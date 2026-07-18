@@ -29,6 +29,7 @@ func buildMux(cfg config) *http.ServeMux {
 	registerAgentEnvRoutes(mux, cfg)
 	registerConnectionRoutes(mux, cfg)
 	registerInternalGitRoutes(mux, cfg)
+	registerBrowserRoutes(mux, cfg)
 	registerTerminalPreviewRoutes(mux, cfg)
 	registerLegacyRedirect(mux)
 	registerStatic(mux, cfg)
@@ -443,6 +444,18 @@ func registerInternalGitRoutes(mux *http.ServeMux, cfg config) {
 	// Smart-HTTP git face (clone/fetch/push). Self-authenticating via a Basic git
 	// token (session-exempt, like /mcp); handles every method.
 	mux.HandleFunc("/git/{slug}/{repo...}", g.gitHTTP)
+}
+
+// Browser Page lifecycle + restricted rendering/input WebSocket (docs/31).
+// The browser implementation remains separate from terminal relay semantics:
+// binary JPEG frames are replaceable under backpressure, PTY bytes are not.
+func registerBrowserRoutes(mux *http.ServeMux, cfg config) {
+	browser := newBrowserAPI(cfg.mgr)
+	rest := browser.withResolved(browser.rest)
+	mux.HandleFunc("POST /api/browser/pages", rest)
+	mux.HandleFunc("GET /api/browser/pages/{id}", rest)
+	mux.HandleFunc("DELETE /api/browser/pages/{id}", rest)
+	mux.HandleFunc("GET /ws/browser", browser.withResolved(browser.socket))
 }
 
 // Terminal PTY (proxied WebSocket) + preview proxy to a service the user started
