@@ -32,6 +32,7 @@ import type { Memo, MemoCategory, MemoAttachment } from "../../types/memo.ts";
 import { MemoTidyModal } from "./MemoTidyModal.tsx";
 import { SendMemoModal } from "./SendMemoModal.tsx";
 import { MemoImageThumb } from "./MemoImageThumb.tsx";
+import { consumeShare } from "./share.ts";
 
 const POLL_MS = 10000;
 const SECTION_KEY = "af-section-memos"; // shared with the Section component's own key
@@ -239,6 +240,24 @@ export function MemoQueueSection() {
       setBusy(false);
     }
   };
+
+  // One-shot: a PWA share (Android 共有シート) launches the app at ?share=<id>. Pull the
+  // shared text + images out of the SW stash, reveal the composer, and prefill it.
+  useEffect(() => {
+    let alive = true;
+    void consumeShare().then((s) => {
+      if (!alive || !s || (!s.text && s.files.length === 0)) return;
+      setOpen(true);
+      setComposerOpen(true);
+      if (s.text) setNewText((prev) => (prev ? prev + "\n" + s.text : s.text));
+      if (s.files.length) void attachImages(s.files);
+      requestAnimationFrame(() => composerTextRef.current?.focus());
+    });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ---- memo edit / delete ------------------------------------------------------
   const saveEdit = async (m: Memo, body: string, category: string) => {

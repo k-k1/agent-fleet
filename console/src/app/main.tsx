@@ -6,6 +6,7 @@ import { ToastProvider } from "../ui/ToastProvider.tsx";
 import { ConfirmProvider } from "../ui/ConfirmProvider.tsx";
 import { PaneHoverProvider } from "../lib/panehover.tsx";
 import { wireViewport } from "./viewport.ts";
+import { registerShareSW } from "../features/memo/share.ts";
 import "@vscode/codicons/dist/codicon.css";
 import "../styles/tokens.css";
 import "../styles/base.css";
@@ -29,6 +30,10 @@ import "../features/keys/keys.css";
 
 // Pin the frame's bars above the mobile soft keyboard (iOS visual-viewport fit).
 wireViewport();
+
+// Install the Web Share Target service worker so the installed PWA can receive shares
+// from Android's 共有シート into the memo queue (docs/21 画像添付). Best-effort.
+registerShareSW();
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
