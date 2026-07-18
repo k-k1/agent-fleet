@@ -71,23 +71,22 @@ RUN set -eux; \
     uv tool install --python /usr/bin/python3 "awslabs.cloudwatch-mcp-server==${CLOUDWATCH_MCP_VERSION}"; \
     test -x /usr/local/bin/awslabs.cloudwatch-mcp-server
 
-# Headless-browser verification support: the shared libraries Chromium needs at
-# runtime, plus fonts (DejaVu + Noto CJK so the Console's Japanese UI renders in
-# screenshots instead of tofu). The browser binary itself is NOT baked — this
-# image is root-only at build time and these libs were the one thing an agent
-# could not install itself (no sudo at runtime; hand-extracting .debs cost a
-# session ~30min). Each user fetches the browser once into the persistent home:
-#   npm i playwright-core && npx playwright-core install chromium
-# (~/.cache/ms-playwright survives container recreation; version tracks whatever
-# playwright the task needs). Keep runs headless and short-lived — the shared
-# host is memory-constrained (workspace-notes).
+# Chromium for the in-container browser pane and headless UI verification. Debian's
+# package supplies the same /usr/bin/chromium entrypoint on amd64 and arm64 and pulls
+# its runtime libraries as dependencies. Pin all three Chromium packages together:
+# chromium-common requires an exact match and chromium-sandbox is normally only a
+# recommendation (suppressed by --no-install-recommends). Bump the ARG after Debian
+# publishes the same security build for both architectures. Fonts and fontconfig are
+# explicit so Japanese pages render without depending on a transient recommendation.
+ARG CHROMIUM_VERSION=150.0.7871.124-1~deb12u1
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      libglib2.0-0 libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libatspi2.0-0 \
-      libcups2 libdbus-1-3 libdrm2 libgbm1 libasound2 libpango-1.0-0 libcairo2 \
-      libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxi6 \
-      libxrandr2 libxkbcommon0 libxshmfence1 \
-      fonts-dejavu-core fonts-noto-cjk \
- && rm -rf /var/lib/apt/lists/*
+      "chromium=${CHROMIUM_VERSION}" \
+      "chromium-common=${CHROMIUM_VERSION}" \
+      "chromium-sandbox=${CHROMIUM_VERSION}" \
+      fontconfig fonts-dejavu-core fonts-noto-cjk \
+ && rm -rf /var/lib/apt/lists/* \
+ && chromium --version \
+ && test "$(dpkg-query -W -f='${Version}' chromium)" = "$CHROMIUM_VERSION"
 # git-lfs filters live in the system gitconfig (/etc/gitconfig) so clones/checkouts
 # smudge LFS objects for every user regardless of home state. LFS auth reuses the
 # HTTPS credential helper (same host token), so private LFS objects fetch too.
@@ -173,8 +172,8 @@ RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
 # ビルド時ピンをコンテナ内へ書き出す（ARG はビルド後に消えて実行時に参照できない）。
 # 設定 UI「ツールのバージョン」の「ピン vs 実体」表示と、スモークの検証材料に使う。
 RUN mkdir -p /usr/local/share/agent-fleet \
- && printf '{"claude":"%s","opencode":"%s","codex":"%s","go":"%s","gh":"%s"}\n' \
-      "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$GO_VERSION" "$GH_VERSION" \
+ && printf '{"claude":"%s","opencode":"%s","codex":"%s","go":"%s","gh":"%s","chromium":"%s"}\n' \
+      "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$GO_VERSION" "$GH_VERSION" "$CHROMIUM_VERSION" \
       > /usr/local/share/agent-fleet/versions.json
 
 # The baked claude is a root-owned npm-global install run as the non-root `dev`
