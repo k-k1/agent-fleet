@@ -21,14 +21,17 @@ import {
   memoCategoryCreate,
   memoCategoryUpdate,
   memoCategoryDelete,
+  memoPasteImage,
+  memoImageGC,
 } from "./api.ts";
 import { useMemoStore } from "./store.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { useDraft } from "../../lib/draft.ts";
-import type { Memo, MemoCategory } from "../../types/memo.ts";
+import type { Memo, MemoCategory, MemoAttachment } from "../../types/memo.ts";
 import { MemoTidyModal } from "./MemoTidyModal.tsx";
 import { SendMemoModal } from "./SendMemoModal.tsx";
+import { MemoImageThumb } from "./MemoImageThumb.tsx";
 
 const POLL_MS = 10000;
 const SECTION_KEY = "af-section-memos"; // shared with the Section component's own key
@@ -110,6 +113,12 @@ export function MemoQueueSection() {
   const [composerOpen, setComposerOpen] = useState(false);
   const [newText, setNewText] = useDraft("af.memo-draft");
   const [newCat, setNewCat] = useDraft("af.memo-draft-cat");
+  // Images attached to the memo being composed (uploaded to the container immediately;
+  // committed into the memo on Add). Not draft-persisted — the bytes live server-side
+  // and a page reload would leave them orphaned, so a fresh composer starts empty.
+  const [newImages, setNewImages] = useState<MemoAttachment[]>([]);
+  const [imgBusy, setImgBusy] = useState(false);
+  const imgInputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [tidy, setTidy] = useState<Memo[] | null>(null);
   const [sendOpen, setSendOpen] = useState(false);
@@ -169,13 +178,52 @@ export function MemoQueueSection() {
     setComposerOpen(true);
     requestAnimationFrame(() => composerTextRef.current?.focus());
   };
+
+  // Upload image files (paste / drop / picker) into the container's memo-images dir and
+  // append them to the composer's attachments. Non-image files are ignored — memo
+  // attachments are images only (a screenshot shared from a phone, a dragged picture).
+  const attachImages = async (files: Iterable<File>) => {
+    const imgs = [...files].filter((f) => f.type.startsWith("image/"));
+    if (!imgs.length) return;
+    setImgBusy(true);
+    try {
+      for (const f of imgs) {
+        const res = await memoPasteImage(f);
+        if (res.status === 201 && res.path && res.name) {
+          setNewImages((cur) => [...cur, { path: res.path!, name: res.name! }]);
+        } else {
+          toast(res.status === 413 ? t("memo.image_too_large") : t("memo.image_failed"));
+        }
+      }
+    } catch {
+      toast(t("memo.image_failed"));
+    } finally {
+      setImgBusy(false);
+    }
+  };
+  const removeNewImage = (name: string) => setNewImages((cur) => cur.filter((a) => a.name !== name));
+
+  // Best-effort prune of orphaned container images: keep everything referenced by a memo
+  // plus the composer's in-flight uploads (not yet committed to a memo). Fire-and-forget.
+  const runImageGC = (memoList: Memo[], pending: MemoAttachment[]) => {
+    const keep = new Set<string>();
+    for (const m of memoList) for (const a of m.attachments || []) keep.add(a.name);
+    for (const a of pending) keep.add(a.name);
+    void memoImageGC([...keep]).catch(() => {});
+  };
+
   const addMemo = async () => {
     const body = newText.trim();
-    if (!body || busy) return;
+    if ((!body && newImages.length === 0) || busy) return;
     setBusy(true);
     try {
       const category = newCat.trim();
-      const res = await memoCreate({ kind: "text", body, category });
+      const res = await memoCreate({
+        kind: "text",
+        body,
+        category,
+        ...(newImages.length ? { attachments: newImages } : {}),
+      });
       if ((res as { error?: unknown }).error) {
         toast(t("memo.add_failed"));
         return;
@@ -183,6 +231,7 @@ export function MemoQueueSection() {
       // A brand-new category becomes first-class so it's reorderable straight away.
       if (category && !catNames.includes(category)) await memoCategoryCreate({ repo: "", name: category }).catch(() => {});
       setNewText("");
+      setNewImages([]);
       bumpMemos();
     } catch {
       toast(t("memo.add_failed"));
@@ -212,6 +261,8 @@ export function MemoQueueSection() {
         delete n[id];
         return n;
       });
+      // Prune the deleted memo's images (keep every other memo's + composer's in-flight).
+      runImageGC(memos.filter((m) => m.id !== id), newImages);
       bumpMemos();
     } catch {
       toast(t("common.delete_failed"));
@@ -377,7 +428,18 @@ export function MemoQueueSection() {
         onToggle={() => setSectionOpen(!open)}
       >
         {composerOpen && (
-          <div className="memo-add">
+          <div
+            className="memo-add"
+            onDragOver={(e) => {
+              if (e.dataTransfer.types.includes("Files")) e.preventDefault();
+            }}
+            onDrop={(e) => {
+              if (e.dataTransfer.files.length) {
+                e.preventDefault();
+                void attachImages(e.dataTransfer.files);
+              }
+            }}
+          >
             <textarea
               ref={composerTextRef}
               className="memo-add-text"
@@ -385,6 +447,13 @@ export function MemoQueueSection() {
               rows={2}
               placeholder={tr("memo.add_ph")}
               onChange={(e) => setNewText(e.target.value)}
+              onPaste={(e) => {
+                const imgs = [...e.clipboardData.files].filter((f) => f.type.startsWith("image/"));
+                if (imgs.length) {
+                  e.preventDefault();
+                  void attachImages(imgs);
+                }
+              }}
               onKeyDown={(e) => {
                 if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
                   e.preventDefault();
@@ -394,6 +463,18 @@ export function MemoQueueSection() {
                 }
               }}
             />
+            {(newImages.length > 0 || imgBusy) && (
+              <div className="memo-add-thumbs">
+                {newImages.map((a) => (
+                  <MemoImageThumb key={a.name} name={a.name} onRemove={() => removeNewImage(a.name)} />
+                ))}
+                {imgBusy && (
+                  <span className="memo-thumb loading">
+                    <Icon name="loading" spin />
+                  </span>
+                )}
+              </div>
+            )}
             <div className="memo-add-row">
               <input
                 className="memo-add-cat"
@@ -408,7 +489,33 @@ export function MemoQueueSection() {
                   } else if (e.key === "Escape") setComposerOpen(false);
                 }}
               />
-              <Button small variant="primary" disabled={!newText.trim() || busy} onClick={() => void addMemo()}>
+              <input
+                ref={imgInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                hidden
+                onChange={(e) => {
+                  if (e.target.files?.length) void attachImages(e.target.files);
+                  e.target.value = "";
+                }}
+              />
+              <Button
+                small
+                variant="ghost"
+                title={tr("memo.attach_image")}
+                aria-label={tr("memo.attach_image")}
+                disabled={imgBusy}
+                onClick={() => imgInputRef.current?.click()}
+              >
+                <Icon name="device-camera" />
+              </Button>
+              <Button
+                small
+                variant="primary"
+                disabled={(!newText.trim() && newImages.length === 0) || busy}
+                onClick={() => void addMemo()}
+              >
                 {tr("memo.add")}
               </Button>
             </div>
@@ -730,7 +837,14 @@ function MemoRow(props: MemoRowProps) {
             {m.body && <div className="memo-comment memo-text">{m.body}</div>}
           </>
         ) : (
-          <div className="memo-text">{m.body}</div>
+          m.body && <div className="memo-text">{m.body}</div>
+        )}
+        {m.attachments && m.attachments.length > 0 && (
+          <div className="memo-row-thumbs" onClick={(e) => e.stopPropagation()}>
+            {m.attachments.map((a) => (
+              <MemoImageThumb key={a.name} name={a.name} />
+            ))}
+          </div>
         )}
         {(m.sentAt || (!expanded && isLong)) && (
           <div className="memo-meta">

@@ -550,6 +550,36 @@ export const memoUpdate = (id: string, patch: MemoPatch): Promise<Memo> =>
   apiJSON(`api/memos/${encodeURIComponent(id)}`, "PATCH", patch);
 export const memoDelete = (id: string): Promise<Response> =>
   raw(`api/memos/${encodeURIComponent(id)}`, { method: "DELETE" });
+
+// Upload one memo image attachment (multipart, field "file"). Membership-scoped:
+// stored in the workspace container under memo-images with no session/conv key, so a
+// memo shared from any device can carry it and flush into whichever session is chosen.
+// Returns the saved absolute path + basename — the flush references the path (the agent
+// opens it with its Read tool) and the Console previews the basename via memoImageURL.
+export function memoPasteImage(
+  file: File,
+): Promise<{ status: number; path?: string; name?: string; error?: unknown }> {
+  const fd = new FormData();
+  fd.append("file", file, file.name || "pasted.png");
+  return fetch(rel("api/memos/paste-image"), { method: "POST", body: fd }).then((r) =>
+    r
+      .json()
+      .then((j) => ({ status: r.status, ...j }))
+      .catch(() => ({ status: r.status })),
+  );
+}
+
+// Relative URL of a stored memo image by basename. The endpoint requires the tenant
+// header (fetch injects X-AF-Tenant), so a bare <img src> can't reach it — fetch it as a
+// blob via raw() for an object URL, as MirrorView's PastedThumb does.
+export const memoImageURL = (name: string): string =>
+  `api/memos/images/${encodeURIComponent(name)}`;
+
+// Best-effort disk hygiene: tell the workspace agent which memo-image basenames are
+// still referenced by a memo; it unlinks every other stored image. Fire-and-forget —
+// a failure (container stopped, network) just leaves stale files for the next sweep.
+export const memoImageGC = (keep: string[]): Promise<Response> =>
+  rawJSON("api/memos/images/gc", "POST", { keep });
 // Flush concatenates the selected memos (by id) into one message, sends it once to
 // the session, and stamps them sent. `text`, when given, is sent verbatim instead of the
 // server-composed message (the send modal lets the user edit it first). Returns

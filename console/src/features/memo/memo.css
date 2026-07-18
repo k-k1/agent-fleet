@@ -599,3 +599,83 @@
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 20%, transparent);
 }
+
+/* --- Image attachments (docs/21 画像添付) ---------------------------------------- */
+/* Composer preview strip + in-row thumbnails. Small square previews with a hover
+   remove chip; clicking opens a full-size lightbox (MemoImageThumb). */
+.memo-add-thumbs,
+.memo-row-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.memo-row-thumbs {
+  margin-top: 4px;
+}
+.memo-thumb-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.memo-thumb {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--muted);
+  overflow: hidden;
+  cursor: pointer;
+}
+.memo-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.memo-thumb.loading,
+.memo-thumb.failed {
+  cursor: default;
+}
+.memo-thumb-del {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+}
+.memo-thumb-del:hover {
+  color: var(--text);
+  border-color: var(--muted);
+}
+.memo-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.72);
+  cursor: zoom-out;
+}
+.memo-lightbox img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 6px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+}
