@@ -202,10 +202,10 @@ function renderEmoji(root: HTMLElement) {
   }
 }
 
-// linkifyRefs turns bare git commit hashes and session slugs in prose into clickable
-// links, mirroring renderEmoji's text-node walk (skips code / pre, and existing anchors
-// so we never double-link). Matches are scanned in one combined pass so the two token
-// shapes can't overlap or fight over the same run of text.
+// linkifyRefs turns bare git commit hashes and session slugs into clickable links,
+// mirroring renderEmoji's text-node walk (skips existing anchors so we never double-link).
+// Matches are scanned in one combined pass so the two token shapes can't overlap or fight
+// over the same run of text.
 //
 // - commit hash: 7–40 hex chars. Only linkified when a `repo` is known (a hash is
 //   unresolvable without one). Linked optimistically; the click handler verifies the sha
@@ -214,6 +214,11 @@ function renderEmoji(root: HTMLElement) {
 // - session slug: `s` + digits (Session.name). Only linkified when a session with that
 //   exact name currently exists (looked up live in the sessions store); a stale/unknown
 //   slug is left as plain text.
+//
+// Code context: a fenced block (<pre>) is literal source and is never touched. INLINE
+// code (`s7` written in backticks — the common way a slug is mentioned) IS linkified, but
+// only for slugs: a hash in inline code stays literal, since a commit id in backticks is
+// usually a copy-me literal, whereas a bare `sN` in backticks is a reference to that session.
 const COMMIT_RE = "[0-9a-f]{7,40}";
 const SLUG_RE = "s\\d+";
 // Combined, alternation ordered longest-first; \b keeps us off sub-word matches.
@@ -223,8 +228,9 @@ function linkifyRefs(root: HTMLElement, repo: string | null, onError: (message: 
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(n) {
       if (!n.nodeValue || !/[0-9a-z]/i.test(n.nodeValue)) return NodeFilter.FILTER_REJECT;
-      // Skip code / pre and anything already inside a link.
-      return n.parentElement?.closest("code,pre,a") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+      // Never touch fenced blocks (literal source) or text already inside a link. Inline
+      // code IS walked — a slug in backticks still linkifies (gated below to slug-only).
+      return n.parentElement?.closest("pre,a") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
     },
   });
   const targets: Text[] = [];
@@ -232,6 +238,8 @@ function linkifyRefs(root: HTMLElement, repo: string | null, onError: (message: 
 
   for (const node of targets) {
     const text = node.nodeValue!;
+    // Inside inline <code>, only slugs linkify — a hash in backticks stays literal.
+    const inCode = !!node.parentElement?.closest("code");
     REF_RE.lastIndex = 0;
     let m = REF_RE.exec(text);
     if (!m) continue;
@@ -243,7 +251,7 @@ function linkifyRefs(root: HTMLElement, repo: string | null, onError: (message: 
       const isCommit = /^[0-9a-f]{7,40}$/.test(token) && !/^s\d+$/.test(token);
       let a: HTMLAnchorElement | null = null;
       if (isCommit) {
-        if (repo) a = makeCommitLink(token, repo, onError);
+        if (repo && !inCode) a = makeCommitLink(token, repo, onError);
       } else {
         // slug shape (s\d+): link only if that session exists right now
         const exists = useSessionsStore.getState().sessions.some((s) => s.name === token);
