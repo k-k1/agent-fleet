@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -187,6 +188,43 @@ func markReportsDelivered(reports []*chatMessage) {
 	}
 }
 
+// autoTurnPausedContent is the system notice appended to the conversation when the
+// operator's unattended auto-turn budget runs out. It both informs the user and asks
+// whether to continue — any reply resets the budget and carries the pending report(s)
+// into the operator's context (injectPendingReports). JA to match the stored thread.
+func autoTurnPausedContent(pendingCount int) string {
+	var b strings.Builder
+	b.WriteString("自動応答が連続 " + strconv.Itoa(maxAutoTurns) + " 回の上限に達したため、いったん停止しました。")
+	if pendingCount > 0 {
+		b.WriteString("未処理のセッション報告が " + strconv.Itoa(pendingCount) + " 件残っています。")
+	}
+	b.WriteString("続ける場合は、このチャットにメッセージ（例:「続けて」）を送ってください。" +
+		"次のメッセージ送信で自動応答の回数がリセットされ、保留中の報告も引き継がれます。")
+	return b.String()
+}
+
+// noteAutoTurnPaused appends the pause notice (once per cap-reach) and mirrors it into
+// the notification center so the user is alerted even when the conversation isn't open.
+// The caller holds the conversation lock (runReportAutoTurn).
+func noteAutoTurnPaused(c *chatConversation) {
+	if c.AutoPausedNotified {
+		return // already told the user for this cap-reach; don't spam further reports
+	}
+	c.AutoPausedNotified = true
+	c.Messages = append(c.Messages, chatMessage{
+		Role: "notice", Content: autoTurnPausedContent(len(undeliveredReports(c))), TS: nowMs(),
+	})
+	c.UpdatedAt = nowMs()
+	if err := saveConv(c); err != nil {
+		log.Printf("chat report: save auto-pause notice %s: %v", c.ID, err)
+		return
+	}
+	ev := notice.New("chat-auto-paused", "", "", c.Title)
+	ev.Payload["conversation_id"] = c.ID
+	ev.Payload["conversationTitle"] = c.Title
+	_ = notice.Put(ev)
+}
+
 // handleChatReport (POST /chat/report {name, kind, excerpt, reason}) receives the
 // one-shot report kick from the hook / record-exit process. It validates + disarms
 // synchronously (single writer for the arm store lives here) and does the slow
@@ -268,11 +306,17 @@ func runReportAutoTurn(convID string) {
 	if err != nil {
 		return
 	}
-	if c.AutoTurns >= maxAutoTurns {
-		return // cap reached — the report sits in the thread until the user speaks
-	}
 	pending := undeliveredReports(c)
 	if len(pending) == 0 {
+		return
+	}
+	if c.AutoTurns >= maxAutoTurns {
+		// Cap reached — don't run another unattended turn. A silent return used to bury
+		// the report and leave both the user and the operator unaware the loop had
+		// stopped (the operator can't emit a turn to say so — it's exactly the turn we're
+		// declining). Surface the pause to the user ONCE and ask whether to continue; the
+		// pending report rides the user's next message, which also resets the budget.
+		noteAutoTurnPaused(c)
 		return
 	}
 	prov := chatProviderFor(c)

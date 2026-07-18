@@ -13,13 +13,15 @@ export interface ChatStep {
 }
 
 export interface ChatMessage {
-  role: "user" | "assistant" | "report";
+  role: "user" | "assistant" | "report" | "notice";
   content: string;
   ts: number; // unix millis
   steps?: ChatStep[]; // assistant working process, separated from the final content
   // role==="report" (docs/30): the reporting session's name — rendered as a
   // session-origin card, not a user/assistant bubble.
   session?: string;
+  // role==="notice" (docs/30): a system notice (e.g. the operator's auto-turn budget
+  // ran out and the loop paused) — rendered as a centered informational card.
   // report only: whether the report has been fed into the provider's context yet.
   delivered?: boolean;
 }

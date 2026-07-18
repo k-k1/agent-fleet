@@ -80,6 +80,8 @@ export const ja = {
   "notif.permission_request.speech": "{name} が権限の確認を求めています。",
   "notif.session_report.title": "セッションから報告が届きました",
   "notif.session_report.speech": "{name} からアシスタントに報告が届きました。",
+  "notif.chat_auto_paused.title": "自動応答が上限に達し停止しました",
+  "notif.chat_auto_paused.speech": "アシスタントの自動応答が上限に達したため停止しました。続けるにはメッセージを送ってください。",
   "notif.usage_reset.title": "{source} の制限がリセットされました",
   "notif.usage_reset.body": "{window}がリセットされました。",
   "notif.usage_reset.speech": "{source}の{window}がリセットされました。",

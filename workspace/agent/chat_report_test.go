@@ -92,6 +92,73 @@ func TestInjectPendingReports(t *testing.T) {
 	}
 }
 
+// TestRunReportAutoTurnCapNotifiesOnce covers the docs/30 auto-turn cap: at the cap
+// the operator can't run another turn, so instead of a silent stop the conversation
+// gets a one-time system notice asking the user whether to continue, and the report
+// stays undelivered to ride the user's next message.
+func TestRunReportAutoTurnCapNotifiesOnce(t *testing.T) {
+	withTempHome(t)
+	conv := &chatConversation{
+		ID: randUUID(), Agent: "claude", Tools: toolsAFWrite,
+		AutoTurns: maxAutoTurns, // unattended budget already spent
+		Messages:  []chatMessage{{Role: "report", Content: "レポートA", Session: "slot01"}},
+	}
+	if err := saveConv(conv); err != nil {
+		t.Fatal(err)
+	}
+
+	runReportAutoTurn(conv.ID) // cap reached → append pause notice, run no provider turn
+
+	countNotices := func() (int, *chatMessage) {
+		c, err := loadConv(conv.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var n int
+		var last *chatMessage
+		for i := range c.Messages {
+			if c.Messages[i].Role == "notice" {
+				n++
+				last = &c.Messages[i]
+			}
+		}
+		return n, last
+	}
+
+	n, notice := countNotices()
+	if n != 1 || notice == nil {
+		t.Fatalf("notice count = %d, want 1", n)
+	}
+	if !strings.Contains(notice.Content, "続け") || !strings.Contains(notice.Content, "上限") {
+		t.Fatalf("notice missing continue/limit wording: %q", notice.Content)
+	}
+	c, _ := loadConv(conv.ID)
+	if !c.AutoPausedNotified {
+		t.Fatal("AutoPausedNotified not set after the pause notice")
+	}
+	if len(undeliveredReports(c)) != 1 {
+		t.Fatal("report must stay undelivered while paused (rides the next user message)")
+	}
+
+	// A further report while still capped must NOT append a second notice.
+	runReportAutoTurn(conv.ID)
+	if n2, _ := countNotices(); n2 != 1 {
+		t.Fatalf("notice re-appended while capped: %d", n2)
+	}
+}
+
+func TestAutoTurnPausedContent(t *testing.T) {
+	got := autoTurnPausedContent(3)
+	for _, want := range []string{"10", "3 件", "続け", "リセット"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("content missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(autoTurnPausedContent(0), "残っています") {
+		t.Fatal("zero pending should omit the pending-count clause")
+	}
+}
+
 func TestBuildReportContent(t *testing.T) {
 	got := buildReportContent("リファクタ作業", "slot07", "answer-ready", "", "最後の出力です")
 	for _, want := range []string{"リファクタ作業", "slot07", "入力待ち", "最後の出力です"} {
