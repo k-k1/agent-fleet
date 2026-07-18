@@ -6,8 +6,8 @@
 //   - a session's kind = which agent runs in it (claude/codex/…, types/session)
 //
 // ── The paneId contract (hard invariant, enforced by ops + tests) ──
-// A pane's id IS its terminal's identity: the xterm instance, its WebSocket and
-// scrollback live in a module map keyed by paneId (terminal service), and the
+// A pane's id IS its runtime-view identity: the xterm instance/WebSocket and the
+// ephemeral browser Page/WebSocket live in module maps keyed by paneId, and the
 // flat-absolute PaneHost keys DOM nodes by it. Operations that move a pane
 // (swap, drop-split) MUST relocate the same pane object keeping its id — never
 // mint a new id and copy content (a new id builds a fresh xterm + WebGL context
@@ -32,7 +32,9 @@ export type PaneContent =
   | { kind: "wtdiff"; scmRepo: string; filePath: string; diffStaged: boolean }
   | { kind: "doc"; docTitle: string; docContent: string }
   | { kind: "diff"; docTitle: string; diffTool: string; diffEdits: unknown }
-  | { kind: "chat"; conversationId: string | null; draftAssistantId: string | null };
+  | { kind: "chat"; conversationId: string | null; draftAssistantId: string | null }
+  /** browserId is deliberately absent: Agent Page ids are runtime-only. */
+  | { kind: "browser"; port: number; path: string };
 
 export type PaneKind = PaneContent["kind"];
 
