@@ -671,6 +671,43 @@
 .markdown a.anchor-link {
   color: var(--accent);
 }
+/* Auto-linked references in prose: a bare commit hash (→ commit pane) and a session
+   slug (→ that session's mirror). Non-navigating anchors (no href) wired by MarkdownView;
+   a dotted underline distinguishes them from real Markdown links. */
+.markdown a.md-ref-link {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+  border-radius: 3px;
+}
+.markdown a.md-ref-link:hover {
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+.markdown a.md-ref-link:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+.markdown a.md-commit-link {
+  color: #d6b37f;
+  font-family: var(--viewer-font, var(--mono));
+  font-size: 0.9em;
+}
+.markdown a.md-commit-link:hover {
+  color: #e8cfa6;
+}
+:root[data-theme="light"] .markdown a.md-commit-link {
+  color: #92580a;
+}
+.markdown a.md-session-link {
+  color: #7fb0d6;
+}
+.markdown a.md-session-link:hover {
+  color: #a6cee8;
+}
+:root[data-theme="light"] .markdown a.md-session-link {
+  color: #0e4a75;
+}
 .markdown code {
   font-family: var(--viewer-font, var(--mono));
   font-size: 0.88em;

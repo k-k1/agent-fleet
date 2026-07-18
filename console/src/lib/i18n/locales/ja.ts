@@ -2084,6 +2084,9 @@ export const ja = {
   "view.cannot_read_file": "(このファイルは朗読できません)",
   "view.no_text_to_read": "(読み上げる本文がありません)",
   "view.read_from_here": "ここから朗読",
+  "view.open_commit": "コミット {sha} を開く",
+  "view.commit_not_found": "コミットが見つかりません: {sha}",
+  "view.open_session": "セッション {name} を開く",
 
 
   // === P5 ログイン切れモーダル（AuthExpiredModal） ===

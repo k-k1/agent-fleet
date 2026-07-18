@@ -1784,6 +1784,7 @@ export function MirrorView({
             openFile,
             maxSpend,
             session,
+            sessionMeta?.repo ?? null,
             setLightbox,
             agentName,
             ttsWiring,
@@ -1873,7 +1874,7 @@ export function MirrorView({
               <span className="mt-model muted">{tr("mirror.questioning")}</span>
             </div>
             <div className="mirror-turn-body">
-              {pendingText && <MarkdownView source={pendingText} onOpenFile={openFile} />}
+              {pendingText && <MarkdownView source={pendingText} repo={sessionMeta?.repo ?? null} onOpenFile={openFile} />}
               <PendingQuestions
                 key={"pq-" + (pending[0]?.question || "")}
                 questions={pending}
@@ -2395,6 +2396,7 @@ function renderGroups(
   onOpenFile: (path: string, line?: number, column?: number) => void,
   maxSpend: number,
   session: string,
+  repo: string | null,
   onOpenImage: (url: string) => void,
   agentName: string,
   tts: TurnTtsWiring,
@@ -2425,6 +2427,7 @@ function renderGroups(
           turn={g}
           before={ctxSizeBefore(groups, i)}
           after={ctxSizeAfter(groups, i)}
+          repo={repo}
           onOpenFile={onOpenFile}
         />
       ) : (
@@ -2433,6 +2436,7 @@ function renderGroups(
           turn={g}
           maxSpend={maxSpend}
           session={session}
+          repo={repo}
           onOpenImage={onOpenImage}
           onAnswer={onAnswer}
           onOpenPlan={onOpenPlan}
@@ -2568,11 +2572,13 @@ function CompactBlock({
   turn,
   before,
   after,
+  repo,
   onOpenFile,
 }: {
   turn: Group;
   before?: number;
   after?: number;
+  repo?: string | null;
   onOpenFile: (path: string, line?: number, column?: number) => void;
 }) {
   // Show the reduction only once both sides are real: `after` is 0 until the first
@@ -2612,7 +2618,7 @@ function CompactBlock({
             </div>
           </div>
         )}
-        <MarkdownView source={turn.text} baseDir={turn.cwd} onOpenFile={onOpenFile} />
+        <MarkdownView source={turn.text} baseDir={turn.cwd} repo={repo} onOpenFile={onOpenFile} />
       </div>
     </details>
   );
@@ -2624,10 +2630,12 @@ function CompactBlock({
 function ThinkingBlock({
   text,
   baseDir,
+  repo,
   onOpenFile,
 }: {
   text?: string;
   baseDir?: string;
+  repo?: string | null;
   onOpenFile?: (path: string, line?: number, column?: number) => void;
 }) {
   if (!text) return null;
@@ -2638,7 +2646,7 @@ function ThinkingBlock({
         <span className="mth-title">{tr("mirror.thinking_label")}</span>
       </summary>
       <div className="mirror-thinking-body">
-        <MarkdownView source={text} baseDir={baseDir} onOpenFile={onOpenFile} />
+        <MarkdownView source={text} baseDir={baseDir} repo={repo} onOpenFile={onOpenFile} />
       </div>
     </details>
   );
@@ -2757,6 +2765,7 @@ function Turn({
   turn,
   maxSpend,
   session,
+  repo,
   onOpenImage,
   onAnswer,
   onOpenPlan,
@@ -2771,6 +2780,7 @@ function Turn({
   turn: Group;
   maxSpend: number;
   session: string;
+  repo?: string | null;
   onOpenImage: (url: string) => void;
   onAnswer: (t: string) => void;
   onOpenPlan: (plan: string) => void;
@@ -2815,11 +2825,11 @@ function Turn({
       ) : item.p.kind === "thinking" ? (
         // The agent's chain-of-thought (codex reasoning / opencode reasoning),
         // collapsed by default so it doesn't crowd the answer.
-        <ThinkingBlock key={item.i} text={item.p.text} baseDir={turn.cwd} onOpenFile={onOpenFile} />
+        <ThinkingBlock key={item.i} text={item.p.text} baseDir={turn.cwd} repo={repo} onOpenFile={onOpenFile} />
       ) : item.p.kind === "delegation" ? (
         <DelegationCard key={item.i} p={item.p} agentName={agentName} />
       ) : (
-        <MarkdownView key={item.i} source={item.p.text} baseDir={turn.cwd} onOpenFile={onOpenFile} />
+        <MarkdownView key={item.i} source={item.p.text} baseDir={turn.cwd} repo={repo} onOpenFile={onOpenFile} />
       ),
     );
   const fromOperator = isUser && turn.source === "operator";
@@ -2880,7 +2890,7 @@ function Turn({
             const { text, images, files } = splitPastedImages(turn.text || "");
             return (
               <>
-                {text && <MarkdownView source={text} breaks baseDir={turn.cwd} onOpenFile={onOpenFile} />}
+                {text && <MarkdownView source={text} breaks baseDir={turn.cwd} repo={repo} onOpenFile={onOpenFile} />}
                 {images.length > 0 && (
                   <div className="mt-imgs">
                     {images.map((nm) => (
