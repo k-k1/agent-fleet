@@ -15,6 +15,7 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { t, useT } from "../../lib/i18n/index.ts";
 import { errText } from "../../core/api/client.ts";
 import { memoFlush } from "./api.ts";
+import { FILE_PROMPT } from "../../lib/pastedImages.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useLaunchSeed } from "../repos/store.ts";
 import { chatCreate, assistantList } from "../chat/api.ts";
@@ -45,11 +46,26 @@ export function composeMemoMessage(memos: Memo[]): string {
     if (m.kind === "file") {
       lines.push(`${n}. ${t("memo.flush_file", { path: m.refPath })}`);
       if (m.body) lines.push("   " + m.body);
-    } else {
+    } else if (m.body) {
       lines.push(`${n}. ${m.body}`);
+    } else {
+      lines.push(`${n}. ${t("memo.flush_image_only")}`);
+    }
+    if (m.attachments?.length) {
+      lines.push("   " + t("memo.flush_images", { names: m.attachments.map((a) => a.name).join(", ") }));
     }
   }
   return lines.join("\n");
+}
+
+// appendImagePaths adds the machine-facing "open with Read tool" line + the attachments'
+// absolute in-container paths (mirrors buildImagePrompt / the server's buildFlushMessage)
+// so whichever target the memos flush to actually opens the images. The names shown in
+// the editable text stay human-readable; the paths ride only on send.
+function appendImagePaths(text: string, memos: Memo[]): string {
+  const paths = memos.flatMap((m) => (m.attachments || []).map((a) => a.path));
+  if (!paths.length) return text;
+  return text + "\n\n" + FILE_PROMPT + " " + paths.join(" ");
 }
 
 type Target = { type: "session"; name: string } | { type: "new" } | { type: "assistant"; id: string };
@@ -99,9 +115,12 @@ export function SendMemoModal({ memos, onClose, onSent }: SendMemoModalProps) {
   const send = async () => {
     if (!target || busy) return;
     setBusy(true);
+    // Attach the images' absolute paths (kept out of the editable text) so the target
+    // agent opens them; a no-op when the selection has no image attachments.
+    const outText = appendImagePaths(text, memos);
     try {
       if (target.type === "session") {
-        const res = await memoFlush(target.name, ids, text);
+        const res = await memoFlush(target.name, ids, outText);
         if (res.error) {
           toast(errText(res.error) || t("common.send_failed"));
           return;
@@ -124,14 +143,14 @@ export function SendMemoModal({ memos, onClose, onSent }: SendMemoModalProps) {
       } else if (target.type === "new") {
         // Seed the launch hub's first prompt and open it — the launch itself (repo /
         // agent / worktree) happens in the hub. Memos stay queued until then.
-        setSeed(text);
+        setSeed(outText);
         openStart();
         toast(t("memo.new_session_started"), { kind: "success" });
         onClose();
       } else {
         const c = await chatCreate(target.id, t("memo.assistant_title"));
         if (c && c.id) {
-          openChat(c.id, text);
+          openChat(c.id, outText);
           onClose();
         } else {
           toast(t("send.chat_create_failed"));

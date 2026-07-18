@@ -5,6 +5,14 @@
 
 export type MemoKind = "file" | "text";
 
+// An image attached to a memo (docs/21 画像添付). path is the absolute in-container path
+// returned by memoPasteImage (under ~/.cache/agent-fleet/memo-images); name is the
+// basename, used both for display and to preview via GET api/memos/images/{name}.
+export interface MemoAttachment {
+  path: string;
+  name: string;
+}
+
 export interface Memo {
   id: string;
   repo: string; // "repos/<repo>"-derived name; "" = common bucket
@@ -12,6 +20,7 @@ export interface Memo {
   kind: MemoKind;
   body: string; // free text, or a comment when kind=file
   refPath: string; // kind=file: "~/repos/<repo>/..."
+  attachments?: MemoAttachment[]; // image attachments (any kind); omitted = none
   position: number; // order within its group
   createdAt: string; // RFC3339
   sentAt: string; // "" = unsent; RFC3339 stamp = flushed, kept until retention sweep
@@ -24,6 +33,7 @@ export interface MemoInput {
   kind: MemoKind;
   body?: string;
   refPath?: string;
+  attachments?: MemoAttachment[];
   position?: number;
 }
 
@@ -33,6 +43,7 @@ export interface MemoPatch {
   category?: string;
   body?: string;
   refPath?: string;
+  attachments?: MemoAttachment[];
   position?: number;
 }
 
