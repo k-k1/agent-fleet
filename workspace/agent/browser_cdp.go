@@ -240,10 +240,11 @@ func (p *pipeCDP) readLoop() {
 		}
 		if len(b) > 1 {
 			if dispatchErr := p.dispatch(b[:len(b)-1]); dispatchErr != nil {
-				// A saturated queue means the manager can no longer enforce navigation
-				// or acknowledge screencast frames in bounded memory. Fail the single
+				// A saturated queue means the manager can no longer enforce a
+				// navigation or lifecycle decision in bounded memory. Fail the single
 				// Chromium process and let BrowserManager invalidate every Page instead
-				// of spawning an unbounded waiter per non-droppable event.
+				// of spawning an unbounded waiter per non-droppable event. Lossy
+				// screencast frames never reach here; they are dropped in dispatch.
 				p.finish(dispatchErr)
 				if p.cmd.Process != nil {
 					_ = syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
@@ -328,14 +329,16 @@ func (ev *browserCDPEvent) releaseQueueBytes() {
 	}
 }
 
-// Events that enforce a security/lifecycle decision or carry an unacknowledged
-// screencast frame may not be silently dropped. Queue saturation is exceptional;
-// terminating Chromium bounds memory and gives every attached Page a stable
-// crashed transition through BrowserManager.handleCrash.
+// Events that enforce a security or lifecycle decision may not be silently
+// dropped. Queue saturation is exceptional; terminating Chromium bounds memory and
+// gives every attached Page a stable crashed transition through
+// BrowserManager.handleCrash. Page.screencastFrame is deliberately absent:
+// screencast frames are lossy by design, so a saturated queue drops the oldest
+// frame instead of killing the whole browser.
 func browserCDPEventMustDeliver(method string) bool {
 	switch method {
 	case "Fetch.requestPaused", "Page.fileChooserOpened", "Page.frameRequestedNavigation",
-		"Page.frameStartedNavigating", "Page.screencastFrame", "Target.targetCreated",
+		"Page.frameStartedNavigating", "Target.targetCreated",
 		"Target.targetDestroyed", "Target.targetCrashed", "Inspector.targetCrashed":
 		return true
 	default:

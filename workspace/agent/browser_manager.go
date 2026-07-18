@@ -51,6 +51,7 @@ type browserManager struct {
 type browserScreencastFrame struct {
 	data      string
 	sessionID int
+	gen       uint64
 }
 
 type browserPage struct {
@@ -77,6 +78,8 @@ type browserPage struct {
 	frameStopOnce sync.Once
 	castMu        sync.Mutex
 	casting       bool
+	castGen       atomic.Uint64 // active screencast generation; 0 while stopped
+	castEpoch     atomic.Uint64 // monotonic source for castGen values
 	unreachable   bool
 	topRequestID  string
 	refreshing    atomic.Bool
@@ -579,15 +582,7 @@ func (m *browserManager) handleEvent(cdp browserCDP, ev browserCDPEvent) {
 			SessionID int    `json:"sessionId"`
 		}
 		if json.Unmarshal(ev.Params, &v) == nil {
-			select {
-			case p.frameEvents <- browserScreencastFrame{data: v.Data, sessionID: v.SessionID}:
-			default:
-				// CDP normally sends one frame at a time until ACK. A second
-				// unprocessed frame is a protocol/backpressure failure; invalidate
-				// this Page instead of allocating another decoder goroutine.
-				p.stopScreencast()
-				m.invalidatePage(p, "crashed", "screencast backpressure")
-			}
+			p.offerScreencastFrame(v.Data, v.SessionID)
 		}
 	case "Page.frameNavigated":
 		var v struct {
@@ -824,18 +819,49 @@ func (p *browserPage) enqueueFrame(frame []byte) {
 	}
 }
 
+// offerScreencastFrame hands the newest raw screencast frame to frameLoop through
+// a latest-only, non-blocking buffer. Real Chromium keeps several frames in flight
+// before it observes an ACK, so a burst of frames must replace the pending one
+// rather than be treated as a fatal protocol error. Frames that arrive while the
+// cast is stopped (gen 0) or that belong to a superseded generation are dropped
+// here so a stop/start restart never mixes old and new casts.
+func (p *browserPage) offerScreencastFrame(data string, sessionID int) {
+	gen := p.castGen.Load()
+	if gen == 0 {
+		return
+	}
+	frame := browserScreencastFrame{data: data, sessionID: sessionID, gen: gen}
+	select {
+	case p.frameEvents <- frame:
+		return
+	default:
+	}
+	// Buffer full: drop the older pending frame and keep only the newest.
+	select {
+	case <-p.frameEvents:
+	default:
+	}
+	select {
+	case p.frameEvents <- frame:
+	default:
+	}
+}
+
 // frameLoop is the sole base64 decoder and screencast ACK producer for a Page.
-// Chromium does not advance Page.startScreencast until the current sessionId is
-// acknowledged, so delaying each ACK by FrameInterval limits capture/encode work
-// at the CDP source instead of merely throttling WebSocket writes after decoding.
-// One worker and one queued frame per Page keep both goroutines and frame memory
-// bounded by BrowserManager.MaxPages.
+// It decodes only the latest buffered frame and paces one ACK per FrameInterval:
+// Chromium throttles capture toward that ACK rate once its in-flight limit is
+// reached, while any extra in-flight frames are absorbed by the latest-only buffer
+// instead of crashing the Page. Frames from a superseded screencast generation are
+// dropped without an ACK so a stop/start restart never acknowledges a stale cast.
 func (p *browserPage) frameLoop() {
 	for {
 		select {
 		case <-p.frameStop:
 			return
 		case event := <-p.frameEvents:
+			if event.gen != p.castGen.Load() {
+				continue
+			}
 			if frame, err := base64.StdEncoding.DecodeString(event.data); err == nil {
 				p.enqueueFrame(frame)
 			}
@@ -847,6 +873,9 @@ func (p *browserPage) frameLoop() {
 				}
 				return
 			case <-timer.C:
+			}
+			if event.gen != p.castGen.Load() {
+				continue
 			}
 			p.manager.mu.Lock()
 			cdp := p.manager.cdp
@@ -887,6 +916,9 @@ func (p *browserPage) startScreencast() error {
 	}, nil)
 	if err == nil {
 		p.casting = true
+		// Publish a fresh generation so frames from any prior cast are dropped and
+		// only this cast's frames are decoded and acknowledged.
+		p.castGen.Store(p.castEpoch.Add(1))
 	}
 	return err
 }
@@ -897,6 +929,8 @@ func (p *browserPage) stopScreencast() {
 	if !p.casting {
 		return
 	}
+	// Retire the generation first so late in-flight frames are dropped, not acked.
+	p.castGen.Store(0)
 	p.manager.mu.Lock()
 	cdp := p.manager.cdp
 	p.manager.mu.Unlock()
@@ -904,6 +938,21 @@ func (p *browserPage) stopScreencast() {
 		_ = p.manager.call(cdp, p.sessionID, "Page.stopScreencast", nil, nil)
 	}
 	p.casting = false
+}
+
+// restartScreencastForResize re-arms the screencast so its maxWidth/maxHeight track
+// a new viewport. It only restarts an already-running cast; when nothing is casting
+// (for example a hidden viewer) the next startScreencast picks up the new size on
+// its own, so this avoids starting a cast no one is watching.
+func (p *browserPage) restartScreencastForResize() {
+	p.castMu.Lock()
+	casting := p.casting
+	p.castMu.Unlock()
+	if !casting {
+		return
+	}
+	p.stopScreencast()
+	_ = p.startScreencast()
 }
 
 func (p *browserPage) refreshNavigation() {
