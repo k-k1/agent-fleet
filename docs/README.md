@@ -24,6 +24,7 @@
 - [28-i18n.md](28-i18n.md) — Console 全面 i18n（✅ P0〜P5 実装済み、実機目視待ち）
 - [29-keyboard-system.md](29-keyboard-system.md) — Console キーボード操作体系（capture-phase 単一ディスパッチャ＋Leader/パレット＋再割当/端末入力優先）（✅ P0〜P5 実装済み・残＝実機目視）
 - [30-session-report.md](30-session-report.md) — フリート・オペレーターへセッション完了・質問・異常終了を自動報告（✅ 実装済み）
+- [31-container-browser-pane.md](31-container-browser-pane.md) — Workspace 内 Chromium で localhost を開き描画・入力を Console ペインへ中継（📋 設計確定・未実装）
 
 > 完了後も実装契約や実測リファレンスとしてコードから参照する 24・26〜30 は番号付きのまま残す。
 > 時系列の実装プランとして役目を終えたものは history/ へ移動: [19 assistant-chat](history/19-assistant-chat.md) /
@@ -63,6 +64,7 @@
 - [0014-agent-exit-recording.md](decisions/0014-agent-exit-recording.md) — エージェント終了理由記録：pane ラッパーで exit code 捕捉・自 cgroup で OOM 帰属・意図停止フラグ不要・CP は cgroup 直読み（設計 [26](26-agent-exit-recording.md)）
 - [0015-agent-managed-driver.md](decisions/0015-agent-managed-driver.md) — Codex / OpenCode は共有 runtime の managed を既定、CLI ルートを常設（実装記録 [27](27-agent-managed-driver.md)）
 - [0017-keyboard-system.md](decisions/0017-keyboard-system.md) — Console キーボード操作体系：capture-phase 単一ディスパッチャで xterm を貫く・Leader(⌘K)/パレット/少数アクセラレータ・直接キー＋予約キーのみ再割当・端末入力優先は Leader だけ残す（設計 [29](29-keyboard-system.md)）
+- [0018-container-browser-pane.md](decisions/0018-container-browser-pane.md) — Chromium を Workspace 内で動かし、localhost の描画と許可済み入力だけをブラウザペインへ中継（設計 [31](31-container-browser-pane.md)）
 
 ## history/ — 使い終わった実装プラン（P3-6 は ◐ 段1 完了・admin 残）
 
