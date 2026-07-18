@@ -895,30 +895,55 @@ func (p *browserPage) stopFrameLoop() {
 	p.frameStopOnce.Do(func() { close(p.frameStop) })
 }
 
+// screencastFrameNotActive reports whether a Page.startScreencast error is the
+// transient "the main frame is not live yet" rejection that Chromium raises when
+// the call lands in the window where the page target is swapping from its initial
+// about:blank document to the navigated document. It is not a fatal condition: the
+// frame goes live within a few tens of milliseconds and the cast then arms cleanly.
+func screencastFrameNotActive(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "Not attached to an active page")
+}
+
 func (p *browserPage) startScreencast() error {
 	p.castMu.Lock()
 	defer p.castMu.Unlock()
 	if p.casting {
 		return nil
 	}
-	p.manager.mu.Lock()
-	cdp := p.manager.cdp
-	owned := p.manager.pages[p.id] == p
-	p.manager.mu.Unlock()
-	if cdp == nil || !owned {
-		return errBrowserNotFound
-	}
-	p.mu.Lock()
-	viewport := p.viewport
-	p.mu.Unlock()
-	err := p.manager.call(cdp, p.sessionID, "Page.startScreencast", map[string]any{
-		"format": "jpeg", "quality": p.manager.config.JPEGQuality, "maxWidth": viewport.Width, "maxHeight": viewport.Height,
-	}, nil)
-	if err == nil {
-		p.casting = true
-		// Publish a fresh generation so frames from any prior cast are dropped and
-		// only this cast's frames are decoded and acknowledged.
-		p.castGen.Store(p.castEpoch.Add(1))
+	// A viewer attaches right after POST /browser/pages returns, which is while the
+	// page is still committing its first navigation (about:blank -> target). If the
+	// very first Page.startScreencast lands in that commit window Chromium rejects it
+	// with "Not attached to an active page". A fast, low-latency viewer attach (the
+	// normal Console path against a fast target) can hit this reliably and would
+	// otherwise crash the whole pane with zero frames. Retry briefly on that one
+	// transient error; the main frame goes live within a few tens of milliseconds.
+	// Any other error, or a page that has gone away, is returned immediately.
+	var err error
+	for attempt := 0; attempt < 12; attempt++ {
+		p.manager.mu.Lock()
+		cdp := p.manager.cdp
+		owned := p.manager.pages[p.id] == p
+		p.manager.mu.Unlock()
+		if cdp == nil || !owned {
+			return errBrowserNotFound
+		}
+		p.mu.Lock()
+		viewport := p.viewport
+		p.mu.Unlock()
+		err = p.manager.call(cdp, p.sessionID, "Page.startScreencast", map[string]any{
+			"format": "jpeg", "quality": p.manager.config.JPEGQuality, "maxWidth": viewport.Width, "maxHeight": viewport.Height,
+		}, nil)
+		if err == nil {
+			p.casting = true
+			// Publish a fresh generation so frames from any prior cast are dropped and
+			// only this cast's frames are decoded and acknowledged.
+			p.castGen.Store(p.castEpoch.Add(1))
+			return nil
+		}
+		if !screencastFrameNotActive(err) {
+			return err
+		}
+		time.Sleep(40 * time.Millisecond)
 	}
 	return err
 }
