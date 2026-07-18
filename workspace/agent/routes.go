@@ -61,6 +61,12 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /sessions/{name}/suggest-branch", handleSessionSuggestBranch)
 	mux.HandleFunc("POST /sessions/{name}/rename-branch", handleSessionRenameBranch)
 	mux.HandleFunc("GET /ws/pty", handlePTY)
+	// Browser pane — ephemeral BrowserContext + Page ownership and a restricted
+	// screencast/input WebSocket. The CP proxies these internal routes verbatim.
+	mux.HandleFunc("POST /browser/pages", handleBrowserPagesCreate)
+	mux.HandleFunc("GET /browser/pages/{id}", handleBrowserPageGet)
+	mux.HandleFunc("DELETE /browser/pages/{id}", handleBrowserPageDelete)
+	mux.HandleFunc("GET /ws/browser", handleBrowserWebSocket)
 
 	// Assistant chat — headless-CLI LLM chat/translation, separate from tmux
 	// sessions (docs/19). Non-streaming; the CP proxies these verbatim.
