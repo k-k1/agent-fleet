@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -223,6 +224,60 @@ func TestBrowserInputConversionAndLatestFrame(t *testing.T) {
 	}
 }
 
+func TestBrowserScreencastAckPacesCaptureBeforeNextFrame(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	interval := 80 * time.Millisecond
+	m := newBrowserManager(browserManagerConfig{
+		MaxPages: 1, DetachedGrace: time.Hour, ChromiumIdle: time.Hour,
+		CommandTimeout: time.Second, FrameInterval: interval, JPEGQuality: 70,
+		CDPFactory: func(context.Context) (browserCDP, error) { return cdp, nil },
+	})
+	t.Cleanup(m.Close)
+	created, err := m.Create(browserCreateRequest{Port: 3000, Path: "/", Viewport: browserViewportRequest{Width: 900, Height: 600, DeviceScaleFactor: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	p := m.pages[created.ID]
+	m.mu.Unlock()
+	v := &browserViewer{page: p, control: make(chan browserOutbound, 4), done: make(chan struct{})}
+	p.mu.Lock()
+	p.viewer, p.visible = v, true
+	p.mu.Unlock()
+	if err := p.startScreencast(); err != nil {
+		t.Fatal(err)
+	}
+	if call, ok := cdp.last("Page.startScreencast"); !ok {
+		t.Fatal("Page.startScreencast was not called")
+	} else if _, exists := call.Params["everyNthFrame"]; exists {
+		t.Fatal("screencast still relies on everyNthFrame instead of ACK pacing")
+	}
+
+	raw, _ := json.Marshal(map[string]any{
+		"data": base64.StdEncoding.EncodeToString([]byte{0xff, 0xd8, 0xff}), "sessionId": 17,
+	})
+	started := time.Now()
+	m.handleEvent(cdp, browserCDPEvent{Method: "Page.screencastFrame", SessionID: p.sessionID, Params: raw})
+	time.Sleep(interval / 3)
+	if _, ok := cdp.last("Page.screencastFrameAck"); ok {
+		t.Fatal("screencast frame was acknowledged before the capture interval")
+	}
+	if !waitFor(3*interval, func() bool { _, ok := cdp.last("Page.screencastFrameAck"); return ok }) {
+		t.Fatal("paced screencast ACK was not sent")
+	}
+	if elapsed := time.Since(started); elapsed < interval {
+		t.Fatalf("screencast ACK after %s, want >= %s", elapsed, interval)
+	}
+	select {
+	case frame := <-p.latestFrame:
+		if !reflect.DeepEqual(frame, []byte{0xff, 0xd8, 0xff}) {
+			t.Fatalf("decoded frame = %x", frame)
+		}
+	default:
+		t.Fatal("screencast frame was not decoded")
+	}
+}
+
 func TestBrowserSingleViewerAndDetachedExpiry(t *testing.T) {
 	cdp := newFakeBrowserCDP()
 	m := newBrowserManager(browserManagerConfig{
@@ -373,8 +428,9 @@ func TestBrowserChromiumIntegration(t *testing.T) {
 	if err != nil {
 		t.Skip("Chromium is not installed in this test environment")
 	}
+	cdpFactory := browserCDPFactory(launchPipeCDP)
 	if strings.Contains(bin, "/.cache/ms-playwright/") {
-		t.Setenv("AF_CHROMIUM_NO_SANDBOX", "1")
+		cdpFactory = launchPipeCDPWithoutSandboxForTest
 	}
 	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -392,7 +448,7 @@ func TestBrowserChromiumIntegration(t *testing.T) {
 	m := newBrowserManager(browserManagerConfig{
 		MaxPages: 1, DetachedGrace: time.Minute, ChromiumIdle: time.Minute,
 		CommandTimeout: 10 * time.Second, FrameInterval: time.Second / 12, JPEGQuality: 70,
-		CDPFactory: launchPipeCDP,
+		CDPFactory: cdpFactory,
 	})
 	defer m.Close()
 	created, err := m.Create(browserCreateRequest{
@@ -442,6 +498,16 @@ func TestBrowserChromiumIntegration(t *testing.T) {
 		"expression": `document.querySelector('#ime').value`, "returnByValue": true,
 	}, &evaluated); err != nil || evaluated.Result.Value != "日本語" {
 		t.Fatalf("IME input round-trip = %q (err=%v)", evaluated.Result.Value, err)
+	}
+}
+
+func TestBrowserTwoPageCaptureIntegration(t *testing.T) {
+	bin, err := findChromiumBinary()
+	if err != nil {
+		t.Skip("Chromium is not installed in this test environment")
+	}
+	if err := runBrowserSmoke(!strings.Contains(bin, "/.cache/ms-playwright/")); err != nil {
+		t.Fatal(err)
 	}
 }
 

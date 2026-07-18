@@ -86,7 +86,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       fontconfig fonts-dejavu-core fonts-noto-cjk \
  && rm -rf /var/lib/apt/lists/* \
  && chromium --version \
- && test "$(dpkg-query -W -f='${Version}' chromium)" = "$CHROMIUM_VERSION"
+ && test "$(dpkg-query -W -f='${Version}' chromium)" = "$CHROMIUM_VERSION" \
+ && test "$(stat -c '%u:%g:%a' /usr/lib/chromium/chrome-sandbox)" = "0:0:4755"
 # git-lfs filters live in the system gitconfig (/etc/gitconfig) so clones/checkouts
 # smudge LFS objects for every user regardless of home state. LFS auth reuses the
 # HTTPS credential helper (same host token), so private LFS objects fetch too.
@@ -242,6 +243,16 @@ COPY vendor/ /opt/vendor/
 RUN if [ -f /opt/vendor/rtk ]; then \
       install -m 0755 /opt/vendor/rtk /usr/local/bin/rtk && echo "installed rtk"; \
     fi
+
+# Docker grants SYS_ADMIN only in the capability bounding set so Chromium's
+# root-owned setuid helper can create its PID/network namespaces. Keep that path
+# exclusive: the normal USER dev process has no effective capabilities, and no
+# unrelated setuid/setgid utility may acquire the enlarged bounding set.
+RUN find / -xdev -type f -perm /6000 ! -path /usr/lib/chromium/chrome-sandbox \
+      -exec chmod a-s {} + \
+ && test "$(stat -c '%u:%g:%a' /usr/lib/chromium/chrome-sandbox)" = "0:0:4755" \
+ && test -z "$(find / -xdev -type f -perm /6000 \
+      ! -path /usr/lib/chromium/chrome-sandbox -print -quit)"
 
 USER dev
 WORKDIR /home/dev

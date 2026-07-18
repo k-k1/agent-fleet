@@ -21,6 +21,8 @@ type browserCDPEvent struct {
 	Method    string
 	SessionID string
 	Params    json.RawMessage
+	queueSize int64
+	queue     *pipeCDP
 }
 
 type browserCDP interface {
@@ -32,18 +34,27 @@ type browserCDP interface {
 
 type browserCDPFactory func(context.Context) (browserCDP, error)
 
+const (
+	browserCDPEventQueueSize  = 256
+	browserCDPEventQueueBytes = 32 << 20
+	browserCDPMaxMessageBytes = 8 << 20
+)
+
+var errBrowserCDPEventOverflow = errors.New("CDP event queue overflow")
+
 type pipeCDP struct {
-	cmd       *exec.Cmd
-	profile   string
-	in        *os.File
-	out       *os.File
-	writeMu   sync.Mutex
-	pendingMu sync.Mutex
-	pending   map[int64]chan cdpResponse
-	events    chan browserCDPEvent
-	done      chan error
-	nextID    atomic.Int64
-	closeOnce sync.Once
+	cmd        *exec.Cmd
+	profile    string
+	in         *os.File
+	out        *os.File
+	writeMu    sync.Mutex
+	pendingMu  sync.Mutex
+	pending    map[int64]chan cdpResponse
+	events     chan browserCDPEvent
+	eventBytes atomic.Int64
+	done       chan error
+	nextID     atomic.Int64
+	closeOnce  sync.Once
 }
 
 type cdpResponse struct {
@@ -55,6 +66,14 @@ type cdpResponse struct {
 }
 
 func launchPipeCDP(ctx context.Context) (browserCDP, error) {
+	return launchPipeCDPWithSandbox(ctx, true)
+}
+
+func launchPipeCDPWithoutSandboxForTest(ctx context.Context) (browserCDP, error) {
+	return launchPipeCDPWithSandbox(ctx, false)
+}
+
+func launchPipeCDPWithSandbox(ctx context.Context, sandbox bool) (browserCDP, error) {
 	bin, err := findChromiumBinary()
 	if err != nil {
 		return nil, err
@@ -76,20 +95,7 @@ func launchPipeCDP(ctx context.Context) (browserCDP, error) {
 		_ = os.RemoveAll(profile)
 		return nil, err
 	}
-	args := []string{
-		"--headless=new", "--remote-debugging-pipe", "--no-first-run", "--no-default-browser-check",
-		"--disable-background-networking", "--disable-component-update", "--disable-sync",
-		"--disable-extensions", "--disable-features=Translate,MediaRouter,OptimizationHints",
-		"--metrics-recording-only", "--mute-audio",
-		"--password-store=basic", "--use-mock-keychain", "--user-data-dir=" + profile,
-		"about:blank",
-	}
-	// Production images should provide a working Chromium sandbox. The explicit
-	// opt-out exists only for restricted local containers using Playwright's
-	// unprivileged binary; never weaken the default silently.
-	if os.Getenv("AF_CHROMIUM_NO_SANDBOX") == "1" {
-		args = append(args, "--no-sandbox")
-	}
+	args := chromiumLaunchArgs(profile, sandbox)
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.ExtraFiles = []*os.File{toChromeR, fromChromeW} // child fd 3 (read), fd 4 (write)
 	cmd.Stderr = io.Discard
@@ -107,7 +113,7 @@ func launchPipeCDP(ctx context.Context) (browserCDP, error) {
 	_ = fromChromeW.Close()
 	p := &pipeCDP{
 		cmd: cmd, profile: profile, in: toChromeW, out: fromChromeR,
-		pending: make(map[int64]chan cdpResponse), events: make(chan browserCDPEvent, 256), done: make(chan error, 1),
+		pending: make(map[int64]chan cdpResponse), events: make(chan browserCDPEvent, browserCDPEventQueueSize), done: make(chan error, 1),
 	}
 	go p.readLoop()
 	go func() {
@@ -115,6 +121,23 @@ func launchPipeCDP(ctx context.Context) (browserCDP, error) {
 		p.finish(err)
 	}()
 	return p, nil
+}
+
+func chromiumLaunchArgs(profile string, sandbox bool) []string {
+	args := []string{
+		"--headless=new", "--remote-debugging-pipe", "--no-first-run", "--no-default-browser-check",
+		"--disable-background-networking", "--disable-component-update", "--disable-sync",
+		"--disable-extensions", "--disable-features=Translate,MediaRouter,OptimizationHints",
+		"--metrics-recording-only", "--mute-audio", "--disable-dev-shm-usage",
+		"--password-store=basic", "--use-mock-keychain", "--user-data-dir=" + profile,
+		"about:blank",
+	}
+	// launchPipeCDP always passes sandbox=true. Only test code can inject the
+	// separate no-sandbox factory for Playwright's unprivileged cache binary.
+	if !sandbox {
+		args = append(args, "--no-sandbox")
+	}
+	return args
 }
 
 func findChromiumBinary() (string, error) {
@@ -201,11 +224,32 @@ func (p *pipeCDP) Call(ctx context.Context, method string, params any, sessionID
 }
 
 func (p *pipeCDP) readLoop() {
-	r := bufio.NewReaderSize(p.out, 64*1024)
+	// ReadSlice with a fixed 8 MiB buffer bounds a single CDP message as well as
+	// queue depth. It matches the CP browser relay's maximum Agent frame size and
+	// is ample for a 1600x1200 quality-70 JPEG after base64 expansion.
+	r := bufio.NewReaderSize(p.out, browserCDPMaxMessageBytes)
 	for {
-		b, err := r.ReadBytes(0)
+		b, err := r.ReadSlice(0)
+		if errors.Is(err, bufio.ErrBufferFull) {
+			overflow := fmt.Errorf("CDP message exceeds %d bytes", browserCDPMaxMessageBytes)
+			p.finish(overflow)
+			if p.cmd.Process != nil {
+				_ = syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
+			}
+			return
+		}
 		if len(b) > 1 {
-			p.dispatch(b[:len(b)-1])
+			if dispatchErr := p.dispatch(b[:len(b)-1]); dispatchErr != nil {
+				// A saturated queue means the manager can no longer enforce navigation
+				// or acknowledge screencast frames in bounded memory. Fail the single
+				// Chromium process and let BrowserManager invalidate every Page instead
+				// of spawning an unbounded waiter per non-droppable event.
+				p.finish(dispatchErr)
+				if p.cmd.Process != nil {
+					_ = syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
+				}
+				return
+			}
 		}
 		if err != nil {
 			if p.cmd.Process != nil {
@@ -217,7 +261,7 @@ func (p *pipeCDP) readLoop() {
 	}
 }
 
-func (p *pipeCDP) dispatch(b []byte) {
+func (p *pipeCDP) dispatch(b []byte) error {
 	var envelope struct {
 		ID        int64           `json:"id"`
 		Method    string          `json:"method"`
@@ -230,7 +274,7 @@ func (p *pipeCDP) dispatch(b []byte) {
 		} `json:"error"`
 	}
 	if json.Unmarshal(b, &envelope) != nil {
-		return
+		return nil
 	}
 	if envelope.ID != 0 {
 		p.pendingMu.Lock()
@@ -239,25 +283,63 @@ func (p *pipeCDP) dispatch(b []byte) {
 		if ch != nil {
 			ch <- cdpResponse{Result: envelope.Result, Error: envelope.Error}
 		}
-		return
+		return nil
 	}
 	if envelope.Method != "" {
-		ev := browserCDPEvent{Method: envelope.Method, SessionID: envelope.SessionID, Params: envelope.Params}
+		eventSize := int64(len(b))
+		if !p.reserveEventBytes(eventSize) {
+			if browserCDPEventMustDeliver(envelope.Method) {
+				return fmt.Errorf("%w: %s exceeds %d-byte queue budget", errBrowserCDPEventOverflow, envelope.Method, browserCDPEventQueueBytes)
+			}
+			return nil
+		}
+		ev := browserCDPEvent{
+			Method: envelope.Method, SessionID: envelope.SessionID, Params: envelope.Params,
+			queueSize: eventSize, queue: p,
+		}
 		select {
 		case p.events <- ev:
 		default:
-			// Interception events cannot be dropped, but their waiter must not block
-			// this response reader: the handler sends a CDP command in reply.
-			switch envelope.Method {
-			case "Fetch.requestPaused", "Page.fileChooserOpened", "Page.frameRequestedNavigation", "Page.frameStartedNavigating", "Target.targetCreated", "Target.targetDestroyed", "Target.targetCrashed":
-				go func() {
-					select {
-					case p.events <- ev:
-					case <-p.done:
-					}
-				}()
+			ev.releaseQueueBytes()
+			if browserCDPEventMustDeliver(envelope.Method) {
+				return fmt.Errorf("%w: %s", errBrowserCDPEventOverflow, envelope.Method)
 			}
 		}
+	}
+	return nil
+}
+
+func (p *pipeCDP) reserveEventBytes(size int64) bool {
+	for {
+		used := p.eventBytes.Load()
+		if size < 0 || used > browserCDPEventQueueBytes-size {
+			return false
+		}
+		if p.eventBytes.CompareAndSwap(used, used+size) {
+			return true
+		}
+	}
+}
+
+func (ev *browserCDPEvent) releaseQueueBytes() {
+	if ev.queue != nil && ev.queueSize > 0 {
+		ev.queue.eventBytes.Add(-ev.queueSize)
+		ev.queue, ev.queueSize = nil, 0
+	}
+}
+
+// Events that enforce a security/lifecycle decision or carry an unacknowledged
+// screencast frame may not be silently dropped. Queue saturation is exceptional;
+// terminating Chromium bounds memory and gives every attached Page a stable
+// crashed transition through BrowserManager.handleCrash.
+func browserCDPEventMustDeliver(method string) bool {
+	switch method {
+	case "Fetch.requestPaused", "Page.fileChooserOpened", "Page.frameRequestedNavigation",
+		"Page.frameStartedNavigating", "Page.screencastFrame", "Target.targetCreated",
+		"Target.targetDestroyed", "Target.targetCrashed", "Inspector.targetCrashed":
+		return true
+	default:
+		return false
 	}
 }
 

@@ -48,6 +48,11 @@ type browserManager struct {
 	closed    bool
 }
 
+type browserScreencastFrame struct {
+	data      string
+	sessionID int
+}
+
 type browserPage struct {
 	manager     *browserManager
 	id          string
@@ -58,20 +63,23 @@ type browserPage struct {
 	mainFrameID string
 	viewport    browserViewport
 
-	mu           sync.Mutex
-	url          string
-	title        string
-	state        string
-	viewer       *browserViewer
-	reserved     bool
-	visible      bool
-	expiry       *time.Timer
-	latestFrame  chan []byte
-	castMu       sync.Mutex
-	casting      bool
-	unreachable  bool
-	topRequestID string
-	refreshing   atomic.Bool
+	mu            sync.Mutex
+	url           string
+	title         string
+	state         string
+	viewer        *browserViewer
+	reserved      bool
+	visible       bool
+	expiry        *time.Timer
+	latestFrame   chan []byte
+	frameEvents   chan browserScreencastFrame
+	frameStop     chan struct{}
+	frameStopOnce sync.Once
+	castMu        sync.Mutex
+	casting       bool
+	unreachable   bool
+	topRequestID  string
+	refreshing    atomic.Bool
 }
 
 func defaultBrowserManagerConfig() browserManagerConfig {
@@ -147,7 +155,8 @@ func (m *browserManager) Create(req browserCreateRequest) (browserPageResponse, 
 	}
 	p := &browserPage{
 		manager: m, id: newBrowserID(), port: req.Port, viewport: viewport,
-		url: target, state: "starting", visible: false, latestFrame: make(chan []byte, 1),
+		url: target, state: "starting", visible: false,
+		latestFrame: make(chan []byte, 1), frameEvents: make(chan browserScreencastFrame, 1), frameStop: make(chan struct{}),
 	}
 	if err := m.createCDPPage(cdp, p); err != nil {
 		m.disposeCDPPage(cdp, p)
@@ -164,6 +173,7 @@ func (m *browserManager) Create(req browserCreateRequest) (browserPageResponse, 
 	m.sessions[p.sessionID] = p
 	m.contexts[p.contextID] = p
 	m.mu.Unlock()
+	go p.frameLoop()
 
 	// Register ownership before navigation so Fetch.requestPaused can enforce the
 	// first document request. Network failures are a normal target-unreachable state.
@@ -338,6 +348,7 @@ func (m *browserManager) Delete(id string) {
 	p.viewer, p.reserved, p.visible = nil, false, false
 	p.state = "disconnected"
 	p.mu.Unlock()
+	p.stopFrameLoop()
 	if v != nil {
 		v.enqueueClose(websocketCloseNormal, "page deleted")
 	}
@@ -385,6 +396,7 @@ func (m *browserManager) Close() {
 	m.contexts = make(map[string]*browserPage)
 	m.mu.Unlock()
 	for _, p := range pages {
+		p.stopFrameLoop()
 		p.notifyFatalState("disconnected", "agent shutting down")
 	}
 	if cdp != nil {
@@ -467,6 +479,10 @@ func (m *browserManager) eventLoop(cdp browserCDP) {
 	for {
 		select {
 		case ev := <-cdp.Events():
+			// The event is no longer queued. Release its byte reservation before
+			// processing; at most this one <=8 MiB event remains live in the
+			// single event-loop goroutine outside the 32 MiB queue budget.
+			ev.releaseQueueBytes()
 			m.handleEvent(cdp, ev)
 		case err := <-cdp.Done():
 			m.handleCrash(cdp, err)
@@ -491,6 +507,7 @@ func (m *browserManager) handleCrash(cdp browserCDP, err error) {
 		log.Printf("browser Chromium stopped: %v", err)
 	}
 	for _, p := range pages {
+		p.stopFrameLoop()
 		p.notifyFatalState("crashed", "Chromium crashed")
 	}
 }
@@ -527,7 +544,7 @@ func (m *browserManager) handleEvent(cdp browserCDP, ev browserCDPEvent) {
 			p := m.contexts[v.TargetInfo.BrowserContextID]
 			m.mu.Unlock()
 			if p != nil && v.TargetInfo.Type == "page" && v.TargetInfo.TargetID != p.targetID {
-				go m.call(cdp, "", "Target.closeTarget", map[string]any{"targetId": v.TargetInfo.TargetID}, nil)
+				_ = m.call(cdp, "", "Target.closeTarget", map[string]any{"targetId": v.TargetInfo.TargetID}, nil)
 			}
 		}
 		return
@@ -562,9 +579,14 @@ func (m *browserManager) handleEvent(cdp browserCDP, ev browserCDPEvent) {
 			SessionID int    `json:"sessionId"`
 		}
 		if json.Unmarshal(ev.Params, &v) == nil {
-			_ = m.call(cdp, p.sessionID, "Page.screencastFrameAck", map[string]any{"sessionId": v.SessionID}, nil)
-			if frame, err := base64.StdEncoding.DecodeString(v.Data); err == nil {
-				p.enqueueFrame(frame)
+			select {
+			case p.frameEvents <- browserScreencastFrame{data: v.Data, sessionID: v.SessionID}:
+			default:
+				// CDP normally sends one frame at a time until ACK. A second
+				// unprocessed frame is a protocol/backpressure failure; invalidate
+				// this Page instead of allocating another decoder goroutine.
+				p.stopScreencast()
+				m.invalidatePage(p, "crashed", "screencast backpressure")
 			}
 		}
 	case "Page.frameNavigated":
@@ -586,7 +608,7 @@ func (m *browserManager) handleEvent(cdp browserCDP, ev browserCDPEvent) {
 				safeURL := p.url
 				p.mu.Unlock()
 				p.notifyJSON(map[string]any{"type": "page-error", "text": "top-level navigation outside loopback was blocked"})
-				go m.call(cdp, p.sessionID, "Page.navigate", map[string]any{"url": safeURL}, nil)
+				_ = m.call(cdp, p.sessionID, "Page.navigate", map[string]any{"url": safeURL}, nil)
 			}
 		}
 	case "Network.responseReceived":
@@ -632,7 +654,7 @@ func (m *browserManager) handleEvent(cdp browserCDP, ev browserCDPEvent) {
 	case "Inspector.targetCrashed", "Target.targetCrashed":
 		m.invalidatePage(p, "crashed", "page crashed")
 	case "Page.fileChooserOpened":
-		go m.call(cdp, p.sessionID, "Page.handleFileChooser", map[string]any{"action": "cancel"}, nil)
+		_ = m.call(cdp, p.sessionID, "Page.handleFileChooser", map[string]any{"action": "cancel"}, nil)
 	case "Runtime.consoleAPICalled":
 		p.handleConsoleEvent(ev.Params)
 	case "Runtime.exceptionThrown":
@@ -654,7 +676,11 @@ func (m *browserManager) invalidatePage(p *browserPage, state, reason string) {
 		m.idleTimer = time.AfterFunc(m.config.ChromiumIdle, func() { m.closeIdle(cdp) })
 	}
 	m.mu.Unlock()
+	p.stopFrameLoop()
 	p.notifyFatalState(state, reason)
+	if cdp != nil {
+		go m.disposeCDPPage(cdp, p)
+	}
 }
 
 func (m *browserManager) handleRequestPaused(cdp browserCDP, p *browserPage, raw json.RawMessage) {
@@ -798,6 +824,48 @@ func (p *browserPage) enqueueFrame(frame []byte) {
 	}
 }
 
+// frameLoop is the sole base64 decoder and screencast ACK producer for a Page.
+// Chromium does not advance Page.startScreencast until the current sessionId is
+// acknowledged, so delaying each ACK by FrameInterval limits capture/encode work
+// at the CDP source instead of merely throttling WebSocket writes after decoding.
+// One worker and one queued frame per Page keep both goroutines and frame memory
+// bounded by BrowserManager.MaxPages.
+func (p *browserPage) frameLoop() {
+	for {
+		select {
+		case <-p.frameStop:
+			return
+		case event := <-p.frameEvents:
+			if frame, err := base64.StdEncoding.DecodeString(event.data); err == nil {
+				p.enqueueFrame(frame)
+			}
+			timer := time.NewTimer(p.manager.config.FrameInterval)
+			select {
+			case <-p.frameStop:
+				if !timer.Stop() {
+					<-timer.C
+				}
+				return
+			case <-timer.C:
+			}
+			p.manager.mu.Lock()
+			cdp := p.manager.cdp
+			owned := p.manager.pages[p.id] == p
+			p.manager.mu.Unlock()
+			if cdp != nil && owned {
+				_ = p.manager.call(cdp, p.sessionID, "Page.screencastFrameAck", map[string]any{"sessionId": event.sessionID}, nil)
+			}
+		}
+	}
+}
+
+func (p *browserPage) stopFrameLoop() {
+	if p.frameStop == nil {
+		return
+	}
+	p.frameStopOnce.Do(func() { close(p.frameStop) })
+}
+
 func (p *browserPage) startScreencast() error {
 	p.castMu.Lock()
 	defer p.castMu.Unlock()
@@ -815,7 +883,7 @@ func (p *browserPage) startScreencast() error {
 	viewport := p.viewport
 	p.mu.Unlock()
 	err := p.manager.call(cdp, p.sessionID, "Page.startScreencast", map[string]any{
-		"format": "jpeg", "quality": p.manager.config.JPEGQuality, "maxWidth": viewport.Width, "maxHeight": viewport.Height, "everyNthFrame": 1,
+		"format": "jpeg", "quality": p.manager.config.JPEGQuality, "maxWidth": viewport.Width, "maxHeight": viewport.Height,
 	}, nil)
 	if err == nil {
 		p.casting = true

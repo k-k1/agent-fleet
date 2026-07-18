@@ -28,7 +28,11 @@ func TestBrowserLiveServerHelper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := newBrowserManager(defaultBrowserManagerConfig())
+	config := defaultBrowserManagerConfig()
+	if os.Getenv("AF_BROWSER_LIVE_ALLOW_NO_SANDBOX") == "1" {
+		config.CDPFactory = launchPipeCDPWithoutSandboxForTest
+	}
+	manager := newBrowserManager(config)
 	previous := workspaceBrowserManager
 	workspaceBrowserManager = manager
 	defer func() {

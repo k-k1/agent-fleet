@@ -94,10 +94,36 @@ if [ "${1:-}" = "--inner" ]; then
 
   # 既定 USER=dev のまま、永続 home を profile にせず固定の日本語ページを描画する。
   # BrowserManager と同じく headless Chromium 自体が起動できることを image job で見る。
-  if [ "$(id -u)" = 0 ]; then
-    echo "NG  Chromium smoke が root で実行されている"; fail=1
+  if [ "$(id -u)" = 1000 ] && [ "$(id -un)" = dev ]; then
+    echo "ok  Chromium smoke user=dev(1000)"
   else
-    echo "ok  Chromium smoke user=$(id -un)"
+    echo "NG  Chromium smoke user=$(id -un)($(id -u))（want dev(1000)）"; fail=1
+  fi
+  sandbox_mode="$(stat -c '%u:%g:%a' /usr/lib/chromium/chrome-sandbox 2>/dev/null)"
+  if [ "$sandbox_mode" = "0:0:4755" ]; then
+    echo "ok  Chromium setuid sandbox $sandbox_mode"
+  else
+    echo "NG  Chromium setuid sandbox: ${sandbox_mode:-missing}（want 0:0:4755）"; fail=1
+  fi
+  if grep -Eq '^NoNewPrivs:[[:space:]]+0$' /proc/self/status; then
+    echo "ok  Docker runtime NoNewPrivs=0（setuid sandbox利用可）"
+  else
+    echo "NG  Docker runtimeがsetuid sandboxを禁止している: $(grep '^NoNewPrivs:' /proc/self/status)"; fail=1
+  fi
+  cap_eff="$(awk '/^CapEff:/ { print $2 }' /proc/self/status)"
+  cap_bnd="$(awk '/^CapBnd:/ { print $2 }' /proc/self/status)"
+  sys_admin_mask=$((1 << 21))
+  if (( (16#$cap_eff & sys_admin_mask) == 0 && (16#$cap_bnd & sys_admin_mask) != 0 )); then
+    echo "ok  devはSYS_ADMIN effectiveなし、setuid helperのbounding setにはあり"
+  else
+    echo "NG  SYS_ADMIN capability条件が不正: CapEff=$cap_eff CapBnd=$cap_bnd"; fail=1
+  fi
+  unexpected_suid="$(find / -xdev -type f -perm /6000 \
+    ! -path /usr/lib/chromium/chrome-sandbox -print 2>/dev/null)"
+  if [ -z "$unexpected_suid" ]; then
+    echo "ok  setuid/setgid executableはChromium helperだけ"
+  else
+    echo "NG  Chromium helper以外のsetuid/setgid executable: $unexpected_suid"; fail=1
   fi
   profile="$(mktemp -d /tmp/af-chromium-smoke.XXXXXX)"
   page="$profile/page.html"
@@ -106,7 +132,7 @@ if [ "${1:-}" = "--inner" ]; then
     '<!doctype html><meta charset="utf-8"><style>body{font-family:sans-serif;font-size:32px}</style>' \
     '<title>Agent Fleet Chromium smoke</title><p>Agent Fleet 日本語表示 ✓</p>' > "$page"
   if chromium \
-      --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage \
+      --headless=new --disable-gpu --disable-dev-shm-usage \
       --user-data-dir="$profile/data" --window-size=800,600 \
       --run-all-compositor-stages-before-draw --virtual-time-budget=1000 \
       --screenshot="$screenshot" "file://$page" >/tmp/af-chromium-smoke.log 2>&1 \
@@ -121,8 +147,17 @@ if [ "${1:-}" = "--inner" ]; then
   else
     echo "NG  Japanese font: $(fc-match 'sans-serif:lang=ja' 2>&1)"; fail=1
   fi
+  # 製品バイナリのpipe CDP経路をsandbox有効のまま実行する。アニメーションする
+  # 2 Pageを同時描画し、PageごとのACK pacingが設定fpsを超えないことも確認する。
+  if workspace-agent browser-smoke >/tmp/af-browser-manager-smoke.log 2>&1; then
+    echo "ok  $(tail -1 /tmp/af-browser-manager-smoke.log)"
+  else
+    echo "NG  BrowserManager sandbox/2-Page smoke に失敗: $(tail -30 /tmp/af-browser-manager-smoke.log 2>/dev/null)"
+    fail=1
+  fi
   rm -rf "$profile"
   rm -f /tmp/af-chromium-smoke.log
+  rm -f /tmp/af-browser-manager-smoke.log
 
   [ "$fail" = 0 ] && echo "== smoke OK ==" || echo "== smoke FAILED ==" >&2
   exit "$fail"
@@ -146,9 +181,10 @@ EXPECT_GO="$(arg_pin GO_VERSION)"
 EXPECT_GH="$(arg_pin GH_VERSION)"
 EXPECT_CHROMIUM="$(arg_pin CHROMIUM_VERSION)"
 EXPECT_RTK=0; [ -x "$ROOT/workspace/vendor/rtk" ] && EXPECT_RTK=1
+SMOKE_MEMORY="${WS_MEMORY:-1g}"
 
 echo "==> image smoke: $IMAGE (claude=$EXPECT_CLAUDE opencode=$EXPECT_OPENCODE codex=$EXPECT_CODEX go=$EXPECT_GO gh=$EXPECT_GH chromium=$EXPECT_CHROMIUM rtk=$EXPECT_RTK)"
-exec docker run --rm -i --network none --memory 512m \
+exec docker run --rm -i --init --network none --memory "$SMOKE_MEMORY" --cap-add=SYS_ADMIN \
   -e EXPECT_CLAUDE="$EXPECT_CLAUDE" \
   -e EXPECT_OPENCODE="$EXPECT_OPENCODE" \
   -e EXPECT_CODEX="$EXPECT_CODEX" \

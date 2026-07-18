@@ -57,8 +57,11 @@ Workspace image には Playwright 配布版ではなく Debian bookworm-security
 
 Debian方式のinstalled値はパッケージmetadataの値で、既存imageと共有する依存libraryやDocker layer圧縮を
 含む最終image差分ではない。実imageの増分と実行時メモリはW5のmulti-arch build・実機計測で確定する。
-W1 image smoke は package revision、`chromium --version`、非root headless起動、日本語fontを使う固定ページの
-screenshotを検証し、コンテナ起動後のnetwork installには依存しない。
+W1 image smoke はpackage revision、`chromium --version`、`root:root 4755`のsetuid helper、helper以外のsetuid/setgidなし、
+`NoNewPrivs=0`、`dev(1000)`の`SYS_ADMIN` effectiveなし/helperのbounding setにはあり、sandbox有効のheadless起動、
+日本語fontを使う固定ページのscreenshotを検証する。さらに製品Docker runtimeと同じ`--cap-add=SYS_ADMIN`で製品Agentの
+pipe CDP経路を起動し、2 Pageを同時描画する。製品とsmokeはいずれも`--disable-dev-shm-usage`を使い、Docker/ECSの
+小さい`/dev/shm`へ依存せず、コンテナ起動後のnetwork installにも依存しない。
 
 ## 却下した案
 
