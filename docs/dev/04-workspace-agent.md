@@ -103,7 +103,7 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
   tmp+rename 書込みに耐える設計。詳細は docs/19 Q3）。
 - **コンテナ内 stdio MCP**: チャットの claude には `workspace-agent mcp-stdio` を `--mcp-config` で
   付与（PAT 不要・egress 不要・身元=自コンテナ）。既定 read-only、`--write` 時のみ
-  `send_to_session`・`list_assistants`・`ask_assistant` を**広告**する（権限プロンプトでなく
+  `create_session`・`send_to_session`・`list_assistants`・`ask_assistant` を**広告**する（権限プロンプトでなく
   「見えるツール集合」がゲート）。CP の `/mcp` とは**別実装・別スコープ**（意図的な二重管理、
   [03](03-control-plane.md)）。
 - **アシスタント**（`/assistants*`）: persona/model/knowledge/tools(af_read|af_write|none) を持つ
@@ -126,7 +126,8 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
   sha は hex 検証、応答はサイズ上限でキャップ。
 - **fs**: home ルートのツリー/ファイル/アップロード/リネーム等。traversal 防御・サイズ上限・
   バイナリ判定。**denylist**（一覧非表示 + 直アクセス 400）: `.claude`・`.claude.json`・
-  `.config/agent-fleet`・`.ssh`・`.git-credentials`・`~/.local/share/opencode`・`~/.codex`。
+  `.config/agent-fleet`・`.ssh`・`.git-credentials`・`~/.local/share/opencode`・`~/.codex`・
+  `~/.aws`（SSM ログインの SSO トークンキャッシュと生成 config）。
 - **Git LFS**: image に git-lfs 同梱・system install。clone/checkout で smudge。残ポインタは
   fs が検出してビュアーにバッジ（既存 working copy は手動 `git lfs pull`）。
 - git 認証は統一 cred helper が `secrets.enc` を都度復号して出力（[07 §7.6](07-security.md)、

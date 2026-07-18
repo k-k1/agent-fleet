@@ -18,7 +18,7 @@
 | `deploy/` | デプロイ 3 形態（local / compose / aws）の runbook と定義（§90.6）|
 | `e2e/` | フリート E2E（独立 Go モジュール・stdlib のみ、`-tags e2e`）。CP + 実コンテナ疎通（L2）+ 実 API スモーク（L4 `live_test.go`）（[10 §10.4](10-development.md)）|
 | `console-e2e/` | Console UI E2E（Playwright、L3）。global-setup が CP/コンテナを起動、ブラウザ打鍵 → fs API で観測 |
-| `docs/` | dev/（本体系）・guide/・decisions/（ADR）・HANDOFF・番号付き計画文書（19〜23…）|
+| `docs/` | dev/（本体系）・guide/（利用者/管理者ガイド）・decisions/（ADR）・history/（旧作業ログ 19〜22 ほか）・HANDOFF・番号付き計画文書（root に 20〜30…）|
 
 ## 90.2 control-plane/ — 責務別ファイルに分割した `package main`
 
@@ -71,7 +71,8 @@
 | `session_name.go` / `session_title.go` | セッション slug 採番 / 自動タイトル + ブランチ名提案（headless claude） |
 | `session_transcript.go` | transcript ウィンドウ API（パーサ 3 本の共通の出口・ページング） |
 | `session_ssm.go` | kind=ssm の起動・ログイン状態検出 |
-| `chat.go` / `assistants.go` | アシスタントチャット（headless CLI、docs/19。約 970 行）/ アシスタント定義（persona・knowledge） |
+| `chat.go` / `chat_handlers.go` / `chat_providers.go` / `chat_store.go` | アシスタントチャット（headless CLI、docs/19）: コア面 / HTTP ハンドラ / プロバイダ実装（claude・codex CLI 駆動）/ 会話永続化。`chat.go` からの機械的分割（docs/23 残②）|
+| `chat_report.go` / `assistants.go` | セッション完了報告→フリートオペレーター（docs/30）/ アシスタント定義（persona・model・knowledge・tools） |
 | `codex_appserver.go` | Codex app-server の起動と read-only observer（managed writer は internal 側） |
 | `git.go` | 作業コピー操作: clone（`ensureRepo`）・status・checkout・worktree・push 等 |
 | `git_view.go` / `fs_git.go` | SCM 閲覧（changes/diff/log/graph）/ エディタ用の行差分マーク |
