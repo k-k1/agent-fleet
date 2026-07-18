@@ -75,6 +75,15 @@ function contentFromFlat(p: any): PaneContent {
         ? { kind: "chat", conversationId, draftAssistantId }
         : { kind: "terminal", chat: false };
     }
+    case "browser": {
+      const port = p.port;
+      const path = p.path;
+      const validPort = typeof port === "number" && Number.isInteger(port) && port >= 1 && port <= 65535 && port !== 7700;
+      const validPath = typeof path === "string" && path.startsWith("/") && !path.startsWith("//") && !path.startsWith("/\\") && !/[\u0000-\u001f\u007f]/.test(path);
+      return validPort && validPath
+        ? { kind: "browser", port, path }
+        : { kind: "terminal", chat: false };
+    }
     default:
       return { kind: "terminal", chat: false };
   }

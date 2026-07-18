@@ -177,14 +177,15 @@ describe("closeSessionPanes", () => {
 });
 
 describe("swapPanes / dropSplit", () => {
-  it("swap keeps ids in place and activates the drop target", () => {
+  it("swap relocates complete panes without changing runtime ids", () => {
     const l = grown(1);
     const [a, b] = allPanes(l);
     const l2 = swapPanes(l, a.id, b.id);
     const [a2, b2] = allPanes(l2);
-    expect([a2.id, b2.id]).toEqual([a.id, b.id]);
+    expect([a2.id, b2.id]).toEqual([b.id, a.id]);
     expect(a2.session).toBe(b.session);
-    expect(l2.activeId).toBe(b.id);
+    expect(b2.session).toBe(a.session);
+    expect(l2.activeId).toBe(a.id);
   });
   it("dropSplit right moves the SAME pane id into a new column", () => {
     let l = grown(1); // 2 columns
@@ -277,6 +278,23 @@ describe("normalizeStored (migration)", () => {
       targetLine: 12,
       targetColumn: 3,
     });
+  });
+  it("persists browser port/path but strips an ephemeral browserId", () => {
+    const l = normalizeStored({
+      cols: [{ id: "c0", panes: [{ id: "p0", content: { kind: "browser", port: 5173, path: "/app?q=1", browserId: "ephemeral-secret" } }] }],
+      colRatios: [1],
+      activeId: "p0",
+    })!;
+    expect(l.cols[0].panes[0].content).toEqual({ kind: "browser", port: 5173, path: "/app?q=1" });
+    expect(JSON.stringify(l)).not.toContain("browserId");
+  });
+  it("falls back to a blank terminal for invalid browser targets", () => {
+    const l = normalizeStored({
+      cols: [{ id: "c0", panes: [{ id: "p0", content: { kind: "browser", port: 7700, path: "//outside" } }] }],
+      colRatios: [1],
+      activeId: "p0",
+    })!;
+    expect(l.cols[0].panes[0].content).toEqual({ kind: "terminal", chat: false });
   });
   it("rejects garbage and repairs bad ratios / activeId", () => {
     expect(normalizeStored(null)).toBeNull();

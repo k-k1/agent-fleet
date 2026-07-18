@@ -13,6 +13,7 @@ import { useLayoutStore, wireLayoutHistory } from "../layout/store.ts";
 import { wireKeys } from "../features/keys/dispatcher.ts";
 import { useLeftRail } from "../core/store/leftRail.ts";
 import { wireTerminalReconcile } from "../terminal/service.ts";
+import { disposeAllBrowsers, resetBrowserRuntime, wireBrowserReconcile } from "../features/browser/service.ts";
 import { useSessionsStore, startSessionsPolling } from "../features/sessions/store.ts";
 import { SessionModals } from "../features/sessions/SessionModals.tsx";
 import { AuthExpiredModal } from "../features/auth/AuthExpiredModal.tsx";
@@ -59,6 +60,7 @@ function wireWorkspaceRefresh(): () => void {
     const to = settle(s.state);
     prevRaw = s.state;
     if (to === "" || to === from) return;
+    resetBrowserRuntime(to === "running");
     useFilesStore.getState().bump();
     if (to === "running") {
       void useReposStore.getState().refresh();
@@ -240,6 +242,7 @@ export function App() {
     const unModalHistory = wireSettingsHistory();
     const unKeys = wireKeys();
     const unReconcile = wireTerminalReconcile();
+    const unBrowserReconcile = wireBrowserReconcile();
     const unWsRefresh = wireWorkspaceRefresh();
     const stopWsPoll = startWorkspacePolling();
     const stopSessPoll = startSessionsPolling();
@@ -256,6 +259,7 @@ export function App() {
       unModalHistory();
       unKeys();
       unReconcile();
+      unBrowserReconcile();
       unWsRefresh();
       stopWsPoll();
       stopSessPoll();
@@ -270,6 +274,9 @@ export function App() {
   // and refetch tenant-scoped data.
   useEffect(() => {
     if (!booted) return;
+    // pane ids are tab-local, not tenant-global. Never carry an ephemeral Page
+    // owned by the previous membership into a same-named pane in the next tenant.
+    disposeAllBrowsers();
     useNotificationStore.getState().reset();
     void useNotificationStore.getState().refresh();
     useLayoutStore.getState().load(tenant);
