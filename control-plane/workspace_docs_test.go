@@ -55,13 +55,13 @@ func TestStageWorkspaceDocs_RoleScoping(t *testing.T) {
 	}{
 		{
 			role:       "member",
-			wantHave:   []string{"guide/member/08-advanced.md"},
-			wantAbsent: []string{"guide/admin/02-limits.md", "dev/04-workspace-agent.md", "decisions/0011-console.md"},
+			wantHave:   []string{"guide/member/08-advanced.md", "dev/04-workspace-agent.md"},
+			wantAbsent: []string{"guide/admin/02-limits.md", "decisions/0011-console.md"},
 		},
 		{
 			role:       "tenant_admin",
-			wantHave:   []string{"guide/member/08-advanced.md", "guide/admin/02-limits.md"},
-			wantAbsent: []string{"dev/04-workspace-agent.md", "history/p3-10.md"},
+			wantHave:   []string{"guide/member/08-advanced.md", "guide/admin/02-limits.md", "dev/04-workspace-agent.md"},
+			wantAbsent: []string{"history/p3-10.md"},
 		},
 		{
 			role:       "super_admin",
@@ -70,8 +70,8 @@ func TestStageWorkspaceDocs_RoleScoping(t *testing.T) {
 		},
 		{
 			role:       "bogus-role", // unknown → least privilege (member)
-			wantHave:   []string{"guide/member/08-advanced.md"},
-			wantAbsent: []string{"guide/admin/02-limits.md", "dev/04-workspace-agent.md"},
+			wantHave:   []string{"guide/member/08-advanced.md", "dev/04-workspace-agent.md"},
+			wantAbsent: []string{"guide/admin/02-limits.md"},
 		},
 	}
 	for _, c := range cases {
@@ -96,7 +96,8 @@ func TestStageWorkspaceDocs_RoleScoping(t *testing.T) {
 }
 
 // A re-stage must fully replace the previous role's subset (e.g. after a role
-// downgrade), not merge into it.
+// downgrade), not merge into it. Member-visible dev docs remain; private
+// decisions must be removed.
 func TestStageWorkspaceDocs_RestageReplaces(t *testing.T) {
 	src := buildDocsSrc(t)
 	t.Setenv("AF_DOCS_DIR", src)
@@ -113,8 +114,11 @@ func TestStageWorkspaceDocs_RestageReplaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := staged(t, dataDir)
-	if got[filepath.FromSlash("dev/04-workspace-agent.md")] {
-		t.Error("re-stage as member must drop the previously-staged dev docs")
+	if !got[filepath.FromSlash("dev/04-workspace-agent.md")] {
+		t.Error("re-stage as member must keep the public dev docs")
+	}
+	if got[filepath.FromSlash("decisions/0011-console.md")] {
+		t.Error("re-stage as member must drop the private decision docs")
 	}
 	if !got[filepath.FromSlash("guide/member/08-advanced.md")] {
 		t.Error("re-stage as member must keep the member guide")
