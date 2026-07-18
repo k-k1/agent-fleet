@@ -41,6 +41,25 @@ localhost を忠実に開き、その画面を Console のペインで操作す�
 7. 既存の port preview は軽量な新規タブ経路として残す。将来、AWS 入口に専用 preview origin を設けても、
    ブラウザペインはエージェントによる視覚確認・自動操作・スクリーンショット基盤として残す。
 
+### Chromium 配布方式（W1 スパイク）
+
+Workspace image には Playwright 配布版ではなく Debian bookworm-security の `chromium` を採用する。
+`CHROMIUM_VERSION` build ARG で Debian revision まで固定し、`chromium`、`chromium-common`、
+`chromium-sandbox` を同じ版で導入する。amd64 / arm64 とも実行名は `/usr/bin/chromium` になる。
+更新時は両archへ同じ版が公開されたことを確認して ARG を上げ、image smoke を通す。
+
+2026-07-18 の比較結果:
+
+| 方式 | multi-arch / 実行名 | 配布サイズの目安 | 更新・実装上の性質 |
+|------|----------------------|------------------|--------------------|
+| Debian package（採用） | bookworm の amd64 / arm64、`/usr/bin/chromium` | 150.0.7871.124 の browser/common/sandbox 合計: amd64 98.8 MiB download・333.2 MiB installed、arm64 93.9 MiB download・338.0 MiB installed | OS依存とsandboxをaptで解決し、Agentは固定パスを直接CDP起動できる |
+| Playwright配布 Chromium | Debian 12 の x86-64 / arm64 対応、cache配下の版別パス | 公式資料のChromium例は約281 MiB（展開後、版で変動） | Playwright版とbrowser revisionの同期、cache配置から固定実行名への正規化が別途必要 |
+
+Debian方式のinstalled値はパッケージmetadataの値で、既存imageと共有する依存libraryやDocker layer圧縮を
+含む最終image差分ではない。実imageの増分と実行時メモリはW5のmulti-arch build・実機計測で確定する。
+W1 image smoke は package revision、`chromium --version`、非root headless起動、日本語fontを使う固定ページの
+screenshotを検証し、コンテナ起動後のnetwork installには依存しない。
+
 ## 却下した案
 
 - **現在の `/preview/{port}` をそのまま iframe 化**: 同一 origin の権限が強すぎる。厳格 sandbox は
