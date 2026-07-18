@@ -41,6 +41,55 @@ func TestBuildFlushMessage(t *testing.T) {
 	}
 }
 
+// A memo with image attachments surfaces the names inline (human-readable) and appends
+// the machine-facing "open with Read tool" line with the absolute paths once at the end,
+// so the flush target agent opens them. An image-only memo (empty body) still numbers.
+func TestBuildFlushMessageAttachments(t *testing.T) {
+	atts := func(a ...memoAttachment) string {
+		b, _ := json.Marshal(a)
+		return string(b)
+	}
+	memos := []Memo{
+		{Category: "ui", Kind: "text", Body: "この画面", Attachments: atts(memoAttachment{Path: "/home/dev/.cache/agent-fleet/memo-images/paste-1.png", Name: "paste-1.png"})},
+		{Category: "ui", Kind: "text", Body: "", Attachments: atts(memoAttachment{Path: "/home/dev/.cache/agent-fleet/memo-images/paste-2.jpg", Name: "paste-2.jpg"})},
+	}
+	got := buildFlushMessage(memos)
+	for _, want := range []string{
+		"1. この画面",
+		"   添付画像: paste-1.png",
+		"2. （画像）",
+		"   添付画像: paste-2.jpg",
+		"Open the following file(s) with the Read tool: /home/dev/.cache/agent-fleet/memo-images/paste-1.png /home/dev/.cache/agent-fleet/memo-images/paste-2.jpg",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("flush missing %q\n---\n%s", want, got)
+		}
+	}
+}
+
+// validateMemo accepts an image-only text memo (no body, has attachments) and derives a
+// missing attachment name from its path; a text memo with neither body nor attachments
+// is rejected.
+func TestValidateMemoAttachments(t *testing.T) {
+	mv := MembershipView{MembershipID: "mem-1"}
+
+	m, aerr := validateMemo(mv, memoDTO{Kind: "text", Attachments: []memoAttachment{{Path: "/x/paste-9.png"}}})
+	if aerr != nil {
+		t.Fatalf("image-only memo rejected: %#v", aerr)
+	}
+	var back []memoAttachment
+	if err := json.Unmarshal([]byte(m.Attachments), &back); err != nil || len(back) != 1 || back[0].Name != "paste-9.png" {
+		t.Fatalf("attachments not normalized: %q (%v)", m.Attachments, err)
+	}
+
+	if _, aerr := validateMemo(mv, memoDTO{Kind: "text"}); aerr == nil || aerr.code != "bad_body" {
+		t.Fatalf("empty text memo should be rejected, got %#v", aerr)
+	}
+	if _, aerr := validateMemo(mv, memoDTO{Kind: "text", Attachments: []memoAttachment{{Path: "  "}}}); aerr == nil || aerr.code != "bad_attachment" {
+		t.Fatalf("blank attachment path should be rejected, got %#v", aerr)
+	}
+}
+
 func TestSendMemoPromptUsesSemanticTurn(t *testing.T) {
 	const prompt = "まとめたメモ"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
