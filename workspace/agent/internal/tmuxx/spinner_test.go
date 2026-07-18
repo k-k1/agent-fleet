@@ -34,6 +34,11 @@ func TestSpinnerActive(t *testing.T) {
 		// the first space and read this idle: 入力待ち with no 停止 button while plainly working.
 		"✢ Adding regression tests… (13m 31s · ↓ 48.5k tokens)",
 		"✳ Verifying with real Chromium… (2m 3s)",
+		// A todo whose activeForm is Japanese heads the phrase with a CJK char, not an
+		// ASCII capital — real capture (claude_sdfruv7). The [A-Z]-only head read this idle:
+		// 進行中 session badged 入力待ち with no 停止 button while plainly working.
+		"· 検証ハーネスを作成中… (12m 2s · ↓ 36.4k tokens)",
+		"✳ テストを実行中… (2m 3s · thinking with high effort)",
 	}
 	for _, s := range busy {
 		if !spinnerActive(s) {
@@ -57,6 +62,9 @@ func TestSpinnerActive(t *testing.T) {
 		// asked to debug the TUI (this very task) from reading its own pane as busy.
 		"  ✢ Tempering… (6s · thinking with high effort)",
 		"  the footer showed ✽ Perusing… (5m 42s · ↓ 17.8k tokens) at that point",
+		// Same, with a CJK activeForm: a ≥2-space-indented quote of a Japanese spinner is
+		// still a quote, not a live turn — the widened non-ASCII head must not weaken this.
+		"  · 検証ハーネスを作成中… (12m 2s · ↓ 36.4k tokens)",
 		// Truncated prose ends in an ellipsis too — it just isn't followed by a timer.
 		"tmux focus-events off · add 'set -g focus-events on' to ~/.tmux.conf and rea…",
 	}

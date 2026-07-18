@@ -40,6 +40,15 @@ import (
 // but "(", a newline, or an earlier ellipsis), not the old [^\s(]* that stopped at the
 // first space and false-idled every todo turn.
 //
+// The phrase does NOT start with an ASCII capital either: a todo whose activeForm is
+// Japanese renders "· 検証ハーネスを作成中… (12m 2s · ↓ 36.4k tokens)" — the run opens on a
+// CJK character (real capture, claude_sdfruv7). The old [A-Z] head demanded an ASCII
+// upper-case letter and false-idled every non-Latin activeForm. So the first char is
+// (?:[A-Z]|[^\x00-\x7F]): still a capital for Latin phrases (so lower-case prose like
+// "and…" can't head a match), but any non-ASCII letter for CJK/accented activeForms. It
+// must be a definite non-space char (both branches are), which — together with the
+// ^\S? ? head — is what stops a ≥2-space-indented transcript quote from matching.
+//
 // It must not match the post-turn summary claude leaves in the transcript
 // ("✻ Worked for 13m 53s", "✻ Sautéed for 5s · 1 shell still running"): those use a
 // past-tense verb with no "…" and no parenthesised timer, so the ellipsis is what
@@ -47,7 +56,7 @@ import (
 // renders at column 0, so a ≥2-space-indented transcript line that merely quotes a
 // spinner — including this file's own examples, when a session is asked to debug the TUI
 // — can't match). Best-effort; one captured frame.
-var spinnerRe = regexp.MustCompile(`(?m)^\S? ?[A-Z][^(\n\x{2026}]*\x{2026} \([^)\n]*[0-9]+(?:h|m|s)\b`)
+var spinnerRe = regexp.MustCompile(`(?m)^\S? ?(?:[A-Z]|[^\x00-\x7F])[^(\n\x{2026}]*\x{2026} \([^)\n]*[0-9]+(?:h|m|s)\b`)
 
 // spinnerActive reports whether the captured pane text shows a turn actively running —
 // either the classic "esc to interrupt" affordance or the live spinner header (see
