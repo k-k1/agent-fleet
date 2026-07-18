@@ -23,6 +23,7 @@ import { t, tCount, useT } from "../lib/i18n/index.ts";
 import type { MsgKey } from "../lib/i18n/index.ts";
 import { fmtGiB as fg } from "../lib/bytes.ts";
 import { useUsageResetNotify } from "./usageResetNotify.ts";
+import { browserTarget } from "../features/browser/target.ts";
 
 const HIST_N = 60; // sparkline ring buffer: ~4 min at the 4s poll cadence
 
@@ -498,6 +499,7 @@ export function WsBar() {
   const splitRight = useLayoutStore((s) => s.splitRight);
   const splitDown = useLayoutStore((s) => s.splitDown);
   const resetToTerminal = useLayoutStore((s) => s.resetToTerminal);
+  const openPaneTarget = useLayoutStore((s) => s.openTarget);
   const activePaneId = layout.activeId;
   const openStart = useSessionsStore((s) => s.openStart);
   const askConfirm = useConfirm();
@@ -505,6 +507,7 @@ export function WsBar() {
   const { wsStats, wsHist, hostStats, hostHist } = useWsResourceChips(tenant, superAdmin);
   const isMobile = useIsMobile();
   const [port, setPort] = useState("");
+  const [previewPath, setPreviewPath] = useState("/");
   const [pvOpen, setPvOpen] = useState(false); // desktop port-preview popover
   const [moreOpen, setMoreOpen] = useState(false); // mobile overflow popover
   const [resOpen, setResOpen] = useState(false); // desktop resource-tiles popover
@@ -581,8 +584,17 @@ export function WsBar() {
   // on :8080) in a new tab, proxied through the CP /preview/{port}.
   const openPreview = () => {
     const p = port.trim();
-    if (!p) return;
-    window.open(previewURL(p), "_blank", "noopener");
+    if (!running || !browserTarget(Number(p), "/")) return;
+    window.open(previewURL(p, previewPath.trim()), "_blank", "noopener");
+    setPvOpen(false);
+    setMoreOpen(false);
+  };
+
+  const openBrowserPane = () => {
+    if (!running) return;
+    const target = browserTarget(Number(port.trim()), previewPath.trim());
+    if (!target) return;
+    openPaneTarget({ content: { kind: "browser", ...target } });
     setPvOpen(false);
     setMoreOpen(false);
   };
@@ -714,11 +726,24 @@ export function WsBar() {
             placeholder="port"
             value={port}
             onChange={(e) => setPort(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && openPreview()}
+            onKeyDown={(e) => e.key === "Enter" && openBrowserPane()}
             title={tr("wsbar.preview.port_hint")}
           />
-          <button onClick={openPreview} disabled={!port.trim()}>
-            {tr("wsbar.preview.open")}
+          <input
+            className="preview-path"
+            value={previewPath}
+            onChange={(e) => setPreviewPath(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && openBrowserPane()}
+            aria-label={tr("browser.path")}
+            title={tr("wsbar.preview.path_hint")}
+          />
+        </div>
+        <div className="pv-row pv-actions">
+          <button onClick={openBrowserPane} disabled={!running || !browserTarget(Number(port.trim()), previewPath.trim())}>
+            {tr("wsbar.preview.open_pane")}
+          </button>
+          <button onClick={openPreview} disabled={!running || !port.trim()}>
+            {tr("wsbar.preview.open_light")}
           </button>
         </div>
         <div className="pv-hint">{tr("wsbar.preview.hint")}</div>
