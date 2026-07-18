@@ -139,3 +139,44 @@ func TestQuestionPendingGatesPrompt(t *testing.T) {
 		t.Fatal("unknown session must read as not-pending")
 	}
 }
+
+func postInput(t *testing.T, name, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/sessions/"+name+"/input", strings.NewReader(body))
+	req.SetPathValue("name", name)
+	rec := httptest.NewRecorder()
+	handleSessionInput(rec, req)
+	return rec
+}
+
+// Regression for the sx37vu7 引継ぎ bug (assistant chat's send_to_session): a managed
+// session's {prompt} must route to its ThreadHandle, not the tmux not_running check —
+// a live managed session has no tmux pane, so the old code 409'd on every send. claude
+// has no managed driver (ADR 0015) so this exercises the same "no driver registered"
+// path as /turn's equivalent test, confirming /input now shares its branch.
+func TestHandleSessionInputManagedUnavailable(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
+	const name = "input_managed"
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude, Driver: session.DriverManaged})
+
+	rec := postInput(t, name, `{"prompt":"x"}`)
+	if rec.Code != http.StatusNotImplemented || !strings.Contains(rec.Body.String(), "driver_unavailable") {
+		t.Fatalf("status = %d, body = %s, want 501 driver_unavailable (not 409 not_running)", rec.Code, rec.Body.String())
+	}
+}
+
+// opencode's managed driver is registered — /input must reach the ThreadHandle (502
+// runtime_failed when no runtime can start) rather than tmux's not_running.
+func TestHandleSessionInputManagedOpencodeNeedsRuntime(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
+	t.Setenv("AF_OPENCODE_SERVE_DISABLE", "1")
+	const name = "input_managed_oc"
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindOpencode, Driver: session.DriverManaged})
+
+	rec := postInput(t, name, `{"prompt":"x"}`)
+	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "runtime_failed") {
+		t.Fatalf("status = %d, body = %s, want 502 runtime_failed (not 409 not_running)", rec.Code, rec.Body.String())
+	}
+}
