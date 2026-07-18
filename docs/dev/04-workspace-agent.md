@@ -8,7 +8,7 @@ per-user コンテナ内で常駐する Go プロセス。コンテナの PID 1 
 その配下で非特権ユーザーとして動く。CP から見た**唯一の実行主体**——runtime・tmux・git・fs・CLI エージェントに
 触るのは必ず Agent（CP は中継のみ、[05](05-api-contracts.md)）。全 API は `requireToken`（Bearer
 `AGENT_TOKEN`）で保護（[07 §7.5](07-security.md)）。コンテナ netns を共有するため、コンテナ内サービスへ
-loopback で届く（preview の下請け `/proxy/{port}`）。
+loopback で届く（preview の下請け `/proxy/{port}`とBrowserManagerの直接navigation）。
 
 ## 4.2 セッションモデル
 
@@ -168,7 +168,11 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
   rtk（vendor 静的バイナリ、git 管理外——ビルド時にホストから vendor）、
   Go toolchain（`ARG GO_VERSION`、go.mod と歩調）、
   build-essential + python3（+ `break-system-packages`、pip --user は home 永続）、vim・git-lfs・
-  jq 等の定番、tzdata。**Java は image 外**: 共有 JVM dir（Temurin 8/21/25）を `/usr/lib/jvm:ro` で
+  jq 等の定番、tzdata、amd64/arm64共通の固定版Debian Chromium（setuid sandbox helperをbuild時検証）と
+  日本語font。Chromiumはsandbox有効、`--disable-dev-shm-usage`で起動する。Docker runtimeはsetuid helperのnamespace作成用に
+  `SYS_ADMIN`をbounding setへ追加するが、`dev`にはeffective capabilityを付けず、helper以外のsetuid/setgid bitはimageから除く。
+  **Java は image 外**:
+  共有 JVM dir（Temurin 8/21/25）を `/usr/lib/jvm:ro` で
   マウント（イメージ 2.1G→1.0G の削減。⚠️ Temurin の cacerts symlink は抽出時に実体化しないと
   空トラストストアになる）。node は nvm（home・オンデマンド）。
 - **レイヤ順の意図**: 重く変わらない RUN（toolchain・npm -g）を前段、頻繁に変わる COPY
@@ -194,3 +198,17 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
 - claude の自己更新は `~/.local` 側のみ・焼き込み版は固定。壊れた symlink（旧 home パス）は
   entrypoint が検出して repair。
 - 反映ルール: image / entrypoint に触れたら **image 再ビルド + 利用者の Stop→Start**（[10](10-development.md)）。
+
+## 4.10 BrowserManager
+
+`BrowserManager`はWorkspace当たり1つのChromium processをpipe CDPで遅延起動し、browserIdごとに独立
+BrowserContext + Pageを所有する。公開内部面は`POST/GET/DELETE /browser/pages*`と`GET /ws/browser?id=`。
+Agent自身の7700、外部top-level navigation、管理endpointを拒否し、PageのHTTP/WS/SSEはコンテナloopback内で完結する。
+
+WS wire v1は最初のtext `ready`、以降の状態/navigation/console/error textと、生JPEG binaryを送る。
+Consoleから受けるのはviewport、mouse/wheel/key/text、navigate/reload/history、visibilityだけでraw CDPは公開しない。
+Page上限2、最大1600×1200/DPR 1、12fps/quality 70、latest-frame 1枚、非表示/切断猶予60秒が既定。
+12fpsはWebSocket送信だけでなく、Pageごとの容量1 frame workerがCDP ACKを`1/maxFPS`遅延して
+Chromiumのcapture/encode元から制限する。pipe CDPは1 message 8 MiB・event 256件/合計32 MiBで固定し、必須eventの飽和時は
+waiter goroutineやqueue memoryを増やさずChromiumを終了してPageを`crashed`へ遷移させる。
+詳細契約とW5検証結果は[設計31](../31-container-browser-pane.md)を参照。

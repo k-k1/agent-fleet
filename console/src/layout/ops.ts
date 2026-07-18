@@ -80,6 +80,8 @@ export function sameTarget(pane: Pane, target: OpenTarget): boolean {
       if (t.conversationId) return c.kind === "chat" && c.conversationId === t.conversationId;
       if (t.draftAssistantId) return c.kind === "chat" && c.draftAssistantId === t.draftAssistantId;
       return false;
+    case "browser":
+      return c.kind === "browser" && c.port === t.port && c.path === t.path;
   }
 }
 
@@ -286,17 +288,15 @@ export function splitDown(l: Layout, paneId: string): Layout {
   return { ...l, cols, activeId: id };
 }
 
-/** swapPanes exchanges the payloads of two panes (ids stay in place — the
- * paneId contract), made by a drag-and-drop. The drop target becomes active. */
+/** swapPanes exchanges the positions of two complete panes. Their ids and runtime
+ * resources move with them; the dragged pane becomes active at its new position. */
 export function swapPanes(l: Layout, aId: string, bId: string): Layout {
   if (!aId || !bId || aId === bId) return l;
   const a = paneById(l, aId);
   const b = paneById(l, bId);
   if (!a || !b) return l;
-  const cols = mapPanes(l, (p) =>
-    p.id === aId ? { ...b, id: aId } : p.id === bId ? { ...a, id: bId } : p,
-  );
-  return { ...l, cols, activeId: bId };
+  const cols = mapPanes(l, (p) => (p.id === aId ? b : p.id === bId ? a : p));
+  return { ...l, cols, activeId: aId };
 }
 
 /** dropSplit MOVES a dragged pane to a new split position (new right column, or

@@ -61,6 +61,15 @@ func main() {
 		claude.RunStatusLine(os.Args[2:])
 		return
 	}
+	// Image-only browser verification: exercise the production BrowserManager,
+	// pipe CDP, sandbox, two simultaneous Pages and capture pacing without booting
+	// the rest of the Agent subsystems. deploy/local/e2e-smoke.sh is the caller.
+	if len(os.Args) > 1 && os.Args[1] == "browser-smoke" {
+		if err := runBrowserImageSmoke(); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 
 	// Fold any pre-A3 plaintext credential files into the encrypted store.
 	migrateLegacySecrets()
