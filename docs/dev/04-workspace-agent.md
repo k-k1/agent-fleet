@@ -179,7 +179,8 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
   （`control-plane/workspace_docs.go` `stageWorkspaceDocs`）→ `dockerRuntime.Start` が
   `/usr/local/share/agent-fleet/docs:ro` でマウント。共有イメージには docs を含めないので、
   member のコンテナは内部 docs をディスク上に一切持たない（＝ provisioning 時点でロール分離）。
-  露出範囲: `member`→`guide/member`、`tenant_admin`→`guide/`、`super_admin`→全 docs。毎起動で
+  露出範囲: `member`→`guide/member` と `dev/`、`tenant_admin`→`guide/` と `dev/`、
+  `super_admin`→全 docs。decision / history などの非公開資料は super_admin に限る。毎起動で
   再ステージ（ロール変更が次回起動で反映・イメージ版に追従）。ECS アダプタは未配線
   （`<dataDir>` が EFS AP でホスト経路が異なるため。未配線でも起動は壊れず docs 無しになるだけ）。
 - claude の自己更新は `~/.local` 側のみ・焼き込み版は固定。壊れた symlink（旧 home パス）は

@@ -44,9 +44,9 @@ func docsRolePrefixes(role string) []string {
 	case "super_admin":
 		return nil // everything, incl. dev/decisions/history/talk
 	case "tenant_admin":
-		return []string{"guide"} // member + admin guides
+		return []string{"guide", "dev"} // member + admin guides, plus public design docs
 	default: // "member" and any unknown role
-		return []string{filepath.Join("guide", "member")}
+		return []string{filepath.Join("guide", "member"), "dev"}
 	}
 }
 
