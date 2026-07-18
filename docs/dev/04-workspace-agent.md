@@ -42,6 +42,13 @@ loopback で届く（preview の下請け `/proxy/{port}`）。
   （`POST /sessions/{name}/fork`）。新スロットは元の kind と driver を引き継ぐ。
 - **driver 切替**: Codex / OpenCode は `POST /sessions/{name}/driver` で同じ会話を `managed` ⇄ `tui` に
   stop→resume する。実行中 turn がある間は `409 busy_switch`。kind・dir・native conversation ID は維持する。
+- **モデル解決（作成時）**: codex/opencode を明示モデル付きで作成する際、Agent は live カタログ
+  （`codex debug models` / `opencode models`）に照らして、ピッカー表示名や一意な略称（例 `terra`）を
+  完全な slug（`gpt-5.6-terra`）へ解決する（`resolveLiveModel`）。曖昧・利用不可なら **clone/worktree の
+  副作用前に `400 bad_model` で拒否**——「起動後に無効モデルで落ちる」罠を封じる。カタログを読めない
+  縮退時（オフライン / CLI 未導入）は指定値を保持して通常起動を続ける。MCP 経由の起動は先に read ツール
+  `list_models` で候補 id を確認してから `create_session` に渡す運びで、codex/opencode は常に managed で
+  起こす（§4.5・[03](03-control-plane.md)）。claude は起動時に自前の picker/`--model` に委ねるため対象外。
 - **ブランチ支援**: `suggest-branch`（セッション会話を要約して AI がブランチ名を提案）/ `rename-branch`。
 - タイトル系（`/title/{suggest,accept,dismiss,regenerate,set}`）は会話からの表示名提案。
 
