@@ -216,9 +216,9 @@ function renderEmoji(root: HTMLElement) {
 //   slug is left as plain text.
 //
 // Code context: a fenced block (<pre>) is literal source and is never touched. INLINE
-// code (`s7` written in backticks — the common way a slug is mentioned) IS linkified, but
-// only for slugs: a hash in inline code stays literal, since a commit id in backticks is
-// usually a copy-me literal, whereas a bare `sN` in backticks is a reference to that session.
+// code (`s7` / `9219ab9` written in backticks — the common way both are mentioned) IS
+// linkified for both shapes: a slug in backticks references that session, and a hash in
+// backticks references that commit, so both become links (commit still click-verified).
 const COMMIT_RE = "[0-9a-f]{7,40}";
 const SLUG_RE = "s\\d+";
 // Combined, alternation ordered longest-first; \b keeps us off sub-word matches.
@@ -238,8 +238,6 @@ function linkifyRefs(root: HTMLElement, repo: string | null, onError: (message: 
 
   for (const node of targets) {
     const text = node.nodeValue!;
-    // Inside inline <code>, only slugs linkify — a hash in backticks stays literal.
-    const inCode = !!node.parentElement?.closest("code");
     REF_RE.lastIndex = 0;
     let m = REF_RE.exec(text);
     if (!m) continue;
@@ -251,7 +249,7 @@ function linkifyRefs(root: HTMLElement, repo: string | null, onError: (message: 
       const isCommit = /^[0-9a-f]{7,40}$/.test(token) && !/^s\d+$/.test(token);
       let a: HTMLAnchorElement | null = null;
       if (isCommit) {
-        if (repo && !inCode) a = makeCommitLink(token, repo, onError);
+        if (repo) a = makeCommitLink(token, repo, onError);
       } else {
         // slug shape (s\d+): link only if that session exists right now
         const exists = useSessionsStore.getState().sessions.some((s) => s.name === token);
