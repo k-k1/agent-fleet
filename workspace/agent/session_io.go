@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -146,6 +148,18 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "empty_prompt", "prompt, keys or seq is required")
 		return
 	}
+	// managed セッションの {prompt} は tmux ペインを持たない（app-server 経由）ので、
+	// tmux 存在チェックより先に ThreadHandle.Send へ回す。send_to_session（MCP の
+	// af_write ツール）など /input を直叩きする呼び出し元は tui/managed を意識しない
+	// ため、ここで分岐しないと生きているセッションにも常に not_running が返っていた
+	// （/turn の handleManagedTurn と同じ理由で、docs/27 で /turn は分岐済みだったが
+	// /input 側の分岐が漏れていた）。{keys}/{seq}（生 TUI 駆動）は tui 専用のまま。
+	if len(body.Keys) == 0 && len(body.Seq) == 0 {
+		if meta, ok := session.ReadMeta(name); ok && meta.DriverKind() == session.DriverManaged {
+			handleManagedInputPrompt(w, meta, body.Prompt, body.ReportTo)
+			return
+		}
+	}
 	tn := session.TmuxName(name)
 	if !tmuxx.HasSession(tn) {
 		httpx.WriteErr(w, http.StatusConflict, "not_running", "session is not running; start it first")
@@ -243,6 +257,49 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		recordOperatorInjection(name, body.Prompt)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name})
+}
+
+// handleManagedInputPrompt is /input's {prompt} counterpart to handleManagedTurn's
+// start op (session_turn.go) — same ThreadHandle.Send delivery, but keeps /input's
+// report_to contract (armSessionReport / recordOperatorInjection) that /turn doesn't
+// carry, so send_to_session's docs/30 auto-report keeps working for managed sessions.
+func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, reportTo string) {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		httpx.WriteErr(w, http.StatusBadRequest, "empty_prompt", "prompt, keys or seq is required")
+		return
+	}
+	if questionPending(meta.Name) {
+		httpx.WriteErr(w, http.StatusConflict, "question_pending",
+			"a question is awaiting an answer; answer it via the question card, not free text")
+		return
+	}
+	d, ok := driverOf(meta)
+	if !ok {
+		httpx.WriteErr(w, http.StatusNotImplemented, "driver_unavailable",
+			"managed driver はこの kind ではまだ利用できません")
+		return
+	}
+	h, err := d.Resume(meta)
+	if err != nil {
+		httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+		return
+	}
+	if err := h.Send(agents.TurnInput{Prompt: prompt}); err != nil {
+		if errors.Is(err, agents.ErrQuestionPending) {
+			httpx.WriteErr(w, http.StatusConflict, "question_pending",
+				"a question is awaiting an answer; answer it via the question card, not free text")
+			return
+		}
+		httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+		return
+	}
+	markSessionWorking(meta.Name)
+	if reportTo != "" {
+		armSessionReport(meta.Name, reportTo)
+		recordOperatorInjection(meta.Name, prompt)
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": meta.Name})
 }
 
 // submitPromptTUI is the shared {prompt}→TUI delivery behind /input's {prompt} path
