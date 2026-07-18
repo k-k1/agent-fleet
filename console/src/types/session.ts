@@ -19,7 +19,7 @@ export type SessionState = "" | "working" | "idle" | "question" | "plan" | "perm
 // A session as returned by GET /api/sessions and used across the left pane, the
 // terminal header, and the chat mirror. Optional fields may be absent per kind.
 export interface Session {
-  name: string; // auto-allocated unique slug ("s7") — the session's immutable identity
+  name: string; // auto-allocated unique slug ("s" + 6 base32 chars, e.g. "sukbq4s") — the session's immutable identity
   kind: SessionKind;
   // Control route (docs/27): "managed" = 共有 runtime＋構造化 RPC（AF が唯一の
   // writer・tmux pane なし）。absent/"tui" = 従来の tmux 内 TUI。pane の有無は kind

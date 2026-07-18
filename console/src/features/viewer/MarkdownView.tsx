@@ -211,17 +211,19 @@ function renderEmoji(root: HTMLElement) {
 //   unresolvable without one). Linked optimistically; the click handler verifies the sha
 //   exists in the repo before opening the commit pane, and toasts otherwise — so a hex
 //   token that isn't actually a commit does nothing but tell you so ("存在しない→リンクにしない").
-// - session slug: `s` + digits (Session.name). Only linkified when a session with that
-//   exact name currently exists (looked up live in the sessions store); a stale/unknown
-//   slug is left as plain text.
+// - session slug: `s` + 6 lowercase base32 chars (Session.name — the shape minted by the
+//   agent's randSlug, e.g. "sukbq4s"). Only linkified when a session with that exact name
+//   currently exists (looked up live in the sessions store); a stale/unknown slug is left
+//   as plain text (so a 7-char English s-word that isn't a live session never links).
 //
 // Code context: a fenced block (<pre>) is literal source and is never touched. INLINE
 // code (`s7` / `9219ab9` written in backticks — the common way both are mentioned) IS
 // linkified for both shapes: a slug in backticks references that session, and a hash in
 // backticks references that commit, so both become links (commit still click-verified).
 const COMMIT_RE = "[0-9a-f]{7,40}";
-const SLUG_RE = "s\\d+";
-// Combined, alternation ordered longest-first; \b keeps us off sub-word matches.
+const SLUG_RE = "s[a-z2-7]{6}"; // randSlug: "s" + 6 base32-lower chars (a-z, 2-7)
+// Combined; \b keeps us off sub-word matches. A slug always starts with "s" (non-hex), so
+// the two alternatives never match the same token — the commit branch owns bare hex.
 const REF_RE = new RegExp(`\\b(?:${COMMIT_RE}|${SLUG_RE})\\b`, "g");
 
 function linkifyRefs(root: HTMLElement, repo: string | null, onError: (message: string) => void) {
@@ -246,7 +248,7 @@ function linkifyRefs(root: HTMLElement, repo: string | null, onError: (message: 
     let last = 0;
     do {
       const token = m[0];
-      const isCommit = /^[0-9a-f]{7,40}$/.test(token) && !/^s\d+$/.test(token);
+      const isCommit = /^[0-9a-f]{7,40}$/.test(token); // slugs start with "s" (non-hex)
       let a: HTMLAnchorElement | null = null;
       if (isCommit) {
         if (repo) a = makeCommitLink(token, repo, onError);
