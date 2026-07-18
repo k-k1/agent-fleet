@@ -4,6 +4,7 @@ import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
+import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useChatStore } from "./store.ts";
 import { chatGet, chatStream, chatStop, chatCreate, assistantGet, chatPasteImage } from "./api.ts";
 import { errText, raw, isTransientErr } from "../../core/api/client.ts";
@@ -56,6 +57,10 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const setPaneTarget = useLayoutStore((s) => s.setPaneTarget);
   const promoteDraft = (pid: string, cid: string) =>
     setPaneTarget(pid, { content: { kind: "chat", conversationId: cid, draftAssistantId: null } });
+  // Same signal MirrorView uses for a stopped session's read-only history view: while the
+  // workspace agent is down, /api/chat/* 5xx's forever — show that plainly instead of
+  // spinning "読み込み中…" indefinitely (chat.ts had no such distinction before).
+  const wsRunning = useWorkspaceStore((s) => s.state) === "running";
   const bumpChatList = useChatStore((s) => s.bumpList);
   const markChatBusy = useChatStore((s) => s.markBusy);
   // In-flight turn state parked in the store, so closing + re-opening this pane mid-answer
@@ -706,10 +711,14 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const streamBody = sending ? streamText : (liveTurn?.text ?? "");
   const liveSteps = sending ? streamSteps : (liveTurn?.steps ?? []);
   const empty = (!conv || conv.messages.length === 0) && !loadError && !showStreaming && !loadingConv;
-  // Status chip like the Sessions list / MirrorView header: 進行中 while streaming, else 待機中.
-  const stateChip = showStreaming
-    ? { cls: "working", icon: "loading", spin: true, text: tr("chat.state_running") }
-    : { cls: "on", icon: "check", text: tr("chat.state_idle") };
+  // Status chip like the Sessions list / MirrorView header: 停止中 when the workspace agent
+  // is down (matches SessionRow/MirrorView's stateInfo for a stopped session), else 進行中
+  // while streaming, else 待機中.
+  const stateChip = !wsRunning
+    ? { cls: "off", icon: "debug-pause", spin: false, text: tr("state.stopped") }
+    : showStreaming
+      ? { cls: "working", icon: "loading", spin: true, text: tr("chat.state_running") }
+      : { cls: "on", icon: "check", spin: false, text: tr("chat.state_idle") };
 
   // assistantTheme scopes the base tokens (tokens.css) via data-theme; assistantColor gives
   // the assistant chat its own surface bg/accent (--chat-bg/--chat-accent, shared contract
@@ -738,7 +747,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
             {agent.assistantName}
           </span>
         )}
-        {(conv || showStreaming) && (
+        {(conv || showStreaming || !wsRunning) && (
           <span className={"session-state " + stateChip.cls}>
             <Icon name={stateChip.icon} spin={stateChip.spin} /> {stateChip.text}
           </span>
@@ -751,11 +760,17 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
           </div>
         )}
         {/* Fetching the conversation (retried while the WS agent boots) — a spinner beats
-            flashing the empty hint or a spurious "not found". */}
+            flashing the empty hint or a spurious "not found". Once we know the workspace
+            itself is stopped, the retry can't succeed until Start is pressed — say so
+            immediately instead of spinning forever (MirrorView's !loaded ws-stopped branch). */}
         {loadingConv && !conv && !loadError && (
-          <div className="chat-empty">
-            <Icon name="loading" spin /> {tr("common.loading")}
-          </div>
+          wsRunning ? (
+            <div className="chat-empty">
+              <Icon name="loading" spin /> {tr("common.loading")}
+            </div>
+          ) : (
+            <div className="chat-empty">{tr("mirror.ws_stopped_history")}</div>
+          )
         )}
         {/* Greeting: the assistant introduces itself while the chat hasn't started. */}
         {empty && draftAsst && (
@@ -887,6 +902,17 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
             )}
           </div>
         )}
+        {!wsRunning ? (
+          // Workspace stopped: nothing here can succeed (no per-chat "alive" to resume —
+          // the whole agent is down), so swap the input for MirrorView's same disabled
+          // resume affordance instead of a composer that silently eats every keystroke.
+          <div className="chat-composer-row chat-compose-resume">
+            <button type="button" className="btn primary" disabled title={tr("mirror.ws_stopped")}>
+              <Icon name="play" /> {tr("mirror.resume_continue")}
+            </button>
+            <span className="muted mirror-resume-hint">{tr("mirror.viewing_history_ws_stopped")}</span>
+          </div>
+        ) : (
         <div className="chat-composer-row">
           {/* History nav for phones (no arrow keys); hidden on wider screens via CSS. */}
           <div className="chat-hist">
@@ -950,6 +976,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
             </button>
           )}
         </div>
+        )}
       </div>
     </div>
   );

@@ -184,6 +184,14 @@
   gap: 8px;
   align-items: flex-end;
 }
+/* Workspace-stopped affordance, mirrors MirrorView's .mirror-compose-resume: centered
+   disabled button + hint instead of the input row. */
+.chat-compose-resume {
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 54px;
+}
 /* Pasted-image attachment chips in the composer (before send). */
 .chat-attach {
   display: flex;
