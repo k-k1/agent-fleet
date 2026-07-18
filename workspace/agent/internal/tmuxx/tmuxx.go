@@ -18,6 +18,7 @@ import (
 //
 //	✢ Tempering… (6s · thinking with high effort)
 //	✽ Perusing… (5m 42s · ↓ 17.8k tokens · thought for 3s)
+//	✢ Adding regression tests… (13m 31s · ↓ 48.5k tokens)
 //
 // Only two parts of that line are dependable, and this regex uses exactly those: the
 // gerund + "…", and the parenthesised elapsed timer. Everything else rotates:
@@ -33,14 +34,20 @@ import (
 //     tui_contract_test.go). Hence [^)\n]* before the timer.
 //   - "shift+tab to cycle" stays visible mid-turn, so it can't tell busy from idle.
 //
+// The gerund is NOT a single word: when a todo is in progress claude renders that item's
+// activeForm as the spinner phrase ("✢ Adding regression tests…"), which is a whole
+// multi-word phrase. So the run before "…" must admit spaces — [^(\n\x{2026}]* (any char
+// but "(", a newline, or an earlier ellipsis), not the old [^\s(]* that stopped at the
+// first space and false-idled every todo turn.
+//
 // It must not match the post-turn summary claude leaves in the transcript
 // ("✻ Worked for 13m 53s", "✻ Sautéed for 5s · 1 shell still running"): those use a
 // past-tense verb with no "…" and no parenthesised timer, so the ellipsis is what
 // separates a live turn from a finished one. Anchored at line start (the spinner always
-// renders at column 0) so an indented transcript line that merely quotes a spinner —
-// including this file's own examples, when a session is asked to debug the TUI — doesn't
-// read as busy. Best-effort; one captured frame.
-var spinnerRe = regexp.MustCompile(`(?m)^\S? ?[A-Z][^\s(]*\x{2026} \([^)\n]*[0-9]+(?:h|m|s)\b`)
+// renders at column 0, so a ≥2-space-indented transcript line that merely quotes a
+// spinner — including this file's own examples, when a session is asked to debug the TUI
+// — can't match). Best-effort; one captured frame.
+var spinnerRe = regexp.MustCompile(`(?m)^\S? ?[A-Z][^(\n\x{2026}]*\x{2026} \([^)\n]*[0-9]+(?:h|m|s)\b`)
 
 // spinnerActive reports whether the captured pane text shows a turn actively running —
 // either the classic "esc to interrupt" affordance or the live spinner header (see
