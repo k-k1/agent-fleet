@@ -29,6 +29,7 @@ L1 認証（authGate）通過後に到達。認可は「自分のリソースの
 | admin | `GET /api/admin/{tenants,sessions,usage,audit,host,egress*}`・`POST /api/admin/{tenants,memberships,stop-workspace,clean-home}`・`PUT /api/admin/{tenants/{slug}/limits,user-limits,membership-role,egress/mode}` | CP（super_admin / tenant_admin gate）| [03](03-control-plane.md) |
 | MCP | `POST /mcp`（Streamable HTTP JSON-RPC・Bearer PAT・authGate 除外）| CP | [03](03-control-plane.md) / [decisions/0006](../decisions/0006-mcp-unified.md) |
 | preview | `GET /preview/{port}/{rest...}`（`/preview/{port}` は 301 で末尾 `/` 付与）| CP → Agent `/proxy/{port}` | §5.3 |
+| browser | `POST/GET/DELETE /api/browser/pages*`・`GET /ws/browser?id=&tenant=` | CP → Agent `/browser/pages*`・`/ws/browser` | §5.3 / [設計31](../31-container-browser-pane.md) |
 | WebSocket | `GET /ws/terminal?session=&tenant=` | CP → Agent `/ws/pty` | §5.3 |
 | auth / その他 | `GET /login`・`/oauth2/{login,callback,logout}`・`GET /api/oauth/bitbucket/callback`・`GET /healthz`・`/internal/egress{,/policy}`（`AF_EGRESS_TOKEN`）・`/` = Console 静的配信（no-store）| CP | [07](07-security.md) |
 
@@ -47,7 +48,8 @@ L1 認証（authGate）通過後に到達。認可は「自分のリソースの
   Agent の `requireToken` が `/healthz` 以外を定数時間比較で検証（[07 §7.5](07-security.md)）。
 - パス規約: CP は公開パスから **`/api` を剥がして**そのまま Agent へ転送する
   （例 `/api/sessions/x/stop` → `<agent>/sessions/x/stop`）。Agent 固有の面は
-  `/ws/pty`（PTY）と `/proxy/{port}/{rest...}`（preview 下請け）。
+  `/ws/pty`（PTY）、`/ws/browser`（browser描画/操作）、`/browser/pages*`（ephemeral Page）、
+  `/proxy/{port}/{rest...}`（preview 下請け）。
 - Agent のグループ構成は公開面と同型: `/sessions`・`/repos`・`/connections`・
   `/fs`(10)・`/chat`(10)・`/assistants`・`/env`・`/claude`・`/codex`・`/git`・`/agents`。
 
@@ -56,13 +58,14 @@ Session API は論理操作と端末操作を分ける。`/turn`（start/steer/i
 振り分ける。`/input`・`/output`・`/ws/pty` は pane を持つ tui 専用。`/driver` は Codex / OpenCode の
 同一会話を stop→resume で切り替え、busy 中は `409 busy_switch` を返す。
 
-## 5.3 中継の 4 経路（CP の proxy 層）
+## 5.3 中継の5経路（CP の proxy 層）
 
 | 経路 | 入口 → 出口 | 特性 |
 |------|-------------|------|
 | **REST**（proxyAgentREST）| `/api/*` → Agent 同パス（`/api` 剥がし）| 変更系は 2xx 応答時に監査記録（§5.5）。workspace が running でなければ 409 |
 | **SSE**（proxyAgentStream）| `POST /api/chat/conversations/{id}/stream` → Agent | チャンク毎 flush。チャットのストリーミング用 |
 | **WS**（proxyTerminal）| `GET /ws/terminal` → Agent `/ws/pty` | running 確認（stopped/starting=409、自動起動しない）→ 双方向リレー（binary=PTY 出力 / text=入力・resize）。接続追跡が workspace を warm 維持（reaper のアイドル判定に使用）|
+| **browser** | `/api/browser/pages*` → Agent `/browser/pages*`、`/ws/browser` → Agent同名 | membership/running検査後にAgent bearerだけを付与。REST本文/応答とWS textは解釈せず、binary JPEGはlatest-onlyで中継。visible viewerだけがworkspaceをwarm維持。wire v1は[設計31](../31-container-browser-pane.md) |
 | **preview** | `GET /preview/{port}/{rest...}` → Agent `/proxy/{port}/{rest...}` → コンテナ内 `127.0.0.1:{port}` | `X-Forwarded-{Prefix,Host,Proto}` 付与、Agent 側は Authorization を除去して ReverseProxy。新タブは cookie 以外のヘッダを運べないため `?tenant=<slug>` の query fallback で解決。**制約: HTTP のみ（WS/SSE 不可＝HMR 不可）**。アプリ側は `X-Forwarded-Prefix` 尊重の設定（例 Spring Boot `server.forward-headers-strategy`）が必要 |
 
 ## 5.4 横断規約

@@ -1,6 +1,6 @@
 # 31. コンテナ内ブラウザペイン — 実装設計
 
-> 状態: **設計確定・未実装**（2026-07-18）
+> 状態: **MVP 実装済み・W5 統合検証済み**（2026-07-18）
 > 意思決定: [decisions/0018](decisions/0018-container-browser-pane.md)
 > 対象: Console / Control Plane / Workspace Agent / Workspace image
 
@@ -383,15 +383,39 @@ API/wire契約は本書 §31.4–31.6 を基準に先に固定する。各セッ
 並列開始前にこの設計commitを全セッションの共通baseにする。W2/W3/W4は互いの未完成コードを参照せず、ここに記載した
 JSONとWebSocket messageだけを契約としてfakeで進める。これにより待ち合わせをW5の一度に限定する。
 
-## 31.13 未決事項（実装スパイクで閉じる）
+## 31.13 実装決定と残る実機調整
 
-以下はwire契約を変えない実装詳細なので並列開始を妨げない。
-
-1. Chromium配布: Debian `chromium` とPlaywright配布版のmulti-arch、サイズ、更新容易性。
-2. AgentのCDP client: Go libraryを使うか、最小raw CDP adapterを持つか。
-3. screencastの実効fps/画質。12fps/quality 70は初期上限で、実測により下げる可能性がある。
-4. viewer切断猶予とChromium idle timeoutの正確な値。
-5. target未listenをCDPのnetwork errorからどこまで安定判定できるか。
+1. Chromium配布はamd64/arm64で同じ実行名を持つDebian `chromium`を採用し、Debian revisionまで固定した。
+2. AgentのCDP clientは外部libraryへ公開型を依存させず、`--remote-debugging-pipe`の最小adapterを実装した。
+3. screencastの実効fps/画質は12fps/quality 70を初期値にした。完成イメージでの実測により下げる可能性がある。
+4. viewer切断猶予は60秒、Chromium idle timeoutは120秒を既定にした。いずれも環境変数で調整できる。
+5. target未listenはPageを保持したまま`target-unreachable`へ遷移し、reloadで復旧できる実装とした。
 
 未決事項を理由に REST path、JSON field、WebSocket message名を各担当が独自変更しない。契約変更が必要になった場合は、
 本書を先に更新して全担当へ共有する。
+
+## 31.14 W5 統合結果（2026-07-18）
+
+W1〜W4を設計commitの子孫である統合ブランチへ順番に取り込み、公開REST/WS契約を実装同士で照合した。
+追加したopt-inライブテストは、実Chromiumを使うWorkspace Agent、Control Plane relay、Console
+`BrowserController`を同時に起動し、Page作成、v1 `ready`、JPEG frame、日本語入力、対象ページのconsole event、
+Page破棄を往復させる。通常のunit suiteでは環境依存を避けてskipし、次で明示実行する。
+
+```bash
+AF_BROWSER_LIVE_E2E=1 AF_CHROMIUM_BIN=/path/to/chromium \
+  go -C control-plane test -run '^TestBrowserLiveW2W3W4$' -count=1
+```
+
+統合時の検証結果:
+
+| 対象 | 結果 |
+|------|------|
+| Workspace Agent | `go test ./...` 304件、`go vet ./...`、`gofmt`、実Chromium smoke 1件が成功 |
+| Control Plane | `go test ./...` 147件、`go vet ./...`、`gofmt`が成功 |
+| Console | vitest 36 files / 322件、`tsc --noEmit`、production buildが成功 |
+| W2↔W3↔W4ライブ結線 | REST作成/破棄、WS text/binary、JPEG、状態、console、日本語入力の往復が成功 |
+
+このWorkspaceにはDocker CLIがないため、完成Workspaceイメージのamd64/arm64 build、Debian Chromium固定版、
+非root起動、日本語font smokeは未実施でimage CI待ち。Node HMRとSpring Boot相当redirect/absolute assetを完成イメージで
+確認するフルE2E、cgroupメモリ・fps・帯域の実機計測も同じCI/実フリート検証へ残す。現在の12fps、quality 70、
+Page上限2、detached grace 60秒は設計既定のままとする。
