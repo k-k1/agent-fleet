@@ -57,6 +57,10 @@ export function AssistantSection() {
   const pickerMenuRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; a: Assistant } | null>(null);
   const menuRef = useRef<HTMLUListElement>(null);
+  // Right-click menu for a conversation row (title rename + copy id) — same
+  // portal/roving/dismiss pattern as the assistant-template menu above.
+  const [convMenu, setConvMenu] = useState<{ x: number; y: number; c: ConversationMeta } | null>(null);
+  const convMenuRef = useRef<HTMLUListElement>(null);
 
   const refresh = useCallback(() => {
     chatList()
@@ -112,6 +116,21 @@ export function AssistantSection() {
   });
   const runMenu = (fn: () => void) => {
     setMenu(null);
+    fn();
+  };
+
+  const openConvMenu = (e: RMouseEvent, c: ConversationMeta) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setConvMenu({ x: e.clientX, y: e.clientY, c });
+  };
+  useDismiss(convMenuRef, !!convMenu, () => setConvMenu(null));
+  useMenuRoving(convMenuRef, !!convMenu);
+  useLayoutEffect(() => {
+    if (convMenu && convMenuRef.current) placeFixed(convMenuRef.current, convMenu.x, convMenu.y);
+  });
+  const runConvMenu = (fn: () => void) => {
+    setConvMenu(null);
     fn();
   };
 
@@ -269,6 +288,7 @@ export function AssistantSection() {
                     onClick={(e) => (e.ctrlKey || e.metaKey ? openTargetInNew(convTarget(c.id)) : openChat(c.id))}
                     onMouseDown={(e) => e.button === 1 && e.preventDefault()}
                     onAuxClick={(e) => e.button === 1 && openTargetInNew(convTarget(c.id))}
+                    onContextMenu={(e) => openConvMenu(e, c)}
                   >
                     {/* Same row language as the session rows: a tinted leading
                         icon square + an icon-only state chip (text in tooltip). */}
@@ -306,12 +326,6 @@ export function AssistantSection() {
                     </span>
                   ) : null}
                   <span className="chat-actions">
-                    <button type="button" className="ui-btn ui-btn-ghost ui-iconbtn chat-del" title={tr("asst.copy_id")} onClick={() => copyId(c)}>
-                      <Icon name="copy" />
-                    </button>
-                    <button type="button" className="ui-btn ui-btn-ghost ui-iconbtn chat-del" title={tr("asst.rename")} onClick={() => setRenaming(c)}>
-                      <Icon name="edit" />
-                    </button>
                     <button type="button" className="ui-btn ui-btn-ghost ui-iconbtn chat-del" title={tr("asst.delete_chat")} onClick={() => void removeConv(c.id)}>
                       <Icon name="trash" />
                     </button>
@@ -349,6 +363,22 @@ export function AssistantSection() {
                   </li>
                 </>
               )}
+            </ul>,
+            document.body,
+          )}
+        {convMenu &&
+          createPortal(
+            <ul className="ui-menu" ref={convMenuRef} style={{ left: convMenu.x, top: convMenu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => runConvMenu(() => copyId(convMenu.c))}>
+                  <Icon name="copy" /> {tr("asst.copy_id")}
+                </button>
+              </li>
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => runConvMenu(() => setRenaming(convMenu.c))}>
+                  <Icon name="edit" /> {tr("asst.rename")}
+                </button>
+              </li>
             </ul>,
             document.body,
           )}
