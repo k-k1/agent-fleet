@@ -316,7 +316,8 @@ button.wu-reload {
   align-self: auto;
   margin: 2px 0;
 }
-.preview-port {
+.preview-port,
+.preview-path {
   width: 80px;
   padding: 3px 8px;
   background: var(--panel);
@@ -324,6 +325,13 @@ button.wu-reload {
   border: 1px solid var(--border);
   border-radius: 4px;
   font-size: 13px;
+}
+.preview-path {
+  flex: 1;
+  min-width: 105px;
+}
+.pv-actions {
+  justify-content: flex-end;
 }
 .preview-port:disabled {
   opacity: 0.5;

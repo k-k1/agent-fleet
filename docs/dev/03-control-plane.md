@@ -15,7 +15,7 @@ CP は tmux にも working copy にも直接触れず必ず Agent 経由で操�
   未知 identity のプロビジョニング（`AF_PROVISION` auto|invite）と super_admin 付与（`SUPER_ADMIN_EMAILS`）もここ。§3.2。
 - **Workspace ライフサイクル** — membership 1 件 = コンテナ 1 本の払い出し、Start/Stop/Recreate、状態の DB 同期。
   実行基盤は Runtime アダプタ（docker|ecs）越し。§3.3。
-- **Agent 中継** — REST / SSE / WS / preview の 4 経路で公開 API を Agent へ転送。経路の特性は [05 §5.3](05-api-contracts.md)。
+- **Agent 中継** — REST / SSE / terminal WS / browser REST+WS / preview の5経路で公開 API をAgentへ転送。経路の特性は [05 §5.3](05-api-contracts.md)。
 - **MetadataStore** — tenant/identity/workspace/セッションミラー等の永続化。SQLite 既定・Postgres 可（[06](06-data-model.md)）。
 - **監査** — proxy 層（変更系）・admin API・MCP write・システムジョブが `audit_log` へ記録。
   書き込み点は [05 §5.5](05-api-contracts.md)、設計は [07 §7.7](07-security.md)。
@@ -40,7 +40,7 @@ CP は tmux にも working copy にも直接触れず必ず Agent 経由で操�
    → RuntimeFactory で Runtime 構築（membership id キーの in-memory キャッシュ、DB が正）。
    全 ingress が接続追跡（conns）に活性を記録する。
 5. **handler or proxy** — CP 完結（memo / pat / ssm / admin / ws-settings / 内蔵 git）はここで処理、
-   他は 4 経路（[05 §5.3](05-api-contracts.md)）で Agent へ。中継は workspace running が前提（stopped=409）だが、
+   他は5経路（[05 §5.3](05-api-contracts.md)）で Agent へ。中継は workspace running が前提（stopped=409）だが、
    意図の明確な操作（セッション作成 / fork / start）だけは `AF_AUTOSTART`（既定 on）が冷えた workspace を
    起こしてから通す。端末接続や読み取りは自動起動しない。
 
@@ -56,8 +56,9 @@ CP は tmux にも working copy にも直接触れず必ず Agent 経由で操�
   `AGENT_TOKEN` / `AF_SECRET_KEY` / `CLAUDE_CONFIG_DIR` 等の env 注入、Agent healthy 待ち。
   **Stop** は二段の graceful stop: SIGTERM →猶予（`AF_STOP_GRACE_SEC` 既定 30s。Agent には安全マージンを
   差し引いた `AGENT_STOP_GRACE_SEC` を渡し、pane の Ctrl-C → tmux 終了を先に済ませる）→ SIGKILL。
-- **接続追跡（conns）** — 端末/preview の long-lived 接続数・セッション別アタッチ・最終リクエスト時刻を
+- **接続追跡（conns）** — 端末/preview/browser viewerのlong-lived接続数・セッション別アタッチ・最終リクエスト時刻を
   in-memory で記録。開いている接続がある限り workspace は warm に保たれ、reaper（§3.7）の判定材料になる。
+  browser viewerは`visibility=false`中と切断後の猶予Pageを接続数へ含めない。
 
 ## 3.4 起動時の鍵配線
 

@@ -16,6 +16,7 @@ import "./topbar.css";
 import "./wsbar.css";
 import "../features/panes/panes.css";
 import "../features/terminal/terminal.css";
+import "../features/browser/browser.css";
 import "../features/sessions/sessions.css";
 import "../features/repos/repos.css";
 import "../features/project/project.css";

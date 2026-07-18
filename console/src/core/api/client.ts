@@ -165,8 +165,17 @@ export const rawJSON = (path: string, method: string, body?: unknown): Promise<R
 // container (Spring Boot, dev server, ...). Opened as a top-level navigation, so
 // the tenant rides as a query param — a new tab can't carry the X-AF-Tenant
 // header that fetch() injects. The CP resolves tenant from this fallback.
-export function previewURL(port: string | number): string {
-  const u = new URL(rel(`preview/${encodeURIComponent(port)}/`));
+export function previewURL(port: string | number, path = "/"): string {
+  const base = new URL(rel(`preview/${encodeURIComponent(port)}/`));
+  let u = base;
+  if (path.startsWith("/") && !path.startsWith("//") && !path.startsWith("/\\")) {
+    const target = new URL(path, "http://127.0.0.1/");
+    // Prefixing the normalized pathname with "." keeps it under /preview/{port}/
+    // even when the target path itself resembles a scheme or contains dot segments.
+    u = new URL("." + target.pathname, base);
+    u.search = target.search;
+    u.hash = target.hash;
+  }
   if (selectedTenant) u.searchParams.set("tenant", selectedTenant);
   return u.toString();
 }

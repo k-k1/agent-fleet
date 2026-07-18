@@ -100,17 +100,11 @@ The shared host is memory-constrained; build tools are the main cause of OOM tro
 - For long-running servers, open the port from the workspace action bar's "Preview" control instead of leaving ad-hoc processes up.
 
 ## Headless browser (UI verification / screenshots)
-Chromium's runtime libraries and fonts (DejaVu + Noto CJK — Japanese renders correctly)
-are baked into the image; the browser binary is not. To verify web UIs headlessly:
-- One-time per user (persists in `~/.cache/ms-playwright` across container recreation):
-  `npm i playwright-core && npx playwright-core install chromium`
-  - **Run the `npm i` in a throwaway/scratch dir, NOT inside an app package dir**
-    (e.g. `~/repos/*/console`): `npm i` rewrites the nearest `package.json` /
-    `package-lock.json`, so doing it in the app dirties its manifest with a
-    `playwright-core` dep the app never imports (this has happened — leftover
-    uncommitted changes on `main`). Only the browser under `~/.cache/ms-playwright`
-    needs to persist; the npm package can live in scratch. Committed E2E belongs in
-    `console-e2e/` (`@playwright/test`), not `console/`.
+The fixed-version `chromium` binary, its runtime libraries, and fonts (DejaVu + Noto
+CJK — Japanese renders correctly) are baked into the image. Use `chromium --headless`
+directly, or point a browser automation library at `/usr/bin/chromium`; no per-user
+browser download is required. Committed E2E belongs in `console-e2e/`
+(`@playwright/test`), not `console/`.
 - Run headless and short-lived; close the browser when done (memory-constrained host).
   Screenshots and WebGL (SwiftShader) work; there is no display for headful runs.
 

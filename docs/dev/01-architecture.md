@@ -31,7 +31,7 @@
 ## 1.3 3 プロセス構成（local/Docker が既定）
 
 ```
-Browser (Console SPA: React+Vite+zustand, xterm.js)
+Browser (Console SPA: React+Vite+zustand, xterm.js + BrowserPane canvas)
    │ HTTPS / WSS
    ▼
 [エッジ]  Caddy(自動TLS, compose) / Tailscale Funnel / ALB … 運用者選択（09 §9.3）
@@ -44,7 +44,7 @@ Control Plane (Go 常駐, CP_ADDR 既定 :8080 / compose 127.0.0.1:8099)
    │  ・MetadataStore (SQLite 既定 | Postgres)
    │  ・内部 git プロバイダ / MCP / 監査 / egress / memo / reaper
    │
-   │  中継: REST(proxyAgentREST) / SSE(proxyAgentStream) / WS(/ws/terminal ↔ /ws/pty)
+   │  中継: REST / SSE / terminal WS / browser REST+WS / preview
    │  認証: Bearer AGENT_TOKEN（per-container、CP が起動時に注入）
    ▼
 Workspace Agent (Go, per-user コンテナ内, AGENT_ADDR 既定 :7700)
@@ -53,6 +53,7 @@ Workspace Agent (Go, per-user コンテナ内, AGENT_ADDR 既定 :7700)
    │  ・tmux/PTY（Claude、shell、SSM、CLI を選んだ Codex / opencode）
    │  ・git / fs / connections（暗号ストア secrets.enc）
    │  ・チャット（headless CLI）/ transcript / usage
+   │  ・BrowserManager（Chromium/CDP、Page、JPEG screencast、入力）
    │  ・/proxy/{port} … コンテナ内サービスへの preview 中継
    ▼
 共有 runtime または CLI エージェント + git working copy（~/repos）
@@ -148,4 +149,5 @@ Console: Repos → URL 入力 → CP /api/repos → Agent: git clone
 | AWS アダプタ（ECS/EFS/SSM・CFN）| 🚧 実装済・実運用実績なし（[09](09-deploy.md)）|
 | KMS/Vault custodian | 📋 seam のみ |
 | agy（Antigravity CLI）kind | 📋 [decisions/0008](../decisions/0008-antigravity-cli-agent-kind.md) のみ |
+| コンテナ内ブラウザペイン | ✅ MVP実装・W5ライブ結線検証済み（[decisions/0018](../decisions/0018-container-browser-pane.md) / [設計31](../31-container-browser-pane.md)）|
 | Go 内部リファクタ | 大半を統合済み（CP 分割、Agent `internal/`・エージェント縦割り）。残作業は [docs/23](../23-go-refactor.md)、現配置は [90](90-code-map.md) |
