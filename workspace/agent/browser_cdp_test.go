@@ -30,7 +30,15 @@ func TestPipeCDPEventQueueFailsClosedWithoutWaiterGoroutines(t *testing.T) {
 	if got := len(p.events); got != 1 {
 		t.Fatalf("event queue length = %d, want fixed capacity 1", got)
 	}
-	for _, method := range []string{"Fetch.requestPaused", "Page.screencastFrame", "Target.targetCrashed"} {
+	// Screencast frames are lossy: a saturated queue drops them rather than killing
+	// Chromium, so overflow must be a silent drop, not errBrowserCDPEventOverflow.
+	if err := p.dispatch([]byte(`{"method":"Page.screencastFrame","sessionId":"s","params":{}}`)); err != nil {
+		t.Fatalf("screencast frame overflow = %v, want silent drop", err)
+	}
+	if got := len(p.events); got != 1 {
+		t.Fatalf("screencast frame grew queue to %d", got)
+	}
+	for _, method := range []string{"Fetch.requestPaused", "Target.targetCrashed"} {
 		err := p.dispatch([]byte(`{"method":"` + method + `","sessionId":"s","params":{}}`))
 		if !errors.Is(err, errBrowserCDPEventOverflow) {
 			t.Fatalf("%s overflow = %v, want errBrowserCDPEventOverflow", method, err)

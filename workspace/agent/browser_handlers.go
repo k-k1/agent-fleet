@@ -265,13 +265,20 @@ func (v *browserViewer) handleControl(data []byte) bool {
 			return true
 		}
 		v.page.mu.Lock()
+		unchanged := v.page.viewport.Width == vp.Width && v.page.viewport.Height == vp.Height
 		v.page.viewport = vp
 		v.page.mu.Unlock()
+		if unchanged {
+			// Console re-sends its current size right after attaching. Restarting the
+			// screencast for an identical viewport only churns the cast and risks
+			// mixing old and new frames, so skip the redundant device-metrics and
+			// stop/start round-trip entirely.
+			return true
+		}
 		if !v.call("Emulation.setDeviceMetricsOverride", map[string]any{"width": vp.Width, "height": vp.Height, "deviceScaleFactor": 1, "mobile": false}, nil) {
 			return true
 		}
-		v.page.stopScreencast()
-		_ = v.page.startScreencast()
+		v.page.restartScreencastForResize()
 	case "mouse":
 		v.handleMouse(data)
 	case "wheel":
