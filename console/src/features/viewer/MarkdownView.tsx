@@ -8,7 +8,7 @@ import { useSettings } from "../../lib/settings.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { t } from "../../lib/i18n/index.ts";
 import { useSessionsStore } from "../sessions/store.ts";
-import { openSessionChat } from "../sessions/open.ts";
+import { openSessionChat, openSessionChatSplit } from "../sessions/open.ts";
 import { openCommit } from "../scm/open.ts";
 
 // MarkdownView renders Markdown to sanitized HTML, highlights fenced code blocks,
@@ -35,6 +35,11 @@ interface MarkdownViewProps {
   /** openInNew is true for Ctrl/Cmd-click or a middle click. */
   onOpenFile?: (path: string, line?: number, column?: number, openInNew?: boolean) => void;
   onOpenDir?: (path: string) => void; // a relative link to a directory → reveal in FILES
+  // Click on an auto-linked session slug. openInNew is true for Ctrl/Cmd / middle click.
+  // Omitted → the default: plain click reuses the active pane (openSessionChat), a modified
+  // click opens a new pane. A surface whose own pane must not be replaced (the assistant
+  // chat) passes this to force a new pane on every click.
+  onOpenSession?: (name: string, openInNew?: boolean) => void;
 }
 
 export function MarkdownView({
@@ -46,6 +51,7 @@ export function MarkdownView({
   streaming = false,
   onOpenFile,
   onOpenDir,
+  onOpenSession,
 }: MarkdownViewProps) {
   const ref = useRef<HTMLDivElement>(null);
   const toast = useToast();
@@ -57,8 +63,10 @@ export function MarkdownView({
   // document and re-rendered mermaid async, making the preview width flap.
   const onOpenFileRef = useRef(onOpenFile);
   const onOpenDirRef = useRef(onOpenDir);
+  const onOpenSessionRef = useRef(onOpenSession);
   onOpenFileRef.current = onOpenFile;
   onOpenDirRef.current = onOpenDir;
+  onOpenSessionRef.current = onOpenSession;
 
   useEffect(() => {
     const el = ref.current;
@@ -104,7 +112,12 @@ export function MarkdownView({
     // creates (no href) aren't reclassified as file links; skips code / pre / existing
     // anchors like renderEmoji does. A slug only links when the session actually exists;
     // a hash links optimistically and is verified against the repo on click.
-    linkifyRefs(el, repo, (message) => toast(message));
+    linkifyRefs(el, repo, (message) => toast(message), (name, openInNew) => {
+      const cb = onOpenSessionRef.current;
+      if (cb) cb(name, openInNew);
+      else if (openInNew) openSessionChatSplit(name);
+      else openSessionChat(name);
+    });
 
     // VS Code-style sticky headings: when this markdown is inside a scroll container
     // (.md-scroll — the Doc / File viewers, not chat bubbles), pin the heading path of
@@ -226,7 +239,12 @@ const SLUG_RE = "s[a-z2-7]{6}"; // randSlug: "s" + 6 base32-lower chars (a-z, 2-
 // the two alternatives never match the same token — the commit branch owns bare hex.
 const REF_RE = new RegExp(`\\b(?:${COMMIT_RE}|${SLUG_RE})\\b`, "g");
 
-function linkifyRefs(root: HTMLElement, repo: string | null, onError: (message: string) => void) {
+function linkifyRefs(
+  root: HTMLElement,
+  repo: string | null,
+  onError: (message: string) => void,
+  openSession: (name: string, openInNew: boolean) => void,
+) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(n) {
       if (!n.nodeValue || !/[0-9a-z]/i.test(n.nodeValue)) return NodeFilter.FILTER_REJECT;
@@ -253,9 +271,9 @@ function linkifyRefs(root: HTMLElement, repo: string | null, onError: (message: 
       if (isCommit) {
         if (repo) a = makeCommitLink(token, repo, onError);
       } else {
-        // slug shape (s\d+): link only if that session exists right now
+        // slug shape: link only if that session exists right now
         const exists = useSessionsStore.getState().sessions.some((s) => s.name === token);
-        if (exists) a = makeSessionLink(token);
+        if (exists) a = makeSessionLink(token, openSession);
       }
       if (a) {
         if (m.index > last) out.appendChild(document.createTextNode(text.slice(last, m.index)));
@@ -308,22 +326,28 @@ function makeCommitLink(sha: string, repo: string, onError: (message: string) =>
 }
 
 // makeSessionLink builds a non-navigating anchor that opens a session's chat mirror.
-function makeSessionLink(name: string): HTMLAnchorElement {
+// Modifier keys follow the same convention as file links (wireLinks): a plain click / Enter
+// is the default open, while Ctrl/Cmd-click and a middle click force a new pane (openInNew).
+function makeSessionLink(name: string, openSession: (name: string, openInNew: boolean) => void): HTMLAnchorElement {
   const a = document.createElement("a");
   a.className = "md-ref-link md-session-link";
   a.textContent = name;
   a.setAttribute("role", "link");
   a.tabIndex = 0;
   a.title = t("view.open_session", { name });
-  const open = () => openSessionChat(name);
   a.addEventListener("click", (e) => {
     e.preventDefault();
-    open();
+    openSession(name, e.ctrlKey || e.metaKey);
+  });
+  a.addEventListener("auxclick", (e) => {
+    if (e.button !== 1) return; // middle click → new pane
+    e.preventDefault();
+    openSession(name, true);
   });
   a.addEventListener("keydown", (e) => {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      open();
+      openSession(name, e.ctrlKey || e.metaKey);
     }
   });
   return a;
