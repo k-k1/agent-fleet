@@ -278,6 +278,119 @@ func TestBrowserScreencastAckPacesCaptureBeforeNextFrame(t *testing.T) {
 	}
 }
 
+func TestBrowserScreencastAbsorbsInFlightBurst(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	interval := 20 * time.Millisecond
+	m := newBrowserManager(browserManagerConfig{
+		MaxPages: 1, DetachedGrace: time.Hour, ChromiumIdle: time.Hour,
+		CommandTimeout: time.Second, FrameInterval: interval, JPEGQuality: 70,
+		CDPFactory: func(context.Context) (browserCDP, error) { return cdp, nil },
+	})
+	t.Cleanup(m.Close)
+	created, err := m.Create(browserCreateRequest{Port: 3000, Path: "/", Viewport: browserViewportRequest{Width: 900, Height: 600, DeviceScaleFactor: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	p := m.pages[created.ID]
+	m.mu.Unlock()
+	v := &browserViewer{page: p, control: make(chan browserOutbound, 4), done: make(chan struct{})}
+	p.mu.Lock()
+	p.viewer, p.visible = v, true
+	p.mu.Unlock()
+	if err := p.startScreencast(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Real Chromium keeps several frames in flight before it sees an ACK. A burst
+	// far larger than the single-slot buffer must never invalidate the Page.
+	frame := func(id int) browserCDPEvent {
+		raw, _ := json.Marshal(map[string]any{
+			"data": base64.StdEncoding.EncodeToString([]byte{0xff, 0xd8, byte(id)}), "sessionId": id,
+		})
+		return browserCDPEvent{Method: "Page.screencastFrame", SessionID: p.sessionID, Params: raw}
+	}
+	for i := 1; i <= 50; i++ {
+		m.handleEvent(cdp, frame(i))
+	}
+	m.mu.Lock()
+	stillOwned := m.pages[created.ID] == p
+	m.mu.Unlock()
+	if !stillOwned {
+		t.Fatal("in-flight frame burst invalidated the Page (screencast backpressure regression)")
+	}
+
+	// A frame must have been decoded and paced-acked; the Page keeps streaming.
+	select {
+	case got := <-p.latestFrame:
+		if len(got) < 2 || got[0] != 0xff || got[1] != 0xd8 {
+			t.Fatalf("decoded frame is not JPEG: %x", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no frame was decoded from the burst")
+	}
+	if !waitFor(time.Second, func() bool { _, ok := cdp.last("Page.screencastFrameAck"); return ok }) {
+		t.Fatal("no screencast frame was acknowledged")
+	}
+
+	// Latest-only convergence: after the burst settles, a final frame wins.
+	fin, _ := json.Marshal(map[string]any{
+		"data": base64.StdEncoding.EncodeToString([]byte{0xff, 0xd8, 0x99}), "sessionId": 777,
+	})
+	if !waitFor(2*time.Second, func() bool {
+		m.handleEvent(cdp, browserCDPEvent{Method: "Page.screencastFrame", SessionID: p.sessionID, Params: fin})
+		select {
+		case got := <-p.latestFrame:
+			return len(got) == 3 && got[2] == 0x99
+		default:
+			return false
+		}
+	}) {
+		t.Fatal("latest-only buffer never converged to the final frame")
+	}
+}
+
+func TestBrowserViewportSkipsRedundantRestart(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	m := fakeBrowserManager(cdp)
+	t.Cleanup(m.Close)
+	created, err := m.Create(browserCreateRequest{Port: 3000, Path: "/", Viewport: browserViewportRequest{Width: 900, Height: 600, DeviceScaleFactor: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	p := m.pages[created.ID]
+	m.mu.Unlock()
+	v := &browserViewer{page: p, control: make(chan browserOutbound, 8), done: make(chan struct{})}
+	p.mu.Lock()
+	p.viewer, p.visible = v, true
+	p.mu.Unlock()
+	if err := p.startScreencast(); err != nil {
+		t.Fatal(err)
+	}
+
+	countStops := func() int {
+		n := 0
+		for _, method := range cdp.methods() {
+			if method == "Page.stopScreencast" {
+				n++
+			}
+		}
+		return n
+	}
+	before := countStops()
+	// Identical viewport (Console's post-attach resend) must not stop/start the cast.
+	v.handleControl([]byte(`{"type":"viewport","width":900,"height":600}`))
+	if got := countStops(); got != before {
+		t.Fatalf("identical viewport restarted the screencast (%d -> %d stops)", before, got)
+	}
+	// A genuine resize must restart the cast so maxWidth/maxHeight track the change.
+	v.handleControl([]byte(`{"type":"viewport","width":1000,"height":700}`))
+	if !waitFor(time.Second, func() bool { return countStops() > before }) {
+		t.Fatal("a real viewport resize did not restart the screencast")
+	}
+}
+
 func TestBrowserSingleViewerAndDetachedExpiry(t *testing.T) {
 	cdp := newFakeBrowserCDP()
 	m := newBrowserManager(browserManagerConfig{
