@@ -60,6 +60,9 @@ func stopGraceBudget() time.Duration {
 // the halt endpoint's kill-session, minus a SIGKILL landing mid-write.
 func gracefulShutdown(budget time.Duration) {
 	deadline := time.Now().Add(budget)
+	// Chromium owns a temporary profile and a process group. Close its pipe first
+	// so browser pages cannot outlive the Workspace Agent during Stop/recreate.
+	workspaceBrowserManager.Close()
 	live := tmuxx.LiveSessionNames()
 	// managed セッション（docs/27 §10.2-8）: pane の C-c に相当する abort を配る。
 	// turn goroutine が cancelled を刻み status ストアが idle へ戻るので、下の
