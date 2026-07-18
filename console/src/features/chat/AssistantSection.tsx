@@ -12,6 +12,7 @@ import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useDismiss } from "../../lib/useDismiss.ts";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { isTransientErr } from "../../core/api/client.ts";
+import { copyText } from "../../lib/clipboard.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useMenuRoving } from "../../lib/useMenuRoving.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
@@ -20,12 +21,12 @@ import { chatPanes, ordClass, paneCount } from "../../layout/badges.ts";
 import { useChatStore } from "./store.ts";
 import { openChat, openAssistantDraft, convTarget, draftTarget } from "./open.ts";
 import { AssistantModal } from "./AssistantModal.tsx";
+import { ChatTitleModal } from "./ChatTitleModal.tsx";
 import { assistantName, assistantDesc } from "./assistantI18n.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import {
   chatList,
   chatDelete,
-  chatRename,
   assistantList,
   assistantCreate,
   assistantUpdate,
@@ -50,6 +51,7 @@ export function AssistantSection() {
   const [assistants, setAssistants] = useState<Assistant[]>([]);
   const [editing, setEditing] = useState<Assistant | null>(null);
   const [creating, setCreating] = useState(false);
+  const [renaming, setRenaming] = useState<ConversationMeta | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerRef = useRef<HTMLDivElement>(null);
   const pickerMenuRef = useRef<HTMLDivElement>(null);
@@ -159,17 +161,10 @@ export function AssistantSection() {
     }
   };
 
-  const renameConv = async (c: ConversationMeta) => {
-    const name = window.prompt(tr("asst.rename"), c.title);
-    if (name == null) return;
-    const t = name.trim();
-    if (!t || t === c.title) return;
-    try {
-      await chatRename(c.id, t);
-      refresh();
-    } catch {
-      toast(tr("asst.rename_failed"));
-    }
+  const copyId = (c: ConversationMeta) => {
+    void copyText(c.id).then((ok) =>
+      ok ? toast(tr("asst.id_copied", { id: c.id }), { kind: "success" }) : toast(tr("common.copy_failed")),
+    );
   };
 
   const actions = (
@@ -270,7 +265,7 @@ export function AssistantSection() {
                   <button
                     type="button"
                     className="chat-open"
-                    title={c.title}
+                    title={`${c.title}\nID: ${c.id}`}
                     onClick={(e) => (e.ctrlKey || e.metaKey ? openTargetInNew(convTarget(c.id)) : openChat(c.id))}
                     onMouseDown={(e) => e.button === 1 && e.preventDefault()}
                     onAuxClick={(e) => e.button === 1 && openTargetInNew(convTarget(c.id))}
@@ -311,7 +306,10 @@ export function AssistantSection() {
                     </span>
                   ) : null}
                   <span className="chat-actions">
-                    <button type="button" className="ui-btn ui-btn-ghost ui-iconbtn chat-del" title={tr("asst.rename")} onClick={() => void renameConv(c)}>
+                    <button type="button" className="ui-btn ui-btn-ghost ui-iconbtn chat-del" title={tr("asst.copy_id")} onClick={() => copyId(c)}>
+                      <Icon name="copy" />
+                    </button>
+                    <button type="button" className="ui-btn ui-btn-ghost ui-iconbtn chat-del" title={tr("asst.rename")} onClick={() => setRenaming(c)}>
                       <Icon name="edit" />
                     </button>
                     <button type="button" className="ui-btn ui-btn-ghost ui-iconbtn chat-del" title={tr("asst.delete_chat")} onClick={() => void removeConv(c.id)}>
@@ -364,6 +362,14 @@ export function AssistantSection() {
             setEditing(null);
           }}
           onSave={saveAssistant}
+        />
+      )}
+      {renaming && (
+        <ChatTitleModal
+          id={renaming.id}
+          title={renaming.title}
+          onClose={() => setRenaming(null)}
+          onSaved={refresh}
         />
       )}
     </>

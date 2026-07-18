@@ -30,6 +30,7 @@ import {
   openSessionChatSplit,
 } from "./open.ts";
 import { useSessionUI } from "./ui.ts";
+import { useSessionsStore } from "./store.ts";
 import type { SessionActions } from "./useSessionActions.tsx";
 import type { Session, SessionKind } from "../../types/session.ts";
 
@@ -51,6 +52,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
   const openRename = useSessionUI((u) => u.openRename);
   const openBranchRename = useSessionUI((u) => u.openBranchRename);
   const openSsmResume = useSessionUI((u) => u.openSsmResume);
+  const startSession = useSessionsStore((st) => st.start);
   const { hover, setHover } = usePaneHover();
   const toast = useToast();
   const tr = useT();
@@ -222,6 +224,22 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
                       setMenuOpen(false);
                       if (s.kind === "ssm") openSsmResume(s.name, false);
                       else openSessionTerminal(s.name);
+                    }}
+                  >
+                    <Icon name="play" /> {tr("srow.resume")}
+                  </button>
+                )}
+                {/* Chat-capable kinds (claude/codex/opencode) have no in-menu resume today —
+                    opening the row shows the mirror read-only, and its own "再開して続ける"
+                    button is the only resume path. This mirrors that same POST /start then
+                    opens the chat pane directly. */}
+                {!s.alive && !dead && running && agentOf(s.kind).caps.chat && (
+                  <button
+                    type="button"
+                    className="ui-menu-item"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      void startSession(s.name).then(() => openSessionChat(s.name));
                     }}
                   >
                     <Icon name="play" /> {tr("srow.resume")}
