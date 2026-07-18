@@ -58,6 +58,10 @@ HTTP アプリ通信は Chromium と対象プロセスの loopback 内で完結�
 - amd64 / arm64 の双方で同じ `chromium` 実行名を提供し、ビルド smoke で `chromium --version` を確認する。
 - バージョンはイメージ build の入力として追跡し、コンテナ起動時のネットワーク install に依存しない。
 - Chromium は非 root の `dev` として動かし、専用の一時 user-data-dir を使用する。永続ホームを既定 profile にしない。
+- Debian `chromium-sandbox`のhelperは`root:root 4755`をbuild時に検証する。Docker runtimeはnamespace作成用の
+  `SYS_ADMIN`をbounding setへ追加するが、通常の`dev` processにはeffective capabilityを付けず、image内でsetuid/setgidを
+  保持する実行ファイルは`chrome-sandbox`だけにする。製品起動ではsandboxを無効化せず、Docker/ECSの小さい`/dev/shm`へ
+  依存しないよう`--disable-dev-shm-usage`を製品とsmokeで共通にする。
 
 実装時に Debian package と Playwright 配布 Chromium のサイズ・multi-arch・更新運用をスパイク比較し、
 最終選定を同 ADR に追記する。Agent と wire 契約はどちらを選んでも変えない。
@@ -73,6 +77,8 @@ HTTP アプリ通信は Chromium と対象プロセスの loopback 内で完結�
 - Page の作成・破棄を直列化し、Chromium crash 時は全 Page を `crashed` に遷移させる。
 - raw CDP debugging port を使う場合は `127.0.0.1` のみ。可能なら pipe 接続を優先する。
 - Agent 終了時は process group と一時 profile を回収する。
+- pipe CDPは1 message 8 MiB、event 256件かつ合計32 MiBを上限とし、security/lifecycle/screencast eventを飽和時に
+  goroutineへ逃がさない。必須eventを収容できなければChromiumを停止して全Pageを`crashed`へ遷移させる。
 
 ### Control Plane
 
@@ -208,11 +214,15 @@ Console log は token/cookie を含む可能性があるのでDBへ永続化・�
 | visible 時 | 最大 12 fps、JPEG quality 70 |
 | hidden 時 | screencast停止 |
 | frame queue | Page ごとに最新1枚 |
+| CDP入力 | 1 message 8 MiB、event queue 256件かつ合計32 MiB |
 | viewer 切断後の猶予 | 60秒、その後 Page 破棄 |
 
 CDP eventを無制限にWebSocketへ積まない。Pageごとに容量1のlatest-frame slotを持ち、新しいframe到着時に未送信の
-古いframeを置換する。CDPのscreencast ackとWebSocket write deadlineを必ず設け、遅いクライアントがChromium全体を
-止めないようにする。visibility=false では `Page.stopScreencast`、再表示で再開する。
+古いframeを置換する。Pageごとにbase64 decoderを1 worker、未処理CDP frameを1件だけ持ち、`Page.screencastFrameAck`を
+`1/maxFPS`後まで返さない。ChromiumはACKまで次frameを生成しないため、capture/encode自体を既定12fps以下に制限する。
+WebSocket側にも同じ間隔の送信tickerとwrite deadlineを設ける。CDP event queueは件数256・合計32 MiBの双方で固定し、
+必須eventがいずれかの上限で飽和した場合はChromiumを停止して全Pageを`crashed`へ遷移し、待機goroutineやメモリを
+増やして継続しない。visibility=falseでは`Page.stopScreencast`、再表示で再開する。
 
 Browser接続はWorkspaceをwarmに保つが、非表示通知後またはsocket切断後の猶予Pageはwarm接続として数えない。
 Chromium processはPageが0になってから数分のidle timeoutで終了し、次回遅延起動する。
@@ -387,7 +397,8 @@ JSONとWebSocket messageだけを契約としてfakeで進める。これによ�
 
 1. Chromium配布はamd64/arm64で同じ実行名を持つDebian `chromium`を採用し、Debian revisionまで固定した。
 2. AgentのCDP clientは外部libraryへ公開型を依存させず、`--remote-debugging-pipe`の最小adapterを実装した。
-3. screencastの実効fps/画質は12fps/quality 70を初期値にした。完成イメージでの実測により下げる可能性がある。
+3. screencastはPageごとのACK pacingによりcapture/encodeを最大12fps、quality 70にした。2 Page同時の
+   アニメーションfixtureで各Pageのframe数が上限内であることをsmokeする。完成イメージのCPU/帯域実測で下げる可能性がある。
 4. viewer切断猶予は60秒、Chromium idle timeoutは120秒を既定にした。いずれも環境変数で調整できる。
 5. target未listenはPageを保持したまま`target-unreachable`へ遷移し、reloadで復旧できる実装とした。
 
@@ -402,20 +413,27 @@ W1〜W4を設計commitの子孫である統合ブランチへ順番に取り込�
 Page破棄を往復させる。通常のunit suiteでは環境依存を避けてskipし、次で明示実行する。
 
 ```bash
-AF_BROWSER_LIVE_E2E=1 AF_CHROMIUM_BIN=/path/to/chromium \
+AF_BROWSER_LIVE_E2E=1 AF_BROWSER_LIVE_ALLOW_NO_SANDBOX=1 AF_CHROMIUM_BIN=/path/to/playwright-chromium \
   go -C control-plane test -run '^TestBrowserLiveW2W3W4$' -count=1
 ```
+
+上記の`ALLOW_NO_SANDBOX`はsetuid helperを持たないローカルPlaywright版へテスト専用CDP factoryを注入する印で、
+製品`launchPipeCDP`にはno-sandbox切替自体を持たせない。完成Workspaceイメージの`deploy/local/e2e-smoke.sh`は製品Docker
+runtimeと同じ`--init --memory ... --cap-add=SYS_ADMIN`を使い、`dev(1000)`、`root:root 4755` helper、helper以外の
+setuid/setgidなし、`NoNewPrivs=0`、devの`SYS_ADMIN` effectiveなし/helperのbounding setにはあり、製品と同じpipe CDP/
+`--disable-dev-shm-usage`、2 Page同時描画を必須検証する。
 
 統合時の検証結果:
 
 | 対象 | 結果 |
 |------|------|
-| Workspace Agent | `go test ./...` 304件、`go vet ./...`、`gofmt`、実Chromium smoke 1件が成功 |
-| Control Plane | `go test ./...` 147件、`go vet ./...`、`gofmt`が成功 |
+| Workspace Agent | `go test ./...` 309件、`go test -race ./...`、`go vet ./...`、`gofmt`、実Chromium 1/2 Page smokeが成功 |
+| Control Plane | `go test ./...` 147件、`go test -race ./...`、`go vet ./...`、`gofmt`が成功 |
 | Console | vitest 36 files / 322件、`tsc --noEmit`、production buildが成功 |
 | W2↔W3↔W4ライブ結線 | REST作成/破棄、WS text/binary、JPEG、状態、console、日本語入力の往復が成功 |
 
-このWorkspaceにはDocker CLIがないため、完成Workspaceイメージのamd64/arm64 build、Debian Chromium固定版、
-非root起動、日本語font smokeは未実施でimage CI待ち。Node HMRとSpring Boot相当redirect/absolute assetを完成イメージで
+このWorkspaceにはDocker互換runtime/socketがないため、完成Workspaceイメージのamd64/arm64 build、Debian setuid sandbox、
+非root起動、日本語font smokeの実行結果はimage CI待ち。smoke自体はこれらを必須条件として失敗するよう更新した。
+Node HMRとSpring Boot相当redirect/absolute assetを完成イメージで
 確認するフルE2E、cgroupメモリ・fps・帯域の実機計測も同じCI/実フリート検証へ残す。現在の12fps、quality 70、
 Page上限2、detached grace 60秒は設計既定のままとする。

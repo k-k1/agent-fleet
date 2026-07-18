@@ -128,6 +128,13 @@ func (d *dockerRuntime) Start(ctx context.Context) error {
 		// tini also forwards docker stop's SIGTERM to the Agent (graceful stop).
 		"--init",
 		"--memory", d.memory,
+		// Chromium's setuid sandbox creates PID/network namespaces. Docker's
+		// default capability bounding set omits SYS_ADMIN, so the root-owned
+		// helper cannot create those namespaces even though the container's
+		// normal dev process has no effective capabilities. The image removes
+		// setuid bits from every other executable, leaving chrome-sandbox as the
+		// sole path that can acquire this bounded capability.
+		"--cap-add=SYS_ADMIN",
 		"-p", fmt.Sprintf("127.0.0.1:%s:7700", d.agentPort),
 		"-v", home + ":/home/dev",
 		"-v", claudeCfg + ":/var/lib/af/claude",

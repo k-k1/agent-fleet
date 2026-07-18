@@ -98,9 +98,14 @@ func startLiveBrowserAgent(t *testing.T, chromium string) (string, func()) {
 		"AF_BROWSER_LIVE_SERVER=1",
 		"AF_BROWSER_LIVE_ADDR="+addr,
 		"AF_CHROMIUM_BIN="+chromium,
-		"AF_CHROMIUM_NO_SANDBOX=1",
 		"AGENT_TOKEN=w5-live-token",
 	)
+	// Playwright's cache binary has no Debian setuid helper. Local runs may opt
+	// into its explicit test-only escape hatch; the product-condition sandbox
+	// check is workspace-agent browser-smoke inside the completed image.
+	if os.Getenv("AF_BROWSER_LIVE_ALLOW_NO_SANDBOX") == "1" {
+		cmd.Env = append(cmd.Env, "AF_BROWSER_LIVE_ALLOW_NO_SANDBOX=1")
+	}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
