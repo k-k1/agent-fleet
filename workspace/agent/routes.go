@@ -40,6 +40,11 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /sessions/{name}/driver", handleSessionDriver)
 	mux.HandleFunc("POST /sessions/{name}/paste-image", handlePasteImage)
 	mux.HandleFunc("GET /sessions/{name}/pasted/{file}", handlePastedImage)
+	// Memo image attachments (docs/21 画像添付) — membership-scoped, so keyed to the
+	// container rather than a session (memo_paste.go). CP proxies /api/memos/* here.
+	mux.HandleFunc("POST /memos/paste-image", handleMemoPasteImage)
+	mux.HandleFunc("GET /memos/images/{file}", handleMemoPastedImage)
+	mux.HandleFunc("POST /memos/images/gc", handleMemoImageGC)
 	mux.HandleFunc("GET /sessions/{name}/status", handleSessionStatus)
 	mux.HandleFunc("GET /sessions/{name}/output", handleSessionOutput)
 	mux.HandleFunc("GET /sessions/{name}/ssm-login", handleSSMLoginStatus)

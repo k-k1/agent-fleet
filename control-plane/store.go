@@ -120,8 +120,12 @@ type SSMHost struct {
 type Memo struct {
 	ID, MembershipID, Repo, Category string
 	Kind, Body, RefPath              string
-	Position                         int
-	CreatedAt, SentAt                string
+	// Attachments is a JSON array of {path,name} image attachments (docs/21 画像添付),
+	// "" = none. path is an absolute in-container path under ~/.cache/agent-fleet/
+	// memo-images; the bytes live in the workspace, this only references them.
+	Attachments       string
+	Position          int
+	CreatedAt, SentAt string
 }
 
 // MemoCategory persists a memo category as a first-class row (docs/21 UI刷新), so a

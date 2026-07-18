@@ -271,6 +271,15 @@ func registerMemoRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("PATCH /api/memos/{id}", memo.withMembership(memo.update))
 	mux.HandleFunc("DELETE /api/memos/{id}", memo.withMembership(memo.delete))
 
+	// Memo image attachments (docs/21 画像添付) — upload/serve/GC proxied verbatim to the
+	// workspace Agent (/api stripped -> /memos/*), which stores the bytes per-container.
+	// These are more specific than POST /api/memos so the mux routes them to the proxy.
+	proxy := newAgentProxyAPI(cfg.mgr)
+	rest := proxy.withResolved(proxy.rest)
+	mux.HandleFunc("POST /api/memos/paste-image", rest)
+	mux.HandleFunc("GET /api/memos/images/{file}", rest)
+	mux.HandleFunc("POST /api/memos/images/gc", rest)
+
 	// First-class categories (docs/21 UI刷新): add empty, rename (cascades), reorder.
 	mux.HandleFunc("GET /api/memo-categories", memo.withMembership(memo.listCategories))
 	mux.HandleFunc("POST /api/memo-categories", memo.withMembership(memo.createCategory))

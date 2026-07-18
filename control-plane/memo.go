@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path"
 	"sort"
 	"strings"
 	"time"
@@ -26,23 +27,72 @@ func memoRetainBefore() string {
 	return time.Now().UTC().Add(-memoRetentionDays * 24 * time.Hour).Format(time.RFC3339)
 }
 
+// memoAttachment is one image attached to a memo (docs/21 画像添付). Path is the
+// absolute in-container path returned by POST /api/memos/paste-image (under
+// ~/.cache/agent-fleet/memo-images); Name is its basename for display.
+type memoAttachment struct {
+	Path string `json:"path"`
+	Name string `json:"name"`
+}
+
 // memoDTO is the JSON wire shape. sentAt is "" for an unsent memo.
 type memoDTO struct {
-	ID        string `json:"id"`
-	Repo      string `json:"repo"`
-	Category  string `json:"category"`
-	Kind      string `json:"kind"`
-	Body      string `json:"body"`
-	RefPath   string `json:"refPath"`
-	Position  int    `json:"position"`
-	CreatedAt string `json:"createdAt"`
-	SentAt    string `json:"sentAt"`
+	ID          string           `json:"id"`
+	Repo        string           `json:"repo"`
+	Category    string           `json:"category"`
+	Kind        string           `json:"kind"`
+	Body        string           `json:"body"`
+	RefPath     string           `json:"refPath"`
+	Attachments []memoAttachment `json:"attachments,omitempty"`
+	Position    int              `json:"position"`
+	CreatedAt   string           `json:"createdAt"`
+	SentAt      string           `json:"sentAt"`
 }
 
 func memoToDTO(m Memo) memoDTO {
 	return memoDTO{ID: m.ID, Repo: m.Repo, Category: m.Category, Kind: m.Kind,
-		Body: m.Body, RefPath: m.RefPath, Position: m.Position,
-		CreatedAt: m.CreatedAt, SentAt: m.SentAt}
+		Body: m.Body, RefPath: m.RefPath, Attachments: parseMemoAttachments(m.Attachments),
+		Position: m.Position, CreatedAt: m.CreatedAt, SentAt: m.SentAt}
+}
+
+// parseMemoAttachments decodes the stored JSON attachments column into a slice
+// (nil for an empty/invalid column, so a corrupt row degrades to "no images"
+// rather than failing the whole list).
+func parseMemoAttachments(raw string) []memoAttachment {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var out []memoAttachment
+	if json.Unmarshal([]byte(raw), &out) != nil {
+		return nil
+	}
+	return out
+}
+
+// normalizeAttachments trims + validates the incoming attachments and marshals them
+// back to the JSON string stored in the column ("" for none). Each attachment needs a
+// non-empty path; a missing name is derived from the path's basename.
+func normalizeAttachments(in []memoAttachment) (string, *apiError) {
+	out := make([]memoAttachment, 0, len(in))
+	for _, a := range in {
+		p := strings.TrimSpace(a.Path)
+		if p == "" {
+			return "", &apiError{http.StatusBadRequest, "bad_attachment", "attachment path is required"}
+		}
+		name := strings.TrimSpace(a.Name)
+		if name == "" {
+			name = path.Base(p)
+		}
+		out = append(out, memoAttachment{Path: p, Name: name})
+	}
+	if len(out) == 0 {
+		return "", nil
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return "", internalErr(err)
+	}
+	return string(b), nil
 }
 
 // memoAPI is the memo-queue feature handler set（docs/23 残③ の機能 struct 実例）:
@@ -85,8 +135,13 @@ func (a memoAPI) list(w http.ResponseWriter, r *http.Request, _ Identity, mv Mem
 }
 
 // validateMemo trims + checks a memo DTO into a normalized Memo (id/created_at/sent_at
-// unset). kind must be "file" (ref_path required) or "text" (body required).
+// unset). kind must be "file" (ref_path required) or "text" (body OR image attachments
+// required — an image-only memo shared from a phone carries no body).
 func validateMemo(mv MembershipView, in memoDTO) (Memo, *apiError) {
+	atts, aerr := normalizeAttachments(in.Attachments)
+	if aerr != nil {
+		return Memo{}, aerr
+	}
 	m := Memo{
 		MembershipID: mv.MembershipID,
 		Repo:         strings.TrimSpace(in.Repo),
@@ -94,6 +149,7 @@ func validateMemo(mv MembershipView, in memoDTO) (Memo, *apiError) {
 		Kind:         strings.TrimSpace(in.Kind),
 		Body:         strings.TrimSpace(in.Body),
 		RefPath:      strings.TrimSpace(in.RefPath),
+		Attachments:  atts,
 		Position:     in.Position,
 	}
 	switch m.Kind {
@@ -102,8 +158,8 @@ func validateMemo(mv MembershipView, in memoDTO) (Memo, *apiError) {
 			return Memo{}, &apiError{http.StatusBadRequest, "bad_ref", "refPath is required for kind=file"}
 		}
 	case "text":
-		if m.Body == "" {
-			return Memo{}, &apiError{http.StatusBadRequest, "bad_body", "body is required for kind=text"}
+		if m.Body == "" && atts == "" {
+			return Memo{}, &apiError{http.StatusBadRequest, "bad_body", "body or attachments is required for kind=text"}
 		}
 	default:
 		return Memo{}, &apiError{http.StatusBadRequest, "bad_kind", "kind must be file or text"}
@@ -142,11 +198,12 @@ func (a memoAPI) create(w http.ResponseWriter, r *http.Request, _ Identity, mv M
 // memoPatch carries partial edits. Nil fields are left unchanged so a reorder can send
 // only position and an assistant tidy-up can send only body/category.
 type memoPatch struct {
-	Repo     *string `json:"repo"`
-	Category *string `json:"category"`
-	Body     *string `json:"body"`
-	RefPath  *string `json:"refPath"`
-	Position *int    `json:"position"`
+	Repo        *string           `json:"repo"`
+	Category    *string           `json:"category"`
+	Body        *string           `json:"body"`
+	RefPath     *string           `json:"refPath"`
+	Attachments *[]memoAttachment `json:"attachments"`
+	Position    *int              `json:"position"`
 }
 
 // memoUpdateFor applies a partial edit to an owned memo (ownership by membership).
@@ -171,14 +228,21 @@ func memoUpdateFor(ctx context.Context, store MemoStore, membershipID, id string
 	if in.RefPath != nil {
 		cur.RefPath = strings.TrimSpace(*in.RefPath)
 	}
+	if in.Attachments != nil {
+		atts, aerr := normalizeAttachments(*in.Attachments)
+		if aerr != nil {
+			return memoDTO{}, aerr
+		}
+		cur.Attachments = atts
+	}
 	if in.Position != nil {
 		cur.Position = *in.Position
 	}
 	if cur.Kind == "file" && cur.RefPath == "" {
 		return memoDTO{}, &apiError{http.StatusBadRequest, "bad_ref", "refPath is required for kind=file"}
 	}
-	if cur.Kind == "text" && cur.Body == "" {
-		return memoDTO{}, &apiError{http.StatusBadRequest, "bad_body", "body is required for kind=text"}
+	if cur.Kind == "text" && cur.Body == "" && cur.Attachments == "" {
+		return memoDTO{}, &apiError{http.StatusBadRequest, "bad_body", "body or attachments is required for kind=text"}
 	}
 	if err := store.UpdateMemo(ctx, cur); err != nil {
 		return memoDTO{}, internalErr(err)
@@ -209,6 +273,7 @@ func buildFlushMessage(memos []Memo) string {
 	b.WriteString("以下のメモをまとめて処理して。\n")
 	lastCat := "\x00" // sentinel so the first real category (incl. "") emits a heading
 	n := 0
+	var imgPaths []string // absolute in-container image paths, appended once at the end
 	for _, m := range memos {
 		if m.Category != lastCat {
 			lastCat = m.Category
@@ -220,17 +285,40 @@ func buildFlushMessage(memos []Memo) string {
 			n = 0
 		}
 		n++
-		if m.Kind == "file" {
+		atts := parseMemoAttachments(m.Attachments)
+		switch {
+		case m.Kind == "file":
 			fmt.Fprintf(&b, "%d. 対象ファイル: %s\n", n, m.RefPath)
 			if m.Body != "" {
 				b.WriteString("   " + m.Body + "\n")
 			}
-		} else {
+		case m.Body != "":
 			fmt.Fprintf(&b, "%d. %s\n", n, m.Body)
+		default:
+			fmt.Fprintf(&b, "%d. （画像）\n", n)
 		}
+		if len(atts) > 0 {
+			names := make([]string, len(atts))
+			for i, a := range atts {
+				names[i] = a.Name
+				imgPaths = append(imgPaths, a.Path)
+			}
+			b.WriteString("   添付画像: " + strings.Join(names, ", ") + "\n")
+		}
+	}
+	// Machine-facing line (mirrors the paste composer's FILE_PROMPT) so the target
+	// agent opens the attached images with its Read tool. Kept on ONE line and last
+	// so send-keys can't submit early and the human-readable memo body stays clean.
+	if len(imgPaths) > 0 {
+		b.WriteString("\n" + memoImageOpenPrompt + " " + strings.Join(imgPaths, " ") + "\n")
 	}
 	return b.String()
 }
+
+// memoImageOpenPrompt is the agent-facing instruction appended to a flush when memos
+// carry image attachments. English + "Read tool" wording matches the paste-image flow
+// (console/src/lib/pastedImages.ts FILE_PROMPT) so both paths read identically.
+const memoImageOpenPrompt = "Open the following file(s) with the Read tool:"
 
 // handleMemoFlush concatenates the selected memos into one message, sends it once to
 // the session's input, and stamps sent_at on those memos. The ids list unifies the

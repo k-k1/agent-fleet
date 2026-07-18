@@ -1239,12 +1239,12 @@ func (s *sqlStore) DeleteSSMHost(ctx context.Context, id, membershipID string) e
 
 // --- Memo queue (docs/21) --------------------------------------------------------
 
-const memoCols = `SELECT id, membership_id, repo, category, kind, body, ref_path, position, created_at, sent_at FROM memo`
+const memoCols = `SELECT id, membership_id, repo, category, kind, body, ref_path, attachments, position, created_at, sent_at FROM memo`
 
 func scanMemo(row scanner) (Memo, error) {
 	var m Memo
 	err := row.Scan(&m.ID, &m.MembershipID, &m.Repo, &m.Category, &m.Kind,
-		&m.Body, &m.RefPath, &m.Position, &m.CreatedAt, &m.SentAt)
+		&m.Body, &m.RefPath, &m.Attachments, &m.Position, &m.CreatedAt, &m.SentAt)
 	return m, err
 }
 
@@ -1280,18 +1280,18 @@ func (s *sqlStore) GetMemo(ctx context.Context, id string) (Memo, bool, error) {
 
 func (s *sqlStore) CreateMemo(ctx context.Context, m Memo) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO memo(id, membership_id, repo, category, kind, body, ref_path, position, created_at, sent_at)
-		 VALUES(?,?,?,?,?,?,?,?,?,?)`,
-		m.ID, m.MembershipID, m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Position, m.CreatedAt, m.SentAt)
+		`INSERT INTO memo(id, membership_id, repo, category, kind, body, ref_path, attachments, position, created_at, sent_at)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		m.ID, m.MembershipID, m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments, m.Position, m.CreatedAt, m.SentAt)
 	return err
 }
 
 func (s *sqlStore) UpdateMemo(ctx context.Context, m Memo) error {
 	// membership_id in the WHERE so a member can only update their own row.
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE memo SET repo=?, category=?, kind=?, body=?, ref_path=?, position=?
+		`UPDATE memo SET repo=?, category=?, kind=?, body=?, ref_path=?, attachments=?, position=?
 		   WHERE id=? AND membership_id=?`,
-		m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Position, m.ID, m.MembershipID)
+		m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments, m.Position, m.ID, m.MembershipID)
 	return err
 }
 
