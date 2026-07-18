@@ -30,6 +30,7 @@ import { cx } from "../../ui/cx.ts";
 import { isManagedSession } from "../../types/session.ts";
 import type { Session } from "../../types/session.ts";
 import { PaneFind } from "./PaneFind.tsx";
+import { BrowserPane } from "../browser/BrowserPane.tsx";
 
 // Drag payload MIME — identifies a pane-to-pane drag (vs any other drag).
 const DND = "application/x-af-pane";
@@ -260,7 +261,7 @@ export function Pane({
 
       {/* Browser find searches the whole page. Keep Ctrl-F scoped to the active
           read-oriented pane instead; raw terminals continue to receive Ctrl-F. */}
-      <PaneFind rootRef={paneRef} active={!!(single || active)} enabled={!isTerm || showMirror} />
+      <PaneFind rootRef={paneRef} active={!!(single || active)} enabled={pane.content.kind !== "browser" && (!isTerm || showMirror)} />
 
       {/* The terminal stays mounted for any terminal-kind pane; other kinds keep
           the pane's xterm warm in the service (not mounted) until their view
@@ -337,6 +338,9 @@ export function Pane({
           paneId={pane.id}
           active={single || active}
         />
+      )}
+      {pane.content.kind === "browser" && (
+        <BrowserPane paneId={pane.id} port={pane.content.port} path={pane.content.path} />
       )}
     </div>
   );
