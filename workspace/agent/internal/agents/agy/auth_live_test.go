@@ -41,6 +41,12 @@ func TestHandleStartLive(t *testing.T) {
 	if strings.ContainsAny(res.URL, " \n") {
 		t.Fatalf("URL is wrapped/mangled: %q", res.URL)
 	}
+	// …and de-duplicated: the OSC-8 hyperlink rendering doubles the URL in the
+	// stripped buffer (sanitizeAuthURL) — a doubled state param has no spaces
+	// and passes the checks above, so pin the scheme count explicitly.
+	if strings.Count(res.URL, "https://") != 1 {
+		t.Fatalf("URL not de-duplicated: %q", res.URL)
+	}
 	// Drop the pending flow so the agy process doesn't linger.
 	if f := flows.Take(res.FlowID); f != nil {
 		f.Close()
