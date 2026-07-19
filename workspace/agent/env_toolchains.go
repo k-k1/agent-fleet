@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -63,29 +62,8 @@ func readToolchains() toolchains {
 // and resolves /usr/share/zoneinfo/<tz>). IANA names: letters, digits, _ + - / .
 var tzNameRe = regexp.MustCompile(`^[A-Za-z0-9_+./-]{1,64}$`)
 
-// availableJava lists the major versions of the Temurin JDKs baked into the image
-// (dirs like /usr/lib/jvm/temurin-21-jdk-amd64), sorted ascending.
-func availableJava() []string {
-	re := regexp.MustCompile(`^temurin-(\d+)-jdk`)
-	seen := map[string]bool{}
-	if entries, err := os.ReadDir("/usr/lib/jvm"); err == nil {
-		for _, e := range entries {
-			if m := re.FindStringSubmatch(e.Name()); m != nil {
-				seen[m[1]] = true
-			}
-		}
-	}
-	out := make([]string, 0, len(seen))
-	for v := range seen {
-		out = append(out, v)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		a, _ := strconv.Atoi(out[i])
-		b, _ := strconv.Atoi(out[j])
-		return a < b
-	})
-	return out
-}
+// Temurin JDK discovery (installed majors, installable set, JAVA_HOME resolution)
+// lives in jdk.go, which searches both /usr/lib/jvm and the per-user home volume.
 
 // nodeOptions are the versions the Console offers for nvm. "system" keeps the
 // image's base node.
@@ -94,14 +72,13 @@ var nodeOptions = []string{"system", "18", "20", "22", "24"}
 // resolvedToolchains resolves the current selection to concrete values for
 // injection into freshly-launched sessions/shells. node uses the highest installed
 // patch of the chosen major under the home nvm dir (must already be installed —
-// session launch won't run a network install); java globs the baked Temurin; tz is
-// honored only if its zoneinfo exists. Empty strings mean "no override".
+// session launch won't run a network install); java resolves the selected Temurin
+// across the search dirs (/usr/lib/jvm then the home volume); tz is honored only if
+// its zoneinfo exists. Empty strings mean "no override".
 func resolvedToolchains() (javaHome, nodeBin, tz string) {
 	t := readToolchains()
 	if t.Java != "" {
-		if m, _ := filepath.Glob("/usr/lib/jvm/temurin-" + t.Java + "-jdk*"); len(m) > 0 {
-			javaHome = m[0]
-		}
+		javaHome = javaHomeFor(t.Java)
 	}
 	if t.Node != "" && t.Node != "system" {
 		if m, _ := filepath.Glob(filepath.Join(homeDir(), ".nvm", "versions", "node", "v"+t.Node+".*", "bin")); len(m) > 0 {
@@ -180,7 +157,8 @@ func handleToolchainsGet(w http.ResponseWriter, r *http.Request) {
 		"java":           t.Java,
 		"timezone":       t.Timezone,
 		"agentUpdate":    t.AgentUpdate,
-		"java_available": availableJava(),
+		"java_available": javaOptions(),         // offered for selection (installed ∪ installable)
+		"java_installed": installedJavaMajors(), // present on disk now (ready without a download)
 		"node_options":   nodeOptions,
 		"tz_options":     tzOptions,
 	})

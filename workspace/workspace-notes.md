@@ -82,11 +82,22 @@ container; read *your own* limits and usage from inside — do NOT trust `free` 
 
 ## Build memory (important — this has caused real incidents)
 The shared host is memory-constrained; build tools are the main cause of OOM trouble.
-- **No system `gradle` / `mvn` is installed — use the project wrapper** (`./gradlew`, `./mvnw`). A JDK is provided, so the wrapper fetches the version a project pins. Do not `apt install gradle`/`maven` (it will not work and is the wrong version). A project that lacks a wrapper cannot be bootstrapped here (no system `gradle`/`mvn` to run `gradle wrapper`) — commit the wrapper upstream instead.
-  - The provided JDKs live under `/usr/lib/jvm/` (Temurin 8/21/25 as of this writing —
-    `ls /usr/lib/jvm` for the current set). `java` is not on `PATH` and `JAVA_HOME` is
-    unset by default; wrappers resolve their own version. To call `java`/`javac`
-    directly, set `JAVA_HOME` explicitly, e.g. `JAVA_HOME=/usr/lib/jvm/temurin-21-jdk-amd64`.
+- **No system `gradle` / `mvn` is installed — use the project wrapper** (`./gradlew`, `./mvnw`). When a JDK is available the wrapper fetches the version a project pins. Do not `apt install gradle`/`maven` (it will not work and is the wrong version). A project that lacks a wrapper cannot be bootstrapped here (no system `gradle`/`mvn` to run `gradle wrapper`) — commit the wrapper upstream instead.
+  - **JDKs come from two places; check what's actually present with `ls -d /usr/lib/jvm/temurin-*-jdk* ~/.local/share/agent-fleet/jvm/temurin-*-jdk* 2>/dev/null`.**
+    - `/usr/lib/jvm/` — JDKs the deployment provides (baked or bind-mounted). Present on
+      most local deployments (Temurin 8/21/25), but **may be empty** (e.g. the ECS
+      runtime mounts nothing here). Never assume it's populated — list it first.
+    - `~/.local/share/agent-fleet/jvm/` — the per-user home volume, where JDKs you add
+      persist across restarts. **If no JDK is present (or you need another major),
+      install one:** `workspace-agent install-jdk 21` (any major; downloads the latest
+      GA Temurin for this arch as `temurin-21-jdk-<arch>`). This works on every runtime,
+      including ECS. Selecting a Java version in the Console does the same automatically
+      on the next container start.
+  - `java` is not on `PATH` and `JAVA_HOME` is unset by default; wrappers resolve their
+    own version. To call `java`/`javac` directly, point `JAVA_HOME` at one of the dirs
+    above, e.g. `JAVA_HOME=$(ls -d /usr/lib/jvm/temurin-21-jdk* ~/.local/share/agent-fleet/jvm/temurin-21-jdk* 2>/dev/null | head -1)`.
+    Or select the version in the Console (**Settings > toolchains**) so `JAVA_HOME` is
+    exported into every session for you.
 - **Gradle:** a conservative `~/.gradle/gradle.properties` is seeded for you — capped heap, a short daemon idle-timeout, no parallelism, limited workers. Projects may override it in their own `gradle.properties`.
   - Do not raise `org.gradle.jvmargs` heap unless a build genuinely needs it.
   - When you finish building, stop lingering daemons: `./gradlew --stop`.
