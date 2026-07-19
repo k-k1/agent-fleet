@@ -108,6 +108,35 @@ browser download is required. Committed E2E belongs in `console-e2e/`
 - Run headless and short-lived; close the browser when done (memory-constrained host).
   Screenshots and WebGL (SwiftShader) work; there is no display for headful runs.
 
+## Browser pane (how the USER views a web app you run)
+The Console has a **browser pane** that renders a web app running inside this
+Workspace. It is a **user-facing Console feature** — the human opens it and looks at
+it. **You do not have a tool to open, drive, or see the browser pane.** Do not act as
+if you can see what it shows, and do not claim a page "looks right" based on it.
+
+What you *can* do, and how to hand off to the user:
+- Run the web app so it listens on `http://127.0.0.1:<port>` (loopback only — the pane
+  connects there; external hosts are not shown).
+- Tell the user the exact **port and path** to open (e.g. `127.0.0.1:5173` `/`), and
+  point them at the flow: **Preview (プレビュー) → "Open in pane" (ペインで開く)**.
+- Prefer the browser pane for anything live or interactive — **Vite HMR, WebSocket,
+  SSE, Spring Boot**, or any app that pushes updates. For a plain static HTTP page the
+  **lightweight preview (軽量プレビュー**, opens `/preview/{port}` in a new tab) is enough.
+- Pane limits the user works within: at most **2 pages**, viewport ≤ **1600×1200**,
+  ~**12 fps**. `target-unreachable` means the port is not listening yet (start the
+  server, then Reload); `crashed` / `disconnected` mean the in-container Chromium died
+  or the socket dropped — the user reconnects from the toolbar.
+- The **phone/tablet layout does not expose this flow yet** — on a smartphone the user
+  cannot open the pane, so don't tell them to.
+
+Verification honesty:
+- The pane is the *user's* view, separate from **your own headless Chromium** (see
+  above). Only say you "verified" / 「確認しました」 a UI when **you** drove it with your
+  own Chromium and observed the result — never on the basis of a pane you cannot see.
+- Don't leave the dev server running once you're done — stop it (memory-constrained host).
+- Never copy secrets that surface in the app — API keys, cookies, Console/devtools log
+  contents — into logs, commits, or docs.
+
 ## Agent Fleet sessions (do not assume a terminal)
 - A **session is a logical task/conversation**, not necessarily a tmux session or a
   dedicated CLI process. Codex and OpenCode normally run through a shared managed
