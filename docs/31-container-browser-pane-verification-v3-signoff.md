@@ -58,9 +58,9 @@ PASS に転じた**。V1 をサインオフ可能と判定する。
    `viewport`（作成時と同寸＝restart 抑止）＋`visibility=true` を送出 → JPEG バイナリフレームを計数。
    fixture（静的・aggressive animation・tall scroll・navigation・HMR）はハーネス内 loopback HTTP が提供。
    HMR は fixture の WebSocket push で DOM を更新し「dev サーバの HMR 更新 → 単発 repaint → 単発 frame」を再現。
-3. cgroup 採取: `memory.current` / `memory.events` / `cpu.stat(usage_usec)` を 1 秒間隔。goroutine の代理として
-   Agent プロセス（pid 7）の `/proc/<pid>/status: Threads` を採取。値はコンテナ全体（他 fleet セッション・
-   LLM を含む）で Chromium 単体ではない。
+3. cgroup 採取: `memory.current` / `memory.events` / `cpu.stat(usage_usec)` を 1 秒間隔。goroutine 数は
+   計測不能のため、別指標として Agent プロセス（pid 7）の `/proc/<pid>/status: Threads`（OS Threads）と
+   cgroup memory を採取した。値はコンテナ全体（他 fleet セッション・LLM を含む）で Chromium 単体ではない。
 
 ### 2.1 image digest — 取得不能（環境制約・前回同）
 
@@ -201,8 +201,8 @@ v2 の完成イメージ（修正前）は `predelay=0` で crash・0 frame、�
    §2.2 で高確度に確認したが、これは完全な同一性証明ではない（digest の確定は上記 `docker inspect` を要する）。
 2. **可観測化（未実装・課題）**: Agent に per-Page の capture/decode/send queue 深さ・drop 数・ACK 数・goroutine 数を
    公開する metric（expvar/pprof/prometheus/`/debug`）は無い（routes に該当エンドポイントなし、GET レスポンスにも
-   カウンタ無しを確認）。本書は代理として Agent プロセス Threads と cgroup を採取した。運用診断のため Page 単位
-   カウンタの公開を推奨。
+   カウンタ無しを確認）。goroutine 数は計測不能のため、本書は別指標として Agent プロセスの OS Threads と
+   cgroup memory を採取したにとどまる。運用診断のため Page 単位カウンタの公開を推奨。
 3. **segment 別帯域（未計測）**: Agent→CP / CP→Console の実 wire byte は未計測（隔離 Agent WS 直結のため）。
    CP/Console 双方に byte counter を置いての再計測が必要。
 4. **実 Workspace Stop→Start（不可・環境制約）**: コンテナ内から自コンテナを停止するとセッションが終了し、Docker/CP 管理
