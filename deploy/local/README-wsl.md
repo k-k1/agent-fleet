@@ -63,6 +63,29 @@ deploy/local/wsl-quickstart.sh
 
 初回はイメージビルド（Chromium/各種CLI焼き込み）と JDK 展開で時間がかかります。
 
+### GitHub 連携（デバイスフロー）
+
+GitHub の clone/push を OAuth デバイスフローで通したい場合は、`GITHUB_OAUTH_CLIENT_ID` を
+渡します（client_id は**非秘密**。デバイスフローに必要なのはこれだけ）。
+
+1. GitHub で OAuth App を作成（Settings → Developer settings → OAuth Apps）。
+   **「Enable Device Flow」を ON** にする。
+2. ひな型をコピーして client_id を記入（このファイルは git-ignore 済み）:
+   ```bash
+   cp deploy/local/oauth.env.example deploy/local/oauth.env
+   # deploy/local/oauth.env を編集し GITHUB_OAUTH_CLIENT_ID=<your-client-id> を設定
+   ```
+3. `wsl-quickstart.sh` を再実行。起動時に `deploy/local/oauth.env` を自動で読み込み、
+   `GITHUB_OAUTH_CLIENT_ID` を CP 経由でワークスペースへ注入します（起動ログに
+   `loaded .../oauth.env（… client_id: 設定あり）` と出ます）。
+4. Console からワークスペースで GitHub 連携を開始すると、デバイスコードと認証 URL が
+   案内されます。`gh auth login` は不要です（透過認証ラッパーがトークンを注入）。
+
+この WSL プリセットは単一ユーザー固定のため **`AUTH` は常に `dev`** です（`oauth.env` に
+`AUTH=oauth` を書いても採用しません＝ログイン認証は変えません）。`oauth.env` から読むのは
+git プロバイダ用の `GITHUB_OAUTH_CLIENT_ID` / `BITBUCKET_OAUTH_KEY,SECRET` / `PUBLIC_BASE_URL`
+だけです。token 貼り付け（PAT）でも連携でき、その場合は client_id 不要です。
+
 ## 3. ブラウザで開く
 
 CP は `http://localhost:8099` で待ち受けます。WSL2 の localhostForwarding により、

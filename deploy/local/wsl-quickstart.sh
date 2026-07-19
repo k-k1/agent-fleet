@@ -23,6 +23,18 @@ AF_DOCS_DIR="${AF_DOCS_DIR:-$ROOT/docs}"
 RTK_VERSION="${RTK_VERSION:-0.43.0}"   # workspace/Dockerfile の既定と揃える
 WS_JDK="${WS_JDK:-1}"                    # 1=共有JDKをprovisionしてbind-mount / 0=省く
 
+# git-provider OAuth 設定（秘密を含むため git-ignore）。あれば読み込み、GitHub の
+# デバイスフロー用 client_id 等を CP 経由でワークスペースへ渡す。ひな型は
+# deploy/local/oauth.env.example。デバイスフローは GITHUB_OAUTH_CLIENT_ID だけでよい
+# （client_id は非秘密）。この WSL プリセットは単一ユーザー固定なので AUTH は常に dev
+# のまま（oauth.env が AUTH=oauth を指定していても採用しない）。
+OAUTH_ENV="$ROOT/deploy/local/oauth.env"
+if [ -f "$OAUTH_ENV" ]; then
+  set -a; . "$OAUTH_ENV"; set +a
+  gh_state="未設定"; [ -n "${GITHUB_OAUTH_CLIENT_ID:-}" ] && gh_state="設定あり"
+  echo "==> loaded $OAUTH_ENV（GitHub device flow client_id: $gh_state）"
+fi
+
 echo "==> preflight（WSL / native docker 前提）"
 fail=0
 # Docker daemon に届くか（Docker Desktop でなく WSL 内 native dockerd を推奨）。
@@ -98,4 +110,8 @@ exec env \
   WS_MEMORY="$WS_MEMORY" \
   AF_DOCS_DIR="$AF_DOCS_DIR" \
   "${JVM_MOUNT_ARGS[@]}" \
+  ${GITHUB_OAUTH_CLIENT_ID:+GITHUB_OAUTH_CLIENT_ID="$GITHUB_OAUTH_CLIENT_ID"} \
+  ${BITBUCKET_OAUTH_KEY:+BITBUCKET_OAUTH_KEY="$BITBUCKET_OAUTH_KEY"} \
+  ${BITBUCKET_OAUTH_SECRET:+BITBUCKET_OAUTH_SECRET="$BITBUCKET_OAUTH_SECRET"} \
+  ${PUBLIC_BASE_URL:+PUBLIC_BASE_URL="$PUBLIC_BASE_URL"} \
   /tmp/af-cp
