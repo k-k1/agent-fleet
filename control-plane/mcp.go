@@ -259,6 +259,24 @@ func memberTools() []mcpTool {
 			},
 		},
 		{
+			// Relays to /halt (resumable), matching the admin stop_session semantics; the
+			// destructive /stop (forget) is deliberately not exposed over MCP.
+			name: "stop_session", minScope: scopeWrite,
+			desc:   "Stop a running session in your Workspace. The session stays resumable (resume_session or the Console); its conversation and working directory are kept.",
+			schema: nameArg,
+			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
+				return agentText(ctx, res.rt, "POST", "/sessions/"+url.PathEscape(argStr(args, "name"))+"/halt", nil)
+			},
+		},
+		{
+			name: "resume_session", minScope: scopeWrite,
+			desc:   "Resume a stopped session (relaunches it from its saved state; the conversation history is kept; a live session is left as-is). Drive it afterwards with send_to_session.",
+			schema: nameArg,
+			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
+				return agentText(ctx, res.rt, "POST", "/sessions/"+url.PathEscape(argStr(args, "name"))+"/start", nil)
+			},
+		},
+		{
 			name: "list_repos", minScope: scopeRead,
 			desc:   "List the git working copies in your Workspace (~/repos). Use before create_session to pick the `dir` (each repo has a `path`) — including repos with no running session.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{}},

@@ -277,6 +277,30 @@ var mcpStdioWriteTools = []map[string]any{
 		},
 	},
 	{
+		// 停止は /halt（再開可能）への中継。破壊的な /stop（メタごと忘却）は意図して
+		// 公開しない — 広告ツール集合がゲートなので、不可逆操作は Console に残す。
+		"name":        "stop_session",
+		"description": "指定セッションを停止する（停止中＝再開可能。会話履歴と作業ディレクトリは保持され、resume_session や Console から再開できる）。暴走している・不要になった・リソースを空けたいセッションを畳む時に呼ぶ。実行中の作業は中断され、そのセッションへの未達の自動報告は取り消される。実行前に『どのセッションを止めるか』を一言添えて利用者に確認すること。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name": map[string]any{"type": "string", "description": "停止するセッション名（list_my_sessions の name）"},
+			},
+			"required": []string{"name"},
+		},
+	},
+	{
+		"name":        "resume_session",
+		"description": "停止中のセッションを再開する（会話履歴を引き継いで再起動。稼働中なら何もしない）。stop_session で止めたセッションや停止中のセッションを再び動かす時に呼ぶ。再開後に作業を指示するには send_to_session を使う。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name": map[string]any{"type": "string", "description": "再開するセッション名（list_my_sessions の name）"},
+			},
+			"required": []string{"name"},
+		},
+	},
+	{
 		"name":        "list_assistants",
 		"description": "利用可能なアシスタント（常設ビルトイン＋ユーザー定義）の一覧を返す。ask_assistant で誰に相談するか選ぶ前に呼ぶ。",
 		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
@@ -425,6 +449,33 @@ func mcpStdioCall(req mcpReq) []byte {
 		out, err := agentPOST("/sessions/"+url.PathEscape(a.Name)+"/input", reqBody)
 		if err != nil {
 			return mcpToolErr(req.ID, "Agent への送信に失敗しました: "+err.Error())
+		}
+		return mcpTextResult(req.ID, out)
+	case "stop_session":
+		if !mcpWriteEnabled {
+			return mcpToolErr(req.ID, "このアシスタントはセッションの停止を許可されていません")
+		}
+		if a.Name == "" {
+			return mcpToolErr(req.ID, "name（セッション名）が必要です")
+		}
+		// disarm_report: オペレーターの停止＝指示の取り消しなので、arm 済みの
+		// ワンショット報告を握りつぶす（後日の再開完了で古い報告が届かないように）。
+		reqBody, _ := json.Marshal(map[string]bool{"disarm_report": true})
+		out, err := agentPOST("/sessions/"+url.PathEscape(a.Name)+"/halt", reqBody)
+		if err != nil {
+			return mcpToolErr(req.ID, "セッションの停止に失敗しました: "+err.Error())
+		}
+		return mcpTextResult(req.ID, out)
+	case "resume_session":
+		if !mcpWriteEnabled {
+			return mcpToolErr(req.ID, "このアシスタントはセッションの再開を許可されていません")
+		}
+		if a.Name == "" {
+			return mcpToolErr(req.ID, "name（セッション名）が必要です")
+		}
+		out, err := agentPOST("/sessions/"+url.PathEscape(a.Name)+"/start", nil)
+		if err != nil {
+			return mcpToolErr(req.ID, "セッションの再開に失敗しました: "+err.Error())
 		}
 		return mcpTextResult(req.ID, out)
 	case "list_assistants":
