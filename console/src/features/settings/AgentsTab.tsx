@@ -606,9 +606,10 @@ function AgyCard({ st, reload }: { st: any; reload: () => void }) {
   );
 }
 
-// AgyUsage: the weekly quota gauge, from GET api/connections/agy/usage (the
-// agent scrapes the TUI's /usage panel — takes a few seconds on a cache miss).
-// One bar per model group (Gemini / Claude+GPT share separate weekly pools);
+// AgyUsage: the quota gauges, from GET api/connections/agy/usage (the agent
+// scrapes the TUI's /usage panel — takes a few seconds on a cache miss).
+// Per model group (Gemini / Claude+GPT have separate pools) a weekly bar, plus
+// a 5-hour bar when the tier has one (AI Pro, docs/32 D-4 — 4 bars total);
 // fill = REMAINING percent, matching the TUI's own bars.
 function AgyUsage() {
   const tr = useT();
@@ -640,25 +641,37 @@ function AgyUsage() {
         usage.groups.map((g: any) => {
           // Fill = remaining, so a LOW bar is the danger sign — reuse the wu
           // warn/crit colors from the WsBar usage chip at <25% / <10% left.
-          const pct = Math.min(100, Math.max(0, g.remainingPct));
-          const sev = pct < 10 ? " crit" : pct < 25 ? " warn" : "";
+          const bar = (label: string, remainingPct: number, resetsAt?: string, sub?: boolean) => {
+            const pct = Math.min(100, Math.max(0, remainingPct));
+            const sev = pct < 10 ? " crit" : pct < 25 ? " warn" : "";
+            return (
+              <div key={g.label + label} className={"rtk-gain-meter agy-quota" + (sub ? " agy-quota-sub" : "")}>
+                <div className="wu-row-head">
+                  <span className="muted" title={g.models || ""}>
+                    {label}
+                  </span>
+                  <span className={"wu-pct" + sev}>{tr("agents.agy_usage_remaining", { pct: Math.round(remainingPct) })}</span>
+                </div>
+                <div className="wu-bar">
+                  <span className={"wu-bar-fill" + sev} style={{ width: pct + "%" }} />
+                </div>
+                {resetsAt && (
+                  <p className="muted ds-note">
+                    {tr("agents.agy_usage_resets", { when: new Date(resetsAt).toLocaleString() })}
+                  </p>
+                )}
+              </div>
+            );
+          };
           return (
-          <div key={g.label} className="rtk-gain-meter agy-quota">
-            <div className="wu-row-head">
-              <span className="muted" title={g.models || ""}>
-                {g.label}
-              </span>
-              <span className={"wu-pct" + sev}>{tr("agents.agy_usage_remaining", { pct: Math.round(g.remainingPct) })}</span>
+            <div key={g.label}>
+              {bar(
+                g.fiveHour ? `${g.label} (${tr("agents.agy_usage_weekly")})` : g.label,
+                g.remainingPct,
+                g.resetsAt,
+              )}
+              {g.fiveHour && bar(tr("agents.agy_usage_5h"), g.fiveHour.remainingPct, g.fiveHour.resetsAt, true)}
             </div>
-            <div className="wu-bar">
-              <span className={"wu-bar-fill" + sev} style={{ width: pct + "%" }} />
-            </div>
-            {g.resetsAt && (
-              <p className="muted ds-note">
-                {tr("agents.agy_usage_resets", { when: new Date(g.resetsAt).toLocaleString() })}
-              </p>
-            )}
-          </div>
           );
         })
       )}
