@@ -104,12 +104,14 @@
 .kind-tag.kind-claude { color: #e0a45e; background: rgba(224, 164, 94, 0.14); border-color: rgba(224, 164, 94, 0.45); }
 .kind-tag.kind-codex { color: #4ec97a; background: rgba(78, 201, 122, 0.14); border-color: rgba(78, 201, 122, 0.45); }
 .kind-tag.kind-opencode { color: #b07cf2; background: rgba(176, 124, 242, 0.16); border-color: rgba(176, 124, 242, 0.45); }
+.kind-tag.kind-agy { color: #4eaef0; background: rgba(78, 174, 240, 0.14); border-color: rgba(78, 174, 240, 0.45); }
 .kind-tag.kind-shell { color: #46c9d0; background: rgba(70, 201, 208, 0.14); border-color: rgba(70, 201, 208, 0.45); }
 .kind-tag.kind-ssm { color: #6d8bf5; background: rgba(109, 139, 245, 0.14); border-color: rgba(109, 139, 245, 0.45); }
 /* Light theme: darker text + stronger fill for legibility. */
 [data-theme="light"] .kind-tag.kind-claude { color: #a85f1c; background: rgba(224, 164, 94, 0.2); border-color: rgba(224, 164, 94, 0.55); }
 [data-theme="light"] .kind-tag.kind-codex { color: #18854a; background: rgba(78, 201, 122, 0.2); border-color: rgba(78, 201, 122, 0.55); }
 [data-theme="light"] .kind-tag.kind-opencode { color: #6d2fce; background: rgba(176, 124, 242, 0.2); border-color: rgba(176, 124, 242, 0.55); }
+[data-theme="light"] .kind-tag.kind-agy { color: #186aa8; background: rgba(78, 174, 240, 0.2); border-color: rgba(78, 174, 240, 0.55); }
 [data-theme="light"] .kind-tag.kind-shell { color: #15828a; background: rgba(70, 201, 208, 0.2); border-color: rgba(70, 201, 208, 0.55); }
 [data-theme="light"] .kind-tag.kind-ssm { color: #3140b8; background: rgba(109, 139, 245, 0.2); border-color: rgba(109, 139, 245, 0.55); }
 

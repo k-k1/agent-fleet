@@ -127,9 +127,11 @@
 .sess-kic.kind-claude { color: #e0a45e; background: rgba(224, 164, 94, 0.14); }
 .sess-kic.kind-codex { color: #4ec97a; background: rgba(78, 201, 122, 0.14); }
 .sess-kic.kind-opencode { color: #b07cf2; background: rgba(176, 124, 242, 0.16); }
+.sess-kic.kind-agy { color: #4eaef0; background: rgba(78, 174, 240, 0.14); }
 [data-theme="light"] .sess-kic.kind-claude { color: #a85f1c; background: rgba(224, 164, 94, 0.2); }
 [data-theme="light"] .sess-kic.kind-codex { color: #18854a; background: rgba(78, 201, 122, 0.2); }
 [data-theme="light"] .sess-kic.kind-opencode { color: #6d2fce; background: rgba(176, 124, 242, 0.2); }
+[data-theme="light"] .sess-kic.kind-agy { color: #186aa8; background: rgba(78, 174, 240, 0.2); }
 /* The state chip is span.session-state (old markup — rules at the bottom of this
    file); its margin-left:auto puts it at the row's right edge. Calm states are
    icon-only (.mini); question/plan/permission keep their text. */
