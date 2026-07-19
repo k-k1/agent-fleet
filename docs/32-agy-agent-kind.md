@@ -279,7 +279,7 @@ Console→CP が叩くのと同一の agent API を直接駆動**した（CP プ
 | 会話 | ✅ marker ファイル読解を正答 |
 | resume | ✅ 停止→`POST /sessions/{name}/start` → `--conversation <UUID>` で履歴・文脈とも完全復元（ファイル再読なしで正答） |
 | logout（`DELETE /connections/agy`） | ✅ token 削除・connections `connected:false`・usage `authed:false`・`agy models` が sign-in 要求 |
-| OAuth 認証フロー | ✅ start（scratch HOME live test）: セレクタ→認可 URL スクレイプ→flow_id、済みアカウントでは 409 gate。complete はコード貼付（実ユーザー）で最終確認 |
+| OAuth 認証フロー | ✅ **complete まで実機完走**（logout 状態から start→ユーザーがブラウザ承認→コード貼付→complete）。connected:true・token 0600・`agy models` 正常・Interactions 収集オフ（`enableTelemetry:false`）を確認。済みアカウントでは 409 gate |
 | `/usage` 残量表示 | ✅ 4 バー（下記）。スクレイプはクォータ消費なし |
 | RDRAND 非対応ホストでの非露出 | ✅ user+mount namespace で rdrand 無し cpuinfo を bind-mount した実 agent で `supported:false/no_rdrand`、セッション作成拒否、auth start 409 を確認 |
 
