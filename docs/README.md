@@ -25,6 +25,7 @@
 - [29-keyboard-system.md](29-keyboard-system.md) — Console キーボード操作体系（capture-phase 単一ディスパッチャ＋Leader/パレット＋再割当/端末入力優先）（✅ P0〜P5 実装済み・残＝実機目視）
 - [30-session-report.md](30-session-report.md) — フリート・オペレーターへセッション完了・質問・異常終了を自動報告（✅ 実装済み）
 - [31-container-browser-pane.md](31-container-browser-pane.md) — Workspace 内 Chromium で localhost を開き描画・入力を Console ペインへ中継（✅ 実装済み・実コンテナで V1 サインオフ完了、[利用契約](31-container-browser-pane-ux-contract.md)）
+- [32-agy-agent-kind.md](32-agy-agent-kind.md) — `kind=agy`（Antigravity CLI）を第4種別として実装する並行トラック計画（📋 計画、設計は [decisions/0008](decisions/0008-antigravity-cli-agent-kind.md)）
 
 > 完了後も実装契約や実測リファレンスとしてコードから参照する 24・26〜30 は番号付きのまま残す。
 > 時系列の実装プランとして役目を終えたものは history/ へ移動: [19 assistant-chat](history/19-assistant-chat.md) /
