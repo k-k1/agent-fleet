@@ -35,7 +35,9 @@ export function StartHost() {
 
   const ctx = useRepoRailContext(); // connection-gated kinds, like the repo rows
   const startWork = useStartWork();
-  const agentKinds = ctx.launchKinds.filter((k) => agentOf(k).caps.chat);
+  // Coding agents only (runsInDir) — shell/ssm have their own rows in the hub.
+  // Not caps.chat: agy is terminal-only (no chat mirror) but still launches here.
+  const agentKinds = ctx.launchKinds.filter((k) => agentOf(k).caps.runsInDir);
 
   // The per-repo stage STACKS on the hub instead of replacing it: swapping
   // modals in one commit trips useBackClose — the outgoing modal's cleanup
