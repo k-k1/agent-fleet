@@ -122,6 +122,7 @@ CP は `http://localhost:8099` で待ち受けます。WSL2 の localhostForward
 | Console ビルドが OOM | `NODE_OPTIONS=--max-old-space-size=3072`（スクリプトは設定済み）。メモリ逼迫時は他ビルドを止める |
 | `go`/`npm` が無い | §1 で導入し PATH を通す（nvm はスクリプトが自動 source） |
 | Java が見つからない | `ls -d /usr/lib/jvm/temurin-*-jdk* ~/.local/share/agent-fleet/jvm/temurin-*-jdk*`、無ければ `workspace-agent install-jdk <major>` |
+| エージェント選択に `agy` が出ない | ホスト CPU が RDRAND 非提示（`grep -w rdrand /proc/cpuinfo` が空）。agy は FIPS ビルドで RDRAND 必須のため意図的に非露出（[0008](../../docs/decisions/0008-antigravity-cli-agent-kind.md)） |
 
 デプロイ形態と env 索引は [docs/dev/09-deploy.md](../../docs/dev/09-deploy.md)、本番 Compose 手順は
 [deploy/compose/README.md](../compose/README.md) を参照。
