@@ -10,6 +10,7 @@
 | 形態 | 概要 | 状態 | runbook |
 |------|------|------|---------|
 | **local dev** | CP をホストプロセスで起動（`run-dev.sh` 一括 / `restart-cp.sh` 軽量反映）。`AUTH=dev`（単独）または `oauth`（共有） | ✅ 開発 + 小規模共有で運用中 | スクリプト冒頭コメント（[run-dev.sh](../../deploy/local/run-dev.sh) / [restart-cp.sh](../../deploy/local/restart-cp.sh)）。反映作法は [10](10-development.md) |
+| **wsl（個人）** | local dev の WSL2 むけ即起動プリセット（native dockerd 前提・`AUTH=dev` 固定・rtk をイメージ同梱・JDK は bind-mount か on-demand） | ✅ 個人検証 | [../../deploy/local/README-wsl.md](../../deploy/local/README-wsl.md)（`wsl-quickstart.sh`） |
 | **compose** | セルフホスト本命。CP コンテナ + Caddy（ACME 自動 TLS）。CP は loopback bind、DooD（ホストのデーモンを駆動）の3制約（host-net / `DATA_DIR` 同一絶対パス / docker gid）を compose 定義が封じ込める | ✅ | [../../deploy/compose/README.md](../../deploy/compose/README.md) |
 | **aws** | ネイティブ ECS アダプタ（CFN 4段）と、compose を単一 EC2 VM に載せる ec2-single の 2 通り | 🚧 実装済・実運用実績なし | [ecs](../../deploy/aws/ecs/README.md) / [ec2-single](../../deploy/aws/ec2-single/README.md) |
 
@@ -69,6 +70,15 @@ https 前置きが Secure cookie の前提。
 
 網羅性の確認方法: 変数名そのものが grep アンカー。CP の読み値（`envOr` / `os.Getenv`）と
 `run-dev.sh` の透過リスト・`.env.example` を突き合わせる。
+
+**JDK の提供はランタイムで異なる（`/usr/lib/jvm` を常在と仮定しない）**。`WS_JVM_DIR` は
+**local ランタイム専用**のノブで、ホストの共有 JDK を各コンテナへ `/usr/lib/jvm:ro` で
+bind-mount する。**ECS はこのマウントが無い**（`home`・`claude` の EFS のみ）ので `/usr/lib/jvm`
+は空になり得る。全ランタイム共通の受け皿は home ボリューム上の
+`~/.local/share/agent-fleet/jvm`（local=ボリューム / ECS=EFS で永続）で、`workspace-agent
+install-jdk <major>` が Adoptium から Temurin を入れる。Console のツール選択（toolchains）で
+Java 版を選ぶと、entrypoint が未導入分をここへ自動導入し `JAVA_HOME` を通す。`availableJava`
+相当（`GET /env/toolchains` の `java_available`）は「on-disk（両ディレクトリ）∪ install 可能 major」を返す。
 
 ## 9.5 aws ターゲットの設計（縮約）🚧
 

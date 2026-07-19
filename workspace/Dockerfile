@@ -151,6 +151,34 @@ RUN set -eux; \
     rm -rf /tmp/gh.tgz "/tmp/gh_${GH_VERSION}_linux_${gharch}"; \
     /usr/local/libexec/gh --version
 
+# Optional: fetch a pinned rtk release at build time (token-saving claude Bash hook)
+# instead of vendoring the host binary. DEFAULT OFF (BAKE_RTK=0) so the production /
+# compose / ECS images are byte-identical and no build-time GitHub fetch is added;
+# deploy/local/wsl-quickstart.sh passes --build-arg BAKE_RTK=1 for a self-contained
+# WSL image. rtk-ai/rtk is public, so the asset + checksums download without auth.
+# Static musl (amd64) / gnu (arm64) binary → runs in the slim container. The
+# entrypoint seeds the hook automatically when `rtk` is on PATH (same as vendor/).
+# Bump RTK_VERSION to upgrade (ARG change busts the cache; same idiom as GH_VERSION).
+ARG BAKE_RTK=0
+ARG RTK_VERSION=0.43.0
+RUN if [ "${BAKE_RTK}" = "1" ]; then set -eux; \
+      arch="$(dpkg --print-architecture)"; \
+      case "$arch" in \
+        amd64) asset="rtk-x86_64-unknown-linux-musl.tar.gz" ;; \
+        arm64) asset="rtk-aarch64-unknown-linux-gnu.tar.gz" ;; \
+        *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
+      esac; \
+      base="https://github.com/rtk-ai/rtk/releases/download/v${RTK_VERSION}"; \
+      cd /tmp; \
+      curl -fsSL "${base}/${asset}" -o "${asset}"; \
+      curl -fsSL "${base}/checksums.txt" -o checksums.txt; \
+      grep " ${asset}\$" checksums.txt | sha256sum -c -; \
+      tar xzf "${asset}"; \
+      install -m 0755 rtk /usr/local/bin/rtk; \
+      rm -f "${asset}" checksums.txt rtk; \
+      rtk --version; \
+    fi
+
 # Coding-agent CLIs baked into the image (stable /usr/local install) for fast,
 # offline container start. claude: a user-home ~/.local install still takes PATH
 # precedence and is auto-updated by the entrypoint; this is the pinned fallback /
