@@ -422,6 +422,108 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
   );
 }
 
+// AgyUsageChip: Antigravity's quota chip (docs/32 — moved here from the AgyCard so
+// the 残量 sits beside the Claude / Codex chips). agy's wallet is split into
+// per-model-group pools (Gemini / Claude+GPT), each with a weekly window plus a
+// 5-hour window on paid tiers, and the agent reports REMAINING percent (matching
+// the TUI's own /usage bars). Shown as USED percent so the chip and dropdown read
+// exactly like the other agents'. The chip numbers are the first group's (Gemini —
+// agy's default-model pool); the dropdown lists every group's windows. Self-hides
+// while agy isn't signed in (authed:false), same rule as the generic chip.
+function AgyUsageChip({ tenant }: { tenant: string | null }) {
+  const tr = useT();
+  const { usage, refreshing, refresh } = useUsage(tenant, "api/connections/agy/usage");
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useDismiss(ref, open, () => setOpen(false));
+  // Keyboard: Ctrl/⌘+K g a toggles this popover (g c / g x = Claude / Codex).
+  useOpenSignal("usage-agy", () => setOpen((o) => !o));
+
+  // Flatten groups into rows: per group the weekly window, then the 5h one.
+  const used = (remainingPct: number) => Math.round(Math.min(100, Math.max(0, 100 - remainingPct)));
+  const wins: { label: string; pct: number; resetsAt?: string }[] = [];
+  for (const g of (usage?.ok && Array.isArray(usage.groups) && usage.groups) || []) {
+    wins.push({ label: tr("wsbar.usage.agy.week_row", { group: g.label }), pct: used(g.remainingPct), resetsAt: g.resetsAt });
+    if (g.fiveHour)
+      wins.push({
+        label: tr("wsbar.usage.agy.five_row", { group: g.label }),
+        pct: used(g.fiveHour.remainingPct),
+        resetsAt: g.fiveHour.resetsAt,
+      });
+  }
+  const unavailable = wins.length === 0;
+  if (unavailable && !usage?.authed) return null;
+
+  // Max付近: any window ≥ NEAR_MAX_PCT switches the chip to the earliest reset time
+  // among the constrained windows (same rule as UsageChip).
+  const nearMax = wins.filter((w) => w.pct >= NEAR_MAX_PCT && w.resetsAt);
+  const bind = nearMax.length
+    ? nearMax.reduce((a, b) => (new Date(a.resetsAt!).getTime() <= new Date(b.resetsAt!).getTime() ? a : b))
+    : null;
+
+  // Chip numbers: the first group (Gemini), 5h% / weekly% — same order as the other chips.
+  const g0 = usage?.ok && Array.isArray(usage.groups) ? usage.groups[0] : null;
+  const label = unavailable
+    ? "—"
+    : bind
+      ? resetChipText(bind.resetsAt!)
+      : [g0?.fiveHour && `${used(g0.fiveHour.remainingPct)}%`, g0 && `${used(g0.remainingPct)}%`]
+          .filter(Boolean)
+          .join(" / ");
+  const chipTitle = unavailable
+    ? tr("wsbar.usage.unavailable_title", { name: "Antigravity" })
+    : bind
+      ? tr("wsbar.usage.chip_bind_title", {
+          name: "Antigravity",
+          label: bind.label,
+          pct: bind.pct,
+          until: untilText(bind.resetsAt!),
+          when: whenText(bind.resetsAt!),
+        })
+      : tr("wsbar.usage.title", { name: "Antigravity" });
+
+  return (
+    <div className="ws-usage-wrap" ref={ref}>
+      <button
+        type="button"
+        className="kind-tag kind-agy ws-usage-btn"
+        title={chipTitle}
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <Icon name="magnet" />
+        <span className={"ws-usage-nums" + (bind ? " crit" : unavailable ? " muted" : "")}>{label}</span>
+        <Icon name="chevron-down" />
+      </button>
+      {open && (
+        <div className="ws-usage-pop">
+          <div className="wu-title">{tr("wsbar.usage.pop_title", { name: "Antigravity" })}</div>
+          {unavailable ? (
+            <div className="wu-note muted">{tr("wsbar.usage.unavailable_note", { name: "Antigravity" })}</div>
+          ) : (
+            wins.map((w) => (
+              <UsageRow
+                key={w.label}
+                label={w.label}
+                w={{ pct: w.pct, until: w.resetsAt ? untilText(w.resetsAt) : "", when: w.resetsAt ? whenText(w.resetsAt) : "" }}
+              />
+            ))
+          )}
+          {/* 実験枠 note (採用条件 — docs/32 Track C-3): the Starter pool is tiny and
+              shared with the Antigravity IDE / Jules, so the popover always says so. */}
+          <div className="wu-note muted">{tr("agents.agy_exp_label")}</div>
+          <div className="wu-foot">
+            {!unavailable && <span className="wu-ago muted">{tr("wsbar.usage.fetched", { ago: agoText(usage.ageSec) })}</span>}
+            <button type="button" className="ghost wu-reload" onClick={refresh} disabled={refreshing}>
+              <Icon name="refresh" spin={refreshing} /> {tr("wsbar.usage.refresh")}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // WS bar: the (single) workspace's state plus Start / Stop. The backend models one
 // workspace per membership, so there is no select / create / delete. The
 // destructive "作り直す" lives deep in 設定 > 環境 (warning-gated), off this bar.
@@ -701,10 +803,18 @@ export function WsBar() {
     </div>
   );
 
-  // Subscription-usage chips, one per agent that exposes limits (Claude, Codex). Each
-  // self-hides until its endpoint answers, so a claude-only user sees one chip, a user
-  // of both sees two. The 8px bar gap spaces them (no manual dividers needed).
-  const usageChips = USAGE_SOURCES.map((s) => <UsageChip key={s.endpoint} src={s} tenant={tenant} />);
+  // Subscription-usage chips, one per agent that exposes limits (Claude, Codex,
+  // Antigravity — display order matches the agent order). Each self-hides until its
+  // endpoint answers, so a claude-only user sees one chip, a user of all sees three.
+  // The 8px bar gap spaces them (no manual dividers needed).
+  const usageChips = (
+    <>
+      {USAGE_SOURCES.map((s) => (
+        <UsageChip key={s.endpoint} src={s} tenant={tenant} />
+      ))}
+      <AgyUsageChip tenant={tenant} />
+    </>
+  );
 
   const statsBlock = (
     <>

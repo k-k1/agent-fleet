@@ -181,18 +181,10 @@
 .rtk-gain-meter {
   margin-bottom: 12px;
 }
-/* AgyCard: the always-on 実験枠 label sits right under the card head; the quota
-   meters reuse the rtk-gain-meter/wu-bar plumbing. */
+/* AgyCard: the always-on 実験枠 label sits right under the card head (the quota
+   meters live in the WS bar's Antigravity usage chip). */
 .p-card .agy-exp {
   margin: 2px 0 6px;
-}
-.agy-quota:last-of-type {
-  margin-bottom: 4px;
-}
-/* 5-hour sub-bar under its group's weekly bar (AI Pro, docs/32 D-4) */
-.agy-quota-sub {
-  margin-left: 12px;
-  margin-top: 2px;
 }
 .rtk-gain .wu-bar-fill {
   background: var(--topbar-accent, var(--accent));
