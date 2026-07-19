@@ -15,10 +15,12 @@ v2 の唯一の残ブロッカー（§5 の初回 attach `Page.startScreencast` 
 V1 マトリクスと即時 attach ストレスを再走した。結果、**新規バグはなく、v2 で条件付きだった項目がすべて
 PASS に転じた**。V1 をサインオフ可能と判定する。
 
-- **焼き込みバイナリが本当に修正を含むことを静的に確証**した。baked `workspace-agent` の
-  `main.(*browserPage).startScreencast` の命令列は、本ワークツリー（HEAD `5690b15`）から
-  `go build` した同関数と**ニーモニック列が 293 命令すべて一致（差分 0）**・CALL 数も 28 で一致。
-  build 時刻 09:15:53 は commit 時刻 07:44:12 より後（§2.2）。
+- **焼き込みバイナリが対象修正を含むことを高い確度で確認**した。baked `workspace-agent` の
+  `main.(*browserPage).startScreencast` は、リトライ用エラー文字列 `Not attached to an active page` を
+  持ち、本ワークツリー（HEAD `5690b15`）から `go build` した同関数と**ニーモニック列（293 命令）と
+  CALL 数（28）が一致**、build 時刻 09:15:53 も commit 時刻 07:44:12 より後。これらの静的一致に加え、
+  即時 attach 30/30 の実挙動（§4.1）と合わせて修正の焼き込みを確認した。なお**ニーモニック比較は
+  オペランド・即値・分岐先・定数を照合しないため、image digest の代替となる完全な同一性証明ではない**（§2.2）。
 - **前回 P0（初回 attach レース）は解消**。Console と同じ「POST 直後・ready 待ちなしの WS attach」
   （`predelay=0`）を **30 回連続で 0 crash**、全回で JPEG フレーム到達（avg ~10.8fps）。v2 の
   完成イメージ（修正前）は `predelay=0` で確実に crash・0 frame だった項目が、本イメージでは消滅した。
@@ -28,8 +30,11 @@ PASS に転じた**。V1 をサインオフ可能と判定する。
   `reason=screencast backpressure` の crash を起こさず ~12fps 上限で継続描画。
 - sandbox smoke（`e2e-smoke.sh --inner`）は全項目 PASS（`== smoke OK ==`）。機能シナリオ
   （Chromium crash 復帰・hidden 停止・idle 回収・DELETE 404）も回帰なし。
-- 全区間で `memory.events` の `oom/oom_kill/high/max` 増分は 0。Agent プロセス Threads は
-  全シナリオ・5 分連続でも 18 固定（goroutine 単調増加なし）。
+- 全区間で `memory.events` の `oom/oom_kill/high/max` 増分は 0。cgroup memory・Agent プロセスの
+  OS Threads（全シナリオ・5 分連続で 18 固定）とも単調悪化なし。ただし OS Threads は Go ランタイムの
+  M であり goroutine 数の代理にはならない（多数の goroutine が少数 thread 上で動く）。goroutine 数・
+  Page 単位 queue 深さは本書では未計測で、実装上の固定上限（latest-only buffer・ACK pace）と既存 race
+  テストの確認にとどまる（§4／§7-2）。
 
 ## 2. 対象と方法
 
@@ -66,20 +71,25 @@ PASS に転じた**。V1 をサインオフ可能と判定する。
 Debian revision、`versions.json` の全ピン。digest 固定は Docker host 側で
 `docker inspect --format '{{.Image}}' 91cd25172070` を実行して追記する必要がある。
 
-### 2.2 焼き込みバイナリ＝`5690b15` の静的確証（今回追加）
+### 2.2 焼き込みバイナリが対象修正を含むことの確認（今回追加・digest 代替ではない）
 
-digest が取れない代替として、焼き込みバイナリが本当に修正版であることを命令列レベルで確証した。
+image digest が取れないため、焼き込みバイナリが対象修正（`startScreencast` リトライ）を含むことを
+複数の状況証拠で確認した。下表の一致に、即時 attach 30/30 の実挙動（§4.1）を合わせて判断している。
 
 | 確認 | 結果 |
 |---|---|
 | build 時刻 vs commit 時刻 | build `09:15:53` > commit `5690b15`=`07:44:12`（＝マージ後ビルド） |
-| `startScreencast` リトライ文字列 | baked に `Not attached to an active page` 在中 |
-| `startScreencast` ニーモニック列（baked vs `5690b15` から `go build`） | **293 命令すべて一致・差分 0** |
+| `startScreencast` リトライ用エラー文字列 | baked に `Not attached to an active page` 在中 |
+| `startScreencast` ニーモニック構造（baked vs `5690b15` から `go build`） | 293 命令すべて一致 |
 | `startScreencast` の CALL 命令数 | baked 28 / from-src 28（一致） |
 
 `go tool objdump -s 'main\.\(\*browserPage\)\.startScreencast$'` の出力からアドレスを除いたニーモニック列が
-完全一致したことで、焼き込みバイナリの当該関数は `5690b15` のソースと同一と確定した（リトライ本体
-= transient `Not attached to an active page` に限り最大 12 回×40ms）。
+一致した（リトライ本体＝transient `Not attached to an active page` に限り最大 12 回×40ms）。
+
+**限界（重要）**: このニーモニック比較は命令の並びと種類・CALL 数を照合するもので、**オペランド・即値
+（例: 12 や 40ms のリテラル）・分岐先・定数を比較しない**ため、バイナリの厳密な同一性証明にはならない。
+したがって本節は「対象修正が焼き込まれていることの高確度の確認」であって、**取得できなかった image digest の
+代替となる完全な同一性証明ではない**。確定的な固定は §7-1 のとおり Docker host 側の `docker inspect` が必要。
 
 ## 3. Sandbox smoke（回帰なし・PASS）
 
@@ -117,9 +127,12 @@ digest が取れない代替として、焼き込みバイナリが本当に修�
 
 - **全シナリオ継続描画・crash 0**。aggressive animation は 1200×800 / 1600×1200 とも ~11.8fps で
   12fps 上限内。2 Page 5 分は各 11.77fps・両 Page `ready` 維持。
-- **Agent Threads は全シナリオで start=peak=end=18**（2 Page 5 分でも増加なし）。「2 Page で
-  goroutine/queue/memory が単調増加しない」を goroutine 代理（Threads）と cgroup memory で確認。
-  2 Page の `memory.current` は peak 1081.3 MiB → end 1057.8 MiB と peak 後に低下し、単調増加ではない。
+- **Agent の OS Threads は全シナリオで start=peak=end=18**（2 Page 5 分でも増加なし）。cgroup memory も
+  2 Page 5 分で peak 1081.3 MiB → end 1057.8 MiB と peak 後に低下し単調増加ではない。**OS Threads と
+  cgroup memory の単調悪化なし**を確認した。ただし OS Threads は Go の M（thread）であって goroutine 数
+  そのものではないため、**「goroutine が単調増加しない」ことの直接証明にはならない**。goroutine 数・
+  Page 単位 queue 深さは未計測で、実装上の固定上限（`offerScreencastFrame` の latest-only 非ブロッキング
+  buffer・FrameInterval 毎 1 ACK pace）と既存の `-race` テスト群で担保している（可観測化は §7-2 の課題）。
 - 全シナリオで `memory.events` の `oom/oom_kill/high/max` 増分は 0。
 - 静的ページは repaint が無いため定常 fps≈0 が正しい（初回 1 枚は届いており空描画ではない）。
 - animation の payload が v2（~0.9–1.0 MB/s）より大きいのは、本 fixture の canvas が 1 frame あたり
@@ -160,20 +173,23 @@ v2 の完成イメージ（修正前）は `predelay=0` で crash・0 frame、�
 |---|---|---|---|---|
 | sandbox smoke 全条件必須 | PASS | PASS | **PASS** | `== smoke OK ==` 全項目 |
 | 各 Page capture 12fps 以下かつ表示継続 | FAIL | PASS | **PASS** | anim/最大 viewport/2 Page/nav/wheel/HMR すべて継続、~12fps 上限内 |
-| 2 Page で goroutine/queue/memory 単調増加なし | 判定不能 | PASS | **PASS** | 5 分・Threads 18 固定・memory peak 後低下・OOM 0 |
+| 2 Page で OS Threads・cgroup memory の単調悪化なし | 判定不能 | PASS | **PASS** | 5 分・OS Threads 18 固定・memory peak 後低下 |
+| 2 Page で goroutine 数・queue 深さの単調増加なし | 判定不能 | （代理計測） | **未計測** | 直接計測手段なし（可観測化未実装・§7-2）。実装上の固定上限（latest-only buffer・ACK pace）と既存 `-race` テストを確認 |
+| per-Page 可観測化（queue/drop/ACK/goroutine 公開） | 未実装 | 未実装 | **未実装（運用課題・非ブロッキング）** | expvar/pprof/metrics エンドポイントなし・GET 応答に counter なし（§7-2） |
 | `memory.events` に新規 OOM なし | PASS | PASS | **PASS** | 全区間 0 |
 | hidden 後に screencast 停止 | PASS | PASS | **PASS** | 35→増分 0 |
 | Page 削除・idle 後に Chromium/profile なし | PASS | PASS | **PASS** | chromium 8→0・profile 1→0（t+135s） |
 | 帯域・メモリ実測値を記録 | 一部 | PASS | **PASS** | 全シナリオ採取（§4/§5） |
 | **通常 Console 経路（即時 attach）で初回描画継続** | FAIL | 要修正（完成イメージ）／修正後 PASS | **PASS** | 焼き込みイメージで即時 attach 30/30 crash 0・掃引全点 OK（§4.1） |
 | Chromium crash 復帰 | PASS | PASS | **PASS** | §4.2 |
-| image digest 記録 | FAIL(環境) | 未充足(環境) | **未充足（環境制約）** | Docker daemon 非公開（§2.1）。代替固定値＋命令列一致で焼き込み確証（§2.2） |
+| image digest 記録 | FAIL(環境) | 未充足(環境) | **未充足（環境制約）** | Docker daemon 非公開（§2.1）。代替として固定値記録＋対象修正の焼き込みを高確度で確認（§2.2、完全な同一性証明ではない） |
 | Stop→Start port/path 復元 | 未実施 | 一部(環境) | **一部（環境制約）** | 実 Stop→Start は不可。idle 回収で無状態＝再作成可を確認・Console 復元経路はコード確認 |
 
 **最終判定: 合格（V1 サインオフ完了）**。v2 で唯一残っていた描画系ブロッカー（初回 attach `startScreencast`
 レース）は、`5690b15` を焼き込んだ完成イメージで**即時 attach 30/30 crash 0・predelay 掃引全点 OK**として
 消失を実測した。backpressure crash も継続解消。sandbox smoke・機能シナリオ・長時間計測いずれも回帰なし。
-**新規バグは発見されなかった。** 焼き込みバイナリが `5690b15` の修正を含むことは命令列一致で確証済み（§2.2）。
+**新規バグは発見されなかった。** 焼き込みバイナリが対象修正を含むことは、静的一致（§2.2）と即時 attach 30/30 の
+実挙動（§4.1）から高確度で確認した（image digest による完全な同一性固定は環境制約で未充足・§7-1）。
 以上より **V1 をサインオフする**。
 
 ## 7. 残課題・環境制約（サインオフをブロックしない）
@@ -181,7 +197,8 @@ v2 の完成イメージ（修正前）は `predelay=0` で crash・0 frame、�
 以下は v2 と同じ**環境制約に起因する未充足**であり、ブラウザペイン V1 の受入判定をブロックしない。運用向けの継続課題。
 
 1. **image digest 固定（未充足・環境制約）**: Docker CLI/socket 非公開のため digest 取得不能。Docker host 側で
-   `docker inspect` 実行が必要。container ID/binary sha256/版ピン＋命令列一致は記録済み（§2.1/§2.2）。
+   `docker inspect` 実行が必要。代替として container ID/binary sha256/版ピンを記録し、対象修正の焼き込みは
+   §2.2 で高確度に確認したが、これは完全な同一性証明ではない（digest の確定は上記 `docker inspect` を要する）。
 2. **可観測化（未実装・課題）**: Agent に per-Page の capture/decode/send queue 深さ・drop 数・ACK 数・goroutine 数を
    公開する metric（expvar/pprof/prometheus/`/debug`）は無い（routes に該当エンドポイントなし、GET レスポンスにも
    カウンタ無しを確認）。本書は代理として Agent プロセス Threads と cgroup を採取した。運用診断のため Page 単位
