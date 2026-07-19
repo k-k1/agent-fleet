@@ -198,11 +198,35 @@ RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
       "@openai/codex@${CODEX_VERSION}" \
  && claude --version && opencode --version && codex --version
 
+# Antigravity CLI（kind="agy"、docs/decisions/0008 / docs/32）。npm でなく Go バイナリ
+# 配布（install.sh が manifest 取得 + sha512 検証）なので別 RUN。--dir /usr/local/bin の
+# root 設置で他 CLI と同列に扱い、版はイメージ再ビルドで管理する。
+# 注意 2 点:
+#  - install.sh に版ピンは無い（常に latest manifest）。AGY_VERSION はキャッシュバスタ兼
+#    「ビルド時に latest だった版」の記録で、bump するとこの RUN のキャッシュが割れて
+#    再取得される。実際に入った版が進んでいても失敗にはしない（versions.json との差は
+#    設定 UI の「ピン vs 実体」に出る）。
+#  - agy は Go BoringCrypto(FIPS) ビルドで、x86 では RDRAND 命令が無いホストだと起動即
+#    SIGABRT する（0008 PoC: Ryzen Embedded R2514）。RDRAND 非提示のビルドホストでも
+#    イメージは焼けるよう、起動を伴う --version 検証は rdrand 提示時だけ行う。
+ARG AGY_VERSION=1.1.4
+RUN echo "agy build pin: ${AGY_VERSION}" \
+ && curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin \
+ && test -x /usr/local/bin/agy \
+ && rm -rf /root/.cache/antigravity \
+ && if grep -qw rdrand /proc/cpuinfo; then agy --version; \
+    else echo "skip agy --version check (build host exposes no rdrand)"; fi
+
+# agy はインストール済みバイナリを通常実行中にバックグラウンド自己更新する
+# （install.sh の明記仕様）。版はイメージ再ビルドで管理するので封じる — claude の
+# DISABLE_AUTOUPDATER と同じ理屈（明示的な `agy update` は引き続き可能）。
+ENV AGY_CLI_DISABLE_AUTO_UPDATE=1
+
 # ビルド時ピンをコンテナ内へ書き出す（ARG はビルド後に消えて実行時に参照できない）。
 # 設定 UI「ツールのバージョン」の「ピン vs 実体」表示と、スモークの検証材料に使う。
 RUN mkdir -p /usr/local/share/agent-fleet \
- && printf '{"claude":"%s","opencode":"%s","codex":"%s","go":"%s","gh":"%s","chromium":"%s"}\n' \
-      "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$GO_VERSION" "$GH_VERSION" "$CHROMIUM_VERSION" \
+ && printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","go":"%s","gh":"%s","chromium":"%s"}\n' \
+      "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$AGY_VERSION" "$GO_VERSION" "$GH_VERSION" "$CHROMIUM_VERSION" \
       > /usr/local/share/agent-fleet/versions.json
 
 # The baked claude is a root-owned npm-global install run as the non-root `dev`
