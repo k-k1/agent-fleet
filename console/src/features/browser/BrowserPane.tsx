@@ -100,6 +100,11 @@ export function BrowserPane({ paneId, port, path }: BrowserPaneProps) {
     if (event.pointerType === "touch") event.preventDefault();
     const p = point(event);
     if (kind === "down") {
+      // The canvas is not focusable, so a mousedown on it makes the browser clear
+      // focus to <body> — which would blur the hidden IME input we focus just
+      // below, swallowing every subsequent keystroke (plain ASCII typing never
+      // reaches onKeyDown). Suppressing the pointerdown default keeps that focus.
+      event.preventDefault();
       event.currentTarget.setPointerCapture(event.pointerId);
       setInputAnchor({ x: event.nativeEvent.offsetX, y: event.nativeEvent.offsetY });
       imeRef.current?.focus({ preventScroll: true });
