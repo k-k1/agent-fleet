@@ -7,12 +7,12 @@ package main
 // edits to the assistant don't retroactively rewrite existing threads.
 //
 // Two sources merge into one list:
-//   - builtins: code-injected, always present, not user-editable/deletable. The flagship
-//     is "Agent Fleet アシスタント" (usage guidance, read-only fleet tools, USAGE knowledge).
+//   - builtins: code-injected, always present, not user-editable/deletable (see
+//     builtinAssistants): the flagship "Agent Fleet アシスタント" (usage guidance, af_read,
+//     USAGE knowledge), the af_write "フリート・オペレーター" (observes / drives / reaps
+//     sessions, receives docs/30 session reports), and the "SRE アシスタント" (af_read +
+//     ops integrations, docs/25).
 //   - user-defined: JSON files under ~/.config/agent-fleet/assistants/<id>.json (full CRUD).
-//
-// Write tools (af_write=send_to_session …) are intentionally NOT a tools value yet;
-// they land with the later write-tools opt-in step (docs/19). Today: "none" | "af_read".
 
 import (
 	"embed"
