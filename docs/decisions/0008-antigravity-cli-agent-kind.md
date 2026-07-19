@@ -162,13 +162,24 @@ compute ベース・**5 時間リフレッシュ＋週次上限**、Pro 以上�
 → **個人利用デプロイ（WSL 即起動導線の路線）には Starter のまま「実験的・補助エージェント」
 として採用可**。会社デプロイでの常用採用は **Workspace / GCP 経路が前提**（初版判定を維持）。
 
+## M1 統合結果（2026-07-20 追記）
+
+Track A/B/C をマージし、**M1 の完了条件（Console 契約の API 実機駆動: 作成・会話・resume・
+logout・認証フロー・`/usage` 4 バー・RDRAND 非露出）を実機で通した** — 詳細は
+[32 §統合と M1 E2E 結果](../32-agy-agent-kind.md)。E2E で 1 件の統合バグを発見・修正:
+**v1.1.4 TUI は resume 単位（cwd→会話マップ）を graceful exit 時にしか flush しない**
+（「初回プロンプトで書く」という Track D 観測は `-p` のプロセス即終了による見え方）。
+対応は WireLive の dead 側 capture ＋ halt の `agents.GracefulStopper`（`/exit` 送出→猶予→kill）。
+この知見は本文「resume 単位 = 会話 UUID」の運用条件として上書きする。
+
 ## 未解決（残り）
 
 - **GCP プロジェクト経路の per-user ログイン**手順（`gcloud` 連携要否、env で渡す資格の形。
   TUI セレクタ選択肢 2 の中身は未走行）。
-- イメージ同梱は `--dir /usr/local/bin` で root 設置（claude/codex と同列）か、home 設置で
-  自己更新を許すか（root 設置だと dev ユーザーの background self-update が効かない）。
+- ~~イメージ同梱は root 設置か home 設置か~~ → **Track B で root 設置に確定**
+  （`--dir /usr/local/bin`＋`AGY_CLI_DISABLE_AUTO_UPDATE=1` で自己更新封殺）。
 - Managed 実行方式の可否は `agy` 側の構造化出力（`--output-format` 相当）の将来提供待ち。
+- CP・ブラウザ込みの L2 E2E（`e2e/`）は docker のあるホストで別途（本コンテナは docker 無し）。
 
 ## 決定（提案）
 
