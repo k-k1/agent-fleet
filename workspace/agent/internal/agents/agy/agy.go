@@ -66,9 +66,12 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	// agy has no status hooks and its TUI chrome matches none of the claude-shaped
 	// tmuxx idle/busy heuristics, so no live state is surfaced (like shell/ssm).
 	li := agents.LiveInfo{Resumable: true}
-	if alive {
-		captureConversation(m)
-	} else if !session.DirExists(m.Dir) {
+	// Capture on BOTH sides of alive: v1.1.4 flushes the cwd→conversation map
+	// only on a graceful exit (統合E2E実測), so for a session the user exited
+	// themselves the UUID first becomes visible on a poll AFTER death. The
+	// alive-side call stays for forward-compat should agy start flushing early.
+	captureConversation(m)
+	if !alive && !session.DirExists(m.Dir) {
 		li.Resumable = false
 	}
 	return li
@@ -76,8 +79,9 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 
 // captureConversation adopts the slot's conversation UUID from agy's cwd→last-
 // conversation map once it differs from the pre-launch snapshot (i.e. this
-// session has created its conversation). agy writes the map on the first
-// prompt, not at TUI start, so this rides the sessions-list poll.
+// session has created its conversation). agy only flushes the map on graceful
+// exit (v1.1.4), so the id typically lands via GracefulStop (halt) or the
+// first sessions-list poll after the user's own /exit.
 func captureConversation(m session.Meta) {
 	slotSid := session.UUID(m.Dir, m.Name)
 	if sids.Read(slotSid) != "" {
