@@ -60,6 +60,19 @@ func reportArmed(name string) bool {
 	return ok && l.Armed && l.Conv != ""
 }
 
+// disarmSessionReport cancels a pending one-shot report for the session. Called from
+// handleHaltSession when the stop carries disarm_report (the operator's stop_session):
+// stopping the session cancels the outstanding instruction, so a later user-driven
+// resume + completion must not deliver a stale report to the operator conversation.
+// A Console halt (no flag) keeps the arm — if the user resumes and the session then
+// completes the instruction, that report is still the instruction's completion.
+func disarmSessionReport(name string) {
+	if l, ok := reportLinks.Read(name); ok && l.Armed {
+		l.Armed = false
+		_ = reportLinks.Write(name, l)
+	}
+}
+
 // reportKindAnswerReady is the one TERMINAL state-transition report kind (an
 // instruction's completion). Only it (and an abnormal "exit", record_exit.go)
 // reports to the operator and disarms; interim kinds (question / plan-approval /
