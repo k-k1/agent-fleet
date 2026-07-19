@@ -20,7 +20,10 @@ func TestScrapeUsageLive(t *testing.T) {
 	}
 	t.Logf("account=%q plan=%q", res.Account, res.Plan)
 	for _, g := range res.Groups {
-		t.Logf("group=%q models=%q remaining=%.2f%% resetsAt=%s", g.Label, g.Models, g.RemainingPct, g.ResetsAt)
+		t.Logf("group=%q models=%q weekly=%.2f%% resetsAt=%s", g.Label, g.Models, g.RemainingPct, g.ResetsAt)
+		if g.FiveHour != nil {
+			t.Logf("  fiveHour=%.2f%% resetsAt=%s", g.FiveHour.RemainingPct, g.FiveHour.ResetsAt)
+		}
 	}
 	if len(res.Groups) < 2 {
 		t.Errorf("expected 2 quota groups, got %d", len(res.Groups))

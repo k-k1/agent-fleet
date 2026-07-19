@@ -67,6 +67,87 @@ func TestParseUsage(t *testing.T) {
 	}
 }
 
+// A cleaned capture of the real v1.1.4 /usage panel on AI Pro (2026-07-20 実測,
+// PTY probe after the D-4 upgrade): each group carries a Weekly Limit AND a
+// Five Hour Limit bar, and the startup header no longer shows a plan suffix.
+const usagePanelPro = `
+? for shortcuts
+└ Models & Quota
+  Account: k1.kami@gmail.com
+GEMINI MODELS
+  Models within this group: Gemini Flash, Gemini Pro
+  Weekly Limit
+    [██████████████████████████████████████████████████] 99.75%
+    100% remaining · Refreshes in 167h 48m
+  Five Hour Limit
+    [█████████████████████████████████████████████████░] 98.48%
+    98% remaining · Refreshes in 4h 48m
+CLAUDE AND GPT MODELS
+  Models within this group: Claude Opus, Claude Sonnet, GPT-OSS
+  Weekly Limit
+    [█████████████████████████████████████████████████░] 98.77%
+    99% remaining · Refreshes in 167h 49m
+  Five Hour Limit
+    [████████████████████████████████████████████████░░] 96.31%
+    96% remaining · Refreshes in 4h 49m
+  │Within each group, models share a weekly limit and a 5-hour limit. Quota is
+  ↑/↓ Scroll · pgup/pgdown Page · ctrl+end Bottom · ctrl+home Top · esc Close
+`
+
+func TestParseUsageProFourBars(t *testing.T) {
+	res, err := parseUsage(usagePanelPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Account != "k1.kami@gmail.com" {
+		t.Errorf("account = %q", res.Account)
+	}
+	if res.Plan != "" {
+		t.Errorf("plan = %q, want empty (Pro header has no plan suffix)", res.Plan)
+	}
+	if len(res.Groups) != 2 {
+		t.Fatalf("groups = %d, want 2", len(res.Groups))
+	}
+	g := res.Groups[0]
+	if g.Label != "GEMINI MODELS" || g.RemainingPct != 99.75 {
+		t.Errorf("gemini weekly = %+v", g)
+	}
+	if g.FiveHour == nil || g.FiveHour.RemainingPct != 98.48 {
+		t.Fatalf("gemini fiveHour = %+v", g.FiveHour)
+	}
+	if at, err := time.Parse(time.RFC3339, g.FiveHour.ResetsAt); err != nil {
+		t.Errorf("fiveHour resetsAt not RFC3339: %v", err)
+	} else if d := time.Until(at); d < 4*time.Hour || d > 5*time.Hour {
+		t.Errorf("fiveHour resetsAt %v not ~4h48m out", d)
+	}
+	if at, err := time.Parse(time.RFC3339, g.ResetsAt); err != nil {
+		t.Errorf("weekly resetsAt not RFC3339: %v", err)
+	} else if d := time.Until(at); d < 167*time.Hour || d > 168*time.Hour {
+		t.Errorf("weekly resetsAt %v not ~167h48m out", d)
+	}
+	c := res.Groups[1]
+	if c.Label != "CLAUDE AND GPT MODELS" || c.RemainingPct != 98.77 {
+		t.Errorf("claude weekly = %+v", c)
+	}
+	if c.FiveHour == nil || c.FiveHour.RemainingPct != 96.31 {
+		t.Errorf("claude fiveHour = %+v", c.FiveHour)
+	}
+}
+
+// The Starter panel (weekly only) must keep parsing with FiveHour absent —
+// the wire shape the M1 AgyCard shipped with.
+func TestParseUsageStarterNoFiveHour(t *testing.T) {
+	res, err := parseUsage(usagePanel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range res.Groups {
+		if g.FiveHour != nil {
+			t.Errorf("group %q has FiveHour = %+v, want nil on Starter", g.Label, g.FiveHour)
+		}
+	}
+}
+
 func TestParseUsageNoGroups(t *testing.T) {
 	if _, err := parseUsage("? for shortcuts\nnothing here"); err == nil {
 		t.Fatal("want error on output without quota groups")

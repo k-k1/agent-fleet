@@ -20,19 +20,28 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
-// The /usage panel is weekly + model-group based (ADR 0008 実測): two pools
-// ("GEMINI MODELS" and "CLAUDE AND GPT MODELS") that each show a REMAINING
-// percentage bar and a "Refreshes in 167h 27m" line ("Quota available" at 100%).
-// The scrape is the Console's only source for the AgyCard's 残量% display — the
-// Starter Quota is tiny and shared with the IDE/Jules wallet, so the card must
-// always show how much of the experimental pool is left.
+// The /usage panel is model-group based (ADR 0008 実測): two pools ("GEMINI
+// MODELS" and "CLAUDE AND GPT MODELS") that each show REMAINING percentage
+// bars and a "Refreshes in 167h 27m" line ("Quota available" at 100%). Starter
+// shows one "Weekly Limit" bar per group; paid tiers (AI Pro 実測, docs/32
+// D-4) add a "Five Hour Limit" bar — 2 groups × 2 limits = the AgyCard's four
+// gauges. The scrape is the Console's only source for the 残量% display.
 
-// UsageGroup is one weekly model-group pool as shown by /usage.
-type UsageGroup struct {
-	Label        string  `json:"label"`            // section header, e.g. "GEMINI MODELS"
-	Models       string  `json:"models,omitempty"` // "Gemini Flash, Gemini Pro"
-	RemainingPct float64 `json:"remainingPct"`     // 0–100, remaining (not used)
+// UsageLimit is one remaining-quota bar within a group ("Five Hour Limit").
+type UsageLimit struct {
+	RemainingPct float64 `json:"remainingPct"` // 0–100, remaining (not used)
 	ResetsAt     string  `json:"resetsAt,omitempty"`
+}
+
+// UsageGroup is one model-group pool as shown by /usage. The flat fields carry
+// the weekly limit (the only one Starter has — wire shape kept from M1);
+// FiveHour is present on tiers whose panel shows the extra bar.
+type UsageGroup struct {
+	Label        string      `json:"label"`            // section header, e.g. "GEMINI MODELS"
+	Models       string      `json:"models,omitempty"` // "Gemini Flash, Gemini Pro"
+	RemainingPct float64     `json:"remainingPct"`     // weekly remaining
+	ResetsAt     string      `json:"resetsAt,omitempty"`
+	FiveHour     *UsageLimit `json:"fiveHour,omitempty"`
 }
 
 type usageResult struct {
@@ -114,7 +123,10 @@ var (
 	// The panel's own account line (no plan there).
 	accountRe = regexp.MustCompile(`Account:\s*(\S+@\S+)`)
 	// Section header, e.g. "GEMINI MODELS" / "CLAUDE AND GPT MODELS".
-	groupRe   = regexp.MustCompile(`(?m)^\s*([A-Z][A-Z0-9 /&+.-]* MODELS)\s*$`)
+	groupRe = regexp.MustCompile(`(?m)^\s*([A-Z][A-Z0-9 /&+.-]* MODELS)\s*$`)
+	// Limit sub-header within a group ("Weekly Limit" / "Five Hour Limit" —
+	// the latter appears on paid tiers, docs/32 D-4).
+	limitRe   = regexp.MustCompile(`(?m)^\s*(Weekly|Five Hour) Limit\s*$`)
 	modelsRe  = regexp.MustCompile(`Models within this group:\s*([^\n]+)`)
 	pctRe     = regexp.MustCompile(`\]\s*(\d+(?:\.\d+)?)%`)
 	refreshRe = regexp.MustCompile(`Refreshes in\s*([0-9dhm ]+)`)
@@ -194,12 +206,36 @@ func parseUsage(out string) (*usageResult, error) {
 		if m := modelsRe.FindStringSubmatch(sec); m != nil {
 			g.Models = strings.TrimSpace(m[1])
 		}
-		if m := pctRe.FindStringSubmatch(sec); m != nil {
-			g.RemainingPct, _ = strconv.ParseFloat(m[1], 64)
+		// Split the section on its limit sub-headers. Starter has "Weekly Limit"
+		// only; paid tiers add "Five Hour Limit" (docs/32 D-4). A panel with no
+		// sub-headers at all (defensive: layout drift) falls back to treating the
+		// whole section as the weekly limit.
+		lims := limitRe.FindAllStringSubmatchIndex(sec, -1)
+		if len(lims) == 0 {
+			lims = [][]int{{0, 0, 0, 0}}
 		}
-		if m := refreshRe.FindStringSubmatch(sec); m != nil {
-			if d := parseRefreshDur(m[1]); d > 0 {
-				g.ResetsAt = time.Now().Add(d).UTC().Format(time.RFC3339)
+		for j, lm := range lims {
+			sub := sec[lm[1]:]
+			if j+1 < len(lims) {
+				sub = sec[lm[1]:lims[j+1][0]]
+			}
+			pct := -1.0
+			if m := pctRe.FindStringSubmatch(sub); m != nil {
+				pct, _ = strconv.ParseFloat(m[1], 64)
+			}
+			if pct < 0 {
+				continue
+			}
+			var resets string
+			if m := refreshRe.FindStringSubmatch(sub); m != nil {
+				if d := parseRefreshDur(m[1]); d > 0 {
+					resets = time.Now().Add(d).UTC().Format(time.RFC3339)
+				}
+			}
+			if strings.TrimSpace(sec[lm[2]:lm[3]]) == "Five Hour" {
+				g.FiveHour = &UsageLimit{RemainingPct: pct, ResetsAt: resets}
+			} else {
+				g.RemainingPct, g.ResetsAt = pct, resets
 			}
 		}
 		if g.RemainingPct >= 0 {
