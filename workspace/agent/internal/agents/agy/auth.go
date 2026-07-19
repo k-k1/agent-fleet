@@ -132,7 +132,7 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 		return
 	}
-	url := f.WaitFor(urlRe, 20*time.Second)
+	url := sanitizeAuthURL(f.WaitFor(urlRe, 20*time.Second))
 	if url == "" {
 		f.Close()
 		httpx.WriteErr(w, http.StatusBadGateway, "no_url", "agy が認可 URL を表示しませんでした")
@@ -140,6 +140,22 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 	}
 	id := flows.Put(f)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"flow_id": id, "url": url})
+}
+
+// sanitizeAuthURL undoes the TUI's OSC-8 hyperlink rendering of the authorize
+// URL: the escape stream carries the URI twice (once as the link target, once
+// as the visible text) with no separator, so after ANSI stripping the buffer
+// reads "<url><url>]8;;" and urlRe's \S+ swallows it all — a mangled state
+// param the OAuth server rejects (統合E2E実測). Keep the first copy and drop
+// any trailing OSC remnant.
+func sanitizeAuthURL(u string) string {
+	const scheme = "https://"
+	if rest := strings.TrimPrefix(u, scheme); rest != u {
+		if i := strings.Index(rest, scheme); i >= 0 {
+			u = u[:len(scheme)+i]
+		}
+	}
+	return strings.TrimSuffix(u, "]8;;")
 }
 
 type completeReq struct {
