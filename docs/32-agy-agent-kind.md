@@ -39,15 +39,34 @@
 4. AGENTS.md: `agy` はプロジェクト root の `AGENTS.md` を読むため **codex/opencode 型のシード不要**の見込み。
    rtk ブロックは `internal/agents/{codex,opencode}/rtk.go` に倣い `agy/rtk.go` ＋ `reconcileAgentRTK` に追加
 
-### Track B — 配備（イメージ・entrypoint）
+### Track B — 配備（イメージ・entrypoint）— **実施済（2026-07-20）**
 
-1. `workspace/Dockerfile` — npm 行（`:193-199`）とは**別 RUN** で `install.sh` 導入。
-   **決定: `--dir /usr/local/bin` の root 設置**（他 CLI と同列・イメージ更新で追随・自己更新は封じる。
-   `agy update` の自動起動があるか確認し、あれば無効化）。`&& agy --version` 検証、`versions.json`（`:200-206`）に追記
-2. `workspace/entrypoint.sh` — シード要否の確認のみ（上記 A-4。不要なら触らない）
-3. **RDRAND ガード**: entrypoint か agent 起動時に `grep -q rdrand /proc/cpuinfo` を確認し、
-   非対応ホストでは agy kind を capability として無効化（Console のセレクタに出さない）。
-   配備ドキュメントに RDRAND 要件を明記（0008）
+1. `workspace/Dockerfile` — npm 行とは別 RUN で `install.sh --dir /usr/local/bin` 導入（root 設置）。
+   実装で判明した事実:
+   - **install.sh に版ピンは無い**（常に latest manifest、sha512 検証つき）。`ARG AGY_VERSION` は
+     キャッシュバスタ兼「ビルド時に latest だった版」の記録で、`versions.json` に `"agy"` として
+     書き出す（設定 UI の「ピン vs 実体」でドリフトが見える）
+   - **バックグラウンド自己更新は実在**（install.sh に明記）。バイナリ実測で
+     `AGY_CLI_DISABLE_AUTO_UPDATE` 環境変数を発見 → Dockerfile で `=1` に設定して封殺
+     （claude の `DISABLE_AUTOUPDATER` と同じ理屈。明示的な `agy update` は可能なまま）
+   - RDRAND 非提示ビルドホストでは `agy --version` 自体が SIGABRT するため、
+     **--version 検証は rdrand 提示時のみ**実行（非対応ホストでもイメージは焼ける）
+   - `env_tool_versions.go` の toolSpecs にも `agy` 行を追加（ピン表示・実体プローブ）
+2. `workspace/entrypoint.sh` — **変更なし**（A-4 のとおり agy はプロジェクト root の AGENTS.md を
+   読む前提。グローバル AGENTS.md シードの要否確定は Track A の auth/実機確認に委ねる）
+3. **RDRAND ガード**: `workspace/agent/internal/hostcaps/` 新設。`/proc/cpuinfo` の flags 行から
+   rdrand を語単位で検知（amd64 のみ要件化・キャッシュ付き）し、
+   `hostcaps.AgyStatus() (supported bool, reason string)` を提供。
+   reason 語彙は `"not_installed"`（agy バイナリ無し = 旧イメージ）/ `"no_rdrand"`。
+   配備ドキュメントに要件明記済（`deploy/compose/README.md` Prerequisites・`deploy/local/README-wsl.md`）
+
+   **← Track A / C への契約（capability の配線）**:
+   - Track A: `agy.Status()`（`GET /connections` の `agy` フィールド）に
+     `hostcaps.AgyStatus()` 由来の `"supported": bool` と `"reason": string`（unsupported 時のみ）を
+     含めること。セッション作成（`agy.Handle*` / create 経路）も同判定で拒否すること
+   - Track C: `ConnectionsStatus.agy.supported === false` のとき `agy` をセレクタに出さない
+     （registry の `available: (c) => c.conns?.agy?.supported !== false` 相当。
+     conns 未取得時は隠さない側に倒す）
 
 ### Track C — control-plane + Console
 
