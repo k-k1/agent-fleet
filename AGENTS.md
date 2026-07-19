@@ -34,6 +34,6 @@ Console（`console/`）の変更を利用者に確認してもらう場合は、
 - 確認が終わったら開発サーバーは止め、常駐させない（共有ホストはメモリ制約が厳しい）。
 - API キー・cookie・Console ログに現れた秘密をログや文書へ転記しない。
 
-詳細な利用契約（用語・状態・制約）は `docs/31-container-browser-pane.md`（§31.8 UI ほか）
-を正とする。
+操作上の正（用語・推奨フロー・状態・制約）は `docs/31-container-browser-pane-ux-contract.md`
+を参照する。
 
