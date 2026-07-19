@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
@@ -184,10 +185,17 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /connections/claude", claude.HandleDisconnect)
 	mux.HandleFunc("PUT /connections/opencode", opencode.HandlePutConn)
 	mux.HandleFunc("DELETE /connections/opencode/{env}", opencode.HandleDeleteConn)
+	// agy quota gauge for the Console's AgyCard (docs/32 Track C — the Starter
+	// Quota is an experimental pool, so the card always shows what's left).
+	// The claude-style auth routes (start/complete/DELETE) land with Track A.
+	mux.HandleFunc("GET /connections/agy/usage", agy.HandleUsage)
 	mux.HandleFunc("POST /connections/codex/api-key", codex.HandleAPIKey)
 	mux.HandleFunc("POST /connections/codex/device/start", codex.HandleDeviceStart)
 	mux.HandleFunc("POST /connections/codex/device/poll", codex.HandleDevicePoll)
 	mux.HandleFunc("DELETE /connections/codex", codex.HandleDisconnect)
+	mux.HandleFunc("POST /connections/agy/start", agy.HandleStart)
+	mux.HandleFunc("POST /connections/agy/complete", agy.HandleComplete)
+	mux.HandleFunc("DELETE /connections/agy", agy.HandleDisconnect)
 	mux.HandleFunc("PUT /connections/pagerduty", handlePutPagerDutyConn)
 	mux.HandleFunc("DELETE /connections/pagerduty", handleDeletePagerDutyConn)
 	mux.HandleFunc("PUT /connections/grafana", handlePutGrafanaConn)

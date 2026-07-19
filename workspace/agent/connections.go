@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
@@ -43,6 +44,7 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		"internal":   internalGitStatus(s),
 		"opencode":   opencode.Status(s),
 		"codex":      codex.Status(),
+		"agy":        agy.Status(),
 		"pagerduty":  pagerdutyStatus(s),
 		"grafana":    grafanaStatus(s),
 		"cloudwatch": cloudwatchStatus(s),

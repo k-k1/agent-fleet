@@ -23,7 +23,37 @@
 
 ## トラック分割（Console の worktree セッションで並行実施を想定)
 
-### Track A — workspace agent 本体（最重量・クリティカルパス）
+### Track A — workspace agent 本体（最重量・クリティカルパス）— **実施済（2026-07-20）**
+
+実装は下記計画どおり `internal/agents/agy/` ＋登録一式（`KindAgy`・レジストリ・
+`/connections/agy/{start,complete}`＋DELETE・`fs.go` denylist `.gemini`・`agent_rtk.go`）。
+Track B の `hostcaps.AgyStatus()` を `Status()`（supported/reason）と `BuildLaunch` に配線済み。
+実装時の実測・設計確定事項:
+
+- **オンボーディング画面列とキー操作を実測確定**（v1.1.4、フェイク HOME＋tmux）:
+  ログイン方式セレクタ（Enter=OAuth 既定）→ 認可 URL（`accounts.google.com/o/oauth2/auth` regex、
+  4000 桁 PTY で非折返し）→ コード貼付（コードと Enter は別 write）→ カラースキーム（Enter）→
+  ToS＋Interactions トグル（**Enter=トグルオフ → ↓ → → → Enter=Done**）→ trust（Enter=Yes）→
+  メイン画面（`? for shortcuts`）。完了後 `enableTelemetry=false` を settings.json に**追い書きで固定**。
+- **workspace trust は `settings.json` の `trustedWorkspaces` へ事前追記でスキップ可**（実測）→
+  `BuildLaunch` が起動 dir を毎回事前 trust。auth フローも専用 `login-flow` dir を事前 trust。
+- **resume は Track D-3 指摘どおり sid-store 方式**: `--continue` は使わず、
+  `cache/last_conversations.json` の cwd エントリを**起動前スナップショットと比較**して
+  「この起動が作った会話 UUID」だけを採用（stale エントリの取り違え防止）→ `--conversation <UUID>`。
+- **グローバル AGENTS.md は `~/.gemini/AGENTS.md`**（実測: 対話・headless 両モードで読む。
+  `~/.gemini/antigravity-cli/AGENTS.md` はどちらも読まれない。**プロジェクト root の AGENTS.md は
+  対話 TUI のみ**が読み、`-p` headless は読まない）。rtk ブロックは `~/.gemini/AGENTS.md` に適用。
+  → **Track B への回答: M1（Terminal 一択）は entrypoint シード不要**（TUI が root AGENTS.md を読む）。
+  headless 補助利用を始める時はグローバル側へのシードを再検討。
+- **Status() の email/plan**: token ファイルに identity が無いため、認証完了時にメイン画面ヘッダの
+  「email (plan)」行をスクレイプして `~/.config/agent-fleet/agy-account.json` に保存（best-effort）。
+- **Caps は M1 では全オフ**（fork なし・transcript なし・label なし）→ **Track C 連絡: registry の
+  `chat`/`transcript` フラグは false に倒すこと**（summaries.db は遅延書き込みで M1 ミラー不成立）。
+- 検証: 全 342 テスト通過＋live テスト（`AF_AGY_LIVE=1`: 実 TUI での start フロー URL 取得・
+  接続済み 409 ガード・/usage スクレイプ）。HandleComplete のコード投入以降は画面列を tmux で
+  手動完走済み（実コードが要るため自動 E2E は統合フェーズ）。
+
+（以下は着手時の計画）
 
 現行コードはレジストリ構造に refactor 済みで、0008 記載の行番号は古い。実際の触り先:
 
