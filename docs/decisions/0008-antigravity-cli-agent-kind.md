@@ -88,13 +88,36 @@ codex/opencode 追加と同じ轍。触る範囲は限定的:
 ビルドの性質。**この開発ホストでは対話/認証/resume の実機確認まで到達できない**ため、以下は
 RDRAND 有効ホストで再 PoC する。
 
-## 未解決（RDRAND 有効ホストで再確認）
+## 再 PoC 結果（2026-07-20、RDRAND 有効ホスト＝WSL2 / Ryzen 7 PRO 8840HS の Workspace コンテナ内）
 
-- `agy` のヘッドレス/SSH 認可 URL を **コンテナ内で**完走できるか（keyring 不在環境の挙動）。
-- **GCP プロジェクト経路の per-user ログイン**手順（`gcloud` 連携要否、env で渡す資格の形）。
-- ログイン状態照会・logout の正確なサブコマンド名（codex の `login status` 相当）。
-- resume の単位（codex/opencode はスロット sid で resume。`agy` の persistent history との対応）。
-- keyring を使う場合のコンテナ永続化先（home 配下に落ちるか＝denylist 追加要否）。
+前回の次アクション「RDRAND 有効ホストで再 PoC」を実施。`/proc/cpuinfo` に `rdrand`/`rdseed`
+提示ありのホストで、**起動〜認証〜非対話実行まで全て完走**した（v1.1.4）。
+
+- ✅ **起動成功**: `install.sh` → `~/.local/bin/agy`、`agy --version` 正常。`CRNGT failed` は
+  再現せず。**RDRAND 要件の裏取り完了**（有効ホストなら問題なし。0008 の配備要件は妥当）。
+- ✅ **コンテナ内認証フロー完走**（keyring 不在環境）: TUI 起動で「1. Google OAuth /
+  2. Use a Google Cloud project」の 2 択 → OAuth 選択で**認可 URL＋認可コード貼り付け
+  （PKCE、redirect_uri=`antigravity.google/oauth-callback`）が端末内に表示**される。
+  tmux `send-keys` でコード投入し完了 = **codex device-auth 同型の PTY スクレイプで
+  Console 統合が成立する**。GCP プロジェクト経路も同セレクタの選択肢 2 として存在。
+- **初回オンボーディング**（`agy_auth.go` がスクレイプで踏む画面列）: カラースキーム選択 →
+  ToS + **Interactions データ収集オプトイン（既定オン、TUI 上でトグルしてオプトアウト可**、
+  今回オフで完走）→ ワークスペースの trust プロンプト（Yes/No）→ メイン画面。
+- **資格の永続化先**: keyring 不在時は **`~/.gemini/antigravity-cli/antigravity-oauth-token`
+  （平文、home 配下）** → claude/codex と同じく**暗号ストア外＝denylist 追加要**。
+- **ログイン状態照会**: 専用サブコマンドは無い。未認証時に `agy models` が
+  「Please sign in」エラーを返すため、**これが `login status` 相当の判定に使える**。
+- ✅ **非対話実行**: `agy -p "<prompt>"` が正常応答（既定 Gemini 3.5 Flash (Medium)）。
+- **モデル一覧**（Starter Quota の個人 Google アカウント）: Gemini 3.5 Flash (Low/Medium/High)、
+  Gemini 3.1 Pro (Low/High)、**Claude Sonnet 4.6 / Opus 4.6 (Thinking)**、GPT-OSS 120B。
+
+## 未解決（残り）
+
+- **GCP プロジェクト経路の per-user ログイン**手順（`gcloud` 連携要否、env で渡す資格の形。
+  TUI セレクタ選択肢 2 の中身は未走行）。
+- logout の正確な手段（状態照会は `agy models` で代替可と判明。logout サブコマンドは未確認）。
+- resume の単位（codex/opencode はスロット sid で resume。`agy` の persistent history との対応。
+  `--continue` / `--conversation <ID>` フラグは存在確認済、ID の取得経路が未確認）。
 - イメージ同梱は `--dir /usr/local/bin` で root 設置（claude/codex と同列）か、home 設置で
   自己更新を許すか（root 設置だと dev ユーザーの background self-update が効かない）。
 
@@ -103,7 +126,9 @@ RDRAND 有効ホストで再 PoC する。
 **`kind=agy` を第4のエージェント種別として追加する**。ToS ゲートは GCP プロジェクト経路で通過済み。
 実装は codex 追加の轍（launch 分岐＋`agy_auth.go` device-auth 流用＋CP プロキシ＋Console パネル）に
 乗り、構造差分はイメージ導入が npm でなく `install.sh` の 1 点のみ。**PoC でインストールは確認済
-だが、agy の FIPS ビルドが RDRAND を必須とし本開発ホストでは起動不可**（上記）。**次アクション=
-RDRAND 有効ホストで対話/認証/resume を再 PoC → 段階実装**。配備ドキュメントに RDRAND 要件を明記。
+だが、agy の FIPS ビルドが RDRAND を必須とし本開発ホストでは起動不可**（上記）。配備ドキュメント
+に RDRAND 要件を明記。**2026-07-20 追記: RDRAND 有効ホストでの再 PoC 完了**（上記「再 PoC 結果」
+— 起動・OAuth 認証・`-p` 非対話まで実機確認済）。**次アクション=残り未解決（GCP 経路・logout・
+resume 単位）を潰しつつ段階実装**。
 
 [Issue #78]: https://github.com/google-antigravity/antigravity-cli/issues/78
