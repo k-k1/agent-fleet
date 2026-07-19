@@ -1,6 +1,6 @@
 # 0008. Antigravity CLI（`agy`）を第4のエージェント種別として取り込む
 
-- 状態: 調査完了・**設計提案**（未実装）
+- 状態: **採用決定**（2026-07-20。Starter=実験枠で実装開始、GCP 経路で常用化を目指す。実装計画は [32](../32-agy-agent-kind.md)）
 - 関連: [session.go](../../workspace/agent/session.go)（セッション統合）/ [Codex auth](../../workspace/agent/internal/agents/codex/auth.go)（device-auth の現行実装）/ [0006-mcp-unified](0006-mcp-unified.md) / [HANDOFF §エージェント種別](../HANDOFF.md)
 - 出自: ユーザー依頼「antigravity cli を Agent-Fleet に組み込めないか検討」（2026-06-29〜30 調査）
 
