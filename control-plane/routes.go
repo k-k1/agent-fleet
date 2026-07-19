@@ -396,6 +396,14 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/connections/claude/start", rest)
 	mux.HandleFunc("POST /api/connections/claude/complete", rest)
 	mux.HandleFunc("DELETE /api/connections/claude", rest)
+	// agy (Antigravity CLI, docs/32) — claude-style flow: start returns the
+	// authorize URL (+ flow_id; body carries method: oauth|gcp-project — M1
+	// implements oauth only), complete submits the pasted code. usage feeds the
+	// AgyCard's Starter-Quota gauge (TUI /usage scrape, agent-side).
+	mux.HandleFunc("POST /api/connections/agy/start", rest)
+	mux.HandleFunc("POST /api/connections/agy/complete", rest)
+	mux.HandleFunc("DELETE /api/connections/agy", rest)
+	mux.HandleFunc("GET /api/connections/agy/usage", rest)
 	mux.HandleFunc("PUT /api/connections/opencode", rest)
 	mux.HandleFunc("DELETE /api/connections/opencode/{env}", rest)
 	// Codex auth — proxied to the Agent (codex owns auth.json; no public callback,

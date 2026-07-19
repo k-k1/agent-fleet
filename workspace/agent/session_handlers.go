@@ -609,9 +609,17 @@ func handleHaltSession(w http.ResponseWriter, r *http.Request) {
 	// pane, so a later resume's autoconnect registers fresh under the current
 	// title instead of resuming the stale one (see disconnectRemoteControl).
 	disconnectRemoteControl(name, m)
-	if out, err := exec.Command("tmux", "kill-session", "-t", session.ExactTarget(tn)).CombinedOutput(); err != nil {
-		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", fmt.Sprintf("%v: %s", err, out))
-		return
+	// Kinds that only flush their resume state on a graceful exit (agy) get a
+	// chance to quit on their own; true = the pane already ended, skip the kill.
+	stopped := false
+	if gs, ok := agentOf(m.Kind).(agents.GracefulStopper); ok {
+		stopped = gs.GracefulStop(m)
+	}
+	if !stopped {
+		if out, err := exec.Command("tmux", "kill-session", "-t", session.ExactTarget(tn)).CombinedOutput(); err != nil {
+			httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", fmt.Sprintf("%v: %s", err, out))
+			return
+		}
 	}
 	status.Remove(session.UUID(m.Dir, name))
 	// Stamp StoppedAt now so the prune TTL starts here (handleListSessions would

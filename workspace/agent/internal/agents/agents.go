@@ -87,6 +87,16 @@ type Agent interface {
 	Transcript(m session.Meta) (TranscriptData, bool)
 }
 
+// GracefulStopper is an optional Agent capability: a chance for the CLI to
+// exit on its own terms before the pane is hard-killed. agy needs it because
+// v1.1.4 flushes its cwd→conversation map (the resume-UUID source) ONLY on a
+// graceful exit (統合E2E実測 — docs/32); kill-session would lose the id for
+// good. Returning true means the tmux session already ended and the caller
+// must skip its own kill.
+type GracefulStopper interface {
+	GracefulStop(m session.Meta) bool
+}
+
 // ModelChoice is one launch-time model option for the Console's model picker:
 // ID is what the launch command receives (`codex -m` / `opencode --model`),
 // Label what the picker shows. Served by GET /agents/{kind}/models.

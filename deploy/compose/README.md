@@ -24,6 +24,12 @@ This directory is the whole deployment surface:
 - Your team's **Claude** login (each user logs in with their own seat from the
   Console after first launch — bring your own; company Team/Enterprise seats
   recommended over personal Pro/Max).
+- (Optional, for the `agy` agent kind) a host CPU that exposes **RDRAND**
+  (`grep -w rdrand /proc/cpuinfo`). The Antigravity CLI is a FIPS build that
+  aborts at startup without it (kernel-masked / BIOS-disabled counts as
+  missing — seen on AMD Ryzen Embedded). Hosts without RDRAND still run
+  everything else; the Console just hides `agy` from the agent selector
+  ([decision 0008](../../docs/decisions/0008-antigravity-cli-agent-kind.md)).
 
 ## Quick start
 

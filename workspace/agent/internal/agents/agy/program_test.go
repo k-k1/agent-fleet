@@ -1,0 +1,74 @@
+package agy
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestBuildProgramDefaults(t *testing.T) {
+	t.Setenv("AGENT_AGY_CMD", "")
+	t.Setenv("AGENT_AGY_FLAGS", "")
+	got := buildProgram("", "", "")
+	want := "agy --dangerously-skip-permissions"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestBuildProgramPlanModeReplacesBypass(t *testing.T) {
+	t.Setenv("AGENT_AGY_CMD", "")
+	t.Setenv("AGENT_AGY_FLAGS", "")
+	got := buildProgram("", "plan", "")
+	want := "agy --mode plan"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestBuildProgramModelAndResume(t *testing.T) {
+	t.Setenv("AGENT_AGY_CMD", "")
+	t.Setenv("AGENT_AGY_FLAGS", "")
+	got := buildProgram("gemini-3.1-pro", "", "55248f57-852f-44af-9f83-4a99941f0a2c")
+	want := "agy --dangerously-skip-permissions --model 'gemini-3.1-pro' --conversation '55248f57-852f-44af-9f83-4a99941f0a2c'"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestBuildProgramOverride(t *testing.T) {
+	t.Setenv("AGENT_AGY_CMD", "bash")
+	if got := buildProgram("m", "plan", "id"); got != "bash" {
+		t.Fatalf("got %q want bash", got)
+	}
+}
+
+func writeLastConversations(t *testing.T, m map[string]string) {
+	t.Helper()
+	dir := filepath.Join(os.Getenv("HOME"), ".gemini", "antigravity-cli", "cache")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "last_conversations.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLastConversationFor(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if got := lastConversationFor("/w"); got != "" {
+		t.Fatalf("missing file: got %q want empty", got)
+	}
+	writeLastConversations(t, map[string]string{"/w": "uuid-1"})
+	if got := lastConversationFor("/w"); got != "uuid-1" {
+		t.Fatalf("got %q want uuid-1", got)
+	}
+	if got := lastConversationFor("/other"); got != "" {
+		t.Fatalf("unknown dir: got %q want empty", got)
+	}
+}

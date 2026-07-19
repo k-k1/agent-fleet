@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
@@ -22,6 +23,7 @@ var agentRegistry = map[string]agents.Agent{
 	session.KindClaude:   claude.New(),
 	session.KindOpencode: opencode.New(),
 	session.KindCodex:    codex.New(),
+	session.KindAgy:      agy.New(),
 	session.KindShell:    shellAgent{},
 	session.KindSSM:      ssmAgent{},
 }
