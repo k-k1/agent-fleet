@@ -229,15 +229,32 @@ else
   echo "[entrypoint] WARN: unknown timezone '$TZ_VAL' (falling back to UTC)"
 fi
 
-# java: point JAVA_HOME at the selected Temurin (if installed).
+# java: point JAVA_HOME at the selected Temurin. JDKs come from the deployment-
+# provided /usr/lib/jvm (baked image or local bind-mount) or the per-user home
+# volume that `install-jdk` populates — the latter being the only source on ECS,
+# where nothing is mounted at /usr/lib/jvm. Search both; if the selection is absent
+# everywhere, download it into the home volume now (persists on the volume / EFS, so
+# only the first launch pays the download). Soft-fail: no network → keep going.
 if [ -n "$JAVA_VER" ]; then
-  JH=$(ls -d /usr/lib/jvm/temurin-"$JAVA_VER"-jdk* 2>/dev/null | head -1)
+  find_jh() {
+    for d in /usr/lib/jvm "$HOME/.local/share/agent-fleet/jvm"; do
+      jh=$(ls -d "$d"/temurin-"$JAVA_VER"-jdk* 2>/dev/null | head -1)
+      [ -n "$jh" ] && { printf '%s\n' "$jh"; return 0; }
+    done
+    return 1
+  }
+  JH=$(find_jh || true)
+  if [ -z "$JH" ]; then
+    echo "[entrypoint] temurin-$JAVA_VER not present; installing into home volume ..."
+    workspace-agent install-jdk "$JAVA_VER" || echo "[entrypoint] WARN: install-jdk $JAVA_VER failed"
+    JH=$(find_jh || true)
+  fi
   if [ -n "$JH" ]; then
     export JAVA_HOME="$JH"
     export PATH="$JH/bin:$PATH"
     echo "[entrypoint] JAVA_HOME=$JH"
   else
-    echo "[entrypoint] WARN: temurin-$JAVA_VER-jdk not installed"
+    echo "[entrypoint] WARN: temurin-$JAVA_VER-jdk unavailable"
   fi
 fi
 

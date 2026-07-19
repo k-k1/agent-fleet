@@ -25,6 +25,15 @@ func main() {
 		runCredHelper(os.Args[2:])
 		return
 	}
+	// JDK provisioner: `workspace-agent install-jdk <major>` downloads the latest GA
+	// Temurin for the container arch into the per-user home volume (temurin-<major>-
+	// jdk-<arch>), the common JDK location the toolchain resolver + entrypoint search
+	// alongside /usr/lib/jvm. Run by the entrypoint on demand (selected java missing)
+	// and available to the agent directly. See jdk.go.
+	if len(os.Args) > 1 && os.Args[1] == "install-jdk" {
+		runInstallJDK(os.Args[2:])
+		return
+	}
 	// claude hook helper: records session working/idle/question state.
 	if len(os.Args) > 1 && os.Args[1] == "session-status" {
 		runSessionStatusHook(os.Args[2:])
