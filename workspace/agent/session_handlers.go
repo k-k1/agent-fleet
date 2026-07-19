@@ -4,6 +4,7 @@ package main
 // session.go からの機械的分割（docs/23 P1-W4）。
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -564,6 +565,9 @@ func handleStopSession(w http.ResponseWriter, r *http.Request) {
 // stays listed and the user can resume it later (claude --resume). This is the
 // button counterpart of quitting in the terminal — distinct from /stop (which also
 // forgets the meta = removes it from the list) and /archive (which hides it).
+// An optional JSON body {"disarm_report":true} additionally cancels a pending
+// one-shot operator report (docs/30) — sent by the MCP stop_session tool, whose stop
+// means "instruction cancelled"; the Console halt sends no body and keeps the arm.
 func handleHaltSession(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !session.ValidName(name) {
@@ -574,6 +578,15 @@ func handleHaltSession(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
+	}
+	var body struct {
+		DisarmReport bool `json:"disarm_report"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body) // body is optional (Console sends none)
+	if body.DisarmReport {
+		// Disarm even when the session turns out to be already stopped below: the
+		// operator's intent (cancel the instruction) does not depend on liveness.
+		disarmSessionReport(name)
 	}
 	if m.DriverKind() == session.DriverManaged {
 		// managed の halt = runtime handle を落とす（daemon は共有なので止めない）。

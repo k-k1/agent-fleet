@@ -46,6 +46,10 @@
   肝で、質問等で先に disarm されると「指示の完了」がオペレーターへ二度と届かない（実測不具合）。
   arm は `answer-ready` か異常終了まで生存する。
 - 次の `send_to_session` で再 arm。
+- **オペレーターの `stop_session`（MCP）は arm を取り消す**: `POST /sessions/{name}/halt` に
+  `{"disarm_report":true}` を同梱し、ハンドラが `disarmSessionReport` を呼ぶ。停止＝指示の
+  取り消しなので、後日ユーザーが再開して完了しても古い報告は届かない。Console の停止ボタンは
+  body なし＝arm 温存（再開後にその指示が完了すれば報告はなお正しい）。
 
 ### managed driver（hook を持たないセッション）
 
