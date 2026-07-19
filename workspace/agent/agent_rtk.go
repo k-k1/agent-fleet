@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
@@ -37,6 +38,7 @@ import (
 type agentRTKPrefs struct {
 	Codex    *bool `json:"codex"`
 	Opencode *bool `json:"opencode"`
+	Agy      *bool `json:"agy"`
 }
 
 func agentRTKPrefsPath() string {
@@ -82,6 +84,7 @@ func reconcileAgentRTK() {
 	p := readAgentRTKPrefs()
 	opencode.ApplyRTK(avail && prefOnDefault(p.Opencode))
 	codex.ApplyRTK(avail && prefOnDefault(p.Codex))
+	agy.ApplyRTK(avail && prefOnDefault(p.Agy))
 }
 
 func agentRTKBody() map[string]any {
@@ -90,6 +93,7 @@ func agentRTKBody() map[string]any {
 		"rtk_available": claude.RTKAvailable(),
 		"codex_rtk":     prefOnDefault(p.Codex),
 		"opencode_rtk":  prefOnDefault(p.Opencode),
+		"agy_rtk":       prefOnDefault(p.Agy),
 	}
 }
 
@@ -100,6 +104,7 @@ func handleAgentRTKGet(w http.ResponseWriter, r *http.Request) {
 type agentRTKReq struct {
 	CodexRTK    *bool `json:"codex_rtk"`
 	OpencodeRTK *bool `json:"opencode_rtk"`
+	AgyRTK      *bool `json:"agy_rtk"`
 }
 
 func handleAgentRTKPut(w http.ResponseWriter, r *http.Request) {
@@ -113,6 +118,9 @@ func handleAgentRTKPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.OpencodeRTK != nil {
 		p.Opencode = req.OpencodeRTK
+	}
+	if req.AgyRTK != nil {
+		p.Agy = req.AgyRTK
 	}
 	if err := writeAgentRTKPrefs(p); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
