@@ -258,6 +258,60 @@ Antigravity の枠・クレジットは [AI Pro benefits](https://support.google
 クレジット追い足しで回復可能（Pro の特典）。Console 側は D 実測どおり `/usage` スクレイプで
 残量%（週次・5h の 4 バー）を出せばよい。学習除外はオプトアウト設定の維持が引き続き前提。
 
+## 統合と M1 E2E 結果（2026-07-20、`temp/szpaeta-agy-integration`）
+
+### 統合
+
+- Track A/B/C を origin 経由でマージ — **コンフリクトなし**（事前調整どおり `usage*.go` は
+  A/C 同一内容、`hostcaps` は A/B 同一内容で自動解決。`routes.go` は双方の追加が共存）。
+- ビルド・既存テスト全緑: agent（Go, 17 pkg）/ CP（Go）/ Console（tsc・vitest・i18n lint・vite build）。
+
+### M1 E2E（実機・本 Workspace コンテナ内で agent を直接駆動）
+
+CP はコンテナ内に docker が無く起動不可のため、**マージ済みビルドの agent を別ポートで起動し、
+Console→CP が叩くのと同一の agent API を直接駆動**した（CP プロキシ・Console UI はそれぞれ
+既存ユニットテストでカバー）。sandbox HOME＋`~/.gemini` symlink 共有で実アカウント
+（AI Pro）を使用。
+
+| M1 完了条件 | 結果 |
+|---|---|
+| セッション作成（`POST /sessions` kind=agy） | ✅ tmux pane で agy TUI 起動、事前 trust 有効（プロンプト非表示） |
+| 会話 | ✅ marker ファイル読解を正答 |
+| resume | ✅ 停止→`POST /sessions/{name}/start` → `--conversation <UUID>` で履歴・文脈とも完全復元（ファイル再読なしで正答） |
+| logout（`DELETE /connections/agy`） | ✅ token 削除・connections `connected:false`・usage `authed:false`・`agy models` が sign-in 要求 |
+| OAuth 認証フロー | ✅ start（scratch HOME live test）: セレクタ→認可 URL スクレイプ→flow_id、済みアカウントでは 409 gate。complete はコード貼付（実ユーザー）で最終確認 |
+| `/usage` 残量表示 | ✅ 4 バー（下記）。スクレイプはクォータ消費なし |
+| RDRAND 非対応ホストでの非露出 | ✅ user+mount namespace で rdrand 無し cpuinfo を bind-mount した実 agent で `supported:false/no_rdrand`、セッション作成拒否、auth start 409 を確認 |
+
+### E2E で発見した統合バグと修正（agy resume の UUID 取得）
+
+**v1.1.4 の TUI は cwd→会話マップ（`cache/last_conversations.json`）を graceful exit 時に
+しか書かない**。D-3 の「初回プロンプトで書く」観測は `-p` 実行がプロンプト毎にプロセス終了して
+いたための見え方で、TUI 常駐では会話 DB（`conversations/<uuid>.db`）だけが先に生まれ、
+マップは `/exit` まで更新されない。このため当初実装（alive 中の poll でマップを読む
+`captureConversation` ＋ 停止は `tmux kill-session` 即死）では **UUID を一度も取得できず
+resume が新規会話になる**。修正:
+
+1. `WireLive` の capture を alive/dead 両側で実行（ユーザー自身の `/exit` 後の poll で採用）。
+2. `agents.GracefulStopper`（optional interface）新設 — halt は kill 前に agy へ
+   `C-u → /exit → Enter` を送り、猶予 4s 内の自死で flush の機会を与え、その場で UUID を採用。
+   実機で下書き入り入力欄からの halt が 0.6s で graceful 完了（下書きは送信されない）。
+
+### `/usage` 4 バー対応（D-4 反映）
+
+AI Pro でグループ毎に Weekly + Five Hour の 2 バーになったため（D-4）、パーサを limit
+サブセクション分割に拡張。ワイヤ形状は **既存フラットフィールド＝週次**（Starter 互換）＋
+`fiveHour: {remainingPct, resetsAt}`（存在時のみ）。AgyCard は週次バーの下に 5h サブバーを
+インデント表示（計 4 バー）。実機 live スクレイプで 4 バーのパースを確認済み。
+Pro ではヘッダのプラン表記が消える（メールのみ）ため `plan` は空になり得る — Card は劣化表示で受ける。
+
+### 残課題（統合スコープ外メモ）
+
+- セッション作成拒否（BuildLaunch 経由）のエラーが `tmux_failed` コードで届く（文言は正しい）。
+  Console はセレクタ非露出で通常到達しないが、コードは後で整えたい。
+- `ClearResume` は registry に定義済みだが呼び出し元が未配線（全 kind 共通の既存事項）。
+- CP 込み・ブラウザ Console 込みの L2 E2E（`e2e/`）は docker のあるホストでの実行が別途必要。
+
 ## ユーザーに依頼する事項（並行作業のブロッカー解消）
 
 1. **GCP プロジェクトの用意**（D1/M2 用）: 課金有効化済みプロジェクト ID を Connections 設定時に使える形で。
