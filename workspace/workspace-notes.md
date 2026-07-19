@@ -121,13 +121,13 @@ What you *can* do, and how to hand off to the user:
   point them at the flow: **Preview (プレビュー) → "Open in pane" (ペインで開く)**.
 - Prefer the browser pane for anything live or interactive — **Vite HMR, WebSocket,
   SSE, Spring Boot**, or any app that pushes updates. For a plain static HTTP page the
-  **lightweight preview (軽量プレビュー**, opens `/preview/{port}` in a new tab) is enough.
+  **lightweight preview** (軽量プレビュー, opens `/preview/{port}` in a new tab) is enough.
 - Pane limits the user works within: at most **2 pages**, viewport ≤ **1600×1200**,
   ~**12 fps**. `target-unreachable` means the port is not listening yet (start the
   server, then Reload); `crashed` / `disconnected` mean the in-container Chromium died
   or the socket dropped — the user reconnects from the toolbar.
-- The **phone/tablet layout does not expose this flow yet** — on a smartphone the user
-  cannot open the pane, so don't tell them to.
+- The **smartphone layout does not expose this flow yet** — desktop and tablet are
+  supported, but on a phone the user cannot open the pane, so don't tell them to.
 
 Verification honesty:
 - The pane is the *user's* view, separate from **your own headless Chromium** (see
