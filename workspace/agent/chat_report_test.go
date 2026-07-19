@@ -269,6 +269,45 @@ func TestSessionReportDeliveredAfterHealWipedMarker(t *testing.T) {
 	}
 }
 
+// TestHaltDisarmsReportOnlyWhenFlagged pins the halt/disarm contract: the MCP
+// stop_session sends {"disarm_report":true} and must cancel the pending one-shot
+// report (stop = instruction cancelled), while the Console's bodyless halt keeps the
+// arm (a later resume + completion is still the instruction's completion). The
+// sessions have no live tmux, exercising the already-stopped path — the disarm must
+// not depend on liveness.
+func TestHaltDisarmsReportOnlyWhenFlagged(t *testing.T) {
+	withTempHome(t)
+	conv := &chatConversation{ID: randUUID(), Agent: "claude", Messages: []chatMessage{}}
+	if err := saveConv(conv); err != nil {
+		t.Fatal(err)
+	}
+
+	halt := func(name, body string) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/sessions/"+name+"/halt", strings.NewReader(body))
+		req.SetPathValue("name", name)
+		rec := httptest.NewRecorder()
+		handleHaltSession(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("halt %s: status = %d, body = %s", name, rec.Code, rec.Body.String())
+		}
+	}
+
+	for _, name := range []string{"slot11", "slot12"} {
+		session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude})
+		armSessionReport(name, conv.ID)
+	}
+
+	halt("slot11", `{"disarm_report":true}`)
+	if reportArmed("slot11") {
+		t.Fatal("stop_session halt must disarm the pending report")
+	}
+	halt("slot12", "")
+	if !reportArmed("slot12") {
+		t.Fatal("Console halt (no body) must keep the arm")
+	}
+}
+
 func TestReportLinkFileLocation(t *testing.T) {
 	home := withTempHome(t)
 	conv := &chatConversation{ID: randUUID(), Agent: "claude", Messages: []chatMessage{}}
