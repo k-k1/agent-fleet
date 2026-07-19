@@ -186,6 +186,7 @@ export const ALL_COMMANDS: Command[] = [
   { id: "open.notifications", title: "keys.cmd.openNotifications", seq: "g n", run: () => useUiOpen.getState().toggle("notifications") },
   { id: "open.usageClaude", title: "keys.cmd.openUsageClaude", seq: "g c", run: () => useUiOpen.getState().toggle("usage-claude") },
   { id: "open.usageCodex", title: "keys.cmd.openUsageCodex", seq: "g x", run: () => useUiOpen.getState().toggle("usage-codex") },
+  { id: "open.usageAgy", title: "keys.cmd.openUsageAgy", seq: "g a", run: () => useUiOpen.getState().toggle("usage-agy") },
   { id: "open.resources", title: "keys.cmd.openResources", seq: "g r", run: () => useUiOpen.getState().toggle("resources") },
 
   // ---- Media: toggle voice read-aloud (mnemonic m = mute). Shares TopBar's stop+OFF logic. ----

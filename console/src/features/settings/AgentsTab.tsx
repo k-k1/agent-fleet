@@ -167,13 +167,13 @@ export function AgentsTab() {
         agents={agents}
         updateAgents={updateAgents}
       />
+      <AgyCard st={conns.agy} reload={reload} agents={agents} updateAgents={updateAgents} />
       <OpencodeCard
         st={conns.opencode}
         reload={reload}
         agents={agents}
         updateAgents={updateAgents}
       />
-      <AgyCard st={conns.agy} reload={reload} />
       {agents === false && <p className="ps-note">{tr("agents.rtk_unsupported")}</p>}
     </div>
   );
@@ -475,12 +475,23 @@ function ClaudeCard({
 
 // agy (Antigravity CLI, docs/32): claude-style OAuth connect (start → approve in a
 // new tab → paste code → complete) with an auth-method selector (M1 offers Google
-// OAuth only; the GCP-project method lands with M2), plus the Starter-Quota gauge.
-// The 実験枠 label and the weekly remaining-% display are a 採用条件 (docs/32 Track
-// C-3): the Starter pool is tiny and shared with the IDE/Jules wallet, so the card
-// must always say so. On unsupported hosts (no RDRAND) the card shows why instead
-// of the connect flow.
-function AgyCard({ st, reload }: { st: any; reload: () => void }) {
+// OAuth only; the GCP-project method lands with M2), plus the shared RTK toggle so
+// the card reads like the other agents'. The 実験枠 label is a 採用条件 (docs/32
+// Track C-3): the Starter pool is tiny and shared with the IDE/Jules wallet, so the
+// card must always say so. The quota gauge (残量%) lives in the WS bar next to the
+// Claude / Codex usage chips. On unsupported hosts (no RDRAND) the card shows why
+// instead of the connect flow.
+function AgyCard({
+  st,
+  reload,
+  agents,
+  updateAgents,
+}: {
+  st: any;
+  reload: () => void;
+  agents: any;
+  updateAgents: (patch: unknown) => void;
+}) {
   const tr = useT();
   const toast = useToast();
   const [flow, setFlow] = useState<any>(null); // { url, flow_id }
@@ -601,84 +612,22 @@ function AgyCard({ st, reload }: { st: any; reload: () => void }) {
           </div>
         </>
       )}
-      {st?.connected && !unsupported && <AgyUsage />}
+      {/* RTK is a workspace-level flag (independent of agy auth) — pre-settable,
+          same block shape as the Codex / opencode cards. */}
+      <div className="p-settings">
+        <div className="ps-title">{tr("agents.settings")}</div>
+        {agents && agents !== false && (
+          <>
+            <RtkRow
+              available={agents.rtk_available}
+              value={agents.agy_rtk}
+              onChange={(v) => updateAgents({ agy_rtk: v })}
+            />
+            <p className="ps-note">{tr("agents.agy_rtk_note")}</p>
+          </>
+        )}
+      </div>
     </ProviderCard>
-  );
-}
-
-// AgyUsage: the quota gauges, from GET api/connections/agy/usage (the agent
-// scrapes the TUI's /usage panel — takes a few seconds on a cache miss).
-// Per model group (Gemini / Claude+GPT have separate pools) a weekly bar, plus
-// a 5-hour bar when the tier has one (AI Pro, docs/32 D-4 — 4 bars total);
-// fill = REMAINING percent, matching the TUI's own bars.
-function AgyUsage() {
-  const tr = useT();
-  const [usage, setUsage] = useState<any>(null); // null = loading, false = failed
-  const [busy, setBusy] = useState(false);
-  const load = useCallback(async (refresh?: boolean) => {
-    setBusy(true);
-    try {
-      const d = await api("api/connections/agy/usage" + (refresh ? "?refresh=1" : ""));
-      setUsage(d && d.ok && Array.isArray(d.groups) ? d : false);
-    } catch {
-      setUsage(false);
-    } finally {
-      setBusy(false);
-    }
-  }, []);
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  return (
-    <div className="p-settings">
-      <div className="ps-title">{tr("agents.agy_usage_title")}</div>
-      {usage === null ? (
-        <p className="ps-note">{tr("agents.agy_usage_loading")}</p>
-      ) : usage === false ? (
-        <p className="ps-note">{tr("agents.agy_usage_unavailable")}</p>
-      ) : (
-        usage.groups.map((g: any) => {
-          // Fill = remaining, so a LOW bar is the danger sign — reuse the wu
-          // warn/crit colors from the WsBar usage chip at <25% / <10% left.
-          const bar = (label: string, remainingPct: number, resetsAt?: string, sub?: boolean) => {
-            const pct = Math.min(100, Math.max(0, remainingPct));
-            const sev = pct < 10 ? " crit" : pct < 25 ? " warn" : "";
-            return (
-              <div key={g.label + label} className={"rtk-gain-meter agy-quota" + (sub ? " agy-quota-sub" : "")}>
-                <div className="wu-row-head">
-                  <span className="muted" title={g.models || ""}>
-                    {label}
-                  </span>
-                  <span className={"wu-pct" + sev}>{tr("agents.agy_usage_remaining", { pct: Math.round(remainingPct) })}</span>
-                </div>
-                <div className="wu-bar">
-                  <span className={"wu-bar-fill" + sev} style={{ width: pct + "%" }} />
-                </div>
-                {resetsAt && (
-                  <p className="muted ds-note">
-                    {tr("agents.agy_usage_resets", { when: new Date(resetsAt).toLocaleString() })}
-                  </p>
-                )}
-              </div>
-            );
-          };
-          return (
-            <div key={g.label}>
-              {bar(
-                g.fiveHour ? `${g.label} (${tr("agents.agy_usage_weekly")})` : g.label,
-                g.remainingPct,
-                g.resetsAt,
-              )}
-              {g.fiveHour && bar(tr("agents.agy_usage_5h"), g.fiveHour.remainingPct, g.fiveHour.resetsAt, true)}
-            </div>
-          );
-        })
-      )}
-      <Button small variant="ghost" icon="refresh" disabled={busy} onClick={() => void load(true)}>
-        {tr("agents.agy_usage_refresh")}
-      </Button>
-    </div>
   );
 }
 
