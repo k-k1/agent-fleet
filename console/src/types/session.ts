@@ -9,7 +9,7 @@
 export type SessionKind = "claude" | "codex" | "opencode" | "agy" | "shell" | "ssm";
 
 // The canonical session kinds in display order (New Session buttons, etc.).
-export const SESSION_KINDS: SessionKind[] = ["claude", "codex", "opencode", "agy", "shell", "ssm"];
+export const SESSION_KINDS: SessionKind[] = ["claude", "codex", "agy", "opencode", "shell", "ssm"];
 
 // Live run state, reported by per-agent hooks/plugins. "" (empty) = idle. Only
 // claude emits question/plan/permission; codex/opencode emit working/idle only;

@@ -534,14 +534,14 @@
 .ui-seg.big .seg-btn.kind-claude:not(.active) .seg-ic { color: #e0a45e; }
 .ui-seg.big .seg-btn.kind-codex:not(.active) .seg-ic { color: #4ec97a; }
 .ui-seg.big .seg-btn.kind-opencode:not(.active) .seg-ic { color: #b07cf2; }
-.ui-seg.big .seg-btn.kind-agy:not(.active) .seg-ic { color: #4eaef0; }
+.ui-seg.big .seg-btn.kind-agy:not(.active) .seg-ic { color: #4285f4; }
 .ui-seg.big .seg-btn.kind-shell:not(.active) .seg-ic { color: #46c9d0; }
 .ui-seg.big .seg-btn.kind-ssm:not(.active) .seg-ic { color: #6d8bf5; }
 /* Light theme: darker inactive icon hues for legibility (mirrors .kind-tag). */
 [data-theme="light"] .ui-seg.big .seg-btn.kind-claude:not(.active) .seg-ic { color: #a85f1c; }
 [data-theme="light"] .ui-seg.big .seg-btn.kind-codex:not(.active) .seg-ic { color: #18854a; }
 [data-theme="light"] .ui-seg.big .seg-btn.kind-opencode:not(.active) .seg-ic { color: #6d2fce; }
-[data-theme="light"] .ui-seg.big .seg-btn.kind-agy:not(.active) .seg-ic { color: #186aa8; }
+[data-theme="light"] .ui-seg.big .seg-btn.kind-agy:not(.active) .seg-ic { color: #1a73e8; }
 [data-theme="light"] .ui-seg.big .seg-btn.kind-shell:not(.active) .seg-ic { color: #15828a; }
 [data-theme="light"] .ui-seg.big .seg-btn.kind-ssm:not(.active) .seg-ic { color: #3140b8; }
 
