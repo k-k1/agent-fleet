@@ -173,6 +173,7 @@ export function AgentsTab() {
         agents={agents}
         updateAgents={updateAgents}
       />
+      <AgyCard st={conns.agy} reload={reload} />
       {agents === false && <p className="ps-note">{tr("agents.rtk_unsupported")}</p>}
     </div>
   );
@@ -469,6 +470,215 @@ function ClaudeCard({
         )}
       </div>
     </ProviderCard>
+  );
+}
+
+// agy (Antigravity CLI, docs/32): claude-style OAuth connect (start → approve in a
+// new tab → paste code → complete) with an auth-method selector (M1 offers Google
+// OAuth only; the GCP-project method lands with M2), plus the Starter-Quota gauge.
+// The 実験枠 label and the weekly remaining-% display are a 採用条件 (docs/32 Track
+// C-3): the Starter pool is tiny and shared with the IDE/Jules wallet, so the card
+// must always say so. On unsupported hosts (no RDRAND) the card shows why instead
+// of the connect flow.
+function AgyCard({ st, reload }: { st: any; reload: () => void }) {
+  const tr = useT();
+  const toast = useToast();
+  const [flow, setFlow] = useState<any>(null); // { url, flow_id }
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  // Fixed to "oauth" while M1; the selector ships disabled so the M2 wiring
+  // (method: "gcp-project" + project_id) has its place already cut.
+  const method = "oauth";
+
+  const start = async () => {
+    setBusy(true);
+    try {
+      const res = await apiJSON("api/connections/agy/start", "POST", { method });
+      if (!res || res.error || !res.url) {
+        toast(tr("agents.agy_auth_failed", { msg: res?.error?.message || "" }));
+        return;
+      }
+      window.open(res.url, "_blank", "noopener");
+      setFlow({ url: res.url, flow_id: res.flow_id });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const complete = async () => {
+    // Same autofill guard as ClaudeCard: cut anything from http(s):// on, in case
+    // a password manager appended a URL to the pasted authorization code.
+    let c = code.trim();
+    const u = c.search(/https?:\/\//i);
+    if (u > 0) c = c.slice(0, u).trim();
+    if (!c) return;
+    setBusy(true);
+    try {
+      const r = await apiJSON("api/connections/agy/complete", "POST", { flow_id: flow.flow_id, code: c });
+      if (r && r.error) {
+        toast(tr("conn.connect_failed", { msg: String(r.error.message || r.error) }));
+        return;
+      }
+      setFlow(null);
+      setCode("");
+      reload();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const disconnect = async () => {
+    await raw("api/connections/agy", { method: "DELETE" });
+    reload();
+  };
+
+  const unsupported = st?.supported === false;
+  return (
+    <ProviderCard
+      id="agy"
+      name="Antigravity"
+      status={<StatusPill on={st?.connected}>{st?.connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>}
+    >
+      {/* 実験枠 label — always visible, connected or not (採用条件). */}
+      <p className="ps-note ps-note-warn agy-exp">{tr("agents.agy_exp_label")}</p>
+      {unsupported ? (
+        <div className="p-desc">{tr("agents.agy_unsupported", { reason: st?.reason || "" })}</div>
+      ) : st?.connected ? (
+        <div className="p-who">
+          <span className="p-em" title={st.email || "connected"}>
+            {st.email || "connected"}
+          </span>
+          {st.plan && <span className="p-pl">{st.plan}</span>}
+          <DisconnectButton onClick={disconnect} />
+        </div>
+      ) : flow ? (
+        <>
+          <div className="p-desc">{tr("agents.agy_desc_flow")}</div>
+          <div className="p-body">
+            <Hint>
+              {tr("agents.claude_hint_1")}
+              <a href={flow.url} target="_blank" rel="noopener" className="flow-link">
+                {tr("agents.claude_signin_link")}
+              </a>
+              {tr("agents.claude_hint_2")}
+            </Hint>
+            <div className="flow">
+              <input
+                className="cinput"
+                type="text"
+                name="agy-oauth-code"
+                placeholder={tr("agents.paste_code")}
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                data-1p-ignore
+                data-lpignore="true"
+                data-form-type="other"
+                autoFocus
+              />
+              <button disabled={busy} onClick={complete}>
+                {tr("agents.complete")}
+              </button>
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="p-desc">{tr("agents.agy_desc")}</div>
+          <div className="p-body">
+            <div className="flow">
+              <select className="cinput" value={method} disabled title={tr("agents.agy_method_label")}>
+                <option value="oauth">{tr("agents.agy_method_oauth")}</option>
+                <option value="gcp-project" disabled>
+                  {tr("agents.agy_method_gcp")}
+                </option>
+              </select>
+              <button disabled={busy} onClick={start}>
+                {tr("agents.oauth_connect")}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+      {st?.connected && !unsupported && <AgyUsage />}
+    </ProviderCard>
+  );
+}
+
+// AgyUsage: the quota gauges, from GET api/connections/agy/usage (the agent
+// scrapes the TUI's /usage panel — takes a few seconds on a cache miss).
+// Per model group (Gemini / Claude+GPT have separate pools) a weekly bar, plus
+// a 5-hour bar when the tier has one (AI Pro, docs/32 D-4 — 4 bars total);
+// fill = REMAINING percent, matching the TUI's own bars.
+function AgyUsage() {
+  const tr = useT();
+  const [usage, setUsage] = useState<any>(null); // null = loading, false = failed
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(async (refresh?: boolean) => {
+    setBusy(true);
+    try {
+      const d = await api("api/connections/agy/usage" + (refresh ? "?refresh=1" : ""));
+      setUsage(d && d.ok && Array.isArray(d.groups) ? d : false);
+    } catch {
+      setUsage(false);
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  return (
+    <div className="p-settings">
+      <div className="ps-title">{tr("agents.agy_usage_title")}</div>
+      {usage === null ? (
+        <p className="ps-note">{tr("agents.agy_usage_loading")}</p>
+      ) : usage === false ? (
+        <p className="ps-note">{tr("agents.agy_usage_unavailable")}</p>
+      ) : (
+        usage.groups.map((g: any) => {
+          // Fill = remaining, so a LOW bar is the danger sign — reuse the wu
+          // warn/crit colors from the WsBar usage chip at <25% / <10% left.
+          const bar = (label: string, remainingPct: number, resetsAt?: string, sub?: boolean) => {
+            const pct = Math.min(100, Math.max(0, remainingPct));
+            const sev = pct < 10 ? " crit" : pct < 25 ? " warn" : "";
+            return (
+              <div key={g.label + label} className={"rtk-gain-meter agy-quota" + (sub ? " agy-quota-sub" : "")}>
+                <div className="wu-row-head">
+                  <span className="muted" title={g.models || ""}>
+                    {label}
+                  </span>
+                  <span className={"wu-pct" + sev}>{tr("agents.agy_usage_remaining", { pct: Math.round(remainingPct) })}</span>
+                </div>
+                <div className="wu-bar">
+                  <span className={"wu-bar-fill" + sev} style={{ width: pct + "%" }} />
+                </div>
+                {resetsAt && (
+                  <p className="muted ds-note">
+                    {tr("agents.agy_usage_resets", { when: new Date(resetsAt).toLocaleString() })}
+                  </p>
+                )}
+              </div>
+            );
+          };
+          return (
+            <div key={g.label}>
+              {bar(
+                g.fiveHour ? `${g.label} (${tr("agents.agy_usage_weekly")})` : g.label,
+                g.remainingPct,
+                g.resetsAt,
+              )}
+              {g.fiveHour && bar(tr("agents.agy_usage_5h"), g.fiveHour.remainingPct, g.fiveHour.resetsAt, true)}
+            </div>
+          );
+        })
+      )}
+      <Button small variant="ghost" icon="refresh" disabled={busy} onClick={() => void load(true)}>
+        {tr("agents.agy_usage_refresh")}
+      </Button>
+    </div>
   );
 }
 
