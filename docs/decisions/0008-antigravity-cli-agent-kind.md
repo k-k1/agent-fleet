@@ -111,15 +111,50 @@ RDRAND 有効ホストで再 PoC する。
 - **モデル一覧**（Starter Quota の個人 Google アカウント）: Gemini 3.5 Flash (Low/Medium/High)、
   Gemini 3.1 Pro (Low/High)、**Claude Sonnet 4.6 / Opus 4.6 (Thinking)**、GPT-OSS 120B。
 
+## Starter Quota 実測と採用判定（2026-07-20 追記）
+
+個人 Google アカウント（表示名 **Antigravity Starter Quota** = consumer 無償枠）のまま
+第4種別として採用できるかを検討。TUI `/usage` の実測で**クォータ制度が本 ADR 初版の
+調査時（1日20req・5h リフレッシュ）から変わっている**ことを確認した。
+
+- **現行は週次・モデルグループ制**: 「Gemini 系（Flash/Pro 共有）」と「Claude/GPT 系
+  （Opus 4.6 / Sonnet 4.6 / GPT-OSS 120B 共有）」の 2 プールが**それぞれ週次上限**を持ち、
+  **トークンコスト比例**で消費される（`/usage` の説明文言より）。実測: 極小の `-p` 1 回で
+  Gemini プールの約 1% を消費 → **Starter の週次プールは極小プロンプト換算で約 100 回分**。
+  実際のエージェントタスク（リポジトリ文脈込み）は 1 タスクで数%〜を消費すると見込む。
+- **クォータは同一アカウントの Google エージェント面と共有**（Antigravity IDE・Jules・
+  Code Assist 等の unified wallet。2026-04 の quota 制度変更報道と整合）。CLI 単独の枠ではない。
+- **`/usage` は PTY スクレイプ可能** → Console の Connections パネルに残量%を出せる。
+- 判明した運用面: **`/logout` あり**（logout 手段解決）。**resume 単位 = 会話 UUID**。
+  `--continue` は cwd の最終会話（`cache/last_conversations.json` が **cwd→会話ID の
+  マップ**）、`--conversation <ID>` で明示 resume、一覧は `conversation_summaries.db`
+  （SQLite、平文で読める）か TUI `/resume`。**スロット sid との対応付けは「スロット毎に
+  作業 dir が分かれていれば `--continue` で自動」「または ID を CP 側で保存」のどちらも可**。
+- **構造化出力は現版に無い**: v1.1.4 の flags に `--output-format` は存在せず（初版調査の
+  記載は旧版/未実装機能とみられる）。`-p` はプレーンテキストのみ。
+  → **実行方式は Terminal (CLI)（tmux/PTY）一択**。codex/opencode のような Managed
+  （イベントストリーム駆動）は現状組めない。claude と同列の扱いになる。
+
+**判定: `kind=agy` の採用価値はあるが、Starter Quota では「claude/codex/opencode と並ぶ
+常用ドライバ」にはならない。**
+
+| 観点 | 評価 |
+|------|------|
+| 技術統合（auth スクレイプ・tmux・resume・AGENTS.md・MCP） | ✅ 全て成立（Terminal 方式限定） |
+| Starter の量 | ❌ 週次プール極小＋IDE/Jules と共有。常用は数タスクで枯渇 |
+| Starter の ToS | ⚠ 初版判定どおり個人検証どまり（学習はオプトアウト済でも会社運用不適） |
+| 位置づけ | **補助枠**: Claude/GPT プールが別枠なので「Gemini/Claude second-opinion を週数回」用途、および統合実装の検証用 |
+
+→ **個人利用デプロイ（WSL 即起動導線の路線）には Starter のまま「実験的・補助エージェント」
+として採用可**。会社デプロイでの常用採用は **Workspace / GCP 経路が前提**（初版判定を維持）。
+
 ## 未解決（残り）
 
 - **GCP プロジェクト経路の per-user ログイン**手順（`gcloud` 連携要否、env で渡す資格の形。
   TUI セレクタ選択肢 2 の中身は未走行）。
-- logout の正確な手段（状態照会は `agy models` で代替可と判明。logout サブコマンドは未確認）。
-- resume の単位（codex/opencode はスロット sid で resume。`agy` の persistent history との対応。
-  `--continue` / `--conversation <ID>` フラグは存在確認済、ID の取得経路が未確認）。
 - イメージ同梱は `--dir /usr/local/bin` で root 設置（claude/codex と同列）か、home 設置で
   自己更新を許すか（root 設置だと dev ユーザーの background self-update が効かない）。
+- Managed 実行方式の可否は `agy` 側の構造化出力（`--output-format` 相当）の将来提供待ち。
 
 ## 決定（提案）
 
