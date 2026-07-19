@@ -222,6 +222,37 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     available: (c) =>
       (c.conns?.opencode?.envs?.length ?? 0) > 0 || !!c.conns?.opencode?.connected,
   },
+  agy: {
+    id: "agy",
+    icon: "telescope",
+    label: "agy",
+    assistantName: "Antigravity",
+    short: "ag",
+    cssClass: "agy",
+    launchHintKey: "agent.launch_hint.agy",
+    launchSuffix: "-ag",
+    planCycleKey: "",
+    planEnterCmd: "",
+    defaultModeLabel: "",
+    // Antigravity CLI (docs/32, ADR 0008). v1.1.4 has no structured output, so
+    // Terminal (CLI) is the only driver — no managed mode until agy grows an
+    // event stream. M1 keeps the default model (no --model), no effort/plan
+    // hooks, no fork. chat/transcript light up with Track A's transcript()
+    // (conversation_summaries.db). Starter Quota = experimental pool: the
+    // launch hint carries the 実験枠 tag, the AgyCard shows the quota gauge.
+    managedDriver: false,
+    tuiMemoryCost: "",
+    caps: caps({
+      chat: true,
+      transcript: true,
+      runsInDir: true,
+      launchableFromRepo: true,
+    }),
+    // Hidden on hosts that cannot run agy (supported === false — docs/32
+    // Track B RDRAND ガード); an unfetched conns bag falls back to visible
+    // (the rail treats null conns as show-all before the predicate runs).
+    available: (c) => c.conns?.agy?.supported !== false && !!c.conns?.agy?.connected,
+  },
   shell: {
     id: "shell",
     icon: "terminal",
@@ -281,6 +312,6 @@ export function availableKinds(ctx: AvailCtx): Record<SessionKind, boolean> {
 
 // Kinds offered in a repo row's launch menu, in display order. Every entry must
 // carry the launchableFromRepo cap (asserted below); the order is presentational.
-export const repoLaunchKinds: SessionKind[] = ["claude", "codex", "opencode", "shell"];
+export const repoLaunchKinds: SessionKind[] = ["claude", "codex", "opencode", "agy", "shell"];
 
 export type { SsmHost };
