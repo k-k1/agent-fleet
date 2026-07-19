@@ -237,14 +237,13 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // Antigravity CLI (docs/32, ADR 0008). v1.1.4 has no structured output, so
     // Terminal (CLI) is the only driver — no managed mode until agy grows an
     // event stream. M1 keeps the default model (no --model), no effort/plan
-    // hooks, no fork. chat/transcript light up with Track A's transcript()
-    // (conversation_summaries.db). Starter Quota = experimental pool: the
+    // hooks, no fork, and NO chat/transcript: Track A ships no transcript()
+    // (conversation_summaries.db is lazily written and can't be trusted), so
+    // the terminal is the only UI. Starter Quota = experimental pool: the
     // launch hint carries the 実験枠 tag, the AgyCard shows the quota gauge.
     managedDriver: false,
     tuiMemoryCost: "",
     caps: caps({
-      chat: true,
-      transcript: true,
       runsInDir: true,
       launchableFromRepo: true,
     }),
