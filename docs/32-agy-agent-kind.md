@@ -321,6 +321,32 @@ Pro ではヘッダのプラン表記が消える（メールのみ）ため `pl
 - `ClearResume` は registry に定義済みだが呼び出し元が未配線（全 kind 共通の既存事項）。
 - CP 込み・ブラウザ Console 込みの L2 E2E（`e2e/`）は docker のあるホストでの実行が別途必要。
 
+## 統合後 UI 修正（2026-07-20、`temp/szpaeta-agy-ui-fixes`）
+
+統合ブランチ合流後に見つかった Console 側の不具合・未決事項の後始末。いずれも
+ビルド済みコンテナ内で稼働中の main ビルド agent(:7700) に Console を直結し、
+headless Chromium で実機確認済み。
+
+1. **起動系モーダルに認証済み agy が出ない**（真因: `StartHost`/`RepoRow` が
+   「コーディングエージェント」の選別に `caps.chat` を流用しており、chat 無しの
+   agy が常に落ちる）→ `caps.runsInDir` 判定に修正。ホーム起動・作業を始める・
+   repo 行メニュー全てで選択可を実機確認（ホーム起動から実セッション作成まで完走）。
+2. **表示順**を `claude, codex, agy, opencode` に統一（`SESSION_KINDS`・
+   `repoLaunchKinds`・設定カード・WS バーのチップ順）。
+3. **残量%表示を AgyCard から WS バーへ移設**: Claude/Codex と同列の使用量チップ
+   （used% 表示・4 バーのドロップダウン・実験枠注記・`g a` キー）。採用条件の
+   残量可視化はチップが引き継ぐ。
+4. **AgyCard の構造を他カードと統一**: 設定セクション＋RTK トグル（`agy_rtk`、
+   agent 側は実装済みだった）を追加。
+5. **色・アイコン確定**: Google Blue（dark `#4285f4` / light `#1a73e8`）＋
+   codicon `magnet`（反重力=磁気浮上のメタファ。ssm の藍・shell の青緑と区別可）。
+6. **ミラービュー調査**: 実機で `GET /sessions/{name}/messages` は
+   `unsupported_kind` — M1 設計どおり不成立。原因は agent が transcript() を
+   持たないこと（`NoGenericTranscript`）。会話 DB（`conversations/<uuid>.db`）を
+   実機で開いたところ steps テーブルの payload/metadata は **protobuf バイナリ**で、
+   post-exit のパースも非公開スキーマの逆解析が要る。対応方針: agy の構造化出力
+   （Track D-4 watch）待ちを本線とし、DB 逆解析には踏み込まない。
+
 ## ユーザーに依頼する事項（並行作業のブロッカー解消）
 
 1. **GCP プロジェクトの用意**（D1/M2 用）: 課金有効化済みプロジェクト ID を Connections 設定時に使える形で。
