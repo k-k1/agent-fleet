@@ -6,10 +6,10 @@
 // NOTE: this session `kind` is a DIFFERENT axis from a *pane's* kind (which VIEW
 // renders — terminal/file/scm/doc/diff, see types/layout PaneKind). Keep distinct.
 
-export type SessionKind = "claude" | "codex" | "opencode" | "shell" | "ssm";
+export type SessionKind = "claude" | "codex" | "opencode" | "agy" | "shell" | "ssm";
 
 // The canonical session kinds in display order (New Session buttons, etc.).
-export const SESSION_KINDS: SessionKind[] = ["claude", "codex", "opencode", "shell", "ssm"];
+export const SESSION_KINDS: SessionKind[] = ["claude", "codex", "opencode", "agy", "shell", "ssm"];
 
 // Live run state, reported by per-agent hooks/plugins. "" (empty) = idle. Only
 // claude emits question/plan/permission; codex/opencode emit working/idle only;
@@ -63,6 +63,10 @@ export const isManagedSession = (s?: { driver?: string } | null): boolean =>
 export interface ProviderConn {
   connected?: boolean;
   envs?: unknown[]; // opencode: configured provider API-key envs
+  // agy: host capability (docs/32 Track B — RDRAND ガード)。false = this host
+  // cannot run agy ("no_rdrand" / "not_installed"); absent = supported.
+  supported?: boolean;
+  reason?: string;
 }
 
 // The full connections bag. Known agents are named; git providers (github /
@@ -71,6 +75,7 @@ export interface ConnectionsStatus {
   claude?: ProviderConn;
   codex?: ProviderConn;
   opencode?: ProviderConn;
+  agy?: ProviderConn;
   [provider: string]: ProviderConn | undefined;
 }
 

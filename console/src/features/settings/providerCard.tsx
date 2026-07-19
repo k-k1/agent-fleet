@@ -13,6 +13,7 @@ export const BADGE_SHORT: Record<string, string> = {
   claude: "cc",
   codex: "cx",
   opencode: "oc",
+  agy: "ag",
   github: "gh",
   bitbucket: "bb",
   pagerduty: "pd",
