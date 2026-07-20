@@ -38,6 +38,10 @@ type chatMessage struct {
 	Role    string `json:"role"` // "user" | "assistant" | "report" (docs/30 セッション報告) | "notice" (システム通知)
 	Content string `json:"content"`
 	TS      int64  `json:"ts"` // unix millis
+	// Agent is the backend that actually generated this assistant turn. It may differ
+	// from chatConversation.Agent when auth loss makes the chat fall back to another
+	// connected CLI. Empty on legacy messages whose executing backend was not recorded.
+	Agent string `json:"agent,omitempty"`
 	// Steps is the assistant turn's working process (narration before each tool call),
 	// separated from Content (the final answer). Empty for user turns and tool-less replies.
 	Steps []chatStep `json:"steps,omitempty"`
@@ -52,13 +56,17 @@ type chatMessage struct {
 
 // chatConversation is the persisted record (one JSON file per conversation).
 type chatConversation struct {
-	ID        string        `json:"id"`
-	Agent     string        `json:"agent"` // "claude" | "codex" — selects the provider
-	Title     string        `json:"title"`
-	Model     string        `json:"model,omitempty"`
-	CreatedAt int64         `json:"created_at"`
-	UpdatedAt int64         `json:"updated_at"`
-	Messages  []chatMessage `json:"messages"`
+	ID    string `json:"id"`
+	Agent string `json:"agent"` // preferred provider snapshotted at creation
+	// ActiveAgent is the backend that generated the latest successful assistant turn.
+	// Keeping it separate preserves the user's preferred provider while letting the UI
+	// truthfully show a live claude -> codex/opencode fallback.
+	ActiveAgent string        `json:"active_agent,omitempty"`
+	Title       string        `json:"title"`
+	Model       string        `json:"model,omitempty"`
+	CreatedAt   int64         `json:"created_at"`
+	UpdatedAt   int64         `json:"updated_at"`
+	Messages    []chatMessage `json:"messages"`
 	// Provider-native resume handles so each turn continues the CLI's own
 	// conversation (context + caching) instead of re-feeding the whole history.
 	ClaudeSessionID   string `json:"claude_session_id,omitempty"`
@@ -217,6 +225,7 @@ func (c *chatConversation) knowledgeDirs() []string {
 type chatMeta struct {
 	ID           string        `json:"id"`
 	Agent        string        `json:"agent"`
+	ActiveAgent  string        `json:"active_agent,omitempty"`
 	AssistantID  string        `json:"assistant_id,omitempty"` // which assistant backs this thread (Q2)
 	Title        string        `json:"title"`
 	Model        string        `json:"model,omitempty"`

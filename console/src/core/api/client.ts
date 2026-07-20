@@ -391,6 +391,7 @@ export const fsSearch = (root: string, query: string): Promise<{ results: string
 // Headless-CLI LLM chat/translation. Thin wrappers over the /api/chat/* endpoints;
 // callers own the response shape (Conversation / ConversationMeta in types/chat).
 import type { Conversation, ConversationMeta, ChatStep } from "../../types/chat.ts";
+import type { SessionKind } from "../../types/session.ts";
 import type { Assistant, AssistantInput } from "../../types/assistant.ts";
 
 export const chatList = (): Promise<{ conversations: ConversationMeta[] }> =>
@@ -446,6 +447,7 @@ export const chatSend = (
 // of {delta}, {error}, or {done, conversation}. onDelta fires per chunk; onDone with
 // the final saved conversation; onError with a message. Resolves when the stream ends.
 export interface ChatStreamHandlers {
+  onAgent?: (agent: SessionKind) => void;
   onDelta?: (text: string) => void;
   onStep?: (step: ChatStep) => void; // a completed 作業過程 item (narration + tools before a tool call)
   onDone?: (conv: Conversation | undefined) => void;
@@ -492,6 +494,7 @@ export async function chatStream(
       const line = frame.startsWith("data:") ? frame.slice(5).trim() : frame.trim();
       if (!line) continue;
       let obj: {
+        agent?: SessionKind;
         delta?: string;
         step?: ChatStep;
         error?: unknown;
@@ -503,7 +506,8 @@ export async function chatStream(
       } catch {
         continue;
       }
-      if (typeof obj.delta === "string") h.onDelta?.(obj.delta);
+      if (obj.agent) h.onAgent?.(obj.agent);
+      else if (typeof obj.delta === "string") h.onDelta?.(obj.delta);
       else if (obj.step) h.onStep?.(obj.step);
       else if (obj.error != null) h.onError?.(errText(obj.error as ApiError) || String(obj.error));
       else if (obj.done) h.onDone?.(obj.conversation);

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -112,6 +113,22 @@ func chatProviderFor(c *chatConversation) chatProvider {
 	return chatProviders[session.KindClaude]
 }
 
+// chatProviderKind returns the concrete backend selected by chatProviderFor. Keeping
+// this out of chatProvider avoids widening every test stub merely for presentation
+// metadata. Production providers are the three value types below.
+func chatProviderKind(c *chatConversation, prov chatProvider) string {
+	switch prov.(type) {
+	case claudeChat:
+		return session.KindClaude
+	case codexChat:
+		return session.KindCodex
+	case opencodeChat:
+		return session.KindOpencode
+	default:
+		return c.Agent // test/custom provider: best truthful fallback available
+	}
+}
+
 // claudeChat runs `claude -p` (headless), pinning a session id on the first turn
 // and resuming it thereafter so context carries across turns. Auth is the
 // container's existing CLAUDE_CODE_OAUTH_TOKEN / CLAUDE_CONFIG_DIR (subscription).
@@ -142,11 +159,6 @@ func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) 
 	args = append(args, c.knowledgeArgs()...)
 	args = append(args, c.mcpConfigArgs()...)
 	cmd := chatClaudeCmd(ctx, args...)
-	// claude writes .credentials.json via tmp+rename (verified with strace): a refresh
-	// during this run replaces the symlink with a real file. Re-run the reconcile after
-	// the process exits to copy the rotated token back to shared and relink immediately,
-	// so the shared login (used by the interactive sessions) never goes stale.
-	defer func() { _, _ = ensureChatClaudeConfig() }()
 	cmd.Stdin = strings.NewReader(prompt)
 	out, err := cmd.Output()
 	// On an error result (e.g. context overflow) claude prints its JSON result AND exits
@@ -241,7 +253,6 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 	args = append(args, c.knowledgeArgs()...)
 	args = append(args, c.mcpConfigArgs()...)
 	cmd := chatClaudeCmd(ctx, args...)
-	defer func() { _, _ = ensureChatClaudeConfig() }() // copy any refreshed token back to shared (see send)
 	cmd.Stdin = strings.NewReader(prompt)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -361,7 +372,10 @@ func (codexChat) send(ctx context.Context, c *chatConversation, prompt string) (
 	// state mutation) — the claude side enforces the same via --disallowedTools. Global
 	// exec flags must precede the resume subcommand (verified live: resume rejects
 	// --color/-C placed after it).
-	args := []string{"exec", "--json", "--skip-git-repo-check", "--color", "never", "-C", chatWorkdir()}
+	// Headless chat has no approval UI. Explicitly decline escalation while keeping
+	// shell commands in the read-only sandbox: MCP calls (including af_write) can run,
+	// but the model still cannot mutate the workspace through shell/file tools.
+	args := codexChatBaseArgs()
 	if c.Model != "" {
 		args = append(args, "-m", c.Model)
 	}
@@ -395,13 +409,17 @@ func (codexChat) send(ctx context.Context, c *chatConversation, prompt string) (
 	return reply, nil
 }
 
+func codexChatBaseArgs() []string {
+	return []string{"-a", "never", "-s", "read-only", "exec", "--json", "--skip-git-repo-check", "--color", "never", "-C", chatWorkdir()}
+}
+
 // chatCodexHome prepares the chat-only CODEX_HOME — the codex analog of claude's
 // chat-only CLAUDE_CONFIG_DIR (docs/19 Q3): an isolated sessions/config tree so the
 // headless chat's `codex exec` neither pollutes ~/.codex (its threads would appear in
 // the interactive `codex resume` picker / history) nor loads the user's config.toml
 // (their own MCP servers must not spawn on every chat turn; the chat attaches only
 // the af server via -c). ONLY the login is shared: auth.json is symlinked to
-// ~/.codex/auth.json with the same copy-back reconcile as claude's credentials
+// ~/.codex/auth.json with a copy-back reconcile dedicated to Codex
 // (codex also rewrites auth.json via tmp+rename on a ChatGPT token refresh, which
 // would replace the symlink with a diverging real file). Call again after each exec
 // to fold a rotated token back into the shared file.
@@ -437,6 +455,10 @@ func codexMCPArgs(write bool, convID string) []string {
 	return []string{
 		"-c", "mcp_servers.af.command=" + tomlString(paths.ExePath()),
 		"-c", "mcp_servers.af.args=" + serverArgs,
+		// Codex has a distinct MCP approval layer. Headless exec has no UI to answer
+		// it, so the default policy reports "user cancelled MCP tool call" unless the
+		// explicitly granted Agent Fleet server is pre-approved.
+		"-c", "mcp_servers.af.default_tools_approval_mode=\"approve\"",
 	}
 }
 
@@ -694,12 +716,11 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 	}
 	// claude (default): the historical path, kept native. --no-session-persistence is
 	// claude's --ephemeral analog (print-mode only, no transcript written, no resume):
-	// a one-shot never resumes, so don't pile per-call jsonl into chat-claude/projects.
+	// a one-shot never resumes, so don't pile per-call jsonl into Claude's projects tree.
 	args := []string{"-p", "--no-session-persistence", "--output-format", "json", "--dangerously-skip-permissions",
 		"--append-system-prompt", persona, "--model", claudeModel}
 	args = append(args, chatToolLimits()...)
 	cmd := chatClaudeCmd(ctx, args...)
-	defer func() { _, _ = ensureChatClaudeConfig() }()
 	cmd.Stdin = strings.NewReader(prompt)
 	out, err := cmd.Output()
 	if err != nil {
@@ -733,11 +754,9 @@ func chatWorkdir() string {
 	return d
 }
 
-// chatClaudeDir is the chat-only CLAUDE_CONFIG_DIR (docs/19 Q3): an isolated
-// settings/trust/transcript tree so the headless chat's `claude -p` does NOT inherit
-// the interactive tmux sessions' status hooks, does not clutter their projects/
-// transcript tree, and can carry its own MCP config — while sharing ONLY the
-// subscription credentials with them (see ensureChatClaudeConfig).
+// legacyChatClaudeDir was the chat-only CLAUDE_CONFIG_DIR. New runs use Claude's
+// shared config directly so every process sees one OAuth refresh-token file. The old
+// directory remains only as a transcript migration source for existing conversations.
 func chatClaudeDir() string {
 	if v := os.Getenv("AF_CHAT_CLAUDE_DIR"); v != "" {
 		return v
@@ -745,39 +764,52 @@ func chatClaudeDir() string {
 	return filepath.Join(homeDir(), ".config", "agent-fleet", "chat-claude")
 }
 
-// ensureChatClaudeConfig prepares chatClaudeDir and shares the subscription login by
-// symlinking its .credentials.json to the interactive sessions' shared config, then
-// returns the dir. Credentials must be a SINGLE shared file: OAuth refresh rotates
-// the refresh token, so two independent copies would race and one side would lose
-// auth.
-//
-// claude writes its JSON state (incl. creds) via tmp-file + rename (verified with
-// strace: `.claude.json.tmp.* → rename(.claude.json)`). That means:
-//   - an interactive session / agent re-auth renames the SHARED file → our symlink is
-//     path-based, so it transparently follows to the fresh file. No action needed.
-//   - the chat's OWN refresh renames the LINK path → the symlink becomes a real file
-//     holding the rotated token, diverging from shared. reconcileChatCreds copies the
-//     newer token back to shared and relinks; callers run it both before AND right
-//     after each claude exec, so the shared login is refreshed within one turn.
-//
-// A file bind-mount would NOT help (atomic-rename of the source makes the mount stale,
-// and rename onto a mountpoint EBUSYs) — the symlink + copy-back is the robust choice.
-func ensureChatClaudeConfig() (string, error) {
-	dir := chatClaudeDir()
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
-	}
-	shared := filepath.Join(claude.ConfigDir(), ".credentials.json")
-	reconcileChatCreds(shared, filepath.Join(dir, ".credentials.json"))
-	// Seed onboarding/theme/trust once from the shared config so a headless run in a
-	// fresh dir doesn't stall on first-run prompts; it diverges independently after.
-	seed := filepath.Join(dir, ".claude.json")
-	if _, err := os.Stat(seed); os.IsNotExist(err) {
-		if b, rerr := os.ReadFile(filepath.Join(claude.ConfigDir(), ".claude.json")); rerr == nil {
-			_ = os.WriteFile(seed, b, 0o600)
+var migrateChatClaudeOnce sync.Once
+
+// migrateLegacyChatClaudeProjects copies provider transcripts created under the old
+// isolated CLAUDE_CONFIG_DIR into the shared projects tree. Files are create-only:
+// an existing shared transcript always wins. Credentials/settings are deliberately
+// excluded. This preserves --resume across the storage-layout change without ever
+// reintroducing a second OAuth credential file.
+func migrateLegacyChatClaudeProjects() {
+	migrateChatClaudeOnce.Do(func() {
+		srcRoot := filepath.Join(chatClaudeDir(), "projects")
+		dstRoot := filepath.Join(claude.ConfigDir(), "projects")
+		copyLegacyChatClaudeProjects(srcRoot, dstRoot)
+	})
+}
+
+func copyLegacyChatClaudeProjects(srcRoot, dstRoot string) {
+	_ = filepath.WalkDir(srcRoot, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil // best-effort migration; a missing legacy tree is normal
 		}
-	}
-	return dir, nil
+		rel, err := filepath.Rel(srcRoot, path)
+		if err != nil || rel == "." {
+			return nil
+		}
+		dst := filepath.Join(dstRoot, rel)
+		if d.IsDir() {
+			_ = os.MkdirAll(dst, 0o700)
+			return nil
+		}
+		in, err := os.Open(path)
+		if err != nil {
+			return nil
+		}
+		defer in.Close()
+		_ = os.MkdirAll(filepath.Dir(dst), 0o700)
+		out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			return nil // already migrated (or not writable): never overwrite
+		}
+		_, copyErr := io.Copy(out, in)
+		_ = out.Close()
+		if copyErr != nil {
+			_ = os.Remove(dst)
+		}
+		return nil
+	})
 }
 
 // reconcileChatCreds ensures link is a symlink to shared, self-healing the case where
@@ -884,14 +916,17 @@ func (c *chatConversation) mcpConfigArgs() []string {
 	return []string{"--mcp-config", string(cfg), "--strict-mcp-config"}
 }
 
-// chatClaudeCmd builds a claude exec configured for the chat: run in chatWorkdir with
-// the chat-only CLAUDE_CONFIG_DIR (shared creds). Falls back to the inherited env if
-// the config dir can't be prepared.
+// chatClaudeCmd runs chat turns against Claude's single shared config directory. This
+// is intentionally different from the old credentials symlink: Claude refreshes OAuth
+// state via atomic rename, which replaces a symlink and can strand concurrent sessions
+// on different refresh tokens. --setting-sources "" plus --strict-mcp-config at the
+// caller keeps user/project hooks and MCP configuration out of the headless chat while
+// auth and provider-native resume state remain shared and race-free.
 func chatClaudeCmd(ctx context.Context, args ...string) *exec.Cmd {
+	migrateLegacyChatClaudeProjects()
+	args = append([]string{"--setting-sources", ""}, args...)
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = chatWorkdir()
-	if ccd, err := ensureChatClaudeConfig(); err == nil {
-		cmd.Env = envWith("CLAUDE_CONFIG_DIR=" + ccd)
-	}
+	cmd.Env = envWith("CLAUDE_CONFIG_DIR=" + claude.ConfigDir())
 	return cmd
 }
