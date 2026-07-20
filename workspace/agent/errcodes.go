@@ -25,6 +25,7 @@ const (
 	errCodeChatTitleEmpty         = "chat_title_empty"
 	errCodeChatMessageEmpty       = "chat_message_empty"
 	errCodeChatConversationNotFnd = "chat_conversation_not_found"
+	errCodeChatNothingToCompact   = "chat_nothing_to_compact"
 
 	// 接続設定（connections.go）
 	errCodeConnAPIKeyRequired     = "conn_api_key_required"

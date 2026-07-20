@@ -121,6 +121,11 @@ type claudeResult struct {
 	Result    string `json:"result"`
 	SessionID string `json:"session_id"`
 	IsError   bool   `json:"is_error"`
+	// Usage/ModelUsage feed the conversation's context-fill snapshot (chat_usage.go):
+	// usage.iterations' last entry is the final per-call snapshot, and modelUsage
+	// carries the model's real contextWindow.
+	Usage      claudeUsage                 `json:"usage"`
+	ModelUsage map[string]claudeModelUsage `json:"modelUsage"`
 }
 
 func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) (string, error) {
@@ -144,12 +149,17 @@ func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) 
 	defer func() { _, _ = ensureChatClaudeConfig() }()
 	cmd.Stdin = strings.NewReader(prompt)
 	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("claude execution failed: %s", cliErr(err))
-	}
+	// On an error result (e.g. context overflow) claude prints its JSON result AND exits
+	// non-zero, so cmd.Output() returns an ExitError while `out` still holds the structured
+	// message. Parse it first: a bare "exit status 1" would hide "Prompt is too long …" and
+	// defeat the overflow self-heal (chat_recover.go). Fall back to the exec error only when
+	// there's no parseable result.
 	var r claudeResult
-	if err := json.Unmarshal(out, &r); err != nil {
-		return "", fmt.Errorf("failed to parse claude response: %v", err)
+	if jerr := json.Unmarshal(out, &r); jerr != nil {
+		if err != nil {
+			return "", fmt.Errorf("claude execution failed: %s", cliErr(err))
+		}
+		return "", fmt.Errorf("failed to parse claude response: %v", jerr)
 	}
 	if r.SessionID != "" {
 		c.ClaudeSessionID = r.SessionID
@@ -157,6 +167,12 @@ func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) 
 	if r.IsError {
 		return "", fmt.Errorf("claude returned an error: %s", r.Result)
 	}
+	if err != nil {
+		return "", fmt.Errorf("claude execution failed: %s", cliErr(err))
+	}
+	t := claudeCtx{model: chatModel(c)}
+	t.observeResult(r.Usage, r.ModelUsage)
+	t.apply(c) // context-fill snapshot (chat_usage.go)
 	return strings.TrimRight(r.Result, "\n"), nil
 }
 
@@ -186,7 +202,16 @@ type streamLine struct {
 	SessionID string `json:"session_id"`
 	Result    string `json:"result"`
 	IsError   bool   `json:"is_error"`
-	Event     struct {
+	// Message rides "assistant" lines: each carries the API message's model + usage —
+	// the per-message context snapshot claudeCtx tracks (chat_usage.go).
+	Message struct {
+		Model string      `json:"model"`
+		Usage claudeUsage `json:"usage"`
+	} `json:"message"`
+	// Usage/ModelUsage ride the final "result" line (same shape as claudeResult).
+	Usage      claudeUsage                 `json:"usage"`
+	ModelUsage map[string]claudeModelUsage `json:"modelUsage"`
+	Event      struct {
 		Type         string `json:"type"`
 		ContentBlock struct {
 			Type string `json:"type"` // "text" | "thinking" | "tool_use"
@@ -239,6 +264,7 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 	var steps []chatStep    // completed working steps
 	var result string       // authoritative final text (fallback / error text)
 	var resultErr bool
+	ctxTrack := claudeCtx{model: chatModel(c)} // context-fill tracker (chat_usage.go)
 	reader := bufio.NewReaderSize(stdout, 1<<20)
 	for {
 		line, rerr := reader.ReadBytes('\n')
@@ -273,9 +299,12 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 							curTools = nil
 						}
 					}
+				case "assistant":
+					ctxTrack.observeAssistant(sl.Message.Model, sl.Message.Usage)
 				case "result":
 					result = sl.Result
 					resultErr = sl.IsError
+					ctxTrack.observeResult(sl.Usage, sl.ModelUsage)
 				}
 			}
 		}
@@ -283,12 +312,18 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 			break // EOF or read error — the process is done streaming
 		}
 	}
-	if err := cmd.Wait(); err != nil {
-		return "", nil, fmt.Errorf("claude execution failed: %s", stderrOr(err, &stderr))
-	}
+	waitErr := cmd.Wait()
+	// An error result (e.g. context overflow) rides the stream's `result` event AND makes
+	// claude exit non-zero. Prefer the parsed message so the overflow self-heal can see
+	// "Prompt is too long …" (chat_recover.go); a bare "exit status 1" from waitErr would
+	// mask it. Fall back to the exec error only when no result event carried an error.
 	if resultErr {
 		return "", nil, fmt.Errorf("claude returned an error: %s", result)
 	}
+	if waitErr != nil {
+		return "", nil, fmt.Errorf("claude execution failed: %s", stderrOr(waitErr, &stderr))
+	}
+	ctxTrack.apply(c) // context-fill snapshot (chat_usage.go)
 	// The final answer is what streamed into the last (end_turn) message — this is exactly
 	// what the answer bubble displayed live, so the saved/`done` content matches it (no
 	// end-of-turn swap). Fall back to `result` only if nothing streamed there.
@@ -344,7 +379,7 @@ func (codexChat) send(ctx context.Context, c *chatConversation, prompt string) (
 	if err != nil {
 		return "", fmt.Errorf("codex execution failed: %s", cliErr(err))
 	}
-	reply, threadID, execErr := parseCodexExecEvents(out)
+	reply, threadID, execErr, usage := parseCodexExecEvents(out)
 	if threadID != "" {
 		c.CodexSessionID = threadID
 	}
@@ -354,6 +389,9 @@ func (codexChat) send(ctx context.Context, c *chatConversation, prompt string) (
 	if reply == "" {
 		return "", errors.New("no response from codex")
 	}
+	// codex の input_tokens は cached を含む（chat_usage.go）: fresh = input - cached。
+	setChatContext(c, usage.InputTokens-usage.CachedInputTokens, usage.CachedInputTokens,
+		0, 0, chatCtxModelFor(c))
 	return reply, nil
 }
 
@@ -404,17 +442,19 @@ func codexMCPArgs(write bool, convID string) []string {
 
 // parseCodexExecEvents walks a codex exec --json JSONL stream: the reply is the
 // agent_message items joined (normally one), the thread id comes from thread.started,
-// and a turn.failed / error event surfaces as execErr.
-func parseCodexExecEvents(out []byte) (reply, threadID, execErr string) {
+// a turn.failed / error event surfaces as execErr, and turn.completed's usage feeds
+// the context-fill snapshot (chat_usage.go; last one wins).
+func parseCodexExecEvents(out []byte) (reply, threadID, execErr string, usage codexUsage) {
 	var texts []string
 	for _, ln := range bytes.Split(out, []byte("\n")) {
 		if len(bytes.TrimSpace(ln)) == 0 {
 			continue
 		}
 		var ev struct {
-			Type     string `json:"type"`
-			ThreadID string `json:"thread_id"`
-			Message  string `json:"message"`
+			Type     string     `json:"type"`
+			ThreadID string     `json:"thread_id"`
+			Message  string     `json:"message"`
+			Usage    codexUsage `json:"usage"`
 			Item     struct {
 				Type string `json:"type"`
 				Text string `json:"text"`
@@ -433,6 +473,8 @@ func parseCodexExecEvents(out []byte) (reply, threadID, execErr string) {
 			if ev.Item.Type == "agent_message" && ev.Item.Text != "" {
 				texts = append(texts, ev.Item.Text)
 			}
+		case "turn.completed":
+			usage = ev.Usage
 		case "turn.failed", "error":
 			if ev.Error.Message != "" {
 				execErr = ev.Error.Message
@@ -443,7 +485,7 @@ func parseCodexExecEvents(out []byte) (reply, threadID, execErr string) {
 			}
 		}
 	}
-	return strings.TrimRight(strings.Join(texts, "\n\n"), "\n"), threadID, execErr
+	return strings.TrimRight(strings.Join(texts, "\n\n"), "\n"), threadID, execErr, usage
 }
 
 // tomlString renders s as a TOML basic string for a codex -c override (same as the
@@ -480,13 +522,14 @@ func (opencodeChat) send(ctx context.Context, c *chatConversation, prompt string
 	if err != nil {
 		return "", fmt.Errorf("opencode execution failed: %s", cliErr(err))
 	}
-	reply, sesID := parseOpencodeRunEvents(out)
+	reply, sesID, usage := parseOpencodeRunEvents(out)
 	if sesID != "" {
 		c.OpencodeSessionID = sesID
 	}
 	if reply == "" {
 		return "", errors.New("no response from opencode")
 	}
+	setChatContext(c, usage.Input, usage.Cache.Read, usage.Cache.Write, 0, chatCtxModelFor(c))
 	return reply, nil
 }
 
@@ -533,8 +576,9 @@ func opencodeChatDir(c *chatConversation) string {
 
 // parseOpencodeRunEvents walks an opencode run --format json stream: the reply is the
 // text parts in arrival order (deduped by part id — opencode may re-emit a part as it
-// settles), and every event carries the session id for resume.
-func parseOpencodeRunEvents(out []byte) (reply, sesID string) {
+// settles), every event carries the session id for resume, and step_finish parts carry
+// the per-call tokens that feed the context-fill snapshot (chat_usage.go; last wins).
+func parseOpencodeRunEvents(out []byte) (reply, sesID string, usage opencodeUsage) {
 	texts := map[string]string{} // part id -> latest text
 	var order []string
 	for _, ln := range bytes.Split(out, []byte("\n")) {
@@ -545,9 +589,10 @@ func parseOpencodeRunEvents(out []byte) (reply, sesID string) {
 			Type      string `json:"type"`
 			SessionID string `json:"sessionID"`
 			Part      struct {
-				ID   string `json:"id"`
-				Type string `json:"type"`
-				Text string `json:"text"`
+				ID     string        `json:"id"`
+				Type   string        `json:"type"`
+				Text   string        `json:"text"`
+				Tokens opencodeUsage `json:"tokens"`
 			} `json:"part"`
 		}
 		if json.Unmarshal(ln, &ev) != nil {
@@ -562,12 +607,16 @@ func parseOpencodeRunEvents(out []byte) (reply, sesID string) {
 			}
 			texts[ev.Part.ID] = ev.Part.Text
 		}
+		if ev.Type == "step_finish" && ev.Part.Type == "step-finish" &&
+			ev.Part.Tokens.Input+ev.Part.Tokens.Cache.Read+ev.Part.Tokens.Cache.Write > 0 {
+			usage = ev.Part.Tokens
+		}
 	}
 	var parts []string
 	for _, id := range order {
 		parts = append(parts, texts[id])
 	}
-	return strings.TrimRight(strings.Join(parts, "\n\n"), "\n"), sesID
+	return strings.TrimRight(strings.Join(parts, "\n\n"), "\n"), sesID, usage
 }
 
 // headlessPrompt builds the stdin/argv prompt for backends without a system-prompt
@@ -611,7 +660,7 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		if err != nil {
 			return "", fmt.Errorf("codex execution failed: %s", cliErr(err))
 		}
-		reply, _, execErr := parseCodexExecEvents(out)
+		reply, _, execErr, _ := parseCodexExecEvents(out)
 		if execErr != "" {
 			return "", errors.New(execErr)
 		}
@@ -629,7 +678,7 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		if err != nil {
 			return "", fmt.Errorf("opencode execution failed: %s", cliErr(err))
 		}
-		reply, sesID := parseOpencodeRunEvents(out)
+		reply, sesID, _ := parseOpencodeRunEvents(out)
 		// opencode has no ephemeral mode — delete the throwaway session so one-shots
 		// don't pile "New session…" rows into the shared store. Best-effort, detached
 		// from ctx (the reply is already in hand; cleanup shouldn't be cancelled).

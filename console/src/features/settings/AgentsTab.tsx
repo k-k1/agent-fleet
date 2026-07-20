@@ -126,6 +126,10 @@ export function AgentsTab() {
         <OnOff value={s.assistantAutoTurn} onChange={(v) => setSetting("assistantAutoTurn", v)} />
       </Row>
       <p className="muted ds-note">{tr("agents.note_assistant_auto_turn")}</p>
+      <Row label={tr("agents.assistant_auto_compact")}>
+        <OnOff value={s.assistantAutoCompact} onChange={(v) => setSetting("assistantAutoCompact", v)} />
+      </Row>
+      <p className="muted ds-note">{tr("agents.note_assistant_auto_compact")}</p>
     </section>
   );
 
