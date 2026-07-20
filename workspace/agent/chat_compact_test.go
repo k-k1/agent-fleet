@@ -36,7 +36,8 @@ func TestCompactConversation(t *testing.T) {
 	if err := compactConversation(context.Background(), c, prov, compactReasonManual); err != nil {
 		t.Fatal(err)
 	}
-	if len(prov.prompts) != 1 || prov.prompts[0] != compactSummaryPrompt {
+	if len(prov.prompts) != 1 || !strings.Contains(prov.prompts[0], providerSyncPreamble) ||
+		!strings.HasSuffix(prov.prompts[0], compactSummaryPrompt) {
 		t.Fatalf("summary prompt not sent: %+v", prov.prompts)
 	}
 	if c.ClaudeSessionID != "" || c.CodexSessionID != "" || c.OpencodeSessionID != "" {

@@ -17,6 +17,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -291,7 +292,7 @@ var mcpStdioWriteTools = []map[string]any{
 	},
 	{
 		"name":        "send_to_session",
-		"description": "指定セッションにプロンプト（テキスト）を送信して実行させる（末尾に Enter）。すぐ返る。送信後にそのセッションが入力待ちになる／異常終了すると、この会話に自動で報告が届くのでポーリングは不要（すぐ結果が要る時だけ get_session_status / get_session_output で確認）。利用者が「s7 に○○を伝えて/やらせて」等の作業依頼をした時に呼ぶ。",
+		"description": "指定セッションにプロンプト（テキスト）を送信して実行させる（末尾に Enter）。停止中なら会話を保持したまま自動で再開してから送る。成功時だけ sent=true を返すため、sent=true を確認するまでは利用者に送信済みと伝えないこと。送信後にそのセッションが入力待ちになる／異常終了すると、この会話に自動で報告が届くのでポーリングは不要（すぐ結果が要る時だけ get_session_status / get_session_output で確認）。利用者が「s7 に○○を伝えて/やらせて」等の作業依頼をした時に呼ぶ。",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -566,11 +567,16 @@ func mcpStdioCall(req mcpReq) []byte {
 			return mcpToolErr(req.ID, "prompt（送信本文）が必要です")
 		}
 		reqBody, _ := json.Marshal(map[string]string{"prompt": a.Prompt, "report_to": mcpConvID})
-		out, err := agentPOST("/sessions/"+url.PathEscape(a.Name)+"/input", reqBody)
+		out, resumed, err := agentSendToSession(a.Name, reqBody)
 		if err != nil {
 			return mcpToolErr(req.ID, "Agent への送信に失敗しました: "+err.Error())
 		}
-		return mcpTextResult(req.ID, out)
+		result := map[string]any{"sent": true, "resumed": resumed, "session": a.Name}
+		if json.Valid([]byte(out)) {
+			result["agent_result"] = json.RawMessage(out)
+		}
+		b, _ := json.Marshal(result)
+		return mcpTextResult(req.ID, string(b))
 	case "stop_session":
 		if !mcpWriteEnabled {
 			return mcpToolErr(req.ID, "このアシスタントはセッションの停止を許可されていません")
@@ -817,7 +823,100 @@ func agentDo(method, path string, body []byte) (string, error) {
 	}
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 400 {
+		return "", &agentHTTPError{StatusCode: resp.StatusCode, Body: string(b)}
+	}
 	return string(b), nil
+}
+
+type agentHTTPError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *agentHTTPError) Error() string {
+	return fmt.Sprintf("Agent API エラー (%d): %s", e.StatusCode, e.Body)
+}
+
+func (e *agentHTTPError) hasCode(code string) bool {
+	var body struct {
+		Code string `json:"code"`
+	}
+	return json.Unmarshal([]byte(e.Body), &body) == nil && body.Code == code
+}
+
+// agentSendToSession makes the orchestration contract atomic from the model's point
+// of view: try delivery, resume only on the explicit stopped-state response, then
+// retry delivery. Other conflicts (for example question_pending) remain errors and
+// can never be reported as successful sends.
+func agentSendToSession(name string, body []byte) (out string, resumed bool, err error) {
+	inputPath := "/sessions/" + url.PathEscape(name) + "/input"
+	state, err := agentSessionStatus(name)
+	if err != nil {
+		return "", false, fmt.Errorf("送信前の状態確認に失敗しました: %w", err)
+	}
+	if !state.Alive {
+		return agentResumeAndSend(name, inputPath, body)
+	}
+	out, err = agentPOST(inputPath, body)
+	if err == nil {
+		return out, false, nil
+	}
+	var httpErr *agentHTTPError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusConflict || !httpErr.hasCode("not_running") {
+		return "", false, err
+	}
+	// The session stopped between the status read and input POST. Apply the same
+	// resume path as an initially stopped session.
+	return agentResumeAndSend(name, inputPath, body)
+}
+
+func agentResumeAndSend(name, inputPath string, body []byte) (out string, resumed bool, err error) {
+	if _, err = agentPOST("/sessions/"+url.PathEscape(name)+"/start", nil); err != nil {
+		return "", false, fmt.Errorf("停止中セッションの再開に失敗しました: %w", err)
+	}
+	if err = agentWaitSessionReady(name, 30*time.Second, 500*time.Millisecond); err != nil {
+		return "", true, err
+	}
+	out, err = agentPOST(inputPath, body)
+	if err != nil {
+		return "", true, fmt.Errorf("再開後の送信に失敗しました: %w", err)
+	}
+	return out, true, nil
+}
+
+type agentSessionState struct {
+	Alive bool `json:"alive"`
+	Ready bool `json:"ready"`
+}
+
+func agentSessionStatus(name string) (agentSessionState, error) {
+	var state agentSessionState
+	out, err := agentGET("/sessions/" + url.PathEscape(name) + "/status")
+	if err != nil {
+		return state, err
+	}
+	if err := json.Unmarshal([]byte(out), &state); err != nil {
+		return state, err
+	}
+	return state, nil
+}
+
+func agentWaitSessionReady(name string, timeout, interval time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		state, err := agentSessionStatus(name)
+		if err != nil {
+			return fmt.Errorf("再開後の状態確認に失敗しました: %w", err)
+		}
+		if state.Alive && state.Ready {
+			return nil
+		}
+		if time.Now().Add(interval).After(deadline) {
+			return errors.New("セッションを再開しましたが、入力可能になる前にタイムアウトしました")
+		}
+		time.Sleep(interval)
+	}
 }
 
 // agentBaseURL derives the loopback URL of the in-container Agent from AGENT_ADDR.

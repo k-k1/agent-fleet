@@ -346,11 +346,13 @@ func runReportAutoTurn(convID string) {
 	// docs/33: 圧縮直後の自動ターンも引き継ぎ要約を先頭に載せる（新セッションは
 	// 過去の指示・文脈を何も知らない）。
 	prompt, handoff := injectHandoff(c, reportsPrompt(pending))
+	prompt = syncProviderPrompt(c, actualAgent, prompt, len(c.Messages))
 	reply, err := prov.send(ctx, c, prompt)
 	if err != nil && recoverForRetry(ctx, c, prov, err) {
 		// docs/33 第3段: 超過を検知 → 現行セッションを要約して畳み、新セッションで
 		// リトライ（reports は未配信なので再注入され要約も前置される）。
 		prompt, handoff = injectHandoff(c, reportsPrompt(pending))
+		prompt = syncProviderPrompt(c, actualAgent, prompt, len(c.Messages))
 		reply, err = prov.send(ctx, c, prompt)
 	}
 	if err != nil {
@@ -373,6 +375,7 @@ func runReportAutoTurn(convID string) {
 	c.AutoTurns++
 	c.Messages = append(c.Messages, chatMessage{Role: "assistant", Content: reply, Agent: actualAgent, TS: nowMs()})
 	c.ActiveAgent = actualAgent
+	markProviderSynced(c, actualAgent, len(c.Messages))
 	// 無人の自動ターンでも逼迫を見逃さない（notice＋通知センター、chat_usage.go）:
 	// オペレーター会話は長寿でコンテキストが積み上がりやすい代表格。
 	noteContextPressure(c)
