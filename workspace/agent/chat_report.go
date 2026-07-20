@@ -351,6 +351,9 @@ func runReportAutoTurn(convID string) {
 	markReportsDelivered(pending)
 	c.AutoTurns++
 	c.Messages = append(c.Messages, chatMessage{Role: "assistant", Content: reply, TS: nowMs()})
+	// 無人の自動ターンでも逼迫を見逃さない（notice＋通知センター、chat_usage.go）:
+	// オペレーター会話は長寿でコンテキストが積み上がりやすい代表格。
+	noteContextPressure(c)
 	c.UpdatedAt = nowMs()
 	if err := saveConv(c); err != nil {
 		log.Printf("chat report: save %s: %v", convID, err)

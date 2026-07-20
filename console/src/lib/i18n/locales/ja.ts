@@ -82,6 +82,8 @@ export const ja = {
   "notif.session_report.speech": "{name} からアシスタントに報告が届きました。",
   "notif.chat_auto_paused.title": "自動応答が上限に達し停止しました",
   "notif.chat_auto_paused.speech": "アシスタントの自動応答が上限に達したため停止しました。続けるにはメッセージを送ってください。",
+  "notif.chat_ctx_pressure.title": "チャットのコンテキストが逼迫しています",
+  "notif.chat_ctx_pressure.speech": "アシスタントチャットのコンテキスト使用量が上限に近づいています。新しいチャットへの引き継ぎを検討してください。",
   "notif.usage_reset.title": "{source} の制限がリセットされました",
   "notif.usage_reset.body": "{window}がリセットされました。",
   "notif.usage_reset.speech": "{source}の{window}がリセットされました。",
