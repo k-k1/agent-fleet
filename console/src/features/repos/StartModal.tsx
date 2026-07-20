@@ -36,7 +36,7 @@ import type { SsmHost } from "../../types/session.ts";
 import { deriveRepoName } from "../../lib/reponame.ts";
 
 interface StartModalProps {
-  /** Connection-gated chat-capable agent kinds (claude / opencode / codex). */
+  /** Connection-gated coding-agent kinds (claude / codex / agy / opencode). */
   kinds: string[];
   onClose: () => void;
   /** A working copy was picked (existing or freshly cloned) — the host closes

@@ -353,6 +353,258 @@ Pro ではヘッダのプラン表記が消える（メールのみ）ため `pl
   Console はセレクタ非露出で通常到達しないが、コードは後で整えたい。
 - `ClearResume` は registry に定義済みだが呼び出し元が未配線（全 kind 共通の既存事項）。
 - CP 込み・ブラウザ Console 込みの L2 E2E（`e2e/`）は docker のあるホストでの実行が別途必要。
+- **既知の問題（2026-07-20 判明・対応後回し）**: agent の `shutdown.go` は
+  SIGTERM 時の終了処理を「自インスタンス管理下のセッションのみ」ではなく
+  **`tmux kill-server`（デフォルトソケット全体）** で行う。コンテナ唯一の
+  agent という本番前提では正しいが、同一 tmux サーバを共有する第2インスタンス
+  （開発・E2E・将来の多重起動）があると他インスタンスのセッションを全滅させる。
+  実害を実機で確認（E2E 用テスト agent への SIGTERM が共有 tmux を kill し、
+  並行セッションを 4 回巻き込み停止）。対応候補: 管理下セッション限定の
+  kill-session 化、または agent の tmux 操作の専用ソケット（`tmux -L`）化。
+  それまで **E2E でテスト agent を立てる際は tmux ソケット分離（または
+  SIGKILL 停止で graceful shutdown を回避）が必須**。
+
+## 統合後 UI 修正（2026-07-20、`temp/szpaeta-agy-ui-fixes`）
+
+統合ブランチ合流後に見つかった Console 側の不具合・未決事項の後始末。いずれも
+ビルド済みコンテナ内で稼働中の main ビルド agent(:7700) に Console を直結し、
+headless Chromium で実機確認済み。
+
+1. **起動系モーダルに認証済み agy が出ない**（真因: `StartHost`/`RepoRow` が
+   「コーディングエージェント」の選別に `caps.chat` を流用しており、chat 無しの
+   agy が常に落ちる）→ `caps.runsInDir` 判定に修正。ホーム起動・作業を始める・
+   repo 行メニュー全てで選択可を実機確認（ホーム起動から実セッション作成まで完走）。
+2. **表示順**を `claude, codex, agy, opencode` に統一（`SESSION_KINDS`・
+   `repoLaunchKinds`・設定カード・WS バーのチップ順）。
+3. **残量%表示を AgyCard から WS バーへ移設**: Claude/Codex と同列の使用量チップ
+   （used% 表示・4 バーのドロップダウン・実験枠注記・`g a` キー）。採用条件の
+   残量可視化はチップが引き継ぐ。
+4. **AgyCard の構造を他カードと統一**: 設定セクション＋RTK トグル（`agy_rtk`、
+   agent 側は実装済みだった）を追加。
+5. **色・アイコン確定**: Google Blue（dark `#4285f4` / light `#1a73e8`）＋
+   codicon `magnet`（反重力=磁気浮上のメタファ。ssm の藍・shell の青緑と区別可）。
+6. **ミラービュー調査 → 実装で解決**（同日後続作業）: まず実機調査では
+   `GET /sessions/{name}/messages` が `unsupported_kind`（agent が transcript()
+   を持たない）で、会話 DB（`conversations/<uuid>.db`）の steps payload は
+   **protobuf バイナリ**のため逆解析は見送りと判断した。その後の再調査で、agy が
+   会話ごとに **`brain/<uuid>/.system_generated/logs/transcript_full.jsonl`**
+   （素の JSONL・USER_INPUT / PLANNER_RESPONSE / ツール step）を**ターン進行中も
+   ライブ追記**していることを protobuf 内の参照から発見 — これを transcript ソース
+   に採用してチャットミラーを実装した（下記「チャットミラー実装」）。
+
+## チャットミラー・モデル選択の実装（2026-07-20 後続、`temp/szpaeta-agy-ui-fixes`）
+
+M1 で「不成立」とした chat/transcript を、brain transcript の発見により実装した。
+
+- **transcript ソース**: `brain/<conversation-uuid>/.system_generated/logs/
+  transcript_full.jsonl`（未 truncate 版を優先。`transcript.jsonl` はチェック
+  ポイント後に古い step が落ちるモデル向けビュー）。1 行 1 step で、
+  `USER_INPUT`（`<USER_REQUEST>` ラッパを剥がして user ターン）／
+  `MODEL/PLANNER_RESPONSE`（assistant テキスト）／`MODEL/<ツール名>`
+  （RUN_COMMAND・VIEW_FILE 等 → tool パート）／`SYSTEM/ERROR_MESSAGE`
+  （tool パートとして表面化）を generic /messages の transcript.Turn に正規化
+  （`internal/agents/agy/transcript.go`、`Caps{CanTranscript:true}`）。
+- **会話 UUID のライブ特定**: brain/<uuid>/ は**初回プロンプト投入の瞬間に生成**
+  される（実機確認）。BuildLaunch が brain ディレクトリ一覧をスナップショット
+  （`agy-brain-prelaunch` store）し、ポーリング時に「スナップショットに無い dir が
+  ちょうど 1 つ」なら生存中でも採用 — これでミラーが会話開始直後から点灯し、
+  resume も graceful exit 不要になった。2 つ以上（同時起動レース）は取り違え
+  回避で見送り、従来の graceful-exit cwd マップが後で確定させる。
+- **入力**: 既存の generic /input（tmux paste）がそのまま効く。チャット
+  コンポーザからの送信・最初のプロンプトの自動送信とも実機で往復確認。
+- **モデル選択**: `GET /agents/agy/models`（`agy models` の行分割・1 分キャッシュ・
+  stale-if-error）を追加。表示名がそのまま `--model` の引数になる（実機確認:
+  TUI ステータスバーに選択モデルが出る）。Console は registry `caps.model`＋
+  `agentModels.isDynamic` に agy を追加し、起動モーダルと設定カードの既定モデル
+  （effort 行はモデル名に織込みのため非表示）を配線。
+- Console registry は `chat/transcript/model: true` に反転。実機 E2E（Console→
+  sandbox agent 直結）で「起動モーダルでモデル選択→agy 起動→最初のプロンプト
+  自動送信→ミラーに user/assistant ターン（Working steps 付き）→コンポーザ追送
+  →応答ミラー」まで完走。既知の残: コンテキストゲージ・plan/fork は据え置き
+  （transcript にトークン情報が無い・agy に fork 相当なし）。
+
+## 会話中インタラクティブプロンプトの調査（2026-07-20、AskUserQuestion 相当の網羅確認）
+
+claude の AskUserQuestion / 許可プロンプトに相当する、**会話進行中に agy TUI が
+出しうる対話プロンプト**を実機で誘発して洗い出した（オンボーディング系は Track A
+対応済みのため対象外）。v1.1.4・実 TUI（tmux）＋ Console 統合経路（sandbox agent
+直結・headless Chromium）で確認。
+
+### 種類の洗い出し（実機で誘発・観察）
+
+| # | プロンプト | UI | transcript_full.jsonl への記録 |
+|---|---|---|---|
+| 1 | **コマンド実行許可**（"Requesting permission for: …"） | 4 択（Yes / この会話で常に許可 / settings.json に永続許可 / No）＋ esc cancel・tab Amend・ctrl+g 編集 | **保留中は無記録**。承認後に `RUN_COMMAND`（DONE）。**拒否は step 自体が残らない**（TUI にのみ "User declined the tool call"） |
+| 2 | **ファイル作成許可**（"Allow creation of this file?"） | 2 択＋インライン diff・f full diff・tab Amend | 同上。承認後に `CODE_ACTION`（DONE） |
+| 3 | **ファイル編集許可**（"Accept this file edit?"） | 2 択＋diff。**shift+tab で auto-approve edits トグル**の案内あり | 同上。承認後に `CODE_ACTION`（DONE） |
+| 4 | **ASK_QUESTION（AskUserQuestion 相当）** | "Question N/M:" ＋番号付き選択肢＋ **Write-in…（自由記述）**＋ esc Skip | **保留中は無記録**。回答後に `ASK_QUESTION`（DONE）— ただし content は **回答のみ**（"A1: Apples"）で**質問文・選択肢は JSONL に残らない** |
+| 5 | plan モード特有の承認 | **無し** — plan は brain の artifact（.md）として保存され「/artifact で確認して手動で shift+tab」方式。claude の ExitPlanMode 型の承認ダイアログは存在しない | plan 作成は `CODE_ACTION` |
+
+- 権限系 1–3 は**フリート既定では発生しない**: BuildLaunch が
+  `--dangerously-skip-permissions` で起動する（M1 設計。plan 起動時のみ外れるが、
+  Console は agy の startMode を出していない）。
+- **4 の ASK_QUESTION は skip-permissions 下でも発火する**（実機確認）— つまり
+  フリートの agy セッションが実際に踏みうる保留プロンプトは実質これ。
+
+### ミラー／セッション統合経路での見え方（実機 E2E）
+
+- **保留中の可視性: 現状ゼロ**。transcript が保留中無記録のため、ミラーは
+  ユーザーターンのみ＋「Awaiting reflection」のまま。状態チップも agy は live
+  state を持たず、/messages の driveState（claude 形ヒューリスティック）は
+  質問保留中を **working と誤報告**することすらある。ユーザーはターミナル
+  ビューに切り替えない限り、セッションが選択待ちでブロックしていることに
+  気づけない。
+- **応答経路は既存プラミングで機能する**: ウィジェット表示中に
+  `POST /input {seq:[{t:"1"},{k:"Enter"}]}`（claude の TUI 質問モーダルと同じ
+  経路）で選択が確定し、回答後は `ASK_QUESTION` tool パート＋続きの応答が
+  ミラーに正しく出ることを確認。**タイミング注意**: モデル思考中（ウィジェット
+  表示前）に送った入力はコンポーザ側にキューされ、質問には届かない — 検知なしの
+  盲目送信は誤爆する（実測）。
+- 回答済みターンの表示は正常（ASK_QUESTION tool パートとして表面化）。
+
+### ギャップと対応方針（→ 下記「保留プロンプト検知の実装」で解消）
+
+1. ~~検知は pane スクレイプ一択~~ → **撤回**。実装前の再調査で上位互換の
+   チャネルを発見した（下記）。
+2. ASK_QUESTION の**質問文・選択肢が JSONL に残らない**ため、履歴表示の充実は
+   検知時スナップショットに依存する（回答後は "A1: …" しか残らない）— 現状は
+   保留中カードのみ構造化表示、履歴は従来どおり。
+3. 拒否されたツール呼び出しが transcript に**痕跡を残さない**点は、ミラー履歴の
+   忠実性の既知の穴として記録しておく（TUI にのみ表示）。
+4. 権限系はフリート既定（skip-permissions）で抑止されているため実質
+   ASK_QUESTION が本命。将来 agy の startMode=plan を Console に出す場合は
+   権限プロンプトが復活する — state=permission の検知は下記実装済み、カードの
+   選択肢駆動は未配線（残課題）。
+
+## 保留プロンプト検知の実装（2026-07-20 後続、`temp/szpaeta-agy-ui-fixes`）
+
+### 検知チャネルの再調査（pane スクレイプの前に代替を確認）
+
+保留中の実機で各チャネルを確認した結果:
+
+| チャネル | 結果 |
+|---|---|
+| OSC / pane・window タイトル | **無し**（タイトル不変、OSC シーケンス出力なし） |
+| stderr | **無し**（空） |
+| lock / 状態ファイル | 無し |
+| CLI ログ（`log/cli-*.log`、glog） | `Surfacing ask_question at step N` 行が**ライブで出る**が、イベントのみで質問本文・選択肢なし（補助止まり） |
+| **会話 DB（`conversations/<uuid>.db` の steps 最終行）** | **採用** — 保留中は `status=9`（実測: 2=実行中・3=完了・9=ユーザー入力待ち）。ask_question はツール引数 JSON `{"questions":[{question, options, is_multi_select}]}` が step_payload に**平文文字列として**埋まっており（protobuf の length-delimited 文字列）、スキーマ逆解析なしで `{"questions":` の位置から 1 値デコードするだけで取れる。権限保留も同じ status=9（該当ツール step、CommandLine 等の引数 JSON つき） |
+
+→ **pane スクレイプは不要**（折返し・文言変更に脆い方式を回避できた）。
+
+### 実装（agent 側のみ・Console は既存カードがそのまま点灯）
+
+- `internal/agents/agy/pending.go` — `Probe(m)`: sids の会話 UUID → 会話 DB を
+  read-only で開き最終 step を見る。status=9 かつ questions JSON あり →
+  `("question", []transcript.Question)`（multiSelect・選択肢つき）、JSON 無し →
+  `("permission", nil)`。TUI が付け足す "Write-in..." 行は JSON に含まれない
+  ため、選択肢 index はウィジェットの行番号と 1:1（menu モードの Down×i+Enter
+  がそのまま正しい行に届く）。
+- 配線: `Transcript()` が Pending を載せ（generic /messages が alive 時のみ
+  `pendingQuestions` として返す）、`WireLive` が State=question/permission を
+  返し（セッション一覧バッジ）、`driveState` は agy 分岐で Probe を最優先 —
+  これが **working 誤報告の修正**（真因: /input が楽観的に "working" を永続し、
+  質問ウィジェットが idle フッタを隠すため claude 形ヒューリスティックの
+  自己修復が発火せず貼り付いていた）。
+- Console 変更なし: 既存の PendingQuestions カードが kind≠claude を menu
+  モード（Down×i+Enter・esc キャンセル）で駆動する設計だったため、agy は
+  そのまま乗った（型コメントのみ更新）。multiSelect 質問と複数質問ページングは
+  カード側の既存ガードで端末誘導ヒントに落ちる（agy でのページング keys は
+  未実測のため据え置き）。
+
+### 実機 E2E（sandbox agent 直結・headless Chromium）
+
+起動モーダル→最初のプロンプトで質問誘発→**ミラーに Question チップ＋質問
+カード（選択肢ボタン・コンポーザロック）が表示**（state=question、
+pendingQuestions に構造化質問）→カードの選択肢クリックで TUI が回答を受理→
+応答ターンがミラーに出て idle へ復帰、まで完走。ユニットテストは probe の
+question/permission/実行中/DB 無しの 4 経路＋既存全緑（agent 362）。
+
+## ツール種別のミラー表面化・網羅確認（2026-07-20、`temp/szpaeta-agy-ui-fixes`）
+
+ASK_QUESTION 以外のツール呼び出しがチャットミラーの Working steps に正しく
+出るかを実機で網羅確認した。
+
+- **型の全列挙**: バイナリの proto 列挙 `CORTEX_STEP_TYPE_*`（約 120 種）を
+  strings で抽出。大半は IDE / google3 内部用（BLAZE_* / MOMA / CIDER /
+  BROWSER_*（CLI では browser tools are disabled）/ MCP_TOOL（未設定）等）で、
+  CLI の通常会話で到達するのは限られる。
+- **実機誘発で確認した型**（1 会話で一括誘発 → /messages の parts を検証）:
+  LIST_DIRECTORY・VIEW_FILE・GREP_SEARCH・RUN_COMMAND・CODE_ACTION（作成/編集
+  とも）・SEARCH_WEB・READ_URL_CONTENT（＋既知の ASK_QUESTION・GENERIC・
+  ERROR_MESSAGE）。ファイル名検索（find 相当）とリネームは agy 側が
+  RUN_COMMAND に落とすため FIND / MOVE 型は CLI では出ない。いずれも
+  「tool パート（tool=型名・output=本文）」として表面化し、Working steps の
+  集計行（例: 8 tools LIST_DIRECTORY · VIEW_FILE · … · RUN_COMMAND×3 ·
+  CODE_ACTION×2）と個別出力の展開表示を実機スクリーンショットで確認。
+  パーサは「MODEL の非 PLANNER_RESPONSE 型はすべて tool パート」の汎用
+  マッピングなので、**未知の型が来ても自動で表面化する**（型名がそのまま
+  ラベルになる）。
+- **バックグラウンドコマンドの生涯**: `sleep 15 &` 相当は RUN_COMMAND step が
+  status=RUNNING で**ライブ追記**され（完了しても同 step の行は書き換わらず
+  重複行も出ない）、完了通知は SYSTEM_MESSAGE（非表示で正 — モデル向け）→
+  モデルの PLANNER_RESPONSE が結果を再掲する、という流れ。ミラーは
+  「実行開始の tool パート＋完了報告のテキスト」になり破綻しない。
+- **status=9 プローブとの衝突なし**: 長時間コマンド実行中の DB 最終 step は
+  status=2（実行中）で、Probe は question/permission を返さないことを実機確認
+  （保留誤検知なし）。
+- **磨き込み**: RUN_COMMAND 出力に agy が付ける 4 タブのテンプレインデント
+  （`\t\t\t\tOutput:` …）をミラー表示で除去（stripCommandIndent — 出力自身の
+  インデントは 4 タブ超過分として保持）。
+- 副次確認: 停止セッションの履歴ビュー（transcript cap）・タイトル自動提案
+  （「ツール実行テスト」が提案された）も agy で動作。
+- **既知の残**: 実行中の working/idle は hook が無いため不正確（ツール実行中に
+  入力待ち表示になり得る。誤検知側ではないので実害は小）。
+
+## 権限保留の安全性再確認とカード駆動の実装（2026-07-20、`temp/szpaeta-agy-ui-fixes`）
+
+「権限保留は state 表面化のみ・フリート既定では発生しないため優先度低」の
+判断を実機で再検証した結果、**前提が崩れるケースと危険な挙動を確認**したため
+カード駆動まで実装した。
+
+### 確認結果
+
+1. **skip-permissions 起動の確実性**: コード上は `AGENT_AGY_FLAGS` 既定
+   `--dangerously-skip-permissions`（フリート実機の env 未設定を確認）で、
+   Console 経由の実セッションの pane 起動コマンドにフラグが付くことを実機確認。
+   **ただし抜け道あり**: sessions create の `mode` は kind 非依存で受理される
+   ため、API 直叩き（af_write MCP の create_session 等）の `mode=plan` で
+   skip なし agy が起動できる（buildProgram が plan 時に skip を外す設計。
+   Console UI に plan が出ないだけで到達可能）。「発生しない」は成立しない。
+2. **発生時の旧挙動**（skip なし agent を立てて実機確認）:
+   - ミラーは state=permission のチップのみでカード無し。**コンポーザが
+     ロックされず**、送信すると本文＋Enter が許可メニューに落ち、Enter が
+     ハイライト行（1. Yes）を確定 = **無言の承認事故**になり得る。
+   - ターミナルビューへの切替で応答は可能（完全な詰みではない）。
+   - **halt が承認を踏む footgun を実証**: GracefulStop の `/exit`＋Enter は
+     メニュー表示中だと Enter が「1. Yes」を確定 — 保留中 halt でファイル作成が
+     実際に承認された（ptest.txt が生成された）。
+3. **脱出可否**: halt/archive 自体は常に通る（graceful 失敗時は kill-session
+   fallback）。詰みはしないが、上記のとおり halt が副作用を持っていた。
+
+### 実装（agent 側のみ）
+
+- **権限カードの駆動**: Probe が保留ツール名（payload 内の平文 `run_command` /
+  `write_to_file` / `replace_file_content`）から TUI メニューを**行数・順序
+  まで一致**させた Question を合成（コマンド=4 行、ファイル作成/編集=2 行、
+  引数 JSON から CommandLine / TargetFile を質問文に付記）。既存の menu モード
+  カード（Down×i+Enter）がそのまま駆動し、カード表示中はコンポーザも
+  ロックされる（誤爆封じ）。**未検証ツールはカードを出さない**（メニュー形が
+  不明なまま鍵駆動すると誤選択するため state のみ・ターミナル誘導）。
+- **halt の Escape 先行**: GracefulStop は保留プロンプト検知時に Escape で
+  メニューを棄却（question=Skip / permission=cancel — どちらも選択なし）して
+  から `/exit`。実機で「保留中 halt → 承認されず 1.1 秒で graceful 終了」を確認。
+- Probe 冒頭で captureConversation を実行（セッション一覧ポーリング前に
+  ミラーだけが走った場合でも会話 UUID を確定できる）。
+
+### 実機 E2E
+
+skip なし agent（`AGENT_AGY_FLAGS=" "` の dev seam）＋ Console で、ファイル
+作成の許可待ち → ミラーに「Allow creation of this file? <path>」カード
+（Yes/No）表示・state=permission → **No, deny creation クリックで TUI が
+"User declined the tool call"**・ファイル未作成・idle 復帰。別の保留を
+作って halt → 承認なしで graceful 終了（htest.txt 未作成）。ユニットは
+コマンド 4 行 / 作成・編集 2 行 / 未知ツール無カードを追加し全緑（agent 365）。
 
 ## ユーザーに依頼する事項（並行作業のブロッカー解消）
 

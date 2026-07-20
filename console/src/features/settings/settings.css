@@ -181,18 +181,12 @@
 .rtk-gain-meter {
   margin-bottom: 12px;
 }
-/* AgyCard: the always-on 実験枠 label sits right under the card head; the quota
-   meters reuse the rtk-gain-meter/wu-bar plumbing. */
+/* AgyCard: the always-on 実験枠 label sits right under the card head (the quota
+   meters live in the WS bar's Antigravity usage chip). It is a bare ps-note
+   directly inside the card — unlike its usual .p-settings home (13px padding) —
+   so it needs the card's horizontal inset itself or it hugs the border. */
 .p-card .agy-exp {
-  margin: 2px 0 6px;
-}
-.agy-quota:last-of-type {
-  margin-bottom: 4px;
-}
-/* 5-hour sub-bar under its group's weekly bar (AI Pro, docs/32 D-4) */
-.agy-quota-sub {
-  margin-left: 12px;
-  margin-top: 2px;
+  margin: 2px 13px 6px;
 }
 .rtk-gain .wu-bar-fill {
   background: var(--topbar-accent, var(--accent));
@@ -762,7 +756,7 @@
 .p-badge.pb-claude { background: #e0a45e; }
 .p-badge.pb-codex { background: #4ec97a; }
 .p-badge.pb-opencode { background: #b07cf2; }
-.p-badge.pb-agy { background: #4eaef0; }
+.p-badge.pb-agy { background: #4285f4; }
 .p-badge.pb-github { background: #c9d1d9; }
 .p-badge.pb-bitbucket { background: #4a90e2; }
 .p-badge.pb-pagerduty { background: #06ac38; }
