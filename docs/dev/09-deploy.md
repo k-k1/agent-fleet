@@ -92,7 +92,7 @@ Java 版を選ぶと、entrypoint が未導入分をここへ自動導入し `JA
   **CP が実行時に決定論的な名前で作る**（アダプタはステートレス・CFN churn ゼロ）。
 - Runtime 契約の `starting` 状態は実質 ECS 専用（Fargate の cold image pull が分単位）。呼び出し側は
   収束待ちの間、再 Start もアイドル停止もしない。docker アダプタは秒で上がるため実際には報告しない。
-- コスト試算は削除した（必要なら git 履歴の docs/reference/aws.md）。
+- コスト特性（ec2-single との比較）は [§9.8](#98-コスト特性ec2-single--ecs)。
 
 ## 9.6 パリティと相違点
 
@@ -116,3 +116,85 @@ Java 版を選ぶと、entrypoint が未導入分をここへ自動導入し `JA
   （basename は維持する契約）。
 - アップグレード: migration は CP 埋め込み・起動時自動適用・**ダウングレード非対応** → 更新前に必ずバックアップ。
 - 実手順（backup.sh / restore.sh / upgrade / air-gapped）: [compose runbook](../../deploy/compose/README.md)。
+
+## 9.8 コスト特性（ec2-single / ECS）
+
+aws ターゲットの 2 通り（[§9.1](#91-デプロイ3形態)）は課金の**形**が違う。ec2-single は
+**人数によらずほぼ定額**（VM 1 台）、ECS は**常設の床 + 人数×稼働時間**（scale-to-zero が効く）。
+選定はこの形の差で決まり、下の絶対額はその裏付けにすぎない。
+
+> **数字の前提**: us-east-1 の Linux/x86 オンデマンド定価・730h/月・2026-07 時点。
+> Tokyo (ap-northeast-1) ほか AP/EU は概ね **+10〜30%**（実額は
+> [AWS Pricing Calculator](https://calculator.aws/) で引くこと。本表は桁感の資料であって見積書ではない）。
+> RI / Savings Plans / Compute Savings Plans（Fargate も対象）は未適用。
+> **Claude / codex / opencode の利用料は各ユーザーの個人サブスクで、以下に一切含まない。**
+
+### 9.8.1 ec2-single — VM 1 台の定額
+
+構成は [ec2-single runbook](../../deploy/aws/ec2-single/README.md) の CFN 既定（t3.large / gp3 30GB /
+EIP / Route53）。TLS は Caddy の Let's Encrypt なので ALB も ACM も要らない。
+
+| 項目 | 月額 | 備考 |
+|------|------|------|
+| EC2 t3.large（2vCPU/8GB） | $61 | t3.medium=$30 / t3.xlarge=$122（CFN の `InstanceType` 選択肢）|
+| EBS gp3 30GB | $2 | `DATA_DIR` ＝保全対象すべてが載る（[§9.7](#97-バックアップ--リストア--アップグレードの設計前提)）|
+| Elastic IP | $4 | 2024 以降パブリック IPv4 は常時課金 |
+| Route53 ホストゾーン | $1 | sslip.io を使うなら不要 |
+| **合計（t3.large）** | **≈ $67/月** | 人数が増えても**変わらない**（RAM が尽きるまで）|
+
+**律速は RAM で、CPU ではない**。CP + Caddy + OS で ~1.5GB を引いた残りを `WS_MEMORY`
+（既定 1g）で割った数が同時起動できる Workspace 数 — t3.large で実用 **4〜5 並列**程度。
+runbook が t3.medium で `WS_MEMORY` を下げろと言うのはこの制約。
+
+注意すべき性質:
+- **t3 はバースト系** — CPU クレジットを使い切ると基準性能（t3.large = 30%）に落ちる。
+  重いビルドが続く使い方では m6i など固定性能族に替える判断が要る。
+- **scale-to-zero が効かない** — アイドル停止は Workspace コンテナを落とすだけで、VM 課金は続く。
+  夜間・週末に費用を落とすなら VM 自体を停止するしかない（EBS/EIP は残る）。
+- **単一障害点** — VM が落ちれば全ユーザーが落ちる。隔離もコンテナ境界のみ（[§9.6](#96-パリティと相違点)）。
+
+### 9.8.2 ECS — 常設の床 + 従量
+
+構成は CFN 4 段（[ecs runbook](../../deploy/aws/ecs/README.md)）。Workspace は既定
+1 vCPU / 2GB（`AF_ECS_TASK_CPU` / `AF_ECS_TASK_MEMORY`）。
+
+**常設の床（Workspace がゼロでも掛かる）:**
+
+| 項目 | 月額 | 備考 |
+|------|------|------|
+| NAT Gateway | $33 | git / Anthropic への egress に必須。VPC エンドポイントでも消せない（runbook 参照）|
+| ALB | $20 | + LCU 従量 |
+| RDS db.t4g.micro（single-AZ, 20GB） | $15 | CP タスク入替を跨いで state が残る根拠 |
+| EFS Standard 50GB | $15 | per-workspace ホーム。使用量課金なので実データ次第 |
+| CP タスク Fargate（0.5vCPU/1GB, 24/7） | $18 | |
+| ECR / CloudWatch Logs / S3 / Route53 | $5〜10 | |
+| **床 合計** | **≈ $110/月** | |
+
+**Workspace 従量**（1 vCPU / 2GB = **$0.049/時**）:
+
+| 稼働パターン | 1 人あたり | 20 人 | 床込み合計 |
+|-------------|-----------|-------|-----------|
+| 平日 8h（176h/月・scale-to-zero 前提） | $8.7 | $174 | **≈ $285/月** |
+| 24/7（アイドル停止が効いていない状態） | $36 | $720 | ≈ $830/月 |
+
+24/7 の列は **scale-to-zero が壊れたときの請求額**でもある。`AF_AUTOSTART` /
+`AF_WS_IDLE_TIMEOUT` 系（[§9.4](#94-環境変数リファレンス索引)）が意図通り効いているかは、
+コスト面でも監視対象。
+
+### 9.8.3 使い分け
+
+| 人数 | ec2-single | ECS（平日 8h） | 判断 |
+|------|-----------|---------------|------|
+| 〜5 人 | **$67**（t3.large） | $154 | **ec2-single 一択** — ECS は床 $110 を回収できない |
+| 〜15 人 | $283（m6i.2xlarge 8vCPU/32GB） | $240 | ほぼ拮抗。運用の手間と隔離要件で決める |
+| 20 人 | $283〜368（32〜64GB 級）| **$285** | **ほぼ同額** — ここが分岐点で、以降は非コスト要因が支配的 |
+| 20 人・24/7 | $283 | $830 | 常時稼働なら VM 集約が圧倒的に安い |
+
+要するに **ECS がコストで勝つ場面はほぼ無い**。ECS を選ぶ理由はコストではなく、
+タスク単位の隔離・ユーザー単位の障害分離・イメージ更新の順次入替・IMDS 遮断 + Task Role
+最小化（[§9.6](#96-パリティと相違点)）であり、**scale-to-zero はその代償を「20 人あたりで
+VM 集約と同額」まで薄めるための仕組み**、と捉えるのが実態に近い。
+
+- **小規模・単一チーム → ec2-single**（= AWS 上の compose。形態としては compose の変種）。
+- **隔離要件やユーザー単位の可用性が要る → ECS**。ただし床 $110 とアイドル停止の健全性を前提条件として引き受ける。
+- どちらも 🚧 実運用実績なし（[§9.1](#91-デプロイ3形態)）。実額は最初の 1 か月の Cost Explorer で必ず答え合わせすること。
