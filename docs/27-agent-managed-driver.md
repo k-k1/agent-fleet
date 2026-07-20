@@ -286,22 +286,38 @@ bearer token を再検討。opencode serve のローカル API 認証有無は �
 
 現行の 3 種 one-shot（`codex exec --json` / `claude -p` / `opencode run`、別ホーム隔離）を**維持**。
 共有 daemon の thread へ統合すると隔離 CODEX_HOME（`chat_providers.go:360` `chatCodexHome`——ユーザ MCP を
-毎ターン起動させない・`~/.codex/sessions` を汚さない）が壊れるため、**グローバル MCP を遮断した thread
-単位 config で隔離相当を再現できると確認できるまで見送り**。将来の受け皿は Capabilities の
-`EphemeralThread` として予約。
+毎ターン起動させない・`~/.codex/sessions` を汚さない）が壊れるため、統合は当面見送り。将来の受け皿は
+Capabilities の `EphemeralThread` として予約。
 
-確認済み（Codex 0.144.5）: `thread/start` / `thread/resume` は任意 `config` を受け、`config.mcp_servers`
-で MCP を thread ごとに追加できる。`mcpServerStatus/list {threadId}` を使う credential-free drift test
-（`TestDriftCodexThreadMCPConfigIsScoped`）では、異なる MCP を持つ 2 本の ephemeral thread 間で MCP が
-混入しないことを実 app-server で確認した。
+確認済み（Codex 0.144.5 / 0.144.6 の両方）: `thread/start` / `thread/resume` は任意 `config` を受け、
+`config.mcp_servers` で MCP を thread ごとに構成できる。`mcpServerStatus/list {threadId}` を使う
+credential-free drift test（`TestDriftCodexThreadMCPConfigIsScoped`）では、異なる MCP を持つ 2 本の
+ephemeral thread 間で MCP が混入しないことを実 app-server で確認した。
 
-同時に**遮断はできない**ことも確認した。daemon 起動時に構成した MCP は、thread の
-`config.mcp_servers = {}` を渡しても `mcpServerStatus/list` に残る
-（`TestDriftCodexThreadMCPConfigCannotClearGlobalServers`）。すなわち現行 shared app-server の thread
-config は追加・thread 間分離の口ではあっても allowlist / replace の口ではない。これでは `none` /
-`af_read` / `af_write` の権限境界にならないため、Codex アシスタントチャットを shared managed runtime
-へ直結してはならない。統合には upstream の thread 単位 replace/deny API、または会話の許可集合ごとに
-設定を固定した別 runtime を必要とする。
+**thread 単位 config はグローバル設定を「マージ」ではなく「置換」する**（2026-07-20 実測・
+`TestDriftCodexThreadMCPConfigReplacesGlobalServers`）。実 app-server での測定は次のとおり:
+
+| thread に渡す `config.mcp_servers` | `mcpServerStatus/list` に見える MCP |
+| --- | --- |
+| 渡さない（未指定） | グローバル設定を継承 |
+| 空マップ `{}` | **0 件（グローバルは全て遮断される）** |
+| 自前サーバのみ指定 | 自前のみ（グローバルは現れない） |
+
+1 行目が成立することが重要で、これは「グローバル `-c` 設定自体が効いていないから 0 件に見えた」という
+偽陽性を否定する。すなわち thread config は追加・thread 間分離の口であると同時に **allowlist / replace
+の口でもあり、空マップ `{}` は deny 機構として機能する**。
+
+**この節は当初「遮断はできない（グローバル MCP は空マップを渡しても `mcpServerStatus/list` に残る）」と
+記述していたが、これは誤りだった。** 当該アサーションを固定していたテストは、同一パッケージ内の先行
+テストが cleanup で必ずハングしてパッケージごとタイムアウトしていたため、commit 以来一度も実行されて
+いなかった（ハーネス側の潜在バグ・`drift_test.go` の `reapProcessGroup` で修正済）。2026-07-20 に
+ハングを解消して初めて実行され、前提の誤りが判明した。**0.144.5 と 0.144.6 の両方で同一の結果**で
+あり、CLI 側の挙動変更（ドリフト）ではなく、当初の記述が実測に基づいていなかったことによる。
+
+従って `none` / `af_read` / `af_write` の権限境界は thread 単位 config で構成可能であり、upstream の
+thread 単位 replace/deny API を待つ必要はない。ただし本節冒頭の one-shot 維持判断は MCP 遮断可否のみを
+根拠にしたものではない（`~/.codex/sessions` を汚さない等、隔離 CODEX_HOME の他の性質も理由）ため、
+統合を進める場合はそれらを別途評価すること。
 
 2026-07-17 の利用者判断で、アシスタントチャットに対するグローバル MCP の透過は許容する方針へ変更した。
 従って上記は権限隔離を要求するデプロイでは維持すべき制約だが、このワークスペースでの Codex managed

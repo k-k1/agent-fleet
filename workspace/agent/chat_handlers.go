@@ -306,15 +306,30 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 	prov := chatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
 
 	c.Messages = append(c.Messages, chatMessage{Role: "user", Content: content, TS: nowMs()})
+	// docs/33 第4段: 閾値超過のまま新ターンに入るなら、先に予防的自動圧縮（成功
+	// すれば直後の injectHandoff がその要約を乗せる）。
+	maybeAutoCompact(r.Context(), c, prov)
 	// docs/30: reports that never got their own auto turn ride the next prompt, and a
 	// user message resets the unattended auto-turn budget.
 	prompt, pendingReports := injectPendingReports(c, content)
+	// docs/33: a compaction summary rides the NEW session's first prompt, outermost.
+	prompt, handoff := injectHandoff(c, prompt)
 	c.AutoTurns, c.AutoPausedNotified = 0, false
 
 	ctx, cancel := context.WithTimeout(r.Context(), chatTimeout)
 	defer cancel()
 	reply, err := prov.send(ctx, c, prompt)
+	if err != nil && recoverForRetry(ctx, c, prov, err) {
+		// docs/33 第3段: 超過を検知 → 現行セッションを要約して畳み、新セッションで
+		// リトライ。reports は未配信なので再注入され、要約も前置される。
+		prompt, pendingReports = injectPendingReports(c, content)
+		prompt, handoff = injectHandoff(c, prompt)
+		reply, err = prov.send(ctx, c, prompt)
+	}
 	if err != nil {
+		if isContextOverflowErr(err) {
+			noteContextOverflow(c) // black hole を塞ぐ（圧縮も不能だった）
+		}
 		// Persist the user turn + resume handle even on failure so a retry continues.
 		c.UpdatedAt = nowMs()
 		_ = saveConv(c)
@@ -322,9 +337,13 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	markReportsDelivered(pendingReports)
+	if handoff {
+		c.PendingHandoff = "" // carried into the new session — done
+	}
 
 	assistant := chatMessage{Role: "assistant", Content: reply, TS: nowMs()}
 	c.Messages = append(c.Messages, assistant)
+	noteContextPressure(c) // 逼迫時は notice を追記（chat_usage.go）
 	c.UpdatedAt = nowMs()
 	if err := saveConv(c); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "chat_save", err.Error())
@@ -364,9 +383,6 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 	prov := chatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
 
 	c.Messages = append(c.Messages, chatMessage{Role: "user", Content: content, TS: nowMs()})
-	// docs/30: undelivered session reports ride this prompt; a user message resets the
-	// unattended auto-turn budget.
-	prompt, pendingReports := injectPendingReports(c, content)
 	c.AutoTurns, c.AutoPausedNotified = 0, false
 
 	// From here the response is an SSE stream; per-frame errors ride the stream body.
@@ -394,30 +410,56 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 
 	var reply string
 	var steps []chatStep
-	if sp, ok := prov.(streamingProvider); ok {
-		reply, steps, err = sp.sendStream(ctx, c, prompt, func(ev chatStreamEvent) {
-			if ev.Step != nil {
-				emit(map[string]any{"step": ev.Step}) // a completed 作業過程 item
-			} else if ev.Delta != "" {
-				emit(map[string]string{"delta": ev.Delta})
+	runTurn := func(p string) {
+		steps = nil
+		if sp, ok := prov.(streamingProvider); ok {
+			reply, steps, err = sp.sendStream(ctx, c, p, func(ev chatStreamEvent) {
+				if ev.Step != nil {
+					emit(map[string]any{"step": ev.Step}) // a completed 作業過程 item
+				} else if ev.Delta != "" {
+					emit(map[string]string{"delta": ev.Delta})
+				}
+			})
+		} else {
+			reply, err = prov.send(ctx, c, p)
+			if err == nil {
+				emit(map[string]string{"delta": reply})
 			}
-		})
-	} else {
-		reply, err = prov.send(ctx, c, prompt)
-		if err == nil {
-			emit(map[string]string{"delta": reply})
 		}
 	}
+	// docs/33 第4段: 閾値超過のまま新ターンに入るなら、先に予防的自動圧縮（detached
+	// ctx 上なのでリロードでも中断されない）。成功すれば下の injectHandoff が要約を
+	// 乗せる。プロンプト構築は圧縮の後（PendingHandoff 反映後）でなければならない。
+	maybeAutoCompact(ctx, c, prov)
+	// docs/30: undelivered session reports ride this prompt; docs/33: a compaction
+	// summary rides the NEW session's first prompt, outermost.
+	prompt, pendingReports := injectPendingReports(c, content)
+	prompt, handoff := injectHandoff(c, prompt)
+	runTurn(prompt)
+	if err != nil && recoverForRetry(ctx, c, prov, err) {
+		// docs/33 第3段: 超過を検知 → 現行セッションを要約して畳み、新セッションで
+		// リトライ。超過エラーは初回送信直後の 400 なので delta 未発火＝二重表示なし。
+		prompt, pendingReports = injectPendingReports(c, content)
+		prompt, handoff = injectHandoff(c, prompt)
+		runTurn(prompt)
+	}
 	if err != nil {
+		if isContextOverflowErr(err) {
+			noteContextOverflow(c) // black hole を塞ぐ（圧縮も不能だった）
+		}
 		c.UpdatedAt = nowMs()
 		_ = saveConv(c) // persist the user turn + resume handle so a retry continues
 		emit(map[string]any{"error": err.Error()})
 		return
 	}
 	markReportsDelivered(pendingReports)
+	if handoff {
+		c.PendingHandoff = "" // carried into the new session — done
+	}
 
 	assistant := chatMessage{Role: "assistant", Content: reply, Steps: steps, TS: nowMs()}
 	c.Messages = append(c.Messages, assistant)
+	noteContextPressure(c) // 逼迫時は notice を追記（chat_usage.go）— done の conversation で届く
 	c.UpdatedAt = nowMs()
 	_ = saveConv(c)
 	emit(map[string]any{"done": true, "message": assistant, "conversation": c})

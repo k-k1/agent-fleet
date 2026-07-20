@@ -606,6 +606,91 @@ skip なし agent（`AGENT_AGY_FLAGS=" "` の dev seam）＋ Console で、フ�
 作って halt → 承認なしで graceful 終了（htest.txt 未作成）。ユニットは
 コマンド 4 行 / 作成・編集 2 行 / 未知ツール無カードを追加し全緑（agent 365）。
 
+## 初回プロンプトがブート画面に食われる問題の修正（2026-07-20 後続）
+
+**症状**: 起動導線（作業を始める）で agy を選び最初のプロンプトを入れて起動
+すると、プロンプトが TUI に届かず入力内容が消える。
+
+**真因**: `paneMode`（agent `session_io.go`）に agy 分岐が無く、常に "" を
+返していた。`paneMode` は launch-seed 配送の readiness ゲートを兼ねる —
+ミラーは `mode` 非空を待って seed を送り（`MirrorView` の readiness gate）、
+サーバ側 `deliverInitialPrompt`（MCP create の `initial_prompt`）も同じ信号を
+待つ。agy はどちらも検知不能で、ミラーは 15 秒の盲目 fallback（`seedForce`）、
+サーバは固定 2.5 秒 beat に落ちていた。agy の「Signing in...」ブート画面は
+**タイプされたテキストを完全に食う**（実機確認: ブート中に send-keys した
+文字列は composer 出現後に残らない）ため、composer 描画前に落ちた送信は
+無音で消える。15 秒 fallback 前にミラーを離れる（ターミナルビューへ切替 =
+MirrorView unmount でタイマー破棄）と配送自体が起きない。
+
+**直し方**: `paneMode` に agy 分岐を追加。composer フッタ（v1.1.4 実測:
+左 "? for shortcuts"（idle）/"esc to cancel"（生成中）、右 "<model>"、plan
+モードは "plan · <model>"）を paneTail(3) から検出し "Default"/"Plan" を
+返す。これで readiness ゲート（ミラー/サーバ両方）と `/messages` の mode が
+agy でも機能する。ミラーのモードチップは `planCycleKey` 必須のため agy には
+出ず、UI 副作用なし。
+
+**検証**: ①ドリフトテスト `agy_pane_drift_test.go`（build tag `drift`・実
+サインイン必須・§4.11 のソケット隔離）で Default/Plan 両モードの実 TUI
+フッタ検出を確認。②第 2 インスタンス（:7710・3 点隔離）で `POST /sessions
+{kind:agy, initial_prompt}` → readiness 待ち後に自動投入・agy 応答・
+`/messages` に user/assistant ターンと mode:"Default" を確認。agent 全緑
+（384）。
+
+### 他の投入経路の監査と追加修正（同日後続）
+
+paneMode 修正後に、agy へテキストが届く全経路を洗い直した。
+
+| 経路 | 結果 |
+|---|---|
+| Console 起動導線（mirror launch-seed） | ✅ paneMode 修正で解消 |
+| MCP `create_session` + `initial_prompt`（`deliverInitialPrompt`） | ✅ 同上・実機確認済み |
+| MCP `send_to_session` → `/input {prompt}`（作成直後） | ❌→修正: readiness 待ちが無く、ブート画面に食われていた |
+| 質問/許可保留中の `/input {prompt}` | ❌→修正: `questionPending` がフック status（claude 専用）しか見ず素通り — 本文＋Enter がハイライト行を確定（許可メニューでは無言承認事故） |
+| MCP ツール定義（workspace `mcp_stdio.go` / CP `mcp.go`） | ❌→修正: `list_models` が agy を拒否・`create_session` の kind 説明に agy 非記載 |
+| 複数行指示（literal send-keys） | ✅ 実機確認: composer に複数行のまま入り早期送信なし（claude と同じ paste 合体挙動） |
+| `/turn` tui start/steer | ✅ `submitPromptTUI` 共有のため上記修正が効く |
+
+追加修正（agent `session_io.go`・`mcp_stdio.go`、CP `mcp.go`）:
+
+- `questionPending` に agy 分岐: フック status の代わりに `agy.Probe`（会話 DB）で
+  判定し、question / permission **両方**で自由文を `question_pending` 409 に。
+  回答は従来どおり `{seq}`/`{keys}`（カード駆動）で通る。
+- `submitPromptTUI` に agy の readiness 待ち: paneMode 非空まで最大 ~15 秒
+  ポーリングしてから投入（フッタは idle/working とも常在なので、空 = ブート中
+  のみ。保留プロンプトは直前の reject 済みで、ウィジェットで停滞しない）。
+- MCP 両面で agy を第一級 kind に: `list_models` の許可と説明、`create_session`
+  の kind 説明（接続済みのときのみ起動可の旨）。
+
+実機 E2E（第 2 インスタンス・3 点隔離）: 作成直後（Signing in... 中）の
+`/input {prompt}` が readiness 待ち（~2.8 秒）後に配送され応答まで到達／
+ask_question 保留中の自由文が 409・`{seq:[{t:"1"},{k:Enter}]}` での回答は成功。
+agent 384・CP 147 全緑。
+
+### アシスタント経由 MCP ツール全体の agy 再確認（同日さらに後続）
+
+kind 追加の影響が投入経路以外にも及ぶため、workspace `mcp_stdio.go` と CP
+`mcp.go` の全ツールを agy 観点で洗った。
+
+| ツール | 結果 |
+|---|---|
+| `list_my_sessions` / `get_session_status` / `get_session_output` | ✅ kind 非依存で agy も正しく列挙・状態・端末出力を返す（実機確認。ただし agy はライブ working/idle を持たず、状態は保留プロンプト検知のみ — 仕様どおり） |
+| `stop_session` / `resume_session` / archive / delete 系 | ✅ halt/start・cleanup とも kind 非依存 |
+| `get_agent_usage` | ❌→修正: claude/codex のみで、実在する agy の使用量（`/connections/agy/usage`・Starter 枠ゲージ）を欠いていた。agy キーを追加（{account, plan, groups} 形。未ログイン時は authed=false を自己申告し 500 を返さないので merge 安全）。説明も更新 |
+| `get_session_usage` | △ 説明修正: agy は transcript-capable なので一覧に**含まれるが**、agy の transcript にトークン情報が無いため context 空・cumulative 全 0 になる。「消費ゼロ」と誤読されないよう注記を追加（残枠は get_agent_usage を見る旨） |
+| `list_models` / `create_session` | ✅ 前段で修正済み |
+| メモ系（add/update/delete/flush/list_memos） | ✅ セッション kind 非依存 |
+
+追加修正（agent `mcp_stdio.go`＋test、CP `mcp.go`）:
+
+- `get_agent_usage` に agy を merge（両面）。ユニット（`mcp_stdio_test.go`）に
+  agy の {account, groups} 形が混ざることを追加検証。
+- `get_session_usage` と `list_my_sessions`（CP）の説明に agy を反映
+  （agy はトークン 0・列挙対象である旨）。
+
+実機（第 2 インスタンス）: `/connections/agy/usage` が account/groups を返し、
+agy セッション作成 → sessions 一覧に kind=agy で出現 → `sessions/usage` が
+cumulative 全 0（トークン情報なし）で返ることを確認。agent 384・CP 147 全緑。
+
 ## ユーザーに依頼する事項（並行作業のブロッカー解消）
 
 1. **GCP プロジェクトの用意**（D1/M2 用）: 課金有効化済みプロジェクト ID を Connections 設定時に使える形で。

@@ -26,6 +26,20 @@ export interface ChatMessage {
   delivered?: boolean;
 }
 
+// Current context-window fill, captured server-side from the provider's usage events
+// after each turn (workspace/agent/chat_usage.go) — same wire shape as the session
+// usage the mirror's ContextBar renders.
+export interface ChatContextUsage {
+  tokens: number; // read + create + fresh
+  read?: number;
+  create?: number;
+  fresh?: number;
+  window?: number; // context-window size the pct is against
+  windowSource?: "recorded" | "estimated";
+  pct?: number; // 0–100
+  model?: string;
+}
+
 // Light shape from GET /api/chat/conversations (no message bodies).
 export interface ConversationMeta {
   id: string;
@@ -36,6 +50,7 @@ export interface ConversationMeta {
   created_at: number;
   updated_at: number;
   message_count: number;
+  context?: ChatContextUsage; // current context fill (chat_usage.go)
 }
 
 // Full conversation from GET/POST /api/chat/conversations/{id}.
@@ -59,4 +74,9 @@ export interface Conversation {
   // receive server-pushed session reports (docs/30), so ChatView keeps them fresh with
   // a light poll while the pane is active.
   tools?: string;
+  // Current context fill (chat_usage.go): drives the ContextBar under the chat header.
+  context?: ChatContextUsage;
+  // Compaction summary waiting to ride the next prompt (docs/33 第2段). Display-only
+  // here (the notice message already shows it); cleared server-side after it carries.
+  pending_handoff?: string;
 }

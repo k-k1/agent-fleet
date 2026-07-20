@@ -429,6 +429,11 @@ export const chatDelete = (id: string): Promise<Response> =>
 // connection (survives a reload), so aborting the fetch no longer cancels it — this does.
 export const chatStop = (id: string): Promise<Response> =>
   raw(`api/chat/conversations/${encodeURIComponent(id)}/stop`, { method: "POST" });
+// Compact the conversation's context (docs/33 第2段): the backend summarizes the current
+// provider session, resets the resume handles, and carries only the summary into a fresh
+// session on the next turn. Returns the updated conversation (or {error}).
+export const chatCompact = (id: string): Promise<Conversation & { error?: ApiError }> =>
+  apiJSON(`api/chat/conversations/${encodeURIComponent(id)}/compact`, "POST");
 // Send returns the assistant message + the updated conversation, or {error} on failure.
 export const chatSend = (
   id: string,

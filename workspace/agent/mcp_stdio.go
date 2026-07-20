@@ -174,7 +174,7 @@ var mcpStdioTools = []map[string]any{
 	},
 	{
 		"name":        "get_session_usage",
-		"description": "各セッションのコンテキスト使用量と累積消費トークンを返す。name 指定で1セッション、省略で transcript を持つ全セッション（shell / SSM は対象外）。context は現在のコンテキスト量（tokens と read/create/fresh の内訳、window に対する pct%。最初の応答が返るまでは無く、自動圧縮後は圧縮後の値）。cumulative は累積消費（論理ターン数 turns、inTok/outTok/cacheRead/cacheCreate、spend=inTok+cacheCreate+outTok の合計）。『どのセッションがコンテキスト逼迫か』『どれだけ消費したか』を聞かれた時や、引き継ぎ・圧縮・新セッション分割の判断材料に呼ぶ。サブスクリプション枠の残量は get_agent_usage（別ツール）。",
+		"description": "各セッションのコンテキスト使用量と累積消費トークンを返す。name 指定で1セッション、省略で transcript を持つ全セッション（shell / SSM は対象外）。context は現在のコンテキスト量（tokens と read/create/fresh の内訳、window に対する pct%。最初の応答が返るまでは無く、自動圧縮後は圧縮後の値）。cumulative は累積消費（論理ターン数 turns、inTok/outTok/cacheRead/cacheCreate、spend=inTok+cacheCreate+outTok の合計）。注意: agy は一覧に含まれるが transcript にトークン情報が無いため context は空・cumulative は全て 0 になる（消費ゼロの意味ではない。agy の残枠は get_agent_usage を見る）。『どのセッションがコンテキスト逼迫か』『どれだけ消費したか』を聞かれた時や、引き継ぎ・圧縮・新セッション分割の判断材料に呼ぶ。サブスクリプション枠の残量は get_agent_usage（別ツール）。",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -184,7 +184,7 @@ var mcpStdioTools = []map[string]any{
 	},
 	{
 		"name":        "get_agent_usage",
-		"description": "各エージェント CLI のサブスクリプション使用量とレート制限を返す（claude / codex。opencode は使用量ソースが無いため含まれない）。fiveHour（5時間枠）と sevenDay（週間枠）の pct が使用率（0–100）、resetsAt が制限の解除（リセット）日時（ISO 8601）。authed=false はその CLI に未ログイン、ageSec は計測の古さ（秒）、codex は planType や resetCredits も付く。『あとどれくらい使える?』『制限はいつ解除?』と聞かれた時や、大きなタスクをセッションに振る前の判断材料に呼ぶ。",
+		"description": "各エージェント CLI のサブスクリプション使用量とレート制限を返す（claude / codex / agy。opencode は使用量ソースが無いため含まれない）。claude / codex は fiveHour（5時間枠）と sevenDay（週間枠）の pct が使用率（0–100）、resetsAt が解除日時（ISO 8601）で、codex は planType や resetCredits も付く。agy は形が異なり、account / plan と groups（クォータ枠ごとに label・remainingPct・resetsAt。実験枠 Starter 等）を返す。authed=false はその CLI に未ログイン、ageSec は計測の古さ（秒）。『あとどれくらい使える?』『制限はいつ解除?』と聞かれた時や、大きなタスクをセッションに振る前の判断材料に呼ぶ。",
 		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 	},
 	{
@@ -206,11 +206,11 @@ var mcpStdioTools = []map[string]any{
 var mcpStdioWriteTools = []map[string]any{
 	{
 		"name":        "list_models",
-		"description": "指定エージェントで現在選べるモデル一覧を返す。model 指定で create_session する前には必ず呼び、返った id を使うこと。claude は固定のティア別名（fable/opus/sonnet/haiku）、codex／opencode は接続状態を反映したライブカタログ。利用者が terra のような略称で指定した場合も、一覧から対応する完全な id（例: gpt-5.6-terra）を選ぶ。",
+		"description": "指定エージェントで現在選べるモデル一覧を返す。model 指定で create_session する前には必ず呼び、返った id を使うこと。claude は固定のティア別名（fable/opus/sonnet/haiku）、codex／opencode／agy は接続状態を反映したライブカタログ。利用者が terra のような略称で指定した場合も、一覧から対応する完全な id（例: gpt-5.6-terra）を選ぶ。",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"kind": map[string]any{"type": "string", "description": "claude / codex / opencode"},
+				"kind": map[string]any{"type": "string", "description": "claude / codex / opencode / agy"},
 			},
 			"required": []string{"kind"},
 		},
@@ -228,7 +228,7 @@ var mcpStdioWriteTools = []map[string]any{
 			"properties": map[string]any{
 				"dir":            map[string]any{"type": "string", "description": "作業ディレクトリ（リポジトリの作業コピー等）。省略時はホーム。list_my_sessions の dir か list_repos の path を渡す。"},
 				"title":          map[string]any{"type": "string", "description": "セッションの表示名（任意）。何のタスクかが分かる短い名前。"},
-				"kind":           map[string]any{"type": "string", "description": "エージェント種別（任意）。claude（既定）| codex | opencode | shell。shell は生のシェルで initial_prompt/送信文字列がそのままコマンド実行される（エージェントのガードレール無し）ため、起動前に実行内容を利用者へ確認すること。"},
+				"kind":           map[string]any{"type": "string", "description": "エージェント種別（任意）。claude（既定）| codex | opencode | agy | shell。agy は Antigravity CLI（接続済みのときのみ起動可）。shell は生のシェルで initial_prompt/送信文字列がそのままコマンド実行される（エージェントのガードレール無し）ため、起動前に実行内容を利用者へ確認すること。"},
 				"model":          map[string]any{"type": "string", "description": "モデル上書き（任意）。"},
 				"initial_prompt": map[string]any{"type": "string", "description": "起動後に自動送信する最初のタスク/引き継ぎ文（任意）。"},
 				"worktree":       map[string]any{"type": "boolean", "description": "dir から新しい独立 worktree を作成して起動する（任意、既定 false）。"},
@@ -456,14 +456,22 @@ func mcpStdioCall(req mcpReq) []byte {
 		if err != nil {
 			return mcpToolErr(req.ID, "使用量の取得に失敗しました: "+err.Error())
 		}
+		// agy usage lives under the connections path and has a different shape
+		// ({account, plan, groups}); it self-reports authed=false when signed out
+		// and never 500s, so a merge is safe. Absent when unsupported on this host.
+		ag, err := agentGET("/connections/agy/usage")
+		if err != nil {
+			return mcpToolErr(req.ID, "使用量の取得に失敗しました: "+err.Error())
+		}
 		b, _ := json.Marshal(map[string]any{
 			"claude": json.RawMessage(cl),
 			"codex":  json.RawMessage(cx),
+			"agy":    json.RawMessage(ag),
 		})
 		return mcpTextResult(req.ID, string(b))
 	case "list_models":
-		if a.Kind != "claude" && a.Kind != "codex" && a.Kind != "opencode" {
-			return mcpToolErr(req.ID, "kind には claude / codex / opencode のいずれかを指定してください")
+		if a.Kind != "claude" && a.Kind != "codex" && a.Kind != "opencode" && a.Kind != "agy" {
+			return mcpToolErr(req.ID, "kind には claude / codex / opencode / agy のいずれかを指定してください")
 		}
 		out, err := agentGET("/agents/" + url.PathEscape(a.Kind) + "/models")
 		if err != nil {
