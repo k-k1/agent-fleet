@@ -76,14 +76,16 @@ if [ "${CLAUDE_INSTALL:-1}" = "1" ]; then
   fi
 fi
 
-# Agent CLI self-update (opt-in + operator-gated). The CLIs (claude/opencode/codex)
-# are baked at /usr/local, pinned to the image version. Both gates come from the CP as
-# env at container start: AF_AGENT_SELF_UPDATE_ALLOWED=1 (the tenant policy) AND
-# AF_AGENT_SELF_UPDATE=1 (the member's per-workspace opt-in, stored in the CP DB so it
-# can be toggled while the container is stopped). When both are set the CLIs are
-# updated to latest IN PLACE here — no image rebuild. The npm-global tree is dev-owned
-# (Dockerfile chown), so this needs no root. Stop→Start recreates the container from
-# the image, so turning the toggle off reverts to the baked versions.
+# Agent CLI self-update (opt-in + operator-gated). The CLIs (claude/opencode/codex/
+# agy) and rtk are baked at /usr/local, pinned to the image version. Both gates come
+# from the CP as env at container start: AF_AGENT_SELF_UPDATE_ALLOWED=1 (the tenant
+# policy) AND AF_AGENT_SELF_UPDATE=1 (the member's per-workspace opt-in, stored in the
+# CP DB so it can be toggled while the container is stopped). When both are set the
+# CLIs are updated to latest IN PLACE here — no image rebuild. The npm-global tree is
+# dev-owned (Dockerfile chown), so the npm trio needs no root; agy and rtk are root-
+# owned bakes, so their updates land in ~/.local/bin as PATH-first shadows instead
+# (removed by the else branch below when the opt-in is off). Stop→Start recreates the
+# container from the image, so turning the toggle off reverts to the baked versions.
 if [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE:-0}" = "1" ]; then
   echo "[entrypoint] updating agent CLIs to latest (member opt-in, operator-allowed) ..."
   if npm install -g @anthropic-ai/claude-code@latest opencode-ai@latest @openai/codex@latest >/dev/null 2>&1; then
@@ -91,6 +93,43 @@ if [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE:-
   else
     echo "[entrypoint] WARN: agent CLI update failed (using baked versions)"
   fi
+  # agy (Antigravity) も同じ opt-in で最新へ。npm でなく Google の install.sh 供給
+  # （版ピン無し＝常に latest）で、焼き込みは root 所有の /usr/local/bin のため、
+  # ~/.local/bin へ入れて PATH 先勝ちで差し替える（shadow 方式）。失敗はソフト。
+  if curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir "$HOME/.local/bin" >/dev/null 2>&1 \
+     && [ -x "$HOME/.local/bin/agy" ]; then
+    # --version は RDRAND 非提示ホストで SIGABRT する（docs/decisions/0008）ので失敗を握る
+    echo "[entrypoint] agy updated: $("$HOME/.local/bin/agy" --version 2>/dev/null | head -1 || echo '?')"
+  else
+    echo "[entrypoint] WARN: agy update failed (using baked version)"
+  fi
+  # rtk も同じ opt-in で最新へ。焼き込みの /usr/local/bin/rtk は root 所有で上書き
+  # できないため、latest release を ~/.local/bin へ入れて PATH 先勝ちで差し替える
+  # （claude の user-install と同じ構図）。checksum 検証つき・失敗はソフト（焼き込み
+  # 版のまま続行）。OFF に戻すと下の分岐がこの shadow を除去し、焼き込み版へ戻る。
+  (
+    set -e
+    arch="$(dpkg --print-architecture 2>/dev/null || uname -m)"
+    case "$arch" in
+      amd64 | x86_64) asset="rtk-x86_64-unknown-linux-musl.tar.gz" ;;
+      arm64 | aarch64) asset="rtk-aarch64-unknown-linux-gnu.tar.gz" ;;
+      *) echo "unsupported arch: $arch" >&2; exit 1 ;;
+    esac
+    base="https://github.com/rtk-ai/rtk/releases/latest/download"
+    tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+    cd "$tmp"
+    curl -fsSL "${base}/${asset}" -o "${asset}"
+    curl -fsSL "${base}/checksums.txt" -o checksums.txt
+    grep " ${asset}\$" checksums.txt | sha256sum -c - >/dev/null
+    tar xzf "${asset}"
+    install -D -m 0755 rtk "$HOME/.local/bin/rtk"
+  ) && echo "[entrypoint] rtk updated: $("$HOME/.local/bin/rtk" --version 2>/dev/null | head -1)" \
+    || echo "[entrypoint] WARN: rtk update failed (using baked version)"
+else
+  # Opt-in が無効（テナント不許可 or メンバー OFF）: 過去の opt-in が残した
+  # ~/.local/bin の rtk / agy shadow は焼き込み版を PATH で隠すので除去し、CLI 群と
+  # 同じ「OFF に戻して Stop→Start で焼き込み版へ復帰」の意味論に揃える。
+  rm -f "$HOME/.local/bin/rtk" "$HOME/.local/bin/agy"
 fi
 
 # 既定 settings.json を seed（ファイルが無い時のみ。以後は Console の Claude 設定が真実）。

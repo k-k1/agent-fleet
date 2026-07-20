@@ -62,7 +62,7 @@ deploy/local/run-dev.sh wsl        # 旧 wsl-quickstart.sh はこのラッパー
 スクリプトがやること:
 1. preflight（docker 疎通・cgroup v2・go・npm）を確認。
 2. 共有 JDK を `~/.local/share/agent-fleet/shared/jvm` に一度だけ展開し、bind-mount で提供（`WS_JDK=0` で省略可、§4）。
-3. ワークスペースイメージを **rtk 同梱**でビルド（`--build-arg BAKE_RTK=1`）。
+3. ワークスペースイメージをビルド（rtk は全ビルド共通で常時同梱）。
 4. Console(Vite) と Control Plane(Go) をビルド。
 5. `AUTH=dev` / `AF_RUNTIME=local` で CP を起動。
 
@@ -99,9 +99,11 @@ CP は `http://localhost:8099` で待ち受けます。WSL2 の localhostForward
 
 ## 4. rtk と JDK の扱い
 
-- **rtk**（Bash のトークン節約フック）: ホスト側 vendoring はやめ、**イメージのビルド時に
-  コンテナ内へダウンロード**（`BAKE_RTK=1` / `RTK_VERSION` は `workspace/Dockerfile` の既定と一致）。
-  静的バイナリ1個なのでイメージへの影響は誤差。entrypoint が `rtk` の有無を見てフックを自動 seed します。
+- **rtk**（Bash のトークン節約フック）: **常時イメージ焼き込み**（`workspace/Dockerfile` の
+  `ARG RTK_VERSION` でピン止め・ビルド時にダウンロード）。静的バイナリ1個なのでイメージへの
+  影響は誤差。entrypoint がフックを自動 seed します。設定モーダルの「起動時に claude /
+  opencode / codex / rtk を最新へ更新する」を ON にすると、起動毎に rtk も最新版へ
+  更新されます（OFF に戻して Stop → Start すれば焼き込み版へ復帰）。
 - **JDK**: 既定は**共有 bind-mount**（`WS_JVM_DIR`）でイメージを太らせません。加えて、どの環境でも
   コンテナ内から後入れできます:
   ```bash
