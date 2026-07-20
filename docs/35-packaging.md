@@ -33,7 +33,7 @@
 |---|---|---|---|
 | A | `agent-fleet-<v>.tar.gz` | compose deploy surface（compose.yml / Caddyfile / .env.example / backup / restore / load-images / README）**+ `aws/`（ec2-single cfn.yaml・ecs cfn/・release-ecr.sh・README）** | amd64 Linux・EC2-Single・ECS |
 | B | `agent-fleet-images-<v>.tar.gz` | `docker save`（CP + Workspace イメージ、air-gap 用）。Workspace は**配布 variant（lean・CLI 抜き）** — §35.4.1 | amd64 Linux・EC2-Single（・ECS も可） |
-| C | `agent-fleet-native-<v>-linux-amd64.tar.gz` | `af` ランチャ・`bin/af-cp`・`bin/bwrap`・`bin/git`（いずれも静的）・`rootfs.tar.zst`（**lean rootfs** = workspace イメージの配布 variant。OSS ユーザーランド＝tmux/git/node/chromium 実行時ライブラリ等のみ。エージェント CLI は起動時ピン版インストール、chromium 本体＋CJK フォント・Go toolchain はオンデマンドピン版インストール — §35.3.1・§35.4.1）・`console/`（Vite dist）・`docs/`（ステージング源）・README | native（WSL / 任意の Linux 単一ユーザー）**ホスト追加インストール ゼロ**（§35.3.1） |
+| C | `agent-fleet-native-<v>-linux-amd64.tar.gz` | `af` ランチャ・`bin/af-cp`・`bin/bwrap`・`bin/git`（いずれも静的）・`rootfs.tar.zst`（**lean rootfs** = workspace イメージの配布 variant。OSS ユーザーランド＝tmux/git/node/chromium 実行時ライブラリ等のみ。エージェント CLI は起動時ピン版インストール、chromium＋CJK フォント・Go・AWS CLI+SSM plugin・ops MCP 群など利用者限定ツールはオンデマンドピン版インストール — §35.3.1・§35.4.1）・`console/`（Vite dist）・`docs/`（ステージング源）・README | native（WSL / 任意の Linux 単一ユーザー）**ホスト追加インストール ゼロ**（§35.3.1） |
 | D | `SHA256SUMS` | A〜C のチェックサム | 全部 |
 
 命名・版の規律:
@@ -76,8 +76,9 @@ agent-fleet-native-<v>-linux-amd64/
   **焼かず**、entrypoint が初回起動時に `versions.json` の**ピン版（= e2e-smoke で動作
   検証した版）**を仮想 HOME の `~/.local/bin` へインストールし、self-update opt-in
   有効時はそのまま最新へ追従する（§35.4.1 — サイズとライセンスの両方の理由）。
-  **chromium 本体＋CJK フォントと Go toolchain も焼かず**、使う人だけがオンデマンドで
-  ピン版を導入する（下記）。node は残す（CLI の npm boot-install が使うランタイム依存）。
+  **chromium 本体＋CJK フォント・Go toolchain・AWS CLI+SSM plugin・ops MCP サーバ群も
+  焼かず**、使う人だけがオンデマンドでピン版を導入する（下記）。node は残す
+  （CLI の npm boot-install が使うランタイム依存）。
   native 専用の `bin/workspace-agent` 同梱は不要
   （rootfs が `/usr/local/bin/workspace-agent` を焼済み）。
 - **console は同梱ディレクトリ、go:embed はしない**。rootfs で tar が必須になった以上、
@@ -124,9 +125,13 @@ self-update opt-in の `~/.local/bin` shadow 機構（claude/opencode/codex/rtk/
   ピン版のまま。書き込み先はすべて bind した仮想 HOME 側なので **ro rootfs のまま成立**する。
 
 なお社内・自社運用の Docker イメージは従来どおり**全焼き込み**を既定のまま維持する
-（オフライン即起動・イメージ=検証単位という現行の利点を捨てない）。lean は「**第三者へ
-配布する形**」（native tar と air-gap イメージ tar）に適用する variant であり、切替は
-Dockerfile の ARG（例 `BAKE_AGENT_CLIS=0`）1 個で行う（§35.4.1 の根拠）。
+（オフライン即起動・イメージ=検証単位という現行の利点を捨てない）。抜く理由は 2 種類
+あり、適用範囲が違うので **Dockerfile の ARG 2 ノブ**に正式化する:
+
+| ノブ | 抜く理由 | 対象 | 0 にする配布物 |
+|---|---|---|---|
+| `BAKE_AGENT_CLIS=0` | **ライセンス**（§35.4.1） | claude / codex / opencode / agy / rtk | **B（air-gap イメージ）と C（native rootfs）の両方** |
+| `BAKE_OPTIONAL_TOOLS=0` | **サイズ**（利用者限定機能の後払い化） | chromium+CJK フォント / Go toolchain / AWS CLI+SSM plugin / ops MCP サーバ群 | **C のみ**（B はサイズ制約が緩く、chromium は SUID sandbox の都合もあり焼き続行） |
 
 **chromium のオンデマンドピン版インストール（native rootfs のみ・利用者限定機能の後払い化）**:
 ブラウザペインを使うユーザーは限られるため、native rootfs では chromium 本体＋CJK フォント
@@ -182,6 +187,31 @@ Dockerfile の ARG（例 `BAKE_AGENT_CLIS=0`）1 個で行う（§35.4.1 の根�
 - 「ツールのバージョン」表示（env_tool_versions.go）の go 行は、baked パス固定でなく
   on-demand ディレクトリも見るよう P2 で追随させる。
 
+**ops 系ツールも同様（native rootfs のみ・利用者はさらに限られる）**:
+
+| ツール | 現状 | オンデマンド化 |
+|---|---|---|
+| AWS CLI v2 + session-manager-plugin（導入後 ~250MB・**削減幅最大**） | kind=`ssm` セッション用に焼き込み。**両方とも「latest」URL で未ピン** | 初回の ssm セッション開始時に agent が versioned URL（awscli は `-2.x.y.zip`、SMP は `plugin/<ver>/`）から home へ導入（aws installer は `--install-dir` 指定可・SMP は deb を `dpkg-deb -x` 相当で展開すれば root 不要）。導入の進捗はその ssm 端末にそのまま流れる。**オンデマンド化で初めてピンが効く**ようになる（現状より改善） |
+| awslabs CloudWatch MCP（uv tool venv・~100MB 級） | `mcp-run cloudwatch` の即起動用に焼き込み | 焼き込みが無ければ `uvx awslabs.cloudwatch-mcp-server==<pin>` で実行 — **後入れ機構は uvx に既にあり**（初回 PyPI 取得・`~/.cache` 永続）、焼き込みは初回高速化の最適化に過ぎない。PyPI は全版恒久保存＝ピン供給元として理想的 |
+| mcp-grafana（Go 単体 ~40MB） | `mcp-run grafana` 用に焼き込み | 焼き込みが無ければ初回 `mcp-run grafana` 時に GitHub Releases の版固定 asset を `~/.local/share/agent-fleet/bin/` へ DL |
+
+ピンは versions.json へ集約する（mcp-grafana / cloudwatch は現在 ARG のみで manifest に
+未記載 → 追記。awscli / SMP は前述のとおり現在未ピン → 新規にピン化）。
+
+**評価の結果「残す」と判断したもの**（後入れ不能・全員が踏む・実行系、のいずれか）:
+
+- **gh**: 透過認証ラッパー（全 git 利用者の導線）の実体。MIT・~50MB と小さい。
+- **node**: CLI の npm boot-install の実行系そのもの。
+- **python3 + uv/uvx**: uvx が ops MCP のランチャ実行系。python は baseline ツール兼
+  pip --user の受け皿。
+- **build-essential + pkg-config + python3-dev**: cgo / node-gyp / source wheel が暗黙に
+  踏む。削ると壊れ方が見えにくい（前述）。
+- **subversion**: clone 機能の svn 対応が使う。bwrap 配下は root になれず apt の後入れが
+  **構造的に不可能**なので、apt でしか供給できないものは焼くしかない（chromium を
+  playwright CDN 供給に切り替えるのはこの制約の回避でもある）。
+- **tmux / git / ripgrep / fd / bat / jq / vim / htop 等の基本ユーティリティ**: セッション
+  実行と日常操作の土台。合計しても小さい。
+
 **CP 側の残依存の始末**: CP 自体は静的 Go バイナリだが、内部 git provider が
 `git-http-backend`（ホストの git-core）を exec する。ここだけは rootfs の外なので、
 **NO_CURL の静的 git を `bin/git` として同梱**し、ランチャが `GIT_HTTP_BACKEND`
@@ -221,9 +251,10 @@ CGI のみで https を使わないため、静的ビルドの難所（libcurl+o
 `AF_NATIVE_AGENT_BIN` は従来モード（開発・`run-dev.sh native`）用にそのまま残す。
 
 **サイズ**: lean rootfs は CLI 群（claude/codex/opencode/agy + npm 残渣）・
-chromium 本体 + CJK フォント・Go toolchain を落とし、全焼き込み比で**圧縮 600MB 級の
-減量**を見込む（残るのは Debian ベース + build-essential + tmux/git + node +
-chromium 実行時ライブラリ等で、zstd で 200〜300MB 目安・要実測）。リリース工程では
+chromium 本体 + CJK フォント・Go toolchain・AWS CLI+SSM plugin・ops MCP 群を落とし、
+全焼き込み比で**圧縮 700MB 級の減量**を見込む（残るのは Debian ベース +
+build-essential/python + tmux/git/svn + node + chromium 実行時ライブラリ + 基本
+ユーティリティで、zstd で 200MB 台目安・要実測）。リリース工程では
 `docker buildx build -o type=tar`（コンテナ起動不要）で書き出し、zstd 圧縮する。
 
 **否決した代替案**（検討の記録）:
@@ -389,7 +420,7 @@ VERSION=0.2.0 deploy/release/build.sh [--compose] [--native] [--save] [--all]
 | フェーズ | 内容 | 出口 |
 |---|---|---|
 | **P1: 共通基盤** | 版刻印（§35.6.1）・release.sh へ `aws/` 同梱 + SHA256SUMS・`deploy/release/build.sh` 骨格・**配布 variant（`BAKE_AGENT_CLIS=0`）と entrypoint のピン版 boot-install 一般化 + NOTICE/帰属整備（§35.4.1）** | `VERSION=x build.sh --compose` で A+B+D が出る（B は lean variant・起動時ピン install がコンテナで通る） |
-| **P2: native tar（self-contained）** | `runtime_native.go` の rootfs モード（bwrap ラップ・`AF_NATIVE_ROOTFS`）・ビルダ（--native: rootfs 書き出し + 静的 bwrap/git）・`workspace-agent install-chromium` + `findChromiumBinary` 解決順変更（専用ピン dir を playwright cache より先に）・`install-go` + toolchains UI への Go 追加・ランチャ `af`・README-native（WSL 導入/userns 注記/更新） | **素の WSL2（追加インストールなし）**で tar 展開 → `af start` → clone → claude セッション E2E（ブラウザペインは初回 attach でピン版 chromium が入る） |
+| **P2: native tar（self-contained）** | `runtime_native.go` の rootfs モード（bwrap ラップ・`AF_NATIVE_ROOTFS`）・ビルダ（--native: rootfs 書き出し + 静的 bwrap/git）・`workspace-agent install-chromium` + `findChromiumBinary` 解決順変更（専用ピン dir を playwright cache より先に）・`install-go` + toolchains UI への Go 追加・ops 系オンデマンド（ssm 初回の awscli+SMP 導入 / mcp-run の uvx ピン実行・grafana DL）・ランチャ `af`・README-native（WSL 導入/userns 注記/更新） | **素の WSL2（追加インストールなし）**で tar 展開 → `af start` → clone → claude セッション E2E（ブラウザペインは初回 attach でピン版 chromium が入る） |
 | **P3: ECS 配布** | release-ecr.sh・ImageTag/Persistence パラメータ化・更新 runbook・最小 IAM 表 | sandbox で「push → deploy → WS 起動 → タグ更新 → 次回 Start で新イメージ」一巡 |
 | **P4: 検証ゲート** | §35.8 の未済分（native 実機が筆頭） | 各ゲート緑 + 第 2 デプロイ再現 |
 
@@ -422,10 +453,12 @@ P1→P2 が本丸（native が唯一のゼロ→イチ）。P3 は独立に並�
    小物で musl 静的ビルドの実績が豊富、リリース工程の builder イメージ内で source から
    固定版をビルドする（バイナリ拾い食いはしない）。→ 推奨: 許容。ここを嫌うと
    「ホスト依存ゼロ」は成立しない。
-7. **chromium オンデマンド化の実装確認 2 点**（方針は §35.3.1 で決定済み: native rootfs は
-   on-demand・air-gap B は焼き込み継続）: (a) DL 供給元の最終選定（playwright CDN を第一候補
-   に、版不変 URL・arm64 供給・レイアウト互換で比較確認）。(b) bwrap 配下での sandbox 実測
-   （namespace sandbox が通るか。不可なら `--no-sandbox` + localhost 限定の割り切りを README 化）。
+7. **オンデマンド供給元の実装確認**（方針は §35.3.1 で決定済み: native rootfs は
+   on-demand・air-gap B は焼き込み継続）: (a) chromium の DL 供給元最終選定（playwright CDN
+   を第一候補に、版不変 URL・arm64 供給・レイアウト互換で比較確認）。(b) bwrap 配下での
+   chromium sandbox 実測（namespace sandbox が通るか。不可なら `--no-sandbox` + localhost
+   限定の割り切りを README 化）。(c) awscli の versioned zip / SMP の versioned deb URL と
+   root なし展開（`dpkg-deb -x` 相当）の確認。
 8. **ライセンス見解の確度**: §35.4.1 は npm registry / GitHub API の license 表示による
    一次調査。配布開始前に claude / agy の利用規約本文（再配布・社内限定配布の条項）を
    読んで確定させる（特にグループ会社配布を「社内」と主張しない前提で設計してあるが、
