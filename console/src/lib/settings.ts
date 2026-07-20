@@ -339,6 +339,7 @@ export const DEFAULT_MODEL = "sonnet";
 const DEFAULT_AGENT_LAUNCH: AgentLaunchDefaults = {
   claude: { model: DEFAULT_MODEL, effort: "", startMode: "normal" },
   codex: { model: "", effort: "", startMode: "normal" },
+  agy: { model: "", effort: "", startMode: "normal" },
   opencode: { model: "", effort: "", startMode: "normal" },
 };
 
@@ -592,7 +593,7 @@ function load(): Settings {
 function normalizeAgentLaunchDefaults(rows: unknown, legacyClaudeModel = DEFAULT_MODEL): AgentLaunchDefaults {
   const src = rows && typeof rows === "object" ? rows as Record<string, Partial<AgentLaunchDefault>> : {};
   const out: AgentLaunchDefaults = {};
-  for (const kind of ["claude", "codex", "opencode"]) {
+  for (const kind of ["claude", "codex", "agy", "opencode"]) {
     const base = DEFAULT_AGENT_LAUNCH[kind];
     const row = src[kind] || {};
     out[kind] = {
