@@ -32,8 +32,8 @@
 | # | アーティファクト | 中身 | 対象ターゲット |
 |---|---|---|---|
 | A | `agent-fleet-<v>.tar.gz` | compose deploy surface（compose.yml / Caddyfile / .env.example / backup / restore / load-images / README）**+ `aws/`（ec2-single cfn.yaml・ecs cfn/・release-ecr.sh・README）** | amd64 Linux・EC2-Single・ECS |
-| B | `agent-fleet-images-<v>.tar.gz` | `docker save`（CP + Workspace イメージ、air-gap 用） | amd64 Linux・EC2-Single（・ECS も可） |
-| C | `agent-fleet-native-<v>-linux-amd64.tar.gz` | `af` ランチャ・`bin/af-cp`・`bin/bwrap`・`bin/git`（いずれも静的）・`rootfs.tar.zst`（workspace イメージの書き出し＝tmux/git/各 CLI/chromium 焼き込み）・`console/`（Vite dist）・`docs/`（ステージング源）・README | native（WSL / 任意の Linux 単一ユーザー）**ホスト追加インストール ゼロ**（§35.3.1） |
+| B | `agent-fleet-images-<v>.tar.gz` | `docker save`（CP + Workspace イメージ、air-gap 用）。Workspace は**配布 variant（lean・CLI 抜き）** — §35.4.1 | amd64 Linux・EC2-Single（・ECS も可） |
+| C | `agent-fleet-native-<v>-linux-amd64.tar.gz` | `af` ランチャ・`bin/af-cp`・`bin/bwrap`・`bin/git`（いずれも静的）・`rootfs.tar.zst`（**lean rootfs** = workspace イメージの配布 variant。OSS のみ＝tmux/git/node/chromium/フォント等。エージェント CLI は焼かず起動時ピン版インストール — §35.3.1・§35.4.1）・`console/`（Vite dist）・`docs/`（ステージング源）・README | native（WSL / 任意の Linux 単一ユーザー）**ホスト追加インストール ゼロ**（§35.3.1） |
 | D | `SHA256SUMS` | A〜C のチェックサム | 全部 |
 
 命名・版の規律:
@@ -70,9 +70,13 @@ agent-fleet-native-<v>-linux-amd64/
 └── README.md             # WSL 前提の導入・制約・更新手順
 ```
 
-- workspace-agent・tmux・git・claude/codex/opencode（ARG ピン止め版）・chromium・CJK
-  フォント・rtk は**すべて rootfs の中**（= Docker 構成と同一物）。native 専用の
-  `bin/workspace-agent` 同梱は不要になる（イメージが `/usr/local/bin/workspace-agent` を焼済み）。
+- rootfs は workspace イメージの**配布 variant（lean rootfs）**: workspace-agent・tmux・
+  git・gh ラッパー・node・go・chromium・CJK フォントなど **OSS だけ**を焼き、エージェント
+  CLI（claude/codex/opencode/agy/rtk）は**焼かない**。CLI は entrypoint が初回起動時に
+  `versions.json` の**ピン版（= e2e-smoke で動作検証した版）**を仮想 HOME の
+  `~/.local/bin` へインストールし、self-update opt-in 有効時はそのまま最新へ追従する
+  （§35.4.1 — サイズとライセンスの両方の理由でこの分割にする）。native 専用の
+  `bin/workspace-agent` 同梱は不要（rootfs が `/usr/local/bin/workspace-agent` を焼済み）。
 - **console は同梱ディレクトリ、go:embed はしない**。rootfs で tar が必須になった以上、
   単一バイナリ化の利得は完全に消えた。`CONSOLE_DIR` seam の現状維持がコード変更ゼロ。
 - **docs/ を同梱する理由**: native では CP イメージが無いので `bakedDocsDefault` が存在しない。
@@ -91,7 +95,7 @@ agent-fleet-native-<v>-linux-amd64/
 | docs mount `:ro` | `--ro-bind <dataDir>/docs /usr/local/share/agent-fleet/docs` |
 | コンテナ uid=1000 (dev) | userns の単一 uid マッピング（実 uid → 1000。WSL 既定ユーザーは実 uid=1000 なので実質恒等） |
 | ネットワーク（`-p 127.0.0.1:<port>`） | net namespace は**共有**（unshare しない）→ agent が host loopback に bind。`AGENT_ADDR` 注入は現行 native と同じ |
-| ENTRYPOINT `entrypoint.sh` | **同じものを実行**（root 不要設計・USER dev 前提を確認済み）→ claude ピン版 install / settings seed / opencode plugin / toolchains 適用が**復活** |
+| ENTRYPOINT `entrypoint.sh` | **同じものを実行**（root 不要設計・USER dev 前提を確認済み）→ settings seed / opencode plugin / toolchains 適用が**復活**。加えて配布 variant では CLI のピン版 boot-install（下記）が走る |
 | `docker stop`（SIGTERM→SIGKILL） | `--unshare-pid --die-with-parent` で bwrap が pid1 → プロセスグループ SIGTERM だけで tmux 含め全滅。現行 native の「tmux ソケット掃除」が不要になる（namespace の /tmp ごと消える） |
 | DNS / hosts | `--ro-bind /etc/resolv.conf` `--ro-bind /etc/hosts`（ホストのを透過） |
 
@@ -99,12 +103,27 @@ agent-fleet-native-<v>-linux-amd64/
 「**entrypoint 初期化なし**」の3行が消える。残るのは「単一ユーザー限定」と
 「メモリ上限なし」（無特権では cgroup を切れない）のみ。
 
-read-only rootfs と版追従は矛盾しない: rtk は常時イメージ焼き込みになり（main 6a3ac1c、
-BAKE_RTK 分岐と vendor 経路は廃止）rootfs の自己完結が既定で保証される。CLI を最新へ
-追従させたい場合の自己更新 opt-in（`AF_AGENT_SELF_UPDATE`・claude/opencode/codex/rtk/agy）は
-「root 所有の `/usr/local/bin` を書かず `~/.local/bin` へ PATH 先勝ちの shadow を置く」
-設計（entrypoint.sh）なので、書き込み先は bind した仮想 HOME 側 — **ro rootfs のまま成立**し、
-OFF に戻せば焼き込みピン版へ復帰する挙動も Docker 構成と同一になる。
+**CLI のピン版 boot-install（lean rootfs の要）**: entrypoint には既に
+「焼き込み claude が無ければ起動時にインストールする」fallback（`CLAUDE_INSTALL` seam）と、
+self-update opt-in の `~/.local/bin` shadow 機構（claude/opencode/codex/rtk/agy）がある。
+これを一般化する:
+
+- ビルド時ピン（Dockerfile ARG → `/usr/local/share/agent-fleet/versions.json`）は配布
+  variant でも**書き出しだけ行う**（バイナリは焼かない）。ピンの意味は「**動作を保証する版**」
+  （e2e-smoke で検証してから bump する現行運用 — docs/dev/10 §10.2.1 — の対象が
+  焼き込み版からピン manifest に変わるだけ）。
+- entrypoint は各 CLI について「`/usr/local/bin` にも `~/.local/bin` にも無ければ、
+  versions.json のピン版を `~/.local/bin` へインストール」する（claude/codex/opencode は
+  rootfs 内の node で `npm install -g`（prefix=`~/.local`）、rtk は checksums 検証付き DL、
+  agy は install.sh。いずれも既存の self-update 実装と同じ取得経路の版指定つき再利用）。
+- 仮想 HOME は永続なので **DL は初回起動の一度きり**。2回目以降はオフラインでも起動する。
+- self-update opt-in（`AF_AGENT_SELF_UPDATE`）ON なら従来どおり最新へ追従、OFF なら
+  ピン版のまま。書き込み先はすべて bind した仮想 HOME 側なので **ro rootfs のまま成立**する。
+
+なお社内・自社運用の Docker イメージは従来どおり**全焼き込み**を既定のまま維持する
+（オフライン即起動・イメージ=検証単位という現行の利点を捨てない）。lean は「**第三者へ
+配布する形**」（native tar と air-gap イメージ tar）に適用する variant であり、切替は
+Dockerfile の ARG（例 `BAKE_AGENT_CLIS=0`）1 個で行う（§35.4.1 の根拠）。
 
 **CP 側の残依存の始末**: CP 自体は静的 Go バイナリだが、内部 git provider が
 `git-http-backend`（ホストの git-core）を exec する。ここだけは rootfs の外なので、
@@ -144,16 +163,19 @@ CGI のみで https を使わないため、静的ビルドの難所（libcurl+o
 --die-with-parent`）で entrypoint.sh 起動へ切り替える。State/pidfile/Stop は共通。
 `AF_NATIVE_AGENT_BIN` は従来モード（開発・`run-dev.sh native`）用にそのまま残す。
 
-**サイズの覚悟**: rootfs（chromium + CJK フォント + CLI 焼き込み）で tar は **GB 級**
-（zstd で 1〜1.5GB 目安・要実測）。「何もインストールさせない」ことと引き換えの本体価格で、
-回線が細い相手には air-gap イメージ tar（B）と同水準。リリース工程では
-`docker buildx build -o type=tar`（コンテナ起動不要）で書き出し、zstd 圧縮する。
+**サイズ**: lean rootfs は CLI 群（claude/codex/opencode/agy + npm 残渣）を落とすぶん
+全焼き込み比で**数百 MB 軽くなる**（それでも chromium + フォント + node/go を含むため
+zstd で数百 MB〜1GB 目安・要実測）。最大の重量物 chromium は OSS（再配布可）なので
+**rootfs に残す**のを推奨 — ブラウザペインが初回から即動き、apt 依存解決を起動時に
+持ち込まずに済む。さらに削るオプション（chromium 抜き variant）はサイズが実測で問題に
+なってから（§35.9-7）。リリース工程では `docker buildx build -o type=tar`
+（コンテナ起動不要）で書き出し、zstd 圧縮する。
 
 **否決した代替案**（検討の記録）:
 
 | 案 | 否決理由 |
 |---|---|
-| 静的 tmux/git を同梱 + CLI は初回に仮想 HOME へブートストラップ | 自前ビルドの供給網が tmux/git（https 付き）へ広がる・chromium は諦めになる・CLI 版ピンと entrypoint 初期化のパリティが得られない・初回にネット必須。rootfs 案が全部まとめて解決する |
+| rootfs を持たず、静的 tmux/git の同梱だけで済ませる | 自前ビルドの供給網が tmux/git（https 付き）へ広がる・chromium/フォント/node は諦めになる・entrypoint 初期化のパリティが得られない。**CLI の boot-install だけは本設計に採用**したが、実行基盤（ユーザーランド）は rootfs で丸ごと持つのが正しい分割 |
 | proot（ptrace ベース・無特権） | syscall フックで桁級に遅い。git/ビルド作業が主用途の本製品では成立しない |
 | `wsl --import` で workspace を別ディストロ化 | WSL 専用（汎用 Linux に効かない）・`wsl.exe` interop への依存・別ディストロへの exec を担う新 Runtime アダプタが必要。bwrap 案はコード差分が Start 1 点で済む |
 | 全部入り単一バイナリ（console/rootfs を go:embed） | GB 級 embed は非現実的。tar 配布が前提になった時点で無意味 |
@@ -233,6 +255,37 @@ reset で掃除）。データ（`WS_DATA`）は外にあるので触れない�
   ローカル実行が正**。ビルドは1つずつ直列に（共有ホストのメモリ制約 — console build は
   `NODE_OPTIONS=--max-old-space-size` 指定済み、イメージビルドと並行しない）。
 
+### 35.4.1 サードパーティ CLI の再配布とライセンス（lean variant の根拠）
+
+「イメージ/rootfs に焼いて第三者へ配布」は、同梱物ごとに再配布権が要る。グループ会社への
+提供も**別法人への頒布**なので同じ扱いが安全側。調査結果（2026-07 時点・npm registry /
+GitHub API の license 表示で確認）:
+
+| 同梱物 | ライセンス | 焼いて再配布 |
+|---|---|---|
+| claude（@anthropic-ai/claude-code） | `SEE LICENSE IN README.md` = プロプライエタリ（再配布許諾の明示なし） | **不可扱い** |
+| agy（Antigravity CLI） | Google のプロプライエタリ配布（install.sh 供給・OSS ライセンスなし） | **不可扱い** |
+| codex（@openai/codex） | Apache-2.0 | 可（NOTICE 帰属） |
+| opencode（opencode-ai） | MIT | 可（同上） |
+| rtk（rtk-ai/rtk） | Apache-2.0 | 可（同上） |
+| chromium / git / tmux / node / go / フォント / Debian ベース | 各種 OSS（BSD/GPL/ISC/OFL 等） | 可（GPL 系はソース入手手段の案内・帰属表示の義務 — NOTICE を P1 で整備） |
+
+帰結:
+
+- **claude と agy が焼けない時点で「全焼き込み rootfs の再配布」は成立しない**。よって
+  配布物（native tar C と air-gap イメージ tar B）は lean variant（CLI 抜き +
+  versions.json ピン + 起動時インストール）にする。**boot-install なら各デプロイ先が
+  公式配布元（npm / claude.ai / antigravity.google / GitHub Releases）から直接取得**する
+  ことになり、当方による再配布に当たらない（各社が各配布元の規約を自ら受諾する形）。
+- codex/opencode/rtk は焼いても適法だが、**boot-install 機構を持つ以上は全 CLI を同じ経路に
+  統一**する（分岐を減らし、lean の軽さも最大化。焼く/焼かないの判断をライセンス表の保守に
+  依存させない）。
+- **完全オフライン（air-gap）で CLI まで要る会社**は、lean イメージ + 自社ビルド
+  （リポジトリの Dockerfile で `BAKE_AGENT_CLIS=1` を自社環境で焼く = 自社が配布元から
+  直接取得）へ誘導する。runbook に手順として明記（これも「当方が再配布しない」形の実現）。
+- 社内・自社デプロイ用のイメージ（配布しない）は全焼き込みのままでよい — ライセンス問題は
+  「頒布」で生じ、自社内利用では生じない。
+
 ## 35.5 アップグレードの共通契約（runbook へ載せる文言の骨子)
 
 全ターゲット共通:
@@ -280,7 +333,7 @@ VERSION=0.2.0 deploy/release/build.sh [--compose] [--native] [--save] [--all]
 
 | フェーズ | 内容 | 出口 |
 |---|---|---|
-| **P1: 共通基盤** | 版刻印（§35.6.1）・release.sh へ `aws/` 同梱 + SHA256SUMS・`deploy/release/build.sh` 骨格 | `VERSION=x build.sh --compose` で A+B+D が出る |
+| **P1: 共通基盤** | 版刻印（§35.6.1）・release.sh へ `aws/` 同梱 + SHA256SUMS・`deploy/release/build.sh` 骨格・**配布 variant（`BAKE_AGENT_CLIS=0`）と entrypoint のピン版 boot-install 一般化 + NOTICE/帰属整備（§35.4.1）** | `VERSION=x build.sh --compose` で A+B+D が出る（B は lean variant・起動時ピン install がコンテナで通る） |
 | **P2: native tar（self-contained）** | `runtime_native.go` の rootfs モード（bwrap ラップ・`AF_NATIVE_ROOTFS`）・ビルダ（--native: rootfs 書き出し + 静的 bwrap/git）・ランチャ `af`・README-native（WSL 導入/userns 注記/更新） | **素の WSL2（追加インストールなし）**で tar 展開 → `af start` → clone → claude セッション E2E |
 | **P3: ECS 配布** | release-ecr.sh・ImageTag/Persistence パラメータ化・更新 runbook・最小 IAM 表 | sandbox で「push → deploy → WS 起動 → タグ更新 → 次回 Start で新イメージ」一巡 |
 | **P4: 検証ゲート** | §35.8 の未済分（native 実機が筆頭） | 各ゲート緑 + 第 2 デプロイ再現 |
@@ -293,7 +346,7 @@ P1→P2 が本丸（native が唯一のゼロ→イチ）。P3 は独立に並�
 |---|---|---|
 | compose | clean host でバンドルから起動（P3-10 段5） | ✅ 実証済（ec2-single 上） |
 | EC2-Single | 同上 + CFN provision〜teardown | ✅ 実証済 |
-| native | **素の WSL2**（Docker なし・**追加インストールなし**）で tar から起動 → clone → claude セッション E2E。userns 無特権実行が WSL2 標準カーネルで通ることの確認を含む（§35.3.1 の仮説） | ✗ 未（docs/34 §34.6 の実機未検証と同時に消化する） |
+| native | **素の WSL2**（Docker なし・**追加インストールなし**）で tar から起動 → 初回 boot-install（ピン版）→ clone → claude セッション E2E → 再起動してオフライン起動（2回目は DL なし）。userns 無特権実行が WSL2 標準カーネルで通ることの確認を含む（§35.3.1 の仮説） | ✗ 未（docs/34 §34.6 の実機未検証と同時に消化する） |
 | ECS | E2E ゲート（p3-7 凍結仕様 §20b.7.14）+ タグ更新の一巡 | △ 段階実証済・更新一巡は未 |
 | 総合 | 第 2 デプロイをゼロから立てて E2E（decisions/0001） | ✗ 未 |
 
@@ -314,3 +367,10 @@ P1→P2 が本丸（native が唯一のゼロ→イチ）。P3 は独立に並�
    小物で musl 静的ビルドの実績が豊富、リリース工程の builder イメージ内で source から
    固定版をビルドする（バイナリ拾い食いはしない）。→ 推奨: 許容。ここを嫌うと
    「ホスト依存ゼロ」は成立しない。
+7. **chromium を lean rootfs に残すか**: OSS なので再配布は適法・最大の重量物。
+   → 推奨: 残す（ブラウザペインの即時性・apt 依存を起動時に持ち込まない）。実測サイズが
+   問題になったら chromium 抜き variant を追加検討。
+8. **ライセンス見解の確度**: §35.4.1 は npm registry / GitHub API の license 表示による
+   一次調査。配布開始前に claude / agy の利用規約本文（再配布・社内限定配布の条項）を
+   読んで確定させる（特にグループ会社配布を「社内」と主張しない前提で設計してあるが、
+   規約側が許すなら焼き込み配布へ戻す選択肢が復活する）。
