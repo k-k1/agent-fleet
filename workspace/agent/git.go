@@ -14,6 +14,8 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // Repositories are plain working copies under ~/repos/<name>. The folder name
@@ -1016,6 +1018,9 @@ func handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_ = gitx.Cmd(parent, "worktree", "prune").Run()
+		if pruneSessions(r) {
+			forgetNonLiveMetasUnder(dir)
+		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"deleted": r.PathValue("name")})
 		return
 	}
@@ -1032,5 +1037,36 @@ func handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", err.Error())
 		return
 	}
+	if pruneSessions(r) {
+		forgetNonLiveMetasUnder(dir)
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"deleted": r.PathValue("name")})
+}
+
+// pruneSessions reports whether the delete should also forget the (non-live) session
+// metas that lived in the removed dir. Opt-in via ?prune_sessions=1 so the Console's
+// plain "delete working copy" keeps its existing behavior (metas untouched); only the
+// cleanup path (MCP delete_worktree) sets it, completing the tidy-up so a stopped
+// session isn't left pointing at a directory that no longer exists.
+func pruneSessions(r *http.Request) bool {
+	v := r.URL.Query().Get("prune_sessions")
+	return v == "1" || v == "true"
+}
+
+// forgetNonLiveMetasUnder removes the metas of any NON-live session whose cwd is at or
+// under dir. handleDeleteRepo has already refused when a LIVE session runs there, so the
+// remaining metas are stopped/archived — unusable once dir is gone (resume would hit
+// DirGoneErr). Belt-and-suspenders: re-check liveness here too. jsonl is left on disk
+// (same as stop = forget meta, keep transcript).
+func forgetNonLiveMetasUnder(dir string) {
+	live := tmuxx.LiveSessionNames()
+	for _, m := range session.ListMetas() {
+		if m.Dir != dir && !strings.HasPrefix(m.Dir, dir+string(os.PathSeparator)) {
+			continue
+		}
+		if live[m.Name] || (m.DriverKind() == session.DriverManaged && managedAlive(m)) {
+			continue
+		}
+		session.RemoveMeta(m.Name)
+	}
 }
