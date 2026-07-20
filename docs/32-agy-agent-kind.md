@@ -727,6 +727,20 @@ agy の転写（`transcript_full.jsonl`）にも他の永続状態にも token �
   消費（スパークライン）は取得元が無く出せない。更新は転写変化 + 60 秒下限の
   スクレイプ粒度で、claude/codex のようなターン即時反映ではない。
 
+### enableTelemetry の起動毎再固定（2026-07-20）
+
+`enableTelemetry:false` の固定は auth 完了時の一回だけだったため、後から
+キーが on に倒れる/消えると次のログインまで戻らなかった（実機: 手動の
+/config 実験で on に戻っていたのを確認）。利用者合意の上で、**agy を起動する
+全経路**（`BuildLaunch`・`/usage` スクレイプ・`/context` スクレイプ）の直前に
+`enforceTelemetryOff()` を呼び足し、常時オフへ再固定するようにした（no-op
+when already false なので追加コストなし）。なお TUI `/config` の
+"Enable Telemetry"（利用状況テレメトリ）はオンボーディングの Interactions
+トグル（学習利用オプトアウト・アカウント側）とは別レイヤー。あわせて
+`showTips:false`・`showFeedbackSurvey:false` も設定した — どちらも TUI に
+予告なく描画される要素で、ミラーの launch-seed 自動投入や PTY スクレイプ
+（画面テキストのパターンマッチ依存）とは共存させない方が安全なため。
+
 ## ユーザーに依頼する事項（並行作業のブロッカー解消）
 
 1. **GCP プロジェクトの用意**（D1/M2 用）: 課金有効化済みプロジェクト ID を Connections 設定時に使える形で。

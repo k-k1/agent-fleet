@@ -61,6 +61,10 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// Pre-trust the launch dir so agy doesn't stall on its "Do you trust the
 	// contents of this project?" prompt (not skippable by flags).
 	ensureWorkspaceTrusted(m.Dir)
+	// Re-pin the telemetry opt-out on every launch: the auth-time pin alone
+	// doesn't survive the key being flipped or dropped later, and docs/32 の
+	// 採用条件は常時オフ。
+	enforceTelemetryOff()
 	slotSid := session.UUID(m.Dir, m.Name)
 	resumeID := sids.Read(slotSid)
 	if resumeID == "" {
