@@ -24,3 +24,7 @@ func (s SidStore) Read(sid string) string {
 
 func (s SidStore) Write(sid, val string) { _ = s.files.Write(sid, val) }
 func (s SidStore) Remove(sid string)     { s.files.Remove(sid) }
+
+// Path exposes the backing file path, for callers that must distinguish "stored
+// empty value" from "no entry at all" (agy's brain-dir snapshot).
+func (s SidStore) Path(sid string) string { return s.files.Path(sid) }
