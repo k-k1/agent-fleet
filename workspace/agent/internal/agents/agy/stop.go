@@ -8,7 +8,6 @@ package agy
 // 失われるため、停止前に /exit を打って flush の機会を与える（agents.GracefulStopper）。
 
 import (
-	"os/exec"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -28,12 +27,12 @@ func (agentImpl) GracefulStop(m session.Meta) bool {
 	}
 	// C-u first: a draft sitting in the input box would otherwise be submitted
 	// as "<draft>/exit" — a quota-burning prompt instead of an exit.
-	_ = exec.Command("tmux", "send-keys", "-t", pane, "C-u").Run()
-	_ = exec.Command("tmux", "send-keys", "-t", pane, "-l", "/exit").Run()
+	_ = tmuxx.Cmd("send-keys", "-t", pane, "C-u").Run()
+	_ = tmuxx.Cmd("send-keys", "-t", pane, "-l", "/exit").Run()
 	// Enter as a separate keystroke after a beat (same Ink/bubbletea quirk as the
 	// auth/usage flows: a combined write can swallow the CR).
 	time.Sleep(300 * time.Millisecond)
-	_ = exec.Command("tmux", "send-keys", "-t", pane, "Enter").Run()
+	_ = tmuxx.Cmd("send-keys", "-t", pane, "Enter").Run()
 	deadline := time.Now().Add(gracefulStopWindow)
 	for time.Now().Before(deadline) {
 		if !tmuxx.HasSession(tn) {

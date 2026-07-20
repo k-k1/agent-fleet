@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -54,7 +53,7 @@ func sessionTerminalState(name string) (string, *compactProgress) {
 	if pane == "" {
 		return "", nil
 	}
-	out, err := exec.Command("tmux", "capture-pane", "-p", "-t", pane).Output()
+	out, err := tmuxx.Cmd("capture-pane", "-p", "-t", pane).Output()
 	if err != nil {
 		return "", nil
 	}
@@ -95,7 +94,7 @@ func codexTerminalState(name string) string {
 	if pane == "" {
 		return ""
 	}
-	out, err := exec.Command("tmux", "capture-pane", "-p", "-t", pane).Output()
+	out, err := tmuxx.Cmd("capture-pane", "-p", "-t", pane).Output()
 	if err != nil {
 		return ""
 	}

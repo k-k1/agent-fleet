@@ -2,7 +2,6 @@ package claude
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -107,7 +106,7 @@ func paneRootPID(tn string) int {
 	if pane == "" {
 		return 0
 	}
-	out, err := exec.Command("tmux", "display-message", "-p", "-t", pane, "#{pane_pid}").Output()
+	out, err := tmuxx.Cmd("display-message", "-p", "-t", pane, "#{pane_pid}").Output()
 	if err != nil {
 		return 0
 	}
