@@ -277,6 +277,22 @@ func memberTools() []mcpTool {
 			},
 		},
 		{
+			name: "get_agent_usage", minScope: scopeRead,
+			desc:   "Subscription usage and rate limits for the agent CLIs in your Workspace (claude and codex; opencode has no usage source). fiveHour / sevenDay windows carry pct (percent used, 0-100) and resetsAt (ISO instant the limit lifts). authed=false means that CLI has no subscription login; ageSec is the capture age in seconds; codex may add planType and resetCredits. Use when asked how much quota remains or when a limit resets.",
+			schema: map[string]any{"type": "object", "properties": map[string]any{}},
+			run: func(ctx context.Context, a mcpAPI, res *resolved, _ map[string]any) (string, error) {
+				cl, err := agentText(ctx, res.rt, "GET", "/claude/usage", nil)
+				if err != nil {
+					return "", err
+				}
+				cx, err := agentText(ctx, res.rt, "GET", "/codex/usage", nil)
+				if err != nil {
+					return "", err
+				}
+				return jsonText(map[string]any{"claude": json.RawMessage(cl), "codex": json.RawMessage(cx)})
+			},
+		},
+		{
 			name: "list_repos", minScope: scopeRead,
 			desc:   "List the git working copies in your Workspace (~/repos). Use before create_session to pick the `dir` (each repo has a `path`) — including repos with no running session.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{}},
