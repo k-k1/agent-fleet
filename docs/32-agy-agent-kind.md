@@ -606,6 +606,36 @@ skip なし agent（`AGENT_AGY_FLAGS=" "` の dev seam）＋ Console で、フ�
 作って halt → 承認なしで graceful 終了（htest.txt 未作成）。ユニットは
 コマンド 4 行 / 作成・編集 2 行 / 未知ツール無カードを追加し全緑（agent 365）。
 
+## 初回プロンプトがブート画面に食われる問題の修正（2026-07-20 後続）
+
+**症状**: 起動導線（作業を始める）で agy を選び最初のプロンプトを入れて起動
+すると、プロンプトが TUI に届かず入力内容が消える。
+
+**真因**: `paneMode`（agent `session_io.go`）に agy 分岐が無く、常に "" を
+返していた。`paneMode` は launch-seed 配送の readiness ゲートを兼ねる —
+ミラーは `mode` 非空を待って seed を送り（`MirrorView` の readiness gate）、
+サーバ側 `deliverInitialPrompt`（MCP create の `initial_prompt`）も同じ信号を
+待つ。agy はどちらも検知不能で、ミラーは 15 秒の盲目 fallback（`seedForce`）、
+サーバは固定 2.5 秒 beat に落ちていた。agy の「Signing in...」ブート画面は
+**タイプされたテキストを完全に食う**（実機確認: ブート中に send-keys した
+文字列は composer 出現後に残らない）ため、composer 描画前に落ちた送信は
+無音で消える。15 秒 fallback 前にミラーを離れる（ターミナルビューへ切替 =
+MirrorView unmount でタイマー破棄）と配送自体が起きない。
+
+**直し方**: `paneMode` に agy 分岐を追加。composer フッタ（v1.1.4 実測:
+左 "? for shortcuts"（idle）/"esc to cancel"（生成中）、右 "<model>"、plan
+モードは "plan · <model>"）を paneTail(3) から検出し "Default"/"Plan" を
+返す。これで readiness ゲート（ミラー/サーバ両方）と `/messages` の mode が
+agy でも機能する。ミラーのモードチップは `planCycleKey` 必須のため agy には
+出ず、UI 副作用なし。
+
+**検証**: ①ドリフトテスト `agy_pane_drift_test.go`（build tag `drift`・実
+サインイン必須・§4.11 のソケット隔離）で Default/Plan 両モードの実 TUI
+フッタ検出を確認。②第 2 インスタンス（:7710・3 点隔離）で `POST /sessions
+{kind:agy, initial_prompt}` → readiness 待ち後に自動投入・agy 応答・
+`/messages` に user/assistant ターンと mode:"Default" を確認。agent 全緑
+（384）。
+
 ## ユーザーに依頼する事項（並行作業のブロッカー解消）
 
 1. **GCP プロジェクトの用意**（D1/M2 用）: 課金有効化済みプロジェクト ID を Connections 設定時に使える形で。
