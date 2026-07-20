@@ -92,6 +92,15 @@ var stepMetaLineRe = regexp.MustCompile(`(?m)^(Created At|Completed At): [^\n]*\
 // remains the raw view; the mirror wants the gist).
 const toolOutputMax = 4000
 
+// commandIndentRe is the 4-tab indent agy's RUN_COMMAND result template puts on
+// every line after the status sentence ("The command completed successfully.\n
+// \t\t\t\tOutput:\n\t\t\t\t<line>…"), which renders as a ragged block in the mirror's
+// tool part. Exactly the template's prefix is stripped per line — output that is
+// itself tab-indented keeps its own tabs (they sit after the template's four).
+var commandIndentRe = regexp.MustCompile(`(?m)^\t{4}`)
+
+func stripCommandIndent(s string) string { return commandIndentRe.ReplaceAllString(s, "") }
+
 func parseTranscript(f *os.File) []transcript.Turn {
 	var turns []transcript.Turn
 	var cur *transcript.Turn // open assistant turn
@@ -140,6 +149,9 @@ func parseTranscript(f *os.File) []transcript.Turn {
 		case s.Source == "MODEL", s.Type == "ERROR_MESSAGE":
 			// A tool step (type = tool name), or a surfaced SYSTEM error.
 			out := strings.TrimSpace(stepMetaLineRe.ReplaceAllString(s.Content, ""))
+			if s.Type == "RUN_COMMAND" {
+				out = stripCommandIndent(out)
+			}
 			if len(out) > toolOutputMax {
 				out = out[:toolOutputMax] + "…"
 			}
