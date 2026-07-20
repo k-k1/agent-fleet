@@ -37,10 +37,16 @@ func conversationDBPath(conv string) string {
 
 // Probe reports whether the slot's conversation is blocked on an interactive
 // prompt right now: ("question", parsed questions) for ASK_QUESTION,
-// ("permission", nil) for a tool-permission menu, ("", nil) otherwise.
-// Callers gate on liveness themselves — a killed session's DB may keep a stale
-// status=9 last step, which must not surface as pending on a stopped session.
+// ("permission", synthesized menu) for a tool-permission prompt, ("", nil)
+// otherwise. Callers gate on liveness themselves — a killed session's DB may
+// keep a stale status=9 last step, which must not surface as pending on a
+// stopped session.
 func Probe(m session.Meta) (string, []transcript.Question) {
+	// The conversation UUID may not be adopted yet when the mirror polls before
+	// any sessions-list poll ran (capture normally fires in WireLive) — a first
+	// prompt straight into a question would then stay invisible. Capture is
+	// idempotent and cheap, so run it here too.
+	captureConversation(m)
 	conv := sids.Read(session.UUID(m.Dir, m.Name))
 	if conv == "" {
 		return "", nil
@@ -59,7 +65,66 @@ func Probe(m session.Meta) (string, []transcript.Question) {
 	if qs := parseAskQuestions(payload); len(qs) > 0 {
 		return "question", qs
 	}
-	return "permission", nil
+	return "permission", permissionQuestions(payload)
+}
+
+// permissionQuestions synthesizes the pending permission menu as a Question so
+// the Console's menu-mode card (Down×i + Enter) can drive it — labels and row
+// COUNT must mirror the TUI's menu exactly or the keys land on the wrong row
+// (v1.1.4 実測: run_command は 4 行、write_to_file / replace_file_content は
+// 2 行)。The pending tool's name rides in the payload as a plain string, so an
+// unknown tool (different menu shape we haven't verified) yields NO card —
+// state=permission alone, answer in the terminal — rather than a mis-keying one.
+func permissionQuestions(payload []byte) []transcript.Question {
+	args := parseArgsJSON(payload)
+	switch {
+	case bytes.Contains(payload, []byte("run_command")):
+		return []transcript.Question{{
+			Question: "Requesting permission for: " + args["CommandLine"],
+			Options: []transcript.Option{
+				{Label: "Yes"},
+				{Label: "Yes — always in this conversation"},
+				{Label: "Yes — always (persist to settings.json)"},
+				{Label: "No"},
+			},
+		}}
+	case bytes.Contains(payload, []byte("write_to_file")):
+		return []transcript.Question{{
+			Question: "Allow creation of this file? " + args["TargetFile"],
+			Options:  []transcript.Option{{Label: "Yes, allow creation"}, {Label: "No, deny creation"}},
+		}}
+	case bytes.Contains(payload, []byte("replace_file_content")):
+		return []transcript.Question{{
+			Question: "Accept this file edit? " + args["TargetFile"],
+			Options:  []transcript.Option{{Label: "Yes, accept this change"}, {Label: "No, reject this change"}},
+		}}
+	}
+	return nil
+}
+
+// parseArgsJSON pulls the pending tool's argument JSON (the first decodable
+// {"…"} object embedded in the payload) into a flat string map, best-effort —
+// a miss just leaves the synthesized question without its detail suffix.
+func parseArgsJSON(payload []byte) map[string]string {
+	out := map[string]string{}
+	for i := 0; i+2 < len(payload); {
+		j := bytes.Index(payload[i:], []byte(`{"`))
+		if j < 0 {
+			break
+		}
+		i += j
+		var doc map[string]any
+		if json.NewDecoder(bytes.NewReader(payload[i:])).Decode(&doc) == nil && len(doc) > 0 {
+			for k, v := range doc {
+				if s, ok := v.(string); ok {
+					out[k] = s
+				}
+			}
+			return out
+		}
+		i += 2
+	}
+	return out
 }
 
 // parseAskQuestions extracts the ask_question tool-args JSON embedded in a
