@@ -278,7 +278,7 @@ func memberTools() []mcpTool {
 		},
 		{
 			name: "list_cleanup_candidates", minScope: scopeRead,
-			desc: "Survey stale sessions and worktrees that can be tidied up. Each candidate has type (session|worktree), action (archive_session|delete_worktree|empty = manual only), safety (safe = merged & clean etc.; review = a stopped session or a clean-but-unmerged worktree, confirm first; keep = live or has uncommitted/unpushed work, don't touch) and reason. Use when the workspace has drifted into clutter: present the safe/review candidates to the user, then act with archive_session / delete_worktree. keep candidates need the user in the Console.",
+			desc:   "Survey stale sessions and worktrees that can be tidied up. Each candidate has type (session|worktree), action (archive_session|delete_worktree|empty = manual only), safety (safe = merged & clean etc.; review = a stopped session or a clean-but-unmerged worktree, confirm first; keep = live or has uncommitted/unpushed work, don't touch) and reason. Use when the workspace has drifted into clutter: present the safe/review candidates to the user, then act with archive_session / delete_worktree. keep candidates need the user in the Console.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{}},
 			run: func(ctx context.Context, a mcpAPI, res *resolved, _ map[string]any) (string, error) {
 				return agentText(ctx, res.rt, "GET", "/sessions/cleanup", nil)
@@ -294,7 +294,7 @@ func memberTools() []mcpTool {
 		},
 		{
 			name: "delete_worktree", minScope: scopeWrite,
-			desc:   "Delete an unneeded worktree (working copy). Acts on a list_cleanup_candidates action=delete_worktree item (merged & clean = safe, clean-but-unmerged = review). A worktree with uncommitted/unpushed changes is protected and refused (keep — force-delete it in the Console). Deleting it also tidies up the stopped sessions that lived there; only the local working copy is removed (history, remote and branch stay). Destructive — confirm which worktree with the user before running.",
+			desc: "Delete an unneeded worktree (working copy). Acts on a list_cleanup_candidates action=delete_worktree item (merged & clean = safe, clean-but-unmerged = review). A worktree with uncommitted/unpushed changes is protected and refused (keep — force-delete it in the Console). Deleting it also tidies up the stopped sessions that lived there; only the local working copy is removed (history, remote and branch stay). Destructive — confirm which worktree with the user before running.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{
 				"name": map[string]any{"type": "string", "description": "worktree name (the id of a list_cleanup_candidates worktree candidate)"},
 			}, "required": []string{"name"}},
