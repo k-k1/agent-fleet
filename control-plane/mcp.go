@@ -390,14 +390,14 @@ func memberTools() []mcpTool {
 		},
 		{
 			name: "list_models", minScope: scopeRead,
-			desc: "List the launch-time models for `kind`. claude returns its fixed tier aliases (fable/opus/sonnet/haiku); codex and opencode return the live catalog reflecting the user's connected providers. Before creating a session with a model override, call this and use a returned id. Resolve a user shorthand such as `terra` to its matching returned full id (for example `gpt-5.6-terra`).",
+			desc: "List the launch-time models for `kind`. claude returns its fixed tier aliases (fable/opus/sonnet/haiku); codex, opencode and agy return the live catalog reflecting the user's connected providers. Before creating a session with a model override, call this and use a returned id. Resolve a user shorthand such as `terra` to its matching returned full id (for example `gpt-5.6-terra`).",
 			schema: map[string]any{"type": "object", "properties": map[string]any{
-				"kind": map[string]any{"type": "string", "description": "claude | codex | opencode"},
+				"kind": map[string]any{"type": "string", "description": "claude | codex | opencode | agy"},
 			}, "required": []string{"kind"}},
 			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
 				kind := argStr(args, "kind")
-				if kind != "claude" && kind != "codex" && kind != "opencode" {
-					return "", fmt.Errorf("kind must be claude, codex or opencode")
+				if kind != "claude" && kind != "codex" && kind != "opencode" && kind != "agy" {
+					return "", fmt.Errorf("kind must be claude, codex, opencode or agy")
 				}
 				return agentText(ctx, res.rt, "GET", "/agents/"+url.PathEscape(kind)+"/models", nil)
 			},
@@ -410,7 +410,7 @@ func memberTools() []mcpTool {
 				"properties": map[string]any{
 					"dir":            map[string]any{"type": "string", "description": "working directory (repo working copy); omitted = home"},
 					"title":          map[string]any{"type": "string", "description": "display name (optional)"},
-					"kind":           map[string]any{"type": "string", "description": "agent kind: claude (default) | codex | opencode | shell. shell is a raw shell with no agent guardrails — initial_prompt and any string sent to it run verbatim as commands, so confirm the exact command with the user before launching or sending."},
+					"kind":           map[string]any{"type": "string", "description": "agent kind: claude (default) | codex | opencode | agy | shell. agy is the Antigravity CLI (launchable only when connected). shell is a raw shell with no agent guardrails — initial_prompt and any string sent to it run verbatim as commands, so confirm the exact command with the user before launching or sending."},
 					"model":          map[string]any{"type": "string", "description": "model override (optional)"},
 					"initial_prompt": map[string]any{"type": "string", "description": "first task/hand-off text, auto-sent after boot (optional)"},
 					"worktree":       map[string]any{"type": "boolean", "description": "create a new isolated worktree from dir before launch (optional; default false)"},
