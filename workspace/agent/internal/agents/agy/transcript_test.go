@@ -77,6 +77,14 @@ func TestTranscriptEmptyBeforeFirstPrompt(t *testing.T) {
 	}
 }
 
+func TestStripCommandIndent(t *testing.T) {
+	in := "The command completed successfully.\n\t\t\t\tOutput:\n\t\t\t\ttool-e2e-done\n\t\t\t\t\tkeep-own-tab"
+	want := "The command completed successfully.\nOutput:\ntool-e2e-done\n\tkeep-own-tab"
+	if got := stripCommandIndent(in); got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
 func TestTranscriptPrefersFullOverTruncated(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	dir := "/home/dev/repos/proj"
