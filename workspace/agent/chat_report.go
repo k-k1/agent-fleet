@@ -339,8 +339,25 @@ func runReportAutoTurn(convID string) {
 	defer cancel()
 	deregister := registerLiveTurn(convID, cancel) // Stop button + in_progress work as usual
 	defer deregister()
-	reply, err := prov.send(ctx, c, reportsPrompt(pending))
+	// docs/33 第4段: 無人の自動ターンでも、閾値超過のままなら先に予防的自動圧縮
+	// （オペレーター会話は長寿でコンテキストが積み上がりやすい代表格）。
+	maybeAutoCompact(ctx, c, prov)
+	// docs/33: 圧縮直後の自動ターンも引き継ぎ要約を先頭に載せる（新セッションは
+	// 過去の指示・文脈を何も知らない）。
+	prompt, handoff := injectHandoff(c, reportsPrompt(pending))
+	reply, err := prov.send(ctx, c, prompt)
+	if err != nil && recoverForRetry(ctx, c, prov, err) {
+		// docs/33 第3段: 超過を検知 → 現行セッションを要約して畳み、新セッションで
+		// リトライ（reports は未配信なので再注入され要約も前置される）。
+		prompt, handoff = injectHandoff(c, reportsPrompt(pending))
+		reply, err = prov.send(ctx, c, prompt)
+	}
 	if err != nil {
+		if isContextOverflowErr(err) {
+			// black hole を塞ぐ: 圧縮も不能な超過を notice＋通知で必ず可視化する
+			// （従来は log のみで、無人のオペレーターが静かに死んでいた）。
+			noteContextOverflow(c)
+		}
 		// Keep the reports undelivered (they retry on the next turn) but persist the
 		// mutated resume handle, mirroring handleChatSend's failure path.
 		c.UpdatedAt = nowMs()
@@ -349,8 +366,14 @@ func runReportAutoTurn(convID string) {
 		return
 	}
 	markReportsDelivered(pending)
+	if handoff {
+		c.PendingHandoff = "" // carried into the new session — done
+	}
 	c.AutoTurns++
 	c.Messages = append(c.Messages, chatMessage{Role: "assistant", Content: reply, TS: nowMs()})
+	// 無人の自動ターンでも逼迫を見逃さない（notice＋通知センター、chat_usage.go）:
+	// オペレーター会話は長寿でコンテキストが積み上がりやすい代表格。
+	noteContextPressure(c)
 	c.UpdatedAt = nowMs()
 	if err := saveConv(c); err != nil {
 		log.Printf("chat report: save %s: %v", convID, err)

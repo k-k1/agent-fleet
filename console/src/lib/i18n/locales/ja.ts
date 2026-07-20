@@ -40,6 +40,7 @@ export const ja = {
   "err.chat_title_empty": "表示名が空です",
   "err.chat_message_empty": "メッセージが空です",
   "err.chat_conversation_not_found": "会話が見つかりません",
+  "err.chat_nothing_to_compact": "まだ圧縮できるコンテキストがありません（最初の応答の後に使えます）",
   "err.conn_api_key_required": "API キーを入力してください",
   "err.conn_grafana_fields_required": "Grafana の URL とサービスアカウントトークンを入力してください",
   "err.conn_url_scheme": "URL は http(s):// で始めてください",
@@ -82,6 +83,10 @@ export const ja = {
   "notif.session_report.speech": "{name} からアシスタントに報告が届きました。",
   "notif.chat_auto_paused.title": "自動応答が上限に達し停止しました",
   "notif.chat_auto_paused.speech": "アシスタントの自動応答が上限に達したため停止しました。続けるにはメッセージを送ってください。",
+  "notif.chat_ctx_pressure.title": "チャットのコンテキストが逼迫しています",
+  "notif.chat_ctx_pressure.speech": "アシスタントチャットのコンテキスト使用量が上限に近づいています。新しいチャットへの引き継ぎを検討してください。",
+  "notif.chat_ctx_overflow.title": "チャットのコンテキストが上限を超えました",
+  "notif.chat_ctx_overflow.speech": "アシスタントチャットのコンテキストが上限を超え、応答できませんでした。圧縮するか新しいチャットを開いてください。",
   "notif.usage_reset.title": "{source} の制限がリセットされました",
   "notif.usage_reset.body": "{window}がリセットされました。",
   "notif.usage_reset.speech": "{source}の{window}がリセットされました。",
@@ -568,6 +573,9 @@ export const ja = {
   "agents.assistant_auto_turn": "セッション報告への自動応答",
   "agents.note_assistant_auto_turn":
     "フリート・オペレーター等（AF 書き込み許可のアシスタント）が起こした・指示したセッションから完了報告が届いたとき、アシスタントが自動で 1 ターン動いて後続を処理します。暴走防止のため、あなたの発言なしで動ける自動ターンは会話ごとに最大 10 回です（発言でリセット）。",
+  "agents.assistant_auto_compact": "コンテキストの自動圧縮",
+  "agents.note_assistant_auto_compact":
+    "チャットのコンテキスト使用率が 90% を超えたまま次のやり取りが始まるとき、先に会話を要約して新しいセッションへ自動で引き継ぎます（要約の作成に 1 ターン分のトークンを消費）。80% の時点で届くお知らせから手動の「圧縮」で先に整理することもできます。",
   "agents.ws_required_title": "設定はワークスペース内で実行されます",
   "agents.ws_required_hint": "接続とエージェント設定はコンテナ内の Agent / CLI を経由するため、ワークスペースの起動が必要です。",
   "agents.note_apply": "接続の変更は即時、挙動設定は各エージェントの新しいセッションから反映されます。",
@@ -1096,6 +1104,13 @@ export const ja = {
   "chat.tts_source_work": "チャット・作業過程",
   "chat.state_running": "進行中",
   "chat.state_idle": "待機中",
+  "chat.compact_btn": "圧縮",
+  "chat.compact_tip": "会話を要約し、要約だけを新しいセッションへ引き継いでコンテキストを圧縮します（この画面の履歴は残ります）",
+  "chat.compact_confirm_title": "コンテキストを圧縮しますか？",
+  "chat.compact_confirm_body":
+    "これまでの会話を要約し、要約だけを新しいセッションへ引き継ぎます。この画面の会話履歴はそのまま残りますが、引き継がれるのは要約のみです。要約の作成に1ターン分のトークンを消費します。",
+  "chat.compacting": "圧縮中…",
+  "chat.compact_failed": "コンテキストの圧縮に失敗しました",
   "chat.assistant_fallback": "アシスタント",
   "chat.greeting_empty": "メッセージを送って会話を始めましょう。",
   "chat.empty_hint":

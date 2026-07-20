@@ -15,7 +15,7 @@ export type NotificationSourceState = "unknown" | "ready" | "offline" | "unsuppo
 export interface FleetNotification {
   seq: number;
   id: string;
-  kind: "answer-ready" | "question" | "plan-approval" | "permission-request" | "session-report" | "chat-auto-paused" | "usage-reset" | string;
+  kind: "answer-ready" | "question" | "plan-approval" | "permission-request" | "session-report" | "chat-auto-paused" | "chat-context-pressure" | "chat-context-overflow" | "usage-reset" | string;
   target: { type: string; id: string; kind?: string };
   displayName: string;
   payload: Record<string, unknown>;
@@ -54,6 +54,18 @@ function wording(n: FleetNotification): { title: string; body: string; speech: s
     // The body names the conversation; clicking opens it so the user can reply to resume.
     const title = String(n.payload.conversationTitle || name);
     return { title: t("notif.chat_auto_paused.title"), body: title, speech: t("notif.chat_auto_paused.speech") };
+  }
+  if (n.kind === "chat-context-pressure") {
+    // A conversation crossed the context-fill threshold (chat_usage.go) — matters even
+    // when it happened on an unattended auto turn; clicking opens the conversation.
+    const title = String(n.payload.conversationTitle || name);
+    return { title: t("notif.chat_ctx_pressure.title"), body: title, speech: t("notif.chat_ctx_pressure.speech") };
+  }
+  if (n.kind === "chat-context-overflow") {
+    // A turn failed on context overflow and couldn't be auto-healed (chat_recover.go);
+    // clicking opens the conversation so the user can compact or start fresh.
+    const title = String(n.payload.conversationTitle || name);
+    return { title: t("notif.chat_ctx_overflow.title"), body: title, speech: t("notif.chat_ctx_overflow.speech") };
   }
   const rawSource = String(n.payload.source || n.displayName || "AI");
   const source = rawSource === "claude" ? "Claude" : rawSource === "codex" ? "Codex" : rawSource;
@@ -97,7 +109,7 @@ async function deliver(n: FleetNotification): Promise<void> {
 export async function openNotificationTarget(n: FleetNotification, split: boolean): Promise<boolean> {
   // A session report's destination is the operator CONVERSATION, not the reporting
   // session (docs/30) — the conversation id rides the payload.
-  if ((n.kind === "session-report" || n.kind === "chat-auto-paused") && typeof n.payload.conversation_id === "string" && n.payload.conversation_id) {
+  if ((n.kind === "session-report" || n.kind === "chat-auto-paused" || n.kind === "chat-context-pressure" || n.kind === "chat-context-overflow") && typeof n.payload.conversation_id === "string" && n.payload.conversation_id) {
     openChat(n.payload.conversation_id);
     return true;
   }

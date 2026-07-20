@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -79,6 +80,20 @@ func paneMode(kind, tn string) string {
 		// bottom (above the border + token/commands footer). The agent name IS the mode.
 		if m := opencodeStatusAgentRe.FindStringSubmatch(paneTail(s, 8)); m != nil {
 			return titleFirst(m[1]) // "Plan" / "Build" / …
+		}
+	case session.KindAgy:
+		// agy's composer footer (v1.1.4 実測): left "? for shortcuts" (idle) or
+		// "esc to cancel" (generating), right "<model>" — "plan · <model>" in plan
+		// mode. The footer only exists once the composer is drawn (the "Signing
+		// in..." boot screen has none, and text typed into it is eaten), so this
+		// doubles as the launch-seed readiness signal, like the other kinds.
+		for _, line := range strings.Split(paneTail(s, 3), "\n") {
+			if strings.Contains(line, "? for shortcuts") || strings.Contains(line, "esc to cancel") {
+				if strings.Contains(line, "plan · ") {
+					return "Plan"
+				}
+				return "Default"
+			}
 		}
 	case session.KindCodex:
 		// codex's composer footer is "<model> <effort> · <cwd>  Plan mode [(shift+tab to
@@ -316,6 +331,18 @@ func submitPromptTUI(w http.ResponseWriter, name, pane, prompt string) bool {
 			"a question is awaiting an answer; answer it via the question card, not free text")
 		return false
 	}
+	// agy: the "Signing in..." boot screen eats typed text entirely (docs/32) — a
+	// send_to_session right after create (no initial_prompt) would vanish. Its
+	// composer footer is persistent once drawn ("? for shortcuts" idle / "esc to
+	// cancel" working), so an empty paneMode here means still booting: wait briefly.
+	// Cap ~15s (slow sign-in) then proceed best-effort; a pending question/permission
+	// was already rejected above, so this can't stall on a widget.
+	if meta, ok := session.ReadMeta(name); ok && meta.Kind == session.KindAgy {
+		tn := session.TmuxName(name)
+		for i := 0; i < 30 && paneMode(session.KindAgy, tn) == ""; i++ {
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
 	// Use the same type-and-submit primitive as server-side initial prompts. In
 	// particular, Codex/OpenCode need bracketed paste so a long prompt's trailing Enter
 	// is not swallowed while their input widget is still consuming the paste.
@@ -532,6 +559,14 @@ func questionPending(name string) bool {
 	meta, ok := session.ReadMeta(name)
 	if !ok {
 		return false
+	}
+	// agy has no status hooks — its pending interactive prompt is detected via the
+	// conversation-DB probe instead (pending.go). Both states must reject free text:
+	// question AND permission menus treat a typed line + Enter as confirming the
+	// highlighted row (docs/32 実測 — 許可メニューでは「1. Yes」確定 = 無言の承認事故)。
+	if meta.Kind == session.KindAgy {
+		st, _ := agy.Probe(meta)
+		return st != ""
 	}
 	st, ok := status.Read(session.UUID(meta.Dir, name))
 	return ok && st.State == "question"
