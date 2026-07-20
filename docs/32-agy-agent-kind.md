@@ -513,6 +513,56 @@ ASK_QUESTION 以外のツール呼び出しがチャットミラーの Working s
 - **既知の残**: 実行中の working/idle は hook が無いため不正確（ツール実行中に
   入力待ち表示になり得る。誤検知側ではないので実害は小）。
 
+## 権限保留の安全性再確認とカード駆動の実装（2026-07-20、`temp/szpaeta-agy-ui-fixes`）
+
+「権限保留は state 表面化のみ・フリート既定では発生しないため優先度低」の
+判断を実機で再検証した結果、**前提が崩れるケースと危険な挙動を確認**したため
+カード駆動まで実装した。
+
+### 確認結果
+
+1. **skip-permissions 起動の確実性**: コード上は `AGENT_AGY_FLAGS` 既定
+   `--dangerously-skip-permissions`（フリート実機の env 未設定を確認）で、
+   Console 経由の実セッションの pane 起動コマンドにフラグが付くことを実機確認。
+   **ただし抜け道あり**: sessions create の `mode` は kind 非依存で受理される
+   ため、API 直叩き（af_write MCP の create_session 等）の `mode=plan` で
+   skip なし agy が起動できる（buildProgram が plan 時に skip を外す設計。
+   Console UI に plan が出ないだけで到達可能）。「発生しない」は成立しない。
+2. **発生時の旧挙動**（skip なし agent を立てて実機確認）:
+   - ミラーは state=permission のチップのみでカード無し。**コンポーザが
+     ロックされず**、送信すると本文＋Enter が許可メニューに落ち、Enter が
+     ハイライト行（1. Yes）を確定 = **無言の承認事故**になり得る。
+   - ターミナルビューへの切替で応答は可能（完全な詰みではない）。
+   - **halt が承認を踏む footgun を実証**: GracefulStop の `/exit`＋Enter は
+     メニュー表示中だと Enter が「1. Yes」を確定 — 保留中 halt でファイル作成が
+     実際に承認された（ptest.txt が生成された）。
+3. **脱出可否**: halt/archive 自体は常に通る（graceful 失敗時は kill-session
+   fallback）。詰みはしないが、上記のとおり halt が副作用を持っていた。
+
+### 実装（agent 側のみ）
+
+- **権限カードの駆動**: Probe が保留ツール名（payload 内の平文 `run_command` /
+  `write_to_file` / `replace_file_content`）から TUI メニューを**行数・順序
+  まで一致**させた Question を合成（コマンド=4 行、ファイル作成/編集=2 行、
+  引数 JSON から CommandLine / TargetFile を質問文に付記）。既存の menu モード
+  カード（Down×i+Enter）がそのまま駆動し、カード表示中はコンポーザも
+  ロックされる（誤爆封じ）。**未検証ツールはカードを出さない**（メニュー形が
+  不明なまま鍵駆動すると誤選択するため state のみ・ターミナル誘導）。
+- **halt の Escape 先行**: GracefulStop は保留プロンプト検知時に Escape で
+  メニューを棄却（question=Skip / permission=cancel — どちらも選択なし）して
+  から `/exit`。実機で「保留中 halt → 承認されず 1.1 秒で graceful 終了」を確認。
+- Probe 冒頭で captureConversation を実行（セッション一覧ポーリング前に
+  ミラーだけが走った場合でも会話 UUID を確定できる）。
+
+### 実機 E2E
+
+skip なし agent（`AGENT_AGY_FLAGS=" "` の dev seam）＋ Console で、ファイル
+作成の許可待ち → ミラーに「Allow creation of this file? <path>」カード
+（Yes/No）表示・state=permission → **No, deny creation クリックで TUI が
+"User declined the tool call"**・ファイル未作成・idle 復帰。別の保留を
+作って halt → 承認なしで graceful 終了（htest.txt 未作成）。ユニットは
+コマンド 4 行 / 作成・編集 2 行 / 未知ツール無カードを追加し全緑（agent 365）。
+
 ## ユーザーに依頼する事項（並行作業のブロッカー解消）
 
 1. **GCP プロジェクトの用意**（D1/M2 用）: 課金有効化済みプロジェクト ID を Connections 設定時に使える形で。
