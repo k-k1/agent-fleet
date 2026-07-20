@@ -224,13 +224,13 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		for i, s := range body.Seq {
 			var cmd *exec.Cmd
 			if s.K != "" {
-				cmd = exec.Command("tmux", "send-keys", "-t", pane, s.K)
+				cmd = tmuxx.Cmd("send-keys", "-t", pane, s.K)
 				if s.K == "Enter" {
 					working = true // a submit (answering the question) starts a turn
 				}
 			} else {
 				// -l: literal, so the answer text is typed verbatim (no key-name interp).
-				cmd = exec.Command("tmux", "send-keys", "-t", pane, "-l", s.T)
+				cmd = tmuxx.Cmd("send-keys", "-t", pane, "-l", s.T)
 			}
 			if out, err := cmd.CombinedOutput(); err != nil {
 				httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
@@ -345,7 +345,7 @@ func typeLineAndSubmit(name, pane, text string) error {
 		return err
 	}
 	time.Sleep(inputSubmitDelay(name))
-	if out, err := exec.Command("tmux", "send-keys", "-t", pane, "Enter").CombinedOutput(); err != nil {
+	if out, err := tmuxx.Cmd("send-keys", "-t", pane, "Enter").CombinedOutput(); err != nil {
 		return fmt.Errorf("%v: %s", err, out)
 	}
 	return nil
@@ -362,22 +362,22 @@ func typePromptText(name, pane, text string) error {
 		kind = meta.Kind
 	}
 	if kind != session.KindCodex && kind != session.KindOpencode {
-		if out, err := exec.Command("tmux", "send-keys", "-t", pane, "-l", text).CombinedOutput(); err != nil {
+		if out, err := tmuxx.Cmd("send-keys", "-t", pane, "-l", text).CombinedOutput(); err != nil {
 			return fmt.Errorf("%v: %s", err, out)
 		}
 		return nil
 	}
 
 	buffer := fmt.Sprintf("af-prompt-%s-%d", name, time.Now().UnixNano())
-	load := exec.Command("tmux", "load-buffer", "-b", buffer, "-")
+	load := tmuxx.Cmd("load-buffer", "-b", buffer, "-")
 	load.Stdin = strings.NewReader(text)
 	if out, err := load.CombinedOutput(); err != nil {
 		return fmt.Errorf("%v: %s", err, out)
 	}
 	// -p enables bracketed paste when the target TUI requested it; -d removes the
 	// one-shot buffer even after a successful paste.
-	if out, err := exec.Command("tmux", "paste-buffer", "-p", "-d", "-b", buffer, "-t", pane).CombinedOutput(); err != nil {
-		_ = exec.Command("tmux", "delete-buffer", "-b", buffer).Run()
+	if out, err := tmuxx.Cmd("paste-buffer", "-p", "-d", "-b", buffer, "-t", pane).CombinedOutput(); err != nil {
+		_ = tmuxx.Cmd("delete-buffer", "-b", buffer).Run()
 		return fmt.Errorf("%v: %s", err, out)
 	}
 	return nil
@@ -440,7 +440,7 @@ func deliverInitialPrompt(name, prompt string) {
 	// inside the paste window (the Console's seedSubmit nudges for the same reason).
 	// A second Enter after the window closes is a no-op if the first already submitted.
 	time.Sleep(900 * time.Millisecond)
-	_ = exec.Command("tmux", "send-keys", "-t", pane, "Enter").Run()
+	_ = tmuxx.Cmd("send-keys", "-t", pane, "Enter").Run()
 	// A real task starts a turn — mark working so the chip reacts before the agent's hook.
 	markSessionWorking(name)
 }
@@ -477,9 +477,9 @@ func disconnectRemoteControl(name string, m session.Meta) {
 		return
 	}
 	time.Sleep(300 * time.Millisecond) // let the menu render
-	_ = exec.Command("tmux", "send-keys", "-t", pane, "Down").Run()
+	_ = tmuxx.Cmd("send-keys", "-t", pane, "Down").Run()
 	time.Sleep(90 * time.Millisecond)
-	_ = exec.Command("tmux", "send-keys", "-t", pane, "Enter").Run()
+	_ = tmuxx.Cmd("send-keys", "-t", pane, "Enter").Run()
 	time.Sleep(300 * time.Millisecond) // let the disconnect actually land before the pane is killed
 }
 
@@ -505,7 +505,7 @@ func inputSubmitDelay(name string) time.Duration {
 // question page). Shared by the /input {keys} path and /turn's tui interrupt.
 func sendNamedKeys(pane string, keys []string) error {
 	for i, k := range keys {
-		if out, err := exec.Command("tmux", "send-keys", "-t", pane, k).CombinedOutput(); err != nil {
+		if out, err := tmuxx.Cmd("send-keys", "-t", pane, k).CombinedOutput(); err != nil {
 			return fmt.Errorf("%v: %s", err, out)
 		}
 		if i < len(keys)-1 {

@@ -73,7 +73,7 @@ func handlePTY(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// new-session -A attaches (the session exists per the check above).
-		cmd = exec.Command("tmux", "new-session", "-A", "-s", session.TmuxName(name))
+		cmd = tmuxx.Cmd("new-session", "-A", "-s", session.TmuxName(name))
 	} else {
 		cmd = exec.Command(envOr("AGENT_SHELL", "bash"), "-l")
 	}

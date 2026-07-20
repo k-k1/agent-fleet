@@ -220,3 +220,51 @@ Page上限2、最大1600×1200/DPR 1、12fps/quality 70、latest-frame 1枚、�
 Chromiumのcapture/encode元から制限する。pipe CDPは1 message 8 MiB・event 256件/合計32 MiBで固定し、必須eventの飽和時は
 waiter goroutineやqueue memoryを増やさずChromiumを終了してPageを`crashed`へ遷移させる。
 詳細契約とW5検証結果は[設計31](../31-container-browser-pane.md)を参照。
+
+## 4.11 tmux サーバのスコープと第 2 インスタンスの隔離（開発・E2E 必読）
+
+> 経緯: agy 統合の M1 E2E（[32](../32-agy-agent-kind.md)、2026-07-20）で、テスト用に別ポートで
+> 起動した agent の shutdown が**共有デフォルトソケットへ `tmux kill-server` を実行**し、
+> 並行稼働中の無関係なセッション（開発者自身の claude CLI 含む）を計 4 回全滅させた。
+> 本節の規約はその再発防止（恒久対応 + 開発時の安全手順）。
+
+**設計上の前提と恒久対応**:
+
+- 本番は 1 コンテナ 1 agent で、デフォルトソケットの tmux サーバは agent が唯一の作成者。
+  旧 shutdown はこの前提に依拠して `kill-server`（サーバごと全滅・列挙不要で確実）を使っていたが、
+  前提は**同一環境に第 2 インスタンスがいる瞬間に崩れる**（kind の問題ではない —
+  ソケットは kind 間で分離されておらず、managed はそもそも pane を持たないため、
+  通常運用では顕在化しなかっただけ）。
+- **`kill-server` は agent 製品コードで全面禁止**。停止（graceful shutdown / halt / stop）は
+  **自インスタンス管理下（自メタ ∩ live）のセッションへの `kill-session`（exact target）のみ**。
+  自分のメタが無い live セッションは「他インスタンスの作業」か「メタ喪失の孤児」かを
+  区別できないので触らない（孤児は C-c の礼儀を失うだけで、コンテナの SIGKILL と運命を共にする。
+  本番では所有セッションを消せばサーバは exit-empty で自然終了し、旧挙動と同じ終状態になる）。
+- **tmux の exec は `tmuxx.Cmd` に集約**（`exec.Command("tmux", …)` 直呼び禁止）。
+  `AF_TMUX_SOCKET=<name>` を設定すると全 tmux 呼び出しが `tmux -L <name>` になり、
+  デフォルトソケットにも**継承した `$TMUX` にも**届かない専用サーバへ完全隔離される。
+- 以上 2 点は `workspace/agent/tmux_guard_test.go` の tripwire（`kill-server` のコード行検出・
+  funnel 迂回検出）が回帰を止める。
+
+**第 2 インスタンスを起動する安全なやり方（コンテナ内 E2E・手元デバッグ）**:
+
+```sh
+# 3 点セットが必須: ソケット・メタ dir・ポート。どれか 1 つでも共有すると本物と衝突する。
+AF_TMUX_SOCKET=af-e2e-$$ \
+AF_SESSIONS_DIR="$HOME/tmp/e2e-$$/sessions" \
+AGENT_ADDR=:7710 AGENT_TOKEN=test-token \
+./workspace-agent
+```
+
+- `AF_TMUX_SOCKET` — 専用 tmux サーバ（`-L`）。⚠️ これ無しで tmux pane 内（＝いつもの
+  開発セッション）から起動すると `$TMUX` を継承し**確実に共有サーバへ向く**。インシデントの直接原因。
+- `AF_SESSIONS_DIR` — メタの分離。共有すると本物のセッションを「自分の管理下」と誤認して
+  停止対象にしてしまう（shutdown の owned 判定はメタが根拠）。
+- `AGENT_ADDR` — 本物の `:7700` とのポート衝突回避。
+- 資格・設定を汚したくなければ sandbox `HOME` も併用（docs/32 の M1 E2E 方式）。
+- 後片付けは**専用ソケットに対してのみ** `tmux -L af-e2e-$$ kill-server` が許される
+  （自分だけのサーバだから）。共有デフォルトソケットへの `kill-server` 手打ちは厳禁。
+- Go テストも同様に隔離する: tmux を直接叩くテストは `tmux -L <専用>`、製品コード経路
+  （`tmuxx.Cmd` 経由）を通すテストは `t.Setenv("AF_TMUX_SOCKET", …)`。従来の contract テスト群は
+  「製品コードが素の tmux を叩くため -L を使えない」制約下で共有ソケット上に自前セッションを
+  作っていた（`opencode_contract_test.go` 冒頭の注記）が、この制約は `AF_TMUX_SOCKET` で解消済み。

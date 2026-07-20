@@ -6,12 +6,32 @@
 package tmuxx
 
 import (
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
+
+// Cmd is the single funnel for every tmux invocation in the agent (enforced by
+// tmux_guard_test.go — exec tmux only through here). It scopes
+// the invocation to this instance's tmux server: AF_TMUX_SOCKET=<name> maps to
+// `tmux -L <name>`, which beats both the default socket and an inherited $TMUX —
+// so a second agent instance (dev / in-container E2E) launched with it can NEVER
+// reach the shared production server, even when started from inside one of its
+// panes. Unset (production) it is plain `tmux` on the default socket.
+//
+// Background: a test instance's shutdown once ran `tmux kill-server` against the
+// shared default socket and took down every live session in the workspace
+// (docs/32 M1 E2E incident, 2026-07-20). Socket scoping here plus the
+// owned-sessions-only shutdown (shutdown.go) are the two halves of the fix.
+func Cmd(args ...string) *exec.Cmd {
+	if s := os.Getenv("AF_TMUX_SOCKET"); s != "" {
+		return exec.Command("tmux", append([]string{"-L", s}, args...)...)
+	}
+	return exec.Command("tmux", args...)
+}
 
 // spinnerRe matches claude's live working-spinner header — the "<glyph> <Gerund>…
 // (<elapsed> · …)" line that ticks while a turn is in flight, e.g.
@@ -96,14 +116,14 @@ func atPromptFooter(s string) bool {
 }
 
 func HasSession(tn string) bool {
-	return exec.Command("tmux", "has-session", "-t", session.ExactTarget(tn)).Run() == nil
+	return Cmd("has-session", "-t", session.ExactTarget(tn)).Run() == nil
 }
 
 // SessionPaneID returns the active pane id (e.g. "%0") of a session's current
 // window, or "" if none. Uses the "=" exact target for list-panes (a target-
 // SESSION context, where "=" is honored), then returns the active pane.
 func SessionPaneID(tn string) string {
-	out, err := exec.Command("tmux", "list-panes", "-t", session.ExactTarget(tn), "-F", "#{pane_active} #{pane_id}").Output()
+	out, err := Cmd("list-panes", "-t", session.ExactTarget(tn), "-F", "#{pane_active} #{pane_id}").Output()
 	if err != nil {
 		return ""
 	}
@@ -132,7 +152,7 @@ func CapturePane(tn string) string {
 	if pane == "" {
 		return ""
 	}
-	out, err := exec.Command("tmux", "capture-pane", "-p", "-t", pane).Output()
+	out, err := Cmd("capture-pane", "-p", "-t", pane).Output()
 	if err != nil {
 		return ""
 	}
@@ -145,7 +165,7 @@ func CapturePane(tn string) string {
 // agree on what "running" means.
 func LiveSessionNames() map[string]bool {
 	live := map[string]bool{}
-	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
+	out, err := Cmd("list-sessions", "-F", "#{session_name}").Output()
 	if err != nil {
 		return live
 	}
@@ -166,7 +186,7 @@ func LiveSessionNames() map[string]bool {
 // words) would misclassify. Kept because an orphan has no other signal, and the only
 // cost is a wrong badge on a session that already lost its meta. Defaults to shell.
 func PaneKind(name string) string {
-	out, err := exec.Command("tmux", "list-panes", "-t", session.ExactTarget(session.TmuxName(name)), "-F", "#{pane_start_command}").Output()
+	out, err := Cmd("list-panes", "-t", session.ExactTarget(session.TmuxName(name)), "-F", "#{pane_start_command}").Output()
 	if err != nil {
 		return session.KindShell
 	}
@@ -196,7 +216,7 @@ func AtIdlePrompt(name string) bool {
 	if pane == "" {
 		return false
 	}
-	out, err := exec.Command("tmux", "capture-pane", "-p", "-t", pane).Output()
+	out, err := Cmd("capture-pane", "-p", "-t", pane).Output()
 	if err != nil {
 		return false
 	}
@@ -246,7 +266,7 @@ func IsBusy(name string) bool {
 	if pane == "" {
 		return false
 	}
-	out, err := exec.Command("tmux", "capture-pane", "-p", "-t", pane).Output()
+	out, err := Cmd("capture-pane", "-p", "-t", pane).Output()
 	if err != nil {
 		return false
 	}
