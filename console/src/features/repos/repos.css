@@ -405,6 +405,31 @@
     pointer-events: auto;
   }
 }
+/* Touch layout: the launch button lives in-flow (no hover overlay), and the
+   trailing cluster (chips / sess badge / ords / 起動) is all flex:none — a busy
+   row overflows the narrow phone drawer, crushing .repo-id to width 0 (the name
+   then paints under the chips) and pushing 起動 past .app-rail-scroll's
+   overflow-x clip, where it cannot be tapped. Wrap instead: the cluster drops
+   to a second line, right-aligned, and the buttons get a taller tap target. */
+@media (hover: none) {
+  .repo-info {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+  /* auto basis (not 0%) so the name claims its content width on line 1 and the
+     overflowing trailing items wrap below, instead of squeezing to nothing. */
+  .repo-id {
+    flex: 1 1 auto;
+  }
+  .launch-wrap {
+    margin-left: auto;
+  }
+  .launch-main,
+  .launch-caret {
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+}
 .launch-split {
   display: flex;
 }
