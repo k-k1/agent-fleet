@@ -11,12 +11,14 @@
 // answer instead of a stale pre-turn snapshot (docs/19: "close pane mid-stream" fix).
 import { create } from "zustand";
 import type { Conversation, ChatStep } from "../../types/chat.ts";
+import type { SessionKind } from "../../types/session.ts";
 
 // Live in-flight turn state: the tentative answer text plus the working steps committed so
 // far (docs/19 分離), so a re-opened pane re-attaches to both the process and the answer.
 export interface LiveTurn {
   text: string;
   steps: ChatStep[];
+  agent?: SessionKind;
 }
 
 interface ChatStore {

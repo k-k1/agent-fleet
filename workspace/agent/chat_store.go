@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -61,7 +62,43 @@ func loadConv(id string) (*chatConversation, error) {
 	if err := json.Unmarshal(b, &c); err != nil {
 		return nil, err
 	}
+	normalizeChatAgentMetadata(&c)
 	return &c, nil
+}
+
+// normalizeChatAgentMetadata upgrades conversations written before each assistant
+// message recorded its executing backend. Codex thread IDs are UUIDv7, so their first
+// 48 bits give the exact fallback start time. Messages before that point came from the
+// preferred backend; messages from that point came from Codex. Once new code writes an
+// explicit Agent it always wins (including a later switch back to Claude).
+func normalizeChatAgentMetadata(c *chatConversation) {
+	codexAt, hasCodexAt := uuidV7Millis(c.CodexSessionID)
+	lastAgent := ""
+	for i := range c.Messages {
+		m := &c.Messages[i]
+		if m.Role != "assistant" {
+			continue
+		}
+		if m.Agent == "" {
+			m.Agent = c.Agent
+			if hasCodexAt && m.TS >= codexAt {
+				m.Agent = "codex"
+			}
+		}
+		lastAgent = m.Agent
+	}
+	if c.ActiveAgent == "" {
+		c.ActiveAgent = lastAgent
+	}
+}
+
+func uuidV7Millis(id string) (int64, bool) {
+	h := strings.ReplaceAll(id, "-", "")
+	if len(h) != 32 || h[12] != '7' {
+		return 0, false
+	}
+	ms, err := strconv.ParseInt(h[:12], 16, 64)
+	return ms, err == nil
 }
 
 func saveConv(c *chatConversation) error {
@@ -93,7 +130,7 @@ func listConvs() ([]chatMeta, error) {
 			continue // skip unreadable entries rather than failing the whole list
 		}
 		out = append(out, chatMeta{
-			ID: c.ID, Agent: c.Agent, AssistantID: c.AssistantID, Title: c.Title, Model: c.Model,
+			ID: c.ID, Agent: c.Agent, ActiveAgent: c.ActiveAgent, AssistantID: c.AssistantID, Title: c.Title, Model: c.Model,
 			CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt, MessageCount: len(c.Messages),
 			Context: c.Context,
 		})

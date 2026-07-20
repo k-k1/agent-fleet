@@ -335,6 +335,7 @@ func runReportAutoTurn(convID string) {
 		return
 	}
 	prov := chatProviderFor(c)
+	actualAgent := chatProviderKind(c, prov)
 	ctx, cancel := context.WithTimeout(context.Background(), chatTimeout)
 	defer cancel()
 	deregister := registerLiveTurn(convID, cancel) // Stop button + in_progress work as usual
@@ -370,7 +371,8 @@ func runReportAutoTurn(convID string) {
 		c.PendingHandoff = "" // carried into the new session — done
 	}
 	c.AutoTurns++
-	c.Messages = append(c.Messages, chatMessage{Role: "assistant", Content: reply, TS: nowMs()})
+	c.Messages = append(c.Messages, chatMessage{Role: "assistant", Content: reply, Agent: actualAgent, TS: nowMs()})
+	c.ActiveAgent = actualAgent
 	// 無人の自動ターンでも逼迫を見逃さない（notice＋通知センター、chat_usage.go）:
 	// オペレーター会話は長寿でコンテキストが積み上がりやすい代表格。
 	noteContextPressure(c)

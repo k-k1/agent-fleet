@@ -36,6 +36,7 @@ import { assistantName, assistantDesc } from "./assistantI18n.ts";
 import { kindClass } from "../../lib/sessionkind.ts";
 import type { Conversation, ChatMessage, ChatStep } from "../../types/chat.ts";
 import type { Assistant } from "../../types/assistant.ts";
+import type { SessionKind } from "../../types/session.ts";
 
 // ChatView renders one assistant-chat conversation (docs/19) — a headless-CLI LLM
 // chat/translation thread. Unlike the terminal panes it never mounts xterm; it's a
@@ -98,6 +99,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const [compacting, setCompacting] = useState(false); // 要約引き継ぎ実行中（docs/33）
   const [streamText, setStreamText] = useState(""); // live-accumulating (tentative) answer
   const [streamSteps, setStreamSteps] = useState<ChatStep[]>([]); // working steps committed this turn (分離)
+  const [streamAgent, setStreamAgent] = useState<SessionKind | null>(null); // actual backend for this turn
   const [reattaching, setReattaching] = useState(false); // a reloaded turn is still running on the backend; polling for the reply
   const [histIdx, setHistIdx] = useState<number | null>(null); // position in composer history (↑/↓ recall), or null
   const [karaoke, setKaraoke] = useState<string | null>(null); // 読み上げ中の文（ライブ配信カラオケ・docs/19）
@@ -471,6 +473,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     setError("");
     setSending(true);
     setStreamText("");
+    setStreamAgent(null);
 
     // Draft: create + promote the conversation before the first turn (approach A).
     let target: Conversation | null = conv;
@@ -590,6 +593,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     const convId = target.id;
     let acc = ""; // current (tentative) answer text
     const steps: ChatStep[] = []; // working steps committed so far this turn
+    let liveAgent: SessionKind | undefined;
     // Tear the streaming turn down in one batched render: applying the final conversation
     // (which now ends with the assistant reply) and removing the still-streaming bubble must
     // happen together. If the teardown runs only AFTER `await chatStream` resolves, a frame
@@ -600,6 +604,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
       markChatBusy(convId, false);
       setStreamText("");
       setStreamSteps([]);
+      setStreamAgent(null);
       setKaraoke(null);
       setSending(false);
     };
@@ -607,10 +612,15 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
       convId,
       prompt,
       {
+        onAgent: (actual) => {
+          liveAgent = actual;
+          setStreamAgent(actual);
+          setLive(convId, { text: acc, steps: [...steps], agent: actual });
+        },
         onDelta: (t) => {
           acc += t;
           setStreamText(acc);
-          setLive(convId, { text: acc, steps }); // steps only change in onStep
+          setLive(convId, { text: acc, steps, agent: liveAgent }); // steps only change in onStep
           if (workMode === "off") ttsRef.current?.push(t);
         },
         onStep: (step) => {
@@ -621,7 +631,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
           setStreamText("");
           setStreamSteps([...steps]);
           setKaraoke(null);
-          setLive(convId, { text: "", steps: [...steps] });
+          setLive(convId, { text: "", steps: [...steps], agent: liveAgent });
           if (workMode === "off") {
             stopTtsForReplacement(ttsRef.current);
             ttsRef.current = makeTts(); // 従来動作: 次の tentative message をライブ再生
@@ -738,7 +748,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   };
 
   // Header/badge come from the live conversation, or the draft assistant while composing.
-  const agentKind = conv?.agent || draftAsst?.agent || null;
+  const agentKind = streamAgent || liveTurn?.agent || conv?.active_agent || conv?.agent || draftAsst?.agent || null;
   const agent = agentKind ? agentOf(agentKind) : null;
   const title = conv?.title || (draftAsst && assistantName(draftAsst)) || t("chat.label");
   const isDraft = !conversationId && !!draftAssistantId;
@@ -893,13 +903,14 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
           // Assistant replies render through AssistantTurn, which owns the bubble ref so
           // its footer can karaoke-read the rendered Markdown (docs/24).
           if (m.role === "assistant") {
+            const turnAgent = agentOf(m.agent || conv.agent);
             return (
               <div key={i} className="chat-msg role-assistant">
                 <AssistantTurn
                   text={m.content}
                   steps={m.steps}
                   ts={m.ts}
-                  agentName={agent?.assistantName || tr("chat.assistant_fallback")}
+                  agentName={turnAgent?.assistantName || tr("chat.assistant_fallback")}
                   voice={{ ...(assistantVoiceOpts(assistId, assistVoice) ?? {}), paneId }}
                   highlight={i === conv.messages.length - 1 ? karaoke : null}
                 />
