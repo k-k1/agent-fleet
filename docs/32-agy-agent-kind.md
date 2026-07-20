@@ -320,6 +320,16 @@ Pro ではヘッダのプラン表記が消える（メールのみ）ため `pl
   Console はセレクタ非露出で通常到達しないが、コードは後で整えたい。
 - `ClearResume` は registry に定義済みだが呼び出し元が未配線（全 kind 共通の既存事項）。
 - CP 込み・ブラウザ Console 込みの L2 E2E（`e2e/`）は docker のあるホストでの実行が別途必要。
+- **既知の問題（2026-07-20 判明・対応後回し）**: agent の `shutdown.go` は
+  SIGTERM 時の終了処理を「自インスタンス管理下のセッションのみ」ではなく
+  **`tmux kill-server`（デフォルトソケット全体）** で行う。コンテナ唯一の
+  agent という本番前提では正しいが、同一 tmux サーバを共有する第2インスタンス
+  （開発・E2E・将来の多重起動）があると他インスタンスのセッションを全滅させる。
+  実害を実機で確認（E2E 用テスト agent への SIGTERM が共有 tmux を kill し、
+  並行セッションを 4 回巻き込み停止）。対応候補: 管理下セッション限定の
+  kill-session 化、または agent の tmux 操作の専用ソケット（`tmux -L`）化。
+  それまで **E2E でテスト agent を立てる際は tmux ソケット分離（または
+  SIGKILL 停止で graceful shutdown を回避）が必須**。
 
 ## 統合後 UI 修正（2026-07-20、`temp/szpaeta-agy-ui-fixes`）
 
