@@ -36,7 +36,14 @@ func settingsPath() string { return filepath.Join(stateDir(), "settings.json") }
 // summaries DB is lazily written and can't be relied on (docs/32 Track D-3).
 // "" when the file or entry is absent.
 func LastConversationFor(dir string) string {
-	b, err := os.ReadFile(filepath.Join(stateDir(), "cache", "last_conversations.json"))
+	return LastConversationIn(stateDir(), dir)
+}
+
+// LastConversationIn is LastConversationFor against an explicit antigravity-cli
+// state root — for the assistant chat, whose agy runs under an isolated HOME
+// (chatAgyHome) rather than the user's ~/.gemini.
+func LastConversationIn(stateRoot, dir string) string {
+	b, err := os.ReadFile(filepath.Join(stateRoot, "cache", "last_conversations.json"))
 	if err != nil {
 		return ""
 	}

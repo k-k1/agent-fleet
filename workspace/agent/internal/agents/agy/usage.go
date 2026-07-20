@@ -67,6 +67,10 @@ func tokenPath() string {
 	return filepath.Join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token")
 }
 
+// TokenPath exposes the token file location for the assistant chat's isolated
+// HOME, which shares ONLY the login via a symlink to this file (chatAgyHome).
+func TokenPath() string { return tokenPath() }
+
 // SignedIn reports whether agy has a persisted OAuth token. The docs/32 contract
 // pairs this with `agy models` for status; token presence is enough for the
 // usage endpoint's cheap authed gate.

@@ -436,27 +436,45 @@ headless チャット契約:
 - **resume**: `-p` プロセスは終了時に cwd→会話 UUID マップ
   （`cache/last_conversations.json`）を書く（TUI と違い graceful exit 不要 —
   Track D-3 の観測どおり）。初回ターン後にマップから UUID を採用し、以後
-  `--conversation <UUID>`。**cwd は会話ごとの専用 dir**
-  （`~/.config/agent-fleet/chat-wd/agy-<convID>`、起動前に trustedWorkspaces へ
-  事前追加）— 共有 dir だと並行する初回ターン同士が UUID を取り違えるため。
-  会話削除時に dir も削除。
+  `--conversation <UUID>`。**実行は会話ごとの分離 HOME + 専用 cwd**
+  （`~/.config/agent-fleet/chat-wd/agy-<convID>/{home,wd}`、下記 MCP 節）—
+  共有だと並行する初回ターン同士が UUID を取り違えるため。会話削除時に
+  dir ごと削除。
 - **既定モデルは `Gemini 3.5 Flash (Medium)`**（`defaultAgyChatModel`）: チャットは
   レイテンシ重視で、agy を選ぶ価値は Gemini（Claude 系は claude バックエンドと
   重複かつ Thinking 固定）、無料枠のクォータ消費も最小。固定名の陳腐化対策として
   送信時にライブカタログ（`agy.Models()`）に無い名前は落として agy 既定へ退避
   （`agyChatModel`）。
-- **権限モデル**: `-p` はツール許可を自動拒否（D-5）— チャット契約（ファイル/
-  シェル禁止）とちょうど一致するのでそのまま利用。ただし knowledge dir の読み
-  取りや af MCP ツールもこのバックエンドでは実質使えない（M1 制約。ビルトイン
-  アシスタントを agy に固定するとツールなしの素チャットになる）。usage イベントも
-  無いためコンテキストゲージは空のまま。
+- **MCP / ツール（2026-07-20 追補・実機検証済み）**: agy の MCP 設定は
+  **グローバルのみ**（`~/.gemini/config/mcp_config.json`、claude 型 `mcpServers`
+  スキーマ。stdio は command/args/env、リモートは serverUrl の SSE。claude
+  `--mcp-config` / codex `-c` 相当の起動単位フラグは無い）。そこでチャットは
+  **会話ごとの分離 HOME**（`chatAgyHome`）で走らせ、実 `~/.gemini` とは OAuth
+  トークンの symlink だけを共有する（ローテーションは codex 同様
+  `reconcileChatCreds` で書き戻し）。分離 HOME に書く内容:
+  - `settings.json` / `config/config.json` — wd の trust・telemetry off・
+    `permissions.allow`（有効ファイルがビルドで揺れた経緯があるため両方に書く）。
+  - `config/mcp_config.json` — グラントに応じた af サーバ（af_write は
+    `--write --conv <convID>` を args に同梱 — これが per-conversation HOME に
+    した理由）＋接続済み ops 連携（pagerduty 等）。**MCP 子プロセスは agy の
+    env を継承するので、各サーバの env で `HOME` を実 home に戻す**
+    （workspace-agent が実セッション状態を見るために必須・実機確認）。
+  - 許可ルールの書式は **`mcp(<server>/<tool|*>)`**（例 `mcp(af/*)`。binary
+    strings から特定 — `mcp(af)` や素のツール名では自動拒否のまま）。read 系
+    （read_file 等）は素名で許可 → knowledge dir も読める。コマンド実行・
+    書き込み系は許可しない＝`-p` の自動拒否のままがチャット契約。
+    `--dangerously-skip-permissions` は使わない。
+  usage イベントは無いままなのでコンテキストゲージは空。one-shot（タイトル案）
+  も共有の分離 HOME（`agy-oneshot`）で走らせ、実 HOME の会話履歴やユーザー自身の
+  グローバル MCP 設定を汚染しない。
 - **auto 選択順は claude → codex → opencode → agy の最後尾**（Starter 無料枠が
   週次極小のため。agy-only ワークスペースでのみ自動選択される）。one-shot
   （タイトル案）も agy 経路あり（`AF_TITLE_MODEL_AGY` で上書き）— ephemeral
   モードが無いので使い捨て会話が agy 側に残る点は許容。
-- 検証: unit（args/モデル退避/resolveChatModel）＋ live
-  （`AF_AGY_LIVE=1 go test . -run TestAgyChatSendLive`: 初回ターン→UUID 捕捉→
-  resume で文脈維持を実機確認）。
+- 検証: unit（args/モデル退避/resolveChatModel/allow ルール/mcp_config 生成/
+  分離 HOME 内容）＋ live（`AF_AGY_LIVE=1 go test . -run TestAgyChatSendLive`:
+  分離 HOME 経由で af MCP ツール `list_my_sessions` の実呼び出し成功→UUID 捕捉→
+  resume で文脈維持、を実機確認）。
 
 ## 会話中インタラクティブプロンプトの調査（2026-07-20、AskUserQuestion 相当の網羅確認）
 
