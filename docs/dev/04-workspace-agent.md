@@ -73,6 +73,14 @@ Codex / OpenCode は managed が新規既定で、tui は明示選択。Claude /
 - ⚠️ **env は `tmux new-session -e` ではプロセスに届かない**（セッション環境止まり）。env 注入は
   **コマンド前置**（`NAME='v' … prog`）が本リポジトリの規約。claude は auth login 方式採用後
   前置も廃止（秘密の cmdline 露出を解消）。
+- ⚠️ **子プロセスは必ず reap する**（workspace-agent は PID 1 ではない — init の自動回収がなく、
+  Wait されない子は永久に `<defunct>` で残り PID をリークする）。`.Run()`/`.Output()`/
+  `.CombinedOutput()` は内部で Wait するので安全。`cmd.Start()` / `pty.Start()` で自前管理する
+  場合は**異常系を含む全経路**で `cmd.Wait()`（または waiter goroutine）に到達させること。
+  漏れやすいのは「起動タイムアウトで `Process.Kill()` して return」する失敗経路
+  （codex app-server / opencode serve で実例、2026-07 修正）。PTY ログインフロー共有の
+  `agents.Flow.Close()` は Kill＋Wait まで面倒を見る（agy /usage スクレイプのゾンビ蓄積で顕在化、
+  `internal/agents/flow_test.go` が回帰テスト。経緯は [32](../32-agy-agent-kind.md)）。
 - ⚠️ codex のフックは claude と同じ**入れ子スキーマ**（`hooks.<Event>=[{hooks=[{type,command}]}]`）。
   フラットに書くと**パースは通るが無音で発火しない**（resume が新規化する既知の罠）。
 - RTK（安全化ラッパー、vendor 時のみ）は 3 エージェントで機構が違う: claude=settings.json の

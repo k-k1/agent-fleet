@@ -154,6 +154,7 @@ func (s *Supervisor) Ensure() (string, int, error) {
 		}
 	}
 	_ = cmd.Process.Kill()
+	_ = cmd.Wait() // reap: waitDaemon is only started on success — Kill alone leaves a zombie
 	return "", 0, errors.New("opencode serve が時間内に起動しませんでした")
 }
 

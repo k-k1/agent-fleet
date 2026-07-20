@@ -68,10 +68,15 @@ func (f *Flow) Clean() string {
 	return strings.ReplaceAll(s, "\r", "\n")
 }
 
-// Close kills the flow's process and releases its PTY.
+// Close kills the flow's process, releases its PTY, and reaps the child. The
+// Wait is load-bearing: workspace-agent is not PID 1, so a killed-but-unwaited
+// flow child stays a zombie forever（実機で agy /usage スクレイプ毎に
+// `[agy] <defunct>` が蓄積 — docs/32）. Wait after SIGKILL cannot block: pty.Start
+// wires *os.File fds (no copier goroutines), so it only reaps the exit status.
 func (f *Flow) Close() {
 	_ = f.Cmd.Process.Kill()
 	_ = f.Ptmx.Close()
+	_ = f.Cmd.Wait()
 }
 
 // WaitFor polls the flow's cleaned output until re matches or the timeout hits.
