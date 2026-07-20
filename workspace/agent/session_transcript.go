@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -310,6 +311,14 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	// 圧縮中 block (spinner-only — opencode reports no progress percentage).
 	if alive && td.Compacting {
 		resp["terminalState"] = "compacting"
+	}
+	// Session-level context fill for agents with no per-turn token usage in their
+	// transcript (agy): the ContextBar's fallback source. Cached agent-side; the
+	// call is non-blocking (a stale reading triggers a background refresh).
+	if cr, ok := agentOf(meta.Kind).(agents.ContextReporter); ok {
+		if c := cr.ContextFill(meta); c != nil {
+			resp["context"] = c
+		}
 	}
 	// codex's startup update menu is terminal-only (no transcript event) and eats
 	// keystrokes — and its "Update now" exits the process, killing the tmux session.

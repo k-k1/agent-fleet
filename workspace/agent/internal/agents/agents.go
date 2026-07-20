@@ -131,6 +131,16 @@ type TranscriptData struct {
 	Compacting bool
 }
 
+// ContextReporter is an optional Agent capability: a session-level context-fill
+// reading for agents whose transcript carries no per-turn token usage (agy —
+// transcript_full.jsonl に token 数が一切無い、docs/32). Called ONLY from the
+// /messages handler (the chat mirror's poll), NOT from the bulk /sessions/usage
+// aggregation, so a fleet-wide usage query never triggers the underlying
+// (expensive, PTY-scrape) refresh. nil = no reading yet.
+type ContextReporter interface {
+	ContextFill(m session.Meta) *transcript.Context
+}
+
 // Forker is the optional fork capability behind Caps().CanFork: ForkSource resolves
 // the source session's provider-native conversation id (claude sid / opencode ses_… /
 // codex session uuid) for the new session's ForkFrom, or an error when there is no
