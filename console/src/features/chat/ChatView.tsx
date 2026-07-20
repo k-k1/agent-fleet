@@ -7,7 +7,7 @@ import { openSessionChatSplit } from "../sessions/open.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useChatStore } from "./store.ts";
-import { chatGet, chatStream, chatStop, chatCreate, assistantGet, chatPasteImage } from "./api.ts";
+import { chatGet, chatStream, chatStop, chatCreate, chatCompact, assistantGet, chatPasteImage } from "./api.ts";
 import { errText, raw, isTransientErr } from "../../core/api/client.ts";
 import { takeChatSeed } from "../../lib/chatSeed.ts";
 import { useDraft, moveDraft, clearDraft } from "../../lib/draft.ts";
@@ -29,6 +29,7 @@ import {
 import { readTurn, collectBlocks, blockIndexAt, type TurnReadHandle } from "../mirror/turnTts.ts";
 import { ContextBar } from "../mirror/ContextBar.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
+import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { assistantName, assistantDesc } from "./assistantI18n.ts";
@@ -75,6 +76,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const snapshot = useChatStore((s) => (conversationId ? s.snapshots[conversationId] : undefined));
   const settings = useSettings();
   const toast = useToast();
+  const askConfirm = useConfirm();
   const tr = useT();
   // Send key follows the user's global preference (shared with the Markdown mirror
   // composer): "mod-enter" = Ctrl/⌘+Enter submits, plain Enter newlines (phone-safe);
@@ -93,6 +95,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const [attachments, setAttachments] = useState<{ path: string; name: string; url: string }[]>([]);
   const [pasting, setPasting] = useState(false); // an image upload is in flight
   const [sending, setSending] = useState(false);
+  const [compacting, setCompacting] = useState(false); // 要約引き継ぎ実行中（docs/33）
   const [streamText, setStreamText] = useState(""); // live-accumulating (tentative) answer
   const [streamSteps, setStreamSteps] = useState<ChatStep[]>([]); // working steps committed this turn (分離)
   const [reattaching, setReattaching] = useState(false); // a reloaded turn is still running on the backend; polling for the reply
@@ -425,10 +428,43 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     inputRef.current?.focus();
   };
 
+  // docs/33 第2段: 要約引き継ぎ（手動コンパクション）。バックエンドが要約1ターン →
+  // resume ハンドル全リセット → 要約の次ターン注入準備まで行い、更新済み会話を返す。
+  // 実行中は busy を店に立てて他ペインの送信もブロック（バックエンドの会話ロックと整合）。
+  const doCompact = async () => {
+    if (!conversationId || compacting || showStreaming) return;
+    if (
+      !(await askConfirm({
+        title: tr("chat.compact_confirm_title"),
+        body: tr("chat.compact_confirm_body"),
+        confirmLabel: tr("chat.compact_btn"),
+      }))
+    )
+      return;
+    setError("");
+    setCompacting(true);
+    markChatBusy(conversationId, true);
+    try {
+      const c2 = await chatCompact(conversationId);
+      if (c2 && c2.id) {
+        applyConv(c2);
+        publishSnapshot(c2); // 他ペイン/一覧にも新しい会話状態を届ける
+        bumpChatList();
+      } else {
+        setError(c2?.error ? errText(c2.error) : tr("chat.compact_failed"));
+      }
+    } catch {
+      setError(tr("chat.compact_failed"));
+    } finally {
+      markChatBusy(conversationId, false);
+      setCompacting(false);
+    }
+  };
+
   const send = async () => {
     // Block a second turn on this conversation, whether it was started here or by another
     // pane whose turn is still running in the background (store busy).
-    if (sending || (conversationId && storeBusy)) return;
+    if (sending || compacting || (conversationId && storeBusy)) return;
     const text = input.trim();
     const paths = attachments.map((a) => a.path);
     if (!text && !paths.length) return;
@@ -757,7 +793,8 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
       </header>
       {/* Context fill (docs/33): the same gauge the mirror shows, fed from the
           conversation's per-turn usage snapshot (chat_usage.go). Hidden until the
-          first turn reports usage. */}
+          first turn reports usage. The trailing 圧縮 button runs the summary
+          handoff (docs/33 第2段). */}
       {conv?.context && conv.context.tokens > 0 && (
         <ContextBar
           read={conv.context.read || 0}
@@ -765,6 +802,20 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
           fresh={conv.context.fresh || 0}
           model={conv.context.model}
           window={conv.context.window}
+          action={
+            conversationId ? (
+              <button
+                type="button"
+                className="cb-action"
+                disabled={compacting || showStreaming || !wsRunning}
+                title={tr("chat.compact_tip")}
+                onClick={() => void doCompact()}
+              >
+                <Icon name={compacting ? "loading" : "fold"} spin={compacting} />
+                {compacting ? tr("chat.compacting") : tr("chat.compact_btn")}
+              </button>
+            ) : undefined
+          }
         />
       )}
       <div className="chat-scroll" ref={scrollRef}>

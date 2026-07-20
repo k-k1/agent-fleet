@@ -76,4 +76,7 @@ export interface Conversation {
   tools?: string;
   // Current context fill (chat_usage.go): drives the ContextBar under the chat header.
   context?: ChatContextUsage;
+  // Compaction summary waiting to ride the next prompt (docs/33 第2段). Display-only
+  // here (the notice message already shows it); cleared server-side after it carries.
+  pending_handoff?: string;
 }

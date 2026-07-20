@@ -112,6 +112,10 @@ type chatConversation struct {
 	// appended for the CURRENT crossing; reset when usage falls back under the
 	// threshold (e.g. the provider compacted) so a later re-crossing warns again.
 	CtxWarned bool `json:"ctx_warned,omitempty"`
+	// PendingHandoff is the compaction summary (docs/33 第2段) waiting to ride the
+	// next prompt as a preamble — the new provider session's seed context. Cleared
+	// only after that turn succeeds (injectHandoff / chat_compact.go).
+	PendingHandoff string `json:"pending_handoff,omitempty"`
 }
 
 // afToolsEnabled reports whether the fleet MCP tools attach to this chat at all (read
