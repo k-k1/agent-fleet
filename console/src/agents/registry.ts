@@ -199,7 +199,9 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // model: launch-time only, live catalog (api/agents/agy/models = `agy
     // models` display names) → `agy --model`; effort variants are baked into
     // the model names, so no separate effort cap. No fork, no plan hooks, no
-    // context gauge (the transcript records no token counts). Starter Quota =
+    // context gauge (the transcript records no token counts).
+    // imagePaste: upload + path-in-prompt (claude/codex の流儀)。agy は素のパス
+    // 記述だけで画像を読む — 実機検証済み（日本語込みで OCR できた）。Starter Quota =
     // experimental pool: the launch hint carries the 実験枠 tag, the WS bar
     // shows the quota gauge.
     managedDriver: false,
@@ -208,6 +210,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       chat: true,
       transcript: true,
       model: true,
+      imagePaste: true,
       runsInDir: true,
       launchableFromRepo: true,
     }),
