@@ -181,11 +181,11 @@ var mcpStdioTools = []map[string]any{
 var mcpStdioWriteTools = []map[string]any{
 	{
 		"name":        "list_models",
-		"description": "指定エージェントで現在選べるモデル一覧を返す。Codex／OpenCode を model 指定で create_session する前には必ず呼び、返った id を使うこと。利用者が terra のような略称で指定した場合も、一覧から対応する完全な id（例: gpt-5.6-terra）を選ぶ。",
+		"description": "指定エージェントで現在選べるモデル一覧を返す。model 指定で create_session する前には必ず呼び、返った id を使うこと。claude は固定のティア別名（fable/opus/sonnet/haiku）、codex／opencode は接続状態を反映したライブカタログ。利用者が terra のような略称で指定した場合も、一覧から対応する完全な id（例: gpt-5.6-terra）を選ぶ。",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"kind": map[string]any{"type": "string", "description": "codex または opencode"},
+				"kind": map[string]any{"type": "string", "description": "claude / codex / opencode"},
 			},
 			"required": []string{"kind"},
 		},
@@ -350,8 +350,8 @@ func mcpStdioCall(req mcpReq) []byte {
 	// the CP wire shape, so p.Args is forwarded as the request body verbatim.
 	switch p.Name {
 	case "list_models":
-		if a.Kind != "codex" && a.Kind != "opencode" {
-			return mcpToolErr(req.ID, "kind には codex または opencode を指定してください")
+		if a.Kind != "claude" && a.Kind != "codex" && a.Kind != "opencode" {
+			return mcpToolErr(req.ID, "kind には claude / codex / opencode のいずれかを指定してください")
 		}
 		out, err := agentGET("/agents/" + url.PathEscape(a.Kind) + "/models")
 		if err != nil {
