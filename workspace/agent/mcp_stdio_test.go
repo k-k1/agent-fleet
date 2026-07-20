@@ -2,12 +2,93 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 )
+
+func TestAgentDoReturnsHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"code":"unauthorized","message":"bad token"}`, http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENT_ADDR", u.Host)
+
+	_, err = agentGET("/sessions")
+	var httpErr *agentHTTPError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("agentGET error = %#v, want agentHTTPError(401)", err)
+	}
+}
+
+func TestMCPSendToSessionResumesStoppedSessionAndConfirmsSend(t *testing.T) {
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		if strings.HasSuffix(r.URL.Path, "/status") {
+			alive := len(paths) > 1
+			_, _ = fmt.Fprintf(w, `{"alive":%t,"ready":%t}`, alive, alive)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/input") {
+			_, _ = w.Write([]byte(`{"sent":"slot01"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENT_ADDR", u.Host)
+
+	oldWrite := mcpWriteEnabled
+	mcpWriteEnabled = true
+	t.Cleanup(func() { mcpWriteEnabled = oldWrite })
+	args, _ := json.Marshal(map[string]any{"name": "slot01", "prompt": "続けて"})
+	params, _ := json.Marshal(map[string]any{"name": "send_to_session", "arguments": json.RawMessage(args)})
+	resp := mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params})
+	if got, want := strings.Join(paths, ","), "GET /sessions/slot01/status,POST /sessions/slot01/start,GET /sessions/slot01/status,POST /sessions/slot01/input"; got != want {
+		t.Fatalf("Agent calls = %q, want %q", got, want)
+	}
+	if !strings.Contains(string(resp), `\"sent\":true`) || !strings.Contains(string(resp), `\"resumed\":true`) {
+		t.Fatalf("MCP response = %s, want sent/resumed confirmation", resp)
+	}
+}
+
+func TestMCPSendToSessionDoesNotMaskConflictAsSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"code":"question_pending"}`))
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	t.Setenv("AGENT_ADDR", u.Host)
+
+	oldWrite := mcpWriteEnabled
+	mcpWriteEnabled = true
+	t.Cleanup(func() { mcpWriteEnabled = oldWrite })
+	args, _ := json.Marshal(map[string]any{"name": "slot01", "prompt": "続けて"})
+	params, _ := json.Marshal(map[string]any{"name": "send_to_session", "arguments": json.RawMessage(args)})
+	resp := mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params})
+	var parsed struct {
+		Result struct {
+			IsError bool `json:"isError"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(resp, &parsed); err != nil || !parsed.Result.IsError {
+		t.Fatalf("MCP response = %s, err=%v, want isError", resp, err)
+	}
+}
 
 func TestMCPCreateSessionForwardsWorktreeOptions(t *testing.T) {
 	got := make(chan map[string]any, 1)

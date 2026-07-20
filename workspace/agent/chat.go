@@ -72,6 +72,13 @@ type chatConversation struct {
 	ClaudeSessionID   string `json:"claude_session_id,omitempty"`
 	CodexSessionID    string `json:"codex_session_id,omitempty"`
 	OpencodeSessionID string `json:"opencode_session_id,omitempty"`
+	// Provider cursors are the number of canonical Messages already represented in
+	// each native provider session. A provider that returns after fallback receives
+	// the intervening user/assistant turns before the new prompt, instead of resuming
+	// a stale private history and mistaking an old action for the current request.
+	ClaudeMessageCursor   int `json:"claude_message_cursor,omitempty"`
+	CodexMessageCursor    int `json:"codex_message_cursor,omitempty"`
+	OpencodeMessageCursor int `json:"opencode_message_cursor,omitempty"`
 	// AFTools attaches the local Agent Fleet MCP tools (read-only) to this chat's
 	// claude so it can inspect the user's workspace (docs/19 Q1). Legacy field kept for
 	// conversations created before assistants (Q2); new conversations drive tools via the

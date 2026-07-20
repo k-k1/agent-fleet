@@ -60,7 +60,9 @@ const (
 // appended notice (compactReason*). The caller holds the conversation lock and
 // saves afterwards.
 func compactConversation(ctx context.Context, c *chatConversation, prov chatProvider, reason string) error {
-	summary, err := prov.send(ctx, c, compactSummaryPrompt)
+	agent := chatProviderKind(c, prov)
+	prompt := syncProviderPrompt(c, agent, compactSummaryPrompt, len(c.Messages))
+	summary, err := prov.send(ctx, c, prompt)
 	if err != nil {
 		return err
 	}
@@ -69,6 +71,7 @@ func compactConversation(ctx context.Context, c *chatConversation, prov chatProv
 		return errors.New("empty summary from provider")
 	}
 	c.ClaudeSessionID, c.CodexSessionID, c.OpencodeSessionID = "", "", ""
+	resetProviderCursors(c)
 	c.PendingHandoff = summary
 	// 旧セッションの占有スナップショットはもう実体を指さない。バーは次ターン
 	// （新セッション）の usage で復活する。
