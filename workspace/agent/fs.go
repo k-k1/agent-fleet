@@ -40,8 +40,16 @@ func scratchRoot() string {
 // agentFleetDocsRoot is staged by the Control Plane per membership role and mounted
 // read-only into the workspace. It is outside home, so add it explicitly to the
 // read-only file-view roots; this lets the Console open the user guide without
-// duplicating its Markdown in the frontend bundle.
-func agentFleetDocsRoot() string { return "/usr/local/share/agent-fleet/docs" }
+// duplicating its Markdown in the frontend bundle. AGENT_DOCS_DIR overrides the
+// fixed container path for runtimes without a mount seam (AF_RUNTIME=native,
+// docs/34, where the CP stages docs under the workspace dataDir instead). NOTE:
+// distinct from the CP-side AF_DOCS_DIR (the staging SOURCE, workspace_docs.go).
+func agentFleetDocsRoot() string {
+	if d := os.Getenv("AGENT_DOCS_DIR"); d != "" {
+		return d
+	}
+	return "/usr/local/share/agent-fleet/docs"
+}
 
 // allowedReadRoots are the absolute roots the file browser may serve a file from when the
 // query path is itself absolute (a SendUserFile path that landed outside the browse root).

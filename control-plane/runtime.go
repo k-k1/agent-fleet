@@ -51,10 +51,11 @@ var _ RuntimeFactory = (*dockerFactory)(nil)
 
 // newRuntimeFactory selects the Runtime adapter by deployment profile (AF_RUNTIME):
 // "" / "local" / "docker" → Docker Engine (compose, the on-prem default); "ecs" /
-// "aws" → AWS ECS (P3-7). Unknown profiles fail fast at boot rather than silently
-// defaulting to Docker. The docker factory captures the manager's template fields
-// by value, so it MUST be built after those fields are finalized (e.g. extraEnv
-// appends in main.go).
+// "aws" → AWS ECS (P3-7); "native" / "wsl" → containerless host processes for
+// Docker-less WSL2 / dev hosts (single-user only; docs/34). Unknown profiles fail
+// fast at boot rather than silently defaulting to Docker. The docker factory
+// captures the manager's template fields by value, so it MUST be built after
+// those fields are finalized (e.g. extraEnv appends in main.go).
 func newRuntimeFactory(profile string, m *manager) (RuntimeFactory, error) {
 	switch profile {
 	case "", "local", "docker":
@@ -68,7 +69,9 @@ func newRuntimeFactory(profile string, m *manager) (RuntimeFactory, error) {
 		}, nil
 	case "ecs", "aws":
 		return newECSFactory(m)
+	case "native", "wsl":
+		return newNativeFactory(m)
 	default:
-		return nil, fmt.Errorf("unknown AF_RUNTIME profile %q (want local|ecs)", profile)
+		return nil, fmt.Errorf("unknown AF_RUNTIME profile %q (want local|ecs|native)", profile)
 	}
 }

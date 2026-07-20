@@ -174,7 +174,7 @@ func (d *dockerRuntime) Start(ctx context.Context) error {
 	if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("docker run: %v: %s", err, out)
 	}
-	return d.waitHealthy(ctx, 15*time.Second)
+	return waitAgentHealthy(ctx, d.Endpoint(), 15*time.Second)
 }
 
 // ensureNetwork creates the per-user network if it does not already exist.
@@ -310,10 +310,13 @@ func dockerEnvValue(name, key string) string {
 	return ""
 }
 
-func (d *dockerRuntime) waitHealthy(ctx context.Context, timeout time.Duration) error {
+// waitAgentHealthy polls the Agent's /healthz until it answers 200 or the
+// timeout lapses. Shared by the docker and native local adapters (ECS has its
+// own converge loop).
+func waitAgentHealthy(ctx context.Context, endpoint string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		req, _ := http.NewRequestWithContext(ctx, "GET", d.Endpoint()+"/healthz", nil)
+		req, _ := http.NewRequestWithContext(ctx, "GET", endpoint+"/healthz", nil)
 		if resp, err := http.DefaultClient.Do(req); err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {

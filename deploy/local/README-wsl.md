@@ -113,7 +113,21 @@ CP は `http://localhost:8099` で待ち受けます。WSL2 の localhostForward
 - データ: `~/.local/share/agent-fleet`（DB・各ユーザー home・共有JDK）に永続。消せば初期化。
 - 再ビルド: CLI 版などを上げたら `wsl-quickstart.sh` を再実行（イメージ再ビルド）。
 
-## 6. トラブルシュート
+## 6. Docker を入れられない場合（実験的: ネイティブ実行）
+
+どうしても Docker を導入できない WSL2 では、コンテナを使わずワークスペースを
+**ホストプロセス**として動かせます（`AF_RUNTIME=native`・単一ユーザー専用・実験的）:
+
+```bash
+# tmux / git / claude 等の CLI をホストに入れておく（イメージ焼き込みが無いため）
+AF_RUNTIME=native deploy/local/run-dev.sh
+```
+
+コンテナ隔離・メモリ上限・entrypoint 初期化（claude 自動インストール等）が無い、という
+割り切りの構成です。詳細と制約は [docs/34-native-runtime.md](../../docs/34-native-runtime.md)。
+Docker が入るなら §1 の構成（`wsl-quickstart.sh`）を推奨します。
+
+## 7. トラブルシュート
 
 | 症状 | 確認 |
 |------|------|
