@@ -51,6 +51,12 @@ import { hasLaunchSeed, takeLaunchSeed } from "../../lib/launchSeed.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
 import { confirmedWorkEnd, latestWorkPromptIndex, textOfParts, workSplit } from "./mirrorParts.ts";
 import { echoLanded, type PendingEcho } from "./pendingEcho.ts";
+import {
+  buildClaudeSeq,
+  buildMenuSeq,
+  buildRespondAnswers,
+  buildSinglePickKeys,
+} from "./questionKeys.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { ManagedSettingsModal } from "./ManagedSettingsModal.tsx";
 
@@ -3329,99 +3335,16 @@ function PendingQuestions({
   // completes the whole form (no review page, unlike claude's modal).
   // Semantic submit (managed): translate the built selection / free text into
   // structured per-question answers — no TUI key encoding, no modal quirks.
-  const submitRespond = () => {
-    onRespond!(
-      qs.map((q, qi) => {
-        const opts = q.options || [];
-        const ft = (freeText[qi] || "").trim();
-        const idx = (sel[qi] || [])
-          .map((l) => opts.findIndex((o) => o.label === l))
-          .filter((i) => i >= 0)
-          .sort((a, b) => a - b);
-        const a: InteractionAnswer = {};
-        if (idx.length) a.options = idx;
-        if (ft) a.text = ft;
-        return a;
-      }),
-    );
-  };
+  const submitRespond = () => onRespond!(buildRespondAnswers(qs, sel, freeText));
 
   const submitMenu = () => {
     if (semantic) return submitRespond();
-    const seq: Array<{ k?: string; t?: string }> = [];
-    qs.forEach((q, qi) => {
-      const opts = q.options || [];
-      const ft = writeIn ? (freeText[qi] || "").trim() : "";
-      if (ft) {
-        // Write-in row (agy): it sits just after the options and must be ENTERED before
-        // it accepts text — Enter opens the "Your answer:" field, the trailing Enter
-        // submits it. Typing without that first Enter lands on a plain option row, where
-        // the text is dropped and Enter would pick the highlighted option instead.
-        for (let k = 0; k < opts.length; k++) seq.push({ k: "Down" });
-        seq.push({ k: "Enter" }, { t: ft }, { k: "Enter" });
-        return;
-      }
-      const ci = Math.max(
-        0,
-        opts.findIndex((o) => o.label === (sel[qi] || [])[0]),
-      );
-      for (let k = 0; k < ci; k++) seq.push({ k: "Down" });
-      seq.push({ k: "Enter" });
-    });
-    onSubmitSeq(seq);
+    onSubmitSeq(buildMenuSeq(qs, sel, freeText, writeIn));
   };
 
   const submit = () => {
     if (semantic) return submitRespond();
-    const seq: Array<{ k?: string; t?: string }> = [];
-    qs.forEach((q, qi) => {
-      const opts = q.options || [];
-      const ft = (freeText[qi] || "").trim();
-      const idx = (sel[qi] || [])
-        .map((l) => opts.findIndex((o) => o.label === l))
-        .filter((i) => i >= 0)
-        .sort((a, b) => a - b);
-      if (q.multiSelect) {
-        // Toggle each checked option in place (Enter toggles, cursor stays). Then, if a
-        // custom answer was typed, drop to the "Type something" row and type it — checked
-        // options and the custom entry COMBINE (verified in the terminal). Crucially, do
-        // NOT press Enter after typing: on a multi-select row Enter toggles the auto-checked
-        // custom entry back OFF, silently losing it (the bug). Instead one Down exits the
-        // field to the Submit row, and the trailing Enter below submits.
-        let cur = 0;
-        for (const ci of idx) {
-          for (let k = 0; k < ci - cur; k++) seq.push({ k: "Down" });
-          seq.push({ k: "Enter" }); // toggle in place
-          cur = ci;
-        }
-        if (ft) {
-          const typeRow = opts.length; // the "Type something" row sits just after the options
-          for (let k = 0; k < typeRow - cur; k++) seq.push({ k: "Down" });
-          seq.push({ t: ft }); // typing auto-checks the custom row (NO Enter — it would uncheck)
-          // Right is swallowed by the text field, so advance the manual way: Down to the row
-          // just below "Type something" — "Next" on an intermediate question, "Submit" on the
-          // last — and Enter to activate it. "Next" moves to the next question tab; "Submit"
-          // opens the review page (cursor on "Submit answers") where the trailing Enter
-          // submits. Verified from the terminal for both single- and multi-question forms.
-          seq.push({ k: "Down" });
-          seq.push({ k: "Enter" });
-        } else {
-          seq.push({ k: "Right" }); // advance to the next question / review (Submit) page
-        }
-      } else if (ft) {
-        // single-select free text: move to the "Type something" row, type, then Enter
-        // confirms + auto-advances (single-select Enter does NOT toggle-off — verified).
-        for (let k = 0; k < opts.length; k++) seq.push({ k: "Down" });
-        seq.push({ t: ft });
-        seq.push({ k: "Enter" });
-      } else {
-        const ci = idx[0] ?? 0;
-        for (let k = 0; k < ci; k++) seq.push({ k: "Down" });
-        seq.push({ k: "Enter" }); // select + auto-advance to the next tab
-      }
-    });
-    seq.push({ k: "Enter" }); // Review page: "Submit answers"
-    onSubmitSeq(seq);
+    onSubmitSeq(buildClaudeSeq(qs, sel, freeText));
   };
 
   return (
@@ -3448,7 +3371,7 @@ function PendingQuestions({
               const pick = single
                 ? semantic
                   ? () => onRespond!([{ options: [oi] }])
-                  : () => onSubmitKeys([...Array(oi).fill("Down"), "Enter"])
+                  : () => onSubmitKeys(buildSinglePickKeys(oi))
                 : () => toggle(qi, o.label, qn.multiSelect);
               return (
                 <button
