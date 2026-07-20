@@ -380,6 +380,63 @@ M1 で「不成立」とした chat/transcript を、brain transcript の発見�
   →応答ミラー」まで完走。既知の残: コンテキストゲージ・plan/fork は据え置き
   （transcript にトークン情報が無い・agy に fork 相当なし）。
 
+## 会話中インタラクティブプロンプトの調査（2026-07-20、AskUserQuestion 相当の網羅確認）
+
+claude の AskUserQuestion / 許可プロンプトに相当する、**会話進行中に agy TUI が
+出しうる対話プロンプト**を実機で誘発して洗い出した（オンボーディング系は Track A
+対応済みのため対象外）。v1.1.4・実 TUI（tmux）＋ Console 統合経路（sandbox agent
+直結・headless Chromium）で確認。
+
+### 種類の洗い出し（実機で誘発・観察）
+
+| # | プロンプト | UI | transcript_full.jsonl への記録 |
+|---|---|---|---|
+| 1 | **コマンド実行許可**（"Requesting permission for: …"） | 4 択（Yes / この会話で常に許可 / settings.json に永続許可 / No）＋ esc cancel・tab Amend・ctrl+g 編集 | **保留中は無記録**。承認後に `RUN_COMMAND`（DONE）。**拒否は step 自体が残らない**（TUI にのみ "User declined the tool call"） |
+| 2 | **ファイル作成許可**（"Allow creation of this file?"） | 2 択＋インライン diff・f full diff・tab Amend | 同上。承認後に `CODE_ACTION`（DONE） |
+| 3 | **ファイル編集許可**（"Accept this file edit?"） | 2 択＋diff。**shift+tab で auto-approve edits トグル**の案内あり | 同上。承認後に `CODE_ACTION`（DONE） |
+| 4 | **ASK_QUESTION（AskUserQuestion 相当）** | "Question N/M:" ＋番号付き選択肢＋ **Write-in…（自由記述）**＋ esc Skip | **保留中は無記録**。回答後に `ASK_QUESTION`（DONE）— ただし content は **回答のみ**（"A1: Apples"）で**質問文・選択肢は JSONL に残らない** |
+| 5 | plan モード特有の承認 | **無し** — plan は brain の artifact（.md）として保存され「/artifact で確認して手動で shift+tab」方式。claude の ExitPlanMode 型の承認ダイアログは存在しない | plan 作成は `CODE_ACTION` |
+
+- 権限系 1–3 は**フリート既定では発生しない**: BuildLaunch が
+  `--dangerously-skip-permissions` で起動する（M1 設計。plan 起動時のみ外れるが、
+  Console は agy の startMode を出していない）。
+- **4 の ASK_QUESTION は skip-permissions 下でも発火する**（実機確認）— つまり
+  フリートの agy セッションが実際に踏みうる保留プロンプトは実質これ。
+
+### ミラー／セッション統合経路での見え方（実機 E2E）
+
+- **保留中の可視性: 現状ゼロ**。transcript が保留中無記録のため、ミラーは
+  ユーザーターンのみ＋「Awaiting reflection」のまま。状態チップも agy は live
+  state を持たず、/messages の driveState（claude 形ヒューリスティック）は
+  質問保留中を **working と誤報告**することすらある。ユーザーはターミナル
+  ビューに切り替えない限り、セッションが選択待ちでブロックしていることに
+  気づけない。
+- **応答経路は既存プラミングで機能する**: ウィジェット表示中に
+  `POST /input {seq:[{t:"1"},{k:"Enter"}]}`（claude の TUI 質問モーダルと同じ
+  経路）で選択が確定し、回答後は `ASK_QUESTION` tool パート＋続きの応答が
+  ミラーに正しく出ることを確認。**タイミング注意**: モデル思考中（ウィジェット
+  表示前）に送った入力はコンポーザ側にキューされ、質問には届かない — 検知なしの
+  盲目送信は誤爆する（実測）。
+- 回答済みターンの表示は正常（ASK_QUESTION tool パートとして表面化）。
+
+### ギャップと対応方針（未実装・M2 以降の候補）
+
+1. **検知は pane スクレイプ一択**: JSONL は保留中に何も書かないため、
+   transcript 側での質問検知は不可能。プロンプトは定型見出し
+   （"Question N/M:" / "Do you want to proceed?" / "Allow creation of this
+   file?" / "Accept this file edit?"）＋番号付き選択肢を持つので、tmux capture
+   末尾の正規表現パースで種別・質問文・選択肢を取り出し、
+   `TranscriptData.Pending`（transcript.Question）＋ state=question/permission に
+   載せるのが現実的（claude の probe 方式と同型）。応答は実証済みの
+   /input {seq} がそのまま使える。
+2. ASK_QUESTION の**質問文・選択肢が JSONL に残らない**ため、履歴表示の充実も
+   1 の検知時スナップショットに依存する（回答後は "A1: …" しか残らない）。
+3. 拒否されたツール呼び出しが transcript に**痕跡を残さない**点は、ミラー履歴の
+   忠実性の既知の穴として記録しておく（TUI にのみ表示）。
+4. 権限系はフリート既定で抑止されているため優先度は低い。将来 agy の
+   startMode=plan を Console に出す場合は、権限プロンプト（1–3）が復活する
+   ことを踏まえて 1 の検知を先に入れること。
+
 ## ユーザーに依頼する事項（並行作業のブロッカー解消）
 
 1. **GCP プロジェクトの用意**（D1/M2 用）: 課金有効化済みプロジェクト ID を Connections 設定時に使える形で。
