@@ -636,6 +636,36 @@ agy でも機能する。ミラーのモードチップは `planCycleKey` 必須
 `/messages` に user/assistant ターンと mode:"Default" を確認。agent 全緑
 （384）。
 
+### 他の投入経路の監査と追加修正（同日後続）
+
+paneMode 修正後に、agy へテキストが届く全経路を洗い直した。
+
+| 経路 | 結果 |
+|---|---|
+| Console 起動導線（mirror launch-seed） | ✅ paneMode 修正で解消 |
+| MCP `create_session` + `initial_prompt`（`deliverInitialPrompt`） | ✅ 同上・実機確認済み |
+| MCP `send_to_session` → `/input {prompt}`（作成直後） | ❌→修正: readiness 待ちが無く、ブート画面に食われていた |
+| 質問/許可保留中の `/input {prompt}` | ❌→修正: `questionPending` がフック status（claude 専用）しか見ず素通り — 本文＋Enter がハイライト行を確定（許可メニューでは無言承認事故） |
+| MCP ツール定義（workspace `mcp_stdio.go` / CP `mcp.go`） | ❌→修正: `list_models` が agy を拒否・`create_session` の kind 説明に agy 非記載 |
+| 複数行指示（literal send-keys） | ✅ 実機確認: composer に複数行のまま入り早期送信なし（claude と同じ paste 合体挙動） |
+| `/turn` tui start/steer | ✅ `submitPromptTUI` 共有のため上記修正が効く |
+
+追加修正（agent `session_io.go`・`mcp_stdio.go`、CP `mcp.go`）:
+
+- `questionPending` に agy 分岐: フック status の代わりに `agy.Probe`（会話 DB）で
+  判定し、question / permission **両方**で自由文を `question_pending` 409 に。
+  回答は従来どおり `{seq}`/`{keys}`（カード駆動）で通る。
+- `submitPromptTUI` に agy の readiness 待ち: paneMode 非空まで最大 ~15 秒
+  ポーリングしてから投入（フッタは idle/working とも常在なので、空 = ブート中
+  のみ。保留プロンプトは直前の reject 済みで、ウィジェットで停滞しない）。
+- MCP 両面で agy を第一級 kind に: `list_models` の許可と説明、`create_session`
+  の kind 説明（接続済みのときのみ起動可の旨）。
+
+実機 E2E（第 2 インスタンス・3 点隔離）: 作成直後（Signing in... 中）の
+`/input {prompt}` が readiness 待ち（~2.8 秒）後に配送され応答まで到達／
+ask_question 保留中の自由文が 409・`{seq:[{t:"1"},{k:Enter}]}` での回答は成功。
+agent 384・CP 147 全緑。
+
 ## ユーザーに依頼する事項（並行作業のブロッカー解消）
 
 1. **GCP プロジェクトの用意**（D1/M2 用）: 課金有効化済みプロジェクト ID を Connections 設定時に使える形で。
