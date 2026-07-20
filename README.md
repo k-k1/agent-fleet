@@ -10,7 +10,9 @@ Web から起動・操作・管理する。同一コアを**ローカル（Docke
 P3-1〜P3-5 + Console 全面刷新（React+Vite）まで完了。次は P3-7（AWS アダプタ）以降（[docs/roadmap.md](docs/roadmap.md)）。
 **現状の運用詳細・落とし穴は [docs/HANDOFF.md](docs/HANDOFF.md)（次セッションはまず読む）。**
 コード: [`workspace/`](workspace/)（Agent + イメージ）/ [`control-plane/`](control-plane/) /
-[`console/`](console/) / 起動は [`deploy/local/run-dev.sh`](deploy/local/run-dev.sh)。
+[`console/`](console/) / 起動は [`deploy/local/run-dev.sh`](deploy/local/run-dev.sh)
+（サブコマンド式: `local`＝Docker 既定 / `wsl`＝WSL プリセット / `native`＝Docker なし /
+`reset`＝データ初期化。[docs/dev/10 §10.3](docs/dev/10-development.md)）。
 
 ## セルフホスト（オンプレ / Docker Compose）
 
@@ -25,7 +27,8 @@ docker compose up -d --build
 
 手順・鍵生成・バックアップ/復元・アップグレード・障害対応・DooD 制約は
 **[deploy/compose/README.md](deploy/compose/README.md)（runbook）** に集約。ローカル dev
-（ホストプロセス起動）は従来どおり [`deploy/local/run-dev.sh`](deploy/local/run-dev.sh)。
+（ホストプロセス起動）は従来どおり [`deploy/local/run-dev.sh`](deploy/local/run-dev.sh)、
+WSL 個人利用（Docker あり/なし）は [deploy/local/README-wsl.md](deploy/local/README-wsl.md)。
 
 ## 確定済みの前提（v1）
 

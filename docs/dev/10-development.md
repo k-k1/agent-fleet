@@ -80,9 +80,20 @@ CLI 3 種（claude / opencode / codex）・gh・Go の版を上げるときは�
 
 ## 10.3 起動スクリプトの責務（`deploy/local/`）
 
-- **`run-dev.sh`** — 一括: Workspace イメージ build → Console build → CP build → CP をホストプロセスで
-  起動。git-ignored の `deploy/local/oauth.env` を自動 source し、AUTH / OAuth / 暗号系 env を CP に渡す
+- **`run-dev.sh`** — 一括起動の**単一エントリポイント（サブコマンド式）**:
+  Workspace 実行環境の準備 → Console build → CP build → CP をホストプロセスで起動。
+  git-ignored の `deploy/local/oauth.env` を自動 source し、AUTH / OAuth / 暗号系 env を CP に渡す
   （無ければ dev 素起動。項目は [oauth.env.example](../../deploy/local/oauth.env.example)）。
+  | サブコマンド | 動き |
+  |---|---|
+  | （無指定）/ `local` | 開発既定。Docker ランタイム・rtk はホスト vendoring |
+  | `wsl` | WSL 個人利用プリセット（docker/cgroup preflight・rtk 焼き込み `BAKE_RTK=1`・`AUTH=dev` 固定）。旧 `wsl-quickstart.sh` はこれを exec する後方互換ラッパー |
+  | `native` | Docker なしコンテナレス（`AF_RUNTIME=native`・単一ユーザー・[34](../34-native-runtime.md)）。agent をホストビルドして渡す |
+  | `reset [--all] [--yes]` | ローカルデータ初期化。既定は dev ユーザーのみ（DB・共有 JDK 温存）、`--all` で `WS_DATA` 全体。CP 稼働中は拒否し、docker/native 両方の残骸（コンテナ・agent プロセス・専用 tmux）を掃除してから消す |
+
+  サブコマンド無しのときは env `AF_RUNTIME` で後方互換分岐（`native|wsl` → コンテナレス）。
+  ※ env の `AF_RUNTIME=wsl` は「コンテナレス」の別名で、サブコマンド `wsl`（Docker プリセット）
+  とは別物。紛れるのでサブコマンド指定を推奨。
 - **`restart-cp.sh`** — 軽量反映: Console + CP だけ再ビルドし、稼働中の CP プロセスをその場で入れ替えて
   `/healthz` まで検証。**Workspace イメージは再ビルドしない**。`SKIP_CONSOLE=1` で Go のみ。
   env は oauth.env + run-dev.sh と同じ `WS_*` 既定を再現する。
