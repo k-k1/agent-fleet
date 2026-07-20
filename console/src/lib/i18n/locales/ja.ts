@@ -1566,6 +1566,10 @@ export const ja = {
   // === P2 起動モーダル（features/repos/LaunchModal.tsx）===
   "launch.history": "履歴",
   "launch.title": "作業を始める: {repo}",
+  // エージェント一覧が空のときの説明。接続確認は各CLIの認証チェックを実際に叩くため
+  // 1〜2秒かかる。その間と、確認が失敗/未認証だった場合とを区別して出す。
+  "launch.agents_checking": "エージェントの接続を確認中…",
+  "launch.agents_none": "使用できるエージェントがありません。設定 > 接続 から認証してください。",
   "launch.plan_hint": "Plan は最初のターンを調査・計画に専念。",
   "launch.field.driver": "実行方式",
   "launch.driver_managed": "マネージド（推奨）",

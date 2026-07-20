@@ -11,6 +11,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { Trans } from "../../lib/i18n/Trans.tsx";
 import { agentOf } from "../../agents/registry.ts";
+import { kindDisplayName } from "../../lib/sessionkind.ts";
 import { readRepoLast, resolveEffort, resolveModel, resolveStartMode } from "../../lib/repoLast.ts";
 import { readPromptHistory } from "../../lib/promptHistory.ts";
 import { agentLaunchDefault, useSettings } from "../../lib/settings.ts";
@@ -52,6 +53,9 @@ interface LaunchModalProps {
   branch?: string;
   path?: string;
   kinds: string[]; // available agent kinds (shell/ssm already excluded)
+  /** The connection check hasn't settled — kinds is empty because we don't know yet,
+   * not because nothing is available. Shows a 確認中 note and blocks launching. */
+  settling?: boolean;
   /** Offer the "new worktree" location (default). False for a worktree row — it's
    * already an isolated checkout, so only in-place launch is offered; new worktrees
    * are created from the base clone. */
@@ -65,13 +69,26 @@ interface LaunchModalProps {
   onLaunch: (opts: LaunchOpts) => Promise<LaunchResult>;
 }
 
-export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, onClose, onBack, initialPrompt, onLaunch }: LaunchModalProps) {
+export function LaunchModal({ repo, branch, path, kinds, settling = false, allowWorktree = true, onClose, onBack, initialPrompt, onLaunch }: LaunchModalProps) {
   const settings = useSettings();
   const last = readRepoLast(repo);
   // Default to the last agent used in this repo when still available, else the first.
   const initialKind = last.kind && kinds.includes(last.kind) ? last.kind : kinds[0] || "claude";
   const initialDefault = agentLaunchDefault(settings, initialKind);
   const [kind, setKind] = useState(initialKind);
+  // Same async-kinds hazard as StartModal: mounting while the connection check is still
+  // in flight seeds the "claude" fallback above, which would stick even if claude is
+  // unavailable. Re-seed once the real list lands and the held kind isn't in it.
+  useEffect(() => {
+    if (!kinds.length || kinds.includes(kind)) return;
+    const k = kinds[0];
+    const d = agentLaunchDefault(settings, k);
+    setKind(k);
+    setModel(resolveModel(k, repo, d.model));
+    setEffort(resolveEffort(k, repo, d.effort));
+    setStartMode(resolveStartMode(k, repo, d.startMode));
+    setDriver(agentOf(k).managedDriver ? "managed" : "");
+  }, [kinds, kind, settings, repo]);
   const tr = useT();
   // Shared per-kind priority chain (repoLast.ts resolveModel); re-resolved on a kind
   // switch so a claude tier never leaks into a codex/opencode launch (and vice versa).
@@ -230,6 +247,14 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
       <div className="ui-modal-body">
         <div className="ui-field">
           <span className="ui-field-label">{tr("launch.field.agent")}</span>
+          {!kinds.length && (
+            // Empty means one of two very different things: still checking, or the
+            // connection check failed / nothing is authenticated. Say which — a bare
+            // empty picker reads as a broken modal.
+            <div className="muted launch-noagents">
+              {tr(settling ? "launch.agents_checking" : "launch.agents_none")}
+            </div>
+          )}
           <div className="ui-seg big">
             {kinds.map((k) => {
               const a = agentOf(k);
@@ -248,7 +273,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
                   }}
                 >
                   <Icon name={a.icon} className="seg-ic" />
-                  {a.label}
+                  {kindDisplayName(k)}
                   <span className="seg-sub">{tr(a.launchHintKey)}</span>
                 </button>
               );
@@ -463,7 +488,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
         <Button variant="ghost" onClick={onClose} disabled={busy}>
           {tr("common.cancel")}
         </Button>
-        <Button variant="primary" onClick={submit} disabled={busy}>
+        <Button variant="primary" onClick={submit} disabled={busy || !kinds.length}>
           {busy ? tr("launch.launching") : worktree ? tr("launch.start_worktree") : tr("launch.launch")}
         </Button>
       </footer>
