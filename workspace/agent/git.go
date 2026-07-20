@@ -485,6 +485,61 @@ func gitCurrentBranch(dir string) string {
 	return b
 }
 
+// gitBranchExists reports whether a local branch of that name exists in dir.
+func gitBranchExists(dir, branch string) bool {
+	return gitx.OK(dir, "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
+}
+
+// gitBranchSHA returns the tip commit of a local branch, or "" if absent.
+func gitBranchSHA(dir, branch string) string {
+	out, err := gitx.Run(dir, "rev-parse", "--verify", "refs/heads/"+branch)
+	if err != nil {
+		return ""
+	}
+	return out
+}
+
+// gitCreateBranch creates a local branch at sha (restore path). Reports success.
+func gitCreateBranch(dir, branch, sha string) bool {
+	return gitx.Cmd(dir, "branch", branch, sha).Run() == nil
+}
+
+// mergedLocalBranches returns dir's local branches already contained in HEAD (safe to
+// delete — their commits live in the current line), excluding the checked-out branch.
+// Worktree-checked-out branches are also excluded (git refuses to delete those). The
+// cleanup survey uses this to propose merged temp/* branches left behind by removed
+// worktrees.
+func mergedLocalBranches(dir string) []string {
+	// `--merged` (no ref) = merged into HEAD. Tab-separated so empty fields survive the
+	// split: name \t worktreepath (non-empty = checked out somewhere) \t HEAD ("*" =
+	// current). Skip the current branch and any worktree-checked-out branch (git refuses
+	// to delete those), plus the trunk.
+	out, err := gitx.Run(dir, "branch", "--merged",
+		"--format=%(refname:short)%09%(worktreepath)%09%(HEAD)")
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, ln := range strings.Split(out, "\n") {
+		if strings.TrimSpace(ln) == "" {
+			continue
+		}
+		f := strings.Split(ln, "\t")
+		if len(f) < 3 {
+			continue
+		}
+		name, worktreePath, head := f[0], f[1], f[2]
+		if name == "" || name == "main" || name == "master" {
+			continue
+		}
+		if strings.TrimSpace(worktreePath) != "" || strings.TrimSpace(head) == "*" {
+			continue // checked out in a worktree or the current branch → not deletable
+		}
+		names = append(names, name)
+	}
+	return names
+}
+
 // gitDirInfo returns dir's current branch AND whether it's a linked worktree in a
 // single rev-parse (branch line + absolute-git-dir line), so the session list can
 // enrich every row with one git call per unique dir. "" branch / false for a non-repo.

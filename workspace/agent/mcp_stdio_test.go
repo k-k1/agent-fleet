@@ -183,6 +183,31 @@ func TestMCPCleanupToolsRelay(t *testing.T) {
 	if strings.Contains(h.query, "force") {
 		t.Fatalf("delete_worktree must never send force: %q", h.query)
 	}
+
+	// delete_session reclaims (jsonl) → DELETE /sessions/{name}?reclaim=1.
+	call("delete_session", "slot9")
+	if h = <-got; h.method != "DELETE" || h.path != "/sessions/slot9" || h.query != "reclaim=1" {
+		t.Fatalf("delete_session hit %s %s?%s", h.method, h.path, h.query)
+	}
+	// delete_branch → DELETE /repos/{repo}/branch?branch=<name> (slash-safe query).
+	dbArgs, _ := json.Marshal(map[string]any{"repo": "app", "branch": "temp/wip-x"})
+	dbParams, _ := json.Marshal(map[string]any{"name": "delete_branch", "arguments": json.RawMessage(dbArgs)})
+	mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: dbParams})
+	if h = <-got; h.method != "DELETE" || h.path != "/repos/app/branch" || h.query != "branch=temp%2Fwip-x" {
+		t.Fatalf("delete_branch hit %s %s?%s", h.method, h.path, h.query)
+	}
+	// restore / purge cleanup archives.
+	idArgs, _ := json.Marshal(map[string]any{"id": "20260720-090000-slot9"})
+	restoreParams, _ := json.Marshal(map[string]any{"name": "restore_cleanup_archive", "arguments": json.RawMessage(idArgs)})
+	mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: restoreParams})
+	if h = <-got; h.method != "POST" || h.path != "/cleanup/archives/20260720-090000-slot9/restore" {
+		t.Fatalf("restore hit %s %s", h.method, h.path)
+	}
+	purgeParams, _ := json.Marshal(map[string]any{"name": "purge_cleanup_archive", "arguments": json.RawMessage(idArgs)})
+	mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: purgeParams})
+	if h = <-got; h.method != "DELETE" || h.path != "/cleanup/archives/20260720-090000-slot9" {
+		t.Fatalf("purge hit %s %s", h.method, h.path)
+	}
 }
 
 // TestMCPStopResumeSessionRelay covers the operator's session-lifecycle tools:

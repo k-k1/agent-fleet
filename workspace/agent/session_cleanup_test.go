@@ -12,9 +12,9 @@ func TestClassifySessionCleanup(t *testing.T) {
 	if !ok || action != "archive_session" || safety != "review" {
 		t.Fatalf("stopped: action=%q safety=%q ok=%v", action, safety, ok)
 	}
-	// Already archived → informational only (no assistant action; TTL-exempt).
+	// Already archived → delete_session reclaims it (TTL-exempt, so it accumulates).
 	action, safety, _, ok = classifySessionCleanup(true, false)
-	if !ok || action != "" || safety != "review" {
+	if !ok || action != "delete_session" || safety != "review" {
 		t.Fatalf("archived: action=%q safety=%q ok=%v", action, safety, ok)
 	}
 }
