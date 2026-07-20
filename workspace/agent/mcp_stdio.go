@@ -163,6 +163,11 @@ var mcpStdioTools = []map[string]any{
 		},
 	},
 	{
+		"name":        "list_cleanup_candidates",
+		"description": "溜まったセッション・worktree の掃除候補を点検して返す。各候補は type（session|worktree）・action（archive_session|delete_worktree|空=手動のみ）・safety（safe=マージ済みクリーン等で安全／review=停止中セッションや未マージ worktree で要確認／keep=稼働中や未コミット・未pushで触らない）・reason を持つ。『リポジトリが散らかってきた・不要なものを片付けたい』時にまず呼び、safe/review の候補を利用者に提示してから archive_session / delete_worktree で実行する。keep は掃除せず、必要なら利用者が Console で対応する。",
+		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+	},
+	{
 		"name":        "get_session_usage",
 		"description": "各セッションのコンテキスト使用量と累積消費トークンを返す。name 指定で1セッション、省略で transcript を持つ全セッション（shell / SSM は対象外）。context は現在のコンテキスト量（tokens と read/create/fresh の内訳、window に対する pct%。最初の応答が返るまでは無く、自動圧縮後は圧縮後の値）。cumulative は累積消費（論理ターン数 turns、inTok/outTok/cacheRead/cacheCreate、spend=inTok+cacheCreate+outTok の合計）。『どのセッションがコンテキスト逼迫か』『どれだけ消費したか』を聞かれた時や、引き継ぎ・圧縮・新セッション分割の判断材料に呼ぶ。サブスクリプション枠の残量は get_agent_usage（別ツール）。",
 		"inputSchema": map[string]any{
@@ -311,6 +316,29 @@ var mcpStdioWriteTools = []map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"name": map[string]any{"type": "string", "description": "再開するセッション名（list_my_sessions の name）"},
+			},
+			"required": []string{"name"},
+		},
+	},
+	{
+		"name":        "archive_session",
+		"description": "終わったセッションをアーカイブして普段の一覧から隠す（会話履歴は残り、Console から復元できる＝可逆）。list_cleanup_candidates で action=archive_session の候補を片付ける時に使う。稼働中の作業は中断されるので、完了済みかどうかを含め実行前に利用者へ確認すること。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name": map[string]any{"type": "string", "description": "アーカイブするセッション名（list_my_sessions / list_cleanup_candidates の name）"},
+			},
+			"required": []string{"name"},
+		},
+	},
+	{
+		"name": "delete_worktree",
+		"description": "不要になった worktree（作業コピー）を削除する。list_cleanup_candidates で action=delete_worktree の候補（マージ済みクリーン＝safe、未マージだがクリーン＝review）を片付ける時に使う。" +
+			"未コミット/未pushの変更がある worktree は保護のため削除できない（keep 候補。Console で強制削除するよう案内する）。削除でその worktree に紐づく停止中セッションも一覧から整理される。ローカルの作業コピーだけが消え、履歴・リモート・ブランチは残る。破壊的操作なので、どの worktree を消すかを一言添えて実行前に必ず利用者へ確認すること。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name": map[string]any{"type": "string", "description": "削除する worktree の名前（list_cleanup_candidates の worktree 候補の id）"},
 			},
 			"required": []string{"name"},
 		},
@@ -510,6 +538,32 @@ func mcpStdioCall(req mcpReq) []byte {
 			return mcpToolErr(req.ID, "セッションの再開に失敗しました: "+err.Error())
 		}
 		return mcpTextResult(req.ID, out)
+	case "archive_session":
+		if !mcpWriteEnabled {
+			return mcpToolErr(req.ID, "このアシスタントはセッションのアーカイブを許可されていません")
+		}
+		if a.Name == "" {
+			return mcpToolErr(req.ID, "name（セッション名）が必要です")
+		}
+		out, err := agentPOST("/sessions/"+url.PathEscape(a.Name)+"/archive", nil)
+		if err != nil {
+			return mcpToolErr(req.ID, "セッションのアーカイブに失敗しました: "+err.Error())
+		}
+		return mcpTextResult(req.ID, out)
+	case "delete_worktree":
+		if !mcpWriteEnabled {
+			return mcpToolErr(req.ID, "このアシスタントは worktree の削除を許可されていません")
+		}
+		if a.Name == "" {
+			return mcpToolErr(req.ID, "name（worktree 名）が必要です")
+		}
+		// prune_sessions=1 で紐づく停止中メタも整理。force は付けない — dirty/ahead は
+		// 保護のまま Agent 側で拒否させ、理由（要 push / Console で強制）を返す。
+		out, err := agentDo(http.MethodDelete, "/repos/"+url.PathEscape(a.Name)+"?prune_sessions=1", nil)
+		if err != nil {
+			return mcpToolErr(req.ID, "worktree の削除に失敗しました: "+err.Error())
+		}
+		return mcpTextResult(req.ID, out)
 	case "list_assistants":
 		if !mcpWriteEnabled {
 			return mcpToolErr(req.ID, "このアシスタントは他アシスタントへの相談を許可されていません")
@@ -558,6 +612,8 @@ func mcpStdioCall(req mcpReq) []byte {
 		if a.Name != "" {
 			path += "?name=" + url.QueryEscape(a.Name)
 		}
+	case "list_cleanup_candidates":
+		path = "/sessions/cleanup"
 	default:
 		return mcpError(req.ID, -32602, "unknown tool: "+p.Name)
 	}

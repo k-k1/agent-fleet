@@ -277,6 +277,32 @@ func memberTools() []mcpTool {
 			},
 		},
 		{
+			name: "list_cleanup_candidates", minScope: scopeRead,
+			desc: "Survey stale sessions and worktrees that can be tidied up. Each candidate has type (session|worktree), action (archive_session|delete_worktree|empty = manual only), safety (safe = merged & clean etc.; review = a stopped session or a clean-but-unmerged worktree, confirm first; keep = live or has uncommitted/unpushed work, don't touch) and reason. Use when the workspace has drifted into clutter: present the safe/review candidates to the user, then act with archive_session / delete_worktree. keep candidates need the user in the Console.",
+			schema: map[string]any{"type": "object", "properties": map[string]any{}},
+			run: func(ctx context.Context, a mcpAPI, res *resolved, _ map[string]any) (string, error) {
+				return agentText(ctx, res.rt, "GET", "/sessions/cleanup", nil)
+			},
+		},
+		{
+			name: "archive_session", minScope: scopeWrite,
+			desc:   "Archive a finished session, hiding it from the active list (its conversation is kept; restorable from the Console — reversible). Acts on a list_cleanup_candidates action=archive_session item. Interrupts any running work, so confirm it is finished with the user first.",
+			schema: nameArg,
+			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
+				return agentText(ctx, res.rt, "POST", "/sessions/"+url.PathEscape(argStr(args, "name"))+"/archive", nil)
+			},
+		},
+		{
+			name: "delete_worktree", minScope: scopeWrite,
+			desc:   "Delete an unneeded worktree (working copy). Acts on a list_cleanup_candidates action=delete_worktree item (merged & clean = safe, clean-but-unmerged = review). A worktree with uncommitted/unpushed changes is protected and refused (keep — force-delete it in the Console). Deleting it also tidies up the stopped sessions that lived there; only the local working copy is removed (history, remote and branch stay). Destructive — confirm which worktree with the user before running.",
+			schema: map[string]any{"type": "object", "properties": map[string]any{
+				"name": map[string]any{"type": "string", "description": "worktree name (the id of a list_cleanup_candidates worktree candidate)"},
+			}, "required": []string{"name"}},
+			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
+				return agentText(ctx, res.rt, "DELETE", "/repos/"+url.PathEscape(argStr(args, "name"))+"?prune_sessions=1", nil)
+			},
+		},
+		{
 			name: "get_session_usage", minScope: scopeRead,
 			desc: "Per-session context fill and cumulative token consumption for transcript-capable sessions (claude/codex/opencode; shell/ssm excluded). Optional `name` narrows to one session; omitted returns all. `context` is the current context size (tokens with read/create/fresh breakdown, pct of window; absent until the first assistant reply, reset by auto-compaction). `cumulative` sums consumption (logical turns, inTok/outTok/cacheRead/cacheCreate, spend = inTok+cacheCreate+outTok). Use when asked which session is near its context limit or how much a session has consumed. Subscription quota is get_agent_usage (separate tool).",
 			schema: map[string]any{"type": "object", "properties": map[string]any{
