@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -14,6 +15,7 @@ import (
 //   - codex: `codex debug models` — the /model picker's catalog, refreshed from
 //     OpenAI's models endpoint with codex's own subscription auth (id + display name)
 //   - opencode: `opencode models` — reflects the user's connected providers (ids only)
+//   - agy: `agy models` — display names, accepted verbatim by `agy --model`
 //
 // claude keeps its Console-side fixed tier aliases (they don't vary per user), so
 // it is not served here. An empty list is a valid answer (CLI absent / offline) —
@@ -27,6 +29,8 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 		for _, id := range opencode.Models() {
 			list = append(list, agents.ModelChoice{ID: id, Label: id})
 		}
+	case "agy":
+		list = agy.Models()
 	default:
 		httpx.WriteErr(w, http.StatusNotFound, "unknown_kind", "no model catalog for this kind")
 		return
