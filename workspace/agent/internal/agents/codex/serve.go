@@ -159,6 +159,7 @@ func (s *Supervisor) startDaemonLocked(addr string) error {
 		}
 	}
 	_ = cmd.Process.Kill()
+	_ = cmd.Wait() // reap: waitDaemon is only started on success — Kill alone leaves a zombie
 	_ = os.Unsetenv(appServerAddrEnv)
 	return errors.New("codex app-server が時間内に起動しませんでした")
 }

@@ -314,6 +314,31 @@ AI Pro でグループ毎に Weekly + Five Hour の 2 バーになったため�
 インデント表示（計 4 バー）。実機 live スクレイプで 4 バーのパースを確認済み。
 Pro ではヘッダのプラン表記が消える（メールのみ）ため `plan` は空になり得る — Card は劣化表示で受ける。
 
+### 実機フォローアップ修正（2026-07-20）: agy 子プロセスのゾンビ化（reap 漏れ）
+
+実機で workspace-agent（PID 7、PID 1 ではない）の子として `[agy] <defunct>` が
+蓄積するのを観測（/usage スクレイプ・auth フローの回数分。メモリ消費はゼロだが PID リーク）。
+
+- **真因**: PTY ログインフロー共有プラミング `agents.Flow.Close()`（`internal/agents/flow.go`）が
+  `Process.Kill()` のみで `Cmd.Wait()` を呼んでいなかった。workspace-agent は PID 1 でないため
+  init による回収がなく、kill された子は親が Wait するまで永久にゾンビのまま残る。
+  agy 固有のバグではなく **Flow を使う全 kind 共通**（claude auth / codex device-auth も同根）だが、
+  agy は /usage スクレイプ（キャッシュ 5 分）で高頻度に通るため唯一実機で顕在化した。
+- **同種の個別漏れ（横断監査で発見・同時修正）**: codex `startDaemonLocked` / opencode `start` の
+  **デーモン起動タイムアウト経路**が `Kill()` のみで Wait なし（waiter goroutine `waitDaemon` は
+  起動成功時にしか始動しない）。起動失敗 1 回につきゾンビ 1 体。
+  それ以外の spawn 箇所（`.Run()`/`.Output()`/`.CombinedOutput()` 系、terminal.go、fs_search.go、
+  chat_providers.go、browser_cdp.go）は全経路で reap されており問題なし。
+- **修正**: `Flow.Close()` に `Cmd.Wait()` を追加（SIGKILL 後の Wait は pty.Start が *os.File を
+  直結する構成のためブロックしない）。codex/opencode の起動タイムアウト経路にも `cmd.Wait()` を追加。
+- **テスト**: `internal/agents/flow_test.go` — Close 後に `Cmd.ProcessState` 非 nil ＋
+  `/proc/<pid>/stat` が Z でないことを、kill 経路と自然終了（先にゾンビ化）経路の両方で検証。
+  修正前のコードでは両テストとも fail することを確認済み。
+- **実機検証**: 修正版で live スクレイプ（`AF_AGY_LIVE=1 -run TestScrapeUsageLive`）を計 3 回、
+  各 kind の短命コマンド（claude `auth status` / codex `login status` / opencode・agy `--version`）を
+  各 3 回誘発し、`ps aux` でゾンビ増加ゼロを確認。観測済みの既存 4 体は稼働中の旧バイナリの
+  workspace-agent が親で、agent の再起動（新バイナリ配備）時に消える。
+
 ### 残課題（統合スコープ外メモ）
 
 - セッション作成拒否（BuildLaunch 経由）のエラーが `tmux_failed` コードで届く（文言は正しい）。
