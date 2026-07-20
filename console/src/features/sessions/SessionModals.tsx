@@ -9,6 +9,7 @@ import { useSessionUI } from "./ui.ts";
 import { displayName } from "../../lib/sessionview.ts";
 import { openSessionTerminal } from "./open.ts";
 import { ArchivedModal } from "./ArchivedModal.tsx";
+import { CleanupModal } from "./CleanupModal.tsx";
 import { SsmLoginModal } from "./SsmLoginModal.tsx";
 import { SessionTitleModal } from "./SessionTitleModal.tsx";
 import { BranchRenameModal } from "./BranchRenameModal.tsx";
@@ -19,6 +20,7 @@ export function SessionModals() {
   const branchRename = useSessionUI((s) => s.branchRename);
   const ssmResume = useSessionUI((s) => s.ssmResume);
   const archivedOpen = useSessionUI((s) => s.archivedOpen);
+  const cleanupOpen = useSessionUI((s) => s.cleanupOpen);
   const close = useSessionUI((s) => s.close);
 
   return (
@@ -41,6 +43,7 @@ export function SessionModals() {
         />
       )}
       {archivedOpen && <ArchivedModal onClose={close} onRestored={() => void refreshSessions()} />}
+      {cleanupOpen && <CleanupModal onClose={close} onChanged={() => void refreshSessions()} />}
       {rename && (
         // Prefill with the name as displayed (manual title, or the derived label /
         // repo@time for auto-named sessions) so editing starts from the current title
