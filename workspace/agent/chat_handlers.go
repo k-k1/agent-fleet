@@ -306,6 +306,9 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 	prov := chatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
 
 	c.Messages = append(c.Messages, chatMessage{Role: "user", Content: content, TS: nowMs()})
+	// docs/33 第4段: 閾値超過のまま新ターンに入るなら、先に予防的自動圧縮（成功
+	// すれば直後の injectHandoff がその要約を乗せる）。
+	maybeAutoCompact(r.Context(), c, prov)
 	// docs/30: reports that never got their own auto turn ride the next prompt, and a
 	// user message resets the unattended auto-turn budget.
 	prompt, pendingReports := injectPendingReports(c, content)
@@ -380,11 +383,6 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 	prov := chatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
 
 	c.Messages = append(c.Messages, chatMessage{Role: "user", Content: content, TS: nowMs()})
-	// docs/30: undelivered session reports ride this prompt; a user message resets the
-	// unattended auto-turn budget.
-	prompt, pendingReports := injectPendingReports(c, content)
-	// docs/33: a compaction summary rides the NEW session's first prompt, outermost.
-	prompt, handoff := injectHandoff(c, prompt)
 	c.AutoTurns, c.AutoPausedNotified = 0, false
 
 	// From here the response is an SSE stream; per-frame errors ride the stream body.
@@ -429,6 +427,14 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// docs/33 第4段: 閾値超過のまま新ターンに入るなら、先に予防的自動圧縮（detached
+	// ctx 上なのでリロードでも中断されない）。成功すれば下の injectHandoff が要約を
+	// 乗せる。プロンプト構築は圧縮の後（PendingHandoff 反映後）でなければならない。
+	maybeAutoCompact(ctx, c, prov)
+	// docs/30: undelivered session reports ride this prompt; docs/33: a compaction
+	// summary rides the NEW session's first prompt, outermost.
+	prompt, pendingReports := injectPendingReports(c, content)
+	prompt, handoff := injectHandoff(c, prompt)
 	runTurn(prompt)
 	if err != nil && recoverForRetry(ctx, c, prov, err) {
 		// docs/33 第3段: 超過を検知 → 現行セッションを要約して畳み、新セッションで

@@ -339,6 +339,9 @@ func runReportAutoTurn(convID string) {
 	defer cancel()
 	deregister := registerLiveTurn(convID, cancel) // Stop button + in_progress work as usual
 	defer deregister()
+	// docs/33 第4段: 無人の自動ターンでも、閾値超過のままなら先に予防的自動圧縮
+	// （オペレーター会話は長寿でコンテキストが積み上がりやすい代表格）。
+	maybeAutoCompact(ctx, c, prov)
 	// docs/33: 圧縮直後の自動ターンも引き継ぎ要約を先頭に載せる（新セッションは
 	// 過去の指示・文脈を何も知らない）。
 	prompt, handoff := injectHandoff(c, reportsPrompt(pending))
