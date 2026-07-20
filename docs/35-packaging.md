@@ -33,7 +33,7 @@
 |---|---|---|---|
 | A | `agent-fleet-<v>.tar.gz` | compose deploy surface（compose.yml / Caddyfile / .env.example / backup / restore / load-images / README）**+ `aws/`（ec2-single cfn.yaml・ecs cfn/・release-ecr.sh・README）** | amd64 Linux・EC2-Single・ECS |
 | B | `agent-fleet-images-<v>.tar.gz` | `docker save`（CP + Workspace イメージ、air-gap 用）。Workspace は**配布 variant（lean・CLI 抜き）** — §35.4.1 | amd64 Linux・EC2-Single（・ECS も可） |
-| C | `agent-fleet-native-<v>-linux-amd64.tar.gz` | `af` ランチャ・`bin/af-cp`・`bin/bwrap`・`bin/git`（いずれも静的）・`rootfs.tar.zst`（**lean rootfs** = workspace イメージの配布 variant。OSS のみ＝tmux/git/node/chromium/フォント等。エージェント CLI は焼かず起動時ピン版インストール — §35.3.1・§35.4.1）・`console/`（Vite dist）・`docs/`（ステージング源）・README | native（WSL / 任意の Linux 単一ユーザー）**ホスト追加インストール ゼロ**（§35.3.1） |
+| C | `agent-fleet-native-<v>-linux-amd64.tar.gz` | `af` ランチャ・`bin/af-cp`・`bin/bwrap`・`bin/git`（いずれも静的）・`rootfs.tar.zst`（**lean rootfs** = workspace イメージの配布 variant。OSS ユーザーランド＝tmux/git/node/go/chromium 実行時ライブラリ等のみ。エージェント CLI は起動時ピン版インストール、chromium 本体＋CJK フォントはオンデマンドピン版インストール — §35.3.1・§35.4.1）・`console/`（Vite dist）・`docs/`（ステージング源）・README | native（WSL / 任意の Linux 単一ユーザー）**ホスト追加インストール ゼロ**（§35.3.1） |
 | D | `SHA256SUMS` | A〜C のチェックサム | 全部 |
 
 命名・版の規律:
@@ -71,12 +71,14 @@ agent-fleet-native-<v>-linux-amd64/
 ```
 
 - rootfs は workspace イメージの**配布 variant（lean rootfs）**: workspace-agent・tmux・
-  git・gh ラッパー・node・go・chromium・CJK フォントなど **OSS だけ**を焼き、エージェント
-  CLI（claude/codex/opencode/agy/rtk）は**焼かない**。CLI は entrypoint が初回起動時に
-  `versions.json` の**ピン版（= e2e-smoke で動作検証した版）**を仮想 HOME の
-  `~/.local/bin` へインストールし、self-update opt-in 有効時はそのまま最新へ追従する
-  （§35.4.1 — サイズとライセンスの両方の理由でこの分割にする）。native 専用の
-  `bin/workspace-agent` 同梱は不要（rootfs が `/usr/local/bin/workspace-agent` を焼済み）。
+  git・gh ラッパー・node・go・chromium の**実行時ライブラリ群**・fontconfig+DejaVu など
+  **OSS のユーザーランドだけ**を焼く。エージェント CLI（claude/codex/opencode/agy/rtk）は
+  **焼かず**、entrypoint が初回起動時に `versions.json` の**ピン版（= e2e-smoke で動作
+  検証した版）**を仮想 HOME の `~/.local/bin` へインストールし、self-update opt-in
+  有効時はそのまま最新へ追従する（§35.4.1 — サイズとライセンスの両方の理由）。
+  **chromium 本体＋CJK フォントも焼かず**、ブラウザペイン利用者だけがオンデマンドで
+  ピン版を導入する（下記）。native 専用の `bin/workspace-agent` 同梱は不要
+  （rootfs が `/usr/local/bin/workspace-agent` を焼済み）。
 - **console は同梱ディレクトリ、go:embed はしない**。rootfs で tar が必須になった以上、
   単一バイナリ化の利得は完全に消えた。`CONSOLE_DIR` seam の現状維持がコード変更ゼロ。
 - **docs/ を同梱する理由**: native では CP イメージが無いので `bakedDocsDefault` が存在しない。
@@ -125,6 +127,43 @@ self-update opt-in の `~/.local/bin` shadow 機構（claude/opencode/codex/rtk/
 配布する形**」（native tar と air-gap イメージ tar）に適用する variant であり、切替は
 Dockerfile の ARG（例 `BAKE_AGENT_CLIS=0`）1 個で行う（§35.4.1 の根拠）。
 
+**chromium のオンデマンドピン版インストール（native rootfs のみ・利用者限定機能の後払い化）**:
+ブラウザペインを使うユーザーは限られるため、native rootfs では chromium 本体＋CJK フォント
+（合わせて圧縮 200MB 級 — 最大の可変重量物）も焼かず、初回利用時にピン版を導入する。
+
+- **版固定の現状**: 焼き込み版は Debian 3 パッケージの完全一致ピン
+  （`CHROMIUM_VERSION=150.0.7871.124-1~deb12u1`・versions.json 記録）で、ブラウザペインの
+  CDP 契約（screencast backpressure 対策 — docs/31 検証群）は **Chromium 150 の実測**で
+  固めてある。**ユーザー/エージェントが自分で入れる playwright 等の版とは別物**という
+  現行の分離は維持する（下記の解決順で保証）。
+- **DL 供給元は Debian ピンでは成立しない**: 旧版 deb はアーカイブから消えるため
+  （Dockerfile も「両 arch の同一ビルドが出たら ARG bump」運用）、オンデマンドは
+  **版が不変 URL で残る配布元**（playwright CDN の版固定 chromium ビルド。linux
+  amd64/arm64 両供給・self-contained・agent が既にレイアウトを知っている）から取得し、
+  versions.json に **DL 用ピン（`chromium_dl`）** を別途記録する。ピンの意味は CLI と
+  同じ「動作を保証する版」＝ブラウザペイン E2E（docs/31）で検証してから bump。
+- **導入先と解決順**: `workspace-agent install-chromium`（`install-jdk` の相同）が
+  `~/.local/share/agent-fleet/chromium/<pin>/` へ導入（home 永続・docker⇄native 互換・
+  `~/.cache/ms-playwright` とは別置き＝ユーザー管理の playwright と混ざらない）。CJK
+  フォント（Noto CJK）は fontconfig のユーザーディレクトリ `~/.local/share/fonts` へ
+  同時に導入。agent の `findChromiumBinary` の解決順を
+  「env → `/usr/bin/chromium`（焼き込み）→ **専用ピンディレクトリ** → playwright cache
+  （最後の手段）」に変更する — 現状は焼き込みが在るから PATH 勝ちで分離できているだけで、
+  lean では専用ディレクトリを playwright fallback より先に置かないと**未ピン版を拾う穴**が開く。
+- **トリガー**: toolchains（JDK）と同じ後入れパターン。ブラウザペイン初回 attach で
+  未導入なら agent が自動で `install-chromium` を走らせ、ペインに「準備中（初回のみ
+  ~200MB 取得）」を出す。明示導入（コマンド/Console 設定）も可。導入済みなら以後
+  オフラインで動く。
+- **sandbox の非対称（B で chromium を焼き続ける理由）**: 焼き込み版は SUID
+  `chrome-sandbox`（4755）で全環境サンドボックス有効。home への DL 版は SUID を
+  持てない。**native（bwrap 無特権 userns 配下）では SUID はどのみち無効**なので、
+  DL 化しても条件は悪化しない（namespace sandbox の可否は docs/34 §34.5 の既存未検証
+  項目のまま — P2 実機で確認し、不可なら pane 用途限定で `--no-sandbox` + 接続先
+  localhost 限定という割り切りを README に明記）。一方 **docker コンテナでは SUID
+  sandbox が有効に働いている**ため、air-gap イメージ B から chromium を抜くと
+  sandbox 強度が下がる。chromium は OSS で再配布適法なので、**B は焼き込み継続**
+  （抜く動機がライセンスでなくサイズだけで、イメージ配布ではサイズ制約が緩い）。
+
 **CP 側の残依存の始末**: CP 自体は静的 Go バイナリだが、内部 git provider が
 `git-http-backend`（ホストの git-core）を exec する。ここだけは rootfs の外なので、
 **NO_CURL の静的 git を `bin/git` として同梱**し、ランチャが `GIT_HTTP_BACKEND`
@@ -163,13 +202,11 @@ CGI のみで https を使わないため、静的ビルドの難所（libcurl+o
 --die-with-parent`）で entrypoint.sh 起動へ切り替える。State/pidfile/Stop は共通。
 `AF_NATIVE_AGENT_BIN` は従来モード（開発・`run-dev.sh native`）用にそのまま残す。
 
-**サイズ**: lean rootfs は CLI 群（claude/codex/opencode/agy + npm 残渣）を落とすぶん
-全焼き込み比で**数百 MB 軽くなる**（それでも chromium + フォント + node/go を含むため
-zstd で数百 MB〜1GB 目安・要実測）。最大の重量物 chromium は OSS（再配布可）なので
-**rootfs に残す**のを推奨 — ブラウザペインが初回から即動き、apt 依存解決を起動時に
-持ち込まずに済む。さらに削るオプション（chromium 抜き variant）はサイズが実測で問題に
-なってから（§35.9-7）。リリース工程では `docker buildx build -o type=tar`
-（コンテナ起動不要）で書き出し、zstd 圧縮する。
+**サイズ**: lean rootfs は CLI 群（claude/codex/opencode/agy + npm 残渣）と
+chromium 本体 + CJK フォントを落とし、全焼き込み比で**圧縮 500MB 級の減量**を見込む
+（残るのは Debian ベース + tmux/git + node + go + chromium 実行時ライブラリ等で、
+zstd で数百 MB 目安・要実測。go toolchain が残存最大の重量物）。リリース工程では
+`docker buildx build -o type=tar`（コンテナ起動不要）で書き出し、zstd 圧縮する。
 
 **否決した代替案**（検討の記録）:
 
@@ -334,7 +371,7 @@ VERSION=0.2.0 deploy/release/build.sh [--compose] [--native] [--save] [--all]
 | フェーズ | 内容 | 出口 |
 |---|---|---|
 | **P1: 共通基盤** | 版刻印（§35.6.1）・release.sh へ `aws/` 同梱 + SHA256SUMS・`deploy/release/build.sh` 骨格・**配布 variant（`BAKE_AGENT_CLIS=0`）と entrypoint のピン版 boot-install 一般化 + NOTICE/帰属整備（§35.4.1）** | `VERSION=x build.sh --compose` で A+B+D が出る（B は lean variant・起動時ピン install がコンテナで通る） |
-| **P2: native tar（self-contained）** | `runtime_native.go` の rootfs モード（bwrap ラップ・`AF_NATIVE_ROOTFS`）・ビルダ（--native: rootfs 書き出し + 静的 bwrap/git）・ランチャ `af`・README-native（WSL 導入/userns 注記/更新） | **素の WSL2（追加インストールなし）**で tar 展開 → `af start` → clone → claude セッション E2E |
+| **P2: native tar（self-contained）** | `runtime_native.go` の rootfs モード（bwrap ラップ・`AF_NATIVE_ROOTFS`）・ビルダ（--native: rootfs 書き出し + 静的 bwrap/git）・`workspace-agent install-chromium` + `findChromiumBinary` 解決順変更（専用ピン dir を playwright cache より先に）・ランチャ `af`・README-native（WSL 導入/userns 注記/更新） | **素の WSL2（追加インストールなし）**で tar 展開 → `af start` → clone → claude セッション E2E（ブラウザペインは初回 attach でピン版 chromium が入る） |
 | **P3: ECS 配布** | release-ecr.sh・ImageTag/Persistence パラメータ化・更新 runbook・最小 IAM 表 | sandbox で「push → deploy → WS 起動 → タグ更新 → 次回 Start で新イメージ」一巡 |
 | **P4: 検証ゲート** | §35.8 の未済分（native 実機が筆頭） | 各ゲート緑 + 第 2 デプロイ再現 |
 
@@ -367,9 +404,10 @@ P1→P2 が本丸（native が唯一のゼロ→イチ）。P3 は独立に並�
    小物で musl 静的ビルドの実績が豊富、リリース工程の builder イメージ内で source から
    固定版をビルドする（バイナリ拾い食いはしない）。→ 推奨: 許容。ここを嫌うと
    「ホスト依存ゼロ」は成立しない。
-7. **chromium を lean rootfs に残すか**: OSS なので再配布は適法・最大の重量物。
-   → 推奨: 残す（ブラウザペインの即時性・apt 依存を起動時に持ち込まない）。実測サイズが
-   問題になったら chromium 抜き variant を追加検討。
+7. **chromium オンデマンド化の実装確認 2 点**（方針は §35.3.1 で決定済み: native rootfs は
+   on-demand・air-gap B は焼き込み継続）: (a) DL 供給元の最終選定（playwright CDN を第一候補
+   に、版不変 URL・arm64 供給・レイアウト互換で比較確認）。(b) bwrap 配下での sandbox 実測
+   （namespace sandbox が通るか。不可なら `--no-sandbox` + localhost 限定の割り切りを README 化）。
 8. **ライセンス見解の確度**: §35.4.1 は npm registry / GitHub API の license 表示による
    一次調査。配布開始前に claude / agy の利用規約本文（再配布・社内限定配布の条項）を
    読んで確定させる（特にグループ会社配布を「社内」と主張しない前提で設計してあるが、
