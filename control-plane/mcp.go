@@ -209,7 +209,7 @@ func memberTools() []mcpTool {
 	return []mcpTool{
 		{
 			name: "list_my_sessions", minScope: scopeRead,
-			desc:   "List the Claude/opencode/codex sessions in your Workspace. Each has a human-readable `display` name and an opaque `name` slug: refer to sessions by `display` when talking to the user (the slug means nothing to them); pass `name` to the other session tools.",
+			desc:   "List the Claude/codex/opencode/agy sessions in your Workspace. Each has a human-readable `display` name and an opaque `name` slug: refer to sessions by `display` when talking to the user (the slug means nothing to them); pass `name` to the other session tools.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{}},
 			run: func(ctx context.Context, a mcpAPI, res *resolved, _ map[string]any) (string, error) {
 				return agentText(ctx, res.rt, "GET", "/sessions", nil)
@@ -352,7 +352,7 @@ func memberTools() []mcpTool {
 		},
 		{
 			name: "get_session_usage", minScope: scopeRead,
-			desc: "Per-session context fill and cumulative token consumption for transcript-capable sessions (claude/codex/opencode; shell/ssm excluded). Optional `name` narrows to one session; omitted returns all. `context` is the current context size (tokens with read/create/fresh breakdown, pct of window; absent until the first assistant reply, reset by auto-compaction). `cumulative` sums consumption (logical turns, inTok/outTok/cacheRead/cacheCreate, spend = inTok+cacheCreate+outTok). Use when asked which session is near its context limit or how much a session has consumed. Subscription quota is get_agent_usage (separate tool).",
+			desc: "Per-session context fill and cumulative token consumption for transcript-capable sessions (claude/codex/opencode/agy; shell/ssm excluded). Optional `name` narrows to one session; omitted returns all. `context` is the current context size (tokens with read/create/fresh breakdown, pct of window; absent until the first assistant reply, reset by auto-compaction). `cumulative` sums consumption (logical turns, inTok/outTok/cacheRead/cacheCreate, spend = inTok+cacheCreate+outTok). NOTE: agy is listed but its transcript records no token counts, so its `context` is absent and `cumulative` is all zeros — not a sign of no usage (check get_agent_usage for agy's quota instead). Use when asked which session is near its context limit or how much a session has consumed. Subscription quota is get_agent_usage (separate tool).",
 			schema: map[string]any{"type": "object", "properties": map[string]any{
 				"name": map[string]any{"type": "string", "description": "session name (optional; omitted = all sessions)"},
 			}},
@@ -366,7 +366,7 @@ func memberTools() []mcpTool {
 		},
 		{
 			name: "get_agent_usage", minScope: scopeRead,
-			desc:   "Subscription usage and rate limits for the agent CLIs in your Workspace (claude and codex; opencode has no usage source). fiveHour / sevenDay windows carry pct (percent used, 0-100) and resetsAt (ISO instant the limit lifts). authed=false means that CLI has no subscription login; ageSec is the capture age in seconds; codex may add planType and resetCredits. Use when asked how much quota remains or when a limit resets.",
+			desc:   "Subscription usage and rate limits for the agent CLIs in your Workspace (claude, codex and agy; opencode has no usage source). claude and codex report fiveHour / sevenDay windows with pct (percent used, 0-100) and resetsAt (ISO instant the limit lifts); codex may add planType and resetCredits. agy has a different shape: account / plan plus groups (each quota pool's label, remainingPct and resetsAt — e.g. the experimental Starter pool). authed=false means that CLI has no subscription login; ageSec is the capture age in seconds. Use when asked how much quota remains or when a limit resets.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{}},
 			run: func(ctx context.Context, a mcpAPI, res *resolved, _ map[string]any) (string, error) {
 				cl, err := agentText(ctx, res.rt, "GET", "/claude/usage", nil)
@@ -377,7 +377,14 @@ func memberTools() []mcpTool {
 				if err != nil {
 					return "", err
 				}
-				return jsonText(map[string]any{"claude": json.RawMessage(cl), "codex": json.RawMessage(cx)})
+				// agy usage sits under the connections path with a distinct shape; it
+				// self-reports authed=false when signed out and never 500s, so merging
+				// its raw blob under an "agy" key is safe.
+				ag, err := agentText(ctx, res.rt, "GET", "/connections/agy/usage", nil)
+				if err != nil {
+					return "", err
+				}
+				return jsonText(map[string]any{"claude": json.RawMessage(cl), "codex": json.RawMessage(cx), "agy": json.RawMessage(ag)})
 			},
 		},
 		{

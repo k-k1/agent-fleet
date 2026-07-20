@@ -666,6 +666,31 @@ paneMode 修正後に、agy へテキストが届く全経路を洗い直した�
 ask_question 保留中の自由文が 409・`{seq:[{t:"1"},{k:Enter}]}` での回答は成功。
 agent 384・CP 147 全緑。
 
+### アシスタント経由 MCP ツール全体の agy 再確認（同日さらに後続）
+
+kind 追加の影響が投入経路以外にも及ぶため、workspace `mcp_stdio.go` と CP
+`mcp.go` の全ツールを agy 観点で洗った。
+
+| ツール | 結果 |
+|---|---|
+| `list_my_sessions` / `get_session_status` / `get_session_output` | ✅ kind 非依存で agy も正しく列挙・状態・端末出力を返す（実機確認。ただし agy はライブ working/idle を持たず、状態は保留プロンプト検知のみ — 仕様どおり） |
+| `stop_session` / `resume_session` / archive / delete 系 | ✅ halt/start・cleanup とも kind 非依存 |
+| `get_agent_usage` | ❌→修正: claude/codex のみで、実在する agy の使用量（`/connections/agy/usage`・Starter 枠ゲージ）を欠いていた。agy キーを追加（{account, plan, groups} 形。未ログイン時は authed=false を自己申告し 500 を返さないので merge 安全）。説明も更新 |
+| `get_session_usage` | △ 説明修正: agy は transcript-capable なので一覧に**含まれるが**、agy の transcript にトークン情報が無いため context 空・cumulative 全 0 になる。「消費ゼロ」と誤読されないよう注記を追加（残枠は get_agent_usage を見る旨） |
+| `list_models` / `create_session` | ✅ 前段で修正済み |
+| メモ系（add/update/delete/flush/list_memos） | ✅ セッション kind 非依存 |
+
+追加修正（agent `mcp_stdio.go`＋test、CP `mcp.go`）:
+
+- `get_agent_usage` に agy を merge（両面）。ユニット（`mcp_stdio_test.go`）に
+  agy の {account, groups} 形が混ざることを追加検証。
+- `get_session_usage` と `list_my_sessions`（CP）の説明に agy を反映
+  （agy はトークン 0・列挙対象である旨）。
+
+実機（第 2 インスタンス）: `/connections/agy/usage` が account/groups を返し、
+agy セッション作成 → sessions 一覧に kind=agy で出現 → `sessions/usage` が
+cumulative 全 0（トークン情報なし）で返ることを確認。agent 384・CP 147 全緑。
+
 ## ユーザーに依頼する事項（並行作業のブロッカー解消）
 
 1. **GCP プロジェクトの用意**（D1/M2 用）: 課金有効化済みプロジェクト ID を Connections 設定時に使える形で。
