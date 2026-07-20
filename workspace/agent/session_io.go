@@ -80,6 +80,20 @@ func paneMode(kind, tn string) string {
 		if m := opencodeStatusAgentRe.FindStringSubmatch(paneTail(s, 8)); m != nil {
 			return titleFirst(m[1]) // "Plan" / "Build" / …
 		}
+	case session.KindAgy:
+		// agy's composer footer (v1.1.4 実測): left "? for shortcuts" (idle) or
+		// "esc to cancel" (generating), right "<model>" — "plan · <model>" in plan
+		// mode. The footer only exists once the composer is drawn (the "Signing
+		// in..." boot screen has none, and text typed into it is eaten), so this
+		// doubles as the launch-seed readiness signal, like the other kinds.
+		for _, line := range strings.Split(paneTail(s, 3), "\n") {
+			if strings.Contains(line, "? for shortcuts") || strings.Contains(line, "esc to cancel") {
+				if strings.Contains(line, "plan · ") {
+					return "Plan"
+				}
+				return "Default"
+			}
+		}
 	case session.KindCodex:
 		// codex's composer footer is "<model> <effort> · <cwd>  Plan mode [(shift+tab to
 		// cycle)]" — "Plan mode" appears ONLY in plan mode (Default shows no label). The
