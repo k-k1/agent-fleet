@@ -85,7 +85,7 @@ agent-fleet-native-<v>-linux-amd64/
 
 | docker ランタイム | native full（bwrap） |
 |---|---|
-| `docker run` イメージ | `bwrap --bind <rootfs展開先> / …` で rootfs を / に |
+| `docker run` イメージ | `bwrap --ro-bind <rootfs展開先> / --tmpfs /tmp …` で rootfs を **read-only** の / に（書込先は home/claude-config の bind と tmpfs のみ） |
 | bind-mount `<dataDir>/home` → `/home/dev` | `--bind <dataDir>/home /home/dev`（同一レイアウト＝データ互換維持） |
 | `<dataDir>/claude-config` → `/var/lib/af/claude` | `--bind` 同様 |
 | docs mount `:ro` | `--ro-bind <dataDir>/docs /usr/local/share/agent-fleet/docs` |
@@ -98,6 +98,13 @@ agent-fleet-native-<v>-linux-amd64/
 これで docs/34 §34.5 の制約表のうち「**実行環境はホスト任せ**」「**焼き込みピン止め無し**」
 「**entrypoint 初期化なし**」の3行が消える。残るのは「単一ユーザー限定」と
 「メモリ上限なし」（無特権では cgroup を切れない）のみ。
+
+read-only rootfs と版追従は矛盾しない: rtk は常時イメージ焼き込みになり（main 6a3ac1c、
+BAKE_RTK 分岐と vendor 経路は廃止）rootfs の自己完結が既定で保証される。CLI を最新へ
+追従させたい場合の自己更新 opt-in（`AF_AGENT_SELF_UPDATE`・claude/opencode/codex/rtk/agy）は
+「root 所有の `/usr/local/bin` を書かず `~/.local/bin` へ PATH 先勝ちの shadow を置く」
+設計（entrypoint.sh）なので、書き込み先は bind した仮想 HOME 側 — **ro rootfs のまま成立**し、
+OFF に戻せば焼き込みピン版へ復帰する挙動も Docker 構成と同一になる。
 
 **CP 側の残依存の始末**: CP 自体は静的 Go バイナリだが、内部 git provider が
 `git-http-backend`（ホストの git-core）を exec する。ここだけは rootfs の外なので、
