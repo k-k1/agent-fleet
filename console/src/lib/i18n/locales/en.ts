@@ -84,6 +84,8 @@ export const en: Record<keyof typeof ja, string> = {
   "notif.chat_auto_paused.speech": "The assistant paused after reaching its auto-reply limit. Send a message to continue.",
   "notif.chat_ctx_pressure.title": "Chat context is running high",
   "notif.chat_ctx_pressure.speech": "An assistant chat is close to its context limit. Consider handing off to a new chat.",
+  "notif.chat_ctx_overflow.title": "Chat context exceeded the limit",
+  "notif.chat_ctx_overflow.speech": "An assistant chat exceeded its context limit and could not reply. Compact it or start a new chat.",
   "notif.usage_reset.title": "{source} limit has reset",
   "notif.usage_reset.body": "The {window} has reset.",
   "notif.usage_reset.speech": "{source}'s {window} has reset.",

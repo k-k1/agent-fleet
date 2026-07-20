@@ -15,7 +15,7 @@ export type NotificationSourceState = "unknown" | "ready" | "offline" | "unsuppo
 export interface FleetNotification {
   seq: number;
   id: string;
-  kind: "answer-ready" | "question" | "plan-approval" | "permission-request" | "session-report" | "chat-auto-paused" | "chat-context-pressure" | "usage-reset" | string;
+  kind: "answer-ready" | "question" | "plan-approval" | "permission-request" | "session-report" | "chat-auto-paused" | "chat-context-pressure" | "chat-context-overflow" | "usage-reset" | string;
   target: { type: string; id: string; kind?: string };
   displayName: string;
   payload: Record<string, unknown>;
@@ -61,6 +61,12 @@ function wording(n: FleetNotification): { title: string; body: string; speech: s
     const title = String(n.payload.conversationTitle || name);
     return { title: t("notif.chat_ctx_pressure.title"), body: title, speech: t("notif.chat_ctx_pressure.speech") };
   }
+  if (n.kind === "chat-context-overflow") {
+    // A turn failed on context overflow and couldn't be auto-healed (chat_recover.go);
+    // clicking opens the conversation so the user can compact or start fresh.
+    const title = String(n.payload.conversationTitle || name);
+    return { title: t("notif.chat_ctx_overflow.title"), body: title, speech: t("notif.chat_ctx_overflow.speech") };
+  }
   const rawSource = String(n.payload.source || n.displayName || "AI");
   const source = rawSource === "claude" ? "Claude" : rawSource === "codex" ? "Codex" : rawSource;
   const win = n.payload.windowKey === "5h" ? t("notif.window.5h") : t("notif.window.week");
@@ -103,7 +109,7 @@ async function deliver(n: FleetNotification): Promise<void> {
 export async function openNotificationTarget(n: FleetNotification, split: boolean): Promise<boolean> {
   // A session report's destination is the operator CONVERSATION, not the reporting
   // session (docs/30) — the conversation id rides the payload.
-  if ((n.kind === "session-report" || n.kind === "chat-auto-paused" || n.kind === "chat-context-pressure") && typeof n.payload.conversation_id === "string" && n.payload.conversation_id) {
+  if ((n.kind === "session-report" || n.kind === "chat-auto-paused" || n.kind === "chat-context-pressure" || n.kind === "chat-context-overflow") && typeof n.payload.conversation_id === "string" && n.payload.conversation_id) {
     openChat(n.payload.conversation_id);
     return true;
   }

@@ -343,7 +343,18 @@ func runReportAutoTurn(convID string) {
 	// 過去の指示・文脈を何も知らない）。
 	prompt, handoff := injectHandoff(c, reportsPrompt(pending))
 	reply, err := prov.send(ctx, c, prompt)
+	if err != nil && recoverForRetry(ctx, c, prov, err) {
+		// docs/33 第3段: 超過を検知 → 現行セッションを要約して畳み、新セッションで
+		// リトライ（reports は未配信なので再注入され要約も前置される）。
+		prompt, handoff = injectHandoff(c, reportsPrompt(pending))
+		reply, err = prov.send(ctx, c, prompt)
+	}
 	if err != nil {
+		if isContextOverflowErr(err) {
+			// black hole を塞ぐ: 圧縮も不能な超過を notice＋通知で必ず可視化する
+			// （従来は log のみで、無人のオペレーターが静かに死んでいた）。
+			noteContextOverflow(c)
+		}
 		// Keep the reports undelivered (they retry on the next turn) but persist the
 		// mutated resume handle, mirroring handleChatSend's failure path.
 		c.UpdatedAt = nowMs()

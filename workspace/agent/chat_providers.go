@@ -149,18 +149,26 @@ func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) 
 	defer func() { _, _ = ensureChatClaudeConfig() }()
 	cmd.Stdin = strings.NewReader(prompt)
 	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("claude execution failed: %s", cliErr(err))
-	}
+	// On an error result (e.g. context overflow) claude prints its JSON result AND exits
+	// non-zero, so cmd.Output() returns an ExitError while `out` still holds the structured
+	// message. Parse it first: a bare "exit status 1" would hide "Prompt is too long …" and
+	// defeat the overflow self-heal (chat_recover.go). Fall back to the exec error only when
+	// there's no parseable result.
 	var r claudeResult
-	if err := json.Unmarshal(out, &r); err != nil {
-		return "", fmt.Errorf("failed to parse claude response: %v", err)
+	if jerr := json.Unmarshal(out, &r); jerr != nil {
+		if err != nil {
+			return "", fmt.Errorf("claude execution failed: %s", cliErr(err))
+		}
+		return "", fmt.Errorf("failed to parse claude response: %v", jerr)
 	}
 	if r.SessionID != "" {
 		c.ClaudeSessionID = r.SessionID
 	}
 	if r.IsError {
 		return "", fmt.Errorf("claude returned an error: %s", r.Result)
+	}
+	if err != nil {
+		return "", fmt.Errorf("claude execution failed: %s", cliErr(err))
 	}
 	t := claudeCtx{model: chatModel(c)}
 	t.observeResult(r.Usage, r.ModelUsage)
@@ -304,11 +312,16 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 			break // EOF or read error — the process is done streaming
 		}
 	}
-	if err := cmd.Wait(); err != nil {
-		return "", nil, fmt.Errorf("claude execution failed: %s", stderrOr(err, &stderr))
-	}
+	waitErr := cmd.Wait()
+	// An error result (e.g. context overflow) rides the stream's `result` event AND makes
+	// claude exit non-zero. Prefer the parsed message so the overflow self-heal can see
+	// "Prompt is too long …" (chat_recover.go); a bare "exit status 1" from waitErr would
+	// mask it. Fall back to the exec error only when no result event carried an error.
 	if resultErr {
 		return "", nil, fmt.Errorf("claude returned an error: %s", result)
+	}
+	if waitErr != nil {
+		return "", nil, fmt.Errorf("claude execution failed: %s", stderrOr(waitErr, &stderr))
 	}
 	ctxTrack.apply(c) // context-fill snapshot (chat_usage.go)
 	// The final answer is what streamed into the last (end_turn) message — this is exactly
