@@ -64,6 +64,7 @@ export function StartHost() {
           branch={launch.branch}
           path={launch.path}
           kinds={agentKinds}
+          settling={ctx.connsSettling}
           allowWorktree={!launch.worktree}
           initialPrompt={seedPrompt || undefined}
           onClose={() => {

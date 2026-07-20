@@ -1532,6 +1532,8 @@ export const en: Record<keyof typeof ja, string> = {
   // === P2 launch modal (features/repos/LaunchModal.tsx) ===
   "launch.history": "History",
   "launch.title": "Start working: {repo}",
+  "launch.agents_checking": "Checking agent connections…",
+  "launch.agents_none": "No agents available. Authenticate one in Settings > Connections.",
   "launch.plan_hint": "Plan devotes the first turn to investigation and planning.",
   "launch.field.driver": "Execution method",
   "launch.driver_managed": "Managed (recommended)",

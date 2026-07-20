@@ -13,6 +13,7 @@ import { t, useT } from "../../lib/i18n/index.ts";
 import { Trans } from "../../lib/i18n/Trans.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { agentOf } from "../../agents/registry.ts";
+import { kindDisplayName } from "../../lib/sessionkind.ts";
 import { resolveEffort, resolveModel, resolveStartMode } from "../../lib/repoLast.ts";
 import { agentLaunchDefault, useSettings } from "../../lib/settings.ts";
 import { EffortPicker, ModelPicker } from "../../ui/ModelPicker.tsx";
@@ -216,6 +217,20 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
   const [effort, setEffort] = useState(() => resolveEffort(kinds[0] || "claude", "", initialDefault.effort));
   const [startMode, setStartMode] = useState(() => resolveStartMode(kinds[0] || "claude", "", initialDefault.startMode));
   const [prompt, setPrompt] = useState("");
+  // kind is seeded once at mount, but kinds arrives asynchronously (the connection
+  // check takes ~1.5-2s). Mounting during that window seeds the "claude" fallback,
+  // which then sticks even if claude turns out to be unavailable — the picker shows
+  // nothing selected and 開始 would launch an unusable agent. Re-seed as soon as the
+  // real list lands and the held kind isn't in it.
+  useEffect(() => {
+    if (!kinds.length || kinds.includes(kind)) return;
+    const k = kinds[0];
+    const d = agentLaunchDefault(settings, k);
+    setKind(k);
+    setModel(resolveModel(k, "", d.model));
+    setEffort(resolveEffort(k, "", d.effort));
+    setStartMode(resolveStartMode(k, "", d.startMode));
+  }, [kinds, kind, settings]);
   const startHome = async () => {
     if (busy) return;
     setBusy(true);
@@ -424,7 +439,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                       }}
                     >
                       <Icon name={a.icon} className="seg-ic" />
-                      {a.label}
+                      {kindDisplayName(k)}
                       <span className="seg-sub">{tr(a.launchHintKey)}</span>
                     </button>
                   );

@@ -54,7 +54,13 @@ export interface AgentDescriptor {
   id: SessionKind;
   // presentation
   icon: string; // codicon name
-  label: string; // display word
+  label: string; // display word — the compact one, used by every chip/header (kindLabel)
+  // Full product name for the roomy launch pickers (作業を始める / はじめる) only.
+  // Optional: falls back to `label`, which is already the product name for
+  // claude/codex/opencode. agy is the outlier — "agy" is the CLI's short name and
+  // reads as an opaque abbreviation in a picker, while the tight chips (LayoutMap,
+  // kt-full) have no room for the full "Antigravity".
+  displayName?: string;
   assistantName: string; // how the agent signs its chat turns ("Claude" / "Codex" / …)
   short: string; // 2-char abbrev for tight headers (cc/cx/oc/sh/aw)
   cssClass: string; // .kind-<slug> color class slug
@@ -183,6 +189,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     id: "agy",
     icon: "magnet",
     label: "agy",
+    displayName: "Antigravity",
     assistantName: "Antigravity",
     short: "ag",
     cssClass: "agy",

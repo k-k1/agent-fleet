@@ -7,6 +7,13 @@ import { agentOf } from "../agents/registry.ts";
 
 export const kindIcon = (k: string | null | undefined): string => agentOf(k).icon;
 export const kindLabel = (k: string | null | undefined): string => agentOf(k).label;
+// Full product name for the roomy launch pickers only (作業を始める / はじめる);
+// everywhere else keeps the compact kindLabel. Falls back to label when an agent
+// declares no separate display name.
+export const kindDisplayName = (k: string | null | undefined): string => {
+  const a = agentOf(k);
+  return a.displayName || a.label;
+};
 // 2-char abbreviation for tight spots (narrow pane headers): claude=cc, codex=cx,
 // opencode=oc, shell=sh, ssm=aw (AWS SSM).
 export const kindShort = (k: string | null | undefined): string => agentOf(k).short;
