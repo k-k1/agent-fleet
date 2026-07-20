@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { IconButton } from "../../ui/Button.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 
 // Shared settings-tab controls, so the segmented Choice / オン・オフ toggle is defined
@@ -78,6 +79,44 @@ export function Select({ value, options, onChange }: ChoiceProps) {
         </option>
       ))}
     </select>
+  );
+}
+
+// OrderList: 優先順位の並べ替え（上下ボタン式）。value は表示順そのままの id 配列で、
+// 呼び出し側が正規化済みの完全な順序を渡す。行の並びが 1 位から順位を表す。
+export function OrderList({
+  value,
+  labels,
+  onChange,
+}: {
+  value: string[];
+  labels: Record<string, string>;
+  onChange: (v: string[]) => void;
+}) {
+  const tr = useT();
+  const move = (i: number, d: number) => {
+    const j = i + d;
+    if (j < 0 || j >= value.length) return;
+    const next = value.slice();
+    [next[i], next[j]] = [next[j], next[i]];
+    onChange(next);
+  };
+  return (
+    <div className="ds-orderlist">
+      {value.map((id, i) => (
+        <div key={id} className="ds-orderlist-row">
+          <span className="ds-orderlist-rank">{i + 1}</span>
+          <span className="ds-orderlist-label">{labels[id] ?? id}</span>
+          <IconButton icon="chevron-up" label={tr("common.move_up")} disabled={i === 0} onClick={() => move(i, -1)} />
+          <IconButton
+            icon="chevron-down"
+            label={tr("common.move_down")}
+            disabled={i === value.length - 1}
+            onClick={() => move(i, 1)}
+          />
+        </div>
+      ))}
+    </div>
   );
 }
 

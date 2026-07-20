@@ -203,12 +203,14 @@ export interface Settings {
   // content). The Agent reads this key from ui-prefs and injects a language rule into the
   // chat system prompt (translate assistant is exempt). See docs/19.
   outputLanguage: string;
-  // Assistant-chat backend: "auto" = the first connected of claude → codex → opencode
-  // (the Agent's preferredHeadlessAgent), or a fixed kind. Applies to builtin
-  // assistants' NEW conversations and one-shot calls (title/branch suggestions); the
-  // Agent reads this key from ui-prefs live. User-defined assistants keep their own
-  // per-assistant agent choice.
-  assistantAgent: string;
+  // Assistant-chat backend priority (AgentsTab 並べ替え): auto-selection takes the
+  // first CONNECTED kind in this order (the Agent's preferredHeadlessAgent, read
+  // live from ui-prefs). Applies to builtin assistants' NEW conversations and
+  // one-shot calls (title/branch suggestions); user-defined assistants keep their
+  // own per-assistant agent choice. Replaces the legacy single-pin assistantAgent
+  // key — hydrateUIPrefs migrates a stored pin by promoting it to the front, and
+  // the Agent normalizes partial/stale lists against its own default order.
+  assistantAgentOrder: string[];
   // Auto turn on session reports (docs/30): when a session an af_write assistant
   // launched/steered reports back, the assistant runs one turn automatically to
   // process it. Default ON; the backend caps unattended turns at 10 per conversation
@@ -340,6 +342,25 @@ export interface Settings {
 // own release-varying default. Change here to move everyone's baseline tier.
 export const DEFAULT_MODEL = "sonnet";
 
+// Headless-chat backend kinds in the built-in priority order (mirrors the Agent's
+// defaultHeadlessOrder; agy last — its free-plan quota is scarce). Display labels
+// come from the agent registry (assistantName), not i18n.
+export const ASSISTANT_AGENT_KINDS = ["claude", "codex", "opencode", "agy"] as const;
+
+// normalizeAssistantOrder folds any stored value into a total order over
+// ASSISTANT_AGENT_KINDS: unknown entries and dupes drop, missing kinds append in
+// the built-in order — same rules as the Agent's assistantAgentOrderPref, so what
+// the UI shows is exactly what the backend will do.
+export function normalizeAssistantOrder(v: unknown): string[] {
+  const out: string[] = [];
+  const push = (k: unknown) => {
+    if (typeof k === "string" && (ASSISTANT_AGENT_KINDS as readonly string[]).includes(k) && !out.includes(k)) out.push(k);
+  };
+  if (Array.isArray(v)) v.forEach(push);
+  ASSISTANT_AGENT_KINDS.forEach(push);
+  return out;
+}
+
 const DEFAULT_AGENT_LAUNCH: AgentLaunchDefaults = {
   claude: { model: DEFAULT_MODEL, effort: "", startMode: "normal" },
   codex: { model: "", effort: "", startMode: "normal" },
@@ -375,7 +396,7 @@ const DEFAULTS: Settings = {
   agentLaunchDefaults: DEFAULT_AGENT_LAUNCH,
   autoTitleSuggest: true,
   outputLanguage: "auto",
-  assistantAgent: "auto",
+  assistantAgentOrder: [...ASSISTANT_AGENT_KINDS],
   assistantAutoTurn: true,
   assistantAutoCompact: true,
   ssmHostColors: {},
@@ -516,18 +537,6 @@ export const OUTPUT_LANGUAGES: [string, MsgKey][] = [
   ["en", "out_lang.en"],
 ];
 
-// Assistant-chat backend choices (AgentsTab). "auto" picks the first CONNECTED of
-// claude → codex → opencode → agy (agy last: its free-plan quota is scarce, so auto
-// only reaches it when nothing else is connected); a fixed choice falls back to auto
-// when that CLI isn't connected (opencode is always usable — its free tier needs no
-// login).
-export const ASSISTANT_AGENTS: [string, MsgKey][] = [
-  ["auto", "asst_agent.auto"],
-  ["claude", "asst_agent.claude"],
-  ["codex", "asst_agent.codex"],
-  ["opencode", "asst_agent.opencode"],
-  ["agy", "asst_agent.agy"],
-];
 
 // Mirror composer submit-key options, shared by the settings UI.
 export const MIRROR_SEND_MODES: { id: string; labelKey: MsgKey }[] = [
@@ -744,6 +753,11 @@ export async function hydrateUIPrefs(): Promise<void> {
   // サーバーに旧booleanだけが残るユーザーも、新しい3択へ一度だけ移行する。
   if (!("ttsBackgroundPlayback" in srv) && typeof srv.ttsQuietWhenHidden === "boolean") {
     srv.ttsBackgroundPlayback = srv.ttsQuietWhenHidden ? "quiet" : "normal";
+  }
+  // 旧・単一ピン（assistantAgent）だけが残るユーザーは、ピンを先頭に昇格した
+  // 優先順位リストへ移行する（Agent 側 assistantAgentOrderPref と同じ規則）。
+  if (!("assistantAgentOrder" in srv) && typeof srv.assistantAgent === "string" && srv.assistantAgent !== "auto") {
+    srv.assistantAgentOrder = normalizeAssistantOrder([srv.assistantAgent]);
   }
   let changed = false;
   const merged: Settings = { ...state };

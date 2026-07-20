@@ -95,6 +95,8 @@ export const en: Record<keyof typeof ja, string> = {
   // --- shared toggles / font names ---
   "common.on": "On",
   "common.off": "Off",
+  "common.move_up": "Move up",
+  "common.move_down": "Move down",
   "font.sys_mono": "System mono",
   "font.sys": "System",
   "font.serif": "Serif",
@@ -549,12 +551,6 @@ export const en: Record<keyof typeof ja, string> = {
   "out_lang.auto": "Match input",
   "out_lang.ja": "Japanese",
   "out_lang.en": "English",
-  // --- assistant agent (ASSISTANT_AGENTS) ---
-  "asst_agent.auto": "Auto (prefer connected)",
-  "asst_agent.claude": "Claude",
-  "asst_agent.codex": "Codex",
-  "asst_agent.opencode": "opencode",
-  "asst_agent.agy": "Antigravity",
 
   // --- agent settings (AgentsTab) ---
   "agents.session": "Session",
@@ -563,9 +559,9 @@ export const en: Record<keyof typeof ja, string> = {
   "agents.output_language": "Assistant reply language",
   "agents.note_output_language":
     "The reply language for the assistant chat. “Match input” replies in the language of the text or question you give it. Choosing Japanese/English replies in that language even for text in another language (translation assistants excluded).",
-  "agents.assistant_agent": "Assistant agent",
+  "agents.assistant_agent": "Assistant agent priority",
   "agents.note_assistant_agent":
-    "The CLI that powers the assistant chat and title suggestions. “Auto” picks a connected one in the order Claude → Codex → opencode → Antigravity (Antigravity last — its free-plan quota is scarce). A fixed CLI falls back to auto when it isn't connected. Takes effect from a new conversation with the built-in assistant (custom assistants prefer their own agent setting).",
+    "Priority order of the CLIs that power the assistant chat and title suggestions: the first CONNECTED one from the top is used (disconnected ones are skipped). Antigravity defaults to last — its free-plan quota is scarce. Takes effect from a new conversation with the built-in assistant (custom assistants prefer their own agent setting).",
   "agents.assistant_auto_turn": "Auto-respond to session reports",
   "agents.note_assistant_auto_turn":
     "When a session launched or steered by the Fleet Operator (or another assistant with AF write access) reports back, the assistant runs one turn automatically to process it. As a runaway guard, at most 10 unattended turns run per conversation (reset whenever you send a message).",

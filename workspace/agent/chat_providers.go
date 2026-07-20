@@ -86,24 +86,25 @@ func headlessAgentAvailable(kind string) bool {
 	return v
 }
 
+// defaultHeadlessOrder is the built-in auto-selection order for assistant-chat
+// backends. agy sits last on purpose: its Starter/free quota is tiny (docs/32
+// Track D), so out of the box it is only reached in an agy-only workspace. The
+// user can rank the backends themselves in 設定 > エージェント (ui-prefs
+// assistantAgentOrder — assistantAgentOrderPref normalizes against this list).
+var defaultHeadlessOrder = []string{session.KindClaude, session.KindCodex, session.KindOpencode, session.KindAgy}
+
 // preferredHeadlessAgent picks the backend for new builtin-assistant conversations
-// and one-shot calls. The user's explicit choice (設定 > エージェント「アシスタントの
-// エージェント」, ui-prefs assistantAgent) wins while that CLI is usable; otherwise —
-// auto, unset, or the pinned CLI not connected — the first authenticated of
-// claude → codex → opencode → agy. agy sits last on purpose: its Starter/free
-// quota is tiny (docs/32 Track D), so auto-selection reaches it only in an
-// agy-only workspace; using it otherwise is an explicit pin. Falls back to
-// claude when nothing is connected (the call then surfaces a clear error).
+// and one-shot calls: the first AUTHENTICATED backend in the user's priority order
+// (or the built-in default order). When nothing is connected it returns the order's
+// top choice, so the resulting error points at the CLI the user cares about most.
 func preferredHeadlessAgent() string {
-	if pin := assistantAgentPref(); pin != "" && headlessAgentAvailable(pin) {
-		return pin
-	}
-	for _, k := range []string{session.KindClaude, session.KindCodex, session.KindOpencode, session.KindAgy} {
+	order := assistantAgentOrderPref()
+	for _, k := range order {
 		if headlessAgentAvailable(k) {
 			return k
 		}
 	}
-	return session.KindClaude
+	return order[0]
 }
 
 // chatProviderFor resolves the provider driving this conversation: the pinned agent
