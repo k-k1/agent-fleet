@@ -349,7 +349,7 @@ var mcpStdioWriteTools = []map[string]any{
 		},
 	},
 	{
-		"name": "delete_session",
+		"name":        "delete_session",
 		"description": "アーカイブ済み／不要なセッションを完全に削除して容量を回収する（会話ログ jsonl も消す）。archive_session が一覧から隠すだけなのに対し、これは実体を消す。消す前に jsonl とメタを gz アーカイブ（安全網）へ退避するので復元可能（list_cleanup_archives → restore_cleanup_archive）。稼働中のセッションは削除できない（先に停止）。list_cleanup_candidates で action=delete_session の候補を片付ける時に使う。不可逆に近い操作なので、どのセッションを消すかを明示して実行前に必ず利用者へ確認すること。",
 		"inputSchema": map[string]any{
 			"type": "object",
@@ -360,7 +360,7 @@ var mcpStdioWriteTools = []map[string]any{
 		},
 	},
 	{
-		"name": "delete_branch",
+		"name":        "delete_branch",
 		"description": "マージ済みのローカルブランチを削除する（worktree を消した後に残る temp/* 等の掃除）。マージ済み（親に取り込み済み）のみ削除でき、未マージのブランチは固有コミットを失わないよう拒否される（push/マージするか Console で対応するよう案内）。消す前にブランチ名と SHA を gz アーカイブへ退避するので復元可能。list_cleanup_candidates で action=delete_branch の候補（repo=id, branch）を片付ける時に使う。実行前に対象を明示して利用者へ確認すること。",
 		"inputSchema": map[string]any{
 			"type": "object",
