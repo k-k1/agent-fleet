@@ -493,6 +493,8 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
             </div>
             <div className="ui-field">
               <span className="ui-field-label">{tr("launch.first_prompt")}</span>
+              {/* 画像貼り付けは意図的に無し（リポジトリなしセッションでは不要と整理）。
+                  LaunchModal 側の staged-images 一式をここに持ち込まないこと。 */}
               <textarea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
