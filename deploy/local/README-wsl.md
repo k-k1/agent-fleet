@@ -125,7 +125,10 @@ AF_RUNTIME=native deploy/local/run-dev.sh
 
 コンテナ隔離・メモリ上限・entrypoint 初期化（claude 自動インストール等）が無い、という
 割り切りの構成です。詳細と制約は [docs/34-native-runtime.md](../../docs/34-native-runtime.md)。
-Docker が入るなら §1 の構成（`wsl-quickstart.sh`）を推奨します。
+ワークスペースの HOME は `~/.local/share/agent-fleet/dev/home` に分離され（実 `~` は
+荒れない）、Windows の Explorer からは `\\wsl.localhost\<ディストロ>\...` でそのまま
+参照できます（docs/34 §34.4）。Docker が入るなら §1 の構成（`wsl-quickstart.sh`）を
+推奨します。
 
 ## 7. トラブルシュート
 

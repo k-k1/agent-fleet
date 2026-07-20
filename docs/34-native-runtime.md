@@ -13,7 +13,7 @@ WSL2 で Docker（Docker Desktop も native dockerd も）を導入できない�
 
 `Runtime` / `RuntimeFactory`（docs/dev/09 §9.2）は最初からポート&アダプタで切ってあり、
 docker / ecs と並ぶ第3のアダプタとして `native` を追加した。**用途は個人利用・開発検証に
-限定**する（§34.4 の制約）。
+限定**する（§34.5 の制約）。
 
 ## 34.2 仕組み
 
@@ -64,7 +64,35 @@ JVM provision）を全部スキップし、`workspace-agent` を `/tmp/af-agent`
 Dockerfile / entrypoint.sh 相当の初期化（claude の自動 install/update、settings.json seed、
 opencode plugin seed、toolchains 適用など）は**行われない**。ホスト環境をそのまま使う。
 
-## 34.4 制約（割り切り）
+## 34.4 HOME の分離とデータの場所（Windows からの参照）
+
+ネイティブ実行の「HOME」は同一 OS ユーザーのまま env 差し替えだけで3層に分かれる:
+
+| 層 | 場所（run-dev.sh 既定） | 使う者 / 中身 |
+|---|---|---|
+| WSL ユーザーの実 `~` | `/home/<user>` | CP プロセス自身。ワークスペースは書き込まない（実ホームのドットファイルは荒れない）。ただしデータ置き場自体は既定でこの下（`WS_DATA=~/.local/share/agent-fleet`） |
+| ワークスペースの**仮想 HOME** | `~/.local/share/agent-fleet/<key>/home`（default テナント・単一ユーザーなら `<key>`=`dev`） | workspace-agent と全セッション（claude/git/tmux/npm…）が `HOME=` ここで動く。`~/repos`・`~/.gitconfig`・`~/.ssh`・`~/.config/agent-fleet`（接続情報）・claude の `~/.local/bin` 自前インストールが全部この下に閉じる。docker 版が `/home/dev` へ bind-mount するのと同一レイアウト＝docker⇄native でデータ互換 |
+| Claude 状態の別置き | `~/.local/share/agent-fleet/<key>/claude-config`（`CLAUDE_CONFIG_DIR`） | 仮想 HOME の**外**に置く理由はコンテナ版と同じ（docs/17 P3-5 段2）: Console ファイルブラウザ（browse root=仮想 HOME）から平文 Claude 状態を見せない |
+
+**Windows の Explorer から参照できる**。WSL2 のファイルシステムは
+`\\wsl.localhost\<ディストロ名>\`（旧 `\\wsl$\`）で公開されているので、
+
+```
+\\wsl.localhost\Ubuntu\home\<WSLユーザー>\.local\share\agent-fleet\dev\home
+```
+
+をアドレスバーに貼れば仮想 HOME（repos 含む）がそのまま開ける（WSL 側から
+`explorer.exe .` でも可）。ドット始まりを隠すのは Linux 側の慣習なので Explorer では
+`.local` 等も普通に見える。注意:
+
+- **閲覧は自由、書き込みは控えめに** — 9P 共有なので、セッション実行中に Windows 側から
+  同じファイルを編集すると普通のファイル競合になる（git 操作中などは避ける）。
+- **`claude-config/` には触れない** — 認証トークン等の平文状態。Explorer から見える場所に
+  あるからこそ、コピー・共有をしないこと。
+- **`WS_DATA` を `/mnt/c` に置かない** — drvfs は I/O が激遅でパーミッションも壊れやすい。
+  データルートは WSL 側 ext4 のままにする。
+
+## 34.5 制約（割り切り）
 
 | 項目 | 内容 |
 |---|---|
@@ -79,7 +107,7 @@ opencode plugin seed、toolchains 適用など）は**行われない**。ホス
 lifecycle（pidfile/State/Stop）はそのまま使え、Start のプロセス起動を bwrap ラップに
 差し替えるだけでよい構造にしてある。
 
-## 34.5 検証状況
+## 34.6 検証状況
 
 - `control-plane`: `TestNativeFactoryGates` / `TestNativeRuntimeLifecycle`（helper-process で
   fake agent を実 fork し、Start/State/Stop/pidfile/クラッシュ検出/env 分離まで実証）緑。
