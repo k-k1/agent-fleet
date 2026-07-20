@@ -54,12 +54,15 @@ docker / ecs と並ぶ第3のアダプタとして `native` を追加した。**
 
 ```bash
 # ホストに必要なもの: go / node(nvm) / tmux / git / claude 等の各 CLI（chromium は任意）
-AF_RUNTIME=native deploy/local/run-dev.sh
+deploy/local/run-dev.sh native      # env でも可: AF_RUNTIME=native deploy/local/run-dev.sh
 ```
 
-run-dev.sh が native のときにやること: docker 工程（rtk vendor・イメージビルド・スモーク・
-JVM provision）を全部スキップし、`workspace-agent` を `/tmp/af-agent` にホストビルドして
+run-dev.sh は起動スクリプトの単一エントリポイント（サブコマンド `local`/`wsl`/`native`/
+`reset`）。native のときは docker 工程（rtk vendor・イメージビルド・スモーク・JVM
+provision）を全部スキップし、`workspace-agent` を `/tmp/af-agent` にホストビルドして
 `AF_NATIVE_AGENT_BIN` で CP へ渡す。tmux / git / claude がホスト PATH に無ければ警告する。
+データ初期化は `deploy/local/run-dev.sh reset [--all]`（native の agent プロセス残骸も
+掃除してから消す。README-wsl §5）。
 
 Dockerfile / entrypoint.sh 相当の初期化（claude の自動 install/update、settings.json seed、
 opencode plugin seed、toolchains 適用など）は**行われない**。ホスト環境をそのまま使う。
