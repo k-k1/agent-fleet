@@ -56,8 +56,10 @@ func ensureWorkspaceTrusted(dir string) {
 
 // enforceTelemetryOff pins enableTelemetry=false in settings.json. The auth
 // flow toggles the Interactions data-collection opt-in off on the ToS screen
-// (既定オン — docs/32 の採用条件で必ずオフに倒す); this backstops the scrape
-// against a missed toggle. No-op when already false.
+// (既定オン — docs/32 の採用条件で必ずオフに倒す)。Called at auth completion
+// AND on every agy launch (BuildLaunch / usage・context スクレイプ): a one-shot
+// pin doesn't survive the key being flipped or dropped later. No-op when
+// already false.
 func enforceTelemetryOff() {
 	m := readSettings()
 	if v, ok := m["enableTelemetry"].(bool); ok && !v {

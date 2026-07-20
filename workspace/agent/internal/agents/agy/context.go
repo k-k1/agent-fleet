@@ -127,6 +127,7 @@ func scrapeContext(conv string) (*transcript.Context, error) {
 		return nil, err
 	}
 	ensureWorkspaceTrusted(dir)
+	enforceTelemetryOff() // launch-time re-pin, same as BuildLaunch
 	cmd := exec.Command("agy", "--conversation", conv)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
