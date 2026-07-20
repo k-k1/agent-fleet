@@ -27,9 +27,67 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
-// stepStatusAwaitingUser is the steps.status value agy writes while a step is
-// blocked on the user (question widget or permission menu). 実測値。
-const stepStatusAwaitingUser = 9
+// steps.status の実測値（v1.1.4 — docs/32）。最終 step の status が会話の
+// 現在地をそのまま表す: 実行中 / 完了 / ユーザー入力待ち。
+const (
+	stepStatusRunning      = 2
+	stepStatusDone         = 3
+	stepStatusAwaitingUser = 9
+)
+
+// lastStep returns the newest step's status and payload for the slot's
+// conversation. ok=false when the conversation isn't adopted yet or the DB is
+// unreadable — callers treat that as "no opinion", never as a state.
+func lastStep(m session.Meta) (int, []byte, bool) {
+	// The conversation UUID may not be adopted yet when the mirror polls before
+	// any sessions-list poll ran (capture normally fires in WireLive) — a first
+	// prompt straight into a question would then stay invisible. Capture is
+	// idempotent and cheap, so run it here too.
+	captureConversation(m)
+	conv := sids.Read(session.UUID(m.Dir, m.Name))
+	if conv == "" {
+		return 0, nil, false
+	}
+	db, err := sql.Open("sqlite", "file:"+conversationDBPath(conv)+"?mode=ro&_pragma=busy_timeout(3000)")
+	if err != nil {
+		return 0, nil, false
+	}
+	defer db.Close()
+	var st int
+	var payload []byte
+	if err := db.QueryRow(`SELECT status, step_payload FROM steps ORDER BY idx DESC LIMIT 1`).
+		Scan(&st, &payload); err != nil {
+		return 0, nil, false
+	}
+	return st, payload, true
+}
+
+// LiveState is agy's session state derived from the conversation DB, mirroring
+// opencode.LiveState: "question"/"permission" while blocked on the user,
+// "working" mid-turn, "idle" once the last step completed, "" when the DB has
+// no opinion yet. agy ships no status hooks, so this is the ONLY turn-end
+// signal — /input persists an optimistic "working" that nothing else clears,
+// which left the operator's 完了報告 arm unconsumed forever (docs/30 ②).
+// Callers gate on liveness themselves: a killed session's DB keeps its last
+// status, which must not surface as live state on a stopped session.
+func LiveState(m session.Meta) string {
+	st, payload, ok := lastStep(m)
+	if !ok {
+		return ""
+	}
+	switch st {
+	case stepStatusAwaitingUser:
+		if qs := parseAskQuestions(payload); len(qs) > 0 {
+			return "question"
+		}
+		return "permission"
+	case stepStatusRunning:
+		return "working"
+	case stepStatusDone:
+		return "idle"
+	}
+	return ""
+}
 
 func conversationDBPath(conv string) string {
 	return filepath.Join(stateDir(), "conversations", conv+".db")
@@ -42,24 +100,8 @@ func conversationDBPath(conv string) string {
 // keep a stale status=9 last step, which must not surface as pending on a
 // stopped session.
 func Probe(m session.Meta) (string, []transcript.Question) {
-	// The conversation UUID may not be adopted yet when the mirror polls before
-	// any sessions-list poll ran (capture normally fires in WireLive) — a first
-	// prompt straight into a question would then stay invisible. Capture is
-	// idempotent and cheap, so run it here too.
-	captureConversation(m)
-	conv := sids.Read(session.UUID(m.Dir, m.Name))
-	if conv == "" {
-		return "", nil
-	}
-	db, err := sql.Open("sqlite", "file:"+conversationDBPath(conv)+"?mode=ro&_pragma=busy_timeout(3000)")
-	if err != nil {
-		return "", nil
-	}
-	defer db.Close()
-	var status int
-	var payload []byte
-	if err := db.QueryRow(`SELECT status, step_payload FROM steps ORDER BY idx DESC LIMIT 1`).
-		Scan(&status, &payload); err != nil || status != stepStatusAwaitingUser {
+	st, payload, ok := lastStep(m)
+	if !ok || st != stepStatusAwaitingUser {
 		return "", nil
 	}
 	if qs := parseAskQuestions(payload); len(qs) > 0 {
