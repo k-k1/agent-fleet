@@ -277,6 +277,22 @@ func memberTools() []mcpTool {
 			},
 		},
 		{
+			name: "get_agent_usage", minScope: scopeRead,
+			desc:   "Subscription usage and rate limits for the agent CLIs in your Workspace (claude and codex; opencode has no usage source). fiveHour / sevenDay windows carry pct (percent used, 0-100) and resetsAt (ISO instant the limit lifts). authed=false means that CLI has no subscription login; ageSec is the capture age in seconds; codex may add planType and resetCredits. Use when asked how much quota remains or when a limit resets.",
+			schema: map[string]any{"type": "object", "properties": map[string]any{}},
+			run: func(ctx context.Context, a mcpAPI, res *resolved, _ map[string]any) (string, error) {
+				cl, err := agentText(ctx, res.rt, "GET", "/claude/usage", nil)
+				if err != nil {
+					return "", err
+				}
+				cx, err := agentText(ctx, res.rt, "GET", "/codex/usage", nil)
+				if err != nil {
+					return "", err
+				}
+				return jsonText(map[string]any{"claude": json.RawMessage(cl), "codex": json.RawMessage(cx)})
+			},
+		},
+		{
 			name: "list_repos", minScope: scopeRead,
 			desc:   "List the git working copies in your Workspace (~/repos). Use before create_session to pick the `dir` (each repo has a `path`) — including repos with no running session.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{}},
@@ -286,21 +302,21 @@ func memberTools() []mcpTool {
 		},
 		{
 			name: "list_models", minScope: scopeRead,
-			desc: "List the live launch-time models for `kind` (codex or opencode). Before creating a Codex or OpenCode session with a model override, call this and use a returned id. Resolve a user shorthand such as `terra` to its matching returned full id (for example `gpt-5.6-terra`).",
+			desc: "List the launch-time models for `kind`. claude returns its fixed tier aliases (fable/opus/sonnet/haiku); codex and opencode return the live catalog reflecting the user's connected providers. Before creating a session with a model override, call this and use a returned id. Resolve a user shorthand such as `terra` to its matching returned full id (for example `gpt-5.6-terra`).",
 			schema: map[string]any{"type": "object", "properties": map[string]any{
-				"kind": map[string]any{"type": "string", "description": "codex | opencode"},
+				"kind": map[string]any{"type": "string", "description": "claude | codex | opencode"},
 			}, "required": []string{"kind"}},
 			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
 				kind := argStr(args, "kind")
-				if kind != "codex" && kind != "opencode" {
-					return "", fmt.Errorf("kind must be codex or opencode")
+				if kind != "claude" && kind != "codex" && kind != "opencode" {
+					return "", fmt.Errorf("kind must be claude, codex or opencode")
 				}
 				return agentText(ctx, res.rt, "GET", "/agents/"+url.PathEscape(kind)+"/models", nil)
 			},
 		},
 		{
 			name: "create_session", minScope: scopeWrite,
-			desc: "Start a NEW coding session in your Workspace. `dir` selects the repo to launch in (a `dir` from list_my_sessions or a `path` from list_repos; omitted = home). Set `worktree=true` to create an isolated git worktree from that repo before launch; `branch` optionally selects its base and `new_branch` optionally names the new branch (omitted = server-generated temporary branch). For Codex or OpenCode, call list_models before a model override and use a returned model id; those sessions always use the managed driver, not TUI. If `initial_prompt` is set it is delivered as the session's first task once its CLI boots (no separate send_to_session needed) — use it to hand off context from another session (read it first with get_session_output) or to kick off a task decided in chat. Returns the new session; drive it with get_session_status / get_session_output by the returned `name`.",
+			desc: "Start a NEW coding session in your Workspace. `dir` selects the repo to launch in (a `dir` from list_my_sessions or a `path` from list_repos; omitted = home). Set `worktree=true` to create an isolated git worktree from that repo before launch; `branch` optionally selects its base and `new_branch` optionally names the new branch (omitted = server-generated temporary branch). Before a model override (any kind), call list_models and use a returned model id; Codex and OpenCode sessions always use the managed driver, not TUI. If `initial_prompt` is set it is delivered as the session's first task once its CLI boots (no separate send_to_session needed) — use it to hand off context from another session (read it first with get_session_output) or to kick off a task decided in chat. Returns the new session; drive it with get_session_status / get_session_output by the returned `name`.",
 			schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
