@@ -1,8 +1,10 @@
 # 33. アシスタントチャットのコンテキスト肥大対策
 
-- ステータス: 第1段（可視化＋逼迫通知）・第2段（要約引き継ぎ＝手動コンパクション）実装済み / 第3段以降は構想
-- 対象: `workspace/agent/chat_usage.go`（第1段の中核）、`chat_compact.go`（第2段の中核）、
-  `chat_providers.go`（捕捉）、`chat_handlers.go`・`chat_report.go`（通知・引き継ぎの差し込み）、
+- ステータス: 第1段（可視化＋逼迫通知）・第2段（要約引き継ぎ＝手動コンパクション）・
+  第3段（超過エラーの自己修復＋通知）実装済み / 第4段以降は構想
+- 対象: `workspace/agent/chat_usage.go`（第1段）、`chat_compact.go`（第2段）、
+  `chat_recover.go`（第3段）、`chat_providers.go`（捕捉・エラー表面化）、
+  `chat_handlers.go`・`chat_report.go`（通知・引き継ぎ・リカバリの差し込み）、
   Console `ChatView` / `ContextBar`（表示・圧縮ボタン）
 
 ## 1. 背景 — なぜ対策が要るか
@@ -118,14 +120,58 @@ handleChatSend / handleChatStream / runReportAutoTurn の3経路で注入。境�
   ID で質問 → 引き継ぎ要約経由で正答（新旧セッション ID が異なることも確認）。
 - go test 389 / console test 322・typecheck・build・i18n:lint 全緑。実機目視は残。
 
-## 4. 今後の段（未実装・優先順）
+## 4. 第3段（実装済み）: 超過エラーの自己修復と通知
 
-1. **超過エラーの自己修復と通知**: "prompt is too long" 系エラーの判別 → notice で可視化
-   （現状、自動ターン経路は log のみで black hole）。将来はエラー検知→自動コンパクション
-   （第2段の compactConversation を再利用）→リトライ。
-2. **閾値/エラー時のコンパクション自動発動**: 第2段は手動ボタン。実績を見てから、逼迫
-   閾値超過や超過エラーで自動発動へ。
-3. **検証タスク**: headless 経路でウィンドウ超過させたときの各 CLI の実挙動（自動
-   コンパクションの有無・エラー文言）の実測。①②の設計前提。
-4. **掃除**: 会話削除時にプロバイダ側セッション（chat-claude/projects の jsonl 等）を
+積み上がったコンテキストがウィンドウを超えると 1 ターンが 400 で失敗する。従来は
+対話ターンならプロバイダエラーが返るだけ（次も失敗して詰む）、自動ターン（docs/30
+オペレーター）なら log に書くだけの black hole だった。第3段（chat_recover.go）で塞ぐ。
+
+### 4.1 判別（isContextOverflowErr）
+
+エラー文字列の小文字部分一致（`contextOverflowNeedles`）: claude "prompt is too long"、
+codex "input_too_large" / "exceeds the maximum" など。文言ドリフトに強くするため寛容に
+持つ — 取りこぼしても通常エラーとして返るだけ、誤検知しても余分な要約 1 ターンを試す
+だけ（安全側）。
+
+### 4.2 前提バグ修正（chat_providers.go・重要）
+
+**claude -p は超過時に JSON result（"Prompt is too long …"）を stdout に出しつつ exit 1**
+する。従来の `claudeChat.send` は `cmd.Output()` の ExitError を見て即
+`"claude execution failed: exit status 1"` を返し、**構造化メッセージを捨てていた**
+（sendStream も cmd.Wait() エラーが result イベントを覆い隠す）。これでは超過を判別
+できず自己修復が成立しない。→ **exit code 非ゼロでも先に result を解釈し、
+is_error・メッセージを表面化するよう両経路を修正**（result が無いときだけ exec
+エラーへフォールバック）。実測では超過が `is_error:true` + result +
+`terminal_reason:"prompt_too_long"` で返る。
+
+### 4.3 自己修復（recoverForRetry）＋通知（noteContextOverflow）
+
+対話（send/stream）・自動ターンとも、ターンが超過エラーで失敗したら:
+1. `recoverForRetry` = 超過なら現行セッションに第2段 compactConversation を実行
+   （＝要約ターン。**まだウィンドウ内なら通る**）。成功したら PendingHandoff がセットされ、
+   呼び出し側が自分の prompt を再構築（reports 再注入＋要約前置）して**新セッションで
+   1 回だけリトライ**。無限ループ防止でリトライは 1 回。
+2. リトライも不能（＝既にウィンドウ超過で要約ターン自体が失敗＝claude の言う
+   "single-exchange conversation cannot be compacted"）なら `noteContextOverflow` で
+   notice＋通知センター（`chat-context-overflow`）に必ず可視化。自動ターンの black hole
+   はこれで消える。
+
+### 4.4 検証
+
+- 単体（chat_recover_test.go）: 判別の陽性/陰性（"context deadline exceeded" 等を誤検知
+  しない）・非超過は no-op・超過で compact 発動・要約も超過するケースで false＋状態不変・
+  notice 追記。既存の chat_compact/chat_usage テストも緑。
+- ライブ（実 claude CLI）: 450k 文字（~242k tokens > 200k）を send / sendStream に流し、
+  **バグ修正後に "Prompt is too long …" が表面化され isContextOverflowErr が判別する**
+  ことを両経路で確認。
+- go test 394 / console test 322・typecheck・build・i18n:lint 全緑。実機目視は残。
+
+## 5. 今後の段（未実装・優先順）
+
+1. **閾値/エラー時のコンパクション自動発動**: 第2段は手動ボタン、第3段は超過エラー時に
+   限り自動発動。実績を見てから、逼迫閾値超過（80%）でも予防的に自動発動する案。
+2. **codex/opencode の超過文言の実測補強**: 第3段の needle は claude 実測＋codex の
+   input-size 制限実測ベース。codex/opencode の真のトークン超過文言（272k 超）は未実測
+   （高コスト）。取りこぼしたら needle を追加。
+3. **掃除**: 会話削除時にプロバイダ側セッション（chat-claude/projects の jsonl 等）を
    残さない。

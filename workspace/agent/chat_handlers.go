@@ -316,7 +316,17 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), chatTimeout)
 	defer cancel()
 	reply, err := prov.send(ctx, c, prompt)
+	if err != nil && recoverForRetry(ctx, c, prov, err) {
+		// docs/33 第3段: 超過を検知 → 現行セッションを要約して畳み、新セッションで
+		// リトライ。reports は未配信なので再注入され、要約も前置される。
+		prompt, pendingReports = injectPendingReports(c, content)
+		prompt, handoff = injectHandoff(c, prompt)
+		reply, err = prov.send(ctx, c, prompt)
+	}
 	if err != nil {
+		if isContextOverflowErr(err) {
+			noteContextOverflow(c) // black hole を塞ぐ（圧縮も不能だった）
+		}
 		// Persist the user turn + resume handle even on failure so a retry continues.
 		c.UpdatedAt = nowMs()
 		_ = saveConv(c)
@@ -402,21 +412,35 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 
 	var reply string
 	var steps []chatStep
-	if sp, ok := prov.(streamingProvider); ok {
-		reply, steps, err = sp.sendStream(ctx, c, prompt, func(ev chatStreamEvent) {
-			if ev.Step != nil {
-				emit(map[string]any{"step": ev.Step}) // a completed 作業過程 item
-			} else if ev.Delta != "" {
-				emit(map[string]string{"delta": ev.Delta})
+	runTurn := func(p string) {
+		steps = nil
+		if sp, ok := prov.(streamingProvider); ok {
+			reply, steps, err = sp.sendStream(ctx, c, p, func(ev chatStreamEvent) {
+				if ev.Step != nil {
+					emit(map[string]any{"step": ev.Step}) // a completed 作業過程 item
+				} else if ev.Delta != "" {
+					emit(map[string]string{"delta": ev.Delta})
+				}
+			})
+		} else {
+			reply, err = prov.send(ctx, c, p)
+			if err == nil {
+				emit(map[string]string{"delta": reply})
 			}
-		})
-	} else {
-		reply, err = prov.send(ctx, c, prompt)
-		if err == nil {
-			emit(map[string]string{"delta": reply})
 		}
 	}
+	runTurn(prompt)
+	if err != nil && recoverForRetry(ctx, c, prov, err) {
+		// docs/33 第3段: 超過を検知 → 現行セッションを要約して畳み、新セッションで
+		// リトライ。超過エラーは初回送信直後の 400 なので delta 未発火＝二重表示なし。
+		prompt, pendingReports = injectPendingReports(c, content)
+		prompt, handoff = injectHandoff(c, prompt)
+		runTurn(prompt)
+	}
 	if err != nil {
+		if isContextOverflowErr(err) {
+			noteContextOverflow(c) // black hole を塞ぐ（圧縮も不能だった）
+		}
 		c.UpdatedAt = nowMs()
 		_ = saveConv(c) // persist the user turn + resume handle so a retry continues
 		emit(map[string]any{"error": err.Error()})
