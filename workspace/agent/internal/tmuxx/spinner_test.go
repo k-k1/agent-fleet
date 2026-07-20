@@ -39,6 +39,15 @@ func TestSpinnerActive(t *testing.T) {
 		// 進行中 session badged 入力待ち with no 停止 button while plainly working.
 		"· 検証ハーネスを作成中… (12m 2s · ↓ 36.4k tokens)",
 		"✳ テストを実行中… (2m 3s · thinking with high effort)",
+		// An activeForm is arbitrary user text, so it can contain "(" — and the glyph is
+		// not always non-ASCII. Real capture (claude_sx5m7yp, screenshotted mid-turn while
+		// the Console badged it 入力待ち): the "(" ended the phrase run early AND the ASCII
+		// "*" glyph left the [A-Z]|non-ASCII head with nothing to match, so every frame of
+		// a 14-minute turn read idle.
+		"* nativeRuntime アダプタ実装 (AF_RUNTIME=native)… (9m 26s · ↓ 35.7k tokens)",
+		"✽ nativeRuntime アダプタ実装 (AF_RUNTIME=native)… (9m 26s · ↓ 35.7k tokens)",
+		"* nativeRuntime アダプタ実装… (9m 26s · ↓ 35.7k tokens)",
+		"✳ Rebuild (native) の検証… (3s)",
 	}
 	for _, s := range busy {
 		if !spinnerActive(s) {
@@ -67,6 +76,16 @@ func TestSpinnerActive(t *testing.T) {
 		"  · 検証ハーネスを作成中… (12m 2s · ↓ 36.4k tokens)",
 		// Truncated prose ends in an ellipsis too — it just isn't followed by a timer.
 		"tmux focus-events off · add 'set -g focus-events on' to ~/.tmux.conf and rea…",
+		// Same guard as the indented quotes above, for the parenthesised activeForm: the
+		// run before "…" now admits "(", so the ≥2-space indent is all that separates a
+		// quote from the real thing.
+		"  * nativeRuntime アダプタ実装 (AF_RUNTIME=native)… (9m 26s · ↓ 35.7k tokens)",
+		// A source line quoting a spinner in a "//" comment sits at column 0, so only the
+		// head class keeps it out — this file and tmuxx.go both contain such lines, and a
+		// session debugging the TUI reads its own pane. Tabs and spaces after the "//".
+		"//\t✢ Tempering… (6s · thinking with high effort)",
+		"// e.g. ✽ Perusing… (5m 42s · ↓ 17.8k tokens)",
+		"#  ✳ Working… (1m 2s · ↓ 900 tokens)",
 	}
 	for _, s := range idle {
 		if spinnerActive(s) {
