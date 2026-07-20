@@ -31,6 +31,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -277,6 +278,7 @@ func startDriftAppServer(t *testing.T, configArgs ...string) *appClient {
 	cmd.Env = append(os.Environ(), "HOME="+home)
 	cmd.Stdout = &output
 	cmd.Stderr = &output
+	reapProcessGroup(cmd)
 	if err := cmd.Start(); err != nil {
 		cancel()
 		t.Fatalf("start isolated app-server: %v", err)
@@ -298,6 +300,25 @@ func startDriftAppServer(t *testing.T, configArgs ...string) *appClient {
 	}
 	t.Fatalf("isolated app-server did not become ready:\n%s", output.String())
 	return nil
+}
+
+// reapProcessGroup makes killing a codex command actually kill codex. `codex` on
+// PATH is a Node shim that spawns the vendored native binary as a child, so the
+// default cancel (SIGKILL to the shim alone) leaves that child running: it is
+// reparented to init and keeps the inherited stdout/stderr pipe open, so the
+// io.Copy feeding cmd.Stdout never sees EOF and cmd.Wait() blocks forever. Both
+// codex 0.144.5 and 0.144.6 behave this way — this is a harness bug, not CLI drift.
+// Run the shim in its own process group and signal the whole group instead;
+// WaitDelay is the backstop so Wait() can never outlive a stuck pipe.
+func reapProcessGroup(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	cmd.WaitDelay = 5 * time.Second
 }
 
 // startDriftMCPThread creates an ephemeral thread with exactly one unique MCP
@@ -412,10 +433,14 @@ func TestDriftCodexUserPromptSubmitHookFires(t *testing.T) {
 	// that the hook ran first.
 	cmd.Env = append(os.Environ(), "HOME="+t.TempDir())
 	cmd.Dir = t.TempDir()
+	reapProcessGroup(cmd)
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start codex: %v", err)
 	}
-	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	defer func() {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		_ = cmd.Wait()
+	}()
 
 	deadline := time.Now().Add(75 * time.Second)
 	for time.Now().Before(deadline) {
