@@ -1,6 +1,9 @@
 package agy
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -64,8 +67,91 @@ func TestClearResumeDropsBothStores(t *testing.T) {
 	sid := session.UUID("/d", "s")
 	sids.Write(sid, "u1")
 	prelaunch.Write(sid, "u0")
+	brainPrelaunch.Write(sid, "conv-a")
 	agentImpl{}.ClearResume(sid)
-	if sids.Read(sid) != "" || prelaunch.Read(sid) != "" {
+	if sids.Read(sid) != "" || prelaunch.Read(sid) != "" || brainPrelaunch.Read(sid) != "" {
 		t.Fatal("ClearResume left store entries behind")
+	}
+}
+
+// brain-dir diff: 生存中のポーリングで「スナップショットに無い brain/<uuid>/ が
+// ちょうど 1 つ」現れたら採用（ライブミラーの点灯条件）。2 つ以上は取り違え回避で
+// 見送り、スナップショット自体が無い（resume / 機能導入前の起動）なら診断しない。
+func TestCaptureConversationBrainDirDiff(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := "/home/dev/repos/proj"
+	m := session.Meta{Dir: dir, Name: "slot03", Kind: session.KindAgy}
+	slotSid := session.UUID(dir, "slot03")
+
+	mkBrain := func(name string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Join(brainDir(), name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Launch-time snapshot: one pre-existing conversation.
+	mkBrain("conv-old")
+	prelaunch.Write(slotSid, "")
+	brainPrelaunch.Write(slotSid, strings.Join(listBrainDirs(), "\n"))
+
+	// Nothing new yet → no adoption.
+	captureConversation(m)
+	if got := sids.Read(slotSid); got != "" {
+		t.Fatalf("adopted %q before any new conversation", got)
+	}
+
+	// First prompt landed → exactly one fresh dir → adopt while alive.
+	mkBrain("conv-new")
+	captureConversation(m)
+	if got := sids.Read(slotSid); got != "conv-new" {
+		t.Fatalf("got %q want conv-new", got)
+	}
+	if brainPrelaunch.Read(slotSid) != "" {
+		t.Fatal("snapshot not cleaned up after adoption")
+	}
+}
+
+func TestCaptureConversationBrainDiffAmbiguousDefers(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := "/home/dev/repos/proj"
+	m := session.Meta{Dir: dir, Name: "slot04", Kind: session.KindAgy}
+	slotSid := session.UUID(dir, "slot04")
+
+	prelaunch.Write(slotSid, "")
+	brainPrelaunch.Write(slotSid, "") // empty snapshot (no conversations yet)
+	for _, n := range []string{"conv-a", "conv-b"} {
+		if err := os.MkdirAll(filepath.Join(brainDir(), n), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	captureConversation(m)
+	if got := sids.Read(slotSid); got != "" {
+		t.Fatalf("guessed %q between two fresh conversations", got)
+	}
+
+	// The graceful-exit cwd map later disambiguates (per-cwd, authoritative).
+	writeLastConversations(t, map[string]string{dir: "conv-b"})
+	captureConversation(m)
+	if got := sids.Read(slotSid); got != "conv-b" {
+		t.Fatalf("got %q want conv-b from cwd map", got)
+	}
+}
+
+func TestCaptureConversationNoSnapshotSkipsBrainDiff(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := "/home/dev/repos/proj"
+	m := session.Meta{Dir: dir, Name: "slot05", Kind: session.KindAgy}
+	slotSid := session.UUID(dir, "slot05")
+
+	// A brain dir exists but this slot has no launch snapshot (resume / old
+	// launch): the diff has no baseline and must stay silent.
+	if err := os.MkdirAll(filepath.Join(brainDir(), "conv-x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prelaunch.Write(slotSid, "")
+	captureConversation(m)
+	if got := sids.Read(slotSid); got != "" {
+		t.Fatalf("adopted %q without a snapshot baseline", got)
 	}
 }

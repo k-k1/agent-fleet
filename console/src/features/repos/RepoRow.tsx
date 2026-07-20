@@ -87,9 +87,10 @@ export interface RepoRowProps {
 export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, sess, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onDelete, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane }: RepoRowProps) {
   const [showLaunch, setShowLaunch] = useState(false);
   const [launchModal, setLaunchModal] = useState(false);
-  // Agent kinds only — shell/ssm have no model/prompt, so the modal excludes
-  // them; they keep the ▼ quick path.
-  const agentKinds = kinds.filter((k) => agentOf(k).caps.chat);
+  // Coding agents only (runsInDir) — shell/ssm have no model/prompt, so the
+  // modal excludes them; they keep the ▼ quick path. Not caps.chat: agy is
+  // terminal-only (no chat mirror) but still launches through the modal.
+  const agentKinds = kinds.filter((k) => agentOf(k).caps.runsInDir);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [branchOpen, setBranchOpen] = useState(false);
