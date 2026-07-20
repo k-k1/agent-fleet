@@ -83,13 +83,14 @@ if [ "${1:-}" = "--inner" ]; then
     echo "NG  $VJ が無い"; fail=1
   fi
 
-  # rtk は任意焼き込み（vendor 品）。期待値はホスト側の vendor/ 有無から EXPECT_RTK で渡る。
-  if [ "${EXPECT_RTK:-0}" = "1" ]; then
+  # rtk は既定で常時焼き込み（BAKE_RTK=1）。EXPECT_RTK=0 は BAKE_RTK=0 のエアギャップ
+  # ビルドを検証するときだけ渡す。
+  if [ "${EXPECT_RTK:-1}" = "1" ]; then
     if command -v rtk >/dev/null; then echo "ok  rtk $(rtk --version 2>/dev/null | semver)"
-    else echo "NG  rtk: vendor 済みのはずがイメージに無い"; fail=1; fi
+    else echo "NG  rtk: 常時焼き込みのはずがイメージに無い"; fail=1; fi
   else
-    if command -v rtk >/dev/null; then echo "ok  rtk $(rtk --version 2>/dev/null | semver)（イメージに有・現在の vendor/ は空）"
-    else echo "ok  rtk なし（vendor/ 空）"; fi
+    if command -v rtk >/dev/null; then echo "ok  rtk $(rtk --version 2>/dev/null | semver)（イメージに有）"
+    else echo "ok  rtk なし（BAKE_RTK=0 ビルド）"; fi
   fi
 
   # 既定 USER=dev のまま、永続 home を profile にせず固定の日本語ページを描画する。
@@ -180,7 +181,7 @@ EXPECT_CODEX="$(arg_pin CODEX_VERSION)"
 EXPECT_GO="$(arg_pin GO_VERSION)"
 EXPECT_GH="$(arg_pin GH_VERSION)"
 EXPECT_CHROMIUM="$(arg_pin CHROMIUM_VERSION)"
-EXPECT_RTK=0; [ -x "$ROOT/workspace/vendor/rtk" ] && EXPECT_RTK=1
+EXPECT_RTK="${EXPECT_RTK:-1}" # 既定=常時焼き込み。BAKE_RTK=0 ビルドの検証時のみ 0 を渡す
 SMOKE_MEMORY="${WS_MEMORY:-1g}"
 
 echo "==> image smoke: $IMAGE (claude=$EXPECT_CLAUDE opencode=$EXPECT_OPENCODE codex=$EXPECT_CODEX go=$EXPECT_GO gh=$EXPECT_GH chromium=$EXPECT_CHROMIUM rtk=$EXPECT_RTK)"

@@ -151,15 +151,16 @@ RUN set -eux; \
     rm -rf /tmp/gh.tgz "/tmp/gh_${GH_VERSION}_linux_${gharch}"; \
     /usr/local/libexec/gh --version
 
-# Optional: fetch a pinned rtk release at build time (token-saving claude Bash hook)
-# instead of vendoring the host binary. DEFAULT OFF (BAKE_RTK=0) so the production /
-# compose / ECS images are byte-identical and no build-time GitHub fetch is added;
-# deploy/local/wsl-quickstart.sh passes --build-arg BAKE_RTK=1 for a self-contained
-# WSL image. rtk-ai/rtk is public, so the asset + checksums download without auth.
-# Static musl (amd64) / gnu (arm64) binary → runs in the slim container. The
-# entrypoint seeds the hook automatically when `rtk` is on PATH (same as vendor/).
+# rtk (token-saving claude Bash hook): fetched pinned at build time, ALWAYS baked
+# by default — the former host-vendoring path (run-dev.sh copying a host binary into
+# vendor/) is gone, so every deployment gets the same pinned rtk like the other
+# CLIs. BAKE_RTK=0 remains as an escape hatch for airgapped builds (no build-time
+# GitHub fetch); the entrypoint seeds the hook only when `rtk` is on PATH.
+# rtk-ai/rtk is public, so the asset + checksums download without auth. Static musl
+# (amd64) / gnu (arm64) binary → runs in the slim container.
 # Bump RTK_VERSION to upgrade (ARG change busts the cache; same idiom as GH_VERSION).
-ARG BAKE_RTK=0
+# The AF_AGENT_SELF_UPDATE opt-in also updates rtk in place at start (entrypoint).
+ARG BAKE_RTK=1
 ARG RTK_VERSION=0.43.0
 RUN if [ "${BAKE_RTK}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
@@ -286,15 +287,6 @@ COPY opencode-plugin/ /usr/local/share/agent-fleet/opencode-plugin/
 COPY workspace-notes.md /usr/local/share/agent-fleet/workspace-notes.md
 RUN mkdir -p /etc/claude-code \
  && cp /usr/local/share/agent-fleet/workspace-notes.md /etc/claude-code/CLAUDE.md
-
-# Optional: install a vendored rtk binary (static) so the claude PreToolUse hook
-# can route Bash through it for token savings. Other deployments leave vendor/
-# empty (only .gitkeep) → no rtk, and the entrypoint seeds the hook only when rtk
-# is present. The binary is git-ignored; run-dev.sh copies the host's rtk in.
-COPY vendor/ /opt/vendor/
-RUN if [ -f /opt/vendor/rtk ]; then \
-      install -m 0755 /opt/vendor/rtk /usr/local/bin/rtk && echo "installed rtk"; \
-    fi
 
 # Docker grants SYS_ADMIN only in the capability bounding set so Chromium's
 # root-owned setuid helper can create its PID/network namespaces. Keep that path
