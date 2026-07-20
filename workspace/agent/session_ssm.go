@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -79,7 +78,7 @@ func handleSSMLoginStatus(w http.ResponseWriter, r *http.Request) {
 	if pane := tmuxx.SessionPaneID(session.TmuxName(name)); pane != "" {
 		// -S - captures the whole scrollback so the URL (early) and the SessionId line
 		// (later) are both visible regardless of pane size.
-		if out, err := exec.Command("tmux", "capture-pane", "-p", "-S", "-", "-t", pane).Output(); err == nil {
+		if out, err := tmuxx.Cmd("capture-pane", "-p", "-S", "-", "-t", pane).Output(); err == nil {
 			buf = string(out)
 		}
 	}

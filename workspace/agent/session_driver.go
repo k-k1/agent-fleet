@@ -18,7 +18,6 @@ package main
 import (
 	"encoding/json"
 	"net/http"
-	"os/exec"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -87,7 +86,7 @@ func handleSessionDriver(w http.ResponseWriter, r *http.Request) {
 	// writer 状態を作らない）。
 	if tn := session.TmuxName(name); tmuxx.HasSession(tn) {
 		disconnectRemoteControl(name, m)
-		if out, err := exec.Command("tmux", "kill-session", "-t", session.ExactTarget(tn)).CombinedOutput(); err != nil {
+		if out, err := tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).CombinedOutput(); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
 			return
 		}

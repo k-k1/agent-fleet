@@ -9,7 +9,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -545,7 +544,7 @@ func handleStopSession(w http.ResponseWriter, r *http.Request) {
 		removeManagedLedger(meta)
 	}
 	if live {
-		if out, err := exec.Command("tmux", "kill-session", "-t", session.ExactTarget(tn)).CombinedOutput(); err != nil {
+		if out, err := tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).CombinedOutput(); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", fmt.Sprintf("%v: %s", err, out))
 			return
 		}
@@ -616,7 +615,7 @@ func handleHaltSession(w http.ResponseWriter, r *http.Request) {
 		stopped = gs.GracefulStop(m)
 	}
 	if !stopped {
-		if out, err := exec.Command("tmux", "kill-session", "-t", session.ExactTarget(tn)).CombinedOutput(); err != nil {
+		if out, err := tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).CombinedOutput(); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", fmt.Sprintf("%v: %s", err, out))
 			return
 		}
@@ -644,7 +643,7 @@ func handleArchiveSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if tn := session.TmuxName(name); tmuxx.HasSession(tn) {
-		_ = exec.Command("tmux", "kill-session", "-t", session.ExactTarget(tn)).Run()
+		_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).Run()
 	}
 	dropManagedRuntime(m) // managed: pane の代わりに runtime handle を落とす
 	status.Remove(session.UUID(m.Dir, name))
@@ -708,7 +707,7 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	// Archive the old identity: kill its tmux, clear the live status cache, hide it from
 	// the active list. Keep the meta + jsonl (and any captured resume id) so it restores.
 	if tn := session.TmuxName(name); tmuxx.HasSession(tn) {
-		_ = exec.Command("tmux", "kill-session", "-t", session.ExactTarget(tn)).Run()
+		_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).Run()
 	}
 	dropManagedRuntime(m) // managed: pane の代わりに runtime handle を落とす
 	status.Remove(session.UUID(m.Dir, m.Name))

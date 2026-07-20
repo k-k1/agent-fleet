@@ -273,6 +273,14 @@ Console→CP が叩くのと同一の agent API を直接駆動**した（CP プ
 既存ユニットテストでカバー）。sandbox HOME＋`~/.gemini` symlink 共有で実アカウント
 （AI Pro）を使用。
 
+> ⚠️ **インシデント（2026-07-20）**: この方式の初期実行では tmux ソケットを分離しておらず、
+> テスト agent の shutdown が共有デフォルトソケットへ `tmux kill-server` を実行、無関係の
+> 並行セッション（開発者の claude CLI 複数）を計 4 回全滅させた。恒久対応（shutdown の
+> owned-only kill-session 化・`AF_TMUX_SOCKET` によるソケット分離・tripwire テスト）と
+> 第 2 インスタンス起動の安全手順は [dev/04 §4.11](dev/04-workspace-agent.md) を正とする。
+> 以後この形の in-container E2E は必ず `AF_TMUX_SOCKET`＋`AF_SESSIONS_DIR`＋別ポートの
+> 3 点セットで隔離すること。
+
 | M1 完了条件 | 結果 |
 |---|---|
 | セッション作成（`POST /sessions` kind=agy） | ✅ tmux pane で agy TUI 起動、事前 trust 有効（プロンプト非表示） |

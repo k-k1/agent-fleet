@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"sort"
 	"strings"
 
@@ -39,13 +38,13 @@ func startSessionTmux(m session.Meta, ssmForce bool) error {
 	// it needs no shell escaping beyond the single quotes.
 	program += "; __af_ec=$?; workspace-agent record-exit '" + m.Name + "' \"$__af_ec\""
 	args := []string{"new-session", "-d", "-s", session.TmuxName(m.Name), "-c", plan.Cwd, program}
-	if out, err := exec.Command("tmux", args...).CombinedOutput(); err != nil {
+	if out, err := tmuxx.Cmd(args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("%v: %s", err, out)
 	}
 	// Record pane output even when no browser is attached. The helper owns the
 	// size cap; failure here must not prevent the actual session from starting.
 	if pane := tmuxx.SessionPaneID(session.TmuxName(m.Name)); pane != "" {
-		_ = exec.Command("tmux", "pipe-pane", "-o", "-t", pane,
+		_ = tmuxx.Cmd("pipe-pane", "-o", "-t", pane,
 			"workspace-agent record-terminal '"+m.Name+"'").Run()
 	}
 	// Baseline the container's oom_kill counter so a later crash is attributed to an OOM
