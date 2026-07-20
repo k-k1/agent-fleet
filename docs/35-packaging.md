@@ -33,7 +33,8 @@
 |---|---|---|---|
 | A | `agent-fleet-<v>.tar.gz` | compose deploy surface（compose.yml / Caddyfile / .env.example / backup / restore / load-images / README）**+ `aws/`（ec2-single cfn.yaml・ecs cfn/・release-ecr.sh・README）** | amd64 Linux・EC2-Single・ECS |
 | B | `agent-fleet-images-<v>.tar.gz` | `docker save`（CP + Workspace イメージ、air-gap 用）。Workspace は**配布 variant（lean・CLI 抜き）** — §35.4.1 | amd64 Linux・EC2-Single（・ECS も可） |
-| C | `agent-fleet-native-<v>-linux-amd64.tar.gz` | `af` ランチャ・`bin/af-cp`・`bin/bwrap`・`bin/git`（いずれも静的）・`rootfs.tar.zst`（**lean rootfs** = workspace イメージの配布 variant。OSS ユーザーランド＝tmux/git/node/chromium 実行時ライブラリ等のみ。エージェント CLI は起動時ピン版インストール、chromium＋CJK フォント・Go・AWS CLI+SSM plugin・ops MCP 群など利用者限定ツールはオンデマンドピン版インストール — §35.3.1・§35.4.1）・`console/`（Vite dist）・`docs/`（ステージング源）・README | native（WSL / 任意の Linux 単一ユーザー）**ホスト追加インストール ゼロ**（§35.3.1） |
+| C | `agent-fleet-native-<v>-linux-amd64.tar.gz`（**数十 MB**） | `af` ランチャ・`bin/af-cp`・`bin/bwrap`・`bin/git`（いずれも静的）・`rootfs.json`（R の URL + sha256 + rootfs 版のピン manifest — **rootfs 本体は同梱せず初回起動時に DL**）・`console/`（Vite dist）・`docs/`（ステージング源）・README。`--bundle-rootfs` で R 同梱の self-contained 版（air-gap/ファイル渡し用）も生成可 | native（WSL / 任意の Linux 単一ユーザー）**ホスト追加インストール ゼロ**（§35.3.1） |
+| R | `agent-fleet-rootfs-<r>-linux-amd64.tar.zst`（zstd 200MB 台目安） | **lean rootfs** = workspace イメージの配布 variant（OSS ユーザーランドのみ。エージェント CLI は起動時ピン版インストール、chromium＋CJK フォント・Go・AWS CLI+SSM plugin・ops MCP 群など利用者限定ツールはオンデマンドピン版インストール — §35.3.1・§35.4.1）。**公開の置き場**（§35.9-2）に置き、`af` が rootfs.json のピンで取得・検証。**版 `<r>` は app 版 `<v>` から分離** — イメージ不変のリリースでは再 DL なし | native（C から参照される） |
 | D | `SHA256SUMS` | A〜C のチェックサム | 全部 |
 
 命名・版の規律:
@@ -59,16 +60,29 @@ bwrap ラップに差し替える（docs/34 の構造がこのために温存し
 **中身**（アーティファクト C）:
 
 ```
-agent-fleet-native-<v>-linux-amd64/
+agent-fleet-native-<v>-linux-amd64/          # 全体で数十 MB（rootfs は含まない）
 ├── af                    # ランチャ（下記）
 ├── bin/af-cp             # CGO_ENABLED=0 静的ビルド
 ├── bin/bwrap             # bubblewrap 静的ビルド（リリース工程で自前ビルド）
 ├── bin/git               # git 静的ビルド（NO_CURL・CP の内部 git provider 用 → 下記）
-├── rootfs.tar.zst        # agent-fleet/workspace イメージの書き出し（buildx -o type=tar）
+├── rootfs.json           # rootfs（R）のピン manifest: url / sha256 / rootfs 版 <r>
 ├── console/              # Vite ビルド済み dist（CONSOLE_DIR で指す）
 ├── docs/                 # CP イメージが焼くのと同じ docs ツリー（stageWorkspaceDocs の源）
 └── README.md             # WSL 前提の導入・制約・更新手順
 ```
+
+**rootfs 本体（R）は配布 tar に同梱せず、初回 `af start` が DL する**。lean 化で rootfs が
+OSS のみになった（§35.4.1）ため公開の置き場に置ける — これが lean 化のもう一つの配当で、
+「配る箱」は自分たちの成果物（af-cp/console/docs/静的小物）だけの数十 MB に縮む。
+`af` は rootfs.json の sha256 で検証してから展開する（改竄・欠損は起動前に検出）。
+rootfs の版 `<r>` は app 版 `<v>` と独立させ、イメージに変更が無いリリースでは
+**既存の展開済み rootfs をそのまま使い再 DL しない**（app だけの更新が数十 MB で済む）。
+air-gap・ファイル渡し運用には `--bundle-rootfs` の self-contained tar（従来形）と、
+`af start --rootfs <path>`（手動配置した R を使う）の両方を残す。
+
+なお「OCI レジストリから layer を pull する」案（基底イメージの重複排除が効く）は
+否決 — 素の HTTPS GET + sha256 で足りるところに whiteout 処理つきの pull 実装を
+持ち込む価値がない（否決表参照）。
 
 - rootfs は workspace イメージの**配布 variant（lean rootfs）**: workspace-agent・tmux・
   git・gh ラッパー・node・chromium の**実行時ライブラリ群**・fontconfig+DejaVu など
@@ -234,7 +248,7 @@ CGI のみで https を使わないため、静的ビルドの難所（libcurl+o
 
 | サブコマンド | 動作 |
 |---|---|
-| `af start` | 初回のみ `rootfs.tar.zst` を `WS_DATA/shared/rootfs/<v>/` へ展開 → preflight（userns 可否チェック。tmux/git/claude の存在 warn は**廃止** — 全部 rootfs 内）→ `AF_RUNTIME=native` / rootfs モード env / `CONSOLE_DIR=<pkg>/console` / `AF_DOCS_DIR=<pkg>/docs` / `GIT_HTTP_BACKEND=<pkg>` 配線 / `WS_DATA=~/.local/share/agent-fleet`（既定）で `bin/af-cp` を exec |
+| `af start` | 初回のみ rootfs.json のピンに従い R を DL（sha256 検証・進捗表示。`--rootfs <path>` / 同梱 full tar なら DL なし）→ `WS_DATA/shared/rootfs/<r>/` へ展開（同 `<r>` が展開済みなら再利用） → preflight（userns 可否チェック。tmux/git/claude の存在 warn は**廃止** — 全部 rootfs 内）→ `AF_RUNTIME=native` / rootfs モード env / `CONSOLE_DIR=<pkg>/console` / `AF_DOCS_DIR=<pkg>/docs` / `GIT_HTTP_BACKEND=<pkg>` 配線 / `WS_DATA=~/.local/share/agent-fleet`（既定）で `bin/af-cp` を exec |
 | `af reset [--all]` | `run-dev.sh` の `do_reset` 移植（bwrap 化で tmux 掃除は簡素化: プロセスグループ kill のみ）。`--all` は展開済み rootfs も対象 |
 | `af status` | pid ファイル + `/proc` 照合で CP / workspace の生存表示（任意・後回し可） |
 
@@ -250,11 +264,13 @@ CGI のみで https を使わないため、静的ビルドの難所（libcurl+o
 --die-with-parent`）で entrypoint.sh 起動へ切り替える。State/pidfile/Stop は共通。
 `AF_NATIVE_AGENT_BIN` は従来モード（開発・`run-dev.sh native`）用にそのまま残す。
 
-**サイズ**: lean rootfs は CLI 群（claude/codex/opencode/agy + npm 残渣）・
-chromium 本体 + CJK フォント・Go toolchain・AWS CLI+SSM plugin・ops MCP 群を落とし、
-全焼き込み比で**圧縮 700MB 級の減量**を見込む（残るのは Debian ベース +
-build-essential/python + tmux/git/svn + node + chromium 実行時ライブラリ + 基本
-ユーティリティで、zstd で 200MB 台目安・要実測）。リリース工程では
+**サイズ**: 配布 tar（C）は**数十 MB**（af-cp ~20MB + console dist + docs + 静的小物）。
+rootfs（R）は CLI 群（claude/codex/opencode/agy + npm 残渣）・chromium 本体 + CJK
+フォント・Go toolchain・AWS CLI+SSM plugin・ops MCP 群を落とした lean で、
+全焼き込み比 **圧縮 700MB 級の減量**、残は Debian ベース + build-essential/python +
+tmux/git/svn + node + chromium 実行時ライブラリ + 基本ユーティリティで
+**zstd 200MB 台目安**（要実測）。R は初回起動時の一度きりの DL で、以降のアプリ更新は
+C（数十 MB）だけで済む（`<r>` 不変なら再 DL なし）。リリース工程では
 `docker buildx build -o type=tar`（コンテナ起動不要）で書き出し、zstd 圧縮する。
 
 **否決した代替案**（検討の記録）:
@@ -265,6 +281,8 @@ build-essential/python + tmux/git/svn + node + chromium 実行時ライブラリ
 | proot（ptrace ベース・無特権） | syscall フックで桁級に遅い。git/ビルド作業が主用途の本製品では成立しない |
 | `wsl --import` で workspace を別ディストロ化 | WSL 専用（汎用 Linux に効かない）・`wsl.exe` interop への依存・別ディストロへの exec を担う新 Runtime アダプタが必要。bwrap 案はコード差分が Start 1 点で済む |
 | 全部入り単一バイナリ（console/rootfs を go:embed） | GB 級 embed は非現実的。tar 配布が前提になった時点で無意味 |
+| rootfs を OCI レジストリの layer pull で取得（基底イメージの重複排除狙い） | manifest 解決・layer 順序・whiteout 処理を持つ pull 実装が要る。単一 tar.zst の HTTPS GET + sha256 検証で同じ結果が得られ、節約できるのは基底層の数十 MB のみ。複雑さに見合わない |
+| rootfs を配布先で組み立て（deb を DL して debootstrap 相当） | root なしでは postinst/trigger が走らせられず、chromium 依存群のような複雑パッケージで壊れる。ビルド済み rootfs の DL が確実 |
 
 **アップデート**: 新 tar 展開 → `af start`（新 rootfs は版別ディレクトリへ展開・旧版は
 reset で掃除）。データ（`WS_DATA`）は外にあるので触れない。migration は CP 起動時自動・
@@ -409,8 +427,11 @@ VERSION=0.2.0 deploy/release/build.sh [--compose] [--native] [--save] [--all]
 - `--compose` = 現 `deploy/compose/release.sh` の処理（イメージビルド + バンドル A、
   `--save` で B）。実装は既存 release.sh を呼ぶ委譲から始める（compose/release.sh は
   当面そのまま残す — ec2-single runbook が参照しているため）。
-- `--native` = §35.3.1 の C（amd64 先行）: af-cp 静的ビルド + bwrap/git 静的ビルド（自前
-  ビルダーイメージ）+ `buildx -o type=tar` で rootfs 書き出し + zstd 圧縮 + console/docs 同梱。
+- `--native` = §35.3.1 の C + R（amd64 先行）: af-cp 静的ビルド + bwrap/git 静的ビルド
+  （自前ビルダーイメージ）+ `buildx -o type=tar` で lean rootfs（R）書き出し + zstd 圧縮
+  + rootfs.json（R の url/sha256/`<r>`）を焼いた C を組み立て。`--bundle-rootfs` で
+  R 同梱の self-contained 版も生成。R の `<r>` は内容ハッシュ由来にして、イメージ不変の
+  リリースで同一 `<r>` を再利用（利用者の再 DL なし）。
 - 仕上げに `SHA256SUMS`（D）を dist 直下へ。
 - ECR push（release-ecr.sh）は**顧客環境側の操作**なのでオーケストレータに含めない
   （バンドル A の `aws/ecs/` に同梱して現地で叩く）。
@@ -420,7 +441,7 @@ VERSION=0.2.0 deploy/release/build.sh [--compose] [--native] [--save] [--all]
 | フェーズ | 内容 | 出口 |
 |---|---|---|
 | **P1: 共通基盤** | 版刻印（§35.6.1）・release.sh へ `aws/` 同梱 + SHA256SUMS・`deploy/release/build.sh` 骨格・**配布 variant（`BAKE_AGENT_CLIS=0`）と entrypoint のピン版 boot-install 一般化 + NOTICE/帰属整備（§35.4.1）** | `VERSION=x build.sh --compose` で A+B+D が出る（B は lean variant・起動時ピン install がコンテナで通る） |
-| **P2: native tar（self-contained）** | `runtime_native.go` の rootfs モード（bwrap ラップ・`AF_NATIVE_ROOTFS`）・ビルダ（--native: rootfs 書き出し + 静的 bwrap/git）・`workspace-agent install-chromium` + `findChromiumBinary` 解決順変更（専用ピン dir を playwright cache より先に）・`install-go` + toolchains UI への Go 追加・ops 系オンデマンド（ssm 初回の awscli+SMP 導入 / mcp-run の uvx ピン実行・grafana DL）・ランチャ `af`・README-native（WSL 導入/userns 注記/更新） | **素の WSL2（追加インストールなし）**で tar 展開 → `af start` → clone → claude セッション E2E（ブラウザペインは初回 attach でピン版 chromium が入る） |
+| **P2: native tar（self-contained）** | `runtime_native.go` の rootfs モード（bwrap ラップ・`AF_NATIVE_ROOTFS`）・ビルダ（--native: lean rootfs 書き出し + 静的 bwrap/git + rootfs.json 生成）・ランチャの R 初回 DL（sha256 検証・`--rootfs` オフライン経路）・`workspace-agent install-chromium` + `findChromiumBinary` 解決順変更（専用ピン dir を playwright cache より先に）・`install-go` + toolchains UI への Go 追加・ops 系オンデマンド（ssm 初回の awscli+SMP 導入 / mcp-run の uvx ピン実行・grafana DL）・ランチャ `af`・README-native（WSL 導入/userns 注記/更新） | **素の WSL2（追加インストールなし）**で tar 展開 → `af start` → clone → claude セッション E2E（ブラウザペインは初回 attach でピン版 chromium が入る） |
 | **P3: ECS 配布** | release-ecr.sh・ImageTag/Persistence パラメータ化・更新 runbook・最小 IAM 表 | sandbox で「push → deploy → WS 起動 → タグ更新 → 次回 Start で新イメージ」一巡 |
 | **P4: 検証ゲート** | §35.8 の未済分（native 実機が筆頭） | 各ゲート緑 + 第 2 デプロイ再現 |
 
@@ -441,8 +462,11 @@ P1→P2 が本丸（native が唯一のゼロ→イチ）。P3 は独立に並�
 1. **native tar への docs/ 同梱範囲**: 全ツリー（内部 dev/decisions/history 込み・単一ユーザー
    なので権限問題なし）か、`guide/` + `dev/` のみに絞るか。tar サイズと「設計文書を配布物に
    含める抵抗感」次第。→ 推奨: まず全ツリー（実装が最短・自分用配布のうちは問題にならない）。
-2. **配布チャネル**: 社内共有のみで始めるか、GitHub Releases / GHCR を立てるか（§35.4）。
-   → 推奨: P1〜P2 はファイル渡しで完結させ、チャネルは需要が出た時点で。
+2. **配布チャネル = rootfs（R）の置き場**: native の初回 DL には**認証なしで GET できる
+   公開 URL** が必要で、本リポジトリは private のため Releases asset は素の curl で取れない。
+   → 推奨: 公開の dist 専用 repo（例 `agent-fleet-dist`）の Releases に R（+C）を置く
+   （R は OSS のみなので公開に支障なし）。完全ファイル渡し運用は `--bundle-rootfs` の
+   self-contained tar で両立するので、公開置き場を作るまでのつなぎも効く。
 3. **`/healthz` の版表示 vs `/api/version` 新設**（§35.6.1）: 監視互換（`ok` 文字列を見る
    ものが居ないか）だけ確認して決める。
 4. **Helm の棚上げを roadmap に反映するか**（§35.3.4-5）。→ 推奨: 反映する。
