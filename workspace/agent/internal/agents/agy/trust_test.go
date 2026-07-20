@@ -33,8 +33,8 @@ func trusted(t *testing.T) []string {
 
 func TestEnsureWorkspaceTrustedCreatesAndIsIdempotent(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	ensureWorkspaceTrusted("/home/dev/repos/proj")
-	ensureWorkspaceTrusted("/home/dev/repos/proj")
+	EnsureWorkspaceTrusted("/home/dev/repos/proj")
+	EnsureWorkspaceTrusted("/home/dev/repos/proj")
 	if got := trusted(t); len(got) != 1 || got[0] != "/home/dev/repos/proj" {
 		t.Fatalf("got %v", got)
 	}
@@ -46,7 +46,7 @@ func TestEnsureWorkspaceTrustedPreservesOtherKeys(t *testing.T) {
 		"enableTelemetry":   false,
 		"trustedWorkspaces": []any{"/w1"},
 	})
-	ensureWorkspaceTrusted("/w2")
+	EnsureWorkspaceTrusted("/w2")
 	m := readSettingsRaw(t)
 	if v, ok := m["enableTelemetry"].(bool); !ok || v {
 		t.Fatalf("enableTelemetry lost: %v", m)

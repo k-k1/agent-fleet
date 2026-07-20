@@ -49,12 +49,13 @@ func autoTitleSuggestEnabled() bool {
 }
 
 // assistantAgentPref returns the user's pinned assistant-chat backend ("claude" |
-// "codex" | "opencode"), or "" for auto/unset — the AgentsTab アシスタントのエージェント
-// setting. Read live per call (like chatOutputLanguage) so a change applies from the
-// next builtin-assistant conversation / one-shot call without a restart.
+// "codex" | "opencode" | "agy"), or "" for auto/unset — the AgentsTab アシスタントの
+// エージェント setting. Read live per call (like chatOutputLanguage) so a change
+// applies from the next builtin-assistant conversation / one-shot call without a
+// restart.
 func assistantAgentPref() string {
 	switch v, _ := readUIPrefs()["assistantAgent"].(string); v {
-	case "claude", "codex", "opencode":
+	case "claude", "codex", "opencode", "agy":
 		return v
 	default:
 		return ""

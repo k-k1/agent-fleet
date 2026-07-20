@@ -31,11 +31,11 @@ func stateDir() string { return filepath.Join(paths.HomeDir(), ".gemini", "antig
 
 func settingsPath() string { return filepath.Join(stateDir(), "settings.json") }
 
-// lastConversationFor returns agy's conversation UUID for dir from its
+// LastConversationFor returns agy's conversation UUID for dir from its
 // cache/last_conversations.json (cwd→UUID) — the immediate source; the SQLite
 // summaries DB is lazily written and can't be relied on (docs/32 Track D-3).
 // "" when the file or entry is absent.
-func lastConversationFor(dir string) string {
+func LastConversationFor(dir string) string {
 	b, err := os.ReadFile(filepath.Join(stateDir(), "cache", "last_conversations.json"))
 	if err != nil {
 		return ""

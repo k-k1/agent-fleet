@@ -211,10 +211,13 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // 記述だけで画像を読む — 実機検証済み（日本語込みで OCR できた）。Starter Quota =
     // experimental pool: the launch hint carries the 実験枠 tag, the WS bar
     // shows the quota gauge.
+    // headlessChat: `agy -p` backs assistant-chat conversations (resume via
+    // --conversation; plain-text output — no working steps, no context gauge).
     managedDriver: false,
     tuiMemoryCost: "",
     caps: caps({
       chat: true,
+      headlessChat: true,
       transcript: true,
       model: true,
       imagePaste: true,

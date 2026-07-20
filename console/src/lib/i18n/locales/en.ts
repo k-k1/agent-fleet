@@ -554,6 +554,7 @@ export const en: Record<keyof typeof ja, string> = {
   "asst_agent.claude": "Claude",
   "asst_agent.codex": "Codex",
   "asst_agent.opencode": "opencode",
+  "asst_agent.agy": "Antigravity",
 
   // --- agent settings (AgentsTab) ---
   "agents.session": "Session",
@@ -564,7 +565,7 @@ export const en: Record<keyof typeof ja, string> = {
     "The reply language for the assistant chat. “Match input” replies in the language of the text or question you give it. Choosing Japanese/English replies in that language even for text in another language (translation assistants excluded).",
   "agents.assistant_agent": "Assistant agent",
   "agents.note_assistant_agent":
-    "The CLI that powers the assistant chat and title suggestions. “Auto” picks a connected one in the order Claude → Codex → opencode. A fixed CLI falls back to auto when it isn't connected. Takes effect from a new conversation with the built-in assistant (custom assistants prefer their own agent setting).",
+    "The CLI that powers the assistant chat and title suggestions. “Auto” picks a connected one in the order Claude → Codex → opencode → Antigravity (Antigravity last — its free-plan quota is scarce). A fixed CLI falls back to auto when it isn't connected. Takes effect from a new conversation with the built-in assistant (custom assistants prefer their own agent setting).",
   "agents.assistant_auto_turn": "Auto-respond to session reports",
   "agents.note_assistant_auto_turn":
     "When a session launched or steered by the Fleet Operator (or another assistant with AF write access) reports back, the assistant runs one turn automatically to process it. As a runaway guard, at most 10 unattended turns run per conversation (reset whenever you send a message).",

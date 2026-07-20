@@ -110,7 +110,7 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 	// is skipped outright.
 	loginDir := filepath.Join(stateDir(), "login-flow")
 	_ = os.MkdirAll(loginDir, 0o700)
-	ensureWorkspaceTrusted(loginDir)
+	EnsureWorkspaceTrusted(loginDir)
 
 	cmd := exec.Command("agy")
 	cmd.Dir = loginDir

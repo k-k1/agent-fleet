@@ -72,6 +72,10 @@ type chatConversation struct {
 	ClaudeSessionID   string `json:"claude_session_id,omitempty"`
 	CodexSessionID    string `json:"codex_session_id,omitempty"`
 	OpencodeSessionID string `json:"opencode_session_id,omitempty"`
+	// AgyConversationID is agy's native conversation UUID (`--conversation`), captured
+	// from cache/last_conversations.json after the first `-p` turn (agy has no
+	// session-id flag nor structured output to hand it over — see agyChat).
+	AgyConversationID string `json:"agy_conversation_id,omitempty"`
 	// AFTools attaches the local Agent Fleet MCP tools (read-only) to this chat's
 	// claude so it can inspect the user's workspace (docs/19 Q1). Legacy field kept for
 	// conversations created before assistants (Q2); new conversations drive tools via the
@@ -256,6 +260,15 @@ const defaultCodexChatModel = "gpt-5.6-luna"
 // provider/model explicitly in its template.
 const defaultOpencodeChatModel = "opencode/nemotron-3-ultra-free"
 
+// defaultAgyChatModel favors the fast Gemini Flash tier for conversational
+// assistants: chat is latency-sensitive, agy's distinctive value here is Gemini
+// (its Claude models duplicate the claude backend and are Thinking-only), and
+// Flash is the quota-cheapest choice on the scarce Starter/free plan (docs/32
+// Track D). The value is `agy models` display-name syntax; a name the live
+// catalog no longer lists is dropped at send time (agyChatModel) so a rename
+// upstream degrades to agy's own default instead of a hard error.
+const defaultAgyChatModel = "Gemini 3.5 Flash (Medium)"
+
 // resolveChatModel applies an agent-specific default only when the assistant did not
 // pin a model. The resolved value is snapshotted onto a new conversation, so an
 // existing thread keeps its prior model selection.
@@ -263,11 +276,13 @@ func resolveChatModel(agent, model string) string {
 	if model = strings.TrimSpace(model); model != "" {
 		return model
 	}
-	if agent == session.KindCodex {
+	switch agent {
+	case session.KindCodex:
 		return defaultCodexChatModel
-	}
-	if agent == session.KindOpencode {
+	case session.KindOpencode:
 		return defaultOpencodeChatModel
+	case session.KindAgy:
+		return defaultAgyChatModel
 	}
 	return ""
 }

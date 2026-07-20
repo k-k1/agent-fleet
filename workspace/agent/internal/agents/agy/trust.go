@@ -35,11 +35,11 @@ func writeSettings(m map[string]any) {
 	}
 }
 
-// ensureWorkspaceTrusted pre-accepts agy's workspace-trust gate for dir by
+// EnsureWorkspaceTrusted pre-accepts agy's workspace-trust gate for dir by
 // appending it to trustedWorkspaces in settings.json — exactly what agy writes
 // when the user answers "Yes, I trust this folder" (実測: 事前追加でプロンプト
 // はスキップされ、メイン画面に直行する). Best-effort and idempotent.
-func ensureWorkspaceTrusted(dir string) {
+func EnsureWorkspaceTrusted(dir string) {
 	if dir == "" {
 		return
 	}

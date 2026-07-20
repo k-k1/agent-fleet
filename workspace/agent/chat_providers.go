@@ -1,7 +1,7 @@
 package main
 
-// アシスタントチャットのプロバイダ実装（claude/codex の headless CLI 駆動）と
-// CLI 起動まわりの下回り。chat.go からの機械的分割（docs/23 残②）。
+// アシスタントチャットのプロバイダ実装（claude/codex/opencode/agy の headless CLI
+// 駆動）と CLI 起動まわりの下回り。chat.go からの機械的分割（docs/23 残②）。
 
 import (
 	"bufio"
@@ -18,6 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
@@ -37,6 +39,7 @@ var chatProviders = map[string]chatProvider{
 	session.KindClaude:   claudeChat{},
 	session.KindCodex:    codexChat{},
 	session.KindOpencode: opencodeChat{},
+	session.KindAgy:      agyChat{},
 }
 
 // --- backend availability (claude-less workspaces, docs/19) ----------------------
@@ -73,6 +76,8 @@ func headlessAgentAvailable(kind string) bool {
 		v = codex.LoggedIn()
 	case session.KindOpencode:
 		v = opencode.Available()
+	case session.KindAgy:
+		v = agy.SignedIn()
 	}
 	headlessAvailMu.Lock()
 	headlessAvailAt[kind], headlessAvail[kind] = time.Now(), v
@@ -84,13 +89,15 @@ func headlessAgentAvailable(kind string) bool {
 // and one-shot calls. The user's explicit choice (設定 > エージェント「アシスタントの
 // エージェント」, ui-prefs assistantAgent) wins while that CLI is usable; otherwise —
 // auto, unset, or the pinned CLI not connected — the first authenticated of
-// claude → codex → opencode. Falls back to claude when nothing is connected (the
-// call then surfaces a clear error).
+// claude → codex → opencode → agy. agy sits last on purpose: its Starter/free
+// quota is tiny (docs/32 Track D), so auto-selection reaches it only in an
+// agy-only workspace; using it otherwise is an explicit pin. Falls back to
+// claude when nothing is connected (the call then surfaces a clear error).
 func preferredHeadlessAgent() string {
 	if pin := assistantAgentPref(); pin != "" && headlessAgentAvailable(pin) {
 		return pin
 	}
-	for _, k := range []string{session.KindClaude, session.KindCodex, session.KindOpencode} {
+	for _, k := range []string{session.KindClaude, session.KindCodex, session.KindOpencode, session.KindAgy} {
 		if headlessAgentAvailable(k) {
 			return k
 		}
@@ -115,7 +122,7 @@ func chatProviderFor(c *chatConversation) chatProvider {
 
 // chatProviderKind returns the concrete backend selected by chatProviderFor. Keeping
 // this out of chatProvider avoids widening every test stub merely for presentation
-// metadata. Production providers are the three value types below.
+// metadata. Production providers are the four value types below.
 func chatProviderKind(c *chatConversation, prov chatProvider) string {
 	switch prov.(type) {
 	case claudeChat:
@@ -124,6 +131,8 @@ func chatProviderKind(c *chatConversation, prov chatProvider) string {
 		return session.KindCodex
 	case opencodeChat:
 		return session.KindOpencode
+	case agyChat:
+		return session.KindAgy
 	default:
 		return c.Agent // test/custom provider: best truthful fallback available
 	}
@@ -641,6 +650,86 @@ func parseOpencodeRunEvents(out []byte) (reply, sesID string, usage opencodeUsag
 	return strings.TrimRight(strings.Join(parts, "\n\n"), "\n"), sesID, usage
 }
 
+// agyChat runs `agy -p` (print mode, plain-text stdout — v1.1.4 has no structured
+// output), resuming via `--conversation <UUID>`. The UUID is captured from agy's
+// cwd→last-conversation map (cache/last_conversations.json), which a `-p` run
+// writes on process exit (docs/32 Track D-3 — unlike the TUI, which flushes it
+// only on graceful exit). agy has no system-prompt flag, so persona/knowledge ride
+// the headlessPrompt preamble. `-p` auto-DENIES tool permission prompts (docs/32
+// D-5), which happens to be the chat contract (no file/shell mutation) — but it
+// also means knowledge dirs and af MCP tools are effectively unavailable on this
+// backend for now; the assistant answers from the prompt text alone. No usage
+// events either, so the context gauge stays empty (Context = nil).
+type agyChat struct{}
+
+func (agyChat) send(ctx context.Context, c *chatConversation, prompt string) (string, error) {
+	dir := agyChatDir(c)
+	agy.EnsureWorkspaceTrusted(dir) // pre-accept the trust gate; -p would auto-deny it
+	args := agyChatArgs(c, headlessPrompt(c.personaOf(), c.knowledgeDirs(), prompt))
+	cmd := exec.CommandContext(ctx, "agy", args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("agy execution failed: %s", cliErr(err))
+	}
+	if c.AgyConversationID == "" {
+		// First turn: adopt the conversation this run just recorded for its private
+		// cwd. Per-conversation dirs make the map entry unambiguous (see agyChatDir).
+		c.AgyConversationID = agy.LastConversationFor(dir)
+	}
+	reply := strings.TrimRight(strings.TrimSpace(string(out)), "\n")
+	if reply == "" {
+		return "", errors.New("no response from agy")
+	}
+	return reply, nil
+}
+
+// agyChatArgs builds the argv for one agy chat turn: flags first, the prompt as
+// `-p`'s value last (verified live v1.1.4 — `-p <prompt>` with the display-name
+// --model and --conversation resume all honored).
+func agyChatArgs(c *chatConversation, prompt string) []string {
+	var args []string
+	if c.Model != "" { // fetch the catalog only when there is a pin to validate
+		if m := agyChatModel(c.Model, agy.Models()); m != "" {
+			args = append(args, "--model", m)
+		}
+	}
+	if c.AgyConversationID != "" {
+		args = append(args, "--conversation", c.AgyConversationID)
+	}
+	return append(args, "-p", prompt)
+}
+
+// agyChatModel returns the --model value for a turn, self-healing a stale pin:
+// the pinned display name is passed through only while the live catalog (or its
+// stale-if-error cache) still lists it — a renamed/withdrawn model degrades to
+// agy's own default instead of failing every send. An empty catalog (CLI absent,
+// signed out) can't validate, so the pin passes through untouched.
+func agyChatModel(model string, catalog []agents.ModelChoice) string {
+	if model == "" || len(catalog) == 0 {
+		return model
+	}
+	for _, mc := range catalog {
+		if mc.ID == model {
+			return model
+		}
+	}
+	return ""
+}
+
+// agyChatDir is the per-CONVERSATION working dir for a chat's agy runs. agy's only
+// conversation-id handover is the cwd→last-conversation map, so two first turns
+// sharing a dir could adopt each other's UUID; a private dir per conversation makes
+// the capture race-free. Falls back to the shared chat workdir when mkdir fails
+// (resume then still works via the already-captured UUID).
+func agyChatDir(c *chatConversation) string {
+	dir := filepath.Join(homeDir(), ".config", "agent-fleet", "chat-wd", "agy-"+c.ID)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return chatWorkdir()
+	}
+	return dir
+}
+
 // headlessPrompt builds the stdin/argv prompt for backends without a system-prompt
 // flag (codex exec, opencode run): the persona as a tagged instruction block, the
 // knowledge dirs as a pointer line, then the user's prompt.
@@ -713,6 +802,25 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 			}()
 		}
 		return reply, nil
+	case session.KindAgy:
+		// agy has no ephemeral mode, so each one-shot leaves a throwaway conversation
+		// in agy's own state (and no CLI to delete it) — accepted: agy is preferred
+		// only when pinned or the sole connected backend. Runs on the cheap Flash
+		// default (quota-scarce free plan) unless overridden.
+		dir := chatWorkdir()
+		agy.EnsureWorkspaceTrusted(dir)
+		var args []string
+		if m := agyChatModel(envOr("AF_TITLE_MODEL_AGY", defaultAgyChatModel), agy.Models()); m != "" {
+			args = append(args, "--model", m)
+		}
+		args = append(args, "-p", headlessPrompt(persona, nil, prompt))
+		cmd := exec.CommandContext(ctx, "agy", args...)
+		cmd.Dir = dir
+		out, err := cmd.Output()
+		if err != nil {
+			return "", fmt.Errorf("agy execution failed: %s", cliErr(err))
+		}
+		return strings.TrimRight(strings.TrimSpace(string(out)), "\n"), nil
 	}
 	// claude (default): the historical path, kept native. --no-session-persistence is
 	// claude's --ephemeral analog (print-mode only, no transcript written, no resume):

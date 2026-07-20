@@ -276,6 +276,10 @@ func handleChatDelete(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "chat_delete", err.Error())
 		return
 	}
+	// agy chats get a private working dir (agyChatDir) — drop it with the thread.
+	// validConvID above already blocked traversal in id. Best-effort; empty for
+	// conversations on other backends is a no-op.
+	_ = os.RemoveAll(filepath.Join(homeDir(), ".config", "agent-fleet", "chat-wd", "agy-"+id))
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
