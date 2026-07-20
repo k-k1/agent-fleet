@@ -27,7 +27,7 @@ bind mount で永続し、イメージ更新の影響を受けない。
 | CP の Go | CP を再ビルドして再起動（`restart-cp.sh`）。イメージ再ビルド不要 |
 | Agent の Go / イメージ焼き込み | イメージ再ビルド → 稼働中 Workspace は**利用者が Console で Stop→Start**（CP からの強制入替はしない）|
 | 焼き込み CLI（claude / opencode / codex）の版 | **§10.2.1 の runbook に従う**（ARG bump → push → CI 検証 → run-dev.sh → Stop→Start）|
-| rtk の版 | `run-dev.sh` が起動時に `update-rtk.sh` で rtk-ai/rtk の最新を自動取得・vendor する（既に最新なら no-op、オフライン時は現状維持）→ Stop→Start。自動更新を止めるなら `WS_RTK_UPDATE=0`。手動更新は `deploy/local/update-rtk.sh`、版確認は `--check` |
+| rtk の版 | CLI 3 種と同じ**イメージ焼き込み・ARG ピン止め**（`workspace/Dockerfile` の `RTK_VERSION`。常時焼き込み `BAKE_RTK=1` 既定）。bump は ARG 書き換え → 再ビルド → Stop→Start。最新への追従は自己更新 opt-in（`AF_AGENT_SELF_UPDATE`）でも可 — entrypoint が CLI 群と一緒に rtk も latest へ更新する（`~/.local/bin` shadow・OFF に戻すと焼き込み版へ復帰）。旧ホスト vendoring（`update-rtk.sh` → `vendor/rtk`）は廃止 |
 | entrypoint が適用する類（設定 seed・TZ 等）| Stop→Start のみ（再ビルド不要）|
 | 共有 JVM | 共有 dir を消して再 provision（`deploy/local/provision-jvm.sh`）|
 
@@ -41,7 +41,8 @@ CLI 3 種（claude / opencode / codex）・gh・Go の版を上げるときは�
    - CLI 3 種: `npm view @anthropic-ai/claude-code version`（`opencode-ai` / `@openai/codex` も同様）
    - gh: [cli/cli の releases](https://github.com/cli/cli/releases) の最新
    - Go: `workspace/agent/go.mod` の `go` ディレクティブと**歩調を合わせる**（go.mod を
-     上げないなら据え置く）。rtk は手動不要 — run-dev.sh が `update-rtk.sh` で自動更新。
+     上げないなら据え置く）。rtk: [rtk-ai/rtk の releases](https://github.com/rtk-ai/rtk/releases)
+     の最新（`ARG RTK_VERSION`。他 CLI と同じ焼き込みピン）。
 2. **ARG bump**: `workspace/Dockerfile` の `ARG CLAUDE_CODE_VERSION` / `OPENCODE_VERSION` /
    `CODEX_VERSION`（/ `GH_VERSION` / `GO_VERSION`）を書き換える。ARG 変更が確実に
    キャッシュを破るので `--no-cache` は不要。
@@ -64,7 +65,7 @@ CLI 3 種（claude / opencode / codex）・gh・Go の版を上げるときは�
      `E2E_CODEX_AUTH_JSON` 使用・ChatGPT サブスク枠を実測 ~45k tokens/回 消費する。
      （Tier1＝無料・無認証の方は codex 関連の push で自動的に走る。）
 6. **ホスト反映**: ホストで `deploy/local/run-dev.sh`。イメージ再ビルド直後に
-   `e2e-smoke.sh`（L1）が自動で走り、版一致を再検証する。rtk もこのとき自動更新される。
+   `e2e-smoke.sh`（L1）が自動で走り、版一致を再検証する（rtk 同梱もここで確認される）。
    ⚠️ ホストはメモリ制約 — 重いビルドを並走させない（[HANDOFF §2](../HANDOFF.md)）。
 7. **Workspace 反映**: 各利用者が Console で **Stop→Start**（home は永続・repos は残る。
    CP からの強制入替はしない）。
@@ -86,8 +87,8 @@ CLI 3 種（claude / opencode / codex）・gh・Go の版を上げるときは�
   （無ければ dev 素起動。項目は [oauth.env.example](../../deploy/local/oauth.env.example)）。
   | サブコマンド | 動き |
   |---|---|
-  | （無指定）/ `local` | 開発既定。Docker ランタイム・rtk はホスト vendoring |
-  | `wsl` | WSL 個人利用プリセット（docker/cgroup preflight・rtk 焼き込み `BAKE_RTK=1`・`AUTH=dev` 固定）。旧 `wsl-quickstart.sh` はこれを exec する後方互換ラッパー |
+  | （無指定）/ `local` | 開発既定。Docker ランタイム |
+  | `wsl` | WSL 個人利用プリセット（docker/cgroup preflight・`AUTH=dev` 固定）。旧 `wsl-quickstart.sh` はこれを exec する後方互換ラッパー |
   | `native` | Docker なしコンテナレス（`AF_RUNTIME=native`・単一ユーザー・[34](../34-native-runtime.md)）。agent をホストビルドして渡す |
   | `reset [--all] [--yes]` | ローカルデータ初期化。既定は dev ユーザーのみ（DB・共有 JDK 温存）、`--all` で `WS_DATA` 全体。CP 稼働中は拒否し、docker/native 両方の残骸（コンテナ・agent プロセス・専用 tmux）を掃除してから消す |
 

@@ -8,7 +8,8 @@
 # エージェント CLI の contract / ドリフト検知はここには置かない（別ファイル・イメージ
 # build 不要）: claude-tui-contract.yml / codex-contract.yml / opencode-contract.yml。
 # 版ズレそのものの監視は cli-drift.yml。構成の全体像は docs/dev/10-development.md。
-# 注: rtk は git-ignored のホスト vendor 品なので CI は「rtk なし」パスの検証になる。
+# 注: rtk は常時焼き込み（BAKE_RTK=1 既定・ARG ピン）なので、CI ビルドのイメージにも
+# rtk が入り、L1 スモークが同梱を検証する（旧ホスト vendor 経路は廃止）。
 name: e2e
 
 on:

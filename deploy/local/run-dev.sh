@@ -4,9 +4,9 @@
 # ホストで CP を起動する。ブラウザで http://localhost:8099 を開く。
 #
 # 使い方:
-#   deploy/local/run-dev.sh [local]   # Docker ランタイム（開発既定。rtk はホスト vendoring）
-#   deploy/local/run-dev.sh wsl       # WSL 個人利用プリセット（Docker 必須。preflight・
-#                                     # rtk イメージ焼き込み(BAKE_RTK)・AUTH=dev 固定）
+#   deploy/local/run-dev.sh [local]   # Docker ランタイム（開発既定）
+#   deploy/local/run-dev.sh wsl       # WSL 個人利用プリセット（Docker 必須。
+#                                     # docker/cgroup preflight・AUTH=dev 固定）
 #   deploy/local/run-dev.sh native    # Docker なしコンテナレス（単一ユーザー・docs/34）
 #   deploy/local/run-dev.sh reset [--all] [--yes]
 #                                     # ローカルデータ初期化。既定は dev ユーザーの
@@ -18,8 +18,9 @@
 #   - サブコマンド無しのときは env AF_RUNTIME で分岐（native|wsl → コンテナレス）。
 #     ※ env の AF_RUNTIME=wsl は CP 側では「コンテナレス」の別名で、サブコマンド
 #       `wsl`（Docker プリセット）とは別物。紛れるのでサブコマンド指定を推奨。
-#   - claude / opencode / codex はイメージに焼き込み（Dockerfile の ARG でピン止め）。
-#     版の bump 手順（runbook）は docs/dev/10-development.md §10.2.1。
+#   - claude / opencode / codex / agy / rtk はイメージに焼き込み（Dockerfile の ARG でピン止め）。
+#     版の bump 手順（runbook）は docs/dev/10-development.md §10.2.1。最新への追従は
+#     設定モーダルの自己更新 opt-in（AF_AGENT_SELF_UPDATE）でも可（rtk 含む）。
 #
 # 例:
 #   deploy/local/run-dev.sh
@@ -46,7 +47,7 @@ WS_JVM_DIR="${WS_JVM_DIR:-$WS_DATA/shared/jvm}"
 # does not have the baked docs tree. Point staging at this checkout by default.
 AF_DOCS_DIR="${AF_DOCS_DIR:-$ROOT/docs}"
 WS_JDK="${WS_JDK:-1}"                  # 1=共有JDKをprovision / 0=省略（install-jdk の on-demand に寄せる）
-RTK_VERSION="${RTK_VERSION:-0.43.0}"   # wsl モードの焼き込み版（workspace/Dockerfile の既定と揃える）
+RTK_VERSION="${RTK_VERSION:-}"         # 焼き込み rtk 版の上書き（空=Dockerfile の ARG 既定ピン）
 DEV_KEY="${DEV_USER:-dev}"
 
 # 冒頭コメントブロック（shebang の次〜最初の非コメント行の手前）をヘルプとして表示。
@@ -194,22 +195,8 @@ fi
 }
 
 # ---- Workspace 実行環境の準備（モード別） ------------------------------------
-if [ "$MODE" = local ]; then
-  # rtk を最新へ自動更新（rtk-ai/rtk のリリース取得。既に最新なら no-op）。ネットワーク /
-  # gh 認証が要るので失敗はソフト。WS_RTK_UPDATE=0 で無効。
-  if [ "${WS_RTK_UPDATE:-1}" = "1" ]; then
-    bash "$ROOT/deploy/local/update-rtk.sh" || echo "WARN: rtk 自動更新に失敗（現状の rtk のまま続行）"
-  fi
-  # Vendor a host rtk binary into the build context so the image installs it
-  # (token-saving claude hook). Static binary → runs in the slim container.
-  RTK_SRC="${WS_RTK_BIN:-$HOME/.local/bin/rtk}"
-  if [ -x "$RTK_SRC" ]; then
-    install -m 0755 "$RTK_SRC" "$ROOT/workspace/vendor/rtk" && echo "==> vendored rtk from $RTK_SRC"
-  else
-    rm -f "$ROOT/workspace/vendor/rtk" 2>/dev/null || true
-  fi
-fi
-
+# rtk は常にイメージ焼き込み（Dockerfile の BAKE_RTK=1 既定・ARG ピン止め）。かつての
+# ホスト vendoring（update-rtk.sh → vendor/rtk）は廃止した。
 if [ "$MODE" != native ]; then
   # Provision the shared JDKs into WS_JVM_DIR (idempotent; first run is slow).
   # WS_JDK=0 なら省き、コンテナ内 `workspace-agent install-jdk` の on-demand に任せる。
@@ -220,20 +207,10 @@ if [ "$MODE" != native ]; then
     echo "==> WS_JDK=0: 共有 JDK provision を省略（必要時に workspace-agent install-jdk <major>）"
   fi
 
-  if [ "$MODE" = wsl ]; then
-    # rtk はホスト vendoring でなくビルド時にコンテナ内へ取得（自己完結イメージ）。
-    # 古い vendor/rtk が残っていると Dockerfile の後段 install が焼き込み版を上書き
-    # するので、このモードでは必ず除去する。
-    rm -f "$ROOT/workspace/vendor/rtk" 2>/dev/null || true
-    echo "==> build workspace image ($WS_IMAGE)  rtk=$RTK_VERSION を同梱"
-    docker build \
-      --build-arg BAKE_RTK=1 \
-      --build-arg "RTK_VERSION=$RTK_VERSION" \
-      -t "$WS_IMAGE" "$ROOT/workspace"
-  else
-    echo "==> build workspace image ($WS_IMAGE)"
-    docker build -t "$WS_IMAGE" "$ROOT/workspace"
-  fi
+  echo "==> build workspace image ($WS_IMAGE)"
+  docker build \
+    ${RTK_VERSION:+--build-arg "RTK_VERSION=$RTK_VERSION"} \
+    -t "$WS_IMAGE" "$ROOT/workspace"
 
   # イメージスモーク（焼き込み CLI の版 = Dockerfile の ARG ピン等を検証、数秒）。
   # WS_SMOKE=0 でスキップ。
