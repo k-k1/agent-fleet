@@ -73,6 +73,16 @@ func driveState(m session.Meta, alive, heal bool) string {
 			return st
 		}
 	}
+	// agy: no hooks — /input persists an optimistic "working" that nothing clears
+	// while an interactive prompt is up (the question/permission widget replaces the
+	// idle footer, so the claude-shaped heal below can't fire and the chat showed a
+	// blocked session as 作業中). The conversation DB knows (last step status=9 —
+	// agy/pending.go), so ask it first and report question/permission.
+	if m.Kind == session.KindAgy {
+		if st, _ := agy.Probe(m); st != "" {
+			return st
+		}
+	}
 	sid := session.UUID(m.Dir, m.Name)
 	state := status.LiveState(sid)
 	if heal && state != "idle" && tmuxx.AtIdlePrompt(m.Name) {

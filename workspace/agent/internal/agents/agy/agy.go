@@ -74,9 +74,15 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
-	// agy has no status hooks and its TUI chrome matches none of the claude-shaped
-	// tmuxx idle/busy heuristics, so no live state is surfaced (like shell/ssm).
+	// agy has no status hooks, so no working/idle state is surfaced. A pending
+	// interactive prompt IS detectable though (conversation-DB probe — pending.go),
+	// so the sessions list can badge 質問/許可待ち while the TUI is blocked.
 	li := agents.LiveInfo{Resumable: true}
+	if alive {
+		if st, _ := Probe(m); st != "" {
+			li.State = st
+		}
+	}
 	// Capture on BOTH sides of alive. Alive polls adopt the UUID via the
 	// brain-dir diff as soon as the first prompt lands (what lights the live
 	// chat mirror); dead polls cover a user /exit whose cwd-map flush the halt
