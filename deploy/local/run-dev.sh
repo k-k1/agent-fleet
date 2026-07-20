@@ -18,7 +18,7 @@
 #   - サブコマンド無しのときは env AF_RUNTIME で分岐（native|wsl → コンテナレス）。
 #     ※ env の AF_RUNTIME=wsl は CP 側では「コンテナレス」の別名で、サブコマンド
 #       `wsl`（Docker プリセット）とは別物。紛れるのでサブコマンド指定を推奨。
-#   - claude / opencode / codex / rtk はイメージに焼き込み（Dockerfile の ARG でピン止め）。
+#   - claude / opencode / codex / agy / rtk はイメージに焼き込み（Dockerfile の ARG でピン止め）。
 #     版の bump 手順（runbook）は docs/dev/10-development.md §10.2.1。最新への追従は
 #     設定モーダルの自己更新 opt-in（AF_AGENT_SELF_UPDATE）でも可（rtk 含む）。
 #
