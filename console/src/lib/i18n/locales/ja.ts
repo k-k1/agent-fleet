@@ -40,6 +40,7 @@ export const ja = {
   "err.chat_title_empty": "表示名が空です",
   "err.chat_message_empty": "メッセージが空です",
   "err.chat_conversation_not_found": "会話が見つかりません",
+  "err.chat_nothing_to_compact": "まだ圧縮できるコンテキストがありません（最初の応答の後に使えます）",
   "err.conn_api_key_required": "API キーを入力してください",
   "err.conn_grafana_fields_required": "Grafana の URL とサービスアカウントトークンを入力してください",
   "err.conn_url_scheme": "URL は http(s):// で始めてください",
@@ -1098,6 +1099,13 @@ export const ja = {
   "chat.tts_source_work": "チャット・作業過程",
   "chat.state_running": "進行中",
   "chat.state_idle": "待機中",
+  "chat.compact_btn": "圧縮",
+  "chat.compact_tip": "会話を要約し、要約だけを新しいセッションへ引き継いでコンテキストを圧縮します（この画面の履歴は残ります）",
+  "chat.compact_confirm_title": "コンテキストを圧縮しますか？",
+  "chat.compact_confirm_body":
+    "これまでの会話を要約し、要約だけを新しいセッションへ引き継ぎます。この画面の会話履歴はそのまま残りますが、引き継がれるのは要約のみです。要約の作成に1ターン分のトークンを消費します。",
+  "chat.compacting": "圧縮中…",
+  "chat.compact_failed": "コンテキストの圧縮に失敗しました",
   "chat.assistant_fallback": "アシスタント",
   "chat.greeting_empty": "メッセージを送って会話を始めましょう。",
   "chat.empty_hint":

@@ -231,6 +231,7 @@ func registerChatRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/chat/conversations/{id}/messages", rest)
 	mux.HandleFunc("POST /api/chat/conversations/{id}/stream", proxy.withResolved(proxy.stream)) // SSE (Phase B)
 	mux.HandleFunc("POST /api/chat/conversations/{id}/stop", rest)                               // cancel a detached in-flight turn
+	mux.HandleFunc("POST /api/chat/conversations/{id}/compact", rest)                            // 要約引き継ぎ（docs/33 第2段）
 	mux.HandleFunc("POST /api/chat/conversations/{id}/paste-image", rest)
 	mux.HandleFunc("GET /api/chat/conversations/{id}/pasted/{file}", rest)
 	// One-shot advisory turn (docs/21 メモ整理) — stateless, tools off. Proxied verbatim.

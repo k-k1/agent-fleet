@@ -309,6 +309,8 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 	// docs/30: reports that never got their own auto turn ride the next prompt, and a
 	// user message resets the unattended auto-turn budget.
 	prompt, pendingReports := injectPendingReports(c, content)
+	// docs/33: a compaction summary rides the NEW session's first prompt, outermost.
+	prompt, handoff := injectHandoff(c, prompt)
 	c.AutoTurns, c.AutoPausedNotified = 0, false
 
 	ctx, cancel := context.WithTimeout(r.Context(), chatTimeout)
@@ -322,6 +324,9 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	markReportsDelivered(pendingReports)
+	if handoff {
+		c.PendingHandoff = "" // carried into the new session — done
+	}
 
 	assistant := chatMessage{Role: "assistant", Content: reply, TS: nowMs()}
 	c.Messages = append(c.Messages, assistant)
@@ -368,6 +373,8 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 	// docs/30: undelivered session reports ride this prompt; a user message resets the
 	// unattended auto-turn budget.
 	prompt, pendingReports := injectPendingReports(c, content)
+	// docs/33: a compaction summary rides the NEW session's first prompt, outermost.
+	prompt, handoff := injectHandoff(c, prompt)
 	c.AutoTurns, c.AutoPausedNotified = 0, false
 
 	// From here the response is an SSE stream; per-frame errors ride the stream body.
@@ -416,6 +423,9 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	markReportsDelivered(pendingReports)
+	if handoff {
+		c.PendingHandoff = "" // carried into the new session — done
+	}
 
 	assistant := chatMessage{Role: "assistant", Content: reply, Steps: steps, TS: nowMs()}
 	c.Messages = append(c.Messages, assistant)

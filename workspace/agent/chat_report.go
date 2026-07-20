@@ -339,7 +339,10 @@ func runReportAutoTurn(convID string) {
 	defer cancel()
 	deregister := registerLiveTurn(convID, cancel) // Stop button + in_progress work as usual
 	defer deregister()
-	reply, err := prov.send(ctx, c, reportsPrompt(pending))
+	// docs/33: 圧縮直後の自動ターンも引き継ぎ要約を先頭に載せる（新セッションは
+	// 過去の指示・文脈を何も知らない）。
+	prompt, handoff := injectHandoff(c, reportsPrompt(pending))
+	reply, err := prov.send(ctx, c, prompt)
 	if err != nil {
 		// Keep the reports undelivered (they retry on the next turn) but persist the
 		// mutated resume handle, mirroring handleChatSend's failure path.
@@ -349,6 +352,9 @@ func runReportAutoTurn(convID string) {
 		return
 	}
 	markReportsDelivered(pending)
+	if handoff {
+		c.PendingHandoff = "" // carried into the new session — done
+	}
 	c.AutoTurns++
 	c.Messages = append(c.Messages, chatMessage{Role: "assistant", Content: reply, TS: nowMs()})
 	// 無人の自動ターンでも逼迫を見逃さない（notice＋通知センター、chat_usage.go）:

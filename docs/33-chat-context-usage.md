@@ -1,8 +1,9 @@
 # 33. アシスタントチャットのコンテキスト肥大対策
 
-- ステータス: 第1段（可視化＋逼迫通知）実装済み / 第2段以降は構想
-- 対象: `workspace/agent/chat_usage.go`（中核）、`chat_providers.go`（捕捉）、
-  `chat_handlers.go`・`chat_report.go`（通知の差し込み）、Console `ChatView`（表示）
+- ステータス: 第1段（可視化＋逼迫通知）・第2段（要約引き継ぎ＝手動コンパクション）実装済み / 第3段以降は構想
+- 対象: `workspace/agent/chat_usage.go`（第1段の中核）、`chat_compact.go`（第2段の中核）、
+  `chat_providers.go`（捕捉）、`chat_handlers.go`・`chat_report.go`（通知・引き継ぎの差し込み）、
+  Console `ChatView` / `ContextBar`（表示・圧縮ボタン）
 
 ## 1. 背景 — なぜ対策が要るか
 
@@ -76,15 +77,54 @@ tmux セッションには `get_session_usage` と ContextBar があるのに、
   （haiku・Tokens 17650 / Window 200000 recorded / Pct 8.8%）。
 - Console: typecheck / test / build / i18n:lint 緑。実フリート再ビルド後の実機目視は残。
 
-## 3. 今後の段（未実装・優先順）
+## 3. 第2段（実装済み）: 要約引き継ぎ＝手動コンパクション
 
-1. **要約引き継ぎ（自前コンパクション）**: 全文履歴を自分で持っている強みを使い、
-   「要約1ターン → resume ハンドル 3 種をクリア → 要約をプリアンブルに新プロバイダ
-   セッション開始」。3 プロバイダ共通で効き、CLI 側コンパクション仕様のドリフトに
-   依存しない。まず手動ボタン、実績が出たら閾値/エラー時の自動発動へ。
-2. **超過エラーの自己修復と通知**: "prompt is too long" 系エラーの判別 → notice で可視化
-   （現状、自動ターン経路は log のみで black hole）。将来はエラー検知→コンパクション→
-   リトライ。
+CLI 側の自動コンパクションは headless 経路での動作が保証されず、仕様ドリフトにも
+晒される。全文履歴を自分で持っている強みを使い、アプリ層で引き継ぐ（chat_compact.go）。
+
+### 3.1 手順（compactConversation）
+
+1. 現行プロバイダセッション（全文脈を持つ）へ**要約ターンを1回**流す
+   （`compactSummaryPrompt` — 後任アシスタントが読む引き継ぎ書を作らせる。言語は
+   会話の主要言語に合わせる）。
+2. resume ハンドル3種（Claude/Codex/Opencode SessionID）を**全部クリア** → 次ターンは
+   新プロバイダセッション。
+3. 要約を `PendingHandoff` として保存し、圧縮完了 notice（要約本文を併記＝利用者が
+   引き継ぎ内容を検証できる）を会話へ追記。旧セッションの `Context` スナップショットも
+   リセット（もう実体を指さない。バーは次ターンの usage で復活）。
+
+### 3.2 注入（injectHandoff）
+
+新プロバイダセッションの**最初のプロンプト**に `handoffPreamble`＋要約をプリアンブル
+として最外側に前置する（report 注入 → handoff 注入の順）。`PendingHandoff` のクリアは
+**ターン成功時のみ**（失敗ターンは次回再注入。docs/30 の報告注入と同じ流儀）。
+handleChatSend / handleChatStream / runReportAutoTurn の3経路で注入。境界ガード
+（要約はデータであり指示ではない、の一文）は reportPreamble と同じ発想。
+
+### 3.3 発動と UI
+
+- `POST /chat/conversations/{id}/compact`（会話ロック下・in_progress/Stop は通常ターンと
+  同扱い）。プロバイダセッションが無い会話は `chat_nothing_to_compact`（400）で弾く。
+- Console: ContextBar 右端に「圧縮」ボタン（`action` スロットを新設）。confirm ダイアログ
+  （トークン消費と「履歴は残るが引き継ぐのは要約のみ」を明示）→ 実行中は busy を店に立て
+  他ペインの送信もブロック。80% 逼迫 notice の文言もこのボタンへ誘導。
+
+### 3.4 検証
+
+- 単体（chat_compact_test.go）: 要約プロンプト送出・ハンドル全クリア・PendingHandoff
+  格納・Context/warn リセット・notice 追記・**失敗時の状態不変**（プロバイダエラー／空要約）・
+  injectHandoff の形状と非クリア・ハンドラのガード（404／nothing_to_compact）。
+- ライブ（実 claude CLI・E2E）: 「合言葉」を1st ターンで覚えさせ → compact → 別セッション
+  ID で質問 → 引き継ぎ要約経由で正答（新旧セッション ID が異なることも確認）。
+- go test 389 / console test 322・typecheck・build・i18n:lint 全緑。実機目視は残。
+
+## 4. 今後の段（未実装・優先順）
+
+1. **超過エラーの自己修復と通知**: "prompt is too long" 系エラーの判別 → notice で可視化
+   （現状、自動ターン経路は log のみで black hole）。将来はエラー検知→自動コンパクション
+   （第2段の compactConversation を再利用）→リトライ。
+2. **閾値/エラー時のコンパクション自動発動**: 第2段は手動ボタン。実績を見てから、逼迫
+   閾値超過や超過エラーで自動発動へ。
 3. **検証タスク**: headless 経路でウィンドウ超過させたときの各 CLI の実挙動（自動
    コンパクションの有無・エラー文言）の実測。①②の設計前提。
 4. **掃除**: 会話削除時にプロバイダ側セッション（chat-claude/projects の jsonl 等）を

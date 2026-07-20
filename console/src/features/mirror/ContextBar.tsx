@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { fmtTok } from "../../lib/fmttok.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { Sparkline } from "../../ui/Sparkline.tsx";
@@ -32,13 +33,16 @@ interface ContextBarProps {
   // the same row, after the context gauge. Omitted by the terminal head, which has none.
   spends?: number[];
   maxSpend?: number;
+  // Optional trailing action (assistant chat only: the compact button, docs/33) rendered
+  // at the row's end. The mirror/terminal heads pass nothing.
+  action?: ReactNode;
 }
 
 // ContextBar is a /context-like fill gauge for the context window, segmented by how
 // the prompt tokens break down (cache read / cache creation / fresh input). Shared
 // by the chat (MirrorView) and terminal (TerminalView) heads so the current context
 // fill is always visible, whichever view a claude pane is showing.
-export function ContextBar({ read, create, fresh, model, window: windowOverride, spends, maxSpend }: ContextBarProps) {
+export function ContextBar({ read, create, fresh, model, window: windowOverride, spends, maxSpend, action }: ContextBarProps) {
   const tr = useT();
   const used = read + create + fresh;
   // Prefer the agent-reported window (exact); fall back to the model-name guess.
@@ -84,6 +88,7 @@ export function ContextBar({ read, create, fresh, model, window: windowOverride,
           </span>
         </>
       )}
+      {action}
     </div>
   );
 }
