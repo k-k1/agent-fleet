@@ -607,7 +607,41 @@ func handleSessionStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	alive := sessionAlive(meta)
 	state := driveState(meta, alive, true)
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"name": name, "kind": meta.Kind, "alive": alive, "status": state})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"name": name, "kind": meta.Kind, "alive": alive, "status": state,
+		"ready": sessionInputReady(meta, alive),
+	})
+}
+
+// sessionInputReady is stricter than liveness: a newly resumed terminal session can
+// have a pane while its CLI is still drawing the boot screen, where typed prompts are
+// lost. Managed sessions can accept Send as soon as their handle is alive; raw shells
+// are immediately typable. Agent TUIs must expose their composer footer and must not
+// be blocked on a startup menu.
+func sessionInputReady(meta session.Meta, alive bool) bool {
+	if !alive {
+		return false
+	}
+	if meta.DriverKind() == session.DriverManaged || meta.Kind == session.KindShell {
+		return true
+	}
+	if meta.Kind == session.KindSSM {
+		pane := tmuxx.SessionPaneID(session.TmuxName(meta.Name))
+		if pane == "" {
+			return false
+		}
+		out, err := tmuxx.Cmd("capture-pane", "-p", "-S", "-", "-t", pane).Output()
+		return err == nil && strings.Contains(string(out), "Starting session with SessionId:")
+	}
+	if meta.Kind == session.KindClaude {
+		if state, _ := sessionTerminalState(meta.Name); state != "" {
+			return false
+		}
+	}
+	if meta.Kind == session.KindCodex && codexTerminalState(meta.Name) != "" {
+		return false
+	}
+	return paneMode(meta.Kind, session.TmuxName(meta.Name)) != ""
 }
 
 // handleSessionOutput (GET /sessions/{name}/output?since=<cursor>) returns the

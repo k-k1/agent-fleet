@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -19,6 +20,14 @@ func TestCodexChatBaseArgsNeverPromptAndStayReadOnly(t *testing.T) {
 func TestCodexMCPArgsPreApproveHeadlessTools(t *testing.T) {
 	got := codexMCPArgs(true, "00000000-0000-4000-8000-000000000000")
 	want := "mcp_servers.af.default_tools_approval_mode=\"approve\""
+	if !containsString(got, want) {
+		t.Fatalf("codex MCP args = %q, missing %q", got, want)
+	}
+}
+
+func TestCodexMCPArgsForwardAgentAndMemoCredentials(t *testing.T) {
+	got := codexMCPArgs(true, "00000000-0000-4000-8000-000000000000")
+	want := `mcp_servers.af.env_vars=["AGENT_TOKEN","AGENT_ADDR","AF_CP_BASE_URL","AF_MEMO_TOKEN"]`
 	if !containsString(got, want) {
 		t.Fatalf("codex MCP args = %q, missing %q", got, want)
 	}
@@ -69,6 +78,72 @@ func TestNormalizeLegacyMessagesAtCodexFallback(t *testing.T) {
 	}
 	if c.ActiveAgent != "claude" {
 		t.Fatalf("active agent = %q, want latest explicit claude", c.ActiveAgent)
+	}
+}
+
+func TestSyncProviderPromptReplaysFallbackDeltaOnLegacyClaudeResume(t *testing.T) {
+	c := &chatConversation{
+		Agent: "claude", ClaudeSessionID: "old-claude", CodexSessionID: "old-codex",
+		Messages: []chatMessage{
+			{Role: "user", Content: "古い依頼"},
+			{Role: "assistant", Content: "古い完了", Agent: "claude"},
+			{Role: "user", Content: "停止中の対象へ送って"},
+			{Role: "assistant", Content: "Codex側の失敗", Agent: "codex"},
+			{Role: "user", Content: "今度こそ送って"}, // current turn: supplied separately
+		},
+	}
+	got := syncProviderPrompt(c, "claude", "今度こそ送って", len(c.Messages)-1)
+	if strings.Contains(got, "古い依頼") || strings.Contains(got, "古い完了") {
+		t.Fatalf("already-known Claude history was replayed: %q", got)
+	}
+	for _, want := range []string{"停止中の対象へ送って", "Codex側の失敗", "今度こそ送って"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("synced prompt = %q, missing %q", got, want)
+		}
+	}
+	if strings.Count(got, "今度こそ送って") != 1 {
+		t.Fatalf("current request duplicated in synced prompt: %q", got)
+	}
+}
+
+func TestSyncProviderPromptUsesCursorAfterSuccessfulTurn(t *testing.T) {
+	c := &chatConversation{
+		Agent: "claude", ClaudeSessionID: "claude", ClaudeMessageCursor: 4,
+		Messages: []chatMessage{
+			{Role: "user", Content: "u1"},
+			{Role: "assistant", Content: "a1", Agent: "claude"},
+			{Role: "user", Content: "u2"},
+			{Role: "assistant", Content: "a2", Agent: "claude"},
+			{Role: "user", Content: "u3"},
+		},
+	}
+	got := syncProviderPrompt(c, "claude", "u3", 4)
+	if got != "u3" {
+		t.Fatalf("prompt with no missing turns = %q, want current prompt only", got)
+	}
+}
+
+func TestSyncProviderPromptRepairsLegacyGapEvenAfterSwitchBack(t *testing.T) {
+	c := &chatConversation{
+		Agent: "claude", ClaudeSessionID: "old-claude", CodexSessionID: "old-codex",
+		Messages: []chatMessage{
+			{Role: "user", Content: "最初"},
+			{Role: "assistant", Content: "Claude初回", Agent: "claude"},
+			{Role: "user", Content: "フォールバック中の依頼"},
+			{Role: "assistant", Content: "Codex応答", Agent: "codex"},
+			{Role: "user", Content: "認証復旧後の依頼"},
+			{Role: "assistant", Content: "Claude復帰後の応答", Agent: "claude"},
+			{Role: "user", Content: "今回"},
+		},
+	}
+	got := syncProviderPrompt(c, "claude", "今回", len(c.Messages)-1)
+	for _, want := range []string{"フォールバック中の依頼", "Codex応答", "Claude復帰後の応答"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("legacy gap repair = %q, missing %q", got, want)
+		}
+	}
+	if strings.Contains(got, "Claude初回") {
+		t.Fatalf("known pre-gap history was replayed: %q", got)
 	}
 }
 

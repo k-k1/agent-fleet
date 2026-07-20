@@ -28,18 +28,20 @@ func TestCompactConversation(t *testing.T) {
 	c := &chatConversation{
 		ID: randUUID(), Agent: "claude",
 		ClaudeSessionID: "old-claude", CodexSessionID: "old-codex", OpencodeSessionID: "old-oc",
-		Context:   &contextUsage{Tokens: 170000, Window: 200000, Pct: 85},
-		CtxWarned: true,
-		Messages:  []chatMessage{{Role: "user", Content: "hi", TS: 1}},
+		AgyConversationID: "old-agy",
+		Context:           &contextUsage{Tokens: 170000, Window: 200000, Pct: 85},
+		CtxWarned:         true,
+		Messages:          []chatMessage{{Role: "user", Content: "hi", TS: 1}},
 	}
 	prov := &stubProvider{reply: "要約テキスト"}
 	if err := compactConversation(context.Background(), c, prov, compactReasonManual); err != nil {
 		t.Fatal(err)
 	}
-	if len(prov.prompts) != 1 || prov.prompts[0] != compactSummaryPrompt {
+	if len(prov.prompts) != 1 || !strings.Contains(prov.prompts[0], providerSyncPreamble) ||
+		!strings.HasSuffix(prov.prompts[0], compactSummaryPrompt) {
 		t.Fatalf("summary prompt not sent: %+v", prov.prompts)
 	}
-	if c.ClaudeSessionID != "" || c.CodexSessionID != "" || c.OpencodeSessionID != "" {
+	if c.ClaudeSessionID != "" || c.CodexSessionID != "" || c.OpencodeSessionID != "" || c.AgyConversationID != "" {
 		t.Fatal("resume handles not cleared")
 	}
 	if c.PendingHandoff != "要約テキスト" {

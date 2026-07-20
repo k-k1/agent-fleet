@@ -110,8 +110,9 @@ func preferredHeadlessAgent() string {
 // chatProviderFor resolves the provider driving this conversation: the pinned agent
 // while its CLI is authenticated, else the preferred available backend — so a
 // claude-less (codex-only / opencode-only) workspace still gets working assistants.
-// Each provider keeps its own resume handle on the conversation, so a later switch
-// back resumes cleanly.
+// Each provider keeps its own resume handle on the conversation. The canonical
+// message cursor synchronizes turns handled by another backend before that handle is
+// resumed (chat_provider_context.go).
 func chatProviderFor(c *chatConversation) chatProvider {
 	if prov, ok := chatProviders[c.Agent]; ok && headlessAgentAvailable(c.Agent) {
 		return prov
@@ -466,6 +467,10 @@ func codexMCPArgs(write bool, convID string) []string {
 	return []string{
 		"-c", "mcp_servers.af.command=" + tomlString(paths.ExePath()),
 		"-c", "mcp_servers.af.args=" + serverArgs,
+		// Codex only forwards explicitly allowlisted variables to stdio MCP children.
+		// Without these, the isolated chat process starts the Agent Fleet server but
+		// every Agent call is unauthenticated and memo calls lose their CP bridge.
+		"-c", `mcp_servers.af.env_vars=["AGENT_TOKEN","AGENT_ADDR","AF_CP_BASE_URL","AF_MEMO_TOKEN"]`,
 		// Codex has a distinct MCP approval layer. Headless exec has no UI to answer
 		// it, so the default policy reports "user cancelled MCP tool call" unless the
 		// explicitly granted Agent Fleet server is pre-approved.

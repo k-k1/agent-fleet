@@ -23,6 +23,21 @@
 特に効く肥大ベクター: 翻訳/要約 verb（大きい文書の反復処理）、オペレーター会話
 （docs/30 — 報告＋自動ターン＋ツール結果が常駐的に積もる）、af_read/ops ツールの結果。
 
+### 1.1 プロバイダ切替時の正本同期
+
+会話 JSON の `Messages` は共通でも、Claude/Codex/OpenCode/Agy の native resume セッションは
+別々である。認証切れで Claude→Codex にフォールバックした後、認証復旧で古い Claude
+セッションをそのまま resume すると、その間の利用者発話と Codex 応答を知らず、過去の依頼を
+現在の依頼と誤認する。
+
+各プロバイダについて「native セッションが取り込んだ canonical message 数」を cursor として
+保存し、切替後の最初の prompt に未同期の user/assistant ターンをデータ境界付きで前置する。
+旧会話（cursor 無し）は、最初の他プロバイダ区間（無ければ最後の自プロバイダ応答）から cursor を
+復元する。report は既存の専用注入、notice は UI メタデータなので同期対象外。新規バックエンドへ
+注入する履歴は最大64 KiBに制限し、古い側から省略する。成功時だけ cursor を進めるため、失敗時は
+次ターンで再同期される。コンパクションの要約ターンにもこの同期を適用し、古い native 文脈だけを
+要約する事故を防ぐ。
+
 ## 2. 第1段（実装済み）: 可視化＋逼迫通知
 
 tmux セッションには `get_session_usage` と ContextBar があるのに、チャット自身には
@@ -89,7 +104,8 @@ CLI 側の自動コンパクションは headless 経路での動作が保証さ
 1. 現行プロバイダセッション（全文脈を持つ）へ**要約ターンを1回**流す
    （`compactSummaryPrompt` — 後任アシスタントが読む引き継ぎ書を作らせる。言語は
    会話の主要言語に合わせる）。
-2. resume ハンドル3種（Claude/Codex/Opencode SessionID）を**全部クリア** → 次ターンは
+2. resume ハンドル4種（Claude/Codex/Opencode SessionID＋Agy ConversationID）を
+   **全部クリア** → 次ターンは
    新プロバイダセッション。
 3. 要約を `PendingHandoff` として保存し、圧縮完了 notice（要約本文を併記＝利用者が
    引き継ぎ内容を検証できる）を会話へ追記。旧セッションの `Context` スナップショットも

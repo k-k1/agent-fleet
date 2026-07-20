@@ -12,7 +12,7 @@ package main
 //	   プリアンブルとして注入する（injectHandoff — 配信済みマークは成功時のみ、
 //	   docs/30 の報告注入と同じ流儀）
 //
-// 3 プロバイダ共通に効き、ストアの会話履歴（Messages）はそのまま残るので表示・
+// 4 プロバイダ共通に効き、ストアの会話履歴（Messages）はそのまま残るので表示・
 // 監査は失われない。発動は3系統: Console の手動ボタン（ContextBar 横）、超過エラー
 // からの自動復旧（第3段 chat_recover.go）、閾値の予防的自動発動（第4段
 // maybeAutoCompact — ターン開始前に挟み、既定 ON・設定で OFF 可）。
@@ -60,7 +60,9 @@ const (
 // appended notice (compactReason*). The caller holds the conversation lock and
 // saves afterwards.
 func compactConversation(ctx context.Context, c *chatConversation, prov chatProvider, reason string) error {
-	summary, err := prov.send(ctx, c, compactSummaryPrompt)
+	agent := chatProviderKind(c, prov)
+	prompt := syncProviderPrompt(c, agent, compactSummaryPrompt, len(c.Messages))
+	summary, err := prov.send(ctx, c, prompt)
 	if err != nil {
 		return err
 	}
@@ -68,7 +70,8 @@ func compactConversation(ctx context.Context, c *chatConversation, prov chatProv
 	if summary == "" {
 		return errors.New("empty summary from provider")
 	}
-	c.ClaudeSessionID, c.CodexSessionID, c.OpencodeSessionID = "", "", ""
+	c.ClaudeSessionID, c.CodexSessionID, c.OpencodeSessionID, c.AgyConversationID = "", "", "", ""
+	resetProviderCursors(c)
 	c.PendingHandoff = summary
 	// 旧セッションの占有スナップショットはもう実体を指さない。バーは次ターン
 	// （新セッション）の usage で復活する。
@@ -127,7 +130,7 @@ func maybeAutoCompact(ctx context.Context, c *chatConversation, prov chatProvide
 	if c.PendingHandoff != "" {
 		return false
 	}
-	if c.ClaudeSessionID == "" && c.CodexSessionID == "" && c.OpencodeSessionID == "" {
+	if c.ClaudeSessionID == "" && c.CodexSessionID == "" && c.OpencodeSessionID == "" && c.AgyConversationID == "" {
 		return false
 	}
 	cctx, cancel := context.WithTimeout(ctx, chatTimeout)
@@ -164,7 +167,7 @@ func handleChatCompact(w http.ResponseWriter, r *http.Request) {
 	}
 	// まだプロバイダセッションが無い（=積み上がったコンテキストが無い）会話に
 	// 要約ターンを流しても空回りするだけ — 明示エラーで返す。
-	if c.ClaudeSessionID == "" && c.CodexSessionID == "" && c.OpencodeSessionID == "" {
+	if c.ClaudeSessionID == "" && c.CodexSessionID == "" && c.OpencodeSessionID == "" && c.AgyConversationID == "" {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeChatNothingToCompact, "no provider session to compact")
 		return
 	}

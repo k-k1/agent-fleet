@@ -25,6 +25,12 @@
 - `mcp_stdio.go`: `--conv` をパースし、`create_session` は `POST /sessions` の `report_to` に、
   `send_to_session` は `POST /sessions/{name}/input` の `report_to` に**ツール側で自動同梱**。
   オペレーター（モデル）は何も覚えなくてよい。
+- `send_to_session` は停止中（`409 not_running`）を検出した場合だけ `/start` で再開し、
+  `/status` の `ready=true`（managed handle または TUI composer 準備完了）を待ってから再送する。
+  成功結果は `{sent:true,resumed:<bool>,session:<name>}`。401/409 等の Agent REST エラーは
+  MCP の `isError=true` に変換し、モデルには `sent=true` を確認するまで送信済みと回答させない。
+  これにより、停止中の TUI へ文字を送って消失する経路と、エラー JSON を成功結果として読む
+  経路をどちらも閉じる。
 - opencode バックエンドは対象外（write 用 opencode.json が grant 単位の共有ディレクトリで
   会話 id を焼き込めない）。claude / codex の af_write 会話で有効。
 
