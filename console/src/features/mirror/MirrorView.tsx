@@ -1894,6 +1894,7 @@ export function MirrorView({
                 onCancel={() => void sendInterrupt()}
                 answerMode={sessionMeta?.kind === "claude" ? "claude" : "menu"}
                 multiPage={sessionMeta?.kind === "codex"}
+                writeIn={sessionMeta?.kind === "agy"}
               />
             </div>
           </div>
@@ -3236,6 +3237,7 @@ function PendingQuestions({
   sending,
   answerMode = "claude",
   multiPage = false,
+  writeIn = false,
 }: {
   questions: Question[];
   onSubmitKeys: (keys: string[]) => void;
@@ -3259,6 +3261,14 @@ function PendingQuestions({
   // sequences in one go. opencode's dialog has no verified paging keys, so it stays
   // single-question-only (multiPage=false → terminal hint for multi).
   multiPage?: boolean;
+  // writeIn (agy): the menu appends a "Write-in..." row just after the options, so a
+  // menu question can ALSO be answered with free text — without this the card showed
+  // only the listed options and the 4th row was unreachable from chat. The row is
+  // entered rather than typed into directly: Down×options.length, Enter (opens
+  // "Your answer:"), the text, then Enter submits — 実測 (agy 1.1.4). That extra Enter
+  // is why this is its own flag and not folded into claude's free-text path, whose row
+  // IS the field (type straight into it).
+  writeIn?: boolean;
 }) {
   const qs = questions || [];
   const [sel, setSel] = useState<string[][]>(() => qs.map(() => []));
@@ -3341,6 +3351,16 @@ function PendingQuestions({
     const seq: Array<{ k?: string; t?: string }> = [];
     qs.forEach((q, qi) => {
       const opts = q.options || [];
+      const ft = writeIn ? (freeText[qi] || "").trim() : "";
+      if (ft) {
+        // Write-in row (agy): it sits just after the options and must be ENTERED before
+        // it accepts text — Enter opens the "Your answer:" field, the trailing Enter
+        // submits it. Typing without that first Enter lands on a plain option row, where
+        // the text is dropped and Enter would pick the highlighted option instead.
+        for (let k = 0; k < opts.length; k++) seq.push({ k: "Down" });
+        seq.push({ k: "Enter" }, { t: ft }, { k: "Enter" });
+        return;
+      }
       const ci = Math.max(
         0,
         opts.findIndex((o) => o.label === (sel[qi] || [])[0]),
@@ -3450,8 +3470,9 @@ function PendingQuestions({
               );
             })}
           </div>
-          {!menu && (
-            // Free-text ("Type something") — rendered for single questions too: the
+          {(!menu || writeIn) && (
+            // Free-text ("Type something" / agy's "Write-in...") — rendered for single
+            // questions too: the
             // composer can't answer an AUQ (typed text is ignored and Enter confirms
             // option 1), so this in-card row, driven via submit()'s reliable
             // Down-to-the-row-then-type sequence, is the only working free-text path.
@@ -3495,9 +3516,11 @@ function PendingQuestions({
             {tr("mirror.submit_answer")}
           </button>
         )}
-        {menu && menuDrivable && !single && (
+        {menu && menuDrivable && (!single || writeIn) && (
           // A paged multi-question menu (codex): pick an option per question above, then
-          // submit all pages' key sequences at once.
+          // submit all pages' key sequences at once. For a single question the options
+          // click-to-send, so this button exists only to carry a write-in answer (agy) —
+          // canSubmit is false until free text is typed, which is the intended gating.
           <button
             type="button"
             className="btn primary mq-submit"
