@@ -423,6 +423,41 @@ M1 で「不成立」とした chat/transcript を、brain transcript の発見�
   →応答ミラー」まで完走。既知の残: コンテキストゲージ・plan/fork は据え置き
   （transcript にトークン情報が無い・agy に fork 相当なし）。
 
+## アシスタントチャット対応（2026-07-20、headlessChat）
+
+`agy -p` を第4のチャットバックエンドとして配線した（`chat_providers.go` の
+`agyChat`。AssistantModal のエージェント候補・設定「アシスタントのエージェント」
+の選択肢・auto 選択順に agy/Antigravity が加わる）。実機（v1.1.4）検証で確定した
+headless チャット契約:
+
+- **プロンプトは `-p` の値（argv）**、stdout は応答テキストそのもの（構造化出力
+  なし）。system-prompt フラグが無いので persona/knowledge は codex/opencode 同様
+  `headlessPrompt` の前置きで渡す。
+- **resume**: `-p` プロセスは終了時に cwd→会話 UUID マップ
+  （`cache/last_conversations.json`）を書く（TUI と違い graceful exit 不要 —
+  Track D-3 の観測どおり）。初回ターン後にマップから UUID を採用し、以後
+  `--conversation <UUID>`。**cwd は会話ごとの専用 dir**
+  （`~/.config/agent-fleet/chat-wd/agy-<convID>`、起動前に trustedWorkspaces へ
+  事前追加）— 共有 dir だと並行する初回ターン同士が UUID を取り違えるため。
+  会話削除時に dir も削除。
+- **既定モデルは `Gemini 3.5 Flash (Medium)`**（`defaultAgyChatModel`）: チャットは
+  レイテンシ重視で、agy を選ぶ価値は Gemini（Claude 系は claude バックエンドと
+  重複かつ Thinking 固定）、無料枠のクォータ消費も最小。固定名の陳腐化対策として
+  送信時にライブカタログ（`agy.Models()`）に無い名前は落として agy 既定へ退避
+  （`agyChatModel`）。
+- **権限モデル**: `-p` はツール許可を自動拒否（D-5）— チャット契約（ファイル/
+  シェル禁止）とちょうど一致するのでそのまま利用。ただし knowledge dir の読み
+  取りや af MCP ツールもこのバックエンドでは実質使えない（M1 制約。ビルトイン
+  アシスタントを agy に固定するとツールなしの素チャットになる）。usage イベントも
+  無いためコンテキストゲージは空のまま。
+- **auto 選択順は claude → codex → opencode → agy の最後尾**（Starter 無料枠が
+  週次極小のため。agy-only ワークスペースでのみ自動選択される）。one-shot
+  （タイトル案）も agy 経路あり（`AF_TITLE_MODEL_AGY` で上書き）— ephemeral
+  モードが無いので使い捨て会話が agy 側に残る点は許容。
+- 検証: unit（args/モデル退避/resolveChatModel）＋ live
+  （`AF_AGY_LIVE=1 go test . -run TestAgyChatSendLive`: 初回ターン→UUID 捕捉→
+  resume で文脈維持を実機確認）。
+
 ## 会話中インタラクティブプロンプトの調査（2026-07-20、AskUserQuestion 相当の網羅確認）
 
 claude の AskUserQuestion / 許可プロンプトに相当する、**会話進行中に agy TUI が

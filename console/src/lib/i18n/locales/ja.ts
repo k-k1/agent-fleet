@@ -559,6 +559,7 @@ export const ja = {
   "asst_agent.claude": "Claude",
   "asst_agent.codex": "Codex",
   "asst_agent.opencode": "opencode",
+  "asst_agent.agy": "Antigravity",
 
   // --- エージェント設定（features/settings/AgentsTab.tsx）---
   "agents.session": "セッション",
@@ -569,7 +570,7 @@ export const ja = {
     "アシスタント・チャットの回答言語です。「入力に合わせる」は、渡した文章や質問の言語に合わせて返します。日本語／English を選ぶと、他言語の文章でもその言語で回答します（翻訳アシスタントは対象外）。",
   "agents.assistant_agent": "アシスタントのエージェント",
   "agents.note_assistant_agent":
-    "アシスタント・チャットとタイトル案の生成を動かす CLI です。「自動」は接続済みのものを Claude → Codex → opencode の順で選びます。固定した CLI が未接続のときは自動選択に戻ります。反映はビルトインアシスタントの新しい会話から（カスタムアシスタントは各自のエージェント設定が優先）。",
+    "アシスタント・チャットとタイトル案の生成を動かす CLI です。「自動」は接続済みのものを Claude → Codex → opencode → Antigravity の順で選びます（Antigravity は無料枠が小さいため最後）。固定した CLI が未接続のときは自動選択に戻ります。反映はビルトインアシスタントの新しい会話から（カスタムアシスタントは各自のエージェント設定が優先）。",
   "agents.assistant_auto_turn": "セッション報告への自動応答",
   "agents.note_assistant_auto_turn":
     "フリート・オペレーター等（AF 書き込み許可のアシスタント）が起こした・指示したセッションから完了報告が届いたとき、アシスタントが自動で 1 ターン動いて後続を処理します。暴走防止のため、あなたの発言なしで動ける自動ターンは会話ごとに最大 10 回です（発言でリセット）。",

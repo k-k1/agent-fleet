@@ -60,14 +60,14 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	}
 	// Pre-trust the launch dir so agy doesn't stall on its "Do you trust the
 	// contents of this project?" prompt (not skippable by flags).
-	ensureWorkspaceTrusted(m.Dir)
+	EnsureWorkspaceTrusted(m.Dir)
 	slotSid := session.UUID(m.Dir, m.Name)
 	resumeID := sids.Read(slotSid)
 	if resumeID == "" {
 		// Fresh conversation: snapshot the dir's current map entry AND the brain
 		// dir listing so the poll-time capture only adopts a UUID this launch
 		// actually created (cwd-map diff on exit, brain-dir diff while alive).
-		prelaunch.Write(slotSid, lastConversationFor(m.Dir))
+		prelaunch.Write(slotSid, LastConversationFor(m.Dir))
 		brainPrelaunch.Write(slotSid, strings.Join(listBrainDirs(), "\n"))
 	}
 	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Mode, resumeID), Cwd: m.Dir}, nil
@@ -120,7 +120,7 @@ func captureConversation(m session.Meta) {
 		prelaunch.Remove(slotSid)
 		brainPrelaunch.Remove(slotSid)
 	}
-	if cur := lastConversationFor(m.Dir); cur != "" && cur != prelaunch.Read(slotSid) {
+	if cur := LastConversationFor(m.Dir); cur != "" && cur != prelaunch.Read(slotSid) {
 		adopt(cur)
 		return
 	}

@@ -517,13 +517,16 @@ export const OUTPUT_LANGUAGES: [string, MsgKey][] = [
 ];
 
 // Assistant-chat backend choices (AgentsTab). "auto" picks the first CONNECTED of
-// claude → codex → opencode; a fixed choice falls back to auto when that CLI isn't
-// connected (opencode is always usable — its free tier needs no login).
+// claude → codex → opencode → agy (agy last: its free-plan quota is scarce, so auto
+// only reaches it when nothing else is connected); a fixed choice falls back to auto
+// when that CLI isn't connected (opencode is always usable — its free tier needs no
+// login).
 export const ASSISTANT_AGENTS: [string, MsgKey][] = [
   ["auto", "asst_agent.auto"],
   ["claude", "asst_agent.claude"],
   ["codex", "asst_agent.codex"],
   ["opencode", "asst_agent.opencode"],
+  ["agy", "asst_agent.agy"],
 ];
 
 // Mirror composer submit-key options, shared by the settings UI.

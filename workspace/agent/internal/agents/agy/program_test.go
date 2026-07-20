@@ -61,14 +61,14 @@ func writeLastConversations(t *testing.T, m map[string]string) {
 
 func TestLastConversationFor(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	if got := lastConversationFor("/w"); got != "" {
+	if got := LastConversationFor("/w"); got != "" {
 		t.Fatalf("missing file: got %q want empty", got)
 	}
 	writeLastConversations(t, map[string]string{"/w": "uuid-1"})
-	if got := lastConversationFor("/w"); got != "uuid-1" {
+	if got := LastConversationFor("/w"); got != "uuid-1" {
 		t.Fatalf("got %q want uuid-1", got)
 	}
-	if got := lastConversationFor("/other"); got != "" {
+	if got := LastConversationFor("/other"); got != "" {
 		t.Fatalf("unknown dir: got %q want empty", got)
 	}
 }

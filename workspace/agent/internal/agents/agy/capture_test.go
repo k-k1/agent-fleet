@@ -20,7 +20,7 @@ func TestCaptureConversationAdoptsOnlyFreshUUID(t *testing.T) {
 
 	// Fresh launch in a dir with a stale entry: snapshot it (BuildLaunch 相当).
 	writeLastConversations(t, map[string]string{dir: "stale-uuid"})
-	prelaunch.Write(slotSid, lastConversationFor(dir))
+	prelaunch.Write(slotSid, LastConversationFor(dir))
 
 	// Map still shows the stale entry → must NOT adopt.
 	captureConversation(m)
@@ -50,7 +50,7 @@ func TestCaptureConversationEmptyDirNoSnapshot(t *testing.T) {
 	slotSid := session.UUID(dir, "slot02")
 
 	// No map at all at launch (first ever agy run): snapshot is "".
-	prelaunch.Write(slotSid, lastConversationFor(dir))
+	prelaunch.Write(slotSid, LastConversationFor(dir))
 	captureConversation(m)
 	if got := sids.Read(slotSid); got != "" {
 		t.Fatalf("adopted %q from empty map", got)
