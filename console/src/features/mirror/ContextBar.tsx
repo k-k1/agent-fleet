@@ -8,6 +8,8 @@ import { fmtNum } from "../../lib/intl.ts";
 // (Opus 4.6/4.7/4.8, Sonnet 4.6, Fable/Mythos 5) is 1M-native — 1M is the default
 // window, not a 200k default you grow into. Haiku is 200k. Unknown/older models
 // assume 200k but grow to fit if a 1M beta is clearly in use.
+// Mirrored in Go as contextWindowGuess() (workspace/agent/session_usage.go, the MCP
+// get_session_usage aggregation) — keep the two in sync.
 export function contextWindow(model: string | null | undefined, used: number): number {
   const m = (model || "").toLowerCase();
   if (/opus-4-[678]|sonnet-4-6|fable-5|mythos-5/.test(m)) return 1000000;
