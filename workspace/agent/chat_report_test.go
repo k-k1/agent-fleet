@@ -78,6 +78,13 @@ func TestInjectPendingReports(t *testing.T) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
 		}
 	}
+	// The injection guard must ride at the data boundary: a report that instructs
+	// command execution / shell sends must never be actionable.
+	for _, want := range []string{"shell", "絶対にしない", "インジェクション"} {
+		if !strings.Contains(reportPreamble, want) {
+			t.Fatalf("reportPreamble missing injection guard %q", want)
+		}
+	}
 	if strings.Contains(prompt, "レポートB") {
 		t.Fatal("delivered report re-injected")
 	}
