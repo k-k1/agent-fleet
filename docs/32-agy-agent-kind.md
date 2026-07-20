@@ -691,6 +691,42 @@ kind 追加の影響が投入経路以外にも及ぶため、workspace `mcp_std
 agy セッション作成 → sessions 一覧に kind=agy で出現 → `sessions/usage` が
 cumulative 全 0（トークン情報なし）で返ることを確認。agent 384・CP 147 全緑。
 
+### ミラーの ContextBar（context 充填率）MVP — `/context` スクレイプ（2026-07-20）
+
+agy の転写（`transcript_full.jsonl`）にも他の永続状態にも token 数が一切無い
+（実機 grep 0 件。会話 DB の `gen_metadata` は非公開スキーマ protobuf で token
+らしき値も確認できず）ため、ミラーの ContextBar はターン usage 経由では永遠に
+出ない。代わりに TUI の **`/context` パネル（"Visualize current context usage"
+— `26.0k/1.0M tokens` の合計とカテゴリ別内訳を描く）** を唯一の取得元として、
+セッションレベルの context 充填率を縮退表示する MVP を実装した。
+
+- **取得**（agent `internal/agents/agy/context.go`）: `/usage` と同じ
+  `agents.Flow` 配管で `agy --conversation <uuid>` を scratch dir
+  （`/tmp/af-agy-ctx`・事前 trust）に復帰 → `/context` 投入 → 合計行
+  `· <used>/<window> tokens` をパース（履歴リプレイに同語が混ざり得るため
+  最終 "Context Usage" 以降のみ）。数値は agy 自身のクライアント側推定
+  （パネル自ら "Estimated usage" 表示）であり API 報告値ではない。
+- **キャッシュ**: 会話ごとに転写の size+mtime を指紋にし、変化時のみ 60 秒を
+  下限にバックグラウンド更新（`ContextFill` は常に非ブロッキング、初回 nil）。
+  スクレイプはプロセス全体で同時 1 本（メモリ制約ホスト）。
+- **ワイヤ**: `agents.ContextReporter`（optional interface）を generic
+  `/messages` ハンドラだけが呼び、`context: {tokens, window, at}` を応答に追加。
+  `/sessions/usage`（MCP get_session_usage）からは呼ばない — 一覧クエリで
+  スクレイプが走らないため。Console（MirrorView）はターン usage が無い時の
+  フォールバックとして ContextBar に内訳なし（全量 fresh 扱い）で描く。
+- **ライブ会話への並行復帰の安全性（go/no-go 実測）**: 稼働中セッション A の
+  会話へ第二プロセス B が `--conversation` 復帰 → `/context` 実数取得 → B kill
+  後も A は応答継続・`transcript_full.jsonl` 無傷（USER_INPUT/PLANNER_RESPONSE
+  各 2 で混入なし）。
+- **実機 E2E**（第 2 インスタンス :7711・3 点隔離）: `POST /sessions
+  {kind:agy, initial_prompt}` → 応答後 ~20 秒で `/messages` に
+  `context:{tokens:17100, window:1000000}` が出現、以後キャッシュ応答。
+- **検証**: agent 全緑（419）・live スクレイプテスト（`AF_AGY_LIVE=1 -run
+  TestScrapeContextLive`）成功・Console typecheck / mirror テスト 33 全緑。
+- **制約（MVP スコープ外）**: cache read/create/fresh の内訳とターン毎 token
+  消費（スパークライン）は取得元が無く出せない。更新は転写変化 + 60 秒下限の
+  スクレイプ粒度で、claude/codex のようなターン即時反映ではない。
+
 ## ユーザーに依頼する事項（並行作業のブロッカー解消）
 
 1. **GCP プロジェクトの用意**（D1/M2 用）: 課金有効化済みプロジェクト ID を Connections 設定時に使える形で。
