@@ -477,6 +477,42 @@ pendingQuestions に構造化質問）→カードの選択肢クリックで TU
 応答ターンがミラーに出て idle へ復帰、まで完走。ユニットテストは probe の
 question/permission/実行中/DB 無しの 4 経路＋既存全緑（agent 362）。
 
+## ツール種別のミラー表面化・網羅確認（2026-07-20、`temp/szpaeta-agy-ui-fixes`）
+
+ASK_QUESTION 以外のツール呼び出しがチャットミラーの Working steps に正しく
+出るかを実機で網羅確認した。
+
+- **型の全列挙**: バイナリの proto 列挙 `CORTEX_STEP_TYPE_*`（約 120 種）を
+  strings で抽出。大半は IDE / google3 内部用（BLAZE_* / MOMA / CIDER /
+  BROWSER_*（CLI では browser tools are disabled）/ MCP_TOOL（未設定）等）で、
+  CLI の通常会話で到達するのは限られる。
+- **実機誘発で確認した型**（1 会話で一括誘発 → /messages の parts を検証）:
+  LIST_DIRECTORY・VIEW_FILE・GREP_SEARCH・RUN_COMMAND・CODE_ACTION（作成/編集
+  とも）・SEARCH_WEB・READ_URL_CONTENT（＋既知の ASK_QUESTION・GENERIC・
+  ERROR_MESSAGE）。ファイル名検索（find 相当）とリネームは agy 側が
+  RUN_COMMAND に落とすため FIND / MOVE 型は CLI では出ない。いずれも
+  「tool パート（tool=型名・output=本文）」として表面化し、Working steps の
+  集計行（例: 8 tools LIST_DIRECTORY · VIEW_FILE · … · RUN_COMMAND×3 ·
+  CODE_ACTION×2）と個別出力の展開表示を実機スクリーンショットで確認。
+  パーサは「MODEL の非 PLANNER_RESPONSE 型はすべて tool パート」の汎用
+  マッピングなので、**未知の型が来ても自動で表面化する**（型名がそのまま
+  ラベルになる）。
+- **バックグラウンドコマンドの生涯**: `sleep 15 &` 相当は RUN_COMMAND step が
+  status=RUNNING で**ライブ追記**され（完了しても同 step の行は書き換わらず
+  重複行も出ない）、完了通知は SYSTEM_MESSAGE（非表示で正 — モデル向け）→
+  モデルの PLANNER_RESPONSE が結果を再掲する、という流れ。ミラーは
+  「実行開始の tool パート＋完了報告のテキスト」になり破綻しない。
+- **status=9 プローブとの衝突なし**: 長時間コマンド実行中の DB 最終 step は
+  status=2（実行中）で、Probe は question/permission を返さないことを実機確認
+  （保留誤検知なし）。
+- **磨き込み**: RUN_COMMAND 出力に agy が付ける 4 タブのテンプレインデント
+  （`\t\t\t\tOutput:` …）をミラー表示で除去（stripCommandIndent — 出力自身の
+  インデントは 4 タブ超過分として保持）。
+- 副次確認: 停止セッションの履歴ビュー（transcript cap）・タイトル自動提案
+  （「ツール実行テスト」が提案された）も agy で動作。
+- **既知の残**: 実行中の working/idle は hook が無いため不正確（ツール実行中に
+  入力待ち表示になり得る。誤検知側ではないので実害は小）。
+
 ## ユーザーに依頼する事項（並行作業のブロッカー解消）
 
 1. **GCP プロジェクトの用意**（D1/M2 用）: 課金有効化済みプロジェクト ID を Connections 設定時に使える形で。
