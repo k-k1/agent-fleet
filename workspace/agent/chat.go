@@ -60,7 +60,7 @@ type chatConversation struct {
 	Agent string `json:"agent"` // preferred provider snapshotted at creation
 	// ActiveAgent is the backend that generated the latest successful assistant turn.
 	// Keeping it separate preserves the user's preferred provider while letting the UI
-	// truthfully show a live claude -> codex/opencode fallback.
+	// truthfully show a live fallback to codex/opencode/agy.
 	ActiveAgent string        `json:"active_agent,omitempty"`
 	Title       string        `json:"title"`
 	Model       string        `json:"model,omitempty"`
@@ -76,6 +76,14 @@ type chatConversation struct {
 	// from cache/last_conversations.json after the first `-p` turn (agy has no
 	// session-id flag nor structured output to hand it over — see agyChat).
 	AgyConversationID string `json:"agy_conversation_id,omitempty"`
+	// Provider cursors are the number of canonical Messages already represented in
+	// each native provider session. A provider that returns after fallback receives
+	// the intervening user/assistant turns before the new prompt, instead of resuming
+	// a stale private history and mistaking an old action for the current request.
+	ClaudeMessageCursor   int `json:"claude_message_cursor,omitempty"`
+	CodexMessageCursor    int `json:"codex_message_cursor,omitempty"`
+	OpencodeMessageCursor int `json:"opencode_message_cursor,omitempty"`
+	AgyMessageCursor      int `json:"agy_message_cursor,omitempty"`
 	// AFTools attaches the local Agent Fleet MCP tools (read-only) to this chat's
 	// claude so it can inspect the user's workspace (docs/19 Q1). Legacy field kept for
 	// conversations created before assistants (Q2); new conversations drive tools via the

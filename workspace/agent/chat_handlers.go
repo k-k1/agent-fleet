@@ -319,6 +319,7 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 	prompt, pendingReports := injectPendingReports(c, content)
 	// docs/33: a compaction summary rides the NEW session's first prompt, outermost.
 	prompt, handoff := injectHandoff(c, prompt)
+	prompt = syncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
 	c.AutoTurns, c.AutoPausedNotified = 0, false
 
 	ctx, cancel := context.WithTimeout(r.Context(), chatTimeout)
@@ -329,6 +330,7 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 		// リトライ。reports は未配信なので再注入され、要約も前置される。
 		prompt, pendingReports = injectPendingReports(c, content)
 		prompt, handoff = injectHandoff(c, prompt)
+		prompt = syncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
 		reply, err = prov.send(ctx, c, prompt)
 	}
 	if err != nil {
@@ -349,6 +351,7 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 	assistant := chatMessage{Role: "assistant", Content: reply, Agent: actualAgent, TS: nowMs()}
 	c.Messages = append(c.Messages, assistant)
 	c.ActiveAgent = actualAgent
+	markProviderSynced(c, actualAgent, len(c.Messages))
 	noteContextPressure(c) // 逼迫時は notice を追記（chat_usage.go）
 	c.UpdatedAt = nowMs()
 	if err := saveConv(c); err != nil {
@@ -445,12 +448,14 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 	// summary rides the NEW session's first prompt, outermost.
 	prompt, pendingReports := injectPendingReports(c, content)
 	prompt, handoff := injectHandoff(c, prompt)
+	prompt = syncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
 	runTurn(prompt)
 	if err != nil && recoverForRetry(ctx, c, prov, err) {
 		// docs/33 第3段: 超過を検知 → 現行セッションを要約して畳み、新セッションで
 		// リトライ。超過エラーは初回送信直後の 400 なので delta 未発火＝二重表示なし。
 		prompt, pendingReports = injectPendingReports(c, content)
 		prompt, handoff = injectHandoff(c, prompt)
+		prompt = syncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
 		runTurn(prompt)
 	}
 	if err != nil {
@@ -470,6 +475,7 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 	assistant := chatMessage{Role: "assistant", Content: reply, Steps: steps, Agent: actualAgent, TS: nowMs()}
 	c.Messages = append(c.Messages, assistant)
 	c.ActiveAgent = actualAgent
+	markProviderSynced(c, actualAgent, len(c.Messages))
 	noteContextPressure(c) // 逼迫時は notice を追記（chat_usage.go）— done の conversation で届く
 	c.UpdatedAt = nowMs()
 	_ = saveConv(c)
