@@ -68,6 +68,26 @@ func TestTranscriptParsesBrainJSONL(t *testing.T) {
 	}
 }
 
+// Idx は「厳密に増加する行番号」でなければならない。0 のまま出していた頃は、
+// Console 側が polled turn を idx > lastIdx で捨て、送信プロンプトの 反映待ち
+// エコーも idx > sinceIdx で消えなくなっていた（ミラーが固まる回帰の再発防止）。
+func TestTranscriptAssignsIncreasingIdx(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := "/home/dev/repos/proj"
+	m := session.Meta{Dir: dir, Name: "slot12", Kind: session.KindAgy}
+	sids.Write(session.UUID(dir, "slot12"), "conv-idx")
+	writeTranscript(t, "conv-idx", "transcript_full.jsonl", fixtureJSONL)
+
+	td, _ := agentImpl{}.Transcript(m)
+	prev := -1
+	for i, turn := range td.Turns {
+		if turn.Idx <= prev {
+			t.Fatalf("turn %d idx=%d not greater than previous %d: %+v", i, turn.Idx, prev, td.Turns)
+		}
+		prev = turn.Idx
+	}
+}
+
 func TestTranscriptEmptyBeforeFirstPrompt(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	m := session.Meta{Dir: "/d", Name: "slot11", Kind: session.KindAgy}

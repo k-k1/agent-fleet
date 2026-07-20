@@ -148,3 +148,49 @@ func TestProbeNoConversationOrDB(t *testing.T) {
 		t.Fatalf("missing-db probe returned %q", st)
 	}
 }
+
+// LiveState は Probe と違い「保留でない」も状態として返す必要がある。agy は
+// status hook を持たないため、この idle 判定が唯一の turn 終端シグナルで、
+// これが無いと /input の楽観 working が消えず、オペレータへの完了報告の arm
+// が永久に消費されない（docs/30 ②）。
+func TestLiveStateClassifiesEveryStepStatus(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := "/home/dev/repos/proj"
+	for _, tc := range []struct {
+		name   string
+		status int
+		want   string
+	}{
+		{"done", stepStatusDone, "idle"},
+		{"running", stepStatusRunning, "working"},
+		{"awaiting", stepStatusAwaitingUser, "permission"},
+		{"unknown", 7, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			slot := "slot-ls-" + tc.name
+			m := session.Meta{Dir: dir, Name: slot, Kind: session.KindAgy}
+			sids.Write(session.UUID(dir, slot), "conv-ls-"+tc.name)
+			mkConvDB(t, "conv-ls-"+tc.name, [][3]any{
+				{14, 3, []byte("user")},
+				{21, tc.status, []byte(`{"CommandLine":"run_command x"}`)},
+			})
+			if got := LiveState(m); got != tc.want {
+				t.Fatalf("status=%d: got %q, want %q", tc.status, got, tc.want)
+			}
+		})
+	}
+}
+
+// 会話未採用 / DB 不在では「意見なし」("")。停止済みセッションを誤って idle と
+// 報告し、偽の完了報告を撃たないための境界。
+func TestLiveStateNoOpinionWithoutDB(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := session.Meta{Dir: "/d", Name: "slot-ls-none", Kind: session.KindAgy}
+	if got := LiveState(m); got != "" {
+		t.Fatalf("no-sid LiveState returned %q", got)
+	}
+	sids.Write(session.UUID("/d", "slot-ls-none"), "conv-ls-missing")
+	if got := LiveState(m); got != "" {
+		t.Fatalf("missing-db LiveState returned %q", got)
+	}
+}

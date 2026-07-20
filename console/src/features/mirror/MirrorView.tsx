@@ -51,6 +51,12 @@ import { hasLaunchSeed, takeLaunchSeed } from "../../lib/launchSeed.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
 import { confirmedWorkEnd, latestWorkPromptIndex, textOfParts, workSplit } from "./mirrorParts.ts";
 import { echoLanded, type PendingEcho } from "./pendingEcho.ts";
+import {
+  buildClaudeSeq,
+  buildMenuSeq,
+  buildRespondAnswers,
+  buildSinglePickKeys,
+} from "./questionKeys.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { ManagedSettingsModal } from "./ManagedSettingsModal.tsx";
 
@@ -1894,6 +1900,7 @@ export function MirrorView({
                 onCancel={() => void sendInterrupt()}
                 answerMode={sessionMeta?.kind === "claude" ? "claude" : "menu"}
                 multiPage={sessionMeta?.kind === "codex"}
+                writeIn={sessionMeta?.kind === "agy"}
               />
             </div>
           </div>
@@ -3236,6 +3243,7 @@ function PendingQuestions({
   sending,
   answerMode = "claude",
   multiPage = false,
+  writeIn = false,
 }: {
   questions: Question[];
   onSubmitKeys: (keys: string[]) => void;
@@ -3259,6 +3267,14 @@ function PendingQuestions({
   // sequences in one go. opencode's dialog has no verified paging keys, so it stays
   // single-question-only (multiPage=false → terminal hint for multi).
   multiPage?: boolean;
+  // writeIn (agy): the menu appends a "Write-in..." row just after the options, so a
+  // menu question can ALSO be answered with free text — without this the card showed
+  // only the listed options and the 4th row was unreachable from chat. The row is
+  // entered rather than typed into directly: Down×options.length, Enter (opens
+  // "Your answer:"), the text, then Enter submits — 実測 (agy 1.1.4). That extra Enter
+  // is why this is its own flag and not folded into claude's free-text path, whose row
+  // IS the field (type straight into it).
+  writeIn?: boolean;
 }) {
   const qs = questions || [];
   const [sel, setSel] = useState<string[][]>(() => qs.map(() => []));
@@ -3319,89 +3335,16 @@ function PendingQuestions({
   // completes the whole form (no review page, unlike claude's modal).
   // Semantic submit (managed): translate the built selection / free text into
   // structured per-question answers — no TUI key encoding, no modal quirks.
-  const submitRespond = () => {
-    onRespond!(
-      qs.map((q, qi) => {
-        const opts = q.options || [];
-        const ft = (freeText[qi] || "").trim();
-        const idx = (sel[qi] || [])
-          .map((l) => opts.findIndex((o) => o.label === l))
-          .filter((i) => i >= 0)
-          .sort((a, b) => a - b);
-        const a: InteractionAnswer = {};
-        if (idx.length) a.options = idx;
-        if (ft) a.text = ft;
-        return a;
-      }),
-    );
-  };
+  const submitRespond = () => onRespond!(buildRespondAnswers(qs, sel, freeText));
 
   const submitMenu = () => {
     if (semantic) return submitRespond();
-    const seq: Array<{ k?: string; t?: string }> = [];
-    qs.forEach((q, qi) => {
-      const opts = q.options || [];
-      const ci = Math.max(
-        0,
-        opts.findIndex((o) => o.label === (sel[qi] || [])[0]),
-      );
-      for (let k = 0; k < ci; k++) seq.push({ k: "Down" });
-      seq.push({ k: "Enter" });
-    });
-    onSubmitSeq(seq);
+    onSubmitSeq(buildMenuSeq(qs, sel, freeText, writeIn));
   };
 
   const submit = () => {
     if (semantic) return submitRespond();
-    const seq: Array<{ k?: string; t?: string }> = [];
-    qs.forEach((q, qi) => {
-      const opts = q.options || [];
-      const ft = (freeText[qi] || "").trim();
-      const idx = (sel[qi] || [])
-        .map((l) => opts.findIndex((o) => o.label === l))
-        .filter((i) => i >= 0)
-        .sort((a, b) => a - b);
-      if (q.multiSelect) {
-        // Toggle each checked option in place (Enter toggles, cursor stays). Then, if a
-        // custom answer was typed, drop to the "Type something" row and type it — checked
-        // options and the custom entry COMBINE (verified in the terminal). Crucially, do
-        // NOT press Enter after typing: on a multi-select row Enter toggles the auto-checked
-        // custom entry back OFF, silently losing it (the bug). Instead one Down exits the
-        // field to the Submit row, and the trailing Enter below submits.
-        let cur = 0;
-        for (const ci of idx) {
-          for (let k = 0; k < ci - cur; k++) seq.push({ k: "Down" });
-          seq.push({ k: "Enter" }); // toggle in place
-          cur = ci;
-        }
-        if (ft) {
-          const typeRow = opts.length; // the "Type something" row sits just after the options
-          for (let k = 0; k < typeRow - cur; k++) seq.push({ k: "Down" });
-          seq.push({ t: ft }); // typing auto-checks the custom row (NO Enter — it would uncheck)
-          // Right is swallowed by the text field, so advance the manual way: Down to the row
-          // just below "Type something" — "Next" on an intermediate question, "Submit" on the
-          // last — and Enter to activate it. "Next" moves to the next question tab; "Submit"
-          // opens the review page (cursor on "Submit answers") where the trailing Enter
-          // submits. Verified from the terminal for both single- and multi-question forms.
-          seq.push({ k: "Down" });
-          seq.push({ k: "Enter" });
-        } else {
-          seq.push({ k: "Right" }); // advance to the next question / review (Submit) page
-        }
-      } else if (ft) {
-        // single-select free text: move to the "Type something" row, type, then Enter
-        // confirms + auto-advances (single-select Enter does NOT toggle-off — verified).
-        for (let k = 0; k < opts.length; k++) seq.push({ k: "Down" });
-        seq.push({ t: ft });
-        seq.push({ k: "Enter" });
-      } else {
-        const ci = idx[0] ?? 0;
-        for (let k = 0; k < ci; k++) seq.push({ k: "Down" });
-        seq.push({ k: "Enter" }); // select + auto-advance to the next tab
-      }
-    });
-    seq.push({ k: "Enter" }); // Review page: "Submit answers"
-    onSubmitSeq(seq);
+    onSubmitSeq(buildClaudeSeq(qs, sel, freeText));
   };
 
   return (
@@ -3428,7 +3371,7 @@ function PendingQuestions({
               const pick = single
                 ? semantic
                   ? () => onRespond!([{ options: [oi] }])
-                  : () => onSubmitKeys([...Array(oi).fill("Down"), "Enter"])
+                  : () => onSubmitKeys(buildSinglePickKeys(oi))
                 : () => toggle(qi, o.label, qn.multiSelect);
               return (
                 <button
@@ -3450,8 +3393,9 @@ function PendingQuestions({
               );
             })}
           </div>
-          {!menu && (
-            // Free-text ("Type something") — rendered for single questions too: the
+          {(!menu || writeIn) && (
+            // Free-text ("Type something" / agy's "Write-in...") — rendered for single
+            // questions too: the
             // composer can't answer an AUQ (typed text is ignored and Enter confirms
             // option 1), so this in-card row, driven via submit()'s reliable
             // Down-to-the-row-then-type sequence, is the only working free-text path.
@@ -3495,9 +3439,11 @@ function PendingQuestions({
             {tr("mirror.submit_answer")}
           </button>
         )}
-        {menu && menuDrivable && !single && (
+        {menu && menuDrivable && (!single || writeIn) && (
           // A paged multi-question menu (codex): pick an option per question above, then
-          // submit all pages' key sequences at once.
+          // submit all pages' key sequences at once. For a single question the options
+          // click-to-send, so this button exists only to carry a write-in answer (agy) —
+          // canSubmit is false until free text is typed, which is the intended gating.
           <button
             type="button"
             className="btn primary mq-submit"
