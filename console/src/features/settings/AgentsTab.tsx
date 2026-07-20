@@ -257,7 +257,7 @@ function SettingRow({ label, sub, children }: { label: ReactNode; sub?: ReactNod
 // LaunchDefaults: the common, per-agent starting point. A repo's last-used values
 // still win in the launch dialog, so these are useful global defaults without
 // repeatedly overwriting deliberate per-repo choices.
-function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "opencode" }) {
+function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "agy" | "opencode" }) {
   const s = useSettings();
   const tr = useT();
   const desc = agentOf(kind);
@@ -282,9 +282,12 @@ function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "opencode" }) {
           <Choice value={row.model} options={models} onChange={(model) => update({ model, effort: "" })} />
         )}
       </SettingRow>
-      <SettingRow label={tr("agents.default_effort")}>
-        <Choice value={row.effort} options={efforts} onChange={(effort) => update({ effort })} />
-      </SettingRow>
+      {/* agy は effort 相当がモデル名に織り込まれている（(Medium) 等）ため行ごと出さない。 */}
+      {desc.caps.effort && (
+        <SettingRow label={tr("agents.default_effort")}>
+          <Choice value={row.effort} options={efforts} onChange={(effort) => update({ effort })} />
+        </SettingRow>
+      )}
       {desc.caps.planMode && (
         <SettingRow label={tr("agents.start_mode")}>
           <Choice
@@ -616,6 +619,7 @@ function AgyCard({
           same block shape as the Codex / opencode cards. */}
       <div className="p-settings">
         <div className="ps-title">{tr("agents.settings")}</div>
+        <LaunchDefaults kind="agy" />
         {agents && agents !== false && (
           <>
             <RtkRow

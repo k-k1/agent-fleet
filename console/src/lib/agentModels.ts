@@ -26,7 +26,7 @@ interface ModelDescriptor {
 // Resolved lazily (not a module-level constant) so the "既定" label reflects the
 // current locale and updates on language switch.
 const defaultOnly = (): ModelOption[] => [["", t("ui.default")]];
-const isDynamic = (kind: string) => kind === "codex" || kind === "opencode";
+const isDynamic = (kind: string) => kind === "codex" || kind === "opencode" || kind === "agy";
 const cache = new Map<string, ModelOption[]>();
 const descriptors = new Map<string, ModelDescriptor[]>();
 const inflight = new Map<string, Promise<ModelOption[]>>();

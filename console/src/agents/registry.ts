@@ -193,14 +193,21 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     defaultModeLabel: "",
     // Antigravity CLI (docs/32, ADR 0008). v1.1.4 has no structured output, so
     // Terminal (CLI) is the only driver — no managed mode until agy grows an
-    // event stream. M1 keeps the default model (no --model), no effort/plan
-    // hooks, no fork, and NO chat/transcript: Track A ships no transcript()
-    // (conversation_summaries.db is lazily written and can't be trusted), so
-    // the terminal is the only UI. Starter Quota = experimental pool: the
-    // launch hint carries the 実験枠 tag, the WS bar shows the quota gauge.
+    // event stream. The chat mirror works: the agent reads the per-conversation
+    // brain/…/transcript_full.jsonl (written live) and normalizes it into
+    // transcript() turns; input is pasted into the TUI like claude's mirror.
+    // model: launch-time only, live catalog (api/agents/agy/models = `agy
+    // models` display names) → `agy --model`; effort variants are baked into
+    // the model names, so no separate effort cap. No fork, no plan hooks, no
+    // context gauge (the transcript records no token counts). Starter Quota =
+    // experimental pool: the launch hint carries the 実験枠 tag, the WS bar
+    // shows the quota gauge.
     managedDriver: false,
     tuiMemoryCost: "",
     caps: caps({
+      chat: true,
+      transcript: true,
+      model: true,
       runsInDir: true,
       launchableFromRepo: true,
     }),
