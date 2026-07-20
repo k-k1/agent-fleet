@@ -5,7 +5,8 @@ Windows の **WSL2** 上で、agent-fleet を**1人の検証用**にすぐ立ち
 WSL 内の Docker で起動します。本番向けの Compose + Caddy(自動TLS) 構成（`deploy/compose/`）は
 公開ドメイン/80・443 が要るので個人検証には使いません。
 
-起動は `deploy/local/wsl-quickstart.sh` 一本。以下はその前提づくりです。
+起動は `deploy/local/run-dev.sh wsl` 一本（旧 `wsl-quickstart.sh` は同じものを呼ぶ
+後方互換ラッパー）。以下はその前提づくりです。
 
 ---
 
@@ -51,8 +52,12 @@ WSL 内の Docker で起動します。本番向けの Compose + Caddy(自動TLS
 
 ```bash
 git clone <this-repo> && cd agent-fleet
-deploy/local/wsl-quickstart.sh
+deploy/local/run-dev.sh wsl        # 旧 wsl-quickstart.sh はこのラッパー（引き続き使える）
 ```
+
+起動スクリプトは `run-dev.sh` に一本化され、サブコマンドで形態を選びます:
+`local`（開発既定・Docker）/ `wsl`（本プリセット）/ `native`（Docker なし、§6）/
+`reset`（データ初期化、§5）。
 
 スクリプトがやること:
 1. preflight（docker 疎通・cgroup v2・go・npm）を確認。
@@ -75,7 +80,7 @@ GitHub の clone/push を OAuth デバイスフローで通したい場合は、
    cp deploy/local/oauth.env.example deploy/local/oauth.env
    # deploy/local/oauth.env を編集し GITHUB_OAUTH_CLIENT_ID=<your-client-id> を設定
    ```
-3. `wsl-quickstart.sh` を再実行。起動時に `deploy/local/oauth.env` を自動で読み込み、
+3. `run-dev.sh wsl` を再実行。起動時に `deploy/local/oauth.env` を自動で読み込み、
    `GITHUB_OAUTH_CLIENT_ID` を CP 経由でワークスペースへ注入します（起動ログに
    `loaded .../oauth.env（… client_id: 設定あり）` と出ます）。
 4. Console からワークスペースで GitHub 連携を開始すると、デバイスコードと認証 URL が
@@ -110,8 +115,13 @@ CP は `http://localhost:8099` で待ち受けます。WSL2 の localhostForward
 
 - 停止: フォアグラウンドの CP を `Ctrl-C`。起動済みワークスペースコンテナは残るので
   必要なら `docker ps` / `docker stop <name>`。
-- データ: `~/.local/share/agent-fleet`（DB・各ユーザー home・共有JDK）に永続。消せば初期化。
-- 再ビルド: CLI 版などを上げたら `wsl-quickstart.sh` を再実行（イメージ再ビルド）。
+- データ: `~/.local/share/agent-fleet`（DB・各ユーザー home・共有JDK）に永続。
+- 初期化: CP を止めてから `deploy/local/run-dev.sh reset`。既定は dev ユーザーの
+  ワークスペース（home / claude-config）だけを消し、DB と共有 JDK は温存します。
+  `--all` で DB・共有 JDK 含む完全初期化（次回の JDK provision をやり直し）。
+  docker / native どちらの残骸（コンテナ・agent プロセス・専用 tmux）も掃除してから
+  消すので、動かした形態を問わず安全に使えます。
+- 再ビルド: CLI 版などを上げたら `run-dev.sh wsl` を再実行（イメージ再ビルド）。
 
 ## 6. Docker を入れられない場合（実験的: ネイティブ実行）
 
@@ -120,7 +130,7 @@ CP は `http://localhost:8099` で待ち受けます。WSL2 の localhostForward
 
 ```bash
 # tmux / git / claude 等の CLI をホストに入れておく（イメージ焼き込みが無いため）
-AF_RUNTIME=native deploy/local/run-dev.sh
+deploy/local/run-dev.sh native
 ```
 
 コンテナ隔離・メモリ上限・entrypoint 初期化（claude 自動インストール等）が無い、という
