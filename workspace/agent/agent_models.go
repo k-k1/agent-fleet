@@ -4,23 +4,30 @@ import (
 	"net/http"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
 // handleAgentModels (GET /agents/{kind}/models) returns the launch-time model
-// choices for a kind whose catalog must be read live rather than hardcoded:
+// choices per kind:
+//   - claude: fixed tier aliases (claude.Models) — no live catalog exists; launch
+//     takes `--model <alias>` and the alias tracks its tier's newest model. The
+//     Console picker keeps its own copy (settings.ts CLAUDE_MODELS); this serves
+//     the MCP list_models so assistants resolve claude ids the same way as the
+//     other kinds.
 //   - codex: `codex debug models` — the /model picker's catalog, refreshed from
 //     OpenAI's models endpoint with codex's own subscription auth (id + display name)
 //   - opencode: `opencode models` — reflects the user's connected providers (ids only)
 //
-// claude keeps its Console-side fixed tier aliases (they don't vary per user), so
-// it is not served here. An empty list is a valid answer (CLI absent / offline) —
-// the Console picker then offers only 既定.
+// An empty list is a valid answer (CLI absent / offline) — the Console picker then
+// offers only 既定.
 func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	var list []agents.ModelChoice
 	switch r.PathValue("kind") {
+	case "claude":
+		list = claude.Models()
 	case "codex":
 		list = codex.Models()
 	case "opencode":
