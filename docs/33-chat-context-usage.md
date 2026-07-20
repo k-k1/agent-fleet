@@ -1,11 +1,11 @@
 # 33. アシスタントチャットのコンテキスト肥大対策
 
 - ステータス: 第1段（可視化＋逼迫通知）・第2段（要約引き継ぎ＝手動コンパクション）・
-  第3段（超過エラーの自己修復＋通知）実装済み / 第4段以降は構想
-- 対象: `workspace/agent/chat_usage.go`（第1段）、`chat_compact.go`（第2段）、
+  第3段（超過エラーの自己修復＋通知）・第4段（閾値での予防的自動圧縮）実装済み / 残タスクは §6
+- 対象: `workspace/agent/chat_usage.go`（第1段）、`chat_compact.go`（第2・4段）、
   `chat_recover.go`（第3段）、`chat_providers.go`（捕捉・エラー表面化）、
   `chat_handlers.go`・`chat_report.go`（通知・引き継ぎ・リカバリの差し込み）、
-  Console `ChatView` / `ContextBar`（表示・圧縮ボタン）
+  Console `ChatView` / `ContextBar`（表示・圧縮ボタン）・`AgentsTab`（自動圧縮トグル）
 
 ## 1. 背景 — なぜ対策が要るか
 
@@ -166,12 +166,49 @@ is_error・メッセージを表面化するよう両経路を修正**（result 
   ことを両経路で確認。
 - go test 394 / console test 322・typecheck・build・i18n:lint 全緑。実機目視は残。
 
-## 5. 今後の段（未実装・優先順）
+## 5. 第4段（実装済み）: 閾値での予防的自動圧縮
 
-1. **閾値/エラー時のコンパクション自動発動**: 第2段は手動ボタン、第3段は超過エラー時に
-   限り自動発動。実績を見てから、逼迫閾値超過（80%）でも予防的に自動発動する案。
-2. **codex/opencode の超過文言の実測補強**: 第3段の needle は claude 実測＋codex の
+超過（第3段のリトライ域）まで行く前に、ターン開始前のゲートで先回りする。
+
+### 5.1 発動（maybeAutoCompact）
+
+直近スナップショットの使用率が **90%**（`chatCtxAutoCompactPct`・
+`AF_CHAT_AUTOCOMPACT_PCT` でデプロイ毎に上書き可）以上のまま新しいターンが始まる
+とき、プロンプト構築の**前**に第2段 `compactConversation` を自動実行し、その
+PendingHandoff を同じターンの `injectHandoff` で乗せる。差し込みは
+handleChatSend / handleChatStream（detached ctx 上＝リロードでも中断されない）/
+runReportAutoTurn の3経路。
+
+段階設計: **80%** で notice（利用者が区切りを選んで手動「圧縮」できる猶予）→
+**90%** で予防的自動圧縮 → それでも超えたら第3段の超過リトライ。
+
+ガード: 設定 OFF・スナップショット無し・PendingHandoff 未配信（直後にリセットされる
+ため二重圧縮しない）・プロバイダセッション無し、では発動しない。圧縮失敗は log して
+**ターン自体は続行**（90% は超過ではないので大抵まだ通る。ダメなら第3段が拾う）。
+
+### 5.2 設定と notice の書き分け
+
+- 設定 > エージェント「コンテキストの自動圧縮」（`assistantAutoCompact`・既定 ON、
+  `assistantAutoTurn` と同じ ui-prefs パターン）。
+- 圧縮完了 notice は発動元で書き分け（`compactReason*`）: 手動「コンテキストを圧縮
+  しました」／自動「使用量が閾値を超えたため、自動で圧縮しました」／復旧「超過エラー
+  からの自動復旧のため、圧縮しました」— なぜ今要約されたかを後から追える。
+
+### 5.3 検証
+
+- 単体（chat_compact_test.go 追補）: 閾値未満 no-op・95% で発動（reason=auto の
+  notice）・PendingHandoff 未配信ガード・セッション/スナップショット無しガード・
+  失敗時状態不変＋続行・設定 OFF ガード（ui-prefs 実ファイル）・env 上書きと
+  不正値フォールバック。
+- ライブ（実 claude CLI・E2E）: `AF_CHAT_AUTOCOMPACT_PCT=1` で閾値を下げ、turn1
+  （事実記憶・pct 8.8%）→ 自動圧縮発火（auto reason notice）→ turn2 が別セッション
+  ID で事実を正答・Context 再捕捉、を通しで確認。
+- go test 397 / console test 322・typecheck・build・i18n:lint 全緑。実機目視は残。
+
+## 6. 残タスク（未実装・優先順）
+
+1. **codex/opencode の超過文言の実測補強**: 第3段の needle は claude 実測＋codex の
    input-size 制限実測ベース。codex/opencode の真のトークン超過文言（272k 超）は未実測
    （高コスト）。取りこぼしたら needle を追加。
-3. **掃除**: 会話削除時にプロバイダ側セッション（chat-claude/projects の jsonl 等）を
+2. **掃除**: 会話削除時にプロバイダ側セッション（chat-claude/projects の jsonl 等）を
    残さない。

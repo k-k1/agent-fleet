@@ -568,6 +568,9 @@ export const en: Record<keyof typeof ja, string> = {
   "agents.assistant_auto_turn": "Auto-respond to session reports",
   "agents.note_assistant_auto_turn":
     "When a session launched or steered by the Fleet Operator (or another assistant with AF write access) reports back, the assistant runs one turn automatically to process it. As a runaway guard, at most 10 unattended turns run per conversation (reset whenever you send a message).",
+  "agents.assistant_auto_compact": "Auto-compact chat context",
+  "agents.note_assistant_auto_compact":
+    "When a chat's context usage is still above 90% as a new exchange starts, the conversation is summarized and handed to a fresh session automatically first (the summary costs one turn of tokens). The notice at 80% lets you compact manually before this fires.",
   "agents.ws_required_title": "Settings run inside the workspace",
   "agents.ws_required_hint": "Connections and agent settings go through the agent / CLI inside the container, so the workspace has to be running.",
   "agents.note_apply": "Connection changes are immediate; behavior settings take effect from each agent's new sessions.",

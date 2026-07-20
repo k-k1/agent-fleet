@@ -70,6 +70,16 @@ func chatAutoTurnEnabled() bool {
 	return !ok || v
 }
 
+// chatAutoCompactEnabled is the global ON/OFF for the assistant chat's preventive
+// auto-compaction at the context threshold (docs/33 第4段, 設定 > エージェント
+// 「コンテキストの自動圧縮」). Missing/invalid key ⇒ true, matching the frontend
+// default — the 80% notice gives the user a manual window first, and the summary
+// handoff keeps the stored thread intact, so ON is the safe default.
+func chatAutoCompactEnabled() bool {
+	v, ok := readUIPrefs()["assistantAutoCompact"].(bool)
+	return !ok || v
+}
+
 // chatOutputLanguage returns the user's forced chat output language ("ja" | "en"),
 // or "" when unset/"auto"/invalid — meaning "follow the input" (no language rule is
 // injected, preserving the persona-driven default). Read live per turn from ui-prefs

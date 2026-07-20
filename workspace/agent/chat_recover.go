@@ -71,7 +71,7 @@ func recoverForRetry(ctx context.Context, c *chatConversation, prov chatProvider
 	if !isContextOverflowErr(origErr) {
 		return false
 	}
-	if err := compactConversation(ctx, c, prov); err != nil {
+	if err := compactConversation(ctx, c, prov, compactReasonRecovery); err != nil {
 		return false
 	}
 	return true
