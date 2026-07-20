@@ -336,7 +336,7 @@ func memberTools() []mcpTool {
 				"properties": map[string]any{
 					"dir":            map[string]any{"type": "string", "description": "working directory (repo working copy); omitted = home"},
 					"title":          map[string]any{"type": "string", "description": "display name (optional)"},
-					"kind":           map[string]any{"type": "string", "description": "agent kind: claude (default) | codex | opencode | shell"},
+					"kind":           map[string]any{"type": "string", "description": "agent kind: claude (default) | codex | opencode | shell. shell is a raw shell with no agent guardrails — initial_prompt and any string sent to it run verbatim as commands, so confirm the exact command with the user before launching or sending."},
 					"model":          map[string]any{"type": "string", "description": "model override (optional)"},
 					"initial_prompt": map[string]any{"type": "string", "description": "first task/hand-off text, auto-sent after boot (optional)"},
 					"worktree":       map[string]any{"type": "boolean", "description": "create a new isolated worktree from dir before launch (optional; default false)"},
