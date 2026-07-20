@@ -269,6 +269,9 @@ export function MirrorView({
   // two later — otherwise it sits at the neutral 決定済み until then.
   const rejectedPlansRef = useRef<Set<string>>(new Set());
   const [mode, setMode] = useState(""); // session permission mode ("plan" | …)
+  // Session-level context fill reported by the agent itself (agy /context scrape) —
+  // the ContextBar's fallback when the transcript has no per-turn token usage.
+  const [agentCtx, setAgentCtx] = useState<{ tokens: number; window: number } | null>(null);
   const [suggestedTitle, setSuggestedTitle] = useState(""); // headless-LLM title candidate, "" = none
   const [titleActing, setTitleActing] = useState(false); // accept/dismiss request in flight
   const [managedSettingsOpen, setManagedSettingsOpen] = useState(false);
@@ -757,6 +760,11 @@ export function MirrorView({
           // Mode comes from the terminal (paneMode) in real time, so trust every poll —
           // the optimistic set on click just gives instant feedback until this confirms.
           setMode(typeof d.mode === "string" ? d.mode : "");
+          setAgentCtx(
+            d.context && typeof d.context.tokens === "number" && typeof d.context.window === "number" && d.context.window > 0
+              ? { tokens: d.context.tokens, window: d.context.window }
+              : null,
+          );
           setTermState(typeof d.terminalState === "string" ? d.terminalState : "");
           setCompactProg(
             d.compactProgress && typeof d.compactProgress.pct === "number"
@@ -1581,7 +1589,13 @@ export function MirrorView({
   // A /context-like gauge: the newest assistant turn's prompt size (input + cache) is
   // the current context fill. The per-category split (/context) is computed inside
   // claude and isn't in the transcript, but the cache breakdown is real usage data.
-  const ctxUsage = latestContext(groups);
+  // Fallback: an agent-reported session-level fill (agy — no per-turn usage exists),
+  // rendered as a single un-broken-down segment against the agent's own window.
+  const ctxUsage =
+    latestContext(groups) ??
+    (agentCtx && agentCtx.tokens > 0
+      ? { read: 0, create: 0, fresh: agentCtx.tokens, model: undefined, window: agentCtx.window }
+      : null);
 
   // Per-assistant-turn "spend" = newly-consumed tokens (uncached input + cache creation +
   // output). Cache reads are reused context, not fresh spend, so they're excluded (the ↑

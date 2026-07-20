@@ -146,6 +146,7 @@ func scrapeUsage() (*usageResult, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
+	enforceTelemetryOff() // launch-time re-pin, same as BuildLaunch
 	cmd := exec.Command("agy")
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")

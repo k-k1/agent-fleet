@@ -81,6 +81,16 @@ type Turn struct {
 	Compact bool `json:"compact,omitempty"`
 }
 
+// Context is a session-level context-fill reading reported by the agent itself
+// (agy の /context スクレイプ)。ターン毎の usage（InTok/CacheRead/CacheCreate）が
+// 取れる agent ではそちらが正で、これは転写に token 情報を一切持たない agent の
+// 縮退ソース — Console の ContextBar は内訳なしの合計/window だけを描く。
+type Context struct {
+	Tokens int    `json:"tokens"`       // current context fill (agent-reported estimate)
+	Window int    `json:"window"`       // context-window size the fill is against
+	At     string `json:"at,omitempty"` // RFC3339 scrape time (staleness hint)
+}
+
 // Task is a ToDo task reconstructed from the transcript's Task tool calls. Unlike
 // TodoWrite (which resends the whole list each time), TaskCreate/TaskUpdate are
 // incremental.
