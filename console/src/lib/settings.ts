@@ -529,7 +529,9 @@ export const MIRROR_SEND_MODES: { id: string; labelKey: MsgKey }[] = [
 // Claude model choices, shared by the launch dialog and the default-model setting. Only
 // concrete tiers — the "既定"/"" (defer to claude's release-varying own default) option was
 // dropped on purpose so model selection stays deterministic. Each alias still tracks the
-// newest model within its tier.
+// newest model within its tier. Mirrored in Go as claude.Models()
+// (workspace/agent/internal/agents/claude/models.go, served by /agents/claude/models
+// for the MCP list_models) — keep the two lists in sync.
 export const CLAUDE_MODELS: [string, string][] = [
   ["fable", "Fable"],
   ["opus", "Opus"],

@@ -163,6 +163,11 @@ var mcpStdioTools = []map[string]any{
 		},
 	},
 	{
+		"name":        "get_agent_usage",
+		"description": "各エージェント CLI のサブスクリプション使用量とレート制限を返す（claude / codex。opencode は使用量ソースが無いため含まれない）。fiveHour（5時間枠）と sevenDay（週間枠）の pct が使用率（0–100）、resetsAt が制限の解除（リセット）日時（ISO 8601）。authed=false はその CLI に未ログイン、ageSec は計測の古さ（秒）、codex は planType や resetCredits も付く。『あとどれくらい使える?』『制限はいつ解除?』と聞かれた時や、大きなタスクをセッションに振る前の判断材料に呼ぶ。",
+		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+	},
+	{
 		"name":        "list_repos",
 		"description": "利用者のワークスペースにある git 作業コピー（~/repos 配下）の一覧を返す。新規セッションをどのディレクトリ（リポジトリ）で起こすか決める時に、まだセッションが動いていないリポジトリも含めて選ぶために呼ぶ。返る各リポジトリの path を create_session の dir に渡す。",
 		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
@@ -181,11 +186,11 @@ var mcpStdioTools = []map[string]any{
 var mcpStdioWriteTools = []map[string]any{
 	{
 		"name":        "list_models",
-		"description": "指定エージェントで現在選べるモデル一覧を返す。Codex／OpenCode を model 指定で create_session する前には必ず呼び、返った id を使うこと。利用者が terra のような略称で指定した場合も、一覧から対応する完全な id（例: gpt-5.6-terra）を選ぶ。",
+		"description": "指定エージェントで現在選べるモデル一覧を返す。model 指定で create_session する前には必ず呼び、返った id を使うこと。claude は固定のティア別名（fable/opus/sonnet/haiku）、codex／opencode は接続状態を反映したライブカタログ。利用者が terra のような略称で指定した場合も、一覧から対応する完全な id（例: gpt-5.6-terra）を選ぶ。",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"kind": map[string]any{"type": "string", "description": "codex または opencode"},
+				"kind": map[string]any{"type": "string", "description": "claude / codex / opencode"},
 			},
 			"required": []string{"kind"},
 		},
@@ -349,9 +354,26 @@ func mcpStdioCall(req mcpReq) []byte {
 	// (available to af_read too); the mutating ones require --write. The tool args match
 	// the CP wire shape, so p.Args is forwarded as the request body verbatim.
 	switch p.Name {
+	case "get_agent_usage":
+		// Read-only merge of the two WsBar usage endpoints (5h/weekly windows captured
+		// locally from statusline / rollout — no network call). opencode has no usage
+		// source, so it is intentionally absent from the result (said in the tool desc).
+		cl, err := agentGET("/claude/usage")
+		if err != nil {
+			return mcpToolErr(req.ID, "使用量の取得に失敗しました: "+err.Error())
+		}
+		cx, err := agentGET("/codex/usage")
+		if err != nil {
+			return mcpToolErr(req.ID, "使用量の取得に失敗しました: "+err.Error())
+		}
+		b, _ := json.Marshal(map[string]any{
+			"claude": json.RawMessage(cl),
+			"codex":  json.RawMessage(cx),
+		})
+		return mcpTextResult(req.ID, string(b))
 	case "list_models":
-		if a.Kind != "codex" && a.Kind != "opencode" {
-			return mcpToolErr(req.ID, "kind には codex または opencode を指定してください")
+		if a.Kind != "claude" && a.Kind != "codex" && a.Kind != "opencode" {
+			return mcpToolErr(req.ID, "kind には claude / codex / opencode のいずれかを指定してください")
 		}
 		out, err := agentGET("/agents/" + url.PathEscape(a.Kind) + "/models")
 		if err != nil {
