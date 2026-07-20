@@ -54,20 +54,25 @@ func Cmd(args ...string) *exec.Cmd {
 //     tui_contract_test.go). Hence [^)\n]* before the timer.
 //   - "shift+tab to cycle" stays visible mid-turn, so it can't tell busy from idle.
 //
-// The gerund is NOT a single word: when a todo is in progress claude renders that item's
-// activeForm as the spinner phrase ("✢ Adding regression tests…"), which is a whole
-// multi-word phrase. So the run before "…" must admit spaces — [^(\n\x{2026}]* (any char
-// but "(", a newline, or an earlier ellipsis), not the old [^\s(]* that stopped at the
-// first space and false-idled every todo turn.
+// The gerund is NOT a single word, and it is NOT even constrained in its characters: when
+// a todo is in progress claude renders that item's activeForm as the spinner phrase, and
+// an activeForm is arbitrary user-authored text. Real captures have shown it to be a
+// multi-word phrase ("✢ Adding regression tests…"), Japanese ("· 検証ハーネスを作成中…",
+// claude_sdfruv7), and parenthesised ("* nativeRuntime アダプタ実装 (AF_RUNTIME=native)…",
+// claude_sx5m7yp). Each of those broke a narrower run in turn — [^\s(]* stopped at the
+// first space, and [^(\n\x{2026}]* stopped at the "(" — so the run is now everything up to
+// the ellipsis: [^\n\x{2026}]*. Assume nothing about the phrase's contents.
 //
-// The phrase does NOT start with an ASCII capital either: a todo whose activeForm is
-// Japanese renders "· 検証ハーネスを作成中… (12m 2s · ↓ 36.4k tokens)" — the run opens on a
-// CJK character (real capture, claude_sdfruv7). The old [A-Z] head demanded an ASCII
-// upper-case letter and false-idled every non-Latin activeForm. So the first char is
-// (?:[A-Z]|[^\x00-\x7F]): still a capital for Latin phrases (so lower-case prose like
-// "and…" can't head a match), but any non-ASCII letter for CJK/accented activeForms. It
-// must be a definite non-space char (both branches are), which — together with the
-// ^\S? ? head — is what stops a ≥2-space-indented transcript quote from matching.
+// The head is where the remaining discipline lives, and it is deliberately weak: one
+// optional glyph, one optional space, then a letter or digit (\p{L}/\p{N}). An earlier
+// head demanded [A-Z] or a non-ASCII char, which looked like it screened the phrase but in
+// practice was satisfied by the *glyph* (✽ is non-ASCII) — so it went unexercised until a
+// frame arrived with an ASCII glyph and a lower-case activeForm ("* nativeRuntime …"),
+// which it then read idle. \p{L}\p{N} admits every activeForm we have seen while still
+// doing the two jobs the head must do: a ≥2-space-indented transcript quote cannot match
+// (^\S? ? absorbs at most one leading space, and the head is not a space), and a source
+// line quoting a spinner inside a "//" comment cannot either (the head is not punctuation)
+// — which matters because sessions asked to debug the TUI read their own pane.
 //
 // It must not match the post-turn summary claude leaves in the transcript
 // ("✻ Worked for 13m 53s", "✻ Sautéed for 5s · 1 shell still running"): those use a
@@ -76,7 +81,7 @@ func Cmd(args ...string) *exec.Cmd {
 // renders at column 0, so a ≥2-space-indented transcript line that merely quotes a
 // spinner — including this file's own examples, when a session is asked to debug the TUI
 // — can't match). Best-effort; one captured frame.
-var spinnerRe = regexp.MustCompile(`(?m)^\S? ?(?:[A-Z]|[^\x00-\x7F])[^(\n\x{2026}]*\x{2026} \([^)\n]*[0-9]+(?:h|m|s)\b`)
+var spinnerRe = regexp.MustCompile(`(?m)^\S? ?[\p{L}\p{N}][^\n\x{2026}]*\x{2026} \([^)\n]*[0-9]+(?:h|m|s)\b`)
 
 // spinnerActive reports whether the captured pane text shows a turn actively running —
 // either the classic "esc to interrupt" affordance or the live spinner header (see
