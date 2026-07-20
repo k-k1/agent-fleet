@@ -56,11 +56,13 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	}
 	path := transcriptPath(conv)
 	td := agents.TranscriptData{Path: path}
-	// A pending ASK_QUESTION never reaches the jsonl (実測 — 保留中は無記録), so
-	// the interactive card's payload comes from the conversation-DB probe. The
-	// generic /messages handler only surfaces Pending while the session is alive,
-	// which gates out a killed session's stale status=9 row.
-	if st, qs := Probe(m); st == "question" {
+	// A pending ASK_QUESTION / permission prompt never reaches the jsonl (実測 —
+	// 保留中は無記録), so the interactive card's payload comes from the
+	// conversation-DB probe: real options for questions, a synthesized menu for
+	// permissions (pending.go). The generic /messages handler only surfaces
+	// Pending while the session is alive, which gates out a killed session's
+	// stale status=9 row.
+	if _, qs := Probe(m); len(qs) > 0 {
 		td.Pending = qs
 	}
 	f, err := os.Open(path)

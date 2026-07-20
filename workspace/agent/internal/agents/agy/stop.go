@@ -26,6 +26,15 @@ func (agentImpl) GracefulStop(m session.Meta) bool {
 	if pane == "" {
 		return false
 	}
+	// A pending interactive prompt (ASK_QUESTION / permission menu) swallows the
+	// "/exit" text but its Enter CONFIRMS the highlighted first row — halting a
+	// session mid-permission silently APPROVED the tool call (実機実証: 保留中
+	// halt でファイル作成が承認された)。Escape dismisses either menu (question:
+	// Skip, permission: cancel) without choosing, so clear the modal first.
+	if st, _ := Probe(m); st != "" {
+		_ = exec.Command("tmux", "send-keys", "-t", pane, "Escape").Run()
+		time.Sleep(300 * time.Millisecond)
+	}
 	// C-u first: a draft sitting in the input box would otherwise be submitted
 	// as "<draft>/exit" — a quota-burning prompt instead of an exit.
 	_ = exec.Command("tmux", "send-keys", "-t", pane, "C-u").Run()

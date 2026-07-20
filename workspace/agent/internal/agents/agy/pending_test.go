@@ -61,19 +61,64 @@ func TestProbePendingQuestion(t *testing.T) {
 	}
 }
 
-func TestProbePendingPermission(t *testing.T) {
+func TestProbePendingPermissionCommand(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	dir := "/home/dev/repos/proj"
 	m := session.Meta{Dir: dir, Name: "slot21", Kind: session.KindAgy}
 	sids.Write(session.UUID(dir, "slot21"), "conv-p")
-	// run_command awaiting permission: status=9, no questions JSON in the payload.
+	// run_command awaiting permission: status=9, tool name + args JSON in the
+	// payload → the synthesized 4-row menu (mirrors the TUI's rows exactly).
 	mkConvDB(t, "conv-p", [][3]any{
 		{14, 3, []byte("user")},
-		{21, stepStatusAwaitingUser, []byte(`{"CommandLine":"rtk echo x","Cwd":"/tmp"}`)},
+		{21, stepStatusAwaitingUser, []byte("\x12\x0brun_command\xaa\x01" + `{"CommandLine":"rtk echo x","Cwd":"/tmp"}` + "\x1a")},
+	})
+	st, qs := Probe(m)
+	if st != "permission" || len(qs) != 1 {
+		t.Fatalf("got %q %+v; want permission with 1 synthesized question", st, qs)
+	}
+	if len(qs[0].Options) != 4 || qs[0].Options[3].Label != "No" {
+		t.Fatalf("command menu must have the TUI's 4 rows: %+v", qs[0].Options)
+	}
+	if qs[0].Question != "Requesting permission for: rtk echo x" {
+		t.Fatalf("question text wrong: %q", qs[0].Question)
+	}
+}
+
+func TestProbePendingPermissionFileTools(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := "/home/dev/repos/proj"
+	for name, tc := range map[string]struct {
+		tool  string
+		nOpts int
+	}{
+		"create": {"write_to_file", 2},
+		"edit":   {"replace_file_content", 2},
+	} {
+		m := session.Meta{Dir: dir, Name: "slot-" + name, Kind: session.KindAgy}
+		sids.Write(session.UUID(dir, "slot-"+name), "conv-"+name)
+		mkConvDB(t, "conv-"+name, [][3]any{
+			{5, stepStatusAwaitingUser, []byte(tc.tool + `*{"TargetFile":"/tmp/x.txt","CodeContent":"y"}`)},
+		})
+		st, qs := Probe(m)
+		if st != "permission" || len(qs) != 1 || len(qs[0].Options) != tc.nOpts {
+			t.Fatalf("%s: got %q %+v; want permission with %d rows", name, st, qs, tc.nOpts)
+		}
+	}
+}
+
+func TestProbePendingPermissionUnknownToolNoCard(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := "/home/dev/repos/proj"
+	m := session.Meta{Dir: dir, Name: "slot24", Kind: session.KindAgy}
+	sids.Write(session.UUID(dir, "slot24"), "conv-u")
+	// 未検証ツールのメニュー形は不明 — カードを出すと Down×i が誤爆し得るので
+	// state のみ（応答はターミナルで）。
+	mkConvDB(t, "conv-u", [][3]any{
+		{99, stepStatusAwaitingUser, []byte(`mystery_tool*{"Thing":"z"}`)},
 	})
 	st, qs := Probe(m)
 	if st != "permission" || qs != nil {
-		t.Fatalf("got %q %+v; want permission with no questions", st, qs)
+		t.Fatalf("got %q %+v; want permission with NO card for unknown tool", st, qs)
 	}
 }
 
