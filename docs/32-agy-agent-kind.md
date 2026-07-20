@@ -419,23 +419,63 @@ claude の AskUserQuestion / 許可プロンプトに相当する、**会話進�
   盲目送信は誤爆する（実測）。
 - 回答済みターンの表示は正常（ASK_QUESTION tool パートとして表面化）。
 
-### ギャップと対応方針（未実装・M2 以降の候補）
+### ギャップと対応方針（→ 下記「保留プロンプト検知の実装」で解消）
 
-1. **検知は pane スクレイプ一択**: JSONL は保留中に何も書かないため、
-   transcript 側での質問検知は不可能。プロンプトは定型見出し
-   （"Question N/M:" / "Do you want to proceed?" / "Allow creation of this
-   file?" / "Accept this file edit?"）＋番号付き選択肢を持つので、tmux capture
-   末尾の正規表現パースで種別・質問文・選択肢を取り出し、
-   `TranscriptData.Pending`（transcript.Question）＋ state=question/permission に
-   載せるのが現実的（claude の probe 方式と同型）。応答は実証済みの
-   /input {seq} がそのまま使える。
-2. ASK_QUESTION の**質問文・選択肢が JSONL に残らない**ため、履歴表示の充実も
-   1 の検知時スナップショットに依存する（回答後は "A1: …" しか残らない）。
+1. ~~検知は pane スクレイプ一択~~ → **撤回**。実装前の再調査で上位互換の
+   チャネルを発見した（下記）。
+2. ASK_QUESTION の**質問文・選択肢が JSONL に残らない**ため、履歴表示の充実は
+   検知時スナップショットに依存する（回答後は "A1: …" しか残らない）— 現状は
+   保留中カードのみ構造化表示、履歴は従来どおり。
 3. 拒否されたツール呼び出しが transcript に**痕跡を残さない**点は、ミラー履歴の
    忠実性の既知の穴として記録しておく（TUI にのみ表示）。
-4. 権限系はフリート既定で抑止されているため優先度は低い。将来 agy の
-   startMode=plan を Console に出す場合は、権限プロンプト（1–3）が復活する
-   ことを踏まえて 1 の検知を先に入れること。
+4. 権限系はフリート既定（skip-permissions）で抑止されているため実質
+   ASK_QUESTION が本命。将来 agy の startMode=plan を Console に出す場合は
+   権限プロンプトが復活する — state=permission の検知は下記実装済み、カードの
+   選択肢駆動は未配線（残課題）。
+
+## 保留プロンプト検知の実装（2026-07-20 後続、`temp/szpaeta-agy-ui-fixes`）
+
+### 検知チャネルの再調査（pane スクレイプの前に代替を確認）
+
+保留中の実機で各チャネルを確認した結果:
+
+| チャネル | 結果 |
+|---|---|
+| OSC / pane・window タイトル | **無し**（タイトル不変、OSC シーケンス出力なし） |
+| stderr | **無し**（空） |
+| lock / 状態ファイル | 無し |
+| CLI ログ（`log/cli-*.log`、glog） | `Surfacing ask_question at step N` 行が**ライブで出る**が、イベントのみで質問本文・選択肢なし（補助止まり） |
+| **会話 DB（`conversations/<uuid>.db` の steps 最終行）** | **採用** — 保留中は `status=9`（実測: 2=実行中・3=完了・9=ユーザー入力待ち）。ask_question はツール引数 JSON `{"questions":[{question, options, is_multi_select}]}` が step_payload に**平文文字列として**埋まっており（protobuf の length-delimited 文字列）、スキーマ逆解析なしで `{"questions":` の位置から 1 値デコードするだけで取れる。権限保留も同じ status=9（該当ツール step、CommandLine 等の引数 JSON つき） |
+
+→ **pane スクレイプは不要**（折返し・文言変更に脆い方式を回避できた）。
+
+### 実装（agent 側のみ・Console は既存カードがそのまま点灯）
+
+- `internal/agents/agy/pending.go` — `Probe(m)`: sids の会話 UUID → 会話 DB を
+  read-only で開き最終 step を見る。status=9 かつ questions JSON あり →
+  `("question", []transcript.Question)`（multiSelect・選択肢つき）、JSON 無し →
+  `("permission", nil)`。TUI が付け足す "Write-in..." 行は JSON に含まれない
+  ため、選択肢 index はウィジェットの行番号と 1:1（menu モードの Down×i+Enter
+  がそのまま正しい行に届く）。
+- 配線: `Transcript()` が Pending を載せ（generic /messages が alive 時のみ
+  `pendingQuestions` として返す）、`WireLive` が State=question/permission を
+  返し（セッション一覧バッジ）、`driveState` は agy 分岐で Probe を最優先 —
+  これが **working 誤報告の修正**（真因: /input が楽観的に "working" を永続し、
+  質問ウィジェットが idle フッタを隠すため claude 形ヒューリスティックの
+  自己修復が発火せず貼り付いていた）。
+- Console 変更なし: 既存の PendingQuestions カードが kind≠claude を menu
+  モード（Down×i+Enter・esc キャンセル）で駆動する設計だったため、agy は
+  そのまま乗った（型コメントのみ更新）。multiSelect 質問と複数質問ページングは
+  カード側の既存ガードで端末誘導ヒントに落ちる（agy でのページング keys は
+  未実測のため据え置き）。
+
+### 実機 E2E（sandbox agent 直結・headless Chromium）
+
+起動モーダル→最初のプロンプトで質問誘発→**ミラーに Question チップ＋質問
+カード（選択肢ボタン・コンポーザロック）が表示**（state=question、
+pendingQuestions に構造化質問）→カードの選択肢クリックで TUI が回答を受理→
+応答ターンがミラーに出て idle へ復帰、まで完走。ユニットテストは probe の
+question/permission/実行中/DB 無しの 4 経路＋既存全緑（agent 362）。
 
 ## ユーザーに依頼する事項（並行作業のブロッカー解消）
 
