@@ -269,7 +269,7 @@ export const ja = {
   "env.no_jdk": "このワークスペースに JDK がありません",
   "env.unselected": "未選択",
   "env.agent_update_title": "エージェント CLI の更新",
-  "env.agent_update_label": "起動時に claude / opencode / codex を最新へ更新する",
+  "env.agent_update_label": "起動時に claude / opencode / codex / rtk を最新へ更新する",
   "env.agent_update_note":
     "OFF（既定）はシステムが焼いたイメージ版で固定。ON にすると次の起動時に最新へ更新します（Stop → Start で反映／OFF に戻して再起動すればイメージ版へ戻ります）。停止中でも変更できます。",
   "env.recreate_failed": "作り直しに失敗: ",
@@ -761,7 +761,7 @@ export const ja = {
   "admin.term_log_hint":
     "有効にすると、端末に表示された出力をワークスペースの永続領域へ保存します。入力操作そのものは記録しませんが、コマンド出力に機密情報が含まれる可能性があります。変更は次回のワークスペース起動から反映されます。",
   "admin.agent_cli_update": "エージェント CLI の更新",
-  "admin.allow_self_update": "メンバーが claude / opencode / codex を自分で最新へ更新するのを許可",
+  "admin.allow_self_update": "メンバーが claude / opencode / codex / rtk を自分で最新へ更新するのを許可",
   "admin.allow_self_update_hint":
     "OFF（既定）は全員がこのデプロイのイメージ版で固定。ON にすると各メンバーが自分の設定で「起動時に最新へ更新」を選べます（コンテナ内 in-place 更新・Stop → Start で反映／戻せます）。",
   "admin.saved": "保存しました",

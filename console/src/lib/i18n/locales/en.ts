@@ -268,7 +268,7 @@ export const en: Record<keyof typeof ja, string> = {
   "env.no_jdk": "This workspace has no JDK.",
   "env.unselected": "Not selected",
   "env.agent_update_title": "Agent CLI updates",
-  "env.agent_update_label": "Update claude / opencode / codex to the latest on start",
+  "env.agent_update_label": "Update claude / opencode / codex / rtk to the latest on start",
   "env.agent_update_note":
     "OFF (default) pins the system-baked image versions. ON updates to the latest on the next start (applied on Stop → Start; turn it OFF and restart to return to the image versions). You can change this even while stopped.",
   "env.recreate_failed": "Failed to recreate: ",
@@ -756,7 +756,7 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.term_log_hint":
     "When enabled, output shown in the terminal is saved to the workspace's persistent area. It doesn't record keystrokes themselves, but command output may contain sensitive information. Changes take effect from the next workspace start.",
   "admin.agent_cli_update": "Agent CLI updates",
-  "admin.allow_self_update": "Allow members to update claude / opencode / codex themselves",
+  "admin.allow_self_update": "Allow members to update claude / opencode / codex / rtk themselves",
   "admin.allow_self_update_hint":
     "OFF (default) pins everyone to this deploy's image versions. ON lets each member choose “update to the latest on start” in their own settings (in-container in-place update; applied on Stop → Start, reversible).",
   "admin.saved": "Saved",
