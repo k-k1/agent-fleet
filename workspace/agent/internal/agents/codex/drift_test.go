@@ -240,16 +240,43 @@ func TestDriftCodexThreadMCPConfigIsScoped(t *testing.T) {
 	}
 }
 
-// TestDriftCodexThreadMCPConfigCannotClearGlobalServers captures the remaining
-// docs/27 §9.3 gate. A thread-local empty mcp_servers map is not an allowlist:
-// app-server still exposes a server inherited from the daemon configuration.
-// Do not invert this assertion until the managed chat implementation has a
-// replacement/deny mechanism and updates the security contract with it.
-func TestDriftCodexThreadMCPConfigCannotClearGlobalServers(t *testing.T) {
+// TestDriftCodexThreadMCPConfigReplacesGlobalServers pins the docs/27 §9.3
+// security contract: a thread-local mcp_servers map REPLACES the daemon's global
+// configuration rather than merging with it, so an empty map is a working deny.
+//
+// This assertion was inverted on 2026-07-20. It previously asserted the opposite
+// ("an empty map is not an allowlist; the global server leaks in") and carried a
+// note not to invert it until a replacement/deny mechanism existed. That note is
+// now discharged: the mechanism was always there. The old assertion had never
+// actually executed — the preceding test in this package hung in cleanup and took
+// the whole package down by timeout (fixed by reapProcessGroup), so this test was
+// unreachable from the commit that introduced it. Measured identically on codex
+// 0.144.5 and 0.144.6, i.e. this is a corrected premise, not CLI drift.
+//
+// The no-config control matters as much as the deny itself: it proves the global
+// -c config is live, so "no servers" cannot be a false pass from a global config
+// that never took effect.
+func TestDriftCodexThreadMCPConfigReplacesGlobalServers(t *testing.T) {
 	const globalServer = "af_drift_global"
 	cl := startDriftAppServer(t, "-c", "mcp_servers."+globalServer+`.command="/bin/true"`)
-	threadID := startDriftThread(t, cl, map[string]any{"mcp_servers": map[string]any{}})
-	waitDriftMCPServer(t, cl, threadID, globalServer)
+
+	// Control: without a thread-local map the global server IS inherited.
+	inherited := startDriftThread(t, cl, nil)
+	waitDriftMCPServer(t, cl, inherited, globalServer)
+
+	// Deny: an empty map replaces the global set, leaving nothing.
+	cleared := startDriftThread(t, cl, map[string]any{"mcp_servers": map[string]any{}})
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if names := driftMCPServerNames(t, cl, cleared); len(names) > 0 {
+			t.Fatalf("thread-local empty mcp_servers no longer denies global servers: got %v.\n"+
+				"docs/27 §9.3 assumes thread config REPLACES the global set; if codex has "+
+				"switched to merging, the none/af_read/af_write permission boundary for the "+
+				"managed assistant chat is gone and must not be relied on.", names)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Logf("ok: global %q inherited without thread config, denied by empty map", globalServer)
 }
 
 // startDriftAppServer launches an isolated, credential-free app-server over a
