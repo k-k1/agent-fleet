@@ -277,6 +277,80 @@ func memberTools() []mcpTool {
 			},
 		},
 		{
+			name: "list_cleanup_candidates", minScope: scopeRead,
+			desc:   "Survey stale sessions and worktrees that can be tidied up. Each candidate has type (session|worktree), action (archive_session|delete_worktree|empty = manual only), safety (safe = merged & clean etc.; review = a stopped session or a clean-but-unmerged worktree, confirm first; keep = live or has uncommitted/unpushed work, don't touch) and reason. Use when the workspace has drifted into clutter: present the safe/review candidates to the user, then act with archive_session / delete_worktree. keep candidates need the user in the Console.",
+			schema: map[string]any{"type": "object", "properties": map[string]any{}},
+			run: func(ctx context.Context, a mcpAPI, res *resolved, _ map[string]any) (string, error) {
+				return agentText(ctx, res.rt, "GET", "/sessions/cleanup", nil)
+			},
+		},
+		{
+			name: "archive_session", minScope: scopeWrite,
+			desc:   "Archive a finished session, hiding it from the active list (its conversation is kept; restorable from the Console — reversible). Acts on a list_cleanup_candidates action=archive_session item. Interrupts any running work, so confirm it is finished with the user first.",
+			schema: nameArg,
+			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
+				return agentText(ctx, res.rt, "POST", "/sessions/"+url.PathEscape(argStr(args, "name"))+"/archive", nil)
+			},
+		},
+		{
+			name: "delete_worktree", minScope: scopeWrite,
+			desc: "Delete an unneeded worktree (working copy). Acts on a list_cleanup_candidates action=delete_worktree item (merged & clean = safe, clean-but-unmerged = review). A worktree with uncommitted/unpushed changes is protected and refused (keep — force-delete it in the Console). Deleting it also tidies up the stopped sessions that lived there; only the local working copy is removed (history, remote and branch stay). Destructive — confirm which worktree with the user before running.",
+			schema: map[string]any{"type": "object", "properties": map[string]any{
+				"name": map[string]any{"type": "string", "description": "worktree name (the id of a list_cleanup_candidates worktree candidate)"},
+			}, "required": []string{"name"}},
+			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
+				return agentText(ctx, res.rt, "DELETE", "/repos/"+url.PathEscape(argStr(args, "name"))+"?prune_sessions=1", nil)
+			},
+		},
+		{
+			name: "delete_session", minScope: scopeWrite,
+			desc:   "Delete a session for good and reclaim its disk (its transcript jsonl is removed), bundling it to a recoverable cleanup archive first. Unlike archive_session (which only hides it), this removes it. Acts on a list_cleanup_candidates action=delete_session item. A running session is refused (stop it first). Near-irreversible — confirm which session with the user before running; recover via restore_cleanup_archive.",
+			schema: nameArg,
+			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
+				return agentText(ctx, res.rt, "DELETE", "/sessions/"+url.PathEscape(argStr(args, "name"))+"?reclaim=1", nil)
+			},
+		},
+		{
+			name: "delete_branch", minScope: scopeWrite,
+			desc: "Delete a MERGED local branch (tidies up temp/* branches left after a worktree is removed). Only merged branches are deleted; an unmerged branch is refused so its unique commits aren't orphaned. Recorded (name+SHA) in a recoverable cleanup archive first. Acts on a list_cleanup_candidates action=delete_branch item (repo = id, branch). Confirm with the user before running.",
+			schema: map[string]any{"type": "object", "properties": map[string]any{
+				"repo":   map[string]any{"type": "string", "description": "repository name (the id of a list_cleanup_candidates branch candidate)"},
+				"branch": map[string]any{"type": "string", "description": "branch name (the branch field of the candidate)"},
+			}, "required": []string{"repo", "branch"}},
+			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
+				return agentText(ctx, res.rt, "DELETE",
+					"/repos/"+url.PathEscape(argStr(args, "repo"))+"/branch?branch="+url.QueryEscape(argStr(args, "branch")), nil)
+			},
+		},
+		{
+			name: "list_cleanup_archives", minScope: scopeRead,
+			desc:   "List the cleanup archives (the gz safety net that delete_session / delete_branch write before removing anything). Each has an id, timestamp, reason and the sessions/branches it holds. Use to find an archive to restore_cleanup_archive (undo) or purge_cleanup_archive (reclaim for good).",
+			schema: map[string]any{"type": "object", "properties": map[string]any{}},
+			run: func(ctx context.Context, a mcpAPI, res *resolved, _ map[string]any) (string, error) {
+				return agentText(ctx, res.rt, "GET", "/cleanup/archives", nil)
+			},
+		},
+		{
+			name: "restore_cleanup_archive", minScope: scopeWrite,
+			desc: "Restore a cleanup archive: a deleted session's transcript + list row come back, or a deleted branch is recreated. Use to undo an over-eager cleanup. id from list_cleanup_archives.",
+			schema: map[string]any{"type": "object", "properties": map[string]any{
+				"id": map[string]any{"type": "string", "description": "archive id from list_cleanup_archives"},
+			}, "required": []string{"id"}},
+			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
+				return agentText(ctx, res.rt, "POST", "/cleanup/archives/"+url.PathEscape(argStr(args, "id"))+"/restore", nil)
+			},
+		},
+		{
+			name: "purge_cleanup_archive", minScope: scopeWrite,
+			desc: "Permanently delete a cleanup archive and reclaim its space (no longer restorable). Use only for archives confirmed no longer needed. id from list_cleanup_archives. Confirm with the user first.",
+			schema: map[string]any{"type": "object", "properties": map[string]any{
+				"id": map[string]any{"type": "string", "description": "archive id from list_cleanup_archives"},
+			}, "required": []string{"id"}},
+			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
+				return agentText(ctx, res.rt, "DELETE", "/cleanup/archives/"+url.PathEscape(argStr(args, "id")), nil)
+			},
+		},
+		{
 			name: "get_session_usage", minScope: scopeRead,
 			desc: "Per-session context fill and cumulative token consumption for transcript-capable sessions (claude/codex/opencode; shell/ssm excluded). Optional `name` narrows to one session; omitted returns all. `context` is the current context size (tokens with read/create/fresh breakdown, pct of window; absent until the first assistant reply, reset by auto-compaction). `cumulative` sums consumption (logical turns, inTok/outTok/cacheRead/cacheCreate, spend = inTok+cacheCreate+outTok). Use when asked which session is near its context limit or how much a session has consumed. Subscription quota is get_agent_usage (separate tool).",
 			schema: map[string]any{"type": "object", "properties": map[string]any{

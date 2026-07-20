@@ -186,6 +186,15 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/sessions/archived", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/archive", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/restore", rest)
+	// Cleanup (docs/32): survey, per-session usage, delete-with-reclaim, and the gz
+	// safety-net archive (list/restore/purge). Proxied verbatim; also used by the MCP
+	// cleanup tools, which reach the Agent directly via the resolved runtime.
+	mux.HandleFunc("GET /api/sessions/usage", rest)
+	mux.HandleFunc("GET /api/sessions/cleanup", rest)
+	mux.HandleFunc("DELETE /api/sessions/{name}", rest)
+	mux.HandleFunc("GET /api/cleanup/archives", rest)
+	mux.HandleFunc("POST /api/cleanup/archives/{id}/restore", rest)
+	mux.HandleFunc("DELETE /api/cleanup/archives/{id}", rest)
 	// Programmatic drive I/O (docs/0006 P3-6 E) — proxied to the Agent. Also used
 	// by the MCP tools, which call the Agent directly via the resolved runtime.
 	mux.HandleFunc("POST /api/sessions/{name}/input", rest)
@@ -312,6 +321,7 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("DELETE /api/repos/{name}", rest)
 	mux.HandleFunc("GET /api/repos/{name}/status", rest)
 	mux.HandleFunc("GET /api/repos/{name}/branches", rest)
+	mux.HandleFunc("DELETE /api/repos/{name}/branch", rest) // ?branch=<name>; cleanup (docs/32)
 	mux.HandleFunc("POST /api/repos/{name}/checkout", rest)
 	mux.HandleFunc("POST /api/repos/{name}/fetch", rest)
 	mux.HandleFunc("POST /api/repos/{name}/ff", rest)

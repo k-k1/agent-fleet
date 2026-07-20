@@ -40,6 +40,7 @@ export function ProjectTree() {
   const clearRepos = useReposStore((s) => s.clear);
   const sessions = useSessionsStore((s) => s.sessions);
   const openArchived = useSessionUI((u) => u.openArchived);
+  const openCleanup = useSessionUI((u) => u.openCleanup);
   const toast = useToast();
   const ctx = useRepoRailContext();
   const actions = useSessionActions(); // one instance shared by every node's rows
@@ -128,6 +129,7 @@ export function ProjectTree() {
             disabled={!sessions.some((s) => !s.alive)}
             onClick={actions.clearStopped}
           />
+          <IconButton icon="trash" label={tr("clean.open")} onClick={openCleanup} />
           <IconButton icon="archive" label={tr("pj.open_archive")} onClick={openArchived} />
         </>
       }

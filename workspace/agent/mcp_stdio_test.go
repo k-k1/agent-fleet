@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -109,6 +110,103 @@ func TestMCPGetAgentUsageMergesEndpoints(t *testing.T) {
 	}
 	if merged.Codex.Authed || merged.Codex.OK {
 		t.Fatalf("codex = %+v, want authed=false ok=false", merged.Codex)
+	}
+}
+
+// TestMCPCleanupToolsRelay covers the cleanup tools: list_cleanup_candidates is a
+// READ tool → GET /sessions/cleanup; archive_session (write) → POST .../archive;
+// delete_worktree (write) → DELETE /repos/{name}?prune_sessions=1 and NEVER force.
+func TestMCPCleanupToolsRelay(t *testing.T) {
+	type hit struct{ method, path, query string }
+	got := make(chan hit, 3)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- hit{r.Method, r.URL.Path, r.URL.RawQuery}
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENT_ADDR", u.Host)
+
+	call := func(tool, name string) []byte {
+		args := map[string]any{}
+		if name != "" {
+			args["name"] = name
+		}
+		ab, _ := json.Marshal(args)
+		params, _ := json.Marshal(map[string]any{"name": tool, "arguments": json.RawMessage(ab)})
+		return mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params})
+	}
+
+	// list_cleanup_candidates works WITHOUT --write (read tool).
+	oldWrite := mcpWriteEnabled
+	mcpWriteEnabled = false
+	call("list_cleanup_candidates", "")
+	if h := <-got; h.method != "GET" || h.path != "/sessions/cleanup" {
+		t.Fatalf("list_cleanup_candidates hit %s %s", h.method, h.path)
+	}
+	// The write tools are refused read-only and never reach the Agent.
+	for _, tool := range []string{"archive_session", "delete_worktree"} {
+		resp := call(tool, "x")
+		var p struct {
+			Result struct {
+				IsError bool `json:"isError"`
+			} `json:"result"`
+		}
+		if json.Unmarshal(resp, &p) != nil || !p.Result.IsError {
+			t.Fatalf("%s read-only: want isError, got %s", tool, resp)
+		}
+	}
+	select {
+	case h := <-got:
+		t.Fatalf("write tool reached Agent read-only: %s %s", h.method, h.path)
+	default:
+	}
+
+	mcpWriteEnabled = true
+	t.Cleanup(func() { mcpWriteEnabled = oldWrite })
+
+	call("archive_session", "slot01")
+	if h := <-got; h.method != "POST" || h.path != "/sessions/slot01/archive" {
+		t.Fatalf("archive_session hit %s %s", h.method, h.path)
+	}
+	call("delete_worktree", "app@wip-x")
+	h := <-got
+	if h.method != "DELETE" || h.path != "/repos/app@wip-x" {
+		t.Fatalf("delete_worktree hit %s %s", h.method, h.path)
+	}
+	if h.query != "prune_sessions=1" {
+		t.Fatalf("delete_worktree query = %q, want prune_sessions=1 (and NO force)", h.query)
+	}
+	if strings.Contains(h.query, "force") {
+		t.Fatalf("delete_worktree must never send force: %q", h.query)
+	}
+
+	// delete_session reclaims (jsonl) → DELETE /sessions/{name}?reclaim=1.
+	call("delete_session", "slot9")
+	if h = <-got; h.method != "DELETE" || h.path != "/sessions/slot9" || h.query != "reclaim=1" {
+		t.Fatalf("delete_session hit %s %s?%s", h.method, h.path, h.query)
+	}
+	// delete_branch → DELETE /repos/{repo}/branch?branch=<name> (slash-safe query).
+	dbArgs, _ := json.Marshal(map[string]any{"repo": "app", "branch": "temp/wip-x"})
+	dbParams, _ := json.Marshal(map[string]any{"name": "delete_branch", "arguments": json.RawMessage(dbArgs)})
+	mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: dbParams})
+	if h = <-got; h.method != "DELETE" || h.path != "/repos/app/branch" || h.query != "branch=temp%2Fwip-x" {
+		t.Fatalf("delete_branch hit %s %s?%s", h.method, h.path, h.query)
+	}
+	// restore / purge cleanup archives.
+	idArgs, _ := json.Marshal(map[string]any{"id": "20260720-090000-slot9"})
+	restoreParams, _ := json.Marshal(map[string]any{"name": "restore_cleanup_archive", "arguments": json.RawMessage(idArgs)})
+	mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: restoreParams})
+	if h = <-got; h.method != "POST" || h.path != "/cleanup/archives/20260720-090000-slot9/restore" {
+		t.Fatalf("restore hit %s %s", h.method, h.path)
+	}
+	purgeParams, _ := json.Marshal(map[string]any{"name": "purge_cleanup_archive", "arguments": json.RawMessage(idArgs)})
+	mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: purgeParams})
+	if h = <-got; h.method != "DELETE" || h.path != "/cleanup/archives/20260720-090000-slot9" {
+		t.Fatalf("purge hit %s %s", h.method, h.path)
 	}
 }
 

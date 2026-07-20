@@ -21,6 +21,14 @@ func AgentConfigDir() string {
 	return filepath.Join(HomeDir(), ".config", "agent-fleet")
 }
 
+// AgentDataDir is the per-user home volume for larger, persistent agent-fleet data
+// (survives container recreate — ~/.local persists). Distinct from AgentConfigDir
+// (small JSON state under ~/.config); used for the cleanup archive of removed
+// sessions so tidy-up is recoverable.
+func AgentDataDir() string {
+	return filepath.Join(HomeDir(), ".local", "share", "agent-fleet")
+}
+
 // ExePath is the absolute path to this binary, used to build hook/MCP commands
 // that resolve in an agent's hook context regardless of PATH (docs/23 残① Wave F
 // で main の agentExe / codex の複製を一本化).

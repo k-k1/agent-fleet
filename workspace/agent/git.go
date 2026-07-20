@@ -14,6 +14,8 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // Repositories are plain working copies under ~/repos/<name>. The folder name
@@ -481,6 +483,61 @@ func gitCurrentBranch(dir string) string {
 		return "(detached)"
 	}
 	return b
+}
+
+// gitBranchExists reports whether a local branch of that name exists in dir.
+func gitBranchExists(dir, branch string) bool {
+	return gitx.OK(dir, "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
+}
+
+// gitBranchSHA returns the tip commit of a local branch, or "" if absent.
+func gitBranchSHA(dir, branch string) string {
+	out, err := gitx.Run(dir, "rev-parse", "--verify", "refs/heads/"+branch)
+	if err != nil {
+		return ""
+	}
+	return out
+}
+
+// gitCreateBranch creates a local branch at sha (restore path). Reports success.
+func gitCreateBranch(dir, branch, sha string) bool {
+	return gitx.Cmd(dir, "branch", branch, sha).Run() == nil
+}
+
+// mergedLocalBranches returns dir's local branches already contained in HEAD (safe to
+// delete — their commits live in the current line), excluding the checked-out branch.
+// Worktree-checked-out branches are also excluded (git refuses to delete those). The
+// cleanup survey uses this to propose merged temp/* branches left behind by removed
+// worktrees.
+func mergedLocalBranches(dir string) []string {
+	// `--merged` (no ref) = merged into HEAD. Tab-separated so empty fields survive the
+	// split: name \t worktreepath (non-empty = checked out somewhere) \t HEAD ("*" =
+	// current). Skip the current branch and any worktree-checked-out branch (git refuses
+	// to delete those), plus the trunk.
+	out, err := gitx.Run(dir, "branch", "--merged",
+		"--format=%(refname:short)%09%(worktreepath)%09%(HEAD)")
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, ln := range strings.Split(out, "\n") {
+		if strings.TrimSpace(ln) == "" {
+			continue
+		}
+		f := strings.Split(ln, "\t")
+		if len(f) < 3 {
+			continue
+		}
+		name, worktreePath, head := f[0], f[1], f[2]
+		if name == "" || name == "main" || name == "master" {
+			continue
+		}
+		if strings.TrimSpace(worktreePath) != "" || strings.TrimSpace(head) == "*" {
+			continue // checked out in a worktree or the current branch → not deletable
+		}
+		names = append(names, name)
+	}
+	return names
 }
 
 // gitDirInfo returns dir's current branch AND whether it's a linked worktree in a
@@ -1016,6 +1073,9 @@ func handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_ = gitx.Cmd(parent, "worktree", "prune").Run()
+		if pruneSessions(r) {
+			forgetNonLiveMetasUnder(dir)
+		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"deleted": r.PathValue("name")})
 		return
 	}
@@ -1032,5 +1092,36 @@ func handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", err.Error())
 		return
 	}
+	if pruneSessions(r) {
+		forgetNonLiveMetasUnder(dir)
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"deleted": r.PathValue("name")})
+}
+
+// pruneSessions reports whether the delete should also forget the (non-live) session
+// metas that lived in the removed dir. Opt-in via ?prune_sessions=1 so the Console's
+// plain "delete working copy" keeps its existing behavior (metas untouched); only the
+// cleanup path (MCP delete_worktree) sets it, completing the tidy-up so a stopped
+// session isn't left pointing at a directory that no longer exists.
+func pruneSessions(r *http.Request) bool {
+	v := r.URL.Query().Get("prune_sessions")
+	return v == "1" || v == "true"
+}
+
+// forgetNonLiveMetasUnder removes the metas of any NON-live session whose cwd is at or
+// under dir. handleDeleteRepo has already refused when a LIVE session runs there, so the
+// remaining metas are stopped/archived — unusable once dir is gone (resume would hit
+// DirGoneErr). Belt-and-suspenders: re-check liveness here too. jsonl is left on disk
+// (same as stop = forget meta, keep transcript).
+func forgetNonLiveMetasUnder(dir string) {
+	live := tmuxx.LiveSessionNames()
+	for _, m := range session.ListMetas() {
+		if m.Dir != dir && !strings.HasPrefix(m.Dir, dir+string(os.PathSeparator)) {
+			continue
+		}
+		if live[m.Name] || (m.DriverKind() == session.DriverManaged && managedAlive(m)) {
+			continue
+		}
+		session.RemoveMeta(m.Name)
+	}
 }
