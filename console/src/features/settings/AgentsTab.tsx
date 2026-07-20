@@ -7,14 +7,15 @@ import { Button } from "../../ui/Button.tsx";
 import { Sparkline } from "../../ui/Sparkline.tsx";
 import { fmtTok } from "../../lib/fmttok.ts";
 import { fmtNum } from "../../lib/intl.ts";
-import { Choice, OnOff, Select } from "./controls.tsx";
+import { Choice, OnOff, OrderList, Select } from "./controls.tsx";
 import {
   agentLaunchDefault,
   useSettings,
   setSetting,
   setSettings,
   OUTPUT_LANGUAGES,
-  ASSISTANT_AGENTS,
+  ASSISTANT_AGENT_KINDS,
+  normalizeAssistantOrder,
 } from "../../lib/settings.ts";
 import { useEffortOptions, useModelOptions } from "../../lib/agentModels.ts";
 import { agentOf } from "../../agents/registry.ts";
@@ -115,10 +116,10 @@ export function AgentsTab() {
       </Row>
       <p className="muted ds-note">{tr("agents.note_output_language")}</p>
       <Row label={tr("agents.assistant_agent")}>
-        <Choice
-          value={s.assistantAgent}
-          options={ASSISTANT_AGENTS.map(([id, k]) => [id, tr(k)])}
-          onChange={(v) => setSetting("assistantAgent", v)}
+        <OrderList
+          value={normalizeAssistantOrder(s.assistantAgentOrder)}
+          labels={Object.fromEntries(ASSISTANT_AGENT_KINDS.map((k) => [k, agentOf(k).assistantName]))}
+          onChange={(v) => setSetting("assistantAgentOrder", v)}
         />
       </Row>
       <p className="muted ds-note">{tr("agents.note_assistant_agent")}</p>

@@ -48,18 +48,38 @@ func autoTitleSuggestEnabled() bool {
 	return !ok || v
 }
 
-// assistantAgentPref returns the user's pinned assistant-chat backend ("claude" |
-// "codex" | "opencode" | "agy"), or "" for auto/unset — the AgentsTab アシスタントの
-// エージェント setting. Read live per call (like chatOutputLanguage) so a change
-// applies from the next builtin-assistant conversation / one-shot call without a
-// restart.
-func assistantAgentPref() string {
-	switch v, _ := readUIPrefs()["assistantAgent"].(string); v {
-	case "claude", "codex", "opencode", "agy":
-		return v
-	default:
-		return ""
+// assistantAgentOrderPref returns the user's assistant-chat backend priority (the
+// AgentsTab 並べ替え UI, ui-prefs assistantAgentOrder), normalized into a TOTAL
+// order: unknown kinds and dupes are dropped, and kinds missing from the stored
+// list are appended in the built-in default order — so a partial or stale list
+// (e.g. written before a new backend existed) still ranks every backend. When the
+// key is absent, the legacy single-pin key (assistantAgent) degrades gracefully:
+// a pin is simply "that backend first". Read live per call (like
+// chatOutputLanguage) so a change applies from the next builtin-assistant
+// conversation / one-shot call without a restart.
+func assistantAgentOrderPref() []string {
+	prefs := readUIPrefs()
+	out := make([]string, 0, len(defaultHeadlessOrder))
+	seen := map[string]bool{}
+	add := func(k string) {
+		if _, ok := chatProviders[k]; ok && !seen[k] {
+			seen[k] = true
+			out = append(out, k)
+		}
 	}
+	if raw, ok := prefs["assistantAgentOrder"].([]any); ok {
+		for _, v := range raw {
+			if s, ok := v.(string); ok {
+				add(s)
+			}
+		}
+	} else if pin, _ := prefs["assistantAgent"].(string); pin != "" {
+		add(pin) // legacy pin ("auto" is not a kind, so it falls through to the default)
+	}
+	for _, k := range defaultHeadlessOrder {
+		add(k)
+	}
+	return out
 }
 
 // chatAutoTurnEnabled is the global ON/OFF for the operator's automatic turn on a

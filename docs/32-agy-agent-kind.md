@@ -467,8 +467,11 @@ headless チャット契約:
   usage イベントは無いままなのでコンテキストゲージは空。one-shot（タイトル案）
   も共有の分離 HOME（`agy-oneshot`）で走らせ、実 HOME の会話履歴やユーザー自身の
   グローバル MCP 設定を汚染しない。
-- **auto 選択順は claude → codex → opencode → agy の最後尾**（Starter 無料枠が
-  週次極小のため。agy-only ワークスペースでのみ自動選択される）。one-shot
+- **auto 選択順の既定は claude → codex → opencode → agy の最後尾**（Starter
+  無料枠が週次極小のため。agy-only ワークスペースでのみ自動選択される）。
+  順位は 設定 > エージェント「アシスタントのエージェント優先順位」の並べ替え UI
+  でユーザーが変更可能（ui-prefs `assistantAgentOrder`。旧・単一ピン
+  `assistantAgent` は先頭昇格で読み替え — `assistantAgentOrderPref`）。one-shot
   （タイトル案）も agy 経路あり（`AF_TITLE_MODEL_AGY` で上書き）— ephemeral
   モードが無いので使い捨て会話が agy 側に残る点は許容。
 - 検証: unit（args/モデル退避/resolveChatModel/allow ルール/mcp_config 生成/
