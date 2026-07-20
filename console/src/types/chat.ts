@@ -16,6 +16,7 @@ export interface ChatMessage {
   role: "user" | "assistant" | "report" | "notice";
   content: string;
   ts: number; // unix millis
+  agent?: SessionKind; // backend that actually generated this assistant turn
   steps?: ChatStep[]; // assistant working process, separated from the final content
   // role==="report" (docs/30): the reporting session's name — rendered as a
   // session-origin card, not a user/assistant bubble.
@@ -44,6 +45,7 @@ export interface ChatContextUsage {
 export interface ConversationMeta {
   id: string;
   agent: SessionKind;
+  active_agent?: SessionKind; // backend used by the latest successful turn
   assistant_id?: string; // which assistant backs this thread (Q2)
   title: string;
   model?: string;
@@ -56,7 +58,8 @@ export interface ConversationMeta {
 // Full conversation from GET/POST /api/chat/conversations/{id}.
 export interface Conversation {
   id: string;
-  agent: SessionKind;
+  agent: SessionKind; // preferred backend snapshotted at creation
+  active_agent?: SessionKind; // actual backend used by the latest successful turn
   assistant_id?: string;
   title: string;
   model?: string;
