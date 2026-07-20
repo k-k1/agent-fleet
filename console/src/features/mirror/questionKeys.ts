@@ -1,0 +1,142 @@
+// Key sequences that drive an agent's pending-question modal from the chat card.
+//
+// Every sequence here was verified against the real TUI (see the per-branch notes);
+// the shapes differ per agent because the modals differ, and a wrong sequence does
+// not fail loudly — it silently picks the wrong option or drops the typed text. That
+// is why these builders live in their own module: they are pure (state in → key
+// steps out), so each agent's modal contract is pinned by a test instead of only by
+// a comment, and MirrorView keeps just the wiring.
+//
+// NEVER send an option label as text: every modal ignores typed text on an option row
+// and the Enter then confirms the highlighted first option (docs/dev/92-tui-modal-driving.md).
+
+import type { InteractionAnswer } from "../../core/api/client.ts";
+
+// One step of a sequence: a named key (k) or literal text to type (t).
+export type KeyStep = { k?: string; t?: string };
+
+export interface QKOption {
+  label: string;
+}
+export interface QKQuestion {
+  multiSelect?: boolean;
+  options?: QKOption[];
+}
+
+// The card's per-question state: the labels checked (single-select holds at most one)
+// and the free-text answer. Indices are resolved from labels here so a stale label —
+// one no longer offered — drops out instead of keying to a wrong row.
+const pickedIdx = (opts: QKOption[], labels: string[] | undefined): number[] =>
+  (labels || [])
+    .map((l) => opts.findIndex((o) => o.label === l))
+    .filter((i) => i >= 0)
+    .sort((a, b) => a - b);
+
+const trimAt = (freeText: string[], qi: number) => (freeText[qi] || "").trim();
+
+const downs = (n: number): KeyStep[] => Array.from({ length: Math.max(0, n) }, () => ({ k: "Down" }));
+
+// A single-select single question answered by clicking option `oi`: move Down to that
+// row and Enter (selects and submits). Shared by the claude modal and the menus.
+export function buildSinglePickKeys(oi: number): string[] {
+  return [...Array(oi).fill("Down"), "Enter"];
+}
+
+// claude's AskUserQuestion: a tabbed modal whose free-text row IS an input field —
+// you type straight into it, no Enter to enter the row first.
+export function buildClaudeSeq(qs: QKQuestion[], sel: string[][], freeText: string[]): KeyStep[] {
+  const seq: KeyStep[] = [];
+  qs.forEach((q, qi) => {
+    const opts = q.options || [];
+    const ft = trimAt(freeText, qi);
+    const idx = pickedIdx(opts, sel[qi]);
+    if (q.multiSelect) {
+      // Toggle each checked option in place (Enter toggles, cursor stays). Then, if a
+      // custom answer was typed, drop to the "Type something" row and type it — checked
+      // options and the custom entry COMBINE (verified in the terminal). Crucially, do
+      // NOT press Enter after typing: on a multi-select row Enter toggles the auto-checked
+      // custom entry back OFF, silently losing it (the bug). Instead one Down exits the
+      // field to the Submit row, and the trailing Enter below submits.
+      let cur = 0;
+      for (const ci of idx) {
+        seq.push(...downs(ci - cur));
+        seq.push({ k: "Enter" }); // toggle in place
+        cur = ci;
+      }
+      if (ft) {
+        const typeRow = opts.length; // the "Type something" row sits just after the options
+        seq.push(...downs(typeRow - cur));
+        seq.push({ t: ft }); // typing auto-checks the custom row (NO Enter — it would uncheck)
+        // Right is swallowed by the text field, so advance the manual way: Down to the row
+        // just below "Type something" — "Next" on an intermediate question, "Submit" on the
+        // last — and Enter to activate it. "Next" moves to the next question tab; "Submit"
+        // opens the review page (cursor on "Submit answers") where the trailing Enter
+        // submits. Verified from the terminal for both single- and multi-question forms.
+        seq.push({ k: "Down" }, { k: "Enter" });
+      } else {
+        seq.push({ k: "Right" }); // advance to the next question / review (Submit) page
+      }
+    } else if (ft) {
+      // single-select free text: move to the "Type something" row, type, then Enter
+      // confirms + auto-advances (single-select Enter does NOT toggle-off — verified).
+      seq.push(...downs(opts.length));
+      seq.push({ t: ft }, { k: "Enter" });
+    } else {
+      seq.push(...downs(idx[0] ?? 0));
+      seq.push({ k: "Enter" }); // select + auto-advance to the next tab
+    }
+  });
+  seq.push({ k: "Enter" }); // Review page: "Submit answers"
+  return seq;
+}
+
+// The simple option menu (codex / opencode / agy): one choice per page, answered by
+// Down×i + Enter — which submits the page, advances to the next question and resets
+// the cursor to the top, so pages simply concatenate. The trailing Enter completes
+// the form (no review page, unlike claude).
+//
+// writeIn (agy only): the menu appends a "Write-in..." row just after the options.
+// Unlike claude's row it must be ENTERED before it accepts text — Enter opens the
+// "Your answer:" field and the trailing Enter submits it (agy 1.1.4 実測). Typing
+// without that first Enter lands on a plain option row, where the text is dropped and
+// Enter picks the highlighted option instead. Left false for codex/opencode, whose
+// menus have no verified write-in row.
+export function buildMenuSeq(
+  qs: QKQuestion[],
+  sel: string[][],
+  freeText: string[],
+  writeIn = false,
+): KeyStep[] {
+  const seq: KeyStep[] = [];
+  qs.forEach((q, qi) => {
+    const opts = q.options || [];
+    const ft = writeIn ? trimAt(freeText, qi) : "";
+    if (ft) {
+      seq.push(...downs(opts.length));
+      seq.push({ k: "Enter" }, { t: ft }, { k: "Enter" });
+      return;
+    }
+    const ci = Math.max(0, opts.findIndex((o) => o.label === (sel[qi] || [])[0]));
+    seq.push(...downs(ci));
+    seq.push({ k: "Enter" });
+  });
+  return seq;
+}
+
+// Managed (semantic) sessions answer the pending Interaction structurally — no modal,
+// no key encoding. One entry per question, in order; empty when that question was left
+// unanswered (a multi-select may legitimately select nothing).
+export function buildRespondAnswers(
+  qs: QKQuestion[],
+  sel: string[][],
+  freeText: string[],
+): InteractionAnswer[] {
+  return qs.map((q, qi) => {
+    const idx = pickedIdx(q.options || [], sel[qi]);
+    const ft = trimAt(freeText, qi);
+    const a: InteractionAnswer = {};
+    if (idx.length) a.options = idx;
+    if (ft) a.text = ft;
+    return a;
+  });
+}
