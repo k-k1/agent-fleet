@@ -168,6 +168,11 @@ var mcpStdioTools = []map[string]any{
 		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 	},
 	{
+		"name":        "list_cleanup_archives",
+		"description": "掃除で退避したアーカイブ（削除したセッションやブランチの gz 安全網）の一覧を返す。delete_session / delete_branch は消す前に必ずここへ退避するので、消しすぎた時は restore_cleanup_archive で復元、不要になったら purge_cleanup_archive で完全削除して容量を回収できる。各アーカイブは id・日時・理由・含まれるセッション/ブランチを持つ。",
+		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+	},
+	{
 		"name":        "get_session_usage",
 		"description": "各セッションのコンテキスト使用量と累積消費トークンを返す。name 指定で1セッション、省略で transcript を持つ全セッション（shell / SSM は対象外）。context は現在のコンテキスト量（tokens と read/create/fresh の内訳、window に対する pct%。最初の応答が返るまでは無く、自動圧縮後は圧縮後の値）。cumulative は累積消費（論理ターン数 turns、inTok/outTok/cacheRead/cacheCreate、spend=inTok+cacheCreate+outTok の合計）。『どのセッションがコンテキスト逼迫か』『どれだけ消費したか』を聞かれた時や、引き継ぎ・圧縮・新セッション分割の判断材料に呼ぶ。サブスクリプション枠の残量は get_agent_usage（別ツール）。",
 		"inputSchema": map[string]any{
@@ -344,6 +349,51 @@ var mcpStdioWriteTools = []map[string]any{
 		},
 	},
 	{
+		"name": "delete_session",
+		"description": "アーカイブ済み／不要なセッションを完全に削除して容量を回収する（会話ログ jsonl も消す）。archive_session が一覧から隠すだけなのに対し、これは実体を消す。消す前に jsonl とメタを gz アーカイブ（安全網）へ退避するので復元可能（list_cleanup_archives → restore_cleanup_archive）。稼働中のセッションは削除できない（先に停止）。list_cleanup_candidates で action=delete_session の候補を片付ける時に使う。不可逆に近い操作なので、どのセッションを消すかを明示して実行前に必ず利用者へ確認すること。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name": map[string]any{"type": "string", "description": "削除するセッション名（list_cleanup_candidates / list_my_sessions の name）"},
+			},
+			"required": []string{"name"},
+		},
+	},
+	{
+		"name": "delete_branch",
+		"description": "マージ済みのローカルブランチを削除する（worktree を消した後に残る temp/* 等の掃除）。マージ済み（親に取り込み済み）のみ削除でき、未マージのブランチは固有コミットを失わないよう拒否される（push/マージするか Console で対応するよう案内）。消す前にブランチ名と SHA を gz アーカイブへ退避するので復元可能。list_cleanup_candidates で action=delete_branch の候補（repo=id, branch）を片付ける時に使う。実行前に対象を明示して利用者へ確認すること。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"repo":   map[string]any{"type": "string", "description": "ブランチのあるリポジトリ名（list_cleanup_candidates の branch 候補の id）"},
+				"branch": map[string]any{"type": "string", "description": "削除するブランチ名（list_cleanup_candidates の branch フィールド）"},
+			},
+			"required": []string{"repo", "branch"},
+		},
+	},
+	{
+		"name":        "restore_cleanup_archive",
+		"description": "掃除で退避したアーカイブ（gz 安全網）を復元する。delete_session なら会話ログ jsonl とセッション一覧の行が戻り、delete_branch ならブランチが再作成される。消しすぎた・やっぱり要る時に使う。id は list_cleanup_archives で取得する。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id": map[string]any{"type": "string", "description": "復元するアーカイブ id（list_cleanup_archives で取得）"},
+			},
+			"required": []string{"id"},
+		},
+	},
+	{
+		"name":        "purge_cleanup_archive",
+		"description": "掃除で退避したアーカイブを完全に削除して容量を回収する（復元不可になる）。もう戻す必要がないと確認できたアーカイブにのみ使う。id は list_cleanup_archives で取得する。完全削除なので実行前に利用者へ確認すること。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id": map[string]any{"type": "string", "description": "完全削除するアーカイブ id（list_cleanup_archives で取得）"},
+			},
+			"required": []string{"id"},
+		},
+	},
+	{
 		"name":        "list_assistants",
 		"description": "利用可能なアシスタント（常設ビルトイン＋ユーザー定義）の一覧を返す。ask_assistant で誰に相談するか選ぶ前に呼ぶ。",
 		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
@@ -382,8 +432,10 @@ func mcpStdioCall(req mcpReq) []byte {
 		Worktree      bool   `json:"worktree"`
 		Branch        string `json:"branch"`
 		NewBranch     string `json:"new_branch"`
-		// memo args (id in the path; the rest are forwarded verbatim via p.Args)
-		ID string `json:"id"`
+		// memo args (id in the path; the rest are forwarded verbatim via p.Args).
+		// ID doubles as the cleanup-archive id (restore/purge). Repo names the branch's repo.
+		ID   string `json:"id"`
+		Repo string `json:"repo"`
 	}
 	_ = json.Unmarshal(p.Args, &a)
 
@@ -564,6 +616,56 @@ func mcpStdioCall(req mcpReq) []byte {
 			return mcpToolErr(req.ID, "worktree の削除に失敗しました: "+err.Error())
 		}
 		return mcpTextResult(req.ID, out)
+	case "delete_session":
+		if !mcpWriteEnabled {
+			return mcpToolErr(req.ID, "このアシスタントはセッションの削除を許可されていません")
+		}
+		if a.Name == "" {
+			return mcpToolErr(req.ID, "name（セッション名）が必要です")
+		}
+		// reclaim=1 で jsonl も回収。消す前に gz 安全網へ退避される（復元可能）。
+		out, err := agentDo(http.MethodDelete, "/sessions/"+url.PathEscape(a.Name)+"?reclaim=1", nil)
+		if err != nil {
+			return mcpToolErr(req.ID, "セッションの削除に失敗しました: "+err.Error())
+		}
+		return mcpTextResult(req.ID, out)
+	case "delete_branch":
+		if !mcpWriteEnabled {
+			return mcpToolErr(req.ID, "このアシスタントはブランチの削除を許可されていません")
+		}
+		if a.Repo == "" || a.Branch == "" {
+			return mcpToolErr(req.ID, "repo（リポジトリ名）と branch（ブランチ名）が必要です")
+		}
+		out, err := agentDo(http.MethodDelete,
+			"/repos/"+url.PathEscape(a.Repo)+"/branch?branch="+url.QueryEscape(a.Branch), nil)
+		if err != nil {
+			return mcpToolErr(req.ID, "ブランチの削除に失敗しました: "+err.Error())
+		}
+		return mcpTextResult(req.ID, out)
+	case "restore_cleanup_archive":
+		if !mcpWriteEnabled {
+			return mcpToolErr(req.ID, "このアシスタントはアーカイブの復元を許可されていません")
+		}
+		if a.ID == "" {
+			return mcpToolErr(req.ID, "id（アーカイブ id）が必要です")
+		}
+		out, err := agentPOST("/cleanup/archives/"+url.PathEscape(a.ID)+"/restore", nil)
+		if err != nil {
+			return mcpToolErr(req.ID, "アーカイブの復元に失敗しました: "+err.Error())
+		}
+		return mcpTextResult(req.ID, out)
+	case "purge_cleanup_archive":
+		if !mcpWriteEnabled {
+			return mcpToolErr(req.ID, "このアシスタントはアーカイブの完全削除を許可されていません")
+		}
+		if a.ID == "" {
+			return mcpToolErr(req.ID, "id（アーカイブ id）が必要です")
+		}
+		out, err := agentDo(http.MethodDelete, "/cleanup/archives/"+url.PathEscape(a.ID), nil)
+		if err != nil {
+			return mcpToolErr(req.ID, "アーカイブの完全削除に失敗しました: "+err.Error())
+		}
+		return mcpTextResult(req.ID, out)
 	case "list_assistants":
 		if !mcpWriteEnabled {
 			return mcpToolErr(req.ID, "このアシスタントは他アシスタントへの相談を許可されていません")
@@ -614,6 +716,8 @@ func mcpStdioCall(req mcpReq) []byte {
 		}
 	case "list_cleanup_candidates":
 		path = "/sessions/cleanup"
+	case "list_cleanup_archives":
+		path = "/cleanup/archives"
 	default:
 		return mcpError(req.ID, -32602, "unknown tool: "+p.Name)
 	}

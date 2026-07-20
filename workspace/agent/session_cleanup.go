@@ -50,9 +50,9 @@ func classifySessionCleanup(archived, live bool) (action, safety, reason string,
 		return "", "", "", false // running — not a cleanup target
 	case archived:
 		// Archived rows are TTL-exempt (handleListSessions skips them before the prune),
-		// so they accumulate. No assistant tool removes them (jsonl reclaim is out of
-		// scope) — surface as info so the operator can flag it for Console cleanup.
-		return "", "review", "アーカイブ済み（自動prune対象外。整理は Console から）", true
+		// so they accumulate. delete_session reclaims them (meta + jsonl), bundled to a
+		// recoverable archive first — review before acting (archived ≠ throwaway).
+		return "delete_session", "review", "アーカイブ済み（自動prune対象外。delete_session で回収可・復元可）", true
 	default:
 		// Stopped but resumable: finished work sitting in the active list. archive is
 		// reversible (restore), but "stopped" ≠ "finished", so review before acting.
@@ -127,6 +127,26 @@ func handleSessionsCleanup(w http.ResponseWriter, r *http.Request) {
 			Type: "worktree", Action: action, ID: e.Name(), Path: dir, Branch: st.Branch,
 			Relation: relation, Dirty: st.Dirty, Ahead: st.Ahead, Safety: safety, Reason: reason,
 		})
+	}
+
+	// Merged local branches left behind by removed worktrees (temp/*, etc.). Only NON-
+	// worktree repos are scanned as the branch home; a worktree's branch is checked out
+	// there and excluded by mergedLocalBranches anyway. Deleting a merged branch is
+	// recoverable (its commits are in the parent line; delete_branch records the SHA).
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dir := filepath.Join(reposRoot(), e.Name())
+		if !isGitRepo(dir) || isLinkedWorktree(dir) {
+			continue
+		}
+		for _, b := range mergedLocalBranches(dir) {
+			out = append(out, cleanupCandidate{
+				Type: "branch", Action: "delete_branch", ID: e.Name(), Branch: b,
+				Safety: "safe", Reason: "マージ済みローカルブランチ（親に取り込み済み。削除しても復元可）",
+			})
+		}
 	}
 
 	counts := map[string]int{"safe": 0, "review": 0, "keep": 0}

@@ -26,6 +26,11 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /sessions/archived", handleListArchived)
 	mux.HandleFunc("GET /sessions/usage", handleSessionsUsage)
 	mux.HandleFunc("GET /sessions/cleanup", handleSessionsCleanup)
+	mux.HandleFunc("DELETE /sessions/{name}", handleDeleteSession)
+	// Cleanup archive (docs/32): the gz safety net for destructive tidy-up.
+	mux.HandleFunc("GET /cleanup/archives", handleListCleanupArchives)
+	mux.HandleFunc("POST /cleanup/archives/{id}/restore", handleRestoreCleanupArchive)
+	mux.HandleFunc("DELETE /cleanup/archives/{id}", handlePurgeCleanupArchive)
 	mux.HandleFunc("POST /sessions/{name}/archive", handleArchiveSession)
 	mux.HandleFunc("POST /sessions/{name}/restore", handleRestoreSession)
 	// Programmatic drive I/O for the MCP tools (docs/0006 P3-6 E).
@@ -109,6 +114,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /repos/{name}", handleDeleteRepo)
 	mux.HandleFunc("GET /repos/{name}/status", handleRepoStatus)
 	mux.HandleFunc("GET /repos/{name}/branches", handleRepoBranches)
+	mux.HandleFunc("DELETE /repos/{name}/branch", handleDeleteBranch) // ?branch=<name> (may contain "/")
 	mux.HandleFunc("POST /repos/{name}/checkout", handleRepoCheckout)
 	mux.HandleFunc("POST /repos/{name}/fetch", handleRepoFetch)
 	mux.HandleFunc("POST /repos/{name}/ff", handleRepoFF)
