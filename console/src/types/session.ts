@@ -11,8 +11,9 @@ export type SessionKind = "claude" | "codex" | "opencode" | "agy" | "shell" | "s
 // The canonical session kinds in display order (New Session buttons, etc.).
 export const SESSION_KINDS: SessionKind[] = ["claude", "codex", "agy", "opencode", "shell", "ssm"];
 
-// Live run state, reported by per-agent hooks/plugins. "" (empty) = idle. Only
-// claude emits question/plan/permission; codex/opencode emit working/idle only;
+// Live run state, reported by per-agent hooks/plugins. "" (empty) = idle. claude
+// emits question/plan/permission; codex/opencode emit working/idle; agy emits
+// question/permission only (conversation-DB probe — no working/idle hooks);
 // shell/ssm emit nothing (their liveness is shown from `alive`).
 export type SessionState = "" | "working" | "idle" | "question" | "plan" | "permission";
 

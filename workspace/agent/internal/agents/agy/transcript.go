@@ -55,12 +55,21 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 		return agents.TranscriptData{}, true
 	}
 	path := transcriptPath(conv)
+	td := agents.TranscriptData{Path: path}
+	// A pending ASK_QUESTION never reaches the jsonl (実測 — 保留中は無記録), so
+	// the interactive card's payload comes from the conversation-DB probe. The
+	// generic /messages handler only surfaces Pending while the session is alive,
+	// which gates out a killed session's stale status=9 row.
+	if st, qs := Probe(m); st == "question" {
+		td.Pending = qs
+	}
 	f, err := os.Open(path)
 	if err != nil {
-		return agents.TranscriptData{Path: path}, true
+		return td, true
 	}
 	defer f.Close()
-	return agents.TranscriptData{Turns: parseTranscript(f), Path: path}, true
+	td.Turns = parseTranscript(f)
+	return td, true
 }
 
 // stepLine is one transcript_full.jsonl row (fields we read).
