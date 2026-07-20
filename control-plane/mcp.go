@@ -277,6 +277,20 @@ func memberTools() []mcpTool {
 			},
 		},
 		{
+			name: "get_session_usage", minScope: scopeRead,
+			desc: "Per-session context fill and cumulative token consumption for transcript-capable sessions (claude/codex/opencode; shell/ssm excluded). Optional `name` narrows to one session; omitted returns all. `context` is the current context size (tokens with read/create/fresh breakdown, pct of window; absent until the first assistant reply, reset by auto-compaction). `cumulative` sums consumption (logical turns, inTok/outTok/cacheRead/cacheCreate, spend = inTok+cacheCreate+outTok). Use when asked which session is near its context limit or how much a session has consumed. Subscription quota is get_agent_usage (separate tool).",
+			schema: map[string]any{"type": "object", "properties": map[string]any{
+				"name": map[string]any{"type": "string", "description": "session name (optional; omitted = all sessions)"},
+			}},
+			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
+				path := "/sessions/usage"
+				if n := argStr(args, "name"); n != "" {
+					path += "?name=" + url.QueryEscape(n)
+				}
+				return agentText(ctx, res.rt, "GET", path, nil)
+			},
+		},
+		{
 			name: "get_agent_usage", minScope: scopeRead,
 			desc:   "Subscription usage and rate limits for the agent CLIs in your Workspace (claude and codex; opencode has no usage source). fiveHour / sevenDay windows carry pct (percent used, 0-100) and resetsAt (ISO instant the limit lifts). authed=false means that CLI has no subscription login; ageSec is the capture age in seconds; codex may add planType and resetCredits. Use when asked how much quota remains or when a limit resets.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{}},
