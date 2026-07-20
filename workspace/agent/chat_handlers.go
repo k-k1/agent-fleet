@@ -325,6 +325,7 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 
 	assistant := chatMessage{Role: "assistant", Content: reply, TS: nowMs()}
 	c.Messages = append(c.Messages, assistant)
+	noteContextPressure(c) // 逼迫時は notice を追記（chat_usage.go）
 	c.UpdatedAt = nowMs()
 	if err := saveConv(c); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "chat_save", err.Error())
@@ -418,6 +419,7 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 
 	assistant := chatMessage{Role: "assistant", Content: reply, Steps: steps, TS: nowMs()}
 	c.Messages = append(c.Messages, assistant)
+	noteContextPressure(c) // 逼迫時は notice を追記（chat_usage.go）— done の conversation で届く
 	c.UpdatedAt = nowMs()
 	_ = saveConv(c)
 	emit(map[string]any{"done": true, "message": assistant, "conversation": c})

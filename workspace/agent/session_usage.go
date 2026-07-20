@@ -156,12 +156,17 @@ func aggregateUsage(turns []transcript.Turn) sessionUsage {
 var bigWindowModelRe = regexp.MustCompile(`opus-4-[678]|sonnet-4-6|fable-5|mythos-5`)
 
 // contextWindowGuess mirrors the Console's contextWindow() (ContextBar.tsx — keep
-// the two in sync): current 1M-native families, 200k for haiku, and a grow-to-fit
+// the two in sync): current 1M-native families, 272k for GPT-5.x (codex normally
+// records its real window, so this is the fallback — e.g. the assistant chat's
+// `codex exec`, whose events don't carry it), 200k for haiku, and a grow-to-fit
 // fallback when the observed usage already exceeds 200k.
 func contextWindowGuess(model string, used int) int {
 	m := strings.ToLower(model)
 	if bigWindowModelRe.MatchString(m) {
 		return 1_000_000
+	}
+	if strings.Contains(m, "gpt-5") {
+		return 272_000
 	}
 	if strings.Contains(m, "haiku") {
 		return 200_000

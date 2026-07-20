@@ -27,6 +27,7 @@ import {
   type TtsOptions,
 } from "./tts.ts";
 import { readTurn, collectBlocks, blockIndexAt, type TurnReadHandle } from "../mirror/turnTts.ts";
+import { ContextBar } from "../mirror/ContextBar.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
 import { agentOf } from "../../agents/registry.ts";
@@ -754,6 +755,18 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
           </span>
         )}
       </header>
+      {/* Context fill (docs/33): the same gauge the mirror shows, fed from the
+          conversation's per-turn usage snapshot (chat_usage.go). Hidden until the
+          first turn reports usage. */}
+      {conv?.context && conv.context.tokens > 0 && (
+        <ContextBar
+          read={conv.context.read || 0}
+          create={conv.context.create || 0}
+          fresh={conv.context.fresh || 0}
+          model={conv.context.model}
+          window={conv.context.window}
+        />
+      )}
       <div className="chat-scroll" ref={scrollRef}>
         {loadError && (
           <div className="chat-error" role="alert">

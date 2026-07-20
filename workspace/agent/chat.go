@@ -103,6 +103,15 @@ type chatConversation struct {
 	// per unattended run instead of on every further report while capped. Reset with
 	// AutoTurns on every user send.
 	AutoPausedNotified bool `json:"auto_paused_notified,omitempty"`
+	// Context is the conversation's current context-window fill, captured from the
+	// provider's own usage events after each successful turn (chat_usage.go) — the
+	// chat analog of get_session_usage's context (same wire shape as the mirror's
+	// ContextBar). Nil until the first turn or when the provider reported no usage.
+	Context *contextUsage `json:"context,omitempty"`
+	// CtxWarned marks that the context-pressure notice (chatCtxWarnPct) has been
+	// appended for the CURRENT crossing; reset when usage falls back under the
+	// threshold (e.g. the provider compacted) so a later re-crossing warns again.
+	CtxWarned bool `json:"ctx_warned,omitempty"`
 }
 
 // afToolsEnabled reports whether the fleet MCP tools attach to this chat at all (read
@@ -202,14 +211,15 @@ func (c *chatConversation) knowledgeDirs() []string {
 
 // chatMeta is the light shape returned by the list endpoint (no message bodies).
 type chatMeta struct {
-	ID           string `json:"id"`
-	Agent        string `json:"agent"`
-	AssistantID  string `json:"assistant_id,omitempty"` // which assistant backs this thread (Q2)
-	Title        string `json:"title"`
-	Model        string `json:"model,omitempty"`
-	CreatedAt    int64  `json:"created_at"`
-	UpdatedAt    int64  `json:"updated_at"`
-	MessageCount int    `json:"message_count"`
+	ID           string        `json:"id"`
+	Agent        string        `json:"agent"`
+	AssistantID  string        `json:"assistant_id,omitempty"` // which assistant backs this thread (Q2)
+	Title        string        `json:"title"`
+	Model        string        `json:"model,omitempty"`
+	CreatedAt    int64         `json:"created_at"`
+	UpdatedAt    int64         `json:"updated_at"`
+	MessageCount int           `json:"message_count"`
+	Context      *contextUsage `json:"context,omitempty"` // current context fill (chat_usage.go)
 }
 
 // chatPersona keeps the headless agent in plain conversational mode (translate,
