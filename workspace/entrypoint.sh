@@ -87,27 +87,70 @@ fi
 # (removed by the else branch below when the opt-in is off). Stop→Start recreates the
 # container from the image, so turning the toggle off reverts to the baked versions.
 if [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE:-0}" = "1" ]; then
-  echo "[entrypoint] updating agent CLIs to latest (member opt-in, operator-allowed) ..."
-  if npm install -g @anthropic-ai/claude-code@latest opencode-ai@latest @openai/codex@latest >/dev/null 2>&1; then
+  echo "[entrypoint] agent self-update: checking versions (member opt-in, operator-allowed) ..."
+  # 版比較スキップ: レジストリの latest とグローバル導入版が全一致なら再インストールを
+  # 丸ごと省く（毎起動の tarball 取得を新リリース時だけに）。判定不能時は従来どおり更新。
+  NPM_NEED=$(node -e '
+    const { execSync } = require("child_process");
+    const run = (c) => execSync(c, { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+    try {
+      const ls = JSON.parse(run("npm ls -g --depth=0 --json"));
+      let need = 0;
+      for (const p of ["@anthropic-ai/claude-code", "opencode-ai", "@openai/codex"]) {
+        const cur = ((ls.dependencies || {})[p] || {}).version || "";
+        const latest = run("npm view " + p + " version");
+        if (!cur || !latest || cur !== latest) { need = 1; break; }
+      }
+      process.stdout.write(String(need));
+    } catch (e) { process.stdout.write("1"); }
+  ' 2>/dev/null || echo 1)
+  if [ "$NPM_NEED" = "0" ]; then
+    echo "[entrypoint] agent CLIs already latest; skip"
+  elif npm install -g @anthropic-ai/claude-code@latest opencode-ai@latest @openai/codex@latest >/dev/null 2>&1; then
     echo "[entrypoint] agent CLIs updated: claude $(claude --version 2>/dev/null | head -1) | opencode $(opencode --version 2>/dev/null | head -1) | codex $(codex --version 2>/dev/null | head -1)"
   else
     echo "[entrypoint] WARN: agent CLI update failed (using baked versions)"
   fi
-  # agy (Antigravity) も同じ opt-in で最新へ。npm でなく Google の install.sh 供給
-  # （版ピン無し＝常に latest）で、焼き込みは root 所有の /usr/local/bin のため、
-  # ~/.local/bin へ入れて PATH 先勝ちで差し替える（shadow 方式）。失敗はソフト。
-  if curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir "$HOME/.local/bin" >/dev/null 2>&1 \
-     && [ -x "$HOME/.local/bin/agy" ]; then
-    # --version は RDRAND 非提示ホストで SIGABRT する（docs/decisions/0008）ので失敗を握る
-    echo "[entrypoint] agy updated: $("$HOME/.local/bin/agy" --version 2>/dev/null | head -1 || echo '?')"
+  # agy (Antigravity) も同じ opt-in で最新へ。npm でなく Google の install.sh 供給で、
+  # 焼き込みは root 所有の /usr/local/bin のため ~/.local/bin へ入れて PATH 先勝ちで
+  # 差し替える（shadow 方式）。版比較スキップ: install.sh と同じ配布 manifest（軽量
+  # JSON）から latest を取り、前回導入時に記録したマーカーと一致なら ~187MB の再取得を
+  # 省く。`agy --version` は RDRAND 非提示ホストで SIGABRT する（decisions/0008）ため、
+  # 実バイナリでなくマーカー比較にしている（agy 自身の自己更新で進んでいたら比較が
+  # ズレて再導入されるだけで無害）。install.sh は既存バイナリがあると更新せず即 exit 0
+  # する仕様なので、空の temp dir へ導入してから差し替える（失敗時は旧 shadow 温存）。
+  AGY_MARK="$HOME/.local/bin/.agy.version"
+  agy_arch="$(dpkg --print-architecture 2>/dev/null || uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
+  agy_latest="$(curl -fsSL --max-time 15 \
+    "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_${agy_arch}.json" 2>/dev/null \
+    | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+  if [ -n "$agy_latest" ] && [ -x "$HOME/.local/bin/agy" ] \
+     && [ "$(cat "$AGY_MARK" 2>/dev/null)" = "$agy_latest" ]; then
+    echo "[entrypoint] agy already latest ($agy_latest); skip"
   else
-    echo "[entrypoint] WARN: agy update failed (using baked version)"
+    agy_tmp="$(mktemp -d)"
+    if curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir "$agy_tmp" >/dev/null 2>&1 \
+       && [ -x "$agy_tmp/agy" ]; then
+      install -D -m 0755 "$agy_tmp/agy" "$HOME/.local/bin/agy"
+      if [ -n "$agy_latest" ]; then printf '%s\n' "$agy_latest" > "$AGY_MARK"; else rm -f "$AGY_MARK"; fi
+      echo "[entrypoint] agy updated: ${agy_latest:-latest}"
+    else
+      echo "[entrypoint] WARN: agy update failed (using $([ -x "$HOME/.local/bin/agy" ] && echo previous || echo baked) version)"
+    fi
+    rm -rf "$agy_tmp"
   fi
   # rtk も同じ opt-in で最新へ。焼き込みの /usr/local/bin/rtk は root 所有で上書き
   # できないため、latest release を ~/.local/bin へ入れて PATH 先勝ちで差し替える
   # （claude の user-install と同じ構図）。checksum 検証つき・失敗はソフト（焼き込み
   # 版のまま続行）。OFF に戻すと下の分岐がこの shadow を除去し、焼き込み版へ戻る。
-  (
+  # 版比較スキップ: GitHub の /releases/latest リダイレクトから latest タグを取り、
+  # PATH 先勝ちの `rtk --version`（shadow か焼き込み）と一致なら取得を省く。
+  rtk_latest="$(curl -fsSI -o /dev/null -w '%{redirect_url}' --max-time 15 \
+    https://github.com/rtk-ai/rtk/releases/latest 2>/dev/null | sed -n 's#.*/tag/v##p')"
+  rtk_cur="$(rtk --version 2>/dev/null | head -1 | awk '{print $2}')"
+  if [ -n "$rtk_latest" ] && [ "$rtk_cur" = "$rtk_latest" ]; then
+    echo "[entrypoint] rtk already latest ($rtk_cur); skip"
+  else (
     set -e
     arch="$(dpkg --print-architecture 2>/dev/null || uname -m)"
     case "$arch" in
@@ -125,11 +168,12 @@ if [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE:-
     install -D -m 0755 rtk "$HOME/.local/bin/rtk"
   ) && echo "[entrypoint] rtk updated: $("$HOME/.local/bin/rtk" --version 2>/dev/null | head -1)" \
     || echo "[entrypoint] WARN: rtk update failed (using baked version)"
+  fi
 else
   # Opt-in が無効（テナント不許可 or メンバー OFF）: 過去の opt-in が残した
   # ~/.local/bin の rtk / agy shadow は焼き込み版を PATH で隠すので除去し、CLI 群と
   # 同じ「OFF に戻して Stop→Start で焼き込み版へ復帰」の意味論に揃える。
-  rm -f "$HOME/.local/bin/rtk" "$HOME/.local/bin/agy"
+  rm -f "$HOME/.local/bin/rtk" "$HOME/.local/bin/agy" "$HOME/.local/bin/.agy.version"
 fi
 
 # 既定 settings.json を seed（ファイルが無い時のみ。以後は Console の Claude 設定が真実）。
