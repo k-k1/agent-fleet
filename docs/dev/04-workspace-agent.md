@@ -113,14 +113,23 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
 
 - **チャットは tmux セッションではない**。Agent 内の並列サブシステムで、`claude -p`（headless）を
   会話ストア（`~/.config/agent-fleet/chats/<id>.json`）と組で駆動。ストリームは SSE（[05 §5.3](05-api-contracts.md)）。
-- **専用 config-dir**: チャットはセッションと `CLAUDE_CONFIG_DIR` を分離（`AF_CHAT_CLAUDE_DIR`）。
-  `.credentials.json` だけ共有へ symlink + copy-back で単一化（OAuth refresh のローテートと
-  tmp+rename 書込みに耐える設計。詳細は docs/19 Q3）。
+- **Claude config-dir**: OAuth 資格情報は対話セッションと同じ `CLAUDE_CONFIG_DIR` の
+  単一ファイルを直接使う。旧 symlink + copy-back は refresh 時の tmp+rename でリンクが
+  実ファイル化し、並行プロセスが異なる refresh token を持ち得たため廃止。チャットへの
+  user/project 設定混入は `--setting-sources ""`、MCP 混入は `--strict-mcp-config` で遮断する。
+  旧専用 config-dir の transcript は初回実行時に共有 projects へ create-only で移行する。
+- **フォールバックの可視化**: 会話の `agent` は作成時の希望値として保持し、各 assistant
+  message の `agent` と会話の `active_agent` に実際の実行 backend を記録する。SSE は最初に
+  `agent` frame を返し、Console の live bubble/header も Claude→Codex 等へ即時追従する。
 - **コンテナ内 stdio MCP**: チャットの claude には `workspace-agent mcp-stdio` を `--mcp-config` で
   付与（PAT 不要・egress 不要・身元=自コンテナ）。既定 read-only、`--write` 時のみ
   `create_session`・`send_to_session`・`list_assistants`・`ask_assistant` を**広告**する（権限プロンプトでなく
   「見えるツール集合」がゲート）。CP の `/mcp` とは**別実装・別スコープ**（意図的な二重管理、
   [03](03-control-plane.md)）。
+- **Codex の無人承認**: headless chat は承認 UI を持たないため `-a never` に加え、明示的に
+  grant した AF MCP server を `default_tools_approval_mode="approve"` にする（未指定だと
+  `user cancelled MCP tool call`）。一方 `-s read-only` は維持し、MCP は実行できても
+  shell/file 経由の変更は許さない。
 - **アシスタント**（`/assistants*`）: persona/model/knowledge/tools(af_read|af_write|none) を持つ
   テンプレート。`ask_assistant` は相手ターンを強制 tools=none で 1 ショット実行＝1 ホップで停止・
   副作用なしを構造で担保。

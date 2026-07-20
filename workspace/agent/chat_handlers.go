@@ -304,6 +304,7 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	prov := chatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
+	actualAgent := chatProviderKind(c, prov)
 
 	c.Messages = append(c.Messages, chatMessage{Role: "user", Content: content, TS: nowMs()})
 	// docs/33 第4段: 閾値超過のまま新ターンに入るなら、先に予防的自動圧縮（成功
@@ -341,8 +342,9 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 		c.PendingHandoff = "" // carried into the new session — done
 	}
 
-	assistant := chatMessage{Role: "assistant", Content: reply, TS: nowMs()}
+	assistant := chatMessage{Role: "assistant", Content: reply, Agent: actualAgent, TS: nowMs()}
 	c.Messages = append(c.Messages, assistant)
+	c.ActiveAgent = actualAgent
 	noteContextPressure(c) // 逼迫時は notice を追記（chat_usage.go）
 	c.UpdatedAt = nowMs()
 	if err := saveConv(c); err != nil {
@@ -381,6 +383,7 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	prov := chatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
+	actualAgent := chatProviderKind(c, prov)
 
 	c.Messages = append(c.Messages, chatMessage{Role: "user", Content: content, TS: nowMs()})
 	c.AutoTurns, c.AutoPausedNotified = 0, false
@@ -397,6 +400,9 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+	// Tell the Console which backend is actually producing this turn before the first
+	// token arrives, so the live bubble/header switches immediately on fallback.
+	emit(map[string]any{"agent": actualAgent})
 
 	// Detach the turn from the request context (WithoutCancel) so a browser reload —
 	// which aborts this SSE request — doesn't cancel the provider or lose the reply:
@@ -457,8 +463,9 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 		c.PendingHandoff = "" // carried into the new session — done
 	}
 
-	assistant := chatMessage{Role: "assistant", Content: reply, Steps: steps, TS: nowMs()}
+	assistant := chatMessage{Role: "assistant", Content: reply, Steps: steps, Agent: actualAgent, TS: nowMs()}
 	c.Messages = append(c.Messages, assistant)
+	c.ActiveAgent = actualAgent
 	noteContextPressure(c) // 逼迫時は notice を追記（chat_usage.go）— done の conversation で届く
 	c.UpdatedAt = nowMs()
 	_ = saveConv(c)

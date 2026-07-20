@@ -97,18 +97,20 @@ Phase C の前に、アシスタントを「Agent Fleet の操作・使い方案
   唯一の経路は `<PUBLIC_BASE_URL>/mcp` へのヘアピン egress。Agent(localhost:7700) は REST のみで MCP なし。
 - `CLAUDE_CONFIG_DIR=/var/lib/af/claude`（専用マウント）を全セッションで共有。チャットの `claude -p` も継承。
 
-### Q3: セッションと .claude を分ける → **専用 config-dir（実装済）**
-共有のままだと (1) セッション状態フック汚染 (2) MCP 設定の対話セッションへの漏れ (3) 会話 jsonl の混在。
-→ チャット専用 `CLAUDE_CONFIG_DIR`（`~/.config/agent-fleet/chat-claude`、`AF_CHAT_CLAUDE_DIR` で上書き可）を
-`cmd.Env` で与え、**`.credentials.json` のみ共有 dir へシンボリックリンク**（サブスク認証は共有＝再ログイン不要）。
-`chat.go` の `ensureChatClaudeConfig`/`reconcileChatCreds`/`envWith`/`chatClaudeCmd`。
-creds は単一共有が必須（OAuth refresh はリフレッシュトークンをローテートするため、二重コピーは片方が失効）。
-**strace で実測確定**: claude は JSON 状態（creds 含む）を **tmp＋rename 置換（アトミック）** で書く
-（`.claude.json.tmp.* → rename(.claude.json)`、inode が変わる）。帰結:
-- 対話セッション/Agent 再認証 = **共有ファイル**を rename → symlink はパス解決なので追従（最新を取得）、対処不要。
-- チャット自身の refresh = **リンクのパス**を rename → symlink が実ファイル化して共有と乖離。
-  → `reconcileChatCreds` が「新しいトークンを shared へ戻して再リンク」。実行**前後**両方で走らせ、1ターン以内に共有へ反映。
-- ファイル bind-mount は不可（source の rename でマウントが陳腐化、マウント点への rename は EBUSY）→ **symlink＋copy-back が最適解**。
+### Q3: セッションと .claude を分ける → **認証だけは単一パスへ再統合（2026-07修正）**
+当初はチャット専用 `CLAUDE_CONFIG_DIR` を作り、`.credentials.json` だけ共有 dir への symlink
+にした。しかし Claude の refresh は資格情報を tmp＋rename で置換するため、チャット側の
+symlink が実ファイルへ変わる瞬間がある。copy-back までの間に対話セッションも refresh すると、
+異なる refresh token が並行して保存され、片方が失効し得る。
+
+修正後はチャットも共有 `CLAUDE_CONFIG_DIR` を直接使い、OAuth ファイルを物理的に1個へ戻した。
+分離したかった他の要素は CLI 契約で遮断する:
+- user/project/local settings・hooks: `--setting-sources ""`
+- 他の MCP: `--strict-mcp-config`（チャット用 `--mcp-config` だけ明示）
+- shell/file mutation: provider別 deny/read-only sandbox
+
+旧 `chat-claude/projects` の jsonl は、既存会話の `--resume` を保つため初回実行時に共有
+projects へ create-only でコピーする。資格情報・settings は移行対象外。
 
 ### Q1: ws から AF 操作 → **コンテナ内ローカル stdio MCP（実装済・リードオンリー）**
 CP `/mcp` はヘアピン＋PAT 発行が要り筋が悪い（外部/管理者/横断向けに温存）。自ワークスペース操作は
