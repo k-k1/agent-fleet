@@ -340,12 +340,45 @@ headless Chromium で実機確認済み。
    agent 側は実装済みだった）を追加。
 5. **色・アイコン確定**: Google Blue（dark `#4285f4` / light `#1a73e8`）＋
    codicon `magnet`（反重力=磁気浮上のメタファ。ssm の藍・shell の青緑と区別可）。
-6. **ミラービュー調査**: 実機で `GET /sessions/{name}/messages` は
-   `unsupported_kind` — M1 設計どおり不成立。原因は agent が transcript() を
-   持たないこと（`NoGenericTranscript`）。会話 DB（`conversations/<uuid>.db`）を
-   実機で開いたところ steps テーブルの payload/metadata は **protobuf バイナリ**で、
-   post-exit のパースも非公開スキーマの逆解析が要る。対応方針: agy の構造化出力
-   （Track D-4 watch）待ちを本線とし、DB 逆解析には踏み込まない。
+6. **ミラービュー調査 → 実装で解決**（同日後続作業）: まず実機調査では
+   `GET /sessions/{name}/messages` が `unsupported_kind`（agent が transcript()
+   を持たない）で、会話 DB（`conversations/<uuid>.db`）の steps payload は
+   **protobuf バイナリ**のため逆解析は見送りと判断した。その後の再調査で、agy が
+   会話ごとに **`brain/<uuid>/.system_generated/logs/transcript_full.jsonl`**
+   （素の JSONL・USER_INPUT / PLANNER_RESPONSE / ツール step）を**ターン進行中も
+   ライブ追記**していることを protobuf 内の参照から発見 — これを transcript ソース
+   に採用してチャットミラーを実装した（下記「チャットミラー実装」）。
+
+## チャットミラー・モデル選択の実装（2026-07-20 後続、`temp/szpaeta-agy-ui-fixes`）
+
+M1 で「不成立」とした chat/transcript を、brain transcript の発見により実装した。
+
+- **transcript ソース**: `brain/<conversation-uuid>/.system_generated/logs/
+  transcript_full.jsonl`（未 truncate 版を優先。`transcript.jsonl` はチェック
+  ポイント後に古い step が落ちるモデル向けビュー）。1 行 1 step で、
+  `USER_INPUT`（`<USER_REQUEST>` ラッパを剥がして user ターン）／
+  `MODEL/PLANNER_RESPONSE`（assistant テキスト）／`MODEL/<ツール名>`
+  （RUN_COMMAND・VIEW_FILE 等 → tool パート）／`SYSTEM/ERROR_MESSAGE`
+  （tool パートとして表面化）を generic /messages の transcript.Turn に正規化
+  （`internal/agents/agy/transcript.go`、`Caps{CanTranscript:true}`）。
+- **会話 UUID のライブ特定**: brain/<uuid>/ は**初回プロンプト投入の瞬間に生成**
+  される（実機確認）。BuildLaunch が brain ディレクトリ一覧をスナップショット
+  （`agy-brain-prelaunch` store）し、ポーリング時に「スナップショットに無い dir が
+  ちょうど 1 つ」なら生存中でも採用 — これでミラーが会話開始直後から点灯し、
+  resume も graceful exit 不要になった。2 つ以上（同時起動レース）は取り違え
+  回避で見送り、従来の graceful-exit cwd マップが後で確定させる。
+- **入力**: 既存の generic /input（tmux paste）がそのまま効く。チャット
+  コンポーザからの送信・最初のプロンプトの自動送信とも実機で往復確認。
+- **モデル選択**: `GET /agents/agy/models`（`agy models` の行分割・1 分キャッシュ・
+  stale-if-error）を追加。表示名がそのまま `--model` の引数になる（実機確認:
+  TUI ステータスバーに選択モデルが出る）。Console は registry `caps.model`＋
+  `agentModels.isDynamic` に agy を追加し、起動モーダルと設定カードの既定モデル
+  （effort 行はモデル名に織込みのため非表示）を配線。
+- Console registry は `chat/transcript/model: true` に反転。実機 E2E（Console→
+  sandbox agent 直結）で「起動モーダルでモデル選択→agy 起動→最初のプロンプト
+  自動送信→ミラーに user/assistant ターン（Working steps 付き）→コンポーザ追送
+  →応答ミラー」まで完走。既知の残: コンテキストゲージ・plan/fork は据え置き
+  （transcript にトークン情報が無い・agy に fork 相当なし）。
 
 ## ユーザーに依頼する事項（並行作業のブロッカー解消）
 
