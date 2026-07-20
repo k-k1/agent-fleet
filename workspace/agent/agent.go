@@ -76,10 +76,20 @@ func driveState(m session.Meta, alive, heal bool) string {
 	// agy: no hooks — /input persists an optimistic "working" that nothing clears
 	// while an interactive prompt is up (the question/permission widget replaces the
 	// idle footer, so the claude-shaped heal below can't fire and the chat showed a
-	// blocked session as 作業中). The conversation DB knows (last step status=9 —
-	// agy/pending.go), so ask it first and report question/permission.
+	// blocked session as 作業中). The conversation DB knows the whole state (last step
+	// status — agy/pending.go), so ask it first.
 	if m.Kind == session.KindAgy {
-		if st, _ := agy.Probe(m); st != "" {
+		if st := agy.LiveState(m); st != "" {
+			// Turn end. agy has no Stop hook, so this poll is the only place the
+			// completion can be observed — persist idle AND fire the notification,
+			// or the operator's 完了報告 arm is never consumed and the report never
+			// arrives (docs/30 ②). MarkTurnEnd shares recordSessionNotification with
+			// the hook route, so "which transition counts" stays one implementation.
+			// Gated on previous=="working" so repeated polls report once; a duplicate
+			// from two concurrent polls is absorbed by handleChatReport's disarm.
+			if st == "idle" && status.LiveState(session.UUID(m.Dir, m.Name)) == "working" {
+				agents.MarkTurnEnd(session.UUID(m.Dir, m.Name), agents.TurnCompleted)
+			}
 			return st
 		}
 	}

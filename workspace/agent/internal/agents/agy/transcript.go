@@ -121,7 +121,14 @@ func parseTranscript(f *os.File) []transcript.Turn {
 	}
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024) // steps can carry large tool output
+	// Idx is the source line index (codex's semantics): a stable render key that also
+	// has to be strictly increasing — the Console drops polled turns whose idx is not
+	// greater than the newest one it holds, and clears a prompt's 反映待ち echo only on
+	// a matching user turn with idx > the idx at send time. Leaving every agy turn at
+	// the zero value stalled both (docs/32).
+	line := -1
 	for sc.Scan() {
+		line++
 		var s stepLine
 		if json.Unmarshal(sc.Bytes(), &s) != nil {
 			continue
@@ -138,13 +145,13 @@ func parseTranscript(f *os.File) []transcript.Turn {
 				continue
 			}
 			turns = append(turns, transcript.Turn{
-				Role: "user", Text: text,
+				Role: "user", Text: text, Idx: line,
 				Parts: []transcript.Part{{Kind: "text", Text: text}},
 			})
 		case s.Source == "MODEL" && s.Type == "PLANNER_RESPONSE":
 			if text := strings.TrimSpace(s.Content); text != "" {
 				if cur == nil {
-					cur = &transcript.Turn{Role: "assistant"}
+					cur = &transcript.Turn{Role: "assistant", Idx: line}
 				}
 				cur.Parts = append(cur.Parts, transcript.Part{Kind: "text", Text: text})
 			}
@@ -158,7 +165,7 @@ func parseTranscript(f *os.File) []transcript.Turn {
 				out = out[:toolOutputMax] + "…"
 			}
 			if cur == nil {
-				cur = &transcript.Turn{Role: "assistant"}
+				cur = &transcript.Turn{Role: "assistant", Idx: line}
 			}
 			cur.Parts = append(cur.Parts, transcript.Part{Kind: "tool", Tool: s.Type, Output: out})
 		default:
