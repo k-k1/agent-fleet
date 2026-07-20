@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -655,27 +656,42 @@ func parseOpencodeRunEvents(out []byte) (reply, sesID string, usage opencodeUsag
 // cwd→last-conversation map (cache/last_conversations.json), which a `-p` run
 // writes on process exit (docs/32 Track D-3 — unlike the TUI, which flushes it
 // only on graceful exit). agy has no system-prompt flag, so persona/knowledge ride
-// the headlessPrompt preamble. `-p` auto-DENIES tool permission prompts (docs/32
-// D-5), which happens to be the chat contract (no file/shell mutation) — but it
-// also means knowledge dirs and af MCP tools are effectively unavailable on this
-// backend for now; the assistant answers from the prompt text alone. No usage
-// events either, so the context gauge stays empty (Context = nil).
+// the headlessPrompt preamble.
+//
+// Tools: agy's MCP config is GLOBAL-only (~/.gemini/config/mcp_config.json — no
+// per-invocation flag like claude --mcp-config / codex -c), so every turn runs
+// under a per-conversation isolated HOME (chatAgyHome) that shares ONLY the OAuth
+// token with the user's real ~/.gemini. `-p` auto-denies tool prompts (docs/32
+// D-5); the isolated home's permissions.allow re-opens exactly the chat contract:
+// the read tools plus `mcp(<server>/*)` for each granted server (rule syntax
+// reverse-engineered from the binary and live-verified 2026-07-20). Command/write
+// tools stay auto-denied — no --dangerously-skip-permissions. No usage events, so
+// the context gauge stays empty (Context = nil).
 type agyChat struct{}
 
 func (agyChat) send(ctx context.Context, c *chatConversation, prompt string) (string, error) {
-	dir := agyChatDir(c)
-	agy.EnsureWorkspaceTrusted(dir) // pre-accept the trust gate; -p would auto-deny it
+	home, wd, err := chatAgyHome(c)
+	if err != nil {
+		// Never fall back to the real HOME: the MCP/permission config is global
+		// there and would leak into the user's interactive agy sessions.
+		return "", fmt.Errorf("agy chat home: %v", err)
+	}
 	args := agyChatArgs(c, headlessPrompt(c.personaOf(), c.knowledgeDirs(), prompt))
 	cmd := exec.CommandContext(ctx, "agy", args...)
-	cmd.Dir = dir
+	cmd.Dir = wd
+	cmd.Env = envWith("HOME=" + home)
+	// agy may refresh the OAuth token via tmp+rename, replacing the symlink with a
+	// diverging real file — fold a rotated token back to the shared one (codex 同様).
+	defer reconcileChatCreds(agy.TokenPath(), filepath.Join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"))
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("agy execution failed: %s", cliErr(err))
 	}
 	if c.AgyConversationID == "" {
 		// First turn: adopt the conversation this run just recorded for its private
-		// cwd. Per-conversation dirs make the map entry unambiguous (see agyChatDir).
-		c.AgyConversationID = agy.LastConversationFor(dir)
+		// cwd inside the private home — doubly unambiguous.
+		c.AgyConversationID = agy.LastConversationIn(
+			filepath.Join(home, ".gemini", "antigravity-cli"), wd)
 	}
 	reply := strings.TrimRight(strings.TrimSpace(string(out)), "\n")
 	if reply == "" {
@@ -717,17 +733,102 @@ func agyChatModel(model string, catalog []agents.ModelChoice) string {
 	return ""
 }
 
-// agyChatDir is the per-CONVERSATION working dir for a chat's agy runs. agy's only
-// conversation-id handover is the cwd→last-conversation map, so two first turns
-// sharing a dir could adopt each other's UUID; a private dir per conversation makes
-// the capture race-free. Falls back to the shared chat workdir when mkdir fails
-// (resume then still works via the already-captured UUID).
-func agyChatDir(c *chatConversation) string {
-	dir := filepath.Join(homeDir(), ".config", "agent-fleet", "chat-wd", "agy-"+c.ID)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return chatWorkdir()
+// chatAgyHome prepares the per-CONVERSATION isolated HOME + working dir for a
+// chat's agy runs, under ~/.config/agent-fleet/chat-wd/agy-<convID>/ (removed
+// with the thread by handleChatDelete):
+//   - home/.gemini/antigravity-cli/antigravity-oauth-token — symlink to the real
+//     token (login is the ONLY shared state; agy resolves config from $HOME).
+//   - settings.json / config/config.json — workspace trust for wd, telemetry off,
+//     and permissions.allow (both files carry it: the effective location has
+//     shifted between builds, docs/32 D-5, and an extra copy is harmless).
+//   - config/mcp_config.json — the granted MCP servers. agy's spawned MCP servers
+//     inherit its env, so each entry pins env.HOME back to the REAL home (the af
+//     server must read the user's actual session state — live-verified).
+//
+// Per-conversation (not per-grant like opencode) because a write grant's --conv
+// must ride mcp_config.json args — there is no per-invocation override to carry
+// the conversation id. The dir doubles as the cwd→UUID capture scope.
+func chatAgyHome(c *chatConversation) (home, wd string, err error) {
+	base := filepath.Join(homeDir(), ".config", "agent-fleet", "chat-wd", "agy-"+c.ID)
+	home = filepath.Join(base, "home")
+	wd = filepath.Join(base, "wd")
+	cliDir := filepath.Join(home, ".gemini", "antigravity-cli")
+	cfgDir := filepath.Join(home, ".gemini", "config")
+	for _, d := range []string{wd, cliDir, cfgDir} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			return "", "", err
+		}
 	}
-	return dir
+	reconcileChatCreds(agy.TokenPath(), filepath.Join(cliDir, "antigravity-oauth-token"))
+	allow := agyChatAllowRules(c)
+	settings := map[string]any{
+		"enableTelemetry":   false,
+		"trustedWorkspaces": []string{wd},
+		"permissions":       map[string]any{"allow": allow},
+	}
+	files := map[string]map[string]any{
+		filepath.Join(cliDir, "settings.json"):   settings,
+		filepath.Join(cfgDir, "config.json"):     {"permissions": map[string]any{"allow": allow}},
+		filepath.Join(cfgDir, "mcp_config.json"): {"mcpServers": agyChatServers(c)},
+	}
+	for p, v := range files {
+		b, err := json.MarshalIndent(v, "", "  ")
+		if err != nil {
+			return "", "", err
+		}
+		if err := os.WriteFile(p, append(b, '\n'), 0o600); err != nil {
+			return "", "", err
+		}
+	}
+	return home, wd, nil
+}
+
+// agyChatAllowRules is the permissions.allow set for a chat's agy: the read-only
+// file tools (knowledge dirs stay readable) plus `mcp(<server>/*)` per granted
+// server. Everything else — command execution, writes — stays auto-denied by -p,
+// which IS the chat contract. Rule syntax verified live (mcp(af) and bare tool
+// names do NOT match; docs/32 headlessChat 節).
+func agyChatAllowRules(c *chatConversation) []string {
+	allow := []string{"read_file", "list_dir", "grep_search", "find_files", "codebase_search"}
+	for name := range agyChatServers(c) {
+		allow = append(allow, "mcp("+name+"/*)")
+	}
+	sort.Strings(allow[5:]) // deterministic file content across turns
+	return allow
+}
+
+// agyChatExe resolves the binary serving mcp-stdio/mcp-run in agy's mcp_config —
+// indirected so the live test can point it at the installed workspace-agent
+// (under `go test`, paths.ExePath() is the test binary, which serves neither).
+var agyChatExe = paths.ExePath
+
+// agyChatServers builds the mcp_config.json server map for this conversation —
+// the agy analog of claude's mcpConfigArgs: the local af server per the tool
+// grant, plus one server per READY ops integration. env.HOME pins the spawned
+// servers back to the real home (they inherit agy's isolated-HOME env otherwise).
+func agyChatServers(c *chatConversation) map[string]any {
+	exe := agyChatExe()
+	env := map[string]any{"HOME": homeDir()}
+	servers := map[string]any{}
+	if c.afToolsEnabled() {
+		sargs := []any{"mcp-stdio"}
+		if c.afWriteEnabled() {
+			sargs = []any{"mcp-stdio", "--write", "--conv", c.ID}
+		}
+		servers["af"] = map[string]any{"command": exe, "args": sargs, "env": env}
+	}
+	for _, id := range c.Integrations {
+		reg, ok := opsIntegrations[id]
+		if !ok || !integrationReady(id) {
+			continue // unknown, or the user hasn't connected it — skip silently
+		}
+		sargs := make([]any, len(reg.runArgs))
+		for i, a := range reg.runArgs {
+			sargs[i] = a
+		}
+		servers[id] = map[string]any{"command": exe, "args": sargs, "env": env}
+	}
+	return servers
 }
 
 // headlessPrompt builds the stdin/argv prompt for backends without a system-prompt
@@ -804,18 +905,23 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		return reply, nil
 	case session.KindAgy:
 		// agy has no ephemeral mode, so each one-shot leaves a throwaway conversation
-		// in agy's own state (and no CLI to delete it) — accepted: agy is preferred
-		// only when pinned or the sole connected backend. Runs on the cheap Flash
-		// default (quota-scarce free plan) unless overridden.
-		dir := chatWorkdir()
-		agy.EnsureWorkspaceTrusted(dir)
+		// behind — contained in the shared "oneshot" isolated home rather than the
+		// user's real agy state (which would also spawn their own global MCP servers
+		// on every title call). Runs on the cheap Flash default (quota-scarce free
+		// plan) unless overridden.
+		home, wdir, err := chatAgyHome(&chatConversation{ID: "oneshot"})
+		if err != nil {
+			return "", fmt.Errorf("agy chat home: %v", err)
+		}
 		var args []string
 		if m := agyChatModel(envOr("AF_TITLE_MODEL_AGY", defaultAgyChatModel), agy.Models()); m != "" {
 			args = append(args, "--model", m)
 		}
 		args = append(args, "-p", headlessPrompt(persona, nil, prompt))
 		cmd := exec.CommandContext(ctx, "agy", args...)
-		cmd.Dir = dir
+		cmd.Dir = wdir
+		cmd.Env = envWith("HOME=" + home)
+		defer reconcileChatCreds(agy.TokenPath(), filepath.Join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"))
 		out, err := cmd.Output()
 		if err != nil {
 			return "", fmt.Errorf("agy execution failed: %s", cliErr(err))
