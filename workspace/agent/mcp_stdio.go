@@ -163,6 +163,16 @@ var mcpStdioTools = []map[string]any{
 		},
 	},
 	{
+		"name":        "get_session_usage",
+		"description": "各セッションのコンテキスト使用量と累積消費トークンを返す。name 指定で1セッション、省略で transcript を持つ全セッション（shell / SSM は対象外）。context は現在のコンテキスト量（tokens と read/create/fresh の内訳、window に対する pct%。最初の応答が返るまでは無く、自動圧縮後は圧縮後の値）。cumulative は累積消費（論理ターン数 turns、inTok/outTok/cacheRead/cacheCreate、spend=inTok+cacheCreate+outTok の合計）。『どのセッションがコンテキスト逼迫か』『どれだけ消費したか』を聞かれた時や、引き継ぎ・圧縮・新セッション分割の判断材料に呼ぶ。サブスクリプション枠の残量は get_agent_usage（別ツール）。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name": map[string]any{"type": "string", "description": "セッション名（任意。省略で全セッション）"},
+			},
+		},
+	},
+	{
 		"name":        "get_agent_usage",
 		"description": "各エージェント CLI のサブスクリプション使用量とレート制限を返す（claude / codex。opencode は使用量ソースが無いため含まれない）。fiveHour（5時間枠）と sevenDay（週間枠）の pct が使用率（0–100）、resetsAt が制限の解除（リセット）日時（ISO 8601）。authed=false はその CLI に未ログイン、ageSec は計測の古さ（秒）、codex は planType や resetCredits も付く。『あとどれくらい使える?』『制限はいつ解除?』と聞かれた時や、大きなタスクをセッションに振る前の判断材料に呼ぶ。",
 		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
@@ -208,7 +218,7 @@ var mcpStdioWriteTools = []map[string]any{
 			"properties": map[string]any{
 				"dir":            map[string]any{"type": "string", "description": "作業ディレクトリ（リポジトリの作業コピー等）。省略時はホーム。list_my_sessions の dir か list_repos の path を渡す。"},
 				"title":          map[string]any{"type": "string", "description": "セッションの表示名（任意）。何のタスクかが分かる短い名前。"},
-				"kind":           map[string]any{"type": "string", "description": "エージェント種別（任意）。claude（既定）| codex | opencode | shell。"},
+				"kind":           map[string]any{"type": "string", "description": "エージェント種別（任意）。claude（既定）| codex | opencode | shell。shell は生のシェルで initial_prompt/送信文字列がそのままコマンド実行される（エージェントのガードレール無し）ため、起動前に実行内容を利用者へ確認すること。"},
 				"model":          map[string]any{"type": "string", "description": "モデル上書き（任意）。"},
 				"initial_prompt": map[string]any{"type": "string", "description": "起動後に自動送信する最初のタスク/引き継ぎ文（任意）。"},
 				"worktree":       map[string]any{"type": "boolean", "description": "dir から新しい独立 worktree を作成して起動する（任意、既定 false）。"},
@@ -542,6 +552,11 @@ func mcpStdioCall(req mcpReq) []byte {
 		path = "/sessions/" + url.PathEscape(a.Name) + "/output"
 		if a.Since > 0 {
 			path += fmt.Sprintf("?since=%d", a.Since)
+		}
+	case "get_session_usage":
+		path = "/sessions/usage"
+		if a.Name != "" {
+			path += "?name=" + url.QueryEscape(a.Name)
 		}
 	default:
 		return mcpError(req.ID, -32602, "unknown tool: "+p.Name)

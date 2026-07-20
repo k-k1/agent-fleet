@@ -25,6 +25,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /sessions/{name}/halt", handleHaltSession)
 	mux.HandleFunc("POST /sessions/{name}/recreate", handleRecreateSession)
 	mux.HandleFunc("GET /sessions/archived", handleListArchived)
+	mux.HandleFunc("GET /sessions/usage", handleSessionsUsage)
 	mux.HandleFunc("POST /sessions/{name}/archive", handleArchiveSession)
 	mux.HandleFunc("POST /sessions/{name}/restore", handleRestoreSession)
 	// Programmatic drive I/O for the MCP tools (docs/0006 P3-6 E).
