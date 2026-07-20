@@ -304,7 +304,7 @@ func memberTools() []mcpTool {
 		},
 		{
 			name: "delete_session", minScope: scopeWrite,
-			desc: "Delete a session for good and reclaim its disk (its transcript jsonl is removed), bundling it to a recoverable cleanup archive first. Unlike archive_session (which only hides it), this removes it. Acts on a list_cleanup_candidates action=delete_session item. A running session is refused (stop it first). Near-irreversible — confirm which session with the user before running; recover via restore_cleanup_archive.",
+			desc:   "Delete a session for good and reclaim its disk (its transcript jsonl is removed), bundling it to a recoverable cleanup archive first. Unlike archive_session (which only hides it), this removes it. Acts on a list_cleanup_candidates action=delete_session item. A running session is refused (stop it first). Near-irreversible — confirm which session with the user before running; recover via restore_cleanup_archive.",
 			schema: nameArg,
 			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
 				return agentText(ctx, res.rt, "DELETE", "/sessions/"+url.PathEscape(argStr(args, "name"))+"?reclaim=1", nil)
@@ -332,7 +332,7 @@ func memberTools() []mcpTool {
 		},
 		{
 			name: "restore_cleanup_archive", minScope: scopeWrite,
-			desc:   "Restore a cleanup archive: a deleted session's transcript + list row come back, or a deleted branch is recreated. Use to undo an over-eager cleanup. id from list_cleanup_archives.",
+			desc: "Restore a cleanup archive: a deleted session's transcript + list row come back, or a deleted branch is recreated. Use to undo an over-eager cleanup. id from list_cleanup_archives.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{
 				"id": map[string]any{"type": "string", "description": "archive id from list_cleanup_archives"},
 			}, "required": []string{"id"}},
@@ -342,7 +342,7 @@ func memberTools() []mcpTool {
 		},
 		{
 			name: "purge_cleanup_archive", minScope: scopeWrite,
-			desc:   "Permanently delete a cleanup archive and reclaim its space (no longer restorable). Use only for archives confirmed no longer needed. id from list_cleanup_archives. Confirm with the user first.",
+			desc: "Permanently delete a cleanup archive and reclaim its space (no longer restorable). Use only for archives confirmed no longer needed. id from list_cleanup_archives. Confirm with the user first.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{
 				"id": map[string]any{"type": "string", "description": "archive id from list_cleanup_archives"},
 			}, "required": []string{"id"}},
