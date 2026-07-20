@@ -62,6 +62,8 @@ func TestMCPGetAgentUsageMergesEndpoints(t *testing.T) {
 			_, _ = w.Write([]byte(`{"ok":true,"authed":true,"fiveHour":{"pct":42,"resetsAt":"2026-07-20T12:00:00Z"}}`))
 		case "/codex/usage":
 			_, _ = w.Write([]byte(`{"ok":false,"authed":false}`))
+		case "/connections/agy/usage":
+			_, _ = w.Write([]byte(`{"ok":true,"authed":true,"account":"a@b.com","groups":[{"label":"GEMINI MODELS","remainingPct":98.8}]}`))
 		default:
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
@@ -101,6 +103,14 @@ func TestMCPGetAgentUsageMergesEndpoints(t *testing.T) {
 			Authed bool `json:"authed"`
 			OK     bool `json:"ok"`
 		} `json:"codex"`
+		Agy struct {
+			Authed  bool   `json:"authed"`
+			Account string `json:"account"`
+			Groups  []struct {
+				Label        string  `json:"label"`
+				RemainingPct float64 `json:"remainingPct"`
+			} `json:"groups"`
+		} `json:"agy"`
 	}
 	if err := json.Unmarshal([]byte(parsed.Result.Content[0].Text), &merged); err != nil {
 		t.Fatalf("merged payload not JSON: %v: %s", err, parsed.Result.Content[0].Text)
@@ -110,6 +120,11 @@ func TestMCPGetAgentUsageMergesEndpoints(t *testing.T) {
 	}
 	if merged.Codex.Authed || merged.Codex.OK {
 		t.Fatalf("codex = %+v, want authed=false ok=false", merged.Codex)
+	}
+	// agy rides under its own key with its distinct {account, groups} shape.
+	if !merged.Agy.Authed || merged.Agy.Account != "a@b.com" || len(merged.Agy.Groups) != 1 ||
+		merged.Agy.Groups[0].Label != "GEMINI MODELS" {
+		t.Fatalf("agy = %+v, want authed=true account=a@b.com one GEMINI MODELS group", merged.Agy)
 	}
 }
 
