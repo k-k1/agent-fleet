@@ -26,6 +26,9 @@
 - [30-session-report.md](30-session-report.md) — フリート・オペレーターへセッション完了・質問・異常終了を自動報告（✅ 実装済み）
 - [31-container-browser-pane.md](31-container-browser-pane.md) — Workspace 内 Chromium で localhost を開き描画・入力を Console ペインへ中継（✅ 実装済み・実コンテナで V1 サインオフ完了、[利用契約](31-container-browser-pane-ux-contract.md)）
 - [32-agy-agent-kind.md](32-agy-agent-kind.md) — `kind=agy`（Antigravity CLI）を第4種別として実装する並行トラック計画（📋 計画、設計は [decisions/0008](decisions/0008-antigravity-cli-agent-kind.md)）
+- [33-chat-context-usage.md](33-chat-context-usage.md) — アシスタントチャットのコンテキスト肥大対策（✅ 全4段実装済み）
+- [34-native-runtime.md](34-native-runtime.md) — Docker 不要のネイティブ Runtime `AF_RUNTIME=native`（🚧 実装済み・素の WSL2 実機検証待ち）
+- [35-packaging.md](35-packaging.md) — パッケージング & 配布の4ターゲット設計（native / amd64 Linux / EC2-Single / ECS）（📋 設計・P3-10 残作業の具体化）
 
 > 完了後も実装契約や実測リファレンスとしてコードから参照する 24・26〜30 は番号付きのまま残す。
 > 時系列の実装プランとして役目を終えたものは history/ へ移動: [19 assistant-chat](history/19-assistant-chat.md) /
