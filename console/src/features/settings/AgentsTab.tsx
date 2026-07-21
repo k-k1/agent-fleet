@@ -7,15 +7,12 @@ import { Button } from "../../ui/Button.tsx";
 import { Sparkline } from "../../ui/Sparkline.tsx";
 import { fmtTok } from "../../lib/fmttok.ts";
 import { fmtNum } from "../../lib/intl.ts";
-import { Choice, OnOff, OrderList, Select } from "./controls.tsx";
+import { Choice, OnOff, Select } from "./controls.tsx";
 import {
   agentLaunchDefault,
   useSettings,
   setSetting,
   setSettings,
-  OUTPUT_LANGUAGES,
-  ASSISTANT_AGENT_KINDS,
-  normalizeAssistantOrder,
 } from "../../lib/settings.ts";
 import { useEffortOptions, useModelOptions } from "../../lib/agentModels.ts";
 import { agentOf } from "../../agents/registry.ts";
@@ -107,30 +104,6 @@ export function AgentsTab() {
         <OnOff value={s.autoTitleSuggest} onChange={(v) => setSetting("autoTitleSuggest", v)} />
       </Row>
       <p className="muted ds-note">{tr("agents.note_auto_title")}</p>
-      <Row label={tr("agents.output_language")}>
-        <Choice
-          value={s.outputLanguage}
-          options={OUTPUT_LANGUAGES.map(([id, k]) => [id, tr(k)])}
-          onChange={(v) => setSetting("outputLanguage", v)}
-        />
-      </Row>
-      <p className="muted ds-note">{tr("agents.note_output_language")}</p>
-      <Row label={tr("agents.assistant_agent")}>
-        <OrderList
-          value={normalizeAssistantOrder(s.assistantAgentOrder)}
-          labels={Object.fromEntries(ASSISTANT_AGENT_KINDS.map((k) => [k, agentOf(k).assistantName]))}
-          onChange={(v) => setSetting("assistantAgentOrder", v)}
-        />
-      </Row>
-      <p className="muted ds-note">{tr("agents.note_assistant_agent")}</p>
-      <Row label={tr("agents.assistant_auto_turn")}>
-        <OnOff value={s.assistantAutoTurn} onChange={(v) => setSetting("assistantAutoTurn", v)} />
-      </Row>
-      <p className="muted ds-note">{tr("agents.note_assistant_auto_turn")}</p>
-      <Row label={tr("agents.assistant_auto_compact")}>
-        <OnOff value={s.assistantAutoCompact} onChange={(v) => setSetting("assistantAutoCompact", v)} />
-      </Row>
-      <p className="muted ds-note">{tr("agents.note_assistant_auto_compact")}</p>
     </section>
   );
 
