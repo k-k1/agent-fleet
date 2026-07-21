@@ -293,6 +293,10 @@ ENV AGY_CLI_DISABLE_AUTO_UPDATE=1
 # （lean rootfs のオンデマンド導入用 — docs/35 §35.7.2-4）。
 ARG CHROMIUM_DL_VERSION=1228
 ARG NOTO_CJK_VERSION=Sans2.004
+# bind マウントポイントを rootfs に焼く: docker は -v 先のディレクトリを実行時に自動
+# 作成するが、native rootfs モード（bwrap --ro-bind で / が read-only — docs/35
+# §35.7.2）では bwrap が bind 先を mkdir できず起動が即死する。3 箇所とも空のまま焼く。
+RUN mkdir -p /var/lib/af/claude /usr/local/share/agent-fleet/docs /usr/lib/jvm
 RUN set -eux; mkdir -p /usr/local/share/agent-fleet; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in \
