@@ -30,7 +30,8 @@ af start
   `~/.local/share/agent-fleet` and is never touched).
 - To pin a version: `AF_VERSION=0.1.0 bash install.sh`
 - For details (host requirements, air-gap installs, running as a service,
-  limitations) see the `README.md` bundled inside the tar.
+  optional text-to-speech with VOICEVOX / Zundamon, limitations) see the
+  `README.md` bundled inside the tar.
 
 ## Release layout
 
