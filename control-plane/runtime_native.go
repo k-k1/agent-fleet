@@ -6,12 +6,15 @@
 //   - コンテナ隔離が無い。ワークスペース分離は HOME/CLAUDE_CONFIG_DIR/tmux ソケットの
 //     論理分離のみなので、単一ユーザー前提の AUTH=dev でしか構築させない（factory が拒否）。
 //   - メモリ上限（WS_MEMORY / per-user MemBytes）は強制しない（cgroup を持たない）。
-//   - 実行環境（tmux / git / claude 等の CLI / chromium）はホスト側に導入済みであること。
-//     Dockerfile / entrypoint.sh 相当の初期化はしない。
+//   - 従来モードでは実行環境（tmux / git / claude 等の CLI / chromium）はホスト側に
+//     導入済みであること（Dockerfile / entrypoint.sh 相当の初期化はしない）。rootfs
+//     モード（AF_NATIVE_ROOTFS — docs/35 §35.7.2）は workspace イメージの rootfs を
+//     bwrap で read-only 実行し、entrypoint 初期化・ピン止めが docker と同等に働く。
 package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -29,8 +32,17 @@ import (
 // process HOME (the docker bind-mount source), claude-config/ is CLAUDE_CONFIG_DIR
 // — so a workspace's data is portable between the two local runtimes, and
 // cleanHome / stageWorkspaceDocs / dirDiskUsage work unchanged.
+//
+// Two launch modes (docs/35 §35.7.2):
+//   - traditional (AF_NATIVE_AGENT_BIN): the host-built agent runs directly with
+//     HOME pointed at the data dir. Dev workflow (run-dev.sh native).
+//   - rootfs (AF_NATIVE_ROOTFS): the agent from an extracted workspace-image
+//     rootfs runs under bubblewrap with the rootfs read-only at /, reproducing
+//     the docker layout (bind home → /home/dev etc.) without a container engine.
 type nativeRuntime struct {
-	agentBin   string
+	agentBin   string // traditional: workspace-agent; rootfs mode: the bwrap binary
+	rootfs     string // extracted rootfs dir ("" = traditional mode)
+	jvmDir     string // optional WS_JVM_DIR → /usr/lib/jvm ro-bind (rootfs mode)
 	name       string // workspace name (af-ws-<key>); doubles as the tmux socket name
 	dataDir    string
 	agentPort  string
@@ -44,6 +56,8 @@ var _ Runtime = (*nativeRuntime)(nil)
 
 type nativeFactory struct {
 	agentBin    string
+	rootfs      string
+	jvmDir      string
 	sessionCmd  string
 	extraEnv    []string
 	rootDataDir func(Workspace) string
@@ -51,14 +65,59 @@ type nativeFactory struct {
 
 var _ RuntimeFactory = (*nativeFactory)(nil)
 
-// newNativeFactory builds the containerless adapter. Two fail-fast gates:
-// the workspace-agent binary must exist on the host (AF_NATIVE_AGENT_BIN or
-// PATH), and the deployment must be single-user (AUTH=dev) — without container
-// isolation every workspace runs as the same OS user, which is only acceptable
-// when that user is the sole operator of the deployment.
+// rootfsImageEnvPath is the image ENV manifest the release builder injects into
+// the rootfs tar: docker image ENV (PATH, LANG, DISABLE_AUTOUPDATER, …) lives in
+// the image CONFIG, not its filesystem, so a plain rootfs export would lose it.
+// The rootfs launch rebuilds the env from this file (docs/35 §35.7.2-2).
+const rootfsImageEnvPath = "usr/local/share/agent-fleet/image-env.json"
+
+// newNativeFactory builds the containerless adapter. Fail-fast gates: the
+// deployment must be single-user (AUTH=dev) — without container isolation every
+// workspace runs as the same OS user, which is only acceptable when that user is
+// the sole operator — and the launch prerequisites must exist: in rootfs mode a
+// complete extracted rootfs plus a bwrap binary, otherwise a host workspace-agent
+// (AF_NATIVE_AGENT_BIN or PATH).
 func newNativeFactory(m *manager) (RuntimeFactory, error) {
 	if m.authMode != "dev" {
 		return nil, fmt.Errorf("AF_RUNTIME=native is single-user only (no container isolation); it requires AUTH=dev, got AUTH=%s", m.authMode)
+	}
+	if rootfs := os.Getenv("AF_NATIVE_ROOTFS"); rootfs != "" {
+		abs, err := filepath.Abs(rootfs)
+		if err != nil {
+			return nil, fmt.Errorf("AF_NATIVE_ROOTFS: resolve %q: %w", rootfs, err)
+		}
+		for _, rel := range []string{
+			"usr/local/bin/workspace-agent",
+			"usr/local/bin/entrypoint.sh",
+			rootfsImageEnvPath,
+		} {
+			if fi, err := os.Stat(filepath.Join(abs, rel)); err != nil || fi.IsDir() {
+				return nil, fmt.Errorf("AF_NATIVE_ROOTFS: %s missing under %s (incomplete rootfs extraction?)", rel, abs)
+			}
+		}
+		bwrap := os.Getenv("AF_NATIVE_BWRAP")
+		if bwrap == "" {
+			p, err := exec.LookPath("bwrap")
+			if err != nil {
+				return nil, fmt.Errorf("AF_NATIVE_ROOTFS: bwrap not found (set AF_NATIVE_BWRAP or install bubblewrap)")
+			}
+			bwrap = p
+		}
+		bwrapAbs, err := filepath.Abs(bwrap)
+		if err != nil {
+			return nil, fmt.Errorf("AF_NATIVE_BWRAP: resolve %q: %w", bwrap, err)
+		}
+		if fi, err := os.Stat(bwrapAbs); err != nil || fi.IsDir() {
+			return nil, fmt.Errorf("AF_NATIVE_BWRAP: %q is not an executable file", bwrapAbs)
+		}
+		return &nativeFactory{
+			agentBin:    bwrapAbs,
+			rootfs:      abs,
+			jvmDir:      os.Getenv("WS_JVM_DIR"),
+			sessionCmd:  m.sessionCmd,
+			extraEnv:    m.extraEnv,
+			rootDataDir: m.rootedDataDir,
+		}, nil
 	}
 	bin := os.Getenv("AF_NATIVE_AGENT_BIN")
 	if bin == "" {
@@ -87,6 +146,8 @@ func (f *nativeFactory) New(ws Workspace, secretKey string, extraEnv []string) R
 	env := append(append([]string(nil), f.extraEnv...), extraEnv...)
 	return &nativeRuntime{
 		agentBin:   f.agentBin,
+		rootfs:     f.rootfs,
+		jvmDir:     f.jvmDir,
 		name:       ws.ContainerName,
 		dataDir:    f.rootDataDir(ws),
 		agentPort:  ws.AgentPort,
@@ -148,9 +209,19 @@ func (n *nativeRuntime) Start(ctx context.Context) error {
 	}
 	defer logf.Close()
 
-	cmd := exec.Command(n.agentBin)
-	cmd.Dir = home
-	cmd.Env = n.processEnv(home, claudeCfg)
+	var cmd *exec.Cmd
+	if n.rootfs != "" {
+		env, err := n.rootfsEnv()
+		if err != nil {
+			return err
+		}
+		cmd = exec.Command(n.agentBin, n.bwrapArgs(home, claudeCfg)...)
+		cmd.Env = env
+	} else {
+		cmd = exec.Command(n.agentBin)
+		cmd.Dir = home
+		cmd.Env = n.processEnv(home, claudeCfg)
+	}
 	cmd.Stdout = logf
 	cmd.Stderr = logf
 	// New session/process group: the agent must outlive this CP request (and the
@@ -172,6 +243,73 @@ func (n *nativeRuntime) Start(ctx context.Context) error {
 		return fmt.Errorf("%w (see %s)", err, filepath.Join(n.dataDir, "agent.log"))
 	}
 	return nil
+}
+
+// bwrapArgs assembles the frozen bwrap invocation (docs/35 §35.7.2): the rootfs
+// read-only at /, the docker bind-mount layout reproduced onto container paths,
+// a single-uid userns mapping to the container's dev uid, and an unshared pid
+// namespace so a group SIGKILL of bwrap tears down every descendant (tmux
+// included) with the namespace. net/uts/ipc stay SHARED — the agent must bind
+// the host loopback the CP connects to.
+func (n *nativeRuntime) bwrapArgs(home, claudeCfg string) []string {
+	args := []string{
+		"--ro-bind", n.rootfs, "/",
+		"--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--tmpfs", "/run",
+		"--bind", home, "/home/dev",
+		"--bind", claudeCfg, "/var/lib/af/claude",
+	}
+	// Role-scoped docs staged by the CP land on the agent's DEFAULT container
+	// path, so no AGENT_DOCS_DIR override is needed in this mode.
+	if docs := filepath.Join(n.dataDir, "docs"); isDirPath(docs) {
+		args = append(args, "--ro-bind", docs, "/usr/local/share/agent-fleet/docs")
+	}
+	// Shared host JDKs (docker parity: WS_JVM_DIR → /usr/lib/jvm read-only).
+	if n.jvmDir != "" && isDirPath(n.jvmDir) {
+		args = append(args, "--ro-bind", n.jvmDir, "/usr/lib/jvm")
+	}
+	// Host DNS/hosts pass through read-only (docker copies them into containers).
+	for _, f := range []string{"/etc/resolv.conf", "/etc/hosts"} {
+		if _, err := os.Stat(f); err == nil {
+			args = append(args, "--ro-bind", f, f)
+		}
+	}
+	return append(args,
+		"--unshare-user", "--uid", "1000", "--gid", "1000",
+		"--unshare-pid", "--die-with-parent",
+		"--chdir", "/home/dev",
+		"/usr/local/bin/entrypoint.sh", "workspace-agent",
+	)
+}
+
+// rootfsEnv builds the agent environment for the rootfs launch: the image ENV
+// manifest (baked into the rootfs by the release builder — docker keeps ENV in
+// the image config, which a filesystem export loses) as the base, the runtime
+// vars valued with CONTAINER paths on top, then the workspace extraEnv.
+func (n *nativeRuntime) rootfsEnv() ([]string, error) {
+	b, err := os.ReadFile(filepath.Join(n.rootfs, rootfsImageEnvPath))
+	if err != nil {
+		return nil, fmt.Errorf("read rootfs image env: %w", err)
+	}
+	var imageEnv []string
+	if err := json.Unmarshal(b, &imageEnv); err != nil {
+		return nil, fmt.Errorf("parse rootfs image env: %w", err)
+	}
+	env := map[string]string{}
+	for _, kv := range imageEnv {
+		if k, v, ok := strings.Cut(kv, "="); ok && k != "" {
+			env[k] = v
+		}
+	}
+	env["HOME"] = "/home/dev"
+	env["USER"] = "dev"
+	env["LOGNAME"] = "dev"
+	env["TERM"] = "xterm-256color"
+	env["AGENT_ADDR"] = "127.0.0.1:" + n.agentPort // loopback-only bind, shared net ns
+	env["CLAUDE_CONFIG_DIR"] = "/var/lib/af/claude"
+	env["AF_TMUX_SOCKET"] = n.name
+	env["AGENT_STOP_GRACE_SEC"] = strconv.Itoa(agentStopGraceSec())
+	n.overlayWorkspaceEnv(env)
+	return flattenEnv(env), nil
 }
 
 // processEnv builds the agent process environment from scratch. Base runtime
@@ -206,6 +344,13 @@ func (n *nativeRuntime) processEnv(home, claudeCfg string) []string {
 	if docs := filepath.Join(n.dataDir, "docs"); isDirPath(docs) {
 		env["AGENT_DOCS_DIR"] = docs
 	}
+	n.overlayWorkspaceEnv(env)
+	return flattenEnv(env)
+}
+
+// overlayWorkspaceEnv adds the per-workspace vars (token, DEK, session command)
+// and finally the deployment/workspace extraEnv, which wins on key collisions.
+func (n *nativeRuntime) overlayWorkspaceEnv(env map[string]string) {
 	if n.token != "" {
 		env["AGENT_TOKEN"] = n.token
 	}
@@ -220,6 +365,11 @@ func (n *nativeRuntime) processEnv(home, claudeCfg string) []string {
 			env[k] = v
 		}
 	}
+}
+
+// flattenEnv renders the env map as a sorted KEY=VALUE list (deterministic, no
+// duplicate keys — getenv would keep the first/stale one otherwise).
+func flattenEnv(env map[string]string) []string {
 	keys := make([]string, 0, len(env))
 	for k := range env {
 		keys = append(keys, k)
@@ -252,8 +402,12 @@ func (n *nativeRuntime) Stop(ctx context.Context) error {
 	}
 	// Best-effort: reap a tmux server left behind by a non-graceful agent death.
 	// Scoped to this workspace's socket, so other workspaces (and the host user's
-	// own tmux) are untouchable by construction.
-	_ = exec.CommandContext(ctx, "tmux", "-L", n.name, "kill-server").Run()
+	// own tmux) are untouchable by construction. Rootfs mode needs none of this:
+	// the socket lives on the namespace-private /tmp, and killing bwrap (the pid-
+	// namespace owner) already took the tmux server down with the namespace.
+	if n.rootfs == "" {
+		_ = exec.CommandContext(ctx, "tmux", "-L", n.name, "kill-server").Run()
+	}
 	// "normal stopped state is none" — same semantics as docker stop + rm.
 	_ = os.Remove(n.pidFile())
 	return nil

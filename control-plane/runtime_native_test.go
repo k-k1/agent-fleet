@@ -81,6 +81,184 @@ func TestNativeFactoryGates(t *testing.T) {
 	}
 }
 
+// writeFakeRootfs lays out the minimum tree the rootfs-mode factory gates check,
+// with a known image-env manifest (the release builder injects the real one).
+func writeFakeRootfs(t *testing.T) string {
+	t.Helper()
+	rootfs := t.TempDir()
+	for _, rel := range []string{"usr/local/bin/workspace-agent", "usr/local/bin/entrypoint.sh"} {
+		p := filepath.Join(rootfs, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	envPath := filepath.Join(rootfs, "usr/local/share/agent-fleet/image-env.json")
+	if err := os.MkdirAll(filepath.Dir(envPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	imageEnv := `["PATH=/home/dev/.local/bin:/usr/local/bin:/usr/bin:/bin","LANG=C.UTF-8","DISABLE_AUTOUPDATER=1"]`
+	if err := os.WriteFile(envPath, []byte(imageEnv+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return rootfs
+}
+
+// writeFakeBwrap writes a stand-in bwrap that records its argv and env into
+// dumpDir, then execs the helper agent — so the lifecycle test exercises the
+// real Start/Stop paths while pinning the frozen bwrap invocation.
+func writeFakeBwrap(t *testing.T, dumpDir string) string {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	bin := filepath.Join(t.TempDir(), "bwrap")
+	script := "#!/bin/bash\n" +
+		"printf '%s\\n' \"$@\" > \"" + dumpDir + "/args.dump\"\n" +
+		"env > \"" + dumpDir + "/env.dump\"\n" +
+		// The helper dumps ITS env to $HOME/env.dump — give it a private subdir so
+		// it neither writes to /home/dev nor clobbers the dump captured above.
+		"mkdir -p \"" + dumpDir + "/helper-home\" && export HOME=\"" + dumpDir + "/helper-home\"\n" +
+		"GO_WANT_HELPER_PROCESS=1 exec -a bwrap \"" + self + "\" -test.run='^TestNativeHelperAgent$'\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake bwrap: %v", err)
+	}
+	return bin
+}
+
+// Rootfs-mode factory gates: an incomplete rootfs (missing agent, entrypoint or
+// image-env manifest) and a missing bwrap must all fail at boot, not at Start.
+func TestNativeRootfsFactoryGates(t *testing.T) {
+	dump := t.TempDir()
+	bwrap := writeFakeBwrap(t, dump)
+
+	t.Setenv("AF_NATIVE_ROOTFS", t.TempDir()) // empty dir: no agent/entrypoint/env
+	t.Setenv("AF_NATIVE_BWRAP", bwrap)
+	if _, err := newRuntimeFactory("native", &manager{authMode: "dev", dataRoot: t.TempDir()}); err == nil {
+		t.Error("incomplete rootfs: expected error, got nil")
+	}
+
+	rootfs := writeFakeRootfs(t)
+	t.Setenv("AF_NATIVE_ROOTFS", rootfs)
+	t.Setenv("AF_NATIVE_BWRAP", filepath.Join(t.TempDir(), "missing-bwrap"))
+	if _, err := newRuntimeFactory("native", &manager{authMode: "dev", dataRoot: t.TempDir()}); err == nil {
+		t.Error("missing bwrap: expected error, got nil")
+	}
+
+	t.Setenv("AF_NATIVE_BWRAP", bwrap)
+	if _, err := newRuntimeFactory("native", &manager{authMode: "oauth", dataRoot: t.TempDir()}); err == nil {
+		t.Error("AUTH=oauth: expected error, got nil")
+	}
+	if _, err := newRuntimeFactory("native", &manager{authMode: "dev", dataRoot: t.TempDir()}); err != nil {
+		t.Errorf("complete rootfs + bwrap: unexpected error: %v", err)
+	}
+}
+
+// Rootfs-mode lifecycle: Start must invoke bwrap with the frozen argv (ro-bind
+// rootfs at /, docker-layout binds, single-uid userns, pid unshare, entrypoint
+// command) and an env rebuilt from the image manifest with container paths —
+// and the State/Stop semantics must match the traditional mode.
+func TestNativeRootfsLifecycle(t *testing.T) {
+	dataRoot := t.TempDir()
+	dump := t.TempDir()
+	rootfs := writeFakeRootfs(t)
+	t.Setenv("AF_NATIVE_ROOTFS", rootfs)
+	t.Setenv("AF_NATIVE_BWRAP", writeFakeBwrap(t, dump))
+	t.Setenv("WS_JVM_DIR", "") // keep the optional jvm bind out of the golden argv
+	t.Setenv("AF_MASTER_KEY", "cp-deployment-secret")
+
+	m := &manager{authMode: "dev", dataRoot: dataRoot, extraEnv: []string{"GITHUB_OAUTH_CLIENT_ID=cid123"}}
+	f, err := newRuntimeFactory("native", m)
+	if err != nil {
+		t.Fatalf("factory: %v", err)
+	}
+	ws := Workspace{
+		ContainerName: "af-ws-rootfs",
+		DataDir:       filepath.Join(dataRoot, "rootfs-ws"),
+		AgentPort:     freeLoopbackPort(t),
+		AgentToken:    "tok-rootfs",
+	}
+	rt := f.New(ws, "dek-rootfs", nil)
+	ctx := context.Background()
+	t.Cleanup(func() { _ = rt.Stop(ctx) })
+
+	if err := rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if got := rt.State(ctx); got != "running" {
+		t.Fatalf("post-start State = %q, want running", got)
+	}
+
+	args, err := os.ReadFile(filepath.Join(dump, "args.dump"))
+	if err != nil {
+		t.Fatalf("read args.dump: %v", err)
+	}
+	argv := strings.Split(strings.TrimSpace(string(args)), "\n")
+	home := filepath.Join(ws.DataDir, "home")
+	claudeCfg := filepath.Join(ws.DataDir, "claude-config")
+	wantSeq := []string{
+		"--ro-bind", rootfs, "/",
+		"--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--tmpfs", "/run",
+		"--bind", home, "/home/dev",
+		"--bind", claudeCfg, "/var/lib/af/claude",
+	}
+	for i, want := range wantSeq {
+		if i >= len(argv) {
+			t.Fatalf("bwrap argv too short (%d items): %q", len(argv), argv)
+		}
+		if argv[i] != want {
+			t.Fatalf("bwrap argv[%d] = %q, want %q (argv=%q)", i, argv[i], want, argv)
+		}
+	}
+	joined := strings.Join(argv, " ")
+	for _, want := range []string{
+		"--unshare-user --uid 1000 --gid 1000",
+		"--unshare-pid --die-with-parent",
+		"--chdir /home/dev",
+		"/usr/local/bin/entrypoint.sh workspace-agent",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("bwrap argv missing %q (argv=%q)", want, joined)
+		}
+	}
+
+	envB, err := os.ReadFile(filepath.Join(dump, "env.dump"))
+	if err != nil {
+		t.Fatalf("read env.dump: %v", err)
+	}
+	env := string(envB)
+	for _, want := range []string{
+		"PATH=/home/dev/.local/bin:/usr/local/bin:/usr/bin:/bin\n", // from image-env.json
+		"DISABLE_AUTOUPDATER=1\n",                                  // image config ENV survives export
+		"HOME=/home/dev\n",                                         // container path, not the host data dir
+		"CLAUDE_CONFIG_DIR=/var/lib/af/claude\n",
+		"AGENT_TOKEN=tok-rootfs\n",
+		"AF_SECRET_KEY=dek-rootfs\n",
+		"AF_TMUX_SOCKET=af-ws-rootfs\n",
+		"GITHUB_OAUTH_CLIENT_ID=cid123\n",
+	} {
+		if !strings.Contains(env, want) {
+			t.Errorf("bwrap env missing %q", strings.TrimSpace(want))
+		}
+	}
+	if strings.Contains(env, "AF_MASTER_KEY") {
+		t.Error("bwrap env leaked AF_MASTER_KEY from the CP environment")
+	}
+	if strings.Contains(env, "AGENT_DOCS_DIR") {
+		t.Error("rootfs mode must not set AGENT_DOCS_DIR (docs ro-bind onto the default path)")
+	}
+
+	if err := rt.Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if got := rt.State(ctx); got != "none" {
+		t.Fatalf("post-stop State = %q, want none", got)
+	}
+}
+
 // Full process lifecycle through the Runtime port: none → Start (spawn, pidfile,
 // healthz) → running → Stop (SIGTERM, pidfile removed) → none; plus the crash
 // path (SIGKILL from outside) reporting "stopped" off the stale pidfile.
