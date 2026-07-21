@@ -4,7 +4,9 @@ Agent Fleet is a self-hosted web console for running AI coding agents (Claude Co
 Codex CLI, OpenCode, GitHub Copilot CLI, Antigravity CLI) as a managed fleet. This native package runs
 it without Docker on a single-user Linux host (including WSL2): the control plane and
 console run as host processes, and the workspace runs inside a bubblewrap
-(user-namespace) sandbox on a downloaded rootfs.
+(user-namespace) sandbox on a downloaded rootfs. For multi-user service with
+container isolation and cgroup CPU/memory quotas, use the Docker-based editions
+(Compose / AWS ECS) instead.
 
 It runs on plain WSL2 (or any Linux, single-user operation) **without installing
 anything on the host**. Workspaces run on the bundled rootfs (the same userland as

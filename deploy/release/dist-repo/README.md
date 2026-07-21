@@ -8,11 +8,12 @@ Distribution artifacts for [Agent Fleet](https://github.com/k-k1/agent-fleet).
 Agent Fleet is a self-hosted web console for running AI coding agents
 (Claude Code, Codex CLI, OpenCode, GitHub Copilot CLI, Antigravity CLI) as a
 managed fleet.
-Each member gets an isolated workspace — a container (or a sandboxed rootfs in
-the native edition) with a persistent home and git working copies — and starts,
-drives and monitors agent sessions from the browser. A Go control plane
-orchestrates the workspaces; deployment targets include on-prem Docker Compose,
-AWS, and a Docker-less native runtime for WSL2 / single-user Linux hosts.
+Each member gets an isolated workspace — a Docker container with cgroup CPU/memory
+quotas (or a bubblewrap-sandboxed rootfs in the native edition) with a persistent
+home and git working copies — and starts, drives and monitors agent sessions from
+the browser. A Go control plane orchestrates the workspaces; deployment targets
+include on-prem Docker Compose, AWS ECS (CloudFormation templates included), and a
+Docker-less native runtime for WSL2 / single-user Linux hosts.
 
 ## Installing the native edition (no Docker; WSL2 / single-user Linux)
 

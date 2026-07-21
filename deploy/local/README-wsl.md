@@ -6,7 +6,8 @@ isolated workspace with a persistent home, and drives agent sessions from the br
 
 This runbook gets agent-fleet up quickly on Windows **WSL2** for **single-person
 evaluation**. There is no login screen and no tenant picker (`AUTH=dev` with the fixed
-user `dev`), and workspaces run in Docker inside WSL. The production Compose + Caddy
+user `dev`), and workspaces run in Docker inside WSL (container isolation +
+per-workspace cgroup quotas, same as the production targets). The production Compose + Caddy
 (auto-TLS) setup (`deploy/compose/`) needs a public domain and ports 80/443, so it is
 not used for personal evaluation.
 

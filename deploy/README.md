@@ -6,9 +6,14 @@ isolated workspace with a persistent home and git working copies, and drives age
 sessions from the browser. This directory contains everything needed to deploy it
 and to build/publish its release artifacts.
 
+Workspace isolation depends on the target: the Docker-based targets (compose, AWS
+ECS, local dev) run each workspace in its own container with cgroup CPU/memory
+quotas; the native runtime uses a bubblewrap (user-namespace) sandbox instead and
+applies no cgroup limits.
+
 | Path | Purpose |
 |------|---------|
-| [`compose/`](compose/README.md) | **On-prem Docker Compose deployment** (the primary self-host target). Runbook: setup, keys, backup/restore, upgrades. |
+| [`compose/`](compose/README.md) | **On-prem Docker Compose deployment** (the primary self-host target; per-user workspace containers with cgroup quotas). Runbook: setup, keys, backup/restore, upgrades. |
 | [`native/`](native/README.md) | **Docker-less native runtime** for WSL2 / single-user Linux hosts. Ships as the `agent-fleet-native-*` tar (`af` launcher; workspace runs in a bubblewrap sandbox). |
 | [`aws/ecs/`](aws/ecs/README.md) | **AWS ECS deployment** (CloudFormation templates + `release-ecr.sh` image publishing). |
 | [`aws/ec2-single/`](aws/ec2-single/README.md) | Single-EC2 variant (CloudFormation). |
