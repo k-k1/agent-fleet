@@ -558,22 +558,28 @@ export const ja = {
   "out_lang.ja": "日本語",
   "out_lang.en": "English",
 
+  // --- アシスタント設定（features/settings/AssistantTab.tsx）---
+  "assistant.title_suggest": "タイトルのAI提案",
+  "assistant.note_title_suggest":
+    "チャットの名前変更ダイアログにある「AIに提案してもらう」ボタンの有効/無効です。セッションのタイトル自動提案は「エージェント」タブで設定します。",
+  "assistant.output_language": "回答言語",
+  "assistant.note_output_language":
+    "アシスタント・チャットの回答言語です。「入力に合わせる」は、渡した文章や質問の言語に合わせて返します。日本語／English を選ぶと、他言語の文章でもその言語で回答します（翻訳アシスタントは対象外）。",
+  "assistant.agent_order": "エージェント優先順位",
+  "assistant.note_agent_order":
+    "アシスタント・チャットとタイトル案の生成を動かす CLI の優先順位です。上から順に見て、最初に接続済みの CLI が使われます（未接続のものは飛ばされます）。既定では無料枠が小さい Antigravity を最後にしています。反映はビルトインアシスタントの新しい会話から（カスタムアシスタントは各自のエージェント設定が優先）。",
+  "assistant.auto_turn": "セッション報告への自動応答",
+  "assistant.note_auto_turn":
+    "フリート・オペレーター等（AF 書き込み許可のアシスタント）が起こした・指示したセッションから完了報告が届いたとき、アシスタントが自動で 1 ターン動いて後続を処理します。暴走防止のため、あなたの発言なしで動ける自動ターンは会話ごとに最大 10 回です（発言でリセット）。",
+  "assistant.auto_compact": "コンテキストの自動圧縮",
+  "assistant.note_auto_compact":
+    "チャットのコンテキスト使用率が 90% を超えたまま次のやり取りが始まるとき、先に会話を要約して新しいセッションへ自動で引き継ぎます（要約の作成に 1 ターン分のトークンを消費）。80% の時点で届くお知らせから手動の「圧縮」で先に整理することもできます。",
+
   // --- エージェント設定（features/settings/AgentsTab.tsx）---
   "agents.session": "セッション",
   "agents.auto_title": "タイトル自動提案",
-  "agents.note_auto_title": "タイトル未設定のセッションで数回やり取りしたら、AIが短いタイトル案をチャット上部に表示します。",
-  "agents.output_language": "アシスタントの回答言語",
-  "agents.note_output_language":
-    "アシスタント・チャットの回答言語です。「入力に合わせる」は、渡した文章や質問の言語に合わせて返します。日本語／English を選ぶと、他言語の文章でもその言語で回答します（翻訳アシスタントは対象外）。",
-  "agents.assistant_agent": "アシスタントのエージェント優先順位",
-  "agents.note_assistant_agent":
-    "アシスタント・チャットとタイトル案の生成を動かす CLI の優先順位です。上から順に見て、最初に接続済みの CLI が使われます（未接続のものは飛ばされます）。既定では無料枠が小さい Antigravity を最後にしています。反映はビルトインアシスタントの新しい会話から（カスタムアシスタントは各自のエージェント設定が優先）。",
-  "agents.assistant_auto_turn": "セッション報告への自動応答",
-  "agents.note_assistant_auto_turn":
-    "フリート・オペレーター等（AF 書き込み許可のアシスタント）が起こした・指示したセッションから完了報告が届いたとき、アシスタントが自動で 1 ターン動いて後続を処理します。暴走防止のため、あなたの発言なしで動ける自動ターンは会話ごとに最大 10 回です（発言でリセット）。",
-  "agents.assistant_auto_compact": "コンテキストの自動圧縮",
-  "agents.note_assistant_auto_compact":
-    "チャットのコンテキスト使用率が 90% を超えたまま次のやり取りが始まるとき、先に会話を要約して新しいセッションへ自動で引き継ぎます（要約の作成に 1 ターン分のトークンを消費）。80% の時点で届くお知らせから手動の「圧縮」で先に整理することもできます。",
+  "agents.note_auto_title":
+    "タイトル未設定のセッションで数回やり取りしたら、AIが短いタイトル案をミラー上部に表示します。チャットのタイトル提案は「アシスタント」タブで設定します。",
   "agents.ws_required_title": "設定はワークスペース内で実行されます",
   "agents.ws_required_hint": "接続とエージェント設定はコンテナ内の Agent / CLI を経由するため、ワークスペースの起動が必要です。",
   "agents.note_apply": "接続の変更は即時、挙動設定は各エージェントの新しいセッションから反映されます。",
@@ -2052,6 +2058,7 @@ export const ja = {
   "set.tab_keys": "キー操作",
   "set.tab_env": "ワークスペース",
   "set.tab_agents": "エージェント",
+  "set.tab_assistant": "アシスタント",
   "set.tab_tts": "読み上げ",
   "set.tab_git": "Git",
   "set.tab_ssm": "AWS SSM",
