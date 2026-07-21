@@ -1184,6 +1184,7 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.ws_stopped": "Workspace stopped",
   "mirror.resume_continue": "Resume and continue",
   "mirror.viewing_history_resume": "Viewing history (resume to type)",
+  "mirror.folder_missing_history": "Can't resume — the working folder no longer exists (history only)",
   "mirror.viewing_history_ws_stopped": "Viewing history (workspace stopped)",
   "mirror.select_in_terminal": "Choose in the terminal",
   "mirror.resume_choice_hint": "Waiting to choose how to resume (“2” keeps the context)",
@@ -1434,7 +1435,7 @@ export const en: Record<keyof typeof ja, string> = {
   "arch.restored_n": "Restored {restored}",
   "arch.title": "Archived sessions",
   "arch.empty": "No archives.",
-  "arch.filter_ph": "Filter by title / folder / kind",
+  "arch.filter_ph": "Filter by title / slug / folder / kind",
   "arch.expand_all": "Expand all groups",
   "arch.collapse_all": "Collapse all groups",
   "arch.expand_all_short": "Expand all",
@@ -1498,6 +1499,7 @@ export const en: Record<keyof typeof ja, string> = {
   // === P2 session row (features/sessions/SessionRow.tsx) ===
   "srow.id_copied": "Copied the ID: {name}",
   "srow.cant_resume": "Can't resume — the working folder no longer exists",
+  "srow.history_only": "Folder missing — history only (can't resume / click to open)",
   "srow.stopped_hint": "Stopped (click to view history / Ctrl or middle-click for a new pane)",
   "srow.open_pane_suffix": " (Ctrl / middle-click to open in a new pane)",
   "srow.branch_switched":
