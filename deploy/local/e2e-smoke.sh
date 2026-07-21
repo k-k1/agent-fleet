@@ -191,6 +191,7 @@ exec docker run --rm -i --init --network none --memory "$SMOKE_MEMORY" --cap-add
   -e EXPECT_CLAUDE="$EXPECT_CLAUDE" \
   -e EXPECT_OPENCODE="$EXPECT_OPENCODE" \
   -e EXPECT_CODEX="$EXPECT_CODEX" \
+  -e EXPECT_COPILOT="$EXPECT_COPILOT" \
   -e EXPECT_GO="$EXPECT_GO" \
   -e EXPECT_GH="$EXPECT_GH" \
   -e EXPECT_CHROMIUM="$EXPECT_CHROMIUM" \
