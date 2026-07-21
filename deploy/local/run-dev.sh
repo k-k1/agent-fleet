@@ -1,62 +1,65 @@
 #!/usr/bin/env bash
-# ローカル起動の単一エントリポイント（旧 run-dev.sh と wsl-quickstart.sh を一本化）。
-# Workspace の動かし方をサブコマンドで選び、Console と Control Plane をビルドして
-# ホストで CP を起動する。ブラウザで http://localhost:8099 を開く。
+# Single entry point for local startup (merges the old run-dev.sh and wsl-quickstart.sh).
+# Pick how Workspaces run via a subcommand; builds the Console and Control Plane and
+# starts the CP on the host. Open http://localhost:8099 in a browser.
 #
-# 使い方:
-#   deploy/local/run-dev.sh [local]   # Docker ランタイム（開発既定）
-#   deploy/local/run-dev.sh wsl       # WSL 個人利用プリセット（Docker 必須。
-#                                     # docker/cgroup preflight・AUTH=dev 固定）
-#   deploy/local/run-dev.sh native    # Docker なしコンテナレス（単一ユーザー・docs/34）
+# Usage:
+#   deploy/local/run-dev.sh [local]   # Docker runtime (dev default)
+#   deploy/local/run-dev.sh wsl       # WSL personal-use preset (Docker required;
+#                                     # docker/cgroup preflight, AUTH=dev forced)
+#   deploy/local/run-dev.sh native    # containerless, no Docker (single user; docs/34)
 #   deploy/local/run-dev.sh reset [--all] [--yes]
-#                                     # ローカルデータ初期化。既定は dev ユーザーの
-#                                     # ワークスペースのみ（$WS_DATA/<DEV_USER>）。
-#                                     # --all は DB・共有 JDK を含む $WS_DATA 全体。
+#                                     # wipe local data. Default: only the dev user's
+#                                     # workspace ($WS_DATA/<DEV_USER>).
+#                                     # --all: all of $WS_DATA incl. DB and shared JDKs.
 #
-# 補足:
-#   - 旧 deploy/local/wsl-quickstart.sh は `run-dev.sh wsl` の後方互換ラッパー。
-#   - サブコマンド無しのときは env AF_RUNTIME で分岐（native|wsl → コンテナレス）。
-#     ※ env の AF_RUNTIME=wsl は CP 側では「コンテナレス」の別名で、サブコマンド
-#       `wsl`（Docker プリセット）とは別物。紛れるのでサブコマンド指定を推奨。
-#   - claude / opencode / codex / agy / rtk はイメージに焼き込み（Dockerfile の ARG でピン止め）。
-#     版の bump 手順（runbook）は docs/dev/10-development.md §10.2.1。最新への追従は
-#     設定モーダルの自己更新 opt-in（AF_AGENT_SELF_UPDATE）でも可（rtk 含む）。
+# Notes:
+#   - The old deploy/local/wsl-quickstart.sh is a backward-compat wrapper for
+#     `run-dev.sh wsl`.
+#   - With no subcommand, env AF_RUNTIME decides (native|wsl -> containerless).
+#     Note: env AF_RUNTIME=wsl is, to the CP, an alias for "containerless" and is NOT
+#     the `wsl` subcommand (Docker preset). Easy to mix up — prefer the subcommand.
+#   - claude / opencode / codex / agy / rtk are baked into the image (pinned via
+#     Dockerfile ARGs). Version bump runbook: docs/dev/10-development.md §10.2.1.
+#     Tracking latest is also possible via the settings modal's self-update opt-in
+#     (AF_AGENT_SELF_UPDATE), rtk included.
 #
-# 例:
+# Examples:
 #   deploy/local/run-dev.sh
-#   WS_ENV=CLAUDE_INSTALL=0 WS_SESSION_CMD=bash deploy/local/run-dev.sh   # claude 抜き軽量検証
+#   WS_ENV=CLAUDE_INSTALL=0 WS_SESSION_CMD=bash deploy/local/run-dev.sh   # light check without claude
 #   WS_JDK=0 WS_SMOKE=0 deploy/local/run-dev.sh wsl
 #   deploy/local/run-dev.sh reset --all --yes
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-# Go / Node は user-local 導入が普通なので、非ログインシェル（sg docker 等）でも
-# 見えるよう PATH を通す。
+# Go / Node are usually user-local installs; extend PATH so they are visible even
+# from non-login shells (sg docker etc.).
 export PATH="$HOME/.local/go/bin:/usr/local/go/bin:$HOME/go/bin:$PATH"
 
 CP_ADDR="${CP_ADDR:-:8099}"
 # Persistent data root (DB + per-user homes + shared JDKs). NOT under /tmp: that's
 # tmpfs (RAM) here, so it would be wiped on reboot and permanently occupy RAM.
 WS_DATA="${WS_DATA:-$HOME/.local/share/agent-fleet}"
-# Per-workspace RAM cap (docker --memory; native は不適用). Raise with care.
+# Per-workspace RAM cap (docker --memory; not applied on native). Raise with care.
 WS_MEMORY="${WS_MEMORY:-5g}"
 # Shared Temurin JDKs live here on the host and are bind-mounted read-only into
-# every workspace at /usr/lib/jvm（docker ランタイムのみ）。
+# every workspace at /usr/lib/jvm (docker runtime only).
 WS_JVM_DIR="${WS_JVM_DIR:-$WS_DATA/shared/jvm}"
 # The host-run Control Plane is not built from control-plane/Dockerfile, so it
 # does not have the baked docs tree. Point staging at this checkout by default.
 AF_DOCS_DIR="${AF_DOCS_DIR:-$ROOT/docs}"
-WS_JDK="${WS_JDK:-1}"                  # 1=共有JDKをprovision / 0=省略（install-jdk の on-demand に寄せる）
-RTK_VERSION="${RTK_VERSION:-}"         # 焼き込み rtk 版の上書き（空=Dockerfile の ARG 既定ピン）
+WS_JDK="${WS_JDK:-1}"                  # 1=provision shared JDKs / 0=skip (rely on on-demand install-jdk)
+RTK_VERSION="${RTK_VERSION:-}"         # override the baked rtk version (empty = Dockerfile's ARG pin)
 DEV_KEY="${DEV_USER:-dev}"
 
-# 冒頭コメントブロック（shebang の次〜最初の非コメント行の手前）をヘルプとして表示。
+# Print the leading comment block (after the shebang, up to the first non-comment
+# line) as help.
 usage() { awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0"; }
 
-# ---- reset: ローカルデータ初期化 --------------------------------------------
-# docker / native どちらで動かした後でも、残骸（コンテナ・network / agent プロセス・
-# 専用 tmux ソケット）を掃除してからデータを消す。既定は dev ユーザーのみ（DB と
-# 共有 JDK は温存＝再 provision 不要）。--all は $WS_DATA ごと消す完全初期化。
+# ---- reset: wipe local data --------------------------------------------------
+# Whether docker or native ran last, clean up leftovers (container/network, agent
+# process, dedicated tmux socket) before deleting data. Default: dev user only
+# (DB and shared JDKs kept = no re-provision needed). --all deletes all of $WS_DATA.
 do_reset() {
   local all=0 yes=0 a
   for a in "$@"; do
@@ -64,7 +67,7 @@ do_reset() {
       --all) all=1 ;;
       --yes | -y) yes=1 ;;
       *)
-        echo "reset の不明なオプション: $a" >&2
+        echo "unknown reset option: $a" >&2
         usage
         exit 1
         ;;
@@ -73,37 +76,38 @@ do_reset() {
   local target="$WS_DATA/$DEV_KEY"
   [ "$all" = 1 ] && target="$WS_DATA"
   if [ ! -e "$target" ]; then
-    echo "削除対象がありません（初期化済み）: $target"
+    echo "nothing to delete (already clean): $target"
     exit 0
   fi
-  # CP がデータを掴んだまま消さない（DB/home を書き戻されて中途半端になる）。
+  # Don't delete while the CP still holds the data (it would write the DB/home
+  # back and leave a half-wiped state).
   if pgrep -f '^/tmp/af-cp' >/dev/null 2>&1; then
-    echo "ERROR: control-plane（/tmp/af-cp）が稼働中です。Ctrl-C で停止してから再実行してください。" >&2
+    echo "ERROR: control-plane (/tmp/af-cp) is running. Stop it with Ctrl-C, then retry." >&2
     exit 1
   fi
-  echo "==> 削除対象: $target"
+  echo "==> deleting: $target"
   if [ "$all" = 1 ]; then
-    echo "    完全初期化: DB・全ユーザー home・claude-config・共有 JDK を含む（JDK は次回 provision し直し）"
+    echo "    full wipe: DB, all user homes, claude-config, shared JDKs (JDKs re-provision next run)"
   else
-    echo "    $DEV_KEY ユーザーのみ: home / claude-config（Claude ログイン含む）。DB と共有 JDK は温存"
+    echo "    user $DEV_KEY only: home / claude-config (incl. Claude login). DB and shared JDKs kept"
   fi
   if [ "$yes" != 1 ]; then
     if [ -t 0 ]; then
-      read -r -p "本当に削除しますか？ [y/N] " ans
+      read -r -p "Really delete? [y/N] " ans
       case "$ans" in y | Y | yes) ;; *)
-        echo "中止しました"
+        echo "aborted"
         exit 1
         ;;
       esac
     else
-      echo "ERROR: 非対話実行では --yes を付けてください" >&2
+      echo "ERROR: pass --yes for non-interactive runs" >&2
       exit 1
     fi
   fi
-  # docker ランタイムの残骸（docker 未導入の環境では素通り）。
+  # docker-runtime leftovers (no-op where docker is absent).
   docker rm -f "af-ws-$DEV_KEY" >/dev/null 2>&1 || true
   docker network rm "af-net-$DEV_KEY" >/dev/null 2>&1 || true
-  # native ランタイムの残骸: agent プロセスグループ停止 → 専用 tmux ソケット掃除。
+  # native-runtime leftovers: stop the agent process group, then clean its tmux socket.
   local pidf="$WS_DATA/$DEV_KEY/agent.pid" pid=""
   if pid="$(cat "$pidf" 2>/dev/null)" && [ -n "$pid" ]; then
     kill -TERM -- "-$pid" 2>/dev/null || true
@@ -112,10 +116,10 @@ do_reset() {
   fi
   tmux -L "af-ws-$DEV_KEY" kill-server 2>/dev/null || true
   rm -rf "$target"
-  echo "==> 初期化完了（次回起動時に再作成されます）"
+  echo "==> wipe complete (recreated on next start)"
 }
 
-# ---- モード決定 --------------------------------------------------------------
+# ---- mode selection ----------------------------------------------------------
 MODE=""
 case "${1:-}" in
   local | docker) MODE=local ;;
@@ -132,16 +136,17 @@ case "${1:-}" in
     ;;
   "") ;;
   *)
-    echo "不明なサブコマンド: $1" >&2
+    echo "unknown subcommand: $1" >&2
     usage
     exit 1
     ;;
 esac
 if [ -z "$MODE" ]; then
-  # サブコマンド無し: 後方互換で env AF_RUNTIME を見る（native|wsl は CP 的にコンテナレス）。
+  # No subcommand: fall back to env AF_RUNTIME (native|wsl are containerless to the CP).
   case "${AF_RUNTIME:-local}" in native | wsl) MODE=native ;; *) MODE=local ;; esac
 fi
-# CP へ渡すランタイムを確定（サブコマンド優先）。wsl プリセットは docker ランタイム。
+# Settle the runtime passed to the CP (subcommand wins). The wsl preset uses the
+# docker runtime.
 case "$MODE" in native) AF_RUNTIME=native ;; *) AF_RUNTIME=local ;; esac
 
 WS_IMAGE_DEFAULT="agent-fleet/workspace:dev"
@@ -157,54 +162,55 @@ if [ -f "$OAUTH_ENV" ]; then
   # shellcheck disable=SC1090
   . "$OAUTH_ENV"
   set +a
-  gh_state="未設定"
-  [ -n "${GITHUB_OAUTH_CLIENT_ID:-}" ] && gh_state="設定あり"
-  echo "==> loaded $OAUTH_ENV（GitHub device flow client_id: $gh_state）"
+  gh_state="unset"
+  [ -n "${GITHUB_OAUTH_CLIENT_ID:-}" ] && gh_state="set"
+  echo "==> loaded $OAUTH_ENV (GitHub device flow client_id: $gh_state)"
 fi
-# wsl プリセットは単一ユーザー固定: oauth.env が AUTH=oauth を書いても採用しない。
+# The wsl preset is single-user only: AUTH=oauth in oauth.env is not honored.
 [ "$MODE" = wsl ] && AUTH=dev
 
 # ---- preflight ---------------------------------------------------------------
 fail=0
 if ! command -v go >/dev/null 2>&1; then
-  echo "✗ go が無い。Go を入れて PATH に通してください（https://go.dev/dl/）" >&2
+  echo "✗ go not found. Install Go and add it to PATH (https://go.dev/dl/)" >&2
   fail=1
 fi
 export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 # shellcheck disable=SC1091
 [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" >/dev/null 2>&1 || true
 if ! command -v npm >/dev/null 2>&1; then
-  echo "✗ npm/node が無い。Node（nvm 推奨）を入れてください" >&2
+  echo "✗ npm/node not found. Install Node (nvm recommended)" >&2
   fail=1
 fi
 if [ "$MODE" = wsl ]; then
-  # Docker daemon に届くか（Docker Desktop でなく WSL 内 native dockerd を推奨）。
+  # Can we reach the Docker daemon? (native dockerd inside WSL recommended over
+  # Docker Desktop).
   if ! docker info >/dev/null 2>&1; then
-    echo "✗ docker daemon に接続できない。WSL 内で dockerd を起動し、${USER:-$(id -un)} を docker グループに入れてください" >&2
-    echo "   （例: sudo service docker start / sudo usermod -aG docker ${USER:-$(id -un)} 後に再ログイン）" >&2
-    echo "   Docker を導入できない場合は: deploy/local/run-dev.sh native（docs/34）" >&2
+    echo "✗ cannot reach the docker daemon. Start dockerd inside WSL and add ${USER:-$(id -un)} to the docker group" >&2
+    echo "   (e.g. sudo service docker start / sudo usermod -aG docker ${USER:-$(id -un)}, then log in again)" >&2
+    echo "   If Docker is not an option: deploy/local/run-dev.sh native (docs/34)" >&2
     fail=1
   fi
-  # cgroup v2（メモリ上限 --memory とリソース表示が依存）。
+  # cgroup v2 (the --memory cap and resource display depend on it).
   cgt="$(stat -fc %T /sys/fs/cgroup 2>/dev/null || echo unknown)"
-  [ "$cgt" = "cgroup2fs" ] || echo "! cgroup が v2 でない（$cgt）。メモリ上限やリソース表示が期待通りに出ない場合があります" >&2
+  [ "$cgt" = "cgroup2fs" ] || echo "! cgroup is not v2 ($cgt). Memory caps and resource display may not behave as expected" >&2
 fi
 [ "$fail" = 0 ] || {
-  echo "preflight 失敗。上記を解消してから再実行してください。" >&2
+  echo "preflight failed. Fix the issues above and retry." >&2
   exit 1
 }
 
-# ---- Workspace 実行環境の準備（モード別） ------------------------------------
-# rtk は常にイメージ焼き込み（Dockerfile の BAKE_RTK=1 既定・ARG ピン止め）。かつての
-# ホスト vendoring（update-rtk.sh → vendor/rtk）は廃止した。
+# ---- prepare the Workspace runtime (per mode) --------------------------------
+# rtk is always baked into the image (Dockerfile BAKE_RTK=1 default, ARG-pinned).
+# The old host vendoring (update-rtk.sh -> vendor/rtk) is gone.
 if [ "$MODE" != native ]; then
   # Provision the shared JDKs into WS_JVM_DIR (idempotent; first run is slow).
-  # WS_JDK=0 なら省き、コンテナ内 `workspace-agent install-jdk` の on-demand に任せる。
+  # With WS_JDK=0, skip and rely on on-demand `workspace-agent install-jdk` in-container.
   if [ "$WS_JDK" = "1" ]; then
     bash "$ROOT/deploy/local/provision-jvm.sh" "$WS_JVM_DIR" || echo "WARN: jvm provision failed (java unavailable)"
   else
     WS_JVM_DIR=""
-    echo "==> WS_JDK=0: 共有 JDK provision を省略（必要時に workspace-agent install-jdk <major>）"
+    echo "==> WS_JDK=0: skipping shared JDK provision (use workspace-agent install-jdk <major> when needed)"
   fi
 
   echo "==> build workspace image ($WS_IMAGE)"
@@ -212,8 +218,8 @@ if [ "$MODE" != native ]; then
     ${RTK_VERSION:+--build-arg "RTK_VERSION=$RTK_VERSION"} \
     -t "$WS_IMAGE" "$ROOT/workspace"
 
-  # イメージスモーク（焼き込み CLI の版 = Dockerfile の ARG ピン等を検証、数秒）。
-  # WS_SMOKE=0 でスキップ。
+  # Image smoke test (verifies baked CLI versions = Dockerfile ARG pins etc.;
+  # takes seconds). Skip with WS_SMOKE=0.
   if [ "${WS_SMOKE:-1}" = "1" ]; then
     bash "$ROOT/deploy/local/e2e-smoke.sh" "$WS_IMAGE"
   fi
@@ -228,7 +234,7 @@ else
   done
 fi
 
-# ---- Console / Control Plane ビルドと起動（全モード共通） ---------------------
+# ---- build & start Console / Control Plane (all modes) -----------------------
 # Console is a Vite + React app: build it to console/dist, which the CP serves
 # statically (no-store). Run `npm --prefix console run dev` (vite build --watch) in a
 # separate shell during active UI work; this script does a one-shot production build.

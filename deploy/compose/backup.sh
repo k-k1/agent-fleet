@@ -1,25 +1,28 @@
 #!/usr/bin/env bash
-# agent-fleet — バックアップ（P3-10 段3）
+# agent-fleet — backup (P3-10 stage 3)
 #
-# ${DATA_DIR} を丸ごと timestamped tar.gz に固める:
-#   - control-plane.db(+ -wal/-shm)   … tenant/membership/port/token グラフ
-#   - <key>/home/.config/secrets.enc  … 封筒暗号された git/claude 資格
-#   - <key>/home/…                    … per-user 作業ツリー・dotfiles
-#   - <key>/claude-config             … claude ログイン状態（平文）
-#   - caddy/                          … ACME 証明書（復元時の再取得＝Let's Encrypt レート回避）
-# 既定で shared/jvm（再取得可能な Temurin、巨大）は除外。
+# Packs the whole ${DATA_DIR} into a timestamped tar.gz:
+#   - control-plane.db(+ -wal/-shm)   ... tenant/membership/port/token graph
+#   - <key>/home/.config/secrets.enc  ... envelope-encrypted git/claude credentials
+#   - <key>/home/...                  ... per-user working trees and dotfiles
+#   - <key>/claude-config             ... claude login state (plaintext)
+#   - caddy/                          ... ACME certs (no re-issue on restore = avoids
+#                                         Let's Encrypt rate limits)
+# shared/jvm (re-provisionable Temurin, huge) is excluded by default.
 #
-# ⚠️ AF_MASTER_KEY はこのアーカイブに入らない（.env にあり）。**別金庫**で保管すること。
-#    紛失 = 全 wrapped DEK が unwrap 不能 = crypto-shred（このバックアップも復号不能）。
-# ⚠️ アーカイブ自体が機微（claude 平文状態を含む）。保管先の権限・暗号化に注意。
+# ⚠️ AF_MASTER_KEY is NOT in this archive (it lives in .env). Keep it in a SEPARATE vault.
+#    Losing it = no wrapped DEK can be unwrapped = crypto-shred (this backup too).
+# ⚠️ The archive itself is sensitive (contains plaintext claude state). Guard the
+#    storage location's permissions and encryption.
 #
-# 既定は CP+Caddy を一瞬停止して SQLite を静止させ整合スナップショットを取り、その後再開する
-# （workspace コンテナ af-ws-* は compose 管理外ゆえ止めない＝ユーザーは切断されない）。
+# By default CP+Caddy are stopped briefly to quiesce SQLite for a consistent snapshot,
+# then restarted (workspace containers af-ws-* are not compose-managed and stay up,
+# so users are not disconnected).
 #
-#   deploy/compose/backup.sh                 # ./backups/ へ、CP を一瞬停止して取得
+#   deploy/compose/backup.sh                 # to ./backups/, briefly stopping the CP
 #   OUT_DIR=/mnt/bkp deploy/compose/backup.sh
-#   deploy/compose/backup.sh --no-stop       # 停止せず取得（呼び出し側で静止済みの前提）
-#   KEEP=7 deploy/compose/backup.sh          # 世代保持数（既定 7、0=無制限）
+#   deploy/compose/backup.sh --no-stop       # snapshot without stopping (caller quiesced)
+#   KEEP=7 deploy/compose/backup.sh          # generations to retain (default 7, 0=unlimited)
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$HERE"
@@ -27,13 +30,13 @@ cd "$HERE"
 NO_STOP=0
 [ "${1:-}" = "--no-stop" ] && NO_STOP=1
 
-# .env から DATA_DIR を読む（環境で上書き可）。
+# Read DATA_DIR from .env (environment overrides win).
 if [ -f .env ]; then set -a; . ./.env; set +a; fi
 DATA_DIR="${DATA_DIR:?DATA_DIR must be set (deploy/compose/.env)}"
 [ -d "$DATA_DIR" ] || { echo "ERROR: DATA_DIR not found: $DATA_DIR" >&2; exit 1; }
 OUT_DIR="${OUT_DIR:-$HERE/backups}"
 KEEP="${KEEP:-7}"
-EXCLUDES=(--exclude=shared/jvm)   # 再取得可能・巨大
+EXCLUDES=(--exclude=shared/jvm)   # re-provisionable and huge
 
 TS="$(date +%Y%m%d-%H%M%S)"
 ARCHIVE="$OUT_DIR/agent-fleet-$TS.tar.gz"
@@ -45,11 +48,12 @@ start_stack() { docker compose start cp caddy >/dev/null 2>&1 || true; }
 if [ "$NO_STOP" = 0 ]; then
   echo "==> quiescing CP+Caddy (workspaces stay up)"
   stop_stack
-  trap start_stack EXIT   # 途中失敗でも必ず再開
+  trap start_stack EXIT   # always restart, even on mid-run failure
 fi
 
 echo "==> archiving $DATA_DIR -> $ARCHIVE"
-# --numeric-owner: uid 1000(dev) 所有を数値で保存し、root で復元しても owner が保たれる。
+# --numeric-owner: store uid 1000(dev) ownership numerically so a restore run as
+# root keeps the owner.
 tar --numeric-owner "${EXCLUDES[@]}" \
     -czf "$ARCHIVE" -C "$(dirname "$DATA_DIR")" "$(basename "$DATA_DIR")"
 
@@ -57,7 +61,7 @@ if [ "$NO_STOP" = 0 ]; then start_stack; trap - EXIT; echo "==> CP+Caddy resumed
 
 echo "==> done: $(du -h "$ARCHIVE" | cut -f1)  $ARCHIVE"
 
-# 世代保持（新しい順に KEEP 個を残す）。
+# Generation retention (keep the newest KEEP archives).
 if [ "$KEEP" -gt 0 ]; then
   mapfile -t OLD < <(ls -1t "$OUT_DIR"/agent-fleet-*.tar.gz 2>/dev/null | tail -n +$((KEEP+1)))
   if [ "${#OLD[@]}" -gt 0 ]; then

@@ -1,30 +1,32 @@
 #!/usr/bin/env bash
-# Agent Fleet — ECR release push（docs/35 §35.7.3-1）。
+# Agent Fleet — ECR release push (docs/35 §35.7.3-1).
 #
 #   VERSION=0.2.0 deploy/aws/ecs/release-ecr.sh --profile af-sandbox --region ap-northeast-1 \
 #     [--account 123456789012] [--images-tar dist/agent-fleet-images-0.2.0.tar.gz] \
 #     [--registry agent-fleet]
 #
-# runbook（README §ECR push）の手打ちコマンド列が正で、このスクリプトはその写し。
-# やること: sts で account 解決 → ECR repo の存在確認（作らない — repo の正は
-# 20-platform CFN。out-of-band create は後続の CFN deploy を AlreadyExists で壊す）
-# → docker login → （--images-tar 指定時は air-gap B を docker load）→
-# ローカルイメージ agent-fleet/{control-plane,workspace}:$VERSION を
-# af-{control-plane,workspace}:$VERSION として tag/push。
+# The hand-typed command sequence in the runbook (README §ECR push) is the source of
+# truth; this script is its transcript. Steps: resolve the account via sts -> check
+# that the ECR repos exist (never create them — the repos are owned by the
+# 20-platform CFN stack; an out-of-band create breaks the later CFN deploy with
+# AlreadyExists) -> docker login -> (docker load the air-gap B tar when --images-tar
+# is given) -> tag/push the local images agent-fleet/{control-plane,workspace}:$VERSION
+# as af-{control-plane,workspace}:$VERSION.
 #
-# 前提: 20-platform デプロイ済み（ECR repo）・push するイメージが手元 docker に
-# あるか --images-tar で渡すこと。イメージのビルド自体は deploy/release/build.sh。
+# Prerequisites: 20-platform deployed (ECR repos), and the images to push either
+# present in the local docker or supplied via --images-tar. Building the images
+# themselves is deploy/release/build.sh.
 set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
 usage: VERSION=<v> release-ecr.sh --profile <p> --region <r> [--account <acct>]
                                   [--images-tar <B.tar.gz>] [--registry <local-prefix>]
-  --profile     aws cli プロファイル（必須）
-  --region      ECR リージョン（必須）
-  --account     アカウント ID（省略時 sts get-caller-identity で解決）
-  --images-tar  air-gap images tar（B）を docker load してから push
-  --registry    ローカルイメージ名の前置（既定 agent-fleet — release.sh の既定と対）
+  --profile     aws cli profile (required)
+  --region      ECR region (required)
+  --account     account ID (resolved via sts get-caller-identity when omitted)
+  --images-tar  docker load the air-gap images tar (B) before pushing
+  --registry    local image name prefix (default agent-fleet — pairs with release.sh's default)
 EOF
 }
 
@@ -51,7 +53,7 @@ if [ -z "$ACCOUNT" ]; then
 fi
 ECR_HOST="$ACCOUNT.dkr.ecr.$REGION.amazonaws.com"
 
-# repo は 20-platform CFN が所有する（ここでは作らない — §35.7.3-1）。
+# The repos are owned by the 20-platform CFN stack (never created here — §35.7.3-1).
 if ! "${AWS[@]}" ecr describe-repositories \
     --repository-names af-control-plane af-workspace >/dev/null; then
   echo "ERROR: ECR repos af-control-plane / af-workspace not found in $ACCOUNT/$REGION." >&2
@@ -82,6 +84,7 @@ next: aws cloudformation deploy --stack-name af-ecs-ingress \\
         --template-file cfn/30-ingress.yaml \\
         --parameter-overrides ImageTag=$VERSION \\
         --profile $PROFILE --region $REGION
-      (他パラメータは previous value 維持。CP は rolling replace、Workspace は
-       次回 Start から新イメージ — 稼働中ワークスペースは巻き込まない)
+      (keep the previous values for the other parameters. The CP does a rolling
+       replace; workspaces pick up the new image from their next Start — running
+       workspaces are not disrupted)
 EOF

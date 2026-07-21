@@ -1,28 +1,31 @@
-# agent-fleet — Caddy リバースプロキシ + 自動 TLS（P3-10 段2）
+# agent-fleet — Caddy reverse proxy + automatic TLS (P3-10 stage 2)
 #
-# 公開ドメイン {$PUBLIC_DOMAIN} を指すだけで Let's Encrypt 証明書を ACME で自動取得・
-# 自動更新する（各社はドメイン + DNS の A/AAAA レコードのみ用意）。Caddy は WebSocket の
-# Upgrade も透過するので端末 ws:// もそのまま通る。
+# Just point the public domain {$PUBLIC_DOMAIN} at this host and Caddy obtains and
+# renews a Let's Encrypt certificate via ACME automatically (each company only needs
+# a domain and a DNS A/AAAA record). Caddy also passes WebSocket Upgrade through, so
+# terminal ws:// traffic works as-is.
 #
-# 網の前提（docs/history/p3-10-packaging.md §20.4）: CP と Caddy は「両方 host-net」。
-# CP は 127.0.0.1:8099（loopback のみ）に bind され外部露出しない＝Caddy が同じ host
-# loopback を共有して 127.0.0.1:8099 へ到達する。bridge Caddy だと host-net CP の
-# loopback bind に届かず CP を 0.0.0.0 bind せねばならず loopback 不変条件が崩れるため不採用。
+# Network assumption (docs/history/p3-10-packaging.md §20.4): CP and Caddy are BOTH
+# host-net. The CP binds 127.0.0.1:8099 (loopback only) and is never exposed
+# directly; Caddy shares the same host loopback and reaches 127.0.0.1:8099. A
+# bridge-net Caddy could not reach the host-net CP's loopback bind — the CP would
+# have to bind 0.0.0.0, breaking the loopback invariant — hence rejected.
 
 {$PUBLIC_DOMAIN} {
 	reverse_proxy 127.0.0.1:8099
 }
 
-# --- 代替1: 公開ドメインが無い / 内部検証（自己署名, Caddy ローカル CA） ---------
-# 上のブロックをコメントアウトし、以下を有効化する（ブラウザは CA 警告を出す）:
+# --- Alternative 1: no public domain / internal testing (self-signed, Caddy local CA)
+# Comment out the block above and enable this instead (browsers show a CA warning):
 #
 #   {$PUBLIC_DOMAIN} {
 #   	tls internal
 #   	reverse_proxy 127.0.0.1:8099
 #   }
 #
-# --- 代替2: 各社の既存プロキシ/ロードバランサで前段する場合 ----------------------
-# この caddy サービスを compose から外し、既存プロキシから CP へ流す。CP は loopback
-# bind のままなので、既存プロキシを同一ホストに置く（127.0.0.1:8099 へ）か、CP_ADDR を
-# 内部ネットワーク IF に変更する（外部露出しないよう FW/セキュリティグループで保護）。
-# いずれも PUBLIC_BASE_URL=https://<公開ドメイン> を CP に渡すこと（redirect_uri の素）。
+# --- Alternative 2: fronting with your own existing proxy / load balancer ---------
+# Drop this caddy service from compose and route from your proxy to the CP. The CP
+# keeps its loopback bind, so either run your proxy on the same host (targeting
+# 127.0.0.1:8099) or change CP_ADDR to an internal-network interface (protect it
+# with a firewall / security group so it is not exposed). Either way, pass
+# PUBLIC_BASE_URL=https://<public domain> to the CP (source of the redirect_uri).
