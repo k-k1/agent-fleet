@@ -99,6 +99,60 @@ cd agent-fleet-native-<v'>-linux-amd64 && ./af start
   with `BAKE_AGENT_CLIS=1` (licensing forbids redistributing builds with the CLIs
   baked in — docs/35 §35.4.1).
 
+## Text-to-speech (TTS / Zundamon) — optional
+
+Reading chat replies aloud (enable it in the Console under Settings > "Speech";
+off by default) needs no audio setup on the WSL/Linux side: **playback** happens in
+your browser (on the Windows side under WSL2). All that is required is that the CP
+can reach the **VOICEVOX** synthesis engine over HTTP (default
+`http://127.0.0.1:50021`). The engine is not bundled with the package or the
+rootfs. Provide it in either of the following ways (leaving it out does not affect
+any other feature).
+
+### A. Run VOICEVOX on the Windows side (WSL2)
+
+Launching the [VOICEVOX](https://voicevox.hiroshiba.jp/) Windows app exposes the
+same HTTP API at `127.0.0.1:50021` on the Windows side.
+
+- With WSL2 in **mirrored networking mode** (`[wsl2]` → `networkingMode=mirrored`
+  in `%UserProfile%\.wslconfig`, Windows 11 22H2+), WSL reaches it at
+  `localhost:50021`, so it works **as-is with `af start` — no configuration**.
+- In the default **NAT mode**, WSL cannot reach the Windows loopback. Run the
+  standalone engine (the Windows build of VOICEVOX ENGINE) with
+  `run.exe --host 0.0.0.0`, and point at the Windows host IP as seen from WSL
+  (`ip route | awk '/^default/{print $3}'`) — Windows Firewall must allow inbound
+  connections from the vEthernet (WSL) interface:
+
+  ```bash
+  AF_VOICEVOX_URL=http://<windows-host-ip>:50021 af start
+  ```
+
+### B. Run the engine directly inside WSL/Linux
+
+Download and extract the Linux (CPU) build of
+[VOICEVOX ENGINE](https://github.com/VOICEVOX/voicevox_engine) and start it with
+`./run` (default `127.0.0.1:50021`, ~1GB resident, no Docker needed). The default
+URL matches, so `af start` needs no changes.
+
+### Changing the URL / port
+
+The engine location is passed to the CP via the `AF_VOICEVOX_URL` env var (a full
+URL including the port). `af` passes your shell environment through to the CP, so
+just set it and start:
+
+```bash
+AF_VOICEVOX_URL=http://127.0.0.1:50022 af start
+```
+
+When running under systemd (below), add `Environment=AF_VOICEVOX_URL=...` to the
+unit's `[Service]` section.
+
+- While the engine is down, only speech fails (with the `auto` setting it falls
+  back to AWS Polly if configured), and it recovers from the next sentence once
+  the engine is up.
+- To use AWS Polly, set `AF_POLLY_REGION` plus standard AWS credentials visible
+  to the CP process (e.g. `~/.aws`).
+
 ## systemd user unit (run as a service; systemd is on by default in WSL2)
 
 `~/.config/systemd/user/agent-fleet.service`:
