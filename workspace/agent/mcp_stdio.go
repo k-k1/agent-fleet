@@ -16,6 +16,8 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +26,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -539,19 +542,24 @@ func mcpStdioCall(req mcpReq) []byte {
 		if a.Kind == "codex" || a.Kind == "opencode" || a.Kind == "copilot" {
 			driver = "managed"
 		}
+		// Deterministic idempotency key (conversation + launch intent): an LLM re-issuing
+		// the same create_session reproduces it, so a timed-out-then-retried create
+		// collapses onto the first session instead of spawning a duplicate.
+		idemKey := createSessionKey(mcpConvID, a.Dir, a.Kind, a.Model, a.InitialPrompt, a.Worktree, a.Branch, a.NewBranch)
 		reqBody, _ := json.Marshal(map[string]any{
-			"dir":            a.Dir,
-			"title":          a.Title,
-			"kind":           a.Kind,
-			"model":          a.Model,
-			"initial_prompt": a.InitialPrompt,
-			"worktree":       a.Worktree,
-			"branch":         a.Branch,
-			"new_branch":     a.NewBranch,
-			"driver":         driver,
-			"report_to":      mcpConvID, // docs/30: 完了報告をこの会話へ（空なら無効）
+			"dir":             a.Dir,
+			"title":           a.Title,
+			"kind":            a.Kind,
+			"model":           a.Model,
+			"initial_prompt":  a.InitialPrompt,
+			"worktree":        a.Worktree,
+			"branch":          a.Branch,
+			"new_branch":      a.NewBranch,
+			"driver":          driver,
+			"report_to":       mcpConvID, // docs/30: 完了報告をこの会話へ（空なら無効）
+			"idempotency_key": idemKey,
 		})
-		out, err := agentPOST("/sessions", reqBody)
+		out, err := agentCreateSession(reqBody, idemKey)
 		if err != nil {
 			return mcpToolErr(req.ID, "セッションの作成に失敗しました: "+err.Error())
 		}
@@ -803,6 +811,10 @@ func agentPOST(path string, body []byte) (string, error) {
 }
 
 func agentDo(method, path string, body []byte) (string, error) {
+	return agentDoTimeout(method, path, body, 15*time.Second)
+}
+
+func agentDoTimeout(method, path string, body []byte, timeout time.Duration) (string, error) {
 	var rdr io.Reader
 	if body != nil {
 		rdr = bytes.NewReader(body)
@@ -817,7 +829,7 @@ func agentDo(method, path string, body []byte) (string, error) {
 	if tok := os.Getenv("AGENT_TOKEN"); tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
 	}
-	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	resp, err := (&http.Client{Timeout: timeout}).Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -827,6 +839,94 @@ func agentDo(method, path string, body []byte) (string, error) {
 		return "", &agentHTTPError{StatusCode: resp.StatusCode, Body: string(b)}
 	}
 	return string(b), nil
+}
+
+// createSessionKey derives a STABLE idempotency key from the launch intent so the LLM
+// re-issuing create_session with the same arguments reproduces it — that is what lets a
+// timed-out-then-retried create collapse onto the first session (see session_idempotency.go).
+// Scoped by the conversation id so unrelated conversations never collide.
+func createSessionKey(conv, dir, kind, model, prompt string, worktree bool, branch, newBranch string) string {
+	h := sha256.New()
+	for _, f := range []string{conv, dir, kind, model, prompt, strconv.FormatBool(worktree), branch, newBranch} {
+		h.Write([]byte(f))
+		h.Write([]byte{0})
+	}
+	return "cs_" + hex.EncodeToString(h.Sum(nil))
+}
+
+// agentCreateSession POSTs /sessions and, crucially, does NOT let a client-side timeout
+// turn a successful backend launch into a "failed" tool result the model would retry into
+// a duplicate. It waits longer than the shared 15s client (launch does real work), and on
+// a timeout OR a create_in_progress conflict it reconciles via the idempotency ledger:
+// poll GET /sessions-idempotency/{key} until the session materializes, then return it. If
+// the create genuinely failed the ledger clears and the original error is surfaced.
+func agentCreateSession(body []byte, key string) (string, error) {
+	out, err := agentDoTimeout(http.MethodPost, "/sessions", body, 40*time.Second)
+	if err == nil {
+		return out, nil
+	}
+	if key != "" && (isTimeoutErr(err) || isCreateInProgress(err)) {
+		if out, ok := agentAwaitCreated(key, 45*time.Second); ok {
+			return out, nil
+		}
+	}
+	return "", err
+}
+
+func isTimeoutErr(err error) bool {
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
+}
+
+func isCreateInProgress(err error) bool {
+	var he *agentHTTPError
+	return errors.As(err, &he) && he.hasCode("create_in_progress")
+}
+
+// agentAwaitCreated polls the idempotency lookup until the create resolves. Because the
+// lookup returns 202 while still launching (which agentDo would treat as success), it
+// inspects the raw status itself: 200 => the session, 202 => keep waiting, a short run of
+// 404s => the create failed (or never registered) so give up, transport errors => retry.
+func agentAwaitCreated(key string, deadline time.Duration) (string, bool) {
+	url_ := agentBaseURL() + "/sessions-idempotency/" + url.PathEscape(key)
+	end := time.Now().Add(deadline)
+	notFound := 0
+	for time.Now().Before(end) {
+		status, body := agentRawGET(url_)
+		switch {
+		case status == http.StatusOK:
+			return body, true
+		case status == http.StatusAccepted:
+			notFound = 0 // still launching
+		case status == http.StatusNotFound:
+			if notFound++; notFound >= 3 {
+				return "", false
+			}
+		case status == 0:
+			// transient transport error (agent momentarily unreachable) — retry
+		default:
+			return "", false
+		}
+		time.Sleep(1500 * time.Millisecond)
+	}
+	return "", false
+}
+
+func agentRawGET(fullURL string) (int, string) {
+	req, err := http.NewRequest(http.MethodGet, fullURL, nil)
+	if err != nil {
+		return 0, ""
+	}
+	if tok := os.Getenv("AGENT_TOKEN"); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return 0, ""
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	return resp.StatusCode, string(b)
 }
 
 type agentHTTPError struct {
