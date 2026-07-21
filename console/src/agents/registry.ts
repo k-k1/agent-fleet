@@ -231,7 +231,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
   },
   copilot: {
     id: "copilot",
-    icon: "github",
+    icon: "copilot",
     label: "copilot",
     displayName: "GitHub Copilot",
     assistantName: "Copilot",
@@ -245,8 +245,10 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // GitHub Copilot CLI (docs/36). Managed が既定: per-session child の
     // `copilot --acp`（ACP JSON-RPC over stdio）を driver が駆動する。TUI も同じ
     // events.jsonl を書くのでミラー/状態は両ドライバで同一実装。
-    // model/effort: launch-time only（静的カタログ → `--model` / `--effort`。
-    // ACP に動的変更が無い — 稼働中変更は managed 設定モーダルの mode のみ）。
+    // model/effort: launch-time only（TUI /model の PTY スクレイプによる
+    // プラン反映ライブカタログ → `--model` / `--effort`。Free は Auto のみ＝
+    // 既定だけが出る。ACP に動的変更が無い — 稼働中変更は managed 設定
+    // モーダルの mode のみ）。
     // fork なし（CLI に fork 口が無い）。contextBar なし（events.jsonl は outTok
     // のみで文脈量が出ない）。imagePaste は未実測のため v1 オフ（1854d の逆 —
     // 未検証の caps を立てない）。認証は GitHub 連携相乗り＋Copilot サブスク前提。

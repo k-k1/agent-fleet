@@ -166,3 +166,50 @@ func TestNewSessionID(t *testing.T) {
 		t.Errorf("bad v4 uuids: %q %q", a, b)
 	}
 }
+
+// fixture: 実 TUI /model キャプチャ（v1.0.73、Free プラン）の縮約。バナー＋
+// 全モデル行＋装飾（❯/✓/スクロールバー/フッタ）。
+const modelPickerFree = `   Auto routes based on your task, real-time system health, and model performance. Learn More
+ Your Copilot Free plan currently includes only Auto, which automatically selects the best available model
+ for each task.
+   Model
+ ❯ Auto ✓                                                                                                   █
+   gpt-5.6-sol                                                                                              █
+   claude-sonnet-4.6                                                                                        █
+ ❯  Search models…
+ ↑/↓ to navigate · enter to select · esc to cancel`
+
+const modelPickerPaid = `   Auto routes based on your task, real-time system health, and model performance. Learn More
+   Model
+ ❯ Auto ✓                                                                                                   █
+   gpt-5.6-sol                                                                                              █
+   gpt-5.4-mini                                                                                             █
+   gpt-5-mini                                                                                               ┃
+   claude-sonnet-4.6                                                                                        █
+   claude-fable-5                                                                                           █
+   gemini-3.1-pro-preview                                                                                   █
+   kimi-k2.7-code                                                                                           █
+ ❯  Search models…
+ ↑/↓ to navigate · enter to select · esc to cancel`
+
+func TestParseModelPicker(t *testing.T) {
+	// Free 系バナー → Auto のみ（空リスト、非 nil）。
+	if got := parseModelPicker(modelPickerFree); len(got) != 0 {
+		t.Errorf("free plan must yield empty catalog, got %+v", got)
+	}
+	// バナー無し → ピッカー行がそのままカタログ（Auto/装飾/フッタは除外）。
+	got := parseModelPicker(modelPickerPaid)
+	want := []string{"gpt-5.6-sol", "gpt-5.4-mini", "gpt-5-mini", "claude-sonnet-4.6", "claude-fable-5", "gemini-3.1-pro-preview", "kimi-k2.7-code"}
+	if len(got) != len(want) {
+		t.Fatalf("want %d models, got %+v", len(want), got)
+	}
+	for i, id := range want {
+		if got[i].ID != id || got[i].Label != id || len(got[i].Efforts) == 0 {
+			t.Errorf("row %d: want %q, got %+v", i, id, got[i])
+		}
+	}
+	// 会話文などの混入行は id 形でないため拾わない。
+	if got := parseModelPicker("   Model\n   run echo and tell me\n ❯  Search models…"); len(got) != 0 {
+		t.Errorf("prose row leaked into catalog: %+v", got)
+	}
+}

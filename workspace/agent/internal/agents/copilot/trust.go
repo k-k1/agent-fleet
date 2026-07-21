@@ -17,8 +17,12 @@ import (
 // readConfig parses config.json, returning the leading comment lines verbatim
 // and the JSON object (empty map when absent/corrupt).
 func readConfig() (comments []string, m map[string]any) {
+	return readConfigAt(configPath())
+}
+
+func readConfigAt(path string) (comments []string, m map[string]any) {
 	m = map[string]any{}
-	b, err := os.ReadFile(configPath())
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, m
 	}
@@ -44,7 +48,10 @@ func readConfig() (comments []string, m map[string]any) {
 // copilot 自身も同じファイルを書くため、未知キーは readConfig の map 経由で保存
 // される。
 func writeConfig(comments []string, m map[string]any) {
-	p := configPath()
+	writeConfigAt(configPath(), comments, m)
+}
+
+func writeConfigAt(p string, comments []string, m map[string]any) {
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return
 	}
@@ -82,4 +89,18 @@ func EnsureFolderTrusted(dir string) {
 	}
 	m["trustedFolders"] = append(list, dir)
 	writeConfig(comments, m)
+}
+
+// ensureFolderTrustedIn is EnsureFolderTrusted against an explicit COPILOT_HOME
+// — for probes that run copilot under a throwaway home (models.go), where the
+// process-env home must not be touched.
+func ensureFolderTrustedIn(home, dir string) {
+	if dir == "" {
+		return
+	}
+	p := filepath.Join(home, "config.json")
+	comments, m := readConfigAt(p)
+	list, _ := m["trustedFolders"].([]any)
+	m["trustedFolders"] = append(list, dir)
+	writeConfigAt(p, comments, m)
 }

@@ -397,7 +397,7 @@ func memberTools() []mcpTool {
 		},
 		{
 			name: "list_models", minScope: scopeRead,
-			desc: "List the launch-time models for `kind`. claude returns its fixed tier aliases (fable/opus/sonnet/haiku); codex, opencode and agy return the live catalog reflecting the user's connected providers; copilot returns a static catalog (omit model for auto routing). Before creating a session with a model override, call this and use a returned id. Resolve a user shorthand such as `terra` to its matching returned full id (for example `gpt-5.6-terra`).",
+			desc: "List the launch-time models for `kind`. claude returns its fixed tier aliases (fable/opus/sonnet/haiku); codex, opencode, agy and copilot return the live catalog reflecting the user's connected providers; copilot's reflects the account's Copilot plan (empty on Free = Auto only; omit model for auto routing). Before creating a session with a model override, call this and use a returned id. Resolve a user shorthand such as `terra` to its matching returned full id (for example `gpt-5.6-terra`).",
 			schema: map[string]any{"type": "object", "properties": map[string]any{
 				"kind": map[string]any{"type": "string", "description": "claude | codex | opencode | agy | copilot"},
 			}, "required": []string{"kind"}},
