@@ -53,7 +53,7 @@ mget() { sed -n 's/.*"'"$1"'": *"\{0,1\}\([^",}]*\)"\{0,1\}.*/\1/p' <<<"$MANIFES
 R_VER="$(mget version)"
 R_SHA="$(mget sha256)"
 R_URL="$(mget url)"
-[ -n "$R_VER" ] && [ -n "$R_SHA" ] || die "C 内の rootfs.json が読めません"
+if [ -z "$R_VER" ] || [ -z "$R_SHA" ]; then die "C 内の rootfs.json が読めません"; fi
 R_NAME="agent-fleet-rootfs-$R_VER-linux-$ARCH.tar.zst"
 
 # C が指す rootfs URL は必ずこの repo の Releases でなければならない。ここが食い違う
