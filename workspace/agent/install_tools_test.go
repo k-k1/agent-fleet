@@ -33,16 +33,17 @@ func TestGoRootFor(t *testing.T) {
 	}
 }
 
-// With no chromium_dl pin (dev host has no versions.json), the newest installed
-// on-demand build wins; nothing installed resolves empty.
+// With no chromium pin (dev host has no versions.json), the newest installed
+// on-demand build wins; nothing installed resolves empty. Both the legacy
+// chrome-linux and the Chrome for Testing chrome-linux64 layouts resolve.
 func TestChromiumPinnedBinary(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	if got := chromiumPinnedBinary(); got != "" {
 		t.Fatalf("empty install: got %q", got)
 	}
-	for _, pin := range []string{"1200", "1228"} {
-		p := filepath.Join(home, ".local/share/agent-fleet/chromium", pin, "chrome-linux", "chrome")
+	for pin, sub := range map[string]string{"1200": "chrome-linux", "149.0.7827.55": "chrome-linux64"} {
+		p := filepath.Join(home, ".local/share/agent-fleet/chromium", pin, sub, "chrome")
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -50,7 +51,8 @@ func TestChromiumPinnedBinary(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	want := filepath.Join(home, ".local/share/agent-fleet/chromium/1228/chrome-linux/chrome")
+	// lexicographic glob: "149.0.7827.55" > "1200" — the CfT dir wins as newest
+	want := filepath.Join(home, ".local/share/agent-fleet/chromium/149.0.7827.55/chrome-linux64/chrome")
 	if got := chromiumPinnedBinary(); got != want {
 		t.Errorf("chromiumPinnedBinary = %q, want %q (newest build)", got, want)
 	}
