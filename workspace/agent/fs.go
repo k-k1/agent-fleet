@@ -94,6 +94,7 @@ var fsDeny = map[string]bool{
 	".local/share/opencode": true, // opencode auth.json (API keys) + session db
 	".codex":                true, // codex auth.json (tokens) + sessions + helper bins
 	".gemini":               true, // agy OAuth token (plaintext) + conversation DBs
+	".copilot":              true, // copilot auth token (キーチェーン無しでは平文) + session store
 	".aws":                  true, // SSM login: SSO token cache + generated configs
 }
 

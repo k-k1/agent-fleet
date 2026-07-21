@@ -9,6 +9,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -37,14 +38,18 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
+	github := gitConnStatus(s, "github.com")
+	ghConnected, _ := github["connected"].(bool)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"claude":     claude.Status(),
-		"github":     gitConnStatus(s, "github.com"),
-		"bitbucket":  bitbucketStatus(s),
-		"internal":   internalGitStatus(s),
-		"opencode":   opencode.Status(s),
-		"codex":      codex.Status(),
-		"agy":        agy.Status(),
+		"claude":    claude.Status(),
+		"github":    github,
+		"bitbucket": bitbucketStatus(s),
+		"internal":  internalGitStatus(s),
+		"opencode":  opencode.Status(s),
+		"codex":     codex.Status(),
+		"agy":       agy.Status(),
+		// copilot は GitHub 連携相乗り（docs/36 契約）: 専用フロー無し。
+		"copilot":    copilot.Status(ghConnected),
 		"pagerduty":  pagerdutyStatus(s),
 		"grafana":    grafanaStatus(s),
 		"cloudwatch": cloudwatchStatus(s),

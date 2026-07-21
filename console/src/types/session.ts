@@ -6,10 +6,10 @@
 // NOTE: this session `kind` is a DIFFERENT axis from a *pane's* kind (which VIEW
 // renders — terminal/file/scm/doc/diff, see types/layout PaneKind). Keep distinct.
 
-export type SessionKind = "claude" | "codex" | "opencode" | "agy" | "shell" | "ssm";
+export type SessionKind = "claude" | "codex" | "opencode" | "agy" | "copilot" | "shell" | "ssm";
 
 // The canonical session kinds in display order (New Session buttons, etc.).
-export const SESSION_KINDS: SessionKind[] = ["claude", "codex", "agy", "opencode", "shell", "ssm"];
+export const SESSION_KINDS: SessionKind[] = ["claude", "codex", "agy", "opencode", "copilot", "shell", "ssm"];
 
 // Live run state, reported by per-agent hooks/plugins. "" (empty) = idle. claude
 // emits question/plan/permission; codex/opencode emit working/idle; agy emits
@@ -77,6 +77,9 @@ export interface ConnectionsStatus {
   codex?: ProviderConn;
   opencode?: ProviderConn;
   agy?: ProviderConn;
+  // copilot は GitHub 連携相乗り（docs/36）: connected = gh トークンあり、
+  // supported=false = CLI 未焼き込みの旧イメージ。
+  copilot?: ProviderConn;
   [provider: string]: ProviderConn | undefined;
 }
 

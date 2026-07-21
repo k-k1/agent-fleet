@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -81,9 +82,11 @@ func gracefulShutdown(budget time.Duration) {
 	// anySessionWorking 待ちが tui と同じ条件で解ける。
 	opencode.AbortManaged()
 	codex.AbortManaged()
+	copilot.AbortManaged()
 	if len(owned) == 0 {
 		opencode.Serve().Shutdown()
 		codex.Serve().Shutdown()
+		copilot.Shutdown()
 		return
 	}
 	for _, tn := range owned {
@@ -109,6 +112,7 @@ func gracefulShutdown(budget time.Duration) {
 	// 共有 daemon は abort が済んだ後なので drain は即座に抜ける（SIGTERM で終了）。
 	opencode.Serve().Shutdown()
 	codex.Serve().Shutdown()
+	copilot.Shutdown()
 	for _, tn := range owned {
 		_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).Run()
 	}
