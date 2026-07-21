@@ -1,9 +1,14 @@
 AWSTemplateFormatVersion: "2010-09-09"
+# LanguageExtensions: lets DeletionPolicy/UpdateReplacePolicy take Fn::If — the
+# Persistence parameter below flips them without duplicating resources.
+Transform: AWS::LanguageExtensions
 Description: >-
   agent-fleet ECS adapter (P3-7) — data substrate: one encrypted EFS filesystem
   (per-workspace access points are created by the Control Plane at runtime, not
   here) and an RDS PostgreSQL instance for the MetadataStore. Imports network from
-  the 00-network stack. Dev-ephemeral: DeletionPolicy Delete, no backups.
+  the 00-network stack. Persistence=delete (default) is dev-ephemeral (DeletionPolicy
+  Delete, no backups); a production environment deploys with Persistence=retain
+  (EFS Retain, RDS Snapshot + backups + deletion protection).
 
 Parameters:
   NetworkStackName:
@@ -27,6 +32,18 @@ Parameters:
     Default: afadmin
     Description: Master username. The password is generated and managed by RDS in
       Secrets Manager (ManageMasterUserPassword) — never passed as a parameter.
+  Persistence:
+    Type: String
+    Default: delete
+    AllowedValues: [ delete, retain ]
+    Description: >-
+      delete (default) = dev-ephemeral, stack deletion drops EFS and RDS with no
+      backups. retain = production: EFS survives stack deletion (Retain), RDS
+      leaves a final snapshot (Snapshot), daily backups (7 days) and deletion
+      protection are enabled.
+
+Conditions:
+  IsRetain: !Equals [ !Ref Persistence, retain ]
 
 Resources:
   # --- EFS ---
@@ -47,8 +64,8 @@ Resources:
 
   FileSystem:
     Type: AWS::EFS::FileSystem
-    DeletionPolicy: Delete
-    UpdateReplacePolicy: Delete
+    DeletionPolicy: !If [ IsRetain, Retain, Delete ]
+    UpdateReplacePolicy: !If [ IsRetain, Retain, Delete ]
     Properties:
       Encrypted: true
       PerformanceMode: generalPurpose
@@ -93,8 +110,8 @@ Resources:
 
   Db:
     Type: AWS::RDS::DBInstance
-    DeletionPolicy: Delete
-    UpdateReplacePolicy: Delete
+    DeletionPolicy: !If [ IsRetain, Snapshot, Delete ]
+    UpdateReplacePolicy: !If [ IsRetain, Snapshot, Delete ]
     Properties:
       Engine: postgres
       DBInstanceClass: !Ref DbInstanceClass
@@ -107,8 +124,8 @@ Resources:
       PubliclyAccessible: false
       StorageEncrypted: true
       MultiAZ: false
-      BackupRetentionPeriod: 0         # dev-ephemeral; a real env sets >0 + DeletionPolicy Snapshot
-      DeletionProtection: false
+      BackupRetentionPeriod: !If [ IsRetain, 7, 0 ]
+      DeletionProtection: !If [ IsRetain, true, false ]
       Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-db" } ]
 
 Outputs:

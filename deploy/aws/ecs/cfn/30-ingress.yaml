@@ -19,10 +19,15 @@ Parameters:
     Type: String
     Default: af-ecs-data
     Description: Name of the 10-data stack (EFS filesystem for workspace homes).
-  WorkspaceImageTag:
+  ImageTag:
     Type: String
     Default: dev
-    Description: Tag of the af-workspace image in ECR (the 段2 adapter runs it).
+    Description: >-
+      Tag of BOTH the af-control-plane and af-workspace images in ECR (=VERSION;
+      release-ecr.sh pushes the pair under one version). Upgrade = push a new tag,
+      then re-deploy with only this parameter overridden: the CP service rolls to
+      the new image; workspaces pick it up on their next Start (running ones are
+      untouched — the adapter builds task definitions statelessly).
   Fqdn:
     Type: String
     Description: >-
@@ -33,10 +38,6 @@ Parameters:
     Description: >-
       Route53 hosted zone id for the Fqdn's domain. Required — the zone must be
       in this account (ACM DNS validation + alias record are created in it).
-  CpImageTag:
-    Type: String
-    Default: dev
-    Description: Tag of the af-control-plane image already pushed to ECR.
   CpPort:
     Type: Number
     Default: 8099
@@ -156,7 +157,7 @@ Resources:
           Image: !Sub
             - "${Uri}:${Tag}"
             - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrControlPlaneUri" }
-              Tag: !Ref CpImageTag
+              Tag: !Ref ImageTag
           PortMappings:
             - ContainerPort: !Ref CpPort
           Environment:
@@ -197,7 +198,7 @@ Resources:
               Value: !Sub
                 - "${Uri}:${Tag}"
                 - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrWorkspaceUri" }
-                  Tag: !Ref WorkspaceImageTag
+                  Tag: !Ref ImageTag
           Secrets:
             # RDS-managed master password (Secrets Manager JSON → the `password` key).
             - Name: AF_DB_PASSWORD

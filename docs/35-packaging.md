@@ -334,6 +334,8 @@ reset で掃除）。データ（`WS_DATA`）は外にあるので触れない�
    - `aws ecr create-repository`（idempotent）→ `get-login-password | docker login` →
      CP/WS 両イメージを `:$VERSION` で tag/push。air-gap tar（B）からの `docker load` →
      push も同スクリプトの入口にする（ビルド環境と push 環境が別でも成立）。
+     ※create-repository は凍結時に**存在確認のみ**へ変更（§35.7.3-1 — repo の正は
+     20-platform CFN で、out-of-band create は後続 deploy を壊す）。
    - 引数は `--profile/--region/--account` と `VERSION`。runbook のコマンド列が正、
      スクリプトはその写し、という関係を README に明記。
 2. **イメージ参照の版パラメータ化**: `30-ingress.yaml` の CP イメージと、CP が Workspace に
@@ -678,6 +680,28 @@ playwright CDN の実 DL 確認）は §35.8 native ゲート（P4）のまま�
 残（P4 実機ゲートへ）: 素の WSL2（追加インストールなし）の通し E2E・実 Console からの
 セッション操作の目視・chromium sandbox の bwrap 配下実測・playwright CDN の実 DL 検証・
 dist repo への実 publish（rootfs URL の疎通）。
+
+### 35.7.3 P3 実装仕様（凍結）
+
+P3 = ECS 配布のリリース作法（§35.3.4）。CFN・アダプタ本体（P3-7）は不変更で、
+「push → deploy → 更新」の作法をスクリプト・パラメータ・runbook に固める。
+
+| # | 対象 | 変更内容 |
+|---|---|---|
+| 1 | `deploy/aws/ecs/release-ecr.sh`（新設） | runbook §ECR push のスクリプト化。`VERSION=<v> release-ecr.sh --profile <p> --region <r> [--account <acct>] [--images-tar <B>] [--registry <local-prefix>]`。手順: ①`--account` 省略時は `aws sts get-caller-identity` で解決 ②**ECR repo の存在確認のみ**（`describe-repositories` で `af-control-plane`/`af-workspace`。不在なら「20-platform を先に deploy」の案内で fail — §35.3.4-1 の「create-repository（idempotent）」は**凍結時に否決**: repo の正は 20-platform CFN であり、out-of-band create は後続の CFN deploy を AlreadyExists で壊す）③`get-login-password \| docker login` ④`--images-tar`（air-gap B）指定時は `docker load` を前置（ビルド環境と push 環境の分離）⑤ローカル名 `agent-fleet/{control-plane,workspace}:$VERSION` → ECR URI `<acct>.dkr.ecr.<region>.amazonaws.com/af-{control-plane,workspace}:$VERSION` へ tag/push ⑥完了時に次の一手（`cloudformation deploy --parameter-overrides ImageTag=$VERSION`）を表示。runbook のコマンド列が正・スクリプトは写し、の関係を README に明記 |
+| 2 | `cfn/30-ingress.yaml` | `CpImageTag`/`WorkspaceImageTag`（既定 dev・個別）を**単一 `ImageTag`（既定 dev）へ統合**。リリースは CP/WS を同一 VERSION で焼く（build.sh）ため版は常に揃う — 片方だけ進める運用は作らない。アップグレード = `aws cloudformation deploy --parameter-overrides ImageTag=<v>`（他パラメータは previous value 維持）。CP サービスは rolling replace、Workspace はアダプタがステートレスに TaskDefinition を作るため**次回 Start から新イメージ**（稼働中 WS は巻き込まない） |
+| 3 | `cfn/10-data.yaml` | `Persistence` パラメータ（`delete`（既定・sandbox）/`retain`）。`Transform: AWS::LanguageExtensions` + Condition で分岐: EFS = DeletionPolicy/UpdateReplacePolicy `Retain`、RDS = 同 `Snapshot`＋`BackupRetentionPeriod` 0→7＋`DeletionProtection` true。「本番は `Persistence=retain`」を README の標準にする |
+| 4 | `deploy/aws/ecs/README.md` | ①§ECR push を release-ecr.sh 前提に書き換え（手打ちコマンド列は正として残す）②**§Upgrade（更新 runbook）新設**: release-ecr.sh → deploy `ImageTag=<v>` → CP 入替・WS は次回 Start・DB/EFS/稼働中 WS 不変・事前バックアップ（EFS+RDS snapshot）推奨 ③**§最小 IAM 表**（P3-10 宿題）: デプロイ主体に要る権限をサービス単位で一覧 ④`Persistence` の説明と stand-up 例の `ImageTag` 反映 |
+| 5 | `.github/workflows/release-gate.yml` | **`ecs-gate` job 追加**（docker/AWS 不要の軽量ジョブ）: cfn-lint で 4 テンプレ検証（LanguageExtensions 対応）+ `bash -n`/shellcheck + **fake-aws/fake-docker stub で release-ecr.sh を実走**し AWS CLI 呼び出し列（sts→describe-repositories→login→(load)→tag×2→push×2）と ECR URI 組み立てを固定（--images-tar 経路含む）。compose-gate に「バンドル A に release-ecr.sh が実行ビット付きで同梱」の assert を追加 |
+
+**P3 ゲート**:
+
+- (g) 静的（hosted CI・ecs-gate）: cfn-lint 4 テンプレ緑・release-ecr.sh の stub 実走で
+  呼び出し列固定・shellcheck 緑・バンドル A への同梱確認。
+- (h) sandbox 実走一巡（§35.7 表の出口: push → deploy → WS 起動 → タグ更新 → 次回
+  Start で新イメージ）: **要 af-sandbox 実クレデンシャル**（開発 Workspace には未設定）。
+  実施時は release-ecr.sh → `00→10→20→30` deploy（`Persistence=delete`）→ WS Start →
+  `ImageTag` 更新 deploy → WS Stop/Start で新イメージ確認 → delete-stack 撤収、まで。
 
 ## 35.8 検証ゲート（P3-10 完了判定への接続）
 
