@@ -86,6 +86,54 @@ cd agent-fleet-native-<v'>-linux-amd64 && ./af start
   場合はリポジトリの Dockerfile で自社ビルド（`BAKE_AGENT_CLIS=1`）した Docker 構成を
   使ってください（ライセンス上、CLI 焼き込み版の再配布はできません — docs/35 §35.4.1）。
 
+## 音声読み上げ（TTS / ずんだもん）— オプション
+
+チャット回答などの読み上げ（Console の 設定 >「読み上げ」で有効化・既定 OFF）は、
+音声の**再生**をブラウザ（WSL2 なら Windows 側）が行うため、WSL/Linux 側にオーディオ
+設定は不要です。必要なのは合成エンジン **VOICEVOX** へ CP から HTTP で届くことだけ
+です（既定 `http://127.0.0.1:50021`）。エンジンはパッケージ・rootfs に同梱して
+いません。次のどちらかで用意します（用意しなくても他機能に影響はありません）。
+
+### A. Windows 側で VOICEVOX を起動（WSL2）
+
+[VOICEVOX](https://voicevox.hiroshiba.jp/) の Windows アプリを起動すると、同じ HTTP API
+が Windows 側の `127.0.0.1:50021` で公開されます。
+
+- WSL2 が**ミラーモード**（`%UserProfile%\.wslconfig` に `[wsl2]` →
+  `networkingMode=mirrored`、Windows 11 22H2+）なら、WSL からも `localhost:50021` で
+  届くため**設定変更なしで `af start` のまま**使えます。
+- 既定の **NAT モード**では Windows の loopback に WSL から届きません。エンジン単体
+  （VOICEVOX ENGINE の Windows 版）を `run.exe --host 0.0.0.0` で起動し、WSL から見た
+  Windows ホストの IP（`ip route | awk '/^default/{print $3}'`）を指定して起動します
+  （Windows ファイアウォールで vEthernet (WSL) からの着信許可が必要）:
+
+  ```bash
+  AF_VOICEVOX_URL=http://<WindowsホストIP>:50021 af start
+  ```
+
+### B. WSL/Linux 内でエンジンを直接動かす
+
+[VOICEVOX ENGINE](https://github.com/VOICEVOX/voicevox_engine) の Linux（CPU）ビルドを
+取得・展開して `./run` で起動します（既定 `127.0.0.1:50021`・常駐 ~1GB・Docker 不要）。
+既定 URL のままなので `af start` に変更は不要です。
+
+### URL / ポートの変更
+
+エンジンの場所は env `AF_VOICEVOX_URL`（ポート込みのフル URL）で CP に伝えます。
+`af` はシェルの環境変数をそのまま CP へ引き継ぐので、設定して起動するだけです:
+
+```bash
+AF_VOICEVOX_URL=http://127.0.0.1:50022 af start
+```
+
+systemd 常駐（下記）の場合は unit の `[Service]` に
+`Environment=AF_VOICEVOX_URL=...` を追記します。
+
+- エンジンが起きていない間、読み上げだけが失敗します（`auto` 設定時は AWS Polly が
+  あればそちらへフォールバック）。エンジン起動後は次の文から自動復帰します。
+- AWS Polly を使う場合は `AF_POLLY_REGION` と標準の AWS 認証情報（CP プロセスから
+  見える `~/.aws` など）を設定します。
+
 ## systemd user unit（常駐化・WSL2 は systemd 既定有効）
 
 `~/.config/systemd/user/agent-fleet.service`:
