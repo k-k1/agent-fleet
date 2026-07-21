@@ -620,16 +620,20 @@ bwrap --ro-bind <rootfs> /
 
 **§35.7.2-8 boot-install の可視性と「即起動」の扱い**（2026-07-21 の切り分けを凍結・
 §35.9-9）: rootfs モードでも entrypoint は bwrap 配下で走り、lean 判定
-（`/usr/local/bin/claude` 不在＋versions.json ピンあり）で `~/.local` へピン版 CLI を
-オンデマンド導入する。その出力は **CP がワークスペースの `<dataDir>/agent.log` にだけ**
-書く（`af`／Console のフォアグラウンドには出さない）。~/.local は home ボリュームに
-永続するので、**初回のみ DL（数分）・2 回目以降は各ブロックが `cli_present=true` で
-スキップして即起動**する（オフライン再起動が成立する理由。§35.8.1 手順 6）。
-したがって「初回 boot-install の DL ログがフォアグラウンドに出ない／再起動が即座」は
-**正常**であり、rootfs に CLI が焼き込まれていることを意味しない（実 rootfs
-`4677f9f5a67d` を直接検証して lean を確認 — §35.9-9）。スキップ経路は無音だと
-焼き込みと誤認されやすいため、entrypoint に明示ログ（`… already present (skip)`）を
-追加済み。初回進捗を Console に可視化するダイアログは別タスク（§35.9-9 の残 UX）。
+（`/usr/local/bin/claude` 不在＋versions.json ピンあり — `node`/`versions.json` は rootfs の
+`/usr/local` 側に実在し home bind-mount に隠れないため**初回起動では必ず lean 判定**）で
+`~/.local` へピン版 CLI をオンデマンド導入する。**初回起動では 6 CLI が確実に DL される**
+（`~/.local/bin` は空・`cli_present=false`）。ところが entrypoint 出力は **CP がワークスペース
+の `<dataDir>/agent.log` にだけ**書き（`af`／Console のフォアグラウンドには出ない）、しかも
+boot-install は `exec workspace-agent` の**前**に同期実行されるため、healthWait（既定 300s）中は
+**無表示のまま待つ**画になる。回線が速いと「即起動・ログ無し」に見えるが、これは
+**DL が起きていて誰にも見えないだけ**で、rootfs への焼き込みではない（実 rootfs
+`4677f9f5a67d` を直接検証して lean 確認 — §35.9-9）。対処: **CP が healthWait 中に agent.log を
+tail して `[entrypoint]` 行を `af start` ターミナルへ転写**（`runtime_native.go`
+`mirrorBootProgress`＋開始時の一行ヒント）。entrypoint 側も明示ログ（`lean variant: …` ヘッダ
+＋初回 DL 行／再起動時は `… already present (skip)`）を持つ。2 回目以降は `~/.local` 永続で
+スキップ即起動＝オフライン再起動が成立する理由（§35.8.1 手順 6）。Console 起動オーバーレイ
+への tail surface は別タスク（§35.9-9 の残 UX）。
 
 **P2 ゲート**（P1 と同じく hosted CI 実走 — release-gate.yml。native 実機は §35.8 の
 P4 ゲートに残す）:
@@ -958,35 +962,48 @@ VERSION=0.1.0 deploy/release/publish-dist.sh --seed
 9. **「初回起動で boot-install の DL ログが出ず即起動」疑いの切り分け（2026-07-21・ゲート k
    中のユーザー実機報告 rootfs `4677f9f5a67d`／v0.1.1）**: 「rootfs に CLI が焼き込まれ、
    ピン版オンデマンド導入をバイパスしているのでは」という疑いを別セッションで調査 →
-   **結論: 逸脱なし。rootfs は設計どおり lean、症状は観測性の穴だった。**
-   - **実 rootfs を直接検証**（公開 dist の R を stream 展開して中身を列挙）: `usr/local/bin`
-     に claude / opencode / codex / copilot / agy / rtk は**一切存在せず**、baked な agent
-     npm パッケージも無し。`versions.json` は全ピン記載済み = **lean 確定**（build.sh
-     `--native` が `BAKE_AGENT_CLIS=0`＋`BAKE_OPTIONAL_TOOLS=0` で焼いた成果物どおり。
-     Dockerfile の各 CLI RUN は全て `BAKE_AGENT_CLIS=1` ガード下で、0 では実行されない）。
-   - **chromium も焼込み無しを確認**（別セッションの追加データ点「ペインを開いた記憶が
-     無いのに chromium が既に在った」への回答）: rootfs に `usr/bin/chromium` /
-     `usr/lib/chromium` / baked Go / aws / SMP / ops MCP / CJK フォントは**いずれも無し**
-     （`BAKE_OPTIONAL_TOOLS=0` 通り）。ユーザーが見た chrome は
-     `~/.local/share/agent-fleet/chromium/<pin>/…` = **オンデマンド導入先（home ボリューム
-     永続）**であり、install-chromium が過去に走って残っていたもの＝**焼込みではなく
-     オンデマンド導入が効いている証拠**。chromium はペイン初回 attach 時に status チャネル
-     で「準備中」を Console へ流すので（§35.7.2-4）、CLI と違い初回進捗は元々可視。
-   - **entrypoint は rootfs モードでも走る**（`runtime_native.go` が bwrap 配下で
-     `/usr/local/bin/entrypoint.sh workspace-agent` を起動）。boot-install は lean 判定
-     （`/usr/local/bin/claude` 不在かつ versions.json にピン）で発火し、~/.local へ導入する。
-   - **真因＝観測性**: entrypoint の全出力は **CP がワークスペースの `<dataDir>/agent.log`
-     にのみ**書く（`af`/Console のフォアグラウンドには出ない）。しかも ~/.local は home
-     ボリュームに永続するので、**2 回目以降（オフライン再起動含む）は cli_present=true で
-     各ブロックが無音スキップし即起動する**（§35.8.1 手順 6「2 回目は DL なし」= むしろ
-     期待動作）。報告の「即起動・ログ無し」は、CLI 導入済み home に対する再起動、または
-     初回でも DL が agent.log に隠れて見えなかった、のどちらかで説明でき、**焼き込みでは
-     ない**。
-   - **対処（この調査で実施）**: (a) `workspace/entrypoint.sh` の lean boot-install に
-     **スキップ時の明示ログ**を追加（`lean variant: ensuring pinned agent CLIs …` ヘッダ＋
-     npm/rtk/agy それぞれ「already present (skip)」）。無音スキップが agent.log 上で
-     「なぜ DL しなかったか」追える形になった。(b) 本節と §35.7.2-8 に「即起動は正常・
-     ログの在り処は agent.log」を明記。
-   - **残る UX 改善（ゲートはブロックしない）**: 初回 boot-install の進捗を Console 側に
-     可視化するダイアログ要望（別途）。agent.log を Workspace 起動オーバーレイに tail
-     surface するのが素直。実装は別タスク。
+   **結論: 逸脱なし。rootfs は設計どおり lean。真因は「初回 boot-install の DL が実行された
+   が、その出力が agent.log にしか出ず起動 UI のどこにも surface されなかった」観測性の穴。**
+   （※初出の記録にあった「2 回目以降だから無音スキップ」という説明は**誤り**。ユーザー
+   確認で本件は**新規ワークスペースの真の初回起動**であり再起動ではない。chromium が
+   `~/.local/share/agent-fleet/chromium/…` に在った件も、プレビュー（ペイン初回 attach）で
+   オンデマンド DL された正常結果と確認済み＝焼込みの証拠ではない。両説明を撤回する。）
+   - **実 rootfs を直接検証**（公開 dist の R zstd 258MB を python `zstandard` で stream 展開し
+     tar エントリ列挙）: `usr/local/bin` に claude / opencode / codex / copilot / agy / rtk は
+     **一切存在せず**、baked agent npm も無し。さらに `usr/bin/chromium`・`usr/lib/chromium`・
+     baked Go・aws・SMP・ops MCP・CJK フォントも**全て無し**。`versions.json` は全ピン記載＝
+     **lean 確定**（build.sh `--native` の `BAKE_AGENT_CLIS=0`＋`BAKE_OPTIONAL_TOOLS=0` どおり。
+     Dockerfile の各 RUN は `BAKE_*=1` ガード下で 0 では焼かれない）。
+   - **初回起動で boot-install が「実際に走ったはず」を code＋rootfs で立証（skip バグの否定）**:
+     entrypoint は rootfs モードでも bwrap 配下で `/usr/local/bin/entrypoint.sh workspace-agent`
+     として起動し（`runtime_native.go`）、`exec workspace-agent` は entrypoint 末尾＝boot-install
+     の**後**。lean 判定 `LEAN_CLIS`（`/usr/local/bin/claude` 不在 かつ `vj_pin claude` 非空）は
+     初回で**必ず 1**になる: (i) lean なので `/usr/local/bin/claude` は無い、(ii) `vj_pin` は
+     `node` と `versions.json` を使うが、両者は rootfs の **`/usr/local` 側**に実在
+     （`/usr/local/bin/node`・`/usr/local/share/agent-fleet/versions.json` を rootfs 直接検証で
+     確認）で、実行時に上書きされる `home/dev` bind-mount の**外**＝隠れない（rootfs の
+     `home/dev` 配下は skel 3 ファイルのみ）。よって初回は `LEAN_CLIS=1`＋`~/.local/bin` 空
+     ＝6 CLI 全て `cli_present=false` → **必ず DL が走る**。presence-check の false-positive で
+     無音スキップした、という仮説は成立しない。
+   - **したがって残るのは可視性のみ**: entrypoint 出力は CP が `<dataDir>/agent.log` に**だけ**
+     書き（`cmd.Stdout/Stderr = agent.log`）、`af start` のターミナルにも Console の起動 UI にも
+     出ない。加えて boot-install は `exec` 前に同期実行されるので、healthWait（rootfs 既定
+     300s）の間ずっと**無表示のまま待つ**画になり、回線が速いと「即起動」に見える。**DL は
+     起きていたが誰にも見えなかった**、が真因。確証は実機の初回 agent.log（下記コマンド）。
+   - **対処（この調査で実施）**:
+     (a) **CP が初回 boot-install の進捗を surface**（`control-plane/runtime_native.go`
+     `mirrorBootProgress`）: rootfs モードの Start で healthWait 中に agent.log を tail し、
+     `[entrypoint] …` 行（boot-install / install-go / install-jdk / claude repair 等）を CP ログ
+     （＝`af start` ターミナル）へ転写。加えて開始時に「初回はピン版 CLI を ~/.local に導入する
+     ため数分かかる・進捗は agent.log」の一行を出す。read-only・best-effort、healthy になれば
+     即停止。これで「無表示の長い待ち→焼込みと誤認」を根絶。
+     (b) `workspace/entrypoint.sh` の lean boot-install に**明示ログ**（`lean variant: ensuring …`
+     ヘッダ＋npm/rtk/agy の「already present (skip)」）。初回は DL 行、再起動時はスキップ行が
+     agent.log に必ず残る。(c) 本節と §35.7.2-8 を「初回 DL は起きる／可視性が穴だった」に更新。
+   - **実機での確定手順（stpovm6 の WSL2 で）**: 該当ワークスペースの初回 agent.log を見る。
+     `grep -n "\[entrypoint\]" ~/.local/share/agent-fleet/<ws>/agent.log`（native 既定 WS_DATA。
+     `af status` で dataDir を確認）。`boot-install (pinned): …@… →boot-install ok` があれば
+     **DL は実行済み＝可視性の問題**で確定。もし無ければ presence-check を再精査するが、
+     上記 code 分析ではその線は出ない見込み。
+   - **残る UX（ゲート非ブロック）**: (a) の CP 転写に加え、Console の起動オーバーレイへ
+     agent.log を tail surface するダイアログは別タスク（より本格的な可視化）。
