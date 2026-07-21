@@ -975,9 +975,21 @@ VERSION=0.1.0 deploy/release/publish-dist.sh --seed
    `--no-sandbox` + localhost 限定の割り切りを README 化）→ **§35.8.1 チェックリスト
    手順 5 に凍結**（ユーザー実施）。(c) awscli の versioned zip / SMP の versioned deb
    URL と root なし展開（`dpkg-deb -x` 相当）の確認。
-8. **ライセンス見解の確度（配布開始前ゲート）**: §35.4.1 は npm registry / GitHub API の
-   license 表示による一次調査。配布開始前に claude / agy / copilot の利用規約本文（再配布・社内限定
-   配布の条項）を読んで確定させる（規約側が許すなら焼き込み配布へ戻す選択肢が復活する）。
+8. **ライセンス見解の確度（配布開始前ゲート）** → **決定（2026-07-22・ユーザー判断）=
+   配布物は恒久的に lean のみ。proprietary CLI（claude / agy / copilot）の焼き込み配布は
+   将来も採らない**（「規約が許せば焼き込みへ戻す」分岐を放棄）。よって §35.4.1 の帰結が
+   単純化し、ライセンス表の保守を配布可否判断に依存させない。
+   - **裏取り済み（claude 本文確認）**: 一次調査（npm/GitHub の license ラベル）に加え、
+     `anthropics/claude-code` の LICENSE.md 本文＝「© Anthropic PBC. All rights reserved.
+     Use is subject to Anthropic's Commercial Terms of Service.」を確認 = **再配布/同梱の
+     許諾なしの proprietary で確定**。2026-03-31 にソースが GitHub で可視化された件は
+     「source-available ≠ 再配布可」で結論に影響なし。agy / copilot も同様の proprietary。
+   - **lean が「当方の再配布に当たらない」根拠の傍証**: 同型 OSS（`openclaw/openclaw`・MIT）も
+     proprietary CLI/モデルを同梱せず、ユーザー自身の鍵・OAuth で provider を直叩きする
+     BYO 方式。agent-fleet の lean（各デプロイ先が公式配布元から起動時 boot-install）は
+     経路こそ違え「proprietary バイナリを配布物に載せない」点で同じ定石。
+   - **残**: agy / copilot の規約"本文"精査は lean 確定により moot（焼かない以上、再配布条項の
+     可否は配布可否に影響しない）。全焼き込みの自社内イメージは従来どおり（頒布しないので不問）。
 9. **「初回起動で boot-install の DL ログが出ず即起動」疑いの切り分け（2026-07-21・ゲート k
    中のユーザー実機報告 rootfs `4677f9f5a67d`／v0.1.1）**: 「rootfs に CLI が焼き込まれ、
    ピン版オンデマンド導入をバイパスしているのでは」という疑いを別セッションで調査 →
