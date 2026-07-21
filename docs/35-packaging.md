@@ -669,8 +669,11 @@ playwright CDN の実 DL 確認）は §35.8 native ゲート（P4）のまま�
   （bwrap 配下で rootfs の entrypoint→boot-install→agent healthy まで同期）→ 仮想 HOME に
   claude 2.1.215 / opencode 1.18.3 / codex 0.144.6 / copilot 1.0.73 / rtk / agy がピン版で
   導入済みを実証 → workspace stop → `af reset --all` が WS_DATA を残骸なく削除。
-- (f) 既定無影響は P1 の 2 job（compose/default）を含む最終フル run で再実証
-  （このゲート反復中は `[native-only]` でスキップしていたため）。
+- (f) ✅ 最終フル run（run 29806179614・3 job 全緑）で再実証: native-gate の再現緑に加え、
+  P2 の共有ファイル変更（workspace/Dockerfile のマウントポイント焼き込み＋noto_cjk ピン・
+  entrypoint の Go toolchain・e2e-smoke）込みで compose-gate（A+B+D 生成・lean
+  boot-install ライブ）と default-image-gate（既定全焼き込みビルド + e2e-smoke）が
+  無変更で通過 = 既存デプロイに影響ゼロ。
 
 残（P4 実機ゲートへ）: 素の WSL2（追加インストールなし）の通し E2E・実 Console からの
 セッション操作の目視・chromium sandbox の bwrap 配下実測・playwright CDN の実 DL 検証・
