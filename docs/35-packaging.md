@@ -703,6 +703,37 @@ P3 = ECS 配布のリリース作法（§35.3.4）。CFN・アダプタ本体（
   実施時は release-ecr.sh → `00→10→20→30` deploy（`Persistence=delete`）→ WS Start →
   `ImageTag` 更新 deploy → WS Stop/Start で新イメージ確認 → delete-stack 撤収、まで。
 
+**P3 ゲート結果（2026-07-21）**:
+
+- (g) ✅ hosted CI run 29807690647 **フル 4 job 全緑**（ecs-gate 新設分＋既存 3 ゲート
+  無変更通過）。初回実走 run 29807545943 の検出 2 件を修正: ①runner の shellcheck は
+  info（SC2015）でも exit 1 ②stub テストの `get-login-password | docker login` は
+  パイプ両側が並行でログ順序が非決定 → 集合一致＋依存順序 assert へ（5 連続実行で安定）。
+  ※副産物の教訓: ジョブスキップマーカー文字列をコミットメッセージ本文に書くと
+  head_commit.message 一致で誤発火する（説明文にも書かない）。
+- (h) ✅ **sandbox 実走一巡完了**（account <account>・ap-northeast-1・
+  `af-h.<domain>`）。この Workspace に docker が無いため、イメージは sandbox 内の
+  使い捨て EC2（t3.xlarge）で `build.sh --compose` ×2 版（0.0.1-h / 0.0.2-h・lean 配布
+  variant）をビルドし、**release-ecr.sh 実物**で push（repo 存在確認→login→tag/push。
+  認証は region-only profile → IMDS チェーン = 「ビルド環境と push 環境が別」の実証）。
+  - `00→10→20→30` deploy。10-data の `Persistence=delete` が Processed テンプレートで
+    EFS/RDS `Delete`・Backup 0・DeletionProtection false に解決 =
+    **LanguageExtensions 分岐の実機実証**（retain 側は cfn-lint 検証）。
+  - **`AuthMode` パラメータを 30-ingress へ追加**（ゲート実施のための追加。既定 oauth
+    不変・`dev` は sandbox/E2E 用 — ALB SG を自 IP に制限してから使う旨を README 化。
+    ゲートでも deploy 前に ALB SG を workspace egress IP /32 へ制限した）。
+  - CP 起動 → `/api/version` = 0.0.1-h（版刻印がビルド→ECR→ImageTag→Fargate まで通貫）。
+    WS Start → task def `:0.0.1-h`・running。**発見: 初回 Start は ALB 60s idle timeout で
+    HTTP は 504 になるが Start はサーバ側で継続し ~100s で running 収束**（アダプタの
+    非同期収束設計どおり。Console は state ポーリングで吸収 — README に注記済み）。
+  - `ImageTag=0.0.2-h` **のみ**上書き deploy → 他パラメータ previous value 維持で CP が
+    ロール（`/api/version` = 0.0.2-h）、**稼働中 WS は同一タスク ARN・`:0.0.1-h` のまま
+    無傷**。WS Stop→Start → 新 task def **`:0.0.2-h`** で running（EFS home 持続により
+    boot-install 再走なし = 更新契約 §35.5 の「WS は次回 Start から」を実証）。
+  - 撤収: af-ws* sweep（service / task def ×2 / EFS AP ×2 / SSM param ×2）→ stacks
+    30→20/10→00 削除・EC2/keypair/IAM role 掃除。SSM `/af-cp/*` 3 param は P3-7 以来の
+    既存物のため温存。
+
 ## 35.8 検証ゲート（P3-10 完了判定への接続）
 
 | ターゲット | ゲート | 状態 |
@@ -710,7 +741,7 @@ P3 = ECS 配布のリリース作法（§35.3.4）。CFN・アダプタ本体（
 | compose | clean host でバンドルから起動（P3-10 段5） | ✅ 実証済（ec2-single 上） |
 | EC2-Single | 同上 + CFN provision〜teardown | ✅ 実証済 |
 | native | **素の WSL2**（Docker なし・**追加インストールなし**）で tar から起動 → 初回 boot-install（ピン版）→ clone → claude セッション E2E → 再起動してオフライン起動（2回目は DL なし）。userns 無特権実行が WSL2 標準カーネルで通ることの確認を含む（§35.3.1 の仮説） | △ CI 分は済（§35.7.2 ゲート d/e 全緑 = hosted runner で af start→bwrap 起動→boot-install ピン実証）。素の WSL2 実機は未（docs/34 §34.6 と同時に消化する） |
-| ECS | E2E ゲート（p3-7 凍結仕様 §20b.7.14）+ タグ更新の一巡 | △ 段階実証済・更新一巡は未 |
+| ECS | E2E ゲート（p3-7 凍結仕様 §20b.7.14）+ タグ更新の一巡 | ✅ タグ更新一巡実証（2026-07-21・§35.7.3 ゲート h: push→deploy→WS起動→ImageTag更新→次回Start新イメージ→撤収）。p3-7 E2E の attach/reaper 項は段階実証のまま |
 | 総合 | 第 2 デプロイをゼロから立てて E2E（decisions/0001） | ✗ 未 |
 
 ## 35.9 決定事項と残る確認事項
