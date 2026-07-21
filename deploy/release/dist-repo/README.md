@@ -8,14 +8,62 @@ Distribution artifacts for [Agent Fleet](https://github.com/k-k1/agent-fleet).
 ## What is Agent Fleet?
 
 Agent Fleet is a self-hosted web console for running AI coding agents
-(Claude Code, Codex CLI, OpenCode, GitHub Copilot CLI, Antigravity CLI) as a
-managed fleet.
-Each member gets an isolated workspace — a Docker container with cgroup CPU/memory
-quotas (or a bubblewrap-sandboxed rootfs in the native edition) with a persistent
-home and git working copies — and starts, drives and monitors agent sessions from
-the browser. A Go control plane orchestrates the workspaces; deployment targets
-include on-prem Docker Compose, AWS ECS (CloudFormation templates included), and a
-Docker-less native runtime for WSL2 / single-user Linux hosts.
+(Claude Code, Codex CLI, GitHub Copilot CLI, Antigravity CLI, OpenCode) as a
+managed fleet. Each member gets an isolated workspace — a Docker container with
+cgroup CPU/memory quotas (or a bubblewrap-sandboxed rootfs in the native
+edition) with a persistent home and git working copies — and starts, drives and
+monitors agent sessions from the browser. A Go control plane orchestrates the
+workspaces.
+
+Key features:
+
+- **Five agent CLIs, one console** — run Claude Code / Codex / GitHub Copilot /
+  Antigravity / OpenCode sessions side by side, with per-session model choice.
+  CLI versions are pinned to verified combinations (opt-in self-update).
+- **Parallel sessions on real git repos** — clone over HTTPS (GitHub /
+  Bitbucket tokens or OAuth device flow) with **Git LFS, submodules (incl.
+  nested) and git-worktree support**; run multiple sessions per repo isolated
+  in worktrees, follow each conversation live in a mirror view with terminal
+  access, queue input while the agent works, and open plain **shell sessions**
+  next to agent sessions.
+- **Project-centric console** — file browser, commit graph and diffs, session
+  state badges (working / awaiting input), a memo queue with image attachments,
+  a notification center, English/Japanese UI, keyboard-first operation
+  (command palette / leader key), and optional text-to-speech for replies
+  (VOICEVOX / Zundamon, AWS Polly).
+- **Live app preview** — web apps started inside a workspace (Vite HMR,
+  WebSocket, Spring Boot, …) render in an embedded browser pane; ports are
+  reachable through lightweight previews.
+- **Multi-user by design** — Google OAuth login, tenants and roles
+  (member / admin / operator), per-user network isolation, envelope encryption
+  for secrets at rest, and per-workspace memory quotas.
+- **Usage visibility** — see each agent account's usage and rate limits (and
+  when they reset) at a glance, plus per-session context usage with warnings
+  and summarized handover before the context window fills up.
+- **Assistant chat & fleet orchestration** — a built-in assistant that can
+  drive the fleet: start and steer multiple agent sessions, orchestrate work
+  across different agents and hand tasks over between them with summarized
+  context, and act as an **SRE assistant** through PagerDuty / Grafana /
+  CloudWatch integrations and AWS SSM login sessions to your servers.
+- **Operable** — backup/restore scripts, forward-only DB migrations for
+  upgrades, air-gap installation paths, and MCP integration points.
+
+Each user signs in to the agent CLIs with **their own account/seat** (e.g. a
+Claude subscription) from the console; the deployment itself does not bundle or
+share any AI-provider credentials.
+
+## Getting started — which edition?
+
+| Your situation | Edition | What you need |
+|---|---|---|
+| Personal use on WSL2 or a single-user Linux machine; no Docker | **Native** (below) | x86_64 Linux/WSL2 with unprivileged user namespaces (stock WSL2 works), `curl` or `wget`, ~1.5 GB disk |
+| A team on your own Linux server | **Docker Compose** (below) | Docker Engine + `docker compose`, a public domain pointed at the host (auto-TLS; an internal-CA fallback exists), a Google OAuth 2.0 client for login |
+| A team on AWS | **ECS (CloudFormation)** (below) | An AWS account, ECR for the images, the templates bundled in the compose tar |
+| Offline / restricted network | Any of the above, air-gap paths | The images tar (Compose) or the `-bundle` native tar; file hand-off instead of downloads |
+
+Common to all editions: outbound network is needed once per workspace to
+pin-install the agent CLIs on first start (air-gap alternatives are documented
+in the bundled READMEs), and each user needs their own agent account/seat.
 
 ## Installing the native edition (no Docker; WSL2 / single-user Linux)
 
@@ -34,6 +82,33 @@ af start
 - For details (host requirements, air-gap installs, running as a service,
   optional text-to-speech with VOICEVOX / Zundamon, limitations) see the
   `README.md` bundled inside the tar.
+
+## Installing the Docker Compose edition (team, on-prem)
+
+The images are **not** published to a registry — download both the bundle
+(`agent-fleet-<version>.tar.gz`) and the images tar
+(`agent-fleet-images-<version>.tar.gz`) from
+[Releases](https://github.com/k-k1/agent-fleet-dist/releases), then:
+
+```bash
+V=<version>
+sha256sum -c --ignore-missing SHA256SUMS          # verify both downloads
+tar xzf "agent-fleet-$V.tar.gz" && cd "agent-fleet-$V"
+./load-images.sh "../agent-fleet-images-$V.tar.gz" # docker load (CP + workspace)
+cp .env.example .env                               # fill in secrets, domain, Google OAuth
+docker compose up -d
+```
+
+The bundled `README.md` is the full runbook: prerequisites, key generation,
+TLS/domain setup, backup/restore, upgrades and troubleshooting.
+
+## Installing on AWS (ECS / CloudFormation)
+
+The compose bundle also carries the AWS deploy surface under `aws/`:
+CloudFormation templates for an ECS deployment (`aws/ecs/cfn/`), a script to
+push the released images to your ECR (`aws/ecs/release-ecr.sh`), and a
+single-EC2 variant (`aws/ec2-single/`). Start from `aws/ecs/README.md` inside
+the bundle.
 
 ## Uninstalling / removing data (native edition)
 
@@ -76,7 +151,7 @@ this automatically).
 ## License / bundled software
 
 - The distributed images and rootfs are a **lean build**: agent CLIs
-  (Claude Code / Codex / OpenCode / Copilot / Antigravity) are not bundled — on first start
+  (Claude Code / Codex / GitHub Copilot / Antigravity / OpenCode) are not bundled — on first start
   each user fetches verified, pinned versions from the respective upstream
   (this build intentionally avoids redistribution).
 - For attribution of bundled OSS, see the `NOTICE` file inside each tar.
