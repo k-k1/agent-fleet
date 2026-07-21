@@ -410,6 +410,36 @@ GitHub API の license 表示で確認）:
   ランナーでの rootfs ビルドはできない。arm64 を出す時は private repo の arm ランナー
   （$0.005/分）か arm 実機でビルドして publish する。
 
+### 35.4.3 docs の配布範囲 — internal denylist（2026-07-21 精査）
+
+決定①「docs/ 全ツリー同梱」を精査の結果、**「全ツリー − internal denylist」に精密化**する。
+ツリー全体を機械スキャン（実ドメイン・メール・IP・アカウント ID・資格情報パターン）した
+結果、**設計文書（番号付き・dev/・guide/・decisions/）はクリーン**で、固有情報は以下の
+「運用ログ系」に集中していた:
+
+| 除外対象（denylist） | 理由（発見された内容） |
+|---|---|
+| `docs/HANDOFF.md` | **自ホストの稼働情報そのもの**: 実 Tailscale 入口 URL（`af.example.ts.net`）・運用者コンテナ名（メール由来 `af-ws-k1-kami-gmail-com`）・ポート/パス等。配布先には無意味かつ攻撃面の開示 |
+| `docs/CHANGELOG-handoff.md` | 時系列作業ログ。**個人メール 2 件＋実名ハンドル**（gmail / 会社ドメイン / 実名ハンドル）を含む |
+| `docs/talk/` | 社内発表資料（Marp・会社名テーマ）。製品ドキュメントではない |
+| `docs/history/` | 役目を終えた実装プラン。実ドメイン（lazmix.jp）・メール由来コンテナ名・移行経緯が散在 |
+
+- **適用先は「配布・公開のすべて」で同一**: native tar C の docs/、配布 variant の
+  CP イメージ（`stageWorkspaceDocs` の焼き込み源 — 配布先の super_admin にも denylist は
+  見せない）、将来の公開 source snapshot。**自社 dev/自社運用ビルドは従来どおり全ツリー**
+  （HANDOFF はまさに自ホスト運用のためにある）。
+- **実装**: denylist は `docs/.distignore`（1 行 1 パターン）として宣言的に置き、
+  release 工程（build.sh が docs をステージングして COPY）で適用する。ハードコードしない。
+- **残す判断をしたもの**: `decisions/`（意思決定記録。個人情報なし・設計理解に価値）、
+  `roadmap.md`（実ドメイン言及 1 箇所は一般化済み）、`dev/`・`guide/`・番号付き設計docs
+  （スキャンでクリーン）。
+- **ツリー本体への修正（適用済み）**: 配布物 A に入る `deploy/aws/` から実環境値を除去 —
+  CFN `30-ingress.yaml` の `Fqdn`/`HostedZoneId` の Default（実ドメイン・実ゾーン ID）を
+  削除して必須パラメータ化、両 README の実ドメイン・実 EIP 例をプレースホルダ
+  （example.com / TEST-NET）へ。roadmap の実ドメイン言及も一般化。
+- **git 履歴は書き換えない**: 配布は tar（履歴なし）・公開 snapshot は squash 方式
+  （orphan コミット）なので、**現在のツリーが綺麗であれば足りる**という前段の判断と整合。
+
 ## 35.5 アップグレードの共通契約（runbook へ載せる文言の骨子)
 
 全ターゲット共通:
@@ -481,6 +511,7 @@ P1→P2 が本丸（native が唯一のゼロ→イチ）。P3 は独立に並�
 | 6 | `workspace/entrypoint.sh` | ピン版 boot-install の一般化: 各 CLI（claude/opencode/codex/agy/rtk）で「`/usr/local/bin` にも `~/.local/bin` にも無ければ versions.json のピン版を `~/.local` へ導入」。既存 `CLAUDE_INSTALL` fallback と self-update 実装の取得経路を版指定で再利用（npm は `prefix=$HOME/.local`） |
 | 7 | `deploy/local/e2e-smoke.sh` | lean イメージ対応: `BAKE_AGENT_CLIS=0` のイメージでは「versions.json が存在し全ピン記載」を検証（boot-install の実走はネット前提なので P1 ゲートの別項で確認） |
 | 8 | `NOTICE` | 同梱 OSS の帰属追記（git/tmux/chromium ほか。静的 bwrap/git 分は P2 で追加） |
+| 8b | `docs/.distignore`（新設） | internal denylist（§35.4.3: HANDOFF / CHANGELOG-handoff / talk/ / history/）。release 工程の docs ステージングと配布 variant の CP イメージビルドで適用 |
 | 9 | `docs/roadmap.md` | Helm chart を「需要が出るまで棚上げ（AWS の答えは ECS+CFN）」へ更新 |
 
 **P1 ゲート**: (a) `VERSION=x deploy/release/build.sh --compose` で A+B+D が生成される。
@@ -502,8 +533,8 @@ P1→P2 が本丸（native が唯一のゼロ→イチ）。P3 は独立に並�
 
 **決定済み（2026-07-21・ユーザー判断）**:
 
-1. **docs/ 同梱範囲 = 全ツリー**（内部 dev/decisions/history 込み。単一ユーザー =
-   super_admin 相当なので権限問題なし・実装最短・Docker 構成と完全同一）。
+1. **docs/ 同梱範囲 = 全ツリー − internal denylist**（HANDOFF / CHANGELOG-handoff /
+   talk/ / history/ を除外。精査結果と denylist の設計は §35.4.3。自社ビルドは全ツリーのまま）。
 2. **配布チャネル = 公開 dist repo `k-k1/agent-fleet-dist` を新設**（具体設計は §35.4.2）。
    完全ファイル渡しは `--bundle-rootfs` で併存。
 3. **版表示は認証付き `/api/version` 新設**（§35.6.1。`/healthz` は restart-cp.sh の

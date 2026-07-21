@@ -25,12 +25,14 @@ Parameters:
     Description: Tag of the af-workspace image in ECR (the 段2 adapter runs it).
   Fqdn:
     Type: String
-    Default: af-dev.lazmix.jp
-    Description: Public host for the Console/API (ACM cert + Route53 alias).
+    Description: >-
+      Public host for the Console/API (ACM cert + Route53 alias), e.g.
+      af.example.com. Required — pass your own domain.
   HostedZoneId:
     Type: String
-    Default: Z0992735RL5SSUMAHKT
-    Description: Route53 hosted zone id for the Fqdn's domain (lazmix.jp).
+    Description: >-
+      Route53 hosted zone id for the Fqdn's domain. Required — the zone must be
+      in this account (ACM DNS validation + alias record are created in it).
   CpImageTag:
     Type: String
     Default: dev

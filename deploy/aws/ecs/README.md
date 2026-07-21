@@ -79,18 +79,19 @@ SQLite is ephemeral in this milestone (no EFS/RDS). Prerequisites:
    aws ssm put-parameter --profile af-sandbox --region $RG --type SecureString \
      --name /af-cp/google-client-secret --value "<GOOGLE_OAUTH_CLIENT_SECRET>"   # your terminal, not shared
    ```
-3. **Google OAuth client**: add `https://af-dev.lazmix.jp/oauth2/callback` to the
-   client's Authorized redirect URIs. Pass its client id + allowed/super-admin emails
-   as parameters at deploy:
+3. **Google OAuth client**: add `https://<your-fqdn>/oauth2/callback` to the
+   client's Authorized redirect URIs. Pass the fqdn/zone + client id +
+   allowed/super-admin emails as parameters at deploy:
    ```bash
    aws cloudformation deploy --stack-name af-ecs-ingress \
      --template-file cfn/30-ingress.yaml \
      --parameter-overrides GoogleClientId=<id> \
+       Fqdn=af.example.com HostedZoneId=<your-zone-id> \
        AllowedEmails=you@example.com SuperAdminEmails=you@example.com \
      --profile af-sandbox --region $RG
    ```
-   ACM DNS validation and the Route53 alias are automated (the `lazmix.jp` zone is
-   in-account); cert issuance adds a few minutes to the first deploy.
+   ACM DNS validation and the Route53 alias are automated (the hosted zone must be
+   in this account); cert issuance adds a few minutes to the first deploy.
 
 ## Prove-out sequence
 

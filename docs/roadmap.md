@@ -269,7 +269,7 @@ CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面�
 > `go build/vet/test` 34 通過）: Service desired 0/1・Service Connect 到達・EFS AP 2 本(CP 動的払出=tag 引き create-or-get)・
 > token/DEK は SSM SecureString `valueFrom`(plaintext env 不使用)・deterministic naming ゆえ**スキーマ/Agent/Console/CP コア変更ゼロ**。
 > **段4（IaC substrate）＝実証済**: `deploy/aws/ecs/cfn/` 00-network/10-data/20-platform/30-ingress を sandbox で
-> deploy→検証→teardown、30 は `af-dev.lazmix.jp` で実 Google ログイン到達（**CloudFormation**、ec2-single と一貫・static のみ）。
+> deploy→検証→teardown、30 は検証用ドメインで実 Google ログイン到達（**CloudFormation**、ec2-single と一貫・static のみ）。
 > **段5（実 AWS E2E）＝到達確認済**: sandbox で 00-30 substrate＋段2 配線 CP を立て、実ブラウザで login→workspace
 > Start→shell まで到達。CP が ws ECS サービス＋EFS AP2本(transit 暗号)＋SSM SecureString を動的払出し、CP→Service
 > Connect→Agent 到達（`POST /sessions` 受理）、DEK/token は平文 env になし。findings=大容量イメージ cold pull が Start の
