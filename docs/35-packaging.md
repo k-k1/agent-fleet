@@ -736,15 +736,117 @@ P3 = ECS 配布のリリース作法（§35.3.4）。CFN・アダプタ本体（
     30→20/10→00 削除・EC2/keypair/IAM role 掃除。SSM `/af-cp/*` 3 param は P3-7 以来の
     既存物のため温存。
 
+### 35.7.4 P4 実装仕様（凍結）
+
+P4 = 検証ゲートの残り（§35.8）と配布チャネル（§35.4.2）の実体化。開発 Workspace は
+コンテナであり素の WSL2 実機ではないため、P4 は二分する:
+**①実機なしで完結する実装**（dist repo publish 一式・CI での代替/実測検証）と、
+**②実機でしか測れない項目のチェックリスト化**（ユーザー実施 — §35.8.1）。
+chromium CDN の実 DL は「この Workspace の回線では cdn.playwright.dev すら PRSS へ
+307 → 400 で落ちる」ことを再確認済みのため、**実測地点は hosted CI の回線**とする。
+
+| # | 対象 | 変更内容 |
+|---|---|---|
+| 1 | `deploy/release/publish-dist.sh`（新設） | dist repo への publish。`VERSION=<v> publish-dist.sh [--dist-dir <d>] [--repo <o/r>] [--seed] [--dry-run]`。手順: ①C tar から rootfs.json を抽出し `<r>`/sha256/url を読む ②url が `--repo` の `releases/download/rootfs-<r>/…` と一致することを検証（ROOTFS_URL_BASE 誤りの C を publish する事故を未然に止める）③rootfs リリース `rootfs-<r>`: **既存 tag ならアップロードごとスキップ**（`<r>` 不変リリース＝利用者の再 DL なし、の実装形）・無ければ手元の R を sha256 照合してから `gh release create` ④app リリース `v<v>`: **既存 tag は fail**（リリースは不変・上書きしない）。添付は dist 直下の A・B・C（＋`-bundle` があれば）+ SHA256SUMS。**2GiB 超の資産は GitHub Releases の上限で添付不可 → 警告してスキップ**（B の air-gap はファイル渡し経路が正）⑤完了時に install ワンライナーと Releases URL を表示。`--seed` = repo 存在確認（無ければ `gh repo create --public`）→ `deploy/release/dist-repo/` の README.md / install.sh を contents API（PUT・既存は sha 付き更新）で push（冪等） |
+| 2 | `deploy/release/dist-repo/`（新設） | dist repo の seed 一式。`README.md`（何が置いてあるか・導入ワンライナー・air-gap 誘導・「成果物は lean＝エージェント CLI 非同梱、初回起動時にピン版を各自が配布元から取得」のライセンス注記）と `install.sh`（§35.4.2 の導入ワンライナー実装: 最新 or `AF_VERSION` 指定版の C を DL → 同リリースの SHA256SUMS で照合 → `~/.local/opt/agent-fleet/<v>/` へ staging→rename の原子展開 → `~/.local/bin/af` symlink。Linux/x86_64 ガード・curl/wget 両対応・`AF_DIST_URL_BASE` で供給元差し替え可＝CI の file:// テスト用。更新も同じコマンド＝版ディレクトリ切替） |
+| 3 | `deploy/local/dist-stub-test.sh`（新設） | fake gh で publish-dist.sh の呼び出し列を固定(新規 publish / `<r>` 再利用スキップ / app tag 衝突 fail / url 不一致 fail / --seed)＋ install.sh の **file:// 実走**（偽 dist レイアウトから DL→sha 照合→展開→symlink→`af` 実在まで。sha 改竄で fail する否定経路含む） |
+| 4 | `.github/workflows/release-gate.yml` | **`dist-gate` job 追加**（軽量・docker 不要）: bash -n + shellcheck（publish-dist.sh / install.sh / dist-stub-test.sh）+ dist-stub-test.sh 実走 + **chromium CDN 実 DL 検証**（§35.9-7(a) の消化: versions.json ピン build の zip を第一ホストからフル DL → unzip で `chrome-linux/chrome` 実在 → fallback 2 ホストは ranged GET + 先頭 1KiB が第一ホストと一致＝同一物確認 → noto_cjk raw URL の疎通）。**native-gate へ「ビルド済み C を file:// 経由で install.sh 導入 → 導入先の `af` が動く」step を追加**（インストーラと実成果物の噛み合わせを実 tar で検証）。反復用マーカー `[dist-only]` を追加（dist-gate 以外をスキップ） |
+| 5 | `.github/workflows/publish-dist.yml`（新設） | 実 publish の CI 経路（§35.4.2「private Actions の workflow_dispatch」の実装）。inputs: `version`。secret **`DIST_PUBLISH_TOKEN`**（fine-grained PAT・dist repo の Contents RW）必須 — 無ければ設定手順を案内して fail。手順: `build.sh --all` → `publish-dist.sh --seed`。`<r>` 不変リリース（`--rootfs-json`）はローカル実施（§35.8.2 runbook） |
+| 6 | docs | §35.8 表の更新（配布チャネル行の追加）+ **§35.8.1 native 実機ゲート チェックリスト（ユーザー実施）**新設（環境記録・導入・起動・E2E・chromium sandbox 実測コマンドと判定・オフライン再起動・報告様式）+ **§35.8.2 実 publish runbook**（初回セットアップ: repo 作成 → PAT → secret → dispatch → 実機 install 検証）。docs/34 §34.6・deploy/native/README.md から相互参照（README にはワンライナー導入を追記） |
+
+**P4 ゲート**:
+
+- (i) dist-gate（hosted CI）: stub 実走全緑・chromium CDN 実 DL 検証・native-gate の
+  install.sh 実 tar 導入 step 緑。
+- (j) 実 publish 一巡（**ユーザー実施** — §35.8.2）: dist repo 新設 → publish-dist.yml
+  dispatch → Releases に `v<v>` / `rootfs-<r>` が付く → 任意の Linux で install
+  ワンライナー → `af start` が rootfs を**実 URL から** DL して起動。
+- (k) 素の WSL2 実機 E2E（**ユーザー実施** — §35.8.1 チェックリスト）: 通し E2E +
+  chromium sandbox 実測 + オフライン再起動。
+
 ## 35.8 検証ゲート（P3-10 完了判定への接続）
 
 | ターゲット | ゲート | 状態 |
 |---|---|---|
 | compose | clean host でバンドルから起動（P3-10 段5） | ✅ 実証済（ec2-single 上） |
 | EC2-Single | 同上 + CFN provision〜teardown | ✅ 実証済 |
-| native | **素の WSL2**（Docker なし・**追加インストールなし**）で tar から起動 → 初回 boot-install（ピン版）→ clone → claude セッション E2E → 再起動してオフライン起動（2回目は DL なし）。userns 無特権実行が WSL2 標準カーネルで通ることの確認を含む（§35.3.1 の仮説） | △ CI 分は済（§35.7.2 ゲート d/e 全緑 = hosted runner で af start→bwrap 起動→boot-install ピン実証）。素の WSL2 実機は未（docs/34 §34.6 と同時に消化する） |
+| native | **素の WSL2**（Docker なし・**追加インストールなし**）で tar から起動 → 初回 boot-install（ピン版）→ clone → claude セッション E2E → 再起動してオフライン起動（2回目は DL なし）。userns 無特権実行が WSL2 標準カーネルで通ることの確認を含む（§35.3.1 の仮説） | △ CI 分は済（§35.7.2 ゲート d/e 全緑 = hosted runner で af start→bwrap 起動→boot-install ピン実証。install.sh 実 tar 導入 step 含む）。素の WSL2 実機は未 = **ユーザー実施**（§35.8.1 チェックリスト。docs/34 §34.6 と同時に消化する） |
 | ECS | E2E ゲート（p3-7 凍結仕様 §20b.7.14）+ タグ更新の一巡 | ✅ タグ更新一巡実証（2026-07-21・§35.7.3 ゲート h: push→deploy→WS起動→ImageTag更新→次回Start新イメージ→撤収）。p3-7 E2E の attach/reaper 項は段階実証のまま |
+| 配布チャネル（dist repo） | publish 一巡（§35.7.4 ゲート j: repo 新設 → publish → install ワンライナー → rootfs 実 URL DL 起動）+ chromium CDN 実 DL（ゲート i） | △ スクリプト/CI/stub は済（§35.7.4）。実 publish は**ユーザー実施**（§35.8.2 runbook — PAT/secret 設定が要る） |
 | 総合 | 第 2 デプロイをゼロから立てて E2E（decisions/0001） | ✗ 未 |
+
+### 35.8.1 native 実機ゲート チェックリスト（ゲート k・ユーザー実施）
+
+素の WSL2 でしか測れない項目の手順書。所要 ~30 分（rootfs/CLI の DL 時間を除く）。
+結果は下の報告様式で持ち帰れば docs へ反映できる。
+
+**前提**: Windows 11 + WSL2 の Ubuntu 系ディストロ（**新規 import 直後が理想** —
+docker / node / エージェント CLI を入れていないこと）。確認と記録:
+
+```bash
+wsl.exe --version          # (Windows 側) WSL/カーネル版
+uname -r && cat /etc/os-release | head -2
+command -v docker tmux node claude || true   # 何も出ないのが「素」の証明
+systemctl --user is-system-running || true   # systemd 有効か（常駐化検証に使う）
+```
+
+**手順とチェック項目**:
+
+| # | 手順 | 期待結果（✓/✗ を記録） |
+|---|---|---|
+| 1 | 導入: `curl -fsSL https://raw.githubusercontent.com/k-k1/agent-fleet-dist/main/install.sh \| bash`（publish 済みの場合）または tar を手で展開 | `~/.local/bin/af` ができ、`af` が PATH で引ける（WSL 既定の PATH は `~/.local/bin` を含む） |
+| 2 | `af start` 初回 | preflight（bwrap userns）が**素通り** = 「WSL2 標準カーネルは AppArmor 制限なし」仮説の実証。rootfs が実 URL から DL・sha256 検証・展開されて CP 起動 |
+| 3 | Windows 側ブラウザで `http://localhost:8099` | Console が出る（WSL2 の localhost フォワーディング） |
+| 4 | Workspace 起動 → repo clone → claude セッション開始 | 初回 boot-install がピン版 CLI を仮想 HOME へ導入。claude ログイン → 実プロンプト一往復まで |
+| 5 | **chromium sandbox 実測**: ブラウザペインを開く（初回は「準備中」表示 → ピン版 chromium 自動 DL ~200MB）。併せてワークスペースのターミナルで下のコマンド | ペインにページが描画される。コマンドが `<html>` を出力すれば **namespace sandbox が bwrap 配下で動く**（`AF_CHROMIUM_NO_SANDBOX` 不要）— 結果を必ず記録 |
+| 6 | Ctrl-C で停止 → `af start` 2 回目 | **DL が一切走らず**即起動（rootfs 再利用・オフライン起動の実証。厳密にやるなら `wsl.exe --shutdown` 後にネット断で起動） |
+| 7 | （任意）systemd user unit 常駐化（README-native 参照） | `systemctl --user status agent-fleet` が active |
+
+手順 5 の sandbox 実測コマンド（ワークスペース内ターミナルで）:
+
+```bash
+c="$(ls -d ~/.local/share/agent-fleet/chromium/*/chrome-linux/chrome | head -1)"
+"$c" --headless=new --disable-gpu --dump-dom about:blank | head -3
+```
+
+- `<html>…` が出る → sandbox 有効のまま動く（**期待**: bwrap は net/ipc を unshare
+  しない最小分離なので、chromium 自身の user-namespace sandbox は入れ子で動く見込み）。
+- `Operation not permitted` / zygote crash 系で落ちる → `AF_CHROMIUM_NO_SANDBOX=1
+  ./af start` で再測し、README-native の割り切り（localhost 限定）を確定させる。
+
+**報告様式**（この 4 点で十分）: ①環境（`wsl.exe --version` / ディストロ / 新規 or 既存）
+②表 1〜7 の ✓/✗ ③手順 5 の生出力（成功でも失敗でも）④気付き（DL 所要・初回起動時間等）。
+
+### 35.8.2 実 publish runbook（ゲート j・ユーザー実施）
+
+初回セットアップ（1 回だけ）:
+
+```bash
+# 1) dist repo 新設（--seed が無ければ作るが、権限を絞るなら手動作成を推奨）
+gh repo create k-k1/agent-fleet-dist --public \
+  --description "Agent Fleet — distribution artifacts (no source here)"
+# 2) fine-grained PAT を作成: 対象 = k-k1/agent-fleet-dist のみ・権限 = Contents RW
+#    https://github.com/settings/personal-access-tokens/new
+# 3) private 側（このリポジトリ）へ secret 登録
+gh secret set DIST_PUBLISH_TOKEN   # プロンプトに PAT を貼る
+```
+
+リリース（毎回）:
+
+```bash
+# CI 経路（推奨）: Actions → publish-dist → Run workflow（version=0.1.0 等）
+gh workflow run publish-dist.yml -f version=0.1.0
+# ローカル経路（docker のあるホスト。<r> 不変リリースはこちら）:
+VERSION=0.1.0 deploy/release/build.sh --all [--rootfs-json <既存 rootfs.json>]
+VERSION=0.1.0 deploy/release/publish-dist.sh --seed
+```
+
+検証（publish のたび）: 任意の Linux で
+`curl -fsSL https://raw.githubusercontent.com/k-k1/agent-fleet-dist/main/install.sh | bash`
+→ `af start` が rootfs を実 URL から DL して起動するところまで（ゲート k の手順 1–2 と同じ）。
+
+注意: app リリース `v<v>` は不変（同 tag への再 publish は fail する仕様）。やり直す
+時は版を上げる。rootfs tag `rootfs-<r>` は内容ハッシュなので衝突＝同一物・自動再利用。
 
 ## 35.9 決定事項と残る確認事項
 
@@ -765,11 +867,18 @@ P3 = ECS 配布のリリース作法（§35.3.4）。CFN・アダプタ本体（
 6. **native の arm64 rootfs**: 需要待ち。dist repo に source を置かない決定（§35.4.2）に
    より公開 repo の無料 arm ランナーは使えない — 出す時は private repo の arm ランナー
    （$0.005/分）か arm 実機でビルド。
-7. **オンデマンド供給元の実装確認**（P2）: (a) chromium の DL 供給元最終選定（playwright CDN
-   を第一候補に、版不変 URL・arm64 供給・レイアウト互換で比較確認）。(b) bwrap 配下での
-   chromium sandbox 実測（namespace sandbox が通るか。不可なら `--no-sandbox` + localhost
-   限定の割り切りを README 化）。(c) awscli の versioned zip / SMP の versioned deb URL と
-   root なし展開（`dpkg-deb -x` 相当）の確認。
+7. **オンデマンド供給元の実装確認**（P2→P4）: (a) chromium の DL 供給元最終選定
+   （playwright CDN を第一候補に、版不変 URL・arm64 供給・レイアウト互換で比較確認）
+   → **P4 で CI 実測に置換**（dist-gate: ピン build のフル DL + zip レイアウト検証 +
+   fallback の同一物確認）。**発見（2026-07-21）**: 3 候補ホストは全て
+   `playwright.download.prss.microsoft.com` へ**リダイレクトで収束** = fallback は実質
+   同一オリジンの別入口であり、PRSS がクライアント回線を拒否する環境（この開発 WS が
+   実例 — UA 非依存の 400）では 3 つとも落ちる。その場合の逃げ道は「別回線で取得して持ち込む」
+   = `af start --rootfs` と同様の手渡し（install-chromium への `--from <zip>` 追加を
+   将来課題とする）。(b) bwrap 配下での chromium sandbox 実測
+   （namespace sandbox が通るか。不可なら `--no-sandbox` + localhost 限定の割り切りを
+   README 化）→ **§35.8.1 チェックリスト手順 5 に凍結**（ユーザー実施）。(c) awscli の
+   versioned zip / SMP の versioned deb URL と root なし展開（`dpkg-deb -x` 相当）の確認。
 8. **ライセンス見解の確度（配布開始前ゲート）**: §35.4.1 は npm registry / GitHub API の
    license 表示による一次調査。配布開始前に claude / agy / copilot の利用規約本文（再配布・社内限定
    配布の条項）を読んで確定させる（規約側が許すなら焼き込み配布へ戻す選択肢が復活する）。

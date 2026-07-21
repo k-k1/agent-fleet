@@ -7,6 +7,17 @@ tmux / git / node / 各エージェント CLI をホストへ入れる必要は�
 
 ## クイックスタート
 
+配布 repo（[k-k1/agent-fleet-dist](https://github.com/k-k1/agent-fleet-dist)）からの
+ワンライナー導入（`~/.local/opt/agent-fleet/<v>/` へ展開・`~/.local/bin/af` に symlink）:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/k-k1/agent-fleet-dist/main/install.sh | bash
+af start            # 初回のみ rootfs（200MB台）を取得・検証して展開
+# ブラウザで http://localhost:8099
+```
+
+tar を直接もらった場合:
+
 ```bash
 tar xzf agent-fleet-native-<v>-linux-amd64.tar.gz
 cd agent-fleet-native-<v>-linux-amd64

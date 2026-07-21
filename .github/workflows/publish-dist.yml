@@ -1,0 +1,59 @@
+# 実 publish（docs/35 §35.7.4-5 / runbook は §35.8.2）: 成果物を一括ビルドし、公開
+# dist repo（k-k1/agent-fleet-dist）の Releases へ publish する workflow_dispatch 専用経路。
+# §35.4.2 の「リリースビルドは private 側（Actions の workflow_dispatch）で行う」の実装。
+#
+# 前提（初回のみ・ユーザー実施）:
+#   1) dist repo を手動作成（gh repo create k-k1/agent-fleet-dist --public）
+#   2) fine-grained PAT（対象 = dist repo のみ・Contents RW）を作成
+#   3) このリポジトリへ secret 登録: gh secret set DIST_PUBLISH_TOKEN
+# <r> 不変リリース（build.sh --rootfs-json）はローカル実施（§35.8.2）。
+name: publish-dist
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'リリース版（semver・例 0.1.0）'
+        required: true
+
+concurrency:
+  group: publish-dist
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ secrets.DIST_PUBLISH_TOKEN }}
+    steps:
+      - name: preflight (secret + version format)
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::secret DIST_PUBLISH_TOKEN が未設定です。docs/35 §35.8.2（PAT 作成 → gh secret set DIST_PUBLISH_TOKEN）を先に実施してください。"
+            exit 1
+          fi
+          echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$' \
+            || { echo "::error::version が semver ではありません: $VERSION"; exit 1; }
+
+      - uses: actions/checkout@v4
+
+      # publish 前の自己検査（fake gh / file:// — 実 repo には触らない）
+      - name: stub self-check
+        run: deploy/local/dist-stub-test.sh
+
+      - name: build all artifacts (A+B+C+R+D)
+        run: VERSION=$VERSION deploy/release/build.sh --all
+
+      - name: publish to dist repo
+        run: VERSION=$VERSION deploy/release/publish-dist.sh --seed
+
+      - name: summary
+        run: |
+          ls -la deploy/release/dist
+          {
+            echo "## publish-dist $VERSION"
+            echo "- https://github.com/k-k1/agent-fleet-dist/releases"
+            echo '- 検証: `curl -fsSL https://raw.githubusercontent.com/k-k1/agent-fleet-dist/main/install.sh | bash` → `af start`'
+          } >> "$GITHUB_STEP_SUMMARY"

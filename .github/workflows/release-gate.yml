@@ -8,7 +8,8 @@
 # hosted CI に出す。課金抑制のため常時トリガーにはしない: この workflow ファイル自身を
 # 変更した push（= 意図的な起動）と、develop/main に載った後の workflow_dispatch のみ。
 # 再実行は `gh run rerun <id>`。
-# P2 ゲート d/e 緑（run 29805585420）→ この push は 3 job フル実走（ゲート f 再実証）。
+# P4（docs/35 §35.7.4）: dist-gate（publish/install の stub 実走 + chromium CDN 実 DL
+# 検証）を追加。開発 WS の回線では PRSS CDN が 400 のため、CDN 実測は CI 回線が正。
 name: release-gate
 
 on:
@@ -30,9 +31,9 @@ jobs:
   # 「セッションが動く」の完全形（実 CP + 実認証）はホスト側フリートでの確認事項。
   compose-gate:
     # 反復修正中は重い job を飛ばせる: [native-only] で P1 系 2 job を、[ecs-only] で
-    # docker ビルドを伴う 3 job 全部をスキップ（ecs-gate だけ回る）。最終検証は
-    # 無印 push で全 job を回す。
-    if: "!contains(github.event.head_commit.message, '[native-only]') && !contains(github.event.head_commit.message, '[ecs-only]')"
+    # docker ビルドを伴う 3 job 全部をスキップ（ecs-gate だけ回る）、[dist-only] で
+    # dist-gate 以外をスキップ。最終検証は無印 push で全 job を回す。
+    if: "!contains(github.event.head_commit.message, '[native-only]') && !contains(github.event.head_commit.message, '[ecs-only]') && !contains(github.event.head_commit.message, '[dist-only]')"
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
@@ -130,7 +131,7 @@ jobs:
   # rootfs 内 entrypoint の boot-install がピン版を仮想 HOME へ導入するまで。
   # 素の WSL2 実機（追加インストールなし）での通しは P4 の実機ゲートに残る。
   native-gate:
-    if: "!contains(github.event.head_commit.message, '[ecs-only]')"
+    if: "!contains(github.event.head_commit.message, '[ecs-only]') && !contains(github.event.head_commit.message, '[dist-only]')"
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -164,6 +165,25 @@ jobs:
           test "$(cat "$C/VERSION")" = "$VERSION"
           # rootfs に image-env manifest が注入されていること（CP rootfs モードの前提）
           tar -I zstd -tf "$R" | grep -q '^usr/local/share/agent-fleet/image-env.json$'
+
+      - name: install.sh flow against built C (file:// — gate i)
+        run: |
+          set -eux
+          DIST="$PWD/deploy/release/dist"
+          C="agent-fleet-native-$VERSION-linux-amd64"
+          # インストーラと実成果物の噛み合わせ: 偽レイアウトではなく本物の C tar +
+          # SHA256SUMS を file:// で食わせ、導入した af が実行できるところまで。
+          mkdir -p "/tmp/dist-layout/v$VERSION"
+          cp "$DIST/$C.tar.gz" "$DIST/SHA256SUMS" "/tmp/dist-layout/v$VERSION/"
+          AF_DIST_URL_BASE="file:///tmp/dist-layout" AF_VERSION="$VERSION" \
+            AF_PREFIX=/tmp/af-prefix bash deploy/release/dist-repo/install.sh
+          test -L /tmp/af-prefix/bin/af
+          /tmp/af-prefix/bin/af help
+          /tmp/af-prefix/bin/af status | grep -q "control-plane: stopped"
+          # symlink 経由でも PKG（rootfs.json の在処）を正しく解決していること:
+          # 解決できていれば「--rootfs が無い」というエラーに到達する
+          ( /tmp/af-prefix/bin/af start --rootfs /nonexistent 2>&1 || true ) \
+            | grep -q "rootfs /nonexistent が見つかりません"
 
       - name: enable unprivileged userns (ubuntu 24.04 runner)
         run: |
@@ -235,6 +255,7 @@ jobs:
   # shellcheck・release-ecr.sh の stub 実走（fake aws/docker で呼び出し列と ECR URI を
   # 固定）。sandbox 実走一巡（ゲート h）は実クレデンシャルが要るため CI 外。
   ecs-gate:
+    if: "!contains(github.event.head_commit.message, '[dist-only]')"
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -253,10 +274,57 @@ jobs:
       - name: release-ecr.sh stub run (call-sequence gate)
         run: deploy/local/release-ecr-stub-test.sh
 
+  # ゲート (i)（P4 — docs/35 §35.7.4）: dist publish 一式の検証。docker 不要の軽量ジョブ:
+  # shellcheck + publish-dist.sh/install.sh の stub 実走（fake gh / file:// レイアウト）+
+  # chromium CDN 実 DL 検証（§35.9-7(a) の実測地点 — 開発 WS 回線は PRSS 400 で測れない。
+  # 注意: 3 ホストは全て PRSS へリダイレクト収束する = 実質 1 オリジン別入口）。
+  dist-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck + syntax
+        run: |
+          set -eux
+          for f in deploy/release/publish-dist.sh deploy/release/dist-repo/install.sh \
+                   deploy/local/dist-stub-test.sh; do
+            bash -n "$f"
+          done
+          shellcheck deploy/release/publish-dist.sh deploy/release/dist-repo/install.sh \
+            deploy/local/dist-stub-test.sh
+
+      - name: publish/install stub run (call-sequence + file:// flow)
+        run: deploy/local/dist-stub-test.sh
+
+      - name: chromium CDN real download (pinned build)
+        run: |
+          set -eux
+          PIN="$(sed -n 's/^ARG CHROMIUM_DL_VERSION=\(.*\)$/\1/p' workspace/Dockerfile)"
+          test -n "$PIN"
+          Z=chromium-linux.zip
+          H1="https://cdn.playwright.dev/dbazure/download/playwright/builds/chromium/$PIN/$Z"
+          H2="https://playwright.azureedge.net/builds/chromium/$PIN/$Z"
+          H3="https://playwright.download.prss.microsoft.com/dbazure/download/playwright/builds/chromium/$PIN/$Z"
+          # 第一ホスト: フル DL → zip 健全性・chrome 実体（install-chromium が期待する
+          # レイアウト chrome-linux/chrome）を確認
+          curl -fSL --retry 3 -o /tmp/c1.zip "$H1"
+          unzip -l /tmp/c1.zip | grep -q 'chrome-linux/chrome$'
+          head -c 1024 /tmp/c1.zip > /tmp/c1.head
+          # fallback 2 ホスト: ranged GET が通り、先頭 1KiB が第一ホストと同一物であること
+          for u in "$H2" "$H3"; do
+            curl -fsSL --retry 3 -r 0-1023 -o /tmp/ch.head "$u"
+            cmp /tmp/c1.head /tmp/ch.head
+          done
+          # CJK フォント（noto_cjk ピン）の raw URL 疎通
+          NOTO="$(sed -n 's/^ARG NOTO_CJK_VERSION=\(.*\)$/\1/p' workspace/Dockerfile)"
+          test -n "$NOTO"
+          curl -fsSI -o /dev/null "https://raw.githubusercontent.com/notofonts/noto-cjk/$NOTO/Sans/Variable/OTC/NotoSansCJK-VF.otf.ttc"
+
   # ゲート (c): 既定 ARG（全焼き込み）のビルドと e2e-smoke が無変更で通ること
   # （既存デプロイに影響ゼロ）。CP も既定 DOCS_SRC（全ツリー docs）で焼けること。
   default-image-gate:
-    if: "!contains(github.event.head_commit.message, '[native-only]') && !contains(github.event.head_commit.message, '[ecs-only]')"
+    if: "!contains(github.event.head_commit.message, '[native-only]') && !contains(github.event.head_commit.message, '[ecs-only]') && !contains(github.event.head_commit.message, '[dist-only]')"
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
