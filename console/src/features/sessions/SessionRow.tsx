@@ -81,6 +81,12 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
   };
 
   const dead = !s.alive && s.resumable === false; // dir gone → can't resume
+  // A dir-missing session keeps its transcript (stored under the agent's home,
+  // e.g. ~/.claude, not in the deleted working dir), so a chat-capable one still
+  // opens read-only history — only resume is gone. inert = truly non-clickable
+  // (no transcript to show and can't resume): those stay grayed/disabled.
+  const historyOnly = dead && agentOf(s.kind).caps.transcript;
+  const inert = dead && !historyOnly;
   const open = opens.length > 0;
   const hl = open && hover?.session === s.name;
   const st = stateInfo(s);
@@ -101,7 +107,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
         (selected ? " active" : "") +
         (hl ? " hover" : "") +
         (s.alive ? "" : " stopped") +
-        (dead ? " dead" : "")
+        (inert ? " dead" : "")
       }
       onMouseEnter={open ? () => setHover({ session: s.name }) : undefined}
       onMouseLeave={open ? () => setHover(null) : undefined}
@@ -122,23 +128,26 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
           // Full display name first — the row ellipsizes it in the narrow rail.
           displayName(s) +
           "\n" +
-          (dead
+          (inert
             ? tr("srow.cant_resume")
-            : !s.alive
-              ? (ex ? ex.hint + "\n" : "") +
-                tr("srow.stopped_hint")
-              : (s.dir || "") + tr("srow.open_pane_suffix")) +
+            : historyOnly
+              ? tr("srow.history_only")
+              : !s.alive
+                ? (ex ? ex.hint + "\n" : "") +
+                  tr("srow.stopped_hint")
+                : (s.dir || "") + tr("srow.open_pane_suffix")) +
           `\n${kindLabel(s.kind)} · ${st.text}\nID: ${s.name}`
         }
-        aria-disabled={dead || undefined}
+        aria-disabled={inert || undefined}
         onClick={(e) => {
           const split = e.ctrlKey || e.metaKey;
           if (!s.alive) {
             // Stopped chat-capable (claude) → read-only chat history (no resume;
-            // resume happens inside the chat). Other kinds: ⋯ menu.
-            if (!dead && agentOf(s.kind).caps.transcript) {
+            // resume happens inside the chat). A dir-missing (dead) session keeps
+            // its transcript, so history stays viewable — only resume is blocked.
+            if (agentOf(s.kind).caps.transcript) {
               (split ? openSessionChatSplit : openSessionChat)(s.name);
-            } else if (!dead && running) {
+            } else if (!inert && running) {
               // Shell/SSM have a bounded terminal replay instead of a structured
               // transcript. Opening it never resumes the stopped session.
               (split ? openSessionTerminalSplit : openSessionTerminal)(s.name);
@@ -154,7 +163,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
         }}
         onMouseDown={(e) => e.button === 1 && e.preventDefault()}
         onAuxClick={(e) => {
-          if (e.button !== 1 || dead) return;
+          if (e.button !== 1 || inert) return;
           e.preventDefault();
           if (s.alive) (agentOf(s.kind).caps.chat ? openSessionChatSplit : openSessionTerminalSplit)(s.name);
           else if (agentOf(s.kind).caps.transcript) openSessionChatSplit(s.name);
