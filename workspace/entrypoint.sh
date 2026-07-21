@@ -96,7 +96,7 @@ if [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE:-
     try {
       const ls = JSON.parse(run("npm ls -g --depth=0 --json"));
       let need = 0;
-      for (const p of ["@anthropic-ai/claude-code", "opencode-ai", "@openai/codex"]) {
+      for (const p of ["@anthropic-ai/claude-code", "opencode-ai", "@openai/codex", "@github/copilot"]) {
         const cur = ((ls.dependencies || {})[p] || {}).version || "";
         const latest = run("npm view " + p + " version");
         if (!cur || !latest || cur !== latest) { need = 1; break; }
@@ -106,8 +106,8 @@ if [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE:-
   ' 2>/dev/null || echo 1)
   if [ "$NPM_NEED" = "0" ]; then
     echo "[entrypoint] agent CLIs already latest; skip"
-  elif npm install -g @anthropic-ai/claude-code@latest opencode-ai@latest @openai/codex@latest >/dev/null 2>&1; then
-    echo "[entrypoint] agent CLIs updated: claude $(claude --version 2>/dev/null | head -1) | opencode $(opencode --version 2>/dev/null | head -1) | codex $(codex --version 2>/dev/null | head -1)"
+  elif npm install -g @anthropic-ai/claude-code@latest opencode-ai@latest @openai/codex@latest @github/copilot@latest >/dev/null 2>&1; then
+    echo "[entrypoint] agent CLIs updated: claude $(claude --version 2>/dev/null | head -1) | opencode $(opencode --version 2>/dev/null | head -1) | codex $(codex --version 2>/dev/null | head -1) | copilot $(copilot --version 2>/dev/null | head -1)"
   else
     echo "[entrypoint] WARN: agent CLI update failed (using baked versions)"
   fi
