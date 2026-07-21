@@ -1000,10 +1000,21 @@ VERSION=0.1.0 deploy/release/publish-dist.sh --seed
      (b) `workspace/entrypoint.sh` の lean boot-install に**明示ログ**（`lean variant: ensuring …`
      ヘッダ＋npm/rtk/agy の「already present (skip)」）。初回は DL 行、再起動時はスキップ行が
      agent.log に必ず残る。(c) 本節と §35.7.2-8 を「初回 DL は起きる／可視性が穴だった」に更新。
-   - **実機での確定手順（stpovm6 の WSL2 で）**: 該当ワークスペースの初回 agent.log を見る。
-     `grep -n "\[entrypoint\]" ~/.local/share/agent-fleet/<ws>/agent.log`（native 既定 WS_DATA。
-     `af status` で dataDir を確認）。`boot-install (pinned): …@… →boot-install ok` があれば
-     **DL は実行済み＝可視性の問題**で確定。もし無ければ presence-check を再精査するが、
-     上記 code 分析ではその線は出ない見込み。
+   - **実機 agent.log で確定（2026-07-21・ユーザー実行）**: 初回 `~/.local/share/agent-fleet/dev/
+     agent.log` に `[entrypoint] boot-install (pinned): @anthropic-ai/claude-code@2.1.215
+     opencode-ai@1.18.3 @openai/codex@0.144.6 @github/copilot@1.0.73 …` → `boot-install ok` →
+     `boot-install agy 1.1.5` が実在。**DL は初回に実行されていた＝観測性の穴で確定**（焼込み
+     でも skip バグでもない）。可視性のみが問題という結論を実機ログが裏付けた。
+   - **同ログで判明した二次不具合（初回ブート時の一過性 DL 失敗・いずれも自己修復）**:
+     (i) `WARN: rtk boot-install failed`＋直前に `sha256sum: WARNING: 1 listed file could not be
+     read`＝rtk アセット取得が途中で切れ検証対象を読めず失敗。(ii) `[install-chromium] WARN:
+     CJK font download failed … exit status 56`＝noto_cjk（raw.githubusercontent の大きめ .ttc）の
+     curl 受信エラー。**どちらも URL/フォーマットは正常**（別ホストから rtk 全手順 sha256 OK・
+     CJK URL も 206 到達）で、その初回ブートの一過性ネットワーク失敗。設計上 WARN 継続＋
+     「次回起動で再試行」で自己修復するが、gate-k の体験（rtk フック欠落・ペインの CJK グリフ
+     欠落）を損ねる。**対処: boot-install/オンデマンド DL の curl に `--retry 3 --retry-delay 2
+     --retry-connrefused` を追加**（entrypoint の rtk 2 本＋agy、`install_tools.go` の 6 本＝
+     chromium/CJK/Go/awscli/SMP）。単一起動内で一過性ブリップを自己修復し、Stop→Start を待たず
+     に済む。
    - **残る UX（ゲート非ブロック）**: (a) の CP 転写に加え、Console の起動オーバーレイへ
      agent.log を tail surface するダイアログは別タスク（より本格的な可視化）。
