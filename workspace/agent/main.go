@@ -39,6 +39,22 @@ func main() {
 		runInstallJDK(os.Args[2:])
 		return
 	}
+	// On-demand pinned installers (docs/35 §35.7.2): chromium+CJK font for the
+	// browser pane, the Go toolchain, and AWS CLI + Session Manager plugin for
+	// ssm sessions. Lean rootfs deployments install these into the home on first
+	// use; versions come from the versions.json pins. See install_tools.go.
+	if len(os.Args) > 1 && os.Args[1] == "install-chromium" {
+		runInstallChromium(os.Args[2:])
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "install-go" {
+		runInstallGo(os.Args[2:])
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "install-awscli" {
+		runInstallAWSCLI(os.Args[2:])
+		return
+	}
 	// claude hook helper: records session working/idle/question state.
 	if len(os.Args) > 1 && os.Args[1] == "session-status" {
 		runSessionStatusHook(os.Args[2:])

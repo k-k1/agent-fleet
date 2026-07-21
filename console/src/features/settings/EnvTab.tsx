@@ -73,6 +73,7 @@ export function EnvTab() {
     const next = {
       node: d.node || "",
       java: d.java || "",
+      go: d.go || "",
       timezone: d.timezone || "",
       ...patch,
     };
@@ -186,6 +187,7 @@ function Toolchains({ d, update, running }: { d: any; update: (patch: Record<str
   const tr = useT();
   const nodeOpts: string[] = d.node_options || ["system"];
   const javaOpts: string[] = d.java_available || [];
+  const goOpts: string[] = d.go_options || ["system"];
   const tz = d.timezone || "Asia/Tokyo";
   const tzOpts: string[] = d.tz_options && d.tz_options.length ? d.tz_options : [tz];
   const tzList = tzOpts.includes(tz) ? tzOpts : [tz, ...tzOpts];
@@ -212,6 +214,15 @@ function Toolchains({ d, update, running }: { d: any; update: (patch: Record<str
           {nodeOpts.map((v) => (
             <option key={v} value={v}>
               {v === "system" ? tr("env.node_default") : "v" + v}
+            </option>
+          ))}
+        </select>
+      </Row>
+      <Row label="Go (GOROOT)">
+        <select value={d.go || "system"} disabled={!running} onChange={(e) => update({ go: e.target.value })}>
+          {goOpts.map((v) => (
+            <option key={v} value={v}>
+              {v === "system" ? tr("env.go_default") : "go " + v}
             </option>
           ))}
         </select>

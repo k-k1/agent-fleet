@@ -289,7 +289,10 @@ ENV AGY_CLI_DISABLE_AUTO_UPDATE=1
 # BAKE ノブに関わらず常に全ピンを書き出す。
 # chromium_dl は playwright CDN 配布の Chromium build ピン（build 1228 =
 # Chromium 149.0.7827.55, playwright 1.61.0 同梱版。供給元の最終選定は §35.9-7(a)）。
+# noto_cjk は install-chromium が CJK フォントを取る notofonts/noto-cjk のタグピン
+# （lean rootfs のオンデマンド導入用 — docs/35 §35.7.2-4）。
 ARG CHROMIUM_DL_VERSION=1228
+ARG NOTO_CJK_VERSION=Sans2.004
 RUN set -eux; mkdir -p /usr/local/share/agent-fleet; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in \
@@ -297,9 +300,9 @@ RUN set -eux; mkdir -p /usr/local/share/agent-fleet; \
       arm64) agy_sha="${AGY_SHA256_ARM64}" ;; \
       *) agy_sha="" ;; \
     esac; \
-    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_sha256":"%s","copilot":"%s","rtk":"%s","go":"%s","gh":"%s","chromium":"%s","chromium_dl":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","awscli":"%s","session_manager_plugin":"%s"}\n' \
+    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_sha256":"%s","copilot":"%s","rtk":"%s","go":"%s","gh":"%s","chromium":"%s","chromium_dl":"%s","noto_cjk":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","awscli":"%s","session_manager_plugin":"%s"}\n' \
       "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$AGY_VERSION" "$agy_sha" "$COPILOT_VERSION" "$RTK_VERSION" "$GO_VERSION" "$GH_VERSION" "$CHROMIUM_VERSION" \
-      "$CHROMIUM_DL_VERSION" "$MCP_GRAFANA_VERSION" "$CLOUDWATCH_MCP_VERSION" "$AWSCLI_VERSION" "$SESSION_MANAGER_PLUGIN_VERSION" \
+      "$CHROMIUM_DL_VERSION" "$NOTO_CJK_VERSION" "$MCP_GRAFANA_VERSION" "$CLOUDWATCH_MCP_VERSION" "$AWSCLI_VERSION" "$SESSION_MANAGER_PLUGIN_VERSION" \
       > /usr/local/share/agent-fleet/versions.json
 
 # The baked claude is a root-owned npm-global install run as the non-root `dev`

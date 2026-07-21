@@ -92,7 +92,8 @@ if [ "${1:-}" = "--inner" ]; then
     for pair in "claude=$EXPECT_CLAUDE" "opencode=$EXPECT_OPENCODE" "codex=$EXPECT_CODEX" "copilot=$EXPECT_COPILOT" \
                 "agy=$EXPECT_AGY" "rtk=$EXPECT_RTK_VER" \
                 "go=$EXPECT_GO" "gh=$EXPECT_GH" "chromium=$EXPECT_CHROMIUM" \
-                "chromium_dl=$EXPECT_CHROMIUM_DL" "mcp_grafana=$EXPECT_MCP_GRAFANA" \
+                "chromium_dl=$EXPECT_CHROMIUM_DL" "noto_cjk=$EXPECT_NOTO_CJK" \
+                "mcp_grafana=$EXPECT_MCP_GRAFANA" \
                 "cloudwatch_mcp=$EXPECT_CLOUDWATCH_MCP" "awscli=$EXPECT_AWSCLI" \
                 "session_manager_plugin=$EXPECT_SMP"; do
       k="${pair%%=*}"; want="${pair#*=}"
@@ -222,6 +223,7 @@ EXPECT_GO="$(arg_pin GO_VERSION)"
 EXPECT_GH="$(arg_pin GH_VERSION)"
 EXPECT_CHROMIUM="$(arg_pin CHROMIUM_VERSION)"
 EXPECT_CHROMIUM_DL="$(arg_pin CHROMIUM_DL_VERSION)"
+EXPECT_NOTO_CJK="$(arg_pin NOTO_CJK_VERSION)"
 EXPECT_MCP_GRAFANA="$(arg_pin MCP_GRAFANA_VERSION)"
 EXPECT_CLOUDWATCH_MCP="$(arg_pin CLOUDWATCH_MCP_VERSION)"
 EXPECT_AWSCLI="$(arg_pin AWSCLI_VERSION)"
@@ -246,6 +248,7 @@ exec docker run --rm -i --init --network none --memory "$SMOKE_MEMORY" --cap-add
   -e EXPECT_GH="$EXPECT_GH" \
   -e EXPECT_CHROMIUM="$EXPECT_CHROMIUM" \
   -e EXPECT_CHROMIUM_DL="$EXPECT_CHROMIUM_DL" \
+  -e EXPECT_NOTO_CJK="$EXPECT_NOTO_CJK" \
   -e EXPECT_MCP_GRAFANA="$EXPECT_MCP_GRAFANA" \
   -e EXPECT_CLOUDWATCH_MCP="$EXPECT_CLOUDWATCH_MCP" \
   -e EXPECT_AWSCLI="$EXPECT_AWSCLI" \

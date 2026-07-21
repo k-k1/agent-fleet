@@ -379,10 +379,11 @@ fi
 # Console. We apply it HERE so the agent — and every tmux session it spawns —
 # inherits JAVA_HOME and the selected node on PATH.
 TOOLS="$HOME/.config/agent-fleet/toolchains.json"
-NODE_VER=""; JAVA_VER=""; TZ_VAL=""
+NODE_VER=""; JAVA_VER=""; GO_VER=""; TZ_VAL=""
 if [ -f "$TOOLS" ]; then
   NODE_VER=$(node -e 'try{process.stdout.write(String((require(process.argv[1]).node)||""))}catch{}' "$TOOLS" 2>/dev/null)
   JAVA_VER=$(node -e 'try{process.stdout.write(String((require(process.argv[1]).java)||""))}catch{}' "$TOOLS" 2>/dev/null)
+  GO_VER=$(node -e 'try{process.stdout.write(String((require(process.argv[1]).go)||""))}catch{}' "$TOOLS" 2>/dev/null)
   TZ_VAL=$(node -e 'try{process.stdout.write(String((require(process.argv[1]).timezone)||""))}catch{}' "$TOOLS" 2>/dev/null)
 fi
 
@@ -424,6 +425,30 @@ if [ -n "$JAVA_VER" ]; then
     echo "[entrypoint] JAVA_HOME=$JH"
   else
     echo "[entrypoint] WARN: temurin-$JAVA_VER-jdk unavailable"
+  fi
+fi
+
+# go: point GOROOT at the selected toolchain (docs/35 §35.7.2-5). The lean rootfs
+# bakes no /usr/local/go — `workspace-agent install-go` puts the pinned version
+# under the home volume (go.dev/dl keeps all past releases + sha256, verified).
+# "system"/empty keeps the baked go, if any. Soft-fail like the JDK path.
+if [ -n "$GO_VER" ] && [ "$GO_VER" != "system" ]; then
+  GOROOT_SEL="$HOME/.local/share/agent-fleet/go/$GO_VER"
+  if [ ! -x "$GOROOT_SEL/bin/go" ]; then
+    BAKED_GO_PIN=$(node -e 'try{process.stdout.write(String(require("/usr/local/share/agent-fleet/versions.json").go||""))}catch{}' 2>/dev/null)
+    if [ "$BAKED_GO_PIN" = "$GO_VER" ] && [ -x /usr/local/go/bin/go ]; then
+      GOROOT_SEL=/usr/local/go
+    else
+      echo "[entrypoint] go $GO_VER not present; installing into home volume ..."
+      workspace-agent install-go "$GO_VER" || echo "[entrypoint] WARN: install-go $GO_VER failed"
+    fi
+  fi
+  if [ -x "$GOROOT_SEL/bin/go" ]; then
+    export GOROOT="$GOROOT_SEL"
+    export PATH="$GOROOT_SEL/bin:$PATH"
+    echo "[entrypoint] GOROOT=$GOROOT_SEL"
+  else
+    echo "[entrypoint] WARN: go $GO_VER unavailable"
   fi
 fi
 
