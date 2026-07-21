@@ -1018,3 +1018,40 @@ VERSION=0.1.0 deploy/release/publish-dist.sh --seed
      に済む。
    - **残る UX（ゲート非ブロック）**: (a) の CP 転写に加え、Console の起動オーバーレイへ
      agent.log を tail surface するダイアログは別タスク（より本格的な可視化）。
+
+10. **claude セッションが入力を一切受け付けない（2026-07-21・ゲート k 中のユーザー実機報告
+    rootfs `4677f9f5a67d`／v0.1.1）→ 根本原因特定・是正済み**:
+    - **症状**: 素の WSL2 で claude セッションを起動すると、welcome TUI は正しく描画され、
+      起動直後の Trust 確認は Enter が通る。しかし**メインプロンプトに到達すると一切の入力が
+      通らない**（Console のミラー＝「反映待ち」のまま／ターミナル直打ちも不可）。**フレッシュな
+      セッション再作成でも 100% 再現**。
+    - **切り分け（ミラー/配線バグを棄却）**: tmux 実データで確認 — claude は正しいペイン
+      （`claude_san447u:%1` 等）に生存（node・State S・~18 threads＝健全）、端末フォアグラウンド
+      も claude（`tpgid == pgrp`）、Console クライアントも当該セッションに attach 済み。**にも
+      かかわらず raw `tmux send-keys` でも文字が着弾しない**（`INPUT=LOST`）。**同一 tmux ソケット
+      の bash セッションは入力が通る**＝ミラー配線・ルーティング・フォアグラウンド占有は全て無実で、
+      **claude プロセス自身が stdin を読んでいない**と確定。
+    - **引き金の観測**: 起動直後に orphan 化した `gh issue list -R anthropics/claude-code …`
+      （Claude Code の PR ステータス取得）が 15 分以上ハング（この WS は外向き回線制限＋gh 未認証・
+      フッターに `gh auth login for PR status`）。ただし gh を kill しても復旧せず＝gh 単体は主因では
+      なく、**「起動時の非必須ネットワーク呼び出しが回線制限でハングし、REPL の入力ループがそこで
+      アームされないまま止まる」**のが本質。
+    - **根本原因の実証**: 同じペイン（bash 入力は通っていた既知 good ペイン）で `claude` を素で
+      起動 → 同じく入力不能。**`DISABLE_AUTOUPDATER=1 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+      DISABLE_TELEMETRY=1 DISABLE_ERROR_REPORTING=1 claude` で起動 → 入力復活・`hi`→応答まで一往復
+      成功**（実機スクショで確認）。image ENV に既存の `DISABLE_AUTOUPDATER=1`（`workspace/Dockerfile`）
+      **だけでは不足**で、**非必須通信（テレメトリ/エラーレポート/サーベイ）の無効化が必須**と判明。
+    - **対処（この調査で実施）**: `workspace/Dockerfile` の `ENV DISABLE_AUTOUPDATER=1` 直後に
+      **`ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 / DISABLE_TELEMETRY=1 / DISABLE_ERROR_REPORTING=1`**
+      を追加。image ENV なので **native rootfs（`image-env.json` 経由）にも Docker/ECS にも**流れ、
+      全 claude セッション（管理下・手動とも）で恒久的に解消する。完全接続環境では単に非必須通信を
+      opt-out するだけで無害。**CLI 版ピン止め（§35 の設計・auto-update でピンが外れると困る）とも
+      整合**。
+    - **状態**: Dockerfile 修正は commit 済み。**管理下セッションでの一往復の再検証は次の rootfs
+      再ビルド／publish 後**（現行公開 rootfs `4677f9f5a67d` にはこの ENV が無いため）。根本原因は
+      実機で手動検証済み＝修正の有効性は確証済み。
+    - **副次（ゲート非ブロック・任意フォローアップ）**: TUI フッターに
+      `tmux focus-events off · add 'set -g focus-events on' to ~/.tmux.conf` のヒント。これは
+      フォーカス追跡＝**通知**用で入力ブロックの主因ではない。native 同梱 tmux 設定へ
+      `set -g focus-events on`＋（Shift+Enter/拡張キー向けに）`set -g allow-passthrough on` /
+      `set -s extended-keys on` を入れる改善は別途検討。

@@ -321,6 +321,20 @@ RUN set -eux; mkdir -p /usr/local/share/agent-fleet; \
 # DISABLE_UPDATES, so explicit `claude update`/`claude install` still work).
 ENV DISABLE_AUTOUPDATER=1
 
+# On a restricted / air-gapped network (the native WSL2 target is the common case:
+# limited outbound), Claude Code's startup NON-ESSENTIAL network calls (telemetry,
+# error reporting, feedback survey) can hang and wedge the REPL input loop: the TUI
+# renders fine and the Trust prompt still takes a keystroke, but once the session
+# reaches the main prompt it accepts NO input at all (verified on real WSL2 — gate k,
+# docs/35 §35.8.1). Disabling the optional traffic so the input loop is never gated on
+# an unreachable endpoint fully restores input. CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
+# is the umbrella switch; the explicit TELEMETRY / ERROR_REPORTING flags are
+# belt-and-suspenders across CLI versions. Harmless on a fully-connected network (it
+# just opts a self-hosted fleet out of optional traffic), so it applies to every target.
+ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
+    DISABLE_TELEMETRY=1 \
+    DISABLE_ERROR_REPORTING=1
+
 # Hand the npm-global tree to `dev` so an opted-in member can update the baked CLIs
 # (claude/opencode/codex) to latest IN PLACE at container start (entrypoint runs as
 # dev). Single-user container, so dev owning its own /usr/local node_modules is no
