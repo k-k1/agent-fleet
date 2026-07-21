@@ -32,13 +32,25 @@ func agentFleetShareDir() string {
 
 // --- chromium (browser pane) -------------------------------------------------
 
-// chromiumDLBases are the playwright CDN mirrors serving version-immutable
-// chromium builds, tried in order (docs/35 §35.9-7(a): final supplier check is a
-// P2 gate; all three serve the same build layout).
+// chromiumCFTBases serve linux-x64 chromium as version-immutable Chrome for
+// Testing zips, keyed by browser version (versions.json `chromium_cft`).
+// playwright 1.61 moved x64 off builds/chromium (which now only carries arm64)
+// — the P4 gate found the old x64 URL 404s on the bucket and 400s via PRSS
+// (docs/35 §35.9-7(a)). The two entry points are genuinely independent
+// (playwright's Azure edge vs Google's official CfT bucket).
+var chromiumCFTBases = []string{
+	"https://cdn.playwright.dev/builds/cft/%s/linux64/chrome-linux64.zip",
+	"https://storage.googleapis.com/chrome-for-testing-public/%s/linux64/chrome-linux64.zip",
+}
+
+// chromiumDLBases are the playwright CDN mirrors for the legacy builds/chromium
+// layout, still the supply for linux-arm64 (versions.json `chromium_dl` build
+// number). All dbazure entrances converge on PRSS, so the bucket-direct URL is
+// kept last as the one truly distinct fallback.
 var chromiumDLBases = []string{
 	"https://cdn.playwright.dev/dbazure/download/playwright/builds/chromium/%s/%s",
-	"https://playwright.azureedge.net/builds/chromium/%s/%s",
 	"https://playwright.download.prss.microsoft.com/dbazure/download/playwright/builds/chromium/%s/%s",
+	"https://cdn.playwright.dev/builds/chromium/%s/%s",
 }
 
 // notoCJKURL is the pinned Noto Sans CJK variable-font OTC (Japanese coverage for
@@ -52,42 +64,71 @@ func chromiumPinRoot(pin string) string {
 	return filepath.Join(agentFleetShareDir(), "chromium", pin)
 }
 
+// chromiumZipSubdirs are the top-level dirs the supported zips extract to:
+// chrome-linux64 (Chrome for Testing, x64) and the legacy playwright layouts.
+var chromiumZipSubdirs = []string{"chrome-linux64", "chrome-linux", "chrome-linux-arm64"}
+
+// chromeUnderDir returns the chrome executable under one pin dir, or "".
+func chromeUnderDir(dir string) string {
+	for _, sub := range chromiumZipSubdirs {
+		p := filepath.Join(dir, sub, "chrome")
+		if st, err := os.Stat(p); err == nil && st.Mode()&0111 != 0 {
+			return p
+		}
+	}
+	return ""
+}
+
+// chromiumDefaultPin picks the pin for this arch: x64 downloads Chrome for
+// Testing by browser version, arm64 the legacy playwright build number.
+func chromiumDefaultPin() string {
+	pins := readBuildPins()
+	if runtime.GOARCH == "arm64" {
+		return pins["chromium_dl"]
+	}
+	return pins["chromium_cft"]
+}
+
 // chromiumPinnedBinary resolves the pane's pinned chromium executable, or ""
 // when not installed. With no pin recorded (dev build without versions.json) the
 // newest installed build is used.
 func chromiumPinnedBinary() string {
 	root := filepath.Join(agentFleetShareDir(), "chromium")
 	dirs := []string{}
-	if pin := readBuildPins()["chromium_dl"]; pin != "" {
-		dirs = append(dirs, filepath.Join(root, pin))
-	} else if m, _ := filepath.Glob(filepath.Join(root, "*")); len(m) > 0 {
-		sort.Strings(m)
-		for i := len(m) - 1; i >= 0; i-- {
-			dirs = append(dirs, m[i])
+	pins := readBuildPins()
+	for _, key := range []string{"chromium_cft", "chromium_dl"} {
+		if pin := pins[key]; pin != "" {
+			dirs = append(dirs, filepath.Join(root, pin))
+		}
+	}
+	if len(dirs) == 0 {
+		if m, _ := filepath.Glob(filepath.Join(root, "*")); len(m) > 0 {
+			sort.Strings(m)
+			for i := len(m) - 1; i >= 0; i-- {
+				dirs = append(dirs, m[i])
+			}
 		}
 	}
 	for _, dir := range dirs {
-		for _, sub := range []string{"chrome-linux", "chrome-linux-arm64"} {
-			p := filepath.Join(dir, sub, "chrome")
-			if st, err := os.Stat(p); err == nil && st.Mode()&0111 != 0 {
-				return p
-			}
+		if p := chromeUnderDir(dir); p != "" {
+			return p
 		}
 	}
 	return ""
 }
 
-// runInstallChromium handles `workspace-agent install-chromium [<build>]`:
-// downloads the pinned playwright chromium build into the per-user pin dir and
+// runInstallChromium handles `workspace-agent install-chromium [<pin>]`:
+// downloads the pinned chromium build (x64 = Chrome for Testing browser
+// version, arm64 = playwright build number) into the per-user pin dir and
 // installs the pinned Noto CJK font into ~/.local/share/fonts (fontconfig user
 // dir). Font failure is a warning — the pane works, CJK rendering degrades.
 func runInstallChromium(args []string) {
-	pin := readBuildPins()["chromium_dl"]
+	pin := chromiumDefaultPin()
 	if len(args) > 0 && args[0] != "" {
 		pin = args[0]
 	}
 	if pin == "" {
-		fmt.Fprintln(os.Stderr, "[install-chromium] no chromium_dl pin in versions.json (pass a build number explicitly)")
+		fmt.Fprintln(os.Stderr, "[install-chromium] no chromium pin in versions.json (pass a version explicitly)")
 		os.Exit(2)
 	}
 	if err := installChromium(pin); err != nil {
@@ -98,14 +139,22 @@ func runInstallChromium(args []string) {
 
 func installChromium(pin string) error {
 	dest := chromiumPinRoot(pin)
-	if _, err := os.Stat(filepath.Join(dest, "chrome-linux", "chrome")); err == nil {
+	if chromeUnderDir(dest) != "" {
 		fmt.Fprintf(os.Stderr, "[install-chromium] build %s already installed at %s\n", pin, dest)
 		installNotoCJK() // font may still be missing (e.g. interrupted earlier run)
 		return nil
 	}
-	asset := "chromium-linux.zip"
+	// x64 = Chrome for Testing keyed by browser version; arm64 = legacy
+	// playwright builds/chromium keyed by build number (see the base lists).
+	var urls []string
 	if runtime.GOARCH == "arm64" {
-		asset = "chromium-linux-arm64.zip"
+		for _, base := range chromiumDLBases {
+			urls = append(urls, fmt.Sprintf(base, pin, "chromium-linux-arm64.zip"))
+		}
+	} else {
+		for _, base := range chromiumCFTBases {
+			urls = append(urls, fmt.Sprintf(base, pin))
+		}
 	}
 	root := filepath.Dir(dest)
 	if err := os.MkdirAll(root, 0o755); err != nil {
@@ -115,8 +164,7 @@ func installChromium(pin string) error {
 	defer os.Remove(zipPath)
 	var lastErr error
 	ok := false
-	for _, base := range chromiumDLBases {
-		url := fmt.Sprintf(base, pin, asset)
+	for _, url := range urls {
 		fmt.Fprintf(os.Stderr, "[install-chromium] downloading build %s (%s) ...\n", pin, url)
 		if err := runCmd("curl", "-fsSL", "-o", zipPath, url); err != nil {
 			lastErr = fmt.Errorf("download %s: %w", url, err)
@@ -138,14 +186,7 @@ func installChromium(pin string) error {
 	}
 	// The zip lays out chrome-linux[-arm64]/chrome; require the binary before the
 	// atomic swap so a truncated archive never becomes the pin dir.
-	found := false
-	for _, sub := range []string{"chrome-linux", "chrome-linux-arm64"} {
-		if _, err := os.Stat(filepath.Join(staging, sub, "chrome")); err == nil {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if chromeUnderDir(staging) == "" {
 		return fmt.Errorf("extracted archive has no chrome binary")
 	}
 	if err := os.RemoveAll(dest); err != nil {

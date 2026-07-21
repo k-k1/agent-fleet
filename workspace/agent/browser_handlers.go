@@ -37,15 +37,15 @@ var chromiumInstallState struct {
 }
 
 // ensureChromiumForPane checks the pane's chromium is resolvable and, when it
-// is absent but a chromium_dl pin exists, kicks the pinned install once in the
-// background. Returns (installing, err): installing=true → tell the viewer to
-// wait; err != nil → the previous install attempt failed (surfaced once, then
-// cleared so the next create retries).
+// is absent but a chromium pin exists for this arch, kicks the pinned install
+// once in the background. Returns (installing, err): installing=true → tell the
+// viewer to wait; err != nil → the previous install attempt failed (surfaced
+// once, then cleared so the next create retries).
 func ensureChromiumForPane() (bool, error) {
 	if _, err := findChromiumBinary(); err == nil {
 		return false, nil
 	}
-	pin := readBuildPins()["chromium_dl"]
+	pin := chromiumDefaultPin()
 	if pin == "" {
 		return false, nil // nothing to install — let Create fail the normal way
 	}

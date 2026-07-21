@@ -92,6 +92,7 @@ if [ "${1:-}" = "--inner" ]; then
     for pair in "claude=$EXPECT_CLAUDE" "opencode=$EXPECT_OPENCODE" "codex=$EXPECT_CODEX" "copilot=$EXPECT_COPILOT" \
                 "agy=$EXPECT_AGY" "rtk=$EXPECT_RTK_VER" \
                 "go=$EXPECT_GO" "gh=$EXPECT_GH" "chromium=$EXPECT_CHROMIUM" \
+                "chromium_cft=$EXPECT_CHROMIUM_CFT" \
                 "chromium_dl=$EXPECT_CHROMIUM_DL" "noto_cjk=$EXPECT_NOTO_CJK" \
                 "mcp_grafana=$EXPECT_MCP_GRAFANA" \
                 "cloudwatch_mcp=$EXPECT_CLOUDWATCH_MCP" "awscli=$EXPECT_AWSCLI" \
@@ -222,6 +223,7 @@ EXPECT_RTK_VER="$(arg_pin RTK_VERSION)"
 EXPECT_GO="$(arg_pin GO_VERSION)"
 EXPECT_GH="$(arg_pin GH_VERSION)"
 EXPECT_CHROMIUM="$(arg_pin CHROMIUM_VERSION)"
+EXPECT_CHROMIUM_CFT="$(arg_pin CHROMIUM_CFT_VERSION)"
 EXPECT_CHROMIUM_DL="$(arg_pin CHROMIUM_DL_VERSION)"
 EXPECT_NOTO_CJK="$(arg_pin NOTO_CJK_VERSION)"
 EXPECT_MCP_GRAFANA="$(arg_pin MCP_GRAFANA_VERSION)"
@@ -247,6 +249,7 @@ exec docker run --rm -i --init --network none --memory "$SMOKE_MEMORY" --cap-add
   -e EXPECT_GO="$EXPECT_GO" \
   -e EXPECT_GH="$EXPECT_GH" \
   -e EXPECT_CHROMIUM="$EXPECT_CHROMIUM" \
+  -e EXPECT_CHROMIUM_CFT="$EXPECT_CHROMIUM_CFT" \
   -e EXPECT_CHROMIUM_DL="$EXPECT_CHROMIUM_DL" \
   -e EXPECT_NOTO_CJK="$EXPECT_NOTO_CJK" \
   -e EXPECT_MCP_GRAFANA="$EXPECT_MCP_GRAFANA" \

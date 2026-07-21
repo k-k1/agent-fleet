@@ -742,8 +742,10 @@ P4 = 検証ゲートの残り（§35.8）と配布チャネル（§35.4.2）の�
 コンテナであり素の WSL2 実機ではないため、P4 は二分する:
 **①実機なしで完結する実装**（dist repo publish 一式・CI での代替/実測検証）と、
 **②実機でしか測れない項目のチェックリスト化**（ユーザー実施 — §35.8.1）。
-chromium CDN の実 DL は「この Workspace の回線では cdn.playwright.dev すら PRSS へ
-307 → 400 で落ちる」ことを再確認済みのため、**実測地点は hosted CI の回線**とする。
+chromium CDN の実 DL 検証は dist-gate（CI）に置く。※着手時は「この WS の回線では
+PRSS が 400」を再確認して CI を実測地点にしたが、ゲート初回実走で真因は回線ではなく
+**「x64 アセットが供給元から消えていた」**と判明した（§35.9-7(a) 参照 — P1 以来の
+「別回線で確認」は誤診で、amd64 の install-chromium は全環境で壊れていた）。
 
 | # | 対象 | 変更内容 |
 |---|---|---|
@@ -805,7 +807,7 @@ systemctl --user is-system-running || true   # systemd 有効か（常駐化検�
 手順 5 の sandbox 実測コマンド（ワークスペース内ターミナルで）:
 
 ```bash
-c="$(ls -d ~/.local/share/agent-fleet/chromium/*/chrome-linux/chrome | head -1)"
+c="$(ls -d ~/.local/share/agent-fleet/chromium/*/chrome-linux*/chrome | head -1)"
 "$c" --headless=new --disable-gpu --dump-dom about:blank | head -3
 ```
 
@@ -867,18 +869,30 @@ VERSION=0.1.0 deploy/release/publish-dist.sh --seed
 6. **native の arm64 rootfs**: 需要待ち。dist repo に source を置かない決定（§35.4.2）に
    より公開 repo の無料 arm ランナーは使えない — 出す時は private repo の arm ランナー
    （$0.005/分）か arm 実機でビルド。
-7. **オンデマンド供給元の実装確認**（P2→P4）: (a) chromium の DL 供給元最終選定
-   （playwright CDN を第一候補に、版不変 URL・arm64 供給・レイアウト互換で比較確認）
-   → **P4 で CI 実測に置換**（dist-gate: ピン build のフル DL + zip レイアウト検証 +
-   fallback の同一物確認）。**発見（2026-07-21）**: 3 候補ホストは全て
-   `playwright.download.prss.microsoft.com` へ**リダイレクトで収束** = fallback は実質
-   同一オリジンの別入口であり、PRSS がクライアント回線を拒否する環境（この開発 WS が
-   実例 — UA 非依存の 400）では 3 つとも落ちる。その場合の逃げ道は「別回線で取得して持ち込む」
-   = `af start --rootfs` と同様の手渡し（install-chromium への `--from <zip>` 追加を
-   将来課題とする）。(b) bwrap 配下での chromium sandbox 実測
-   （namespace sandbox が通るか。不可なら `--no-sandbox` + localhost 限定の割り切りを
-   README 化）→ **§35.8.1 チェックリスト手順 5 に凍結**（ユーザー実施）。(c) awscli の
-   versioned zip / SMP の versioned deb URL と root なし展開（`dpkg-deb -x` 相当）の確認。
+7. **オンデマンド供給元の実装確認**（P2→P4）: (a) chromium の DL 供給元最終選定 →
+   **P4 ゲート実走で確定（2026-07-21）**。経緯と真相:
+   - P1 の「この WS からは PRSS CDN が 400 → 実機/別回線で確認」は**誤診**だった。
+     PRSS は不存在オブジェクトに（404 でなく）400 を返す仕様で、実在するアセット
+     （arm64 zip）はこの WS からも 200 で引ける。回線は最初から問題ではない。
+   - 真因: **playwright 1.61 は linux-x64 の chromium を `builds/chromium/<build>/`
+     から Chrome for Testing（CfT）配布へ移行済み**（playwright-core 1.61.0 の
+     DOWNLOAD_PATHS を実物で確認 — x64 は `cftUrl("linux64/chrome-linux64.zip")`、
+     旧レイアウトに残るのは arm64 のみ）。つまり P2 が凍結した 3 ホスト×
+     `chromium-linux.zip` は **amd64 では実体が存在せず**（バケット直 404・PRSS 400）、
+     install-chromium は全環境で失敗する状態だった。CI に出した実 DL ゲートの
+     初回失敗がこれを検出した。
+   - 修正（P4）: amd64 は **`chromium_cft` ピン（browser version = 149.0.7827.55）**
+     新設で CfT 2 経路（`cdn.playwright.dev/builds/cft/…` と Google 公式
+     `storage.googleapis.com/chrome-for-testing-public/…` — 真に独立な 2 オリジン）、
+     zip レイアウトは `chrome-linux64/chrome`。arm64 は従来の `chromium_dl`（build
+     番号）のまま dbazure 2 経路＋バケット直を fallback に追加（PRSS 200 実証済み）。
+     dist-gate が毎回「フル DL + レイアウト + 2 経路同一物」を実測する。
+   - なお dbazure 系入口（cdn.playwright.dev/dbazure・azureedge）は全て PRSS へ
+     リダイレクト収束する = 冗長化になっていなかった（azureedge は候補から削除）。
+   (b) bwrap 配下での chromium sandbox 実測（namespace sandbox が通るか。不可なら
+   `--no-sandbox` + localhost 限定の割り切りを README 化）→ **§35.8.1 チェックリスト
+   手順 5 に凍結**（ユーザー実施）。(c) awscli の versioned zip / SMP の versioned deb
+   URL と root なし展開（`dpkg-deb -x` 相当）の確認。
 8. **ライセンス見解の確度（配布開始前ゲート）**: §35.4.1 は npm registry / GitHub API の
    license 表示による一次調査。配布開始前に claude / agy / copilot の利用規約本文（再配布・社内限定
    配布の条項）を読んで確定させる（規約側が許すなら焼き込み配布へ戻す選択肢が復活する）。

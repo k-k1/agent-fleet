@@ -300,21 +300,29 @@ jobs:
       - name: chromium CDN real download (pinned build)
         run: |
           set -eux
+          # amd64 = Chrome for Testing（chromium_cft ピン = browser version。playwright
+          # 1.61 で x64 は builds/chromium から CfT へ移行 — 旧 URL はバケット 404/PRSS 400）
+          CFT="$(sed -n 's/^ARG CHROMIUM_CFT_VERSION=\(.*\)$/\1/p' workspace/Dockerfile)"
+          test -n "$CFT"
+          U1="https://cdn.playwright.dev/builds/cft/$CFT/linux64/chrome-linux64.zip"
+          U2="https://storage.googleapis.com/chrome-for-testing-public/$CFT/linux64/chrome-linux64.zip"
+          # 第一経路: フル DL → zip 健全性・chrome 実体（install-chromium が期待する
+          # レイアウト chrome-linux64/chrome）を確認
+          curl -fSL --retry 3 -o /tmp/c1.zip "$U1"
+          unzip -l /tmp/c1.zip | grep -q 'chrome-linux64/chrome$'
+          head -c 1024 /tmp/c1.zip > /tmp/c1.head
+          # 第二経路（Google 公式 CfT バケット直 = 真に独立な fallback）: ranged GET が
+          # 通り、先頭 1KiB が第一経路と同一物であること
+          curl -fsSL --retry 3 -r 0-1023 -o /tmp/c2.head "$U2"
+          cmp /tmp/c1.head /tmp/c2.head
+          # arm64（chromium_dl ピン = 旧 builds/chromium レイアウト）: 3 経路の存在確認
           PIN="$(sed -n 's/^ARG CHROMIUM_DL_VERSION=\(.*\)$/\1/p' workspace/Dockerfile)"
           test -n "$PIN"
-          Z=chromium-linux.zip
-          H1="https://cdn.playwright.dev/dbazure/download/playwright/builds/chromium/$PIN/$Z"
-          H2="https://playwright.azureedge.net/builds/chromium/$PIN/$Z"
-          H3="https://playwright.download.prss.microsoft.com/dbazure/download/playwright/builds/chromium/$PIN/$Z"
-          # 第一ホスト: フル DL → zip 健全性・chrome 実体（install-chromium が期待する
-          # レイアウト chrome-linux/chrome）を確認
-          curl -fSL --retry 3 -o /tmp/c1.zip "$H1"
-          unzip -l /tmp/c1.zip | grep -q 'chrome-linux/chrome$'
-          head -c 1024 /tmp/c1.zip > /tmp/c1.head
-          # fallback 2 ホスト: ranged GET が通り、先頭 1KiB が第一ホストと同一物であること
-          for u in "$H2" "$H3"; do
-            curl -fsSL --retry 3 -r 0-1023 -o /tmp/ch.head "$u"
-            cmp /tmp/c1.head /tmp/ch.head
+          Z=chromium-linux-arm64.zip
+          for u in "https://cdn.playwright.dev/dbazure/download/playwright/builds/chromium/$PIN/$Z" \
+                   "https://playwright.download.prss.microsoft.com/dbazure/download/playwright/builds/chromium/$PIN/$Z" \
+                   "https://cdn.playwright.dev/builds/chromium/$PIN/$Z"; do
+            curl -fsSL --retry 3 -r 0-1023 -o /dev/null "$u"
           done
           # CJK フォント（noto_cjk ピン）の raw URL 疎通
           NOTO="$(sed -n 's/^ARG NOTO_CJK_VERSION=\(.*\)$/\1/p' workspace/Dockerfile)"

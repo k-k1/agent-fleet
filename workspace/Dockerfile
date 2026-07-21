@@ -287,10 +287,13 @@ ENV AGY_CLI_DISABLE_AUTO_UPDATE=1
 # lean variant（BAKE_AGENT_CLIS=0 / BAKE_OPTIONAL_TOOLS=0）では entrypoint の
 # boot-install とオンデマンド導入（P2）がこのピンを取得版として使う（docs/35 §35.4.1）。
 # BAKE ノブに関わらず常に全ピンを書き出す。
-# chromium_dl は playwright CDN 配布の Chromium build ピン（build 1228 =
-# Chromium 149.0.7827.55, playwright 1.61.0 同梱版。供給元の最終選定は §35.9-7(a)）。
+# chromium_cft は amd64 のオンデマンド chromium ピン = Chrome for Testing の
+# browser version（playwright 1.61 同梱 build 1228 と同一実体。playwright は 1.61 で
+# x64 を builds/chromium から CfT 配布へ移行済み — docs/35 §35.9-7(a) の P4 実測）。
+# chromium_dl は arm64 が使う旧 builds/chromium レイアウトの build 番号ピン。
 # noto_cjk は install-chromium が CJK フォントを取る notofonts/noto-cjk のタグピン
 # （lean rootfs のオンデマンド導入用 — docs/35 §35.7.2-4）。
+ARG CHROMIUM_CFT_VERSION=149.0.7827.55
 ARG CHROMIUM_DL_VERSION=1228
 ARG NOTO_CJK_VERSION=Sans2.004
 # bind マウントポイントを rootfs に焼く: docker は -v 先のディレクトリを実行時に自動
@@ -304,9 +307,9 @@ RUN set -eux; mkdir -p /usr/local/share/agent-fleet; \
       arm64) agy_sha="${AGY_SHA256_ARM64}" ;; \
       *) agy_sha="" ;; \
     esac; \
-    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_sha256":"%s","copilot":"%s","rtk":"%s","go":"%s","gh":"%s","chromium":"%s","chromium_dl":"%s","noto_cjk":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","awscli":"%s","session_manager_plugin":"%s"}\n' \
+    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_sha256":"%s","copilot":"%s","rtk":"%s","go":"%s","gh":"%s","chromium":"%s","chromium_cft":"%s","chromium_dl":"%s","noto_cjk":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","awscli":"%s","session_manager_plugin":"%s"}\n' \
       "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$AGY_VERSION" "$agy_sha" "$COPILOT_VERSION" "$RTK_VERSION" "$GO_VERSION" "$GH_VERSION" "$CHROMIUM_VERSION" \
-      "$CHROMIUM_DL_VERSION" "$NOTO_CJK_VERSION" "$MCP_GRAFANA_VERSION" "$CLOUDWATCH_MCP_VERSION" "$AWSCLI_VERSION" "$SESSION_MANAGER_PLUGIN_VERSION" \
+      "$CHROMIUM_CFT_VERSION" "$CHROMIUM_DL_VERSION" "$NOTO_CJK_VERSION" "$MCP_GRAFANA_VERSION" "$CLOUDWATCH_MCP_VERSION" "$AWSCLI_VERSION" "$SESSION_MANAGER_PLUGIN_VERSION" \
       > /usr/local/share/agent-fleet/versions.json
 
 # The baked claude is a root-owned npm-global install run as the non-root `dev`
