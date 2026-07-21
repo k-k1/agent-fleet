@@ -20,7 +20,7 @@ aws cloudformation deploy \
   --stack-name agent-fleet-test \
   --template-file cfn.yaml \
   --parameter-overrides \
-      HostedZoneName=<domain>. \
+      HostedZoneName=example.com. \
       Fqdn=af.example.com \
       SSHLocation=<your-ip>/32 \
       PublicKey="$(cat agent-fleet-test-key.pub)"
@@ -35,7 +35,7 @@ aws cloudformation describe-stacks --stack-name agent-fleet-test \
 > servers). If the domain lives at another DNS provider, either add the A record
 > there instead, or skip DNS entirely and use **sslip.io** on the Elastic IP:
 > set `Fqdn` / `PUBLIC_DOMAIN` to `<dash-ip>.sslip.io` (e.g.
-> `57-182-130-33.sslip.io`) — it resolves to the IP with zero setup and still
+> `203-0-113-7.sslip.io`) — it resolves to the IP with zero setup and still
 > gets a real Let's Encrypt cert.
 
 Minimal IAM for the deploying user: EC2 + Route53 + CloudFormation (no SSM write,
