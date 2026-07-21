@@ -111,8 +111,16 @@ func main() {
 			log.Fatalf("open postgres: %v", err)
 		}
 		log.Printf("metadata store: postgres")
-	} else if store, err = openSQLite(dbPath); err != nil {
-		log.Fatalf("open db %s: %v", dbPath, err)
+	} else {
+		// 初回起動でも素で立ち上がるよう DB の親ディレクトリは自作する（docs/35 P1
+		// ゲートで露見: WS_DATA 未作成の素のコンテナ/native 初回起動だと sqlite が
+		// ファイルを作れず即死していた。実デプロイはマウント済み dir で不発だった）。
+		if mkerr := os.MkdirAll(filepath.Dir(dbPath), 0o755); mkerr != nil {
+			log.Printf("WARN: create db dir %s: %v", filepath.Dir(dbPath), mkerr)
+		}
+		if store, err = openSQLite(dbPath); err != nil {
+			log.Fatalf("open db %s: %v", dbPath, err)
+		}
 	}
 	ctx := context.Background()
 	if err := store.migrate(ctx); err != nil {
