@@ -1,0 +1,135 @@
+# P1 リリースゲート（docs/35 §35.7.1）: 配布成果物 A+B+D の生成と lean variant の
+# boot-install、既定（全焼き込み）ビルドの無影響を hosted runner で実走検証する。
+#
+# 開発 Workspace には docker が無く、dev ホストでの重ビルドは稼働フリートの OOM リスク
+# があるため（共有ホスト・メモリ制約）、イメージ実ビルドを要するこのゲートだけ
+# hosted CI に出す。課金抑制のため常時トリガーにはしない: この workflow ファイル自身を
+# 変更した push（= 意図的な起動）と、develop/main に載った後の workflow_dispatch のみ。
+# 再実行は `gh run rerun <id>`。
+name: release-gate
+
+on:
+  push:
+    branches: [feat/packaging]
+    paths: ['.github/workflows/release-gate.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: release-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  VERSION: 0.0.0-ci
+
+jobs:
+  # ゲート (a)+(b): release パスで A+B+D を生成し、lean B（BAKE_AGENT_CLIS=0）の
+  # 内容検証（e2e-smoke lean モード）と boot-install のライブ実走まで行う。
+  # 「セッションが動く」の完全形（実 CP + 実認証）はホスト側フリートでの確認事項。
+  compose-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build release artifacts (A+B+D)
+        run: VERSION=$VERSION deploy/release/build.sh --compose
+
+      - name: assert artifacts + bundle contents
+        run: |
+          set -eux
+          cd deploy/release/dist
+          test -f "agent-fleet-$VERSION.tar.gz"          # A
+          test -f "agent-fleet-images-$VERSION.tar.gz"   # B
+          test -f SHA256SUMS                             # D
+          sha256sum -c SHA256SUMS
+          # A に aws/ 一式・NOTICE が同梱され、.env.example が VERSION にピンされていること
+          tar tzf "agent-fleet-$VERSION.tar.gz" | grep -q "^agent-fleet-$VERSION/aws/ecs/cfn/30-ingress.yaml$"
+          tar tzf "agent-fleet-$VERSION.tar.gz" | grep -q "^agent-fleet-$VERSION/aws/ec2-single/cfn.yaml$"
+          tar tzf "agent-fleet-$VERSION.tar.gz" | grep -q "^agent-fleet-$VERSION/NOTICE$"
+          tar xzf "agent-fleet-$VERSION.tar.gz" "agent-fleet-$VERSION/.env.example" -O | grep -q "^VERSION=$VERSION$"
+          # 鍵類（gitignore 対象）が紛れていないこと
+          ! tar tzf "agent-fleet-$VERSION.tar.gz" | grep -E '(-key|\.pem)$'
+
+      - name: assert CP image (docs denylist + /api/version stamp)
+        run: |
+          set -eux
+          # 配布 variant の CP は internal denylist（docs/.distignore）適用済みの docs を焼く
+          docker run --rm --entrypoint /bin/sh "agent-fleet/control-plane:$VERSION" -c '
+            set -e
+            d=/usr/local/share/agent-fleet/docs
+            test -f "$d/35-packaging.md" && test -d "$d/dev" && test -d "$d/guide"
+            test ! -e "$d/HANDOFF.md" && test ! -e "$d/CHANGELOG-handoff.md"
+            test ! -e "$d/talk" && test ! -e "$d/history"'
+          # 版刻印: 起動して認証配下 /api/version が VERSION を返す（AUTH=dev はゲートなし）
+          docker run -d --name cp-gate -p 8099:8099 -e CP_ADDR=:8099 -e WS_DATA=/tmp/af-data \
+            "agent-fleet/control-plane:$VERSION"
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8099/healthz 2>/dev/null | grep -qx ok && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8099/healthz | grep -qx ok
+          curl -fsS http://127.0.0.1:8099/api/version | grep -F "\"version\":\"$VERSION\""
+          docker logs cp-gate 2>&1 | grep -F "control-plane $VERSION on"
+          docker rm -f cp-gate
+
+      - name: assert workspace-agent version stamp (lean B)
+        run: |
+          set -eux
+          out="$(docker run --rm --entrypoint /bin/bash "agent-fleet/workspace:$VERSION" \
+            -c 'timeout 10 workspace-agent 2>&1 || true')"
+          echo "$out" | grep -F "workspace-agent $VERSION listening"
+
+      - name: free disk (drop dist tars)
+        run: rm -rf deploy/release/dist
+
+      - name: e2e-smoke (lean mode)
+        run: EXPECT_AGENT_CLIS=0 deploy/local/e2e-smoke.sh "agent-fleet/workspace:$VERSION"
+
+      - name: boot-install live run (lean B)
+        timeout-minutes: 15
+        run: |
+          # entrypoint（コンテナ起動時に実行）が versions.json のピン版を ~/.local へ
+          # boot-install してから bash が検証する。ネット有り（npm / GitHub Releases）。
+          docker run --rm "agent-fleet/workspace:$VERSION" /bin/bash -lc '
+            set -e
+            pin() { node -e "process.stdout.write(String(require(\"/usr/local/share/agent-fleet/versions.json\")[process.argv[1]]||\"\"))" "$1"; }
+            for c in claude opencode codex copilot; do
+              test -e "$HOME/.local/bin/$c" || { echo "NG: $c not boot-installed"; exit 1; }
+              v="$("$c" --version 2>/dev/null | grep -oE "[0-9]+\.[0-9]+\.[0-9]+" | head -1)"
+              test "$v" = "$(pin "$c")" || { echo "NG: $c effective $v != pin $(pin "$c")"; exit 1; }
+              echo "ok  $c $v (pinned)"
+            done
+            test -x "$HOME/.local/bin/rtk"
+            rv="$(rtk --version 2>/dev/null | grep -oE "[0-9]+\.[0-9]+\.[0-9]+" | head -1)"
+            test "$rv" = "$(pin rtk)" || { echo "NG: rtk $rv != pin $(pin rtk)"; exit 1; }
+            echo "ok  rtk $rv (pinned)"
+            test -x "$HOME/.local/bin/agy" || { echo "NG: agy not boot-installed"; exit 1; }
+            test "$(cat "$HOME/.local/bin/.agy.version")" = "$(pin agy)" || { echo "NG: agy marker"; exit 1; }
+            if grep -qw rdrand /proc/cpuinfo; then
+              agy --version && echo "ok  agy $(pin agy) (--version ran)"
+            else
+              echo "ok  agy binary present (no rdrand on runner; --version skipped)"
+            fi
+            echo "== boot-install gate OK =="'
+
+  # ゲート (c): 既定 ARG（全焼き込み）のビルドと e2e-smoke が無変更で通ること
+  # （既存デプロイに影響ゼロ）。CP も既定 DOCS_SRC（全ツリー docs）で焼けること。
+  default-image-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build workspace image (default = full bake)
+        run: docker build -t agent-fleet/workspace:ci-default workspace
+
+      - name: e2e-smoke (default)
+        run: deploy/local/e2e-smoke.sh agent-fleet/workspace:ci-default
+
+      - name: build CP image (default DOCS_SRC = full docs tree)
+        run: |
+          set -eux
+          docker build -f control-plane/Dockerfile -t agent-fleet/control-plane:ci-default .
+          # 自社ビルドは従来どおり全ツリー（HANDOFF が残っていること = denylist は配布時のみ）
+          docker run --rm --entrypoint /bin/sh agent-fleet/control-plane:ci-default -c '
+            test -f /usr/local/share/agent-fleet/docs/HANDOFF.md'
