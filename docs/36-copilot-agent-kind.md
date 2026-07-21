@@ -1,6 +1,7 @@
 # 36. `kind=copilot`（GitHub Copilot CLI）実装計画 — Terminal + Managed 両対応
 
-- 状態: **採用決定・計画**（2026-07-21）。事前調査・実バイナリ実測は本ドキュメント末尾 §実測記録。
+- 状態: **実装済み**（2026-07-21 計画・同日実装完了。全トラック✅、実 CLI 契約テスト通過）。
+  採用判断は [decisions/0019](decisions/0019-copilot-agent-kind.md)。事前調査・実バイナリ実測は本ドキュメント末尾 §実測記録。
 - ゴール: `copilot`（GitHub Copilot CLI, npm `@github/copilot`）を第5のエージェント種別として組み込む。
   **agy と異なり v1 から Managed driver（既定）＋ Terminal (CLI) の両対応**とする。
 - 根拠: Copilot CLI v1.0.73（2026-02 GA）は `--acp`（Agent Client Protocol, JSON-RPC over stdio）・
@@ -10,13 +11,17 @@
 
 ## 先に固定する契約
 
-**認証は GitHub 連携相乗り型**（claude/codex 型の専用フローなし）:
+**認証は GitHub 連携相乗り型**（claude/codex 型の専用フローなし）。**順序は
+git プロバイダの GitHub 連携が先**で、それが唯一の認証源 — copilot 側に独立した
+ログインは無く、`copilot.connected` は GitHub 連携の導出値（切断も GitHub 側に連動、
+Copilot カードは状態表示＋起動既定のみ）:
 
 | 項目 | 決定 |
 |---|---|
 | トークン供給 | `BuildLaunch`／managed 子プロセス起動時に `COPILOT_GITHUB_TOKEN="$(gh auth token)"` を注入（gh 透過認証ラッパー経由の gho_ OAuth。Copilot CLI は gh CLI アプリのトークンを公式サポート） |
 | `GET /connections` の `copilot` | `connected` = `gh auth token` 成功（＝GitHub 連携済み）。専用 start/complete/DELETE ルートは**作らない**（GitHub 連携の従属） |
 | 前提 | ユーザーの GitHub アカウントに Copilot サブスク（Free 枠含む）が必要。未サブスクは初回ターンでエラー表面化（カードに注記） |
+| 注意 | Copilot CLI が受けるのは gh/Copilot CLI アプリの OAuth と fine-grained PAT（Copilot Requests 権限）のみ — **classic PAT（ghp_）非対応**。フリートの GitHub OAuth は gho_ を作るため通常は非該当だが、PAT 手動登録の GitHub 連携では「カード接続済みなのに copilot だけ認証エラー」があり得る（必要になったら Status にトークン種別検査を足す） |
 
 **launch 契約**（TUI・managed 共通のセッション同一性）:
 
@@ -60,7 +65,7 @@
 
 ## トラック分割
 
-### Track A — workspace agent 本体（read 層 + TUI）
+### Track A — workspace agent 本体（read 層 + TUI）— **実施済（2026-07-21）**
 
 1. `workspace/agent/internal/agents/copilot/` 新設（テンプレ: codex/agy）:
    - `copilot.go` — `agentImpl`（Kind/Caps/BuildLaunch/WireLive/ClearResume/Transcript）
@@ -70,8 +75,8 @@
    - `sids.go` — sid-store（slotSid → copilot session UUID。外部採番なので書くだけ）
    - `transcript.go` — events.jsonl パーサ（Turn.Idx 単調・pending 検知・ツール正規化）
    - `state.go` — `LiveState`（events.jsonl 末尾: turn_start 未閉→working、permission.requested 未完→question）
-   - `models.go` — 静的カタログ（auto 既定＋検証済み id 群。ドリフトは live テストで検知）
-   - `rtk.go` — `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` 方式（要実測確定）
+   - `models.go` — プラン連動ライブカタログ（§実装後の追加実測。当初計画の静的リストは廃止）
+   - `rtk.go` — **v1 では見送り**（COPILOT_CUSTOM_INSTRUCTIONS_DIRS 方式の実測が先 — §残課題）
 2. 登録: `internal/session/session.go` `KindCopilot`、`agent.go` agentRegistry、
    `connections.go` Status 集約、`agent_models.go` switch、`fs.go` denylist **`.copilot`**（平文トークン対策）
 3. **paneMode**（`session_io.go`）: フッタ実測パターンで分岐（8780956 教訓）:
@@ -82,7 +87,7 @@
 5. `questionPending`・`submitPromptTUI`・MCP ツール（list_models/create_session/get_agent_usage 等）の
    kind 分岐監査（54e1fec/194695f 教訓）。
 
-### Track A2 — managed driver
+### Track A2 — managed driver — **実施済（2026-07-21）**
 
 1. `driver.go` — `managedDriver{agentImpl}` + `threadHandle`（state/queue/pump/inter/events, buffer 64）。
    `Resume` 冪等（子プロセス生存なら再利用。死んでいれば spawn → initialize → session/load）。
@@ -94,16 +99,17 @@
 4. Capabilities: `{ProcessModel:"per-session-child", Steer:true(キュー), Fork:false,
    DynamicModel:false, DynamicEffort:false, DynamicMode:true, Questions:true, TUIAttach:false}`。
 
-### Track B — 配備
+### Track B — 配備 — **実施済（2026-07-21）**
 
 1. `workspace/Dockerfile` — 既存 npm ピン RUN に `@github/copilot@${COPILOT_VERSION}` 追加、
    `ENV COPILOT_AUTO_UPDATE=false`、`versions.json` に `"copilot"`。
 2. `env_tool_versions.go` toolSpecs 追加（ピン vs 実体ドリフト表示）。
 3. 自己更新 opt-in（`AF_AGENT_SELF_UPDATE`）に copilot 追加（npm 系なので claude/codex と同経路。
    41b1c83 の「既存あり no-op」問題は npm には無い）。
-4. entrypoint — グローバル AGENTS.md シード不要見込み（プロジェクト root AGENTS.md を読む）。要実測確定。
+4. entrypoint — グローバル AGENTS.md シード不要見込み（プロジェクト root AGENTS.md を読む）。**実測未（残課題）**。
+5. e2e-smoke に版ピン検証（バイナリ＋versions.json）を追加済み。
 
-### Track C — control-plane + Console
+### Track C — control-plane + Console — **実施済（2026-07-21）**
 
 1. CP: `/api/connections` 集約に copilot が載るのみ（専用ルート無し）。
 2. Console:
