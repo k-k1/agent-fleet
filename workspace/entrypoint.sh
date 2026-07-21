@@ -104,8 +104,10 @@ if [ "$LEAN_CLIS" = 1 ]; then
       base="https://github.com/rtk-ai/rtk/releases/download/v${rver}"
       tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
       cd "$tmp"
-      curl -fsSL "${base}/${asset}" -o "${asset}"
-      curl -fsSL "${base}/checksums.txt" -o checksums.txt
+      # --retry: a transient blip on first boot otherwise leaves rtk uninstalled
+      # until the next start (observed on the WSL2 gate — docs/35 §35.9-9).
+      curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "${base}/${asset}" -o "${asset}"
+      curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "${base}/checksums.txt" -o checksums.txt
       grep " ${asset}\$" checksums.txt | sha256sum -c - >/dev/null
       tar xzf "${asset}"
       install -D -m 0755 rtk "$HOME/.local/bin/rtk"
@@ -130,7 +132,7 @@ if [ "$LEAN_CLIS" = 1 ]; then
       esac
       tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
       cd "$tmp"
-      curl -fsSL "https://github.com/google-antigravity/antigravity-cli/releases/download/${aver}/${asset}" -o agy.tgz
+      curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "https://github.com/google-antigravity/antigravity-cli/releases/download/${aver}/${asset}" -o agy.tgz
       echo "${asha}  agy.tgz" | sha256sum -c - >/dev/null
       tar -xzf agy.tgz antigravity
       install -D -m 0755 antigravity "$HOME/.local/bin/agy"
