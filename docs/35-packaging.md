@@ -787,7 +787,27 @@ default/ecs ゲートも無変更通過）。実走で得た確定事項:
   スキップマーカーが効かず常にフル実走になる（dispatch でフルゲートを兼ねられる。
   部分実行の反復は workflow ファイルを触る push + マーカーで行う）。
 
-ゲート (j)(k) は**ユーザー実施待ち**（§35.8.2 / §35.8.1）。
+**ゲート (j) 結果（2026-07-21・✅）**: §35.8.2 runbook どおりに実 publish 一巡を完走。
+
+- セットアップ: `k-k1/agent-fleet-dist`（public）新設 → fine-grained PAT（対象 =
+  dist repo のみ・Contents RW）→ private 側 secret `DIST_PUBLISH_TOKEN` 登録（PAT/
+  secret はユーザーがブラウザで実施）。
+- **runbook に無かった前提を実測で発見**: `workflow_dispatch` は**ワークフローファイル
+  が default branch に存在しないと 404**（実行 ref に在っても不可）。feat/packaging を
+  develop へマージ（361deca・コンフリクトなし・合流後 build/test 緑）して解消。
+- publish: `gh workflow run publish-dist.yml -f version=0.1.0` → run 29818785407 全緑
+  （preflight → stub self-check → build A+B+C+R+D → publish → summary）。成果物:
+  Releases `v0.1.0`（app 35KB / images 1.04GB / native 27MB / SHA256SUMS）+
+  `rootfs-fc943ac06dfa`（linux-amd64）+ main に install.sh / README seed。
+- install 検証（この開発 WS = Docker コンテナ・amd64 で実施）: raw URL の install.sh
+  ワンライナー → latest 解決（releases/latest リダイレクト）→ native tar 実 URL DL →
+  sha256 検証 → 展開 → symlink まで ✅。続く `af start` は rootfs を**実 URL から** DL
+  → sha256 検証 → 915MB 展開まで ✅ し、bwrap 無特権 userns がコンテナ内で使えず
+  設計どおりの案内メッセージで停止（想定内の環境制約 — 起動自体は CI ゲート d/e で
+  実証済み。実機起動はゲート k の領分）。
+
+残りはゲート (k) のみ = **ユーザー実施待ち**（§35.8.1。公開済み版 `0.1.0` /
+rootfs `fc943ac06dfa` を使う）。
 
 ## 35.8 検証ゲート（P3-10 完了判定への接続）
 
@@ -797,7 +817,7 @@ default/ecs ゲートも無変更通過）。実走で得た確定事項:
 | EC2-Single | 同上 + CFN provision〜teardown | ✅ 実証済 |
 | native | **素の WSL2**（Docker なし・**追加インストールなし**）で tar から起動 → 初回 boot-install（ピン版）→ clone → claude セッション E2E → 再起動してオフライン起動（2回目は DL なし）。userns 無特権実行が WSL2 標準カーネルで通ることの確認を含む（§35.3.1 の仮説） | △ CI 分は済（§35.7.2 ゲート d/e 全緑 = hosted runner で af start→bwrap 起動→boot-install ピン実証。install.sh 実 tar 導入 step 含む）。素の WSL2 実機は未 = **ユーザー実施**（§35.8.1 チェックリスト。docs/34 §34.6 と同時に消化する） |
 | ECS | E2E ゲート（p3-7 凍結仕様 §20b.7.14）+ タグ更新の一巡 | ✅ タグ更新一巡実証（2026-07-21・§35.7.3 ゲート h: push→deploy→WS起動→ImageTag更新→次回Start新イメージ→撤収）。p3-7 E2E の attach/reaper 項は段階実証のまま |
-| 配布チャネル（dist repo） | publish 一巡（§35.7.4 ゲート j: repo 新設 → publish → install ワンライナー → rootfs 実 URL DL 起動）+ chromium CDN 実 DL（ゲート i） | △ ゲート i ✅（フル run 29813287446 全緑 = stub/CDN 実 DL/install.sh 実 tar）。実 publish（ゲート j）は**ユーザー実施**（§35.8.2 runbook — PAT/secret 設定が要る） |
+| 配布チャネル（dist repo） | publish 一巡（§35.7.4 ゲート j: repo 新設 → publish → install ワンライナー → rootfs 実 URL DL 起動）+ chromium CDN 実 DL（ゲート i） | ✅ ゲート i（フル run 29813287446 全緑 = stub/CDN 実 DL/install.sh 実 tar）+ ゲート j（2026-07-21 実 publish 一巡 = v0.1.0/rootfs-fc943ac06dfa 公開 → 実 URL install → rootfs 実 URL DL/検証/展開。起動段のみコンテナ環境制約で bwrap 案内終了 = 実機起動はゲート k で確認。詳細 §35.7.4） |
 | 総合 | 第 2 デプロイをゼロから立てて E2E（decisions/0001） | ✗ 未 |
 
 ### 35.8.1 native 実機ゲート チェックリスト（ゲート k・ユーザー実施）
@@ -872,6 +892,9 @@ VERSION=0.1.0 deploy/release/publish-dist.sh --seed
 
 注意: app リリース `v<v>` は不変（同 tag への再 publish は fail する仕様）。やり直す
 時は版を上げる。rootfs tag `rootfs-<r>` は内容ハッシュなので衝突＝同一物・自動再利用。
+また `workflow_dispatch` は **publish-dist.yml が default branch（develop）に存在する
+ことが前提**（無いと `gh workflow run` が 404。実行 ref に在るだけでは不可 — ゲート j
+実走で確認）。
 
 ## 35.9 決定事項と残る確認事項
 
