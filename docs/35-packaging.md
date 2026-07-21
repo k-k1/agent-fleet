@@ -766,6 +766,29 @@ PRSS が 400」を再確認して CI を実測地点にしたが、ゲート初�
 - (k) 素の WSL2 実機 E2E（**ユーザー実施** — §35.8.1 チェックリスト）: 通し E2E +
   chromium sandbox 実測 + オフライン再起動。
 
+**P4 実装状況・ゲート結果（2026-07-21・feat/packaging 〜b3fb24e）**: 表の 6 項目
+すべて実装済み。ゲート (i) ✅ = **最終フル run 29813287446 で 5 job 全緑**
+（dist-gate 新設 + native-gate の install.sh 実 tar step を含み、既存 compose/native/
+default/ecs ゲートも無変更通過）。実走で得た確定事項:
+
+- **ゲートが実バグを 2 件検出**（stub では出ない・実物で出る、の典型）:
+  1. `af` ランチャが `BASH_SOURCE` の dirname を PKG とするため、install.sh の
+     symlink（`~/.local/bin/af → <pkg>/af`）経由だと rootfs.json を見失う →
+     `readlink -f` で実体パスまで辿るよう修正。native-gate に「symlink 経由で
+     manifest まで届く」判別 assert を常設。
+  2. **amd64 の install-chromium が全環境で失敗する状態だった**（chromium_cft 移行
+     — 経緯・修正は §35.9-7(a)）。dist-gate 初回失敗（run 29812636687）が検出。
+- dist-gate の CDN 実測は毎 run: CfT 第一経路フル DL + `chrome-linux64/chrome`
+  レイアウト + Google バケット直との先頭 1KiB 同一物確認 + arm64 旧 3 経路 +
+  noto_cjk 疎通（初回緑 run 29813227165 → フル run で再実証）。
+- runner の shellcheck は SC2015(info) でも exit 1（P3 の教訓の再演 — ローカル
+  shellcheck は既定で info を出さないので `-S info` で合わせて事前検証する）。
+- **workflow_dispatch は `head_commit.message` が空**のため `[dist-only]` 等の
+  スキップマーカーが効かず常にフル実走になる（dispatch でフルゲートを兼ねられる。
+  部分実行の反復は workflow ファイルを触る push + マーカーで行う）。
+
+ゲート (j)(k) は**ユーザー実施待ち**（§35.8.2 / §35.8.1）。
+
 ## 35.8 検証ゲート（P3-10 完了判定への接続）
 
 | ターゲット | ゲート | 状態 |
@@ -774,7 +797,7 @@ PRSS が 400」を再確認して CI を実測地点にしたが、ゲート初�
 | EC2-Single | 同上 + CFN provision〜teardown | ✅ 実証済 |
 | native | **素の WSL2**（Docker なし・**追加インストールなし**）で tar から起動 → 初回 boot-install（ピン版）→ clone → claude セッション E2E → 再起動してオフライン起動（2回目は DL なし）。userns 無特権実行が WSL2 標準カーネルで通ることの確認を含む（§35.3.1 の仮説） | △ CI 分は済（§35.7.2 ゲート d/e 全緑 = hosted runner で af start→bwrap 起動→boot-install ピン実証。install.sh 実 tar 導入 step 含む）。素の WSL2 実機は未 = **ユーザー実施**（§35.8.1 チェックリスト。docs/34 §34.6 と同時に消化する） |
 | ECS | E2E ゲート（p3-7 凍結仕様 §20b.7.14）+ タグ更新の一巡 | ✅ タグ更新一巡実証（2026-07-21・§35.7.3 ゲート h: push→deploy→WS起動→ImageTag更新→次回Start新イメージ→撤収）。p3-7 E2E の attach/reaper 項は段階実証のまま |
-| 配布チャネル（dist repo） | publish 一巡（§35.7.4 ゲート j: repo 新設 → publish → install ワンライナー → rootfs 実 URL DL 起動）+ chromium CDN 実 DL（ゲート i） | △ スクリプト/CI/stub は済（§35.7.4）。実 publish は**ユーザー実施**（§35.8.2 runbook — PAT/secret 設定が要る） |
+| 配布チャネル（dist repo） | publish 一巡（§35.7.4 ゲート j: repo 新設 → publish → install ワンライナー → rootfs 実 URL DL 起動）+ chromium CDN 実 DL（ゲート i） | △ ゲート i ✅（フル run 29813287446 全緑 = stub/CDN 実 DL/install.sh 実 tar）。実 publish（ゲート j）は**ユーザー実施**（§35.8.2 runbook — PAT/secret 設定が要る） |
 | 総合 | 第 2 デプロイをゼロから立てて E2E（decisions/0001） | ✗ 未 |
 
 ### 35.8.1 native 実機ゲート チェックリスト（ゲート k・ユーザー実施）
