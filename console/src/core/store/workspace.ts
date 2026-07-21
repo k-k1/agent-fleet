@@ -13,6 +13,12 @@ import { t } from "../../lib/i18n/index.ts";
 
 interface WorkspaceStore {
   state: string;
+  /** Live boot-install phase surfaced by the CP during a native rootfs first
+   * start (docs/35 §35.9-9): the latest "[entrypoint] …" line, e.g.
+   * "boot-install (pinned): claude-code@…". "" = no boot in progress. The
+   * starting dialog shows it so the user sees the pinned-CLI download instead of
+   * a silent multi-minute wait. */
+  bootPhase: string;
   refresh(): Promise<void>;
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -30,18 +36,29 @@ interface WorkspaceStore {
 
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   state: "…",
+  bootPhase: "",
 
   async refresh() {
     try {
       const w = await api("api/workspace");
-      set({ state: w.state || "unknown" });
+      set({ state: w.state || "unknown", bootPhase: w.bootPhase || "" });
     } catch {
       set({ state: "unknown" });
     }
   },
 
   async start() {
-    set({ state: "starting…" });
+    set({ state: "starting…", bootPhase: "" });
+    // While the (blocking) start POST is in flight, poll bootPhase ONLY — never the
+    // state — so the optimistic "starting…" holds. Native State() reports "running"
+    // the instant the process spawns (pid-alive, not health, docs/35 §35.9-9), so a
+    // state refresh here would close the starting dialog while boot-install is still
+    // downloading. bootPhase is the real "still booting" signal.
+    const iv = setInterval(() => {
+      void api("api/workspace")
+        .then((w) => set({ bootPhase: w.bootPhase || "" }))
+        .catch(() => {});
+    }, 2000);
     // The poll skips while the state ends in "…", so even an aborted POST (e.g. a
     // gateway timeout on a slow ECS start) must settle to the real server state —
     // otherwise the bar sticks on 起動中… until a manual reload. api() only
@@ -52,6 +69,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     } catch {
       /* settled by the refresh below */
     }
+    clearInterval(iv);
     await get().refresh();
   },
 
@@ -98,11 +116,26 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
 /** True while a start/stop transition is in flight (or state not yet fetched). */
 export const wsBusy = (state: string): boolean => state.endsWith("…");
 
+/** True when the workspace agent is up. Per-workspace pollers that proxy to the
+ * agent (sessions/repos/stats/…) gate on this so a STOPPED workspace stops
+ * generating 502s every few seconds (docs/35 §35.9-9; the ws-boot-view-stuck
+ * running-gate, applied to the pollers themselves). Read imperatively in poll
+ * loops via `wsRunning(useWorkspaceStore.getState().state)`. */
+export const wsRunning = (state: string): boolean => state === "running";
+
 /** True while starting the workspace would be wrong: an optimistic "…" transition
  * is in flight OR the server already reports "starting" (ECS cold pull, minutes).
  * The CP no-ops a re-Start anyway, but every start button disables on this so the
  * UI doesn't offer 起動 for a workspace that is already coming up. */
 export const wsStartBusy = (state: string): boolean => wsBusy(state) || state === "starting";
+
+/** True while the workspace is coming up and the starting dialog should show: an
+ * optimistic "starting…"/"recreating…" transition, the server-reported "starting"
+ * (ECS cold pull), OR a live boot phase (native rootfs boot-install — the process
+ * is pid-alive so state already reads "running", but the agent is still installing
+ * pinned CLIs, docs/35 §35.9-9). NOT "stopping…". */
+export const wsPreparing = (state: string, bootPhase: string): boolean =>
+  bootPhase !== "" || state === "starting…" || state === "starting" || state === "recreating…";
 
 // Auto-sync every 4s so an externally-changed workspace (admin stop, OOM death,
 // crash) reflects on its own. Skipped while hidden or mid-transition (trailing

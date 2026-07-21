@@ -551,3 +551,37 @@ button.wu-reload {
 }
 
 /* ---- left pane ---- */
+
+/* ---- starting dialog (WsStartingDialog — docs/35 §35.9-9) ---- */
+.ws-starting .ws-starting-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: min(440px, 80vw);
+}
+.ws-starting-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--fg);
+}
+.ws-starting-line .codicon {
+  font-size: 16px;
+  opacity: 0.85;
+  flex: 0 0 auto;
+}
+.ws-starting-phase {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--panel2, var(--panel));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  word-break: break-all;
+}
+.ws-starting-hint {
+  font-size: 12px;
+  color: var(--muted);
+}
