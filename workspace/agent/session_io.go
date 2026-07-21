@@ -15,6 +15,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -92,6 +93,20 @@ func paneMode(kind, tn string) string {
 				if strings.Contains(line, "plan · ") {
 					return "Plan"
 				}
+				return "Default"
+			}
+		}
+	case session.KindCopilot:
+		// copilot's composer footer (v1.0.73 実測): idle "/ commands · ? help · tab
+		// next tab", draft "@ files · # issues", working "◎ Working esc interrupt" —
+		// right edge shows the model ("Auto → gpt-5-mini"). The footer exists only
+		// once the composer is drawn (the trust dialog / boot screen has none), so
+		// this doubles as the launch-seed readiness signal. Mode has no footer
+		// marker; plan mode is chosen at launch (--mode plan)＝meta が真実なので
+		// here we only distinguish drawn/not-drawn and report the non-plan label.
+		for _, line := range strings.Split(paneTail(s, 3), "\n") {
+			if strings.Contains(line, "/ commands") || strings.Contains(line, "@ files") ||
+				strings.Contains(line, "Working") {
 				return "Default"
 			}
 		}
@@ -337,9 +352,12 @@ func submitPromptTUI(w http.ResponseWriter, name, pane, prompt string) bool {
 	// cancel" working), so an empty paneMode here means still booting: wait briefly.
 	// Cap ~15s (slow sign-in) then proceed best-effort; a pending question/permission
 	// was already rejected above, so this can't stall on a widget.
-	if meta, ok := session.ReadMeta(name); ok && meta.Kind == session.KindAgy {
+	// copilot: 同型 — trust 事前追記済みでもタブ UI の描画までコンポーザは無く、
+	// ブート画面に送った文字は無音で消える（8780956 の教訓）。フッタが readiness。
+	if meta, ok := session.ReadMeta(name); ok &&
+		(meta.Kind == session.KindAgy || meta.Kind == session.KindCopilot) {
 		tn := session.TmuxName(name)
-		for i := 0; i < 30 && paneMode(session.KindAgy, tn) == ""; i++ {
+		for i := 0; i < 30 && paneMode(meta.Kind, tn) == ""; i++ {
 			time.Sleep(500 * time.Millisecond)
 		}
 	}
@@ -388,7 +406,9 @@ func typePromptText(name, pane, text string) error {
 	if meta, ok := session.ReadMeta(name); ok {
 		kind = meta.Kind
 	}
-	if kind != session.KindCodex && kind != session.KindOpencode {
+	// copilot も bracketed paste が必要: 実測（v1.0.73）で literal keys と同じ
+	// send-keys 内の Enter がペースト折り畳みに食われ、プロンプトが確定しない。
+	if kind != session.KindCodex && kind != session.KindOpencode && kind != session.KindCopilot {
 		if out, err := tmuxx.Cmd("send-keys", "-t", pane, "-l", text).CombinedOutput(); err != nil {
 			return fmt.Errorf("%v: %s", err, out)
 		}
@@ -567,6 +587,11 @@ func questionPending(name string) bool {
 	if meta.Kind == session.KindAgy {
 		st, _ := agy.Probe(meta)
 		return st != ""
+	}
+	// copilot: hooks 無し — events.jsonl の未完了 permission.requested が保留の
+	// 唯一のソース（tui の許可メニュー / managed の Interaction 双方を同じ形で拾う）。
+	if meta.Kind == session.KindCopilot {
+		return copilot.LiveState(meta) == "question"
 	}
 	st, ok := status.Read(session.UUID(meta.Dir, name))
 	return ok && st.State == "question"

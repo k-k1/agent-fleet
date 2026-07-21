@@ -15,6 +15,9 @@ P3（Codex managed 化 — 第2 Driver、daemon drain、双方向排他切替）
 > 暫定対処の `[notice] hide_rate_limit_model_nudge` トグルは main マージ済み（`ac8c202`）。
 > 本書はその根本対処＝「端末スクレイプ＋キー入力エミュレーション」からの脱却を、
 > Codex 単体でなく 3 エージェント（codex / opencode / claude）横断のアーキテクチャとして設計する。
+> （追記 2026-07-21: 第3の Driver 実装として copilot が加わった — 共有 daemon でなく
+> **per-session child**（`copilot --acp`、ACP JSON-RPC over stdio）という新しい
+> ProcessModel。[docs/36](36-copilot-agent-kind.md) / [decisions/0019](decisions/0019-copilot-agent-kind.md)）
 
 ---
 

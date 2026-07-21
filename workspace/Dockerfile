@@ -194,10 +194,18 @@ RUN if [ "${BAKE_RTK}" = "1" ]; then set -eux; \
 ARG CLAUDE_CODE_VERSION=2.1.215
 ARG OPENCODE_VERSION=1.18.3
 ARG CODEX_VERSION=0.144.6
+ARG COPILOT_VERSION=1.0.73
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
       "opencode-ai@${OPENCODE_VERSION}" \
       "@openai/codex@${CODEX_VERSION}" \
- && claude --version && opencode --version && codex --version
+      "@github/copilot@${COPILOT_VERSION}" \
+ && claude --version && opencode --version && codex --version && copilot --version
+
+# copilot（kind="copilot"、docs/36）: 自己更新は既定 ON（CI env 検出時のみ自動 OFF）
+# — フリートの版管理はイメージ再ビルドが正なので明示的に封殺する（claude の
+# DISABLE_AUTOUPDATER・agy の AGY_CLI_DISABLE_AUTO_UPDATE と同じ理屈。ユーザーの
+# 明示的な `copilot update` は可能なまま）。
+ENV COPILOT_AUTO_UPDATE=false
 
 # Antigravity CLI（kind="agy"、docs/decisions/0008 / docs/32）。npm でなく Go バイナリ
 # 配布（install.sh が manifest 取得 + sha512 検証）なので別 RUN。--dir /usr/local/bin の
@@ -226,8 +234,8 @@ ENV AGY_CLI_DISABLE_AUTO_UPDATE=1
 # ビルド時ピンをコンテナ内へ書き出す（ARG はビルド後に消えて実行時に参照できない）。
 # 設定 UI「ツールのバージョン」の「ピン vs 実体」表示と、スモークの検証材料に使う。
 RUN mkdir -p /usr/local/share/agent-fleet \
- && printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","go":"%s","gh":"%s","chromium":"%s"}\n' \
-      "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$AGY_VERSION" "$GO_VERSION" "$GH_VERSION" "$CHROMIUM_VERSION" \
+ && printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","copilot":"%s","go":"%s","gh":"%s","chromium":"%s"}\n' \
+      "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$AGY_VERSION" "$COPILOT_VERSION" "$GO_VERSION" "$GH_VERSION" "$CHROMIUM_VERSION" \
       > /usr/local/share/agent-fleet/versions.json
 
 # The baked claude is a root-owned npm-global install run as the non-root `dev`

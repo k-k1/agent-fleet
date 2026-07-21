@@ -229,6 +229,47 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // (the rail treats null conns as show-all before the predicate runs).
     available: (c) => c.conns?.agy?.supported !== false && !!c.conns?.agy?.connected,
   },
+  copilot: {
+    id: "copilot",
+    icon: "copilot",
+    label: "copilot",
+    displayName: "GitHub Copilot",
+    assistantName: "Copilot",
+    short: "cp",
+    cssClass: "copilot",
+    launchHintKey: "agent.launch_hint.copilot",
+    launchSuffix: "-cp",
+    planCycleKey: "", // TUI の Shift+Tab は 3 モード循環（autopilot を跨ぐ）— キー駆動トグルは出さない
+    planEnterCmd: "",
+    defaultModeLabel: "Default",
+    // GitHub Copilot CLI (docs/36). Managed が既定: per-session child の
+    // `copilot --acp`（ACP JSON-RPC over stdio）を driver が駆動する。TUI も同じ
+    // events.jsonl を書くのでミラー/状態は両ドライバで同一実装。
+    // model/effort: launch-time only（TUI /model の PTY スクレイプによる
+    // プラン反映ライブカタログ → `--model` / `--effort`。Free は Auto のみ＝
+    // 既定だけが出る。ACP に動的変更が無い — 稼働中変更は managed 設定
+    // モーダルの mode のみ）。
+    // fork なし（CLI に fork 口が無い）。contextBar なし（events.jsonl は outTok
+    // のみで文脈量が出ない）。imagePaste は未実測のため v1 オフ（1854d の逆 —
+    // 未検証の caps を立てない）。認証は GitHub 連携相乗り＋Copilot サブスク前提。
+    managedDriver: true,
+    // per-session child なので CLI(TUI) を選んでも常駐プロセス数は変わらない
+    // （どちらも copilot 1 プロセス/セッション）— 追加コスト表示なし。
+    tuiMemoryCost: "",
+    caps: caps({
+      chat: true,
+      transcript: true,
+      model: true,
+      effort: true,
+      tuiEffort: true, // --effort
+      tuiStartMode: true, // --mode plan
+      runsInDir: true,
+      launchableFromRepo: true,
+    }),
+    // Hidden when the image lacks the CLI (supported === false) or GitHub is not
+    // connected; an unfetched conns bag stays visible (same policy as agy).
+    available: (c) => c.conns?.copilot?.supported !== false && !!c.conns?.copilot?.connected,
+  },
   opencode: {
     id: "opencode",
     icon: "hubot",
@@ -331,6 +372,6 @@ export function availableKinds(ctx: AvailCtx): Record<SessionKind, boolean> {
 
 // Kinds offered in a repo row's launch menu, in display order. Every entry must
 // carry the launchableFromRepo cap (asserted below); the order is presentational.
-export const repoLaunchKinds: SessionKind[] = ["claude", "codex", "agy", "opencode", "shell"];
+export const repoLaunchKinds: SessionKind[] = ["claude", "codex", "agy", "opencode", "copilot", "shell"];
 
 export type { SsmHost };

@@ -19,6 +19,7 @@ const (
 	KindOpencode = "opencode"
 	KindCodex    = "codex"
 	KindAgy      = "agy"
+	KindCopilot  = "copilot"
 	KindShell    = "shell"
 	KindSSM      = "ssm"
 )
