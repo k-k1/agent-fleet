@@ -5,6 +5,7 @@
 // repaint flickered the terminal cursor in the old console.
 import { create } from "zustand";
 import { api } from "../../core/api/client.ts";
+import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
 import type { Session } from "../../types/session.ts";
 
 interface SessionsStore {
@@ -53,10 +54,14 @@ export const useSessionsStore = create<SessionsStore>((set) => ({
   },
 }));
 
-/** Poll every 4s while the tab is visible. Returns cleanup (StrictMode-safe). */
+/** Poll every 4s while the tab is visible AND the workspace is running — a
+ * stopped/booting agent only 502s, so polling it is pure waste (docs/35 §35.9-9).
+ * The running edge is picked up on the next tick (and wireWorkspaceRefresh fires
+ * an immediate refetch). Returns cleanup (StrictMode-safe). */
 export function startSessionsPolling(): () => void {
   const load = () => {
-    if (!document.hidden) void useSessionsStore.getState().refresh();
+    if (document.hidden || !wsRunning(useWorkspaceStore.getState().state)) return;
+    void useSessionsStore.getState().refresh();
   };
   load();
   const t = setInterval(load, 4000);

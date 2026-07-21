@@ -986,6 +986,13 @@ export const ja = {
   "wsbar.state.stopping": "停止中…",
   "wsbar.state.recreating": "再作成中…",
   "wsbar.state.unknown": "不明",
+  // 起動中ダイアログ（WsStartingDialog・docs/35 §35.9-9）
+  "wsstart.title": "ワークスペースを起動中",
+  "wsstart.generic": "起動しています…（初回はエージェント CLI の導入で数分かかることがあります）",
+  "wsstart.installing_clis": "エージェント CLI を導入中…（初回のみ・数分かかることがあります）",
+  "wsstart.fetching_tool": "追加ツールを取得中…",
+  "wsstart.toolchain": "ツールチェーンを導入中…",
+  "wsstart.hint": "進捗は agent.log にも記録されます。このダイアログは閉じても起動は続きます。",
   // 使用状況チップ／ドロップダウン（UsageChip / UsageRow / USAGE_SOURCES）
   "wsbar.usage.title": "{name} 使用状況（5時間 / 週次）",
   "wsbar.usage.pop_title": "{name} 使用状況",

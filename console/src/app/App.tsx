@@ -17,6 +17,7 @@ import { disposeAllBrowsers, resetBrowserRuntime, wireBrowserReconcile } from ".
 import { useSessionsStore, startSessionsPolling } from "../features/sessions/store.ts";
 import { SessionModals } from "../features/sessions/SessionModals.tsx";
 import { AuthExpiredModal } from "../features/auth/AuthExpiredModal.tsx";
+import { WsStartingDialog } from "./WsStartingDialog.tsx";
 import { useSessionNotifications } from "../features/sessions/useSessionNotifications.ts";
 import { useReposStore, startReposPolling } from "../features/repos/store.ts";
 import { useFilesStore } from "../features/files/store.ts";
@@ -356,6 +357,7 @@ export function App() {
       {guideOpen && <GuideModal />}
       <StartHost />
       <SessionModals />
+      <WsStartingDialog />
       <AuthExpiredModal />
       <WhichKey />
       <CommandPalette />

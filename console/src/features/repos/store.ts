@@ -2,6 +2,7 @@
 // reposKey bump counter — sections call refresh() directly.
 import { create } from "zustand";
 import { api, isTransientErr } from "../../core/api/client.ts";
+import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
 
 // A working copy from GET /api/repos.
 export interface Repo {
@@ -105,12 +106,14 @@ export const useLaunchSeed = create<LaunchSeedStore>((set) => ({
   clear: () => set({ prompt: "" }),
 }));
 
-/** Poll every 60s while the tab is visible, so the origin-ahead badge (kept
- * fresh server-side by the Agent's auto-fetch) updates without a manual
- * refresh. Returns cleanup (StrictMode-safe). */
+/** Poll every 60s while the tab is visible AND the workspace is running, so the
+ * origin-ahead badge (kept fresh server-side by the Agent's auto-fetch) updates
+ * without a manual refresh. Skipped while stopped/booting — the agent proxy only
+ * 502s then (docs/35 §35.9-9). Returns cleanup (StrictMode-safe). */
 export function startReposPolling(): () => void {
   const load = () => {
-    if (!document.hidden) void useReposStore.getState().refresh();
+    if (document.hidden || !wsRunning(useWorkspaceStore.getState().state)) return;
+    void useReposStore.getState().refresh();
   };
   load();
   const t = setInterval(load, 60000);
