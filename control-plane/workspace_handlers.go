@@ -55,7 +55,18 @@ func (a workspaceAPI) whoami(w http.ResponseWriter, r *http.Request) {
 
 func (a workspaceAPI) get(w http.ResponseWriter, r *http.Request, res *resolved) {
 	rt := res.rt
-	writeJSON(w, http.StatusOK, map[string]any{"name": rt.Name(), "state": rt.State(r.Context())})
+	m := map[string]any{"name": rt.Name(), "state": rt.State(r.Context())}
+	// Live boot-install phase for the "starting" dialog (native rootfs only —
+	// docs/35 §35.9-9). Native State() reports "running" the instant the process
+	// spawns (pid-alive, not health), so state alone can't tell the Console the
+	// agent is still boot-installing; bootPhase is the real signal. Only the
+	// native runtime implements it; a non-empty value means a boot is in progress.
+	if bp, ok := rt.(interface{ BootPhase() string }); ok {
+		if phase := bp.BootPhase(); phase != "" {
+			m["bootPhase"] = phase
+		}
+	}
+	writeJSON(w, http.StatusOK, m)
 }
 
 func (a workspaceAPI) start(w http.ResponseWriter, r *http.Request, res *resolved) {

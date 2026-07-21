@@ -361,3 +361,43 @@ func TestNativeRuntimeLifecycle(t *testing.T) {
 		t.Fatalf("State after crash restart = %q, want running", got)
 	}
 }
+
+// mirrorBootProgress publishes the latest [entrypoint] line (sans prefix) to the
+// .boot-phase file for BootPhase(), and clears it when the boot ends (docs/35
+// §35.9-9). The Console "starting" dialog reads this via GET /api/workspace.
+func TestNativeBootPhase(t *testing.T) {
+	dir := t.TempDir()
+	n := &nativeRuntime{name: "af-ws-bp", dataDir: dir}
+
+	if got := n.BootPhase(); got != "" {
+		t.Fatalf("BootPhase with no file = %q, want empty", got)
+	}
+
+	// A log line without the marker must NOT publish a phase; the marker line must.
+	logPath := filepath.Join(dir, "agent.log")
+	if err := os.WriteFile(logPath,
+		[]byte("some noise\n[entrypoint] boot-install (pinned): claude-code@2.1.215\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go n.mirrorBootProgress(ctx, 0)
+
+	want := "boot-install (pinned): claude-code@2.1.215"
+	deadline := time.Now().Add(3 * time.Second)
+	for n.BootPhase() != want {
+		if time.Now().After(deadline) {
+			t.Fatalf("BootPhase never became %q (got %q)", want, n.BootPhase())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// Ending the mirror (agent healthy) clears the phase so the dialog closes.
+	cancel()
+	deadline = time.Now().Add(3 * time.Second)
+	for n.BootPhase() != "" {
+		if time.Now().After(deadline) {
+			t.Fatalf("BootPhase not cleared after mirror stopped (got %q)", n.BootPhase())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}

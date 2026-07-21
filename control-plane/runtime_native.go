@@ -270,6 +270,7 @@ func (n *nativeRuntime) Start(ctx context.Context) error {
 		if fi, statErr := os.Stat(filepath.Join(n.dataDir, "agent.log")); statErr == nil {
 			off = fi.Size()
 		}
+		_ = os.Remove(n.bootPhasePath()) // drop any stale phase from a prior start
 		tailCtx, stopTail := context.WithCancel(ctx)
 		defer stopTail()
 		go n.mirrorBootProgress(tailCtx, off)
@@ -280,6 +281,23 @@ func (n *nativeRuntime) Start(ctx context.Context) error {
 	return nil
 }
 
+// bootPhasePath is the file mirrorBootProgress keeps the latest boot-install
+// phase line in, so a separate GET /api/workspace request (possibly served by a
+// different runtime instance) can read it back via BootPhase() without shared
+// in-memory state. Absent = no boot in progress.
+func (n *nativeRuntime) bootPhasePath() string { return filepath.Join(n.dataDir, ".boot-phase") }
+
+// BootPhase returns the latest entrypoint boot-install phase (docs/35 §35.9-9),
+// or "" when no boot is in progress. The Console's "starting" dialog polls
+// GET /api/workspace and shows this while the agent boot-installs pinned CLIs.
+func (n *nativeRuntime) BootPhase() string {
+	b, err := os.ReadFile(n.bootPhasePath())
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
 // mirrorBootProgress tails agent.log from startOff and echoes the entrypoint's
 // own progress lines (the "[entrypoint] …" prefix — boot-install, install-go,
 // install-jdk, claude repair, …) to the CP log so a first-start operator can see
@@ -287,6 +305,9 @@ func (n *nativeRuntime) Start(ctx context.Context) error {
 // (docs/35 §35.9-9). Best-effort: any error just ends the mirror. It stops when
 // ctx is cancelled (the caller cancels the moment the agent is healthy).
 func (n *nativeRuntime) mirrorBootProgress(ctx context.Context, startOff int64) {
+	// The boot is over the moment this returns (agent healthy) — clear the phase
+	// so GET /api/workspace stops reporting one and the Console dialog closes.
+	defer os.Remove(n.bootPhasePath())
 	f, err := os.Open(filepath.Join(n.dataDir, "agent.log"))
 	if err != nil {
 		return
@@ -302,8 +323,17 @@ func (n *nativeRuntime) mirrorBootProgress(ctx context.Context, startOff int64) 
 		if err == nil { // a complete line
 			s := strings.TrimRight(pending+line, "\r\n")
 			pending = ""
-			if strings.Contains(s, "[entrypoint]") {
+			if i := strings.Index(s, "[entrypoint]"); i >= 0 {
 				log.Printf("[ws %s] %s", n.name, strings.TrimSpace(s))
+				// Publish the phase (sans prefix) for the Console dialog. Atomic
+				// rename so a concurrent BootPhase() read never sees a torn write.
+				phase := strings.TrimSpace(s[i+len("[entrypoint]"):])
+				if phase != "" {
+					tmp := n.bootPhasePath() + ".tmp"
+					if os.WriteFile(tmp, []byte(phase), 0o644) == nil {
+						_ = os.Rename(tmp, n.bootPhasePath())
+					}
+				}
 			}
 			continue
 		}
