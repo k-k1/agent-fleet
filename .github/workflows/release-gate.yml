@@ -60,14 +60,18 @@ jobs:
             test -f "$d/35-packaging.md" && test -d "$d/dev" && test -d "$d/guide"
             test ! -e "$d/HANDOFF.md" && test ! -e "$d/CHANGELOG-handoff.md"
             test ! -e "$d/talk" && test ! -e "$d/history"'
-          # 版刻印: 起動して認証配下 /api/version が VERSION を返す（AUTH=dev はゲートなし）
+          # 版刻印: 起動して認証配下 /api/version が VERSION を返す（AUTH=dev はゲートなし）。
+          # 素の（マウントなし）起動は CP 側の MkdirAll(dbPath 親) が支える — このゲートで
+          # 初回起動即死（WS_DATA 未作成 → sqlite open 失敗）を検出した経緯があるため、
+          # あえてディレクトリを事前作成せずに起動する。
           docker run -d --name cp-gate -p 8099:8099 -e CP_ADDR=:8099 -e WS_DATA=/tmp/af-data \
             "agent-fleet/control-plane:$VERSION"
+          up=0
           for i in $(seq 1 30); do
-            curl -fsS http://127.0.0.1:8099/healthz 2>/dev/null | grep -qx ok && break
+            if curl -fsS http://127.0.0.1:8099/healthz 2>/dev/null | grep -qx ok; then up=1; break; fi
             sleep 1
           done
-          curl -fsS http://127.0.0.1:8099/healthz | grep -qx ok
+          if [ "$up" != 1 ]; then echo "CP never became healthy; logs:"; docker logs cp-gate; exit 1; fi
           curl -fsS http://127.0.0.1:8099/api/version | grep -F "\"version\":\"$VERSION\""
           docker logs cp-gate 2>&1 | grep -F "control-plane $VERSION on"
           docker rm -f cp-gate
