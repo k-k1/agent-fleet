@@ -390,6 +390,26 @@ GitHub API の license 表示で確認）:
 - 社内・自社デプロイ用のイメージ（配布しない）は全焼き込みのままでよい — ライセンス問題は
   「頒布」で生じ、自社内利用では生じない。
 
+### 35.4.2 公開 dist repo（決定・2026-07-21）
+
+**`k-k1/agent-fleet-dist`（public）を新設**し、成果物の置き場とする（ユーザー決定）。
+
+- **中身は「README + install.sh + Releases」だけ。source は置かない。** したがって
+  dist repo 上で CI ビルドは回らない（無料 Actions の恩恵はソースが public の場合のみ、
+  という制約の帰結）。リリースビルドは private 側（ローカル、または private Actions の
+  workflow_dispatch）で行い、`gh release create -R k-k1/agent-fleet-dist` で publish する。
+- **Releases の構成**: app リリース `v<v>`（C・B・SHA256SUMS を添付）と、rootfs リリース
+  `rootfs-<r>`（R を添付）を**別 tag** で切る。C 内の rootfs.json は
+  `releases/download/rootfs-<r>/agent-fleet-rootfs-<r>-linux-amd64.tar.zst` の恒久 URL を
+  指す。`<r>` 不変のリリースでは既存 rootfs tag をそのまま参照（再アップロードも再 DL もなし）。
+- **install.sh（導入ワンライナー）**: `curl -fsSL <raw URL>/install.sh | bash` が最新の
+  C を取得・sha256 検証し `~/.local/opt/agent-fleet/<v>/` へ展開、`~/.local/bin/af` に
+  symlink。更新も同じコマンド（版ディレクトリ切替）。air-gap はファイル渡し
+  （`--bundle-rootfs`）のままで、install.sh は使わない。
+- **arm64 の含意**（未決⑤の更新）: dist repo に source が無い以上、公開 repo の無料 arm64
+  ランナーでの rootfs ビルドはできない。arm64 を出す時は private repo の arm ランナー
+  （$0.005/分）か arm 実機でビルドして publish する。
+
 ## 35.5 アップグレードの共通契約（runbook へ載せる文言の骨子)
 
 全ターゲット共通:
@@ -411,8 +431,10 @@ GitHub API の license 表示で確認）:
 ### 35.6.1 版刻印（前提の小改修）
 
 - `control-plane/main.go` と `workspace/agent` に `var buildVersion = "dev"` を置き、
-  起動ログへ出す。CP は `/healthz`（現在 `ok` 固定）を `ok <version>` にするか
-  `/api/version` を足す（Console のオペレーター画面での表示は後続でよい）。
+  起動ログへ出す。CP には **`/api/version`（認証付き）を新設**する（決定）:
+  `/healthz` は `restart-cp.sh` が応答 `ok` を**完全一致比較**しているため変えられず、
+  ALB ヘルスチェックも 200 だけ見るので触る理由がない。版情報を無認証で外部に晒さない
+  意味でも新設が安全側。Console のオペレーター画面での表示は後続でよい。
 - すべてのビルド経路（release オーケストレータ・両 Dockerfile・run-dev.sh）で
   `-ldflags -X` を配線。Dockerfile は `ARG VERSION=dev` で受ける。
 
@@ -447,6 +469,25 @@ VERSION=0.2.0 deploy/release/build.sh [--compose] [--native] [--save] [--all]
 
 P1→P2 が本丸（native が唯一のゼロ→イチ）。P3 は独立に並行可。
 
+### 35.7.1 P1 実装仕様（凍結）
+
+| # | 対象 | 変更内容 |
+|---|---|---|
+| 1 | `control-plane/main.go`・`workspace/agent` | `var buildVersion = "dev"`（`-ldflags -X main.buildVersion=<v>` 注入）+ 起動ログ出力。CP に `GET /api/version`（member 認証配下・`{"version":"..."}`）新設 |
+| 2 | 両 Dockerfile | `ARG VERSION=dev` → go build の ldflags へ配線（リリース経路のみ実版。run-dev.sh は "dev" のまま） |
+| 3 | `deploy/compose/release.sh` | bundle へ `deploy/aws/` を同梱・dist 直下に `SHA256SUMS` 生成・docker build へ `--build-arg VERSION` |
+| 4 | `deploy/release/build.sh`（新設） | 単一入口の骨格。`--compose` は compose/release.sh へ委譲、`--native` は P2 まで未実装エラー。`VERSION` 必須・出力 `deploy/release/dist/` |
+| 5 | `workspace/Dockerfile` | `ARG BAKE_AGENT_CLIS=1`（npm 3種・agy・rtk の RUN を条件化）・`ARG BAKE_OPTIONAL_TOOLS=1`（chromium 3pkg + CJK フォント・Go・awscli+SMP・mcp-grafana・cloudwatch を条件化。**chromium 実行時ライブラリと fontconfig/DejaVu は 0 でも apt で明示導入**）。versions.json は常に書き出し、`chromium_dl` / `mcp_grafana` / `cloudwatch_mcp` / `awscli` / `session_manager_plugin` のピンを追記。SUID sweep の chrome-sandbox 前提 test を chromium 不在ビルドでも通るよう条件化 |
+| 6 | `workspace/entrypoint.sh` | ピン版 boot-install の一般化: 各 CLI（claude/opencode/codex/agy/rtk）で「`/usr/local/bin` にも `~/.local/bin` にも無ければ versions.json のピン版を `~/.local` へ導入」。既存 `CLAUDE_INSTALL` fallback と self-update 実装の取得経路を版指定で再利用（npm は `prefix=$HOME/.local`） |
+| 7 | `deploy/local/e2e-smoke.sh` | lean イメージ対応: `BAKE_AGENT_CLIS=0` のイメージでは「versions.json が存在し全ピン記載」を検証（boot-install の実走はネット前提なので P1 ゲートの別項で確認） |
+| 8 | `NOTICE` | 同梱 OSS の帰属追記（git/tmux/chromium ほか。静的 bwrap/git 分は P2 で追加） |
+| 9 | `docs/roadmap.md` | Helm chart を「需要が出るまで棚上げ（AWS の答えは ECS+CFN）」へ更新 |
+
+**P1 ゲート**: (a) `VERSION=x deploy/release/build.sh --compose` で A+B+D が生成される。
+(b) lean B（`BAKE_AGENT_CLIS=0`）をローカル起動し、boot-install で claude ピン版が
+`~/.local/bin` に入りセッションが動く。(c) 既定 ARG（全焼き込み）のビルド・e2e-smoke が
+無変更で通る（既存デプロイに影響ゼロ）。
+
 ## 35.8 検証ゲート（P3-10 完了判定への接続）
 
 | ターゲット | ゲート | 状態 |
@@ -457,33 +498,30 @@ P1→P2 が本丸（native が唯一のゼロ→イチ）。P3 は独立に並�
 | ECS | E2E ゲート（p3-7 凍結仕様 §20b.7.14）+ タグ更新の一巡 | △ 段階実証済・更新一巡は未 |
 | 総合 | 第 2 デプロイをゼロから立てて E2E（decisions/0001） | ✗ 未 |
 
-## 35.9 未決事項（実装前に決める）
+## 35.9 決定事項と残る確認事項
 
-1. **native tar への docs/ 同梱範囲**: 全ツリー（内部 dev/decisions/history 込み・単一ユーザー
-   なので権限問題なし）か、`guide/` + `dev/` のみに絞るか。tar サイズと「設計文書を配布物に
-   含める抵抗感」次第。→ 推奨: まず全ツリー（実装が最短・自分用配布のうちは問題にならない）。
-2. **配布チャネル = rootfs（R）の置き場**: native の初回 DL には**認証なしで GET できる
-   公開 URL** が必要で、本リポジトリは private のため Releases asset は素の curl で取れない。
-   → 推奨: 公開の dist 専用 repo（例 `agent-fleet-dist`）の Releases に R（+C）を置く
-   （R は OSS のみなので公開に支障なし）。完全ファイル渡し運用は `--bundle-rootfs` の
-   self-contained tar で両立するので、公開置き場を作るまでのつなぎも効く。
-3. **`/healthz` の版表示 vs `/api/version` 新設**（§35.6.1）: 監視互換（`ok` 文字列を見る
-   ものが居ないか）だけ確認して決める。
-4. **Helm の棚上げを roadmap に反映するか**（§35.3.4-5）。→ 推奨: 反映する。
-5. **native の arm64 rootfs をいつ出すか**: Dockerfile は arch 対応済みだが、rootfs の
-   arm64 ビルドは QEMU クロスでホスト負荷が重い。→ 推奨: amd64 のみで出し、WSL on ARM の
-   実需要が出た時点で arm64 対応ホスト（実機 or CI）でビルドする。
-6. **静的 bwrap / 静的 git（NO_CURL）の自前ビルドを供給網として許容するか**: どちらも
-   小物で musl 静的ビルドの実績が豊富、リリース工程の builder イメージ内で source から
-   固定版をビルドする（バイナリ拾い食いはしない）。→ 推奨: 許容。ここを嫌うと
-   「ホスト依存ゼロ」は成立しない。
-7. **オンデマンド供給元の実装確認**（方針は §35.3.1 で決定済み: native rootfs は
-   on-demand・air-gap B は焼き込み継続）: (a) chromium の DL 供給元最終選定（playwright CDN
+**決定済み（2026-07-21・ユーザー判断）**:
+
+1. **docs/ 同梱範囲 = 全ツリー**（内部 dev/decisions/history 込み。単一ユーザー =
+   super_admin 相当なので権限問題なし・実装最短・Docker 構成と完全同一）。
+2. **配布チャネル = 公開 dist repo `k-k1/agent-fleet-dist` を新設**（具体設計は §35.4.2）。
+   完全ファイル渡しは `--bundle-rootfs` で併存。
+3. **版表示は認証付き `/api/version` 新設**（§35.6.1。`/healthz` は restart-cp.sh の
+   `ok` 完全一致比較があるため不変更）。
+4. **Helm chart は棚上げを roadmap に反映**（P1 の作業項目）。
+5. **静的 bwrap / 静的 git（NO_CURL）の自前ビルドを許容**（builder イメージ内で source
+   から固定版をビルド。バイナリ拾い食いはしない）。
+
+**残る確認事項（実装フェーズ内で消化）**:
+
+6. **native の arm64 rootfs**: 需要待ち。dist repo に source を置かない決定（§35.4.2）に
+   より公開 repo の無料 arm ランナーは使えない — 出す時は private repo の arm ランナー
+   （$0.005/分）か arm 実機でビルド。
+7. **オンデマンド供給元の実装確認**（P2）: (a) chromium の DL 供給元最終選定（playwright CDN
    を第一候補に、版不変 URL・arm64 供給・レイアウト互換で比較確認）。(b) bwrap 配下での
    chromium sandbox 実測（namespace sandbox が通るか。不可なら `--no-sandbox` + localhost
    限定の割り切りを README 化）。(c) awscli の versioned zip / SMP の versioned deb URL と
    root なし展開（`dpkg-deb -x` 相当）の確認。
-8. **ライセンス見解の確度**: §35.4.1 は npm registry / GitHub API の license 表示による
-   一次調査。配布開始前に claude / agy の利用規約本文（再配布・社内限定配布の条項）を
-   読んで確定させる（特にグループ会社配布を「社内」と主張しない前提で設計してあるが、
-   規約側が許すなら焼き込み配布へ戻す選択肢が復活する）。
+8. **ライセンス見解の確度（配布開始前ゲート）**: §35.4.1 は npm registry / GitHub API の
+   license 表示による一次調査。配布開始前に claude / agy の利用規約本文（再配布・社内限定
+   配布の条項）を読んで確定させる（規約側が許すなら焼き込み配布へ戻す選択肢が復活する）。
