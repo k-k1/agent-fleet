@@ -44,6 +44,7 @@ var toolSpecs = []toolSpec{
 	// workspace/Dockerfile）。RDRAND 非提示ホストでは --version 自体が SIGABRT する
 	// ため probeVersion は "(取得失敗)" になる（それ自体がガード対象ホストの兆候）。
 	{Name: "agy", Cmd: "agy", Baked: "/usr/local/bin/agy", Pin: "agy"},
+	{Name: "copilot", Cmd: "copilot", Baked: "/usr/local/bin/copilot", Pin: "copilot"},
 	{Name: "rtk", Cmd: "rtk", Baked: "/usr/local/bin/rtk"},
 	{Name: "gh", Cmd: "gh", Baked: "/usr/local/libexec/gh", Pin: "gh"}, // /usr/local/bin/gh は透過認証ラッパー
 	{Name: "go", Cmd: "go", Baked: "/usr/local/go/bin/go", Args: []string{"version"}, Pin: "go"},

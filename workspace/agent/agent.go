@@ -5,6 +5,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -24,6 +25,7 @@ var agentRegistry = map[string]agents.Agent{
 	session.KindOpencode: opencode.New(),
 	session.KindCodex:    codex.New(),
 	session.KindAgy:      agy.New(),
+	session.KindCopilot:  copilot.New(),
 	session.KindShell:    shellAgent{},
 	session.KindSSM:      ssmAgent{},
 }
@@ -87,6 +89,19 @@ func driveState(m session.Meta, alive, heal bool) string {
 			// the hook route, so "which transition counts" stays one implementation.
 			// Gated on previous=="working" so repeated polls report once; a duplicate
 			// from two concurrent polls is absorbed by handleChatReport's disarm.
+			if st == "idle" && status.LiveState(session.UUID(m.Dir, m.Name)) == "working" {
+				agents.MarkTurnEnd(session.UUID(m.Dir, m.Name), agents.TurnCompleted)
+			}
+			return st
+		}
+	}
+	// copilot: no hooks either — events.jsonl 由来の分類が唯一の状態ソース
+	// （state.go。managed でも子プロセスが同じファイルを書くので整合する）。
+	// agy と同じく、この poll が turn 完了の唯一の観測点（TUI ルート）なので
+	// working→idle の遷移で MarkTurnEnd を発火する（docs/30 ②）。managed は
+	// driver の runTurn が MarkTurnEnd 済みで status も idle — 二重発火しない。
+	if m.Kind == session.KindCopilot {
+		if st := copilot.LiveState(m); st != "" {
 			if st == "idle" && status.LiveState(session.UUID(m.Dir, m.Name)) == "working" {
 				agents.MarkTurnEnd(session.UUID(m.Dir, m.Name), agents.TurnCompleted)
 			}
