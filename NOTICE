@@ -51,9 +51,31 @@ from the official registries in the lean distribution variant):
   opencode (opencode-ai) — MIT License (https://github.com/sst/opencode)
   rtk — Apache-2.0 (https://github.com/rtk-ai/rtk)
 
+--------------------------------------------------------------------------------
+Statically linked binaries bundled in the native package (agent-fleet-native-*,
+docs/35 §35.7.2). Each is built unmodified from the upstream release tarball at
+the version pinned in deploy/release/native/Dockerfile.tools:
+
+  bubblewrap (bin/bwrap) — LGPL-2.0-or-later
+    (https://github.com/containers/bubblewrap)
+  git (bin/git, bin/git-http-backend) — GPL-2.0
+    (https://git-scm.com; source: https://mirrors.edge.kernel.org/pub/software/scm/git/)
+  zstd (bin/zstd) — dual BSD-3-Clause / GPL-2.0, used under BSD-3-Clause
+    (https://github.com/facebook/zstd)
+  musl libc (statically linked into the above) — MIT License (https://musl.libc.org)
+  libcap (statically linked into bwrap) — dual BSD-3-Clause / GPL-2.0
+    (https://sites.google.com/site/fullycapable/)
+  zlib (statically linked into git) — zlib License (https://zlib.net)
+
+Fonts installed on demand by the native lean rootfs (install-chromium):
+  Noto Sans CJK — SIL Open Font License 1.1 (https://github.com/notofonts/noto-cjk)
+
 Source code availability: components licensed under the GPL/LGPL family are
 unmodified Debian packages; their corresponding sources are available from the
 Debian archive (https://www.debian.org / `apt-get source <pkg>` against the
-bookworm suite recorded in the image). On written request to the distributor we
-will provide the corresponding source for any GPL/LGPL component bundled in a
-distributed image.
+bookworm suite recorded in the image). The statically linked git and bubblewrap
+binaries in the native package are built unmodified from the upstream release
+tarballs at the exact versions pinned in deploy/release/native/Dockerfile.tools
+(those tarballs are the corresponding source). On written request to the
+distributor we will provide the corresponding source for any GPL/LGPL component
+bundled in a distributed image or package.
