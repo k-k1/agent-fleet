@@ -67,7 +67,7 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
     const needle = q.trim().toLowerCase();
     if (!needle) return list;
     return list.filter((s) =>
-      [displayName(s), s.dir || "", kindLabel(s.kind)].join(" ").toLowerCase().includes(needle),
+      [displayName(s), s.name, s.dir || "", kindLabel(s.kind)].join(" ").toLowerCase().includes(needle),
     );
   }, [items, q]);
 
