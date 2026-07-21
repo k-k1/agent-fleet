@@ -260,6 +260,10 @@ export function MirrorView({
   // echoes get a キュー済み badge; the rest render as synthetic queued bubbles.
   const [queuedPrompts, setQueuedPrompts] = useState<string[]>([]);
   const [alive, setAlive] = useState(!!sessionMeta?.alive); // live session ⇒ composer usable
+  // The working dir was removed (repo/worktree deleted): the transcript survives
+  // (stored under the agent's home), so history stays readable, but resume is
+  // impossible — BuildLaunch refuses a gone dir. Offer a note, not a resume button.
+  const dirGone = sessionMeta?.resumable === false && !alive;
   const [pending, setPending] = useState<Question[] | null>(null); // currently-awaiting AskUserQuestion
   const [pendingText, setPendingText] = useState<string>(""); // prose streamed just before the pending question
   const [pendingPlan, setPendingPlan] = useState<string | null>(null); // ExitPlanMode plan awaiting approval
@@ -1944,26 +1948,36 @@ export function MirrorView({
       </div>
 
       {readOnly ? (
-        // History (read-only): the session isn't attached, so input is disabled. The
-        // button attaches (resumes) in the background while keeping this chat open —
-        // the composer enables once the session is live (alive from the poll).
-        <div className="mirror-compose mirror-compose-resume">
-          <button
-            type="button"
-            className="btn primary mirror-resume"
-            disabled={!running}
-            title={running ? tr("mirror.resume_session") : tr("mirror.ws_stopped")}
-            onClick={() => {
-              wantResumeFocusRef.current = true;
-              onResume?.();
-            }}
-          >
-            <Icon name="play" /> {tr("mirror.resume_continue")}
-          </button>
-          <span className="muted mirror-resume-hint">
-            {running ? tr("mirror.viewing_history_resume") : tr("mirror.viewing_history_ws_stopped")}
-          </span>
-        </div>
+        dirGone ? (
+          // Dir removed: no resume path, so drop the button and just say so — the
+          // history above is fully readable, it simply can't be continued.
+          <div className="mirror-compose mirror-compose-resume">
+            <span className="muted mirror-resume-hint">
+              <Icon name="circle-slash" /> {tr("mirror.folder_missing_history")}
+            </span>
+          </div>
+        ) : (
+          // History (read-only): the session isn't attached, so input is disabled. The
+          // button attaches (resumes) in the background while keeping this chat open —
+          // the composer enables once the session is live (alive from the poll).
+          <div className="mirror-compose mirror-compose-resume">
+            <button
+              type="button"
+              className="btn primary mirror-resume"
+              disabled={!running}
+              title={running ? tr("mirror.resume_session") : tr("mirror.ws_stopped")}
+              onClick={() => {
+                wantResumeFocusRef.current = true;
+                onResume?.();
+              }}
+            >
+              <Icon name="play" /> {tr("mirror.resume_continue")}
+            </button>
+            <span className="muted mirror-resume-hint">
+              {running ? tr("mirror.viewing_history_resume") : tr("mirror.viewing_history_ws_stopped")}
+            </span>
+          </div>
+        )
       ) : termState === "resume" ? (
         // Resume menu is up in the terminal: block the composer (keystrokes would go to
         // the menu) and send the user there to choose.

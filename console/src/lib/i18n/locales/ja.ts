@@ -1207,6 +1207,7 @@ export const ja = {
   "mirror.ws_stopped": "ワークスペース停止中",
   "mirror.resume_continue": "再開して続ける",
   "mirror.viewing_history_resume": "履歴を閲覧中（入力するには再開）",
+  "mirror.folder_missing_history": "作業フォルダが存在しないため再開できません（履歴のみ閲覧可）",
   "mirror.viewing_history_ws_stopped": "履歴を閲覧中（ワークスペース停止中）",
   "mirror.select_in_terminal": "ターミナルで選択",
   "mirror.resume_choice_hint": "再開方法の選択待ち（コンテキスト維持は「2」）",
@@ -1468,7 +1469,7 @@ export const ja = {
   "arch.restored_n": "{restored} 件を復帰しました",
   "arch.title": "アーカイブ済みセッション",
   "arch.empty": "アーカイブはありません。",
-  "arch.filter_ph": "タイトル / フォルダ / 種別で絞り込み",
+  "arch.filter_ph": "タイトル / slug / フォルダ / 種別で絞り込み",
   "arch.expand_all": "すべてのグループを開く",
   "arch.collapse_all": "すべてのグループを閉じる",
   "arch.expand_all_short": "すべて開く",
@@ -1532,6 +1533,7 @@ export const ja = {
   // === P2 セッション行（features/sessions/SessionRow.tsx）===
   "srow.id_copied": "IDをコピーしました: {name}",
   "srow.cant_resume": "作業フォルダが存在しないため再開できません",
+  "srow.history_only": "フォルダ無し — 履歴のみ閲覧可（再開不可 / クリックで開く）",
   "srow.stopped_hint": "停止中（クリックで履歴を閲覧 / Ctrl・中クリックで新ペイン）",
   "srow.open_pane_suffix": "（Ctrl/中クリックで新ペインに開く）",
   "srow.branch_switched":
