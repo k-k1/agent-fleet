@@ -42,7 +42,7 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-[ -n "$PROFILE" ] && [ -n "$REGION" ] || { usage; exit 2; }
+if [ -z "$PROFILE" ] || [ -z "$REGION" ]; then usage; exit 2; fi
 
 AWS=(aws --profile "$PROFILE" --region "$REGION")
 
