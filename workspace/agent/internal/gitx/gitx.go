@@ -5,6 +5,7 @@
 package gitx
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -19,6 +20,19 @@ func Cmd(dir string, args ...string) *exec.Cmd {
 		args = append([]string{"-C", dir}, args...)
 	}
 	cmd := exec.Command("git", args...)
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	return cmd
+}
+
+// CmdContext is Cmd bound to ctx: when ctx is cancelled or its deadline passes,
+// the git process is killed. Use it for the network-touching ops (fetch, submodule
+// update) that GIT_TERMINAL_PROMPT=0 does NOT bound — a slow or unresponsive remote
+// can otherwise hang the caller indefinitely.
+func CmdContext(ctx context.Context, dir string, args ...string) *exec.Cmd {
+	if dir != "" {
+		args = append([]string{"-C", dir}, args...)
+	}
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	return cmd
 }
