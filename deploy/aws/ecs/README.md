@@ -205,6 +205,15 @@ service supports it:
 | ssm | CP secrets (out-of-band) | PutParameter/DeleteParameter under `/af-cp/*` |
 | sts | account resolution in release-ecr.sh | GetCallerIdentity |
 
+## Known behavior: first Start may 504 at the ALB
+
+A cold workspace Start (image pull + agent wait) can outlast the ALB's 60s idle
+timeout, so the *HTTP request* dies with 504 — but the CP keeps provisioning
+server-side and the workspace converges to `running` shortly after (~100s
+measured). The Console polls `GET /api/workspace` so users just see "starting";
+when driving the API directly, poll the same endpoint instead of trusting the
+Start response code.
+
 ## Cost & ephemerality
 
 Standing costs while the substrate is up: **NAT (~$32/mo)**, ALB (~$20/mo), RDS
@@ -239,5 +248,8 @@ deleting `af-ecs-network`.
   ECR/SSM are fine in a throwaway account; for least privilege see
   §Minimal IAM above.
 - The Google OAuth client used for ALB OIDC is throwaway — delete it after testing.
+- **`AuthMode=dev`** (30-ingress parameter) skips login entirely for sandbox/E2E
+  gates. Before deploying with it, restrict the ALB SG (80/443) to your own IP —
+  dev auth hands an authenticated session to anyone who reaches the ALB.
 - Naming prefix `af-` on every resource so a sandbox shared with other work stays
   greppable and safe to sweep.

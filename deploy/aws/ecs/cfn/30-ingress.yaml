@@ -65,6 +65,15 @@ Parameters:
     Type: String
     Default: ""
     Description: SUPER_ADMIN_EMAILS (comma-separated).
+  AuthMode:
+    Type: String
+    Default: oauth
+    AllowedValues: [ oauth, dev ]
+    Description: >-
+      CP auth mode. oauth (default) = CP-native Google OAuth. dev = fixed dev
+      identity with NO login — sandbox/E2E gates only: restrict the ALB security
+      group to your own IP before using it (an internet-facing ALB with dev auth
+      hands out an authenticated session to anyone who reaches it).
 
 Resources:
   Cert:
@@ -173,7 +182,7 @@ Resources:
             - { Name: AF_DB_PORT, Value: !ImportValue { "Fn::Sub": "${DataStackName}-DbPort" } }
             - { Name: AF_DB_NAME, Value: agentfleet }
             - { Name: AF_DB_USER, Value: afadmin }
-            - { Name: AUTH, Value: oauth }
+            - { Name: AUTH, Value: !Ref AuthMode }
             - { Name: PUBLIC_BASE_URL, Value: !Sub "https://${Fqdn}" }
             - { Name: PUBLIC_DOMAIN, Value: !Ref Fqdn }
             - { Name: GOOGLE_OAUTH_CLIENT_ID, Value: !Ref GoogleClientId }
