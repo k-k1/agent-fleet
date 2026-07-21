@@ -1034,39 +1034,50 @@ VERSION=0.1.0 deploy/release/publish-dist.sh --seed
      - typecheck/build/vitest(stores)/i18n:lint 緑。実描画はゲート k 再ビルド後の目視待ち。
        さらに本格的な可視化（agent.log 全文の tail surface）は必要になれば別タスク。
 
-10. **claude セッションが入力を一切受け付けない（2026-07-21・ゲート k 中のユーザー実機報告
-    rootfs `4677f9f5a67d`／v0.1.1）→ 根本原因特定・是正済み**:
-    - **症状**: 素の WSL2 で claude セッションを起動すると、welcome TUI は正しく描画され、
-      起動直後の Trust 確認は Enter が通る。しかし**メインプロンプトに到達すると一切の入力が
-      通らない**（Console のミラー＝「反映待ち」のまま／ターミナル直打ちも不可）。**フレッシュな
-      セッション再作成でも 100% 再現**。
-    - **切り分け（ミラー/配線バグを棄却）**: tmux 実データで確認 — claude は正しいペイン
-      （`claude_san447u:%1` 等）に生存（node・State S・~18 threads＝健全）、端末フォアグラウンド
-      も claude（`tpgid == pgrp`）、Console クライアントも当該セッションに attach 済み。**にも
-      かかわらず raw `tmux send-keys` でも文字が着弾しない**（`INPUT=LOST`）。**同一 tmux ソケット
-      の bash セッションは入力が通る**＝ミラー配線・ルーティング・フォアグラウンド占有は全て無実で、
-      **claude プロセス自身が stdin を読んでいない**と確定。
-    - **引き金の観測**: 起動直後に orphan 化した `gh issue list -R anthropics/claude-code …`
-      （Claude Code の PR ステータス取得）が 15 分以上ハング（この WS は外向き回線制限＋gh 未認証・
-      フッターに `gh auth login for PR status`）。ただし gh を kill しても復旧せず＝gh 単体は主因では
-      なく、**「起動時の非必須ネットワーク呼び出しが回線制限でハングし、REPL の入力ループがそこで
-      アームされないまま止まる」**のが本質。
-    - **根本原因の実証**: 同じペイン（bash 入力は通っていた既知 good ペイン）で `claude` を素で
-      起動 → 同じく入力不能。**`DISABLE_AUTOUPDATER=1 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
-      DISABLE_TELEMETRY=1 DISABLE_ERROR_REPORTING=1 claude` で起動 → 入力復活・`hi`→応答まで一往復
-      成功**（実機スクショで確認）。image ENV に既存の `DISABLE_AUTOUPDATER=1`（`workspace/Dockerfile`）
-      **だけでは不足**で、**非必須通信（テレメトリ/エラーレポート/サーベイ）の無効化が必須**と判明。
-    - **対処（この調査で実施）**: `workspace/Dockerfile` の `ENV DISABLE_AUTOUPDATER=1` 直後に
-      **`ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 / DISABLE_TELEMETRY=1 / DISABLE_ERROR_REPORTING=1`**
-      を追加。image ENV なので **native rootfs（`image-env.json` 経由）にも Docker/ECS にも**流れ、
-      全 claude セッション（管理下・手動とも）で恒久的に解消する。完全接続環境では単に非必須通信を
-      opt-out するだけで無害。**CLI 版ピン止め（§35 の設計・auto-update でピンが外れると困る）とも
-      整合**。
-    - **状態**: Dockerfile 修正は commit 済み。**管理下セッションでの一往復の再検証は次の rootfs
-      再ビルド／publish 後**（現行公開 rootfs `4677f9f5a67d` にはこの ENV が無いため）。根本原因は
-      実機で手動検証済み＝修正の有効性は確証済み。
-    - **副次（ゲート非ブロック・任意フォローアップ）**: TUI フッターに
-      `tmux focus-events off · add 'set -g focus-events on' to ~/.tmux.conf` のヒント。これは
-      フォーカス追跡＝**通知**用で入力ブロックの主因ではない。native 同梱 tmux 設定へ
-      `set -g focus-events on`＋（Shift+Enter/拡張キー向けに）`set -g allow-passthrough on` /
-      `set -s extended-keys on` を入れる改善は別途検討。
+10. **claude セッションが入力を一切受け付けない（2026-07-21〜22・ゲート k 中のユーザー実機報告
+    rootfs `4677f9f5a67d`／v0.1.1）→ 真因特定・実機検証済み・恒久修正**:
+    - **症状**: 実リポジトリで管理下 claude セッションを起動すると、welcome TUI は正しく描画され、
+      起動直後の Trust 確認は Enter が通る。しかし**メインプロンプトに到達すると一切の入力が通らない**
+      （Console のミラー＝「反映待ち」のまま／ターミナル直打ち／raw `tmux send-keys` も不可）。
+      **Console フレッシュ新規でも 100% 再現**。Docker/ECS は同じランチャで正常。
+    - **切り分け（ミラー/配線/コマンドを全棄却）**: claude は正しいペインに生存（node・State S・
+      fd/tty/epoll 武装とも正常 claude と一致＝正しく入力待ち）、端末フォアグラウンドも claude
+      （`tpgid==pgrp`）。send-keys 着弾（`PINGME`）判定で、素 `new-session -d 'claude …'`／実 socket
+      `af-ws-dev`／`--session-id`+`--name`／`export` prefix／末尾コマンド（fork/exec 差）／`pipe-pane`／
+      **実起動コマンドの verbatim 再現**／attach 済み手動／detached-bash（send-keys 機構は健全）は
+      **全て REACHED（＝無罪）**。env（`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` 等）も claude の
+      `/proc/pid/environ` に届いていたが入力 LOST のまま＝**env は真因でない（当初の結論は誤帰属）**。
+      **唯一 LOST は workspace-agent が実起動した管理下セッションだけ**＝実リポで `gh pr view` が発火する
+      条件だけが差。
+    - **★真因（WSL ローカル claude が strace/proc で特定）**: claude が起動時に **PR ステータス取得の
+      `gh pr view`** を実行 → gh 未認証＋この repo は github.com HTTPS リモート → 認証情報を探して
+      **`git credential fill` が `/dev/tty`（＝tmux ペインの pty）を open し、ユーザ名/パスワードの
+      `read()` でブロック**。結果、claude と credential-fill が**同一 pty の 2 リーダー**になり、
+      **send-keys のバイトが認証プロンプト側に食われて claude の `epoll(fd0)` に届かない**。因果確定：
+      credential パイプラインを kill する**前は LOST・kill 直後に同一 send-keys が即 REACHED**（他不変）。
+    - **★スコープ＝native 固有でなくフリート全体の潜在バグ**: `workspace/agent/cred_helper.go` が
+      global credential.helper `!workspace-agent cred` を仕込むが、**GitHub 未接続だと github.com の
+      トークンを持たず空を返す**→git が対話プロンプトにフォールバック。`GIT_TERMINAL_PROMPT=0` は
+      `internal/gitx` 等で **agent 自身の git にだけ per-command** 付与され、**claude が spawn する
+      `gh pr view`→git 子プロセスには効いていない**。cred ヘルパーも同じく Docker/ECS 共通なので、
+      **GitHub 未接続ユーザー（例：Bitbucket 専用）は Docker/ECS でも github.com リポで同様に入力全断**
+      する。フリートで表面化していないのは大半が GitHub 接続済みだから。
+    - **★修正（実機検証済み）**: `workspace/Dockerfile` に **`ENV GIT_TERMINAL_PROMPT=0` と
+      `GCM_INTERACTIVE=never`** を追加（image ENV＝native rootfs `image-env.json`/Docker/ECS 全てに効く）。
+      git を対話プロンプトに落とさせず即失敗させる＝credential-fill が pty を掴まない。**設定モーダルの
+      GitHub 認証は無傷**：資格情報は Console キャプチャ（OAuth device flow／PAT 貼付→暗号化ストア）で、
+      git の端末プロンプトは認証フローに一切使わない（cred ヘルパーは `get` のみ実装・`store`/`erase`
+      は no-op）。cred ヘルパーが先に走り、空のときだけこの防御が効く純粋な追加。**現行 rootfs の
+      image-env.json に手動追記→`af start` やり直し→Console 新規 claude で `hi` 一往復成功を実機確認**
+      （2026-07-22）。次の rootfs 再ビルド/publish で恒久反映。
+    - **⚠️ 訂正**: 当初「起動時の非必須ネットワーク呼び出しのハング＝env 無効化で解決」と誤結論し、
+      commit **b1c1c41** で `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`/`DISABLE_TELEMETRY`/
+      `DISABLE_ERROR_REPORTING` を追加した（本節の旧版もその記述だった）。env は claude に届いていたが
+      入力 LOST のまま＝**入力の真因でない**（`gh pr view` はテレメトリでないので DISABLE 系では止まらない）。
+      当該3キーは制限ネット向け無害ハードニングとして**残置**（コメントを訂正）。真の修正は上記
+      `GIT_TERMINAL_PROMPT=0`。
+    - **副次フォローアップ（別件）**: native で gh 未認証＝gh 透過認証（GH_TOKEN 注入）が native ランタイム
+      で効いていない。`GIT_TERMINAL_PROMPT=0` は「ブロックせず即失敗」にするだけで PR ステータス自体は
+      表示されない。native の gh 透過認証配線が別途要る（ただし未接続ユーザーは常に存在しうるので
+      `GIT_TERMINAL_PROMPT=0` の防御は接続有無に関わらず必須）。TUI フッターの `tmux focus-events off`
+      ヒントは通知/状態検出用で入力主因ではない。
