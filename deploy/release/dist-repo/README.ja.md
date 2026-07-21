@@ -59,7 +59,6 @@ bubblewrap サンドボックス上の rootfs）と永続ホーム・git 作業�
 | WSL2 や単一ユーザー Linux で個人利用・Docker なし | **Native**（下記） | unprivileged user namespaces が使える x86_64 Linux/WSL2（素の WSL2 は可）、`curl` か `wget`、ディスク ~1.5 GB |
 | 自社の Linux サーバでチーム利用 | **Docker Compose**（下記） | Docker Engine + `docker compose`、ホストに向けた公開ドメイン（自動 TLS。内部 CA フォールバックあり）、ログイン用 Google OAuth 2.0 クライアント |
 | AWS でチーム利用 | **ECS（CloudFormation）**（下記） | AWS アカウント、イメージ用 ECR、compose バンドル同梱のテンプレート |
-| オフライン / 制限ネットワーク | 上記いずれかの air-gap 経路 | イメージ tar（Compose）または native の `-bundle` tar。ダウンロードの代わりにファイル受け渡し |
 
 全版共通: 各ワークスペースの初回起動時にエージェント CLI のピン版導入で一度だけ
 外向きネットワークが必要です（air-gap の代替手順は各同梱 README に記載）。また
@@ -79,6 +78,25 @@ af start
 - 版を指定する場合: `AF_VERSION=0.1.0 bash install.sh`
 - 詳細（ホスト要件・air-gap 導入・常駐化・VOICEVOX / ずんだもんによる読み上げ
   （任意）・制約）は tar 同梱の `README.md` を参照してください。
+
+### private リポジトリのクローン（git プロバイダ OAuth）
+
+各利用者は自分の GitHub / Bitbucket を Console（**⚙設定 → 「Git」**）から接続します。
+アクセストークン（PAT）を貼り付ける方式はデプロイ側の設定なしで動きます。加えて
+ワンクリックの **「OAuth で接続」** ボタンを有効にするには、クライアント資格情報を
+**`af start` の前に**環境変数で渡します（`af` がそれを control plane へ引き渡します）:
+
+| プロバイダ | 変数 | 補足 |
+|---|---|---|
+| **GitHub**（device flow） | `GITHUB_OAUTH_CLIENT_ID` | OAuth App を作り **「Enable Device Flow」を ON**。client_id は**秘密ではありません**。コールバック URL 不要なので `localhost` でもそのまま動きます。 |
+| **Bitbucket**（auth code） | `BITBUCKET_OAUTH_KEY`, `BITBUCKET_OAUTH_SECRET`, `PUBLIC_BASE_URL` | consumer の Callback URL を `<PUBLIC_BASE_URL>/api/oauth/bitbucket/callback` と完全一致で登録します。 |
+
+```bash
+GITHUB_OAUTH_CLIENT_ID=<your-client-id> af start
+```
+
+systemd 常駐時は `[Service]` に `Environment=` 行として追加します。これらは OAuth
+ボタンを点けるだけで、**未設定でもトークン貼付は使えます**（OAuth は利便性のため）。
 
 フォアグラウンドの `af start` の代わりにサービス常駐させる場合（WSL2 は systemd が
 既定で有効）— `~/.config/systemd/user/agent-fleet.service` を作成:
@@ -107,22 +125,27 @@ loginctl enable-linger "$USER"               # WSL セッションを閉じて�
 
 ## Docker Compose 版の導入（チーム・オンプレ）
 
-イメージはレジストリに**公開していません** —
-[Releases](https://github.com/k-k1/agent-fleet-dist/releases) からバンドル
-（`agent-fleet-<版>.tar.gz`）とイメージ tar（`agent-fleet-images-<版>.tar.gz`）の
-両方をダウンロードして:
+イメージはレジストリに**公開していません**。そのためバンドル
+（`agent-fleet-<版>.tar.gz`）とイメージ tar（`agent-fleet-images-<版>.tar.gz`）を
+[Releases](https://github.com/k-k1/agent-fleet-dist/releases) に添付しています。
+ヘルパーが両方を取得・検証し、バンドルを展開してイメージを `docker load` します:
 
 ```bash
-V=<版>
-sha256sum -c --ignore-missing SHA256SUMS          # 両ダウンロードを検証
-tar xzf "agent-fleet-$V.tar.gz" && cd "agent-fleet-$V"
-./load-images.sh "../agent-fleet-images-$V.tar.gz" # docker load（CP + workspace）
-cp .env.example .env                               # 秘密・ドメイン・Google OAuth を記入
+curl -fsSL https://raw.githubusercontent.com/k-k1/agent-fleet-dist/main/install-compose.sh | bash
+cd agent-fleet-<版>
+cp .env.example .env     # 秘密・ドメイン・Google OAuth を記入（下記も参照）
 docker compose up -d
 ```
 
+native 版と違い**完全なワンライナーにはなりません**: `docker compose up` の前に
+`.env`（秘密・`PUBLIC_DOMAIN`・Google OAuth・任意で下記の git プロバイダ OAuth 変数）を
+編集する必要があります。版を固定するなら `AF_VERSION=<版>` を前置し、`AF_SKIP_IMAGES=1`
+で大きいイメージ tar の DL を省けます（別途ファイル受け渡しする場合）。手動が良ければ
+2 つの tar を DL 後、`sha256sum -c --ignore-missing SHA256SUMS`・`tar xzf`・`./load-images.sh`。
+
 同梱の `README.md` が完全な runbook です: 前提条件・鍵生成・TLS / ドメイン設定・
-バックアップ / リストア・アップグレード・トラブルシュート。
+git プロバイダ OAuth（`.env` の `GITHUB_OAUTH_CLIENT_ID` / `BITBUCKET_OAUTH_KEY` /
+`BITBUCKET_OAUTH_SECRET`）・バックアップ / リストア・アップグレード・トラブルシュート。
 
 ## AWS への導入（ECS / CloudFormation）
 

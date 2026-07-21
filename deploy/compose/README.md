@@ -40,6 +40,11 @@ This directory is the whole deployment surface:
 
 ## Quick start
 
+> Starting from a published release? The `install-compose.sh` helper in the
+> [distribution repo](https://github.com/k-k1/agent-fleet-dist) fetches + verifies
+> the bundle and images tar and `docker load`s them, leaving you at the `cp
+> .env.example .env` step below. This runbook is the manual/from-source path.
+
 ```bash
 cd deploy/compose
 cp .env.example .env
@@ -69,6 +74,17 @@ https://<PUBLIC_DOMAIN>/oauth2/callback
 ```
 
 Copy the client ID/secret into `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET`.
+
+### Git provider OAuth (GitHub / Bitbucket) — optional
+
+Google OAuth above is for **console login**. To also enable the one-click
+"Connect via OAuth" buttons for cloning private repos, set the git-provider vars
+in `.env` (users can always paste a token instead, without these):
+
+- **GitHub** (device flow) — `GITHUB_OAUTH_CLIENT_ID` (client_id is not a secret;
+  the OAuth App must have "Enable Device Flow" ON; no callback URL needed).
+- **Bitbucket** (auth code) — `BITBUCKET_OAUTH_KEY` / `BITBUCKET_OAUTH_SECRET`;
+  the consumer's Callback URL must equal `<PUBLIC_BASE_URL>/api/oauth/bitbucket/callback`.
 
 ## First administrator, tenants, members
 
