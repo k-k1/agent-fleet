@@ -823,8 +823,9 @@ default/ecs ゲートも無変更通過）。実走で得た確定事項:
   設計どおりの案内メッセージで停止（想定内の環境制約 — 起動自体は CI ゲート d/e で
   実証済み。実機起動はゲート k の領分）。
 
-残りはゲート (k) のみ = **ユーザー実施待ち**（§35.8.1。公開済み版 `0.1.0` /
-rootfs `fc943ac06dfa` を使う）。
+ゲート (k) = **完了（2026-07-22・ユーザー実機・v0.1.1 / rootfs `4677f9f5a67d`）**。
+手順 1〜7（手順 7 = systemd 常駐化の任意項目含む）全クリア。詳細と填まりどころは
+§35.8.1 の「最終結果」を参照。全ゲート (a)〜(k) 消化済み。
 
 ## 35.8 検証ゲート（P3-10 完了判定への接続）
 
@@ -878,6 +879,24 @@ c="$(ls -d ~/.local/share/agent-fleet/chromium/*/chrome-linux*/chrome | head -1)
 
 **報告様式**（この 4 点で十分）: ①環境（`wsl.exe --version` / ディストロ / 新規 or 既存）
 ②表 1〜7 の ✓/✗ ③手順 5 の生出力（成功でも失敗でも）④気付き（DL 所要・初回起動時間等）。
+
+**最終結果（ユーザー実機・2026-07-22・v0.1.1 / rootfs `4677f9f5a67d`）= ゲート k 全手順クリア**:
+
+- **手順 1〜6 ✓**（別セッション stpovm6 で実施）。素の WSL2（Windows 11 + WSL2 Ubuntu）で
+  ワンライナー導入 → `af start` の preflight 素通り → Console 表示 → clone → claude セッション
+  E2E → 再起動オフライン起動まで通し確認。**この過程で Console から起動した claude セッションの
+  入力全断バグを発見・修正**（`gh pr view` → `git credential fill` が pty を占有し claude の
+  入力を横取り。GitHub 未接続＝Bitbucket 専用環境で常時踏む。修正 = `GIT_TERMINAL_PROMPT=0` を
+  image ENV に追加。commit `f5158b1`・§35.9-10 参照）。
+- **手順 7（任意・systemd user unit 常駐化）✓**（2026-07-22）。`systemctl --user status
+  agent-fleet` = **`Active: active (running); enabled`**、Main PID は
+  `~/.local/opt/agent-fleet/0.1.1/bin/af-cp`。
+  - **填まりどころ**: README-native のユニット例 `ExecStart` が汎用想定パス
+    `%h/agent-fleet/af start` だったが、ワンライナー導入では `af` は
+    `~/.local/opt/agent-fleet/<v>/` 展開＋`~/.local/bin/af` symlink なので `~/agent-fleet/af`
+    は**存在しない**。正しくは `%h/.local/bin/af start`。この填まりどころ修正と、dist repo
+    README（en/ja）への systemd user 登録手順の追記を本コミットで実施（tar 手展開時の
+    読み替え・linger・port 8099 二重起動注意・bus 未接続時の `[boot] systemd=true` も併記）。
 
 ### 35.8.2 実 publish runbook（ゲート j・ユーザー実施）
 

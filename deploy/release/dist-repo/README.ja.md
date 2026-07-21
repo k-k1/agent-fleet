@@ -80,6 +80,31 @@ af start
 - 詳細（ホスト要件・air-gap 導入・常駐化・VOICEVOX / ずんだもんによる読み上げ
   （任意）・制約）は tar 同梱の `README.md` を参照してください。
 
+フォアグラウンドの `af start` の代わりにサービス常駐させる場合（WSL2 は systemd が
+既定で有効）— `~/.config/systemd/user/agent-fleet.service` を作成:
+
+```ini
+[Unit]
+Description=Agent Fleet (native)
+
+[Service]
+ExecStart=%h/.local/bin/af start
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload && systemctl --user enable --now agent-fleet
+systemctl --user status agent-fleet          # 期待: Active: active (running)
+loginctl enable-linger "$USER"               # WSL セッションを閉じても常駐させる
+```
+
+`%h` はホームディレクトリに展開されます。`ExecStart` のパスは上のワンライナー導入
+（`~/.local/bin/af` への symlink）に一致します。フォアグラウンドの `af start` が
+残っていると port 8099 の bind に失敗するので先に止めてください。
+
 ## Docker Compose 版の導入（チーム・オンプレ）
 
 イメージはレジストリに**公開していません** —
