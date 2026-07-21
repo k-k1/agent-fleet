@@ -128,10 +128,12 @@
 .sess-kic.kind-codex { color: #4ec97a; background: rgba(78, 201, 122, 0.14); }
 .sess-kic.kind-opencode { color: #b07cf2; background: rgba(176, 124, 242, 0.16); }
 .sess-kic.kind-agy { color: #4285f4; background: rgba(66, 133, 244, 0.14); }
+.sess-kic.kind-copilot { color: #a371f7; background: rgba(163, 113, 247, 0.14); }
 [data-theme="light"] .sess-kic.kind-claude { color: #a85f1c; background: rgba(224, 164, 94, 0.2); }
 [data-theme="light"] .sess-kic.kind-codex { color: #18854a; background: rgba(78, 201, 122, 0.2); }
 [data-theme="light"] .sess-kic.kind-opencode { color: #6d2fce; background: rgba(176, 124, 242, 0.2); }
 [data-theme="light"] .sess-kic.kind-agy { color: #1a73e8; background: rgba(66, 133, 244, 0.2); }
+[data-theme="light"] .sess-kic.kind-copilot { color: #8250df; background: rgba(130, 80, 223, 0.16); }
 /* The state chip is span.session-state (old markup — rules at the bottom of this
    file); its margin-left:auto puts it at the row's right edge. Calm states are
    icon-only (.mini); question/plan/permission keep their text. */

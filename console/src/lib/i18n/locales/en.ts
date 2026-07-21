@@ -270,7 +270,7 @@ export const en: Record<keyof typeof ja, string> = {
   "env.agent_update_title": "Agent CLI updates",
   "env.agent_update_label": "Update the agent CLIs and rtk to the latest on start",
   "env.agent_update_note":
-    "Covers claude / opencode / codex / Antigravity (agy) / rtk. OFF (default) pins the system-baked image versions. ON updates each to the latest on the next start (applied on Stop → Start; turn it OFF and restart to return to the image versions). You can change this even while stopped.",
+    "Covers claude / opencode / codex / Copilot / Antigravity (agy) / rtk. OFF (default) pins the system-baked image versions. ON updates each to the latest on the next start (applied on Stop → Start; turn it OFF and restart to return to the image versions). You can change this even while stopped.",
   "env.recreate_failed": "Failed to recreate: ",
   "env.cleanhome_failed": "Failed to clean: ",
   "env.danger_zone": "Danger zone",
@@ -608,6 +608,10 @@ export const en: Record<keyof typeof ja, string> = {
   "agents.agy_rtk_note":
     "agy has no command-rewrite hook, so it's instruction-based (best effort). AGENTS.md just encourages rtk use; it isn't enforced.",
   "agents.agy_unsupported": "Not available on this host ({reason})",
+  "agents.copilot_desc":
+    "GitHub Copilot CLI rides the GitHub connection (gh transparent auth) — no separate sign-in. A Copilot subscription on the GitHub account is required (the Free tier has a small monthly quota).",
+  "agents.copilot_not_connected": "Connect GitHub first (Connections > GitHub)",
+  "agents.copilot_unsupported": "Not available in this container image ({reason})",
   "agents.remote_control": "Remote control",
   "agents.notifications": "Notifications",
   "agents.codex_auth_failed": "Failed to start Codex auth: {msg}",
@@ -758,7 +762,7 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.agent_cli_update": "Agent CLI updates",
   "admin.allow_self_update": "Allow members to update the agent CLIs and rtk themselves",
   "admin.allow_self_update_hint":
-    "Covers claude / opencode / codex / Antigravity (agy) / rtk. OFF (default) pins everyone to this deploy's image versions. ON lets each member choose “update to the latest on start” in their own settings (in-container in-place update; applied on Stop → Start, reversible).",
+    "Covers claude / opencode / codex / Copilot / Antigravity (agy) / rtk. OFF (default) pins everyone to this deploy's image versions. ON lets each member choose “update to the latest on start” in their own settings (in-container in-place update; applied on Stop → Start, reversible).",
   "admin.saved": "Saved",
   "admin.no_members": "No members. Add one from the form below.",
   "admin.add_failed": "Failed to add: {msg}",
@@ -920,6 +924,7 @@ export const en: Record<keyof typeof ja, string> = {
   "agent.launch_hint.codex": "Launch Codex CLI",
   "agent.launch_hint.opencode": "Launch opencode",
   "agent.launch_hint.agy": "Launch Antigravity CLI (experimental)",
+  "agent.launch_hint.copilot": "Launch GitHub Copilot CLI",
   "agent.launch_hint.shell": "Plain shell (bash)",
   "agent.launch_hint.ssm": "SSM login to an AWS EC2 host",
 

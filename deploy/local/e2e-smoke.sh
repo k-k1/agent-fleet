@@ -42,6 +42,7 @@ if [ "${1:-}" = "--inner" ]; then
   check_ver claude   "$EXPECT_CLAUDE"   claude --version
   check_ver opencode "$EXPECT_OPENCODE" opencode --version
   check_ver codex    "$EXPECT_CODEX"    codex --version
+  check_ver copilot  "$EXPECT_COPILOT"  copilot --version
   check_ver go       "$EXPECT_GO"       /usr/local/go/bin/go version
   check_ver gh       "$EXPECT_GH"       /usr/local/libexec/gh --version
 
@@ -72,7 +73,7 @@ if [ "${1:-}" = "--inner" ]; then
   # ビルド時ピンの写し versions.json（設定 UI「ツールのバージョン」のピン表示の源）。
   VJ=/usr/local/share/agent-fleet/versions.json
   if [ -f "$VJ" ]; then
-    for pair in "claude=$EXPECT_CLAUDE" "opencode=$EXPECT_OPENCODE" "codex=$EXPECT_CODEX" \
+    for pair in "claude=$EXPECT_CLAUDE" "opencode=$EXPECT_OPENCODE" "codex=$EXPECT_CODEX" "copilot=$EXPECT_COPILOT" \
                 "go=$EXPECT_GO" "gh=$EXPECT_GH" "chromium=$EXPECT_CHROMIUM"; do
       k="${pair%%=*}"; want="${pair#*=}"
       got="$(jq -r ".$k" "$VJ" 2>/dev/null)"
@@ -178,13 +179,14 @@ arg_pin() {
 EXPECT_CLAUDE="$(arg_pin CLAUDE_CODE_VERSION)"
 EXPECT_OPENCODE="$(arg_pin OPENCODE_VERSION)"
 EXPECT_CODEX="$(arg_pin CODEX_VERSION)"
+EXPECT_COPILOT="$(arg_pin COPILOT_VERSION)"
 EXPECT_GO="$(arg_pin GO_VERSION)"
 EXPECT_GH="$(arg_pin GH_VERSION)"
 EXPECT_CHROMIUM="$(arg_pin CHROMIUM_VERSION)"
 EXPECT_RTK="${EXPECT_RTK:-1}" # 既定=常時焼き込み。BAKE_RTK=0 ビルドの検証時のみ 0 を渡す
 SMOKE_MEMORY="${WS_MEMORY:-1g}"
 
-echo "==> image smoke: $IMAGE (claude=$EXPECT_CLAUDE opencode=$EXPECT_OPENCODE codex=$EXPECT_CODEX go=$EXPECT_GO gh=$EXPECT_GH chromium=$EXPECT_CHROMIUM rtk=$EXPECT_RTK)"
+echo "==> image smoke: $IMAGE (claude=$EXPECT_CLAUDE opencode=$EXPECT_OPENCODE codex=$EXPECT_CODEX copilot=$EXPECT_COPILOT go=$EXPECT_GO gh=$EXPECT_GH chromium=$EXPECT_CHROMIUM rtk=$EXPECT_RTK)"
 exec docker run --rm -i --init --network none --memory "$SMOKE_MEMORY" --cap-add=SYS_ADMIN \
   -e EXPECT_CLAUDE="$EXPECT_CLAUDE" \
   -e EXPECT_OPENCODE="$EXPECT_OPENCODE" \

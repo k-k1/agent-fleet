@@ -209,7 +209,7 @@ func memberTools() []mcpTool {
 	return []mcpTool{
 		{
 			name: "list_my_sessions", minScope: scopeRead,
-			desc:   "List the Claude/codex/opencode/agy sessions in your Workspace. Each has a human-readable `display` name and an opaque `name` slug: refer to sessions by `display` when talking to the user (the slug means nothing to them); pass `name` to the other session tools.",
+			desc:   "List the Claude/codex/opencode/agy/copilot sessions in your Workspace. Each has a human-readable `display` name and an opaque `name` slug: refer to sessions by `display` when talking to the user (the slug means nothing to them); pass `name` to the other session tools.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{}},
 			run: func(ctx context.Context, a mcpAPI, res *resolved, _ map[string]any) (string, error) {
 				return agentText(ctx, res.rt, "GET", "/sessions", nil)
@@ -352,7 +352,7 @@ func memberTools() []mcpTool {
 		},
 		{
 			name: "get_session_usage", minScope: scopeRead,
-			desc: "Per-session context fill and cumulative token consumption for transcript-capable sessions (claude/codex/opencode/agy; shell/ssm excluded). Optional `name` narrows to one session; omitted returns all. `context` is the current context size (tokens with read/create/fresh breakdown, pct of window; absent until the first assistant reply, reset by auto-compaction). `cumulative` sums consumption (logical turns, inTok/outTok/cacheRead/cacheCreate, spend = inTok+cacheCreate+outTok). NOTE: agy is listed but its transcript records no token counts, so its `context` is absent and `cumulative` is all zeros — not a sign of no usage (check get_agent_usage for agy's quota instead). Use when asked which session is near its context limit or how much a session has consumed. Subscription quota is get_agent_usage (separate tool).",
+			desc: "Per-session context fill and cumulative token consumption for transcript-capable sessions (claude/codex/opencode/agy/copilot; shell/ssm excluded). Optional `name` narrows to one session; omitted returns all. `context` is the current context size (tokens with read/create/fresh breakdown, pct of window; absent until the first assistant reply, reset by auto-compaction). `cumulative` sums consumption (logical turns, inTok/outTok/cacheRead/cacheCreate, spend = inTok+cacheCreate+outTok). NOTE: agy is listed but its transcript records no token counts, so its `context` is absent and `cumulative` is all zeros — not a sign of no usage (check get_agent_usage for agy's quota instead). copilot records outTok only (inTok/cache stay 0, `context` absent). Use when asked which session is near its context limit or how much a session has consumed. Subscription quota is get_agent_usage (separate tool).",
 			schema: map[string]any{"type": "object", "properties": map[string]any{
 				"name": map[string]any{"type": "string", "description": "session name (optional; omitted = all sessions)"},
 			}},
@@ -366,7 +366,7 @@ func memberTools() []mcpTool {
 		},
 		{
 			name: "get_agent_usage", minScope: scopeRead,
-			desc:   "Subscription usage and rate limits for the agent CLIs in your Workspace (claude, codex and agy; opencode has no usage source). claude and codex report fiveHour / sevenDay windows with pct (percent used, 0-100) and resetsAt (ISO instant the limit lifts); codex may add planType and resetCredits. agy has a different shape: account / plan plus groups (each quota pool's label, remainingPct and resetsAt — e.g. the experimental Starter pool). authed=false means that CLI has no subscription login; ageSec is the capture age in seconds. Use when asked how much quota remains or when a limit resets.",
+			desc:   "Subscription usage and rate limits for the agent CLIs in your Workspace (claude, codex and agy; opencode and copilot have no usage source). claude and codex report fiveHour / sevenDay windows with pct (percent used, 0-100) and resetsAt (ISO instant the limit lifts); codex may add planType and resetCredits. agy has a different shape: account / plan plus groups (each quota pool's label, remainingPct and resetsAt — e.g. the experimental Starter pool). authed=false means that CLI has no subscription login; ageSec is the capture age in seconds. Use when asked how much quota remains or when a limit resets.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{}},
 			run: func(ctx context.Context, a mcpAPI, res *resolved, _ map[string]any) (string, error) {
 				cl, err := agentText(ctx, res.rt, "GET", "/claude/usage", nil)
@@ -397,14 +397,14 @@ func memberTools() []mcpTool {
 		},
 		{
 			name: "list_models", minScope: scopeRead,
-			desc: "List the launch-time models for `kind`. claude returns its fixed tier aliases (fable/opus/sonnet/haiku); codex, opencode and agy return the live catalog reflecting the user's connected providers. Before creating a session with a model override, call this and use a returned id. Resolve a user shorthand such as `terra` to its matching returned full id (for example `gpt-5.6-terra`).",
+			desc: "List the launch-time models for `kind`. claude returns its fixed tier aliases (fable/opus/sonnet/haiku); codex, opencode, agy and copilot return the live catalog reflecting the user's connected providers; copilot's reflects the account's Copilot plan (empty on Free = Auto only; omit model for auto routing). Before creating a session with a model override, call this and use a returned id. Resolve a user shorthand such as `terra` to its matching returned full id (for example `gpt-5.6-terra`).",
 			schema: map[string]any{"type": "object", "properties": map[string]any{
-				"kind": map[string]any{"type": "string", "description": "claude | codex | opencode | agy"},
+				"kind": map[string]any{"type": "string", "description": "claude | codex | opencode | agy | copilot"},
 			}, "required": []string{"kind"}},
 			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
 				kind := argStr(args, "kind")
-				if kind != "claude" && kind != "codex" && kind != "opencode" && kind != "agy" {
-					return "", fmt.Errorf("kind must be claude, codex, opencode or agy")
+				if kind != "claude" && kind != "codex" && kind != "opencode" && kind != "agy" && kind != "copilot" {
+					return "", fmt.Errorf("kind must be claude, codex, opencode, agy or copilot")
 				}
 				return agentText(ctx, res.rt, "GET", "/agents/"+url.PathEscape(kind)+"/models", nil)
 			},
@@ -417,7 +417,7 @@ func memberTools() []mcpTool {
 				"properties": map[string]any{
 					"dir":            map[string]any{"type": "string", "description": "working directory (repo working copy); omitted = home"},
 					"title":          map[string]any{"type": "string", "description": "display name (optional)"},
-					"kind":           map[string]any{"type": "string", "description": "agent kind: claude (default) | codex | opencode | agy | shell. agy is the Antigravity CLI (launchable only when connected). shell is a raw shell with no agent guardrails — initial_prompt and any string sent to it run verbatim as commands, so confirm the exact command with the user before launching or sending."},
+					"kind":           map[string]any{"type": "string", "description": "agent kind: claude (default) | codex | opencode | agy | copilot | shell. agy is the Antigravity CLI (launchable only when connected). copilot is the GitHub Copilot CLI (needs the GitHub connection + a Copilot subscription). shell is a raw shell with no agent guardrails — initial_prompt and any string sent to it run verbatim as commands, so confirm the exact command with the user before launching or sending."},
 					"model":          map[string]any{"type": "string", "description": "model override (optional)"},
 					"initial_prompt": map[string]any{"type": "string", "description": "first task/hand-off text, auto-sent after boot (optional)"},
 					"worktree":       map[string]any{"type": "boolean", "description": "create a new isolated worktree from dir before launch (optional; default false)"},
@@ -428,7 +428,7 @@ func memberTools() []mcpTool {
 			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
 				kind := argStr(args, "kind")
 				driver := ""
-				if kind == "codex" || kind == "opencode" {
+				if kind == "codex" || kind == "opencode" || kind == "copilot" {
 					driver = "managed"
 				}
 				body, _ := json.Marshal(map[string]any{

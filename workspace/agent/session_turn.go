@@ -16,6 +16,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -28,6 +29,7 @@ import (
 var managedDrivers = map[string]agents.Driver{
 	session.KindOpencode: opencode.NewDriver(),
 	session.KindCodex:    codex.NewDriver(),
+	session.KindCopilot:  copilot.NewDriver(),
 }
 
 // driverOf resolves the managed driver for a session's kind.
