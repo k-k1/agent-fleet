@@ -48,7 +48,9 @@ expect_set() { diff <(LC_ALL=C sort "$1") <(LC_ALL=C sort "$LOG") || fail "call 
 lineno() { grep -nF -- "$1" "$LOG" | head -1 | cut -d: -f1; }
 expect_order() {
   local a b; a="$(lineno "$1")"; b="$(lineno "$2")"
-  [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ] || fail "order: '$1' must precede '$2'"
+  if [ -z "$a" ] || [ -z "$b" ] || [ "$a" -ge "$b" ]; then
+    fail "order: '$1' must precede '$2'"
+  fi
 }
 
 # ---- fixture: 偽の dist 成果物一式（R・C（rootfs.json 内蔵）・A・B・SHA256SUMS）------
