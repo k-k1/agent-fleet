@@ -13,9 +13,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"os/exec"
 	"os/user"
@@ -254,11 +257,65 @@ func (n *nativeRuntime) Start(ctx context.Context) error {
 	healthWait := agentHealthWait(15 * time.Second)
 	if n.rootfs != "" {
 		healthWait = agentHealthWait(300 * time.Second)
+		// The entrypoint's boot-install writes only to agent.log, which nothing
+		// surfaces during Start — so a first-start operator sees a long, silent
+		// wait and can wrongly conclude the CLIs were baked / no install ran
+		// (docs/35 §35.9-9). Mirror the entrypoint's own [entrypoint] progress
+		// lines (boot-install, install-go/jdk, …) to the CP log — visible in the
+		// `af start` terminal — for the duration of this wait. Best-effort and
+		// read-only; the deferred cancel stops it the moment the agent is healthy.
+		log.Printf("[ws %s] starting (first start pins agent CLIs into ~/.local; this can take a few minutes) — progress in %s",
+			n.name, filepath.Join(n.dataDir, "agent.log"))
+		off := int64(0)
+		if fi, statErr := os.Stat(filepath.Join(n.dataDir, "agent.log")); statErr == nil {
+			off = fi.Size()
+		}
+		tailCtx, stopTail := context.WithCancel(ctx)
+		defer stopTail()
+		go n.mirrorBootProgress(tailCtx, off)
 	}
 	if err := waitAgentHealthy(ctx, n.Endpoint(), healthWait); err != nil {
 		return fmt.Errorf("%w (see %s)", err, filepath.Join(n.dataDir, "agent.log"))
 	}
 	return nil
+}
+
+// mirrorBootProgress tails agent.log from startOff and echoes the entrypoint's
+// own progress lines (the "[entrypoint] …" prefix — boot-install, install-go,
+// install-jdk, claude repair, …) to the CP log so a first-start operator can see
+// that pinned CLIs are being installed instead of a silent multi-minute wait
+// (docs/35 §35.9-9). Best-effort: any error just ends the mirror. It stops when
+// ctx is cancelled (the caller cancels the moment the agent is healthy).
+func (n *nativeRuntime) mirrorBootProgress(ctx context.Context, startOff int64) {
+	f, err := os.Open(filepath.Join(n.dataDir, "agent.log"))
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	if _, err := f.Seek(startOff, io.SeekStart); err != nil {
+		return
+	}
+	r := bufio.NewReader(f)
+	var pending string // trailing partial line not yet newline-terminated
+	for {
+		line, err := r.ReadString('\n')
+		if err == nil { // a complete line
+			s := strings.TrimRight(pending+line, "\r\n")
+			pending = ""
+			if strings.Contains(s, "[entrypoint]") {
+				log.Printf("[ws %s] %s", n.name, strings.TrimSpace(s))
+			}
+			continue
+		}
+		// EOF (or read error): hold any partial bytes and wait for more, unless
+		// cancelled (the agent went healthy → boot phase is done).
+		pending += line
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
 }
 
 // bwrapArgs assembles the frozen bwrap invocation (docs/35 §35.7.2): the rootfs
