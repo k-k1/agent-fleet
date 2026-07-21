@@ -40,7 +40,8 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	case "agy":
 		list = agy.Models()
 	case "copilot":
-		// 静的カタログ（copilot CLI に列挙口が無い — docs/36）。未指定は auto。
+		// TUI /model ピッカーの PTY スクレイプ（プラン反映ライブ取得 — docs/36 追補。
+		// Free は Auto のみ＝空リスト）。未指定は auto ルーティング。
 		list = copilot.Models()
 	default:
 		httpx.WriteErr(w, http.StatusNotFound, "unknown_kind", "no model catalog for this kind")

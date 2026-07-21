@@ -207,7 +207,7 @@ var mcpStdioTools = []map[string]any{
 var mcpStdioWriteTools = []map[string]any{
 	{
 		"name":        "list_models",
-		"description": "指定エージェントで現在選べるモデル一覧を返す。model 指定で create_session する前には必ず呼び、返った id を使うこと。claude は固定のティア別名（fable/opus/sonnet/haiku）、codex／opencode／agy は接続状態を反映したライブカタログ、copilot は静的カタログ（未指定は auto ルーティング）。利用者が terra のような略称で指定した場合も、一覧から対応する完全な id（例: gpt-5.6-terra）を選ぶ。",
+		"description": "指定エージェントで現在選べるモデル一覧を返す。model 指定で create_session する前には必ず呼び、返った id を使うこと。claude は固定のティア別名（fable/opus/sonnet/haiku）、codex／opencode／agy／copilot は接続状態を反映したライブカタログ（copilot はプラン反映 — Free は Auto のみで空になる。未指定は auto ルーティング）。利用者が terra のような略称で指定した場合も、一覧から対応する完全な id（例: gpt-5.6-terra）を選ぶ。",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{

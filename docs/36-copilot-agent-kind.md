@@ -175,8 +175,14 @@
   起動すること**。/model ピッカーの実測語彙（v1.0.73）: gpt-5.6-sol/terra/luna,
   gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5-mini, gpt-5.3-codex, claude-sonnet-5/4.6/4.5,
   claude-haiku-4.5, claude-fable-5, claude-opus-4.8(+fast)/4.7/4.6/4.5,
-  gemini-3.1-pro-preview, gemini-3.5-flash, kimi-k2.7-code。models.go の静的
-  カタログはここから採録（列挙口が CLI に無いため）。
+  gemini-3.1-pro-preview, gemini-3.5-flash, kimi-k2.7-code。
+- **モデルカタログはプラン連動のライブ取得へ**（静的リストを廃止）: models.go が
+  使い捨て COPILOT_HOME＋トークン明示注入で TUI を PTY 起動し `/model` ピッカーを
+  スクレイプ（agents.Flow — agy /usage と同じ基盤・10 分キャッシュ・stale-if-error）。
+  Free 系バナー検出 → 空リスト＝Console ピッカーは既定（auto）のみ、バナー無し →
+  ピッカー行がそのままそのアカウントで選べるカタログ。実プローブ ~12 秒・
+  実セッション一覧は汚さない。契約は fixture（両プラン形）＋ live テスト
+  （TestLiveModels）で固定。
 - **managed driver の実 CLI 契約テスト**が通過（`live_contract_test.go`,
   `AF_COPILOT_LIVE=1` opt-in）: spawn→initialize→session/new→prompt 完走→
   events.jsonl に応答反映→子 kill→respawn+session/load→文脈保持まで。

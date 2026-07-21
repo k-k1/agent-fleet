@@ -109,3 +109,23 @@ func TestLiveSpawnPromptResume(t *testing.T) {
 		t.Fatalf("resume lost context; last turn: %+v", last)
 	}
 }
+
+// TestLiveModels: 実 TUI /model スクレイプの契約。Free プランのアカウントでは
+// 空カタログ（Auto のみ）、有償プランでは 1 件以上の id が返る — どちらでも
+// 「プローブが完走して解析できる」ことがこのテストの本体（描画ドリフト検知）。
+func TestLiveModels(t *testing.T) {
+	liveGate(t)
+	if Token() == "" {
+		t.Skip("gh auth token が取れない（GitHub 未連携）— live テストをスキップ")
+	}
+	list, err := probeModels()
+	if err != nil {
+		t.Fatalf("probeModels: %v", err)
+	}
+	t.Logf("catalog: %d models", len(list))
+	for _, m := range list {
+		if m.ID == "" || strings.EqualFold(m.ID, "auto") {
+			t.Errorf("bad catalog entry: %+v", m)
+		}
+	}
+}
