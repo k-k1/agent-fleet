@@ -7,6 +7,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
@@ -38,6 +39,10 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 		}
 	case "agy":
 		list = agy.Models()
+	case "copilot":
+		// TUI /model ピッカーの PTY スクレイプ（プラン反映ライブ取得 — docs/36 追補。
+		// Free は Auto のみ＝空リスト）。未指定は auto ルーティング。
+		list = copilot.Models()
 	default:
 		httpx.WriteErr(w, http.StatusNotFound, "unknown_kind", "no model catalog for this kind")
 		return

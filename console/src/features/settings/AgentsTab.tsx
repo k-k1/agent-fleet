@@ -179,6 +179,7 @@ export function AgentsTab() {
         agents={agents}
         updateAgents={updateAgents}
       />
+      <CopilotCard st={conns.copilot} />
       {agents === false && <p className="ps-note">{tr("agents.rtk_unsupported")}</p>}
     </div>
   );
@@ -262,7 +263,7 @@ function SettingRow({ label, sub, children }: { label: ReactNode; sub?: ReactNod
 // LaunchDefaults: the common, per-agent starting point. A repo's last-used values
 // still win in the launch dialog, so these are useful global defaults without
 // repeatedly overwriting deliberate per-repo choices.
-function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "agy" | "opencode" }) {
+function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "agy" | "opencode" | "copilot" }) {
   const s = useSettings();
   const tr = useT();
   const desc = agentOf(kind);
@@ -489,6 +490,34 @@ function ClaudeCard({
 // card must always say so. The quota gauge (残量%) lives in the WS bar next to the
 // Claude / Codex usage chips. On unsupported hosts (no RDRAND) the card shows why
 // instead of the connect flow.
+// CopilotCard: GitHub Copilot CLI（docs/36）。専用の認証フローを持たない —
+// GitHub 連携（gh 透過認証）に相乗りするので、状態表示と起動既定のみ。接続/切断は
+// 連携タブの GitHub 側で行う。
+function CopilotCard({ st }: { st: any }) {
+  const tr = useT();
+  const unsupported = st?.supported === false;
+  return (
+    <ProviderCard
+      id="copilot"
+      name="GitHub Copilot"
+      status={<StatusPill on={st?.connected}>{st?.connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>}
+    >
+      {unsupported ? (
+        <div className="p-desc">{tr("agents.copilot_unsupported", { reason: st?.reason || "" })}</div>
+      ) : (
+        <>
+          <div className="p-desc">{tr("agents.copilot_desc")}</div>
+          {!st?.connected && <p className="ps-note">{tr("agents.copilot_not_connected")}</p>}
+        </>
+      )}
+      <div className="p-settings">
+        <div className="ps-title">{tr("agents.settings")}</div>
+        <LaunchDefaults kind="copilot" />
+      </div>
+    </ProviderCard>
+  );
+}
+
 function AgyCard({
   st,
   reload,

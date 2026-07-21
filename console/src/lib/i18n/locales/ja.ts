@@ -271,7 +271,7 @@ export const ja = {
   "env.agent_update_title": "エージェント CLI の更新",
   "env.agent_update_label": "起動時にエージェント CLI と rtk を最新へ更新する",
   "env.agent_update_note":
-    "対象は claude / opencode / codex / Antigravity（agy）/ rtk。OFF（既定）はシステムが焼いたイメージ版で固定。ON にすると次の起動時にそれぞれ最新へ更新します（Stop → Start で反映／OFF に戻して再起動すればイメージ版へ戻ります）。停止中でも変更できます。",
+    "対象は claude / opencode / codex / Copilot / Antigravity（agy）/ rtk。OFF（既定）はシステムが焼いたイメージ版で固定。ON にすると次の起動時にそれぞれ最新へ更新します（Stop → Start で反映／OFF に戻して再起動すればイメージ版へ戻ります）。停止中でも変更できます。",
   "env.recreate_failed": "作り直しに失敗: ",
   "env.cleanhome_failed": "掃除に失敗: ",
   "env.danger_zone": "危険な操作",
@@ -613,6 +613,10 @@ export const ja = {
   "agents.agy_rtk_note":
     "agy はコマンド書換フックを持たないため指示ベース（ベストエフォート）。AGENTS.md で rtk 利用を促すだけで、強制ではありません。",
   "agents.agy_unsupported": "このホストでは利用できません（{reason}）",
+  "agents.copilot_desc":
+    "GitHub Copilot CLI は GitHub 連携（gh 透過認証）に相乗りします — 個別のログインは不要です。GitHub アカウントに Copilot サブスクリプションが必要です（Free プランは月間クォータ小）。",
+  "agents.copilot_not_connected": "先に GitHub を連携してください（連携 > GitHub）",
+  "agents.copilot_unsupported": "このコンテナイメージでは利用できません（{reason}）",
   "agents.remote_control": "リモートコントロール",
   "agents.notifications": "通知",
   "agents.codex_auth_failed": "Codex 認証開始に失敗: {msg}",
@@ -763,7 +767,7 @@ export const ja = {
   "admin.agent_cli_update": "エージェント CLI の更新",
   "admin.allow_self_update": "メンバーがエージェント CLI と rtk を自分で最新へ更新するのを許可",
   "admin.allow_self_update_hint":
-    "対象は claude / opencode / codex / Antigravity（agy）/ rtk。OFF（既定）は全員がこのデプロイのイメージ版で固定。ON にすると各メンバーが自分の設定で「起動時に最新へ更新」を選べます（コンテナ内 in-place 更新・Stop → Start で反映／戻せます）。",
+    "対象は claude / opencode / codex / Copilot / Antigravity（agy）/ rtk。OFF（既定）は全員がこのデプロイのイメージ版で固定。ON にすると各メンバーが自分の設定で「起動時に最新へ更新」を選べます（コンテナ内 in-place 更新・Stop → Start で反映／戻せます）。",
   "admin.saved": "保存しました",
   "admin.no_members": "メンバーがいません。下のフォームから追加してください。",
   "admin.add_failed": "追加に失敗: {msg}",
@@ -925,6 +929,7 @@ export const ja = {
   "agent.launch_hint.codex": "Codex CLI を起動",
   "agent.launch_hint.opencode": "opencode を起動",
   "agent.launch_hint.agy": "Antigravity CLI を起動（実験枠）",
+  "agent.launch_hint.copilot": "GitHub Copilot CLI を起動",
   "agent.launch_hint.shell": "通常のシェル (bash)",
   "agent.launch_hint.ssm": "AWS EC2 に SSM ログイン",
 
