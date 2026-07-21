@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -600,10 +601,23 @@ func gitSubmodulesUpdate(dir string) {
 	run := func(args ...string) {
 		_ = gitx.Cmd(dir, args...).Run()
 	}
-	run("submodule", "init")
+	run("submodule", "init") // local: reads .gitmodules, no network
 	rewriteSubmoduleSSHURLs(dir)
-	run("submodule", "update", "--recursive")
+	// `submodule update` is the only step that fetches over the network, and gitx has no
+	// default timeout — a slow/unreachable submodule remote would otherwise hang the
+	// synchronous create request past its client deadline (the worktree-launch double-start
+	// root cause). Bound it: best-effort, so on timeout the worktree still launches with
+	// whatever was fetched and the user can finish the checkout manually.
+	ctx, cancel := context.WithTimeout(context.Background(), submoduleUpdateTimeout)
+	defer cancel()
+	_ = gitx.CmdContext(ctx, dir, "submodule", "update", "--recursive").Run()
 }
+
+// submoduleUpdateTimeout caps the submodule network fetch during a worktree launch. Kept
+// under the create tool's reconcile budget (POST 40s + poll 45s) so a normal-but-slow
+// fetch still resolves as a successful create, while a pathological hang degrades to a
+// worktree with partial submodules instead of a wedged request.
+const submoduleUpdateTimeout = 60 * time.Second
 
 // rewriteSubmoduleSSHURLs replaces SSH-form submodule URLs in .git/config with their
 // HTTPS equivalents (so the token credential helper applies). Operates on the URLs
