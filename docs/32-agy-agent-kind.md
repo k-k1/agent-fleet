@@ -76,6 +76,11 @@ Track B の `hostcaps.AgyStatus()` を `Status()`（supported/reason）と `Buil
    - **install.sh に版ピンは無い**（常に latest manifest、sha512 検証つき）。`ARG AGY_VERSION` は
      キャッシュバスタ兼「ビルド時に latest だった版」の記録で、`versions.json` に `"agy"` として
      書き出す（設定 UI の「ピン vs 実体」でドリフトが見える）
+   - **【更新 2026-07-21・docs/35 P1】真のピンへ昇格**: GitHub Releases
+     （`google-antigravity/antigravity-cli`）が全旧版の versioned アセットを恒久保存し
+     GCS 配布とバイト同一（sha256/sha512 一致を実測）と判明 → 焼き込みを install.sh から
+     「`AGY_VERSION` ピンの直接 DL + `AGY_SHA256_X64/ARM64` 検証」へ変更。この行の
+     「ピン不可」制約は解消（self-update の latest 追従は manifest 経路のまま）
    - **バックグラウンド自己更新は実在**（install.sh に明記）。バイナリ実測で
      `AGY_CLI_DISABLE_AUTO_UPDATE` 環境変数を発見 → Dockerfile で `=1` に設定して封殺
      （claude の `DISABLE_AUTOUPDATER` と同じ理屈。明示的な `agy update` は可能なまま）

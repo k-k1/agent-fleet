@@ -100,6 +100,18 @@ if [ "${1:-}" = "--inner" ]; then
       if [ "$got" = "$want" ]; then echo "ok  versions.json $k=$got"
       else echo "NG  versions.json $k: ${got:-?} ≠ $want"; fail=1; fi
     done
+    # agy_sha256 はイメージ arch で決まる（boot-install の検証値。docs/35 §35.4.1）。
+    case "$(dpkg --print-architecture)" in
+      amd64) agy_sha_want="$EXPECT_AGY_SHA_X64" ;;
+      arm64) agy_sha_want="$EXPECT_AGY_SHA_ARM64" ;;
+      *)     agy_sha_want="" ;;
+    esac
+    got="$(jq -r .agy_sha256 "$VJ" 2>/dev/null)"
+    if [ -n "$agy_sha_want" ] && [ "$got" = "$agy_sha_want" ]; then
+      echo "ok  versions.json agy_sha256=$got"
+    else
+      echo "NG  versions.json agy_sha256: ${got:-?} ≠ ${agy_sha_want:-?}"; fail=1
+    fi
   else
     echo "NG  $VJ が無い"; fail=1
   fi
@@ -203,6 +215,8 @@ EXPECT_OPENCODE="$(arg_pin OPENCODE_VERSION)"
 EXPECT_CODEX="$(arg_pin CODEX_VERSION)"
 EXPECT_COPILOT="$(arg_pin COPILOT_VERSION)"
 EXPECT_AGY="$(arg_pin AGY_VERSION)"
+EXPECT_AGY_SHA_X64="$(arg_pin AGY_SHA256_X64)"
+EXPECT_AGY_SHA_ARM64="$(arg_pin AGY_SHA256_ARM64)"
 EXPECT_RTK_VER="$(arg_pin RTK_VERSION)"
 EXPECT_GO="$(arg_pin GO_VERSION)"
 EXPECT_GH="$(arg_pin GH_VERSION)"
@@ -225,6 +239,8 @@ exec docker run --rm -i --init --network none --memory "$SMOKE_MEMORY" --cap-add
   -e EXPECT_CODEX="$EXPECT_CODEX" \
   -e EXPECT_COPILOT="$EXPECT_COPILOT" \
   -e EXPECT_AGY="$EXPECT_AGY" \
+  -e EXPECT_AGY_SHA_X64="$EXPECT_AGY_SHA_X64" \
+  -e EXPECT_AGY_SHA_ARM64="$EXPECT_AGY_SHA_ARM64" \
   -e EXPECT_RTK_VER="$EXPECT_RTK_VER" \
   -e EXPECT_GO="$EXPECT_GO" \
   -e EXPECT_GH="$EXPECT_GH" \
