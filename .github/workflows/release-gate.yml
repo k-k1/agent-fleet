@@ -1,5 +1,6 @@
-# P1 リリースゲート（docs/35 §35.7.1）: 配布成果物 A+B+D の生成と lean variant の
-# boot-install、既定（全焼き込み）ビルドの無影響を hosted runner で実走検証する。
+# リリースゲート（docs/35 §35.7.1 P1 / §35.7.2 P2）: 配布成果物 A+B+D の生成と
+# lean variant の boot-install、既定（全焼き込み）ビルドの無影響、native C+R の生成と
+# bwrap 実走（ゲート d/e）を hosted runner で実走検証する。
 #
 # 開発 Workspace には docker が無く、dev ホストでの重ビルドは稼働フリートの OOM リスク
 # があるため（共有ホスト・メモリ制約）、イメージ実ビルドを要するこのゲートだけ
@@ -115,6 +116,101 @@ jobs:
               echo "ok  agy binary present (no rdrand on runner; --version skipped)"
             fi
             echo "== boot-install gate OK =="'
+
+  # ゲート (d)+(e)（P2 — docs/35 §35.7.2）: C（native tar）+ R（lean rootfs）の生成・
+  # 内容検証と、runner 上での実走 = af start --rootfs → bwrap 配下で workspace 起動 →
+  # rootfs 内 entrypoint の boot-install がピン版を仮想 HOME へ導入するまで。
+  # 素の WSL2 実機（追加インストールなし）での通しは P4 の実機ゲートに残る。
+  native-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build native artifacts (C+R+D)
+        run: VERSION=$VERSION deploy/release/build.sh --native
+
+      - name: assert artifacts (gate d)
+        run: |
+          set -eux
+          cd deploy/release/dist
+          C="agent-fleet-native-$VERSION-linux-amd64"
+          test -f "$C.tar.gz"
+          R="$(ls agent-fleet-rootfs-*-linux-amd64.tar.zst)"
+          sha256sum -c SHA256SUMS
+          tar tzf "$C.tar.gz" | grep -q "^$C/af$"
+          # 同梱バイナリが本当に静的であること（ldd が dynamic と言ったら fail）
+          for b in af-cp bwrap git git-http-backend zstd; do
+            test -x "$C/bin/$b"
+            if ldd "$C/bin/$b" >/dev/null 2>&1; then echo "NOT STATIC: $b"; exit 1; fi
+          done
+          # rootfs.json のピンが R と一致（af はこの sha で検証・展開する）
+          sha="$(sed -n 's/.*"sha256": *"\([^"]*\)".*/\1/p' "$C/rootfs.json")"
+          echo "$sha  $R" | sha256sum -c -
+          # console / docs（denylist 適用）/ NOTICE / VERSION の同梱
+          test -f "$C/console/index.html"
+          test -f "$C/docs/35-packaging.md" && test -d "$C/docs/dev"
+          test ! -e "$C/docs/HANDOFF.md" && test ! -e "$C/docs/talk" && test ! -e "$C/docs/history"
+          test -f "$C/NOTICE" && test -f "$C/README.md"
+          test "$(cat "$C/VERSION")" = "$VERSION"
+          # rootfs に image-env manifest が注入されていること（CP rootfs モードの前提）
+          tar -I zstd -tf "$R" | grep -q '^usr/local/share/agent-fleet/image-env.json$'
+
+      - name: enable unprivileged userns (ubuntu 24.04 runner)
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+
+      - name: live run (gate e) — af start --rootfs → workspace up → boot-install pins
+        timeout-minutes: 30
+        run: |
+          set -eux
+          DIST="$PWD/deploy/release/dist"
+          C="agent-fleet-native-$VERSION-linux-amd64"
+          R="$(ls "$DIST"/agent-fleet-rootfs-*.tar.zst)"
+          RUN=/tmp/af-native; mkdir -p "$RUN"
+          tar xzf "$DIST/$C.tar.gz" -C "$RUN"
+          export WS_DATA=/tmp/af-native-data
+          ( cd "$RUN/$C" && exec ./af start --rootfs "$R" ) > /tmp/af-cp.log 2>&1 &
+          AF_PID=$!
+          up=0
+          for i in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:8099/healthz 2>/dev/null | grep -qx ok; then up=1; break; fi
+            sleep 1
+          done
+          if [ "$up" != 1 ]; then echo "CP never became healthy:"; cat /tmp/af-cp.log; exit 1; fi
+          curl -fsS http://127.0.0.1:8099/api/version | grep -F "\"version\":\"$VERSION\""
+          # workspace 起動（AUTH=dev）。Start は agent healthy まで同期 — 初回は rootfs 内
+          # entrypoint の boot-install（ピン版 DL）を含むため数分かかる（健康待ち既定 300s）。
+          out="$(curl -fsS --max-time 570 -X POST http://127.0.0.1:8099/api/workspace/start)"
+          echo "$out" | grep -F '"state":"running"' || { cat /tmp/af-cp.log; tail -200 "$WS_DATA"/dev/agent.log; exit 1; }
+          # bwrap 配下の agent が生きている（CP 経由の workspace 状態で確認）
+          curl -fsS http://127.0.0.1:8099/api/workspace | grep -F '"state":"running"'
+          # boot-install: 仮想 HOME にピン版 CLI が入っている（lean rootfs の要）
+          HOMEDIR="$WS_DATA/dev/home"
+          ls -la "$HOMEDIR/.local/bin" || true
+          for c in claude opencode codex copilot rtk agy; do
+            test -e "$HOMEDIR/.local/bin/$c" || { echo "NG: $c not boot-installed"; tail -200 "$WS_DATA"/dev/agent.log; exit 1; }
+          done
+          # 版一致は npm の導入記録（package.json）と agy の版マーカーで見る
+          # （rootfs 外から CLI を実行せずに済む・agy の RDRAND 事情にも非依存）。
+          VJ="$(ls "$WS_DATA"/shared/rootfs/*/usr/local/share/agent-fleet/versions.json | head -1)"
+          for pair in "claude=@anthropic-ai/claude-code" "opencode=opencode-ai" \
+                      "codex=@openai/codex" "copilot=@github/copilot"; do
+            k="${pair%%=*}"; pkg="${pair#*=}"
+            pin="$(jq -r ".$k" "$VJ")"
+            got="$(jq -r .version "$HOMEDIR/.local/lib/node_modules/$pkg/package.json")"
+            test "$got" = "$pin" || { echo "NG: $k $got != pin $pin"; exit 1; }
+            echo "ok  $k $got (pinned)"
+          done
+          test "$(cat "$HOMEDIR/.local/bin/.agy.version")" = "$(jq -r .agy "$VJ")"
+          echo "== native live gate OK =="
+          # 掃除: CP 停止 → af reset --all が残骸なく消えること
+          curl -fsS -X POST http://127.0.0.1:8099/api/workspace/stop
+          kill "$AF_PID" 2>/dev/null || true
+          for i in $(seq 1 20); do pgrep -f "$RUN/$C/bin/af-cp" >/dev/null || break; sleep 1; done
+          pgrep -f "$RUN/$C/bin/af-cp" >/dev/null && { pkill -TERM -f "$RUN/$C/bin/af-cp"; sleep 2; } || true
+          ( cd "$RUN/$C" && WS_DATA="$WS_DATA" ./af reset --all --yes )
+          test ! -e "$WS_DATA"
 
   # ゲート (c): 既定 ARG（全焼き込み）のビルドと e2e-smoke が無変更で通ること
   # （既存デプロイに影響ゼロ）。CP も既定 DOCS_SRC（全ツリー docs）で焼けること。

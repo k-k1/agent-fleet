@@ -1,0 +1,60 @@
+# 静的ツールビルダー（docs/35 §35.7.2-7 (iv)・§35.9-5 決定「自前ビルド許容」）。
+# native パッケージ C に同梱する bwrap / git+git-http-backend / zstd を alpine(musl)
+# で固定版ソースから静的ビルドする。バイナリの拾い食いはしない（供給元は各上流の
+# リリース tarball のみ）。取り出しは `docker build -o`（最終 scratch ステージ）。
+#
+#   docker build -f deploy/release/native/Dockerfile.tools \
+#     --output type=local,dest=<dir> deploy/release/native
+#
+# 版ピンは ARG（bump はここを書き換え）。GPL/LGPL の帰属と対応ソースの案内は
+# リポジトリ NOTICE に記載（git は GPLv2 — 上流 tarball が対応ソース）。
+FROM alpine:3.22 AS build
+ARG BUBBLEWRAP_VERSION=0.11.0
+ARG GIT_VERSION=2.47.3
+ARG ZSTD_VERSION=1.5.7
+RUN apk add --no-cache build-base meson ninja pkgconf curl xz \
+      libcap-dev libcap-static zlib-dev zlib-static
+WORKDIR /work
+
+# bubblewrap — meson の静的ビルド（musl + libcap-static）。
+RUN set -eux; \
+    curl -fsSL "https://github.com/containers/bubblewrap/releases/download/v${BUBBLEWRAP_VERSION}/bubblewrap-${BUBBLEWRAP_VERSION}.tar.xz" \
+      | tar -xJ; \
+    cd "bubblewrap-${BUBBLEWRAP_VERSION}"; \
+    LDFLAGS=-static meson setup build -Dselinux=disabled -Dman=disabled \
+      -Dbash_completion=none -Dzsh_completion=none -Dtests=false --prefer-static; \
+    ninja -C build; \
+    install -D -m 0755 build/bwrap /out/bwrap; \
+    /out/bwrap --version
+
+# git — NO_CURL の静的ビルド（CP の内部 git provider 用: ローカル操作 + git-http-backend
+# CGI のみで https を使わないため、libcurl+openssl を丸ごと回避できる）。
+RUN set -eux; \
+    curl -fsSL "https://mirrors.edge.kernel.org/pub/software/scm/git/git-${GIT_VERSION}.tar.xz" \
+      | tar -xJ; \
+    cd "git-${GIT_VERSION}"; \
+    make -j"$(nproc)" CC=cc LDFLAGS="-static" \
+      NO_CURL=1 NO_OPENSSL=1 NO_EXPAT=1 NO_TCLTK=1 NO_GETTEXT=1 \
+      NO_PERL=1 NO_PYTHON=1 NO_ICONV=1 NO_REGEX=NeedsStartEnd \
+      git git-http-backend; \
+    install -D -m 0755 git /out/git; \
+    install -D -m 0755 git-http-backend /out/git-http-backend; \
+    /out/git --version
+
+# zstd — ランチャの rootfs 展開用（ホスト側 zstd を前提にしないため同梱）。
+RUN set -eux; \
+    curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" \
+      | tar -xz; \
+    cd "zstd-${ZSTD_VERSION}"; \
+    make -j"$(nproc)" -C programs zstd \
+      LDFLAGS=-static HAVE_ZLIB=0 HAVE_LZMA=0 HAVE_LZ4=0; \
+    install -D -m 0755 programs/zstd /out/zstd; \
+    /out/zstd --version
+
+# 全部ほんとうに静的か（動的ならここで fail — ldd は静的バイナリでエラーを返す）。
+RUN set -eux; for b in /out/bwrap /out/git /out/git-http-backend /out/zstd; do \
+      ! ldd "$b" 2>/dev/null || { echo "NOT STATIC: $b"; exit 1; }; \
+    done
+
+FROM scratch
+COPY --from=build /out /

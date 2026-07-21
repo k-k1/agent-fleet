@@ -174,7 +174,7 @@ func (d *dockerRuntime) Start(ctx context.Context) error {
 	if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("docker run: %v: %s", err, out)
 	}
-	return waitAgentHealthy(ctx, d.Endpoint(), 15*time.Second)
+	return waitAgentHealthy(ctx, d.Endpoint(), agentHealthWait(15*time.Second))
 }
 
 // ensureNetwork creates the per-user network if it does not already exist.
@@ -308,6 +308,18 @@ func dockerEnvValue(name, key string) string {
 		}
 	}
 	return ""
+}
+
+// agentHealthWait returns the Start health-wait budget: the adapter default,
+// overridable via AF_AGENT_HEALTH_WAIT_SEC. Lean (boot-install) deployments
+// need more than the classic 15s on FIRST start — the entrypoint downloads the
+// pinned CLIs before the agent listens (docs/35 §35.4.1); the native rootfs
+// adapter defaults higher for the same reason.
+func agentHealthWait(def time.Duration) time.Duration {
+	if n := envInt("AF_AGENT_HEALTH_WAIT_SEC", 0); n > 0 {
+		return time.Duration(n) * time.Second
+	}
+	return def
 }
 
 // waitAgentHealthy polls the Agent's /healthz until it answers 200 or the

@@ -102,13 +102,16 @@ opencode plugin seed、toolchains 適用など）は**行われない**。ホス
 | **単一ユーザー限定** | コンテナ隔離が無く、全ワークスペースが同一 OS ユーザーで動く。factory が `AUTH=dev` 以外を fail-fast で拒否する |
 | メモリ上限なし | `WS_MEMORY` / per-user MemBytes は不適用（cgroup を持たない）。ホスト全体で共倒れし得る |
 | ネットワーク隔離なし | per-user docker network（相互不可視）が無い。単一ユーザー前提なら実害なし |
-| 実行環境はホスト任せ | CLI（claude/codex/opencode）、tmux、git、chromium、JDK はホスト導入が前提。焼き込みピン止め（versions.json）も無し |
-| entrypoint 初期化なし | settings.json seed / opencode plugin / AGENTS.md seed / TZ・toolchains 適用が働かない（必要になれば agent 側での吸収を検討） |
-| ブラウザペイン | ホストに chromium があれば動く見込み（SUID/user namespace サンドボックスは WSL2 カーネル依存）— 未検証 |
+| 実行環境はホスト任せ | **従来モードのみ**: CLI（claude/codex/opencode）、tmux、git、chromium、JDK はホスト導入が前提。焼き込みピン止め（versions.json）も無し。**rootfs モードでは解消**（rootfs がユーザーランドとピン manifest を持つ） |
+| entrypoint 初期化なし | **従来モードのみ**: settings.json seed / opencode plugin / AGENTS.md seed / TZ・toolchains 適用が働かない。**rootfs モードでは entrypoint.sh がそのまま走り docker と同等** |
+| ブラウザペイン | 従来モード: ホストに chromium があれば動く見込み — 未検証。rootfs モード: 初回 attach でピン版を自動導入（bwrap 配下の sandbox 可否は docs/35 P2/P4 ゲートで実測。不可なら `AF_CHROMIUM_NO_SANDBOX=1`） |
 
-将来 bubblewrap + rootfs 配布（前セッション検討の本命案）へ進む場合も、この Runtime の
-lifecycle（pidfile/State/Stop）はそのまま使え、Start のプロセス起動を bwrap ラップに
-差し替えるだけでよい構造にしてある。
+**rootfs モード（P2 で実装済み — docs/35 §35.7.2）**: `AF_NATIVE_ROOTFS=<展開済み
+rootfs>`（+`AF_NATIVE_BWRAP`）で、Start のプロセス起動が bwrap ラップ（rootfs を
+read-only の / に・docker と同じ bind レイアウト・単一 uid userns・pid unshare）へ
+切り替わる。lifecycle（pidfile/State/Stop）は従来モードと共通のまま。native
+パッケージのランチャ `af`（docs/35 §35.3.1）がこの配線を行う。「単一ユーザー限定」
+「メモリ上限なし」の 2 制約は rootfs モードでも残る。
 
 ## 34.6 検証状況
 

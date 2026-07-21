@@ -1,0 +1,17 @@
+# af-cp（native 用 CP 静的バイナリ）のビルダー。control-plane/Dockerfile の build
+# ステージと同じレシピ（CGO off・pure Go sqlite・migrations go:embed）で、イメージに
+# せずバイナリだけ取り出す。context は repo root。
+#
+#   docker build -f deploy/release/native/Dockerfile.afcp \
+#     --build-arg VERSION=<v> --output type=local,dest=<dir> .
+FROM golang:1.26-bookworm AS build
+WORKDIR /src/control-plane
+COPY control-plane/go.mod control-plane/go.sum ./
+RUN go mod download
+COPY control-plane/ ./
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
+      -ldflags="-s -w -X main.buildVersion=${VERSION}" -o /out/af-cp .
+
+FROM scratch
+COPY --from=build /out/af-cp /af-cp

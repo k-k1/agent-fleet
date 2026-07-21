@@ -1,0 +1,15 @@
+# Console dist（native パッケージ同梱用）のビルダー。control-plane/Dockerfile の
+# console ステージと同じレシピで、dist だけ取り出す。context は repo root。
+#
+#   docker build -f deploy/release/native/Dockerfile.console \
+#     --output type=local,dest=<dir> .
+FROM node:22-bookworm AS build
+WORKDIR /src/console
+COPY console/package.json console/package-lock.json ./
+RUN npm ci
+COPY console/ ./
+# mermaid/marp are heavy; raise the Node heap so the prod build doesn't OOM.
+RUN NODE_OPTIONS=--max-old-space-size=4096 npm run build
+
+FROM scratch
+COPY --from=build /src/console/dist /console

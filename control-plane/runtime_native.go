@@ -239,7 +239,14 @@ func (n *nativeRuntime) Start(ctx context.Context) error {
 	// Reap the child when it exits so it never lingers as a zombie under the CP.
 	go func() { _ = cmd.Wait() }()
 
-	if err := waitAgentHealthy(ctx, n.Endpoint(), 15*time.Second); err != nil {
+	// Rootfs mode gets a much larger default budget: the FIRST start runs the
+	// entrypoint's pinned boot-install (npm + GitHub downloads, minutes) before
+	// the agent ever listens. Overridable either way (AF_AGENT_HEALTH_WAIT_SEC).
+	healthWait := agentHealthWait(15 * time.Second)
+	if n.rootfs != "" {
+		healthWait = agentHealthWait(300 * time.Second)
+	}
+	if err := waitAgentHealthy(ctx, n.Endpoint(), healthWait); err != nil {
 		return fmt.Errorf("%w (see %s)", err, filepath.Join(n.dataDir, "agent.log"))
 	}
 	return nil

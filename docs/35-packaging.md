@@ -634,6 +634,24 @@ P4 ゲートに残す）:
 素の WSL2 実機（追加インストールなしの通し E2E・chromium sandbox 実測・
 playwright CDN の実 DL 確認）は §35.8 native ゲート（P4）のまま。
 
+**実装時の確定事項（2026-07-21・feat/packaging）**: 表の 12 項目すべて実装済み。追加の確定:
+
+- **agent 健康待ちのノブ化**: Start の `waitAgentHealthy` は docker/native とも 15s
+  固定だったが、lean の初回起動は entrypoint の boot-install（npm/GitHub DL・分単位）が
+  agent の listen より先に走るため必ず超過する。`AF_AGENT_HEALTH_WAIT_SEC` で上書き
+  可能にし、**rootfs モードの既定は 300s**（docker は既定 15s のまま — lean B を CP 配下で
+  動かす場合はこの env を設定する）。
+- versions.json に **`noto_cjk` ピンを新設**（`NOTO_CJK_VERSION` ARG → install-chromium
+  の CJK フォント供給元 = notofonts/noto-cjk の versioned tag。e2e-smoke の全ピン検証にも追加）。
+- ペイン自動導入の Console 側は新 state を増やさず **error code `browser_installing`
+  （503）+ 5s 自動リトライ + 「準備中」表示**で実装（controller.ts / BrowserPane.tsx / i18n）。
+- Go toolchain の選択肢は `"system"（焼き込み or なし）∪ ビルドピン ∪ 導入済み版`。
+  entrypoint は「選択版が home に無く、焼き込みピンとも不一致」の時だけ install-go を走らせる。
+- mcp-grafana のオンデマンド導入は `mcp-run grafana` の実行経路内（grafanaMCPPath の
+  最終 fallback）で行う。cloudwatch の uvx fallback は `==<cloudwatch_mcp ピン>` 固定に変更。
+- 静的ツールの版ピン（Dockerfile.tools の ARG）: bubblewrap 0.11.0 / git 2.47.3 /
+  zstd 1.5.7。ビルダー内で `ldd` による静的性検証を行い、CI ゲート (d) でも再検証する。
+
 ## 35.8 検証ゲート（P3-10 完了判定への接続）
 
 | ターゲット | ゲート | 状態 |

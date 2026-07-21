@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+# Agent Fleet — native ランチャ（docs/35 §35.3.1 / §35.7.2-8）。
+# tar を展開して `./af start`、ブラウザで http://localhost:8099 。
+#
+#   ./af start [--rootfs <tar.zst>]   # 初回は rootfs を取得（sha256 検証）して展開
+#   ./af reset [--all] [--yes]        # ローカルデータ初期化（--all は rootfs 展開含む全体）
+#   ./af status                       # CP / workspace の生存表示
+#
+# ホスト要件: Linux カーネル（unprivileged user namespaces）+ bash/coreutils/tar +
+# curl または wget。zstd はパッケージ同梱の bin/zstd を使うのでホスト不要。
+# 詳細は同梱 README.md。
+set -euo pipefail
+
+PKG="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WS_DATA="${WS_DATA:-$HOME/.local/share/agent-fleet}"
+CP_ADDR="${CP_ADDR:-127.0.0.1:8099}"
+DEV_KEY="${DEV_USER:-dev}"
+
+usage() { awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0"; }
+
+# rootfs.json（ビルダー生成・整形済み JSON）から 1 キーを抜く。ホストに jq を
+# 要求しないため sed で読む（フォーマットはビルダーと対）。
+manifest_get() {
+  sed -n 's/.*"'"$1"'": *"\{0,1\}\([^",}]*\)"\{0,1\}.*/\1/p' "$PKG/rootfs.json" | head -1
+}
+
+# ---- rootfs の取得と展開 ------------------------------------------------------
+# 優先順: --rootfs 明示 > パッケージ同梱（--bundle-rootfs 版の rootfs/）> URL DL。
+# どの経路でも rootfs.json の sha256 で検証してから展開する（改竄・欠損は起動前に
+# 検出）。同じ版 <r> が展開済みなら何もしない = 2 回目以降はオフラインで起動する。
+ensure_rootfs() {
+  local explicit_tar="$1"
+  R_VER="$(manifest_get version)"
+  local sha url dest tar dl=0
+  sha="$(manifest_get sha256)"
+  url="$(manifest_get url)"
+  [ -n "$R_VER" ] && [ -n "$sha" ] || { echo "ERROR: $PKG/rootfs.json が読めません" >&2; exit 1; }
+  dest="$WS_DATA/shared/rootfs/$R_VER"
+  ROOTFS_DIR="$dest"
+  if [ -f "$dest/.ok" ]; then
+    return 0
+  fi
+  mkdir -p "$WS_DATA/shared/rootfs"
+  if [ -n "$explicit_tar" ]; then
+    tar="$explicit_tar"
+    [ -f "$tar" ] || { echo "ERROR: --rootfs $tar が見つかりません" >&2; exit 1; }
+  elif ls "$PKG"/rootfs/*.tar.zst >/dev/null 2>&1; then
+    tar="$(ls "$PKG"/rootfs/*.tar.zst | head -1)"
+  else
+    tar="$WS_DATA/shared/rootfs/.dl-$R_VER.tar.zst"
+    dl=1
+    echo "==> rootfs $R_VER をダウンロード（初回のみ）: $url"
+    if command -v curl >/dev/null 2>&1; then
+      curl -fL --progress-bar -o "$tar" "$url"
+    elif command -v wget >/dev/null 2>&1; then
+      wget -O "$tar" "$url"
+    else
+      echo "ERROR: curl も wget もありません（rootfs を取得できません）。" >&2
+      echo "       別ホストで取得し ./af start --rootfs <tar.zst> で渡すこともできます。" >&2
+      exit 1
+    fi
+  fi
+  echo "==> rootfs 検証（sha256）"
+  echo "$sha  $tar" | sha256sum -c - >/dev/null \
+    || { echo "ERROR: rootfs の sha256 が一致しません: $tar" >&2; exit 1; }
+  echo "==> rootfs 展開 -> $dest"
+  local staging="$WS_DATA/shared/rootfs/.extract-$R_VER.$$"
+  rm -rf "$staging"; mkdir -p "$staging"
+  "$PKG/bin/zstd" -dc "$tar" | tar -x -C "$staging"
+  rm -rf "$dest"
+  mv "$staging" "$dest"
+  touch "$dest/.ok"
+  [ "$dl" = 1 ] && rm -f "$tar"
+  return 0
+}
+
+# ---- preflight: unprivileged userns で bwrap が動くか -------------------------
+preflight() {
+  if ! "$PKG/bin/bwrap" --unshare-user --uid 1000 --gid 1000 --ro-bind / / true 2>/dev/null; then
+    cat >&2 <<'EOF'
+ERROR: bubblewrap の無特権実行（unprivileged user namespaces）が使えません。
+  素の WSL2 では通常そのまま動きます。Ubuntu 23.10+ の実機では AppArmor の制限を
+  一度だけ緩める必要があります:
+    sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+  恒久化は /etc/sysctl.d/ に同設定を置いてください（詳細は README.md）。
+  userns 自体が無効なカーネルでは native 版は動きません（Docker 構成を使ってください）。
+EOF
+    exit 1
+  fi
+}
+
+do_start() {
+  local rootfs_tar=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --rootfs) rootfs_tar="${2:?--rootfs には tar.zst のパスが要ります}"; shift 2 ;;
+      *) echo "start の不明なオプション: $1" >&2; usage; exit 1 ;;
+    esac
+  done
+  local ver=""
+  [ -f "$PKG/VERSION" ] && ver="$(cat "$PKG/VERSION")"
+  ensure_rootfs "$rootfs_tar"
+  preflight
+
+  # git-provider OAuth 設定（あれば）。AUTH は native では dev 固定（単一ユーザー）。
+  if [ -f "$PKG/oauth.env" ]; then
+    set -a
+    # shellcheck disable=SC1091
+    . "$PKG/oauth.env"
+    set +a
+    echo "==> loaded $PKG/oauth.env"
+  fi
+
+  echo "==> control-plane ${ver:+$ver }on $CP_ADDR  (console: http://${CP_ADDR/#127.0.0.1/localhost})  rootfs=$R_VER"
+  exec env \
+    CP_ADDR="$CP_ADDR" \
+    AF_RUNTIME=native \
+    AF_NATIVE_ROOTFS="$ROOTFS_DIR" \
+    AF_NATIVE_BWRAP="$PKG/bin/bwrap" \
+    CONSOLE_DIR="$PKG/console" \
+    AF_DOCS_DIR="$PKG/docs" \
+    GIT_HTTP_BACKEND="$PKG/bin/git-http-backend" \
+    GIT_EXEC_PATH="$PKG/bin" \
+    PATH="$PKG/bin:$PATH" \
+    WS_DATA="$WS_DATA" \
+    AUTH=dev \
+    ${DEV_USER:+DEV_USER="$DEV_USER"} \
+    ${GITHUB_OAUTH_CLIENT_ID:+GITHUB_OAUTH_CLIENT_ID="$GITHUB_OAUTH_CLIENT_ID"} \
+    ${BITBUCKET_OAUTH_KEY:+BITBUCKET_OAUTH_KEY="$BITBUCKET_OAUTH_KEY"} \
+    ${BITBUCKET_OAUTH_SECRET:+BITBUCKET_OAUTH_SECRET="$BITBUCKET_OAUTH_SECRET"} \
+    ${PUBLIC_BASE_URL:+PUBLIC_BASE_URL="$PUBLIC_BASE_URL"} \
+    ${AF_MASTER_KEY:+AF_MASTER_KEY="$AF_MASTER_KEY"} \
+    ${AF_DB:+AF_DB="$AF_DB"} \
+    ${AF_MCP_ENABLED:+AF_MCP_ENABLED="$AF_MCP_ENABLED"} \
+    "$PKG/bin/af-cp"
+}
+
+# ---- reset: ローカルデータ初期化（run-dev.sh do_reset の移植・docker 分岐なし）--
+do_reset() {
+  local all=0 yes=0 a
+  for a in "$@"; do
+    case "$a" in
+      --all) all=1 ;;
+      --yes | -y) yes=1 ;;
+      *) echo "reset の不明なオプション: $a" >&2; usage; exit 1 ;;
+    esac
+  done
+  local target="$WS_DATA/$DEV_KEY"
+  [ "$all" = 1 ] && target="$WS_DATA"
+  if [ ! -e "$target" ]; then
+    echo "削除対象がありません（初期化済み）: $target"
+    exit 0
+  fi
+  if pgrep -f "$PKG/bin/af-cp" >/dev/null 2>&1; then
+    echo "ERROR: control-plane（af-cp）が稼働中です。停止（Ctrl-C）してから再実行してください。" >&2
+    exit 1
+  fi
+  echo "==> 削除対象: $target"
+  if [ "$all" = 1 ]; then
+    echo "    完全初期化: DB・全 home・claude-config・展開済み rootfs を含む WS_DATA 全体"
+  else
+    echo "    $DEV_KEY ユーザーのみ: home / claude-config（Claude ログイン含む）。DB と rootfs は温存"
+  fi
+  if [ "$yes" != 1 ]; then
+    if [ -t 0 ]; then
+      read -r -p "本当に削除しますか？ [y/N] " ans
+      case "$ans" in y | Y | yes) ;; *) echo "中止しました"; exit 1 ;; esac
+    else
+      echo "ERROR: 非対話実行では --yes を付けてください" >&2
+      exit 1
+    fi
+  fi
+  # workspace 残骸: bwrap の process group を止める（pid namespace ごと tmux も消える）。
+  local pidf="$WS_DATA/$DEV_KEY/agent.pid" pid=""
+  if pid="$(cat "$pidf" 2>/dev/null)" && [ -n "$pid" ]; then
+    kill -TERM -- "-$pid" 2>/dev/null || true
+    sleep 1
+    kill -KILL -- "-$pid" 2>/dev/null || true
+  fi
+  rm -rf "$target"
+  echo "==> 初期化完了（次回起動時に再作成されます）"
+}
+
+do_status() {
+  if pgrep -f "$PKG/bin/af-cp" >/dev/null 2>&1; then
+    echo "control-plane: running (http://${CP_ADDR/#127.0.0.1/localhost})"
+  else
+    echo "control-plane: stopped"
+  fi
+  local pidf pid name
+  for pidf in "$WS_DATA"/*/agent.pid; do
+    [ -f "$pidf" ] || continue
+    name="$(basename "$(dirname "$pidf")")"
+    pid="$(cat "$pidf" 2>/dev/null || true)"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      echo "workspace $name: running (pid $pid)"
+    else
+      echo "workspace $name: stopped (stale pidfile)"
+    fi
+  done
+}
+
+case "${1:-}" in
+  start) shift; do_start "$@" ;;
+  reset) shift; do_reset "$@" ;;
+  status) shift; do_status ;;
+  -h | --help | help | "") usage; exit 0 ;;
+  *) echo "不明なサブコマンド: $1" >&2; usage; exit 1 ;;
+esac
