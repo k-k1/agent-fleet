@@ -964,6 +964,14 @@ VERSION=0.1.0 deploy/release/publish-dist.sh --seed
      npm パッケージも無し。`versions.json` は全ピン記載済み = **lean 確定**（build.sh
      `--native` が `BAKE_AGENT_CLIS=0`＋`BAKE_OPTIONAL_TOOLS=0` で焼いた成果物どおり。
      Dockerfile の各 CLI RUN は全て `BAKE_AGENT_CLIS=1` ガード下で、0 では実行されない）。
+   - **chromium も焼込み無しを確認**（別セッションの追加データ点「ペインを開いた記憶が
+     無いのに chromium が既に在った」への回答）: rootfs に `usr/bin/chromium` /
+     `usr/lib/chromium` / baked Go / aws / SMP / ops MCP / CJK フォントは**いずれも無し**
+     （`BAKE_OPTIONAL_TOOLS=0` 通り）。ユーザーが見た chrome は
+     `~/.local/share/agent-fleet/chromium/<pin>/…` = **オンデマンド導入先（home ボリューム
+     永続）**であり、install-chromium が過去に走って残っていたもの＝**焼込みではなく
+     オンデマンド導入が効いている証拠**。chromium はペイン初回 attach 時に status チャネル
+     で「準備中」を Console へ流すので（§35.7.2-4）、CLI と違い初回進捗は元々可視。
    - **entrypoint は rootfs モードでも走る**（`runtime_native.go` が bwrap 配下で
      `/usr/local/bin/entrypoint.sh workspace-agent` を起動）。boot-install は lean 判定
      （`/usr/local/bin/claude` 不在かつ versions.json にピン）で発火し、~/.local へ導入する。
