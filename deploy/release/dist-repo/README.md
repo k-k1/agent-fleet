@@ -83,6 +83,31 @@ af start
   optional text-to-speech with VOICEVOX / Zundamon, limitations) see the
   `README.md` bundled inside the tar.
 
+Run it as a service instead of foreground `af start` (systemd is on by default in
+WSL2) — create `~/.config/systemd/user/agent-fleet.service`:
+
+```ini
+[Unit]
+Description=Agent Fleet (native)
+
+[Service]
+ExecStart=%h/.local/bin/af start
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload && systemctl --user enable --now agent-fleet
+systemctl --user status agent-fleet          # expect: Active: active (running)
+loginctl enable-linger "$USER"               # keep running after you close the WSL session
+```
+
+`%h` is your home directory; the `ExecStart` path matches the one-liner install
+above (symlinked `~/.local/bin/af`). Stop any foreground `af start` first, or the
+service fails to bind port 8099.
+
 ## Installing the Docker Compose edition (team, on-prem)
 
 The images are **not** published to a registry — download both the bundle

@@ -155,23 +155,40 @@ unit's `[Service]` section.
 
 ## systemd user unit (run as a service; systemd is on by default in WSL2)
 
-`~/.config/systemd/user/agent-fleet.service`:
+Instead of keeping `af start` in the foreground, run it as a systemd **user**
+service (auto-restart, survives your shell). `~/.config/systemd/user/agent-fleet.service`:
 
 ```ini
 [Unit]
 Description=Agent Fleet (native)
 
 [Service]
-ExecStart=%h/agent-fleet/af start
+ExecStart=%h/.local/bin/af start
 Restart=on-failure
 
 [Install]
 WantedBy=default.target
 ```
 
+`%h` expands to your home directory. The `ExecStart` path above matches the
+**one-liner install** (which symlinks `~/.local/bin/af`). If you extracted the
+tar by hand instead, point it at that copy — e.g.
+`ExecStart=%h/agent-fleet-native-<v>-linux-amd64/af start` (use
+`readlink -f "$(command -v af)"` to find the real path).
+
 ```bash
 systemctl --user daemon-reload && systemctl --user enable --now agent-fleet
+systemctl --user status agent-fleet          # expect: Active: active (running)
 ```
+
+- Stop the foreground `af start` first if it is still running — otherwise the
+  service fails to bind port 8099 (double start).
+- To keep it running after you close the WSL session:
+  `loginctl enable-linger "$USER"`.
+- Logs: `journalctl --user -u agent-fleet -f`.
+- If `systemctl --user` reports `Failed to connect to bus`, user systemd is not
+  running — on WSL2 enable it via `/etc/wsl.conf` (`[boot]` / `systemd=true`),
+  then `wsl.exe --shutdown` and reopen.
 
 ## Limitations (differences from the Docker setup)
 
