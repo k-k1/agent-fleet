@@ -158,14 +158,21 @@ type createReq struct {
 	// Name is IGNORED: the server auto-allocates a unique slug as the session's
 	// identity. Kept in the wire struct only so older clients that still send it
 	// don't error. Title is the optional user-facing display name (→ claude --name).
-	Name   string `json:"name"`
-	Title  string `json:"title"`
-	Color  string `json:"color"` // terminal background hue (hex); SSM host color, else empty
-	Dir    string `json:"dir"`
-	Model  string `json:"model"`
-	Effort string `json:"effort"`
-	Mode   string `json:"mode"` // "plan" | "normal"
-	Kind   string `json:"kind"` // "claude" (default) | "opencode" | "codex" | "shell"
+	Name  string `json:"name"`
+	Title string `json:"title"`
+	Color string `json:"color"` // terminal background hue (hex); SSM host color, else empty
+	Dir   string `json:"dir"`
+	// IdempotencyKey dedupes a retried/concurrent create so a client that times out
+	// (but whose request the backend actually completed) can't spawn a duplicate on
+	// retry. The stdio MCP create_session tool derives it deterministically from the
+	// conversation id + launch args, so an LLM re-issuing the same call reproduces the
+	// same key. Empty => the server falls back to a report_to-scoped intent fingerprint
+	// (createIdempotencyKey); interactive Console launches send neither and aren't deduped.
+	IdempotencyKey string `json:"idempotency_key"`
+	Model          string `json:"model"`
+	Effort         string `json:"effort"`
+	Mode           string `json:"mode"` // "plan" | "normal"
+	Kind           string `json:"kind"` // "claude" (default) | "opencode" | "codex" | "shell"
 	// Driver selects the control route（docs/27 §9.2）: "" | "tui"（従来の tmux 内
 	// TUI、既定）| "managed"（共有 runtime＋構造化 RPC・pane なし）。managed の起動は
 	// P2（opencode serve）/ P3（codex app-server）で解禁。未対応 kind は明示拒否する。
@@ -264,6 +271,46 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	var req createReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
+	}
+	// Idempotency guard (session_idempotency.go): collapse a retried / concurrent create
+	// onto the first one so a client that timed out mid-launch can't spawn a duplicate.
+	idemKey := createIdempotencyKey(&req)
+	committed := false
+	if idemKey != "" {
+		if prev, dup := createLedger.begin(idemKey); dup {
+			if prev.state == createDone {
+				// The identical create already succeeded — replay that session verbatim.
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(prev.body)
+			} else {
+				// The first create is still launching (the timed-out client's retry, or a
+				// genuine double-fire). Refuse with a distinct code the MCP tool reconciles
+				// into the eventual session rather than surfacing as a retryable failure.
+				httpx.WriteErr(w, http.StatusConflict, "create_in_progress",
+					"同じ内容のセッションを作成中です。完了までお待ちください")
+			}
+			return
+		}
+		// We own the inflight entry: clear it on any non-committed exit so a real failure
+		// doesn't wedge the key (a completed entry is kept for replay by ledger.fail).
+		defer func() {
+			if !committed {
+				createLedger.fail(idemKey)
+			}
+		}()
+	}
+	// writeCreated finalizes a successful launch: cache the session for idempotent replay,
+	// mark the key committed (so the defer above won't clear it), then write the response.
+	writeCreated := func(m session.Meta) {
+		body := wireSession(m, true)
+		if idemKey != "" {
+			if b, err := json.Marshal(body); err == nil {
+				createLedger.complete(idemKey, b)
+				committed = true
+			}
+		}
+		httpx.WriteJSON(w, http.StatusCreated, body)
 	}
 	title, ok := cleanTitle(req.Title)
 	if !ok {
@@ -440,7 +487,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			armSessionReport(name, req.ReportTo)
 			recordOperatorInjection(name, req.InitialPrompt) // operator-driven start (docs/30 ②)
 		}
-		httpx.WriteJSON(w, http.StatusCreated, wireSession(meta, true))
+		writeCreated(meta)
 		return
 	}
 	if err := startSessionTmux(meta, req.SSMForceLogin); err != nil {
@@ -463,7 +510,27 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		recordOperatorInjection(name, req.InitialPrompt)
 	}
 
-	httpx.WriteJSON(w, http.StatusCreated, wireSession(meta, true))
+	writeCreated(meta)
+}
+
+// handleIdempotencyLookup lets a client that lost the create response (a mid-launch
+// timeout) find out what became of its request without risking a duplicate: it returns
+// 200 + the created session once done, 202 while still launching, or 404 if no such
+// create is (or is still) on record. The stdio MCP create_session tool polls this to
+// reconcile a timed-out POST instead of retrying it. GET /sessions-idempotency/{key}.
+func handleIdempotencyLookup(w http.ResponseWriter, r *http.Request) {
+	e, ok := createLedger.lookup(r.PathValue("key"))
+	if !ok {
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no create on record for this key")
+		return
+	}
+	if e.state == createDone {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(e.body)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"status": "creating"})
 }
 
 // handleForkSession forks a session's conversation into a NEW session of the same
