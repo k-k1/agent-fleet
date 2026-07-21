@@ -1,7 +1,7 @@
 # Personal use on WSL (no auth, single user, instant start)
 
 Agent Fleet is a self-hosted web console for running AI coding agents (Claude Code,
-Codex CLI, OpenCode, GitHub Copilot CLI) as a managed fleet — each member gets an
+Codex CLI, OpenCode, GitHub Copilot CLI, Antigravity CLI) as a managed fleet — each member gets an
 isolated workspace with a persistent home, and drives agent sessions from the browser.
 
 This runbook gets agent-fleet up quickly on Windows **WSL2** for **single-person
