@@ -603,6 +603,13 @@ func gitSubmodulesUpdate(dir string) {
 	}
 	run("submodule", "init") // local: reads .gitmodules, no network
 	rewriteSubmoduleSSHURLs(dir)
+	// rewriteSubmoduleSSHURLs only reaches dir's TOP-LEVEL .git/config; a nested submodule
+	// (e.g. lib-svc/lib-core) is materialized during --recursive with its own SSH URL and
+	// would fail with "Permission denied (publickey)" in a workspace that authenticates over
+	// HTTPS+token (no SSH keys). Pass url.insteadOf rewrites derived from the repo's hosts:
+	// git exports -c config to the child processes that clone nested submodules (via
+	// GIT_CONFIG_PARAMETERS), so SSH→HTTPS applies at every nesting level.
+	insteadOf := submoduleInsteadOfArgs(dir)
 	// `submodule update` is the only step that fetches over the network, and gitx has no
 	// default timeout — a slow/unreachable submodule remote would otherwise hang the
 	// synchronous create request past its client deadline (the worktree-launch double-start
@@ -610,7 +617,53 @@ func gitSubmodulesUpdate(dir string) {
 	// whatever was fetched and the user can finish the checkout manually.
 	ctx, cancel := context.WithTimeout(context.Background(), submoduleUpdateTimeout)
 	defer cancel()
-	_ = gitx.CmdContext(ctx, dir, "submodule", "update", "--recursive").Run()
+	args := append(insteadOf, "submodule", "update", "--recursive")
+	_ = gitx.CmdContext(ctx, dir, args...).Run()
+}
+
+// submoduleInsteadOfArgs builds `-c url.<https>.insteadOf=<ssh>` flags for every distinct
+// host referenced by dir's top-level .gitmodules, so a recursive submodule fetch rewrites
+// SSH URLs to HTTPS at ALL nesting levels (nested submodules are almost always on the same
+// host, and the child git clones inherit these -c settings). Returns nil when there are no
+// SSH-form submodule URLs, leaving the command untouched.
+func submoduleInsteadOfArgs(dir string) []string {
+	out, err := gitx.Run(dir, "config", "-f", ".gitmodules", "--get-regexp", `^submodule\..*\.url$`)
+	if err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var args []string
+	for _, line := range strings.Split(out, "\n") {
+		_, url, ok := strings.Cut(line, " ")
+		if !ok {
+			continue
+		}
+		host, ok := sshURLHost(url)
+		if !ok || seen[host] {
+			continue
+		}
+		seen[host] = true
+		https := "https://" + host + "/"
+		// Cover both SSH spellings: scp-like (git@host:) and ssh:// (ssh://git@host/).
+		args = append(args,
+			"-c", "url."+https+".insteadOf=git@"+host+":",
+			"-c", "url."+https+".insteadOf=ssh://git@"+host+"/",
+		)
+	}
+	return args
+}
+
+// sshURLHost returns the host of an SSH git URL (scp-like or ssh://), ok=false for anything
+// else (HTTPS, local paths). Mirrors sshToHTTPS's matching so the two stay consistent.
+func sshURLHost(url string) (string, bool) {
+	u := strings.TrimSpace(url)
+	if m := scpURLRe.FindStringSubmatch(u); m != nil {
+		return m[1], true
+	}
+	if m := sshURLRe.FindStringSubmatch(u); m != nil {
+		return m[1], true
+	}
+	return "", false
 }
 
 // submoduleUpdateTimeout caps the submodule network fetch during a worktree launch. Kept
