@@ -50,7 +50,7 @@ real gate: no git clone on the box):
 cd ../../..                                  # repo root
 VERSION=0.1.0 deploy/compose/release.sh --save
 scp -i deploy/aws/ec2-single/agent-fleet-test-key.pem \
-    deploy/compose/dist/agent-fleet-0.1.0/agent-fleet-images-0.1.0.tar.gz \
+    deploy/compose/dist/agent-fleet-images-0.1.0.tar.gz \
     deploy/compose/dist/agent-fleet-0.1.0.tar.gz \
     ubuntu@<public-ip>:~
 ```

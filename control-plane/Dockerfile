@@ -28,7 +28,10 @@ RUN go mod download
 COPY control-plane/ ./
 # Static binary: modernc.org/sqlite is pure Go, so CGO can stay off. Migrations
 # (migrations/*.sql) are go:embed'd into the binary — no external files needed.
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/af-cp .
+# VERSION stamps the binary (startup log + GET /api/version, docs/35 §35.6.1);
+# only the release pipeline passes a real value — dev builds stay "dev".
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X main.buildVersion=${VERSION}" -o /out/af-cp .
 
 # --- 3. runtime --------------------------------------------------------------
 FROM debian:bookworm-slim
@@ -44,7 +47,12 @@ COPY --from=build         /out/af-cp            /usr/local/bin/af-cp
 COPY --from=console       /src/console/dist     /app/console
 # Docs, baked so the CP can stage a role-scoped subset into each Workspace container
 # at start (workspace_docs.go). Context is the repo root, so docs/ is reachable.
-COPY docs/                /usr/local/share/agent-fleet/docs/
+# DOCS_SRC lets the release pipeline point this COPY at a staged tree with the
+# internal denylist (docs/.distignore) applied — distribution images must not
+# carry HANDOFF/talk/history etc. (docs/35 §35.4.3). Self-hosted dev/ops builds
+# keep the default (full tree).
+ARG DOCS_SRC=docs
+COPY ${DOCS_SRC}/         /usr/local/share/agent-fleet/docs/
 # HOME is set so the docker CLI has a writable config dir when the container runs
 # as an arbitrary uid (compose sets user: "1000:1000"; that uid has no /etc/passwd
 # home). CONSOLE_DIR points the CP at the baked-in Console assets.

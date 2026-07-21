@@ -56,6 +56,26 @@ func TestSmokeHealthz(t *testing.T) {
 	}
 }
 
+func TestSmokeVersion(t *testing.T) {
+	_, mux := smokeEnv(t)
+	w := smokeGet(t, mux, "GET", "/api/version")
+	if w.Code != http.StatusOK {
+		t.Fatalf("version: %d %s", w.Code, w.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if got["version"] != "dev" {
+		t.Fatalf("version payload: %v", got)
+	}
+	// /api/version must stay behind the auth gate (docs/35 §35.6.1) — only
+	// /healthz is the unauthenticated probe.
+	if isAuthExempt("/api/version") {
+		t.Fatalf("/api/version must not be auth-exempt")
+	}
+}
+
 func TestSmokeWhoami(t *testing.T) {
 	_, mux := smokeEnv(t)
 	w := smokeGet(t, mux, "GET", "/api/whoami")

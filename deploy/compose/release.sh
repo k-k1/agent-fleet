@@ -1,18 +1,26 @@
 #!/usr/bin/env bash
 # Agent Fleet — build a versioned on-prem release bundle (maintainers).
 #
-# Produces, under ./dist/agent-fleet-<VERSION>/:
-#   docker-compose.yml, Caddyfile, .env.example, backup.sh, restore.sh,
-#   load-images.sh, README.md, LICENSE   (the deploy surface)
-# and, with --save, an air-gap image tar:
-#   agent-fleet-images-<VERSION>.tar.gz   (docker save of cp + workspace)
-# then tars the whole thing to  ./dist/agent-fleet-<VERSION>.tar.gz.
+# Produces, under ${DIST_DIR:-./dist}/ (docs/35 §35.2 の A/B/D):
+#   agent-fleet-<VERSION>/           … bundle dir（下記 deploy surface）
+#   agent-fleet-<VERSION>.tar.gz     … A: compose deploy surface + aws/（ec2-single・
+#                                       ecs cfn・release-ecr）+ LICENSE/NOTICE
+#   agent-fleet-images-<VERSION>.tar.gz … B（--save 時）: docker save（CP+Workspace、
+#                                       air-gap 用。A とは独立の成果物）
+#   SHA256SUMS                       … D: 上記のチェックサム
 #
 # Images are tagged ${REGISTRY}/agent-fleet/{control-plane,workspace}:${VERSION}.
+# 配布 variant（docs/35 §35.4.1/§35.4.3）: 既定で
+#   - workspace は lean（BAKE_AGENT_CLIS=0・エージェント CLI は起動時ピン install）。
+#     自社用の全焼き込みは BAKE_AGENT_CLIS=1 で明示。
+#   - CP の docs は internal denylist（docs/.distignore）適用のステージング済みツリー。
 #
-#   VERSION=1.0.0 deploy/compose/release.sh            # build images + bundle
-#   VERSION=1.0.0 deploy/compose/release.sh --save     # + docker save tar (air-gap)
+#   VERSION=1.0.0 deploy/compose/release.sh            # build images + bundle (A+D)
+#   VERSION=1.0.0 deploy/compose/release.sh --save     # + docker save tar (B, air-gap)
 #   VERSION=1.0.0 deploy/compose/release.sh --no-build # bundle only (images exist)
+#   BAKE_AGENT_CLIS=1 VERSION=... deploy/compose/release.sh   # 全焼き込み（自社用）
+#
+# 通常は deploy/release/build.sh（単一入口）経由で呼ぶ（docs/35 §35.6.2）。
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -23,6 +31,8 @@ VERSION="${VERSION:?set VERSION=<tag> (e.g. VERSION=1.0.0)}"
 REGISTRY="${REGISTRY:-agent-fleet}"
 CP_IMAGE="$REGISTRY/control-plane:$VERSION"
 WS_IMAGE="$REGISTRY/workspace:$VERSION"
+# 配布既定は lean（CLI 抜き）。BAKE_AGENT_CLIS=1 で従来の全焼き込み。
+BAKE_AGENT_CLIS="${BAKE_AGENT_CLIS:-0}"
 
 DO_BUILD=1; DO_SAVE=0
 for a in "$@"; do
@@ -33,35 +43,73 @@ for a in "$@"; do
   esac
 done
 
-OUT="$HERE/dist/agent-fleet-$VERSION"
+DIST="${DIST_DIR:-$HERE/dist}"
+OUT="$DIST/agent-fleet-$VERSION"
 rm -rf "$OUT"; mkdir -p "$OUT"
 
 if [ "$DO_BUILD" = 1 ]; then
-  echo "==> build $CP_IMAGE (context=repo root)"
-  docker build -f "$ROOT/control-plane/Dockerfile" -t "$CP_IMAGE" "$ROOT"
-  echo "==> build $WS_IMAGE"
-  docker build -t "$WS_IMAGE" "$ROOT/workspace"
+  # 配布イメージの docs は internal denylist（docs/.distignore、docs/35 §35.4.3）を
+  # 適用したステージング済みツリーを焼く。ステージは build context（repo root）内に
+  # 置く必要があるので deploy/release/.docs-stage を使う（gitignore 済み）。
+  DOCS_STAGE_REL="deploy/release/.docs-stage"
+  DOCS_STAGE="$ROOT/$DOCS_STAGE_REL"
+  rm -rf "$DOCS_STAGE"; mkdir -p "$DOCS_STAGE"
+  EXCLUDES=()
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%%#*}"
+    line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
+    if [ -n "$line" ]; then EXCLUDES+=(--exclude="./$line"); fi
+  done < "$ROOT/docs/.distignore"
+  tar -C "$ROOT/docs" -cf - "${EXCLUDES[@]}" . | tar -C "$DOCS_STAGE" -xf -
+  echo "==> staged docs (distignore applied) -> $DOCS_STAGE_REL"
+
+  echo "==> build $CP_IMAGE (context=repo root, docs=staged)"
+  docker build -f "$ROOT/control-plane/Dockerfile" -t "$CP_IMAGE" \
+    --build-arg "VERSION=$VERSION" \
+    --build-arg "DOCS_SRC=$DOCS_STAGE_REL" \
+    "$ROOT"
+  echo "==> build $WS_IMAGE (BAKE_AGENT_CLIS=$BAKE_AGENT_CLIS)"
+  docker build -t "$WS_IMAGE" \
+    --build-arg "VERSION=$VERSION" \
+    --build-arg "BAKE_AGENT_CLIS=$BAKE_AGENT_CLIS" \
+    "$ROOT/workspace"
+  rm -rf "$DOCS_STAGE"
 fi
 
 echo "==> assemble deploy surface -> $OUT"
 cp "$HERE/docker-compose.yml" "$HERE/Caddyfile" "$HERE/.env.example" \
    "$HERE/backup.sh" "$HERE/restore.sh" "$HERE/load-images.sh" \
-   "$HERE/README.md" "$ROOT/LICENSE" "$OUT/"
+   "$HERE/README.md" "$ROOT/LICENSE" "$ROOT/NOTICE" "$OUT/"
+# AWS deploy surface (docs/35 §35.2 A): ec2-single cfn + ecs cfn/ + runbooks.
+# ローカルの鍵類（gitignore 対象）が紛れ込まないよう明示除去する。
+cp -R "$ROOT/deploy/aws" "$OUT/aws"
+rm -f "$OUT"/aws/ec2-single/*-key "$OUT"/aws/ec2-single/*-key.pub "$OUT"/aws/ec2-single/*.pem
 # Pin the bundle to this VERSION so `compose up` uses the released images by
 # default (operators still override REGISTRY/VERSION in their .env).
 sed -i "s/^VERSION=.*/VERSION=$VERSION/; s#^REGISTRY=.*#REGISTRY=$REGISTRY#; s#^WS_IMAGE=.*#WS_IMAGE=$WS_IMAGE#" "$OUT/.env.example"
 
 if [ "$DO_SAVE" = 1 ]; then
   echo "==> docker save (air-gap) $CP_IMAGE + $WS_IMAGE"
-  docker save "$CP_IMAGE" "$WS_IMAGE" | gzip > "$OUT/agent-fleet-images-$VERSION.tar.gz"
+  docker save "$CP_IMAGE" "$WS_IMAGE" | gzip > "$DIST/agent-fleet-images-$VERSION.tar.gz"
 fi
 
 echo "==> tar bundle"
-tar -czf "$HERE/dist/agent-fleet-$VERSION.tar.gz" -C "$HERE/dist" "agent-fleet-$VERSION"
+tar -czf "$DIST/agent-fleet-$VERSION.tar.gz" -C "$DIST" "agent-fleet-$VERSION"
+
+echo "==> SHA256SUMS"
+(
+  cd "$DIST"
+  rm -f SHA256SUMS
+  sums=("agent-fleet-$VERSION.tar.gz")
+  [ "$DO_SAVE" = 1 ] && sums+=("agent-fleet-images-$VERSION.tar.gz")
+  sha256sum "${sums[@]}" > SHA256SUMS
+)
+
 echo "==> done:"
 echo "   bundle dir: $OUT"
-echo "   bundle tar: $HERE/dist/agent-fleet-$VERSION.tar.gz  ($(du -h "$HERE/dist/agent-fleet-$VERSION.tar.gz" | cut -f1))"
-[ "$DO_SAVE" = 1 ] && echo "   images tar: $OUT/agent-fleet-images-$VERSION.tar.gz  ($(du -h "$OUT/agent-fleet-images-$VERSION.tar.gz" | cut -f1))"
+echo "   bundle tar: $DIST/agent-fleet-$VERSION.tar.gz  ($(du -h "$DIST/agent-fleet-$VERSION.tar.gz" | cut -f1))"
+[ "$DO_SAVE" = 1 ] && echo "   images tar: $DIST/agent-fleet-images-$VERSION.tar.gz  ($(du -h "$DIST/agent-fleet-images-$VERSION.tar.gz" | cut -f1))"
+echo "   checksums:  $DIST/SHA256SUMS"
 echo
 echo "next: push images to \$REGISTRY (docker push $CP_IMAGE; $WS_IMAGE),"
 echo "      or ship the images tar for air-gap (load-images.sh)."

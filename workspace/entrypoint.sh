@@ -51,12 +51,85 @@ if [ "$CCD" != "$HOME/.claude" ] && [ -d "$HOME/.claude" ] && [ -z "$(ls -A "$CC
   fi
 fi
 
+# --- boot-install（lean 配布 variant、docs/35 §35.4.1 / §35.7.1-6） -----------
+# BAKE_AGENT_CLIS=0 で焼いたイメージ/rootfs はエージェント CLI
+# （claude/opencode/codex/copilot/agy/rtk）を含まない。ここで versions.json の
+# ピン版（= e2e-smoke で動作検証した版）を ~/.local へ導入する。各デプロイ先が
+# 公式配布元（npm / GitHub Releases / Google）から直接取得する形なので、当方に
+# よる再配布に当たらない（各社が各配布元の規約を自ら受諾する）。焼き込み
+# （/usr/local/bin）か home（~/.local/bin）に既に居る CLI は触らない。ネット不通は
+# WARN で続行（Agent 起動は止めない — 端末は使える。次回起動時に再試行）。
+VJ=/usr/local/share/agent-fleet/versions.json
+vj_pin() { node -e 'try{process.stdout.write(String(require(process.argv[1])[process.argv[2]]||""))}catch{}' "$VJ" "$1" 2>/dev/null; }
+cli_present() { [ -x "/usr/local/bin/$1" ] || [ -e "$HOME/.local/bin/$1" ]; }
+# lean 判定: claude が焼かれておらず versions.json にピンがある = lean variant。
+# lean では下の CLAUDE_INSTALL ブロックの起動時 update も抑止してピン版を維持する
+# （最新への追従は self-update opt-in の仕事）。
+LEAN_CLIS=0
+if [ ! -x /usr/local/bin/claude ] && [ -n "$(vj_pin claude)" ]; then LEAN_CLIS=1; fi
+if [ "$LEAN_CLIS" = 1 ]; then
+  # npm 配布の 4 CLI はまとめて 1 回の npm install（prefix=$HOME/.local → ~/.local/bin）。
+  NPM_BOOT=""
+  for pair in "claude=@anthropic-ai/claude-code" "opencode=opencode-ai" \
+              "codex=@openai/codex" "copilot=@github/copilot"; do
+    cli="${pair%%=*}"; pkg="${pair#*=}"; ver="$(vj_pin "$cli")"
+    if ! cli_present "$cli" && [ -n "$ver" ]; then NPM_BOOT="$NPM_BOOT ${pkg}@${ver}"; fi
+  done
+  if [ -n "$NPM_BOOT" ]; then
+    echo "[entrypoint] boot-install (pinned):$NPM_BOOT ..."
+    # shellcheck disable=SC2086
+    npm install -g --prefix "$HOME/.local" $NPM_BOOT >/dev/null 2>&1 \
+      && echo "[entrypoint] boot-install ok" \
+      || echo "[entrypoint] WARN: npm boot-install failed (retrying next start)"
+  fi
+  # rtk: GitHub Releases のピン版（checksum 検証つき — Dockerfile 焼き込みと同じ経路）。
+  if ! cli_present rtk && [ -n "$(vj_pin rtk)" ]; then
+    (
+      set -e
+      rver="$(vj_pin rtk)"
+      arch="$(dpkg --print-architecture 2>/dev/null || uname -m)"
+      case "$arch" in
+        amd64 | x86_64) asset="rtk-x86_64-unknown-linux-musl.tar.gz" ;;
+        arm64 | aarch64) asset="rtk-aarch64-unknown-linux-gnu.tar.gz" ;;
+        *) echo "unsupported arch: $arch" >&2; exit 1 ;;
+      esac
+      base="https://github.com/rtk-ai/rtk/releases/download/v${rver}"
+      tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+      cd "$tmp"
+      curl -fsSL "${base}/${asset}" -o "${asset}"
+      curl -fsSL "${base}/checksums.txt" -o checksums.txt
+      grep " ${asset}\$" checksums.txt | sha256sum -c - >/dev/null
+      tar xzf "${asset}"
+      install -D -m 0755 rtk "$HOME/.local/bin/rtk"
+    ) && echo "[entrypoint] boot-install rtk $(vj_pin rtk)" \
+      || echo "[entrypoint] WARN: rtk boot-install failed (retrying next start)"
+  fi
+  # agy: install.sh 供給に版ピンが無い（常に latest — 焼き込み時と同じ制約。
+  # versions.json の agy はビルド時 latest の記録）。self-update と同じく空 dir へ
+  # 導入してから ~/.local/bin へ移す。
+  if ! cli_present agy; then
+    agy_tmp="$(mktemp -d)"
+    if curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir "$agy_tmp" >/dev/null 2>&1 \
+       && [ -x "$agy_tmp/agy" ]; then
+      install -D -m 0755 "$agy_tmp/agy" "$HOME/.local/bin/agy"
+      echo "[entrypoint] boot-install agy (latest)"
+    else
+      echo "[entrypoint] WARN: agy boot-install failed (retrying next start)"
+    fi
+    rm -rf "$agy_tmp"
+  fi
+fi
+
 if [ "${CLAUDE_INSTALL:-1}" = "1" ]; then
   if command -v claude >/dev/null 2>&1; then
     case "$(command -v claude)" in
       "$HOME"/*)
         # User-home install (~/.local) takes PATH precedence → keep it current.
-        if [ "${CLAUDE_AUTO_UPDATE:-1}" = "1" ]; then
+        # lean の boot-install 品はピン維持なので起動時 update をしない（最新への
+        # 追従は self-update opt-in が担う）。
+        if [ "$LEAN_CLIS" = 1 ]; then
+          :
+        elif [ "${CLAUDE_AUTO_UPDATE:-1}" = "1" ]; then
           echo "[entrypoint] updating Claude CLI (user install) ..."
           claude update || echo "[entrypoint] WARN: claude update failed (continuing)"
         fi
@@ -173,7 +246,10 @@ else
   # Opt-in が無効（テナント不許可 or メンバー OFF）: 過去の opt-in が残した
   # ~/.local/bin の rtk / agy shadow は焼き込み版を PATH で隠すので除去し、CLI 群と
   # 同じ「OFF に戻して Stop→Start で焼き込み版へ復帰」の意味論に揃える。
-  rm -f "$HOME/.local/bin/rtk" "$HOME/.local/bin/agy" "$HOME/.local/bin/.agy.version"
+  # lean（焼き込みが無い）では ~/.local が boot-install 品そのものなので消さない —
+  # 「復帰先の焼き込み版がある時だけ shadow を掃除」に限定する。
+  if [ -x /usr/local/bin/rtk ]; then rm -f "$HOME/.local/bin/rtk"; fi
+  if [ -x /usr/local/bin/agy ]; then rm -f "$HOME/.local/bin/agy" "$HOME/.local/bin/.agy.version"; fi
 fi
 
 # 既定 settings.json を seed（ファイルが無い時のみ。以後は Console の Claude 設定が真実）。

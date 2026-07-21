@@ -10,7 +10,10 @@ WORKDIR /src
 COPY agent/go.mod agent/go.sum ./
 RUN go mod download
 COPY agent/ ./
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /out/workspace-agent .
+# VERSION stamps the binary (startup log, docs/35 §35.6.1); only the release
+# pipeline passes a real value — dev builds stay "dev".
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-X main.buildVersion=${VERSION}" -o /out/workspace-agent .
 
 # --- runtime ---
 FROM node:22-bookworm-slim
@@ -43,20 +46,32 @@ RUN printf '[global]\nbreak-system-packages = true\n' > /etc/pip.conf
 RUN pip install --no-cache-dir uv \
     && uv --version && uvx --version
 
+# --- 配布ノブ（docs/35 §35.4.1・§35.7.1-5） ----------------------------------
+# BAKE_AGENT_CLIS=0  … エージェント CLI（claude/opencode/codex/copilot/agy/rtk）を
+#   焼かない lean variant（ライセンス理由: プロプライエタリ CLI は再配布不可扱い）。
+#   entrypoint の boot-install が versions.json のピン版を初回起動時に ~/.local へ導入。
+# BAKE_OPTIONAL_TOOLS=0 … chromium+CJK フォント・Go・awscli+SSM plugin・ops MCP 群を
+#   焼かない（サイズ理由・native rootfs 用。chromium の実行時ライブラリと
+#   fontconfig/DejaVu だけは残し、chromium 本体はオンデマンド DL — P2）。
+# 既定はどちらも 1 = 従来どおり全焼き込み（自社デプロイ・run-dev.sh は無変更）。
+ARG BAKE_AGENT_CLIS=1
+ARG BAKE_OPTIONAL_TOOLS=1
+
 # mcp-grafana (official Grafana MCP server, Go single binary) baked for the ops
 # integrations (docs/25 — `workspace-agent mcp-run grafana` execs it with the
 # stored URL + service-account token and -disable-write -disable-admin). Works
 # against self-hosted / Grafana Cloud / Amazon Managed Grafana. Bump
 # MCP_GRAFANA_VERSION to upgrade (ARG pin busts the cache; same idiom as GH_VERSION).
 ARG MCP_GRAFANA_VERSION=0.17.1
-RUN set -eux; \
+RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64) mgarch=x86_64 ;; arm64) mgarch=arm64 ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
     curl -fsSL "https://github.com/grafana/mcp-grafana/releases/download/v${MCP_GRAFANA_VERSION}/mcp-grafana_Linux_${mgarch}.tar.gz" -o /tmp/mcp-grafana.tgz; \
     tar -C /tmp -xzf /tmp/mcp-grafana.tgz mcp-grafana; \
     install -m 0755 /tmp/mcp-grafana /usr/local/bin/mcp-grafana; \
     rm -f /tmp/mcp-grafana.tgz /tmp/mcp-grafana; \
-    mcp-grafana --version
+    mcp-grafana --version; \
+    fi
 
 # awslabs CloudWatch MCP server (Python) baked as a uv tool so `workspace-agent
 # mcp-run cloudwatch` starts instantly with no PyPI fetch at runtime (docs/25
@@ -65,11 +80,12 @@ RUN set -eux; \
 # runtime user. The venv + entrypoint under /usr/local are root-owned and
 # world-readable, which is all the runtime user needs.
 ARG CLOUDWATCH_MCP_VERSION=0.1.4
-RUN set -eux; \
+RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     UV_TOOL_DIR=/usr/local/share/uv/tools UV_TOOL_BIN_DIR=/usr/local/bin \
     UV_PYTHON_DOWNLOADS=never UV_NO_CACHE=1 \
     uv tool install --python /usr/bin/python3 "awslabs.cloudwatch-mcp-server==${CLOUDWATCH_MCP_VERSION}"; \
-    test -x /usr/local/bin/awslabs.cloudwatch-mcp-server
+    test -x /usr/local/bin/awslabs.cloudwatch-mcp-server; \
+    fi
 
 # Chromium for the in-container browser pane and headless UI verification. Debian's
 # package supplies the same /usr/bin/chromium entrypoint on amd64 and arm64 and pulls
@@ -79,15 +95,29 @@ RUN set -eux; \
 # publishes the same security build for both architectures. Fonts and fontconfig are
 # explicit so Japanese pages render without depending on a transient recommendation.
 ARG CHROMIUM_VERSION=150.0.7871.124-1~deb12u1
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      "chromium=${CHROMIUM_VERSION}" \
-      "chromium-common=${CHROMIUM_VERSION}" \
-      "chromium-sandbox=${CHROMIUM_VERSION}" \
-      fontconfig fonts-dejavu-core fonts-noto-cjk \
- && rm -rf /var/lib/apt/lists/* \
- && chromium --version \
- && test "$(dpkg-query -W -f='${Version}' chromium)" = "$CHROMIUM_VERSION" \
- && test "$(stat -c '%u:%g:%a' /usr/lib/chromium/chrome-sandbox)" = "0:0:4755"
+# BAKE_OPTIONAL_TOOLS=0（native lean rootfs）は chromium 本体・CJK フォントを焼かず
+# オンデマンド DL（P2 の install-chromium、CHROMIUM_DL_VERSION ピン）に回すが、
+# その DL 版が動くための実行時ライブラリと fontconfig/DejaVu はここで明示導入する
+# （docs/35 §35.7.1-5。ライブラリ一覧は playwright の Debian 12 chromium deps 準拠）。
+RUN apt-get update \
+ && if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then \
+      apt-get install -y --no-install-recommends \
+        "chromium=${CHROMIUM_VERSION}" \
+        "chromium-common=${CHROMIUM_VERSION}" \
+        "chromium-sandbox=${CHROMIUM_VERSION}" \
+        fontconfig fonts-dejavu-core fonts-noto-cjk \
+      && chromium --version \
+      && test "$(dpkg-query -W -f='${Version}' chromium)" = "$CHROMIUM_VERSION" \
+      && test "$(stat -c '%u:%g:%a' /usr/lib/chromium/chrome-sandbox)" = "0:0:4755"; \
+    else \
+      apt-get install -y --no-install-recommends \
+        fontconfig fonts-dejavu-core \
+        libasound2 libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 libcairo2 \
+        libcups2 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0 libnspr4 libnss3 \
+        libpango-1.0-0 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 \
+        libxfixes3 libxkbcommon0 libxrandr2; \
+    fi \
+ && rm -rf /var/lib/apt/lists/*
 # git-lfs filters live in the system gitconfig (/etc/gitconfig) so clones/checkouts
 # smudge LFS objects for every user regardless of home state. LFS auth reuses the
 # HTTPS credential helper (same host token), so private LFS objects fetch too.
@@ -106,33 +136,39 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # binaries and the module cache land under ~/go (home volume → persist). Keep
 # GO_VERSION in step with agent/go.mod's `go` directive; bump here to upgrade.
 ARG GO_VERSION=1.26.4
-RUN set -eux; \
+RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64) goarch=amd64 ;; arm64) goarch=arm64 ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
     curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${goarch}.tar.gz" -o /tmp/go.tgz; \
     tar -C /usr/local -xzf /tmp/go.tgz; \
     rm /tmp/go.tgz; \
-    /usr/local/go/bin/go version
+    /usr/local/go/bin/go version; \
+    fi
 
 # AWS CLI v2 + Session Manager plugin for SSM login sessions (kind="ssm"): a member
 # opens a browser terminal that runs `aws sso login` (device-code URL surfaced in the
 # terminal) + `aws ssm start-session` against their OWN AWS account. NO AWS credentials
 # are baked or stored anywhere — auth is per-session via SSO and cached in the home
 # volume; the Control Plane only resolves non-secret host bookmarks. arch auto-detected.
-RUN set -eux; \
+# 版は ARG でピン止め（versioned URL — かつては latest URL で未ピンだった。docs/35
+# §35.9-7(c)。bump は下の ARG を書き換えて再ビルド）。
+ARG AWSCLI_VERSION=2.36.4
+ARG SESSION_MANAGER_PLUGIN_VERSION=1.2.835.0
+RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in \
       amd64) awsarch=x86_64; smparch=64bit ;; \
       arm64) awsarch=aarch64; smparch=arm64 ;; \
       *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${awsarch}.zip" -o /tmp/awscliv2.zip; \
+    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${awsarch}-${AWSCLI_VERSION}.zip" -o /tmp/awscliv2.zip; \
     unzip -q /tmp/awscliv2.zip -d /tmp; \
     /tmp/aws/install; \
-    curl -fsSL "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_${smparch}/session-manager-plugin.deb" -o /tmp/smp.deb; \
+    curl -fsSL "https://s3.amazonaws.com/session-manager-downloads/plugin/${SESSION_MANAGER_PLUGIN_VERSION}/ubuntu_${smparch}/session-manager-plugin.deb" -o /tmp/smp.deb; \
     dpkg -i /tmp/smp.deb; \
     rm -rf /tmp/awscliv2.zip /tmp/aws /tmp/smp.deb; \
-    aws --version && session-manager-plugin --version
+    aws --version && session-manager-plugin --version; \
+    fi
 
 # GitHub CLI (gh) from the official pinned release (arch auto-detected). Baked into the
 # image so `gh` (PR/issue ops, `gh auth`, API) is available on a fresh container without a
@@ -160,9 +196,11 @@ RUN set -eux; \
 # (amd64) / gnu (arm64) binary → runs in the slim container.
 # Bump RTK_VERSION to upgrade (ARG change busts the cache; same idiom as GH_VERSION).
 # The AF_AGENT_SELF_UPDATE opt-in also updates rtk in place at start (entrypoint).
+# BAKE_AGENT_CLIS=0（lean 配布 variant）は rtk も焼かない — entrypoint の boot-install
+# が versions.json の rtk ピンで ~/.local/bin へ導入する（docs/35 §35.4.1）。
 ARG BAKE_RTK=1
 ARG RTK_VERSION=0.43.0
-RUN if [ "${BAKE_RTK}" = "1" ]; then set -eux; \
+RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
         amd64) asset="rtk-x86_64-unknown-linux-musl.tar.gz" ;; \
@@ -195,11 +233,13 @@ ARG CLAUDE_CODE_VERSION=2.1.215
 ARG OPENCODE_VERSION=1.18.3
 ARG CODEX_VERSION=0.144.6
 ARG COPILOT_VERSION=1.0.73
-RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
-      "opencode-ai@${OPENCODE_VERSION}" \
-      "@openai/codex@${CODEX_VERSION}" \
-      "@github/copilot@${COPILOT_VERSION}" \
- && claude --version && opencode --version && codex --version && copilot --version
+RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
+      npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+        "opencode-ai@${OPENCODE_VERSION}" \
+        "@openai/codex@${CODEX_VERSION}" \
+        "@github/copilot@${COPILOT_VERSION}" \
+      && claude --version && opencode --version && codex --version && copilot --version; \
+    fi
 
 # copilot（kind="copilot"、docs/36）: 自己更新は既定 ON（CI env 検出時のみ自動 OFF）
 # — フリートの版管理はイメージ再ビルドが正なので明示的に封殺する（claude の
@@ -219,12 +259,14 @@ ENV COPILOT_AUTO_UPDATE=false
 #    SIGABRT する（0008 PoC: Ryzen Embedded R2514）。RDRAND 非提示のビルドホストでも
 #    イメージは焼けるよう、起動を伴う --version 検証は rdrand 提示時だけ行う。
 ARG AGY_VERSION=1.1.4
-RUN echo "agy build pin: ${AGY_VERSION}" \
- && curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin \
- && test -x /usr/local/bin/agy \
- && rm -rf /root/.cache/antigravity \
- && if grep -qw rdrand /proc/cpuinfo; then agy --version; \
-    else echo "skip agy --version check (build host exposes no rdrand)"; fi
+RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
+      echo "agy build pin: ${AGY_VERSION}" \
+      && curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin \
+      && test -x /usr/local/bin/agy \
+      && rm -rf /root/.cache/antigravity \
+      && if grep -qw rdrand /proc/cpuinfo; then agy --version; \
+         else echo "skip agy --version check (build host exposes no rdrand)"; fi; \
+    fi
 
 # agy はインストール済みバイナリを通常実行中にバックグラウンド自己更新する
 # （install.sh の明記仕様）。版はイメージ再ビルドで管理するので封じる — claude の
@@ -232,10 +274,17 @@ RUN echo "agy build pin: ${AGY_VERSION}" \
 ENV AGY_CLI_DISABLE_AUTO_UPDATE=1
 
 # ビルド時ピンをコンテナ内へ書き出す（ARG はビルド後に消えて実行時に参照できない）。
-# 設定 UI「ツールのバージョン」の「ピン vs 実体」表示と、スモークの検証材料に使う。
+# 設定 UI「ツールのバージョン」の「ピン vs 実体」表示・スモークの検証材料に加え、
+# lean variant（BAKE_AGENT_CLIS=0 / BAKE_OPTIONAL_TOOLS=0）では entrypoint の
+# boot-install とオンデマンド導入（P2）がこのピンを取得版として使う（docs/35 §35.4.1）。
+# BAKE ノブに関わらず常に全ピンを書き出す。
+# chromium_dl は playwright CDN 配布の Chromium build ピン（build 1228 =
+# Chromium 149.0.7827.55, playwright 1.61.0 同梱版。供給元の最終選定は §35.9-7(a)）。
+ARG CHROMIUM_DL_VERSION=1228
 RUN mkdir -p /usr/local/share/agent-fleet \
- && printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","copilot":"%s","go":"%s","gh":"%s","chromium":"%s"}\n' \
-      "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$AGY_VERSION" "$COPILOT_VERSION" "$GO_VERSION" "$GH_VERSION" "$CHROMIUM_VERSION" \
+ && printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","copilot":"%s","rtk":"%s","go":"%s","gh":"%s","chromium":"%s","chromium_dl":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","awscli":"%s","session_manager_plugin":"%s"}\n' \
+      "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$AGY_VERSION" "$COPILOT_VERSION" "$RTK_VERSION" "$GO_VERSION" "$GH_VERSION" "$CHROMIUM_VERSION" \
+      "$CHROMIUM_DL_VERSION" "$MCP_GRAFANA_VERSION" "$CLOUDWATCH_MCP_VERSION" "$AWSCLI_VERSION" "$SESSION_MANAGER_PLUGIN_VERSION" \
       > /usr/local/share/agent-fleet/versions.json
 
 # The baked claude is a root-owned npm-global install run as the non-root `dev`
@@ -300,9 +349,15 @@ RUN mkdir -p /etc/claude-code \
 # root-owned setuid helper can create its PID/network namespaces. Keep that path
 # exclusive: the normal USER dev process has no effective capabilities, and no
 # unrelated setuid/setgid utility may acquire the enlarged bounding set.
+# BAKE_OPTIONAL_TOOLS=0 は chromium 不在なので sandbox helper の存在前提を外し、
+# 「setuid/setgid が一切残っていない」ことだけを見る（docs/35 §35.7.1-5）。
 RUN find / -xdev -type f -perm /6000 ! -path /usr/lib/chromium/chrome-sandbox \
       -exec chmod a-s {} + \
- && test "$(stat -c '%u:%g:%a' /usr/lib/chromium/chrome-sandbox)" = "0:0:4755" \
+ && if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then \
+      test "$(stat -c '%u:%g:%a' /usr/lib/chromium/chrome-sandbox)" = "0:0:4755"; \
+    else \
+      test ! -e /usr/lib/chromium/chrome-sandbox; \
+    fi \
  && test -z "$(find / -xdev -type f -perm /6000 \
       ! -path /usr/lib/chromium/chrome-sandbox -print -quit)"
 

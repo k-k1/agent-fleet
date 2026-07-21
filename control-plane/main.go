@@ -18,6 +18,11 @@ import (
 	"time"
 )
 
+// buildVersion is stamped by the release pipeline via
+// `-ldflags "-X main.buildVersion=<v>"` (docs/35 §35.6.1); dev builds stay "dev".
+// Surfaced in the startup log and GET /api/version (authenticated).
+var buildVersion = "dev"
+
 type config struct {
 	addr       string
 	consoleDir string
@@ -235,7 +240,7 @@ func main() {
 		handler = cfg.authGate(mux)
 	}
 
-	log.Printf("control-plane on %s (console=%s, ws image=%s, auth=%s, runtime=%s)", cfg.addr, cfg.consoleDir, cfg.mgr.image, cfg.mgr.authMode, rtProfile)
+	log.Printf("control-plane %s on %s (console=%s, ws image=%s, auth=%s, runtime=%s)", buildVersion, cfg.addr, cfg.consoleDir, cfg.mgr.image, cfg.mgr.authMode, rtProfile)
 	srv := &http.Server{Addr: cfg.addr, Handler: logRequests(handler), ReadHeaderTimeout: 10 * time.Second}
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
