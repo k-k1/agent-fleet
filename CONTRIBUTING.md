@@ -42,9 +42,18 @@ neither on the host — only Docker.
 
 ## Commits & PRs
 
-`main` への直 push で運用（単独メンテナ・レビュー gate なし）。自分からブランチを
-切らない — worktree セッションは Console が専用ブランチで払い出す。GitHub リモートは
-`git@github.com:k-k1/agent-fleet.git`。
+**develop がトランク（default branch）**。日常の開発は develop への直 push /
+随時マージで運用し（単独メンテナ・レビュー gate なし）、**「完了」の定義は
+develop マージ済**。自分からブランチを切らない — worktree セッションは Console が
+専用ブランチで払い出す。GitHub リモートは `git@github.com:k-k1/agent-fleet.git`。
+
+**main は常時 CI 緑の安定ブランチ**で、develop→main の PR（リリーストレイン、
+週 1〜2 回 or フェーズ完了時）でのみ更新する。hosted CI（ci.yml / e2e.yml /
+contract 系）はこの PR と main push・毎晩の cron（develop）に集約し、develop への
+push では回さない — per-commit の検証は各セッションのローカル実行
+（gofmt/vet/test/build、下記）が担う。課金の背景と2層 CI 運用の全体像は
+docs/35-packaging.md を参照。緊急修正は main から分岐 → PR → main、develop へ
+back-merge する。リリースタグ・リリースビルド・公開配布はすべて main から切る。
 
 小さく焦点の合ったコミットを心がけ、下記の形式に従う。
 
