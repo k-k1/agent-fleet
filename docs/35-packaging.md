@@ -1016,8 +1016,23 @@ VERSION=0.1.0 deploy/release/publish-dist.sh --seed
      --retry-connrefused` を追加**（entrypoint の rtk 2 本＋agy、`install_tools.go` の 6 本＝
      chromium/CJK/Go/awscli/SMP）。単一起動内で一過性ブリップを自己修復し、Stop→Start を待たず
      に済む。
-   - **残る UX（ゲート非ブロック）**: (a) の CP 転写に加え、Console の起動オーバーレイへ
-     agent.log を tail surface するダイアログは別タスク（より本格的な可視化）。
+   - **起動中ダイアログ＋停止中ポーリング停止（実装済み）**:
+     - **CP**: `GET /api/workspace` に `bootPhase` を追加（`runtime_native.go` `BootPhase()`）。
+       `mirrorBootProgress` が最新の `[entrypoint]` 行を `<dataDir>/.boot-phase` に atomic
+       書き込み → boot 終了（healthy=mirror 停止）で defer 削除。**native の `State()` は
+       pid 生存で即 "running" を返す**（healthy 非依存）ので状態だけでは起動中を判定できず、
+       bootPhase が真の信号。type assertion で載せるので native のみ・非空＝起動中。
+     - **Console**: `WsStartingDialog`（App 直下）。workspace ストアの `start()` は起動中
+       state を触らず bootPhase のみ2秒ポーリング（状態 refresh だと boot 途中で閉じる）。
+       `wsPreparing(state,bootPhase)` の間モーダル表示・raw フェーズを friendly i18n へマップ
+       ＋生フェーズ併記・Esc/背景/×で閉じられる（起動はサーバ側継続）。ja/en キー追加。
+     - **停止中の無駄ポーリング停止**: `wsRunning()` を追加し、エージェント proxy 系ポーラー
+       （`startSessionsPolling` 4s・`startReposPolling` 60s）を running ゲート＝停止/起動中は
+       502 しか返さないので発火停止（[[ws-boot-view-stuck-retry]] の running ゲートをポーラー
+       本体へ適用）。CP側で 502 しない workspace/stats・memos・notifications は据え置き
+       （stopped でも OOM/終了理由・通知を運ぶため）。
+     - typecheck/build/vitest(stores)/i18n:lint 緑。実描画はゲート k 再ビルド後の目視待ち。
+       さらに本格的な可視化（agent.log 全文の tail surface）は必要になれば別タスク。
 
 10. **claude セッションが入力を一切受け付けない（2026-07-21・ゲート k 中のユーザー実機報告
     rootfs `4677f9f5a67d`／v0.1.1）→ 根本原因特定・是正済み**:
