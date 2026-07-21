@@ -2,7 +2,7 @@
 // still has no user-set title, a headless `claude -p` call proposes a short (~40
 // char) Japanese title. The Console shows it as a dismissible banner; accepting or
 // dismissing latches SuggestedTitleDismissed so a session is offered one at most
-// once (v1 has no re-suggestion loop). Gated globally by the DisplayTab セッション
+// once (v1 has no re-suggestion loop). Gated globally by the AgentsTab セッション
 // "タイトル自動提案" toggle (autoTitleSuggestEnabled, ui_prefs.go).
 
 package main
@@ -460,7 +460,7 @@ func handleSessionSuggestBranch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !autoTitleSuggestEnabled() {
-		httpx.WriteErr(w, http.StatusBadRequest, errCodeTitleFeatureDisabled, "AI suggestions are disabled (enable title auto-suggestion in display settings)")
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeTitleFeatureDisabled, "AI suggestions are disabled (enable title auto-suggestion in agent settings)")
 		return
 	}
 	m, ok := session.ReadMeta(name)

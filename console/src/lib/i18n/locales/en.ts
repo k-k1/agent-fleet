@@ -553,22 +553,28 @@ export const en: Record<keyof typeof ja, string> = {
   "out_lang.ja": "Japanese",
   "out_lang.en": "English",
 
+  // --- assistant settings (AssistantTab) ---
+  "assistant.title_suggest": "AI title suggestion",
+  "assistant.note_title_suggest":
+    "Enables the “Ask AI for a suggestion” button in the chat rename dialog. The automatic session-title suggestion is configured on the Agents tab.",
+  "assistant.output_language": "Reply language",
+  "assistant.note_output_language":
+    "The reply language for the assistant chat. “Match input” replies in the language of the text or question you give it. Choosing Japanese/English replies in that language even for text in another language (translation assistants excluded).",
+  "assistant.agent_order": "Agent priority",
+  "assistant.note_agent_order":
+    "Priority order of the CLIs that power the assistant chat and title suggestions: the first CONNECTED one from the top is used (disconnected ones are skipped). Antigravity defaults to last — its free-plan quota is scarce. Takes effect from a new conversation with the built-in assistant (custom assistants prefer their own agent setting).",
+  "assistant.auto_turn": "Auto-respond to session reports",
+  "assistant.note_auto_turn":
+    "When a session launched or steered by the Fleet Operator (or another assistant with AF write access) reports back, the assistant runs one turn automatically to process it. As a runaway guard, at most 10 unattended turns run per conversation (reset whenever you send a message).",
+  "assistant.auto_compact": "Auto-compact chat context",
+  "assistant.note_auto_compact":
+    "When a chat's context usage is still above 90% as a new exchange starts, the conversation is summarized and handed to a fresh session automatically first (the summary costs one turn of tokens). The notice at 80% lets you compact manually before this fires.",
+
   // --- agent settings (AgentsTab) ---
   "agents.session": "Session",
   "agents.auto_title": "Auto-suggest title",
-  "agents.note_auto_title": "After a few exchanges in a session with no title, AI shows a short title suggestion at the top of the chat.",
-  "agents.output_language": "Assistant reply language",
-  "agents.note_output_language":
-    "The reply language for the assistant chat. “Match input” replies in the language of the text or question you give it. Choosing Japanese/English replies in that language even for text in another language (translation assistants excluded).",
-  "agents.assistant_agent": "Assistant agent priority",
-  "agents.note_assistant_agent":
-    "Priority order of the CLIs that power the assistant chat and title suggestions: the first CONNECTED one from the top is used (disconnected ones are skipped). Antigravity defaults to last — its free-plan quota is scarce. Takes effect from a new conversation with the built-in assistant (custom assistants prefer their own agent setting).",
-  "agents.assistant_auto_turn": "Auto-respond to session reports",
-  "agents.note_assistant_auto_turn":
-    "When a session launched or steered by the Fleet Operator (or another assistant with AF write access) reports back, the assistant runs one turn automatically to process it. As a runaway guard, at most 10 unattended turns run per conversation (reset whenever you send a message).",
-  "agents.assistant_auto_compact": "Auto-compact chat context",
-  "agents.note_assistant_auto_compact":
-    "When a chat's context usage is still above 90% as a new exchange starts, the conversation is summarized and handed to a fresh session automatically first (the summary costs one turn of tokens). The notice at 80% lets you compact manually before this fires.",
+  "agents.note_auto_title":
+    "After a few exchanges in a session with no title, AI shows a short title suggestion at the top of the mirror. The chat-side title suggestion is configured on the Assistant tab.",
   "agents.ws_required_title": "Settings run inside the workspace",
   "agents.ws_required_hint": "Connections and agent settings go through the agent / CLI inside the container, so the workspace has to be running.",
   "agents.note_apply": "Connection changes are immediate; behavior settings take effect from each agent's new sessions.",
@@ -2016,6 +2022,7 @@ export const en: Record<keyof typeof ja, string> = {
   "set.tab_keys": "Keyboard",
   "set.tab_env": "Workspace",
   "set.tab_agents": "Agents",
+  "set.tab_assistant": "Assistant",
   "set.tab_tts": "Read aloud",
   "set.tab_git": "Git",
   "set.tab_ssm": "AWS SSM",

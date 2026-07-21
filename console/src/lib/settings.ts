@@ -195,15 +195,21 @@ export interface Settings {
   // Per-agent launch defaults. defaultModel remains as a migration mirror for older
   // Console/server prefs; new code reads this map for all three agent kinds.
   agentLaunchDefaults: AgentLaunchDefaults;
-  // Global ON/OFF for the auto session-title-suggestion feature (DisplayTab セッション).
+  // Global ON/OFF for the auto session-title-suggestion feature (AgentsTab セッション).
+  // Sessions only — the assistant-chat side split off into assistantTitleSuggest.
   // Default true so existing users get it without an explicit opt-in.
   autoTitleSuggest: boolean;
+  // ON/OFF for the assistant-chat title AI suggestion (AssistantTab; the rename
+  // dialog's 「AIに提案してもらう」 button). Split out of autoTitleSuggest so sessions
+  // and chats gate independently; load()/hydrateUIPrefs migrate an explicit legacy
+  // OFF, and the Agent falls back to autoTitleSuggest when this key is absent.
+  assistantTitleSuggest: boolean;
   // Forced output language for assistant chat: "auto" = follow the input language
   // (default), "ja" / "en" = always reply in that language (even for foreign-language
   // content). The Agent reads this key from ui-prefs and injects a language rule into the
   // chat system prompt (translate assistant is exempt). See docs/19.
   outputLanguage: string;
-  // Assistant-chat backend priority (AgentsTab 並べ替え): auto-selection takes the
+  // Assistant-chat backend priority (AssistantTab 並べ替え): auto-selection takes the
   // first CONNECTED kind in this order (the Agent's preferredHeadlessAgent, read
   // live from ui-prefs). Applies to builtin assistants' NEW conversations and
   // one-shot calls (title/branch suggestions); user-defined assistants keep their
@@ -396,6 +402,7 @@ const DEFAULTS: Settings = {
   defaultModel: DEFAULT_MODEL, // concrete tier (avoids claude's release-varying own pick)
   agentLaunchDefaults: DEFAULT_AGENT_LAUNCH,
   autoTitleSuggest: true,
+  assistantTitleSuggest: true,
   outputLanguage: "auto",
   assistantAgentOrder: [...ASSISTANT_AGENT_KINDS],
   assistantAutoTurn: true,
@@ -596,6 +603,11 @@ function load(): Settings {
       saved.ttsBackgroundPlayback = saved.ttsQuietWhenHidden ? "quiet" : "normal";
     }
     delete saved.ttsQuietWhenHidden;
+    // タイトルAI提案のセッション/アシスタント分離（旧: autoTitleSuggest が両方を兼ねた）。
+    // 新キー未設定なら旧設定を引き継ぐ — OFF にしていた人のチャット側も OFF のまま。
+    if (!("assistantTitleSuggest" in saved) && typeof saved.autoTitleSuggest === "boolean") {
+      saved.assistantTitleSuggest = saved.autoTitleSuggest;
+    }
     const legacyClaudeModel = typeof saved.defaultModel === "string" ? saved.defaultModel : DEFAULT_MODEL;
     const rows = saved.agentLaunchDefaults && typeof saved.agentLaunchDefaults === "object"
       ? saved.agentLaunchDefaults
@@ -759,6 +771,10 @@ export async function hydrateUIPrefs(): Promise<void> {
   // 優先順位リストへ移行する（Agent 側 assistantAgentOrderPref と同じ規則）。
   if (!("assistantAgentOrder" in srv) && typeof srv.assistantAgent === "string" && srv.assistantAgent !== "auto") {
     srv.assistantAgentOrder = normalizeAssistantOrder([srv.assistantAgent]);
+  }
+  // 分離前のサーバー prefs（autoTitleSuggest のみ）はチャット側へも引き継ぐ（load() と同じ規則）。
+  if (!("assistantTitleSuggest" in srv) && typeof srv.autoTitleSuggest === "boolean") {
+    srv.assistantTitleSuggest = srv.autoTitleSuggest;
   }
   let changed = false;
   const merged: Settings = { ...state };

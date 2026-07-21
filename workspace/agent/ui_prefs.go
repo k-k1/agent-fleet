@@ -39,17 +39,30 @@ func readUIPrefs() map[string]any {
 	return obj
 }
 
-// autoTitleSuggestEnabled is the global ON/OFF for auto session-title suggestion
-// (Console DisplayTab セッション). Missing/invalid key ⇒ true, matching the frontend's
-// DEFAULTS.autoTitleSuggest (settings.ts) so pre-feature clients get it without an
-// explicit opt-in.
+// autoTitleSuggestEnabled is the ON/OFF for SESSION title suggestion — the automatic
+// banner plus the manual title/branch suggest endpoints (Console AgentsTab セッション).
+// The assistant-chat side gates separately (assistantTitleSuggestEnabled). Missing/
+// invalid key ⇒ true, matching the frontend's DEFAULTS.autoTitleSuggest (settings.ts)
+// so pre-feature clients get it without an explicit opt-in.
 func autoTitleSuggestEnabled() bool {
 	v, ok := readUIPrefs()["autoTitleSuggest"].(bool)
 	return !ok || v
 }
 
+// assistantTitleSuggestEnabled is the ON/OFF for the assistant-chat title suggestion
+// (the rename dialog's AI-suggest button, chat_title.go; Console AssistantTab). Split
+// out of autoTitleSuggest so sessions and chats gate independently — prefs written
+// before the split lack the key, so fall back to the combined flag to preserve an
+// explicit OFF.
+func assistantTitleSuggestEnabled() bool {
+	if v, ok := readUIPrefs()["assistantTitleSuggest"].(bool); ok {
+		return v
+	}
+	return autoTitleSuggestEnabled()
+}
+
 // assistantAgentOrderPref returns the user's assistant-chat backend priority (the
-// AgentsTab 並べ替え UI, ui-prefs assistantAgentOrder), normalized into a TOTAL
+// AssistantTab 並べ替え UI, ui-prefs assistantAgentOrder), normalized into a TOTAL
 // order: unknown kinds and dupes are dropped, and kinds missing from the stored
 // list are appended in the built-in default order — so a partial or stale list
 // (e.g. written before a new backend existed) still ranks every backend. When the
@@ -83,7 +96,7 @@ func assistantAgentOrderPref() []string {
 }
 
 // chatAutoTurnEnabled is the global ON/OFF for the operator's automatic turn on a
-// session report (docs/30, 設定 > エージェント「報告への自動応答」). Missing/invalid
+// session report (docs/30, 設定 > アシスタント「セッション報告への自動応答」). Missing/invalid
 // key ⇒ true, matching the frontend default — the feature ships ON, with the
 // per-conversation maxAutoTurns cap as the safety stop.
 func chatAutoTurnEnabled() bool {
@@ -92,7 +105,7 @@ func chatAutoTurnEnabled() bool {
 }
 
 // chatAutoCompactEnabled is the global ON/OFF for the assistant chat's preventive
-// auto-compaction at the context threshold (docs/33 第4段, 設定 > エージェント
+// auto-compaction at the context threshold (docs/33 第4段, 設定 > アシスタント
 // 「コンテキストの自動圧縮」). Missing/invalid key ⇒ true, matching the frontend
 // default — the 80% notice gives the user a manual window first, and the summary
 // handoff keeps the stored thread intact, so ON is the safe default.
