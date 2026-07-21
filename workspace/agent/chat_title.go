@@ -85,8 +85,8 @@ func handleChatSuggestTitle(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeChatConversationNotFnd, "invalid conversation id")
 		return
 	}
-	if !autoTitleSuggestEnabled() {
-		httpx.WriteErr(w, http.StatusBadRequest, errCodeTitleFeatureDisabled, "auto title suggestion is turned off")
+	if !assistantTitleSuggestEnabled() {
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeTitleFeatureDisabled, "assistant title suggestion is turned off")
 		return
 	}
 	c, err := loadConv(id)
