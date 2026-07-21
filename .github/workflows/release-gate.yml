@@ -1,6 +1,7 @@
-# リリースゲート（docs/35 §35.7.1 P1 / §35.7.2 P2）: 配布成果物 A+B+D の生成と
-# lean variant の boot-install、既定（全焼き込み）ビルドの無影響、native C+R の生成と
-# bwrap 実走（ゲート d/e）を hosted runner で実走検証する。
+# リリースゲート（docs/35 §35.7.1 P1 / §35.7.2 P2 / §35.7.3 P3）: 配布成果物 A+B+D の
+# 生成と lean variant の boot-install、既定（全焼き込み）ビルドの無影響、native C+R の
+# 生成と bwrap 実走（ゲート d/e）、ECS リリース作法の静的検証（ゲート g）を
+# hosted runner で実走検証する。
 #
 # 開発 Workspace には docker が無く、dev ホストでの重ビルドは稼働フリートの OOM リスク
 # があるため（共有ホスト・メモリ制約）、イメージ実ビルドを要するこのゲートだけ
@@ -28,9 +29,10 @@ jobs:
   # 内容検証（e2e-smoke lean モード）と boot-install のライブ実走まで行う。
   # 「セッションが動く」の完全形（実 CP + 実認証）はホスト側フリートでの確認事項。
   compose-gate:
-    # native ゲートの反復修正中は P1 の 2 job を飛ばせる（コミットメッセージに
-    # [native-only] を含める）。最終検証は無印 push で 3 job 全部を回す。
-    if: "!contains(github.event.head_commit.message, '[native-only]')"
+    # 反復修正中は重い job を飛ばせる: [native-only] で P1 系 2 job を、[ecs-only] で
+    # docker ビルドを伴う 3 job 全部をスキップ（ecs-gate だけ回る）。最終検証は
+    # 無印 push で全 job を回す。
+    if: "!contains(github.event.head_commit.message, '[native-only]') && !contains(github.event.head_commit.message, '[ecs-only]')"
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
@@ -51,6 +53,8 @@ jobs:
           tar tzf "agent-fleet-$VERSION.tar.gz" | grep -q "^agent-fleet-$VERSION/aws/ecs/cfn/30-ingress.yaml$"
           tar tzf "agent-fleet-$VERSION.tar.gz" | grep -q "^agent-fleet-$VERSION/aws/ec2-single/cfn.yaml$"
           tar tzf "agent-fleet-$VERSION.tar.gz" | grep -q "^agent-fleet-$VERSION/NOTICE$"
+          # release-ecr.sh が実行ビット付きで同梱（P3 §35.7.3-5）
+          tar tvzf "agent-fleet-$VERSION.tar.gz" | grep -E "^-rwx.* agent-fleet-$VERSION/aws/ecs/release-ecr\.sh$"
           tar xzf "agent-fleet-$VERSION.tar.gz" "agent-fleet-$VERSION/.env.example" -O | grep -q "^VERSION=$VERSION$"
           # 鍵類（gitignore 対象）が紛れていないこと
           ! tar tzf "agent-fleet-$VERSION.tar.gz" | grep -E '(-key|\.pem)$'
@@ -126,6 +130,7 @@ jobs:
   # rootfs 内 entrypoint の boot-install がピン版を仮想 HOME へ導入するまで。
   # 素の WSL2 実機（追加インストールなし）での通しは P4 の実機ゲートに残る。
   native-gate:
+    if: "!contains(github.event.head_commit.message, '[ecs-only]')"
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -225,10 +230,33 @@ jobs:
           ( cd "$RUN/$C" && WS_DATA="$WS_DATA" ./af reset --all --yes )
           test ! -e "$WS_DATA"
 
+  # ゲート (g)（P3 — docs/35 §35.7.3）: ECS リリース作法の静的検証。docker/AWS 不要の
+  # 軽量ジョブ: cfn-lint（LanguageExtensions/Persistence 分岐含む 4 テンプレ）・
+  # shellcheck・release-ecr.sh の stub 実走（fake aws/docker で呼び出し列と ECR URI を
+  # 固定）。sandbox 実走一巡（ゲート h）は実クレデンシャルが要るため CI 外。
+  ecs-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: cfn-lint (ecs cfn templates)
+        run: |
+          pip install --quiet cfn-lint
+          cfn-lint deploy/aws/ecs/cfn/*.yaml
+
+      - name: shellcheck + syntax
+        run: |
+          bash -n deploy/aws/ecs/release-ecr.sh
+          shellcheck deploy/aws/ecs/release-ecr.sh
+
+      - name: release-ecr.sh stub run (call-sequence gate)
+        run: deploy/local/release-ecr-stub-test.sh
+
   # ゲート (c): 既定 ARG（全焼き込み）のビルドと e2e-smoke が無変更で通ること
   # （既存デプロイに影響ゼロ）。CP も既定 DOCS_SRC（全ツリー docs）で焼けること。
   default-image-gate:
-    if: "!contains(github.event.head_commit.message, '[native-only]')"
+    if: "!contains(github.event.head_commit.message, '[native-only]') && !contains(github.event.head_commit.message, '[ecs-only]')"
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

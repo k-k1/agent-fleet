@@ -92,6 +92,8 @@ SQLite is ephemeral in this milestone (no EFS/RDS). Prerequisites:
    ```
    ACM DNS validation and the Route53 alias are automated (the hosted zone must be
    in this account); cert issuance adds a few minutes to the first deploy.
+   Versioned (release) images add `ImageTag=<v>` to the overrides — the default
+   `dev` matches the sandbox push above.
 
 ## Prove-out sequence
 
@@ -124,6 +126,23 @@ CFN authoring (S1–S3) and the 段2 Go code are **parallel tracks**; they meet 
 
 ## ECR push (before S3)
 
+Scripted (P3 — `release-ecr.sh` wraps the command sequence below; the manual
+sequence stays the source of truth, the script is its transcription):
+
+```bash
+# images already local (built by deploy/release/build.sh):
+VERSION=<v> ./release-ecr.sh --profile af-sandbox --region <region>
+# or from the air-gap images tar (B) when the build host is a different machine:
+VERSION=<v> ./release-ecr.sh --profile af-sandbox --region <region> \
+    --images-tar agent-fleet-images-<v>.tar.gz
+```
+
+The script only *verifies* the ECR repositories exist — they are owned by
+`20-platform.yaml`, so deploy that stack first (creating them out of band would
+make the later CFN deploy fail with AlreadyExists).
+
+Manual equivalent:
+
 ```bash
 aws ecr get-login-password --region <region> | docker login --username AWS \
     --password-stdin <acct>.dkr.ecr.<region>.amazonaws.com
@@ -133,6 +152,58 @@ docker tag agent-fleet/workspace:<tag>     <acct>.dkr.ecr.<region>.amazonaws.com
 docker push <acct>.dkr.ecr.<region>.amazonaws.com/af-control-plane:<tag>
 docker push <acct>.dkr.ecr.<region>.amazonaws.com/af-workspace:<tag>
 ```
+
+## Upgrade (runbook)
+
+Both images are versioned together — `30-ingress.yaml` takes a single `ImageTag`
+parameter (default `dev`) used for the CP image *and* the `AF_ECS_WORKSPACE_IMAGE`
+the adapter launches. To move a deployment to a new release:
+
+1. **Back up first** (production): EFS is on `Persistence=retain` so it survives
+   stacks, but take an RDS snapshot / AWS Backup point before upgrading anyway.
+2. **Push the new tag**: `VERSION=<v> ./release-ecr.sh --profile <p> --region <r>`.
+3. **Re-deploy ingress with only the tag overridden** (all other parameters keep
+   their previous values):
+   ```bash
+   aws cloudformation deploy --stack-name af-ecs-ingress \
+     --template-file cfn/30-ingress.yaml \
+     --parameter-overrides ImageTag=<v> \
+     --profile <p> --region <r>
+   ```
+4. What happens: the **CP/Console service rolls** to the new image (brief
+   blue/green replacement behind the ALB). **Workspaces are not touched** — the
+   adapter builds task definitions statelessly from `AF_ECS_WORKSPACE_IMAGE`, so
+   each workspace picks the new image up **on its next Start**; running workspaces
+   keep their current image until stopped. No EFS/RDS change; state carries over.
+
+Rollback is the same operation with the previous tag. Convention: never re-push a
+different image under an already-released version tag (the repos stay `MUTABLE`
+so the `:dev` sandbox flow can overwrite itself — release tags are write-once by
+discipline, not enforcement).
+
+## Minimal IAM (deploying principal)
+
+What the human/CI principal running `release-ecr.sh` + `cloudformation deploy`
+needs, by service (the runtime roles the *tasks* use are created by `20-platform`
+and are not listed here). Scope resources by the `af-` name prefix where the
+service supports it:
+
+| Service | Why | Actions (summary) |
+|---|---|---|
+| cloudformation | stack CRUD | Create/Update/Delete/Describe stacks + change sets |
+| ec2 | 00-network (VPC/subnets/NAT/SG) | Create/Delete/Describe VPC, subnets, IGW, NAT, EIP, routes, security groups |
+| ecr | 20-platform repos + image push | CreateRepository/DeleteRepository/Describe*, GetAuthorizationToken, BatchCheckLayerAvailability, InitiateLayerUpload, UploadLayerPart, CompleteLayerUpload, PutImage |
+| ecs | 20-platform cluster + 30-ingress service | Create/Delete/Describe cluster & service, RegisterTaskDefinition, plus `iam:CreateServiceLinkedRole` once per account |
+| servicediscovery | Service Connect namespace | Create/Delete/Get namespace |
+| efs | 10-data filesystem + mount targets | CreateFileSystem/DeleteFileSystem/CreateMountTarget/DeleteMountTarget/Describe* |
+| rds | 10-data instance | CreateDBInstance/DeleteDBInstance/CreateDBSubnetGroup/Describe* (ManageMasterUserPassword also needs `secretsmanager:*` on the RDS-managed secret + `kms:DescribeKey`) |
+| elasticloadbalancing | 30-ingress ALB/TG/listeners | Create/Delete/Describe/Modify load balancers, target groups, listeners |
+| acm | 30-ingress cert | RequestCertificate/DeleteCertificate/DescribeCertificate |
+| route53 | DNS validation + alias | ChangeResourceRecordSets/GetHostedZone/ListResourceRecordSets (on the zone) |
+| logs | log groups | CreateLogGroup/DeleteLogGroup/PutRetentionPolicy/Describe* |
+| iam | 20-platform named roles | CreateRole/DeleteRole/Get/PassRole, Put/Delete/AttachRolePolicy (→ `CAPABILITY_NAMED_IAM`) |
+| ssm | CP secrets (out-of-band) | PutParameter/DeleteParameter under `/af-cp/*` |
+| sts | account resolution in release-ecr.sh | GetCallerIdentity |
 
 ## Cost & ephemerality
 
@@ -144,8 +215,10 @@ and keep stacks short-lived.
   VPC endpoints (ECR api+dkr, S3 gw, Logs, SSM) cut AWS-service traffic off NAT but
   not the public git/Anthropic egress — for a dev loop, a **NAT instance** (t4g.nano)
   or just accepting the NAT Gateway for the hours a stack lives is simpler.
-- `DeletionPolicy` on EFS/RDS: default **Delete** in the sandbox (ephemeral). Flip to
-  `Retain` + `Snapshot` only for a persistent environment.
+- Persistence: `10-data.yaml` takes a **`Persistence` parameter** — `delete`
+  (default, sandbox-ephemeral: EFS/RDS dropped with the stack, no backups) or
+  `retain` (production: EFS `Retain`, RDS `Snapshot` + 7-day backups + deletion
+  protection). **Deploy production with `Persistence=retain`.**
 
 ## Teardown
 
@@ -163,7 +236,8 @@ deleting `af-ecs-network`.
 ## Notes
 
 - Deploying principal (sandbox): broad create rights for VPC/ECS/EFS/RDS/ALB/**IAM**/
-  ECR/SSM. Fine in a throwaway account; least-priv doc for customers comes with P3-10.
+  ECR/SSM are fine in a throwaway account; for least privilege see
+  §Minimal IAM above.
 - The Google OAuth client used for ALB OIDC is throwaway — delete it after testing.
 - Naming prefix `af-` on every resource so a sandbox shared with other work stays
   greppable and safe to sweep.
