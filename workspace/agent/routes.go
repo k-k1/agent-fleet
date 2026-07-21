@@ -20,6 +20,10 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /notifications", handleNotifications)
 	mux.HandleFunc("POST /notifications/ack", handleNotificationsAck)
 	mux.HandleFunc("POST /sessions", handleCreateSession)
+	// Idempotency reconcile (session_idempotency.go): resolve a create whose POST
+	// response was lost to a client timeout, so the caller need not retry into a dup.
+	// Top-level path (not under /sessions/{name}/…) to avoid a mux wildcard collision.
+	mux.HandleFunc("GET /sessions-idempotency/{key}", handleIdempotencyLookup)
 	mux.HandleFunc("POST /sessions/{name}/fork", handleForkSession)
 	mux.HandleFunc("POST /sessions/{name}/stop", handleStopSession)
 	mux.HandleFunc("POST /sessions/{name}/halt", handleHaltSession)

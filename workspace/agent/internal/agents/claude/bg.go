@@ -156,6 +156,98 @@ func BackgroundBusy(name string) bool {
 	return false
 }
 
+// BackgroundShellBusy reports whether a long-lived background shell runs under the
+// session's pane while claude is idle — a Monitor's poll loop, or any
+// run_in_background shell that spends its life sleeping or waiting on I/O. It closes
+// the gap the other two detectors structurally can't see:
+//   - BackgroundBusy only flags R/D workers, so a Monitor's `while …; sleep 30; done`
+//     slips past — the loop's own bash and its gh/curl children sit in S almost the
+//     whole time (sleeping, or blocked on the network), never R/D.
+//   - SubagentBusy only sees subagent/Workflow transcripts, which a Monitor never
+//     writes (it is neither).
+//
+// The signature they share: a shell spawned directly by the claude(node) process.
+// The pane's own login shell is the BFS root (excluded), and a transient foreground
+// Bash tool only exists mid-turn — we run only when idle — so during idle a shell
+// hanging off node is a backgrounded one. State is ignored on purpose: the whole
+// point is to catch the S-state loop BackgroundBusy misses.
+func BackgroundShellBusy(name string) bool {
+	root := paneRootPID(session.TmuxName(name))
+	if root == 0 {
+		return false
+	}
+	return backgroundShellBusyIn(root, procSnapshot())
+}
+
+// backgroundShellBusyIn is the pure core of BackgroundShellBusy, split out so the
+// process-tree signature can be tested against a fixtured proc table.
+func backgroundShellBusyIn(root int, tab map[int]procInfo) bool {
+	kids := childrenOf(tab)
+	// BFS the descendants of the pane root (root itself excluded).
+	seen := map[int]bool{root: true}
+	queue := append([]int(nil), kids[root]...)
+	for len(queue) > 0 {
+		pid := queue[0]
+		queue = queue[1:]
+		if seen[pid] {
+			continue
+		}
+		seen[pid] = true
+		pi, ok := tab[pid]
+		if !ok {
+			continue
+		}
+		queue = append(queue, kids[pid]...)
+		if !shellComm[pi.comm] {
+			continue // only a shell carries the background-loop signature
+		}
+		if !procIsClaude(pi.ppid, tab[pi.ppid]) {
+			continue // not spawned by claude → not a claude-backgrounded shell
+		}
+		if subtreeHasClaude(pid, kids, tab) {
+			continue // a wrapper launching another claude (bash → claude), not real work
+		}
+		return true
+	}
+	return false
+}
+
+// childrenOf inverts a proc table into a ppid → children index.
+func childrenOf(tab map[int]procInfo) map[int][]int {
+	kids := map[int][]int{}
+	for pid, pi := range tab {
+		kids[pi.ppid] = append(kids[pi.ppid], pid)
+	}
+	return kids
+}
+
+// procIsClaude reports whether pid is a claude process. claude's node process sets
+// its comm to "claude" (or "claude.exe"), so that alone decides it without a /proc
+// read; isClaudeProc is the fallback for a node whose comm stayed "node".
+func procIsClaude(pid int, pi procInfo) bool {
+	return pi.comm == "claude" || pi.comm == "claude.exe" || isClaudeProc(pid)
+}
+
+// subtreeHasClaude reports whether any descendant of pid is a claude process, used to
+// skip a shell that merely wraps a nested claude launch rather than doing work.
+func subtreeHasClaude(pid int, kids map[int][]int, tab map[int]procInfo) bool {
+	seen := map[int]bool{}
+	queue := append([]int(nil), kids[pid]...)
+	for len(queue) > 0 {
+		p := queue[0]
+		queue = queue[1:]
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		if pi, ok := tab[p]; ok && procIsClaude(p, pi) {
+			return true
+		}
+		queue = append(queue, kids[p]...)
+	}
+	return false
+}
+
 // isClaudeProc skips the claude CLI itself (node running claude) and our own agent
 // binary (the MCP helper), so neither is mistaken for a background task.
 func isClaudeProc(pid int) bool {
