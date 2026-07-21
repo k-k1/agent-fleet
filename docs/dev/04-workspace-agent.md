@@ -54,7 +54,7 @@ loopback で届く（preview の下請け `/proxy/{port}`とBrowserManagerの直
 
 ## 4.3 エージェント kind / driver 統合パターン
 
-kind = `claude` / `codex` / `opencode` / `shell` / `ssm`（+ 📋 agy、[decisions/0008](../decisions/0008-antigravity-cli-agent-kind.md)）。
+kind = `claude` / `codex` / `opencode` / `agy` / `copilot` / `shell` / `ssm`（agy は [32](../32-agy-agent-kind.md)、copilot は [36](../36-copilot-agent-kind.md) — Terminal+Managed 両対応・per-session child の ACP driver）。
 Codex / OpenCode は managed が新規既定で、tui は明示選択。Claude / shell / SSM は tui のみ。
 **新 kind を足すときに埋める面**は毎回同じ（雛形は opencode 追加時に確立、codex で再利用）:
 
