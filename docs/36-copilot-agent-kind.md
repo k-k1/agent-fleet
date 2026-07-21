@@ -166,3 +166,30 @@
 - 状態ファイル: `COPILOT_HOME`（既定 `~/.copilot`）に config.json / mcp-config.json / logs/ /
   session-store.db / `session-state/<sid>/{events.jsonl, session.db, workspace.yaml, checkpoints/, files/, inuse.<pid>.lock}`。
   events.jsonl は TUI/`-p`/ACP 全経路で同形式・ライブ追記。
+
+## 実装後の追加実測（2026-07-21、実装検証時）
+
+- **モデル可否はプラン依存**: 検証アカウントは Copilot Free で、TUI /model に
+  「Your Copilot Free plan currently includes only Auto」— 正しい ID でも明示
+  `--model` は "Model ... is not available" で失敗する。**Free では既定（auto）で
+  起動すること**。/model ピッカーの実測語彙（v1.0.73）: gpt-5.6-sol/terra/luna,
+  gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5-mini, gpt-5.3-codex, claude-sonnet-5/4.6/4.5,
+  claude-haiku-4.5, claude-fable-5, claude-opus-4.8(+fast)/4.7/4.6/4.5,
+  gemini-3.1-pro-preview, gemini-3.5-flash, kimi-k2.7-code。models.go の静的
+  カタログはここから採録（列挙口が CLI に無いため）。
+- **managed driver の実 CLI 契約テスト**が通過（`live_contract_test.go`,
+  `AF_COPILOT_LIVE=1` opt-in）: spawn→initialize→session/new→prompt 完走→
+  events.jsonl に応答反映→子 kill→respawn+session/load→文脈保持まで。
+  注意: HOME 隔離は gh の ambient 認証も切る — トークンは隔離前に取得して
+  `COPILOT_GITHUB_TOKEN` で明示注入する（実運用の managed 子も同様に明示注入）。
+- TUI 実測の paneMode/貼り付け/GracefulStop は session_io.go / stop.go に反映済み。
+
+## 残課題（実装済み範囲の外）
+
+- 実フリートのイメージ再ビルド後の実機目視（起動導線・ミラー・managed 切替・
+  接続カード・色）。
+- rtk（COPILOT_CUSTOM_INSTRUCTIONS_DIRS 方式の実測から）/ WS バー使用量チップ /
+  アシスタントチャット headless バックエンド / 画像添付（imagePaste・managed
+  Attachments）/ ContextBar — Track D のまま。
+- TUI の plan モードチップ（フッタにモード表示が無く検出不能 — Shift+Tab は
+  autopilot を跨ぐ 3 モード循環のためキー駆動トグルも封印中）。
