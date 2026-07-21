@@ -29,6 +29,10 @@ func toolchainsPath() string {
 type toolchains struct {
 	Node     string `json:"node"`
 	Java     string `json:"java"`
+	// Go: ""/"system" keeps the baked /usr/local/go (or none, on a lean rootfs);
+	// a version string selects an on-demand toolchain the entrypoint installs
+	// into the home via `workspace-agent install-go` (docs/35 §35.7.2-5).
+	Go       string `json:"go,omitempty"`
 	Timezone string `json:"timezone"`
 	// AgentUpdate: member opt-in to update the baked CLIs (claude/opencode/codex) to
 	// latest at container start. Only honored when the operator allows it (the
@@ -69,13 +73,32 @@ var tzNameRe = regexp.MustCompile(`^[A-Za-z0-9_+./-]{1,64}$`)
 // image's base node.
 var nodeOptions = []string{"system", "18", "20", "22", "24"}
 
+// goOptions merges "system" (baked /usr/local/go, or none), the build pin and the
+// on-demand versions already installed — the list the Console offers.
+func goOptions() []string {
+	opts := []string{"system"}
+	seen := map[string]bool{}
+	if pin := readBuildPins()["go"]; pin != "" {
+		opts = append(opts, pin)
+		seen[pin] = true
+	}
+	for _, v := range installedGoVersions() {
+		if !seen[v] {
+			opts = append(opts, v)
+			seen[v] = true
+		}
+	}
+	return opts
+}
+
 // resolvedToolchains resolves the current selection to concrete values for
 // injection into freshly-launched sessions/shells. node uses the highest installed
 // patch of the chosen major under the home nvm dir (must already be installed —
 // session launch won't run a network install); java resolves the selected Temurin
-// across the search dirs (/usr/lib/jvm then the home volume); tz is honored only if
+// across the search dirs (/usr/lib/jvm then the home volume); go resolves the
+// on-demand GOROOT (or the baked one when its pin matches); tz is honored only if
 // its zoneinfo exists. Empty strings mean "no override".
-func resolvedToolchains() (javaHome, nodeBin, tz string) {
+func resolvedToolchains() (javaHome, nodeBin, goRoot, tz string) {
 	t := readToolchains()
 	if t.Java != "" {
 		javaHome = javaHomeFor(t.Java)
@@ -86,6 +109,7 @@ func resolvedToolchains() (javaHome, nodeBin, tz string) {
 			nodeBin = m[len(m)-1] // highest installed patch
 		}
 	}
+	goRoot = goRootFor(t.Go)
 	if t.Timezone != "" {
 		if _, err := os.Stat("/usr/share/zoneinfo/" + t.Timezone); err == nil {
 			tz = t.Timezone
@@ -97,9 +121,9 @@ func resolvedToolchains() (javaHome, nodeBin, tz string) {
 // toolchainShellPrefix is an `sh -c` prefix that exports the selected toolchain
 // for a tmux-launched program (tmux runs the pane command via /bin/sh -c, so the
 // existing PATH expands via "$PATH"). Empty when nothing is selected. The new java
-// / node bins are prepended, so they win over the entrypoint's stale ones.
+// / node / go bins are prepended, so they win over the entrypoint's stale ones.
 func toolchainShellPrefix() string {
-	jh, nodeBin, tz := resolvedToolchains()
+	jh, nodeBin, goRoot, tz := resolvedToolchains()
 	var b strings.Builder
 	if jh != "" {
 		b.WriteString("export JAVA_HOME=" + session.ShellQuote(jh) + "; ")
@@ -107,6 +131,10 @@ func toolchainShellPrefix() string {
 	}
 	if nodeBin != "" {
 		b.WriteString("export PATH=" + session.ShellQuote(nodeBin) + ":\"$PATH\"; ")
+	}
+	if goRoot != "" {
+		b.WriteString("export GOROOT=" + session.ShellQuote(goRoot) + "; ")
+		b.WriteString("export PATH=" + session.ShellQuote(goRoot+"/bin") + ":\"$PATH\"; ")
 	}
 	if tz != "" {
 		b.WriteString("export TZ=" + session.ShellQuote(tz) + "; ")
@@ -118,17 +146,19 @@ func toolchainShellPrefix() string {
 // default shell in handlePTY, launched directly from Go). It rewrites a single PATH
 // entry (avoiding duplicate keys, where getenv would keep the first/stale one).
 func applyToolchainEnv(env []string) []string {
-	jh, nodeBin, tz := resolvedToolchains()
-	if jh == "" && nodeBin == "" && tz == "" {
+	jh, nodeBin, goRoot, tz := resolvedToolchains()
+	if jh == "" && nodeBin == "" && goRoot == "" && tz == "" {
 		return env
 	}
 	path := ""
-	out := make([]string, 0, len(env)+3)
+	out := make([]string, 0, len(env)+4)
 	for _, e := range env {
 		switch {
 		case strings.HasPrefix(e, "PATH="):
 			path = strings.TrimPrefix(e, "PATH=")
 		case jh != "" && strings.HasPrefix(e, "JAVA_HOME="):
+			// dropped; re-added below
+		case goRoot != "" && strings.HasPrefix(e, "GOROOT="):
 			// dropped; re-added below
 		case tz != "" && strings.HasPrefix(e, "TZ="):
 			// dropped; re-added below
@@ -138,6 +168,10 @@ func applyToolchainEnv(env []string) []string {
 	}
 	if nodeBin != "" {
 		path = nodeBin + ":" + path
+	}
+	if goRoot != "" {
+		out = append(out, "GOROOT="+goRoot)
+		path = goRoot + "/bin:" + path
 	}
 	if jh != "" {
 		out = append(out, "JAVA_HOME="+jh)
@@ -155,11 +189,13 @@ func handleToolchainsGet(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"node":           t.Node,
 		"java":           t.Java,
+		"go":             t.Go,
 		"timezone":       t.Timezone,
 		"agentUpdate":    t.AgentUpdate,
 		"java_available": javaOptions(),         // offered for selection (installed ∪ installable)
 		"java_installed": installedJavaMajors(), // present on disk now (ready without a download)
 		"node_options":   nodeOptions,
+		"go_options":     goOptions(), // "system" ∪ build pin ∪ installed on-demand versions
 		"tz_options":     tzOptions,
 	})
 }

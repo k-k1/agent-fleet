@@ -212,6 +212,15 @@ export class BrowserController {
       } catch (error) {
         if (generation !== this.generation || this.disposed) return;
         const e = error as { code?: string; message?: string };
+        if (e.code === "browser_installing") {
+          // First-use pinned Chromium install is running agent-side (lean rootfs
+          // — docs/35 §35.7.2-4). Show "preparing" and poll until it lands.
+          this.update({ state: "loading", errorCode: e.code, errorMessage: e.message || "" });
+          setTimeout(() => {
+            if (!this.disposed && this.visible && !this.pageId) void this.start();
+          }, 5000);
+          return;
+        }
         this.update({ state: "disconnected", errorCode: e.code || "browser_start_failed", errorMessage: e.message || String(error) });
       }
     })();

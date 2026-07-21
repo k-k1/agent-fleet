@@ -267,6 +267,7 @@ export const en: Record<keyof typeof ja, string> = {
   "env.node_default": "Default (image's node)",
   "env.no_jdk": "This workspace has no JDK.",
   "env.unselected": "Not selected",
+  "env.go_default": "Default (image's go)",
   "env.agent_update_title": "Agent CLI updates",
   "env.agent_update_label": "Update the agent CLIs and rtk to the latest on start",
   "env.agent_update_note":
@@ -1038,6 +1039,7 @@ export const en: Record<keyof typeof ja, string> = {
   "browser.loading": "Loading page…",
   "browser.target_unreachable": "The target port is unreachable. Start the service, then reload.",
   "browser.crashed": "The browser inside the container crashed.",
+  "browser.installing": "Preparing the browser (first use only, ~200MB download)…",
   "browser.disconnected": "The browser pane disconnected.",
   "browser.workspace_stopped": "The workspace is stopped. Start it, then reconnect.",
   "browser.workspace_starting": "The workspace is starting. Reconnect when it is ready.",

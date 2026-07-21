@@ -26,12 +26,62 @@ var browserUpgrader = websocket.Upgrader{
 	CheckOrigin: func(*http.Request) bool { return true }, // internal CP-only endpoint
 }
 
+// chromiumInstallState serializes the one-shot on-demand chromium install a
+// lean rootfs triggers on the first pane attach (docs/35 §35.7.2-4). While the
+// background install runs, page creation answers 503 browser_installing and the
+// Console shows "preparing" + retries.
+var chromiumInstallState struct {
+	sync.Mutex
+	running bool
+	lastErr error
+}
+
+// ensureChromiumForPane checks the pane's chromium is resolvable and, when it
+// is absent but a chromium_dl pin exists, kicks the pinned install once in the
+// background. Returns (installing, err): installing=true → tell the viewer to
+// wait; err != nil → the previous install attempt failed (surfaced once, then
+// cleared so the next create retries).
+func ensureChromiumForPane() (bool, error) {
+	if _, err := findChromiumBinary(); err == nil {
+		return false, nil
+	}
+	pin := readBuildPins()["chromium_dl"]
+	if pin == "" {
+		return false, nil // nothing to install — let Create fail the normal way
+	}
+	chromiumInstallState.Lock()
+	defer chromiumInstallState.Unlock()
+	if chromiumInstallState.running {
+		return true, nil
+	}
+	if err := chromiumInstallState.lastErr; err != nil {
+		chromiumInstallState.lastErr = nil
+		return false, err
+	}
+	chromiumInstallState.running = true
+	go func() {
+		err := installChromium(pin)
+		chromiumInstallState.Lock()
+		chromiumInstallState.running = false
+		chromiumInstallState.lastErr = err
+		chromiumInstallState.Unlock()
+	}()
+	return true, nil
+}
+
 func handleBrowserPagesCreate(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
 	var req browserCreateRequest
 	dec := json.NewDecoder(r.Body)
 	if err := dec.Decode(&req); err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_browser_target", "invalid browser target")
+		return
+	}
+	if installing, err := ensureChromiumForPane(); installing {
+		httpx.WriteErr(w, http.StatusServiceUnavailable, "browser_installing", "preparing pinned Chromium (first use only, ~200MB)")
+		return
+	} else if err != nil {
+		httpx.WriteErr(w, http.StatusBadGateway, "browser_start_failed", "Chromium install failed: "+err.Error())
 		return
 	}
 	resp, err := workspaceBrowserManager.Create(req)

@@ -249,6 +249,7 @@ function browserStatus(snapshot: BrowserSnapshot, tr: ReturnType<typeof useT>): 
       workspace_starting: "browser.workspace_starting",
       browser_page_limit: "browser.page_limit",
       browser_protocol_mismatch: "browser.protocol_mismatch",
+      browser_installing: "browser.installing",
     };
     const key = known[snapshot.errorCode];
     return key ? tr(key) : snapshot.errorMessage || tr("browser.disconnected");

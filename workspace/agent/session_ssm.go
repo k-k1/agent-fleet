@@ -173,6 +173,11 @@ func writeSSMConfig(path string, s session.SSMMeta) error {
 // generated; otherwise the profile is assumed to exist in the member's own ~/.aws.
 func buildSSMProgram(name string, s session.SSMMeta, force bool) (string, error) {
 	var b strings.Builder
+	// Lean rootfs ships without the AWS CLI / Session Manager plugin; install the
+	// pinned versions into the home on first use, with the progress streaming
+	// into this very pane (docs/35 §35.7.2-6). No-op when both are present.
+	b.WriteString("{ command -v aws && command -v session-manager-plugin; } >/dev/null 2>&1 || " +
+		"workspace-agent install-awscli || { echo '[Agent Fleet] AWS CLI の導入に失敗しました（ネットワークを確認して再試行してください）'; exit 1; }; ")
 	if s.StartURL != "" && s.Profile != "" {
 		cfg := ssmConfigPath(name)
 		if err := writeSSMConfig(cfg, s); err != nil {

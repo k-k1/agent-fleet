@@ -268,6 +268,7 @@ export const ja = {
   "env.node_default": "既定 (image の node)",
   "env.no_jdk": "このワークスペースに JDK がありません",
   "env.unselected": "未選択",
+  "env.go_default": "既定 (image の go)",
   "env.agent_update_title": "エージェント CLI の更新",
   "env.agent_update_label": "起動時にエージェント CLI と rtk を最新へ更新する",
   "env.agent_update_note":
@@ -1051,6 +1052,7 @@ export const ja = {
   "browser.loading": "ページを読み込み中…",
   "browser.target_unreachable": "対象ポートへ接続できません。サービスの起動後に再読み込みしてください。",
   "browser.crashed": "コンテナ内ブラウザがクラッシュしました。",
+  "browser.installing": "ブラウザを準備中です（初回のみ約200MBを取得）…",
   "browser.disconnected": "ブラウザペインの接続が切れました。",
   "browser.workspace_stopped": "ワークスペースが停止しています。起動してから再接続してください。",
   "browser.workspace_starting": "ワークスペースを起動中です。準備ができてから再接続してください。",

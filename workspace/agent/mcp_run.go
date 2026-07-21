@@ -151,7 +151,14 @@ func runCloudWatchMCP(extra []string) {
 		fmt.Fprintf(os.Stderr, "mcp-run cloudwatch: %v\n", err)
 		os.Exit(1)
 	}
-	argv := append([]string{uvx, "awslabs.cloudwatch-mcp-server"}, extra...)
+	// Pin the PyPI fetch to the verified version (versions.json) — on a lean
+	// rootfs this fallback IS the normal path, and an unpinned uvx would pull
+	// whatever latest is (docs/35 §35.7.2-6). No pin (dev build) = latest.
+	pkg := "awslabs.cloudwatch-mcp-server"
+	if pin := readBuildPins()["cloudwatch_mcp"]; pin != "" {
+		pkg += "==" + pin
+	}
+	argv := append([]string{uvx, pkg}, extra...)
 	if err := syscall.Exec(uvx, argv, env); err != nil {
 		fmt.Fprintf(os.Stderr, "mcp-run cloudwatch: exec %s: %v\n", uvx, err)
 		os.Exit(1)
@@ -182,18 +189,29 @@ func writeCloudWatchOpsConfig(c *secrets.CloudWatchConn) error {
 }
 
 // grafanaMCPPath resolves the mcp-grafana binary: PATH (the image bakes it into
-// /usr/local/bin) first, then the per-user Phase 0 install under ~/.local/bin.
+// /usr/local/bin) first, the per-user installs next (~/.local/bin from Phase 0,
+// ~/.local/share/agent-fleet/bin from the on-demand installer), and as the last
+// resort it downloads the pinned release on the spot (lean rootfs — the bake is
+// absent by design; docs/35 §35.7.2-6).
 func grafanaMCPPath() (string, error) {
 	if p, err := exec.LookPath("mcp-grafana"); err == nil {
 		return p, nil
 	}
 	if home := homeDir(); home != "" {
-		p := filepath.Join(home, ".local", "bin", "mcp-grafana")
-		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
-			return p, nil
+		for _, p := range []string{
+			filepath.Join(home, ".local", "bin", "mcp-grafana"),
+			filepath.Join(agentFleetShareDir(), "bin", "mcp-grafana"),
+		} {
+			if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+				return p, nil
+			}
 		}
 	}
-	return "", fmt.Errorf("mcp-grafana not found (baked into newer images; or install to ~/.local/bin)")
+	if p, err := installGrafanaMCP(readBuildPins()["mcp_grafana"]); err == nil {
+		return p, nil
+	} else {
+		return "", fmt.Errorf("mcp-grafana not found and on-demand install failed: %v", err)
+	}
 }
 
 // uvxPath resolves the uvx launcher: PATH first, then the per-user install under

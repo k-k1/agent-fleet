@@ -140,6 +140,13 @@ func collectToolVersions() []toolReport {
 				r.Effective = probeVersion(p, spec.Args)
 			}
 			r.Baked = probeVersion(spec.Baked, spec.Args)
+			// go: a lean rootfs bakes no /usr/local/go — surface the on-demand
+			// toolchain (install-go, docs/35 §35.7.2-5) in the image column instead.
+			if r.Baked == nil && spec.Name == "go" {
+				if vers := installedGoVersions(); len(vers) > 0 {
+					r.Baked = probeVersion(filepath.Join(goHomeRoot(), vers[len(vers)-1], "bin", "go"), spec.Args)
+				}
+			}
 			r.UserLocal = probeVersion(filepath.Join(home, ".local", "bin", spec.Cmd), spec.Args)
 			out[i] = r
 		}(i, spec)
