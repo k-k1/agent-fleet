@@ -1,5 +1,7 @@
 # agent-fleet-dist
 
+English | [日本語](README.ja.md)
+
 Distribution artifacts for [Agent Fleet](https://github.com/k-k1/agent-fleet).
 **There is no source code here** — binaries and bundles are attached to Releases.
 
@@ -32,6 +34,32 @@ af start
 - For details (host requirements, air-gap installs, running as a service,
   optional text-to-speech with VOICEVOX / Zundamon, limitations) see the
   `README.md` bundled inside the tar.
+
+## Uninstalling / removing data (native edition)
+
+```bash
+# 1. If you set up the systemd user unit, stop and remove it first
+systemctl --user disable --now agent-fleet 2>/dev/null
+rm -f ~/.config/systemd/user/agent-fleet.service
+# otherwise just stop `af start` with Ctrl-C
+
+# 2. Wipe all data — DB, workspace homes (incl. Claude logins), extracted rootfs
+af reset --all
+
+# 3. Remove the program itself
+rm -f ~/.local/bin/af
+rm -rf ~/.local/opt/agent-fleet
+```
+
+- Steps 2 and 3 are independent: to uninstall but **keep your data** (e.g. before
+  reinstalling), skip step 2 — data lives in `~/.local/share/agent-fleet`
+  (or `$WS_DATA` if you overrode it), separate from the program.
+- If `af` is already gone, remove the data manually. Note that Go module caches
+  inside workspace homes are write-protected, so restore write permission first:
+
+  ```bash
+  chmod -R u+w ~/.local/share/agent-fleet && rm -rf ~/.local/share/agent-fleet
+  ```
 
 ## Release layout
 
