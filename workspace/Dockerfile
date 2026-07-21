@@ -321,16 +321,33 @@ RUN set -eux; mkdir -p /usr/local/share/agent-fleet; \
 # DISABLE_UPDATES, so explicit `claude update`/`claude install` still work).
 ENV DISABLE_AUTOUPDATER=1
 
-# On a restricted / air-gapped network (the native WSL2 target is the common case:
-# limited outbound), Claude Code's startup NON-ESSENTIAL network calls (telemetry,
-# error reporting, feedback survey) can hang and wedge the REPL input loop: the TUI
-# renders fine and the Trust prompt still takes a keystroke, but once the session
-# reaches the main prompt it accepts NO input at all (verified on real WSL2 — gate k,
-# docs/35 §35.8.1). Disabling the optional traffic so the input loop is never gated on
-# an unreachable endpoint fully restores input. CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
-# is the umbrella switch; the explicit TELEMETRY / ERROR_REPORTING flags are
-# belt-and-suspenders across CLI versions. Harmless on a fully-connected network (it
-# just opts a self-hosted fleet out of optional traffic), so it applies to every target.
+# NEVER let git fall back to an interactive /dev/tty credential prompt. This fixes a
+# real "the claude session accepts NO keyboard input" bug (gate k, docs/35 §35.9-10):
+# when a user works in a github.com repo but has NOT connected GitHub, our global
+# credential helper (`workspace-agent cred`) returns nothing for github.com, so the
+# `gh pr view` that Claude Code runs for PR status falls to `git credential fill`,
+# which opens /dev/tty (== the tmux pane's pty) and BLOCKS on a username/password
+# read(). That makes credential-fill a second reader on claude's controlling terminal
+# and it eats every keystroke send-keys delivers, so claude's stdin epoll never fires.
+# GIT_TERMINAL_PROMPT=0 makes git fail fast instead of prompting; GCM_INTERACTIVE=never
+# does the same if git-credential-manager is ever in play. This is NOT native-specific:
+# any GitHub-unconnected user (e.g. Bitbucket-only) hits it on any target — it just
+# usually stays hidden because most users have GitHub connected. The agent already sets
+# GIT_TERMINAL_PROMPT=0 per-command for its OWN git (internal/gitx), but that never
+# reaches the git subprocess claude spawns; setting it in the image env covers every
+# git invocation on every target. Safe with the settings-modal auth: credentials are
+# captured via the Console (OAuth device flow / PAT paste), never via git's prompt, and
+# the helper's get path (the only one implemented) runs BEFORE this fallback.
+ENV GIT_TERMINAL_PROMPT=0 \
+    GCM_INTERACTIVE=never
+
+# Opt a self-hosted fleet out of Claude Code's optional/background network calls. NOTE:
+# this does NOT fix the input-hang above (that was an early misdiagnosis, commit
+# b1c1c41 / an earlier revision of docs/35 §35.9-10 — the real cause is the git
+# credential prompt handled just above; these flags never stop `gh pr view`). Kept only
+# as harmless hardening for restricted/air-gapped networks and privacy, and it aligns
+# with the version-pinned CLI story (DISABLE_AUTOUPDATER above). Harmless when fully
+# connected.
 ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
     DISABLE_TELEMETRY=1 \
     DISABLE_ERROR_REPORTING=1
