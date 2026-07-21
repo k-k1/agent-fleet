@@ -248,24 +248,33 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
 ENV COPILOT_AUTO_UPDATE=false
 
 # Antigravity CLI（kind="agy"、docs/decisions/0008 / docs/32）。npm でなく Go バイナリ
-# 配布（install.sh が manifest 取得 + sha512 検証）なので別 RUN。--dir /usr/local/bin の
-# root 設置で他 CLI と同列に扱い、版はイメージ再ビルドで管理する。
-# 注意 2 点:
-#  - install.sh に版ピンは無い（常に latest manifest）。AGY_VERSION はキャッシュバスタ兼
-#    「ビルド時に latest だった版」の記録で、bump するとこの RUN のキャッシュが割れて
-#    再取得される。実際に入った版が進んでいても失敗にはしない（versions.json との差は
-#    設定 UI の「ピン vs 実体」に出る）。
-#  - agy は Go BoringCrypto(FIPS) ビルドで、x86 では RDRAND 命令が無いホストだと起動即
-#    SIGABRT する（0008 PoC: Ryzen Embedded R2514）。RDRAND 非提示のビルドホストでも
-#    イメージは焼けるよう、起動を伴う --version 検証は rdrand 提示時だけ行う。
-ARG AGY_VERSION=1.1.4
-RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
-      echo "agy build pin: ${AGY_VERSION}" \
-      && curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin \
-      && test -x /usr/local/bin/agy \
-      && rm -rf /root/.cache/antigravity \
-      && if grep -qw rdrand /proc/cpuinfo; then agy --version; \
-         else echo "skip agy --version check (build host exposes no rdrand)"; fi; \
+# 配布なので別 RUN。かつては install.sh（常に latest manifest・版ピン不可）だったが、
+# GitHub Releases（google-antigravity/antigravity-cli）が全旧版の versioned アセットを
+# 恒久保存しており、GCS の install.sh 配布物と**バイト同一**（2026-07-21 実測:
+# sha256/manifest sha512 一致）— これを供給元に他 CLI と同じ真のピンにする。
+# sha256 はリリースアセットの digest（GitHub API）を ARG に写して検証。bump は
+# AGY_VERSION と両 arch の sha を揃えて書き換える（digest は
+# `gh api repos/google-antigravity/antigravity-cli/releases/tags/<v>` で取れる）。
+# 注意: agy は Go BoringCrypto(FIPS) ビルドで、x86 では RDRAND 命令が無いホストだと
+# 起動即 SIGABRT する（0008 PoC: Ryzen Embedded R2514）。RDRAND 非提示のビルドホスト
+# でもイメージは焼けるよう、起動を伴う --version 検証は rdrand 提示時だけ行う。
+ARG AGY_VERSION=1.1.5
+ARG AGY_SHA256_X64=1d586501b8a13d146e8aa3c7f00634f50c6034e2c428ea7d013377d36315a69a
+ARG AGY_SHA256_ARM64=d61ace663d7efee9dfd8f4f881e6f1021eff904a0688a91cd4d84359ee76f044
+RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
+      arch="$(dpkg --print-architecture)"; \
+      case "$arch" in \
+        amd64) asset="agy_cli_linux_x64.tar.gz"; sha="${AGY_SHA256_X64}" ;; \
+        arm64) asset="agy_cli_linux_arm64.tar.gz"; sha="${AGY_SHA256_ARM64}" ;; \
+        *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
+      esac; \
+      curl -fsSL "https://github.com/google-antigravity/antigravity-cli/releases/download/${AGY_VERSION}/${asset}" -o /tmp/agy.tgz; \
+      echo "${sha}  /tmp/agy.tgz" | sha256sum -c -; \
+      tar -C /tmp -xzf /tmp/agy.tgz antigravity; \
+      install -m 0755 /tmp/antigravity /usr/local/bin/agy; \
+      rm -f /tmp/agy.tgz /tmp/antigravity; \
+      if grep -qw rdrand /proc/cpuinfo; then agy --version; \
+      else echo "skip agy --version check (build host exposes no rdrand)"; fi; \
     fi
 
 # agy はインストール済みバイナリを通常実行中にバックグラウンド自己更新する
@@ -281,9 +290,15 @@ ENV AGY_CLI_DISABLE_AUTO_UPDATE=1
 # chromium_dl は playwright CDN 配布の Chromium build ピン（build 1228 =
 # Chromium 149.0.7827.55, playwright 1.61.0 同梱版。供給元の最終選定は §35.9-7(a)）。
 ARG CHROMIUM_DL_VERSION=1228
-RUN mkdir -p /usr/local/share/agent-fleet \
- && printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","copilot":"%s","rtk":"%s","go":"%s","gh":"%s","chromium":"%s","chromium_dl":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","awscli":"%s","session_manager_plugin":"%s"}\n' \
-      "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$AGY_VERSION" "$COPILOT_VERSION" "$RTK_VERSION" "$GO_VERSION" "$GH_VERSION" "$CHROMIUM_VERSION" \
+RUN set -eux; mkdir -p /usr/local/share/agent-fleet; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) agy_sha="${AGY_SHA256_X64}" ;; \
+      arm64) agy_sha="${AGY_SHA256_ARM64}" ;; \
+      *) agy_sha="" ;; \
+    esac; \
+    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_sha256":"%s","copilot":"%s","rtk":"%s","go":"%s","gh":"%s","chromium":"%s","chromium_dl":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","awscli":"%s","session_manager_plugin":"%s"}\n' \
+      "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$AGY_VERSION" "$agy_sha" "$COPILOT_VERSION" "$RTK_VERSION" "$GO_VERSION" "$GH_VERSION" "$CHROMIUM_VERSION" \
       "$CHROMIUM_DL_VERSION" "$MCP_GRAFANA_VERSION" "$CLOUDWATCH_MCP_VERSION" "$AWSCLI_VERSION" "$SESSION_MANAGER_PLUGIN_VERSION" \
       > /usr/local/share/agent-fleet/versions.json
 

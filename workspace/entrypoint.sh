@@ -104,19 +104,29 @@ if [ "$LEAN_CLIS" = 1 ]; then
     ) && echo "[entrypoint] boot-install rtk $(vj_pin rtk)" \
       || echo "[entrypoint] WARN: rtk boot-install failed (retrying next start)"
   fi
-  # agy: install.sh 供給に版ピンが無い（常に latest — 焼き込み時と同じ制約。
-  # versions.json の agy はビルド時 latest の記録）。self-update と同じく空 dir へ
-  # 導入してから ~/.local/bin へ移す。
-  if ! cli_present agy; then
-    agy_tmp="$(mktemp -d)"
-    if curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir "$agy_tmp" >/dev/null 2>&1 \
-       && [ -x "$agy_tmp/agy" ]; then
-      install -D -m 0755 "$agy_tmp/agy" "$HOME/.local/bin/agy"
-      echo "[entrypoint] boot-install agy (latest)"
-    else
-      echo "[entrypoint] WARN: agy boot-install failed (retrying next start)"
-    fi
-    rm -rf "$agy_tmp"
+  # agy: GitHub Releases（google-antigravity/antigravity-cli）のピン版
+  # （versions.json の agy + agy_sha256 で取得・検証 — Dockerfile 焼き込みと同じ経路。
+  # GCS の install.sh 配布物とバイト同一を実測確認済み、docs/35 §35.4.1）。
+  # self-update の版比較マーカーも書いておく（ピン導入直後の無駄な再取得を防ぐ）。
+  if ! cli_present agy && [ -n "$(vj_pin agy)" ] && [ -n "$(vj_pin agy_sha256)" ]; then
+    (
+      set -e
+      aver="$(vj_pin agy)"; asha="$(vj_pin agy_sha256)"
+      arch="$(dpkg --print-architecture 2>/dev/null || uname -m)"
+      case "$arch" in
+        amd64 | x86_64) asset="agy_cli_linux_x64.tar.gz" ;;
+        arm64 | aarch64) asset="agy_cli_linux_arm64.tar.gz" ;;
+        *) echo "unsupported arch: $arch" >&2; exit 1 ;;
+      esac
+      tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+      cd "$tmp"
+      curl -fsSL "https://github.com/google-antigravity/antigravity-cli/releases/download/${aver}/${asset}" -o agy.tgz
+      echo "${asha}  agy.tgz" | sha256sum -c - >/dev/null
+      tar -xzf agy.tgz antigravity
+      install -D -m 0755 antigravity "$HOME/.local/bin/agy"
+      printf '%s\n' "$aver" > "$HOME/.local/bin/.agy.version"
+    ) && echo "[entrypoint] boot-install agy $(vj_pin agy)" \
+      || echo "[entrypoint] WARN: agy boot-install failed (retrying next start)"
   fi
 fi
 

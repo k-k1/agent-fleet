@@ -40,9 +40,10 @@ var toolSpecs = []toolSpec{
 	{Name: "claude", Cmd: "claude", Baked: "/usr/local/bin/claude", Pin: "claude"},
 	{Name: "opencode", Cmd: "opencode", Baked: "/usr/local/bin/opencode", Pin: "opencode"},
 	{Name: "codex", Cmd: "codex", Baked: "/usr/local/bin/codex", Pin: "codex"},
-	// agy の Pin は「ビルド時に latest だった版」（install.sh に版ピンは無い —
-	// workspace/Dockerfile）。RDRAND 非提示ホストでは --version 自体が SIGABRT する
-	// ため probeVersion は "(取得失敗)" になる（それ自体がガード対象ホストの兆候）。
+	// agy は GitHub Releases（google-antigravity/antigravity-cli）の versioned アセット
+	// からの真のピン（workspace/Dockerfile の AGY_VERSION + sha256 検証）。RDRAND 非提示
+	// ホストでは --version 自体が SIGABRT するため probeVersion は "(取得失敗)" になる
+	// （それ自体がガード対象ホストの兆候）。
 	{Name: "agy", Cmd: "agy", Baked: "/usr/local/bin/agy", Pin: "agy"},
 	{Name: "copilot", Cmd: "copilot", Baked: "/usr/local/bin/copilot", Pin: "copilot"},
 	{Name: "rtk", Cmd: "rtk", Baked: "/usr/local/bin/rtk", Pin: "rtk"},
