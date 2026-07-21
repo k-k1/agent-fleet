@@ -49,15 +49,15 @@ func TestPostgresStore(t *testing.T) {
 	}
 
 	// identity upsert (idempotent on user_key; role upgrades; partial email index)
-	i1, err := st.UpsertIdentity(ctx, "", "k1-kami-gmail-com", "")
+	i1, err := st.UpsertIdentity(ctx, "", "dev-example-com", "")
 	if err != nil {
 		t.Fatalf("upsert1: %v", err)
 	}
-	i2, err := st.UpsertIdentity(ctx, "k1.kami@gmail.com", "k1-kami-gmail-com", "super_admin")
+	i2, err := st.UpsertIdentity(ctx, "dev@example.com", "dev-example-com", "super_admin")
 	if err != nil {
 		t.Fatalf("upsert2: %v", err)
 	}
-	if i1.ID != i2.ID || i2.Role != "super_admin" || i2.Email != "k1.kami@gmail.com" {
+	if i1.ID != i2.ID || i2.Role != "super_admin" || i2.Email != "dev@example.com" {
 		t.Fatalf("identity upsert: %+v", i2)
 	}
 
