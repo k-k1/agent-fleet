@@ -201,10 +201,12 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		// Idle by hook but background work may still be running; surface it so the chat
 		// header shows "入力待ち · BG実行中". BackgroundBusy catches run_in_background worker
 		// processes under the pane; SubagentBusy catches in-process background subagents /
-		// Workflow agents via transcript freshness. Only computed when not already working
-		// (the chip prefers 進行中 then), keeping the scans off the hot path during turns.
+		// Workflow agents via transcript freshness; BackgroundShellBusy catches a Monitor /
+		// sleep- or I/O-bound background shell (S state) that slips past both. Only computed
+		// when not already working (the chip prefers 進行中 then), keeping the scans off the
+		// hot path during turns.
 		if state == "idle" || state == "" {
-			resp["backgroundBusy"] = claude.BackgroundBusy(name) || claude.SubagentBusy(sid)
+			resp["backgroundBusy"] = claude.BackgroundBusy(name) || claude.SubagentBusy(sid) || claude.BackgroundShellBusy(name)
 		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
