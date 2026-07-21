@@ -22,7 +22,7 @@ RUN set -eux; \
       | tar -xJ; \
     cd "bubblewrap-${BUBBLEWRAP_VERSION}"; \
     LDFLAGS=-static meson setup build -Dselinux=disabled -Dman=disabled \
-      -Dbash_completion=none -Dzsh_completion=none -Dtests=false --prefer-static; \
+      -Dbash_completion=disabled -Dzsh_completion=disabled -Dtests=false --prefer-static; \
     ninja -C build; \
     install -D -m 0755 build/bwrap /out/bwrap; \
     /out/bwrap --version

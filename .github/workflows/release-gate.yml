@@ -27,6 +27,9 @@ jobs:
   # 内容検証（e2e-smoke lean モード）と boot-install のライブ実走まで行う。
   # 「セッションが動く」の完全形（実 CP + 実認証）はホスト側フリートでの確認事項。
   compose-gate:
+    # native ゲートの反復修正中は P1 の 2 job を飛ばせる（コミットメッセージに
+    # [native-only] を含める）。最終検証は無印 push で 3 job 全部を回す。
+    if: "!contains(github.event.head_commit.message, '[native-only]')"
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
@@ -215,6 +218,7 @@ jobs:
   # ゲート (c): 既定 ARG（全焼き込み）のビルドと e2e-smoke が無変更で通ること
   # （既存デプロイに影響ゼロ）。CP も既定 DOCS_SRC（全ツリー docs）で焼けること。
   default-image-gate:
+    if: "!contains(github.event.head_commit.message, '[native-only]')"
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
