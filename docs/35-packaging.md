@@ -419,10 +419,10 @@ GitHub API の license 表示で確認）:
 
 | 除外対象（denylist） | 理由（発見された内容） |
 |---|---|
-| `docs/HANDOFF.md` | **自ホストの稼働情報そのもの**: 実 Tailscale 入口 URL（`af.example.ts.net`）・運用者コンテナ名（メール由来 `af-ws-k1-kami-gmail-com`）・ポート/パス等。配布先には無意味かつ攻撃面の開示 |
-| `docs/CHANGELOG-handoff.md` | 時系列作業ログ。**個人メール 2 件＋実名ハンドル**（gmail / 会社ドメイン / 実名ハンドル）を含む |
+| `docs/HANDOFF.md` | **自ホストの稼働情報そのもの**: 実入口 URL（Tailscale ホスト名）・運用者コンテナ名（メールアドレス由来）・ポート/パス等。配布先には無意味かつ攻撃面の開示 |
+| `docs/CHANGELOG-handoff.md` | 時系列作業ログ。個人メールアドレス・実名ハンドルを含む |
 | `docs/talk/` | 社内発表資料（Marp・会社名テーマ）。製品ドキュメントではない |
-| `docs/history/` | 役目を終えた実装プラン。実ドメイン（lazmix.jp）・メール由来コンテナ名・移行経緯が散在 |
+| `docs/history/` | 役目を終えた実装プラン。実ドメイン・メール由来コンテナ名・移行経緯が散在 |
 
 - **適用先は「配布・公開のすべて」で同一**: native tar C の docs/、配布 variant の
   CP イメージ（`stageWorkspaceDocs` の焼き込み源 — 配布先の super_admin にも denylist は

@@ -133,7 +133,7 @@ Deployment（1 社が自社ホスト。データ・鍵・設定をその社が�
   ```
 - **manager.go の昇格**: in-memory map を**廃止し DB を source of truth に**。CP 再起動時は Workspace レコードから rehydrate ＋ Runtime（docker inspect / ECS describe）で reconcile。
   → 「停止中コンテナのポート再採番」問題が原理的に消える。
-- **現ライブ環境からの移行（B5）**: 今のライブ（`af-ws-k1-kami-gmail-com` 等）は**我々の社の「第 1 デプロイ＝リファレンス実装」**になる。
+- **現ライブ環境からの移行（B5）**: 今のライブ（運用者の既存 workspace 等）は**我々の社の「第 1 デプロイ＝リファレンス実装」**になる。
   移行 = **既定テナントを 1 つ作成 → 既存ユーザーを所属 → 既存コンテナ/home から DB をバックフィル**（Phase 2 の home/secrets 移行と同型の one-shot）。
 - **規模配慮**: マイグレーションは単純な SQL（goose/atlas 等）。ORM は薄く。分散トランザクション不要。
 
