@@ -134,7 +134,7 @@ echo "== case 5: --seed (no repo → create; contents absent → PUT ×2) =="
 : > "$LOG"
 STUB_REPO_MISSING=1 VERSION=$V "$PUBLISH" --repo "$REPO" --dist-dir "$DISTD" --seed > /dev/null
 grep -q "repo create $REPO --public" "$LOG" || fail "repo create was not called"
-for f in README.md install.sh; do
+for f in README.md README.ja.md install.sh; do
   grep -q "api -X PUT repos/$REPO/contents/$f -f message=seed: $f -f content=<b64>" "$LOG" \
     || fail "seed PUT($f) missing"
 done

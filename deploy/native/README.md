@@ -191,3 +191,25 @@ systemctl --user daemon-reload && systemctl --user enable --now agent-fleet
 ./af reset          # dev user's data only (DB and rootfs are kept)
 ./af reset --all    # all of WS_DATA (full wipe incl. the extracted rootfs)
 ```
+
+## Uninstall
+
+```bash
+# 1. If you set up the systemd user unit, stop and remove it first
+systemctl --user disable --now agent-fleet 2>/dev/null
+rm -f ~/.config/systemd/user/agent-fleet.service
+# otherwise just stop `af start` with Ctrl-C
+
+# 2. Wipe all data (skip to keep it — data is separate from the program)
+./af reset --all
+
+# 3. Remove the program
+#    installed via install.sh:
+rm -f ~/.local/bin/af && rm -rf ~/.local/opt/agent-fleet
+#    extracted from a tar directly: just delete the extracted directory
+```
+
+If `af` is already gone, remove the data manually — Go module caches inside
+workspace homes are write-protected, so restore write permission first:
+`chmod -R u+w ~/.local/share/agent-fleet && rm -rf ~/.local/share/agent-fleet`
+(use your `$WS_DATA` path if you overrode it).
