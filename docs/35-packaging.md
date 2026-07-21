@@ -618,6 +618,19 @@ bwrap --ro-bind <rootfs> /
   は「bwrap の直接親（=なし）」にしか効かないので害なし・保険として付けるのみ。
   停止の正は従来どおり process group SIGTERM→SIGKILL。
 
+**§35.7.2-8 boot-install の可視性と「即起動」の扱い**（2026-07-21 の切り分けを凍結・
+§35.9-9）: rootfs モードでも entrypoint は bwrap 配下で走り、lean 判定
+（`/usr/local/bin/claude` 不在＋versions.json ピンあり）で `~/.local` へピン版 CLI を
+オンデマンド導入する。その出力は **CP がワークスペースの `<dataDir>/agent.log` にだけ**
+書く（`af`／Console のフォアグラウンドには出さない）。~/.local は home ボリュームに
+永続するので、**初回のみ DL（数分）・2 回目以降は各ブロックが `cli_present=true` で
+スキップして即起動**する（オフライン再起動が成立する理由。§35.8.1 手順 6）。
+したがって「初回 boot-install の DL ログがフォアグラウンドに出ない／再起動が即座」は
+**正常**であり、rootfs に CLI が焼き込まれていることを意味しない（実 rootfs
+`4677f9f5a67d` を直接検証して lean を確認 — §35.9-9）。スキップ経路は無音だと
+焼き込みと誤認されやすいため、entrypoint に明示ログ（`… already present (skip)`）を
+追加済み。初回進捗を Console に可視化するダイアログは別タスク（§35.9-9 の残 UX）。
+
 **P2 ゲート**（P1 と同じく hosted CI 実走 — release-gate.yml。native 実機は §35.8 の
 P4 ゲートに残す）:
 
@@ -942,3 +955,30 @@ VERSION=0.1.0 deploy/release/publish-dist.sh --seed
 8. **ライセンス見解の確度（配布開始前ゲート）**: §35.4.1 は npm registry / GitHub API の
    license 表示による一次調査。配布開始前に claude / agy / copilot の利用規約本文（再配布・社内限定
    配布の条項）を読んで確定させる（規約側が許すなら焼き込み配布へ戻す選択肢が復活する）。
+9. **「初回起動で boot-install の DL ログが出ず即起動」疑いの切り分け（2026-07-21・ゲート k
+   中のユーザー実機報告 rootfs `4677f9f5a67d`／v0.1.1）**: 「rootfs に CLI が焼き込まれ、
+   ピン版オンデマンド導入をバイパスしているのでは」という疑いを別セッションで調査 →
+   **結論: 逸脱なし。rootfs は設計どおり lean、症状は観測性の穴だった。**
+   - **実 rootfs を直接検証**（公開 dist の R を stream 展開して中身を列挙）: `usr/local/bin`
+     に claude / opencode / codex / copilot / agy / rtk は**一切存在せず**、baked な agent
+     npm パッケージも無し。`versions.json` は全ピン記載済み = **lean 確定**（build.sh
+     `--native` が `BAKE_AGENT_CLIS=0`＋`BAKE_OPTIONAL_TOOLS=0` で焼いた成果物どおり。
+     Dockerfile の各 CLI RUN は全て `BAKE_AGENT_CLIS=1` ガード下で、0 では実行されない）。
+   - **entrypoint は rootfs モードでも走る**（`runtime_native.go` が bwrap 配下で
+     `/usr/local/bin/entrypoint.sh workspace-agent` を起動）。boot-install は lean 判定
+     （`/usr/local/bin/claude` 不在かつ versions.json にピン）で発火し、~/.local へ導入する。
+   - **真因＝観測性**: entrypoint の全出力は **CP がワークスペースの `<dataDir>/agent.log`
+     にのみ**書く（`af`/Console のフォアグラウンドには出ない）。しかも ~/.local は home
+     ボリュームに永続するので、**2 回目以降（オフライン再起動含む）は cli_present=true で
+     各ブロックが無音スキップし即起動する**（§35.8.1 手順 6「2 回目は DL なし」= むしろ
+     期待動作）。報告の「即起動・ログ無し」は、CLI 導入済み home に対する再起動、または
+     初回でも DL が agent.log に隠れて見えなかった、のどちらかで説明でき、**焼き込みでは
+     ない**。
+   - **対処（この調査で実施）**: (a) `workspace/entrypoint.sh` の lean boot-install に
+     **スキップ時の明示ログ**を追加（`lean variant: ensuring pinned agent CLIs …` ヘッダ＋
+     npm/rtk/agy それぞれ「already present (skip)」）。無音スキップが agent.log 上で
+     「なぜ DL しなかったか」追える形になった。(b) 本節と §35.7.2-8 に「即起動は正常・
+     ログの在り処は agent.log」を明記。
+   - **残る UX 改善（ゲートはブロックしない）**: 初回 boot-install の進捗を Console 側に
+     可視化するダイアログ要望（別途）。agent.log を Workspace 起動オーバーレイに tail
+     surface するのが素直。実装は別タスク。

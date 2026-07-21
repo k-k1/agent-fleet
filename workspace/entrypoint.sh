@@ -68,6 +68,12 @@ cli_present() { [ -x "/usr/local/bin/$1" ] || [ -e "$HOME/.local/bin/$1" ]; }
 LEAN_CLIS=0
 if [ ! -x /usr/local/bin/claude ] && [ -n "$(vj_pin claude)" ]; then LEAN_CLIS=1; fi
 if [ "$LEAN_CLIS" = 1 ]; then
+  # lean 配布 variant であることを明示（agent.log で「なぜ DL したか / しなかったか」を
+  # 追えるように）。初回起動は npm/GitHub から数分かけて DL するが、~/.local は home
+  # ボリュームに永続するので 2 回目以降（オフライン再起動含む）は下の各ブロックが
+  # cli_present=true で無音スキップし即起動する。これは設計どおりの正常動作で、
+  # 「rootfs に CLI が焼かれている」わけではない（docs/35 §35.7.2-8）。
+  echo "[entrypoint] lean variant: ensuring pinned agent CLIs under ~/.local (versions.json)"
   # npm 配布の 4 CLI はまとめて 1 回の npm install（prefix=$HOME/.local → ~/.local/bin）。
   NPM_BOOT=""
   for pair in "claude=@anthropic-ai/claude-code" "opencode=opencode-ai" \
@@ -81,6 +87,8 @@ if [ "$LEAN_CLIS" = 1 ]; then
     npm install -g --prefix "$HOME/.local" $NPM_BOOT >/dev/null 2>&1 \
       && echo "[entrypoint] boot-install ok" \
       || echo "[entrypoint] WARN: npm boot-install failed (retrying next start)"
+  else
+    echo "[entrypoint] boot-install: npm CLIs already present in ~/.local (skip)"
   fi
   # rtk: GitHub Releases のピン版（checksum 検証つき — Dockerfile 焼き込みと同じ経路）。
   if ! cli_present rtk && [ -n "$(vj_pin rtk)" ]; then
@@ -103,6 +111,8 @@ if [ "$LEAN_CLIS" = 1 ]; then
       install -D -m 0755 rtk "$HOME/.local/bin/rtk"
     ) && echo "[entrypoint] boot-install rtk $(vj_pin rtk)" \
       || echo "[entrypoint] WARN: rtk boot-install failed (retrying next start)"
+  elif cli_present rtk; then
+    echo "[entrypoint] boot-install: rtk already present (skip)"
   fi
   # agy: GitHub Releases（google-antigravity/antigravity-cli）のピン版
   # （versions.json の agy + agy_sha256 で取得・検証 — Dockerfile 焼き込みと同じ経路。
@@ -127,6 +137,8 @@ if [ "$LEAN_CLIS" = 1 ]; then
       printf '%s\n' "$aver" > "$HOME/.local/bin/.agy.version"
     ) && echo "[entrypoint] boot-install agy $(vj_pin agy)" \
       || echo "[entrypoint] WARN: agy boot-install failed (retrying next start)"
+  elif cli_present agy; then
+    echo "[entrypoint] boot-install: agy already present (skip)"
   fi
 fi
 
