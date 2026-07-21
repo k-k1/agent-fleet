@@ -14,8 +14,8 @@ const usagePanel = `
 GEMINI MODELS
   Weekly Limit
 ` + "└" + ` Models & Quota
-  Account: k1.kami@gmail.com
-      k1.kami@gmail.com (Antigravity Starter Quota)
+  Account: dev@example.com
+      dev@example.com (Antigravity Starter Quota)
 GEMINI MODELS
   Models within this group: Gemini Flash, Gemini Pro
   Weekly Limit
@@ -35,7 +35,7 @@ func TestParseUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Account != "k1.kami@gmail.com" {
+	if res.Account != "dev@example.com" {
 		t.Errorf("account = %q", res.Account)
 	}
 	if res.Plan != "Antigravity Starter Quota" {
@@ -73,7 +73,7 @@ func TestParseUsage(t *testing.T) {
 const usagePanelPro = `
 ? for shortcuts
 └ Models & Quota
-  Account: k1.kami@gmail.com
+  Account: dev@example.com
 GEMINI MODELS
   Models within this group: Gemini Flash, Gemini Pro
   Weekly Limit
@@ -99,7 +99,7 @@ func TestParseUsageProFourBars(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Account != "k1.kami@gmail.com" {
+	if res.Account != "dev@example.com" {
 		t.Errorf("account = %q", res.Account)
 	}
 	if res.Plan != "" {
