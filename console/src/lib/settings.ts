@@ -366,6 +366,7 @@ const DEFAULT_AGENT_LAUNCH: AgentLaunchDefaults = {
   codex: { model: "", effort: "", startMode: "normal" },
   agy: { model: "", effort: "", startMode: "normal" },
   opencode: { model: "", effort: "", startMode: "normal" },
+  copilot: { model: "", effort: "", startMode: "normal" },
 };
 
 const DEFAULTS: Settings = {
