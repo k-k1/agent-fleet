@@ -1,8 +1,15 @@
 # Agent Fleet — on-prem deployment (Docker Compose)
 
-Run a self-hosted Agent Fleet: your team logs in with Google, each member gets an
-isolated container running Claude Code, driven from the browser. **One company =
-one deployment** on your own infrastructure, with your own Claude seats.
+Agent Fleet is a self-hosted web console for running AI coding agents (Claude Code,
+Codex CLI, OpenCode, GitHub Copilot CLI) as a managed fleet. Each member gets an
+isolated workspace container with a persistent home and git working copies, and
+drives agent sessions from the browser. A Go control plane orchestrates the
+workspaces; deployment targets include this on-prem Docker Compose stack, AWS, and
+a Docker-less native runtime.
+
+This runbook covers the Docker Compose target: your team logs in with Google and
+works on **one deployment per company**, on your own infrastructure, with your own
+agent seats (e.g. your Claude subscription).
 
 This directory is the whole deployment surface:
 

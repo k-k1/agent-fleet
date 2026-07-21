@@ -1,34 +1,38 @@
-# opencode CLI contract（ドリフト検知）。既存 e2e.yml の L1 は「イメージ内の実版 ==
-# Dockerfile ARG ピン」を照合する*ピン適合*チェックなので、新しい opencode が我々の
-# パースを壊しても緑のまま通る。一方フリートは entrypoint.sh のオプトイン自己更新で
-# @latest を走らせる（ピンはベースイメージ側の既定値・フォールバック）ため、CI は
-# フリートが動かしていない版を検証している。claude の false-idle が実フリートに到達し
-# 人力発見された構造的な穴がこれ。
+# opencode CLI contract (drift detection). The existing e2e.yml L1 is a *pin
+# conformance* check ("actual version in image == Dockerfile ARG pin"), so a new
+# opencode that breaks our parsing still passes green. Meanwhile the fleet runs
+# @latest via entrypoint.sh's opt-in self-update (the pin is the base image's default
+# / fallback), so CI was verifying a version the fleet doesn't run. This is the
+# structural hole through which claude's false-idle reached the live fleet and was
+# found by hand.
 #
-# ここでは実 opencode バイナリ・実ストア・実 app-server・実 tmux ペインに対して
-# contract を表明する（-tags clicontract）。opencode は無料 OpenCode Zen モデルを同梱し
-# ログイン無しで composer も実ターンも動くので、claude の L4 と違い**課金も secrets も不要**。
+# Here we assert the contract against the real opencode binary, real store, real
+# app-server, and real tmux pane (-tags clicontract). opencode bundles the free
+# OpenCode Zen model, so the composer and real turns work without login — unlike
+# claude's L4, **no billing and no secrets needed**.
 #
-# 版は matrix で 2 本走らせ、「自分が壊した」と「上流が動いた」を切り分ける:
-#   - pinned: Dockerfile の ARG ピン（= 今イメージに焼く版）
-#   - latest: フリートが実際に走らせる版
+# Versions run as a 2-way matrix to separate "we broke it" from "upstream moved":
+#   - pinned: the Dockerfile ARG pin (= the version baked into the image now)
+#   - latest: the version the fleet actually runs
 #
-# 注: イメージ build は不要（runner に node+tmux+Go だけ）なので e2e.yml から独立させ、
-# 数分で終わる。
+# Note: no image build is needed (just node+tmux+Go on the runner), so this is
+# independent of e2e.yml and finishes in minutes.
 #
-# 別ファイルのままにしてある理由（当初は「main マージ時に 3 種まとめて e2e.yml へ畳む」
-# 想定だったが、畳まない判断に変えた）: パス条件も workflow_dispatch の入力も
-# **ワークフロー単位**なので、e2e.yml に同居させると (1) console/** 等の変更でも
-# opencode の contract が走り、(2) 入力が他エージェントと混ざる。実際 codex の Tier2 と
-# claude の live-smoke は 1 つの `live` 入力を共有していて片方だけ回せない不具合になった
-# （ed0bcd7 で分離）。エージェント毎に別ファイルなら、この結合が構造的に起きない。
-# 同型: codex-contract.yml / claude-tui-contract.yml。版ズレの監視は cli-drift.yml。
-# 共通セットアップ（Go/Node/tmux/CLI 導入）は .github/actions/setup-agent-cli。
+# Why it stays a separate file (the original plan was "fold all 3 into e2e.yml at
+# main merge", since reversed): path filters and workflow_dispatch inputs are both
+# **per workflow**, so co-locating in e2e.yml would (1) run the opencode contract even
+# for console/** etc. changes, and (2) mix inputs with other agents. codex's Tier2 and
+# claude's live-smoke actually shared a single `live` input and could not be run
+# separately (split in ed0bcd7). One file per agent makes this coupling structurally
+# impossible.
+# Same shape: codex-contract.yml / claude-tui-contract.yml. Version-skew monitoring is
+# cli-drift.yml. Shared setup (Go/Node/tmux/CLI install) is .github/actions/setup-agent-cli.
 name: opencode-contract
 
 on:
-  # develop への push では回さない（課金分散・CONTRIBUTING「Commits & PRs」）。
-  # 契約検証は main への PR（該当パスに差分がある時）と週次 cron に集約する。
+  # Not run on pushes to develop (billing spread; CONTRIBUTING "Commits & PRs").
+  # Contract checks are concentrated on PRs to main (when relevant paths changed)
+  # and the weekly cron.
   pull_request:
     branches: [main]
     paths:
@@ -39,7 +43,8 @@ on:
       - ".github/workflows/opencode-contract.yml"
       - ".github/actions/setup-agent-cli/action.yml"
   schedule:
-    - cron: "30 21 * * 0" # 毎週月曜 6:30 JST — コード無変更でも上流 opencode の破壊を検出
+    # Mondays 6:30 JST — catch upstream opencode breakage even with no code changes
+    - cron: "30 21 * * 0"
   workflow_dispatch:
 
 concurrency:
@@ -51,7 +56,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
-      fail-fast: false # pinned が壊れても latest の結果は見たい（逆も同じ）
+      fail-fast: false # even if pinned breaks we want latest's result (and vice versa)
       matrix:
         version: [pinned, latest]
     steps:
@@ -61,18 +66,19 @@ jobs:
           agent: opencode
           version: ${{ matrix.version }}
 
-      # Tier A: 決定的・LLM 呼び出し無し。ストア schema / app-server プロトコル /
-      # TUI フッタ（paneMode）の contract を実物に対して表明する。ここが赤 = 上流が
-      # 我々の読み取り面を動かした、が確定する。
+      # Tier A: deterministic, no LLM calls. Asserts the store schema / app-server
+      # protocol / TUI footer (paneMode) contracts against the real thing. Red here =
+      # confirmed that upstream moved a surface we read.
       - name: tier A — store / app-server / TUI contract
         working-directory: workspace/agent
         env:
-          E2E_REQUIRE: "1" # バイナリ不在なら skip でなく fail
+          E2E_REQUIRE: "1" # fail rather than skip when the binary is missing
         run: go test -tags clicontract -run TestContract -v -count=1 -timeout 15m ./internal/agents/opencode/ ./
 
-      # Tier B: 無料 Zen モデルで実ターンを回し、message/part の JSON payload 形と
-      # LiveState の working→idle 遷移まで確かめる。外部サービス依存でフレークしうるので
-      # 非ブロッキング（報告のみ）。赤くはしないがログに残す。
+      # Tier B: runs a real turn on the free Zen model and verifies the message/part
+      # JSON payload shapes and the LiveState working→idle transition. Depends on an
+      # external service and can flake, so it is non-blocking (report only) — never
+      # turns the job red, but stays in the log.
       - name: tier B — live free-model turn (non-blocking)
         continue-on-error: true
         working-directory: workspace/agent

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# エアギャップ配布用: `docker save` で作った tar からイメージを読み込む（P3-10 §20.4）。
-# ネット可の環境では compose の `image:`（registry pull）を使えばよく、これは不要。
+# Air-gap distribution: load images from a tar produced by `docker save` (P3-10 §20.4).
+# On a networked host just use compose's `image:` (registry pull); this script is
+# not needed there.
 #
-#   # 配布側（ネット可の環境で作る）:
+#   # Producer side (built on a networked machine):
 #   docker save agent-fleet/control-plane:"$VERSION" agent-fleet/workspace:"$VERSION" \
 #     | gzip > agent-fleet-images-"$VERSION".tar.gz
 #
-#   # 設置側（エアギャップ）:
+#   # Target side (air-gapped):
 #   deploy/compose/load-images.sh agent-fleet-images-<version>.tar.gz
 set -euo pipefail
 TAR="${1:-}"

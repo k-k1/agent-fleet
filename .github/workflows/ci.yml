@@ -1,9 +1,10 @@
-# CI (docs/23 P0): CONTRIBUTING.md の手動規約（gofmt / vet / test / build 一式）の機械化。
-# 3 コンポーネントを独立ジョブで検証する。lint 追加（golangci-lint 等)は opt-in で後続。
+# CI (docs/23 P0): automates the manual checks from CONTRIBUTING.md (gofmt / vet /
+# test / build). Verifies the 3 components in independent jobs. Extra linters
+# (golangci-lint etc.) may follow as opt-in.
 #
-# 課金分散（develop トランク運用・CONTRIBUTING「Commits & PRs」）: develop への push では
-# hosted CI を回さない（per-commit の検証は各セッションのローカル実行が担う）。hosted CI は
-# main へのゲート（develop→main の PR と、マージ後の main push）に集約する。
+# Billing spread (develop-trunk workflow; CONTRIBUTING "Commits & PRs"): hosted CI does
+# not run on pushes to develop (per-commit verification is each session's local runs).
+# Hosted CI is concentrated on the main gate (develop→main PRs and post-merge main pushes).
 name: ci
 
 on:

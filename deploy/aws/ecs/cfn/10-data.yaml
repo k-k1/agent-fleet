@@ -86,7 +86,7 @@ Resources:
       SecurityGroups: [ !Ref EfsSg ]
       SubnetId: !Select [ 1, !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ] ]
 
-  # --- RDS (MetadataStore, 段3a) ---
+  # --- RDS (MetadataStore, stage 3a) ---
   DbSg:
     Type: AWS::EC2::SecurityGroup
     Properties:

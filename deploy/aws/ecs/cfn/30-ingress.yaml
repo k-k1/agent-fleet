@@ -5,8 +5,8 @@ Description: >-
   CP-native Google OAuth, AUTH=oauth — no ALB OIDC), the CP/Console Fargate service
   (Service Connect client so it can reach the workspace Agents it provisions), and
   the Route53 alias. Imports 00-network, 10-data (EFS + RDS) and 20-platform. The CP
-  is wired with AF_ECS_* so the 段2 ecsRuntime provisions workspaces on demand, and
-  its MetadataStore is RDS Postgres (段3a) so state survives task replacement.
+  is wired with AF_ECS_* so the stage-2 ecsRuntime provisions workspaces on demand, and
+  its MetadataStore is RDS Postgres (stage 3a) so state survives task replacement.
 
 Parameters:
   NetworkStackName:
@@ -175,7 +175,7 @@ Resources:
             # network isolation the compose loopback bind gives on a single box).
             - { Name: CP_ADDR, Value: !Sub "0.0.0.0:${CpPort}" }
             - { Name: WS_DATA, Value: /tmp }   # unused for state now (store = RDS/Postgres, below)
-            # MetadataStore = RDS Postgres (P3-7 段3a): survives CP task replacement.
+            # MetadataStore = RDS Postgres (P3-7 stage 3a): survives CP task replacement.
             # The CP composes the DSN from these parts; the password arrives as a
             # secret (below) so it never sits in a plaintext URL/env.
             - { Name: AF_DB_HOST, Value: !ImportValue { "Fn::Sub": "${DataStackName}-DbEndpoint" } }
@@ -188,7 +188,7 @@ Resources:
             - { Name: GOOGLE_OAUTH_CLIENT_ID, Value: !Ref GoogleClientId }
             - { Name: AF_OAUTH_ALLOWED_EMAILS, Value: !Ref AllowedEmails }
             - { Name: SUPER_ADMIN_EMAILS, Value: !Ref SuperAdminEmails }
-            # AF_RUNTIME=ecs = the P3-7 段2 adapter. The AF_ECS_* below give it the
+            # AF_RUNTIME=ecs = the P3-7 stage-2 adapter. The AF_ECS_* below give it the
             # substrate placement it needs to provision per-workspace ECS services.
             - { Name: AF_RUNTIME, Value: ecs }
             - { Name: AF_ECS_REGION, Value: !Ref "AWS::Region" }
@@ -248,7 +248,7 @@ Resources:
           ContainerName: cp
           ContainerPort: !Ref CpPort
       # CP as a Service Connect client so it can resolve workspace Agents by
-      # <service>.<namespace> once the 段2 adapter creates them.
+      # <service>.<namespace> once the stage-2 adapter creates them.
       ServiceConnectConfiguration:
         Enabled: true
         Namespace: !ImportValue { "Fn::Sub": "${PlatformStackName}-NamespaceArn" }

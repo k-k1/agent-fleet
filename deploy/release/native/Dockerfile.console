@@ -1,5 +1,5 @@
-# Console dist（native パッケージ同梱用）のビルダー。control-plane/Dockerfile の
-# console ステージと同じレシピで、dist だけ取り出す。context は repo root。
+# Builder for the Console dist (bundled into the native package). Same recipe as the
+# console stage of control-plane/Dockerfile, but extracts only dist. Context is repo root.
 #
 #   docker build -f deploy/release/native/Dockerfile.console \
 #     --output type=local,dest=<dir> .

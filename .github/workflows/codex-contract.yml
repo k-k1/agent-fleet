@@ -1,19 +1,22 @@
-# codex CLI contract（ドリフト検知）。実 codex バイナリ＋実 tmux ペインに当てて、
-# hooks スキーマ・-c config キー・TUI フッタ仕様・rollout イベントの破壊を検出する。
+# codex CLI contract (drift detection). Runs against the real codex binary in a real
+# tmux pane to detect breakage of the hooks schema, -c config keys, the TUI footer
+# spec, and rollout events.
 #
-# なぜ e2e.yml から独立しているか: e2e.yml はイメージ build → L1/L2/L3 の縦串が本題で、
-# トリガのパス条件も workspace/** control-plane/** console/** と広い。パス条件は
-# **ワークフロー単位**なので、ここに同居すると console の変更でも codex の contract が
-# 走る（逆にこちらの都合で e2e.yml のパス条件を広げると全ジョブが釣られる）。加えて
-# workflow_dispatch の入力もワークフロー単位で、実際 codex の Tier2 と claude の
-# live-smoke が 1 つの `live` 入力を共有していて片方だけ回せない不具合を起こしていた
-# （ed0bcd7 で分離）。エージェント毎に別ファイルなら、この結合が構造的に起きない。
-# 同型: opencode-contract.yml / claude-tui-contract.yml。版ズレの監視は cli-drift.yml。
+# Why separate from e2e.yml: e2e.yml is about the image build → L1/L2/L3 pipeline, and
+# its trigger path filter is broad (workspace/** control-plane/** console/**). Path
+# filters are **per workflow**, so co-locating there would run the codex contract even
+# for console changes (and widening e2e.yml's paths for our sake would drag in all its
+# jobs). workflow_dispatch inputs are also per workflow — codex's Tier2 and claude's
+# live-smoke actually shared a single `live` input and could not be run separately
+# (split in ed0bcd7). One file per agent makes this coupling structurally impossible.
+# Same shape: opencode-contract.yml / claude-tui-contract.yml. Version-skew monitoring
+# is cli-drift.yml.
 name: codex-contract
 
 on:
-  # develop への push では回さない（課金分散・CONTRIBUTING「Commits & PRs」）。
-  # 契約検証は main への PR（該当パスに差分がある時）と週次 cron に集約する。
+  # Not run on pushes to develop (billing spread; CONTRIBUTING "Commits & PRs").
+  # Contract checks are concentrated on PRs to main (when relevant paths changed)
+  # and the weekly cron.
   pull_request:
     branches: [main]
     paths:
@@ -24,13 +27,14 @@ on:
       - ".github/workflows/codex-contract.yml"
       - ".github/actions/setup-agent-cli/action.yml"
   schedule:
-    # 毎週月曜 6:15 JST — コード無変更でも上流 codex の破壊を検出。
-    # e2e.yml（0 21）/ opencode-contract.yml（30 21）とずらす（週次を同時刻に固めない）。
+    # Every Monday 6:15 JST — catch upstream codex breakage even with no code changes.
+    # Offset from e2e.yml (0 21) / opencode-contract.yml (30 21) so the weeklies
+    # don't all fire at once.
     - cron: "15 21 * * 0"
   workflow_dispatch:
     inputs:
       live:
-        description: "Tier2: 実ターンを消費するドリフト検知も走らせる — ChatGPT(codex) のサブスク枠を消費（実測 ~45k tokens/回）"
+        description: "Tier2: also run drift checks that consume real turns — uses ChatGPT (codex) subscription quota (measured ~45k tokens/run)"
         type: boolean
         default: false
 
@@ -40,17 +44,19 @@ concurrency:
 
 jobs:
   drift:
-    # Tier 1。実 codex バイナリ＋実 tmux ペインに当てて、hooks スキーマ・-c config キー・
-    # TUI フッタ仕様の破壊を検出する（workspace/agent の `-tags drift` テスト）。
-    # イメージ build が要らないので数十秒で終わる。
+    # Tier 1. Runs against the real codex binary in a real tmux pane to detect breakage
+    # of the hooks schema, -c config keys, and the TUI footer spec (workspace/agent's
+    # `-tags drift` tests). No image build needed, so it finishes in tens of seconds.
     #
-    # 無料・無認証: 検証する経路（features list / config 検証 / UserPromptSubmit の発火 /
-    # フッタ描画）は全て API 呼び出しの前に完結する（実測）。実ターンを要する Stop hook・
-    # rollout イベント・turn/* 通知は下の live-drift（要課金）で見る。
+    # Free, no auth: every verified path (features list / config validation /
+    # UserPromptSubmit firing / footer rendering) completes before any API call
+    # (measured). Things that need a real turn — the Stop hook, rollout events, turn/*
+    # notifications — are covered by live-drift below (costs money).
     #
-    # 版は Dockerfile の ARG ピンに合わせる（＝実際に焼き込まれる版を検証する）。
-    # 注: self-update opt-in の Workspace は @latest で動くため、この版と実フリートの
-    # 稼働版がずれることがある。ズレ自体の監視は cli-drift.yml（毎日・issue 通知）。
+    # Version matches the Dockerfile ARG pin (= verifies what actually gets baked in).
+    # Note: Workspaces with self-update opt-in run @latest, so this version can drift
+    # from what the fleet actually runs. That skew itself is monitored by cli-drift.yml
+    # (daily, issue notification).
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -62,25 +68,27 @@ jobs:
       - name: codex drift (Tier 1)
         working-directory: workspace/agent
         env:
-          # 未インストールを skip でなく失敗にする（silent skip は false green）。
+          # Fail instead of skip when the CLI is missing (a silent skip is a false green).
           E2E_REQUIRE: "1"
         run: go test -tags drift -run TestDrift -v -timeout 10m ./...
 
   live-drift:
-    # Tier 2 / **実ターンを消費する**。Tier 1（無料）では観測できない4点だけを実ターンで
-    # 見る: Stop hook→idle / rollout の task_started・task_complete / request_user_input の
-    # function_call / managed の turn/started・turn/completed。
+    # Tier 2 — **consumes real turns**. Covers only the 4 things Tier 1 (free) cannot
+    # observe: Stop hook→idle / rollout's task_started & task_complete /
+    # request_user_input's function_call / managed turn/started & turn/completed.
     #
-    # **workflow_dispatch の live 入力を立てた時だけ**走る（cron 無し）。claude 側の
-    # live-smoke（e2e.yml）とは入力もワークフローも別 ＝ 枠の消費先が混ざらない。
-    # 実測コスト: 1実行あたり概ね 45k tokens 前後（内訳はジョブログの `MEASURED COST` 行）。
-    # auth_mode="chatgpt" ならサブスク枠の消費（API 課金ではない）。
+    # Runs **only when the workflow_dispatch live input is set** (no cron). Separate
+    # input and workflow from claude's live-smoke (e2e.yml) = quota consumption never
+    # mixes. Measured cost: roughly ~45k tokens per run (breakdown in the job log's
+    # `MEASURED COST` line). With auth_mode="chatgpt" it consumes subscription quota
+    # (not API billing).
     #
-    # 認証: secrets.E2E_CODEX_AUTH_JSON = `codex login` 後の ~/.codex/auth.json の中身。
-    # chatgpt トークンは refresh_token 前提で in-place 更新されるため、**CI に置いたコピーは
-    # いずれ失効する**（ローテートされた新トークンを CI 側は保持できない）。失効時に
-    # 「謎の 401」で終わらないよう、テスト側がターン前の `codex login status` と
-    # ターン中の 401 文面を分類し、再 login → secret 更新まで書いたメッセージで落とす。
+    # Auth: secrets.E2E_CODEX_AUTH_JSON = contents of ~/.codex/auth.json after
+    # `codex login`. The chatgpt token is refreshed in place via refresh_token, so
+    # **the copy stored in CI will eventually expire** (CI cannot keep the rotated new
+    # token). To avoid dying with a "mystery 401" on expiry, the tests classify the
+    # pre-turn `codex login status` and mid-turn 401 messages, and fail with a message
+    # that spells out re-login → secret update.
     if: github.event_name == 'workflow_dispatch' && inputs.live
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -91,8 +99,8 @@ jobs:
           AUTH: ${{ secrets.E2E_CODEX_AUTH_JSON }}
         run: |
           if [ -z "$AUTH" ]; then
-            # 注: バッククォートは書かない（"..." 内ではコマンド置換として実行されてしまう）
-            echo '::error::secrets.E2E_CODEX_AUTH_JSON を登録してください（codex login 後の ~/.codex/auth.json の中身をそのまま貼る）'
+            # Note: no backquotes here (inside "..." they would run as command substitution)
+            echo '::error::register secrets.E2E_CODEX_AUTH_JSON (paste the contents of ~/.codex/auth.json after codex login as-is)'
             exit 1
           fi
       - uses: ./.github/actions/setup-agent-cli
