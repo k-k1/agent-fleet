@@ -86,7 +86,7 @@ air-gap・ファイル渡し運用には `--bundle-rootfs` の self-contained ta
 
 - rootfs は workspace イメージの**配布 variant（lean rootfs）**: workspace-agent・tmux・
   git・gh ラッパー・node・chromium の**実行時ライブラリ群**・fontconfig+DejaVu など
-  **OSS のユーザーランドだけ**を焼く。エージェント CLI（claude/codex/opencode/agy/rtk）は
+  **OSS のユーザーランドだけ**を焼く。エージェント CLI（claude/codex/opencode/agy/copilot/rtk）は
   **焼かず**、entrypoint が初回起動時に `versions.json` の**ピン版（= e2e-smoke で動作
   検証した版）**を仮想 HOME の `~/.local/bin` へインストールし、self-update opt-in
   有効時はそのまま最新へ追従する（§35.4.1 — サイズとライセンスの両方の理由）。
@@ -123,7 +123,7 @@ air-gap・ファイル渡し運用には `--bundle-rootfs` の self-contained ta
 
 **CLI のピン版 boot-install（lean rootfs の要）**: entrypoint には既に
 「焼き込み claude が無ければ起動時にインストールする」fallback（`CLAUDE_INSTALL` seam）と、
-self-update opt-in の `~/.local/bin` shadow 機構（claude/opencode/codex/rtk/agy）がある。
+self-update opt-in の `~/.local/bin` shadow 機構（claude/opencode/codex/rtk/agy/copilot）がある。
 これを一般化する:
 
 - ビルド時ピン（Dockerfile ARG → `/usr/local/share/agent-fleet/versions.json`）は配布
@@ -265,7 +265,7 @@ CGI のみで https を使わないため、静的ビルドの難所（libcurl+o
 `AF_NATIVE_AGENT_BIN` は従来モード（開発・`run-dev.sh native`）用にそのまま残す。
 
 **サイズ**: 配布 tar（C）は**数十 MB**（af-cp ~20MB + console dist + docs + 静的小物）。
-rootfs（R）は CLI 群（claude/codex/opencode/agy + npm 残渣）・chromium 本体 + CJK
+rootfs（R）は CLI 群（claude/codex/opencode/agy/copilot + npm 残渣）・chromium 本体 + CJK
 フォント・Go toolchain・AWS CLI+SSM plugin・ops MCP 群を落とした lean で、
 全焼き込み比 **圧縮 700MB 級の減量**、残は Debian ベース + build-essential/python +
 tmux/git/svn + node + chromium 実行時ライブラリ + 基本ユーティリティで
@@ -369,6 +369,7 @@ GitHub API の license 表示で確認）:
 |---|---|---|
 | claude（@anthropic-ai/claude-code） | `SEE LICENSE IN README.md` = プロプライエタリ（再配布許諾の明示なし） | **不可扱い** |
 | agy（Antigravity CLI） | Google のプロプライエタリ配布（install.sh 供給・OSS ライセンスなし） | **不可扱い** |
+| copilot（@github/copilot） | `SEE LICENSE IN LICENSE.md` = プロプライエタリ（再配布許諾の明示なし。2026-07-21 確認） | **不可扱い** |
 | codex（@openai/codex） | Apache-2.0 | 可（NOTICE 帰属） |
 | opencode（opencode-ai） | MIT | 可（同上） |
 | rtk（rtk-ai/rtk） | Apache-2.0 | 可（同上） |
@@ -376,7 +377,7 @@ GitHub API の license 表示で確認）:
 
 帰結:
 
-- **claude と agy が焼けない時点で「全焼き込み rootfs の再配布」は成立しない**。よって
+- **claude・agy・copilot が焼けない時点で「全焼き込み rootfs の再配布」は成立しない**。よって
   配布物（native tar C と air-gap イメージ tar B）は lean variant（CLI 抜き +
   versions.json ピン + 起動時インストール）にする。**boot-install なら各デプロイ先が
   公式配布元（npm / claude.ai / antigravity.google / GitHub Releases）から直接取得**する
@@ -508,7 +509,7 @@ P1→P2 が本丸（native が唯一のゼロ→イチ）。P3 は独立に並�
 | 3 | `deploy/compose/release.sh` | bundle へ `deploy/aws/` を同梱・dist 直下に `SHA256SUMS` 生成・docker build へ `--build-arg VERSION` |
 | 4 | `deploy/release/build.sh`（新設） | 単一入口の骨格。`--compose` は compose/release.sh へ委譲、`--native` は P2 まで未実装エラー。`VERSION` 必須・出力 `deploy/release/dist/` |
 | 5 | `workspace/Dockerfile` | `ARG BAKE_AGENT_CLIS=1`（npm 3種・agy・rtk の RUN を条件化）・`ARG BAKE_OPTIONAL_TOOLS=1`（chromium 3pkg + CJK フォント・Go・awscli+SMP・mcp-grafana・cloudwatch を条件化。**chromium 実行時ライブラリと fontconfig/DejaVu は 0 でも apt で明示導入**）。versions.json は常に書き出し、`chromium_dl` / `mcp_grafana` / `cloudwatch_mcp` / `awscli` / `session_manager_plugin` のピンを追記。SUID sweep の chrome-sandbox 前提 test を chromium 不在ビルドでも通るよう条件化 |
-| 6 | `workspace/entrypoint.sh` | ピン版 boot-install の一般化: 各 CLI（claude/opencode/codex/agy/rtk）で「`/usr/local/bin` にも `~/.local/bin` にも無ければ versions.json のピン版を `~/.local` へ導入」。既存 `CLAUDE_INSTALL` fallback と self-update 実装の取得経路を版指定で再利用（npm は `prefix=$HOME/.local`） |
+| 6 | `workspace/entrypoint.sh` | ピン版 boot-install の一般化: 各 CLI（claude/opencode/codex/agy/copilot/rtk）で「`/usr/local/bin` にも `~/.local/bin` にも無ければ versions.json のピン版を `~/.local` へ導入」。既存 `CLAUDE_INSTALL` fallback と self-update 実装の取得経路を版指定で再利用（npm は `prefix=$HOME/.local`） |
 | 7 | `deploy/local/e2e-smoke.sh` | lean イメージ対応: `BAKE_AGENT_CLIS=0` のイメージでは「versions.json が存在し全ピン記載」を検証（boot-install の実走はネット前提なので P1 ゲートの別項で確認） |
 | 8 | `NOTICE` | 同梱 OSS の帰属追記（git/tmux/chromium ほか。静的 bwrap/git 分は P2 で追加） |
 | 8b | `docs/.distignore`（新設） | internal denylist（§35.4.3: HANDOFF / CHANGELOG-handoff / talk/ / history/）。release 工程の docs ステージングと配布 variant の CP イメージビルドで適用 |
@@ -554,5 +555,5 @@ P1→P2 が本丸（native が唯一のゼロ→イチ）。P3 は独立に並�
    限定の割り切りを README 化）。(c) awscli の versioned zip / SMP の versioned deb URL と
    root なし展開（`dpkg-deb -x` 相当）の確認。
 8. **ライセンス見解の確度（配布開始前ゲート）**: §35.4.1 は npm registry / GitHub API の
-   license 表示による一次調査。配布開始前に claude / agy の利用規約本文（再配布・社内限定
+   license 表示による一次調査。配布開始前に claude / agy / copilot の利用規約本文（再配布・社内限定
    配布の条項）を読んで確定させる（規約側が許すなら焼き込み配布へ戻す選択肢が復活する）。
