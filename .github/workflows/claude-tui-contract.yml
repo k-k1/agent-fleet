@@ -1,30 +1,34 @@
-# claude TUI フッタ契約プローブ（P1）。**手動実行のみ**。
+# claude TUI footer contract probe (P1). **Manual runs only**.
 #
-# 何を見るか: 実 CLI の対話 TUI を tmux で起動して実ターンを走らせ、状態検出
-# （internal/tmuxx の IsBusy / AtIdlePrompt）が現物のフッタ/スピナーに追随できているかを
-# 実物で確かめる。既存の L4（e2e/live_test.go）は headless の `claude -p` なので**フッタも
-# スピナーも描画されず**、状態検出の破壊を 1 度も検知できなかった（2026-07-17 時点で 3 回、
-# いずれも CI 緑のまま実フリートで人力発見）。
+# What it checks: starts the real CLI's interactive TUI in tmux, runs real turns, and
+# verifies against the real thing that state detection (internal/tmuxx's IsBusy /
+# AtIdlePrompt) keeps up with the actual footer/spinner. The existing L4
+# (e2e/live_test.go) uses headless `claude -p`, which **renders neither footer nor
+# spinner**, and has never caught a state-detection breakage (3 as of 2026-07-17, all
+# found by hand on the live fleet while CI stayed green).
 #
-# 既定で **@latest** を焼く: e2e.yml は build-args を渡さずピン版を検証するが、self-update を
-# opt-in した Workspace は latest を走らせる＝検証対象と本番が別物。ここはその本番側を見る。
-# cli_version に版を明示すれば A/B 比較もできる。
+# Bakes **@latest** by default: e2e.yml verifies the pinned version (no build-args),
+# but Workspaces with self-update opt-in run latest = what's verified and what's in
+# production differ. This job looks at the production side. Setting cli_version to an
+# explicit version also allows A/B comparison.
 #
-# なぜ cron を付けないか: 資格情報（OAuth トークン）の失効という運用負荷があり、失効すると
-# 定期ジョブが赤くなって放置され、やがて無視される。まずは手動運用で実績を見てから常時化を
-# 判断する。運用上の合図は cli-drift.yml（毎日・無資格・issue 通知）が出すので、
-# 「ドリフト issue が来たらこのジョブを叩く」で大半の価値は取れる。
+# Why no cron: credentials (the OAuth token) expire, which is operational burden — an
+# expired token turns the scheduled job red, it gets left alone, and eventually
+# ignored. Run it manually first, and decide about always-on after seeing a track
+# record. The operational signal comes from cli-drift.yml (daily, no credentials,
+# issue notification), so "a drift issue arrives → trigger this job" captures most of
+# the value.
 #
-# 課金: 実ターンを 2 本（manual / bypass）。短文エッセイ 1 本ずつで数百トークン程度。
-# E2E_CLAUDE_OAUTH_TOKEN（`claude setup-token` のトークン＝Max/Pro サブスク枠）なら
-# 追加課金なし。E2E_ANTHROPIC_API_KEY は従量課金。
+# Billing: 2 real turns (manual / bypass). One short essay each, a few hundred tokens.
+# With E2E_CLAUDE_OAUTH_TOKEN (a `claude setup-token` token = Max/Pro subscription
+# quota) there is no extra charge. E2E_ANTHROPIC_API_KEY is pay-as-you-go.
 name: claude-tui-contract
 
 on:
   workflow_dispatch:
     inputs:
       cli_version:
-        description: "焼き込む claude CLI の版（latest 推奨。特定版で A/B したい時だけ番号を入れる）"
+        description: "claude CLI version to bake in (latest recommended; enter a number only for A/B against a specific version)"
         type: string
         default: "latest"
 
@@ -51,7 +55,7 @@ jobs:
           TOKEN: ${{ secrets.E2E_CLAUDE_OAUTH_TOKEN }}
         run: |
           if [ -z "$KEY" ] && [ -z "$TOKEN" ]; then
-            echo "::error::secrets.E2E_CLAUDE_OAUTH_TOKEN（claude setup-token のトークン・サブスク枠・推奨）か secrets.E2E_ANTHROPIC_API_KEY（従量課金）のどちらかを登録してください"
+            echo "::error::register either secrets.E2E_CLAUDE_OAUTH_TOKEN (claude setup-token token, subscription quota, recommended) or secrets.E2E_ANTHROPIC_API_KEY (pay-as-you-go)"
             exit 1
           fi
 
@@ -68,8 +72,8 @@ jobs:
       - name: claude version in image
         run: docker run --rm --entrypoint /bin/bash "$WS_IMAGE" -lc "claude --version"
 
-      # 資格情報は env で渡す（打鍵・ログに載せない）。ソースは read-only マウントし、
-      # Go のキャッシュ類は書き込める /tmp に逃がす（マウント元は runner 所有のため）。
+      # Pass credentials via env (never typed or logged). The source is mounted
+      # read-only; Go caches go to writable /tmp (the mount source is runner-owned).
       - name: TUI contract probe
         env:
           TOKEN: ${{ secrets.E2E_CLAUDE_OAUTH_TOKEN }}
@@ -86,7 +90,7 @@ jobs:
             "go test -tags tui_contract ./internal/tmuxx/ -run TestClaudeTUIContractLive -v -timeout 20m" \
             2>&1 | tee /tmp/contract.log
 
-      # 緑でも文言のドリフトは目視できるようにする（観測した spinner/footer 行が出る）。
+      # Make wording drift visible even on green (the observed spinner/footer lines are printed).
       - name: upload observed frames
         if: always()
         uses: actions/upload-artifact@v4

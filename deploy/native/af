@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# Agent Fleet — native ランチャ（docs/35 §35.3.1 / §35.7.2-8）。
-# tar を展開して `./af start`、ブラウザで http://localhost:8099 。
+# Agent Fleet — native launcher (docs/35 §35.3.1 / §35.7.2-8).
+# Extract the tar, run `./af start`, then open http://localhost:8099 in a browser.
 #
-#   ./af start [--rootfs <tar.zst>]   # 初回は rootfs を取得（sha256 検証）して展開
-#   ./af reset [--all] [--yes]        # ローカルデータ初期化（--all は rootfs 展開含む全体）
-#   ./af status                       # CP / workspace の生存表示
+#   ./af start [--rootfs <tar.zst>]   # first run: fetch rootfs (sha256-verified) and extract
+#   ./af reset [--all] [--yes]        # wipe local data (--all includes the extracted rootfs)
+#   ./af status                       # show CP / workspace liveness
 #
-# ホスト要件: Linux カーネル（unprivileged user namespaces）+ bash/coreutils/tar +
-# curl または wget。zstd はパッケージ同梱の bin/zstd を使うのでホスト不要。
-# 詳細は同梱 README.md。
+# Host requirements: Linux kernel (unprivileged user namespaces) + bash/coreutils/tar +
+# curl or wget. zstd is bundled as bin/zstd, so the host does not need it.
+# See the bundled README.md for details.
 set -euo pipefail
 
-# symlink 起動（install.sh は ~/.local/bin/af -> <pkg>/af を張る）でもパッケージ
-# ディレクトリを正しく解決するため、実体パスまで辿る（readlink -f は coreutils）。
+# Resolve the real path so the package directory is found even when launched via
+# symlink (install.sh links ~/.local/bin/af -> <pkg>/af); readlink -f is coreutils.
 PKG="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 WS_DATA="${WS_DATA:-$HOME/.local/share/agent-fleet}"
 CP_ADDR="${CP_ADDR:-127.0.0.1:8099}"
@@ -20,23 +20,24 @@ DEV_KEY="${DEV_USER:-dev}"
 
 usage() { awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0"; }
 
-# rootfs.json（ビルダー生成・整形済み JSON）から 1 キーを抜く。ホストに jq を
-# 要求しないため sed で読む（フォーマットはビルダーと対）。
+# Extract one key from rootfs.json (builder-generated, pretty-printed JSON). Read
+# with sed so the host does not need jq (the format is paired with the builder).
 manifest_get() {
   sed -n 's/.*"'"$1"'": *"\{0,1\}\([^",}]*\)"\{0,1\}.*/\1/p' "$PKG/rootfs.json" | head -1
 }
 
-# ---- rootfs の取得と展開 ------------------------------------------------------
-# 優先順: --rootfs 明示 > パッケージ同梱（--bundle-rootfs 版の rootfs/）> URL DL。
-# どの経路でも rootfs.json の sha256 で検証してから展開する（改竄・欠損は起動前に
-# 検出）。同じ版 <r> が展開済みなら何もしない = 2 回目以降はオフラインで起動する。
+# ---- rootfs fetch and extraction ---------------------------------------------
+# Precedence: explicit --rootfs > bundled in package (rootfs/ of the --bundle-rootfs
+# variant) > URL download. Every path verifies against the sha256 in rootfs.json
+# before extracting (tampering/truncation is caught before startup). If the same
+# version <r> is already extracted, do nothing = later starts work offline.
 ensure_rootfs() {
   local explicit_tar="$1"
   R_VER="$(manifest_get version)"
   local sha url dest tar dl=0
   sha="$(manifest_get sha256)"
   url="$(manifest_get url)"
-  [ -n "$R_VER" ] && [ -n "$sha" ] || { echo "ERROR: $PKG/rootfs.json が読めません" >&2; exit 1; }
+  [ -n "$R_VER" ] && [ -n "$sha" ] || { echo "ERROR: cannot read $PKG/rootfs.json" >&2; exit 1; }
   dest="$WS_DATA/shared/rootfs/$R_VER"
   ROOTFS_DIR="$dest"
   if [ -f "$dest/.ok" ]; then
@@ -45,27 +46,27 @@ ensure_rootfs() {
   mkdir -p "$WS_DATA/shared/rootfs"
   if [ -n "$explicit_tar" ]; then
     tar="$explicit_tar"
-    [ -f "$tar" ] || { echo "ERROR: --rootfs $tar が見つかりません" >&2; exit 1; }
+    [ -f "$tar" ] || { echo "ERROR: --rootfs $tar not found" >&2; exit 1; }
   elif ls "$PKG"/rootfs/*.tar.zst >/dev/null 2>&1; then
     tar="$(ls "$PKG"/rootfs/*.tar.zst | head -1)"
   else
     tar="$WS_DATA/shared/rootfs/.dl-$R_VER.tar.zst"
     dl=1
-    echo "==> rootfs $R_VER をダウンロード（初回のみ）: $url"
+    echo "==> downloading rootfs $R_VER (first run only): $url"
     if command -v curl >/dev/null 2>&1; then
       curl -fL --progress-bar -o "$tar" "$url"
     elif command -v wget >/dev/null 2>&1; then
       wget -O "$tar" "$url"
     else
-      echo "ERROR: curl も wget もありません（rootfs を取得できません）。" >&2
-      echo "       別ホストで取得し ./af start --rootfs <tar.zst> で渡すこともできます。" >&2
+      echo "ERROR: neither curl nor wget is available (cannot fetch the rootfs)." >&2
+      echo "       Fetch it on another host and pass it via ./af start --rootfs <tar.zst>." >&2
       exit 1
     fi
   fi
-  echo "==> rootfs 検証（sha256）"
+  echo "==> verifying rootfs (sha256)"
   echo "$sha  $tar" | sha256sum -c - >/dev/null \
-    || { echo "ERROR: rootfs の sha256 が一致しません: $tar" >&2; exit 1; }
-  echo "==> rootfs 展開 -> $dest"
+    || { echo "ERROR: rootfs sha256 mismatch: $tar" >&2; exit 1; }
+  echo "==> extracting rootfs -> $dest"
   local staging="$WS_DATA/shared/rootfs/.extract-$R_VER.$$"
   rm -rf "$staging"; mkdir -p "$staging"
   "$PKG/bin/zstd" -dc "$tar" | tar -x -C "$staging"
@@ -76,16 +77,17 @@ ensure_rootfs() {
   return 0
 }
 
-# ---- preflight: unprivileged userns で bwrap が動くか -------------------------
+# ---- preflight: can bwrap run with unprivileged userns? -----------------------
 preflight() {
   if ! "$PKG/bin/bwrap" --unshare-user --uid 1000 --gid 1000 --ro-bind / / true 2>/dev/null; then
     cat >&2 <<'EOF'
-ERROR: bubblewrap の無特権実行（unprivileged user namespaces）が使えません。
-  素の WSL2 では通常そのまま動きます。Ubuntu 23.10+ の実機では AppArmor の制限を
-  一度だけ緩める必要があります:
+ERROR: bubblewrap cannot run unprivileged (unprivileged user namespaces unavailable).
+  Plain WSL2 normally works out of the box. On bare-metal Ubuntu 23.10+ you need to
+  relax the AppArmor restriction once:
     sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-  恒久化は /etc/sysctl.d/ に同設定を置いてください（詳細は README.md）。
-  userns 自体が無効なカーネルでは native 版は動きません（Docker 構成を使ってください）。
+  To make it permanent, put the same setting under /etc/sysctl.d/ (see README.md).
+  On kernels with userns disabled entirely, the native package cannot run
+  (use the Docker setup instead).
 EOF
     exit 1
   fi
@@ -95,8 +97,8 @@ do_start() {
   local rootfs_tar=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      --rootfs) rootfs_tar="${2:?--rootfs には tar.zst のパスが要ります}"; shift 2 ;;
-      *) echo "start の不明なオプション: $1" >&2; usage; exit 1 ;;
+      --rootfs) rootfs_tar="${2:?--rootfs requires a tar.zst path}"; shift 2 ;;
+      *) echo "unknown option for start: $1" >&2; usage; exit 1 ;;
     esac
   done
   local ver=""
@@ -104,7 +106,7 @@ do_start() {
   ensure_rootfs "$rootfs_tar"
   preflight
 
-  # git-provider OAuth 設定（あれば）。AUTH は native では dev 固定（単一ユーザー）。
+  # git-provider OAuth config (if present). AUTH is fixed to dev on native (single user).
   if [ -f "$PKG/oauth.env" ]; then
     set -a
     # shellcheck disable=SC1091
@@ -137,42 +139,42 @@ do_start() {
     "$PKG/bin/af-cp"
 }
 
-# ---- reset: ローカルデータ初期化（run-dev.sh do_reset の移植・docker 分岐なし）--
+# ---- reset: wipe local data (port of run-dev.sh do_reset, without docker branches) --
 do_reset() {
   local all=0 yes=0 a
   for a in "$@"; do
     case "$a" in
       --all) all=1 ;;
       --yes | -y) yes=1 ;;
-      *) echo "reset の不明なオプション: $a" >&2; usage; exit 1 ;;
+      *) echo "unknown option for reset: $a" >&2; usage; exit 1 ;;
     esac
   done
   local target="$WS_DATA/$DEV_KEY"
   [ "$all" = 1 ] && target="$WS_DATA"
   if [ ! -e "$target" ]; then
-    echo "削除対象がありません（初期化済み）: $target"
+    echo "nothing to delete (already clean): $target"
     exit 0
   fi
   if pgrep -f "$PKG/bin/af-cp" >/dev/null 2>&1; then
-    echo "ERROR: control-plane（af-cp）が稼働中です。停止（Ctrl-C）してから再実行してください。" >&2
+    echo "ERROR: control-plane (af-cp) is running. Stop it (Ctrl-C) and retry." >&2
     exit 1
   fi
-  echo "==> 削除対象: $target"
+  echo "==> will delete: $target"
   if [ "$all" = 1 ]; then
-    echo "    完全初期化: DB・全 home・claude-config・展開済み rootfs を含む WS_DATA 全体"
+    echo "    full wipe: all of WS_DATA, incl. DB, all homes, claude-config, extracted rootfs"
   else
-    echo "    $DEV_KEY ユーザーのみ: home / claude-config（Claude ログイン含む）。DB と rootfs は温存"
+    echo "    user $DEV_KEY only: home / claude-config (incl. Claude login). DB and rootfs are kept"
   fi
   if [ "$yes" != 1 ]; then
     if [ -t 0 ]; then
-      read -r -p "本当に削除しますか？ [y/N] " ans
-      case "$ans" in y | Y | yes) ;; *) echo "中止しました"; exit 1 ;; esac
+      read -r -p "Really delete? [y/N] " ans
+      case "$ans" in y | Y | yes) ;; *) echo "aborted"; exit 1 ;; esac
     else
-      echo "ERROR: 非対話実行では --yes を付けてください" >&2
+      echo "ERROR: pass --yes for non-interactive runs" >&2
       exit 1
     fi
   fi
-  # workspace 残骸: bwrap の process group を止める（pid namespace ごと tmux も消える）。
+  # Workspace leftovers: kill the bwrap process group (tmux dies with the pid namespace).
   local pidf="$WS_DATA/$DEV_KEY/agent.pid" pid=""
   if pid="$(cat "$pidf" 2>/dev/null)" && [ -n "$pid" ]; then
     kill -TERM -- "-$pid" 2>/dev/null || true
@@ -180,7 +182,7 @@ do_reset() {
     kill -KILL -- "-$pid" 2>/dev/null || true
   fi
   rm -rf "$target"
-  echo "==> 初期化完了（次回起動時に再作成されます）"
+  echo "==> reset complete (recreated on next start)"
 }
 
 do_status() {
@@ -207,5 +209,5 @@ case "${1:-}" in
   reset) shift; do_reset "$@" ;;
   status) shift; do_status ;;
   -h | --help | help | "") usage; exit 0 ;;
-  *) echo "不明なサブコマンド: $1" >&2; usage; exit 1 ;;
+  *) echo "unknown subcommand: $1" >&2; usage; exit 1 ;;
 esac

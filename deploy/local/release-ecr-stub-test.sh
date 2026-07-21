@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# release-ecr.sh の stub 実走テスト（docs/35 §35.7.3 ゲート g）。
-# 実 AWS/docker を使わず、PATH 前置の fake aws / fake docker で呼び出し集合と
-# ECR URI の組み立てを固定する。CI（release-gate.yml ecs-gate）とローカルの両方で
-# 実行可（docker 不要）。
-# 注意: `get-login-password | docker login` はパイプ両側が並行に走りログ順序が
-# 非決定になるため、順序 assert は意味のある依存（repo確認→push・load→tag）に限る。
+# Stub end-to-end test for release-ecr.sh (docs/35 §35.7.3 gate g).
+# Uses no real AWS/docker: PATH-prepended fake aws / fake docker pin down the call
+# set and the assembled ECR URIs. Runs both in CI (release-gate.yml ecs-gate) and
+# locally (no docker needed).
+# Note: `get-login-password | docker login` runs both sides of the pipe concurrently,
+# so log order is nondeterministic — order asserts are limited to meaningful
+# dependencies (repo check -> push, load -> tag).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -15,8 +16,8 @@ trap 'rm -rf "$WORK"' EXIT
 STUB="$WORK/bin"; LOG="$WORK/calls.log"
 mkdir -p "$STUB"
 
-# fake aws: 呼び出しを記録し、サブコマンドごとに決め打ちの応答を返す。
-# STUB_REPOS_MISSING=1 で describe-repositories を失敗させる（否定経路用）。
+# fake aws: records each call and returns a canned response per subcommand.
+# STUB_REPOS_MISSING=1 makes describe-repositories fail (for the negative path).
 cat > "$STUB/aws" <<'FAKE'
 #!/usr/bin/env bash
 echo "aws $*" >> "$STUB_LOG"
@@ -29,7 +30,7 @@ case "$*" in
   *"ecr get-login-password"*) echo "stub-token" ;;
 esac
 FAKE
-# fake docker: 記録のみ。login は stdin（--password-stdin）を消費する。
+# fake docker: record only. login consumes stdin (--password-stdin).
 cat > "$STUB/docker" <<'FAKE'
 #!/usr/bin/env bash
 echo "docker $*" >> "$STUB_LOG"
@@ -39,7 +40,7 @@ chmod +x "$STUB/aws" "$STUB/docker"
 export PATH="$STUB:$PATH" STUB_LOG="$LOG"
 
 fail() { echo "NG: $1"; echo "--- full log ---"; cat "$LOG"; exit 1; }
-# 呼び出し集合の完全一致（順序不問 — パイプ並行の非決定を吸収）
+# Exact match on the call set, order-insensitive (absorbs the pipe-concurrency nondeterminism)
 expect_set() { # expect_set <expected-file>
   diff <(LC_ALL=C sort "$1") <(LC_ALL=C sort "$LOG") || fail "call set mismatch"
 }

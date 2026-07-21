@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
-# Agent Fleet — native パッケージ導入ワンライナー（docs/35 §35.4.2）。
+# Agent Fleet — one-liner installer for the native package (docs/35 §35.4.2).
 #
 #   curl -fsSL https://raw.githubusercontent.com/k-k1/agent-fleet-dist/main/install.sh | bash
 #
-# 最新（または AF_VERSION 指定版）の native tar を取得し、同リリースの SHA256SUMS で
-# 検証して ~/.local/opt/agent-fleet/<v>/ へ展開、~/.local/bin/af に symlink する。
-# 更新も同じコマンド（版ディレクトリ切替 — データ WS_DATA には触らない）。
+# Downloads the latest (or AF_VERSION-pinned) native tar, verifies it against the
+# release's SHA256SUMS, extracts it to ~/.local/opt/agent-fleet/<v>/ and symlinks
+# ~/.local/bin/af. Updating uses the same command (switches the version directory —
+# user data under WS_DATA is never touched).
 #
 # env:
-#   AF_VERSION        導入する版（省略時は最新リリース）
-#   AF_PREFIX         導入先 prefix（既定 ~/.local）
-#   AF_DIST_REPO      配布 repo（既定 k-k1/agent-fleet-dist）
-#   AF_DIST_URL_BASE  取得元 URL 基底の差し替え（検証・ミラー用。指定時は AF_VERSION 必須）
+#   AF_VERSION        version to install (default: latest release)
+#   AF_PREFIX         install prefix (default ~/.local)
+#   AF_DIST_REPO      distribution repo (default k-k1/agent-fleet-dist)
+#   AF_DIST_URL_BASE  override the download URL base (for testing/mirrors;
+#                     requires AF_VERSION)
 set -euo pipefail
 
 REPO="${AF_DIST_REPO:-k-k1/agent-fleet-dist}"
@@ -23,8 +25,8 @@ ARCH=amd64
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
-[ "$(uname -s)" = Linux ] || die "Linux 専用です（WSL2 を含む）"
-[ "$(uname -m)" = x86_64 ] || die "現在 linux-amd64 のみ配布しています（$(uname -m) は未対応）"
+[ "$(uname -s)" = Linux ] || die "Linux only (including WSL2)"
+[ "$(uname -m)" = x86_64 ] || die "only linux-amd64 is distributed for now ($(uname -m) is unsupported)"
 
 fetch() { # fetch <url> <out>
   if command -v curl >/dev/null 2>&1; then
@@ -32,13 +34,14 @@ fetch() { # fetch <url> <out>
   elif command -v wget >/dev/null 2>&1; then
     wget -qO "$2" "$1"
   else
-    die "curl も wget もありません"
+    die "neither curl nor wget is available"
   fi
 }
 
-# 最新版の解決: releases/latest のリダイレクト先 tag（API レート制限に依らない）。
+# Resolve the latest version from the releases/latest redirect target tag
+# (does not depend on the API rate limit).
 if [ -z "$VER" ]; then
-  [ "$BASE" = "$DEFAULT_BASE" ] || die "AF_DIST_URL_BASE 指定時は AF_VERSION も指定してください"
+  [ "$BASE" = "$DEFAULT_BASE" ] || die "AF_VERSION is required when AF_DIST_URL_BASE is set"
   if command -v curl >/dev/null 2>&1; then
     loc="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest")"
     tag="${loc##*/}"
@@ -48,7 +51,7 @@ if [ -z "$VER" ]; then
   fi
   case "$tag" in
     v[0-9]*) VER="${tag#v}" ;;
-    *) die "最新リリースを解決できません（tag=$tag）。AF_VERSION=<v> で明示してください" ;;
+    *) die "cannot resolve the latest release (tag=$tag). Set AF_VERSION=<v> explicitly" ;;
   esac
 fi
 
@@ -56,20 +59,20 @@ NAME="agent-fleet-native-$VER-linux-$ARCH"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-echo "==> agent-fleet $VER を取得: $BASE/v$VER/$NAME.tar.gz"
+echo "==> downloading agent-fleet $VER: $BASE/v$VER/$NAME.tar.gz"
 fetch "$BASE/v$VER/$NAME.tar.gz" "$TMP/$NAME.tar.gz"
 fetch "$BASE/v$VER/SHA256SUMS" "$TMP/SHA256SUMS"
 
-echo "==> 検証（sha256）"
+echo "==> verifying (sha256)"
 grep -E "  $NAME\.tar\.gz\$" "$TMP/SHA256SUMS" > "$TMP/want.sum" \
-  || die "SHA256SUMS に $NAME.tar.gz の行がありません"
+  || die "SHA256SUMS has no entry for $NAME.tar.gz"
 (cd "$TMP" && sha256sum -c want.sum >/dev/null) \
-  || die "sha256 が一致しません（ダウンロード破損の可能性 — やり直してください）"
+  || die "sha256 mismatch (possibly a corrupted download — please retry)"
 
-echo "==> 展開 -> $PREFIX/opt/agent-fleet/$VER"
+echo "==> extracting -> $PREFIX/opt/agent-fleet/$VER"
 mkdir -p "$TMP/x"
 tar xzf "$TMP/$NAME.tar.gz" -C "$TMP/x"
-[ -x "$TMP/x/$NAME/af" ] || die "tar の内容が想定と異なります（af がありません）"
+[ -x "$TMP/x/$NAME/af" ] || die "unexpected tar contents (af is missing)"
 DEST_ROOT="$PREFIX/opt/agent-fleet"
 STAGING="$DEST_ROOT/.staging-$VER.$$"
 mkdir -p "$DEST_ROOT"
@@ -81,14 +84,15 @@ mv "$STAGING" "$DEST_ROOT/$VER"
 mkdir -p "$PREFIX/bin"
 ln -sfn "$DEST_ROOT/$VER/af" "$PREFIX/bin/af"
 
-echo "==> 導入完了: $PREFIX/bin/af -> $DEST_ROOT/$VER/af"
+echo "==> installed: $PREFIX/bin/af -> $DEST_ROOT/$VER/af"
 case ":$PATH:" in
   *":$PREFIX/bin:"*) ;;
-  *) echo "    注意: $PREFIX/bin が PATH にありません（ログインし直すか PATH に追加してください）" ;;
+  *) echo "    note: $PREFIX/bin is not on PATH (re-login or add it to PATH)" ;;
 esac
 cat <<EOF
-次の一手:
-  af start        # 初回のみ rootfs（200MB台）を取得・検証して展開
-  # ブラウザで http://localhost:8099
-旧版の掃除（任意）: $DEST_ROOT/ の不要な版ディレクトリを削除（データは別置きで無傷）
+Next steps:
+  af start        # first run downloads, verifies and extracts the rootfs (~200 MB)
+  # then open http://localhost:8099 in your browser
+Cleanup of old versions (optional): remove unused version directories under
+  $DEST_ROOT/ (user data lives elsewhere and is not affected)
 EOF

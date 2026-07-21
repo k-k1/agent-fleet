@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
-# Agent Fleet — dist repo publish（docs/35 §35.7.4-1 / §35.4.2）。
+# Agent Fleet — dist repo publish (docs/35 §35.7.4-1 / §35.4.2).
 #
 #   VERSION=0.1.0 deploy/release/publish-dist.sh [--dist-dir <d>] [--repo <o/r>] [--seed] [--dry-run]
 #
-# deploy/release/dist/ の成果物を公開 dist repo の GitHub Releases へ publish する:
-#   - rootfs リリース `rootfs-<r>` … R を添付。既存 tag なら何もしない（<r> は内容
-#     ハッシュ = 同一物。イメージ不変リリースで利用者の再 DL を発生させない）。
-#   - app リリース `v<v>`         … A / B / C（+ -bundle）/ SHA256SUMS を添付。
-#     既存 tag は fail（リリースは不変 — やり直しは版を上げる）。
-# --seed は dist repo 本体（README.md / install.sh）を deploy/release/dist-repo/ から
-# contents API で push（内容一致ならスキップ = 冪等）。repo が無ければ作る。
-# 認証は gh（ローカル = gh auth login / CI = GH_TOKEN に DIST_PUBLISH_TOKEN）。
-# 実 publish の runbook は docs/35 §35.8.2。
+# Publishes the artifacts in deploy/release/dist/ to the public dist repo's
+# GitHub Releases:
+#   - rootfs release `rootfs-<r>` … attaches R. If the tag exists, do nothing
+#     (<r> is a content hash = identical bits; image-immutable releases avoid
+#     re-downloads for users).
+#   - app release `v<v>`          … attaches A / B / C (+ -bundle) / SHA256SUMS.
+#     An existing tag fails (releases are immutable — redo by bumping the version).
+# --seed pushes the dist repo contents (README.md / install.sh) from
+# deploy/release/dist-repo/ via the contents API (skipped when identical =
+# idempotent). Creates the repo if it does not exist.
+# Auth via gh (local = gh auth login / CI = GH_TOKEN set to DIST_PUBLISH_TOKEN).
+# Runbook for a real publish: docs/35 §35.8.2.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -32,39 +35,40 @@ while [ $# -gt 0 ]; do
 done
 
 die() { echo "ERROR: $*" >&2; exit 1; }
-# 変更系の gh 呼び出しだけ通す（--dry-run では表示のみ）。読み取り系は素で呼ぶ。
+# Gate only mutating gh calls (--dry-run prints them instead). Read-only calls
+# run directly.
 run() {
   if [ "$DRY" = 1 ]; then echo "DRY-RUN: $*" >&2; else "$@"; fi
 }
 
-# GitHub Releases の 1 アセット上限（2GiB）。超過分は添付できない — B の air-gap は
-# ファイル渡し経路（§35.2）が正なので、警告してスキップする。
+# GitHub Releases per-asset limit (2GiB). Oversized assets cannot be attached —
+# the air-gap path for B is file hand-off (§35.2), so warn and skip.
 GH_MAX_ASSET=2147483648
 
 ARCH=amd64
 C_NAME="agent-fleet-native-$VERSION-linux-$ARCH"
 C_TAR="$DIST/$C_NAME.tar.gz"
-[ -f "$C_TAR" ] || die "$C_TAR がありません（VERSION=$VERSION build.sh --native が先）"
-[ -f "$DIST/SHA256SUMS" ] || die "$DIST/SHA256SUMS がありません（build.sh が生成する）"
+[ -f "$C_TAR" ] || die "$C_TAR not found (run VERSION=$VERSION build.sh --native first)"
+[ -f "$DIST/SHA256SUMS" ] || die "$DIST/SHA256SUMS not found (build.sh generates it)"
 
-# ---- C 内の rootfs.json を読む（af ランチャと同じ sed パーサ）---------------------
+# ---- read rootfs.json inside C (same sed parser as the af launcher) ----------------
 MANIFEST="$(tar xzf "$C_TAR" -O "$C_NAME/rootfs.json")"
 mget() { sed -n 's/.*"'"$1"'": *"\{0,1\}\([^",}]*\)"\{0,1\}.*/\1/p' <<<"$MANIFEST" | head -1; }
 R_VER="$(mget version)"
 R_SHA="$(mget sha256)"
 R_URL="$(mget url)"
-if [ -z "$R_VER" ] || [ -z "$R_SHA" ]; then die "C 内の rootfs.json が読めません"; fi
+if [ -z "$R_VER" ] || [ -z "$R_SHA" ]; then die "cannot read rootfs.json inside C"; fi
 R_NAME="agent-fleet-rootfs-$R_VER-linux-$ARCH.tar.zst"
 
-# C が指す rootfs URL は必ずこの repo の Releases でなければならない。ここが食い違う
-# C を publish すると、利用者の `af start` が存在しない/別の URL を叩く。
+# The rootfs URL referenced by C must point at this repo's Releases. Publishing a
+# C that disagrees would make users' `af start` hit a missing/foreign URL.
 WANT_URL="https://github.com/$REPO/releases/download/rootfs-$R_VER/$R_NAME"
-[ "$R_URL" = "$WANT_URL" ] || die "C の rootfs URL が publish 先と不一致です。
+[ "$R_URL" = "$WANT_URL" ] || die "the rootfs URL in C does not match the publish target.
   rootfs.json: $R_URL
-  期待値:      $WANT_URL
-  （ROOTFS_URL_BASE を変えてビルドした C は、この repo へは publish できません）"
+  expected:    $WANT_URL
+  (a C built with a different ROOTFS_URL_BASE cannot be published to this repo)"
 
-# ---- --seed: dist repo 本体（README.md / install.sh）--------------------------------
+# ---- --seed: dist repo contents (README.md / install.sh) ---------------------------
 if [ "$SEED" = 1 ]; then
   echo "==> [publish] seed dist repo contents ($REPO)"
   if ! gh repo view "$REPO" --json name >/dev/null 2>&1; then
@@ -78,36 +82,36 @@ if [ "$SEED" = 1 ]; then
     sha="${resp%% *}"
     cur="${resp#* }"
     if [ -n "$resp" ] && [ "$cur" = "$local_b64" ]; then
-      echo "    $f: 変更なし（スキップ）"
+      echo "    $f: unchanged (skipped)"
       continue
     fi
     put=(-X PUT "repos/$REPO/contents/$f" -f "message=seed: $f" -f "content=$local_b64")
     if [ -n "$sha" ]; then put+=(-f "sha=$sha"); fi
     run gh api "${put[@]}" > /dev/null
-    echo "    $f: push 済み"
+    echo "    $f: pushed"
   done
 fi
 
-# ---- rootfs リリース ----------------------------------------------------------------
+# ---- rootfs release ----------------------------------------------------------------
 if gh release view "rootfs-$R_VER" -R "$REPO" >/dev/null 2>&1; then
-  echo "==> [publish] rootfs-$R_VER は既存 — 再利用（アップロードなし）"
+  echo "==> [publish] rootfs-$R_VER already exists — reusing (no upload)"
 else
   R_TAR="$DIST/$R_NAME"
-  [ -f "$R_TAR" ] || die "rootfs-$R_VER の tag が無く、R も手元にありません: $R_TAR
-  （--rootfs-json での再利用ビルドは、publish 済みの <r> に対してのみ可能です）"
-  echo "==> [publish] rootfs 検証（sha256）"
+  [ -f "$R_TAR" ] || die "tag rootfs-$R_VER does not exist and R is not available locally: $R_TAR
+  (a --rootfs-json reuse build is only valid against an already published <r>)"
+  echo "==> [publish] verify rootfs (sha256)"
   echo "$R_SHA  $R_TAR" | sha256sum -c - >/dev/null \
-    || die "R の sha256 が C 内 rootfs.json と一致しません: $R_TAR"
-  echo "==> [publish] release rootfs-$R_VER を作成"
+    || die "sha256 of R does not match rootfs.json inside C: $R_TAR"
+  echo "==> [publish] create release rootfs-$R_VER"
   run gh release create "rootfs-$R_VER" -R "$REPO" \
     --title "rootfs $R_VER (linux-$ARCH)" \
-    --notes "workspace rootfs（内容ハッシュ $R_VER）。app リリースの native tar が参照する。単体では使わない。" \
+    --notes "workspace rootfs (content hash $R_VER). Referenced by the app release's native tar; not for standalone use." \
     "$R_TAR"
 fi
 
-# ---- app リリース -------------------------------------------------------------------
+# ---- app release -------------------------------------------------------------------
 if gh release view "v$VERSION" -R "$REPO" >/dev/null 2>&1; then
-  die "v$VERSION は既に存在します（リリースは不変 — 版を上げてやり直してください）"
+  die "v$VERSION already exists (releases are immutable — bump the version and retry)"
 fi
 assets=()
 for f in "agent-fleet-$VERSION.tar.gz" "agent-fleet-images-$VERSION.tar.gz" \
@@ -116,22 +120,22 @@ for f in "agent-fleet-$VERSION.tar.gz" "agent-fleet-images-$VERSION.tar.gz" \
   [ -f "$p" ] || continue
   size="$(stat -c%s "$p")"
   if [ "$size" -ge "$GH_MAX_ASSET" ]; then
-    echo "WARN: $f は ${size} bytes で GitHub Releases の 2GiB 上限超 — 添付をスキップ" >&2
-    echo "      （air-gap はファイル渡し経路で配布する — docs/35 §35.2）" >&2
+    echo "WARN: $f is ${size} bytes, over the 2GiB GitHub Releases asset limit — skipping" >&2
+    echo "      (distribute the air-gap tar via file hand-off — docs/35 §35.2)" >&2
     continue
   fi
   assets+=("$p")
 done
 assets+=("$DIST/SHA256SUMS")
-echo "==> [publish] release v$VERSION を作成（${#assets[@]} assets）"
+echo "==> [publish] create release v$VERSION (${#assets[@]} assets)"
 run gh release create "v$VERSION" -R "$REPO" \
   --title "agent-fleet $VERSION" \
-  --notes "Agent Fleet $VERSION。native は install.sh（README 参照）、compose は agent-fleet-$VERSION.tar.gz。rootfs は rootfs-$R_VER。" \
+  --notes "Agent Fleet $VERSION. Native: install.sh (see README). Compose: agent-fleet-$VERSION.tar.gz. Rootfs: rootfs-$R_VER." \
   "${assets[@]}"
 
 cat <<EOF
 ==> [publish] done
   releases: https://github.com/$REPO/releases/tag/v$VERSION
             https://github.com/$REPO/releases/tag/rootfs-$R_VER
-  導入:     curl -fsSL https://raw.githubusercontent.com/$REPO/main/install.sh | bash
+  install:  curl -fsSL https://raw.githubusercontent.com/$REPO/main/install.sh | bash
 EOF

@@ -1,36 +1,53 @@
 # agent-fleet-dist
 
-[Agent Fleet](https://github.com/k-k1/agent-fleet)（private）の**配布物置き場**です。
-ソースコードはここにはありません。成果物は Releases に付いています。
+Distribution artifacts for [Agent Fleet](https://github.com/k-k1/agent-fleet).
+**There is no source code here** — binaries and bundles are attached to Releases.
 
-## native 版（Docker 不要・WSL2 / Linux 単一ユーザー向け）の導入
+## What is Agent Fleet?
+
+Agent Fleet is a self-hosted web console for running AI coding agents
+(Claude Code, Codex CLI, OpenCode, GitHub Copilot CLI, Antigravity CLI) as a
+managed fleet.
+Each member gets an isolated workspace — a Docker container with cgroup CPU/memory
+quotas (or a bubblewrap-sandboxed rootfs in the native edition) with a persistent
+home and git working copies — and starts, drives and monitors agent sessions from
+the browser. A Go control plane orchestrates the workspaces; deployment targets
+include on-prem Docker Compose, AWS ECS (CloudFormation templates included), and a
+Docker-less native runtime for WSL2 / single-user Linux hosts.
+
+## Installing the native edition (no Docker; WSL2 / single-user Linux)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/k-k1/agent-fleet-dist/main/install.sh | bash
 af start
-# ブラウザで http://localhost:8099
+# then open http://localhost:8099 in your browser
 ```
 
-- インストーラは最新リリースの tar を取得し、`SHA256SUMS` で検証してから
-  `~/.local/opt/agent-fleet/<版>/` へ展開、`~/.local/bin/af` に symlink します。
-- 更新も同じコマンドです（データは `~/.local/share/agent-fleet` にあり、触りません）。
-- 版を指定する場合: `AF_VERSION=0.1.0 bash install.sh`
-- 詳細（ホスト要件・air-gap・常駐化・制約）は tar 同梱の `README.md` を参照。
+- The installer downloads the latest release tar, verifies it against
+  `SHA256SUMS`, extracts it to `~/.local/opt/agent-fleet/<version>/` and
+  symlinks `~/.local/bin/af`.
+- Updating uses the same command (your data lives in
+  `~/.local/share/agent-fleet` and is never touched).
+- To pin a version: `AF_VERSION=0.1.0 bash install.sh`
+- For details (host requirements, air-gap installs, running as a service,
+  limitations) see the `README.md` bundled inside the tar.
 
-## Releases の構成
+## Release layout
 
-| tag | 添付 | 用途 |
+| tag | assets | purpose |
 |---|---|---|
-| `v<版>` | `agent-fleet-<版>.tar.gz`（compose バンドル）/ `agent-fleet-images-<版>.tar.gz`（air-gap 用イメージ）/ `agent-fleet-native-<版>-linux-amd64.tar.gz`（native）/ `SHA256SUMS` | アプリ本体のリリース |
-| `rootfs-<r>` | `agent-fleet-rootfs-<r>-linux-amd64.tar.zst` | native 版が初回起動時に取得する workspace rootfs。**単体では使いません**（native tar 内の `rootfs.json` が版・sha256 を指定） |
+| `v<version>` | `agent-fleet-<version>.tar.gz` (compose bundle) / `agent-fleet-images-<version>.tar.gz` (air-gap images) / `agent-fleet-native-<version>-linux-amd64.tar.gz` (native) / `SHA256SUMS` | the application release |
+| `rootfs-<r>` | `agent-fleet-rootfs-<r>-linux-amd64.tar.zst` | workspace rootfs the native edition downloads on first start. **Not for standalone use** (`rootfs.json` inside the native tar pins its version and sha256) |
 
-`<r>` は内容ハッシュです。アプリの版が上がっても rootfs が不変なら同じ tag を参照し、
-再ダウンロードは発生しません。取得物は必ず `SHA256SUMS` / `rootfs.json` の sha256 で
-検証してください（install.sh と `af start` は自動で行います）。
+`<r>` is a content hash: when the app version bumps but the rootfs is unchanged,
+the same tag is referenced and no re-download happens. Always verify downloads
+against `SHA256SUMS` / the sha256 in `rootfs.json` (install.sh and `af start` do
+this automatically).
 
-## ライセンス / 同梱物について
+## License / bundled software
 
-- 配布イメージ・rootfs は **lean 構成**です: エージェント CLI（Claude Code / Codex /
-  OpenCode ほか）は同梱せず、初回起動時に各利用者がそれぞれの配布元から検証済みの
-  ピン版を取得します（再配布を行わないための構成です）。
-- 同梱 OSS の帰属は各 tar 内の `NOTICE` を参照してください。
+- The distributed images and rootfs are a **lean build**: agent CLIs
+  (Claude Code / Codex / OpenCode / Copilot / Antigravity) are not bundled — on first start
+  each user fetches verified, pinned versions from the respective upstream
+  (this build intentionally avoids redistribution).
+- For attribution of bundled OSS, see the `NOTICE` file inside each tar.

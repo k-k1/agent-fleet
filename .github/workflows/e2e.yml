@@ -1,17 +1,20 @@
-# E2E（docs/dev/10 §10.4): Workspace イメージを build し、L1（e2e-smoke.sh: CLI 実版 =
-# Dockerfile ARG ピン等）→ L2（e2e/: CP をヘッドレス起動して workspace/session 疎通）→
-# L3（console-e2e/: Playwright でブラウザ→CP→コンテナの縦串）を検証する。イメージ build が
-# 重いので ci.yml から分離し、main への PR（マージゲート）+ 毎晩 cron（default branch =
-# develop の統合検証。破壊の混入を最大 1 日分に絞り bisect を現実的にする）+ 手動のみ実行
-# する。develop への push では回さない（課金分散・CONTRIBUTING「Commits & PRs」）。
-# L4（実クレデンシャルの claude 疎通）は枠を消費するため workflow_dispatch の live 入力を
-# 立てた時だけ走る。
+# E2E (docs/dev/10 §10.4): build the Workspace image, then verify L1 (e2e-smoke.sh:
+# actual CLI versions = Dockerfile ARG pins etc.) -> L2 (e2e/: boot the CP headless
+# and exercise workspace/session round-trips) -> L3 (console-e2e/: Playwright
+# browser->CP->container end-to-end). The image build is heavy, so this is split
+# out of ci.yml and runs only on PRs to main (merge gate) + a nightly cron
+# (integration check of the default branch = develop; caps breakage exposure at one
+# day and keeps bisects practical) + manual dispatch. Not run on pushes to develop
+# (spreads billing; CONTRIBUTING "Commits & PRs"). L4 (claude round-trip with real
+# credentials) consumes quota, so it only runs when the workflow_dispatch live
+# input is set.
 #
-# エージェント CLI の contract / ドリフト検知はここには置かない（別ファイル・イメージ
-# build 不要）: claude-tui-contract.yml / codex-contract.yml / opencode-contract.yml。
-# 版ズレそのものの監視は cli-drift.yml。構成の全体像は docs/dev/10-development.md。
-# 注: rtk は常時焼き込み（BAKE_RTK=1 既定・ARG ピン）なので、CI ビルドのイメージにも
-# rtk が入り、L1 スモークが同梱を検証する（旧ホスト vendor 経路は廃止）。
+# Agent-CLI contract / drift detection does not live here (separate files, no image
+# build needed): claude-tui-contract.yml / codex-contract.yml / opencode-contract.yml.
+# Version-drift monitoring itself is cli-drift.yml. Overall layout: docs/dev/10-development.md.
+# Note: rtk is always baked in (BAKE_RTK=1 default, ARG-pinned), so CI-built images
+# also contain rtk and the L1 smoke verifies its inclusion (the old host vendor
+# path is gone).
 name: e2e
 
 on:
@@ -26,15 +29,16 @@ on:
       - "deploy/local/e2e-smoke.sh"
       - ".github/workflows/e2e.yml"
   schedule:
-    - cron: "0 19 * * *" # 毎晩 4:00 JST — develop（default branch）の統合検証 + 上流 CLI / base image の破壊検出
+    - cron: "0 19 * * *" # nightly 04:00 JST — integration check of develop (default branch) + upstream CLI / base image breakage detection
   workflow_dispatch:
     inputs:
-      # 課金/枠消費を伴う入力は**そのワークフローが回すエージェント 1 種類だけ**を指す。
-      # 以前ここの live 入力を codex の Tier2 ジョブと共有しており、1 回の dispatch で
-      # Anthropic と ChatGPT の枠が同時に減った（片方だけ回せなかった）。codex は
-      # codex-contract.yml へ分離済み ＝ この入力は claude の live-smoke 専用。
+      # An input that spends billing / quota must map to **exactly one agent this
+      # workflow runs**. This live input used to be shared with codex's Tier2 job,
+      # so one dispatch burned both Anthropic and ChatGPT quota (no way to run just
+      # one). codex has moved to codex-contract.yml = this input is exclusively for
+      # claude's live-smoke.
       live:
-        description: "L4: claude 疎通スモーク（live-smoke）を実行する — Anthropic のサブスク枠 / API 課金を消費"
+        description: "L4: run the claude round-trip smoke (live-smoke) — consumes Anthropic subscription quota / API billing"
         type: boolean
         default: false
 
@@ -100,7 +104,7 @@ jobs:
           tags: ${{ env.WS_IMAGE }}
           load: true
           cache-from: type=gha
-          # e2e ジョブが cache-to を担う（同じ内容の二重書き込みを避ける）
+          # the e2e job owns cache-to (avoid double-writing identical content)
       - name: build console
         working-directory: console
         run: |
@@ -125,9 +129,10 @@ jobs:
           if-no-files-found: ignore
 
   live-smoke:
-    # L4: 実 API キーで claude -p の疎通を見る。手動 + 明示 opt-in のみ（課金あり）。
-    # 注: これは headless の `claude -p` ＝ TUI もフッタも描画されない。状態検出の契約は
-    # ここでは見えないので claude-tui-contract.yml が別途見る。
+    # L4: verify claude -p round-trip with a real API key. Manual + explicit opt-in
+    # only (billed). Note: this is headless `claude -p` = no TUI, no footer rendered.
+    # The state-detection contract is not visible here; claude-tui-contract.yml
+    # covers it separately.
     if: github.event_name == 'workflow_dispatch' && inputs.live
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -153,7 +158,7 @@ jobs:
           TOKEN: ${{ secrets.E2E_CLAUDE_OAUTH_TOKEN }}
         run: |
           if [ -z "$KEY" ] && [ -z "$TOKEN" ]; then
-            echo "::error::secrets.E2E_ANTHROPIC_API_KEY（API キー）か secrets.E2E_CLAUDE_OAUTH_TOKEN（claude setup-token の OAuth トークン）のどちらかを登録してください"
+            echo "::error::Register either secrets.E2E_ANTHROPIC_API_KEY (API key) or secrets.E2E_CLAUDE_OAUTH_TOKEN (OAuth token from claude setup-token)"
             exit 1
           fi
       - name: claude live smoke (L4)
