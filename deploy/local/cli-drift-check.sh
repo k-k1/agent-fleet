@@ -1,30 +1,33 @@
 #!/usr/bin/env bash
-# CLI 版ドリフト検知（P0）。
+# CLI version drift detection (P0).
 #
-# なぜ要るか: workspace/Dockerfile の ARG ピンは「焼き込み時」にしか効かない。
-# AF_AGENT_SELF_UPDATE_ALLOWED=1 かつ AF_AGENT_SELF_UPDATE=1 の Workspace は
-# entrypoint.sh が起動毎に `npm i -g <cli>@latest` するので、**実フリートはピンより
-# 先の版を走らせる**。一方 CI（e2e.yml）は build-args を渡さないため常にピン版の
-# イメージを検証する ＝ 検証対象と本番が別物。
+# Why this exists: the ARG pins in workspace/Dockerfile only take effect at bake
+# time. A Workspace with AF_AGENT_SELF_UPDATE_ALLOWED=1 and AF_AGENT_SELF_UPDATE=1
+# has entrypoint.sh run `npm i -g <cli>@latest` on every boot, so **the live fleet
+# runs versions ahead of the pins**. Meanwhile CI (e2e.yml) passes no build-args
+# and always verifies a pinned-version image = CI tests something other than
+# production.
 #
-# 実際これで痛い目を見ている: claude の TUI フッタ文字列に依存する状態検出
-# （workspace/agent/internal/tmuxx）が 2026-07-17 時点で 3 回壊れ、3 回とも CI は緑の
-# まま人力で発見された（詳細は internal/tmuxx/testdata/footers/SOURCE.txt）。
+# This has hurt for real: the state detection that depends on claude's TUI footer
+# strings (workspace/agent/internal/tmuxx) broke 3 times as of 2026-07-17, and all
+# 3 were found by humans while CI stayed green (details in
+# internal/tmuxx/testdata/footers/SOURCE.txt).
 #
-# このスクリプトは「何が壊れたか」までは分からない。分かるのは **見に行くべき時** で、
-# それが分かるだけでも現状（誰も新版に気づかない）よりは大きく前進する。
-# 実際の破壊検知は実 CLI を走らせる契約テスト（P1）の仕事。
+# This script cannot tell *what* broke. It only tells you **when to go look** —
+# which by itself is a big step up from today (nobody notices new releases).
+# Actual breakage detection is the job of the contract tests that run the real
+# CLIs (P1).
 #
-# 使い方:
-#   deploy/local/cli-drift-check.sh            # 全 CLI を照合
-#   deploy/local/cli-drift-check.sh claude     # 1 つだけ
-# 終了コード: 0=ピンと latest が一致 / 1=ドリフトあり / 2=実行エラー（取得失敗等）
+# Usage:
+#   deploy/local/cli-drift-check.sh            # check all CLIs
+#   deploy/local/cli-drift-check.sh claude     # just one
+# Exit codes: 0 = pins match latest / 1 = drift / 2 = execution error (fetch failure etc.)
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DOCKERFILE="$ROOT/workspace/Dockerfile"
 
-# name|ARG 名|npm パッケージ
+# name|ARG name|npm package
 TARGETS=(
   "claude|CLAUDE_CODE_VERSION|@anthropic-ai/claude-code"
   "opencode|OPENCODE_VERSION|opencode-ai"
@@ -41,12 +44,12 @@ arg_pin() {
 want="${1:-}"
 drift=0
 errors=0
-# GitHub Actions の Job Summary（あれば）に出す表。無ければ /dev/null。
+# Table for the GitHub Actions Job Summary (if present); /dev/null otherwise.
 SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/null}"
 {
-  echo "## CLI 版ドリフト"
+  echo "## CLI version drift"
   echo
-  echo "| CLI | ピン (Dockerfile ARG) | npm latest | |"
+  echo "| CLI | Pin (Dockerfile ARG) | npm latest | |"
   echo "|---|---|---|---|"
 } >> "$SUMMARY"
 
@@ -56,24 +59,25 @@ for t in "${TARGETS[@]}"; do
   [ -n "$want" ] && [ "$want" != "$name" ] && continue
 
   if ! pin="$(arg_pin "$arg")"; then
-    printf '%-10s %s\n' "$name" "ERROR: ARG $arg が $DOCKERFILE に無い"
+    printf '%-10s %s\n' "$name" "ERROR: ARG $arg not found in $DOCKERFILE"
     errors=1
     continue
   fi
-  # npm view はネットワーク断で空を返しうる。空＝ドリフト無しと誤判定しないよう分ける。
+  # npm view can return empty on a network outage. Keep that case separate so an
+  # empty result is not misread as "no drift".
   if ! latest="$(npm view "$pkg" version 2>/dev/null)" || [ -z "$latest" ]; then
-    printf '%-10s %-14s %-14s %s\n' "$name" "$pin" "?" "ERROR: npm view $pkg 失敗"
-    echo "| $name | \`$pin\` | ? | ⚠ 取得失敗 |" >> "$SUMMARY"
+    printf '%-10s %-14s %-14s %s\n' "$name" "$pin" "?" "ERROR: npm view $pkg failed"
+    echo "| $name | \`$pin\` | ? | ⚠ fetch failed |" >> "$SUMMARY"
     errors=1
     continue
   fi
 
   if [ "$pin" = "$latest" ]; then
     printf '%-10s %-14s %-14s %s\n' "$name" "$pin" "$latest" "ok"
-    echo "| $name | \`$pin\` | \`$latest\` | ✅ 一致 |" >> "$SUMMARY"
+    echo "| $name | \`$pin\` | \`$latest\` | ✅ in sync |" >> "$SUMMARY"
   else
     printf '%-10s %-14s %-14s %s\n' "$name" "$pin" "$latest" "DRIFT"
-    echo "| $name | \`$pin\` | \`$latest\` | 🔸 ドリフト |" >> "$SUMMARY"
+    echo "| $name | \`$pin\` | \`$latest\` | 🔸 drift |" >> "$SUMMARY"
     drift=1
   fi
 done
@@ -82,17 +86,19 @@ done
 if [ "$drift" = 1 ]; then
   cat >> "$SUMMARY" <<'EOF'
 
-**self-update を有効にした Workspace は上記 latest を走らせています**（CI が検証しているのは
-ピン版）。上流の破壊が紛れていないか確認してください:
+**Workspaces with self-update enabled are running the latest versions above** (what CI
+verifies is the pinned versions). Check that no upstream breakage has slipped in:
 
-1. 実機で `claude --version` を見て実効版を確認する（ピンを信じない）。
-2. 状態検出のフッタ契約を再確認する — `workspace/agent/internal/tmuxx/testdata/footers/SOURCE.txt`
-   の手順で実ペインを取り直し、コーパスと diff する。
-3. 問題なければ Dockerfile の ARG を bump（＝ CI の検証対象を実フリートに追いつかせる）。
+1. Run `claude --version` on a real workspace to confirm the effective version (don't
+   trust the pin).
+2. Re-verify the state-detection footer contract — recapture real panes following
+   `workspace/agent/internal/tmuxx/testdata/footers/SOURCE.txt` and diff against the corpus.
+3. If all is well, bump the Dockerfile ARGs (= bring what CI verifies back in line with
+   the live fleet).
 EOF
   echo
-  echo "ドリフトあり: 実フリート（self-update 有効）は latest を走らせています。"
-  echo "状態検出のフッタ契約を再確認してください（internal/tmuxx/testdata/footers/SOURCE.txt）。"
+  echo "Drift detected: the live fleet (self-update enabled) is running latest."
+  echo "Re-verify the state-detection footer contract (internal/tmuxx/testdata/footers/SOURCE.txt)."
   exit 1
 fi
 exit 0

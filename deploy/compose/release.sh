@@ -1,26 +1,27 @@
 #!/usr/bin/env bash
 # Agent Fleet — build a versioned on-prem release bundle (maintainers).
 #
-# Produces, under ${DIST_DIR:-./dist}/ (docs/35 §35.2 の A/B/D):
-#   agent-fleet-<VERSION>/           … bundle dir（下記 deploy surface）
-#   agent-fleet-<VERSION>.tar.gz     … A: compose deploy surface + aws/（ec2-single・
-#                                       ecs cfn・release-ecr）+ LICENSE/NOTICE
-#   agent-fleet-images-<VERSION>.tar.gz … B（--save 時）: docker save（CP+Workspace、
-#                                       air-gap 用。A とは独立の成果物）
-#   SHA256SUMS                       … D: 上記のチェックサム
+# Produces, under ${DIST_DIR:-./dist}/ (A/B/D of docs/35 §35.2):
+#   agent-fleet-<VERSION>/           ... bundle dir (the deploy surface below)
+#   agent-fleet-<VERSION>.tar.gz     ... A: compose deploy surface + aws/ (ec2-single,
+#                                       ecs cfn, release-ecr) + LICENSE/NOTICE
+#   agent-fleet-images-<VERSION>.tar.gz ... B (with --save): docker save (CP+Workspace,
+#                                       for air-gap; an artifact independent of A)
+#   SHA256SUMS                       ... D: checksums of the above
 #
 # Images are tagged ${REGISTRY}/agent-fleet/{control-plane,workspace}:${VERSION}.
-# 配布 variant（docs/35 §35.4.1/§35.4.3）: 既定で
-#   - workspace は lean（BAKE_AGENT_CLIS=0・エージェント CLI は起動時ピン install）。
-#     自社用の全焼き込みは BAKE_AGENT_CLIS=1 で明示。
-#   - CP の docs は internal denylist（docs/.distignore）適用のステージング済みツリー。
+# Distribution variants (docs/35 §35.4.1/§35.4.3): by default
+#   - workspace is lean (BAKE_AGENT_CLIS=0; agent CLIs are pin-installed at start).
+#     The fully-baked internal build must be requested with BAKE_AGENT_CLIS=1.
+#   - CP docs come from a staged tree with the internal denylist (docs/.distignore)
+#     applied.
 #
 #   VERSION=1.0.0 deploy/compose/release.sh            # build images + bundle (A+D)
 #   VERSION=1.0.0 deploy/compose/release.sh --save     # + docker save tar (B, air-gap)
 #   VERSION=1.0.0 deploy/compose/release.sh --no-build # bundle only (images exist)
-#   BAKE_AGENT_CLIS=1 VERSION=... deploy/compose/release.sh   # 全焼き込み（自社用）
+#   BAKE_AGENT_CLIS=1 VERSION=... deploy/compose/release.sh   # fully baked (internal use)
 #
-# 通常は deploy/release/build.sh（単一入口）経由で呼ぶ（docs/35 §35.6.2）。
+# Normally invoked via deploy/release/build.sh, the single entry point (docs/35 §35.6.2).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -31,7 +32,8 @@ VERSION="${VERSION:?set VERSION=<tag> (e.g. VERSION=1.0.0)}"
 REGISTRY="${REGISTRY:-agent-fleet}"
 CP_IMAGE="$REGISTRY/control-plane:$VERSION"
 WS_IMAGE="$REGISTRY/workspace:$VERSION"
-# 配布既定は lean（CLI 抜き）。BAKE_AGENT_CLIS=1 で従来の全焼き込み。
+# Distribution default is lean (no baked CLIs). BAKE_AGENT_CLIS=1 restores the
+# fully-baked build.
 BAKE_AGENT_CLIS="${BAKE_AGENT_CLIS:-0}"
 
 DO_BUILD=1; DO_SAVE=0
@@ -48,9 +50,9 @@ OUT="$DIST/agent-fleet-$VERSION"
 rm -rf "$OUT"; mkdir -p "$OUT"
 
 if [ "$DO_BUILD" = 1 ]; then
-  # 配布イメージの docs は internal denylist（docs/.distignore、docs/35 §35.4.3）を
-  # 適用したステージング済みツリーを焼く。ステージは build context（repo root）内に
-  # 置く必要があるので deploy/release/.docs-stage を使う（gitignore 済み）。
+  # Bake the distribution image's docs from a staged tree with the internal denylist
+  # (docs/.distignore, docs/35 §35.4.3) applied. The stage must live inside the build
+  # context (repo root), so it goes in deploy/release/.docs-stage (gitignored).
   DOCS_STAGE_REL="deploy/release/.docs-stage"
   DOCS_STAGE="$ROOT/$DOCS_STAGE_REL"
   rm -rf "$DOCS_STAGE"; mkdir -p "$DOCS_STAGE"
@@ -81,7 +83,7 @@ cp "$HERE/docker-compose.yml" "$HERE/Caddyfile" "$HERE/.env.example" \
    "$HERE/backup.sh" "$HERE/restore.sh" "$HERE/load-images.sh" \
    "$HERE/README.md" "$ROOT/LICENSE" "$ROOT/NOTICE" "$OUT/"
 # AWS deploy surface (docs/35 §35.2 A): ec2-single cfn + ecs cfn/ + runbooks.
-# ローカルの鍵類（gitignore 対象）が紛れ込まないよう明示除去する。
+# Explicitly strip local key material (gitignored) so it cannot slip into the bundle.
 cp -R "$ROOT/deploy/aws" "$OUT/aws"
 rm -f "$OUT"/aws/ec2-single/*-key "$OUT"/aws/ec2-single/*-key.pub "$OUT"/aws/ec2-single/*.pem
 # Pin the bundle to this VERSION so `compose up` uses the released images by

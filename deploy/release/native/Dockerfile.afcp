@@ -1,6 +1,6 @@
-# af-cp（native 用 CP 静的バイナリ）のビルダー。control-plane/Dockerfile の build
-# ステージと同じレシピ（CGO off・pure Go sqlite・migrations go:embed）で、イメージに
-# せずバイナリだけ取り出す。context は repo root。
+# Builder for af-cp (static CP binary for native). Same recipe as the build stage of
+# control-plane/Dockerfile (CGO off, pure-Go sqlite, migrations via go:embed), but
+# extracts just the binary instead of making an image. Context is repo root.
 #
 #   docker build -f deploy/release/native/Dockerfile.afcp \
 #     --build-arg VERSION=<v> --output type=local,dest=<dir> .

@@ -1,157 +1,176 @@
-# WSL で個人利用（認証なし・単一ユーザーで即起動）
+# Personal use on WSL (no auth, single user, instant start)
 
-Windows の **WSL2** 上で、agent-fleet を**1人の検証用**にすぐ立ち上げるための runbook。
-ログイン画面もテナント選択もなし（`AUTH=dev` の固定ユーザー `dev`）、ワークスペースは
-WSL 内の Docker で起動します。本番向けの Compose + Caddy(自動TLS) 構成（`deploy/compose/`）は
-公開ドメイン/80・443 が要るので個人検証には使いません。
+Agent Fleet is a self-hosted web console for running AI coding agents (Claude Code,
+Codex CLI, OpenCode, GitHub Copilot CLI) as a managed fleet — each member gets an
+isolated workspace with a persistent home, and drives agent sessions from the browser.
 
-起動は `deploy/local/run-dev.sh wsl` 一本（旧 `wsl-quickstart.sh` は同じものを呼ぶ
-後方互換ラッパー）。以下はその前提づくりです。
+This runbook gets agent-fleet up quickly on Windows **WSL2** for **single-person
+evaluation**. There is no login screen and no tenant picker (`AUTH=dev` with the fixed
+user `dev`), and workspaces run in Docker inside WSL. The production Compose + Caddy
+(auto-TLS) setup (`deploy/compose/`) needs a public domain and ports 80/443, so it is
+not used for personal evaluation.
+
+Startup is a single command: `deploy/local/run-dev.sh wsl` (the old `wsl-quickstart.sh`
+is a backward-compat wrapper that calls the same thing). The rest of this document sets
+up its prerequisites.
 
 ---
 
-## 0. 全体像（何が「省かれて」いるか）
+## 0. The big picture (what is "left out")
 
-- **認証**: `AUTH=dev`（既定）。OAuth ゲートも oauth2-proxy もかからず、全リクエストが
-  固定ユーザー `dev` に解決されます。ログイン不要。
-- **テナント**: 内部的に「default」テナントが1個だけ自動生成され、`dev` が自動所属します。
-  UI 上でテナントを意識することはありません（複数所属時のみ選択が要る仕組みなので、
-  1人なら常に自動選択）。
-- **暗号化**: `AF_MASTER_KEY` 未設定 → at-rest 暗号化オフ（シークレットは平文 JSON）。個人検証前提。
-- **ランタイム**: `AF_RUNTIME=local` → WSL 内 Docker でワークスペースコンテナを起動。
+- **Auth**: `AUTH=dev` (default). No OAuth gate, no oauth2-proxy — every request
+  resolves to the fixed user `dev`. No login needed.
+- **Tenants**: a single "default" tenant is auto-created internally and `dev` joins it
+  automatically. You never deal with tenants in the UI (selection only appears with
+  multiple memberships, so a single user is always auto-selected).
+- **Encryption**: `AF_MASTER_KEY` unset → at-rest encryption off (secrets stored as
+  plain JSON). Acceptable for personal evaluation.
+- **Runtime**: `AF_RUNTIME=local` → workspace containers start in Docker inside WSL.
 
-コードを削る必要はありません。これらは `run-dev.sh` / `wsl-quickstart.sh` の既定挙動です。
+No code changes are needed; all of the above is the default behavior of `run-dev.sh` /
+`wsl-quickstart.sh`.
 
-## 1. 前提ソフト（WSL2 ディストロ内に入れる）
+## 1. Prerequisites (install inside the WSL2 distro)
 
-推奨は **WSL2 ディストロ内に native な Docker Engine を直接入れる**構成です（Docker Desktop 連携でも
-動きますが、この構成は `network_mode` を使わない代わりにホスト Docker と同一名前空間・同一パスを
-前提にするため、native の方が素直）。
+The recommended setup is **native Docker Engine installed directly inside the WSL2
+distro** (Docker Desktop integration also works, but instead of using `network_mode`
+this setup assumes the same namespaces and paths as the host Docker, so native is the
+simpler fit).
 
-- **Docker Engine（native dockerd）**
+- **Docker Engine (native dockerd)**
   ```bash
-  curl -fsSL https://get.docker.com | sh          # docker-ce を導入
-  sudo usermod -aG docker "$USER"                 # 以後 sudo 無しで docker
-  sudo service docker start                        # WSL では systemd 無しでも service で起動可
-  # 新しいシェルを開き直して: docker info が通ればOK
+  curl -fsSL https://get.docker.com | sh          # install docker-ce
+  sudo usermod -aG docker "$USER"                 # docker without sudo from now on
+  sudo service docker start                        # on WSL, `service` works even without systemd
+  # open a new shell: you're set once `docker info` succeeds
   ```
-  systemd を有効化しておくと `dockerd` が自動起動して楽です（`/etc/wsl.conf` に `[boot]\nsystemd=true`）。
-- **cgroup v2**（メモリ上限 `--memory` とリソース表示が依存）
+  Enabling systemd auto-starts `dockerd` and saves the manual step (`[boot]\nsystemd=true`
+  in `/etc/wsl.conf`).
+- **cgroup v2** (the `--memory` cap and resource display depend on it)
   ```bash
-  stat -fc %T /sys/fs/cgroup     # => cgroup2fs なら OK
+  stat -fc %T /sys/fs/cgroup     # => cgroup2fs means OK
   ```
-  近年の WSL2 は既定で v2。古い場合は WSL を更新（`wsl --update`）してください。
-- **Go**（Control Plane をホストビルド） … https://go.dev/dl/ から入れて PATH に通す。
-- **Node**（Console の Vite ビルド） … nvm 推奨。
+  Recent WSL2 defaults to v2. If yours is older, update WSL (`wsl --update`).
+- **Go** (host-builds the Control Plane) … install from https://go.dev/dl/ and add to
+  PATH.
+- **Node** (Vite build of the Console) … nvm recommended.
   ```bash
   curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
   . ~/.nvm/nvm.sh && nvm install --lts
   ```
 
-## 2. 起動
+## 2. Start
 
 ```bash
 git clone <this-repo> && cd agent-fleet
-deploy/local/run-dev.sh wsl        # 旧 wsl-quickstart.sh はこのラッパー（引き続き使える）
+deploy/local/run-dev.sh wsl        # the old wsl-quickstart.sh wraps this (still works)
 ```
 
-起動スクリプトは `run-dev.sh` に一本化され、サブコマンドで形態を選びます:
-`local`（開発既定・Docker）/ `wsl`（本プリセット）/ `native`（Docker なし、§6）/
-`reset`（データ初期化、§5）。
+Startup scripts are unified into `run-dev.sh`; pick the form with a subcommand:
+`local` (dev default, Docker) / `wsl` (this preset) / `native` (no Docker, §6) /
+`reset` (wipe data, §5).
 
-スクリプトがやること:
-1. preflight（docker 疎通・cgroup v2・go・npm）を確認。
-2. 共有 JDK を `~/.local/share/agent-fleet/shared/jvm` に一度だけ展開し、bind-mount で提供（`WS_JDK=0` で省略可、§4）。
-3. ワークスペースイメージをビルド（rtk は全ビルド共通で常時同梱）。
-4. Console(Vite) と Control Plane(Go) をビルド。
-5. `AUTH=dev` / `AF_RUNTIME=local` で CP を起動。
+What the script does:
+1. Preflight checks (docker reachability, cgroup v2, go, npm).
+2. Extracts the shared JDKs once into `~/.local/share/agent-fleet/shared/jvm` and
+   serves them via bind mount (skippable with `WS_JDK=0`, §4).
+3. Builds the workspace image (rtk is always included in every build).
+4. Builds the Console (Vite) and Control Plane (Go).
+5. Starts the CP with `AUTH=dev` / `AF_RUNTIME=local`.
 
-初回はイメージビルド（Chromium/各種CLI焼き込み）と JDK 展開で時間がかかります。
+The first run takes a while for the image build (baking Chromium and the CLIs) and the
+JDK extraction.
 
-### GitHub 連携（デバイスフロー）
+### GitHub integration (device flow)
 
-GitHub の clone/push を OAuth デバイスフローで通したい場合は、`GITHUB_OAUTH_CLIENT_ID` を
-渡します（client_id は**非秘密**。デバイスフローに必要なのはこれだけ）。
+To let GitHub clone/push go through the OAuth device flow, provide
+`GITHUB_OAUTH_CLIENT_ID` (the client_id is **not a secret**; it is all the device flow
+needs).
 
-1. GitHub で OAuth App を作成（Settings → Developer settings → OAuth Apps）。
-   **「Enable Device Flow」を ON** にする。
-2. ひな型をコピーして client_id を記入（このファイルは git-ignore 済み）:
+1. Create an OAuth App on GitHub (Settings → Developer settings → OAuth Apps) and turn
+   **"Enable Device Flow" ON**.
+2. Copy the template and fill in the client_id (the file is git-ignored):
    ```bash
    cp deploy/local/oauth.env.example deploy/local/oauth.env
-   # deploy/local/oauth.env を編集し GITHUB_OAUTH_CLIENT_ID=<your-client-id> を設定
+   # edit deploy/local/oauth.env and set GITHUB_OAUTH_CLIENT_ID=<your-client-id>
    ```
-3. `run-dev.sh wsl` を再実行。起動時に `deploy/local/oauth.env` を自動で読み込み、
-   `GITHUB_OAUTH_CLIENT_ID` を CP 経由でワークスペースへ注入します（起動ログに
-   `loaded .../oauth.env（… client_id: 設定あり）` と出ます）。
-4. Console からワークスペースで GitHub 連携を開始すると、デバイスコードと認証 URL が
-   案内されます。`gh auth login` は不要です（透過認証ラッパーがトークンを注入）。
+3. Re-run `run-dev.sh wsl`. On startup it auto-sources `deploy/local/oauth.env` and
+   injects `GITHUB_OAUTH_CLIENT_ID` into workspaces via the CP (the startup log shows
+   `loaded .../oauth.env (GitHub device flow client_id: set)`).
+4. Start the GitHub integration from a workspace in the Console; it walks you through
+   a device code and verification URL. `gh auth login` is not needed (the
+   transparent-auth wrapper injects the token).
 
-この WSL プリセットは単一ユーザー固定のため **`AUTH` は常に `dev`** です（`oauth.env` に
-`AUTH=oauth` を書いても採用しません＝ログイン認証は変えません）。`oauth.env` から読むのは
-git プロバイダ用の `GITHUB_OAUTH_CLIENT_ID` / `BITBUCKET_OAUTH_KEY,SECRET` / `PUBLIC_BASE_URL`
-だけです。token 貼り付け（PAT）でも連携でき、その場合は client_id 不要です。
+This WSL preset is fixed to a single user, so **`AUTH` is always `dev`** (writing
+`AUTH=oauth` into `oauth.env` is not honored = login auth never changes). The only
+values read from `oauth.env` are the git-provider ones: `GITHUB_OAUTH_CLIENT_ID` /
+`BITBUCKET_OAUTH_KEY,SECRET` / `PUBLIC_BASE_URL`. Token paste (PAT) also works for the
+integration, in which case no client_id is needed.
 
-## 3. ブラウザで開く
+## 3. Open in a browser
 
-CP は `http://localhost:8099` で待ち受けます。WSL2 の localhostForwarding により、
-**Windows 側のブラウザからそのまま `http://localhost:8099`** を開けます。
-そこから Console でリポジトリを clone し、Claude セッションを起動してください。
+The CP listens on `http://localhost:8099`. Thanks to WSL2 localhostForwarding you can
+open **`http://localhost:8099` directly from a browser on the Windows side**. From
+there, clone a repository in the Console and start a Claude session.
 
-## 4. rtk と JDK の扱い
+## 4. rtk and JDKs
 
-- **rtk**（Bash のトークン節約フック）: **常時イメージ焼き込み**（`workspace/Dockerfile` の
-  `ARG RTK_VERSION` でピン止め・ビルド時にダウンロード）。静的バイナリ1個なのでイメージへの
-  影響は誤差。entrypoint がフックを自動 seed します。設定モーダルの「起動時に claude /
-  opencode / codex / rtk を最新へ更新する」を ON にすると、起動毎に rtk も最新版へ
-  更新されます（OFF に戻して Stop → Start すれば焼き込み版へ復帰）。
-- **JDK**: 既定は**共有 bind-mount**（`WS_JVM_DIR`）でイメージを太らせません。加えて、どの環境でも
-  コンテナ内から後入れできます:
+- **rtk** (the token-saving Bash hook): **always baked into the image** (pinned by
+  `ARG RTK_VERSION` in `workspace/Dockerfile`, downloaded at build time). It is a
+  single static binary, so the impact on image size is negligible. The entrypoint
+  auto-seeds the hook. Turning ON the settings-modal option "update claude / opencode /
+  codex / rtk to latest at startup" also updates rtk to the latest version on every
+  boot (turn it OFF and Stop → Start to return to the baked version).
+- **JDKs**: the default is a **shared bind mount** (`WS_JVM_DIR`) that keeps the image
+  slim. In addition, any environment can install one from inside the container:
   ```bash
-  workspace-agent install-jdk 21     # 最新 GA Temurin を ~/.local/share/agent-fleet/jvm に導入
+  workspace-agent install-jdk 21     # install the latest GA Temurin into ~/.local/share/agent-fleet/jvm
   ```
-  Console の**ツール設定（toolchains）で Java 版を選ぶ**と、次回コンテナ起動時に未導入分を
-  entrypoint が自動でこの場所へ入れ、`JAVA_HOME` を各セッションへ通します。`WS_JDK=0` で起動すると
-  共有 provision を省き、この on-demand 導入だけに寄せられます。
+  **Selecting a Java version in the Console's toolchains settings** makes the
+  entrypoint install any missing version into that location at the next container
+  start and export `JAVA_HOME` into each session. Starting with `WS_JDK=0` skips the
+  shared provision and relies on this on-demand install alone.
 
-## 5. 停止・後片付け・再ビルド
+## 5. Stop, clean up, rebuild
 
-- 停止: フォアグラウンドの CP を `Ctrl-C`。起動済みワークスペースコンテナは残るので
-  必要なら `docker ps` / `docker stop <name>`。
-- データ: `~/.local/share/agent-fleet`（DB・各ユーザー home・共有JDK）に永続。
-- 初期化: CP を止めてから `deploy/local/run-dev.sh reset`。既定は dev ユーザーの
-  ワークスペース（home / claude-config）だけを消し、DB と共有 JDK は温存します。
-  `--all` で DB・共有 JDK 含む完全初期化（次回の JDK provision をやり直し）。
-  docker / native どちらの残骸（コンテナ・agent プロセス・専用 tmux）も掃除してから
-  消すので、動かした形態を問わず安全に使えます。
-- 再ビルド: CLI 版などを上げたら `run-dev.sh wsl` を再実行（イメージ再ビルド）。
+- Stop: `Ctrl-C` the foreground CP. Started workspace containers stay up; use
+  `docker ps` / `docker stop <name>` if needed.
+- Data: persisted under `~/.local/share/agent-fleet` (DB, per-user homes, shared JDKs).
+- Wipe: stop the CP, then `deploy/local/run-dev.sh reset`. The default deletes only
+  the dev user's workspace (home / claude-config), keeping the DB and shared JDKs.
+  `--all` is a full wipe including the DB and shared JDKs (the next run re-provisions
+  the JDKs). It cleans up leftovers from either runtime (container, agent process,
+  dedicated tmux) before deleting, so it is safe no matter which form you ran.
+- Rebuild: after bumping CLI versions etc., re-run `run-dev.sh wsl` (rebuilds the
+  image).
 
-## 6. Docker を入れられない場合（実験的: ネイティブ実行）
+## 6. If you cannot install Docker (experimental: native runtime)
 
-どうしても Docker を導入できない WSL2 では、コンテナを使わずワークスペースを
-**ホストプロセス**として動かせます（`AF_RUNTIME=native`・単一ユーザー専用・実験的）:
+On WSL2 where Docker really cannot be installed, workspaces can run as **host
+processes** without containers (`AF_RUNTIME=native`, single-user only, experimental):
 
 ```bash
-# tmux / git / claude 等の CLI をホストに入れておく（イメージ焼き込みが無いため）
+# install CLIs like tmux / git / claude on the host (nothing is baked in)
 deploy/local/run-dev.sh native
 ```
 
-コンテナ隔離・メモリ上限・entrypoint 初期化（claude 自動インストール等）が無い、という
-割り切りの構成です。詳細と制約は [docs/34-native-runtime.md](../../docs/34-native-runtime.md)。
-ワークスペースの HOME は `~/.local/share/agent-fleet/dev/home` に分離され（実 `~` は
-荒れない）、Windows の Explorer からは `\\wsl.localhost\<ディストロ>\...` でそのまま
-参照できます（docs/34 §34.4）。Docker が入るなら §1 の構成（`wsl-quickstart.sh`）を
-推奨します。
+This is a deliberate trade-off: no container isolation, no memory caps, no entrypoint
+initialization (automatic claude install etc.). Details and constraints:
+[docs/34-native-runtime.md](../../docs/34-native-runtime.md). The workspace HOME is
+isolated at `~/.local/share/agent-fleet/dev/home` (your real `~` stays untouched) and
+is browsable from Windows Explorer at `\\wsl.localhost\<distro>\...` (docs/34 §34.4).
+If Docker is an option, prefer the §1 setup (`wsl-quickstart.sh`).
 
-## 7. トラブルシュート
+## 7. Troubleshooting
 
-| 症状 | 確認 |
+| Symptom | Check |
 |------|------|
-| `docker daemon に接続できない` | `sudo service docker start` / `usermod -aG docker` 後に再ログイン |
-| cgroup が v2 でない警告 | `wsl --update`（Windows 側）で WSL カーネル更新 |
-| Console ビルドが OOM | `NODE_OPTIONS=--max-old-space-size=3072`（スクリプトは設定済み）。メモリ逼迫時は他ビルドを止める |
-| `go`/`npm` が無い | §1 で導入し PATH を通す（nvm はスクリプトが自動 source） |
-| Java が見つからない | `ls -d /usr/lib/jvm/temurin-*-jdk* ~/.local/share/agent-fleet/jvm/temurin-*-jdk*`、無ければ `workspace-agent install-jdk <major>` |
-| エージェント選択に `agy` が出ない | ホスト CPU が RDRAND 非提示（`grep -w rdrand /proc/cpuinfo` が空）。agy は FIPS ビルドで RDRAND 必須のため意図的に非露出（[0008](../../docs/decisions/0008-antigravity-cli-agent-kind.md)） |
+| `cannot reach the docker daemon` | `sudo service docker start` / `usermod -aG docker`, then log in again |
+| warning that cgroup is not v2 | update the WSL kernel with `wsl --update` (on the Windows side) |
+| Console build OOMs | `NODE_OPTIONS=--max-old-space-size=3072` (the script already sets it). Stop other builds when memory is tight |
+| `go`/`npm` missing | install per §1 and fix PATH (the script auto-sources nvm) |
+| Java not found | `ls -d /usr/lib/jvm/temurin-*-jdk* ~/.local/share/agent-fleet/jvm/temurin-*-jdk*`; if empty, `workspace-agent install-jdk <major>` |
+| `agy` missing from the agent picker | the host CPU does not expose RDRAND (`grep -w rdrand /proc/cpuinfo` is empty). agy is a FIPS build that requires RDRAND, so it is deliberately hidden ([0008](../../docs/decisions/0008-antigravity-cli-agent-kind.md)) |
 
-デプロイ形態と env 索引は [docs/dev/09-deploy.md](../../docs/dev/09-deploy.md)、本番 Compose 手順は
-[deploy/compose/README.md](../compose/README.md) を参照。
+For deployment forms and the env index see [docs/dev/09-deploy.md](../../docs/dev/09-deploy.md);
+for production Compose steps see [deploy/compose/README.md](../compose/README.md).

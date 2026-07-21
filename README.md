@@ -1,114 +1,140 @@
-# Agent Fleet — Claude マルチユーザー運用コンソール
+# Agent Fleet — a self-hosted console for running AI coding agents as a fleet
 
-社内の複数メンバーが Claude Code を効率良く共同利用するための Web サービス。
-ユーザー毎の隔離環境（コンテナ）で Bitbucket リポジトリを扱い、Claude セッションを
-Web から起動・操作・管理する。同一コアを**ローカル（Docker）でも AWS でも**動かせるよう
-デプロイ層をポート&アダプタで分離する（[portability](docs/dev/09-deploy.md)）。
+Agent Fleet is a web service that lets a team share AI coding agents — Claude Code,
+Codex CLI, OpenCode, GitHub Copilot CLI — efficiently and safely. Each member gets an
+isolated per-user environment (container) with a persistent home and git working
+copies, and starts, drives and manages agent sessions from the browser. A Go control
+plane orchestrates the workspaces; the same core runs **both locally (Docker) and on
+AWS** — the deployment layer is separated via ports & adapters
+([portability](docs/dev/09-deploy.md)).
 
-**状態: Phase 2 完了・Phase 3 進行中。** オンプレ 1 台で複数ユーザーが相互不可視に並行利用でき
-（per-user Workspace / AuthGateway / ネットワーク分離 / at-rest 暗号化）、Phase 3 のプロダクト化は
-P3-1〜P3-5 + Console 全面刷新（React+Vite）まで完了。次は P3-7（AWS アダプタ）以降（[docs/roadmap.md](docs/roadmap.md)）。
-**現状の運用詳細・落とし穴は [docs/HANDOFF.md](docs/HANDOFF.md)（次セッションはまず読む）。**
-コード: [`workspace/`](workspace/)（Agent + イメージ）/ [`control-plane/`](control-plane/) /
-[`console/`](console/) / 起動は [`deploy/local/run-dev.sh`](deploy/local/run-dev.sh)
-（サブコマンド式: `local`＝Docker 既定 / `wsl`＝WSL プリセット / `native`＝Docker なし /
-`reset`＝データ初期化。[docs/dev/10 §10.3](docs/dev/10-development.md)）。
+**Status: Phase 2 complete, Phase 3 in progress.** Multiple users can work in
+parallel, mutually invisible, on a single on-prem host (per-user Workspace /
+AuthGateway / network isolation / at-rest encryption). Phase 3 productization is done
+through P3-1–P3-5 plus the full Console rebuild (React+Vite). Next up is P3-7 (AWS
+adapter) onwards ([docs/roadmap.md](docs/roadmap.md)).
+**Current operational details and pitfalls: [docs/HANDOFF.md](docs/HANDOFF.md) (read
+first in a new session).**
+Code: [`workspace/`](workspace/) (Agent + image) / [`control-plane/`](control-plane/) /
+[`console/`](console/); start via [`deploy/local/run-dev.sh`](deploy/local/run-dev.sh)
+(subcommands: `local` = Docker default / `wsl` = WSL preset / `native` = no Docker /
+`reset` = wipe data. [docs/dev/10 §10.3](docs/dev/10-development.md)).
 
-## セルフホスト（オンプレ / Docker Compose）
+## Self-hosting (on-prem / Docker Compose)
 
-各社が自社インフラで 1 デプロイを立てる想定。イメージ一式を `compose up` するだけ
-（Caddy が Let's Encrypt で自動 TLS、CP ネイティブ Google OAuth でログイン）。
+Each company runs one deployment on its own infrastructure. Just `compose up` the
+image set (Caddy handles automatic TLS via Let's Encrypt; login uses the CP-native
+Google OAuth).
 
 ```bash
 cd deploy/compose
-cp .env.example .env     # 秘密を生成して記入（AF_MASTER_KEY 等）
+cp .env.example .env     # generate and fill in secrets (AF_MASTER_KEY etc.)
 docker compose up -d --build
 ```
 
-手順・鍵生成・バックアップ/復元・アップグレード・障害対応・DooD 制約は
-**[deploy/compose/README.md](deploy/compose/README.md)（runbook）** に集約。ローカル dev
-（ホストプロセス起動）は従来どおり [`deploy/local/run-dev.sh`](deploy/local/run-dev.sh)、
-WSL 個人利用（Docker あり/なし）は [deploy/local/README-wsl.md](deploy/local/README-wsl.md)。
+Procedures, key generation, backup/restore, upgrades, incident response and DooD
+constraints are collected in **[deploy/compose/README.md](deploy/compose/README.md)
+(runbook)**. Local dev (host processes) remains
+[`deploy/local/run-dev.sh`](deploy/local/run-dev.sh); personal WSL use (with or
+without Docker) is covered by
+[deploy/local/README-wsl.md](deploy/local/README-wsl.md).
 
-## 確定済みの前提（v1）
+## Settled assumptions (v1)
 
-| 論点 | 決定 | 理由・補足 |
+| Topic | Decision | Rationale / notes |
 |------|------|-----------|
-| Claude 認証 | 各ユーザーが自分のアカウントで `/login` | コンソールで各自の認証状況を可視化・再ログイン誘導する |
-| ユーザー分離 | ユーザー毎コンテナ | 移植性・隔離が高く AWS と相性が良い |
-| 想定規模 | 〜20 人（同時） | 単一クラスタ + オーケストレーション層で十分 |
-| 永続化 | `local`=bind mount / `aws`=EBS/EFS | ホーム・clone・認証情報・履歴をディスク保持 |
-| git 認証 | Console から HTTPS トークン/OAuth（Connections）| SSH 鍵から格下げ。秘密を CP は保持しない（[decisions/0003](docs/decisions/0003-ssh-to-connections.md)）|
-| 技術スタック | Console=React+Vite / Backend=Go | 常駐・WS プロキシ・コンテナ制御に Go が好適（[decisions/0004](docs/decisions/0004-vanilla-to-react.md)）|
-| 提供モデル | パッケージ製品・各社セルフホスト | 1 社=1 デプロイ。SaaS は ToS で断念（[decisions/0001](docs/decisions/0001-self-host-vs-saas.md)）|
-| デプロイ層 | local / aws を同一コアで切替 | ポート&アダプタで分離（local は Docker、local-first で進める）|
+| Claude auth | each user runs `/login` with their own account | the console surfaces each user's auth state and prompts re-login |
+| User isolation | one container per user | highly portable, strong isolation, fits AWS well |
+| Target scale | ~20 users (concurrent) | a single cluster + an orchestration layer is enough |
+| Persistence | `local`=bind mount / `aws`=EBS/EFS | home, clones, credentials and history are kept on disk |
+| Git auth | HTTPS tokens/OAuth via Console (Connections) | downgraded from SSH keys; the CP holds no secrets ([decisions/0003](docs/decisions/0003-ssh-to-connections.md)) |
+| Tech stack | Console=React+Vite / Backend=Go | Go suits daemons, WS proxying and container control ([decisions/0004](docs/decisions/0004-vanilla-to-react.md)) |
+| Delivery model | packaged product, self-hosted per company | 1 company = 1 deployment. SaaS abandoned due to ToS ([decisions/0001](docs/decisions/0001-self-host-vs-saas.md)) |
+| Deployment layer | local / aws switchable over one core | separated via ports & adapters (local = Docker, local-first) |
 
-## ドキュメント構成
+## Documentation layout
 
-索引は [docs/README.md](docs/README.md)。**仕様の正＝[docs/dev/](docs/dev/README.md)（開発者向け）とコード、
-操作の正＝[docs/guide/](docs/guide/README.md)（利用者向け）、稼働状態＝[HANDOFF](docs/HANDOFF.md)。**
-意思決定（なぜ）＝`decisions/`、前向きの計画＝`roadmap.md`、使い終わった計画・完了した機能設計＝`history/`。
+Index: [docs/README.md](docs/README.md). **Source of truth for specs =
+[docs/dev/](docs/dev/README.md) (for developers) plus the code; for operations =
+[docs/guide/](docs/guide/README.md) (for users); for runtime state =
+[HANDOFF](docs/HANDOFF.md).**
+Decisions (why) = `decisions/`; forward-looking plans = `roadmap.md`; finished plans
+and completed feature designs = `history/`.
 
-**開発者向け [docs/dev/](docs/dev/README.md)**（コードに追従する設計と契約）
-| ファイル | 内容 |
+**Developer docs [docs/dev/](docs/dev/README.md)** (designs and contracts that track
+the code)
+| File | Contents |
 |----------|------|
-| [01-architecture](docs/dev/01-architecture.md) | 提供モデル・用語・3プロセス構成・認証2層・主要フロー・アダプタ |
-| [02-console](docs/dev/02-console.md) / [03-control-plane](docs/dev/03-control-plane.md) / [04-workspace-agent](docs/dev/04-workspace-agent.md) | 各コンポーネントの設計 |
-| [05-api-contracts](docs/dev/05-api-contracts.md) / [06-data-model](docs/dev/06-data-model.md) | API 境界・中継 / データモデル |
-| [07-security](docs/dev/07-security.md) / [08-integrations](docs/dev/08-integrations.md) | 脅威モデル・認証・暗号 / 外部連携 |
-| [09-deploy](docs/dev/09-deploy.md) / [10-development](docs/dev/10-development.md) | デプロイ・ポータビリティ / 開発作法 |
-| [90-code-map](docs/dev/90-code-map.md) / [91-internal-git](docs/dev/91-internal-git.md) | コードマップ / 内部 git プロバイダ |
+| [01-architecture](docs/dev/01-architecture.md) | delivery model, terminology, 3-process layout, 2-layer auth, main flows, adapters |
+| [02-console](docs/dev/02-console.md) / [03-control-plane](docs/dev/03-control-plane.md) / [04-workspace-agent](docs/dev/04-workspace-agent.md) | per-component design |
+| [05-api-contracts](docs/dev/05-api-contracts.md) / [06-data-model](docs/dev/06-data-model.md) | API boundaries and relaying / data model |
+| [07-security](docs/dev/07-security.md) / [08-integrations](docs/dev/08-integrations.md) | threat model, auth, crypto / external integrations |
+| [09-deploy](docs/dev/09-deploy.md) / [10-development](docs/dev/10-development.md) | deployment & portability / development practices |
+| [90-code-map](docs/dev/90-code-map.md) / [91-internal-git](docs/dev/91-internal-git.md) | code map / internal git provider |
 
-**利用者向け [docs/guide/](docs/guide/README.md)**: ペルソナ別分冊（member / admin / operator / lite）。
+**User guide [docs/guide/](docs/guide/README.md)**: split by persona (member / admin /
+operator / lite).
 
-**引き継ぎ・計画**
-| ファイル | 内容 |
+**Handoff & plans**
+| File | Contents |
 |----------|------|
-| [docs/HANDOFF.md](docs/HANDOFF.md) | このホストの稼働状態・実行作法・落とし穴・現在地 |
-| [docs/CHANGELOG-handoff.md](docs/CHANGELOG-handoff.md) | 時系列ログ（日付＋1行）|
-| [docs/roadmap.md](docs/roadmap.md) | フェーズ一覧・マイルストーン + Phase 3 詳細設計（P3-1〜P3-10）|
+| [docs/HANDOFF.md](docs/HANDOFF.md) | this host's runtime state, working practices, pitfalls, current position |
+| [docs/CHANGELOG-handoff.md](docs/CHANGELOG-handoff.md) | chronological log (date + one line) |
+| [docs/roadmap.md](docs/roadmap.md) | phase list, milestones + Phase 3 detailed design (P3-1–P3-10) |
 
-> 旧 `docs/reference/` は dev/ へ再編済み（読み替え表は [docs/README.md](docs/README.md)）。
+> The old `docs/reference/` was reorganized into dev/ (mapping table in
+> [docs/README.md](docs/README.md)).
 
-**decisions/ — 意思決定（なぜ・捨てた選択肢）**
-| ファイル | 内容 |
+**decisions/ — decision records (why, and the discarded options)**
+| File | Contents |
 |----------|------|
-| [0001-self-host-vs-saas.md](docs/decisions/0001-self-host-vs-saas.md) | 提供モデル: SaaS 断念・各社セルフホスト採用（ToS 根拠・残存リスク）|
-| [0002-claude-auth-onboarding.md](docs/decisions/0002-claude-auth-onboarding.md) | Claude 認証: auth と onboarding は別物（ログイン画面の真因）|
-| [0003-ssh-to-connections.md](docs/decisions/0003-ssh-to-connections.md) | git 認証: SSH 鍵 → Connections（HTTPS トークン/OAuth）|
-| [0004-vanilla-to-react.md](docs/decisions/0004-vanilla-to-react.md) | Console スタック: React + Vite を採用 |
-| [0005-envelope-custodian.md](docs/decisions/0005-envelope-custodian.md) | at-rest 鍵: 封筒暗号 + custodian 抽象（on-prem の限界を明記）|
+| [0001-self-host-vs-saas.md](docs/decisions/0001-self-host-vs-saas.md) | delivery model: SaaS abandoned, per-company self-hosting adopted (ToS grounds, residual risk) |
+| [0002-claude-auth-onboarding.md](docs/decisions/0002-claude-auth-onboarding.md) | Claude auth: auth and onboarding are distinct (root cause of the login screen) |
+| [0003-ssh-to-connections.md](docs/decisions/0003-ssh-to-connections.md) | git auth: SSH keys → Connections (HTTPS tokens/OAuth) |
+| [0004-vanilla-to-react.md](docs/decisions/0004-vanilla-to-react.md) | Console stack: React + Vite adopted |
+| [0005-envelope-custodian.md](docs/decisions/0005-envelope-custodian.md) | at-rest keys: envelope encryption + custodian abstraction (on-prem limits stated) |
 
-**history/ — 使い終わった実装プラン（完了・記録）**
-| ファイル | 内容 |
+**history/ — finished implementation plans (done, kept for the record)**
+| File | Contents |
 |----------|------|
-| [phase0-poc.md](docs/history/phase0-poc.md) | Phase 0 PoC 手順書（`/login` 検証）|
-| [phase1-plan.md](docs/history/phase1-plan.md) | Phase 1 実装プラン + 実装結果（§11.10 は今も有効な知見）|
-| [p3-1-metadatastore.md](docs/history/p3-1-metadatastore.md) | P3-1: MetadataStore（SQLite）導入 |
-| [p3-2-identity-tenant.md](docs/history/p3-2-identity-tenant.md) | P3-2: identity↔tenant 多対多 |
-| [p3-3-envelope-crypto.md](docs/history/p3-3-envelope-crypto.md) | P3-3: 封筒暗号 + custodian 抽象 |
-| [p3-4-quota.md](docs/history/p3-4-quota.md) | P3-4: リソースバジェット/クォータ |
-| [p3-5-member-console.md](docs/history/p3-5-member-console.md) | P3-5: メンバー Console UX（git/ファイル可視化）|
-| [console-redesign.md](docs/history/console-redesign.md) | Console UI 刷新ブリーフ（vanilla→React の診断）|
+| [phase0-poc.md](docs/history/phase0-poc.md) | Phase 0 PoC procedure (`/login` verification) |
+| [phase1-plan.md](docs/history/phase1-plan.md) | Phase 1 plan + results (§11.10 remains useful knowledge) |
+| [p3-1-metadatastore.md](docs/history/p3-1-metadatastore.md) | P3-1: MetadataStore (SQLite) |
+| [p3-2-identity-tenant.md](docs/history/p3-2-identity-tenant.md) | P3-2: identity↔tenant many-to-many |
+| [p3-3-envelope-crypto.md](docs/history/p3-3-envelope-crypto.md) | P3-3: envelope encryption + custodian abstraction |
+| [p3-4-quota.md](docs/history/p3-4-quota.md) | P3-4: resource budgets / quotas |
+| [p3-5-member-console.md](docs/history/p3-5-member-console.md) | P3-5: member Console UX (git/file visibility) |
+| [console-redesign.md](docs/history/console-redesign.md) | Console UI rebuild brief (vanilla→React diagnosis) |
 
-## 既存プロトタイプ資産（再利用元）
+## Existing prototype assets (reused from)
 
-個人用フリート運用の仕組みがすでに存在し、これをサービス化する。
+A personal fleet-operation setup already existed; this project turns it into a
+product.
 
-- **`oauth2-proxy`** — Google ドメイン制限の認証ゲート（`emails.txt` ホワイトリスト）。**現行はこれを廃し CP ネイティブ Google OAuth（`AUTH=oauth`）に集約**——許可リストは `deploy/local/allowed-emails.txt`（メール / `@domain`）。設計 [docs/dev/07 §7.3](docs/dev/07-security.md)
-- **`scripts/tmux-claude.sh`** — detached tmux で複数 Claude CLI を冪等起動・resume・世代管理
-- **`CLAUDE_CONFIG_DIR` プロファイル分離** — ディレクトリ配下で別 `~/.claude` を使い分ける仕組み
-- **`~/.claude/settings.json`** — `remoteControlAtStartup` / `skipDangerousModePermissionPrompt` 設定済み
+- **`oauth2-proxy`** — Google domain-restricted auth gate (`emails.txt` allowlist).
+  **Now replaced by CP-native Google OAuth (`AUTH=oauth`)** — the allowlist is
+  `deploy/local/allowed-emails.txt` (emails / `@domain`). Design:
+  [docs/dev/07 §7.3](docs/dev/07-security.md)
+- **`scripts/tmux-claude.sh`** — idempotently starts, resumes and generation-manages
+  multiple Claude CLIs in detached tmux
+- **`CLAUDE_CONFIG_DIR` profile separation** — per-directory separate `~/.claude`
+- **`~/.claude/settings.json`** — `remoteControlAtStartup` /
+  `skipDangerousModePermissionPrompt` preconfigured
 
-## 用語
+## Terminology
 
-- **Workspace** — ユーザー 1 人に対応する永続コンテナ環境。ホームボリュームと稼働プロセスを持つ。
-- **Working copy** — Workspace 内に clone した Bitbucket リポジトリの作業ディレクトリ。
-- **Session** — Working copy に紐づく会話・設定・実行状態の論理単位。Codex / OpenCode は
-  共有 runtime 上でも動き、必ずしも専用 CLI プロセスや tmux session を持たない。
+- **Workspace** — the persistent container environment for one user, with a home
+  volume and running processes.
+- **Working copy** — the working directory of a git repository cloned inside a
+  Workspace.
+- **Session** — the logical unit of a conversation, its settings and execution state,
+  tied to a working copy. Codex / OpenCode can run on a shared runtime and do not
+  necessarily own a dedicated CLI process or tmux session.
 
-## ライセンス
+## License
 
-[Apache License 2.0](LICENSE)（特許グラント付き permissive）。資格情報を扱うツールの
-ソースを公開し各社が暗号/隔離実装を監査できることを採用の強みとする。貢献は
-[CONTRIBUTING.md](CONTRIBUTING.md)、脆弱性報告と脅威モデルは [SECURITY.md](SECURITY.md)。
+[Apache License 2.0](LICENSE) (permissive, with a patent grant). Publishing the
+source of a credential-handling tool so each company can audit the crypto/isolation
+implementation is part of the adoption pitch. Contributions:
+[CONTRIBUTING.md](CONTRIBUTING.md); vulnerability reports and the threat model:
+[SECURITY.md](SECURITY.md).

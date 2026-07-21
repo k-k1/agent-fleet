@@ -3,7 +3,7 @@
 Spin up one Ubuntu 24.04 EC2 instance (Docker pre-installed via cloud-init), a
 stable Elastic IP, a Route53 A record, and an auto-generated SSH key, then run the
 **on-prem Compose stack** (`deploy/compose`) on it. This is the environment used
-for the P3-10 段5 completion gate ("stand it up from the release bundle on a clean
+for the P3-10 stage-5 completion gate ("stand it up from the release bundle on a clean
 host"). It is a single-VM host — **not** the ECS adapter (P3-7).
 
 Only the AWS CLI is required (no Terraform). Tear everything down with one command.

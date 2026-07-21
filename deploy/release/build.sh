@@ -1,25 +1,28 @@
 #!/usr/bin/env bash
-# Agent Fleet — release オーケストレータ（単一入口、docs/35 §35.6.2）。
+# Agent Fleet — release orchestrator (single entry point, docs/35 §35.6.2).
 #
 #   VERSION=0.2.0 deploy/release/build.sh [--compose] [--native] [--save] [--all]
 #
-#   --compose … compose 系成果物（A: bundle tar / B: air-gap images tar / D: SHA256SUMS）。
-#               実装は deploy/compose/release.sh への委譲。P1 ゲート（A+B+D）を
-#               満たすため既定で B（docker save）も作る。イメージは配布 variant
-#               （workspace: BAKE_AGENT_CLIS=0 lean / CP: docs distignore 適用）。
-#   --native  … C（native tar）+ R（lean rootfs）— docs/35 §35.7.2-7。
-#   --bundle-rootfs     … --native で R 同梱の self-contained 版（-bundle tar）も生成。
-#   --rootfs-json <path> … 既存の rootfs.json を使い R の生成をスキップ
-#                          （イメージ不変リリース: 利用者の再 DL なし）。
-#   --save    … --compose の B 生成を明示（既定 ON。互換のため受けるだけ）。
-#   --all     … --compose + --native。
+#   --compose … compose artifacts (A: bundle tar / B: air-gap images tar /
+#               D: SHA256SUMS). Delegates to deploy/compose/release.sh. Builds B
+#               (docker save) by default to satisfy the P1 gate (A+B+D). Images
+#               are the distribution variant (workspace: BAKE_AGENT_CLIS=0 lean /
+#               CP: docs distignore applied).
+#   --native  … C (native tar) + R (lean rootfs) — docs/35 §35.7.2-7.
+#   --bundle-rootfs     … with --native, also produce the self-contained variant
+#                          bundling R (-bundle tar).
+#   --rootfs-json <path> … reuse an existing rootfs.json and skip generating R
+#                          (image-immutable release: no re-download for users).
+#   --save    … explicit B for --compose (default ON; accepted for compatibility).
+#   --all     … --compose + --native.
 #
-# env: ROOTFS_URL_BASE … rootfs.json に焼く R の配布 URL の基底
-#      （既定 https://github.com/k-k1/agent-fleet-dist/releases/download — §35.4.2）。
+# env: ROOTFS_URL_BASE … base of the R distribution URL baked into rootfs.json
+#      (default https://github.com/k-k1/agent-fleet-dist/releases/download — §35.4.2).
 #
-# 出力: deploy/release/dist/（各成果物 + SHA256SUMS）。
-# リリース実ビルドは hosted CI（release-gate.yml）か十分なメモリのあるホストで。
-# ビルドは 1 つずつ直列に（共有ホストのメモリ制約 — docs/35 §35.4）。
+# Output: deploy/release/dist/ (each artifact + SHA256SUMS).
+# Run real release builds on hosted CI (release-gate.yml) or a host with enough
+# memory. Build one artifact at a time, serially (shared-host memory limits —
+# docs/35 §35.4).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -37,7 +40,7 @@ while [ $# -gt 0 ]; do
     --all)     DO_COMPOSE=1; DO_NATIVE=1 ;;
     --bundle-rootfs) BUNDLE_ROOTFS=1 ;;
     --rootfs-json) ROOTFS_JSON="${2:?--rootfs-json needs a path}"; shift ;;
-    --save)    : ;; # B は --compose の既定に含む（互換受け）
+    --save)    : ;; # B is part of the --compose default (compat no-op)
     *) echo "unknown arg: $1" >&2; usage; exit 2 ;;
   esac
   shift
@@ -56,7 +59,7 @@ if [ "$DO_COMPOSE" = 1 ]; then
 fi
 
 if [ "$DO_NATIVE" = 1 ]; then
-  # C（native tar）+ R（lean rootfs）— docs/35 §35.7.2-7。amd64 先行（§35.3.1）。
+  # C (native tar) + R (lean rootfs) — docs/35 §35.7.2-7. amd64 first (§35.3.1).
   ARCH=amd64
   PKG_NAME="agent-fleet-native-$VERSION-linux-$ARCH"
   NATIVE_DIR="$HERE/native"
@@ -66,19 +69,20 @@ if [ "$DO_NATIVE" = 1 ]; then
   rm -rf "$WORK" "$OUT" "$DIST/$PKG_NAME.tar.gz" "$DIST/$PKG_NAME-bundle.tar.gz"
   mkdir -p "$WORK" "$OUT/bin"
 
-  # (i) af-cp 静的ビルド（golang コンテナ・ldflags VERSION — CP Dockerfile と同レシピ）。
+  # (i) af-cp static build (golang container, ldflags VERSION — same recipe as the
+  # CP Dockerfile).
   echo "==> [native] build af-cp (static)"
   docker build -f "$NATIVE_DIR/Dockerfile.afcp" --build-arg "VERSION=$VERSION" \
     --output "type=local,dest=$WORK/afcp" "$ROOT"
   install -m 0755 "$WORK/afcp/af-cp" "$OUT/bin/af-cp"
 
-  # (ii) console dist（node コンテナ）。
+  # (ii) console dist (node container).
   echo "==> [native] build console dist"
   docker build -f "$NATIVE_DIR/Dockerfile.console" \
     --output "type=local,dest=$WORK/console" "$ROOT"
   cp -R "$WORK/console/console" "$OUT/console"
 
-  # (iii) docs ステージング（internal denylist 適用 — compose/release.sh と同じ規則）。
+  # (iii) stage docs (internal denylist applied — same rules as compose/release.sh).
   echo "==> [native] stage docs (distignore applied)"
   mkdir -p "$OUT/docs"
   EXCLUDES=()
@@ -89,7 +93,8 @@ if [ "$DO_NATIVE" = 1 ]; then
   done < "$ROOT/docs/.distignore"
   tar -C "$ROOT/docs" -cf - "${EXCLUDES[@]}" . | tar -C "$OUT/docs" -xf -
 
-  # (iv) 静的 bwrap / git+git-http-backend / zstd（alpine builder・版は Dockerfile.tools の ARG ピン）。
+  # (iv) static bwrap / git+git-http-backend / zstd (alpine builder; versions are
+  # pinned via ARGs in Dockerfile.tools).
   echo "==> [native] build static tools (bwrap/git/zstd)"
   docker build -f "$NATIVE_DIR/Dockerfile.tools" \
     --output "type=local,dest=$WORK/tools" "$NATIVE_DIR"
@@ -97,8 +102,8 @@ if [ "$DO_NATIVE" = 1 ]; then
     install -m 0755 "$WORK/tools/$b" "$OUT/bin/$b"
   done
 
-  # (v)(vi) lean rootfs（R）と rootfs.json。--rootfs-json 指定時は既存 manifest を
-  # 再利用して R の生成を丸ごとスキップ（<r> 不変リリース）。
+  # (v)(vi) lean rootfs (R) and rootfs.json. With --rootfs-json, reuse the given
+  # manifest and skip generating R entirely (<r>-immutable release).
   R_TAR=""
   if [ -n "$ROOTFS_JSON" ]; then
     echo "==> [native] reuse rootfs manifest: $ROOTFS_JSON"
@@ -115,14 +120,16 @@ if [ "$DO_NATIVE" = 1 ]; then
     cid="$(docker create "$WS_NATIVE_IMAGE")"
     docker export "$cid" > "$WORK/rootfs.tar"
     docker rm "$cid" >/dev/null
-    # docker の ENV はイメージ config にあり filesystem export に乗らない。CP の
-    # rootfs モードが env を再構成できるよう manifest を tar へ注入する（§35.7.2-2）。
+    # Docker ENV lives in the image config and is not part of a filesystem export.
+    # Inject the manifest into the tar so the CP's rootfs mode can reconstruct the
+    # env (§35.7.2-2).
     docker image inspect --format '{{json .Config.Env}}' "$WS_NATIVE_IMAGE" \
       > "$WORK/image-env.json"
     mkdir -p "$WORK/inject/usr/local/share/agent-fleet"
     cp "$WORK/image-env.json" "$WORK/inject/usr/local/share/agent-fleet/image-env.json"
     tar --append -f "$WORK/rootfs.tar" -C "$WORK/inject" usr/local/share/agent-fleet/image-env.json
-    # <r> は内容ハッシュ由来（イメージ不変なら再利用でき、利用者の再 DL が要らない）。
+    # <r> derives from the content hash (an unchanged image can be reused, so
+    # users never re-download).
     R_VER="$(sha256sum "$WORK/rootfs.tar" | cut -c1-12)"
     R_TAR="$DIST/agent-fleet-rootfs-$R_VER-linux-$ARCH.tar.zst"
     echo "==> [native] compress rootfs -> $R_TAR"
@@ -130,7 +137,7 @@ if [ "$DO_NATIVE" = 1 ]; then
     R_SHA="$(sha256sum "$R_TAR" | awk '{print $1}')"
     R_SIZE="$(stat -c%s "$R_TAR")"
     URL_BASE="${ROOTFS_URL_BASE:-https://github.com/k-k1/agent-fleet-dist/releases/download}"
-    # 整形は af ランチャの sed パーサと対（1 キー 1 行を崩さないこと）。
+    # Formatting pairs with the af launcher's sed parser (keep one key per line).
     cat > "$OUT/rootfs.json" <<EOF
 {
   "version": "$R_VER",
@@ -141,14 +148,14 @@ if [ "$DO_NATIVE" = 1 ]; then
 EOF
   fi
 
-  # (vii) C の組立。
+  # (vii) assemble C.
   echo "==> [native] assemble $PKG_NAME"
   install -m 0755 "$ROOT/deploy/native/af" "$OUT/af"
   cp "$ROOT/deploy/native/README.md" "$ROOT/LICENSE" "$ROOT/NOTICE" "$OUT/"
   printf '%s\n' "$VERSION" > "$OUT/VERSION"
   tar -czf "$DIST/$PKG_NAME.tar.gz" -C "$DIST" "$PKG_NAME"
   if [ "$BUNDLE_ROOTFS" = 1 ]; then
-    [ -n "$R_TAR" ] || { echo "ERROR: --bundle-rootfs は --rootfs-json と併用できません（R が手元に無い）" >&2; exit 2; }
+    [ -n "$R_TAR" ] || { echo "ERROR: --bundle-rootfs cannot be combined with --rootfs-json (R is not available locally)" >&2; exit 2; }
     mkdir -p "$OUT/rootfs"
     cp "$R_TAR" "$OUT/rootfs/"
     tar -czf "$DIST/$PKG_NAME-bundle.tar.gz" -C "$DIST" "$PKG_NAME"
@@ -158,8 +165,8 @@ EOF
   echo "==> [native] done: $DIST/$PKG_NAME.tar.gz${R_TAR:+  +  $R_TAR}"
 fi
 
-# D: dist 直下の全成果物を対象に SHA256SUMS を作り直す（release.sh が書いた分を
-# 上書き — native 成果物が増えても常に全量をカバーする）。
+# D: rebuild SHA256SUMS over everything directly under dist (overwrites what
+# release.sh wrote — always covers the full set even as native artifacts appear).
 echo "==> [build.sh] SHA256SUMS"
 (
   cd "$DIST"

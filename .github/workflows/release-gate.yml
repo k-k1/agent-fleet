@@ -1,15 +1,17 @@
-# リリースゲート（docs/35 §35.7.1 P1 / §35.7.2 P2 / §35.7.3 P3）: 配布成果物 A+B+D の
-# 生成と lean variant の boot-install、既定（全焼き込み）ビルドの無影響、native C+R の
-# 生成と bwrap 実走（ゲート d/e）、ECS リリース作法の静的検証（ゲート g）を
-# hosted runner で実走検証する。
+# Release gate (docs/35 §35.7.1 P1 / §35.7.2 P2 / §35.7.3 P3): verifies on a hosted
+# runner that the distribution artifacts A+B+D build, the lean variant boot-installs,
+# the default (fully baked) build is unaffected, native C+R build and run under real
+# bwrap (gates d/e), and the ECS release procedure passes static checks (gate g).
 #
-# 開発 Workspace には docker が無く、dev ホストでの重ビルドは稼働フリートの OOM リスク
-# があるため（共有ホスト・メモリ制約）、イメージ実ビルドを要するこのゲートだけ
-# hosted CI に出す。課金抑制のため常時トリガーにはしない: この workflow ファイル自身を
-# 変更した push（= 意図的な起動）と、develop/main に載った後の workflow_dispatch のみ。
-# 再実行は `gh run rerun <id>`。
-# P4（docs/35 §35.7.4）: dist-gate（publish/install の stub 実走 + chromium CDN 実 DL
-# 検証）を追加。開発 WS の回線では PRSS CDN が 400 のため、CDN 実測は CI 回線が正。
+# The development Workspace has no docker, and heavy builds on the dev host risk
+# OOMing the live fleet (shared, memory-constrained host), so only this gate — which
+# needs real image builds — runs on hosted CI. To limit billing it has no permanent
+# trigger: it runs on pushes that change this workflow file itself (= deliberate
+# trigger) and on workflow_dispatch once it is on develop/main.
+# Re-run with `gh run rerun <id>`.
+# P4 (docs/35 §35.7.4): adds dist-gate (stub run of publish/install + real chromium
+# CDN download check). The dev WS network gets 400s from the PRSS CDN, so the CI
+# network is the authoritative place to measure the CDN.
 name: release-gate
 
 on:
@@ -26,13 +28,15 @@ env:
   VERSION: 0.0.0-ci
 
 jobs:
-  # ゲート (a)+(b): release パスで A+B+D を生成し、lean B（BAKE_AGENT_CLIS=0）の
-  # 内容検証（e2e-smoke lean モード）と boot-install のライブ実走まで行う。
-  # 「セッションが動く」の完全形（実 CP + 実認証）はホスト側フリートでの確認事項。
+  # Gates (a)+(b): build A+B+D via the release path, verify the lean B
+  # (BAKE_AGENT_CLIS=0) contents (e2e-smoke lean mode) and live-run boot-install.
+  # The full "sessions actually work" check (real CP + real auth) stays a host-side
+  # fleet concern.
   compose-gate:
-    # 反復修正中は重い job を飛ばせる: [native-only] で P1 系 2 job を、[ecs-only] で
-    # docker ビルドを伴う 3 job 全部をスキップ（ecs-gate だけ回る）、[dist-only] で
-    # dist-gate 以外をスキップ。最終検証は無印 push で全 job を回す。
+    # Skip heavy jobs while iterating: [native-only] skips the two P1 jobs,
+    # [ecs-only] skips all three docker-building jobs (only ecs-gate runs),
+    # [dist-only] skips everything but dist-gate. Final verification runs all jobs
+    # via an unmarked push.
     if: "!contains(github.event.head_commit.message, '[native-only]') && !contains(github.event.head_commit.message, '[ecs-only]') && !contains(github.event.head_commit.message, '[dist-only]')"
     runs-on: ubuntu-latest
     timeout-minutes: 50
@@ -50,30 +54,32 @@ jobs:
           test -f "agent-fleet-images-$VERSION.tar.gz"   # B
           test -f SHA256SUMS                             # D
           sha256sum -c SHA256SUMS
-          # A に aws/ 一式・NOTICE が同梱され、.env.example が VERSION にピンされていること
+          # A bundles the aws/ tree and NOTICE, and .env.example is pinned to VERSION
           tar tzf "agent-fleet-$VERSION.tar.gz" | grep -q "^agent-fleet-$VERSION/aws/ecs/cfn/30-ingress.yaml$"
           tar tzf "agent-fleet-$VERSION.tar.gz" | grep -q "^agent-fleet-$VERSION/aws/ec2-single/cfn.yaml$"
           tar tzf "agent-fleet-$VERSION.tar.gz" | grep -q "^agent-fleet-$VERSION/NOTICE$"
-          # release-ecr.sh が実行ビット付きで同梱（P3 §35.7.3-5）
+          # release-ecr.sh is bundled with the execute bit set (P3 §35.7.3-5)
           tar tvzf "agent-fleet-$VERSION.tar.gz" | grep -E "^-rwx.* agent-fleet-$VERSION/aws/ecs/release-ecr\.sh$"
           tar xzf "agent-fleet-$VERSION.tar.gz" "agent-fleet-$VERSION/.env.example" -O | grep -q "^VERSION=$VERSION$"
-          # 鍵類（gitignore 対象）が紛れていないこと
+          # no key material (gitignored) slipped into the bundle
           ! tar tzf "agent-fleet-$VERSION.tar.gz" | grep -E '(-key|\.pem)$'
 
       - name: assert CP image (docs denylist + /api/version stamp)
         run: |
           set -eux
-          # 配布 variant の CP は internal denylist（docs/.distignore）適用済みの docs を焼く
+          # the distribution-variant CP bakes docs with the internal denylist
+          # (docs/.distignore) applied
           docker run --rm --entrypoint /bin/sh "agent-fleet/control-plane:$VERSION" -c '
             set -e
             d=/usr/local/share/agent-fleet/docs
             test -f "$d/35-packaging.md" && test -d "$d/dev" && test -d "$d/guide"
             test ! -e "$d/HANDOFF.md" && test ! -e "$d/CHANGELOG-handoff.md"
             test ! -e "$d/talk" && test ! -e "$d/history"'
-          # 版刻印: 起動して認証配下 /api/version が VERSION を返す（AUTH=dev はゲートなし）。
-          # 素の（マウントなし）起動は CP 側の MkdirAll(dbPath 親) が支える — このゲートで
-          # 初回起動即死（WS_DATA 未作成 → sqlite open 失敗）を検出した経緯があるため、
-          # あえてディレクトリを事前作成せずに起動する。
+          # version stamp: after boot, /api/version behind auth returns VERSION
+          # (AUTH=dev has no gate). Booting with no mounts is intentional — the CP's
+          # MkdirAll(dbPath parent) supports it, and this gate once caught an
+          # immediate first-boot death (WS_DATA missing → sqlite open failure), so
+          # we deliberately do not pre-create the directory.
           docker run -d --name cp-gate -p 8099:8099 -e CP_ADDR=:8099 -e WS_DATA=/tmp/af-data \
             "agent-fleet/control-plane:$VERSION"
           up=0
@@ -102,8 +108,9 @@ jobs:
       - name: boot-install live run (lean B)
         timeout-minutes: 15
         run: |
-          # entrypoint（コンテナ起動時に実行）が versions.json のピン版を ~/.local へ
-          # boot-install してから bash が検証する。ネット有り（npm / GitHub Releases）。
+          # the entrypoint (run at container start) boot-installs the versions.json
+          # pins into ~/.local before bash verifies them. Network available
+          # (npm / GitHub Releases).
           docker run --rm "agent-fleet/workspace:$VERSION" /bin/bash -lc '
             set -e
             pin() { node -e "process.stdout.write(String(require(\"/usr/local/share/agent-fleet/versions.json\")[process.argv[1]]||\"\"))" "$1"; }
@@ -126,10 +133,11 @@ jobs:
             fi
             echo "== boot-install gate OK =="'
 
-  # ゲート (d)+(e)（P2 — docs/35 §35.7.2）: C（native tar）+ R（lean rootfs）の生成・
-  # 内容検証と、runner 上での実走 = af start --rootfs → bwrap 配下で workspace 起動 →
-  # rootfs 内 entrypoint の boot-install がピン版を仮想 HOME へ導入するまで。
-  # 素の WSL2 実機（追加インストールなし）での通しは P4 の実機ゲートに残る。
+  # Gates (d)+(e) (P2 — docs/35 §35.7.2): build and content-check C (native tar) +
+  # R (lean rootfs), then live-run on the runner = af start --rootfs → workspace
+  # boots under bwrap → the rootfs entrypoint boot-installs the pins into the
+  # virtual HOME. The end-to-end pass on plain WSL2 (no extra installs) remains
+  # the P4 real-machine gate.
   native-gate:
     if: "!contains(github.event.head_commit.message, '[ecs-only]') && !contains(github.event.head_commit.message, '[dist-only]')"
     runs-on: ubuntu-latest
@@ -149,21 +157,22 @@ jobs:
           R="$(ls agent-fleet-rootfs-*-linux-amd64.tar.zst)"
           sha256sum -c SHA256SUMS
           tar tzf "$C.tar.gz" | grep -q "^$C/af$"
-          # 同梱バイナリが本当に静的であること（ldd が dynamic と言ったら fail）
+          # bundled binaries must be truly static (fail if ldd says dynamic)
           for b in af-cp bwrap git git-http-backend zstd; do
             test -x "$C/bin/$b"
             if ldd "$C/bin/$b" >/dev/null 2>&1; then echo "NOT STATIC: $b"; exit 1; fi
           done
-          # rootfs.json のピンが R と一致（af はこの sha で検証・展開する）
+          # the rootfs.json pin matches R (af verifies/extracts against this sha)
           sha="$(sed -n 's/.*"sha256": *"\([^"]*\)".*/\1/p' "$C/rootfs.json")"
           echo "$sha  $R" | sha256sum -c -
-          # console / docs（denylist 適用）/ NOTICE / VERSION の同梱
+          # console / docs (denylist applied) / NOTICE / VERSION are bundled
           test -f "$C/console/index.html"
           test -f "$C/docs/35-packaging.md" && test -d "$C/docs/dev"
           test ! -e "$C/docs/HANDOFF.md" && test ! -e "$C/docs/talk" && test ! -e "$C/docs/history"
           test -f "$C/NOTICE" && test -f "$C/README.md"
           test "$(cat "$C/VERSION")" = "$VERSION"
-          # rootfs に image-env manifest が注入されていること（CP rootfs モードの前提）
+          # the image-env manifest is injected into the rootfs (CP rootfs mode
+          # depends on it)
           tar -I zstd -tf "$R" | grep -q '^usr/local/share/agent-fleet/image-env.json$'
 
       - name: install.sh flow against built C (file:// — gate i)
@@ -171,8 +180,8 @@ jobs:
           set -eux
           DIST="$PWD/deploy/release/dist"
           C="agent-fleet-native-$VERSION-linux-amd64"
-          # インストーラと実成果物の噛み合わせ: 偽レイアウトではなく本物の C tar +
-          # SHA256SUMS を file:// で食わせ、導入した af が実行できるところまで。
+          # installer ↔ real artifact fit: feed the real C tar + SHA256SUMS via
+          # file:// (not a fake layout), up to running the installed af.
           mkdir -p "/tmp/dist-layout/v$VERSION"
           cp "$DIST/$C.tar.gz" "$DIST/SHA256SUMS" "/tmp/dist-layout/v$VERSION/"
           AF_DIST_URL_BASE="file:///tmp/dist-layout" AF_VERSION="$VERSION" \
@@ -180,10 +189,10 @@ jobs:
           test -L /tmp/af-prefix/bin/af
           /tmp/af-prefix/bin/af help
           /tmp/af-prefix/bin/af status | grep -q "control-plane: stopped"
-          # symlink 経由でも PKG（rootfs.json の在処）を正しく解決していること:
-          # 解決できていれば「--rootfs が無い」というエラーに到達する
+          # PKG (where rootfs.json lives) resolves correctly even via the symlink:
+          # if it resolved, we reach the "--rootfs ... not found" error
           ( /tmp/af-prefix/bin/af start --rootfs /nonexistent 2>&1 || true ) \
-            | grep -q "rootfs /nonexistent が見つかりません"
+            | grep -q "rootfs /nonexistent not found"
 
       - name: enable unprivileged userns (ubuntu 24.04 runner)
         run: |
@@ -208,9 +217,10 @@ jobs:
           done
           if [ "$up" != 1 ]; then echo "CP never became healthy:"; cat /tmp/af-cp.log; exit 1; fi
           curl -fsS http://127.0.0.1:8099/api/version | grep -F "\"version\":\"$VERSION\""
-          # workspace 起動（AUTH=dev）。Start は agent healthy まで同期 — 初回は rootfs 内
-          # entrypoint の boot-install（ピン版 DL）を含むため数分かかる（健康待ち既定 300s）。
-          # 失敗時は CP / agent 両ログをダンプして原因を残す。
+          # start the workspace (AUTH=dev). Start is synchronous until the agent is
+          # healthy — the first run includes the rootfs entrypoint's boot-install
+          # (downloading pins), so it takes minutes (health wait default 300s).
+          # On failure, dump both CP and agent logs to keep the cause.
           set +e
           code="$(curl -sS --max-time 570 -o /tmp/start-out.json -w '%{http_code}' -X POST http://127.0.0.1:8099/api/workspace/start)"
           set -e
@@ -221,16 +231,17 @@ jobs:
             ls -la "$WS_DATA"/dev 2>/dev/null || true
             exit 1
           fi
-          # bwrap 配下の agent が生きている（CP 経由の workspace 状態で確認）
+          # the agent under bwrap is alive (checked via the CP's workspace state)
           curl -fsS http://127.0.0.1:8099/api/workspace | grep -F '"state":"running"'
-          # boot-install: 仮想 HOME にピン版 CLI が入っている（lean rootfs の要）
+          # boot-install: pinned CLIs are in the virtual HOME (the point of lean rootfs)
           HOMEDIR="$WS_DATA/dev/home"
           ls -la "$HOMEDIR/.local/bin" || true
           for c in claude opencode codex copilot rtk agy; do
             test -e "$HOMEDIR/.local/bin/$c" || { echo "NG: $c not boot-installed"; tail -200 "$WS_DATA"/dev/agent.log; exit 1; }
           done
-          # 版一致は npm の導入記録（package.json）と agy の版マーカーで見る
-          # （rootfs 外から CLI を実行せずに済む・agy の RDRAND 事情にも非依存）。
+          # version match is checked via npm's install record (package.json) and
+          # agy's version marker (avoids running CLIs from outside the rootfs and
+          # agy's RDRAND requirement).
           VJ="$(ls "$WS_DATA"/shared/rootfs/*/usr/local/share/agent-fleet/versions.json | head -1)"
           for pair in "claude=@anthropic-ai/claude-code" "opencode=opencode-ai" \
                       "codex=@openai/codex" "copilot=@github/copilot"; do
@@ -242,7 +253,7 @@ jobs:
           done
           test "$(cat "$HOMEDIR/.local/bin/.agy.version")" = "$(jq -r .agy "$VJ")"
           echo "== native live gate OK =="
-          # 掃除: CP 停止 → af reset --all が残骸なく消えること
+          # cleanup: stop the CP → af reset --all must remove everything
           curl -fsS -X POST http://127.0.0.1:8099/api/workspace/stop
           kill "$AF_PID" 2>/dev/null || true
           for i in $(seq 1 20); do pgrep -f "$RUN/$C/bin/af-cp" >/dev/null || break; sleep 1; done
@@ -250,10 +261,11 @@ jobs:
           ( cd "$RUN/$C" && WS_DATA="$WS_DATA" ./af reset --all --yes )
           test ! -e "$WS_DATA"
 
-  # ゲート (g)（P3 — docs/35 §35.7.3）: ECS リリース作法の静的検証。docker/AWS 不要の
-  # 軽量ジョブ: cfn-lint（LanguageExtensions/Persistence 分岐含む 4 テンプレ）・
-  # shellcheck・release-ecr.sh の stub 実走（fake aws/docker で呼び出し列と ECR URI を
-  # 固定）。sandbox 実走一巡（ゲート h）は実クレデンシャルが要るため CI 外。
+  # Gate (g) (P3 — docs/35 §35.7.3): static verification of the ECS release
+  # procedure. Lightweight job, no docker/AWS: cfn-lint (4 templates incl. the
+  # LanguageExtensions/Persistence branches), shellcheck, and a stub run of
+  # release-ecr.sh (fake aws/docker pin the call sequence and ECR URIs). A full
+  # sandbox pass (gate h) needs real credentials and stays outside CI.
   ecs-gate:
     if: "!contains(github.event.head_commit.message, '[dist-only]')"
     runs-on: ubuntu-latest
@@ -274,10 +286,11 @@ jobs:
       - name: release-ecr.sh stub run (call-sequence gate)
         run: deploy/local/release-ecr-stub-test.sh
 
-  # ゲート (i)（P4 — docs/35 §35.7.4）: dist publish 一式の検証。docker 不要の軽量ジョブ:
-  # shellcheck + publish-dist.sh/install.sh の stub 実走（fake gh / file:// レイアウト）+
-  # chromium CDN 実 DL 検証（§35.9-7(a) の実測地点 — 開発 WS 回線は PRSS 400 で測れない。
-  # 注意: 3 ホストは全て PRSS へリダイレクト収束する = 実質 1 オリジン別入口）。
+  # Gate (i) (P4 — docs/35 §35.7.4): verifies the dist publish set. Lightweight
+  # job, no docker: shellcheck + stub run of publish-dist.sh/install.sh (fake gh /
+  # file:// layout) + real chromium CDN download check (the measuring point of
+  # §35.9-7(a) — the dev WS network gets PRSS 400s and cannot measure it. Note:
+  # all 3 hosts redirect-converge on PRSS = effectively one origin, two doors).
   dist-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -300,22 +313,23 @@ jobs:
       - name: chromium CDN real download (pinned build)
         run: |
           set -eux
-          # amd64 = Chrome for Testing（chromium_cft ピン = browser version。playwright
-          # 1.61 で x64 は builds/chromium から CfT へ移行 — 旧 URL はバケット 404/PRSS 400）
+          # amd64 = Chrome for Testing (the chromium_cft pin = browser version;
+          # playwright 1.61 moved x64 from builds/chromium to CfT — old URLs give
+          # bucket 404 / PRSS 400)
           CFT="$(sed -n 's/^ARG CHROMIUM_CFT_VERSION=\(.*\)$/\1/p' workspace/Dockerfile)"
           test -n "$CFT"
           U1="https://cdn.playwright.dev/builds/cft/$CFT/linux64/chrome-linux64.zip"
           U2="https://storage.googleapis.com/chrome-for-testing-public/$CFT/linux64/chrome-linux64.zip"
-          # 第一経路: フル DL → zip 健全性・chrome 実体（install-chromium が期待する
-          # レイアウト chrome-linux64/chrome）を確認
+          # path 1: full download → check zip integrity and the chrome binary
+          # (the chrome-linux64/chrome layout install-chromium expects)
           curl -fSL --retry 3 -o /tmp/c1.zip "$U1"
           unzip -l /tmp/c1.zip | grep -q 'chrome-linux64/chrome$'
           head -c 1024 /tmp/c1.zip > /tmp/c1.head
-          # 第二経路（Google 公式 CfT バケット直 = 真に独立な fallback）: ranged GET が
-          # 通り、先頭 1KiB が第一経路と同一物であること
+          # path 2 (Google's official CfT bucket = a truly independent fallback):
+          # ranged GET works and the first 1KiB is identical to path 1
           curl -fsSL --retry 3 -r 0-1023 -o /tmp/c2.head "$U2"
           cmp /tmp/c1.head /tmp/c2.head
-          # arm64（chromium_dl ピン = 旧 builds/chromium レイアウト）: 3 経路の存在確認
+          # arm64 (chromium_dl pin = old builds/chromium layout): all 3 paths exist
           PIN="$(sed -n 's/^ARG CHROMIUM_DL_VERSION=\(.*\)$/\1/p' workspace/Dockerfile)"
           test -n "$PIN"
           Z=chromium-linux-arm64.zip
@@ -324,13 +338,14 @@ jobs:
                    "https://cdn.playwright.dev/builds/chromium/$PIN/$Z"; do
             curl -fsSL --retry 3 -r 0-1023 -o /dev/null "$u"
           done
-          # CJK フォント（noto_cjk ピン）の raw URL 疎通
+          # CJK font (noto_cjk pin) raw URL reachability
           NOTO="$(sed -n 's/^ARG NOTO_CJK_VERSION=\(.*\)$/\1/p' workspace/Dockerfile)"
           test -n "$NOTO"
           curl -fsSI -o /dev/null "https://raw.githubusercontent.com/notofonts/noto-cjk/$NOTO/Sans/Variable/OTC/NotoSansCJK-VF.otf.ttc"
 
-  # ゲート (c): 既定 ARG（全焼き込み）のビルドと e2e-smoke が無変更で通ること
-  # （既存デプロイに影響ゼロ）。CP も既定 DOCS_SRC（全ツリー docs）で焼けること。
+  # Gate (c): the default-ARG (fully baked) build and e2e-smoke pass unchanged
+  # (zero impact on existing deployments). The CP also builds with the default
+  # DOCS_SRC (full docs tree).
   default-image-gate:
     if: "!contains(github.event.head_commit.message, '[native-only]') && !contains(github.event.head_commit.message, '[ecs-only]') && !contains(github.event.head_commit.message, '[dist-only]')"
     runs-on: ubuntu-latest
@@ -348,6 +363,7 @@ jobs:
         run: |
           set -eux
           docker build -f control-plane/Dockerfile -t agent-fleet/control-plane:ci-default .
-          # 自社ビルドは従来どおり全ツリー（HANDOFF が残っていること = denylist は配布時のみ）
+          # in-house builds keep the full tree (HANDOFF present = denylist applies
+          # to distribution only)
           docker run --rm --entrypoint /bin/sh agent-fleet/control-plane:ci-default -c '
             test -f /usr/local/share/agent-fleet/docs/HANDOFF.md'

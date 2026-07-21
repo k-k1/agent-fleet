@@ -1,16 +1,18 @@
-# agent-fleet — on-prem compose (P3-10 段2: CP + Caddy 自動 TLS).
-# backup/restore は 段3、設定一元化+runbook は 段4 で追加する。
+# agent-fleet — on-prem compose (P3-10 stage 2: CP + Caddy auto-TLS).
+# backup/restore comes in stage 3; config consolidation + runbook in stage 4.
 #
 #   cp deploy/compose/.env.example deploy/compose/.env   # then fill it in
 #   docker compose -f deploy/compose/docker-compose.yml up -d --build
 #
-# DooD の3制約（docs/history/p3-10-packaging.md §20.3）を compose で封じ込める:
-#   (A) network_mode: host   — CP が発行する 127.0.0.1:<port> publish は host デーモンが
-#       実行するので、CP も host loopback を共有しないと agent へ到達できない。
-#   (B) ${DATA_DIR}:${DATA_DIR} 同一パス bind — CP が host デーモンに渡す -v は host パスと
-#       して解決されるため、CP 内でも同一絶対パスで DATA_DIR を見せる必要がある。
-#   (C) user: "1000:1000" + group_add ${DOCKER_GID} — home は uid 1000(dev) 所有で作らせ、
-#       docker.sock アクセスは host の docker gid を付与する。
+# The three DooD constraints (docs/history/p3-10-packaging.md §20.3), encoded here:
+#   (A) network_mode: host   — the 127.0.0.1:<port> publishes the CP issues are
+#       executed by the host daemon, so the CP must share the host loopback to
+#       reach the agents.
+#   (B) ${DATA_DIR}:${DATA_DIR} same-path bind — the -v specs the CP hands to the
+#       host daemon resolve as host paths, so DATA_DIR must be visible at the same
+#       absolute path inside the CP.
+#   (C) user: "1000:1000" + group_add ${DOCKER_GID} — homes are created owned by
+#       uid 1000(dev); docker.sock access comes from adding the host docker gid.
 services:
   cp:
     image: ${REGISTRY:-agent-fleet}/control-plane:${VERSION:-dev}
@@ -26,24 +28,26 @@ services:
     env_file:
       - .env
     environment:
-      # CP は loopback のみ bind（host-net でも 0.0.0.0 にはしない＝既存の
-      # loopback-only 不変条件を維持）。外部公開は 段2 の Caddy が担う。
+      # The CP binds loopback only (never 0.0.0.0, even on host-net = the existing
+      # loopback-only invariant is kept). Public exposure is handled by the stage-2
+      # Caddy service.
       CP_ADDR: ${CP_ADDR:-127.0.0.1:8099}
-      # (B) CP が DB/home を作る先。workspace の -v ソースと同一パスでなければならない。
+      # (B) Where the CP creates the DB/homes. Must be the same path as the
+      # workspace -v source.
       WS_DATA: ${DATA_DIR}
       WS_JVM_DIR: ${DATA_DIR}/shared/jvm
     volumes:
-      # docker-out-of-docker: host デーモンを叩く。
+      # docker-out-of-docker: talk to the host daemon.
       - /var/run/docker.sock:/var/run/docker.sock
-      # (B) 同一絶対パス bind。
+      # (B) same absolute path bind.
       - ${DATA_DIR}:${DATA_DIR}
     restart: unless-stopped
 
-  # Caddy: 公開ドメインの自動 TLS（ACME/Let's Encrypt）+ CP への reverse proxy。
-  # host-net で host loopback を共有し 127.0.0.1:8099(CP) へ到達（§20.4: 両方 host-net）。
-  # 80/443 を bind するため root のまま（privileged port）。証明書は DATA_DIR 配下に
-  # 永続化＝段3 backup が同時に拾える。既存プロキシで前段する社はこのサービスを外す
-  # （Caddyfile 代替2 参照）。
+  # Caddy: automatic TLS for the public domain (ACME/Let's Encrypt) + reverse proxy
+  # to the CP. Host-net so it shares the host loopback and reaches 127.0.0.1:8099
+  # (the CP) (§20.4: both host-net). Runs as root to bind 80/443 (privileged ports).
+  # Certs persist under DATA_DIR, so the stage-3 backup picks them up too. Companies
+  # fronting with their own proxy drop this service (see Caddyfile alternative 2).
   caddy:
     image: caddy:2-alpine
     network_mode: host

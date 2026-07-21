@@ -1,42 +1,44 @@
 #!/usr/bin/env bash
-# L1 イメージスモーク: ビルド済み Workspace イメージの焼き込み内容を検証する。
+# L1 image smoke test: verify what is baked into a built Workspace image.
 #
-# 目玉は「CLI の実版 = Dockerfile の ARG ピン」のアサート。未ピン時代に
-# 「npm レイヤがキャッシュに当たり、再ビルドしても CLI が古いまま」という事故が
-# あったため、ビルド直後にここで機械検出する（期待値は Dockerfile の ARG を parse
-# するので、bump してもこのスクリプトの更新は不要）。
+# The centerpiece is asserting "actual CLI version = Dockerfile ARG pin". In the
+# unpinned days we had an incident where the npm layer hit the build cache and a
+# rebuilt image still shipped stale CLIs, so this detects that mechanically right
+# after a build (expected values are parsed from the Dockerfile ARGs, so bumping
+# a pin needs no update to this script).
 #
-# 使い方:
-#   deploy/local/e2e-smoke.sh [image]     # 既定 agent-fleet/workspace:dev（WS_IMAGE でも可）
-# run-dev.sh がイメージビルド直後に自動実行する（WS_SMOKE=0 でスキップ）。
+# Usage:
+#   deploy/local/e2e-smoke.sh [image]     # default agent-fleet/workspace:dev (or WS_IMAGE)
+# run-dev.sh runs this automatically right after the image build (skip with WS_SMOKE=0).
 #
-# 仕組み: スクリプト自身を `docker run -i ... bash -s -- --inner < $0` でコンテナへ
-# 流し込む（イメージにスクリプトを含めず・bind mount も不要）。--inner はコンテナ内
-# 実行パスで、期待値は env で受け取る。entrypoint は通さない（seed や自己更新を
-# 走らせず、焼き込み状態そのものを見る）。
+# How it works: the script pipes itself into the container via
+# `docker run -i ... bash -s -- --inner < $0` (no script baked into the image, no
+# bind mount needed). --inner is the in-container execution path; expected values
+# arrive via env. The entrypoint is bypassed (no seeding or self-update — inspect
+# the baked state as-is).
 set -euo pipefail
 
-# ---- inner: コンテナ内で実行される検証本体 -------------------------------
+# ---- inner: verification body that runs inside the container --------------
 if [ "${1:-}" = "--inner" ]; then
   set +e
   fail=0
   semver() { grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1; }
-  # check_ver <名前> <期待版> <コマンド...> : 出力から semver を抜いて期待値と比較
+  # check_ver <name> <expected> <cmd...>: extract semver from output, compare to expected
   check_ver() {
     local name="$1" expected="$2" out ver; shift 2
     if ! out="$("$@" 2>&1)"; then
-      echo "NG  $name: コマンド失敗: $out"; fail=1; return
+      echo "NG  $name: command failed: $out"; fail=1; return
     fi
     ver="$(printf '%s' "$out" | semver)"
     if [ "$ver" = "$expected" ]; then
       echo "ok  $name $ver"
     else
-      echo "NG  $name: 実版 ${ver:-?} ≠ ピン $expected（出力: $out）"; fail=1
+      echo "NG  $name: actual ${ver:-?} != pin $expected (output: $out)"; fail=1
     fi
   }
   check_file() {  # check_file <f|d|x> <path>
     local mode="$1" path="$2"
-    if test -"$mode" "$path"; then echo "ok  $path"; else echo "NG  $path が無い"; fail=1; fi
+    if test -"$mode" "$path"; then echo "ok  $path"; else echo "NG  $path missing"; fail=1; fi
   }
 
   if [ "${EXPECT_AGENT_CLIS:-1}" = "1" ]; then
@@ -45,48 +47,49 @@ if [ "${1:-}" = "--inner" ]; then
     check_ver codex    "$EXPECT_CODEX"    codex --version
     check_ver copilot  "$EXPECT_COPILOT"  copilot --version
   else
-    # lean 配布 variant（BAKE_AGENT_CLIS=0、docs/35 §35.7.1-7）: エージェント CLI が
-    # 本当に居ないこと（= プロプライエタリ CLI を再配布していないこと）を検証。
-    # ピン版の導入可否は versions.json の全ピン記載チェック（下）と、P1 ゲート別項の
-    # boot-install 実走（ネット前提）で見る。
+    # Lean distribution variant (BAKE_AGENT_CLIS=0, docs/35 §35.7.1-7): verify the
+    # agent CLIs really are absent (= we do not redistribute proprietary CLIs).
+    # Whether the pinned versions are installable is covered by the versions.json
+    # all-pins check (below) and the separate P1-gate boot-install run (needs network).
     for c in claude opencode codex copilot agy rtk; do
       if command -v "$c" >/dev/null 2>&1; then
-        echo "NG  lean: $c が焼き込まれている（BAKE_AGENT_CLIS=0 のはず）"; fail=1
+        echo "NG  lean: $c is baked in (expected BAKE_AGENT_CLIS=0)"; fail=1
       else
-        echo "ok  lean: $c なし"
+        echo "ok  lean: $c absent"
       fi
     done
   fi
   check_ver go       "$EXPECT_GO"       /usr/local/go/bin/go version
   check_ver gh       "$EXPECT_GH"       /usr/local/libexec/gh --version
 
-  # Chromium は Debian revision まで固定するため、4桁の upstream version しか
-  # 表示しない `chromium --version` だけでなく dpkg の実版も比較する。
+  # Chromium is pinned down to the Debian revision, so compare the dpkg version too —
+  # `chromium --version` only prints the 4-part upstream version.
   chromium_pkg="$(dpkg-query -W -f='${Version}' chromium 2>/dev/null)"
   chromium_out="$(chromium --version 2>&1)"
   chromium_upstream="${EXPECT_CHROMIUM%%-*}"
   if [ "$chromium_pkg" = "$EXPECT_CHROMIUM" ] && printf '%s' "$chromium_out" | grep -Fq "$chromium_upstream"; then
     echo "ok  chromium $chromium_pkg ($chromium_out)"
   else
-    echo "NG  chromium: 実版 ${chromium_pkg:-?} ≠ ピン $EXPECT_CHROMIUM（出力: $chromium_out）"
+    echo "NG  chromium: actual ${chromium_pkg:-?} != pin $EXPECT_CHROMIUM (output: $chromium_out)"
     fail=1
   fi
 
   check_file x /usr/local/bin/workspace-agent
   check_file x /usr/local/bin/entrypoint.sh
-  check_file x /usr/local/bin/gh                # 透過認証ラッパー（実体は libexec）
+  check_file x /usr/local/bin/gh                # transparent-auth wrapper (real binary in libexec)
   check_file f /etc/claude-code/CLAUDE.md
   check_file f /etc/tmux.conf
   check_file d /usr/local/share/agent-fleet/opencode-plugin
 
   command -v tmux >/dev/null && echo "ok  $(tmux -V 2>/dev/null)" \
-    || { echo "NG  tmux が無い"; fail=1; }
+    || { echo "NG  tmux missing"; fail=1; }
   [ "${DISABLE_AUTOUPDATER:-}" = "1" ] && echo "ok  DISABLE_AUTOUPDATER=1" \
-    || { echo "NG  DISABLE_AUTOUPDATER が 1 でない"; fail=1; }
+    || { echo "NG  DISABLE_AUTOUPDATER is not 1"; fail=1; }
 
-  # ビルド時ピンの写し versions.json（設定 UI「ツールのバージョン」のピン表示の源、
-  # lean variant では boot-install / オンデマンド導入の取得版）。BAKE ノブに関わらず
-  # 常に全ピンが記載されていること（docs/35 §35.7.1-5/-7）。
+  # versions.json mirrors the build-time pins (source of the pin display in the
+  # settings UI "tool versions"; on the lean variant, the versions boot-install /
+  # on-demand install fetches). All pins must be listed regardless of the BAKE
+  # knobs (docs/35 §35.7.1-5/-7).
   VJ=/usr/local/share/agent-fleet/versions.json
   if [ -f "$VJ" ]; then
     for pair in "claude=$EXPECT_CLAUDE" "opencode=$EXPECT_OPENCODE" "codex=$EXPECT_CODEX" "copilot=$EXPECT_COPILOT" \
@@ -100,9 +103,10 @@ if [ "${1:-}" = "--inner" ]; then
       k="${pair%%=*}"; want="${pair#*=}"
       got="$(jq -r ".$k" "$VJ" 2>/dev/null)"
       if [ "$got" = "$want" ]; then echo "ok  versions.json $k=$got"
-      else echo "NG  versions.json $k: ${got:-?} ≠ $want"; fail=1; fi
+      else echo "NG  versions.json $k: ${got:-?} != $want"; fail=1; fi
     done
-    # agy_sha256 はイメージ arch で決まる（boot-install の検証値。docs/35 §35.4.1）。
+    # agy_sha256 depends on the image arch (verification value for boot-install;
+    # docs/35 §35.4.1).
     case "$(dpkg --print-architecture)" in
       amd64) agy_sha_want="$EXPECT_AGY_SHA_X64" ;;
       arm64) agy_sha_want="$EXPECT_AGY_SHA_ARM64" ;;
@@ -112,56 +116,58 @@ if [ "${1:-}" = "--inner" ]; then
     if [ -n "$agy_sha_want" ] && [ "$got" = "$agy_sha_want" ]; then
       echo "ok  versions.json agy_sha256=$got"
     else
-      echo "NG  versions.json agy_sha256: ${got:-?} ≠ ${agy_sha_want:-?}"; fail=1
+      echo "NG  versions.json agy_sha256: ${got:-?} != ${agy_sha_want:-?}"; fail=1
     fi
   else
-    echo "NG  $VJ が無い"; fail=1
+    echo "NG  $VJ missing"; fail=1
   fi
 
-  # rtk は既定で常時焼き込み（BAKE_RTK=1）。EXPECT_RTK=0 は BAKE_RTK=0 のエアギャップ
-  # ビルドを検証するときだけ渡す。lean（EXPECT_AGENT_CLIS=0）は上の不在チェック済み。
+  # rtk is baked in by default (BAKE_RTK=1). Pass EXPECT_RTK=0 only when verifying
+  # an air-gapped BAKE_RTK=0 build. The lean variant (EXPECT_AGENT_CLIS=0) is
+  # covered by the absence check above.
   if [ "${EXPECT_AGENT_CLIS:-1}" = "1" ]; then
     if [ "${EXPECT_RTK:-1}" = "1" ]; then
       if command -v rtk >/dev/null; then echo "ok  rtk $(rtk --version 2>/dev/null | semver)"
-      else echo "NG  rtk: 常時焼き込みのはずがイメージに無い"; fail=1; fi
+      else echo "NG  rtk: should always be baked in but is missing from the image"; fail=1; fi
     else
-      if command -v rtk >/dev/null; then echo "ok  rtk $(rtk --version 2>/dev/null | semver)（イメージに有）"
-      else echo "ok  rtk なし（BAKE_RTK=0 ビルド）"; fi
+      if command -v rtk >/dev/null; then echo "ok  rtk $(rtk --version 2>/dev/null | semver) (present in image)"
+      else echo "ok  rtk absent (BAKE_RTK=0 build)"; fi
     fi
   fi
 
-  # 既定 USER=dev のまま、永続 home を profile にせず固定の日本語ページを描画する。
-  # BrowserManager と同じく headless Chromium 自体が起動できることを image job で見る。
+  # As the default USER=dev, render a fixed Japanese page without turning the
+  # persistent home into a profile. The image job checks that headless Chromium
+  # itself can start, the same way BrowserManager does.
   if [ "$(id -u)" = 1000 ] && [ "$(id -un)" = dev ]; then
     echo "ok  Chromium smoke user=dev(1000)"
   else
-    echo "NG  Chromium smoke user=$(id -un)($(id -u))（want dev(1000)）"; fail=1
+    echo "NG  Chromium smoke user=$(id -un)($(id -u)) (want dev(1000))"; fail=1
   fi
   sandbox_mode="$(stat -c '%u:%g:%a' /usr/lib/chromium/chrome-sandbox 2>/dev/null)"
   if [ "$sandbox_mode" = "0:0:4755" ]; then
     echo "ok  Chromium setuid sandbox $sandbox_mode"
   else
-    echo "NG  Chromium setuid sandbox: ${sandbox_mode:-missing}（want 0:0:4755）"; fail=1
+    echo "NG  Chromium setuid sandbox: ${sandbox_mode:-missing} (want 0:0:4755)"; fail=1
   fi
   if grep -Eq '^NoNewPrivs:[[:space:]]+0$' /proc/self/status; then
-    echo "ok  Docker runtime NoNewPrivs=0（setuid sandbox利用可）"
+    echo "ok  Docker runtime NoNewPrivs=0 (setuid sandbox usable)"
   else
-    echo "NG  Docker runtimeがsetuid sandboxを禁止している: $(grep '^NoNewPrivs:' /proc/self/status)"; fail=1
+    echo "NG  Docker runtime forbids the setuid sandbox: $(grep '^NoNewPrivs:' /proc/self/status)"; fail=1
   fi
   cap_eff="$(awk '/^CapEff:/ { print $2 }' /proc/self/status)"
   cap_bnd="$(awk '/^CapBnd:/ { print $2 }' /proc/self/status)"
   sys_admin_mask=$((1 << 21))
   if (( (16#$cap_eff & sys_admin_mask) == 0 && (16#$cap_bnd & sys_admin_mask) != 0 )); then
-    echo "ok  devはSYS_ADMIN effectiveなし、setuid helperのbounding setにはあり"
+    echo "ok  dev lacks effective SYS_ADMIN; setuid helper's bounding set has it"
   else
-    echo "NG  SYS_ADMIN capability条件が不正: CapEff=$cap_eff CapBnd=$cap_bnd"; fail=1
+    echo "NG  unexpected SYS_ADMIN capability state: CapEff=$cap_eff CapBnd=$cap_bnd"; fail=1
   fi
   unexpected_suid="$(find / -xdev -type f -perm /6000 \
     ! -path /usr/lib/chromium/chrome-sandbox -print 2>/dev/null)"
   if [ -z "$unexpected_suid" ]; then
-    echo "ok  setuid/setgid executableはChromium helperだけ"
+    echo "ok  the Chromium helper is the only setuid/setgid executable"
   else
-    echo "NG  Chromium helper以外のsetuid/setgid executable: $unexpected_suid"; fail=1
+    echo "NG  setuid/setgid executables other than the Chromium helper: $unexpected_suid"; fail=1
   fi
   profile="$(mktemp -d /tmp/af-chromium-smoke.XXXXXX)"
   page="$profile/page.html"
@@ -175,9 +181,9 @@ if [ "${1:-}" = "--inner" ]; then
       --run-all-compositor-stages-before-draw --virtual-time-budget=1000 \
       --screenshot="$screenshot" "file://$page" >/tmp/af-chromium-smoke.log 2>&1 \
       && [ "$(od -An -tx1 -N8 "$screenshot" 2>/dev/null | tr -d ' \n')" = "89504e470d0a1a0a" ]; then
-    echo "ok  Chromium headless 日本語 screenshot"
+    echo "ok  Chromium headless Japanese-text screenshot"
   else
-    echo "NG  Chromium headless screenshot に失敗: $(tail -20 /tmp/af-chromium-smoke.log 2>/dev/null)"
+    echo "NG  Chromium headless screenshot failed: $(tail -20 /tmp/af-chromium-smoke.log 2>/dev/null)"
     fail=1
   fi
   if fc-match 'sans-serif:lang=ja' | grep -Fq 'Noto Sans CJK'; then
@@ -185,12 +191,12 @@ if [ "${1:-}" = "--inner" ]; then
   else
     echo "NG  Japanese font: $(fc-match 'sans-serif:lang=ja' 2>&1)"; fail=1
   fi
-  # 製品バイナリのpipe CDP経路をsandbox有効のまま実行する。アニメーションする
-  # 2 Pageを同時描画し、PageごとのACK pacingが設定fpsを超えないことも確認する。
+  # Exercise the product binary's pipe-CDP path with the sandbox enabled. Render two
+  # animating Pages at once and confirm per-Page ACK pacing stays within the set fps.
   if workspace-agent browser-smoke >/tmp/af-browser-manager-smoke.log 2>&1; then
     echo "ok  $(tail -1 /tmp/af-browser-manager-smoke.log)"
   else
-    echo "NG  BrowserManager sandbox/2-Page smoke に失敗: $(tail -30 /tmp/af-browser-manager-smoke.log 2>/dev/null)"
+    echo "NG  BrowserManager sandbox/2-Page smoke failed: $(tail -30 /tmp/af-browser-manager-smoke.log 2>/dev/null)"
     fail=1
   fi
   rm -rf "$profile"
@@ -201,7 +207,7 @@ if [ "${1:-}" = "--inner" ]; then
   exit "$fail"
 fi
 
-# ---- outer: 期待値を Dockerfile から拾って docker run --------------------
+# ---- outer: read expected values from the Dockerfile, then docker run -----
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 IMAGE="${1:-${WS_IMAGE:-agent-fleet/workspace:dev}}"
 DOCKERFILE="$ROOT/workspace/Dockerfile"
@@ -209,7 +215,7 @@ DOCKERFILE="$ROOT/workspace/Dockerfile"
 arg_pin() {
   local v
   v="$(sed -n "s/^ARG $1=//p" "$DOCKERFILE" | head -1)"
-  [ -n "$v" ] || { echo "ERROR: ARG $1 が $DOCKERFILE に無い" >&2; exit 1; }
+  [ -n "$v" ] || { echo "ERROR: ARG $1 not found in $DOCKERFILE" >&2; exit 1; }
   printf '%s' "$v"
 }
 EXPECT_CLAUDE="$(arg_pin CLAUDE_CODE_VERSION)"
@@ -230,9 +236,9 @@ EXPECT_MCP_GRAFANA="$(arg_pin MCP_GRAFANA_VERSION)"
 EXPECT_CLOUDWATCH_MCP="$(arg_pin CLOUDWATCH_MCP_VERSION)"
 EXPECT_AWSCLI="$(arg_pin AWSCLI_VERSION)"
 EXPECT_SMP="$(arg_pin SESSION_MANAGER_PLUGIN_VERSION)"
-EXPECT_RTK="${EXPECT_RTK:-1}" # 既定=常時焼き込み。BAKE_RTK=0 ビルドの検証時のみ 0 を渡す
-# lean 配布 variant（BAKE_AGENT_CLIS=0）のイメージを検証するときは 0 を渡す
-# （docs/35 §35.7.1-7。CLI 不在 + versions.json 全ピン記載へ検証が切り替わる）。
+EXPECT_RTK="${EXPECT_RTK:-1}" # default = always baked in; pass 0 only to verify a BAKE_RTK=0 build
+# Pass 0 when verifying a lean distribution variant image (BAKE_AGENT_CLIS=0;
+# docs/35 §35.7.1-7 — verification switches to CLI absence + versions.json listing all pins).
 EXPECT_AGENT_CLIS="${EXPECT_AGENT_CLIS:-1}"
 SMOKE_MEMORY="${WS_MEMORY:-1g}"
 

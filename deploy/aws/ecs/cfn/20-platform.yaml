@@ -5,7 +5,7 @@ Description: >-
   roles the Control Plane and workspace tasks assume. No ALB / services here (that
   is 30-ingress). Imports the VPC from 00-network. Per-workspace ECS Services,
   task definitions, EFS access points and SSM params are created by the CP at
-  runtime (段2) — not by CloudFormation.
+  runtime (stage 2) — not by CloudFormation.
 
 Parameters:
   NetworkStackName:
@@ -80,7 +80,7 @@ Resources:
                   - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/af-ws/*"
                   - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/af-cp/*"
               # Reads the RDS-managed master password (Secrets Manager) to inject
-              # AF_DB_PASSWORD into the CP task (P3-7 段3a). RDS-managed secrets are
+              # AF_DB_PASSWORD into the CP task (P3-7 stage 3a). RDS-managed secrets are
               # named rds!db-*; scope to that prefix.
               - Effect: Allow
                 Action: [ secretsmanager:GetSecretValue ]

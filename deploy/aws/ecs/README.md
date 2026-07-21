@@ -18,7 +18,7 @@ name/tag and created on demand):
 | Layer | Owner | Resources |
 |-------|-------|-----------|
 | **static substrate** | **CloudFormation** (this dir) | VPC/subnets/NAT, SGs, EFS **filesystem**, RDS, ECR, ECS **cluster**, Service Connect **namespace**, IAM **roles**, ALB(ACM/OIDC), **CP+Console service** |
-| **per-workspace** | **Control Plane at runtime** (`runtime_ecs.go`, 段2) | ECS **Service**, **TaskDefinition**, EFS **access point**, **SSM SecureString** params |
+| **per-workspace** | **Control Plane at runtime** (`runtime_ecs.go`, stage 2) | ECS **Service**, **TaskDefinition**, EFS **access point**, **SSM SecureString** params |
 
 So CFN is deployed **once** per environment; workspaces appear/disappear afterwards
 with zero CFN churn. This keeps teardown clean and the template small.
@@ -110,10 +110,10 @@ RDS) lives in AWS, so this host's build/OOM limits don't gate it.
   ECS can't pull until they're in ECR.
 - **S3** — deploy `30-ingress.yaml`; the CP/Console service boots, ALB OIDC login
   works, RDS reachable.
-- **S4** — with `runtime_ecs.go` (段2) implemented, the CP **dynamically provisions a
+- **S4** — with `runtime_ecs.go` (stage 2) implemented, the CP **dynamically provisions a
   workspace** (exercises the real adapter) → the E2E gate below.
 
-CFN authoring (S1–S3) and the 段2 Go code are **parallel tracks**; they meet at S4.
+CFN authoring (S1–S3) and the stage-2 Go code are **parallel tracks**; they meet at S4.
 
 ## E2E completion gate (frozen spec §20b.7.14)
 
