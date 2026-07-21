@@ -10,8 +10,8 @@
 #     re-downloads for users).
 #   - app release `v<v>`          … attaches A / B / C (+ -bundle) / SHA256SUMS.
 #     An existing tag fails (releases are immutable — redo by bumping the version).
-# --seed pushes the dist repo contents (README.md / install.sh) from
-# deploy/release/dist-repo/ via the contents API (skipped when identical =
+# --seed pushes the dist repo contents (README.md / README.ja.md / install.sh)
+# from deploy/release/dist-repo/ via the contents API (skipped when identical =
 # idempotent). Creates the repo if it does not exist.
 # Auth via gh (local = gh auth login / CI = GH_TOKEN set to DIST_PUBLISH_TOKEN).
 # Runbook for a real publish: docs/35 §35.8.2.
@@ -75,7 +75,7 @@ if [ "$SEED" = 1 ]; then
     run gh repo create "$REPO" --public \
       --description "Agent Fleet — distribution artifacts (no source here)"
   fi
-  for f in README.md install.sh; do
+  for f in README.md README.ja.md install.sh; do
     local_b64="$(base64 -w0 < "$HERE/dist-repo/$f")"
     resp="$(gh api "repos/$REPO/contents/$f" \
       --jq '.sha + " " + (.content | gsub("\n"; ""))' 2>/dev/null)" || resp=""
