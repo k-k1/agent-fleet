@@ -11,7 +11,9 @@
 # 詳細は同梱 README.md。
 set -euo pipefail
 
-PKG="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# symlink 起動（install.sh は ~/.local/bin/af -> <pkg>/af を張る）でもパッケージ
+# ディレクトリを正しく解決するため、実体パスまで辿る（readlink -f は coreutils）。
+PKG="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 WS_DATA="${WS_DATA:-$HOME/.local/share/agent-fleet}"
 CP_ADDR="${CP_ADDR:-127.0.0.1:8099}"
 DEV_KEY="${DEV_USER:-dev}"

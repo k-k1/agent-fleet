@@ -118,3 +118,5 @@ read-only の / に・docker と同じ bind レイアウト・単一 uid userns�
 - `control-plane`: `TestNativeFactoryGates` / `TestNativeRuntimeLifecycle`（helper-process で
   fake agent を実 fork し、Start/State/Stop/pidfile/クラッシュ検出/env 分離まで実証）緑。
 - 実機（Docker なし WSL2 での通し起動・Console からのセッション実行）は**未実施**。
+  手順は docs/35 §35.8.1 のチェックリストに凍結済み（ユーザー実施 — chromium sandbox
+  実測・オフライン再起動確認を含む。結果はこの節と docs/35 §35.8 に反映する）。
