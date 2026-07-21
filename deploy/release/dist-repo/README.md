@@ -59,7 +59,6 @@ share any AI-provider credentials.
 | Personal use on WSL2 or a single-user Linux machine; no Docker | **Native** (below) | x86_64 Linux/WSL2 with unprivileged user namespaces (stock WSL2 works), `curl` or `wget`, ~1.5 GB disk |
 | A team on your own Linux server | **Docker Compose** (below) | Docker Engine + `docker compose`, a public domain pointed at the host (auto-TLS; an internal-CA fallback exists), a Google OAuth 2.0 client for login |
 | A team on AWS | **ECS (CloudFormation)** (below) | An AWS account, ECR for the images, the templates bundled in the compose tar |
-| Offline / restricted network | Any of the above, air-gap paths | The images tar (Compose) or the `-bundle` native tar; file hand-off instead of downloads |
 
 Common to all editions: outbound network is needed once per workspace to
 pin-install the agent CLIs on first start (air-gap alternatives are documented
@@ -82,6 +81,26 @@ af start
 - For details (host requirements, air-gap installs, running as a service,
   optional text-to-speech with VOICEVOX / Zundamon, limitations) see the
   `README.md` bundled inside the tar.
+
+### Cloning private repos (git-provider OAuth)
+
+Each user connects their own GitHub / Bitbucket from the Console
+(**⚙ Settings → Git**) — pasting a token works out of the box. To also light up
+the one-click **"Connect via OAuth"** buttons, set these in the environment
+**before `af start`** (the launcher passes them through to the control plane):
+
+| Provider | Variables | Notes |
+|---|---|---|
+| **GitHub** (device flow) | `GITHUB_OAUTH_CLIENT_ID` | Create an OAuth App with **"Enable Device Flow" ON**. The client_id is **not a secret**; no callback URL is needed, so it works on plain `localhost`. |
+| **Bitbucket** (auth code) | `BITBUCKET_OAUTH_KEY`, `BITBUCKET_OAUTH_SECRET`, `PUBLIC_BASE_URL` | The consumer's Callback URL must exactly equal `<PUBLIC_BASE_URL>/api/oauth/bitbucket/callback`. |
+
+```bash
+GITHUB_OAUTH_CLIENT_ID=<your-client-id> af start
+```
+
+Under the systemd unit below, add them as `Environment=` lines in `[Service]`.
+Without any of this, token/PAT paste in the Console still works — OAuth is only a
+convenience.
 
 Run it as a service instead of foreground `af start` (systemd is on by default in
 WSL2) — create `~/.config/systemd/user/agent-fleet.service`:
@@ -110,22 +129,30 @@ service fails to bind port 8099.
 
 ## Installing the Docker Compose edition (team, on-prem)
 
-The images are **not** published to a registry — download both the bundle
+The images are **not** published to a registry, so the bundle
 (`agent-fleet-<version>.tar.gz`) and the images tar
-(`agent-fleet-images-<version>.tar.gz`) from
-[Releases](https://github.com/k-k1/agent-fleet-dist/releases), then:
+(`agent-fleet-images-<version>.tar.gz`) ship on
+[Releases](https://github.com/k-k1/agent-fleet-dist/releases). A helper fetches
+and verifies both, extracts the bundle and `docker load`s the images:
 
 ```bash
-V=<version>
-sha256sum -c --ignore-missing SHA256SUMS          # verify both downloads
-tar xzf "agent-fleet-$V.tar.gz" && cd "agent-fleet-$V"
-./load-images.sh "../agent-fleet-images-$V.tar.gz" # docker load (CP + workspace)
-cp .env.example .env                               # fill in secrets, domain, Google OAuth
+curl -fsSL https://raw.githubusercontent.com/k-k1/agent-fleet-dist/main/install-compose.sh | bash
+cd agent-fleet-<version>
+cp .env.example .env     # fill in secrets, domain, Google OAuth (see below)
 docker compose up -d
 ```
 
+Unlike the native edition this is **not** a full one-liner: you must edit `.env`
+(secrets, `PUBLIC_DOMAIN`, Google OAuth, optionally the git-provider OAuth vars
+below) before `docker compose up`. To pin a version, prefix
+`AF_VERSION=<version>`; `AF_SKIP_IMAGES=1` skips the large images download when
+you hand it off separately. Prefer the manual path? Download the two tars, then
+`sha256sum -c --ignore-missing SHA256SUMS`, `tar xzf`, `./load-images.sh`.
+
 The bundled `README.md` is the full runbook: prerequisites, key generation,
-TLS/domain setup, backup/restore, upgrades and troubleshooting.
+TLS/domain setup, git-provider OAuth (`GITHUB_OAUTH_CLIENT_ID` /
+`BITBUCKET_OAUTH_KEY` / `BITBUCKET_OAUTH_SECRET` in `.env`), backup/restore,
+upgrades and troubleshooting.
 
 ## Installing on AWS (ECS / CloudFormation)
 

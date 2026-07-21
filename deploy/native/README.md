@@ -99,6 +99,34 @@ cd agent-fleet-native-<v'>-linux-amd64 && ./af start
   with `BAKE_AGENT_CLIS=1` (licensing forbids redistributing builds with the CLIs
   baked in — docs/35 §35.4.1).
 
+## Git provider OAuth (GitHub / Bitbucket) — optional
+
+To clone/push private repos, each user connects their own GitHub or Bitbucket
+from the Console (**⚙ Settings → Git**). Pasting a Personal Access Token / app
+token works with no deployment config. To also enable the one-click **"Connect
+via OAuth"** buttons, set the client credentials in the environment **before
+`af start`** — `af` passes them through to the control plane (same mechanism as
+`AF_VOICEVOX_URL` above):
+
+| Provider | Variables | Setup |
+|---|---|---|
+| **GitHub** (device flow) | `GITHUB_OAUTH_CLIENT_ID` | Create an OAuth App (GitHub → Settings → Developer settings → OAuth Apps) with **"Enable Device Flow" ON**. The client_id is **not a secret**, and device flow needs **no callback URL**, so it works as-is on `localhost`. |
+| **Bitbucket** (auth code grant) | `BITBUCKET_OAUTH_KEY`, `BITBUCKET_OAUTH_SECRET`, `PUBLIC_BASE_URL` | Create an OAuth consumer whose **Callback URL** exactly equals `<PUBLIC_BASE_URL>/api/oauth/bitbucket/callback`. `PUBLIC_BASE_URL` must match how you reach the Console (e.g. `http://localhost:8099`). |
+
+```bash
+# GitHub only (simplest — device flow, localhost-friendly):
+GITHUB_OAUTH_CLIENT_ID=<your-client-id> af start
+
+# Bitbucket (needs the callback registered against PUBLIC_BASE_URL):
+PUBLIC_BASE_URL=http://localhost:8099 \
+  BITBUCKET_OAUTH_KEY=<key> BITBUCKET_OAUTH_SECRET=<secret> af start
+```
+
+Under systemd (below), add them as `Environment=` lines in the `[Service]`
+section. These only light up the OAuth buttons; **token paste keeps working
+without them**, so OAuth is purely a convenience. GitHub's device flow is the
+easiest path for a single-user native install because it needs no callback.
+
 ## Text-to-speech (TTS / Zundamon) — optional
 
 Reading chat replies aloud (enable it in the Console under Settings > "Speech";

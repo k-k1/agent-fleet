@@ -301,10 +301,12 @@ jobs:
         run: |
           set -eux
           for f in deploy/release/publish-dist.sh deploy/release/dist-repo/install.sh \
+                   deploy/release/dist-repo/install-compose.sh \
                    deploy/local/dist-stub-test.sh; do
             bash -n "$f"
           done
           shellcheck deploy/release/publish-dist.sh deploy/release/dist-repo/install.sh \
+            deploy/release/dist-repo/install-compose.sh \
             deploy/local/dist-stub-test.sh
 
       - name: publish/install stub run (call-sequence + file:// flow)
