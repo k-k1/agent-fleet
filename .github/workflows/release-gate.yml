@@ -7,6 +7,7 @@
 # hosted CI に出す。課金抑制のため常時トリガーにはしない: この workflow ファイル自身を
 # 変更した push（= 意図的な起動）と、develop/main に載った後の workflow_dispatch のみ。
 # 再実行は `gh run rerun <id>`。
+# P2 ゲート d/e 緑（run 29805585420）→ この push は 3 job フル実走（ゲート f 再実証）。
 name: release-gate
 
 on:

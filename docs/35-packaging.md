@@ -651,6 +651,30 @@ playwright CDN の実 DL 確認）は §35.8 native ゲート（P4）のまま�
   最終 fallback）で行う。cloudwatch の uvx fallback は `==<cloudwatch_mcp ピン>` 固定に変更。
 - 静的ツールの版ピン（Dockerfile.tools の ARG）: bubblewrap 0.11.0 / git 2.47.3 /
   zstd 1.5.7。ビルダー内で `ldd` による静的性検証を行い、CI ゲート (d) でも再検証する。
+- **bind マウントポイントは rootfs へ焼く**（初回ゲート実走が検出した真因バグ）: docker は
+  `-v` 先ディレクトリをコンテナ内に自動作成するが、bwrap の `--ro-bind rootfs /` 配下は
+  read-only で mkdir 不能 → `/var/lib/af/claude`・`/usr/local/share/agent-fleet/docs`・
+  `/usr/lib/jvm` が無い rootfs では起動即死する。workspace/Dockerfile で 3 箇所を空のまま
+  焼き、CP factory にも「旧イメージ由来 rootfs は起動前に明示エラー」の fail-fast を追加。
+- release-gate.yml はコミットメッセージ `[native-only]` で P1 系 2 job を省略できる
+  （native ゲートの反復用。最終検証は無印 push で 3 job）。
+
+**P2 ゲート結果（2026-07-21・hosted CI 実走 run 29805585420 全緑）**:
+
+- (d) ✅ `VERSION=0.0.0-ci build.sh --native` で C＋R＋D 生成（ビルド 8.5 分）。
+  静的性（ldd）・rootfs.json sha256 = R 一致・console/docs（denylist 適用）/NOTICE/VERSION
+  同梱・image-env.json の tar 内在、全て検証。
+- (e) ✅ runner（userns sysctl 緩和のみ）で C 展開 → `af start --rootfs` → CP healthy・
+  `/api/version` 一致 → `POST /api/workspace/start` が **29 秒で `state:"running"`**
+  （bwrap 配下で rootfs の entrypoint→boot-install→agent healthy まで同期）→ 仮想 HOME に
+  claude 2.1.215 / opencode 1.18.3 / codex 0.144.6 / copilot 1.0.73 / rtk / agy がピン版で
+  導入済みを実証 → workspace stop → `af reset --all` が WS_DATA を残骸なく削除。
+- (f) 既定無影響は P1 の 2 job（compose/default）を含む最終フル run で再実証
+  （このゲート反復中は `[native-only]` でスキップしていたため）。
+
+残（P4 実機ゲートへ）: 素の WSL2（追加インストールなし）の通し E2E・実 Console からの
+セッション操作の目視・chromium sandbox の bwrap 配下実測・playwright CDN の実 DL 検証・
+dist repo への実 publish（rootfs URL の疎通）。
 
 ## 35.8 検証ゲート（P3-10 完了判定への接続）
 
@@ -658,7 +682,7 @@ playwright CDN の実 DL 確認）は §35.8 native ゲート（P4）のまま�
 |---|---|---|
 | compose | clean host でバンドルから起動（P3-10 段5） | ✅ 実証済（ec2-single 上） |
 | EC2-Single | 同上 + CFN provision〜teardown | ✅ 実証済 |
-| native | **素の WSL2**（Docker なし・**追加インストールなし**）で tar から起動 → 初回 boot-install（ピン版）→ clone → claude セッション E2E → 再起動してオフライン起動（2回目は DL なし）。userns 無特権実行が WSL2 標準カーネルで通ることの確認を含む（§35.3.1 の仮説） | ✗ 未（docs/34 §34.6 の実機未検証と同時に消化する） |
+| native | **素の WSL2**（Docker なし・**追加インストールなし**）で tar から起動 → 初回 boot-install（ピン版）→ clone → claude セッション E2E → 再起動してオフライン起動（2回目は DL なし）。userns 無特権実行が WSL2 標準カーネルで通ることの確認を含む（§35.3.1 の仮説） | △ CI 分は済（§35.7.2 ゲート d/e 全緑 = hosted runner で af start→bwrap 起動→boot-install ピン実証）。素の WSL2 実機は未（docs/34 §34.6 と同時に消化する） |
 | ECS | E2E ゲート（p3-7 凍結仕様 §20b.7.14）+ タグ更新の一巡 | △ 段階実証済・更新一巡は未 |
 | 総合 | 第 2 デプロイをゼロから立てて E2E（decisions/0001） | ✗ 未 |
 
