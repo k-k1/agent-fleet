@@ -28,18 +28,18 @@ func TestSQLiteStore(t *testing.T) {
 
 	// UpsertIdentity is idempotent on user_key; email updated when non-empty;
 	// role upgrades but does not downgrade.
-	i1, err := st.UpsertIdentity(ctx, "", "k1-kami-gmail-com", "")
+	i1, err := st.UpsertIdentity(ctx, "", "dev-example-com", "")
 	if err != nil {
 		t.Fatalf("upsert1: %v", err)
 	}
-	i2, err := st.UpsertIdentity(ctx, "k1.kami@gmail.com", "k1-kami-gmail-com", "super_admin")
+	i2, err := st.UpsertIdentity(ctx, "dev@example.com", "dev-example-com", "super_admin")
 	if err != nil {
 		t.Fatalf("upsert2: %v", err)
 	}
 	if i1.ID != i2.ID {
 		t.Fatalf("identity not idempotent: %s != %s", i1.ID, i2.ID)
 	}
-	if i2.Email != "k1.kami@gmail.com" || i2.Role != "super_admin" {
+	if i2.Email != "dev@example.com" || i2.Role != "super_admin" {
 		t.Fatalf("identity not updated: %+v", i2)
 	}
 
@@ -76,8 +76,8 @@ func TestSQLiteStore(t *testing.T) {
 	}
 	ws := Workspace{
 		ID: newID(), TenantID: tn.ID, MembershipID: defMem,
-		ContainerName: "af-ws-k1-kami-gmail-com", Network: "af-net-k1-kami-gmail-com",
-		DataDir: "/tmp/af-data/k1-kami-gmail-com", AgentPort: "7700",
+		ContainerName: "af-ws-dev-example-com", Network: "af-net-dev-example-com",
+		DataDir: "/tmp/af-data/dev-example-com", AgentPort: "7700",
 		AgentToken: "tok", State: "stopped", CreatedAt: nowTS(),
 	}
 	if err := st.CreateWorkspace(ctx, ws); err != nil {

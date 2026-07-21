@@ -16,13 +16,13 @@ func TestRootedDataDir(t *testing.T) {
 	}{
 		{
 			name: "default tenant flat path re-rooted",
-			ws:   Workspace{TenantID: "T-default", DataDir: "/old/root/k1-kami-gmail-com"},
-			want: "/srv/agent-fleet/data/k1-kami-gmail-com",
+			ws:   Workspace{TenantID: "T-default", DataDir: "/old/root/dev-example-com"},
+			want: "/srv/agent-fleet/data/dev-example-com",
 		},
 		{
 			name: "non-default tenant nested path re-rooted (slug/key kept)",
-			ws:   Workspace{TenantID: "T-acme", DataDir: "/old/root/acme-team/k1-kami-gmail-com"},
-			want: "/srv/agent-fleet/data/acme-team/k1-kami-gmail-com",
+			ws:   Workspace{TenantID: "T-acme", DataDir: "/old/root/acme-team/dev-example-com"},
+			want: "/srv/agent-fleet/data/acme-team/dev-example-com",
 		},
 		{
 			name: "idempotent when already current (default)",
