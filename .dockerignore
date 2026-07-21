@@ -21,3 +21,9 @@ workspace
 deploy/local/oauth.env
 deploy/local/allowed-emails.txt
 deploy/compose/.env
+
+# Release artifacts (huge tars) must never enter the CP build context.
+# (deploy/release/.docs-stage is NOT ignored — the release build COPYs it via
+# --build-arg DOCS_SRC.)
+deploy/compose/dist
+deploy/release/dist

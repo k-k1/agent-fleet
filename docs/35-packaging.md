@@ -520,6 +520,27 @@ P1→P2 が本丸（native が唯一のゼロ→イチ）。P3 は独立に並�
 `~/.local/bin` に入りセッションが動く。(c) 既定 ARG（全焼き込み）のビルド・e2e-smoke が
 無変更で通る（既存デプロイに影響ゼロ）。
 
+**実装状況（2026-07-21・feat/packaging）**: 表の 9 項目すべて実装済み。実装時の確定事項:
+
+- `release.sh` の配布既定は lean（`BAKE_AGENT_CLIS=0`。自社用全焼き込みは
+  `BAKE_AGENT_CLIS=1` を明示）。B（images tar）はバンドル内でなく **dist 直下の独立
+  成果物**に変更（§35.2 のマトリクスどおり。ec2-single runbook のパスも更新済み）。
+  NOTICE はバンドル A に同梱。
+- awscli / session-manager-plugin は焼き込みも versioned URL へ前倒しでピン化
+  （§35.9-7(c) の残りは「root なし展開のオンデマンド導入」= P2）。
+- `chromium_dl` ピンは playwright build **1228**（= Chromium 149.0.7827.55、
+  playwright 1.61.0 安定版同梱）を記録。供給元の最終選定・実 DL 検証は §35.9-7(a)
+  のまま P2（この Workspace からは PRSS CDN が 400 を返し検証不能 — 実機/別回線で確認）。
+- entrypoint の self-update OFF 時 shadow 掃除は「焼き込み版が存在する時だけ」に限定
+  （lean では ~/.local が boot-install 品そのものなので消してはならない）。
+- e2e-smoke の既存バグ修正: `EXPECT_COPILOT` が docker run へ渡っておらず、copilot
+  統合後の smoke は set -u で落ちる状態だった。
+- 検証済み: CP/agent 全 Go テスト緑（151+451）・shell 構文・docs ステージングの実走
+  （114→90 file、denylist 4 種のみ除外）・entrypoint boot-install のサンドボックス実走
+  （lean 初回=ピン npm 導入+update 抑止 / 2 回目=no-op / baked=no-op / 失敗時ソフト続行）。
+  **ゲート (a)(b)(c) の docker 実ビルドは未**（この Workspace に docker なし —
+  ホスト側で `VERSION=x deploy/release/build.sh --compose` と run-dev.sh 再ビルドを実施）。
+
 ## 35.8 検証ゲート（P3-10 完了判定への接続）
 
 | ターゲット | ゲート | 状態 |

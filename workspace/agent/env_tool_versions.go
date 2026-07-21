@@ -45,7 +45,7 @@ var toolSpecs = []toolSpec{
 	// ため probeVersion は "(取得失敗)" になる（それ自体がガード対象ホストの兆候）。
 	{Name: "agy", Cmd: "agy", Baked: "/usr/local/bin/agy", Pin: "agy"},
 	{Name: "copilot", Cmd: "copilot", Baked: "/usr/local/bin/copilot", Pin: "copilot"},
-	{Name: "rtk", Cmd: "rtk", Baked: "/usr/local/bin/rtk"},
+	{Name: "rtk", Cmd: "rtk", Baked: "/usr/local/bin/rtk", Pin: "rtk"},
 	{Name: "gh", Cmd: "gh", Baked: "/usr/local/libexec/gh", Pin: "gh"}, // /usr/local/bin/gh は透過認証ラッパー
 	{Name: "go", Cmd: "go", Baked: "/usr/local/go/bin/go", Args: []string{"version"}, Pin: "go"},
 	{Name: "node", Cmd: "node", Baked: "/usr/local/bin/node"},

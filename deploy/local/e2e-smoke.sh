@@ -39,10 +39,24 @@ if [ "${1:-}" = "--inner" ]; then
     if test -"$mode" "$path"; then echo "ok  $path"; else echo "NG  $path が無い"; fail=1; fi
   }
 
-  check_ver claude   "$EXPECT_CLAUDE"   claude --version
-  check_ver opencode "$EXPECT_OPENCODE" opencode --version
-  check_ver codex    "$EXPECT_CODEX"    codex --version
-  check_ver copilot  "$EXPECT_COPILOT"  copilot --version
+  if [ "${EXPECT_AGENT_CLIS:-1}" = "1" ]; then
+    check_ver claude   "$EXPECT_CLAUDE"   claude --version
+    check_ver opencode "$EXPECT_OPENCODE" opencode --version
+    check_ver codex    "$EXPECT_CODEX"    codex --version
+    check_ver copilot  "$EXPECT_COPILOT"  copilot --version
+  else
+    # lean 配布 variant（BAKE_AGENT_CLIS=0、docs/35 §35.7.1-7）: エージェント CLI が
+    # 本当に居ないこと（= プロプライエタリ CLI を再配布していないこと）を検証。
+    # ピン版の導入可否は versions.json の全ピン記載チェック（下）と、P1 ゲート別項の
+    # boot-install 実走（ネット前提）で見る。
+    for c in claude opencode codex copilot agy rtk; do
+      if command -v "$c" >/dev/null 2>&1; then
+        echo "NG  lean: $c が焼き込まれている（BAKE_AGENT_CLIS=0 のはず）"; fail=1
+      else
+        echo "ok  lean: $c なし"
+      fi
+    done
+  fi
   check_ver go       "$EXPECT_GO"       /usr/local/go/bin/go version
   check_ver gh       "$EXPECT_GH"       /usr/local/libexec/gh --version
 
@@ -70,11 +84,17 @@ if [ "${1:-}" = "--inner" ]; then
   [ "${DISABLE_AUTOUPDATER:-}" = "1" ] && echo "ok  DISABLE_AUTOUPDATER=1" \
     || { echo "NG  DISABLE_AUTOUPDATER が 1 でない"; fail=1; }
 
-  # ビルド時ピンの写し versions.json（設定 UI「ツールのバージョン」のピン表示の源）。
+  # ビルド時ピンの写し versions.json（設定 UI「ツールのバージョン」のピン表示の源、
+  # lean variant では boot-install / オンデマンド導入の取得版）。BAKE ノブに関わらず
+  # 常に全ピンが記載されていること（docs/35 §35.7.1-5/-7）。
   VJ=/usr/local/share/agent-fleet/versions.json
   if [ -f "$VJ" ]; then
     for pair in "claude=$EXPECT_CLAUDE" "opencode=$EXPECT_OPENCODE" "codex=$EXPECT_CODEX" "copilot=$EXPECT_COPILOT" \
-                "go=$EXPECT_GO" "gh=$EXPECT_GH" "chromium=$EXPECT_CHROMIUM"; do
+                "agy=$EXPECT_AGY" "rtk=$EXPECT_RTK_VER" \
+                "go=$EXPECT_GO" "gh=$EXPECT_GH" "chromium=$EXPECT_CHROMIUM" \
+                "chromium_dl=$EXPECT_CHROMIUM_DL" "mcp_grafana=$EXPECT_MCP_GRAFANA" \
+                "cloudwatch_mcp=$EXPECT_CLOUDWATCH_MCP" "awscli=$EXPECT_AWSCLI" \
+                "session_manager_plugin=$EXPECT_SMP"; do
       k="${pair%%=*}"; want="${pair#*=}"
       got="$(jq -r ".$k" "$VJ" 2>/dev/null)"
       if [ "$got" = "$want" ]; then echo "ok  versions.json $k=$got"
@@ -85,13 +105,15 @@ if [ "${1:-}" = "--inner" ]; then
   fi
 
   # rtk は既定で常時焼き込み（BAKE_RTK=1）。EXPECT_RTK=0 は BAKE_RTK=0 のエアギャップ
-  # ビルドを検証するときだけ渡す。
-  if [ "${EXPECT_RTK:-1}" = "1" ]; then
-    if command -v rtk >/dev/null; then echo "ok  rtk $(rtk --version 2>/dev/null | semver)"
-    else echo "NG  rtk: 常時焼き込みのはずがイメージに無い"; fail=1; fi
-  else
-    if command -v rtk >/dev/null; then echo "ok  rtk $(rtk --version 2>/dev/null | semver)（イメージに有）"
-    else echo "ok  rtk なし（BAKE_RTK=0 ビルド）"; fi
+  # ビルドを検証するときだけ渡す。lean（EXPECT_AGENT_CLIS=0）は上の不在チェック済み。
+  if [ "${EXPECT_AGENT_CLIS:-1}" = "1" ]; then
+    if [ "${EXPECT_RTK:-1}" = "1" ]; then
+      if command -v rtk >/dev/null; then echo "ok  rtk $(rtk --version 2>/dev/null | semver)"
+      else echo "NG  rtk: 常時焼き込みのはずがイメージに無い"; fail=1; fi
+    else
+      if command -v rtk >/dev/null; then echo "ok  rtk $(rtk --version 2>/dev/null | semver)（イメージに有）"
+      else echo "ok  rtk なし（BAKE_RTK=0 ビルド）"; fi
+    fi
   fi
 
   # 既定 USER=dev のまま、永続 home を profile にせず固定の日本語ページを描画する。
@@ -180,19 +202,38 @@ EXPECT_CLAUDE="$(arg_pin CLAUDE_CODE_VERSION)"
 EXPECT_OPENCODE="$(arg_pin OPENCODE_VERSION)"
 EXPECT_CODEX="$(arg_pin CODEX_VERSION)"
 EXPECT_COPILOT="$(arg_pin COPILOT_VERSION)"
+EXPECT_AGY="$(arg_pin AGY_VERSION)"
+EXPECT_RTK_VER="$(arg_pin RTK_VERSION)"
 EXPECT_GO="$(arg_pin GO_VERSION)"
 EXPECT_GH="$(arg_pin GH_VERSION)"
 EXPECT_CHROMIUM="$(arg_pin CHROMIUM_VERSION)"
+EXPECT_CHROMIUM_DL="$(arg_pin CHROMIUM_DL_VERSION)"
+EXPECT_MCP_GRAFANA="$(arg_pin MCP_GRAFANA_VERSION)"
+EXPECT_CLOUDWATCH_MCP="$(arg_pin CLOUDWATCH_MCP_VERSION)"
+EXPECT_AWSCLI="$(arg_pin AWSCLI_VERSION)"
+EXPECT_SMP="$(arg_pin SESSION_MANAGER_PLUGIN_VERSION)"
 EXPECT_RTK="${EXPECT_RTK:-1}" # 既定=常時焼き込み。BAKE_RTK=0 ビルドの検証時のみ 0 を渡す
+# lean 配布 variant（BAKE_AGENT_CLIS=0）のイメージを検証するときは 0 を渡す
+# （docs/35 §35.7.1-7。CLI 不在 + versions.json 全ピン記載へ検証が切り替わる）。
+EXPECT_AGENT_CLIS="${EXPECT_AGENT_CLIS:-1}"
 SMOKE_MEMORY="${WS_MEMORY:-1g}"
 
-echo "==> image smoke: $IMAGE (claude=$EXPECT_CLAUDE opencode=$EXPECT_OPENCODE codex=$EXPECT_CODEX copilot=$EXPECT_COPILOT go=$EXPECT_GO gh=$EXPECT_GH chromium=$EXPECT_CHROMIUM rtk=$EXPECT_RTK)"
+echo "==> image smoke: $IMAGE (agent_clis=$EXPECT_AGENT_CLIS claude=$EXPECT_CLAUDE opencode=$EXPECT_OPENCODE codex=$EXPECT_CODEX copilot=$EXPECT_COPILOT go=$EXPECT_GO gh=$EXPECT_GH chromium=$EXPECT_CHROMIUM rtk=$EXPECT_RTK)"
 exec docker run --rm -i --init --network none --memory "$SMOKE_MEMORY" --cap-add=SYS_ADMIN \
   -e EXPECT_CLAUDE="$EXPECT_CLAUDE" \
   -e EXPECT_OPENCODE="$EXPECT_OPENCODE" \
   -e EXPECT_CODEX="$EXPECT_CODEX" \
+  -e EXPECT_COPILOT="$EXPECT_COPILOT" \
+  -e EXPECT_AGY="$EXPECT_AGY" \
+  -e EXPECT_RTK_VER="$EXPECT_RTK_VER" \
   -e EXPECT_GO="$EXPECT_GO" \
   -e EXPECT_GH="$EXPECT_GH" \
   -e EXPECT_CHROMIUM="$EXPECT_CHROMIUM" \
+  -e EXPECT_CHROMIUM_DL="$EXPECT_CHROMIUM_DL" \
+  -e EXPECT_MCP_GRAFANA="$EXPECT_MCP_GRAFANA" \
+  -e EXPECT_CLOUDWATCH_MCP="$EXPECT_CLOUDWATCH_MCP" \
+  -e EXPECT_AWSCLI="$EXPECT_AWSCLI" \
+  -e EXPECT_SMP="$EXPECT_SMP" \
   -e EXPECT_RTK="$EXPECT_RTK" \
+  -e EXPECT_AGENT_CLIS="$EXPECT_AGENT_CLIS" \
   --entrypoint /bin/bash "$IMAGE" -s -- --inner < "${BASH_SOURCE[0]}"

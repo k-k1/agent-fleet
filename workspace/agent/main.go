@@ -17,6 +17,10 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
+// buildVersion is stamped by the release pipeline via
+// `-ldflags "-X main.buildVersion=<v>"` (docs/35 §35.6.1); dev builds stay "dev".
+var buildVersion = "dev"
+
 func main() {
 	// Subcommand mode: git invokes this binary as its credential helper
 	// (`workspace-agent cred get`), backed by the encrypted store. It prints
@@ -127,7 +131,7 @@ func main() {
 	// "origin advanced" without a manual fetch (fetch_loop.go).
 	startAutoFetch()
 
-	log.Printf("workspace-agent listening on %s", addr)
+	log.Printf("workspace-agent %s listening on %s", buildVersion, addr)
 	if err := http.ListenAndServe(addr, httpx.LogRequests(httpx.RequireToken(mux))); err != nil {
 		log.Fatal(err)
 	}

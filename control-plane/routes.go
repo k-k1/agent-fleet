@@ -96,6 +96,12 @@ func registerAuthRoutes(mux *http.ServeMux, cfg config) {
 	exemptExact("/login", "/healthz")
 	exemptPrefix("/oauth2/", "/brand/")
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
+	// Build version (docs/35 §35.6.1). Deliberately NOT auth-exempt: /healthz is
+	// frozen (restart-cp.sh compares the body to "ok" verbatim) and the version
+	// string shouldn't leak to unauthenticated callers.
+	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"version": buildVersion})
+	})
 	mux.HandleFunc("GET /login", cfg.handleLogin)
 	mux.HandleFunc("GET /oauth2/login", cfg.handleOAuthLogin)
 	mux.HandleFunc("GET /oauth2/callback", cfg.handleOAuthCallback)

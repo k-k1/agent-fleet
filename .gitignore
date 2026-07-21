@@ -13,8 +13,11 @@ deploy/compose/.env
 # Local backup archives (backup.sh default OUT_DIR). Sensitive — never commit.
 deploy/compose/backups/
 
-# Release bundles built by release.sh.
+# Release bundles built by release.sh / deploy/release/build.sh.
 deploy/compose/dist/
+deploy/release/dist/
+# docs staging（distignore 適用済みツリー）— release.sh が build context 内に一時生成。
+deploy/release/.docs-stage/
 
 # EC2 test-harness SSH keys (private key stays local; never commit).
 deploy/aws/ec2-single/*-key
