@@ -93,6 +93,8 @@ cat <<EOF
 Next steps:
   af start        # first run downloads, verifies and extracts the rootfs (~200 MB)
   # then open http://localhost:8099 in your browser
+Optional text-to-speech (VOICEVOX / Zundamon): see the bundled guide
+  $DEST_ROOT/$VER/README.md
 Cleanup of old versions (optional): remove unused version directories under
   $DEST_ROOT/ (user data lives elsewhere and is not affected)
 EOF
