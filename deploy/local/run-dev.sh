@@ -115,6 +115,10 @@ do_reset() {
     kill -KILL -- "-$pid" 2>/dev/null || true
   fi
   tmux -L "af-ws-$DEV_KEY" kill-server 2>/dev/null || true
+  # Go module caches inside workspace homes are write-protected (0555/0444 —
+  # `go mod` does this on purpose), which makes a plain rm -rf fail with
+  # "Permission denied". Restore owner write permission first.
+  chmod -R u+w "$target" 2>/dev/null || true
   rm -rf "$target"
   echo "==> wipe complete (recreated on next start)"
 }
