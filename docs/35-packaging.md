@@ -547,8 +547,27 @@ P1→P2 が本丸（native が唯一のゼロ→イチ）。P3 は独立に並�
 - 検証済み: CP/agent 全 Go テスト緑（151+451）・shell 構文・docs ステージングの実走
   （114→90 file、denylist 4 種のみ除外）・entrypoint boot-install のサンドボックス実走
   （lean 初回=ピン npm 導入+update 抑止 / 2 回目=no-op / baked=no-op / 失敗時ソフト続行）。
-  **ゲート (a)(b)(c) の docker 実ビルドは未**（この Workspace に docker なし —
-  ホスト側で `VERSION=x deploy/release/build.sh --compose` と run-dev.sh 再ビルドを実施）。
+
+**P1 ゲート結果（2026-07-21・hosted CI 実走 = `.github/workflows/release-gate.yml`、
+run 29802263108 全緑）**: 開発 Workspace に docker が無く dev ホストの重ビルドは
+フリート OOM リスクがあるため、実ビルド検証は hosted runner で実施（トリガーは
+workflow ファイル変更 push と workflow_dispatch のみ = 課金抑制）。
+
+- (a) ✅ `VERSION=0.0.0-ci build.sh --compose` で A+B+D 生成。SHA256SUMS 照合・
+  aws//NOTICE 同梱・.env.example 版ピン・鍵類不混入・CP 配布イメージの denylist 適用
+  （HANDOFF/talk/history 不在・設計 docs 残存）・`/api/version` が実起動で版を返す・
+  workspace-agent の版刻印ログ、全て検証。
+- (b) ✅（CI で可能な範囲）lean B は e2e-smoke lean モード全緑（6 CLI 完全不在・
+  versions.json 全ピン記載・chromium/SUID/browser smoke 維持）。boot-install ライブ実走で
+  claude 2.1.215 / opencode 1.18.3 / codex 0.144.6 / copilot 1.0.73 / rtk 0.43.0 が
+  ピン版で `~/.local` に入り、agy 1.1.5 は `--version` 実行まで通過（runner は RDRAND 有）。
+  残るのは「実 CP+実認証でセッションが動く」の目視のみ（ホスト側フリート再ビルド時）。
+- (c) ✅ 既定 ARG（全焼き込み）の workspace ビルド + e2e-smoke、既定 DOCS_SRC
+  （全ツリー docs・HANDOFF 残存）の CP ビルドが無変更で通過（既存デプロイに影響ゼロ）。
+- 副産物のバグ修正: 初回ゲート実走（run 29801834913）が **CP の素起動即死**を検出 —
+  openSQLite が dbPath 親ディレクトリを作らず、WS_DATA 未作成だと起動不能（実デプロイは
+  マウント済み dir で不発・P2 native の初回 `af start` で必ず踏む経路）。CP 側に
+  MkdirAll を追加して修正済み。
 
 ## 35.8 検証ゲート（P3-10 完了判定への接続）
 
