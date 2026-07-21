@@ -6,7 +6,8 @@ Distribution artifacts for [Agent Fleet](https://github.com/k-k1/agent-fleet).
 ## What is Agent Fleet?
 
 Agent Fleet is a self-hosted web console for running AI coding agents
-(Claude Code, Codex CLI, OpenCode, GitHub Copilot CLI) as a managed fleet.
+(Claude Code, Codex CLI, OpenCode, GitHub Copilot CLI, Antigravity CLI) as a
+managed fleet.
 Each member gets an isolated workspace — a container (or a sandboxed rootfs in
 the native edition) with a persistent home and git working copies — and starts,
 drives and monitors agent sessions from the browser. A Go control plane
@@ -45,7 +46,7 @@ this automatically).
 ## License / bundled software
 
 - The distributed images and rootfs are a **lean build**: agent CLIs
-  (Claude Code / Codex / OpenCode and friends) are not bundled — on first start
+  (Claude Code / Codex / OpenCode / Copilot / Antigravity) are not bundled — on first start
   each user fetches verified, pinned versions from the respective upstream
   (this build intentionally avoids redistribution).
 - For attribution of bundled OSS, see the `NOTICE` file inside each tar.

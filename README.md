@@ -1,7 +1,7 @@
 # Agent Fleet — a self-hosted console for running AI coding agents as a fleet
 
 Agent Fleet is a web service that lets a team share AI coding agents — Claude Code,
-Codex CLI, OpenCode, GitHub Copilot CLI — efficiently and safely. Each member gets an
+Codex CLI, OpenCode, GitHub Copilot CLI, Antigravity CLI — efficiently and safely. Each member gets an
 isolated per-user environment (container) with a persistent home and git working
 copies, and starts, drives and manages agent sessions from the browser. A Go control
 plane orchestrates the workspaces; the same core runs **both locally (Docker) and on
