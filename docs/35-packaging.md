@@ -569,6 +569,71 @@ workflow ファイル変更 push と workflow_dispatch のみ = 課金抑制）�
   マウント済み dir で不発・P2 native の初回 `af start` で必ず踏む経路）。CP 側に
   MkdirAll を追加して修正済み。
 
+### 35.7.2 P2 実装仕様（凍結）
+
+P2 = native tar（§35.3.1）の実装一式。§35.7.1 と同じく「表の項目を全部実装したら
+ゲートで判定」の形で凍結する。設計の背骨は §35.3.1 のまま、ここでは実装が迷わない
+粒度まで確定する。
+
+| # | 対象 | 変更内容 |
+|---|---|---|
+| 1 | `control-plane/runtime_native.go` | **rootfs モード**追加。`AF_NATIVE_ROOTFS=<展開済み rootfs dir>` が設定されたら Start のコマンドを bwrap ラップ（下記 argv 表）へ切替。bwrap は `AF_NATIVE_BWRAP`（無ければ PATH の `bwrap`）。factory ゲート: AUTH=dev（共通）＋ rootfs 配下に `usr/local/bin/workspace-agent`・`usr/local/bin/entrypoint.sh`・`usr/local/share/agent-fleet/image-env.json` が存在すること（欠けは起動前 fail-fast）。`AF_NATIVE_AGENT_BIN` の従来モード（開発・run-dev.sh native）は無変更で共存 |
+| 2 | 同上（env 合成） | docker イメージの ENV（PATH/LANG/LC_ALL/DISABLE_AUTOUPDATER/AGY_CLI_DISABLE_AUTO_UPDATE/COPILOT_AUTO_UPDATE 等）は**イメージ config にあり rootfs tar に乗らない**ため、ビルダーが `docker image inspect .Config.Env` を `usr/local/share/agent-fleet/image-env.json`（JSON 配列）として R 内へ注入し、rootfs モードはこれを env の**土台**に敷く。その上へ既存の明示 env（`HOME=/home/dev`・`AGENT_ADDR`・`CLAUDE_CONFIG_DIR=/var/lib/af/claude`・`AF_TMUX_SOCKET`・`AGENT_TOKEN` 等 — 値はコンテナ内パス）→ extraEnv の順で重ねる（重複キーは後勝ち、従来同様 map 平坦化）。`AGENT_DOCS_DIR` は**設定しない**（docs はコンテナ既定パスへ ro-bind するため） |
+| 3 | 同上（lifecycle） | pidfile は bwrap の pid を記録し、`pidAlive` の argv0 照合対象は bwrap バイナリ。Stop は従来の group SIGTERM→SIGKILL のみで完結（`--unshare-pid` により bwrap 死亡＝pid namespace 全滅で tmux も消える。rootfs モードでは tmux kill-server fallback を**スキップ** — ソケットは namespace 内 /tmp で外から不可視）。State/waitAgentHealthy は共通 |
+| 4 | `workspace/agent`（chromium） | `workspace-agent install-chromium`: versions.json `chromium_dl`（playwright build 番号）の zip（amd64=`chromium-linux.zip` / arm64=`chromium-linux-arm64.zip`）を候補ホスト順（`cdn.playwright.dev/dbazure/download/playwright/builds/chromium/<pin>/` → `playwright.azureedge.net/builds/chromium/<pin>/` → `playwright.download.prss.microsoft.com/dbazure/...`）に取得し `~/.local/share/agent-fleet/chromium/<pin>/` へ原子展開（install-jdk と同型 staging→rename）。CJK フォントは versions.json **`noto_cjk` ピン新設**（notofonts/noto-cjk GitHub Releases の versioned asset）で `~/.local/share/fonts/` へ＋`fc-cache -f`（無ければ skip）。`findChromiumBinary` 解決順を「env → 焼き込み（/usr/bin/chromium 等 PATH 名群）→ **専用ピン dir**（chromium_dl。無ピンは glob 最新）→ playwright cache」へ変更。ペイン初回 attach で不在＆ピンあり→ページ状態 `installing`（既存 status チャネルで Console へ「準備中（初回のみ ~200MB 取得）」）を流して自動導入。`AF_CHROMIUM_NO_SANDBOX=1` で `--no-sandbox` 起動する knob を追加（既定 off・bwrap 配下 sandbox 実測不可時の README 記載用） |
+| 5 | `workspace/agent`（go） | `workspace-agent install-go [<ver>]`: 既定 versions.json `go`。go.dev/dl の versioned tarball を `?mode=json&include=all` の公表 sha256 で検証し `~/.local/share/agent-fleet/go/<ver>/` へ原子展開。toolchains.json に `go` フィールド追加（""/"system"=焼き込み or なし、版指定=on-demand）。entrypoint: 選択あり＆未導入なら install-go、`GOROOT`/PATH を export。`resolvedToolchains`/`toolchainShellPrefix`/`applyToolchainEnv` に go を追加（セッション単位注入 — JAVA_HOME 相同）。`env_tool_versions.go` の go 行は on-demand dir も Baked 候補に見る。Console の toolchains UI（設定モーダル）に Go select 追加（ja/en i18n） |
+| 6 | `workspace/agent`（ops） | `workspace-agent install-awscli`: versions.json `awscli`/`session_manager_plugin` ピンで awscli zip（`--install-dir ~/.local/share/agent-fleet/aws --bin-dir ~/.local/bin`）＋ SMP deb を `dpkg-deb -x` で root なし展開→ `~/.local/bin/session-manager-plugin`。`buildSSMProgram` の冒頭に「`command -v aws` 不在なら install-awscli（進捗はその ssm ペインへ流れる）」を前置。`runCloudWatchMCP` の uvx fallback を `awslabs.cloudwatch-mcp-server==<cloudwatch_mcp ピン>` に固定（現状 latest の穴を塞ぐ）。`runGrafanaMCP`: 不在時 versions.json `mcp_grafana` の GH release asset を `~/.local/share/agent-fleet/bin/mcp-grafana` へ DL して exec |
+| 7 | `deploy/release/build.sh --native` ＋ `deploy/release/native/` | ビルダー実装。(i) `af-cp` 静的ビルド（golang:1.26 コンテナ・CGO off・ldflags VERSION）(ii) console dist（node:22 コンテナ・heap 4096）(iii) docs ステージング（release.sh と同じ `.distignore` 適用）(iv) **静的 bwrap／git+git-http-backend（NO_CURL）／zstd** を alpine(musl) builder イメージで固定版ソースビルド（`Dockerfile.tools`・版は ARG ピン。zstd を同梱するのは**ホスト側 zstd を前提にできない**ため — R の展開は `bin/zstd` で行う）(v) lean rootfs: workspace を `VERSION`＋`BAKE_AGENT_CLIS=0`＋`BAKE_OPTIONAL_TOOLS=0` でビルド→ `docker create`+`docker export`（flatten）→ image-env.json を tar append → `<r>`=sha256(生 tar) 先頭 12hex → `zstd -T0 -15` で R (vi) rootfs.json 生成（`{version,url,sha256,size}`。url 既定 `https://github.com/k-k1/agent-fleet-dist/releases/download/rootfs-<r>/agent-fleet-rootfs-<r>-linux-amd64.tar.zst`、`ROOTFS_URL_BASE` で上書き）(vii) C 組立（`af`・`bin/{af-cp,bwrap,git,git-http-backend,zstd}`・`rootfs.json`・`console/`・`docs/`・`README.md`・`LICENSE`/`NOTICE`・`VERSION` ファイル）。`--bundle-rootfs` で C 内 `rootfs/` に R を同梱した self-contained tar も生成。`--rootfs-json <path>` で既存 manifest を再利用し R 生成をスキップ（`<r>` 不変リリース用） |
+| 8 | `deploy/native/af`（ランチャ・C 直下へ同梱） | bash 実装（run-dev.sh native の移植＋rootfs 管理）。`af start`: rootfs ensure（`--rootfs <tar>` 明示 > `<pkg>/rootfs/` 同梱 > rootfs.json URL を curl/wget で DL・進捗表示）→ `sha256sum -c` → `bin/zstd -d \| tar -x` を staging へ→ `WS_DATA/shared/rootfs/<r>/` へ原子 rename＋`.ok` マーカー（同 `<r>` 展開済みなら再利用・オフライン起動）→ preflight（`bin/bwrap --unshare-user --uid 1000 --gid 1000 --ro-bind / / true`。失敗時は userns sysctl 案内を出して stop。旧 preflight の tmux/git/claude warn は廃止）→ env 配線（`AF_RUNTIME=native` `AF_NATIVE_ROOTFS` `AF_NATIVE_BWRAP=<pkg>/bin/bwrap` `CONSOLE_DIR=<pkg>/console` `AF_DOCS_DIR=<pkg>/docs` `GIT_HTTP_BACKEND=<pkg>/bin/git-http-backend` `GIT_EXEC_PATH=<pkg>/bin` `PATH=<pkg>/bin:$PATH` `WS_DATA`（既定 `~/.local/share/agent-fleet`）`CP_ADDR`（**既定 `127.0.0.1:8099`**）`AUTH=dev` 固定・`<pkg>/oauth.env` read）→ `exec bin/af-cp`。`af reset [--all] [--yes]`: do_reset 移植（docker 分岐なし・pidfile group kill のみ・`--all` は展開済み rootfs 含む WS_DATA 全体）。`af status`: pidfile＋/proc 照合の簡易表示 |
+| 9 | `deploy/native/README.md`（C 同梱） | WSL 前提の導入（展開→`./af start`→`http://localhost:8099`）・ホスト要件（**Linux カーネル userns＋bash/coreutils/tar＋curl or wget** — zstd 不要）・Ubuntu 23.10+ の `apparmor_restrict_unprivileged_userns` sysctl 注記・systemd user unit 見本・更新（新 tar 展開→af start・データは WS_DATA で不変）・バックアップ・air-gap（`--bundle-rootfs` / `af start --rootfs`）・制約（単一ユーザー AUTH=dev・メモリ上限なし・chromium sandbox の割り切り） |
+| 10 | `NOTICE` | 静的同梱分の帰属追記: bubblewrap（LGPL）・git（GPLv2 — 対応ソース＝上流 tarball 版の入手案内を明記）・zstd（BSD/GPLv2 dual）。P1 の「静的 bwrap/git 分は P2 で追加」の消化 |
+| 11 | `.github/workflows/release-gate.yml` | **native ゲート job 追加**（既存 2 job は不変）。内容は下記ゲート (d)(e) |
+| 12 | `docs/34-native-runtime.md` | §34.5 制約表へ rootfs モードの帰結を追記（「実行環境はホスト任せ」「焼き込みピン止め無し」「entrypoint 初期化なし」の 3 行が rootfs モードでは解消）。§34.3 に af 経由の導線を注記 |
+
+**bwrap argv（凍結 — docker run ↔ bwrap 対応表 §35.3.1 の実装形）**:
+
+```
+bwrap --ro-bind <rootfs> /
+      --dev /dev --proc /proc --tmpfs /tmp --tmpfs /run
+      --bind <dataDir>/home /home/dev
+      --bind <dataDir>/claude-config /var/lib/af/claude
+      [--ro-bind <dataDir>/docs /usr/local/share/agent-fleet/docs]     # 存在時
+      [--ro-bind <WS_JVM_DIR> /usr/lib/jvm]                            # 設定・存在時
+      [--ro-bind /etc/resolv.conf /etc/resolv.conf]                    # 存在時
+      [--ro-bind /etc/hosts /etc/hosts]                                # 存在時
+      --unshare-user --uid 1000 --gid 1000
+      --unshare-pid --die-with-parent
+      --chdir /home/dev
+      /usr/local/bin/entrypoint.sh workspace-agent
+```
+
+- net/uts/ipc は unshare **しない**（agent の loopback bind を CP と共有するのが要件。
+  最小の namespace 分離に留める）。`--dev` は devpts 込み（tmux の pty に必要）。
+- uid 写像: 実 uid → 1000（dev）。rootfs も home も実 uid で展開・作成されるため、
+  namespace 内では全部 1000 所有に見える（WSL 既定ユーザー uid=1000 なら実質恒等）。
+- `--die-with-parent`: CP 縁切り時の孤児を防ぐ…のではなく**逆**に注意 — Start は
+  Setsid で CP から切り離す既存設計のため、bwrap の親は init になる。die-with-parent
+  は「bwrap の直接親（=なし）」にしか効かないので害なし・保険として付けるのみ。
+  停止の正は従来どおり process group SIGTERM→SIGKILL。
+
+**P2 ゲート**（P1 と同じく hosted CI 実走 — release-gate.yml。native 実機は §35.8 の
+P4 ゲートに残す）:
+
+- (d) `VERSION=x build.sh --native` で C＋R＋D が生成される。C の内容検証: `af`・
+  `bin/` 5 バイナリ（`ldd` が「not a dynamic executable」= 静的であること）・
+  rootfs.json の sha256 が R と一致・console/・docs（denylist 適用済み）・NOTICE。
+- (e) hosted runner（sudo で userns sysctl 緩和可）で C を展開し
+  `af start --rootfs <R>` → `/healthz`・`/api/version` 応答 → dev 認証で workspace
+  作成/起動（API 直叩き）→ bwrap 配下の agent が healthy → rootfs 内 entrypoint の
+  boot-install がピン版を仮想 HOME `~/.local/bin` へ導入していること（版一致）→
+  `af reset --yes` が残骸なく掃除。
+- (f) 既定経路の無影響: 既存 compose/default ゲート 2 job が不変で緑・CP/agent の
+  全 Go テスト緑（rootfs モードの unit テストは fake bwrap の helper-process で
+  argv/env 合成・lifecycle を固定）。
+
+素の WSL2 実機（追加インストールなしの通し E2E・chromium sandbox 実測・
+playwright CDN の実 DL 確認）は §35.8 native ゲート（P4）のまま。
+
 ## 35.8 検証ゲート（P3-10 完了判定への接続）
 
 | ターゲット | ゲート | 状態 |
