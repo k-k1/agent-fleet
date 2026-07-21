@@ -711,6 +711,8 @@ P3 = ECS 配布のリリース作法（§35.3.4）。CFN・アダプタ本体（
   パイプ両側が並行でログ順序が非決定 → 集合一致＋依存順序 assert へ（5 連続実行で安定）。
   ※副産物の教訓: ジョブスキップマーカー文字列をコミットメッセージ本文に書くと
   head_commit.message 一致で誤発火する（説明文にも書かない）。
+  ゲート h での `AuthMode` 追加後（d3ab486）にも最終フル run 29810696327 で
+  4 job 全緑を再実証。
 - (h) ✅ **sandbox 実走一巡完了**（account 722507597273・ap-northeast-1・
   `af-h.lazmix.jp`）。この Workspace に docker が無いため、イメージは sandbox 内の
   使い捨て EC2（t3.xlarge）で `build.sh --compose` ×2 版（0.0.1-h / 0.0.2-h・lean 配布
