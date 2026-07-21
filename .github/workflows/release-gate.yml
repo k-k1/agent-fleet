@@ -184,8 +184,17 @@ jobs:
           curl -fsS http://127.0.0.1:8099/api/version | grep -F "\"version\":\"$VERSION\""
           # workspace 起動（AUTH=dev）。Start は agent healthy まで同期 — 初回は rootfs 内
           # entrypoint の boot-install（ピン版 DL）を含むため数分かかる（健康待ち既定 300s）。
-          out="$(curl -fsS --max-time 570 -X POST http://127.0.0.1:8099/api/workspace/start)"
-          echo "$out" | grep -F '"state":"running"' || { cat /tmp/af-cp.log; tail -200 "$WS_DATA"/dev/agent.log; exit 1; }
+          # 失敗時は CP / agent 両ログをダンプして原因を残す。
+          set +e
+          code="$(curl -sS --max-time 570 -o /tmp/start-out.json -w '%{http_code}' -X POST http://127.0.0.1:8099/api/workspace/start)"
+          set -e
+          echo "start: http=$code body=$(cat /tmp/start-out.json 2>/dev/null || true)"
+          if [ "$code" != 200 ] || ! grep -qF '"state":"running"' /tmp/start-out.json; then
+            echo '=== af-cp.log ==='; cat /tmp/af-cp.log || true
+            echo '=== agent.log ==='; tail -n 200 "$WS_DATA"/dev/agent.log || true
+            ls -la "$WS_DATA"/dev 2>/dev/null || true
+            exit 1
+          fi
           # bwrap 配下の agent が生きている（CP 経由の workspace 状態で確認）
           curl -fsS http://127.0.0.1:8099/api/workspace | grep -F '"state":"running"'
           # boot-install: 仮想 HOME にピン版 CLI が入っている（lean rootfs の要）

@@ -95,6 +95,15 @@ func newNativeFactory(m *manager) (RuntimeFactory, error) {
 				return nil, fmt.Errorf("AF_NATIVE_ROOTFS: %s missing under %s (incomplete rootfs extraction?)", rel, abs)
 			}
 		}
+		// Bind mountpoints must be baked into the rootfs: the / ro-bind makes the
+		// tree read-only, so bwrap cannot mkdir them at launch (docker created
+		// them implicitly for -v). A rootfs from an image predating the mkdir
+		// would fail inside bwrap with a cryptic error — fail fast here instead.
+		for _, rel := range []string{"home/dev", "var/lib/af/claude", "usr/local/share/agent-fleet/docs"} {
+			if fi, err := os.Stat(filepath.Join(abs, rel)); err != nil || !fi.IsDir() {
+				return nil, fmt.Errorf("AF_NATIVE_ROOTFS: bind mountpoint %s missing under %s (rootfs built from an old workspace image?)", rel, abs)
+			}
+		}
 		bwrap := os.Getenv("AF_NATIVE_BWRAP")
 		if bwrap == "" {
 			p, err := exec.LookPath("bwrap")

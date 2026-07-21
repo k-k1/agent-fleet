@@ -103,6 +103,12 @@ func writeFakeRootfs(t *testing.T) string {
 	if err := os.WriteFile(envPath, []byte(imageEnv+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Bind mountpoints the factory verifies (baked by the workspace Dockerfile).
+	for _, rel := range []string{"home/dev", "var/lib/af/claude", "usr/local/share/agent-fleet/docs"} {
+		if err := os.MkdirAll(filepath.Join(rootfs, rel), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 	return rootfs
 }
 
