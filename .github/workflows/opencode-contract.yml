@@ -27,15 +27,10 @@
 name: opencode-contract
 
 on:
-  push:
-    paths:
-      - "workspace/agent/internal/agents/opencode/**"
-      - "workspace/agent/session_io.go" # paneMode / opencodeInSubagentView
-      - "workspace/agent/opencode_contract_test.go"
-      - "workspace/Dockerfile" # OPENCODE_VERSION ピン
-      - ".github/workflows/opencode-contract.yml"
-      - ".github/actions/setup-agent-cli/action.yml"
+  # develop への push では回さない（課金分散・CONTRIBUTING「Commits & PRs」）。
+  # 契約検証は main への PR（該当パスに差分がある時）と週次 cron に集約する。
   pull_request:
+    branches: [main]
     paths:
       - "workspace/agent/internal/agents/opencode/**"
       - "workspace/agent/session_io.go"

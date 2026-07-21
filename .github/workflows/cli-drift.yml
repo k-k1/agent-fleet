@@ -14,17 +14,15 @@
 # されるので、ドリフト時はジョブを赤くせず**追跡 issue を 1 本だけ upsert** する
 # （解消したら自動で閉じる）。ジョブが赤くなるのは検査自体が壊れた時（npm 取得失敗等）。
 #
-# 注: schedule はデフォルトブランチでしか走らない ＝ main マージまで cron は動かない。
+# 注: schedule はデフォルトブランチ（develop）の workflow 定義で走る。
 name: cli-drift
 
 on:
   schedule:
     - cron: "0 20 * * *" # 毎日 5:00 JST
   workflow_dispatch:
-  push:
-    paths:
-      - "deploy/local/cli-drift-check.sh"
-      - ".github/workflows/cli-drift.yml"
+  # push トリガは持たない（課金分散・develop トランク運用）。スクリプト変更の検証は
+  # 毎日の cron か workflow_dispatch で足りる。
 
 permissions:
   contents: read
