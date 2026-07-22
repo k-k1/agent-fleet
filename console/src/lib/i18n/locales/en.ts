@@ -246,10 +246,15 @@ export const en: Record<keyof typeof ja, string> = {
     "No secret is stored. Pick an SSM connection profile and it generates a dedicated config file from that SSO setup (non-secret) and uses it. Read-only tools only — log search, alarm history, metric analysis, etc. If you haven't logged in to SSO (or it's expired), open the matching SSM session once, or run `AWS_CONFIG_FILE=~/.aws/af-ops/cloudwatch.config aws sso login --profile <profile>` in a terminal.",
   "ops.cat_chat": "Chat notifications (bridge)",
   "ops.dc_token_placeholder": "Discord bot token",
-  "ops.dc_mode_dm": "DM (to your Discord user)",
-  "ops.dc_mode_channel": "Channel (in your private server)",
+  "ops.dc_verify": "Verify token",
+  "ops.dc_invite": "Invite to your server",
+  "ops.dc_waiting_guild": "Waiting for the bot to join a server… (open “Invite to your server” and add it to your private server)",
+  "ops.dc_channel_select": "Select a channel…",
+  "ops.dc_advanced_dm": "Advanced: send as DM (enter your user ID)",
+  "ops.dc_advanced_channel": "Back to channel picker",
+  "ops.dc_test_sent": "Test notification sent — if it arrived in Discord, you're all set.",
+  "ops.dc_test_failed": "Connection saved, but the test send failed: {msg}",
   "ops.dc_user_placeholder": "Your Discord user ID (numeric)",
-  "ops.dc_channel_placeholder": "Channel ID (numeric)",
   "ops.dc_events_label": "Events to send",
   "ops.dc_connected_dm": "DM notifications",
   "ops.dc_connected_channel": "Channel notifications",
@@ -259,7 +264,7 @@ export const en: Record<keyof typeof ja, string> = {
   "ops.ev_exit": "Abnormal exits",
   "ops.ev_report": "Session reports",
   "ops.dc_hint":
-    "Create your own Discord bot (Developer Portal → New Application → Bot) and paste its bot token. For DMs the bot must share a server with you, so create a private server and invite the bot. Get IDs via Discord's Developer Mode → “Copy ID”. The token is stored encrypted inside the workspace and used only to send notifications (session display name and state only — never logs or secrets).",
+    "In the Discord Developer Portal (discord.com/developers/applications), create New Application → Bot → Reset Token and paste the token here. Then just open the “Invite to your server” link to add the bot to your private server and pick a channel — no copying numeric IDs. The token is stored encrypted inside the workspace and used only to send notifications (session display name and state only — never logs or secrets).",
 
   // --- common (save) ---
   "common.save_failed": "Failed to save.",

@@ -247,10 +247,15 @@ export const ja = {
     "秘密は保存しません。SSM 接続のプロファイルを選ぶと、その SSO 設定（非秘密）から専用の設定ファイルを生成して使います。ログの検索・アラーム履歴・メトリクス分析など読み取り専用ツールのみです。SSO ログインがまだ（または期限切れ）の場合は、該当の SSM セッションを一度開くか、ターミナルで `AWS_CONFIG_FILE=~/.aws/af-ops/cloudwatch.config aws sso login --profile プロファイル名` を実行してください。",
   "ops.cat_chat": "チャット通知（ブリッジ）",
   "ops.dc_token_placeholder": "Discord Bot トークン",
-  "ops.dc_mode_dm": "DM（自分の Discord ユーザーへ）",
-  "ops.dc_mode_channel": "チャンネル（私設サーバーのチャンネルへ）",
+  "ops.dc_verify": "トークンを検証",
+  "ops.dc_invite": "サーバーへ招待",
+  "ops.dc_waiting_guild": "Bot がサーバーへ追加されるのを待っています…（「サーバーへ招待」を開いて自分の私設サーバーに追加してください）",
+  "ops.dc_channel_select": "通知先チャンネルを選択…",
+  "ops.dc_advanced_dm": "上級者向け: DM に送る（ユーザーID 手入力）",
+  "ops.dc_advanced_channel": "チャンネル選択に戻す",
+  "ops.dc_test_sent": "テスト通知を送りました — Discord に届いていれば設定完了です",
+  "ops.dc_test_failed": "接続は保存しましたがテスト送信に失敗しました: {msg}",
   "ops.dc_user_placeholder": "自分の Discord ユーザー ID（数字）",
-  "ops.dc_channel_placeholder": "チャンネル ID（数字）",
   "ops.dc_events_label": "送る通知",
   "ops.dc_connected_dm": "DM 通知",
   "ops.dc_connected_channel": "チャンネル通知",
@@ -260,7 +265,7 @@ export const ja = {
   "ops.ev_exit": "異常終了",
   "ops.ev_report": "完了報告",
   "ops.dc_hint":
-    "自分の Discord Bot を作成し（Developer Portal → New Application → Bot）、Bot トークンを貼り付けます。DM の場合は Bot と自分が同じサーバーに居る必要があるため、私設サーバーを作って Bot を招待してください。ID は Discord の開発者モードで「IDをコピー」から取得します。トークンはワークスペース内に暗号化保存され、通知の送信にだけ使われます（セッションの表示名と状態のみ送信・ログや秘密は送りません）。",
+    "Discord Developer Portal（discord.com/developers/applications）で New Application → Bot → Reset Token でトークンを取得して貼り付けます。あとは表示される「サーバーへ招待」リンクで自分の私設サーバーに Bot を追加し、チャンネルを選ぶだけです（数字 ID のコピーは不要）。トークンはワークスペース内に暗号化保存され、通知の送信にだけ使われます（セッションの表示名と状態のみ送信・ログや秘密は送りません）。",
 
   // --- 共通（保存）---
   "common.save_failed": "保存に失敗しました",
