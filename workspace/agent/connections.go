@@ -91,6 +91,11 @@ func discordStatus(s *secrets.Data) map[string]any {
 	if d.FullText {
 		m["fullText"] = true
 	}
+	// docs/37 P3先取り: signal that the standing fleet-operator thread is provisioned so
+	// the card can show an "operator" pill (present only once 起票 succeeded).
+	if ref, ok := bridge.OperatorState(); ok && ref.Thread != "" {
+		m["operator"] = true
+	}
 	events := d.Events
 	if len(events) == 0 {
 		events = bridge.EventKeys
@@ -310,6 +315,13 @@ func handlePutDiscordConn(w http.ResponseWriter, r *http.Request) {
 			res["test"] = "sent"
 		}
 	}
+	// docs/37 P3先取り: with receive + channel mode, stand up (or reuse) the dedicated
+	// fleet-operator thread + conversation so @mentions route to the operator assistant.
+	// Async + best-effort — it does its own Discord round-trips, so it must not slow the
+	// PUT or fail the connect (reuse across reconnects avoids duplicate threads).
+	if creds.Receive && creds.ChannelID != "" {
+		go provisionDiscordOperator(creds.Token, creds.ChannelID, creds.Lang)
+	}
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
@@ -324,7 +336,8 @@ func handleDeleteDiscordConn(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
-	bridge.ResetThreads() // stale session↔thread mappings die with the connection
+	bridge.ResetThreads()        // stale session↔thread mappings die with the connection
+	bridge.ResetOperatorThread() // drop the operator thread coordinates (the conv is kept)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "discord"})
 }
 
