@@ -438,6 +438,10 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("DELETE /api/connections/grafana", rest)
 	mux.HandleFunc("PUT /api/connections/cloudwatch", rest)
 	mux.HandleFunc("DELETE /api/connections/cloudwatch", rest)
+	// Chat bridge (docs/37 P1): the Discord bot token lives in the Workspace's
+	// encrypted secrets like the ops credentials above — proxied, never held here.
+	mux.HandleFunc("PUT /api/connections/discord", rest)
+	mux.HandleFunc("DELETE /api/connections/discord", rest)
 }
 
 // Internal git provider (docs/reference/internal-git-provider, ADR 0010).

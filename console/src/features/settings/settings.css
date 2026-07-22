@@ -782,6 +782,7 @@
 .p-badge.pb-github { background: #c9d1d9; }
 .p-badge.pb-bitbucket { background: #4a90e2; }
 .p-badge.pb-pagerduty { background: #06ac38; }
+.p-badge.pb-discord { background: #5865f2; }
 .p-name {
   font-weight: 600;
   font-size: 14px;

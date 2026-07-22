@@ -45,6 +45,10 @@ export const en: Record<keyof typeof ja, string> = {
   "err.conn_url_scheme": "The URL must start with http(s)://.",
   "err.conn_aws_profile_required": "Specify an AWS profile.",
   "err.conn_sso_region_missing": "No SSO region found (check the SSM profile configuration).",
+  "err.conn_discord_token_required": "Enter a Discord bot token.",
+  "err.conn_discord_destination_required": "Enter exactly one destination (channel ID or user ID).",
+  "err.conn_discord_destination_invalid": "The destination must be a numeric Discord ID (use Developer Mode → Copy ID).",
+  "err.conn_discord_token_invalid": "Discord rejected the token (check the bot token).",
   "err.assistant_not_found": "Assistant not found.",
   "err.assistant_builtin_readonly_edit": "Builtin assistants can't be edited.",
   "err.assistant_builtin_readonly_delete": "Builtin assistants can't be deleted.",
@@ -240,6 +244,22 @@ export const en: Record<keyof typeof ja, string> = {
   "ops.cw_region_placeholder": "Region (optional)",
   "ops.cw_hint":
     "No secret is stored. Pick an SSM connection profile and it generates a dedicated config file from that SSO setup (non-secret) and uses it. Read-only tools only — log search, alarm history, metric analysis, etc. If you haven't logged in to SSO (or it's expired), open the matching SSM session once, or run `AWS_CONFIG_FILE=~/.aws/af-ops/cloudwatch.config aws sso login --profile <profile>` in a terminal.",
+  "ops.cat_chat": "Chat notifications (bridge)",
+  "ops.dc_token_placeholder": "Discord bot token",
+  "ops.dc_mode_dm": "DM (to your Discord user)",
+  "ops.dc_mode_channel": "Channel (in your private server)",
+  "ops.dc_user_placeholder": "Your Discord user ID (numeric)",
+  "ops.dc_channel_placeholder": "Channel ID (numeric)",
+  "ops.dc_events_label": "Events to send",
+  "ops.dc_connected_dm": "DM notifications",
+  "ops.dc_connected_channel": "Channel notifications",
+  "ops.ev_answer_ready": "Answer ready (awaiting input)",
+  "ops.ev_question": "Questions & plan approvals",
+  "ops.ev_permission": "Permission requests",
+  "ops.ev_exit": "Abnormal exits",
+  "ops.ev_report": "Session reports",
+  "ops.dc_hint":
+    "Create your own Discord bot (Developer Portal → New Application → Bot) and paste its bot token. For DMs the bot must share a server with you, so create a private server and invite the bot. Get IDs via Discord's Developer Mode → “Copy ID”. The token is stored encrypted inside the workspace and used only to send notifications (session display name and state only — never logs or secrets).",
 
   // --- common (save) ---
   "common.save_failed": "Failed to save.",
