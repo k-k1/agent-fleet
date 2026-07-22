@@ -1110,11 +1110,24 @@ export function MirrorView({
   const postInput = (text: string, op: "start" | "steer", attachments?: string[]): Promise<TurnResult> =>
     sessionTurn(session, op, text, attachments);
 
+  // wsDown: the workspace isn't running, so nothing can receive an agent-bound action —
+  // it would just 502, and helpers that optimistically flip the UI to "working" would leave
+  // that spinner stuck (the poll is frozen while stopped). Every send helper funnels through
+  // here: the live composer is already hidden while stopped (the !running branch below), but
+  // the pending 許可/質問/プラン cards and the 停止 button render OUTSIDE that branch, so each
+  // must self-guard. Returns true (and toasts once) when the action must be dropped.
+  const wsDown = (): boolean => {
+    if (running) return false;
+    toast(tr("mirror.ws_stopped"));
+    return true;
+  };
+
   // Low-level: send named keys with NO "working" status and NO quick re-poll — used by
   // the plan-mode toggle, which isn't a turn. (The quick re-poll of sendKeys/sendPrompt
   // would fire before the mode actually changed and momentarily revert the optimistic
   // indicator; the regular poll picks up the real mode via paneMode.)
   const postKeys = async (keys: string[]) => {
+    if (wsDown()) return; // plan-mode toggle / codex update-menu skip: no agent to key while stopped
     try {
       await apiJSON(`api/sessions/${q(session)}/input`, "POST", { keys });
     } catch {
@@ -1140,10 +1153,7 @@ export function MirrorView({
     // WS down: nothing can receive the prompt (a send would 502). The composer is already
     // hidden while stopped, but other callers (seed prompt, file drop) reach here too — bail
     // before the optimistic echo so a send never looks accepted when it can't be.
-    if (!running) {
-      toast(tr("mirror.ws_stopped"));
-      return;
-    }
+    if (wsDown()) return;
     setSending(true);
     // start = 新しい turn / steer = 実行中 turn への追撃 — 楽観的に working へ倒す前の
     // 実状態で決める。tui では同じ型付けに落ちるが、managed の turn/start・turn/steer
@@ -1259,6 +1269,7 @@ export function MirrorView({
   // only way to answer multi-select / multi-question forms (free text can't).
   const sendKeys = async (keys: string[]) => {
     if (!keys || !keys.length || sending) return;
+    if (wsDown()) return; // WS stopped: no agent to receive keys (and the optimistic 'working' below would stick)
     setSending(true);
     statusRef.current = "working";
     setStatus("working");
@@ -1277,6 +1288,7 @@ export function MirrorView({
   // forms where free text and option navigation are interleaved.
   const sendSeq = async (seq: Array<{ k?: string; t?: string }>) => {
     if (!seq || !seq.length || sending) return;
+    if (wsDown()) return; // WS stopped: the AUQ free-text sequence can't reach the agent
     setSending(true);
     statusRef.current = "working";
     setStatus("working");
@@ -1295,6 +1307,7 @@ export function MirrorView({
   // 再同期するので楽観的な状態変更は不要。
   const sendInterrupt = async () => {
     if (sending) return;
+    if (wsDown()) return; // WS stopped: no live turn to interrupt (also plan-reject / question-cancel)
     // An explicit stop (also plan-reject / question-cancel) means the user does NOT expect
     // a reply to render, so disarm the idle→reply bridge — otherwise the spinner would
     // linger over an interrupted, reply-less turn until the grace lapsed.
@@ -1313,6 +1326,7 @@ export function MirrorView({
   // をナビゲーション駆動する（サーバも tui への /respond は受け付けない）。
   const sendRespond = async (id: string, answers: InteractionAnswer[]) => {
     if (sending) return;
+    if (wsDown()) return; // WS stopped: the managed session's structured answer can't be delivered
     setSending(true);
     const prev = statusRef.current;
     statusRef.current = "working";
@@ -1474,6 +1488,7 @@ export function MirrorView({
   // poll); 却下 discards it. Either way the server never offers one again.
   const acceptTitle = async () => {
     if (!session || titleActing) return;
+    if (wsDown()) return; // title accept/dismiss is agent-served (session_title.go) → 502 while stopped
     setTitleActing(true);
     try {
       const res = await raw(`api/sessions/${q(session)}/title/accept`, { method: "POST" });
@@ -1489,6 +1504,7 @@ export function MirrorView({
   };
   const dismissTitle = async () => {
     if (!session || titleActing) return;
+    if (wsDown()) return;
     setTitleActing(true);
     try {
       const res = await raw(`api/sessions/${q(session)}/title/dismiss`, { method: "POST" });
@@ -1813,8 +1829,8 @@ export function MirrorView({
           <button
             type="button"
             className="ghost managed-settings-btn"
-            disabled={!alive || readOnly}
-            title={alive && !readOnly ? tr("mirror.exec_settings_edit") : tr("mirror.exec_settings_after_resume")}
+            disabled={!running || !alive || readOnly}
+            title={running && alive && !readOnly ? tr("mirror.exec_settings_edit") : tr("mirror.exec_settings_after_resume")}
             onClick={() => setManagedSettingsOpen(true)}
           >
             <Icon name="gear" />
