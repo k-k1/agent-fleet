@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
+import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { AGENTS } from "../../agents/registry.ts";
 
 // Shared building blocks for the settings connection cards, used by both the
@@ -45,10 +46,22 @@ export function CopyCode({ children }: { children: ReactNode }) {
 }
 
 // DisconnectButton: the per-provider "切断" action shown when a connection is live.
+// Confirms first (styled useConfirm — the same dialog SSM/token deletes use), so every
+// destructive action in the settings modal asks before it acts.
 export function DisconnectButton({ onClick }: { onClick: () => void }) {
   const tr = useT();
+  const askConfirm = useConfirm();
+  const handle = async () => {
+    const ok = await askConfirm({
+      title: tr("provider.disconnect_confirm_title"),
+      body: tr("provider.disconnect_confirm_body"),
+      confirmLabel: tr("provider.disconnect"),
+      danger: true,
+    });
+    if (ok) onClick();
+  };
   return (
-    <button className="ghost danger conn-disconnect" title={tr("provider.disconnect")} onClick={onClick}>
+    <button className="ghost danger conn-disconnect" title={tr("provider.disconnect")} onClick={handle}>
       {tr("provider.disconnect")}
     </button>
   );
