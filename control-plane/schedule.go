@@ -42,14 +42,21 @@ type scheduleDTO struct {
 	NewBranch     bool   `json:"new_branch,omitempty"`
 	Prompt        string `json:"prompt,omitempty"`
 	OverlapPolicy string `json:"overlap_policy,omitempty"`
-	OwnerConv     string `json:"owner_conv,omitempty"`
-	Enabled       bool   `json:"enabled"`
-	NextRun       string `json:"next_run,omitempty"`
-	NextRunLocal  string `json:"next_run_local,omitempty"` // next_run rendered in the schedule's tz
-	LastRun       string `json:"last_run,omitempty"`
-	LastStatus    string `json:"last_status,omitempty"`
-	CreatedAt     string `json:"created_at,omitempty"`
-	UpdatedAt     string `json:"updated_at,omitempty"`
+	// Reuse (P6): Rotation is the JSON rotation policy blob, MissingTargetPolicy governs a
+	// pinned reuse whose target is gone. The reuse ledger (ReuseSession/ReuseRunCount) is
+	// read-only output so the operator/Console can show which session is current.
+	Rotation            string `json:"rotation,omitempty"`
+	MissingTargetPolicy string `json:"missing_target_policy,omitempty"`
+	ReuseSession        string `json:"reuse_session,omitempty"`
+	ReuseRunCount       int    `json:"reuse_run_count,omitempty"`
+	OwnerConv           string `json:"owner_conv,omitempty"`
+	Enabled             bool   `json:"enabled"`
+	NextRun             string `json:"next_run,omitempty"`
+	NextRunLocal        string `json:"next_run_local,omitempty"` // next_run rendered in the schedule's tz
+	LastRun             string `json:"last_run,omitempty"`
+	LastStatus          string `json:"last_status,omitempty"`
+	CreatedAt           string `json:"created_at,omitempty"`
+	UpdatedAt           string `json:"updated_at,omitempty"`
 	// Warning is set on a create/run_now response when the scheduler goroutine is not
 	// running on this deployment — the schedule is stored but will never fire until an
 	// operator enables it (AF_SCHEDULER_INTERVAL). Empty otherwise. The operator relays it.
@@ -72,6 +79,8 @@ func scheduleToDTO(s Schedule) scheduleDTO {
 		WakePolicy: s.WakePolicy, SessionMode: s.SessionMode, ReuseTarget: s.ReuseTarget,
 		AgentKind: s.AgentKind, Model: s.Model, Repo: s.Repo, Worktree: s.Worktree,
 		NewBranch: s.NewBranch, Prompt: s.Prompt, OverlapPolicy: s.OverlapPolicy,
+		Rotation: s.Rotation, MissingTargetPolicy: s.MissingTargetPolicy,
+		ReuseSession: s.ReuseSession, ReuseRunCount: s.ReuseRunCount,
 		OwnerConv: s.OwnerConv, Enabled: s.Enabled, NextRun: s.NextRun, LastRun: s.LastRun,
 		LastStatus: s.LastStatus, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt,
 	}
@@ -100,6 +109,9 @@ func applyScheduleDefaults(s *Schedule) {
 	if s.OverlapPolicy == "" {
 		s.OverlapPolicy = "skip"
 	}
+	if s.MissingTargetPolicy == "" {
+		s.MissingTargetPolicy = "recreate"
+	}
 }
 
 // validateScheduleDTO normalizes + validates a create input into a Schedule (id/ledger
@@ -115,6 +127,7 @@ func validateScheduleDTO(mv MembershipView, in scheduleDTO) (Schedule, *apiError
 		Model: strings.TrimSpace(in.Model), Repo: strings.TrimSpace(in.Repo),
 		Worktree: strings.TrimSpace(in.Worktree), NewBranch: in.NewBranch,
 		Prompt: in.Prompt, OverlapPolicy: strings.TrimSpace(in.OverlapPolicy),
+		Rotation: strings.TrimSpace(in.Rotation), MissingTargetPolicy: strings.TrimSpace(in.MissingTargetPolicy),
 	}
 	applyScheduleDefaults(&s)
 	if strings.TrimSpace(s.Prompt) == "" {
@@ -139,6 +152,12 @@ func validateScheduleFields(s Schedule) *apiError {
 	}
 	if !oneOf(s.SessionMode, "new", "reuse") {
 		return &apiError{http.StatusBadRequest, "bad_session_mode", "session_mode must be new or reuse"}
+	}
+	if s.MissingTargetPolicy != "" && !oneOf(s.MissingTargetPolicy, "recreate", "fail") {
+		return &apiError{http.StatusBadRequest, "bad_missing_target_policy", "missing_target_policy must be recreate or fail"}
+	}
+	if err := validateRotation(s.Rotation); err != nil {
+		return &apiError{http.StatusBadRequest, "bad_rotation", err.Error()}
 	}
 	return nil
 }
@@ -373,20 +392,22 @@ func (a scheduleAPI) writeOne(w http.ResponseWriter, r *http.Request, id string,
 
 // schedulePatch carries partial edits (nil = unchanged), mirroring memoPatch.
 type schedulePatch struct {
-	SpecKind      *string `json:"spec_kind"`
-	Spec          *string `json:"spec"`
-	SpecLabel     *string `json:"spec_label"`
-	TZ            *string `json:"tz"`
-	WakePolicy    *string `json:"wake_policy"`
-	SessionMode   *string `json:"session_mode"`
-	ReuseTarget   *string `json:"reuse_target"`
-	AgentKind     *string `json:"agent_kind"`
-	Model         *string `json:"model"`
-	Repo          *string `json:"repo"`
-	Worktree      *string `json:"worktree"`
-	NewBranch     *bool   `json:"new_branch"`
-	Prompt        *string `json:"prompt"`
-	OverlapPolicy *string `json:"overlap_policy"`
+	SpecKind            *string `json:"spec_kind"`
+	Spec                *string `json:"spec"`
+	SpecLabel           *string `json:"spec_label"`
+	TZ                  *string `json:"tz"`
+	WakePolicy          *string `json:"wake_policy"`
+	SessionMode         *string `json:"session_mode"`
+	ReuseTarget         *string `json:"reuse_target"`
+	AgentKind           *string `json:"agent_kind"`
+	Model               *string `json:"model"`
+	Repo                *string `json:"repo"`
+	Worktree            *string `json:"worktree"`
+	NewBranch           *bool   `json:"new_branch"`
+	Prompt              *string `json:"prompt"`
+	OverlapPolicy       *string `json:"overlap_policy"`
+	Rotation            *string `json:"rotation"`
+	MissingTargetPolicy *string `json:"missing_target_policy"`
 	// owner_conv is intentionally NOT patchable: create stamps it to the operator's own
 	// conversation (mcp_stdio withOwnerConv) so completion reports always return to the
 	// operator. Letting update change it would let a report be redirected within the
@@ -417,6 +438,9 @@ func (p schedulePatch) apply(sch *Schedule) (specChanged bool) {
 	set(&sch.WakePolicy, p.WakePolicy)
 	set(&sch.SessionMode, p.SessionMode)
 	set(&sch.ReuseTarget, p.ReuseTarget)
+	set(&sch.OverlapPolicy, p.OverlapPolicy)
+	set(&sch.Rotation, p.Rotation)
+	set(&sch.MissingTargetPolicy, p.MissingTargetPolicy)
 	set(&sch.AgentKind, p.AgentKind)
 	set(&sch.Model, p.Model)
 	set(&sch.Repo, p.Repo)

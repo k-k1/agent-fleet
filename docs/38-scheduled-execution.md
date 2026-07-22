@@ -340,7 +340,126 @@ reuse セッションでは driver 切替中 `409 busy_switch` にも遭遇し�
   （statusTone/statusIcon/specSummary/formatInterval/sortSchedules）は `read.ts` に分離し
   vitest 9件。ライト/ダーク両テーマを headless Chromium で描画確認。console test 374／CP 199／
   typecheck／i18n-lint／build 緑。**残（後続）**: 長寿命セッション再利用モード（`session_mode=
-  reuse`・`reuse_target`）。
+  reuse`・`reuse_target`）＝**P6**（下記「長寿命セッション再利用モード」節で設計中）。
+- **P6（長寿命セッション再利用モード）**: **実装済み**（下記専用節が設計正本・2026-07-23）。
+  同一の長寿命セッションへ毎発火プロンプトを送り（`send_to_session` 経由）、文脈を継続させる。
+  CP: `scheduler_reuse.go`（`fireReuse`＝pinned/managed 2モード・rotation 評価・CP側
+  send/resume/input・managed create から name 取得→台帳更新・overlap 適用）＋
+  `scheduler_wake.go` の `fire()` が `SessionMode=="reuse"` を分岐。DB: migrations/0024＋
+  pg/0007（`reuse_session`/`reuse_started_at`/`reuse_run_count`/`rotation`/`missing_target_policy`）
+  ＋`SetScheduleReuse`。API: `schedule.go` DTO/validate に rotation・missing_target_policy、
+  reuse 用に overlap_policy を再公開。MCP: create/update_schedule に
+  session_mode/reuse_target/rotation/missing_target_policy/overlap_policy 引数、persona に
+  reuse 確認ガード。テスト CP14 件（rotation 純関数＋fireReuse pinned/managed/rotate/missing/
+  overlap の fake-agent 統合）。**意図的な限界**（決定 3）: 使用率トリガ `context_pct` は未実装
+  （停止中 WS で usage を読めないため後続 best-effort）。**残**: 実フリート再ビルド後の実機目視、
+  Console のスケジュール一覧に reuse/rotation の表示（現状 read-only 台帳は DTO に出るが UI 未装飾）。
+
+## 長寿命セッション再利用モード（`session_mode=reuse`・実装済み 2026-07-23）
+
+v1 コアは `session_mode=new`（毎発火で新規セッション）のみ。reuse は**同一の長寿命
+セッションへ毎回プロンプトを送り、会話文脈を継続させる**モード。「昨日の続きをやらせる」
+「同じ作業スレッドに積み上げる」用途と、掃除対象を 1 本に抑える運用に効く。DB 列
+（`session_mode`／`reuse_target`／`overlap_policy`）は v1 で既に用意済み（値は未使用）。
+
+### 動機と非動機
+
+- 動機: new は毎回ゼロ文脈で、継続タスク（レビューの積み上げ・日次の引き継ぎ）に不向き。
+  reuse なら前回までの文脈が生きる。生成セッションが増えない＝掃除も楽。
+- 非動機（v1 reuse）: 複数スケジュールで 1 セッションを共有する多重化、reuse 先での
+  agent_kind/model の動的切替は範囲外（後述のとおり kind は既存セッション側が正）。
+
+### 注入プリミティブ — create ではなく send（既存資産で賄える）
+
+reuse の注入は `send_to_session`（`workspace/agent/mcp_stdio.go` `agentSendToSession`・
+Agent REST は状態確認→停止中なら `POST /sessions/{name}/start`→`POST /sessions/{name}/input`）
+を使う。停止中 WS でも wake 後に resume される。`resumed` フラグが返る。
+
+**重要な帰結**: reuse では **kind/model/repo/worktree/new_branch は既存セッション側が正**で、
+スケジュールのそれらは（初回作成のシード用途を除き）注入時に無視する。よって
+**driver 切替＝★5 の `busy_switch` は reuse では起きない**（作り直さないから）。★5 の
+overlap 懸念のうち残るのは「前発火が走行中に次が来る」reentrancy だけ（下記 overlap）。
+
+### reuse_target の解決 — 2 モード
+
+- **(A) ピン留め reuse**: `reuse_target` = 既存セッション名。オペレーターが「この常設
+  セッションへ毎朝送って」と指定。セッションのライフサイクルはユーザー/オペレーターが所有。
+  ローテーションは既定 off。
+- **(B) 管理 reuse（ローテーション対象）**: `reuse_target` 空 → スケジュールが専用の
+  長寿命セッションを**初回発火で作成**（create_session、`report_to`＝owner_conv）し、以後は
+  そこへ send。名前は派生（例 `sched-<id>` タイトル）。この管理下セッションに
+  ローテーションを適用する。
+- **対象消失時**（アーカイブ/削除された）: 沈黙失敗にせず、選択制ポリシー `missing_target_policy`
+  で裁く（**既定 `recreate`＝作り直して台帳を貼り替え・run 履歴に「recreated」記録** / `fail`＝
+  失敗通知で止める）。(B) 管理 reuse は自セッションなので実質 `recreate` 前提。(A) ピン留めは
+  ユーザー所有セッションのため `fail` を選べる（既定は `recreate`・下記決定 4）。
+
+### ローテーション — いつ新品に戻すか（ユーザー提案・2026-07-23）
+
+reuse は文脈が積み上がり、放置するとコンテキスト上限に達する（docs/33 の 90% 自動圧縮で
+延命はするが限界がある）。「一定量／期間／暦でローテーション」を入れる。トリガは **OR 合成**
+（どれか満たせば**次回発火で現セッションを退役し新規作成**）:
+
+| トリガ | 列（案） | 意味 | 判定材料 |
+|---|---|---|---|
+| 量（単純） | `rotation.every_runs` | N 発火ごとに作り直し | 台帳 `reuse_run_count`（決定論） |
+| 期間 | `rotation.after` | 現セッション開始から一定経過で作り直し（例 7d） | 台帳 `reuse_started_at`（決定論） |
+| 暦 | `rotation.calendar` | 暦境界を跨いだら作り直し（daily/weekly/monthly） | 発火スロットと `reuse_started_at` の境界比較。「**月曜は新セッション**」＝ weekly（週境界＝月曜始まり）（決定論） |
+| 量（使用率・**後続**） | `rotation.context_pct` | コンテキスト使用率が閾値超で作り直し | 発火前に running セッションの usage を読む（docs/33）。**停止中は読めず best-effort＝v1 reuse では未実装、後続で追加** |
+
+- ローテーション実行時: 現セッションを退役（停止のまま cleanup 機構へ、または archive）→
+  新規作成 → 台帳を新セッションへ貼り替え → run 履歴に「rotated」記録。
+- 使用率トリガは running 限定の best-effort と割り切る（停止中 WS では usage を読めない、の
+  既知制約＝★3 と同根）。決定論が要るなら `rotate_every_runs`／`rotate_after`／`rotate_calendar`
+  で足りる。
+
+### 台帳（新規列）
+
+reuse の現行セッション同一性とローテーション判定材料を持つ（`schedule` 表に追加）:
+
+- `reuse_session` — 現に使っている実セッション名（ローテーションで変わる。(A) では reuse_target と同じ）
+- `reuse_started_at` — 現 reuse セッションの開始時刻（期間/暦判定）
+- `reuse_run_count` — 前回ローテーションからの発火数（量ベース単純版）
+- `rotation` — ローテーション設定を畳んだ**単一 JSON 列**（決定 2。例:
+  `{"every_runs":20,"after":"7d","calendar":"weekly"}`。`context_pct` は後続）
+- `missing_target_policy` — 対象消失時の挙動（`recreate` 既定 / `fail`。決定 4）
+
+### overlap の再公開（★5）
+
+reuse は同一セッションゆえ、前発火が走行中に次が来る overlap が現実に起きる。v1 P4.1 で
+操作 MCP 表面から撤去した `overlap_policy` を **reuse でのみ再公開**する（new では引き続き隠す）:
+
+- `skip`（既定）: send 前に状態を見て busy なら今回を見送り（run 履歴に `skipped_overlap`）。
+- `queue`: そのまま `/input` へ送る＝現ターン後に処理されるステアリング的投入。
+- `restart`: 現ターンを halt してから送る。
+- `send_to_session` の 409（`question_pending`＝入力待ち中）も busy とみなし overlap_policy で裁く。
+
+### keep-alive / settle（★1）は new と同じ
+
+reuse でも wake→keep-alive→settle 後 release。停止中だった WS は settle 後に停止へ戻す。
+ただし (A) ピン留めでユーザーが日常使う常設セッションなら、settle 後の停止判断は reaper の
+通常タイムアウトに委ね、スケジュール由来で強制停止しない方が親切（要決定に含めうる）。
+
+### セキュリティ / 掃除
+
+- reuse は「無人で同じセッションに積む」＝過去の会話（データ）が文脈に残り続ける。§④''' の
+  「プロンプト本文にデータを運ばない」線は維持されるが、**reuse セッション自体が過去データを
+  保持する**点が new と異なる。要ユーザー確認の persona ガード（★セキュリティ）は reuse 登録
+  にも適用する。
+- 退役セッションは operator の掃除ツール群（cleanup 機構）に乗せる。archive か stop-only かは
+  掃除ポリシーに合わせる。
+
+### 決定（2026-07-23）
+
+1. **主モード**: **(A) ピン留め / (B) 管理 の両対応。ツール表面の既定は (B) 管理**
+   （ローテーションの主役で自己完結。ピン留めは `reuse_target` 明示で選択）。
+2. **ローテーション設定の持ち方**: **単一 JSON `rotation` 列**（`{"every_runs":N,"after":"7d",
+   "calendar":"weekly","context_pct":80}` 等。トリガ追加でマイグレーション不要）。
+3. **量ベースの既定**: **まず決定論の 3 種のみ**（`every_runs`／`after`／`calendar`）。使用率
+   トリガ（`context_pct`・running 限定・best-effort）は**後続**で足す（停止中 WS では usage を
+   読めない＝★3 と同根の制約のため）。
+4. **対象消失時（`missing_target_policy`）**: **選択制。既定 `recreate`（作り直す）** / `fail`
+   （失敗通知で止める）。(A) ピン留めでユーザー所有セッションを保護したい場合に `fail` を選ぶ。
 
 ## 決定済み（2026-07-22・当初の未決から確定）
 
