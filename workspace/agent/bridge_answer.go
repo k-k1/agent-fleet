@@ -271,11 +271,20 @@ func claudePane(name string) (string, error) {
 	return pane, nil
 }
 
-// bridgeAnswerEN reports whether the Discord connection's notification language is
-// English (feedback lines follow the same locale as the notifications).
+// bridgeAnswerEN reports whether the chat connection's notification language is English
+// (feedback lines follow the same locale as the notifications). A button click doesn't
+// carry which provider it came from, so with both connected we prefer whichever is set to
+// English — the bound user is the same person, so the two locales normally match anyway.
 func bridgeAnswerEN() bool {
-	if s, err := secrets.Load(); err == nil && s.Discord != nil {
-		return s.Discord.Lang == "en"
+	s, err := secrets.Load()
+	if err != nil {
+		return false
+	}
+	if s.Discord != nil && s.Discord.Lang == "en" {
+		return true
+	}
+	if s.Slack != nil && s.Slack.Lang == "en" {
+		return true
 	}
 	return false
 }

@@ -57,6 +57,7 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		"grafana":    grafanaStatus(s),
 		"cloudwatch": cloudwatchStatus(s),
 		"discord":    discordStatus(s),
+		"slack":      slackStatus(s),
 	})
 }
 
@@ -323,7 +324,7 @@ func handlePutDiscordConn(w http.ResponseWriter, r *http.Request) {
 	// Fire one synchronous test notification so "did it arrive?" is answered on
 	// the spot. The connection is saved either way — a failed test (e.g. missing
 	// channel permission) is surfaced to the card, not treated as a bad config.
-	if ps := bridge.Providers(s, nil); len(ps) > 0 {
+	if ps := bridge.Providers(s, nil, nil); len(ps) > 0 {
 		if err := ps[0].Send(bridge.Message{Kind: "bridge-test"}); err != nil {
 			res["testError"] = err.Error()
 		} else {
