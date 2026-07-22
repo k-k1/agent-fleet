@@ -265,6 +265,8 @@ export const ja = {
   "ops.dc_receive_sub": "セッションのスレッドに返信すると、その本文がセッションへ入力されます。Discord 開発者ポータルで Bot の MESSAGE CONTENT INTENT を有効化してください（本人の返信のみ届きます）",
   "ops.dc_pill_threads": "スレッド",
   "ops.dc_pill_receive": "受信",
+  "ops.dc_edit": "編集",
+  "ops.dc_events_all": "すべて",
   "ops.dc_events_label": "送る通知",
   "ops.dc_connected_dm": "DM 通知",
   "ops.dc_connected_channel": "チャンネル通知",
