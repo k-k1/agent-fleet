@@ -1,10 +1,13 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
@@ -53,7 +56,120 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		"pagerduty":  pagerdutyStatus(s),
 		"grafana":    grafanaStatus(s),
 		"cloudwatch": cloudwatchStatus(s),
+		"discord":    discordStatus(s),
 	})
+}
+
+// discordStatus reports the chat-bridge Discord connection (docs/37 P1) — never
+// the token. Echoes the destination mode (channel/dm), the cached bot name, and
+// the enabled event groups so the card can render the current selection.
+func discordStatus(s *secrets.Data) map[string]any {
+	d := s.Discord
+	if d == nil || d.Token == "" {
+		return map[string]any{"connected": false}
+	}
+	m := map[string]any{"connected": true}
+	if d.BotName != "" {
+		m["botName"] = d.BotName
+	}
+	if d.ChannelID != "" {
+		m["mode"] = "channel"
+	} else {
+		m["mode"] = "dm"
+	}
+	events := d.Events
+	if len(events) == 0 {
+		events = bridge.EventKeys
+	}
+	m["events"] = events
+	return m
+}
+
+type discordConnReq struct {
+	Token     string   `json:"token"`
+	ChannelID string   `json:"channelId"`
+	UserID    string   `json:"userId"`
+	Events    []string `json:"events"`
+}
+
+// discordSnowflakeRe matches a Discord snowflake id — catches names/mentions
+// pasted where an id belongs (both destinations are numeric ids).
+var discordSnowflakeRe = regexp.MustCompile(`^[0-9]{5,25}$`)
+
+// handlePutDiscordConn stores the user's Discord bot token + destination in the
+// encrypted store (docs/37 P1; PagerDuty カードと同じ三点セット). Exactly one
+// destination: a guild channel id, or the user's own Discord user id for DMs
+// (the identity binding of docs/37 契約5). The token is validated against the
+// Discord API when reachable — a network failure saves anyway (outbound may be
+// restricted; sends will surface in the daemon log), but a 401/403 rejects.
+func handlePutDiscordConn(w http.ResponseWriter, r *http.Request) {
+	var req discordConnReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	token := strings.TrimSpace(req.Token)
+	if token == "" {
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnDiscordTokenRequired, "enter a bot token")
+		return
+	}
+	channelID := strings.TrimSpace(req.ChannelID)
+	userID := strings.TrimSpace(req.UserID)
+	if (channelID == "") == (userID == "") {
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnDiscordDestRequired, "set exactly one of channel id / user id")
+		return
+	}
+	if id := firstNonEmpty(channelID, userID); !discordSnowflakeRe.MatchString(id) {
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnDiscordDestInvalid, "destination must be a numeric Discord id")
+		return
+	}
+	var events []string
+	for _, ev := range req.Events {
+		if bridge.EventEnabled(bridge.EventKeys, ev) { // known key?
+			events = append(events, ev)
+		}
+	}
+	if len(events) == len(bridge.EventKeys) {
+		events = nil // all on — store the compact "everything" default
+	}
+	botName, err := bridge.DiscordBotName(token)
+	if errors.Is(err, bridge.ErrUnauthorized) {
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnDiscordTokenInvalid, "Discord rejected the bot token")
+		return
+	}
+	creds := &secrets.DiscordCreds{Token: token, ChannelID: channelID, UserID: userID,
+		BotName: botName, Events: events}
+	// Resolve the DM channel eagerly so the first notification doesn't pay the
+	// round-trip; a failure here is tolerated (the sender resolves lazily).
+	if userID != "" {
+		if ch, err := bridge.DiscordResolveDM(token, userID); err == nil {
+			creds.DMChannelID = ch
+		}
+	}
+	s, err := secrets.Load()
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	s.Discord = creds
+	if err := s.Save(); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, discordStatus(s))
+}
+
+func handleDeleteDiscordConn(w http.ResponseWriter, r *http.Request) {
+	s, err := secrets.Load()
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	s.Discord = nil
+	if err := s.Save(); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "discord"})
 }
 
 // pagerdutyStatus reports whether a PagerDuty API key is stored (never the key

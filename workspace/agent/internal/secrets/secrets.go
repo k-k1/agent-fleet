@@ -97,6 +97,22 @@ type CloudWatchConn struct {
 	RoleName  string `json:"roleName,omitempty"`  // SSO permission-set role name
 }
 
+// DiscordCreds is the user's Discord chat-bridge connection (docs/37 P1). Token
+// is the user's OWN bot token (private guild + bot — no central shared app,
+// docs/37 契約3). Exactly one destination: ChannelID posts to a guild channel;
+// UserID DMs the bound Discord user (the identity binding of docs/37 契約5 —
+// P2's inbound routing will verify against this same ID). DMChannelID caches
+// the DM channel resolved from UserID so sends don't re-resolve every time.
+// Events selects the pushed notification groups (bridge.EventKeys); empty = all.
+type DiscordCreds struct {
+	Token       string   `json:"token"`
+	ChannelID   string   `json:"channelId,omitempty"`
+	UserID      string   `json:"userId,omitempty"`
+	DMChannelID string   `json:"dmChannelId,omitempty"` // cache: resolved from UserID
+	BotName     string   `json:"botName,omitempty"`     // cache: bot account name for the UI
+	Events      []string `json:"events,omitempty"`
+}
+
 type Data struct {
 	Git         map[string]GitEntry    `json:"git"`                   // host -> https cred
 	GitIdentity map[string]GitIdentity `json:"gitIdentity,omitempty"` // host -> explicit commit identity
@@ -106,6 +122,7 @@ type Data struct {
 	PagerDuty   *PagerDutyCreds        `json:"pagerduty,omitempty"`   // ops MCP credential (docs/25)
 	Grafana     *GrafanaCreds          `json:"grafana,omitempty"`     // ops MCP credential (docs/25)
 	CloudWatch  *CloudWatchConn        `json:"cloudwatch,omitempty"`  // ops MCP settings (docs/25; no secret — AWS cred chain)
+	Discord     *DiscordCreds          `json:"discord,omitempty"`     // chat-bridge connection (docs/37)
 }
 
 // agentSecretKey returns the 32-byte per-user key from AF_SECRET_KEY (hex), or
