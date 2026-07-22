@@ -85,15 +85,22 @@ React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を�
 - **BrowserRegistry**（`features/browser/service.ts`）もpaneId keyedでPage/socket/canvasを所有する。
   layoutに永続化するのは`{kind:"browser", port, path}`だけで、ephemeralなbrowserIdは保存しない。
   非表示は`visibility=false`、60秒後にPageを破棄し、再表示・reload・Workspace再起動時はport/pathから再生成する。
-- `agents/registry.ts` = kind（claude / codex / opencode / shell / ssm）の**単一真実源**。kind ごとに
-  descriptor（表示・availability 述語・capability set: chat / transcript / model / fork / planMode /
-  ephemeral 等）を 1 個持ち、UI は capability を見て分岐する。エージェント追加 = descriptor 追加。
+- `agents/registry.ts` = kind（claude / codex / copilot / agy / opencode / shell / ssm）の**単一真実源**。
+  kind ごとに descriptor（表示・availability 述語・capability set: chat / transcript / model / fork /
+  planMode / ephemeral 等）を 1 個持ち、UI は capability を見て分岐する。エージェント追加 = descriptor 追加。
+- **表示名の 3 段体系**（`id`/`cssClass`/`short`/`icon` は内部識別子で不変・小文字）: `short`（2字 cc/cx/ag/cp/oc）＝
+  狭所バッジ / `label`（コンパクト proper 名 Claude・Codex・Copilot・OpenCode・Antigravity）＝pane ヘッダ・セッション行 /
+  `displayName`（フル製品名 **Claude Code**・**GitHub Copilot**・他は label と同値）＝起動カード・設定カード。表示コードは
+  `lib/sessionkind.ts` の `kindShort`/`kindLabel`/`kindDisplayName`（=`displayName || label`）経由で書き、生の label 直読み・
+  名称ハードコードは避ける（`BADGE_SHORT` も registry の `short` から導出）。
 
 ## 2.5 IA（情報設計）
 
 - **2 段バー**: 画面最上部（アプリ名・テナント picker〔単一所属時は非表示〕・外観ポップオーバー・アカウント
   メニュー・設定・管理〔super_admin のみ〕）+ ワークスペース操作（workspace 状態と Start⇄Stop・リソースチップ +
-  Sparkline・ポートプレビュー〔`/preview/{port}` を新タブで〕・Claude/Codex サブスク使用量・分割操作）。
+  Sparkline・ポートプレビュー〔`/preview/{port}` を新タブで〕・各エージェントの使用量チップ（claude/codex の
+  サブスク枠 5h/週次、copilot のアカウントクレジット残量、agy のクォータ残量%。各 popover にプランと利用アカウントも
+  表示）・分割操作）。
 - **左ペイン**: LayoutMap + 常駐 3 セクション（アシスタント / メモキュー / プロジェクトツリー）+
   repo 外セッションの受け皿（無ければ非表示）。フラットな Sessions / Repos / Files セクションは
   プロジェクトツリーに統合された（project-first IA）。
@@ -102,7 +109,7 @@ React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を�
   使えない）。戻る / 進むでレイアウト・設定/管理モーダル・スマホ drawer が復元される。スマホは左ペインを
   オフキャンバス drawer 化し、`{drawer:true}` の履歴エントリで「戻る＝drawer を閉じる/再び開く」を実現
   （端末の beforeunload ガードを誤爆させない）。エッジスワイプで開閉。
-- **設定モーダル**: エージェント（claude/codex/opencode の接続・RTK 等）/ Git / 環境（toolchains・
+- **設定モーダル**: エージェント（claude/codex/copilot/agy/opencode の接続・RTK 等）/ Git / 環境（toolchains・
   Workspace 作り直しの危険ゾーン）/ AWS SSM / MCP（PAT 発行・失効）/ 表示 の 6 タブ。
   管理機能は SettingsDialog に混ぜず **AdminDialog に分離**（TopBar の shield から、super_admin のみ）。
 
@@ -113,6 +120,10 @@ React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を�
   `<html data-theme>` と region 変数を書き込み、SURFACE_COLORS は per-theme tint（ライトで暗色バー＝
   文字潰れを回避）。highlight.js は `--hl-*` 変数でテーマ追従。**既知の限界**: xterm はライトテーマ
   未対応（ライト選択時も端末は暗いまま）。
+- **エージェント kind 色**: `tokens.css` の `--kind-*`（claude/codex/agy/copilot/opencode/shell/ssm、`:root`=dark・
+  `[data-theme=light]` で暗色版）が**唯一の hue 源**。使用側（kind-tag・sess-kic・LayoutMap・起動 seg アイコン・
+  設定バッジ）は `var(--kind-*)`＋tint は `color-mix(… N%, transparent)` で描画し、各 CSS に色 hex を直書きしない。
+  **opencode はティール（#1fbaa6 / light #0d8f82）**＝copilot 紫との視認衝突を避けるため。
 - **アイコンの役割分担**: クローム＝codicon 単色（currentColor 追従）/ ファイル種別＝カラー SVG
   （`lib/fileicons` の ext→typeKey 解決 + `ui/FileIcon`）。
 - **ui-prefs**: 表示設定（テーマ・フォント・アイコンセット等）は per-user でサーバー保存

@@ -35,6 +35,10 @@ Copilot カードは状態表示＋起動既定のみ）:
 - 自己更新封殺: `COPILOT_AUTO_UPDATE=false`（CI env 検出でも自動 OFF だが明示する）。
 - モデル: `--model <id>`（未指定=auto ルーティング）。effort: `--effort <level>`。
   モード: `--mode plan` 等（interactive/plan/autopilot）。
+  - ⚠️ **Auto は `--effort` 非対応**（`Model "auto" does not support reasoning effort configuration` で起動失敗）。
+    Auto は copilot の既定であり **Free プランの唯一のモデル**なので、effort を既定以外にすると Free では常に落ちる
+    フットガン。→ `program.go`/`driver.go` は **concrete な非 auto モデルの時だけ `--effort` を渡す**。フロント
+    `useEffortOptions` も copilot+auto/未指定は effort を既定のみに寄せる（バックエンドのガードと一致）。
 
 **read 正本（transcript/状態）は `$COPILOT_HOME/session-state/<sid>/events.jsonl`**:
 
