@@ -38,6 +38,7 @@ const (
 //	af|q|<sid>|<qi>|<oi>|<fp>   AskUserQuestion option (qi/oi = question/option index)
 //	af|p|<allow|deny>|<sid>     tool-permission decision
 //	af|pl|<approve|reject>|<sid>  plan approval decision
+//	af|op|<approve|reject>|<id>   operator destructive-action approval (P3, approval.go)
 //
 // The fingerprint (fp) on question buttons is a short digest of the questions
 // payload; the answer path rejects a click whose fp no longer matches the current
@@ -180,11 +181,12 @@ func label(en bool, ja, ens string) string {
 
 // ParsedInteraction is a decoded button custom_id (the answer intent).
 type ParsedInteraction struct {
-	Kind    string // "q" | "p" | "pl"
-	Session string
-	QI, OI  int    // question/option index (Kind == "q")
-	Fp      string // questions fingerprint (Kind == "q")
-	Choice  string // "allow"/"deny" (p) or "approve"/"reject" (pl)
+	Kind     string // "q" | "p" | "pl" | "op"
+	Session  string
+	QI, OI   int    // question/option index (Kind == "q")
+	Fp       string // questions fingerprint (Kind == "q")
+	Choice   string // "allow"/"deny" (p), "approve"/"reject" (pl / op)
+	Approval string // operator approval id (Kind == "op")
 }
 
 // ParseCustomID decodes a button custom_id back into an answer intent, or (nil,
@@ -210,6 +212,13 @@ func ParseCustomID(s string) (ParsedInteraction, bool) {
 			return ParsedInteraction{}, false
 		}
 		return ParsedInteraction{Kind: parts[1], Session: parts[3], Choice: parts[2]}, true
+	case "op":
+		// af|op|<approve|reject>|<id> — an operator destructive-action approval (P3).
+		// There is no session; the id keys the bridge-approvals handshake record.
+		if len(parts) != 4 || (parts[2] != "approve" && parts[2] != "reject") || parts[3] == "" {
+			return ParsedInteraction{}, false
+		}
+		return ParsedInteraction{Kind: "op", Choice: parts[2], Approval: parts[3]}, true
 	}
 	return ParsedInteraction{}, false
 }
