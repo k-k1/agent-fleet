@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
@@ -80,18 +81,22 @@ func (d *discordProvider) Send(m Message) error {
 		return err
 	}
 	content := m.Text(d.creds.Lang)
-	// 全文ブリッジ (docs/37 将来の方向): append the scrubbed turn body when this
-	// connection opted into full-text mode. Only answer-ready carries a body.
+	// 全文ブリッジ (docs/37 将来の方向): in full-text mode the answer body IS the
+	// message — drop the headline/「表示名」/link preface and post the scrubbed body
+	// alone (the thread name already names the session, and the deep link is usually
+	// dead in the local-only setup full-text targets). Only answer-ready carries a
+	// body; every other kind keeps its headline.
 	if d.creds.FullText && m.Body != "" {
-		content += "\n\n" + ScrubSecrets(m.Body)
+		content = ScrubSecrets(m.Body)
 	}
 	// Mention makes mobile push deterministic: Discord's default notification
 	// level for guild channels AND threads is "only @mentions", so an unpinged
 	// notification silently becomes badge-only (docs/37 P1.5). DM mode needs none.
 	// It rides the FIRST chunk only (one ping per turn) and is budgeted so the
-	// pinged chunk still fits Discord's limit.
+	// pinged chunk still fits Discord's limit. The time-gate (shouldMention) keeps a
+	// rapid answer stream from pinging every turn while still pushing after a lull.
 	prefix := ""
-	if d.creds.ChannelID != "" && d.creds.MentionUserID != "" {
+	if d.creds.ChannelID != "" && d.creds.MentionUserID != "" && d.shouldMention(m) {
 		prefix = "<@" + d.creds.MentionUserID + "> "
 	}
 	var msgs []outMsg
@@ -114,6 +119,47 @@ func (d *discordProvider) Send(m Message) error {
 		}
 	}
 	return nil
+}
+
+// mentionQuietWindow: inside an active thread, a read-only event (answer-ready &
+// co.) skips the @mention if the bot posted to that thread within this window — you
+// are likely still watching, so a rapid reply→answer exchange won't ping every turn.
+// After a lull (or for any action/abnormal event) the mention returns so mobile still
+// pushes. Tunable; a var so tests can shrink it.
+var mentionQuietWindow = 10 * time.Minute
+
+// shouldMention decides whether this message carries the push @mention (docs/37,
+// user request 2026-07-22). Action/abnormal events always ping (you must act, or the
+// session died); read-only events ping only when the session's thread has been quiet
+// for mentionQuietWindow. Without a thread to gate on (flat channel / DM / first
+// post) it falls back to the old always-mention behavior.
+func (d *discordProvider) shouldMention(m Message) bool {
+	if alwaysMentionKind(m.Kind) {
+		return true
+	}
+	if d.creds.ChannelID == "" || !d.creds.Threads || m.SessionName == "" {
+		return true // no thread to gate on
+	}
+	ref, ok := loadThreads()[m.SessionName]
+	if !ok || ref.LastPostAt == "" {
+		return true // first notification seeds the thread — ping it
+	}
+	last, err := time.Parse(time.RFC3339, ref.LastPostAt)
+	if err != nil {
+		return true
+	}
+	return time.Since(last) >= mentionQuietWindow
+}
+
+// alwaysMentionKind is the set of events that must reliably push regardless of how
+// recently the thread was active: pending decisions the user has to make, and an
+// abnormal exit.
+func alwaysMentionKind(kind string) bool {
+	switch kind {
+	case "question", "plan-approval", "permission-request", "exit":
+		return true
+	}
+	return false
 }
 
 // destChannel resolves where a flat (non-thread) message goes: the configured
@@ -148,6 +194,9 @@ func (d *discordProvider) sendThreaded(m Message, msgs []outMsg) error {
 	ts := loadThreads()
 	if ref, ok := ts[m.SessionName]; ok && ref.Channel == d.creds.ChannelID {
 		err := d.postMsgsToThread(ref.Thread, msgs)
+		if err == nil {
+			touchThreadPost(m.SessionName, time.Now()) // feed the mention time-gate
+		}
 		if !isUnknownChannel(err) {
 			return err // delivered, or a real failure worth retrying as-is
 		}
@@ -172,7 +221,9 @@ func (d *discordProvider) sendThreaded(m Message, msgs []outMsg) error {
 	}
 	ts[m.SessionName] = threadRef{Channel: d.creds.ChannelID, Thread: threadID}
 	saveThreads(ts)
-	return d.postMsgsToThread(threadID, msgs[1:])
+	err = d.postMsgsToThread(threadID, msgs[1:])
+	touchThreadPost(m.SessionName, time.Now()) // the seed message already landed in-thread
+	return err
 }
 
 // postMsgsToThread posts each message into the thread in order (unarchiving as
@@ -236,10 +287,11 @@ func DiscordAppInfo(token string) (DiscordApp, error) {
 }
 
 // discordInvitePermissions = VIEW_CHANNEL(1024) + SEND_MESSAGES(2048) +
-// CREATE_PUBLIC_THREADS(1<<34) + SEND_MESSAGES_IN_THREADS(1<<38). The thread
-// bits back docs/37 P1.5; private guilds usually grant them via @everyone
-// anyway, so older invites keep working — a denial surfaces as testError.
-const discordInvitePermissions = "292057779200"
+// ADD_REACTIONS(64) + CREATE_PUBLIC_THREADS(1<<34) + SEND_MESSAGES_IN_THREADS(1<<38).
+// The thread bits back docs/37 P1.5 and ADD_REACTIONS backs the P2a inject receipt
+// (👀); private guilds usually grant these via @everyone anyway, so older invites keep
+// working — a denial surfaces as testError / a silently-logged best-effort skip.
+const discordInvitePermissions = "292057779264"
 
 // DiscordInviteURL is the one-click "add the bot to your private server" link
 // the connections card shows after token validation.
@@ -345,6 +397,25 @@ func DiscordStartThread(token, channelID, messageID, name string) (string, error
 
 func DiscordUnarchiveThread(token, threadID string) error {
 	return discordDo("PATCH", "/channels/"+threadID, token, map[string]any{"archived": false}, nil)
+}
+
+// receiptEmoji is the reaction the bot adds to an injected reply to signal "received,
+// now working" (docs/37 P2a ack). Eyes read as "seen" and pair with the typing pulse.
+const receiptEmoji = "👀"
+
+// DiscordAddReaction reacts to a message as the bot (PUT .../reactions/{emoji}/@me).
+// The emoji is a raw unicode glyph, percent-encoded into the path. Best-effort: a
+// missing ADD_REACTIONS permission (private-guild @everyone usually grants it) just
+// errors, which the caller logs — the reply was still injected.
+func DiscordAddReaction(token, channelID, messageID, emoji string) error {
+	return discordDo("PUT", "/channels/"+channelID+"/messages/"+messageID+
+		"/reactions/"+url.PathEscape(emoji)+"/@me", token, nil, nil)
+}
+
+// DiscordTriggerTyping fires the typing indicator in a channel/thread (~10s, auto-
+// cleared when the next message posts). Used as the liveliness half of the inject ack.
+func DiscordTriggerTyping(token, channelID string) error {
+	return discordDo("POST", "/channels/"+channelID+"/typing", token, map[string]any{}, nil)
 }
 
 // interactionDeferUpdate is Discord's DEFERRED_UPDATE_MESSAGE callback type (6):
