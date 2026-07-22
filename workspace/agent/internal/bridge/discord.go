@@ -61,11 +61,15 @@ type discordProvider struct {
 
 // Providers builds the send-capable providers configured in the secrets store.
 // Called per drain — cheap, stateless, and picks up connect/disconnect without
-// any daemon-side registry (P1: Discord only; Slack joins here).
-func Providers(s *secrets.Data, cacheDiscordDM func(channelID string)) []Provider {
+// any daemon-side registry. Discord and Slack coexist (docs/37 Slack 追随): each
+// gets its own resume cursor (queued.Delivered keys on Name()) and DM cache callback.
+func Providers(s *secrets.Data, cacheDiscordDM, cacheSlackDM func(channelID string)) []Provider {
 	var out []Provider
 	if d := s.Discord; d != nil && d.Token != "" {
 		out = append(out, &discordProvider{creds: *d, cacheDM: cacheDiscordDM})
+	}
+	if sl := s.Slack; sl != nil && sl.BotToken != "" {
+		out = append(out, &slackProvider{creds: *sl, cacheDM: cacheSlackDM})
 	}
 	return out
 }
@@ -276,18 +280,23 @@ func (d *discordProvider) postRangeToThread(session, threadID string, msgs []out
 	return len(msgs), nil
 }
 
-// MirrorUserInput echoes a prompt the user submitted from the Console into the
-// session's Discord thread, so the thread stays a faithful two-way mirror (docs/37
-// Fix ②). Best-effort and gated: only in channel + thread mode, when the connection
-// hasn't opted out (MirrorInputOff), and a thread already exists for the session (the
-// first answer-ready seeds it — an echo never creates one). Called async from the
-// Console input path for genuine human prompts (report_to == ""); operator/MCP
-// injections are badged elsewhere and Discord-origin replies already show a 👀.
+// MirrorUserInput echoes a prompt the user submitted from the Console into the session's
+// chat thread(s), so each connected provider's thread stays a faithful two-way mirror
+// (docs/37 Fix ②). Called async from the Console input path for genuine human prompts
+// (report_to == ""); operator/MCP injections are badged elsewhere and chat-origin replies
+// already show a 👀. Best-effort per provider.
 func MirrorUserInput(sessionName, text string) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return
 	}
+	mirrorDiscordInput(sessionName, text)
+	mirrorSlackInput(sessionName, text)
+}
+
+// mirrorDiscordInput is the Discord half of MirrorUserInput: gated on channel + thread mode,
+// not opted out (MirrorInputOff), and an existing thread (an echo never creates one).
+func mirrorDiscordInput(sessionName, text string) {
 	s, err := secrets.Load()
 	if err != nil || s.Discord == nil {
 		return

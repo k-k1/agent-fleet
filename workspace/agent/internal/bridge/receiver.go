@@ -59,13 +59,17 @@ var (
 	receiverHealthyAfter = 60 * time.Second
 )
 
-// StartReceiver launches the supervisor. No-op without an Inject callback. Cheap when no
-// Discord receive is configured — it just polls secrets and does nothing.
+// StartReceiver launches the receive supervisors — one per chat provider (Discord Gateway +
+// Slack Socket Mode), sharing the same provider-neutral deps (docs/37 Slack 追随). No-op
+// without an Inject callback; cheap when no provider has receive configured — each just polls
+// secrets and does nothing.
 func StartReceiver(deps ReceiverDeps) {
 	if deps.Inject == nil {
 		return
 	}
-	go superviseReceiver(context.Background(), deps)
+	ctx := context.Background()
+	go superviseReceiver(ctx, deps)
+	StartSlackReceiver(ctx, deps)
 }
 
 // superviseReceiver polls secrets and starts/stops the Gateway connection to match the

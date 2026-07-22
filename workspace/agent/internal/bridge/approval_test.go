@@ -61,7 +61,7 @@ func TestParseCustomIDOpRejectsMalformed(t *testing.T) {
 // reports a no-target error so the gate can fail closed.
 func TestPostOperatorApprovalNoTarget(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	if err := PostOperatorApproval("delete s7?", "id1"); err == nil {
+	if err := PostOperatorApproval("conv-x", "delete s7?", "id1"); err == nil {
 		t.Fatal("expected a no-target error when no operator thread exists")
 	}
 }
@@ -83,7 +83,7 @@ func TestPostOperatorApprovalPosts(t *testing.T) {
 	hits, bodies, _ := captureDiscordBodies(t)
 
 	secret := "トークン xoxb-123456789012-abcdefghijklmnopqrstuvwx を delete して"
-	if err := PostOperatorApproval("🔒 承認\n"+secret, "id1"); err != nil {
+	if err := PostOperatorApproval("conv-1", "🔒 承認\n"+secret, "id1"); err != nil {
 		t.Fatal(err)
 	}
 	var posted bool
