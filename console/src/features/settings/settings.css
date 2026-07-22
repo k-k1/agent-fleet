@@ -98,37 +98,95 @@
   flex-direction: column;
   overflow: hidden;
 }
-.settings-seg {
-  flex: none; /* never let the flex column squash the tab bar (it would clip) */
-  display: inline-flex;
-  align-self: flex-start;
-  margin-bottom: 16px;
+/* Two-pane settings: a grouped left rail (category headers + section items) beside the
+   scrolling content pane. Replaces the old single-row segmented tab bar, which clipped /
+   overflowed once the tab count grew past ~6. On mobile the two panes collapse into a
+   drill-down (rail → content, ‹ returns) via the @media block below. */
+.settings-layout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
 }
-.settings-seg .seg-btn {
+.settings-rail {
   flex: 0 0 auto;
-  padding: 6px 20px;
-  font-size: 12px;
+  width: 176px;
+  overflow-y: auto;
+  padding: 2px 12px 8px 2px;
+  margin-right: 14px;
+  border-right: 1px solid var(--btn-border);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
-/* Mobile: the 6 tabs overflow a phone width — scroll the bar horizontally instead of
-   clipping the right edge (the buttons keep their width; swipe / tap scrolls the
-   active one into view). */
-@media (max-width: 760px) {
-  .settings-seg {
-    display: flex;
-    width: 100%;
-    align-self: stretch;
-    overflow-x: auto;
-    overflow-y: hidden;
-    scrollbar-width: none;
-  }
-  .settings-seg::-webkit-scrollbar {
-    display: none;
-  }
+.settings-rail-group + .settings-rail-group {
+  margin-top: 12px;
+}
+.settings-rail-head {
+  padding: 4px 10px;
+  font-size: 10.5px;
+  letter-spacing: 0.03em;
+  color: var(--dialog-muted);
+}
+/* Rail items override the legacy :where(.settings-modal) button reset (bordered pill). */
+.settings-modal .settings-rail-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.settings-modal .settings-rail-item:hover:not(.active) {
+  background: var(--btn);
+}
+.settings-rail-item.active {
+  background: var(--active-bg);
+  font-weight: 600;
 }
 .settings-content {
   flex: 1;
   min-height: 0;
   overflow: auto;
+}
+/* ‹ back-to-rail control: shown only in the mobile drill-down (see @media). */
+.settings-back {
+  display: none;
+}
+@media (max-width: 760px) {
+  .settings-layout {
+    flex-direction: column;
+  }
+  .settings-rail {
+    width: 100%;
+    flex: 1;
+    min-height: 0;
+    margin-right: 0;
+    border-right: none;
+    padding: 2px 0 8px;
+  }
+  .settings-layout.entered .settings-rail {
+    display: none;
+  }
+  .settings-layout:not(.entered) .settings-content {
+    display: none;
+  }
+  .settings-modal .settings-layout.entered .settings-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin: 0 0 12px;
+    padding: 4px 8px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--dialog-muted);
+    font-size: 13px;
+    cursor: pointer;
+  }
 }
 /* The secondary/note text in the settings dialog was too faint at plain --muted.
    Lift it toward --fg so it stays legible while still reading as secondary. color-mix
