@@ -2,7 +2,8 @@
 
 - 状態: **採用・実装中**（2026-07-22）。P1／P1.5（Discord 片方向通知）＋P2a（受信＝スレッド
   返信→セッション注入）＋全文ブリッジ（応答本文をチャットへ・opt-in）＋P2b（AUQ／許可／プラン
-  承認のボタン化・claude/TUI）実装済み、P3（承認ゲート／オペレーター bot）と Slack 追随は未着手。
+  承認のボタン化・claude/TUI＋managed）＋P3先取り（@メンション→フリート・オペレーター会話・
+  専用スレッド）実装済み、残る P3（破壊的操作の承認ゲート）と Slack 追随は未着手。
   実装計画は [docs/37](../37-chat-bridge.md)。
 - 関連: [docs/30](../30-session-report.md)（完了報告 — 通知内容の供給元）、
   docs/25（PagerDuty/Grafana — Connections 追加の先例）、docs/07 §7.6（秘密は CP を素通り）。
@@ -62,12 +63,29 @@
   自動全文化する案は、到達性の能動判定が誤診するため不採用＝明示トグルのみ）。決定2「秘密は載せない」
   との整合は多層スクラブ（既知トークン形＋大文字 env 代入＋高エントロピー独立トークン）で取り、
   一次防壁は「本人が両端を所有」。載せるのは turn 確定時の本文のみ（tool ログ・思考・生ログは不送信）、
-  2000 字は分割。本人が自分の出力を自分のチャットに載せる用途に閉じる。
+  2000 字は分割。本人が自分の出力を自分のチャットに載せる用途に閉じる。**整理（2026-07-22）**:
+  全文モード時は**本文のみ**投稿（見出し・「表示名」・deep link の前置きを省く＝スレッド名で
+  文脈は足りる／リンクはローカル専用環境で大抵死ぬ）。あわせて**メンションを時間ゲート化**
+  （要対応/異常イベントは常時 push、読むだけの answer-ready はスレッドが既定 10 分静かなときだけ
+  @メンション）＋**受信 ack**（返信注入の成功＝👀 リアクション＋typing、失敗＝局所化した理由を
+  スレッドへ返信）。
 - **P2b（ボタン化）の制約**: 質問・許可・プラン承認を Message Components で回答する。相互作用は
   Interactions Endpoint URL 未設定なら Gateway に `INTERACTION_CREATE` として届く（ローカル
   専用・外部端点なしと整合）ので P2a の受信 Gateway に相乗りし、公開端点は不要。回答は契約6の
-  構造化写像（キー送出でも、押下者検証は契約5の本人限定）。**v1 は claude/TUI 対象**＝フックが
-  pending ペイロードを記録し MirrorView 検証済みのキー列を Go 再現できる面に閉じる。managed
-  （codex/opencode/copilot）は `/respond` の ID がドライバのライブ Interaction 依存で通知経路の
-  識別子と異なり、ライブ検証も要るため v1 は Console 誘導（次段でボタン化）。単一選択のみ対応
-  （multi-select はテキストのまま Console 回答）、複数問は per-session 蓄積で全問揃い次第 submit。
+  構造化写像（キー送出でも、押下者検証は契約5の本人限定）。claude/TUI はフックが pending
+  ペイロードを記録し MirrorView 検証済みのキー列を Go 再現。**managed（codex/opencode/copilot）も
+  実装済み（2026-07-22）**＝当初懸念した「rollout call_id ↔ ライブ Interaction id」の識別子不一致は
+  **custom_id に id を載せず回答時に `Resume→Snapshot` で現在の Interaction を再取得**して解消
+  （送信側は `codex.PendingInteraction` で resume せず questions を覗いて通知に添付）。陳腐化は
+  フィンガープリント＋`Respond` の id 照合の二重ガード。単一選択のみ対応（multi-select はテキストの
+  まま Console 回答）、複数問は per-session 蓄積で全問揃い次第 submit。ライブ codex 実クリック検証は
+  再ビルド後に残。
+- **P3先取り（@メンション→オペレーター会話）**: セッションだけでなく built-in オペレーター会話
+  （`assistants.go` "operator"・`af_write`）ともチャットできる。受信面は**専用オペレータースレッド**
+  （契約5の本人限定を維持・`ThreadToSession` とは別ファイル `bridge-operator.json` の thread→conv
+  マッチで `routeInbound` が分岐）。ターン機構は既存の `runReportAutoTurn` 系を非HTTPで回す
+  `runOperatorTurn`（`handleChatSend` 同型）＝再発明なし。正準会話は 1 本の連続会話（Console と共有・
+  deep link 可・肥大化は docs/33 の予防的自動圧縮で頭打ち）。応答は answer-ready 通知に乗らないので
+  受信側が同スレッドへ明示 post（`ScrubSecrets`＋2000字分割）。オペレーターが指示したセッションの
+  報告への自律応答もスレッドへミラー＝外出先ループが閉じる。切断で thread 座標は破棄・会話は保持。
+  破壊的操作の承認は残る P3 で P2b ボタン機構に載せる。

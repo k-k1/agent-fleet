@@ -31,6 +31,10 @@ const AF_ASSISTANT_ID = "af";
 
 interface GuideState {
   running: boolean;
+  // CP unreachable (workspace fetch failed → state "unknown"). The session/chat/connection
+  // probes the card relies on ALSO fail then, so "no sessions / no chats" is untrustworthy —
+  // we must not read a CP outage as a fresh first-run and pop the welcome guide.
+  cpDown: boolean;
   startBusy: boolean;
   gitOk: boolean;
   agentOk: boolean;
@@ -62,6 +66,7 @@ function useGuideState(): GuideState {
 
   return {
     running: wsState === "running",
+    cpDown: wsState === "unknown", // fetch failed — see the field's comment
     startBusy: wsStartBusy(wsState), // start already in flight / ECS cold pull
     gitOk: !!(conns?.github?.connected || conns?.bitbucket?.connected),
     agentOk: !!(
@@ -265,6 +270,11 @@ export function OnboardingCard() {
   }, [chatTick, g.running]);
 
   if (dismissed || sessions.length > 0 || (chats ?? 0) > 0) return null;
+  // CP down (status 不明): the empty panes and failed probes look identical to first-run,
+  // but they aren't — don't show the welcome guide (its launch actions can't work anyway,
+  // and it misreads a transient outage as a fresh install). The pane keeps its neutral
+  // "セッション未接続" empty state; the WS bar already signals 不明.
+  if (g.cpDown) return null;
   if (g.conns === null || chats === null) return null; // wait for the probes so checks don't flash wrong
 
   const dismiss = () => {

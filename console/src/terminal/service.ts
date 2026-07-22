@@ -21,6 +21,7 @@ export {
   reconnectSession,
   clearTerm,
   fit,
+  repaint,
   focusTerm,
   sendInput,
   setTermBackground,
