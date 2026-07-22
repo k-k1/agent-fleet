@@ -166,6 +166,11 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
   const [autoMention, setAutoMention] = useState<{ id: string; name: string } | null>(null);
   const [events, setEvents] = useState<string[]>(DC_EVENTS.map(([k]) => k));
   const [busy, setBusy] = useState(false);
+  // The PUT response IS the fresh connection status — trust it immediately
+  // instead of waiting on the parent's api/connections refetch (a transient CP
+  // failure there left the card on 未接続 right after a successful connect).
+  const [localSt, setLocalSt] = useState<any>(null);
+  const view = st?.connected ? st : localSt?.connected ? localSt : null;
   const ok = !!insp && (dm ? userId.trim() !== "" : channel !== "") && events.length > 0;
 
   // Auto-fill the mention target with the picked channel's guild owner (= the
@@ -245,6 +250,7 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
         return;
       }
       toast(res?.testError ? tr("ops.dc_test_failed", { msg: String(res.testError) }) : tr("ops.dc_test_sent"));
+      setLocalSt(res);
       setInsp(null);
       setChans(null);
       setChannel("");
@@ -256,6 +262,7 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
   };
   const disconnect = async () => {
     await raw("api/connections/discord", { method: "DELETE" });
+    setLocalSt(null);
     reload();
   };
 
@@ -263,19 +270,19 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
     <ProviderCard
       id="discord"
       name="Discord"
-      status={<StatusPill on={st?.connected}>{st?.connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>}
+      status={<StatusPill on={!!view}>{view ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>}
     >
-      {st?.connected ? (
+      {view ? (
         <div className="p-who">
           <span className="p-em">
-            {tr(st.mode === "channel" ? "ops.dc_connected_channel" : "ops.dc_connected_dm")}
+            {tr(view.mode === "channel" ? "ops.dc_connected_channel" : "ops.dc_connected_dm")}
           </span>
-          {st.botName && <span className="p-pl">{st.botName}</span>}
-          {st.threads && <span className="p-pl">{tr("ops.dc_pill_threads")}</span>}
-          {st.mention && <span className="p-pl">@</span>}
-          {Array.isArray(st.events) && st.events.length < DC_EVENTS.length && (
+          {view.botName && <span className="p-pl">{view.botName}</span>}
+          {view.threads && <span className="p-pl">{tr("ops.dc_pill_threads")}</span>}
+          {view.mention && <span className="p-pl">@</span>}
+          {Array.isArray(view.events) && view.events.length < DC_EVENTS.length && (
             <span className="p-pl">
-              {DC_EVENTS.filter(([k]) => st.events.includes(k))
+              {DC_EVENTS.filter(([k]) => view.events.includes(k))
                 .map(([, l]) => tr(l as Parameters<typeof tr>[0]))
                 .join(" / ")}
             </span>
