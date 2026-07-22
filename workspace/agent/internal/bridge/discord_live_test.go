@@ -1,8 +1,11 @@
 package bridge
 
 import (
+	"context"
+	"errors"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
@@ -50,5 +53,63 @@ func TestDiscordLiveSend(t *testing.T) {
 				t.Fatalf("thread %s: %v", kind, err)
 			}
 		}
+	}
+}
+
+// TestDiscordLiveReceive is the live RECEIVE smoke test (docs/37 P2a): it opens a REAL
+// Discord Gateway connection and logs every message the bot sees for ~40s, so the receive
+// path can be verified in isolation — before the full session round-trip. Post a message in
+// your server (and in a session thread) while it runs and confirm it arrives WITH content;
+// an empty content line means the MESSAGE_CONTENT privileged intent isn't actually enabled.
+// Token/bound-user come from env, falling back to the stored Discord connection:
+//
+//	AF_DISCORD_LIVE=1 AF_DISCORD_GATEWAY=1 [AF_DISCORD_TOKEN=<bot token>] \
+//	  [AF_DISCORD_USER=<your user id>] \
+//	  go test ./internal/bridge -run TestDiscordLiveReceive -v -timeout 90s
+func TestDiscordLiveReceive(t *testing.T) {
+	if os.Getenv("AF_DISCORD_LIVE") != "1" || os.Getenv("AF_DISCORD_GATEWAY") != "1" {
+		t.Skip("AF_DISCORD_LIVE != 1 or AF_DISCORD_GATEWAY != 1")
+	}
+	token := os.Getenv("AF_DISCORD_TOKEN")
+	bound := os.Getenv("AF_DISCORD_USER")
+	if token == "" { // fall back to the configured connection (no need to paste the token)
+		if s, err := secrets.Load(); err == nil && s.Discord != nil {
+			token = s.Discord.Token
+			if bound == "" {
+				if bound = s.Discord.MentionUserID; bound == "" {
+					bound = s.Discord.UserID
+				}
+			}
+		}
+	}
+	if token == "" {
+		t.Fatal("no token: set AF_DISCORD_TOKEN or configure the Discord connection")
+	}
+	name, err := DiscordBotName(token)
+	if err != nil {
+		t.Fatalf("users/@me: %v", err)
+	}
+	t.Logf("bot %q connecting to the gateway — post messages in your server for ~40s (bound user=%q)…", name, bound)
+
+	var count int
+	gw := &gateway{token: token, onMsg: func(m gatewayMessage) {
+		count++
+		tag := ""
+		if bound != "" && m.Author.ID == bound {
+			tag = " [BOUND USER ✓ would route]"
+		}
+		content := m.Content
+		if content == "" {
+			content = "<EMPTY — MESSAGE_CONTENT not enabled?>"
+		}
+		t.Logf("MESSAGE_CREATE author=%s bot=%v channel=%s%s content=%q",
+			m.Author.ID, m.Author.Bot, m.ChannelID, tag, content)
+	}}
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	err = gw.connectOnce(ctx)
+	t.Logf("gateway closed after %d message(s): %v", count, err)
+	if errors.Is(err, errDisallowedIntent) {
+		t.Fatal("Discord rejected the intents (close 4014) — enable MESSAGE_CONTENT in the Developer Portal")
 	}
 }
