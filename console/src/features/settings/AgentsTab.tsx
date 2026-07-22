@@ -3,7 +3,7 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import type { ReactNode } from "react";
 import { api, apiJSON, raw } from "../../core/api/client.ts";
 import { Button } from "../../ui/Button.tsx";
-import { Choice, OnOff, Select } from "./controls.tsx";
+import { Choice, OnOff, Row, Select } from "./controls.tsx";
 import {
   agentLaunchDefault,
   useSettings,
@@ -145,16 +145,6 @@ export function AgentsTab() {
           {running && agents === false && <p className="ps-note">{tr("agents.rtk_unsupported")}</p>}
         </>
       )}
-    </div>
-  );
-}
-
-// A labeled row for the client-side session settings (mirrors DisplayTab's Row).
-function Row({ label, children }: { label: ReactNode; children?: ReactNode }) {
-  return (
-    <div className="ds-row">
-      <span className="ds-label">{label}</span>
-      {children}
     </div>
   );
 }

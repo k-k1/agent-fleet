@@ -2,6 +2,18 @@ import type { ReactNode } from "react";
 import { IconButton } from "../../ui/Button.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 
+// Row: the standard label + control row shared by every settings tab (was copy-pasted
+// as a local `Row` in each — Display/Agents/Assistant/Tts/Tokens/Env/Notifications —
+// which drifts). Left label (.ds-label) + right control.
+export function Row({ label, children }: { label: ReactNode; children?: ReactNode }) {
+  return (
+    <div className="ds-row">
+      <span className="ds-label">{label}</span>
+      {children}
+    </div>
+  );
+}
+
 // Shared settings-tab controls, so the segmented Choice / オン・オフ toggle is defined
 // once instead of copied between DisplayTab and AgentsTab (they drift otherwise).
 export interface ChoiceProps {

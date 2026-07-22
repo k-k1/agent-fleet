@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import {
   useSettings,
   setSetting,
@@ -18,7 +18,7 @@ import { loadSpeakers, speakersCatalog } from "../chat/ttsSpeakers.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
-import { Choice, OnOff, Slider } from "./controls.tsx";
+import { Choice, OnOff, Row, Slider } from "./controls.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 
 // TtsTab — 音声読み上げ（TTS, docs/24 + ADR0013）の設定タブ。もとは AgentsTab から分離した
@@ -207,16 +207,6 @@ export function TtsTab() {
         </Button>
         <p className="muted ds-note">{tr("tts.note_reset")}</p>
       </section>
-    </div>
-  );
-}
-
-// A labeled settings row (mirrors DisplayTab / AgentsTab の Row).
-function Row({ label, children }: { label: ReactNode; children?: ReactNode }) {
-  return (
-    <div className="ds-row">
-      <span className="ds-label">{label}</span>
-      {children}
     </div>
   );
 }
