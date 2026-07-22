@@ -89,6 +89,13 @@ const maxAutoTurns = 10
 // pending-text buffer itself is capped at 16 KiB; the report only needs the ending.
 const reportExcerptCap = 2000
 
+// bridgeBodyCap bounds the full-text bridge body (docs/37 Fix ③). It is far larger
+// than the report excerpt because the chat is standing in for the Console — the whole
+// answer should arrive (split across messages by chunkMessage / maxBodyChunks), not a
+// 2000-rune tail. Kept under the 16 KiB pending-text buffer with headroom for the
+// table-fence expansion, and matched to maxBodyChunks so nothing is silently dropped.
+const bridgeBodyCap = 12000
+
 // tailRunes returns the last n runes of s (whole string when shorter), prefixing
 // an ellipsis when truncated.
 func tailRunes(s string, n int) string {
@@ -97,6 +104,17 @@ func tailRunes(s string, n int) string {
 		return string(r)
 	}
 	return "…" + string(r[len(r)-n:])
+}
+
+// headRunes returns the FIRST n runes of s (whole string when shorter), appending an
+// ellipsis when truncated. The full-text bridge body wants the answer from the START
+// (unlike the report excerpt's tail).
+func headRunes(s string, n int) string {
+	r := []rune(strings.TrimSpace(s))
+	if len(r) <= n {
+		return string(r)
+	}
+	return string(r[:n]) + "…"
 }
 
 // kickSessionReport posts the report event to the local Agent server, best-effort.

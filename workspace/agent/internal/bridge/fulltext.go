@@ -20,10 +20,31 @@ const discordContentLimit = 1990
 
 // maxBodyChunks bounds how many messages one turn body may fan into, so a giant
 // turn can't flood the thread. Overflow past this is dropped with an ellipsis
-// line rather than posted (the full text is always in the Console).
-const maxBodyChunks = 5
+// line rather than posted (the full text is always in the Console). Sized so a
+// full turn body (bridgeBodyCap runes, session_status.go) splits cleanly across
+// enough messages that a normal long answer is delivered WHOLE (docs/37 Fix ③ —
+// 「うまく分割」), not truncated to the first few chunks.
+const maxBodyChunks = 12
 
 const redactedMark = "[secret redacted]"
+
+// bridgeDivider is a thin horizontal rule appended to the end of a full-text answer
+// and a mirrored user input (docs/37 Fix ⑤), so consecutive posts / a run of replies
+// don't visually merge into one unreadable block. A run of U+2500 renders as a line
+// in Discord (which does not honor Markdown "---").
+const bridgeDivider = "────────────────────"
+
+// withDivider appends the separator line to a block of text.
+func withDivider(s string) string {
+	return strings.TrimRight(s, "\n") + "\n" + bridgeDivider
+}
+
+// renderBodyForDiscord prepares an assistant/user body for a Discord message: scrub
+// secrets, then reflow Markdown tables (which Discord does NOT render) into fenced
+// code blocks so their columns stay aligned in monospace (docs/37 Fix ④).
+func renderBodyForDiscord(body string) string {
+	return tablesToCodeBlocks(ScrubSecrets(body))
+}
 
 // knownSecretPatterns are high-precision provider token shapes — matched
 // verbatim regardless of entropy so short, structured credentials still go.
@@ -108,6 +129,40 @@ func shannonEntropy(s string) float64 {
 		h -= p * math.Log2(p)
 	}
 	return h
+}
+
+// tableSepRe matches a GFM table's separator row (the "---|:--:|---" line under the
+// header). It must contain a pipe so a bare "---" horizontal rule isn't mistaken for
+// one (the caller also requires the preceding header line to contain a pipe).
+var tableSepRe = regexp.MustCompile(`^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$`)
+
+// tablesToCodeBlocks wraps each Markdown table (which Discord does NOT render) in a
+// fenced code block, so its pipes line up in monospace instead of collapsing into an
+// unreadable run of text (docs/37 Fix ④). A table is a header line containing a pipe
+// immediately followed by a separator row; the block extends over the following
+// pipe-bearing rows. Everything else is passed through untouched.
+func tablesToCodeBlocks(s string) string {
+	if !strings.Contains(s, "|") {
+		return s // fast path: no tables possible
+	}
+	lines := strings.Split(s, "\n")
+	var out []string
+	for i := 0; i < len(lines); i++ {
+		if i+1 < len(lines) && strings.Contains(lines[i], "|") &&
+			strings.Contains(lines[i+1], "|") && tableSepRe.MatchString(lines[i+1]) {
+			j := i + 2
+			for j < len(lines) && strings.Contains(lines[j], "|") && strings.TrimSpace(lines[j]) != "" {
+				j++
+			}
+			out = append(out, "```")
+			out = append(out, lines[i:j]...)
+			out = append(out, "```")
+			i = j - 1
+			continue
+		}
+		out = append(out, lines[i])
+	}
+	return strings.Join(out, "\n")
 }
 
 // chunkMessage splits content into Discord-sized pieces. firstPrefix (the

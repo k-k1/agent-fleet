@@ -16,6 +16,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -285,6 +286,11 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	if body.ReportTo != "" {
 		armSessionReport(name, body.ReportTo)
 		recordOperatorInjection(name, body.Prompt)
+	} else {
+		// Genuine Console-typed input (not an operator/MCP injection): mirror it into
+		// the session's Discord thread so the thread reflects both directions (docs/37
+		// Fix ②). Best-effort + async — never blocks or fails the input.
+		go bridge.MirrorUserInput(name, body.Prompt)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name})
 }
@@ -328,6 +334,8 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 	if reportTo != "" {
 		armSessionReport(meta.Name, reportTo)
 		recordOperatorInjection(meta.Name, prompt)
+	} else {
+		go bridge.MirrorUserInput(meta.Name, prompt) // docs/37 Fix ②: Console-input mirror
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": meta.Name})
 }
