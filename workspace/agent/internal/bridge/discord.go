@@ -85,6 +85,66 @@ func DiscordBotName(token string) (string, error) {
 	return res.Username, nil
 }
 
+// DiscordApp is the bot's application identity — the id feeds the generated
+// invite URL, so the setup wizard can skip the OAuth2 URL Generator entirely.
+type DiscordApp struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// DiscordAppInfo fetches the application behind a bot token (works with plain
+// bot auth; no OAuth2 client secret involved).
+func DiscordAppInfo(token string) (DiscordApp, error) {
+	var app DiscordApp
+	err := discordDo("GET", "/oauth2/applications/@me", token, nil, &app)
+	return app, err
+}
+
+// discordInvitePermissions = VIEW_CHANNEL(1024) + SEND_MESSAGES(2048). Send
+// alone is not enough when a channel doesn't inherit view for @everyone.
+const discordInvitePermissions = "3072"
+
+// DiscordInviteURL is the one-click "add the bot to your private server" link
+// the connections card shows after token validation.
+func DiscordInviteURL(appID string) string {
+	return "https://discord.com/oauth2/authorize?client_id=" + appID + "&scope=bot&permissions=" + discordInvitePermissions
+}
+
+type DiscordGuild struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// DiscordGuilds lists the guilds the bot has been invited to — the wizard polls
+// this to detect the invite completing. Needs no privileged intent.
+func DiscordGuilds(token string) ([]DiscordGuild, error) {
+	var gs []DiscordGuild
+	err := discordDo("GET", "/users/@me/guilds", token, nil, &gs)
+	return gs, err
+}
+
+type DiscordChannel struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Type int    `json:"type"`
+}
+
+// DiscordGuildChannels lists a guild's text channels (type 0) so the card can
+// offer a picker instead of asking the user for a numeric channel id.
+func DiscordGuildChannels(token, guildID string) ([]DiscordChannel, error) {
+	var chs []DiscordChannel
+	if err := discordDo("GET", "/guilds/"+guildID+"/channels", token, nil, &chs); err != nil {
+		return nil, err
+	}
+	var out []DiscordChannel
+	for _, c := range chs {
+		if c.Type == 0 {
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
 // DiscordResolveDM opens (or returns the existing) DM channel with the bound
 // user — the REST shape of "DM this person" (docs/37 契約5: the bot only ever
 // initiates toward the explicitly bound user id).
