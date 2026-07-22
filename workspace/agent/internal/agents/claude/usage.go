@@ -33,6 +33,13 @@ func HandleUsage(w http.ResponseWriter, r *http.Request) {
 	cap, at := readCapturedUsage()
 
 	out := map[string]any{"ok": false, "authed": authed}
+	// Plan (subscription tier) for the chip's popover — the rate_limits capture has no
+	// plan, so read it from `claude auth status` (cached). Only when signed in.
+	if authed {
+		if p := Plan(); p != "" {
+			out["plan"] = p
+		}
+	}
 	if cap != nil {
 		now := time.Now().UTC()
 		var fh, sd *usageWindow

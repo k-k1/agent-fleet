@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -181,4 +182,31 @@ func Status() map[string]any {
 		return map[string]any{"connected": false}
 	}
 	return map[string]any{"connected": true, "email": st.Email, "plan": st.SubscriptionType}
+}
+
+var (
+	planMu  sync.Mutex
+	planVal string
+	planAt  time.Time
+)
+
+// Plan returns the subscription tier (`claude auth status`'s subscriptionType, e.g.
+// "pro" / "max") for the WsBar usage chip. Status() execs the CLI, so the value is
+// cached briefly — the usage endpoint is polled and must not shell out every time.
+// "" when signed out or unknown. (/connections already surfaces this via Status; this
+// is the cached read the usage path uses so the chip and card agree without a per-poll exec.)
+func Plan() string {
+	planMu.Lock()
+	defer planMu.Unlock()
+	if !planAt.IsZero() && time.Since(planAt) < 5*time.Minute {
+		return planVal
+	}
+	planVal = ""
+	if m := Status(); m != nil {
+		if p, _ := m["plan"].(string); p != "" {
+			planVal = p
+		}
+	}
+	planAt = time.Now()
+	return planVal
 }
