@@ -20,6 +20,7 @@ import { useConnections } from "./useConnections.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../core/store/workspace.ts";
 import { usePolling } from "./usePolling.ts";
 import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton } from "./providerCard.tsx";
+import { kindDisplayName } from "../../lib/sessionkind.ts";
 import { useT } from "../../lib/i18n/index.ts";
 
 // AgentsTab is the per-agent home: for Claude / Codex / opencode it combines the
@@ -366,7 +367,7 @@ function ClaudeCard({
   return (
     <ProviderCard
       id="claude"
-      name="Claude"
+      name={kindDisplayName("claude")}
       status={<StatusPill on={st?.connected}>{st?.connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>}
     >
       {st?.connected ? (
@@ -480,7 +481,7 @@ function CopilotCard({
   return (
     <ProviderCard
       id="copilot"
-      name="GitHub Copilot"
+      name={kindDisplayName("copilot")}
       status={<StatusPill on={st?.connected}>{st?.connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>}
     >
       {unsupported ? (
@@ -573,7 +574,7 @@ function AgyCard({
   return (
     <ProviderCard
       id="agy"
-      name="Antigravity"
+      name={kindDisplayName("agy")}
       status={<StatusPill on={st?.connected}>{st?.connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>}
     >
       {/* 実験枠 label — always visible, connected or not (採用条件). */}
@@ -744,7 +745,7 @@ function CodexCard({
   return (
     <ProviderCard
       id="codex"
-      name="Codex"
+      name={kindDisplayName("codex")}
       status={<StatusPill on={st?.connected}>{st?.connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>}
     >
       {st?.connected ? (
@@ -899,7 +900,7 @@ function OpencodeCard({
   return (
     <ProviderCard
       id="opencode"
-      name="opencode"
+      name={kindDisplayName("opencode")}
       status={<StatusPill on={envs.length > 0}>{envs.length > 0 ? tr("agents.oc_key_count", { count: envs.length }) : tr("conn.disconnected")}</StatusPill>}
     >
       <div className="p-desc">{tr("agents.oc_desc")}</div>
