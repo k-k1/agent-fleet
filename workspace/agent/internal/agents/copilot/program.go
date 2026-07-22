@@ -63,10 +63,14 @@ func buildProgram(model, effort, mode, sid string) string {
 		flags = strings.TrimSpace(strings.ReplaceAll(flags, "--allow-all", ""))
 		flags = strings.TrimSpace(flags + " --mode plan")
 	}
-	if model != "" && model != "auto" {
+	concreteModel := model != "" && model != "auto"
+	if concreteModel {
 		flags += " --model " + session.ShellQuote(model)
 	}
-	if effort != "" {
+	// Auto (copilot's default, and the ONLY model on the Free plan) rejects --effort:
+	// "Model \"auto\" does not support reasoning effort configuration". Pass effort only
+	// alongside an explicit non-auto model, else the session errors on launch.
+	if effort != "" && concreteModel {
 		flags += " --effort " + session.ShellQuote(effort)
 	}
 	if sid != "" {
