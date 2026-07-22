@@ -3,6 +3,7 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import type { ReactNode } from "react";
 import { api, apiJSON, getTenant } from "../../core/api/client.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
+import { OnOff } from "./controls.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 
 // EnvTab (ツールチェーン) selects the workspace toolchains: timezone, node (via nvm),
@@ -249,10 +250,10 @@ function AgentUpdateRow({ au, onChange }: { au: any; onChange: (on: boolean) => 
   return (
     <section className="ds-group">
       <h4 className="ds-title">{tr("env.agent_update_title")}</h4>
-      <label className="ds-check">
-        <input type="checkbox" checked={!!au.agentUpdate} onChange={(e) => onChange(e.target.checked)} />
-        <span>{tr("env.agent_update_label")}</span>
-      </label>
+      {/* segmented OnOff, like every other toggle in the modal (was a bare checkbox). */}
+      <Row label={tr("env.agent_update_label")}>
+        <OnOff value={!!au.agentUpdate} onChange={onChange} />
+      </Row>
       <p className="muted ds-sub">{tr("env.agent_update_note")}</p>
     </section>
   );

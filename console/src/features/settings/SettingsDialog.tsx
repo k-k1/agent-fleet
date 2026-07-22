@@ -79,6 +79,16 @@ export function SettingsDialog() {
   // returns to the rail. Ignored by the desktop two-pane layout (CSS).
   const [entered, setEntered] = useState(true);
 
+  // Follow programmatic section requests (openSettings(section) called while the modal
+  // is already open) — e.g. a cross-tab pointer like Copilot → Gitホスティング or
+  // CloudWatch → AWS SSM jumps the rail to the target and drills in on mobile.
+  useEffect(() => {
+    if (settingsSection) {
+      setSection(settingsSection);
+      setEntered(true);
+    }
+  }, [settingsSection]);
+
   // Keep the active rail item in view as the section changes (tap or swipe).
   const railRef = useRef<HTMLDivElement>(null);
   useEffect(() => {

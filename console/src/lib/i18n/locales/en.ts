@@ -242,6 +242,8 @@ export const en: Record<keyof typeof ja, string> = {
     "A Viewer-role service-account token is recommended. The token is stored encrypted inside the workspace and passed only when the MCP server starts (write/admin tools start disabled). For Amazon Managed Grafana, set the URL to the workspace endpoint (g-xxxx.grafana-workspace.<region>.amazonaws.com) — tokens expire after at most 30 days, so re-paste when they do.",
   "ops.cw_profile_select": "Select a profile…",
   "ops.cw_manual_option": "Manual entry (a profile in your own ~/.aws)",
+  "ops.cw_no_profiles": "No SSO profiles yet, so this falls back to manual entry.",
+  "ops.cw_open_ssm": "Set up in AWS SSM",
   "ops.cw_manual_placeholder": "Profile name in ~/.aws",
   "ops.cw_region_placeholder": "Region (optional)",
   "ops.cw_hint":
@@ -668,7 +670,8 @@ export const en: Record<keyof typeof ja, string> = {
   "agents.agy_unsupported": "Not available on this host ({reason})",
   "agents.copilot_desc":
     "GitHub Copilot CLI rides the GitHub connection (gh transparent auth) — no separate sign-in. A Copilot subscription on the GitHub account is required (the Free tier has a small monthly quota).",
-  "agents.copilot_not_connected": "Connect GitHub first (Connections > GitHub)",
+  "agents.copilot_not_connected": "Connect GitHub first.",
+  "agents.copilot_open_git": "Open Git hosting",
   "agents.copilot_rtk_note":
     "copilot routes shell commands through rtk via a preToolUse hook ($COPILOT_HOME/hooks) — deterministic, unlike codex/agy's instruction-based approach. Applies to new sessions.",
   "agents.copilot_unsupported": "Not available in this container image ({reason})",

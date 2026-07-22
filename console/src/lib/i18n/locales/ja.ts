@@ -243,6 +243,8 @@ export const ja = {
     "Viewer 権限のサービスアカウントトークンを推奨します。トークンはワークスペース内に暗号化保存され、MCP サーバの起動時にだけ渡されます（書き込み・管理ツールは無効で起動）。Amazon Managed Grafana の場合は URL に workspace endpoint（g-xxxx.grafana-workspace.リージョン.amazonaws.com）を指定してください（トークンは最長30日で失効するため、失効したら貼り直します）。",
   "ops.cw_profile_select": "プロファイルを選択…",
   "ops.cw_manual_option": "手動入力（自分の ~/.aws のプロファイル）",
+  "ops.cw_no_profiles": "SSO プロファイルが未登録のため手動入力になります。",
+  "ops.cw_open_ssm": "AWS SSM で設定",
   "ops.cw_manual_placeholder": "~/.aws のプロファイル名",
   "ops.cw_region_placeholder": "リージョン（任意）",
   "ops.cw_hint":
@@ -673,7 +675,8 @@ export const ja = {
   "agents.agy_unsupported": "このホストでは利用できません（{reason}）",
   "agents.copilot_desc":
     "GitHub Copilot CLI は GitHub 連携（gh 透過認証）に相乗りします — 個別のログインは不要です。GitHub アカウントに Copilot サブスクリプションが必要です（Free プランは月間クォータ小）。",
-  "agents.copilot_not_connected": "先に GitHub を連携してください（連携 > GitHub）",
+  "agents.copilot_not_connected": "先に GitHub を連携してください。",
+  "agents.copilot_open_git": "Gitホスティングを開く",
   "agents.copilot_rtk_note":
     "copilot は preToolUse フック（$COPILOT_HOME/hooks）でシェルコマンドを rtk 経由に自動書換します — codex/agy の指示ベースと違い決定的に効きます。新規セッションに適用。",
   "agents.copilot_unsupported": "このコンテナイメージでは利用できません（{reason}）",
