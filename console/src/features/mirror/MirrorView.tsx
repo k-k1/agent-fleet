@@ -1137,6 +1137,13 @@ export function MirrorView({
   const sendPrompt = async (text: string, attachments?: string[]) => {
     const t = (text || "").trim();
     if ((!t && !attachments?.length) || sending) return;
+    // WS down: nothing can receive the prompt (a send would 502). The composer is already
+    // hidden while stopped, but other callers (seed prompt, file drop) reach here too — bail
+    // before the optimistic echo so a send never looks accepted when it can't be.
+    if (!running) {
+      toast(tr("mirror.ws_stopped"));
+      return;
+    }
     setSending(true);
     // start = 新しい turn / steer = 実行中 turn への追撃 — 楽観的に working へ倒す前の
     // 実状態で決める。tui では同じ型付けに落ちるが、managed の turn/start・turn/steer
@@ -2137,6 +2144,20 @@ export function MirrorView({
             </span>
           </div>
         )
+      ) : !running ? (
+        // Workspace stopped (or not yet running): the agent is down, so the composer can't
+        // deliver a prompt — a send would just 502. When the WS stops, the sessions poll
+        // freezes and this pane's `alive` stays stuck at its last live value (a CP 502 is an
+        // error, so setAlive never flips), which used to leave the live composer enabled and
+        // accepting input that silently failed. Block it here and frame the mirror as the
+        // read-only history it now is; Start from the top bar brings it back. (readOnly handles
+        // its own stopped case above; a live agent's resume/update menu can't be up with the WS
+        // down, so this precedes those checks.)
+        <div className="mirror-compose mirror-compose-resume">
+          <span className="muted mirror-resume-hint">
+            <Icon name="circle-slash" /> {tr("mirror.viewing_history_ws_stopped")}
+          </span>
+        </div>
       ) : termState === "resume" ? (
         // Resume menu is up in the terminal: block the composer (keystrokes would go to
         // the menu) and send the user there to choose.
