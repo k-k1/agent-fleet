@@ -41,6 +41,9 @@ func (m Message) headline() string {
 		return "セッションの完了報告が届きました"
 	case "exit":
 		return "セッションが異常終了しました（" + exitLabel(m.Detail) + "）"
+	case "bridge-test":
+		// Sent synchronously by the connections PUT — never enqueued.
+		return "接続テスト — この通知が届けば設定完了です"
 	}
 	return "状態が変化しました（" + m.Kind + "）"
 }

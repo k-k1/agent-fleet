@@ -442,6 +442,8 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	// encrypted secrets like the ops credentials above — proxied, never held here.
 	mux.HandleFunc("PUT /api/connections/discord", rest)
 	mux.HandleFunc("DELETE /api/connections/discord", rest)
+	mux.HandleFunc("POST /api/connections/discord/inspect", rest)
+	mux.HandleFunc("POST /api/connections/discord/guilds", rest)
 }
 
 // Internal git provider (docs/reference/internal-git-provider, ADR 0010).

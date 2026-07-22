@@ -94,8 +94,31 @@ Slack と Discord は「外向き WSS 1 本で送受信・ボタン応答まで�
   Console リンクを付ける（セッション deep link は残課題のまま）。
 - **検証**: ユニット（キュー境界・リトライ/破棄・トグルフィルタ・Discord REST 契約 =
   httptest・notice fan-out）＋ live 契約テスト `AF_DISCORD_LIVE=1 AF_DISCORD_TOKEN=…
-  AF_DISCORD_CHANNEL=…`（`internal/bridge/discord_live_test.go`）。実 Discord 通し・
-  スマホ実機目視は未（トークンはユーザー準備）。
+  AF_DISCORD_CHANNEL=…`（`internal/bridge/discord_live_test.go`）。
+  **実 Discord DM 通しは 2026-07-22 に完了**（実フリート反映後、本番経路の実
+  answer-ready が着弾・Console リンク付与も確認）。
+
+#### P1 追補: カードのセットアップウィザード化（2026-07-22）
+
+初期設定コスト（契約 3 のトレードオフ）を、貼られた bot トークンから残りを全部
+導出することで圧縮した。Discord REST は bot トークンだけで application 情報・
+所属ギルド・チャンネル一覧が取れ（特権 intent 不要）、ユーザーの手作業は
+「Developer Portal でトークン取得」と「招待リンクを開いて追加」だけになる。
+数字 ID のコピー（開発者モード）と OAuth2 URL Generator は不要。
+
+- **手順**: ①トークン貼付→検証（`POST /connections/discord/inspect` — bot 名＋
+  `GET /oauth2/applications/@me` の application id から招待 URL を生成。権限は
+  VIEW_CHANNEL+SEND_MESSAGES=3072）→ ②カードが `POST /connections/discord/guilds`
+  （`GET /users/@me/guilds`＋`GET /guilds/{id}/channels`、text=type 0 のみ）を
+  3 秒ポーリングし、Bot がギルドに入った瞬間チャンネルピッカー表示 → ③接続
+  （PUT）と同時に**同期テスト通知**（kind `bridge-test`・キュー非経由）を 1 通
+  送り、失敗は `testError` としてカードに表面化（接続自体は保存する — 権限不足等は
+  設定ミスではなく後から直せるため）。
+- **DM モードは上級者向けに格下げ**: ユーザー ID の自動検出だけは特権 intent
+  （GUILD_MEMBERS）が要るため自動化せず、手入力のまま残す。私設サーバーの
+  チャンネル宛てが実質 DM と同等の既定経路。
+- 中央共有 App によるワンクリック招待は引き続き不採用（ADR0020 決定 3 のまま。
+  self-host デプロイで成立しない）。
 
 ### P2 — 双方向: スレッド＝セッション ＋ AUQ ボタン（canReceive / canInteract）
 
@@ -146,7 +169,10 @@ Slack と Discord は「外向き WSS 1 本で送受信・ボタン応答まで�
 
 ## 残課題（起案時点の未決）
 
-- Console セッション URL の組み立て（deployment ベース URL の取得手段）。
-- Discord の私設ギルド前提を README/ガイド（member/）にどう書くか。
+- Console セッション URL の組み立て — ベース URL は `AF_CP_BASE_URL` で解決済み
+  （通知にリンク付与）。セッション単位の deep link はスキーム未定のまま。
+- ~~Discord の私設ギルド前提を README/ガイド（member/）にどう書くか~~ →
+  カード内ウィザード（P1 追補）にほぼ吸収。member ガイドの独立ページは P2 の
+  双方向設定が増えた時点で検討。
 - オペレーター bot（P3）の応答をどのセッション実体に持たせるか
   （常駐オペレーター 1 本を bot 専属にする案が有力 — P3 着手時に確定）。
