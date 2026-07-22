@@ -80,19 +80,32 @@ func (d *discordProvider) Send(m Message) error {
 		return err
 	}
 	content := m.Text(d.creds.Lang)
+	// 全文ブリッジ (docs/37 将来の方向): append the scrubbed turn body when this
+	// connection opted into full-text mode. Only answer-ready carries a body.
+	if d.creds.FullText && m.Body != "" {
+		content += "\n\n" + ScrubSecrets(m.Body)
+	}
 	// Mention makes mobile push deterministic: Discord's default notification
 	// level for guild channels AND threads is "only @mentions", so an unpinged
 	// notification silently becomes badge-only (docs/37 P1.5). DM mode needs none.
+	// It rides the FIRST chunk only (one ping per turn) and is budgeted so the
+	// pinged chunk still fits Discord's limit.
+	prefix := ""
 	if d.creds.ChannelID != "" && d.creds.MentionUserID != "" {
-		content = "<@" + d.creds.MentionUserID + "> " + content
+		prefix = "<@" + d.creds.MentionUserID + "> "
 	}
+	chunks := chunkMessage(content, prefix)
 	// Thread-per-session (docs/37 P1.5): guild channel destination only —
 	// threads don't exist in DMs — and only for session-scoped events.
 	if d.creds.ChannelID != "" && d.creds.Threads && m.SessionName != "" {
-		return d.sendThreaded(m, content)
+		return d.sendThreaded(m, chunks)
 	}
-	_, err = discordPostMessage(d.creds.Token, ch, content)
-	return err
+	for _, c := range chunks {
+		if _, err = discordPostMessage(d.creds.Token, ch, c); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // destChannel resolves where a flat (non-thread) message goes: the configured
@@ -123,10 +136,10 @@ func (d *discordProvider) destChannel() (string, error) {
 // never be lost to thread bookkeeping — if the thread can't be created the
 // message has already landed flat in the channel and we simply try again on
 // the session's next event.
-func (d *discordProvider) sendThreaded(m Message, content string) error {
+func (d *discordProvider) sendThreaded(m Message, chunks []string) error {
 	ts := loadThreads()
 	if ref, ok := ts[m.SessionName]; ok && ref.Channel == d.creds.ChannelID {
-		err := d.postToThread(ref.Thread, content)
+		err := d.postChunksToThread(ref.Thread, chunks)
 		if !isUnknownChannel(err) {
 			return err // delivered, or a real failure worth retrying as-is
 		}
@@ -134,16 +147,34 @@ func (d *discordProvider) sendThreaded(m Message, content string) error {
 		delete(ts, m.SessionName)
 		saveThreads(ts)
 	}
-	msgID, err := discordPostMessage(d.creds.Token, d.creds.ChannelID, content)
+	// No (valid) thread: the first chunk lands flat and seeds the thread; the
+	// rest go inside it (or flat too, if thread creation fails — nothing lost).
+	msgID, err := discordPostMessage(d.creds.Token, d.creds.ChannelID, chunks[0])
 	if err != nil {
 		return err
 	}
 	threadID, err := DiscordStartThread(d.creds.Token, d.creds.ChannelID, msgID, threadName(m))
 	if err != nil {
+		for _, c := range chunks[1:] {
+			if _, e := discordPostMessage(d.creds.Token, d.creds.ChannelID, c); e != nil {
+				return nil // partial flat delivery; grouping retries next event
+			}
+		}
 		return nil // message delivered flat; thread grouping retries next event
 	}
 	ts[m.SessionName] = threadRef{Channel: d.creds.ChannelID, Thread: threadID}
 	saveThreads(ts)
+	return d.postChunksToThread(threadID, chunks[1:])
+}
+
+// postChunksToThread posts each chunk into the thread in order (unarchiving as
+// needed per postToThread).
+func (d *discordProvider) postChunksToThread(threadID string, chunks []string) error {
+	for _, c := range chunks {
+		if err := d.postToThread(threadID, c); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

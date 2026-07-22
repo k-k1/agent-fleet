@@ -136,7 +136,18 @@ func recordSessionNotification(sid, previous, state, turnText string) {
 		if session.UUID(m.Dir, m.Name) != sid {
 			continue
 		}
-		_ = notice.Put(notice.New(kind, m.Name, m.Kind, session.Display(m)))
+		ev := notice.New(kind, m.Name, m.Kind, session.Display(m))
+		// 全文ブリッジ (docs/37 将来の方向): carry the turn's final prose on the
+		// answer-ready event so a full-text-mode provider can post it. Only
+		// answer-ready — interim attention events (question/plan/permission) have
+		// no completed turn body. Capped like the operator report excerpt; the
+		// provider scrubs secrets and chunks before any wire.
+		if kind == reportKindAnswerReady {
+			if body := tailRunes(turnText, reportExcerptCap); body != "" {
+				ev.Payload["body"] = body
+			}
+		}
+		_ = notice.Put(ev)
 		// One-shot session report to the operator conversation that armed this
 		// session (docs/30). Only TERMINAL events report to the operator: an
 		// instruction's report must be its COMPLETION, so an interim attention event
