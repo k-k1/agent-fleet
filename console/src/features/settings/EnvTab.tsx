@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useToast } from "../../ui/ToastProvider.tsx";
-import type { ReactNode } from "react";
 import { api, apiJSON, getTenant } from "../../core/api/client.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
-import { OnOff } from "./controls.tsx";
+import { OnOff, Row } from "./controls.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 
 // EnvTab (ツールチェーン) selects the workspace toolchains: timezone, node (via nvm),
@@ -256,14 +255,5 @@ function AgentUpdateRow({ au, onChange }: { au: any; onChange: (on: boolean) => 
       </Row>
       <p className="muted ds-sub">{tr("env.agent_update_note")}</p>
     </section>
-  );
-}
-
-function Row({ label, children }: { label: ReactNode; children?: ReactNode }) {
-  return (
-    <div className="ds-row">
-      <span className="ds-label">{label}</span>
-      {children}
-    </div>
   );
 }

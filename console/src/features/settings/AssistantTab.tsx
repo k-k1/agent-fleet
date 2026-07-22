@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import {
   useSettings,
   setSetting,
@@ -9,7 +8,7 @@ import {
 } from "../../lib/settings.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { SwatchGrid } from "../../ui/SwatchGrid.tsx";
-import { Choice, OnOff, OrderList } from "./controls.tsx";
+import { Choice, OnOff, OrderList, Row } from "./controls.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 
 // AssistantTab — アシスタント・チャットの設定：挙動（タイトルAI提案 / 回答言語 /
@@ -71,15 +70,5 @@ export function AssistantTab() {
         <p className="muted ds-note">{tr("assistant.note_appearance")}</p>
       </section>
     </>
-  );
-}
-
-// A labeled settings row (mirrors DisplayTab's Row).
-function Row({ label, children }: { label: ReactNode; children?: ReactNode }) {
-  return (
-    <div className="ds-row">
-      <span className="ds-label">{label}</span>
-      {children}
-    </div>
   );
 }

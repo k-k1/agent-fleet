@@ -19,7 +19,7 @@ import { useT } from "../../lib/i18n/index.ts";
 import type { MsgKey } from "../../lib/i18n/index.ts";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { SwatchGrid } from "../../ui/SwatchGrid.tsx";
-import { Choice, OnOff } from "./controls.tsx";
+import { Choice, OnOff, Row } from "./controls.tsx";
 import type { ChoiceProps } from "./controls.tsx";
 
 // DisplayTab: font + file-viewer preferences (CodeLeaf-inspired), persisted via the
@@ -165,15 +165,6 @@ const FONT_LABEL_KEYS: Record<string, MsgKey> = {
   "ゴシック": "font.gothic",
 };
 // i18n-exempt-end
-
-function Row({ label, children }: { label: ReactNode; children?: ReactNode }) {
-  return (
-    <div className="ds-row">
-      <span className="ds-label">{label}</span>
-      {children}
-    </div>
-  );
-}
 
 // FontSelect lays the choices out horizontally, each rendered in its own font so
 // the user can compare them at a glance.

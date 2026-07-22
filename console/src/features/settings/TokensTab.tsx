@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import type { ReactNode } from "react";
 import { api, apiJSON, raw, rel } from "../../core/api/client.ts";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useT } from "../../lib/i18n/index.ts";
+import { Row } from "./controls.tsx";
 
 // TokensTab issues and revokes Personal Access Tokens for the MCP endpoint
 // (docs/decisions/0006, P3-6). A token carries the issuer's identity+membership;
@@ -220,11 +220,3 @@ function fmtDate(s: string | undefined): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-function Row({ label, children }: { label: ReactNode; children?: ReactNode }) {
-  return (
-    <div className="ds-row">
-      <span className="ds-label">{label}</span>
-      {children}
-    </div>
-  );
-}

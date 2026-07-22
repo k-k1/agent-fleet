@@ -1,6 +1,5 @@
-import type { ReactNode } from "react";
 import { useSettings, setSetting } from "../../lib/settings.ts";
-import { OnOff } from "./controls.tsx";
+import { OnOff, Row } from "./controls.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 
 // NotificationsTab — 通知（音声）系のクライアント設定。読み上げ(TtsTab)から分離した：
@@ -23,15 +22,6 @@ export function NotificationsTab() {
         </Row>
         <p className="muted ds-note">{tr("tts.note_usage_reset_notify")}</p>
       </section>
-    </div>
-  );
-}
-
-function Row({ label, children }: { label: ReactNode; children?: ReactNode }) {
-  return (
-    <div className="ds-row">
-      <span className="ds-label">{label}</span>
-      {children}
     </div>
   );
 }
