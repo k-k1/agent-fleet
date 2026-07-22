@@ -93,8 +93,20 @@ export function TerminalView({
       // reset() the grid (wiping the visible history) or yank focus every tick. When
       // already on this session, ensureAttached recovers a dead socket but no-ops
       // (just refits) on a live one, so it's non-disruptive.
+      // `attached` = we intend a LIVE PTY (a running session, or an explicit 再開).
+      // `stopped && !attached` = viewing a STOPPED session's READ-ONLY history: the CP
+      // serves a finite scrollback replay that closes cleanly (code 1000), so the socket
+      // ends in CLOSED. The live-recovery machinery below must NOT touch that: ensureAttached
+      // treats a CLOSED socket as "not live" and re-attaches, and attach() resets the grid and
+      // replays the whole history — so re-verifying a stopped session blanks-and-repaints the
+      // pane on every retry (the "切断された shell/ssm が4秒ごとにちらつく" bug), and re-opening
+      // /ws/pty is "intent-to-work" so it can even silently auto-start the stopped session.
+      // Load the history ONCE, then leave it alone. Only a genuinely live session gets the
+      // re-verify + retry ladder (which exists to repaint a live pane that raced its bring-up).
+      const wantLive = attached;
       if (sessionOf(paneId) !== session) attach(paneId, session);
-      else ensureAttached(paneId, session);
+      else if (wantLive) ensureAttached(paneId, session);
+      if (!wantLive) return; // stopped read-only history: no re-verify, no retry ladder
       // A session opened right after creation (repo 起動 / worktree launch) can
       // race its own bring-up: the first PTY connect may fail or die while the
       // agent is still starting, and the focus-reconnect path only fires on a
