@@ -30,6 +30,30 @@ func (m Message) Text(lang string) string {
 	return b.String()
 }
 
+// textSlack is Text's Slack-mrkdwn twin: same headline + 「display」（kind）, but the deep
+// link uses Slack's <url|label> syntax (a bare URL would unfurl into a big preview card).
+func (m Message) textSlack(lang string) string {
+	en := lang == "en"
+	var b strings.Builder
+	b.WriteString(m.headline(en))
+	if m.DisplayName != "" {
+		if en {
+			b.WriteString("\n\"" + m.DisplayName + "\" (" + kindLabel(m.SessionKind) + ")")
+		} else {
+			b.WriteString("\n「" + m.DisplayName + "」（" + kindLabel(m.SessionKind) + "）")
+		}
+	}
+	if base := os.Getenv("AF_CP_BASE_URL"); base != "" && m.SessionName != "" {
+		u := strings.TrimRight(base, "/") + "/?session=" + m.SessionName
+		if en {
+			b.WriteString("\n<" + u + "|Open in Console>")
+		} else {
+			b.WriteString("\n<" + u + "|Console で開く>")
+		}
+	}
+	return b.String()
+}
+
 func (m Message) headline(en bool) string {
 	if en {
 		switch m.Kind {

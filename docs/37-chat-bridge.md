@@ -6,8 +6,10 @@
   P3先取り（@メンション→フリート・オペレーター会話・専用スレッド）＋
   P3 承認ゲート（破壊的操作＝削除系＋shell を Discord のボタンで承認）実装済み（Discord）＋
   重複・可読性の修正（429/配送冪等化・session-report 二重掲出解消・Console 入力ミラー・長文分割・
-  テーブル→コードブロック・区切り線）実装済み**
-  （2026-07-23。残るは Slack 追随のみ）。採用判断は
+  テーブル→コードブロック・区切り線）実装済み＋
+  **Slack 追随（Socket Mode で全機能パリティ＝送信・スレッド=セッション・メンション・deep link・
+  全文・双方向受信・AUQ/許可/プランのボタン化・オペレーター会話・P3 承認ゲート）実装済み**
+  （2026-07-23。Discord/Slack 同時接続対応＝store は provider スコープ化）。採用判断は
   [decisions/0020](decisions/0020-chat-bridge.md)。実装メモは
   [§P1 実装記録](#p1-実装記録2026-07-22)／[§P2a 実装記録](#p2a-実装記録-スレッド返信--セッション注入2026-07-22)／
   [§全文ブリッジ 実装記録](#全文ブリッジ-実装記録-応答本文をチャットへ2026-07-22)／
@@ -539,6 +541,49 @@ managed ボタン化に着手する前に、実運用のノイズと外出先の
   **新 REST は無し**（ミラーは既存 PUT /connections/discord に相乗り＝CP allowlist 影響なし）。
   **残＝実 Discord 実機目視（重複解消・入力ミラー・長文分割・テーブル・区切り線）は再ビルド後**。
 
+#### Slack 追随 実装記録（Socket Mode で全機能パリティ・2026-07-23）
+
+Discord で縦貫した機能一式を、同じ `bridge.Provider` 抽象に **Slack Socket Mode** で載せた
+（ADR0020 の「抽象は最初から 2 プロバイダ前提」を回収）。**中核は無改修で再利用**＝`Provider`／
+`ResumableSender`／ファイルキュー（`Delivered` は既に `Name()` キー）／`ScrubSecrets`／`custom_id`
+スキーム＋`ParseCustomID`／`ReceiverDeps`（Inject/Answer/Operator は中立型）／`Message.headline`
+＋`kindLabel`。前セッションで先行整地済みの `turnSourceSlack`・Console ミラーの Slack バッジも回収。
+
+- **共通整地（provider 非依存化）**: `chunkMessage`→`chunkTo(content,prefix,limit)` に一般化
+  （Discord=1990／Slack=3900）。thread/operator ストアを **provider スコープ化**（`threadStore`／
+  `operatorStore` 型・`bridge-threads-slack.json`／`bridge-operator-slack.json`・Discord は無印で
+  後方互換）＝Discord/Slack **同時接続で衝突しない**。operator の返信/承認投稿は **conv→provider**
+  を走査（各 provider が独立 conv を持つので一意）＝`PostOperatorReply(conv,text)`／
+  `PostOperatorApproval(conv,content,id)`。`bridgeAnswerEN` は両 provider の Lang を見る。
+- **Slack と Discord の設計差（移植を簡素化）**: ①受信は **Socket Mode**
+  （`apps.connections.open`→WSS→`hello`/`events_api`/`interactive` エンベロープを **3 秒以内に
+  envelope_id ACK**・`disconnect` で再接続）＝opcode/heartbeat/IDENTIFY 不要で `gateway.go` より薄い。
+  ②スレッドは **`thread_ts`（ルート ts）だけ**＝別オブジェクト無し・archive 無しで自己修復は再作成 1 本。
+  ③Web API は常に HTTP 200＋`{ok,error}` 包み＝成功は `ok` フラグ（429 だけ HTTP・Retry-After で
+  インライン再試行）。④typing 表示が無い＝受信 ack は 👀 リアクションのみ（オペレーターターンも 👀＋最終返信）。
+  ⑤記法は **mrkdwn**（`renderBodyForSlack`＝scrub→`tablesToCodeBlocks`→`mrkdwnFromGFM`〔`## 見出し`→
+  `*bold*`／`**x**`→`*x*`〕・best-effort）。⑥deep link は `<url|label>`。⑦トークンは **2 本**
+  （bot `xoxb-`＝Web API＋app-level `xapp-`＝Socket）。⑧宛先の bound user は 1 フィールド（`UserID`＝
+  DM 先＋メンション＋本人検証、Discord の owner とは違い guild owner 概念が無いので一本化）。
+- **実装ファイル**: `internal/bridge/slack.go`（Web API＋送信 Provider＝`SendFrom`/threading/mention
+  時間ゲート再利用/`destChannel`/`mirrorSlackInput`）／`slack_interact.go`（Block Kit ボタン・同 custom_id）
+  ／`slack_socket.go`（Socket Mode クライアント＋受信スーパーバイザ＋本人限定ルーティング〔契約5〕）。
+  `StartReceiver` が Discord Gateway と Slack Socket の 2 スーパーバイザを起動。
+- **接続 UX**: `secrets.SlackCreds`＋`Data.Slack`。三点セット＝`connections_slack.go`
+  （`slackStatus`／`handlePut/DeleteSlackConn`／`handleSlackInspect`〔auth.test＋apps.connections.open〕／
+  `handleSlackChannels`〔users.conversations＋**email→users.lookupByEmail で bound user 自動解決**〕）
+  ＋`routes.go`＋**CP allowlist `/api/connections/slack*`**（[[cp-rest-proxy-allowlist]] 遵守）。Console
+  `SlackCard`（2 トークン貼付→チャンネルピッカー→接続＋テスト通知・i18n ja/en・`BADGE_SHORT.slack="sl"`）。
+- **セットアップの差**: Slack は App マニフェスト（Socket Mode＋scope＋message 購読＋connections:write）を
+  作り `/invite` で招待する分だけ Discord より手数が多い（カードの hint に scope 列挙）。bound user は
+  email 自動解決＋手入力フォールバック（Copy-Member-ID 不要）。
+- 検証: go **58 テスト緑**（うち Slack 11＝送信/スレッド起票＋resume 冪等/session-report 抑制/ボタン描画/
+  入力ミラー opt-out/mention 時間ゲート/mrkdwn＋table/本人限定ルーティング〔bot/subtype/他人/非スレッド/
+  他人押下を全 drop〕/エンベロープ parse）＋live 拡張 `slack_live_test.go`（`AF_SLACK_LIVE=1`＋
+  `AF_SLACK_BOT_TOKEN`/`AF_SLACK_APP_TOKEN`/`AF_SLACK_CHANNEL`/`AF_SLACK_USER`＋
+  `AF_SLACK_BUTTONS`/`AF_SLACK_FULLTEXT`/`AF_SLACK_SOCKET`）。Console typecheck/i18n:lint/vitest365 緑。
+  **残＝実 Slack 実機目視（App 作成・2 トークン・招待・スマホ通し）はユーザー環境＋再ビルド後**。
+
 ## 将来の方向（次セッション検討）
 
 - **論点1（全文ブリッジ）＋ P2b（ボタン化・claude/TUI ＋ managed）とも実装済み** →
@@ -549,5 +594,6 @@ managed ボタン化に着手する前に、実運用のノイズと外出先の
   実装記録）。Discord 駆動（無人）時のみ作動＝Console は従来どおり。残るは実機目視（再ビルド後）。
 - session-report 本文（オペレーター向け報告文）の全文投稿は別トグル候補として保留（用途・言語が
   answer-ready 本文と異なるため今回スコープ外）。
-- Slack 追随（Socket Mode）で同じ `bridge.Provider` 抽象に全文モードを載せる（`ScrubSecrets`／
-  `chunkMessage` はプロバイダ非依存なので再利用、分割の上限は Slack の 4000 字に合わせて調整）。
+- **Slack 追随（Socket Mode）＝実装済み**（上記 §Slack 追随 実装記録）。`ScrubSecrets`／`chunkTo`／
+  `custom_id`／`ReceiverDeps` を再利用し、分割上限は Slack の ~4000 字（`slackContentLimit`=3900）に調整。
+  Discord/Slack 同時接続対応（store は provider スコープ化）。残るは実 Slack 実機目視（再ビルド後）。

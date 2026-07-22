@@ -17,6 +17,7 @@ export const BADGE_SHORT: Record<string, string> = {
   bitbucket: "bb",
   pagerduty: "pd",
   discord: "dc",
+  slack: "sl",
   grafana: "gf",
   cloudwatch: "cw",
 };
