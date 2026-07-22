@@ -272,6 +272,16 @@ reuse セッションでは driver 切替中 `409 busy_switch` にも遭遇し�
   `AF_SCHEDULE_WAKE_TIMEOUT`（既定90秒）。テスト8件。**後回し**（P4）: jitter/並列上限/
   レート制限事前チェック/無人失敗報告。dir/worktree/new_branch の完全配線は P3。
 - **P3**: 操作 MCP（create/list/update/delete/pause/run_now/get_runs）＋ CP internal 経路。
+  **実装済み**。CP: `schedule_bridge.go`（専用 `AF_SCHEDULE_TOKEN`＝memo/git と別クレデンシャル・
+  `withScheduleToken`）＋`schedule.go`（`scheduleAPI` 8ハンドラ・create は `validateSpec`＋
+  `initialNextRun` で次回発火を計算し `next_run_local` を読み上げ確認に返す・update は pointer
+  patch・run_now は `next_run=now` で次 tick 発火＝定時と同一経路・全操作 membership オーナー
+  スコープ）＋`schedule_run` 表（migrations/0023＋pg/0006）で実行履歴（`fireOne` が毎発火 append・
+  keep 50）＋`routes.go` に `/internal/schedules*` 8ルート。agent: `mcp_stdio.go` に read
+  （list_schedules/get_schedule_runs）＋write（create/update/delete/pause/resume/run_schedule_now・
+  create は `owner_conv=mcpConvID` を強制注入＝報告はオペレーター会話へ）＋`cpScheduleDo` ブリッジ。
+  create ツール説明に NL→spec 翻訳・固定メタ変数・要ユーザー確認を明記。テスト CP15/agent2。
+  **後回し**（P4）: persona の要ユーザー確認ガード徹底・無人失敗報告・jitter/並列上限。
 - **P4**: 無人失敗報告（★3）・jitter/並列上限（★2）・冪等（★4）・persona ガード。
 - **P5（後続）**: Console UI（一覧・履歴・トグル）、長寿命セッション再利用モード。
 
