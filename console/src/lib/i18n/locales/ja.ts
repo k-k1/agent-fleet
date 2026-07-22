@@ -1241,6 +1241,7 @@ export const ja = {
   "mirror.dismiss_suggestion": "この提案を今後表示しません",
   // 履歴ロード
   "mirror.load_earlier": "以前の会話を読み込む",
+  "mirror.jump_latest": "最新へ",
   "mirror.ws_stopped_history": "ワークスペースが停止しています。上部の Start で起動すると履歴を表示できます。",
   "mirror.no_history": "この会話に表示できる履歴はありません。",
   "mirror.no_conversation":
