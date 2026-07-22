@@ -1691,7 +1691,8 @@ export const ja = {
   "launch.template_insert_title": "テンプレートから最初のプロンプトを挿入",
   "launch.template_insert": "テンプレートから挿入…",
   "launch.first_prompt_note": "セッション起動後、準備でき次第この内容を1回だけ自動送信します（⌘/Ctrl+Enter で起動）。",
-  "launch.image_paste_note": "画像はここに貼り付けられます。",
+  "launch.image_paste_note": "画像はここに貼り付け、または＋ボタンで添付できます（スマホは＋から）。",
+  "launch.attach_image": "画像を添付",
   "launch.start_worktree": "worktree で始める",
 
   // === P2 スタートモーダル（features/repos/StartModal.tsx）===

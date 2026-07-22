@@ -107,6 +107,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   imagesRef.current = images;
   const [busy, setBusy] = useState(false);
   const textRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null); // hidden ＋ picker (the phone path)
   // WHERE: default to an isolated worktree — a branch switch can't corrupt other
   // sessions when each task has its own dir. From a worktree row (allowWorktree
   // false) there's no worktree choice: launch in place.
@@ -153,8 +154,17 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
       });
   }, [canPasteImage]);
 
-  // Paste image(s) into the prompt: stage each File + a preview URL. Actual upload waits
-  // for the session (onStartWork). Non-image pastes fall through to the default (text).
+  // Stage image File(s) as pending attachments (raw File + a preview URL). Actual upload
+  // waits for the session (onStartWork). Shared by clipboard paste and the ＋ picker.
+  const addImages = (files: File[]) => {
+    if (!canPasteImage || !files.length) return;
+    setImages((prev) => [...prev, ...files.map((f) => ({ file: f, url: URL.createObjectURL(f) }))]);
+  };
+
+  // Paste image(s) into the prompt. Non-image pastes fall through to the default (text).
+  // NOTE: mobile soft keyboards (e.g. Gboard) can't commit an image into a plain
+  // <textarea> — they refuse it ("paste not supported here"). The ＋ picker beside the
+  // label is the phone path; it funnels into the same addImages as this handler.
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
     if (!canPasteImage) return;
     const items = e.clipboardData?.items;
@@ -169,7 +179,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
     }
     if (!files.length) return; // ordinary text paste — let it happen
     e.preventDefault();
-    setImages((prev) => [...prev, ...files.map((f) => ({ file: f, url: URL.createObjectURL(f) }))]);
+    addImages(files);
   };
 
   const removeImage = (i: number) =>
@@ -419,36 +429,64 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
         <div className="ui-field">
           <span className="ui-field-label launch-prompt-label">
             <span>{tr("launch.first_prompt")}</span>
-            {hasTemplates && (
-              <select
-                className="launch-tmpl-select"
-                value=""
-                title={tr("launch.template_insert_title")}
-                onChange={(e) => {
-                  if (e.target.value === "") return;
-                  const i = Number(e.target.value);
-                  if (Number.isInteger(i) && flatItems[i] !== undefined) pick(flatItems[i]);
-                }}
-              >
-                <option value="">{tr("launch.template_insert")}</option>
-                {(() => {
-                  let idx = 0;
-                  return groups.map((g) => {
-                    const start = idx;
-                    idx += g.items.length;
-                    return (
-                      <optgroup key={g.source} label={g.label}>
-                        {g.items.map((it, j) => (
-                          <option key={g.source + ":" + it.id} value={start + j}>
-                            {it.label}
-                          </option>
-                        ))}
-                      </optgroup>
-                    );
-                  });
-                })()}
-              </select>
-            )}
+            <span className="launch-prompt-tools">
+              {/* ＋ attach: the paste-less path. Mobile keyboards can't paste images into
+                  a <textarea>, so a phone can only attach through this picker. */}
+              {canPasteImage && (
+                <>
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    hidden
+                    onChange={(e) => {
+                      const files = Array.from(e.target.files || []).filter((f) => f.type.startsWith("image/"));
+                      e.target.value = ""; // allow re-picking the same file
+                      addImages(files);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="ghost launch-attach-btn"
+                    title={tr("launch.attach_image")}
+                    onClick={() => fileRef.current?.click()}
+                  >
+                    <Icon name="add" />
+                  </button>
+                </>
+              )}
+              {hasTemplates && (
+                <select
+                  className="launch-tmpl-select"
+                  value=""
+                  title={tr("launch.template_insert_title")}
+                  onChange={(e) => {
+                    if (e.target.value === "") return;
+                    const i = Number(e.target.value);
+                    if (Number.isInteger(i) && flatItems[i] !== undefined) pick(flatItems[i]);
+                  }}
+                >
+                  <option value="">{tr("launch.template_insert")}</option>
+                  {(() => {
+                    let idx = 0;
+                    return groups.map((g) => {
+                      const start = idx;
+                      idx += g.items.length;
+                      return (
+                        <optgroup key={g.source} label={g.label}>
+                          {g.items.map((it, j) => (
+                            <option key={g.source + ":" + it.id} value={start + j}>
+                              {it.label}
+                            </option>
+                          ))}
+                        </optgroup>
+                      );
+                    });
+                  })()}
+                </select>
+              )}
+            </span>
           </span>
           {images.length > 0 && (
             <div className="mirror-attach">
