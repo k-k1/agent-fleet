@@ -51,6 +51,7 @@ import { hasLaunchSeed, takeLaunchSeed } from "../../lib/launchSeed.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
 import { confirmedWorkEnd, latestWorkPromptIndex, textOfParts, workSplit } from "./mirrorParts.ts";
 import { echoLanded, type PendingEcho } from "./pendingEcho.ts";
+import { PLAN_APPROVE_KEYS, planOutcome } from "./planDecision.ts";
 import {
   buildClaudeSeq,
   buildMenuSeq,
@@ -1829,15 +1830,16 @@ export function MirrorView({
                 pending
                 sending={sending}
                 onOpen={() => openPlan(pendingPlan)}
-                onApprove={() => sendKeys(["Enter"])}
-                // 却下 = pick "Tell Claude what to change" — the 4th ExitPlanMode option
-                // (1 Yes-bypass / 2 Yes-manual / 3 No-refine-on-web / 4 tell-what-to-change).
-                // NOT option 3, which routes to Ultraplan on the web. Selecting 4 keeps
-                // refining in-session; pendingPlan then clears and the composer unlocks so
-                // the user can type feedback. (Option order is claude-version dependent.)
+                onApprove={() => sendKeys([...PLAN_APPROVE_KEYS])}
+                // 却下 = 中断（Escape）で keep-planning に倒す。ExitPlanMode メニューの
+                // 選択肢数/順序は claude 版依存で、位置固定キー（旧 Down×3 で「4. Tell Claude
+                // what to change」を狙う実装）は短いラップするメニューでは先頭の「Yes」行へ
+                // 回り込み、却下したのに承認してしまう（2026-07-22 実障害）。中断はレイアウト
+                // 非依存にモーダルを閉じて plan モードへ戻し、composer を解放する。tool_result は
+                // interrupt になり planDecision.isRejected が拾う。詳細は planDecision.ts。
                 onReject={() => {
-                  rejectedPlansRef.current.add(pendingPlan.trim()); // optimistic 却下 badge
-                  sendKeys(["Down", "Down", "Down", "Enter"]);
+                  rejectedPlansRef.current.add(pendingPlan.trim()); // optimistic 却下 badge（実 outcome で planOutcome が調停）
+                  void sendInterrupt();
                 }}
               />
             </div>
@@ -3606,13 +3608,14 @@ function PlanBlock({
   sending?: boolean;
 }) {
   // A plan in the transcript was presented and resolved — classify its outcome text
-  // (best-effort; the exact result text varies). A rejected plan's tool_result is an
-  // interruption ("[Request interrupted by user for tool use]"), so isRejected wins to
-  // avoid mislabeling a 却下 as 承認済み. Empty/unknown → neutral 決定済み: the tool_result
-  // can lag a poll or two behind the plan turn, and defaulting empty→approved made a
-  // just-rejected plan flash 承認済み until the interrupt result landed.
-  const rejected = forceRejected || isRejected(outcome);
-  const approved = !rejected && isApproved(outcome);
+  // (best-effort; the exact result text varies). planOutcome reconciles the optimistic
+  // 却下 mark (forceRejected) against the real tool_result: a definitive approval wins so
+  // a card can't stay badged 却下 while claude coded, an interrupt result badges 却下, and
+  // an empty/unknown outcome (the result can lag a poll or two) stays 決定済み. See
+  // planDecision.ts.
+  const kind = planOutcome(outcome, !!forceRejected);
+  const approved = kind === "approved";
+  const rejected = kind === "rejected";
   return (
     <div className={"mt-plan" + (answered ? " decided" : "")}>
       <div className="mt-plan-head">
@@ -3700,17 +3703,6 @@ function UserFileBlock({ files, caption, onOpen }: { files?: string[]; caption?:
       </div>
     </div>
   );
-}
-
-// isApproved guesses whether an ExitPlanMode tool_result text is an approval, to badge
-// a historical plan. Best-effort keyword match (the exact result text may vary).
-function isApproved(outcome?: string) {
-  return /approv|proceed|start coding|going to code|承認|実行してよい|yes/i.test(outcome || "");
-}
-function isRejected(outcome?: string) {
-  // "interrupt" catches a rejected plan's tool_result ("[Request interrupted by user for
-  // tool use]"), which is how ExitPlanMode records 却下 / "tell Claude what to change".
-  return /keep planning|not approv|reject|refine|declin|interrupt|却下|中止|やり直/i.test(outcome || "");
 }
 
 // planTitle / planSummary derive a compact heading + lead line from the plan Markdown.
