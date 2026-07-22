@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import {
   ensureTerm,
-  fit,
+  repaint,
   focusTerm,
   attach,
   detach,
@@ -127,7 +127,11 @@ export function TerminalView({
 
   useEffect(() => {
     if (active) {
-      fit(paneId);
+      // repaint (forceFit), not fit: becoming the active pane must reliably restore a black
+      // pane, and plain fit() no-ops when the grid shape is unchanged. On touch, focusTerm is
+      // a no-op (won't summon the keyboard just to read), so the focus-handler repaint never
+      // fires — activating the pane is the only recovery hook, so it must repaint directly.
+      repaint(paneId);
       focusTerm(paneId);
       // Recover a dropped PTY when this pane becomes active — but never silently
       // resume a stopped session or auto-start a stopped workspace.
