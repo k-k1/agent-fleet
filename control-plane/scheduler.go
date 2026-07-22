@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"log"
 	"strconv"
 	"strings"
@@ -56,10 +58,40 @@ type scheduleStore interface {
 	ListDueSchedules(ctx context.Context, nowRFC string) ([]Schedule, error)
 	RecordScheduleFire(ctx context.Context, id, lastRun, lastStatus, nextRun string, enabled bool, updatedAt string) error
 	AppendScheduleRun(ctx context.Context, run ScheduleRun, keepN int) error
+	// InsertNotification surfaces an unattended failure/skip in the notification center
+	// (★3, P4) — WS-independent because the CP notification store is the durable sink.
+	InsertNotification(ctx context.Context, n Notification) error
 }
 
 // scheduleRunKeep bounds the per-schedule run history (docs/38 P3 get_schedule_runs).
 const scheduleRunKeep = 50
+
+// scheduleJitterMax caps the deterministic per-schedule fire jitter (★2 thundering-herd
+// → host-OOM mitigation). Set once at startup from AF_SCHEDULE_JITTER; 0 disables. A
+// package global (not a param) so both initialNextRun and advanceNextRun apply it
+// without threading config through the operator API. Defaults to 0 so unit tests that
+// assert exact fire instants are unaffected.
+var scheduleJitterMax time.Duration
+
+// scheduleJitter returns a stable offset in [0, scheduleJitterMax] derived from the
+// schedule id, so many schedules aligned to the same wall-clock (e.g. everyone at 09:00)
+// fire spread across a window instead of all waking at once. Deterministic — the same
+// schedule always jitters by the same amount — so next_run stays reproducible across CP
+// restarts and the idempotency slot is stable. Applied to cron only (an interval is
+// already spread by its own phase, and adding jitter each period would drift it; a once
+// is an exact user-chosen instant we must not move).
+func scheduleJitter(scheduleID string) time.Duration {
+	if scheduleJitterMax <= 0 || scheduleID == "" {
+		return 0
+	}
+	maxSecs := int64(scheduleJitterMax / time.Second)
+	if maxSecs <= 0 {
+		return 0
+	}
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(scheduleID))
+	return time.Duration(h.Sum64()%uint64(maxSecs+1)) * time.Second
+}
 
 type scheduler struct {
 	store    scheduleStore
@@ -139,6 +171,54 @@ func (sc *scheduler) fireOne(ctx context.Context, sch Schedule, now time.Time) {
 	if err := sc.store.AppendScheduleRun(ctx, run, scheduleRunKeep); err != nil {
 		log.Printf("scheduler: append run %s: %v", sch.ID, err)
 	}
+	// Unattended failure/skip must not be silent (★3, P4): surface it in the
+	// notification center, which is the WS-independent durable sink (the CP store,
+	// unlike the operator conversation which lives in the possibly-stopped agent).
+	// A successful fire reports itself via the session's report_to (docs/30).
+	if scheduleNotifyStatus(status) {
+		sc.notifyOutcome(ctx, sch, slot, status, nowRFC)
+	}
+}
+
+// scheduleNotifyStatus reports whether an outcome deserves an unattended-failure
+// notification. Hard failures always do; among the soft skips, quota/rate-limit/
+// membership are surprises worth surfacing, but a policy "skip" of a stopped workspace
+// is the user's explicit choice (recorded in history, not notified).
+func scheduleNotifyStatus(status string) bool {
+	if strings.HasPrefix(status, "error") {
+		return true
+	}
+	switch status {
+	case "skipped_quota", "skipped_rate_limited", "skipped_membership_inactive":
+		return true
+	}
+	return false
+}
+
+// notifyOutcome inserts a membership-scoped notification for a failed/skipped fire. The
+// EventID is deterministic per (schedule, slot) so a CP-restart re-fire of the same slot
+// does not double-notify (InsertNotification is ON CONFLICT DO NOTHING).
+func (sc *scheduler) notifyOutcome(ctx context.Context, sch Schedule, slot time.Time, status, nowRFC string) {
+	label := sch.SpecLabel
+	if label == "" {
+		label = sch.ID
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"schedule_id": sch.ID, "status": status, "spec_label": sch.SpecLabel, "spec": sch.Spec,
+	})
+	kind := "schedule-failed"
+	if strings.HasPrefix(status, "skipped") {
+		kind = "schedule-skipped"
+	}
+	n := Notification{
+		EventID:      "sched-" + status + "-" + sch.ID + "-" + slot.UTC().Format(time.RFC3339),
+		MembershipID: sch.MembershipID, Kind: kind,
+		TargetType: "schedule", TargetID: sch.ID, TargetKind: sch.AgentKind,
+		DisplayName: label, Payload: string(payload), CreatedAt: nowRFC,
+	}
+	if err := sc.store.InsertNotification(ctx, n); err != nil {
+		log.Printf("scheduler: notify outcome %s: %v", sch.ID, err)
+	}
 }
 
 func truncStatus(s string) string {
@@ -181,7 +261,7 @@ func initialNextRun(sch Schedule, from time.Time) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return t.UTC().Format(time.RFC3339), nil
+		return t.Add(scheduleJitter(sch.ID)).UTC().Format(time.RFC3339), nil
 	case "interval":
 		d, err := intervalDuration(sch.Spec)
 		if err != nil {
@@ -205,7 +285,7 @@ func advanceNextRun(sch Schedule, after time.Time) (nextRun string, keepEnabled 
 		if err != nil {
 			return "", false, err
 		}
-		return t.UTC().Format(time.RFC3339), true, nil
+		return t.Add(scheduleJitter(sch.ID)).UTC().Format(time.RFC3339), true, nil
 	case "interval":
 		d, err := intervalDuration(sch.Spec)
 		if err != nil {

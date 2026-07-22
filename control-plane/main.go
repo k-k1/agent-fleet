@@ -242,10 +242,18 @@ func main() {
 	if iv := parseDurationOr(os.Getenv("AF_SCHEDULER_INTERVAL"), 0); iv > 0 {
 		settle := parseDurationOr(os.Getenv("AF_SCHEDULE_SETTLE"), 5*time.Minute)
 		ready := parseDurationOr(os.Getenv("AF_SCHEDULE_WAKE_TIMEOUT"), 90*time.Second)
+		// Per-schedule fire jitter (★2) spreads aligned cron times (everyone at 09:00)
+		// so simultaneous wakes don't OOM the shared host. Default 2m; AF_SCHEDULE_JITTER=0
+		// disables. Set before any schedule's next_run is computed so it takes effect.
+		if strings.TrimSpace(os.Getenv("AF_SCHEDULE_JITTER")) == "0" {
+			scheduleJitterMax = 0
+		} else {
+			scheduleJitterMax = parseDurationOr(os.Getenv("AF_SCHEDULE_JITTER"), 2*time.Minute)
+		}
 		firer := newWakeFirer(mgr, settle, ready)
 		go newScheduler(mgr.store, firer, iv).run(context.Background())
 		logSchedulerFirerNote(firer)
-		log.Printf("scheduler: enabled (interval=%s settle=%s wake_timeout=%s)", iv, settle, ready)
+		log.Printf("scheduler: enabled (interval=%s settle=%s wake_timeout=%s jitter=%s)", iv, settle, ready, scheduleJitterMax)
 	}
 
 	mux := buildMux(cfg)
