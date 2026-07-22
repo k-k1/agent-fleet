@@ -334,6 +334,7 @@ export function MirrorView({
   const bgBusyRef = useRef(false); // mirrors bgBusy for the poll-cadence closure (fast-poll while BG runs)
   const tickRef = useRef<(() => void) | null>(null); // lets send() trigger an immediate refresh
   const bodyRef = useRef<HTMLDivElement>(null);
+  const scrollBoxRef = useRef<HTMLDivElement>(null); // inner content wrapper — its height tracks the transcript
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // Is the user stuck to the bottom (auto-follow on)? Updated HONESTLY on every scroll —
   // user drags AND our own programmatic scrolls both flow through onBodyScroll, so the
@@ -856,6 +857,7 @@ export function MirrorView({
     if (!el) return;
     const toBottom = () => {
       el.scrollTop = el.scrollHeight;
+      atBottomRef.current = true; // authoritative now (don't wait for the async scroll event)
     };
 
     // Actionable prompts (question / plan / permission) render at the very bottom and need
@@ -915,7 +917,8 @@ export function MirrorView({
         if (work && answer) {
           answerAnchoredRef.current = replyIdx;
           const top = el.scrollTop + (answer.getBoundingClientRect().top - el.getBoundingClientRect().top) - 12;
-          el.scrollTop = Math.max(0, top); // upward scroll → onBodyScroll flips atBottomRef false
+          el.scrollTop = Math.max(0, top);
+          atBottomRef.current = false; // parked at the answer top — leave the user here (and stop the RO re-pin)
         } else if (body && !work) {
           answerAnchoredRef.current = replyIdx; // nothing folded — top already is the answer
         }
@@ -931,22 +934,24 @@ export function MirrorView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [turns, pending, pendingPlan, pendingPerm, status, bgBusy, finalizing, pendingSends, queuedPrompts]);
 
-  // Keep the latest message in view when the body's OWN height changes — the ToDo /
-  // 消費推移 / コンテキスト panels opening above it, the composer auto-growing, or a
-  // pane/window resize all shrink the scroll area and would otherwise clip the bottom
-  // (reads as the chat scrolling away). Re-pin only if the body is ACTUALLY near the bottom
-  // right now — a user parked at the top of a freshly-anchored reply must not be yanked
-  // down. (Content-driven growth is handled by the effect above — adding turns changes
-  // scrollHeight, not the body's box, so it won't fire here.)
+  // Keep a bottom-stuck view pinned as geometry changes OUTSIDE the poll-driven follow
+  // effect: the body's own box resizing (ToDo / 消費推移 / コンテキスト panels above it, the
+  // composer auto-growing, a pane/window resize) AND — via the inner wrapper — the
+  // transcript's content height changing as late content lays out (images, code
+  // highlighting, math) or streams in. This is what makes opening a session settle at the
+  // TRUE bottom instead of a stale pre-layout position, and keeps streaming glued to the
+  // tail. atBottomRef is authoritative (the follow effect sets it synchronously right after
+  // it scrolls), so a completion-anchored view that was scrolled up is left alone.
   useEffect(() => {
     const el = bodyRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => {
-      // Only re-pin if actually near the bottom right now (not just because atBottomRef says
-      // so) — a user parked at a freshly-anchored answer top must not be yanked down.
-      if (el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX) el.scrollTop = el.scrollHeight;
+      if (atBottomRef.current && el.scrollHeight - el.scrollTop - el.clientHeight >= 1) {
+        el.scrollTop = el.scrollHeight;
+      }
     });
     ro.observe(el);
+    if (scrollBoxRef.current) ro.observe(scrollBoxRef.current);
     return () => ro.disconnect();
   }, []);
 
@@ -1852,6 +1857,12 @@ export function MirrorView({
       )}
 
       <div className="mirror-body" ref={bodyRef} onScroll={onBodyScroll} onMouseUp={captureTtsSel}>
+        {/* Wrapper whose height == the transcript's total height, so a ResizeObserver can
+            re-pin a bottom-stuck view to the true bottom as late content lays out (images,
+            code highlighting, math) — that's what makes opening a session land at the
+            bottom, and keeps streaming glued to the tail. The jump-to-latest button stays
+            OUTSIDE it (a direct child of the scroll container) so it sticks to the viewport. */}
+        <div className="mirror-scroll" ref={scrollBoxRef}>
         {loaded && hasMore && (
           <div className="mirror-loadmore" ref={topSentinelRef}>
             <button
@@ -2039,6 +2050,7 @@ export function MirrorView({
             </button>
           </div>
         )}
+        </div>
         {showJump && (
           // Sticky so it floats just above the composer at the viewport bottom while the
           // user reads up-thread; one click re-arms follow and snaps to the newest content.
