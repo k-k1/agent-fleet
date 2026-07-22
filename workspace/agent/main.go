@@ -14,6 +14,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
@@ -146,6 +147,11 @@ func main() {
 	// Keep origin refs fresh in the background so repo rows can badge
 	// "origin advanced" without a manual fetch (fetch_loop.go).
 	startAutoFetch()
+
+	// Chat-bridge delivery loop (docs/37 P1): drains the on-disk queue that
+	// notice.Put / record-exit enqueue into (possibly from hook subprocesses)
+	// and pushes to the configured chat providers (Discord first).
+	bridge.StartSender()
 
 	log.Printf("workspace-agent %s listening on %s", buildVersion, addr)
 	if err := http.ListenAndServe(addr, httpx.LogRequests(httpx.RequireToken(mux))); err != nil {

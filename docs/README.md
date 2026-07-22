@@ -30,6 +30,7 @@
 - [34-native-runtime.md](34-native-runtime.md) — Docker なし WSL 向けコンテナレス Runtime（✅ 実装済み・素の WSL2 実機検証待ち）
 - [35-packaging.md](35-packaging.md) — パッケージング & 配布の4ターゲット設計（native / amd64 Linux / EC2-Single / ECS）（📋 設計・P3-10 残作業の具体化）
 - [36-copilot-agent-kind.md](36-copilot-agent-kind.md) — `kind=copilot`（GitHub Copilot CLI）を第5種別として Terminal+Managed 両対応で実装（✅ 実装済み・実 CLI 契約テスト通過。設計判断は [decisions/0019](decisions/0019-copilot-agent-kind.md)）
+- [37-chat-bridge.md](37-chat-bridge.md) — チャットブリッジ（Slack/Discord 連携）: 通知・双方向操縦・AUQ ボタン・承認ゲート（📋 計画・未実装。設計判断は [decisions/0020](decisions/0020-chat-bridge.md)）
 
 > 完了後も実装契約や実測リファレンスとしてコードから参照する 24・26〜30 は番号付きのまま残す。
 > 時系列の実装プランとして役目を終えたものは history/ へ移動: [19 assistant-chat](history/19-assistant-chat.md) /
