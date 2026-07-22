@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
@@ -23,6 +24,11 @@ import (
 type threadRef struct {
 	Channel string `json:"channel"`
 	Thread  string `json:"thread"`
+	// LastPostAt is when the bot last posted into this thread (RFC3339). The mention
+	// time-gate (discord.go shouldMention) reads it to decide whether a read-only
+	// event still needs the push @mention. Empty for pre-upgrade maps → treated as
+	// "quiet" (mention), which is the safe default.
+	LastPostAt string `json:"lastPostAt,omitempty"`
 }
 
 type threadMap map[string]threadRef
@@ -74,6 +80,28 @@ func ThreadToSession(threadID string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// touchThreadPost stamps a session's thread with the current time after the bot
+// posts into it, feeding the mention time-gate (shouldMention). now is injected so
+// tests are deterministic; production passes time.Now(). No-op if the session has no
+// recorded thread (a flat/DM post has nothing to gate on).
+func touchThreadPost(sessionName string, now time.Time) {
+	threadsMu.Lock()
+	defer threadsMu.Unlock()
+	m := loadThreadsLocked()
+	ref, ok := m[sessionName]
+	if !ok {
+		return
+	}
+	ref.LastPostAt = now.UTC().Format(time.RFC3339)
+	m[sessionName] = ref
+	b, err := json.Marshal(m)
+	if err != nil {
+		return
+	}
+	_ = os.MkdirAll(filepath.Dir(threadsPath()), 0o700)
+	_ = os.WriteFile(threadsPath(), b, 0o600)
 }
 
 // ResetThreads drops all mappings — called when the Discord connection is
