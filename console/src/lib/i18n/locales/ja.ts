@@ -1006,6 +1006,12 @@ export const ja = {
   "wsbar.usage.codex.week": "週次",
   "wsbar.usage.agy.week_row": "{group}（週次）",
   "wsbar.usage.agy.five_row": "{group}（5時間枠）",
+  "wsbar.usage.copilot.title": "Copilot 使用状況（月次クレジット）",
+  "wsbar.usage.copilot.plan": "プラン: {plan}",
+  "wsbar.usage.copilot.upgradable": "アップグレード可",
+  "wsbar.usage.copilot.pool_chat": "チャット",
+  "wsbar.usage.copilot.pool_completions": "コード補完",
+  "wsbar.usage.copilot.pool_premium": "プレミアム リクエスト",
   "wsbar.usage.codex.note":
     "codex が記録した最後の値です（この時点のスナップショット）。次に codex を実行すると更新されます。",
   "wsbar.usage.full_reset_one": "Full reset {count}件",

@@ -524,6 +524,105 @@ function AgyUsageChip({ tenant }: { tenant: string | null }) {
   );
 }
 
+// CopilotUsageChip: GitHub Copilot's account credit chip. Unlike agy this needs no
+// TUI scrape — the backend reads copilot_internal/user (gh transparent auth) and
+// returns structured {plan, sku, resetsAt, quotas:[{id, remainingPct, ...}]}. Each
+// quota pool (chat / completions / premium_interactions, plan-dependent) shares the
+// one monthly reset date. The plan is shown in the popover (the user asked to see it).
+function CopilotUsageChip({ tenant }: { tenant: string | null }) {
+  const tr = useT();
+  const { usage, refreshing, refresh } = useUsage(tenant, "api/copilot/usage");
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useDismiss(ref, open, () => setOpen(false));
+  useOpenSignal("usage-copilot", () => setOpen((o) => !o));
+
+  const used = (remainingPct: number) => Math.round(Math.min(100, Math.max(0, 100 - remainingPct)));
+  // Localized pool names; unknown ids fall back to the raw id.
+  const poolLabel = (id: string) =>
+    id === "chat"
+      ? tr("wsbar.usage.copilot.pool_chat")
+      : id === "completions"
+        ? tr("wsbar.usage.copilot.pool_completions")
+        : id === "premium_interactions"
+          ? tr("wsbar.usage.copilot.pool_premium")
+          : id;
+  const quotas: { id: string; remainingPct: number }[] =
+    (usage?.ok && Array.isArray(usage.quotas) && usage.quotas) || [];
+  const resetsAt: string | undefined = usage?.resetsAt;
+  const wins = quotas.map((q) => ({ label: poolLabel(q.id), pct: used(q.remainingPct), resetsAt }));
+  const unavailable = wins.length === 0;
+  if (unavailable && !usage?.authed) return null;
+
+  const nearMax = wins.filter((w) => w.pct >= NEAR_MAX_PCT && w.resetsAt);
+  const bind = nearMax.length
+    ? nearMax.reduce((a, b) => (new Date(a.resetsAt!).getTime() <= new Date(b.resetsAt!).getTime() ? a : b))
+    : null;
+
+  // Chip number: the primary pool's used% (quotas are pre-ordered by the backend —
+  // premium first on paid plans, else chat).
+  const label = unavailable ? "—" : bind ? resetChipText(bind.resetsAt!) : `${wins[0].pct}%`;
+  const chipTitle = unavailable
+    ? tr("wsbar.usage.unavailable_title", { name: "Copilot" })
+    : bind
+      ? tr("wsbar.usage.chip_bind_title", {
+          name: "Copilot",
+          label: bind.label,
+          pct: bind.pct,
+          until: untilText(bind.resetsAt!),
+          when: whenText(bind.resetsAt!),
+        })
+      : tr("wsbar.usage.copilot.title");
+  const plan: string = usage?.plan || "";
+
+  return (
+    <div className="ws-usage-wrap" ref={ref}>
+      <button
+        type="button"
+        className="kind-tag kind-copilot ws-usage-btn"
+        title={chipTitle}
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <Icon name="copilot" />
+        <span className={"ws-usage-nums" + (bind ? " crit" : unavailable ? " muted" : "")}>{label}</span>
+        <Icon name="chevron-down" />
+      </button>
+      {open && (
+        <div className="ws-usage-pop">
+          <div className="wu-title">{tr("wsbar.usage.pop_title", { name: "Copilot" })}</div>
+          {plan && (
+            <div className="wu-note muted">
+              {tr("wsbar.usage.copilot.plan", { plan })}
+              {usage?.canUpgrade ? " · " + tr("wsbar.usage.copilot.upgradable") : ""}
+            </div>
+          )}
+          {unavailable ? (
+            <div className="wu-note muted">{tr("wsbar.usage.unavailable_note", { name: "Copilot" })}</div>
+          ) : (
+            wins.map((w) => (
+              <UsageRow
+                key={w.label}
+                label={w.label}
+                w={{ pct: w.pct, until: w.resetsAt ? untilText(w.resetsAt) : "", when: w.resetsAt ? whenText(w.resetsAt) : "" }}
+              />
+            ))
+          )}
+          <div className="wu-foot">
+            {!unavailable && <span className="wu-ago muted">{tr("wsbar.usage.fetched", { ago: agoText(usage.ageSec) })}</span>}
+            <a className="ghost wu-manage" href="https://github.com/settings/copilot" target="_blank" rel="noopener">
+              <Icon name="link-external" /> {tr("wsbar.usage.open_page")}
+            </a>
+            <button type="button" className="ghost wu-reload" onClick={refresh} disabled={refreshing}>
+              <Icon name="refresh" spin={refreshing} /> {tr("wsbar.usage.refresh")}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // WS bar: the (single) workspace's state plus Start / Stop. The backend models one
 // workspace per membership, so there is no select / create / delete. The
 // destructive "作り直す" lives deep in 設定 > 環境 (warning-gated), off this bar.
@@ -812,6 +911,7 @@ export function WsBar() {
       {USAGE_SOURCES.map((s) => (
         <UsageChip key={s.endpoint} src={s} tenant={tenant} />
       ))}
+      <CopilotUsageChip tenant={tenant} />
       <AgyUsageChip tenant={tenant} />
     </>
   );

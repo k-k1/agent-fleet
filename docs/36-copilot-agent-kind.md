@@ -209,7 +209,15 @@ Copilot カードは状態表示＋起動既定のみ）:
 - 実フリートのイメージ再ビルド後の実機目視（起動導線・ミラー・managed 切替・
   接続カード・色）。
 - ~~rtk~~ → **実装済み**（決定的フック方式・上記 §実装手順 1 の rtk.go 参照）。
-  WS バー使用量チップ / アシスタントチャット headless バックエンド / 画像添付
-  （imagePaste・managed Attachments）/ ContextBar — Track D のまま。
+- ~~WS バー使用量チップ~~ → **実装済み**。当初想定の statusLine セッション消費ではなく、
+  内部 API `GET copilot_internal/user`（gh 透過認証トークンで直接叩ける構造化 JSON）から
+  **アカウント単位のクレジット残量%＋リセット日＋プラン**を取得（`copilot/usage.go`
+  `HandleUsage`・`routes.go` `GET /copilot/usage`・FE `WsBar.tsx` `CopilotUsageChip`）。
+  agy と同じ「残量%」型だが**スクレイプ不要**。plan（copilot_plan/access_type_sku）と
+  can_upgrade_plan もチップ popover に表示。has_quota=true のプールのみ採用（Free は
+  chat/completions、paid は premium_interactions が主）。
+- アシスタントチャット headless バックエンド / 画像添付（imagePaste・managed
+  Attachments）/ ContextBar（statusLine の `context_window.*` で実現可能・未実装）/
+  session 単位の AI クレジット消費表示（statusLine `ai_used`・managed では非描画）— Track D のまま。
 - TUI の plan モードチップ（フッタにモード表示が無く検出不能 — Shift+Tab は
   autopilot を跨ぐ 3 モード循環のためキー駆動トグルも封印中）。
