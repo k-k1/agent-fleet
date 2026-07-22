@@ -91,7 +91,13 @@ export function useEffortOptions(kind: string, model: string): EffortOption[] {
   void version;
   const rows = descriptors.get(kind) || [];
   const selected = rows.find((m) => m.id === model);
-  const efforts = kind === "claude" && model === "haiku"
+  // copilot の Auto（Free の唯一のモデル / copilot 既定）は --effort を拒否する
+  // （"Model auto does not support reasoning effort configuration"）。concrete な
+  // 非 auto モデルが選ばれるまで effort は既定のみにする（バックエンドの起動ガードと一致）。
+  const noEffort =
+    (kind === "claude" && model === "haiku") ||
+    (kind === "copilot" && (model === "" || model === "auto"));
+  const efforts = noEffort
     ? []
     : selected?.efforts.length
     ? selected.efforts
