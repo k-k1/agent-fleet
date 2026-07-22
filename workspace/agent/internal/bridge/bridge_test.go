@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
@@ -153,7 +154,7 @@ func TestDiscordWizardEndpoints(t *testing.T) {
 		t.Fatalf("app=%+v err=%v", app, err)
 	}
 	url := DiscordInviteURL(app.ID)
-	if !strings.Contains(url, "client_id=app1") || !strings.Contains(url, "permissions=292057779200") || !strings.Contains(url, "scope=bot") {
+	if !strings.Contains(url, "client_id=app1") || !strings.Contains(url, "permissions=292057779264") || !strings.Contains(url, "scope=bot") {
 		t.Fatalf("invite url=%q", url)
 	}
 	owner, err := DiscordGuildOwner("tok", "g1")
@@ -382,5 +383,61 @@ func TestTextEnglishAndDeepLink(t *testing.T) {
 	}
 	if strings.Contains(ja, "agent-fleet】") {
 		t.Fatalf("prefix must be gone: %q", ja)
+	}
+}
+
+// TestMentionTimeGate: action/abnormal events always mention; a read-only event
+// (answer-ready) mentions only when its thread has been quiet past the window (docs/37).
+func TestMentionTimeGate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	old := mentionQuietWindow
+	mentionQuietWindow = time.Hour // well above RFC3339's second granularity
+	t.Cleanup(func() { mentionQuietWindow = old })
+
+	d := &discordProvider{creds: secrets.DiscordCreds{
+		Token: "tok", ChannelID: "C1", MentionUserID: "U1", Threads: true}}
+
+	// Action/abnormal kinds always ping, even with a fresh thread post.
+	saveThreads(threadMap{"s1": {Channel: "C1", Thread: "T1",
+		LastPostAt: time.Now().UTC().Format(time.RFC3339)}})
+	for _, k := range []string{"question", "plan-approval", "permission-request", "exit"} {
+		if !d.shouldMention(Message{Kind: k, SessionName: "s1"}) {
+			t.Fatalf("%s must always mention", k)
+		}
+	}
+
+	// answer-ready: no thread yet → mention (first post seeds it).
+	if !d.shouldMention(Message{Kind: "answer-ready", SessionName: "new"}) {
+		t.Fatal("first answer-ready (no thread) should mention")
+	}
+	// Recent post → suppressed.
+	if d.shouldMention(Message{Kind: "answer-ready", SessionName: "s1"}) {
+		t.Fatal("answer-ready within quiet window should NOT mention")
+	}
+	// After the window elapses → mention returns.
+	saveThreads(threadMap{"s1": {Channel: "C1", Thread: "T1",
+		LastPostAt: time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339)}})
+	if !d.shouldMention(Message{Kind: "answer-ready", SessionName: "s1"}) {
+		t.Fatal("answer-ready after quiet window should mention")
+	}
+}
+
+// TestFullTextBodyOnly: full-text mode posts the scrubbed answer body alone — no
+// headline/link preface (docs/37 全文整理 2026-07-22).
+func TestFullTextBodyOnly(t *testing.T) {
+	srv, sent := fakeDiscord(t, "tok")
+	oldBase := discordAPIBase
+	discordAPIBase = srv.URL
+	t.Cleanup(func() { discordAPIBase = oldBase })
+
+	d := &discordProvider{creds: secrets.DiscordCreds{
+		Token: "tok", ChannelID: "42", FullText: true}}
+	if err := d.Send(Message{Kind: "answer-ready", DisplayName: "Proj",
+		SessionKind: "claude", Body: "Build is green."}); err != nil {
+		t.Fatal(err)
+	}
+	got := (*sent)[0]["content"]
+	if got != "Build is green." {
+		t.Fatalf("full-text content should be body only, got %q", got)
 	}
 }

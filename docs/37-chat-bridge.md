@@ -350,6 +350,38 @@ native/docker・外部到達なし**で、そこでは Console URL がスマホ�
   body の queue 転写）＋ live 契約テスト拡張（`AF_DISCORD_FULLTEXT=1` で分割＋スクラブを目視）。
   go 503／Console typecheck・i18n:lint・vitest 355 緑。実機目視（実 Discord へ全文投稿）は再ビルド後に残。
 
+#### 通知／全文の整理・受信 ack（2026-07-22）
+
+managed ボタン化に着手する前に、実運用のノイズと外出先の体感を上げる 3 点をユーザー確認の上で整理した。
+
+- **全文モードは本文のみ**（`discord.go Send`）: 全文モードで `m.Body` があるとき（＝
+  answer-ready のみ本文を持つ）、見出し・「表示名」・`<deep link>` の前置きを落とし
+  **スクラブ済み本文だけ**を投稿する。スレッド名に表示名は出ており、リンクは全文モードが
+  狙うローカル専用環境では大抵死んでいる。P1 の「link と本文は併用」はこの決定で
+  「全文時は本文のみ」に改訂。非全文・本文なしのイベントは従来どおり見出しを保つ。
+- **メンションの時間ゲート**（`discord.go shouldMention`＋`threads.go` の `threadRef.LastPostAt`）:
+  Discord のスレッド既定 push は「@メンションのみ」なので push の生命線は残しつつ、**連続した
+  返信→回答のやり取り中に毎ターン ping しない**ようにした。判定は
+  ①**question / plan-approval / permission-request / exit は常にメンション**（要対応・異常＝
+  取りこぼし厳禁）②**answer-ready 等の読むだけイベントは、そのセッションのスレッドへ bot が
+  最後に投函してから `mentionQuietWindow`（既定 10 分）静かなときだけ**メンション。スレッド未
+  起票（初回）・フラット/DM は従来どおり常時メンション。`LastPostAt` はスレッド投函成功のたびに
+  `touchThreadPost` で更新（RFC3339・秒粒度で 10 分窓には十分）。「時間が経った」の基準は bot の
+  最終投函時刻＝連続回答は抑制、席を外して間が空いたら次の回答で再び push。
+- **受信 ack（返信を受け付けた合図）**（`receiver.go routeInbound`＋`discord.go`＋
+  `bridge_inbound.go`）: P2a の返信→注入で、成功/失敗とも無反応だったのを解消。**成功時**＝
+  ユーザーのメッセージに 👀 リアクション（永続の受領印・`DiscordAddReaction`）＋対象スレッドに
+  typing パルス（実行中らしさ・`DiscordTriggerTyping`、~10 秒で回答が置き換える）。**失敗時**＝
+  スレッドに**局所化した理由**を短く返信（`injectFailureReason`：質問ペンディング→「ボタンで
+  回答して」、停止中→「開始してから返信して」、未知エラーは汎用文で包み dev 文言を漏らさない・
+  ja/en）。`ReceiverDeps.Inject` は `(reason string, err error)` を返す形に変更（`Answer` の
+  `(feedback,err)` と同型）。ADD_REACTIONS を招待権限に追加（292057779200→**292057779264**）＝
+  新規セットアップで既定付与、既存招待は私設ギルド @everyone 既定で通常動く・拒否は best-effort で
+  静かにログのみ。
+- 検証: ユニット（mention 時間ゲートの kind 別・窓境界／全文本文のみ描画／成功 ack＝
+  reaction+typing・失敗 ack＝理由投函と ack 抑止／gate 落ちは Discord に触れない）。go 520 緑。
+  実 Discord 目視（全文本文のみ・時間ゲート・👀/typing・失敗理由）は再ビルド後に残。
+
 ## 将来の方向（次セッション検討）
 
 - **論点1（全文ブリッジ）＋ P2b（ボタン化）とも実装済み** → **claude/TUI では Console 無しで
