@@ -26,6 +26,7 @@ import "../features/viewer/viewer.css";
 import "../features/chat/chat.css";
 import "../features/mirror/mirror.css";
 import "../features/memo/memo.css";
+import "../features/schedules/schedules.css";
 import "../features/settings/settings.css";
 import "../features/keys/keys.css";
 

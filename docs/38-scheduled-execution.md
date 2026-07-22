@@ -329,7 +329,18 @@ reuse セッションでは driver 切替中 `409 busy_switch` にも遭遇し�
     `resume` で過去 once を 400（`once_in_past`）に。将来 once は従来どおり resume 可。
   - **`owner_conv` を更新不可に**: create は operator 自身の会話に固定注入するが、update の
     patch から `owner_conv` を除去（membership 内での報告先すり替え面を閉じる。生涯固定）。
-- **P5（後続）**: Console UI（一覧・履歴・トグル）、長寿命セッション再利用モード。
+- **P5（Console UI）実装済み**: 左レール専用セクション「スケジュール」（`console/src/features/
+  schedules/`）。**閲覧＋管理**（一覧／実行履歴／有効・無効トグル／run-now／削除）で、登録・
+  編集はオペレーター会話（NL→spec 翻訳が要る）に残す。CP は既存の membership スコープ済み
+  `scheduleAPI` ハンドラを `/api/schedules*` にも生やす（`registerScheduleRoutes` に
+  `withMembership` アダプタ `scheduleMember` で list/runs/pause/resume/run-now/delete の6経路。
+  create/update は /internal のみ）。フロントは memo キュー同型の自己完結セクション（mount時
+  fetch＋15s poll＋tenant キーで再取得）。ステータスは `--ok/--warn/--del/--muted` の4トーンで
+  ドット表示、run-now の warning（scheduler 無効デプロイ）はトースト。pure ロジック
+  （statusTone/statusIcon/specSummary/formatInterval/sortSchedules）は `read.ts` に分離し
+  vitest 9件。ライト/ダーク両テーマを headless Chromium で描画確認。console test 374／CP 199／
+  typecheck／i18n-lint／build 緑。**残（後続）**: 長寿命セッション再利用モード（`session_mode=
+  reuse`・`reuse_target`）。
 
 ## 決定済み（2026-07-22・当初の未決から確定）
 

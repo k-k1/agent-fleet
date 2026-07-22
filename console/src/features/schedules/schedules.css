@@ -1,0 +1,170 @@
+/* Schedules rail section (docs/38 P5). Follows the memo-queue / notification rail idiom:
+   dense rows, muted secondary text, tone-colored status dots keyed off the shared
+   --ok/--warn/--danger/--muted tokens, ghost icon-buttons that reveal on row hover. */
+
+.sched-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.sched-row {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.sched-row:last-child {
+  border-bottom: none;
+}
+.sched-row.paused {
+  opacity: 0.62;
+}
+
+.sched-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+/* Status dot — the codicon is colored per tone; the four tones match the rest of the app. */
+.sched-dot {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  font-size: 13px;
+  line-height: 1;
+  display: inline-flex;
+}
+.sched-dot.tone-ok {
+  color: var(--ok);
+}
+.sched-dot.tone-warn {
+  color: var(--warn);
+}
+.sched-dot.tone-danger {
+  color: var(--del);
+}
+.sched-dot.tone-muted {
+  color: var(--muted);
+}
+
+.sched-info {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.sched-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sched-badge {
+  flex: 0 0 auto;
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.sched-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  min-width: 0;
+}
+.sched-spec {
+  font-family: var(--mono, monospace);
+  font-size: 10.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sched-kind {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--muted);
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.sched-times {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 3px;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.sched-next,
+.sched-last {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.sched-next {
+  color: var(--fg);
+}
+.sched-next .codicon,
+.sched-last .codicon {
+  font-size: 11px;
+}
+
+/* Row actions — quiet by default, brighter on row hover (matches memo/notification rows). */
+.sched-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 1px;
+  opacity: 0.45;
+  transition: opacity 0.12s ease;
+}
+.sched-row:hover .sched-actions,
+.sched-actions:focus-within {
+  opacity: 1;
+}
+.sched-actions .ui-iconbtn.active {
+  color: var(--accent);
+}
+
+/* Expanded run history. */
+.sched-runs {
+  margin: 5px 0 2px 21px;
+  padding-left: 8px;
+  border-left: 2px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.sched-runs-empty {
+  font-size: 10.5px;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.sched-run {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+}
+.sched-run-time {
+  color: var(--fg);
+  flex: 0 0 auto;
+}
+.sched-run-status {
+  color: var(--muted);
+  font-family: var(--mono, monospace);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

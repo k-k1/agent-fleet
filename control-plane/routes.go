@@ -319,11 +319,17 @@ func registerMemoRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("DELETE /internal/memo-categories/{id}", memo.withMemoToken(memo.deleteCategory))
 }
 
-// Scheduled execution (docs/38 + ADR0021 P3) — operator-authored cron/interval/once
-// tasks. Definitions live in the CP DB; the scheduler goroutine (scheduler.go) drives
-// them. Only the internal (operator-token) face exists in v1 — the operator MCP reaches
-// it with its AF_SCHEDULE_TOKEN Bearer (schedule_bridge.go); a Console GUI is a later
-// phase. /internal/* is session-exempt; auth + membership scoping live in withScheduleToken.
+// Scheduled execution (docs/38 + ADR0021) — operator-authored cron/interval/once tasks.
+// Definitions live in the CP DB; the scheduler goroutine (scheduler.go) drives them.
+// Two faces share the same membership-scoped scheduleAPI handlers:
+//   - /internal/* (operator token, session-exempt): the operator MCP writes here via its
+//     AF_SCHEDULE_TOKEN Bearer (schedule_bridge.go). Full CRUD incl. create/update, whose
+//     NL->spec translation is the operator LLM's job.
+//   - /api/schedules* (gateway member auth, P5 Console GUI): read + manage only (list /
+//     runs / pause / resume / run-now / delete). Create/edit stay operator-only because a
+//     schedule is authored from natural language the operator translates to a cron spec.
+//
+// The member handlers take (w, r, mv); scheduleMember adapts withMembership's (id, mv) form.
 func registerScheduleRoutes(mux *http.ServeMux, cfg config) {
 	s := newScheduleAPI(cfg.mgr)
 	mux.HandleFunc("GET /internal/schedules", s.withScheduleToken(s.list))
@@ -334,6 +340,24 @@ func registerScheduleRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /internal/schedules/{id}/resume", s.withScheduleToken(s.resume))
 	mux.HandleFunc("POST /internal/schedules/{id}/run-now", s.withScheduleToken(s.runNow))
 	mux.HandleFunc("GET /internal/schedules/{id}/runs", s.withScheduleToken(s.runs))
+
+	// Console member routes (P5): the logged-in member manages their own schedules. No
+	// create/update here — those require the operator's NL->spec translation.
+	mux.HandleFunc("GET /api/schedules", scheduleMember(s, s.list))
+	mux.HandleFunc("GET /api/schedules/{id}/runs", scheduleMember(s, s.runs))
+	mux.HandleFunc("POST /api/schedules/{id}/pause", scheduleMember(s, s.pause))
+	mux.HandleFunc("POST /api/schedules/{id}/resume", scheduleMember(s, s.resume))
+	mux.HandleFunc("POST /api/schedules/{id}/run-now", scheduleMember(s, s.runNow))
+	mux.HandleFunc("DELETE /api/schedules/{id}", scheduleMember(s, s.delete))
+}
+
+// scheduleMember wraps a membership-scoped schedule handler in the gateway member auth so
+// the Console can reach it, dropping the Identity that withMembership also resolves (the
+// schedule handlers key everything off mv.MembershipID).
+func scheduleMember(s scheduleAPI, h func(http.ResponseWriter, *http.Request, MembershipView)) http.HandlerFunc {
+	return s.withMembership(func(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+		h(w, r, mv)
+	})
 }
 
 // Repository ops + source-control view + file browser — proxied to the Workspace

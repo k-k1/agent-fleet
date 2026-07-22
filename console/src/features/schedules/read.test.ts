@@ -1,0 +1,81 @@
+import { describe, it, expect } from "vitest";
+import {
+  type ScheduleDTO,
+  statusTone,
+  statusIcon,
+  scheduleTitle,
+  specSummary,
+  formatInterval,
+  sortSchedules,
+} from "./read.ts";
+
+const base: ScheduleDTO = { id: "sch_1", spec_kind: "cron", spec: "0 9 * * *", enabled: true };
+
+describe("statusTone", () => {
+  it("maps scheduler status tokens to the four tones", () => {
+    expect(statusTone("fired")).toBe("ok");
+    expect(statusTone("fired_noop")).toBe("ok");
+    expect(statusTone("skipped_quota")).toBe("warn");
+    expect(statusTone("skipped_stopped")).toBe("warn");
+    expect(statusTone("error:boom")).toBe("danger");
+    expect(statusTone("")).toBe("muted");
+    expect(statusTone(undefined)).toBe("muted");
+  });
+});
+
+describe("statusIcon", () => {
+  it("picks the codicon per tone", () => {
+    expect(statusIcon("fired")).toBe("pass-filled");
+    expect(statusIcon("error:x")).toBe("error");
+    expect(statusIcon("skipped_quota")).toBe("circle-slash");
+    expect(statusIcon("")).toBe("circle-outline");
+  });
+});
+
+describe("scheduleTitle", () => {
+  it("prefers the natural-language label", () => {
+    expect(scheduleTitle({ ...base, spec_label: "毎朝9時レビュー" })).toBe("毎朝9時レビュー");
+  });
+  it("falls back to a spec summary when unlabeled", () => {
+    expect(scheduleTitle({ ...base, spec_label: "" })).toBe("0 9 * * *");
+    expect(scheduleTitle({ ...base, spec_label: "   " })).toBe("0 9 * * *");
+  });
+});
+
+describe("specSummary", () => {
+  it("renders each kind", () => {
+    expect(specSummary({ ...base, spec_kind: "cron", spec: "*/15 * * * *" })).toBe("*/15 * * * *");
+    expect(specSummary({ ...base, spec_kind: "interval", spec: "3600" })).toBe("every 1h");
+    expect(specSummary({ ...base, spec_kind: "once", spec: "2026-07-24T09:00:00Z" })).toBe("2026-07-24T09:00:00Z");
+  });
+});
+
+describe("formatInterval", () => {
+  it("compacts seconds into d/h/m", () => {
+    expect(formatInterval("3600")).toBe("1h");
+    expect(formatInterval("5400")).toBe("1h 30m");
+    expect(formatInterval("90000")).toBe("1d 1h");
+    expect(formatInterval("300")).toBe("5m");
+    expect(formatInterval("45")).toBe("45s");
+  });
+  it("passes odd input through", () => {
+    expect(formatInterval("nope")).toBe("nope");
+  });
+});
+
+describe("sortSchedules", () => {
+  it("enabled before paused, then by soonest next_run", () => {
+    const a: ScheduleDTO = { ...base, id: "a", enabled: true, next_run: "2026-07-24T09:00:00Z" };
+    const b: ScheduleDTO = { ...base, id: "b", enabled: true, next_run: "2026-07-23T09:00:00Z" };
+    const c: ScheduleDTO = { ...base, id: "c", enabled: false, next_run: "" };
+    const d: ScheduleDTO = { ...base, id: "d", enabled: true, next_run: "" };
+    const order = sortSchedules([a, c, b, d]).map((s) => s.id);
+    // enabled with next_run soonest-first (b, a), then enabled w/o next_run (d), then paused (c).
+    expect(order).toEqual(["b", "a", "d", "c"]);
+  });
+  it("does not mutate the input array", () => {
+    const arr = [base];
+    const out = sortSchedules(arr);
+    expect(out).not.toBe(arr);
+  });
+});

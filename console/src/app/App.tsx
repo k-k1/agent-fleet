@@ -28,6 +28,7 @@ import { PaneHost } from "../features/panes/PaneHost.tsx";
 import { LayoutMap } from "../features/panes/LayoutMap.tsx";
 import { AssistantSection } from "../features/chat/AssistantSection.tsx";
 import { MemoQueueSection } from "../features/memo/MemoQueueSection.tsx";
+import { SchedulesSection } from "../features/schedules/SchedulesSection.tsx";
 import { ProjectTree } from "../features/project/ProjectTree.tsx";
 import { OtherSessionsSection } from "../features/project/OtherSessionsSection.tsx";
 import { StoppedSessionsSection } from "../features/project/StoppedSessionsSection.tsx";
@@ -328,6 +329,7 @@ export function App() {
               <>
                 <AssistantSection />
                 <MemoQueueSection />
+                <SchedulesSection />
                 <ProjectTree />
                 <OtherSessionsSection />
                 <FilesSection />
@@ -336,6 +338,7 @@ export function App() {
               <>
                 <StoppedRailSection id="assistant" title={tr("ui.assistant")} icon="comment-discussion" />
                 <MemoQueueSection />
+                <SchedulesSection />
                 <StoppedRailSection id="repos" title={tr("ui.repositories")} icon="repo" />
                 <StoppedSessionsSection />
                 <StoppedRailSection id="files" title={tr("ui.files")} icon="files" defaultOpen={false} />
