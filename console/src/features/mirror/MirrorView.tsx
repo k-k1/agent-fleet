@@ -2868,13 +2868,23 @@ function Turn({
       ),
     );
   const fromOperator = isUser && turn.source === "operator";
+  // Chat-bridge origin (docs/37 P2a): a reply the user sent from Discord/Slack, injected
+  // into the session — badged distinctly from self-typed input, like operator turns.
+  const chatProvider = isUser
+    ? turn.source === "discord"
+      ? "Discord"
+      : turn.source === "slack"
+        ? "Slack"
+        : null
+    : null;
   return (
     <div
       className={
         "mirror-turn " +
         (isUser ? "user" : "assistant") +
         (turn.sidechain ? " sidechain" : "") +
-        (fromOperator ? " from-operator" : "")
+        (fromOperator ? " from-operator" : "") +
+        (chatProvider ? " from-chat" : "")
       }
       data-turn-idx={turn.idx}
     >
@@ -2885,6 +2895,12 @@ function Turn({
           // the user — badge it so the two are never confused.
           <span className="mt-op" title={tr("mirror.from_operator_title")}>
             <Icon name="broadcast" /> {tr("mirror.from_operator")}
+          </span>
+        )}
+        {chatProvider && (
+          // Sent from a chat bridge (docs/37 P2a) — a phone reply, not typed at the console.
+          <span className="mt-op mt-chat" title={tr("mirror.from_chat_title")}>
+            <Icon name="comment-discussion" /> {tr("mirror.from_chat", { provider: chatProvider })}
           </span>
         )}
         {turn.queued ? (

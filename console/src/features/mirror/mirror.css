@@ -455,6 +455,16 @@
 .mirror-turn.user.from-operator {
   border-left: 2px solid color-mix(in srgb, var(--warn, #e0a45e) 55%, var(--border));
 }
+/* Chat-bridge-injected user turn (docs/37 P2a): a reply the user sent from Discord/Slack,
+   not the console keyboard. Same pill shape as the operator badge but a distinct (info)
+   hue so the two origins read apart. */
+.mt-chat {
+  background: color-mix(in srgb, var(--accent, #5e9ce0) 18%, transparent);
+  color: var(--accent, #5e9ce0);
+}
+.mirror-turn.user.from-chat {
+  border-left: 2px solid color-mix(in srgb, var(--accent, #5e9ce0) 55%, var(--border));
+}
 /* Reasoning effort/variant chip (codex reasoning_effort / opencode variant), shown
    right after the model. A faint pill so it reads as secondary metadata. */
 .mt-effort {
