@@ -254,8 +254,13 @@ reuse セッションでは driver 切替中 `409 busy_switch` にも遭遇し�
 
 ## フェーズ
 
-- **P0（本 doc）**: 設計合意・ADR0021。
+- **P0（本 doc）**: 設計合意・ADR0021。**完了**。
 - **P1**: CP スケジューラ骨格（DB 表・tick・`next_run` 台帳・cron/interval/once 評価）。
+  **実装済み**（`control-plane/scheduler.go`・`schedules` 表 = migrations/0022＋pg/0005・
+  `ScheduleStore`・env ゲート `AF_SCHEDULER_INTERVAL` 既定 OFF）。実 wake+注入は
+  `scheduleFirer` シーム越しの P2 に委ね、P1 既定は no-op の `logFirer`（有効化しても
+  台帳が進むだけ）。cron は外部依存ゼロの自前評価器（5 フィールド・dom OR dow の
+  Vixie ルール・`time/tzdata` 埋込で TZ/DST）。テスト 18 件（DST 両方向含む）緑。
 - **P2**: wake 経路（membership→resolved 内部生成・`ensureWorkspaceStarted` 内部呼び）と
   reaper keep-alive（★1）。
 - **P3**: 操作 MCP（create/list/update/delete/pause/run_now/get_runs）＋ CP internal 経路。
