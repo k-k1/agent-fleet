@@ -261,7 +261,7 @@ export const en: Record<keyof typeof ja, string> = {
   "ops.dc_mention_auto": "Auto-filled with server owner @{name} (that should be you — edit only if not)",
   "ops.dc_mention_placeholder": "Empty = no mention",
   "ops.dc_receive_label": "Reply to steer (two-way)",
-  "ops.dc_receive_sub": "Replying in a session's thread sends the text into that session. Enable the bot's MESSAGE CONTENT INTENT in the Discord Developer Portal (only your own replies are routed)",
+  "ops.dc_receive_sub": "Replying in a session's thread sends the text into that session; questions, permissions, and plan approvals are answerable with buttons. Enable the bot's MESSAGE CONTENT INTENT in the Discord Developer Portal (only your own replies and clicks are routed)",
   "ops.dc_pill_threads": "Threads",
   "ops.dc_pill_receive": "Receive",
   "ops.dc_pill_fulltext": "Full text",

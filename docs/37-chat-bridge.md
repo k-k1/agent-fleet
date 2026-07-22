@@ -1,10 +1,12 @@
 # 37. チャットブリッジ（Slack / Discord 連携）— 通知・双方向操縦・承認ゲート
 
-- 状態: **P1／P1.5 実装済み＋P2a（受信＝スレッド返信→注入）＋全文ブリッジ（応答本文投稿）
-  実装済み（Discord）**（2026-07-22。P2b＝ボタン化以降は未着手）。採用判断は
+- 状態: **P1／P1.5＋P2a（受信＝スレッド返信→注入）＋全文ブリッジ（応答本文投稿）＋
+  P2b（AUQ／許可／プラン承認のボタン化・claude/TUI）実装済み（Discord）**（2026-07-22。
+  P3＝承認ゲート／オペレーター bot と Slack 追随は未着手）。採用判断は
   [decisions/0020](decisions/0020-chat-bridge.md)。実装メモは
   [§P1 実装記録](#p1-実装記録2026-07-22)／[§P2a 実装記録](#p2a-実装記録-スレッド返信--セッション注入2026-07-22)／
-  [§全文ブリッジ 実装記録](#全文ブリッジ-実装記録-応答本文をチャットへ2026-07-22)。
+  [§全文ブリッジ 実装記録](#全文ブリッジ-実装記録-応答本文をチャットへ2026-07-22)／
+  [§P2b 実装記録](#p2b-実装記録-askuserquestion許可プラン承認のボタン化2026-07-22)。
 - **着手順は Discord 優先**（2026-07-22 決定）: トークン準備が最軽量（私設ギルド＋Bot、
   管理者承認・課金なし）のため、P1→P2 を Discord で縦に貫通させてから Slack を
   同じプロバイダ抽象に足す。抽象の設計は最初から 2 プロバイダ前提で行う
@@ -176,9 +178,50 @@ Slack と Discord は「外向き WSS 1 本で送受信・ボタン応答まで�
 - スレッド返信 → 対応セッションへ `send_to_session` 相当（`/input` 経路）で注入。
   → **P2a で実装済み**（下記 §P2a 実装記録）。
 - AUQ・permission-request をボタン化。押下 → 構造化回答。タイムアウト・
-  セッション側で先に回答済みのケースはボタン無効化更新で表面化。→ **P2b（未着手）**。
+  セッション側で先に回答済みのケースはボタン無効化更新で表面化。→ **P2b で実装済み**
+  （下記 §P2b 実装記録・claude/TUI 対象）。
 - Slack: Socket Mode（`xapp-` token）。Discord: Gateway intents は
   DM＋ギルドメッセージ＋interactions の最小構成。
+
+#### P2b 実装記録: AskUserQuestion／許可／プラン承認のボタン化（2026-07-22）
+
+チャットが Console 無しで完結する遠隔クライアントになる最後のピース（P2a の返信＋全文
+ブリッジと組む）。**セッションの pending な質問・許可・プラン承認を Discord の Message
+Components（ボタン）で回答する**。回答はキー送出でなく構造化写像（契約7）で、押下者は
+本人限定（契約5）。
+
+- **相互作用は同じ Gateway に届く**: Discord は Interactions Endpoint URL 未設定なら
+  ボタン押下を `INTERACTION_CREATE` として Gateway に流す（＝ローカル専用・外部端点なしの
+  本命構成そのもの）。P2a の受信 Gateway に相乗りし、公開端点は不要。押下は 3 秒以内に
+  callback を返す必要があるため、受信は**即 deferred-ACK（type 6・ローディング非表示）→
+  適用→メッセージ編集（ボタン除去＋結果表示）**の順（`receiver.go routeInteraction`）。
+- **送信（ボタン描画・`internal/bridge/interact.go`）**: 受信が有効（`Receive`＋channel
+  モード）なとき question/plan-approval/permission-request にボタンを添える。permission→
+  「許可/拒否」、plan→「承認/却下」、question→**質問ごとに 1 メッセージ**（単一/複数問で
+  一様）＝オプション 1 個 = ボタン 1 個（5/行・最大 25）。`custom_id` にセッション・質問/
+  選択肢インデックス・**questions のフィンガープリント**（陳腐化検出）を格納。**multi-select
+  や予算超過の質問はボタン化せず素のテキストのまま**（Console で回答）。
+- **回答適用（`bridge_answer.go`／package main・`ReceiverDeps.Answer` で DI）**: 押下を
+  デコードし `meta.DriverKind()` で分岐。**v1 は claude/TUI 対象**（フックが pending
+  ペイロードを記録する状態＝ここが唯一ボタンの出る面）。
+  - **AUQ**: `status.ReadPendingQuestion` を再読しフィンガープリント照合（不一致＝陳腐化で
+    拒否）。単一選択を**質問ごとに 1 押下**で受け、複数問は per-session の蓄積ストア
+    （`bridge-answers/`）に貯め、**全問揃ったら** claude モーダルへ `Down×index＋Enter`／
+    末尾 `Enter`（`buildClaudeSingleSelectKeys` ＝ console `questionKeys.ts buildClaudeSeq`
+    の単一選択パスの Go 再現）を送出。
+  - **permission / plan**: MirrorView が実際に送る検証済みキーを厳密に再現（許可=Enter・
+    拒否=Down Down Enter／承認=Enter・却下=Down Down Down Enter）。**現在の状態が
+    permission/plan でなければ送らない**（陳腐化した押下が composer に迷子キーを打ち込むのを防ぐ）。
+  - **managed（codex/opencode/copilot）**: 構造化 `/respond` は ID がドライバのライブ
+    Interaction（`h.inter.ID`）依存で、通知経路（rollout 由来 call_id）と識別子が異なり
+    ライブ検証も要るため v1 では「Console で回答」に誘導（フォールバック）。managed の
+    ボタン化は次段（notice への questions＋id 添付とライブ codex 検証）。
+- **UX**: 受信トグルの説明に「質問・許可・プラン承認はボタンで回答」を追記（i18n ja/en）。
+- 検証: ユニット（custom_id 往復・フィンガープリント安定/差異・単一/複数問のボタン描画・
+  multi-select/予算超過のテキスト退避・permission/plan 行・Send のスレッド内ボタン投函・
+  Receive 無効時はボタンなし・Gateway INTERACTION_CREATE 配送＝component 型のみ・キー列の
+  Console 一致）＋ live 拡張（`AF_DISCORD_BUTTONS=1` で質問＋許可を投函、受信テストが
+  `INTERACTION_CREATE` を記録）。go 緑。実機（実クリック→回答適用）は再ビルド後に残。
 
 #### P2a 実装記録: スレッド返信 → セッション注入（2026-07-22）
 
@@ -309,11 +352,9 @@ native/docker・外部到達なし**で、そこでは Console URL がスマホ�
 
 ## 将来の方向（次セッション検討）
 
-- **論点1（全文ブリッジ）は上記で実装済み**。残るのは P2b（AUQ／許可のボタン化）との統合＝
-  「完全な遠隔クライアント」。P2a（返信）＋全文（本文表示）＋P2b（ボタン）で Console 無しでも
-  フリートが回る。全文は質問文の散文も載せられるが、選択肢のボタン化は P2b の Message Components /
-  INTERACTION_CREATE 実装で行う（回答は managed=/respond・tui=`questionKeys.ts buildClaudeSeq` の
-  Go 再現）。
+- **論点1（全文ブリッジ）＋ P2b（ボタン化）とも実装済み** → **claude/TUI では Console 無しで
+  フリートが回る**（P2a 返信＋全文表示＋P2b ボタン）。残るのは managed（codex/opencode/copilot）
+  のボタン化＝notice への questions＋interaction id 添付とライブ codex 検証（§P2b 実装記録）。
 - session-report 本文（オペレーター向け報告文）の全文投稿は別トグル候補として保留（用途・言語が
   answer-ready 本文と異なるため今回スコープ外）。
 - Slack 追随（Socket Mode）で同じ `bridge.Provider` 抽象に全文モードを載せる（`ScrubSecrets`／

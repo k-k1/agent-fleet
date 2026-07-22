@@ -147,6 +147,13 @@ func recordSessionNotification(sid, previous, state, turnText string) {
 				ev.Payload["body"] = body
 			}
 		}
+		// P2b (docs/37): carry the pending AskUserQuestion payload on the question
+		// event so an interact-capable provider can render option buttons.
+		if kind == "question" {
+			if q, ok := status.ReadPendingQuestion(sid); ok && len(q) > 0 {
+				ev.Payload["questions"] = q
+			}
+		}
 		_ = notice.Put(ev)
 		// One-shot session report to the operator conversation that armed this
 		// session (docs/30). Only TERMINAL events report to the operator: an
