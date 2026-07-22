@@ -93,5 +93,8 @@ func startBridgeReceiver() {
 			recordInjection(sessionName, text, source)
 			return nil
 		},
+		// P2b: a button click (AskUserQuestion pick / permission / plan decision) is
+		// applied structurally (bridge_answer.go), never as free text (契約6).
+		Answer: answerInteraction,
 	})
 }
