@@ -1459,6 +1459,26 @@ export const ja = {
   "memo.assistant_title": "メモ",
   "keys.cmd.memoAdd": "メモを追加",
 
+  // === 定時実行スケジュール（features/schedules/SchedulesSection.tsx・docs/38 P5）===
+  "sched.title": "スケジュール",
+  "sched.empty": "定時実行はまだありません。オペレーターに「毎朝9時に…」のように依頼すると登録されます。",
+  "sched.next_run": "次回発火",
+  "sched.last_run": "前回発火",
+  "sched.never_run": "未実行",
+  "sched.paused_tag": "停止中",
+  "sched.pause": "一時停止",
+  "sched.resume": "再開",
+  "sched.run_now": "今すぐ発火",
+  "sched.history": "実行履歴",
+  "sched.loading": "読み込み中…",
+  "sched.no_runs": "実行履歴はまだありません。",
+  "sched.paused": "スケジュールを一時停止しました",
+  "sched.resumed": "スケジュールを再開しました",
+  "sched.run_now_queued": "次のtickで発火するようキューに入れました",
+  "sched.deleted": "スケジュールを削除しました",
+  "sched.action_failed": "操作に失敗しました",
+  "sched.delete_confirm": "スケジュール「{name}」を削除しますか？",
+
   // === P2 送信モーダル（features/memo/SendSelectionModal.tsx）===
   "send.target_file": "対象ファイル: {path}",
   "send.quote_file_loc": "ファイル `{file}` の {loc}:",

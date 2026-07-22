@@ -1425,6 +1425,26 @@ export const en: Record<keyof typeof ja, string> = {
   "memo.assistant_title": "Memos",
   "keys.cmd.memoAdd": "Add memo",
 
+  // === Scheduled execution (features/schedules/SchedulesSection.tsx, docs/38 P5) ===
+  "sched.title": "Schedules",
+  "sched.empty": "No scheduled runs yet. Ask the operator (e.g. \"every morning at 9…\") to add one.",
+  "sched.next_run": "Next run",
+  "sched.last_run": "Last run",
+  "sched.never_run": "Never run",
+  "sched.paused_tag": "Paused",
+  "sched.pause": "Pause",
+  "sched.resume": "Resume",
+  "sched.run_now": "Run now",
+  "sched.history": "Run history",
+  "sched.loading": "Loading…",
+  "sched.no_runs": "No runs yet.",
+  "sched.paused": "Schedule paused",
+  "sched.resumed": "Schedule resumed",
+  "sched.run_now_queued": "Queued to fire on the next tick",
+  "sched.deleted": "Schedule deleted",
+  "sched.action_failed": "Action failed",
+  "sched.delete_confirm": "Delete schedule \"{name}\"?",
+
   // === P2 send modal (features/memo/SendSelectionModal.tsx) ===
   "send.target_file": "Target file: {path}",
   "send.quote_file_loc": "File `{file}` at {loc}:",
