@@ -201,6 +201,20 @@ var mcpStdioTools = []map[string]any{
 		"description": "メモキュー（溜めて一括でセッションへ送るメモ）の一覧を返す。未送信＋保持期間内の送信済みを含む。各メモは id/repo/category/kind(file|text)/body/refPath を持つ。利用者に「今どんなメモが溜まっている?」と聞かれた時や、flush_memos / update_memo / delete_memo で対象の id を選ぶ前に呼ぶ。",
 		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 	},
+	{
+		"name":        "list_schedules",
+		"description": "定時実行スケジュールの一覧を返す（docs/38）。各スケジュールは id / spec_kind(cron|interval|once) / spec / spec_label(登録時の自然言語) / tz / enabled / next_run(次回発火 UTC) / next_run_local(tz でのわかりやすい表記) / last_run / last_status / prompt などを持つ。利用者に「今どんな定時タスクがある?」と聞かれた時や、update_schedule / delete_schedule / pause_schedule / run_schedule_now で対象 id を選ぶ前に呼ぶ。",
+		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+	},
+	{
+		"name":        "get_schedule_runs",
+		"description": "指定スケジュールの実行履歴（最新50件）を返す。各行は fired_at（発火時刻 UTC）と status（fired / skipped_* / error:...）。定時タスクがちゃんと動いているか／失敗していないかを確認する時に呼ぶ。id は list_schedules で取得する。",
+		"inputSchema": map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"id": map[string]any{"type": "string", "description": "スケジュール id（list_schedules で取得）"}},
+			"required":   []string{"id"},
+		},
+	},
 }
 
 // mcpStdioWriteTools — Agent Fleet write/orchestrate tools, advertised only under --write
@@ -291,6 +305,87 @@ var mcpStdioWriteTools = []map[string]any{
 				"ids":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "送るメモ id の配列（list_memos で取得）"},
 			},
 			"required": []string{"sessionName", "ids"},
+		},
+	},
+	{
+		"name": "create_schedule",
+		"description": "定時実行スケジュールを登録する（docs/38）。指定時刻に、必要なら停止中のワークスペースを起こして新規セッションを起動し、prompt を最初のタスクとして投入する。完了報告はこの会話に自動で届く。" +
+			"利用者の自然言語（「毎朝9時」「平日夕方6時」「6時間おき」等）は、あなたが構造化 spec に翻訳して渡すこと: spec_kind=cron なら spec は5フィールドの cron 式（分 時 日 月 曜日・曜日は0=日曜）、interval なら spec は秒数（最小60）、once なら spec は RFC3339 の絶対時刻。tz は IANA タイムゾーン（例 Asia/Tokyo）で cron/once の評価基準（DST 込み）。" +
+			"登録すると解釈した spec と next_run_local（次回発火の具体日時）が返るので、必ず利用者に読み上げて確認する（例『毎日 09:00 JST に実行、次回は 7/23 09:00 でよいですか?』）。元の自然言語表現は spec_label に入れておくと一覧で人に見せられる。" +
+			"prompt には固定メタ変数 {{date}} {{time}} {{datetime}} {{tz}} {{schedule_id}} {{schedule_label}} {{last_run}} を埋め込め、発火時に置換される（未定義の変数はそのまま残る）。" +
+			"注意: 停止中WSを無人で起こして agent を回す強力な操作なので、登録前に必ず利用者へ内容（何時・何を・どのリポジトリ）を確認すること。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"spec_kind":      map[string]any{"type": "string", "description": "cron | interval | once"},
+				"spec":           map[string]any{"type": "string", "description": "cron 式（分 時 日 月 曜日）/ 秒数（interval・最小60）/ RFC3339 絶対時刻（once）"},
+				"tz":             map[string]any{"type": "string", "description": "IANA タイムゾーン（cron/once の評価基準。例 Asia/Tokyo。省略時 UTC）"},
+				"spec_label":     map[string]any{"type": "string", "description": "元の自然言語表現（表示用・任意。例『毎朝9時』）"},
+				"prompt":         map[string]any{"type": "string", "description": "発火時に新規セッションへ投入するタスク文（必須）"},
+				"agent_kind":     map[string]any{"type": "string", "description": "エージェント種別（任意。claude 既定 | codex | opencode | copilot）"},
+				"model":          map[string]any{"type": "string", "description": "モデル上書き（任意）"},
+				"repo":           map[string]any{"type": "string", "description": "作業ディレクトリ（任意。list_repos の path）"},
+				"wake_policy":    map[string]any{"type": "string", "description": "停止中WSの扱い（任意。wake 既定=起こす | skip=見送り | catch_up）"},
+				"overlap_policy": map[string]any{"type": "string", "description": "前回実行中に次が来た時（任意。skip 既定 | queue | restart）"},
+			},
+			"required": []string{"spec_kind", "spec", "prompt"},
+		},
+	},
+	{
+		"name":        "update_schedule",
+		"description": "既存スケジュール（id 指定）を編集する。渡したフィールドだけ変わり、省略した項目はそのまま。spec/spec_kind/tz を変えると次回発火が再計算される。id は list_schedules で取得。spec を変える時は create_schedule と同じ翻訳ルールに従うこと。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id":             map[string]any{"type": "string", "description": "スケジュール id（list_schedules で取得）"},
+				"spec_kind":      map[string]any{"type": "string", "description": "cron | interval | once（任意）"},
+				"spec":           map[string]any{"type": "string", "description": "新しい spec（任意）"},
+				"tz":             map[string]any{"type": "string", "description": "新しいタイムゾーン（任意）"},
+				"spec_label":     map[string]any{"type": "string", "description": "新しい自然言語ラベル（任意）"},
+				"prompt":         map[string]any{"type": "string", "description": "新しいプロンプト（任意）"},
+				"agent_kind":     map[string]any{"type": "string", "description": "新しいエージェント種別（任意）"},
+				"model":          map[string]any{"type": "string", "description": "新しいモデル（任意）"},
+				"repo":           map[string]any{"type": "string", "description": "新しい作業ディレクトリ（任意）"},
+				"wake_policy":    map[string]any{"type": "string", "description": "新しい wake_policy（任意）"},
+				"overlap_policy": map[string]any{"type": "string", "description": "新しい overlap_policy（任意）"},
+			},
+			"required": []string{"id"},
+		},
+	},
+	{
+		"name":        "delete_schedule",
+		"description": "スケジュールを id で削除する。id は list_schedules で取得する。",
+		"inputSchema": map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"id": map[string]any{"type": "string", "description": "スケジュール id（list_schedules で取得）"}},
+			"required":   []string{"id"},
+		},
+	},
+	{
+		"name":        "pause_schedule",
+		"description": "スケジュールを一時停止する（発火しなくなる。定義は残る）。id は list_schedules で取得。再開は resume_schedule。",
+		"inputSchema": map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"id": map[string]any{"type": "string", "description": "スケジュール id"}},
+			"required":   []string{"id"},
+		},
+	},
+	{
+		"name":        "resume_schedule",
+		"description": "一時停止したスケジュールを再開する（次回発火を今から再計算）。id は list_schedules で取得。",
+		"inputSchema": map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"id": map[string]any{"type": "string", "description": "スケジュール id"}},
+			"required":   []string{"id"},
+		},
+	},
+	{
+		"name":        "run_schedule_now",
+		"description": "スケジュールを今すぐ発火させる（動作確認用）。定時発火と同じ経路（wake ポリシー・冪等・keep-alive）を通る。次のスケジューラ tick（最大約1分後）で実行される。停止中（pause 済み）のスケジュールは先に resume すること。id は list_schedules で取得。",
+		"inputSchema": map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"id": map[string]any{"type": "string", "description": "スケジュール id"}},
+			"required":   []string{"id"},
 		},
 	},
 	{
@@ -526,6 +621,69 @@ func mcpStdioCall(req mcpReq) []byte {
 			return mcpToolErr(req.ID, "このアシスタントはメモの一括送信を許可されていません")
 		}
 		out, err := cpMemoDo(http.MethodPost, "/internal/memos/flush", []byte(p.Args))
+		if err != nil {
+			return mcpToolErr(req.ID, err.Error())
+		}
+		return mcpTextResult(req.ID, out)
+	case "list_schedules":
+		out, err := cpScheduleDo(http.MethodGet, "/internal/schedules", nil)
+		if err != nil {
+			return mcpToolErr(req.ID, err.Error())
+		}
+		return mcpTextResult(req.ID, out)
+	case "get_schedule_runs":
+		if a.ID == "" {
+			return mcpToolErr(req.ID, "id（スケジュール id）が必要です")
+		}
+		out, err := cpScheduleDo(http.MethodGet, "/internal/schedules/"+url.PathEscape(a.ID)+"/runs", nil)
+		if err != nil {
+			return mcpToolErr(req.ID, err.Error())
+		}
+		return mcpTextResult(req.ID, out)
+	case "create_schedule":
+		if !mcpWriteEnabled {
+			return mcpToolErr(req.ID, "このアシスタントはスケジュールの登録を許可されていません")
+		}
+		// Route completion reports back to THIS operator conversation (docs/30): stamp
+		// owner_conv = the operator's own conv id, overriding any client-supplied value.
+		out, err := cpScheduleDo(http.MethodPost, "/internal/schedules", withOwnerConv(p.Args, mcpConvID))
+		if err != nil {
+			return mcpToolErr(req.ID, err.Error())
+		}
+		return mcpTextResult(req.ID, out)
+	case "update_schedule":
+		if !mcpWriteEnabled {
+			return mcpToolErr(req.ID, "このアシスタントはスケジュールの編集を許可されていません")
+		}
+		if a.ID == "" {
+			return mcpToolErr(req.ID, "id（スケジュール id）が必要です")
+		}
+		out, err := cpScheduleDo(http.MethodPatch, "/internal/schedules/"+url.PathEscape(a.ID), []byte(p.Args))
+		if err != nil {
+			return mcpToolErr(req.ID, err.Error())
+		}
+		return mcpTextResult(req.ID, out)
+	case "delete_schedule":
+		if !mcpWriteEnabled {
+			return mcpToolErr(req.ID, "このアシスタントはスケジュールの削除を許可されていません")
+		}
+		if a.ID == "" {
+			return mcpToolErr(req.ID, "id（スケジュール id）が必要です")
+		}
+		out, err := cpScheduleDo(http.MethodDelete, "/internal/schedules/"+url.PathEscape(a.ID), nil)
+		if err != nil {
+			return mcpToolErr(req.ID, err.Error())
+		}
+		return mcpTextResult(req.ID, out)
+	case "pause_schedule", "resume_schedule", "run_schedule_now":
+		if !mcpWriteEnabled {
+			return mcpToolErr(req.ID, "このアシスタントはスケジュールの操作を許可されていません")
+		}
+		if a.ID == "" {
+			return mcpToolErr(req.ID, "id（スケジュール id）が必要です")
+		}
+		action := map[string]string{"pause_schedule": "pause", "resume_schedule": "resume", "run_schedule_now": "run-now"}[p.Name]
+		out, err := cpScheduleDo(http.MethodPost, "/internal/schedules/"+url.PathEscape(a.ID)+"/"+action, nil)
 		if err != nil {
 			return mcpToolErr(req.ID, err.Error())
 		}
@@ -800,6 +958,56 @@ func cpMemoDo(method, path string, body []byte) (string, error) {
 		return "", fmt.Errorf("CP メモAPI エラー (%d): %s", resp.StatusCode, string(b))
 	}
 	return string(b), nil
+}
+
+// cpScheduleDo calls the CP's /internal/schedules bridge over the public hairpin
+// (AF_CP_BASE_URL) authenticated by the per-membership AF_SCHEDULE_TOKEN — schedules
+// live in the CP store (docs/38), not the local Agent. Mirrors cpMemoDo; both env vars
+// are injected by the CP only when PUBLIC_BASE_URL is set.
+func cpScheduleDo(method, path string, body []byte) (string, error) {
+	base := os.Getenv("AF_CP_BASE_URL")
+	if base == "" || os.Getenv("AF_SCHEDULE_TOKEN") == "" {
+		return "", fmt.Errorf("定時実行機能はこの環境では利用できません（CP の公開URL/トークンが未設定）")
+	}
+	var rdr io.Reader
+	if body != nil {
+		rdr = bytes.NewReader(body)
+	}
+	req, err := http.NewRequest(method, base+path, rdr)
+	if err != nil {
+		return "", err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("Authorization", "Bearer "+os.Getenv("AF_SCHEDULE_TOKEN"))
+	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("CP 定時実行API エラー (%d): %s", resp.StatusCode, string(b))
+	}
+	return string(b), nil
+}
+
+// withOwnerConv stamps owner_conv onto a create_schedule body so the schedule's
+// completion reports (docs/30) land in the operator's own conversation. A client-
+// supplied owner_conv is overridden — the operator only ever reports to itself. On a
+// parse failure the original body is returned unchanged (the CP then validates it).
+func withOwnerConv(args json.RawMessage, conv string) []byte {
+	var m map[string]any
+	if err := json.Unmarshal(args, &m); err != nil || m == nil {
+		return []byte(args)
+	}
+	m["owner_conv"] = conv
+	b, err := json.Marshal(m)
+	if err != nil {
+		return []byte(args)
+	}
+	return b
 }
 
 // agentGET calls the local Agent REST with the shared AGENT_TOKEN.
