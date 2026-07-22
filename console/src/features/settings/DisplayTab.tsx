@@ -55,15 +55,10 @@ export function DisplayTab() {
             onChange={(v) => setSetting("mirrorTheme", v)}
           />
         </Row>
-        <Row label={tr("display.assistant_theme")}>
-          <Choice
-            value={s.assistantTheme}
-            options={REGION_THEMES.map((x) => [x.id, tr(x.labelKey)])}
-            onChange={(v) => setSetting("assistantTheme", v)}
-          />
-        </Row>
         <p className="muted ds-note">{tr("display.region_theme_note")}</p>
-        {SURFACE_TARGETS.map((t) => (
+        {/* assistantColor + assistantTheme moved to the Assistant tab (its appearance
+            lives with its behavior); every other surface color stays here. */}
+        {SURFACE_TARGETS.filter((t) => t.key !== "assistantColor").map((t) => (
           <Row key={t.key} label={tr(t.longKey)}>
             <SwatchGrid theme={s.theme} value={s[t.key]} onChange={(v) => setSetting(t.key, v)} />
           </Row>

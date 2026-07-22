@@ -612,6 +612,9 @@ export const en: Record<keyof typeof ja, string> = {
   "assistant.auto_compact": "Auto-compact chat context",
   "assistant.note_auto_compact":
     "When a chat's context usage is still above 90% as a new exchange starts, the conversation is summarized and handed to a fresh session automatically first (the summary costs one turn of tokens). The notice at 80% lets you compact manually before this fires.",
+  "assistant.appearance": "Appearance",
+  "assistant.note_appearance":
+    "“Inherit” follows the app theme. Theme and background color are saved on this device only (not synced to others).",
 
   // --- agent settings (AgentsTab) ---
   "agents.session": "Session",
@@ -2110,6 +2113,7 @@ export const en: Record<keyof typeof ja, string> = {
   "set.tab_tts": "Read aloud",
   "set.tab_git": "Git",
   "set.tab_ssm": "AWS SSM",
+  "set.tab_danger": "Danger zone",
   "set.tab_ops": "Ops & monitoring",
   "set.tab_tokens": "MCP tokens",
   "set.group_personal": "Personal",

@@ -3,19 +3,15 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import type { ReactNode } from "react";
 import { api, apiJSON, getTenant } from "../../core/api/client.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
-import { useLayoutStore } from "../../layout/store.ts";
-import { useSessionsStore } from "../sessions/store.ts";
-import { useReposStore } from "../repos/store.ts";
-import { useFilesStore } from "../files/store.ts";
-import { ConfirmDialog } from "../../ui/ConfirmDialog.tsx";
-import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 
-// EnvTab selects the workspace toolchains: node (via nvm) and java (a pre-baked
-// Temurin JDK). Reads/writes via the Agent, so the workspace must be running.
-// Changes apply to sessions/shells started AFTER the change (the Agent injects the
-// selection at launch); already-running ones and the agent process itself pick it
-// up on the next Stop → Start.
+// EnvTab (ツールチェーン) selects the workspace toolchains: timezone, node (via nvm),
+// go, and java (a pre-baked Temurin JDK), plus the read-only bundled-tool versions and
+// the agent-CLI self-update opt-in. Reads/writes via the Agent, so the workspace must
+// be running. Changes apply to sessions/shells started AFTER the change (the Agent
+// injects the selection at launch); already-running ones and the agent process itself
+// pick it up on the next Stop → Start. The destructive lifecycle actions (recreate /
+// clean home) live in their own 危険な操作 tab (DangerTab).
 export function EnvTab() {
   const tr = useT();
   const toast = useToast();
@@ -96,7 +92,6 @@ export function EnvTab() {
       )}
       {au && au.allowAgentUpdate && <AgentUpdateRow au={au} onChange={setAgentUpdate} />}
       <ToolVersions running={running} />
-      <WorkspaceDangerZone />
     </div>
   );
 }
@@ -259,115 +254,6 @@ function AgentUpdateRow({ au, onChange }: { au: any; onChange: (on: boolean) => 
         <span>{tr("env.agent_update_label")}</span>
       </label>
       <p className="muted ds-sub">{tr("env.agent_update_note")}</p>
-    </section>
-  );
-}
-
-// WorkspaceDangerZone: the destructive "作り直す" is tucked away here — deep in
-// 設定 > 環境, behind a warning dialog — rather than on the always-visible WS bar,
-// since recreating discards sessions and cloned repos (logins/connections survive).
-function WorkspaceDangerZone() {
-  const tr = useT();
-  const toast = useToast();
-  // Recreate = reset the layout up front (everything the views point at is about
-  // to go away; the terminal reconciler then disposes the other panes' xterms),
-  // then tear down + refresh. Old state.tsx recreateWs, orchestrated here.
-  // Both destructive actions share the same post-teardown refresh: everything the
-  // views point at is about to go away (the terminal reconciler disposes the other
-  // panes' xterms after resetToTerminal), then we refresh sessions/repos/files.
-  const runDestructive = async (
-    action: () => Promise<string | null>,
-    failMsg: string,
-  ) => {
-    useLayoutStore.getState().resetToTerminal();
-    const err = await action();
-    if (err) toast(failMsg + err);
-    void useSessionsStore.getState().refresh();
-    void useReposStore.getState().refresh();
-    useFilesStore.getState().bump();
-  };
-  const [confirm, setConfirm] = useState<null | "recreate" | "cleanHome">(null);
-  const [busy, setBusy] = useState(false);
-
-  const run = async (action: () => Promise<string | null>, failMsg: string) => {
-    setBusy(true);
-    try {
-      await runDestructive(action, failMsg);
-      setConfirm(null);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const doRecreate = () => run(() => useWorkspaceStore.getState().recreate(), tr("env.recreate_failed"));
-  const doCleanHome = () => run(() => useWorkspaceStore.getState().cleanHome(), tr("env.cleanhome_failed"));
-
-  return (
-    <section className="danger-zone">
-      <h4 className="danger-zone-title">
-        <Icon name="warning" /> {tr("env.danger_zone")}
-      </h4>
-      <div className="danger-zone-row">
-        <div className="danger-zone-text">
-          <strong>{tr("env.recreate_head")}</strong>
-          <span className="muted">
-            {tr("env.recreate_desc_1")}
-            <code>~/repos</code>
-            {tr("env.recreate_desc_2")}
-          </span>
-        </div>
-        <button className="danger-btn" onClick={() => setConfirm("recreate")}>
-          {tr("env.recreate_btn")}
-        </button>
-      </div>
-      <div className="danger-zone-row">
-        <div className="danger-zone-text">
-          <strong>{tr("env.cleanhome_head")}</strong>
-          <span className="muted">
-            {tr("env.cleanhome_desc_1")}
-            <code>~/repos</code>
-            {tr("common.mid_dot")}
-            <code>~/.local</code>
-            {tr("env.cleanhome_desc_2")}
-          </span>
-        </div>
-        <button className="danger-btn" onClick={() => setConfirm("cleanHome")}>
-          {tr("env.cleanhome_btn")}
-        </button>
-      </div>
-      {confirm === "recreate" && (
-        <ConfirmDialog
-          title={tr("env.recreate_confirm_title")}
-          confirmLabel={tr("env.recreate_btn")}
-          busy={busy}
-          onConfirm={doRecreate}
-          onCancel={() => setConfirm(null)}
-        >
-          <p>{tr("env.recreate_confirm_body")}</p>
-          <ul className="confirm-list">
-            <li className="keep"><Icon name="check" /> {tr("env.dz_keep_login")}</li>
-            <li className="keep"><Icon name="check" /> <code>~/repos</code>{tr("env.dz_keep_home_1")}<code>~/.local</code>{tr("env.dz_keep_home_2")}</li>
-            <li className="lose"><Icon name="close" /> {tr("env.dz_lose_sessions")}</li>
-            <li className="lose"><Icon name="close" /> {tr("env.dz_lose_repos")}</li>
-          </ul>
-        </ConfirmDialog>
-      )}
-      {confirm === "cleanHome" && (
-        <ConfirmDialog
-          title={tr("env.cleanhome_confirm_title")}
-          confirmLabel={tr("env.cleanhome_btn")}
-          busy={busy}
-          onConfirm={doCleanHome}
-          onCancel={() => setConfirm(null)}
-        >
-          <p>{tr("env.cleanhome_confirm_body")}</p>
-          <ul className="confirm-list">
-            <li className="keep"><Icon name="check" /> {tr("env.dz_keep_login")}</li>
-            <li className="lose"><Icon name="close" /> {tr("env.dz_lose_sessions")}</li>
-            <li className="lose"><Icon name="close" /> {tr("env.dz_lose_repos")}</li>
-            <li className="lose"><Icon name="close" /> <code>~/.local</code>{tr("env.dz_lose_home_rest")}</li>
-          </ul>
-        </ConfirmDialog>
-      )}
     </section>
   );
 }

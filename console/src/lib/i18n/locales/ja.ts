@@ -617,6 +617,9 @@ export const ja = {
   "assistant.auto_compact": "コンテキストの自動圧縮",
   "assistant.note_auto_compact":
     "チャットのコンテキスト使用率が 90% を超えたまま次のやり取りが始まるとき、先に会話を要約して新しいセッションへ自動で引き継ぎます（要約の作成に 1 ターン分のトークンを消費）。80% の時点で届くお知らせから手動の「圧縮」で先に整理することもできます。",
+  "assistant.appearance": "外観",
+  "assistant.note_appearance":
+    "「継承」はアプリのテーマに従います。テーマ・背景色はこの端末のみで保存されます（他の端末には同期されません）。",
 
   // --- エージェント設定（features/settings/AgentsTab.tsx）---
   "agents.session": "セッション",
@@ -2146,6 +2149,7 @@ export const ja = {
   "set.tab_tts": "読み上げ",
   "set.tab_git": "Git",
   "set.tab_ssm": "AWS SSM",
+  "set.tab_danger": "危険な操作",
   "set.tab_ops": "運用・監視",
   "set.tab_tokens": "MCPトークン",
   // 設定ダイアログ左レールのグループ見出し + モバイル drill-down の戻り
