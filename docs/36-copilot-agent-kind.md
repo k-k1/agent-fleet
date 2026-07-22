@@ -76,7 +76,15 @@ Copilot カードは状態表示＋起動既定のみ）:
    - `transcript.go` — events.jsonl パーサ（Turn.Idx 単調・pending 検知・ツール正規化）
    - `state.go` — `LiveState`（events.jsonl 末尾: turn_start 未閉→working、permission.requested 未完→question）
    - `models.go` — プラン連動ライブカタログ（§実装後の追加実測。当初計画の静的リストは廃止）
-   - `rtk.go` — **v1 では見送り**（COPILOT_CUSTOM_INSTRUCTIONS_DIRS 方式の実測が先 — §残課題）
+   - `rtk.go` — **実装済み（決定的フック方式）**。当初想定の COPILOT_CUSTOM_INSTRUCTIONS_DIRS
+     指示ベースは採らず、rtk 本体の `rtk hook copilot`（preToolUse フック処理器）を
+     ユーザースコープ `$COPILOT_HOME/hooks/rtk.json` の preToolUse に配線（native 形式・
+     matcher `bash`）。rtk が `modifiedArgs` でシェルコマンドを `rtk <cmd>` へ透過書換 —
+     claude/opencode と同格の決定的連携（codex/agy の指示ベースより上）。プラグイン
+     (`--plugin-dir`)方式は plugin 定義 preToolUse が発火しない既知バグ
+     (github/copilot-cli#2540)のため不採用。実 CLI 1.0.73 で end-to-end 検証済
+     （フック発火・modifiedArgs 適用・`rtk gain` 増分）。durable prefs/reconcile は
+     `agent_rtk.go`（`Copilot *bool`・既定 ON）、Console トグルは AgentsTab CopilotCard。
 2. 登録: `internal/session/session.go` `KindCopilot`、`agent.go` agentRegistry、
    `connections.go` Status 集約、`agent_models.go` switch、`fs.go` denylist **`.copilot`**（平文トークン対策）
 3. **paneMode**（`session_io.go`）: フッタ実測パターンで分岐（8780956 教訓）:
@@ -200,8 +208,16 @@ Copilot カードは状態表示＋起動既定のみ）:
 
 - 実フリートのイメージ再ビルド後の実機目視（起動導線・ミラー・managed 切替・
   接続カード・色）。
-- rtk（COPILOT_CUSTOM_INSTRUCTIONS_DIRS 方式の実測から）/ WS バー使用量チップ /
-  アシスタントチャット headless バックエンド / 画像添付（imagePaste・managed
-  Attachments）/ ContextBar — Track D のまま。
+- ~~rtk~~ → **実装済み**（決定的フック方式・上記 §実装手順 1 の rtk.go 参照）。
+- ~~WS バー使用量チップ~~ → **実装済み**。当初想定の statusLine セッション消費ではなく、
+  内部 API `GET copilot_internal/user`（gh 透過認証トークンで直接叩ける構造化 JSON）から
+  **アカウント単位のクレジット残量%＋リセット日＋プラン**を取得（`copilot/usage.go`
+  `HandleUsage`・`routes.go` `GET /copilot/usage`・FE `WsBar.tsx` `CopilotUsageChip`）。
+  agy と同じ「残量%」型だが**スクレイプ不要**。plan（copilot_plan/access_type_sku）と
+  can_upgrade_plan もチップ popover に表示。has_quota=true のプールのみ採用（Free は
+  chat/completions、paid は premium_interactions が主）。
+- アシスタントチャット headless バックエンド / 画像添付（imagePaste・managed
+  Attachments）/ ContextBar（statusLine の `context_window.*` で実現可能・未実装）/
+  session 単位の AI クレジット消費表示（statusLine `ai_used`・managed では非描画）— Track D のまま。
 - TUI の plan モードチップ（フッタにモード表示が無く検出不能 — Shift+Tab は
   autopilot を跨ぐ 3 モード循環のためキー駆動トグルも封印中）。

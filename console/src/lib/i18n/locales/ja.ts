@@ -643,6 +643,8 @@ export const ja = {
   "agents.copilot_desc":
     "GitHub Copilot CLI は GitHub 連携（gh 透過認証）に相乗りします — 個別のログインは不要です。GitHub アカウントに Copilot サブスクリプションが必要です（Free プランは月間クォータ小）。",
   "agents.copilot_not_connected": "先に GitHub を連携してください（連携 > GitHub）",
+  "agents.copilot_rtk_note":
+    "copilot は preToolUse フック（$COPILOT_HOME/hooks）でシェルコマンドを rtk 経由に自動書換します — codex/agy の指示ベースと違い決定的に効きます。新規セッションに適用。",
   "agents.copilot_unsupported": "このコンテナイメージでは利用できません（{reason}）",
   "agents.remote_control": "リモートコントロール",
   "agents.notifications": "通知",
@@ -1024,6 +1026,13 @@ export const ja = {
   "wsbar.usage.codex.week": "週次",
   "wsbar.usage.agy.week_row": "{group}（週次）",
   "wsbar.usage.agy.five_row": "{group}（5時間枠）",
+  "wsbar.usage.plan": "プラン: {plan}",
+  "wsbar.usage.user": "ユーザー: {user}",
+  "wsbar.usage.copilot.title": "Copilot 使用状況（月次クレジット）",
+  "wsbar.usage.copilot.upgradable": "アップグレード可",
+  "wsbar.usage.copilot.pool_chat": "チャット",
+  "wsbar.usage.copilot.pool_completions": "コード補完",
+  "wsbar.usage.copilot.pool_premium": "プレミアム リクエスト",
   "wsbar.usage.codex.note":
     "codex が記録した最後の値です（この時点のスナップショット）。次に codex を実行すると更新されます。",
   "wsbar.usage.full_reset_one": "Full reset {count}件",

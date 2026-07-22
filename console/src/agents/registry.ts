@@ -372,6 +372,6 @@ export function availableKinds(ctx: AvailCtx): Record<SessionKind, boolean> {
 
 // Kinds offered in a repo row's launch menu, in display order. Every entry must
 // carry the launchableFromRepo cap (asserted below); the order is presentational.
-export const repoLaunchKinds: SessionKind[] = ["claude", "codex", "agy", "opencode", "copilot", "shell"];
+export const repoLaunchKinds: SessionKind[] = ["claude", "codex", "copilot", "agy", "opencode", "shell"];
 
 export type { SsmHost };

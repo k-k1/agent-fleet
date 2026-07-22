@@ -6,6 +6,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 )
 
@@ -162,6 +163,9 @@ func buildMux() *http.ServeMux {
 	// Claude subscription usage (5-hour + weekly bars) for the WsBar chip.
 	mux.HandleFunc("GET /claude/usage", claude.HandleUsage)
 	mux.HandleFunc("GET /codex/usage", codex.HandleUsage)
+	// Copilot account credit quota (remaining % + reset + plan) for the WsBar chip;
+	// structured JSON from copilot_internal/user via the gh transparent-auth token.
+	mux.HandleFunc("GET /copilot/usage", copilot.HandleUsage)
 	mux.HandleFunc("GET /codex/settings", codex.HandleSettingsGet)
 	mux.HandleFunc("PUT /codex/settings", codex.HandleSettingsPut)
 	// codex / opencode rtk toggle (durable pref → on-disk artifacts) — Console.

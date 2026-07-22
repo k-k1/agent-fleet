@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -182,3 +183,40 @@ func Status() map[string]any {
 	}
 	return map[string]any{"connected": true, "email": st.Email, "plan": st.SubscriptionType}
 }
+
+var (
+	idMu    sync.Mutex
+	idEmail string
+	idPlan  string
+	idAt    time.Time
+)
+
+// identity returns the account email + subscription tier from `claude auth status`,
+// cached briefly. Status() execs the CLI, so the usage endpoint (polled) must not shell
+// out every time. Both "" when signed out. Shared by Plan() and Account() so one exec
+// serves both.
+func identity() (email, plan string) {
+	idMu.Lock()
+	defer idMu.Unlock()
+	if !idAt.IsZero() && time.Since(idAt) < 5*time.Minute {
+		return idEmail, idPlan
+	}
+	idEmail, idPlan = "", ""
+	if m := Status(); m != nil {
+		if p, _ := m["plan"].(string); p != "" {
+			idPlan = p
+		}
+		if e, _ := m["email"].(string); e != "" {
+			idEmail = e
+		}
+	}
+	idAt = time.Now()
+	return idEmail, idPlan
+}
+
+// Plan returns the subscription tier (subscriptionType, e.g. "pro" / "max") for the
+// WsBar usage chip. "" when signed out or unknown.
+func Plan() string { _, p := identity(); return p }
+
+// Account returns the signed-in account email for the usage chip. "" when signed out.
+func Account() string { e, _ := identity(); return e }

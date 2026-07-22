@@ -83,6 +83,26 @@ func Status() map[string]any {
 	return info
 }
 
+// AccountEmail returns the ChatGPT account email from the stored id_token for the
+// usage chip. Reads auth.json + decodes the JWT locally (no exec, unlike Status which
+// runs `codex login status`). "" when signed out, in api-key mode, or unreadable.
+func AccountEmail() string {
+	b, err := os.ReadFile(filepath.Join(paths.HomeDir(), ".codex", "auth.json"))
+	if err != nil {
+		return ""
+	}
+	var a struct {
+		Tokens struct {
+			IDToken string `json:"id_token"`
+		} `json:"tokens"`
+	}
+	if json.Unmarshal(b, &a) != nil {
+		return ""
+	}
+	email, _ := idTokenInfo(a.Tokens.IDToken)
+	return email
+}
+
 // idTokenInfo decodes the (unverified) JWT payload of a ChatGPT id_token and
 // returns the account email + plan claim. We only read identity claims for display;
 // no signature check is needed since we're reading codex's own stored token.

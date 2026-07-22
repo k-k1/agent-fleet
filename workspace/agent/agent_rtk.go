@@ -12,6 +12,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
@@ -25,6 +26,9 @@ import (
 //              (intercepts bash/shell tool calls → `rtk rewrite`). Transparent.
 //   codex    … a marked rtk-usage block appended to ~/.codex/AGENTS.md (codex has
 //              no command-rewrite hook, so it is instruction-based / best-effort).
+//   copilot  … a user-scope preToolUse hook file $COPILOT_HOME/hooks/rtk.json
+//              (`rtk hook copilot` rewrites the shell tool's command via modifiedArgs).
+//              Transparent & deterministic like claude/opencode (see copilot/rtk.go).
 //
 // Because the entrypoint reseeds the base AGENTS.md / status plugin on every
 // container start, the toggle needs a DURABLE preference that survives restarts:
@@ -39,6 +43,7 @@ type agentRTKPrefs struct {
 	Codex    *bool `json:"codex"`
 	Opencode *bool `json:"opencode"`
 	Agy      *bool `json:"agy"`
+	Copilot  *bool `json:"copilot"`
 }
 
 func agentRTKPrefsPath() string {
@@ -85,6 +90,7 @@ func reconcileAgentRTK() {
 	opencode.ApplyRTK(avail && prefOnDefault(p.Opencode))
 	codex.ApplyRTK(avail && prefOnDefault(p.Codex))
 	agy.ApplyRTK(avail && prefOnDefault(p.Agy))
+	copilot.ApplyRTK(avail && prefOnDefault(p.Copilot))
 }
 
 func agentRTKBody() map[string]any {
@@ -94,6 +100,7 @@ func agentRTKBody() map[string]any {
 		"codex_rtk":     prefOnDefault(p.Codex),
 		"opencode_rtk":  prefOnDefault(p.Opencode),
 		"agy_rtk":       prefOnDefault(p.Agy),
+		"copilot_rtk":   prefOnDefault(p.Copilot),
 	}
 }
 
@@ -105,6 +112,7 @@ type agentRTKReq struct {
 	CodexRTK    *bool `json:"codex_rtk"`
 	OpencodeRTK *bool `json:"opencode_rtk"`
 	AgyRTK      *bool `json:"agy_rtk"`
+	CopilotRTK  *bool `json:"copilot_rtk"`
 }
 
 func handleAgentRTKPut(w http.ResponseWriter, r *http.Request) {
@@ -121,6 +129,9 @@ func handleAgentRTKPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.AgyRTK != nil {
 		p.Agy = req.AgyRTK
+	}
+	if req.CopilotRTK != nil {
+		p.Copilot = req.CopilotRTK
 	}
 	if err := writeAgentRTKPrefs(p); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
