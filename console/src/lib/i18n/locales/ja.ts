@@ -644,6 +644,8 @@ export const ja = {
   "agents.rtk_row": "RTK（トークン節約）",
   "agents.rtk_unavailable": "このワークスペースに rtk がありません",
   "agents.settings": "設定",
+  "agents.behavior": "動作設定",
+  "agents.conn_paused": "ワークスペースを起動すると接続できます。",
   "agents.claude_auth_failed": "Claude 認証開始に失敗: {msg}",
   "agents.claude_desc_flow": "Claude Code の OAuth 接続。サインインは新しいタブで開きます。",
   "agents.claude_hint_1": "タブが自動で開かない場合は ",
