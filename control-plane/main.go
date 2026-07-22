@@ -251,6 +251,7 @@ func main() {
 			scheduleJitterMax = parseDurationOr(os.Getenv("AF_SCHEDULE_JITTER"), 2*time.Minute)
 		}
 		firer := newWakeFirer(mgr, settle, ready)
+		schedulerRunning = true // so the operator API stops warning that fires never happen
 		go newScheduler(mgr.store, firer, iv).run(context.Background())
 		logSchedulerFirerNote(firer)
 		log.Printf("scheduler: enabled (interval=%s settle=%s wake_timeout=%s jitter=%s)", iv, settle, ready, scheduleJitterMax)
