@@ -178,6 +178,7 @@ type discordConnReq struct {
 	Events        []string `json:"events"`
 	Threads       bool     `json:"threads"`       // thread-per-session (channel mode)
 	MentionUserID string   `json:"mentionUserId"` // @mentioned per notification (channel mode)
+	Lang          string   `json:"lang"`          // Console locale at connect time ("ja"/"en")
 }
 
 // discordSnowflakeRe matches a Discord snowflake id — catches names/mentions
@@ -229,8 +230,14 @@ func handlePutDiscordConn(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnDiscordTokenInvalid, "Discord rejected the bot token")
 		return
 	}
+	// Notification language rides the Console's active locale; anything but "en"
+	// renders Japanese (pre-lang connections included — this deployment's default).
+	lang := ""
+	if req.Lang == "en" {
+		lang = "en"
+	}
 	creds := &secrets.DiscordCreds{Token: token, ChannelID: channelID, UserID: userID,
-		BotName: botName, Events: events,
+		BotName: botName, Events: events, Lang: lang,
 		// Channel-mode extras (docs/37 P1.5); meaningless for DM, so not stored there.
 		Threads: channelID != "" && req.Threads, MentionUserID: mention}
 	if channelID == "" {

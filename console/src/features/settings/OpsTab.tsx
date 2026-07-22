@@ -7,7 +7,7 @@ import { Button } from "../../ui/Button.tsx";
 import { useConnections } from "./useConnections.ts";
 import { OnOff } from "./controls.tsx";
 import { ProviderCard, StatusPill, Hint, DisconnectButton } from "./providerCard.tsx";
-import { useT } from "../../lib/i18n/index.ts";
+import { getLocale, useT } from "../../lib/i18n/index.ts";
 
 // OpsTab is the home for service-operations connections (docs/25 Phase 1): external
 // monitoring / incident tools the SRE assistant talks to over MCP. Today: PagerDuty,
@@ -244,6 +244,7 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
         events,
         threads: !dm && threads,
         mentionUserId: dm ? "" : mentionId.trim(),
+        lang: getLocale(), // notifications follow the Console language at connect time
       });
       if (res && res.error) {
         toast(tr("conn.connect_failed", { msg: errText(res.error) }));

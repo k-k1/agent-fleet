@@ -151,6 +151,21 @@ Slack と Discord は「外向き WSS 1 本で送受信・ボタン応答まで�
   削除再起票→セッション分離→セッション無しイベントはフラット）＋ live テスト拡張
   （`AF_DISCORD_CHANNEL` 指定時にスレッド 2 通・`AF_DISCORD_MENTION` でメンション）。
 
+#### P1.5 追補: 通知文の簡潔化・言語・ペイン deep link（2026-07-22）
+
+- **簡潔化**: `【agent-fleet】` プレフィクスと「セッション:」ラベルを廃止（アプリ名は
+  Bot 名で分かる）。形は「見出し ＋ 「表示名」（kind）＋ リンク」の最大 3 行。
+  kind は Console の agent registry に揃えた製品名（claude → Claude Code 等 —
+  `bridge/format.go kindLabel`、registry 変更時は同期）。
+- **言語**: 接続時の Console ロケールを `DiscordCreds.Lang` に保存し、bridge が
+  ja/en を出し分け。`"en"` 以外（旧接続の空含む）は日本語。切替はカード再接続で。
+- **ペイン deep link スキーマ確定**（残課題だった件）: 通知リンクは
+  `<base>/?session=<slug>`。Console が boot 時に `?session=` を消費
+  （`lib/sessionDeepLink.ts` — param 即除去→sessions store に現れるまで最長 90 秒
+  待って rail クリックと同じ流儀で開く: chat-capable はミラー、他はターミナル）。
+  Discord 側は `<…>` 包みで埋め込みプレビューを抑止。テナントは URL に載せない
+  （マルチテナントでの越境オープンは対象外 — 必要になったら ?tenant= を検討）。
+
 ### P2 — 双方向: スレッド＝セッション ＋ AUQ ボタン（canReceive / canInteract）
 
 - セッション初回通知でスレッドを起こし、以後の報告・質問を同スレッドへ
@@ -201,8 +216,8 @@ Slack と Discord は「外向き WSS 1 本で送受信・ボタン応答まで�
 
 ## 残課題（起案時点の未決）
 
-- Console セッション URL の組み立て — ベース URL は `AF_CP_BASE_URL` で解決済み
-  （通知にリンク付与）。セッション単位の deep link はスキーム未定のまま。
+- ~~Console セッション URL の組み立て~~ → 解決済み: ベース URL は `AF_CP_BASE_URL`、
+  セッション単位の deep link は `?session=<slug>`（P1.5 追補参照）。
 - ~~Discord の私設ギルド前提を README/ガイド（member/）にどう書くか~~ →
   カード内ウィザード（P1 追補）にほぼ吸収。member ガイドの独立ページは P2 の
   双方向設定が増えた時点で検討。
