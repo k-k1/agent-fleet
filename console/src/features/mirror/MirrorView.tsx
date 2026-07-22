@@ -49,7 +49,7 @@ import { kindIcon, kindLabel, kindShort, kindClass } from "../../lib/sessionkind
 import { agentOf } from "../../agents/registry.ts";
 import { hasLaunchSeed, takeLaunchSeed } from "../../lib/launchSeed.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
-import { confirmedWorkEnd, latestWorkPromptIndex, textOfParts, workSplit } from "./mirrorParts.ts";
+import { awaitingReply, confirmedWorkEnd, latestWorkPromptIndex, textOfParts, workSplit } from "./mirrorParts.ts";
 import { echoLanded, type PendingEcho } from "./pendingEcho.ts";
 import { PLAN_APPROVE_KEYS, planOutcome } from "./planDecision.ts";
 import {
@@ -66,6 +66,12 @@ const q = encodeURIComponent;
 // Transcript window size (jsonl lines) for the initial tail load and each backward page.
 // The server clamps it; matches docs/decisions/0009 (P2).
 const WINDOW = 400;
+
+// How long the "working" indicator is held after a turn reads idle while its reply is
+// still not in the transcript (the idle→reply-renders gap). Long enough to cover the
+// jsonl-write / poll-cadence lag, short enough that a genuinely reply-less turn (e.g. an
+// interrupt) doesn't leave a phantom spinner. See `finalizing`.
+const FINALIZE_GRACE_MS = 8000;
 
 // One option in an AskUserQuestion, and one such question.
 interface QuestionOption {
@@ -255,6 +261,15 @@ export function MirrorView({
   const [compactProg, setCompactProg] = useState<{ pct: number; elapsed?: string } | null>(null);
   const [status, setStatus] = useState("");
   const [bgBusy, setBgBusy] = useState(false); // idle but a run_in_background task lingers
+  // "Finalizing" bridges the gap between claude finishing (status flips to idle — its
+  // Stop hook, or the TUI heal firing once the spinner clears during answer streaming)
+  // and the reply actually landing in the transcript jsonl a poll later. In that window
+  // the naive indicator would blink off over an empty mirror, so the user sees the
+  // spinner vanish with no answer yet and thinks it stalled. While finalizing we keep the
+  // typing indicator up and keep polling fast until the reply renders (or a grace lapses).
+  const [finalizing, setFinalizing] = useState(false);
+  const finalizingRef = useRef(false);
+  const wasWorkingRef = useRef(false); // saw "working" since the last landed reply
   const [tasks, setTasks] = useState<TaskItem[]>([]); // current ToDo list (Task tool calls)
   // Prompts claude reports queued into the RUNNING turn (queue-operation events) — sent
   // mid-run from this composer or typed in the raw terminal, not yet injected. Matching
@@ -641,6 +656,9 @@ export function MirrorView({
     setTermState("");
     setStatus("");
     setBgBusy(false);
+    setFinalizing(false); // the idle→reply bridge belongs to the old session
+    finalizingRef.current = false;
+    wasWorkingRef.current = false;
     setTasks([]);
     setQueuedPrompts([]);
     setAlive(!!sessionMeta?.alive);
@@ -783,7 +801,7 @@ export function MirrorView({
         /* transient; retry on the next tick */
       }
       if (!alive) return;
-      timer = setTimeout(tick, statusRef.current === "working" || bgBusyRef.current ? 1200 : 3000);
+      timer = setTimeout(tick, statusRef.current === "working" || bgBusyRef.current || finalizingRef.current ? 1200 : 3000);
     };
     tickRef.current = () => {
       if (timer) clearTimeout(timer);
@@ -1206,6 +1224,12 @@ export function MirrorView({
   // 再同期するので楽観的な状態変更は不要。
   const sendInterrupt = async () => {
     if (sending) return;
+    // An explicit stop (also plan-reject / question-cancel) means the user does NOT expect
+    // a reply to render, so disarm the idle→reply bridge — otherwise the spinner would
+    // linger over an interrupted, reply-less turn until the grace lapsed.
+    wasWorkingRef.current = false;
+    finalizingRef.current = false;
+    setFinalizing(false);
     setSending(true);
     const res = await sessionTurn(session, "interrupt");
     if (!res.ok) toast(res.message || tr("mirror.stop_failed"));
@@ -1506,6 +1530,53 @@ export function MirrorView({
   const extras = [...queuedTurns, ...echoTurns];
   const baseTurns = coalesceUserActions(turns);
   const groups = groupTurns(extras.length ? [...baseTurns, ...extras] : baseTurns);
+
+  // replyPending: the newest user prompt has no assistant reply after it yet — i.e. the
+  // answer to the latest turn hasn't rendered. This is the signal that the mirror is still
+  // waiting for the reply even if the session already reads idle.
+  const replyPending = awaitingReply(groups);
+
+  // Hold the "working" indicator across the idle→reply-renders gap (see `finalizing`).
+  // finalizingRef is set SYNCHRONOUSLY alongside the state so the poll loop's next-tick
+  // cadence sees it immediately; entering the hold also kicks a fast re-poll, because the
+  // tick that first read idle already scheduled the slow (3s) interval before this ran.
+  const setFinalize = (on: boolean) => {
+    finalizingRef.current = on;
+    setFinalizing(on);
+  };
+  useEffect(() => {
+    if (status === "working" || bgBusy) {
+      wasWorkingRef.current = true; // a turn is (or was just) running
+      setFinalize(false);
+      return;
+    }
+    if (!replyPending) {
+      // The reply has landed (or there's nothing to wait for): clear, and re-arm so the
+      // bridge only ever applies to a turn we actually watched run.
+      wasWorkingRef.current = false;
+      setFinalize(false);
+      return;
+    }
+    if (!wasWorkingRef.current) {
+      // replyPending but we never saw work this cycle (a plain history view whose last
+      // turn is an interrupted, reply-less prompt) — don't invent a spinner.
+      setFinalize(false);
+      return;
+    }
+    if (!finalizingRef.current) {
+      setFinalize(true);
+      tickRef.current?.(); // re-poll now instead of waiting out the slow interval
+    }
+    // Safety valve: an interrupted turn can end with no reply at all, so never hold
+    // forever — drop the indicator after a grace even if nothing lands.
+    const id = setTimeout(() => {
+      wasWorkingRef.current = false;
+      setFinalize(false);
+    }, FINALIZE_GRACE_MS);
+    return () => clearTimeout(id);
+    // setFinalize / refs are stable enough; re-run only on the signals that change the hold.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, bgBusy, replyPending]);
 
   // 新しい回答の自動読み上げ（P2）: ポーリングで append された新規 assistant ターンを
   // 朗読キューへ（通常はアクティブなペインのみ、ttsAutoReadAllPanes なら開いている全ペイン。
@@ -1925,7 +1996,7 @@ export function MirrorView({
             </div>
           </div>
         )}
-        {(status === "working" || bgBusy) && !pending && (
+        {(status === "working" || bgBusy || finalizing) && !pending && (
           <div className="mirror-typing" aria-label={tr("mirror.typing", { name: agentName })}>
             <span className="mt-who">{agentName}</span>
             <span className="typing-dots">
