@@ -1195,6 +1195,41 @@
     transform: translateY(-3px);
   }
 }
+/* Jump-to-latest affordance. Sticky at the bottom of the scroll body (a zero-height
+   wrapper so it never adds scrollable space), centered, floating just above the composer.
+   Shown only while the user has scrolled up off the bottom (auto-follow paused). */
+.mirror-jump-wrap {
+  position: sticky;
+  bottom: 10px;
+  height: 0;
+  display: flex;
+  justify-content: center;
+  pointer-events: none; /* let clicks fall through the zero-height strip… */
+  z-index: 4;
+}
+.mirror-jump {
+  pointer-events: auto; /* …except on the button itself */
+  transform: translateY(-8px);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--fg);
+  background: var(--chat-bg, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.22);
+  cursor: pointer;
+}
+.mirror-jump:hover {
+  background: var(--hover-bg);
+}
+.mirror-jump .codicon {
+  font-size: 13px;
+}
+
 /* A faint trace of claude's tool activity, interleaved between text parts. Kept
    low-contrast and single-line so it reads as "background work", not content. */
 .mt-tool {
