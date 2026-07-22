@@ -50,6 +50,20 @@ type scheduleDTO struct {
 	LastStatus    string `json:"last_status,omitempty"`
 	CreatedAt     string `json:"created_at,omitempty"`
 	UpdatedAt     string `json:"updated_at,omitempty"`
+	// Warning is set on a create/run_now response when the scheduler goroutine is not
+	// running on this deployment — the schedule is stored but will never fire until an
+	// operator enables it (AF_SCHEDULER_INTERVAL). Empty otherwise. The operator relays it.
+	Warning string `json:"warning,omitempty"`
+}
+
+// withSchedulerWarning stamps the "scheduler disabled" note onto a DTO when the scheduler
+// goroutine is not running, so create/run_now do not silently succeed on a deployment that
+// never fires anything. A no-op when the scheduler is enabled.
+func withSchedulerWarning(d scheduleDTO) scheduleDTO {
+	if !schedulerRunning {
+		d.Warning = "このデプロイでは定時実行スケジューラが無効（AF_SCHEDULER_INTERVAL 未設定）のため、登録しても発火しません。運用者に有効化を依頼してください。"
+	}
+	return d
 }
 
 func scheduleToDTO(s Schedule) scheduleDTO {
@@ -191,7 +205,7 @@ func (a scheduleAPI) create(w http.ResponseWriter, r *http.Request, mv Membershi
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	writeJSON(w, http.StatusCreated, scheduleToDTO(s))
+	writeJSON(w, http.StatusCreated, withSchedulerWarning(scheduleToDTO(s)))
 }
 
 // update patches a schedule. Nil pointer fields are left unchanged; when the spec or tz
@@ -271,6 +285,16 @@ func (a scheduleAPI) resume(w http.ResponseWriter, r *http.Request, mv Membershi
 		writeAPIErr(w, aerr)
 		return
 	}
+	// A spent `once` whose instant is in the past must not be resumed: initialNextRun
+	// would return that past instant and it would fire again immediately. Reject so the
+	// operator creates a fresh schedule instead of silently re-running a one-shot.
+	if sch.SpecKind == "once" {
+		if t, perr := parseOnce(sch.Spec); perr == nil && !t.After(time.Now().UTC()) {
+			writeAPIErr(w, &apiError{http.StatusBadRequest, "once_in_past",
+				"この once スケジュールは指定時刻を過ぎているため再開できません。新しく作成してください"})
+			return
+		}
+	}
 	next, err := initialNextRun(sch, time.Now().UTC())
 	if err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_spec", err.Error()})
@@ -299,11 +323,23 @@ func (a scheduleAPI) runNow(w http.ResponseWriter, r *http.Request, mv Membershi
 		writeAPIErr(w, &apiError{http.StatusConflict, "schedule_paused", "schedule is paused; resume it before run_now"})
 		return
 	}
-	if err := a.store.SetScheduleEnabled(r.Context(), id, mv.MembershipID, true, nowTS(), nowTS()); err != nil {
+	// Set next_run to now MINUS the schedule's fire jitter so the tick's jitter gate
+	// (now >= next_run+jitter) passes immediately — run_now is a "fire now" affordance and
+	// must not inherit the cron spread delay. For interval/once jitter is 0, so this is now.
+	now := time.Now().UTC()
+	next := now.Add(-jitterForSchedule(sch)).Format(time.RFC3339)
+	if err := a.store.SetScheduleEnabled(r.Context(), id, mv.MembershipID, true, next, nowTS()); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	a.writeOne(w, r, id, mv)
+	// Re-read and return, surfacing the disabled-scheduler warning: run_now on a
+	// deployment with no scheduler goroutine would otherwise report success yet never fire.
+	sch, aerr = a.getOwned(r, id, mv)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	writeJSON(w, http.StatusOK, withSchedulerWarning(scheduleToDTO(sch)))
 }
 
 func (a scheduleAPI) runs(w http.ResponseWriter, r *http.Request, mv MembershipView) {
@@ -351,7 +387,10 @@ type schedulePatch struct {
 	NewBranch     *bool   `json:"new_branch"`
 	Prompt        *string `json:"prompt"`
 	OverlapPolicy *string `json:"overlap_policy"`
-	OwnerConv     *string `json:"owner_conv"`
+	// owner_conv is intentionally NOT patchable: create stamps it to the operator's own
+	// conversation (mcp_stdio withOwnerConv) so completion reports always return to the
+	// operator. Letting update change it would let a report be redirected within the
+	// membership, so it is fixed for the schedule's lifetime.
 }
 
 // apply overlays the non-nil fields onto sch and reports whether the timing (spec_kind/
@@ -382,7 +421,6 @@ func (p schedulePatch) apply(sch *Schedule) (specChanged bool) {
 	set(&sch.Model, p.Model)
 	set(&sch.Repo, p.Repo)
 	set(&sch.Worktree, p.Worktree)
-	set(&sch.OwnerConv, p.OwnerConv)
 	if p.Prompt != nil {
 		sch.Prompt = *p.Prompt // prompt kept verbatim (leading/trailing space may matter)
 	}
