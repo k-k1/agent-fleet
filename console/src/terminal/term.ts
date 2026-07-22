@@ -475,6 +475,17 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
   if (term.textarea) {
     term.textarea.addEventListener("focus", () => {
       reconnect(paneId);
+      // Universal black-pane recovery. However a visible pane reached a black/stale state —
+      // a split-pane mount race that painted into a not-yet-laid-out grid, a canvas whose
+      // atlas went stale, a reveal that beat layout — the ONE gesture the user reaches for is
+      // to click (focus) the pane. reconnect() only helps a dropped/stalled SOCKET; a
+      // black-but-live pane needs a RENDERER repaint, and fitInst()/the ResizeObserver only
+      // repaint when the grid SHAPE changes (fit() is a no-op otherwise), so focusing an
+      // unchanged-shape black pane used to do nothing — leaving reload as the only cure. Force
+      // an unconditional clear+repaint here so one click reliably restores any black pane. Runs
+      // only on genuine focus-in (not the 4s poll churn), so it can't cause the flicker f67bfd4
+      // guarded against, and forceFit no-ops on a hidden pane (zero client rects).
+      forceFit(inst(paneId));
       // First focus opens the keyboard (the visualViewport resize will place the
       // prompt); this handles switching panes while the keyboard is already up.
       requestAnimationFrame(() => keepInputVisible(inst(paneId)));
@@ -630,6 +641,16 @@ export function sendInput(paneId: string, data: string) {
 
 export function fit(paneId: string) {
   fitInst(inst(paneId));
+}
+
+// repaint forces a visible pane's grid to re-sync AND fully repaint (forceFit), regardless of
+// whether the grid shape changed. This is the black-pane recovery the plain fit() can't do
+// (fit() no-ops on an unchanged shape). Called when a pane becomes ACTIVE — on touch,
+// focusTerm() is a no-op so the focus-handler repaint never fires, and the mount-race "never
+// painted" black is renderer-independent (it hits the DOM renderer too), so activating a pane
+// must repaint it directly. No-op on a hidden pane (forceFit bails on zero client rects).
+export function repaint(paneId: string) {
+  forceFit(inst(paneId));
 }
 
 // setTermBackground tints a pane's terminal background (per session kind / SSM host).
