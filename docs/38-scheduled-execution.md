@@ -341,11 +341,21 @@ reuse セッションでは driver 切替中 `409 busy_switch` にも遭遇し�
   vitest 9件。ライト/ダーク両テーマを headless Chromium で描画確認。console test 374／CP 199／
   typecheck／i18n-lint／build 緑。**残（後続）**: 長寿命セッション再利用モード（`session_mode=
   reuse`・`reuse_target`）＝**P6**（下記「長寿命セッション再利用モード」節で設計中）。
-- **P6（長寿命セッション再利用モード）**: **設計中**（下記専用節が正本・2026-07-23 起票）。
-  同一の長寿命セッションへ毎発火プロンプトを送り、文脈を継続させる。ローテーション
-  （量／期間／暦で新品に戻す）・overlap 再公開・reuse_target 解決を含む。実装は未着手。
+- **P6（長寿命セッション再利用モード）**: **実装済み**（下記専用節が設計正本・2026-07-23）。
+  同一の長寿命セッションへ毎発火プロンプトを送り（`send_to_session` 経由）、文脈を継続させる。
+  CP: `scheduler_reuse.go`（`fireReuse`＝pinned/managed 2モード・rotation 評価・CP側
+  send/resume/input・managed create から name 取得→台帳更新・overlap 適用）＋
+  `scheduler_wake.go` の `fire()` が `SessionMode=="reuse"` を分岐。DB: migrations/0024＋
+  pg/0007（`reuse_session`/`reuse_started_at`/`reuse_run_count`/`rotation`/`missing_target_policy`）
+  ＋`SetScheduleReuse`。API: `schedule.go` DTO/validate に rotation・missing_target_policy、
+  reuse 用に overlap_policy を再公開。MCP: create/update_schedule に
+  session_mode/reuse_target/rotation/missing_target_policy/overlap_policy 引数、persona に
+  reuse 確認ガード。テスト CP14 件（rotation 純関数＋fireReuse pinned/managed/rotate/missing/
+  overlap の fake-agent 統合）。**意図的な限界**（決定 3）: 使用率トリガ `context_pct` は未実装
+  （停止中 WS で usage を読めないため後続 best-effort）。**残**: 実フリート再ビルド後の実機目視、
+  Console のスケジュール一覧に reuse/rotation の表示（現状 read-only 台帳は DTO に出るが UI 未装飾）。
 
-## 長寿命セッション再利用モード（`session_mode=reuse`・設計中 2026-07-23）
+## 長寿命セッション再利用モード（`session_mode=reuse`・実装済み 2026-07-23）
 
 v1 コアは `session_mode=new`（毎発火で新規セッション）のみ。reuse は**同一の長寿命
 セッションへ毎回プロンプトを送り、会話文脈を継続させる**モード。「昨日の続きをやらせる」
