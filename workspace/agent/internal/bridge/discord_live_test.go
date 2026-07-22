@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -51,6 +52,21 @@ func TestDiscordLiveSend(t *testing.T) {
 			if err := tp.Send(Message{Kind: kind, SessionName: "af-live-thread",
 				DisplayName: "AF live thread test", SessionKind: "claude"}); err != nil {
 				t.Fatalf("thread %s: %v", kind, err)
+			}
+		}
+		// 全文ブリッジ (docs/37 将来の方向): with AF_DISCORD_FULLTEXT=1, post an
+		// answer-ready whose body exceeds one message so chunking + the scrubber
+		// can be eyeballed in the thread (mention on the first chunk only).
+		if os.Getenv("AF_DISCORD_FULLTEXT") == "1" {
+			ftp := &discordProvider{creds: secrets.DiscordCreds{Token: token,
+				ChannelID: p.creds.ChannelID, Threads: true, FullText: true,
+				MentionUserID: os.Getenv("AF_DISCORD_MENTION")}}
+			body := "全文ブリッジのライブ確認です。以下は分割の確認用に長くしています。\n\n" +
+				strings.Repeat("あいうえお かきくけこ さしすせそ たちつてと なにぬねの ", 120) +
+				"\n\nダミーの鍵: xoxb-123456789012-AbCdEfGhIjKlMn（伏字化されるはず）"
+			if err := ftp.Send(Message{Kind: "answer-ready", SessionName: "af-live-fulltext",
+				DisplayName: "AF live full-text test", SessionKind: "claude", Body: body}); err != nil {
+				t.Fatalf("full-text send: %v", err)
 			}
 		}
 	}
