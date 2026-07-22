@@ -85,6 +85,76 @@ func discordStatus(s *secrets.Data) map[string]any {
 	return m
 }
 
+// handleDiscordInspect (POST /connections/discord/inspect {token}) is step 1 of
+// the card's setup wizard: validate the pasted bot token and hand back the bot
+// name plus a ready-made invite URL (application id resolved from the token),
+// so the user never touches the OAuth2 URL Generator. Nothing is stored yet.
+func handleDiscordInspect(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Token string `json:"token"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	token := strings.TrimSpace(req.Token)
+	if token == "" {
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnDiscordTokenRequired, "enter a bot token")
+		return
+	}
+	botName, err := bridge.DiscordBotName(token)
+	if errors.Is(err, bridge.ErrUnauthorized) {
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnDiscordTokenInvalid, "Discord rejected the bot token")
+		return
+	}
+	if err != nil {
+		httpx.WriteErr(w, http.StatusBadGateway, "discord_unreachable", err.Error())
+		return
+	}
+	app, err := bridge.DiscordAppInfo(token)
+	if err != nil {
+		httpx.WriteErr(w, http.StatusBadGateway, "discord_unreachable", err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"botName": botName, "applicationId": app.ID, "inviteUrl": bridge.DiscordInviteURL(app.ID),
+	})
+}
+
+// handleDiscordGuilds (POST /connections/discord/guilds {token}) is step 2: the
+// card polls it after showing the invite link and renders a channel picker the
+// moment the bot lands in a guild. Text channels only; no privileged intents.
+func handleDiscordGuilds(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Token string `json:"token"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	token := strings.TrimSpace(req.Token)
+	if token == "" {
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnDiscordTokenRequired, "enter a bot token")
+		return
+	}
+	gs, err := bridge.DiscordGuilds(token)
+	if err != nil {
+		httpx.WriteErr(w, http.StatusBadGateway, "discord_unreachable", err.Error())
+		return
+	}
+	out := []map[string]any{}
+	for _, g := range gs {
+		chs, err := bridge.DiscordGuildChannels(token, g.ID)
+		if err != nil {
+			continue // e.g. missing view permission in this guild — skip, keep the rest
+		}
+		var cl []map[string]string
+		for _, c := range chs {
+			cl = append(cl, map[string]string{"id": c.ID, "name": c.Name})
+		}
+		out = append(out, map[string]any{"id": g.ID, "name": g.Name, "channels": cl})
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"guilds": out})
+}
+
 type discordConnReq struct {
 	Token     string   `json:"token"`
 	ChannelID string   `json:"channelId"`
@@ -155,7 +225,18 @@ func handlePutDiscordConn(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, discordStatus(s))
+	res := discordStatus(s)
+	// Fire one synchronous test notification so "did it arrive?" is answered on
+	// the spot. The connection is saved either way — a failed test (e.g. missing
+	// channel permission) is surfaced to the card, not treated as a bad config.
+	if ps := bridge.Providers(s, nil); len(ps) > 0 {
+		if err := ps[0].Send(bridge.Message{Kind: "bridge-test"}); err != nil {
+			res["testError"] = err.Error()
+		} else {
+			res["test"] = "sent"
+		}
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
 func handleDeleteDiscordConn(w http.ResponseWriter, r *http.Request) {

@@ -143,39 +143,91 @@ const DC_EVENTS: [string, string][] = [
   ["session-report", "ops.ev_report"],
 ];
 
-// DiscordCard: the chat-bridge connection (docs/37 P1). The user pastes their OWN
-// bot's token (private guild — no central shared app) and exactly one destination:
-// their Discord user ID (DM) or a channel ID. Event toggles pick which notification
-// groups are pushed; the token is stored encrypted container-side like the ops keys.
+// DiscordCard: the chat-bridge connection (docs/37 P1) as a 3-step wizard. The
+// user pastes their OWN bot's token (private guild — no central shared app);
+// everything else is derived from it: the invite URL is generated from the
+// token's application id (no OAuth2 URL Generator), the destination is picked
+// from the bot's guild channels (no Developer Mode / numeric IDs), and connect
+// fires a test notification so "did it arrive?" is answered on the spot. DM
+// mode (manual user ID) remains as the advanced fallback.
 function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
   const tr = useT();
   const toast = useToast();
   const [token, setToken] = useState("");
-  const [mode, setMode] = useState<"dm" | "channel">("dm");
-  const [destId, setDestId] = useState("");
+  const [insp, setInsp] = useState<{ botName: string; inviteUrl: string; token: string } | null>(null);
+  const [chans, setChans] = useState<{ id: string; label: string }[] | null>(null);
+  const [channel, setChannel] = useState("");
+  const [dm, setDm] = useState(false);
+  const [userId, setUserId] = useState("");
   const [events, setEvents] = useState<string[]>(DC_EVENTS.map(([k]) => k));
   const [busy, setBusy] = useState(false);
-  const ok = token.trim() !== "" && destId.trim() !== "" && events.length > 0;
+  const ok = !!insp && (dm ? userId.trim() !== "" : channel !== "") && events.length > 0;
 
   const toggle = (key: string, on: boolean) =>
     setEvents((prev) => (on ? [...prev.filter((k) => k !== key), key] : prev.filter((k) => k !== key)));
 
+  const verify = async () => {
+    if (!token.trim()) return;
+    setBusy(true);
+    try {
+      const res = await apiJSON("api/connections/discord/inspect", "POST", { token: token.trim() });
+      if (res && res.error) {
+        toast(tr("conn.connect_failed", { msg: errText(res.error) }));
+        return;
+      }
+      setInsp({ botName: res.botName, inviteUrl: res.inviteUrl, token: token.trim() });
+      setToken("");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Poll the bot's guilds while the invite is pending; the moment it lands in a
+  // server the channel picker fills in and the poll stops.
+  const found = !!(chans && chans.length > 0);
+  useEffect(() => {
+    if (!insp || dm || found) return;
+    let stopped = false;
+    const load = async () => {
+      const res = await apiJSON("api/connections/discord/guilds", "POST", { token: insp.token });
+      if (stopped || !res || res.error) return; // unreachable etc. — keep waiting
+      const guilds = Array.isArray(res.guilds) ? res.guilds : [];
+      const opts = guilds.flatMap((g: any) =>
+        (g.channels || []).map((c: any) => ({
+          id: c.id,
+          label: (guilds.length > 1 ? g.name + " / " : "") + "#" + c.name,
+        })),
+      );
+      setChans(opts);
+      if (opts.length === 1) setChannel(opts[0].id);
+    };
+    void load();
+    const t = setInterval(load, 3000);
+    return () => {
+      stopped = true;
+      clearInterval(t);
+    };
+  }, [insp, dm, found]);
+
   const save = async () => {
-    if (!ok) return;
+    if (!ok || !insp) return;
     setBusy(true);
     try {
       const res = await apiJSON("api/connections/discord", "PUT", {
-        token: token.trim(),
-        channelId: mode === "channel" ? destId.trim() : "",
-        userId: mode === "dm" ? destId.trim() : "",
+        token: insp.token,
+        channelId: dm ? "" : channel,
+        userId: dm ? userId.trim() : "",
         events,
       });
       if (res && res.error) {
         toast(tr("conn.connect_failed", { msg: errText(res.error) }));
         return;
       }
-      setToken("");
-      setDestId("");
+      toast(res?.testError ? tr("ops.dc_test_failed", { msg: String(res.testError) }) : tr("ops.dc_test_sent"));
+      setInsp(null);
+      setChans(null);
+      setChannel("");
+      setUserId("");
       reload();
     } finally {
       setBusy(false);
@@ -207,7 +259,7 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
           )}
           <DisconnectButton onClick={disconnect} />
         </div>
-      ) : (
+      ) : !insp ? (
         <div className="p-body">
           <div className="flow">
             <input
@@ -217,23 +269,44 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
               value={token}
               onChange={(e) => setToken(e.target.value)}
             />
-          </div>
-          <div className="flow">
-            <select className="cinput" value={mode} onChange={(e) => setMode(e.target.value as "dm" | "channel")}>
-              <option value="dm">{tr("ops.dc_mode_dm")}</option>
-              <option value="channel">{tr("ops.dc_mode_channel")}</option>
-            </select>
-            <input
-              className="cinput"
-              type="text"
-              placeholder={tr(mode === "dm" ? "ops.dc_user_placeholder" : "ops.dc_channel_placeholder")}
-              value={destId}
-              onChange={(e) => setDestId(e.target.value)}
-            />
-            <button disabled={busy || !ok} onClick={save}>
-              {tr("conn.connect")}
+            <button disabled={busy || !token.trim()} onClick={verify}>
+              {tr("ops.dc_verify")}
             </button>
           </div>
+          <Hint>{tr("ops.dc_hint")}</Hint>
+        </div>
+      ) : (
+        <div className="p-body">
+          <div className="flow">
+            <span className="p-em">{insp.botName}</span>
+            <button onClick={() => window.open(insp.inviteUrl, "_blank", "noopener")}>
+              {tr("ops.dc_invite")}
+            </button>
+          </div>
+          {dm ? (
+            <div className="flow">
+              <input
+                className="cinput"
+                type="text"
+                placeholder={tr("ops.dc_user_placeholder")}
+                value={userId}
+                onChange={(e) => setUserId(e.target.value)}
+              />
+            </div>
+          ) : !found ? (
+            <p className="muted">{tr("ops.dc_waiting_guild")}</p>
+          ) : (
+            <div className="flow">
+              <select className="cinput" value={channel} onChange={(e) => setChannel(e.target.value)}>
+                <option value="">{tr("ops.dc_channel_select")}</option>
+                {chans!.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="ps-row">
             <span className="ps-label">{tr("ops.dc_events_label")}</span>
           </div>
@@ -243,7 +316,14 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
               <OnOff value={events.includes(key)} onChange={(on) => toggle(key, on)} />
             </div>
           ))}
-          <Hint>{tr("ops.dc_hint")}</Hint>
+          <div className="flow">
+            <button disabled={busy || !ok} onClick={save}>
+              {tr("conn.connect")}
+            </button>
+            <button className="ghost" onClick={() => setDm(!dm)}>
+              {tr(dm ? "ops.dc_advanced_channel" : "ops.dc_advanced_dm")}
+            </button>
+          </div>
         </div>
       )}
     </ProviderCard>

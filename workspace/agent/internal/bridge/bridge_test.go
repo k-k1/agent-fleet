@@ -64,6 +64,15 @@ func fakeDiscord(t *testing.T, wantToken string) (*httptest.Server, *[]map[strin
 		switch {
 		case r.Method == "GET" && r.URL.Path == "/users/@me":
 			_ = json.NewEncoder(w).Encode(map[string]string{"username": "af-bot"})
+		case r.Method == "GET" && r.URL.Path == "/oauth2/applications/@me":
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "app1", "name": "af"})
+		case r.Method == "GET" && r.URL.Path == "/users/@me/guilds":
+			_ = json.NewEncoder(w).Encode([]map[string]string{{"id": "g1", "name": "My Guild"}})
+		case r.Method == "GET" && r.URL.Path == "/guilds/g1/channels":
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "c1", "name": "general", "type": 0},
+				{"id": "v1", "name": "voice", "type": 2},
+			})
 		case r.Method == "POST" && r.URL.Path == "/users/@me/channels":
 			var body map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&body)
@@ -124,6 +133,32 @@ func TestDiscordBotNameUnauthorized(t *testing.T) {
 	}
 	if _, err := DiscordBotName("wrong"); err == nil || !strings.Contains(err.Error(), "unauthorized") {
 		t.Fatalf("err=%v, want ErrUnauthorized", err)
+	}
+}
+
+// The setup-wizard REST shapes (docs/37 P1 追補): app info → invite URL,
+// guild list, and text-channel filtering for the picker.
+func TestDiscordWizardEndpoints(t *testing.T) {
+	srv, _ := fakeDiscord(t, "tok")
+	old := discordAPIBase
+	discordAPIBase = srv.URL
+	t.Cleanup(func() { discordAPIBase = old })
+
+	app, err := DiscordAppInfo("tok")
+	if err != nil || app.ID != "app1" {
+		t.Fatalf("app=%+v err=%v", app, err)
+	}
+	url := DiscordInviteURL(app.ID)
+	if !strings.Contains(url, "client_id=app1") || !strings.Contains(url, "permissions=3072") || !strings.Contains(url, "scope=bot") {
+		t.Fatalf("invite url=%q", url)
+	}
+	gs, err := DiscordGuilds("tok")
+	if err != nil || len(gs) != 1 || gs[0].Name != "My Guild" {
+		t.Fatalf("guilds=%+v err=%v", gs, err)
+	}
+	chs, err := DiscordGuildChannels("tok", "g1")
+	if err != nil || len(chs) != 1 || chs[0].ID != "c1" {
+		t.Fatalf("channels=%+v err=%v (voice must be filtered)", chs, err)
 	}
 }
 
