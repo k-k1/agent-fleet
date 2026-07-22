@@ -26,6 +26,21 @@ export function latestWorkPromptIndex(groups: PromptBoundaryLike[]): number {
   return -1;
 }
 
+// awaitingReply: the newest user prompt has no assistant reply after it yet — the mirror
+// is still waiting for the answer to the latest turn. Used to hold the "working" indicator
+// across the gap between a session reading idle and its reply actually landing in the
+// transcript (the reply is the first non-user group after the last user group). Returns
+// false when there's no prompt at all (a fresh or history-only view has nothing pending).
+export function awaitingReply(groups: PromptBoundaryLike[]): boolean {
+  let u = -1;
+  for (let i = groups.length - 1; i >= 0; i--) {
+    if (groups[i].role === "user") { u = i; break; }
+  }
+  if (u < 0) return false;
+  const reply = groups[u + 1];
+  return !(reply && reply.role !== "user");
+}
+
 export function confirmedWorkEnd(parts: MirrorPartLike[]): number {
   let boundary = -1;
   for (let i = 0; i < parts.length; i++) {

@@ -49,8 +49,9 @@ import { kindIcon, kindLabel, kindShort, kindClass } from "../../lib/sessionkind
 import { agentOf } from "../../agents/registry.ts";
 import { hasLaunchSeed, takeLaunchSeed } from "../../lib/launchSeed.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
-import { confirmedWorkEnd, latestWorkPromptIndex, textOfParts, workSplit } from "./mirrorParts.ts";
+import { awaitingReply, confirmedWorkEnd, latestWorkPromptIndex, textOfParts, workSplit } from "./mirrorParts.ts";
 import { echoLanded, type PendingEcho } from "./pendingEcho.ts";
+import { PLAN_APPROVE_KEYS, planOutcome } from "./planDecision.ts";
 import {
   buildClaudeSeq,
   buildMenuSeq,
@@ -65,6 +66,16 @@ const q = encodeURIComponent;
 // Transcript window size (jsonl lines) for the initial tail load and each backward page.
 // The server clamps it; matches docs/decisions/0009 (P2).
 const WINDOW = 400;
+
+// How long the "working" indicator is held after a turn reads idle while its reply is
+// still not in the transcript (the idle→reply-renders gap). Long enough to cover the
+// jsonl-write / poll-cadence lag, short enough that a genuinely reply-less turn (e.g. an
+// interrupt) doesn't leave a phantom spinner. See `finalizing`.
+const FINALIZE_GRACE_MS = 8000;
+
+// The user counts as "stuck to the bottom" (auto-follow on) while within this many px of
+// the end. Above it, following stops and the jump-to-latest button appears.
+const NEAR_BOTTOM_PX = 80;
 
 // One option in an AskUserQuestion, and one such question.
 interface QuestionOption {
@@ -254,6 +265,18 @@ export function MirrorView({
   const [compactProg, setCompactProg] = useState<{ pct: number; elapsed?: string } | null>(null);
   const [status, setStatus] = useState("");
   const [bgBusy, setBgBusy] = useState(false); // idle but a run_in_background task lingers
+  // "Finalizing" bridges the gap between claude finishing (status flips to idle — its
+  // Stop hook, or the TUI heal firing once the spinner clears during answer streaming)
+  // and the reply actually landing in the transcript jsonl a poll later. In that window
+  // the naive indicator would blink off over an empty mirror, so the user sees the
+  // spinner vanish with no answer yet and thinks it stalled. While finalizing we keep the
+  // typing indicator up and keep polling fast until the reply renders (or a grace lapses).
+  const [finalizing, setFinalizing] = useState(false);
+  const finalizingRef = useRef(false);
+  const wasWorkingRef = useRef(false); // saw "working" since the last landed reply
+  // Show a "jump to latest ↓" affordance whenever the user has scrolled up off the bottom
+  // (auto-follow is paused) so new/streaming content below is discoverable with one click.
+  const [showJump, setShowJump] = useState(false);
   const [tasks, setTasks] = useState<TaskItem[]>([]); // current ToDo list (Task tool calls)
   // Prompts claude reports queued into the RUNNING turn (queue-operation events) — sent
   // mid-run from this composer or typed in the raw terminal, not yet injected. Matching
@@ -310,10 +333,12 @@ export function MirrorView({
   const tickRef = useRef<(() => void) | null>(null); // lets send() trigger an immediate refresh
   const bodyRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  // Was the user pinned to the bottom at their last scroll? Only then do we auto-follow
-  // new content; if they've scrolled up to read history we leave their position alone.
-  // Updated on scroll (not on append — appending grows scrollHeight without a scroll
-  // event), so it reflects the user's intent, not the just-added content.
+  // Is the user stuck to the bottom (auto-follow on)? Updated HONESTLY on every scroll —
+  // user drags AND our own programmatic scrolls both flow through onBodyScroll, so the
+  // flag always matches where the viewport actually is. (Appending content grows
+  // scrollHeight without firing a scroll event, so a follow that keeps us pinned leaves
+  // this true; scrolling up to read flips it false and we stop following.) This replaces
+  // the old scroll-event-suppression dance, which drifted out of sync with reality.
   const atBottomRef = useRef(true);
   // The idx of the assistant block whose TOP we last brought to the viewport top. A fresh
   // reply is anchored there once (so the user reads it from its first line) and then left
@@ -325,10 +350,6 @@ export function MirrorView({
   // (docs/24). Kept separate from anchoredIdxRef so the top-anchor and the answer-anchor each
   // fire exactly once per reply.
   const answerAnchoredRef = useRef<number | undefined>(undefined);
-  // Set just before we scroll the body ourselves so the scroll handler can tell our own
-  // programmatic scroll apart from a real user scroll (and not mistake anchoring-to-top
-  // for the user scrolling up to read history).
-  const selfScrollRef = useRef(false);
   // False until the first content settle for a session. On open we land at the bottom (as
   // before) and mark the reply already present as "seen", so only replies that arrive while
   // the user is watching get anchored to the top — history isn't retro-scrolled.
@@ -640,6 +661,9 @@ export function MirrorView({
     setTermState("");
     setStatus("");
     setBgBusy(false);
+    setFinalizing(false); // the idle→reply bridge belongs to the old session
+    finalizingRef.current = false;
+    wasWorkingRef.current = false;
     setTasks([]);
     setQueuedPrompts([]);
     setAlive(!!sessionMeta?.alive);
@@ -659,6 +683,7 @@ export function MirrorView({
       return [];
     });
     atBottomRef.current = true; // a freshly opened session starts pinned to the bottom
+    setShowJump(false); // …so no jump-to-latest affordance until they scroll up
     anchoredIdxRef.current = undefined; // no reply anchored yet in the new session
     answerAnchoredRef.current = undefined; // …nor its final answer
     didInitRef.current = false; // re-run the "land at bottom on open" settle for this session
@@ -782,7 +807,7 @@ export function MirrorView({
         /* transient; retry on the next tick */
       }
       if (!alive) return;
-      timer = setTimeout(tick, statusRef.current === "working" || bgBusyRef.current ? 1200 : 3000);
+      timer = setTimeout(tick, statusRef.current === "working" || bgBusyRef.current || finalizingRef.current ? 1200 : 3000);
     };
     tickRef.current = () => {
       if (timer) clearTimeout(timer);
@@ -809,23 +834,24 @@ export function MirrorView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [turns, status]);
 
-  // Keep the conversation in view as it grows — but ONLY when the user is at the bottom
-  // (atBottomRef, set on scroll). If they've scrolled up to read, we never move them; the
-  // poll replaces `pending` with a fresh array every tick, so an unconditional scroll here
-  // yanked them back down every 1.2–3s.
+  // Keep the conversation in view as it grows — but ONLY while the user is stuck to the
+  // bottom (atBottomRef). If they've scrolled up to read, we never move them.
+  //
+  // Runs as a LAYOUT effect: it fires synchronously after the DOM mutates but BEFORE the
+  // browser paints or dispatches scroll events. That matters at completion, when the work
+  // trace folds into a disclosure and the content height suddenly shrinks — reading/
+  // scrolling here first means we set a valid scrollTop before the browser would clamp it
+  // and fire a stray scroll (which used to race this effect and mis-place the viewport).
   //
   // While a reply is still WORKING we follow the bottom so the streamed 作業過程 / answer stays
-  // in view — the user watches progress live. We do NOT leave them stranded at the end of a
-  // long answer, though: the moment the reply COMPLETES we re-anchor once to the FINAL
-  // ANSWER's first line at the viewport top (tracked by its idx), so it reads from the start
-  // instead of the tail. After that anchor we leave the user alone.
-  useEffect(() => {
+  // in view. We do NOT strand the user at the end of a long answer, though: the moment the
+  // reply COMPLETES we re-anchor once to the FINAL ANSWER's first line at the viewport top
+  // (tracked by its idx), so it reads from the start instead of the tail. That upward scroll
+  // honestly flips atBottomRef→false via onBodyScroll, so afterwards the user is left alone.
+  useLayoutEffect(() => {
     if (!atBottomRef.current) return;
     const el = bodyRef.current;
     if (!el) return;
-    // Scrolling to the bottom lands the user "at the bottom", which is exactly what the
-    // scroll handler would record — so it needs no selfScroll guard (only the upward
-    // anchor-to-top below does, to avoid being read as the user leaving the bottom).
     const toBottom = () => {
       el.scrollTop = el.scrollHeight;
     };
@@ -868,9 +894,10 @@ export function MirrorView({
         anchoredIdxRef.current = replyIdx;
         answerAnchoredRef.current = undefined; // this reply's final answer hasn't been anchored yet
       }
-      // Still working — or idle but a background run (サブエージェント/Workflow) is still
-      // appending output — follow the bottom so the streamed 作業過程 / answer tail stays in view.
-      if (status === "working" || bgBusy) {
+      // Still working, a background run (サブエージェント/Workflow) is appending, or we're
+      // bridging the idle→reply gap (finalizing) — follow the bottom so the streamed tail
+      // (and the typing indicator) stay in view.
+      if (status === "working" || bgBusy || finalizing) {
         toBottom();
         return;
       }
@@ -886,10 +913,7 @@ export function MirrorView({
         if (work && answer) {
           answerAnchoredRef.current = replyIdx;
           const top = el.scrollTop + (answer.getBoundingClientRect().top - el.getBoundingClientRect().top) - 12;
-          if (Math.abs(el.scrollTop - top) >= 1) {
-            selfScrollRef.current = true;
-            el.scrollTop = Math.max(0, top);
-          }
+          el.scrollTop = Math.max(0, top); // upward scroll → onBodyScroll flips atBottomRef false
         } else if (body && !work) {
           answerAnchoredRef.current = replyIdx; // nothing folded — top already is the answer
         }
@@ -903,7 +927,7 @@ export function MirrorView({
     // fresh on every run; keeping them out of the deps avoids re-firing on unrelated
     // re-renders (e.g. every composer keystroke).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turns, pending, pendingPlan, pendingPerm, status, bgBusy, pendingSends, queuedPrompts]);
+  }, [turns, pending, pendingPlan, pendingPerm, status, bgBusy, finalizing, pendingSends, queuedPrompts]);
 
   // Keep the latest message in view when the body's OWN height changes — the ToDo /
   // 消費推移 / コンテキスト panels opening above it, the composer auto-growing, or a
@@ -916,26 +940,35 @@ export function MirrorView({
     const el = bodyRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => {
-      if (el.scrollHeight - el.scrollTop - el.clientHeight < 80) el.scrollTop = el.scrollHeight;
+      // Only re-pin if actually near the bottom right now (not just because atBottomRef says
+      // so) — a user parked at a freshly-anchored answer top must not be yanked down.
+      if (el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX) el.scrollTop = el.scrollHeight;
     });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
 
-  // Track whether the user is at (within 80px of) the bottom. Content appends grow
-  // scrollHeight without firing a scroll event, so this only changes on real user
-  // scrolling — exactly the "did they scroll up to read?" signal the effect above needs.
-  // When we anchor a new reply to the top ourselves, that upward scroll fires a scroll
-  // event too; selfScrollRef lets us skip it so it isn't misread as the user scrolling up
-  // off the bottom (which would switch following off).
+  // Track whether the user is stuck to the bottom, from the ACTUAL viewport position, on
+  // every scroll — user drags and our own follow/anchor scrolls alike. Content appends grow
+  // scrollHeight without a scroll event, so a poll that keeps us pinned leaves this true;
+  // scrolling up flips it false (and reveals the jump-to-latest button). Because our upward
+  // completion-anchor also flows through here, "leave the user alone after anchoring" falls
+  // out for free — no scroll-event suppression needed.
   const onBodyScroll = () => {
     const el = bodyRef.current;
     if (!el) return;
-    if (selfScrollRef.current) {
-      selfScrollRef.current = false;
-      return;
-    }
-    atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    const stuck = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
+    atBottomRef.current = stuck;
+    setShowJump((s) => (s === !stuck ? s : !stuck));
+  };
+
+  // Jump-to-latest button: snap to the bottom and re-arm auto-follow.
+  const jumpToBottom = () => {
+    const el = bodyRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    atBottomRef.current = true;
+    setShowJump(false);
   };
 
   // Page older history in (P2): fetch the window before the oldest line we hold and
@@ -1066,6 +1099,11 @@ export function MirrorView({
     const op = statusRef.current === "working" ? "steer" : "start";
     statusRef.current = "working";
     setStatus("working");
+    // Sending is an explicit "take me to the conversation": re-arm auto-follow so the
+    // optimistic echo below and the incoming reply are surfaced, even if the user had
+    // scrolled up to read history.
+    atBottomRef.current = true;
+    setShowJump(false);
     // Show the message immediately (optimistic echo) so it never looks lost while claude
     // is busy — reconciled away once its real user turn appears in the transcript.
     const echoId = ++echoSeqCounter;
@@ -1205,6 +1243,12 @@ export function MirrorView({
   // 再同期するので楽観的な状態変更は不要。
   const sendInterrupt = async () => {
     if (sending) return;
+    // An explicit stop (also plan-reject / question-cancel) means the user does NOT expect
+    // a reply to render, so disarm the idle→reply bridge — otherwise the spinner would
+    // linger over an interrupted, reply-less turn until the grace lapsed.
+    wasWorkingRef.current = false;
+    finalizingRef.current = false;
+    setFinalizing(false);
     setSending(true);
     const res = await sessionTurn(session, "interrupt");
     if (!res.ok) toast(res.message || tr("mirror.stop_failed"));
@@ -1505,6 +1549,53 @@ export function MirrorView({
   const extras = [...queuedTurns, ...echoTurns];
   const baseTurns = coalesceUserActions(turns);
   const groups = groupTurns(extras.length ? [...baseTurns, ...extras] : baseTurns);
+
+  // replyPending: the newest user prompt has no assistant reply after it yet — i.e. the
+  // answer to the latest turn hasn't rendered. This is the signal that the mirror is still
+  // waiting for the reply even if the session already reads idle.
+  const replyPending = awaitingReply(groups);
+
+  // Hold the "working" indicator across the idle→reply-renders gap (see `finalizing`).
+  // finalizingRef is set SYNCHRONOUSLY alongside the state so the poll loop's next-tick
+  // cadence sees it immediately; entering the hold also kicks a fast re-poll, because the
+  // tick that first read idle already scheduled the slow (3s) interval before this ran.
+  const setFinalize = (on: boolean) => {
+    finalizingRef.current = on;
+    setFinalizing(on);
+  };
+  useEffect(() => {
+    if (status === "working" || bgBusy) {
+      wasWorkingRef.current = true; // a turn is (or was just) running
+      setFinalize(false);
+      return;
+    }
+    if (!replyPending) {
+      // The reply has landed (or there's nothing to wait for): clear, and re-arm so the
+      // bridge only ever applies to a turn we actually watched run.
+      wasWorkingRef.current = false;
+      setFinalize(false);
+      return;
+    }
+    if (!wasWorkingRef.current) {
+      // replyPending but we never saw work this cycle (a plain history view whose last
+      // turn is an interrupted, reply-less prompt) — don't invent a spinner.
+      setFinalize(false);
+      return;
+    }
+    if (!finalizingRef.current) {
+      setFinalize(true);
+      tickRef.current?.(); // re-poll now instead of waiting out the slow interval
+    }
+    // Safety valve: an interrupted turn can end with no reply at all, so never hold
+    // forever — drop the indicator after a grace even if nothing lands.
+    const id = setTimeout(() => {
+      wasWorkingRef.current = false;
+      setFinalize(false);
+    }, FINALIZE_GRACE_MS);
+    return () => clearTimeout(id);
+    // setFinalize / refs are stable enough; re-run only on the signals that change the hold.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, bgBusy, replyPending]);
 
   // 新しい回答の自動読み上げ（P2）: ポーリングで append された新規 assistant ターンを
   // 朗読キューへ（通常はアクティブなペインのみ、ttsAutoReadAllPanes なら開いている全ペイン。
@@ -1829,15 +1920,16 @@ export function MirrorView({
                 pending
                 sending={sending}
                 onOpen={() => openPlan(pendingPlan)}
-                onApprove={() => sendKeys(["Enter"])}
-                // 却下 = pick "Tell Claude what to change" — the 4th ExitPlanMode option
-                // (1 Yes-bypass / 2 Yes-manual / 3 No-refine-on-web / 4 tell-what-to-change).
-                // NOT option 3, which routes to Ultraplan on the web. Selecting 4 keeps
-                // refining in-session; pendingPlan then clears and the composer unlocks so
-                // the user can type feedback. (Option order is claude-version dependent.)
+                onApprove={() => sendKeys([...PLAN_APPROVE_KEYS])}
+                // 却下 = 中断（Escape）で keep-planning に倒す。ExitPlanMode メニューの
+                // 選択肢数/順序は claude 版依存で、位置固定キー（旧 Down×3 で「4. Tell Claude
+                // what to change」を狙う実装）は短いラップするメニューでは先頭の「Yes」行へ
+                // 回り込み、却下したのに承認してしまう（2026-07-22 実障害）。中断はレイアウト
+                // 非依存にモーダルを閉じて plan モードへ戻し、composer を解放する。tool_result は
+                // interrupt になり planDecision.isRejected が拾う。詳細は planDecision.ts。
                 onReject={() => {
-                  rejectedPlansRef.current.add(pendingPlan.trim()); // optimistic 却下 badge
-                  sendKeys(["Down", "Down", "Down", "Enter"]);
+                  rejectedPlansRef.current.add(pendingPlan.trim()); // optimistic 却下 badge（実 outcome で planOutcome が調停）
+                  void sendInterrupt();
                 }}
               />
             </div>
@@ -1923,7 +2015,7 @@ export function MirrorView({
             </div>
           </div>
         )}
-        {(status === "working" || bgBusy) && !pending && (
+        {(status === "working" || bgBusy || finalizing) && !pending && (
           <div className="mirror-typing" aria-label={tr("mirror.typing", { name: agentName })}>
             <span className="mt-who">{agentName}</span>
             <span className="typing-dots">
@@ -1942,6 +2034,21 @@ export function MirrorView({
               onClick={() => void sendInterrupt()}
             >
               <Icon name="debug-stop" /> {tr("chat.stop")}
+            </button>
+          </div>
+        )}
+        {showJump && (
+          // Sticky so it floats just above the composer at the viewport bottom while the
+          // user reads up-thread; one click re-arms follow and snaps to the newest content.
+          <div className="mirror-jump-wrap">
+            <button
+              type="button"
+              className="mirror-jump"
+              onClick={jumpToBottom}
+              title={tr("mirror.jump_latest")}
+              aria-label={tr("mirror.jump_latest")}
+            >
+              <Icon name="arrow-down" /> {tr("mirror.jump_latest")}
             </button>
           </div>
         )}
@@ -3622,13 +3729,14 @@ function PlanBlock({
   sending?: boolean;
 }) {
   // A plan in the transcript was presented and resolved — classify its outcome text
-  // (best-effort; the exact result text varies). A rejected plan's tool_result is an
-  // interruption ("[Request interrupted by user for tool use]"), so isRejected wins to
-  // avoid mislabeling a 却下 as 承認済み. Empty/unknown → neutral 決定済み: the tool_result
-  // can lag a poll or two behind the plan turn, and defaulting empty→approved made a
-  // just-rejected plan flash 承認済み until the interrupt result landed.
-  const rejected = forceRejected || isRejected(outcome);
-  const approved = !rejected && isApproved(outcome);
+  // (best-effort; the exact result text varies). planOutcome reconciles the optimistic
+  // 却下 mark (forceRejected) against the real tool_result: a definitive approval wins so
+  // a card can't stay badged 却下 while claude coded, an interrupt result badges 却下, and
+  // an empty/unknown outcome (the result can lag a poll or two) stays 決定済み. See
+  // planDecision.ts.
+  const kind = planOutcome(outcome, !!forceRejected);
+  const approved = kind === "approved";
+  const rejected = kind === "rejected";
   return (
     <div className={"mt-plan" + (answered ? " decided" : "")}>
       <div className="mt-plan-head">
@@ -3716,17 +3824,6 @@ function UserFileBlock({ files, caption, onOpen }: { files?: string[]; caption?:
       </div>
     </div>
   );
-}
-
-// isApproved guesses whether an ExitPlanMode tool_result text is an approval, to badge
-// a historical plan. Best-effort keyword match (the exact result text may vary).
-function isApproved(outcome?: string) {
-  return /approv|proceed|start coding|going to code|承認|実行してよい|yes/i.test(outcome || "");
-}
-function isRejected(outcome?: string) {
-  // "interrupt" catches a rejected plan's tool_result ("[Request interrupted by user for
-  // tool use]"), which is how ExitPlanMode records 却下 / "tell Claude what to change".
-  return /keep planning|not approv|reject|refine|declin|interrupt|却下|中止|やり直/i.test(outcome || "");
 }
 
 // planTitle / planSummary derive a compact heading + lead line from the plan Markdown.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { confirmedWorkEnd, latestWorkPromptIndex, textOfParts, workSplit } from "./mirrorParts.ts";
+import { awaitingReply, confirmedWorkEnd, latestWorkPromptIndex, textOfParts, workSplit } from "./mirrorParts.ts";
 
 describe("workSplit", () => {
   it("最後のツール以前を作業過程、以後を最終回答に分ける", () => {
@@ -91,5 +91,22 @@ describe("latestWorkPromptIndex", () => {
       { role: "user", queued: true },
     ];
     expect(latestWorkPromptIndex(groups)).toBe(0);
+  });
+});
+
+describe("awaitingReply", () => {
+  it("最新ユーザーターンに返信がまだ無ければ true（idle→描画待ちの間スピナーを保持）", () => {
+    // ユーザー送信直後：回答ターンがまだ transcript に出ていない＝入力待ちの空白が出る状況。
+    expect(awaitingReply([{ role: "user" }, { role: "assistant" }, { role: "user" }])).toBe(true);
+  });
+
+  it("返信（assistantブロック）が来たら false＝スピナーを消して回答を出す", () => {
+    expect(awaitingReply([{ role: "user" }, { role: "assistant" }])).toBe(false);
+    expect(awaitingReply([{ role: "user" }, { role: "assistant" }, { role: "user" }, { role: "assistant" }])).toBe(false);
+  });
+
+  it("プロンプトが1つも無い（新規/履歴のみ）なら待たない", () => {
+    expect(awaitingReply([])).toBe(false);
+    expect(awaitingReply([{ role: "assistant" }])).toBe(false);
   });
 });
