@@ -137,6 +137,31 @@ type MemoCategory struct {
 	CreatedAt                    string
 }
 
+// Schedule is one operator-authored scheduled task (docs/38 + ADR0021). It lives
+// in the CP DB because the CP is the only thing alive while the workspace is stopped.
+// SpecKind is "cron" (Spec is a 5-field cron expr), "interval" (Spec is whole
+// seconds) or "once" (Spec is an RFC3339 absolute instant). Spec is the evaluated
+// source of truth; TZ is the IANA zone cron is evaluated in (DST included); SpecLabel
+// keeps the operator's original natural-language phrasing for display only. NextRun/
+// LastRun are UTC RFC3339 fire-ledger stamps (NextRun="" means never/disabled).
+type Schedule struct {
+	ID, MembershipID, TenantID string
+	OwnerConv                  string // operator conversation id — the report_to target (docs/30)
+	SpecKind, Spec, SpecLabel  string
+	TZ                         string
+	WakePolicy                 string // wake (default) | skip | catch_up
+	SessionMode, ReuseTarget   string // new (default) | reuse; ReuseTarget for reuse (future)
+	AgentKind, Model           string
+	Repo, Worktree             string
+	NewBranch                  bool
+	Prompt                     string
+	OverlapPolicy              string // skip (default) | queue | restart
+	Enabled                    bool
+	NextRun, LastRun           string
+	LastStatus                 string
+	CreatedAt, UpdatedAt       string
+}
+
 // Notification is a membership-scoped, content-free activity record shared by
 // every browser the member uses. Payload contains only structured metadata; chat
 // answer/question text is deliberately never persisted here.
@@ -210,6 +235,7 @@ type Store interface {
 	SSMStore
 	MemoStore
 	NotificationStore
+	ScheduleStore
 
 	Close() error
 }
@@ -432,6 +458,27 @@ type NotificationStore interface {
 	SweepNotifications(ctx context.Context, retainBefore string) error
 	GetUsageNotificationState(ctx context.Context, membershipID, source, windowKey string) (UsageNotificationState, bool, error)
 	PutUsageNotificationState(ctx context.Context, state UsageNotificationState) error
+}
+
+// ScheduleStore is the scheduled-execution definition store (docs/38 + ADR0021).
+// The CP-resident scheduler (scheduler.go) reads ListDueSchedules on every tick and
+// stamps the fire ledger via RecordScheduleFire; the operator MCP (P3) drives the
+// membership-scoped CRUD. Mutations that a member issues carry membership_id in the
+// WHERE so one member never touches another's rows.
+type ScheduleStore interface {
+	CreateSchedule(ctx context.Context, s Schedule) error
+	GetSchedule(ctx context.Context, id string) (Schedule, bool, error)
+	ListSchedules(ctx context.Context, membershipID string) ([]Schedule, error)
+	// ListDueSchedules returns enabled schedules whose next_run is non-empty and at
+	// or before nowRFC (an RFC3339 UTC cutoff; RFC3339 sorts chronologically).
+	ListDueSchedules(ctx context.Context, nowRFC string) ([]Schedule, error)
+	UpdateSchedule(ctx context.Context, s Schedule) error
+	SetScheduleEnabled(ctx context.Context, id, membershipID string, enabled bool, nextRun, updatedAt string) error
+	DeleteSchedule(ctx context.Context, id, membershipID string) error
+	// RecordScheduleFire stamps the ledger after a fire attempt: last_run/last_status
+	// and the recomputed next_run, disabling the row (enabled=0) when next_run is ""
+	// (a spent "once"). The scheduler is the only caller, so no membership scoping.
+	RecordScheduleFire(ctx context.Context, id, lastRun, lastStatus, nextRun string, enabled bool, updatedAt string) error
 }
 
 // newID mints an opaque record id (not a strict UUID; sufficient for keys).
