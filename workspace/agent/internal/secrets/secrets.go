@@ -126,6 +126,13 @@ type DiscordCreds struct {
 	// bot (a one-checkbox step in the Developer Portal for bots in <100 guilds),
 	// and it bounds the daemon's memory to opted-in users only (docs/37「メモリ」).
 	Receive bool `json:"receive,omitempty"`
+	// FullText opts into the P2 「全文ブリッジ」(docs/37 将来の方向): when on, the
+	// final assistant turn body rides along the answer-ready push so the chat is a
+	// self-sufficient remote UI (the deep link is useless on a local-only,
+	// externally-unreachable deployment). Default off — the chat side is a 写し
+	// by default; only the owner of both ends opts into posting their own output.
+	// The body is secret-scrubbed and chunked to Discord's 2000-char limit.
+	FullText bool `json:"fullText,omitempty"`
 }
 
 type Data struct {

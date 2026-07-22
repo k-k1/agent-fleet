@@ -88,6 +88,9 @@ func discordStatus(s *secrets.Data) map[string]any {
 	if d.Receive {
 		m["receive"] = true
 	}
+	if d.FullText {
+		m["fullText"] = true
+	}
 	events := d.Events
 	if len(events) == 0 {
 		events = bridge.EventKeys
@@ -185,6 +188,7 @@ type discordConnReq struct {
 	MentionUserID string   `json:"mentionUserId"` // @mentioned per notification (channel mode)
 	Lang          string   `json:"lang"`          // Console locale at connect time ("ja"/"en")
 	Receive       bool     `json:"receive"`       // inbound: route thread replies back (docs/37 P2a)
+	FullText      bool     `json:"fullText"`      // post the answer-ready turn body (docs/37 全文ブリッジ)
 }
 
 // discordSnowflakeRe matches a Discord snowflake id — catches names/mentions
@@ -274,7 +278,10 @@ func handlePutDiscordConn(w http.ResponseWriter, r *http.Request) {
 		// Channel-mode extras (docs/37 P1.5 / P2a); meaningless for DM, so not stored there.
 		// Receive (P2a inbound) rides thread mode — replies arrive in session threads.
 		Threads: channelID != "" && req.Threads, MentionUserID: mention,
-		Receive: channelID != "" && req.Receive}
+		Receive: channelID != "" && req.Receive,
+		// Full-text mode (docs/37 全文ブリッジ) works in either destination mode —
+		// the body posts to the channel/thread or the DM alike.
+		FullText: req.FullText}
 	if channelID == "" {
 		creds.MentionUserID = ""
 	}

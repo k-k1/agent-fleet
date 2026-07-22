@@ -43,6 +43,11 @@ type Message struct {
 	DisplayName string `json:"displayName"`
 	Detail      string `json:"detail,omitempty"` // e.g. exit reason (oom/crashed/killed)
 	CreatedAt   string `json:"createdAt"`
+	// Body is the final assistant turn prose for the 全文ブリッジ (docs/37 将来の
+	// 方向). Populated only for answer-ready; rendered only when the provider's
+	// creds opt into full-text mode. Still display data — never tool logs,
+	// thinking, or raw transcripts, and secret-scrubbed before it reaches a wire.
+	Body string `json:"body,omitempty"`
 }
 
 // EventKeys are the user-toggleable notification groups of docs/37 P1. The

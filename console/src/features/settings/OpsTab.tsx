@@ -163,6 +163,7 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
   const [userId, setUserId] = useState("");
   const [threads, setThreads] = useState(true);
   const [receive, setReceive] = useState(false);
+  const [fullText, setFullText] = useState(false); // 全文ブリッジ: post the answer body (docs/37)
   const [mentionId, setMentionId] = useState("");
   const [autoMention, setAutoMention] = useState<{ id: string; name: string } | null>(null);
   const [events, setEvents] = useState<string[]>(DC_EVENTS.map(([k]) => k));
@@ -250,6 +251,7 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
         events,
         threads: !dm && threads,
         receive: !dm && receive, // P2a inbound: route thread replies back into the session
+        fullText, // 全文ブリッジ: applies to either destination mode (docs/37)
         mentionUserId: dm ? "" : mentionId.trim(),
         lang: getLocale(), // notifications follow the Console language at connect time
       });
@@ -276,6 +278,7 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
     setDm(view.mode === "dm");
     setThreads(!!view.threads);
     setReceive(!!view.receive);
+    setFullText(!!view.fullText);
     setMentionId(view.mentionUserId || "");
     setChannel(view.channelId || "");
     setEvents(Array.isArray(view.events) && view.events.length ? view.events : DC_EVENTS.map(([k]) => k));
@@ -302,6 +305,7 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
           {view.threads && <span className="p-pl">{tr("ops.dc_pill_threads")}</span>}
           {view.mention && <span className="p-pl">@</span>}
           {view.receive && <span className="p-pl">{tr("ops.dc_pill_receive")}</span>}
+          {view.fullText && <span className="p-pl">{tr("ops.dc_pill_fulltext")}</span>}
           {Array.isArray(view.events) && view.events.length < DC_EVENTS.length && (
             <span className="p-pl">
               {DC_EVENTS.filter(([k]) => view.events.includes(k))
@@ -419,6 +423,16 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
                 <OnOff value={events.includes(key)} onChange={(on) => toggle(key, on)} />
               </div>
             ))}
+          {/* 全文ブリッジ (docs/37): works in either mode, once a destination is chosen. */}
+          {(found || editing || dm) && (
+            <div className="ps-row">
+              <span className="ps-label">
+                {tr("ops.dc_fulltext_label")}
+                <span className="sub">{tr("ops.dc_fulltext_sub")}</span>
+              </span>
+              <OnOff value={fullText} onChange={setFullText} />
+            </div>
+          )}
           <div className="flow">
             <button disabled={busy || !ok} onClick={save}>
               {tr(editing ? "common.save" : "conn.connect")}
