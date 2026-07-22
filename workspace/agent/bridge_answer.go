@@ -46,6 +46,11 @@ func clearBridgeAnswer(name string) { bridgeAnswers.Remove(name) }
 // Errors are returned for logging; a user-visible outcome always comes back as text.
 func answerInteraction(pi bridge.ParsedInteraction) (string, error) {
 	en := bridgeAnswerEN()
+	// P3: an operator destructive-action approval — not a session answer. It records the
+	// decision into the bridge-approvals handshake the gating subprocess is polling.
+	if pi.Kind == "op" {
+		return bridgeApprovalDecision(pi.Approval, pi.Choice, en)
+	}
 	if !session.ValidName(pi.Session) {
 		return "", fmt.Errorf("invalid session name %q", pi.Session)
 	}

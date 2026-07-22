@@ -33,6 +33,13 @@ func runOperatorTurn(conv, text string) (string, error) {
 	unlock := lockConv(conv)
 	defer unlock()
 
+	// P3 approval gate: mark THIS turn as the Discord-driven (unattended) operator turn so
+	// the mcp-stdio subprocess's destructive tools gate on a Discord approval button. Console
+	// operator chat (handleChatSend) never arms this, so it is never gated. Self-clears on a
+	// TTL if the process dies before the defer runs.
+	armOperatorTurn(conv)
+	defer disarmOperatorTurn()
+
 	c, err := loadConv(conv)
 	if err != nil {
 		return fb(en, "⚠️ オペレーター会話が見つかりません", "⚠️ Operator conversation not found"), err
@@ -45,7 +52,9 @@ func runOperatorTurn(conv, text string) (string, error) {
 	// handleChatSend — subsequent session reports get a fresh follow-up allowance.
 	c.AutoTurns, c.AutoPausedNotified = 0, false
 
-	ctx, cancel := context.WithTimeout(context.Background(), chatTimeout)
+	// A longer ceiling than Console chat (chatTimeout): a Discord-driven turn may pause on a
+	// human approval (bridgeApprovalTimeout), which must fit inside the turn.
+	ctx, cancel := context.WithTimeout(context.Background(), operatorTurnTimeout)
 	defer cancel()
 	deregister := registerLiveTurn(conv, cancel) // Stop button / in_progress work as usual
 	defer deregister()

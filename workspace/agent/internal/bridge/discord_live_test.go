@@ -101,6 +101,15 @@ func TestDiscordLiveSend(t *testing.T) {
 			if err := postOperatorChunks(token, thread, "オペレーターの応答（ライブ確認）: フリートは正常です。"); err != nil {
 				t.Fatalf("operator reply post: %v", err)
 			}
+			// P3 承認ゲート (docs/37): with AF_DISCORD_APPROVAL=1, post an approve/reject
+			// button into the operator thread so the gate's buttons render and a click
+			// round-trips through TestDiscordLiveReceive (which logs the parsed "op" id).
+			if os.Getenv("AF_DISCORD_APPROVAL") == "1" {
+				body := ScrubSecrets("🔒 承認が必要な操作\n**ブランチを削除** — myrepo / temp/foo\n実行してよろしいですか？")
+				if _, err := discordPost(token, thread, outMsg{content: body, components: approvalRow("live-appr-1", false)}); err != nil {
+					t.Fatalf("approval buttons post: %v", err)
+				}
+			}
 		}
 	}
 }
