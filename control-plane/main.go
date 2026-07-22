@@ -234,12 +234,18 @@ func main() {
 
 	// Scheduled execution (docs/38 + ADR0021): a CP-resident scheduler watches the
 	// wall clock and drives due schedules (cron/interval/once). DISABLED by default
-	// (opt-in like the reaper) until the P2 wake path lands — P1 ships only the
-	// skeleton with a no-op firer, so enabling it now merely advances the ledger.
-	// AF_SCHEDULER_INTERVAL=0 keeps it off; a positive duration (e.g. 1m) starts it.
+	// (opt-in like the reaper) — enabling it wakes stopped workspaces and injects
+	// sessions unattended, so it stays off until an operator turns it on per
+	// deployment. AF_SCHEDULER_INTERVAL=0 keeps it off; a positive duration (e.g. 1m)
+	// starts it. The P2 wake firer resolves the owner, applies the wake policy, holds
+	// a reaper keep-alive for AF_SCHEDULE_SETTLE, and injects via create_session.
 	if iv := parseDurationOr(os.Getenv("AF_SCHEDULER_INTERVAL"), 0); iv > 0 {
-		go newScheduler(mgr.store, logFirer{}, iv).run(context.Background())
-		log.Printf("scheduler: enabled (interval=%s)", iv)
+		settle := parseDurationOr(os.Getenv("AF_SCHEDULE_SETTLE"), 5*time.Minute)
+		ready := parseDurationOr(os.Getenv("AF_SCHEDULE_WAKE_TIMEOUT"), 90*time.Second)
+		firer := newWakeFirer(mgr, settle, ready)
+		go newScheduler(mgr.store, firer, iv).run(context.Background())
+		logSchedulerFirerNote(firer)
+		log.Printf("scheduler: enabled (interval=%s settle=%s wake_timeout=%s)", iv, settle, ready)
 	}
 
 	mux := buildMux(cfg)
