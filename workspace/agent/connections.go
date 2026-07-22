@@ -80,6 +80,9 @@ func discordStatus(s *secrets.Data) map[string]any {
 	}
 	if d.Threads {
 		m["threads"] = true
+		// Console-input mirror (docs/37 Fix ②): default-on, so echo the resolved state
+		// (not just when off) for the card's edit-form prefill.
+		m["mirrorInput"] = !d.MirrorInputOff
 	}
 	if d.MentionUserID != "" {
 		m["mention"] = true
@@ -194,6 +197,10 @@ type discordConnReq struct {
 	Lang          string   `json:"lang"`          // Console locale at connect time ("ja"/"en")
 	Receive       bool     `json:"receive"`       // inbound: route thread replies back (docs/37 P2a)
 	FullText      bool     `json:"fullText"`      // post the answer-ready turn body (docs/37 全文ブリッジ)
+	// MirrorInput echoes Console-typed prompts into the session thread (docs/37 Fix ②).
+	// A pointer so an omitted field means "default" (on) rather than false — the card
+	// always sends it, but an older/edit request that leaves it out keeps the default.
+	MirrorInput *bool `json:"mirrorInput"`
 }
 
 // discordSnowflakeRe matches a Discord snowflake id — catches names/mentions
@@ -278,6 +285,12 @@ func handlePutDiscordConn(w http.ResponseWriter, r *http.Request) {
 	if req.Lang == "en" {
 		lang = "en"
 	}
+	// Console-input mirror (docs/37 Fix ②): ON by default in channel+thread mode.
+	// Preserve the stored value on an edit that omits the field; an explicit value wins.
+	mirrorOff := editing && s.Discord != nil && s.Discord.MirrorInputOff
+	if req.MirrorInput != nil {
+		mirrorOff = !*req.MirrorInput
+	}
 	creds := &secrets.DiscordCreds{Token: token, ChannelID: channelID, UserID: userID,
 		BotName: botName, Events: events, Lang: lang,
 		// Channel-mode extras (docs/37 P1.5 / P2a); meaningless for DM, so not stored there.
@@ -286,7 +299,9 @@ func handlePutDiscordConn(w http.ResponseWriter, r *http.Request) {
 		Receive: channelID != "" && req.Receive,
 		// Full-text mode (docs/37 全文ブリッジ) works in either destination mode —
 		// the body posts to the channel/thread or the DM alike.
-		FullText: req.FullText}
+		FullText: req.FullText,
+		// Mirror opt-out is meaningful only alongside thread mode.
+		MirrorInputOff: channelID != "" && req.Threads && mirrorOff}
 	if channelID == "" {
 		creds.MentionUserID = ""
 	}
