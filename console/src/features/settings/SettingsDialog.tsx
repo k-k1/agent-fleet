@@ -29,6 +29,8 @@ import { SsmTab } from "./SsmTab.tsx";
 import { OpsTab } from "./OpsTab.tsx";
 import { TokensTab } from "./TokensTab.tsx";
 import { DangerTab } from "./DangerTab.tsx";
+import { InternalReposTab } from "./InternalReposTab.tsx";
+import { NotificationsTab } from "./NotificationsTab.tsx";
 
 // Rail groups. Each item = [section key, i18n label key]. Order here IS the rail order.
 const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
@@ -39,6 +41,7 @@ const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
       ["display", "set.tab_display"],
       ["keys", "set.tab_keys"],
       ["tts", "set.tab_tts"],
+      ["notifications", "set.tab_notifications"],
       ["assistant", "set.tab_assistant"],
     ],
   },
@@ -58,6 +61,7 @@ const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
     items: [
       ["env", "set.tab_env"],
       ["ssm", "set.tab_ssm"],
+      ["internalrepos", "set.tab_internalrepos"],
       ["danger", "set.tab_danger"],
     ],
   },
@@ -136,11 +140,13 @@ export function SettingsDialog() {
             {section === "agents" && <AgentsTab />}
             {section === "assistant" && <AssistantTab />}
             {section === "tts" && <TtsTab />}
+            {section === "notifications" && <NotificationsTab />}
             {section === "git" && <GitTab />}
             {section === "env" && <EnvTab />}
             {section === "ssm" && <SsmTab />}
             {section === "ops" && <OpsTab />}
             {section === "tokens" && <TokensTab />}
+            {section === "internalrepos" && <InternalReposTab />}
             {section === "danger" && <DangerTab />}
             {section === "display" && <DisplayTab />}
             {section === "keys" && <KeysTab />}
