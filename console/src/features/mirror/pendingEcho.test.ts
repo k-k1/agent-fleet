@@ -25,4 +25,54 @@ describe("echoLanded", () => {
       ),
     ).toBe(false);
   });
+
+  // スラッシュコマンドは生の "/model opus" ではなく <command-name>…</command-name> として
+  // 記録され isNoise で隠れる。テキスト一致では永久に「反映待ち」→ commandTurnName で解消する。
+  const cmdNoise = (t: { text?: string }) => (t.text || "").replace(/^\s+/, "").startsWith("<command-name>");
+
+  it("スラッシュコマンドは <command-name> ターンで解消する", () => {
+    expect(
+      echoLanded(
+        { text: "/model opus", sinceIdx: 10 },
+        [{ role: "user", text: "<command-name>/model</command-name><command-args>opus</command-args>", idx: 11 }],
+        cmdNoise,
+      ),
+    ).toBe(true);
+  });
+
+  it("スラッシュコマンド行に続く文が付いても command 名一致で解消する", () => {
+    // 実バグの再現: "/model opus\n続けて" を送信、実ターンは <command-name> のみ。
+    expect(
+      echoLanded(
+        { text: "/model opus\n続けて", sinceIdx: 10 },
+        [{ role: "user", text: "<command-name>/model</command-name><command-args>opus</command-args>", idx: 11 }],
+        cmdNoise,
+      ),
+    ).toBe(true);
+  });
+
+  it("送信より前の command ターンでは解消しない", () => {
+    expect(
+      echoLanded(
+        { text: "/model opus", sinceIdx: 20 },
+        [{ role: "user", text: "<command-name>/model</command-name>", idx: 11 }],
+        cmdNoise,
+      ),
+    ).toBe(false);
+  });
+
+  it("別コマンドのターンでは解消しない", () => {
+    expect(
+      echoLanded(
+        { text: "/model opus", sinceIdx: 10 },
+        [{ role: "user", text: "<command-name>/clear</command-name>", idx: 11 }],
+        cmdNoise,
+      ),
+    ).toBe(false);
+  });
+
+  it("先頭が '/' でも実 command ターンが無ければ通常のテキスト一致に委ねる", () => {
+    // "/" 始まりの素のテキスト（コマンドではない）は誤って隠さない。
+    expect(echoLanded({ text: "/etc/hosts を見て", sinceIdx: 10 }, [], notNoise)).toBe(false);
+  });
 });
