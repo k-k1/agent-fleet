@@ -143,7 +143,10 @@ func recordSessionNotification(sid, previous, state, turnText string) {
 		// no completed turn body. Capped like the operator report excerpt; the
 		// provider scrubs secrets and chunks before any wire.
 		if kind == reportKindAnswerReady {
-			if body := tailRunes(turnText, reportExcerptCap); body != "" {
+			// Head-first and generously capped (docs/37 Fix ③): the full-text bridge
+			// stands in for the Console, so the WHOLE answer rides along (chunkMessage
+			// splits it), not a 2000-rune tail like the operator report excerpt.
+			if body := headRunes(turnText, bridgeBodyCap); body != "" {
 				ev.Payload["body"] = body
 			}
 		}

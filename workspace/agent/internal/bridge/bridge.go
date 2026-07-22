@@ -36,6 +36,20 @@ type Provider interface {
 	Send(m Message) error
 }
 
+// ResumableSender is an optional Provider capability: deliver a message starting
+// at a sub-message index and report how many sub-messages have been delivered so
+// far, so the sender can RESUME a partial delivery across ticks WITHOUT re-posting
+// what already landed (docs/37 重複対策 = idempotent delivery). One notification
+// fans into several posts (mention chunk + body chunks + P2b buttons + a thread
+// starter); a failure after some succeed — a 429 that slips discordDo's inline
+// retry, a dropped connection mid-batch — used to re-post the whole entry on the
+// next tick and duplicate. A provider implementing this returns the count reached
+// and the error; the sender persists it and calls SendFrom again with that count as
+// `from`. Providers that don't implement it fall back to whole-message Send.
+type ResumableSender interface {
+	SendFrom(m Message, from int) (delivered int, err error)
+}
+
 // Message is the provider-independent notification payload. It carries only
 // display data — never tokens, keys, or raw logs (docs/37 「秘密の露出」).
 type Message struct {

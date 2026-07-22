@@ -49,7 +49,11 @@ func DrainOnce() {
 	drainWith(provs)
 }
 
-// drainWith is the provider-agnostic queue pass (split out for tests).
+// drainWith is the provider-agnostic queue pass (split out for tests). Each provider
+// resumes from its own persisted delivery cursor (docs/37 重複対策), so a partial
+// failure never re-posts what already landed. An attempt that made ANY progress
+// resets the retry counter (a long message that advances every tick can't be dropped
+// mid-stream); only a fully-stuck tick counts against maxAttempts.
 func drainWith(provs []Provider) {
 	dir := queueDir()
 	for _, n := range queueFiles(dir) {
@@ -58,23 +62,42 @@ func drainWith(provs []Provider) {
 		if !ok {
 			continue
 		}
+		if q.Delivered == nil {
+			q.Delivered = map[string]int{}
+		}
 		key := eventKeyFor(q.Kind)
-		delivered := true
+		allOK := true
+		progressed := false
 		for _, p := range provs {
 			if !p.Wants(key) {
 				continue
 			}
-			// A partial multi-provider failure retries the whole entry (possible
-			// duplicate on the provider that succeeded). Accepted for P1 — there
-			// is one provider; revisit with per-provider sent-markers for Slack.
+			if rs, ok := p.(ResumableSender); ok {
+				from := q.Delivered[p.Name()]
+				delivered, err := rs.SendFrom(q.Message, from)
+				if delivered > from {
+					progressed = true
+				}
+				q.Delivered[p.Name()] = delivered
+				if err != nil {
+					log.Printf("bridge: %s send %s failed (attempt %d): %v", p.Name(), q.Kind, q.Attempts+1, err)
+					allOK = false
+				}
+				continue
+			}
+			// Whole-message fallback for a non-resumable provider (a partial failure
+			// may duplicate on the provider that succeeded).
 			if err := p.Send(q.Message); err != nil {
 				log.Printf("bridge: %s send %s failed (attempt %d): %v", p.Name(), q.Kind, q.Attempts+1, err)
-				delivered = false
+				allOK = false
 			}
 		}
-		if delivered {
+		if allOK {
 			_ = os.Remove(path)
 			continue
+		}
+		if progressed {
+			q.Attempts = 0 // healthy — advanced this tick; don't let a long send hit the cap
 		}
 		q.Attempts++
 		if q.Attempts >= maxAttempts {

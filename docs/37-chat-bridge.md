@@ -4,8 +4,10 @@
   P2b（AUQ／許可／プラン承認のボタン化・claude/TUI＋managed codex/opencode/copilot）＋
   通知/全文の整理（全文は本文のみ・メンション時間ゲート・受信 ack）＋
   P3先取り（@メンション→フリート・オペレーター会話・専用スレッド）＋
-  P3 承認ゲート（破壊的操作＝削除系＋shell を Discord のボタンで承認）実装済み（Discord）**
-  （2026-07-22。残るは Slack 追随のみ）。採用判断は
+  P3 承認ゲート（破壊的操作＝削除系＋shell を Discord のボタンで承認）実装済み（Discord）＋
+  重複・可読性の修正（429/配送冪等化・session-report 二重掲出解消・Console 入力ミラー・長文分割・
+  テーブル→コードブロック・区切り線）実装済み**
+  （2026-07-23。残るは Slack 追随のみ）。採用判断は
   [decisions/0020](decisions/0020-chat-bridge.md)。実装メモは
   [§P1 実装記録](#p1-実装記録2026-07-22)／[§P2a 実装記録](#p2a-実装記録-スレッド返信--セッション注入2026-07-22)／
   [§全文ブリッジ 実装記録](#全文ブリッジ-実装記録-応答本文をチャットへ2026-07-22)／
@@ -491,6 +493,51 @@ managed ボタン化に着手する前に、実運用のノイズと外出先の
 - 検証: ユニット（mention 時間ゲートの kind 別・窓境界／全文本文のみ描画／成功 ack＝
   reaction+typing・失敗 ack＝理由投函と ack 抑止／gate 落ちは Discord に触れない）。go 520 緑。
   実 Discord 目視（全文本文のみ・時間ゲート・👀/typing・失敗理由）は再ビルド後に残。
+
+#### 重複・可読性の修正 実装記録（2026-07-23）
+
+実 Discord 運用のフィードバックで表面化した 5 件を、ユーザー確認の上まとめて修正した（Console から
+駆動する既存経路の不具合＝Slack 追随の前段）。
+
+- **① 同一メッセージが大量に届く（重複）**＝**配送の非冪等＋429 握り潰し**が真因。1 通知は複数 POST
+  （メンションチャンク＋本文チャンク＋P2b ボタン＋スレッド起票）に展開されるが、`discordDo` が
+  Discord の **429（レート制限）を一般エラー扱い**（`Retry-After` 無視）→ 途中失敗で `Send` が
+  エラーを返し **キューエントリ丸ごと再送**（既配送チャンクを再 POST・最大 `maxAttempts`＝5 回）。
+  長文・全文モードで POST が連続すると 429 が出やすく多重着弾。対策 3 段:
+  - **1a 429 インライン処理**（`discord.go discordDo`）: 429 を `retry_after`（JSON／`Retry-After`
+    ヘッダ）に従い**同一 POST を上限付きで再試行**（`discordRateRetries`＝3・`discordRetryCap`＝5s で
+    クランプ）。主因（バーストの途中失敗→丸ごと再送）を除去。
+  - **1b 配送の冪等化**（`ResumableSender` 抽象・`bridge.go`／`queue.go`／`sender.go`／`discord.go`）:
+    キューエントリに**プロバイダ別の配送カーソル** `Delivered map[string]int` を持たせ、`Provider` が
+    任意で実装する `SendFrom(m, from) (delivered, err)` で**未達サブメッセージだけ**送る。中断再送でも
+    重複しない。スレッド起票済み状態も保持（`sendThreaded`/`postRangeToThread` が `from` を尊重）。
+    **前進した tick は attempts をリセット**（長文が cap に達して落ちない）。非対応プロバイダは従来の
+    丸ごと `Send` にフォールバック。
+  - **1c session-report の二重掲出解消**（`discord.go SendFrom`）: オペレーター起動セッションは 1 回の
+    完了で `answer-ready` と `session-report` が**同じスレッドへ 2 通**入る。スレッドモードでは
+    `session-report` を**そのセッションのスレッドへは投稿しない**（完了は answer-ready が届けており、
+    オペレーター可視化はオペレータースレッドの写しが担う）。フラット/DM では従来どおり掲出。
+- **② Console 入力が Discord に出ない**＝Console のコンポーザーで送った user 入力を**同スレッドへ写す
+  経路が無かった**。`bridge.MirrorUserInput(session, text)` を新設し、`handleSessionInput` の {prompt}
+  成功時（TUI／managed 両方・**report_to == "" の生人間入力に限定**＝オペレーター/MCP 注入は除外）に
+  `go` で best-effort 投函（🧑 マーカー付き・スレッド既存時のみ＝echo はスレッドを新規作成しない）。
+  既定 ON の opt-in トグル（`DiscordCreds.MirrorInputOff`＝**逆持ち**で既存接続も既定 ON・OpsTab トグル
+  ＋「入力写し」ピル・i18n ja/en）。
+- **③ 長文回答の一部が欠ける**＝本文が `tailRunes(turnText, reportExcerptCap=2000)` で**末尾 2000
+  rune だけ**（頭が落ちる）。ブリッジ本文専用に **`bridgeBodyCap`＝12000 rune の head-first
+  （`headRunes`）**へ decouple（`reportExcerptCap` はオペレーター抜粋用に据え置き）＋`maxBodyChunks`
+  を 5→**12** に引き上げ、**全文を頭から複数メッセージへ「うまく分割」**（無言の切り捨てを解消）。
+- **④ Markdown テーブルが表示されない**＝Discord は**テーブル記法未対応**。`fulltext.go
+  tablesToCodeBlocks` で GFM テーブルを**fenced コードブロック**へ包み等幅で桁を保つ
+  （`renderBodyForDiscord`＝scrub→table 変換。ヘッダ行＋区切り行の検出・bare hr は非テーブル扱い）。
+- **⑤ 連続投稿・入力の文脈が繋がって読みづらい**＝全文回答と**ミラーした入力の末尾に区切り線**
+  （`bridgeDivider`＝U+2500 の連続。Discord は Markdown「---」を hr にしないため）を付け、
+  連続する投稿が 1 塊に見えないようにした。
+- 検証: go **562 緑**（新規＝`TestDiscord429RetriesInline`／`TestDrainResumesWithoutDuplicate`＝カーソル
+  冪等・重複無し／`TestSessionReportThreadSuppressed`／`TestMirrorUserInput`＝写し・opt-out・スレッド無し／
+  `TestTablesToCodeBlocks`／全文本文のみ＋divider）＋Console typecheck・i18n:lint・vitest 365 緑。
+  **新 REST は無し**（ミラーは既存 PUT /connections/discord に相乗り＝CP allowlist 影響なし）。
+  **残＝実 Discord 実機目視（重複解消・入力ミラー・長文分割・テーブル・区切り線）は再ビルド後**。
 
 ## 将来の方向（次セッション検討）
 
