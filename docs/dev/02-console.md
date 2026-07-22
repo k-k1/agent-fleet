@@ -123,7 +123,7 @@ React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を�
 - **エージェント kind 色**: `tokens.css` の `--kind-*`（claude/codex/agy/copilot/opencode/shell/ssm、`:root`=dark・
   `[data-theme=light]` で暗色版）が**唯一の hue 源**。使用側（kind-tag・sess-kic・LayoutMap・起動 seg アイコン・
   設定バッジ）は `var(--kind-*)`＋tint は `color-mix(… N%, transparent)` で描画し、各 CSS に色 hex を直書きしない。
-  **opencode はティール（#1fbaa6 / light #0d8f82）**＝copilot 紫との視認衝突を避けるため。
+  **opencode はスレートグレー（#8b96a5 / light #5a6470）**＝codex 緑・copilot 紫との視認衝突を避けるため。
 - **アイコンの役割分担**: クローム＝codicon 単色（currentColor 追従）/ ファイル種別＝カラー SVG
   （`lib/fileicons` の ext→typeKey 解決 + `ui/FileIcon`）。
 - **ui-prefs**: 表示設定（テーマ・フォント・アイコンセット等）は per-user でサーバー保存
