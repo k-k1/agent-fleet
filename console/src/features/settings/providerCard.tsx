@@ -12,6 +12,7 @@ import { useT } from "../../lib/i18n/index.ts";
 export const BADGE_SHORT: Record<string, string> = {
   claude: "cc",
   codex: "cx",
+  copilot: "cp",
   opencode: "oc",
   agy: "ag",
   github: "gh",

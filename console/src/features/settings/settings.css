@@ -777,6 +777,7 @@
 }
 .p-badge.pb-claude { background: #e0a45e; }
 .p-badge.pb-codex { background: #4ec97a; }
+.p-badge.pb-copilot { background: #a371f7; }
 .p-badge.pb-opencode { background: #b07cf2; }
 .p-badge.pb-agy { background: #4285f4; }
 .p-badge.pb-github { background: #c9d1d9; }
@@ -1215,6 +1216,24 @@
 }
 .ps-note-warn {
   color: var(--warn);
+}
+/* Narrow screens: stack the label above its control so a wide segmented control
+   (e.g. copilot's 7-option effort) wraps across the full width instead of crushing
+   the label / overflowing the row. The control's .choice-seg already flex-wraps. */
+@media (max-width: 520px) {
+  .ps-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+  .ps-label {
+    flex: none;
+  }
+  .ps-row .choice-seg,
+  .ps-row .ds-select {
+    width: 100%;
+    max-width: none;
+  }
 }
 .conn-row {
   display: flex;
