@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, apiJSON, raw } from "../../core/api/client.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
+import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { InternalRepoBrowser } from "./InternalRepoBrowser.tsx";
 import { ProviderCard, StatusPill } from "./providerCard.tsx";
 import { useT } from "../../lib/i18n/index.ts";
@@ -24,6 +25,7 @@ interface InternalRepo {
 export function InternalReposTab() {
   const tr = useT();
   const toast = useToast();
+  const askConfirm = useConfirm();
   const [repos, setRepos] = useState<InternalRepo[] | null>(null);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -56,7 +58,13 @@ export function InternalReposTab() {
   };
 
   const remove = async (rn: string) => {
-    if (!confirm(tr("git.internal_delete_confirm", { name: rn }))) return;
+    const ok = await askConfirm({
+      title: tr("git.internal_delete_title"),
+      body: tr("git.internal_delete_confirm", { name: rn }),
+      confirmLabel: tr("common.delete"),
+      danger: true,
+    });
+    if (!ok) return;
     const res = await raw(`api/internal-git/repos/${encodeURIComponent(rn)}`, { method: "DELETE" });
     if (!res.ok) {
       toast(tr("git.delete_failed"));
