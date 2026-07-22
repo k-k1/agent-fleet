@@ -79,6 +79,12 @@ const FINALIZE_GRACE_MS = 8000;
 // ~40–60px height swing between polls) never nudges us out of "at bottom" and drops follow.
 const NEAR_BOTTOM_PX = 160;
 
+// How long after a session first settles we keep auto-re-pinning to the bottom as late
+// content lays out (images / code highlighting / math). Bounded so that LATER content
+// growth from the user's own action — expanding a 作業過程 disclosure while idle — is NOT
+// yanked back to the bottom; only streaming (active) and this open window re-pin.
+const OPEN_SETTLE_MS = 2000;
+
 // One option in an AskUserQuestion, and one such question.
 interface QuestionOption {
   label: string;
@@ -335,6 +341,7 @@ export function MirrorView({
   const tickRef = useRef<(() => void) | null>(null); // lets send() trigger an immediate refresh
   const bodyRef = useRef<HTMLDivElement>(null);
   const scrollBoxRef = useRef<HTMLDivElement>(null); // inner content wrapper — its height tracks the transcript
+  const settleUntilRef = useRef(0); // re-pin the bottom on late layout only until this ms (open window)
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // Is the user stuck to the bottom (auto-follow on)? Updated HONESTLY on every scroll —
   // user drags AND our own programmatic scrolls both flow through onBodyScroll, so the
@@ -687,6 +694,7 @@ export function MirrorView({
     });
     atBottomRef.current = true; // a freshly opened session starts pinned to the bottom
     setShowJump(false); // …so no jump-to-latest affordance until they scroll up
+    settleUntilRef.current = 0; // the open-settle window belongs to the new session's first settle
     anchoredIdxRef.current = undefined; // no reply anchored yet in the new session
     answerAnchoredRef.current = undefined; // …nor its final answer
     didInitRef.current = false; // re-run the "land at bottom on open" settle for this session
@@ -885,6 +893,7 @@ export function MirrorView({
         didInitRef.current = true;
         anchoredIdxRef.current = replyIdx;
         answerAnchoredRef.current = replyIdx; // a reply already present at open isn't re-anchored
+        settleUntilRef.current = Date.now() + OPEN_SETTLE_MS; // keep re-pinning as this content lays out
       }
       toBottom();
       return;
@@ -946,7 +955,13 @@ export function MirrorView({
     const el = bodyRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => {
-      if (atBottomRef.current && el.scrollHeight - el.scrollTop - el.clientHeight >= 1) {
+      // Only chase late-arriving height while actively streaming (follow the tail) or during
+      // the brief open-settle window (images/highlighting laying out). NOT on arbitrary idle
+      // growth — expanding a 作業過程 disclosure must keep the reader's position, not snap them
+      // to the bottom. (Box resizes like the composer growing still re-pin via `active`/window.)
+      const active = statusRef.current === "working" || bgBusyRef.current || finalizingRef.current;
+      const settling = Date.now() < settleUntilRef.current;
+      if (atBottomRef.current && (active || settling) && el.scrollHeight - el.scrollTop - el.clientHeight >= 1) {
         el.scrollTop = el.scrollHeight;
       }
     });
