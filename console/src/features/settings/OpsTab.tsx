@@ -155,13 +155,30 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
   const toast = useToast();
   const [token, setToken] = useState("");
   const [insp, setInsp] = useState<{ botName: string; inviteUrl: string; token: string } | null>(null);
-  const [chans, setChans] = useState<{ id: string; label: string }[] | null>(null);
+  const [chans, setChans] = useState<
+    { id: string; label: string; ownerId?: string; ownerName?: string }[] | null
+  >(null);
   const [channel, setChannel] = useState("");
   const [dm, setDm] = useState(false);
   const [userId, setUserId] = useState("");
+  const [threads, setThreads] = useState(true);
+  const [mentionId, setMentionId] = useState("");
+  const [autoMention, setAutoMention] = useState<{ id: string; name: string } | null>(null);
   const [events, setEvents] = useState<string[]>(DC_EVENTS.map(([k]) => k));
   const [busy, setBusy] = useState(false);
   const ok = !!insp && (dm ? userId.trim() !== "" : channel !== "") && events.length > 0;
+
+  // Auto-fill the mention target with the picked channel's guild owner (= the
+  // user themself in the recommended private-server setup) unless the user has
+  // typed their own value over a previous auto-fill.
+  const pickChannel = (id: string, opts?: { id: string; ownerId?: string; ownerName?: string }[]) => {
+    setChannel(id);
+    const opt = (opts ?? chans ?? []).find((c) => c.id === id);
+    if (opt?.ownerId && (mentionId === "" || mentionId === autoMention?.id)) {
+      setMentionId(opt.ownerId);
+      setAutoMention({ id: opt.ownerId, name: opt.ownerName || "" });
+    }
+  };
 
   const toggle = (key: string, on: boolean) =>
     setEvents((prev) => (on ? [...prev.filter((k) => k !== key), key] : prev.filter((k) => k !== key)));
@@ -196,10 +213,12 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
         (g.channels || []).map((c: any) => ({
           id: c.id,
           label: (guilds.length > 1 ? g.name + " / " : "") + "#" + c.name,
+          ownerId: g.ownerId as string | undefined,
+          ownerName: g.ownerName as string | undefined,
         })),
       );
       setChans(opts);
-      if (opts.length === 1) setChannel(opts[0].id);
+      if (opts.length === 1) pickChannel(opts[0].id, opts);
     };
     void load();
     const t = setInterval(load, 3000);
@@ -218,6 +237,8 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
         channelId: dm ? "" : channel,
         userId: dm ? userId.trim() : "",
         events,
+        threads: !dm && threads,
+        mentionUserId: dm ? "" : mentionId.trim(),
       });
       if (res && res.error) {
         toast(tr("conn.connect_failed", { msg: errText(res.error) }));
@@ -250,6 +271,8 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
             {tr(st.mode === "channel" ? "ops.dc_connected_channel" : "ops.dc_connected_dm")}
           </span>
           {st.botName && <span className="p-pl">{st.botName}</span>}
+          {st.threads && <span className="p-pl">{tr("ops.dc_pill_threads")}</span>}
+          {st.mention && <span className="p-pl">@</span>}
           {Array.isArray(st.events) && st.events.length < DC_EVENTS.length && (
             <span className="p-pl">
               {DC_EVENTS.filter(([k]) => st.events.includes(k))
@@ -296,16 +319,41 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
           ) : !found ? (
             <p className="muted">{tr("ops.dc_waiting_guild")}</p>
           ) : (
-            <div className="flow">
-              <select className="cinput" value={channel} onChange={(e) => setChannel(e.target.value)}>
-                <option value="">{tr("ops.dc_channel_select")}</option>
-                {chans!.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <>
+              <div className="flow">
+                <select className="cinput" value={channel} onChange={(e) => pickChannel(e.target.value)}>
+                  <option value="">{tr("ops.dc_channel_select")}</option>
+                  {chans!.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="ps-row">
+                <span className="ps-label">
+                  {tr("ops.dc_threads_label")}
+                  <span className="sub">{tr("ops.dc_threads_sub")}</span>
+                </span>
+                <OnOff value={threads} onChange={setThreads} />
+              </div>
+              <div className="ps-row">
+                <span className="ps-label">
+                  {tr("ops.dc_mention_label")}
+                  {autoMention && mentionId === autoMention.id && autoMention.name && (
+                    <span className="sub">{tr("ops.dc_mention_auto", { name: autoMention.name })}</span>
+                  )}
+                </span>
+                <input
+                  className="cinput"
+                  type="text"
+                  style={{ maxWidth: "14em" }}
+                  placeholder={tr("ops.dc_mention_placeholder")}
+                  value={mentionId}
+                  onChange={(e) => setMentionId(e.target.value)}
+                />
+              </div>
+            </>
           )}
           <div className="ps-row">
             <span className="ps-label">{tr("ops.dc_events_label")}</span>

@@ -104,13 +104,21 @@ type CloudWatchConn struct {
 // P2's inbound routing will verify against this same ID). DMChannelID caches
 // the DM channel resolved from UserID so sends don't re-resolve every time.
 // Events selects the pushed notification groups (bridge.EventKeys); empty = all.
+//
+// Channel-mode extras (docs/37 P1.5): Threads groups notifications into one
+// thread per session; MentionUserID is @mentioned in every notification so
+// mobile push fires regardless of the user's channel/thread notification
+// settings (Discord defaults to "only @mentions"). The wizard auto-fills it
+// with the guild's owner_id — no Developer Mode needed.
 type DiscordCreds struct {
-	Token       string   `json:"token"`
-	ChannelID   string   `json:"channelId,omitempty"`
-	UserID      string   `json:"userId,omitempty"`
-	DMChannelID string   `json:"dmChannelId,omitempty"` // cache: resolved from UserID
-	BotName     string   `json:"botName,omitempty"`     // cache: bot account name for the UI
-	Events      []string `json:"events,omitempty"`
+	Token         string   `json:"token"`
+	ChannelID     string   `json:"channelId,omitempty"`
+	UserID        string   `json:"userId,omitempty"`
+	DMChannelID   string   `json:"dmChannelId,omitempty"` // cache: resolved from UserID
+	BotName       string   `json:"botName,omitempty"`     // cache: bot account name for the UI
+	Events        []string `json:"events,omitempty"`
+	Threads       bool     `json:"threads,omitempty"`       // thread-per-session (channel mode only)
+	MentionUserID string   `json:"mentionUserId,omitempty"` // @mentioned in notifications (channel mode)
 }
 
 type Data struct {
