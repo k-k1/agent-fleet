@@ -2,11 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import type { ReactNode } from "react";
 import { api, apiJSON, raw } from "../../core/api/client.ts";
-import { EmptyState } from "../../ui/EmptyState.tsx";
 import { Button } from "../../ui/Button.tsx";
-import { Sparkline } from "../../ui/Sparkline.tsx";
-import { fmtTok } from "../../lib/fmttok.ts";
-import { fmtNum } from "../../lib/intl.ts";
 import { Choice, OnOff, Select } from "./controls.tsx";
 import {
   agentLaunchDefault,
@@ -23,25 +19,29 @@ import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton } from ".
 import { kindDisplayName } from "../../lib/sessionkind.ts";
 import { useT } from "../../lib/i18n/index.ts";
 
-// AgentsTab is the per-agent home: for Claude / Codex / opencode it combines the
-// CONNECTION (auth flow + status) and the BEHAVIOR settings (Remote Control / 通知 /
-// RTK / opencode Web UI) in one card, so "set up Claude" is one place. Git-hosting
-// providers live in their own GitTab. Connection auth goes through the Agent
-// (secrets stored container-side); behavior settings via api/claude/settings +
-// api/agents/rtk and apply to NEW sessions. Both need the workspace running.
+// AgentsTab is the per-agent home. Each card is split into two levels so the two
+// concerns read as a hierarchy rather than one flat block:
+//   1. CONNECTION (top) — the auth flow + status. Needs the workspace running (secrets
+//      are stored container-side via the Agent; the REST proxy 502s while stopped).
+//   2. 動作設定 (a collapsed disclosure, below) — the per-agent BEHAVIOR: client-side
+//      launch defaults (model / effort / start-mode, in the local settings store) plus
+//      the container-backed toggles (Remote Control / 通知 / RTK / nudge). Launch
+//      defaults are client-only, so the cards render even while stopped — you can set a
+//      default model before starting; only the connection + runtime toggles wait for the
+//      workspace. Git-hosting agents live in GitTab; the rtk 効果 analytics that used to
+//      sit here moved out (monitoring is not a setting).
 export function AgentsTab() {
   const tr = useT();
   const toast = useToast();
   // Client-side session pref (タイトル自動提案) — persisted in the local settings
-  // store, so it shows regardless of workspace state (unlike the agent behavior
-  // cards below, which need the container's Agent/CLI). 既定モデルは claude 固有なので
-  // ClaudeCard 内に置く。
+  // store, so it shows regardless of workspace state (unlike the container-backed
+  // toggles, which need the Agent/CLI). 既定モデルは各カードの 動作設定 内。
   const s = useSettings();
   const wsState = useWorkspaceStore((s) => s.state);
   const startWs = useWorkspaceStore((s) => s.start);
-  // Connection auth AND behavior settings both go through the in-container Agent
-  // (proxyAgentREST → 502 when the workspace is stopped), so the whole tab requires
-  // a running workspace — there's no CP-side DB to edit against while stopped.
+  // Connection auth AND the behavior toggles both go through the in-container Agent
+  // (proxyAgentREST → 502 when stopped), so those wait for a running workspace. The
+  // client launch defaults do not (see CardSettings, rendered in every state).
   const running = wsState === "running";
   // Shared connection loader (also used by GitTab); reload() refetches + bumps global
   // listeners on connect/disconnect.
@@ -53,10 +53,6 @@ export function AgentsTab() {
   const [claude, setClaude] = useState<any>(null);
   const [codex, setCodex] = useState<any>(null);
   const [agents, setAgents] = useState<any>(null);
-  // rtk 効果（トークン節約の累積履歴）: rtk gain のワークスペース集計。WsBar から移設
-  // したもので、コンテナ内 Agent が `rtk gain --format json` を叩いた結果。
-  // ダイアログを開いた時に1回取得すれば十分（累積で低速変化のため常時ポーリング不要）。
-  const [gain, setGain] = useState<any>(null);
 
   const loadSettings = useCallback(() => {
     api("api/claude/settings")
@@ -68,9 +64,6 @@ export function AgentsTab() {
     api("api/agents/rtk")
       .then((a) => setAgents(a && !a.error ? a : false))
       .catch(() => setAgents(false));
-    api("api/agents/rtk/gain")
-      .then((d) => setGain(d && d.available && !d.error && d.summary ? d : null))
-      .catch(() => setGain(null));
   }, []);
 
   // (Re)load when the workspace is running — including when it transitions
@@ -108,106 +101,50 @@ export function AgentsTab() {
     </section>
   );
 
-  if (!running) {
-    return (
-      <>
-        {sessionSettings}
-        <EmptyState
-          icon="debug-disconnect"
-          title={tr("agents.ws_required_title")}
-          hint={tr("agents.ws_required_hint")}
-        >
-          <Button icon="play" disabled={wsStartBusy(wsState)} onClick={() => void startWs()}>
-            {wsStartBusy(wsState) ? tr("common.starting") : tr("ops.start_ws")}
-          </Button>
-        </EmptyState>
-      </>
-    );
-  }
-  if (!conns)
-    return (
-      <>
-        {sessionSettings}
-        <p className="muted pad">{tr("common.loading")}</p>
-      </>
-    );
+  // While running but the connection snapshot hasn't loaded yet, hold the cards back a
+  // beat (avoids a flash of "未接続" idle flows). Stopped renders the cards immediately
+  // (degraded): their launch defaults are reachable, connection waits for start.
+  const loading = running && !conns;
 
   return (
     <div className="conns">
       {sessionSettings}
-      {gain && <RtkGainPanel gain={gain} />}
-      <p className="muted ds-note">{tr("agents.note_apply")}</p>
-      <ClaudeCard st={conns.claude} reload={reload} claude={claude} updateClaude={updateClaude} />
-      <CodexCard
-        st={conns.codex}
-        reload={reload}
-        codex={codex}
-        updateCodex={updateCodex}
-        agents={agents}
-        updateAgents={updateAgents}
-      />
-      <CopilotCard st={conns.copilot} agents={agents} updateAgents={updateAgents} />
-      <AgyCard st={conns.agy} reload={reload} agents={agents} updateAgents={updateAgents} />
-      <OpencodeCard
-        st={conns.opencode}
-        reload={reload}
-        agents={agents}
-        updateAgents={updateAgents}
-      />
-      {agents === false && <p className="ps-note">{tr("agents.rtk_unsupported")}</p>}
+      {!running && (
+        <div className="agents-ws-hint">
+          <p className="muted ds-note">{tr("agents.ws_required_hint")}</p>
+          <Button icon="play" disabled={wsStartBusy(wsState)} onClick={() => void startWs()}>
+            {wsStartBusy(wsState) ? tr("common.starting") : tr("ops.start_ws")}
+          </Button>
+        </div>
+      )}
+      {loading ? (
+        <p className="muted pad">{tr("common.loading")}</p>
+      ) : (
+        <>
+          {running && <p className="muted ds-note">{tr("agents.note_apply")}</p>}
+          <ClaudeCard running={running} st={conns?.claude} reload={reload} claude={claude} updateClaude={updateClaude} />
+          <CodexCard
+            running={running}
+            st={conns?.codex}
+            reload={reload}
+            codex={codex}
+            updateCodex={updateCodex}
+            agents={agents}
+            updateAgents={updateAgents}
+          />
+          <CopilotCard running={running} st={conns?.copilot} agents={agents} updateAgents={updateAgents} />
+          <AgyCard running={running} st={conns?.agy} reload={reload} agents={agents} updateAgents={updateAgents} />
+          <OpencodeCard
+            running={running}
+            st={conns?.opencode}
+            reload={reload}
+            agents={agents}
+            updateAgents={updateAgents}
+          />
+          {running && agents === false && <p className="ps-note">{tr("agents.rtk_unsupported")}</p>}
+        </>
+      )}
     </div>
-  );
-}
-
-const RTK_HIST_N = 30; // sparkline shows ~the last month of daily savings
-
-// RtkGainPanel: the workspace-level "rtk 効果" summary — a sparkline of daily tokens
-// saved plus the cumulative total, average savings %, and the input→output / command
-// totals. rtk keeps this history itself (the Agent shells out to `rtk gain --format
-// json`); it's a per-container aggregate across this user's agents, so it lives here
-// once — next to the per-agent RTK toggles below — rather than in the WsBar. Self-hides
-// until gain reads back with something actually saved. Savings read as positive, so the
-// sparkline / meter use the ok color (green), not the resource warn/crit scale.
-function RtkGainPanel({ gain }: { gain: any }) {
-  const tr = useT();
-  const s = gain?.summary;
-  const saved = s?.total_saved || 0;
-  if (!s || saved <= 0) return null;
-  const pct = Math.round(s.avg_savings_pct || 0);
-  const series = (gain.daily || []).slice(-RTK_HIST_N).map((d: any) => d.saved_tokens);
-  return (
-    <section className="ds-group rtk-gain">
-      <h4 className="ds-title">{tr("agents.rtk_gain_title")}</h4>
-      <div className="rtk-gain-head">
-        <Sparkline data={series} width={80} height={30} />
-        <div className="rtk-gain-headline">
-          <b>{fmtTok(saved)}</b>
-          <span className="muted">{tr("agents.rtk_cumulative")}</span>
-        </div>
-      </div>
-      <div className="rtk-gain-meter">
-        <div className="wu-row-head">
-          <span className="muted">{tr("agents.rtk_avg_pct")}</span>
-          <span className="wu-pct">{pct}%</span>
-        </div>
-        <div className="wu-bar">
-          <span className="wu-bar-fill" style={{ width: Math.min(100, pct) + "%" }} />
-        </div>
-      </div>
-      <div className="ws-rtk-stats">
-        <div className="ws-rtk-stat">
-          <span className="muted">{tr("agents.rtk_in_out")}</span>
-          <b>
-            {fmtTok(s.total_input)} → {fmtTok(s.total_output)}
-          </b>
-        </div>
-        <div className="ws-rtk-stat">
-          <span className="muted">{tr("agents.rtk_commands")}</span>
-          <b>{fmtNum(s.total_commands || 0)}</b>
-        </div>
-      </div>
-      <p className="muted ds-note">{tr("agents.note_rtk_gain", { n: RTK_HIST_N })}</p>
-    </section>
   );
 }
 
@@ -221,7 +158,7 @@ function Row({ label, children }: { label: ReactNode; children?: ReactNode }) {
   );
 }
 
-// A labeled settings row inside a card's .p-settings group.
+// A labeled settings row inside a card's 動作設定 group.
 function SettingRow({ label, sub, children }: { label: ReactNode; sub?: ReactNode; children?: ReactNode }) {
   return (
     <div className="ps-row">
@@ -232,6 +169,32 @@ function SettingRow({ label, sub, children }: { label: ReactNode; sub?: ReactNod
       {children}
     </div>
   );
+}
+
+// CardSettings: the per-agent 動作設定 disclosure — collapsed by default so the card
+// reads as "connect" first, with behavior a deliberate second level. Its body is the
+// client launch defaults (always usable) + any container-backed toggles the card passes.
+function CardSettings({ children }: { children?: ReactNode }) {
+  const tr = useT();
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={"p-settings" + (open ? " open" : "")}>
+      <button type="button" className="ps-disclosure" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <span className="ps-caret" aria-hidden="true">
+          {open ? "▾" : "▸"}
+        </span>
+        {tr("agents.behavior")}
+      </button>
+      {open && <div className="ps-body">{children}</div>}
+    </div>
+  );
+}
+
+// The connection body shown while the workspace is stopped: launch defaults below stay
+// reachable, but the auth flow (Agent-proxied) waits for start.
+function ConnPaused() {
+  const tr = useT();
+  return <div className="p-desc muted">{tr("agents.conn_paused")}</div>;
 }
 
 // LaunchDefaults: the common, per-agent starting point. A repo's last-used values
@@ -308,11 +271,13 @@ function RtkRow({
 // Claude: OAuth connect (start → approve in a new tab → paste code → complete), plus
 // its behavior settings (Remote Control / 通知 / RTK) once connected.
 function ClaudeCard({
+  running,
   st,
   reload,
   claude,
   updateClaude,
 }: {
+  running: boolean;
   st: any;
   reload: () => void;
   claude: any;
@@ -368,9 +333,15 @@ function ClaudeCard({
     <ProviderCard
       id="claude"
       name={kindDisplayName("claude")}
-      status={<StatusPill on={st?.connected}>{st?.connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>}
+      status={
+        running ? (
+          <StatusPill on={st?.connected}>{st?.connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>
+        ) : undefined
+      }
     >
-      {st?.connected ? (
+      {!running ? (
+        <ConnPaused />
+      ) : st?.connected ? (
         <div className="p-who">
           <span className="p-em" title={st.email || "connected"}>
             {st.email || "connected"}
@@ -425,8 +396,7 @@ function ClaudeCard({
           </div>
         </>
       )}
-      <div className="p-settings">
-        <div className="ps-title">{tr("agents.settings")}</div>
+      <CardSettings>
         <LaunchDefaults kind="claude" />
         {/* Remote Control / 通知 / RTK are workspace-level files (independent of Claude
             auth) — pre-settable, but need the api/claude/settings endpoint loaded. */}
@@ -451,7 +421,7 @@ function ClaudeCard({
             />
           </>
         )}
-      </div>
+      </CardSettings>
     </ProviderCard>
   );
 }
@@ -468,10 +438,12 @@ function ClaudeCard({
 // GitHub 連携（gh 透過認証）に相乗りするので、状態表示と起動既定のみ。接続/切断は
 // 連携タブの GitHub 側で行う。
 function CopilotCard({
+  running,
   st,
   agents,
   updateAgents,
 }: {
+  running: boolean;
   st: any;
   agents: any;
   updateAgents: (patch: unknown) => void;
@@ -482,9 +454,15 @@ function CopilotCard({
     <ProviderCard
       id="copilot"
       name={kindDisplayName("copilot")}
-      status={<StatusPill on={st?.connected}>{st?.connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>}
+      status={
+        running ? (
+          <StatusPill on={st?.connected}>{st?.connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>
+        ) : undefined
+      }
     >
-      {unsupported ? (
+      {!running ? (
+        <ConnPaused />
+      ) : unsupported ? (
         <div className="p-desc">{tr("agents.copilot_unsupported", { reason: st?.reason || "" })}</div>
       ) : (
         <>
@@ -492,8 +470,7 @@ function CopilotCard({
           {!st?.connected && <p className="ps-note">{tr("agents.copilot_not_connected")}</p>}
         </>
       )}
-      <div className="p-settings">
-        <div className="ps-title">{tr("agents.settings")}</div>
+      <CardSettings>
         <LaunchDefaults kind="copilot" />
         {agents && agents !== false && (
           <>
@@ -505,17 +482,19 @@ function CopilotCard({
             <p className="ps-note">{tr("agents.copilot_rtk_note")}</p>
           </>
         )}
-      </div>
+      </CardSettings>
     </ProviderCard>
   );
 }
 
 function AgyCard({
+  running,
   st,
   reload,
   agents,
   updateAgents,
 }: {
+  running: boolean;
   st: any;
   reload: () => void;
   agents: any;
@@ -575,11 +554,17 @@ function AgyCard({
     <ProviderCard
       id="agy"
       name={kindDisplayName("agy")}
-      status={<StatusPill on={st?.connected}>{st?.connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>}
+      status={
+        running ? (
+          <StatusPill on={st?.connected}>{st?.connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>
+        ) : undefined
+      }
     >
       {/* 実験枠 label — always visible, connected or not (採用条件). */}
       <p className="ps-note ps-note-warn agy-exp">{tr("agents.agy_exp_label")}</p>
-      {unsupported ? (
+      {!running ? (
+        <ConnPaused />
+      ) : unsupported ? (
         <div className="p-desc">{tr("agents.agy_unsupported", { reason: st?.reason || "" })}</div>
       ) : st?.connected ? (
         <div className="p-who">
@@ -643,8 +628,7 @@ function AgyCard({
       )}
       {/* RTK is a workspace-level flag (independent of agy auth) — pre-settable,
           same block shape as the Codex / opencode cards. */}
-      <div className="p-settings">
-        <div className="ps-title">{tr("agents.settings")}</div>
+      <CardSettings>
         <LaunchDefaults kind="agy" />
         {agents && agents !== false && (
           <>
@@ -656,7 +640,7 @@ function AgyCard({
             <p className="ps-note">{tr("agents.agy_rtk_note")}</p>
           </>
         )}
-      </div>
+      </CardSettings>
     </ProviderCard>
   );
 }
@@ -665,6 +649,7 @@ function AgyCard({
 // (workspace-level; shown whenever settings load). codex has no command-rewrite
 // hook so RTK there is instruction-based.
 function CodexCard({
+  running,
   st,
   reload,
   codex,
@@ -672,6 +657,7 @@ function CodexCard({
   agents,
   updateAgents,
 }: {
+  running: boolean;
   st: any;
   reload: () => void;
   codex: any;
@@ -746,9 +732,15 @@ function CodexCard({
     <ProviderCard
       id="codex"
       name={kindDisplayName("codex")}
-      status={<StatusPill on={st?.connected}>{st?.connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>}
+      status={
+        running ? (
+          <StatusPill on={st?.connected}>{st?.connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>
+        ) : undefined
+      }
     >
-      {st?.connected ? (
+      {!running ? (
+        <ConnPaused />
+      ) : st?.connected ? (
         <div className="p-who">
           <span className="p-em" title={st.email || ""}>
             {st.email || (st.method === "apikey" ? tr("agents.codex_apikey_label") : "ChatGPT")}
@@ -813,33 +805,32 @@ function CodexCard({
         </>
       )}
       {/* RTK is a workspace-level flag (independent of Codex auth) — pre-settable. */}
-      <div className="p-settings">
-        <div className="ps-title">{tr("agents.settings")}</div>
+      <CardSettings>
         <LaunchDefaults kind="codex" />
         {codex && (
-            <>
-              <SettingRow label={tr("agents.codex_nudge")}>
-                <OnOff
-                  value={codex.rate_limit_model_nudge}
-                  onChange={(v) => updateCodex({ rate_limit_model_nudge: v })}
-                />
-              </SettingRow>
-              <p className={`ps-note${codex.rate_limit_model_nudge ? " ps-note-warn" : ""}`}>
-                {codex.rate_limit_model_nudge ? tr("agents.codex_nudge_on") : tr("agents.codex_nudge_off")}
-              </p>
-            </>
+          <>
+            <SettingRow label={tr("agents.codex_nudge")}>
+              <OnOff
+                value={codex.rate_limit_model_nudge}
+                onChange={(v) => updateCodex({ rate_limit_model_nudge: v })}
+              />
+            </SettingRow>
+            <p className={`ps-note${codex.rate_limit_model_nudge ? " ps-note-warn" : ""}`}>
+              {codex.rate_limit_model_nudge ? tr("agents.codex_nudge_on") : tr("agents.codex_nudge_off")}
+            </p>
+          </>
         )}
         {agents && agents !== false && (
-            <>
-              <RtkRow
-                available={agents.rtk_available}
-                value={agents.codex_rtk}
-                onChange={(v) => updateAgents({ codex_rtk: v })}
-              />
-              <p className="ps-note">{tr("agents.codex_rtk_note")}</p>
-            </>
+          <>
+            <RtkRow
+              available={agents.rtk_available}
+              value={agents.codex_rtk}
+              onChange={(v) => updateAgents({ codex_rtk: v })}
+            />
+            <p className="ps-note">{tr("agents.codex_rtk_note")}</p>
+          </>
         )}
-      </div>
+      </CardSettings>
     </ProviderCard>
   );
 }
@@ -856,11 +847,13 @@ const OC_PRESETS = [
 ];
 
 function OpencodeCard({
+  running,
   st,
   reload,
   agents,
   updateAgents,
 }: {
+  running: boolean;
   st: any;
   reload: () => void;
   agents: any;
@@ -901,60 +894,71 @@ function OpencodeCard({
     <ProviderCard
       id="opencode"
       name={kindDisplayName("opencode")}
-      status={<StatusPill on={envs.length > 0}>{envs.length > 0 ? tr("agents.oc_key_count", { count: envs.length }) : tr("conn.disconnected")}</StatusPill>}
+      status={
+        running ? (
+          <StatusPill on={envs.length > 0}>
+            {envs.length > 0 ? tr("agents.oc_key_count", { count: envs.length }) : tr("conn.disconnected")}
+          </StatusPill>
+        ) : undefined
+      }
     >
-      <div className="p-desc">{tr("agents.oc_desc")}</div>
-      <div className="p-body">
-        {preset === "go" && (
-          <Hint>
-            <a href="https://opencode.ai/auth" target="_blank" rel="noopener" className="flow-link">
-              opencode.ai/auth
-            </a>
-            {tr("agents.oc_hint")}
-          </Hint>
-        )}
-        {envs.length > 0 && (
-          <ul className="oc-keys">
-            {envs.map((e: string) => (
-              <li key={e}>
-                <code>{e}</code>
-                <button className="icon danger" title={tr("common.delete")} onClick={() => remove(e)}>
-                  ✕
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-        <div className="flow">
-          <select className="cinput" value={preset} onChange={(e) => setPreset(e.target.value)}>
-            {OC_PRESETS.map(([v, label]) => (
-              <option key={v} value={v}>
-                {v === "custom" ? tr("agents.oc_custom") : label}
-              </option>
-            ))}
-          </select>
-          {preset === "custom" && (
-            <input
-              className="cinput"
-              placeholder={tr("agents.oc_env_placeholder")}
-              value={customEnv}
-              onChange={(e) => setCustomEnv(e.target.value)}
-            />
-          )}
-          <input
-            className="cinput"
-            type="password"
-            placeholder={envName ? tr("agents.oc_key_value", { env: envName }) : tr("agents.oc_key_fallback")}
-            value={key}
-            onChange={(e) => setKey(e.target.value)}
-          />
-          <button disabled={busy || !envName || !key.trim()} onClick={add}>
-            {tr("conn.connect")}
-          </button>
-        </div>
-      </div>
-      <div className="p-settings">
-        <div className="ps-title">{tr("agents.settings")}</div>
+      {!running ? (
+        <ConnPaused />
+      ) : (
+        <>
+          <div className="p-desc">{tr("agents.oc_desc")}</div>
+          <div className="p-body">
+            {preset === "go" && (
+              <Hint>
+                <a href="https://opencode.ai/auth" target="_blank" rel="noopener" className="flow-link">
+                  opencode.ai/auth
+                </a>
+                {tr("agents.oc_hint")}
+              </Hint>
+            )}
+            {envs.length > 0 && (
+              <ul className="oc-keys">
+                {envs.map((e: string) => (
+                  <li key={e}>
+                    <code>{e}</code>
+                    <button className="icon danger" title={tr("common.delete")} onClick={() => remove(e)}>
+                      ✕
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="flow">
+              <select className="cinput" value={preset} onChange={(e) => setPreset(e.target.value)}>
+                {OC_PRESETS.map(([v, label]) => (
+                  <option key={v} value={v}>
+                    {v === "custom" ? tr("agents.oc_custom") : label}
+                  </option>
+                ))}
+              </select>
+              {preset === "custom" && (
+                <input
+                  className="cinput"
+                  placeholder={tr("agents.oc_env_placeholder")}
+                  value={customEnv}
+                  onChange={(e) => setCustomEnv(e.target.value)}
+                />
+              )}
+              <input
+                className="cinput"
+                type="password"
+                placeholder={envName ? tr("agents.oc_key_value", { env: envName }) : tr("agents.oc_key_fallback")}
+                value={key}
+                onChange={(e) => setKey(e.target.value)}
+              />
+              <button disabled={busy || !envName || !key.trim()} onClick={add}>
+                {tr("conn.connect")}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+      <CardSettings>
         <LaunchDefaults kind="opencode" />
         {agents && agents !== false && (
           <RtkRow
@@ -963,7 +967,7 @@ function OpencodeCard({
             onChange={(v) => updateAgents({ opencode_rtk: v })}
           />
         )}
-      </div>
+      </CardSettings>
     </ProviderCard>
   );
 }

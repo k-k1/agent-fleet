@@ -639,6 +639,8 @@ export const en: Record<keyof typeof ja, string> = {
   "agents.rtk_row": "RTK (token savings)",
   "agents.rtk_unavailable": "This workspace has no rtk.",
   "agents.settings": "Settings",
+  "agents.behavior": "Behavior",
+  "agents.conn_paused": "Connect once the workspace is running.",
   "agents.claude_auth_failed": "Failed to start Claude auth: {msg}",
   "agents.claude_desc_flow": "Claude Code OAuth connection. Sign-in opens in a new tab.",
   "agents.claude_hint_1": "If the tab doesn't open automatically, use ",

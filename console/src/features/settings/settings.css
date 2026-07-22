@@ -1251,6 +1251,50 @@
   color: var(--faint, var(--muted));
   margin: 4px 0 6px;
 }
+/* 動作設定 disclosure: the collapsed behavior header inside a provider card. Reuses the
+   .ps-title look (small uppercase mono) but as a full-width clickable row with a caret,
+   overriding the legacy :where(.settings-modal) button reset (border/padding/bg). */
+.settings-modal .ps-disclosure {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 0;
+  margin: 2px 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  cursor: pointer;
+  font-size: 10.5px;
+  font-family: var(--mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--faint, var(--muted));
+}
+.settings-modal .ps-disclosure:hover:not(:disabled) {
+  background: transparent;
+  color: var(--fg);
+}
+.ps-caret {
+  font-size: 9px;
+  opacity: 0.8;
+}
+.ps-body {
+  margin-top: 2px;
+}
+/* Stopped-workspace hint above the agent cards: the note + a start button, inline. */
+.agents-ws-hint {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 6px 0 12px;
+}
+.agents-ws-hint .ds-note {
+  margin: 0;
+  flex: 1;
+  min-width: 180px;
+}
 .ps-row {
   display: flex;
   align-items: center;
