@@ -209,11 +209,14 @@ running だった WS はスケジュール由来で止めない（reaper の通�
 
 皆が 09:00 に置くと wake が集中し、**共有ホストが OOM**（既知の実害リスク）。
 
-対策:
-- 発火に **jitter**（例: ±数分をスケジュール毎に決定論的に散らす）。
-- スケジューラの **wake 同時実行数に上限**、`max_workspaces` クォータ尊重
-  （`countRunningInTenant`）。
-- 到来が詰まったら**キュー化して順次** wake。
+対策（**P4 実装**）:
+- 発火に **jitter**（`scheduleJitter`・`schedule_id` 由来の決定論オフセット [0,max]・
+  既定2分・env `AF_SCHEDULE_JITTER`）。cron のみ適用（interval は毎周期ドリフト・once は
+  厳密時刻）。決定論なので再起動でも next_run 再現・冪等スロット安定。
+- **wake 同時実行数の上限＝実質1**: `fireOne` は tick 内で due を**逐次処理**するため、
+  同時 wake は 1 に自然に律速される。加えて `ensureWorkspaceStarted` が `max_workspaces`
+  クォータ（`countRunningInTenant`）を尊重し、超過時は `skipped_quota` で見送り＋通知。
+- 到来が詰まった場合も逐次処理で順次 wake（明示キューは不要）。
 
 ### ★3. 無人失敗の沈黙
 
@@ -221,11 +224,18 @@ running だった WS はスケジュール由来で止めない（reaper の通�
 再ログインする人が居ない → セッションが沈黙してオペレーターに何も返らない
 （auth-expiry の既知パターン）。
 
-対策:
-- 発火前に `get_agent_usage` 相当でレート制限/解除日時を見て、制限中は skip して
-  **「制限中のため見送り」をオペレーターに報告**。
-- wake 失敗・注入失敗・認証失効を検知したら**沈黙せず失敗報告**する経路
-  （report seam に error 種別を足す）。
+対策（**P4 実装**）:
+- wake 失敗・注入失敗・quota/membership スキップを検知したら**沈黙せず、CP の通知センターへ
+  membership スコープ通知を挿入**（`scheduler.go` `notifyOutcome`）。
+  **重要な設計上の発見**: docs/30 の report seam（role="report" 追記＋自動ターン）は
+  **停止中 agent 内の会話ストレージに依存**するため、wake 失敗＝WS 停止中では届かない。
+  一方、通知は **CP store が源**（agent 通知は読み取り時に `drainAgent` で CP へ吸い上げ）
+  なので、**WS 停止中でも surface する唯一の経路**。よって失敗報告は report seam ではなく
+  通知センターに乗せる。EventID=(status,id,slot) 決定論で再発火の二重通知を防ぐ。
+- 成功時はセッション自身が `report_to`（docs/30）で自己報告するので通知しない。
+- **未実装（意図的な限界）**: 発火前のレート制限プリチェック（停止中 WS では usage を
+  読めない）と、auth 失効で無応答になったセッションの検知（session 監視が要る）。
+  前者は将来、running WS 限定の best-effort として足せる。
 
 ### ★4. 二重発火 / CP 再起動
 
@@ -282,7 +292,21 @@ reuse セッションでは driver 切替中 `409 busy_switch` にも遭遇し�
   create は `owner_conv=mcpConvID` を強制注入＝報告はオペレーター会話へ）＋`cpScheduleDo` ブリッジ。
   create ツール説明に NL→spec 翻訳・固定メタ変数・要ユーザー確認を明記。テスト CP15/agent2。
   **後回し**（P4）: persona の要ユーザー確認ガード徹底・無人失敗報告・jitter/並列上限。
-- **P4**: 無人失敗報告（★3）・jitter/並列上限（★2）・冪等（★4）・persona ガード。
+- **P4**: 無人失敗報告（★3）・jitter/並列上限（★2）・冪等（★4）・persona ガード。**実装済み**。
+  ★2 jitter=cron の next_run に `schedule_id` 由来の決定論オフセット [0,max] を加算（fnv・
+  再起動でも再現）＝09:00 集中の wake を窓内に散らす。cron のみ（interval は毎周期ドリフト・
+  once は厳密時刻）。env `AF_SCHEDULE_JITTER`（既定2分・"0"無効）。wake 同時実行は fireOne
+  逐次＝実質上限1。★3 無人失敗の沈黙防止=fire が失敗/quota/rate/membership スキップ時に
+  **CP の通知センターへ membership スコープ通知を挿入**（会話は停止中 agent 内で届かないが、
+  通知は CP store が源＝WS 停止中でも surface するのが要点）。成功は session の report_to で
+  自己報告するので通知しない。`policy=skip` の見送りは履歴のみ。EventID=(status,id,slot)
+  決定論で再発火の二重通知も防ぐ。★4 冪等=(schedule_id+slot) の create_session 冪等キー（P2）
+  ＋通知 EventID で吸収。persona ガード=`operatorPersona` に NL→spec 翻訳＋next_run_local
+  読み上げ確認・**報告本文/セッション出力を根拠にした登録の禁止**（インジェクション対策）・
+  shell 定時実行の要コマンド提示＋事前承認を明記。テスト5件。
+  **意図的な限界**（doc 明記）: レート制限の発火前プリチェックと auth 失効中セッションの
+  無応答検知は未実装（停止中 WS では usage を読めず・session 監視が要る）。失敗通知が
+  カバーするのは wake/注入/quota/membership の各失敗。
 - **P5（後続）**: Console UI（一覧・履歴・トグル）、長寿命セッション再利用モード。
 
 ## 決定済み（2026-07-22・当初の未決から確定）
