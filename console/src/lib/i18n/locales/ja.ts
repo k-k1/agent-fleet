@@ -2138,14 +2138,19 @@ export const ja = {
   "set.title": "設定",
   "set.tab_display": "表示",
   "set.tab_keys": "キー操作",
-  "set.tab_env": "ワークスペース",
+  "set.tab_env": "ツールチェーン",
   "set.tab_agents": "エージェント",
   "set.tab_assistant": "アシスタント",
   "set.tab_tts": "読み上げ",
   "set.tab_git": "Git",
   "set.tab_ssm": "AWS SSM",
-  "set.tab_ops": "運用",
-  "set.tab_tokens": "MCP",
+  "set.tab_ops": "運用・監視",
+  "set.tab_tokens": "MCPトークン",
+  // 設定ダイアログ左レールのグループ見出し + モバイル drill-down の戻り
+  "set.group_personal": "個人設定",
+  "set.group_connections": "接続",
+  "set.group_workspace": "ワークスペース",
+  "set.back": "設定一覧",
 
   // === P5 セッション/メモ（BranchRename/SessionTitle/SsmLogin/MemoTidy ほか） ===
   "sx.branch_rename_failed": "ブランチ名の変更に失敗しました（通信エラー）",
