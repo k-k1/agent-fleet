@@ -176,4 +176,11 @@ rm -rf ~/.local/opt/agent-fleet
   Codex / GitHub Copilot / Antigravity / OpenCode）は同梱せず、初回起動時に
   各利用者がそれぞれの配布元から検証済みのピン版を取得します（再配布を
   行わないための構成です）。
+- 一方、自分でビルドする **全焼き込み Docker イメージ**（既定
+  `BAKE_AGENT_CLIS=1`）は、これらエージェント CLI の本体を同梱します。
+  **自組織内での利用は問題ありませんが、そのイメージを再配布しないでください**
+  （公開レジストリへの push、`docker save` したイメージ tar の第三者への配布 等）
+  — プロプライエタリ CLI の再配布に当たります。第三者へイメージを渡す必要がある
+  場合は lean 構成（`BAKE_AGENT_CLIS=0`）でビルドしてください（本配布物の
+  イメージ・rootfs はこの lean 構成です）。
 - 同梱 OSS の帰属は各 tar 内の `NOTICE` を参照してください。
