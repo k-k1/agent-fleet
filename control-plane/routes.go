@@ -374,6 +374,8 @@ func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/codex/usage", rest)
 	mux.HandleFunc("GET /api/codex/settings", rest)
 	mux.HandleFunc("PUT /api/codex/settings", rest)
+	// Copilot account credit usage (WsBar chip) — proxied to the Agent.
+	mux.HandleFunc("GET /api/copilot/usage", rest)
 	// codex / opencode rtk toggle — proxied to the Agent.
 	mux.HandleFunc("GET /api/agents/rtk", rest)
 	mux.HandleFunc("PUT /api/agents/rtk", rest)
