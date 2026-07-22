@@ -14,10 +14,11 @@ func TestOperatorInjectionTagging(t *testing.T) {
 
 	recordOperatorInjection("slot01", "  リファクタして  ") // trimmed on store
 	recordOperatorInjection("slot01", "テストも直して")
-	recordOperatorInjection("slot01", "リファクタして") // dup of the first (post-trim) — no growth
+	recordOperatorInjection("slot01", "リファクタして")               // dup of the first (post-trim) — no growth
+	recordInjection("slot01", "スマホから返信", turnSourceDiscord) // chat-bridge origin (docs/37 P2a)
 
-	if got := operatorInjections("slot01"); len(got) != 2 {
-		t.Fatalf("store should hold 2 distinct texts, got %d: %v", len(got), got)
+	if got := operatorInjections("slot01"); len(got) != 3 {
+		t.Fatalf("store should hold 3 distinct texts, got %d: %v", len(got), got)
 	}
 
 	turns := []transcript.Turn{
@@ -25,10 +26,11 @@ func TestOperatorInjectionTagging(t *testing.T) {
 		{Role: "user", Text: "自分で打った質問"},     // user's own — untagged
 		{Role: "assistant", Text: "テストも直して"}, // assistant echo — never tagged (role guard)
 		{Role: "user", Text: "  テストも直して  "},  // operator (matches after trim)
+		{Role: "user", Text: "スマホから返信"},       // chat bridge → "discord"
 	}
-	tagOperatorTurns("slot01", turns)
+	tagInjectedTurns("slot01", turns)
 
-	want := []string{turnSourceOperator, "", "", turnSourceOperator}
+	want := []string{turnSourceOperator, "", "", turnSourceOperator, turnSourceDiscord}
 	for i, w := range want {
 		if turns[i].Source != w {
 			t.Errorf("turn %d (%q %q): Source = %q, want %q", i, turns[i].Role, turns[i].Text, turns[i].Source, w)
@@ -40,7 +42,7 @@ func TestOperatorInjectionTagging(t *testing.T) {
 func TestOperatorInjectionTaggingEmpty(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	turns := []transcript.Turn{{Role: "user", Text: "ふつうの入力"}}
-	tagOperatorTurns("slot02", turns)
+	tagInjectedTurns("slot02", turns)
 	if turns[0].Source != "" {
 		t.Errorf("no injections recorded, want empty Source, got %q", turns[0].Source)
 	}

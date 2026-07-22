@@ -153,6 +153,11 @@ func main() {
 	// and pushes to the configured chat providers (Discord first).
 	bridge.StartSender()
 
+	// Chat-bridge receive (docs/37 P2a): the Discord Gateway supervisor that routes the
+	// bound user's thread replies back into sessions. No-op until a user opts into receive
+	// (Discord.Receive) — bounds the WSS connection to opted-in users only.
+	startBridgeReceiver()
+
 	log.Printf("workspace-agent %s listening on %s", buildVersion, addr)
 	if err := http.ListenAndServe(addr, httpx.LogRequests(httpx.RequireToken(mux))); err != nil {
 		log.Fatal(err)

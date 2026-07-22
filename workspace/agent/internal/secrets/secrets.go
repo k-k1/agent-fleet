@@ -120,6 +120,12 @@ type DiscordCreds struct {
 	Threads       bool     `json:"threads,omitempty"`       // thread-per-session (channel mode only)
 	MentionUserID string   `json:"mentionUserId,omitempty"` // @mentioned in notifications (channel mode)
 	Lang          string   `json:"lang,omitempty"`          // notification language: "en" | "" (=ja) — Console locale at connect time
+	// Receive opts into the P2a inbound Gateway (docs/37): when on, a long-lived
+	// WSS connection routes the bound user's thread replies back into the session.
+	// Default off — it needs the MESSAGE_CONTENT privileged intent enabled on the
+	// bot (a one-checkbox step in the Developer Portal for bots in <100 guilds),
+	// and it bounds the daemon's memory to opted-in users only (docs/37「メモリ」).
+	Receive bool `json:"receive,omitempty"`
 }
 
 type Data struct {

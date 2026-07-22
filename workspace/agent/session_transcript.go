@@ -138,7 +138,7 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	turns := claude.CollectTurns(lines, lo, hi)
 	resolveUserFiles(turns)       // SendUserFile paths → browse-root-relative, per each turn's cwd
-	tagOperatorTurns(name, turns) // Source="operator" on operator-injected user turns (docs/30 ②)
+	tagInjectedTurns(name, turns) // Source=operator/discord/… on injected user turns (docs/30 ②, docs/37 P2a)
 	mt := jsonlMtime(jpath)       // hoisted: also feeds the title-suggestion idle check below
 	if autoTitleSuggestEnabled() && meta.Title == "" && meta.SuggestedTitle == "" &&
 		!meta.SuggestedTitleDismissed && titleGenReady(name) {
@@ -278,7 +278,7 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	// userfile parts exist here too (codex imagegen's generated file) — map their
 	// paths browse-root-relative so the Console's 共有ファイル panel can open them.
 	resolveUserFiles(turns)
-	tagOperatorTurns(meta.Name, turns) // Source="operator" on operator-injected user turns (docs/30 ②)
+	tagInjectedTurns(meta.Name, turns) // Source=operator/discord/… on injected user turns (docs/30 ②, docs/37 P2a)
 	resp := map[string]any{
 		"name": meta.Name, "messages": turns, "cursor": cursor,
 		"status": state, "alive": alive, "reset": reset,
