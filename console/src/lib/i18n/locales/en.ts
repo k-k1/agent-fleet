@@ -638,6 +638,8 @@ export const en: Record<keyof typeof ja, string> = {
   "agents.copilot_desc":
     "GitHub Copilot CLI rides the GitHub connection (gh transparent auth) — no separate sign-in. A Copilot subscription on the GitHub account is required (the Free tier has a small monthly quota).",
   "agents.copilot_not_connected": "Connect GitHub first (Connections > GitHub)",
+  "agents.copilot_rtk_note":
+    "copilot routes shell commands through rtk via a preToolUse hook ($COPILOT_HOME/hooks) — deterministic, unlike codex/agy's instruction-based approach. Applies to new sessions.",
   "agents.copilot_unsupported": "Not available in this container image ({reason})",
   "agents.remote_control": "Remote control",
   "agents.notifications": "Notifications",
@@ -1014,6 +1016,13 @@ export const en: Record<keyof typeof ja, string> = {
   "wsbar.usage.codex.week": "Weekly",
   "wsbar.usage.agy.week_row": "{group} (weekly)",
   "wsbar.usage.agy.five_row": "{group} (5-hour)",
+  "wsbar.usage.plan": "Plan: {plan}",
+  "wsbar.usage.user": "User: {user}",
+  "wsbar.usage.copilot.title": "Copilot usage (monthly credits)",
+  "wsbar.usage.copilot.upgradable": "upgradable",
+  "wsbar.usage.copilot.pool_chat": "Chat",
+  "wsbar.usage.copilot.pool_completions": "Code completions",
+  "wsbar.usage.copilot.pool_premium": "Premium requests",
   "wsbar.usage.codex.note":
     "The last value codex recorded (a snapshot from that moment). It refreshes the next time you run codex.",
   "wsbar.usage.full_reset_one": "{count} full reset",

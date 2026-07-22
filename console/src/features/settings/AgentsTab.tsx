@@ -145,6 +145,7 @@ export function AgentsTab() {
         agents={agents}
         updateAgents={updateAgents}
       />
+      <CopilotCard st={conns.copilot} agents={agents} updateAgents={updateAgents} />
       <AgyCard st={conns.agy} reload={reload} agents={agents} updateAgents={updateAgents} />
       <OpencodeCard
         st={conns.opencode}
@@ -152,7 +153,6 @@ export function AgentsTab() {
         agents={agents}
         updateAgents={updateAgents}
       />
-      <CopilotCard st={conns.copilot} />
       {agents === false && <p className="ps-note">{tr("agents.rtk_unsupported")}</p>}
     </div>
   );
@@ -466,7 +466,15 @@ function ClaudeCard({
 // CopilotCard: GitHub Copilot CLI（docs/36）。専用の認証フローを持たない —
 // GitHub 連携（gh 透過認証）に相乗りするので、状態表示と起動既定のみ。接続/切断は
 // 連携タブの GitHub 側で行う。
-function CopilotCard({ st }: { st: any }) {
+function CopilotCard({
+  st,
+  agents,
+  updateAgents,
+}: {
+  st: any;
+  agents: any;
+  updateAgents: (patch: unknown) => void;
+}) {
   const tr = useT();
   const unsupported = st?.supported === false;
   return (
@@ -486,6 +494,16 @@ function CopilotCard({ st }: { st: any }) {
       <div className="p-settings">
         <div className="ps-title">{tr("agents.settings")}</div>
         <LaunchDefaults kind="copilot" />
+        {agents && agents !== false && (
+          <>
+            <RtkRow
+              available={agents.rtk_available}
+              value={agents.copilot_rtk}
+              onChange={(v) => updateAgents({ copilot_rtk: v })}
+            />
+            <p className="ps-note">{tr("agents.copilot_rtk_note")}</p>
+          </>
+        )}
       </div>
     </ProviderCard>
   );

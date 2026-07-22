@@ -68,6 +68,9 @@ func HandleUsage(w http.ResponseWriter, r *http.Request) {
 	if u.PlanType != "" {
 		out["planType"] = u.PlanType
 	}
+	if e := AccountEmail(); e != "" {
+		out["user"] = e
+	}
 	if u.AgeSec >= 0 {
 		out["ageSec"] = u.AgeSec
 	}

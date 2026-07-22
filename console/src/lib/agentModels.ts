@@ -26,7 +26,8 @@ interface ModelDescriptor {
 // Resolved lazily (not a module-level constant) so the "既定" label reflects the
 // current locale and updates on language switch.
 const defaultOnly = (): ModelOption[] => [["", t("ui.default")]];
-const isDynamic = (kind: string) => kind === "codex" || kind === "opencode" || kind === "agy";
+const isDynamic = (kind: string) =>
+  kind === "codex" || kind === "opencode" || kind === "agy" || kind === "copilot";
 const cache = new Map<string, ModelOption[]>();
 const descriptors = new Map<string, ModelDescriptor[]>();
 const inflight = new Map<string, Promise<ModelOption[]>>();
@@ -71,6 +72,7 @@ const FALLBACK_EFFORTS: Record<string, string[]> = {
   claude: ["low", "medium", "high", "xhigh", "max"],
   codex: ["minimal", "low", "medium", "high", "xhigh"],
   opencode: ["low", "medium", "high", "max"],
+  copilot: ["minimal", "low", "medium", "high", "xhigh", "max"],
 };
 
 // useEffortOptions returns model-aware effort choices when the live Codex catalog
