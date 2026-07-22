@@ -12,10 +12,10 @@
 ## セッションの種類
 
 - **claude** — Claude Code を起動。
-- **codex** — Codex CLI を起動。
-- **opencode** — opencode を起動。
-- **copilot** — GitHub Copilot CLI を起動（GitHub 連携に相乗り — [06](06-agents.md)）。
-- **agy** — Antigravity CLI を起動（実験枠。接続すると並びます）。
+- **codex** — Codex を起動。
+- **copilot** — GitHub Copilot を起動（GitHub 連携に相乗り — [06](06-agents.md)）。
+- **agy** — Antigravity を起動（実験枠。接続すると並びます）。
+- **opencode** — OpenCode を起動。
 - **shell** — 通常のシェル（bash）。「はじめる」からすぐ開けます。
 
 claude / codex / opencode / copilot / agy は、対応するエージェントを接続すると「はじめる」に並びます

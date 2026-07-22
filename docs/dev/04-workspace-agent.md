@@ -32,8 +32,10 @@ loopback で届く（preview の下請け `/proxy/{port}`とBrowserManagerの直
   reconciliation で live handle を再構築する。claude/codex/opencode は driver にかかわらず
   **作業 dir 消失で再開不可**（resumable=false、home フォールバックしない）。shell は home フォールバック。claude の resume 判定は
   jsonl に実会話行（user/assistant）があるか——
-  ⚠️ Remote Control 既定 ON では会話前でも `bridge-session` 1 行が書かれるため「jsonl 存在=resume 可」に
-  すると `--resume` が即死する。non-resumable なら jsonl を捨てて `--session-id` 新規。
+  ⚠️ Remote Control が ON のとき会話前でも `bridge-session` 1 行が書かれるため「jsonl 存在=resume 可」に
+  すると `--resume` が即死する。non-resumable なら jsonl を捨てて `--session-id` 新規。（entrypoint の
+  seed 既定は **新規 WS で Remote Control OFF**＝`remoteControlAtStartup: false`。既存 WS は settings.json が
+  真実なので現状値を維持。）
 - ⚠️ **tmux の `-t` は前方一致**（exact→prefix→fnmatch）。`claude_foo` が `claude_foo-sh` に一致して
   誤判定・誤 kill しうるため、target 参照は全て `=name` の exact 形式で行うのが本リポジトリの規約。
 - **DB ミラー（B 案）**: CP の `GET /api/sessions` は running 時に Agent から取得して DB を洗い替え、
@@ -42,13 +44,17 @@ loopback で届く（preview の下請け `/proxy/{port}`とBrowserManagerの直
   （`POST /sessions/{name}/fork`）。新スロットは元の kind と driver を引き継ぐ。
 - **driver 切替**: Codex / OpenCode は `POST /sessions/{name}/driver` で同じ会話を `managed` ⇄ `tui` に
   stop→resume する。実行中 turn がある間は `409 busy_switch`。kind・dir・native conversation ID は維持する。
-- **モデル解決（作成時）**: codex/opencode を明示モデル付きで作成する際、Agent は live カタログ
-  （`codex debug models` / `opencode models`）に照らして、ピッカー表示名や一意な略称（例 `terra`）を
-  完全な slug（`gpt-5.6-terra`）へ解決する（`resolveLiveModel`）。曖昧・利用不可なら **clone/worktree の
-  副作用前に `400 bad_model` で拒否**——「起動後に無効モデルで落ちる」罠を封じる。カタログを読めない
-  縮退時（オフライン / CLI 未導入）は指定値を保持して通常起動を続ける。MCP 経由の起動は先に read ツール
-  `list_models` で候補 id を確認してから `create_session` に渡す運びで、codex/opencode は常に managed で
-  起こす（§4.5・[03](03-control-plane.md)）。claude は起動時に自前の picker/`--model` に委ねるため対象外。
+- **モデル解決（作成時）**: codex/opencode/copilot を明示モデル付きで作成する際、Agent は live カタログ
+  （`codex debug models` / `opencode models` / copilot は `/model` ピッカーの PTY スクレイプ）に照らして、
+  ピッカー表示名や一意な略称（例 `terra`）を完全な slug（`gpt-5.6-terra`）へ解決する（`resolveLiveModel`）。
+  曖昧・利用不可なら **clone/worktree の副作用前に `400 bad_model` で拒否**——「起動後に無効モデルで落ちる」罠を
+  封じる。カタログを読めない縮退時（オフライン / CLI 未導入）は指定値を保持して通常起動を続ける。MCP 経由の起動は
+  先に read ツール `list_models` で候補 id を確認してから `create_session` に渡す。claude は起動時に自前の
+  picker/`--model` に委ねるため対象外。
+  - copilot は **Free プランだと Auto のみ**でモデル catalog が空（＝既定だけ）。かつ **Auto は `--effort` 非対応**
+    （`Model "auto" does not support reasoning effort configuration`）なので、起動コード（`program.go`/`driver.go`）は
+    **concrete な非 auto モデルの時だけ `--effort` を渡す**。auto/未指定で effort を付けると起動失敗する（Free で常時
+    踏むフットガン）ため、フロントの `useEffortOptions` も copilot+auto/未指定では effort を既定のみにする。
 - **ブランチ支援**: `suggest-branch`（セッション会話を要約して AI がブランチ名を提案）/ `rename-branch`。
 - タイトル系（`/title/{suggest,accept,dismiss,regenerate,set}`）は会話からの表示名提案。
 
