@@ -31,6 +31,11 @@ type ReceiverDeps struct {
 	// its origin so the transcript can badge the turn. Returns an error the receiver only
 	// logs (a failed inject is dropped — chat is a 写し, the session is the source of truth).
 	Inject func(sessionName, text, source string) error
+	// Answer applies a P2b button click (an AskUserQuestion pick or a permission/plan
+	// decision) to the session, structurally — never via free-text (契約6). It returns a
+	// short user-facing outcome line the receiver shows on the (button) message, plus an
+	// error it only logs. nil when P2b isn't wired.
+	Answer func(pi ParsedInteraction) (feedback string, err error)
 }
 
 // receiverPollInterval: how often to re-read secrets to notice a connect/disconnect or an
@@ -119,8 +124,9 @@ func desiredReceive() (token, boundUser string) {
 // creds change.
 func runReceiverConn(ctx context.Context, token, boundUser string, deps ReceiverDeps) {
 	gw := &gateway{
-		token: token,
-		onMsg: func(m gatewayMessage) { routeInbound(m, boundUser, deps) },
+		token:      token,
+		onMsg:      func(m gatewayMessage) { routeInbound(m, boundUser, deps) },
+		onInteract: func(gi gatewayInteraction) { routeInteraction(gi, token, boundUser, deps) },
 	}
 	backoff := receiverBackoffMin
 	for {
@@ -177,5 +183,37 @@ func routeInbound(m gatewayMessage, boundUser string, deps ReceiverDeps) {
 	}
 	if err := deps.Inject(name, text, sourceDiscord); err != nil {
 		log.Printf("bridge: inject into %s from discord failed: %v", name, err)
+	}
+}
+
+// routeInteraction is the P2b button-click gate — the interactive counterpart of
+// routeInbound. Same sole defense (契約5): only the bound user's clicks are ever
+// honored. It ACKs immediately (deferred update — no visible loading), applies the
+// answer structurally via deps.Answer, then edits the message to show the outcome
+// and clear the buttons so a decision can't be double-submitted.
+func routeInteraction(gi gatewayInteraction, token, boundUser string, deps ReceiverDeps) {
+	if deps.Answer == nil {
+		return
+	}
+	if boundUser == "" || gi.authorID() != boundUser {
+		return // only the explicitly bound user's clicks
+	}
+	pi, ok := ParseCustomID(gi.Data.CustomID)
+	if !ok {
+		return // not one of ours / malformed
+	}
+	// ACK within Discord's 3s window before the (possibly slower) apply.
+	if err := DiscordAckInteraction(token, gi.ID, gi.Token); err != nil {
+		log.Printf("bridge: ack interaction failed: %v", err)
+	}
+	feedback, err := deps.Answer(pi)
+	if err != nil {
+		log.Printf("bridge: answer interaction for %s failed: %v", pi.Session, err)
+	}
+	if feedback == "" {
+		return // nothing to show (e.g. deps chose to stay silent)
+	}
+	if err := DiscordEditMessage(token, gi.ChannelID, gi.Message.ID, feedback, nil); err != nil {
+		log.Printf("bridge: edit interaction message failed: %v", err)
 	}
 }

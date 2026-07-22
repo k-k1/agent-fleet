@@ -87,12 +87,49 @@ type gatewayMessage struct {
 	} `json:"author"`
 }
 
+// gatewayInteraction is the slice of an INTERACTION_CREATE we need for P2b button
+// clicks: who clicked (member.user in a guild, user in a DM), which button
+// (data.custom_id), and where (channel + message) to acknowledge/edit. Only
+// MESSAGE_COMPONENT (type 3) interactions are acted on.
+type gatewayInteraction struct {
+	ID        string `json:"id"`
+	Type      int    `json:"type"`
+	Token     string `json:"token"`
+	ChannelID string `json:"channel_id"`
+	Data      struct {
+		CustomID string `json:"custom_id"`
+	} `json:"data"`
+	Message struct {
+		ID string `json:"id"`
+	} `json:"message"`
+	Member struct {
+		User struct {
+			ID string `json:"id"`
+		} `json:"user"`
+	} `json:"member"`
+	User struct {
+		ID string `json:"id"`
+	} `json:"user"`
+}
+
+// interactionTypeComponent is Discord's MESSAGE_COMPONENT interaction type.
+const interactionTypeComponent = 3
+
+// authorID is the clicker's user id (member.user in a guild, top-level user in a DM).
+func (gi gatewayInteraction) authorID() string {
+	if gi.Member.User.ID != "" {
+		return gi.Member.User.ID
+	}
+	return gi.User.ID
+}
+
 // gateway holds one connection's worth of state plus the resume tokens carried across
 // reconnects within a supervisor loop. Not safe for concurrent connectOnce calls — the
 // supervisor runs them sequentially.
 type gateway struct {
-	token string
-	onMsg func(gatewayMessage)
+	token      string
+	onMsg      func(gatewayMessage)
+	onInteract func(gatewayInteraction)
 
 	// resume state (persists across reconnects; cleared on a non-resumable invalid session)
 	sessionID string
@@ -228,6 +265,19 @@ func (g *gateway) onDispatch(p gwPayload) {
 		}
 		if g.onMsg != nil {
 			g.onMsg(m)
+		}
+	case "INTERACTION_CREATE":
+		// P2b: a button click. Interactions arrive over the Gateway when no public
+		// Interactions Endpoint URL is set — exactly the local-only deployment.
+		var gi gatewayInteraction
+		if err := json.Unmarshal(p.D, &gi); err != nil {
+			return
+		}
+		if gi.Type != interactionTypeComponent {
+			return // ignore slash commands / autocomplete / modals
+		}
+		if g.onInteract != nil {
+			g.onInteract(gi)
 		}
 	}
 }

@@ -1,8 +1,9 @@
 # 0020. チャットブリッジは「外向き常時接続」型（Slack Socket Mode / Discord Gateway）を採用し、Teams は送信専用枠に格下げする
 
 - 状態: **採用・実装中**（2026-07-22）。P1／P1.5（Discord 片方向通知）＋P2a（受信＝スレッド
-  返信→セッション注入）＋全文ブリッジ（応答本文をチャットへ・opt-in）実装済み、P2b（AUQ／許可
-  ボタン化）以降は未着手。実装計画は [docs/37](../37-chat-bridge.md)。
+  返信→セッション注入）＋全文ブリッジ（応答本文をチャットへ・opt-in）＋P2b（AUQ／許可／プラン
+  承認のボタン化・claude/TUI）実装済み、P3（承認ゲート／オペレーター bot）と Slack 追随は未着手。
+  実装計画は [docs/37](../37-chat-bridge.md)。
 - 関連: [docs/30](../30-session-report.md)（完了報告 — 通知内容の供給元）、
   docs/25（PagerDuty/Grafana — Connections 追加の先例）、docs/07 §7.6（秘密は CP を素通り）。
 
@@ -62,3 +63,11 @@
   との整合は多層スクラブ（既知トークン形＋大文字 env 代入＋高エントロピー独立トークン）で取り、
   一次防壁は「本人が両端を所有」。載せるのは turn 確定時の本文のみ（tool ログ・思考・生ログは不送信）、
   2000 字は分割。本人が自分の出力を自分のチャットに載せる用途に閉じる。
+- **P2b（ボタン化）の制約**: 質問・許可・プラン承認を Message Components で回答する。相互作用は
+  Interactions Endpoint URL 未設定なら Gateway に `INTERACTION_CREATE` として届く（ローカル
+  専用・外部端点なしと整合）ので P2a の受信 Gateway に相乗りし、公開端点は不要。回答は契約6の
+  構造化写像（キー送出でも、押下者検証は契約5の本人限定）。**v1 は claude/TUI 対象**＝フックが
+  pending ペイロードを記録し MirrorView 検証済みのキー列を Go 再現できる面に閉じる。managed
+  （codex/opencode/copilot）は `/respond` の ID がドライバのライブ Interaction 依存で通知経路の
+  識別子と異なり、ライブ検証も要るため v1 は Console 誘導（次段でボタン化）。単一選択のみ対応
+  （multi-select はテキストのまま Console 回答）、複数問は per-session 蓄積で全問揃い次第 submit。
