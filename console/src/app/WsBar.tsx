@@ -383,6 +383,11 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
       {open && (
         <div className="ws-usage-pop">
           <div className="wu-title">{tr("wsbar.usage.pop_title", { name: src.name })}</div>
+          {/* Subscription tier: claude's HandleUsage returns `plan`, codex returns
+              `planType` — surface whichever is present. */}
+          {(usage?.planType || usage?.plan) && (
+            <div className="wu-note muted">{tr("wsbar.usage.plan", { plan: usage.planType || usage.plan })}</div>
+          )}
           {unavailable ? (
             <div className="wu-note muted">{tr("wsbar.usage.unavailable_note", { name: src.name })}</div>
           ) : (
@@ -498,6 +503,7 @@ function AgyUsageChip({ tenant }: { tenant: string | null }) {
       {open && (
         <div className="ws-usage-pop">
           <div className="wu-title">{tr("wsbar.usage.pop_title", { name: "Antigravity" })}</div>
+          {usage?.plan && <div className="wu-note muted">{tr("wsbar.usage.plan", { plan: usage.plan })}</div>}
           {unavailable ? (
             <div className="wu-note muted">{tr("wsbar.usage.unavailable_note", { name: "Antigravity" })}</div>
           ) : (
@@ -593,7 +599,7 @@ function CopilotUsageChip({ tenant }: { tenant: string | null }) {
           <div className="wu-title">{tr("wsbar.usage.pop_title", { name: "Copilot" })}</div>
           {plan && (
             <div className="wu-note muted">
-              {tr("wsbar.usage.copilot.plan", { plan })}
+              {tr("wsbar.usage.plan", { plan })}
               {usage?.canUpgrade ? " · " + tr("wsbar.usage.copilot.upgradable") : ""}
             </div>
           )}
