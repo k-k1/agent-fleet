@@ -7,7 +7,13 @@
 import { useEffect, useRef } from "react";
 import { create } from "zustand";
 
-export type OpenTarget = "notifications" | "usage-claude" | "usage-codex" | "usage-agy" | "resources";
+export type OpenTarget =
+  | "notifications"
+  | "usage-claude"
+  | "usage-codex"
+  | "usage-copilot"
+  | "usage-agy"
+  | "resources";
 
 interface UiOpenStore {
   /** Per-target monotonic request counter. A bump = "the user asked to toggle this". */
@@ -16,7 +22,7 @@ interface UiOpenStore {
 }
 
 export const useUiOpen = create<UiOpenStore>((set) => ({
-  seq: { notifications: 0, "usage-claude": 0, "usage-codex": 0, "usage-agy": 0, resources: 0 },
+  seq: { notifications: 0, "usage-claude": 0, "usage-codex": 0, "usage-copilot": 0, "usage-agy": 0, resources: 0 },
   toggle: (t) => set((s) => ({ seq: { ...s.seq, [t]: s.seq[t] + 1 } })),
 }));
 

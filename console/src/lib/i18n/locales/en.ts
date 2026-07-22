@@ -996,6 +996,12 @@ export const en: Record<keyof typeof ja, string> = {
   "wsbar.usage.codex.week": "Weekly",
   "wsbar.usage.agy.week_row": "{group} (weekly)",
   "wsbar.usage.agy.five_row": "{group} (5-hour)",
+  "wsbar.usage.copilot.title": "Copilot usage (monthly credits)",
+  "wsbar.usage.copilot.plan": "Plan: {plan}",
+  "wsbar.usage.copilot.upgradable": "upgradable",
+  "wsbar.usage.copilot.pool_chat": "Chat",
+  "wsbar.usage.copilot.pool_completions": "Code completions",
+  "wsbar.usage.copilot.pool_premium": "Premium requests",
   "wsbar.usage.codex.note":
     "The last value codex recorded (a snapshot from that moment). It refreshes the next time you run codex.",
   "wsbar.usage.full_reset_one": "{count} full reset",
