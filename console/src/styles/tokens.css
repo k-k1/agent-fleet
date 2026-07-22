@@ -86,7 +86,7 @@
   --kind-codex: #4ec97a;
   --kind-agy: #4285f4;
   --kind-copilot: #a371f7;
-  --kind-opencode: #1fbaa6; /* teal — distinct from copilot's purple */
+  --kind-opencode: #8b96a5; /* slate grey — distinct from codex green & copilot purple */
   --kind-shell: #46c9d0;
   --kind-ssm: #6d8bf5;
 }
@@ -153,7 +153,7 @@
   --kind-codex: #18854a;
   --kind-agy: #1a73e8;
   --kind-copilot: #8250df;
-  --kind-opencode: #0d8f82; /* teal (light) */
+  --kind-opencode: #5a6470; /* slate grey (light) */
   --kind-shell: #15828a;
   --kind-ssm: #3140b8;
 }
