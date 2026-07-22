@@ -58,6 +58,16 @@ jobs:
         with:
           go-version-file: control-plane/go.mod
           cache-dependency-path: control-plane/go.sum
+      - name: free disk space
+        # ubuntu-latest ships ~14GB free; the workspace image bakes chromium+CJK
+        # フォント / node / python+uv MCP 群 / Go / awscli+SSM / agent CLI 4種で、
+        # buildx + gha cache(mode=max) が空き0MBに達し "no space left on device" で
+        # 落ちる（e2e が恒常 FAIL していた真因）。使わないプリインストール(android ~9GB,
+        # dotnet, ghc 等)を消して十数GB を回収する。外部 action は供給網回避のため使わない。
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
+          df -h /
       - uses: docker/setup-buildx-action@v3
       - name: build workspace image
         uses: docker/build-push-action@v6
@@ -96,6 +106,16 @@ jobs:
           cache-dependency-path: |
             console/package-lock.json
             console-e2e/package-lock.json
+      - name: free disk space
+        # ubuntu-latest ships ~14GB free; the workspace image bakes chromium+CJK
+        # フォント / node / python+uv MCP 群 / Go / awscli+SSM / agent CLI 4種で、
+        # buildx + gha cache(mode=max) が空き0MBに達し "no space left on device" で
+        # 落ちる（e2e が恒常 FAIL していた真因）。使わないプリインストール(android ~9GB,
+        # dotnet, ghc 等)を消して十数GB を回収する。外部 action は供給網回避のため使わない。
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
+          df -h /
       - uses: docker/setup-buildx-action@v3
       - name: build workspace image
         uses: docker/build-push-action@v6
@@ -144,6 +164,16 @@ jobs:
         with:
           go-version-file: control-plane/go.mod
           cache-dependency-path: control-plane/go.sum
+      - name: free disk space
+        # ubuntu-latest ships ~14GB free; the workspace image bakes chromium+CJK
+        # フォント / node / python+uv MCP 群 / Go / awscli+SSM / agent CLI 4種で、
+        # buildx + gha cache(mode=max) が空き0MBに達し "no space left on device" で
+        # 落ちる（e2e が恒常 FAIL していた真因）。使わないプリインストール(android ~9GB,
+        # dotnet, ghc 等)を消して十数GB を回収する。外部 action は供給網回避のため使わない。
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
+          df -h /
       - uses: docker/setup-buildx-action@v3
       - name: build workspace image
         uses: docker/build-push-action@v6

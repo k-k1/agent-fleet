@@ -823,6 +823,15 @@ default/ecs ゲートも無変更通過）。実走で得た確定事項:
   設計どおりの案内メッセージで停止（想定内の環境制約 — 起動自体は CI ゲート d/e で
   実証済み。実機起動はゲート k の領分）。
 
+**publish 履歴**: v0.1.0 → v0.1.1（英語化・アシスタントタブ等）→ **v0.1.2（2026-07-22・
+run 29850262365 success）= 入力全断修正（f5158b1・workspace image に `GIT_TERMINAL_PROMPT=0`）
+反映リリース**。workspace image 変更で **rootfs は `4677f9f5a67d` → `1aadff3b24b7` に更新**
+（＝修正が配布 rootfs に載った証跡）。CI 経路 `gh workflow run publish-dist.yml --ref develop
+-f version=0.1.2` で発火。install 検証（この開発 WS・scratchpad 隔離・AF_VERSION=0.1.2）:
+実 URL DL → sha256 → 展開 → symlink → `af help` ✅、同梱 rootfs.json が新 rootfs
+`1aadff3b24b7` の URL/sha256 を指すことを確認（`af start` の実起動はコンテナ userns 制約で
+対象外 = 実機はゲート k で実証済み）。
+
 ゲート (k) = **完了（2026-07-22・ユーザー実機・v0.1.1 / rootfs `4677f9f5a67d`）**。
 手順 1〜7（手順 7 = systemd 常駐化の任意項目含む）全クリア。詳細と填まりどころは
 §35.8.1 の「最終結果」を参照。全ゲート (a)〜(k) 消化済み。

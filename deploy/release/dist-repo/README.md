@@ -206,4 +206,11 @@ this automatically).
   (Claude Code / Codex / GitHub Copilot / Antigravity / OpenCode) are not bundled — on first start
   each user fetches verified, pinned versions from the respective upstream
   (this build intentionally avoids redistribution).
+- By contrast, a **full-baked Docker image you build yourself** (the default,
+  `BAKE_AGENT_CLIS=1`) bundles the agent CLI binaries themselves. **Using it
+  within your own organization is fine, but do not redistribute that image**
+  (pushing to a public registry, handing out a `docker save` image tar, etc.) —
+  that would redistribute the proprietary CLIs. Build the lean variant
+  (`BAKE_AGENT_CLIS=0`) if you need to hand an image to third parties (the
+  images and rootfs in this distribution are that lean build).
 - For attribution of bundled OSS, see the `NOTICE` file inside each tar.
