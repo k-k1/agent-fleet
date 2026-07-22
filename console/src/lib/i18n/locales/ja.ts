@@ -262,7 +262,7 @@ export const ja = {
   "ops.dc_mention_auto": "サーバーオーナー @{name} を自動設定（あなた自身のはず — 違う場合のみ書き換え）",
   "ops.dc_mention_placeholder": "空でメンションなし",
   "ops.dc_receive_label": "返信で操縦（双方向）",
-  "ops.dc_receive_sub": "セッションのスレッドに返信すると、その本文がセッションへ入力されます。Discord 開発者ポータルで Bot の MESSAGE CONTENT INTENT を有効化してください（本人の返信のみ届きます）",
+  "ops.dc_receive_sub": "セッションのスレッドに返信すると、その本文がセッションへ入力されます。質問・許可・プラン承認はボタンで回答できます。Discord 開発者ポータルで Bot の MESSAGE CONTENT INTENT を有効化してください（本人の返信・押下のみ届きます）",
   "ops.dc_pill_threads": "スレッド",
   "ops.dc_pill_receive": "受信",
   "ops.dc_pill_fulltext": "全文",

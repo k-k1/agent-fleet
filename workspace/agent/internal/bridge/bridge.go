@@ -13,6 +13,8 @@
 //     send-capable provider with bounded retries (drop + log beyond that).
 package bridge
 
+import "encoding/json"
+
 // Caps are a provider's capability flags (docs/37 契約1). P1 providers are
 // send-only in practice (only Send is wired); CanReceive/CanInteract exist so
 // the Console and P2's inbound routing can discriminate without a type switch
@@ -48,6 +50,12 @@ type Message struct {
 	// creds opt into full-text mode. Still display data — never tool logs,
 	// thinking, or raw transcripts, and secret-scrubbed before it reaches a wire.
 	Body string `json:"body,omitempty"`
+	// Questions is the pending AskUserQuestion payload (claude's tool_input.questions
+	// array, verbatim) for P2b button rendering (docs/37). Populated only for the
+	// "question" kind; an interact-capable provider renders one option button per
+	// choice. Nil for every other kind (plan-approval / permission-request use fixed
+	// allow/deny buttons that need no payload).
+	Questions json.RawMessage `json:"questions,omitempty"`
 }
 
 // EventKeys are the user-toggleable notification groups of docs/37 P1. The

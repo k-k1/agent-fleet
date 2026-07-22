@@ -55,8 +55,15 @@ func Put(e Event) error {
 	// Enqueue はファイル 1 枚の書き込みだけ（ネットワークはデーモンの sender 側）で、
 	// エラーも飲む — ブリッジ不達が Console 通知を巻き込むことは構造的にない。
 	body, _ := e.Payload["body"].(string) // 全文ブリッジ: 応答本文（answer-ready のみ載る）
+	// P2b: the pending AskUserQuestion payload rides the "question" event so an
+	// interact-capable provider can render option buttons. Stored as raw JSON.
+	var questions json.RawMessage
+	if q, ok := e.Payload["questions"].(json.RawMessage); ok {
+		questions = q
+	}
 	bridge.Enqueue(bridge.Message{Kind: e.Kind, SessionName: e.SessionName,
-		SessionKind: e.SessionKind, DisplayName: e.DisplayName, CreatedAt: e.CreatedAt, Body: body})
+		SessionKind: e.SessionKind, DisplayName: e.DisplayName, CreatedAt: e.CreatedAt,
+		Body: body, Questions: questions})
 	return nil
 }
 

@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
@@ -52,6 +53,23 @@ func TestDiscordLiveSend(t *testing.T) {
 			if err := tp.Send(Message{Kind: kind, SessionName: "af-live-thread",
 				DisplayName: "AF live thread test", SessionKind: "claude"}); err != nil {
 				t.Fatalf("thread %s: %v", kind, err)
+			}
+		}
+		// P2b (docs/37): with AF_DISCORD_BUTTONS=1, post a question with option
+		// buttons plus a permission prompt so the rendering can be eyeballed and
+		// clicked (the click round-trips through TestDiscordLiveReceive).
+		if os.Getenv("AF_DISCORD_BUTTONS") == "1" {
+			bp := &discordProvider{creds: secrets.DiscordCreds{Token: token,
+				ChannelID: p.creds.ChannelID, Threads: true, Receive: true,
+				MentionUserID: os.Getenv("AF_DISCORD_MENTION")}}
+			raw := json.RawMessage(`[{"header":"Env","question":"どの環境にデプロイしますか？","options":[{"label":"dev"},{"label":"staging"},{"label":"prod"}]}]`)
+			if err := bp.Send(Message{Kind: "question", SessionName: "af-live-buttons",
+				DisplayName: "AF live buttons test", SessionKind: "claude", Questions: raw}); err != nil {
+				t.Fatalf("question buttons send: %v", err)
+			}
+			if err := bp.Send(Message{Kind: "permission-request", SessionName: "af-live-buttons",
+				DisplayName: "AF live buttons test", SessionKind: "claude"}); err != nil {
+				t.Fatalf("permission buttons send: %v", err)
 			}
 		}
 		// 全文ブリッジ (docs/37 将来の方向): with AF_DISCORD_FULLTEXT=1, post an
@@ -120,6 +138,16 @@ func TestDiscordLiveReceive(t *testing.T) {
 		}
 		t.Logf("MESSAGE_CREATE author=%s bot=%v channel=%s%s content=%q",
 			m.Author.ID, m.Author.Bot, m.ChannelID, tag, content)
+	}, onInteract: func(gi gatewayInteraction) {
+		// P2b: log button clicks so a live tester can confirm the round-trip.
+		count++
+		pi, _ := ParseCustomID(gi.Data.CustomID)
+		tag := ""
+		if bound != "" && gi.authorID() == bound {
+			tag = " [BOUND USER ✓ would answer]"
+		}
+		t.Logf("INTERACTION_CREATE author=%s%s custom_id=%q parsed=%+v",
+			gi.authorID(), tag, gi.Data.CustomID, pi)
 	}}
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()

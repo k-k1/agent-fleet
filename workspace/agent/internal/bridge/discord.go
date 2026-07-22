@@ -94,14 +94,22 @@ func (d *discordProvider) Send(m Message) error {
 	if d.creds.ChannelID != "" && d.creds.MentionUserID != "" {
 		prefix = "<@" + d.creds.MentionUserID + "> "
 	}
-	chunks := chunkMessage(content, prefix)
+	var msgs []outMsg
+	for _, c := range chunkMessage(content, prefix) {
+		msgs = append(msgs, outMsg{content: c})
+	}
+	// P2b (docs/37): append interactive button messages for attention events when
+	// this connection can round-trip clicks (Receive gateway + channel mode).
+	if d.interactive() {
+		msgs = append(msgs, d.buttonMessages(m)...)
+	}
 	// Thread-per-session (docs/37 P1.5): guild channel destination only —
 	// threads don't exist in DMs — and only for session-scoped events.
 	if d.creds.ChannelID != "" && d.creds.Threads && m.SessionName != "" {
-		return d.sendThreaded(m, chunks)
+		return d.sendThreaded(m, msgs)
 	}
-	for _, c := range chunks {
-		if _, err = discordPostMessage(d.creds.Token, ch, c); err != nil {
+	for _, om := range msgs {
+		if _, err = discordPost(d.creds.Token, ch, om); err != nil {
 			return err
 		}
 	}
@@ -136,10 +144,10 @@ func (d *discordProvider) destChannel() (string, error) {
 // never be lost to thread bookkeeping — if the thread can't be created the
 // message has already landed flat in the channel and we simply try again on
 // the session's next event.
-func (d *discordProvider) sendThreaded(m Message, chunks []string) error {
+func (d *discordProvider) sendThreaded(m Message, msgs []outMsg) error {
 	ts := loadThreads()
 	if ref, ok := ts[m.SessionName]; ok && ref.Channel == d.creds.ChannelID {
-		err := d.postChunksToThread(ref.Thread, chunks)
+		err := d.postMsgsToThread(ref.Thread, msgs)
 		if !isUnknownChannel(err) {
 			return err // delivered, or a real failure worth retrying as-is
 		}
@@ -147,16 +155,16 @@ func (d *discordProvider) sendThreaded(m Message, chunks []string) error {
 		delete(ts, m.SessionName)
 		saveThreads(ts)
 	}
-	// No (valid) thread: the first chunk lands flat and seeds the thread; the
+	// No (valid) thread: the first message lands flat and seeds the thread; the
 	// rest go inside it (or flat too, if thread creation fails — nothing lost).
-	msgID, err := discordPostMessage(d.creds.Token, d.creds.ChannelID, chunks[0])
+	msgID, err := discordPost(d.creds.Token, d.creds.ChannelID, msgs[0])
 	if err != nil {
 		return err
 	}
 	threadID, err := DiscordStartThread(d.creds.Token, d.creds.ChannelID, msgID, threadName(m))
 	if err != nil {
-		for _, c := range chunks[1:] {
-			if _, e := discordPostMessage(d.creds.Token, d.creds.ChannelID, c); e != nil {
+		for _, om := range msgs[1:] {
+			if _, e := discordPost(d.creds.Token, d.creds.ChannelID, om); e != nil {
 				return nil // partial flat delivery; grouping retries next event
 			}
 		}
@@ -164,14 +172,14 @@ func (d *discordProvider) sendThreaded(m Message, chunks []string) error {
 	}
 	ts[m.SessionName] = threadRef{Channel: d.creds.ChannelID, Thread: threadID}
 	saveThreads(ts)
-	return d.postChunksToThread(threadID, chunks[1:])
+	return d.postMsgsToThread(threadID, msgs[1:])
 }
 
-// postChunksToThread posts each chunk into the thread in order (unarchiving as
+// postMsgsToThread posts each message into the thread in order (unarchiving as
 // needed per postToThread).
-func (d *discordProvider) postChunksToThread(threadID string, chunks []string) error {
-	for _, c := range chunks {
-		if err := d.postToThread(threadID, c); err != nil {
+func (d *discordProvider) postMsgsToThread(threadID string, msgs []outMsg) error {
+	for _, om := range msgs {
+		if err := d.postToThread(threadID, om); err != nil {
 			return err
 		}
 	}
@@ -180,13 +188,13 @@ func (d *discordProvider) postChunksToThread(threadID string, chunks []string) e
 
 // postToThread sends into a thread, transparently unarchiving it first when
 // the auto-archive window (24h) has passed.
-func (d *discordProvider) postToThread(threadID, content string) error {
-	_, err := discordPostMessage(d.creds.Token, threadID, content)
+func (d *discordProvider) postToThread(threadID string, om outMsg) error {
+	_, err := discordPost(d.creds.Token, threadID, om)
 	if isThreadArchived(err) {
 		if err = DiscordUnarchiveThread(d.creds.Token, threadID); err != nil {
 			return err
 		}
-		_, err = discordPostMessage(d.creds.Token, threadID, content)
+		_, err = discordPost(d.creds.Token, threadID, om)
 	}
 	return err
 }
@@ -301,13 +309,26 @@ func DiscordUserName(token, userID string) (string, error) {
 	return u.Username, nil
 }
 
-// discordPostMessage posts to a channel (or thread — threads are channels) and
-// returns the created message id (the thread starter needs it).
+// discordPostMessage posts a plain-text message and returns the created message
+// id (the thread starter needs it). Thin wrapper over discordPost.
 func discordPostMessage(token, channelID, content string) (string, error) {
+	return discordPost(token, channelID, outMsg{content: content})
+}
+
+// discordPost posts a message (content and/or interactive components — P2b) to a
+// channel or thread and returns the created message id.
+func discordPost(token, channelID string, om outMsg) (string, error) {
+	body := map[string]any{}
+	if om.content != "" {
+		body["content"] = om.content
+	}
+	if len(om.components) > 0 {
+		body["components"] = om.components
+	}
 	var res struct {
 		ID string `json:"id"`
 	}
-	err := discordDo("POST", "/channels/"+channelID+"/messages", token, map[string]any{"content": content}, &res)
+	err := discordDo("POST", "/channels/"+channelID+"/messages", token, body, &res)
 	return res.ID, err
 }
 
@@ -324,6 +345,31 @@ func DiscordStartThread(token, channelID, messageID, name string) (string, error
 
 func DiscordUnarchiveThread(token, threadID string) error {
 	return discordDo("PATCH", "/channels/"+threadID, token, map[string]any{"archived": false}, nil)
+}
+
+// interactionDeferUpdate is Discord's DEFERRED_UPDATE_MESSAGE callback type (6):
+// it ACKs a component interaction with no visible loading state, so the answer
+// can be applied and the message edited afterwards without racing the 3s deadline.
+const interactionDeferUpdate = 6
+
+// DiscordAckInteraction acknowledges a component interaction (P2b) so Discord
+// doesn't show "interaction failed". Must be sent within 3s of the click; the
+// message is edited separately once the answer is applied.
+func DiscordAckInteraction(token, interactionID, interactionToken string) error {
+	return discordDo("POST", "/interactions/"+interactionID+"/"+interactionToken+"/callback", token,
+		map[string]any{"type": interactionDeferUpdate}, nil)
+}
+
+// DiscordEditMessage patches a message's content and components (P2b: after a
+// button click, replace the prompt with the outcome and clear the buttons so the
+// same decision can't be re-submitted). Pass an empty (non-nil) components slice
+// to remove the buttons.
+func DiscordEditMessage(token, channelID, messageID, content string, components []any) error {
+	if components == nil {
+		components = []any{}
+	}
+	return discordDo("PATCH", "/channels/"+channelID+"/messages/"+messageID, token,
+		map[string]any{"content": content, "components": components}, nil)
 }
 
 // DiscordResolveDM opens (or returns the existing) DM channel with the bound
