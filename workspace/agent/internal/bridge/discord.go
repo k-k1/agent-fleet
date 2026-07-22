@@ -79,7 +79,7 @@ func (d *discordProvider) Send(m Message) error {
 	if err != nil {
 		return err
 	}
-	content := m.Text()
+	content := m.Text(d.creds.Lang)
 	// Mention makes mobile push deterministic: Discord's default notification
 	// level for guild channels AND threads is "only @mentions", so an unpinged
 	// notification silently becomes badge-only (docs/37 P1.5). DM mode needs none.

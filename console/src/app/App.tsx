@@ -45,6 +45,7 @@ import { WhichKey } from "../features/keys/WhichKey.tsx";
 import { CommandPalette } from "../features/keys/CommandPalette.tsx";
 import { CheatSheet } from "../features/keys/CheatSheet.tsx";
 import { useUpdateCheck } from "../lib/useUpdateCheck.tsx";
+import { consumeSessionDeepLink } from "../lib/sessionDeepLink.ts";
 
 // Refresh FILES (and repos/sessions/chat list on start) whenever the workspace
 // actually flips running↔stopped — including external changes the 4s sync catches
@@ -256,6 +257,9 @@ export function App() {
       void hydrateUIPrefs();
       setBooted(true);
     })();
+    // Chat-bridge notification links (?session=<name>) open that session's pane.
+    // Idempotent across StrictMode's double-invoke: the first call strips the param.
+    consumeSessionDeepLink();
     return () => {
       unHistory();
       unModalHistory();
