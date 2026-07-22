@@ -3,12 +3,14 @@
 - 状態: **P1／P1.5＋P2a（受信＝スレッド返信→注入）＋全文ブリッジ（応答本文投稿）＋
   P2b（AUQ／許可／プラン承認のボタン化・claude/TUI＋managed codex/opencode/copilot）＋
   通知/全文の整理（全文は本文のみ・メンション時間ゲート・受信 ack）＋
-  P3先取り（@メンション→フリート・オペレーター会話・専用スレッド）実装済み（Discord）**
-  （2026-07-22。残る P3＝破壊的操作の承認ゲートと Slack 追随は未着手）。採用判断は
+  P3先取り（@メンション→フリート・オペレーター会話・専用スレッド）＋
+  P3 承認ゲート（破壊的操作＝削除系＋shell を Discord のボタンで承認）実装済み（Discord）**
+  （2026-07-22。残るは Slack 追随のみ）。採用判断は
   [decisions/0020](decisions/0020-chat-bridge.md)。実装メモは
   [§P1 実装記録](#p1-実装記録2026-07-22)／[§P2a 実装記録](#p2a-実装記録-スレッド返信--セッション注入2026-07-22)／
   [§全文ブリッジ 実装記録](#全文ブリッジ-実装記録-応答本文をチャットへ2026-07-22)／
-  [§P2b 実装記録](#p2b-実装記録-askuserquestion許可プラン承認のボタン化2026-07-22)。
+  [§P2b 実装記録](#p2b-実装記録-askuserquestion許可プラン承認のボタン化2026-07-22)／
+  [§P3 承認ゲート 実装記録](#p3-承認ゲート-実装記録-破壊的操作をボタンで承認2026-07-23)。
 - **着手順は Discord 優先**（2026-07-22 決定）: トークン準備が最軽量（私設ギルド＋Bot、
   管理者承認・課金なし）のため、P1→P2 を Discord で縦に貫通させてから Slack を
   同じプロバイダ抽象に足す。抽象の設計は最初から 2 プロバイダ前提で行う
@@ -285,6 +287,7 @@ Console を開けない外出先からセッションを操縦できる（AUQ／
 
 - オペレーターの shell 実行確認（方針C）・破壊的操作を「承認/却下」ボタン付き
   メッセージに写像。押下者検証は契約 5 のとおり。
+  → **実装済み**（2026-07-23。下記 §P3 承認ゲート 実装記録）。
 - オペレーターセッション（`operatorPersona`）へのチャット窓口:
   「フリート何やってる？」→ list/usage 系 MCP ツールの回答を整形返信。
   → **@メンション→オペレーター会話は P3先取りとして実装済み**（下記）。`/af run` の独自
@@ -333,8 +336,51 @@ Console を開けない外出先から、走らせている個々のセッショ
   局所化理由／`createOperatorConversation`＝operator スナップショットで af_write 付与）＋
   live 拡張（`AF_DISCORD_OPERATOR=1` でスレッド 起票＋return-leg 目視）。go 533／Console
   typecheck・i18n:lint・vitest 355 緑。**残＝実 Discord での実機目視（@メンション→会話→応答が
-  同スレッドへ・自律応答ミラー）は再ビルド後**。破壊的操作の確認（承認ゲート）は残る P3 で P2b
-  ボタン機構に載せる。
+  同スレッドへ・自律応答ミラー）は再ビルド後**。破壊的操作の確認（承認ゲート）は下記 §P3 承認ゲートで実装。
+
+#### P3 承認ゲート 実装記録: 破壊的操作をボタンで承認（2026-07-23）
+
+Discord から駆動されるオペレーター会話（Console を開けない外出先・無人）が **破壊的操作** を
+実行する直前に、専用オペレータースレッドへ「承認/却下」ボタンを出し、本人が押すまで実行を止める。
+押下者検証は契約5（本人限定）を流用。P2b のボタン往復（`interact.go`／`routeInteraction`／
+`ParsedInteraction`）にそのまま載せる。
+
+- **ゲート対象＝削除系＋shell**（ユーザー確認 2026-07-23）: `delete_session`／`delete_worktree`／
+  `delete_branch`／`purge_cleanup_archive`（データ損失・回収系）＋ `create_session(kind=shell)` と
+  **shell セッションへの** `send_to_session`（任意コマンド実行＝生シェルはガードレール無し・方針Cの穴）。
+  `stop_session`／`archive_session` は可逆なので対象外。
+- **プロセス構成の制約**: 書込 MCP ツールは `workspace-agent mcp-stdio --write --conv <id>` の
+  **別サブプロセス**で走り、各破壊的ツールはデーモン REST（`/halt`・`DELETE …`）へ中継する。
+  ボタン押下は **デーモン側 Gateway** に届く（別プロセス）ため、両者はファイルで協調する（bridge-queue／
+  bridge-answers 等と同じ fstore 方式）。
+- **Discord 由来か Console 由来かの区別**（信号が無い＝同一 conv・同一 spawn 引数）: `runOperatorTurn`
+  （Discord 駆動のみ）が `prov.send` の前後で **オリジン・マーカー** `bridge-operator-turn.json`
+  `{conv, expiresAt}` を arm/disarm する（`bridge_approval.go`）。Console の `handleChatSend` は
+  書かない＝**Discord 駆動時だけゲート作動**（Console は人が見ているので従来どおり）。conv ロックで
+  直列化済み＝マーカーは一意。TTL 自己失効でプロセス死時も残らない。
+- **ゲート本体**（`mcp_stdio.go` の各破壊的ハンドラが実行直前に `bridgeApprovalGate(op, summary)` を呼ぶ）:
+  マーカーが自分の conv で無効なら即 `nil`（＝従来どおり実行）。有効なら承認レコード
+  `bridge-approvals/<id>.json` を書き、`bridge.PostOperatorApproval` で専用スレッドへボタン投稿
+  （`ScrubSecrets` 済み＝summary にコマンド/プロンプトが載るため）→ decision をポーリング。
+  承認→実行／却下→`errApprovalRejected`／時間切れ→`errApprovalTimeout`。error 時は `mcpToolErr` で
+  LLM に文面を返し、オペレーターが結果を報告。**フェイルセーフ**＝マーカー有効なのに投稿不可
+  （thread/secrets 欠落）→ **実行せず中止**（fail-closed）。
+- **承認ウィンドウ**: `runOperatorTurn` の turn timeout を Console 用 `chatTimeout`（240秒）より
+  長い `operatorTurnTimeout`（6分）に引き上げ、外出先でも押せる猶予（`bridgeApprovalTimeout` 既定4分）を
+  確保。待機中は既存の typing パルスがスレッドを「作業中」に保つ。ブロッキング方式なのでツール結果は
+  会話文脈にそのまま戻り、承認後の連鎖もできる（実行はサブプロセスのまま＝REST 中継ロジックの重複無し）。
+- **押下適用**（デーモン側）: `ParseCustomID` に `af|op|<approve|reject>|<id>`（Kind `"op"`・`Approval` id）を追加。
+  `answerInteraction` が `op` を `bridgeApprovalDecision` へ分岐＝レコードに decision を書き、フィードバック
+  （「✓ 承認しました」等）を返す→`routeInteraction` が既存どおりメッセージをボタン除去＋結果に編集。
+  二重押下/期限切れは decision 済み判定で弾く。孤児レコードは書込時 TTL 掃引（`sweepStaleApprovals`）。
+- **面は作らない／新 REST 追加なし**: 投稿先は既存の専用オペレータースレッド、押下適用は既存
+  `ReceiverDeps.Answer`（`answerInteraction`）に相乗り。
+- 検証: go **557 緑**（`bridge_approval_test.go`＝マーカー arm/disarm/失効・非武装 no-op・fail-closed・
+  wait の承認/却下/時間切れ・decision の初回/二重/欠落・往復・`sessionIsShell`・stale 掃引／
+  `internal/bridge/approval_test.go`＝custom_id 往復・不正 op 拒否・no-target・投稿＋scrub）＋
+  live 拡張（`AF_DISCORD_APPROVAL=1` でスレッドへボタン投稿→クリックは `TestDiscordLiveReceive` の
+  `INTERACTION_CREATE` ログで parsed `op` を確認）。**残＝実 Discord 実機目視（削除/ shell を Discord から
+  頼む→ボタン→承認で実行・却下で不実行）は再ビルド後**。
 
 ### P4 — 周辺 ＋ Teams 送信専用
 
@@ -452,7 +498,8 @@ managed ボタン化に着手する前に、実運用のノイズと外出先の
   **Console 無しでフリートが回る**（P2a 返信＋全文表示＋P2b ボタン）。managed のボタン化も
   完了（§P2b 実装記録 managed 節）＝残るは**ライブ codex 実クリック検証**（再ビルド後）。
 - **P3 先取り＝@メンション→フリート・オペレーター会話＝実装済み**（上記 §P3先取り 実装記録）。
-  残るは実機目視と、破壊的操作の承認ゲート（P2b ボタン機構に載せる）。
+- **P3 承認ゲート＝破壊的操作（削除系＋shell）を Discord のボタンで承認＝実装済み**（上記 §P3 承認ゲート
+  実装記録）。Discord 駆動（無人）時のみ作動＝Console は従来どおり。残るは実機目視（再ビルド後）。
 - session-report 本文（オペレーター向け報告文）の全文投稿は別トグル候補として保留（用途・言語が
   answer-ready 本文と異なるため今回スコープ外）。
 - Slack 追随（Socket Mode）で同じ `bridge.Provider` 抽象に全文モードを載せる（`ScrubSecrets`／

@@ -1,10 +1,10 @@
 # 0020. チャットブリッジは「外向き常時接続」型（Slack Socket Mode / Discord Gateway）を採用し、Teams は送信専用枠に格下げする
 
-- 状態: **採用・実装中**（2026-07-22）。P1／P1.5（Discord 片方向通知）＋P2a（受信＝スレッド
+- 状態: **採用・実装中**（2026-07-22〜23）。P1／P1.5（Discord 片方向通知）＋P2a（受信＝スレッド
   返信→セッション注入）＋全文ブリッジ（応答本文をチャットへ・opt-in）＋P2b（AUQ／許可／プラン
   承認のボタン化・claude/TUI＋managed）＋P3先取り（@メンション→フリート・オペレーター会話・
-  専用スレッド）実装済み、残る P3（破壊的操作の承認ゲート）と Slack 追随は未着手。
-  実装計画は [docs/37](../37-chat-bridge.md)。
+  専用スレッド）＋P3 承認ゲート（破壊的操作＝削除系＋shell を Discord ボタンで承認）実装済み、
+  残るは Slack 追随のみ。実装計画は [docs/37](../37-chat-bridge.md)。
 - 関連: [docs/30](../30-session-report.md)（完了報告 — 通知内容の供給元）、
   docs/25（PagerDuty/Grafana — Connections 追加の先例）、docs/07 §7.6（秘密は CP を素通り）。
 
@@ -80,6 +80,18 @@
   フィンガープリント＋`Respond` の id 照合の二重ガード。単一選択のみ対応（multi-select はテキストの
   まま Console 回答）、複数問は per-session 蓄積で全問揃い次第 submit。ライブ codex 実クリック検証は
   再ビルド後に残。
+- **P3 承認ゲート（破壊的操作を Discord ボタンで承認）**: オペレーター会話が **Discord 駆動（無人）** の
+  ときだけ、破壊的操作（削除系＝`delete_session`／`delete_worktree`／`delete_branch`／
+  `purge_cleanup_archive`、および shell 実行＝`create_session(kind=shell)`／shell への `send_to_session`）を
+  実行直前に「承認/却下」ボタンへ写像し、本人が押すまで止める（押下者検証は契約5）。Console 経由は人が
+  見ているので従来どおりゲートしない＝**Discord/Console の区別**は `runOperatorTurn` が arm するオリジン・
+  マーカー（`handleChatSend` は書かない）で行う（同一 conv・同一 spawn 引数のため他に信号が無い）。書込 MCP は
+  **別サブプロセス**で走りボタン押下は**デーモン**に届くので、両者は共有ファイル（承認レコード）で協調する。
+  相互作用は P2b と同じく Interactions Endpoint 未設定なら Gateway に `INTERACTION_CREATE` として届く＝
+  公開端点不要。**フェイルセーフ**＝承認を届ける経路（スレッド/接続）が無ければ実行しない（fail-closed）。
+  実行はサブプロセスの REST 中継のまま（重複ロジック無し）で、承認待ちのあいだ turn timeout を
+  `chatTimeout` より長くして外出先での承認猶予を確保する。`stop_session`／`archive_session` は可逆ゆえ対象外。
+  ライブ実クリック実機目視は再ビルド後に残。
 - **P3先取り（@メンション→オペレーター会話）**: セッションだけでなく built-in オペレーター会話
   （`assistants.go` "operator"・`af_write`）ともチャットできる。受信面は**専用オペレータースレッド**
   （契約5の本人限定を維持・`ThreadToSession` とは別ファイル `bridge-operator.json` の thread→conv

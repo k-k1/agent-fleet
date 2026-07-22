@@ -696,6 +696,13 @@ func mcpStdioCall(req mcpReq) []byte {
 		if !mcpWriteEnabled {
 			return mcpToolErr(req.ID, "このアシスタントはセッションの作成を許可されていません")
 		}
+		// P3: a raw shell session executes arbitrary commands (no agent guardrails) — gate
+		// its creation on a Discord approval when this is an unattended operator turn.
+		if a.Kind == "shell" {
+			if err := bridgeApprovalGate(approvalLabel("create_session_shell"), shellCreateTarget(a.Dir, a.InitialPrompt)); err != nil {
+				return mcpToolErr(req.ID, err.Error())
+			}
+		}
 		driver := ""
 		if a.Kind == "codex" || a.Kind == "opencode" || a.Kind == "copilot" {
 			driver = "managed"
@@ -731,6 +738,13 @@ func mcpStdioCall(req mcpReq) []byte {
 		}
 		if a.Prompt == "" {
 			return mcpToolErr(req.ID, "prompt（送信本文）が必要です")
+		}
+		// P3: sending to a raw shell session runs an arbitrary command — gate it like a shell
+		// create when this is an unattended operator turn (agent sessions keep their own guardrails).
+		if sessionIsShell(a.Name) {
+			if err := bridgeApprovalGate(approvalLabel("send_to_session_shell"), shellSendTarget(a.Name, a.Prompt)); err != nil {
+				return mcpToolErr(req.ID, err.Error())
+			}
 		}
 		reqBody, _ := json.Marshal(map[string]string{"prompt": a.Prompt, "report_to": mcpConvID})
 		out, resumed, err := agentSendToSession(a.Name, reqBody)
@@ -789,6 +803,9 @@ func mcpStdioCall(req mcpReq) []byte {
 		if a.Name == "" {
 			return mcpToolErr(req.ID, "name（worktree 名）が必要です")
 		}
+		if err := bridgeApprovalGate(approvalLabel("delete_worktree"), a.Name); err != nil {
+			return mcpToolErr(req.ID, err.Error())
+		}
 		// prune_sessions=1 で紐づく停止中メタも整理。force は付けない — dirty/ahead は
 		// 保護のまま Agent 側で拒否させ、理由（要 push / Console で強制）を返す。
 		out, err := agentDo(http.MethodDelete, "/repos/"+url.PathEscape(a.Name)+"?prune_sessions=1", nil)
@@ -803,6 +820,9 @@ func mcpStdioCall(req mcpReq) []byte {
 		if a.Name == "" {
 			return mcpToolErr(req.ID, "name（セッション名）が必要です")
 		}
+		if err := bridgeApprovalGate(approvalLabel("delete_session"), a.Name); err != nil {
+			return mcpToolErr(req.ID, err.Error())
+		}
 		// reclaim=1 で jsonl も回収。消す前に gz 安全網へ退避される（復元可能）。
 		out, err := agentDo(http.MethodDelete, "/sessions/"+url.PathEscape(a.Name)+"?reclaim=1", nil)
 		if err != nil {
@@ -815,6 +835,9 @@ func mcpStdioCall(req mcpReq) []byte {
 		}
 		if a.Repo == "" || a.Branch == "" {
 			return mcpToolErr(req.ID, "repo（リポジトリ名）と branch（ブランチ名）が必要です")
+		}
+		if err := bridgeApprovalGate(approvalLabel("delete_branch"), a.Repo+" / "+a.Branch); err != nil {
+			return mcpToolErr(req.ID, err.Error())
 		}
 		out, err := agentDo(http.MethodDelete,
 			"/repos/"+url.PathEscape(a.Repo)+"/branch?branch="+url.QueryEscape(a.Branch), nil)
@@ -840,6 +863,9 @@ func mcpStdioCall(req mcpReq) []byte {
 		}
 		if a.ID == "" {
 			return mcpToolErr(req.ID, "id（アーカイブ id）が必要です")
+		}
+		if err := bridgeApprovalGate(approvalLabel("purge_cleanup_archive"), a.ID); err != nil {
+			return mcpToolErr(req.ID, err.Error())
 		}
 		out, err := agentDo(http.MethodDelete, "/cleanup/archives/"+url.PathEscape(a.ID), nil)
 		if err != nil {
