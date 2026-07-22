@@ -2,7 +2,8 @@
 
 - 状態: **採用・実装中**（2026-07-22）。P1／P1.5（Discord 片方向通知）＋P2a（受信＝スレッド
   返信→セッション注入）＋全文ブリッジ（応答本文をチャットへ・opt-in）＋P2b（AUQ／許可／プラン
-  承認のボタン化・claude/TUI）実装済み、P3（承認ゲート／オペレーター bot）と Slack 追随は未着手。
+  承認のボタン化・claude/TUI＋managed）＋P3先取り（@メンション→フリート・オペレーター会話・
+  専用スレッド）実装済み、残る P3（破壊的操作の承認ゲート）と Slack 追随は未着手。
   実装計画は [docs/37](../37-chat-bridge.md)。
 - 関連: [docs/30](../30-session-report.md)（完了報告 — 通知内容の供給元）、
   docs/25（PagerDuty/Grafana — Connections 追加の先例）、docs/07 §7.6（秘密は CP を素通り）。
@@ -79,3 +80,12 @@
   フィンガープリント＋`Respond` の id 照合の二重ガード。単一選択のみ対応（multi-select はテキストの
   まま Console 回答）、複数問は per-session 蓄積で全問揃い次第 submit。ライブ codex 実クリック検証は
   再ビルド後に残。
+- **P3先取り（@メンション→オペレーター会話）**: セッションだけでなく built-in オペレーター会話
+  （`assistants.go` "operator"・`af_write`）ともチャットできる。受信面は**専用オペレータースレッド**
+  （契約5の本人限定を維持・`ThreadToSession` とは別ファイル `bridge-operator.json` の thread→conv
+  マッチで `routeInbound` が分岐）。ターン機構は既存の `runReportAutoTurn` 系を非HTTPで回す
+  `runOperatorTurn`（`handleChatSend` 同型）＝再発明なし。正準会話は 1 本の連続会話（Console と共有・
+  deep link 可・肥大化は docs/33 の予防的自動圧縮で頭打ち）。応答は answer-ready 通知に乗らないので
+  受信側が同スレッドへ明示 post（`ScrubSecrets`＋2000字分割）。オペレーターが指示したセッションの
+  報告への自律応答もスレッドへミラー＝外出先ループが閉じる。切断で thread 座標は破棄・会話は保持。
+  破壊的操作の承認は残る P3 で P2b ボタン機構に載せる。

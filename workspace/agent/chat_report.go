@@ -383,4 +383,8 @@ func runReportAutoTurn(convID string) {
 	if err := saveConv(c); err != nil {
 		log.Printf("chat report: save %s: %v", convID, err)
 	}
+	// docs/37 P3先取り: when this IS the Discord operator conversation, mirror the
+	// operator's autonomous reply into its thread so a phone sees the follow-up too
+	// (best-effort, no-op otherwise).
+	maybePushOperatorReply(convID, reply)
 }
