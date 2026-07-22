@@ -119,7 +119,7 @@ func TestDiscordSendToChannelAndDM(t *testing.T) {
 	if len(got) != 2 || got[0]["channel"] != "42" || got[1]["channel"] != "dm-777" {
 		t.Fatalf("sent=%v", got)
 	}
-	if !strings.Contains(got[0]["content"], "応答あり") || !strings.Contains(got[0]["content"], "Proj") {
+	if !strings.Contains(got[0]["content"], "入力待ち") || !strings.Contains(got[0]["content"], "Proj") {
 		t.Fatalf("content=%q", got[0]["content"])
 	}
 	if !strings.Contains(got[1]["content"], "OOM") {
@@ -356,8 +356,31 @@ func TestDrainClearsQueueWhenUnconfigured(t *testing.T) {
 func TestTextNeverEmptyAndCarriesDisplay(t *testing.T) {
 	os.Unsetenv("AF_CP_BASE_URL")
 	m := Message{Kind: "permission-request", DisplayName: "秘密の花園", SessionKind: "codex"}
-	txt := m.Text()
-	if !strings.Contains(txt, "許可待ち") || !strings.Contains(txt, "秘密の花園") || !strings.Contains(txt, "codex") {
+	txt := m.Text("")
+	if !strings.Contains(txt, "許可待ち") || !strings.Contains(txt, "秘密の花園") || !strings.Contains(txt, "Codex") {
 		t.Fatalf("text=%q", txt)
+	}
+	if strings.Contains(txt, "http") {
+		t.Fatalf("no base URL configured — text must carry no link: %q", txt)
+	}
+}
+
+// The concise bilingual format + the pane deep link (?session= — consumed by
+// the Console's consumeSessionDeepLink).
+func TestTextEnglishAndDeepLink(t *testing.T) {
+	t.Setenv("AF_CP_BASE_URL", "https://cp.example/")
+	m := Message{Kind: "answer-ready", SessionName: "sabc123", DisplayName: "Proj", SessionKind: "claude"}
+	en := m.Text("en")
+	if !strings.Contains(en, "awaiting your input") || !strings.Contains(en, "(Claude Code)") ||
+		!strings.Contains(en, "<https://cp.example/?session=sabc123>") {
+		t.Fatalf("en text=%q", en)
+	}
+	ja := m.Text("")
+	if !strings.Contains(ja, "入力待ち") || !strings.Contains(ja, "（Claude Code）") ||
+		!strings.Contains(ja, "<https://cp.example/?session=sabc123>") {
+		t.Fatalf("ja text=%q", ja)
+	}
+	if strings.Contains(ja, "agent-fleet】") {
+		t.Fatalf("prefix must be gone: %q", ja)
 	}
 }

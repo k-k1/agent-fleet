@@ -119,6 +119,7 @@ type DiscordCreds struct {
 	Events        []string `json:"events,omitempty"`
 	Threads       bool     `json:"threads,omitempty"`       // thread-per-session (channel mode only)
 	MentionUserID string   `json:"mentionUserId,omitempty"` // @mentioned in notifications (channel mode)
+	Lang          string   `json:"lang,omitempty"`          // notification language: "en" | "" (=ja) — Console locale at connect time
 }
 
 type Data struct {
