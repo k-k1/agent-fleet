@@ -54,8 +54,9 @@ func Put(e Event) error {
 	// docs/37 契約4: outbox に書けた直後、チャットブリッジの配送キューにも積む。
 	// Enqueue はファイル 1 枚の書き込みだけ（ネットワークはデーモンの sender 側）で、
 	// エラーも飲む — ブリッジ不達が Console 通知を巻き込むことは構造的にない。
+	body, _ := e.Payload["body"].(string) // 全文ブリッジ: 応答本文（answer-ready のみ載る）
 	bridge.Enqueue(bridge.Message{Kind: e.Kind, SessionName: e.SessionName,
-		SessionKind: e.SessionKind, DisplayName: e.DisplayName, CreatedAt: e.CreatedAt})
+		SessionKind: e.SessionKind, DisplayName: e.DisplayName, CreatedAt: e.CreatedAt, Body: body})
 	return nil
 }
 
