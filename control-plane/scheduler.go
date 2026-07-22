@@ -73,13 +73,27 @@ const scheduleRunKeep = 50
 // assert exact fire instants are unaffected.
 var scheduleJitterMax time.Duration
 
+// schedulerRunning reports whether the CP scheduler goroutine was started this process
+// (AF_SCHEDULER_INTERVAL > 0). The operator API reads it so create_schedule / run_now can
+// warn that a definition will never fire on a deployment where the scheduler is disabled
+// (the default) — otherwise those calls succeed silently and nothing ever runs. Set once
+// at startup in main.go before the HTTP server serves; read-only afterward.
+var schedulerRunning bool
+
 // scheduleJitter returns a stable offset in [0, scheduleJitterMax] derived from the
 // schedule id, so many schedules aligned to the same wall-clock (e.g. everyone at 09:00)
 // fire spread across a window instead of all waking at once. Deterministic — the same
-// schedule always jitters by the same amount — so next_run stays reproducible across CP
-// restarts and the idempotency slot is stable. Applied to cron only (an interval is
-// already spread by its own phase, and adding jitter each period would drift it; a once
-// is an exact user-chosen instant we must not move).
+// schedule always jitters by the same amount — so the deferral is reproducible across CP
+// restarts.
+//
+// Jitter is applied as a FIRE-TIME GATE (see tick), not baked into next_run: next_run
+// stays the nominal wall-clock instant, so the operator's read-back confirmation, the
+// next_run_local display, and the {{time}} prompt variable all show the time the user
+// actually asked for (09:00, not 09:01), and the idempotency slot stays the nominal
+// instant. Keeping next_run nominal also makes the gate immune to an AF_SCHEDULE_JITTER
+// change across a restart. jitterForSchedule limits it to cron (an interval is already
+// spread by its own phase, and deferring it each period would drift it; a once is an
+// exact user-chosen instant we must not move).
 func scheduleJitter(scheduleID string) time.Duration {
 	if scheduleJitterMax <= 0 || scheduleID == "" {
 		return 0
@@ -91,6 +105,15 @@ func scheduleJitter(scheduleID string) time.Duration {
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(scheduleID))
 	return time.Duration(h.Sum64()%uint64(maxSecs+1)) * time.Second
+}
+
+// jitterForSchedule is the fire deferral applied to a due schedule: the deterministic
+// per-id jitter for cron, zero for interval/once (which must fire on their exact slot).
+func jitterForSchedule(sch Schedule) time.Duration {
+	if sch.SpecKind != "cron" {
+		return 0
+	}
+	return scheduleJitter(sch.ID)
 }
 
 type scheduler struct {
@@ -121,14 +144,27 @@ func (sc *scheduler) run(ctx context.Context) {
 }
 
 // tick fires every schedule that is due as of now, advancing each one's ledger.
-func (sc *scheduler) tick(ctx context.Context) {
-	now := time.Now().UTC()
+func (sc *scheduler) tick(ctx context.Context) { sc.tickAt(ctx, time.Now().UTC()) }
+
+// tickAt is tick with an injected clock so the jitter gate is unit-testable.
+func (sc *scheduler) tickAt(ctx context.Context, now time.Time) {
 	due, err := sc.store.ListDueSchedules(ctx, now.Format(time.RFC3339))
 	if err != nil {
 		log.Printf("scheduler: list due: %v", err)
 		return
 	}
 	for _, sch := range due {
+		// Jitter gate (★2): next_run is the nominal slot, but a cron fire is held back
+		// by its deterministic per-id offset so aligned schedules (everyone at 09:00) do
+		// not wake at once. A row stays "due" in the SQL sense but is skipped this tick
+		// until now reaches slot+jitter; it fires on a later tick. interval/once have no
+		// jitter so they fire immediately. A row with an unparseable next_run falls
+		// through to fireOne (which defends with slot=now).
+		if slot, err := time.Parse(time.RFC3339, sch.NextRun); err == nil {
+			if now.Before(slot.Add(jitterForSchedule(sch))) {
+				continue
+			}
+		}
 		sc.fireOne(ctx, sch, now)
 	}
 }
@@ -261,7 +297,9 @@ func initialNextRun(sch Schedule, from time.Time) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return t.Add(scheduleJitter(sch.ID)).UTC().Format(time.RFC3339), nil
+		// Nominal instant (no jitter) — jitter is a fire-time gate (see tick), so next_run
+		// reads back to the operator as the exact time the user asked for.
+		return t.UTC().Format(time.RFC3339), nil
 	case "interval":
 		d, err := intervalDuration(sch.Spec)
 		if err != nil {
@@ -285,7 +323,8 @@ func advanceNextRun(sch Schedule, after time.Time) (nextRun string, keepEnabled 
 		if err != nil {
 			return "", false, err
 		}
-		return t.Add(scheduleJitter(sch.ID)).UTC().Format(time.RFC3339), true, nil
+		// Nominal instant (no jitter) — jitter is applied as a fire-time gate (see tick).
+		return t.UTC().Format(time.RFC3339), true, nil
 	case "interval":
 		d, err := intervalDuration(sch.Spec)
 		if err != nil {
@@ -480,7 +519,11 @@ func nextCron(spec string, after time.Time, loc *time.Location) (time.Time, erro
 	prev := after.In(loc)
 	// Start at the next whole minute strictly after `after`.
 	start := after.Truncate(time.Minute).Add(time.Minute)
-	const horizon = 366*24*60 + 60 // one leap year of minutes plus slack
+	// Four leap years of minutes plus slack. A year-wide horizon rejected a legitimate
+	// Feb-29-only cron ("0 0 29 2 *") whose next match can be up to ~4 years out; four
+	// years covers the leap cycle. (The 2100 non-leap century boundary is not covered —
+	// an accepted, negligible edge.)
+	const horizon = 4*366*24*60 + 60
 	for i := 0; i < horizon; i++ {
 		t := start.Add(time.Duration(i) * time.Minute)
 		wt := t.In(loc)
