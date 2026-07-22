@@ -39,7 +39,7 @@ func DrainOnce() {
 	if err != nil {
 		return // store unreadable — leave the queue for the next tick
 	}
-	provs := Providers(s, cacheDiscordDM)
+	provs := Providers(s, cacheDiscordDM, cacheSlackDM)
 	if len(provs) == 0 {
 		for _, n := range names {
 			_ = os.Remove(filepath.Join(dir, n))
@@ -127,5 +127,15 @@ func cacheDiscordDM(channelID string) {
 		return
 	}
 	s.Discord.DMChannelID = channelID
+	_ = s.Save()
+}
+
+// cacheSlackDM is the Slack write-through DM cache (docs/37 Slack 追随).
+func cacheSlackDM(channelID string) {
+	s, err := secrets.Load()
+	if err != nil || s.Slack == nil {
+		return
+	}
+	s.Slack.DMChannelID = channelID
 	_ = s.Save()
 }

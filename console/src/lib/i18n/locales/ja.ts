@@ -50,6 +50,11 @@ export const ja = {
   "err.conn_discord_destination_required": "宛先（チャンネル ID か ユーザー ID）をどちらか一方だけ入力してください",
   "err.conn_discord_destination_invalid": "宛先は数字の Discord ID を入力してください（開発者モードで「IDをコピー」）",
   "err.conn_discord_token_invalid": "Discord がトークンを拒否しました（Bot トークンを確認してください）",
+  "err.conn_slack_token_required": "Slack Bot トークン（xoxb-）を入力してください",
+  "err.conn_slack_destination_required": "チャンネル ID かユーザー ID を入力してください（受信には対象ユーザー ID も必要です）",
+  "err.conn_slack_destination_invalid": "宛先は Slack の ID を入力してください（チャンネル C…、ユーザー U…）",
+  "err.conn_slack_token_invalid": "Slack がトークンを拒否しました（Bot / App-level トークンを確認してください）",
+  "err.conn_slack_app_token_required": "返信の受信には App-level トークン（xapp-）が必要です",
   "err.assistant_not_found": "アシスタントが見つかりません",
   "err.assistant_builtin_readonly_edit": "ビルトインは編集できません",
   "err.assistant_builtin_readonly_delete": "ビルトインは削除できません",
@@ -284,6 +289,15 @@ export const ja = {
   "ops.ev_report": "完了報告",
   "ops.dc_hint":
     "Discord Developer Portal（discord.com/developers/applications）で New Application → Bot → Reset Token でトークンを取得して貼り付けます。あとは表示される「サーバーへ招待」リンクで自分の私設サーバーに Bot を追加し、チャンネルを選ぶだけです（数字 ID のコピーは不要）。トークンはワークスペース内に暗号化保存され、通知の送信にだけ使われます（セッションの表示名と状態のみ送信・ログや秘密は送りません）。",
+  "ops.sl_bot_placeholder": "Slack Bot トークン（xoxb-…）",
+  "ops.sl_app_placeholder": "App-level トークン（xapp-…）— 双方向受信のときだけ必要",
+  "ops.sl_user_placeholder": "自分の Slack メンバー ID（U…）",
+  "ops.sl_waiting_channel": "Bot がチャンネルに参加するのを待っています…（/invite @Bot 名 で招待してから選んでください）",
+  "ops.sl_user_label": "自分の Slack メンバー ID",
+  "ops.sl_user_sub": "メールから自動入力。@メンション先＝返信/ボタンを信頼する本人（双方向では必須）。",
+  "ops.sl_receive_sub": "セッションのスレッドに返信するとその本文がセッションへ送られ、ボタンで質問/許可に回答できます。App-level トークンが必要です。",
+  "ops.sl_hint":
+    "Slack アプリを作成し（api.slack.com/apps → From scratch）、Socket Mode を有効化、Bot スコープ（chat:write, channels:read, channels:history, groups:history, im:history, reactions:write, users:read, users:read.email）と connections:write を持つ App-level トークンを追加、message 系イベントを購読してからインストールし、/invite で Bot をチャンネルに招待します。両方のトークンをここに貼り付けてください。トークンはワークスペース内に暗号化保存され、通知の送信にだけ使われます（表示名と状態のみ・ログや秘密は送りません）。",
 
   // --- 共通（保存）---
   "common.save_failed": "保存に失敗しました",

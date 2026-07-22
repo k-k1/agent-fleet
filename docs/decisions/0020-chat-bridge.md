@@ -4,7 +4,8 @@
   返信→セッション注入）＋全文ブリッジ（応答本文をチャットへ・opt-in）＋P2b（AUQ／許可／プラン
   承認のボタン化・claude/TUI＋managed）＋P3先取り（@メンション→フリート・オペレーター会話・
   専用スレッド）＋P3 承認ゲート（破壊的操作＝削除系＋shell を Discord ボタンで承認）実装済み、
-  残るは Slack 追随のみ。実装計画は [docs/37](../37-chat-bridge.md)。
+  ＋**Slack 追随（Socket Mode で全機能パリティ）実装済み**（2026-07-23。Discord/Slack 同時接続対応＝
+  store は provider スコープ化）。実装計画は [docs/37](../37-chat-bridge.md)。
 - 関連: [docs/30](../30-session-report.md)（完了報告 — 通知内容の供給元）、
   docs/25（PagerDuty/Grafana — Connections 追加の先例）、docs/07 §7.6（秘密は CP を素通り）。
 
@@ -101,3 +102,13 @@
   受信側が同スレッドへ明示 post（`ScrubSecrets`＋2000字分割）。オペレーターが指示したセッションの
   報告への自律応答もスレッドへミラー＝外出先ループが閉じる。切断で thread 座標は破棄・会話は保持。
   破壊的操作の承認は残る P3 で P2b ボタン機構に載せる。
+- **Slack 追随（Socket Mode で全機能パリティ・2026-07-23）**: 決定1の「抽象は最初から 2 プロバイダ前提」を
+  回収。`Provider`/`ResumableSender`/ファイルキュー/`ScrubSecrets`/`custom_id`+`ParseCustomID`/
+  `ReceiverDeps` は無改修で再利用し、Slack 固有分（`slack.go` 送信 Web API＋`slack_interact.go` Block Kit＋
+  `slack_socket.go` Socket Mode 受信）を足すだけで、Discord の全機能（送信・スレッド=セッション・メンション・
+  deep link・全文・双方向受信・AUQ/許可/プランのボタン化・オペレーター会話・P3 承認ゲート）が Slack でも
+  成立。**Discord/Slack 同時接続を許容**（thread/operator ストアを provider スコープ化＝別ファイル・operator の
+  返信/承認は conv→provider 走査で宛先を特定）。Slack 差＝2 トークン（bot xoxb-＋app-level xapp-）・スレッドは
+  thread_ts のみ（archive 無し）・Web API は {ok,error} 包み・typing 表示無し（👀 のみ）・記法 mrkdwn・
+  bound user 1 本（DM 先＋メンション＋本人検証）。bound user は email→users.lookupByEmail で自動解決。
+  live 契約テストは `AF_SLACK_LIVE`。実 Slack 実機目視は再ビルド後に残。

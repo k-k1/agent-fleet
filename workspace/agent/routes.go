@@ -225,6 +225,12 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /connections/discord", handleDeleteDiscordConn)
 	mux.HandleFunc("POST /connections/discord/inspect", handleDiscordInspect)
 	mux.HandleFunc("POST /connections/discord/guilds", handleDiscordGuilds)
+	// チャットブリッジ Slack（docs/37 Slack 追随）: bot xoxb- ＋ app-level xapp- トークン＋宛先。
+	// inspect/channels はセットアップウィザード（トークン検証→チャンネルピッカー＋email 解決）用。
+	mux.HandleFunc("PUT /connections/slack", handlePutSlackConn)
+	mux.HandleFunc("DELETE /connections/slack", handleDeleteSlackConn)
+	mux.HandleFunc("POST /connections/slack/inspect", handleSlackInspect)
+	mux.HandleFunc("POST /connections/slack/channels", handleSlackChannels)
 
 	return mux
 }

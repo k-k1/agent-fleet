@@ -150,26 +150,51 @@ func provisionDiscordOperator(token, channelID, lang string) {
 	bridge.SaveOperatorState(channelID, thread, conv)
 }
 
+// provisionSlackOperator is the Slack twin of provisionDiscordOperator (docs/37 Slack 追随):
+// ensure a standing operator thread + conversation for the Slack connection, reusing both
+// across reconnects. Slack threads carry no name (the seed message titles it) and are keyed
+// by the seed's ts. Best-effort + async, called from handlePutSlackConn.
+func provisionSlackOperator(botToken, channelID, lang string) {
+	ref, _ := bridge.SlackOperatorState()
+	conv := ref.Conv
+	if conv == "" || !operatorConvExists(conv) {
+		newConv, err := createOperatorConversation()
+		if err != nil {
+			log.Printf("bridge: create slack operator conversation failed: %v", err)
+			return
+		}
+		conv = newConv
+	}
+	thread := ref.Thread
+	if thread == "" || ref.Channel != channelID {
+		t, err := bridge.SlackCreateOperatorThread(botToken, channelID, operatorThreadSeed(lang))
+		if err != nil {
+			log.Printf("bridge: create slack operator thread failed: %v", err)
+			return
+		}
+		thread = t
+	}
+	bridge.SaveSlackOperatorState(channelID, thread, conv)
+}
+
 func operatorConvExists(conv string) bool {
 	_, err := loadConv(conv)
 	return err == nil
 }
 
-// maybePushOperatorReply forwards a report auto-turn's reply into the operator thread
-// when the conversation IS the bridge operator conversation, so the operator's
-// autonomous reactions to session reports are visible on Discord too (the raw report
-// already lands in the session's own thread via the P1 path). Best-effort + async.
+// maybePushOperatorReply forwards a report auto-turn's reply into whichever provider's
+// operator thread owns the conversation, so the operator's autonomous reactions to
+// session reports are visible on chat too (the raw report already lands in the session's
+// own thread via the P1 path). Best-effort + async; a no-match conv is a silent no-op.
 func maybePushOperatorReply(conv, reply string) {
 	if strings.TrimSpace(reply) == "" {
 		return
 	}
-	if ref, ok := bridge.OperatorState(); ok && ref.Conv == conv && ref.Thread != "" {
-		go func() {
-			if err := bridge.PostToOperatorThread(reply); err != nil {
-				log.Printf("bridge: push operator auto-turn reply failed: %v", err)
-			}
-		}()
-	}
+	go func() {
+		if err := bridge.PostOperatorReply(conv, reply); err != nil {
+			log.Printf("bridge: push operator auto-turn reply failed: %v", err)
+		}
+	}()
 }
 
 // operatorThreadName / operatorThreadSeed are the localized 起票 strings for the standing
