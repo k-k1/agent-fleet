@@ -83,6 +83,9 @@ func discordStatus(s *secrets.Data) map[string]any {
 	if d.MentionUserID != "" {
 		m["mention"] = true
 	}
+	if d.Receive {
+		m["receive"] = true
+	}
 	events := d.Events
 	if len(events) == 0 {
 		events = bridge.EventKeys
@@ -179,6 +182,7 @@ type discordConnReq struct {
 	Threads       bool     `json:"threads"`       // thread-per-session (channel mode)
 	MentionUserID string   `json:"mentionUserId"` // @mentioned per notification (channel mode)
 	Lang          string   `json:"lang"`          // Console locale at connect time ("ja"/"en")
+	Receive       bool     `json:"receive"`       // inbound: route thread replies back (docs/37 P2a)
 }
 
 // discordSnowflakeRe matches a Discord snowflake id — catches names/mentions
@@ -238,8 +242,10 @@ func handlePutDiscordConn(w http.ResponseWriter, r *http.Request) {
 	}
 	creds := &secrets.DiscordCreds{Token: token, ChannelID: channelID, UserID: userID,
 		BotName: botName, Events: events, Lang: lang,
-		// Channel-mode extras (docs/37 P1.5); meaningless for DM, so not stored there.
-		Threads: channelID != "" && req.Threads, MentionUserID: mention}
+		// Channel-mode extras (docs/37 P1.5 / P2a); meaningless for DM, so not stored there.
+		// Receive (P2a inbound) rides thread mode — replies arrive in session threads.
+		Threads: channelID != "" && req.Threads, MentionUserID: mention,
+		Receive: channelID != "" && req.Receive}
 	if channelID == "" {
 		creds.MentionUserID = ""
 	}

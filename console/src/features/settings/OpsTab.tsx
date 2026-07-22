@@ -162,6 +162,7 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
   const [dm, setDm] = useState(false);
   const [userId, setUserId] = useState("");
   const [threads, setThreads] = useState(true);
+  const [receive, setReceive] = useState(false);
   const [mentionId, setMentionId] = useState("");
   const [autoMention, setAutoMention] = useState<{ id: string; name: string } | null>(null);
   const [events, setEvents] = useState<string[]>(DC_EVENTS.map(([k]) => k));
@@ -243,6 +244,7 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
         userId: dm ? userId.trim() : "",
         events,
         threads: !dm && threads,
+        receive: !dm && receive, // P2a inbound: route thread replies back into the session
         mentionUserId: dm ? "" : mentionId.trim(),
         lang: getLocale(), // notifications follow the Console language at connect time
       });
@@ -281,6 +283,7 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
           {view.botName && <span className="p-pl">{view.botName}</span>}
           {view.threads && <span className="p-pl">{tr("ops.dc_pill_threads")}</span>}
           {view.mention && <span className="p-pl">@</span>}
+          {view.receive && <span className="p-pl">{tr("ops.dc_pill_receive")}</span>}
           {Array.isArray(view.events) && view.events.length < DC_EVENTS.length && (
             <span className="p-pl">
               {DC_EVENTS.filter(([k]) => view.events.includes(k))
@@ -360,6 +363,13 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
                   value={mentionId}
                   onChange={(e) => setMentionId(e.target.value)}
                 />
+              </div>
+              <div className="ps-row">
+                <span className="ps-label">
+                  {tr("ops.dc_receive_label")}
+                  <span className="sub">{tr("ops.dc_receive_sub")}</span>
+                </span>
+                <OnOff value={receive} onChange={setReceive} />
               </div>
             </>
           )}

@@ -1,7 +1,8 @@
 # 37. チャットブリッジ（Slack / Discord 連携）— 通知・双方向操縦・承認ゲート
 
-- 状態: **P1 実装済み（Discord）**（2026-07-22。P2 以降は未着手）。採用判断は
-  [decisions/0020](decisions/0020-chat-bridge.md)。実装メモは [§P1 実装記録](#p1-実装記録2026-07-22)。
+- 状態: **P1／P1.5 実装済み＋P2a（受信＝スレッド返信→注入）実装済み（Discord）**（2026-07-22。
+  P2b＝ボタン化以降は未着手）。採用判断は [decisions/0020](decisions/0020-chat-bridge.md)。
+  実装メモは [§P1 実装記録](#p1-実装記録2026-07-22)／[§P2a 実装記録](#p2a-実装記録-スレッド返信--セッション注入2026-07-22)。
 - **着手順は Discord 優先**（2026-07-22 決定）: トークン準備が最軽量（私設ギルド＋Bot、
   管理者承認・課金なし）のため、P1→P2 を Discord で縦に貫通させてから Slack を
   同じプロバイダ抽象に足す。抽象の設計は最初から 2 プロバイダ前提で行う
@@ -171,10 +172,52 @@ Slack と Discord は「外向き WSS 1 本で送受信・ボタン応答まで�
 - セッション初回通知でスレッドを起こし、以後の報告・質問を同スレッドへ
   （**起票・対応表・アーカイブ復帰は P1.5 で実装済み** — P2 は受信側のみ）。
 - スレッド返信 → 対応セッションへ `send_to_session` 相当（`/input` 経路）で注入。
+  → **P2a で実装済み**（下記 §P2a 実装記録）。
 - AUQ・permission-request をボタン化。押下 → 構造化回答。タイムアウト・
-  セッション側で先に回答済みのケースはボタン無効化更新で表面化。
+  セッション側で先に回答済みのケースはボタン無効化更新で表面化。→ **P2b（未着手）**。
 - Slack: Socket Mode（`xapp-` token）。Discord: Gateway intents は
   DM＋ギルドメッセージ＋interactions の最小構成。
+
+#### P2a 実装記録: スレッド返信 → セッション注入（2026-07-22）
+
+送信専用だった受信側の最初の縦貫。**本人がセッションのスレッドに返信すると、その本文が
+セッションへ user 入力として注入され、応答は既存の answer-ready 通知で同じスレッドへ戻る**。
+Console を開けない外出先からセッションを操縦できる（AUQ／許可のボタン化は P2b に分離）。
+
+- **Discord Gateway（`internal/bridge/gateway.go`）**: gorilla/websocket の長命クライアント。
+  `GET /gateway/bot` で WSS URL 取得 → HELLO の heartbeat_interval で心拍（op1／ACK op11・
+  zombie 検出で再接続）→ IDENTIFY（intents = **GUILD_MESSAGES | MESSAGE_CONTENT = 33280**）→
+  READY で resume_gateway_url/session_id 保持 → MESSAGE_CREATE を配送。RECONNECT(op7)／
+  INVALID_SESSION(op9) は RESUME(op6) で復帰、非 resumable は IDENTIFY からやり直し。
+  close **4014（Disallowed intents）＝MESSAGE_CONTENT 未有効**は致命として再試行を止める。
+  送信は従来どおり REST のみ（このファイルは READ 専用）。
+- **受信スーパーバイザ（`internal/bridge/receiver.go`）**: `StartReceiver(deps)` が secrets を
+  interval poll（変更通知が無いため sender と同流儀）し、`Discord.Receive` on かつ token／
+  bound user あり→Gateway 起動、off／identity 変化→停止・再ダイヤル。バックオフ再接続
+  （健全接続後はリセット）。**受信は opt-in**＝WSS 常駐を有効ユーザーに限定（メモリ配慮）。
+- **本人限定ルーティング（ADR0020 契約5・唯一の防壁）**: MESSAGE_CREATE を
+  ①bot は無視（自分の通知エコー含む）②`author.id == bound user`（channel モードは
+  auto-fill 済み `mentionUserId`＝オーナー＝本人、DM は `userId`）以外は無視 ③channel_id を
+  **thread→session 逆引き**（`ThreadToSession`・`bridge-threads.json` の P1.5 対応表をそのまま
+  逆引き＝捨てコード無し）で解決、未知スレッドは無視。**チャンネル聴取の面は作らない**。
+  先頭のメンションを剥がして注入。受信文はそのまま user 入力として注入（システム指示と混ぜない）。
+- **注入コア（`bridge_inbound.go`／package main）**: import cycle 回避のため注入能力は
+  main→bridge へコールバック注入（既存 `cacheDiscordDM` と同 DI）。`injectSessionPrompt` は
+  `handleSessionInput` の `{prompt}` 分岐を非 HTTP 化（tui=`typeLineAndSubmit`／managed=
+  driver `Send`・同じ guard = 質問未応答は拒否＝AUQ 誤答防止）。**応答が同スレッドへ戻るのは
+  answer-ready 通知が既存 P1 経路で thread に push されるため（追加配線なし）**。
+- **発信元バッジ（追加要件）**: 注入された user turn をミラーで**オペレーター注入と同様に
+  バッジ表示**して自分の入力と見分ける。既存の `recordOperatorInjection`＋`tagOperatorTurns`
+  ＋Console `from-operator` を**発信元付きに汎用化**（`recordInjection(name,text,source)`＋
+  `tagInjectedTurns`＋Console `from-chat` バッジ・`source="discord"`／将来 `"slack"`）。
+- **Connections/UX**: `DiscordCreds.Receive`（channel モード限定）＋ DiscordCard に
+  「返信で操縦（双方向）」トグル＋**MESSAGE_CONTENT 有効化の案内**＋接続時「受信」ピル。
+- **要件（受け入れる制約）**: 受信には Discord の **MESSAGE_CONTENT 特権 intent** が要る
+  （Bot<100 サーバは開発者ポータルでチェック1つ・審査不要）。DM モード受信は thread→session
+  対応表が無いため P2a 対象外（推奨のチャンネル＋スレッド構成が前提）。
+- 検証: ユニット（fake Gateway で HELLO→IDENTIFY(intents)→READY→MESSAGE_CREATE 配送・
+  close4014→致命・本人検証ゲート＝他人／bot／未知スレッド／空文を全 drop・逆引き）。
+  実機通し（再ビルド後）は残。
 
 ### P3 — 承認ゲート ＋ オペレーター bot
 
