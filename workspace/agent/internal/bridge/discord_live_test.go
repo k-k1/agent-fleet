@@ -87,8 +87,27 @@ func TestDiscordLiveSend(t *testing.T) {
 				t.Fatalf("full-text send: %v", err)
 			}
 		}
+
+		// P3先取り (docs/37): with AF_DISCORD_OPERATOR=1, 起票 the standing operator
+		// thread and post a reply into it, so the create-thread + return-leg (chunk +
+		// scrub) can be eyeballed. Uses a throwaway conv id — no turn is run here.
+		if os.Getenv("AF_DISCORD_OPERATOR") == "1" {
+			thread, err := CreateOperatorThread(token, p.creds.ChannelID, operatorLiveName(), "🛰 operator thread (live contract test)")
+			if err != nil {
+				t.Fatalf("create operator thread: %v", err)
+			}
+			SaveOperatorState(p.creds.ChannelID, thread, "af-live-operator-conv")
+			t.Cleanup(ResetOperatorThread)
+			if err := postOperatorChunks(token, thread, "オペレーターの応答（ライブ確認）: フリートは正常です。"); err != nil {
+				t.Fatalf("operator reply post: %v", err)
+			}
+		}
 	}
 }
+
+// operatorLiveName mirrors the JA thread name package main uses (kept local so the
+// bridge package's live test doesn't reach into main).
+func operatorLiveName() string { return "🛰 フリート・オペレーター" }
 
 // TestDiscordLiveReceive is the live RECEIVE smoke test (docs/37 P2a): it opens a REAL
 // Discord Gateway connection and logs every message the bot sees for ~40s, so the receive
