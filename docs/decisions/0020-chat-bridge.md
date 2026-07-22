@@ -71,8 +71,11 @@
 - **P2b（ボタン化）の制約**: 質問・許可・プラン承認を Message Components で回答する。相互作用は
   Interactions Endpoint URL 未設定なら Gateway に `INTERACTION_CREATE` として届く（ローカル
   専用・外部端点なしと整合）ので P2a の受信 Gateway に相乗りし、公開端点は不要。回答は契約6の
-  構造化写像（キー送出でも、押下者検証は契約5の本人限定）。**v1 は claude/TUI 対象**＝フックが
-  pending ペイロードを記録し MirrorView 検証済みのキー列を Go 再現できる面に閉じる。managed
-  （codex/opencode/copilot）は `/respond` の ID がドライバのライブ Interaction 依存で通知経路の
-  識別子と異なり、ライブ検証も要るため v1 は Console 誘導（次段でボタン化）。単一選択のみ対応
-  （multi-select はテキストのまま Console 回答）、複数問は per-session 蓄積で全問揃い次第 submit。
+  構造化写像（キー送出でも、押下者検証は契約5の本人限定）。claude/TUI はフックが pending
+  ペイロードを記録し MirrorView 検証済みのキー列を Go 再現。**managed（codex/opencode/copilot）も
+  実装済み（2026-07-22）**＝当初懸念した「rollout call_id ↔ ライブ Interaction id」の識別子不一致は
+  **custom_id に id を載せず回答時に `Resume→Snapshot` で現在の Interaction を再取得**して解消
+  （送信側は `codex.PendingInteraction` で resume せず questions を覗いて通知に添付）。陳腐化は
+  フィンガープリント＋`Respond` の id 照合の二重ガード。単一選択のみ対応（multi-select はテキストの
+  まま Console 回答）、複数問は per-session 蓄積で全問揃い次第 submit。ライブ codex 実クリック検証は
+  再ビルド後に残。
