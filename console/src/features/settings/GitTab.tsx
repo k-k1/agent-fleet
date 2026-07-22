@@ -6,7 +6,6 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { Button } from "../../ui/Button.tsx";
-import { InternalRepoBrowser } from "./InternalRepoBrowser.tsx";
 import { useConnections } from "./useConnections.ts";
 import { ProviderCard, StatusPill, DeviceSteps, DisconnectButton } from "./providerCard.tsx";
 import { useT } from "../../lib/i18n/index.ts";
@@ -16,9 +15,12 @@ interface RowProps {
   reload: () => void;
 }
 
-// GitTab: git-hosting connections (GitHub / Bitbucket) used for clone / fetch / push.
-// Split out of the old 接続 tab so it sits on its own domain, next to SSM / MCP — the
-// エージェント tab owns the agent providers. Auth flows and APIs are unchanged.
+// GitTab: git-hosting CONNECTIONS (GitHub / Bitbucket) used for clone / fetch / push,
+// plus the commit identity. Lives in the 接続 group next to the other external-account
+// connections. Auth is agent-proxied (proxyAgentREST → 502 while stopped), so the tab
+// needs a running workspace — same as the エージェント tab. Self-hosted internal repos
+// (CP-native, no Agent) moved to their own ワークスペース › 内部リポジトリ tab
+// (InternalReposTab), since they're workspace infra, not an external connection.
 //
 // TODO(gitconfig): per-provider commit identity (user.name / user.email) is planned
 // here — each provider card will gain a settings group like the agent cards. It needs
@@ -27,20 +29,14 @@ export function GitTab() {
   const tr = useT();
   const wsState = useWorkspaceStore((s) => s.state);
   const startWs = useWorkspaceStore((s) => s.start);
-  // git-hosting auth is agent-proxied (proxyAgentREST → 502 while stopped), so the
-  // tab needs a running workspace — same as the agent tab (SSM/MCP are CP-stored and
-  // don't).
   const running = wsState === "running";
   const { conns, reload } = useConnections();
   useEffect(() => {
     if (running) reload();
   }, [running, reload]);
 
-  // Internal repos are CP-native (no Agent), so they render regardless of the
-  // workspace state; the external git-hosting cards still require a running Agent.
   return (
     <div className="conns">
-      <InternalRepos />
       {!running ? (
         <EmptyState
           icon="debug-disconnect"
@@ -62,132 +58,6 @@ export function GitTab() {
         </>
       )}
     </div>
-  );
-}
-
-// An internal repo from GET /api/internal-git/repos.
-interface InternalRepo {
-  name: string;
-  clone_url: string;
-  default_branch?: string;
-  created_at?: string;
-}
-
-// InternalRepos manages the tenant's self-hosted git repositories (docs/reference/
-// internal-git-provider). Unlike the OAuth provider cards, this is CP-native: list /
-// create / delete talk to the CP directly (api/internal-git/*), need no external
-// account, and work while the workspace is stopped. Clone URLs authenticate via the
-// CP-injected token, so no connect step is required.
-function InternalRepos() {
-  const tr = useT();
-  const toast = useToast();
-  const [repos, setRepos] = useState<InternalRepo[] | null>(null);
-  const [name, setName] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [browsing, setBrowsing] = useState<string | null>(null);
-
-  const load = () =>
-    api("api/internal-git/repos")
-      .then((d) => setRepos(d && !d.error ? d.repos || [] : []))
-      .catch(() => setRepos([]));
-  useEffect(() => {
-    load();
-  }, []);
-
-  const create = async () => {
-    const n = name.trim();
-    if (!n) return;
-    setBusy(true);
-    try {
-      const res = await apiJSON("api/internal-git/repos", "POST", { name: n });
-      if (res && res.error) {
-        toast(tr("git.create_failed", { msg: res.error.message || res.error.code || "" }));
-        return;
-      }
-      toast(tr("git.created", { name: res.name }));
-      setName("");
-      load();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const remove = async (rn: string) => {
-    if (!confirm(tr("git.internal_delete_confirm", { name: rn }))) return;
-    const res = await raw(`api/internal-git/repos/${encodeURIComponent(rn)}`, { method: "DELETE" });
-    if (!res.ok) {
-      toast(tr("git.delete_failed"));
-      return;
-    }
-    toast(tr("git.deleted", { name: rn }), { kind: "success", persist: true });
-    load();
-  };
-
-  const rename = async (oldName: string, newName: string) => {
-    const res = await apiJSON(`api/internal-git/repos/${encodeURIComponent(oldName)}/rename`, "POST", {
-      new_name: newName,
-    });
-    if (res && res.error) {
-      toast(tr("git.rename_failed", { msg: res.error.message || res.error.code || "" }));
-      return false;
-    }
-    toast(tr("git.renamed", { old: oldName, new: res.name }));
-    load();
-    return true;
-  };
-
-  const copyUrl = (url: string) => {
-    navigator.clipboard?.writeText(url).then(
-      () => toast(tr("git.clone_url_copied")),
-      () => {},
-    );
-  };
-
-  const count = repos?.length ?? 0;
-  return (
-    <>
-      <div className="conn-cat">{tr("git.cat_internal")}</div>
-      <ProviderCard
-        id="internal"
-        name={tr("git.internal_name")}
-        status={<StatusPill on>{count ? tr("git.count", { count }) : tr("git.available")}</StatusPill>}
-      >
-        <div className="p-desc">{tr("git.internal_desc")}</div>
-        <div className="p-body">
-          <div className="flow">
-            <input
-              className="cinput"
-              placeholder={tr("git.repo_name_placeholder")}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && create()}
-            />
-            <button disabled={busy || !name.trim()} onClick={create}>
-              {tr("git.create")}
-            </button>
-          </div>
-          {repos === null ? (
-            <p className="muted pad">{tr("common.loading")}</p>
-          ) : repos.length === 0 ? (
-            <p className="muted pad">{tr("git.internal_empty")}</p>
-          ) : (
-            <ul className="internal-repo-list">
-              {repos.map((r) => (
-                <InternalRepoRow
-                  key={r.name}
-                  repo={r}
-                  onCopy={() => copyUrl(r.clone_url)}
-                  onBrowse={() => setBrowsing(r.name)}
-                  onRename={rename}
-                  onRemove={() => remove(r.name)}
-                />
-              ))}
-            </ul>
-          )}
-        </div>
-      </ProviderCard>
-      {browsing && <InternalRepoBrowser name={browsing} onClose={() => setBrowsing(null)} />}
-    </>
   );
 }
 
@@ -281,97 +151,6 @@ function GlobalIdentity() {
         <div className="field-help">{tr("git.global_identity_help")}</div>
       </div>
     </>
-  );
-}
-
-// InternalRepoRow is one repo in the internal list: name (editable via リネーム),
-// its clone URL (click to copy), and 削除. Rename edit-state is per-row.
-function InternalRepoRow({
-  repo,
-  onCopy,
-  onBrowse,
-  onRename,
-  onRemove,
-}: {
-  repo: InternalRepo;
-  onCopy: () => void;
-  onBrowse: () => void;
-  onRename: (oldName: string, newName: string) => Promise<boolean>;
-  onRemove: () => void;
-}) {
-  const tr = useT();
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(repo.name);
-  const [busy, setBusy] = useState(false);
-
-  const commit = async () => {
-    const n = draft.trim();
-    if (!n || n === repo.name) {
-      setEditing(false);
-      setDraft(repo.name);
-      return;
-    }
-    setBusy(true);
-    const ok = await onRename(repo.name, n);
-    setBusy(false);
-    if (ok) setEditing(false);
-  };
-
-  if (editing) {
-    return (
-      <li className="internal-repo">
-        <input
-          className="cinput ir-rename"
-          value={draft}
-          autoFocus
-          disabled={busy}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") commit();
-            if (e.key === "Escape") {
-              // Don't let the Esc bubble to the settings modal's document-level
-              // close handler — it should only cancel the rename.
-              e.stopPropagation();
-              setEditing(false);
-              setDraft(repo.name);
-            }
-          }}
-        />
-        <button type="button" disabled={busy} onClick={commit}>
-          {tr("common.save")}
-        </button>
-        <button
-          type="button"
-          className="ghost"
-          disabled={busy}
-          onClick={() => {
-            setEditing(false);
-            setDraft(repo.name);
-          }}
-        >
-          {tr("git.rename_cancel")}
-        </button>
-      </li>
-    );
-  }
-  return (
-    <li className="internal-repo">
-      <span className="ir-name" title={repo.name}>
-        {repo.name}
-      </span>
-      <button type="button" className="ir-url" title={tr("git.copy_clone_url")} onClick={onCopy}>
-        <code>{repo.clone_url}</code>
-      </button>
-      <button type="button" className="ghost" title={tr("git.browse_title")} onClick={onBrowse}>
-        {tr("git.browse")}
-      </button>
-      <button type="button" className="ghost" title={tr("git.rename")} onClick={() => setEditing(true)}>
-        {tr("git.rename")}
-      </button>
-      <button type="button" className="ghost danger conn-disconnect" title={tr("common.delete")} onClick={onRemove}>
-        {tr("common.delete")}
-      </button>
-    </li>
   );
 }
 
