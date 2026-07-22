@@ -379,8 +379,10 @@ overlap 懸念のうち残るのは「前発火が走行中に次が来る」ree
   長寿命セッションを**初回発火で作成**（create_session、`report_to`＝owner_conv）し、以後は
   そこへ send。名前は派生（例 `sched-<id>` タイトル）。この管理下セッションに
   ローテーションを適用する。
-- **対象消失時**（アーカイブ/削除された）: 沈黙失敗にせず、(B) は**作り直して台帳を貼り替え**
-  「recreated」を run 履歴に記録。(A) は消失を**失敗通知**にするか作り直すかを要決定（下記未決 4）。
+- **対象消失時**（アーカイブ/削除された）: 沈黙失敗にせず、選択制ポリシー `missing_target_policy`
+  で裁く（**既定 `recreate`＝作り直して台帳を貼り替え・run 履歴に「recreated」記録** / `fail`＝
+  失敗通知で止める）。(B) 管理 reuse は自セッションなので実質 `recreate` 前提。(A) ピン留めは
+  ユーザー所有セッションのため `fail` を選べる（既定は `recreate`・下記決定 4）。
 
 ### ローテーション — いつ新品に戻すか（ユーザー提案・2026-07-23）
 
@@ -390,10 +392,10 @@ reuse は文脈が積み上がり、放置するとコンテキスト上限に�
 
 | トリガ | 列（案） | 意味 | 判定材料 |
 |---|---|---|---|
-| 量（単純） | `rotate_every_runs` | N 発火ごとに作り直し | 台帳 `reuse_run_count`（決定論） |
-| 量（使用率） | `rotate_context_pct` | コンテキスト使用率が閾値超で作り直し | 発火前に running セッションの usage を読む（docs/33）。**停止中は読めず best-effort** |
-| 期間 | `rotate_after` | 現セッション開始から一定経過で作り直し（例 7d） | 台帳 `reuse_started_at` |
-| 暦 | `rotate_calendar` | 暦境界を跨いだら作り直し（daily/weekly/monthly） | 発火スロットと `reuse_started_at` の境界比較。「**月曜は新セッション**」＝ weekly（週境界＝月曜始まり） |
+| 量（単純） | `rotation.every_runs` | N 発火ごとに作り直し | 台帳 `reuse_run_count`（決定論） |
+| 期間 | `rotation.after` | 現セッション開始から一定経過で作り直し（例 7d） | 台帳 `reuse_started_at`（決定論） |
+| 暦 | `rotation.calendar` | 暦境界を跨いだら作り直し（daily/weekly/monthly） | 発火スロットと `reuse_started_at` の境界比較。「**月曜は新セッション**」＝ weekly（週境界＝月曜始まり）（決定論） |
+| 量（使用率・**後続**） | `rotation.context_pct` | コンテキスト使用率が閾値超で作り直し | 発火前に running セッションの usage を読む（docs/33）。**停止中は読めず best-effort＝v1 reuse では未実装、後続で追加** |
 
 - ローテーション実行時: 現セッションを退役（停止のまま cleanup 機構へ、または archive）→
   新規作成 → 台帳を新セッションへ貼り替え → run 履歴に「rotated」記録。
@@ -408,8 +410,9 @@ reuse の現行セッション同一性とローテーション判定材料を�
 - `reuse_session` — 現に使っている実セッション名（ローテーションで変わる。(A) では reuse_target と同じ）
 - `reuse_started_at` — 現 reuse セッションの開始時刻（期間/暦判定）
 - `reuse_run_count` — 前回ローテーションからの発火数（量ベース単純版）
-- ローテーション設定 — `rotate_every_runs`／`rotate_after`／`rotate_calendar`／`rotate_context_pct`
-  （個別 4 列か、単一 JSON `rotation` 列に畳むかは未決 2）
+- `rotation` — ローテーション設定を畳んだ**単一 JSON 列**（決定 2。例:
+  `{"every_runs":20,"after":"7d","calendar":"weekly"}`。`context_pct` は後続）
+- `missing_target_policy` — 対象消失時の挙動（`recreate` 既定 / `fail`。決定 4）
 
 ### overlap の再公開（★5）
 
@@ -436,13 +439,17 @@ reuse でも wake→keep-alive→settle 後 release。停止中だった WS は 
 - 退役セッションは operator の掃除ツール群（cleanup 機構）に乗せる。archive か stop-only かは
   掃除ポリシーに合わせる。
 
-### 未決（要ユーザー確認）
+### 決定（2026-07-23）
 
-1. reuse の主モードを (A) ピン留め / (B) 管理 のどちらに寄せるか（両対応でもツール表面の既定）。
-2. ローテーション設定の持ち方: 個別列 4 本 vs 単一 JSON `rotation` 列。
-3. 量ベースの既定: 使用率閾値（running 限定・best-effort）を入れるか、まずは決定論の
-   `rotate_every_runs`／`rotate_after`／`rotate_calendar` のみにするか。
-4. (A) ピン留めで対象セッションが消えていた時: 作り直す or 失敗通知で止める。
+1. **主モード**: **(A) ピン留め / (B) 管理 の両対応。ツール表面の既定は (B) 管理**
+   （ローテーションの主役で自己完結。ピン留めは `reuse_target` 明示で選択）。
+2. **ローテーション設定の持ち方**: **単一 JSON `rotation` 列**（`{"every_runs":N,"after":"7d",
+   "calendar":"weekly","context_pct":80}` 等。トリガ追加でマイグレーション不要）。
+3. **量ベースの既定**: **まず決定論の 3 種のみ**（`every_runs`／`after`／`calendar`）。使用率
+   トリガ（`context_pct`・running 限定・best-effort）は**後続**で足す（停止中 WS では usage を
+   読めない＝★3 と同根の制約のため）。
+4. **対象消失時（`missing_target_policy`）**: **選択制。既定 `recreate`（作り直す）** / `fail`
+   （失敗通知で止める）。(A) ピン留めでユーザー所有セッションを保護したい場合に `fail` を選ぶ。
 
 ## 決定済み（2026-07-22・当初の未決から確定）
 
