@@ -383,8 +383,9 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
       {open && (
         <div className="ws-usage-pop">
           <div className="wu-title">{tr("wsbar.usage.pop_title", { name: src.name })}</div>
-          {/* Subscription tier: claude's HandleUsage returns `plan`, codex returns
-              `planType` — surface whichever is present. */}
+          {/* Account + subscription tier: claude's HandleUsage returns `user`/`plan`,
+              codex returns `user`/`planType` — surface whichever is present. */}
+          {usage?.user && <div className="wu-note muted">{tr("wsbar.usage.user", { user: usage.user })}</div>}
           {(usage?.planType || usage?.plan) && (
             <div className="wu-note muted">{tr("wsbar.usage.plan", { plan: usage.planType || usage.plan })}</div>
           )}
@@ -503,6 +504,7 @@ function AgyUsageChip({ tenant }: { tenant: string | null }) {
       {open && (
         <div className="ws-usage-pop">
           <div className="wu-title">{tr("wsbar.usage.pop_title", { name: "Antigravity" })}</div>
+          {usage?.account && <div className="wu-note muted">{tr("wsbar.usage.user", { user: usage.account })}</div>}
           {usage?.plan && <div className="wu-note muted">{tr("wsbar.usage.plan", { plan: usage.plan })}</div>}
           {unavailable ? (
             <div className="wu-note muted">{tr("wsbar.usage.unavailable_note", { name: "Antigravity" })}</div>
@@ -597,6 +599,7 @@ function CopilotUsageChip({ tenant }: { tenant: string | null }) {
       {open && (
         <div className="ws-usage-pop">
           <div className="wu-title">{tr("wsbar.usage.pop_title", { name: "Copilot" })}</div>
+          {usage?.user && <div className="wu-note muted">{tr("wsbar.usage.user", { user: usage.user })}</div>}
           {plan && (
             <div className="wu-note muted">
               {tr("wsbar.usage.plan", { plan })}

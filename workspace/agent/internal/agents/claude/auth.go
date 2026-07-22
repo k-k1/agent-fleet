@@ -185,28 +185,38 @@ func Status() map[string]any {
 }
 
 var (
-	planMu  sync.Mutex
-	planVal string
-	planAt  time.Time
+	idMu    sync.Mutex
+	idEmail string
+	idPlan  string
+	idAt    time.Time
 )
 
-// Plan returns the subscription tier (`claude auth status`'s subscriptionType, e.g.
-// "pro" / "max") for the WsBar usage chip. Status() execs the CLI, so the value is
-// cached briefly — the usage endpoint is polled and must not shell out every time.
-// "" when signed out or unknown. (/connections already surfaces this via Status; this
-// is the cached read the usage path uses so the chip and card agree without a per-poll exec.)
-func Plan() string {
-	planMu.Lock()
-	defer planMu.Unlock()
-	if !planAt.IsZero() && time.Since(planAt) < 5*time.Minute {
-		return planVal
+// identity returns the account email + subscription tier from `claude auth status`,
+// cached briefly. Status() execs the CLI, so the usage endpoint (polled) must not shell
+// out every time. Both "" when signed out. Shared by Plan() and Account() so one exec
+// serves both.
+func identity() (email, plan string) {
+	idMu.Lock()
+	defer idMu.Unlock()
+	if !idAt.IsZero() && time.Since(idAt) < 5*time.Minute {
+		return idEmail, idPlan
 	}
-	planVal = ""
+	idEmail, idPlan = "", ""
 	if m := Status(); m != nil {
 		if p, _ := m["plan"].(string); p != "" {
-			planVal = p
+			idPlan = p
+		}
+		if e, _ := m["email"].(string); e != "" {
+			idEmail = e
 		}
 	}
-	planAt = time.Now()
-	return planVal
+	idAt = time.Now()
+	return idEmail, idPlan
 }
+
+// Plan returns the subscription tier (subscriptionType, e.g. "pro" / "max") for the
+// WsBar usage chip. "" when signed out or unknown.
+func Plan() string { _, p := identity(); return p }
+
+// Account returns the signed-in account email for the usage chip. "" when signed out.
+func Account() string { e, _ := identity(); return e }
