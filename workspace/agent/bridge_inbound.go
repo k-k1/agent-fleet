@@ -96,6 +96,9 @@ func startBridgeReceiver() {
 		// P2b: a button click (AskUserQuestion pick / permission / plan decision) is
 		// applied structurally (bridge_answer.go), never as free text (契約6).
 		Answer: answerInteraction,
+		// P3先取り: a reply in the dedicated operator thread runs a turn on the built-in
+		// operator assistant conversation (bridge_operator.go); the reply is posted back.
+		Operator: runOperatorTurn,
 	})
 }
 

@@ -305,6 +305,7 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
           {view.threads && <span className="p-pl">{tr("ops.dc_pill_threads")}</span>}
           {view.mention && <span className="p-pl">@</span>}
           {view.receive && <span className="p-pl">{tr("ops.dc_pill_receive")}</span>}
+          {view.operator && <span className="p-pl">{tr("ops.dc_pill_operator")}</span>}
           {view.fullText && <span className="p-pl">{tr("ops.dc_pill_fulltext")}</span>}
           {Array.isArray(view.events) && view.events.length < DC_EVENTS.length && (
             <span className="p-pl">
