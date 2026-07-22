@@ -5,6 +5,7 @@ import { useWorkspaceStore, wsStartBusy } from "../../core/store/workspace.ts";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useConnections } from "./useConnections.ts";
+import { useSettingsUI } from "./store.ts";
 import { OnOff } from "./controls.tsx";
 import { ProviderCard, StatusPill, Hint, DisconnectButton } from "./providerCard.tsx";
 import { getLocale, useT } from "../../lib/i18n/index.ts";
@@ -628,6 +629,16 @@ function CloudWatchCard({ st, reload }: { st: any; reload: () => void }) {
         <p className="muted pad">{tr("common.loading")}</p>
       ) : (
         <div className="p-body">
+          {/* Surface the silent SSM dependency: with no profiles we fall back to manual
+              entry — point the user at the AWS SSM tab where profiles are defined. */}
+          {profiles.length === 0 && (
+            <p className="ps-note">
+              {tr("ops.cw_no_profiles")}{" "}
+              <button type="button" className="linklike" onClick={() => useSettingsUI.getState().openSettings("ssm")}>
+                {tr("ops.cw_open_ssm")}
+              </button>
+            </p>
+          )}
           <div className="flow">
             {profiles.length > 0 && (
               <select className="cinput" value={sel} onChange={(e) => pick(e.target.value)}>

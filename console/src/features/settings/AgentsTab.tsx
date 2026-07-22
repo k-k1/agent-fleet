@@ -13,6 +13,7 @@ import {
 import { useEffortOptions, useModelOptions } from "../../lib/agentModels.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { useConnections } from "./useConnections.ts";
+import { useSettingsUI } from "./store.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../core/store/workspace.ts";
 import { usePolling } from "./usePolling.ts";
 import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton } from "./providerCard.tsx";
@@ -467,7 +468,15 @@ function CopilotCard({
       ) : (
         <>
           <div className="p-desc">{tr("agents.copilot_desc")}</div>
-          {!st?.connected && <p className="ps-note">{tr("agents.copilot_not_connected")}</p>}
+          {!st?.connected && (
+            <p className="ps-note">
+              {tr("agents.copilot_not_connected")}{" "}
+              {/* Copilot rides GitHub auth — jump straight to the Gitホスティング tab. */}
+              <button type="button" className="linklike" onClick={() => useSettingsUI.getState().openSettings("git")}>
+                {tr("agents.copilot_open_git")}
+              </button>
+            </p>
+          )}
         </>
       )}
       <CardSettings>
