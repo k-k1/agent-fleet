@@ -571,10 +571,10 @@ function CopilotUsageChip({ tenant }: { tenant: string | null }) {
   // premium first on paid plans, else chat).
   const label = unavailable ? "—" : bind ? resetChipText(bind.resetsAt!) : `${wins[0].pct}%`;
   const chipTitle = unavailable
-    ? tr("wsbar.usage.unavailable_title", { name: "Copilot" })
+    ? tr("wsbar.usage.unavailable_title", { name: "GitHub Copilot" })
     : bind
       ? tr("wsbar.usage.chip_bind_title", {
-          name: "Copilot",
+          name: "GitHub Copilot",
           label: bind.label,
           pct: bind.pct,
           until: untilText(bind.resetsAt!),
@@ -598,7 +598,7 @@ function CopilotUsageChip({ tenant }: { tenant: string | null }) {
       </button>
       {open && (
         <div className="ws-usage-pop">
-          <div className="wu-title">{tr("wsbar.usage.pop_title", { name: "Copilot" })}</div>
+          <div className="wu-title">{tr("wsbar.usage.pop_title", { name: "GitHub Copilot" })}</div>
           {usage?.user && <div className="wu-note muted">{tr("wsbar.usage.user", { user: usage.user })}</div>}
           {plan && (
             <div className="wu-note muted">
@@ -607,7 +607,7 @@ function CopilotUsageChip({ tenant }: { tenant: string | null }) {
             </div>
           )}
           {unavailable ? (
-            <div className="wu-note muted">{tr("wsbar.usage.unavailable_note", { name: "Copilot" })}</div>
+            <div className="wu-note muted">{tr("wsbar.usage.unavailable_note", { name: "GitHub Copilot" })}</div>
           ) : (
             wins.map((w) => (
               <UsageRow
@@ -619,13 +619,15 @@ function CopilotUsageChip({ tenant }: { tenant: string | null }) {
           )}
           <div className="wu-foot">
             {!unavailable && <span className="wu-ago muted">{tr("wsbar.usage.fetched", { ago: agoText(usage.ageSec) })}</span>}
-            <a className="ghost wu-manage" href="https://github.com/settings/copilot" target="_blank" rel="noopener">
-              <Icon name="link-external" /> {tr("wsbar.usage.open_page")}
-            </a>
             <button type="button" className="ghost wu-reload" onClick={refresh} disabled={refreshing}>
               <Icon name="refresh" spin={refreshing} /> {tr("wsbar.usage.refresh")}
             </button>
           </div>
+          {/* Manage link on its own row (same as the generic UsageChip) — cramming it
+              into wu-foot alongside 取得/更新 broke the layout. */}
+          <a className="wu-manage" href="https://github.com/settings/copilot" target="_blank" rel="noopener">
+            <Icon name="link-external" /> {tr("wsbar.usage.open_page")}
+          </a>
         </div>
       )}
     </div>
