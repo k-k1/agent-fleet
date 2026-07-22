@@ -209,10 +209,25 @@ function forceFit(it: Inst | null | undefined) {
   fitInst(it);
   try {
     /* eslint-disable @typescript-eslint/no-explicit-any */
-    const core = (it.term as any)._core;
-    core?._renderService?.clear?.();
-    (it.term as any).clearTextureAtlas?.();
+    // Canvas-backed (WebGL) renderer ONLY: a stale/blank canvas or a corrupted glyph atlas
+    // must be cleared + the atlas rebuilt before the repaint below can show correct pixels.
+    // WebGL is gated off on touch devices (loadWebgl), so this branch is desktop-only.
+    if (it.webgl) {
+      const core = (it.term as any)._core;
+      core?._renderService?.clear?.();
+      (it.term as any).clearTextureAtlas?.();
+    }
     /* eslint-enable @typescript-eslint/no-explicit-any */
+    // Repaint every row from the buffer. On the DOM renderer (touch/mobile, or wherever WebGL
+    // is unavailable) this refresh IS the whole recovery — we deliberately do NOT call
+    // _renderService.clear() there. clear() blanks the row elements synchronously and defers
+    // the repaint to the next animation frame; a phone's frequent hide/reveal/soft-keyboard/
+    // visibility churn routinely drops that frame, and xterm does not auto-repaint on reveal,
+    // so the rows stay permanently EMPTY — the "mobile TUI goes black" regression that every
+    // forceFit call site (reveal / focus / active / redraw) could trigger. refresh() alone
+    // repaints the dirty rows without ever blanking first (DOM rows aren't a stale canvas), so
+    // it is strictly safer. Verified in a coarse-pointer headless harness: clear()→hide→show
+    // leaves it black; refresh-only recovers it and never flashes blank.
     it.term.refresh(0, it.term.rows - 1);
   } catch {}
 }
