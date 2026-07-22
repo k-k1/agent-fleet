@@ -623,6 +623,8 @@ export const ja = {
   "agents.copilot_desc":
     "GitHub Copilot CLI は GitHub 連携（gh 透過認証）に相乗りします — 個別のログインは不要です。GitHub アカウントに Copilot サブスクリプションが必要です（Free プランは月間クォータ小）。",
   "agents.copilot_not_connected": "先に GitHub を連携してください（連携 > GitHub）",
+  "agents.copilot_rtk_note":
+    "copilot は preToolUse フック（$COPILOT_HOME/hooks）でシェルコマンドを rtk 経由に自動書換します — codex/agy の指示ベースと違い決定的に効きます。新規セッションに適用。",
   "agents.copilot_unsupported": "このコンテナイメージでは利用できません（{reason}）",
   "agents.remote_control": "リモートコントロール",
   "agents.notifications": "通知",

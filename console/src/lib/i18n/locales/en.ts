@@ -618,6 +618,8 @@ export const en: Record<keyof typeof ja, string> = {
   "agents.copilot_desc":
     "GitHub Copilot CLI rides the GitHub connection (gh transparent auth) — no separate sign-in. A Copilot subscription on the GitHub account is required (the Free tier has a small monthly quota).",
   "agents.copilot_not_connected": "Connect GitHub first (Connections > GitHub)",
+  "agents.copilot_rtk_note":
+    "copilot routes shell commands through rtk via a preToolUse hook ($COPILOT_HOME/hooks) — deterministic, unlike codex/agy's instruction-based approach. Applies to new sessions.",
   "agents.copilot_unsupported": "Not available in this container image ({reason})",
   "agents.remote_control": "Remote control",
   "agents.notifications": "Notifications",
