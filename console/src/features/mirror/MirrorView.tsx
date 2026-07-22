@@ -970,6 +970,29 @@ export function MirrorView({
     return () => ro.disconnect();
   }, []);
 
+  // Late-decoding transcript images are the one late-layout source that routinely finishes
+  // AFTER the open-settle window closes: a big screenshot on a session opened from the left
+  // pane can decode well past OPEN_SETTLE_MS, growing the content once the ResizeObserver above
+  // has stopped chasing (idle + settle expired) — which strands the view above the true bottom
+  // (the "opened-from-left-pane lands off" symptom). An <img> finishing load is unambiguously
+  // content-driven, NOT a user expanding a 作業過程 disclosure: those images already decoded while
+  // the <details> was collapsed (they stay in the DOM), so this never fires on that expand and
+  // can't reintroduce the snap-to-bottom regression. Re-pin on load, but ONLY while still stuck
+  // to the bottom (atBottomRef) — a reader who scrolled up, or parked at a completion anchor, is
+  // left where they are.
+  useEffect(() => {
+    const box = scrollBoxRef.current;
+    const el = bodyRef.current;
+    if (!box || !el) return;
+    const onLoad = (e: Event) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.tagName !== "IMG") return; // load also fires for <link>/<script> etc.
+      if (atBottomRef.current) el.scrollTop = el.scrollHeight;
+    };
+    box.addEventListener("load", onLoad, true); // capture: <img> load does not bubble
+    return () => box.removeEventListener("load", onLoad, true);
+  }, []);
+
   // Track whether the user is stuck to the bottom, from the ACTUAL viewport position, on
   // every scroll — user drags and our own follow/anchor scrolls alike. Content appends grow
   // scrollHeight without a scroll event, so a poll that keeps us pinned leaves this true;

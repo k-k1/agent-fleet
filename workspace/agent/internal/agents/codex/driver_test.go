@@ -578,3 +578,37 @@ func TestManagedTurnNotifiesCompletion(t *testing.T) {
 		t.Fatal("turn completed without notifying the state seam — 報告が飛ばない")
 	}
 }
+
+// TestPendingInteraction pins the send-side contract for managed button rendering
+// (docs/37): the peek reads the live handle's questions without resuming, and its
+// bytes are exactly json.Marshal(inter.Questions) — the same shape bridge_answer
+// fingerprints from Snapshot, so the send/answer fingerprints match.
+func TestPendingInteraction(t *testing.T) {
+	h := newCodexTestHandle(t, nil, "peek1")
+	registerCodexTestHandle(t, h)
+
+	// No pending interaction → not ok.
+	if _, ok := PendingInteraction("peek1"); ok {
+		t.Fatal("no interaction should return ok=false")
+	}
+	// Unknown session → not ok.
+	if _, ok := PendingInteraction("nope"); ok {
+		t.Fatal("unknown session should return ok=false")
+	}
+
+	inter := &agents.Interaction{ID: "i1", Kind: "question", Questions: []transcript.Question{
+		{Header: "H", Question: "q?", Options: []transcript.Option{{Label: "x"}, {Label: "y"}}},
+	}}
+	h.mu.Lock()
+	h.inter = inter
+	h.mu.Unlock()
+
+	got, ok := PendingInteraction("peek1")
+	if !ok {
+		t.Fatal("pending interaction should return ok=true")
+	}
+	want, _ := json.Marshal(inter.Questions)
+	if string(got) != string(want) {
+		t.Fatalf("peek bytes=%s, want %s", got, want)
+	}
+}

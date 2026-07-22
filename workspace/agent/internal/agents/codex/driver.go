@@ -866,6 +866,32 @@ func (h *threadHandle) hasQuestion() bool {
 	return h.inter != nil
 }
 
+// PendingInteraction returns the marshaled []transcript.Question a managed codex
+// session is currently blocked on, read straight from the live handle WITHOUT
+// resuming the runtime (a notification-poll caller must stay cheap). ok=false when no
+// live handle / no pending question. Used to enrich the codex-question notification
+// with P2b option buttons (docs/37 managed ボタン化). The bytes are the SAME shape
+// bridge_answer fingerprints from Snapshot at answer time (identical []transcript.
+// Question marshaled the same way), so the send-side fingerprint matches the
+// answer-side one for an unchanged question.
+func PendingInteraction(name string) (json.RawMessage, bool) {
+	h := handleFor(name)
+	if h == nil {
+		return nil, false
+	}
+	h.mu.Lock()
+	inter := h.inter
+	h.mu.Unlock()
+	if inter == nil || len(inter.Questions) == 0 {
+		return nil, false
+	}
+	b, err := json.Marshal(inter.Questions)
+	if err != nil {
+		return nil, false
+	}
+	return b, true
+}
+
 // managedEnrich folds the driver-side state into the read layer's TranscriptData
 // （readTranscript から呼ばれる — opencode と同型）: pending question へ Interaction
 // id を載せ、driver 内キューを キュー済み へ合流し、モード chip の即時性を上げる。

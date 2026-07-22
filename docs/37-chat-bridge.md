@@ -1,8 +1,10 @@
 # 37. チャットブリッジ（Slack / Discord 連携）— 通知・双方向操縦・承認ゲート
 
 - 状態: **P1／P1.5＋P2a（受信＝スレッド返信→注入）＋全文ブリッジ（応答本文投稿）＋
-  P2b（AUQ／許可／プラン承認のボタン化・claude/TUI）実装済み（Discord）**（2026-07-22。
-  P3＝承認ゲート／オペレーター bot と Slack 追随は未着手）。採用判断は
+  P2b（AUQ／許可／プラン承認のボタン化・claude/TUI＋managed codex/opencode/copilot）＋
+  通知/全文の整理（全文は本文のみ・メンション時間ゲート・受信 ack）＋
+  P3先取り（@メンション→フリート・オペレーター会話・専用スレッド）実装済み（Discord）**
+  （2026-07-22。残る P3＝破壊的操作の承認ゲートと Slack 追随は未着手）。採用判断は
   [decisions/0020](decisions/0020-chat-bridge.md)。実装メモは
   [§P1 実装記録](#p1-実装記録2026-07-22)／[§P2a 実装記録](#p2a-実装記録-スレッド返信--セッション注入2026-07-22)／
   [§全文ブリッジ 実装記録](#全文ブリッジ-実装記録-応答本文をチャットへ2026-07-22)／
@@ -212,10 +214,25 @@ Components（ボタン）で回答する**。回答はキー送出でなく構�
   - **permission / plan**: MirrorView が実際に送る検証済みキーを厳密に再現（許可=Enter・
     拒否=Down Down Enter／承認=Enter・却下=Down Down Down Enter）。**現在の状態が
     permission/plan でなければ送らない**（陳腐化した押下が composer に迷子キーを打ち込むのを防ぐ）。
-  - **managed（codex/opencode/copilot）**: 構造化 `/respond` は ID がドライバのライブ
-    Interaction（`h.inter.ID`）依存で、通知経路（rollout 由来 call_id）と識別子が異なり
-    ライブ検証も要るため v1 では「Console で回答」に誘導（フォールバック）。managed の
-    ボタン化は次段（notice への questions＋id 添付とライブ codex 検証）。
+  - **managed（codex/opencode/copilot）＝実装済み（2026-07-22）**: 当初は ID の識別子
+    不一致（通知経路の rollout call_id ↔ ドライバのライブ `h.inter.ID`）を理由に Console
+    誘導だったが、**custom_id にライブ Interaction id を載せず、回答時に再取得する**設計で
+    解決した。送信側＝`notifications.go` の codex-question 通知に、ライブハンドルを resume
+    せず覗く `codex.PendingInteraction(name)`（`json.Marshal(inter.Questions)`）で questions
+    を添付（無ければ従来どおりボタン無しの Console フォールバック）。回答側＝`bridge_answer.go`
+    の `answerManagedQuestion`＝`driverOf→Resume→Snapshot` で**現在の**Interaction を読み、
+    `Kind=="question"`＋**フィンガープリント照合**（`json.Marshal(snap.Interaction.Questions)`
+    は送信側と同一バイト＝同一 fp）で陳腐化を弾き、`bridge-answers/` に per-question 蓄積して
+    全問揃ったら `h.Respond(InteractionReply{ID: snap.Interaction.ID, Decision: answer,
+    Answers})`。**識別子不一致を構造的に回避**（送信時に id を知る必要がない）＋二重ガード
+    （fp 不一致／`Respond` 自身の `inter.ID != reply.ID`）で late-click 誤答を防ぐ。permission/
+    plan は managed には描画されない（notice が出ない）ので `p`/`pl` 押下が来ても Console 誘導。
+    3 ドライバとも `Respond`＋`Snapshot().Interaction` は同型なので opencode/copilot も同経路で
+    効く（question 通知に payload が載れば自動でボタン化・載らなければ Console フォールバック）。
+    検証: ユニット（`buildInteractionAnswers`／fake ThreadHandle で蓄積→全問で `Respond`・
+    id/Answers 検証／fp 陳腐化・interaction 消失は非 Respond／`PendingInteraction` の
+    fingerprint 契約＝peek バイト == `json.Marshal(inter.Questions)`）。go 524 緑。**ライブ
+    codex（実クリック→`Respond`）検証は再ビルド後・実 codex セッションが要る＝未実施**。
 - **UX**: 受信トグルの説明に「質問・許可・プラン承認はボタンで回答」を追記（i18n ja/en）。
 - 検証: ユニット（custom_id 往復・フィンガープリント安定/差異・単一/複数問のボタン描画・
   multi-select/予算超過のテキスト退避・permission/plan 行・Send のスレッド内ボタン投函・
@@ -269,8 +286,55 @@ Console を開けない外出先からセッションを操縦できる（AUQ／
 - オペレーターの shell 実行確認（方針C）・破壊的操作を「承認/却下」ボタン付き
   メッセージに写像。押下者検証は契約 5 のとおり。
 - オペレーターセッション（`operatorPersona`）へのチャット窓口:
-  `/af run <repo> <task>`（スラッシュコマンド/テキストコマンド）→ create_session、
   「フリート何やってる？」→ list/usage 系 MCP ツールの回答を整形返信。
+  → **@メンション→オペレーター会話は P3先取りとして実装済み**（下記）。`/af run` の独自
+  スラッシュは不採用（専用スレッド返信で「本物のオペレーター会話」がそのまま回るため）。
+
+#### P3先取り 実装記録: @メンション→フリート・オペレーター会話（2026-07-22）
+
+Console を開けない外出先から、走らせている個々のセッションだけでなく **フリートの司令塔
+（フリート・オペレーター）そのものとチャットで会話**できるようにする。「何やってる？」→
+稼働状況、「◯◯を直して」→ セッション起動/指示、までスマホで完結する。
+
+- **オペレーターは built-in アシスタント会話**（`assistants.go` ID `"operator"`・
+  `af_write` MCP）。セッションではないが、外部イベント駆動でターンを回す機構は既存
+  （`chat_report.go deliverSessionReport→runReportAutoTurn→prov.send` が同期で応答テキストを
+  返す）。**ターン機構は再発明せず** `runOperatorTurn`（`bridge_operator.go`）＝
+  `handleChatSend` の非HTTP版（同じ lock／`maybeAutoCompact`／`injectPendingReports`／
+  overflow 自己修復／`AutoTurns` リセット）で回し、応答テキストを返す。肥大化は docs/33 の
+  予防的自動圧縮で頭打ち＝Console のオペレーターチャットと同じ振る舞い（**これは Console
+  からも deep link で開ける同一会話**）。
+- **受信面＝専用オペレータースレッド**（「面を作らない」を維持）: 接続時（`handlePutDiscordConn`・
+  受信＋channel モード）に常設スレッド「🛰 フリート・オペレーター」を 起票 し、
+  `bridge-operator.json`（`internal/bridge/operator.go`）に `{channel, thread, conv}` を永続化。
+  `conv` は正準オペレーター会話の UUID（1本の連続会話・create-or-reuse で再接続をまたいで維持）。
+  bridge にとって `conv` は不透明で、`bridge-threads.json`（セッション用）とは別ファイル＝
+  `ThreadToSession` は決してマッチせず `routeInbound` が **`OperatorThreadMatch` で別分岐**する。
+- **ルーティング**（`receiver.go routeInbound`）: 本人限定ゲート（契約5）通過後、
+  `ThreadToSession` が当たらないとき operator スレッドか判定→一致なら `routeOperatorInbound`。
+  即 👀 リアクション＋typing パルス（オペレーターターンは LLM+MCP で遅いので **Gateway reader
+  goroutine を塞がず** `go` で回し、`typingPulseInterval`〔8秒〕でパルスを継続）→ 応答を
+  **同スレッドへ投函**（セッションと違い answer-ready 通知に乗らないので受信側が明示 post。
+  `postOperatorChunks`＝`ScrubSecrets`＋`chunkMessage` で秘密伏字化＋2000字分割・アーカイブは
+  unarchive 再送）。`ReceiverDeps.Operator` コールバック（`bridge_inbound.go` で `runOperatorTurn`
+  を配線・Inject/Answer と同じ import-cycle 回避）。
+- **自律応答も可視化**: オペレーターが指示したセッションからの報告（`report_to: mcpConvID` を
+  `create_session`/`send_to_session` が自動付与）はこの会話へ戻り `runReportAutoTurn` が後続処理する。
+  その自律応答も operator スレッドへミラーする（`chat_report.go maybePushOperatorReply`＝conv 一致
+  かつ thread ありのとき best-effort）。生の報告自体は従来どおりセッション自身のスレッドに出る。
+  **＝Discord からオペレーターを駆動→セッション起動→報告→オペレーターが要約、の外出先ループが閉じる**。
+- **切断時**（`handleDeleteDiscordConn`）: `ResetOperatorThread()`＝thread/channel 座標は破棄するが
+  **`conv` は残す**（連続会話・Console から履歴閲覧可）。次回接続で thread 再 起票・conv 再利用。
+- **UX**: 受信トグル説明に専用スレッドの案内を追記＋接続時「オペレーター」ピル（`discordStatus`
+  の `operator`・i18n ja/en）。招待権限は据え置き（既存のスレッド作成/送信/リアクション権限で足りる）。
+- 検証: ユニット（operator store の save/match/reset＝conv 保持／`routeInbound` の operator 分岐＝
+  本人限定ゲート流用・他人/bot drop・mention 剥がし・👀＋return-leg／`postOperatorChunks` の
+  scrub＋分割／`runOperatorTurn`＝fake provider で user→assistant 追記・AutoTurns リセット・欠落 conv の
+  局所化理由／`createOperatorConversation`＝operator スナップショットで af_write 付与）＋
+  live 拡張（`AF_DISCORD_OPERATOR=1` でスレッド 起票＋return-leg 目視）。go 533／Console
+  typecheck・i18n:lint・vitest 355 緑。**残＝実 Discord での実機目視（@メンション→会話→応答が
+  同スレッドへ・自律応答ミラー）は再ビルド後**。破壊的操作の確認（承認ゲート）は残る P3 で P2b
+  ボタン機構に載せる。
 
 ### P4 — 周辺 ＋ Teams 送信専用
 
@@ -350,11 +414,45 @@ native/docker・外部到達なし**で、そこでは Console URL がスマホ�
   body の queue 転写）＋ live 契約テスト拡張（`AF_DISCORD_FULLTEXT=1` で分割＋スクラブを目視）。
   go 503／Console typecheck・i18n:lint・vitest 355 緑。実機目視（実 Discord へ全文投稿）は再ビルド後に残。
 
+#### 通知／全文の整理・受信 ack（2026-07-22）
+
+managed ボタン化に着手する前に、実運用のノイズと外出先の体感を上げる 3 点をユーザー確認の上で整理した。
+
+- **全文モードは本文のみ**（`discord.go Send`）: 全文モードで `m.Body` があるとき（＝
+  answer-ready のみ本文を持つ）、見出し・「表示名」・`<deep link>` の前置きを落とし
+  **スクラブ済み本文だけ**を投稿する。スレッド名に表示名は出ており、リンクは全文モードが
+  狙うローカル専用環境では大抵死んでいる。P1 の「link と本文は併用」はこの決定で
+  「全文時は本文のみ」に改訂。非全文・本文なしのイベントは従来どおり見出しを保つ。
+- **メンションの時間ゲート**（`discord.go shouldMention`＋`threads.go` の `threadRef.LastPostAt`）:
+  Discord のスレッド既定 push は「@メンションのみ」なので push の生命線は残しつつ、**連続した
+  返信→回答のやり取り中に毎ターン ping しない**ようにした。判定は
+  ①**question / plan-approval / permission-request / exit は常にメンション**（要対応・異常＝
+  取りこぼし厳禁）②**answer-ready 等の読むだけイベントは、そのセッションのスレッドへ bot が
+  最後に投函してから `mentionQuietWindow`（既定 10 分）静かなときだけ**メンション。スレッド未
+  起票（初回）・フラット/DM は従来どおり常時メンション。`LastPostAt` はスレッド投函成功のたびに
+  `touchThreadPost` で更新（RFC3339・秒粒度で 10 分窓には十分）。「時間が経った」の基準は bot の
+  最終投函時刻＝連続回答は抑制、席を外して間が空いたら次の回答で再び push。
+- **受信 ack（返信を受け付けた合図）**（`receiver.go routeInbound`＋`discord.go`＋
+  `bridge_inbound.go`）: P2a の返信→注入で、成功/失敗とも無反応だったのを解消。**成功時**＝
+  ユーザーのメッセージに 👀 リアクション（永続の受領印・`DiscordAddReaction`）＋対象スレッドに
+  typing パルス（実行中らしさ・`DiscordTriggerTyping`、~10 秒で回答が置き換える）。**失敗時**＝
+  スレッドに**局所化した理由**を短く返信（`injectFailureReason`：質問ペンディング→「ボタンで
+  回答して」、停止中→「開始してから返信して」、未知エラーは汎用文で包み dev 文言を漏らさない・
+  ja/en）。`ReceiverDeps.Inject` は `(reason string, err error)` を返す形に変更（`Answer` の
+  `(feedback,err)` と同型）。ADD_REACTIONS を招待権限に追加（292057779200→**292057779264**）＝
+  新規セットアップで既定付与、既存招待は私設ギルド @everyone 既定で通常動く・拒否は best-effort で
+  静かにログのみ。
+- 検証: ユニット（mention 時間ゲートの kind 別・窓境界／全文本文のみ描画／成功 ack＝
+  reaction+typing・失敗 ack＝理由投函と ack 抑止／gate 落ちは Discord に触れない）。go 520 緑。
+  実 Discord 目視（全文本文のみ・時間ゲート・👀/typing・失敗理由）は再ビルド後に残。
+
 ## 将来の方向（次セッション検討）
 
-- **論点1（全文ブリッジ）＋ P2b（ボタン化）とも実装済み** → **claude/TUI では Console 無しで
-  フリートが回る**（P2a 返信＋全文表示＋P2b ボタン）。残るのは managed（codex/opencode/copilot）
-  のボタン化＝notice への questions＋interaction id 添付とライブ codex 検証（§P2b 実装記録）。
+- **論点1（全文ブリッジ）＋ P2b（ボタン化・claude/TUI ＋ managed）とも実装済み** →
+  **Console 無しでフリートが回る**（P2a 返信＋全文表示＋P2b ボタン）。managed のボタン化も
+  完了（§P2b 実装記録 managed 節）＝残るは**ライブ codex 実クリック検証**（再ビルド後）。
+- **P3 先取り＝@メンション→フリート・オペレーター会話＝実装済み**（上記 §P3先取り 実装記録）。
+  残るは実機目視と、破壊的操作の承認ゲート（P2b ボタン機構に載せる）。
 - session-report 本文（オペレーター向け報告文）の全文投稿は別トグル候補として保留（用途・言語が
   answer-ready 本文と異なるため今回スコープ外）。
 - Slack 追随（Socket Mode）で同じ `bridge.Provider` 抽象に全文モードを載せる（`ScrubSecrets`／

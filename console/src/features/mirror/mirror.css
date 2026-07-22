@@ -1229,24 +1229,28 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  /* Deliberately a solid WHITE pill (both themes) so it pops off the transcript instead
-     of blending into the chat surface — bigger and bolder than a normal ghost button. */
+  /* Follows the TOP-BAR colour theme so it reads correctly light AND dark: the bar surface
+     (--bar: light grey / near-black) with the theme foreground, edged and iconed in the
+     top-bar accent. These tokens are re-scoped by the mirror's own data-theme, so the pill
+     tracks whatever theme the chat surface is showing. Bold + shadow keep it prominent. */
   padding: 9px 18px;
   font-size: 13.5px;
   font-weight: 600;
   line-height: 1;
-  color: #1b1b1b;
-  background: #fff;
-  border: 1px solid rgba(0, 0, 0, 0.14);
+  color: var(--fg);
+  background: var(--bar);
+  border: 1px solid color-mix(in srgb, var(--topbar-accent) 45%, var(--border));
   border-radius: 999px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.32);
   cursor: pointer;
 }
 .mirror-jump:hover {
-  background: #eef1f4;
+  background: var(--btn-h);
+  border-color: var(--topbar-accent);
 }
 .mirror-jump .codicon {
   font-size: 15px;
+  color: var(--topbar-accent);
 }
 
 /* A faint trace of claude's tool activity, interleaved between text parts. Kept
