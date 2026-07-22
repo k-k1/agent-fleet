@@ -74,8 +74,10 @@ const WINDOW = 400;
 const FINALIZE_GRACE_MS = 8000;
 
 // The user counts as "stuck to the bottom" (auto-follow on) while within this many px of
-// the end. Above it, following stops and the jump-to-latest button appears.
-const NEAR_BOTTOM_PX = 80;
+// the end. Above it, following stops and the jump-to-latest button appears. Kept generous
+// so the typing indicator / stop-button row appearing and disappearing at the end (a
+// ~40–60px height swing between polls) never nudges us out of "at bottom" and drops follow.
+const NEAR_BOTTOM_PX = 160;
 
 // One option in an AskUserQuestion, and one such question.
 interface QuestionOption {
@@ -2548,13 +2550,12 @@ function renderGroups(
 ) {
   const els = [];
   let prevCtx = "";
-  let lastUser = -1;
-  for (let i = groups.length - 1; i >= 0; i--) {
-    if (groups[i].role === "user" && !groups[i].pending && !groups[i].queued) {
-      lastUser = i;
-      break;
-    }
-  }
+  // The current work boundary — INCLUDING a just-sent optimistic echo (pending). If we
+  // skipped pending here, sending a new prompt would leave lastUser on the PREVIOUS user
+  // turn, so the previous (already-finished) reply counts as "the live exchange" below and
+  // its work trace unfolds the moment you hit send. latestWorkPromptIndex treats pending as
+  // the boundary (but not un-run queued prompts), which keeps the old reply folded.
+  const lastUser = latestWorkPromptIndex(groups);
   for (let i = 0; i < groups.length; i++) {
     const g = groups[i];
     const ctx = g.branch || g.cwd ? (g.branch || "") + "\x1f" + (g.cwd || "") : "";
