@@ -215,6 +215,9 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /connections/grafana", handleDeleteGrafanaConn)
 	mux.HandleFunc("PUT /connections/cloudwatch", handlePutCloudWatchConn)
 	mux.HandleFunc("DELETE /connections/cloudwatch", handleDeleteCloudWatchConn)
+	// チャットブリッジ（docs/37 P1）: Discord bot トークン＋宛先。
+	mux.HandleFunc("PUT /connections/discord", handlePutDiscordConn)
+	mux.HandleFunc("DELETE /connections/discord", handleDeleteDiscordConn)
 
 	return mux
 }

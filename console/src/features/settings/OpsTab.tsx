@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useToast } from "../../ui/ToastProvider.tsx";
-import { api, apiJSON, raw } from "../../core/api/client.ts";
+import { api, apiJSON, errText, raw } from "../../core/api/client.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../core/store/workspace.ts";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { Button } from "../../ui/Button.tsx";
@@ -14,6 +14,8 @@ import { useT } from "../../lib/i18n/index.ts";
 // Grafana and CloudWatch. Credentials are stored container-side (encrypted secrets)
 // and injected into the MCP server at spawn by `workspace-agent mcp-run` — they never
 // reach the CP. (CloudWatch stores no secret at all: it rides the AWS cred chain.)
+// The chat-bridge connection (docs/37 P1: Discord push notifications) lives here too
+// — same encrypted store, same card pattern.
 export function OpsTab() {
   const tr = useT();
   const wsState = useWorkspaceStore((s) => s.state);
@@ -50,6 +52,8 @@ export function OpsTab() {
           <div className="conn-cat">{tr("ops.cat_monitoring")}</div>
           <GrafanaCard st={conns.grafana} reload={reload} />
           <CloudWatchCard st={conns.cloudwatch} reload={reload} />
+          <div className="conn-cat">{tr("ops.cat_chat")}</div>
+          <DiscordCard st={conns.discord} reload={reload} />
         </>
       )}
     </div>
@@ -123,6 +127,123 @@ function PagerDutyCard({ st, reload }: { st: any; reload: () => void }) {
             <OnOff value={eu} onChange={setEu} />
           </div>
           <Hint>{tr("ops.pd_hint")}</Hint>
+        </div>
+      )}
+    </ProviderCard>
+  );
+}
+
+// DC_EVENTS: the toggleable notification groups (must mirror the backend's
+// bridge.EventKeys — docs/37 P1).
+const DC_EVENTS: [string, string][] = [
+  ["answer-ready", "ops.ev_answer_ready"],
+  ["question", "ops.ev_question"],
+  ["permission-request", "ops.ev_permission"],
+  ["exit", "ops.ev_exit"],
+  ["session-report", "ops.ev_report"],
+];
+
+// DiscordCard: the chat-bridge connection (docs/37 P1). The user pastes their OWN
+// bot's token (private guild — no central shared app) and exactly one destination:
+// their Discord user ID (DM) or a channel ID. Event toggles pick which notification
+// groups are pushed; the token is stored encrypted container-side like the ops keys.
+function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
+  const tr = useT();
+  const toast = useToast();
+  const [token, setToken] = useState("");
+  const [mode, setMode] = useState<"dm" | "channel">("dm");
+  const [destId, setDestId] = useState("");
+  const [events, setEvents] = useState<string[]>(DC_EVENTS.map(([k]) => k));
+  const [busy, setBusy] = useState(false);
+  const ok = token.trim() !== "" && destId.trim() !== "" && events.length > 0;
+
+  const toggle = (key: string, on: boolean) =>
+    setEvents((prev) => (on ? [...prev.filter((k) => k !== key), key] : prev.filter((k) => k !== key)));
+
+  const save = async () => {
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const res = await apiJSON("api/connections/discord", "PUT", {
+        token: token.trim(),
+        channelId: mode === "channel" ? destId.trim() : "",
+        userId: mode === "dm" ? destId.trim() : "",
+        events,
+      });
+      if (res && res.error) {
+        toast(tr("conn.connect_failed", { msg: errText(res.error) }));
+        return;
+      }
+      setToken("");
+      setDestId("");
+      reload();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const disconnect = async () => {
+    await raw("api/connections/discord", { method: "DELETE" });
+    reload();
+  };
+
+  return (
+    <ProviderCard
+      id="discord"
+      name="Discord"
+      status={<StatusPill on={st?.connected}>{st?.connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>}
+    >
+      {st?.connected ? (
+        <div className="p-who">
+          <span className="p-em">
+            {tr(st.mode === "channel" ? "ops.dc_connected_channel" : "ops.dc_connected_dm")}
+          </span>
+          {st.botName && <span className="p-pl">{st.botName}</span>}
+          {Array.isArray(st.events) && st.events.length < DC_EVENTS.length && (
+            <span className="p-pl">
+              {DC_EVENTS.filter(([k]) => st.events.includes(k))
+                .map(([, l]) => tr(l as Parameters<typeof tr>[0]))
+                .join(" / ")}
+            </span>
+          )}
+          <DisconnectButton onClick={disconnect} />
+        </div>
+      ) : (
+        <div className="p-body">
+          <div className="flow">
+            <input
+              className="cinput"
+              type="password"
+              placeholder={tr("ops.dc_token_placeholder")}
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+            />
+          </div>
+          <div className="flow">
+            <select className="cinput" value={mode} onChange={(e) => setMode(e.target.value as "dm" | "channel")}>
+              <option value="dm">{tr("ops.dc_mode_dm")}</option>
+              <option value="channel">{tr("ops.dc_mode_channel")}</option>
+            </select>
+            <input
+              className="cinput"
+              type="text"
+              placeholder={tr(mode === "dm" ? "ops.dc_user_placeholder" : "ops.dc_channel_placeholder")}
+              value={destId}
+              onChange={(e) => setDestId(e.target.value)}
+            />
+            <button disabled={busy || !ok} onClick={save}>
+              {tr("conn.connect")}
+            </button>
+          </div>
+          <div className="ps-row">
+            <span className="ps-label">{tr("ops.dc_events_label")}</span>
+          </div>
+          {DC_EVENTS.map(([key, label]) => (
+            <div className="ps-row" key={key}>
+              <span className="ps-label">{tr(label as Parameters<typeof tr>[0])}</span>
+              <OnOff value={events.includes(key)} onChange={(on) => toggle(key, on)} />
+            </div>
+          ))}
+          <Hint>{tr("ops.dc_hint")}</Hint>
         </div>
       )}
     </ProviderCard>

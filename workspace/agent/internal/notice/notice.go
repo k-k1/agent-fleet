@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
@@ -47,7 +48,15 @@ func Put(e Event) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir(), e.ID+".json"), b, 0o600)
+	if err := os.WriteFile(filepath.Join(dir(), e.ID+".json"), b, 0o600); err != nil {
+		return err
+	}
+	// docs/37 契約4: outbox に書けた直後、チャットブリッジの配送キューにも積む。
+	// Enqueue はファイル 1 枚の書き込みだけ（ネットワークはデーモンの sender 側）で、
+	// エラーも飲む — ブリッジ不達が Console 通知を巻き込むことは構造的にない。
+	bridge.Enqueue(bridge.Message{Kind: e.Kind, SessionName: e.SessionName,
+		SessionKind: e.SessionKind, DisplayName: e.DisplayName, CreatedAt: e.CreatedAt})
+	return nil
 }
 
 // PutOnce persists an event only once for a stable source key. The marker is

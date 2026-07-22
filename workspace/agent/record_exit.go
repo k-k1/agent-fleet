@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
@@ -65,5 +66,14 @@ func runRecordExit(args []string) {
 		if reportArmed(name) {
 			kickSessionReport(name, "exit", "", reason)
 		}
+		// Abnormal exits don't pass through the notice outbox (the sessions list
+		// surfaces ExitInfo directly), so the chat bridge (docs/37 P1) gets its
+		// own enqueue here. Plain file write — safe in this dying shell.
+		display, sessKind := name, ""
+		if m, ok := session.ReadMeta(name); ok {
+			display, sessKind = session.Display(m), m.Kind
+		}
+		bridge.Enqueue(bridge.Message{Kind: "exit", SessionName: name,
+			SessionKind: sessKind, DisplayName: display, Detail: reason})
 	}
 }

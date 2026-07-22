@@ -1,6 +1,7 @@
 # 37. チャットブリッジ（Slack / Discord 連携）— 通知・双方向操縦・承認ゲート
 
-- 状態: **計画**（2026-07-22 起案。未実装）。採用判断は [decisions/0020](decisions/0020-chat-bridge.md)。
+- 状態: **P1 実装済み（Discord）**（2026-07-22。P2 以降は未着手）。採用判断は
+  [decisions/0020](decisions/0020-chat-bridge.md)。実装メモは [§P1 実装記録](#p1-実装記録2026-07-22)。
 - **着手順は Discord 優先**（2026-07-22 決定）: トークン準備が最軽量（私設ギルド＋Bot、
   管理者承認・課金なし）のため、P1→P2 を Discord で縦に貫通させてから Slack を
   同じプロバイダ抽象に足す。抽象の設計は最初から 2 プロバイダ前提で行う
@@ -67,6 +68,34 @@ Slack と Discord は「外向き WSS 1 本で送受信・ボタン応答まで�
   （docs/30 `buildReportContent` の報告文を再利用）。
 - 通知文にはセッション表示名・kind・要約を含める。リンクは Console の該当
   セッション URL（deployment のベース URL が取れる場合のみ）。
+
+#### P1 実装記録（2026-07-22）
+
+- **プロバイダ抽象**: `internal/bridge`（workspace Agent）。`Provider` interface
+  （`Name/Caps/Wants/Send`）＋ `Caps{CanSend,CanReceive,CanInteract}`（契約 1）。
+  Discord は P1 では Send のみ配線（REST だけで送れる — Gateway は P2 の受信で張る）。
+- **配送キューはファイル**（`~/.config/agent-fleet/bridge-queue/`）: `notice.Put` と
+  `record-exit` は**hook 子プロセス**（`workspace-agent session-status` 等）で走るため、
+  積む側はファイル 1 枚の書き込みのみ（非ブロック・エラーは飲む — 契約 4）。送信は
+  デーモン側 `bridge.StartSender()`（3 秒 tick・単一 goroutine・逐次送信）。
+  有限リトライ = attempts をエントリに永続化し 5 回で破棄ログ、キュー上限 200
+  （古い方から破棄）。未設定時はキューを掃除するだけ。
+- **異常終了イベント**: exit（oom/crashed/killed）は notice outbox を通らない
+  （セッション一覧が ExitInfo を直接出す）ため、`record_exit.go` から独自に enqueue。
+- **イベントトグル**: `bridge.EventKeys` = answer-ready / question（plan-approval を含む）/
+  permission-request / exit / session-report。空 = 全部オン。chat-*（コンテキスト系）は
+  ブリッジ対象外。
+- **Connections**: `secrets.Data.Discord`（token＋channelId/userId 排他＋DM チャンネル
+  キャッシュ＋events）。三点セット `PUT|DELETE /connections/discord`（agent）＋
+  `/api/connections/discord`（CP proxy）＋ OpsTab の DiscordCard（カテゴリ
+  「チャット通知（ブリッジ）」・i18n ja/en）。PUT 時に `GET /users/@me` でトークン検証
+  （401/403 は拒否、ネットワーク不達は保存を許す — egress 制限環境向け）。
+- **通知文**: 表示名・kind・見出しのみ（秘密・生ログなし）。`AF_CP_BASE_URL` がある時だけ
+  Console リンクを付ける（セッション deep link は残課題のまま）。
+- **検証**: ユニット（キュー境界・リトライ/破棄・トグルフィルタ・Discord REST 契約 =
+  httptest・notice fan-out）＋ live 契約テスト `AF_DISCORD_LIVE=1 AF_DISCORD_TOKEN=…
+  AF_DISCORD_CHANNEL=…`（`internal/bridge/discord_live_test.go`）。実 Discord 通し・
+  スマホ実機目視は未（トークンはユーザー準備）。
 
 ### P2 — 双方向: スレッド＝セッション ＋ AUQ ボタン（canReceive / canInteract）
 

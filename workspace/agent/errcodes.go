@@ -34,6 +34,12 @@ const (
 	errCodeConnAWSProfileRequired = "conn_aws_profile_required"
 	errCodeConnSSORegionMissing   = "conn_sso_region_missing"
 
+	// チャットブリッジ接続（connections.go, docs/37 P1）
+	errCodeConnDiscordTokenRequired = "conn_discord_token_required"
+	errCodeConnDiscordDestRequired  = "conn_discord_destination_required"
+	errCodeConnDiscordDestInvalid   = "conn_discord_destination_invalid"
+	errCodeConnDiscordTokenInvalid  = "conn_discord_token_invalid"
+
 	// アシスタント CRUD（assistants.go）
 	errCodeAssistantNotFound      = "assistant_not_found"
 	errCodeAssistantBuiltinEdit   = "assistant_builtin_readonly_edit"
