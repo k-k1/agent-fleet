@@ -18,6 +18,7 @@ func TestDiscordLiveSend(t *testing.T) {
 	if os.Getenv("AF_DISCORD_LIVE") != "1" {
 		t.Skip("AF_DISCORD_LIVE != 1")
 	}
+	t.Setenv("HOME", t.TempDir()) // keep the thread store off the real config dir
 	token := os.Getenv("AF_DISCORD_TOKEN")
 	if token == "" {
 		t.Fatal("AF_DISCORD_LIVE=1 but AF_DISCORD_TOKEN is empty")
@@ -36,5 +37,18 @@ func TestDiscordLiveSend(t *testing.T) {
 		SessionKind: "claude"})
 	if err != nil {
 		t.Fatalf("send: %v", err)
+	}
+	// Thread grouping (docs/37 P1.5): two events for one session must land in a
+	// single thread under the channel. Verify visually on the Discord side.
+	if p.creds.ChannelID != "" {
+		tp := &discordProvider{creds: secrets.DiscordCreds{Token: token,
+			ChannelID: p.creds.ChannelID, Threads: true,
+			MentionUserID: os.Getenv("AF_DISCORD_MENTION")}}
+		for _, kind := range []string{"answer-ready", "session-report"} {
+			if err := tp.Send(Message{Kind: kind, SessionName: "af-live-thread",
+				DisplayName: "AF live thread test", SessionKind: "claude"}); err != nil {
+				t.Fatalf("thread %s: %v", kind, err)
+			}
+		}
 	}
 }

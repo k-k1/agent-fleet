@@ -77,6 +77,12 @@ func discordStatus(s *secrets.Data) map[string]any {
 	} else {
 		m["mode"] = "dm"
 	}
+	if d.Threads {
+		m["threads"] = true
+	}
+	if d.MentionUserID != "" {
+		m["mention"] = true
+	}
 	events := d.Events
 	if len(events) == 0 {
 		events = bridge.EventKeys
@@ -150,16 +156,28 @@ func handleDiscordGuilds(w http.ResponseWriter, r *http.Request) {
 		for _, c := range chs {
 			cl = append(cl, map[string]string{"id": c.ID, "name": c.Name})
 		}
-		out = append(out, map[string]any{"id": g.ID, "name": g.Name, "channels": cl})
+		entry := map[string]any{"id": g.ID, "name": g.Name, "channels": cl}
+		// Owner = the user's own id in the recommended "your private server"
+		// setup (docs/37 P1.5) — the card auto-fills the mention target from it,
+		// so no Developer Mode / Copy-ID is ever needed. Best-effort.
+		if owner, err := bridge.DiscordGuildOwner(token, g.ID); err == nil && owner != "" {
+			entry["ownerId"] = owner
+			if name, err := bridge.DiscordUserName(token, owner); err == nil {
+				entry["ownerName"] = name
+			}
+		}
+		out = append(out, entry)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"guilds": out})
 }
 
 type discordConnReq struct {
-	Token     string   `json:"token"`
-	ChannelID string   `json:"channelId"`
-	UserID    string   `json:"userId"`
-	Events    []string `json:"events"`
+	Token         string   `json:"token"`
+	ChannelID     string   `json:"channelId"`
+	UserID        string   `json:"userId"`
+	Events        []string `json:"events"`
+	Threads       bool     `json:"threads"`       // thread-per-session (channel mode)
+	MentionUserID string   `json:"mentionUserId"` // @mentioned per notification (channel mode)
 }
 
 // discordSnowflakeRe matches a Discord snowflake id — catches names/mentions
@@ -201,13 +219,23 @@ func handlePutDiscordConn(w http.ResponseWriter, r *http.Request) {
 	if len(events) == len(bridge.EventKeys) {
 		events = nil // all on — store the compact "everything" default
 	}
+	mention := strings.TrimSpace(req.MentionUserID)
+	if mention != "" && !discordSnowflakeRe.MatchString(mention) {
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnDiscordDestInvalid, "mention target must be a numeric Discord id")
+		return
+	}
 	botName, err := bridge.DiscordBotName(token)
 	if errors.Is(err, bridge.ErrUnauthorized) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnDiscordTokenInvalid, "Discord rejected the bot token")
 		return
 	}
 	creds := &secrets.DiscordCreds{Token: token, ChannelID: channelID, UserID: userID,
-		BotName: botName, Events: events}
+		BotName: botName, Events: events,
+		// Channel-mode extras (docs/37 P1.5); meaningless for DM, so not stored there.
+		Threads: channelID != "" && req.Threads, MentionUserID: mention}
+	if channelID == "" {
+		creds.MentionUserID = ""
+	}
 	// Resolve the DM channel eagerly so the first notification doesn't pay the
 	// round-trip; a failure here is tolerated (the sender resolves lazily).
 	if userID != "" {
@@ -250,6 +278,7 @@ func handleDeleteDiscordConn(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
+	bridge.ResetThreads() // stale session↔thread mappings die with the connection
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "discord"})
 }
 
