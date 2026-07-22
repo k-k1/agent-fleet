@@ -150,16 +150,24 @@ type Schedule struct {
 	SpecKind, Spec, SpecLabel  string
 	TZ                         string
 	WakePolicy                 string // wake (default) | skip | catch_up
-	SessionMode, ReuseTarget   string // new (default) | reuse; ReuseTarget for reuse (future)
+	SessionMode, ReuseTarget   string // new (default) | reuse; ReuseTarget = pinned session name for reuse (P6)
 	AgentKind, Model           string
 	Repo, Worktree             string
 	NewBranch                  bool
 	Prompt                     string
-	OverlapPolicy              string // skip (default) | queue | restart
+	OverlapPolicy              string // skip (default) | queue | restart (reuse only, P6)
 	Enabled                    bool
 	NextRun, LastRun           string
 	LastStatus                 string
 	CreatedAt, UpdatedAt       string
+	// Reuse ledger (P6, docs/38): the current long-lived session the scheduler drives in
+	// session_mode=reuse, when it started, and how many fires it has taken since the last
+	// rotation. Rotation is a JSON blob of triggers (every_runs/after/calendar). MissingTargetPolicy
+	// governs a pinned reuse whose target session vanished (recreate default | fail).
+	ReuseSession, ReuseStartedAt string
+	ReuseRunCount                int
+	Rotation                     string
+	MissingTargetPolicy          string
 }
 
 // ScheduleRun is one fire-attempt history row (docs/38 P3 get_schedule_runs).
@@ -486,6 +494,10 @@ type ScheduleStore interface {
 	// and the recomputed next_run, disabling the row (enabled=0) when next_run is ""
 	// (a spent "once"). The scheduler is the only caller, so no membership scoping.
 	RecordScheduleFire(ctx context.Context, id, lastRun, lastStatus, nextRun string, enabled bool, updatedAt string) error
+	// SetScheduleReuse persists the reuse ledger (P6): the current long-lived session,
+	// when it started, and the fire count since the last rotation. Only reuse schedules
+	// use it; the firer calls it, so no membership scoping.
+	SetScheduleReuse(ctx context.Context, id, reuseSession, reuseStartedAt string, runCount int, updatedAt string) error
 	// AppendScheduleRun inserts a run-history row and trims that schedule's history to
 	// the keepN most recent rows so a frequent schedule cannot grow it without bound.
 	AppendScheduleRun(ctx context.Context, run ScheduleRun, keepN int) error

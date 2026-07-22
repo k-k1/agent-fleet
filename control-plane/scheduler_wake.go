@@ -97,6 +97,10 @@ func (f *wakeFirer) fire(ctx context.Context, sch Schedule, slot time.Time) (str
 	if err := f.awaitAgentReady(ctx, res.rt); err != nil {
 		return "", fmt.Errorf("agent not ready: %w", err)
 	}
+	// session_mode=reuse (P6): send into the long-lived session instead of creating one.
+	if sch.SessionMode == "reuse" {
+		return f.fireReuse(ctx, res, sch, slot)
+	}
 	if err := f.injectSession(ctx, res.rt, buildInjectBody(sch, slot)); err != nil {
 		return "", fmt.Errorf("inject: %w", err)
 	}
