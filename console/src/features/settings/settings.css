@@ -775,11 +775,11 @@
   font-weight: 700;
   color: #0c0c0c;
 }
-.p-badge.pb-claude { background: #e0a45e; }
-.p-badge.pb-codex { background: #4ec97a; }
-.p-badge.pb-copilot { background: #a371f7; }
-.p-badge.pb-opencode { background: #b07cf2; }
-.p-badge.pb-agy { background: #4285f4; }
+.p-badge.pb-claude { background: var(--kind-claude); }
+.p-badge.pb-codex { background: var(--kind-codex); }
+.p-badge.pb-copilot { background: var(--kind-copilot); }
+.p-badge.pb-opencode { background: var(--kind-opencode); }
+.p-badge.pb-agy { background: var(--kind-agy); }
 .p-badge.pb-github { background: #c9d1d9; }
 .p-badge.pb-bitbucket { background: #4a90e2; }
 .p-badge.pb-pagerduty { background: #06ac38; }

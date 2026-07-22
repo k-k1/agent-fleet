@@ -101,21 +101,23 @@
     display: inline;
   }
 }
-.kind-tag.kind-claude { color: #e0a45e; background: rgba(224, 164, 94, 0.14); border-color: rgba(224, 164, 94, 0.45); }
-.kind-tag.kind-codex { color: #4ec97a; background: rgba(78, 201, 122, 0.14); border-color: rgba(78, 201, 122, 0.45); }
-.kind-tag.kind-opencode { color: #b07cf2; background: rgba(176, 124, 242, 0.16); border-color: rgba(176, 124, 242, 0.45); }
-.kind-tag.kind-agy { color: #4285f4; background: rgba(66, 133, 244, 0.14); border-color: rgba(66, 133, 244, 0.45); }
-.kind-tag.kind-copilot { color: #a371f7; background: rgba(163, 113, 247, 0.14); border-color: rgba(163, 113, 247, 0.45); }
-.kind-tag.kind-shell { color: #46c9d0; background: rgba(70, 201, 208, 0.14); border-color: rgba(70, 201, 208, 0.45); }
-.kind-tag.kind-ssm { color: #6d8bf5; background: rgba(109, 139, 245, 0.14); border-color: rgba(109, 139, 245, 0.45); }
-/* Light theme: darker text + stronger fill for legibility. */
-[data-theme="light"] .kind-tag.kind-claude { color: #a85f1c; background: rgba(224, 164, 94, 0.2); border-color: rgba(224, 164, 94, 0.55); }
-[data-theme="light"] .kind-tag.kind-codex { color: #18854a; background: rgba(78, 201, 122, 0.2); border-color: rgba(78, 201, 122, 0.55); }
-[data-theme="light"] .kind-tag.kind-opencode { color: #6d2fce; background: rgba(176, 124, 242, 0.2); border-color: rgba(176, 124, 242, 0.55); }
-[data-theme="light"] .kind-tag.kind-agy { color: #1a73e8; background: rgba(66, 133, 244, 0.2); border-color: rgba(66, 133, 244, 0.55); }
-[data-theme="light"] .kind-tag.kind-copilot { color: #8250df; background: rgba(130, 80, 223, 0.16); border-color: rgba(130, 80, 223, 0.5); }
-[data-theme="light"] .kind-tag.kind-shell { color: #15828a; background: rgba(70, 201, 208, 0.2); border-color: rgba(70, 201, 208, 0.55); }
-[data-theme="light"] .kind-tag.kind-ssm { color: #3140b8; background: rgba(109, 139, 245, 0.2); border-color: rgba(109, 139, 245, 0.55); }
+/* Hue is 1-sourced in tokens.css (--kind-*); tints are derived via color-mix. The
+   light theme keeps a stronger fill/border (the darker hue comes from the var). */
+.kind-tag.kind-claude { color: var(--kind-claude); background: color-mix(in srgb, var(--kind-claude) 14%, transparent); border-color: color-mix(in srgb, var(--kind-claude) 45%, transparent); }
+.kind-tag.kind-codex { color: var(--kind-codex); background: color-mix(in srgb, var(--kind-codex) 14%, transparent); border-color: color-mix(in srgb, var(--kind-codex) 45%, transparent); }
+.kind-tag.kind-opencode { color: var(--kind-opencode); background: color-mix(in srgb, var(--kind-opencode) 14%, transparent); border-color: color-mix(in srgb, var(--kind-opencode) 45%, transparent); }
+.kind-tag.kind-agy { color: var(--kind-agy); background: color-mix(in srgb, var(--kind-agy) 14%, transparent); border-color: color-mix(in srgb, var(--kind-agy) 45%, transparent); }
+.kind-tag.kind-copilot { color: var(--kind-copilot); background: color-mix(in srgb, var(--kind-copilot) 14%, transparent); border-color: color-mix(in srgb, var(--kind-copilot) 45%, transparent); }
+.kind-tag.kind-shell { color: var(--kind-shell); background: color-mix(in srgb, var(--kind-shell) 14%, transparent); border-color: color-mix(in srgb, var(--kind-shell) 45%, transparent); }
+.kind-tag.kind-ssm { color: var(--kind-ssm); background: color-mix(in srgb, var(--kind-ssm) 14%, transparent); border-color: color-mix(in srgb, var(--kind-ssm) 45%, transparent); }
+/* Light theme: stronger fill for legibility (color comes from the light --kind-* var). */
+[data-theme="light"] .kind-tag.kind-claude { background: color-mix(in srgb, var(--kind-claude) 20%, transparent); border-color: color-mix(in srgb, var(--kind-claude) 55%, transparent); }
+[data-theme="light"] .kind-tag.kind-codex { background: color-mix(in srgb, var(--kind-codex) 20%, transparent); border-color: color-mix(in srgb, var(--kind-codex) 55%, transparent); }
+[data-theme="light"] .kind-tag.kind-opencode { background: color-mix(in srgb, var(--kind-opencode) 20%, transparent); border-color: color-mix(in srgb, var(--kind-opencode) 55%, transparent); }
+[data-theme="light"] .kind-tag.kind-agy { background: color-mix(in srgb, var(--kind-agy) 20%, transparent); border-color: color-mix(in srgb, var(--kind-agy) 55%, transparent); }
+[data-theme="light"] .kind-tag.kind-copilot { background: color-mix(in srgb, var(--kind-copilot) 20%, transparent); border-color: color-mix(in srgb, var(--kind-copilot) 55%, transparent); }
+[data-theme="light"] .kind-tag.kind-shell { background: color-mix(in srgb, var(--kind-shell) 20%, transparent); border-color: color-mix(in srgb, var(--kind-shell) 55%, transparent); }
+[data-theme="light"] .kind-tag.kind-ssm { background: color-mix(in srgb, var(--kind-ssm) 20%, transparent); border-color: color-mix(in srgb, var(--kind-ssm) 55%, transparent); }
 
 /* Terminal body: xterm fills; overlays cover it. */
 .term-body {

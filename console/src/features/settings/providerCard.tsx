@@ -2,19 +2,17 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
+import { AGENTS } from "../../agents/registry.ts";
 
 // Shared building blocks for the settings connection cards, used by both the
 // エージェント tab (Claude / Codex / opencode) and the Git tab (GitHub / Bitbucket).
 // Presentation only — the per-provider auth logic lives in each tab.
 
 // Colored 2-char badge per provider, matching the session kind badge colors so a
-// provider reads the same color wherever it appears.
+// provider reads the same color wherever it appears. Agent abbreviations come from
+// the registry (single source — `short`); the git/ops providers below aren't agents.
 export const BADGE_SHORT: Record<string, string> = {
-  claude: "cc",
-  codex: "cx",
-  copilot: "cp",
-  opencode: "oc",
-  agy: "ag",
+  ...Object.fromEntries(Object.values(AGENTS).map((a) => [a.id, a.short])),
   github: "gh",
   bitbucket: "bb",
   pagerduty: "pd",

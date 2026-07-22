@@ -79,6 +79,16 @@
   --leftpane-bg: var(--panel);
   --mono: "Source Code Pro", "SF Mono", Menlo, Consolas, "DejaVu Sans Mono",
     "Noto Sans Mono CJK JP", monospace;
+  /* Per-agent kind hues — single source of truth for the color every agent reads
+     wherever it appears (kind-tag pane headers, session badges, launch seg icons,
+     LayoutMap, settings badges). Tints are derived via color-mix at the use sites. */
+  --kind-claude: #e0a45e;
+  --kind-codex: #4ec97a;
+  --kind-agy: #4285f4;
+  --kind-copilot: #a371f7;
+  --kind-opencode: #1fbaa6; /* teal — distinct from copilot's purple */
+  --kind-shell: #46c9d0;
+  --kind-ssm: #6d8bf5;
 }
 
 /* Light theme — applied via document.documentElement[data-theme="light"]. The bare
@@ -138,6 +148,14 @@
   --hl-add-bg: #dafbe1;
   --hl-del-fg: #82071e;
   --hl-del-bg: #ffebe9;
+  /* Light theme: darker kind hues for legibility (mirrors the old per-file overrides). */
+  --kind-claude: #a85f1c;
+  --kind-codex: #18854a;
+  --kind-agy: #1a73e8;
+  --kind-copilot: #8250df;
+  --kind-opencode: #0d8f82; /* teal (light) */
+  --kind-shell: #15828a;
+  --kind-ssm: #3140b8;
 }
 
 /* --sel-* re-derivation for regions that rebind --sel-accent (.mirror-toggle →
