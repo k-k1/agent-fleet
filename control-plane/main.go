@@ -232,6 +232,16 @@ func main() {
 		go newGitGC(mgr.store, mgr.dataRoot, iv, grace).run(context.Background())
 	}
 
+	// Scheduled execution (docs/38 + ADR0021): a CP-resident scheduler watches the
+	// wall clock and drives due schedules (cron/interval/once). DISABLED by default
+	// (opt-in like the reaper) until the P2 wake path lands — P1 ships only the
+	// skeleton with a no-op firer, so enabling it now merely advances the ledger.
+	// AF_SCHEDULER_INTERVAL=0 keeps it off; a positive duration (e.g. 1m) starts it.
+	if iv := parseDurationOr(os.Getenv("AF_SCHEDULER_INTERVAL"), 0); iv > 0 {
+		go newScheduler(mgr.store, logFirer{}, iv).run(context.Background())
+		log.Printf("scheduler: enabled (interval=%s)", iv)
+	}
+
 	mux := buildMux(cfg)
 
 	// In oauth mode the CP is the edge (behind Funnel): gate every request on a
