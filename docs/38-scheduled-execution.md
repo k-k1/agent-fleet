@@ -212,7 +212,12 @@ running だった WS はスケジュール由来で止めない（reaper の通�
 対策（**P4 実装**）:
 - 発火に **jitter**（`scheduleJitter`・`schedule_id` 由来の決定論オフセット [0,max]・
   既定2分・env `AF_SCHEDULE_JITTER`）。cron のみ適用（interval は毎周期ドリフト・once は
-  厳密時刻）。決定論なので再起動でも next_run 再現・冪等スロット安定。
+  厳密時刻）。**jitter は next_run に焼き込まず「発火時ゲート」として適用する**
+  （`jitterForSchedule`＋`tick` の `now < slot+jitter` なら見送り）。next_run は名目
+  wall-clock のまま保つので、(a) オペレーターの読み上げ確認・`next_run_local` 表示・
+  `{{time}}` が利用者の依頼どおりの時刻（09:00 であって 09:01 でない）になり、(b) 冪等
+  スロットが名目時刻で安定し、(c) 再起動で `AF_SCHEDULE_JITTER` を変えてもゲートがズレない。
+  `run_now` は名目 next_run を `now - jitter` に置くことでゲートを即通過し即時発火を保つ。
 - **wake 同時実行数の上限＝実質1**: `fireOne` は tick 内で due を**逐次処理**するため、
   同時 wake は 1 に自然に律速される。加えて `ensureWorkspaceStarted` が `max_workspaces`
   クォータ（`countRunningInTenant`）を尊重し、超過時は `skipped_quota` で見送り＋通知。
@@ -307,6 +312,23 @@ reuse セッションでは driver 切替中 `409 busy_switch` にも遭遇し�
   **意図的な限界**（doc 明記）: レート制限の発火前プリチェックと auth 失効中セッションの
   無応答検知は未実装（停止中 WS では usage を読めず・session 監視が要る）。失敗通知が
   カバーするのは wake/注入/quota/membership の各失敗。
+- **P4.1（レビュー追随・実装済み）**: v1 コアのコードレビュー所見を反映。
+  - **jitter を発火時ゲート化**（★2 上記）— next_run に焼き込まず名目時刻を保持し、
+    読み上げ確認・`next_run_local`・`{{time}}` を利用者の依頼どおりの時刻にする。
+    `run_now` は `now - jitter` で即時性維持。
+  - **無効デプロイの無シグナル解消**: スケジューラ goroutine 未起動
+    （`AF_SCHEDULER_INTERVAL` 未設定）のとき `create_schedule` / `run_schedule_now` の
+    応答に `warning` を載せ（`schedulerRunning` フラグ＋`withSchedulerWarning`）、
+    persona がそれを利用者に伝える。登録は成功するが発火しないことを黙らせない。
+  - **うるう日 cron**: `nextCron` の探索 horizon を 1 年→約 4 年に拡大
+    （`0 0 29 2 *` 等が誤って拒否/無効化されるのを防止。2100 非うるう境界は非対応の許容外縁）。
+  - **`overlap_policy` の誤解除去**: v1 は `session_mode=new` のみで毎発火が新規セッション＝
+    overlap は起きないため、操作 MCP の create/update ツール表面から `overlap_policy` を撤去
+    （DB 列と既定 `skip` は温存。reuse モード導入時に再公開）。
+  - **使用済み `once` の resume 拒否**: 過去時刻の once を resume すると即再発火するため、
+    `resume` で過去 once を 400（`once_in_past`）に。将来 once は従来どおり resume 可。
+  - **`owner_conv` を更新不可に**: create は operator 自身の会話に固定注入するが、update の
+    patch から `owner_conv` を除去（membership 内での報告先すり替え面を閉じる。生涯固定）。
 - **P5（後続）**: Console UI（一覧・履歴・トグル）、長寿命セッション再利用モード。
 
 ## 決定済み（2026-07-22・当初の未決から確定）

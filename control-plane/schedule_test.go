@@ -175,6 +175,68 @@ func TestSchedulePauseResumeRunNow(t *testing.T) {
 	}
 }
 
+// TestResumeSpentOnceRejected: resuming a `once` whose instant has passed would re-fire it
+// immediately; it must be rejected so the operator creates a fresh schedule instead.
+func TestResumeSpentOnceRejected(t *testing.T) {
+	api, _, mv := newSchedAPITest(t)
+	past := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	rec := doJSON(api.create, mv, "POST",
+		`{"spec_kind":"once","spec":"`+past+`","prompt":"x"}`, "")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create once code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var dto scheduleDTO
+	_ = json.Unmarshal(rec.Body.Bytes(), &dto)
+	if p := doJSON(api.pause, mv, "POST", "", dto.ID); p.Code != 200 {
+		t.Fatalf("pause code=%d", p.Code)
+	}
+	rs := doJSON(api.resume, mv, "POST", "", dto.ID)
+	if rs.Code != http.StatusBadRequest {
+		t.Fatalf("resume of spent once = %d, want 400 (body=%s)", rs.Code, rs.Body.String())
+	}
+	// A future once, by contrast, resumes fine.
+	future := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
+	rec2 := doJSON(api.create, mv, "POST", `{"spec_kind":"once","spec":"`+future+`","prompt":"x"}`, "")
+	var dto2 scheduleDTO
+	_ = json.Unmarshal(rec2.Body.Bytes(), &dto2)
+	_ = doJSON(api.pause, mv, "POST", "", dto2.ID)
+	if rs2 := doJSON(api.resume, mv, "POST", "", dto2.ID); rs2.Code != 200 {
+		t.Fatalf("resume of future once = %d, want 200", rs2.Code)
+	}
+}
+
+// TestSchedulerDisabledWarning: create/run_now surface a warning when the scheduler
+// goroutine is not running, so an operator is not misled into thinking a stored schedule
+// will fire on a deployment that never runs it.
+func TestSchedulerDisabledWarning(t *testing.T) {
+	api, _, mv := newSchedAPITest(t)
+	old := schedulerRunning
+	t.Cleanup(func() { schedulerRunning = old })
+
+	schedulerRunning = false
+	rec := doJSON(api.create, mv, "POST", `{"spec_kind":"cron","spec":"0 9 * * *","tz":"UTC","prompt":"x"}`, "")
+	var d scheduleDTO
+	_ = json.Unmarshal(rec.Body.Bytes(), &d)
+	if d.Warning == "" {
+		t.Fatal("create with scheduler disabled must return a warning")
+	}
+	if rn := doJSON(api.runNow, mv, "POST", "", d.ID); rn.Code == 200 {
+		var dr scheduleDTO
+		_ = json.Unmarshal(rn.Body.Bytes(), &dr)
+		if dr.Warning == "" {
+			t.Error("run_now with scheduler disabled must return a warning")
+		}
+	}
+
+	schedulerRunning = true
+	rec2 := doJSON(api.create, mv, "POST", `{"spec_kind":"cron","spec":"0 9 * * *","tz":"UTC","prompt":"x"}`, "")
+	var d2 scheduleDTO
+	_ = json.Unmarshal(rec2.Body.Bytes(), &d2)
+	if d2.Warning != "" {
+		t.Fatalf("create with scheduler enabled must not warn: %q", d2.Warning)
+	}
+}
+
 func TestScheduleDeleteOwnership(t *testing.T) {
 	api, ctx, mv := newSchedAPITest(t)
 	rec := doJSON(api.create, mv, "POST", `{"spec_kind":"interval","spec":"3600","prompt":"x"}`, "")
