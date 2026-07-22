@@ -208,12 +208,13 @@
   white-space: nowrap;
   color: var(--muted);
 }
-.lm-kind.kc-claude { color: #e0a45e; }
-.lm-kind.kc-codex { color: #4ec97a; }
-.lm-kind.kc-opencode { color: #b07cf2; }
-.lm-kind.kc-agy { color: #4285f4; }
-.lm-kind.kc-shell { color: #46c9d0; }
-.lm-kind.kc-ssm { color: #6d8bf5; }
+.lm-kind.kc-claude { color: var(--kind-claude); }
+.lm-kind.kc-codex { color: var(--kind-codex); }
+.lm-kind.kc-opencode { color: var(--kind-opencode); }
+.lm-kind.kc-copilot { color: var(--kind-copilot); }
+.lm-kind.kc-agy { color: var(--kind-agy); }
+.lm-kind.kc-shell { color: var(--kind-shell); }
+.lm-kind.kc-ssm { color: var(--kind-ssm); }
 .lm-dot {
   flex: none;
   width: 7px;

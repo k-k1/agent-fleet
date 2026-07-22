@@ -63,18 +63,25 @@ describe("launch gate — per-agent predicates", () => {
   });
 });
 
-describe("picker display names", () => {
-  it("shows agy as its full product name in the launch pickers", () => {
+describe("display names", () => {
+  it("uses the full product name in the launch pickers where it differs from the label", () => {
+    expect(kindDisplayName("claude")).toBe("Claude Code");
+    expect(kindDisplayName("copilot")).toBe("GitHub Copilot");
     expect(kindDisplayName("agy")).toBe("Antigravity");
   });
 
-  it("keeps the compact label for chips and headers", () => {
-    // The tight spots (LayoutMap, kt-full pane headers) have no room for "Antigravity".
-    expect(kindLabel("agy")).toBe("agy");
+  it("keeps a proper-cased compact label for chips and headers", () => {
+    // The tight spots (LayoutMap, pane headers) show the compact label, not the full name.
+    expect(kindLabel("claude")).toBe("Claude");
+    expect(kindLabel("copilot")).toBe("Copilot");
+    expect(kindLabel("codex")).toBe("Codex");
+    expect(kindLabel("opencode")).toBe("OpenCode");
+    expect(kindLabel("agy")).toBe("Antigravity");
   });
 
-  it("falls back to label for agents that declare no separate display name", () => {
-    for (const k of ["claude", "codex", "opencode", "shell"]) {
+  it("falls back to the label when an agent declares no separate display name", () => {
+    // codex / opencode / agy: full name == compact label, so displayName is the label.
+    for (const k of ["codex", "opencode", "shell"]) {
       expect(kindDisplayName(k)).toBe(kindLabel(k));
     }
   });
