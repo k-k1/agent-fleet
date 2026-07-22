@@ -1477,3 +1477,160 @@ func (s *sqlStore) PutUsageNotificationState(ctx context.Context, st UsageNotifi
 		st.MembershipID, st.Source, st.WindowKey, st.ResetsAt, st.Armed)
 	return err
 }
+
+// --- Schedules (docs/38 + ADR0021) ----------------------------------------------
+
+// b2i/i2b bridge the 0/1 INTEGER columns (enabled, new_branch) and Go bools; the
+// database/sql layer does not coerce int<->bool on its own.
+func b2i(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+const scheduleCols = `SELECT id, membership_id, tenant_id, owner_conv, spec_kind, spec, spec_label, tz,
+	wake_policy, session_mode, reuse_target, agent_kind, model, repo, worktree, new_branch, prompt,
+	overlap_policy, enabled, next_run, last_run, last_status, created_at, updated_at FROM schedule`
+
+func scanSchedule(row scanner) (Schedule, error) {
+	var s Schedule
+	var newBranch, enabled int
+	err := row.Scan(&s.ID, &s.MembershipID, &s.TenantID, &s.OwnerConv, &s.SpecKind, &s.Spec, &s.SpecLabel, &s.TZ,
+		&s.WakePolicy, &s.SessionMode, &s.ReuseTarget, &s.AgentKind, &s.Model, &s.Repo, &s.Worktree, &newBranch, &s.Prompt,
+		&s.OverlapPolicy, &enabled, &s.NextRun, &s.LastRun, &s.LastStatus, &s.CreatedAt, &s.UpdatedAt)
+	s.NewBranch = newBranch != 0
+	s.Enabled = enabled != 0
+	return s, err
+}
+
+func (s *sqlStore) CreateSchedule(ctx context.Context, sc Schedule) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO schedule(id, membership_id, tenant_id, owner_conv, spec_kind, spec, spec_label, tz,
+		   wake_policy, session_mode, reuse_target, agent_kind, model, repo, worktree, new_branch, prompt,
+		   overlap_policy, enabled, next_run, last_run, last_status, created_at, updated_at)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		sc.ID, sc.MembershipID, sc.TenantID, sc.OwnerConv, sc.SpecKind, sc.Spec, sc.SpecLabel, sc.TZ,
+		sc.WakePolicy, sc.SessionMode, sc.ReuseTarget, sc.AgentKind, sc.Model, sc.Repo, sc.Worktree, b2i(sc.NewBranch), sc.Prompt,
+		sc.OverlapPolicy, b2i(sc.Enabled), sc.NextRun, sc.LastRun, sc.LastStatus, sc.CreatedAt, sc.UpdatedAt)
+	return err
+}
+
+func (s *sqlStore) GetSchedule(ctx context.Context, id string) (Schedule, bool, error) {
+	sc, err := scanSchedule(s.db.QueryRowContext(ctx, scheduleCols+` WHERE id=?`, id))
+	if err == sql.ErrNoRows {
+		return Schedule{}, false, nil
+	}
+	return sc, err == nil, err
+}
+
+func (s *sqlStore) ListSchedules(ctx context.Context, membershipID string) ([]Schedule, error) {
+	rows, err := s.db.QueryContext(ctx, scheduleCols+` WHERE membership_id=? ORDER BY created_at`, membershipID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Schedule
+	for rows.Next() {
+		sc, err := scanSchedule(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, sc)
+	}
+	return out, rows.Err()
+}
+
+// ListDueSchedules returns enabled rows with a non-empty next_run at or before
+// nowRFC. The empty-string guard matters: next_run=” (a paused/spent schedule)
+// must never look due, and ” sorts before any real RFC3339 stamp.
+func (s *sqlStore) ListDueSchedules(ctx context.Context, nowRFC string) ([]Schedule, error) {
+	rows, err := s.db.QueryContext(ctx,
+		scheduleCols+` WHERE enabled=1 AND next_run!='' AND next_run<=? ORDER BY next_run`, nowRFC)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Schedule
+	for rows.Next() {
+		sc, err := scanSchedule(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, sc)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlStore) UpdateSchedule(ctx context.Context, sc Schedule) error {
+	// membership_id in the WHERE so a member can only update their own row.
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE schedule SET owner_conv=?, spec_kind=?, spec=?, spec_label=?, tz=?, wake_policy=?,
+		   session_mode=?, reuse_target=?, agent_kind=?, model=?, repo=?, worktree=?, new_branch=?, prompt=?,
+		   overlap_policy=?, enabled=?, next_run=?, updated_at=?
+		 WHERE id=? AND membership_id=?`,
+		sc.OwnerConv, sc.SpecKind, sc.Spec, sc.SpecLabel, sc.TZ, sc.WakePolicy,
+		sc.SessionMode, sc.ReuseTarget, sc.AgentKind, sc.Model, sc.Repo, sc.Worktree, b2i(sc.NewBranch), sc.Prompt,
+		sc.OverlapPolicy, b2i(sc.Enabled), sc.NextRun, sc.UpdatedAt, sc.ID, sc.MembershipID)
+	return err
+}
+
+func (s *sqlStore) SetScheduleEnabled(ctx context.Context, id, membershipID string, enabled bool, nextRun, updatedAt string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE schedule SET enabled=?, next_run=?, updated_at=? WHERE id=? AND membership_id=?`,
+		b2i(enabled), nextRun, updatedAt, id, membershipID)
+	return err
+}
+
+func (s *sqlStore) DeleteSchedule(ctx context.Context, id, membershipID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM schedule WHERE id=? AND membership_id=?`, id, membershipID)
+	return err
+}
+
+func (s *sqlStore) RecordScheduleFire(ctx context.Context, id, lastRun, lastStatus, nextRun string, enabled bool, updatedAt string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE schedule SET last_run=?, last_status=?, next_run=?, enabled=?, updated_at=? WHERE id=?`,
+		lastRun, lastStatus, nextRun, b2i(enabled), updatedAt, id)
+	return err
+}
+
+func (s *sqlStore) AppendScheduleRun(ctx context.Context, run ScheduleRun, keepN int) error {
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO schedule_run(id, schedule_id, membership_id, fired_at, status, detail) VALUES(?,?,?,?,?,?)`,
+		run.ID, run.ScheduleID, run.MembershipID, run.FiredAt, run.Status, run.Detail); err != nil {
+		return err
+	}
+	if keepN <= 0 {
+		return nil
+	}
+	// Trim to the keepN most recent rows for this schedule. The NOT IN (…LIMIT…)
+	// subquery is dialect-neutral across SQLite and Postgres.
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM schedule_run WHERE schedule_id=? AND id NOT IN (
+		   SELECT id FROM schedule_run WHERE schedule_id=? ORDER BY fired_at DESC LIMIT ?)`,
+		run.ScheduleID, run.ScheduleID, keepN)
+	return err
+}
+
+func (s *sqlStore) ListScheduleRuns(ctx context.Context, scheduleID, membershipID string, limit int) ([]ScheduleRun, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, schedule_id, membership_id, fired_at, status, detail FROM schedule_run
+		 WHERE schedule_id=? AND membership_id=? ORDER BY fired_at DESC LIMIT ?`,
+		scheduleID, membershipID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ScheduleRun
+	for rows.Next() {
+		var r ScheduleRun
+		if err := rows.Scan(&r.ID, &r.ScheduleID, &r.MembershipID, &r.FiredAt, &r.Status, &r.Detail); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}

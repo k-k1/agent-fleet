@@ -24,6 +24,7 @@ func buildMux(cfg config) *http.ServeMux {
 	registerTTSRoutes(mux, cfg)
 	registerSSMRoutes(mux, cfg)
 	registerMemoRoutes(mux, cfg)
+	registerScheduleRoutes(mux, cfg)
 	registerNotificationRoutes(mux, cfg)
 	registerRepoFSRoutes(mux, cfg)
 	registerAgentEnvRoutes(mux, cfg)
@@ -316,6 +317,23 @@ func registerMemoRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /internal/memo-categories", memo.withMemoToken(memo.createCategory))
 	mux.HandleFunc("PATCH /internal/memo-categories/{id}", memo.withMemoToken(memo.updateCategory))
 	mux.HandleFunc("DELETE /internal/memo-categories/{id}", memo.withMemoToken(memo.deleteCategory))
+}
+
+// Scheduled execution (docs/38 + ADR0021 P3) — operator-authored cron/interval/once
+// tasks. Definitions live in the CP DB; the scheduler goroutine (scheduler.go) drives
+// them. Only the internal (operator-token) face exists in v1 — the operator MCP reaches
+// it with its AF_SCHEDULE_TOKEN Bearer (schedule_bridge.go); a Console GUI is a later
+// phase. /internal/* is session-exempt; auth + membership scoping live in withScheduleToken.
+func registerScheduleRoutes(mux *http.ServeMux, cfg config) {
+	s := newScheduleAPI(cfg.mgr)
+	mux.HandleFunc("GET /internal/schedules", s.withScheduleToken(s.list))
+	mux.HandleFunc("POST /internal/schedules", s.withScheduleToken(s.create))
+	mux.HandleFunc("PATCH /internal/schedules/{id}", s.withScheduleToken(s.update))
+	mux.HandleFunc("DELETE /internal/schedules/{id}", s.withScheduleToken(s.delete))
+	mux.HandleFunc("POST /internal/schedules/{id}/pause", s.withScheduleToken(s.pause))
+	mux.HandleFunc("POST /internal/schedules/{id}/resume", s.withScheduleToken(s.resume))
+	mux.HandleFunc("POST /internal/schedules/{id}/run-now", s.withScheduleToken(s.runNow))
+	mux.HandleFunc("GET /internal/schedules/{id}/runs", s.withScheduleToken(s.runs))
 }
 
 // Repository ops + source-control view + file browser — proxied to the Workspace

@@ -232,6 +232,30 @@ func main() {
 		go newGitGC(mgr.store, mgr.dataRoot, iv, grace).run(context.Background())
 	}
 
+	// Scheduled execution (docs/38 + ADR0021): a CP-resident scheduler watches the
+	// wall clock and drives due schedules (cron/interval/once). DISABLED by default
+	// (opt-in like the reaper) — enabling it wakes stopped workspaces and injects
+	// sessions unattended, so it stays off until an operator turns it on per
+	// deployment. AF_SCHEDULER_INTERVAL=0 keeps it off; a positive duration (e.g. 1m)
+	// starts it. The P2 wake firer resolves the owner, applies the wake policy, holds
+	// a reaper keep-alive for AF_SCHEDULE_SETTLE, and injects via create_session.
+	if iv := parseDurationOr(os.Getenv("AF_SCHEDULER_INTERVAL"), 0); iv > 0 {
+		settle := parseDurationOr(os.Getenv("AF_SCHEDULE_SETTLE"), 5*time.Minute)
+		ready := parseDurationOr(os.Getenv("AF_SCHEDULE_WAKE_TIMEOUT"), 90*time.Second)
+		// Per-schedule fire jitter (★2) spreads aligned cron times (everyone at 09:00)
+		// so simultaneous wakes don't OOM the shared host. Default 2m; AF_SCHEDULE_JITTER=0
+		// disables. Set before any schedule's next_run is computed so it takes effect.
+		if strings.TrimSpace(os.Getenv("AF_SCHEDULE_JITTER")) == "0" {
+			scheduleJitterMax = 0
+		} else {
+			scheduleJitterMax = parseDurationOr(os.Getenv("AF_SCHEDULE_JITTER"), 2*time.Minute)
+		}
+		firer := newWakeFirer(mgr, settle, ready)
+		go newScheduler(mgr.store, firer, iv).run(context.Background())
+		logSchedulerFirerNote(firer)
+		log.Printf("scheduler: enabled (interval=%s settle=%s wake_timeout=%s jitter=%s)", iv, settle, ready, scheduleJitterMax)
+	}
+
 	mux := buildMux(cfg)
 
 	// In oauth mode the CP is the edge (behind Funnel): gate every request on a
