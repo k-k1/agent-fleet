@@ -278,7 +278,7 @@ fi
 
 # 既定 settings.json を seed（ファイルが無い時のみ。以後は Console の Claude 設定が真実）。
 #   skipDangerousModePermissionPrompt … bypass 警告での誤 exit を防ぐ
-#   remoteControlAtStartup            … 起動時に Remote Control を有効化
+#   remoteControlAtStartup            … 起動時の Remote Control は既定 OFF（新規WSのみ。以後は Console 設定が真実）
 #   agentPushNotifEnabled             … プッシュ通知を有効化
 #   hooks(PreToolUse/Bash → rtk hook claude) … rtk がコンテナにあれば seed（トークン節約）
 SETTINGS="$CCD/settings.json"
@@ -289,7 +289,7 @@ if [ ! -f "$SETTINGS" ]; then
     const fs = require("fs"), p = process.argv[1], rtk = process.argv[2] === "1";
     const s = {
       skipDangerousModePermissionPrompt: true,
-      remoteControlAtStartup: true,
+      remoteControlAtStartup: false,
       agentPushNotifEnabled: true,
     };
     if (rtk) s.hooks = { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "rtk hook claude" }] }] };

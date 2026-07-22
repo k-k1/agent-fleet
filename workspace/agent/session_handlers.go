@@ -348,6 +348,13 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		req.Model = model
+	} else if normalizeKind(req.Kind) == session.KindCopilot && strings.TrimSpace(req.Model) != "" {
+		model, err := resolveLiveModel(req.Model, copilot.Models())
+		if err != nil {
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_model", err.Error())
+			return
+		}
+		req.Model = model
 	} else if normalizeKind(req.Kind) == session.KindOpencode && strings.TrimSpace(req.Model) != "" {
 		ids := opencode.Models()
 		choices := make([]agents.ModelChoice, 0, len(ids))
