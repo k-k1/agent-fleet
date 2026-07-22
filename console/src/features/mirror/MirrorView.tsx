@@ -14,6 +14,7 @@ import FileIcon from "../../ui/FileIcon.tsx";
 import { baseName, imageFormat } from "../../lib/filemeta.ts";
 import { useDraft } from "../../lib/draft.ts";
 import { scrollComposerViewport } from "../../lib/keyScroll.ts";
+import { useBackClose } from "../../lib/backClose.ts";
 import { fmtDateTime, fmtNum } from "../../lib/intl.ts";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import {
@@ -324,6 +325,10 @@ export function MirrorView({
   const dragDepth = useRef(0); // dragenter/leave nesting counter (leave fires per child)
   const filePickRef = useRef<HTMLInputElement>(null); // the ＋ button's hidden picker
   const [lightbox, setLightbox] = useState<string | null>(null); // enlarged image (blob URL) or null
+  // Close the enlarged-image lightbox with the device/browser Back button or a back gesture
+  // (phones foremost): opening it pushes a throwaway history entry, so Back pops that instead
+  // of navigating away from the Console; a tap on the backdrop consumes the entry on cleanup.
+  useBackClose(lightbox ? () => setLightbox(null) : undefined, !!lightbox);
   const [histIdx, setHistIdx] = useState<number | null>(null); // position in composer history, or null
   const cursorRef = useRef(0);
   // Backward paging (P2): firstLineRef = oldest jsonl line currently held; hasMore = there
@@ -3767,7 +3772,7 @@ function QuestionBlock({
                     disabled
                     title={o.description || o.label}
                   >
-                    <span className="mq-mark">{sel ? "☑" : "☐"}</span>
+                    <span className="mq-mark">{qn.multiSelect ? (sel ? "☑" : "☐") : sel ? "◉" : "○"}</span>
                     <span className="mq-opt-body">
                       <span className="mq-opt-label">{o.label}</span>
                       {o.description && <span className="mq-opt-desc">{o.description}</span>}
