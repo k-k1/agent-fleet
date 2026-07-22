@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -52,11 +53,16 @@ func answerInteraction(pi bridge.ParsedInteraction) (string, error) {
 	if !ok {
 		return fb(en, "セッションが見つかりません", "Session not found"), nil
 	}
-	// v1: buttons only ever attach to claude (tui) prompts. A managed answer needs
-	// the live driver interaction (follow-up) — steer the user to the Console rather
-	// than drive a tmux pane the managed session doesn't have.
+	// Managed (codex/opencode/copilot): the answer is a structured Interaction reply
+	// to the live driver, not a tmux modal — resolve the driver and Respond by the
+	// CURRENT interaction id (managed only ever buttons single-select questions;
+	// permission/plan aren't rendered for managed, so a p/pl click there just steers
+	// to the Console).
 	if meta.DriverKind() == session.DriverManaged {
-		return fb(en, "このセッションは Console で回答してください", "Answer this session from the Console"), nil
+		if pi.Kind != "q" {
+			return fb(en, "このセッションは Console で回答してください", "Answer this session from the Console"), nil
+		}
+		return answerManagedQuestion(meta, pi, en)
 	}
 	switch pi.Kind {
 	case "q":
@@ -115,6 +121,85 @@ func answerClaudeQuestion(meta session.Meta, pi bridge.ParsedInteraction, en boo
 	markSessionWorking(meta.Name)
 	clearBridgeAnswer(meta.Name)
 	return questionDoneFeedback(pi.QI, len(qs), picked, en), nil
+}
+
+// answerManagedQuestion applies a button pick to a managed session's pending
+// AskUserQuestion. Unlike claude (which the hooks record a pending payload for, then
+// gets driven with tmux keys), a managed answer is a structured Interaction reply: it
+// re-reads the LIVE interaction off the driver (Resume→Snapshot — the same path
+// /respond uses), which sidesteps the identifier mismatch between the notification's
+// rollout call_id and the driver's live interaction id. Staleness is caught by the
+// fingerprint (the questions changed) and by Respond itself (the interaction id moved),
+// so a late click can't mis-answer. Multi-question forms accumulate one pick per
+// question in the shared bridge-answers store and submit once every question is picked.
+func answerManagedQuestion(meta session.Meta, pi bridge.ParsedInteraction, en bool) (string, error) {
+	d, ok := driverOf(meta)
+	if !ok {
+		return fb(en, "このセッションは Console で回答してください", "Answer this session from the Console"), nil
+	}
+	h, err := d.Resume(meta)
+	if err != nil {
+		return "", err
+	}
+	return applyManagedQuestion(h, meta.Name, pi, en)
+}
+
+// applyManagedQuestion is the driver-agnostic core (testable with a fake ThreadHandle):
+// snapshot the live interaction, guard staleness by fingerprint, accumulate the pick,
+// and Respond once every question is answered.
+func applyManagedQuestion(h agents.ThreadHandle, name string, pi bridge.ParsedInteraction, en bool) (string, error) {
+	snap, err := h.Snapshot()
+	if err != nil {
+		return "", err
+	}
+	inter := snap.Interaction
+	if inter == nil || inter.Kind != "question" || len(inter.Questions) == 0 {
+		clearBridgeAnswer(name)
+		return fb(en, "この質問はもう回答済みです", "This question was already answered"), nil
+	}
+	raw, err := json.Marshal(inter.Questions)
+	if err != nil {
+		return "", err
+	}
+	if bridge.QuestionFingerprint(raw) != pi.Fp {
+		clearBridgeAnswer(name)
+		return fb(en, "質問の内容が変わりました", "The question changed — re-check in the Console"), nil
+	}
+	qs := inter.Questions
+	if pi.QI < 0 || pi.QI >= len(qs) || pi.OI < 0 || pi.OI >= len(qs[pi.QI].Options) {
+		return fb(en, "選択肢が範囲外です", "Option out of range"), nil
+	}
+	picked := qs[pi.QI].Options[pi.OI].Label
+
+	st, _ := bridgeAnswers.Read(name)
+	if st.Fp != pi.Fp || st.Picks == nil {
+		st = bridgeAnswerState{Fp: pi.Fp, Picks: map[int]int{}}
+	}
+	st.Picks[pi.QI] = pi.OI
+	if len(st.Picks) < len(qs) {
+		_ = bridgeAnswers.Write(name, st)
+		return questionWaitFeedback(pi.QI, len(qs), picked, en), nil
+	}
+	reply := agents.InteractionReply{
+		ID: inter.ID, Decision: agents.DecisionAnswer, Answers: buildInteractionAnswers(st.Picks, len(qs)),
+	}
+	if err := h.Respond(reply); err != nil {
+		return "", err
+	}
+	markSessionWorking(name)
+	clearBridgeAnswer(name)
+	return questionDoneFeedback(pi.QI, len(qs), picked, en), nil
+}
+
+// buildInteractionAnswers maps the accumulated single-select picks to one
+// InteractionAnswer per question, in question order (each a single option index —
+// multi-select forms never reach here, they stay plain text in the Console).
+func buildInteractionAnswers(picks map[int]int, n int) []agents.InteractionAnswer {
+	out := make([]agents.InteractionAnswer, n)
+	for qi := 0; qi < n; qi++ {
+		out[qi] = agents.InteractionAnswer{Options: []int{picks[qi]}}
+	}
+	return out
 }
 
 // answerClaudeDecision drives a claude allow/deny or approve/reject modal. It guards

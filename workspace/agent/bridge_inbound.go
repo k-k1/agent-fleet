@@ -86,15 +86,34 @@ func injectManagedPrompt(meta session.Meta, prompt string) error {
 // the resulting user turn distinctly from self-typed input (docs/37 追加要件, docs/30 ②).
 func startBridgeReceiver() {
 	bridge.StartReceiver(bridge.ReceiverDeps{
-		Inject: func(sessionName, text, source string) error {
+		Inject: func(sessionName, text, source string) (string, error) {
 			if err := injectSessionPrompt(sessionName, text); err != nil {
-				return err
+				return injectFailureReason(err), err
 			}
 			recordInjection(sessionName, text, source)
-			return nil
+			return "", nil
 		},
 		// P2b: a button click (AskUserQuestion pick / permission / plan decision) is
 		// applied structurally (bridge_answer.go), never as free text (契約6).
 		Answer: answerInteraction,
 	})
+}
+
+// injectFailureReason maps an injectSessionPrompt error to a short, localized line the
+// receiver posts back into the thread so the user knows why their reply was dropped.
+// Known cases get a specific hint; anything else is wrapped generically so no dev-facing
+// error text leaks to chat. Locale follows the connection's notification language.
+func injectFailureReason(err error) string {
+	en := bridgeAnswerEN()
+	switch {
+	case errors.Is(err, errInjectQuestionPending):
+		return fb(en, "⚠️ 質問への回答待ちです。テキストではなくボタン（または Console）で回答してください",
+			"⚠️ A question is awaiting an answer — reply with the buttons (or the Console), not free text")
+	case errors.Is(err, errInjectNotRunning):
+		return fb(en, "⚠️ セッションが停止しています。開始してから返信してください",
+			"⚠️ The session isn't running — start it, then reply")
+	case errors.Is(err, errInjectEmpty):
+		return "" // nothing typed — no need to explain
+	}
+	return fb(en, "⚠️ 返信をセッションに届けられませんでした", "⚠️ Couldn't deliver your reply to the session")
 }

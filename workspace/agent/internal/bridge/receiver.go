@@ -28,9 +28,11 @@ const sourceDiscord = "discord"
 // callback to avoid an import cycle (the session-injection primitives live in main).
 type ReceiverDeps struct {
 	// Inject delivers an inbound chat message into a session as user input and records
-	// its origin so the transcript can badge the turn. Returns an error the receiver only
-	// logs (a failed inject is dropped — chat is a 写し, the session is the source of truth).
-	Inject func(sessionName, text, source string) error
+	// its origin so the transcript can badge the turn. On failure it returns a short,
+	// already-localized reason line the receiver posts back into the thread (so the user
+	// learns why their reply was dropped — e.g. a pending question needs a button), plus
+	// the underlying error the receiver only logs. reason is "" on success.
+	Inject func(sessionName, text, source string) (reason string, err error)
 	// Answer applies a P2b button click (an AskUserQuestion pick or a permission/plan
 	// decision) to the session, structurally — never via free-text (契約6). It returns a
 	// short user-facing outcome line the receiver shows on the (button) message, plus an
@@ -125,7 +127,7 @@ func desiredReceive() (token, boundUser string) {
 func runReceiverConn(ctx context.Context, token, boundUser string, deps ReceiverDeps) {
 	gw := &gateway{
 		token:      token,
-		onMsg:      func(m gatewayMessage) { routeInbound(m, boundUser, deps) },
+		onMsg:      func(m gatewayMessage) { routeInbound(m, token, boundUser, deps) },
 		onInteract: func(gi gatewayInteraction) { routeInteraction(gi, token, boundUser, deps) },
 	}
 	backoff := receiverBackoffMin
@@ -166,7 +168,7 @@ var mentionPrefixRe = regexp.MustCompile(`^(?:<@!?\d+>\s*)+`)
 
 // routeInbound is the identity + routing gate. It runs on the Gateway reader goroutine for
 // EVERY message the bot can see, so it must be cheap and must reject aggressively.
-func routeInbound(m gatewayMessage, boundUser string, deps ReceiverDeps) {
+func routeInbound(m gatewayMessage, token, boundUser string, deps ReceiverDeps) {
 	if m.Author.Bot {
 		return // ignore all bots, including our own notification echoes
 	}
@@ -181,8 +183,27 @@ func routeInbound(m gatewayMessage, boundUser string, deps ReceiverDeps) {
 	if text == "" {
 		return
 	}
-	if err := deps.Inject(name, text, sourceDiscord); err != nil {
+	reason, err := deps.Inject(name, text, sourceDiscord)
+	if err != nil {
 		log.Printf("bridge: inject into %s from discord failed: %v", name, err)
+		// Tell the user WHY their reply was dropped (a pending question, a stopped
+		// session) instead of leaving them guessing. Best-effort — a failed reply post
+		// just logs.
+		if reason != "" {
+			if _, e := discordPostMessage(token, m.ChannelID, reason); e != nil {
+				log.Printf("bridge: post inject-failure reason to %s failed: %v", name, e)
+			}
+		}
+		return
+	}
+	// Received & now working: a durable 👀 receipt on the user's message, plus a typing
+	// pulse for liveliness (the answer replaces it when the turn completes). Both are
+	// best-effort — the inject already succeeded, so a missing permission only logs.
+	if err := DiscordAddReaction(token, m.ChannelID, m.ID, receiptEmoji); err != nil {
+		log.Printf("bridge: react to injected reply in %s failed: %v", name, err)
+	}
+	if err := DiscordTriggerTyping(token, m.ChannelID); err != nil {
+		log.Printf("bridge: typing pulse in %s failed: %v", name, err)
 	}
 }
 
