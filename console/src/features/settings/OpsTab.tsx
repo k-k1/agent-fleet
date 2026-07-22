@@ -164,6 +164,7 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
   const [threads, setThreads] = useState(true);
   const [receive, setReceive] = useState(false);
   const [fullText, setFullText] = useState(false); // 全文ブリッジ: post the answer body (docs/37)
+  const [mirrorInput, setMirrorInput] = useState(true); // Fix ②: echo Console input to the thread (default on)
   const [mentionId, setMentionId] = useState("");
   const [autoMention, setAutoMention] = useState<{ id: string; name: string } | null>(null);
   const [events, setEvents] = useState<string[]>(DC_EVENTS.map(([k]) => k));
@@ -251,6 +252,7 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
         events,
         threads: !dm && threads,
         receive: !dm && receive, // P2a inbound: route thread replies back into the session
+        mirrorInput: !dm && threads ? mirrorInput : undefined, // Fix ②: echo Console input (thread mode only)
         fullText, // 全文ブリッジ: applies to either destination mode (docs/37)
         mentionUserId: dm ? "" : mentionId.trim(),
         lang: getLocale(), // notifications follow the Console language at connect time
@@ -278,6 +280,7 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
     setDm(view.mode === "dm");
     setThreads(!!view.threads);
     setReceive(!!view.receive);
+    setMirrorInput(view.mirrorInput !== false); // default on when unset
     setFullText(!!view.fullText);
     setMentionId(view.mentionUserId || "");
     setChannel(view.channelId || "");
@@ -305,6 +308,7 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
           {view.threads && <span className="p-pl">{tr("ops.dc_pill_threads")}</span>}
           {view.mention && <span className="p-pl">@</span>}
           {view.receive && <span className="p-pl">{tr("ops.dc_pill_receive")}</span>}
+          {view.mirrorInput && <span className="p-pl">{tr("ops.dc_pill_mirror")}</span>}
           {view.operator && <span className="p-pl">{tr("ops.dc_pill_operator")}</span>}
           {view.fullText && <span className="p-pl">{tr("ops.dc_pill_fulltext")}</span>}
           {Array.isArray(view.events) && view.events.length < DC_EVENTS.length && (
@@ -403,6 +407,16 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
                 </span>
                 <OnOff value={receive} onChange={setReceive} />
               </div>
+              {/* Fix ②: mirror Console input into the thread — only meaningful with threads. */}
+              {threads && (
+                <div className="ps-row">
+                  <span className="ps-label">
+                    {tr("ops.dc_mirror_label")}
+                    <span className="sub">{tr("ops.dc_mirror_sub")}</span>
+                  </span>
+                  <OnOff value={mirrorInput} onChange={setMirrorInput} />
+                </div>
+              )}
             </>
           )}
           {/* Notification list collapsed by default so the primary action stays in view. */}

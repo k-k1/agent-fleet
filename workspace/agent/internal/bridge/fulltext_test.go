@@ -77,6 +77,35 @@ func TestScrubSecrets(t *testing.T) {
 	}
 }
 
+// TestTablesToCodeBlocks: a Markdown table (which Discord doesn't render) is wrapped
+// in a code fence so its columns survive; surrounding prose and non-tables are untouched.
+func TestTablesToCodeBlocks(t *testing.T) {
+	in := "Here are the results:\n" +
+		"| Name | Score |\n" +
+		"| --- | --- |\n" +
+		"| foo | 12 |\n" +
+		"| bar | 7 |\n" +
+		"\nThat's all."
+	out := tablesToCodeBlocks(in)
+	if strings.Count(out, "```") != 2 {
+		t.Fatalf("table should be wrapped in one code fence pair:\n%s", out)
+	}
+	if !strings.Contains(out, "Here are the results:") || !strings.Contains(out, "That's all.") {
+		t.Fatalf("surrounding prose dropped:\n%s", out)
+	}
+	if !strings.Contains(out, "| Name | Score |") || !strings.Contains(out, "| bar | 7 |") {
+		t.Fatalf("table rows lost:\n%s", out)
+	}
+	// A bare horizontal rule is NOT a table (no header pipe) → untouched.
+	if got := tablesToCodeBlocks("intro\n\n---\n\noutro"); strings.Contains(got, "```") {
+		t.Fatalf("bare hr must not be treated as a table: %q", got)
+	}
+	// No pipes at all → returned as-is.
+	if got := tablesToCodeBlocks("just prose"); got != "just prose" {
+		t.Fatalf("plain prose changed: %q", got)
+	}
+}
+
 func TestChunkMessageSingleChunk(t *testing.T) {
 	got := chunkMessage("hello world", "")
 	if len(got) != 1 || got[0] != "hello world" {

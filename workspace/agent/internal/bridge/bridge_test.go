@@ -254,9 +254,10 @@ func TestDiscordThreadPerSession(t *testing.T) {
 	if posts[len(posts)-1].ch != "t1" {
 		t.Fatalf("second post=%+v", posts[len(posts)-1])
 	}
-	// 3) Archived thread revives transparently.
+	// 3) Archived thread revives transparently. (answer-ready, not session-report:
+	// session-report is now suppressed in thread mode — see TestSessionReportThreadSuppressed.)
 	threads["t1"].archived = true
-	send("session-report", "s1", "Proj A")
+	send("answer-ready", "s1", "Proj A")
 	last := posts[len(posts)-1]
 	if last.ch != "t1" || threads["t1"].archived {
 		t.Fatalf("archive revive failed: %+v archived=%v", last, threads["t1"].archived)
@@ -354,6 +355,156 @@ func TestDrainClearsQueueWhenUnconfigured(t *testing.T) {
 	}
 }
 
+// TestDiscord429RetriesInline: a 429 is retried inline (respecting retry_after)
+// instead of failing the post — the fix that stops a duplicate storm (docs/37 重複対策).
+func TestDiscord429RetriesInline(t *testing.T) {
+	oldCap, oldN := discordRetryCap, discordRateRetries
+	discordRetryCap, discordRateRetries = 20*time.Millisecond, 3
+	t.Cleanup(func() { discordRetryCap, discordRateRetries = oldCap, oldN })
+
+	var attempts, delivered int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts <= 2 { // rate-limit the first two tries
+			w.Header().Set("Retry-After", "0.01")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"retry_after":0.01,"message":"rate limited"}`))
+			return
+		}
+		delivered++
+		_ = json.NewEncoder(w).Encode(map[string]string{"id": "m1"})
+	}))
+	t.Cleanup(srv.Close)
+	old := discordAPIBase
+	discordAPIBase = srv.URL
+	t.Cleanup(func() { discordAPIBase = old })
+
+	if _, err := discordPostMessage("tok", "42", "hi"); err != nil {
+		t.Fatalf("429 should be retried to success, got %v", err)
+	}
+	if attempts != 3 || delivered != 1 {
+		t.Fatalf("attempts=%d delivered=%d, want 3 tries then a single delivery", attempts, delivered)
+	}
+}
+
+// resumableFake records the `from` cursor of each SendFrom call and fails once at a
+// given sub-message index, so the drain's resume path can be asserted end to end.
+type resumableFake struct {
+	total  int
+	failAt int   // fail once at this index; set to -1 after firing
+	calls  []int // the `from` each SendFrom was invoked with
+	posts  int   // successful sub-message posts (must never double-count)
+}
+
+func (r *resumableFake) Name() string         { return "rfake" }
+func (r *resumableFake) Caps() Caps           { return Caps{CanSend: true} }
+func (r *resumableFake) Wants(string) bool    { return true }
+func (r *resumableFake) Send(m Message) error { _, err := r.SendFrom(m, 0); return err }
+func (r *resumableFake) SendFrom(m Message, from int) (int, error) {
+	r.calls = append(r.calls, from)
+	for i := from; i < r.total; i++ {
+		if r.failAt == i {
+			r.failAt = -1
+			return i, fmt.Errorf("boom at %d", i)
+		}
+		r.posts++
+	}
+	return r.total, nil
+}
+
+// TestDrainResumesWithoutDuplicate: a partial failure persists the delivery cursor,
+// so the retry tick posts only the undelivered tail — no sub-message twice (docs/37 重複対策).
+func TestDrainResumesWithoutDuplicate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	Enqueue(Message{Kind: "answer-ready", DisplayName: "A"})
+	p := &resumableFake{total: 5, failAt: 3}
+
+	drainWith([]Provider{p}) // posts 0,1,2 then fails at 3 → entry kept, cursor=3
+	if n := len(queueFiles(queueDir())); n != 1 {
+		t.Fatalf("entry should be kept after partial failure, queue=%d", n)
+	}
+	drainWith([]Provider{p}) // resumes from 3 → posts 3,4 → done
+	if n := len(queueFiles(queueDir())); n != 0 {
+		t.Fatalf("entry should be gone after full delivery, queue=%d", n)
+	}
+	if p.posts != 5 {
+		t.Fatalf("posts=%d, want exactly 5 (no duplicate re-post)", p.posts)
+	}
+	if len(p.calls) != 2 || p.calls[0] != 0 || p.calls[1] != 3 {
+		t.Fatalf("resume cursor calls=%v, want [0 3]", p.calls)
+	}
+}
+
+// TestSessionReportThreadSuppressed: session-report is a no-op in thread mode (the
+// completion is already delivered by answer-ready — docs/37 Fix ①c), but still posts
+// flat / in DM.
+func TestSessionReportThreadSuppressed(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	srv, sent := fakeDiscord(t, "tok")
+	old := discordAPIBase
+	discordAPIBase = srv.URL
+	t.Cleanup(func() { discordAPIBase = old })
+
+	// Thread mode: suppressed (no post, no error, cursor unchanged).
+	threaded := &discordProvider{creds: secrets.DiscordCreds{Token: "tok", ChannelID: "42", Threads: true}}
+	if n, err := threaded.SendFrom(Message{Kind: "session-report", SessionName: "s1", DisplayName: "P"}, 0); err != nil || n != 0 {
+		t.Fatalf("session-report in thread mode: n=%d err=%v, want no-op", n, err)
+	}
+	if len(*sent) != 0 {
+		t.Fatalf("session-report must not post in thread mode, sent=%v", *sent)
+	}
+
+	// Flat channel (no threads): still delivered.
+	flat := &discordProvider{creds: secrets.DiscordCreds{Token: "tok", ChannelID: "42"}}
+	if err := flat.Send(Message{Kind: "session-report", SessionName: "s1", DisplayName: "P"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(*sent) != 1 {
+		t.Fatalf("session-report must still post flat, sent=%v", *sent)
+	}
+}
+
+// TestMirrorUserInput: a Console prompt echoes into an existing session thread with the
+// 🧑 marker (docs/37 Fix ②); opt-out and a thread-less session post nothing.
+func TestMirrorUserInput(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	srv, sent := fakeDiscord(t, "tok")
+	old := discordAPIBase
+	discordAPIBase = srv.URL
+	t.Cleanup(func() { discordAPIBase = old })
+
+	save := func(off bool) {
+		s := &secrets.Data{Discord: &secrets.DiscordCreds{
+			Token: "tok", ChannelID: "42", Threads: true, MirrorInputOff: off}}
+		if err := s.Save(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save(false)
+	saveThreads(threadMap{"s1": {Channel: "42", Thread: "t9"}})
+
+	MirrorUserInput("s1", "please refactor foo")
+	got := *sent
+	if len(got) != 1 || got[0]["channel"] != "t9" {
+		t.Fatalf("mirror should post once into the thread, got %v", got)
+	}
+	if !strings.HasPrefix(got[0]["content"], "🧑 ") || !strings.Contains(got[0]["content"], "please refactor foo") {
+		t.Fatalf("mirrored content=%q", got[0]["content"])
+	}
+
+	// A session with no thread yet: nothing posted (an echo never creates a thread).
+	MirrorUserInput("no-thread", "hello")
+	if len(*sent) != 1 {
+		t.Fatalf("thread-less session must not post, sent=%v", *sent)
+	}
+	// Opt-out: nothing posted.
+	save(true)
+	MirrorUserInput("s1", "should be skipped")
+	if len(*sent) != 1 {
+		t.Fatalf("opt-out must not post, sent=%v", *sent)
+	}
+}
+
 func TestTextNeverEmptyAndCarriesDisplay(t *testing.T) {
 	os.Unsetenv("AF_CP_BASE_URL")
 	m := Message{Kind: "permission-request", DisplayName: "秘密の花園", SessionKind: "codex"}
@@ -437,7 +588,7 @@ func TestFullTextBodyOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := (*sent)[0]["content"]
-	if got != "Build is green." {
-		t.Fatalf("full-text content should be body only, got %q", got)
+	if got != "Build is green.\n"+bridgeDivider {
+		t.Fatalf("full-text content should be body-only + divider, got %q", got)
 	}
 }

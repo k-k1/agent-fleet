@@ -6,8 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
@@ -75,26 +78,67 @@ func (d *discordProvider) Wants(eventKey string) bool {
 	return EventEnabled(d.creds.Events, eventKey)
 }
 
+// Send is the non-resumable entry point (Provider.Send) — a thin wrapper over
+// SendFrom that starts at the first sub-message and drops the delivered count.
 func (d *discordProvider) Send(m Message) error {
+	_, err := d.SendFrom(m, 0)
+	return err
+}
+
+// SendFrom delivers m starting at sub-message index `from` and returns the count of
+// sub-messages delivered so far (cumulative from 0), so the sender can resume a
+// partial delivery without re-posting what already landed (docs/37 重複対策 =
+// ResumableSender). A transient failure returns the count reached and the error.
+func (d *discordProvider) SendFrom(m Message, from int) (int, error) {
+	// In thread mode the completion is already delivered to the session's thread by
+	// answer-ready, so the operator-facing session-report would just double it there
+	// (operator visibility rides the operator-thread mirror instead). Suppress it — a
+	// no-op success so the queue entry is consumed. Flat/DM keep the report.
+	if m.Kind == "session-report" && d.creds.ChannelID != "" && d.creds.Threads && m.SessionName != "" {
+		return from, nil
+	}
 	ch, err := d.destChannel()
 	if err != nil {
-		return err
+		return from, err
 	}
+	msgs := d.buildMessages(m)
+	if len(msgs) == 0 {
+		return from, nil
+	}
+	// Thread-per-session (docs/37 P1.5): guild channel destination only — threads
+	// don't exist in DMs — and only for session-scoped events.
+	if d.creds.ChannelID != "" && d.creds.Threads && m.SessionName != "" {
+		return d.sendThreaded(m, msgs, from)
+	}
+	for i := from; i < len(msgs); i++ {
+		if _, err = discordPost(d.creds.Token, ch, msgs[i]); err != nil {
+			return i, err
+		}
+	}
+	return len(msgs), nil
+}
+
+// buildMessages renders the ordered sub-messages for one event: the content chunks
+// (the scrubbed, table-reflowed body alone in full-text mode, else the headline),
+// each mention-budgeted, then any P2b button messages. The order is stable across
+// retries so a delivery cursor (SendFrom's `from`) indexes the same messages.
+func (d *discordProvider) buildMessages(m Message) []outMsg {
 	content := m.Text(d.creds.Lang)
 	// 全文ブリッジ (docs/37 将来の方向): in full-text mode the answer body IS the
-	// message — drop the headline/「表示名」/link preface and post the scrubbed body
-	// alone (the thread name already names the session, and the deep link is usually
-	// dead in the local-only setup full-text targets). Only answer-ready carries a
-	// body; every other kind keeps its headline.
+	// message — drop the headline/「表示名」/link preface and post the scrubbed,
+	// Discord-formatted body alone (the thread name already names the session, and
+	// the deep link is usually dead in the local-only setup full-text targets). Only
+	// answer-ready carries a body; every other kind keeps its headline.
 	if d.creds.FullText && m.Body != "" {
-		content = ScrubSecrets(m.Body)
+		// A trailing divider (docs/37 Fix ⑤) so a run of answers doesn't visually merge.
+		content = withDivider(renderBodyForDiscord(m.Body))
 	}
-	// Mention makes mobile push deterministic: Discord's default notification
-	// level for guild channels AND threads is "only @mentions", so an unpinged
-	// notification silently becomes badge-only (docs/37 P1.5). DM mode needs none.
-	// It rides the FIRST chunk only (one ping per turn) and is budgeted so the
-	// pinged chunk still fits Discord's limit. The time-gate (shouldMention) keeps a
-	// rapid answer stream from pinging every turn while still pushing after a lull.
+	// Mention makes mobile push deterministic: Discord's default notification level
+	// for guild channels AND threads is "only @mentions", so an unpinged notification
+	// silently becomes badge-only (docs/37 P1.5). DM mode needs none. It rides the
+	// FIRST chunk only (one ping per turn) and is budgeted so the pinged chunk still
+	// fits Discord's limit. The time-gate (shouldMention) keeps a rapid answer stream
+	// from pinging every turn while still pushing after a lull.
 	prefix := ""
 	if d.creds.ChannelID != "" && d.creds.MentionUserID != "" && d.shouldMention(m) {
 		prefix = "<@" + d.creds.MentionUserID + "> "
@@ -108,17 +152,7 @@ func (d *discordProvider) Send(m Message) error {
 	if d.interactive() {
 		msgs = append(msgs, d.buttonMessages(m)...)
 	}
-	// Thread-per-session (docs/37 P1.5): guild channel destination only —
-	// threads don't exist in DMs — and only for session-scoped events.
-	if d.creds.ChannelID != "" && d.creds.Threads && m.SessionName != "" {
-		return d.sendThreaded(m, msgs)
-	}
-	for _, om := range msgs {
-		if _, err = discordPost(d.creds.Token, ch, om); err != nil {
-			return err
-		}
-	}
-	return nil
+	return msgs
 }
 
 // mentionQuietWindow: inside an active thread, a read-only event (answer-ready &
@@ -185,56 +219,97 @@ func (d *discordProvider) destChannel() (string, error) {
 	return resolved, nil
 }
 
-// sendThreaded posts into the session's thread, creating it from the session's
-// first notification when needed. Failure policy: the notification itself must
-// never be lost to thread bookkeeping — if the thread can't be created the
-// message has already landed flat in the channel and we simply try again on
-// the session's next event.
-func (d *discordProvider) sendThreaded(m Message, msgs []outMsg) error {
+// sendThreaded posts msgs[from:] into the session's thread, creating it from the
+// session's first notification when needed, and returns the cumulative delivered
+// count so a partial failure resumes without duplicating (docs/37 重複対策). Failure
+// policy unchanged: the notification is never lost to thread bookkeeping — a failed
+// thread creation falls back to flat delivery and the grouping retries next event.
+func (d *discordProvider) sendThreaded(m Message, msgs []outMsg, from int) (int, error) {
 	ts := loadThreads()
 	if ref, ok := ts[m.SessionName]; ok && ref.Channel == d.creds.ChannelID {
-		err := d.postMsgsToThread(ref.Thread, msgs)
-		if err == nil {
-			touchThreadPost(m.SessionName, time.Now()) // feed the mention time-gate
+		delivered, err := d.postRangeToThread(m.SessionName, ref.Thread, msgs, from)
+		if err == nil || !isUnknownChannel(err) {
+			return delivered, err // delivered, or a real failure worth resuming as-is
 		}
-		if !isUnknownChannel(err) {
-			return err // delivered, or a real failure worth retrying as-is
-		}
-		// Thread deleted by hand — drop the stale mapping and start fresh.
+		// Thread deleted by hand — drop the stale mapping and recreate below. Its posts
+		// vanished with it, so resume from the start (nothing to skip).
 		delete(ts, m.SessionName)
 		saveThreads(ts)
+		from = 0
 	}
-	// No (valid) thread: the first message lands flat and seeds the thread; the
-	// rest go inside it (or flat too, if thread creation fails — nothing lost).
-	msgID, err := discordPost(d.creds.Token, d.creds.ChannelID, msgs[0])
+	// No (valid) thread: the first message lands flat and seeds the thread; the rest
+	// go inside it. Seeding is a fresh delivery (a resume always finds a thread in the
+	// map, saved before the in-thread posts below), so start the seed from msgs[0].
+	seedID, err := discordPost(d.creds.Token, d.creds.ChannelID, msgs[0])
 	if err != nil {
-		return err
+		return 0, err
 	}
-	threadID, err := DiscordStartThread(d.creds.Token, d.creds.ChannelID, msgID, threadName(m))
+	threadID, err := DiscordStartThread(d.creds.Token, d.creds.ChannelID, seedID, threadName(m))
 	if err != nil {
-		for _, om := range msgs[1:] {
-			if _, e := discordPost(d.creds.Token, d.creds.ChannelID, om); e != nil {
-				return nil // partial flat delivery; grouping retries next event
+		// Thread creation failed: deliver the rest flat too (nothing lost); the grouping
+		// retries next event. Best-effort — stop at the first flat failure, but report
+		// the whole entry delivered so it isn't re-seeded (which would duplicate).
+		for i := 1; i < len(msgs); i++ {
+			if _, e := discordPost(d.creds.Token, d.creds.ChannelID, msgs[i]); e != nil {
+				break
 			}
 		}
-		return nil // message delivered flat; thread grouping retries next event
+		return len(msgs), nil
 	}
 	ts[m.SessionName] = threadRef{Channel: d.creds.ChannelID, Thread: threadID}
 	saveThreads(ts)
-	err = d.postMsgsToThread(threadID, msgs[1:])
-	touchThreadPost(m.SessionName, time.Now()) // the seed message already landed in-thread
-	return err
+	// The seed (msgs[0]) already landed in the channel; post the rest into the thread.
+	return d.postRangeToThread(m.SessionName, threadID, msgs, 1)
 }
 
-// postMsgsToThread posts each message into the thread in order (unarchiving as
-// needed per postToThread).
-func (d *discordProvider) postMsgsToThread(threadID string, msgs []outMsg) error {
-	for _, om := range msgs {
-		if err := d.postToThread(threadID, om); err != nil {
-			return err
+// postRangeToThread posts msgs[from:] into the thread in order (unarchiving as
+// needed per postToThread), stamping the mention time-gate on success. Returns the
+// cumulative delivered count (len(msgs) on full success) and the error at the first
+// failed post.
+func (d *discordProvider) postRangeToThread(session, threadID string, msgs []outMsg, from int) (int, error) {
+	for i := from; i < len(msgs); i++ {
+		if err := d.postToThread(threadID, msgs[i]); err != nil {
+			return i, err
 		}
 	}
-	return nil
+	touchThreadPost(session, time.Now()) // feed the mention time-gate
+	return len(msgs), nil
+}
+
+// MirrorUserInput echoes a prompt the user submitted from the Console into the
+// session's Discord thread, so the thread stays a faithful two-way mirror (docs/37
+// Fix ②). Best-effort and gated: only in channel + thread mode, when the connection
+// hasn't opted out (MirrorInputOff), and a thread already exists for the session (the
+// first answer-ready seeds it — an echo never creates one). Called async from the
+// Console input path for genuine human prompts (report_to == ""); operator/MCP
+// injections are badged elsewhere and Discord-origin replies already show a 👀.
+func MirrorUserInput(sessionName, text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	s, err := secrets.Load()
+	if err != nil || s.Discord == nil {
+		return
+	}
+	d := s.Discord
+	if d.Token == "" || d.ChannelID == "" || !d.Threads || d.MirrorInputOff {
+		return
+	}
+	ref, ok := loadThreads()[sessionName]
+	if !ok || ref.Thread == "" || ref.Channel != d.ChannelID {
+		return
+	}
+	prov := &discordProvider{creds: *d}
+	// 🧑 marks it as the human's own input, distinct from the bot's answer posts; the
+	// trailing divider (docs/37 Fix ⑤) separates it from the answer that follows.
+	for _, chunk := range chunkMessage(withDivider(renderBodyForDiscord(text)), "🧑 ") {
+		if err := prov.postToThread(ref.Thread, outMsg{content: chunk}); err != nil {
+			log.Printf("bridge: mirror console input to %s failed: %v", sessionName, err)
+			return
+		}
+	}
+	touchThreadPost(sessionName, time.Now())
 }
 
 // postToThread sends into a thread, transparently unarchiving it first when
@@ -460,54 +535,105 @@ func DiscordResolveDM(token, userID string) (string, error) {
 	return res.ID, nil
 }
 
-// discordDo is the one REST call shape we need: JSON in/out, bot-token auth,
-// short timeout (the sender loop is single-goroutine — a hung call must not
-// stall the queue for long).
+// discordRateRetries / discordRetryCap bound the inline retry on a 429. Handling the
+// rate limit HERE (rather than failing the post and re-sending the whole queue entry)
+// is the primary fix for the duplicate storm (docs/37 重複対策): a burst of posts
+// from a long full-text answer routinely trips Discord's per-channel limit, and a
+// mid-batch failure used to re-post the delivered chunks. Bounded so a stuck 429
+// can't hang the single sender goroutine. Vars so tests can shrink them.
+var (
+	discordRateRetries = 3
+	discordRetryCap    = 5 * time.Second
+)
+
+// discordDo is the one REST call shape we need: JSON in/out, bot-token auth, short
+// timeout (the sender loop is single-goroutine — a hung call must not stall the queue
+// for long), with a bounded inline retry that respects Discord's 429 Retry-After.
 func discordDo(method, path, token string, body any, out any) error {
-	var rdr io.Reader
+	var raw []byte
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
 			return err
 		}
-		rdr = bytes.NewReader(b)
+		raw = b
 	}
-	req, err := http.NewRequest(method, discordAPIBase+path, rdr)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bot "+token)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return fmt.Errorf("%w (%d)", ErrUnauthorized, resp.StatusCode)
-	}
-	if resp.StatusCode >= 300 {
-		var de struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
+	for attempt := 0; ; attempt++ {
+		var rdr io.Reader
+		if raw != nil {
+			rdr = bytes.NewReader(raw)
 		}
-		_ = json.Unmarshal(b, &de)
-		msg := de.Message
-		if msg == "" {
-			msg = truncate(string(b), 200)
+		req, err := http.NewRequest(method, discordAPIBase+path, rdr)
+		if err != nil {
+			return err
 		}
-		return &discordAPIError{Status: resp.StatusCode, Code: de.Code,
-			Msg: fmt.Sprintf("%s %s: %s", method, path, msg)}
+		req.Header.Set("Authorization", "Bot "+token)
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+		if err != nil {
+			return err
+		}
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusTooManyRequests && attempt < discordRateRetries {
+			wait := discordRetryAfter(resp, b)
+			log.Printf("bridge: discord 429 on %s %s — retrying in %s", method, path, wait)
+			time.Sleep(wait)
+			continue
+		}
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return fmt.Errorf("%w (%d)", ErrUnauthorized, resp.StatusCode)
+		}
+		if resp.StatusCode >= 300 {
+			var de struct {
+				Code    int    `json:"code"`
+				Message string `json:"message"`
+			}
+			_ = json.Unmarshal(b, &de)
+			msg := de.Message
+			if msg == "" {
+				msg = truncate(string(b), 200)
+			}
+			return &discordAPIError{Status: resp.StatusCode, Code: de.Code,
+				Msg: fmt.Sprintf("%s %s: %s", method, path, msg)}
+		}
+		if out != nil {
+			if err := json.Unmarshal(b, out); err != nil {
+				return fmt.Errorf("discord: decode %s %s: %w", method, path, err)
+			}
+		}
+		return nil
 	}
-	if out != nil {
-		if err := json.Unmarshal(b, out); err != nil {
-			return fmt.Errorf("discord: decode %s %s: %w", method, path, err)
+}
+
+// discordRetryAfter reads the retry delay from a 429: the JSON body's retry_after
+// (seconds, float) preferred, then the Retry-After header, clamped to discordRetryCap
+// (and a small floor so a 0 doesn't busy-loop).
+func discordRetryAfter(resp *http.Response, body []byte) time.Duration {
+	var j struct {
+		RetryAfter float64 `json:"retry_after"`
+	}
+	if json.Unmarshal(body, &j) == nil && j.RetryAfter > 0 {
+		return clampRetry(time.Duration(j.RetryAfter * float64(time.Second)))
+	}
+	if h := resp.Header.Get("Retry-After"); h != "" {
+		if secs, err := strconv.ParseFloat(h, 64); err == nil && secs > 0 {
+			return clampRetry(time.Duration(secs * float64(time.Second)))
 		}
 	}
-	return nil
+	return 500 * time.Millisecond
+}
+
+func clampRetry(d time.Duration) time.Duration {
+	if d < 100*time.Millisecond {
+		return 100 * time.Millisecond
+	}
+	if d > discordRetryCap {
+		return discordRetryCap
+	}
+	return d
 }
 
 func truncate(s string, n int) string {

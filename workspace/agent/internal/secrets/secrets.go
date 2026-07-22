@@ -133,6 +133,11 @@ type DiscordCreds struct {
 	// by default; only the owner of both ends opts into posting their own output.
 	// The body is secret-scrubbed and chunked to Discord's 2000-char limit.
 	FullText bool `json:"fullText,omitempty"`
+	// MirrorInputOff opts OUT of echoing Console-typed prompts into the session's
+	// thread (docs/37 Fix ②). The mirror is ON by default in channel+thread mode so
+	// the thread reflects BOTH directions; stored inverted so pre-existing connections
+	// (absent field = false = on) keep mirroring without a re-save.
+	MirrorInputOff bool `json:"mirrorInputOff,omitempty"`
 }
 
 type Data struct {

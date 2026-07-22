@@ -27,10 +27,13 @@ const maxAttempts = 5
 func queueDir() string { return filepath.Join(paths.AgentConfigDir(), "bridge-queue") }
 
 // queued is the on-disk envelope: the message plus its delivery attempt count
-// (persisted so retries survive a daemon restart).
+// (persisted so retries survive a daemon restart). Delivered tracks, per provider
+// name, how many of the message's sub-messages already landed, so a retry resumes
+// instead of re-posting from scratch (docs/37 重複対策 — see ResumableSender).
 type queued struct {
 	Message
-	Attempts int `json:"attempts,omitempty"`
+	Attempts  int            `json:"attempts,omitempty"`
+	Delivered map[string]int `json:"delivered,omitempty"`
 }
 
 // Enqueue drops a message into the delivery queue. Safe from ANY process
