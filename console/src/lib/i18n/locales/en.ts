@@ -997,6 +997,7 @@ export const en: Record<keyof typeof ja, string> = {
   "wsbar.usage.agy.week_row": "{group} (weekly)",
   "wsbar.usage.agy.five_row": "{group} (5-hour)",
   "wsbar.usage.plan": "Plan: {plan}",
+  "wsbar.usage.user": "User: {user}",
   "wsbar.usage.copilot.title": "Copilot usage (monthly credits)",
   "wsbar.usage.copilot.upgradable": "upgradable",
   "wsbar.usage.copilot.pool_chat": "Chat",

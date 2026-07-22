@@ -43,11 +43,12 @@ type QuotaSnap struct {
 }
 
 type usageResult struct {
-	Plan        string      `json:"plan"`               // copilot_plan, e.g. "individual"
-	Sku         string      `json:"sku"`                // access_type_sku, e.g. "free_limited_copilot"
-	CanUpgrade  bool        `json:"canUpgrade"`         // can_upgrade_plan
-	ResetsAt    string      `json:"resetsAt,omitempty"` // quota_reset_date_utc (RFC3339)
-	Quotas      []QuotaSnap `json:"quotas"`
+	User       string      `json:"user,omitempty"`     // login (GitHub account)
+	Plan       string      `json:"plan"`               // copilot_plan, e.g. "individual"
+	Sku        string      `json:"sku"`                // access_type_sku, e.g. "free_limited_copilot"
+	CanUpgrade bool        `json:"canUpgrade"`         // can_upgrade_plan
+	ResetsAt   string      `json:"resetsAt,omitempty"` // quota_reset_date_utc (RFC3339)
+	Quotas     []QuotaSnap `json:"quotas"`
 }
 
 // The account API is cheap but hit on every chip mount/refresh; cache like the
@@ -81,6 +82,7 @@ func HandleUsage(w http.ResponseWriter, r *http.Request) {
 			// transient failure.
 			if usageCached != nil {
 				out["ok"] = true
+				out["user"] = usageCached.User
 				out["plan"], out["sku"], out["canUpgrade"] = usageCached.Plan, usageCached.Sku, usageCached.CanUpgrade
 				out["resetsAt"], out["quotas"] = usageCached.ResetsAt, usageCached.Quotas
 				out["ageSec"] = int(time.Since(usageAt).Seconds())
@@ -93,6 +95,7 @@ func HandleUsage(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"ok":         true,
 		"authed":     true,
+		"user":       usageCached.User,
 		"plan":       usageCached.Plan,
 		"sku":        usageCached.Sku,
 		"canUpgrade": usageCached.CanUpgrade,
@@ -104,6 +107,7 @@ func HandleUsage(w http.ResponseWriter, r *http.Request) {
 
 // internalUser mirrors the fields we read from copilot_internal/user.
 type internalUser struct {
+	Login             string `json:"login"`
 	CopilotPlan       string `json:"copilot_plan"`
 	AccessTypeSku     string `json:"access_type_sku"`
 	CanUpgradePlan    bool   `json:"can_upgrade_plan"`
@@ -147,6 +151,7 @@ func fetchUsage(ctx context.Context) (*usageResult, error) {
 // the HTTP call so it is unit-testable offline.
 func buildUsage(u internalUser) *usageResult {
 	res := &usageResult{
+		User:       u.Login,
 		Plan:       u.CopilotPlan,
 		Sku:        u.AccessTypeSku,
 		CanUpgrade: u.CanUpgradePlan,

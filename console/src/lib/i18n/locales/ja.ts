@@ -1007,6 +1007,7 @@ export const ja = {
   "wsbar.usage.agy.week_row": "{group}（週次）",
   "wsbar.usage.agy.five_row": "{group}（5時間枠）",
   "wsbar.usage.plan": "プラン: {plan}",
+  "wsbar.usage.user": "ユーザー: {user}",
   "wsbar.usage.copilot.title": "Copilot 使用状況（月次クレジット）",
   "wsbar.usage.copilot.upgradable": "アップグレード可",
   "wsbar.usage.copilot.pool_chat": "チャット",

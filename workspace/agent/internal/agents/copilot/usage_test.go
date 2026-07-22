@@ -8,6 +8,7 @@ import (
 // Real copilot_internal/user payload (trimmed to the fields we read), captured
 // from a free_limited_copilot individual account.
 const sampleInternalUser = `{
+  "login": "octocat",
   "access_type_sku": "free_limited_copilot",
   "copilot_plan": "individual",
   "can_upgrade_plan": true,
@@ -29,6 +30,9 @@ func TestBuildUsageFromInternalUser(t *testing.T) {
 
 	if res.Plan != "individual" || res.Sku != "free_limited_copilot" || !res.CanUpgrade {
 		t.Fatalf("plan/sku/upgrade wrong: %+v", res)
+	}
+	if res.User != "octocat" {
+		t.Fatalf("user = %q, want octocat", res.User)
 	}
 	if res.ResetsAt != "2026-08-01T00:00:00.000Z" {
 		t.Fatalf("resetsAt = %q", res.ResetsAt)
