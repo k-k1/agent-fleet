@@ -262,7 +262,15 @@ reuse セッションでは driver 切替中 `409 busy_switch` にも遭遇し�
   台帳が進むだけ）。cron は外部依存ゼロの自前評価器（5 フィールド・dom OR dow の
   Vixie ルール・`time/tzdata` 埋込で TZ/DST）。テスト 18 件（DST 両方向含む）緑。
 - **P2**: wake 経路（membership→resolved 内部生成・`ensureWorkspaceStarted` 内部呼び）と
-  reaper keep-alive（★1）。
+  reaper keep-alive（★1）。**実装済み**（`control-plane/scheduler_wake.go`＝`wakeFirer`）。
+  membership→resolved は既存の `IdentityIDForMembership`＋`resolveByMembership`（memo bridge
+  flush と同経路）を再利用＝新規解決コード不要。wake_policy 適用（wake/catch_up=起こす・
+  skip=停止中なら見送り・running は続行）→`ensureWorkspaceStarted` 内部 wake→connRegistry に
+  tier2 擬似接続で keep-alive（settle 猶予後 release）→agent 到達待ち→create_session REST 注入
+  （`report_to`＝完了は docs/30 seam へ・`idempotency_key`＝(schedule_id＋slot) 決定論）。
+  テンプレート展開は §④''' の固定メタ変数のみ。env: `AF_SCHEDULE_SETTLE`（既定5分）/
+  `AF_SCHEDULE_WAKE_TIMEOUT`（既定90秒）。テスト8件。**後回し**（P4）: jitter/並列上限/
+  レート制限事前チェック/無人失敗報告。dir/worktree/new_branch の完全配線は P3。
 - **P3**: 操作 MCP（create/list/update/delete/pause/run_now/get_runs）＋ CP internal 経路。
 - **P4**: 無人失敗報告（★3）・jitter/並列上限（★2）・冪等（★4）・persona ガード。
 - **P5（後続）**: Console UI（一覧・履歴・トグル）、長寿命セッション再利用モード。
