@@ -33,6 +33,14 @@ func TestBuildProgram(t *testing.T) {
 	if got := buildProgram("auto", "", "", sid); strings.Contains(got, "--model") {
 		t.Errorf("auto must not emit --model: %q", got)
 	}
+	// Auto rejects --effort (Free's only model), so effort must be suppressed unless a
+	// concrete model is set — else the session errors on launch.
+	if got := buildProgram("auto", "high", "", sid); strings.Contains(got, "--effort") {
+		t.Errorf("auto+effort must not emit --effort: %q", got)
+	}
+	if got := buildProgram("", "high", "", sid); strings.Contains(got, "--effort") {
+		t.Errorf("default(auto)+effort must not emit --effort: %q", got)
+	}
 	t.Setenv("AGENT_COPILOT_CMD", "echo override")
 	if got := buildProgram("", "", "", sid); got != "echo override" {
 		t.Errorf("override ignored: %q", got)

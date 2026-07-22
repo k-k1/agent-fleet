@@ -302,10 +302,14 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 		// Interaction として表面化させる）。
 		args = append(args, "--allow-all")
 	}
-	if st.Model != "" && st.Model != "auto" {
+	concreteModel := st.Model != "" && st.Model != "auto"
+	if concreteModel {
 		args = append(args, "--model", st.Model)
 	}
-	if st.Effort != "" {
+	// Auto (copilot's default / the only Free model) rejects --effort ("Model \"auto\"
+	// does not support reasoning effort configuration") — only pass it with an explicit
+	// non-auto model, else the child errors on startup.
+	if st.Effort != "" && concreteModel {
 		args = append(args, "--effort", st.Effort)
 	}
 	bin := os.Getenv("AGENT_COPILOT_BIN")
