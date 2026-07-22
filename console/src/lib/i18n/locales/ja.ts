@@ -960,10 +960,10 @@ export const ja = {
   // === P2 共有: セッション種別の起動ヒント（agents/registry.ts の launchHintKey）===
   // kindLabel の値（claude/codex/opencode/shell/ssm）は固有語のため未翻訳（defaultModeLabel と同方針）。
   "agent.launch_hint.claude": "Claude Code を起動",
-  "agent.launch_hint.codex": "Codex CLI を起動",
-  "agent.launch_hint.opencode": "opencode を起動",
-  "agent.launch_hint.agy": "Antigravity CLI を起動（実験枠）",
-  "agent.launch_hint.copilot": "GitHub Copilot CLI を起動",
+  "agent.launch_hint.codex": "Codex を起動",
+  "agent.launch_hint.opencode": "OpenCode を起動",
+  "agent.launch_hint.agy": "Antigravity を起動（実験枠）",
+  "agent.launch_hint.copilot": "GitHub Copilot を起動",
   "agent.launch_hint.shell": "通常のシェル (bash)",
   "agent.launch_hint.ssm": "AWS EC2 に SSM ログイン",
 

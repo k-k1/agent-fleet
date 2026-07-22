@@ -955,10 +955,10 @@ export const en: Record<keyof typeof ja, string> = {
   // === P2 shared: per-kind launch hint (agents/registry.ts launchHintKey). ===
   // kindLabel values (claude/codex/opencode/shell/ssm) stay untranslated (proper nouns).
   "agent.launch_hint.claude": "Launch Claude Code",
-  "agent.launch_hint.codex": "Launch Codex CLI",
-  "agent.launch_hint.opencode": "Launch opencode",
-  "agent.launch_hint.agy": "Launch Antigravity CLI (experimental)",
-  "agent.launch_hint.copilot": "Launch GitHub Copilot CLI",
+  "agent.launch_hint.codex": "Launch Codex",
+  "agent.launch_hint.opencode": "Launch OpenCode",
+  "agent.launch_hint.agy": "Launch Antigravity (experimental)",
+  "agent.launch_hint.copilot": "Launch GitHub Copilot",
   "agent.launch_hint.shell": "Plain shell (bash)",
   "agent.launch_hint.ssm": "SSM login to an AWS EC2 host",
 

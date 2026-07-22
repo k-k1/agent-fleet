@@ -118,7 +118,8 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
   claude: {
     id: "claude",
     icon: "sparkle",
-    label: "claude",
+    label: "Claude",
+    displayName: "Claude Code",
     assistantName: "Claude",
     short: "cc",
     cssClass: "claude",
@@ -149,7 +150,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
   codex: {
     id: "codex",
     icon: "rocket",
-    label: "codex",
+    label: "Codex",
     assistantName: "Codex",
     short: "cx",
     cssClass: "codex",
@@ -188,7 +189,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
   agy: {
     id: "agy",
     icon: "magnet",
-    label: "agy",
+    label: "Antigravity",
     displayName: "Antigravity",
     assistantName: "Antigravity",
     short: "ag",
@@ -232,7 +233,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
   copilot: {
     id: "copilot",
     icon: "copilot",
-    label: "copilot",
+    label: "Copilot",
     displayName: "GitHub Copilot",
     assistantName: "Copilot",
     short: "cp",
@@ -273,8 +274,9 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
   opencode: {
     id: "opencode",
     icon: "hubot",
-    label: "opencode",
-    assistantName: "opencode",
+    label: "OpenCode",
+    displayName: "OpenCode",
+    assistantName: "OpenCode",
     short: "oc",
     cssClass: "opencode",
     launchHintKey: "agent.launch_hint.opencode",
@@ -316,8 +318,8 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
   shell: {
     id: "shell",
     icon: "terminal",
-    label: "shell",
-    assistantName: "shell",
+    label: "Shell",
+    assistantName: "Shell",
     short: "sh",
     cssClass: "shell",
     launchHintKey: "agent.launch_hint.shell",
@@ -338,8 +340,8 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
   ssm: {
     id: "ssm",
     icon: "cloud",
-    label: "ssm",
-    assistantName: "ssm",
+    label: "SSM",
+    assistantName: "SSM",
     short: "aw",
     cssClass: "ssm",
     launchHintKey: "agent.launch_hint.ssm",
