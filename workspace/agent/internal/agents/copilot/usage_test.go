@@ -28,7 +28,9 @@ func TestBuildUsageFromInternalUser(t *testing.T) {
 	}
 	res := buildUsage(u)
 
-	if res.Plan != "individual" || res.Sku != "free_limited_copilot" || !res.CanUpgrade {
+	// free_limited_copilot sku → human tier "Free" (copilot_plan "individual" is only the
+	// account category, not the tier).
+	if res.Plan != "Free" || res.Sku != "free_limited_copilot" || !res.CanUpgrade {
 		t.Fatalf("plan/sku/upgrade wrong: %+v", res)
 	}
 	if res.User != "octocat" {
@@ -48,6 +50,21 @@ func TestBuildUsageFromInternalUser(t *testing.T) {
 	chat := res.Quotas[0]
 	if chat.RemainingPct != 89.6 || chat.Remaining != 179 || chat.Entitlement != 200 {
 		t.Fatalf("chat quota parsed wrong: %+v", chat)
+	}
+}
+
+func TestPlanLabel(t *testing.T) {
+	cases := []struct{ plan, sku, want string }{
+		{"individual", "free_limited_copilot", "Free"}, // Free's tier comes from the sku, not the plan
+		{"individual", "copilot_pro", "Pro"},           // paid individual = Pro family
+		{"business", "copilot_for_business", "Business"},
+		{"enterprise", "copilot_enterprise", "Enterprise"},
+		{"", "", ""},
+	}
+	for _, c := range cases {
+		if got := planLabel(c.plan, c.sku); got != c.want {
+			t.Errorf("planLabel(%q,%q) = %q, want %q", c.plan, c.sku, got, c.want)
+		}
 	}
 }
 
