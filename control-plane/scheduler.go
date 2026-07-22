@@ -55,7 +55,11 @@ func (logFirer) fire(_ context.Context, sch Schedule, slot time.Time) (string, e
 type scheduleStore interface {
 	ListDueSchedules(ctx context.Context, nowRFC string) ([]Schedule, error)
 	RecordScheduleFire(ctx context.Context, id, lastRun, lastStatus, nextRun string, enabled bool, updatedAt string) error
+	AppendScheduleRun(ctx context.Context, run ScheduleRun, keepN int) error
 }
+
+// scheduleRunKeep bounds the per-schedule run history (docs/38 P3 get_schedule_runs).
+const scheduleRunKeep = 50
 
 type scheduler struct {
 	store    scheduleStore
@@ -125,8 +129,15 @@ func (sc *scheduler) fireOne(ctx context.Context, sch Schedule, now time.Time) {
 		}
 	}
 	enabled := sch.Enabled && keep
-	if err := sc.store.RecordScheduleFire(ctx, sch.ID, now.UTC().Format(time.RFC3339), status, next, enabled, now.UTC().Format(time.RFC3339)); err != nil {
+	nowRFC := now.UTC().Format(time.RFC3339)
+	if err := sc.store.RecordScheduleFire(ctx, sch.ID, nowRFC, status, next, enabled, nowRFC); err != nil {
 		log.Printf("scheduler: record fire %s: %v", sch.ID, err)
+	}
+	// Append to the run history (docs/38 P3). Best-effort: a failed history write must
+	// not affect the ledger advance above.
+	run := ScheduleRun{ID: newID(), ScheduleID: sch.ID, MembershipID: sch.MembershipID, FiredAt: nowRFC, Status: status}
+	if err := sc.store.AppendScheduleRun(ctx, run, scheduleRunKeep); err != nil {
+		log.Printf("scheduler: append run %s: %v", sch.ID, err)
 	}
 }
 
@@ -204,6 +215,33 @@ func advanceNextRun(sch Schedule, after time.Time) (nextRun string, keepEnabled 
 	default:
 		return "", false, fmt.Errorf("unknown spec_kind %q", sch.SpecKind)
 	}
+}
+
+// validateSpec checks a schedule spec+tz without computing a fire time — used by the
+// operator API (P3) to reject a bad cron/interval/once or tz at create/update.
+func validateSpec(kind, spec, tz string) error {
+	switch kind {
+	case "cron":
+		if _, err := parseCron(spec); err != nil {
+			return err
+		}
+	case "interval":
+		if _, err := intervalDuration(spec); err != nil {
+			return err
+		}
+	case "once":
+		if _, err := parseOnce(spec); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("spec_kind must be cron, interval, or once")
+	}
+	if tz != "" {
+		if _, err := time.LoadLocation(tz); err != nil {
+			return fmt.Errorf("unknown tz %q", tz)
+		}
+	}
+	return nil
 }
 
 func parseOnce(spec string) (time.Time, error) {
