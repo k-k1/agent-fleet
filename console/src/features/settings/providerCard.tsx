@@ -16,6 +16,8 @@ export const BADGE_SHORT: Record<string, string> = {
   github: "gh",
   bitbucket: "bb",
   pagerduty: "pd",
+  grafana: "gf",
+  cloudwatch: "cw",
 };
 
 // CopyCode renders a one-time auth code that copies to the clipboard on click. The
