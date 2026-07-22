@@ -162,6 +162,13 @@ type Schedule struct {
 	CreatedAt, UpdatedAt       string
 }
 
+// ScheduleRun is one fire-attempt history row (docs/38 P3 get_schedule_runs).
+// Status mirrors the schedule's last_status token; FiredAt is UTC RFC3339.
+type ScheduleRun struct {
+	ID, ScheduleID, MembershipID string
+	FiredAt, Status, Detail      string
+}
+
 // Notification is a membership-scoped, content-free activity record shared by
 // every browser the member uses. Payload contains only structured metadata; chat
 // answer/question text is deliberately never persisted here.
@@ -479,6 +486,12 @@ type ScheduleStore interface {
 	// and the recomputed next_run, disabling the row (enabled=0) when next_run is ""
 	// (a spent "once"). The scheduler is the only caller, so no membership scoping.
 	RecordScheduleFire(ctx context.Context, id, lastRun, lastStatus, nextRun string, enabled bool, updatedAt string) error
+	// AppendScheduleRun inserts a run-history row and trims that schedule's history to
+	// the keepN most recent rows so a frequent schedule cannot grow it without bound.
+	AppendScheduleRun(ctx context.Context, run ScheduleRun, keepN int) error
+	// ListScheduleRuns returns a schedule's most-recent runs (newest first), scoped by
+	// membership so a member only sees their own schedule's history.
+	ListScheduleRuns(ctx context.Context, scheduleID, membershipID string, limit int) ([]ScheduleRun, error)
 }
 
 // newID mints an opaque record id (not a strict UUID; sufficient for keys).

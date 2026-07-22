@@ -1593,3 +1593,44 @@ func (s *sqlStore) RecordScheduleFire(ctx context.Context, id, lastRun, lastStat
 		lastRun, lastStatus, nextRun, b2i(enabled), updatedAt, id)
 	return err
 }
+
+func (s *sqlStore) AppendScheduleRun(ctx context.Context, run ScheduleRun, keepN int) error {
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO schedule_run(id, schedule_id, membership_id, fired_at, status, detail) VALUES(?,?,?,?,?,?)`,
+		run.ID, run.ScheduleID, run.MembershipID, run.FiredAt, run.Status, run.Detail); err != nil {
+		return err
+	}
+	if keepN <= 0 {
+		return nil
+	}
+	// Trim to the keepN most recent rows for this schedule. The NOT IN (…LIMIT…)
+	// subquery is dialect-neutral across SQLite and Postgres.
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM schedule_run WHERE schedule_id=? AND id NOT IN (
+		   SELECT id FROM schedule_run WHERE schedule_id=? ORDER BY fired_at DESC LIMIT ?)`,
+		run.ScheduleID, run.ScheduleID, keepN)
+	return err
+}
+
+func (s *sqlStore) ListScheduleRuns(ctx context.Context, scheduleID, membershipID string, limit int) ([]ScheduleRun, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, schedule_id, membership_id, fired_at, status, detail FROM schedule_run
+		 WHERE schedule_id=? AND membership_id=? ORDER BY fired_at DESC LIMIT ?`,
+		scheduleID, membershipID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ScheduleRun
+	for rows.Next() {
+		var r ScheduleRun
+		if err := rows.Scan(&r.ID, &r.ScheduleID, &r.MembershipID, &r.FiredAt, &r.Status, &r.Detail); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}

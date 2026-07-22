@@ -192,7 +192,11 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws Workspace) []string 
 	if m.publicBaseURL != "" && ws.MembershipID != "" {
 		env = append(env,
 			"AF_CP_BASE_URL="+m.publicBaseURL,
-			"AF_MEMO_TOKEN="+mintMemoToken(memoSignKey(m.master32), ws.MembershipID))
+			"AF_MEMO_TOKEN="+mintMemoToken(memoSignKey(m.master32), ws.MembershipID),
+			// Schedule bridge (docs/38 P3): separate per-membership token so the
+			// operator MCP can drive /internal/schedules over the same hairpin. A
+			// distinct credential from the memo token — a leak is scoped to schedules.
+			"AF_SCHEDULE_TOKEN="+mintScheduleToken(scheduleSignKey(m.master32), ws.MembershipID))
 	}
 	return env
 }
