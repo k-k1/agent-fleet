@@ -5,11 +5,36 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
+
+// planLabel turns the internal-API fields into a human tier for the chip. copilot_plan
+// is only the ACCOUNT category (individual / business / enterprise), NOT the tier — the
+// actual Free/Pro tier for an individual lives in access_type_sku (e.g.
+// "free_limited_copilot" = Free). So derive the tier: Free from the sku, Business /
+// Enterprise from the plan, a paid individual as Pro (the only individual paid family —
+// Pro / Pro+). Unknown values fall back to the raw plan so nothing is lost.
+func planLabel(plan, sku string) string {
+	s := strings.ToLower(sku)
+	switch {
+	case strings.Contains(s, "free"):
+		return "Free"
+	case plan == "business":
+		return "Business"
+	case plan == "enterprise":
+		return "Enterprise"
+	case plan == "individual":
+		return "Pro"
+	case plan != "":
+		return plan
+	default:
+		return sku
+	}
+}
 
 // copilot の使用量（アカウント単位のクレジット残量＋プラン）。agy のように TUI を
 // スクレイプする必要はなく、copilot CLI 自身が使う内部エンドポイント
@@ -152,7 +177,7 @@ func fetchUsage(ctx context.Context) (*usageResult, error) {
 func buildUsage(u internalUser) *usageResult {
 	res := &usageResult{
 		User:       u.Login,
-		Plan:       u.CopilotPlan,
+		Plan:       planLabel(u.CopilotPlan, u.AccessTypeSku),
 		Sku:        u.AccessTypeSku,
 		CanUpgrade: u.CanUpgradePlan,
 		ResetsAt:   u.QuotaResetDateUTC,
