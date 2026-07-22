@@ -166,13 +166,17 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
   const [mentionId, setMentionId] = useState("");
   const [autoMention, setAutoMention] = useState<{ id: string; name: string } | null>(null);
   const [events, setEvents] = useState<string[]>(DC_EVENTS.map(([k]) => k));
+  const [showEvents, setShowEvents] = useState(false); // notification list collapsed by default (keeps 接続 in view)
+  const [editing, setEditing] = useState(false); // edit an existing connection's settings without re-pasting the token
   const [busy, setBusy] = useState(false);
   // The PUT response IS the fresh connection status — trust it immediately
   // instead of waiting on the parent's api/connections refetch (a transient CP
   // failure there left the card on 未接続 right after a successful connect).
   const [localSt, setLocalSt] = useState<any>(null);
   const view = st?.connected ? st : localSt?.connected ? localSt : null;
-  const ok = !!insp && (dm ? userId.trim() !== "" : channel !== "") && events.length > 0;
+  // Editing an existing connection reuses the stored token + destination server-side, so the
+  // usual token/destination gate doesn't apply — only a fresh connect needs them.
+  const ok = editing || (!!insp && (dm ? userId.trim() !== "" : channel !== "") && events.length > 0);
 
   // Auto-fill the mention target with the picked channel's guild owner (= the
   // user themself in the recommended private-server setup) unless the user has
@@ -235,11 +239,12 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
   }, [insp, dm, found]);
 
   const save = async () => {
-    if (!ok || !insp) return;
+    if (!ok || (!insp && !editing)) return;
     setBusy(true);
     try {
       const res = await apiJSON("api/connections/discord", "PUT", {
-        token: insp.token,
+        // Editing omits the token: the server reuses the stored one (and destination).
+        token: editing ? "" : insp!.token,
         channelId: dm ? "" : channel,
         userId: dm ? userId.trim() : "",
         events,
@@ -255,6 +260,7 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
       toast(res?.testError ? tr("ops.dc_test_failed", { msg: String(res.testError) }) : tr("ops.dc_test_sent"));
       setLocalSt(res);
       setInsp(null);
+      setEditing(false);
       setChans(null);
       setChannel("");
       setUserId("");
@@ -262,6 +268,18 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
     } finally {
       setBusy(false);
     }
+  };
+  // startEdit reopens the settings form for a live connection, prefilled from its status —
+  // no token re-entry, no channel re-pick (docs/37: 接続後に通知設定を変えられるように).
+  const startEdit = () => {
+    if (!view) return;
+    setDm(view.mode === "dm");
+    setThreads(!!view.threads);
+    setReceive(!!view.receive);
+    setMentionId(view.mentionUserId || "");
+    setChannel(view.channelId || "");
+    setEvents(Array.isArray(view.events) && view.events.length ? view.events : DC_EVENTS.map(([k]) => k));
+    setEditing(true);
   };
   const disconnect = async () => {
     await raw("api/connections/discord", { method: "DELETE" });
@@ -275,7 +293,7 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
       name="Discord"
       status={<StatusPill on={!!view}>{view ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>}
     >
-      {view ? (
+      {view && !editing ? (
         <div className="p-who">
           <span className="p-em">
             {tr(view.mode === "channel" ? "ops.dc_connected_channel" : "ops.dc_connected_dm")}
@@ -291,9 +309,12 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
                 .join(" / ")}
             </span>
           )}
+          <button className="ghost" onClick={startEdit}>
+            {tr("ops.dc_edit")}
+          </button>
           <DisconnectButton onClick={disconnect} />
         </div>
-      ) : !insp ? (
+      ) : !insp && !editing ? (
         <div className="p-body">
           <div className="flow">
             <input
@@ -311,13 +332,16 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
         </div>
       ) : (
         <div className="p-body">
-          <div className="flow">
-            <span className="p-em">{insp.botName}</span>
-            <button onClick={() => window.open(insp.inviteUrl, "_blank", "noopener")}>
-              {tr("ops.dc_invite")}
-            </button>
-          </div>
-          {dm ? (
+          {/* Invite + destination picking only when connecting fresh; an edit keeps them. */}
+          {insp && (
+            <div className="flow">
+              <span className="p-em">{insp.botName}</span>
+              <button onClick={() => window.open(insp.inviteUrl, "_blank", "noopener")}>
+                {tr("ops.dc_invite")}
+              </button>
+            </div>
+          )}
+          {insp && dm && (
             <div className="flow">
               <input
                 className="cinput"
@@ -327,20 +351,23 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
                 onChange={(e) => setUserId(e.target.value)}
               />
             </div>
-          ) : !found ? (
-            <p className="muted">{tr("ops.dc_waiting_guild")}</p>
-          ) : (
+          )}
+          {insp && !dm && !found && <p className="muted">{tr("ops.dc_waiting_guild")}</p>}
+          {insp && !dm && found && (
+            <div className="flow">
+              <select className="cinput" value={channel} onChange={(e) => pickChannel(e.target.value)}>
+                <option value="">{tr("ops.dc_channel_select")}</option>
+                {chans!.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          {/* Channel-mode settings: after a channel is picked (wizard) or always (edit). */}
+          {!dm && (found || editing) && (
             <>
-              <div className="flow">
-                <select className="cinput" value={channel} onChange={(e) => pickChannel(e.target.value)}>
-                  <option value="">{tr("ops.dc_channel_select")}</option>
-                  {chans!.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
               <div className="ps-row">
                 <span className="ps-label">
                   {tr("ops.dc_threads_label")}
@@ -373,22 +400,38 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
               </div>
             </>
           )}
-          <div className="ps-row">
-            <span className="ps-label">{tr("ops.dc_events_label")}</span>
+          {/* Notification list collapsed by default so the primary action stays in view. */}
+          <div className="ps-row ps-clickable" onClick={() => setShowEvents((v) => !v)}>
+            <span className="ps-label">
+              {tr("ops.dc_events_label")}
+              <span className="sub">
+                {events.length === DC_EVENTS.length
+                  ? tr("ops.dc_events_all")
+                  : `${events.length} / ${DC_EVENTS.length}`}
+              </span>
+            </span>
+            <span className="muted">{showEvents ? "▾" : "▸"}</span>
           </div>
-          {DC_EVENTS.map(([key, label]) => (
-            <div className="ps-row" key={key}>
-              <span className="ps-label">{tr(label as Parameters<typeof tr>[0])}</span>
-              <OnOff value={events.includes(key)} onChange={(on) => toggle(key, on)} />
-            </div>
-          ))}
+          {showEvents &&
+            DC_EVENTS.map(([key, label]) => (
+              <div className="ps-row" key={key}>
+                <span className="ps-label">{tr(label as Parameters<typeof tr>[0])}</span>
+                <OnOff value={events.includes(key)} onChange={(on) => toggle(key, on)} />
+              </div>
+            ))}
           <div className="flow">
             <button disabled={busy || !ok} onClick={save}>
-              {tr("conn.connect")}
+              {tr(editing ? "common.save" : "conn.connect")}
             </button>
-            <button className="ghost" onClick={() => setDm(!dm)}>
-              {tr(dm ? "ops.dc_advanced_channel" : "ops.dc_advanced_dm")}
-            </button>
+            {editing ? (
+              <button className="ghost" onClick={() => setEditing(false)}>
+                {tr("common.cancel")}
+              </button>
+            ) : (
+              <button className="ghost" onClick={() => setDm(!dm)}>
+                {tr(dm ? "ops.dc_advanced_channel" : "ops.dc_advanced_dm")}
+              </button>
+            )}
           </div>
         </div>
       )}

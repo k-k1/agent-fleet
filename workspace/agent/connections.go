@@ -74,6 +74,7 @@ func discordStatus(s *secrets.Data) map[string]any {
 	}
 	if d.ChannelID != "" {
 		m["mode"] = "channel"
+		m["channelId"] = d.ChannelID // for the card's edit form to prefill (not a secret to its owner)
 	} else {
 		m["mode"] = "dm"
 	}
@@ -82,6 +83,7 @@ func discordStatus(s *secrets.Data) map[string]any {
 	}
 	if d.MentionUserID != "" {
 		m["mention"] = true
+		m["mentionUserId"] = d.MentionUserID // edit-form prefill
 	}
 	if d.Receive {
 		m["receive"] = true
@@ -195,18 +197,37 @@ var discordSnowflakeRe = regexp.MustCompile(`^[0-9]{5,25}$`)
 // (the identity binding of docs/37 契約5). The token is validated against the
 // Discord API when reachable — a network failure saves anyway (outbound may be
 // restricted; sends will surface in the daemon log), but a 401/403 rejects.
+//
+// Edit-after-connect: when the token is OMITTED and a connection already exists,
+// this patches the existing one — the stored token (and destination, if the
+// request also omits it) is reused, so the card can change notification settings /
+// toggles without re-pasting the token or re-picking the channel.
 func handlePutDiscordConn(w http.ResponseWriter, r *http.Request) {
 	var req discordConnReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	token := strings.TrimSpace(req.Token)
-	if token == "" {
-		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnDiscordTokenRequired, "enter a bot token")
+	s, err := secrets.Load()
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
+	token := strings.TrimSpace(req.Token)
 	channelID := strings.TrimSpace(req.ChannelID)
 	userID := strings.TrimSpace(req.UserID)
+	// Patch mode: no token in the request → reuse the stored connection's token, and
+	// reuse its destination too when the request left that blank (an events/toggles edit).
+	editing := token == "" && s.Discord != nil && s.Discord.Token != ""
+	if token == "" {
+		if !editing {
+			httpx.WriteErr(w, http.StatusBadRequest, errCodeConnDiscordTokenRequired, "enter a bot token")
+			return
+		}
+		token = s.Discord.Token
+		if channelID == "" && userID == "" {
+			channelID, userID = s.Discord.ChannelID, s.Discord.UserID
+		}
+	}
 	if (channelID == "") == (userID == "") {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnDiscordDestRequired, "set exactly one of channel id / user id")
 		return
@@ -229,10 +250,18 @@ func handlePutDiscordConn(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnDiscordDestInvalid, "mention target must be a numeric Discord id")
 		return
 	}
-	botName, err := bridge.DiscordBotName(token)
-	if errors.Is(err, bridge.ErrUnauthorized) {
-		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnDiscordTokenInvalid, "Discord rejected the bot token")
-		return
+	// Reuse the cached bot name on an edit (token unchanged); only a fresh token needs
+	// the /users/@me round-trip to validate + name it.
+	botName := ""
+	if editing {
+		botName = s.Discord.BotName
+	} else {
+		n, err := bridge.DiscordBotName(token)
+		if errors.Is(err, bridge.ErrUnauthorized) {
+			httpx.WriteErr(w, http.StatusBadRequest, errCodeConnDiscordTokenInvalid, "Discord rejected the bot token")
+			return
+		}
+		botName = n
 	}
 	// Notification language rides the Console's active locale; anything but "en"
 	// renders Japanese (pre-lang connections included — this deployment's default).
@@ -250,16 +279,13 @@ func handlePutDiscordConn(w http.ResponseWriter, r *http.Request) {
 		creds.MentionUserID = ""
 	}
 	// Resolve the DM channel eagerly so the first notification doesn't pay the
-	// round-trip; a failure here is tolerated (the sender resolves lazily).
+	// round-trip; reuse the cached one on an edit, else a failure is tolerated.
 	if userID != "" {
-		if ch, err := bridge.DiscordResolveDM(token, userID); err == nil {
+		if editing && s.Discord.DMChannelID != "" && s.Discord.UserID == userID {
+			creds.DMChannelID = s.Discord.DMChannelID
+		} else if ch, err := bridge.DiscordResolveDM(token, userID); err == nil {
 			creds.DMChannelID = ch
 		}
-	}
-	s, err := secrets.Load()
-	if err != nil {
-		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
-		return
 	}
 	s.Discord = creds
 	if err := s.Save(); err != nil {

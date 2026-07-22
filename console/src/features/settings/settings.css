@@ -1196,6 +1196,14 @@
   gap: 10px;
   min-height: 30px;
 }
+/* A ps-row that toggles a collapsible section (e.g. the Discord notification list). */
+.ps-clickable {
+  cursor: pointer;
+  user-select: none;
+}
+.ps-clickable:hover .ps-label {
+  color: var(--accent, #6cf);
+}
 .ps-label {
   flex: 1;
   min-width: 0;

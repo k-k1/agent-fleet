@@ -264,6 +264,8 @@ export const en: Record<keyof typeof ja, string> = {
   "ops.dc_receive_sub": "Replying in a session's thread sends the text into that session. Enable the bot's MESSAGE CONTENT INTENT in the Discord Developer Portal (only your own replies are routed)",
   "ops.dc_pill_threads": "Threads",
   "ops.dc_pill_receive": "Receive",
+  "ops.dc_edit": "Edit",
+  "ops.dc_events_all": "All",
   "ops.dc_events_label": "Events to send",
   "ops.dc_connected_dm": "DM notifications",
   "ops.dc_connected_channel": "Channel notifications",
