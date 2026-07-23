@@ -220,6 +220,8 @@ export const ja = {
   "conn.connect_failed": "接続に失敗: {msg}",
   "provider.click_to_copy": "クリックでコピー",
   "provider.disconnect": "切断",
+  "provider.disconnect_confirm_title": "接続を切断しますか？",
+  "provider.disconnect_confirm_body": "保存された認証情報はワークスペースから削除されます。再接続はいつでも可能です。",
   "provider.step_copy_code": "コードをコピー",
   "provider.step_open_link": "リンクを開いて貼り付け",
   "provider.open_url": "{url} を開く ↗",
@@ -246,6 +248,8 @@ export const ja = {
     "Viewer 権限のサービスアカウントトークンを推奨します。トークンはワークスペース内に暗号化保存され、MCP サーバの起動時にだけ渡されます（書き込み・管理ツールは無効で起動）。Amazon Managed Grafana の場合は URL に workspace endpoint（g-xxxx.grafana-workspace.リージョン.amazonaws.com）を指定してください（トークンは最長30日で失効するため、失効したら貼り直します）。",
   "ops.cw_profile_select": "プロファイルを選択…",
   "ops.cw_manual_option": "手動入力（自分の ~/.aws のプロファイル）",
+  "ops.cw_no_profiles": "SSO プロファイルが未登録のため手動入力になります。",
+  "ops.cw_open_ssm": "AWS SSM で設定",
   "ops.cw_manual_placeholder": "~/.aws のプロファイル名",
   "ops.cw_region_placeholder": "リージョン（任意）",
   "ops.cw_hint":
@@ -563,6 +567,7 @@ export const ja = {
   "git.internal_empty": "リポジトリはまだありません。上で作成してください。",
   "git.create_failed": "作成に失敗: {msg}",
   "git.created": "内部リポジトリ「{name}」を作成しました",
+  "git.internal_delete_title": "リポジトリを削除しますか？",
   "git.internal_delete_confirm": "内部リポジトリ「{name}」を削除します。取り消せません。よろしいですか？",
   "git.delete_failed": "削除に失敗しました",
   "git.deleted": "「{name}」を削除しました",
@@ -631,6 +636,9 @@ export const ja = {
   "assistant.auto_compact": "コンテキストの自動圧縮",
   "assistant.note_auto_compact":
     "チャットのコンテキスト使用率が 90% を超えたまま次のやり取りが始まるとき、先に会話を要約して新しいセッションへ自動で引き継ぎます（要約の作成に 1 ターン分のトークンを消費）。80% の時点で届くお知らせから手動の「圧縮」で先に整理することもできます。",
+  "assistant.appearance": "外観",
+  "assistant.note_appearance":
+    "「継承」はアプリのテーマに従います。テーマ・背景色はこの端末のみで保存されます（他の端末には同期されません）。",
 
   // --- エージェント設定（features/settings/AgentsTab.tsx）---
   "agents.session": "セッション",
@@ -658,6 +666,8 @@ export const ja = {
   "agents.rtk_row": "RTK（トークン節約）",
   "agents.rtk_unavailable": "このワークスペースに rtk がありません",
   "agents.settings": "設定",
+  "agents.behavior": "動作設定",
+  "agents.conn_paused": "ワークスペースを起動すると接続できます。",
   "agents.claude_auth_failed": "Claude 認証開始に失敗: {msg}",
   "agents.claude_desc_flow": "Claude Code の OAuth 接続。サインインは新しいタブで開きます。",
   "agents.claude_hint_1": "タブが自動で開かない場合は ",
@@ -679,7 +689,8 @@ export const ja = {
   "agents.agy_unsupported": "このホストでは利用できません（{reason}）",
   "agents.copilot_desc":
     "GitHub Copilot CLI は GitHub 連携（gh 透過認証）に相乗りします — 個別のログインは不要です。GitHub アカウントに Copilot サブスクリプションが必要です（Free プランは月間クォータ小）。",
-  "agents.copilot_not_connected": "先に GitHub を連携してください（連携 > GitHub）",
+  "agents.copilot_not_connected": "先に GitHub を連携してください。",
+  "agents.copilot_open_git": "Gitホスティングを開く",
   "agents.copilot_rtk_note":
     "copilot は preToolUse フック（$COPILOT_HOME/hooks）でシェルコマンドを rtk 経由に自動書換します — codex/agy の指示ベースと違い決定的に効きます。新規セッションに適用。",
   "agents.copilot_unsupported": "このコンテナイメージでは利用できません（{reason}）",
@@ -2153,14 +2164,22 @@ export const ja = {
   "set.title": "設定",
   "set.tab_display": "表示",
   "set.tab_keys": "キー操作",
-  "set.tab_env": "ワークスペース",
+  "set.tab_env": "ツールチェーン",
   "set.tab_agents": "エージェント",
   "set.tab_assistant": "アシスタント",
   "set.tab_tts": "読み上げ",
-  "set.tab_git": "Git",
+  "set.tab_notifications": "通知",
+  "set.tab_git": "Gitホスティング",
   "set.tab_ssm": "AWS SSM",
-  "set.tab_ops": "運用",
-  "set.tab_tokens": "MCP",
+  "set.tab_internalrepos": "内部リポジトリ",
+  "set.tab_danger": "危険な操作",
+  "set.tab_ops": "運用・監視",
+  "set.tab_tokens": "MCPトークン",
+  // 設定ダイアログ左レールのグループ見出し + モバイル drill-down の戻り
+  "set.group_personal": "個人設定",
+  "set.group_connections": "接続",
+  "set.group_workspace": "ワークスペース",
+  "set.back": "設定一覧",
 
   // === P5 セッション/メモ（BranchRename/SessionTitle/SsmLogin/MemoTidy ほか） ===
   "sx.branch_rename_failed": "ブランチ名の変更に失敗しました（通信エラー）",

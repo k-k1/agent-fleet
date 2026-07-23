@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import {
   useSettings,
   setSetting,
@@ -18,7 +18,7 @@ import { loadSpeakers, speakersCatalog } from "../chat/ttsSpeakers.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
-import { Choice, OnOff, Slider } from "./controls.tsx";
+import { Choice, OnOff, Row, Slider } from "./controls.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 
 // TtsTab — 音声読み上げ（TTS, docs/24 + ADR0013）の設定タブ。もとは AgentsTab から分離した
@@ -201,33 +201,12 @@ export function TtsTab() {
           </section>
         </>
       )}
-      <section className="ds-group">
-        <h4 className="ds-title">{tr("tts.h_notify")}</h4>
-        <Row label={tr("tts.session_notify")}>
-          <OnOff value={s.ttsSessionNotify} onChange={(v) => setSetting("ttsSessionNotify", v)} />
-        </Row>
-        <p className="muted ds-note">{tr("tts.note_session_notify")}</p>
-        <Row label={tr("tts.usage_reset_notify")}>
-          <OnOff value={s.usageResetNotify} onChange={(v) => setSetting("usageResetNotify", v)} />
-        </Row>
-        <p className="muted ds-note">{tr("tts.note_usage_reset_notify")}</p>
-      </section>
       <section className="ds-group ds-reset">
         <Button variant="ghost" icon="discard" onClick={resetTts}>
           {tr("tts.reset_btn")}
         </Button>
         <p className="muted ds-note">{tr("tts.note_reset")}</p>
       </section>
-    </div>
-  );
-}
-
-// A labeled settings row (mirrors DisplayTab / AgentsTab の Row).
-function Row({ label, children }: { label: ReactNode; children?: ReactNode }) {
-  return (
-    <div className="ds-row">
-      <span className="ds-label">{label}</span>
-      {children}
     </div>
   );
 }

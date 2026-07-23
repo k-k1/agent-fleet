@@ -219,6 +219,8 @@ export const en: Record<keyof typeof ja, string> = {
   "conn.connect_failed": "Failed to connect: {msg}",
   "provider.click_to_copy": "Click to copy",
   "provider.disconnect": "Disconnect",
+  "provider.disconnect_confirm_title": "Disconnect this connection?",
+  "provider.disconnect_confirm_body": "The stored credentials are removed from the workspace. You can reconnect anytime.",
   "provider.step_copy_code": "Copy the code",
   "provider.step_open_link": "Open the link and paste",
   "provider.open_url": "Open {url} ↗",
@@ -245,6 +247,8 @@ export const en: Record<keyof typeof ja, string> = {
     "A Viewer-role service-account token is recommended. The token is stored encrypted inside the workspace and passed only when the MCP server starts (write/admin tools start disabled). For Amazon Managed Grafana, set the URL to the workspace endpoint (g-xxxx.grafana-workspace.<region>.amazonaws.com) — tokens expire after at most 30 days, so re-paste when they do.",
   "ops.cw_profile_select": "Select a profile…",
   "ops.cw_manual_option": "Manual entry (a profile in your own ~/.aws)",
+  "ops.cw_no_profiles": "No SSO profiles yet, so this falls back to manual entry.",
+  "ops.cw_open_ssm": "Set up in AWS SSM",
   "ops.cw_manual_placeholder": "Profile name in ~/.aws",
   "ops.cw_region_placeholder": "Region (optional)",
   "ops.cw_hint":
@@ -558,6 +562,7 @@ export const en: Record<keyof typeof ja, string> = {
   "git.internal_empty": "No repositories yet. Create one above.",
   "git.create_failed": "Failed to create: {msg}",
   "git.created": "Created internal repository “{name}”",
+  "git.internal_delete_title": "Delete repository?",
   "git.internal_delete_confirm": "This deletes internal repository “{name}”. It can't be undone. Proceed?",
   "git.delete_failed": "Failed to delete.",
   "git.deleted": "Deleted “{name}”",
@@ -626,6 +631,9 @@ export const en: Record<keyof typeof ja, string> = {
   "assistant.auto_compact": "Auto-compact chat context",
   "assistant.note_auto_compact":
     "When a chat's context usage is still above 90% as a new exchange starts, the conversation is summarized and handed to a fresh session automatically first (the summary costs one turn of tokens). The notice at 80% lets you compact manually before this fires.",
+  "assistant.appearance": "Appearance",
+  "assistant.note_appearance":
+    "“Inherit” follows the app theme. Theme and background color are saved on this device only (not synced to others).",
 
   // --- agent settings (AgentsTab) ---
   "agents.session": "Session",
@@ -653,6 +661,8 @@ export const en: Record<keyof typeof ja, string> = {
   "agents.rtk_row": "RTK (token savings)",
   "agents.rtk_unavailable": "This workspace has no rtk.",
   "agents.settings": "Settings",
+  "agents.behavior": "Behavior",
+  "agents.conn_paused": "Connect once the workspace is running.",
   "agents.claude_auth_failed": "Failed to start Claude auth: {msg}",
   "agents.claude_desc_flow": "Claude Code OAuth connection. Sign-in opens in a new tab.",
   "agents.claude_hint_1": "If the tab doesn't open automatically, use ",
@@ -674,7 +684,8 @@ export const en: Record<keyof typeof ja, string> = {
   "agents.agy_unsupported": "Not available on this host ({reason})",
   "agents.copilot_desc":
     "GitHub Copilot CLI rides the GitHub connection (gh transparent auth) — no separate sign-in. A Copilot subscription on the GitHub account is required (the Free tier has a small monthly quota).",
-  "agents.copilot_not_connected": "Connect GitHub first (Connections > GitHub)",
+  "agents.copilot_not_connected": "Connect GitHub first.",
+  "agents.copilot_open_git": "Open Git hosting",
   "agents.copilot_rtk_note":
     "copilot routes shell commands through rtk via a preToolUse hook ($COPILOT_HOME/hooks) — deterministic, unlike codex/agy's instruction-based approach. Applies to new sessions.",
   "agents.copilot_unsupported": "Not available in this container image ({reason})",
@@ -2117,14 +2128,21 @@ export const en: Record<keyof typeof ja, string> = {
   "set.title": "Settings",
   "set.tab_display": "Display",
   "set.tab_keys": "Keyboard",
-  "set.tab_env": "Workspace",
+  "set.tab_env": "Toolchains",
   "set.tab_agents": "Agents",
   "set.tab_assistant": "Assistant",
   "set.tab_tts": "Read aloud",
-  "set.tab_git": "Git",
+  "set.tab_notifications": "Notifications",
+  "set.tab_git": "Git hosting",
   "set.tab_ssm": "AWS SSM",
-  "set.tab_ops": "Operations",
-  "set.tab_tokens": "MCP",
+  "set.tab_internalrepos": "Internal repos",
+  "set.tab_danger": "Danger zone",
+  "set.tab_ops": "Ops & monitoring",
+  "set.tab_tokens": "MCP tokens",
+  "set.group_personal": "Personal",
+  "set.group_connections": "Connections",
+  "set.group_workspace": "Workspace",
+  "set.back": "All settings",
 
   // === P5 セッション/メモ（BranchRename/SessionTitle/SsmLogin/MemoTidy ほか） ===
   "sx.branch_rename_failed": "Failed to rename the branch (network error)",
