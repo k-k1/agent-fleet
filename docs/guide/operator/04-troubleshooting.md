@@ -1,118 +1,138 @@
-# 04. 障害対応と FAQ
+# 04. Troubleshooting and FAQ
 
-「立ち上がったのに動かない」「ユーザーから使えないと言われた」ときの切り分けを、症状ベースで
-まとめます。**復旧コマンドの正は [deploy/compose/README.md](../../../deploy/compose/README.md) の
-"Troubleshooting" 節**で、ここはそれを日本語化・拡充し、診断の観点を足したものです。ログ確認や
-ヘルスチェックの 1〜2 行は例外的にここにも載せます。作業ディレクトリは `deploy/compose/`。
+English | [日本語](04-troubleshooting.ja.md)
 
-## まず見る 2 か所
+This chapter organizes, by symptom, how to triage "it came up but doesn't work" and "a user
+says they can't use it." **The canonical recovery commands are in the "Troubleshooting" section
+of [deploy/compose/README.md](../../../deploy/compose/README.md)**; this chapter expands on it
+and adds diagnostic perspectives. One-or-two-line log checks and health checks are exceptionally
+included here as well. The working directory is `deploy/compose/`.
 
-- **CP のログ**: `docker compose logs -f control-plane`（起動失敗・認証拒否の理由はほぼここ）。
-- **CP のヘルス**: `curl -s http://127.0.0.1:8099/healthz` が `ok` を返すか。
+## The first 2 places to look
 
-## 症状別・確認表
+- **CP logs**: `docker compose logs -f control-plane` (the reason for startup failures and
+  authentication rejections is almost always here).
+- **CP health**: whether `curl -s http://127.0.0.1:8099/healthz` returns `ok`.
 
-| 症状 | 確認すること |
+## Symptom-based checklist
+
+| Symptom | What to check |
 |------|-------------|
-| CP が起動しない | `docker compose logs control-plane`。`curl -s http://127.0.0.1:8099/healthz` が `ok` を返すか |
-| docker.sock で "permission denied" | `DOCKER_GID` がホストの docker グループ GID と一致しているか（DooD 制約 C）|
-| Workspace は起動するのに home が空 | `DATA_DIR` が CP の内外で同一絶対パスか。リストア時も同じパスか（DooD 制約 B）|
-| 起動した Workspace に到達できない | CP と Caddy が両方 `network_mode: host` か（DooD 制約 A）|
-| ログインが常に拒否される | 許可リストが空（fail-closed）。`AF_OAUTH_ALLOWED_DOMAINS` / `_EMAILS` を設定 |
-| TLS 証明書が発行されない | DNS A/AAAA がこのホストを指すか。80/443 が到達可能か。Let's Encrypt のレート制限 |
-| redirect URI mismatch | Google Console の URI が `<PUBLIC_BASE_URL>/oauth2/callback` と一致しているか |
+| CP does not start | `docker compose logs control-plane`. Whether `curl -s http://127.0.0.1:8099/healthz` returns `ok` |
+| "permission denied" on docker.sock | Whether `DOCKER_GID` matches the host's docker group GID (DooD constraint C) |
+| Workspace starts but home is empty | Whether `DATA_DIR` is the same absolute path inside and outside the CP. The same path at restore time too (DooD constraint B) |
+| Cannot reach a started Workspace | Whether both the CP and Caddy have `network_mode: host` (DooD constraint A) |
+| Logins are always rejected | The allowlist is empty (fail-closed). Set `AF_OAUTH_ALLOWED_DOMAINS` / `_EMAILS` |
+| TLS certificate is not issued | Whether DNS A/AAAA point to this host. Whether 80/443 are reachable. Let's Encrypt rate limits |
+| redirect URI mismatch | Whether the URI in Google Console matches `<PUBLIC_BASE_URL>/oauth2/callback` |
 
-## DooD の 3 制約の診断（「起動するのに静かに動かない」）
+## Diagnosing the 3 DooD constraints ("starts but silently doesn't work")
 
-CP はコンテナですが、ホストの Docker デーモンを外から駆動します（docker-out-of-docker）。この方式
-には破ると**エラーを出さずに静かに壊れる** 3 つの制約があり、compose 定義が封じ込めています。
-自分で compose をカスタマイズしたときや、症状から当たりをつけたいときはここを見ます。仕組みの
-背景は [dev/09](../../dev/09-deploy.md)。
+The CP is a container, but it drives the host's Docker daemon from the outside
+(docker-out-of-docker). This approach has 3 constraints that, if broken, **fail silently
+without producing errors**; the compose definition keeps them contained. Look here when you
+have customized compose yourself, or when you want to narrow things down from symptoms. The
+background on how this works is in [dev/09](../../dev/09-deploy.md).
 
-- **(A) host ネットワーク** — CP はワークスペースをホストデーモン経由で `127.0.0.1:<port>` に
-  publish するので、ホストの loopback を共有していないと到達できません。CP と Caddy の両方が
-  `network_mode: host` である必要があります。**症状: 起動済みの Workspace にブラウザから繋がらない。**
-- **(B) `DATA_DIR` の同一絶対パス bind** — CP はホストパスをホストデーモンに渡して Workspace の
-  `-v` マウントを作るので、`DATA_DIR` は CP の内側でも同じ絶対パスに解決されなければなりません。
-  ずれると**空の home がマウント**されます。**症状: Workspace は起動するのに home が空・作業が
-  見当たらない。**リストア後にこの症状が出たら、復元先の `DATA_DIR` が元とパス（少なくとも
-  basename）で食い違っていないか確認します（[02](02-operations.md)）。
-- **(C) `user: "1000:1000"` + `group_add: <DOCKER_GID>`** — home は uid 1000（Workspace の `dev`
-  ユーザー）所有で作られ、CP は docker ソケットを使うためにホストの docker グループが要ります。
-  `DOCKER_GID` が違うと**ソケットで permission denied**。**症状: Workspace を起動しようとすると
-  permission denied、または起動そのものが失敗。**
+- **(A) host network** — the CP publishes workspaces on `127.0.0.1:<port>` via the host daemon,
+  so they are unreachable unless the host's loopback is shared. Both the CP and Caddy must have
+  `network_mode: host`. **Symptom: the browser cannot connect to a started Workspace.**
+- **(B) identical absolute path bind for `DATA_DIR`** — the CP passes host paths to the host
+  daemon to create the Workspace's `-v` mounts, so `DATA_DIR` must resolve to the same absolute
+  path inside the CP too. If they diverge, **an empty home gets mounted**. **Symptom: the
+  Workspace starts but home is empty / the work is missing.** If this symptom appears after a
+  restore, check whether the destination `DATA_DIR` diverges from the original in path (at
+  least in basename) ([02](02-operations.md)).
+- **(C) `user: "1000:1000"` + `group_add: <DOCKER_GID>`** — homes are created owned by uid 1000
+  (the Workspace's `dev` user), and the CP needs the host's docker group to use the docker
+  socket. With the wrong `DOCKER_GID`, you get **permission denied on the socket**. **Symptom:
+  trying to start a Workspace yields permission denied, or the start itself fails.**
 
-## ログインできない
+## Cannot log in
 
-- **常に拒否される** → 許可リスト（`AF_OAUTH_ALLOWED_EMAILS` / `_DOMAINS` / `_EMAILS_FILE`）が
-  **すべて空だと全拒否**です（fail-closed = 安全側に倒す設計）。少なくとも 1 つ設定します。
-  `_EMAILS_FILE` はログインごとに再読込されるので追加は再起動不要です。
-- **redirect URI mismatch** → Google Cloud Console の承認済みリダイレクト URI が
-  `<PUBLIC_BASE_URL>/oauth2/callback` と**完全一致**しているか。`PUBLIC_BASE_URL` を変えたら Google 側も
-  合わせます（[01 §3](01-install.md)）。
-- **cookie が保存されない/ログイン直後に戻される** → `AUTH=oauth` は Secure cookie を使うため
-  **HTTPS 必須**です。素の HTTP（TLS 未終端）では保存されません。`PUBLIC_BASE_URL` が `https://` か、
-  TLS が実際に発行されているか（下記）を確認します。
+- **Always rejected** → if the allowlist (`AF_OAUTH_ALLOWED_EMAILS` / `_DOMAINS` /
+  `_EMAILS_FILE`) is **entirely empty, everything is rejected** (fail-closed = a
+  fail-safe design). Set at least one. `_EMAILS_FILE` is re-read on every login, so additions
+  need no restart.
+- **redirect URI mismatch** → check that the authorized redirect URI in Google Cloud Console
+  is an **exact match** for `<PUBLIC_BASE_URL>/oauth2/callback`. If you change
+  `PUBLIC_BASE_URL`, update the Google side to match ([01 §3](01-install.md)).
+- **Cookie not saved / bounced back right after login** → `AUTH=oauth` uses Secure cookies, so
+  **HTTPS is required**. Over plain HTTP (no TLS termination) they are not saved. Check that
+  `PUBLIC_BASE_URL` is `https://`, and that TLS is actually being issued (below).
 
-## TLS が発行されない
+## TLS is not issued
 
-Caddy が Let's Encrypt から証明書を取れないときの定番は、DNS の A/AAAA がこのホストを指していない、
-80/443 が外部から到達できない（ファイアウォール）、Let's Encrypt のレート制限に当たった、の 3 つ
-です。閉域網など公開 DNS を用意できない環境では、そもそも ACME を使わず `tls internal`（自己署名）へ
-切り替えます（[01 §4](01-install.md)）。
+When Caddy cannot obtain a certificate from Let's Encrypt, the usual causes are these 3: DNS
+A/AAAA do not point to this host, 80/443 are not reachable from outside (firewall), or you hit
+Let's Encrypt rate limits. In environments where public DNS is not available, such as air-gapped
+networks, don't use ACME at all — switch to `tls internal` (self-signed)
+([01 §4](01-install.md)).
 
-## ユーザー問い合わせの切り分けフロー
+## Triage flow for user inquiries
 
-「使えない」と言われたら、まず **member 個別の問題か、CP/デプロイ全体の問題か**を切り分けます。
+When someone says "it doesn't work," first determine **whether it is an individual member's
+problem or a CP/deployment-wide problem**.
 
-1. **他のユーザーも同時に困っているか？**
-   - はい → **CP/デプロイ側**を疑う。CP のログとヘルス、TLS、ログイン許可リスト、ホストの負荷
-     （メモリ）を確認。全員がログインできないなら許可リストや OAuth 設定、全員が繋がらないなら
-     入口（Caddy/TLS）や DooD (A)。
-   - いいえ（その人だけ）→ **member 個別**を疑う。次へ。
-2. **その人だけの問題の切り分け:**
-   - ログインできない → その人が許可リストに入っているか、`AF_PROVISION=invite` なら追加済みか。
-   - ログインはできるが Workspace が変 → その人の Workspace（`af-ws-<user>`）の状態。home が空なら
-     DooD (B)（ただし全員に出るはず）、Claude が繋がらないならその人自身の Claude ログイン（BYO）
-     の問題で、運用者ではなく本人が Console から再ログインします。
-   - Console の操作方法そのもの → member 分冊 / lite 分冊の範囲（運用者の対応外）。
-3. どうしても切り分かないときは、CP のログにそのユーザーのメール（sanitize 済みの `user_key`）で
-   何が起きているかが出ます。
+1. **Are other users having trouble at the same time?**
+   - Yes → suspect the **CP/deployment side**. Check the CP's logs and health, TLS, the login
+     allowlist, and the host's load (memory). If nobody can log in, look at the allowlist or
+     the OAuth configuration; if nobody can connect, look at the entry point (Caddy/TLS) or
+     DooD (A).
+   - No (just that one person) → suspect a **member-specific issue**. Continue below.
+2. **Triaging a single person's problem:**
+   - Cannot log in → is that person on the allowlist, and if `AF_PROVISION=invite`, have they
+     been added?
+   - Can log in but their Workspace misbehaves → the state of that person's Workspace
+     (`af-ws-<user>`). If home is empty, it's DooD (B) (though that should hit everyone); if
+     Claude won't connect, it's a problem with that person's own Claude login (BYO), and the
+     person themselves — not the operator — re-logs-in from the Console.
+   - How to operate the Console itself → the scope of the member volume / lite volume (outside
+     the operator's remit).
+3. When you just cannot narrow it down, the CP's logs show what is happening for that user
+   under their email (the sanitized `user_key`).
 
-## FAQ（例外系・よくある疑問）
+## FAQ (edge cases and common questions)
 
-**Q. `AF_MASTER_KEY` を無くすとどうなる？**
-A. 保存済みの全資格情報と、**すべての過去バックアップが永久に復号不能**になります（crypto-shred）。
-復旧手段はありません。だからこそデータとは別の金庫に、独立してバックアップします（[03](03-security.md)）。
+**Q. What happens if I lose `AF_MASTER_KEY`?**
+A. All stored credentials and **every past backup become permanently undecryptable**
+(crypto-shred). There is no recovery. That is precisely why you store it in a vault separate
+from the data and back it up independently ([03](03-security.md)).
 
-**Q. バックアップに何が入って、何が入らない？**
-A. 入るのは DB・各ユーザーの home・平文の Claude 状態・Caddy 証明書。入らないのは `shared/jvm`
-（再取得可能）と **`AF_MASTER_KEY`**。詳細は [02](02-operations.md)。
+**Q. What goes into a backup, and what does not?**
+A. Included: the DB, each user's home, plaintext Claude state, and Caddy certificates. Not
+included: `shared/jvm` (re-fetchable) and **`AF_MASTER_KEY`**. Details in
+[02](02-operations.md).
 
-**Q. Workspace は起動するのに home が空。**
-A. ほぼ DooD 制約 (B)。`DATA_DIR` が CP の内外で同一絶対パスか、リストア時に basename が一致して
-いるかを確認します（本書の DooD 診断）。
+**Q. The Workspace starts but home is empty.**
+A. Almost certainly DooD constraint (B). Check that `DATA_DIR` is the same absolute path inside
+and outside the CP, and that the basename matched at restore time (the DooD diagnosis in this
+document).
 
-**Q. 閉域網（インターネット非接続）に入れられる？**
-A. 入れられます。image を `docker save`/`load` で持ち込み、TLS は `tls internal`、Claude は
-`CLAUDE_INSTALL=0` で焼き込み image を使います（[02](02-operations.md) の air-gap）。
+**Q. Can it be installed into an air-gapped network (no internet)?**
+A. Yes. Carry the images in with `docker save`/`load`, use `tls internal` for TLS, and use a
+baked-in image with `CLAUDE_INSTALL=0` for Claude (the air-gap section of
+[02](02-operations.md)).
 
-**Q. ダウングレードしたい。**
-A. 非対応です。migration は前方互換で自動適用され、古い CP は新スキーマを理解できません。後退は
-「古い image に戻す」ではなく「アップグレード前に取ったバックアップからリストアする」で行います
-（[02](02-operations.md)）。
+**Q. I want to downgrade.**
+A. Not supported. Migrations are forward-compatible and applied automatically, and an older CP
+cannot understand the new schema. Rolling back is done not by "going back to the old image" but
+by "restoring from the backup taken before the upgrade" ([02](02-operations.md)).
 
-**Q. `docker compose down` したのに Workspace が残っている。**
-A. 正常です。Workspace（`af-ws-*`）は compose 管理外で、CP が `docker run` で起こしたものです。
-確実に止めるには Admin パネルの force-stop、またはホスト全体を落とすなら残る `af-ws-*` を別途
-`docker stop` します（[02](02-operations.md)）。
+**Q. I ran `docker compose down` but Workspaces are still there.**
+A. That is normal. Workspaces (`af-ws-*`) are outside compose management; the CP started them
+with `docker run`. To stop them for sure, use force-stop in the Admin panel; or, if bringing the
+whole host down, `docker stop` the remaining `af-ws-*` separately ([02](02-operations.md)).
 
-**Q. 複数ホストに分散（HA・水平スケール）できる？**
-A. 提供モデルは 1 社 = 1 デプロイ = 1 ホストです。CP はホストの Docker デーモンを駆動する前提で、
-複数ホストへの分散や HA 構成は現行の対象外です。大規模化の設計方向は [dev/09](../../dev/09-deploy.md)
-（aws ターゲットは実装済みだが実運用実績なし）を参照してください。
+**Q. Can it be distributed across multiple hosts (HA / horizontal scaling)?**
+A. The delivery model is one company = one deployment = one host. The CP is premised on driving
+the host's Docker daemon, and distribution across multiple hosts or HA configurations are out
+of scope for now. For the design direction toward larger scale, see
+[dev/09](../../dev/09-deploy.md) (the aws target is implemented but has no production track
+record).
 
-**Q. Google 以外の認証（LDAP / SAML など）を使いたい。**
-A. CP ネイティブは Google OAuth（`AUTH=oauth`）です。既存の認証ゲートウェイ（oauth2-proxy / ALB
-OIDC など）を前段に置き、`AUTH=proxy` で上流のメールヘッダを信頼させる形なら、他の IdP も間接的に
-使えます（[01 §3](01-install.md) / [dev/07 §7.3](../../dev/07-security.md)）。
+**Q. I want to use authentication other than Google (LDAP / SAML, etc.).**
+A. Natively, the CP supports Google OAuth (`AUTH=oauth`). If you put an existing authentication
+gateway (oauth2-proxy / ALB OIDC, etc.) in front and have the CP trust the upstream email
+header with `AUTH=proxy`, other IdPs can be used indirectly
+([01 §3](01-install.md) / [dev/07 §7.3](../../dev/07-security.md)).

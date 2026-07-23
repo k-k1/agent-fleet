@@ -1,226 +1,249 @@
-# かんたんガイド（ターミナルを使わない方向け）
+# Easy Guide (for people who don't use the terminal)
 
-> このガイドの対象: 開発そのものはしないけれど、AI に質問や翻訳を頼んだり、開発の進み具合を
-> のぞいたり、リポジトリの中のドキュメントやスライドを見たり、思いついた要望を開発チームへ
-> 流したい方。プロダクトマネージャー、企画、ドキュメント担当など。
+English | [日本語](lite.ja.md)
 
-**まず安心してください。この使い方なら、黒い画面（ターミナル）は一切触りません。**
+> Who this guide is for: people who don't do development themselves, but want to ask the AI
+> questions or for translations, peek at how development is going, read the documents and slides
+> inside repositories, or pass ideas and requests along to the development team. Product managers,
+> planners, documentation owners, and so on.
 
-Agent Fleet には「ターミナル」と呼ばれる、文字だけの黒い画面があります。開発者はそこでコマンドを
-打ち込んで AI にコードを書かせます。でも、あなたが使うのはそこではありません。あなたが触れるのは
-ブラウザの中の **ボタンとチェックボックスと入力欄** だけ。コマンドを覚える必要も、git という言葉の
-意味を知る必要もありません。この分冊では、その黒い画面を一度も開かずに済む使い方だけを説明します。
+**First, relax: with this way of working, you will never touch the black screen (the terminal).**
 
-このガイドは操作の「やり方」を書いたものです。「なぜそう動くのか」という仕組みの話は出てきません
-（気になったら開発者向けの [../dev/README.md](../dev/README.md) にあります）。ほかの立場の人向けの
-ガイドや用語集は索引 [README.md](README.md) から。もう少し踏み込んだ操作（自分でコードを
-書く・ファイルを編集するなど）が必要になったら、開発者向けの [member/README.md](member/README.md) へ。
+Agent Fleet has a text-only black screen called the "terminal". Developers type commands there
+to make the AI write code. But that is not where you'll be working. All you touch are the
+**buttons, checkboxes, and input fields** in your browser. You don't need to memorize commands,
+and you don't need to know what the word "git" means. This volume explains only the ways of
+using Agent Fleet that never require opening that black screen.
+
+This guide describes the "how" of the operations. It doesn't get into the "why it works that way"
+mechanics (if you're curious, that's in the developer-facing [../dev/README.md](../dev/README.md)).
+Guides for other roles and the glossary are in the index [README.md](README.md). If you ever need
+to go a step further (write code yourself, edit files, and so on), move on to the developer-facing
+[member/README.md](member/README.md).
 
 ---
 
-## 1. Agent Fleet でできること
+## 1. What you can do with Agent Fleet
 
-Agent Fleet は、社内のみんなが AI（Claude など）をブラウザから使うためのサービスです。
-難しい機能はたくさんありますが、**あなたが覚えるのはこの 4 つだけ**で十分です。
+Agent Fleet is a service that lets everyone in your organization use AI (such as Claude) from
+the browser. It has plenty of advanced features, but **these four are all you need to learn**.
 
-| やりたいこと | 使う場所 | ざっくり言うと |
+| What you want to do | Where to do it | In a nutshell |
 |--------------|----------|----------------|
-| AI に質問する・翻訳してもらう・文章を整える | **チャット（アシスタント）** | リポジトリ不要の相談窓口。気軽に何度でも |
-| 思いついた要望を溜めて開発チームに渡す | **メモキュー** | 走り書きを溜めて、まとめて送る |
-| ドキュメントやスライドを読む | **ファイル一覧** | リポジトリの中身をブラウザで閲覧 |
-| 開発が今どこまで進んでいるか見る | **セッション一覧** | AI 作業の状態バッジを眺める |
+| Ask the AI questions, get translations, polish text | **Chat (assistants)** | A help desk that needs no repository. Ask casually, as often as you like |
+| Collect ideas and requests, then hand them to the dev team | **Memo queue** | Pile up quick notes, then send them together |
+| Read documents and slides | **File list** | Browse repository contents in your browser |
+| See how far development has progressed | **Session list** | Glance at the status badges on the AI's work |
 
-繰り返しますが、ここに **ターミナルは入っていません**。この 4 つはどれもボタンとマウス操作だけで
-使えます。困ったら「あとで」ボタンや ✕ でいつでも閉じられるので、こわがらずに触ってください。
-
----
-
-## 2. ログインと画面の見方
-
-会社から案内された URL を開くとログイン画面が出ます。普段お使いのアカウント（社内のログイン方法）で
-サインインしてください。ここは情シスが用意しているので、迷ったら管理者に URL とログイン方法を
-確認すれば大丈夫です。
-
-ログインすると、いくつかの領域に分かれた画面（コンソール）が出ます。全部を理解する必要はありません。
-**覚えるのは左側にある次の並びだけ**です。
-
-- **アシスタント** — AI とのチャットの一覧と「＋ 新規チャット」。ここが質問・翻訳の入り口。
-- **メモキュー** — 溜めた要望メモの一覧。件数バッジが付きます。
-- **ファイル（リポジトリのツリー）** — 開発チームの資料やスライドが入っています。
-- **セッション** — 開発の AI 作業の一覧。状態バッジ（色付きの印）で進み具合が分かります。
-
-画面がせまいスマートフォンでも見られます。その場合、左側の並びは最初たたまれていて、上のほうにある
-横三本線（メニュー）のボタンを押すと開きます。項目を選ぶと自動で閉じるので、指一本で操作できます。
+To repeat: **the terminal is not on this list**. All four work with nothing but buttons and
+mouse clicks. If you get stuck, you can always close things with the "Later" button or the ✕,
+so don't be afraid to click around.
 
 ---
 
-## 3. 初回だけの準備
+## 2. Logging in and reading the screen
 
-初めて開いたとき、「**Agent Fleet へようこそ / まず2ステップ。そのあとは目的を選ぶだけです**」
-という案内カードが出ます。順番にチェックが付いていく、やることリストです。やることは 2 つだけです。
+Open the URL your company gave you and a login screen appears. Sign in with the account you
+normally use (your company's login method). IT set this up, so if you're lost, just ask your
+administrator for the URL and login method and you'll be fine.
 
-1. **ワークスペースを起動** — あなた専用の作業場所を立ち上げます。「起動」ボタンを押して、
-   「起動中…」の表示がおさまるのを待つだけ。これは必ずやってください。
-2. **エージェントを接続** — AI（Claude など）にサインインします。チャットを使うにはここが必要
-   なので「接続する」を押し、画面の案内に沿ってサインインしてください。
+After logging in you'll see a screen (the Console) divided into several areas. You don't need
+to understand all of it. **All you need to remember is the following list on the left side.**
 
-続いて「**どちらから始めますか？**」と 2 枚のカードが出ます。あなたは
-**「AI に質問・翻訳を頼む」の「チャットをはじめる」** を押してください。それだけで
-チャットが開き、準備は完了です。もう一方の「リポジトリで開発する」は開発者向けなので、
-触らなくて大丈夫です（git の接続やセッション作成の手順は、選んだ人にだけ表示されます）。
+- **Assistants** — the list of AI chats and "+ New chat". This is your entrance for questions and translations.
+- **Memo queue** — the list of request memos you've collected. It shows a count badge.
+- **Files (the repository tree)** — where the dev team's documents and slides live.
+- **Sessions** — the list of development AI work. Status badges (colored marks) show progress at a glance.
 
-カードは右下の「あとで」で閉じられ、済んだ項目は自動でチェックが付きます。閉じたあとで
-もう一度見たくなったら、右上の自分の名前のメニューにある「**はじめかたガイド**」から
-いつでも開き直せます。ワークスペースは使い終わったら止めておけますが、次に使うとき
-また「起動」を押せば戻ります。
-
-**管理者に聞くべきライン** — 次のときは自分でがんばらず聞いてください: ログイン方法や URL が
-分からない / 「エージェントを接続」でサインインがうまくいかない / そもそも自分のアカウントで
-何が使えるか分からない。これらは設定・権限の話なので、管理者に頼むのが早くて確実です。
+It also works on a narrow smartphone screen. In that case the left-side list starts out
+collapsed; press the three-line (menu) button near the top to open it. It closes automatically
+when you pick an item, so you can operate it with one finger.
 
 ---
 
-## 4. チャットを使う（質問・翻訳・文章整理）
+## 3. One-time setup
 
-左の「**アシスタント**」から「**＋ 新規チャット**」を選ぶと、AI との会話が始まります。下の入力欄に
-書いて送るだけ。翻訳して、要約して、この文章を分かりやすく直して、といった依頼が得意です。
+The first time you open it, a guidance card appears saying "**Welcome to Agent Fleet /
+Two steps first, then just pick your goal**". It's a to-do list where items get checked off in
+order. There are only two things to do.
 
-- 送信は入力欄の説明どおり（**Enter で送信 / Shift+Enter で改行**、環境によっては Ctrl+Enter）。
-  画像を貼り付けて「これ何？」と聞くこともできます。
-- 会話がまだ空のときは「**メッセージを送って会話を始めましょう。**」と出ます。最初に開いた
-  ときは「**チャットはまだありません。＋ から開始できます。**」です。
-- 何も設定しなくても、いくつかの **アシスタント（AI の性格・役割）** が最初から用意されています。
-  たとえば **Agent Fleet アシスタント**（使い方の案内）や **SRE アシスタント**（監視・障害対応の相談）など。
-  用途に合わせて「＋ 新規チャット」のときに選べます。翻訳や要約だけなら、左のファイル一覧で
-  ファイルを右クリックして **「アシスタントで翻訳」「アシスタントで要約」** を選ぶのが手軽です
-  （そのファイルを渡した状態でチャットが開きます）。
+1. **Start workspace** — brings up your own private work area. Just press the "Start" button
+   and wait for the "Starting…" indicator to settle. This one is a must.
+2. **Connect an agent** — sign in to the AI (such as Claude). Chat needs this, so press
+   "Connect" and follow the on-screen instructions to sign in.
 
-### チャットとセッションは何が違う？
+Next, two cards appear asking "**Where do you want to start?**". You should press
+**"Start chatting" under "Ask AI a question or for a translation"**. That alone opens a chat
+and your setup is done. The other card, "Develop in a repository", is for developers, so you
+can leave it alone (the git connection and session creation steps are shown only to people
+who choose it).
 
-よくある疑問です。ざっくり言うと:
+You can close the card with "Later" at the bottom right, and completed items get checked off
+automatically. If you want to see it again after closing it, you can always reopen it from
+"**Getting-started guide**" in the menu under your name at the top right. You can stop the
+workspace when you're done with it; press "Start" again next time and it comes back.
 
-- **チャット（アシスタント）** = リポジトリを使わない Q&A・翻訳向け。あなたが気軽に何度でも聞ける相談窓口。
-  会話の中で答えを返すだけで、ファイルを作ったり大きな作業をしたりはしません。
-- **セッション** = 開発者が AI に本格的な作業（コードを書く・ファイルを大量に直す）をさせる場所。
-
-なので「短い質問・翻訳・文章整理」はチャット、「ファイルを書き換える大きな作業」はセッション、と
-覚えておけば十分です。長い文章を翻訳して別ファイルに保存したい、のような **ファイル出力を伴う
-大きな作業** は、チャットではなくセッション（＝開発チーム）にお願いするのが向いています。
-チャットは一度にたくさんの作業を抱えると力尽きてしまうので、用途を分けてあるのです。
-
----
-
-## 5. ドキュメントとスライドを見る
-
-開発チームが書いた資料は、左の **ファイル（リポジトリのツリー）** から開けます。フォルダを
-たどってファイル名をクリックするだけ。
-
-- **Markdown（.md）の文書** は、読みやすく整形された **プレビュー** で表示されます。上部の
-  「**プレビュー / ソース**」の切り替えで、元の書式付きテキストも見られます。図（Mermaid）も
-  絵として表示されます。
-- **Marp のスライド資料** は、スライドとして 1 枚ずつめくって読めます。上部に「**スライド /
-  プレビュー / ソース**」の切り替えが出て、最初はスライド表示です。「◀ ▶」や矢印キーでめくり、
-  「**全画面**」ボタンで大きく映せます（発表にも使えます）。
-
-読むだけなので、うっかり中身を壊す心配はありません。外部リンクは新しいタブで開きます。
-
-ファイルを開いた画面には「**送る**」ボタンがあります。ここから、その文書を **チャットの
-アシスタントに渡して** 「翻訳して」「要約して」と頼んだり、開発のセッションへ送ったり、
-次章のメモキューに溜めたりできます。「この英語ドキュメントを訳してほしい」というときは、
-開いて「送る」→ 送信先で **アシスタント（チャットで開く）** を選ぶのが手軽です。
+**When to ask your administrator** — don't struggle on your own in these cases: you don't know
+the login method or the URL / signing in at "Connect an agent" isn't working / you're not sure
+what your account can use in the first place. These are configuration and permission matters,
+so asking your administrator is the fastest and surest route.
 
 ---
 
-## 6. メモキュー（思いついた要望を溜めて渡す）
+## 4. Using chat (questions, translation, text cleanup)
 
-「ここ直したい」「こういう機能がほしい」と思いついても、その都度チームに割り込むのは気が引ける
-もの。**メモキュー** は、そうした走り書きを **溜めておいて、あとでまとめて開発に渡す** ための場所です。
+From "**Assistants**" on the left, choose "**+ New chat**" and a conversation with the AI begins.
+Just write in the input field at the bottom and send. It's good at requests like "translate
+this", "summarize this", "make this text easier to read".
 
-- 左の「**メモキュー**」の入力欄（「**走り書きメモを追加…（後でまとめて送信）**」）に思いついた
-  ことを書いて「**追加**」します。必要なら「**カテゴリ（任意）**」でグループ分けもできます（例:
-  frontend、api）。空のときは「**メモはまだありません。**」と出ます。
-- ファイルを開いた画面の「**送る**」ボタンからも、その文書を対象にした要望を「**キューに追加**」
-  できます（前章参照）。
-- 溜まったメモは、雑なままでも大丈夫。上部の「**選択したメモをアシスタントで整理**」を使うと、AI が
-  文章を整え・カテゴリ分けの提案までしてくれます。結果はプレビュー（「**アシスタントで整理**」の
-  画面）で確認し、「**反映**」を押したときだけ書き換わります（勝手に上書きされません）。
-- 渡すときは、チェックを付けて「**選択を送信**」、あるいはカテゴリ見出しの「**送信**」（＝この
-  カテゴリをまとめて送信）を押し、送り先のセッションを選びます。選んだメモは **1 通のメッセージに
-  まとまって** 届きます。
+- Send as described in the input field (**Enter to send / Shift+Enter for newline**; Ctrl+Enter
+  in some environments). You can also paste in an image and ask "what is this?".
+- While the conversation is still empty, it says "**Send a message to start the conversation.**"
+  The very first time you open it, it says "**No chats yet. Start one from +.**"
+- Even with no configuration at all, several **assistants (AI personalities/roles)** come ready
+  out of the box. For example, the **Agent Fleet Assistant** (guidance on using the product) and
+  the **SRE Assistant** (a sounding board for monitoring and incident response). Pick the one
+  that fits when you press "+ New chat". If all you need is translation or summarization, the
+  easiest way is to right-click a file in the file list on the left and choose
+  **"Translate with assistant" or "Summarize with assistant"**
+  (a chat opens with that file already handed over).
 
-### 「メモは誰に届く？」
+### How is chat different from a session?
 
-メモは自動で誰かのメールに飛んだりはしません。あなたが送信の操作をしたときに、**あなたが選んだ
-「稼働中のセッション」＝その開発 AI 作業へ** 届きます。つまり届け先はあなたが選びます。送れる
-セッションが無いときは「**送信先の稼働セッションがありません。**」と出るので、その場合は開発担当に
-セッションを動かしてもらってから送ってください。送ったメモは消えず「**送信済み**」として一定期間
-残るので、あとから見返せます。溜めるだけ溜めて、送るのは後日、という使い方もできます。
+A common question. Roughly speaking:
+
+- **Chat (assistants)** = for repository-free Q&A and translation. Your help desk — ask casually,
+  as often as you like. It only answers within the conversation; it doesn't create files or take on big jobs.
+- **Session** = where developers have the AI do serious work (writing code, fixing lots of files).
+
+So it's enough to remember: "short questions, translation, text cleanup" go to chat, and "big
+work that rewrites files" goes to a session. **Big jobs that produce file output** — like
+translating a long document and saving it as a separate file — are better handed to a session
+(i.e. the dev team) rather than chat. Chat runs out of steam when it takes on too much work at
+once, which is why the roles are kept separate.
 
 ---
 
-## 7. 開発の進み具合を見る
+## 5. Reading documents and slides
 
-左の **セッション** の一覧には、開発の AI 作業がずらりと並びます。各行の色付きの印（状態バッジ）で、
-今どんな状況かがひと目で分かります。読み方は次のとおりです。
+Documents written by the dev team open from **Files (the repository tree)** on the left. Just
+walk down the folders and click a file name.
 
-| 見える表示 | 意味 | あなたの受け取り方 |
+- **Markdown (.md) documents** are shown as a nicely formatted **preview**. The
+  "**Preview / Source**" toggle at the top also lets you see the original formatted text.
+  Diagrams (Mermaid) are rendered as pictures too.
+- **Marp slide decks** can be read as slides, flipping through one page at a time. A
+  "**Slides / Preview / Source**" toggle appears at the top, with the slide view shown first.
+  Flip pages with "◀ ▶" or the arrow keys, and use the "**Fullscreen**" button to show them
+  large (works for presentations too).
+
+You're only reading, so there's no worry about accidentally breaking the contents. External
+links open in a new tab.
+
+The screen showing an open file has a "**Send**" button. From there you can **hand the document
+to a chat assistant** and ask "translate this" or "summarize this", send it to a development
+session, or add it to the memo queue covered in the next chapter. When you're thinking "I'd
+like this English document translated", the easy route is: open it, press "Send", and pick
+**Assistants (open in chat)** as the destination.
+
+---
+
+## 6. The memo queue (collect ideas and hand them over)
+
+Even when you think "I'd like this fixed" or "I want a feature like this", interrupting the team
+every single time feels awkward. The **memo queue** is the place to **pile up those quick notes
+and hand them to development later, all at once**.
+
+- Write whatever comes to mind in the input field of the "**Memo queue**" on the left
+  ("**Add a quick memo… (send them together later)**") and press "**Add**". If you like, group
+  memos with "**Category (optional)**" (e.g. frontend, api). When it's empty it says
+  "**No memos yet.**"
+- The "**Send**" button on an open file can also "**Add to queue**" a request about that
+  document (see the previous chapter).
+- Piled-up memos can stay rough — that's fine. Use "**Organize the selected memos with an
+  assistant**" at the top and the AI will polish the wording and even suggest a categorization.
+  You review the result in a preview (the "**Tidy with assistant**" screen), and nothing is
+  rewritten until you press "**Apply**" (it never overwrites on its own).
+- To hand them over, tick the checkboxes and press "**Send selection**", or press "**Send**" on
+  a category header (= send this category together), then choose the destination session. The
+  selected memos arrive **combined into a single message**.
+
+### "Who receives my memos?"
+
+Memos don't automatically fly off into someone's email. When you perform the send operation,
+they go to **the running session you chose — that development AI's work**. In other words, you
+choose the destination. If there is no session you can send to, it says "**No running session
+to send to.**" — in that case, ask the developer in charge to get a session running, then send.
+Sent memos aren't deleted; they remain marked "**Sent**" for a while, so you can look back at
+them later. You can also just keep collecting and send them another day.
+
+---
+
+## 7. Watching development progress
+
+The **Sessions** list on the left shows all the development AI work in a row. The colored mark
+on each row (the status badge) tells you at a glance what state it's in. Read them like this:
+
+| What you see | Meaning | How to take it |
 |------------|------|--------------------|
-| **進行中…**（くるくる回る印） | AI が今まさに作業中 | 動いている。待てばよい |
-| **入力待ち**（チェックの印） | ひと区切りついて、次の指示待ち | 手が空いている状態 |
-| **質問あり / 許可待ち / プランあり** | AI が人の返事を待っている | 開発担当の対応が必要（下記の約束事へ） |
-| **停止中** | 動いていない（あとで再開できる） | 今は止まっているだけ |
-| **起動中** | シェルなどが立ち上がっている | 動作中 |
+| **Working…** (a spinning mark) | The AI is working right this moment | It's moving. Just wait |
+| **Ready** (a check mark) | Reached a stopping point, awaiting the next instruction | Its hands are free (awaiting input) |
+| **Question / Awaiting approval / Plan ready** | The AI is waiting for a human reply | The developer in charge needs to respond (see the ground rule below) |
+| **Stopped** | Not running (can be resumed later) | Just paused for now |
+| **Running** | A shell or the like is up | Active |
 
-行を開くと、上部に「**チャット / ターミナル**」の切り替えが出ます。**「チャット」側を選ぶ**と、
-その作業の **会話のようす** を読みやすく（ターンごとの整形表示で）追えます。「ターミナル」は
-開発者向けの黒い画面なので、あなたは「チャット」だけ見れば十分です。あなたが眺めているときは
-「**履歴を閲覧中（入力するには再開）**」と表示され、基本は読むだけの状態です。
+Open a row and a "**Chat / Terminal**" toggle appears at the top. **Choose the "Chat" side**
+to follow that work's **conversation** in a readable form (formatted turn by turn). "Terminal"
+is the black screen for developers, so looking at "Chat" alone is enough for you. While you're
+watching, it shows "**Viewing history (resume to type)**" — you're essentially in read-only mode.
 
-### 大切な約束事
+### An important ground rule
 
-「質問あり」「許可待ち」のように **AI が誰かの返事を待っている** とき、のぞいているあなたが
-代わりに答えてしまわないでください。その質問は担当の開発者に向いたものです。あなたは進み具合を
-**見るだけ**にとどめ、気づいたことがあれば担当者に声をかけるか、メモキューに書いて渡しましょう。
-勝手に返事をすると、開発者の意図と食い違った方向に作業が進んでしまうことがあります。
+When the AI is **waiting for someone's reply** — as in "Question" or "Awaiting approval" —
+please don't answer in their place just because you happen to be watching. That question is
+addressed to the developer in charge. Stick to **watching** the progress, and if you notice
+something, speak to the person in charge or write it into the memo queue. Replying on your own
+can send the work off in a direction the developer never intended.
 
 ---
 
-## 8. 困ったとき + FAQ
+## 8. When you're stuck + FAQ
 
-### 困ったときの最初の一手
+### First moves when something goes wrong
 
-1. まず画面を **再読み込み**（ブラウザの更新）してみる。
-2. 「ワークスペースを起動」を押していないと、多くの機能が使えません。起動済みか確認する。
-3. それでもダメなら、無理せず **管理者に相談**。ログイン・接続・権限まわりは管理者の担当です。
+1. First, try **reloading** the page (browser refresh).
+2. If you haven't pressed "Start workspace", most features won't work. Check that it's started.
+3. If it still doesn't work, don't push through — **ask your administrator**. Login, connections,
+   and permissions are the administrator's territory.
 
 ### FAQ
 
-**Q. 黒い画面（ターミナル）を触らずに使える？**
-はい。この分冊の使い方（チャット・メモキュー・ファイル閲覧・進捗確認）は、すべてボタンと入力欄
-だけで完結します。コマンドを打つことも、git を覚えることもありません。
+**Q. Can I use it without touching the black screen (terminal)?**
+Yes. Everything in this volume (chat, memo queue, file browsing, progress watching) is done
+entirely with buttons and input fields. You never type a command or learn git.
 
-**Q. チャットとセッションは何が違う？**
-チャットはリポジトリを使わない質問・翻訳向けの相談窓口、セッションは開発者が AI に本格作業をさせる場所です。
-短い質問はチャット、ファイルを書き換える大きな作業はセッション（＝開発チーム）、と覚えてください。
-くわしくは [第 4 章](#4-チャットを使う質問翻訳文章整理) を参照。
+**Q. How is chat different from a session?**
+Chat is a repository-free help desk for questions and translation; a session is where developers
+have the AI do serious work. Remember it as: short questions → chat; big work that rewrites
+files → session (i.e. the dev team). See [Chapter 4](#4-using-chat-questions-translation-text-cleanup) for details.
 
-**Q. メモは誰に届く？**
-自動配信ではありません。あなたが送信操作をしたとき、あなたが選んだ稼働中のセッションへ届きます。
-届け先はあなたが選べます。[第 6 章](#6-メモキュー思いついた要望を溜めて渡す) を参照。
+**Q. Who receives my memos?**
+There's no automatic delivery. When you perform the send operation, they go to the running
+session you chose. You get to pick the destination. See [Chapter 6](#6-the-memo-queue-collect-ideas-and-hand-them-over).
 
-**Q. 間違えてボタンを押しても壊れない？**
-閲覧やチャットで中身が壊れることはありません。メモの整理も「反映」を押すまで書き換わりません。
-迷ったら「あとで」や ✕ で閉じれば元に戻れます。
+**Q. If I press the wrong button, will something break?**
+Browsing and chatting can't damage anything. Memo organizing doesn't rewrite anything until
+you press "Apply". If in doubt, close with "Later" or ✕ and you're back where you started.
 
-**Q. スマートフォンでも使える？**
-見る・軽く操作する用途なら使えます。左の並びは上の横三本線メニューから開きます。じっくり作業する
-ときはパソコンのほうが快適です。
+**Q. Does it work on a smartphone?**
+For viewing and light operations, yes. Open the left-side list from the three-line menu at the
+top. For focused work, a computer is more comfortable.
 
-**Q. 「git を接続」「セッションを作成」は必要？**
-チャットと閲覧だけなら不要です。準備で必要なのは「ワークスペースを起動」と「エージェントを接続」
-の 2 つだけ。[第 3 章](#3-初回だけの準備) を参照。
+**Q. Do I need "connect git" or "create a session"?**
+Not if you only chat and browse. Setup requires just two things: "Start workspace" and
+"Connect an agent". See [Chapter 3](#3-one-time-setup).
 
-**Q. もっといろいろやりたくなったら？**
-自分でファイルを編集したり AI にコードを書かせたりしたくなったら、開発者向けの
-[member/README.md](member/README.md) が次のステップです。仕組みそのものが知りたいときは
-[../dev/README.md](../dev/README.md) へ。
+**Q. What if I want to do more?**
+When you feel like editing files yourself or having the AI write code, the developer-facing
+[member/README.md](member/README.md) is your next step. If you want to understand the machinery
+itself, head to [../dev/README.md](../dev/README.md).

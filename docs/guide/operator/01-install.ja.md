@@ -1,0 +1,130 @@
+# 01. 初期構築
+
+[English](01-install.md) | 日本語
+
+初めてのデプロイを、判断ポイントを添えて順を追って説明します。**実際のコマンドは
+[deploy/compose/README.md](../../../deploy/compose/README.md) の "Quick start" 節が正**です。ここでは
+「各ステップで何を決め、何に注意するか」を日本語で補います。作業ディレクトリは `deploy/compose/`
+です。全体像とこのガイドの位置づけは [README.md](README.ja.md) を先に読んでください。
+
+## 0. 前提の確認
+
+構築を始める前に、[README.md](README.ja.md) の「前提」で挙げた 4 点がそろっているか確認します。
+
+- Docker Engine + `docker compose` が動く Linux ホスト。
+- 公開ドメインと、このホストを指す DNS の A/AAAA レコード（TLS 用）。社内限定なら §4 の判断を参照。
+- Google OAuth 2.0 Web クライアント（§3 で作成）。
+- Claude シートは各メンバーが後から持ち込むので、構築時点では不要です。
+
+## 1. 設定ファイルを用意する
+
+`deploy/compose/.env.example` を `.env` にコピーして編集します（コマンドは runbook の "Quick start"）。
+`.env` は git 管理外で、ここが**設定の単一ソース**です。各変数の意味・生成手順・注釈は
+[.env.example](../../../deploy/compose/.env.example) 自体に詳しく書いてあります。索引が欲しいときは
+[dev/09 §9.4](../../dev/09-deploy.md) を参照してください。
+
+構築時に必ず埋める主なものは、公開 URL（`PUBLIC_DOMAIN` / `PUBLIC_BASE_URL`）、Google OAuth の
+クライアント ID/シークレット、ログイン許可リスト（`AF_OAUTH_ALLOWED_DOMAINS` など）、初期管理者
+（`SUPER_ADMIN_EMAILS`）、データ保管先（`DATA_DIR`）、そして 2 つの秘密（次節）です。
+
+## 2. 秘密を生成する — `AF_MASTER_KEY` はこの時点で金庫へ
+
+`.env` には自分で生成する秘密が 2 つあります。生成コマンド（`/dev/urandom` から 32 バイトを
+base64 化）は runbook の "Quick start" に載っています。
+
+- **`AF_MASTER_KEY`** — すべての資格情報暗号の根（封筒暗号の master 鍵）。
+- **`AF_COOKIE_SECRET`** — ログインセッション cookie の署名鍵。
+
+> 最重要の判断: **`AF_MASTER_KEY` を生成したら、その場でパスワード金庫／シークレットマネージャに
+> 控えを取り、データ領域とは別に独立して保管してください。** この鍵は `DATA_DIR` にもバックアップ
+> アーカイブにも入りません（設計上、意図的に）。失うと、保存済みの全資格情報とすべての過去
+> バックアップが**永久に復号不能**になります（crypto-shred）。リストアには「同じ鍵」が要ります。
+> 詳細は [03-security.md](03-security.ja.md) と [dev/07 §7.6](../../dev/07-security.md)。
+
+あわせて、CP が使う `DOCKER_GID` をホストの docker グループ GID に合わせます（値の求め方は
+runbook）。これを間違えると起動後に docker ソケットで permission denied になります（[04](04-troubleshooting.ja.md)）。
+
+## 3. Google OAuth を設定する
+
+Google Cloud Console で OAuth クライアント ID（Web アプリケーション）を作成し、**承認済みリダイレクト
+URI** に次を登録します。
+
+```
+https://<PUBLIC_DOMAIN>/oauth2/callback
+```
+
+このパスは `<PUBLIC_BASE_URL>/oauth2/callback` と一致していなければなりません。ここがズレると
+ログイン時に "redirect URI mismatch" になります（よくある失敗・[04](04-troubleshooting.ja.md)）。発行された
+クライアント ID/シークレットを `.env` の `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` に
+入れます。手順の詳細は runbook の "Google OAuth setup" 節。
+
+補足: Console のログイン認証（L1）は CP 自身が Google OAuth を実行します（`AUTH=oauth`・既定）。
+既存の認証ゲートウェイ（oauth2-proxy / ALB OIDC など）を前段に置く社は `AUTH=proxy` を選べます
+（メール識別を上流ヘッダに委ねる）。仕組みは [dev/07 §7.3](../../dev/07-security.md)。GitHub/Bitbucket
+の連携 OAuth は任意で、無くてもトークン貼り付けで動くため初期構築では省略できます。
+
+## 4. 判断ポイント
+
+起動前に、自分のデプロイに合わせて 3 つを決めます。
+
+### `tls internal` はいつ使うか
+
+Caddy は既定で公開ドメインの証明書を Let's Encrypt から自動取得します。これには**公開 DNS と
+80/443 の到達性**が要ります。社内限定・閉域網で公開 DNS を用意できない場合は、Caddyfile の
+代替（`tls internal`・自己署名）に切り替えます。この場合ブラウザに証明書警告が出るので、社内
+CA の配布などは別途検討してください。切替方法は runbook の "Quick start" 脚注と Caddyfile を参照。
+既存の TLS 終端プロキシを前段に持つ社は Caddy サービス自体を外せます（Caddyfile 代替2）。
+
+### `AF_PROVISION` は auto か invite か
+
+- **`auto`（既定）** — 許可リストを通ったログインを、既定テナントのメンバーとして自動受け入れ。
+  少人数・ドメイン単位で許可する運用に向きます。
+- **`invite`** — 未知の identity は管理者が Admin パネルで追加するまで拒否。誰を入れるかを
+  一件ずつ統制したいときに選びます。
+
+いずれにせよ、そもそもログインできるのは許可リスト（`AF_OAUTH_ALLOWED_*`）を通った相手だけです。
+`auto` は「許可リスト内なら勝手にテナント割当まで進む」かどうかの違いです。
+
+### 単一テナントか、分離するか
+
+- **単一テナント（既定）** — 全員が組み込みの `default` テナントに入り、摩擦ゼロ。多くの社は
+  これで十分です。
+- **テナント分離** — 部署間などで**ハードな分離**が要るときだけ追加します。メンバーシップごとに
+  完全に隔離された Workspace が割り当てられます。後からでも追加できるので、迷ったら単一で始めて
+  必要になってから分けるのが無難です。
+
+## 5. 起動する
+
+`.env` がそろったら `DATA_DIR` を作成し、`docker compose up -d`（プレビルド image を使うなら
+そのまま、ローカルビルドなら `--build`）で起動します。正確なコマンドは runbook の "Quick start"。
+起動後、CP のログを追い、ヘルスチェックが通ることを確認します。
+
+```
+curl -s http://127.0.0.1:8099/healthz    # -> ok
+```
+
+`ok` が返らない・そもそも CP が上がらないときは [04-troubleshooting.md](04-troubleshooting.ja.md) の
+「CP が起動しない」を参照してください。
+
+## 6. 初回ログインと最初の管理者
+
+ブラウザで `https://<PUBLIC_DOMAIN>` を開き、`SUPER_ADMIN_EMAILS` に列挙したアカウントで
+サインインします。**このメールアドレスが初回ログインで `super_admin`** になります。super_admin は
+Console に歯車の **Admin パネル**が見え、デプロイ全体を管理できます。
+
+> ログインが常に拒否される場合、許可リストが空の可能性が高いです。3 系統（`AF_OAUTH_ALLOWED_EMAILS`
+> / `_DOMAINS` / `_EMAILS_FILE`）が**すべて空だと全ログインを拒否**します（fail-closed = 安全側に倒す
+> 設計）。少なくとも 1 つを設定してください。詳細は [04](04-troubleshooting.ja.md)。
+
+## 7. 最初のテナントとメンバー
+
+super_admin として Admin パネルから、テナントの作成、メンバーの追加、資源上限やアイドル停止の
+設定ができます。既定の単一テナント運用ならテナント作成は不要で、`AF_PROVISION=auto` なら許可
+リスト内のメンバーはログインするだけで使い始められます。メンバー管理・上限・監査のブラウザ操作
+そのものは、管理者向けの admin 分冊が扱います。
+
+各メンバーは自分の Workspace を起動したあと、Console から**自分の Claude シートでログイン**します
+（BYO）。運用者がメンバーの Claude 資格情報を代理設定することはありません。
+
+構築後の日常運用（バックアップ・アップグレード・停止）は [02-operations.md](02-operations.ja.md) へ、
+セキュリティ運用は [03-security.md](03-security.ja.md) へ進んでください。
