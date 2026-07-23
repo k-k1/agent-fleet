@@ -349,6 +349,19 @@ if [ ! -f "$SETTINGS" ]; then
   ' "$SETTINGS" "$RTK" \
     && echo "[entrypoint] seeded default $SETTINGS (rtk=$RTK)" \
     || echo "[entrypoint] WARN: failed to seed $SETTINGS"
+else
+  # 既存WS: remoteControlAtStartup キーが未設定なら一度だけ false を補い、既定 OFF へ揃える。
+  # キーが既にある（ユーザーが Console で true/false を明示設定した）場合は尊重して上書きしない。
+  # キー補完後は次回以降キーが存在するため再度は触らない＝「一度だけ」。
+  node -e '
+    const fs = require("fs"), p = process.argv[1];
+    let s; try { s = JSON.parse(fs.readFileSync(p, "utf8")); } catch { process.exit(0); }
+    if (s && typeof s === "object" && !Array.isArray(s) && !("remoteControlAtStartup" in s)) {
+      s.remoteControlAtStartup = false;
+      fs.writeFileSync(p, JSON.stringify(s, null, 2) + "\n");
+      console.log("[entrypoint] defaulted remoteControlAtStartup=false in existing " + p);
+    }
+  ' "$SETTINGS" 2>/dev/null || true
 fi
 
 # opencode status plugin: copy the bundled plugin into the user's opencode plugin
