@@ -1203,6 +1203,8 @@ export const en: Record<keyof typeof ja, string> = {
   "topbar.reload": "Reload",
   "topbar.appearance_title": "Appearance (theme, colors)",
   "topbar.appearance": "Appearance",
+  "topbar.appearance_details": "Details",
+  "topbar.appearance_details_title": "Open display settings (fonts, advanced colors, …)",
   "topbar.tenant": "Tenant",
   "topbar.user_guide": "User guide",
   "topbar.guide": "Getting-started guide",
