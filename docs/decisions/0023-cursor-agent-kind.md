@@ -1,8 +1,9 @@
 # 0023. `kind=cursor`（Cursor CLI）を第7のエージェント種別として追加する
 
-- 状態: **採用（Track A 実装済み）**（2026-07-23。Track 0 プローブ合格→workspace agent
-  本体の read 層＋TUI を実装・`go build`/`go test` 緑）。残 A2/B/C/D。
-  実装計画・実測・Track A の改良2点（自己採番 UUID／JSONL 末尾状態）は
+- 状態: **採用（Track A＋A2 実装済み）**（2026-07-23。Track 0 プローブ合格→read 層＋TUI＋
+  managed driver を実装・`go build`/`go test`＋`AF_CURSOR_LIVE=1` 実 CLI 契約テスト緑）。残 B/C/D。
+  実装計画・実測・Track A の改良2点（自己採番 UUID／JSONL 末尾状態）・Track A2 の ACP 契約
+  （`cursor-agent acp` 起動・session/update からの転写メモリ構築・set_mode/cancel 実測）は
   [docs/40](../40-cursor-agent-kind.md)。
 - 関連: [0019](0019-copilot-agent-kind.md)（copilot — 直近の種別追加・本件のテンプレ）、
   [0008](0008-antigravity-cli-agent-kind.md)（agy — Terminal 専用 MVP の先例）、
