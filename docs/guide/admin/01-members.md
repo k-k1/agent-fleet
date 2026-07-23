@@ -1,88 +1,105 @@
-# メンバー管理
+# Member management
 
-テナントとメンバーの管理は、管理画面の **「テナント管理」** タブで行います。ここは
-「テナント一覧 → テナント詳細 → メンバー詳細」の 3 段の掘り下げ（ドリルダウン）です。
-上の段へ戻るには「戻る」ボタン、または画面上部のパンくず（テナント › メンバー）をたどります。
+English | [日本語](01-members.ja.md)
 
-あなたは自分のテナントしか見えないので、多くの場合は最初の一覧に自分のテナントが 1 つだけ並びます。
-それを開けば、いきなりメンバー管理に入れます。
+You manage tenants and members on the **"Tenants"** tab of the admin screen. It is a
+three-level drill-down: tenant list → tenant detail → member detail.
+To go back up a level, use the "Back" button or follow the breadcrumb at the top of the screen
+(tenant › member).
 
-## 画面をたどる
+Since you can only see your own tenant, in most cases the first list contains just your one tenant.
+Open it and you're straight into member management.
 
-**テナント一覧** — カード状に並びます。各カードには表示名、メンバー数（「◯ 人」）、いま起動中の
-ワークスペース数（「◯ 起動中」）、そしてテナント全体の上限（「上限 — ワークスペース: X / セッション: Y」）が
-出ます。「新規テナント」ボタンは super_admin にだけ表示されます（あなたには出ません）。
+## Finding your way around
 
-**テナント詳細** — 開くと「メンバー」の一覧が並びます。super_admin の場合はこの上に上限設定の欄も
-出ますが、tenant_admin のあなたには上限欄は表示されません（上限は [02-limits.md](02-limits.md) を参照）。
-各メンバーの行には、稼働状態を示す点、内部識別子（`user_key`）、メールアドレス、ロール（`member` / `tenant_admin`）が
-並びます。行をクリックするとメンバー詳細へ進みます。
+**Tenant list** — tenants appear as cards. Each card shows the display name, the member count, the
+number of workspaces currently running ("N running"), and the tenant-wide limits
+("Limits — Workspace: X / Session: Y"). The "New tenant" button is shown only to super_admin
+(you won't see it).
 
-**メンバー詳細** — そのメンバーのワークスペース資源、稼働セッション、各種操作が集まる画面です。
-資源とセッション、強制停止・上限設定は [02-limits.md](02-limits.md) で扱います。
+**Tenant detail** — opening a tenant shows the "Members" list. For super_admin a limits-settings
+section also appears above it, but as tenant_admin you won't see the limits section (for limits,
+see [02-limits.md](02-limits.md)). Each member row shows a dot indicating running state, the
+internal identifier (`user_key`), the email address, and the role (`member` / `tenant_admin`).
+Clicking a row takes you to the member detail.
 
-## メンバーを追加する
+**Member detail** — the screen that gathers that member's workspace resources, running sessions,
+and the various operations. Resources and sessions, force-stop, and limit settings are covered in
+[02-limits.md](02-limits.md).
 
-テナント詳細の「メンバー」欄のいちばん下に **「メンバー追加」** のフォームがあります。
+## Adding a member
 
-1. 「email」欄にそのメンバーの Google ログインに使うメールアドレスを入れます。または「内部識別子（user_key）」欄に
-   キーを直接入れても構いません（メールを入れれば、そこから自動でキーが作られます）。
-2. tenant_admin のあなたが追加できるのは **`member`（一般メンバー）だけ** です。ロールを選ぶ欄は
-   super_admin にしか表示されません。誰かを管理者にしたい場合は後述のとおり super_admin に依頼します。
-3. 「追加」を押すと、そのメンバーがこのテナントに加わります。まだ一度もログインしていない相手でも
-   先に追加できます（招待の先出し）。相手が初回ログインしたときに、この所属をもとにワークスペースが
-   払い出されます。
+At the very bottom of the "Members" section in the tenant detail there is an **"Add member"** form.
 
-追加された本人には、このガイドの [member/](../member/README.md) を案内してあげてください。
+1. Enter the email address the member uses for Google login in the "email" field. Alternatively you
+   can enter a key directly in the "or user_key" (internal identifier) field (if you enter an email,
+   the key is derived from it automatically).
+2. As tenant_admin, you can only add **`member` (regular members)**. The role selector is shown
+   only to super_admin. If you want to make someone an administrator, ask a super_admin as
+   described below.
+3. Press "Add" and the member joins this tenant. You can add someone even before they have ever
+   logged in (an invite in advance). When they log in for the first time, a workspace is
+   provisioned based on this membership.
 
-### メールアドレスと内部識別子の関係
+Point the newly added person to [member/](../member/README.md) in this guide.
 
-メンバーは内部的に **user_key**（メールから作られる短い識別子）で識別されます。メンバー行やセッション一覧に
-出るモノスペースの文字列がそれです。ふだんはメールアドレスを入れれば自動でキーが決まるので意識する必要は
-ありませんが、監査ログやセッション俯瞰では内部識別子が主役になるので、「この識別子＝この人」の対応を
-つかんでおくと読みやすくなります。同じ人でもテナントが違えば所属（とワークスペース）は完全に別扱いです。
+### How email addresses relate to internal identifiers
 
-## 自動加入と招待制
+Members are identified internally by a **user_key** (a short identifier derived from the email).
+That is the monospace string you see in member rows and session lists. Normally you don't need to
+think about it — entering an email determines the key automatically — but in audit logs and the
+sessions overview the internal identifier takes center stage, so knowing the mapping of
+"this identifier = this person" makes them easier to read. Even for the same person, membership
+(and the workspace) is treated completely separately per tenant.
 
-新しい人がこのテナントに入る道は、デプロイの設定で 2 通りあります。
+## Auto-join and invite-only
 
-- **自動加入（`AF_PROVISION=auto`・既定）** — ログインが許可されているメールアドレスなら、初回ログインで
-  自動的に既定テナントのメンバーになります。あなたが一人ずつ追加する必要はありません。
-- **招待制（`AF_PROVISION=invite`）** — 管理者が「メンバー追加」で登録した人だけが入れます。登録の無い
-  ログインは拒否されます。
+There are two ways, depending on deployment settings, for a new person to enter this tenant.
 
-**どちらのモードかを切り替えるのは、あなたの権限の外です。** これはデプロイ全体の環境設定なので、
-変更したいときは情シス／デプロイ管理者に依頼してください（[operator/README.md](../operator/README.md)）。
-招待制であっても、追加操作そのものはこのページの「メンバーを追加する」で行えます。
+- **Auto-join (`AF_PROVISION=auto`, the default)** — anyone with an email address permitted to log
+  in automatically becomes a member of the default tenant on first login. You don't need to add
+  people one by one.
+- **Invite-only (`AF_PROVISION=invite`)** — only people registered by an administrator via
+  "Add member" can enter. Logins without a registration are rejected.
 
-なお、そもそもログインできる範囲（許可されたメールドメイン／アドレス）を決めるのも情シスの領分です。
-許可されていない相手はテナントに追加しても本人がログインできません。
+**Switching between these modes is outside your authority.** It is a deployment-wide environment
+setting, so when you want it changed, ask your IT department / deployment administrator
+([operator/README.md](../operator/README.md)). Even in invite-only mode, the add operation itself
+is done via "Adding a member" on this page.
 
-## メンバーを外すには
+Note that deciding who can log in at all (the permitted email domains / addresses) is also IT's
+domain. Someone who isn't permitted can't log in even if you add them to the tenant.
 
-管理画面には、メンバーを **その場で削除するボタンはありません**。所属をきれいに取り消したい
-（退職者を消すなど）ときは、情シス／デプロイ管理者に依頼してください。当面の実務としては、
-その人の稼働中のワークスペースを止めておく（[02-limits.md](02-limits.md) の「ワークスペースを強制停止」）ことで、
-資源の占有と稼働を抑えられます。
+## Removing a member
 
-## ロールの意味
+The admin screen has **no button to delete a member on the spot**. When you want to cleanly revoke
+a membership (removing someone who has left the company, for example), ask your IT department /
+deployment administrator. As a practical interim measure, stopping that person's running workspace
+("Force-stop the workspace" in [02-limits.md](02-limits.md)) reins in their resource occupancy and
+activity.
 
-Agent Fleet には 3 つのロールがあります。あなた（tenant_admin）に関係するのは主に下の 2 つです。
+## What the roles mean
 
-- **member（一般メンバー）** — 自分のワークスペースでコードを書き、セッションを動かす人。管理画面には入れません。
-- **tenant_admin（テナント管理者）** — このテナント内のメンバー管理・資源閲覧・ワークスペース強制停止・
-  セッション上限設定ができます。**他テナントには一切関与できません。** テナントの新規作成、テナント全体の
-  上限変更、home の掃除、管理者権限の付与はできません。＝あなたです。
-- **super_admin** — デプロイ全体の管理者。すべてのテナントを見て、テナントの作成、上限設定、そして
-  「誰かを tenant_admin にする」といった権限付与を行えます。super_admin は環境設定
-  （`SUPER_ADMIN_EMAILS`）で決まり、管理画面のメンバー一覧では星印で示されます。
+Agent Fleet has 3 roles. The ones that mainly concern you (tenant_admin) are the first two below.
 
-**誰かを tenant_admin に昇格させたい**ときは、あなたにはできません。super_admin だけが、メンバー詳細の
-「権限」欄からロールを付与できます。付与された管理者もそのテナント内だけの権限で、他テナントには影響しません。
-権限モデルの厳密な定義は [dev/03 コントロールプレーン](../../dev/03-control-plane.md)、
-テーブル構造は [dev/06 データモデル](../../dev/06-data-model.md) にあります。
+- **member (regular member)** — someone who writes code in their own workspace and runs sessions.
+  They cannot enter the admin screen.
+- **tenant_admin (tenant administrator)** — can manage members within this tenant, view resources,
+  force-stop workspaces, and set session limits. **They cannot touch other tenants at all.** They
+  cannot create tenants, change tenant-wide limits, clean home, or grant admin rights. = You.
+- **super_admin** — the deployment-wide administrator. Sees all tenants and can create tenants,
+  set limits, and grant rights such as "make someone a tenant_admin". super_admins are determined
+  by environment configuration (`SUPER_ADMIN_EMAILS`) and are marked with a star in the member
+  list of the admin screen.
+
+**When you want to promote someone to tenant_admin**, you can't do it yourself. Only a super_admin
+can grant roles, from the "Permissions" section of the member detail. A granted administrator's
+authority is likewise limited to that tenant and does not affect other tenants.
+The precise definition of the permission model is in
+[dev/03 Control plane](../../dev/03-control-plane.md), and the table structure in
+[dev/06 Data model](../../dev/06-data-model.md).
 
 ---
 
-- 次に読む: [02 資源上限とセッション](02-limits.md)
-- 前に戻る: [admin/README.md](README.md)
+- Read next: [02 Resource limits and sessions](02-limits.md)
+- Back to: [admin/README.md](README.md)

@@ -1,102 +1,121 @@
-# operator — セルフホスト運用者ガイド
+# operator — Self-Hosting Operator Guide
 
-このガイドは、Agent Fleet を自社インフラに**デプロイし、運用し、守る**人（情報システム部門・SRE
-など、ホスト OS への SSH と `super_admin` 権限を持つ担当者）向けです。開発フローの知識は前提と
-しません。必要なのは Docker・DNS・OAuth・バックアップ運用の一般的な素養です。
+English | [日本語](README.ja.md)
 
-「壊れたとき自分しか直せない」立場に向けて、**何を・なぜ・どの判断で**を日本語で説明します。
-一方、**実際のコマンド手順の正は [deploy/compose/README.md](../../../deploy/compose/README.md)（英語 runbook）**
-です。このガイドはコマンドを複製せず、「どの節を見ればよいか」へ誘導します。内部の仕組みを
-知りたいときは開発者向け [dev/09 デプロイ](../../dev/09-deploy.md) と [dev/07 セキュリティ](../../dev/07-security.md)
-を参照してください（リンクは guide → dev の一方向）。
+This guide is for the people who **deploy, operate, and protect** Agent Fleet on their own
+infrastructure (IT / SRE staff with SSH access to the host OS and `super_admin` privileges).
+No knowledge of the development workflow is assumed. What you need is a general grounding in
+Docker, DNS, OAuth, and backup operations.
 
-## この分冊の構成
+For those in the position where "if it breaks, only I can fix it," this guide explains
+**what, why, and by which decisions**. Meanwhile, **the source of truth for the actual command
+procedures is [deploy/compose/README.md](../../../deploy/compose/README.md) (the English runbook)**.
+This guide does not duplicate commands; it points you to the right section. If you want to know
+how things work internally, see the developer docs [dev/09 Deploy](../../dev/09-deploy.md) and
+[dev/07 Security](../../dev/07-security.md) (links go one way: guide → dev).
 
-| ファイル | 内容 |
+## Structure of this volume
+
+| File | Contents |
 |----------|------|
-| [README.md](README.md)（本書）| 全体像・構成要素・運用者の責務・導入検討者向けの要約 |
-| [01-install.md](01-install.md) | 初期構築（秘密の生成・OAuth 設定・起動・初回ログイン・最初のテナント）|
-| [02-operations.md](02-operations.md) | 日常運用（バックアップ・リストア・アップグレード・閉域・停止）|
-| [03-security.md](03-security.md) | セキュリティ運用（脅威モデル・残存リスク・egress 統制・報告窓口）|
-| [04-troubleshooting.md](04-troubleshooting.md) | 障害対応と FAQ（DooD 3制約の診断・切り分けフロー）|
+| [README.md](README.md) (this document) | Big picture, components, operator responsibilities, summary for prospective adopters |
+| [01-install.md](01-install.md) | Initial setup (generating secrets, OAuth configuration, startup, first login, first tenant) |
+| [02-operations.md](02-operations.md) | Day-to-day operations (backup, restore, upgrades, air-gapped networks, shutdown) |
+| [03-security.md](03-security.md) | Security operations (threat model, residual risks, egress controls, reporting channel) |
+| [04-troubleshooting.md](04-troubleshooting.md) | Incident response and FAQ (diagnosing the 3 DooD constraints, triage flow) |
 
 ---
 
-## 導入を検討している方へ
+## For those considering adoption
 
-「何ができて、何が必要で、セキュリティ姿勢はどうか」をここに要約します。技術評価の入口として
-まずこの節を読んでください。
+This section summarizes "what it can do, what it requires, and what its security posture is."
+Read this section first as the entry point for a technical evaluation.
 
-### できること
+### What it can do
 
-- 社内メンバーが **ブラウザから** Claude Code などの CLI コーディングエージェントを使えます。
-  各自が隔離された環境（**Workspace** = 専用コンテナ）を持ち、リポジトリを clone して AI
-  セッションや shell を起動・操作します。ターミナルに不慣れなメンバー向けのチャット中心の
-  使い方もあります。
-- 管理者（`super_admin` / `tenant_admin`）は、メンバーの追加、資源上限（メモリ・アイドル停止）、
-  利用量の可視化、監査ログの閲覧、通信先の観測をブラウザの Admin パネルから行えます。
-- 部署ごとに**テナント**を分ければ、Workspace は互いに完全分離されます（既定は単一テナント）。
+- Your team members can use CLI coding agents such as Claude Code **from a browser**.
+  Each member gets an isolated environment (**Workspace** = a dedicated container), clones
+  repositories, and launches and drives AI sessions and shells. There is also a chat-centric
+  way of working for members who are not comfortable with a terminal.
+- Administrators (`super_admin` / `tenant_admin`) can add members, set resource limits
+  (memory, idle shutdown), visualize usage, view audit logs, and observe outbound destinations,
+  all from the Admin panel in the browser.
+- If you split departments into **tenants**, their Workspaces are fully isolated from each
+  other (the default is a single tenant).
 
-### 前提（導入に必要なもの）
+### Prerequisites (what you need to adopt)
 
-- **Docker が動く Linux ホスト**（Docker Engine + `docker compose`）。1 台で完結します。
-- **公開ドメイン**と、そのホストを指す DNS の A/AAAA レコード（自動 TLS のため）。
-  社内限定・公開 DNS を用意できない場合は自己署名 TLS の代替手段があります（[01](01-install.md) 参照）。
-- **Google OAuth 2.0 の Web クライアント**（ログイン用）。
-- チームの **Claude シートは各自が持ち込み**（BYO）。初回起動後、各メンバーが Console から
-  自分のシートでログインします。個人の Pro/Max より会社の Team/Enterprise シートを推奨します。
+- **A Linux host that runs Docker** (Docker Engine + `docker compose`). A single host is all it takes.
+- **A public domain** and DNS A/AAAA records pointing at that host (for automatic TLS).
+  If your deployment is internal-only and you cannot provide public DNS, there is a
+  self-signed TLS alternative (see [01](01-install.md)).
+- **A Google OAuth 2.0 web client** (for login).
+- Your team's **Claude seats are brought by each member** (BYO). After the first startup,
+  each member logs in with their own seat from the Console. Company Team/Enterprise seats
+  are recommended over personal Pro/Max.
 
-### 提供モデルとセキュリティ姿勢（要約）
+### Delivery model and security posture (summary)
 
-- **1 社 = 1 デプロイ**。各社が自社インフラに独立したインスタンスを立てます。会社間の分離は
-  「プロセス内の境界」ではなく「**別デプロイ**」で担保します。これにより、万一の侵害の影響範囲
-  （blast radius）は**そのデプロイ 1 つの内側に限定**されます。
-- Workspace の中では AI エージェントが**任意コードを実行**する前提で境界を設計しています。守る
-  対象は「他ユーザーのデータ・CP/ホスト基盤・シークレット・情報持ち出し」です。
-- 正直に開示すべき残存リスクが 4 点あります（`docker.sock` = ホスト root 相当、`AF_MASTER_KEY`
-  紛失 = crypto-shred、バックアップの機微性、ホストアクセス = 全権）。詳細は [03-security.md](03-security.md)
-  と対外向け [SECURITY.md](../../../SECURITY.md) にまとめてあります。導入判断の前に必ず目を通して
-  ください。
+- **One company = one deployment.** Each company stands up an independent instance on its own
+  infrastructure. Isolation between companies is guaranteed by **separate deployments**, not by
+  "in-process boundaries." As a result, the impact of a compromise (blast radius) is **confined
+  to the inside of that one deployment**.
+- Inside a Workspace, the boundaries are designed on the assumption that AI agents **execute
+  arbitrary code**. What we protect is "other users' data, the CP/host infrastructure, secrets,
+  and data exfiltration."
+- There are 4 residual risks that must be disclosed honestly (`docker.sock` = host-root
+  equivalent, losing `AF_MASTER_KEY` = crypto-shred, the sensitivity of backups, host access =
+  full control). Details are collected in [03-security.md](03-security.md) and the public-facing
+  [SECURITY.md](../../../SECURITY.md). Be sure to read them before making an adoption decision.
 
-より広い全体像はプロジェクトの [README](../../../README.md) と [dev/01 アーキテクチャ](../../dev/01-architecture.md)
-にあります。
+For the broader picture, see the project [README](../../../README.md) and
+[dev/01 Architecture](../../dev/01-architecture.md).
 
 ---
 
-## 構成要素（運用者が把握すべき最小モデル）
+## Components (the minimal model an operator must understand)
 
-1 台のホスト上で、`docker compose` が **2 つのサービス**を管理します。
+On a single host, `docker compose` manages **two services**.
 
-- **Control Plane（CP）** — 頭脳。ログイン認証、テナント/メンバー管理、Workspace の起動・停止、
-  すべての API 中継を担います。CP はコンテナですが、**ホストの Docker デーモンを外から駆動して**
-  Workspace コンテナを起こします（この方式を DooD = docker-out-of-docker と呼びます）。
-- **Caddy** — 入口（reverse proxy）。公開ドメインの TLS を Let's Encrypt から自動取得・更新し、
-  背後の CP へ転送します。
+- **Control Plane (CP)** — the brain. It handles login authentication, tenant/member
+  management, starting and stopping Workspaces, and relaying all API traffic. The CP is a
+  container, but it **drives the host's Docker daemon from the outside** to start Workspace
+  containers (this approach is called DooD = docker-out-of-docker).
+- **Caddy** — the front door (reverse proxy). It automatically obtains and renews the TLS
+  certificate for the public domain from Let's Encrypt and forwards traffic to the CP behind it.
 
-一方、**ユーザーの Workspace コンテナ（`af-ws-<user>`）は compose の管理対象ではありません**。
-CP が実行時に `docker run` で起こします。これは運用上とても重要な性質です。
+Meanwhile, **user Workspace containers (`af-ws-<user>`) are not managed by compose**.
+The CP starts them at runtime with `docker run`. This is a very important operational property.
 
-- `docker compose down` や CP の再起動で **Workspace は止まりません**（ユーザーは切断されない）。
-- バックアップ時に CP を一瞬止めても、稼働中の Workspace は影響を受けません。
-- 一方で「compose を止めれば全部止まる」わけではないので、力業で全 Workspace を止めたいときは
-  別の操作が要ります（[02](02-operations.md) の force-stop）。
+- `docker compose down` or restarting the CP **does not stop Workspaces** (users are not disconnected).
+- Briefly stopping the CP during a backup does not affect running Workspaces.
+- On the other hand, "stopping compose stops everything" is not true, so if you want to
+  forcibly stop all Workspaces, you need a separate operation (force-stop in [02](02-operations.md)).
 
-永続データは**すべて `DATA_DIR`（既定 `/srv/agent-fleet/data`）の下**にあります。DB・各ユーザーの
-home・封筒暗号された資格情報・Caddy の証明書。バックアップはこのディレクトリを対象にします。
-唯一の例外が `AF_MASTER_KEY` で、これは `DATA_DIR` にもバックアップにも**入りません**（後述）。
+Persistent data lives **entirely under `DATA_DIR` (default `/srv/agent-fleet/data`)**: the DB,
+each user's home, envelope-encrypted credentials, and Caddy's certificates. Backups target this
+directory. The sole exception is `AF_MASTER_KEY`, which goes into **neither** `DATA_DIR` **nor**
+backups (see below).
 
-DooD 方式には破ると静かに壊れる 3 つの制約（host ネットワーク・`DATA_DIR` 同一絶対パス・docker
-グループ GID）があります。compose 定義がこれを封じ込めていますが、意味は [04](04-troubleshooting.md)
-で診断の観点から説明します。仕組みの背景は [dev/09](../../dev/09-deploy.md) にあります。
+The DooD approach has 3 constraints that break things silently when violated (host networking,
+the identical absolute `DATA_DIR` path, and the docker group GID). The compose definition
+contains them, but their meaning is explained from a diagnostic perspective in
+[04](04-troubleshooting.md). The background on how this works is in [dev/09](../../dev/09-deploy.md).
 
-## 運用者の責務チェックリスト
+## Operator responsibility checklist
 
-- [ ] `AF_MASTER_KEY` を**データとは別の金庫**に保管し、独立してバックアップした（紛失 = 全資格
-      情報が永久に復号不能）。
-- [ ] `backup.sh` を cron で定期実行し、アーカイブの保管先を権限・暗号化で保護している。
-- [ ] リストア手順を一度は実地で試し、`DATA_DIR` の basename 制約を理解している。
-- [ ] アップグレード前に必ずバックアップを取る運用にしている（**ダウングレード不可**）。
-- [ ] ログイン許可リスト（`AF_OAUTH_ALLOWED_*`）を適切に設定した（空 = 全拒否の fail-closed）。
-- [ ] ホスト OS への SSH・sudo・docker 実行権限を持つ人を最小限に絞っている（= ホスト root 相当）。
-- [ ] egress 統制を入れる場合、log-only で観測してから enforce へ段階的に進める方針を理解している。
-- [ ] 脆弱性を見つけたときの報告手順（[SECURITY.md](../../../SECURITY.md)）を把握している。
+- [ ] Stored `AF_MASTER_KEY` in **a vault separate from the data** and backed it up
+      independently (loss = all credentials become permanently undecryptable).
+- [ ] Run `backup.sh` regularly via cron, and protect the archive storage location with
+      permissions and encryption.
+- [ ] Tried the restore procedure at least once for real, and understand the `DATA_DIR`
+      basename constraint.
+- [ ] Always take a backup before upgrading (**downgrade is not possible**).
+- [ ] Configured the login allowlist (`AF_OAUTH_ALLOWED_*`) appropriately (empty = deny all,
+      fail-closed).
+- [ ] Kept the set of people with SSH, sudo, and docker execution rights on the host OS to a
+      minimum (= host-root equivalent).
+- [ ] If introducing egress controls, understand the policy of observing in log-only mode
+      first, then moving to enforce in stages.
+- [ ] Know the procedure for reporting a vulnerability you find
+      ([SECURITY.md](../../../SECURITY.md)).

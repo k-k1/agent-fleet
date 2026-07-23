@@ -8,7 +8,7 @@ import { useTtsStore, toggleTtsPlayback } from "../core/store/tts.ts";
 import { useSettingsUI } from "../features/settings/store.ts";
 import { rel, clearLocalState } from "../core/api/client.ts";
 import { useSettings, setSetting, THEMES, SURFACE_TARGETS, LOCALES } from "../lib/settings.ts";
-import { useT } from "../lib/i18n/index.ts";
+import { useT, getLocale } from "../lib/i18n/index.ts";
 import { useIsMobile, isStandalonePWA } from "../lib/device.ts";
 import { buildInfo, buildLabel } from "../lib/version.ts";
 import { Icon } from "../ui/Icon.tsx";
@@ -95,9 +95,14 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
   const openSettings = useSettingsUI((st) => st.openSettings);
   const openAdmin = useSettingsUI((st) => st.openAdmin);
   const openGuide = useSettingsUI((st) => st.openGuide);
+  // The guide ships per language: English is canonical (README.md), Japanese
+  // lives beside it as README.ja.md — open the one matching the UI locale.
   const openUserGuide = () =>
     useLayoutStore.getState().openTargetInNew({
-      content: { kind: "file", filePath: "/usr/local/share/agent-fleet/docs/guide/member/README.md" },
+      content: {
+        kind: "file",
+        filePath: `/usr/local/share/agent-fleet/docs/guide/member/README${getLocale() === "ja" ? ".ja" : ""}.md`,
+      },
     }, true);
   const run = (fn: () => void) => {
     setMenuOpen(false);

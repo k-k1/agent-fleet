@@ -1,140 +1,143 @@
-# 09. 困ったとき — 症状別の対処と FAQ
+# 09. Troubleshooting — fixes by symptom and FAQ
 
-> 対象: 何かがうまくいかないメンバー。まず「症状別」で自分の状況を探し、当てはまらなければ
-> 末尾の FAQ を見てください。各項目は本編の該当章にリンクしています。
+English | [日本語](09-troubleshooting.ja.md)
 
-## 症状別インデックス
+> Audience: members when something isn't working. Start with the "by symptom" index and look
+> for your situation; if nothing matches, check the FAQ at the end. Each entry links to the
+> relevant chapter of the main guide.
 
-### claude を選ぶとログイン画面（「Select login method」）が出る
+## Index by symptom
 
-接続そのものは生きていることがほとんどです。これは認証ではなく、対話画面が
-オンボーディングをやり直しているだけで、多くはセッションを **再開**するか、
-⋯ メニューの **「作り直す（今の会話はアーカイブへ）」** で解消します。
-端末内で手動 `/login` する従来のやり方も併用できます。接続状態は
-⚙設定 → 「エージェント」タブで確認できます（[06](06-agents.md)）。
+### Selecting claude shows a login screen ("Select login method")
 
-### セッションが再開できない／打ち消し線になっている
+In most cases the connection itself is still alive. This isn't an authentication problem —
+the interactive screen is just redoing its onboarding, and it usually clears if you
+**resume** the session or use **"Recreate (current conversation goes to the archive)"**
+from the ⋯ menu. The traditional manual `/login` inside the terminal works alongside this too.
+You can check the connection status in ⚙ Settings → the "Agents" tab ([06](06-agents.md)).
 
-状態が **「フォルダ無し — 再開不可」** なら、そのセッションの**作業フォルダが消えて**います
-（worktree ごと削除した後などが典型）。claude / opencode はこの状態から再開できません。
-同じ内容を新しいセッションとして起動し直してください。shell は作業フォルダが無ければ
-ホームに戻って再開します（[02](02-sessions.md)）。
+### A session won't resume / is shown struck through
 
-### クローンに失敗する
+If the state is **"Folder missing — can't resume"**, that session's **working folder is gone**
+(typically after deleting the whole worktree). claude / opencode cannot resume from this state.
+Start the same work over as a new session. shell falls back to home and resumes if the
+working folder is missing ([02](02-sessions.md)).
 
-- private リポジトリは、先に GitHub / Bitbucket の**接続**が必要です（⚙設定 → 「Git」タブ）。「未接続」と出ていないか確認してください。
-- URL とブランチ名の綴りを確認します。
-- submoduleはクローン後にベストエフォートで取得され、失敗しても親のクローン自体は成功します（[04](04-git.md)）。
+### Cloning fails
 
-### private リポジトリで認証エラーになる
+- Private repositories need a GitHub / Bitbucket **connection** first (⚙ Settings → "Git hosting" tab). Check whether it says "Not connected".
+- Double-check the spelling of the URL and branch name.
+- Submodules are fetched best-effort after the clone; even if they fail, the parent clone itself succeeds ([04](04-git.md)).
 
-⚙設定 → 「Git」タブで、該当プロバイダが **「接続済み」** かを確認してください。
-未接続なら OAuth かトークンで接続します。接続後は認証が透過するので、以後は
-トークン入力なしでクローン／pushできます（[04](04-git.md)・[06](06-agents.md)）。
+### Authentication errors on a private repository
 
-### ブラウザペインが `target-unreachable` になる／真っ白・404 になる
+In ⚙ Settings → the "Git hosting" tab, check that the provider in question is **"Connected"**.
+If it isn't, connect via OAuth or a token. Once connected, authentication is transparent, so
+from then on you can clone / push without entering tokens ([04](04-git.md) · [06](06-agents.md)).
 
-- **`target-unreachable`** は、ブラウザは起動したものの、そのポート/path への接続がまだ成立していない状態です。
-  開発サーバーの**起動待ち**でも出ます。ポート番号と path、サーバーが本当に立ち上がっているかを確認し、
-  起動後に **「再読み込み」**、それでも残るなら **「再接続」** を押してください。
-- **`127.0.0.1`（localhost）で listen していれば届きます。** ブラウザは同じワークスペース内から `127.0.0.1`
-  へ直接つなぐため、loopback だけの listen で問題なく開けます（外部公開のための `0.0.0.0` は不要です）。
-  それでも届かないときは、サーバーが本当にそのポートで起動しているか、ポート番号の打ち間違いがないかを確認します。
-- **真っ白・404** は、絶対パスで asset を読むアプリを**軽量プレビュー**で開いたときに起きがちです。この場合は
-  画面表示を **「ペインで開く」（ブラウザペイン）** に切り替えてください。ブラウザペインは絶対 asset・リダイレクトを
-  通常の localhost ブラウジングと同じように扱えるため、多くはそのまま表示できます。どうしても軽量プレビューで
-  見たい場合は、Spring Boot なら `server.forward-headers-strategy=framework`（または `native`）を設定、
-  その他は base path をアプリ側で調整します（[08](08-advanced.md)）。
+### The browser pane shows `target-unreachable` / goes blank or 404
 
-### HMR（ライブリロード）が効かない／自動更新されない
+- **`target-unreachable`** means the browser started, but the connection to that port/path hasn't been established yet.
+  It also appears while a dev server is **still starting up**. Check the port number and path, and that the server has really started;
+  once it's up press **"Reload"**, and if the state persists, press **"Reconnect"**.
+- **Listening on `127.0.0.1` (localhost) is enough for it to reach.** The browser connects directly to `127.0.0.1`
+  from inside the same workspace, so a loopback-only listen opens without issues (`0.0.0.0` for external exposure is not needed).
+  If it still can't reach, verify that the server really is up on that port and that you didn't mistype the port number.
+- **A blank page / 404** tends to happen when you open an app that loads assets by absolute path in the **lightweight preview**. In that case
+  switch the display to **"Open in pane"** (browser pane). The browser pane handles absolute assets and redirects
+  just like ordinary localhost browsing, so most apps render as-is. If you really must use the lightweight preview,
+  set `server.forward-headers-strategy=framework` (or `native`) for Spring Boot,
+  or adjust the base path on the app side for anything else ([08](08-advanced.md)).
 
-- **軽量プレビュー**は HTTP 一回確認用で、**WebSocket / SSE に非対応**です。そのため Vite / React の
-  **HMR（ホットリロード）は効きません**。HMR が必要なときは **「ペインで開く」（ブラウザペイン）** を使ってください。
-  ブラウザペインなら HMR・WebSocket・SSE がふつうの localhost と同じように動きます（[08](08-advanced.md)）。
+### HMR (live reload) doesn't work / no automatic refresh
 
-### ブラウザペインが `crashed` / `disconnected` になる・繰り返し落ちる
+- The **lightweight preview** is for one-off HTTP checks and **does not support WebSocket / SSE**. That's why Vite / React
+  **HMR (hot reload) does not work** there. When you need HMR, use **"Open in pane"** (browser pane).
+  In the browser pane, HMR, WebSocket, and SSE work just like plain localhost ([08](08-advanced.md)).
 
-- **`disconnected`** は通信（WebSocket）が切れた状態で、必ずしも異常終了ではありません。ワークスペースが
-  稼働中かを確認して **「再接続」** を押します。
-- **`crashed`** はワークスペース内のブラウザが異常終了した状態です。**「再接続」** で開き直してください。
-- **短時間に繰り返し落ちる**ときは、ワークスペースのメモリ不足が疑われます。重いビルドや watcher、開いたままの
-  ブラウザペインを整理し、ブラウザペインは同時 **2 つまで**である点も踏まえて使ってください。メモリの見方と
-  対処は後述の FAQ「ビルドでメモリが足りず落ちる／固まる」も参照（[08](08-advanced.md)）。
+### The browser pane shows `crashed` / `disconnected`, or keeps dying
 
-### 通知が来ない
+- **`disconnected`** means the communication channel (WebSocket) dropped — not necessarily an abnormal exit. Check that the
+  workspace is running and press **"Reconnect"**.
+- **`crashed`** means the browser inside the workspace terminated abnormally. Reopen it with **"Reconnect"**.
+- **If it keeps dying within a short time**, workspace memory pressure is the likely suspect. Clean up heavy builds, watchers, and
+  browser panes left open, and keep in mind that browser panes are limited to **2** at a time. For how to check memory and
+  what to do about it, also see the FAQ entry "Builds die / freeze from running out of memory" below ([08](08-advanced.md)).
 
-ブラウザの通知許可がオフだと出ません（初回に許可を求められます）。また、そのセッションの
-画面を開いている間は通知が**抑止**されます。shell / ssm は状態通知の対象外です
-（[02](02-sessions.md)）。
+### No notifications arrive
 
-### codex を接続したいのに、承認しても進まない
+They won't appear if the browser's notification permission is off (you're asked to allow it the first time). Also, notifications are
+**suppressed** while you have that session's screen open. shell / ssm are outside the scope of state notifications
+([02](02-sessions.md)).
 
-ChatGPT サブスクでの接続は、**ChatGPT の「設定 > セキュリティ」で「Codex に対して
-デバイスコード認証を有効にする」をオン**にしておく必要があります。オフだと承認しても
-先に進みません（[06](06-agents.md)）。
+### I want to connect codex, but approving doesn't get me anywhere
 
-### 端末で Ctrl+C が効かない／コピペできない
+To connect with a ChatGPT subscription, you must first **turn on "Enable device code
+authentication for Codex" under ChatGPT's "Settings > Security"**. If it's off, approving
+won't get you any further ([06](06-agents.md)).
 
-仕様です。端末では Ctrl+C は割り込み（SIGINT）としてプログラムに渡ります。**コピーは
-選択で自動、またはCtrl+Shift+C、ペーストは右クリック / 中クリック / Ctrl+Shift+V** を
-使ってください（[03](03-terminal.md)）。
+### Ctrl+C doesn't work in the terminal / I can't copy-paste
 
-### スマホでキーボードが勝手に出る／操作しづらい
+Working as intended. In the terminal, Ctrl+C is passed to the program as an interrupt (SIGINT). **Copy is
+automatic on select, or Ctrl+Shift+C; paste with right-click / middle-click / Ctrl+Shift+V**
+([03](03-terminal.md)).
 
-端末下の**コントロールキー列**（`Esc` `Tab` 矢印 `^C` `⏎`）は、ソフトキーボードを
-呼ばずにキーを送れます。過去の出力は**1 本指の縦スワイプ**で遡れます。左ペインは
-画面左上の **≡（メニュー）**で出し入れします（[03](03-terminal.md)）。
+### On a phone, the keyboard pops up on its own / it's hard to operate
 
-### ライトテーマにしても端末だけ暗い
+The **control key row** under the terminal (`Esc` `Tab` arrows `^C` `⏎`) sends keys without
+bringing up the soft keyboard. You can scroll back through past output with a **one-finger vertical swipe**. Toggle the left pane
+with the **≡ (menu)** at the top left of the screen ([03](03-terminal.md)).
 
-既知の仕様です。テーマを切り替えても端末（黒い画面）の背景は暗いままです。ファイル
-ビュアーや他の画面はテーマに追従します（[03](03-terminal.md)）。
+### Only the terminal stays dark on the light theme
 
-### ワークスペースがいつのまにか止まっている
+Known behavior. Even after switching themes, the terminal (the black screen) background stays dark. The file
+viewer and other screens follow the theme ([03](03-terminal.md)).
 
-しばらく操作がないと**自動で停止**します（アイドル自動停止）。ワークスペース操作バーの「起動」で
-もう一度「起動」を押せば、セッション一覧もクローンも接続もそのまま戻ります（[01](01-first-day.md)）。
+### The workspace has stopped without me noticing
+
+It **stops automatically** after a while with no activity (idle auto-stop). Press "Start" in the workspace action bar
+once more, and your session list, clones, and connections all come back as they were ([01](01-first-day.md)).
 
 ## FAQ
 
-**Q. 消したセッションは戻せる？**
-「アーカイブする」で隠しただけなら、アーカイブ済み一覧の「復帰」で戻せます。「停止する
-（あとで再開できる）」なら停止中として残り、クリックで再開できます。shell / ssm の
-「削除する」は取り消せません（会話ログのファイル自体は残ります）。違いは
-[02 セッション](02-sessions.md) を参照。
+**Q. Can I get a deleted session back?**
+If you only hid it with "Archive", you can bring it back with "Restore" in the archived list. With "Stop
+(resumable later)" it remains as stopped and can be resumed with a click. "Delete" for shell / ssm
+cannot be undone (the conversation log files themselves remain). For the differences, see
+[02 Sessions](02-sessions.md).
 
-**Q. 会社の PC と自宅の PC、両方から使える？**
-はい。ログイン・接続も、フォント／文字サイズなどの表示設定もサーバーに保存され、
-別の端末・ブラウザでも追従します（[03](03-terminal.md)）。
+**Q. Can I use it from both my work PC and my home PC?**
+Yes. Your login and connections, as well as display settings like font / text size, are stored on the server
+and follow you on other devices and browsers ([03](03-terminal.md)).
 
-**Q. ワークスペースを止めたら作業は消える？**
-消えません。クローン・未コミットの変更・セッション一覧・接続はすべて残ります。ただし
-未コミット変更はワークスペースの中だけにあるので、長期保存はコミット／push を
-（[01](01-first-day.md)・[04](04-git.md)）。
+**Q. If I stop the workspace, is my work lost?**
+No. Clones, uncommitted changes, the session list, and connections all remain. However,
+uncommitted changes exist only inside the workspace, so commit / push for long-term safekeeping
+([01](01-first-day.md) · [04](04-git.md)).
 
-**Q. 複数のタスクを同時に走らせていい？**
-はい。セッションごとに独立した worktree で作業すれば、編集がぶつかりません。既定で
-worktree が作られます（[02](02-sessions.md)・[04](04-git.md)）。
+**Q. Is it OK to run several tasks at the same time?**
+Yes. If each session works in its own independent worktree, edits won't collide. Worktrees are
+created by default ([02](02-sessions.md) · [04](04-git.md)).
 
-**Q. 「停止」「削除」「アーカイブ」「作り直す」の違いは？**
-停止＝止めるだけ（再開可）、削除＝一覧から消す（使い捨て種別）、アーカイブ＝隠す（復帰可）、
-作り直す＝同じ場所で新しい会話（今の会話はアーカイブへ）。詳細は [02](02-sessions.md)。
+**Q. What's the difference between "Stop", "Delete", "Archive", and "Recreate"?**
+Stop = just pause (resumable), Delete = remove from the list (throwaway kinds), Archive = hide (restorable),
+Recreate = a new conversation in the same place (the current conversation goes to the archive). Details in [02](02-sessions.md).
 
-**Q. opencode が新規セッションの種類に出てこない**
-API キーを 1 つも登録していないと選べません。⚙設定 → 「エージェント」タブで opencode に
-キーを登録してください（[06](06-agents.md)）。
+**Q. opencode doesn't show up among the new-session kinds**
+It can't be selected until you've registered at least one API key. Register a key for opencode in
+⚙ Settings → the "Agents" tab ([06](06-agents.md)).
 
-**Q. ビルドでメモリが足りず落ちる／固まる**
-ホストは共有・メモリ制約があります。Node 系ビルドは必要なコマンドだけヒープを上げ
-（例: `NODE_OPTIONS=--max-old-space-size=2048`）、テストランナーの並列は抑え、watcher や
-dev サーバーを放置しないでください。Gradle は使い終わったら `./gradlew --stop`。
-重いビルドは 1 つずつ実行します。
+**Q. Builds die / freeze from running out of memory**
+The host is shared and memory-constrained. For Node builds, raise the heap only for the command that needs it
+(e.g. `NODE_OPTIONS=--max-old-space-size=2048`), keep test-runner parallelism low, and don't leave watchers or
+dev servers running. With Gradle, run `./gradlew --stop` when you're done.
+Run heavy builds one at a time.
 
-**Q. `git-delta` や `sudo` が見当たらない**
-ワークスペースのイメージには意図的に含めていません（隔離維持などの理由）。必要なツールは
-ユーザー領域に自分で入れられます（`pip install --user` は永続します）。
+**Q. I can't find `git-delta` or `sudo`**
+They are deliberately left out of the workspace image (to preserve isolation, among other reasons). Tools you need
+can be installed into your user area yourself (`pip install --user` persists).
 
 ---
 
-これで解決しないときは、チームの管理者や情シスに、症状と（あれば）表示されたメッセージを
-添えて相談してください。仕組み側の詳細は開発者向け [dev/](../../dev/README.md) にあります。
+If this doesn't solve it, ask your team admin or IT department, including the symptom and
+(if any) the message that was shown. The internals are covered in the developer docs [dev/](../../dev/README.md).

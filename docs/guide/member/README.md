@@ -1,97 +1,106 @@
-# member/ — 開発者向け利用ガイド
+# member/ — User guide for developers
 
-> 対象: Console で日々コードを書くメンバー開発者。この分冊は、ログインから
-> セッション・git・ファイル・エージェント・チャット・困ったときまでを、使い始めの
-> 時系列で追えるようにまとめたものです。まずこのページで画面の全体像と用語をつかんでから、
-> [01 初日](01-first-day.md) に進んでください。
+English | [日本語](README.ja.md)
 
-## このガイドの読み方
+> Audience: member developers who write code in the Console every day. This volume covers
+> everything from logging in through sessions, git, files, agents, chat, and what to do when
+> you get stuck, arranged so you can follow it in the order you'll need it as you start out.
+> Get the overall picture of the screen and the terminology on this page first, then move on
+> to [01 First day](01-first-day.md).
 
-章は**使い始めの時系列**で並んでいます。上から順に読めば、初日にやること →
-日々の作業 → 一歩進んだ使い方、と自然につながります。困ったときは
-[09 困ったとき](09-troubleshooting.md) を先に開いても構いません。
+## How to read this guide
 
-画面上の名前を確認したいときは [画面と用語](ui-and-terms.md)、色付きの印や
-右クリック操作を調べたいときは [アイコン・バッジ・メニュー](badges-and-menus.md) を参照してください。
+The chapters are arranged **chronologically from your first day**. Read them from the top
+and they flow naturally: what to do on day one → daily work → going further. When you're
+stuck, it's fine to open [09 Troubleshooting](09-troubleshooting.md) first.
 
-## 目次
+To check what something on the screen is called, see [UI and terminology](ui-and-terms.md);
+to look up colored marks and right-click actions, see [Icons, badges, and menus](badges-and-menus.md).
 
-1. [初日](01-first-day.md) — ログイン、ようこそカード（2ステップ＋目的選択）、最初のクローン、一日の終わり
-2. [セッション](02-sessions.md) — AI との会話を起動・切り替え・止める
-3. [ターミナル](03-terminal.md) — 黒い画面の操作・コピペ・ショートカット・スマホ
-4. [リポジトリと git](04-git.md) — クローン・変更の確認・コミット・push（SVN もこちら）
-5. [ファイル](05-files.md) — ツリー・ビュアー・Markdown/スライドの表示
-6. [エージェント](06-agents.md) — claude / codex / opencode / GitHub Copilot / Cursor の接続と選び方
-7. [チャットとメモ](07-chat-memo.md) — リポジトリを使わない質問・翻訳・メモ溜め
-8. [一歩進んだ使い方](08-advanced.md) — ブラウザペイン／軽量プレビュー・Discord / Slack 連携・別ホスト・環境設定
-9. [困ったとき](09-troubleshooting.md) — 症状別の対処と FAQ
-10. [運用ツール連携 PoC](10-ops-mcp-poc.md) 🧪 — PagerDuty / Grafana / CloudWatch を MCP で繋いでインシデント壁打ち（実験的）
-11. [フリート・オペレーター](11-fleet-operator.md) — 複数セッションをチャットで指揮・引き継ぎ・並列作業・定時実行
+## Table of contents
 
-操作の「やり方」はこのガイドが正です。内部の「仕組み」を知りたくなったら、各章末の
-「仕組みを知りたい人へ」リンクから開発者向け [dev/](../../dev/README.md) へどうぞ。
+1. [First day](01-first-day.md) — Logging in, the welcome card (2 steps + picking a goal), your first clone, the end of the day
+2. [Sessions](02-sessions.md) — Launching, switching, and stopping conversations with AI
+3. [Terminal](03-terminal.md) — Working the black screen, copy & paste, shortcuts, phones
+4. [Repositories and git](04-git.md) — Cloning, reviewing changes, committing, pushing (SVN too)
+5. [Files](05-files.md) — Tree, viewer, Markdown/slide display
+6. [Agents](06-agents.md) — Connecting and choosing claude / codex / opencode / GitHub Copilot / Cursor
+7. [Chat and memos](07-chat-memo.md) — Questions and translations without a repository, collecting memos
+8. [Going further](08-advanced.md) — Browser pane / lightweight preview, Discord / Slack integration, other hosts, environment settings
+9. [Troubleshooting](09-troubleshooting.md) — Fixes by symptom, plus an FAQ
+10. [Ops tooling PoC](10-ops-mcp-poc.md) 🧪 — Wiring up PagerDuty / Grafana / CloudWatch over MCP to talk through incidents (experimental)
+11. [Fleet operator](11-fleet-operator.md) — Directing multiple sessions from chat, handover, parallel work, scheduled runs
 
-Console では、右上のアカウントメニューにある **「利用ガイド」** から、ワークスペースの
-起動中にこの目次をいつでもファイルビューアで開けます。停止中は、先に「起動」を押してください。
+For the "how to do it", this guide is canonical. When you get curious about the internal
+"how it works", follow the "For those who want to know how it works" link at the end of each
+chapter into the developer-facing [dev/](../../dev/README.md).
 
-## 画面の名前
+In the Console, you can open this table of contents in the file viewer at any time while the
+workspace is running, via **"User guide"** in the account menu at the top right. If the
+workspace is stopped, press "Start workspace" first.
 
-Console は**上に 2 段のバー**、**左にペイン**、**中央にメイン領域**という構成です。
-詳しい名称と用語は [画面と用語](ui-and-terms.md) にまとめています。
+## Parts of the screen
 
-### 上段: 画面最上部のバー
+The Console is laid out as **two bars at the top**, a **pane on the left**, and a **main
+area in the center**. Detailed names and terms are collected in
+[UI and terminology](ui-and-terms.md).
 
-画面いちばん上の横帯です。左からアプリ名（Agent Fleet）、**テナント選択**（部署などの
-切り替え。既定は 1 つなので触らないことも多い）、右側に **⚙設定**、アカウント
-（あなたの表示）が並びます。チームを管理する権限がある人だけ、さらに**盾のアイコン**
-（管理者向けの画面）が出ます。
+### Top row: the bar at the very top of the screen
 
-### 下段: ワークスペース操作バー
+This is the horizontal strip at the very top of the screen. From the left: the app name
+(Agent Fleet), the **tenant selector** (switching between departments and the like; the
+default is a single tenant, so you may never touch it), and on the right **⚙ Settings** and
+your account (how you appear). Only people with team-management permissions also see a
+**shield icon** (the admin screens).
 
-その下の帯が、あなた専用の環境＝**ワークスペース**を操作する**ワークスペース操作バー**です。
-「はじめる」、起動・停止、プレビュー、画面分割など、作業全体に関わる操作が並びます。
+### Bottom row: the workspace action bar
 
-- **● 状態ランプ** — ワークスペースが**稼働中**か**停止中**かを色で示します。数秒ごとに自動で最新化されるので、手動更新は不要です。
-- **起動 / 停止ボタン** — 1 つのボタンでワークスペースを起動・停止します。
-- **プレビュー** — ワークスペース内で立ち上げた Web サービスを、Console のペインに映す **ブラウザペイン**、または別タブで開く **軽量プレビュー**で確認する入口です（[08 一歩進んだ使い方](08-advanced.md)）。
+The strip below that is the **workspace action bar**, which operates your own private
+environment — your **workspace**. It holds the operations that affect your work as a whole:
+"Start", start/stop, Preview, pane splitting, and so on.
 
-### 左ペイン
+- **● Status lamp** — shows by color whether the workspace is **running** or **stopped**. It refreshes automatically every few seconds, so there is no need to reload manually.
+- **Start / Stop workspace button** — a single button that starts and stops the workspace.
+- **Preview** — the entry point for viewing a web service you started inside the workspace, either in the **browser pane** rendered inside a Console pane, or in the **lightweight preview** that opens in another tab ([08 Going further](08-advanced.md)).
 
-ワークスペースが動いているときは、次のセクションが縦に並びます。
+### Left pane
 
-- **アシスタント** — リポジトリを使わない簡単なチャット（[07](07-chat-memo.md)）。
-- **メモキュー** — あとでまとめて送る指示のメモ（[07](07-chat-memo.md)）。
-- **リポジトリ** — 作業コピーと、その場所で動くセッション（[02](02-sessions.md)・[04](04-git.md)）。
-- **その他のセッション** — リポジトリに属さないセッション（[02](02-sessions.md)）。
-- **ファイル** — ワークスペース内のファイルブラウザー（[05](05-files.md)）。
+While the workspace is running, the following sections are stacked vertically.
 
-ワークスペース停止中は、セッションを **セッション履歴**で確認できます。
+- **Assistants** — simple chat that doesn't use a repository ([07](07-chat-memo.md)).
+- **Memo queue** — memos of instructions to send later in a batch ([07](07-chat-memo.md)).
+- **Repositories** — working copies, and the sessions running at each location ([02](02-sessions.md), [04](04-git.md)).
+- **Other sessions** — sessions that don't belong to a repository ([02](02-sessions.md)).
+- **Files** — a file browser for the workspace ([05](05-files.md)).
 
-（スマホでは左ペインは隠れていて、画面左上の **≡（メニュー）**で引き出します。詳しくは [03 ターミナル](03-terminal.md)。）
+While the workspace is stopped, you can review sessions in **Session history**.
 
-### メイン領域
+(On a phone the left pane is hidden; pull it out with the **≡ (menu)** at the top left of the screen. See [03 Terminal](03-terminal.md) for details.)
 
-中央の広い領域は、左ペインで何を選んだかによって表示が切り替わります。
+### Main area
 
-- **端末（ターミナル）** — ターミナル（CLI）実行のセッション、shell、SSM の黒い画面（[03](03-terminal.md)）。
-- **ソース管理** — 変更・diff・コミット・履歴（[04](04-git.md)）。
-- **ファイルビュアー** — ファイルの中身の表示（[05](05-files.md)）。
-- **チャット** — 走っているエージェントの会話や、リポジトリを使わない質問・翻訳（[07](07-chat-memo.md)）。
+The wide central area switches its contents depending on what you select in the left pane.
 
-ターミナル（CLI）実行の AI セッションは、上部の **チャット ⇄ ターミナル** 切り替えで会話表示と端末表示を
-切り替えられます。マネージド実行には端末表示がありません。メイン領域は複数のペインに分割して
-並べられます（[02](02-sessions.md)・[03](03-terminal.md)）。
+- **Terminal** — the black screen of Terminal (CLI) sessions, shell, and SSM ([03](03-terminal.md)).
+- **Source control** — changes, diffs, commits, history ([04](04-git.md)).
+- **File viewer** — displaying the contents of files ([05](05-files.md)).
+- **Chat** — conversations with running agents, and questions / translations that don't use a repository ([07](07-chat-memo.md)).
 
-## 用語（最小限）
+For AI sessions running as Terminal (CLI), the **Chat ⇄ Terminal** switch at the top toggles
+between the conversation view and the terminal view. Managed execution has no terminal view.
+The main area can be split into multiple panes arranged side by side
+([02](02-sessions.md), [03](03-terminal.md)).
 
-- **ワークスペース** — あなた専用の作業環境。クローンしたリポジトリと作業内容が入ります。停止しても中身は残ります（裏側では専用コンテナとして動きます）。
-- **セッション** — 1 つの仕事に対応する会話・作業場所・実行状態のまとまり。端末を持たない場合もあります。
-- **エージェント** — claude / codex / opencode / GitHub Copilot などの CLI コーディング AI。
-- **テナント** — 部署などのグループ。あなたのワークスペースはテナントごとに分かれます（既定は 1 つ）。
-- **worktree** — 1 つのリポジトリから、ブランチごとに独立した作業用フォルダを切り出す git の仕組み。セッションを起動すると既定でこれが作られ、複数タスクを互いに邪魔せず並行できます（[02](02-sessions.md) / [04](04-git.md)）。
+## Terminology (the bare minimum)
 
-詳しい定義と表記の基準は [画面と用語](ui-and-terms.md) を参照してください。
+- **Workspace** — your own private work environment. It holds your cloned repositories and your work. Its contents survive a stop (behind the scenes it runs as a dedicated container).
+- **Session** — a unit of conversation, working location, and execution state corresponding to one task. It may or may not have a terminal.
+- **Agent** — a CLI coding AI such as claude / codex / opencode / GitHub Copilot.
+- **Tenant** — a group such as a department. Your workspaces are separated per tenant (the default is a single tenant).
+- **worktree** — a git mechanism that carves out an independent working folder per branch from a single repository. Launching a session creates one by default, so multiple tasks can run in parallel without interfering with each other ([02](02-sessions.md) / [04](04-git.md)).
+
+For detailed definitions and writing conventions, see [UI and terminology](ui-and-terms.md).
 
 ---
 
-仕組みを知りたい人へ: [dev/02 Console の設計](../../dev/02-console.md)
+For those who want to know how it works: [dev/02 Console design](../../dev/02-console.md)

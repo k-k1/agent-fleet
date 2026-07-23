@@ -1,175 +1,186 @@
-# 08. 一歩進んだ使い方 — ブラウザペイン／軽量プレビュー・外部連携・別ホスト・環境設定
+# 08. Going further — browser pane / lightweight preview, external integrations, other hosts, environment settings
 
-> 対象: 基本操作に慣れ、もう一歩踏み込みたいメンバー。ワークスペース内サービスの確認
-> （ブラウザペイン／軽量プレビュー）、手元の Claude からの遠隔操作（MCP）、社内の別ホストへの
-> ログイン（SSM）、環境設定とワークスペースの作り直しを扱います。必要になったところだけ読めば十分です。
+English | [日本語](08-advanced.ja.md)
 
-## 立ち上げた Web を見る — ブラウザペインと軽量プレビュー
+> Audience: members who are comfortable with the basics and want to go one step further. This chapter covers
+> checking services running inside your workspace (browser pane / lightweight preview), remote control from your
+> local Claude (MCP), logging in to other in-house hosts (SSM), and environment settings plus recreating the
+> workspace. It's fine to read only the parts you need, when you need them.
 
-ワークスペース内で起動した Web サービス（各種 dev サーバー・Spring Boot・任意の Web アプリ）を、
-**追加のポート公開もコンテナ作り直しも無し**でその場で確認できます。方式は 2 つあります。
+## Viewing a web app you started — browser pane and lightweight preview
 
-ワークスペース操作バー右の**ポート入力欄**にポート番号を入れると、**「ペインで開く」**（ブラウザペイン）と
-**「軽量プレビュー」**が選べます（どちらもワークスペースが稼働中のときだけ）。
+You can check web services started inside the workspace (dev servers of all kinds, Spring Boot, any web app)
+on the spot, **with no extra port publishing and no container rebuild**. There are two methods.
 
-- **ブラウザペイン（「ペインで開く」）** — ワークスペース内のブラウザが `127.0.0.1:{ポート}` を直接開き、
-  その**描画と操作だけ**を Console のペインへ映します。クリック・スクロール・ASCII/日本語入力・戻る/進む・
-  再読み込み・path 移動ができ、**HMR（ホットリロード）・WebSocket・SSE・cookie・リダイレクト・絶対パスの
-  asset** がふつうの localhost と同じように動きます。画面を触って確かめたいときはこちらです。
-- **軽量プレビュー** — 単純な HTTP proxy でそのポートを**新しいタブ**に開く、軽い確認用です。JSON の
-  health エンドポイントや単純な静的ページを**一度見るだけ**の用途に向きます。**HMR / WebSocket / SSE は
-  使えず**、root path・絶対 asset・リダイレクト・cookie path に依存するアプリの表示は保証されません。
+Enter a port number in the **port input field** on the right of the workspace action bar, and you can choose
+**"Open in pane"** (browser pane) or **"Lightweight preview"** (both only while the workspace is running).
 
-**迷ったら「ペインで開く」**。軽量プレビューは「HTTP 応答を一度見るだけ」と割り切れるときの省資源な例外です。
+- **Browser pane ("Open in pane")** — a browser inside the workspace opens `127.0.0.1:{port}` directly, and
+  **only its rendering and input** are mirrored into a Console pane. You can click, scroll, type ASCII/Japanese,
+  go back/forward, reload, and navigate paths, and **HMR (hot reload), WebSocket, SSE, cookies, redirects, and
+  absolute-path assets** all work just like ordinary localhost. Use this when you want to touch the screen and
+  verify it.
+- **Lightweight preview** — a simple HTTP proxy that opens the port in a **new tab**, for quick checks. It suits
+  **one-time looks** at a JSON health endpoint or a simple static page. **HMR / WebSocket / SSE do not work**,
+  and rendering is not guaranteed for apps that depend on the root path, absolute assets, redirects, or cookie
+  paths.
 
-### 使い方
+**When in doubt, use "Open in pane".** The lightweight preview is a resource-saving exception for when you can
+settle for "just looking at an HTTP response once".
 
-1. shell またはエージェントに開発サーバーを起動させます。サーバーはワークスペース内の `127.0.0.1`
-   （または全 interface）で listen させます。
-2. **デスクトップ／タブレット**のワークスペース操作バーで、ポート入力欄に `1..65535`（Agent 自身が使う
-   `7700` を除く）のポート番号と、必要なら `/` で始まる path を入れます（host や外部 URL は入れません）。
-3. 通常は **「ペインで開く」**、単純な HTTP 一回確認だけなら **「軽量プレビュー」** を選びます。
+### How to use it
 
-たとえば shell で API サーバーを 8080 で起動したら、ポート欄に `8080` を入れて「ペインで開く」を押せば、
-そのアプリがペインに出ます。追加のポート開放を情シスに依頼する必要はありません。
+1. Have a shell or an agent start the dev server. Make the server listen on `127.0.0.1` inside the workspace
+   (or on all interfaces).
+2. On the **desktop / tablet** workspace action bar, enter a port number from `1..65535` (excluding `7700`,
+   which the Agent itself uses) in the port field, plus a path starting with `/` if needed (no host or external
+   URL).
+3. Normally choose **"Open in pane"**; if all you need is a single HTTP check, choose **"Lightweight preview"**.
 
-### 構成別の例
+For example, once you start an API server on 8080 in a shell, enter `8080` in the port field and press
+"Open in pane", and the app appears in a pane. There is no need to ask IT to open extra ports.
 
-| 構成 | 入力例 | どちらで開くか |
+### Examples by setup
+
+| Setup | Example input | Which to open with |
 |------|--------|----------------|
-| **Node / Vite** | `5173` + `/` | HMR（WebSocket）を使うので **ブラウザペイン**。 |
-| **Spring Boot** | `8080` + `/` または `/actuator/health` | リダイレクト・絶対 `/assets/*`・cookie を含む画面は **ブラウザペイン**。health JSON を一度見るだけなら軽量プレビュー。 |
-| **API のみ** | `8080` + `/api/health` | JSON / status の一回確認は **軽量プレビュー**。SSE・認証 cookie・リダイレクト・対話的な確認は **ブラウザペイン**。 |
-| **frontend + API（複数ポート）** | frontend `5173` / API `8080` | frontend の `5173` を **ブラウザペイン**で開く。そこから別ポート（`8080`）への fetch / WebSocket / SSE は使えます（ふつうのブラウザ同様、CORS 設定は必要）。API も見たいときは 2 つめのペインで `8080` を開きます。 |
+| **Node / Vite** | `5173` + `/` | Uses HMR (WebSocket), so **browser pane**. |
+| **Spring Boot** | `8080` + `/` or `/actuator/health` | Screens involving redirects, absolute `/assets/*`, and cookies: **browser pane**. Just a one-time look at the health JSON: lightweight preview. |
+| **API only** | `8080` + `/api/health` | One-time JSON / status checks: **lightweight preview**. SSE, auth cookies, redirects, and interactive checks: **browser pane**. |
+| **Frontend + API (multiple ports)** | frontend `5173` / API `8080` | Open the frontend's `5173` in a **browser pane**. From there, fetch / WebSocket / SSE to another port (`8080`) works (as in a normal browser, CORS configuration is required). If you also want to see the API, open `8080` in a second pane. |
 
-> **Spring Boot のリンク／リダイレクト** — 正しく解決させたいときは、アプリ側で
-> `server.forward-headers-strategy=framework`（または `native`）を設定してください。
+> **Spring Boot links / redirects** — to have them resolve correctly, set
+> `server.forward-headers-strategy=framework` (or `native`) on the app side.
 
-### 状態表示と復旧
+### Status display and recovery
 
-ブラウザペインでうまく表示されないときは、ペインに状態が出ます。
+When the browser pane fails to render properly, a status appears in the pane.
 
-| 状態 | 意味 | 対処 |
+| Status | Meaning | What to do |
 |------|------|------|
-| `target-unreachable` | ブラウザは起動したが、そのポート/path への接続がまだ成立していない。開発サーバーの**起動待ち**もこの状態。 | ポート番号と path、サーバーが listen しているかを確認し、起動後に **「再読み込み」**。残るなら **「再接続」**。 |
-| `disconnected` | ペインとの通信（WebSocket）が切れた状態。必ずしもブラウザの異常終了ではありません。 | ワークスペースが稼働中か・通信が戻ったかを確認して **「再接続」**。 |
-| `crashed` | ワークスペース内のブラウザが異常終了し、その表示を続けられない状態。 | **「再接続」** で開き直します。繰り返す場合はワークスペースのメモリ使用量と対象アプリを確認します（[09](09-troubleshooting.md)）。 |
+| `target-unreachable` | The browser started, but the connection to that port/path hasn't been established yet. **Waiting for the dev server to start** is also this state. | Check the port number, the path, and whether the server is listening; once it's up, press **"Reload"**. If it persists, press **"Reconnect"**. |
+| `disconnected` | Communication with the pane (WebSocket) was lost. This is not necessarily a browser crash. | Check that the workspace is running and connectivity is back, then press **"Reconnect"**. |
+| `crashed` | The browser inside the workspace terminated abnormally and cannot continue that display. | Reopen with **"Reconnect"**. If it keeps happening, check the workspace's memory usage and the target app ([09](09-troubleshooting.md)). |
 
-ワークスペースの停止中・起動中に開こうとすると専用の案内が出ます。稼働中になってから開き直してください。
+If you try to open it while the workspace is stopped or starting, a dedicated notice appears. Reopen once the
+workspace is running.
 
-### 上限と一時性（知っておくと安心）
+### Limits and transience (good to know)
 
-- 同時に開けるのは **1 ワークスペースあたり 2 つまで**、表示サイズは最大 **1600×1200**、描画は最大 **12fps**
-  です。動画再生や高フレームレートの確認には向きません。
-- ペインを**別の表示に切り替える／背面に回す**と描画は止まり、Page は約 **60 秒**だけ保持されます。すぐ戻せば
-  同じ状態が続き、時間が経つと保存済みのポート/path から作り直します。
-- **ワークスペースの停止（Stop）→ 起動（Start）**や Console の再読み込みでは、表示中のブラウザペインは同じ
-  ポート/path から**自動で作り直されます**が、cookie や入力途中の状態までは戻りません。
-- これは**外部 URL を開く汎用ブラウザではありません**（localhost 専用で、host 欄はなくポートと path だけを受け付けます）。
-  また、DOM / Network / Sources を持つ**ブラウザ開発者ツールの完全な代替でもありません**。ペイン内の「Console」では、
-  そのページの `error` / `warn` などのログを確認・コピーできます（最大 200 件・永続保存はしません）。
+- You can have at most **2 open per workspace**, the display size is at most **1600×1200**, and rendering is at
+  most **12fps**. It is not suited to video playback or high-frame-rate checks.
+- If you **switch the pane to another view / send it to the back**, rendering stops and the Page is kept for
+  about **60 seconds**. Return quickly and the same state continues; after a while it is recreated from the
+  saved port/path.
+- On a **workspace Stop → Start** or a Console reload, browser panes that were on display are **automatically
+  recreated** from the same port/path, but cookies and half-typed input do not come back.
+- This is **not a general-purpose browser for opening external URLs** (it is localhost-only; there is no host
+  field, only a port and path). Nor is it a **full replacement for browser devtools** with DOM / Network /
+  Sources. The pane's "Console" lets you view and copy that page's `error` / `warn` logs and the like
+  (up to 200 entries; not stored persistently).
 
-> **スマートフォンは現行版では非対応です。** 390px 幅相当（スマホ）では操作バーの入口が画面外へはみ出し、
-> 開始できません。**デスクトップまたはタブレット**でお使いください。
+> **Smartphones are not supported in the current version.** At around 390px width (phones), the entry point in
+> the action bar overflows off screen and you cannot start. Please use a **desktop or tablet**.
 
-## 外部の Claude から自分のワークスペースを操作する（MCP）
+## Driving your workspace from an external Claude (MCP)
 
-手元の PC の Claude Code / Claude Desktop から、ワークスペースのセッションを**遠隔操作**できます。
-「外出先の自分の Claude から、会社のワークスペースで走っているセッションの様子を見て、
-次の指示を送る」といった使い方です。そのためのトークンを **⚙設定 → 「MCP」タブ**で
-発行します。
+From Claude Code / Claude Desktop on your local PC you can **remotely drive** sessions in your workspace.
+Think "from my own Claude while I'm out, check on the session running in the company workspace and send it the
+next instruction". Issue the token for this in **⚙ Settings → the "MCP tokens" tab**.
 
-1. **名前**（例: `laptop-claude`）と **スコープ**、**有効期限**を選んで **「トークンを発行」**。
-   - スコープは **read（閲覧のみ）** / **write（セッション駆動・既定）** / **admin:dangerous（強権・管理）**。あなたの権限を超えるスコープは選べません。遠隔からセッションを動かしたいだけなら write で十分です。
-   - 有効期限は 90 日（既定）／30 日／365 日／無期限。
-2. 発行すると **「トークンを発行しました（この画面を閉じると再表示できません）」** と出ます。**トークンはこの 1 回しか表示されません**。「トークンをコピー」で控えてください。
-3. 同じ画面に、手元の Claude Code 用の **`.mcp.json`** のひな型も出ます。「.mcp.json をコピー」でコピーし、プロジェクト直下に保存（または既存ファイルに `agent-fleet` を追記）します。エンドポイントは `/mcp`、ヘッダに `Authorization: Bearer <トークン>` が入ります。
+1. Choose a **name** (e.g. `laptop-claude`), a **scope**, and an **expiry**, then press **"Issue token"**.
+   - Scopes are **read (view only)** / **write (drive sessions; the default)** / **admin:dangerous (elevated / admin)**. You cannot pick a scope beyond your own permissions. If all you want is to drive sessions remotely, write is enough.
+   - Expiry is 90 days (default) / 30 days / 365 days / no expiry.
+2. On issue you'll see **"Token issued (you can't see it again once you close this)."** — **the token is shown
+   only this once**. Save it with "Copy token".
+3. The same screen also shows a **`.mcp.json`** template for your local Claude Code. Copy it with
+   "Copy .mcp.json" and save it at the project root (or add `agent-fleet` to an existing file). The endpoint is
+   `/mcp`, with `Authorization: Bearer <token>` in the header.
 
-不要になったトークンは同じ画面で **「失効」** できます（失効すると、そのトークンを使う
-接続は次回から弾かれます）。
+Tokens you no longer need can be **revoked** ("Revoke") on the same screen (once revoked, connections using
+that token are rejected from the next attempt).
 
-## Discord / Slack と連携する（チャットブリッジ）
+## Connecting Discord / Slack (chat bridge)
 
-⚙設定 → 接続グループの **「チャット連携」** タブから自分の Discord / Slack の Bot を
-接続すると、席を離れていてもセッションの進捗がチャットに届き、そのまま返信で操縦
-できます。
+Connect your own Discord / Slack bot from ⚙ Settings → the **"Chat"** tab in the Connections group, and session
+progress reaches your chat even while you're away from your desk — and you can steer sessions right from your
+replies.
 
-- **接続** — Discord は **Bot トークン 1 本**（カードのウィザードが検証 → サーバーへの
-  招待 → チャンネル選択まで案内し、接続時にテスト通知が届きます）。Slack は Bot
-  トークン（`xoxb-…`）と、双方向にする場合の App-level トークン（`xapp-…`）の 2 本。
-  両方の同時接続もできます。
-- **届くもの** — セッションごとにスレッドが作られ、「応答あり」「質問・計画承認」
-  「許可リクエスト」「異常終了」「完了報告」が届きます（種別ごとにトグルあり）。
-  opt-in の**全文モード**では応答本文そのものが届きます（トークンなどの秘密は自動で
-  伏字化されます）。
-- **チャットから操作** — **「返信で操縦」**（opt-in）をオンにすると、スレッドへの返信が
-  そのままそのセッションへの入力になります。質問は選択肢ボタン、プラン承認は
-  「承認 / 却下」、許可リクエストは「許可 / 拒否」のボタンで答えられます（ボタンの
-  対応範囲はエージェント種別によって異なります）。
-- **フリート・オペレーター** — 常設スレッド「🛰 フリート・オペレーター」に書き込むと、
-  [11 フリート・オペレーター](11-fleet-operator.md)とチャットから会話できます
-  （Console 側のオペレーターと同一会話）。チャット発の破壊的操作（削除など）は、
-  実行前に「承認 / 却下」ボタンで一旦止まります。
-- **通知だけ止めたい** — 個人設定 → 「通知」タブの**サービス通知**で、接続を切らずに
-  送信だけオフにできます。
+- **Connecting** — Discord takes **a single Bot token** (the card's wizard walks you through validation →
+  inviting it to your server → picking a channel, and a test notification arrives on connect). Slack takes two:
+  a Bot token (`xoxb-…`) and, if you want two-way operation, an App-level token (`xapp-…`).
+  You can also connect both at the same time.
+- **What arrives** — a thread is created per session, and you receive "Answer ready", "Questions & plan
+  approvals", "Permission requests", "Abnormal exits", and "Session reports" (each type has its own toggle).
+  With the opt-in **full-text mode**, the response body itself is delivered (secrets such as tokens are
+  automatically redacted).
+- **Driving from chat** — turn on **"Reply to steer"** (opt-in) and replies in the thread become input to that
+  session as-is. Questions can be answered with choice buttons, plan approvals with "Approve / Reject" buttons,
+  and permission requests with "Allow / Deny" buttons (button coverage varies by agent kind).
+- **Fleet operator** — write in the standing thread "🛰 Fleet Operator" to talk with the
+  [11 fleet operator](11-fleet-operator.md) from chat (the same conversation as the operator on the Console
+  side). Destructive operations initiated from chat (deletion etc.) pause for an "Approve / Reject" button
+  before executing.
+- **Just want to silence notifications** — under Personal → the "Notifications" tab, **Service notifications**
+  lets you turn off delivery without disconnecting.
 
-## 社内の別ホストに入る（SSM）
+## Logging in to another in-house host (SSM)
 
-自社 AWS の EC2 に、AWS SSM Session Manager でログインできます。設定は **⚙設定 →
-「AWS SSM」タブ**で、**2 層**に分かれています。
+You can log in to EC2 instances in your company's AWS via AWS SSM Session Manager. Configuration lives in
+**⚙ Settings → the "AWS SSM" tab**, split into **two layers**.
 
-- **プロファイル（共通設定）** — アクセスポータル（IAM Identity Center）とアカウント／ロール。複数のホストで使い回す SSO の束です。まずこれを 1 つ作ります。
-- **SSM ホスト（個別）** — ログイン先の別名 → インスタンス ID。認証はプロファイルを選ぶだけです。
+- **Profile (shared settings)** — the access portal (IAM Identity Center) and account/role. A bundle of SSO settings reused across multiple hosts. Create one of these first.
+- **SSM host (individual)** — an alias for the login target → instance ID. For authentication you just pick a profile.
 
-**AWS の秘密情報は Agent Fleet に保存されません。** ログインはセッション開始時に、
-端末に出る **`aws sso login`** の URL をブラウザで承認する device-code 方式で、
-短命の資格情報はワークスペース内にだけ保持されます。
+**No AWS secrets are stored in Agent Fleet.** Login happens at session start via the device-code flow — you
+approve the **`aws sso login`** URL shown in the terminal in your browser — and short-lived credentials are held
+only inside the workspace.
 
-登録後は、ワークスペース操作バーの **「はじめる」→「SSM — 別ホストへログイン」** で
-**ログイン先ホスト**を選んで接続します。
-認証が必要なら `aws sso login` の URL が確認画面に出るので、別タブで承認してください
-（身に覚えのないコード／URL は入力しないこと）。
+Once registered, connect from the workspace action bar via **"Start" → "SSM — log in to another host"**,
+choosing the **target host**.
+If authentication is needed, the `aws sso login` URL appears on a confirmation screen; approve it in another tab
+(never enter a code / URL you don't recognize).
 
-## 環境設定とワークスペースの作り直し
+## Environment settings and recreating the workspace
 
-**⚙設定 → 「ワークスペース」タブ**で、ワークスペースの環境を調整できます。変更は**この後に
-起動するセッション／シェルに反映**されます（起動中のものと既存プロセスには、ワークスペースを停止してから再び起動すると反映されます）。
+In **⚙ Settings → the "Workspace" tab** you can adjust the workspace environment. Changes **apply to sessions /
+shells started afterwards** (running ones and existing processes pick them up after you stop and then start the
+workspace again).
 
-- **タイムゾーン (TZ)** — 既定は日本時間。変更の反映にはワークスペースの停止・起動が必要です。
-- **Node.js / Java (JAVA_HOME)** — 使うバージョンを選べます。
-- **エージェント CLI の更新** — 「起動時にエージェント CLI と rtk を最新へ更新する」（対象は claude / opencode / codex / GitHub Copilot / Antigravity（agy）/ rtk）。既定は OFF（イメージに焼いた版で固定）。
+- **Time zone (TZ)** — the default is Japan time. Applying a change requires stopping and starting the workspace.
+- **Node.js / Java (JAVA_HOME)** — pick the versions to use.
+- **Agent CLI updates** — "Update the agent CLIs and rtk to the latest on start" (covers claude / opencode / codex / GitHub Copilot / Antigravity (agy) / rtk). Default is OFF (pinned to the versions baked into the image).
 
-### ワークスペースを作り直す（危険な操作）
+### Recreating the workspace (danger zone)
 
-同じタブの下部、**「危険な操作」** に **「ワークスペースを作り直す」** があります。コンテナを
-破棄して最新イメージで作り直す操作で、**「作り直す」** を押すと確認が出ます。何が残り、
-何が消えるかは以下のとおりです。
+At the bottom of the same tab, under **"Danger zone"**, is **"Recreate the workspace"**. It discards the
+container and rebuilds it from the latest image; pressing **"Recreate"** shows a confirmation. What stays and
+what goes is as follows.
 
-- **消えるもの** — 実行中のセッション、および **クローン済みリポジトリ（`~/repos`・未コミット変更を含む）**。
-  削除されるのは `~/repos` **だけ**です。
-- **残るもの** — それ以外のホーム（`~`）はすべて残ります。ログイン・接続（GitHub / Bitbucket /
-  Claude など）、`~/.local`（claude / node など）、各種設定・キャッシュは、ホームボリュームが
-  作り直したコンテナへ再び接続されるので保持されます。
+- **What is lost** — running sessions, and **cloned repositories (`~/repos`, including uncommitted changes)**.
+  `~/repos` is the **only** thing deleted.
+- **What stays** — everything else in your home (`~`) remains. Logins and connections (GitHub / Bitbucket /
+  Claude etc.), `~/.local` (claude / node etc.), and your settings and caches are preserved, because the home
+  volume is reattached to the recreated container.
 
-つまり「**`~/repos` だけが削除され、コンテナは最新イメージで作り直される。home のそれ以外
-（ログイン・接続・`~/.local` 等）は残る**」操作です。イメージ更新を取り込みたい、
-環境が壊れた、というときに使います。**未コミットの変更が消える**ので、実行前に
-push / コミットを済ませてください（[04](04-git.md)）。
+In short: "**only `~/repos` is deleted, and the container is rebuilt from the latest image. The rest of home
+(logins, connections, `~/.local`, etc.) stays**". Use it when you want to pick up an image update or the
+environment is broken. **Uncommitted changes are lost**, so push / commit before running it ([04](04-git.md)).
 
-### ホームを掃除する（さらに深いリセット）
+### Cleaning home (an even deeper reset)
 
-作り直しは `~/repos` しか消さないため、ホーム側（`~/.local` の壊れた claude 導入、
-壊れたキャッシュや設定ファイルなど）が原因のときは直りません。その場合は同じ「危険な操作」に
-ある **「ホームを掃除する」** を使います。**ログイン・接続を除くホーム全体**（`~/repos`・
-`~/.local`・各種キャッシュ・設定）を削除して最新イメージで作り直す、より深いリセットです。
+Since recreating deletes only `~/repos`, it won't fix problems on the home side (a broken claude install in
+`~/.local`, corrupted caches or config files, and so on). In that case use **"Clean home"**, in the same
+"Danger zone". It deletes **your entire home except logins and connections** (`~/repos`, `~/.local`, caches,
+settings) and rebuilds from the latest image — a deeper reset.
 
-- **残るもの** — ログイン・接続（GitHub / Bitbucket / Claude）**のみ**。
-- **消えるもの** — 実行中のセッション、クローン済みリポジトリ、および `~/.local`・キャッシュ・
-  設定など**ホームのその他すべて**。
+- **What stays** — logins and connections (GitHub / Bitbucket / Claude) **only**.
+- **What is lost** — running sessions, cloned repositories, and **everything else in home**, including
+  `~/.local`, caches, and settings.
 
-まず「作り直す」で直るか試し、それでも直らないときだけ「掃除する」を使ってください。
-どちらも**未コミットの変更は消えます**。
+Try "Recreate" first to see if it fixes things, and use "Clean" only when that doesn't.
+Both operations **lose uncommitted changes**.
 
 ---
 
-仕組みを知りたい人へ: ブラウザペインと軽量プレビュー・MCP・SSM は [dev/08 外部連携](../../dev/08-integrations.md)、作り直しの挙動は [dev/04 Workspace Agent](../../dev/04-workspace-agent.md)
+For those who want the internals: browser pane and lightweight preview, MCP, and SSM are in [dev/08 External integrations](../../dev/08-integrations.md); recreate behavior is in [dev/04 Workspace Agent](../../dev/04-workspace-agent.md)

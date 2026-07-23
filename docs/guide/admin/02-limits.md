@@ -1,112 +1,136 @@
-# 資源上限・アイドル停止・セッション俯瞰
+# Resource limits, idle auto-stop, and the sessions overview
 
-チームが増えると気になるのが「誰がどれだけ資源を使っているか」「暴走を止められるか」です。
-この章では、あなた（tenant_admin）に見えるもの・調整できるもの、そして情シスに依頼するものを整理します。
+English | [日本語](02-limits.ja.md)
 
-## 2 種類の上限
+As the team grows, the questions become "who is using how much of the resources" and "can we stop a
+runaway". This chapter sorts out what you (tenant_admin) can see, what you can adjust, and what you
+ask IT for.
 
-上限には **テナント全体にかかるもの** と **メンバー個人にかかるもの** があります。
+## Two kinds of limits
 
-### テナント全体の上限（設定は super_admin）
+There are limits **that apply to the whole tenant** and limits **that apply to an individual
+member**.
 
-テナント詳細の上部に、テナント全体の上限とアイドル自動停止の設定欄があります。ただしこの欄は
-**super_admin にしか表示されず、tenant_admin のあなたには編集できません。** 内容だけ知っておいてください。
+### Tenant-wide limits (set by super_admin)
 
-- **最大ワークスペース数** — このテナントで同時に起動できるワークスペースの数（`0` = 無制限）。
-- **最大 Session** — 同時に動かせるセッションの数。
-- **最大 内部リポジトリ / 最大 LFS 容量** — 内蔵 git に置けるリポジトリ数と LFS の総容量。
-- **アイドル自動停止** — 放置されたセッションとワークスペースを自動で停止する時間（次節）。
+At the top of the tenant detail there is a settings section for tenant-wide limits and idle
+auto-stop. However, this section is **shown only to super_admin — as tenant_admin you cannot edit
+it.** Just know what it contains.
 
-テナント一覧のカードに出る「上限 — ワークスペース: X / セッション: Y」が、いま効いている値です。これを
-変えたいときは情シス／デプロイ管理者に依頼してください（[operator/README.md](../operator/README.md)）。
+- **Max Workspace** — the number of workspaces that can run concurrently in this tenant
+  (`0` = unlimited).
+- **Max Session** — the number of sessions that can run concurrently.
+- **Max internal repositories / Max LFS size** — the number of repositories that can live in the
+  built-in git and the total LFS capacity.
+- **Idle auto-stop** — how long before neglected sessions and workspaces are stopped automatically
+  (next section).
 
-### メンバー個人のセッション上限（あなたが設定できる）
+The "Limits — Workspace: X / Session: Y" shown on the card in the tenant list is the value
+currently in effect. When you want it changed, ask your IT department / deployment administrator
+([operator/README.md](../operator/README.md)).
 
-あなたが調整できるのは、メンバーごとの **セッション上限** です。メンバー詳細の「操作」欄にある
-**「セッション上限を設定」** を押すと「最大セッション数（0 = 無制限）」を入力でき、保存するとその人に
-だけ効きます。個人上限を決めた人は、テナント一覧のメンバー行に「s≤ N」と表示されます。
+### Per-member session limits (you can set these)
 
-個人のセッション上限とテナント全体の上限は、より厳しい方が先に効きます。
+What you can adjust is the per-member **session limit**. Pressing **"Set limits"** in the
+"Operations" section of the member detail lets you enter "Max sessions (0 = unlimited)"; once
+saved, it applies to that person only. Members with a personal limit show "s≤ N" on their member
+row in the tenant list.
 
-## アイドル自動停止
+Between a personal session limit and the tenant-wide limit, whichever is stricter kicks in first.
 
-放置された環境を自動で畳む仕組みです（設定はテナント全体側なので super_admin の領分）。二段構えです。
+## Idle auto-stop
 
-- **セッション停止まで** — 開かれていない放置セッションが、この時間を超えると「停止中（再開可）」に
-  畳まれます。会話ログは残るので、あとから再開できます。
-- **ワークスペース停止まで** — 誰も接続しておらず稼働セッションもないワークスペースが、この時間を超えると
-  コンテナごと停止します。
+This is the mechanism that automatically folds up neglected environments (the settings are on the
+tenant-wide side, so they are super_admin's domain). It has two stages.
 
-時間の書式は `30m`（分）・`2h`（時間）・`90s`（秒）。空欄はデプロイ既定（既定では無効）に従い、`0` は
-明示的に無効化を意味します。挙動の詳細は [dev/03 §3.7 バックグラウンドジョブ](../../dev/03-control-plane.md) を参照。
+- **Session halt after** — a neglected session that no one has open is folded to
+  "stopped (resumable)" once it exceeds this time. The conversation log remains, so it can be
+  resumed later.
+- **Workspace stop after** — a workspace with no one connected and no running sessions has its
+  whole container stopped once it exceeds this time.
 
-停止されても作業内容（home の中身）は残ります。メンバーは次に使うとき Console から起動し直すだけです。
+The time format is `30m` (minutes), `2h` (hours), `90s` (seconds). Empty follows the deploy
+default (disabled by default), and `0` means explicitly disabled. For the details of the behavior,
+see [dev/03 §3.7 Background jobs](../../dev/03-control-plane.md).
 
-## メンバーの資源を見る
+Even when stopped, the work itself (the contents of home) remains. The next time members need it,
+they just start it again from the Console.
 
-メンバー詳細を開くと、そのメンバーのワークスペースの状態が出ます。上部に「稼働中／停止中」の別、
-その下の **「ワークスペースのリソース」** に 3 つのメーターが並びます。
+## Viewing a member's resources
 
-- **メモリ** — 使用量と上限、使用率。
-- **CPU** — 使用率（「1コア = 100%」なので、200% なら 2 コア相当を使っている状態）。
-- **ディスク** — home の使用量と割り当て。停止中でもディスク使用量だけは表示されます。
+Opening a member detail shows the state of that member's workspace. At the top is whether it is
+Running or Stopped, and below that, **"Workspace resources"** with 3 meters.
 
-メーターは使用率が高くなると色が変わり（警告→危険）、逼迫が一目で分かります。値は数秒ごとに更新されます。
+- **Memory** — usage, limit, and utilization.
+- **CPU** — utilization ("1 core = 100%", so 200% means using the equivalent of 2 cores).
+- **Disk** — home usage and allocation. Even while stopped, disk usage alone is still shown.
 
-## セッションを見る／全体を俯瞰する
+The meters change color as utilization rises (warning → danger), so pressure is visible at a
+glance. Values refresh every few seconds.
 
-メンバー詳細の **「セッション」** には、その人のセッションが種類（claude / shell など）・作業対象・状態
-（稼働中／停止中など）・開始時刻とともに並びます。ここは閲覧専用で、個々のセッションを止めるボタンは
-ありません（環境ごと止めたい場合は次節の強制停止を使います）。
+## Viewing sessions / getting the whole picture
 
-テナント全体を見渡したいときは、上部の **「セッション」** タブを開きます。こちらはテナント内で
-**いま動いているセッションだけ** をユーザー横断でまとめて表示します（停止中のものは各メンバー詳細で確認）。
-「ユーザー / ラベル / リポジトリ」で絞り込め、右肩に「◯ 稼働中」の総数が出ます。何が走っているのか、
-資源が逼迫していないかを朝いちで確認するのに向いています。
+**"Sessions"** in the member detail lists that person's sessions along with their kind
+(claude / shell, etc.), what they are working on, their state (running / stopped, etc.), and start
+time. This is view-only — there is no button to stop an individual session (if you want to stop
+the whole environment, use force-stop in the next section).
 
-## ワークスペースを強制停止する
+When you want to survey the whole tenant, open the **"Sessions"** tab at the top. It shows
+**only the sessions running right now** in the tenant, aggregated across users (stopped ones are
+checked in each member detail). You can filter by "User / label / repository", and the total
+("N running") appears at the top right. It is well suited to a first-thing-in-the-morning check of
+what is running and whether resources are under pressure.
 
-暴走したセッションや、放置されたまま資源を占有している環境を止めたいときは、メンバー詳細の
-「操作」欄の **「ワークスペースを強制停止」** を使います（稼働中のときだけ押せます）。確認ダイアログの
-あと、そのメンバーのワークスペースコンテナが停止します。**作業内容（home）は消えません。** メンバーは
-次に Console から起動し直せます。あくまで「いったん止める」操作で、破壊的ではありません。
+## Force-stopping a workspace
 
-なお、home そのものを掃除する「home を掃除」ボタンは super_admin 専用で、あなたには表示されません。
-コンテナが壊れて起動し直しても直らない、ホスト側の対処が要る、といった **力業が必要な場面は、
-情シス／デプロイ管理者の領分** です（[operator/README.md](../operator/README.md)）。
+When you want to stop a runaway session, or an environment left occupying resources, use
+**"Force-stop the workspace"** in the "Operations" section of the member detail (it can only be
+pressed while the workspace is running). After a confirmation dialog, that member's workspace
+container stops. **The work (home) is not lost.** The member can start it again from the Console.
+It is strictly a "pause for now" operation, not destructive.
 
-## 上限に達するとメンバー側で何が起きるか
+Note that the "Clean home" button, which cleans home itself, is super_admin only and is not shown
+to you. **Situations that need heavier measures** — the container is broken and restarting doesn't
+fix it, host-side intervention is needed — **are the domain of your IT department / deployment
+administrator** ([operator/README.md](../operator/README.md)).
 
-上限は、メンバーが「新しく起動しよう」とした瞬間に効きます。既に動いているものが急に止められるわけでは
-ありません。メンバーには次のように見えます。
+## What members experience when a limit is hit
 
-- **セッション数の上限** — 新しいセッションを作ろうとすると弾かれ、Console に
-  「同時に稼働できるセッション数の上限に達しています。稼働中のセッションをどれか停止してから
-  作成してください。」と出ます（内部的には HTTP 429）。
-- **ワークスペース数の上限（テナント全体）** — 上限に達している状態で新たなワークスペースを起こそうとすると、
-  同じく 429 で弾かれます。
-- **内部リポジトリ数・LFS 容量の上限** — 上限を超える作成／アップロードは拒否されます（リポジトリ作成は
-  競合エラー、LFS は容量超過エラー）。
+Limits take effect at the moment a member tries to "start something new". Things already running
+are not suddenly stopped. To members it looks like this.
 
-つまりメンバーは「今あるものを片付ければ続けられる」状態になります。恒常的に上限に当たるようなら、
-個人のセッション上限を見直すか、テナント全体の上限引き上げを情シスに相談してください。
+- **Session count limit** — trying to create a new session is rejected, and the Console shows
+  "You've reached the limit on concurrently running sessions. Stop one of the running sessions
+  before creating another." (internally an HTTP 429).
+- **Workspace count limit (tenant-wide)** — trying to bring up a new workspace while at the limit
+  is likewise rejected with a 429.
+- **Internal repository count / LFS capacity limits** — creation / uploads beyond the limit are
+  refused (repository creation with a conflict error, LFS with a capacity-exceeded error).
 
-## 資源が逼迫しているときの動き方
+In other words, members end up in a "tidy up what you have and you can continue" state. If someone
+hits limits constantly, revisit their personal session limit, or talk to IT about raising the
+tenant-wide limits.
 
-「重い」「遅い」という声が出たときは、次の順で切り分けると早いです。
+## How to act when resources are under pressure
 
-1. **「セッション」タブで全体を俯瞰** — 何がいくつ動いているか、特定の人・リポジトリに偏っていないかを見ます。
-2. **当たりのメンバーの詳細を開き、メーターを確認** — メモリやディスクが危険域（色が変わっている）なら、
-   その人の環境が逼迫の主因です。CPU は瞬間的に跳ねるので、継続して高いかどうかで判断します。
-3. **必要なら手を打つ** — 一時的な暴走はメンバー本人にセッションを止めてもらうのが基本です。連絡が
-   つかず放置されている、あるいは明らかに暴走している場合に限り「ワークスペースを強制停止」でいったん止めます。
-4. **恒常的なら上限で調整** — 特定の人が常に走らせすぎているなら個人のセッション上限を、テナント全体が
-   慢性的に逼迫しているならテナント上限やアイドル自動停止の見直し（super_admin／情シス）を検討します。
+When people start saying "it's heavy" or "it's slow", triaging in this order is fastest.
 
-ホスト全体のメモリ状況（他テナント含む）は super_admin にしか見えません。テナントをまたいで
-「ホストが重い」ような場合は、あなたの画面だけでは判断しきれないので情シスに共有してください。
+1. **Survey the whole picture on the "Sessions" tab** — see what is running and how many, and
+   whether it is skewed toward a particular person or repository.
+2. **Open the likely member's detail and check the meters** — if memory or disk is in the danger
+   zone (the color has changed), that person's environment is the main cause of the pressure. CPU
+   spikes momentarily, so judge by whether it stays high.
+3. **Act if needed** — for a temporary runaway, the default is to have the member stop the session
+   themselves. Only when they can't be reached and it sits neglected, or it is clearly out of
+   control, pause it with "Force-stop the workspace".
+4. **If it is chronic, adjust with limits** — if a particular person constantly runs too much,
+   consider a personal session limit; if the whole tenant is chronically under pressure, consider
+   revisiting the tenant limits or idle auto-stop (super_admin / IT).
+
+Host-wide memory status (including other tenants) is visible only to super_admin. When "the host is
+heavy" across tenants, your screen alone can't settle it, so share it with IT.
 
 ---
 
-- 次に読む: [03 監査と利用状況](03-audit-usage.md)
-- 前に戻る: [01 メンバー管理](01-members.md)
+- Read next: [03 Audit and usage](03-audit-usage.md)
+- Back to: [01 Member management](01-members.md)

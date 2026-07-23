@@ -1,85 +1,106 @@
-# 03. セキュリティ運用
+# 03. Security Operations
 
-Agent Fleet を安全に運用するために、運用者が**理解しておくべき前提**と**日々行う統制**をまとめ
-ます。ここは「隠れたバグの列挙」ではなく、**アーキテクチャに内在する性質を正直に開示し、運用で
-どう扱うか**を示すものです。対外向けの脅威モデルは [SECURITY.md](../../../SECURITY.md)（英語）、
-設計の背景は [dev/07 セキュリティ](../../dev/07-security.md) にあり、本書はそれを運用手順に展開します。
+English | [日本語](03-security.ja.md)
 
-## 脅威モデル（要約）
+This chapter summarizes the **assumptions an operator must understand** and the **day-to-day
+controls to apply** in order to run Agent Fleet safely. It is not a list of hidden bugs; it
+**honestly discloses properties inherent in the architecture and shows how to handle them in
+operations**. The external-facing threat model is in [SECURITY.md](../../../SECURITY.md)
+(English), and the design background is in [dev/07 Security](../../dev/07-security.md); this
+document expands those into operational procedures.
 
-Workspace の中では CLI エージェントが**任意コードを実行**します（`--dangerously-skip-permissions`
-を含む運用が既定）。「ユーザーのセッションが untrusted なコードを動かす」前提で境界を引いており、
-守る対象は「他ユーザーのデータ・CP/ホスト基盤・シークレット・情報持ち出し」です。主要な隔離境界は
-**Workspace コンテナ（信頼度低）** と **CP/ホスト基盤（信頼度高）** の間にあります。
+## Threat model (summary)
 
-- **`docker.sock` = ホスト root 相当。** CP はマウントされた Docker ソケット越しにホストのデーモンを
-  駆動し、Workspace 起動時に平文 DEK を注入します。そのため **CP かホストが侵害されると、その
-  デプロイ内の分離は一括で破れます**。
-- **会社間は別デプロイで分離。** 上記の影響は**そのデプロイ 1 つの内側に限定**され、他社（= 別
-  デプロイ）には波及しません。これが 1 社 = 1 デプロイという提供モデルの核心的な強みです。
+Inside a Workspace, CLI agents **execute arbitrary code** (operation that includes
+`--dangerously-skip-permissions` is the default). The boundaries are drawn under the assumption
+that "a user's session runs untrusted code," and what we protect is "other users' data, the
+CP/host infrastructure, secrets, and data exfiltration." The primary isolation boundary sits
+between the **Workspace container (low trust)** and the **CP/host infrastructure (high trust)**.
 
-## 残存リスク 4 点（運用者は必ず理解する）
+- **`docker.sock` = equivalent to host root.** The CP drives the host's daemon through the
+  mounted Docker socket and injects plaintext DEKs at Workspace startup. Consequently, **if the
+  CP or the host is compromised, isolation within that deployment collapses all at once**.
+- **Companies are separated by separate deployments.** The impact above is **confined to the
+  inside of that single deployment** and does not spread to other companies (= other
+  deployments). This is the core strength of the one-company = one-deployment delivery model.
 
-[SECURITY.md](../../../SECURITY.md) が挙げる 4 点を、運用の観点で展開します。これらは未開示のバグ
-ではなく、現アーキテクチャに内在する既知の性質です。
+## The 4 residual risks (operators must understand these)
 
-1. **CP はホスト root 相当の権限を持つ。** 上記のとおり docker.sock 経由でホストを操作できます。
-   運用: **ホストに SSH / sudo / docker を実行できる人を最小限に絞る**。Docker API の面を狭めたい
-   場合は、ソケットをフィルタリングプロキシ（例 `tecnativa/docker-socket-proxy`）で前段する
-   ハードニングが選べます。
+Here we expand, from an operational standpoint, the 4 points that
+[SECURITY.md](../../../SECURITY.md) lists. These are not undisclosed bugs; they are known
+properties inherent in the current architecture.
 
-2. **`AF_MASTER_KEY` が資格情報暗号の根。** すべての per-workspace DEK がこの鍵由来の per-tenant
-   KEK で wrap されています。**失えば crypto-shred = 保存済み資格情報も全バックアップも永久に
-   復号不能**。運用: **DB や home とは別の金庫に保管し、独立してバックアップする**。データ領域や
-   バックアップアーカイブには絶対に置かない（設計上も入りません）。生成タイミングと保管は
-   [01 §2](01-install.md)、リストア時の同一性要件は [02](02-operations.md)。
+1. **The CP holds privileges equivalent to host root.** As noted above, it can operate the host
+   via docker.sock. Operations: **minimize the set of people who can SSH into the host or run
+   sudo / docker there**. If you want to narrow the Docker API surface, a hardening option is to
+   put the socket behind a filtering proxy (e.g. `tecnativa/docker-socket-proxy`).
 
-3. **バックアップは機微。** アーカイブには各ユーザーの home と**平文の Claude ログイン状態**が
-   含まれます。運用: 保管先の権限（アクセスできる人を限定）と保存時暗号化（at-rest）を徹底する。
+2. **`AF_MASTER_KEY` is the root of credential encryption.** Every per-workspace DEK is wrapped
+   with a per-tenant KEK derived from this key. **Losing it means crypto-shred = the stored
+   credentials and every backup become permanently undecryptable**. Operations: **store it in a
+   vault separate from the DB and homes, and back it up independently**. Never place it in the
+   data area or in backup archives (by design it never goes in). For when it is generated and
+   how to store it, see [01 §2](01-install.md); for the identity requirement at restore time,
+   see [02](02-operations.md).
 
-4. **docker.sock へのアクセス = ホストへのアクセス。** CP コンテナを実行できる人、あるいは Docker
-   ソケットに到達できる人は誰でもホストを制御できます。運用: **誰がデプロイ／運用できるかを絞る**。
+3. **Backups are sensitive.** The archive contains each user's home and **plaintext Claude
+   login state**. Operations: strictly control the permissions of the storage location (limit
+   who can access it) and enforce at-rest encryption.
 
-補足の限界: 現行の localCustodian は KEK が master 鍵由来のため、実効強度は単一 `AF_MASTER_KEY` と
-同等です。テナント鍵の無効化による**真の per-tenant crypto-shred は将来の Vault/KMS custodian 採用時**
-に達成されます（現状は設計のみ）。詳細は [dev/07 §7.6](../../dev/07-security.md)。
+4. **Access to docker.sock = access to the host.** Anyone who can run the CP container, or who
+   can reach the Docker socket, can control the host. Operations: **restrict who can deploy /
+   operate**.
 
-## egress 統制の運用
+A caveat on limits: in the current localCustodian, the KEK is derived from the master key, so
+the effective strength is equivalent to the single `AF_MASTER_KEY`. **True per-tenant
+crypto-shred via tenant key revocation will be achieved when a Vault/KMS custodian is adopted
+in the future** (currently design only). Details in [dev/07 §7.6](../../dev/07-security.md).
 
-Workspace からの外向き通信（egress）を統制する仕組みがあります。**forward proxy 方式**で FQDN
-（CONNECT/SNI）を見て allow/deny を判定し、TLS は復号しません。super_admin だけが Console の Admin
-パネルの **egress** タブで操作します。
+## Operating egress control
 
-**段階的に入れるのが設計の核**です。次の順で進めてください。
+There is a mechanism for controlling outbound traffic (egress) from Workspaces. It is a
+**forward-proxy approach**: it inspects the FQDN (CONNECT/SNI) to make allow/deny decisions and
+does not decrypt TLS. Only super_admins operate it, from the **Egress** tab of the Admin panel
+in the Console.
 
-1. **log-only（観測のみ・既定）** — 通信を遮断せず、宛先を記録するだけ。Admin の「観測された宛先」に
-   ホストごとの許可/遮断候補件数が積み上がります。まずここで**実態を把握**します。
-2. **allowlist を固める** — 観測結果を見ながら、正当な宛先を許可リストに追加していきます。許可
-   リストは版管理され（active / proposed / retired）、AI は**提案のみ・承認は人間**が行います
-   （Admin の「提案中（要承認）」で承認/却下）。
-3. **enforce へ切替** — 許可リストが十分に固まってから、モードを enforce に切り替えます。以降は
-   許可リスト外の通信を**遮断**します。Admin の UI も「先に log-only で実態を確認してから切替えて
-   ください」と警告します。
+**Rolling it out in stages is the core of the design.** Proceed in this order.
 
-> 現状の実装範囲: **観測（log-only）と許可リスト管理までが動作**します。実際の遮断（enforce）と、
-> それに伴うコンテナ側の常時配線（内部網 + proxy env 注入）の有効化は**後続の作業で未完了**です。
-> 今は「観測して許可リストを育てる」段階まで運用できる、と理解してください。設計の全体像は
-> [dev/07 §7.8](../../dev/07-security.md)。
+1. **log-only (observe only — the default)** — blocks nothing; it only records destinations.
+   Per-host counts of allow/block candidates accumulate under "Observed destinations" in the
+   Admin panel. Start here to **understand the actual traffic**.
+2. **Firm up the allowlist** — while reviewing the observations, add the legitimate
+   destinations to the allowlist. The allowlist is versioned (active / proposed / retired); the
+   AI only **proposes — approval is done by humans** (approve/reject under "Proposed (needs
+   approval)" in the Admin panel).
+3. **Switch to enforce** — once the allowlist is sufficiently solid, switch the mode to
+   enforce. From then on, traffic outside the allowlist is **blocked**. The Admin UI also warns
+   you to confirm reality in log-only first before switching.
 
-## その他の運用上の統制
+> Current implementation scope: **observation (log-only) and allowlist management work**. The
+> actual blocking (enforce), and enabling the accompanying always-on container-side wiring
+> (internal network + proxy env injection), are **not yet completed and are follow-up work**.
+> For now, understand that you can operate up to the "observe and grow the allowlist" stage.
+> The full design picture is in [dev/07 §7.8](../../dev/07-security.md).
 
-- **ログイン許可リストは fail-closed。** `AF_OAUTH_ALLOWED_*` の 3 系統がすべて空だと全ログインを
-  拒否します。`_EMAILS_FILE` はログインごとに再読込されるので、**追加は CP 再起動なしで反映**され
-  ます（削除も同様）。設定は [01 §6](01-install.md)。
-- **監査ログ。** 変更・破壊操作のみが `audit_log` に記録されます（読み取りは既定オフ、**ターミナルの
-  生ストリームは秘密混入リスクのため保存しません**）。閲覧は super_admin / tenant_admin が Admin の
-  audit タブから。運用上の見方は admin 分冊が扱います。
-- **秘密をログに出さない設計。** CP は資格情報の平文を保持・解釈せず、ログにも出しません。統一
-  cred helper が都度復号して渡すため、平文ファイルは作られません（[dev/07 §7.6](../../dev/07-security.md)）。
+## Other operational controls
 
-## 脆弱性の報告窓口
+- **The login allowlist is fail-closed.** If all 3 of the `AF_OAUTH_ALLOWED_*` variables are
+  empty, all logins are rejected. `_EMAILS_FILE` is re-read on every login, so **additions take
+  effect without a CP restart** (removals likewise). Configuration is in [01 §6](01-install.md).
+- **Audit log.** Only mutating / destructive operations are recorded in `audit_log` (reads are
+  off by default, and **raw terminal streams are never stored, due to the risk of secrets
+  leaking into them**). super_admins / tenant_admins view it from the Audit tab of the Admin
+  panel. The admin volume covers how to read it operationally.
+- **Designed to keep secrets out of logs.** The CP neither holds nor interprets credential
+  plaintext, and does not emit it into logs. The unified cred helper decrypts on demand and
+  hands it over, so no plaintext files are ever created
+  ([dev/07 §7.6](../../dev/07-security.md)).
 
-脆弱性を見つけたら、**公開 issue を立てず**に非公開で報告してください。優先は GitHub の Security →
-"Report a vulnerability"（非公開アドバイザリ）。報告に含める情報（対象バージョン/コミット・デプロイ
-形態・再現手順・観測した影響）と対応方針は [SECURITY.md](../../../SECURITY.md) にあります。pre-1.0
-のため、修正は最新タグに対して行われます。報告前に最新版へ更新してください。
+## Reporting vulnerabilities
+
+If you find a vulnerability, **do not open a public issue** — report it privately. The
+preferred channel is GitHub's Security → "Report a vulnerability" (private advisory). The
+information to include in a report (affected version/commit, deployment form, reproduction
+steps, observed impact) and the response policy are in [SECURITY.md](../../../SECURITY.md).
+Because we are pre-1.0, fixes are made against the latest tag. Update to the latest version
+before reporting.

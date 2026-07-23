@@ -1,91 +1,99 @@
-# テナント管理者ガイド
+# Tenant Administrator Guide
 
-あなたはチームの **テナント管理者（tenant_admin）** です。メンバーの追加、資源の使われ方の把握、
-監査ログ・利用状況の確認を、ブラウザの管理画面から行います。多くの管理者は自分も開発する
-メンバーを兼ねています。日々の開発操作そのものは [member/](../member/README.md) を読んでください。
-ここでは「チームを管理する側」の話だけをします。
+English | [日本語](README.ja.md)
 
-この分冊は独立して読めるように書いてありますが、内部の「仕組み」は開発者向けの
-[dev/](../../dev/README.md) にあります。事実の重複を避けるため、仕組みが知りたくなったら
-そちらへリンクで送ります。
+You are your team's **tenant administrator (tenant_admin)**. From the browser admin screen you add
+members, keep track of how resources are being used, and review audit logs and usage. Many
+administrators are also developing members themselves. For everyday development operations, read
+[member/](../member/README.md). Here we talk only about the "managing the team" side.
 
-## まず結論: あなたにできること／見える範囲
+This volume is written to be readable on its own, but the internal "mechanics" live in the
+developer-facing [dev/](../../dev/README.md). To avoid duplicating facts, we link you there
+whenever you want to know how things work.
 
-- **見えるのは自分のテナントだけ** です。他部署（他テナント）のメンバーもセッションも、あなたには
-  一切見えません。デプロイ全体を見られるのは super_admin（後述）だけです。
-- テナントをまたぐ設定（テナントの新規作成、テナント全体の資源上限、アイドル自動停止、egress 統制など）は
-  あなたの権限の外です。必要なときは **情シス／デプロイ管理者に依頼** します。
+## The short version: what you can do / what you can see
 
-| できること | 画面 | 詳細 |
+- **You can only see your own tenant.** Members and sessions of other departments (other tenants) are
+  completely invisible to you. Only a super_admin (described below) can see the whole deployment.
+- Settings that span tenants (creating new tenants, tenant-wide resource limits, idle auto-stop,
+  egress controls, and so on) are outside your authority. When you need them, **ask your IT
+  department / deployment administrator**.
+
+| What you can do | Screen | Details |
 |-----------|------|------|
-| メンバーを追加する | テナント管理 → テナント → メンバー追加 | [01-members.md](01-members.md) |
-| メンバーごとのセッション上限を決める | メンバー詳細 → 操作 | [02-limits.md](02-limits.md) |
-| メンバーの資源（メモリ／CPU／ディスク）と稼働セッションを見る | メンバー詳細 | [02-limits.md](02-limits.md) |
-| 稼働中のワークスペースを強制停止する | メンバー詳細 → 操作 | [02-limits.md](02-limits.md) |
-| テナント全体の稼働セッションを俯瞰する | セッション | [02-limits.md](02-limits.md) |
-| 誰が何を変更したか（監査ログ）を見る | 監査 | [03-audit-usage.md](03-audit-usage.md) |
-| 利用状況（稼働時間）を見て CSV で書き出す | 使用量 | [03-audit-usage.md](03-audit-usage.md) |
+| Add members | Tenants → tenant → Add member | [01-members.md](01-members.md) |
+| Set per-member session limits | Member detail → Operations | [02-limits.md](02-limits.md) |
+| View a member's resources (memory / CPU / disk) and running sessions | Member detail | [02-limits.md](02-limits.md) |
+| Force-stop a running workspace | Member detail → Operations | [02-limits.md](02-limits.md) |
+| Get an overview of running sessions across the tenant | Sessions | [02-limits.md](02-limits.md) |
+| See who changed what (audit log) | Audit | [03-audit-usage.md](03-audit-usage.md) |
+| View usage (running time) and export it as CSV | Usage | [03-audit-usage.md](03-audit-usage.md) |
 
-## 管理画面への入り方
+## How to enter the admin screen
 
-1. 画面右上の、あなたのメールアドレスが出ているボタン（アカウントメニュー）を開きます。
-2. メニューの中の盾アイコンの付いた **「管理」** を選びます。
+1. Open the button at the top right of the screen showing your email address (the account menu).
+2. In the menu, choose **"Admin"**, the item with the shield icon.
 
-この「管理」項目は、tenant_admin と super_admin にだけ表示されます。ふつうのメンバーには出ません。
-同じメニューに「設定」（自分の表示・エージェント・Git などの個人設定）もありますが、それは別物です。
-チームを管理するのは「管理」の方です。
+This "Admin" item is shown only to tenant_admin and super_admin. Ordinary members don't see it.
+The same menu also has "Settings" (your personal settings for display, agents, Git, and so on), but
+that is something else. Managing the team is done from "Admin".
 
-## 管理画面の構成
+## Layout of the admin screen
 
-管理画面は上部のタブで 5 つの区画に分かれています。
+The admin screen is divided into 5 sections by the tabs at the top.
 
-- **テナント管理** — メンバー一覧と、各メンバーの詳細（資源・セッション・操作）へのドリルダウン。
-  日々いちばん使う区画です。→ [01-members.md](01-members.md)・[02-limits.md](02-limits.md)
-- **セッション** — テナント内で「いま動いている」セッションを一覧で俯瞰します。→ [02-limits.md](02-limits.md)
-- **使用量** — 期間を区切って、メンバーごとのワークスペース稼働時間を見ます。CSV で書き出せます。→ [03-audit-usage.md](03-audit-usage.md)
-- **監査** — 変更操作の記録（誰が・いつ・何を）を検索します。→ [03-audit-usage.md](03-audit-usage.md)
-- **通信** — 外部通信の統制（egress）。これは super_admin 専用です。tenant_admin のあなたが開くと
-  「権限がありません」と表示されます。統制の必要が出たら情シスへ。
+- **Tenants** — the member list, with a drill-down into each member's detail (resources, sessions,
+  operations). This is the section you will use most day to day. → [01-members.md](01-members.md) / [02-limits.md](02-limits.md)
+- **Sessions** — an at-a-glance list of the sessions "running right now" within the tenant. → [02-limits.md](02-limits.md)
+- **Usage** — per-member workspace running time over a chosen period. Exportable as CSV. → [03-audit-usage.md](03-audit-usage.md)
+- **Audit** — search the record of change operations (who, when, what). → [03-audit-usage.md](03-audit-usage.md)
+- **Egress** — control of external traffic (egress). This is super_admin only. If you, as a
+  tenant_admin, open it, you'll see "You don't have permission". When egress controls become
+  necessary, go to your IT department.
 
-どの区画でも、テナントを切り替える選択肢は **super_admin にしか出ません**。あなたには常に自分の
-テナントだけが表示されます。
+In every section, the option to switch tenants **appears only for super_admin**. You always see
+only your own tenant.
 
-## 誰が何を担当するか
+## Who is responsible for what
 
-Agent Fleet の管理は、あなた（tenant_admin）だけでは完結しません。役割の切り分けはこうです。
+Managing Agent Fleet is not something you (tenant_admin) can complete alone. Responsibilities are
+divided like this.
 
-| 事柄 | 担当 |
+| Matter | Owner |
 |------|------|
-| メンバーの追加、セッション上限、ワークスペースの強制停止、監査・使用量の確認 | **あなた（tenant_admin）** |
-| テナントの新規作成、テナント全体の資源上限・アイドル自動停止の設定、管理者権限の付与、home の掃除 | デプロイ全体の管理者（super_admin） |
-| egress（外部通信）統制 | super_admin |
-| 加入方式の切替（自動加入⇄招待制）、デプロイ全体の環境設定、バックアップ、アップグレード、ホストの障害対応 | 情シス／SRE（operator） |
+| Adding members, session limits, force-stopping workspaces, reviewing audit and usage | **You (tenant_admin)** |
+| Creating new tenants, setting tenant-wide resource limits and idle auto-stop, granting admin rights, cleaning home | Deployment-wide administrator (super_admin) |
+| Egress (external traffic) controls | super_admin |
+| Switching the join mode (auto-join ⇄ invite-only), deployment-wide environment settings, backups, upgrades, host incident response | IT / SRE (operator) |
 
-super_admin と情シスは同じ人が兼ねていることも多く、あなたから見ればどちらも「上流に依頼する相手」です。
-自分の権限で完結しないことに気づいたら、[operator/README.md](../operator/README.md) の担当者に相談してください。
+super_admin and IT are often the same person, and from your point of view both are "someone
+upstream to ask". Whenever you notice something can't be completed with your own authority, consult
+the people in [operator/README.md](../operator/README.md).
 
-権限の仕組み（RBAC）や管理 API の内部設計を詳しく知りたい場合は、
-開発者向けの [dev/03 コントロールプレーン](../../dev/03-control-plane.md) を参照してください。
+If you want the details of the permission model (RBAC) or the internal design of the admin API,
+see the developer-facing [dev/03 Control plane](../../dev/03-control-plane.md).
 
-## 管理者になったら、まず
+## Once you become an administrator, first
 
-初めてテナント管理者になった日にひととおり触っておくと、いざというとき迷いません。
+Touring everything once on the day you first become a tenant administrator means you won't be lost
+when it matters.
 
-1. **管理画面に入れることを確認する** — 右上のアカウントメニューに「管理」が出ていれば OK です。
-   出ていなければ、あなたのアカウントにまだ tenant_admin 権限が付いていません。super_admin に付与を
-   依頼してください。
-2. **メンバー一覧を眺める** — 「テナント管理」で自分のテナントを開き、いま誰が所属しているかを確認します。
-   自動加入モードなら、ログインした人が自動で並んでいるはずです。→ [01-members.md](01-members.md)
-3. **いま効いている上限を知る** — テナントカードの「上限 — ワークスペース / セッション」を見ておきます。厳しすぎ／
-   緩すぎると感じたら、テナント全体の上限は super_admin、個人のセッション上限はあなた自身で調整します。
+1. **Confirm you can enter the admin screen** — if "Admin" appears in the account menu at the top
+   right, you're fine. If it doesn't, your account doesn't have tenant_admin rights yet. Ask a
+   super_admin to grant them.
+2. **Look over the member list** — open your tenant under "Tenants" and check who currently belongs.
+   In auto-join mode, everyone who has logged in should already be listed. → [01-members.md](01-members.md)
+3. **Know the limits currently in effect** — look at "Limits — Workspace / Session" on the tenant
+   card. If they feel too strict or too loose, tenant-wide limits are adjusted by a super_admin,
+   and per-person session limits by you yourself.
    → [02-limits.md](02-limits.md)
-4. **監査と使用量の見方を覚える** — 平常時のログと稼働量を一度見ておくと、異常時に「いつもと違う」に
-   気づけます。→ [03-audit-usage.md](03-audit-usage.md)
+4. **Learn how to read audit and usage** — looking at the logs and running time once during normal
+   operation lets you notice "this is different from usual" when something is wrong. → [03-audit-usage.md](03-audit-usage.md)
 
-日常運用では、朝いちに「セッション」タブで稼働状況を俯瞰し、月末に「使用量」で稼働時間を書き出す、
-といった使い方が中心になります。
+In daily operation, the typical rhythm is: first thing in the morning, get an overview of running
+state on the "Sessions" tab; at month end, export running time from "Usage".
 
 ---
 
-- 次に読む: [01 メンバー管理](01-members.md) → [02 資源上限とセッション](02-limits.md) → [03 監査と利用状況](03-audit-usage.md)
-- ガイド全体の索引: [../README.md](../README.md)
+- Read next: [01 Member management](01-members.md) → [02 Resource limits and sessions](02-limits.md) → [03 Audit and usage](03-audit-usage.md)
+- Guide index: [../README.md](../README.md)
