@@ -1,79 +1,81 @@
-# 05. ファイル — ツリー・ビュアー・Markdown/スライド
+# 05. Files — tree, viewer, Markdown/slides
 
-> 対象: ワークスペース内のファイルを見る・整理する・エージェントに渡すメンバー。ファイルツリー、
-> ビュアー（ハイライト・Markdown・Mermaid・Marp スライド）、そして「ファイルを
-> セッションに送る」使い方を扱います。
+English | [日本語](05-files.ja.md)
 
-## ファイルツリー
+> Audience: members who view and organize files in the workspace and hand them to agents.
+> Covers the file tree, the viewer (highlighting, Markdown, Mermaid, Marp slides), and how to
+> "send a file to a session".
 
-左ペインの **ファイル** に、ワークスペース内のファイルがツリー表示されます。リポジトリのノードは
-折りたためます（三角の「折りたたむ」／「展開」）。1 つの作業コピーに集中したいときに、
-他を畳んでおくと見通しが良くなります。
+## File tree
 
-- **compact folders** — 中身が 1 つのサブフォルダだけ、という階層は `a/b/c` のように 1 行に畳んで表示されます（深い単一階層で行を無駄にしない、VS Code と同じ流儀）。
-- **ツリー / 変更** — リポジトリノードでは表示を「ツリー」と「変更」（変更ファイルのみ）で切り替えられます。変更ファイルには「未追跡」「追加」「変更」「改名」「削除」のバッジが付きます。
+The **Files** section in the left pane shows the files in your workspace as a tree. Repository
+nodes can be collapsed (the triangle "Collapse" / "Expand"). When you want to focus on one
+working copy, folding the others keeps things tidy.
 
-ファイルやフォルダを右クリックすると、「新規ファイル」「新規フォルダ」「名前をコピー」
-「相対パスをコピー」「名前を変更」「削除」ができます。ファイルには「朗読で開く」と
-「ダウンロード」も表示されます。フォルダを削除すると中身ごと消えるので確認が出ます。
-項目ごとの表示条件は [アイコン・バッジ・メニュー](badges-and-menus.md) を参照してください。
+- **compact folders** — levels whose only content is a single subfolder are collapsed into one row like `a/b/c` (no wasted rows for deep single-child hierarchies; the same convention as VS Code).
+- **Tree / Changes** — on repository nodes you can switch the display between "Tree" and "Changes" (changed files only). Changed files get "Untracked", "Added", "Modified", "Renamed", and "Deleted" badges.
 
-ファイルの追加は**ドラッグ＆ドロップでアップロード**するか、右クリックの「新規ファイル」
-から作れます。同名ファイルがあると上書き確認が出ます。ファイルを **Ctrl+クリック**（または
-中クリック）すると、今の表示を保ったまま**新しいペインで開け**ます（[03](03-terminal.md)）。
+Right-clicking a file or folder offers "New file", "New folder", "Copy the name",
+"Copy the relative path", "Rename", and "Delete". Files also show "Open in reader" and
+"Download". Deleting a folder removes its contents too, so a confirmation is shown.
+See [Icons, badges, and menus](badges-and-menus.md) for when each item appears.
 
-クローン直後やワークスペースの起動・停止後は、ツリーが**自動で最新化**されます。手で
-更新する必要はありません。
+To add files, **upload by drag & drop** or create them via "New file" in the right-click menu.
+If a file with the same name exists, an overwrite confirmation is shown. **Ctrl+click** (or
+middle-click) a file to **open it in a new pane** while keeping the current view ([03](03-terminal.md)).
 
-### 見えないフォルダがある理由
+Right after a clone, and after the workspace starts or stops, the tree is **refreshed
+automatically**. There is no need to refresh it by hand.
 
-ツリーには**わざと表示されないフォルダ**があります。エージェントのログイン情報や
-暗号化された保管領域（claude / codex / opencode の資格ファイル、SSH 鍵、Agent Fleet の
-内部状態など）を収めたディレクトリです。あなたの秘密を守るため、一覧に出さず直接の
-閲覧もできないようになっています。見当たらなくても異常ではありません。
+### Why some folders are invisible
 
-## ファイルビュアー
+Some folders are **intentionally hidden** from the tree. These are directories holding agent
+login credentials and encrypted storage (credential files for claude / codex / opencode, SSH keys,
+Agent Fleet internal state, and so on). To protect your secrets, they are neither listed nor
+directly viewable. Not seeing them is not a problem.
 
-ファイルをクリックすると、メイン領域の**ビュアー**に中身が出ます。上部にファイル名・
-形式・サイズ・行数が表示されます。
+## File viewer
 
-- **構文ハイライト・行番号・ミニマップ** — コードは言語を判定してハイライトされます。行番号やミニマップの有無は ⚙設定 → 「表示」タブの「ファイルビュアー」で切り替えます。
-- **巨大ファイル** — 極端に大きい／長い行のファイルは、「プレーン表示」（ハイライト・行番号なし）に自動で切り替わります。
-- **LFS ポインタ** — Git LFS の実体がまだ無いファイルには「LFS ポインタ」バッジが出ます。端末でそのリポジトリに入り `git lfs pull` すると実体を取得できます（[04](04-git.md)）。
+Clicking a file shows its contents in the **viewer** in the main area. The top shows the file
+name, format, size, and line count.
 
-### Markdown と Mermaid
+- **Syntax highlighting, line numbers, minimap** — code is highlighted with language detection. Toggle line numbers and the minimap under "File viewer" in ⚙Settings → the "Display" tab.
+- **Huge files** — files that are extremely large or have extremely long lines automatically switch to "Plain view" (no highlighting or line numbers).
+- **LFS pointers** — files whose Git LFS content has not been fetched show an "LFS pointer" badge. Enter the repository in a terminal and run `git lfs pull` to fetch the content ([04](04-git.md)).
 
-`.md` ファイルは、上部の切り替えで **「プレビュー」** と **「ソース」** を行き来できます。
-プレビューでは Mermaid のコードブロックが図として描画されます。コードブロックごとに
-「このコードをコピー」ボタンが付きます。
+### Markdown and Mermaid
 
-リンクの挙動は次のとおりです。
+For `.md` files, the toggle at the top switches between **"Preview"** and **"Source"**.
+In the preview, Mermaid code blocks are rendered as diagrams. Each code block gets a
+"Copy this code" button.
 
-- **外部 URL** — 新しいタブで開きます。
-- **リポジトリ内の相対リンク** — そのファイルをビュアーで開く／フォルダを **ファイル** で表示します。
-- **`#見出し` アンカー** — ページ内をスクロールします。
+Links behave as follows.
 
-### Marp スライド
+- **External URLs** — open in a new tab.
+- **Relative links within the repository** — open that file in the viewer / show the folder in **Files**.
+- **`#heading` anchors** — scroll within the page.
 
-先頭に `marp: true` を書いた `.md` は、**スライド**として表示できます。上部の切り替えに
-**「スライド」「プレビュー「ソース」** が並び、既定でスライド表示になります。
+### Marp slides
 
-- **◀ / ▶**（または ← → / PageUp・PageDown / Space / Home・End）で 1 枚ずつ送れます。
-- **⤢** で全画面表示にできます。
+A `.md` file starting with `marp: true` can be displayed as **slides**. The toggle at the top
+shows **"Slides", "Preview", "Source"**, and slides are the default view.
 
-## ファイルをセッション／チャットに送る
+- **◀ / ▶** (or ← → / PageUp·PageDown / Space / Home·End) move one slide at a time.
+- **⤢** switches to fullscreen.
 
-エージェントに「このファイルを扱ってほしい」ときは、ファイルを開き、ビュアーで
-**テキストを選択**すると出る **「送る」** から送信できます（範囲を選ばず、ファイル全体を
-送ることもできます）。この操作はファイルの右クリックメニューにはありません。
+## Send a file to a session / chat
 
-- **送信先** — 稼働中のセッション（直接送信）か、アシスタント（チャットで開く）を選びます。停止中のセッションには送れません。
-- **コメント（指示）** — 「日本語に翻訳して保存して」などの指示を添えます。
-- ファイルは**パスで渡され**、セッションが自分で読み書きします。大きなファイルの翻訳など、ファイル出力を伴う作業に向きます。
+When you want an agent to "work on this file", open the file and use the **"Send"** button
+that appears when you **select text** in the viewer (you can also send the whole file without
+selecting a range). This action is not in the file's right-click menu.
 
-「カテゴリ」を付けて**メモキュー**に溜めておき、あとでまとめて送ることもできます
-（[07 チャットとメモ](07-chat-memo.md)）。
+- **Destination** — choose a running session (direct send) or the assistant (open in chat). You cannot send to a stopped session.
+- **Comment (instructions)** — attach instructions such as "Translate this into Japanese and save it".
+- The file is **passed by path**, and the session reads and writes it itself. This suits work that produces file output, such as translating a large file.
+
+You can also tag items with a "Category" and pile them up in the **memo queue** to send in a
+batch later ([07 Chat and memos](07-chat-memo.md)).
 
 ---
 
-仕組みを知りたい人へ: [dev/04 Workspace Agent（fs 面・denylist）](../../dev/04-workspace-agent.md)
+For those who want to know how it works: [dev/04 Workspace Agent (fs side / denylist)](../../dev/04-workspace-agent.md)

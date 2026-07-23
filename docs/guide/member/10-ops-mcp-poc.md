@@ -1,95 +1,97 @@
-# 10. 運用ツール連携（MCP でインシデント壁打ち）🧪
+# 10. Ops tooling PoC — incident brainstorming over MCP 🧪
 
-## PagerDuty / Grafana / CloudWatch は「運用」タブから接続できます（推奨）
+English | [日本語](10-ops-mcp-poc.ja.md)
 
-**PagerDuty・Grafana・CloudWatch は製品機能として組み込み済み**です（docs/25 Phase 1、要イメージ再ビルド）。手作業の PoC 手順（後述）より、まずこちらを使ってください。
+## PagerDuty / Grafana / CloudWatch connect from the "Ops & monitoring" tab (recommended)
 
-1. **設定 > 運用** タブを開き、各カードに接続情報を入れて「接続」:
-   - **PagerDuty**: API キー。**読み取り専用キー**を推奨します（PagerDuty の Integrations > API Access Keys で「Read-only」を選択）。EU アカウントはトグルをオンにしてください。
-   - **Grafana**: インスタンス URL と**サービスアカウントトークン**（Viewer 権限を推奨）。セルフホスト / Grafana Cloud / **Amazon Managed Grafana** のいずれも可（AMG は URL に workspace endpoint を指定。トークンの発行方法と 30 日期限は後述の AMG 節を参照）。
-   - **CloudWatch**: プルダウンから **SSM 接続のプロファイルを選ぶ**だけ（リージョンは任意で上書き可）。**秘密の入力はありません** — プロファイルの SSO 設定（非秘密）から専用の設定ファイルを生成し、コンテナ内の AWS 資格をそのまま読みます。SSO ログインがまだ／期限切れの場合はツールがエラーになるので、該当の SSM セッションを一度開くか、ターミナルで `AWS_CONFIG_FILE=~/.aws/af-ops/cloudwatch.config aws sso login --profile プロファイル名` を実行してください。自分で `~/.aws` を管理している人は「手動入力」でプロファイル名を直接指定できます。
-2. 資格情報はワークスペース内に暗号化保存され、MCP サーバの起動時にだけ渡されます（設定ファイルや平文には残りません）。Grafana は書き込み・管理ツール無効で起動、CloudWatch はサーバ自体が読み取り専用ツールのみです。
-3. チャットで **「SRE アシスタント」** を選んで新しい会話を開始。「今開いている PagerDuty のインシデントを一覧して経緯をまとめて」「このサービスの直近 1 時間のエラーレートを Grafana で見て」「CloudWatch でこのロググループの ERROR を分析して」のように聞くと、実データを確認しながら状況整理・原因の仮説出し・対外報告の草稿を手伝います（読み取り専用。ack/resolve はしません）。
-4. 接続の変更は**次のチャット送信から反映**されます（ワークスペースの再起動は不要）。
+**PagerDuty, Grafana, and CloudWatch are already built into the product** (docs/25 Phase 1; requires an image rebuild). Use that first, rather than the manual PoC steps described later.
 
-Zabbix など他ツールは、下の PoC 手順で手動接続できます（順次「運用」タブに取り込み予定）。
+1. Open the **Settings > Ops & monitoring** tab, enter the connection details on each card, and hit "Connect":
+   - **PagerDuty**: an API key. A **read-only key** is recommended (choose "Read-only" under Integrations > API Access Keys in PagerDuty). For EU accounts, turn the toggle on.
+   - **Grafana**: the instance URL and a **service account token** (Viewer permission recommended). Self-hosted / Grafana Cloud / **Amazon Managed Grafana** all work (for AMG, use the workspace endpoint as the URL; for how to issue a token and the 30-day expiry, see the AMG section below).
+   - **CloudWatch**: just **pick an SSM connection's profile** from the dropdown (the region can optionally be overridden). **No secrets are entered** — a dedicated config file is generated from the profile's SSO settings (non-secret), and the AWS credentials inside the container are read as-is. If SSO login hasn't been done yet / has expired, the tools will error out, so open the relevant SSM session once, or run `AWS_CONFIG_FILE=~/.aws/af-ops/cloudwatch.config aws sso login --profile <profile-name>` in a terminal. If you manage `~/.aws` yourself, you can specify the profile name directly via "Manual entry".
+2. Credentials are stored encrypted inside the workspace and are handed over only when the MCP server starts (they don't end up in config files or plaintext). Grafana starts with write and admin tools disabled; the CloudWatch server itself has read-only tools only.
+3. In chat, pick the **"SRE Assistant"** and start a new conversation. Ask things like "List the PagerDuty incidents currently open and summarize what happened", "Check this service's error rate for the last hour in Grafana", or "Analyze the ERROR entries in this log group with CloudWatch" — it will help you organize the situation, form hypotheses about the cause, and draft external reports while checking the real data (read-only; it does not ack/resolve).
+4. Connection changes take effect **from the next chat message** (no workspace restart needed).
+
+Other tools such as Zabbix can be connected manually with the PoC steps below (they will be folded into the "Ops & monitoring" tab over time).
 
 ---
 
-## （PoC）その他ツールを手動で繋ぐ 🧪
+## (PoC) Connecting other tools manually 🧪
 
-**実験的な手順です**（[docs/25 サービス運用向け拡張](../../25-ops-monitoring.md) の Phase 0）。まだ「運用」タブに無いツール（CloudWatch / Zabbix など）や、チャットではなく**ターミナル（CLI）の claude セッション**に繋ぎたい場合の手作業手順です。
+**These are experimental steps** (Phase 0 of [docs/25 service-ops extensions](../../25-ops-monitoring.md)). Manual steps for tools not yet in the "Ops & monitoring" tab (CloudWatch / Zabbix, etc.), or for when you want to connect a **Terminal (CLI) claude session** rather than chat.
 
-- 対象: ターミナル（CLI）の claude セッション。**チャット（アシスタント）には現状 MCP を足せません**（Phase 1 で対応予定）。
-- 前提: ワークスペースから各監視ツールのエンドポイントへ outbound が通ること。PyPI 系は `uvx` の初回取得で必要。
-- ⚠️ **トークンの扱い（PoC 限定の妥協）**: `claude mcp add -e` で渡したトークンは `~/.claude.json` に**平文で保存されます**。home ボリューム内でコンテナ recreate では消えませんが、リポジトリには絶対に書かないこと・**read-only の専用トークンだけ**を使うこと。この平文問題の解消（Connections への統合）が Phase 1 の主目的です。
+- Scope: Terminal (CLI) claude sessions. **Chat (the assistant) cannot take extra MCP servers today** (planned for Phase 1).
+- Prerequisite: outbound connectivity from the workspace to each monitoring tool's endpoint. PyPI access is needed for `uvx`'s first fetch.
+- ⚠️ **Token handling (a PoC-only compromise)**: tokens passed via `claude mcp add -e` are **stored in plaintext** in `~/.claude.json`. Because it's inside the home volume it survives a container recreate, but never write tokens into a repository, and use **read-only, dedicated tokens only**. Fixing this plaintext problem (integrating into Connections) is the main goal of Phase 1.
 
-## 0. 下ごしらえ（1 回だけ・recreate 後も残る）
+## 0. Prep (one time only; survives a recreate)
 
 ```bash
 mkdir -p ~/.local/bin
-# uv/uvx（Python 系 MCP サーバのランチャ。~/.local に入るので永続）
+# uv/uvx (launcher for Python MCP servers; goes into ~/.local so it persists)
 pip install --user uv
 ```
 
-## 1. Grafana（メトリクス・ログ・アラート・OnCall）
+## 1. Grafana (metrics, logs, alerts, OnCall)
 
-Go 単一バイナリで最軽量・最充実。**検証済み**: v0.17.1 は `-disable-write -disable-admin` で read-only 52 ツール（Prometheus/Loki クエリ、ダッシュボード検索、アラート、Incident/OnCall 参照、Sift 分析。create/update/delete/install 系ゼロ）になる。Grafana のデータソース経由で CloudWatch / Athena / Elasticsearch 等を引くツールも同梱。
+A single Go binary — the lightest and most complete. **Verified**: v0.17.1 with `-disable-write -disable-admin` becomes read-only with 52 tools (Prometheus/Loki queries, dashboard search, alerts, Incident/OnCall lookups, Sift analysis; zero create/update/delete/install tools). Tools that query CloudWatch / Athena / Elasticsearch etc. through Grafana data sources are also included.
 
 ```bash
-# バイナリ取得（~/.local/bin に置くと永続）
+# Fetch the binary (put it in ~/.local/bin so it persists)
 curl -sL https://github.com/grafana/mcp-grafana/releases/download/v0.17.1/mcp-grafana_Linux_x86_64.tar.gz \
   | tar xz -C ~/.local/bin mcp-grafana
 
-# Grafana 側: 管理画面で Viewer 権限のサービスアカウントを作りトークン発行
+# On the Grafana side: create a Viewer-permission service account in the admin UI and issue a token
 
-# claude に登録（user スコープ = このワークスペースの全セッションで有効）
+# Register with claude (user scope = active in every session in this workspace)
 claude mcp add -s user grafana \
   -e GRAFANA_URL=https://grafana.example.com \
   -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<viewer-sa-token> \
   -- ~/.local/bin/mcp-grafana -disable-write -disable-admin
 ```
 
-**Amazon Managed Grafana（AMG）の場合**も同じ手順で繋がる（認証はセルフホストと同じサービスアカウントトークン。IAM/SigV4 は不要）。違いは 2 点だけ:
+**Amazon Managed Grafana (AMG)** connects with the same steps (authentication is the same service account token as self-hosted; no IAM/SigV4 needed). There are only two differences:
 
-- `GRAFANA_URL` は workspace endpoint（`https://g-xxxxxxxxxx.grafana-workspace.<region>.amazonaws.com`）。
-- トークンは AMG の Grafana 管理画面（Administration → Service accounts、要 admin）か、IAM 権限があれば AWS CLI でも発行できる（**最長 30 日**で失効するので期限管理に注意）:
+- `GRAFANA_URL` is the workspace endpoint (`https://g-xxxxxxxxxx.grafana-workspace.<region>.amazonaws.com`).
+- The token is issued from AMG's Grafana admin UI (Administration → Service accounts; admin required), or — if you have the IAM permissions — via the AWS CLI (it expires after **30 days at most**, so watch the expiry):
 
 ```bash
 aws grafana create-workspace-service-account-token \
   --workspace-id g-xxxxxxxxxx --service-account-id <sa-id> \
-  --name poc-$(date +%Y%m%d) --seconds-to-live 604800   # 7日。応答の key がトークン（再表示不可）
+  --name poc-$(date +%Y%m%d) --seconds-to-live 604800   # 7 days. The key in the response is the token (cannot be shown again)
 ```
 
-## 2. PagerDuty（インシデント・オンコール）
+## 2. PagerDuty (incidents, on-call)
 
-公式 self-host 版（Python / PyPI `pagerduty-mcp`）。**既定で read-only**、write 系は `--enable-write-tools` を付けない限り出ない。トークンは PagerDuty の User API Token（My Profile → User Settings）。
+The official self-hosted version (Python / PyPI `pagerduty-mcp`). **Read-only by default**; write tools don't appear unless you pass `--enable-write-tools`. The token is a PagerDuty User API Token (My Profile → User Settings).
 
 ```bash
 claude mcp add -s user pagerduty \
   -e PAGERDUTY_USER_API_KEY=<user-api-token> \
   -- ~/.local/bin/uvx pagerduty-mcp
-# EU アカウントは -e PAGERDUTY_API_HOST=https://api.eu.pagerduty.com を追加
+# For EU accounts, add -e PAGERDUTY_API_HOST=https://api.eu.pagerduty.com
 ```
 
-> hosted 版（`https://mcp.pagerduty.com/mcp`、remote HTTP）もあるが、**既定で write ツールまで出る**ため PoC では self-host + read-only 既定を推奨。
+> There is also a hosted version (`https://mcp.pagerduty.com/mcp`, remote HTTP), but it **exposes write tools by default**, so for the PoC we recommend self-host with the read-only default.
 
-## 3. CloudWatch（アラーム起点調査・ログ分析）
+## 3. CloudWatch (alarm-driven investigation, log analysis)
 
-### 3a. まずは MCP なしで: aws CLI で直接ログを見る（最速）
+### 3a. Start without MCP: read logs directly with the aws CLI (fastest)
 
-ターミナル（CLI）の claude セッションは Bash が使えるので、**MCP を繋がなくても焼き込み済みの aws CLI でログ確認の壁打ちができます**。SSM 接続で使っている SSO プロファイルでログインしてあれば追加設定ゼロです。claude に「`<ロググループ>` の直近 1 時間の ERROR を見て」と頼めば、以下のようなコマンドを自分で叩いて調べてくれます。
+Terminal (CLI) claude sessions can use Bash, so **you can brainstorm over logs with the baked-in aws CLI without wiring up MCP at all**. If you're already logged in with the SSO profile you use for SSM connections, there is zero extra setup. Ask claude to "look at the last hour of ERROR in `<log-group>`" and it will run commands like the following on its own:
 
 ```bash
-aws sso login --profile <sso-profile>          # オンコール開始時に済ませておく
+aws sso login --profile <sso-profile>          # get this done when your on-call shift starts
 export AWS_PROFILE=<sso-profile> AWS_REGION=ap-northeast-1
 
-aws logs describe-log-groups --log-group-name-prefix /aws/   # ロググループ探し
-aws logs tail /aws/ecs/my-service --since 1h                 # 直近ログ（--follow で追尾）
+aws logs describe-log-groups --log-group-name-prefix /aws/   # find log groups
+aws logs tail /aws/ecs/my-service --since 1h                 # recent logs (--follow to keep tailing)
 aws logs filter-log-events --log-group-name /aws/ecs/my-service \
   --start-time $(date -d '1 hour ago' +%s)000 --filter-pattern ERROR
 
-# 集計や横断は Logs Insights（start-query → get-query-results の 2 段）
+# For aggregation or cross-group queries, use Logs Insights (two steps: start-query → get-query-results)
 qid=$(aws logs start-query --log-group-name /aws/ecs/my-service \
   --start-time $(date -d '3 hours ago' +%s) --end-time $(date +%s) \
   --query-string 'filter @message like /ERROR/ | stats count(*) by bin(5m)' \
@@ -97,44 +99,44 @@ qid=$(aws logs start-query --log-group-name /aws/ecs/my-service \
 aws logs get-query-results --query-id $qid
 ```
 
-必要な IAM は読み取りのみ（`CloudWatchLogsReadOnlyAccess` 相当: DescribeLogGroups / FilterLogEvents / GetLogEvents / StartQuery / GetQueryResults）。
+The IAM required is read-only (equivalent to `CloudWatchLogsReadOnlyAccess`: DescribeLogGroups / FilterLogEvents / GetLogEvents / StartQuery / GetQueryResults).
 
-### 3b. MCP で繋ぐ（アラーム分析・異常検知ツールが欲しいとき）
+### 3b. Connect via MCP (when you want alarm analysis and anomaly detection tools)
 
-AWS 公式（awslabs）。資格は焼き込み済み aws CLI と同じチェーンを読むので、**SSO プロファイルがあれば追加の秘密は不要**。全ツール read-only（メトリクス取得・アラーム履歴・ロググループの異常パターン分析・Logs Insights クエリなど）。
+Official AWS (awslabs). Credentials are read from the same chain as the baked-in aws CLI, so **no extra secret is needed if you have an SSO profile**. All tools are read-only (metric retrieval, alarm history, log-group anomaly pattern analysis, Logs Insights queries, and more).
 
 ```bash
-# 事前にコンテナ内で aws sso login 済みであること（SSM セッションと同じ流儀）
+# You must have already run aws sso login inside the container (same routine as SSM sessions)
 claude mcp add -s user cloudwatch \
   -e AWS_PROFILE=<sso-profile> \
   -e FASTMCP_LOG_LEVEL=ERROR \
   -- ~/.local/bin/uvx awslabs.cloudwatch-mcp-server@latest
 ```
 
-※ チャットの SRE アシスタントで使うだけなら、この手順は不要です（冒頭の「運用」タブから接続してください）。この手順はターミナル（CLI）の claude セッションに繋ぎたい場合用です。
+Note: if you only want to use it from the SRE Assistant in chat, these steps are unnecessary (connect from the "Ops & monitoring" tab described at the top). These steps are for connecting a Terminal (CLI) claude session.
 
-Athena は (a) まず素の aws CLI（追加設定ゼロ、claude が Bash で叩ける）、(b) 本格的には `uvx awslabs.aws-dataprocessing-mcp-server@latest`。PoC では (a) で十分なことが多い。
+For Athena: (a) start with the plain aws CLI (zero extra setup; claude can drive it from Bash), (b) for the full experience, `uvx awslabs.aws-dataprocessing-mcp-server@latest`. For a PoC, (a) is often enough.
 
 ## 4. Zabbix
 
-initMAX 製（事実上の標準、read_only 設定・全 API 対応）は **systemd 常駐のチーム共有サービス**として立てて remote HTTP で繋ぐ設計なので、個人 PoC には重い。軽く試すなら PyPI の stdio 版（例: `uvx zabbix-mcp`、`ZABBIX_URL`/`ZABBIX_TOKEN`）で雰囲気を掴み、本採用の評価時に initMAX を検討する。
+The initMAX one (the de facto standard; read_only setting, full API coverage) is designed to run as a **team-shared systemd resident service** connected over remote HTTP, which is heavy for a personal PoC. To try things out lightly, get a feel with a stdio version from PyPI (e.g. `uvx zabbix-mcp`, `ZABBIX_URL`/`ZABBIX_TOKEN`), and evaluate initMAX when assessing it for real adoption.
 
-## 5. 動作確認と壁打ちの試し方
+## 5. Verifying it works and trying the brainstorming
 
 ```bash
-claude mcp list        # 登録一覧と接続ヘルス
+claude mcp list        # list of registered servers and connection health
 ```
 
-セッション（claude）を開いて、実インシデントで試す例:
+Open a (claude) session and try it on a real incident:
 
-- 「PagerDuty で今開いているインシデントを一覧して、最新のものの経緯をまとめて」
-- 「そのサービスの直近 1 時間のエラーレートを Grafana の Prometheus で引いて、アラート発火時刻と突き合わせて」
-- 「CloudWatch で該当 Lambda のログから ERROR パターンを分析して、時系列で何が起きたか仮説を 3 つ」
-- 「ここまでの調査を、経緯 → 影響範囲 → 原因仮説 → 次アクションの形式で対外報告向けに整理して」
+- "List the incidents currently open in PagerDuty and summarize the timeline of the latest one"
+- "Pull that service's error rate for the last hour from Grafana's Prometheus and cross-check it against the alert firing time"
+- "Analyze the ERROR patterns in that Lambda's logs in CloudWatch and give 3 hypotheses of what happened, in chronological order"
+- "Organize the investigation so far into timeline → impact scope → cause hypotheses → next actions, formatted for an external report"
 
-評価したい観点（docs/25 の UC1/UC2）: ツール横断の状況整理が速いか / 仮説の質 / 対外文案の使い物度 / トークン消費と応答速度。
+Points to evaluate (UC1/UC2 in docs/25): whether cross-tool situation assessment is fast / quality of hypotheses / how usable the external drafts are / token consumption and response speed.
 
-## 6. 片付け
+## 6. Cleanup
 
 ```bash
 claude mcp remove -s user grafana
@@ -142,11 +144,11 @@ claude mcp remove -s user pagerduty
 claude mcp remove -s user cloudwatch
 ```
 
-トークンを失効させるのも忘れずに（Grafana SA トークン削除・PagerDuty User API Token 削除）。
+Don't forget to revoke the tokens as well (delete the Grafana SA token and the PagerDuty User API Token).
 
-## 既知の制約（= Phase 1 以降で解消する予定のもの）
+## Known limitations (= to be resolved in Phase 1 and later)
 
-- トークンが `~/.claude.json` 平文（→ Connections + secrets.enc へ）
-- チャット/アシスタントでは使えない（→ `chatMCPArgs` のカタログ駆動化）
-- アラート本文やログは**攻撃者が影響を与えられる入力**。read-only 構成を崩さないこと。write を試すときは専用アシスタント/セッションで明示的に
-- uvx 系は初回起動時に PyPI から取得（egress 必要）。メモリ制約ホストでは同時起動しすぎない
+- Tokens sit in plaintext in `~/.claude.json` (→ moving to Connections + secrets.enc)
+- Not usable from chat / the assistant (→ making `chatMCPArgs` catalog-driven)
+- Alert bodies and logs are **input an attacker can influence**. Do not break the read-only setup. If you experiment with writes, do it explicitly in a dedicated assistant/session
+- uvx-based servers fetch from PyPI on first launch (egress required). On a memory-constrained host, don't start too many at once

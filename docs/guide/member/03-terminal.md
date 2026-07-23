@@ -1,84 +1,91 @@
-# 03. ターミナル — 黒い画面の操作・コピペ・ショートカット・スマホ
+# 03. Terminal — working the black screen, copy & paste, shortcuts, phones
 
-> 対象: セッションの端末を操作するメンバー。コピー＆ペースト、ショートカット、スマホでの
-> 操作、フォント・サイズの調整を扱います。CLI に慣れていても、ブラウザ端末ならではの
-> クセ（特にコピペ）があるので、ここを一度読んでおくと詰まりません。
+English | [日本語](03-terminal.ja.md)
 
-この章は、ターミナル（CLI）実行のセッションと shell / SSM を扱います。セッションを開くと、
-メイン領域に**端末**（黒い画面）が出ます。Codex / opencode をマネージド実行で始めた場合は
-会話画面だけが開き、端末はありません（実行方式の違いは [02 セッション](02-sessions.md)）。
-停止中のセッションを開いたときは「再開中…」のあと **「再開」** ボタンが出るので、押すと再開します。
+> Audience: members who operate a session's terminal. Covers copy & paste, shortcuts, using it
+> on a phone, and adjusting the font and size. Even if you're comfortable with CLIs, a browser
+> terminal has quirks of its own (copy & paste in particular), so reading this once will keep
+> you from getting stuck.
 
-## コピー＆ペースト
+This chapter covers sessions running as Terminal (CLI), plus shell / SSM. When you open a
+session, a **terminal** (the black screen) appears in the main area. If you started
+Codex / opencode in managed execution, only the chat view opens and there is no terminal
+(for the difference between execution methods, see [02 Sessions](02-sessions.md)).
+When you open a stopped session, a **"Resume"** button appears after "Resuming…"; press it to resume.
 
-端末にフォーカスがあると **Ctrl+C / Ctrl+V はプログラム側に素通し**します（Ctrl+C は
-割り込み＝SIGINT、Ctrl+V は文字入力）。そのため、クリップボードのコピペは別のキーに
-割り当てられています。ここが普通のエディタと違うので注意してください。
+## Copy & paste
 
-- **コピー** — マウスで**左ドラッグして選択すると、離した時点で自動コピー**されます。キーボードなら `Ctrl+Shift+C`（macOS は `⌘+Shift+C`、選択があるときは `⌘C` でも可）、`Ctrl+Insert`。
-- **ペースト** — **右クリック**または**中クリック**で貼り付け。キーボードなら `Ctrl+Shift+V`（macOS は `⌘+Shift+V` / `⌘V`）、`Shift+Insert`。
+When the terminal has focus, **Ctrl+C / Ctrl+V pass straight through to the program**
+(Ctrl+C is interrupt = SIGINT; Ctrl+V is character input). Clipboard copy & paste is therefore
+assigned to different keys. This is where it differs from an ordinary editor, so watch out.
 
-端末内に出た URL（claude のサインインリンクなど）は、折り返して表示されていても
-**クリックで新しいタブ**に開けます。長い URL をコピーして貼り直す手間が要りません。
+- **Copy** — **left-drag to select, and it is copied automatically the moment you release**. From the keyboard: `Ctrl+Shift+C` (macOS: `⌘+Shift+C`; `⌘C` also works when there is a selection), `Ctrl+Insert`.
+- **Paste** — **right-click** or **middle-click** to paste. From the keyboard: `Ctrl+Shift+V` (macOS: `⌘+Shift+V` / `⌘V`), `Shift+Insert`.
 
-## ショートカット
+URLs that appear in the terminal (like claude sign-in links) open **in a new tab on click**,
+even when they're displayed wrapped. No need to copy a long URL and paste it back together.
 
-- **Ctrl+PgUp / Ctrl+PgDn** — セッションを前後に切り替え。
-- ファイルツリーにフォーカスがあるとき: **↑ ↓ ← → / Enter** で移動・開閉、**Ctrl+↑ ↓** でフォルダ間移動、**Shift+↑ ↓** でビュアーをスクロール（[05 ファイル](05-files.md)）。
+## Shortcuts
 
-### コマンドパレット
+- **Ctrl+PgUp / Ctrl+PgDn** — switch to the previous / next session.
+- When the file tree has focus: **↑ ↓ ← → / Enter** to move and open/close, **Ctrl+↑ ↓** to jump between folders, **Shift+↑ ↓** to scroll the viewer ([05 Files](05-files.md)).
 
-**Ctrl+P**（macOS は **⌘P**）で **コマンドパレット**を開けます。画面内の操作、セッション、
-リポジトリを名前で検索して、キーボードだけで実行・移動できる入口です。設定 →
-**キーボードショートカット**で、このキーは変更できます。
+### Command palette
 
-- **↑ ↓ / Enter** — 候補を選んで実行・開く。ファイルや変更ファイルでは **Ctrl+Enter**（macOS は **⌘Enter**）で別ペインに開けます。
-- **Tab** またはもう一度 **Ctrl+P / ⌘P** — 「コマンド」「変更ファイル」「ファイル」の検索対象を切り替えます。
-- **Esc** — 閉じて、開く前に操作していた場所へ戻ります。
+**Ctrl+P** (macOS: **⌘P**) opens the **command palette** — an entry point for searching
+in-screen actions, sessions, and repositories by name, and running or navigating with the
+keyboard alone. You can change this key in Settings →
+**Keyboard**.
 
-端末にフォーカスがあり、設定で **「端末入力を優先」** をオンにしていると、Ctrl+P は端末へ渡されます。
-その場合は既定の **Ctrl+K → ;**（macOS は **⌘K → ;**）で開けます。**?** では、ほかの
-ショートカットも一覧で確認できます。
+- **↑ ↓ / Enter** — pick a result and run / open it. For files and changed files, **Ctrl+Enter** (macOS: **⌘Enter**) opens them in another pane.
+- **Tab**, or **Ctrl+P / ⌘P** again — switches the search scope between "Commands", "Changed files", and "Files".
+- **Esc** — closes it and returns to where you were working before opening it.
 
-全画面表示中は、ブラウザが本来横取りするキー（Ctrl+W で閉じる、など）も端末に届くよう
-自動でロックされます。Esc はロックしないので、全画面はいつでも Esc で抜けられます。
+When the terminal has focus and **"Terminal input priority"** is turned on in settings, Ctrl+P is
+passed to the terminal. In that case, open it with the default **Ctrl+K → ;** (macOS: **⌘K → ;**).
+**?** shows a list of the other shortcuts as well.
 
-## 複数を並べる（ペイン）
+In fullscreen, keys the browser would normally intercept (Ctrl+W to close, etc.) are
+automatically locked so they reach the terminal. Esc is not locked, so you can always leave
+fullscreen with Esc.
 
-メイン領域は**複数のペインに分割**できます。1 つのタスクを進めながら別のタスクを横目で
-見る、という並行作業に向きます。
+## Arranging multiple views (panes)
 
-- **新しいペインで開く** — セッション・リポジトリ・ファイルの項目を **Ctrl+クリック**（または**中クリック**）すると、今のペインを置き換えず**新しいペインに開き**ます。アシスタントの右クリックにも「新しいペインで開く」があります。項目による違いは [アイコン・バッジ・メニュー](badges-and-menus.md) を参照してください。
-- **並べ替える** — ペイン上部のつまみをドラッグすると、他のペインと入れ替えられます。境界をドラッグすれば幅・高さも変えられます。
-- **閉じる** — ペインの閉じるボタン（中クリック / Ctrl+クリックで確認なしに直接閉じる）。
+The main area can be **split into multiple panes**. This suits parallel work — pushing one task
+forward while keeping an eye on another.
 
-デスクトップでは最大 4 列×2 段まで並べられます。スマホは 1 列・最大 2 枚までです。
+- **Open in a new pane** — **Ctrl+click** (or **middle-click**) a session, repository, or file item to open it **in a new pane** without replacing the current one. The assistant's right-click menu also has "Open in a new pane". For per-item differences, see [Icons, badges, and menus](badges-and-menus.md).
+- **Rearrange** — drag the handle at the top of a pane to swap it with another pane. Drag the borders to change width and height too.
+- **Close** — the pane's close button (middle-click / Ctrl+click closes it directly without confirmation).
 
-各ペインの内容は独立しています。ターミナル（CLI）実行の claude / codex / opencode なら上部の
-**チャット ⇄ ターミナル**で会話の Markdown 表示と端末表示を切り替えられます。マネージド実行の
-セッションはチャット表示だけを使います（[07 チャットとメモ](07-chat-memo.md)）。
+On desktop you can arrange up to 4 columns × 2 rows. On phones it's 1 column, up to 2 panes.
 
-## スマホでの操作
+Each pane's content is independent. For claude / codex / opencode running as Terminal (CLI),
+the **Chat ⇄ Terminal** toggle at the top switches between the conversation's Markdown view and
+the terminal view. Managed sessions use only the chat view ([07 Chat and memos](07-chat-memo.md)).
 
-スマホでは画面を広く使うため、左ペインは隠れています。
+## Using it on a phone
 
-- **左ペインを出す** — 画面左上の **≡（メニュー）**で引き出します。項目を選ぶと自動で閉じます。戻る操作でまた開きます。
-- **コントロールキー列** — 端末の下に、ソフトキーボードでは押しづらいキーが並びます: **`Esc` `Tab` `←` `↑` `↓` `→` `^C` `⏎`**。これらはキーボードを呼び出さずに送れます。
-- **過去の出力を遡る** — 端末上を **1 本指で縦にスワイプ**すると過去の出力に戻れます（下へドラッグで古い行、上へで新しい行）。vim など端末全体を使うアプリでは、そのアプリ自身のスクロールになります。
+On phones, the left pane is hidden to make the most of the screen.
 
-（スマホは「進捗確認・軽い返信」向けです。込み入った編集は PC で行うのがおすすめです。）
+- **Show the left pane** — pull it out with **≡ (menu)** at the top left of the screen. It closes automatically when you pick an item. The back gesture opens it again.
+- **Control key row** — below the terminal sits a row of keys that are hard to press on a soft keyboard: **`Esc` `Tab` `←` `↑` `↓` `→` `^C` `⏎`**. You can send these without bringing up the keyboard.
+- **Scrolling back through past output** — **swipe vertically with one finger** on the terminal to go back through past output (drag down for older lines, up for newer). In apps that use the whole terminal, like vim, this becomes that app's own scrolling.
 
-## フォント・サイズを変える
+(Phones are for "checking progress and quick replies". For involved editing, a PC is recommended.)
 
-端末の見た目は **⚙設定 → 「表示」タブ**で調整します。「ターミナル」の
-**フォント**と**文字サイズ**（9〜28px）が変えられます。
+## Changing the font and size
 
-この設定は**サーバーに保存**され、per-user で管理されます。会社の PC と自宅の PC、
-別のブラウザからログインしても、同じフォント・サイズが**追従**します。
+Adjust the terminal's appearance in **⚙ Settings → the "Display" tab**. Under "Terminal" you can
+change the **Font** and **Font size** (9–28px).
 
-（テーマや配色、ファイルビュアーの表示設定も同じ「表示」タブにあります。詳しくは
-[05 ファイル](05-files.md)。なお端末の背景色は、ライトテーマにしても暗いままです。）
+These settings are **saved on the server** and managed per user. Your office PC, your home PC,
+even a login from another browser — the same font and size **follow you**.
+
+(Theme, colors, and the file viewer's display settings are on the same "Display" tab. See
+[05 Files](05-files.md) for details. Note that the terminal background stays dark even on the
+light theme.)
 
 ---
 
-仕組みを知りたい人へ: [dev/02 Console（表示システム）](../../dev/02-console.md)
+For those who want to know how it works: [dev/02 Console (the display system)](../../dev/02-console.md)

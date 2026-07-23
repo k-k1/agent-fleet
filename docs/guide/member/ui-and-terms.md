@@ -1,73 +1,80 @@
-# 画面と用語 — Console 共通リファレンス
+# UI and terminology — Console common reference
 
-> 対象: Console のどこに何があるか、ガイド内の言葉が何を指すかを確認したい人。
-> 個々の操作手順は各章、表示やメニューの意味は
-> [アイコン・バッジ・メニュー](badges-and-menus.md)を参照してください。
+English | [日本語](ui-and-terms.ja.md)
 
-## 画面の構成
+> Audience: anyone who wants to check where things live in the Console, or what a word in
+> this guide refers to. For individual step-by-step operations see each chapter; for the
+> meaning of indicators and menus see
+> [Icons, badges, and menus](badges-and-menus.md).
 
-Console は、上から **画面最上部のバー**、**ワークスペース操作バー**、その下の
-**左ペイン**と**メイン領域**で構成されます。スマートフォンでは左ペインが隠れ、
-画面左上の **≡（メニュー）**から開きます。
+## Screen layout
 
-### 画面最上部のバーとワークスペース操作バー
+From top to bottom, the Console consists of the **bar at the very top of the screen**, the
+**workspace action bar**, and below them the **left pane** and the **main area**. On a
+smartphone the left pane is hidden; open it with the **≡ (menu)** at the top left of the
+screen.
 
-画面最上部のバーにはテナントの切り替え、通知、設定、アカウント操作があります。ワークスペース操作バーは
-自分の **ワークスペース**を操作する帯で、状態、起動・停止、「はじめる」、プレビュー、
-ペイン分割などの操作があります。
+### The top bar and the workspace action bar
 
-### 左ペイン
+The bar at the very top of the screen holds tenant switching, notifications, settings, and
+account actions. The workspace action bar is the strip for operating your own
+**workspace** — status, start/stop, "Start", Preview, pane splitting, and so on.
 
-ワークスペースが動いているときは、次の順に並びます。
+### Left pane
 
-| セクション | 内容 |
+While the workspace is running, the sections appear in this order.
+
+| Section | Contents |
 |---|---|
-| アシスタント | リポジトリを使わないチャットと、用途別のアシスタント |
-| メモキュー | あとでまとめて送る指示のメモ |
-| リポジトリ | クローン済みの作業コピー。各行の下に、その場所で動くセッションやworktreeが並ぶ |
-| その他のセッション | リポジトリに属さないshell、SSM、ホーム起動など |
-| ファイル | リポジトリまたはhomeのファイルを探して開くブラウザー |
+| Assistants | Chat that doesn't use a repository, plus purpose-specific assistants |
+| Memo queue | Memos of instructions to send later in a batch |
+| Repositories | Cloned working copies. Under each row, the sessions and worktrees running at that location |
+| Other sessions | shell, SSM, home-launched sessions, and others not belonging to a repository |
+| Files | A browser for finding and opening files in a repository or home |
 
-ワークスペース停止中は、リポジトリ配下のセッションに代わって **セッション履歴**が表示されます。
-履歴は確認できますが、再開などワークスペースを必要とする操作は起動後に行います。
+While the workspace is stopped, **Session history** is shown in place of the sessions under
+each repository. You can review the history, but operations that need the workspace, such as
+resuming, are done after starting it.
 
-### メイン領域とペイン
+### Main area and panes
 
-左ペインで選んだ内容を表示する場所です。セッションのチャット／ターミナル、ソース管理、
-変更、ファイル、diff、アシスタントチャットなどが開きます。複数の **ペイン**に分割でき、
-左ペインの色付き数字は、その項目を表示しているペイン番号です。
+This is where whatever you selected in the left pane is displayed. A session's chat /
+terminal, source control, changes, files, diffs, assistant chat, and more open here. It can
+be split into multiple **panes**; the colored number in the left pane is the number of the
+pane displaying that item.
 
-## 用語
+## Terminology
 
-| 用語 | このガイドでの意味 |
+| Term | What it means in this guide |
 |---|---|
-| ワークスペース | 利用者専用の作業環境。リポジトリ、作業内容、セッションが入る。裏側では専用コンテナとして動く |
-| ワークスペース操作バー | 画面上部にある、ワークスペースの起動・停止や「はじめる」などの操作列 |
-| セッション | 1つの仕事に対応する会話・作業場所・実行状態のまとまり。端末の有無とは別 |
-| 実行方式 | Agent Fleet がエージェントを動かし、指示を届ける経路。内部名はドライバ |
-| マネージド | 共有の実行基盤を使い、チャット表示から操作する方式。ターミナルは持たない |
-| ターミナル（CLI） | エージェントの CLI と端末内の対話画面を直接操作できる方式 |
-| エージェント | claude、codex、opencodeなどのCLIコーディングAI |
-| アシスタント | 端末を持たない用途別チャット。セッションとは別の機能 |
-| リポジトリ | Gitリポジトリの総称。UIの「リポジトリ」セクションも指す |
-| 作業コピー | ワークスペース内にある、実際に編集するリポジトリのフォルダ |
-| worktree | Gitの仕組みで作る独立した作業コピー。並行作業時の干渉を防ぐ |
-| 親 | worktreeを作った基準側の作業コピー。状態表示の比較先になる |
-| ペイン | メイン領域を分割した1区画 |
-| ソース管理 | コミットグラフ、ブランチ、fetchなどを扱う画面 |
-| メモキュー | 指示を一時保存し、あとでセッションへまとめて送る機能 |
-| ブラウザペイン | ワークスペース内で起動した Web サービス（`127.0.0.1:{ポート}`）を Console のペインに映し、描画と操作（クリック・入力・スクロール等）を行う方式。HMR・WebSocket・SSE・cookie・リダイレクトが動く。UI では「ペインで開く」。localhost 専用で外部 URL は開けない（[08](08-advanced.md)）|
-| 軽量プレビュー | 同じ Web サービスを単純な HTTP proxy で別タブに開く軽い確認方式。JSON や単純な静的ページの一回確認向けで、HMR / WebSocket / SSE は使えない（[08](08-advanced.md)）|
+| Workspace | The user's private work environment. Holds repositories, work in progress, and sessions. Runs as a dedicated container behind the scenes |
+| Workspace action bar | The row of controls at the top of the screen for starting/stopping the workspace, "Start", and so on |
+| Session | A unit of conversation, working location, and execution state corresponding to one task. Separate from whether it has a terminal |
+| Execution method | The path by which Agent Fleet runs an agent and delivers instructions to it. Internally called a driver |
+| Managed | A method that uses a shared execution runtime and is operated from the chat view. Has no terminal |
+| Terminal (CLI) | A method where you directly operate the agent's CLI and its interactive screen inside a terminal |
+| Agent | A CLI coding AI such as claude, codex, or opencode |
+| Assistant | A purpose-specific chat with no terminal. A feature separate from sessions |
+| Repository | Git repositories in general. Also refers to the "Repositories" section in the UI |
+| Working copy | The folder of a repository inside the workspace that you actually edit |
+| worktree | An independent working copy created via a Git mechanism. Prevents interference during parallel work |
+| Parent | The working copy a worktree was created from. Serves as the comparison target in status displays |
+| Pane | One subdivision of the main area |
+| Source control | The screen that handles the commit graph, branches, fetch, and so on |
+| Memo queue | A feature that stores instructions temporarily and sends them to a session later in a batch |
+| Browser pane | A method that renders a web service started inside the workspace (`127.0.0.1:{port}`) in a Console pane, with display and interaction (clicking, typing, scrolling, etc.). HMR, WebSocket, SSE, cookies, and redirects all work. "Open in pane" in the UI. localhost only — external URLs cannot be opened ([08](08-advanced.md)) |
+| Lightweight preview | A lighter way to check the same web service by opening it in another tab through a simple HTTP proxy. Suited to one-off checks of JSON or simple static pages; HMR / WebSocket / SSE are unavailable ([08](08-advanced.md)) |
 
-## 表記の基準
+## Writing conventions
 
-- 画面上の名称は **リポジトリ**、**ファイル**、**セッション**のように日本語で書きます。
-- CLIやセッションの種類は `claude`、`codex`、`opencode`、`shell`、`ssm` と書きます。
-- 製品名や発話者名を指すときは Claude、Codex のように表記することがあります。
-- UIのボタンは「クローン」、Gitコマンドや一般的な操作は `git clone` と書きます。
-- **アイコン**は絵だけの表示、**状態表示**は状態を示す色付き表示、**バッジ**は件数や
-  ペイン番号などの小さな補助表示を指します。
+- On-screen names are written like **Repositories**, **Files**, **Sessions**.
+- CLIs and session kinds are written as `claude`, `codex`, `opencode`, `shell`, `ssm`.
+- When referring to the product or to a speaker, we may write Claude, Codex.
+- UI buttons are written like "Clone"; Git commands and generic operations like `git clone`.
+- An **icon** is a picture-only display, a **status display** is a colored display that
+  shows a state, and a **badge** is a small auxiliary display such as a count or a pane
+  number.
 
 ---
 
-仕組みを知りたい人へ: [dev/02 Console の設計](../../dev/02-console.md)
+For those who want to know how it works: [dev/02 Console design](../../dev/02-console.md)

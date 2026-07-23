@@ -1,137 +1,169 @@
-# 04. リポジトリと git — クローン・変更の確認・コミット・push
+# 04. Repositories and git — cloning, reviewing changes, committing, pushing
 
-> 対象: リポジトリをクローンしてgit操作をするメンバー。gitプロバイダの接続、クローン、
-> 内蔵のgitプロバイダ、リポジトリ行からの起動、ソース管理ビューでのコミット、pushと認証を扱います。
+English | [日本語](04-git.ja.md)
 
-## git プロバイダを接続する
+> Audience: members who clone repositories and work with git. Covers connecting a git provider,
+> cloning, the built-in git provider, launching from a repository row, committing in the source
+> control view, and push with authentication.
 
-privateリポジトリをクローン／pushするには、まずGitHubかBitbucketに接続します。
-**⚙設定 → 「Git」タブ**で行います（接続はワークスペース内の Agent を経由するため、
-ワークスペースの起動が必要です）。
+## Connect a git provider
 
-- **GitHub** — 「OAuth で接続」（推奨・ブラウザで承認するデバイスフロー）か「アクセストークンで接続」（Personal Access Token を貼付）。
-- **Bitbucket** — 「OAuth で接続」（推奨・別タブで承認するコードグラント）か「アプリトークンで接続」（Atlassian メール＋API トークン）。
+To clone or push private repositories, first connect GitHub or Bitbucket.
+Do this in **⚙Settings → the "Git hosting" tab** (the connection goes through the Agent inside the
+workspace, so the workspace must be started).
 
-OAuth（デバイスフロー）は、表示された**コードをコピー**して**リンクを開いて貼り付け**、
-**承認を待つ**、の 3 ステップです。接続済みになると、あなたのハンドルとメールが表示されます。
+- **GitHub** — "Connect via OAuth" (recommended; a device flow you approve in the browser) or "Connect with an access token" (paste a Personal Access Token).
+- **Bitbucket** — "Connect via OAuth" (recommended; a code grant you approve in a separate tab) or "Connect with an app token" (Atlassian email + API token).
 
-gitの認証は接続後、すべてのgit操作に**透過的に効きます**。クローンやpushのたびに
-トークンを聞かれることはありません。
+OAuth (device flow) is three steps: **Copy the code** shown, **Open the link and paste**,
+then **Wait for approval**. Once connected, your handle and email are displayed.
 
-## リポジトリをクローンする
+After connecting, git authentication applies **transparently** to every git operation. You will
+never be asked for a token on each clone or push.
 
-左ペイン **リポジトリ** の **「クローン」** を開きます。取得元は2つです。
+## Clone a repository
 
-- **接続から選ぶ**（既定）— 接続済みの GitHub / Bitbucket からリポジトリとブランチを選びます。private リポジトリには 🔒 が付きます。未接続のプロバイダのタブは選べず、「未接続（設定 → Git）」と出ます。
-- **URL 手入力** — 「クローンURL」（`https://…`／`git@…`）と「ブランチ（任意）」を入れます。接続していないリポジトリ向けです。
+Open **"Clone"** in the **Repositories** section of the left pane. There are two sources.
 
-**「新規ブランチ（任意）」** を指定すると、基点ブランチから新しいブランチを作って
-切り替えます。指定すると **「フォルダ名」** で作業コピーのフォルダも分けられます。
-最後に **「クローン」** で取得します。
+- **Pick from connections** (default) — choose a repository and branch from your connected GitHub / Bitbucket. Private repositories are marked with 🔒. Tabs for unconnected providers cannot be selected and show "Not connected (Settings → Git)".
+- **Enter URL** — enter a "Clone URL" (`https://…` / `git@…`) and "Branch (optional)". For repositories you are not connected to.
 
-### submodule と Git LFS
+If you specify **"New branch (optional)"**, a new branch is created from the base branch and
+checked out. When you do, you can also give the working copy its own folder via **"Folder name"**.
+Finally, click **"Clone"** to fetch it.
 
-- **submodule** — クローン後にベストエフォートで取得します。SSH登録のsubmoduleは自動でHTTPSに読み替えて取得します（失敗しても親のクローンは成功します）。
-- **Git LFS** — クローン／checkout時に自動で実体を取得します（smudge）。既にある作業コピーでポインタのままのファイルは、ビュアーに「LFS ポインタ」バッジが出ます。この場合は端末でそのリポジトリに入り、`git lfs pull`で実体を取得してください。
+### Submodules and Git LFS
 
-## 内蔵の git プロバイダ（内部 Git）
+- **Submodules** — fetched on a best-effort basis after the clone. Submodules registered over SSH are automatically rewritten to HTTPS and fetched (even if this fails, the parent clone succeeds).
+- **Git LFS** — actual content is fetched automatically on clone / checkout (smudge). In an existing working copy, files that are still pointers show an "LFS pointer" badge in the viewer. In that case, enter the repository in a terminal and run `git lfs pull` to fetch the content.
 
-外部のホスティングを使わずに、**フリート内でリポジトリを持つ**こともできます。
-**⚙設定 → 「Git」タブ**の「内部リポジトリ（フリート内）」で、名前を入れて **「作成」**
-するだけです。外部アカウント不要で、テナント内のメンバーとクローン／pushを共有できます
-（認証は自動注入されるトークンで透過）。行からクローンURLをコピーしたり、中身を「参照」
-（クローン不要のブラウズ）したりできます。試作やチーム内共有に向きます。
+## The built-in git provider (internal Git)
 
-## リポジトリの行からセッションを起動する
+You can also **host repositories inside the fleet** without using external hosting.
+In **⚙Settings → the "Git hosting" tab**, under "Internal repositories (within the fleet)", just enter
+a name and click **"Create"**. No external account is needed, and you can share clone / push with
+members in your tenant (authentication is transparent via an auto-injected token). From the row you
+can copy the clone URL or **"Browse"** the contents (browsing without cloning). Good for
+prototypes and in-team sharing.
 
-クローンしたリポジトリは **リポジトリ** に並びます。行の **「起動」** ボタンで
-**「作業を始める」** 画面が開き、エージェント・モデル・**場所**・最初のプロンプトを
-選んで起動できます。**場所**は既定が **「新しい worktree」**（隔離・ブランチ切替から安全）、
-もう一方が **「このコピーで直接」** です。
+## Launch a session from a repository row
 
-- **新しい worktree**（既定）— そのタスク専用の独立した作業コピーを切り出します。他のセッションと編集がぶつからないので、並行作業はこちらが安全です（基点ブランチとブランチ名を選べます。空なら暫定名 `temp/…`）。
-- **このコピーで直接** — 今開いているフォルダでそのまま作業します。
+Cloned repositories are listed under **Repositories**. The **"Launch"** button on a row opens
+the **"Start working"** screen, where you choose the agent, model, **location**, and the first
+prompt, then launch. For **location**, the default is **"New worktree"** (isolated · safe across
+branch switches); the other option is **"Directly in this copy"**.
 
-「起動」右の **▾** からは、設定画面を開かず種別（claude / opencode / codex / shell）を選んで
-**即起動**できます（Ctrl / 中クリックで新しいペインに起動）。
+- **New worktree** (default) — carves out an independent working copy dedicated to that task. Since edits never collide with other sessions, this is the safe choice for parallel work (you can pick the base branch and branch name; if left empty, a provisional name `temp/…` is used).
+- **Directly in this copy** — works directly in the folder currently open.
 
-行には状態表示も出ます。読み方を覚えておくと、push 前に気づけます。
+The **▾** to the right of "Launch" lets you pick a kind (claude / opencode / codex / shell) and
+**launch instantly** without opening the settings screen (Ctrl / middle-click launches in a new pane).
 
-- **未コミット** — コミットしていない変更があります。
-- worktree の **親=** — 親 working copy と同じコミットです。
-- worktree の **未取込 N** — 親にまだ含まれない固有コミットが N 件あります。
-- worktree の **取込済** — worktree の HEAD は Git 履歴上、親に含まれています。
-- worktree の **分岐 N↕M** — worktree と親の両方に固有コミットがあり、マージかリベースが必要です。
-- worktree の **比較不可** — detached HEAD やコミットのないリポジトリなどで関係を判定できません。
-- **↑N**（先行）— origin より N コミット進んでいます（未 push）。
-- **↓N FF可** — origin が N コミット進んでいて、そのまま fast-forward できます（ソース管理の Fast-Forward）。
-- **↑N ↓N 要マージ** — origin と分岐しています。fast-forward できず、マージかリベースが必要です。
+Rows also show status indicators. Learning to read them helps you catch things before pushing.
 
-worktree の状態表示は親の作業コピーにある現在のブランチとの比較、`↑` / `↓` は origin との比較です。
-比較先や双方の固有コミット数は状態表示にマウスを重ねると確認できます。squash merge はコミットの
-祖先関係を残さないため、ホスティングサービス上でマージ済みでも **取込済** にならないことがあります。
+- **Uncommitted** — there are changes that have not been committed.
+- Worktree **= parent** — same commit as the parent working copy.
+- Worktree **unmerged N** — there are N commits unique to the worktree not yet in the parent.
+- Worktree **merged** — the worktree's HEAD is contained in the parent in Git history.
+- Worktree **diverged N↕M** — both the worktree and the parent have unique commits; a merge or rebase is needed.
+- Worktree **n/a** — the relationship cannot be determined, e.g. detached HEAD or a repository with no commits.
+- **↑N** (ahead) — N commits ahead of origin (not pushed).
+- **↓N FF ok** — origin is N commits ahead and can be fast-forwarded cleanly (Fast-Forward in source control).
+- **↑N ↓N needs merge** — diverged from origin. A fast-forward is not possible; a merge or rebase is needed.
 
-行末の `●N` は稼働中のセッション数、数字だけのバッジは停止中のセッション数です。リポジトリを
-折りたたんでいるときは、配下のworktreeのセッションも含みます。色付きの数字は、そのリポジトリの
-ソース管理を表示しているペイン番号です。詳しくは
-[アイコン・バッジ・メニュー](badges-and-menus.md)を参照してください。
+Worktree status indicators compare against the current branch in the parent working copy, while
+`↑` / `↓` compare against origin. Hover over the status indicator to see what it is compared
+against and each side's unique commit counts. Because a squash merge does not preserve commit
+ancestry, a branch merged on the hosting service may still not show as **merged**.
 
-### 右クリックでできること
+The `●N` at the end of a row is the number of running sessions; a plain number badge is the number
+of stopped sessions. When a repository is collapsed, this includes sessions of its worktrees. A
+colored number is the pane number showing that repository's source control. See
+[Icons, badges, and menus](badges-and-menus.md) for details.
 
-リポジトリまたはworktreeの行を右クリックすると、次の操作が表示されます。状態や場所によって
-表示されない項目もあります。
+### What you can do with right-click
 
-- **ソース管理を開く**／**フォルダを開く**／**変更をコミット**
-- **ブランチ切替**／**ブランチ名をコピー**／**Fast-Forward**
-- claude、codex、opencode、shellなど種類別のセッション起動
-- **ワーキングコピーを削除**（削除できる作業コピーのみ）
+Right-clicking a repository or worktree row shows the following actions. Some items are hidden
+depending on state and location.
 
-## ソース管理ビューでコミットする
+- **Open source control** / **Open the folder** / **Commit changes**
+- **Switch branch** / **Copy the branch name** / **Fast-Forward**
+- Per-kind session launch: claude, codex, opencode, shell, and so on
+- **Delete the working copy** (only for working copies that can be deleted)
 
-リポジトリ行を通常クリックすると、配下のセッションやworktreeを展開／折りたたみます。
-**ソース管理**ビュー（コミットグラフ）は右クリックの「ソース管理を開く」から開きます。
-Ctrl／⌘+クリックまたは中クリックなら、新しいペインに直接開けます。ヘッダには現在の
-ブランチと操作ボタンが並び、狭いときは **⋯** に畳まれます。
+## Commit in the source control view
 
-- **変更** — 変更をコミットする作業画面（別ペイン）を開きます。
-- **fetch** — リモートを取得します（`git fetch --prune`）。
-- **Fast-Forward** — 現在のブランチを upstream に fast-forward します（`pull --ff-only`）。
-- **更新** — 表示を最新化します。
-- ブランチ名の部分をクリックすると **「ブランチ切替」**（フィルタ付き・最新コミット順）です。
-- `.gitmodules` がある場合はヘッダの対象選択に **submodule** が並びます。取得済みの
-  submoduleを選ぶと、そのsubmodule自身のコミットグラフとコミット詳細を閲覧できます。
-  未取得のsubmoduleも「未取得」と表示されますが、初期化されるまで選択できません。
+A normal click on a repository row expands / collapses the sessions and worktrees underneath it.
+The **source control** view (commit graph) opens from "Open source control" in the right-click
+menu. Ctrl / ⌘+click or middle-click opens it directly in a new pane. The header shows the
+current branch and action buttons, which collapse into **⋯** when space is tight.
 
-### 変更 → stage → コミット
+- **Changes** — opens the work screen for committing changes (in a separate pane).
+- **fetch** — fetches from the remote (`git fetch --prune`).
+- **Fast-Forward** — fast-forwards the current branch to upstream (`pull --ff-only`).
+- **Refresh** — refreshes the display.
+- Clicking the branch name part opens **"Switch branch"** (with filtering, sorted by latest commit).
+- If a `.gitmodules` file exists, **submodules** are listed in the header's target selector.
+  Selecting a fetched submodule lets you browse that submodule's own commit graph and commit
+  details. Unfetched submodules are also listed as "(not fetched)", but they cannot be selected
+  until they are initialized.
 
-「変更」を開くと、変更ファイルの一覧が出ます（`{リポジトリ名} — 変更`）。
+### Changes → stage → commit
 
-- 各行の **stage** / **unstage** ボタンで対象を出し入れします。追跡中ファイルは**変更を破棄**もできます（「元に戻せません。」の確認あり）。
-- 下の **コミットメッセージ**欄に書き、必要なら **「追跡中を全て stage (-a)」** にチェックして **「Commit」** します。メッセージが空だと「コミットメッセージが必要です」と出ます。
-- コミット作者（identity）はこの画面から上書きできます。解決順は「リポ上書き ＞ プロバイダ ＞ グローバル既定」です（⚙設定 → 「Git」でも設定できます）。
+Opening "Changes" shows the list of changed files (`{repository name} — Changes`).
 
-### 履歴と diff
+- Use the **stage** / **unstage** buttons on each row to move files in and out. For tracked files you can also **Discard changes** (with a "This cannot be undone." confirmation).
+- Write in the **Commit message** field below, check **"Stage all tracked (-a)"** if needed, then click **"Commit"**. If the message is empty, "A commit message is required" is shown.
+- The commit author (identity) can be overridden from this screen. The resolution order is "repo override > provider > global default" (also configurable in ⚙Settings → "Git").
 
-コミットグラフの行をクリックすると、その**コミットの詳細**（変更ファイルと diff）が開きます。
-diff はファイルごとに折り畳め、「全て開く」「全て閉じる」「折り返し」で見え方を調整できます。
-グラフ上のコミットを右クリックすると、「詳細を表示」「ブランチ切替」「このコミットから
-新規ブランチ…」などが選べます。
+### History and diffs
 
-## 作業コピーの削除
+Clicking a row in the commit graph opens that **commit's details** (changed files and diff).
+Diffs can be folded per file, and you can adjust how they are shown with "Expand all",
+"Collapse all", and "Wrap". Right-clicking a commit on the graph offers "Show details",
+"Switch branch", "New branch from this commit…", and more.
 
-不要になった作業コピーは、リポジトリ行の右クリックか、ソース管理ヘッダの削除から
-**「ワーキングコピーを削除」** できます。ローカルの作業コピーだけが消え、履歴・リモートは
-残ります。未コミット / 未 push の変更があると、失われる旨の再確認（「強制削除」）が出ます。
+## Deleting a working copy
 
-## push と認証
+When you no longer need a working copy, use **"Delete the working copy"** from the repository
+row's right-click menu or from the delete action in the source control header. Only the local
+working copy is removed; history and the remote remain. If there are uncommitted / unpushed
+changes, a second confirmation ("Force delete") warns you that they will be lost.
 
-push は git の通常操作としてそのまま行えます（端末やエージェントから `git push`）。
-接続済みなら**認証は自動で透過**するので、トークンの入力は不要です。Bitbucket の
-トークンは失効しても自動更新されます。
+## Push and authentication
 
-> コミットしていない変更、push していないブランチは**ワークスペースの中だけ**にあります。
-> 長く残したい作業はこまめに push しておきましょう（[01 初日](01-first-day.md)）。
+Push works as a normal git operation (`git push` from a terminal or an agent). If you are
+connected, **authentication is transparent and automatic**, so no token entry is needed.
+Bitbucket tokens are refreshed automatically even after they expire.
+
+> Uncommitted changes and unpushed branches exist **only inside the workspace**.
+> Push work you want to keep frequently ([01 First day](01-first-day.md)).
+
+## Subversion (SVN) repositories
+
+You can work with **SVN** repositories, not just git. In the clone modal, use the **Git / SVN
+toggle** to select SVN, then enter the **Repository URL** and, if needed, a **subpath**
+(e.g. `trunk`, `branches/x`) and **username / password** (basic auth) to check out.
+
+- **A specific path only / multiple paths** — you can check out just a subtree via the subpath.
+  Checking out another path again creates a separate folder, giving you the same isolation as
+  git's separate clones. Since SVN has no worktrees, **this is how you split parallel work**
+  (session launch from an svn row is **in-place only**; no worktree option is shown).
+- **Saving credentials (optional)** — if you check the save option, credentials are stored in
+  the encrypted store and reused automatically for subsequent updates. The password never
+  appears in the process list or in a plaintext cache.
+- **Self-signed certificates** — if the certificate cannot be trusted (e.g. an in-house server),
+  turn on "Trust self-signed certificate" in the modal. This is a per-server opt-in that
+  **disables certificate verification for that server**, and it persists across future updates.
+- **Update and lock cleanup** — use "Update (svn)" on the svn row to move to the latest revision.
+  If the working copy gets locked (an error prompting `svn cleanup`), e.g. after an interruption,
+  checkout / update automatically attempts one recovery. If the lock remains, use
+  **"Clean up lock"** from the row menu.
+- The svn row shows the current revision (`r1234`). Branch switch and the source control view
+  (stage / commit) are git-only, so commit with `svn commit` inside a session. **Saved
+  credentials are not passed through to svn commands inside sessions**, so add `--username`
+  when needed.
 
 ---
 
-仕組みを知りたい人へ: [dev/04 Workspace Agent（git / fs 面）](../../dev/04-workspace-agent.md)・内蔵プロバイダは [dev/91 内部 git](../../dev/91-internal-git.md)
+For those who want to know how it works: [dev/04 Workspace Agent (git / fs side)](../../dev/04-workspace-agent.md) · the built-in provider is covered in [dev/91 Internal git](../../dev/91-internal-git.md)

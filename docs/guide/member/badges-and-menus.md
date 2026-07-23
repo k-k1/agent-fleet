@@ -1,95 +1,96 @@
-# アイコン・バッジ・メニュー — Console 共通リファレンス
+# Icons, badges, and menus — common Console reference
 
-> 対象: 左ペインの印の意味や、右クリックで何ができるかを確認したい人。
-> メニュー項目は対象の種類、状態、権限、ワークスペースの状態によって変わります。
+English | [日本語](badges-and-menus.ja.md)
 
-## セッションの表示
+> Audience: anyone who wants to check what the marks in the left pane mean, or what a right-click can do.
+> Menu items vary with the target's type, its state, your permissions, and the workspace state.
 
-行の先頭にある色付きアイコンは、`claude`、`codex`、`opencode`、`shell`、`ssm` の種類を
-表します。行末の状態アイコンにマウスを重ねると状態名を確認できます。利用者の操作が必要な
-状態は、アイコンだけでなく文字も表示されます。
+## Session display
 
-| 状態 | 意味 |
+The colored icon at the start of a row indicates the kind: `claude`, `codex`, `opencode`, `shell`, or `ssm`.
+Hover over the state icon at the end of the row to see the state name. States that need action from you are
+shown as text as well, not just an icon.
+
+| State | Meaning |
 |---|---|
-| 進行中… | エージェントが処理中 |
-| 質問あり | 質問への回答待ち |
-| プランあり | プランの承認または却下待ち |
-| 許可待ち | コマンド実行や編集などの許可待ち |
-| 入力待ち | 次の指示を受けられる状態 |
-| 入力待ち · BG実行中 | 入力は受けられるがバックグラウンド処理が継続中 |
-| 起動中 | 詳細な進行状態を持たないshell／ssmが稼働中 |
-| 停止中 | プロセスが停止している |
-| フォルダ無し — 再開不可 | 作業フォルダがなく、同じ会話を再開できない |
-| メモリ不足で終了 | メモリ上限などにより強制終了した可能性がある |
-| 強制終了／異常終了 | SIGKILL、シグナル、非ゼロ終了などを検出した |
+| Working… | The agent is processing |
+| Question | Waiting for an answer to a question |
+| Plan ready | Waiting for the plan to be approved or rejected |
+| Awaiting approval | Waiting for permission for a command run, an edit, etc. |
+| Ready | Ready to take the next instruction |
+| Ready · running in background | Accepts input, but background processing is still running |
+| Running | A shell / ssm with no detailed progress state is running |
+| Stopped | The process is stopped |
+| Folder missing — can't resume | The working folder is gone and the same conversation can't be resumed |
+| Ended (out of memory) | May have been force-killed by a memory limit or similar |
+| Force-killed / Crashed | A SIGKILL, a signal, a non-zero exit, or similar was detected |
 
-スピーカーアイコンは回答の読み上げ中、警告とブランチ名は起動時とは別のブランチへ
-作業コピーが切り替わったことを示します。
+The speaker icon means an answer is being read aloud; the warning plus a branch name means the working copy has
+switched to a branch different from the one it started on.
 
-## リポジトリの状態表示
+## Repository status display
 
-| 表示 | 意味 |
+| Badge | Meaning |
 |---|---|
-| 未コミット | コミットしていない変更がある |
-| 親= | 親の作業コピーと同じコミット |
-| 未取込 N | 親に含まれないworktree固有のコミットがN件ある |
-| 取込済 | worktreeのHEADがGit履歴上、親に含まれている |
-| 分岐 N↕M | worktreeと親の双方に固有コミットがある |
-| 比較不可 | detached HEADなどで親との関係を判定できない |
-| ↑N | originよりNコミット先行している |
-| ↓N FF可 | originがNコミット先行し、fast-forwardできる |
-| ↑N ↓M 要マージ | originと分岐し、マージかリベースが必要 |
+| Uncommitted | There are uncommitted changes |
+| = parent | Same commit as the parent working copy |
+| unmerged N | There are N worktree-specific commits not contained in the parent |
+| merged | The worktree's HEAD is contained in the parent in Git history |
+| diverged N↕M | Both the worktree and the parent have their own commits |
+| n/a | The relation to the parent can't be determined (detached HEAD etc.) |
+| ↑N | N commits ahead of origin |
+| ↓N FF ok | origin is N commits ahead and can be fast-forwarded |
+| ↑N ↓M needs merge | Diverged from origin; a merge or rebase is needed |
 
-`●N` はその作業コピーで稼働中のセッション数、数字だけの場合は停止中のセッション数です。
-折りたたんだ親リポジトリでは、配下のworktreeのセッションも集計します。
+`●N` is the number of running sessions in that working copy; a plain number is the count of stopped sessions.
+A collapsed parent repository also aggregates the sessions of the worktrees under it.
 
-## その他のバッジ
+## Other badges
 
-- 色付きの `1`、`2`… — 表示中のペイン番号。押すとそのペインへ移動します。
-- 「未追跡」「追加」「変更」「改名」「削除」 — ファイルのGit変更種別です。
-- アシスタント行の数字 — 会話のメッセージ数です。
-- アシスタント行の回転アイコン／チェック — 回答を生成中／待機中です。
-- プランカードの「承認待ち」「承認済み」「却下」 — プランに対する判断です。
-- 「LFS ポインタ」 — Git LFSの実体ではなくポインタだけがあるファイルです。
+- Colored `1`, `2`… — the number of the pane it is shown in. Press to jump to that pane.
+- "Untracked", "Added", "Modified", "Renamed", "Deleted" — the file's Git change type.
+- The number on an assistant row — the conversation's message count.
+- The spinning icon / check on an assistant row — generating an answer / waiting.
+- "Awaiting approval", "Approved", "Rejected" on a plan card — the decision on the plan.
+- "LFS pointer" — a file with only the Git LFS pointer present, not the actual content.
 
-## 右クリックメニュー
+## Right-click menus
 
-### セッション
+### Sessions
 
-状態や種類に応じて、再開、SSMへの再ログイン、停止、リモートセッションを開く、IDのコピー、
-タイトル変更、ブランチ名変更、会話の分岐、アーカイブ／削除、作り直しが表示されます。
-アーカイブは会話を保持して一覧から隠し、作り直しは現在の会話をアーカイブして同じ場所で
-新しい会話を始めます。作業フォルダがない場合、再開、分岐、作り直しは表示されません。
+Depending on state and kind you'll see resume, re-login to SSM, stop, open the remote session, copy the ID,
+rename, rename the branch, fork the conversation, archive / delete, and recreate.
+Archive keeps the conversation but hides it from the list; recreate archives the current conversation and starts
+a new one in the same place. When there is no working folder, resume, fork, and recreate are not shown.
 
-### リポジトリ／worktree
+### Repositories / worktrees
 
-ソース管理を開く、フォルダを開く、変更をコミット、ブランチ切替、ブランチ名をコピー、
-Fast-Forward、種類別のセッション起動、ワーキングコピーの削除ができます。通常クリックは
-行を展開／折りたたみます。Ctrl／⌘+クリックまたは中クリックはソース管理を新しいペインで開きます。
+You can open source control, open the folder, commit changes, switch branches, copy the branch name,
+Fast-Forward, launch a session by kind, and delete the working copy. A normal click expands / collapses the row.
+Ctrl / ⌘+click or middle-click opens source control in a new pane.
 
-### ファイル／フォルダ
+### Files / folders
 
-新規ファイル、新規フォルダ、名前をコピー、相対パスをコピー、名前を変更、削除ができます。
-ファイルにはさらに「朗読で開く」と「ダウンロード」が表示されます。ファイルをセッションや
-アシスタントへ渡す操作は、ファイルを開き、ビュアーの「送る」から行います。
+You can create a new file, create a new folder, copy the name, copy the relative path, rename, and delete.
+Files additionally show "Open in reader" and "Download". To hand a file to a session or an assistant, open the
+file and use "Send" in the viewer.
 
-### アシスタント
+### Assistants
 
-新規チャット、新しいペインで開くが表示されます。利用者が作成したアシスタントには編集と
-削除も表示されます。常設アシスタントは編集・削除できません。
+New chat and open in a new pane are shown. Assistants you created also show edit and delete.
+Built-in assistants cannot be edited or deleted.
 
-### コミットグラフ
+### Commit graph
 
-コミットの詳細表示、参照しているブランチへの切替、detached HEADでのチェックアウト、
-そのコミットを基点とした新規ブランチ作成ができます。submodule表示中はブランチ変更項目が
-表示されません。
+You can view a commit's details, switch to a branch that references it, check it out as a detached HEAD, and
+create a new branch based at that commit. While viewing a submodule, the branch-changing items are not shown.
 
-## メニューが表示されないとき
+## When a menu doesn't appear
 
-- ワークスペース停止中は、ワークスペース内で処理するメニューが無効または非表示になります。
-- 種類が対応していない操作や、状態に合わない操作は表示されません。
-- 右クリックメニューは、外側のクリック、Escape、ウィンドウからフォーカスが外れたときに閉じます。
+- While the workspace is stopped, menu items that run inside the workspace are disabled or hidden.
+- Operations the kind doesn't support, or that don't fit the current state, are not shown.
+- A right-click menu closes on an outside click, Escape, or when the window loses focus.
 
 ---
 
-関連: [セッション](02-sessions.md)・[リポジトリとgit](04-git.md)・[ファイル](05-files.md)
+Related: [Sessions](02-sessions.md) · [Repositories and git](04-git.md) · [Files](05-files.md)

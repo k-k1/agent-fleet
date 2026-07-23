@@ -1,33 +1,37 @@
-# Agent Fleet 利用ガイド
+# Agent Fleet User Guide
 
-Agent Fleet は、社内の複数メンバーが Claude Code などのコーディング AI を
-ブラウザから利用するためのサービスです。各自が他の利用者から分離された作業環境
-（ワークスペース）を持ち、リポジトリをクローンして AI セッションを起動・操作できます。
+English | [日本語](README.ja.md)
 
-このガイドは**読者（あなたの役割）ごとに分冊**しています。自分に当てはまるものから読んでください。
-操作の「やり方」はこのガイドが正、内部の「仕組み」は開発者向けの [dev/](../dev/README.md) にあります。
+Agent Fleet is a service that lets multiple members of your organization use coding AIs
+such as Claude Code from the browser. Each person gets a working environment (workspace)
+isolated from other users, where they can clone repositories and launch and operate AI sessions.
 
-## あなたはどれ？
+This guide is **split into volumes per reader role**. Start with the one that applies to you.
+This guide is the authoritative source for the "how to" of operating the product; the internal
+"how it works" lives in the developer-facing [dev/](../dev/README.md).
 
-| あなたは… | 読む分冊 | そこに書いてあること |
+## Which one are you?
+
+| You are… | Volume to read | What it covers |
 |-----------|----------|---------------------|
-| Console で日々コードを書く開発者 | **[member/](member/README.md)** | ログイン〜セッション・git・ファイル・エージェント・チャット・困ったとき |
-| ターミナルは使わず、チャットや進捗確認が中心 | **[lite.md](lite.md)** | 黒い画面に触れずに使う最小ガイド |
-| チームのメンバー・上限・監査を管理する人 | **[admin/](admin/README.md)** | メンバー追加・資源上限・監査ログ・利用状況 |
-| デプロイ・バックアップ・障害対応をする情シス/SRE | **[operator/](operator/README.md)** | 構築・運用・セキュリティ・トラブル対応 |
+| A developer writing code in the Console every day | **[member/](member/README.md)** | Login through sessions, git, files, agents, chat, and troubleshooting |
+| Someone who skips the terminal — mostly chat and progress checks | **[lite.md](lite.md)** | The minimal guide for using Agent Fleet without touching the black screen |
+| Someone managing the team's members, limits, and audits | **[admin/](admin/README.md)** | Adding members, resource limits, audit logs, usage |
+| IT / SRE handling deployment, backups, and incident response | **[operator/](operator/README.md)** | Setup, operations, security, troubleshooting |
 
-複数に当てはまることもあります（例: 開発もするチームリードは member + admin）。分冊は独立して
-読めるように書いてあるので、必要なものを行き来してください。
+You may fall into more than one (e.g. a team lead who also develops is member + admin). The
+volumes are written to be readable independently, so move between them as needed.
 
-## 導入を検討している方へ
+## Considering adoption?
 
-「何ができるのか / セキュリティは / 何が必要か」は [operator/README.md](operator/README.md) の冒頭
-（構成・前提・セキュリティ姿勢）にまとまっています。まずそこを読んでください。全体像は
-プロジェクトの [README](../../README.md) と開発者向け [dev/01 アーキテクチャ](../dev/01-architecture.md) にあります。
+"What can it do / how is security handled / what do we need" is summarized at the beginning of
+[operator/README.md](operator/README.md) (architecture, prerequisites, security posture).
+Read that first. For the big picture, see the project [README](../../README.md) and the
+developer-facing [dev/01 Architecture](../dev/01-architecture.md).
 
-## 用語（最小限）
+## Terminology (bare minimum)
 
-- **ワークスペース** — あなた専用の作業環境。リポジトリと作業内容が入る。
-- **セッション** — 1 つの仕事に対応する、会話・作業場所・実行状態のまとまり。ターミナルを持たない場合もある。
-- **テナント** — 部署などのグループ。あなたのワークスペースはテナントごとに分かれる（既定は 1 つ）。
-- **エージェント** — Claude / Codex / OpenCode などのコーディング AI。
+- **Workspace** — your own dedicated working environment. Holds your repositories and work.
+- **Session** — the unit corresponding to one task: a conversation, a place to work, and an execution state. It may not have a terminal.
+- **Tenant** — a group such as a department. Your workspaces are separated per tenant (one by default).
+- **Agent** — a coding AI such as Claude / Codex / OpenCode.

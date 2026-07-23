@@ -1,115 +1,132 @@
-# 06. エージェント — claude / codex / opencode / GitHub Copilot の接続と選び方
+# 06. Agents — connecting and choosing claude / codex / opencode / GitHub Copilot / Cursor
 
-> 対象: どのエージェントを使うか決め、接続するメンバー。接続方法と違い、モデル選択、
-> そして 3 エージェント共通の RTK 設定を扱います。接続はすべて **⚙設定 →
-> 「エージェント」タブ**から行います（ワークスペースの起動が必要）。
+English | [日本語](06-agents.ja.md)
 
-## 対応エージェントと選び方
+> For: members deciding which agent to use and connecting it. Covers how the connections
+> differ, model selection, and the RTK setting shared by the three agents. All connections
+> are made from **⚙Settings → the "Agents" tab** (the workspace must be running).
 
-主要 4 つの CLI コーディングエージェントに対応しています（実験枠の Antigravity（agy）は
-[08](08-advanced.md)）。接続の変更は即時、挙動設定は各エージェントの**新しいセッション
-から**反映されます。
+## Supported agents and how to choose
 
-| | claude | codex | opencode | copilot |
-|--|--------|-------|----------|---------|
-| 認証方式 | OAuth 接続（コード貼付） | ChatGPT サブスク / API キー | プロバイダの API キー（env） | GitHub 連携に相乗り（個別ログイン不要） |
-| 起動時のモデル選択 | あり | あり | あり | あり（プラン依存 — Free は自動のみ） |
-| 状態 | 進行中 / 質問あり / プランあり / 許可待ち / 入力待ち | 進行中 / 質問あり / プランあり / 入力待ち | 進行中 / 質問あり / 入力待ち | 進行中 / 許可待ち / 入力待ち |
-| チャット表示・履歴 | あり | あり | あり | あり |
-| Planモード | あり | あり | あり | 起動時指定＋マネージド設定から切替 |
-| 実行方式 | ターミナル（CLI） | マネージド（既定）/ ターミナル（CLI） | マネージド（既定）/ ターミナル（CLI） | マネージド（既定）/ ターミナル（CLI） |
-| 再開 | 可（作業フォルダ消失時は不可） | 可（作業フォルダ消失時は不可） | 可（作業フォルダ消失時は不可） | 可（作業フォルダ消失時は不可） |
-| 分岐（fork） | あり | あり | あり | なし |
-| 画像貼り付け | あり | あり | あり（モデル依存） | 未対応 |
+Five major CLI coding agents are supported (the experimental Antigravity (agy) slot is
+covered in [08](08-advanced.md)). Connection changes take effect immediately; behavior
+settings apply **from each agent's new sessions**.
 
-迷ったら、利用している契約やモデルで選べます。Anthropicのアカウントを使うなら **claude**、
-ChatGPTやOpenAI APIを使うなら **codex**、複数プロバイダのAPIキーを切り替えたいなら
-**opencode**、GitHub Copilot のサブスクリプションを持っているなら **copilot**、という
-選び方になります。3種類とも会話表示、質問への回答、Planモード、
-コンテキストゲージ、分岐に対応しています。
+| | claude | codex | opencode | copilot | cursor |
+|--|--------|-------|----------|---------|--------|
+| Authentication | OAuth connection (paste a code) | ChatGPT subscription / API key | Provider API keys (env) | Rides the GitHub connection (no separate sign-in) | Sign in with a Cursor account (browser approval only) |
+| Model choice at launch | Yes | Yes | Yes | Yes (plan-dependent — Free is Auto only) | Yes (tied to the account) |
+| States | Working / Question / Plan ready / Awaiting approval / Ready | Working / Question / Plan ready / Ready | Working / Question / Ready | Working / Awaiting approval / Ready | Working / Ready |
+| Chat view & history | Yes | Yes | Yes | Yes | Yes (tool output is simplified) |
+| Plan mode | Yes | Yes | Yes | Set at launch + switchable from managed settings | Yes |
+| Execution method | Terminal (CLI) | Managed (default) / Terminal (CLI) | Managed (default) / Terminal (CLI) | Managed (default) / Terminal (CLI) | Managed (default) / Terminal (CLI) |
+| Resume | Yes (not if the working folder is gone) | Yes (not if the working folder is gone) | Yes (not if the working folder is gone) | Yes (not if the working folder is gone) | Yes (can't resume across execution methods) |
+| Fork | Yes | Yes | Yes | No | No |
+| Image paste | Yes | Yes | Yes (model-dependent) | Not supported | Not supported |
 
-Codex / opencode / copilot の**マネージド実行**は、会話画面から普段の操作を完結できます
-（Codex / opencode はセッションごとの追加プロセスを持たないため並行作業向き。copilot は
-マネージドでもセッションごとの専用プロセスで動きます）。CLI 固有の黒い画面が必要なときだけ
-**ターミナル（CLI）**を選びます。詳しくは
-[02 セッション](02-sessions.md#実行方式--マネージドとターミナルcli)を参照してください。
-マネージドのチャット表示は、左ペインのリポジトリを使わないアシスタントチャットとは別です。
+If you're unsure, choose by the subscription or models you use. If you use an Anthropic
+account, pick **claude**; if you use ChatGPT or the OpenAI API, pick **codex**; if you want
+to switch between API keys from multiple providers, pick **opencode**; if you have a
+GitHub Copilot subscription, pick **copilot**; if you have a Cursor plan, pick
+**cursor**. All three support the conversation view, answering questions, Plan mode,
+the context gauge, and fork.
 
-接続がうまくいったかは、⚙設定 → 「エージェント」タブの各カードで確認できます。
-**「接続済み」** と表示され、claude / codex ならログインしているアカウント（メール）と
-プランも出ます。1 つ接続すれば、新規セッションの種類にそのエージェントが並ぶように
-なります（[02](02-sessions.md)）。
+**Managed execution** for Codex / opencode / copilot / cursor lets you handle your everyday
+work entirely from the conversation view (Codex / opencode carry no extra per-session
+process, which makes them well suited to parallel work; copilot / cursor run a dedicated
+per-session process even when Managed). Pick **Terminal (CLI)** only when you need the
+CLI's own black screen. For details, see
+[02 Sessions](02-sessions.md#execution-method--managed-and-terminal-cli).
+The Managed chat view is separate from the assistant chat in the left pane, which doesn't use a repository.
+
+You can confirm a connection succeeded on each card in ⚙Settings → the "Agents" tab.
+It shows **"Connected"**, and for claude / codex also the signed-in account (email) and
+plan. Once one agent is connected, it appears among the session types when you launch a
+new session ([02](02-sessions.md)).
 
 ## Claude
 
-「エージェント」タブの **Claude** で **「OAuth 接続」** を押すと、サインインが新しいタブで
-開きます。自分のブラウザで承認し、表示された**コードを貼り付けて「完了」** します
-（タブが自動で開かないときは「サインインリンク ↗」から開けます）。接続済みになると
-メールとプラン（例: `…@gmail.com · pro`）が表示されます。
+On **Claude** in the "Agents" tab, press **"Connect via OAuth"** and sign-in opens in a
+new tab. Approve in your own browser, then **paste the displayed code and press "Done"**
+(if the tab doesn't open automatically, you can open it from "the sign-in link ↗"). Once
+connected, the email and plan (e.g. `…@gmail.com · pro`) are shown.
 
-Claude の挙動は同じ画面で切り替えられます。
+Claude's behavior can be adjusted on the same screen.
 
-- **既定モデル** — claude セッションを起動するときの初期選択モデル。「既定」は claude 任せ（リリースにより変動）で、固定したいなら Opus / Sonnet / Haiku を選びます。
-- **リモートコントロール** — 手元の Claude アプリなどから、走っているセッションを遠隔操作する機能のオン / オフ。新しいワークスペースでは既定オフ（必要ならここでオンにします）。
-- **通知** — セッションの状態変化を通知するかどうか。
-- **RTK（トークン節約）** — 後述。
+- **Default model** — the model initially selected when launching a claude session. "Default" leaves it up to claude (varies by release); pick Opus / Sonnet / Haiku if you want to pin it.
+- **Remote control** — turns on / off the ability to remotely drive running sessions from your local Claude app and the like. Off by default in new workspaces (turn it on here if you need it).
+- **Notifications** — whether to notify you of session state changes.
+- **RTK (token savings)** — see below.
 
-> **「Select login method」やログイン画面が出てしまうときは** → セッション側の
-> 一時的な状態で、接続そのものは生きていることがほとんどです。対処は
-> [09 困ったとき](09-troubleshooting.md) を見てください。端末内で手動 `/login` する
-> 従来のやり方も併用できます。
+> **If "Select login method" or a login screen shows up** → it's almost always a
+> transient session-side state, and the connection itself is still alive. For the fix, see
+> [09 Troubleshooting](09-troubleshooting.md). The traditional approach of running
+> `/login` manually inside the terminal also still works.
 
 ## Codex
 
-**Codex** は 2 通りで接続できます。
+**Codex** can be connected in two ways.
 
-- **ChatGPT サブスクで接続**（推奨）— Plus / Pro の枠を使い、追加課金なし。デバイスコード方式です。事前に **ChatGPT の「設定 > セキュリティ」で「Codex に対してデバイスコード認証を有効にする」をオン**にしておく必要があります（これがオフだと承認しても進みません）。
-- **API キーで接続** — OpenAI API の従量課金（`sk-…`）。
+- **Connect with a ChatGPT subscription** (recommended) — uses your Plus / Pro quota, no extra charge. It's a device-code flow. Beforehand you must **turn on "Enable device-code authentication for Codex" in ChatGPT's "Settings > Security"** (if this is off, approving won't advance).
+- **Connect with an API key** — OpenAI API pay-as-you-go (`sk-…`).
 
-接続の流れは GitHub と同じ 3 ステップ（コードをコピー → リンクを開いて貼り付け →
-承認を待つ）です。
+The connection flow is the same 3 steps as GitHub (copy the code → open the link and
+paste it → wait for approval).
 
 ## OpenCode
 
-**opencode** は、使いたい LLM プロバイダの **API キーを env として保存**します。
-プリセットから選ぶと env 名が自動で埋まります。
+**opencode** saves the **API key of the LLM provider you want to use as an env**.
+Picking a preset fills in the env name automatically.
 
-- **OpenCode Go**（既定・`OPENCODE_API_KEY`）/ **Anthropic** / **OpenAI** / **OpenRouter** / **Google Gemini** / **カスタム…**（env 名を自分で指定）
+- **OpenCode Go** (default · `OPENCODE_API_KEY`) / **Anthropic** / **OpenAI** / **OpenRouter** / **Google Gemini** / **Custom…** (specify the env name yourself)
 
-キーを貼って **「接続」** すると保存され、opencode起動時に注入されます。複数のキーを
-登録でき、起動時に接続済みプロバイダのモデルを選べます。
+Paste the key and press **"Connect"** to save it; it's injected when opencode launches. You
+can register multiple keys, and choose from the connected providers' models at launch.
 
 ## GitHub Copilot
 
-**copilot**（GitHub Copilot CLI）に個別のログインはありません。**git プロバイダの
-GitHub を連携すると自動的に「接続済み」になります**（連携タブ > GitHub。切断も GitHub
-側に連動します）。前提として、その GitHub アカウントに **Copilot のサブスクリプション**
-（Free プラン含む）が必要です — 無い場合は最初の指示でエラーになります。
+**copilot** (GitHub Copilot CLI) has no separate sign-in. **Connecting GitHub as a git
+provider automatically makes it "Connected"** (Git hosting tab > GitHub; disconnecting
+follows the GitHub side too). As a prerequisite, that GitHub account needs a **Copilot
+subscription** (including the Free plan) — without one, the first instruction fails with an error.
 
-- 起動時のモデル選択肢は**プランに応じて自動で切り替わります**。Free プランは
-  「自動（Copilot が選択）」のみ、有償プランではそのアカウントで選べるモデルが並びます。
-- Free プランは月間の利用枠が小さめです。使用量は GitHub 側の設定画面で確認できます。
+- The model choices at launch **switch automatically based on your plan**. The Free plan
+  offers only "Auto (Copilot picks)", while paid plans list the models available to that account.
+- The Free plan's monthly quota is on the small side. Check your usage on GitHub's settings pages.
 
-## コンテキスト残量を見る
+## Cursor
 
-claude / codex / opencode のセッションでは、画面上部に **「コンテキスト」**（狭いときは
-`ctx`）のゲージが出ます。今の会話が使っているトークン量と上限、そのうちキャッシュ再利用・
-新規キャッシュ・未キャッシュの内訳は、表示にマウスを重ねると確認できます。上限に近づくと
-「まもなく自動圧縮される可能性があります」と警告が出ます。長い作業で「急に文脈が
-薄くなった」と感じたら、ここを見てください。チャット表示ではターンごとの
-トークン消費推移も見られます。
+**cursor** (Cursor CLI) — on the **Cursor** card in the "Agents" tab, press
+**"Sign in to Cursor"**. An authorize link is shown; just open it in your browser and
+approve (**there is no code to paste** — once you approve, the card automatically shows
+"Connected"). A Cursor account is required. Connecting with an API key is not
+supported.
 
-## RTK（トークン節約）
+- The model choices at launch are **exactly the models available to that account**
+  (fetched live). You can't change the model after a session has started.
+- The usage chip, context gauge, image paste, and fork are not supported for cursor.
+  Check your plan's remaining quota on the Cursor dashboard.
 
-3 エージェントすべてに **「RTK（トークン節約）」** のオン／オフ設定があります。エージェントが
-実行するコマンドを賢く書き換えて、消費トークンを抑える仕組みです。このワークスペースの
-イメージに RTK が含まれていない場合は「このワークスペースに rtk がありません」と表示されます。
+## Checking remaining context
 
-効き方はエージェントで少し違います。
+In claude / codex / opencode sessions, a **"Context"** gauge (`ctx` when the screen is
+narrow) appears at the top. Hover over it to see how many tokens the current conversation
+is using, the limit, and the breakdown into cache reuse, new cache writes, and uncached.
+As you approach the limit, a "May be auto-compacted soon" warning appears. If a long
+task suddenly feels like the context has "thinned out", look here. The chat view also
+shows the per-turn token-spend trend.
 
-- **claude / opencode** — コマンドを透過的に書き換えるので、意識せず効きます。
-- **codex** — codex はコマンド書き換えの仕組みを持たないため、**指示ベース（ベストエフォート）**です。「rtk を使ってね」と促すだけで、強制ではありません。
+## RTK (token savings)
+
+All three agents have an on / off setting for **"RTK (token savings)"**. It smartly
+rewrites the commands the agent runs to keep token consumption down. If this workspace's
+image doesn't include RTK, "This workspace has no rtk." is shown.
+
+How it takes effect differs a little by agent.
+
+- **claude / opencode** — commands are rewritten transparently, so it works without you noticing.
+- **codex** — codex has no command-rewrite mechanism, so it's **instruction-based (best effort)**. It only nudges the agent to "please use rtk"; it isn't enforced.
 
 ---
 
-仕組みを知りたい人へ: [dev/08 外部連携（認証方式）](../../dev/08-integrations.md)・[dev/04 Workspace Agent（kind 統合・RTK 機構）](../../dev/04-workspace-agent.md)
+For those who want to know how it works: [dev/08 Integrations (auth methods)](../../dev/08-integrations.md) · [dev/04 Workspace Agent (kind integration / RTK mechanism)](../../dev/04-workspace-agent.md)

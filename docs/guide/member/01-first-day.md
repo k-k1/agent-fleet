@@ -1,91 +1,99 @@
-# 01. 初日 — ログインから最初のセッションまで
+# 01. First day — from login to your first session
 
-> 対象: 初めて Console を開くメンバー。ログイン、ようこそカード（2 ステップ＋目的選択）、
-> 最初のリポジトリのクローン、そして「一日の終わりにワークスペースを止めていいのか」までを順にたどります。
+English | [日本語](01-first-day.ja.md)
 
-## ログインする
+> Audience: members opening the Console for the first time. We walk in order through logging
+> in, the welcome card (2 steps + picking a goal), cloning your first repository, and
+> whether it's OK to stop the workspace at the end of the day.
 
-Console の URL をブラウザで開くと、まず **Google でのログイン**を求められます。会社の
-Google アカウントでサインインしてください（許可されたアカウントだけが入れます）。
+## Log in
 
-ログインすると、画面最上部に**テナント選択**が出ます。テナントは部署などの
-グループで、あなたのワークスペースはテナントごとに分かれています。多くの場合は 1 つだけなので、
-そのまま進んで構いません。複数に所属している人は、作業したいテナントを選んでください
-（画面の名前は [README](README.md) を参照）。
+Open the Console URL in your browser and you'll first be asked to **sign in with Google**.
+Sign in with your company Google account (only permitted accounts can get in).
 
-## ようこそカード — 2 ステップ＋目的の選択
+Once you're logged in, a **tenant selector** appears at the very top of the screen. A tenant
+is a group such as a department, and your workspaces are separated per tenant. In most cases
+there is only one, so you can just proceed. If you belong to several, pick the tenant you
+want to work in (see the [README](README.md) for the names of the screen areas).
 
-初回はメイン領域に **「Agent Fleet へようこそ」** というカード（「まず2ステップ。
-そのあとは目的を選ぶだけです」）が出ます。これは**チェックリスト**で、済んだ項目には
-自動でチェックが付きます。全員に必要なのは上の 2 つだけです。
+## The welcome card — 2 steps + picking a goal
 
-1. **ワークスペースを起動** — 「起動」ボタンで、あなた専用の作業環境を立ち上げます。起動中は「起動中…」、完了すると「稼働中」と表示され、チェックが付きます。まずこれをしないと後の操作（接続を含む）ができません。
-2. **エージェントを接続** — 「接続する」から、Claude / Codex / opencode のいずれかにサインインします。少なくとも 1 つ接続すればチェックが付きます（接続の詳細は [06 エージェント](06-agents.md)）。
+The first time, a card titled **"Welcome to Agent Fleet"** appears in the main area
+("Two steps first, then just pick your goal"). It is a **checklist**, and completed items
+are checked off automatically. Only the top two items are required for everyone.
 
-続いて **「どちらから始めますか？」** の 2 択が出ます（あとから両方使えます）。
+1. **Start workspace** — the "Start" button brings up your own private work environment. While it's starting you'll see "Starting…", and when it finishes it shows "Running" and the item is checked off. Nothing that follows (including connecting) works until you do this.
+2. **Connect an agent** — from "Connect", sign in to Claude, Codex, or opencode. Connecting at least one checks the item off (see [06 Agents](06-agents.md) for connection details).
 
-- **AI に質問・翻訳を頼む** — 「チャットをはじめる」で、そのままアシスタントとの
-  チャットが開きます。git もターミナルも不要です（[07 チャットとメモ](07-chat-memo.md)）。
-- **リポジトリで開発する** — 「開発のセットアップへ」で続きの手順が展開されます。
-  1. **git プロバイダを接続**（任意）— GitHub／Bitbucketにサインイン。privateリポジトリをクローン／pushするなら必要です（[04 リポジトリと git](04-git.md)）。
-  2. **リポジトリをクローンしてセッション開始** — ワークスペース操作バーの **「はじめる」** からクローンと起動をまとめて行えます（[02 セッション](02-sessions.md)）。
+Next comes a two-way choice: **"Where do you want to start?"** (you can use both later).
 
-カードは、最初のセッションを作るか、最初のチャットを始めると消えます。
+- **Ask AI a question or for a translation** — "Start chatting" opens a chat with the
+  assistant right away. No git and no terminal needed ([07 Chat and memos](07-chat-memo.md)).
+- **Develop in a repository** — "Go to dev setup" expands the remaining steps.
+  1. **Connect a git provider** (optional) — sign in to GitHub / Bitbucket. Required if you'll clone or push private repositories ([04 Repositories and git](04-git.md)).
+  2. **Clone a repository and start a session** — from **"Start"** on the workspace action bar you can clone and launch in one go ([02 Sessions](02-sessions.md)).
 
-### カードを閉じても大丈夫
+The card disappears once you create your first session or start your first chat.
 
-右下の **「あとで」** を押すとカードは消えます。同じチェックリストは、右上の
-アカウントメニューの **「はじめかたガイド」** からいつでも開き直せます。操作を調べる
-通常のガイドは、同じメニューの **「利用ガイド」** から開けます。個別の操作の
-対応は次のとおりです。
+### It's fine to close the card
 
-| ようこそカードの項目 | 通常の画面での同じ操作 |
+Pressing **"Later"** at the bottom right dismisses the card. You can reopen the same
+checklist at any time from **"Getting-started guide"** in the account menu at the top right.
+The regular guide for looking up operations opens from **"User guide"** in the same menu.
+Each item maps to a regular operation as follows.
+
+| Welcome card item | Same operation in the regular UI |
 |--------------------------|--------------------|
-| ワークスペースを起動 | ワークスペース操作バーの起動 / 停止ボタン |
-| エージェントを接続 | ⚙設定 → 「エージェント」タブ |
-| チャットをはじめる | 左ペイン アシスタントの「＋（新規チャット）」 |
-| git プロバイダを接続 | ⚙設定 → 「Git」タブ |
-| リポジトリをクローンしてセッション開始 | ワークスペース操作バーの「はじめる」（左ペイン「リポジトリ」の「クローン」でもクローンのみ可能） |
+| Start workspace | Start / Stop workspace button on the workspace action bar |
+| Connect an agent | ⚙ Settings → "Agents" tab |
+| Start chatting | "＋ (New chat)" in the left pane's Assistants section |
+| Connect a git provider | ⚙ Settings → "Git hosting" tab |
+| Clone a repository and start a session | "Start" on the workspace action bar ("Clone" in the left pane's "Repositories" section can also clone, clone-only) |
 
-## 最初のリポジトリをクローンする
+## Clone your first repository
 
-エージェントに仕事をさせるには、まず作業対象のリポジトリをワークスペースに持ってきます。
-左ペインの **リポジトリ** から **「クローン」** を開きます。
+To put an agent to work, first bring the repository you'll work on into the workspace.
+Open **"Clone"** from **Repositories** in the left pane.
 
-- 接続済みの GitHub / Bitbucket があれば、**「接続から選ぶ」**（既定）でリポジトリとブランチを一覧から選べます。
-- 一覧に無い、あるいは未接続のものは **「URL 手入力」** でクローンURLを貼ります。
-- private リポジトリは、開発トラックの「git プロバイダを接続」が前提です。
+- If you have a connected GitHub / Bitbucket, **"Pick from connections"** (the default) lets you choose the repository and branch from a list.
+- For anything not in the list, or not connected, use **"Enter URL"** and paste the clone URL.
+- Private repositories require the "Connect a git provider" step from the development track.
 
-**「クローン」** を押すと取得が始まり、終わると **リポジトリ** の一覧に並びます。その行の **「起動」**
-から、そのまま最初のセッションを起動できます。詳しい手順とつまずきどころは
-[04 リポジトリと git](04-git.md) にまとめています。
+Press **"Clone"** and the fetch starts; when it finishes, the repository appears in the
+**Repositories** list. From **"Launch"** on that row you can start your first session right
+away. Detailed steps and common pitfalls are collected in
+[04 Repositories and git](04-git.md).
 
-## 一日の終わりに — ワークスペースを止めていい？
+## At the end of the day — is it OK to stop the workspace?
 
-**停止して構いません。** ワークスペース操作バーでワークスペースを止めても、次のものは残ります。
+**Yes, stop it if you like.** Even if you stop the workspace from the workspace action bar,
+the following remain:
 
-- クローンしたリポジトリと、その中の変更（コミット前の作業も含む）。
-- 実行していたセッションの一覧。**停止中**として残り、次にワークスペースを起動したときにクリックで再開できます（再開できないケースは [02 セッション](02-sessions.md) を参照）。
-- git やエージェントの**接続（ログイン）**。ワークスペースを停止・起動しても保持されます。
+- The repositories you cloned, and the changes inside them (including uncommitted work).
+- The list of sessions you were running. They remain as **stopped**, and the next time you start the workspace you can resume them with a click (for the cases that can't be resumed, see [02 Sessions](02-sessions.md)).
+- Your git and agent **connections (logins)**. They persist across workspace stop / start.
 
-停止中のワークスペースでも、左ペインの**セッション一覧は見えます**（中身の操作はできません）。
-つまり通勤中にスマホで「どのセッションがあったか」を眺めるくらいは、止めたままでも可能です。
+Even while the workspace is stopped, **the session list is still visible** in the left pane
+(you can't operate on their contents). So glancing at "which sessions did I have?" from your
+phone during your commute works even with the workspace stopped.
 
-止め忘れても心配は要りません。**しばらく操作がないと自動で停止**します（アイドル自動停止）。
-資源の節約になるので、明示的に止めるのが面倒なら放っておいても大丈夫です。
+Don't worry if you forget to stop it. **It stops automatically after a period of
+inactivity** (idle auto-stop). It saves resources, so if stopping it explicitly feels like a
+chore, it's fine to just leave it.
 
-ただし、**コミットしていない変更はワークスペースの中だけにあります**。長期の作業は
-こまめにコミット・push しておくと安心です（[04](04-git.md)）。
+However, **uncommitted changes exist only inside the workspace**. For long-running work,
+committing and pushing frequently is the safe habit ([04](04-git.md)).
 
-### 初日の終わりのチェック
+### End-of-first-day checklist
 
-- 大事な変更はコミット・push したか（ワークスペースの外に残るのは push した分だけ）。
-- 走らせっぱなしにしたいセッションは、止めなくてもそのまま残ります。区切りが良ければ ⋯ メニューの「停止する（あとで再開できる）」で止めておくと、次回クリックで再開できます（[02](02-sessions.md)）。
-- ワークスペースは自分で停止しても、放っておいて自動停止に任せても構いません。
+- Did you commit and push the changes that matter? (Only what you pushed survives outside the workspace.)
+- Sessions you want to keep running can simply stay as they are. If you've reached a good stopping point, stopping them via "Stop (resumable later)" in the ⋯ menu means a single click resumes them next time ([02](02-sessions.md)).
+- The workspace can be stopped by you, or left alone for idle auto-stop — either is fine.
 
-初日に「あれ？」となりやすい点（claude がログイン画面を出す、セッションが再開できない、
-クローンに失敗するなど）は [09 困ったとき](09-troubleshooting.md) にまとめてあります。
+The things that tend to trip people up on day one (claude showing a login screen, a session
+that won't resume, a failed clone, and so on) are collected in
+[09 Troubleshooting](09-troubleshooting.md).
 
 ---
 
-仕組みを知りたい人へ: [dev/01 全体アーキテクチャ](../../dev/01-architecture.md)
+For those who want to know how it works: [dev/01 Overall architecture](../../dev/01-architecture.md)

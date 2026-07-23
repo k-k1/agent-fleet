@@ -1,178 +1,196 @@
-# 02. セッション — AI との会話を起動・切り替え・止める
+# 02. Sessions — launch, switch, and stop AI conversations
 
-> 対象: セッションを日常的に回すメンバー。新規作成、状態の見方、作業を中断・整理する方法、
-> 再開できる条件、複製とブランチ名変更までを扱います。
+English | [日本語](02-sessions.ja.md)
 
-セッションは、AI に任せる 1 つの仕事を、**会話・作業場所・実行状態**ごとまとめた単位です。
-ターミナルの有無とは別の概念で、Codex / opencode / GitHub Copilot は黒い画面を持たない
-マネージド実行でもセッションとして動きます。左ペインでは作業場所に対応する **リポジトリ** の下に並び、
-リポジトリに属さないものは **その他のセッション** に並びます。複数のセッションを並行して
-持て、それぞれが独立した会話・作業フォルダを持ちます。
+> Audience: members who work with sessions day to day. Covers creating new sessions, reading
+> their state, pausing and tidying up work, the conditions for resuming, and duplicating a
+> conversation and renaming branches.
 
-## セッションの種類
+A session bundles one job you delegate to the AI into a single unit — its **conversation,
+working location, and execution state**. It is a separate concept from whether a terminal
+exists: Codex / opencode / GitHub Copilot also run as sessions under managed execution,
+without a black screen. In the left pane, sessions appear under the **repository** that matches
+their working location; those that don't belong to a repository appear under **Other sessions**.
+You can have multiple sessions in parallel, each with its own independent conversation and
+working folder.
 
-- **claude** — Claude Code を起動。
-- **codex** — Codex を起動。
-- **copilot** — GitHub Copilot を起動（GitHub 連携に相乗り — [06](06-agents.md)）。
-- **agy** — Antigravity を起動（実験枠。接続すると並びます）。
-- **opencode** — OpenCode を起動。
-- **shell** — 通常のシェル（bash）。「はじめる」からすぐ開けます。
+## Session types
 
-claude / codex / opencode / copilot / agy は、対応するエージェントを接続すると「はじめる」に並びます
-（接続は [06 エージェント](06-agents.md)）。（別ホストへ入る **ssm** は
-[08 一歩進んだ使い方](08-advanced.md)。）
+- **claude** — launches Claude Code.
+- **codex** — launches Codex.
+- **copilot** — launches GitHub Copilot (rides on the GitHub connection — [06](06-agents.md)).
+- **agy** — launches Antigravity (experimental slot; appears once connected).
+- **opencode** — launches OpenCode.
+- **shell** — a plain shell (bash). Opens right away from "Start".
 
-## 実行方式 — マネージドとターミナル（CLI）
+claude / codex / opencode / copilot / agy appear in "Start" once you connect the corresponding
+agent (connections: [06 Agents](06-agents.md)). (**ssm**, which logs in to another host, is
+covered in [08 Advanced usage](08-advanced.md).)
 
-Codex / opencode / GitHub Copilot の開始画面では **実行方式**を選べます。これは Agent Fleet がエージェントを
-動かし、指示を届ける経路（内部では「ドライバ」）の違いです。**同じ種類のセッションを
-どう動かすか**を選ぶもので、会話の保存先や作業フォルダが別になるわけではありません。
+## Execution method — Managed and Terminal (CLI)
 
-- **マネージド（推奨・既定）** — Agent Fleet がエージェントを直接制御します。
-  操作はチャット表示で行い、ターミナルはありません。Codex / opencode は共有の実行基盤で動き、
-  セッション専用の CLI プロセスを持たないため省メモリで並行作業に向きます
-  （GitHub Copilot はマネージドでもセッションごとの専用プロセスで動くため、メモリは
-  ターミナル（CLI）と同等です）。
-- **ターミナル（CLI）** — エージェントの CLI をセッションごとに起動し、その対話画面を
-  ターミナルから直接操作できます。CLI 固有の画面やコマンドが必要な場合向けで、セッションごとに
-  追加のメモリを使います。
+On the start screen for Codex / opencode / GitHub Copilot you can choose the **execution
+method**. This is the difference in the path Agent Fleet uses to run the agent and deliver your
+instructions (internally, the "driver"). It chooses **how a session of the same kind is run** —
+it does not give the conversation a separate storage location or a separate working folder.
 
-新しい Codex / opencode / GitHub Copilot セッションはマネージドが既定です。claude / agy は
-ターミナル（CLI）、shell / SSM はターミナル経路だけを使います。マネージド対応の種類は停止中でなく、エージェントが処理中でもないとき、
-セッションの ⋯ メニューから実行方式を切り替えられます。**会話はそのまま引き継がれます**。
-ターミナル（CLI）からチャット表示を開くこともできますが、マネージドにターミナル画面はありません。
+- **Managed (recommended, default)** — Agent Fleet controls the agent directly.
+  You operate it through the chat view; there is no terminal. Codex / opencode run on a shared
+  execution runtime and have no per-session CLI process, so they save memory and suit
+  parallel work (GitHub Copilot runs in a dedicated per-session process even when managed,
+  so its memory use is on par with Terminal (CLI)).
+- **Terminal (CLI)** — launches the agent's CLI per session, and you can operate its
+  interactive screen directly from the terminal. Suited to cases that need CLI-specific screens
+  or commands; each session uses extra memory.
 
-ターミナル（CLI）の画面は、ブラウザを閉じても裏側で保持されます。保持の仕組みを
-利用者が直接操作する必要はありません。
+New Codex / opencode / GitHub Copilot sessions default to managed. claude / agy use
+Terminal (CLI), and shell / SSM use only the terminal path. For kinds that support managed
+execution, you can switch the execution method from the session's ⋯ menu whenever the session
+is not stopped and the agent is not in the middle of processing. **The conversation carries over
+as is.** You can also open the chat view from Terminal (CLI), but managed execution has no
+terminal screen.
 
-## 新規セッションを作る — 画面上部の「はじめる」
+A Terminal (CLI) screen is kept alive behind the scenes even if you close the browser. You
+never need to operate that keep-alive mechanism yourself.
 
-ワークスペース操作バーの **「＋ はじめる」** が起動の入り口です。押すと **「はじめる」** 画面が開き、
-**どこで作業するか**から選びます。
+## Creating a new session — "Start" at the top of the screen
 
-- **チャット（アシスタント）** — リポジトリを使わない簡単なチャットを始めます
-  （[07 チャットとメモ](07-chat-memo.md)）。
-- **リポジトリでエージェントを起動** — クローン済みのリポジトリを検索して選ぶと、そのまま **「作業を始める」**（エージェント・モデル・
-  worktree・最初のプロンプト）に進みます。リポジトリ行の「起動」と同じ画面です（後述）。
-- **新しいリポジトリをクローン…** — リポジトリ一覧の下にあります。接続から選ぶ／URL手入力でクローンし、完了すると
-  そのまま「作業を始める」に続きます（新規ブランチを指定でき、worktreeのフォルダ名は自動生成されます）。
-- **ホームでエージェントを起動** — ホーム（~）でエージェントを走らせます。
-  下書き・調べもの・使い捨ての作業向けです。
-- **shell** — 押すとすぐbashが開きます。
-- **SSM — 別ホストへログイン** — SSM設定があると表示され、ログイン先ホストを選んで接続します。
+**"+ Start"** in the workspace action bar is the entry point for launching. Pressing it opens the
+**"Start"** screen, where you begin by choosing **where to work**.
 
-各段の左下 **「場所を変更」**（またはブラウザの戻る）で 1 つ前に戻れます。
-セッション名は自動命名（リポジトリ名＋日時）で、あとから変更できます（後述）。
+- **Chat (assistant)** — starts a simple chat that doesn't use a repository
+  ([07 Chat and memos](07-chat-memo.md)).
+- **Launch an agent in a repository** — search for and pick a cloned repository, and you move
+  straight on to **"Start working"** (agent, model, worktree, first prompt). This is the same
+  screen as "Launch" on a repository row (see below).
+- **Clone a new repository…** — sits below the repository list. Clone by picking from a
+  connection or entering a URL by hand; when it completes you continue straight into
+  "Start working" (you can specify a new branch, and the worktree folder name is generated
+  automatically).
+- **Launch an agent in home** — runs an agent in home (~).
+  For drafts, research, and throwaway work.
+- **shell** — pressing it opens bash immediately.
+- **SSM — log in to another host** — shown when SSM is configured; pick the host to log in to
+  and connect.
 
-ワークスペースが停止中でも「はじめる」は押せます。確認して **起動 → 準備ができ次第「はじめる」画面が
-自動で開く**ので、起動を待ってボタンを押し直す必要はありません。
+**"Change location"** at the bottom left of each step (or the browser back button) takes you one
+step back. Sessions are named automatically (repository name + timestamp) and can be renamed
+later (see below).
 
-### worktree と新規ブランチ — 並行作業の要
+You can press "Start" even while the workspace is stopped. After you confirm, it **starts the
+workspace, and the "Start" screen opens automatically once it's ready** — no need to wait for
+startup and press the button again.
 
-同じリポジトリで複数タスクを同時に進めたいとき、作業フォルダが 1 つだと互いに
-踏み合います。Agent Fleet は既定で、セッションごとに独立した作業コピー（worktree）を
-切り出してこれを防ぎます。
+### Worktrees and new branches — the key to parallel work
 
-- 「はじめる」またはベースリポジトリの「起動」から開く **「作業を始める」** では、
-  **「新しい worktree」**（既定）と **「このコピーで直接」** を選べます。
-- 「新しい worktree」では基点ブランチと任意のブランチ名を指定します。ブランチ名が空なら
-  暫定名 `temp/…` になり、入力した場合のworktreeフォルダ名はブランチ名から自動生成されます。
-- 既存のworktree行から起動するときは、そのworktreeで直接起動します。新しいworktreeは
-  ベースリポジトリから作成してください。
+When you want to advance multiple tasks in the same repository at the same time, a single
+working folder makes them trample each other. By default, Agent Fleet prevents this by carving
+out an independent working copy (worktree) per session.
 
-左ペイン **リポジトリ** の単独の「クローン」では、新規ブランチを指定した場合や同名の
-作業コピーがある場合に、別のフォルダ名も指定できます（[04](04-git.md)）。これは
-「作業を始める」でworktreeを作る操作とは別の導線です。
+- In **"Start working"** — opened from "Start" or from "Launch" on the base repository —
+  you can choose between **"New worktree"** (default) and **"Directly in this copy"**.
+- With "New worktree" you specify the base branch and an optional branch name. If the branch
+  name is empty you get a provisional name `temp/…`; if you enter one, the worktree folder
+  name is generated automatically from the branch name.
+- Launching from an existing worktree row launches directly in that worktree. Create new
+  worktrees from the base repository.
 
-## 状態を読む — バッジと通知
+The standalone "Clone" under **Repositories** in the left pane also lets you specify a different
+folder name when you specify a new branch or when a working copy with the same name already
+exists ([04](04-git.md)). This is a separate path from creating a worktree in "Start working".
 
-一覧の各行では、先頭の色付きアイコンがエージェントの種類、行末の状態アイコンが現在の
-状態を表します。状態アイコンにマウスを重ねると状態名を確認できます。**質問あり**、
-**プランあり**、**許可待ち**のように利用者の操作が必要な状態は文字も表示されます。
-稼働中セッションは4秒ごとに自動更新されます。
+## Reading state — badges and notifications
 
-| 状態表示 | 意味 |
+In each row of the list, the colored icon at the front shows the agent kind, and the state icon
+at the end shows the current state. Hover over the state icon to see the state name. States that
+need action from you — **Question**, **Plan ready**, **Awaiting approval** — also show text.
+Active sessions refresh automatically every 4 seconds.
+
+| State display | Meaning |
 |--------|------|
-| 進行中… | エージェントが作業中（回転） |
-| 質問あり | あなたに質問していて、返事待ち |
-| プランあり | 提案されたプランの確認待ち |
-| 許可待ち | 操作の許可を求めている |
-| 入力待ち | 手が空いていて、次の指示待ち |
-| 入力待ち · BG実行中 | 入力待ちだが、裏で処理が走っている |
-| 起動中 | shell など（進行中／入力待ちの区別を持たない種類） |
-| 停止中 | 止まっている（クリックで開いて再開） |
-| フォルダ無し — 再開不可 | 作業フォルダが消えて再開できない（後述） |
-| メモリ不足で終了 | メモリ上限などにより強制終了した可能性がある |
-| 強制終了 / 異常終了 | SIGKILL、シグナル、非ゼロ終了などを検出した |
+| Working… | The agent is working (spinning) |
+| Question | It has asked you something and is waiting for a reply |
+| Plan ready | A proposed plan is waiting for your review |
+| Awaiting approval | It is asking for permission to act |
+| Ready | Idle, waiting for your next instruction |
+| Ready · running in background | Awaiting input, but something is still running behind the scenes |
+| Running | shell and the like (kinds with no working / awaiting-input distinction) |
+| Stopped | Not running (click to open and resume) |
+| Folder missing — can't resume | The working folder is gone and it can't be resumed (see below) |
+| Ended (out of memory) | May have been force-terminated, e.g. by the memory limit |
+| Force-killed / Crashed | SIGKILL, a signal, a non-zero exit, etc. was detected |
 
-色付きのペイン番号、読み上げ中、ブランチ切替警告など、行に表示されるその他の印は
-[アイコン・バッジ・メニュー](badges-and-menus.md)を参照してください。
+For the other marks shown on a row — colored pane numbers, reading aloud, branch-switch
+warnings, and so on — see [Icons, badges, and menus](badges-and-menus.md).
 
-見ていない間に状態が変わると、**ブラウザ通知**が出ます（その画面を開いているときは
-抑止されます）。作業が一段落＝入力待ちになると **「回答が返ってきました」**、質問が来ると
-**「質問が来ています」** と通知され、本文にセッション名が入ります。通勤中にスマホで
-返事を待つ、といった使い方に向きます（shell / ssm は通知しません）。
+When a state changes while you're not watching, a **browser notification** appears (suppressed
+while you have that screen open). When the work pauses — the session becomes Ready — you're
+notified with **"A reply is ready"**; when a question arrives, with **"A question is waiting"** —
+the session name is included in the body. This suits use cases like waiting for a reply on your
+phone during a commute (shell / ssm don't notify).
 
-## セッションを止める・片付ける
+## Stopping and tidying up sessions
 
-操作はセッション行の **⋯ メニュー**（または右クリック）にあります。迷ったときは
-**「停止する」**を選んでください。会話も一覧も残る、いちばん安全な操作です。
+The operations live in the session row's **⋯ menu** (or right-click). When in doubt, choose
+**"Stop"**. It keeps both the conversation and the list entry — the safest operation.
 
-| やりたいこと | 選ぶ操作 | 操作後 | 元に戻せるか |
+| What you want to do | Operation | Afterwards | Reversible? |
 |---|---|---|---|
-| いったん処理を止め、あとで続きをする | **停止する** | 「停止中」として一覧に残る | 一覧から開いて再開できる |
-| 終わった仕事を普段の一覧から片付ける | **アーカイブする** | 会話を残したまま一覧から隠れる | アーカイブ一覧から復帰できる |
-| 同じ場所で、会話だけ最初から始める | **作り直す** | 今の会話をアーカイブし、新しい会話が開く | 古い会話はアーカイブから復帰できる |
-| 使い捨ての shell / SSM を一覧から消す | **削除する** | 一覧から消える | 元に戻せない |
+| Pause the work for now and continue later | **Stop** | Stays in the list as "Stopped" | Open it from the list to resume |
+| Clear a finished job out of the everyday list | **Archive** | Hidden from the list with the conversation kept | Can be restored from the archive list |
+| Start just the conversation over in the same place | **Recreate** | Archives the current conversation and opens a new one | The old conversation can be restored from the archive |
+| Remove a throwaway shell / SSM from the list | **Delete** | Disappears from the list | Cannot be undone |
 
-表示される操作はセッションの種類と状態によって異なります。たとえば AI セッションには
-「アーカイブする」、使い捨ての shell / SSM には「削除する」が表示されます。削除後もログの
-ファイルが残る場合はありますが、セッションとして一覧へ戻すことはできません。
+Which operations appear depends on the session's kind and state. For example, AI sessions show
+"Archive", while throwaway shell / SSM show "Delete". Log files may remain after deletion, but
+the session cannot be brought back to the list.
 
-停止中のセッションをまとめて片付けるには、**リポジトリ**見出しの
-**「停止中をまとめてアーカイブ」**を使います。AI セッションはアーカイブ、shell / SSM は削除されます。
-アーカイブ一覧の「古いものを削除」では、30 日以上前の項目を一覧から削除できます。
+To tidy up stopped sessions in bulk, use **"Archive all stopped"** in the **Repositories**
+heading. AI sessions are archived; shell / SSM are deleted.
+"Delete old ones" in the archive list removes items older than 30 days from the list.
 
-## 再開できる／できない
+## When you can — and can't — resume
 
-停止中のセッションはクリックで開いて再開できます。ただし claude / codex / opencode は、
-**起動時の作業フォルダが消えていると再開できません**。この場合、状態表示が
-**「フォルダ無し — 再開不可」** になり、行は打ち消し線でクリックできなくなります
-（「作業フォルダが存在しないため再開できません」）。作業コピーを worktree ごと消したあとが
-典型例です。shell は作業フォルダが無ければホームに戻って再開します。
+Stopped sessions can be opened and resumed with a click. However, claude / codex / opencode
+**cannot resume if the working folder they were launched in is gone**. In that case the state
+display becomes **"Folder missing — can't resume"**, and the row is struck through and can no
+longer be clicked ("Can't resume — the working folder no longer exists"). The typical case is
+after deleting a working copy together with its worktree. shell falls back to home and resumes
+if its working folder is missing.
 
-停止中のセッションを開くと、まず履歴が読み取り専用で表示され、**「再開」** で会話を
-再開します。再開後は、保存されていた実行方式で続きます。ペインの中で **Ctrl+クリック**
-（または中クリック）すると、今の表示を保ったまま
-**新しいペインに開け**ます（[03 ターミナル](03-terminal.md)）。
+When you open a stopped session, the history is first shown read-only, and **"Resume"** restarts
+the conversation. After resuming, it continues with the execution method that was saved.
+**Ctrl+click** (or middle-click) opens it **in a new pane** while keeping your
+current view ([03 Terminal](03-terminal.md)).
 
-ワークスペースを止めていても、**一覧そのものは見えます**。中身の操作はできませんが、
-「どのセッションがあったか」はスマホからでも確認できます。
+Even while the workspace is stopped, **the list itself stays visible**. You can't operate on the
+contents, but you can check "which sessions were there" even from a phone.
 
-### ブランチが入れ替わったときの警告
+### The warning when the branch has been swapped
 
-セッションの行に**警告アイコンとブランチ名**が出ることがあります。これは、その
-セッションの作業コピーが、起動時のブランチから別のブランチへ**切り替わっている**サインです。
-稼働中のエージェントが見ている作業ツリーが入れ替わり、編集や差分が食い違っている
-恐れがあります。心当たりがなければ、意図しないブランチ切替が起きていないか確認して
-ください。並行作業では、セッションごとに worktree を分けておくとこの混乱を避けられます。
+A session row can show a **warning icon and a branch name**. This is a sign that the session's
+working copy **has switched** from the branch it was launched on to a different branch.
+The working tree the running agent sees may have been swapped out, and its edits and diffs may
+no longer line up. If this doesn't ring a bell, check whether an unintended branch switch has
+happened. For parallel work, giving each session its own worktree avoids this confusion.
 
-## 会話を分岐する（fork）
+## Forking a conversation (fork)
 
-稼働中の claude、codex、opencode セッションの **⋯** メニューから、引継ぎ先の
-**「codex への引継ぎを準備」** などを選べます。元の会話をそのまま丸ごと渡すのではなく、
-**フリート・オペレーター**が元セッションの状況を読み、要点・未完了タスク・変更済みファイル・次の作業を
-引継ぎ案にまとめます。
+From the **⋯** menu of a running claude, codex, or opencode session, you can choose a handoff
+target such as **"Prepare handoff to codex"**. Rather than handing over the whole original
+conversation as is, the **fleet operator** reads the source session's situation and drafts a
+handoff proposal: the key points, unfinished tasks, changed files, and next steps.
 
-案、作業フォルダ、開始するエージェントを確認し、あなたが明示的に同意してから新しいセッションを
-作成します。元のセッションはそのまま残ります。長い会話で新しい会話の文脈を使い切らずに、別の
-エージェントへ引き継いだり、別の方向を試したりできます。
+You review the proposal, the working folder, and the agent to start, and the new session is
+created only after you explicitly agree. The original session stays as it is. In a long
+conversation, this lets you hand off to another agent or try a different direction without
+using up the new conversation's context.
 
-## タイトルとブランチ名を変える
+## Changing the title and branch name
 
-- **タイトルを変更** — 一覧での識別名を変えます。空のまま保存すると自動命名（リポジトリ名＋日時）に戻ります。**「AIに提案してもらう」** で会話内容から名前を提案させ、「この案にする」で採用できます。
-- **ブランチ名を変更** — worktree で動いているセッションだけに出ます。その worktree のブランチを改名します（フォルダ＝セッションはそのまま）。`feat/` `fix/` `refactor/` `chore/` `docs/` の接頭辞をボタンで付け替えられ、**「AIに提案してもらう」** で会話からブランチ名を提案させられます。暫定名（`temp/…`）で始めたセッションに、あとで意味のある名前を付けるのに使います。
+- **Rename** — changes the identifying name in the list. Saving it empty reverts to the automatic name (repository name + timestamp). **"Ask AI to suggest"** has a name proposed from the conversation contents; adopt it with "Use this".
+- **Rename the branch** — appears only for sessions running in a worktree. Renames that worktree's branch (the folder — that is, the session — stays as is). Buttons let you swap the `feat/` `fix/` `refactor/` `chore/` `docs/` prefixes, and **"Ask AI to suggest"** proposes a branch name from the conversation. Use it to give a meaningful name later to a session started under a provisional name (`temp/…`).
 
 ---
 
-仕組みを知りたい人へ: [dev/04 Workspace Agent（セッションモデル）](../../dev/04-workspace-agent.md)
+For those who want to know how it works: [dev/04 Workspace Agent (session model)](../../dev/04-workspace-agent.md)

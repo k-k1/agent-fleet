@@ -1,127 +1,150 @@
-# 11. フリート・オペレーター — 複数セッションをチャットで指揮する
+# 11. Fleet operator — directing multiple sessions from chat
 
-> 対象: 複数のセッションを並行して回したい、調査から実装への引き継ぎや完了待ちの追撃を
-> 任せたいメンバー。[07 チャットとメモ](07-chat-memo.md) のアシスタントチャットと
-> [02 セッション](02-sessions.md) を先に読んでおくと分かりやすいです。
+English | [日本語](11-fleet-operator.ja.md)
 
-## フリート・オペレーターとは
+> Audience: members who want to run multiple sessions in parallel, or hand over from
+> research to implementation and delegate the follow-up until completion. It helps to read
+> the assistant chat in [07 Chat and memos](07-chat-memo.md) and
+> [02 Sessions](02-sessions.md) first.
 
-**フリート・オペレーター**は、左ペインの **アシスタント** に最初から用意されている
-「司令塔」役のアシスタントです。普通のアシスタント（[07](07-chat-memo.md)）が
-チャット内で答えるだけなのに対し、オペレーターはあなたのワークスペースを**見て・動かせ**ます。
+## What is the fleet operator?
 
-- あなたは**チャットで会話するだけ**。オペレーターがセッションの状態を確認し、指示を送り、必要なら新しいセッションを起こします。
-- 指示を出したセッションが**入力待ちになる（＝ひと区切りつく）か異常終了すると、その会話に「セッション報告」カードが自動で届き**、オペレーターが続きを判断します。あなたが完了を見張り続ける必要はありません。
-- オペレーター自身はファイルを編集しません。実作業は必ずセッション（claude / codex / opencode）にやらせ、自分は観察・指示・要約に徹します。新しいセッションを起こすなどリソースを使う操作は、実行前にあなたに確認します。
+The **fleet operator** is a "command center" assistant that is available from the start
+under **Assistants** in the left pane. While a regular assistant ([07](07-chat-memo.md))
+only answers inside the chat, the operator can **see and drive** your workspace.
 
-一言でいうと、**「セッションたちの現場監督をチャットに雇う」**機能です。
+- You **just talk in chat**. The operator checks session states, sends instructions, and launches new sessions when needed.
+- When a session it instructed **becomes idle (i.e. reaches a stopping point) or terminates abnormally, a "Session report" card arrives in that conversation automatically**, and the operator decides what to do next. You don't have to keep watching for completion.
+- The operator itself does not edit files. Actual work is always done by sessions (claude / codex / opencode); the operator sticks to observing, instructing, and summarizing. Operations that consume resources, such as launching a new session, are confirmed with you before execution.
 
-## できること
+In a word, it's a feature that lets you **"hire a site foreman for your sessions, in chat."**
 
-### 見る（読み取り）
+## What it can do
 
-- **セッション一覧と状態** — いま何がどこで走っていて、作業中か・入力待ちか・質問中か。
-- **セッションの出力** — 各セッションの会話・端末出力の直近部分を読んで、進み具合や結論を把握。
-- **リポジトリ一覧** — `~/repos` 配下の作業コピー。新しいセッションをどこで起こすか選ぶ材料。
-- **エージェントの使用量・制限** — claude / codex のサブスクリプション使用率（5 時間枠・週間枠）、copilot のアカウントクレジット残量、agy のクォータ残量に加え、各エージェントのプランと利用アカウント、制限の解除日時。「あとどれくらい使える？」「制限いつ解除？」「どのプラン？」に実際の値で答え、大きなタスクを振る前の判断材料にもします（opencode は各プロバイダの API キー方式でサブスク使用量の概念が無いため対象外）。
-- **セッションごとのコンテキスト量・累積消費** — 各セッションのコンテキストの詰まり具合（ウィンドウに対する充填率）と、これまでの累積消費トークン。コンテキストが逼迫したセッションを見つけて、引き継ぎ（新セッションへの分割）を判断する材料になります。
+### See (read)
 
-「いま走ってるセッションの状況をまとめて」「◯◯のセッション、何か困ってない？」のような
-聞き方で、推測ではなく実際の状態を確認してから答えます。なお使用量・コンテキスト量の
-読み取りは、「AF 読み取り」を許可した他のアシスタント（[07](07-chat-memo.md)）でも使えます。
+- **Session list and states** — what is running where right now, and whether each is working, idle, or asking a question.
+- **Session output** — reads the recent portion of each session's conversation / terminal output to grasp progress and conclusions.
+- **Repository list** — the working copies under `~/repos`. Material for choosing where to launch a new session.
+- **Agent usage and limits** — claude / codex subscription usage (5-hour window and weekly window), copilot account credit balance, and agy quota balance, plus each agent's plan and account in use, and when limits reset. It answers "How much do I have left?", "When does the limit reset?", "Which plan?" with actual values, and this also informs decisions before assigning a big task (opencode is excluded because it uses per-provider API keys and has no notion of subscription usage).
+- **Per-session context volume and cumulative consumption** — how full each session's context is (fill ratio against the window) and the cumulative tokens consumed so far. This helps you spot sessions with tight context and decide on a handover (splitting into a new session).
 
-### 動かす（書き込み）
+With questions like "Summarize the state of the sessions running right now" or
+"Is session ◯◯ stuck on anything?", it answers after checking the actual state, not by
+guessing. Note that reading usage and context volume is also available to other assistants
+([07](07-chat-memo.md)) that have "AF read" permission.
 
-- **走っているセッションへ指示を送る** — 端末に打ち込むのと同じようにプロンプトを届けます。どのセッションに何を送るかを一言添えてから実行します。
-- **新しいセッションを起こす** — リポジトリ（dir）、エージェントの種類（claude / codex / opencode / shell）、モデルを選んで起動。モデルは実際に選べる一覧（claude はティア名 fable / opus / sonnet / haiku、codex / opencode は接続状態を反映したカタログ）を確認してから指定します。**worktree 指定**で独立した作業コピー＋ブランチを切り出せるので、並行作業どうしが衝突しません。**最初のタスク（initial_prompt）**を渡しておけば、起動後すぐに作業が始まります。
-- **セッションを停止・再開する** — 不要になった・暴走している・リソースを空けたいセッションを畳み、必要になったら会話履歴ごと再開できます。停止はどれを止めるか確認してから実行し、停止中のセッションは Console からも再開できます。オペレーターができるのは**再開可能な「停止」だけ**で、セッションを消す破壊的な削除は Console 側の操作に限られています。
-- **メモキューの操作** — 溜まっているメモの確認・追加・整理・**選んだメモの一括送信**（[07](07-chat-memo.md) のメモキューをチャット越しに扱えます）。
-- **他のアシスタントへの相談** — 判断に専門知識が要るとき、SRE アシスタントなどに助言を求めてから動きます（相談相手は助言を返すだけで、作業はしません）。
+### Drive (write)
 
-オペレーターがセッションに送ったプロンプトには、そのセッションのチャット表示で
-**「オペレーターから」**バッジが付きます。あなたが打った指示と混ざらないので、後から
-経緯を追えます。
+- **Send instructions to running sessions** — delivers prompts just as if you typed them into the terminal. It states which session it will send what to before executing.
+- **Launch new sessions** — pick a repository (dir), agent kind (claude / codex / opencode / shell), and model, then start. Models are specified after checking the actually selectable list (claude uses tier names fable / opus / sonnet / haiku; codex / opencode use a catalog reflecting connection state). With a **worktree** you can carve out an independent working copy plus branch, so parallel work doesn't collide. If you pass an **initial task (initial_prompt)**, work starts right after launch.
+- **Stop and resume sessions** — fold up sessions that are no longer needed, running away, or hogging resources, and resume them later with their conversation history intact. It confirms which one to stop before executing, and stopped sessions can also be resumed from the Console. The operator can only perform a **resumable "stop"**; destructive deletion of a session is limited to Console-side operations.
+- **Memo queue operations** — check, add, and organize queued memos, and **batch-send selected memos** (operate the memo queue from [07](07-chat-memo.md) over chat).
+- **Consulting other assistants** — when a decision needs specialist knowledge, it asks the SRE assistant or others for advice before acting (the consulted assistant only returns advice; it does no work).
 
-### セッション報告と自動応答
+Prompts the operator sends to a session get a **"From operator"** badge in that session's
+chat view. They don't get mixed up with instructions you typed yourself, so you can trace
+what happened later.
 
-オペレーターが指示したセッションは、**指示 1 件につき 1 回**、区切りがつくと会話へ
-自動報告します。
+### Session reports and auto-reply
 
-- 届くタイミングは **入力待ちになったとき**（＝その指示への応答が終わったとき）と、**異常終了**（メモリ不足・クラッシュなど）のとき。
-- 報告が届くと、既定ではオペレーターが**自動で応答**します（結果の要約、追撃指示、次のタスクへの着手判断など）。この自動応答は ⚙設定 → 「アシスタント」タブの **「セッション報告への自動応答」** で切れます。
-- 暴走防止のため、**あなたの発話なしの自動応答は連続 10 回まで**です。上限に達すると一時停止のお知らせが出て、あなたが次のメッセージを送ると再開します。長丁場でも定期的にあなたの判断が挟まる設計です。
-- 報告は**通知センターにも届く**ので、別の画面を見ていても気づけます（クリックでその会話が開きます）。
+A session the operator instructed reports back to the conversation automatically,
+**once per instruction**, when it reaches a stopping point.
 
-## 基本の使い方
+- Reports arrive **when the session becomes idle** (i.e. its response to that instruction is done) and on **abnormal termination** (out of memory, crash, etc.).
+- When a report arrives, by default the operator **replies automatically** (summarizing results, sending follow-up instructions, deciding whether to start the next task, and so on). You can turn this auto-reply off with **"Auto-respond to session reports"** in ⚙Settings → the **Assistant** tab.
+- To prevent runaway loops, **auto-replies without any input from you are capped at 10 in a row**. When the cap is reached, a pause notice appears, and sending your next message resumes it. The design ensures your judgment is inserted periodically even in long hauls.
+- Reports **also arrive in the notification center**, so you notice them even while looking at another screen (clicking opens that conversation).
 
-1. 左ペインの **アシスタント** → **＋（新規チャット）** → **フリート・オペレーター**を選びます。
-2. やりたいことを普通の日本語で伝えます。例:
-   - 「console リポジトリで worktree セッションを起こして、◯◯のバグを直させて」
-   - 「いま走ってる 3 つのセッション、それぞれ何をしてるか要約して」
-   - 「セッション◯◯が終わったら、テストを流すよう追撃して」
-3. セッションを起こす・メモを一括送信するなどリソースを使う操作は、オペレーターが「どこで・何を」を提示して**確認を求めて**きます。よければ承認の返事をします。
-4. あとは報告カードと自動応答を眺めつつ、必要なところだけ口を挟みます。会話ペインを開いたままにしておけば、報告・自動応答が数秒おきに反映されます。
+## Basic usage
 
-## ユースケース集
+1. In the left pane, choose **Assistants** → **＋ (New chat)** → **Fleet Operator**.
+2. Say what you want in plain language. Examples:
+   - "Launch a worktree session in the console repo and have it fix the ◯◯ bug"
+   - "Summarize what each of the 3 sessions running right now is doing"
+   - "When session ◯◯ finishes, follow up and have it run the tests"
+3. For operations that consume resources — launching a session, batch-sending memos, etc. — the operator presents "where and what" and **asks for confirmation**. If it looks good, reply with your approval.
+4. After that, watch the report cards and auto-replies, and chime in only where needed. If you keep the conversation pane open, reports and auto-replies are reflected every few seconds.
 
-ここからは「こう使うと効く」という型の提案です。そのままプロンプトの下敷きにしてください。
+## Use-case patterns
 
-### 型 1: 調査セッション → オペレーターへ引き継ぎ → 並列実装 → 統合
+From here on, these are suggested patterns for "this is how to use it effectively." Use them as-is as templates for your prompts.
 
-いちばんおすすめの型です。**調査と実装で頭数を変える**流れをオペレーターが仕切ります。
+### Pattern 1: research session → handover to the operator → parallel implementation → integration
 
-1. **調査** — まず普通にセッションを 1 本立てて調査させます。「原因を調べて、**独立に進められる作業単位に分割した修正計画**をまとめて」のように、後で分担できる形の出力を求めるのがコツです。大きな計画になるなら、計画をファイルに書いてコミットさせておくと確実です（セッション出力の読み取りは直近部分が中心のため）。
-2. **引き継ぎ** — オペレーターに「セッション◯◯の調査結果を読んで、作業単位ごとにセッションを分けて進めて」と頼みます。オペレーターは元セッションの出力を読み、**要点を要約して新セッションの最初のタスクに埋め込んで**引き継ぎます（会話を丸ごと複製するのではなく、必要な文脈だけを絞って渡します）。
-3. **並列実装** — 作業単位ごとに **worktree セッション**が起きるので、互いのファイルを踏まずに並行します。エージェントやモデルを作業の重さで変える（軽微な修正は軽いモデル、難所は重いモデル）のもここで頼めます。
-4. **統合** — 各セッションの報告が揃ったら、オペレーターに結果を要約させ、統合用のセッション（またはどれか 1 本）に「各ブランチを取り込んでテストを通して」と指示させます。最終レビューとマージはあなたが行います。
+The most recommended pattern. The operator manages a flow where you **change headcount between research and implementation**.
 
-### 型 2: 同種修正のファンアウト
+1. **Research** — first launch one session normally and have it investigate. The trick is to request output in a form you can divide later, like "Investigate the cause and produce a **fix plan split into work units that can proceed independently**." If the plan gets large, having the session write the plan to a file and commit it is more reliable (since reading session output focuses on the recent portion).
+2. **Handover** — ask the operator: "Read the research results from session ◯◯ and proceed with a separate session per work unit." The operator reads the source session's output and hands over by **summarizing the key points and embedding them into each new session's initial task** (it doesn't duplicate the whole conversation; it passes only the necessary context, distilled).
+3. **Parallel implementation** — a **worktree session** is launched per work unit, so they proceed in parallel without stepping on each other's files. You can also ask here to vary the agent or model by the weight of the work (a light model for minor fixes, a heavy model for the hard parts).
+4. **Integration** — once the reports from all sessions are in, have the operator summarize the results and instruct an integration session (or one of the existing ones) to "pull in each branch and get the tests passing." You do the final review and merge yourself.
 
-「この直しを N 箇所（複数リポジトリ・複数モジュール）に同じように当てたい」という作業を、
-見本 1 件＋展開に分けます。
+### Pattern 2: fan-out of same-kind fixes
 
-1. まず 1 箇所を自分のセッションで直し、やり方を固めます。
-2. オペレーターに「セッション◯◯でやった修正と同じ要領で、残りの △△ と □□ にもセッションを起こして適用して」と頼みます。見本セッションの出力から要領を要約して各セッションへ配ります。
-3. 報告が届くたびにオペレーターが結果を確認し、漏れや失敗だけあなたに上げてきます。
+For work like "I want to apply this fix the same way in N places (multiple repositories /
+multiple modules)," split it into one exemplar plus roll-out.
 
-### 型 3: エージェント比較・クロスレビュー
+1. First fix one place in your own session and settle the approach.
+2. Ask the operator: "Following the same approach as the fix done in session ◯◯, launch sessions for the remaining △△ and □□ and apply it." It summarizes the approach from the exemplar session's output and distributes it to each session.
+3. As each report arrives, the operator checks the result and raises only gaps and failures to you.
 
-同じ課題を **claude / codex / opencode に並行で解かせて比較**できるのは、司令塔が
-エージェント横断で見ているオペレーターならではです。
+### Pattern 3: agent comparison / cross-review
 
-- 「この課題を claude と codex の 2 セッションで別々に解かせて。両方の報告が来たら、アプローチの違いを表で比較して」
-- 「セッション A の実装を、別エージェントのセッション B にレビューさせて。指摘は A に追撃で戻して」
+Having **claude / codex / opencode solve the same problem in parallel and comparing** them
+is something only the operator, watching across agents as the command center, can do.
 
-解き方が割れる設計課題や、レビューの目を変えたいときに有効です。
+- "Have claude and codex each solve this problem in separate sessions. When both reports are in, compare the differences in approach in a table."
+- "Have session B, on a different agent, review session A's implementation. Send the findings back to A as a follow-up."
 
-### 型 4: 直列パイプライン（実装 → テスト → レビュー）
+Useful for design problems where approaches diverge, or when you want a different pair of eyes on a review.
 
-報告を「次の工程の引き金」に使う型です。「実装が終わったらテストを流す。テストが
-落ちたら修正を追撃、通ったらレビュー観点でもう一周」のような段取りを最初に伝えて
-おけば、各報告をオペレーターが判断して工程を進めます。自動応答の上限（10 回）が
-あるので、長いパイプラインは節目で「続けて」と一声かける前提で組んでください。
+### Pattern 4: serial pipeline (implement → test → review)
 
-### 型 5: 状況ブリーフィングとメモ捌き
+A pattern that uses reports as the "trigger for the next stage." If you describe the
+sequence up front — "when implementation finishes, run the tests; if tests fail, follow up
+with fixes; if they pass, do another pass from a review perspective" — the operator judges
+each report and advances the stages. Because of the auto-reply cap (10), plan long
+pipelines with the expectation that you'll say "continue" at milestones.
 
-動かす前の「見る」だけでも便利です。
+### Pattern 5: status briefing and memo triage
 
-- **ブリーフィング** — 離席後・翌朝に「昨日から走ってるセッションの現状と、止まってる理由をまとめて」。状態と出力を実際に読んで報告してくれます。
-- **メモ捌き** — 「メモキューに溜まってるやつ、内容ごとに適切なセッションへ振り分けて送って」。溜め歩き（[07](07-chat-memo.md)）の出口をチャットで済ませられます。
-- **片付け** — 「役目が終わったセッションを確認して、要らないものは停止して」。並列作業のあとに散らかったセッションを畳んでリソースを空けられます（停止中＝再開可能なので、消えるわけではありません）。
-- **残量を見た割り振り** — 「claude と codex、どっちがまだ枠に余裕ある？」「この大きめのタスク、制限的にどっちに振るのがいい？」。使用率と解除日時を実際に確認した上で、制限が近いエージェントを避けた割り振りを相談できます。
-- **コンテキストの見張りと引き継ぎ** — 「コンテキストが詰まってきてるセッションはある？」。充填率の高いセッションを見つけたら、追加指示を重ねる代わりに要点を要約して新セッションへ引き継ぐ（型 1 の手順）判断につなげられます。
+Even the "see" side alone, without driving anything, is useful.
 
-## 制約と注意
+- **Briefing** — after stepping away or the next morning: "Summarize the current state of the sessions running since yesterday and why any are stopped." It actually reads states and output before reporting.
+- **Memo triage** — "Route the memos piled up in the memo queue to the appropriate sessions by content and send them." You can finish off the capture-as-you-go flow ([07](07-chat-memo.md)) from chat.
+- **Cleanup** — "Check which sessions have served their purpose and stop the ones no longer needed." After parallel work, you can fold up scattered sessions and free resources (stopped = resumable, so nothing disappears).
+- **Assignment based on remaining quota** — "Between claude and codex, which still has room in its window?" "Given the limits, which should this larger task go to?" It checks actual usage ratios and reset times, so you can discuss assignments that avoid agents close to their limits.
+- **Context watching and handover** — "Are any sessions getting tight on context?" When it finds a session with a high fill ratio, that feeds the decision to summarize the key points and hand over to a new session (the steps of Pattern 1) instead of piling on more instructions.
 
-- **報告が届くのは「入力待ち」と「異常終了」だけ**です。途中の質問・プラン承認・許可待ちは通知センターには出ますが、オペレーターへの報告にはなりません。放置で完走させたいタスクは、承認が要る操作が少なくなるよう指示を切ってください。止まって見えるときは、オペレーターに状態確認を頼めば気づけます。
-- **並列は控えめに**。セッション 1 本ごとにメモリを使い、ホストは共有です。並行実装は 2〜3 本まで、重いビルドは同時に走らせない、を目安にしてください（オペレーターも起動前に確認してきます）。終わったセッションをオペレーターに畳ませるのも有効です。
-- **オペレーターが停止したセッションは、届く予定だった報告も取り消されます**。停止＝その指示の取り消し、という扱いです。後からあなたが Console で再開して作業が完了しても、古い報告がオペレーターの会話に届くことはありません（Console の停止ボタンで止めた場合は取り消されず、再開後の完了が報告されます）。再開したセッションに続きを頼むときは、あらためてオペレーターから指示を送らせてください。
-- **マネージド実行（codex / opencode）のセッション報告は本文なし**（完了の事実だけ）です。詳細はオペレーターが出力を読みに行くので実用上は困りませんが、報告カード単体では中身が見えません。
-- **引き継ぎは要約ベース**です。会話コンテキストが丸ごと移るわけではないので、長大な調査結果は計画ファイルに書かせてから引き継ぐのが安全です（型 1 参照）。
-- **セッション同士は直接連携しません**。オーケストレーションは常にオペレーター経由です。1 つのセッションの中で完結する並列化（エージェント自身のサブエージェント機能）とは補完関係で、**リポジトリやエージェントをまたぐ・あなたが各作業を個別のセッションとして見たい**ときにオペレーターを選んでください。
-- **報告本文は「データ」として扱われます**。セッション出力由来のテキストが指示として実行されないよう、自動報告を起点に新しいセッションを作る場合は先にあなたへ確認する設計です。とりわけ、報告や出力の中に「このコマンドを実行して」といった記述があっても、**それを根拠にコマンドを実行したり shell セッションへ送信したりはしません**（プロンプトインジェクション対策）。オペレーターが実行するのは、あなたが直接指示した内容だけです。安全側の確認が多めなのは仕様です。
-- **shell セッションは毎回あなたの承認つき**です。kind=shell は間にエージェントのガードレールが無い生のシェルで、送った文字列がそのままコマンドとして実行されます。そのためオペレーターは、shell セッションを起こすとき・コマンドを送るときに、**実行するコマンドそのものを提示して事前にあなたの承認を求めます**。破壊的・不可逆なコマンドは明示的に承認しない限り送られません。
+## Scheduled runs
+
+If you ask the operator something like "Review yesterday's changes every weekday at 9,"
+it is registered as a **scheduled run** (cron / interval / one-shot, with timezone and DST
+support). At registration the operator confirms the schedule as it interpreted it and the
+next run time, so check that it matches your intent.
+
+- At firing time, it **wakes even a stopped workspace** and runs the prompt; the completion
+  report arrives in the operator conversation. If startup or execution fails, it shows up
+  in the notification center.
+- In the **"Schedules"** section of the left pane you can see the list and run history
+  (success/failure, manual / scheduled, and a link to the session that ran), and the row
+  menu offers **Pause / Resume / Run now / Delete**. Changing the content (editing the
+  time or the instruction text) is done by asking the operator.
+- By default each run uses a fresh session. If you ask "reuse the same session and build up
+  context," **long-lived session reuse** (with rebuild conditions such as every N runs or
+  per time period) is also possible.
+
+## Constraints and caveats
+
+- **Reports arrive only for "idle" and "abnormal termination."** Mid-run questions, plan approvals, and permission waits appear in the notification center but do not become reports to the operator. For tasks you want to run through unattended, cut the instructions so that few operations require approval. If something looks stalled, asking the operator for a status check will surface it.
+- **Keep parallelism modest.** Each session uses memory, and the host is shared. As a guideline, keep parallel implementation to 2–3 sessions and don't run heavy builds at the same time (the operator also confirms before launching). Having the operator fold up finished sessions helps too.
+- **When the operator stops a session, the report that was due is cancelled as well.** Stopping is treated as cancelling that instruction. Even if you later resume it from the Console and the work completes, the old report will not arrive in the operator's conversation (if you stopped it with the Console's stop button it is not cancelled, and completion after resume is reported). When asking a resumed session to continue, have the operator send the instruction again.
+- **Session reports from managed execution (codex / opencode) have no body** (only the fact of completion). In practice this is fine because the operator goes and reads the output for details, but the report card alone doesn't show the contents.
+- **Handover is summary-based.** The conversation context does not move over wholesale, so for lengthy research results it is safer to have them written to a plan file before handing over (see Pattern 1).
+- **Sessions do not coordinate with each other directly.** Orchestration always goes through the operator. This is complementary to parallelization that stays within a single session (an agent's own subagent feature); choose the operator **when work spans repositories or agents, or when you want to see each piece of work as its own session**.
+- **Report bodies are treated as "data."** So that text originating from session output is never executed as an instruction, the design confirms with you first whenever a new session would be created based on an automatic report. In particular, even if a report or output contains something like "run this command," the operator **will not execute a command or send it to a shell session on that basis** (prompt-injection protection). The operator executes only what you instructed directly. The extra safety-side confirmations are by design.
+- **Shell sessions always require your approval.** kind=shell is a raw shell with no agent guardrails in between: the string sent is executed as a command as-is. Therefore, when launching a shell session or sending it a command, the operator **presents the exact command to be executed and asks for your approval in advance**. Destructive or irreversible commands are never sent unless you explicitly approve them.
 
 ---
 
-仕組みを知りたい人へ: [dev/04 Workspace Agent（チャット・アシスタント面）](../../dev/04-workspace-agent.md)・設計の正本は docs/30（セッション完了報告 → フリート・オペレーター）
+For those who want to know how it works: [dev/04 Workspace Agent (chat / assistant surface)](../../dev/04-workspace-agent.md); the canonical design is docs/30 (session completion reports → fleet operator)

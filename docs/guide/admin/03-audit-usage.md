@@ -1,94 +1,103 @@
-# 監査ログと利用状況
+# Audit log and usage
 
-「誰が何をしたか」を追える監査ログと、「どれだけ使われたか」を集計する使用量。どちらも
-管理画面のタブから、自分のテナントの範囲で確認できます。
+English | [日本語](03-audit-usage.ja.md)
 
-## 監査ログ（監査タブ）
+The audit log lets you trace "who did what"; usage tallies "how much was used". Both are available
+from tabs in the admin screen, scoped to your own tenant.
 
-**「監査」** タブは、テナント内で起きた **変更操作の記録** です。1 行が 1 操作で、次の列が並びます。
+## Audit log (Audit tab)
 
-- **時刻** — いつ行われたか。
-- **操作** — 何をしたか（`fs.*` = ファイル操作、`git.*` = コミットやチェックアウトなど、`repo.*` =
-  リポジトリの作成・削除、`session.*` = セッションの作成・fork・停止 など）。
-- **実行者** — 誰が（メールアドレス）。人の操作のほか、外部の Claude クライアント（MCP）や
-  システム動作（自動停止など）が主体のこともあります。
-- **対象** — どのファイル・リポジトリ・セッションに対してか。
+The **"Audit"** tab is the **record of change operations** that happened within the tenant. Each
+row is one operation, with the following columns.
 
-上部の検索欄に「操作 / 対象 / ユーザー」を入れると絞り込めます。ログは自動更新されないので、
-最新を見たいときは更新ボタンを押してください。右肩に件数が出ます。
+- **Time** — when it was done.
+- **Action** — what was done (`fs.*` = file operations, `git.*` = commits, checkouts, and so on,
+  `repo.*` = repository creation / deletion, `session.*` = session creation / fork / stop, etc.).
+- **Actor** — who did it (email address). Besides human operations, the actor can also be an
+  external Claude client (MCP) or a system action (auto-stop, etc.).
+- **Target** — which file, repository, or session it was done to.
 
-### 何が記録され、何が記録されないか
+Typing "Action / target / user" into the search field at the top filters the list. The log does not
+auto-refresh, so press the refresh button when you want the latest. The item count appears at the
+top right.
 
-記録されるのは **変更・破壊をともなう操作だけ** です。ここは意図的な線引きなので、覚えておいてください。
+### What is recorded, and what is not
 
-- **記録される** — ファイルのアップロード／作成／改名／削除、git のコミット・チェックアウト・取得、
-  リポジトリの clone・削除、セッションの作成・fork・停止、といった「状態を変える」操作。
-- **記録されない** — 単なる**読み取り**（ファイルを開いて見ただけ、一覧を眺めただけ）は既定で残りません。
-  そして **ターミナルの生の入出力（画面に流れる文字そのもの）は保存しません**。パスワードやトークンが
-  紛れ込むリスクを避けるための設計です。
+Only **operations that change or destroy something** are recorded. This is a deliberate line, so
+keep it in mind.
 
-したがって「そのメンバーが端末で具体的に何をタイプしたか」までは監査ログでは追えません。追えるのは
-「いつ・誰が・どのファイルやセッションに対して・どんな種類の変更をしたか」です。記録範囲の設計意図は
-[dev/07 §7.7 監査](../../dev/07-security.md) にまとまっています。
+- **Recorded** — operations that "change state": file upload / creation / rename / deletion, git
+  commit / checkout / fetch, repository clone / deletion, session creation / fork / stop, and so on.
+- **Not recorded** — plain **reads** (just opening and viewing a file, just browsing a list) are
+  not kept by default. And **raw terminal input/output (the very characters flowing across the
+  screen) is not stored**. This is by design, to avoid the risk of passwords or tokens slipping in.
 
-## 使用量（使用量タブ）
+Therefore the audit log cannot trace "what exactly that member typed in the terminal". What it can
+trace is "when, who, against which file or session, made what kind of change". The design intent
+behind the recording scope is laid out in [dev/07 §7.7 Audit](../../dev/07-security.md).
 
-**「使用量」** タブは、メンバーごとの**ワークスペース稼働時間**を集計します。ここでいう使用量は
-「インフラをどれだけ占有したか」＝ワークスペースが起動していた時間であって、Claude の利用料ではありません。
-Claude は各メンバーが自分のサブスクリプション（席）でログインする「持ち込み（BYO）」なので、運用者側の
-コストになるのは占有時間の方だ、という考え方です。この値は約 5 分ごとのサンプリングなので、多少の誤差を
-含む概算です。
+## Usage (Usage tab)
 
-- **期間** — 「開始」「終了」で日付を区切り、「適用」で反映します。
-- **メンバー別** — メンバーごとの稼働時間が棒グラフで並び、上部に「合計稼働」と「メンバー」数が出ます。
-- **CSV** — 「CSV」ボタンで、表示中の期間・範囲のデータをそのまま書き出せます（費用の按分＝ showback や
-  社内報告に使えます）。
+The **"Usage"** tab tallies each member's **workspace running time**. Usage here means "how much
+infrastructure was occupied" — the time a workspace was up — not Claude fees. Claude is
+"bring your own" (BYO): each member logs in with their own subscription (seat), so the cost borne
+by the operator is the occupancy time. The value is sampled roughly every 5 minutes, so it is an
+approximation with some margin of error.
 
-テナントを切り替える選択肢は super_admin にしか出ません。あなたの使用量画面は常に自分のテナント範囲です。
+- **Period** — set dates with "From" and "To", and press "Apply" to take effect.
+- **Per member** — each member's running time appears as a bar chart, with "Total running" and the
+  "Members" count at the top.
+- **CSV** — the "CSV" button exports the data for the displayed period and scope as-is (usable for
+  cost allocation — showback — and internal reporting).
+
+The option to switch tenants appears only for super_admin. Your usage screen is always scoped to
+your own tenant.
 
 ---
 
 ## FAQ
 
-**Q. メンバーの追加は招待制ですか、自動ですか？**
-デプロイの設定次第です。自動加入（既定）なら許可されたログインは初回に自動で入り、招待制なら管理者が
-追加した人だけが入れます。モードの切替は情シスの領分です。詳しくは [01-members.md](01-members.md) の
-「自動加入と招待制」を参照してください。
+**Q. Is adding members invite-based or automatic?**
+It depends on deployment settings. With auto-join (the default), permitted logins join
+automatically on first login; with invite-only, only people an administrator has added can enter.
+Switching the mode is IT's domain. For details, see "Auto-join and invite-only" in
+[01-members.md](01-members.md).
 
-**Q. 上限に達したメンバーはどうなりますか？**
-今動いているものが止められることはありません。新しく起動しようとした操作だけが弾かれ、Console に
-「上限に達しています」と表示されます。片付ければ続けられます。詳しくは [02-limits.md](02-limits.md) の
-「上限に達するとメンバー側で何が起きるか」を参照してください。
+**Q. What happens to a member who hits a limit?**
+Nothing that is already running gets stopped. Only the attempt to start something new is rejected,
+and the Console shows a "limit reached" message. Once they tidy up, they can continue. For details,
+see "What members experience when a limit is hit" in [02-limits.md](02-limits.md).
 
-**Q. 自分に見えるのは自分のテナントだけですか？**
-はい。メンバーもセッションも監査も使用量も、すべて自分のテナントの範囲だけです。テナントを切り替える
-選択肢は表示されません。デプロイ全体を見られるのは super_admin だけです。
+**Q. Can I only see my own tenant?**
+Yes. Members, sessions, audit, and usage are all scoped to your own tenant. The option to switch
+tenants is not shown. Only a super_admin can see the whole deployment.
 
-**Q. メンバーがターミナルで打ったコマンドの中身まで監査で見られますか？**
-いいえ。ターミナルの生の入出力は保存されません。監査で追えるのは変更操作（ファイル・git・セッション等）の
-種類・実行者・対象・時刻です。
+**Q. Can I see in the audit log the actual commands a member typed in the terminal?**
+No. Raw terminal input/output is not stored. What the audit log can trace is the kind, actor,
+target, and time of change operations (files, git, sessions, etc.).
 
-**Q. 使用量に Claude の利用料は含まれますか？**
-含まれません。使用量はワークスペースの稼働時間（インフラ占有）です。Claude の料金は各メンバーの
-サブスクリプション側です。
+**Q. Does usage include Claude fees?**
+No. Usage is workspace running time (infrastructure occupancy). Claude charges sit on each member's
+own subscription.
 
-**Q. あるメンバーを昇格させて管理者にしたいのですが、ボタンがありません。**
-tenant_admin のあなたには権限付与ができません。super_admin だけがロールを付与できます。情シス／
-デプロイ管理者に依頼してください（[01-members.md](01-members.md) の「ロールの意味」）。
+**Q. I want to promote a member to administrator, but there's no button.**
+As tenant_admin you cannot grant rights. Only a super_admin can grant roles. Ask your IT
+department / deployment administrator ("What the roles mean" in [01-members.md](01-members.md)).
 
-**Q. 退職者のメンバーを削除したいのですが。**
-管理画面に削除ボタンはありません。所属の取り消しは情シスに依頼してください。当面はその人のワークスペースを
-強制停止しておけば、稼働と資源の占有を抑えられます（[02-limits.md](02-limits.md)）。
+**Q. I want to delete a member who has left the company.**
+The admin screen has no delete button. Ask IT to revoke the membership. In the meantime,
+force-stopping that person's workspace reins in their activity and resource occupancy
+([02-limits.md](02-limits.md)).
 
-**Q. 「通信」タブを開くと「権限がありません」と出ます。**
-egress（外部通信）統制は super_admin 専用です。通信の制御が必要になったら情シスへ相談してください
-（[operator/README.md](../operator/README.md)）。
+**Q. Opening the "Egress" tab says I don't have permission.**
+Egress (external traffic) control is super_admin only. When traffic control becomes necessary,
+consult your IT department ([operator/README.md](../operator/README.md)).
 
-**Q. ワークスペースを強制停止すると、そのメンバーの作業は消えますか？**
-消えません。コンテナがいったん止まるだけで、home の中身（リポジトリや設定）は残ります。メンバーは
-Console から起動し直せます。
+**Q. If I force-stop a workspace, does that member's work disappear?**
+No. The container merely stops for the moment; the contents of home (repositories and settings)
+remain. The member can start it again from the Console.
 
 ---
 
-- 前に戻る: [02 資源上限とセッション](02-limits.md)
-- ガイド全体の索引: [../README.md](../README.md)
+- Back to: [02 Resource limits and sessions](02-limits.md)
+- Guide index: [../README.md](../README.md)
