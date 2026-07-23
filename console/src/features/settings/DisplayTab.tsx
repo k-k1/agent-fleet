@@ -19,7 +19,7 @@ import { useT } from "../../lib/i18n/index.ts";
 import type { MsgKey } from "../../lib/i18n/index.ts";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { SwatchGrid } from "../../ui/SwatchGrid.tsx";
-import { Choice, OnOff } from "./controls.tsx";
+import { Choice, OnOff, Row } from "./controls.tsx";
 import type { ChoiceProps } from "./controls.tsx";
 
 // DisplayTab: font + file-viewer preferences (CodeLeaf-inspired), persisted via the
@@ -55,15 +55,10 @@ export function DisplayTab() {
             onChange={(v) => setSetting("mirrorTheme", v)}
           />
         </Row>
-        <Row label={tr("display.assistant_theme")}>
-          <Choice
-            value={s.assistantTheme}
-            options={REGION_THEMES.map((x) => [x.id, tr(x.labelKey)])}
-            onChange={(v) => setSetting("assistantTheme", v)}
-          />
-        </Row>
         <p className="muted ds-note">{tr("display.region_theme_note")}</p>
-        {SURFACE_TARGETS.map((t) => (
+        {/* assistantColor + assistantTheme moved to the Assistant tab (its appearance
+            lives with its behavior); every other surface color stays here. */}
+        {SURFACE_TARGETS.filter((t) => t.key !== "assistantColor").map((t) => (
           <Row key={t.key} label={tr(t.longKey)}>
             <SwatchGrid theme={s.theme} value={s[t.key]} onChange={(v) => setSetting(t.key, v)} />
           </Row>
@@ -170,15 +165,6 @@ const FONT_LABEL_KEYS: Record<string, MsgKey> = {
   "ゴシック": "font.gothic",
 };
 // i18n-exempt-end
-
-function Row({ label, children }: { label: ReactNode; children?: ReactNode }) {
-  return (
-    <div className="ds-row">
-      <span className="ds-label">{label}</span>
-      {children}
-    </div>
-  );
-}
 
 // FontSelect lays the choices out horizontally, each rendered in its own font so
 // the user can compare them at a glance.
