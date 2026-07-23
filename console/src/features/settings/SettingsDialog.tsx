@@ -15,7 +15,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { TouchEvent as RTouchEvent } from "react";
 import { useT } from "../../lib/i18n/index.ts";
-import { useSettingsUI } from "./store.ts";
+import { useSettingsUI, rememberSettingsSection } from "./store.ts";
 import { mobileMatches } from "../../lib/device.ts";
 import { Modal } from "../../ui/Modal.tsx";
 import { DisplayTab } from "./DisplayTab.tsx";
@@ -27,6 +27,7 @@ import { TtsTab } from "./TtsTab.tsx";
 import { GitTab } from "./GitTab.tsx";
 import { SsmTab } from "./SsmTab.tsx";
 import { OpsTab } from "./OpsTab.tsx";
+import { ChatTab } from "./ChatTab.tsx";
 import { TokensTab } from "./TokensTab.tsx";
 import { DangerTab } from "./DangerTab.tsx";
 import { InternalReposTab } from "./InternalReposTab.tsx";
@@ -52,6 +53,7 @@ const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
       ["agents", "set.tab_agents"],
       ["git", "set.tab_git"],
       ["ops", "set.tab_ops"],
+      ["chat", "set.tab_chat"],
       ["tokens", "set.tab_tokens"],
     ],
   },
@@ -73,7 +75,11 @@ export function SettingsDialog() {
   const tr = useT();
   const closeSettings = useSettingsUI((s) => s.closeSettings);
   const settingsSection = useSettingsUI((s) => s.settingsSection);
-  const [section, setSection] = useState(settingsSection || "agents");
+  // Initial section comes from the store (a requested deep-link, else the restored
+  // last-opened one, else 表示). Guard against a stale stored key from an older build.
+  const [section, setSection] = useState(
+    ALL_SECTIONS.includes(settingsSection) ? settingsSection : "display",
+  );
   // Mobile drill-down: `entered` = viewing a section's content. Defaults true so
   // opening lands directly on the section (as the old tab bar did); the ‹ control
   // returns to the rail. Ignored by the desktop two-pane layout (CSS).
@@ -83,11 +89,17 @@ export function SettingsDialog() {
   // is already open) — e.g. a cross-tab pointer like Copilot → Gitホスティング or
   // CloudWatch → AWS SSM jumps the rail to the target and drills in on mobile.
   useEffect(() => {
-    if (settingsSection) {
+    if (ALL_SECTIONS.includes(settingsSection)) {
       setSection(settingsSection);
       setEntered(true);
     }
   }, [settingsSection]);
+
+  // Remember the last-opened section (localStorage) so reopening lands here; the store's
+  // openSettings() restores it on the next open (first-ever open defaults to 表示).
+  useEffect(() => {
+    rememberSettingsSection(section);
+  }, [section]);
 
   // Keep the active rail item in view as the section changes (tap or swipe).
   const railRef = useRef<HTMLDivElement>(null);
@@ -155,6 +167,7 @@ export function SettingsDialog() {
             {section === "env" && <EnvTab />}
             {section === "ssm" && <SsmTab />}
             {section === "ops" && <OpsTab />}
+            {section === "chat" && <ChatTab />}
             {section === "tokens" && <TokensTab />}
             {section === "internalrepos" && <InternalReposTab />}
             {section === "danger" && <DangerTab />}

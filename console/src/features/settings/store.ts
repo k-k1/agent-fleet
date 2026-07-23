@@ -11,9 +11,29 @@
 import { create } from "zustand";
 import { useLayoutStore } from "../../layout/store.ts";
 
+// The settings modal remembers the last-opened section in localStorage, so reopening
+// lands where you left off. First-ever open (nothing stored) defaults to 表示
+// (個人設定 › display). Device-local UI state — deliberately NOT server-synced.
+const SETTINGS_SECTION_KEY = "af-settings-section";
+const lastSection = (): string => {
+  try {
+    return localStorage.getItem(SETTINGS_SECTION_KEY) || "";
+  } catch {
+    return "";
+  }
+};
+export function rememberSettingsSection(section: string): void {
+  try {
+    localStorage.setItem(SETTINGS_SECTION_KEY, section);
+  } catch {
+    /* storage unavailable — non-fatal */
+  }
+}
+
 interface SettingsUIStore {
   settingsOpen: boolean;
-  /** Initial tab when opened ("display" | "env" | "agents" | "git" | "ssm" | "tokens"). */
+  /** Section to open: the caller's requested section, else the last-opened one
+   * (localStorage), else "display". */
   settingsSection: string;
   adminOpen: boolean;
   /** はじめかたガイド modal (re-openable first-run checklist — GuideModal). */
@@ -44,14 +64,18 @@ const pushModalEntry = (modal: string) => {
 
 export const useSettingsUI = create<SettingsUIStore>((set) => ({
   settingsOpen: false,
-  settingsSection: "agents",
+  settingsSection: lastSection() || "display",
   adminOpen: false,
   guideOpen: false,
 
   openSettings(section?: string) {
     // "connections" is a legacy alias for the merged エージェント tab (the old 接続
     // tab was folded into it), so any caller asking for connections lands there.
-    set({ settingsSection: section === "connections" ? "agents" : section || "agents", settingsOpen: true });
+    // No explicit section → restore the last-opened one (localStorage), else 表示.
+    set({
+      settingsSection: section === "connections" ? "agents" : section || lastSection() || "display",
+      settingsOpen: true,
+    });
   },
   closeSettings() {
     // Close-on-back is handled by ui/Modal (useBackClose); just drop the flag.

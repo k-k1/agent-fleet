@@ -138,6 +138,10 @@ type DiscordCreds struct {
 	// the thread reflects BOTH directions; stored inverted so pre-existing connections
 	// (absent field = false = on) keep mirroring without a re-save.
 	MirrorInputOff bool `json:"mirrorInputOff,omitempty"`
+	// NotifyOff mutes ALL outbound notifications to this service WITHOUT disconnecting —
+	// a master switch toggled from 個人設定 › 通知 (and the チャット連携 card). Stored
+	// inverted so a pre-existing connection (absent = false) keeps notifying with no re-save.
+	NotifyOff bool `json:"notifyOff,omitempty"`
 }
 
 // SlackCreds is the user's Slack chat-bridge connection (docs/37 Slack 追随), the
@@ -175,6 +179,9 @@ type SlackCreds struct {
 	// MirrorInputOff opts OUT of echoing Console-typed prompts into the session thread
 	// (docs/37 Fix ②); stored inverted so the default is on (mirror both directions).
 	MirrorInputOff bool `json:"mirrorInputOff,omitempty"`
+	// NotifyOff mutes ALL outbound notifications without disconnecting (see
+	// DiscordCreds.NotifyOff). Stored inverted so a pre-existing connection keeps notifying.
+	NotifyOff bool `json:"notifyOff,omitempty"`
 }
 
 type Data struct {
