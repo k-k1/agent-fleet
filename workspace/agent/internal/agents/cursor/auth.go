@@ -74,6 +74,17 @@ func probeStatus() statusOut {
 	return statusVal
 }
 
+// LoggedIn reports (cached, ~30s) whether cursor-agent has an authenticated
+// session — the headless-chat availability probe (chat_providers.go
+// headlessAgentAvailable). Guards on the binary being present so a missing CLI
+// (old image) reads as unavailable rather than paying a failed exec each call.
+func LoggedIn() bool {
+	if _, err := exec.LookPath(bin()); err != nil {
+		return false
+	}
+	return probeStatus().IsAuthenticated
+}
+
 // invalidateStatus drops the cached status so the next /connections poll reflects
 // a login/logout at once instead of after statusTTL.
 func invalidateStatus() {

@@ -76,6 +76,10 @@ type chatConversation struct {
 	// from cache/last_conversations.json after the first `-p` turn (agy has no
 	// session-id flag nor structured output to hand it over — see agyChat).
 	AgyConversationID string `json:"agy_conversation_id,omitempty"`
+	// CursorSessionID is cursor's chat UUID (`--resume <uuid>`), self-minted on the
+	// first turn (cursor CREATEs a chat under a fresh valid v4) and echoed back in the
+	// -p result's session_id — see cursorChat.
+	CursorSessionID string `json:"cursor_session_id,omitempty"`
 	// Provider cursors are the number of canonical Messages already represented in
 	// each native provider session. A provider that returns after fallback receives
 	// the intervening user/assistant turns before the new prompt, instead of resuming
@@ -84,6 +88,7 @@ type chatConversation struct {
 	CodexMessageCursor    int `json:"codex_message_cursor,omitempty"`
 	OpencodeMessageCursor int `json:"opencode_message_cursor,omitempty"`
 	AgyMessageCursor      int `json:"agy_message_cursor,omitempty"`
+	CursorMessageCursor   int `json:"cursor_message_cursor,omitempty"`
 	// AFTools attaches the local Agent Fleet MCP tools (read-only) to this chat's
 	// claude so it can inspect the user's workspace (docs/19 Q1). Legacy field kept for
 	// conversations created before assistants (Q2); new conversations drive tools via the
