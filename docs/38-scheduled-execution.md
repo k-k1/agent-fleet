@@ -272,7 +272,8 @@ reuse セッションでは driver 切替中 `409 busy_switch` にも遭遇し�
 - **P0（本 doc）**: 設計合意・ADR0021。**完了**。
 - **P1**: CP スケジューラ骨格（DB 表・tick・`next_run` 台帳・cron/interval/once 評価）。
   **実装済み**（`control-plane/scheduler.go`・`schedules` 表 = migrations/0022＋pg/0005・
-  `ScheduleStore`・env ゲート `AF_SCHEDULER_INTERVAL` 既定 OFF）。実 wake+注入は
+  `ScheduleStore`・env ゲート `AF_SCHEDULER_INTERVAL`。**当初 P1 は既定 OFF（opt-in）だったが
+  P5.1 後に既定 ON（1m tick・opt-out）へ反転＝`=0` で hard-off。下記 P5.1 ⑧参照**）。実 wake+注入は
   `scheduleFirer` シーム越しの P2 に委ね、P1 既定は no-op の `logFirer`（有効化しても
   台帳が進むだけ）。cron は外部依存ゼロの自前評価器（5 フィールド・dom OR dow の
   Vixie ルール・`time/tzdata` 埋込で TZ/DST）。テスト 18 件（DST 両方向含む）緑。
@@ -372,7 +373,12 @@ reuse セッションでは driver 切替中 `409 busy_switch` にも遭遇し�
   `sch_98968564…` は状態確認依頼（実フリート DB は当環境から触れないためオペレーター会話で
   `list_schedules` する）。テスト＝CP +2件（manual-fire フラグ set/clear、run session/trigger 往復）
   ＋console read.test +2件（`runStatusLabelKey`/`isManualRun`）。CP 224／console typecheck・vitest 394・
-  i18n-lint・build 緑。**残**: 実フリート再ビルド後の実機目視。
+  i18n-lint・build 緑。**⑧ スケジューラを既定 ON（opt-out）へ反転（2026-07-23・ユーザー判断）**＝`main.go` の
+  `AF_SCHEDULER_INTERVAL` 既定を `0`→`1m`（`=0` で hard-off は温存）。根拠＝tick は `enabled,next_run`
+  インデックス済み due-query 1本でスケジュール0件なら完全 no-op・「作った定時実行が実際に発火する」方が
+  驚きが少ない。リスク本体は tick でなく発火＝停止中 WS の wake（意図的にスケジュールを作った時だけ発生・
+  jitter/クォータ/keep-alive で緩和済み）。ECS 課金や no-wake ポリシーは `=0` で殺せる。副作用＝① の左ペイン
+  非表示は既定 ON では `=0` にした時だけ隠れる affordance に格下げ（矛盾なし）。**残**: 実フリート再ビルド後の実機目視。
 
 ## 長寿命セッション再利用モード（`session_mode=reuse`・実装済み 2026-07-23）
 
