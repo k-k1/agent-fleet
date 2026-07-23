@@ -9,10 +9,16 @@ package cursor
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
 // statusOut is the shape of `cursor-agent status --format json`（実測 v2026.07.20）。
@@ -66,4 +72,124 @@ func probeStatus() statusOut {
 		statusAt = time.Now()
 	}
 	return statusVal
+}
+
+// invalidateStatus drops the cached status so the next /connections poll reflects
+// a login/logout at once instead of after statusTTL.
+func invalidateStatus() {
+	statusMu.Lock()
+	statusAt = time.Time{}
+	statusMu.Unlock()
+}
+
+// --- interactive login flow (docs/40 Track C) ---------------------------------
+//
+// `NO_OPEN_BROWSER=1 cursor-agent login` prints an authorize URL to stdout, then
+// polls Cursor itself until the user approves in a browser and finally writes
+// ~/.config/cursor/auth.json（実測）. We hold the process on a PTY (shared
+// agents.Flow plumbing) so we can scrape the URL and keep the poller alive; the
+// Console shows the URL and polls /connections/cursor/poll until authenticated.
+// Unlike claude/agy there is no pasted code — approval happens entirely in the
+// browser, so the flow is start→poll（codex device-auth 型）, not start→complete.
+// v1 is login-only; a manual CURSOR_API_KEY registration path is deferred to
+// Track D（cursor CLI has no key-persistence command, and injecting the key into
+// the tmux TUI pane program would leak it into `ps` — docs/40 決定 5/Track D）.
+
+// loginURLRe matches the deep-control authorize URL cursor prints（実測 Track 0）:
+// https://cursor.com/loginDeepControl?challenge=…&uuid=…&mode=login&redirectTarget=cli
+var loginURLRe = regexp.MustCompile(`https://cursor\.com/loginDeepControl\?\S+`)
+
+// The device-approval window is short; don't keep orphan login PTYs around.
+const loginFlowTTL = 10 * time.Minute
+
+var loginFlows = agents.NewFlowStore(loginFlowTTL)
+
+// HandleStart launches the interactive login, scrapes the authorize URL, and
+// returns it with a flow_id the client polls. The cursor process is kept alive to
+// do the Cursor-side polling. POST /connections/cursor/start.
+func HandleStart(w http.ResponseWriter, r *http.Request) {
+	if _, err := exec.LookPath(bin()); err != nil {
+		httpx.WriteErr(w, http.StatusConflict, "cursor_unsupported", "cursor-agent が見つかりません（旧イメージの可能性）")
+		return
+	}
+	if loggedInFresh() {
+		// A signed-in cursor prints no login URL — the scrape below would just hang.
+		httpx.WriteErr(w, http.StatusConflict, "already_connected", "すでに接続済みです。再認証するには一度切断してください。")
+		return
+	}
+	loginFlows.Reap()
+	cmd := exec.Command(bin(), disableAutoUpdateFlag, "login")
+	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "NO_OPEN_BROWSER=1")
+	f, err := agents.StartFlow(cmd)
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "pty_failed", err.Error())
+		return
+	}
+	url := sanitizeURL(f.WaitFor(loginURLRe, 20*time.Second))
+	if url == "" {
+		f.Close()
+		httpx.WriteErr(w, http.StatusBadGateway, "no_url", "cursor がログイン URL を表示しませんでした")
+		return
+	}
+	id := loginFlows.Put(f)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"flow_id": id, "url": url})
+}
+
+// sanitizeURL drops a trailing OSC-8 hyperlink remnant defensively（agy 26c875f
+// 教訓の予防 — cursor は実測で OSC-8 無しだが版ドリフトに備える）.
+func sanitizeURL(u string) string {
+	const scheme = "https://"
+	if rest := strings.TrimPrefix(u, scheme); rest != u {
+		if i := strings.Index(rest, scheme); i >= 0 {
+			u = u[:len(scheme)+i]
+		}
+	}
+	return strings.TrimSuffix(u, "]8;;")
+}
+
+type pollReq struct {
+	FlowID string `json:"flow_id"`
+}
+
+// HandlePoll reports whether the browser approval has completed. On success it
+// tears down the flow; cursor has written auth.json by then.
+// POST /connections/cursor/poll.
+func HandlePoll(w http.ResponseWriter, r *http.Request) {
+	var req pollReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if loggedInFresh() {
+		if f := loginFlows.Take(req.FlowID); f != nil {
+			f.Close()
+		}
+		invalidateStatus()
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true})
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": false})
+}
+
+// HandleDisconnect signs cursor out (clears ~/.config/cursor/auth.json) via the
+// CLI. DELETE /connections/cursor.
+func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
+	_ = exec.Command(bin(), disableAutoUpdateFlag, "logout").Run()
+	invalidateStatus()
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "cursor"})
+}
+
+// loggedInFresh runs an UNCACHED `cursor-agent status --format json` for the login
+// poll (probeStatus caches 30s — too stale for a live poll loop).
+func loggedInFresh() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, bin(), disableAutoUpdateFlag, "status", "--format", "json").Output()
+	if err != nil {
+		return false
+	}
+	var st statusOut
+	if json.Unmarshal([]byte(strings.TrimSpace(string(out))), &st) != nil {
+		return false
+	}
+	return st.IsAuthenticated
 }

@@ -105,6 +105,7 @@
    light theme keeps a stronger fill/border (the darker hue comes from the var). */
 .kind-tag.kind-claude { color: var(--kind-claude); background: color-mix(in srgb, var(--kind-claude) 14%, transparent); border-color: color-mix(in srgb, var(--kind-claude) 45%, transparent); }
 .kind-tag.kind-codex { color: var(--kind-codex); background: color-mix(in srgb, var(--kind-codex) 14%, transparent); border-color: color-mix(in srgb, var(--kind-codex) 45%, transparent); }
+.kind-tag.kind-cursor { color: var(--kind-cursor); background: color-mix(in srgb, var(--kind-cursor) 14%, transparent); border-color: color-mix(in srgb, var(--kind-cursor) 45%, transparent); }
 .kind-tag.kind-opencode { color: var(--kind-opencode); background: color-mix(in srgb, var(--kind-opencode) 14%, transparent); border-color: color-mix(in srgb, var(--kind-opencode) 45%, transparent); }
 .kind-tag.kind-agy { color: var(--kind-agy); background: color-mix(in srgb, var(--kind-agy) 14%, transparent); border-color: color-mix(in srgb, var(--kind-agy) 45%, transparent); }
 .kind-tag.kind-copilot { color: var(--kind-copilot); background: color-mix(in srgb, var(--kind-copilot) 14%, transparent); border-color: color-mix(in srgb, var(--kind-copilot) 45%, transparent); }
@@ -113,6 +114,7 @@
 /* Light theme: stronger fill for legibility (color comes from the light --kind-* var). */
 [data-theme="light"] .kind-tag.kind-claude { background: color-mix(in srgb, var(--kind-claude) 20%, transparent); border-color: color-mix(in srgb, var(--kind-claude) 55%, transparent); }
 [data-theme="light"] .kind-tag.kind-codex { background: color-mix(in srgb, var(--kind-codex) 20%, transparent); border-color: color-mix(in srgb, var(--kind-codex) 55%, transparent); }
+[data-theme="light"] .kind-tag.kind-cursor { background: color-mix(in srgb, var(--kind-cursor) 20%, transparent); border-color: color-mix(in srgb, var(--kind-cursor) 55%, transparent); }
 [data-theme="light"] .kind-tag.kind-opencode { background: color-mix(in srgb, var(--kind-opencode) 20%, transparent); border-color: color-mix(in srgb, var(--kind-opencode) 55%, transparent); }
 [data-theme="light"] .kind-tag.kind-agy { background: color-mix(in srgb, var(--kind-agy) 20%, transparent); border-color: color-mix(in srgb, var(--kind-agy) 55%, transparent); }
 [data-theme="light"] .kind-tag.kind-copilot { background: color-mix(in srgb, var(--kind-copilot) 20%, transparent); border-color: color-mix(in srgb, var(--kind-copilot) 55%, transparent); }

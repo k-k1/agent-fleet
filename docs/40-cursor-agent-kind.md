@@ -1,7 +1,14 @@
 # 40. `kind=cursor`（Cursor CLI）実装計画 — Terminal + Managed 両対応
 
-- 状態: **Track A（read＋TUI）＋Track A2（managed driver）＋Track B（配備）実装済み**（2026-07-23）。
-  残: Track C（CP＋Console）・Track D（将来）・arm64 実機実行の最終確認。
+- 状態: **Track A（read＋TUI）＋Track A2（managed driver）＋Track B（配備）＋Track C
+  （CP＋Console）実装済み**（2026-07-23）。残: Track D（将来）・arm64 実機実行の最終確認。
+  Track C は auth.go に login start/poll/disconnect（専用フロー型・コード貼付なしの
+  ブラウザ承認ポーリング）＋両 routes.go 二重登録＋mcp_stdio.go/CP mcp.go の kind enum
+  総ざらい＋bridge format.go kindLabel＋Console（types union/SESSION_KINDS・registry
+  descriptor 全 caps 明示・tokens.css/5 色クラスファイルの cursor twin・AgentsTab
+  CursorCard・settings.ts/agentModels.ts・i18n ja/en）。`go build`/`go test`
+  （cursor 12・agent+bridge 335・CP 222 緑）＋Console typecheck/i18n:lint/vitest 392/
+  vite build 全緑。**v1 は login-only を確定**（API キー手動登録は Track D 送り — 下記）。
   Track A の実装は `workspace/agent/internal/agents/cursor/`（cursor.go/program.go/
   transcript.go/state.go/auth.go/models.go/stop.go/cursor_test.go）＋登録
   （session.go `KindCursor`・agent.go registry/driveState・connections.go・
@@ -262,27 +269,70 @@ chatId は別空間）。
    未検証**（本コンテナは x64・RPi5 起動不能報告 forum #148408 は実機で要確認 — agy の
    RDRAND 実機ガードと同格の残課題）。
 
-### Track C — control-plane + Console
+### Track C — control-plane + Console — **実装済（2026-07-23）**
 
-1. CP: `/api/connections` 集約＋cursor login start/complete ルート（**routes.go 二重登録** —
-   `workspace/agent/routes.go` と `control-plane/routes.go` の両方。cp-rest-proxy-allowlist 教訓）。
-   `GET /api/agents/{kind}/models` はパターンルートで自動対応。
-2. MCP kind enum: `mcp_stdio.go`（create_session/list_models/検証 whitelist）＋
-   `control-plane/mcp.go`（kind 記述・usage ツール）の**両方**（194695f 教訓）。
+**実装時に確定した設計（計画からの差分）**:
+- **login は start→poll（start→complete ではない）**: cursor の対話ログインは
+  `NO_OPEN_BROWSER=1 cursor-agent login` が URL を出し**ブラウザ承認を CLI 自身が
+  ポーリング**して `~/.config/cursor/auth.json` を書く型で、**貼り付けるコードが無い**
+  （claude/agy の code paste とは異なる）。よって codex device-auth と同じ start→poll に
+  した（`POST /connections/cursor/start` → `{url,flow_id}`、`POST …/poll` → `{connected}`、
+  `DELETE …/cursor`）。auth.go に `HandleStart`/`HandlePoll`/`HandleDisconnect`＋uncached
+  `loggedInFresh()`（poll 用・probeStatus 30s キャッシュは live poll に古すぎる）＋
+  `invalidateStatus()`（login/logout 直後に /connections を即反映）。Console は
+  `DeviceSteps`（`code` 省略可）を URL のみで再利用。
+- **v1 は login-only（API キー手動登録は Track D 送り — ユーザー確認済み）**: cursor CLI は
+  API キーの**永続化コマンドが無い**（codex の `login --with-api-key` に相当が無い・
+  `CURSOR_API_KEY`/`--api-key` のアンビエント利用のみ）。活かすには暗号ストア保存＋各 exec
+  への env 注入が要るが、**TUI(tmux ペイン)には注入シームが無く Program 文字列へ埋めると
+  `ps` にキーが露出**（フリートの平文資格禁止に抵触）。一方 login フロー（auth.json
+  アンビエント）は TUI/managed/status/models 全経路を env 注入ゼロで賄う。CursorCard は
+  API キー欄を出さず login ボタンのみ（CodexCard の device 部を簡略化した構成）。
+
+1. CP: `/api/connections` 集約（cursor は Track A で既配線）＋cursor login **start/poll**
+   ルート（**routes.go 二重登録** — `workspace/agent/routes.go` と
+   `control-plane/routes.go` の両方に登録済み。cp-rest-proxy-allowlist 教訓）。
+   `GET /api/agents/{kind}/models` はパターンルートで自動対応（agent_models.go の cursor
+   case は Track A 済み）。
+2. MCP kind enum: `mcp_stdio.go`（create_session driver 注入・list_models whitelist の
+   `!=` 連鎖＋エラー文＋スキーマ記述・get_session_usage/get_agent_usage の注記）＋
+   `control-plane/mcp.go`（同項目＋list_my_sessions/create_session 記述）の**両方**を総ざらい
+   （194695f 教訓）。
 3. Console:
-   - `types/session.ts` — union / SESSION_KINDS（表示順どおり挿入）/ ConnectionsStatus.cursor
-   - `agents/registry.ts` — descriptor（caps 全項目を明示決定 — 1854dc2/fe84b06 教訓、
-     `managedDriver` は Track A2 結果で、`tuiMemoryCost`、launchHintKey、planCycleKey 等）
-   - `tokens.css` `--kind-cursor`（**dark/light 両テーマ**）＋ `app.css`/`ui.css` の色クラス
-   - `AgentsTab.tsx` — CursorCard（ログインフロー＋API キー欄。CodexCard の構成に近い。
-     ClaudeCard と同じ autofill ガード）
-   - i18n ja/en ＋ `i18n:lint`
-   - `questionKeys.ts` — managed 質問は /respond 経路。TUI 保留カードは probe 結果次第
-4. availability: `connsDone` ゲート（443fc8a 教訓）、選別は `caps.runsInDir`（f8a7bbe 教訓）。
-5. bridge: `internal/bridge/format.go` kindLabel に case 追加（registry.ts と同期コメント維持）。
+   - `types/session.ts` — union / SESSION_KINDS（表示順どおり codex と copilot の間へ挿入）/
+     ConnectionsStatus.cursor
+   - `agents/registry.ts` — descriptor（**caps 全項目を明示決定**した — chat/transcript/model/
+     tuiStartMode/runsInDir/launchableFromRepo のみ true。effort は**モデル id に畳まれる**ため
+     false、fork は TUI 限定で false、contextBar/imagePaste は v1 未配線で false=1854dc2/fe84b06
+     教訓）。`managedDriver:true`（Track A2）・`tuiMemoryCost:""`（per-session child・copilot 同型）・
+     icon=`inspect`（cursor 相当の codicon が無いためポインタで代替）・color=ローズ `#d96ba1`/
+     `#b0316e`・short=`cu`・repoLaunchKinds へ挿入
+   - `tokens.css` `--kind-cursor`（**dark/light 両テーマ**）＋色クラスの cursor twin を
+     **全ファイルに追加**（`app.css` `.kc-cursor`／`terminal.css` `.kind-tag.kind-cursor`
+     dark+light／`sessions.css` `.sess-kic.kind-cursor` dark+light／`settings.css`
+     `.pb-cursor`／`ui.css` seg-btn）——設定モーダルのアイコンチップ用色クラスは漏れやすい
+     ので copilot の全クラス族に twin があるか grep で突き合わせ確認
+   - `AgentsTab.tsx` — CursorCard（**login フローのみ**・DeviceSteps 再利用・LaunchDefaults
+     kind union に cursor 追加・CodexCard と CopilotCard の間へ挿入）
+   - `lib/settings.ts`（DEFAULT_AGENT_LAUNCH＋normalize ループに cursor）・
+     `lib/agentModels.ts`（`isDynamic` に cursor＝ライブカタログ。effort 無しなので
+     FALLBACK_EFFORTS には入れない）
+   - i18n ja/en（launch_hint.cursor＋cursor カード文言 8 キー）＋ `i18n:lint` 通過
+   - `questionKeys.ts`: 変更不要 — managed 質問は buildRespondAnswers（汎用・kind 非依存）、
+     TUI cursor は v1 で "question" を出さない（許可待ち検知は Track D）。
+4. availability: registry の `available` 述語＝`supported!==false && connected`（agy/copilot
+   同型）。conns 未取得時は表示（rail の null=show-all）＝443fc8a 教訓に整合。
+5. bridge: `internal/bridge/format.go` kindLabel に `case "cursor": return "Cursor"`
+   （registry.ts と同期コメント維持）。
 
 ### Track D — 残課題・将来
 
+0. **API キー手動登録経路**（v1 で login-only に確定したため送り）: cursor は API キーの
+   永続化コマンドが無く `CURSOR_API_KEY`/`--api-key` のアンビエント利用のみ。実装するなら
+   暗号ストア（`secrets.Data` に cursor フィールド追加）＋各 exec への env 注入だが、
+   **TUI(tmux ペイン)には安全な注入シームが無い**（Program 文字列へ埋めると `ps` 露出）。
+   採るなら「managed 子＋status/models プローブにのみ注入し、TUI は login 必須」と割り切るか、
+   LaunchPlan に per-session env マップを足す設計変更が要る。
 1. **WS バー使用量チップは v1 スキップ**: プラン残量の公式 API/コマンドが無い
    （CLI から見えるのは context 使用量のみ — フォーラム確認）。非公式 API
    （`cursor.com/api/usage`・`api2.cursor.sh GetCurrentPeriodUsage`）は usage-chip 429 事件と
@@ -303,14 +353,14 @@ chatId は別空間）。
 | tmux kill-server 全滅（agy 84139d2） | probe/E2E は `-L cursor-probe` 専用ソケット隔離 |
 | Turn.Idx 未採番（30c5e21） | transcript.go 単調採番＋単調増加テスト |
 | paneMode 分岐漏れ（8780956） | Track 0 でフッタ実測 → 実装。改行 Ctrl+J の投入経路監査（54e1fec）込み |
-| MCP ツール欠落（194695f） | mcp_stdio.go / CP mcp.go 総ざらいを Track C 明記 |
+| MCP ツール欠落（194695f） | mcp_stdio.go / CP mcp.go 総ざらい済（Track C — create_session driver・list_models whitelist・各 usage 記述） |
 | turn 終端未検出→報告不発（5facc6e/1f64c57） | hooks stop を status seam に乗せ、managed は MarkTurnStart/End |
-| caps 明示漏れ（1854dc2/fe84b06） | descriptor caps 全項目を表で決定してから実装 |
+| caps 明示漏れ（1854dc2/fe84b06） | descriptor caps 全項目を明示決定済（Track C — effort/fork/contextBar/imagePaste は根拠付きで false） |
 | 権限「発生しない前提」崩壊（agy 1af1be9） | request_permission / ask_question を防御実装 |
 | conns ローディング中の誤露出（443fc8a） | connsDone ゲート |
 | 設定の一回きり固定（agy 3a2c9df） | hooks.json / trust / auto-update 封殺は起動毎に再固定 |
 | ストア内部依存の false-idle（opencode 教訓） | store.db（SQLite blob）は読まない。hooks＋JSONL の公式契約のみ |
-| CP allowlist 漏れ（cp-rest-proxy-allowlist） | 新設ルートは両 routes.go 同時登録をレビュー項目に |
+| CP allowlist 漏れ（cp-rest-proxy-allowlist） | cursor login start/poll/DELETE は両 routes.go に同時登録済（Track C） |
 | 非公式 API の突然死（usage-chip 429） | 使用量チップ v1 不採用（Track D） |
 | インストーラ既存あり no-op（agy 41b1c83） | tarball 直展開のため非該当だが、焼き込み検証を e2e-smoke に追加 |
 

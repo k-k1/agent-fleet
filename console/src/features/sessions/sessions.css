@@ -128,6 +128,7 @@
    kind's session badge is colored (they previously fell through to no color). */
 .sess-kic.kind-claude { color: var(--kind-claude); background: color-mix(in srgb, var(--kind-claude) 14%, transparent); }
 .sess-kic.kind-codex { color: var(--kind-codex); background: color-mix(in srgb, var(--kind-codex) 14%, transparent); }
+.sess-kic.kind-cursor { color: var(--kind-cursor); background: color-mix(in srgb, var(--kind-cursor) 14%, transparent); }
 .sess-kic.kind-opencode { color: var(--kind-opencode); background: color-mix(in srgb, var(--kind-opencode) 14%, transparent); }
 .sess-kic.kind-agy { color: var(--kind-agy); background: color-mix(in srgb, var(--kind-agy) 14%, transparent); }
 .sess-kic.kind-copilot { color: var(--kind-copilot); background: color-mix(in srgb, var(--kind-copilot) 14%, transparent); }
@@ -135,6 +136,7 @@
 .sess-kic.kind-ssm { color: var(--kind-ssm); background: color-mix(in srgb, var(--kind-ssm) 14%, transparent); }
 [data-theme="light"] .sess-kic.kind-claude { background: color-mix(in srgb, var(--kind-claude) 20%, transparent); }
 [data-theme="light"] .sess-kic.kind-codex { background: color-mix(in srgb, var(--kind-codex) 20%, transparent); }
+[data-theme="light"] .sess-kic.kind-cursor { background: color-mix(in srgb, var(--kind-cursor) 20%, transparent); }
 [data-theme="light"] .sess-kic.kind-opencode { background: color-mix(in srgb, var(--kind-opencode) 20%, transparent); }
 [data-theme="light"] .sess-kic.kind-agy { background: color-mix(in srgb, var(--kind-agy) 20%, transparent); }
 [data-theme="light"] .sess-kic.kind-copilot { background: color-mix(in srgb, var(--kind-copilot) 20%, transparent); }
