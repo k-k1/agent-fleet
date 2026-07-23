@@ -14,6 +14,7 @@
 #   AF_DIST_REPO      distribution repo (default k-k1/agent-fleet-dist)
 #   AF_DIST_URL_BASE  override the download URL base (for testing/mirrors;
 #                     requires AF_VERSION)
+#   AF_NO_AUTOUPDATE  set to 1 to skip enabling the daily update timer (docs/42)
 set -euo pipefail
 
 REPO="${AF_DIST_REPO:-k-k1/agent-fleet-dist}"
@@ -89,6 +90,41 @@ case ":$PATH:" in
   *":$PREFIX/bin:"*) ;;
   *) echo "    note: $PREFIX/bin is not on PATH (re-login or add it to PATH)" ;;
 esac
+
+# Automatic updates (docs/42): a systemd *user* timer that runs `af update` daily
+# to STAGE the newest release (sha256-verified). It never restarts a running
+# service — the new version applies when you restart agent-fleet (systemctl or the
+# Console 'restart to apply' button), so live agent sessions are never dropped
+# behind your back. Best-effort: only when the user systemd bus is reachable.
+# Opt out with AF_NO_AUTOUPDATE=1 (or disable the timer later).
+if [ "${AF_NO_AUTOUPDATE:-}" != 1 ] \
+  && command -v systemctl >/dev/null 2>&1 \
+  && systemctl --user show-environment >/dev/null 2>&1; then
+  UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+  mkdir -p "$UNIT_DIR"
+  cat > "$UNIT_DIR/agent-fleet-update.service" <<EOF
+[Unit]
+Description=Agent Fleet — stage the latest release (does not restart the running service)
+[Service]
+Type=oneshot
+ExecStart=$PREFIX/bin/af update --yes
+EOF
+  cat > "$UNIT_DIR/agent-fleet-update.timer" <<EOF
+[Unit]
+Description=Agent Fleet — daily update check
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=1h
+[Install]
+WantedBy=timers.target
+EOF
+  systemctl --user daemon-reload 2>/dev/null || true
+  if systemctl --user enable --now agent-fleet-update.timer >/dev/null 2>&1; then
+    echo "==> auto-update: daily 'af update' timer enabled (stages only; apply via restart)"
+    echo "    disable: systemctl --user disable --now agent-fleet-update.timer"
+  fi
+fi
 cat <<EOF
 Next steps:
   af start        # first run downloads, verifies and extracts the rootfs (~200 MB)
