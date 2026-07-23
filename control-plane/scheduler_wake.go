@@ -198,7 +198,7 @@ func scheduleInjectKind(kind string) string {
 // injectDriver mirrors the Agent-side rule: managed-driver kinds run paneless.
 func injectDriver(kind string) string {
 	switch kind {
-	case "codex", "opencode", "copilot":
+	case "codex", "opencode", "copilot", "cursor":
 		return "managed"
 	default:
 		return ""

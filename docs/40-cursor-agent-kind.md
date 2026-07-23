@@ -1,12 +1,41 @@
 # 40. `kind=cursor`（Cursor CLI）実装計画 — Terminal + Managed 両対応
 
-- 状態: **Track A 実装済み（workspace agent 本体：read 層＋TUI）**（2026-07-23）。
-  残: Track A2（managed driver）・Track B（配備）・Track C（CP＋Console）・Track D（将来）。
+- 状態: **Track A（read＋TUI）＋Track A2（managed driver）実装済み**（2026-07-23）。
+  残: Track B（配備）・Track C（CP＋Console）・Track D（将来）。
   Track A の実装は `workspace/agent/internal/agents/cursor/`（cursor.go/program.go/
   transcript.go/state.go/auth.go/models.go/stop.go/cursor_test.go）＋登録
   （session.go `KindCursor`・agent.go registry/driveState・connections.go・
   agent_models.go・fs.go denylist・session_io.go paneMode/paste/readiness）。
-  `go build ./...`・`go test`（cursor 5件＋main/session 計275件）緑。
+  Track A2 は同パッケージに `driver.go`（managedDriver＋threadHandle＋spawn/watch＋turn
+  状態機械）・`acp.go`（JSON-RPC over stdio クライアント）・`mirror.go`（session/update →
+  転写メモリ構築）・`driver_test.go`・`live_contract_test.go` を追加＋root 配線
+  （session_turn.go managedDrivers・session_handlers.go の 4 switch・main.go ReconcileManaged・
+  shutdown.go AbortManaged/Shutdown・control-plane/scheduler_wake.go injectDriver）。
+  `go build ./...`・`go test`（cursor 13件・全パッケージ緑）＋`AF_CURSOR_LIVE=1` 実 CLI 契約
+  テスト緑（spawn→prompt 完了→転写メモリ構築→別プロセス session/load で文脈＋転写復元を実測）。
+
+- **Track A2 の実測反映（実装時に確定した ACP 契約 — いずれも実 CLI v2026.07.20 で検証）**:
+  1. **起動は `cursor-agent acp`**（`agent` はバイナリ名で `acp` がサブコマンド。`cursor-agent
+     agent acp` は誤り＝`agent` が prompt 扱いになる）。**ACP 経路も workspace trust で固まる**
+     ため `--force --trust` 必須（plan は `--force` を外し承認を Interaction 化）。
+  2. **転写は driver がメモリ構築**（copilot と異なる最大差分）。ACP はローカル痕跡を書かない
+     ので、`session/update` の `sessionUpdate` 判別子から組み立てる: `agent_message_chunk`
+     （assistant text・token 逐次）/`agent_thought_chunk`（thinking）/`user_message_chunk`
+     （**replay 専用**・live turn では出ない→user ターンは driver が Send 時に確定）/`tool_call`
+     （toolCallId/title/kind/rawInput）/`tool_call_update`（rawOutput の exitCode/stdout/stderr
+     ＝**ツール出力が載る**・TUI JSONL より情報量が多い）/`current_mode_update`。turn 終端は
+     ACP に通知が無く `session/prompt` の応答（`stopReason`）が境界。`mirror.go` の
+     transcriptBuf が live/replay 両方を同じ状態機械で扱う（Idx 単調）。**停止中の managed は
+     handle が無い＝ミラー空**（resume の `session/load` リプレイが再構築 — ローカル正本が無い
+     設計の帰結）。
+  3. **`session/set_mode`**（modeId は素の `agent`/`plan`/`ask`・応答 `{}`＋`current_mode_update`
+     通知）で動的モード切替可＝`DynamicMode:true`。モデルは per-session child の `--model`
+     フラグ固定（ACP に per-session 指定口なし・`cursor-agent models` の catalog id を acp
+     サブコマンドが受理）＝`DynamicModel:false`。`session/cancel`（通知）→ in-flight
+     `session/prompt` が `stopReason:"cancelled"` で返る（copilot 同型・実測）。
+  4. **serve.go は作らず driver.go に統合**（copilot と同じ per-session child。spawn/watch/
+     cmd.Wait→status.PersistExit を driver 内に置く）。worker-server 常駐の取り残し対策で
+     子は専用プロセスグループ（Setpgid）にし、stopChild は `-pid` へシグナルしてグループごと落とす。
 - **Track A の実測反映（計画からの改良2点 — いずれも実 CLI で検証済み）**:
   1. **セッション ID は自己採番 v4 UUID を `--resume` に渡す**（`create-chat` 事前採番は不採用）。
      実測: 未知の valid v4 UUID を `-p --resume <uuid>` に渡すとその ID で新規チャットを
@@ -164,14 +193,28 @@ Status() のみ（login start/complete は Track C）。以下は当初計画（
    （launch-seed / send_to_session / /turn / 保留中 / paste）を監査（54e1fec 教訓）
 4. GracefulStop: TUI の終了コマンド実測（Ctrl+D 二度押し — 実測 help/docs）→ `stop.go`
 
-### Track A2 — managed driver（probe 合格が前提）
+### Track A2 — managed driver — **実装済（2026-07-23）**
 
-1. `driver.go` — `managedDriver{agentImpl}` + `threadHandle`（copilot driver.go 踏襲）
-2. `serve.go` — per-session child supervisor（`agent acp` stdio）。`cmd.Wait()` →
-   `status.PersistExit`（OOM 帰属）→ runtimeLost → 次 Resume で再 spawn+load
-3. 登録: `session_turn.go` managedDrivers、`session_handlers.go` の managed 系 switch 全部、
-   `main.go` `ReconcileManaged`、`shutdown.go`、`control-plane/scheduler_wake.go` の managed switch
-4. 実 CLI 契約テスト（`AF_CURSOR_LIVE=1` opt-in、copilot live_contract_test.go 踏襲）
+1. `driver.go` — `managedDriver{agentImpl}` + `threadHandle`（copilot driver.go 踏襲）。
+   spawn/watch/cmd.Wait→`status.PersistExit`（OOM 帰属）を driver に統合（**serve.go は作らず** —
+   copilot と同じ per-session child のため）。子は Setpgid で専用グループにし stopChild は
+   `-pid` へ SIGTERM/SIGKILL（worker-server 取り残し対策）。
+2. `acp.go` — JSON-RPC over stdio クライアント（copilot acp.go とほぼ同型・プロトコル汎用）。
+3. `mirror.go` — `transcriptBuf`: `session/update` からの転写メモリ構築（**cursor 固有**。ACP は
+   ローカル痕跡ゼロ。live turn の user は driver が確定、replay は user_message_chunk から再生）。
+   read 層 `transcript.go` は managed のとき `managedTranscript()` を返す。
+4. 登録: `session_turn.go` managedDrivers、`session_handlers.go` の 4 switch（Alive/Busy/Drop/
+   RemoveLedger）、`main.go` `ReconcileManaged`、`shutdown.go` AbortManaged/Shutdown、
+   `control-plane/scheduler_wake.go` `injectDriver`（cursor→managed）。
+5. 実 CLI 契約テスト（`AF_CURSOR_LIVE=1` opt-in・copilot live_contract_test.go 踏襲）＋
+   `driver_test.go`（fake ACP で turn 状態機械・permission 往復・**session/update→転写構築**を検証）。
+   HOME 隔離＋`~/.config/cursor` symlink で ambient 認証を保ちつつ AF 状態を隔離（トークンは
+   読まず CLI 自身に読ませる）。
+
+残（実装外）: managed の許可待ちで chat chip が "question" に変わらない（status を
+"question" へ書かないため — copilot も同様で plan モード限定の軽微な見た目差。Pending カード
+自体は managedTranscript.Pending から出る）。TUI⇄managed 相互乗り入れはしない（ACP sid と TUI
+chatId は別空間）。
 
 ### Track B — 配備
 
@@ -292,7 +335,7 @@ Status() のみ（login start/complete は Track C）。以下は当初計画（
 
 | # | 項目 | 結果 |
 |---|---|---|
-| 1 | ACP 一巡＋load resume | ✅ **合格**: initialize（`loadSession:true`）→ new → prompt（chunk streaming）→ `end_turn`。**別プロセス `session/load` で履歴リプレイ＋文脈保持を実証**。cancel は docs のみ（実装時に実測） |
+| 1 | ACP 一巡＋load resume | ✅ **合格**: initialize（`loadSession:true`）→ new → prompt（chunk streaming）→ `end_turn`。**別プロセス `session/load` で履歴リプレイ＋文脈保持を実証**。**cancel/set_mode も Track A2 実装時に実測合格**（cancel→`stopReason:"cancelled"`・set_mode→`{}`＋`current_mode_update` 通知・modeId は素の agent/plan/ask） |
 | 2 | JSONL 転写 | ✅ `~/.cursor/projects/<cwdスラグ>/agent-transcripts/<chatId>/<chatId>.jsonl`。Anthropic content block 型（`tool_use` あり・**tool_result 無し**・uuid/timestamp 無し）＋`turn_ended`。TUI/-p は書く・**ACP は書かない** |
 | 3 | hooks 実発火 | ✅ TUI: beforeSubmitPrompt/beforeShellExecution/stop 全発火。`-p`: beforeShellExecution のみ。ACP: 不発火。payload に conversation_id/`transcript_path`/cursor_version/user_email。コマンド書換の可否は未検証（rtk 実装時） |
 | 4 | 資格情報 | ✅ `~/.config/cursor/auth.json`（600・accessToken/refreshToken 平文 JSON）。ホームボリュームで持続。`status --format json` はクリーンな構造化 JSON |

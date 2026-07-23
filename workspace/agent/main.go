@@ -13,6 +13,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -135,6 +136,7 @@ func main() {
 	go opencode.ReconcileManaged("agent boot")
 	go codex.ReconcileManaged("agent boot")
 	go copilot.ReconcileManaged("agent boot")
+	go cursor.ReconcileManaged("agent boot")
 
 	addr := envOr("AGENT_ADDR", ":7700")
 

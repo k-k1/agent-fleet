@@ -17,6 +17,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -34,6 +35,8 @@ func managedAlive(m session.Meta) bool {
 		return codex.ManagedAlive(m.Name)
 	case session.KindCopilot:
 		return copilot.ManagedAlive(m.Name)
+	case session.KindCursor:
+		return cursor.ManagedAlive(m.Name)
 	}
 	return false
 }
@@ -49,6 +52,8 @@ func managedBusy(m session.Meta) bool {
 		return codex.ManagedBusy(m.Name)
 	case session.KindCopilot:
 		return copilot.ManagedBusy(m.Name)
+	case session.KindCursor:
+		return cursor.ManagedBusy(m.Name)
 	}
 	return false
 }
@@ -64,6 +69,8 @@ func dropManagedRuntime(m session.Meta) {
 		codex.DropHandle(m.Name)
 	case session.KindCopilot:
 		copilot.DropHandle(m.Name)
+	case session.KindCursor:
+		cursor.DropHandle(m.Name)
 	}
 }
 
@@ -77,6 +84,8 @@ func removeManagedLedger(m session.Meta) {
 		codex.RemoveLedger(m.Name)
 	case session.KindCopilot:
 		copilot.RemoveLedger(m.Name)
+	case session.KindCursor:
+		cursor.RemoveLedger(m.Name)
 	}
 }
 

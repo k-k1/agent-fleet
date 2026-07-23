@@ -27,6 +27,12 @@ import (
 )
 
 func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
+	// managed（ACP）: ローカル転写が無いので driver がメモリ構築したものを返す（driver.go
+	// managedTranscript）。停止中で handle が無ければ空ミラー（resume で session/load
+	// リプレイが再構築する）。
+	if m.DriverKind() == session.DriverManaged {
+		return managedTranscript(m), true
+	}
 	chatID := ChatID(m)
 	if chatID == "" {
 		return agents.TranscriptData{}, true // まだ会話なし（起動前）— 空ミラー
