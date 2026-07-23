@@ -84,8 +84,16 @@ af start
   `SHA256SUMS`, extracts it to `~/.local/opt/agent-fleet/<version>/` and
   symlinks `~/.local/bin/af`.
 - Updating uses the same command (your data lives in
-  `~/.local/share/agent-fleet` and is never touched).
-- To pin a version: `AF_VERSION=0.1.0 bash install.sh`
+  `~/.local/share/agent-fleet` and is never touched). You can also update in
+  place with `af update`.
+- **Automatic updates:** the installer enables a daily systemd user timer that
+  runs `af update` to *stage* the latest release (sha256-verified). It never
+  restarts a running service — apply it when convenient via
+  `systemctl --user restart agent-fleet` or the Console's "restart to apply"
+  button, so live agent sessions are never dropped. Opt out with
+  `AF_NO_AUTOUPDATE=1 bash install.sh`.
+- To pin a version: `AF_VERSION=0.1.0 bash install.sh` (also stops auto-updates
+  advancing past it when set in the unit `Environment=`)
 - For details (host requirements, air-gap installs, running as a service,
   optional text-to-speech with VOICEVOX / Zundamon, limitations) see the
   `README.md` bundled inside the tar.

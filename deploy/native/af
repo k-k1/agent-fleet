@@ -3,6 +3,7 @@
 # Extract the tar, run `./af start`, then open http://localhost:8099 in a browser.
 #
 #   ./af start [--rootfs <tar.zst>]   # first run: fetch rootfs (sha256-verified) and extract
+#   ./af update [--check] [--yes]     # stage the latest release (sha256-verified); does NOT restart
 #   ./af reset [--all] [--yes]        # wipe local data (--all includes the extracted rootfs)
 #   ./af status                       # show CP / workspace liveness
 #
@@ -19,6 +20,21 @@ CP_ADDR="${CP_ADDR:-127.0.0.1:8099}"
 DEV_KEY="${DEV_USER:-dev}"
 
 usage() { awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0"; }
+
+# ---- distribution metadata (for `af update`; docs/42) ------------------------
+# Where `af update` fetches new releases from. Baked as dist.json at build time
+# (paired with install.sh's defaults); env overrides win. Kept in sync with the
+# one-liner installer so update and install resolve the same artifacts.
+dist_get() { sed -n 's/.*"'"$1"'": *"\{0,1\}\([^",}]*\)"\{0,1\}.*/\1/p' "$PKG/dist.json" 2>/dev/null | head -1; }
+DIST_REPO="${AF_DIST_REPO:-$(dist_get repo)}"; : "${DIST_REPO:=k-k1/agent-fleet-dist}"
+DIST_URL_BASE="${AF_DIST_URL_BASE:-$(dist_get url_base)}"; : "${DIST_URL_BASE:=https://github.com/$DIST_REPO/releases/download}"
+
+# fetch <url> <out> — curl if present, else wget (bundled tools do not include either).
+fetch() {
+  if command -v curl >/dev/null 2>&1; then curl -fsSL -o "$2" "$1"
+  elif command -v wget >/dev/null 2>&1; then wget -qO "$2" "$1"
+  else echo "ERROR: neither curl nor wget is available (cannot fetch)." >&2; return 1; fi
+}
 
 # Extract one key from rootfs.json (builder-generated, pretty-printed JSON). Read
 # with sed so the host does not need jq (the format is paired with the builder).
@@ -77,6 +93,22 @@ ensure_rootfs() {
   return 0
 }
 
+# ---- install layout (install.sh symlink model) --------------------------------
+# `af update` self-updates only when we are the install.sh layout:
+#   <prefix>/opt/agent-fleet/<v>/af  <-  <prefix>/bin/af (symlink).
+# Sets DEST_ROOT (…/opt/agent-fleet), BIN_LINK (…/bin/af). Returns 1 (and leaves
+# BIN_LINK empty) for a hand-extracted copy, which cannot be swapped in place.
+resolve_layout() {
+  DEST_ROOT="$(dirname "$PKG")"
+  local prefix; prefix="$(dirname "$(dirname "$DEST_ROOT")")"
+  BIN_LINK="$prefix/bin/af"
+  if [ -L "$BIN_LINK" ] && [ "$(readlink -f "$BIN_LINK")" = "$(readlink -f "$PKG/af")" ]; then
+    return 0
+  fi
+  BIN_LINK=""
+  return 1
+}
+
 # ---- preflight: can bwrap run with unprivileged userns? -----------------------
 preflight() {
   if ! "$PKG/bin/bwrap" --unshare-user --uid 1000 --gid 1000 --ro-bind / / true 2>/dev/null; then
@@ -103,6 +135,12 @@ do_start() {
   done
   local ver=""
   [ -f "$PKG/VERSION" ] && ver="$(cat "$PKG/VERSION")"
+  # Self-info for the CP's update surface (docs/42): AF_SELF_PKG is this running
+  # package; AF_SELF_LINK is the ~/.local/bin/af symlink `af update` re-points, so
+  # the CP can compare its baked version against what is staged on disk and offer
+  # "restart to apply". Empty for hand-extracted copies. AF_SYSTEMD_UNIT is
+  # inherited from the update-aware systemd unit (Environment=AF_SYSTEMD_UNIT=%N).
+  resolve_layout || true
   ensure_rootfs "$rootfs_tar"
   preflight
 
@@ -128,6 +166,8 @@ do_start() {
     PATH="$PKG/bin:$PATH" \
     WS_DATA="$WS_DATA" \
     AUTH=dev \
+    AF_SELF_PKG="$PKG" \
+    ${BIN_LINK:+AF_SELF_LINK="$BIN_LINK"} \
     ${DEV_USER:+DEV_USER="$DEV_USER"} \
     ${GITHUB_OAUTH_CLIENT_ID:+GITHUB_OAUTH_CLIENT_ID="$GITHUB_OAUTH_CLIENT_ID"} \
     ${BITBUCKET_OAUTH_KEY:+BITBUCKET_OAUTH_KEY="$BITBUCKET_OAUTH_KEY"} \
@@ -137,6 +177,85 @@ do_start() {
     ${AF_DB:+AF_DB="$AF_DB"} \
     ${AF_MCP_ENABLED:+AF_MCP_ENABLED="$AF_MCP_ENABLED"} \
     "$PKG/bin/af-cp"
+}
+
+# ---- update: stage the latest release (docs/42) -------------------------------
+# Resolves the target version (AF_VERSION pins it; otherwise the latest release
+# via the releases/latest redirect — no API rate limit), downloads + sha256-
+# verifies the native tar against the release SHA256SUMS, extracts it next to the
+# current version and atomically re-points ~/.local/bin/af. It never restarts a
+# running control-plane: the running af-cp keeps serving until you restart it
+# (systemctl --user restart agent-fleet) or apply from the Console. User data
+# under WS_DATA is untouched; the new rootfs (if any) is fetched lazily on the
+# next start.
+resolve_latest() {
+  local loc tag
+  if command -v curl >/dev/null 2>&1; then
+    loc="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$DIST_REPO/releases/latest")" \
+      || { echo "ERROR: cannot reach GitHub to resolve the latest release." >&2; return 1; }
+    tag="${loc##*/}"
+  else
+    tag="$(fetch "https://api.github.com/repos/$DIST_REPO/releases/latest" /dev/stdout 2>/dev/null \
+      | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)"
+  fi
+  case "$tag" in
+    v[0-9]*) printf '%s\n' "${tag#v}" ;;
+    *) echo "ERROR: cannot resolve the latest release (tag=$tag). Set AF_VERSION=<v>." >&2; return 1 ;;
+  esac
+}
+
+do_update() {
+  local check=0 yes=0 a
+  for a in "$@"; do
+    case "$a" in
+      --check) check=1 ;;
+      --yes | -y) yes=1 ;;
+      *) echo "unknown option for update: $a" >&2; usage; exit 1 ;;
+    esac
+  done
+  if ! resolve_layout; then
+    echo "ERROR: 'af update' needs the standard install layout (~/.local/bin/af symlink)." >&2
+    echo "       This copy looks hand-extracted — install with install.sh, or fetch the new" >&2
+    echo "       tar yourself and extract it over this directory." >&2
+    exit 1
+  fi
+  local cur=""; [ -f "$PKG/VERSION" ] && cur="$(cat "$PKG/VERSION")"
+  local target="${AF_VERSION:-}"
+  if [ -z "$target" ]; then target="$(resolve_latest)" || exit 1; fi
+  if [ "$target" = "$cur" ]; then
+    echo "already up to date (v$cur)"
+    exit 0
+  fi
+  echo "==> update available: v${cur:-?} -> v$target"
+  if [ "$check" = 1 ]; then exit 0; fi
+  if [ "$yes" != 1 ] && [ -t 0 ]; then
+    read -r -p "Download and stage v$target? [Y/n] " ans
+    case "$ans" in n | N | no) echo "aborted"; exit 1 ;; *) : ;; esac
+  fi
+
+  local arch=amd64 name tmp
+  name="agent-fleet-native-$target-linux-$arch"
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' RETURN
+  echo "==> downloading $name.tar.gz"
+  fetch "$DIST_URL_BASE/v$target/$name.tar.gz" "$tmp/$name.tar.gz" || exit 1
+  fetch "$DIST_URL_BASE/v$target/SHA256SUMS" "$tmp/SHA256SUMS" || exit 1
+  echo "==> verifying (sha256)"
+  grep -E "  $name\.tar\.gz\$" "$tmp/SHA256SUMS" > "$tmp/want.sum" \
+    || { echo "ERROR: SHA256SUMS has no entry for $name.tar.gz" >&2; exit 1; }
+  (cd "$tmp" && sha256sum -c want.sum >/dev/null) \
+    || { echo "ERROR: sha256 mismatch (corrupted download — retry)" >&2; exit 1; }
+  echo "==> extracting -> $DEST_ROOT/$target"
+  mkdir -p "$tmp/x"
+  tar xzf "$tmp/$name.tar.gz" -C "$tmp/x"
+  [ -x "$tmp/x/$name/af" ] || { echo "ERROR: unexpected tar contents (af is missing)" >&2; exit 1; }
+  local staging="$DEST_ROOT/.staging-$target.$$"
+  rm -rf "$staging"; mv "$tmp/x/$name" "$staging"
+  rm -rf "${DEST_ROOT:?}/${target:?}"; mv "$staging" "$DEST_ROOT/$target"
+  ln -sfn "$DEST_ROOT/$target/af" "$BIN_LINK"
+  echo "==> staged v$target (running control-plane is unchanged until restart)"
+  echo "    apply it with one of:"
+  echo "      systemctl --user restart agent-fleet     # systemd users"
+  echo "      # or click 'restart to apply' in the Console"
 }
 
 # ---- reset: wipe local data (port of run-dev.sh do_reset, without docker branches) --
@@ -210,6 +329,7 @@ do_status() {
 
 case "${1:-}" in
   start) shift; do_start "$@" ;;
+  update) shift; do_update "$@" ;;
   reset) shift; do_reset "$@" ;;
   status) shift; do_status ;;
   -h | --help | help | "") usage; exit 0 ;;

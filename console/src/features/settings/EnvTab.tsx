@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { useToast } from "../../ui/ToastProvider.tsx";
+import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { api, apiJSON, getTenant } from "../../core/api/client.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
+import { useSessionsStore } from "../sessions/store.ts";
 import { OnOff, Row } from "./controls.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 
@@ -83,6 +85,7 @@ export function EnvTab() {
 
   return (
     <div className="display-settings">
+      <HostUpdateSection />
       {d ? (
         <Toolchains d={d} update={update} running={running} />
       ) : err ? (
@@ -93,6 +96,76 @@ export function EnvTab() {
       {au && au.allowAgentUpdate && <AgentUpdateRow au={au} onChange={setAgentUpdate} />}
       <ToolVersions running={running} />
     </div>
+  );
+}
+
+// HostUpdateSection surfaces the native host self-update (docs/42). GET
+// /api/update/status is native-only; on any other deployment (Docker/ECS, dev)
+// the CP does not register the route, api() returns an http_404 error, and this
+// renders nothing. When a newer version has been staged on disk (by `af update`
+// / the daily timer) the running control-plane still serves the OLD version
+// until restarted — so we offer a "restart to apply" that warns how many live
+// sessions the restart would interrupt before it fires.
+function HostUpdateSection() {
+  const tr = useT();
+  const toast = useToast();
+  const askConfirm = useConfirm();
+  const [st, setSt] = useState<any>(null); // { current, installed, restartRequired, systemd } | null
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api("api/update/status")
+      .then((res) => setSt(res && !res.error ? res : null))
+      .catch(() => setSt(null));
+  }, []);
+
+  if (!st) return null; // non-native deployment (or status unavailable)
+
+  const apply = async () => {
+    const running = useSessionsStore.getState().sessions.filter((s) => s.alive).length;
+    const ok = await askConfirm({
+      title: tr("env.update_apply_title", { v: st.installed }),
+      body: running > 0 ? tr("env.update_apply_warn", { n: running }) : tr("env.update_apply_confirm"),
+      confirmLabel: tr("env.update_apply_cta"),
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy(true);
+    const res = await apiJSON("api/update/apply", "POST", {});
+    if (res && res.error) {
+      toast(tr("env.update_apply_failed"));
+      setBusy(false);
+      return;
+    }
+    // The service is restarting; the CP connection will drop and reconnect on the
+    // new version. Leave the button disabled and let the reconnect refresh state.
+    toast(tr("env.update_applying"));
+  };
+
+  return (
+    <section className="ds-group">
+      <h4 className="ds-title">{tr("env.update_title")}</h4>
+      <Row label={tr("env.update_current")}>
+        <span className="muted">v{st.current}</span>
+      </Row>
+      {st.restartRequired ? (
+        <>
+          <Row label={tr("env.update_staged")}>
+            <span>
+              v{st.installed} <span className="tool-ver-badge">{tr("env.update_ready")}</span>
+            </span>
+          </Row>
+          <Row label={tr("env.update_apply_row")}>
+            <button className="danger-btn" disabled={busy} onClick={apply}>
+              {busy ? tr("env.update_applying") : tr("env.update_apply_cta")}
+            </button>
+          </Row>
+          <p className="muted ds-sub">{tr("env.update_apply_note")}</p>
+        </>
+      ) : (
+        <p className="muted ds-sub">{tr("env.update_uptodate")}</p>
+      )}
+    </section>
   );
 }
 
