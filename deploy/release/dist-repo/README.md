@@ -105,6 +105,11 @@ tied to a workspace worktree.
 session has no history to show (the live mirror works while running, and running Cursor
 as Terminal (CLI) does persist a readable history).
 
+**Default model for the assistant chat** — each assistant can pin its own, and Claude's
+default is also settable deployment-wide via `AF_CHAT_MODEL`. These favour fast, low-cost
+tiers because the assistant is conversational: Claude → Sonnet 5 · Codex → `gpt-5.6-luna`
+· OpenCode → `opencode/nemotron-3-ultra-free` · Antigravity → Gemini 3.5 Flash.
+
 ## Getting started — which edition?
 
 | Your situation | Edition | What you need |
