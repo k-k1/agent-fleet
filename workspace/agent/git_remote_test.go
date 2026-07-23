@@ -83,3 +83,69 @@ func TestRetryBackoffGrowsAndCaps(t *testing.T) {
 		t.Fatalf("backoff should cap at 2s, got %v", retryBackoff(100))
 	}
 }
+
+// oauthScopeSet splits the comma/space-separated X-OAuth-Scopes header, and scopeGranted
+// accepts both the granular API-token form and the classic short form — read and write
+// are independent (API-token scopes are non-hierarchical).
+func TestBitbucketScopeParsing(t *testing.T) {
+	set := oauthScopeSet("read:account, read:repository:bitbucket ,write:repository:bitbucket")
+	if !scopeGranted(set, "read:repository:bitbucket", "repository") {
+		t.Fatalf("expected repo read granted")
+	}
+	if !scopeGranted(set, "write:repository:bitbucket", "repository:write") {
+		t.Fatalf("expected repo write granted")
+	}
+	// Short classic form (OAuth / app password): read present, write absent.
+	short := oauthScopeSet("account repository")
+	if !scopeGranted(short, "read:repository:bitbucket", "repository") {
+		t.Fatalf("expected repo read via short form")
+	}
+	if scopeGranted(short, "write:repository:bitbucket", "repository:write") {
+		t.Fatalf("did not expect repo write")
+	}
+	if scopeGranted(oauthScopeSet(""), "read:repository:bitbucket", "repository") {
+		t.Fatalf("empty header must grant nothing")
+	}
+}
+
+// bitbucketConnectCheck: 401 → scopeless; a recognized credential missing repo read →
+// errBBNoRepoRead; missing only write → "no_write" warn; full scopes → clean.
+func TestBitbucketConnectCheck(t *testing.T) {
+	cases := []struct {
+		name     string
+		status   int
+		scopes   string
+		wantWarn string
+		wantErr  error
+	}{
+		{"scopeless_401", http.StatusUnauthorized, "", "", errBBScopeless},
+		{"no_repo_read", http.StatusOK, "read:account", "", errBBNoRepoRead},
+		{"no_write", http.StatusOK, "read:repository:bitbucket", "no_write", nil},
+		{"full", http.StatusOK, "read:repository:bitbucket,write:repository:bitbucket", "", nil},
+		{"unverified_5xx", http.StatusBadGateway, "", "", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if c.scopes != "" {
+					w.Header().Set("X-OAuth-Scopes", c.scopes)
+				}
+				w.WriteHeader(c.status)
+			}))
+			defer srv.Close()
+			warn, err := bitbucketConnectCheckAt(srv.URL, "me@example.com", "tok")
+			if c.wantErr != nil {
+				if !errors.Is(err, c.wantErr) {
+					t.Fatalf("err = %v, want %v", err, c.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected err: %v", err)
+			}
+			if warn != c.wantWarn {
+				t.Fatalf("warn = %q, want %q", warn, c.wantWarn)
+			}
+		})
+	}
+}
