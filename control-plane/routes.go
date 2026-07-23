@@ -18,6 +18,7 @@ func buildMux(cfg config) *http.ServeMux {
 	registerPATRoutes(mux, cfg)
 	registerMCPRoutes(mux, cfg)
 	registerWorkspaceRoutes(mux, cfg)
+	registerEventsRoutes(mux, cfg)
 	registerSessionRoutes(mux, cfg)
 	registerChatRoutes(mux, cfg)
 	registerAssistantRoutes(mux, cfg)
