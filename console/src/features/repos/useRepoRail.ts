@@ -12,6 +12,7 @@ import { repoPanes, sessionPanes, paneCount } from "../../layout/badges.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useSettingsUI } from "../settings/store.ts";
+import { setCachedConns } from "./connsCache.ts";
 import type { ConnectionsStatus } from "../../types/session.ts";
 
 export interface RepoRailContext {
@@ -57,6 +58,7 @@ export function useRepoRailContext(): RepoRailContext {
       if (!alive) return;
       setConns(d);
       setConnsDone(true);
+      setCachedConns(d); // warm the shared cache so leaves (HandoffModal) render instantly
     };
     api("api/connections")
       .then((d) => settle(d && !d.error ? d : null))
