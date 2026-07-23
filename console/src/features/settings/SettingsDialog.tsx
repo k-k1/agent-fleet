@@ -113,6 +113,14 @@ export function SettingsDialog() {
     setEntered(true);
   };
 
+  // The current section's rail label — shown as a heading in the mobile drill-down,
+  // where the rail (and its .active highlight) is hidden, so the user can still tell
+  // which tab they're viewing. Falls back to the modal title if a stale key slips in.
+  const currentLabel = tr(
+    (GROUPS.flatMap((g) => g.items).find(([k]) => k === section)?.[1] ??
+      "set.title") as Parameters<typeof tr>[0],
+  );
+
   // Mobile: a horizontal swipe moves to the adjacent section (left → next, right →
   // prev). Passive; only fires on a clearly-horizontal drag so content still scrolls.
   const touch = useRef<{ x: number; y: number } | null>(null);
@@ -156,9 +164,14 @@ export function SettingsDialog() {
             ))}
           </nav>
           <div className="settings-content">
-            <button type="button" className="settings-back" onClick={() => setEntered(false)}>
-              ‹ {tr("set.back")}
-            </button>
+            <div className="settings-crumb">
+              <button type="button" className="settings-back" onClick={() => setEntered(false)}>
+                ‹ {tr("set.back")}
+              </button>
+              <span className="settings-current" aria-current="page">
+                {currentLabel}
+              </span>
+            </div>
             {section === "agents" && <AgentsTab />}
             {section === "assistant" && <AssistantTab />}
             {section === "tts" && <TtsTab />}
