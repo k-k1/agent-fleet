@@ -104,6 +104,11 @@ opencode（各自のプロバイダ API キー）と Cursor にはその枠が�
 Cursor セッションには表示できる履歴がありません（実行中のミラーは動作し、ターミナル
 （CLI）で実行した場合は読み取り可能な履歴が残ります）。
 
+**アシスタントチャットの既定モデル** — 各アシスタントで個別に指定でき、claude の既定は
+デプロイ全体で `AF_CHAT_MODEL` でも変更できます。会話用途のため高速・低コストのティアを
+既定にしています: Claude → Sonnet 5 · Codex → `gpt-5.6-luna` · OpenCode →
+`opencode/nemotron-3-ultra-free` · Antigravity → Gemini 3.5 Flash。
+
 ## はじめに — どの版を選ぶ？
 
 | 状況 | 版 | 必要なもの |
