@@ -193,6 +193,9 @@ Description=Agent Fleet (native)
 [Service]
 ExecStart=%h/.local/bin/af start
 Restart=on-failure
+# Lets the Console's "restart to apply" button (auto-update, below) find this
+# unit; %N expands to the unit name (agent-fleet).
+Environment=AF_SYSTEMD_UNIT=%N
 
 [Install]
 WantedBy=default.target
@@ -218,6 +221,47 @@ systemctl --user status agent-fleet          # expect: Active: active (running)
   running — on WSL2 enable it via `/etc/wsl.conf` (`[boot]` / `systemd=true`),
   then `wsl.exe --shutdown` and reopen.
 
+## Automatic updates
+
+`af update` fetches the latest release, verifies it (sha256) and stages it beside
+the current version, then re-points `~/.local/bin/af`. It **never restarts a
+running control-plane** — the new version takes effect only when you restart, so
+live agent sessions are never dropped without your say-so. User data under
+`WS_DATA` is untouched; a new workspace image (rootfs) is fetched lazily on the
+next start.
+
+```bash
+af update --check   # report whether a newer release exists (no download)
+af update           # download + verify + stage the latest (or AF_VERSION-pinned)
+```
+
+The one-liner installer enables a **daily user timer** that runs `af update`
+automatically (stage only). Opt out at install time with `AF_NO_AUTOUPDATE=1`, or
+later:
+
+```bash
+systemctl --user disable --now agent-fleet-update.timer   # stop auto-staging
+systemctl --user list-timers agent-fleet-update.timer     # when it next runs
+```
+
+**Applying a staged update** (picking up the new version) is a restart of the
+main service, which you trigger when convenient:
+
+- **From the Console** — when a newer version is staged, a "restart to apply"
+  control appears (Settings → 環境). It warns how many sessions are running before
+  it restarts, so you can wait until the fleet is idle.
+- **From the shell** — `systemctl --user restart agent-fleet` (or Ctrl-C + `af
+  start` for a foreground run).
+
+To **pin** a version (and stop auto-updates advancing past it), set
+`Environment=AF_VERSION=<v>` in *both* the `agent-fleet` and
+`agent-fleet-update` units; `af update` then treats that version as the target
+and does nothing once you are on it.
+
+> Restarting the service stops the control-plane and the workspaces it supervises
+> (under systemd the whole unit cgroup is stopped), so in-flight agent sessions
+> are interrupted. That is why applying is a deliberate action, not automatic.
+
 ## Limitations (differences from the Docker setup)
 
 - **Single user only** (AUTH=dev fixed). There is no container isolation; all
@@ -242,7 +286,10 @@ systemctl --user status agent-fleet          # expect: Active: active (running)
 ```bash
 # 1. If you set up the systemd user unit, stop and remove it first
 systemctl --user disable --now agent-fleet 2>/dev/null
-rm -f ~/.config/systemd/user/agent-fleet.service
+systemctl --user disable --now agent-fleet-update.timer 2>/dev/null   # auto-update timer
+rm -f ~/.config/systemd/user/agent-fleet.service \
+      ~/.config/systemd/user/agent-fleet-update.service \
+      ~/.config/systemd/user/agent-fleet-update.timer
 # otherwise just stop `af start` with Ctrl-C
 
 # 2. Wipe all data (skip to keep it — data is separate from the program)
