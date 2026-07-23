@@ -57,7 +57,18 @@ func runCredHelper(args []string) {
 		return
 	}
 	if e, ok := s.Git[host]; ok {
-		fmt.Printf("username=%s\npassword=%s\n", e.User, e.Token)
+		user := e.User
+		// A Bitbucket API token can't authenticate git-over-HTTPS with the Atlassian
+		// email as the username — that email:token form is only accepted by the REST
+		// API (see bitbucketAuthHeader). Git requires the static API-token username, so
+		// the same pasted credential that lists repos otherwise fails clone/push with
+		// "Authentication failed". An app password still uses the Bitbucket account
+		// name, so only rewrite when the stored user looks like an email (the
+		// token-paste flow stores the Atlassian email; OAuth is handled above).
+		if host == "bitbucket.org" && strings.Contains(user, "@") {
+			user = "x-bitbucket-api-token-auth"
+		}
+		fmt.Printf("username=%s\npassword=%s\n", user, e.Token)
 	}
 }
 
