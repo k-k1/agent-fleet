@@ -233,13 +233,15 @@ func main() {
 	}
 
 	// Scheduled execution (docs/38 + ADR0021): a CP-resident scheduler watches the
-	// wall clock and drives due schedules (cron/interval/once). DISABLED by default
-	// (opt-in like the reaper) — enabling it wakes stopped workspaces and injects
-	// sessions unattended, so it stays off until an operator turns it on per
-	// deployment. AF_SCHEDULER_INTERVAL=0 keeps it off; a positive duration (e.g. 1m)
-	// starts it. The P2 wake firer resolves the owner, applies the wake policy, holds
-	// a reaper keep-alive for AF_SCHEDULE_SETTLE, and injects via create_session.
-	if iv := parseDurationOr(os.Getenv("AF_SCHEDULER_INTERVAL"), 0); iv > 0 {
+	// wall clock and drives due schedules (cron/interval/once). ON by default with a
+	// 1m tick (opt-out): the tick is a single indexed due-query and is a no-op while no
+	// schedule exists, so the sane default is "a schedule you create actually fires."
+	// Set AF_SCHEDULER_INTERVAL=0 to hard-disable it (no timed wakes at all) on a
+	// deployment where unattended workspace wakes are unwanted (cost/policy). A firing
+	// schedule wakes a stopped workspace and injects a session unattended; the P2 wake
+	// firer resolves the owner, applies the wake policy, holds a reaper keep-alive for
+	// AF_SCHEDULE_SETTLE, and injects via create_session.
+	if iv := parseDurationOr(os.Getenv("AF_SCHEDULER_INTERVAL"), time.Minute); iv > 0 {
 		settle := parseDurationOr(os.Getenv("AF_SCHEDULE_SETTLE"), 5*time.Minute)
 		ready := parseDurationOr(os.Getenv("AF_SCHEDULE_WAKE_TIMEOUT"), 90*time.Second)
 		// Per-schedule fire jitter (★2) spreads aligned cron times (everyone at 09:00)
