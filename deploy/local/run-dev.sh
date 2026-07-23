@@ -217,15 +217,19 @@ if [ "$MODE" != native ]; then
     echo "==> WS_JDK=0: skipping shared JDK provision (use workspace-agent install-jdk <major> when needed)"
   fi
 
-  echo "==> build workspace image ($WS_IMAGE)"
+  # Dockerfile ARG default is now lean-CLI (BAKE_AGENT_CLIS=0): the dev image ships
+  # without the agent CLIs and boot-install fetches the pinned versions on first
+  # workspace start. Set BAKE_AGENT_CLIS=1 to bake them in for a faster first start.
+  echo "==> build workspace image ($WS_IMAGE, BAKE_AGENT_CLIS=${BAKE_AGENT_CLIS:-0})"
   docker build \
     ${RTK_VERSION:+--build-arg "RTK_VERSION=$RTK_VERSION"} \
+    ${BAKE_AGENT_CLIS:+--build-arg "BAKE_AGENT_CLIS=$BAKE_AGENT_CLIS"} \
     -t "$WS_IMAGE" "$ROOT/workspace"
 
-  # Image smoke test (verifies baked CLI versions = Dockerfile ARG pins etc.;
-  # takes seconds). Skip with WS_SMOKE=0.
+  # Image smoke test (verifies baked pins / lean absence; takes seconds).
+  # Match the smoke's expectation to how we built (default lean). Skip with WS_SMOKE=0.
   if [ "${WS_SMOKE:-1}" = "1" ]; then
-    bash "$ROOT/deploy/local/e2e-smoke.sh" "$WS_IMAGE"
+    EXPECT_AGENT_CLIS="${BAKE_AGENT_CLIS:-0}" bash "$ROOT/deploy/local/e2e-smoke.sh" "$WS_IMAGE"
   fi
 else
   # native: no image — build the workspace-agent for this host instead, and check

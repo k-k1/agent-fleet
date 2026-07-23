@@ -345,9 +345,12 @@ jobs:
           test -n "$NOTO"
           curl -fsSI -o /dev/null "https://raw.githubusercontent.com/notofonts/noto-cjk/$NOTO/Sans/Variable/OTC/NotoSansCJK-VF.otf.ttc"
 
-  # Gate (c): the default-ARG (fully baked) build and e2e-smoke pass unchanged
-  # (zero impact on existing deployments). The CP also builds with the default
-  # DOCS_SRC (full docs tree).
+  # Gate (c): the fully-baked internal build (self-host / run-dev with
+  # BAKE_AGENT_CLIS=1) and e2e-smoke pass unchanged. NOTE: the Dockerfile ARG
+  # default is now lean-CLI (BAKE_AGENT_CLIS=0), so this gate bakes the CLIs in
+  # explicitly to keep the baked self-host path covered; lean-CLI coverage lives
+  # in the dist/native gates. The CP also builds with the default DOCS_SRC
+  # (full docs tree).
   default-image-gate:
     if: "!contains(github.event.head_commit.message, '[native-only]') && !contains(github.event.head_commit.message, '[ecs-only]') && !contains(github.event.head_commit.message, '[dist-only]')"
     runs-on: ubuntu-latest
@@ -355,8 +358,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: build workspace image (default = full bake)
-        run: docker build -t agent-fleet/workspace:ci-default workspace
+      - name: build workspace image (baked variant, explicit BAKE_AGENT_CLIS=1)
+        run: docker build --build-arg BAKE_AGENT_CLIS=1 -t agent-fleet/workspace:ci-default workspace
 
       - name: e2e-smoke (default)
         run: deploy/local/e2e-smoke.sh agent-fleet/workspace:ci-default
