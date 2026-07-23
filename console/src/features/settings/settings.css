@@ -81,12 +81,15 @@
   --active-bg: color-mix(in srgb, var(--topbar-accent) 18%, var(--bg));
 }
 /* Old .modal sizing: the settings dialog is a fixed large surface (not a
-   content-sized sheet) so the tab bar and content don't reflow per tab. */
+   content-sized sheet) so the tab bar and content don't reflow per tab. Sized
+   up toward the 管理 (admin) modal's footprint (min(1100px,94vw)×min(900px,92vh))
+   so grouped forms have room to breathe — a touch more modest since the rail +
+   single-column forms are narrower than the admin drill-down. */
 .settings-modal.ui-modal {
-  width: min(820px, 92vw);
-  max-width: min(820px, 92vw);
-  height: min(600px, 88vh);
-  max-height: 88vh;
+  width: min(1000px, 94vw);
+  max-width: min(1000px, 94vw);
+  height: min(760px, 90vh);
+  max-height: 90vh;
 }
 .settings-modal .ui-modal-head {
   background: var(--topbar-bg);
@@ -152,9 +155,15 @@
   min-height: 0;
   overflow: auto;
 }
-/* ‹ back-to-rail control: shown only in the mobile drill-down (see @media). */
-.settings-back {
+/* Mobile drill-down header (‹ back control + current-section title): hidden on the
+   desktop two-pane layout (the rail's .active highlight already shows the tab), shown
+   only in the mobile drill-down (see @media). */
+.settings-crumb {
   display: none;
+}
+.settings-current {
+  font-weight: 600;
+  font-size: 14px;
 }
 @media (max-width: 760px) {
   .settings-layout {
@@ -174,11 +183,16 @@
   .settings-layout:not(.entered) .settings-content {
     display: none;
   }
+  .settings-modal .settings-layout.entered .settings-crumb {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 12px;
+  }
   .settings-modal .settings-layout.entered .settings-back {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    margin: 0 0 12px;
     padding: 4px 8px;
     border: none;
     border-radius: 6px;
@@ -186,6 +200,7 @@
     color: var(--dialog-muted);
     font-size: 13px;
     cursor: pointer;
+    flex: 0 0 auto;
   }
 }
 /* The secondary/note text in the settings dialog was too faint at plain --muted.
