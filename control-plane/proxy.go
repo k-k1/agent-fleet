@@ -169,7 +169,12 @@ func (a agentProxyAPI) stream(w http.ResponseWriter, r *http.Request, res *resol
 	}
 }
 
-var upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+// EnableCompression: permessage-deflate に対応するブラウザとだけネゴする（モバイル
+// 回線での PTY 出力・スクリーンキャストの帯域削減）。非対応クライアントは従来通り。
+var upgrader = websocket.Upgrader{
+	CheckOrigin:       func(r *http.Request) bool { return true },
+	EnableCompression: true,
+}
 
 // terminal bridges the browser terminal WS to the Agent's /ws/pty,
 // relaying frames in both directions while preserving message types
@@ -211,7 +216,7 @@ func (a agentProxyAPI) terminal(w http.ResponseWriter, r *http.Request, res *res
 	if rt.Token() != "" {
 		hdr = http.Header{"Authorization": []string{"Bearer " + rt.Token()}} // CP↔Agent auth
 	}
-	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second}
+	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second, EnableCompression: true}
 	up, _, err := dialer.Dial(agentURL.String(), hdr)
 	if err != nil {
 		http.Error(w, "cannot reach workspace agent terminal", http.StatusBadGateway)

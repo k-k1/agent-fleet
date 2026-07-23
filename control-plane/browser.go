@@ -127,7 +127,7 @@ func (a browserAPI) socket(w http.ResponseWriter, r *http.Request, res *resolved
 	if token := res.rt.Token(); token != "" {
 		headers = http.Header{"Authorization": []string{"Bearer " + token}}
 	}
-	dialer := websocket.Dialer{HandshakeTimeout: browserHandshakeTimeout}
+	dialer := websocket.Dialer{HandshakeTimeout: browserHandshakeTimeout, EnableCompression: true}
 	up, agentResp, err := dialer.Dial(agentURL, headers)
 	if err != nil {
 		writeBrowserAgentHandshakeError(w, agentResp)
