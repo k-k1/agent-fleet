@@ -149,3 +149,55 @@ func TestParseModels(t *testing.T) {
 		t.Errorf("header-only must yield empty: %+v", got)
 	}
 }
+
+// fixture: 実測 `cursor-agent about`（Free アカウント・v2026.07.20）。
+const aboutFreeFixture = `About Cursor CLI
+
+CLI Version         2026.07.20-8cc9c0b
+Model               Auto
+Subscription Tier   Free
+OS                  linux (x64)
+`
+
+const aboutProFixture = `About Cursor CLI
+
+CLI Version         2026.07.20-8cc9c0b
+Model               Auto
+Subscription Tier   Pro
+`
+
+func TestAboutTierRe(t *testing.T) {
+	m := aboutTierRe.FindStringSubmatch(aboutFreeFixture)
+	if m == nil || !strings.EqualFold(strings.TrimSpace(m[1]), "free") {
+		t.Errorf("Free tier not parsed: %v", m)
+	}
+	m = aboutTierRe.FindStringSubmatch(aboutProFixture)
+	if m == nil || strings.EqualFold(strings.TrimSpace(m[1]), "free") {
+		t.Errorf("Pro tier misread as free: %v", m)
+	}
+	// 書式ドリフト（該当行なし）は nil。
+	if aboutTierRe.FindStringSubmatch("About Cursor CLI\n\nModel  Auto\n") != nil {
+		t.Errorf("missing tier row must not match")
+	}
+}
+
+func TestFreeUsableModels(t *testing.T) {
+	// Free では named model（gpt/claude/grok…）を隠し composer 系のみ残す。
+	full := parseModels(`Available models
+
+auto - Auto (current, default)
+composer-2.5 - Composer 2.5
+composer-2.5-fast - Composer 2.5 Fast
+gpt-5.3-codex-high - Codex 5.3 High
+claude-opus-4-8-thinking-high - Opus 4.8 1M Thinking
+`)
+	free := freeUsableModels(full)
+	if len(free) != 2 {
+		t.Fatalf("want 2 composer models, got %+v", free)
+	}
+	for _, m := range free {
+		if !strings.HasPrefix(m.ID, "composer") {
+			t.Errorf("non-composer leaked into Free catalog: %q", m.ID)
+		}
+	}
+}

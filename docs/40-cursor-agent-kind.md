@@ -495,7 +495,7 @@ chatId は別空間）。
   `session/load` クロスプロセス resume（ADR0023 決定1）を捨てるかが要る。`-p` の `result.usage`
   はアシスタントチャット headless バックエンド（Track D-3）でのみ活きる。
 
-### Free プラン時のモデル制約（同 session2 実測 — 起動既定に影響）
+### Free プラン時のモデル制約 → **Free 検知でピッカー絞り込みを実装（session2）**
 
 利用者から「GLM-5.2 を選んだらアップグレードしろと言われた」との報告。実測で **Free プランは
 named model を一切使えない**ことを確認:
@@ -504,12 +504,20 @@ named model を一切使えない**ことを確認:
   `ActionRequiredError: Named models unavailable Free plans can only use Auto. Switch to Auto or
   upgrade plans to continue.`。ACP 経路では同事象が assistant テキスト `Upgrade your plan to
   continue` として表面化。
-- Free で通ったのは **`default[]`（Auto）と `composer-2.5`（Cursor 自社モデル）のみ**（`result:"ok"`
-  ＋usage 正常）。
-- **起動既定の注意（要検討）**: buildProgram（TUI）/driver.spawn（managed）は `model=="" || "auto"`
-  のとき `--model` を渡さず、cursor のサーバ側アカウント既定に委ねる。この既定は揺れる（session2
-  の ACP プローブで一度 `glm-5.2`、後で `default[]` を観測）。Free ユーザがモデル未選択で起動すると
-  **初回ターンでいきなり free wall に当たり得る**。頑健化するなら未選択時に明示的に `--model
-  default[]`（Auto）を前置する（`-p`・ACP 双方で `currentModelId=default[]` になることを実測）。
-  ただし有料ユーザのアカウント既定モデルを Auto で上書きする副作用があるため、既定変更は
-  利用者判断に委ねる（Track D／要実機検証）。
+- Free で通ったのは **Auto（catalog id `auto`／ACP `default[]`）と Composer 系（`composer-2.5`・
+  `composer-2.5-fast`）のみ**（`result:"ok"`＋usage 正常）。`cursor-agent models` は**プランに
+  関係なく全モデルを列挙**するため、ピッカーが named を見せていたのが利用者混乱の元。
+
+**実装（利用者判断＝「Free 使用可のみに絞る」）:**
+- **Free 判定は `cursor-agent about` の `Subscription Tier` 行**（実測: `Subscription Tier   Free`。
+  `status --format json` にはプラン情報が無く `models` カタログもプラン非依存＝これが唯一の
+  クリーンな公式シグナル）。`models.go` に `freePlan()`（`about` パース・`aboutTierRe`・10 分
+  キャッシュ・stale-if-error）＋`freeUsableModels()`（`composer` 前置きのみ残す）を追加し、
+  **Free のとき `Models()` を Composer 系だけに絞る**。Auto はピッカーの 既定（`["", 既定]`）として
+  別枠で常に出る（`agentModels.ts` が prepend）ので、Free の見え方は **既定(Auto)＋Composer のみ**、
+  named は非表示。有料／判定不能時は全カタログのまま（過剰制限しない安全側）。**FE 変更ゼロ**
+  （バックエンドの絞り込みだけで成立）。ライブ実測: 本 Free アカウントで `Models()` が
+  `composer-2.5`・`composer-2.5-fast` の 2 件のみを返すことを確認（`probeFreePlan→free=true`）。
+- 起動既定（`model==""||"auto"` で `--model` 無し＝サーバ側 Auto）はそのまま。`about` の
+  `Model  Auto` が示す通り Free アカウントのサーバ側既定は Auto で、絞り込みで named を選ばせない
+  方針と併せて free wall を回避する。テスト: `TestAboutTierRe`・`TestFreeUsableModels`（go test 14 緑）。
