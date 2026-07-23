@@ -80,7 +80,8 @@ upstream CLI exposes. This matrix is the quick reference (✓ = supported,
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 | Managed (paneless) execution | — | ✓ | ✓ | ✓ | — | ✓ | — |
 | Terminal (CLI) execution | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Chat mirror & history | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| Live chat mirror | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| History when stopped (read-only) | ✓ | ✓ | —³ | ✓ | ✓ | ✓ | — |
 | Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | — |
 | Reasoning-effort control | ✓ | ✓ | —² | ✓ | —² | ✓ | — |
 | Plan mode | ✓ | ✓ | ✓ | ✓ | — | ✓ | — |
@@ -99,6 +100,10 @@ no separate control. The WS-bar usage chip needs an account-level limit to show 
 opencode (bring-your-own provider API keys) and Cursor expose none. **SSM** sessions
 (remote login over AWS SSM) behave like Shell: terminal only, no conversation, and not
 tied to a workspace worktree.
+
+³ Cursor's managed (default) execution keeps no local transcript — a **stopped** Cursor
+session has no history to show (the live mirror works while running, and running Cursor
+as Terminal (CLI) does persist a readable history).
 
 ## Getting started — which edition?
 
