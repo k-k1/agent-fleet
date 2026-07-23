@@ -8,6 +8,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
@@ -33,6 +34,9 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 		list = claude.Models()
 	case "codex":
 		list = codex.Models()
+	case "cursor":
+		// `cursor-agent models` の行パース（id - 表示名・アカウント連動 — docs/40）。
+		list = cursor.Models()
 	case "opencode":
 		for _, id := range opencode.Models() {
 			list = append(list, agents.ModelChoice{ID: id, Label: id})

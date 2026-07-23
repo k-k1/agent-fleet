@@ -470,6 +470,12 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/connections/agy/complete", rest)
 	mux.HandleFunc("DELETE /api/connections/agy", rest)
 	mux.HandleFunc("GET /api/connections/agy/usage", rest)
+	// cursor (Cursor CLI, docs/40) — dedicated login flow: start returns the
+	// authorize URL (+ flow_id), poll checks browser approval (no pasted code —
+	// cursor self-polls). Proxied to the Agent (cursor owns ~/.config/cursor/auth.json).
+	mux.HandleFunc("POST /api/connections/cursor/start", rest)
+	mux.HandleFunc("POST /api/connections/cursor/poll", rest)
+	mux.HandleFunc("DELETE /api/connections/cursor", rest)
 	mux.HandleFunc("PUT /api/connections/opencode", rest)
 	mux.HandleFunc("DELETE /api/connections/opencode/{env}", rest)
 	// SVN saved basic-auth creds (docs/41) — forget a stored server credential.

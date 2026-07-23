@@ -13,6 +13,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -50,6 +51,7 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		"internal":  internalGitStatus(s),
 		"opencode":  opencode.Status(s),
 		"codex":     codex.Status(),
+		"cursor":    cursor.Status(),
 		"agy":       agy.Status(),
 		// copilot は GitHub 連携相乗り（docs/36 契約）: 専用フロー無し。
 		"copilot":    copilot.Status(ghConnected),

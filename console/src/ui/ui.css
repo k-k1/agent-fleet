@@ -535,6 +535,7 @@
    hue, so no separate light override is needed here. */
 .ui-seg.big .seg-btn.kind-claude:not(.active) .seg-ic { color: var(--kind-claude); }
 .ui-seg.big .seg-btn.kind-codex:not(.active) .seg-ic { color: var(--kind-codex); }
+.ui-seg.big .seg-btn.kind-cursor:not(.active) .seg-ic { color: var(--kind-cursor); }
 .ui-seg.big .seg-btn.kind-opencode:not(.active) .seg-ic { color: var(--kind-opencode); }
 .ui-seg.big .seg-btn.kind-agy:not(.active) .seg-ic { color: var(--kind-agy); }
 .ui-seg.big .seg-btn.kind-copilot:not(.active) .seg-ic { color: var(--kind-copilot); }

@@ -84,6 +84,7 @@
      LayoutMap, settings badges). Tints are derived via color-mix at the use sites. */
   --kind-claude: #e0a45e;
   --kind-codex: #4ec97a;
+  --kind-cursor: #d96ba1; /* rose/magenta — the only warm hue free of the other 7 (docs/40) */
   --kind-agy: #4285f4;
   --kind-copilot: #a371f7;
   --kind-opencode: #8b96a5; /* slate grey — distinct from codex green & copilot purple */
@@ -151,6 +152,7 @@
   /* Light theme: darker kind hues for legibility (mirrors the old per-file overrides). */
   --kind-claude: #a85f1c;
   --kind-codex: #18854a;
+  --kind-cursor: #b0316e; /* rose/magenta (light) */
   --kind-agy: #1a73e8;
   --kind-copilot: #8250df;
   --kind-opencode: #5a6470; /* slate grey (light) */

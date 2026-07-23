@@ -694,6 +694,14 @@ export const ja = {
   "agents.copilot_rtk_note":
     "copilot は preToolUse フック（$COPILOT_HOME/hooks）でシェルコマンドを rtk 経由に自動書換します — codex/agy の指示ベースと違い決定的に効きます。新規セッションに適用。",
   "agents.copilot_unsupported": "このコンテナイメージでは利用できません（{reason}）",
+  "agents.cursor_desc": "Cursor にサインインします。承認はブラウザで完結します（貼り付けるコードはありません）。",
+  "agents.cursor_connect": "Cursor にサインイン",
+  "agents.cursor_connect_note": "認可リンクを開きます。ブラウザで承認してください。",
+  "agents.cursor_auth_failed": "Cursor のサインイン開始に失敗しました: {msg}",
+  "agents.cursor_hint_1": "Cursor アカウントが必要です。プランや請求は ",
+  "agents.cursor_dashboard": "Cursor ダッシュボード",
+  "agents.cursor_hint_2": " で管理できます。",
+  "agents.cursor_unsupported": "このコンテナイメージでは利用できません（{reason}）",
   "agents.remote_control": "リモートコントロール",
   "agents.notifications": "通知",
   "agents.codex_auth_failed": "Codex 認証開始に失敗: {msg}",
@@ -1004,6 +1012,7 @@ export const ja = {
   // kindLabel の値（claude/codex/opencode/shell/ssm）は固有語のため未翻訳（defaultModeLabel と同方針）。
   "agent.launch_hint.claude": "Claude Code を起動",
   "agent.launch_hint.codex": "Codex を起動",
+  "agent.launch_hint.cursor": "Cursor を起動",
   "agent.launch_hint.opencode": "OpenCode を起動",
   "agent.launch_hint.agy": "Antigravity を起動（実験枠）",
   "agent.launch_hint.copilot": "GitHub Copilot を起動",

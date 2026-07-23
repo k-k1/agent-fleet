@@ -47,7 +47,7 @@ RUN pip install --no-cache-dir uv \
     && uv --version && uvx --version
 
 # --- 配布ノブ（docs/35 §35.4.1・§35.7.1-5） ----------------------------------
-# BAKE_AGENT_CLIS=0  … エージェント CLI（claude/opencode/codex/copilot/agy/rtk）を
+# BAKE_AGENT_CLIS=0  … エージェント CLI（claude/opencode/codex/copilot/cursor/agy/rtk）を
 #   焼かない lean variant（ライセンス理由: プロプライエタリ CLI は再配布不可扱い）。
 #   entrypoint の boot-install が versions.json のピン版を初回起動時に ~/.local へ導入。
 # BAKE_OPTIONAL_TOOLS=0 … chromium+CJK フォント・Go・awscli+SSM plugin・ops MCP 群を
@@ -282,6 +282,47 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # DISABLE_AUTOUPDATER と同じ理屈（明示的な `agy update` は引き続き可能）。
 ENV AGY_CLI_DISABLE_AUTO_UPDATE=1
 
+# Cursor CLI（kind="cursor"、docs/40 / docs/decisions/0023）。npm でも単一 Go バイナリ
+# でもなく、版付き tarball の Node.js バンドル（bundled node ＋ webpack chunk 群 ＋
+# node_sqlite3/pty/ripgrep 同梱）。上流 `curl cursor.com/install | bash` は版ピンされた
+# スクリプトを配り、`downloads.cursor.com/lab/<版>/linux/<arch>/agent-cli-package.tar.gz`
+# を `~/.local/share/cursor-agent/versions/<版>/` へ `tar --strip-components=1` 展開し、
+# `~/.local/bin/{agent,cursor-agent}` へ symlink する（wrapper は realpath で自分の版
+# ディレクトリの node/index.js を解決）。焼き込みは同レイアウトを /usr/local に置いて
+# root 所有にする（dev ユーザは書けない）。バレ名 `agent` は PATH 衝突しやすいので
+# /usr/local/bin には `cursor-agent` だけを張る（AF は cursor-agent のみ呼ぶ）。
+#
+# 版数は日付形式（2026.07.20-8cc9c0b）で semver でない — 版比較ロジックは要注意
+# （rtk-always-baked と同類。e2e-smoke は版文字列を丸ごと突き合わせる）。上流は
+# チェックサムを公開しないので sha256 は両 arch とも bake 時に自前計算してピン
+# （改竄検知）。bump は CURSOR_VERSION と両 sha を揃えて書き換える（`curl -fsSL
+# https://cursor.com/install | grep -oE 'versions/[0-9.]+-[a-f0-9]+'` で最新版、
+# tarball を落として sha256sum で digest）。
+#
+# 自己更新は公式に無効化できる（バンドル解析: 背景更新は起動2秒後の
+# setTimeout(...).unref() で走るが `disableAutoUpdate || channel==="static"` でスキップ）。
+# 焼き込みでは AF が起動フラグ `--disable-auto-update`（全経路）＋ entrypoint の
+# cli-config.json `channel:"static"` 再固定の二重で封じる（詳細 docs/40 Track B）。
+ARG CURSOR_VERSION=2026.07.20-8cc9c0b
+ARG CURSOR_SHA256_X64=6e9f17247ffeb5f8f7e2246b4bcd6bb26cb2d5a9f9a4b0012c9a80d868ed25b4
+ARG CURSOR_SHA256_ARM64=2986152b283c70a666b015035b2e99a96d13afd2660a587b8639417cfdd147fb
+RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
+      arch="$(dpkg --print-architecture)"; \
+      case "$arch" in \
+        amd64) casset="x64"; sha="${CURSOR_SHA256_X64}" ;; \
+        arm64) casset="arm64"; sha="${CURSOR_SHA256_ARM64}" ;; \
+        *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
+      esac; \
+      dir="/usr/local/share/cursor-agent/versions/${CURSOR_VERSION}"; \
+      mkdir -p "$dir"; \
+      curl -fsSL "https://downloads.cursor.com/lab/${CURSOR_VERSION}/linux/${casset}/agent-cli-package.tar.gz" -o /tmp/cursor.tgz; \
+      echo "${sha}  /tmp/cursor.tgz" | sha256sum -c -; \
+      tar --strip-components=1 -xzf /tmp/cursor.tgz -C "$dir"; \
+      rm -f /tmp/cursor.tgz; \
+      ln -sf "$dir/cursor-agent" /usr/local/bin/cursor-agent; \
+      cursor-agent --disable-auto-update --version; \
+    fi
+
 # ビルド時ピンをコンテナ内へ書き出す（ARG はビルド後に消えて実行時に参照できない）。
 # 設定 UI「ツールのバージョン」の「ピン vs 実体」表示・スモークの検証材料に加え、
 # lean variant（BAKE_AGENT_CLIS=0 / BAKE_OPTIONAL_TOOLS=0）では entrypoint の
@@ -303,12 +344,12 @@ RUN mkdir -p /var/lib/af/claude /usr/local/share/agent-fleet/docs /usr/lib/jvm
 RUN set -eux; mkdir -p /usr/local/share/agent-fleet; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in \
-      amd64) agy_sha="${AGY_SHA256_X64}" ;; \
-      arm64) agy_sha="${AGY_SHA256_ARM64}" ;; \
-      *) agy_sha="" ;; \
+      amd64) agy_sha="${AGY_SHA256_X64}"; cursor_sha="${CURSOR_SHA256_X64}" ;; \
+      arm64) agy_sha="${AGY_SHA256_ARM64}"; cursor_sha="${CURSOR_SHA256_ARM64}" ;; \
+      *) agy_sha=""; cursor_sha="" ;; \
     esac; \
-    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_sha256":"%s","copilot":"%s","rtk":"%s","go":"%s","gh":"%s","chromium":"%s","chromium_cft":"%s","chromium_dl":"%s","noto_cjk":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","awscli":"%s","session_manager_plugin":"%s"}\n' \
-      "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$AGY_VERSION" "$agy_sha" "$COPILOT_VERSION" "$RTK_VERSION" "$GO_VERSION" "$GH_VERSION" "$CHROMIUM_VERSION" \
+    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_sha256":"%s","copilot":"%s","cursor":"%s","cursor_sha256":"%s","rtk":"%s","go":"%s","gh":"%s","chromium":"%s","chromium_cft":"%s","chromium_dl":"%s","noto_cjk":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","awscli":"%s","session_manager_plugin":"%s"}\n' \
+      "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$AGY_VERSION" "$agy_sha" "$COPILOT_VERSION" "$CURSOR_VERSION" "$cursor_sha" "$RTK_VERSION" "$GO_VERSION" "$GH_VERSION" "$CHROMIUM_VERSION" \
       "$CHROMIUM_CFT_VERSION" "$CHROMIUM_DL_VERSION" "$NOTO_CJK_VERSION" "$MCP_GRAFANA_VERSION" "$CLOUDWATCH_MCP_VERSION" "$AWSCLI_VERSION" "$SESSION_MANAGER_PLUGIN_VERSION" \
       > /usr/local/share/agent-fleet/versions.json
 
