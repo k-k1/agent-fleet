@@ -165,6 +165,7 @@ export function CommandPalette() {
   const [fileHits, setFileHits] = useState<Item[] | null>(null); // null = searching (file mode)
   const inputRef = useRef<HTMLInputElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
+  const selRef = useRef<HTMLDivElement | null>(null);
 
   const close = () => useKeysStore.getState().closePalette();
   // Cancel = close without running anything → hand focus back to whoever opened us.
@@ -283,6 +284,13 @@ export function CommandPalette() {
     [items, q, mode],
   );
 
+  // Keep the highlighted row visible: arrow-key navigation moves `sel` but the list is a
+  // fixed-height scroller, so a selection past the fold would otherwise vanish. `nearest`
+  // scrolls only when the row is out of view (no jump while it's already visible).
+  useEffect(() => {
+    selRef.current?.scrollIntoView({ block: "nearest" });
+  }, [sel, mode, filtered.length]);
+
   const switchMode = (m: Mode) => {
     setMode(m);
     setSel(0);
@@ -382,6 +390,7 @@ export function CommandPalette() {
             filtered.map((it, i) => (
               <div
                 key={it.id}
+                ref={i === sel ? selRef : null}
                 className={"cp-item" + (i === sel ? " sel" : "")}
                 onMouseMove={() => setSel(i)}
                 onMouseDown={(e) => {
