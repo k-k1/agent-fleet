@@ -17,7 +17,7 @@ settings apply **from each agent's new sessions**.
 | Authentication | OAuth connection (paste a code) | ChatGPT subscription / API key | Provider API keys (env) | Rides the GitHub connection (no separate sign-in) | Sign in with a Cursor account (browser approval only) |
 | Model choice at launch | Yes | Yes | Yes | Yes (plan-dependent — Free is Auto only) | Yes (tied to the account) |
 | States | Working / Question / Plan ready / Awaiting approval / Ready | Working / Question / Plan ready / Ready | Working / Question / Ready | Working / Awaiting approval / Ready | Working / Ready |
-| Chat view & history | Yes | Yes | Yes | Yes | Yes (tool output is simplified) |
+| Chat view & history | Yes | Yes | Yes | Yes | Live: yes (simplified tool output). Stopped: no history under Managed |
 | Plan mode | Yes | Yes | Yes | Set at launch + switchable from managed settings | Yes |
 | Execution method | Terminal (CLI) | Managed (default) / Terminal (CLI) | Managed (default) / Terminal (CLI) | Managed (default) / Terminal (CLI) | Managed (default) / Terminal (CLI) |
 | Resume | Yes (not if the working folder is gone) | Yes (not if the working folder is gone) | Yes (not if the working folder is gone) | Yes (not if the working folder is gone) | Yes (can't resume across execution methods) |
@@ -56,7 +56,8 @@ chat bridge ([11](11-fleet-operator.md), [08](08-advanced.md)). ✓ = supported,
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 | Managed (paneless) execution | — | ✓ | ✓ | ✓ | — | ✓ | — | — |
 | Terminal (CLI) execution | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Chat mirror & history | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
+| Live chat mirror | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
+| History when stopped (read-only) | ✓ | ✓ | —³ | ✓ | ✓ | ✓ | — | — |
 | Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | — | — |
 | Reasoning-effort control | ✓ | ✓ | —² | ✓ | —² | ✓ | — | — |
 | Plan mode | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
@@ -75,6 +76,10 @@ control. The WS-bar usage chip needs an account-level limit to show — opencode
 (bring-your-own provider API keys) and cursor expose none. **shell** is a raw shell and
 **ssm** is a remote login over AWS SSM — both are terminal-only with no conversation,
 state model, or notifications.
+
+³ cursor's managed (default) execution keeps no local transcript — a **stopped** cursor
+session has no history to show (the live mirror works while running, and running cursor
+as Terminal (CLI) does persist a readable history).
 
 > **A note on autonomous execution.** Agents run commands, edit files, and push on your
 > behalf — including unattended (scheduled runs) and, in permission-bypassing modes,
