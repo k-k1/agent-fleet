@@ -224,6 +224,7 @@ export const en: Record<keyof typeof ja, string> = {
   "provider.step_copy_code": "Copy the code",
   "provider.step_open_link": "Open the link and paste",
   "provider.open_url": "Open {url} ↗",
+  "provider.issue_link": "Open the token page",
   "provider.step_wait_approval": "Wait for approval",
 
   // --- ops-tool connections (OpsTab) ---
@@ -614,6 +615,9 @@ export const en: Record<keyof typeof ja, string> = {
   "git.bb_oauth_sub": "A code grant you approve in another tab.",
   "git.connect_apptoken": "Connect with an app token",
   "git.bb_token_sub": "Atlassian email + API token.",
+  "git.bb_token_hint": "Create an API token \"with scopes\" and select Bitbucket in the app — a scopeless token is rejected by the Bitbucket API. Required scopes: ",
+  "git.bb_token_hint_read": " (list & clone). To push as well, also add ",
+  "git.bb_token_hint_write": ". Use your canonical Atlassian account email as the username.",
 
   // --- internal repo browser (InternalRepoBrowser) ---
   "igb.title": "Internal repo browser — {name}",

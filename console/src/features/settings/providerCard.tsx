@@ -115,6 +115,21 @@ export function Hint({ children }: { children: ReactNode }) {
   );
 }
 
+// IssueLink — a small external link to a provider's fixed credential-issuance page
+// (API token / key). Only wired for providers whose issuance URL is DETERMINISTIC —
+// not instance- or subdomain-specific (so PagerDuty / Grafana, whose pages are
+// relative to the user's instance, don't get one). Matches the .flow-link style the
+// cards already use, with the link-external icon from the WS-bar "manage" links.
+export function IssueLink({ url }: { url: string }) {
+  const tr = useT();
+  return (
+    <a href={url} target="_blank" rel="noopener" className="flow-link p-issue">
+      <Icon name="link-external" className="p-issue-ic" />
+      {tr("provider.issue_link")}
+    </a>
+  );
+}
+
 // DeviceSteps renders a device-code flow (Codex / GitHub OAuth) as numbered steps —
 // ①copy the code ②open the link ③wait for approval — instead of a single wrapping
 // row, so the order is legible.
