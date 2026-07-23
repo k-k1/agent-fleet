@@ -94,7 +94,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # recommendation (suppressed by --no-install-recommends). Bump the ARG after Debian
 # publishes the same security build for both architectures. Fonts and fontconfig are
 # explicit so Japanese pages render without depending on a transient recommendation.
-ARG CHROMIUM_VERSION=150.0.7871.124-1~deb12u1
+ARG CHROMIUM_VERSION=150.0.7871.181-1~deb12u1
 # BAKE_OPTIONAL_TOOLS=0（native lean rootfs）は chromium 本体・CJK フォントを焼かず
 # オンデマンド DL（P2 の install-chromium、CHROMIUM_DL_VERSION ピン）に回すが、
 # その DL 版が動くための実行時ライブラリと fontconfig/DejaVu はここで明示導入する
