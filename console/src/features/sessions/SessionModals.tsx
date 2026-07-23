@@ -6,6 +6,8 @@
 // NewSessionModal.
 import { useSessionsStore } from "./store.ts";
 import { useSessionUI } from "./ui.ts";
+import { useReposStore } from "../repos/store.ts";
+import { useFilesStore } from "../files/store.ts";
 import { displayName } from "../../lib/sessionview.ts";
 import { openSessionTerminal } from "./open.ts";
 import { ArchivedModal } from "./ArchivedModal.tsx";
@@ -43,7 +45,20 @@ export function SessionModals() {
         />
       )}
       {archivedOpen && <ArchivedModal onClose={close} onRestored={() => void refreshSessions()} />}
-      {cleanupOpen && <CleanupModal onClose={close} onChanged={() => void refreshSessions()} />}
+      {cleanupOpen && (
+        // Cleanup mutates working copies (delete_worktree), branches, and sessions on
+        // disk, so — like clone — re-pull all three left-pane stores, not just sessions.
+        // Otherwise the repo tree stays stale until the 60s poll and the file tree (which
+        // has no poll) stays stale until a manual 更新.
+        <CleanupModal
+          onClose={close}
+          onChanged={() => {
+            void refreshSessions();
+            void useReposStore.getState().refresh();
+            useFilesStore.getState().bump();
+          }}
+        />
+      )}
       {rename && (
         // Prefill with the name as displayed (manual title, or the derived label /
         // repo@time for auto-named sessions) so editing starts from the current title
