@@ -5,6 +5,8 @@
 import { create } from "zustand";
 import type { TtsController } from "../../features/chat/tts.ts";
 import { getSettings, setSetting } from "../../lib/settings.ts";
+import { toast } from "../../ui/toast.ts";
+import { t } from "../../lib/i18n/index.ts";
 
 interface TtsStore {
   speaking: boolean; // 音声を再生中/合成キューに積んでいる間 true
@@ -46,7 +48,12 @@ export function toggleTtsPlayback(): void {
     if (st.purpose === "session-notification") setSetting("ttsSessionNotify", false);
     else if (st.purpose === "usage-notification") setSetting("usageResetNotify", false);
     else if (st.purpose !== "manual") setSetting("ttsEnabled", false);
+    // Pressed while playing = "silence it now": report the stop rather than a specific
+    // on/off, since which switch flipped depends on what was playing.
+    toast(t("keys.toast.ttsStopped"), { kind: "success" });
     return;
   }
-  setSetting("ttsEnabled", !getSettings().ttsEnabled);
+  const next = !getSettings().ttsEnabled;
+  setSetting("ttsEnabled", next);
+  toast(t(next ? "keys.toast.ttsOn" : "keys.toast.ttsOff"), { kind: "success" });
 }
