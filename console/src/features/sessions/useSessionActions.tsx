@@ -12,7 +12,7 @@ import { useSessionsStore } from "./store.ts";
 import { openSessionChat, openSessionTerminal } from "./open.ts";
 import { chatCreate } from "../chat/api.ts";
 import { openChat } from "../chat/open.ts";
-import { t, useT } from "../../lib/i18n/index.ts";
+import { t, useT, getLocale } from "../../lib/i18n/index.ts";
 import { Trans } from "../../lib/i18n/Trans.tsx";
 import type { Session } from "../../types/session.ts";
 
@@ -239,14 +239,26 @@ export function useSessionActions(): SessionActions {
 
   const handoff = async (name: string, kind: string, note?: string) => {
     const target = kind || "claude";
-    // i18n-exempt-start: LLM プロンプト（表示でなくモデル挙動・docs/28 §4）
-    const extra = note?.trim() ? `\n利用者からの補足指示: ${note.trim()}` : "";
+    // This prompt is unusual for an LLM prompt: openChat auto-sends it, so it renders as
+    // the user's OWN message in the operator chat (and steers the reply language in the
+    // default outputLanguage=auto). So it must follow the UI locale — an English user must
+    // not see a Japanese paragraph as their own turn, nor get a Japanese reply.
+    // i18n-exempt-start: LLM プロンプト（表示でなくモデル挙動・docs/28 §4）— ロケール分岐
+    const trimmed = note?.trim();
     const prompt =
-      `セッション「${name}」の会話を ${target} へ引き継いで新規セッションを始めたいです。` +
-      "まず get_session_output で元セッションの状況を確認し、新しいエージェントに必要な要点、未完了タスク、" +
-      "変更済みファイル、次の作業を簡潔な引継ぎ案として提示してください。この時点ではセッションを作成せず、" +
-      "引継ぎ案・作業フォルダ・開始エージェントを私に確認してください。私が明示的に同意した後だけ、" +
-      `kind=${target} で create_session を呼び、承認した引継ぎ案を initial_prompt に設定してください。${extra}`;
+      getLocale() === "en"
+        ? `I'd like to hand off the conversation of session "${name}" to ${target} and start a new session. ` +
+          "First, use get_session_output to review the source session, then present a concise handoff summary — " +
+          "the key points the new agent needs, unfinished tasks, changed files, and the next steps. " +
+          "Do not create the session yet: confirm the handoff summary, working folder, and starting agent with me. " +
+          `Only after I explicitly agree, call create_session with kind=${target} and set the approved summary as initial_prompt.` +
+          (trimmed ? `\nAdditional instruction from the user: ${trimmed}` : "")
+        : `セッション「${name}」の会話を ${target} へ引き継いで新規セッションを始めたいです。` +
+          "まず get_session_output で元セッションの状況を確認し、新しいエージェントに必要な要点、未完了タスク、" +
+          "変更済みファイル、次の作業を簡潔な引継ぎ案として提示してください。この時点ではセッションを作成せず、" +
+          "引継ぎ案・作業フォルダ・開始エージェントを私に確認してください。私が明示的に同意した後だけ、" +
+          `kind=${target} で create_session を呼び、承認した引継ぎ案を initial_prompt に設定してください。` +
+          (trimmed ? `\n利用者からの補足指示: ${trimmed}` : "");
     // i18n-exempt-end
     try {
       // A dedicated operator conversation preserves any unfinished draft. openChat's auto

@@ -1724,8 +1724,6 @@ export const ja = {
   "handoff.title": "「{name}」を引き継ぐ",
   "handoff.intro": "オペレーターアシスタントがこのセッションを読んで引継ぎ案を提示します。新しいセッションはあなたの承認後にのみ作成されます。",
   "handoff.target_label": "引き継ぎ先エージェント",
-  "handoff.checking": "利用可能なエージェントを確認中…",
-  "handoff.no_targets": "引き継ぎ先にできる接続済みエージェントがありません。まず設定で接続してください。",
   "handoff.note_label": "補足（任意）",
   "handoff.note_hint": "引継ぎへの追加指示 — 重点や省く範囲など。",
   "handoff.note_ph": "例: API リファクタだけ引き継ぎ、テストの足場は省略。",
