@@ -184,6 +184,18 @@ type SlackCreds struct {
 	NotifyOff bool `json:"notifyOff,omitempty"`
 }
 
+// SVNCred is a stored basic-auth credential for a Subversion server (docs/41).
+// SVN has no credential-helper analog to git's `workspace-agent cred`, so the
+// REST checkout/update paths look these up by longest-matching URLPrefix and pass
+// them to `svn` as --username / --password-from-stdin. URLPrefix is the repository
+// root URL (or any prefix): the longest match wins, so a per-repo entry overrides a
+// broader per-server one.
+type SVNCred struct {
+	URLPrefix string `json:"urlPrefix"`
+	Username  string `json:"username"`
+	Password  string `json:"password"`
+}
+
 type Data struct {
 	Git         map[string]GitEntry    `json:"git"`                   // host -> https cred
 	GitIdentity map[string]GitIdentity `json:"gitIdentity,omitempty"` // host -> explicit commit identity
@@ -195,6 +207,7 @@ type Data struct {
 	CloudWatch  *CloudWatchConn        `json:"cloudwatch,omitempty"`  // ops MCP settings (docs/25; no secret — AWS cred chain)
 	Discord     *DiscordCreds          `json:"discord,omitempty"`     // chat-bridge connection (docs/37)
 	Slack       *SlackCreds            `json:"slack,omitempty"`       // chat-bridge connection (docs/37 Slack 追随)
+	SVN         []SVNCred              `json:"svn,omitempty"`         // SVN basic-auth creds by URL prefix (docs/41)
 }
 
 // agentSecretKey returns the 32-byte per-user key from AF_SECRET_KEY (hex), or

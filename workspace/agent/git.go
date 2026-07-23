@@ -55,6 +55,12 @@ type Repo struct {
 	Behind   int    `json:"behind"`
 	Provider string `json:"provider,omitempty"` // origin host slug: github/bitbucket/gitlab, or the bare host
 	Remote   string `json:"remote,omitempty"`   // origin host (for a tooltip); no path/token
+	// Vcs discriminates the working-copy kind: "git" (default/omitted) or "svn"
+	// (docs/41). SVN copies are flat — no branches/ahead/behind/worktree — so the
+	// Console gates git-only actions on it; Revision/URL carry the svn-side facts.
+	Vcs      string `json:"vcs,omitempty"`
+	Revision string `json:"revision,omitempty"` // SVN: current working-copy revision
+	URL      string `json:"url,omitempty"`      // SVN: repository URL of the working copy
 	// Worktree marks a linked git worktree (from `git worktree add`) rather than a
 	// standalone clone, so the Console can badge it; Parent is the folder name of the
 	// main working copy it hangs off (for a tooltip). Both empty/false for a plain clone.
@@ -228,6 +234,12 @@ func handleListRepos(w http.ResponseWriter, r *http.Request) {
 		}
 		dir := filepath.Join(reposRoot(), e.Name())
 		if !isGitRepo(dir) {
+			// An SVN working copy (docs/41) is a flat folder with a .svn dir; surface it
+			// with revision/URL so it shows in the tree and can host a session. Anything
+			// else (a plain folder) is skipped.
+			if isSvnRepo(dir) {
+				repos = append(repos, svnRepoEntry(e.Name(), dir))
+			}
 			continue
 		}
 		st, _ := gitStatus(dir)
@@ -910,6 +922,22 @@ func repoDirFromPath(w http.ResponseWriter, r *http.Request) (string, bool) {
 	return dir, true
 }
 
+// repoAnyDirFromPath validates {name} and ensures it is a working copy of EITHER
+// kind (git or svn). Used by the vcs-agnostic endpoints (delete); the git-only
+// endpoints keep repoDirFromPath so they never run git on an svn folder.
+func repoAnyDirFromPath(w http.ResponseWriter, r *http.Request) (string, bool) {
+	dir, ok := resolveRepoDir(r.PathValue("name"))
+	if !ok {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid repo name")
+		return "", false
+	}
+	if !isGitRepo(dir) && !isSvnRepo(dir) {
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such repo: "+r.PathValue("name"))
+		return "", false
+	}
+	return dir, true
+}
+
 func handleRepoStatus(w http.ResponseWriter, r *http.Request) {
 	dir, ok := repoViewDir(w, r)
 	if !ok {
@@ -1102,7 +1130,7 @@ func handleRepoFetch(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
-	dir, ok := repoDirFromPath(w, r)
+	dir, ok := repoAnyDirFromPath(w, r)
 	if !ok {
 		return
 	}
@@ -1113,6 +1141,20 @@ func handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusConflict, errCodeSessionsRunningDelete,
 			fmt.Sprintf("%d session(s) are running in this working copy (%s); deleting it would break them. Stop those sessions first.",
 				len(running), strings.Join(running, ", ")))
+		return
+	}
+	// An SVN working copy has no worktree registry — just a folder with a .svn dir.
+	// Remove it directly (after the session guard above); the git worktree logic below
+	// applies only to git working copies.
+	if !isGitRepo(dir) && isSvnRepo(dir) {
+		if err := os.RemoveAll(dir); err != nil {
+			httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", err.Error())
+			return
+		}
+		if pruneSessions(r) {
+			forgetNonLiveMetasUnder(dir)
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"deleted": r.PathValue("name")})
 		return
 	}
 	force := r.URL.Query().Get("force") == "true" || r.URL.Query().Get("force") == "1"
