@@ -851,15 +851,18 @@ func agyChatServers(c *chatConversation) map[string]any {
 // injection. cursor has no system-prompt flag, so persona/knowledge ride the
 // headlessPrompt preamble.
 //
-// Tool posture: we do NOT pass --force. Headless chat has no approval UI, so
-// auto-approving would let a turn mutate the shared host via shell/file tools — the
-// opposite of the chat contract (claude enforces it via --disallowedTools, opencode
-// via edit/bash:deny). A pure-text answer (the assistant's actual use — Q&A /
-// translation) needs no tools; a turn that reaches for one is declined by cursor
-// (headless has nothing to approve it) instead of running. --trust only skips the
-// workspace-trust prompt, orthogonal to tool approval. The af MCP tools are not wired
-// for cursor v1: cursor's MCP config is global (~/.cursor), so per-conversation grants
-// would need the isolated-HOME dance agy uses (docs/40 Track D).
+// Tool posture: --mode ask ("Q&A style … read-only", cursor's own execution mode —
+// 実測 v2026.07.20). This is BOTH the chat contract (no host mutation: the model can
+// read but cannot edit files or run write shell commands) AND the assistant's actual
+// use (conversational Q&A / translation). We do NOT pass --force. Live-verified: a
+// bare `-p` (even without --force) AUTO-EXECUTES write tools in headless mode — it
+// does NOT fail closed on the missing approval UI, so relying on "no approver" would
+// silently mutate the shared host; --mode ask is what structurally prevents it (a
+// file-creation prompt returns "I'm in Ask mode, so I can't create files …" and
+// writes nothing). It is the cursor analog of claude --disallowedTools /
+// opencode edit,bash:deny. --trust only skips the workspace-trust prompt. The af MCP
+// tools are not wired for cursor v1: cursor's MCP config is global (~/.cursor), so
+// per-conversation grants would need the isolated-HOME dance agy uses (docs/40 Track D).
 //
 // The terminal `result.usage` is the ONLY cursor route carrying tokens (docs/40 §使用量
 // — ACP/JSONL have none), so it feeds the context-fill snapshot. Fields are additive
@@ -920,10 +923,11 @@ func (cursorChat) send(ctx context.Context, c *chatConversation, prompt string) 
 
 // cursorChatBaseArgs is the shared argv prefix for a cursor headless turn:
 // --disable-auto-update (fleet pins the version via image rebuild) precedes the
-// subcommand as a root option (実測: it is rejected after -p), then print-mode JSON
-// and --trust (skip the workspace-trust prompt only — not tool approval).
+// subcommand as a root option (実測: it is rejected after -p), then print-mode JSON,
+// --trust (skip the workspace-trust prompt), and --mode ask (read-only Q&A — the
+// tool posture that keeps a chat turn from mutating the shared host; see cursorChat).
 func cursorChatBaseArgs() []string {
-	return []string{"--disable-auto-update", "-p", "--output-format", "json", "--trust"}
+	return []string{"--disable-auto-update", "-p", "--output-format", "json", "--trust", "--mode", "ask"}
 }
 
 // parseCursorResult decodes the -p result object. --output-format json emits one
