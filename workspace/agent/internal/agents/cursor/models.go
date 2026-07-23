@@ -5,6 +5,15 @@ package cursor
 // の行を返す（実測 v2026.07.20）。effort はモデル ID 自体に畳まれている
 // （例 gpt-5.3-codex-high / claude-opus-4-8-thinking-high）ので別 Efforts は付けない。
 // `auto`（既定・フラグ無し）はカタログから外す。10 分キャッシュ・stale-if-error。
+//
+// **Free プラン絞り込み（docs/40 §Free・session2 実測）**: `cursor-agent models` は
+// プランに関係なく全モデルを列挙するが、**Free プランは named model を一切使えない**
+// （実測: `ActionRequiredError: Named models unavailable Free plans can only use Auto.`）。
+// 使えるのは Auto（＝ピッカーの 既定・カタログから除外済み）と Composer 系のみ
+// （実測: composer-2.5 は result:"ok"）。よって Free プラン（`cursor-agent about` の
+// `Subscription Tier` で判定）のときはカタログを composer 系だけに絞り、選ぶと壁に
+// 当たる named を隠す（ユーザーが GLM-5.2 を選んで Upgrade 要求に当たった問題の解消）。
+// 有料プラン／判定不能時は全カタログのまま（過剰制限しない安全側）。
 
 import (
 	"context"
@@ -35,9 +44,66 @@ func Models() []agents.ModelChoice {
 	if err != nil {
 		return modelsList // stale-if-error
 	}
+	if freePlan() {
+		list = freeUsableModels(list)
+	}
 	modelsList = list
 	modelsAt = time.Now()
 	return modelsList
+}
+
+// freeUsableModels keeps only the models a Free plan can actually launch — the
+// Composer family（Auto はピッカーの 既定として別枠なのでここには元々居ない）。named
+// model は Free では `ActionRequiredError` になるので隠す。有料は Models() が呼ばない。
+func freeUsableModels(list []agents.ModelChoice) []agents.ModelChoice {
+	out := make([]agents.ModelChoice, 0, len(list))
+	for _, m := range list {
+		if strings.HasPrefix(m.ID, "composer") {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// --- Free プラン判定（`cursor-agent about` の Subscription Tier）------------------
+
+var tierMu sync.Mutex
+var tierAt time.Time
+var tierFree, tierKnown bool
+
+// freePlan reports whether the signed-in account is on the Free plan. Cached with
+// the same TTL as the model catalog（アップグレード反映は最大 10 分）。判定不能時は
+// 直近既知値（無ければ false＝過剰制限しない）。
+func freePlan() bool {
+	tierMu.Lock()
+	defer tierMu.Unlock()
+	if tierKnown && time.Since(tierAt) < modelsTTL {
+		return tierFree
+	}
+	free, ok := probeFreePlan()
+	if !ok {
+		return tierFree // stale-if-error
+	}
+	tierFree, tierKnown, tierAt = free, true, time.Now()
+	return tierFree
+}
+
+// aboutTierRe matches the `Subscription Tier   Free` row of `cursor-agent about`
+// （列は空白揃え・実測 v2026.07.20）。
+var aboutTierRe = regexp.MustCompile(`(?mi)^\s*Subscription Tier\s+(\S+)`)
+
+func probeFreePlan() (free bool, ok bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, bin(), disableAutoUpdateFlag, "about").Output()
+	if err != nil {
+		return false, false
+	}
+	m := aboutTierRe.FindStringSubmatch(string(out))
+	if m == nil {
+		return false, false // 書式ドリフト — 未知として扱う（絞り込まない）
+	}
+	return strings.EqualFold(strings.TrimSpace(m[1]), "free"), true
 }
 
 // modelRowRe matches one `id - Display Name` catalog row（実測）。id は英小文字
