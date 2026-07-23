@@ -955,6 +955,14 @@ VERSION=0.1.0 deploy/release/publish-dist.sh --seed
 5. **静的 bwrap / 静的 git（NO_CURL）の自前ビルドを許容**（builder イメージ内で source
    から固定版をビルド。バイナリ拾い食いはしない）。
 
+**決定（2026-07-23・ユーザー判断）— dist README に AWS 構成を露出しない**:
+
+11. dist repo の `README.md` / `README.ja.md` から「AWS への導入（ECS / CloudFormation）」
+    セクションと版選択表の AWS 行を削除し、**EC2-Single / ECS 構成は公開 README に
+    露出しない**。配布物は不変（compose バンドルの `aws/` 一式・`aws/ecs/README.md` は
+    同梱のまま、§35.2 / §35.3 のマトリクス・設計も変更なし）＝**公開面の導線を出さない
+    だけ**で、バンドルを手にした利用者は従来どおり `aws/` から辿れる。
+
 **残る確認事項（実装フェーズ内で消化）**:
 
 6. **native の arm64 rootfs**: 需要待ち。dist repo に source を置かない決定（§35.4.2）に
@@ -1121,3 +1129,82 @@ VERSION=0.1.0 deploy/release/publish-dist.sh --seed
       表示されない。native の gh 透過認証配線が別途要る（ただし未接続ユーザーは常に存在しうるので
       `GIT_TERMINAL_PROMPT=0` の防御は接続有無に関わらず必須）。TUI フッターの `tmux focus-events off`
       ヒントは通知/状態検出用で入力主因ではない。
+
+## 35.10 v0.1.1 公開後の機能差分（次リリースの README／リリースノート素材・2026-07-23 整理）
+
+範囲: **v0.1.1（merge `790f756`・2026-07-21 publish）→ develop `d3b37a5`（2026-07-23）**。
+この間に **v0.1.2 を publish 済み**（2026-07-22・rootfs `1aadff3b24b7`・下記「修正」の
+claude 入力全断/curl --retry を反映した hotfix）。ただし **dist repo の README seed は
+0.1.1 時点のまま**（公開 README に「Scheduled execution」「Automatic updates」等は未掲載
+— 2026-07-23 に raw.githubusercontent の実物で確認）＝本節の README 反映分は次の publish
+`--seed` でまとめて公開される。
+
+### 新機能（設計 docs あり・README 反映済み）
+
+1. **チャットブリッジ（Discord / Slack）** — [docs/37](37-chat-bridge.md)+ADR0020。
+   セッション毎スレッド通知（応答あり/質問・プラン承認/許可リクエスト/異常終了/完了報告の
+   5 種・個別トグル）、全文モード（opt-in・秘密自動伏字化・長文分割）、スレッド返信での
+   操縦（全 kind・TUI/managed 両対応・opt-in）、質問/プラン承認/許可のボタン回答、
+   @メンション→フリート・オペレーター会話（Console と同一会話）、チャット駆動の破壊的
+   操作に承認ゲート（fail-closed）。接続はトークン貼付のウィザード（Discord=Bot トークン
+   1 本・Slack=xoxb+xapp の Socket Mode）。**Slack も全機能パリティ実装済み**（実機通しのみ残）。
+   Console は「接続 › チャット連携」タブ＋「個人設定 › 通知」のサービス毎マスタ ON/OFF。
+2. **定時実行** — [docs/38](38-scheduled-execution.md)+ADR0021。オペレーターへの自然言語
+   依頼で登録（cron / interval / once・TZ/DST 対応・自前評価器）、停止中 WS を wake して
+   実行（完了後は settle 猶予後に元へ戻す）、失敗（wake/注入/quota/membership）は CP 通知
+   センターへ surface。左レール「スケジュール」セクション（一覧・実行履歴 50 件・一時停止/
+   再開/今すぐ発火/削除。登録・編集は会話側のみ）。**スケジューラ既定 ON**（opt-out=
+   `AF_SCHEDULER_INTERVAL=0`）。P6=長寿命セッション再利用（`session_mode=reuse`・ピン留め/
+   管理・every_runs/after/calendar ローテーション）。
+3. **Cursor CLI（6 種目のエージェント kind）** — [docs/40](40-cursor-agent-kind.md)+ADR0023。
+   v1 は login-only（ブラウザ承認・コード貼付なし）、TUI＋managed（`cursor-agent acp`・既定
+   managed）、アカウント連動のライブモデルカタログ、版ピン焼込＋公式 auto-update 2 経路封殺。
+   使用量チップ・API キー登録・rtk フック等は Track D（未実装）。
+4. **SVN チェックアウト対応** — [docs/41](41-svn-checkout.md)+ADR0024。URL＋基本認証
+   （stdin 渡し・auth-cache 無効）、サブパス/複数 path チェックアウト、資格情報の暗号
+   ストア保存（opt-in・最長プレフィックス一致で再利用）、自己署名証明書のサーバ単位信頼
+   （opt-in）、working-copy ロックの自己修復（cleanup+retry＋明示「ロックを解除」）。
+   worktree 非対応＝その場起動のみ（並行作業は別 path 別フォルダで隔離）。
+5. **ホスト常駐 af の自動更新（native）** — [docs/42](42-native-auto-update.md)+ADR0025。
+   stage 自動（`af update`・日次 systemd user timer 既定 ON・sha256 検証）／apply 明示
+   （Console「設定 › 環境」の「再起動して適用」or 手動 restart・実行中セッションを不意に
+   切らない）。`AF_VERSION` ピンで停止可。README の native 節へ反映済み。
+
+### 改善（README 非掲載の粒度）
+
+- **copilot Track D**（[docs/36](36-copilot-agent-kind.md)）: モデル選択（動的カタログ）・
+  WS バー使用量チップ＋プラン表示（copilot_internal/user API）・rtk 決定的フック。
+- **エージェント表示の統一**: 3 段命名（short/label/displayName・registry が正）＋kind 色の
+  `tokens.css --kind-*` 1 ソース化。
+- **設定モーダル IA 再編**: 10 タブ→3 グループ左レール（接続/動作階層・確認/導線統一）。
+  「チャット連携」タブ独立＋個人設定「通知」タブ（音声＋サービス通知マスタ）。
+- **Console↔CP 通信量削減**: gzip/immutable・ETag 304・WS deflate・SSE 統合 push
+  （`/api/events` 1 本化、ポーラーはフォールバック）。実フリート実測済み。
+- **ミラー UX 堅牢化**: スクロール追従の正直更新＋「最新へ」ボタン、初期位置の最下部安定、
+  返信描画前の空白（finalizing ブリッジ）解消、プラン却下が承認になる不具合修正、
+  スラッシュコマンド送信後の「反映待ち」解消、画像ライトボックスの「戻る」対応。
+- **キーボード**: 通知トグル群を `n` グループへ再編（音声/Slack/Discord/制限リセット、
+  状態トースト付き）。
+- **SSM/shell**: 接続名=別名＋日時、接続モーダルのクイック接続カード（頻度＋色ドット）、
+  shell・ssm セッションでのリーダーキー透過（Ctrl+K/P 素通し・既定 OFF）。
+- **WS 起動中ダイアログ**: native boot-install の進捗フェーズを `GET /api/workspace` に公開し
+  起動中モーダルで表示（§35.9-9 の観測性の穴の恒久対処）＋停止中 WS への無駄ポーリング停止。
+- **起動モーダル**: スマホからの画像添付＋ピッカー。掃除後の左ペイン即時反映。
+
+### 修正（配布物に効くもの）
+
+- **claude 入力全断の恒久修正** `GIT_TERMINAL_PROMPT=0`/`GCM_INTERACTIVE=never`（§35.9-10。
+  **v0.1.2 の rootfs で配布済み**）。
+- **boot-install/オンデマンド DL の一過性失敗を curl --retry で自己修復**（§35.9-9。
+  同じく v0.1.2 で配布済み）。
+- **Remote Control 既定 OFF**（既存 WS にも一度だけ適用）。
+- **install-compose.sh 新設**（compose 版の取得ヘルパー・README 反映済み・§35.3.2）。
+
+### README 側の変更（本差分で実施・2026-07-23）
+
+- 「5 種→**6 種のエージェント CLI**」（Cursor 追加）、git 並行セッション節へ **SVN 対応**を
+  追記、**チャットブリッジ（Discord / Slack）** bullet を新設（en/ja 両方）。
+- **AWS（ECS / CloudFormation・EC2-Single）の露出を削除**（§35.9-11 の決定。版選択表の
+  AWS 行＋「AWS への導入」セクションを削除。配布物の `aws/` 同梱は不変）。
+- 定時実行・native 自動更新の bullet は 0.1.1 publish 後に seed へ追記済み＝次リリースで
+  初公開となる（本節の範囲に含まれる）。

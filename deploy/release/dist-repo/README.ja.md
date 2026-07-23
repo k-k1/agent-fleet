@@ -8,7 +8,7 @@
 ## Agent Fleet とは
 
 Agent Fleet は、AI コーディングエージェント（Claude Code / Codex CLI /
-GitHub Copilot CLI / Antigravity CLI / OpenCode）をフリートとして運用するための
+GitHub Copilot CLI / Antigravity CLI / Cursor CLI / OpenCode）をフリートとして運用するための
 セルフホスト型 Web コンソールです。メンバーごとに隔離されたワークスペース —
 cgroup による CPU/メモリクォータ付きの Docker コンテナ（native 版では
 bubblewrap サンドボックス上の rootfs）と永続ホーム・git 作業コピー — が
@@ -17,16 +17,18 @@ bubblewrap サンドボックス上の rootfs）と永続ホーム・git 作業�
 
 主な機能:
 
-- **5 種のエージェント CLI をひとつのコンソールで** — Claude Code / Codex /
-  GitHub Copilot / Antigravity / OpenCode のセッションを並べて実行。セッション毎の
-  モデル選択に対応し、CLI の版は動作検証済みの組み合わせにピン止め
+- **6 種のエージェント CLI をひとつのコンソールで** — Claude Code / Codex /
+  GitHub Copilot / Antigravity / Cursor / OpenCode のセッションを並べて実行。
+  セッション毎のモデル選択に対応し、CLI の版は動作検証済みの組み合わせにピン止め
   （self-update は opt-in）。
 - **実 git リポジトリ上の並行セッション** — HTTPS（GitHub / Bitbucket の
   トークンまたは OAuth デバイスフロー）で clone。**Git LFS・submodule
   （ネスト含む）・git worktree に対応**。1 リポジトリに複数セッションを
   worktree 分離で並走させ、各会話はライブミラーで追跡。ターミナルアクセス、
   実行中の入力キュー投入、エージェントセッションと並ぶ素の
-  **shell セッション**も。
+  **shell セッション**も。**Subversion にも対応** — URL＋基本認証で
+  チェックアウト（サブパス / 複数 path のチェックアウト、自己署名証明書の
+  サーバ単位信頼（opt-in）、作業コピーロックの自動復旧）。
 - **プロジェクト中心のコンソール** — ファイルブラウザ、コミットグラフと diff、
   セッション状態バッジ（実行中 / 入力待ち）、画像添付できるメモキュー、
   通知センター、日英 UI、キーボード主体の操作（コマンドパレット /
@@ -52,6 +54,13 @@ bubblewrap サンドボックス上の rootfs）と永続ホーム・git 作業�
   いない時間帯の作業も自動で回ります。長寿命セッションを再利用して実行間で
   文脈を積み上げることも、毎回新規で始めることも可能。スケジュール一覧と
   実行毎の履歴（各実行が動かしたセッション付き）は左レールから確認できます。
+- **チャットブリッジ（Discord / Slack）** — Console から Bot を接続（トークン
+  貼付のガイド付きウィザード）すると、セッション毎のスレッドに進捗が届きます:
+  応答あり・質問・プラン承認・許可リクエスト・異常終了・完了報告。スレッドへの
+  返信でそのセッションを操縦、質問やプラン承認はボタンで回答、@メンションで
+  フリート・オペレーターにフリート全体の操作を頼むことも — チャット発の
+  破壊的操作は承認 / 却下ゲートで一旦停止します。opt-in の全文モードは
+  エージェントの応答本文そのものを投稿（秘密情報は自動伏字化）。
 - **運用のしやすさ** — バックアップ / リストアスクリプト、forward-only の
   DB マイグレーションによる更新、air-gap 導入経路、MCP 連携ポイント。
 
@@ -65,7 +74,6 @@ bubblewrap サンドボックス上の rootfs）と永続ホーム・git 作業�
 |---|---|---|
 | WSL2 や単一ユーザー Linux で個人利用・Docker なし | **Native**（下記） | unprivileged user namespaces が使える x86_64 Linux/WSL2（素の WSL2 は可）、`curl` か `wget`、ディスク ~1.5 GB |
 | 自社の Linux サーバでチーム利用 | **Docker Compose**（下記） | Docker Engine + `docker compose`、ホストに向けた公開ドメイン（自動 TLS。内部 CA フォールバックあり）、ログイン用 Google OAuth 2.0 クライアント |
-| AWS でチーム利用 | **ECS（CloudFormation）**（下記） | AWS アカウント、イメージ用 ECR、compose バンドル同梱のテンプレート |
 
 全版共通: 各ワークスペースの初回起動時にエージェント CLI のピン版導入で一度だけ
 外向きネットワークが必要です（air-gap の代替手順は各同梱 README に記載）。また
@@ -154,13 +162,6 @@ native 版と違い**完全なワンライナーにはなりません**: `docker
 同梱の `README.md` が完全な runbook です: 前提条件・鍵生成・TLS / ドメイン設定・
 git プロバイダ OAuth（`.env` の `GITHUB_OAUTH_CLIENT_ID` / `BITBUCKET_OAUTH_KEY` /
 `BITBUCKET_OAUTH_SECRET`）・バックアップ / リストア・アップグレード・トラブルシュート。
-
-## AWS への導入（ECS / CloudFormation）
-
-compose バンドルには `aws/` 配下に AWS デプロイ一式も同梱しています:
-ECS 用 CloudFormation テンプレート（`aws/ecs/cfn/`）、リリースイメージを自分の
-ECR へ push するスクリプト（`aws/ecs/release-ecr.sh`）、EC2 一台構成
-（`aws/ec2-single/`）。バンドル内の `aws/ecs/README.md` から始めてください。
 
 ## アンインストール / データの消去（native 版）
 

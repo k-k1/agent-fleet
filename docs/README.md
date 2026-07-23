@@ -1,12 +1,12 @@
 # docs 索引
 
 ドキュメントは性質（ジャンル）で分ける。**仕様の正は [dev/](dev/README.md)（開発者向け）とコード、
-操作の正は [guide/](guide/README.md)（利用者向け）、稼働状態の正は [HANDOFF](HANDOFF.md)。**
+操作の正は [guide/](guide/README.ja.md)（利用者向け）、稼働状態の正は [HANDOFF](HANDOFF.md)。**
 
 | ジャンル | 置き場 | 役割 |
 |----------|--------|------|
 | 開発者向け設計 | [dev/](dev/README.md) | アーキテクチャ・各コンポーネント・API・データモデル・セキュリティ・連携・デプロイ（**開発者はまず読む**・コードに追従）|
-| 利用者向けガイド | [guide/](guide/README.md) | ペルソナ別分冊（member / admin / operator / lite）。操作の正 |
+| 利用者向けガイド | [guide/](guide/README.ja.md) | ペルソナ別分冊（member / admin / operator / lite）。操作の正 |
 | 引き継ぎ | [HANDOFF.md](HANDOFF.md) | このホストの稼働状態・実行作法・落とし穴・現在地 |
 | 時系列ログ | [CHANGELOG-handoff.md](CHANGELOG-handoff.md) | 作業ログ（日付 + 1 行）|
 | 前向きの計画 | [roadmap.md](roadmap.md) | フェーズ一覧・マイルストーン + Phase 3 詳細設計 |

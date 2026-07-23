@@ -1,102 +1,122 @@
-# 02. 日常運用
+# 02. Day-to-Day Operations
 
-構築後の定常運用 — バックアップ、リストア、アップグレード、閉域網、Workspace の停止 — を、
-判断ポイントとともに説明します。**実際のコマンド（`backup.sh` / `restore.sh` / upgrade /
-air-gapped の各手順）は [deploy/compose/README.md](../../../deploy/compose/README.md) が正**です。
-ここではコマンドを複製せず、「何が起きるか・何に注意するか」を補います。作業ディレクトリは
-`deploy/compose/`。設計上の前提を深掘りしたいときは [dev/09 §9.7](../../dev/09-deploy.md)。
+English | [日本語](02-operations.ja.md)
 
-## バックアップ
+This chapter covers steady-state operations after installation — backup, restore, upgrades,
+air-gapped networks, and stopping Workspaces — together with the decision points involved.
+**The actual commands (`backup.sh` / `restore.sh` / upgrade / air-gapped procedures) are
+canonically documented in [deploy/compose/README.md](../../../deploy/compose/README.md).**
+Rather than duplicating the commands here, this chapter supplements them with "what happens
+and what to watch out for." The working directory is `deploy/compose/`. To dig into the
+design assumptions, see [dev/09 §9.7](../../dev/09-deploy.md).
 
-`deploy/compose/backup.sh` が `DATA_DIR` を丸ごと timestamped な `tar.gz` に固めます。コマンドと
-オプション（`OUT_DIR` / `KEEP` / `--no-stop`）は runbook の "Backup & restore" 節を参照。
+## Backup
 
-### 何が入り、何が入らないか
+`deploy/compose/backup.sh` packs the entire `DATA_DIR` into a timestamped `tar.gz`. For the
+command and its options (`OUT_DIR` / `KEEP` / `--no-stop`), see the "Backup & restore" section
+of the runbook.
 
-アーカイブに**入る**もの（= これだけあれば別ホストへ復元できる）:
+### What is included and what is not
 
-- `control-plane.db` — テナント / メンバー / ポート / トークンのグラフ。
-- 各ユーザーの home（作業ツリー・dotfiles・封筒暗号された `secrets.enc`）。
-- 各ユーザーの `claude-config`（**平文の Claude ログイン状態**）。
-- Caddy の証明書（復元時に Let's Encrypt のレート制限を避けるため）。
+What **goes into** the archive (= with this alone you can restore onto another host):
 
-**入らない**もの:
+- `control-plane.db` — the graph of tenants / members / ports / tokens.
+- Each user's home (working trees, dotfiles, the envelope-encrypted `secrets.enc`).
+- Each user's `claude-config` (**plaintext Claude login state**).
+- Caddy's certificates (to avoid Let's Encrypt rate limits at restore time).
 
-- `shared/jvm`（再取得可能で巨大な Temurin JDK）は意図的に除外。
-- **`AF_MASTER_KEY` は入りません。** これは `.env` にあり、設計上アーカイブに含めません。
+What is **not included**:
 
-> この 2 点が運用の肝です。バックアップアーカイブは**平文の Claude 状態を含む機微データ**なので、
-> 保管先の権限・暗号化を厳格にしてください。同時に、アーカイブだけを持っていても
-> `AF_MASTER_KEY` が無ければ封筒暗号された資格情報は復号できません。逆に `AF_MASTER_KEY` を
-> 失えば、すべての過去アーカイブが復号不能になります（crypto-shred・[03](03-security.md)）。**鍵と
-> データは別々に、しかし両方をバックアップする**のが正解です。
+- `shared/jvm` (the re-fetchable, huge Temurin JDKs) is deliberately excluded.
+- **`AF_MASTER_KEY` is not included.** It lives in `.env` and is by design never put into
+  the archive.
 
-### ユーザーへの影響
+> These two points are the heart of operations. The backup archive is **sensitive data that
+> contains plaintext Claude state**, so be strict about the permissions and encryption of
+> wherever you store it. At the same time, possessing the archive alone is not enough: without
+> `AF_MASTER_KEY`, the envelope-encrypted credentials cannot be decrypted. Conversely, if you
+> lose `AF_MASTER_KEY`, every past archive becomes permanently undecryptable (crypto-shred —
+> see [03](03-security.md)). **Keep the key and the data separate, but back up both** — that is
+> the right answer.
 
-`backup.sh` は既定で **CP と Caddy を一瞬だけ停止**して SQLite の整合スナップショットを取り、
-すぐ再開します。このとき**ユーザーの Workspace（`af-ws-*`）は compose 管理外なので止まりません** —
-セッションは切れず、作業は継続します。停止中の数秒は Console のログインや API 中継が一時的に
-応答しなくなる程度です。呼び出し側で静止を保証済みなら `--no-stop` で無停止取得もできます。
+### Impact on users
 
-### cron 化
+By default `backup.sh` **briefly stops the CP and Caddy** to take a consistent SQLite snapshot,
+then restarts them immediately. During this, **user Workspaces (`af-ws-*`) do not stop, since
+they are outside compose management** — sessions stay connected and work continues. During the
+few seconds of downtime, Console logins and API relaying merely become temporarily unresponsive.
+If the caller has already guaranteed quiescence, `--no-stop` lets you take the backup without
+stopping anything.
 
-本番では `backup.sh` を cron で定期実行します。`OUT_DIR` で社内のバックアップ領域（別ボリューム／
-リモート）を指定し、`KEEP` で世代数を制御します。cron エントリの例は runbook の "Backup & restore"
-節にあります。取得後は世代のプルーニングまで自動で行われます。
+### Running it from cron
 
-## リストア
+In production, run `backup.sh` periodically from cron. Use `OUT_DIR` to point at your
+organization's backup area (a separate volume / a remote location) and `KEEP` to control the
+number of generations. An example cron entry is in the "Backup & restore" section of the
+runbook. After each backup, pruning of old generations is performed automatically.
 
-クリーンなホスト、またはデータ喪失後の復旧手順です。コマンドは runbook の "Backup & restore"。
+## Restore
 
-流れは「`.env` を用意（**バックアップ元と同一の `AF_MASTER_KEY`** を金庫から復元）→ `restore.sh
-<archive>` → `docker compose up -d` → Console から各 Workspace を**起動**」です。要点を 3 つ。
+This is the recovery procedure onto a clean host, or after data loss. The commands are in the
+runbook's "Backup & restore".
 
-1. **`AF_MASTER_KEY` は元と同一値でなければならない。** 違う／欠落していると wrapped DEK を
-   unwrap できず、資格情報は復号できません。金庫からの復元を最初に確認します。
-2. **`DATA_DIR` の basename 制約。** 復元先の親パスは元と違ってよく（例 `/srv` → `/mnt`）、CP が
-   起動時に各 Workspace の on-disk root を現在の `DATA_DIR` へ付け替えます。ただしアーカイブ先頭の
-   ディレクトリ名（= 元 `DATA_DIR` の basename）と、復元先 `DATA_DIR` の basename は**一致**させて
-   ください。`restore.sh` がこれを検証し、不一致なら拒否します。
-3. **Workspace は Console からの「起動」で再水和する。** リストア直後には Workspace コンテナは
-   存在しません（compose 管理外だから）。ユーザー（または管理者）が Console で「起動」を押すと、CP が
-   復元済み DB のポート/トークンで `af-ws-*` を再作成し、home の `secrets.enc` と `claude-config`
-   からユーザーの接続と Claude ログインが復活します。
+The flow is: "prepare `.env` (restore **the same `AF_MASTER_KEY` as the backup source** from
+your vault) → `restore.sh <archive>` → `docker compose up -d` → **Start** each Workspace from
+the Console". Three key points.
 
-## アップグレード
+1. **`AF_MASTER_KEY` must be identical to the original.** If it differs or is missing, the
+   wrapped DEKs cannot be unwrapped and the credentials cannot be decrypted. Verify the
+   restoration from the vault first.
+2. **The `DATA_DIR` basename constraint.** The parent path of the restore destination may
+   differ from the original (e.g. `/srv` → `/mnt`); at startup the CP re-points each
+   Workspace's on-disk root to the current `DATA_DIR`. However, the top-level directory name
+   inside the archive (= the basename of the original `DATA_DIR`) and the basename of the
+   destination `DATA_DIR` **must match**. `restore.sh` validates this and refuses on a mismatch.
+3. **Workspaces rehydrate via "Start workspace" in the Console.** Immediately after a restore,
+   no Workspace containers exist (they are outside compose management). When a user (or an
+   admin) presses Start in the Console, the CP re-creates `af-ws-*` using the ports/tokens in
+   the restored DB, and the user's connections and Claude login come back from `secrets.enc`
+   and `claude-config` in their home.
 
-`.env` の `VERSION` を新しいタグに変え、image を pull（またはビルド）して `up -d` するだけです。
-コマンドは runbook の "Upgrade" 節。
+## Upgrade
 
-- **スキーマ migration は CP に埋め込まれ、起動時に自動適用**されます（**前方互換**）。手動の
-  migration 実行は不要です。
-- **ダウングレードは非対応**です。新バージョンで適用された migration を古い CP は理解できません。
-  したがって**アップグレードの前に必ず `backup.sh` を取る**こと。何かあれば「古い image に戻す」の
-  ではなく「バックアップからリストアする」のが正しい後退経路です。
-- 破壊的変更の有無はリリースノートで確認してください。
+Just change `VERSION` in `.env` to the new tag, pull (or build) the images, and run `up -d`.
+The commands are in the runbook's "Upgrade" section.
 
-## 閉域網（air-gap）へのインストール
+- **Schema migrations are embedded in the CP and applied automatically at startup**
+  (**forward-compatible**). No manual migration runs are needed.
+- **Downgrades are not supported.** An older CP cannot understand migrations applied by a newer
+  version. Therefore **always take a `backup.sh` before upgrading**. If something goes wrong,
+  the correct rollback path is not "go back to the old image" but "restore from the backup."
+- Check the release notes for breaking changes.
 
-外部ネットワークに出られないホストにも入れられます。ネット接続のあるマシンで image を
-`docker save` して持ち込み、対象ホストで `load-images.sh` して `up -d` します。コマンドは runbook の
-"Air-gapped install" 節。
+## Installing into an air-gapped network
 
-判断ポイントが 2 つあります。
+You can install onto a host with no external network access. On a machine with internet
+connectivity, `docker save` the images and carry them over; on the target host, run
+`load-images.sh` and then `up -d`. The commands are in the runbook's "Air-gapped install"
+section.
 
-- **TLS**: 閉域では Let's Encrypt が使えないので、[01 §4](01-install.md) の `tls internal`（自己署名）
-  へ切り替えるか、社内 CA を使います。
-- **Claude のインストール**: Workspace image は既定でコンテナ起動時に最新の Claude を取得します。
-  完全オフラインのホストでは `CLAUDE_INSTALL=0`（`WS_ENV` 経由）にし、Claude を焼き込んだ image を
-  使ってください。
+There are two decision points.
 
-## アイドル停止と force-stop
+- **TLS**: Let's Encrypt is unusable in an air-gapped network, so either switch to
+  `tls internal` (self-signed) per [01 §4](01-install.md), or use an internal CA.
+- **Installing Claude**: the Workspace image by default fetches the latest Claude at container
+  startup. On a fully offline host, set `CLAUDE_INSTALL=0` (via `WS_ENV`) and use an image with
+  Claude baked in.
 
-- **アイドル自動停止（scale-to-zero）**: `AF_SESSION_IDLE_TIMEOUT` / `AF_WS_IDLE_TIMEOUT` を設定すると、
-  一定時間使われていない Workspace を自動で止めます（テナント単位の上書きは Admin UI）。既定は
-  無効。停止した Workspace は、ユーザーが次にターミナルを開くと自動起動します（`AF_AUTOSTART`）。
-  資源の節約に有効です。env の意味は [.env.example](../../../deploy/compose/.env.example)、仕組みは
-  [dev/09 §9.4](../../dev/09-deploy.md)。
-- **force-stop（力業）**: `docker compose down` では**ユーザーの Workspace は止まりません**（compose
-  管理外）。特定の Workspace を確実に止めたいときは、super_admin が Console の Admin パネルから
-  force-stop します。ホスト全体をメンテナンスで完全に落とす必要があるときは、CP/Caddy を止めた
-  うえで、残る `af-ws-*` コンテナを別途 `docker stop` する必要があります（この点は障害対応の
-  [04](04-troubleshooting.md) でも触れます）。
+## Idle stop and force-stop
+
+- **Automatic idle stop (scale-to-zero)**: setting `AF_SESSION_IDLE_TIMEOUT` /
+  `AF_WS_IDLE_TIMEOUT` automatically stops Workspaces that have been unused for a given period
+  (per-tenant overrides are in the Admin UI). Disabled by default. A stopped Workspace starts
+  automatically the next time the user opens a terminal (`AF_AUTOSTART`). This is effective for
+  saving resources. For the meaning of the env vars, see
+  [.env.example](../../../deploy/compose/.env.example); for how it works, see
+  [dev/09 §9.4](../../dev/09-deploy.md).
+- **force-stop (brute force)**: `docker compose down` **does not stop user Workspaces** (they
+  are outside compose management). To stop a specific Workspace for sure, a super_admin
+  force-stops it from the Admin panel in the Console. When the whole host must be brought fully
+  down for maintenance, after stopping the CP/Caddy you also need to `docker stop` the remaining
+  `af-ws-*` containers separately (this also comes up in the troubleshooting chapter,
+  [04](04-troubleshooting.md)).

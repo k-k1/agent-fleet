@@ -1,128 +1,148 @@
-# 01. 初期構築
+# 01. Initial Setup
 
-初めてのデプロイを、判断ポイントを添えて順を追って説明します。**実際のコマンドは
-[deploy/compose/README.md](../../../deploy/compose/README.md) の "Quick start" 節が正**です。ここでは
-「各ステップで何を決め、何に注意するか」を日本語で補います。作業ディレクトリは `deploy/compose/`
-です。全体像とこのガイドの位置づけは [README.md](README.md) を先に読んでください。
+English | [日本語](01-install.ja.md)
 
-## 0. 前提の確認
+This page walks through your first deployment step by step, with the decision points along the
+way. **The source of truth for the actual commands is the "Quick start" section of
+[deploy/compose/README.md](../../../deploy/compose/README.md).** Here we supplement it with
+"what to decide and what to watch out for at each step." The working directory is
+`deploy/compose/`. For the big picture and where this guide fits, read
+[README.md](README.md) first.
 
-構築を始める前に、[README.md](README.md) の「前提」で挙げた 4 点がそろっているか確認します。
+## 0. Check the prerequisites
 
-- Docker Engine + `docker compose` が動く Linux ホスト。
-- 公開ドメインと、このホストを指す DNS の A/AAAA レコード（TLS 用）。社内限定なら §4 の判断を参照。
-- Google OAuth 2.0 Web クライアント（§3 で作成）。
-- Claude シートは各メンバーが後から持ち込むので、構築時点では不要です。
+Before starting the build-out, confirm you have the 4 items listed under "Prerequisites" in
+[README.md](README.md).
 
-## 1. 設定ファイルを用意する
+- A Linux host running Docker Engine + `docker compose`.
+- A public domain and DNS A/AAAA records pointing at this host (for TLS). For internal-only
+  deployments, see the decision in §4.
+- A Google OAuth 2.0 web client (created in §3).
+- Claude seats are brought by each member later, so they are not needed at build time.
 
-`deploy/compose/.env.example` を `.env` にコピーして編集します（コマンドは runbook の "Quick start"）。
-`.env` は git 管理外で、ここが**設定の単一ソース**です。各変数の意味・生成手順・注釈は
-[.env.example](../../../deploy/compose/.env.example) 自体に詳しく書いてあります。索引が欲しいときは
-[dev/09 §9.4](../../dev/09-deploy.md) を参照してください。
+## 1. Prepare the configuration file
 
-構築時に必ず埋める主なものは、公開 URL（`PUBLIC_DOMAIN` / `PUBLIC_BASE_URL`）、Google OAuth の
-クライアント ID/シークレット、ログイン許可リスト（`AF_OAUTH_ALLOWED_DOMAINS` など）、初期管理者
-（`SUPER_ADMIN_EMAILS`）、データ保管先（`DATA_DIR`）、そして 2 つの秘密（次節）です。
+Copy `deploy/compose/.env.example` to `.env` and edit it (the commands are in the runbook's
+"Quick start"). `.env` is outside git management and is the **single source of configuration**.
+The meaning of each variable, generation steps, and annotations are described in detail in
+[.env.example](../../../deploy/compose/.env.example) itself. If you want an index, see
+[dev/09 §9.4](../../dev/09-deploy.md).
 
-## 2. 秘密を生成する — `AF_MASTER_KEY` はこの時点で金庫へ
+The main values you must fill in at build time are the public URL (`PUBLIC_DOMAIN` /
+`PUBLIC_BASE_URL`), the Google OAuth client ID/secret, the login allowlist
+(`AF_OAUTH_ALLOWED_DOMAINS`, etc.), the initial administrators (`SUPER_ADMIN_EMAILS`), the data
+storage location (`DATA_DIR`), and the 2 secrets (next section).
 
-`.env` には自分で生成する秘密が 2 つあります。生成コマンド（`/dev/urandom` から 32 バイトを
-base64 化）は runbook の "Quick start" に載っています。
+## 2. Generate the secrets — put `AF_MASTER_KEY` in a vault at this point
 
-- **`AF_MASTER_KEY`** — すべての資格情報暗号の根（封筒暗号の master 鍵）。
-- **`AF_COOKIE_SECRET`** — ログインセッション cookie の署名鍵。
+There are 2 secrets in `.env` that you generate yourself. The generation command (32 bytes from
+`/dev/urandom`, base64-encoded) is in the runbook's "Quick start."
 
-> 最重要の判断: **`AF_MASTER_KEY` を生成したら、その場でパスワード金庫／シークレットマネージャに
-> 控えを取り、データ領域とは別に独立して保管してください。** この鍵は `DATA_DIR` にもバックアップ
-> アーカイブにも入りません（設計上、意図的に）。失うと、保存済みの全資格情報とすべての過去
-> バックアップが**永久に復号不能**になります（crypto-shred）。リストアには「同じ鍵」が要ります。
-> 詳細は [03-security.md](03-security.md) と [dev/07 §7.6](../../dev/07-security.md)。
+- **`AF_MASTER_KEY`** — the root of all credential encryption (the master key for envelope encryption).
+- **`AF_COOKIE_SECRET`** — the signing key for login session cookies.
 
-あわせて、CP が使う `DOCKER_GID` をホストの docker グループ GID に合わせます（値の求め方は
-runbook）。これを間違えると起動後に docker ソケットで permission denied になります（[04](04-troubleshooting.md)）。
+> The most important decision: **the moment you generate `AF_MASTER_KEY`, record a copy in a
+> password vault / secret manager and store it independently, separate from the data area.**
+> This key goes into neither `DATA_DIR` nor backup archives (deliberately, by design). If you
+> lose it, all stored credentials and every past backup become **permanently undecryptable**
+> (crypto-shred). A restore requires "the same key."
+> Details in [03-security.md](03-security.md) and [dev/07 §7.6](../../dev/07-security.md).
 
-## 3. Google OAuth を設定する
+In addition, set the `DOCKER_GID` used by the CP to match the host's docker group GID (how to
+find the value is in the runbook). Getting this wrong results in permission denied on the docker
+socket after startup ([04](04-troubleshooting.md)).
 
-Google Cloud Console で OAuth クライアント ID（Web アプリケーション）を作成し、**承認済みリダイレクト
-URI** に次を登録します。
+## 3. Configure Google OAuth
+
+Create an OAuth client ID (web application) in the Google Cloud Console, and register the
+following as an **authorized redirect URI**.
 
 ```
 https://<PUBLIC_DOMAIN>/oauth2/callback
 ```
 
-このパスは `<PUBLIC_BASE_URL>/oauth2/callback` と一致していなければなりません。ここがズレると
-ログイン時に "redirect URI mismatch" になります（よくある失敗・[04](04-troubleshooting.md)）。発行された
-クライアント ID/シークレットを `.env` の `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` に
-入れます。手順の詳細は runbook の "Google OAuth setup" 節。
+This path must match `<PUBLIC_BASE_URL>/oauth2/callback`. If they diverge, you get
+"redirect URI mismatch" at login (a common failure — [04](04-troubleshooting.md)). Put the issued
+client ID/secret into `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` in `.env`. Detailed
+steps are in the runbook's "Google OAuth setup" section.
 
-補足: Console のログイン認証（L1）は CP 自身が Google OAuth を実行します（`AUTH=oauth`・既定）。
-既存の認証ゲートウェイ（oauth2-proxy / ALB OIDC など）を前段に置く社は `AUTH=proxy` を選べます
-（メール識別を上流ヘッダに委ねる）。仕組みは [dev/07 §7.3](../../dev/07-security.md)。GitHub/Bitbucket
-の連携 OAuth は任意で、無くてもトークン貼り付けで動くため初期構築では省略できます。
+Note: for Console login authentication (L1), the CP itself performs Google OAuth
+(`AUTH=oauth`, the default). Companies that put an existing authentication gateway
+(oauth2-proxy / ALB OIDC, etc.) in front can choose `AUTH=proxy` (delegating email
+identification to upstream headers). How this works is in [dev/07 §7.3](../../dev/07-security.md).
+The GitHub/Bitbucket integration OAuth is optional — everything works with token pasting even
+without it, so you can skip it during initial setup.
 
-## 4. 判断ポイント
+## 4. Decision points
 
-起動前に、自分のデプロイに合わせて 3 つを決めます。
+Before starting up, make 3 decisions to fit your deployment.
 
-### `tls internal` はいつ使うか
+### When to use `tls internal`
 
-Caddy は既定で公開ドメインの証明書を Let's Encrypt から自動取得します。これには**公開 DNS と
-80/443 の到達性**が要ります。社内限定・閉域網で公開 DNS を用意できない場合は、Caddyfile の
-代替（`tls internal`・自己署名）に切り替えます。この場合ブラウザに証明書警告が出るので、社内
-CA の配布などは別途検討してください。切替方法は runbook の "Quick start" 脚注と Caddyfile を参照。
-既存の TLS 終端プロキシを前段に持つ社は Caddy サービス自体を外せます（Caddyfile 代替2）。
+By default, Caddy automatically obtains a certificate for the public domain from Let's Encrypt.
+This requires **public DNS and reachability on 80/443**. If your deployment is internal-only or
+on an isolated network and you cannot provide public DNS, switch to the Caddyfile alternative
+(`tls internal`, self-signed). In this case browsers will show a certificate warning, so
+consider distributing an internal CA separately. For how to switch, see the "Quick start"
+footnote in the runbook and the Caddyfile. Companies with an existing TLS-terminating proxy in
+front can remove the Caddy service entirely (Caddyfile alternative 2).
 
-### `AF_PROVISION` は auto か invite か
+### `AF_PROVISION`: auto or invite
 
-- **`auto`（既定）** — 許可リストを通ったログインを、既定テナントのメンバーとして自動受け入れ。
-  少人数・ドメイン単位で許可する運用に向きます。
-- **`invite`** — 未知の identity は管理者が Admin パネルで追加するまで拒否。誰を入れるかを
-  一件ずつ統制したいときに選びます。
+- **`auto` (default)** — logins that pass the allowlist are automatically accepted as members
+  of the default tenant. Suited to small teams and domain-based allow policies.
+- **`invite`** — unknown identities are rejected until an administrator adds them in the
+  Admin panel. Choose this when you want to control who gets in, one by one.
 
-いずれにせよ、そもそもログインできるのは許可リスト（`AF_OAUTH_ALLOWED_*`）を通った相手だけです。
-`auto` は「許可リスト内なら勝手にテナント割当まで進む」かどうかの違いです。
+Either way, only people who pass the allowlist (`AF_OAUTH_ALLOWED_*`) can log in at all.
+`auto` only changes whether "anyone inside the allowlist proceeds automatically all the way to
+tenant assignment."
 
-### 単一テナントか、分離するか
+### Single tenant, or separate tenants
 
-- **単一テナント（既定）** — 全員が組み込みの `default` テナントに入り、摩擦ゼロ。多くの社は
-  これで十分です。
-- **テナント分離** — 部署間などで**ハードな分離**が要るときだけ追加します。メンバーシップごとに
-  完全に隔離された Workspace が割り当てられます。後からでも追加できるので、迷ったら単一で始めて
-  必要になってから分けるのが無難です。
+- **Single tenant (default)** — everyone joins the built-in `default` tenant, with zero
+  friction. This is enough for most companies.
+- **Tenant separation** — add it only when you need **hard isolation**, e.g. between
+  departments. Each membership gets a fully isolated Workspace. You can add tenants later, so
+  when in doubt it is safest to start with a single tenant and split only when the need arises.
 
-## 5. 起動する
+## 5. Start it up
 
-`.env` がそろったら `DATA_DIR` を作成し、`docker compose up -d`（プレビルド image を使うなら
-そのまま、ローカルビルドなら `--build`）で起動します。正確なコマンドは runbook の "Quick start"。
-起動後、CP のログを追い、ヘルスチェックが通ることを確認します。
+Once `.env` is complete, create `DATA_DIR` and start with `docker compose up -d` (as-is if you
+use the prebuilt image, or with `--build` for a local build). The exact commands are in the
+runbook's "Quick start." After startup, follow the CP's logs and confirm the health check
+passes.
 
 ```
 curl -s http://127.0.0.1:8099/healthz    # -> ok
 ```
 
-`ok` が返らない・そもそも CP が上がらないときは [04-troubleshooting.md](04-troubleshooting.md) の
-「CP が起動しない」を参照してください。
+If `ok` does not come back, or the CP does not come up at all, see "CP does not start" in
+[04-troubleshooting.md](04-troubleshooting.md).
 
-## 6. 初回ログインと最初の管理者
+## 6. First login and the first administrator
 
-ブラウザで `https://<PUBLIC_DOMAIN>` を開き、`SUPER_ADMIN_EMAILS` に列挙したアカウントで
-サインインします。**このメールアドレスが初回ログインで `super_admin`** になります。super_admin は
-Console に歯車の **Admin パネル**が見え、デプロイ全体を管理できます。
+Open `https://<PUBLIC_DOMAIN>` in a browser and sign in with an account listed in
+`SUPER_ADMIN_EMAILS`. **That email address becomes `super_admin` on first login.** A
+super_admin sees the gear-icon **Admin panel** in the Console and can manage the entire
+deployment.
 
-> ログインが常に拒否される場合、許可リストが空の可能性が高いです。3 系統（`AF_OAUTH_ALLOWED_EMAILS`
-> / `_DOMAINS` / `_EMAILS_FILE`）が**すべて空だと全ログインを拒否**します（fail-closed = 安全側に倒す
-> 設計）。少なくとも 1 つを設定してください。詳細は [04](04-troubleshooting.md)。
+> If login is always rejected, the allowlist is most likely empty. If all 3 channels
+> (`AF_OAUTH_ALLOWED_EMAILS` / `_DOMAINS` / `_EMAILS_FILE`) are **empty, all logins are
+> rejected** (fail-closed = designed to fail safe). Set at least one of them. Details in
+> [04](04-troubleshooting.md).
 
-## 7. 最初のテナントとメンバー
+## 7. The first tenant and members
 
-super_admin として Admin パネルから、テナントの作成、メンバーの追加、資源上限やアイドル停止の
-設定ができます。既定の単一テナント運用ならテナント作成は不要で、`AF_PROVISION=auto` なら許可
-リスト内のメンバーはログインするだけで使い始められます。メンバー管理・上限・監査のブラウザ操作
-そのものは、管理者向けの admin 分冊が扱います。
+As super_admin, from the Admin panel you can create tenants, add members, and configure
+resource limits and idle shutdown. With the default single-tenant operation, no tenant creation
+is needed, and with `AF_PROVISION=auto`, members inside the allowlist can start using it just by
+logging in. The browser operations themselves — member management, limits, auditing — are
+covered by the admin volume for administrators.
 
-各メンバーは自分の Workspace を起動したあと、Console から**自分の Claude シートでログイン**します
-（BYO）。運用者がメンバーの Claude 資格情報を代理設定することはありません。
+After starting their own Workspace, each member **logs in with their own Claude seat** from the
+Console (BYO). The operator never sets up members' Claude credentials on their behalf.
 
-構築後の日常運用（バックアップ・アップグレード・停止）は [02-operations.md](02-operations.md) へ、
-セキュリティ運用は [03-security.md](03-security.md) へ進んでください。
+For day-to-day operations after the build-out (backup, upgrades, shutdown), continue to
+[02-operations.md](02-operations.md), and for security operations, to
+[03-security.md](03-security.md).

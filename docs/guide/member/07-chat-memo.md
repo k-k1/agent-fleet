@@ -1,112 +1,124 @@
-# 07. チャットとメモ — 簡単な質問・翻訳・メモ溜め
+# 07. Chat and memos — quick questions, translation, and memo capture
 
-> 対象: セッションを起こすほどでもない質問・翻訳・要約を片付けたいメンバー。アシスタント
-> チャット、走っているエージェントの会話を読む「チャット」表示、そしてメモキューを扱います。
+English | [日本語](07-chat-memo.ja.md)
 
-## アシスタントチャットとは
+> For: members who want to knock out questions, translations, and summaries that don't warrant
+> spinning up a session. Covers the assistant chat, the "Chat" view for reading a running
+> agent's conversation, and the memo queue.
 
-左ペインの **アシスタント** から始める**チャット**は、作業セッションとは別物です。
-セッションのマネージド実行で使う「チャット表示」と名前は似ていますが、こちらは作業場所や
-継続的な実行状態を持たない、**リポジトリ不要の会話**です。Markdown 文書の翻訳や要約、ちょっとした
-質問への回答に向きます。
+## What the assistant chat is
 
-**セッションとの使い分け**はこう考えてください。
+The **chat** you start from **Assistants** in the left pane is a different thing from a work
+session. The name resembles the "chat view" used with a session's Managed execution, but
+this one is a **repository-free conversation** with no working directory or persistent
+execution state. It's a good fit for translating or summarizing Markdown documents and
+answering small questions.
 
-- **チャット** — 短〜中くらいの質問・翻訳・要約。「この文章を日本語にして」「この関数、何をしてる？」など、その場で答えが返ればいいもの。
-- **セッション** — ファイルを実際に読み書きする作業、コードの変更、大きなファイルの一括処理。ファイル出力を伴うならセッションへ（[05 ファイル](05-files.md) の「送る」でファイルを渡せます）。
+Here's how to think about **choosing between it and a session**.
 
-**アシスタント** セクションの **＋（新規チャット）** で会話を始めます。送信は Ctrl+Enter
-（設定で Enter 送信にも変更可）。相手の発言は「アシスタント」、あなたの発言は「あなた」と
-表示され、処理中は「考え中…」が出ます。入力欄に**画像を貼り付け**て一緒に送ることも
-できます（スクリーンショットを見せて質問する、など）。
+- **Chat** — short-to-medium questions, translations, summaries. Things like "translate this text into Japanese" or "what does this function do?", where an answer on the spot is all you need.
+- **Session** — work that actually reads and writes files, code changes, bulk processing of large files. If file output is involved, go to a session (you can hand over files with "Send" in [05 Files](05-files.md)).
 
-### 用途別のアシスタントと翻訳
+Start a conversation with **+ (New chat)** in the **Assistants** section. Send with Ctrl+Enter
+(you can switch to Enter-to-send in settings). The other side's messages are labeled
+"Assistant", yours "You", and "Thinking…" appears while it's working. You can also
+**paste an image** into the input field and send it along (for example, showing a
+screenshot and asking about it).
 
-Agent Fleet の使い方案内や SRE の相談など、固有の役割を持つアシスタントが用意されています。
-通常の質問は新規チャットへそのまま入力し、ファイルの翻訳・要約はファイルの
-右クリックメニューを使います。
+### Purpose-built assistants and translation
 
-自分用に用途を決めたアシスタントを **「アシスタントを作成」** で用意することもできます。名前・
-説明（会話開始時の挨拶）・ペルソナ（役割や口調の指示）・使うエージェント／モデル、
-そして **ツール許可**を設定します。
+Assistants with specific roles are provided, such as guidance on using Agent Fleet or SRE
+consultation. Type ordinary questions straight into a new chat; for translating or
+summarizing files, use a file's right-click menu.
 
-モデルを空欄にすると、新しい会話では選んだエージェントに合う既定モデルを使います。現在は
-**codex は Luna**、**opencode は Nemotron** が既定です。ここでモデルを明示すればその指定が優先され、
-すでに始めた会話のモデルは後から変わりません。
+You can also set up your own purpose-built assistant with **"Create assistant"**. You
+configure a name, a description (the greeting when a conversation starts), a persona
+(instructions on role and tone), the agent / model to use, and **tool permissions**.
 
-- **なし** — 外部ツールなしで、チャット内だけで答えます。翻訳・要約はこれで十分です。
-- **AF 読み取り** — 自分のワークスペースのセッション一覧・状態・出力のほか、エージェントの使用量・制限（claude / codex の使用率と解除日時）や、セッションごとのコンテキスト量・累積消費トークンを読み取れます（書き込み不可）。
-- **AF 書き込み** — 読み取りに加え、セッションへプロンプトを送れます（作業の代行）。信頼できる用途にだけ許可してください。
+If you leave the model blank, new conversations use the default model that fits the chosen
+agent. Currently the defaults are **Luna for codex** and **Nemotron for opencode**. If you specify
+a model here, that choice wins, and the model of a conversation you've already started
+doesn't change afterwards.
 
-ビルトインの **フリート・オペレーター**は「AF 書き込み」の代表例で、セッションの起動・
-指示・完了報告の受け取りまでチャットで指揮できます。詳しくは
-[11 フリート・オペレーター](11-fleet-operator.md) を参照してください。
+- **None** — answers within the chat alone, with no external tools. This is plenty for translation and summarization.
+- **AF read** — can read your workspace's session list, statuses, and output, plus agent usage / limits (claude / codex usage rates and reset times) and each session's context size and cumulative token spend (no writing).
+- **AF write** — in addition to reading, can send prompts to sessions (doing work on your behalf). Grant this only for trusted uses.
 
-たとえば翻訳用なら、ペルソナに「あなたは技術文書の翻訳者です。訳文のみを返してください」、
-挨拶に「文章を渡してください。日本語↔英語を翻訳します」と書いておく、といった具合です。
+The built-in **Fleet Operator** is the flagship example of "AF write": from chat it can
+direct everything from launching sessions to giving instructions and receiving completion
+reports. See [11 Fleet Operator](11-fleet-operator.md) for details.
 
-チャットの**回答言語**は ⚙設定 → 「アシスタント」タブの「回答言語」で
-決められます。「入力に合わせる」なら渡した文章の言語で返し、日本語／English を選ぶと
-他言語の文章でもその言語で答えます（ファイル右クリックの「アシスタントで翻訳」は対象外 — 常に原文に応じて訳し分けます）。
+For example, for a translation assistant you might put "You are a technical-document
+translator. Return only the translated text." in the persona, and "Send me text and I'll
+translate between Japanese and English." in the greeting.
 
-### 会話が長くなってきたら（コンテキストの目安）
+The chat's **reply language** is set with "Reply language" on ⚙Settings → the
+"Assistant" tab. "Match input" replies in the language of the text you hand over, while
+choosing 日本語 / English answers in that language even for text in other languages
+(the file right-click "Translate with assistant" is exempt — it always translates according to the source text).
 
-会話を重ねるほど、モデルに渡る文脈（コンテキスト）は増え続けます。最初の応答が返ると、
-チャットのヘッダ下にセッションのミラーと同じ**コンテキストバー**（使用量／上限・%）が
-表示されます。使用率が **80%** を超えるとバーが警告色になり、会話にもお知らせが 1 回
-届きます（通知センターにも出ます）。
+### When a conversation gets long (a context rule of thumb)
 
-対処は 2 通りです。
+The more exchanges you pile up, the more context keeps flowing to the model. Once the
+first response comes back, a **context bar** (usage / limit · %) — the same one as a
+session's mirror — appears under the chat header. When usage passes **80%** the bar
+turns a warning color, and a one-time notice arrives in the conversation (it also shows
+up in the notification center).
 
-- **圧縮（そのまま続ける）** — コンテキストバー右端の **「圧縮」** を押すと、これまでの
-  会話を要約し、**要約だけを新しいセッションへ引き継いで**同じチャットで続けられます。
-  画面の会話履歴はそのまま残り、引き継がれるのは要約のみです（要約の作成に 1 ターン分の
-  トークンを使います）。長い会話をそのまま続けたいときに向きます。
-- **新しいチャットを開く** — 区切りが良ければ、新規チャットを開いて必要な要点だけを
-  自分で書いて渡すのが確実です。
+There are two ways to deal with it.
 
-いずれにせよ、長くなった会話をそのまま続けるほど、応答の品質低下・ターンの失敗・
-トークン消費の増大につながります。
+- **Compact (keep going as is)** — press **"Compact"** at the right end of the context
+  bar to summarize the conversation so far and **hand only the summary to a fresh
+  session**, continuing in the same chat. The on-screen history stays intact; only the
+  summary carries over (producing the summary costs one turn's worth of tokens). Good
+  when you want to keep a long conversation going as is.
+- **Open a new chat** — if you're at a natural break, opening a new chat and writing out
+  just the key points yourself is the surest way.
 
-放置した場合の安全網も用意されています。使用率が **90%** を超えたまま次のやり取りを
-始めると、先に自動で圧縮（要約引き継ぎ）してから応答します（⚙設定 → 「アシスタント」
-タブの「コンテキストの自動圧縮」で OFF 可）。さらに、圧縮する前にコンテキストが上限を
-超えてしまった場合でも、システムが自動で要約による引き継ぎを試みてから返信を再実行
-します。それでも回復できないほど超えていたときは、その旨のお知らせが会話（と通知
-センター）に出るので、「圧縮」か新しいチャットで対処してください。
+Either way, the longer you push on with a bloated conversation, the more you invite
+degraded response quality, failed turns, and ballooning token spend.
 
-## 走っているエージェントの会話を読む・返信する
+There's also a safety net if you leave it alone. If usage is still above **90%** when
+you start the next exchange, it auto-compacts first (summary handoff) before responding
+(can be turned OFF with "Auto-compact chat context" on ⚙Settings → the "Assistant" tab).
+Furthermore, even if the context blows past the limit before compacting, the system
+automatically attempts a summary handoff and then retries the reply. If it was exceeded
+too far to recover, a notice to that effect appears in the conversation (and the
+notification center), so deal with it via "Compact" or a new chat.
 
-claude、codex、opencodeのセッションは **チャット**表示で操作できます。ターミナル（CLI）実行なら
-ペイン上部の **チャット ⇄ ターミナル** で切り替え、マネージド実行なら最初からチャット表示だけを
-使います。チャット表示では
-やり取りが**ターンごとのMarkdown**で読め、そのまま返信もできます。スマホで進捗を
-追いながら短く返す、という使い方に向きます。
+## Reading and replying to a running agent's conversation
 
-エージェントがあなたの判断を待っているときは、対応するカードが出ます。使えるカードや
-選択肢はエージェントと状態によって異なります。
+claude, codex, and opencode sessions can be driven from the **Chat** view. With Terminal (CLI)
+execution, switch with **Chat ⇄ Terminal** at the top of the pane; with Managed execution
+you use only the chat view from the start. In the chat view the
+exchange reads as **per-turn Markdown**, and you can reply right there. It suits
+following progress on your phone and firing back short replies.
 
-- **質問中** — 選択肢や自由入力で答えます。
-- **プラン承認待ち** — 提案されたプランを「承認して実行」か「却下（続ける）」。
-- **許可待ち** — 編集やコマンドの実行を「許可」／「拒否」（以降このセッションで自動許可も選べます）。
+When the agent is waiting on your judgment, a corresponding card appears. Which cards and
+choices are available depends on the agent and the state.
 
-下の入力欄からプロンプトを送れば、端末に打ち込むのと同じように指示できます（画像の
-貼り付けも可）。**モード切り替え**で Plan（計画）⇄ 実装 を選べ、実行中は **「停止」**（Esc）
-で止められます。送った直後は送信済みであることが表示され、エージェントが処理を始めると
-会話に反映されます。
+- **Question** — answer with the choices or free-form input.
+- **Plan awaiting approval** — either "Approve and run" the proposed plan or "Reject (keep going)".
+- **Awaiting permission** — "Allow" / "Deny" the edit or command run (you can also choose to auto-allow for the rest of this session).
 
-停止中のセッションは履歴の閲覧のみで、返信するには **「再開して続ける」** で再開します。
+Sending a prompt from the input field below works just like typing into the terminal
+(image paste included). The **mode toggle** lets you pick Plan ⇄ Build, and while it's
+running you can halt it with **"Stop"** (Esc). Right after sending, the message shows as
+sent, and it's reflected in the conversation once the agent starts processing.
 
-## メモキュー
+A stopped session is read-only history; to reply, restart it with **"Resume and continue"**.
 
-思いついた指示を**その場で溜めておき、あとでまとめてセッションに流す**のがメモキューです
-（左ペインの **メモキュー**）。通勤中にスマホで「あれ直したい」を書き溜め、PC で一気に
-渡す、といった使い方ができます。
+## Memo queue
 
-- **溜める** — 「走り書きメモを追加…（後でまとめて送信）」に書いて「追加」。ファイルを開き、[05](05-files.md) の「送る」から溜めることもできます。リポジトリ・カテゴリでグループ分けされます。
-- **AI で整理する** — メモを選び **「選択したメモをアシスタントで整理」** すると、走り書きを明確な指示文に整え、カテゴリを提案してくれます。結果は **必ずプレビュー**され、「◯件を反映」で承認するまで適用されません（勝手に書き換わらないので安心です）。
-- **送る** — 送信先の稼働セッションを選び、**「選択を送信」** で一括送信します。カテゴリ単位の「送信」もできます。送信先の稼働セッションが無いときは、先にセッションを起動してください。
+The memo queue is for **capturing instructions on the spot as they occur to you, then
+flushing them to a session together later** (the **Memo queue** in the left pane). You can,
+say, jot down "want to fix that" items on your phone during the commute, then hand them
+over in one go at your PC.
+
+- **Capture** — write into "Add a quick memo… (send them together later)" and press "Add". You can also open a file and capture from "Send" in [05](05-files.md). Memos are grouped by repository and category.
+- **Tidy up with AI** — select memos and hit **"Organize the selected memos with an assistant"**: it turns scribbles into clear instructions and suggests categories. The result is **always previewed** and nothing is applied until you approve with "Apply N item(s)" (nothing gets rewritten behind your back).
+- **Send** — pick a running destination session and send in bulk with **"Send selection"**. You can also send a whole category at once ("Send this category together"). If there's no running session to send to, start one first.
 
 ---
 
-仕組みを知りたい人へ: [dev/04 Workspace Agent（チャット・アシスタント面）](../../dev/04-workspace-agent.md)・[dev/03 Control Plane（memo キュー）](../../dev/03-control-plane.md)
+For those who want to know how it works: [dev/04 Workspace Agent (chat / assistant surface)](../../dev/04-workspace-agent.md) · [dev/03 Control Plane (memo queue)](../../dev/03-control-plane.md)
