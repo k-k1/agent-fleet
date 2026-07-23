@@ -49,6 +49,11 @@ export const en: Record<keyof typeof ja, string> = {
   "err.conn_discord_destination_required": "Enter exactly one destination (channel ID or user ID).",
   "err.conn_discord_destination_invalid": "The destination must be a numeric Discord ID (use Developer Mode → Copy ID).",
   "err.conn_discord_token_invalid": "Discord rejected the token (check the bot token).",
+  "err.conn_slack_token_required": "Enter a Slack bot token (xoxb-).",
+  "err.conn_slack_destination_required": "Enter a channel ID or a user ID (receive also needs the bound user ID).",
+  "err.conn_slack_destination_invalid": "The destination must be a Slack ID (channel C…, user U…).",
+  "err.conn_slack_token_invalid": "Slack rejected the token (check the bot / app-level token).",
+  "err.conn_slack_app_token_required": "Receiving replies needs an app-level token (xapp-).",
   "err.assistant_not_found": "Assistant not found.",
   "err.assistant_builtin_readonly_edit": "Builtin assistants can't be edited.",
   "err.assistant_builtin_readonly_delete": "Builtin assistants can't be deleted.",
@@ -287,6 +292,15 @@ export const en: Record<keyof typeof ja, string> = {
   "ops.ev_report": "Session reports",
   "ops.dc_hint":
     "In the Discord Developer Portal (discord.com/developers/applications), create New Application → Bot → Reset Token and paste the token here. Then just open the “Invite to your server” link to add the bot to your private server and pick a channel — no copying numeric IDs. The token is stored encrypted inside the workspace and used only to send notifications (session display name and state only — never logs or secrets).",
+  "ops.sl_bot_placeholder": "Slack bot token (xoxb-…)",
+  "ops.sl_app_placeholder": "App-level token (xapp-…) — only for two-way receive",
+  "ops.sl_user_placeholder": "Your Slack member ID (U…)",
+  "ops.sl_waiting_channel": "Waiting for the bot to be in a channel… (invite it with /invite @your-bot, then pick it)",
+  "ops.sl_user_label": "Your Slack member ID",
+  "ops.sl_user_sub": "Auto-filled from your email; who gets @mentioned and whose replies/clicks are trusted (required for two-way).",
+  "ops.sl_receive_sub": "Replying in a session's thread sends the text into that session; buttons answer questions/permissions. Needs the app-level token.",
+  "ops.sl_hint":
+    "Create a Slack app (api.slack.com/apps → From scratch), enable Socket Mode, add bot scopes (chat:write, channels:read, channels:history, groups:history, im:history, reactions:write, users:read, users:read.email) plus an app-level token with connections:write, subscribe to message events, then install it and /invite the bot to a channel. Paste both tokens here. They're stored encrypted inside the workspace and used only for notifications (display name and state — never logs or secrets).",
 
   // --- common (save) ---
   "common.save_failed": "Failed to save.",
@@ -1666,7 +1680,8 @@ export const en: Record<keyof typeof ja, string> = {
   "launch.template_insert_title": "Insert a first prompt from a template",
   "launch.template_insert": "Insert from a template…",
   "launch.first_prompt_note": "Once the session is up, this is auto-sent exactly once (⌘/Ctrl+Enter to launch).",
-  "launch.image_paste_note": "You can paste images here.",
+  "launch.image_paste_note": "Paste images here, or attach with the ＋ button (on a phone, use ＋).",
+  "launch.attach_image": "Attach an image",
   "launch.start_worktree": "Start in a worktree",
 
   // === P2 start modal (features/repos/StartModal.tsx) ===

@@ -282,7 +282,7 @@ func TestDiscordThreadPerSession(t *testing.T) {
 	if posts[len(posts)-1].ch != "42" {
 		t.Fatalf("session-less post=%+v", posts[len(posts)-1])
 	}
-	if _, err := os.Stat(threadsPath()); err != nil {
+	if _, err := os.Stat(discordThreads.path()); err != nil {
 		t.Fatalf("thread store not persisted: %v", err)
 	}
 }

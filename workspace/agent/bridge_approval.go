@@ -116,7 +116,7 @@ func bridgeApprovalGate(op, summary string) error {
 	}); err != nil {
 		return errApprovalUndeliverable
 	}
-	if err := bridge.PostOperatorApproval(approvalPrompt(op, summary), id); err != nil {
+	if err := bridge.PostOperatorApproval(mcpConvID, approvalPrompt(op, summary), id); err != nil {
 		bridgeApprovals.Remove(id)
 		return errApprovalUndeliverable // fail closed — no channel to approve through
 	}

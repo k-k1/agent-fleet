@@ -488,6 +488,12 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("DELETE /api/connections/discord", rest)
 	mux.HandleFunc("POST /api/connections/discord/inspect", rest)
 	mux.HandleFunc("POST /api/connections/discord/guilds", rest)
+	// Chat bridge Slack (docs/37 Slack 追随): bot + app-level tokens live in the
+	// Workspace's encrypted secrets like Discord above — proxied, never held here.
+	mux.HandleFunc("PUT /api/connections/slack", rest)
+	mux.HandleFunc("DELETE /api/connections/slack", rest)
+	mux.HandleFunc("POST /api/connections/slack/inspect", rest)
+	mux.HandleFunc("POST /api/connections/slack/channels", rest)
 }
 
 // Internal git provider (docs/reference/internal-git-provider, ADR 0010).

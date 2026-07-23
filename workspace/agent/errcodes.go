@@ -40,6 +40,13 @@ const (
 	errCodeConnDiscordDestInvalid   = "conn_discord_destination_invalid"
 	errCodeConnDiscordTokenInvalid  = "conn_discord_token_invalid"
 
+	// Slack チャットブリッジ接続（connections_slack.go, docs/37 Slack 追随）
+	errCodeConnSlackTokenRequired    = "conn_slack_token_required"
+	errCodeConnSlackDestRequired     = "conn_slack_destination_required"
+	errCodeConnSlackDestInvalid      = "conn_slack_destination_invalid"
+	errCodeConnSlackTokenInvalid     = "conn_slack_token_invalid"
+	errCodeConnSlackAppTokenRequired = "conn_slack_app_token_required"
+
 	// アシスタント CRUD（assistants.go）
 	errCodeAssistantNotFound      = "assistant_not_found"
 	errCodeAssistantBuiltinEdit   = "assistant_builtin_readonly_edit"

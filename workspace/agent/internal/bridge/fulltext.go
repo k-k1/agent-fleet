@@ -46,6 +46,31 @@ func renderBodyForDiscord(body string) string {
 	return tablesToCodeBlocks(ScrubSecrets(body))
 }
 
+// renderBodyForSlack prepares a body for a Slack message: scrub secrets, reflow tables into
+// code blocks, then a light GFM→mrkdwn pass (Slack uses *bold* / has no # headings), so an
+// agent's GFM output reads sensibly. Best-effort, like Discord's rendering — a rare bold
+// span inside a code fence may be touched; leaking a key matters more than perfect markdown.
+func renderBodyForSlack(body string) string {
+	return mrkdwnFromGFM(tablesToCodeBlocks(ScrubSecrets(body)))
+}
+
+var (
+	// gfmHeadingRe matches an ATX heading line (## Title); Slack has no headings, so it
+	// becomes a bold line.
+	gfmHeadingRe = regexp.MustCompile(`(?m)^\s{0,3}#{1,6}\s+(.+?)\s*$`)
+	// gfmBoldRe matches **bold** (Slack bold is a single *…*).
+	gfmBoldRe = regexp.MustCompile(`\*\*([^*\n]+)\*\*`)
+)
+
+// mrkdwnFromGFM applies the minimal GFM→Slack-mrkdwn fixups that make the biggest legibility
+// difference: ATX headings → bold lines, **bold** → *bold*. Everything else (lists, inline
+// code, code fences, links) already renders close enough in Slack mrkdwn.
+func mrkdwnFromGFM(s string) string {
+	s = gfmHeadingRe.ReplaceAllString(s, "*$1*")
+	s = gfmBoldRe.ReplaceAllString(s, "*$1*")
+	return s
+}
+
 // knownSecretPatterns are high-precision provider token shapes — matched
 // verbatim regardless of entropy so short, structured credentials still go.
 var knownSecretPatterns = []*regexp.Regexp{
@@ -165,16 +190,24 @@ func tablesToCodeBlocks(s string) string {
 	return strings.Join(out, "\n")
 }
 
-// chunkMessage splits content into Discord-sized pieces. firstPrefix (the
+// chunkMessage splits content into Discord-sized pieces (chunkTo with Discord's
+// per-message limit). Kept as the Discord entry point; Slack calls chunkTo with
+// its own larger limit (docs/37 Slack 追随).
+func chunkMessage(content, firstPrefix string) []string {
+	return chunkTo(content, firstPrefix, discordContentLimit)
+}
+
+// chunkTo splits content into pieces no larger than limit runes. firstPrefix (the
 // mention) is prepended to the first chunk and counts against its budget so the
 // pinged chunk still fits. Splits prefer a line then a word boundary, falling
 // back to a hard rune cut; chunk count is bounded (maxBodyChunks) with an
-// ellipsis marking any dropped overflow.
-func chunkMessage(content, firstPrefix string) []string {
+// ellipsis marking any dropped overflow. Provider-independent — the only
+// per-provider knob is the character limit.
+func chunkTo(content, firstPrefix string, limit int) []string {
 	remaining := []rune(strings.TrimRight(content, "\n"))
 	var chunks []string
 	for len(remaining) > 0 {
-		budget := discordContentLimit
+		budget := limit
 		if len(chunks) == 0 {
 			budget -= len([]rune(firstPrefix))
 		}

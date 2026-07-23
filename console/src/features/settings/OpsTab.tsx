@@ -9,6 +9,7 @@ import { useSettingsUI } from "./store.ts";
 import { OnOff } from "./controls.tsx";
 import { ProviderCard, StatusPill, Hint, DisconnectButton } from "./providerCard.tsx";
 import { getLocale, useT } from "../../lib/i18n/index.ts";
+import { useTenantStore } from "../../core/store/tenant.ts";
 
 // OpsTab is the home for service-operations connections (docs/25 Phase 1): external
 // monitoring / incident tools the SRE assistant talks to over MCP. Today: PagerDuty,
@@ -55,6 +56,7 @@ export function OpsTab() {
           <CloudWatchCard st={conns.cloudwatch} reload={reload} />
           <div className="conn-cat">{tr("ops.cat_chat")}</div>
           <DiscordCard st={conns.discord} reload={reload} />
+          <SlackCard st={conns.slack} reload={reload} />
         </>
       )}
     </div>
@@ -440,6 +442,302 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
               </div>
             ))}
           {/* 全文ブリッジ (docs/37): works in either mode, once a destination is chosen. */}
+          {(found || editing || dm) && (
+            <div className="ps-row">
+              <span className="ps-label">
+                {tr("ops.dc_fulltext_label")}
+                <span className="sub">{tr("ops.dc_fulltext_sub")}</span>
+              </span>
+              <OnOff value={fullText} onChange={setFullText} />
+            </div>
+          )}
+          <div className="flow">
+            <button disabled={busy || !ok} onClick={save}>
+              {tr(editing ? "common.save" : "conn.connect")}
+            </button>
+            {editing ? (
+              <button className="ghost" onClick={() => setEditing(false)}>
+                {tr("common.cancel")}
+              </button>
+            ) : (
+              <button className="ghost" onClick={() => setDm(!dm)}>
+                {tr(dm ? "ops.dc_advanced_channel" : "ops.dc_advanced_dm")}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </ProviderCard>
+  );
+}
+
+// SlackCard: the chat-bridge Slack connection (docs/37 Slack 追随), the Socket-Mode twin of
+// DiscordCard. The user pastes their OWN app's two tokens (bot xoxb- for the Web API + app-
+// level xapp- for Socket-Mode receive); Verify validates them and returns the workspace +
+// bot identity. The destination is picked from the channels the bot was invited to
+// (users.conversations), and the bound user id (mention + identity binding) is auto-resolved
+// from the member's email — no Copy-Member-ID. DM mode (manual user id) is the advanced
+// fallback. Connect fires a test notification so "did it arrive?" is answered on the spot.
+function SlackCard({ st, reload }: { st: any; reload: () => void }) {
+  const tr = useT();
+  const toast = useToast();
+  const email = useTenantStore((s) => s.whoami?.email || "");
+  const [botToken, setBotToken] = useState("");
+  const [appToken, setAppToken] = useState("");
+  const [insp, setInsp] = useState<{ botName: string; teamName: string; botToken: string; appToken: string } | null>(null);
+  const [chans, setChans] = useState<{ id: string; label: string }[] | null>(null);
+  const [channel, setChannel] = useState("");
+  const [dm, setDm] = useState(false);
+  const [userId, setUserId] = useState("");
+  const [threads, setThreads] = useState(true);
+  const [receive, setReceive] = useState(false);
+  const [fullText, setFullText] = useState(false);
+  const [mirrorInput, setMirrorInput] = useState(true);
+  const [events, setEvents] = useState<string[]>(DC_EVENTS.map(([k]) => k));
+  const [showEvents, setShowEvents] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [localSt, setLocalSt] = useState<any>(null);
+  const view = st?.connected ? st : localSt?.connected ? localSt : null;
+  const ok = editing || (!!insp && (dm ? userId.trim() !== "" : channel !== "") && events.length > 0 && (!receive || userId.trim() !== ""));
+
+  const toggle = (key: string, on: boolean) =>
+    setEvents((prev) => (on ? [...prev.filter((k) => k !== key), key] : prev.filter((k) => k !== key)));
+
+  const verify = async () => {
+    if (!botToken.trim()) return;
+    setBusy(true);
+    try {
+      const res = await apiJSON("api/connections/slack/inspect", "POST", {
+        botToken: botToken.trim(),
+        appToken: appToken.trim(),
+      });
+      if (res && res.error) {
+        toast(tr("conn.connect_failed", { msg: errText(res.error) }));
+        return;
+      }
+      setInsp({ botName: res.botName, teamName: res.teamName, botToken: botToken.trim(), appToken: appToken.trim() });
+      setBotToken("");
+      setAppToken("");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Poll the channels the bot was invited to; auto-resolve the bound user id from the email.
+  const found = !!(chans && chans.length > 0);
+  useEffect(() => {
+    if (!insp || dm || found) return;
+    let stopped = false;
+    const load = async () => {
+      const res = await apiJSON("api/connections/slack/channels", "POST", { botToken: insp.botToken, email });
+      if (stopped || !res || res.error) return;
+      const opts = (Array.isArray(res.channels) ? res.channels : []).map((c: any) => ({ id: c.id, label: "#" + c.name }));
+      setChans(opts);
+      if (res.resolvedUserId && userId === "") setUserId(res.resolvedUserId);
+      if (opts.length === 1) setChannel(opts[0].id);
+    };
+    void load();
+    const t = setInterval(load, 3000);
+    return () => {
+      stopped = true;
+      clearInterval(t);
+    };
+  }, [insp, dm, found, email, userId]);
+
+  const save = async () => {
+    if (!ok || (!insp && !editing)) return;
+    setBusy(true);
+    try {
+      const res = await apiJSON("api/connections/slack", "PUT", {
+        botToken: editing ? "" : insp!.botToken,
+        appToken: editing ? "" : insp!.appToken,
+        channelId: dm ? "" : channel,
+        userId: userId.trim(),
+        events,
+        threads: !dm && threads,
+        receive: !dm && receive,
+        mirrorInput: !dm && threads ? mirrorInput : undefined,
+        fullText,
+        lang: getLocale(),
+      });
+      if (res && res.error) {
+        toast(tr("conn.connect_failed", { msg: errText(res.error) }));
+        return;
+      }
+      toast(res?.testError ? tr("ops.dc_test_failed", { msg: String(res.testError) }) : tr("ops.dc_test_sent"));
+      setLocalSt(res);
+      setInsp(null);
+      setEditing(false);
+      setChans(null);
+      setChannel("");
+      reload();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const startEdit = () => {
+    if (!view) return;
+    setDm(view.mode === "dm");
+    setThreads(!!view.threads);
+    setReceive(!!view.receive);
+    setMirrorInput(view.mirrorInput !== false);
+    setFullText(!!view.fullText);
+    setUserId(view.userId || "");
+    setChannel(view.channelId || "");
+    setEvents(Array.isArray(view.events) && view.events.length ? view.events : DC_EVENTS.map(([k]) => k));
+    setEditing(true);
+  };
+  const disconnect = async () => {
+    await raw("api/connections/slack", { method: "DELETE" });
+    setLocalSt(null);
+    reload();
+  };
+
+  return (
+    <ProviderCard
+      id="slack"
+      name="Slack"
+      status={<StatusPill on={!!view}>{view ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>}
+    >
+      {view && !editing ? (
+        <div className="p-who">
+          <span className="p-em">
+            {tr(view.mode === "channel" ? "ops.dc_connected_channel" : "ops.dc_connected_dm")}
+          </span>
+          {view.botName && <span className="p-pl">{view.botName}</span>}
+          {view.teamName && <span className="p-pl">{view.teamName}</span>}
+          {view.threads && <span className="p-pl">{tr("ops.dc_pill_threads")}</span>}
+          {view.receive && <span className="p-pl">{tr("ops.dc_pill_receive")}</span>}
+          {view.mirrorInput && <span className="p-pl">{tr("ops.dc_pill_mirror")}</span>}
+          {view.operator && <span className="p-pl">{tr("ops.dc_pill_operator")}</span>}
+          {view.fullText && <span className="p-pl">{tr("ops.dc_pill_fulltext")}</span>}
+          {Array.isArray(view.events) && view.events.length < DC_EVENTS.length && (
+            <span className="p-pl">
+              {DC_EVENTS.filter(([k]) => view.events.includes(k))
+                .map(([, l]) => tr(l as Parameters<typeof tr>[0]))
+                .join(" / ")}
+            </span>
+          )}
+          <button className="ghost" onClick={startEdit}>
+            {tr("ops.dc_edit")}
+          </button>
+          <DisconnectButton onClick={disconnect} />
+        </div>
+      ) : !insp && !editing ? (
+        <div className="p-body">
+          <div className="flow">
+            <input
+              className="cinput"
+              type="password"
+              placeholder={tr("ops.sl_bot_placeholder")}
+              value={botToken}
+              onChange={(e) => setBotToken(e.target.value)}
+            />
+          </div>
+          <div className="flow">
+            <input
+              className="cinput"
+              type="password"
+              placeholder={tr("ops.sl_app_placeholder")}
+              value={appToken}
+              onChange={(e) => setAppToken(e.target.value)}
+            />
+            <button disabled={busy || !botToken.trim()} onClick={verify}>
+              {tr("ops.dc_verify")}
+            </button>
+          </div>
+          <Hint>{tr("ops.sl_hint")}</Hint>
+        </div>
+      ) : (
+        <div className="p-body">
+          {insp && (
+            <div className="flow">
+              <span className="p-em">{insp.botName}</span>
+              {insp.teamName && <span className="p-pl">{insp.teamName}</span>}
+            </div>
+          )}
+          {insp && dm && (
+            <div className="flow">
+              <input
+                className="cinput"
+                type="text"
+                placeholder={tr("ops.sl_user_placeholder")}
+                value={userId}
+                onChange={(e) => setUserId(e.target.value)}
+              />
+            </div>
+          )}
+          {insp && !dm && !found && <p className="muted">{tr("ops.sl_waiting_channel")}</p>}
+          {insp && !dm && found && (
+            <div className="flow">
+              <select className="cinput" value={channel} onChange={(e) => setChannel(e.target.value)}>
+                <option value="">{tr("ops.dc_channel_select")}</option>
+                {chans!.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          {!dm && (found || editing) && (
+            <>
+              <div className="ps-row">
+                <span className="ps-label">
+                  {tr("ops.dc_threads_label")}
+                  <span className="sub">{tr("ops.dc_threads_sub")}</span>
+                </span>
+                <OnOff value={threads} onChange={setThreads} />
+              </div>
+              <div className="ps-row">
+                <span className="ps-label">
+                  {tr("ops.sl_user_label")}
+                  <span className="sub">{tr("ops.sl_user_sub")}</span>
+                </span>
+                <input
+                  className="cinput"
+                  type="text"
+                  style={{ maxWidth: "12em" }}
+                  placeholder={tr("ops.sl_user_placeholder")}
+                  value={userId}
+                  onChange={(e) => setUserId(e.target.value)}
+                />
+              </div>
+              <div className="ps-row">
+                <span className="ps-label">
+                  {tr("ops.dc_receive_label")}
+                  <span className="sub">{tr("ops.sl_receive_sub")}</span>
+                </span>
+                <OnOff value={receive} onChange={setReceive} />
+              </div>
+              {threads && (
+                <div className="ps-row">
+                  <span className="ps-label">
+                    {tr("ops.dc_mirror_label")}
+                    <span className="sub">{tr("ops.dc_mirror_sub")}</span>
+                  </span>
+                  <OnOff value={mirrorInput} onChange={setMirrorInput} />
+                </div>
+              )}
+            </>
+          )}
+          <div className="ps-row ps-clickable" onClick={() => setShowEvents((v) => !v)}>
+            <span className="ps-label">
+              {tr("ops.dc_events_label")}
+              <span className="sub">
+                {events.length === DC_EVENTS.length ? tr("ops.dc_events_all") : `${events.length} / ${DC_EVENTS.length}`}
+              </span>
+            </span>
+            <span className="muted">{showEvents ? "▾" : "▸"}</span>
+          </div>
+          {showEvents &&
+            DC_EVENTS.map(([key, label]) => (
+              <div className="ps-row" key={key}>
+                <span className="ps-label">{tr(label as Parameters<typeof tr>[0])}</span>
+                <OnOff value={events.includes(key)} onChange={(on) => toggle(key, on)} />
+              </div>
+            ))}
           {(found || editing || dm) && (
             <div className="ps-row">
               <span className="ps-label">

@@ -494,6 +494,20 @@
   justify-content: space-between;
   gap: 8px;
 }
+.launch-prompt-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.launch-attach-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 8px;
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+}
 .launch-tmpl-select {
   max-width: 200px;
   background: var(--panel2);
