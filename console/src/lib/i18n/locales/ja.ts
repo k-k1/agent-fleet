@@ -225,6 +225,7 @@ export const ja = {
   "provider.step_copy_code": "コードをコピー",
   "provider.step_open_link": "リンクを開いて貼り付け",
   "provider.open_url": "{url} を開く ↗",
+  "provider.issue_link": "トークン発行ページを開く",
   "provider.step_wait_approval": "承認を待つ",
 
   // --- 運用ツール接続（features/settings/OpsTab.tsx）---

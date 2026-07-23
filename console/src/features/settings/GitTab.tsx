@@ -7,7 +7,7 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useConnections } from "./useConnections.ts";
-import { ProviderCard, StatusPill, DeviceSteps, DisconnectButton } from "./providerCard.tsx";
+import { ProviderCard, StatusPill, DeviceSteps, DisconnectButton, IssueLink } from "./providerCard.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 
 interface RowProps {
@@ -252,6 +252,7 @@ function GithubRow({ st, reload }: RowProps) {
               {tr("common.back")}
             </button>
           </div>
+          <IssueLink url="https://github.com/settings/tokens" />
         </div>
       ) : (
         <>
@@ -381,6 +382,7 @@ function BitbucketRow({ st, reload }: RowProps) {
               {tr("common.back")}
             </button>
           </div>
+          <IssueLink url="https://id.atlassian.com/manage-profile/security/api-tokens" />
         </div>
       ) : (
         <>

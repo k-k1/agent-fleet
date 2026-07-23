@@ -7,7 +7,7 @@ import { EmptyState } from "../../ui/EmptyState.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useConnections } from "./useConnections.ts";
 import { OnOff } from "./controls.tsx";
-import { ProviderCard, StatusPill, Hint, DisconnectButton } from "./providerCard.tsx";
+import { ProviderCard, StatusPill, Hint, DisconnectButton, IssueLink } from "./providerCard.tsx";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { getLocale, useT } from "../../lib/i18n/index.ts";
 
@@ -319,6 +319,7 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
             </button>
           </div>
           <Hint>{tr("ops.dc_hint")}</Hint>
+          <IssueLink url="https://discord.com/developers/applications" />
         </div>
       ) : (
         <div className="p-body">
@@ -570,6 +571,7 @@ function SlackCard({ st, reload }: { st: any; reload: () => void }) {
             </button>
           </div>
           <Hint>{tr("ops.sl_hint")}</Hint>
+          <IssueLink url="https://api.slack.com/apps" />
         </div>
       ) : (
         <div className="p-body">

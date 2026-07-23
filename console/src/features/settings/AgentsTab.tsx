@@ -16,7 +16,7 @@ import { useConnections } from "./useConnections.ts";
 import { useSettingsUI } from "./store.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../core/store/workspace.ts";
 import { usePolling } from "./usePolling.ts";
-import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton } from "./providerCard.tsx";
+import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton, IssueLink } from "./providerCard.tsx";
 import { kindDisplayName } from "../../lib/sessionkind.ts";
 import { useT } from "../../lib/i18n/index.ts";
 
@@ -777,6 +777,7 @@ function CodexCard({
               {tr("common.back")}
             </button>
           </div>
+          <IssueLink url="https://platform.openai.com/api-keys" />
         </div>
       ) : (
         <>
@@ -943,13 +944,15 @@ function CursorCard({ running, st, reload }: { running: boolean; st: any; reload
 
 // opencode: provider API keys (stored, injected as env at launch), plus the RTK and
 // Web UI toggles. "Connected" = at least one key saved.
+// [presetId, label, envVar, issueUrl]. issueUrl is the provider's fixed API-key page
+// (empty = none / handled elsewhere — "go" keeps its own opencode.ai/auth hint below).
 const OC_PRESETS = [
-  ["go", "OpenCode Go", "OPENCODE_API_KEY"],
-  ["anthropic", "Anthropic", "ANTHROPIC_API_KEY"],
-  ["openai", "OpenAI", "OPENAI_API_KEY"],
-  ["openrouter", "OpenRouter", "OPENROUTER_API_KEY"],
-  ["google", "Google Gemini", "GEMINI_API_KEY"],
-  ["custom", "", ""], // label resolved via i18n (agents.oc_custom) at render
+  ["go", "OpenCode Go", "OPENCODE_API_KEY", ""],
+  ["anthropic", "Anthropic", "ANTHROPIC_API_KEY", "https://console.anthropic.com/settings/keys"],
+  ["openai", "OpenAI", "OPENAI_API_KEY", "https://platform.openai.com/api-keys"],
+  ["openrouter", "OpenRouter", "OPENROUTER_API_KEY", "https://openrouter.ai/keys"],
+  ["google", "Google Gemini", "GEMINI_API_KEY", "https://aistudio.google.com/apikey"],
+  ["custom", "", "", ""], // label resolved via i18n (agents.oc_custom) at render
 ];
 
 function OpencodeCard({
@@ -974,6 +977,7 @@ function OpencodeCard({
   const envs = st?.envs || [];
   const envName =
     preset === "custom" ? customEnv.trim().toUpperCase() : OC_PRESETS.find((p) => p[0] === preset)?.[2] || "";
+  const issueUrl = OC_PRESETS.find((p) => p[0] === preset)?.[3] || "";
 
   const add = async () => {
     if (!envName || !key.trim()) return;
@@ -1022,6 +1026,7 @@ function OpencodeCard({
                 {tr("agents.oc_hint")}
               </Hint>
             )}
+            {issueUrl && <IssueLink url={issueUrl} />}
             {envs.length > 0 && (
               <ul className="oc-keys">
                 {envs.map((e: string) => (
