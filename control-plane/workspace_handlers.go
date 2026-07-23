@@ -53,9 +53,11 @@ func (a workspaceAPI) whoami(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (a workspaceAPI) get(w http.ResponseWriter, r *http.Request, res *resolved) {
+// workspacePayload composes the GET /api/workspace body. Shared by the REST
+// handler and the /api/events push channel so both emit the identical shape.
+func (a workspaceAPI) workspacePayload(ctx context.Context, res *resolved) map[string]any {
 	rt := res.rt
-	m := map[string]any{"name": rt.Name(), "state": rt.State(r.Context())}
+	m := map[string]any{"name": rt.Name(), "state": rt.State(ctx)}
 	// Live boot-install phase for the "starting" dialog (native rootfs only —
 	// docs/35 §35.9-9). Native State() reports "running" the instant the process
 	// spawns (pid-alive, not health), so state alone can't tell the Console the
@@ -66,7 +68,11 @@ func (a workspaceAPI) get(w http.ResponseWriter, r *http.Request, res *resolved)
 			m["bootPhase"] = phase
 		}
 	}
-	writeJSON(w, http.StatusOK, m)
+	return m
+}
+
+func (a workspaceAPI) get(w http.ResponseWriter, r *http.Request, res *resolved) {
+	writeJSON(w, http.StatusOK, a.workspacePayload(r.Context(), res))
 }
 
 func (a workspaceAPI) start(w http.ResponseWriter, r *http.Request, res *resolved) {
@@ -243,12 +249,12 @@ func fmtStarted(createdAt string) string {
 	return ""
 }
 
-// sessionsList serves GET /api/sessions. While the Workspace runs the Agent
-// is authoritative: fetch its list and mirror it into the DB. While it is stopped
-// (or the Agent is briefly unreachable) serve the last mirrored list from the DB —
-// as stopped — so the user still sees, and can resume, their sessions.
-func (a workspaceAPI) sessionsList(w http.ResponseWriter, r *http.Request, res *resolved) {
-	ctx := r.Context()
+// sessionsPayload composes the GET /api/sessions body. While the Workspace runs
+// the Agent is authoritative: fetch its list and mirror it into the DB. While it
+// is stopped (or the Agent is briefly unreachable) serve the last mirrored list
+// from the DB — as stopped — so the user still sees, and can resume, their
+// sessions. Shared by the REST handler and the /api/events push channel.
+func (a workspaceAPI) sessionsPayload(ctx context.Context, res *resolved) map[string]any {
 	if res.rt.State(ctx) == "running" {
 		if list, err := a.mgr.agentSessions(ctx, res.rt); err == nil {
 			rows := make([]SessionRow, 0, len(list))
@@ -263,8 +269,7 @@ func (a workspaceAPI) sessionsList(w http.ResponseWriter, r *http.Request, res *
 				})
 			}
 			_ = a.mgr.store.ReplaceSessions(ctx, res.ws.ID, rows)
-			writeJSON(w, http.StatusOK, map[string]any{"sessions": list})
-			return
+			return map[string]any{"sessions": list}
 		}
 		// Agent unreachable (e.g. mid-start): fall through to the DB mirror.
 	}
@@ -282,7 +287,11 @@ func (a workspaceAPI) sessionsList(w http.ResponseWriter, r *http.Request, res *
 			Resumable: true,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"sessions": out})
+	return map[string]any{"sessions": out}
+}
+
+func (a workspaceAPI) sessionsList(w http.ResponseWriter, r *http.Request, res *resolved) {
+	writeJSON(w, http.StatusOK, a.sessionsPayload(r.Context(), res))
 }
 
 // sessionCreate enforces the per-user session quota (docs/16 P3-4) then
