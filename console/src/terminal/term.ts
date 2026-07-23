@@ -202,10 +202,37 @@ function fitInst(it: Inst | null | undefined) {
 // never leaves a black pane waiting on a size change that may never come. All the reach-ins
 // are private xterm internals (like FitAddon's own _core reach-in) and guarded, so a
 // version bump just makes them no-op rather than throw.
+// webglLost reports a WebGL renderer whose context died WITHOUT firing our
+// onContextLoss handler — the desktop variant of the silent mobile reclaim.
+// Browsers cap live WebGL contexts (~16 per tab) and evict the oldest when the
+// cap is hit; mirror⇄terminal toggling rebuilds contexts (hideTerm/revealTerm),
+// so heavy switching can silently kill the context of a pane that stayed
+// visible the whole time. Nothing can paint into a dead context — refresh(),
+// clear(), the whole recovery arsenal draws into the void — so it must be
+// DETECTED and the renderer rebuilt. Private reach-in (like FitAddon's own
+// _core usage), guarded so an xterm bump degrades to "never lost".
+function webglLost(it: Inst): boolean {
+  try {
+    /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+    const gl = (it.webgl as any)?._renderer?._gl;
+    return !!gl?.isContextLost?.();
+  } catch {
+    return false;
+  }
+}
+
 function forceFit(it: Inst | null | undefined) {
   if (!it || !it.term) return;
   const el = it.term.element;
   if (!el || !el.isConnected || el.getClientRects().length === 0) return;
+  // A silently-dead WebGL context makes every repaint below a no-op: rebuild the
+  // renderer first so clear/refresh have a live target. Runs only when the
+  // context is actually lost (a frozen canvas), so no swap-flicker on the hot
+  // recovery paths (focus/active/watchdog) in the healthy case.
+  if (it.webgl && webglLost(it)) {
+    dropWebgl(it);
+    loadWebgl(it);
+  }
   fitInst(it);
   try {
     /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -628,13 +655,9 @@ export function hideTerm(paneId: string) {
 export function revealTerm(paneId: string) {
   const it = inst(paneId);
   if (!it || !it.term) return;
-  try {
-    // Private API (like FitAddon's _core reach-in): detect a context that was
-    // lost while we weren't looking, where isContextLost() is all we ever get.
-    /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-    const gl = (it.webgl as any)?._renderer?._gl;
-    if (gl?.isContextLost?.()) dropWebgl(it);
-  } catch {}
+  // Detect a context that was lost while we weren't looking (webglLost — same
+  // guarded reach-in) so the rebuild below starts from a clean slate.
+  if (it.webgl && webglLost(it)) dropWebgl(it);
   loadWebgl(it);
   // Unconditional clear+repaint (not just fit+refresh): a reveal whose grid is already
   // the right shape must still force the renderer to redraw, or it stays black.
@@ -797,7 +820,15 @@ function startHeartbeat(paneId: string, ws: WebSocket) {
     // history panes are one-shot by design (84ac551), so live panes only.
     try {
       const el = it.term?.element;
-      if (el && el.isConnected && el.getClientRects().length > 0) it.term!.refresh(0, it.term!.rows - 1);
+      if (el && el.isConnected && el.getClientRects().length > 0) {
+        // A silently-dead WebGL context freezes the canvas and refresh() draws
+        // into the void — heavy mirror⇄terminal switching can evict a visible
+        // pane's context without any event (browser cap ~16). Detect it and let
+        // forceFit rebuild the renderer; otherwise stick to the flicker-free
+        // refresh-only repaint.
+        if (it.webgl && webglLost(it)) forceFit(it);
+        else it.term!.refresh(0, it.term!.rows - 1);
+      }
     } catch {}
   }, HB_INTERVAL);
 }
