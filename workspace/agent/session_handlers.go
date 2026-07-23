@@ -380,6 +380,14 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		if !filepath.IsAbs(parent) {
 			parent = filepath.Join(homeDir(), parent)
 		}
+		// SVN has no worktree analog (docs/41): isolate parallel work by checking out a
+		// different path into its own folder instead. Refuse a worktree launch here with a
+		// clear message rather than letting ensureWorktree fail on the missing .git.
+		if isSvnRepo(parent) {
+			httpx.WriteErr(w, http.StatusBadRequest, "svn_no_worktree",
+				"svn working copies have no worktree; check out a different path into its own folder instead")
+			return
+		}
 		var dir string
 		var err error
 		folderSeg := strings.TrimSpace(req.Folder) // "" => folder derives from the branch

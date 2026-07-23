@@ -32,6 +32,12 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 			return "fs.rename", q.Get("from") + " → " + q.Get("to"), true
 		case p == "/api/repos":
 			return "repo.clone", "", true
+		case p == "/api/repos/svn":
+			return "repo.svn.checkout", "", true
+		case name != "" && strings.HasSuffix(p, "/svn-update"):
+			return "repo.svn.update", name, true
+		case name != "" && strings.HasSuffix(p, "/svn-cleanup"):
+			return "repo.svn.cleanup", name, true
 		case name != "" && strings.HasSuffix(p, "/commit"):
 			return "git.commit", name, true
 		case name != "" && strings.HasSuffix(p, "/discard"):

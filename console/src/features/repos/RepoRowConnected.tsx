@@ -70,6 +70,26 @@ export function RepoRowConnected({ r, ctx, onToggle, sess }: RepoRowConnectedPro
         void refreshRepos();
         toast(tr("rp.ff_success", { name: r.name }), { kind: "success" });
       }}
+      // SVN (docs/41): update to the latest revision (auto-heals a wedged lock server-side).
+      onUpdate={r.vcs === "svn" ? async () => {
+        const res = await apiJSON(`api/repos/${encodeURIComponent(r.name)}/svn-update`, "POST", {});
+        if (res && res.error) {
+          toast(tr("rp.svn_update_failed", { err: errText(res.error) }));
+          return;
+        }
+        void refreshRepos();
+        toast(tr("rp.svn_update_success", { name: r.name, rev: res?.revision || "?" }), { kind: "success" });
+      } : undefined}
+      // SVN: explicitly clear a wedged working-copy lock (local; no auth needed).
+      onCleanup={r.vcs === "svn" ? async () => {
+        const res = await apiJSON(`api/repos/${encodeURIComponent(r.name)}/svn-cleanup`, "POST", {});
+        if (res && res.error) {
+          toast(tr("rp.svn_cleanup_failed", { err: errText(res.error) }));
+          return;
+        }
+        void refreshRepos();
+        toast(tr("rp.svn_cleanup_success", { name: r.name }), { kind: "success" });
+      } : undefined}
       onDelete={async () => {
         const ok = await askConfirm({
           title: tr("rp.delete_workcopy_title"),

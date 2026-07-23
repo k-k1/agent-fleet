@@ -18,6 +18,13 @@ export interface Repo {
   parent?: string; // for a worktree, the parent working copy's folder name
   createdAt?: string; // for a worktree, its creation time (RFC3339); orders worktrees under a base
 
+  /** Working-copy kind (docs/41): "git" (default/omitted) or "svn". SVN copies are
+   * flat — no branch/ahead/behind/worktree — so the Console gates git-only actions
+   * on it and shows the revision/URL below instead. */
+  vcs?: "git" | "svn";
+  revision?: string; // SVN: current working-copy revision
+  url?: string; // SVN: repository URL of the working copy
+
   /** Commit relationship to the parent working copy's current HEAD. This is
    * independent of ahead/behind above, which are relative to the upstream. */
   integration?: {

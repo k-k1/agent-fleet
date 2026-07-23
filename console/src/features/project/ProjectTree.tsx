@@ -14,8 +14,8 @@ import { EmptyState } from "../../ui/EmptyState.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useReposStore, useLaunchTarget } from "../repos/store.ts";
 import { NewRepoModal } from "../repos/NewRepoModal.tsx";
-import { cloneRepo } from "../repos/clone.ts";
-import type { CloneRequest } from "../repos/clone.ts";
+import { cloneRepo, svnCheckout } from "../repos/clone.ts";
+import type { CloneRequest, SvnCheckoutRequest } from "../repos/clone.ts";
 import { useRepoRailContext } from "../repos/useRepoRail.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useSessionUI } from "../sessions/ui.ts";
@@ -103,6 +103,27 @@ export function ProjectTree() {
     }
   };
 
+  const doSvnCheckout = async (req: SvnCheckoutRequest) => {
+    setCloning({ name: req.name || guessRepoName(req.url) });
+    try {
+      const res = await svnCheckout(req, toast); // proxy-timeout re-check + reveal live in clone.ts
+      const repo = res.ok && res.name ? useReposStore.getState().repos.find((r) => r.name === res.name) : undefined;
+      if (repo) {
+        toast(
+          <span className="clone-done-toast">
+            {tr("pj.cloned", { name: repo.name })}
+            <Button small icon="play" onClick={() => useLaunchTarget.getState().open(repo)}>
+              {tr("pj.start_now")}
+            </Button>
+          </span>,
+          { kind: "success", duration: 10000 },
+        );
+      }
+    } finally {
+      setCloning(null);
+    }
+  };
+
   return (
     <Section
       id="repos"
@@ -159,7 +180,7 @@ export function ProjectTree() {
           )}
         </div>
       </div>
-      {showClone && <NewRepoModal onClose={() => setShowClone(false)} onClone={doClone} repos={repos} />}
+      {showClone && <NewRepoModal onClose={() => setShowClone(false)} onClone={doClone} onSvnCheckout={doSvnCheckout} repos={repos} />}
       <ul className="sess-list proj-tree" ref={rail.ref} role="tree" onKeyDown={rail.onKeyDown}>
         {cloning && (
           <li className="repo-cloning">
