@@ -2,9 +2,27 @@ package main
 
 import (
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
+
+// ssmDefaultTitle builds "{alias} @MMDD-HHMM" from the host alias, falls back to the raw
+// instance target, and returns "" when neither is set.
+func TestSSMDefaultTitle(t *testing.T) {
+	now := time.Date(2026, 7, 23, 15, 30, 0, 0, time.UTC)
+	cases := []struct{ alias, target, want string }{
+		{"mng@g3prod-mon01", "i-06f4", "mng@g3prod-mon01 @0723-1530"},
+		{"mng@g3prod-mon01 (prod)", "i-06f4", "mng@g3prod-mon01 (prod) @0723-1530"},
+		{"  ", "i-abc", "i-abc @0723-1530"}, // blank alias → instance target
+		{"", "", ""},                        // nothing known → empty (caller keeps generic fallback)
+	}
+	for _, c := range cases {
+		if got := ssmDefaultTitle(c.alias, c.target, now); got != c.want {
+			t.Fatalf("ssmDefaultTitle(%q, %q) = %q; want %q", c.alias, c.target, got, c.want)
+		}
+	}
+}
 
 // randSlug returns a valid, "s"-prefixed, fixed-length slug and doesn't repeat across
 // a batch of draws (random, so collisions are astronomically unlikely).

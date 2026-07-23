@@ -232,7 +232,7 @@ export function TerminalView({
       </header>
       {ctxUsage && <ContextBar {...(ctxUsage as { read: number; create: number; fresh: number; model?: string; window?: number })} />}
       <div className="term-body">
-        <div className={"terminal" + (disableIme ? " terminal-ime-disabled" : "")} ref={ref} />
+        <div className={"terminal" + (disableIme ? " terminal-ime-disabled terminal-shellssm" : "")} ref={ref} />
         {!session && (
           <div className="term-empty">
             <img className="term-empty-img" src={idleSrc} alt="Agent Fleet" />

@@ -563,6 +563,62 @@
   color: var(--muted);
 }
 
+/* SSM quick-connect cards (StartModal): frequently-used / all hosts as one-click tiles. */
+.ssm-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+}
+.ssm-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel, transparent);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ssm-card:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--hover, var(--panel));
+}
+.ssm-card:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+/* The host color registered in 設定 → SSM (settings.ssmHostColors), so a card is
+   recognizable at a glance and matches the session's terminal tint. */
+.ssm-card-dot {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+}
+.ssm-card-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+.ssm-card-alias {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ssm-card-sub {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Small segmented toggle (section headers, e.g. Files ツリー/変更). CJK labels
    are breakable per character, which collapses the flex width and wraps the
    label vertically — keep each button on one line. */
