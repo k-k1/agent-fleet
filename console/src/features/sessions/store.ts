@@ -5,6 +5,7 @@
 // repaint flickered the terminal cursor in the old console.
 import { create } from "zustand";
 import { api } from "../../core/api/client.ts";
+import { pushHealthy, pushStamp } from "../../core/push/events.ts";
 import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
 import type { Session } from "../../types/session.ts";
 
@@ -16,31 +17,39 @@ interface SessionsStore {
   startTick: number;
   openStart(): void;
   refresh(): Promise<void>;
+  /** Publish a session list (poll result or pushed api/events frame) — only on
+   * an actual change (serialized compare, see the header note). */
+  applyList(list: Session[]): void;
   /** Resume/launch a stopped session (POST start). The caller re-attaches. */
   start(name: string): Promise<void>;
 }
 
 let ser = ""; // last published serialization (module-level: not render state)
 
-export const useSessionsStore = create<SessionsStore>((set) => ({
+export const useSessionsStore = create<SessionsStore>((set, get) => ({
   sessions: [],
   startTick: 0,
   openStart: () => set((s) => ({ startTick: s.startTick + 1 })),
 
+  applyList(list: Session[]) {
+    const s = JSON.stringify(list);
+    if (s !== ser) {
+      ser = s;
+      set({ sessions: list });
+    }
+  },
+
   async refresh() {
+    const stamp = pushStamp("sessions");
     try {
       const d = await api("api/sessions");
-      const list: Session[] = d.sessions || [];
-      const s = JSON.stringify(list);
-      if (s !== ser) {
-        ser = s;
-        set({ sessions: list });
-      }
+      // A pushed frame that arrived while this fetch was in flight is at least
+      // as fresh — a slow (mobile) response must not clobber it and stick.
+      if (pushStamp("sessions") !== stamp) return;
+      get().applyList(d.sessions || []);
     } catch {
-      if (ser !== "[]") {
-        ser = "[]";
-        set({ sessions: [] });
-      }
+      if (pushStamp("sessions") !== stamp) return;
+      get().applyList([]);
     }
   },
 
@@ -57,10 +66,11 @@ export const useSessionsStore = create<SessionsStore>((set) => ({
 /** Poll every 4s while the tab is visible AND the workspace is running — a
  * stopped/booting agent only 502s, so polling it is pure waste (docs/35 §35.9-9).
  * The running edge is picked up on the next tick (and wireWorkspaceRefresh fires
- * an immediate refetch). Returns cleanup (StrictMode-safe). */
+ * an immediate refetch). Skipped while the push channel covers this stream
+ * (api/events — the poll is the fallback). Returns cleanup (StrictMode-safe). */
 export function startSessionsPolling(): () => void {
   const load = () => {
-    if (document.hidden || !wsRunning(useWorkspaceStore.getState().state)) return;
+    if (document.hidden || pushHealthy() || !wsRunning(useWorkspaceStore.getState().state)) return;
     void useSessionsStore.getState().refresh();
   };
   load();

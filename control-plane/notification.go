@@ -113,19 +113,20 @@ func (a notificationAPI) drainAgent(ctx context.Context, res *resolved) string {
 	return "ready"
 }
 
-func (a notificationAPI) list(w http.ResponseWriter, r *http.Request, res *resolved) {
-	sourceState := a.drainAgent(r.Context(), res)
+// listPayload composes the GET /api/notifications body (drain the Agent's
+// outbox into the store, then list). Shared by the REST handler and the
+// /api/events push channel so both emit the identical shape.
+func (a notificationAPI) listPayload(ctx context.Context, res *resolved) (map[string]any, *apiError) {
+	sourceState := a.drainAgent(ctx, res)
 	cutoff := notificationCutoff()
-	_ = a.store.SweepNotifications(r.Context(), cutoff)
-	rows, err := a.store.ListNotifications(r.Context(), res.mv.MembershipID, cutoff, 50)
+	_ = a.store.SweepNotifications(ctx, cutoff)
+	rows, err := a.store.ListNotifications(ctx, res.mv.MembershipID, cutoff, 50)
 	if err != nil {
-		writeAPIErr(w, internalErr(err))
-		return
+		return nil, internalErr(err)
 	}
-	unseen, err := a.store.CountUnseenNotifications(r.Context(), res.mv.MembershipID, cutoff)
+	unseen, err := a.store.CountUnseenNotifications(ctx, res.mv.MembershipID, cutoff)
 	if err != nil {
-		writeAPIErr(w, internalErr(err))
-		return
+		return nil, internalErr(err)
 	}
 	items := make([]notificationDTO, 0, len(rows))
 	var maxSeq int64
@@ -135,7 +136,16 @@ func (a notificationAPI) list(w http.ResponseWriter, r *http.Request, res *resol
 			maxSeq = n.Seq
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "maxSeq": maxSeq, "unseenCount": unseen, "sourceState": sourceState})
+	return map[string]any{"items": items, "maxSeq": maxSeq, "unseenCount": unseen, "sourceState": sourceState}, nil
+}
+
+func (a notificationAPI) list(w http.ResponseWriter, r *http.Request, res *resolved) {
+	p, aerr := a.listPayload(r.Context(), res)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
 }
 
 func (a notificationAPI) seen(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
