@@ -25,7 +25,6 @@ export interface AgentCaps {
   effort: boolean; // offers a reasoning-effort selector when the chosen driver supports it
   tuiEffort: boolean; // the TUI launch command can pin effort (managed uses Driver capabilities)
   tuiStartMode: boolean; // the TUI launch command can start deterministically in plan/normal
-  fork: boolean; // supports fork-session from the chat (claude --fork-session)
   contextBar: boolean; // shows the context-window token gauge
   imagePaste: boolean; // chat composer accepts pasted images (claude Read-tool flow)
   planMode: boolean; // chat offers a plan-mode toggle (drives the TUI's mode-cycle key)
@@ -101,7 +100,6 @@ function caps(overrides: Partial<AgentCaps>): AgentCaps {
     effort: false,
     tuiEffort: false,
     tuiStartMode: false,
-    fork: false,
     contextBar: false,
     imagePaste: false,
     planMode: false,
@@ -138,7 +136,6 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       effort: true,
       tuiEffort: true, // claude --effort
       tuiStartMode: true, // --permission-mode plan / bypassPermissions
-      fork: true,
       contextBar: true,
       imagePaste: true,
       planMode: true,
@@ -177,7 +174,6 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       model: true,
       effort: true,
       tuiEffort: true, // -c model_reasoning_effort=…
-      fork: true,
       contextBar: true,
       imagePaste: true,
       planMode: true,
@@ -342,7 +338,6 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       model: true,
       effort: true,
       tuiStartMode: true, // --agent plan|build
-      fork: true,
       contextBar: true,
       imagePaste: true,
       planMode: true,

@@ -101,6 +101,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const [streamSteps, setStreamSteps] = useState<ChatStep[]>([]); // working steps committed this turn (分離)
   const [streamAgent, setStreamAgent] = useState<SessionKind | null>(null); // actual backend for this turn
   const [reattaching, setReattaching] = useState(false); // a reloaded turn is still running on the backend; polling for the reply
+  const [pendingAuto, setPendingAuto] = useState<string | null>(null); // handoff: fire this first turn automatically once the conversation loads
   const [histIdx, setHistIdx] = useState<number | null>(null); // position in composer history (↑/↓ recall), or null
   const [karaoke, setKaraoke] = useState<string | null>(null); // 読み上げ中の文（ライブ配信カラオケ・docs/19）
   const [error, setError] = useState("");
@@ -152,10 +153,15 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
       if (convRef.current?.id === conversationId) return; // already have it (e.g. just promoted)
       applyConv(null);
       setDraftAsst(null);
-      // One-shot composer prefill (Phase C); with no seed the persisted draft (which
-      // useDraft reloads on the key change) is left standing.
+      // One-shot seed (Phase C prefill, or a session handoff). auto=false prefills the
+      // composer for review; auto=true stashes the text to fire automatically once the
+      // conversation has loaded (handoff — アシスタントを直接呼び出す). With no seed the
+      // persisted draft (which useDraft reloads on the key change) is left standing.
       const seed = takeChatSeed(conversationId);
-      if (seed !== undefined) setInput(seed);
+      if (seed) {
+        if (seed.auto) setPendingAuto(seed.text);
+        else setInput(seed.text);
+      }
       // Load the conversation, retrying transient failures. When the workspace agent is
       // still booting (WS just started), the CP answers with an empty/gateway response
       // that api() resolves as { error } (NOT a throw) — reading that as "no id" would
@@ -463,11 +469,12 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     }
   };
 
-  const send = async () => {
+  const send = async (override?: string) => {
     // Block a second turn on this conversation, whether it was started here or by another
     // pane whose turn is still running in the background (store busy).
     if (sending || compacting || (conversationId && storeBusy)) return;
-    const text = input.trim();
+    // `override` drives the auto-sent handoff first turn (its text isn't in the composer).
+    const text = (override ?? input).trim();
     const paths = attachments.map((a) => a.path);
     if (!text && !paths.length) return;
     setError("");
@@ -671,6 +678,21 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     teardown();
     bumpChatList(); // a new/updated thread should surface in the rail list
   };
+
+  // Handoff auto-send: fire the seeded first turn once the conversation has loaded and is
+  // idle. A ref keeps the effect calling the freshest send() without re-subscribing every
+  // render; setPendingAuto(null) makes it one-shot (a later re-open won't resend).
+  const sendRef = useRef(send);
+  sendRef.current = send;
+  useEffect(() => {
+    if (pendingAuto == null) return;
+    if (!conv || conv.in_progress) return; // wait for the conversation to exist and no turn to be running
+    if (sending || compacting) return;
+    const text = pendingAuto;
+    setPendingAuto(null);
+    void sendRef.current(text);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sendRef is a stable ref
+  }, [pendingAuto, conv, sending, compacting]);
 
   // Stop the in-flight turn. The turn is now detached from its SSE request on the backend
   // (so a reload can't kill it), which means aborting the fetch alone no longer cancels the

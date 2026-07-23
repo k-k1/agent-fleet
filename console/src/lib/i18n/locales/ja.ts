@@ -1620,7 +1620,7 @@ export const ja = {
   "sess.switch_confirm": "切り替える",
   "sess.switch_busy": "実行中のターンがあります。完了を待つか停止してから切り替えてください",
   "sess.switch_failed": "実行方式の切り替えに失敗しました",
-  "sess.fork_failed": "分岐に失敗しました",
+  "sess.handoff_failed": "引き継ぎを開始できませんでした",
 
   // === P2 アーカイブモーダル（features/sessions/ArchivedModal.tsx）===
   "arch.other": "その他",
@@ -1712,9 +1712,17 @@ export const ja = {
   "srow.copy_id": "ID（{name}）をコピー",
   "srow.rename": "タイトルを変更",
   "srow.rename_branch": "ブランチ名を変更",
-  "srow.fork": "分岐（会話を引き継いで新規）",
-  "srow.fork_to": "{agent} への引継ぎを準備",
+  "srow.handoff": "別のエージェントへ引き継ぐ…",
   "srow.handoff_title": "{name} の引継ぎ",
+  "handoff.title": "「{name}」を引き継ぐ",
+  "handoff.intro": "オペレーターアシスタントがこのセッションを読んで引継ぎ案を提示します。新しいセッションはあなたの承認後にのみ作成されます。",
+  "handoff.target_label": "引き継ぎ先エージェント",
+  "handoff.checking": "利用可能なエージェントを確認中…",
+  "handoff.no_targets": "引き継ぎ先にできる接続済みエージェントがありません。まず設定で接続してください。",
+  "handoff.note_label": "補足（任意）",
+  "handoff.note_hint": "引継ぎへの追加指示 — 重点や省く範囲など。",
+  "handoff.note_ph": "例: API リファクタだけ引き継ぎ、テストの足場は省略。",
+  "handoff.start": "引き継ぎを開始",
   "srow.archive": "アーカイブする（一覧から消す）",
   "srow.recreate": "作り直す（今の会話はアーカイブへ）",
 
