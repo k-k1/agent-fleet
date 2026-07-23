@@ -291,7 +291,9 @@ function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boo
     ser.current = "";
     setRows(null);
     poll();
-    timer.current = setInterval(poll, 5000);
+    timer.current = setInterval(() => {
+      if (!document.hidden) poll(); // hidden tab: skip the tick
+    }, 5000);
     return () => clearInterval(timer.current);
   }, [poll]);
 
@@ -1349,7 +1351,9 @@ function MemberView({
     setStats(null);
     setSessions(null);
     poll();
-    timer.current = setInterval(poll, 4000);
+    timer.current = setInterval(() => {
+      if (!document.hidden) poll(); // hidden tab: skip the tick
+    }, 4000);
     return () => clearInterval(timer.current);
   }, [poll]);
 
