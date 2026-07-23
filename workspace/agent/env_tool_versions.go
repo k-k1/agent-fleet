@@ -46,6 +46,11 @@ var toolSpecs = []toolSpec{
 	// （それ自体がガード対象ホストの兆候）。
 	{Name: "agy", Cmd: "agy", Baked: "/usr/local/bin/agy", Pin: "agy"},
 	{Name: "copilot", Cmd: "copilot", Baked: "/usr/local/bin/copilot", Pin: "copilot"},
+	// cursor（kind="cursor"、docs/40）は npm でなく版付き tarball の Node.js バンドル。
+	// 焼き込みは /usr/local/share/cursor-agent/versions/<ver>/ で、/usr/local/bin/cursor-agent
+	// はその wrapper への symlink（realpath で版ディレクトリを解決）。版は日付形式
+	// （2026.07.20-8cc9c0b）で semver でないが、`cursor-agent --version` はその文字列を返す。
+	{Name: "cursor", Cmd: "cursor-agent", Baked: "/usr/local/bin/cursor-agent", Pin: "cursor"},
 	{Name: "rtk", Cmd: "rtk", Baked: "/usr/local/bin/rtk", Pin: "rtk"},
 	{Name: "gh", Cmd: "gh", Baked: "/usr/local/libexec/gh", Pin: "gh"}, // /usr/local/bin/gh は透過認証ラッパー
 	{Name: "go", Cmd: "go", Baked: "/usr/local/go/bin/go", Args: []string{"version"}, Pin: "go"},

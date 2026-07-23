@@ -48,7 +48,9 @@ var annotationRe = regexp.MustCompile(`\s*\((?:current|default)[^)]*\)\s*$`)
 func probeModels() ([]agents.ModelChoice, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, bin(), "models").Output()
+	// --disable-auto-update を前置（models は最大 20s 走り得て、起動2秒後の背景更新
+	// トリガに掛かる可能性がある — root option なのでサブコマンドの前）。
+	out, err := exec.CommandContext(ctx, bin(), disableAutoUpdateFlag, "models").Output()
 	if err != nil {
 		return nil, err
 	}

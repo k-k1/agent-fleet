@@ -63,12 +63,23 @@ func transcriptPath(dir, chatID string) string {
 	return guess // 未生成（起動直後）— 呼び出し側は Stat 失敗を空扱いにする。
 }
 
+// disableAutoUpdateFlag はイメージ再ビルドで版管理する fleet 方針に合わせ、CLI の
+// 背景自己更新を封じる root オプション（`--disable-auto-update`。実測 help で hideHelp
+// だが受理・既定 false）。ACP/サブコマンドの前に置く必要がある（root option のため。
+// 実測: `cursor-agent --disable-auto-update acp` は通り、`acp --disable-auto-update` は
+// 拒否）。バンドル解析でも背景更新は `disableAutoUpdate || channel==="static"` で
+// スキップされる（起動2秒後 setTimeout(...).unref()）ことを確認済み — docs/40 Track B。
+// entrypoint の cli-config.json `channel:"static"` 再固定と二重の封殺（片方が
+// ユーザ設定で崩れても他方が効く）。
+const disableAutoUpdateFlag = "--disable-auto-update"
+
 // defaultFlags is the fleet-standard posture:
+//   - --disable-auto-update: 背景自己更新を封じる（版はイメージ再ビルドで管理）。
 //   - --force: fleet 既定の bypass 相当（"unless explicitly denied" — deny リストは
 //     引き続き有効。実測 help）。claude の skip-permissions と同格。
 //   - --trust: 未信頼ワークスペースの trust プロンプトをスキップ（実測 help。
 //     copilot の config.json 事前追記に相当する起動時スキップ）。
-const defaultFlags = "--force --trust"
+const defaultFlags = disableAutoUpdateFlag + " --force --trust"
 
 // bin returns the cursor CLI binary（symlink `cursor-agent`。`agent` は短すぎて
 // PATH 衝突しやすいので使わない）。AGENT_CURSOR_BIN で差し替え可。

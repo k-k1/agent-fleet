@@ -1,7 +1,7 @@
 # 40. `kind=cursor`（Cursor CLI）実装計画 — Terminal + Managed 両対応
 
-- 状態: **Track A（read＋TUI）＋Track A2（managed driver）実装済み**（2026-07-23）。
-  残: Track B（配備）・Track C（CP＋Console）・Track D（将来）。
+- 状態: **Track A（read＋TUI）＋Track A2（managed driver）＋Track B（配備）実装済み**（2026-07-23）。
+  残: Track C（CP＋Console）・Track D（将来）・arm64 実機実行の最終確認。
   Track A の実装は `workspace/agent/internal/agents/cursor/`（cursor.go/program.go/
   transcript.go/state.go/auth.go/models.go/stop.go/cursor_test.go）＋登録
   （session.go `KindCursor`・agent.go registry/driveState・connections.go・
@@ -107,11 +107,12 @@
 - sandbox は既定 disabled（`cli-config.json` 実測）。v1 はそのまま（fleet コンテナ自体が隔離境界）。
 - **Cursor 自前の worktree 機能（`-w/--worktree`）は使わない** — セッション隔離は Console の
   worktree が正（`~/.cursor/worktrees/` に勝手に増えるのを避ける）。
-- 自己更新封殺: 既定で auto-update ON・**公式な無効化手段なし**（Track 0 で env/config を
-  探索したが AUTO_UPDATE 系は存在せず — `CURSOR_AGENT_*` 環境変数群に該当なし）。
-  AUR 方式 = versions ディレクトリの書込禁止（chmod）で封殺し、e2e-smoke の版ピン検証で監視。
-  自己更新 opt-in（`AF_AGENT_SELF_UPDATE`）への追加は rtk/agy と同じ「~/.local/bin shadow」系の
-  設計になる見込み（npm ではないため claude/codex 経路は使えない）。
+- 自己更新封殺: 既定で auto-update ON。**Track B で公式手段を確定**（Track 0 の env 探索は
+  空振りだったが、バンドル再解析で背景更新ゲート＝`disableAutoUpdate || channel==="static"`
+  を発見）: **`--disable-auto-update` root フラグ**（全起動経路で前置）＋**`cli-config.json`
+  channel:"static"**（entrypoint 再固定）の 2 経路。AUR の versions 書込禁止 fallback は不要。
+  自己更新 opt-in（`AF_AGENT_SELF_UPDATE`）は rtk/agy と同じ「~/.local/bin shadow」系
+  （npm でないため上流 install.sh で latest を home へ導入）。詳細は §Track B。
 - モデル: `--model <id>`（`claude-opus-4-8[context=1m,effort=high]` 形式のパラメータ付きあり — 実測 help）。
 
 **read 正本（transcript/状態）— Track 0 実測で経路別に確定**:
@@ -216,18 +217,50 @@ Status() のみ（login start/complete は Track C）。以下は当初計画（
 自体は managedTranscript.Pending から出る）。TUI⇄managed 相互乗り入れはしない（ACP sid と TUI
 chatId は別空間）。
 
-### Track B — 配備
+### Track B — 配備 — **実装済（2026-07-23）**
 
-1. `workspace/Dockerfile` — `CURSOR_CLI_VERSION` ARG ＋版付き URL
-   `downloads.cursor.com/lab/<版>/linux/<arch>/agent-cli-package.tar.gz` から焼き込み
-   （**非公開 URL 仕様** — e2e-smoke の版ピン検証を必ず付けてドリフトを一次検知）。
-   auto-update 無効化（Track 0 の結果で手段確定）。
-2. `env_tool_versions.go` toolSpecs 追加＋`versions.json` `"cursor"`。
-   **版数は日付形式（`2026.07.20-8cc9c0b`）で semver でない** — 版比較ロジックに注意
-   （rtk-always-baked の版比較スキップ実装と同類の扱い）。
-3. 自己更新 opt-in（`AF_AGENT_SELF_UPDATE`）へ cursor 追加（`~/.local/bin` shadow 系）。
-4. boot-install fallback（`BAKE_AGENT_CLIS=false` 経路）対応。
-5. **linux arm64 は要実機確認**（Raspberry Pi 5 で動かない報告あり — ECS/native 展開前提条件）。
+**auto-update 無効化は Track 0 の「公式手段なし」を覆して確定（バンドル再解析）**:
+背景自己更新は起動2秒後の `setTimeout(...).unref()` で走るが、ゲートは
+`disableAutoUpdate || channel==="static"` の**論理和**でスキップされる。よって公式に
+2 経路ある:
+- **`--disable-auto-update`**（root オプション・hideHelp だが受理・既定 false・実測合格）
+  — サブコマンドの**前**に必須（`cursor-agent --disable-auto-update acp` は通り、
+  `acp --disable-auto-update` は拒否 — 実測）。AF は全起動経路で前置する。
+- **`cli-config.json` の `channel:"static"`**（config enum `static|prod|lab|prod-stable-internal`）
+  — 恒久設定。ユーザーが素で叩いた時の背景更新（home shadow を作る）まで封じる。
+  実測: channel=static で `--version`/`status`/`acp initialize` 全て正常、static は
+  `lab` へ transform されず維持される。
+
+実装:
+1. `workspace/Dockerfile` — `CURSOR_VERSION`＋両 arch の `CURSOR_SHA256_*` ARG ＋版付き URL
+   `downloads.cursor.com/lab/<版>/linux/<arch>/agent-cli-package.tar.gz` から
+   `/usr/local/share/cursor-agent/versions/<版>/`（root 所有）へ `tar --strip-components=1`
+   展開し `/usr/local/bin/cursor-agent` へ symlink（上流 install.sh と同レイアウト・wrapper が
+   realpath で bundled node/index.js を解決）。**バレ名 `agent` は PATH 衝突回避で張らない**
+   （AF は cursor-agent のみ呼ぶ）。**上流はチェックサム非公開のため sha256 は bake 時に
+   自前計算してピン**。arch 命名は `x64`/`arm64`（install.sh 実測）。
+   - **root 所有（読取専用）でも動く**ことを実測確認: CLI は版ディレクトリ内 `.running/<pid>`
+     マーカーを実行時に書くが、書けなくても `--version`/`acp initialize` はグレースフルに
+     動く（best-effort・claude npm-global root 所有と同構図）。
+2. `env_tool_versions.go` toolSpecs に cursor 追加（Baked=`/usr/local/bin/cursor-agent`）＋
+   `versions.json` に `"cursor"`＋`"cursor_sha256"`（arch 依存・agy_sha256 と同型）。
+   **版数は日付形式（`2026.07.20-8cc9c0b`）で semver でない** — `extractVer` は `2026.07.20`
+   を抜く（e2e-smoke は版文字列を**丸ごと**突き合わせる・semver 抽出を使わない）。
+3. 自己更新 opt-in（`AF_AGENT_SELF_UPDATE`）へ cursor 追加（entrypoint）。npm でないので
+   上流 install.sh（版ピン埋め込み）で latest を `~/.local` へ shadow 導入し PATH 先勝ちで
+   差し替え。版比較スキップ: install.sh から latest 版を grep し実効 `--version` と一致なら
+   ~100MB 再取得を省く。OFF で shadow（bin symlink 2 本＋share ツリー）を掃除し焼き込みへ復帰。
+4. boot-install fallback（`BAKE_AGENT_CLIS=0` lean 経路）: `versions.json` の
+   `cursor`＋`cursor_sha256` で版付き tarball を `~/.local` へ導入（agy boot と同経路）。
+5. entrypoint で `cli-config.json` の `channel:"static"` を起動毎再固定（channel 鍵のみ・
+   他キー保存・JSON でなければ触らない — 3a2c9df 教訓）。
+6. `deploy/local/e2e-smoke.sh` に cursor 版検証・lean 不在検証・`versions.json`
+   （cursor＋cursor_sha256）検証を追加（**非公開 URL 仕様のドリフト一次検知**）。
+7. **linux arm64**: 配布資産の健全性は検証済（arm64 tarball の bundled `node` と native
+   addon `node_sqlite3.node`/`file_service.linux-arm64-gnu.node`/`merkle-tree-napi...` が
+   全て AArch64/glibc・strip-components=1 レイアウト正）。**実 arm64 ハードでの起動実行のみ
+   未検証**（本コンテナは x64・RPi5 起動不能報告 forum #148408 は実機で要確認 — agy の
+   RDRAND 実機ガードと同格の残課題）。
 
 ### Track C — control-plane + Console
 
@@ -339,12 +372,12 @@ chatId は別空間）。
 | 2 | JSONL 転写 | ✅ `~/.cursor/projects/<cwdスラグ>/agent-transcripts/<chatId>/<chatId>.jsonl`。Anthropic content block 型（`tool_use` あり・**tool_result 無し**・uuid/timestamp 無し）＋`turn_ended`。TUI/-p は書く・**ACP は書かない** |
 | 3 | hooks 実発火 | ✅ TUI: beforeSubmitPrompt/beforeShellExecution/stop 全発火。`-p`: beforeShellExecution のみ。ACP: 不発火。payload に conversation_id/`transcript_path`/cursor_version/user_email。コマンド書換の可否は未検証（rtk 実装時） |
 | 4 | 資格情報 | ✅ `~/.config/cursor/auth.json`（600・accessToken/refreshToken 平文 JSON）。ホームボリュームで持続。`status --format json` はクリーンな構造化 JSON |
-| 5 | auto-update 封殺 | ◐ 公式手段なし（AUTO_UPDATE 系 env/config 不存在を確認）→ versions ディレクトリ書込禁止 fallback で確定 |
+| 5 | auto-update 封殺 | ✅ **Track B で公式手段を確定**（Track 0 の「手段なし」を覆す）。バンドル再解析で背景更新ゲート＝`disableAutoUpdate \|\| channel==="static"`。**`--disable-auto-update` root フラグ**（サブコマンドの前・実測合格）＋**`cli-config.json` channel:"static"**（実測: version/status/acp 正常・static 維持）の 2 経路で封殺。versions 書込禁止 fallback は不要に |
 | 6 | `agent models` | ✅ `id - 表示名` のテキスト行（`--format json` は無い）。アカウント連動（auto/composer/claude/gpt/grok 系を確認）。要認証 |
 | 7 | TUI 実測 | ✅ §Track 0 実測結果（trust プロンプト・フッタ・許可プロンプトのキー列） |
 | 8 | create-chat→resume | ✅ `create-chat` が UUID を即返し、`-p --resume <id>` でそのチャットにターンが乗る（result の session_id 一致・転写も同一ファイルに追記） |
 | 9 | `-p` result 形状 | ✅ `{"type":"result","subtype":"success","is_error",duration_ms,result,session_id,request_id,usage:{inputTokens,outputTokens,cacheReadTokens,cacheWriteTokens}}`・exit 0。stream-json は system/init→thinking delta→assistant→型付き tool_call（`shellToolCall`）→result |
-| 10 | linux arm64 | ⏭ 未実測（本コンテナ x64。ECS/native 展開前に要実機） |
+| 10 | linux arm64 | ◐ **配布資産は健全と検証**（arm64 tarball の bundled node ＋ native addon 群が全て AArch64/glibc・レイアウト正・sha ピン済）。**実 arm64 ハード起動のみ未検証**（本コンテナ x64・forum #148408 は実機確認要・agy RDRAND ガードと同格の残課題） |
 
 ## Track 0 実測結果（2026-07-23、v2026.07.20-8cc9c0b、認証済み・本コンテナ）
 

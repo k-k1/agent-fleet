@@ -1,7 +1,8 @@
 # 0023. `kind=cursor`（Cursor CLI）を第7のエージェント種別として追加する
 
-- 状態: **採用（Track A＋A2 実装済み）**（2026-07-23。Track 0 プローブ合格→read 層＋TUI＋
-  managed driver を実装・`go build`/`go test`＋`AF_CURSOR_LIVE=1` 実 CLI 契約テスト緑）。残 B/C/D。
+- 状態: **採用（Track A＋A2＋B 実装済み）**（2026-07-23。Track 0 プローブ合格→read 層＋TUI＋
+  managed driver＋配備を実装・`go build`/`go test`＋`AF_CURSOR_LIVE=1` 実 CLI 契約テスト緑）。
+  残 C/D＋arm64 実機実行確認。
   実装計画・実測・Track A の改良2点（自己採番 UUID／JSONL 末尾状態）・Track A2 の ACP 契約
   （`cursor-agent acp` 起動・session/update からの転写メモリ構築・set_mode/cancel 実測）は
   [docs/40](../40-cursor-agent-kind.md)。
@@ -47,14 +48,21 @@ Cursor CLI（`cursor-agent`/`agent`、Anysphere）は `agent acp`（ACP = JSON-R
    （隔離は Console worktree が正）・`agent worker`（Cursor cloud 側のオーケストレーション）・
    セッションの cloud 送出（`&` プレフィックス）。
 10. **配備は版付き URL の焼き込み**（`downloads.cursor.com/lab/<版>/...` — 非公開 URL 仕様
-    のため e2e-smoke 版ピン検証を必須化）＋ auto-update 封殺（手段はプローブで確定、
-    最終手段は versions ディレクトリ書込禁止）。版数は日付形式で semver でない。
+    のため e2e-smoke 版ピン検証を必須化。上流チェックサム非公開のため sha256 を自前計算して
+    ピン）＋ **auto-update 封殺は公式 2 経路で確定**（Track B バンドル再解析）: 背景更新ゲート＝
+    `disableAutoUpdate || channel==="static"` → `--disable-auto-update` root フラグ（全経路で
+    前置）＋ `cli-config.json` channel:"static"（entrypoint 再固定）。AUR の versions 書込禁止
+    fallback は不要になった。版数は日付形式で semver でない。焼き込みは root 所有の
+    `/usr/local/share/cursor-agent/versions/<版>/`＋`/usr/local/bin/cursor-agent` symlink
+    （読取専用でも `.running` マーカーはグレースフル劣化で動作する — 実測）。
 
 ## リスク（受け入れ）
 
 - 週次リリースの CLI ドリフト（hooks/JSONL/ACP の公式契約依存で緩和＋live テスト一次検知）。
-- 版ピン・auto-update 無効化が非公式手段（e2e-smoke で破壊を検知）。
-- linux arm64 の動作不良報告あり（ECS/native 展開前に実機確認を条件化）。
+- 版ピン URL は非公開仕様（e2e-smoke で破壊を検知）。auto-update 無効化は**公式手段**に更新
+  （`--disable-auto-update`＋channel:"static" — Track B で確定）。
+- linux arm64: 配布資産の健全性は検証済（bundled node/native addon が AArch64/glibc）だが、
+  実 arm64 ハードでの起動実行は未検証（本コンテナ x64。ECS/native 展開前に実機確認を条件化）。
 - Docker 内 `CURSOR_API_KEY` 不調のフォーラム報告（自コンテナで要検証）。
 
 ## 結果

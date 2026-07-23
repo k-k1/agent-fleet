@@ -55,7 +55,7 @@ func probeStatus() statusOut {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, bin(), "status", "--format", "json").Output()
+	out, err := exec.CommandContext(ctx, bin(), disableAutoUpdateFlag, "status", "--format", "json").Output()
 	if err != nil {
 		// stale-if-error: 一時失敗で接続状態を落とさない（前回値を維持）。
 		return statusVal
