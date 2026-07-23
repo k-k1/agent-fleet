@@ -25,22 +25,22 @@ func TestAssistantAgentOrderPref(t *testing.T) {
 		prefs string
 		want  []string
 	}{
-		{"unset", `{}`, []string{"claude", "codex", "opencode", "agy"}},
+		{"unset", `{}`, []string{"claude", "codex", "opencode", "cursor", "agy"}},
 		{"full order", `{"assistantAgentOrder":["agy","opencode","codex","claude"]}`,
-			[]string{"agy", "opencode", "codex", "claude"}},
+			[]string{"agy", "opencode", "codex", "claude", "cursor"}},
 		{"partial order appends the rest in default order",
 			`{"assistantAgentOrder":["opencode"]}`,
-			[]string{"opencode", "claude", "codex", "agy"}},
+			[]string{"opencode", "claude", "codex", "cursor", "agy"}},
 		{"junk and dupes dropped",
 			`{"assistantAgentOrder":["gemini","codex",42,"codex"]}`,
-			[]string{"codex", "claude", "opencode", "agy"}},
+			[]string{"codex", "claude", "opencode", "cursor", "agy"}},
 		{"legacy pin promotes to front", `{"assistantAgent":"opencode"}`,
-			[]string{"opencode", "claude", "codex", "agy"}},
+			[]string{"opencode", "claude", "codex", "cursor", "agy"}},
 		{"legacy auto falls through to default", `{"assistantAgent":"auto"}`,
-			[]string{"claude", "codex", "opencode", "agy"}},
+			[]string{"claude", "codex", "opencode", "cursor", "agy"}},
 		{"order wins over legacy pin",
 			`{"assistantAgent":"opencode","assistantAgentOrder":["codex"]}`,
-			[]string{"codex", "claude", "opencode", "agy"}},
+			[]string{"codex", "claude", "opencode", "cursor", "agy"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

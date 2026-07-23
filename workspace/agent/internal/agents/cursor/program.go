@@ -85,6 +85,11 @@ const defaultFlags = disableAutoUpdateFlag + " --force --trust"
 // PATH 衝突しやすいので使わない）。AGENT_CURSOR_BIN で差し替え可。
 func bin() string { return envOr("AGENT_CURSOR_BIN", "cursor-agent") }
 
+// Bin exposes the resolved cursor CLI binary for the assistant-chat headless
+// backend (chat_providers.go cursorChat), which shells out `cursor-agent -p`
+// from the main package and must honor the same AGENT_CURSOR_BIN override.
+func Bin() string { return bin() }
+
 // buildProgram returns the tmux pane program for a cursor TUI session. Auth is
 // ambient（~/.config/cursor/auth.json を CLI 自身が拾う — 実測）なのでトークンは
 // 注入しない。--resume は新規作成と resume の両方を同じ形でまかなう。

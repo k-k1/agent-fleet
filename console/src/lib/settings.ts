@@ -360,7 +360,7 @@ export const DEFAULT_MODEL = "sonnet";
 // Headless-chat backend kinds in the built-in priority order (mirrors the Agent's
 // defaultHeadlessOrder; agy last — its free-plan quota is scarce). Display labels
 // come from the agent registry (assistantName), not i18n.
-export const ASSISTANT_AGENT_KINDS = ["claude", "codex", "opencode", "agy"] as const;
+export const ASSISTANT_AGENT_KINDS = ["claude", "codex", "opencode", "cursor", "agy"] as const;
 
 // normalizeAssistantOrder folds any stored value into a total order over
 // ASSISTANT_AGENT_KINDS: unknown entries and dupes drop, missing kinds append in

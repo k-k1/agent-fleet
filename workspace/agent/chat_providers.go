@@ -1,7 +1,7 @@
 package main
 
-// アシスタントチャットのプロバイダ実装（claude/codex/opencode/agy の headless CLI
-// 駆動）と CLI 起動まわりの下回り。chat.go からの機械的分割（docs/23 残②）。
+// アシスタントチャットのプロバイダ実装（claude/codex/opencode/agy/cursor の headless
+// CLI 駆動）と CLI 起動まわりの下回り。chat.go からの機械的分割（docs/23 残②）。
 
 import (
 	"bufio"
@@ -23,6 +23,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -41,6 +42,7 @@ var chatProviders = map[string]chatProvider{
 	session.KindCodex:    codexChat{},
 	session.KindOpencode: opencodeChat{},
 	session.KindAgy:      agyChat{},
+	session.KindCursor:   cursorChat{},
 }
 
 // --- backend availability (claude-less workspaces, docs/19) ----------------------
@@ -79,6 +81,8 @@ func headlessAgentAvailable(kind string) bool {
 		v = opencode.Available()
 	case session.KindAgy:
 		v = agy.SignedIn()
+	case session.KindCursor:
+		v = cursor.LoggedIn()
 	}
 	headlessAvailMu.Lock()
 	headlessAvailAt[kind], headlessAvail[kind] = time.Now(), v
@@ -91,7 +95,7 @@ func headlessAgentAvailable(kind string) bool {
 // Track D), so out of the box it is only reached in an agy-only workspace. The
 // user can rank the backends themselves in 設定 > エージェント (ui-prefs
 // assistantAgentOrder — assistantAgentOrderPref normalizes against this list).
-var defaultHeadlessOrder = []string{session.KindClaude, session.KindCodex, session.KindOpencode, session.KindAgy}
+var defaultHeadlessOrder = []string{session.KindClaude, session.KindCodex, session.KindOpencode, session.KindCursor, session.KindAgy}
 
 // preferredHeadlessAgent picks the backend for new builtin-assistant conversations
 // and one-shot calls: the first AUTHENTICATED backend in the user's priority order
@@ -125,7 +129,7 @@ func chatProviderFor(c *chatConversation) chatProvider {
 
 // chatProviderKind returns the concrete backend selected by chatProviderFor. Keeping
 // this out of chatProvider avoids widening every test stub merely for presentation
-// metadata. Production providers are the four value types below.
+// metadata. Production providers are the five value types below.
 func chatProviderKind(c *chatConversation, prov chatProvider) string {
 	switch prov.(type) {
 	case claudeChat:
@@ -136,6 +140,8 @@ func chatProviderKind(c *chatConversation, prov chatProvider) string {
 		return session.KindOpencode
 	case agyChat:
 		return session.KindAgy
+	case cursorChat:
+		return session.KindCursor
 	default:
 		return c.Agent // test/custom provider: best truthful fallback available
 	}
@@ -837,6 +843,113 @@ func agyChatServers(c *chatConversation) map[string]any {
 	return servers
 }
 
+// cursorChat runs `cursor-agent -p --output-format json` (headless print mode). The
+// chat UUID is minted on the first turn — cursor's `--resume <uuid>` CREATES a chat
+// under a self-minted valid v4 and resumes it thereafter (実測 docs/40 §-p / probe 8)
+// — so context carries across turns via the same self-UUID identity the TUI/managed
+// routes use (cursor.go). Auth is ambient (~/.config/cursor/auth.json), so no token
+// injection. cursor has no system-prompt flag, so persona/knowledge ride the
+// headlessPrompt preamble.
+//
+// Tool posture: we do NOT pass --force. Headless chat has no approval UI, so
+// auto-approving would let a turn mutate the shared host via shell/file tools — the
+// opposite of the chat contract (claude enforces it via --disallowedTools, opencode
+// via edit/bash:deny). A pure-text answer (the assistant's actual use — Q&A /
+// translation) needs no tools; a turn that reaches for one is declined by cursor
+// (headless has nothing to approve it) instead of running. --trust only skips the
+// workspace-trust prompt, orthogonal to tool approval. The af MCP tools are not wired
+// for cursor v1: cursor's MCP config is global (~/.cursor), so per-conversation grants
+// would need the isolated-HOME dance agy uses (docs/40 Track D).
+//
+// The terminal `result.usage` is the ONLY cursor route carrying tokens (docs/40 §使用量
+// — ACP/JSONL have none), so it feeds the context-fill snapshot. Fields are additive
+// (fresh input + cache read + cache write), same shape as opencode.
+type cursorChat struct{}
+
+// cursorResult is `cursor-agent -p --output-format json`'s single result object
+// (実測 docs/40 probe 9): {"type":"result","subtype":"success","is_error":…,
+// "result":"…","session_id":"…","usage":{inputTokens,outputTokens,cacheReadTokens,
+// cacheWriteTokens}}. --output-format stream-json would be NDJSON; we use the plain
+// json form, so the whole stdout is this one object.
+type cursorResult struct {
+	Type      string `json:"type"`
+	IsError   bool   `json:"is_error"`
+	Result    string `json:"result"`
+	SessionID string `json:"session_id"`
+	Usage     struct {
+		InputTokens      int `json:"inputTokens"`
+		OutputTokens     int `json:"outputTokens"`
+		CacheReadTokens  int `json:"cacheReadTokens"`
+		CacheWriteTokens int `json:"cacheWriteTokens"`
+	} `json:"usage"`
+}
+
+func (cursorChat) send(ctx context.Context, c *chatConversation, prompt string) (string, error) {
+	args := cursorChatBaseArgs()
+	if m := c.Model; m != "" && m != "auto" { // "auto" = cursor's default = no --model
+		args = append(args, "--model", m)
+	}
+	if c.CursorSessionID == "" {
+		c.CursorSessionID = randUUID() // --resume with a fresh valid v4 creates the chat
+	}
+	args = append(args, "--resume", c.CursorSessionID)
+	cmd := exec.CommandContext(ctx, cursor.Bin(), args...)
+	cmd.Dir = chatWorkdir()
+	cmd.Stdin = strings.NewReader(headlessPrompt(c.personaOf(), c.knowledgeDirs(), prompt))
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("cursor execution failed: %s", cliErr(err))
+	}
+	r, perr := parseCursorResult(out)
+	if perr != nil {
+		return "", perr
+	}
+	if r.SessionID != "" {
+		c.CursorSessionID = r.SessionID // adopt the id cursor echoes back (self-heals a drift)
+	}
+	if r.IsError {
+		return "", fmt.Errorf("cursor returned an error: %s", strings.TrimSpace(r.Result))
+	}
+	reply := strings.TrimRight(strings.TrimSpace(r.Result), "\n")
+	if reply == "" {
+		return "", errors.New("no response from cursor")
+	}
+	setChatContext(c, r.Usage.InputTokens, r.Usage.CacheReadTokens, r.Usage.CacheWriteTokens, 0, chatCtxModelFor(c))
+	return reply, nil
+}
+
+// cursorChatBaseArgs is the shared argv prefix for a cursor headless turn:
+// --disable-auto-update (fleet pins the version via image rebuild) precedes the
+// subcommand as a root option (実測: it is rejected after -p), then print-mode JSON
+// and --trust (skip the workspace-trust prompt only — not tool approval).
+func cursorChatBaseArgs() []string {
+	return []string{"--disable-auto-update", "-p", "--output-format", "json", "--trust"}
+}
+
+// parseCursorResult decodes the -p result object. --output-format json emits one
+// object, but cursor "異常時は整形 JSON なしで終わり得る" (docs/40) and may prefix
+// stray lines, so fall back to scanning for the last line that parses as a result.
+func parseCursorResult(out []byte) (cursorResult, error) {
+	var r cursorResult
+	if json.Unmarshal(bytes.TrimSpace(out), &r) == nil && r.Type == "result" {
+		return r, nil
+	}
+	var found bool
+	for _, ln := range bytes.Split(out, []byte("\n")) {
+		if len(bytes.TrimSpace(ln)) == 0 {
+			continue
+		}
+		var cand cursorResult
+		if json.Unmarshal(ln, &cand) == nil && cand.Type == "result" {
+			r, found = cand, true
+		}
+	}
+	if !found {
+		return cursorResult{}, errors.New("failed to parse cursor response")
+	}
+	return r, nil
+}
+
 // headlessPrompt builds the stdin/argv prompt for backends without a system-prompt
 // flag (codex exec, opencode run): the persona as a tagged instruction block, the
 // knowledge dirs as a pointer line, then the user's prompt.
@@ -909,6 +1022,29 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 			}()
 		}
 		return reply, nil
+	case session.KindCursor:
+		// cursor has no ephemeral mode; without --resume each one-shot mints a fresh
+		// chat, leaving a throwaway in ~/.cursor (same trade-off as agy/opencode
+		// one-shots). No tools/persona-native flag — persona rides the preamble.
+		args := cursorChatBaseArgs()
+		if m := os.Getenv("AF_TITLE_MODEL_CURSOR"); m != "" {
+			args = append(args, "--model", m)
+		}
+		cmd := exec.CommandContext(ctx, cursor.Bin(), args...)
+		cmd.Dir = chatWorkdir()
+		cmd.Stdin = strings.NewReader(headlessPrompt(persona, nil, prompt))
+		out, err := cmd.Output()
+		if err != nil {
+			return "", fmt.Errorf("cursor execution failed: %s", cliErr(err))
+		}
+		r, perr := parseCursorResult(out)
+		if perr != nil {
+			return "", perr
+		}
+		if r.IsError {
+			return "", errors.New(strings.TrimSpace(r.Result))
+		}
+		return strings.TrimRight(strings.TrimSpace(r.Result), "\n"), nil
 	case session.KindAgy:
 		// agy has no ephemeral mode, so each one-shot leaves a throwaway conversation
 		// behind — contained in the shared "oneshot" isolated home rather than the
