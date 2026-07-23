@@ -90,7 +90,7 @@ CLI が公開している範囲に依存します）。早見表は以下のと�
 | git worktree で起動 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | 定時実行（無人実行） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | チャットブリッジ（Discord / Slack） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| アシスタントチャットとして利用可 | ✓ | ✓ | — | — | ✓ | ✓ | — |
+| アシスタントチャットとして利用可 | ✓ | ✓ | ✓ | — | ✓ | ✓ | — |
 | WSバーの使用量 / 残量チップ | ✓ | ✓ | — | ✓ | ✓ | — | — |
 
 ¹ Copilot のモデル選択はプラン依存です（Free は Auto のみ）。
@@ -107,7 +107,8 @@ Cursor セッションには表示できる履歴がありません（実行中�
 **アシスタントチャットの既定モデル** — 各アシスタントで個別に指定でき、claude の既定は
 デプロイ全体で `AF_CHAT_MODEL` でも変更できます。会話用途のため高速・低コストのティアを
 既定にしています: Claude → Sonnet 5 · Codex → `gpt-5.6-luna` · OpenCode →
-`opencode/nemotron-3-ultra-free` · Antigravity → Gemini 3.5 Flash。
+`opencode/nemotron-3-ultra-free` · Antigravity → Gemini 3.5 Flash · Cursor →
+Cursor 自身の既定（Auto）。なお Cursor のアシスタントは**読み取り専用**（`--mode ask`）です。
 
 ## はじめに — どの版を選ぶ？
 

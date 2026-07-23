@@ -211,6 +211,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     tuiMemoryCost: "",
     caps: caps({
       chat: true,
+      headlessChat: true, // `cursor-agent -p --mode ask` backs assistant chat, read-only (docs/40 Track D)
       transcript: true,
       model: true,
       tuiStartMode: true, // --plan（plan で起動）

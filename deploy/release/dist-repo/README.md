@@ -91,7 +91,7 @@ upstream CLI exposes. This matrix is the quick reference (✓ = supported,
 | Runs in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| Usable as the assistant chat | ✓ | ✓ | — | — | ✓ | ✓ | — |
+| Usable as the assistant chat | ✓ | ✓ | ✓ | — | ✓ | ✓ | — |
 | WS-bar usage / limit chip | ✓ | ✓ | — | ✓ | ✓ | — | — |
 
 ¹ Copilot's model choice is plan-dependent (Free = Auto only).
@@ -108,7 +108,8 @@ as Terminal (CLI) does persist a readable history).
 **Default model for the assistant chat** — each assistant can pin its own, and Claude's
 default is also settable deployment-wide via `AF_CHAT_MODEL`. These favour fast, low-cost
 tiers because the assistant is conversational: Claude → Sonnet 5 · Codex → `gpt-5.6-luna`
-· OpenCode → `opencode/nemotron-3-ultra-free` · Antigravity → Gemini 3.5 Flash.
+· OpenCode → `opencode/nemotron-3-ultra-free` · Antigravity → Gemini 3.5 Flash · Cursor →
+its own default (Auto). Cursor's assistant runs **read-only** (`--mode ask`).
 
 ## Getting started — which edition?
 
