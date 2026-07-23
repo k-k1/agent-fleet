@@ -34,8 +34,9 @@ loopback で届く（preview の下請け `/proxy/{port}`とBrowserManagerの直
   jsonl に実会話行（user/assistant）があるか——
   ⚠️ Remote Control が ON のとき会話前でも `bridge-session` 1 行が書かれるため「jsonl 存在=resume 可」に
   すると `--resume` が即死する。non-resumable なら jsonl を捨てて `--session-id` 新規。（entrypoint の
-  seed 既定は **新規 WS で Remote Control OFF**＝`remoteControlAtStartup: false`。既存 WS は settings.json が
-  真実なので現状値を維持。）
+  seed 既定は **新規 WS で Remote Control OFF**＝`remoteControlAtStartup: false`。既存 WS も
+  settings.json に `remoteControlAtStartup` キーが無ければ起動時に一度だけ `false` を補って既定 OFF に揃える
+  ——ただしユーザーが Console で明示設定した値（キー在り）は上書きせず尊重する。）
 - ⚠️ **tmux の `-t` は前方一致**（exact→prefix→fnmatch）。`claude_foo` が `claude_foo-sh` に一致して
   誤判定・誤 kill しうるため、target 参照は全て `=name` の exact 形式で行うのが本リポジトリの規約。
 - **DB ミラー（B 案）**: CP の `GET /api/sessions` は running 時に Agent から取得して DB を洗い替え、
