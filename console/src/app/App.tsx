@@ -8,6 +8,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useTenantStore } from "../core/store/tenant.ts";
 import { useT } from "../lib/i18n/index.ts";
+import { startPushChannel, restartPush } from "../core/push/events.ts";
+import { wirePushApply } from "../core/push/wire.ts";
 import { useWorkspaceStore, startWorkspacePolling } from "../core/store/workspace.ts";
 import { useLayoutStore, wireLayoutHistory } from "../layout/store.ts";
 import { wireKeys } from "../features/keys/dispatcher.ts";
@@ -247,6 +249,11 @@ export function App() {
     const unReconcile = wireTerminalReconcile();
     const unBrowserReconcile = wireBrowserReconcile();
     const unWsRefresh = wireWorkspaceRefresh();
+    // 統合 push チャネル（通信量削減 P3）: 配線を先に登録してから接続 — 初回
+    // スナップショットのフレームを取りこぼさない。ポーラーはフォールバックで
+    // そのまま起動する（pushHealthy 中は tick スキップ）。
+    const unPushApply = wirePushApply();
+    const stopPush = startPushChannel();
     const stopWsPoll = startWorkspacePolling();
     const stopSessPoll = startSessionsPolling();
     const stopReposPoll = startReposPolling();
@@ -268,6 +275,8 @@ export function App() {
       unReconcile();
       unBrowserReconcile();
       unWsRefresh();
+      unPushApply();
+      stopPush();
       stopWsPoll();
       stopSessPoll();
       stopReposPoll();
@@ -285,6 +294,9 @@ export function App() {
     // pane ids are tab-local, not tenant-global. Never carry an ephemeral Page
     // owned by the previous membership into a same-named pane in the next tenant.
     disposeAllBrowsers();
+    // 旧テナントの push ストリームを先に落としてから通知ストアを reset する —
+    // 逆順だと reset 後に旧テナントのフレームが 1 個滑り込みうる。
+    restartPush();
     useNotificationStore.getState().reset();
     void useNotificationStore.getState().refresh();
     useLayoutStore.getState().load(tenant);

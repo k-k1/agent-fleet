@@ -20,8 +20,10 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"time"
 )
@@ -46,6 +48,25 @@ func newEventsAPI(m *manager, autostart bool) eventsAPI {
 func registerEventsRoutes(mux *http.ServeMux, cfg config) {
 	ev := newEventsAPI(cfg.mgr, cfg.autostart)
 	mux.HandleFunc("GET /api/events", ev.withResolved(ev.stream))
+}
+
+// statsPayload rounds the jittery gauges before diffing: memory.current moves
+// by bytes on every read and cpu_pct by fractions, so diffing the raw values
+// would push a stats frame every tick and defeat the suppression. The WS-bar
+// chip displays rounded percent / 0.1 GiB anyway — an 8 MiB floor and integer
+// CPU percent lose nothing visible. The REST endpoint keeps serving raw values.
+func statsPayload(ctx context.Context, name string) map[string]any {
+	return roundStats(containerStats(ctx, name))
+}
+
+func roundStats(m map[string]any) map[string]any {
+	if v, ok := m["mem_used"].(uint64); ok {
+		m["mem_used"] = v &^ (8<<20 - 1)
+	}
+	if v, ok := m["cpu_pct"].(float64); ok {
+		m["cpu_pct"] = math.Round(v)
+	}
+	return m
 }
 
 // stream serves one subscriber: initial full snapshot, then diff-only pushes.
@@ -83,7 +104,7 @@ func (a eventsAPI) stream(w http.ResponseWriter, r *http.Request, res *resolved)
 	}
 	tickAll := func() {
 		wrote := emit("workspace", a.ws.workspacePayload(ctx, res))
-		wrote = emit("stats", containerStats(ctx, res.rt.Name())) || wrote
+		wrote = emit("stats", statsPayload(ctx, res.rt.Name())) || wrote
 		wrote = emit("sessions", a.ws.sessionsPayload(ctx, res)) || wrote
 		// 通知 drain の一時失敗（DB エラー等）はこの tick を落とすだけで
 		// ストリーム自体は生かす — 次の tick で回復する。

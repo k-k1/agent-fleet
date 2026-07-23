@@ -152,6 +152,31 @@ func TestEventsStreamPushesChange(t *testing.T) {
 	}
 }
 
+// TestRoundStats: 生の cgroup 値はバイト単位で毎読み揺れるので、diff 抑制が
+// 効くよう mem_used は 8MiB floor・cpu_pct は整数へ丸める（表示粒度は WS バー
+// チップの丸め percent / 0.1GiB なので情報は落ちない）。それ以外のキーは不変。
+func TestRoundStats(t *testing.T) {
+	got := roundStats(map[string]any{
+		"running": true, "mem_used": uint64(8<<20 + 12345), "mem_max": uint64(1 << 30),
+		"cpu_pct": 12.7, "oom_kill_total": uint64(2),
+	})
+	if got["mem_used"] != uint64(8<<20) {
+		t.Errorf("mem_used = %v, want %v", got["mem_used"], uint64(8<<20))
+	}
+	if got["cpu_pct"] != 13.0 {
+		t.Errorf("cpu_pct = %v, want 13", got["cpu_pct"])
+	}
+	if got["mem_max"] != uint64(1<<30) || got["oom_kill_total"] != uint64(2) || got["running"] != true {
+		t.Errorf("untouched keys changed: %v", got)
+	}
+	// 揺れだけ違う 2 サンプルが同一 JSON になる（= diff 抑制が効く）こと。
+	a, _ := json.Marshal(roundStats(map[string]any{"mem_used": uint64(100<<20 + 1), "cpu_pct": 3.2}))
+	b, _ := json.Marshal(roundStats(map[string]any{"mem_used": uint64(100<<20 + 999999), "cpu_pct": 2.8}))
+	if string(a) != string(b) {
+		t.Errorf("jittered samples differ after rounding: %s vs %s", a, b)
+	}
+}
+
 // TestEventsStreamPing: 無送信が ping 間隔を超えたらコメント ping を流す
 // （クライアント watchdog / 中間プロキシの keep-alive）。
 func TestEventsStreamPing(t *testing.T) {

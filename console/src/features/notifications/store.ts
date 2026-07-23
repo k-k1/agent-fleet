@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { api, apiJSON } from "../../core/api/client.ts";
+import { pushHealthy } from "../../core/push/events.ts";
 import { getSettings } from "../../lib/settings.ts";
 import { t } from "../../lib/i18n/index.ts";
 import { activePane } from "../../layout/ops.ts";
@@ -30,6 +31,9 @@ interface NotificationState {
   sourceState: NotificationSourceState;
   initialized: boolean;
   reset(): void;
+  /** Adopt one GET /api/notifications-shaped payload (poll result or pushed
+   * api/events frame) and deliver the rows newer than the last seen maxSeq. */
+  applyPayload(d: { error?: unknown; items?: FleetNotification[]; maxSeq?: number; unseenCount?: number; sourceState?: NotificationSourceState }): void;
   refresh(): Promise<void>;
   markSeen(throughSeq?: number, eventIds?: string[]): Promise<void>;
 }
@@ -138,6 +142,16 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
     generation++;
     set({ items: [], maxSeq: 0, unseenCount: 0, sourceState: "unknown", initialized: false });
   },
+  applyPayload(d) {
+    if (d.error) return;
+    const items: FleetNotification[] = d.items || [];
+    const previous = get().maxSeq;
+    const initialized = get().initialized;
+    set({ items, maxSeq: d.maxSeq || 0, unseenCount: d.unseenCount || 0, sourceState: d.sourceState || "offline", initialized: true });
+    if (initialized) {
+      for (const n of items.filter((x) => x.seq > previous).sort((a, b) => a.seq - b.seq)) void deliver(n);
+    }
+  },
   async refresh() {
     try {
       const ownGeneration = generation;
@@ -145,14 +159,7 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
       const d = await api("api/notifications");
       if (ownGeneration !== generation || ownRequest < appliedSeq) return;
       appliedSeq = ownRequest;
-      if (d.error) return;
-      const items: FleetNotification[] = d.items || [];
-      const previous = get().maxSeq;
-      const initialized = get().initialized;
-      set({ items, maxSeq: d.maxSeq || 0, unseenCount: d.unseenCount || 0, sourceState: d.sourceState || "offline", initialized: true });
-      if (initialized) {
-        for (const n of items.filter((x) => x.seq > previous).sort((a, b) => a.seq - b.seq)) void deliver(n);
-      }
+      get().applyPayload(d);
     } catch {}
   },
   async markSeen(throughSeq, eventIds) {
@@ -203,11 +210,22 @@ export function wireNotificationReadOnActiveSession(): () => void {
   };
 }
 
+// applyPushedNotifications adopts a pushed api/events frame. Bumping the
+// request/applied counters marks any in-flight poll as stale so its (older)
+// response gets discarded on arrival — the same ordering guard refresh() uses.
+export function applyPushedNotifications(d: Parameters<NotificationState["applyPayload"]>[0]): void {
+  appliedSeq = ++requestSeq;
+  useNotificationStore.getState().applyPayload(d);
+}
+
+// Poll fallback: skipped while the push channel covers this stream (api/events).
+// While hidden the push channel disconnects and this poll resumes at its slow
+// 15s cadence — preserving today's hidden-tab OS-notification delivery.
 export function startNotificationPolling(): () => void {
   let stopped = false;
   let timer = 0;
   const load = async () => {
-    await useNotificationStore.getState().refresh();
+    if (!pushHealthy()) await useNotificationStore.getState().refresh();
     if (!stopped) timer = window.setTimeout(load, document.hidden ? 15000 : 5000);
   };
   void load();
