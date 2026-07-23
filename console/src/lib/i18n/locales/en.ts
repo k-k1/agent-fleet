@@ -618,6 +618,9 @@ export const en: Record<keyof typeof ja, string> = {
   "git.bb_token_hint": "Create an API token \"with scopes\" and select Bitbucket in the app — a scopeless token is rejected by the Bitbucket API. Required scopes: ",
   "git.bb_token_hint_read": " (list & clone). To push as well, also add ",
   "git.bb_token_hint_write": ". Use your canonical Atlassian account email as the username.",
+  "git.bb_err_scopeless": "Bitbucket rejected the token. Create an API token \"with scopes\" (select Bitbucket) and use your Atlassian account email as the username.",
+  "git.bb_err_no_repo_read": "The token is missing the read:repository:bitbucket scope. Recreate it with scopes.",
+  "git.bb_warn_no_write": "Connected — but pushing needs the write:repository:bitbucket scope, which this token doesn't have.",
 
   // --- internal repo browser (InternalRepoBrowser) ---
   "igb.title": "Internal repo browser — {name}",

@@ -325,9 +325,20 @@ function BitbucketRow({ st, reload }: RowProps) {
       token: token.trim(),
     });
     if (res && res.error) {
-      toast(tr("conn.connect_failed", { msg: String(res.error.message || res.error) }));
+      // Connect-time scope check (backend): map the actionable codes to guidance,
+      // fall back to the raw message for anything else.
+      const code = res.error.code;
+      const msg =
+        code === "bb_scopeless"
+          ? tr("git.bb_err_scopeless")
+          : code === "bb_no_repo_read"
+            ? tr("git.bb_err_no_repo_read")
+            : tr("conn.connect_failed", { msg: String(res.error.message || res.error) });
+      toast(msg, { kind: "warn" });
       return;
     }
+    // Connected, but the token can't push (no write scope) — surface it, don't block.
+    if (res?.warn === "no_write") toast(tr("git.bb_warn_no_write"), { kind: "warn" });
     setToken("");
     setUsername("");
     setMode("idle");

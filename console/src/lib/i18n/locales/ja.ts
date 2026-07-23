@@ -623,6 +623,9 @@ export const ja = {
   "git.bb_token_hint": "「スコープ付き API トークン」を作成し、アプリで Bitbucket を選択してください。スコープ無しのトークンは Bitbucket API で拒否されます。必要なスコープ：",
   "git.bb_token_hint_read": "（一覧・クローン用）。push も行う場合は ",
   "git.bb_token_hint_write": " も追加。ユーザー名には正規の Atlassian アカウントのメールアドレスを使用します。",
+  "git.bb_err_scopeless": "Bitbucket がトークンを拒否しました。スコープ付き API トークン（アプリで Bitbucket を選択）を作成し、ユーザー名には Atlassian アカウントのメールアドレスを使用してください。",
+  "git.bb_err_no_repo_read": "トークンに read:repository:bitbucket スコープがありません。スコープ付きで作り直してください。",
+  "git.bb_warn_no_write": "接続しました。ただし push には write:repository:bitbucket スコープが必要です（現在のトークンには未付与）。",
 
   // --- 内部リポジトリ参照（features/settings/InternalRepoBrowser.tsx）---
   "igb.title": "内部リポジトリ参照 — {name}",
