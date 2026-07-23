@@ -111,6 +111,20 @@ func paneMode(kind, tn string) string {
 				return "Default"
 			}
 		}
+	case session.KindCursor:
+		// cursor's composer footer (v2026.07.20 実測): idle placeholder "→ Add a
+		// follow-up" / "→ Plan, search, build anything"、下部にモデル名（"Auto"）と
+		// cwd、working は "Running … ctrl+c to stop"。フッタはコンポーザ描画後にのみ
+		// 出る（--trust 起動で trust ダイアログは出ないが、ブート直後は無い）ので、
+		// これが launch-seed の readiness 信号を兼ねる。plan は起動時固定（--plan）＝
+		// meta が真実なので、ここでは描画済み/未描画のみ判定し非 plan ラベルを返す。
+		for _, line := range strings.Split(paneTail(s, 4), "\n") {
+			if strings.Contains(line, "Add a follow-up") ||
+				strings.Contains(line, "Plan, search, build anything") ||
+				strings.Contains(line, "ctrl+c to stop") || strings.Contains(line, "Running") {
+				return "Default"
+			}
+		}
 	case session.KindCodex:
 		// codex's composer footer is "<model> <effort> · <cwd>  Plan mode [(shift+tab to
 		// cycle)]" — "Plan mode" appears ONLY in plan mode (Default shows no label). The
@@ -363,7 +377,7 @@ func submitPromptTUI(w http.ResponseWriter, name, pane, prompt string) bool {
 	// copilot: 同型 — trust 事前追記済みでもタブ UI の描画までコンポーザは無く、
 	// ブート画面に送った文字は無音で消える（8780956 の教訓）。フッタが readiness。
 	if meta, ok := session.ReadMeta(name); ok &&
-		(meta.Kind == session.KindAgy || meta.Kind == session.KindCopilot) {
+		(meta.Kind == session.KindAgy || meta.Kind == session.KindCopilot || meta.Kind == session.KindCursor) {
 		tn := session.TmuxName(name)
 		for i := 0; i < 30 && paneMode(meta.Kind, tn) == ""; i++ {
 			time.Sleep(500 * time.Millisecond)
@@ -416,7 +430,7 @@ func typePromptText(name, pane, text string) error {
 	}
 	// copilot も bracketed paste が必要: 実測（v1.0.73）で literal keys と同じ
 	// send-keys 内の Enter がペースト折り畳みに食われ、プロンプトが確定しない。
-	if kind != session.KindCodex && kind != session.KindOpencode && kind != session.KindCopilot {
+	if kind != session.KindCodex && kind != session.KindOpencode && kind != session.KindCopilot && kind != session.KindCursor {
 		if out, err := tmuxx.Cmd("send-keys", "-t", pane, "-l", text).CombinedOutput(); err != nil {
 			return fmt.Errorf("%v: %s", err, out)
 		}
