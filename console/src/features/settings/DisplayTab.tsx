@@ -12,7 +12,6 @@ import {
   THEMES,
   REGION_THEMES,
   SURFACE_TARGETS,
-  MIRROR_SEND_MODES,
   LOCALES,
 } from "../../lib/settings.ts";
 import { useT } from "../../lib/i18n/index.ts";

@@ -1690,8 +1690,6 @@ export const en: Record<keyof typeof ja, string> = {
   "handoff.title": "Hand off “{name}”",
   "handoff.intro": "The operator assistant reads this session and proposes a handoff summary. It only creates the new session after you approve.",
   "handoff.target_label": "Target agent",
-  "handoff.checking": "Checking available agents…",
-  "handoff.no_targets": "No connected agent can receive a handoff. Connect one in Settings first.",
   "handoff.note_label": "Note (optional)",
   "handoff.note_hint": "Extra instructions for the handoff — what to focus on, what to leave out.",
   "handoff.note_ph": "e.g. Carry over only the API refactor; skip the test scaffolding.",
