@@ -27,7 +27,7 @@ interface ModelDescriptor {
 // current locale and updates on language switch.
 const defaultOnly = (): ModelOption[] => [["", t("ui.default")]];
 const isDynamic = (kind: string) =>
-  kind === "codex" || kind === "opencode" || kind === "agy" || kind === "copilot";
+  kind === "codex" || kind === "opencode" || kind === "agy" || kind === "copilot" || kind === "cursor";
 const cache = new Map<string, ModelOption[]>();
 const descriptors = new Map<string, ModelDescriptor[]>();
 const inflight = new Map<string, Promise<ModelOption[]>>();

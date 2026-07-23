@@ -186,6 +186,45 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     }),
     available: (c) => !!c.conns?.codex?.connected,
   },
+  cursor: {
+    id: "cursor",
+    icon: "inspect", // codicon pointer/cursor — closest nod to "Cursor"; no brand codicon exists
+    label: "Cursor",
+    displayName: "Cursor",
+    assistantName: "Cursor",
+    short: "cu",
+    cssClass: "cursor",
+    launchHintKey: "agent.launch_hint.cursor",
+    launchSuffix: "-cu",
+    planCycleKey: "", // TUI の Shift+Tab は 3 モード循環（agent/plan/ask を跨ぐ）— キー駆動トグルは出さない
+    planEnterCmd: "",
+    defaultModeLabel: "Agent",
+    // Cursor CLI (docs/40, ADR 0023). Managed が既定: per-session child の
+    // `cursor-agent acp`（ACP JSON-RPC over stdio）を driver が駆動する（Track A2）。
+    // TUI も同じ Claude Code 互換 JSONL 転写を書くのでミラー/状態は両ドライバで成立。
+    // model: launch-time only（`cursor-agent models` のアカウント連動ライブカタログ →
+    // `--model`。effort はモデル id 自体に畳まれている＝別 effort cap は立てない。
+    // ACP に per-session モデル指定口が無く稼働中変更も不可＝DynamicModel:false）。
+    // fork なし（cursor の /fork は TUI 限定）。contextBar なし（v1 は per-turn トークンを
+    // ミラーに載せない — docs/40 Track D）。imagePaste は ACP に image:true があるが v1
+    // 未配線のためオフ（copilot と同じ「未検証の caps を立てない」1854d 教訓）。
+    // 認証は専用ログインフロー（~/.config/cursor/auth.json・API キー登録は Track D）。
+    managedDriver: true,
+    // per-session child なので CLI(TUI) を選んでも常駐プロセス数は変わらない
+    // （どちらも cursor 1 プロセス/セッション）— 追加コスト表示なし（copilot 同型）。
+    tuiMemoryCost: "",
+    caps: caps({
+      chat: true,
+      transcript: true,
+      model: true,
+      tuiStartMode: true, // --plan（plan で起動）
+      runsInDir: true,
+      launchableFromRepo: true,
+    }),
+    // Hidden when the image lacks the CLI (supported === false) or cursor is not
+    // signed in; an unfetched conns bag stays visible (same policy as agy/copilot).
+    available: (c) => c.conns?.cursor?.supported !== false && !!c.conns?.cursor?.connected,
+  },
   agy: {
     id: "agy",
     icon: "magnet",
@@ -374,6 +413,6 @@ export function availableKinds(ctx: AvailCtx): Record<SessionKind, boolean> {
 
 // Kinds offered in a repo row's launch menu, in display order. Every entry must
 // carry the launchableFromRepo cap (asserted below); the order is presentational.
-export const repoLaunchKinds: SessionKind[] = ["claude", "codex", "copilot", "agy", "opencode", "shell"];
+export const repoLaunchKinds: SessionKind[] = ["claude", "codex", "cursor", "copilot", "agy", "opencode", "shell"];
 
 export type { SsmHost };

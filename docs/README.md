@@ -31,6 +31,8 @@
 - [35-packaging.md](35-packaging.md) — パッケージング & 配布の4ターゲット設計（native / amd64 Linux / EC2-Single / ECS）（📋 設計・P3-10 残作業の具体化）
 - [36-copilot-agent-kind.md](36-copilot-agent-kind.md) — `kind=copilot`（GitHub Copilot CLI）を第5種別として Terminal+Managed 両対応で実装（✅ 実装済み・実 CLI 契約テスト通過。設計判断は [decisions/0019](decisions/0019-copilot-agent-kind.md)）
 - [37-chat-bridge.md](37-chat-bridge.md) — チャットブリッジ（Slack/Discord 連携）: 通知・双方向操縦・AUQ ボタン・承認ゲート（📋 計画・未実装。設計判断は [decisions/0020](decisions/0020-chat-bridge.md)）
+- [38-scheduled-execution.md](38-scheduled-execution.md) — 定時実行（オペレーター cron 型）: CP scheduler・wakeFirer・run 履歴・Console UI（✅ v1 コア実装済み。設計判断は [decisions/0021](decisions/0021-scheduled-execution.md)）
+- [40-cursor-agent-kind.md](40-cursor-agent-kind.md) — `kind=cursor`（Cursor CLI）を第7種別として Terminal+Managed 両対応で実装（📋 計画・実装未着手。実 CLI 実測記録・着工前プローブ一覧を含む。設計判断は [decisions/0023](decisions/0023-cursor-agent-kind.md)）
 
 > 完了後も実装契約や実測リファレンスとしてコードから参照する 24・26〜30 は番号付きのまま残す。
 > 時系列の実装プランとして役目を終えたものは history/ へ移動: [19 assistant-chat](history/19-assistant-chat.md) /

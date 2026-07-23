@@ -210,6 +210,7 @@
 }
 .lm-kind.kc-claude { color: var(--kind-claude); }
 .lm-kind.kc-codex { color: var(--kind-codex); }
+.lm-kind.kc-cursor { color: var(--kind-cursor); }
 .lm-kind.kc-opencode { color: var(--kind-opencode); }
 .lm-kind.kc-copilot { color: var(--kind-copilot); }
 .lm-kind.kc-agy { color: var(--kind-agy); }

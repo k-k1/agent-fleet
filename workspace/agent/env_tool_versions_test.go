@@ -13,6 +13,8 @@ func TestExtractVer(t *testing.T) {
 		{"go version go1.26.4 linux/amd64", "1.26.4"},
 		{"v22.17.0", "22.17.0"},
 		{"Python 3.11.2", "3.11.2"},
+		{"2026.07.20-8cc9c0b", "2026.07.20"}, // cursor: 日付版数（sha 接尾辞は落ちる）
+
 		{"(timeout)", "(timeout)"}, // 番号なし → raw をそのまま返す
 	}
 	for _, c := range cases {

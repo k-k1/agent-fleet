@@ -46,12 +46,17 @@ if [ "${1:-}" = "--inner" ]; then
     check_ver opencode "$EXPECT_OPENCODE" opencode --version
     check_ver codex    "$EXPECT_CODEX"    codex --version
     check_ver copilot  "$EXPECT_COPILOT"  copilot --version
+    # cursor の版数は日付+sha 文字列（2026.07.20-8cc9c0b）で semver でない — check_ver は
+    # semver 抽出で -sha 接尾辞を落とすので、--version 出力を丸ごとピンと突き合わせる。
+    cursor_out="$(cursor-agent --disable-auto-update --version 2>&1 | head -1)"
+    if [ "$cursor_out" = "$EXPECT_CURSOR" ]; then echo "ok  cursor $cursor_out"
+    else echo "NG  cursor: actual ${cursor_out:-?} != pin $EXPECT_CURSOR"; fail=1; fi
   else
     # Lean distribution variant (BAKE_AGENT_CLIS=0, docs/35 §35.7.1-7): verify the
     # agent CLIs really are absent (= we do not redistribute proprietary CLIs).
     # Whether the pinned versions are installable is covered by the versions.json
     # all-pins check (below) and the separate P1-gate boot-install run (needs network).
-    for c in claude opencode codex copilot agy rtk; do
+    for c in claude opencode codex copilot cursor-agent agy rtk; do
       if command -v "$c" >/dev/null 2>&1; then
         echo "NG  lean: $c is baked in (expected BAKE_AGENT_CLIS=0)"; fail=1
       else
@@ -93,6 +98,7 @@ if [ "${1:-}" = "--inner" ]; then
   VJ=/usr/local/share/agent-fleet/versions.json
   if [ -f "$VJ" ]; then
     for pair in "claude=$EXPECT_CLAUDE" "opencode=$EXPECT_OPENCODE" "codex=$EXPECT_CODEX" "copilot=$EXPECT_COPILOT" \
+                "cursor=$EXPECT_CURSOR" \
                 "agy=$EXPECT_AGY" "rtk=$EXPECT_RTK_VER" \
                 "go=$EXPECT_GO" "gh=$EXPECT_GH" "chromium=$EXPECT_CHROMIUM" \
                 "chromium_cft=$EXPECT_CHROMIUM_CFT" \
@@ -117,6 +123,18 @@ if [ "${1:-}" = "--inner" ]; then
       echo "ok  versions.json agy_sha256=$got"
     else
       echo "NG  versions.json agy_sha256: ${got:-?} != ${agy_sha_want:-?}"; fail=1
+    fi
+    # cursor_sha256 も arch 依存の焼き込み値（boot-install の検証材料）。
+    case "$(dpkg --print-architecture)" in
+      amd64) cursor_sha_want="$EXPECT_CURSOR_SHA_X64" ;;
+      arm64) cursor_sha_want="$EXPECT_CURSOR_SHA_ARM64" ;;
+      *)     cursor_sha_want="" ;;
+    esac
+    got="$(jq -r .cursor_sha256 "$VJ" 2>/dev/null)"
+    if [ -n "$cursor_sha_want" ] && [ "$got" = "$cursor_sha_want" ]; then
+      echo "ok  versions.json cursor_sha256=$got"
+    else
+      echo "NG  versions.json cursor_sha256: ${got:-?} != ${cursor_sha_want:-?}"; fail=1
     fi
   else
     echo "NG  $VJ missing"; fail=1
@@ -222,6 +240,9 @@ EXPECT_CLAUDE="$(arg_pin CLAUDE_CODE_VERSION)"
 EXPECT_OPENCODE="$(arg_pin OPENCODE_VERSION)"
 EXPECT_CODEX="$(arg_pin CODEX_VERSION)"
 EXPECT_COPILOT="$(arg_pin COPILOT_VERSION)"
+EXPECT_CURSOR="$(arg_pin CURSOR_VERSION)"
+EXPECT_CURSOR_SHA_X64="$(arg_pin CURSOR_SHA256_X64)"
+EXPECT_CURSOR_SHA_ARM64="$(arg_pin CURSOR_SHA256_ARM64)"
 EXPECT_AGY="$(arg_pin AGY_VERSION)"
 EXPECT_AGY_SHA_X64="$(arg_pin AGY_SHA256_X64)"
 EXPECT_AGY_SHA_ARM64="$(arg_pin AGY_SHA256_ARM64)"
@@ -242,12 +263,15 @@ EXPECT_RTK="${EXPECT_RTK:-1}" # default = always baked in; pass 0 only to verify
 EXPECT_AGENT_CLIS="${EXPECT_AGENT_CLIS:-1}"
 SMOKE_MEMORY="${WS_MEMORY:-1g}"
 
-echo "==> image smoke: $IMAGE (agent_clis=$EXPECT_AGENT_CLIS claude=$EXPECT_CLAUDE opencode=$EXPECT_OPENCODE codex=$EXPECT_CODEX copilot=$EXPECT_COPILOT go=$EXPECT_GO gh=$EXPECT_GH chromium=$EXPECT_CHROMIUM rtk=$EXPECT_RTK)"
+echo "==> image smoke: $IMAGE (agent_clis=$EXPECT_AGENT_CLIS claude=$EXPECT_CLAUDE opencode=$EXPECT_OPENCODE codex=$EXPECT_CODEX copilot=$EXPECT_COPILOT cursor=$EXPECT_CURSOR go=$EXPECT_GO gh=$EXPECT_GH chromium=$EXPECT_CHROMIUM rtk=$EXPECT_RTK)"
 exec docker run --rm -i --init --network none --memory "$SMOKE_MEMORY" --cap-add=SYS_ADMIN \
   -e EXPECT_CLAUDE="$EXPECT_CLAUDE" \
   -e EXPECT_OPENCODE="$EXPECT_OPENCODE" \
   -e EXPECT_CODEX="$EXPECT_CODEX" \
   -e EXPECT_COPILOT="$EXPECT_COPILOT" \
+  -e EXPECT_CURSOR="$EXPECT_CURSOR" \
+  -e EXPECT_CURSOR_SHA_X64="$EXPECT_CURSOR_SHA_X64" \
+  -e EXPECT_CURSOR_SHA_ARM64="$EXPECT_CURSOR_SHA_ARM64" \
   -e EXPECT_AGY="$EXPECT_AGY" \
   -e EXPECT_AGY_SHA_X64="$EXPECT_AGY_SHA_X64" \
   -e EXPECT_AGY_SHA_ARM64="$EXPECT_AGY_SHA_ARM64" \

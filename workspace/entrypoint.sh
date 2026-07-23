@@ -53,7 +53,7 @@ fi
 
 # --- boot-install（lean 配布 variant、docs/35 §35.4.1 / §35.7.1-6） -----------
 # BAKE_AGENT_CLIS=0 で焼いたイメージ/rootfs はエージェント CLI
-# （claude/opencode/codex/copilot/agy/rtk）を含まない。ここで versions.json の
+# （claude/opencode/codex/copilot/cursor/agy/rtk）を含まない。ここで versions.json の
 # ピン版（= e2e-smoke で動作検証した版）を ~/.local へ導入する。各デプロイ先が
 # 公式配布元（npm / GitHub Releases / Google）から直接取得する形なので、当方に
 # よる再配布に当たらない（各社が各配布元の規約を自ら受諾する）。焼き込み
@@ -141,6 +141,34 @@ if [ "$LEAN_CLIS" = 1 ]; then
       || echo "[entrypoint] WARN: agy boot-install failed (retrying next start)"
   elif cli_present agy; then
     echo "[entrypoint] boot-install: agy already present (skip)"
+  fi
+  # cursor（kind="cursor"、docs/40）: 版付き tarball の Node.js バンドルを
+  # ~/.local/share/cursor-agent/versions/<版>/ へ展開し ~/.local/bin/cursor-agent を張る
+  # （上流 install.sh と同レイアウト・Dockerfile 焼き込みと同経路）。sha256 は
+  # versions.json の cursor_sha256（arch 依存の焼き込み値）で検証。
+  if ! cli_present cursor-agent && [ -n "$(vj_pin cursor)" ] && [ -n "$(vj_pin cursor_sha256)" ]; then
+    (
+      set -e
+      cver="$(vj_pin cursor)"; csha="$(vj_pin cursor_sha256)"
+      arch="$(dpkg --print-architecture 2>/dev/null || uname -m)"
+      case "$arch" in
+        amd64 | x86_64) casset="x64" ;;
+        arm64 | aarch64) casset="arm64" ;;
+        *) echo "unsupported arch: $arch" >&2; exit 1 ;;
+      esac
+      dir="$HOME/.local/share/cursor-agent/versions/${cver}"
+      tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+      curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused \
+        "https://downloads.cursor.com/lab/${cver}/linux/${casset}/agent-cli-package.tar.gz" -o "$tmp/cursor.tgz"
+      echo "${csha}  $tmp/cursor.tgz" | sha256sum -c - >/dev/null
+      rm -rf "$dir"; mkdir -p "$dir"
+      tar --strip-components=1 -xzf "$tmp/cursor.tgz" -C "$dir"
+      mkdir -p "$HOME/.local/bin"
+      ln -sf "$dir/cursor-agent" "$HOME/.local/bin/cursor-agent"
+    ) && echo "[entrypoint] boot-install cursor $(vj_pin cursor)" \
+      || echo "[entrypoint] WARN: cursor boot-install failed (retrying next start)"
+  elif cli_present cursor-agent; then
+    echo "[entrypoint] boot-install: cursor already present (skip)"
   fi
 fi
 
@@ -266,6 +294,24 @@ if [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE:-
   ) && echo "[entrypoint] rtk updated: $("$HOME/.local/bin/rtk" --version 2>/dev/null | head -1)" \
     || echo "[entrypoint] WARN: rtk update failed (using baked version)"
   fi
+  # cursor も同じ opt-in で最新へ。npm でなく上流の版ピン install.sh 供給で、焼き込みは
+  # root 所有の /usr/local に置くため、install.sh の既定インストール先 ~/.local へ入れて
+  # PATH 先勝ちで差し替える（shadow 方式・agy/rtk と同構図）。install.sh は
+  # ~/.local/bin/{agent,cursor-agent} を張り ~/.local/share/cursor-agent へ展開する。
+  # OFF に戻すと下の分岐がこの shadow を除去し焼き込み版へ戻る。版比較スキップ:
+  # install.sh（軽量スクリプト・版ピン埋め込み）から latest 版を取り、PATH 先勝ちの
+  # `cursor-agent --version`（shadow か焼き込み）と一致なら ~100MB の再取得を省く。
+  cursor_latest="$(curl -fsSL --max-time 15 https://cursor.com/install 2>/dev/null \
+    | grep -oE 'lab/[0-9][0-9.]*-[a-f0-9]+' | head -1 | sed 's#lab/##')"
+  cursor_cur="$(cursor-agent --disable-auto-update --version 2>/dev/null | head -1)"
+  if [ -n "$cursor_latest" ] && [ "$cursor_cur" = "$cursor_latest" ]; then
+    echo "[entrypoint] cursor already latest ($cursor_cur); skip"
+  elif curl -fsSL https://cursor.com/install 2>/dev/null | bash >/dev/null 2>&1 \
+       && [ -x "$HOME/.local/bin/cursor-agent" ]; then
+    echo "[entrypoint] cursor updated: $(cursor-agent --disable-auto-update --version 2>/dev/null | head -1)"
+  else
+    echo "[entrypoint] WARN: cursor update failed (using $([ -e "$HOME/.local/bin/cursor-agent" ] && echo previous || echo baked) version)"
+  fi
 else
   # Opt-in が無効（テナント不許可 or メンバー OFF）: 過去の opt-in が残した
   # ~/.local/bin の rtk / agy shadow は焼き込み版を PATH で隠すので除去し、CLI 群と
@@ -274,6 +320,12 @@ else
   # 「復帰先の焼き込み版がある時だけ shadow を掃除」に限定する。
   if [ -x /usr/local/bin/rtk ]; then rm -f "$HOME/.local/bin/rtk"; fi
   if [ -x /usr/local/bin/agy ]; then rm -f "$HOME/.local/bin/agy" "$HOME/.local/bin/.agy.version"; fi
+  # cursor: install.sh は agent/cursor-agent の両シンボリックリンクと share ツリーを
+  # 作るので両方畳む（焼き込み /usr/local/bin/cursor-agent がある時のみ = 復帰先あり）。
+  if [ -x /usr/local/bin/cursor-agent ]; then
+    rm -f "$HOME/.local/bin/cursor-agent" "$HOME/.local/bin/agent"
+    rm -rf "$HOME/.local/share/cursor-agent"
+  fi
 fi
 
 # 既定 settings.json を seed（ファイルが無い時のみ。以後は Console の Claude 設定が真実）。
@@ -348,6 +400,39 @@ PY
 # the agent (reconcileAgentRTK in agent_rtk.go) from the durable ~/.config/agent-
 # fleet/rtk.json toggle — NOT seeded here — so the Console on/off choice survives
 # restarts. The agent runs immediately after this entrypoint (exec workspace-agent).
+
+# cursor auto-update 封殺（docs/40 Track B）: バンドル解析で背景自己更新は
+# `disableAutoUpdate || channel==="static"` でスキップされる。AF は起動フラグ
+# --disable-auto-update を全経路で渡すが、ユーザーが素で `cursor-agent` を叩いた
+# 場合の背景更新（~/.local へ home shadow を作り PATH で焼き込みを隠す）まで防ぐには
+# 恒久設定が要る。~/.cursor/cli-config.json の channel を "static" に固定する（起動毎
+# 再固定 — 3a2c9df 教訓）。channel 鍵のみ触り他は保存。JSON でなければ触らない。
+# self-update opt-in で ~/.local に shadow を入れた版にも同じ config が効くが、opt-in の
+# 更新は install.sh 明示実行なので無害（cursor 自身の背景更新だけを止める）。
+if command -v cursor-agent >/dev/null 2>&1; then
+  CUR_CFG="$HOME/.cursor/cli-config.json"
+  mkdir -p "$HOME/.cursor"
+  python3 - "$CUR_CFG" <<'PY' && echo "[entrypoint] set cursor channel=static (auto-update off)" || echo "[entrypoint] WARN: skipped cursor channel config"
+import json, os, sys
+p = sys.argv[1]
+cfg = {}
+if os.path.exists(p):
+    try:
+        with open(p) as f:
+            cfg = json.load(f)
+    except Exception:
+        sys.exit(1)  # not plain JSON — don't clobber
+if not isinstance(cfg, dict):
+    sys.exit(1)
+if cfg.get("channel") == "static":
+    sys.exit(0)  # already fixed
+cfg["channel"] = "static"
+tmp = p + ".af-tmp"
+with open(tmp, "w") as f:
+    json.dump(cfg, f, indent=2)
+os.replace(tmp, p)
+PY
+fi
 
 # Workspace 利用ガイド（やってはいけないこと等）を各エージェントが常時読み込む位置へ配置。
 #   claude   … /etc/claude-code/CLAUDE.md（イメージに焼込済の managed policy。毎セッション読込）
