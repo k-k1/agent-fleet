@@ -6,6 +6,7 @@
 //   openNewSession               → features/sessions/store (tick signal)
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, previewURL } from "../core/api/client.ts";
+import { onPush, pushHealthy } from "../core/push/events.ts";
 import { useTenantStore } from "../core/store/tenant.ts";
 import { useWorkspaceStore, wsStartBusy } from "../core/store/workspace.ts";
 import { useLayoutStore } from "../layout/store.ts";
@@ -50,35 +51,40 @@ function useWsResourceChips(tenant: string | null, superAdmin: boolean) {
     let alive = true;
     wsKey.current = "";
     setWsHist([]); // tenant switch → start the trend fresh
+    // apply adopts one stats payload — from the 4s poll or a pushed api/events
+    // frame (identical shape).
+    const apply = (d: any) => {
+      if (!alive) return;
+      const ok = d && !d.error;
+      const running = !!(ok && d.running && d.mem_used != null);
+      // Re-render only when a DISPLAYED value changes. memory.current jitters
+      // by bytes every read, so keying on the raw stats would repaint the
+      // sparkline every 4s even at a steady 0% — which on a remote display
+      // flickered the cursor. Key on the rounded mem%/cpu% the chip actually
+      // shows, so an idle workspace produces the same key and no re-render.
+      const memPct = running && d.mem_max ? Math.round((d.mem_used / d.mem_max) * 100) : -1;
+      const cpuPct = running && d.cpu_pct != null ? Math.round(d.cpu_pct) : -1;
+      // OOM flags are part of the key so a fresh in-container OOM (oom_recent) or a
+      // stopped-from-OOM container (oom_killed) repaints even at a steady mem/cpu.
+      const oom = `${d.oom_recent ? 1 : 0}|${d.oom_killed ? 1 : 0}|${d.exit_code ?? ""}`;
+      const key = ok ? `${!!(d && d.running)}|${memPct}|${cpuPct}|${oom}` : "off";
+      if (key === wsKey.current) return;
+      wsKey.current = key;
+      setWsStats(ok ? d : null);
+      if (running) {
+        const mem = d.mem_max ? d.mem_used / d.mem_max : null;
+        const cpu = typeof d.cpu_pct === "number" ? d.cpu_pct : null;
+        setWsHist((h) => [...h, { cpu, mem }].slice(-HIST_N));
+      } else {
+        setWsHist([]); // stopped / unreachable → drop the stale trend
+      }
+    };
     const load = () => {
-      if (document.hidden) return; // a backgrounded tab needn't poll (or repaint)
+      // a backgrounded tab needn't poll (or repaint); while the push channel is
+      // live the stats frames arrive on their own (the poll is the fallback)
+      if (document.hidden || pushHealthy()) return;
       api("api/workspace/stats")
-        .then((d) => {
-          if (!alive) return;
-          const ok = d && !d.error;
-          const running = !!(ok && d.running && d.mem_used != null);
-          // Re-render only when a DISPLAYED value changes. memory.current jitters
-          // by bytes every read, so keying on the raw stats would repaint the
-          // sparkline every 4s even at a steady 0% — which on a remote display
-          // flickered the cursor. Key on the rounded mem%/cpu% the chip actually
-          // shows, so an idle workspace produces the same key and no re-render.
-          const memPct = running && d.mem_max ? Math.round((d.mem_used / d.mem_max) * 100) : -1;
-          const cpuPct = running && d.cpu_pct != null ? Math.round(d.cpu_pct) : -1;
-          // OOM flags are part of the key so a fresh in-container OOM (oom_recent) or a
-          // stopped-from-OOM container (oom_killed) repaints even at a steady mem/cpu.
-          const oom = `${d.oom_recent ? 1 : 0}|${d.oom_killed ? 1 : 0}|${d.exit_code ?? ""}`;
-          const key = ok ? `${!!(d && d.running)}|${memPct}|${cpuPct}|${oom}` : "off";
-          if (key === wsKey.current) return;
-          wsKey.current = key;
-          setWsStats(ok ? d : null);
-          if (running) {
-            const mem = d.mem_max ? d.mem_used / d.mem_max : null;
-            const cpu = typeof d.cpu_pct === "number" ? d.cpu_pct : null;
-            setWsHist((h) => [...h, { cpu, mem }].slice(-HIST_N));
-          } else {
-            setWsHist([]); // stopped / unreachable → drop the stale trend
-          }
-        })
+        .then(apply)
         .catch(() => {
           if (!alive || wsKey.current === "off") return;
           wsKey.current = "off";
@@ -86,12 +92,14 @@ function useWsResourceChips(tenant: string | null, superAdmin: boolean) {
           setWsHist([]);
         });
     };
+    const unPush = onPush("stats", apply);
     load();
     const id = setInterval(load, 4000);
     const onVis = () => !document.hidden && load();
     document.addEventListener("visibilitychange", onVis);
     return () => {
       alive = false;
+      unPush();
       clearInterval(id);
       document.removeEventListener("visibilitychange", onVis);
     };

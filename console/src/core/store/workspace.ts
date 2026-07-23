@@ -9,6 +9,7 @@
 // treat it as busy and keep their hands off).
 import { create } from "zustand";
 import { api } from "../api/client.ts";
+import { pushHealthy, pushStamp } from "../push/events.ts";
 import { t } from "../../lib/i18n/index.ts";
 
 interface WorkspaceStore {
@@ -20,6 +21,11 @@ interface WorkspaceStore {
    * a silent multi-minute wait. */
   bootPhase: string;
   refresh(): Promise<void>;
+  /** Apply a pushed workspace payload (api/events). Poll parity: an optimistic
+   * "…" transition is never clobbered — while busy only bootPhase updates (the
+   * same thing start()'s transient 2s poll does); the settle refresh() after the
+   * POST is what clears the busy state. */
+  applyPush(w: { state?: string; bootPhase?: string }): void;
   start(): Promise<void>;
   stop(): Promise<void>;
   /** Tear the container down and start fresh from the current image. Logins +
@@ -39,12 +45,27 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   bootPhase: "",
 
   async refresh() {
+    const stamp = pushStamp("workspace");
     try {
       const w = await api("api/workspace");
+      // A pushed frame that arrived while this fetch was in flight is at least as
+      // fresh — don't let a slow (mobile) response clobber it and stick until the
+      // next server-side change. The busy settle path is exempt: applyPush never
+      // clears an optimistic "…", so the settle refresh must always land.
+      if (pushStamp("workspace") !== stamp && !wsBusy(get().state)) return;
       set({ state: w.state || "unknown", bootPhase: w.bootPhase || "" });
     } catch {
       set({ state: "unknown" });
     }
+  },
+
+  applyPush(w) {
+    const cur = get().state;
+    if (wsBusy(cur)) {
+      if (cur === "starting…" || cur === "recreating…") set({ bootPhase: w.bootPhase || "" });
+      return;
+    }
+    set({ state: w.state || "unknown", bootPhase: w.bootPhase || "" });
   },
 
   async start() {
@@ -138,13 +159,14 @@ export const wsPreparing = (state: string, bootPhase: string): boolean =>
   bootPhase !== "" || state === "starting…" || state === "starting" || state === "recreating…";
 
 // Auto-sync every 4s so an externally-changed workspace (admin stop, OOM death,
-// crash) reflects on its own. Skipped while hidden or mid-transition (trailing
-// "…" only — the server-reported "starting" keeps polling, which is what walks
-// an ECS cold start to 稼働中 without a reload). Returns the cleanup, so the
-// caller (App boot effect) is StrictMode-safe.
+// crash) reflects on its own. Skipped while hidden, while the push channel
+// covers this stream (api/events — the poll is the fallback), or mid-transition
+// (trailing "…" only — the server-reported "starting" keeps polling, which is
+// what walks an ECS cold start to 稼働中 without a reload). Returns the cleanup,
+// so the caller (App boot effect) is StrictMode-safe.
 export function startWorkspacePolling(): () => void {
   const t = setInterval(() => {
-    if (document.hidden || wsBusy(useWorkspaceStore.getState().state)) return;
+    if (document.hidden || pushHealthy() || wsBusy(useWorkspaceStore.getState().state)) return;
     useWorkspaceStore.getState().refresh();
   }, 4000);
   return () => clearInterval(t);
