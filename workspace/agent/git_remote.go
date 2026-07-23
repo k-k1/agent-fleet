@@ -417,6 +417,77 @@ func bitbucketAuthHeader(s *secrets.Data) (string, error) {
 // a token-paste (Basic) connection surfaces it to the user as a reconnect prompt.
 var errBitbucketUnauthorized = errors.New("bitbucket token rejected (re-connect Bitbucket)")
 
+// --- Bitbucket connect-time credential / scope check ---
+
+// oauthScopeSet parses a Bitbucket X-OAuth-Scopes header (comma/space separated) into a
+// lowercased set of granted scope names.
+func oauthScopeSet(h string) map[string]bool {
+	set := map[string]bool{}
+	for _, p := range strings.FieldsFunc(h, func(r rune) bool { return r == ',' || r == ' ' }) {
+		if p = strings.TrimSpace(p); p != "" {
+			set[strings.ToLower(p)] = true
+		}
+	}
+	return set
+}
+
+// scopeGranted reports whether a capability is present, accepting both the granular
+// API-token form (e.g. read:repository:bitbucket) and the classic OAuth / app-password
+// short form (e.g. repository). API-token scopes are non-hierarchical, so read and write
+// are checked independently.
+func scopeGranted(set map[string]bool, granular, short string) bool {
+	return set[granular] || set[short]
+}
+
+// Connect-time check outcomes for a pasted Bitbucket credential.
+var (
+	errBBScopeless  = errors.New("Bitbucket rejected the token — create a scoped API token and use your Atlassian account email")
+	errBBNoRepoRead = errors.New("the token lacks the read:repository:bitbucket scope")
+)
+
+// bitbucketConnectCheck validates an email+API-token credential the moment the user hits
+// 接続, so a scopeless token / wrong email / missing scope surfaces immediately instead of
+// as a later opaque list or clone failure. It probes the endpoint the repo picker starts
+// from and inspects the granted scopes (X-OAuth-Scopes). Returns a non-empty warn code for
+// a non-fatal gap (currently "no_write": clone works but push won't); a nil error with an
+// empty warn means the credential is fully usable. Transient failures are treated as
+// "unverified" (allow the connect) rather than blocking a good token on a hiccup.
+func bitbucketConnectCheck(user, token string) (warn string, err error) {
+	return bitbucketConnectCheckAt("https://api.bitbucket.org", user, token)
+}
+
+// bitbucketConnectCheckAt is bitbucketConnectCheck with an overridable API base (tests).
+func bitbucketConnectCheckAt(base, user, token string) (warn string, err error) {
+	client := &http.Client{Timeout: 12 * time.Second}
+	req, err := http.NewRequest("GET", base+"/2.0/user/workspaces?pagelen=1", nil)
+	if err != nil {
+		return "", nil // can't build the probe: don't block the connect
+	}
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(user+":"+token)))
+	req.Header.Set("Accept", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", nil // transport error: unverified — allow (list/clone reports later)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode == http.StatusUnauthorized {
+		return "", errBBScopeless
+	}
+	// When the credential is recognized, Bitbucket echoes its scopes regardless of the
+	// status — enforce the minimum (repo read) and warn on a missing push (write) scope.
+	if set := oauthScopeSet(resp.Header.Get("X-OAuth-Scopes")); len(set) > 0 {
+		if !scopeGranted(set, "read:repository:bitbucket", "repository") {
+			return "", errBBNoRepoRead
+		}
+		if !scopeGranted(set, "write:repository:bitbucket", "repository:write") {
+			return "no_write", nil
+		}
+		return "", nil
+	}
+	return "", nil // no scope header to inspect: leave unverified rather than false-block
+}
+
 // bitbucketGet does an authorized GET and returns the body, mapping common errors. Transient
 // failures — a transport error, HTTP 429, or a 5xx — are retried a few times with a short
 // backoff. Without this, the Console's repo/branch pickers surface an intermittent

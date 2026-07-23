@@ -731,13 +731,37 @@ func handlePutGitConn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Verify a pasted Bitbucket credential at connect time so a scopeless token / wrong
+	// email / missing scope is reported on the spot, not as a later opaque list/clone
+	// failure. Hard failures block the save; a missing push scope connects with a warning.
+	var warn string
+	if host == "bitbucket.org" {
+		w2, verr := bitbucketConnectCheck(user, token)
+		if verr != nil {
+			code := "bb_verify_failed"
+			switch {
+			case errors.Is(verr, errBBScopeless):
+				code = "bb_scopeless"
+			case errors.Is(verr, errBBNoRepoRead):
+				code = "bb_no_repo_read"
+			}
+			httpx.WriteErr(w, http.StatusBadRequest, code, verr.Error())
+			return
+		}
+		warn = w2
+	}
+
 	if err := upsertGitCredential(host, user, token); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
 	// Commit identity is set separately (per provider) via /identity — not clobbered
 	// into the global config at connect time.
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "host": host, "username": user})
+	resp := map[string]any{"connected": true, "host": host, "username": user}
+	if warn != "" {
+		resp["warn"] = warn
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
 func handleDeleteGitConn(w http.ResponseWriter, r *http.Request) {
