@@ -29,6 +29,12 @@ ROOT="$(cd "$HERE/../.." && pwd)"
 
 VERSION="${VERSION:?set VERSION=<semver> (e.g. VERSION=0.2.0)}"
 DIST="$HERE/dist"
+# Distribution coordinates baked into the native package as dist.json, so
+# `af update` resolves the same repo/URL base the one-liner installer uses
+# (install.sh defaults). Overridable for mirrors/testing (must match --native's
+# ROOTFS_URL_BASE if both point at a custom host).
+DIST_REPO_META="${AF_DIST_REPO:-k-k1/agent-fleet-dist}"
+DIST_URL_BASE_META="${AF_DIST_URL_BASE:-https://github.com/$DIST_REPO_META/releases/download}"
 
 usage() { echo "usage: VERSION=<v> $0 [--compose] [--native] [--all] [--bundle-rootfs] [--rootfs-json <path>]" >&2; }
 
@@ -153,6 +159,14 @@ EOF
   install -m 0755 "$ROOT/deploy/native/af" "$OUT/af"
   cp "$ROOT/deploy/native/README.md" "$ROOT/LICENSE" "$ROOT/NOTICE" "$OUT/"
   printf '%s\n' "$VERSION" > "$OUT/VERSION"
+  # dist.json — where `af update` fetches new releases from (docs/42). Formatting
+  # pairs with the af launcher's dist_get sed parser (one key per line).
+  cat > "$OUT/dist.json" <<EOF
+{
+  "repo": "$DIST_REPO_META",
+  "url_base": "$DIST_URL_BASE_META"
+}
+EOF
   tar -czf "$DIST/$PKG_NAME.tar.gz" -C "$DIST" "$PKG_NAME"
   if [ "$BUNDLE_ROOTFS" = 1 ]; then
     [ -n "$R_TAR" ] || { echo "ERROR: --bundle-rootfs cannot be combined with --rootfs-json (R is not available locally)" >&2; exit 2; }
