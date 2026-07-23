@@ -30,6 +30,7 @@ func slackStatus(s *secrets.Data) map[string]any {
 		return map[string]any{"connected": false}
 	}
 	m := map[string]any{"connected": true}
+	m["notify"] = !sl.NotifyOff // master mute state (default on) for the 通知 toggle
 	if sl.BotName != "" {
 		m["botName"] = sl.BotName
 	}
@@ -151,6 +152,7 @@ type slackConnReq struct {
 	Receive     bool     `json:"receive"`
 	FullText    bool     `json:"fullText"`
 	MirrorInput *bool    `json:"mirrorInput"`
+	NotifyOff   *bool    `json:"notifyOff"` // master mute (通知 ON/OFF); pointer = preserve on edit
 	Lang        string   `json:"lang"`
 }
 
@@ -247,6 +249,10 @@ func handlePutSlackConn(w http.ResponseWriter, r *http.Request) {
 	if req.MirrorInput != nil {
 		mirrorOff = !*req.MirrorInput
 	}
+	notifyOff := editing && s.Slack != nil && s.Slack.NotifyOff
+	if req.NotifyOff != nil {
+		notifyOff = *req.NotifyOff
+	}
 	creds := &secrets.SlackCreds{
 		BotToken: bot, AppToken: app, ChannelID: channelID, UserID: userID,
 		BotName: botName, TeamName: teamName, BotUserID: botUserID,
@@ -254,6 +260,7 @@ func handlePutSlackConn(w http.ResponseWriter, r *http.Request) {
 		Threads:        channelID != "" && req.Threads,
 		Receive:        channelID != "" && req.Receive,
 		FullText:       req.FullText,
+		NotifyOff:      notifyOff,
 		MirrorInputOff: channelID != "" && req.Threads && mirrorOff,
 	}
 	// Resolve the DM channel eagerly for DM mode; reuse the cache on an edit, else tolerate.
@@ -270,12 +277,15 @@ func handlePutSlackConn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res := slackStatus(s)
-	// Fire one synchronous test notification so "did it arrive?" is answered on the spot.
-	if ps := bridge.Providers(s, nil, nil); len(ps) > 0 {
-		if err := ps[len(ps)-1].Send(bridge.Message{Kind: "bridge-test"}); err != nil {
-			res["testError"] = err.Error()
-		} else {
-			res["test"] = "sent"
+	// Fire one synchronous test notification on a FRESH connect only — not on a settings
+	// edit (auto-save per toggle would otherwise spam the channel with tests).
+	if !editing {
+		if ps := bridge.Providers(s, nil, nil); len(ps) > 0 {
+			if err := ps[len(ps)-1].Send(bridge.Message{Kind: "bridge-test"}); err != nil {
+				res["testError"] = err.Error()
+			} else {
+				res["test"] = "sent"
+			}
 		}
 	}
 	if creds.Receive && creds.ChannelID != "" {

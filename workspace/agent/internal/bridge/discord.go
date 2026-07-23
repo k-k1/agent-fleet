@@ -65,10 +65,10 @@ type discordProvider struct {
 // gets its own resume cursor (queued.Delivered keys on Name()) and DM cache callback.
 func Providers(s *secrets.Data, cacheDiscordDM, cacheSlackDM func(channelID string)) []Provider {
 	var out []Provider
-	if d := s.Discord; d != nil && d.Token != "" {
+	if d := s.Discord; d != nil && d.Token != "" && !d.NotifyOff {
 		out = append(out, &discordProvider{creds: *d, cacheDM: cacheDiscordDM})
 	}
-	if sl := s.Slack; sl != nil && sl.BotToken != "" {
+	if sl := s.Slack; sl != nil && sl.BotToken != "" && !sl.NotifyOff {
 		out = append(out, &slackProvider{creds: *sl, cacheDM: cacheSlackDM})
 	}
 	return out
