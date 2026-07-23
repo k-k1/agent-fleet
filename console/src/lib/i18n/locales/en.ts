@@ -224,6 +224,7 @@ export const en: Record<keyof typeof ja, string> = {
   "provider.step_copy_code": "Copy the code",
   "provider.step_open_link": "Open the link and paste",
   "provider.open_url": "Open {url} ↗",
+  "provider.issue_link": "Open the token page",
   "provider.step_wait_approval": "Wait for approval",
 
   // --- ops-tool connections (OpsTab) ---
