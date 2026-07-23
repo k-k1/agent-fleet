@@ -14,14 +14,15 @@ import (
 func TestBuildProgram(t *testing.T) {
 	id := "9eb73605-3f4a-4a46-84bc-35e6d300a9df"
 	got := buildProgram("", "", id)
-	for _, want := range []string{"cursor-agent ", "--force", "--trust", "--resume", id} {
+	for _, want := range []string{"cursor-agent ", "--disable-auto-update", "--force", "--trust", "--resume", id} {
 		if !strings.Contains(got+" ", want) {
 			t.Errorf("program %q lacks %q", got, want)
 		}
 	}
-	// plan は bypass（--force）を外し --plan を足す。--trust は残す。
+	// plan は bypass（--force）を外し --plan を足す。--trust と自己更新封殺は残す。
 	got = buildProgram("", "plan", id)
-	if strings.Contains(got, "--force") || !strings.Contains(got, "--plan") || !strings.Contains(got, "--trust") {
+	if strings.Contains(got, "--force") || !strings.Contains(got, "--plan") ||
+		!strings.Contains(got, "--trust") || !strings.Contains(got, "--disable-auto-update") {
 		t.Errorf("plan program wrong: %q", got)
 	}
 	// model はそのまま。"auto" は無指定と同義（フラグを付けない）。

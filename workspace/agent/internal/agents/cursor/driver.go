@@ -295,9 +295,10 @@ type threadHandle struct {
 // spawn starts the child runtime, initializes ACP and loads/creates the cursor
 // session. Caller must NOT hold h.mu.
 func (h *threadHandle) spawn(st agents.ThreadSettings) error {
-	// base: acp サブコマンド ＋ workspace trust スキップ（実測: --trust が無いと ACP でも
-	// trust プロンプトで固まる）。plan では --force を外し、承認を Interaction として表面化。
-	args := []string{"acp", "--trust"}
+	// base: 背景自己更新の封殺（root option なので acp の前に必須 — 実測）＋ acp サブ
+	// コマンド ＋ workspace trust スキップ（実測: --trust が無いと ACP でも trust
+	// プロンプトで固まる）。plan では --force を外し、承認を Interaction として表面化。
+	args := []string{disableAutoUpdateFlag, "acp", "--trust"}
 	if st.Mode != "plan" {
 		args = append(args, "--force") // fleet 既定の bypass（"unless explicitly denied"）
 	}
