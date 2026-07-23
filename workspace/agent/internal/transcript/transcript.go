@@ -22,7 +22,7 @@ type Part struct {
 	Edits     []Edit     `json:"edits,omitempty"`     // kind=tool: before/after per edit (Edit/Write/MultiEdit)
 	Files     []string   `json:"files,omitempty"`     // kind=userfile: SendUserFile paths, browse-root-relative (openable in a pane)
 	Caption   string     `json:"caption,omitempty"`   // kind=userfile: optional caption the agent attached
-	QID       string     `json:"-"`                   // kind=question: tool_use id, to resolve the answer (never serialized)
+	QID       string     `json:"qid,omitempty"`       // kind=question/plan/delegation: tool_use id, so the Console can patch a late-arriving answer (see CollectInteractionAnswers) onto an already-delivered turn
 }
 
 // Edit is one before/after pair for an edit-family tool, so the Console can render

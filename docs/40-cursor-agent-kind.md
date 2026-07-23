@@ -521,3 +521,24 @@ named model を一切使えない**ことを確認:
 - 起動既定（`model==""||"auto"` で `--model` 無し＝サーバ側 Auto）はそのまま。`about` の
   `Model  Auto` が示す通り Free アカウントのサーバ側既定は Auto で、絞り込みで named を選ばせない
   方針と併せて free wall を回避する。テスト: `TestAboutTierRe`・`TestFreeUsableModels`（go test 14 緑）。
+
+### モデル表示（応答ごとのモデルバッジ — session2 実装）
+
+利用者フィードバック「Cursor の応答にモデルを表示できないか」。ミラーは既に per-turn の
+`turn.model` バッジ（`MirrorView` 3134 行・`prettyModel` で短縮）を持つが、cursor はそこに値を
+流していなかった。**実装（利用者選択＝「応答ごとのバッジ（他エージェント共通）」）:**
+
+- **表示できるのは「セッションの設定モデル」**（Auto／Composer／明示選択したモデル）。cursor は
+  **モデルがセッション固定**（per-session child・`--model` 起動時固定・DynamicModel:false）なので、
+  1 セッション内の全 assistant ターンに同じモデルが載る。
+- **取得元**: managed=ACP `session/new`/`load` の `models.currentModelId`（`currentModelOf` 追加。
+  Auto は `default[]`）。TUI=セッション meta の起動モデル（`m.Model`）。read 層で各 assistant
+  ターンに `transcript.Turn.Model` をスタンプ（`stampModel`）→ FE の既存バッジ経路に載る＝
+  **FE 変更ゼロ**。`displayModel` で正規化（ACP の `[params]` を剥がす・`` /`auto`/`default[]` は
+  "Auto"）。managed は明示選択（`settings.Model`）を優先し、Auto/未指定のみ `currentModelId` に
+  フォールバック。
+- **制約（実測・明記）**: **Auto が各ターンで実際に解決した具体モデルは公式経路に出ない**
+  （JSONL/-p result に model 無し・stream-json init は `"Auto"` のまま・ACP `session/update` に
+  応答毎 model 無し — §使用量表示の実現可否プローブ と同じ経路調査）。よって Auto セッションは
+  バッジに「Auto」と出るだけで、どのモデルが答えたかは示せない。明示モデル選択時のみバッジは
+  正確。テスト: `TestDisplayModel`・`TestStampModelAssistantOnly`（go test 16 緑）。

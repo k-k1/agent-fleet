@@ -30,8 +30,10 @@ export interface SessionActions {
   halt(name: string, display: string): Promise<void>;
   /** Mint a NEW live session (fresh slug, same title/dir/model), archive the old. */
   recreate(name: string, display: string): Promise<void>;
-  /** Ask the operator to extract a hand-off and obtain consent before creating a session. */
-  fork(name: string, kind?: string): Promise<void>;
+  /** Hand this session's conversation off to a target agent: opens an operator chat and
+   *  auto-fires the extraction turn; the operator proposes a summary and only creates the
+   *  new session after the user consents. `note` is optional extra instruction. */
+  handoff(name: string, kind: string, note?: string): Promise<void>;
   /** ドライバ排他切替（docs/27 P3 §2）: tui ⇄ managed を stop→drain→resume で。 */
   switchDriver(s: Session): Promise<void>;
 }
@@ -235,26 +237,29 @@ export function useSessionActions(): SessionActions {
     setTimeout(() => void refreshSessions(), 1200);
   };
 
-  const fork = async (name: string, kind?: string) => {
+  const handoff = async (name: string, kind: string, note?: string) => {
     const target = kind || "claude";
     // i18n-exempt-start: LLM プロンプト（表示でなくモデル挙動・docs/28 §4）
+    const extra = note?.trim() ? `\n利用者からの補足指示: ${note.trim()}` : "";
     const prompt =
       `セッション「${name}」の会話を ${target} へ引き継いで新規セッションを始めたいです。` +
       "まず get_session_output で元セッションの状況を確認し、新しいエージェントに必要な要点、未完了タスク、" +
       "変更済みファイル、次の作業を簡潔な引継ぎ案として提示してください。この時点ではセッションを作成せず、" +
       "引継ぎ案・作業フォルダ・開始エージェントを私に確認してください。私が明示的に同意した後だけ、" +
-      `kind=${target} で create_session を呼び、承認した引継ぎ案を initial_prompt に設定してください。`;
+      `kind=${target} で create_session を呼び、承認した引継ぎ案を initial_prompt に設定してください。${extra}`;
     // i18n-exempt-end
     try {
-      // A dedicated conversation preserves any unfinished operator draft. The prompt
-      // is prefilled for review, so the user explicitly starts the extraction turn.
+      // A dedicated operator conversation preserves any unfinished draft. openChat's auto
+      // flag fires this extraction turn as soon as ChatView loads — the assistant is called
+      // directly (アシスタントを直接呼び出す) and comes back with a proposal; the consent
+      // gate before create_session lives in the prompt above.
       const conv = await chatCreate("operator", tr("srow.handoff_title", { name }));
       if (!conv?.id) throw new Error("conversation was not created");
-      openChat(conv.id, prompt);
+      openChat(conv.id, prompt, true);
     } catch {
-      toast(t("sess.fork_failed"));
+      toast(t("sess.handoff_failed"));
     }
   };
 
-  return { archive, deleteSession, clearStopped, clearOrphans, halt, recreate, fork, switchDriver };
+  return { archive, deleteSession, clearStopped, clearOrphans, halt, recreate, handoff, switchDriver };
 }

@@ -521,6 +521,24 @@
   padding: 8px 10px;
   font-size: 13px;
 }
+/* Handoff target picker: a wrapping chip row rather than a squeezed segmented control,
+   so 6 agents with long display names (e.g. "GitHub Copilot") never clip. Layout only —
+   the selected state reuses .seg-btn.active. */
+.ui-seg.handoff-targets {
+  flex-wrap: wrap;
+  gap: 6px;
+  border: none;
+  overflow: visible;
+}
+.ui-seg.handoff-targets .seg-btn {
+  flex: 0 1 auto;
+  flex-direction: row;
+  gap: 5px;
+  padding: 6px 10px;
+  font-size: 12px;
+  border: 1px solid var(--btn-border);
+  border-radius: 6px;
+}
 /* Inactive only — the active button keeps its --sel-fg (else this equal-specificity rule,
    ordered later, overrode the selected color and put light text on the fill). */
 .ui-seg.big .seg-btn:not(.active) {

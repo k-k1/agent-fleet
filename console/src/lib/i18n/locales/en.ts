@@ -1586,7 +1586,7 @@ export const en: Record<keyof typeof ja, string> = {
   "sess.switch_confirm": "Switch",
   "sess.switch_busy": "A turn is running. Wait for it to finish or stop it before switching.",
   "sess.switch_failed": "Failed to switch the execution method",
-  "sess.fork_failed": "Failed to fork",
+  "sess.handoff_failed": "Couldn't start the handoff",
 
   // === P2 archived modal (features/sessions/ArchivedModal.tsx) ===
   "arch.other": "Other",
@@ -1678,9 +1678,17 @@ export const en: Record<keyof typeof ja, string> = {
   "srow.copy_id": "Copy the ID ({name})",
   "srow.rename": "Rename",
   "srow.rename_branch": "Rename the branch",
-  "srow.fork": "Fork (new session, keeps the conversation)",
-  "srow.fork_to": "Prepare handoff to {agent}",
+  "srow.handoff": "Hand off to another agent…",
   "srow.handoff_title": "Handoff from {name}",
+  "handoff.title": "Hand off “{name}”",
+  "handoff.intro": "The operator assistant reads this session and proposes a handoff summary. It only creates the new session after you approve.",
+  "handoff.target_label": "Target agent",
+  "handoff.checking": "Checking available agents…",
+  "handoff.no_targets": "No connected agent can receive a handoff. Connect one in Settings first.",
+  "handoff.note_label": "Note (optional)",
+  "handoff.note_hint": "Extra instructions for the handoff — what to focus on, what to leave out.",
+  "handoff.note_ph": "e.g. Carry over only the API refactor; skip the test scaffolding.",
+  "handoff.start": "Start handoff",
   "srow.archive": "Archive (remove from the list)",
   "srow.recreate": "Recreate (current conversation goes to the archive)",
 
