@@ -4,20 +4,30 @@
 - 要望: 各エージェントの「メモリ」を管理したい。①git での差分管理 ②日時・履歴指定でのロールバック
   ③特定プロジェクトだけのロールバック ④他の agent-fleet 環境への import/export。
 
-## 背景 / 「メモリ」の実態（調査結論 2026-07-23）
+## 背景 / 「メモリ」の実態（調査結論 2026-07-23・再調査で改訂）
 
-まず「各エージェントのメモリ」が実際に何であるかを現物で棚卸しした。
+「各エージェントのメモリ」が実際に何であるかを、現物（本環境の実ファイル・実バイナリ）と
+公式ドキュメント/上流リポジトリの両面で棚卸しした。
 
-| kind | 置き場 | 実態 | 版管理対象になるか |
-|------|--------|------|--------------------|
-| claude | `CLAUDE_CONFIG_DIR=/var/lib/af/claude` の `projects/<slug>/memory/*.md`（`MEMORY.md` 索引 + 1事実=1ファイル） | **エージェント自身が書き溜める唯一の永続メモリ**。専用マウント（Docker: `<dataDir>/claude-config`、ECS: EFS AP `/claude-config/<membershipID>`、native: 同型。`runtime_docker.go:107-141` / `runtime_ecs.go:363,387` / `runtime_native.go:362-431`）。recreate / clean-home を生き残る（`workspace-notes.md`） | **○（v1 の対象）** |
-| codex | `~/.codex/AGENTS.md` | 毎起動 `cp -f` で image の `workspace-notes.md` に**上書き**（`entrypoint.sh` の refresh。編集は次回起動で消える）＝フリート管理ファイルであり、エージェントが書き溜めるメモリではない | ×（将来: user-owned 領域を設計してから） |
-| opencode | `~/.config/opencode/AGENTS.md` | 同上（毎起動 refresh） | × 同上 |
-| agy | `~/.gemini/AGENTS.md` + `brain/<uuid>/` | AGENTS.md は指示ファイル、brain は会話履歴でありメモリではない | × |
-| copilot | `~/.copilot` | メモリ概念なし（auth+セッションストアのみ） | × |
+| kind | メモリ機構 | 置き場・形式 | 版管理対象になるか |
+|------|-----------|--------------|--------------------|
+| claude | auto-memory（既定 ON） | `CLAUDE_CONFIG_DIR=/var/lib/af/claude` の `projects/<slug>/memory/*.md`（`MEMORY.md` 索引 + トピック別 md。slug は **git リポジトリ由来**なので worktree 間で共有）。専用マウント（Docker: `<dataDir>/claude-config`、ECS: EFS AP、native: 同型）。recreate / clean-home を生き残る | **○（v1 ルート #1）** |
+| codex | **memories 機能あり**（feature flag `memories`＝stable・**既定 OFF**。`config.toml [features] memories = true` で有効化） | `~/.codex/memories/` の **markdown ワークスペース**（`memory_summary.md`＝セッション開始時に developer instructions へ注入される索引 / `MEMORY.md`＝grep 対象の登記簿 / `rollout_summaries/*.md` / `skills/<name>/SKILL.md` / `extensions/ad_hoc/notes/*.md`）＋パイプライン状態 `memories_1.sqlite`（`stage1_outputs`・`jobs`）。2 段構成: Phase1=rollout 毎の抽出（idle 6h 経過・並列 8）→ Phase2=**内部サブエージェントによるグローバル統合**。統合機構自体が `~/.codex/memories/.git` を差分ベースラインに使う（上流 PR #18982）。スコープは CODEX_HOME 単位のグローバル 1 ワークスペース（プロジェクト区分はファイル**内**のエントリ） | **○（v1 ルート #2・dir 存在検知で自動有効）** |
+| opencode | ネイティブ無し（確認済: 上流 schema にメモリ表なし・docs にも無し・feature request #16077 が open のまま。サードパーティ plugin で補う文化） | `~/.config/opencode/AGENTS.md` は毎起動 `cp -f` refresh のフリート管理ファイル | ×（上流が実装したら root 追加） |
+| agy | CLI には一級メモリ未確認（Antigravity **IDE** には Knowledge Items があるが `~/.gemini/antigravity/` 配下でレイアウト非公開。CLI 側 `~/.gemini/antigravity-cli/brain/` は会話 artifacts でありメモリではない） | — | ×（watch） |
+| copilot | **Copilot Memory はあるが GitHub サーバー側サービス**（repo スコープ事実＋ユーザー選好・28 日失効・管理は GitHub 設定画面）。ローカル `~/.copilot` にはセッションストアのみ | ローカル実体なし | ×（対象外＝versioning する実体がローカルに無い） |
+| （共通） | `AGENTS.md`（codex/opencode/agy） | entrypoint が毎起動イメージ内容へ上書きするフリート管理ファイル＝ユーザーメモリではない | × |
 
-**結論: 今日「メモリ」と呼べる実体は claude の auto-memory（`projects/*/memory/`）だけ。**
-ただし本設計は「メモリルート」を宣言的に持ち、将来 kind を追加するだけで拡張できる形にする。
+**結論（改訂）: 版管理対象になるローカル実体は claude の auto-memory と codex の memories
+ワークスペースの 2 つ。** codex は本フリートで機能を有効化していないだけで、有効化すれば
+`~/.codex/memories/` に md ファイル群として育つ。よって v1 から**ルートを 2 つ宣言**し、
+codex 側はディレクトリ存在検知で自動的に対象へ入る（フリートとして memories を有効化するか
+どうかは別判断＝未決事項 4）。opencode/agy は上流動向の watch、copilot はサーバー側のため対象外。
+
+なお上流では codex が `external_agent_memory_import`（開発中フラグ）で **Claude Code の
+`projects/<slug>/memory/*.md` をそのまま読み取り自分の MEMORY.md へ統合する**機能を作っており、
+「索引 md ＋トピック md」というレイアウトはエージェント間で収斂しつつある。汎用の
+「メモリルート宣言」設計はこの潮流にそのまま乗れる。
 
 サイズ実測（本開発環境）: メモリ本体はプロジェクトあたり 32KB〜668KB。一方 `/var/lib/af/claude`
 全体は 883MB（大半がセッション transcript の jsonl）。**メモリだけを対象にすれば git 履歴の
@@ -38,13 +48,13 @@
 
 | 論点 | 既定 | 備考 |
 |------|------|------|
-| 対象データ | v1 = claude `projects/*/memory/**` のみ。**allowlist 方式** | transcript / `.credentials.json` / `settings.json` は構造的に対象外（★1） |
+| 対象データ | v1 = claude `projects/*/memory/**` ＋ codex `~/.codex/memories/**`（存在時のみ・`.git` と sqlite は除外）。**allowlist 方式** | transcript / `.credentials.json` / `settings.json` / `memories_1.sqlite` は構造的に対象外（★1・★9） |
 | 履歴エンジン | **git**（bare repo + 一時 staging コピー） | 差分・時点解決・bundle 移送・パススコープ復元が全部標準機能で載る |
-| repo の置き場 | `/var/lib/af/claude/af-memory.git`（claude 専用マウント内） | ファイルブラウザ非公開領域・recreate / clean-home 生存・ECS でも agent から見える。live ツリーには `.git` を置かない |
+| repo の置き場 | `/var/lib/af/claude/af-memory.git`（claude 専用マウント内・**codex 分の履歴も同居**） | このマウントが最も強い生存保証を持つため全 kind 共通の置き場にする。ファイルブラウザ非公開領域・recreate / clean-home 生存・ECS でも agent から見える。live ツリーには `.git` を置かない |
 | 実行主体 | **workspace-agent**（uid=dev、git あり、全 runtime で一様） | CP は REST proxy（dual allowlist）のみ。ECS で CP がファイル直アクセスできない制約を回避 |
 | snapshot 契機 | 自動（claude 全セッション idle 遷移 + debounce）＋手動＋（将来 scheduler） | 無変更なら commit しない |
 | ロールバック | **履歴は書き換えない**。restore は「新しい snapshot commit」として積む。適用前に pre-restore snapshot 自動取得 | ロールバックのロールバックが常に可能 |
-| スコープ | 全体 / プロジェクト単位（`projects/<slug>/`） | 日時指定は「その時刻以前の直近 snapshot」に解決 |
+| スコープ | claude: 全体 / プロジェクト単位（`projects/<slug>/`）。codex: **ワークスペース全体のみ**（プロジェクト区分がファイル内エントリのためディレクトリ粒度が存在しない） | 日時指定は「その時刻以前の直近 snapshot」に解決 |
 | export | **git bundle（全履歴）を既定**、tar.gz（最新ツリーのみ）も選択可 | bundle は 1 ファイル・履歴込み・`git bundle verify` で検証可能 |
 | import | bundle → `refs/imports/<ts>` に fetch / tar → staging 展開。適用は**プロジェクト選択式の置き換え（=新 commit）** | 3-way merge はしない（v1）。ローカル履歴は保全される |
 | UI | 設定モーダル「ワークスペース」グループに「エージェントメモリ」タブ | 破壊操作は P4a の統一確認ダイアログ |
@@ -54,9 +64,10 @@
 
 ```
 live:    /var/lib/af/claude/projects/<slug>/memory/**     ← claude が読み書き（無改変）
+         ~/.codex/memories/**（.git と sqlite を除く）    ← codex 統合パイプラインが読み書き（無改変・存在時のみ）
                │ ① allowlist copy（idle 契機・数百KB）
                ▼
-staging: $TMPDIR/af-memory-staging/claude/projects/<slug>/...
+staging: $TMPDIR/af-memory-staging/{claude,codex}/...
                │ ② git commit（--git-dir=af-memory.git・専用 identity）
                ▼
 repo:    /var/lib/af/claude/af-memory.git（bare・agent 管理・マウントと同寿命）
@@ -74,16 +85,27 @@ agent 側に宣言テーブルを 1 つ持つ:
 
 ```go
 type memoryRoot struct {
-    Kind    string   // "claude"
-    Label   string   // 表示名
-    LiveDir string   // claude.ConfigDir()+"/projects"
-    Include []string // {"*/memory/**"} — allowlist glob。これ以外は決して読まない
+    Kind      string   // "claude" | "codex"
+    Label     string   // 表示名
+    LiveDir   string   // claude.ConfigDir()+"/projects" / $HOME/.codex/memories
+    Include   []string // allowlist glob。これ以外は決して読まない
+    Exclude   []string // Include 内の除外（codex: ".git/**", "phase2_workspace_diff.md"）
+    Scopes    bool     // ディレクトリ粒度の部分ロールバック可否（claude=true, codex=false）
 }
 ```
 
-v1 はエントリ 1 件。codex/opencode に user-owned メモリ領域ができたら（P4 の前提作業）、
+v1 のエントリは 2 件:
+
+| Kind | LiveDir | Include | 備考 |
+|------|---------|---------|------|
+| claude | `<CLAUDE_CONFIG_DIR>/projects` | `*/memory/**` | プロジェクト粒度あり |
+| codex | `~/.codex/memories` | `**`（Exclude: `.git/**`・`phase2_workspace_diff.md`） | **dir が存在する時だけ有効**（memories 機能 OFF の環境ではルート自体が現れない）。`memories_1.sqlite` は LiveDir 外なので構造的に対象外 |
+
+codex の統合パイプラインは自前の `~/.codex/memories/.git` を差分ベースラインに使うため、
+これは**絶対に触らない・repo にも入れない**（Exclude）。当方の snapshot は staging コピー方式
+なので live 側に一切の痕跡を残さず、両者は干渉しない。opencode が上流でメモリを実装したら、
 ここへ 1 行足すだけで snapshot / rollback / export の全機能が付いてくる。
-repo 内レイアウトは `<kind>/projects/<slug>/...` で kind ごとに名前空間を分ける。
+repo 内レイアウトは `claude/projects/<slug>/...`・`codex/...` と kind ごとに名前空間を分ける。
 
 ### ② snapshot エンジン
 
@@ -122,9 +144,13 @@ CP 側は `control-plane/routes.go` に同パスを `rest` で登録（**登録�
 3. live への適用は **allowlist prefix 限定の rsync --delete**。scope 外・allowlist 外の
    ファイルには一切触れない（`memory/` に無いファイルを消さない・作らない）。
 4. 適用結果を **restore commit** として積む（`AF-Trigger: restore`、対象 rev を trailer に記録）。
-5. 実行ゲート: claude セッションが実行中（working）の場合は警告を返し、Console 側で
+5. 実行ゲート: 当該 kind のセッションが実行中（working）の場合は警告を返し、Console 側で
    確認ダイアログを一段強くする（既定は続行可。実行中セッションが後からメモリを
    書けば restore 後の新 commit として現れるだけで、履歴上は追跡可能）。
+6. **codex 固有**: restore の粒度はワークスペース全体（`Scopes=false`）。restore 後、codex の
+   統合パイプラインは自前の `.git` ベースラインとの diff として変更を検知し、次回統合で
+   再消化する——外部編集を差分として扱う diff 駆動設計なので、restore は仕様上グレースフルに
+   受け止められる。`memories_1.sqlite` の watermark とズレても再統合で自癒する（★9）。
 
 ### ⑤ import / export（環境間移送）
 
@@ -140,7 +166,9 @@ CP 側は `control-plane/routes.go` に同パスを `rest` で登録（**登録�
     解決できないためやらない。取り込まなかった側もローカル履歴に残るので後悔がない。
 - **slug 互換性**: リポジトリは全環境で `~/repos/<repo>` 規約なので、同名リポジトリなら
   slug（パス由来）が環境間で一致する。worktree suffix 付き slug はメモリを持たない
-  （メモリは base slug に付く）ため衝突しない。
+  （claude のメモリディレクトリは git リポジトリ由来で worktree 間共有）ため衝突しない。
+- **codex の import 単位**: グローバル 1 ワークスペースなので kind 単位の置き換え
+  （claude のようなプロジェクト選択はできない）。UI は kind ごとにチェックボックスを分ける。
 - **検証**（★3）: サイズ上限（既定 64MB）/ tar path traversal 防御（`cleanup_archive.go`
   の guard と同型）/ allowlist glob に合致しないエントリの拒否 / import・export とも監査ログ。
 - **将来（P4）**: CP 内部 git プロバイダ（ADR 0010 の bare+http-backend）へ agent が
@@ -173,8 +201,9 @@ CP 側は `control-plane/routes.go` に同パスを `rest` で登録（**登録�
 
 ## 重要な落とし穴（設計で必ず閉じる）
 
-- **★1 巻き込み事故**: 対象は allowlist（`*/memory/**`）で構造的に限定。deny 方式にしない。
-  transcript・credentials が repo に入る経路をコード上作らない（テストで担保）。
+- **★1 巻き込み事故**: 対象は roots の allowlist（claude: `*/memory/**`、codex:
+  `memories/**` − `.git`）で構造的に限定。deny 方式にしない。transcript・credentials・
+  sqlite が repo に入る経路をコード上作らない（テストで担保）。
 - **★2 restore と live 書き込みの競合**: pre-restore snapshot の自動取得＋実行中セッション
   警告。restore 自体も commit として積むので、どの順で何が起きたか常に履歴から復元可能。
 - **★3 import は外部入力**: サイズ上限・traversal 防御・allowlist 外拒否・監査。bundle は
@@ -189,15 +218,21 @@ CP 側は `control-plane/routes.go` に同パスを `rest` で登録（**登録�
   項目（対象が小さいため実害なしの見込み）。
 - **★8 repo 肥大**: 追記型 md ＋テキスト差分なので伸びは遅い。snapshot N 回ごとに
   `git gc --auto`（`git_gc.go` の流儀に倣う）。
+- **★9 codex の派生状態との整合**: `memories_1.sqlite`（stage1 抽出・jobs の watermark）と
+  `~/.codex/memories/.git`（統合ベースライン）は**派生状態なので snapshot に含めない**。
+  md だけを restore すると一時的に不整合になるが、codex の統合は diff 駆動なので次回
+  パイプラインが外部変更として再消化する。逆に sqlite まで巻き戻すと thread 由来の
+  watermark が実 rollout と食い違い、抽出済みデータを失う方向に壊れる——含めないのが正。
+  codex 統合と snapshot/restore の同時実行だけは避ける（codex セッション実行中警告が兼ねる）。
 
 ## フェーズ
 
 | フェーズ | 内容 | 出口条件 |
 |----------|------|----------|
-| P1 | snapshot エンジン（roots 宣言・staging・bare repo・自動/手動契機）＋ REST（roots/snapshots/diff）＋ dual allowlist 登録 | 自動 snapshot が実データで積まれ、一覧/差分が API で取れる |
+| P1 | snapshot エンジン（roots 宣言 = claude+codex・staging・bare repo・自動/手動契機）＋ REST（roots/snapshots/diff）＋ dual allowlist 登録 | 自動 snapshot が実データで積まれ、一覧/差分が API で取れる（codex は dir 存在環境で） |
 | P2 | restore（全体/プロジェクト・pre-restore・rsync scope 限定）＋ Console タブ（履歴/差分/復元） | UI から日時指定・プロジェクト単位の巻き戻しが往復できる |
 | P3 | export/import（bundle/tar・preview・選択適用・検証・監査） | 2 環境間で bundle 持ち回りの移送が実際に通る |
-| P4 | 拡張: codex/opencode の user-owned メモリ領域設計（entrypoint refresh との分離が前提）・CP internal git への push mirror（停止中閲覧・直接同期）・operator MCP ツール・scheduler 連携 | — |
+| P4 | 拡張: codex memories のフリート有効化配線（config.toml `[features] memories` の Console トグル・`[memories]` チューニング seed）・CP internal git への push mirror（停止中閲覧・直接同期）・operator MCP ツール・scheduler 連携・opencode/agy の上流 watch | — |
 
 ## 未決事項（ユーザー判断待ち）
 
@@ -206,3 +241,7 @@ CP 側は `control-plane/routes.go` に同パスを `rest` で登録（**登録�
    （age 等）を要件にするか。
 3. UI の置き場: 設定モーダル案を推奨（データ管理は設定の「ワークスペース」群と同質）。
    スケジュール同様の左レール常設が良ければ P2 で差し替え可能。
+4. **codex memories をフリートで有効化するか**: 本設計は「有効化されていれば自動で対象化」
+   まで（P1）。有効化そのものは別判断——統合パイプラインが extract/consolidation モデルを
+   バックグラウンドで呼ぶためトークンを消費する（`min_rate_limit_remaining_percent` 等の
+   ガードは上流にあり）。有効化する場合の配線（config seed + Console トグル）は P4。
