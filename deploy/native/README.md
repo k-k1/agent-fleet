@@ -305,3 +305,17 @@ If `af` is already gone, remove the data manually — Go module caches inside
 workspace homes are write-protected, so restore write permission first:
 `chmod -R u+w ~/.local/share/agent-fleet && rm -rf ~/.local/share/agent-fleet`
 (use your `$WS_DATA` path if you overrode it).
+
+## Disclaimer — autonomous agent execution
+
+The agents run commands, edit files, and commit/push on your behalf — including
+**unattended** (scheduled runs that wake a stopped workspace), in
+**permission-bypassing modes**, and through **shell / SSM sessions that run the
+strings you send verbatim**. Such actions can be destructive or irreversible and can
+incur charges on your AI-provider and cloud accounts. You are solely responsible for
+the workspaces, credentials, repositories, and infrastructure you connect, and for
+reviewing what the agents do; use least-privilege credentials, keep backups, and
+prefer the approval gates for destructive actions. This software is distributed under
+the **Apache License 2.0** and is provided **"AS IS", WITHOUT WARRANTIES OR CONDITIONS
+OF ANY KIND**; the authors accept **no liability** for any damage, data loss, or cost
+arising from its use. See `LICENSE`, and `NOTICE` for bundled-OSS attribution.
