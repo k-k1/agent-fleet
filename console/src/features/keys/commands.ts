@@ -143,6 +143,13 @@ function toggleTtsSessionNotify(): void {
   toast(t(next ? "keys.toast.ttsSessionOn" : "keys.toast.ttsSessionOff"), { kind: "success" });
 }
 
+// Toggle the limit-reset voice notification (Settings › Notifications' 制限リセットの通知).
+function toggleUsageResetNotify(): void {
+  const next = !getSettings().usageResetNotify;
+  setSetting("usageResetNotify", next);
+  toast(t(next ? "keys.toast.usageResetOn" : "keys.toast.usageResetOff"), { kind: "success" });
+}
+
 // Leader groups (Leader → group key → action). `title` is an i18n key (resolved for
 // display by cmdLabel; see labels.ts). Titles show in the which-key overlay.
 export const GROUPS: Group[] = [
@@ -233,11 +240,13 @@ export const ALL_COMMANDS: Command[] = [
   { id: "open.resources", title: "keys.cmd.openResources", seq: "g r", run: () => useUiOpen.getState().toggle("resources") },
 
   // ---- Notifications (leader n) — mute the voice read-aloud, toggle the per-session voice
-  // notification, or toggle a chat-bridge service's notification master. n m = mute (shares
-  // TopBar's stop+OFF logic); n a = session voice notification; n s / n d flip Slack /
-  // Discord notifications. All match Settings › Notifications and toast their result. ----
+  // notification / limit-reset notification, or toggle a chat-bridge service's notification
+  // master. n m = mute (shares TopBar's stop+OFF logic); n a = session voice notification;
+  // n r = limit-reset notification; n s / n d flip Slack / Discord notifications. All match
+  // Settings › Notifications and toast their result. ----
   { id: "tts.toggle", title: "keys.cmd.ttsToggle", seq: "n m", run: toggleTtsPlayback },
   { id: "notify.ttsSession", title: "keys.cmd.ttsSessionToggle", seq: "n a", run: toggleTtsSessionNotify },
+  { id: "notify.usageReset", title: "keys.cmd.usageResetToggle", seq: "n r", run: toggleUsageResetNotify },
   { id: "notify.slack", title: "keys.cmd.slackToggle", seq: "n s", run: () => void toggleChatNotify("slack") },
   { id: "notify.discord", title: "keys.cmd.discordToggle", seq: "n d", run: () => void toggleChatNotify("discord") },
 
