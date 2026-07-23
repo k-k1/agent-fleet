@@ -19,14 +19,14 @@
 1. [初日](01-first-day.md) — ログイン、ようこそカード（2ステップ＋目的選択）、最初のクローン、一日の終わり
 2. [セッション](02-sessions.md) — AI との会話を起動・切り替え・止める
 3. [ターミナル](03-terminal.md) — 黒い画面の操作・コピペ・ショートカット・スマホ
-4. [リポジトリと git](04-git.md) — クローン・変更の確認・コミット・push
+4. [リポジトリと git](04-git.md) — クローン・変更の確認・コミット・push（SVN もこちら）
 5. [ファイル](05-files.md) — ツリー・ビュアー・Markdown/スライドの表示
-6. [エージェント](06-agents.md) — claude / codex / opencode / GitHub Copilot の接続と選び方
+6. [エージェント](06-agents.md) — claude / codex / opencode / GitHub Copilot / Cursor の接続と選び方
 7. [チャットとメモ](07-chat-memo.md) — リポジトリを使わない質問・翻訳・メモ溜め
-8. [一歩進んだ使い方](08-advanced.md) — ブラウザペイン／軽量プレビュー・外部連携・別ホスト・環境設定
+8. [一歩進んだ使い方](08-advanced.md) — ブラウザペイン／軽量プレビュー・Discord / Slack 連携・別ホスト・環境設定
 9. [困ったとき](09-troubleshooting.md) — 症状別の対処と FAQ
 10. [運用ツール連携 PoC](10-ops-mcp-poc.md) 🧪 — PagerDuty / Grafana / CloudWatch を MCP で繋いでインシデント壁打ち（実験的）
-11. [フリート・オペレーター](11-fleet-operator.md) — 複数セッションをチャットで指揮・引き継ぎ・並列作業
+11. [フリート・オペレーター](11-fleet-operator.md) — 複数セッションをチャットで指揮・引き継ぎ・並列作業・定時実行
 
 操作の「やり方」はこのガイドが正です。内部の「仕組み」を知りたくなったら、各章末の
 「仕組みを知りたい人へ」リンクから開発者向け [dev/](../../dev/README.md) へどうぞ。

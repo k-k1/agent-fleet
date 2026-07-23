@@ -8,24 +8,26 @@ Distribution artifacts for [Agent Fleet](https://github.com/k-k1/agent-fleet).
 ## What is Agent Fleet?
 
 Agent Fleet is a self-hosted web console for running AI coding agents
-(Claude Code, Codex CLI, GitHub Copilot CLI, Antigravity CLI, OpenCode) as a
-managed fleet. Each member gets an isolated workspace — a Docker container with
-cgroup CPU/memory quotas (or a bubblewrap-sandboxed rootfs in the native
-edition) with a persistent home and git working copies — and starts, drives and
-monitors agent sessions from the browser. A Go control plane orchestrates the
+(Claude Code, Codex CLI, GitHub Copilot CLI, Antigravity CLI, Cursor CLI,
+OpenCode) as a managed fleet. Each member gets an isolated workspace — a
+Docker container with cgroup CPU/memory quotas (or a bubblewrap-sandboxed
+rootfs in the native edition) with a persistent home and git working copies —
+and starts, drives and monitors agent sessions from the browser. A Go control plane orchestrates the
 workspaces.
 
 Key features:
 
-- **Five agent CLIs, one console** — run Claude Code / Codex / GitHub Copilot /
-  Antigravity / OpenCode sessions side by side, with per-session model choice.
-  CLI versions are pinned to verified combinations (opt-in self-update).
+- **Six agent CLIs, one console** — run Claude Code / Codex / GitHub Copilot /
+  Antigravity / Cursor / OpenCode sessions side by side, with per-session model
+  choice. CLI versions are pinned to verified combinations (opt-in self-update).
 - **Parallel sessions on real git repos** — clone over HTTPS (GitHub /
   Bitbucket tokens or OAuth device flow) with **Git LFS, submodules (incl.
   nested) and git-worktree support**; run multiple sessions per repo isolated
   in worktrees, follow each conversation live in a mirror view with terminal
   access, queue input while the agent works, and open plain **shell sessions**
-  next to agent sessions.
+  next to agent sessions. **Subversion works too** — check out over URL + basic
+  auth (subtree and multiple-path checkouts, optional per-server trust for
+  self-signed certificates, automatic working-copy lock recovery).
 - **Project-centric console** — file browser, commit graph and diffs, session
   state badges (working / awaiting input), a memo queue with image attachments,
   a notification center, English/Japanese UI, keyboard-first operation
@@ -53,6 +55,14 @@ Key features:
   long-lived session to build up context across runs, or start fresh each time;
   browse the schedule list and per-run history (with the session each run drove)
   from the left rail.
+- **Chat bridge (Discord / Slack)** — connect a bot from the Console (guided,
+  token-paste wizard) and each session gets its own thread: replies ready,
+  questions, plan approvals, permission requests, abnormal exits and completion
+  reports arrive there. Reply in the thread to steer the session, answer
+  questions and approve plans with buttons, or @mention the fleet operator to
+  drive the whole fleet from chat — destructive actions triggered from chat
+  stop at an approve/deny gate first. An opt-in full-text mode posts the
+  agent's actual replies (with automatic secret redaction).
 - **Operable** — backup/restore scripts, forward-only DB migrations for
   upgrades, air-gap installation paths, and MCP integration points.
 
@@ -66,7 +76,6 @@ share any AI-provider credentials.
 |---|---|---|
 | Personal use on WSL2 or a single-user Linux machine; no Docker | **Native** (below) | x86_64 Linux/WSL2 with unprivileged user namespaces (stock WSL2 works), `curl` or `wget`, ~1.5 GB disk |
 | A team on your own Linux server | **Docker Compose** (below) | Docker Engine + `docker compose`, a public domain pointed at the host (auto-TLS; an internal-CA fallback exists), a Google OAuth 2.0 client for login |
-| A team on AWS | **ECS (CloudFormation)** (below) | An AWS account, ECR for the images, the templates bundled in the compose tar |
 
 Common to all editions: outbound network is needed once per workspace to
 pin-install the agent CLIs on first start (air-gap alternatives are documented
@@ -169,14 +178,6 @@ The bundled `README.md` is the full runbook: prerequisites, key generation,
 TLS/domain setup, git-provider OAuth (`GITHUB_OAUTH_CLIENT_ID` /
 `BITBUCKET_OAUTH_KEY` / `BITBUCKET_OAUTH_SECRET` in `.env`), backup/restore,
 upgrades and troubleshooting.
-
-## Installing on AWS (ECS / CloudFormation)
-
-The compose bundle also carries the AWS deploy surface under `aws/`:
-CloudFormation templates for an ECS deployment (`aws/ecs/cfn/`), a script to
-push the released images to your ECR (`aws/ecs/release-ecr.sh`), and a
-single-EC2 variant (`aws/ec2-single/`). Start from `aws/ecs/README.md` inside
-the bundle.
 
 ## Uninstalling / removing data (native edition)
 
