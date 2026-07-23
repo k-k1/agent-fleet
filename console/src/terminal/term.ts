@@ -824,10 +824,20 @@ function startHeartbeat(paneId: string, ws: WebSocket) {
         // A silently-dead WebGL context freezes the canvas and refresh() draws
         // into the void — heavy mirror⇄terminal switching can evict a visible
         // pane's context without any event (browser cap ~16). Detect it and let
-        // forceFit rebuild the renderer; otherwise stick to the flicker-free
-        // refresh-only repaint.
+        // forceFit rebuild the renderer.
         if (it.webgl && webglLost(it)) forceFit(it);
-        else it.term!.refresh(0, it.term!.rows - 1);
+        else {
+          // Glyph-atlas corruption survives a plain refresh: every cell is
+          // redrawn, but FROM poisoned textures, so the garble persists
+          // (confirmed live — click/forceFit incl. clearTextureAtlas healed
+          // what the refresh-only watchdog could not). Rebuild the atlas before
+          // repainting; unlike _renderService.clear() this never blanks the
+          // canvas, so the tick stays flicker-free. The DOM renderer has no
+          // atlas — refresh alone remains the whole repaint there (85ba3bf).
+          /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+          if (it.webgl) (it.term as any).clearTextureAtlas?.();
+          it.term!.refresh(0, it.term!.rows - 1);
+        }
       }
     } catch {}
   }, HB_INTERVAL);
