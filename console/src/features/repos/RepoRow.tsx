@@ -77,6 +77,9 @@ export interface RepoRowProps {
   onOpenChanges?: () => void;
   onFF?: () => void;
   onDelete?: () => void;
+  /** SVN (docs/41): update to the latest revision / clear a wedged working-copy lock. */
+  onUpdate?: () => void;
+  onCleanup?: () => void;
   onLaunch: (kind: string, split: boolean) => void;
   onStartWork: (opts: LaunchOpts) => Promise<LaunchResult>;
   onBranchChanged?: () => void;
@@ -84,7 +87,11 @@ export interface RepoRowProps {
   onFocusPane?: (id: string) => void;
 }
 
-export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, sess, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onDelete, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane }: RepoRowProps) {
+export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, sess, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onDelete, onUpdate, onCleanup, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane }: RepoRowProps) {
+  // SVN working copies (docs/41) are flat: no branch/SCM view/worktree, so the card
+  // never opens Source Control and the menu shows svn actions (update/cleanup) instead
+  // of git ones (branch switch / FF / commit).
+  const isSvn = r.vcs === "svn";
   const [showLaunch, setShowLaunch] = useState(false);
   const [launchModal, setLaunchModal] = useState(false);
   // Coding agents only (runsInDir) — shell/ssm have no model/prompt, so the
@@ -146,19 +153,21 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
         title={
           (running ? tr("repo.row_title_running") + "\n" : tr("repo.row_title") + "\n") +
           (r.path || "") +
+          (isSvn && r.url ? "\n" + r.url : "") +
           (r.provider ? "\n" + tr("repo.remote_line", { remote: r.remote || providerLabel(r.provider) }) : "")
         }
         // Plain click folds/unfolds the node (SCM is on the right-click menu now).
-        // Ctrl/⌘ still opens Source Control in a split (a power gesture).
+        // Ctrl/⌘ still opens Source Control in a split (a power gesture) — git only;
+        // an svn copy has no SCM view, so it always just folds.
         onClick={(e) => {
-          if (running && (e.ctrlKey || e.metaKey)) {
+          if (running && !isSvn && (e.ctrlKey || e.metaKey)) {
             onOpen(e);
             return;
           }
           onToggle?.();
         }}
         onMouseDown={(e) => e.button === 1 && e.preventDefault()}
-        onAuxClick={(e) => e.button === 1 && running && onOpen(e)}
+        onAuxClick={(e) => e.button === 1 && running && !isSvn && onOpen(e)}
       >
         <div className="repo-info">
           {/* One line for every row. Worktrees: the BRANCH is the identity (the
@@ -175,6 +184,11 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
             {!r.worktree && r.branch && (
               <span className="repo-branch-inline" title={tr("repo.current_branch", { branch: r.branch })}>
                 {r.branch}
+              </span>
+            )}
+            {isSvn && r.revision && (
+              <span className="repo-branch-inline" title={tr("repo.revision", { rev: r.revision })}>
+                r{r.revision}
               </span>
             )}
           </span>
@@ -311,11 +325,14 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
       {menu &&
         createPortal(
           <ul className="ui-menu repo-ctxmenu" ref={menuRef} style={{ left: menu.x, top: menu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
-            <li>
-              <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onOpen(); }}>
-                <Icon name="source-control" /> {tr("repo.open_scm")}
-              </button>
-            </li>
+            {/* Source Control view + git-only ops — hidden for svn (flat working copy). */}
+            {!isSvn && (
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onOpen(); }}>
+                  <Icon name="source-control" /> {tr("repo.open_scm")}
+                </button>
+              </li>
+            )}
             {onOpenFolder && (
               <li>
                 <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onOpenFolder(); }}>
@@ -323,29 +340,46 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                 </button>
               </li>
             )}
-            {onOpenChanges && (
+            {!isSvn && onOpenChanges && (
               <li>
                 <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onOpenChanges(); }}>
                   <Icon name="git-commit" /> {tr("repo.commit_changes")}
                 </button>
               </li>
             )}
-            <li>
-              <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); setBranchOpen(true); }}>
-                <Icon name="git-branch" /> {tr("repo.switch_branch")}
-              </button>
-            </li>
-            {r.branch && (
+            {!isSvn && (
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); setBranchOpen(true); }}>
+                  <Icon name="git-branch" /> {tr("repo.switch_branch")}
+                </button>
+              </li>
+            )}
+            {!isSvn && r.branch && (
               <li>
                 <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); copyBranch(); }}>
                   <Icon name="copy" /> {tr("repo.copy_branch")}
                 </button>
               </li>
             )}
-            {onFF && (
+            {!isSvn && onFF && (
               <li>
                 <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onFF(); }}>
                   <Icon name="arrow-down" /> Fast-Forward
+                </button>
+              </li>
+            )}
+            {/* SVN: update to the latest revision / clear a wedged lock. */}
+            {isSvn && onUpdate && (
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onUpdate(); }}>
+                  <Icon name="sync" /> {tr("repo.svn_update")}
+                </button>
+              </li>
+            )}
+            {isSvn && onCleanup && (
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onCleanup(); }}>
+                  <Icon name="unlock" /> {tr("repo.svn_cleanup")}
                 </button>
               </li>
             )}
@@ -388,8 +422,9 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
           kinds={agentKinds}
           // From a worktree, only in-place launch is offered — spawning a worktree
           // OFF a worktree yields a confusing double-@ name off the wrong base. New
-          // worktrees are created from the base clone (any base branch).
-          allowWorktree={!r.worktree}
+          // worktrees are created from the base clone (any base branch). SVN has no
+          // worktree at all (docs/41), so it too launches in place only.
+          allowWorktree={!r.worktree && !isSvn}
           onClose={() => setLaunchModal(false)}
           onLaunch={onStartWork}
         />

@@ -125,6 +125,11 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /repos/{name}/checkout", handleRepoCheckout)
 	mux.HandleFunc("POST /repos/{name}/fetch", handleRepoFetch)
 	mux.HandleFunc("POST /repos/{name}/ff", handleRepoFF)
+	// Subversion (docs/41): checkout a URL (URL + basic auth), update to the latest
+	// revision, and cleanup a wedged working-copy lock. Delete reuses DELETE /repos/{name}.
+	mux.HandleFunc("POST /repos/svn", handleSvnCheckout)
+	mux.HandleFunc("POST /repos/{name}/svn-update", handleSvnUpdate)
+	mux.HandleFunc("POST /repos/{name}/svn-cleanup", handleSvnCleanup)
 	// Launch prompt templates (repo 起動 modal): .claude/commands, .claude/skills,
 	// .agent-fleet/launch-prompts.md — aggregated read-only from the working copy.
 	mux.HandleFunc("GET /repos/{name}/prompt-templates", handleRepoPromptTemplates)
@@ -202,6 +207,8 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /connections/claude", claude.HandleDisconnect)
 	mux.HandleFunc("PUT /connections/opencode", opencode.HandlePutConn)
 	mux.HandleFunc("DELETE /connections/opencode/{env}", opencode.HandleDeleteConn)
+	// SVN saved basic-auth creds (docs/41): saved at checkout time; forget them here.
+	mux.HandleFunc("DELETE /connections/svn", handleDeleteSvnConn)
 	// agy quota gauge for the Console's AgyCard (docs/32 Track C — the Starter
 	// Quota is an experimental pool, so the card always shows what's left).
 	// The claude-style auth routes (start/complete/DELETE) land with Track A.

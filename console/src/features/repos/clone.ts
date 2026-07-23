@@ -14,6 +14,15 @@ export interface CloneRequest {
   new_branch?: string;
 }
 
+export interface SvnCheckoutRequest {
+  url: string;
+  subpath?: string;
+  name?: string;
+  username?: string;
+  password?: string;
+  save?: boolean;
+}
+
 export async function cloneRepo(
   req: CloneRequest,
   toast: (msg: string) => void,
@@ -50,6 +59,44 @@ export async function cloneRepo(
     return { ok: true, name: res?.name || "" };
   } catch (e) {
     toast(t("rp.clone_failed", { err: String(e) }));
+    return { ok: false, name: "" };
+  }
+}
+
+// svnCheckout — POST /api/repos/svn, the SVN twin of cloneRepo (docs/41). Same
+// proxy-timeout re-check (a large checkout can outlive the upstream timeout while
+// the server keeps working), same refresh + reveal on success.
+export async function svnCheckout(
+  req: SvnCheckoutRequest,
+  toast: (msg: string) => void,
+): Promise<{ ok: boolean; name: string }> {
+  const beforeNames = new Set(useReposStore.getState().repos.map((r) => r.name));
+  const refreshRepos = () => useReposStore.getState().refresh();
+  try {
+    const res = await apiJSON("api/repos/svn", "POST", {
+      url: req.url,
+      subpath: req.subpath || "",
+      name: req.name || "",
+      username: req.username || "",
+      password: req.password || "",
+      save: !!req.save,
+    });
+    if (res && res.error) {
+      await refreshRepos();
+      const added = useReposStore.getState().repos.find((r) => !beforeNames.has(r.name));
+      if (!added) {
+        toast(t("rp.svn_checkout_failed", { err: errText(res.error) }));
+        return { ok: false, name: "" };
+      }
+      useFilesStore.getState().revealInFiles("repos/" + added.name);
+      return { ok: true, name: added.name };
+    }
+    await refreshRepos();
+    if (res && res.name) useFilesStore.getState().revealInFiles("repos/" + res.name);
+    else useFilesStore.getState().bump();
+    return { ok: true, name: res?.name || "" };
+  } catch (e) {
+    toast(t("rp.svn_checkout_failed", { err: String(e) }));
     return { ok: false, name: "" };
   }
 }
