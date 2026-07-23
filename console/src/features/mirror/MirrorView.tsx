@@ -121,6 +121,7 @@ interface Part {
   questions?: Question[];
   answer?: string;
   plan?: string;
+  qid?: string; // kind=question/plan/delegation: tool_use id, to patch a late answer (see patchAnswers)
   files?: string[]; // kind=userfile: SendUserFile paths (browse-root-relative)
   caption?: string; // kind=userfile: optional caption
   stderr?: string; // kind=bash: the ! command's stderr (output field holds stdout)
@@ -197,6 +198,41 @@ interface TurnTtsWiring {
 type SendEcho = PendingEcho & { id: number };
 const echoStore = new Map<string, SendEcho[]>();
 let echoSeqCounter = 0;
+
+// patchAnswers reconciles late-arriving interaction answers (the server's `answers` map:
+// tool_use id → answer text) onto turns already held. claude writes an AskUserQuestion /
+// ExitPlanMode / Agent tool_use at ASK time, so its answer can land in a LATER poll whose
+// window no longer re-emits that turn — the append-only merge would then leave it forever
+// unanswered (the reported "AUQ回答がミラーに反映されない"). Idempotent: only fills a part
+// whose answer/output isn't set yet, and returns the SAME array reference when nothing
+// changed, so a steady-state poll (answers resent every tick) triggers no re-render.
+function patchAnswers(turns: Turn[], answers: Record<string, string> | null | undefined): Turn[] {
+  if (!answers) return turns;
+  let changed = false;
+  const next = turns.map((t) => {
+    if (!t.parts) return t;
+    let pchanged = false;
+    const parts = t.parts.map((p) => {
+      const a = p.qid ? answers[p.qid] : undefined;
+      if (!a) return p;
+      // question and plan both surface their result through part.answer (PlanBlock reads it
+      // as `outcome`); a delegation flips to completed and shows its (server-capped) output.
+      if ((p.kind === "question" || p.kind === "plan") && !p.answer) {
+        pchanged = true;
+        return { ...p, answer: a };
+      }
+      if (p.kind === "delegation" && p.status !== "completed") {
+        pchanged = true;
+        return { ...p, output: a, status: "completed" };
+      }
+      return p;
+    });
+    if (!pchanged) return t;
+    changed = true;
+    return { ...t, parts };
+  });
+  return changed ? next : turns;
+}
 
 // MirrorView (user-facing: チャット) is a read-mostly Markdown view of a claude
 // session, built on the same Agent endpoints the MCP drive tools use: GET
@@ -743,8 +779,12 @@ export function MirrorView({
           // reset: the server's jsonl shrank or was replaced (compaction, or a
           // different <sid>.jsonl became live), so our line cursor was stale and it
           // re-sent from the top — replace, don't append. Otherwise append new turns.
+          // Late interaction answers (AskUserQuestion/ExitPlanMode/Agent), keyed by
+          // tool_use id — see patchAnswers. Sent every poll; applied to whatever turns we
+          // hold after the append/reset below.
+          const answers = d.answers && typeof d.answers === "object" ? (d.answers as Record<string, string>) : null;
           if (d.reset) {
-            setTurns(Array.isArray(d.messages) ? d.messages : []);
+            setTurns(patchAnswers(Array.isArray(d.messages) ? d.messages : [], answers));
             // Servers now resend a TAIL window on reset and set firstLine/hasMore
             // (handled by the shared block below); 0/false is the fallback for a
             // whole-file reset from an older server (fork preview still sends one).
@@ -769,8 +809,13 @@ export function MirrorView({
                 if (t[i].idx !== undefined) { lastIdx = t[i].idx as number; break; }
               }
               const fresh = (d.messages as Turn[]).filter((m) => m.idx === undefined || m.idx > lastIdx);
-              return fresh.length ? [...t, ...fresh] : t;
+              return patchAnswers(fresh.length ? [...t, ...fresh] : t, answers);
             });
+          } else if (answers) {
+            // No new turns this poll, but an answer may have just landed for a question/plan/
+            // delegation turn we already hold (its tool_result line carries no displayable turn
+            // of its own). Patch in place; patchAnswers no-ops when nothing changed.
+            setTurns((t) => patchAnswers(t, answers));
           }
           // Windowed (initial tail) response carries the oldest line we now hold.
           if (typeof d.firstLine === "number") {

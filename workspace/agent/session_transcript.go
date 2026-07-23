@@ -179,6 +179,13 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		resp["firstLine"] = firstLine
 		resp["hasMore"] = firstLine > 0
 	}
+	// Whole-transcript answers for AskUserQuestion/ExitPlanMode/Agent, keyed by tool_use
+	// id. claude writes an interaction tool_use at ASK time; its answer can land in a later
+	// poll whose window no longer re-emits that turn, so the windowed `turns` above may
+	// carry it unanswered. The Console patches the answer onto the already-held turn by qid.
+	if ans := claude.CollectInteractionAnswers(lines); len(ans) > 0 {
+		resp["answers"] = ans
+	}
 	surfacePendingPayloads(resp, sid, state)
 	// Current mode label (Plan / Bypass / Default / …), only while alive — read from the
 	// status line so it reflects a terminal-side Shift+Tab too. The jsonl mode is a stale
