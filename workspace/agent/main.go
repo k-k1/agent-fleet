@@ -159,7 +159,7 @@ func main() {
 	startBridgeReceiver()
 
 	log.Printf("workspace-agent %s listening on %s", buildVersion, addr)
-	if err := http.ListenAndServe(addr, httpx.LogRequests(httpx.RequireToken(mux))); err != nil {
+	if err := http.ListenAndServe(addr, httpx.LogRequests(httpx.Gzip(httpx.RequireToken(mux)))); err != nil {
 		log.Fatal(err)
 	}
 }

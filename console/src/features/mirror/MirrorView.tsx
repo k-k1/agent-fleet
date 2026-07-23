@@ -722,6 +722,12 @@ export function MirrorView({
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const tick = async () => {
+      // Hidden tab: skip the fetch entirely (mobile data / battery); the
+      // visibilitychange listener below re-polls immediately on return.
+      if (document.hidden) {
+        timer = setTimeout(tick, 15000);
+        return;
+      }
       try {
         // First poll: fetch only the TAIL window (fast on huge transcripts); the server
         // returns firstLine/hasMore so we can page older history in on scroll. Subsequent
@@ -739,7 +745,10 @@ export function MirrorView({
           // re-sent from the top — replace, don't append. Otherwise append new turns.
           if (d.reset) {
             setTurns(Array.isArray(d.messages) ? d.messages : []);
-            firstLineRef.current = 0; // reset re-sends from the top: nothing older to page
+            // Servers now resend a TAIL window on reset and set firstLine/hasMore
+            // (handled by the shared block below); 0/false is the fallback for a
+            // whole-file reset from an older server (fork preview still sends one).
+            firstLineRef.current = 0;
             setHasMore(false);
             ttsHandleRef.current?.stop("replaced"); // 本文 DOM の入れ替え。全体停止にはしない
             ttsAutoSeenRef.current = null; // idx が振り直されるので基準も取り直す
@@ -829,11 +838,16 @@ export function MirrorView({
       if (timer) clearTimeout(timer);
       tick();
     };
+    const onVisible = () => {
+      if (!document.hidden) tickRef.current?.();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     tick();
     return () => {
       alive = false;
       if (timer) clearTimeout(timer);
       tickRef.current = null;
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [session]);
 

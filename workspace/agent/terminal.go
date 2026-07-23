@@ -20,6 +20,9 @@ import (
 // origin/auth upstream. Accept any origin here (VPC/docker-network bound).
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
+	// CP 側 dialer と permessage-deflate をネゴする（ECS では CP↔Agent も
+	// ネットワーク越しなので PTY 出力を圧縮して運ぶ）。
+	EnableCompression: true,
 }
 
 // ctrlMsg is the client->server text protocol. Server->client is raw binary

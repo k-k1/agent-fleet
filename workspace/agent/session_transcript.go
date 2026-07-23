@@ -102,9 +102,17 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	lo, hi := since, len(lines)
 	firstLine := -1
 	switch {
+	case forkPreview && since == forkPreviewCursor:
+		// The client's cursor is already parked at the sentinel, i.e. it holds the
+		// preview from a prior tick — don't re-send the whole source every poll
+		// (status/pending below still refresh). The first poll that sees the fork's
+		// own jsonl leaves preview mode and trips the reset case below.
+		lo, hi = 0, 0
+		cursor = forkPreviewCursor
 	case forkPreview:
-		// Send the whole source preview each tick (content is stable); park the cursor
-		// past any real line count so the next non-preview poll resets onto the fork.
+		// First preview send: the whole source history (content is treated as stable);
+		// park the cursor past any real line count so the next non-preview poll resets
+		// onto the fork.
 		lo, hi = 0, len(lines)
 		reset = true
 		cursor = forkPreviewCursor
@@ -117,8 +125,12 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		cursor = since
 	case since > len(lines):
 		// The live log is genuinely shorter than the cursor (compaction / a replaced
-		// file). Restart from the top and tell the client to reload from scratch.
-		lo, hi = 0, len(lines)
+		// file). Tell the client to reload from scratch — but hand it a TAIL window,
+		// not the whole file (a compacted transcript can still be ~1MiB); firstLine
+		// lets it page older history in on scroll, same as the initial open.
+		hi = len(lines)
+		lo = max(0, hi-clampWindowLimit(r.URL.Query().Get("limit")))
+		firstLine = lo
 		reset = true
 	default:
 		// Windowed reads (P1): an initial tail window, or a backward page. With neither,
@@ -248,9 +260,12 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 		lo, hi = 0, 0
 		cursor = since
 	case since > total:
-		// The transcript shrank below the cursor (a resumed/replaced session): restart
-		// from the top and tell the client to reload.
-		lo, hi = 0, total
+		// The transcript shrank below the cursor (a resumed/replaced session): tell the
+		// client to reload — with a tail window (not the whole conversation), like the
+		// claude path; firstLine lets it page older history in on scroll.
+		hi = total
+		lo = max(0, hi-clampWindowLimit(r.URL.Query().Get("limit")))
+		firstLine = lo
 		reset = true
 	default:
 		limit := clampWindowLimit(r.URL.Query().Get("limit"))

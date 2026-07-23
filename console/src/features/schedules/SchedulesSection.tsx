@@ -69,7 +69,9 @@ export function SchedulesSection() {
         })
         .catch(() => {});
     load();
-    const id = setInterval(load, POLL_MS);
+    const id = setInterval(() => {
+      if (!document.hidden) load(); // hidden tab: skip the tick (mobile data / battery)
+    }, POLL_MS);
     return () => {
       alive = false;
       clearInterval(id);

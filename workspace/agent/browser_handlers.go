@@ -23,7 +23,8 @@ const (
 )
 
 var browserUpgrader = websocket.Upgrader{
-	CheckOrigin: func(*http.Request) bool { return true }, // internal CP-only endpoint
+	CheckOrigin:       func(*http.Request) bool { return true }, // internal CP-only endpoint
+	EnableCompression: true,                                     // base64 スクリーンキャストの帯域を CP↔Agent 間でも削る
 }
 
 // chromiumInstallState serializes the one-shot on-demand chromium install a

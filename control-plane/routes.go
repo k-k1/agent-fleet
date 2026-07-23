@@ -574,8 +574,19 @@ func registerLegacyRedirect(mux *http.ServeMux) {
 	mux.HandleFunc("/agent-fleet/", legacyRedirect)
 }
 
-// Static Console (catch-all). no-store so reloads always get fresh assets
-// during active development.
+// Static Console (catch-all). Vite emits content-hashed files under assets/ —
+// a rebuild changes the name, never the bytes — so those are safe to cache
+// long-term (the mobile win: no multi-MB bundle re-download per open). The
+// unhashed entry points (index.html, version.json, sw.js) stay no-store so a
+// reload / the deploy check always sees the latest build.
 func registerStatic(mux *http.ServeMux, cfg config) {
-	mux.Handle("/", noStore(http.FileServer(http.Dir(cfg.consoleDir))))
+	fs := http.FileServer(http.Dir(cfg.consoleDir))
+	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-store")
+		}
+		fs.ServeHTTP(w, r)
+	}))
 }
