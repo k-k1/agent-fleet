@@ -105,16 +105,6 @@ export function DisplayTab() {
         <Row label={tr("display.font_size")}>
           <Stepper value={s.chatSize} onChange={(v) => setSetting("chatSize", v)} />
         </Row>
-        <Row label={tr("display.send_key")}>
-          <Choice
-            value={s.mirrorSend}
-            options={MIRROR_SEND_MODES.map((m) => [m.id, tr(m.labelKey)])}
-            onChange={(v) => setSetting("mirrorSend", v)}
-          />
-        </Row>
-        <p className="muted ds-note">
-          {s.mirrorSend === "enter" ? tr("display.send_note_enter") : tr("display.send_note_mod")}
-        </p>
       </section>
 
       <section className="ds-group">

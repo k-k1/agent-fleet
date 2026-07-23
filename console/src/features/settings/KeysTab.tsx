@@ -5,9 +5,9 @@
 // cheat-sheet) are rebindable; leader SEQUENCES (p r, w t …) are structural and fixed.
 // Action / section names are i18n keys (resolved with cmdLabel); chrome uses t().
 import { useEffect, useState } from "react";
-import { useSettings, setSetting } from "../../lib/settings.ts";
+import { useSettings, setSetting, MIRROR_SEND_MODES } from "../../lib/settings.ts";
 import { Kbd } from "../../ui/Kbd.tsx";
-import { OnOff } from "./controls.tsx";
+import { OnOff, Row, Choice } from "./controls.tsx";
 import { t, useLocale } from "../../lib/i18n/index.ts";
 import { eventChordString, shouldIgnore } from "../../lib/keys/chords.ts";
 import {
@@ -69,6 +69,15 @@ export function KeysTab() {
           <OnOff value={s.shellTermPassthrough} onChange={(v) => setSetting("shellTermPassthrough", v)} />
         </div>
         <p className="muted ds-note">{t("keys.kt.shellPassNote")}</p>
+
+        <Row label={t("display.send_key")}>
+          <Choice
+            value={s.mirrorSend}
+            options={MIRROR_SEND_MODES.map((m) => [m.id, t(m.labelKey)])}
+            onChange={(v) => setSetting("mirrorSend", v)}
+          />
+        </Row>
+        <p className="muted ds-note">{s.mirrorSend === "enter" ? t("display.send_note_enter") : t("display.send_note_mod")}</p>
       </section>
 
       <section className="ds-group">
