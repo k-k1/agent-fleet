@@ -1,6 +1,7 @@
 # 0023. `kind=cursor`（Cursor CLI）を第7のエージェント種別として追加する
 
-- 状態: **採用（計画）**（2026-07-23 事前調査完了・実装未着手）。実装計画・実測は [docs/40](../40-cursor-agent-kind.md)。
+- 状態: **採用（計画・Track 0 プローブ合格）**（2026-07-23 事前調査＋認証済み実測完了・実装未着手）。
+  実装計画・実測は [docs/40](../40-cursor-agent-kind.md)。
 - 関連: [0019](0019-copilot-agent-kind.md)（copilot — 直近の種別追加・本件のテンプレ）、
   [0008](0008-antigravity-cli-agent-kind.md)（agy — Terminal 専用 MVP の先例）、
   [0015](0015-agent-managed-driver.md)（managed driver 抽象）。
@@ -17,9 +18,9 @@ Cursor CLI（`cursor-agent`/`agent`、Anysphere）は `agent acp`（ACP = JSON-R
 
 ## 決定
 
-1. **v1 から Terminal (CLI) と Managed の両対応を狙う**（copilot 踏襲）。ただし
-   **ACP のクロスプロセス resume（load 相当）の有無を着工前プローブの合格条件**とし、
-   欠けていれば v1 は Terminal 専用（agy 型）に縮退、managed は後送り（判断基準を先に固定）。
+1. **v1 から Terminal (CLI) と Managed の両対応**（copilot 踏襲）。合格条件としていた
+   ACP のクロスプロセス resume は **Track 0 プローブで合格**（`loadSession:true`・
+   `session/load` で履歴リプレイ＋文脈保持を別プロセスから実証 — docs/40 §プローブ一覧）。
 2. **表示順はユーザー指定で確定**: Claude, Codex, **Cursor**, GitHub Copilot, Antigravity, OpenCode
    （`SESSION_KINDS`・`repoLaunchKinds`・AgentsTab カード順に反映。他 UI は派生）。
 3. **read 正本は公式契約面のみ**: hooks（stop/beforeSubmitPrompt → status seam）と
