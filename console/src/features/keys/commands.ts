@@ -135,6 +135,14 @@ async function toggleChatNotify(kind: "discord" | "slack"): Promise<void> {
   toast(t(wasOn ? "keys.toast.notifyOff" : "keys.toast.notifyOn", { name }), { kind: "success" });
 }
 
+// Toggle the per-session voice notification (docs/24) from the keyboard — the same setting
+// as Settings › Notifications' セッションの音声通知. Toasts the resulting on/off state.
+function toggleTtsSessionNotify(): void {
+  const next = !getSettings().ttsSessionNotify;
+  setSetting("ttsSessionNotify", next);
+  toast(t(next ? "keys.toast.ttsSessionOn" : "keys.toast.ttsSessionOff"), { kind: "success" });
+}
+
 // Leader groups (Leader → group key → action). `title` is an i18n key (resolved for
 // display by cmdLabel; see labels.ts). Titles show in the which-key overlay.
 export const GROUPS: Group[] = [
@@ -224,10 +232,12 @@ export const ALL_COMMANDS: Command[] = [
   { id: "open.usageAgy", title: "keys.cmd.openUsageAgy", seq: "g a", run: () => useUiOpen.getState().toggle("usage-agy") },
   { id: "open.resources", title: "keys.cmd.openResources", seq: "g r", run: () => useUiOpen.getState().toggle("resources") },
 
-  // ---- Notifications (leader n) — mute the voice read-aloud, or toggle a chat-bridge
-  // service's notification master. n m = mute (shares TopBar's stop+OFF logic); n s / n d
-  // flip Slack / Discord notifications (same effect as Settings › Notifications). ----
+  // ---- Notifications (leader n) — mute the voice read-aloud, toggle the per-session voice
+  // notification, or toggle a chat-bridge service's notification master. n m = mute (shares
+  // TopBar's stop+OFF logic); n a = session voice notification; n s / n d flip Slack /
+  // Discord notifications. All match Settings › Notifications and toast their result. ----
   { id: "tts.toggle", title: "keys.cmd.ttsToggle", seq: "n m", run: toggleTtsPlayback },
+  { id: "notify.ttsSession", title: "keys.cmd.ttsSessionToggle", seq: "n a", run: toggleTtsSessionNotify },
   { id: "notify.slack", title: "keys.cmd.slackToggle", seq: "n s", run: () => void toggleChatNotify("slack") },
   { id: "notify.discord", title: "keys.cmd.discordToggle", seq: "n d", run: () => void toggleChatNotify("discord") },
 
