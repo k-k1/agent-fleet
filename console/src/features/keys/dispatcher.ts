@@ -41,6 +41,14 @@ function focusedKind(): KeyContext["focusedKind"] {
   return "other";
 }
 
+// True when focus is inside a shell/ssm terminal specifically (not an agent chat terminal).
+// TerminalView tags those panes' container with `.terminal-shellssm`. Used by the
+// shellTermPassthrough gate to make plain shells pure terminals without affecting agents.
+function isShellSsmTerminal(): boolean {
+  const el = document.activeElement as HTMLElement | null;
+  return !!(el && typeof el.closest === "function" && el.closest(".terminal-shellssm"));
+}
+
 // The currently-focused element an IME could compose into (a text field or the terminal's
 // helper textarea), or null if focus is somewhere inert. Blurring it on leader entry is how
 // we "turn IME off" for the sequence — see dropIME() below. SELECT is excluded (no IME).
@@ -240,12 +248,18 @@ export function wireKeys(): () => void {
 
     const ctx = buildContext();
 
-    // Terminal-input priority (Settings): while a terminal is focused, yield every app
-    // chord to xterm EXCEPT the leader — the single guaranteed gateway to which-key /
-    // palette. An in-progress leader sequence is handled above, so it always completes.
-    // With the leader itself unbound, nothing escapes → a fully pure terminal, by choice.
-    if (getSettings().terminalPriority && ctx.focusedKind === "terminal" && chord !== LEADER) {
-      return;
+    // Terminal-input priority (Settings): while a terminal is focused, yield app chords
+    // to xterm so they reach the shell/PTY.
+    if (ctx.focusedKind === "terminal") {
+      const s = getSettings();
+      // shellTermPassthrough: for a FOCUSED shell/ssm terminal only, yield EVERY app chord —
+      // including the leader (Ctrl/⌘+K) and palette (Ctrl/⌘+P) — so Ctrl+K (kill-line),
+      // Ctrl+P (history-prev) etc. reach the shell. A fully pure terminal; return to app
+      // shortcuts by focusing another pane. (An in-progress leader sequence is handled above.)
+      if (s.shellTermPassthrough && isShellSsmTerminal()) return;
+      // terminalPriority (all terminals): yield every chord EXCEPT the leader — the single
+      // guaranteed gateway to which-key / palette. With the leader unbound, nothing escapes.
+      if (s.terminalPriority && chord !== LEADER) return;
     }
 
     if (chord === LEADER) {

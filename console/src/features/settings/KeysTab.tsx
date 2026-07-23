@@ -64,6 +64,11 @@ export function KeysTab() {
           <OnOff value={s.terminalPriority} onChange={(v) => setSetting("terminalPriority", v)} />
         </div>
         <p className="muted ds-note">{t("keys.kt.termPrioNote")}</p>
+        <div className="ds-row">
+          <span className="ds-label">{t("keys.kt.shellPassLabel")}</span>
+          <OnOff value={s.shellTermPassthrough} onChange={(v) => setSetting("shellTermPassthrough", v)} />
+        </div>
+        <p className="muted ds-note">{t("keys.kt.shellPassNote")}</p>
       </section>
 
       <section className="ds-group">
