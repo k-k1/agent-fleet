@@ -81,6 +81,11 @@ state model, or notifications.
 session has no history to show (the live mirror works while running, and running cursor
 as Terminal (CLI) does persist a readable history).
 
+**Default model for the assistant chat** — each assistant can pin its own model, and
+claude's default is settable deployment-wide via `AF_CHAT_MODEL`. Fast, low-cost tiers are
+the defaults because the assistant is conversational: claude → Sonnet 5 · codex →
+`gpt-5.6-luna` · opencode → `opencode/nemotron-3-ultra-free` · agy → Gemini 3.5 Flash.
+
 > **A note on autonomous execution.** Agents run commands, edit files, and push on your
 > behalf — including unattended (scheduled runs) and, in permission-bypassing modes,
 > without asking each time. shell / SSM sessions run the string you send **verbatim**.
