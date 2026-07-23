@@ -783,6 +783,22 @@ function startHeartbeat(paneId: string, ws: WebSocket) {
     try {
       ws.send(JSON.stringify({ type: "ping" }));
     } catch {}
+    // Watchdog repaint for visible-but-INACTIVE panes. A WebGL canvas can end up
+    // showing a stale/garbled composite after the boot churn (multi-pane attach +
+    // history replay + layout/font settling), and every existing recovery hook —
+    // focus, activation, mirror⇄terminal reveal — requires the user to touch THAT
+    // pane; an idle session pane they are merely watching repaints on nothing and
+    // stays corrupted indefinitely (confirmed live: clicking the pane fixed it).
+    // refresh() redraws every cell from the buffer OVER the canvas without
+    // clear(), so there is no blank frame on either renderer (the 85ba3bf DOM
+    // lesson: clear()+deferred-repaint is the hazard, refresh alone is safe) —
+    // at the 15s heartbeat cadence this is imperceptible. Hidden panes are
+    // skipped (zero client rects); dead sockets have no heartbeat and read-only
+    // history panes are one-shot by design (84ac551), so live panes only.
+    try {
+      const el = it.term?.element;
+      if (el && el.isConnected && el.getClientRects().length > 0) it.term!.refresh(0, it.term!.rows - 1);
+    } catch {}
   }, HB_INTERVAL);
 }
 
