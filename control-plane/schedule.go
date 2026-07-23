@@ -347,7 +347,9 @@ func (a scheduleAPI) runNow(w http.ResponseWriter, r *http.Request, mv Membershi
 	// must not inherit the cron spread delay. For interval/once jitter is 0, so this is now.
 	now := time.Now().UTC()
 	next := now.Add(-jitterForSchedule(sch)).Format(time.RFC3339)
-	if err := a.store.SetScheduleEnabled(r.Context(), id, mv.MembershipID, true, next, nowTS()); err != nil {
+	// Flag manual_fire_pending too so the resulting run history row is tagged as a manual
+	// run-now rather than an automatic scheduled fire (both go through the same ticker path).
+	if err := a.store.MarkManualFirePending(r.Context(), id, mv.MembershipID, next, nowTS()); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
@@ -374,7 +376,10 @@ func (a scheduleAPI) runs(w http.ResponseWriter, r *http.Request, mv MembershipV
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for _, rn := range rows {
-		out = append(out, map[string]any{"fired_at": rn.FiredAt, "status": rn.Status, "detail": rn.Detail})
+		out = append(out, map[string]any{
+			"fired_at": rn.FiredAt, "status": rn.Status, "detail": rn.Detail,
+			"session": rn.Session, "trigger": rn.Trigger,
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"schedule_id": id, "runs": out})
 }

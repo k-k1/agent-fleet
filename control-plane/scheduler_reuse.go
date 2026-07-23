@@ -35,10 +35,10 @@ import (
 // the workspace is awake, the keep-alive is held, and the Agent is reachable, so it only
 // has to pick/rotate the target session and deliver the prompt. It persists the reuse
 // ledger itself (SetScheduleReuse); fireOne stamps the cron ledger afterward.
-func (f *wakeFirer) fireReuse(ctx context.Context, res *resolved, sch Schedule, slot time.Time) (string, error) {
+func (f *wakeFirer) fireReuse(ctx context.Context, res *resolved, sch Schedule, slot time.Time) (string, string, error) {
 	sessions, err := f.mgr.agentSessions(ctx, res.rt)
 	if err != nil {
-		return "", fmt.Errorf("list sessions: %w", err)
+		return "", "", fmt.Errorf("list sessions: %w", err)
 	}
 	pinned := sch.ReuseTarget != ""
 	loc := scheduleLocation(sch.TZ)
@@ -63,39 +63,40 @@ func (f *wakeFirer) fireReuse(ctx context.Context, res *resolved, sch Schedule, 
 		// (Re)create is required. A pinned schedule whose target is absent honors the
 		// missing-target policy before creating a replacement.
 		if pinned && reuseMissingPolicy(sch) == "fail" {
-			return "skipped_target_missing", nil
+			return "skipped_target_missing", "", nil
 		}
 		title := reuseCreateTitle(sch, pinned)
 		name, cerr := f.createReuseSession(ctx, res.rt, sch, slot, title)
 		if cerr != nil {
-			return "", cerr
+			return "", "", cerr
 		}
 		f.saveReuse(ctx, sch.ID, name, slot.UTC().Format(time.RFC3339), 1)
 		switch {
 		case rotated:
-			return "fired_rotated", nil
+			return "fired_rotated", name, nil
 		case sch.ReuseSession != "":
 			// We had an adopted session before but it was gone — this is a recreate.
-			return "fired_recreated", nil
+			return "fired_recreated", name, nil
 		default:
-			return "fired", nil
+			return "fired", name, nil
 		}
 	}
 
-	// The current session exists: apply overlap policy, then deliver.
+	// The current session exists: apply overlap policy, then deliver. Link the run to it
+	// even on an overlap skip so the history can open the busy session that deferred us.
 	skip, derr := f.deliverReuse(ctx, res.rt, sch, cur, slot)
 	if derr != nil {
-		return "", derr
+		return "", "", derr
 	}
 	if skip != "" {
-		return skip, nil
+		return skip, cur.Name, nil
 	}
 	started := sch.ReuseStartedAt
 	if started == "" {
 		started = slot.UTC().Format(time.RFC3339)
 	}
 	f.saveReuse(ctx, sch.ID, cur.Name, started, sch.ReuseRunCount+1)
-	return "fired", nil
+	return "fired", cur.Name, nil
 }
 
 // deliverReuse resolves the overlap policy against the target's live state, then sends

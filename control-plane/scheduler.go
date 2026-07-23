@@ -38,8 +38,10 @@ import (
 // logFirer (no-op + log); P2 implements wake + create_session injection against this
 // same interface. slot is the fire instant taken from next_run. The returned status
 // is stamped into last_status (short token, e.g. "fired" / "skipped_rate_limited").
+// session is the session the fire drove (created for session_mode=new, the reuse target
+// for session_mode=reuse) so the run history can link to it; empty when nothing ran.
 type scheduleFirer interface {
-	fire(ctx context.Context, sch Schedule, slot time.Time) (status string, err error)
+	fire(ctx context.Context, sch Schedule, slot time.Time) (status, session string, err error)
 }
 
 // logFirer is the P1 default: it records that a schedule came due without waking any
@@ -47,10 +49,10 @@ type scheduleFirer interface {
 // the P2 wake path exists.
 type logFirer struct{}
 
-func (logFirer) fire(_ context.Context, sch Schedule, slot time.Time) (string, error) {
+func (logFirer) fire(_ context.Context, sch Schedule, slot time.Time) (string, string, error) {
 	log.Printf("scheduler: schedule %s due at %s (P1 no-op firer — wake/inject is P2; kind=%s repo=%s)",
 		sch.ID, slot.UTC().Format(time.RFC3339), sch.AgentKind, sch.Repo)
-	return "fired_noop", nil
+	return "fired_noop", "", nil
 }
 
 // scheduleStore is the narrow store view the scheduler needs (docs/23 narrow view).
@@ -179,7 +181,7 @@ func (sc *scheduler) fireOne(ctx context.Context, sch Schedule, now time.Time) {
 	if err != nil {
 		slot = now // defensive: a corrupt next_run should not wedge the loop
 	}
-	status, ferr := sc.firer.fire(ctx, sch, slot)
+	status, session, ferr := sc.firer.fire(ctx, sch, slot)
 	if ferr != nil {
 		status = "error:" + truncStatus(ferr.Error())
 	}
@@ -202,8 +204,13 @@ func (sc *scheduler) fireOne(ctx context.Context, sch Schedule, now time.Time) {
 		log.Printf("scheduler: record fire %s: %v", sch.ID, err)
 	}
 	// Append to the run history (docs/38 P3). Best-effort: a failed history write must
-	// not affect the ledger advance above.
-	run := ScheduleRun{ID: newID(), ScheduleID: sch.ID, MembershipID: sch.MembershipID, FiredAt: nowRFC, Status: status}
+	// not affect the ledger advance above. Session links the run to what it drove; trigger
+	// records whether this was a manual run-now (flag set on the row) or an automatic fire.
+	trigger := "scheduled"
+	if sch.ManualFirePending {
+		trigger = "manual"
+	}
+	run := ScheduleRun{ID: newID(), ScheduleID: sch.ID, MembershipID: sch.MembershipID, FiredAt: nowRFC, Status: status, Session: session, Trigger: trigger}
 	if err := sc.store.AppendScheduleRun(ctx, run, scheduleRunKeep); err != nil {
 		log.Printf("scheduler: append run %s: %v", sch.ID, err)
 	}

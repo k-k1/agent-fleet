@@ -5,9 +5,12 @@ import type { Layout, Pane, PaneKind } from "./layout.ts";
 import type { Session } from "./session.ts";
 
 // GET /api/whoami — the signed-in identity. email/user are the fields the UI reads.
+// scheduler_enabled is a deployment capability flag (AF_SCHEDULER_INTERVAL is set): the
+// left-rail schedules section is hidden when it is false, since nothing can ever fire.
 export interface Whoami {
   email?: string;
   user?: string;
+  scheduler_enabled?: boolean;
   [k: string]: unknown;
 }
 

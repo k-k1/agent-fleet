@@ -211,12 +211,12 @@ type fakeFirer struct {
 	err    error
 }
 
-func (f *fakeFirer) fire(_ context.Context, sch Schedule, _ time.Time) (string, error) {
+func (f *fakeFirer) fire(_ context.Context, sch Schedule, _ time.Time) (string, string, error) {
 	f.fired = append(f.fired, sch.ID)
 	if f.status == "" {
-		return "fired", f.err
+		return "fired", "", f.err
 	}
-	return f.status, f.err
+	return f.status, "", f.err
 }
 
 func newSchedTestStore(t *testing.T) (*sqlStore, context.Context) {
@@ -284,6 +284,70 @@ func TestScheduleStoreCRUD(t *testing.T) {
 	}
 	if _, ok, _ := st.GetSchedule(ctx, "sch_1"); ok {
 		t.Fatal("row still present after owner delete")
+	}
+}
+
+// TestMarkManualFirePending checks the run-now provenance flag: MarkManualFirePending sets
+// next_run + manual_fire_pending, and the fire ledger (RecordScheduleFire) clears the flag
+// so a subsequent automatic fire is not mis-tagged as manual (docs/38).
+func TestMarkManualFirePending(t *testing.T) {
+	st, ctx := newSchedTestStore(t)
+	sc := Schedule{
+		ID: "sch_1", MembershipID: "m1", TenantID: "default", SpecKind: "interval", Spec: "3600",
+		TZ: "UTC", Enabled: true, NextRun: "2999-01-01T00:00:00Z", CreatedAt: nowTS(), UpdatedAt: nowTS(),
+	}
+	if err := st.CreateSchedule(ctx, sc); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if got, _, _ := st.GetSchedule(ctx, "sch_1"); got.ManualFirePending {
+		t.Fatal("manual_fire_pending should default off")
+	}
+	if err := st.MarkManualFirePending(ctx, "sch_1", "m1", "2026-07-23T00:00:00Z", nowTS()); err != nil {
+		t.Fatalf("mark: %v", err)
+	}
+	got, _, _ := st.GetSchedule(ctx, "sch_1")
+	if !got.ManualFirePending || got.NextRun != "2026-07-23T00:00:00Z" {
+		t.Fatalf("mark not applied: pending=%v next=%q", got.ManualFirePending, got.NextRun)
+	}
+	// A foreign member cannot flag someone else's schedule.
+	if err := st.MarkManualFirePending(ctx, "sch_1", "m2", "2020-01-01T00:00:00Z", nowTS()); err != nil {
+		t.Fatalf("cross-member mark errored: %v", err)
+	}
+	if got, _, _ := st.GetSchedule(ctx, "sch_1"); got.NextRun != "2026-07-23T00:00:00Z" {
+		t.Fatal("cross-member mark mutated the row")
+	}
+	// A fire clears the flag.
+	if err := st.RecordScheduleFire(ctx, "sch_1", nowTS(), "fired", "2999-01-01T00:00:00Z", true, nowTS()); err != nil {
+		t.Fatalf("record fire: %v", err)
+	}
+	if got, _, _ := st.GetSchedule(ctx, "sch_1"); got.ManualFirePending {
+		t.Fatal("manual_fire_pending should be cleared after a fire")
+	}
+}
+
+// TestScheduleRunSessionTrigger round-trips the run-history columns added for the Console:
+// the session a fire drove and whether it was a manual or scheduled fire.
+func TestScheduleRunSessionTrigger(t *testing.T) {
+	st, ctx := newSchedTestStore(t)
+	runs := []ScheduleRun{
+		{ID: newID(), ScheduleID: "s", MembershipID: "m1", FiredAt: "2026-07-23T09:00:00Z", Status: "fired", Session: "sess-a", Trigger: "scheduled"},
+		{ID: newID(), ScheduleID: "s", MembershipID: "m1", FiredAt: "2026-07-23T09:05:00Z", Status: "fired", Session: "sess-b", Trigger: "manual"},
+	}
+	for _, r := range runs {
+		if err := st.AppendScheduleRun(ctx, r, 50); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+	got, err := st.ListScheduleRuns(ctx, "s", "m1", 50)
+	if err != nil || len(got) != 2 {
+		t.Fatalf("list: %v n=%d", err, len(got))
+	}
+	// Newest first: the manual run.
+	if got[0].Session != "sess-b" || got[0].Trigger != "manual" {
+		t.Fatalf("row0 = %+v", got[0])
+	}
+	if got[1].Session != "sess-a" || got[1].Trigger != "scheduled" {
+		t.Fatalf("row1 = %+v", got[1])
 	}
 }
 

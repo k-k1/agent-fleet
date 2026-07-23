@@ -2,6 +2,7 @@
 // the component so the formatting + status classification is unit-testable (the codebase
 // tests pure logic, not React rendering — see notifications/read.test.ts). The section
 // component owns fetch/poll/state; everything here is a plain function over the DTO.
+import type { MsgKey } from "../../lib/i18n/index.ts";
 
 // Wire shape returned by GET /api/schedules — mirrors the CP scheduleDTO (schedule.go).
 export interface ScheduleDTO {
@@ -30,6 +31,11 @@ export interface ScheduleRun {
   fired_at: string;
   status: string;
   detail?: string;
+  // The session this fire drove (created for session_mode=new, the reuse target for
+  // session_mode=reuse) — the history can open it. Empty for soft skips that ran nothing.
+  session?: string;
+  // How the fire was initiated: "manual" (a run-now) or "scheduled" (an automatic fire).
+  trigger?: string;
 }
 
 // A run/last_status token maps to one of four tones so the dot + label read consistently
@@ -59,6 +65,29 @@ export function statusIcon(status?: string): string {
     default:
       return "circle-outline";
   }
+}
+
+// The i18n key for a run's outcome, keyed off the same four tones as the status dot so
+// history reads "成功 / 失敗 / スキップ / 未実行" instead of the raw token (which stays in the
+// row tooltip). Pure so it is unit-tested alongside statusTone.
+export function runStatusLabelKey(status?: string): MsgKey {
+  switch (statusTone(status)) {
+    case "ok":
+      return "sched.status_ok";
+    case "danger":
+      return "sched.status_fail";
+    case "warn":
+      return "sched.status_skip";
+    default:
+      return "sched.status_pending";
+  }
+}
+
+// A run is "manual" when it was triggered by run-now; anything else is an automatic
+// scheduled fire. The CP stamps trigger="manual"/"scheduled"; an older row with no
+// trigger reads as scheduled (the pre-existing behavior before run-now was tagged).
+export function isManualRun(trigger?: string): boolean {
+  return trigger === "manual";
 }
 
 // A schedule is "paused" when it is disabled; the enabled flag is the single source of

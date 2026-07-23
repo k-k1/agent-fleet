@@ -168,13 +168,23 @@ type Schedule struct {
 	ReuseRunCount                int
 	Rotation                     string
 	MissingTargetPolicy          string
+	// ManualFirePending is set by run-now and read+cleared by the scheduler on the next
+	// fire to tag that run as manual (docs/38). Transient — not part of the schedule DTO.
+	ManualFirePending bool
 }
 
 // ScheduleRun is one fire-attempt history row (docs/38 P3 get_schedule_runs).
-// Status mirrors the schedule's last_status token; FiredAt is UTC RFC3339.
+// Status mirrors the schedule's last_status token; FiredAt is UTC RFC3339. Session is
+// the session the fire drove — the newly created session (session_mode=new) or the
+// long-lived reuse target (session_mode=reuse) — so the Console history can open it. It
+// is empty for soft skips that ran nothing (skipped_* / error before a session existed).
+// Trigger is how the fire was initiated: "manual" (a run-now) or "scheduled" (an automatic
+// wall-clock fire, the default), so the history can tell an on-demand run from a timed one.
 type ScheduleRun struct {
 	ID, ScheduleID, MembershipID string
 	FiredAt, Status, Detail      string
+	Session                      string
+	Trigger                      string
 }
 
 // Notification is a membership-scoped, content-free activity record shared by
@@ -489,6 +499,9 @@ type ScheduleStore interface {
 	ListDueSchedules(ctx context.Context, nowRFC string) ([]Schedule, error)
 	UpdateSchedule(ctx context.Context, s Schedule) error
 	SetScheduleEnabled(ctx context.Context, id, membershipID string, enabled bool, nextRun, updatedAt string) error
+	// MarkManualFirePending is run-now: it sets next_run so the ticker fires immediately and
+	// flags manual_fire_pending so the resulting run is tagged as a manual fire (docs/38).
+	MarkManualFirePending(ctx context.Context, id, membershipID, nextRun, updatedAt string) error
 	DeleteSchedule(ctx context.Context, id, membershipID string) error
 	// RecordScheduleFire stamps the ledger after a fire attempt: last_run/last_status
 	// and the recomputed next_run, disabling the row (enabled=0) when next_run is ""

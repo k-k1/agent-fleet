@@ -4,13 +4,23 @@
 // switch + slow-polls while mounted. Read + manage only: toggle enabled, run-now, view run
 // history, delete. Creating/editing a schedule stays in the operator conversation because
 // it needs the NL→cron translation the operator LLM does.
-import { useEffect, useMemo, useRef, useState } from "react";
+//
+// Row interaction (docs/38): clicking a row opens its run history inline; the ⋯ menu (also
+// on right-click) holds the manage actions — pause/resume, run-now, delete. Each history
+// row shows the outcome (成功/失敗/スキップ), whether it was a manual run-now or a scheduled
+// fire, and opens the session that fire drove.
+import { createPortal } from "react-dom";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
-import { IconButton } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
+import { useDismiss } from "../../lib/useDismiss.ts";
+import { useMenuRoving } from "../../lib/useMenuRoving.ts";
+import { placeFixed } from "../../lib/placeFixed.ts";
 import { t, useT } from "../../lib/i18n/index.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
+import { agentOf } from "../../agents/registry.ts";
+import { openSessionChat, openSessionTerminal } from "../sessions/open.ts";
 import {
   scheduleList,
   scheduleRuns,
@@ -26,6 +36,8 @@ import {
   specSummary,
   statusTone,
   statusIcon,
+  runStatusLabelKey,
+  isManualRun,
   sortSchedules,
 } from "./read.ts";
 
@@ -38,6 +50,181 @@ function shortLocal(iso?: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString(undefined, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+// Open the session a fire drove. new-mode sessions take the schedule's agent kind, so a
+// chat-capable kind opens the mirror and a terminal kind opens the terminal pane.
+function openRunSession(agentKind: string | undefined, name: string): void {
+  (agentOf(agentKind || "claude").caps.chat ? openSessionChat : openSessionTerminal)(name);
+}
+
+interface ScheduleRowProps {
+  s: ScheduleDTO;
+  rowBusy: boolean;
+  runsOpen: boolean;
+  runs: ScheduleRun[] | undefined;
+  onToggleRuns: (s: ScheduleDTO) => void;
+  onPause: (s: ScheduleDTO) => void;
+  onRunNow: (s: ScheduleDTO) => void;
+  onDelete: (s: ScheduleDTO) => void;
+}
+
+function ScheduleRow({ s, rowBusy, runsOpen, runs, onToggleRuns, onPause, onRunNow, onDelete }: ScheduleRowProps) {
+  const tr = useT();
+  const paused = !s.enabled;
+  const tone = statusTone(s.last_status);
+
+  // ⋯ menu (also opened by right-click on the row), positioned like SessionRow's menu.
+  const menuWrapRef = useRef<HTMLDivElement>(null);
+  const menuElRef = useRef<HTMLDivElement>(null);
+  const menuBtnRef = useRef<HTMLButtonElement>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  useDismiss([menuWrapRef, menuElRef], menuOpen, () => setMenuOpen(false));
+  useMenuRoving(menuElRef, menuOpen);
+  useLayoutEffect(() => {
+    const el = menuElRef.current;
+    const anchor = menuBtnRef.current;
+    if (!menuOpen || !el || !anchor) return;
+    const a = anchor.getBoundingClientRect();
+    placeFixed(el, a.right - el.offsetWidth, a.bottom + 2, menuBtnRef.current?.closest<HTMLElement>(".app-rail"));
+  });
+
+  const runAction = (fn: (s: ScheduleDTO) => void) => {
+    setMenuOpen(false);
+    fn(s);
+  };
+
+  return (
+    <div className={"sched-row" + (paused ? " paused" : "")}>
+      {/* Clicking the row body toggles the run history; the ⋯ menu holds the actions. */}
+      <div
+        className="sched-main"
+        role="button"
+        tabIndex={0}
+        aria-expanded={runsOpen}
+        onClick={() => onToggleRuns(s)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onToggleRuns(s);
+          }
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setMenuOpen(true);
+        }}
+      >
+        <span className={"sched-dot tone-" + tone} title={s.last_status || tr("sched.never_run")}>
+          <Icon name={statusIcon(s.last_status)} />
+        </span>
+        <div className="sched-info">
+          <div className="sched-name" title={scheduleTitle(s)}>
+            {scheduleTitle(s)}
+            {paused && <span className="sched-badge">{tr("sched.paused_tag")}</span>}
+          </div>
+          <div className="sched-sub">
+            <code className="sched-spec">{specSummary(s)}</code>
+            {s.agent_kind && <span className="sched-kind">{s.agent_kind}</span>}
+          </div>
+          <div className="sched-times">
+            {!paused && s.next_run_local && (
+              <span className="sched-next" title={tr("sched.next_run")}>
+                <Icon name="arrow-small-right" /> {s.next_run_local}
+              </span>
+            )}
+            {s.last_run && (
+              <span className="sched-last" title={tr("sched.last_run")}>
+                <Icon name="history" /> {shortLocal(s.last_run)}
+              </span>
+            )}
+          </div>
+        </div>
+        {/* Chevron hints the row expands; the ⋯ menu carries the manage actions. */}
+        <Icon name={runsOpen ? "chevron-down" : "chevron-right"} className="sched-caret" />
+        <div className="sched-menu-wrap" ref={menuWrapRef} onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            className="sched-menu-btn"
+            title={tr("sched.menu")}
+            aria-label={tr("sched.menu")}
+            ref={menuBtnRef}
+            onClick={() => setMenuOpen((v) => !v)}
+          >
+            <Icon name="ellipsis" />
+          </button>
+          {menuOpen &&
+            createPortal(
+              <div className="ui-menu sched-menu" ref={menuElRef} onMouseDown={(e) => e.stopPropagation()}>
+                <button type="button" className="ui-menu-item" disabled={rowBusy} onClick={() => runAction(onPause)}>
+                  <Icon name={paused ? "debug-start" : "debug-pause"} /> {paused ? tr("sched.resume") : tr("sched.pause")}
+                </button>
+                <button
+                  type="button"
+                  className="ui-menu-item"
+                  disabled={rowBusy || paused}
+                  onClick={() => runAction(onRunNow)}
+                >
+                  <Icon name="play" /> {tr("sched.run_now")}
+                </button>
+                <button type="button" className="ui-menu-item danger" disabled={rowBusy} onClick={() => runAction(onDelete)}>
+                  <Icon name="trash" /> {tr("common.delete")}
+                </button>
+              </div>,
+              document.body,
+            )}
+        </div>
+      </div>
+
+      {runsOpen && (
+        <div className="sched-runs">
+          {runs === undefined ? (
+            <div className="sched-runs-empty">
+              <Icon name="loading" spin /> {tr("sched.loading")}
+            </div>
+          ) : runs.length === 0 ? (
+            <div className="sched-runs-empty">{tr("sched.no_runs")}</div>
+          ) : (
+            runs.map((run, i) => {
+              const manual = isManualRun(run.trigger);
+              const openable = !!run.session;
+              return (
+                <div
+                  key={i}
+                  className={"sched-run" + (openable ? " openable" : "")}
+                  role={openable ? "button" : undefined}
+                  tabIndex={openable ? 0 : undefined}
+                  title={openable ? tr("sched.open_session", { name: run.session as string }) : run.detail || run.status}
+                  onClick={openable ? () => openRunSession(s.agent_kind, run.session as string) : undefined}
+                  onKeyDown={
+                    openable
+                      ? (e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            openRunSession(s.agent_kind, run.session as string);
+                          }
+                        }
+                      : undefined
+                  }
+                >
+                  <span className={"sched-dot tone-" + statusTone(run.status)}>
+                    <Icon name={statusIcon(run.status)} />
+                  </span>
+                  <span className="sched-run-time">{shortLocal(run.fired_at)}</span>
+                  <span className={"sched-run-label tone-" + statusTone(run.status)} title={run.detail || run.status}>
+                    {tr(runStatusLabelKey(run.status))}
+                  </span>
+                  <span className={"sched-run-trigger" + (manual ? " manual" : "")}>
+                    {manual ? tr("sched.trigger_manual") : tr("sched.trigger_scheduled")}
+                  </span>
+                  {openable && <Icon name="link-external" className="sched-run-open" />}
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function SchedulesSection() {
@@ -69,9 +256,7 @@ export function SchedulesSection() {
         })
         .catch(() => {});
     load();
-    const id = setInterval(() => {
-      if (!document.hidden) load(); // hidden tab: skip the tick (mobile data / battery)
-    }, POLL_MS);
+    const id = setInterval(load, POLL_MS);
     return () => {
       alive = false;
       clearInterval(id);
@@ -171,96 +356,19 @@ export function SchedulesSection() {
         <div className="pane-empty">{tr("sched.empty")}</div>
       ) : (
         <div className="sched-list">
-          {sorted.map((s) => {
-            const tone = statusTone(s.last_status);
-            const paused = !s.enabled;
-            const rowBusy = !!busy[s.id];
-            return (
-              <div key={s.id} className={"sched-row" + (paused ? " paused" : "")}>
-                <div className="sched-main">
-                  <span
-                    className={"sched-dot tone-" + tone}
-                    title={s.last_status || tr("sched.never_run")}
-                  >
-                    <Icon name={statusIcon(s.last_status)} />
-                  </span>
-                  <div className="sched-info">
-                    <div className="sched-name" title={scheduleTitle(s)}>
-                      {scheduleTitle(s)}
-                      {paused && <span className="sched-badge">{tr("sched.paused_tag")}</span>}
-                    </div>
-                    <div className="sched-sub">
-                      <code className="sched-spec">{specSummary(s)}</code>
-                      {s.agent_kind && <span className="sched-kind">{s.agent_kind}</span>}
-                    </div>
-                    <div className="sched-times">
-                      {!paused && s.next_run_local && (
-                        <span className="sched-next" title={tr("sched.next_run")}>
-                          <Icon name="arrow-small-right" /> {s.next_run_local}
-                        </span>
-                      )}
-                      {s.last_run && (
-                        <span className="sched-last" title={tr("sched.last_run")}>
-                          <Icon name="history" /> {shortLocal(s.last_run)}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="sched-actions">
-                    <IconButton
-                      icon={paused ? "debug-start" : "debug-pause"}
-                      label={paused ? tr("sched.resume") : tr("sched.pause")}
-                      disabled={rowBusy}
-                      onClick={() => void doToggle(s)}
-                    />
-                    <IconButton
-                      icon="play"
-                      label={tr("sched.run_now")}
-                      disabled={rowBusy || paused}
-                      onClick={() => void doRunNow(s)}
-                    />
-                    <IconButton
-                      icon="history"
-                      label={tr("sched.history")}
-                      className={openRuns === s.id ? "active" : ""}
-                      onClick={() => void toggleRuns(s)}
-                    />
-                    <IconButton
-                      variant="danger"
-                      icon="trash"
-                      label={tr("common.delete")}
-                      disabled={rowBusy}
-                      onClick={() => void doDelete(s)}
-                    />
-                  </div>
-                </div>
-
-                {openRuns === s.id && (
-                  <div className="sched-runs">
-                    {runs[s.id] === undefined ? (
-                      <div className="sched-runs-empty">
-                        <Icon name="loading" spin /> {tr("sched.loading")}
-                      </div>
-                    ) : runs[s.id].length === 0 ? (
-                      <div className="sched-runs-empty">{tr("sched.no_runs")}</div>
-                    ) : (
-                      runs[s.id].map((run, i) => (
-                        <div key={i} className="sched-run">
-                          <span className={"sched-dot tone-" + statusTone(run.status)}>
-                            <Icon name={statusIcon(run.status)} />
-                          </span>
-                          <span className="sched-run-time">{shortLocal(run.fired_at)}</span>
-                          <span className="sched-run-status" title={run.detail || run.status}>
-                            {run.status}
-                          </span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          {sorted.map((s) => (
+            <ScheduleRow
+              key={s.id}
+              s={s}
+              rowBusy={!!busy[s.id]}
+              runsOpen={openRuns === s.id}
+              runs={openRuns === s.id ? runs[s.id] : undefined}
+              onToggleRuns={(x) => void toggleRuns(x)}
+              onPause={(x) => void doToggle(x)}
+              onRunNow={(x) => void doRunNow(x)}
+              onDelete={(x) => void doDelete(x)}
+            />
+          ))}
         </div>
       )}
     </Section>

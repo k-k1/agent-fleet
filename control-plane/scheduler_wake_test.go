@@ -130,8 +130,12 @@ func TestInjectSession(t *testing.T) {
 	f := &wakeFirer{}
 	sch := Schedule{ID: "sch_1", AgentKind: "claude", OwnerConv: "conv1", Prompt: "hi"}
 	body := buildInjectBody(sch, time.Date(2026, 7, 23, 0, 0, 0, 0, time.UTC))
-	if err := f.injectSession(context.Background(), stubRuntime{endpoint: srv.URL, token: "tok"}, body); err != nil {
+	name, err := f.injectSession(context.Background(), stubRuntime{endpoint: srv.URL, token: "tok"}, body)
+	if err != nil {
 		t.Fatalf("injectSession: %v", err)
+	}
+	if name != "s7" {
+		t.Errorf("session name = %q, want s7 (parsed from create_session response)", name)
 	}
 	if gotPath != "/sessions" {
 		t.Errorf("path = %q, want /sessions", gotPath)
@@ -152,7 +156,7 @@ func TestInjectSessionAgentError(t *testing.T) {
 	}))
 	defer srv.Close()
 	f := &wakeFirer{}
-	err := f.injectSession(context.Background(), stubRuntime{endpoint: srv.URL}, []byte(`{}`))
+	_, err := f.injectSession(context.Background(), stubRuntime{endpoint: srv.URL}, []byte(`{}`))
 	if err == nil {
 		t.Fatal("expected error on 409, got nil")
 	}

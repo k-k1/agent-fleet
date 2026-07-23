@@ -80,6 +80,9 @@ function wireWorkspaceRefresh(): () => void {
 export function App() {
   const tr = useT();
   const tenant = useTenantStore((s) => s.tenant);
+  // Deployment gate: only show the schedules rail when the CP scheduler is enabled
+  // (AF_SCHEDULER_INTERVAL set) — otherwise schedules can never fire, so hide the section.
+  const schedulerEnabled = useTenantStore((s) => !!s.whoami?.scheduler_enabled);
   const layout = useLayoutStore((s) => s.layout);
   const settingsOpen = useSettingsUI((s) => s.settingsOpen);
   const adminOpen = useSettingsUI((s) => s.adminOpen);
@@ -341,7 +344,7 @@ export function App() {
               <>
                 <AssistantSection />
                 <MemoQueueSection />
-                <SchedulesSection />
+                {schedulerEnabled && <SchedulesSection />}
                 <ProjectTree />
                 <OtherSessionsSection />
                 <FilesSection />
@@ -350,7 +353,7 @@ export function App() {
               <>
                 <StoppedRailSection id="assistant" title={tr("ui.assistant")} icon="comment-discussion" />
                 <MemoQueueSection />
-                <SchedulesSection />
+                {schedulerEnabled && <SchedulesSection />}
                 <StoppedRailSection id="repos" title={tr("ui.repositories")} icon="repo" />
                 <StoppedSessionsSection />
                 <StoppedRailSection id="files" title={tr("ui.files")} icon="files" defaultOpen={false} />
