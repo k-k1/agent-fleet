@@ -67,7 +67,7 @@ chat bridge ([11](11-fleet-operator.md), [08](08-advanced.md)). ✓ = supported,
 | Runs in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
 | Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
-| Usable as the assistant chat | ✓ | ✓ | — | — | ✓ | ✓ | — | — |
+| Usable as the assistant chat | ✓ | ✓ | ✓ | — | ✓ | ✓ | — | — |
 | WS-bar usage / limit chip | ✓ | ✓ | — | ✓ | ✓ | — | — | — |
 
 ¹ copilot's model choice is plan-dependent (Free = Auto only).
@@ -84,7 +84,8 @@ as Terminal (CLI) does persist a readable history).
 **Default model for the assistant chat** — each assistant can pin its own model, and
 claude's default is settable deployment-wide via `AF_CHAT_MODEL`. Fast, low-cost tiers are
 the defaults because the assistant is conversational: claude → Sonnet 5 · codex →
-`gpt-5.6-luna` · opencode → `opencode/nemotron-3-ultra-free` · agy → Gemini 3.5 Flash.
+`gpt-5.6-luna` · opencode → `opencode/nemotron-3-ultra-free` · agy → Gemini 3.5 Flash ·
+cursor → its own default (Auto). cursor's assistant runs **read-only** (`--mode ask`).
 
 > **A note on autonomous execution.** Agents run commands, edit files, and push on your
 > behalf — including unattended (scheduled runs) and, in permission-bypassing modes,
