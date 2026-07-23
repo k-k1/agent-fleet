@@ -280,11 +280,18 @@ function keepInputVisible(it: Inst | null) {
 export function ensureTerm(paneId: string, el: HTMLElement) {
   let it = insts.get(paneId);
   if (it && it.term) {
-    // Re-open into the element if React remounted the container. Reparenting a
-    // canvas keeps its GL context but may discard the drawn frame, and a kept
-    // instance may have sat hidden for a while — so repaint every row instead of
-    // trusting the canvas (same contract as revealTerm).
-    if (el && it.term.element?.parentElement !== el) it.term.open(el);
+    // Re-attach to the element if React remounted the container. xterm's open()
+    // is a silent NO-OP once a terminal has opened (5.x) — calling it again
+    // neither moves nor recreates the DOM, so the remounted container stayed
+    // EMPTY forever: the pane renders pure black (no cursor, no background)
+    // while the live xterm — still holding its PTY socket — sits parented to
+    // the discarded old div (and the server keeps a zombie tmux attach for it).
+    // Move the element by hand instead. Reparenting a canvas keeps its GL
+    // context but may discard the drawn frame, and a kept instance may have sat
+    // hidden for a while — so repaint every row afterwards (forceFit below,
+    // same contract as revealTerm).
+    if (el && it.term.element && it.term.element.parentElement !== el) el.appendChild(it.term.element);
+    else if (el && !it.term.element) it.term.open(el);
     observe(it, el);
     forceFit(it);
     return it.term;
