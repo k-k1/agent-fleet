@@ -1413,6 +1413,16 @@
   color: var(--accent);
   font-size: 12px;
 }
+/* Standalone "issue a token/key" external link under a token input (IssueLink). */
+.p-issue {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+}
+.p-issue-ic {
+  font-size: 12px;
+}
 .cinput {
   font-size: 12px;
   min-width: 160px;

@@ -225,6 +225,7 @@ export const ja = {
   "provider.step_copy_code": "コードをコピー",
   "provider.step_open_link": "リンクを開いて貼り付け",
   "provider.open_url": "{url} を開く ↗",
+  "provider.issue_link": "トークン発行ページを開く",
   "provider.step_wait_approval": "承認を待つ",
 
   // --- 運用ツール接続（features/settings/OpsTab.tsx）---
@@ -619,6 +620,9 @@ export const ja = {
   "git.bb_oauth_sub": "別タブで承認するコードグラント。",
   "git.connect_apptoken": "アプリトークンで接続",
   "git.bb_token_sub": "Atlassian メール＋API トークン。",
+  "git.bb_token_hint": "「スコープ付き API トークン」を作成し、アプリで Bitbucket を選択してください。スコープ無しのトークンは Bitbucket API で拒否されます。必要なスコープ：",
+  "git.bb_token_hint_read": "（一覧・クローン用）。push も行う場合は ",
+  "git.bb_token_hint_write": " も追加。ユーザー名には正規の Atlassian アカウントのメールアドレスを使用します。",
 
   // --- 内部リポジトリ参照（features/settings/InternalRepoBrowser.tsx）---
   "igb.title": "内部リポジトリ参照 — {name}",
