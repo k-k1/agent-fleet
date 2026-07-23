@@ -942,8 +942,6 @@ export const en: Record<keyof typeof ja, string> = {
   "keys.cmd.ttsToggle": "Toggle voice read-aloud",
   "keys.cmd.slackToggle": "Toggle Slack notifications",
   "keys.cmd.discordToggle": "Toggle Discord notifications",
-  "keys.toast.notifyOn": "{name} notifications on",
-  "keys.toast.notifyOff": "{name} notifications off",
   "keys.toast.notifyNoConn": "{name} isn't connected (connect in Connections › Chat)",
   "keys.cmd.mdMode": "Toggle Markdown preview / source",
   "keys.cmd.reader": "Toggle read-aloud view",

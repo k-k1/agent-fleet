@@ -947,8 +947,6 @@ export const ja = {
   "keys.cmd.ttsToggle": "音声読み上げ ON/OFF",
   "keys.cmd.slackToggle": "Slack 通知 ON/OFF",
   "keys.cmd.discordToggle": "Discord 通知 ON/OFF",
-  "keys.toast.notifyOn": "{name} 通知を ON にしました",
-  "keys.toast.notifyOff": "{name} 通知を OFF にしました",
   "keys.toast.notifyNoConn": "{name} は未接続です（接続 › チャット連携で接続してください）",
   "keys.cmd.mdMode": "Markdown プレビュー / ソース切替",
   "keys.cmd.reader": "朗読モード切替",

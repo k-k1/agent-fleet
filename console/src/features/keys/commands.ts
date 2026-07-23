@@ -115,7 +115,9 @@ async function toggleChatNotify(kind: "discord" | "slack"): Promise<void> {
     toast(t("keys.toast.notifyNoConn", { name }), { kind: "info" });
     return;
   }
-  const wasOn = st.notify !== false; // notifications currently enabled?
+  // Silent on success, like every other toggle command (the resulting state shows in
+  // Settings › Notifications). Only the exceptional paths — not-connected above and a save
+  // failure below — toast, matching the "errors surface, toggles don't" convention.
   const res = await apiJSON(`api/connections/${kind}`, "PUT", {
     // token + destination omitted → the backend reuses the stored connection.
     events: Array.isArray(st.events) ? st.events : [],
@@ -124,13 +126,9 @@ async function toggleChatNotify(kind: "discord" | "slack"): Promise<void> {
     fullText: !!st.fullText,
     mirrorInput: st.mirrorInput !== false,
     mentionUserId: st.mentionUserId || "",
-    notifyOff: wasOn, // flip: on → off, off → on
+    notifyOff: st.notify !== false, // flip: currently on → off, off → on
   });
-  if (res && res.error) {
-    toast(t("common.save_failed_msg", { msg: String(res.error.message || res.error) }));
-    return;
-  }
-  toast(t(wasOn ? "keys.toast.notifyOff" : "keys.toast.notifyOn", { name }), { kind: "success" });
+  if (res && res.error) toast(t("common.save_failed_msg", { msg: String(res.error.message || res.error) }));
 }
 
 // Leader groups (Leader → group key → action). `title` is an i18n key (resolved for
