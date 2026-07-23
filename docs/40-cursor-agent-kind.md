@@ -1,8 +1,9 @@
 # 40. `kind=cursor`（Cursor CLI）実装計画 — Terminal + Managed 両対応
 
-- 状態: **計画**（2026-07-23 事前調査完了・実装未着手）。
+- 状態: **計画・Track 0 プローブ実施済み**（2026-07-23 事前調査＋認証済み実測完了・実装未着手）。
   採用判断は [decisions/0023](decisions/0023-cursor-agent-kind.md)。
-  実 CLI の実測は本ドキュメント末尾 §実測記録（v2026.07.20-8cc9c0b を本コンテナで実測）。
+  実 CLI の実測は本ドキュメント末尾 §実測記録・§Track 0 実測結果（v2026.07.20-8cc9c0b を本コンテナで実測）。
+  **managed 可否の分水嶺（ACP `session/load`）は合格 — v1 Terminal + Managed 両対応で確定。**
   ※ docs/39 / ADR0022 はエージェントメモリ版管理（未マージブランチ）が使用中のため 40/0023 を採番。
 - ゴール: `cursor`（Cursor CLI, `cursor-agent` / `agent`）を第7のエージェント種別として組み込む。
   **copilot（docs/36）と同じく v1 から Managed driver ＋ Terminal (CLI) の両対応**を狙う。
@@ -42,8 +43,8 @@
 |---|---|
 | 対話ログイン | `NO_OPEN_BROWSER=1 agent login` が URL を標準出力に出す（実測）→ claude/agy と同じ start/complete 連携フロー（URL 抽出→Console 表示→ユーザーがブラウザで承認→完了検知）。OSC-8 汚染（agy 26c875f）に注意して URL 抽出 |
 | API キー | `CURSOR_API_KEY` / `--api-key`（実測）→ codex 型の手動キー登録経路も併設（Dashboard 発行キー） |
-| 状態判定 | `agent status --format json`（要プローブ: JSON 形状） |
-| 資格情報の保存先 | **非公開**（"securely stored locally" のみ。`~/.cursor` 配下と推定）→ プローブで特定し、`fs.go` denylist に **`.cursor`** を追加（copilot `.copilot` と同じ平文トークン対策）。※ プロジェクト側 `.cursor/`（rules/commands）とはスコープが別であることを確認する |
+| 状態判定 | `agent status --format json`（実測: `{status:"authenticated", isAuthenticated, hasAccessToken, hasRefreshToken, userInfo:{email,userId,...}}` のクリーンな JSON） |
+| 資格情報の保存先 | **`~/.config/cursor/auth.json`**（実測・mode 600・`accessToken`/`refreshToken` の平文 JSON。**`~/.cursor` ではない**）→ `fs.go` denylist は **`.config/cursor` と `.cursor`** の両方（copilot `.copilot` と同じ平文トークン対策）。ホームボリュームに載るため recreate を跨いで持続 |
 | バックエンド | `api2.cursor.sh`（プロバイダ直結ではない）。`-e/--endpoint`・`-H/--header`・`NODE_USE_ENV_PROXY=1` があるが v1 では触らない |
 
 **launch 契約**（TUI・managed 共通のセッション同一性）:
@@ -58,51 +59,67 @@
 - sandbox は既定 disabled（`cli-config.json` 実測）。v1 はそのまま（fleet コンテナ自体が隔離境界）。
 - **Cursor 自前の worktree 機能（`-w/--worktree`）は使わない** — セッション隔離は Console の
   worktree が正（`~/.cursor/worktrees/` に勝手に増えるのを避ける）。
-- 自己更新封殺: 既定で auto-update ON・**公式な無効化手段が未確認**（要プローブ:
-  config キー/env の探索。最終手段は AUR 方式 = versions ディレクトリの書込禁止）。
+- 自己更新封殺: 既定で auto-update ON・**公式な無効化手段なし**（Track 0 で env/config を
+  探索したが AUTO_UPDATE 系は存在せず — `CURSOR_AGENT_*` 環境変数群に該当なし）。
+  AUR 方式 = versions ディレクトリの書込禁止（chmod）で封殺し、e2e-smoke の版ピン検証で監視。
   自己更新 opt-in（`AF_AGENT_SELF_UPDATE`）への追加は rtk/agy と同じ「~/.local/bin shadow」系の
   設計になる見込み（npm ではないため claude/codex 経路は使えない）。
 - モデル: `--model <id>`（`claude-opus-4-8[context=1m,effort=high]` 形式のパラメータ付きあり — 実測 help）。
 
-**read 正本（transcript/状態）**:
+**read 正本（transcript/状態）— Track 0 実測で経路別に確定**:
 
 - 真の正本は `~/.cursor/chats/<workspace-hash>/<chatId>/store.db`（SQLite blob・**非公開形式**）。
   **これは読まない**（opencode ストア契約変更で false-idle を踏んだ教訓 — 非保証内部への依存禁止）。
-- 読むのは公式契約側 2 本:
-  1. **hooks**（`~/.cursor/hooks.json`）— `stop` / `beforeSubmitPrompt` / `beforeShellExecution` 等が
-     JSON over stdin で `conversation_id`・`transcript_path` を渡す（実測: バンドル内にイベント名確認、
-     公式 docs にプロトコル記載）。claude と同型の working マーカー（beforeSubmitPrompt=turn 開始、
-     stop=turn 終了）を status ファイルに書く → `LiveState` の一次ソース。
-     報告消失の教訓（1f64c57: 自己修復の status.Remove がマーカーを消す）を踏まえ同じ seam に乗せる。
-  2. **JSONL 転写**（hooks の `transcript_path` が指す Claude Code 互換 JSONL、changelog 記載の公式機能）
-     → `transcript.go` のソース。形式互換なら claude パーサの流用可能性あり（要プローブ）。
+- **経路によって出るものが違う**（実測 — copilot の「全経路同一 events.jsonl」とは異なる）:
+
+| 経路 | hooks 発火 | JSONL 転写 | 状態/転写のソース |
+|---|---|---|---|
+| TUI | **beforeSubmitPrompt / beforeShellExecution / stop 全発火** | 書く | hooks（一次）＋JSONL |
+| `-p` | beforeShellExecution のみ（submit/stop 出ない） | 書く | プロセス終了＝ターン終了 |
+| `agent acp` | **発火しない** | **書かない**（ローカル痕跡ゼロ・履歴はサーバ側） | ACP updates/`session/load` リプレイから driver が構築 |
+
+- **TUI**: claude と同型の working マーカー（beforeSubmitPrompt=turn 開始、stop=turn 終了）を
+  `~/.cursor/hooks.json`（起動前に AF が配線・起動毎再固定）から status ファイルに書く →
+  `LiveState` の一次ソース。報告消失の教訓（1f64c57）を踏まえ同じ seam に乗せる。
+  転写は hooks payload の `transcript_path` が指す
+  `~/.cursor/projects/<cwdスラグ>/agent-transcripts/<chatId>/<chatId>.jsonl`。
+  形式は `{"role","message":{"content":[...]}}`（Anthropic content block 型・`tool_use` あり）＋
+  `{"type":"turn_ended","status"}`。**tool_result は転写に載らない**（ツール出力は store.db のみ）
+  → ミラーはツール名/引数まで、出力はプレースホルダ表示。claude パーサ流用は不可（uuid/timestamp 無し）
+  だが専用パーサは簡単。resume で同一ファイルに追記（実測）。
+- **managed（ACP）**: JSONL/hooks が無いため transcript は driver が `session/update`
+  通知（`agent_message_chunk`/`agent_thought_chunk`/`tool_call`）から構築し、
+  `session/load` の全量リプレイ（user_message_chunk から再生 — 実測）で復元。
+  状態は runTurn 境界（codex/copilot と同じ）。
 - TUI 文字列（スピナー/フッタ）には依存しない（false-idle 第3〜6次の教訓。週次リリースでドリフト前提）。
-  paneMode 分岐（8780956 教訓）に必要な最小限のフッタ実測のみ行う。
+  paneMode 分岐（8780956 教訓）用のフッタは §Track 0 実測結果 に採取済み。
 
-**managed 契約（ADR0015 / driver.go 準拠・着工前に §プローブ で確定）**:
+**managed 契約（ADR0015 / driver.go 準拠・Track 0 プローブで主要項目を確定）**:
 
-| 項目 | 見込み | 確定条件 |
+| 項目 | 決定 | 根拠 |
 |---|---|---|
-| Runtime | **per-session child**: `agent --api-key/資格情報 acp [--model]` stdio JSON-RPC（copilot 型） | probe: ACP の initialize/new/prompt/cancel 一巡 |
-| 新規/再開 | ACP session/new 相当 → chatId 対応付け。クロスプロセス resume（session/load 相当）の有無が **managed 可否の分水嶺** | probe: load 系メソッドの有無・履歴リプレイ |
-| streaming | ACP 通知（thinking ブロック対応あり — 公式 docs） | probe |
-| 質問/許可 | `session/request_permission` 型（allow-once/allow-always/reject-once — 公式 docs）→ Interaction(question) に写像。`cursor/ask_question`（ブロッキング拡張メソッド — 公式 docs）も question に写像 | probe |
-| Steer/Fork | ネイティブ無し見込み → driver 内キュー / `Fork:false`（TUI には `/fork` あり） | probe |
-| Mode/Model | ACP でモデル・モード選択可（公式 docs）→ `DynamicMode`/`DynamicModel` は probe 結果で決定 | probe |
+| Runtime | **per-session child**: `agent acp` stdio JSON-RPC（copilot 型・NDJSON） | 実測: initialize→session/new→session/prompt→`stopReason:"end_turn"` 一巡成功 |
+| 新規/再開 | `session/new`（sessionId が返る）→ sid-store。**`session/load` でクロスプロセス resume 成功**（`loadSession:true` 宣言・履歴全量リプレイ・文脈保持を実測 — 別プロセスから前ターンのトークンを正答） | 実測 probe |
+| ACP セッションの性質 | **ローカル痕跡ゼロ**（chats/ にも転写にも出ない・履歴はサーバ側保持）。`-p --resume <acp-sid>` は文脈を復元しない（実測）→ **resume は session/load 一択**。TUI⇄managed の相互乗り入れはしない | 実測 |
+| streaming | `session/update` 通知: `agent_message_chunk` / `agent_thought_chunk` / `session_info_update` / `available_commands_update`（実測）＋ `tool_call`（公式 docs） | 実測 probe |
+| capabilities | `promptCapabilities.image:true`（画像添付可）・`sessionCapabilities.list`・`mcpCapabilities.http/sse`・modes は `agent`/`plan`（session/new 応答で列挙 — 実測） | 実測 |
+| Interrupt | `session/cancel`（公式 docs・copilot 同型。実装時に実測） | docs |
+| 質問/許可 | `session/request_permission`（allow-once/allow-always/reject-once — 公式 docs）→ Interaction(question)。`cursor/ask_question`（blocking 拡張）も question に写像。防御実装（agy 1af1be9 教訓） | docs |
+| Steer/Fork | ネイティブ無し見込み → driver 内キュー / `Fork:false`（TUI には `/fork` あり） | 実装時確認 |
+| Mode/Model | mode は session/new/load 応答に `modes` があり切替口あり → `DynamicMode` は実装時に set 系メソッドを確認。model は ACP で per-session 指定が見当たらず → copilot 同様 **子プロセス毎 `--model` フラグ**・`DynamicModel:false` | 実測＋docs |
 | 完了報告 | runTurn 境界で `MarkTurnStart/End`（notify seam、5facc6e/dffd84c 教訓） | — |
 | TUIAttach | `false`（codex/copilot 型の排他切替） | — |
-
-probe の結果 resume（load 相当）が欠けるなら **v1 は Terminal 専用（agy 型 MVP）に縮退**し、
-managed は Track D へ送る（判断基準を先に固定しておく）。
+| 認証 | 子プロセスは `~/.config/cursor/auth.json` の ambient ログインで動く（実測: env 注入なしで完走）。`--api-key` 前置も可 | 実測 |
 
 ## トラック分割
 
-### Track 0 — 着工前プローブ（本コンテナに v2026.07.20 導入済み・要ログイン）
+### Track 0 — 着工前プローブ — **実施済（2026-07-23・認証済み実測）**
 
-未実測項目の実測。**全部 §プローブ一覧 に列挙**。特に managed 可否（ACP load）、
-JSONL 転写の実パスと claude 互換度、hooks の実発火、資格情報ファイルの特定、
-auto-update 無効化手段の 5 点が契約を左右する。tmux 検証は `-L cursor-probe`
-専用ソケット隔離（84139d2 教訓）。
+結果は §プローブ一覧（結果） と §Track 0 実測結果。要点: managed 可否（ACP load）**合格**、
+JSONL 転写パス・形式確定（claude パーサ流用は不可だが専用パーサ容易）、hooks は TUI 経路で
+全発火（-p は shell のみ・ACP は不発火）、資格情報は `~/.config/cursor/auth.json`、
+auto-update 無効化の公式手段は**未発見**（versions 書込禁止 fallback で確定）。
+tmux 検証は `-L cursor-probe` 専用ソケット隔離を遵守（84139d2 教訓）。
 
 ### Track A — workspace agent 本体（read 層 + TUI）
 
@@ -248,17 +265,40 @@ auto-update 無効化手段の 5 点が契約を左右する。tmux 検証は `-
 - 料金: サブスク（Pro $20/Pro+ $60/Ultra $200）＋API 従量。プラン残量の公式 CLI/API なし（forum #154101）。
 - AGENTS.md はプロジェクト root で読まれる（Docker sandbox docs で確認）。`.cursor/rules/` も可。
 
-## プローブ一覧（Track 0 — 着工前に実測で潰す）
+## プローブ一覧（結果 — 2026-07-23 実施）
 
-| # | 項目 | 契約への影響 |
+| # | 項目 | 結果 |
 |---|---|---|
-| 1 | `agent acp` 一巡（initialize→new→prompt→cancel）＋ **load 系 resume の有無** | **managed 可否の分水嶺**。無ければ v1 Terminal 専用に縮退 |
-| 2 | JSONL 転写の実パス（hooks `transcript_path`）と claude 互換度・全経路（TUI/-p/acp）ライブ追記か | transcript.go の設計（claude パーサ流用可否） |
-| 3 | hooks 実発火（stop/beforeSubmitPrompt/beforeShellExecution）・既存 hooks.json とのマージ・コマンド書換の可否 | state.go 一次ソース／rtk seam |
-| 4 | 資格情報の保存ファイル特定・コンテナ間可搬性（ホームボリューム persist で生きるか）・`status --format json` 形状 | auth.go / fs.go denylist / 接続カード |
-| 5 | auto-update 無効化手段（config/env 探索。無ければ versions chmod -x） | Track B 焼き込み |
-| 6 | `agent models` の出力形式（構造化か）・要認証・プラン別可否 | models.go |
-| 7 | TUI フッタ/スピナー/初回 trust プロンプト採取（tmux `-L cursor-probe`） | paneMode / trust 契約 |
-| 8 | `create-chat` → TUI `--resume` → 別プロセス resume の一巡 | sid-store 設計 |
-| 9 | `-p --output-format json` の終端 result 形状・異常系 exit code | ブリッジ/アシスタント将来対応 |
-| 10 | linux arm64 動作（該当ホストがある時点で） | ECS/native 展開条件 |
+| 1 | ACP 一巡＋load resume | ✅ **合格**: initialize（`loadSession:true`）→ new → prompt（chunk streaming）→ `end_turn`。**別プロセス `session/load` で履歴リプレイ＋文脈保持を実証**。cancel は docs のみ（実装時に実測） |
+| 2 | JSONL 転写 | ✅ `~/.cursor/projects/<cwdスラグ>/agent-transcripts/<chatId>/<chatId>.jsonl`。Anthropic content block 型（`tool_use` あり・**tool_result 無し**・uuid/timestamp 無し）＋`turn_ended`。TUI/-p は書く・**ACP は書かない** |
+| 3 | hooks 実発火 | ✅ TUI: beforeSubmitPrompt/beforeShellExecution/stop 全発火。`-p`: beforeShellExecution のみ。ACP: 不発火。payload に conversation_id/`transcript_path`/cursor_version/user_email。コマンド書換の可否は未検証（rtk 実装時） |
+| 4 | 資格情報 | ✅ `~/.config/cursor/auth.json`（600・accessToken/refreshToken 平文 JSON）。ホームボリュームで持続。`status --format json` はクリーンな構造化 JSON |
+| 5 | auto-update 封殺 | ◐ 公式手段なし（AUTO_UPDATE 系 env/config 不存在を確認）→ versions ディレクトリ書込禁止 fallback で確定 |
+| 6 | `agent models` | ✅ `id - 表示名` のテキスト行（`--format json` は無い）。アカウント連動（auto/composer/claude/gpt/grok 系を確認）。要認証 |
+| 7 | TUI 実測 | ✅ §Track 0 実測結果（trust プロンプト・フッタ・許可プロンプトのキー列） |
+| 8 | create-chat→resume | ✅ `create-chat` が UUID を即返し、`-p --resume <id>` でそのチャットにターンが乗る（result の session_id 一致・転写も同一ファイルに追記） |
+| 9 | `-p` result 形状 | ✅ `{"type":"result","subtype":"success","is_error",duration_ms,result,session_id,request_id,usage:{inputTokens,outputTokens,cacheReadTokens,cacheWriteTokens}}`・exit 0。stream-json は system/init→thinking delta→assistant→型付き tool_call（`shellToolCall`）→result |
+| 10 | linux arm64 | ⏭ 未実測（本コンテナ x64。ECS/native 展開前に要実機） |
+
+## Track 0 実測結果（2026-07-23、v2026.07.20-8cc9c0b、認証済み・本コンテナ）
+
+- ログインフロー: `NO_OPEN_BROWSER=1 agent login` →
+  `Open a browser and navigate to this link: https://cursor.com/loginDeepControl?challenge=...&uuid=...&mode=login&redirectTarget=cli`
+  を標準出力に出し、承認までポーリング → `✓ Logged in as <email>` で exit 0。URL 抽出は素直（OSC-8 無し）。
+- TUI（tmux 120x30・`-L cursor-probe`）:
+  - 初回 trust ダイアログ「⚠ Workspace Trust Required」— `[a] Trust this workspace` / `[q] Quit`（key 駆動）。
+  - idle: プレースホルダ `→ Plan, search, build anything`（初回）/ `→ Add a follow-up`（ターン後）、
+    下部に `Auto`（モデル名）と cwd。ターン後は `Auto · 5.1%` — **コンテキスト使用率%が常時表示**
+    （ContextBar 実装の素材）。
+  - working: 点字スピナー＋`Running`＋トークン数（例 `⠘⠆ Running  67 tokens`）＋`ctrl+c to stop`。
+  - 許可プロンプト（allowlist 外コマンド）: `Run this command?` `Not in allowlist: <cmd>` —
+    `→ Run (once) (y)` / `Add Shell(<cmd>) to allowlist? (tab)` / `Run Everything (shift+tab)` /
+    `Skip & tell the agent what to do instead (esc or n)`（キー駆動・AUQ 型の質問カード素材）。
+- **残存プロセス注意**: cursor-agent 実行後に `index.js worker-server` 常駐プロセスが残る（実測 2 個）。
+  セッション終了時の掃除（プロセスグループ kill）を stop.go / driver 側で必ず行う。
+- ACP セッション（dd16d662）は `~/.cursor` にファイルを一切残さず、`-p --resume <acp-sid>` は
+  エラーにならないが文脈は復元されない（モデルがローカル転写を検索して別セッションの答えを返した）
+  — TUI⇄managed 相互乗り入れ禁止の根拠。
+- trust の永続先は未特定（`agent-cli-state.json` には無し。`--trust` フラグ運用で回避可能なため深追いせず）。
+- 実測に使った chat: `d78190b4-...`（-p/hooks 検証）・`3d3a3c8f-...`（TUI）・`dd16d662-...`（ACP）。
+  probe 用 hooks.json は撤去済み。
