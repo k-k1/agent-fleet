@@ -1,6 +1,25 @@
 # 40. `kind=cursor`（Cursor CLI）実装計画 — Terminal + Managed 両対応
 
-- 状態: **計画・Track 0 プローブ実施済み**（2026-07-23 事前調査＋認証済み実測完了・実装未着手）。
+- 状態: **Track A 実装済み（workspace agent 本体：read 層＋TUI）**（2026-07-23）。
+  残: Track A2（managed driver）・Track B（配備）・Track C（CP＋Console）・Track D（将来）。
+  Track A の実装は `workspace/agent/internal/agents/cursor/`（cursor.go/program.go/
+  transcript.go/state.go/auth.go/models.go/stop.go/cursor_test.go）＋登録
+  （session.go `KindCursor`・agent.go registry/driveState・connections.go・
+  agent_models.go・fs.go denylist・session_io.go paneMode/paste/readiness）。
+  `go build ./...`・`go test`（cursor 5件＋main/session 計275件）緑。
+- **Track A の実測反映（計画からの改良2点 — いずれも実 CLI で検証済み）**:
+  1. **セッション ID は自己採番 v4 UUID を `--resume` に渡す**（`create-chat` 事前採番は不採用）。
+     実測: 未知の valid v4 UUID を `-p --resume <uuid>` に渡すとその ID で新規チャットを
+     作成し以後 resume する（TUI 起動でもエラー無くコンポーザ描画を確認）。copilot の
+     `--session-id` と完全同型で、起動時の追加 exec が消える。
+  2. **TUI 状態は JSONL 転写末尾の分類**（copilot の events.jsonl 分類と同型）で取り、
+     hooks.json 配線は v1 では**張らない**。cursor は TUI で JSONL をライブ追記する
+     （user 行→応答/tool_use 行→`turn_ended`）ため、tail 分類＋driveState の cursor 分岐
+     （working→idle 遷移で `MarkTurnEnd`）だけで working/idle と完了報告（docs/30）が成立する。
+     グローバル `~/.cursor/hooks.json` の chatId→slot-sid キー付け問題を構造的に回避。
+     許可待ち（allowlist 外コマンド確認）は JSONL に痕跡が無いため v1 は "question" を
+     出さず "working" 扱い（許可カード化と rtk hook seam は Track D）。
+- 状態(旧): 計画・Track 0 プローブ実施済み（2026-07-23 事前調査＋認証済み実測完了）。
   採用判断は [decisions/0023](decisions/0023-cursor-agent-kind.md)。
   実 CLI の実測は本ドキュメント末尾 §実測記録・§Track 0 実測結果（v2026.07.20-8cc9c0b を本コンテナで実測）。
   **managed 可否の分水嶺（ACP `session/load`）は合格 — v1 Terminal + Managed 両対応で確定。**
@@ -121,7 +140,11 @@ JSONL 転写パス・形式確定（claude パーサ流用は不可だが専用�
 auto-update 無効化の公式手段は**未発見**（versions 書込禁止 fallback で確定）。
 tmux 検証は `-L cursor-probe` 専用ソケット隔離を遵守（84139d2 教訓）。
 
-### Track A — workspace agent 本体（read 層 + TUI）
+### Track A — workspace agent 本体（read 層 + TUI）— **実装済み（2026-07-23）**
+
+実装は上記「Track A の実測反映」の2点を織り込み済み: sids は自己採番 v4 UUID
+（`create-chat` 不使用）、状態は JSONL 末尾分類（hooks.json 不使用）。auth.go は
+Status() のみ（login start/complete は Track C）。以下は当初計画（差分は上記参照）。
 
 1. `workspace/agent/internal/agents/cursor/` 新設（テンプレ: copilot）:
    - `cursor.go` — `agentImpl`（Kind/Caps/BuildLaunch/WireLive/ClearResume/Transcript）

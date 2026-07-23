@@ -95,6 +95,8 @@ var fsDeny = map[string]bool{
 	".codex":                true, // codex auth.json (tokens) + sessions + helper bins
 	".gemini":               true, // agy OAuth token (plaintext) + conversation DBs
 	".copilot":              true, // copilot auth token (キーチェーン無しでは平文) + session store
+	".cursor":               true, // cursor chats/store.db + transcripts + hooks/cli config
+	".config/cursor":        true, // cursor auth.json (accessToken/refreshToken 平文)
 	".aws":                  true, // SSM login: SSO token cache + generated configs
 }
 
