@@ -1492,17 +1492,20 @@ func b2i(b bool) int {
 const scheduleCols = `SELECT id, membership_id, tenant_id, owner_conv, spec_kind, spec, spec_label, tz,
 	wake_policy, session_mode, reuse_target, agent_kind, model, repo, worktree, new_branch, prompt,
 	overlap_policy, enabled, next_run, last_run, last_status, created_at, updated_at,
-	reuse_session, reuse_started_at, reuse_run_count, rotation, missing_target_policy FROM schedule`
+	reuse_session, reuse_started_at, reuse_run_count, rotation, missing_target_policy,
+	manual_fire_pending FROM schedule`
 
 func scanSchedule(row scanner) (Schedule, error) {
 	var s Schedule
-	var newBranch, enabled int
+	var newBranch, enabled, manualFire int
 	err := row.Scan(&s.ID, &s.MembershipID, &s.TenantID, &s.OwnerConv, &s.SpecKind, &s.Spec, &s.SpecLabel, &s.TZ,
 		&s.WakePolicy, &s.SessionMode, &s.ReuseTarget, &s.AgentKind, &s.Model, &s.Repo, &s.Worktree, &newBranch, &s.Prompt,
 		&s.OverlapPolicy, &enabled, &s.NextRun, &s.LastRun, &s.LastStatus, &s.CreatedAt, &s.UpdatedAt,
-		&s.ReuseSession, &s.ReuseStartedAt, &s.ReuseRunCount, &s.Rotation, &s.MissingTargetPolicy)
+		&s.ReuseSession, &s.ReuseStartedAt, &s.ReuseRunCount, &s.Rotation, &s.MissingTargetPolicy,
+		&manualFire)
 	s.NewBranch = newBranch != 0
 	s.Enabled = enabled != 0
+	s.ManualFirePending = manualFire != 0
 	return s, err
 }
 
@@ -1604,16 +1607,29 @@ func (s *sqlStore) DeleteSchedule(ctx context.Context, id, membershipID string) 
 }
 
 func (s *sqlStore) RecordScheduleFire(ctx context.Context, id, lastRun, lastStatus, nextRun string, enabled bool, updatedAt string) error {
+	// Clear manual_fire_pending on every fire: the run-now signal is consumed once the
+	// fire it requested has happened (the scheduler already read it to tag the run).
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE schedule SET last_run=?, last_status=?, next_run=?, enabled=?, updated_at=? WHERE id=?`,
+		`UPDATE schedule SET last_run=?, last_status=?, next_run=?, enabled=?, updated_at=?, manual_fire_pending=0 WHERE id=?`,
 		lastRun, lastStatus, nextRun, b2i(enabled), updatedAt, id)
+	return err
+}
+
+// MarkManualFirePending flags a run-now request: it sets next_run so the ticker fires the
+// schedule immediately AND records that this next fire was manually triggered, so the run
+// history can distinguish it from an automatic scheduled fire (docs/38). enabled is forced
+// true (run-now on a paused schedule is rejected earlier). membership_id scopes the write.
+func (s *sqlStore) MarkManualFirePending(ctx context.Context, id, membershipID, nextRun, updatedAt string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE schedule SET enabled=1, next_run=?, manual_fire_pending=1, updated_at=? WHERE id=? AND membership_id=?`,
+		nextRun, updatedAt, id, membershipID)
 	return err
 }
 
 func (s *sqlStore) AppendScheduleRun(ctx context.Context, run ScheduleRun, keepN int) error {
 	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO schedule_run(id, schedule_id, membership_id, fired_at, status, detail) VALUES(?,?,?,?,?,?)`,
-		run.ID, run.ScheduleID, run.MembershipID, run.FiredAt, run.Status, run.Detail); err != nil {
+		`INSERT INTO schedule_run(id, schedule_id, membership_id, fired_at, status, detail, session, trigger_kind) VALUES(?,?,?,?,?,?,?,?)`,
+		run.ID, run.ScheduleID, run.MembershipID, run.FiredAt, run.Status, run.Detail, run.Session, run.Trigger); err != nil {
 		return err
 	}
 	if keepN <= 0 {
@@ -1633,7 +1649,7 @@ func (s *sqlStore) ListScheduleRuns(ctx context.Context, scheduleID, membershipI
 		limit = 50
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, schedule_id, membership_id, fired_at, status, detail FROM schedule_run
+		`SELECT id, schedule_id, membership_id, fired_at, status, detail, session, trigger_kind FROM schedule_run
 		 WHERE schedule_id=? AND membership_id=? ORDER BY fired_at DESC LIMIT ?`,
 		scheduleID, membershipID, limit)
 	if err != nil {
@@ -1643,7 +1659,7 @@ func (s *sqlStore) ListScheduleRuns(ctx context.Context, scheduleID, membershipI
 	var out []ScheduleRun
 	for rows.Next() {
 		var r ScheduleRun
-		if err := rows.Scan(&r.ID, &r.ScheduleID, &r.MembershipID, &r.FiredAt, &r.Status, &r.Detail); err != nil {
+		if err := rows.Scan(&r.ID, &r.ScheduleID, &r.MembershipID, &r.FiredAt, &r.Status, &r.Detail, &r.Session, &r.Trigger); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

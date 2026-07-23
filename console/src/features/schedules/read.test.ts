@@ -3,6 +3,8 @@ import {
   type ScheduleDTO,
   statusTone,
   statusIcon,
+  runStatusLabelKey,
+  isManualRun,
   scheduleTitle,
   specSummary,
   formatInterval,
@@ -29,6 +31,26 @@ describe("statusIcon", () => {
     expect(statusIcon("error:x")).toBe("error");
     expect(statusIcon("skipped_quota")).toBe("circle-slash");
     expect(statusIcon("")).toBe("circle-outline");
+  });
+});
+
+describe("runStatusLabelKey", () => {
+  it("maps a run outcome to its friendly label key by tone", () => {
+    expect(runStatusLabelKey("fired")).toBe("sched.status_ok");
+    expect(runStatusLabelKey("fired_rotated")).toBe("sched.status_ok");
+    expect(runStatusLabelKey("skipped_overlap")).toBe("sched.status_skip");
+    expect(runStatusLabelKey("error:boom")).toBe("sched.status_fail");
+    expect(runStatusLabelKey("")).toBe("sched.status_pending");
+    expect(runStatusLabelKey(undefined)).toBe("sched.status_pending");
+  });
+});
+
+describe("isManualRun", () => {
+  it("is true only for a run-now trigger", () => {
+    expect(isManualRun("manual")).toBe(true);
+    expect(isManualRun("scheduled")).toBe(false);
+    expect(isManualRun("")).toBe(false);
+    expect(isManualRun(undefined)).toBe(false);
   });
 });
 

@@ -51,37 +51,37 @@ func newWakeFirer(mgr *manager, settle, readyTimeout time.Duration) *wakeFirer {
 	}
 }
 
-func (f *wakeFirer) fire(ctx context.Context, sch Schedule, slot time.Time) (string, error) {
+func (f *wakeFirer) fire(ctx context.Context, sch Schedule, slot time.Time) (string, string, error) {
 	// 1. membership -> resolved (no gateway headers; the MCP/memo-bridge path).
 	identityID, ok, err := f.mgr.store.IdentityIDForMembership(ctx, sch.MembershipID)
 	if err != nil {
-		return "", fmt.Errorf("resolve identity: %w", err)
+		return "", "", fmt.Errorf("resolve identity: %w", err)
 	}
 	if !ok {
 		// Soft outcome: the membership was revoked. Record it (not an error) so the
 		// ledger advances and the operator can see why nothing ran.
-		return "skipped_membership_inactive", nil
+		return "skipped_membership_inactive", "", nil
 	}
 	res, aerr := f.mgr.resolveByMembership(ctx, identityID, sch.MembershipID)
 	if aerr != nil {
 		if aerr.code == "forbidden_tenant" {
-			return "skipped_membership_inactive", nil
+			return "skipped_membership_inactive", "", nil
 		}
-		return "", fmt.Errorf("resolve membership: %s", aerr.message)
+		return "", "", fmt.Errorf("resolve membership: %s", aerr.message)
 	}
 
 	// 2. wake policy vs live state.
 	state := res.rt.State(ctx)
 	shouldWake, soft := wakeDecision(state, sch.WakePolicy)
 	if soft != "" {
-		return soft, nil
+		return soft, "", nil
 	}
 	if shouldWake {
 		if aerr := f.wsAPI.ensureWorkspaceStarted(ctx, res); aerr != nil {
 			if aerr.code == "quota_workspaces" {
-				return "skipped_quota", nil // soft: tenant is at its running cap
+				return "skipped_quota", "", nil // soft: tenant is at its running cap
 			}
-			return "", fmt.Errorf("wake: %s", aerr.message)
+			return "", "", fmt.Errorf("wake: %s", aerr.message)
 		}
 	}
 
@@ -95,16 +95,17 @@ func (f *wakeFirer) fire(ctx context.Context, sch Schedule, slot time.Time) (str
 
 	// 4. wait for the Agent, then inject.
 	if err := f.awaitAgentReady(ctx, res.rt); err != nil {
-		return "", fmt.Errorf("agent not ready: %w", err)
+		return "", "", fmt.Errorf("agent not ready: %w", err)
 	}
 	// session_mode=reuse (P6): send into the long-lived session instead of creating one.
 	if sch.SessionMode == "reuse" {
 		return f.fireReuse(ctx, res, sch, slot)
 	}
-	if err := f.injectSession(ctx, res.rt, buildInjectBody(sch, slot)); err != nil {
-		return "", fmt.Errorf("inject: %w", err)
+	session, err := f.injectSession(ctx, res.rt, buildInjectBody(sch, slot))
+	if err != nil {
+		return "", "", fmt.Errorf("inject: %w", err)
 	}
-	return "fired", nil
+	return "fired", session, nil
 }
 
 // scheduleRelease drops the keep-alive after the settle window. time.AfterFunc runs on
@@ -143,11 +144,14 @@ func (f *wakeFirer) awaitAgentReady(ctx context.Context, rt Runtime) error {
 	}
 }
 
-// injectSession POSTs a create_session to the Agent (same REST the Console/MCP use).
-func (f *wakeFirer) injectSession(ctx context.Context, rt Runtime, body []byte) error {
+// injectSession POSTs a create_session to the Agent (same REST the Console/MCP use) and
+// returns the created session's name so the run history can link to it. The idempotency
+// key collapses a retry onto the first session, and the Agent replays that session's wire
+// body verbatim, so the returned name is stable across a CP restart that re-fires the slot.
+func (f *wakeFirer) injectSession(ctx context.Context, rt Runtime, body []byte) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, "POST", rt.Endpoint()+"/sessions", bytes.NewReader(body))
 	if err != nil {
-		return err
+		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if rt.Token() != "" {
@@ -155,14 +159,21 @@ func (f *wakeFirer) injectSession(ctx context.Context, rt Runtime, body []byte) 
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return fmt.Errorf("agent create_session %s: %s", resp.Status, strings.TrimSpace(string(b)))
+		return "", fmt.Errorf("agent create_session %s: %s", resp.Status, strings.TrimSpace(string(b)))
 	}
-	return nil
+	// The response is the wire session; pull its name (best-effort — a fire whose session
+	// name we cannot parse still counts as fired, it just has no history link).
+	var created struct {
+		Name string `json:"name"`
+	}
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	_ = json.Unmarshal(b, &created)
+	return created.Name, nil
 }
 
 // --- pure helpers (unit-tested) -------------------------------------------------

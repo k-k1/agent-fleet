@@ -1506,6 +1506,14 @@ export const ja = {
   "sched.deleted": "スケジュールを削除しました",
   "sched.action_failed": "操作に失敗しました",
   "sched.delete_confirm": "スケジュール「{name}」を削除しますか？",
+  "sched.menu": "操作",
+  "sched.open_session": "セッション {name} を開く",
+  "sched.trigger_manual": "手動",
+  "sched.trigger_scheduled": "定時",
+  "sched.status_ok": "成功",
+  "sched.status_fail": "失敗",
+  "sched.status_skip": "スキップ",
+  "sched.status_pending": "未実行",
 
   // === P2 送信モーダル（features/memo/SendSelectionModal.tsx）===
   "send.target_file": "対象ファイル: {path}",

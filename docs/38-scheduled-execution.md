@@ -354,6 +354,25 @@ reuse セッションでは driver 切替中 `409 busy_switch` にも遭遇し�
   overlap の fake-agent 統合）。**意図的な限界**（決定 3）: 使用率トリガ `context_pct` は未実装
   （停止中 WS で usage を読めないため後続 best-effort）。**残**: 実フリート再ビルド後の実機目視、
   Console のスケジュール一覧に reuse/rotation の表示（現状 read-only 台帳は DTO に出るが UI 未装飾）。
+- **P5.1（Console/CP 改良・2026-07-23）**＝利用者フィードバック7件:
+  ① **無効デプロイでは左レールのスケジュールを隠す**＝`whoami` に `scheduler_enabled`
+  （＝`schedulerRunning`）を追加し、`App.tsx` が偽なら `<SchedulesSection>` を描画しない
+  （発火し得ないデプロイで UI ノイズを出さない）。② **env サンプル追記**＝`deploy/compose/.env.example`
+  と `deploy/local/oauth.env.example` に `AF_SCHEDULER_INTERVAL`（＋`AF_SCHEDULE_JITTER`/`SETTLE`/
+  `WAKE_TIMEOUT`）を既定 OFF の説明付きで記載。④ **行 UI 再構成**＝行本体クリックで実行履歴を開閉、
+  一時停止/再開・今すぐ発火・削除は「⋯」メニュー（右クリックでも開く。`SessionRow` と同じ
+  `useDismiss`＋`useMenuRoving`＋`placeFixed` イディオム）へ集約。⑤ **履歴→セッション起動＋成否表示**＝
+  `schedule_run` に `session` 列（migrations/0025＋pg/0008）を追加し `fire()` の戻りを
+  `(status, session, err)` に拡張（new＝create_session 応答の name を parse、reuse＝reuse 対象名）、
+  履歴行に成否ラベル（成功/失敗/スキップ/未実行・4トーン）を出し、`session` があればクリックで
+  該当セッションを開く（schedule の agent_kind で chat/terminal を選択）。⑦ **手動 run-now と定時の
+  区別**＝`schedule.manual_fire_pending` 列（migrations/0026＋pg/0009）を run-now が立て（`MarkManualFirePending`）、
+  fireOne が読んで run 履歴を `trigger_kind`（migrations/0025）に `manual`/`scheduled` で記録し発火時に
+  クリア（`RecordScheduleFire`）。履歴行にトリガーバッジ（手動/定時）を表示。③ の
+  `sch_98968564…` は状態確認依頼（実フリート DB は当環境から触れないためオペレーター会話で
+  `list_schedules` する）。テスト＝CP +2件（manual-fire フラグ set/clear、run session/trigger 往復）
+  ＋console read.test +2件（`runStatusLabelKey`/`isManualRun`）。CP 224／console typecheck・vitest 394・
+  i18n-lint・build 緑。**残**: 実フリート再ビルド後の実機目視。
 
 ## 長寿命セッション再利用モード（`session_mode=reuse`・実装済み 2026-07-23）
 

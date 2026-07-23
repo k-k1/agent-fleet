@@ -203,7 +203,7 @@ func TestFireReusePinnedSendsToExisting(t *testing.T) {
 	sch := Schedule{ID: "sch_p", SessionMode: "reuse", ReuseTarget: "my-sess", OwnerConv: "conv1", Prompt: "go"}
 	f, res, st, ctx := newReuseFixture(t, a, sch)
 
-	status, err := f.fireReuse(ctx, res, sch, time.Now().UTC())
+	status, _, err := f.fireReuse(ctx, res, sch, time.Now().UTC())
 	if err != nil || status != "fired" {
 		t.Fatalf("status=%q err=%v, want fired/nil", status, err)
 	}
@@ -224,7 +224,7 @@ func TestFireReusePinnedMissingRecreate(t *testing.T) {
 	sch := Schedule{ID: "sch_r", SessionMode: "reuse", ReuseTarget: "gone", MissingTargetPolicy: "recreate", Prompt: "go"}
 	f, res, st, ctx := newReuseFixture(t, a, sch)
 
-	status, err := f.fireReuse(ctx, res, sch, time.Now().UTC())
+	status, _, err := f.fireReuse(ctx, res, sch, time.Now().UTC())
 	if err != nil || status != "fired" {
 		t.Fatalf("status=%q err=%v, want fired/nil", status, err)
 	}
@@ -242,7 +242,7 @@ func TestFireReusePinnedMissingFail(t *testing.T) {
 	sch := Schedule{ID: "sch_f", SessionMode: "reuse", ReuseTarget: "gone", MissingTargetPolicy: "fail", Prompt: "go"}
 	f, res, _, ctx := newReuseFixture(t, a, sch)
 
-	status, err := f.fireReuse(ctx, res, sch, time.Now().UTC())
+	status, _, err := f.fireReuse(ctx, res, sch, time.Now().UTC())
 	if err != nil || status != "skipped_target_missing" {
 		t.Fatalf("status=%q err=%v, want skipped_target_missing/nil", status, err)
 	}
@@ -256,7 +256,7 @@ func TestFireReuseManagedFirstFireCreates(t *testing.T) {
 	sch := Schedule{ID: "sch_m", SessionMode: "reuse", Prompt: "go"} // reuse_target empty => managed
 	f, res, st, ctx := newReuseFixture(t, a, sch)
 
-	status, err := f.fireReuse(ctx, res, sch, time.Now().UTC())
+	status, _, err := f.fireReuse(ctx, res, sch, time.Now().UTC())
 	if err != nil || status != "fired" {
 		t.Fatalf("status=%q err=%v", status, err)
 	}
@@ -282,7 +282,7 @@ func TestFireReuseManagedRotates(t *testing.T) {
 	}
 	f, res, st, ctx := newReuseFixture(t, a, sch)
 
-	status, err := f.fireReuse(ctx, res, sch, time.Now().UTC())
+	status, _, err := f.fireReuse(ctx, res, sch, time.Now().UTC())
 	if err != nil || status != "fired_rotated" {
 		t.Fatalf("status=%q err=%v, want fired_rotated/nil", status, err)
 	}
@@ -303,7 +303,7 @@ func TestFireReuseOverlapSkip(t *testing.T) {
 	sch := Schedule{ID: "sch_o", SessionMode: "reuse", ReuseTarget: "busy", OverlapPolicy: "skip", Prompt: "go"}
 	f, res, st, ctx := newReuseFixture(t, a, sch)
 
-	status, err := f.fireReuse(ctx, res, sch, time.Now().UTC())
+	status, _, err := f.fireReuse(ctx, res, sch, time.Now().UTC())
 	if err != nil || status != "skipped_overlap" {
 		t.Fatalf("status=%q err=%v, want skipped_overlap/nil", status, err)
 	}
@@ -322,7 +322,7 @@ func TestFireReuseOverlapQueueSends(t *testing.T) {
 	sch := Schedule{ID: "sch_q", SessionMode: "reuse", ReuseTarget: "busy", OverlapPolicy: "queue", Prompt: "go"}
 	f, res, _, ctx := newReuseFixture(t, a, sch)
 
-	status, err := f.fireReuse(ctx, res, sch, time.Now().UTC())
+	status, _, err := f.fireReuse(ctx, res, sch, time.Now().UTC())
 	if err != nil || status != "fired" {
 		t.Fatalf("status=%q err=%v, want fired/nil", status, err)
 	}

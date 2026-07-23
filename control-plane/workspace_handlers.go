@@ -50,6 +50,10 @@ func (a workspaceAPI) whoami(w http.ResponseWriter, r *http.Request) {
 		"sanitized_user":     sanitizeUser(email),
 		"x_forwarded_user":   r.Header.Get("X-Forwarded-User"),
 		"preferred_username": r.Header.Get("X-Forwarded-Preferred-Username"),
+		// Deployment capability flag: whether the CP scheduler goroutine is running
+		// (AF_SCHEDULER_INTERVAL > 0). The Console hides the schedules rail section when
+		// it is off, since no schedule can ever fire on this deployment (docs/38).
+		"scheduler_enabled": schedulerRunning,
 	})
 }
 

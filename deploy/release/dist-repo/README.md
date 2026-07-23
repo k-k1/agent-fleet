@@ -45,6 +45,14 @@ Key features:
   across different agents and hand tasks over between them with summarized
   context, and act as an **SRE assistant** through PagerDuty / Grafana /
   CloudWatch integrations and AWS SSM login sessions to your servers.
+- **Scheduled execution** — have the assistant schedule recurring agent runs in
+  plain language ("every weekday at 9:00, review yesterday's changes"): the
+  control plane fires them on a wall-clock (cron / interval / one-off, timezone-
+  and DST-aware), **waking a stopped workspace**, running the prompt, and
+  reporting back — so timed work happens even while nobody is watching. Reuse a
+  long-lived session to build up context across runs, or start fresh each time;
+  browse the schedule list and per-run history (with the session each run drove)
+  from the left rail.
 - **Operable** — backup/restore scripts, forward-only DB migrations for
   upgrades, air-gap installation paths, and MCP integration points.
 

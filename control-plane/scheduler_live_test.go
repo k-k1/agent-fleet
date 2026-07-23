@@ -25,14 +25,14 @@ type recordingFirer struct {
 	status string
 }
 
-func (f *recordingFirer) fire(_ context.Context, sch Schedule, _ time.Time) (string, error) {
+func (f *recordingFirer) fire(_ context.Context, sch Schedule, _ time.Time) (string, string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.fired = append(f.fired, sch)
 	if f.status != "" {
-		return f.status, nil
+		return f.status, "", nil
 	}
-	return "fired", nil
+	return "fired", "", nil
 }
 
 func (f *recordingFirer) count() int {

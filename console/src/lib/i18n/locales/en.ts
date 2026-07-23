@@ -1472,6 +1472,14 @@ export const en: Record<keyof typeof ja, string> = {
   "sched.deleted": "Schedule deleted",
   "sched.action_failed": "Action failed",
   "sched.delete_confirm": "Delete schedule \"{name}\"?",
+  "sched.menu": "Actions",
+  "sched.open_session": "Open session {name}",
+  "sched.trigger_manual": "Manual",
+  "sched.trigger_scheduled": "Scheduled",
+  "sched.status_ok": "Success",
+  "sched.status_fail": "Failed",
+  "sched.status_skip": "Skipped",
+  "sched.status_pending": "Pending",
 
   // === P2 send modal (features/memo/SendSelectionModal.tsx) ===
   "send.target_file": "Target file: {path}",
