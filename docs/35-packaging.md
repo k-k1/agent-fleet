@@ -139,9 +139,14 @@ self-update opt-in の `~/.local/bin` shadow 機構（claude/opencode/codex/rtk/
 - self-update opt-in（`AF_AGENT_SELF_UPDATE`）ON なら従来どおり最新へ追従、OFF なら
   ピン版のまま。書き込み先はすべて bind した仮想 HOME 側なので **ro rootfs のまま成立**する。
 
-なお社内・自社運用の Docker イメージは従来どおり**全焼き込み**を既定のまま維持する
-（オフライン即起動・イメージ=検証単位という現行の利点を捨てない）。抜く理由は 2 種類
-あり、適用範囲が違うので **Dockerfile の ARG 2 ノブ**に正式化する:
+社内・自社運用の Docker イメージも、**既定を lean-CLI（`BAKE_AGENT_CLIS=0`）へ反転した**
+（2026-07-23。素の `docker build` でも再配布不可のプロプライエタリ CLI をイメージに含めない
+安全既定にする狙い。初回起動時に boot-install がピン版を導入する）。オフライン即起動・
+イメージ=検証単位の利点が要る自社デプロイは `BAKE_AGENT_CLIS=1` を明示すれば従来どおり
+全焼き込みになる（`run-dev.sh` は `BAKE_AGENT_CLIS=1` env で対応・スモークも追随、
+`default-image-gate` は明示 bake でその経路を担保）。`BAKE_OPTIONAL_TOOLS` の既定は 1 の
+まま（サイズ系ツールはライセンス無関係）。抜く理由は 2 種類あり、適用範囲が違うので
+**Dockerfile の ARG 2 ノブ**に正式化する:
 
 | ノブ | 抜く理由 | 対象 | 0 にする配布物 |
 |---|---|---|---|

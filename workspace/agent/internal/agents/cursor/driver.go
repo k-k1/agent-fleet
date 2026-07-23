@@ -278,6 +278,7 @@ type threadHandle struct {
 	cmd      *exec.Cmd
 	cl       *acpClient
 	sid      string // cursor session UUID
+	model    string // ACP currentModelId（モデルバッジ用・Auto は default[]）
 	alive    bool
 	state    agents.TurnState
 	running  bool
@@ -341,6 +342,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 		sid = sids.Read(h.slotSid)
 	}
 	mode := ""
+	modelID := ""
 	if sid != "" {
 		// クロスプロセス resume（実測: session/update リプレイで履歴＋文脈を復元）。
 		// リプレイ通知が buf を再構築するので、その前に空にする（二重計上防止）。
@@ -356,6 +358,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 			h.buf.reset()
 		} else {
 			mode = currentModeOf(res)
+			modelID = currentModelOf(res)
 		}
 	}
 	if sid == "" {
@@ -376,11 +379,13 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 		sid = out.SessionID
 		sids.Write(h.slotSid, sid)
 		mode = currentModeOf(res)
+		modelID = currentModelOf(res)
 	}
 
 	h.mu.Lock()
 	h.cmd, h.cl, h.sid, h.alive = cmd, cl, sid, true
 	h.state = agents.TurnCompleted // 子は生まれたて — 走行中 turn は存在しない
+	h.model = modelID              // ACP currentModelId（Auto は default[]）— モデルバッジ用
 	h.inter, h.permID, h.permOpts = nil, nil, nil
 	if m := modeFromACP(mode); m != "" {
 		h.settings.Mode = m
@@ -407,6 +412,18 @@ func currentModeOf(res json.RawMessage) string {
 	}
 	_ = json.Unmarshal(res, &out)
 	return out.Modes.CurrentModeID
+}
+
+// currentModelOf extracts models.currentModelId from a session/new・load result
+// （Auto は `default[]`・明示指定は bracket 形式で返る — 実測。docs/40 §モデル表示）。
+func currentModelOf(res json.RawMessage) string {
+	var out struct {
+		Models struct {
+			CurrentModelID string `json:"currentModelId"`
+		} `json:"models"`
+	}
+	_ = json.Unmarshal(res, &out)
+	return out.Models.CurrentModelID
 }
 
 // watch reaps the child and records its exit（per-session child なので daemon supervisor
@@ -885,7 +902,14 @@ func managedTranscript(m session.Meta) agents.TranscriptData {
 	h.mu.Lock()
 	inter := h.inter
 	modeSet := h.settings.Mode
+	// モデルバッジ: ユーザーが明示選択したモデル（settings.Model・ピッカーの dash 形式）を
+	// 優先し、Auto/未指定なら ACP の currentModelId（default[]）を使う（docs/40 §モデル表示）。
+	modelID := h.settings.Model
+	if modelID == "" || modelID == "auto" {
+		modelID = h.model
+	}
 	h.mu.Unlock()
+	stampModel(td.Turns, displayModel(modelID))
 	if inter != nil {
 		qs := make([]transcript.Question, len(inter.Questions))
 		copy(qs, inter.Questions)

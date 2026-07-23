@@ -129,11 +129,18 @@ func AssistantText(line []byte) string {
 
 // CollectTurns builds the displayable turns from lines[lo:hi] (a window into the
 // transcript — the whole file, a tail window, a backward page, or a live increment; see
-// docs/decisions/0009). A transcript AskUserQuestion/ExitPlanMode is always already
-// answered (claude writes the tool_use only after the answer), so it resolves each one's
-// chosen answer from its tool_result for display (the currently-pending one is surfaced
+// docs/decisions/0009). It resolves each answered AskUserQuestion/ExitPlanMode's chosen
+// answer from its tool_result for display (the currently-pending one is surfaced
 // separately). Each turn keeps its ABSOLUTE line index as idx (stable across windows, so
 // React keys and ordering hold when pages are prepended). Capped at 1 MiB of newest text.
+//
+// NOTE: window-local answer resolution is only complete when the window holds BOTH the
+// question's tool_use AND its tool_result. That is NOT guaranteed: claude writes an
+// AskUserQuestion/ExitPlanMode/Agent tool_use at ASK time and its tool_result lands later
+// (an answer can be minutes and — live — many polls away), so a live increment or a page
+// boundary can split them, leaving the question turn here with an empty Answer. The
+// Console reconciles that from the whole-transcript CollectInteractionAnswers map, which
+// the /messages handler sends alongside these turns and patches on by qid.
 func CollectTurns(lines [][]byte, lo, hi int) []transcript.Turn {
 	if lo < 0 {
 		lo = 0
@@ -141,8 +148,9 @@ func CollectTurns(lines [][]byte, lo, hi int) []transcript.Turn {
 	if hi > len(lines) {
 		hi = len(lines)
 	}
-	// Answers are resolved within the window: a question and its tool_result are adjacent
-	// (claude writes the tool_use only after the answer), so window-local is enough.
+	// Best-effort window-local resolution: fills the Answer when the tool_result is in the
+	// same window. When it isn't (an ask/answer split across increments or a page boundary),
+	// the Answer stays empty here and the Console patches it from CollectInteractionAnswers.
 	answers := collectAnswers(lines[lo:hi])
 	turns := []transcript.Turn{}
 	budget := 0
@@ -393,6 +401,78 @@ func collectAnswers(lines [][]byte) map[string]string {
 			if b.Type == "tool_result" && b.ToolUseID != "" {
 				if t := contentText(b.Content); t != "" {
 					out[b.ToolUseID] = t
+				}
+			}
+		}
+	}
+	return out
+}
+
+// CollectInteractionAnswers maps the tool_use id of each INTERACTION tool
+// (AskUserQuestion, ExitPlanMode, and foreground Agent/Task delegations) to the text of
+// its tool_result, scanning the WHOLE transcript (like CollectTasks/CollectQueued).
+//
+// CollectTurns resolves answers only within the emitted window, which breaks for these
+// tools specifically: claude writes their tool_use at ASK time and the tool_result lands
+// later — in a live increment or backward page that no longer re-emits the question/plan/
+// delegation turn (the Console's append-only merge then keeps it forever unanswered). The
+// Console patches the answer onto the already-held turn by qid using this map. Only these
+// tools are included (not every tool_result) so the payload stays small — a Bash/Read
+// round-trip resolves within its own turn and never needs a late patch. Delegation outputs
+// are capped like CollectTurns; question/plan answers are small and kept whole.
+func CollectInteractionAnswers(lines [][]byte) map[string]string {
+	interactive := map[string]bool{} // qid the Console may need to patch later
+	delegation := map[string]bool{}  // subset whose value is a (capped) delegation output
+	out := map[string]string{}
+	for _, ln := range lines {
+		var ev struct {
+			Message struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(ln, &ev) != nil || len(ev.Message.Content) == 0 || ev.Message.Content[0] != '[' {
+			continue
+		}
+		var blocks []struct {
+			Type      string          `json:"type"`
+			Name      string          `json:"name"`
+			ID        string          `json:"id"`
+			ToolUseID string          `json:"tool_use_id"`
+			Input     json.RawMessage `json:"input"`
+			Content   json.RawMessage `json:"content"`
+		}
+		if json.Unmarshal(ev.Message.Content, &blocks) != nil {
+			continue
+		}
+		// tool_use precedes its tool_result in the transcript, so a single in-order pass
+		// registers the interaction qid before its answer line is reached.
+		for _, b := range blocks {
+			switch b.Type {
+			case "tool_use":
+				switch b.Name {
+				case "AskUserQuestion", "ExitPlanMode":
+					if b.ID != "" {
+						interactive[b.ID] = true
+					}
+				case "Agent", "Task":
+					// Only foreground delegations get a final tool_result (a background one
+					// returns just a launch ack); mirror assistantParts' QID gating.
+					var in struct {
+						RunInBackground bool `json:"run_in_background"`
+					}
+					if b.ID != "" && json.Unmarshal(b.Input, &in) == nil && !in.RunInBackground {
+						interactive[b.ID] = true
+						delegation[b.ID] = true
+					}
+				}
+			case "tool_result":
+				if b.ToolUseID != "" && interactive[b.ToolUseID] {
+					if t := contentText(b.Content); t != "" {
+						if delegation[b.ToolUseID] {
+							t = transcript.CapOutput(t)
+						}
+						out[b.ToolUseID] = t
+					}
 				}
 			}
 		}

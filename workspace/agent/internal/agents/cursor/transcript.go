@@ -38,7 +38,44 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 		return agents.TranscriptData{}, true // まだ会話なし（起動前）— 空ミラー
 	}
 	path := transcriptPath(m.Dir, chatID)
-	return agents.TranscriptData{Path: path, Turns: parseTranscript(path)}, true
+	td := agents.TranscriptData{Path: path, Turns: parseTranscript(path)}
+	// TUI/-p はモデルを転写に書かない（docs/40 §モデル表示）ので、起動モデル（セッション
+	// 固定）を各 assistant ターンにスタンプしてミラーのモデルバッジに出す。未選択＝Auto。
+	stampModel(td.Turns, displayModel(m.Model))
+	return td, true
+}
+
+// displayModel normalizes a cursor model id for the mirror's per-response badge:
+// ACP の bracket パラメータ（`claude-opus-4-8[thinking=true,context=300k,effort=high]`）を
+// 剥がして素の id にし、Auto 系（``/`auto`/`default[]`）は "Auto" に寄せる。ピッカーの
+// dash 形式（`composer-2.5` 等）はそのまま。cursor は**セッションでモデル固定**（per-session
+// child・DynamicModel:false）なので、全 assistant ターンに同じ値が載る（docs/40 §モデル表示）。
+// 注意: これは**設定モデル**であって、Auto が各ターンで実際に解決した具体モデルではない
+// （公式経路に解決先が出ない — docs/40）。
+func displayModel(id string) string {
+	id = strings.TrimSpace(id)
+	if i := strings.IndexByte(id, '['); i >= 0 {
+		id = strings.TrimSpace(id[:i]) // ACP の [params] を剥がす
+	}
+	switch strings.ToLower(id) {
+	case "", "auto", "default":
+		return "Auto"
+	}
+	return id
+}
+
+// stampModel labels every assistant turn with the session's (fixed) model so the
+// mirror renders a per-response model badge（MirrorView の turn.model 経路）。既に
+// 値があるターンは尊重する（将来の per-turn 情報源に備えて上書きしない）。
+func stampModel(turns []transcript.Turn, model string) {
+	if model == "" {
+		return
+	}
+	for i := range turns {
+		if turns[i].Role == "assistant" && turns[i].Model == "" {
+			turns[i].Model = model
+		}
+	}
 }
 
 // line is one JSONL row: either a role-bearing message or a control marker
