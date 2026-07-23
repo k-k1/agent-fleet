@@ -44,6 +44,45 @@ It shows **"Connected"**, and for claude / codex also the signed-in account (ema
 plan. Once one agent is connected, it appears among the session types when you launch a
 new session ([02](02-sessions.md)).
 
+## Feature matrix (all agent kinds)
+
+The table at the top compares the five main agents. This one adds Antigravity (agy) and
+the non-agent session kinds (shell / SSM), and rolls in the cross-cutting features
+covered elsewhere in this guide — worktrees ([04](04-git.md)), scheduled runs and the
+chat bridge ([11](11-fleet-operator.md), [08](08-advanced.md)). ✓ = supported,
+— = not applicable / not supported.
+
+| Capability | claude | codex | cursor | copilot | agy | opencode | shell | ssm |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| Managed (paneless) execution | — | ✓ | ✓ | ✓ | — | ✓ | — | — |
+| Terminal (CLI) execution | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Chat mirror & history | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
+| Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | — | — |
+| Reasoning-effort control | ✓ | ✓ | —² | ✓ | —² | ✓ | — | — |
+| Plan mode | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
+| Context-window gauge | ✓ | ✓ | — | — | — | ✓ | — | — |
+| Image paste | ✓ | ✓ | — | — | ✓ | ✓ | — | — |
+| Fork a conversation | ✓ | ✓ | — | — | — | ✓ | — | — |
+| Runs in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
+| Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
+| Backs the assistant chat | ✓ | ✓ | — | — | ✓ | ✓ | — | — |
+| WS-bar usage / limit chip | ✓ | ✓ | — | ✓ | ✓ | — | — | — |
+
+¹ copilot's model choice is plan-dependent (Free = Auto only).
+² cursor and agy fold the reasoning effort into the model name, so there is no separate
+control. The WS-bar usage chip needs an account-level limit to show — opencode
+(bring-your-own provider API keys) and cursor expose none. **shell** is a raw shell and
+**ssm** is a remote login over AWS SSM — both are terminal-only with no conversation,
+state model, or notifications.
+
+> **A note on autonomous execution.** Agents run commands, edit files, and push on your
+> behalf — including unattended (scheduled runs) and, in permission-bypassing modes,
+> without asking each time. shell / SSM sessions run the string you send **verbatim**.
+> These actions can be destructive or irreversible. Keep backups, use least-privilege
+> credentials, and lean on the approval gates (shell-command confirmation, chat-bridge
+> approve / deny). See also [11 Fleet operator](11-fleet-operator.md).
+
 ## Claude
 
 On **Claude** in the "Agents" tab, press **"Connect via OAuth"** and sign-in opens in a

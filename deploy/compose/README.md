@@ -198,3 +198,18 @@ encodes them, but if you customize it, keep them:
   narrow the Docker API surface, front the socket with a filtering proxy.
 - **`AF_MASTER_KEY`** — separate vault, independent backup, never in the data dir.
 - See `../../SECURITY.md` for the full threat model and how to report issues.
+
+## Disclaimer — autonomous agent execution
+
+The agents run commands, edit files, and commit/push on behalf of your members —
+including **unattended** (scheduled runs that wake a stopped workspace), in
+**permission-bypassing modes**, and through **shell / SSM sessions that run the
+strings sent verbatim**. Such actions can be destructive or irreversible and can incur
+charges on the connected AI-provider and cloud accounts. The operator and each member
+are responsible for the workspaces, credentials, repositories, and infrastructure they
+connect, and for reviewing what the agents do; use least-privilege credentials, keep
+backups, and prefer the approval gates for destructive actions. This software is
+distributed under the **Apache License 2.0** and is provided **"AS IS", WITHOUT
+WARRANTIES OR CONDITIONS OF ANY KIND**; the authors accept **no liability** for any
+damage, data loss, downtime, or cost arising from its use. See `LICENSE`, and `NOTICE`
+for bundled-OSS attribution.
