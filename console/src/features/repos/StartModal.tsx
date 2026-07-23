@@ -15,7 +15,7 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { agentOf } from "../../agents/registry.ts";
 import { kindDisplayName } from "../../lib/sessionkind.ts";
 import { resolveEffort, resolveModel, resolveStartMode } from "../../lib/repoLast.ts";
-import { agentLaunchDefault, useSettings } from "../../lib/settings.ts";
+import { agentLaunchDefault, useSettings, setSetting } from "../../lib/settings.ts";
 import { EffortPicker, ModelPicker } from "../../ui/ModelPicker.tsx";
 import { groupedRepos } from "../../lib/project.ts";
 import { hostColorBase } from "../../lib/termcolor.ts";
@@ -153,6 +153,25 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
     const q = ssmQuery.trim().toLocaleLowerCase();
     return !q || h.alias.toLocaleLowerCase().includes(q) || h.instanceId.toLocaleLowerCase().includes(q);
   });
+  // Quick-connect cards. Rank the (query-filtered) hosts by usage frequency, tie-broken by
+  // most-recent use. When few hosts are registered (≤ SSM_CARD_ALL_MAX) show them ALL as
+  // cards and drop the dropdown; otherwise surface only the top SSM_CARD_TOP as cards and
+  // keep the dropdown for the long tail.
+  const SSM_CARD_ALL_MAX = 8;
+  const SSM_CARD_TOP = 6;
+  const ssmProfileLabel = (pid: string) => ssmProfiles?.find((p) => p.id === pid)?.label || "";
+  const ssmCardSub = (h: SsmHost) =>
+    [ssmProfileLabel(h.profileId), h.accountId ? `acct ${h.accountId}` : "", h.instanceId].filter(Boolean).join(" · ");
+  const ssmAllAsCards = (ssmHosts?.length || 0) <= SSM_CARD_ALL_MAX;
+  const rankedSsmHosts = [...visibleSsmHosts].sort((a, b) => {
+    const ua = settings.ssmHostUsage?.[a.id];
+    const ub = settings.ssmHostUsage?.[b.id];
+    const ca = ua?.count || 0;
+    const cb = ub?.count || 0;
+    if (cb !== ca) return cb - ca;
+    return (ub?.at || 0) - (ua?.at || 0);
+  });
+  const ssmCardHosts = ssmAllAsCards ? rankedSsmHosts : rankedSsmHosts.slice(0, SSM_CARD_TOP);
   const searchSsmInstances = async () => {
     const profileId = ssmProfileId || ssmProfiles?.[0]?.id || "";
     if (!profileId || ssmSearching) return;
@@ -193,20 +212,26 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
     setSsmHostId(res.id);
     toast(t("start.host_registered", { id: instance.instanceId }));
   };
-  const startSsm = async () => {
-    if (!ssmHostId || busy) return;
+  // Start an SSM session. hostId lets a quick-connect card launch its host directly
+  // (no setState round-trip); omitted → the dropdown selection (ssmHostId).
+  const startSsm = async (hostId?: string) => {
+    const id = hostId || ssmHostId;
+    if (!id || busy) return;
     setBusy(true);
     const res = await apiJSON("api/sessions", "POST", {
       kind: "ssm",
-      ssm_host_id: ssmHostId,
+      ssm_host_id: id,
       ssm_force_login: ssmForce,
-      color: hostColorBase(settings.ssmHostColors?.[ssmHostId], ssmHostId),
+      color: hostColorBase(settings.ssmHostColors?.[id], id),
     });
     setBusy(false);
     if (res && res.error) {
       toast(t("start.create_failed", { msg: errText(res.error) }));
       return;
     }
+    // Tally usage so the quick-connect cards rank by frequency (recency breaks ties).
+    const prev = settings.ssmHostUsage?.[id];
+    setSetting("ssmHostUsage", { ...(settings.ssmHostUsage || {}), [id]: { count: (prev?.count || 0) + 1, at: Date.now() } });
     setSsmLogin((res && res.name) || "");
   };
 
@@ -547,15 +572,44 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                     onChange={(e) => setSsmQuery(e.target.value)}
                     placeholder={tr("start.ssm_search_ph")}
                   />
-                  <select value={ssmHostId} onChange={(e) => setSsmHostId(e.target.value)}>
-                    <option value="">{tr("start.select_host")}</option>
-                    {visibleSsmHosts.map((h) => (
-                      <option key={h.id} value={h.id}>
-                        {h.alias} — {h.instanceId}
-                        {h.accountId ? ` (acct ${h.accountId})` : ""}
-                      </option>
-                    ))}
-                  </select>
+                  {!ssmAllAsCards && ssmCardHosts.length > 0 && (
+                    <span className="ui-field-hint">{tr("start.frequent_hosts")}</span>
+                  )}
+                  {ssmCardHosts.length > 0 && (
+                    <div className="ssm-card-grid">
+                      {ssmCardHosts.map((h) => (
+                        <button
+                          type="button"
+                          key={h.id}
+                          className="ssm-card"
+                          disabled={busy}
+                          title={tr("start.quick_connect")}
+                          onClick={() => void startSsm(h.id)}
+                        >
+                          <span
+                            className="ssm-card-dot"
+                            style={{ background: hostColorBase(settings.ssmHostColors?.[h.id], h.id) }}
+                            aria-hidden="true"
+                          />
+                          <span className="ssm-card-body">
+                            <span className="ssm-card-alias">{h.alias}</span>
+                            <span className="ssm-card-sub">{ssmCardSub(h)}</span>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {!ssmAllAsCards && (
+                    <select value={ssmHostId} onChange={(e) => setSsmHostId(e.target.value)}>
+                      <option value="">{tr("start.select_host")}</option>
+                      {visibleSsmHosts.map((h) => (
+                        <option key={h.id} value={h.id}>
+                          {h.alias} — {h.instanceId}
+                          {h.accountId ? ` (acct ${h.accountId})` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                   {visibleSsmHosts.length === 0 && <span className="ui-field-hint">{tr("start.no_matching_hosts")}</span>}
                   <label className="ssm-check">
                     <input type="checkbox" checked={ssmForce} onChange={(e) => setSsmForce(e.target.checked)} />
@@ -618,9 +672,11 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
             <Button variant="ghost" onClick={onClose} disabled={busy}>
               {tr("common.cancel")}
             </Button>
-            <Button variant="primary" onClick={() => void startSsm()} disabled={!ssmHostId || busy}>
-              {busy ? tr("start.creating") : tr("start.connect")}
-            </Button>
+            {!ssmAllAsCards && (
+              <Button variant="primary" onClick={() => void startSsm()} disabled={!ssmHostId || busy}>
+                {busy ? tr("start.creating") : tr("start.connect")}
+              </Button>
+            )}
           </footer>
         </>
       )}

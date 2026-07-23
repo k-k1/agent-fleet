@@ -335,11 +335,31 @@ func (a workspaceAPI) rewriteSSMCreate(ctx context.Context, res *resolved, r *ht
 	if region == "" {
 		region = p.Region
 	}
+	// Default session-name base = the host alias (e.g. "mng@g3prod-mon01"). The Agent
+	// appends " @MMDD-HHMM" when the client sent no title. Only when another registered
+	// host shares this alias do we disambiguate with the profile (falls back to the SSO
+	// account id) — so the common case stays a clean bare alias.
+	nameBase := h.Alias
+	if others, lerr := a.mgr.store.ListSSMHosts(ctx, res.mv.MembershipID); lerr == nil {
+		for _, o := range others {
+			if o.ID != h.ID && strings.EqualFold(strings.TrimSpace(o.Alias), strings.TrimSpace(h.Alias)) {
+				disambig := ssmProfileName(p.Label)
+				if disambig == "" {
+					disambig = p.AccountID
+				}
+				if disambig != "" {
+					nameBase = h.Alias + " (" + disambig + ")"
+				}
+				break
+			}
+		}
+	}
 	out := map[string]any{
 		"name":            peek.Name,
 		"title":           peek.Title,
 		"color":           peek.Color,
 		"kind":            "ssm",
+		"ssm_alias":       nameBase,
 		"ssm_profile":     ssmProfileName(p.Label),
 		"ssm_target":      h.InstanceID,
 		"ssm_document":    h.DocumentName,

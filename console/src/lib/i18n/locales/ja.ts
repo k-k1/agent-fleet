@@ -983,6 +983,9 @@ export const ja = {
   "keys.kt.termPrioLabel": "端末フォーカス中はアプリより端末を優先",
   "keys.kt.termPrioNote":
     "オンにすると、ターミナルにフォーカスがある間は Ctrl 系のキーをすべて端末（シェル）へ渡します。アプリのショートカットはリーダー（下の「アプリ全体」で変更可）だけが生き、そこからコマンドメニュー／パレットで全操作に到達できます。tmux やエディタを端末内で使うときに便利です。",
+  "keys.kt.shellPassLabel": "shell / SSM 端末へキーをすべて渡す（Ctrl+K・Ctrl+P 含む）",
+  "keys.kt.shellPassNote":
+    "オンにすると、shell・SSM 端末にフォーカスがある間は純ターミナルになります。上の項目と違い、リーダー（Ctrl/⌘+K）とパレット（Ctrl/⌘+P）も渡すので、Ctrl+K（行末まで削除）や Ctrl+P（履歴を前へ）などがシェルに届きます。対象は shell/SSM 端末のみで、エージェント端末は従来どおりです。アプリのショートカットに戻すには別のペインにフォーカスしてください。既定はオフ。",
   "keys.kt.assignTitle": "ショートカットの割り当て",
   "keys.kt.resetAll": "すべて既定に戻す",
   "keys.kt.assignNote":
@@ -1772,6 +1775,8 @@ export const ja = {
   "start.register_there": "で登録してください。",
   "start.ssm_search_ph": "ホスト名・インスタンスIDで検索…",
   "start.select_host": "— ホストを選択 —",
+  "start.quick_connect": "このホストに接続",
+  "start.frequent_hosts": "よく使うホスト",
   "start.no_matching_hosts": "該当する登録済みホストはありません。",
   "start.force_relogin": "強制的に再ログイン（キャッシュ済みでも aws sso logout → login）",
   "start.ssm_auth_note":
