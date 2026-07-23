@@ -722,6 +722,12 @@ export function MirrorView({
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const tick = async () => {
+      // Hidden tab: skip the fetch entirely (mobile data / battery); the
+      // visibilitychange listener below re-polls immediately on return.
+      if (document.hidden) {
+        timer = setTimeout(tick, 15000);
+        return;
+      }
       try {
         // First poll: fetch only the TAIL window (fast on huge transcripts); the server
         // returns firstLine/hasMore so we can page older history in on scroll. Subsequent
@@ -829,11 +835,16 @@ export function MirrorView({
       if (timer) clearTimeout(timer);
       tick();
     };
+    const onVisible = () => {
+      if (!document.hidden) tickRef.current?.();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     tick();
     return () => {
       alive = false;
       if (timer) clearTimeout(timer);
       tickRef.current = null;
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [session]);
 
