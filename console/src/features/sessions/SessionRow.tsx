@@ -31,8 +31,9 @@ import {
 } from "./open.ts";
 import { useSessionUI } from "./ui.ts";
 import { useSessionsStore } from "./store.ts";
+import { HandoffModal } from "./HandoffModal.tsx";
 import type { SessionActions } from "./useSessionActions.tsx";
-import type { Session, SessionKind } from "../../types/session.ts";
+import type { Session } from "../../types/session.ts";
 
 interface SessionRowProps {
   s: Session;
@@ -60,6 +61,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
   const menuElRef = useRef<HTMLDivElement>(null);
   const menuBtnRef = useRef<HTMLButtonElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [handoffOpen, setHandoffOpen] = useState(false);
   useDismiss([menuRef, menuElRef], menuOpen, () => setMenuOpen(false));
   useMenuRoving(menuElRef, menuOpen);
   // The dropdown is position:fixed, anchored under the ⋯ button and clamped
@@ -337,22 +339,20 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
                     <Icon name="repo-forked" /> {tr("srow.rename_branch")}
                   </button>
                 )}
-                {agentOf(s.kind).caps.fork && !dead && running && (
-                  <>
-                    {(["claude", "codex", "opencode"] as SessionKind[]).map((kind) => (
-                      <button
-                        key={kind}
-                        type="button"
-                        className="ui-menu-item"
-                        onClick={() => {
-                          setMenuOpen(false);
-                          void actions.fork(s.name, kind);
-                        }}
-                      >
-                        <Icon name={kind === s.kind ? "git-branch" : agentOf(kind).icon} /> {tr("srow.fork_to", { agent: agentOf(kind).label })}
-                      </button>
-                    ))}
-                  </>
+                {/* Handoff to another agent — one unified item for every session that
+                    has a conversation (caps.transcript); the target is chosen in the
+                    modal, which then calls the operator assistant directly. */}
+                {actions && agentOf(s.kind).caps.transcript && !dead && running && (
+                  <button
+                    type="button"
+                    className="ui-menu-item"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setHandoffOpen(true);
+                    }}
+                  >
+                    <Icon name="git-branch" /> {tr("srow.handoff")}
+                  </button>
                 )}
                 {agentOf(s.kind).caps.ephemeral ? (
                   <button
@@ -393,6 +393,9 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
               document.body,
             )}
         </div>
+      )}
+      {handoffOpen && actions && (
+        <HandoffModal session={s} actions={actions} onClose={() => setHandoffOpen(false)} />
       )}
     </li>
   );
