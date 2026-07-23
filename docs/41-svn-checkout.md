@@ -23,6 +23,15 @@
   upsert。以後の `svn update` は URL の**最長プレフィックス一致**で creds を再利用。
 - 保存 creds の一覧（urlPrefix＋username・パスワードは返さない）は `GET /connections` の `svn`、
   失効は `DELETE /connections/svn?prefix=`。
+- **自己署名／未信頼証明書（opt-in）**: チェックアウトモーダルの「自己署名証明書を信頼」で
+  `--trust-server-cert-failures=unknown-ca,cn-mismatch,expired,not-yet-valid,other` を付与し、
+  そのサーバの証明書検証を無効化する（非対話では信頼できない証明書は既定で失敗するため）。
+  証明書信頼は**秘密ではなくサーバの属性**なので、認証とは独立に扱う: 認証情報の保存 opt-in とは
+  別に、信頼フラグは checkout 時に必ず `secrets.SVN` の該当 prefix へ永続化し（`{trustCert}`・
+  認証なしの公開自己署名リポジトリでは username 空の trust-only エントリ）、以後の `svn update`
+  でも同じ証明書を信頼し続ける。旧 `--trust-server-cert`（unknown-ca のみ）ではなくフルセットを
+  使うのは、自己署名がほぼ必ず伴うホスト名不一致まで許可するため。トレードオフ＝そのサーバの
+  証明書検証は完全に無効化される（ゆえに明示・サーバ単位の opt-in）。
 
 ## 3. ロック自己修復
 
@@ -74,6 +83,5 @@ Agent（`workspace/agent/routes.go`）・CP 許可リスト（`control-plane/rou
 
 ## 8. 残（環境依存）
 
-- 自己署名証明書サーバの `--trust-server-cert` 対応（将来）。
 - セッション内エージェント直 `svn` の透過認証（構造的に非対応・ADR 0024 の限界）。
-- 実フリート再ビルド後の実機目視（実 SVN サーバでの basic 認証／更新／ロック解除）。
+- 実フリート再ビルド後の実機目視（実 SVN サーバでの basic 認証／更新／ロック解除／自己署名証明書の信頼）。

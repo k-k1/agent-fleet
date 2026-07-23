@@ -2054,6 +2054,8 @@ export const en: Record<keyof typeof ja, string> = {
   "rp.svn_password": "Password (optional)",
   "rp.svn_save": "Save credentials",
   "rp.svn_save_hint": "Store the username/password (encrypted) so later updates reuse them.",
+  "rp.svn_trust": "Trust self-signed certificate",
+  "rp.svn_trust_hint": "Disable certificate verification for this server (accepts self-signed / unknown CA / hostname mismatch). For dev servers. Later updates keep trusting it.",
   "rp.svn_checkout": "Check out",
   "rp.svn_checkout_failed": "Checkout failed: {err}",
   "rp.svn_update_failed": "Update failed: {err}",

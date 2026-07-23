@@ -194,6 +194,11 @@ type SVNCred struct {
 	URLPrefix string `json:"urlPrefix"`
 	Username  string `json:"username"`
 	Password  string `json:"password"`
+	// TrustCert accepts an otherwise-rejected server certificate (self-signed /
+	// unknown CA / hostname mismatch) for this server, so checkout/update work
+	// against a dev SVN server without a trusted cert. Not a secret — persisted
+	// independently of the password Save opt-in (docs/41).
+	TrustCert bool `json:"trustCert,omitempty"`
 }
 
 type Data struct {

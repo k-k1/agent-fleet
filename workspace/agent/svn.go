@@ -55,17 +55,38 @@ func runSvn(dir string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
+// svnTrustFailures is the set of certificate problems --trust-server-cert-failures
+// waves through when a server's cert is opted into trust. It is the full set (the
+// modern superset of the deprecated --trust-server-cert, which only covered
+// unknown-ca) so a deliberate "trust this dev server" toggle also survives the
+// hostname mismatch that self-signed certs almost always have. Security trade-off:
+// it disables cert verification for that server entirely, hence the explicit,
+// per-server opt-in (docs/41).
+const svnTrustFailures = "--trust-server-cert-failures=unknown-ca,cn-mismatch,expired,not-yet-valid,other"
+
+// svnAuthedArgs builds the full argv (after "svn") for a network op: the
+// non-interactive / no-auth-cache flags, an optional cert-trust flag, optional
+// --username, then the subcommand args. --password-from-stdin (added here when
+// authed) means the password is fed on stdin, never in the argv. Pure, so the flag
+// wiring is unit-tested without spawning svn.
+func svnAuthedArgs(creds *secrets.SVNCred, args ...string) (full []string, authed bool) {
+	full = []string{"--non-interactive", "--no-auth-cache"}
+	if creds != nil && creds.TrustCert {
+		full = append(full, svnTrustFailures)
+	}
+	authed = creds != nil && creds.Username != ""
+	if authed {
+		full = append(full, "--username", creds.Username, "--password-from-stdin")
+	}
+	return append(full, args...), authed
+}
+
 // runSvnAuthed runs a network svn subcommand (checkout/update), injecting basic
 // auth via --username + --password-from-stdin when creds are present. --no-auth-cache
 // keeps the password out of ~/.subversion/auth (no plaintext on disk). Returns
 // trimmed combined output so the handler can surface svn's own message verbatim.
 func runSvnAuthed(ctx context.Context, creds *secrets.SVNCred, args ...string) (string, error) {
-	full := []string{"--non-interactive", "--no-auth-cache"}
-	authed := creds != nil && creds.Username != ""
-	if authed {
-		full = append(full, "--username", creds.Username, "--password-from-stdin")
-	}
-	full = append(full, args...)
+	full, authed := svnAuthedArgs(creds, args...)
 	cmd := exec.CommandContext(ctx, "svn", full...)
 	if authed {
 		cmd.Stdin = strings.NewReader(creds.Password + "\n")
@@ -168,20 +189,27 @@ func svnCredsFor(url string) *secrets.SVNCred {
 	return pickSvnCred(s.SVN, url)
 }
 
-// svnSaveCred upserts a basic-auth credential keyed by URL prefix into the
-// encrypted store (the "save credentials" opt-in of the checkout modal).
-func svnSaveCred(prefix, user, pass string) error {
+// svnSaveCred upserts an SVN store entry keyed by URL prefix. A non-empty user sets
+// the basic-auth credential (the "save credentials" opt-in of the checkout modal);
+// an empty user leaves any existing username/password untouched so a trust-only
+// entry can be written without a password. trust is OR-ed in (never cleared here) so
+// `svn update` of a self-signed server keeps trusting its cert even when the
+// password was not saved.
+func svnSaveCred(prefix, user, pass string, trust bool) error {
 	s, err := secrets.Load()
 	if err != nil {
 		return err
 	}
 	for i := range s.SVN {
 		if s.SVN[i].URLPrefix == prefix {
-			s.SVN[i].Username, s.SVN[i].Password = user, pass
+			if user != "" {
+				s.SVN[i].Username, s.SVN[i].Password = user, pass
+			}
+			s.SVN[i].TrustCert = s.SVN[i].TrustCert || trust
 			return s.Save()
 		}
 	}
-	s.SVN = append(s.SVN, secrets.SVNCred{URLPrefix: prefix, Username: user, Password: pass})
+	s.SVN = append(s.SVN, secrets.SVNCred{URLPrefix: prefix, Username: user, Password: pass, TrustCert: trust})
 	return s.Save()
 }
 
@@ -206,7 +234,11 @@ func svnForgetCred(prefix string) error {
 func svnConnStatus(s *secrets.Data) []map[string]string {
 	list := []map[string]string{}
 	for _, c := range s.SVN {
-		list = append(list, map[string]string{"urlPrefix": c.URLPrefix, "username": c.Username})
+		e := map[string]string{"urlPrefix": c.URLPrefix, "username": c.Username}
+		if c.TrustCert {
+			e["trustCert"] = "1"
+		}
+		list = append(list, e)
 	}
 	return list
 }
@@ -233,12 +265,13 @@ func deriveSvnName(url string) string {
 }
 
 type svnCheckoutReq struct {
-	URL      string `json:"url"`
-	Subpath  string `json:"subpath"`
-	Name     string `json:"name"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Save     bool   `json:"save"`
+	URL       string `json:"url"`
+	Subpath   string `json:"subpath"`
+	Name      string `json:"name"`
+	Username  string `json:"username"`
+	Password  string `json:"password"`
+	Save      bool   `json:"save"`
+	TrustCert bool   `json:"trustCert"` // accept a self-signed / untrusted server cert (docs/41)
 }
 
 // svnBuildURL joins a base repo URL with an optional subpath (SVN addresses
@@ -294,16 +327,33 @@ func handleSvnCheckout(w http.ResponseWriter, r *http.Request) {
 	} else {
 		creds = svnCredsFor(full)
 	}
+	// Cert trust is a per-server property (not the credential): overlay the request
+	// flag onto whatever creds we resolved, allocating a trust-only entry when there
+	// is no auth at all (a public self-signed repo).
+	if req.TrustCert {
+		if creds == nil {
+			creds = &secrets.SVNCred{URLPrefix: base}
+		}
+		creds.TrustCert = true
+	}
 	out, err := runSvnAuthedHealing(context.Background(), dir, creds, "checkout", full, dir)
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		httpx.WriteErr(w, http.StatusBadGateway, "checkout_failed", fmt.Sprintf("%v: %s", err, out))
 		return
 	}
-	// Save only after a successful checkout proves the creds work (base URL as the
-	// prefix, so a later `svn update` of any subtree matches it).
-	if req.Save && creds != nil && creds.Username != "" {
-		_ = svnSaveCred(base, creds.Username, creds.Password)
+	// Persist only after a successful checkout proves it works (base URL as the
+	// prefix, so a later `svn update` of any subtree matches it). The password is
+	// saved only on the explicit Save opt-in; cert trust — not a secret — persists
+	// whenever it was used, so updates keep trusting the server's cert.
+	if creds != nil {
+		saveUser, savePass := "", ""
+		if req.Save && creds.Username != "" {
+			saveUser, savePass = creds.Username, creds.Password
+		}
+		if saveUser != "" || creds.TrustCert {
+			_ = svnSaveCred(base, saveUser, savePass, creds.TrustCert)
+		}
 	}
 	httpx.WriteJSON(w, http.StatusCreated, svnRepoEntry(name, dir))
 }
