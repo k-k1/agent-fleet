@@ -181,6 +181,44 @@ func TestAboutTierRe(t *testing.T) {
 	}
 }
 
+func TestDisplayModel(t *testing.T) {
+	cases := map[string]string{
+		"":                        "Auto",
+		"auto":                    "Auto",
+		"default[]":               "Auto",
+		"glm-5.2[reasoning=high]": "glm-5.2",
+		"claude-opus-4-8[thinking=true,fast=false]": "claude-opus-4-8",
+		"composer-2.5":                  "composer-2.5", // dash 形式はそのまま
+		"claude-opus-4-8-thinking-high": "claude-opus-4-8-thinking-high",
+	}
+	for in, want := range cases {
+		if got := displayModel(in); got != want {
+			t.Errorf("displayModel(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestStampModelAssistantOnly(t *testing.T) {
+	turns := parseTranscript(writeFixture(t, transcriptFixture))
+	stampModel(turns, "composer-2.5")
+	for _, tn := range turns {
+		if tn.Role == "assistant" && tn.Model != "composer-2.5" {
+			t.Errorf("assistant turn not stamped: %+v", tn)
+		}
+		if tn.Role == "user" && tn.Model != "" {
+			t.Errorf("user turn must not carry a model: %+v", tn)
+		}
+	}
+	// 空モデルは no-op（既存を汚さない）。
+	turns2 := parseTranscript(writeFixture(t, transcriptFixture))
+	stampModel(turns2, "")
+	for _, tn := range turns2 {
+		if tn.Model != "" {
+			t.Errorf("empty model must not stamp: %+v", tn)
+		}
+	}
+}
+
 func TestFreeUsableModels(t *testing.T) {
 	// Free では named model（gpt/claude/grok…）を隠し composer 系のみ残す。
 	full := parseModels(`Available models
