@@ -1133,8 +1133,11 @@ VERSION=0.1.0 deploy/release/publish-dist.sh --seed
 ## 35.10 v0.1.1 公開後の機能差分（次リリースの README／リリースノート素材・2026-07-23 整理）
 
 範囲: **v0.1.1（merge `790f756`・2026-07-21 publish）→ develop `d3b37a5`（2026-07-23）**。
-dist README（en/ja）への反映状況を各項に付記する（公開済み 0.1.1 の README には未掲載＝
-次リリースの `--seed` で公開される）。
+この間に **v0.1.2 を publish 済み**（2026-07-22・rootfs `1aadff3b24b7`・下記「修正」の
+claude 入力全断/curl --retry を反映した hotfix）。ただし **dist repo の README seed は
+0.1.1 時点のまま**（公開 README に「Scheduled execution」「Automatic updates」等は未掲載
+— 2026-07-23 に raw.githubusercontent の実物で確認）＝本節の README 反映分は次の publish
+`--seed` でまとめて公開される。
 
 ### 新機能（設計 docs あり・README 反映済み）
 
@@ -1191,8 +1194,9 @@ dist README（en/ja）への反映状況を各項に付記する（公開済み 
 ### 修正（配布物に効くもの）
 
 - **claude 入力全断の恒久修正** `GIT_TERMINAL_PROMPT=0`/`GCM_INTERACTIVE=never`（§35.9-10。
-  次の rootfs 再ビルド/publish で恒久反映）。
-- **boot-install/オンデマンド DL の一過性失敗を curl --retry で自己修復**（§35.9-9）。
+  **v0.1.2 の rootfs で配布済み**）。
+- **boot-install/オンデマンド DL の一過性失敗を curl --retry で自己修復**（§35.9-9。
+  同じく v0.1.2 で配布済み）。
 - **Remote Control 既定 OFF**（既存 WS にも一度だけ適用）。
 - **install-compose.sh 新設**（compose 版の取得ヘルパー・README 反映済み・§35.3.2）。
 
