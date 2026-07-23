@@ -745,7 +745,10 @@ export function MirrorView({
           // re-sent from the top — replace, don't append. Otherwise append new turns.
           if (d.reset) {
             setTurns(Array.isArray(d.messages) ? d.messages : []);
-            firstLineRef.current = 0; // reset re-sends from the top: nothing older to page
+            // Servers now resend a TAIL window on reset and set firstLine/hasMore
+            // (handled by the shared block below); 0/false is the fallback for a
+            // whole-file reset from an older server (fork preview still sends one).
+            firstLineRef.current = 0;
             setHasMore(false);
             ttsHandleRef.current?.stop("replaced"); // 本文 DOM の入れ替え。全体停止にはしない
             ttsAutoSeenRef.current = null; // idx が振り直されるので基準も取り直す

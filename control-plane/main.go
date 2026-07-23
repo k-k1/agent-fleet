@@ -274,7 +274,7 @@ func main() {
 	}
 
 	log.Printf("control-plane %s on %s (console=%s, ws image=%s, auth=%s, runtime=%s)", buildVersion, cfg.addr, cfg.consoleDir, cfg.mgr.image, cfg.mgr.authMode, rtProfile)
-	srv := &http.Server{Addr: cfg.addr, Handler: logRequests(gzipMiddleware(handler)), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Addr: cfg.addr, Handler: logRequests(gzipMiddleware(etagJSON(handler))), ReadHeaderTimeout: 10 * time.Second}
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
