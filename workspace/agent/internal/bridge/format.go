@@ -106,6 +106,8 @@ func kindLabel(kind string) string {
 		return "opencode"
 	case "copilot":
 		return "GitHub Copilot"
+	case "cursor":
+		return "Cursor"
 	case "agy":
 		return "Antigravity"
 	}

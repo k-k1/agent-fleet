@@ -689,6 +689,14 @@ export const en: Record<keyof typeof ja, string> = {
   "agents.copilot_rtk_note":
     "copilot routes shell commands through rtk via a preToolUse hook ($COPILOT_HOME/hooks) — deterministic, unlike codex/agy's instruction-based approach. Applies to new sessions.",
   "agents.copilot_unsupported": "Not available in this container image ({reason})",
+  "agents.cursor_desc": "Sign in to Cursor. Approve in the browser — no code to paste.",
+  "agents.cursor_connect": "Sign in to Cursor",
+  "agents.cursor_connect_note": "Opens an authorize link; approve it in your browser.",
+  "agents.cursor_auth_failed": "Failed to start Cursor sign-in: {msg}",
+  "agents.cursor_hint_1": "You need a Cursor account. Manage plans and billing in your ",
+  "agents.cursor_dashboard": "Cursor dashboard",
+  "agents.cursor_hint_2": ".",
+  "agents.cursor_unsupported": "Not available in this container image ({reason})",
   "agents.remote_control": "Remote control",
   "agents.notifications": "Notifications",
   "agents.codex_auth_failed": "Failed to start Codex auth: {msg}",
@@ -999,6 +1007,7 @@ export const en: Record<keyof typeof ja, string> = {
   // kindLabel values (claude/codex/opencode/shell/ssm) stay untranslated (proper nouns).
   "agent.launch_hint.claude": "Launch Claude Code",
   "agent.launch_hint.codex": "Launch Codex",
+  "agent.launch_hint.cursor": "Launch Cursor",
   "agent.launch_hint.opencode": "Launch OpenCode",
   "agent.launch_hint.agy": "Launch Antigravity (experimental)",
   "agent.launch_hint.copilot": "Launch GitHub Copilot",

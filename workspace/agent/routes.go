@@ -7,6 +7,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 )
 
@@ -213,6 +214,11 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /connections/agy/start", agy.HandleStart)
 	mux.HandleFunc("POST /connections/agy/complete", agy.HandleComplete)
 	mux.HandleFunc("DELETE /connections/agy", agy.HandleDisconnect)
+	// cursor login（docs/40 Track C）: 専用フロー型（claude/agy 同型）。ただしコード
+	// 貼付は無く、ブラウザ承認をポーリングする（codex device-auth 型）ので start→poll。
+	mux.HandleFunc("POST /connections/cursor/start", cursor.HandleStart)
+	mux.HandleFunc("POST /connections/cursor/poll", cursor.HandlePoll)
+	mux.HandleFunc("DELETE /connections/cursor", cursor.HandleDisconnect)
 	mux.HandleFunc("PUT /connections/pagerduty", handlePutPagerDutyConn)
 	mux.HandleFunc("DELETE /connections/pagerduty", handleDeletePagerDutyConn)
 	mux.HandleFunc("PUT /connections/grafana", handlePutGrafanaConn)

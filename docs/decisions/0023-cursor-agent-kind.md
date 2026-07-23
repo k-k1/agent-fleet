@@ -1,8 +1,9 @@
 # 0023. `kind=cursor`（Cursor CLI）を第7のエージェント種別として追加する
 
-- 状態: **採用（Track A＋A2＋B 実装済み）**（2026-07-23。Track 0 プローブ合格→read 層＋TUI＋
-  managed driver＋配備を実装・`go build`/`go test`＋`AF_CURSOR_LIVE=1` 実 CLI 契約テスト緑）。
-  残 C/D＋arm64 実機実行確認。
+- 状態: **採用（Track A＋A2＋B＋C 実装済み）**（2026-07-23。Track 0 プローブ合格→read 層＋
+  TUI＋managed driver＋配備＋CP/Console を実装・`go build`/`go test`＋`AF_CURSOR_LIVE=1`
+  実 CLI 契約テスト＋Console typecheck/i18n:lint/vitest/vite build 緑）。残 D＋arm64 実機実行確認。
+  Track C で **v1 は login-only を確定**（API キー手動登録は Track D 送り — 下記決定 5 追記）。
   実装計画・実測・Track A の改良2点（自己採番 UUID／JSONL 末尾状態）・Track A2 の ACP 契約
   （`cursor-agent acp` 起動・session/update からの転写メモリ構築・set_mode/cancel 実測）は
   [docs/40](../40-cursor-agent-kind.md)。
@@ -33,9 +34,16 @@ Cursor CLI（`cursor-agent`/`agent`、Anysphere）は `agent acp`（ACP = JSON-R
    踏んだ教訓を適用。TUI 文字列にも依存しない。
 4. **chat ID は `agent create-chat` で AF 側から事前採番**し sid-store に保存
    （copilot `--session-id` と同型 — agy の resume ID 捕獲問題を構造的に回避）。
-5. **認証は専用フロー型**: `NO_OPEN_BROWSER=1 agent login`（URL 抽出 → claude/agy 型
-   start/complete）＋ `CURSOR_API_KEY` 手動登録（codex 型）の併設。資格情報の保存先は
-   非公開のためプローブで特定し `fs.go` denylist（`.cursor`）で保護。
+5. **認証は専用フロー型**: `NO_OPEN_BROWSER=1 agent login`（URL 抽出）。資格情報の保存先は
+   `~/.config/cursor/auth.json`（プローブで特定）で `fs.go` denylist（`.config/cursor`＋
+   `.cursor`）保護。**Track C で v1 は login-only に確定**（当初併設予定だった
+   `CURSOR_API_KEY` 手動登録は Track D 送り）: ①cursor CLI は API キーの永続化コマンドが
+   無く（`CURSOR_API_KEY`/`--api-key` のアンビエント利用のみ）、②活かすには各 exec への
+   env 注入が要るが **TUI(tmux ペイン)には安全な注入シームが無く Program 文字列へ埋めると
+   `ps` にキーが露出**（平文資格禁止に抵触）、③一方 login フロー（auth.json アンビエント）は
+   TUI/managed/status/models 全経路を env 注入ゼロで賄うため。**login は code paste ではなく
+   start→poll**（ブラウザ承認を CLI が自己ポーリング — codex device-auth 型。claude/agy の
+   pasted code とは異なる）。
 6. **モデルカタログは `agent models` によるアカウント連動ライブ取得**（公式コマンドが
    あるため copilot のような TUI スクレイプは不要見込み）。
 7. **WS バー使用量チップは v1 不採用**: プラン残量の公式 API/CLI が存在せず、非公式
@@ -67,4 +75,11 @@ Cursor CLI（`cursor-agent`/`agent`、Anysphere）は `agent acp`（ACP = JSON-R
 
 ## 結果
 
-（実装後に記載。トラック分割・教訓反映表・プローブ一覧は docs/40。）
+- Track A/A2/B/C 実装済み（2026-07-23）。Track C は auth.go の login start/poll/disconnect
+  ＋両 routes.go 二重登録＋mcp_stdio.go/CP mcp.go の kind enum 総ざらい＋bridge kindLabel＋
+  Console（union/SESSION_KINDS・registry descriptor 全 caps 明示・tokens.css/5 色クラスの
+  cursor twin・AgentsTab CursorCard・settings.ts/agentModels.ts・i18n ja/en）。全テスト緑
+  （cursor 12・agent+bridge 335・CP 222／Console typecheck・i18n:lint・vitest 392・vite build）。
+- 残: Track D（API キー手動登録・使用量チップ・rtk hook seam・headless チャット・画像添付等）と
+  arm64 実機起動、実フリート再ビルド後の実機目視。詳細・トラック分割・教訓反映表・プローブ一覧は
+  [docs/40](../40-cursor-agent-kind.md)。
