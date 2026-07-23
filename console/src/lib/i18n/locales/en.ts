@@ -978,6 +978,9 @@ export const en: Record<keyof typeof ja, string> = {
   "keys.kt.termPrioLabel": "Prefer the terminal over the app while the terminal is focused",
   "keys.kt.termPrioNote":
     "When on, every Ctrl-key goes to the terminal (shell) while it has focus. Only the leader (rebindable under “App-wide” below) stays live, and from it the command menu / palette reach every action. Handy when using tmux or an editor inside the terminal.",
+  "keys.kt.shellPassLabel": "Pass all keys to shell / SSM terminals (incl. Ctrl+K, Ctrl+P)",
+  "keys.kt.shellPassNote":
+    "When on, a focused shell or SSM terminal becomes a pure terminal: unlike the option above, even the leader (Ctrl/⌘+K) and palette (Ctrl/⌘+P) are passed through, so Ctrl+K (kill-line), Ctrl+P (previous command) and the like reach the shell. Only shell/SSM terminals are affected; agent terminals are unchanged. To use app shortcuts again, focus another pane. Default off.",
   "keys.kt.assignTitle": "Shortcut assignments",
   "keys.kt.resetAll": "Reset all to defaults",
   "keys.kt.assignNote":
@@ -1736,6 +1739,8 @@ export const en: Record<keyof typeof ja, string> = {
   "start.register_there": "to register one.",
   "start.ssm_search_ph": "Search by host name / instance ID…",
   "start.select_host": "— select a host —",
+  "start.quick_connect": "Connect to this host",
+  "start.frequent_hosts": "Frequently used",
   "start.no_matching_hosts": "No matching registered hosts.",
   "start.force_relogin": "Force re-login (aws sso logout → login even if cached)",
   "start.ssm_auth_note":

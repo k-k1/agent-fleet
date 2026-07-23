@@ -224,6 +224,10 @@ type createReq struct {
 	Folder string `json:"folder"`
 	// SSM (kind=ssm) coordinates, resolved and forwarded by the Control Plane from a
 	// host bookmark (control-plane/ssm.go). No secrets — SSO login happens in-pane.
+	// SSMAlias: the host bookmark's alias (CP disambiguates it with the profile when it
+	// collides with another host). Used to default a kind=ssm session's Title to
+	// "{alias} @MMDD-HHMM" when the client sent no title.
+	SSMAlias     string `json:"ssm_alias"`
 	SSMProfile   string `json:"ssm_profile"`
 	SSMTarget    string `json:"ssm_target"`
 	SSMDocument  string `json:"ssm_document"`
@@ -462,6 +466,11 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	name := allocSessionName(req.Dir)
 
 	kind := normalizeKind(req.Kind)
+	// An SSM session with no client title defaults to "{host alias} @MMDD-HHMM" — a
+	// human-meaningful "接続先＋日時" name (vs the generic {home-basename} @… fallback).
+	if kind == session.KindSSM && title == "" {
+		title = ssmDefaultTitle(req.SSMAlias, req.SSMTarget, time.Now())
+	}
 	label := ""
 	if agentOf(kind).Caps().UsesLabel {
 		label = sessionLabelFor(req.Dir, title)

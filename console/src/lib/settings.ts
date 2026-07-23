@@ -229,6 +229,10 @@ export interface Settings {
   // Per-SSM-host terminal color: host id → color id (see lib/termcolor SSM_HOST_COLORS).
   // Applied to a session's terminal background when it's created (sent as its color).
   ssmHostColors: Record<string, string>;
+  // Per-SSM-host usage tally: host id → { count = 起動回数, at = 最終起動 epoch ms }。
+  // 接続モーダルの「クイック接続」カードの並び（頻度優先・同数は最近優先）に使う。
+  // startSsm 成功時に更新（ssmHostColors と同じくクライアント settings のみで完結）。
+  ssmHostUsage: Record<string, { count: number; at: number }>;
   // 音声読み上げ（TTS, docs/24 + ADR0013）。エージェント回答を VOICEVOX（ずんだもん）で
   // 読み上げる。CP-native な /api/tts/synthesize を句点区切りで逐次呼ぶ（features/chat/tts.ts）。
   ttsEnabled: boolean;
@@ -341,6 +345,11 @@ export interface Settings {
   // ショートカットを抑止して端末へ素通しする（Ctrl 系を端末に渡す）。唯一 Leader（既定 Ctrl/⌘+K・
   // 再割当可）だけは残し、そこから which-key／パレットで全コマンドに到達できる。既定 OFF（capture 優先）。
   terminalPriority: boolean;
+  // shell/SSM 端末へのキー素通し（docs/29）。ON のとき、shell・ssm 端末にフォーカスがある間は
+  // terminalPriority と違い Leader（Ctrl/⌘+K）とパレット（Ctrl/⌘+P）も含めて全アプリショートカットを
+  // 抑止し、Ctrl+K（kill-line）／Ctrl+P（履歴前へ）などをそのまま xterm/PTY へ渡す＝純ターミナル。
+  // 対象は shell/ssm のみ（エージェント端末は従来どおり）。既定 OFF。復帰はマウスや他ペインクリック。
+  shellTermPassthrough: boolean;
 }
 
 // The pinned fallback model. Used as the seeded global default and as resolveModel's
@@ -448,6 +457,8 @@ const DEFAULTS: Settings = {
   readerSize: 17,
   keybindings: {},
   terminalPriority: false,
+  shellTermPassthrough: false,
+  ssmHostUsage: {},
 };
 
 // VOICEVOX ずんだもんのスタイル（speaker 番号 → ラベル）。設定 UI の話者選択に使う。
