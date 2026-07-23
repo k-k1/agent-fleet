@@ -21,6 +21,7 @@ export interface SvnCheckoutRequest {
   username?: string;
   password?: string;
   save?: boolean;
+  trustCert?: boolean;
 }
 
 export async function cloneRepo(
@@ -80,6 +81,7 @@ export async function svnCheckout(
       username: req.username || "",
       password: req.password || "",
       save: !!req.save,
+      trustCert: !!req.trustCert,
     });
     if (res && res.error) {
       await refreshRepos();

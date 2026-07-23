@@ -2090,6 +2090,8 @@ export const ja = {
   "rp.svn_password": "パスワード（任意）",
   "rp.svn_save": "認証情報を保存",
   "rp.svn_save_hint": "ユーザー名／パスワードを暗号化して保存し、以後の更新で再利用します。",
+  "rp.svn_trust": "自己署名証明書を信頼",
+  "rp.svn_trust_hint": "このサーバの証明書検証を無効化します（自己署名・不明な CA・ホスト名不一致を許可）。開発用サーバ向け。以後の更新でも信頼を継続します。",
   "rp.svn_checkout": "チェックアウト",
   "rp.svn_checkout_failed": "チェックアウトに失敗: {err}",
   "rp.svn_update_failed": "更新に失敗: {err}",

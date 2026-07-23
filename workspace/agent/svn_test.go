@@ -74,6 +74,36 @@ func TestPickSvnCred(t *testing.T) {
 	}
 }
 
+func TestSvnAuthedArgs(t *testing.T) {
+	has := func(a []string, s string) bool {
+		for _, x := range a {
+			if x == s {
+				return true
+			}
+		}
+		return false
+	}
+	// No creds: base flags only, no auth, no trust.
+	got, authed := svnAuthedArgs(nil, "checkout", "url", "dir")
+	if authed || has(got, svnTrustFailures) || has(got, "--username") {
+		t.Errorf("nil creds should add no auth/trust: %v authed=%v", got, authed)
+	}
+	// Trust only (no username): trust flag present, still no --username / not authed.
+	got, authed = svnAuthedArgs(&secrets.SVNCred{TrustCert: true}, "update", "dir")
+	if authed || !has(got, svnTrustFailures) || has(got, "--username") {
+		t.Errorf("trust-only creds wrong: %v authed=%v", got, authed)
+	}
+	// Auth + trust: both wired, password never in argv.
+	got, authed = svnAuthedArgs(&secrets.SVNCred{Username: "u", Password: "secret", TrustCert: true}, "checkout", "url", "dir")
+	if !authed || !has(got, svnTrustFailures) || !has(got, "--username") || !has(got, "--password-from-stdin") || has(got, "secret") {
+		t.Errorf("auth+trust wrong: %v authed=%v", got, authed)
+	}
+	// Order: subcommand args come last (svn wants global options before the subcommand).
+	if got[len(got)-3] != "checkout" || got[len(got)-1] != "dir" {
+		t.Errorf("subcommand args not trailing: %v", got)
+	}
+}
+
 // TestSvnCheckoutFileRepo exercises the svn runner + info/dirty/cleanup against a
 // local file:// repository — no network, no auth, no secrets store. Skipped when
 // svn/svnadmin are absent (e.g. the native runtime relies on host tools).

@@ -68,6 +68,7 @@ export function NewRepoModal({ onClose, onClone, onSvnCheckout, repos = [] }: Ne
   const [svnUser, setSvnUser] = useState("");
   const [svnPass, setSvnPass] = useState("");
   const [svnSave, setSvnSave] = useState(false);
+  const [svnTrust, setSvnTrust] = useState(false);
   const [svnName, setSvnName] = useState("");
   const [svnNameEdited, setSvnNameEdited] = useState(false);
   const svnDerived = svnUrl.trim() ? deriveSvnName(svnUrl.trim(), subpath) : "";
@@ -90,6 +91,7 @@ export function NewRepoModal({ onClose, onClone, onSvnCheckout, repos = [] }: Ne
         username: svnUser.trim(),
         password: svnPass,
         save: svnSave && !!svnUser.trim(),
+        trustCert: svnTrust,
       });
       onClose?.();
       return;
@@ -199,6 +201,13 @@ export function NewRepoModal({ onClose, onClone, onSvnCheckout, repos = [] }: Ne
                 </span>
               </label>
             )}
+            <label className="ui-field" style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
+              <input type="checkbox" checked={svnTrust} onChange={(e) => setSvnTrust(e.target.checked)} />
+              <span>
+                {tr("rp.svn_trust")}
+                <span className="ui-field-hint"> — {tr("rp.svn_trust_hint")}</span>
+              </span>
+            </label>
             <div className="ui-field">
               <span className="ui-field-label">{tr("rp.folder_name")}</span>
               <input

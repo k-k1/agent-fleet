@@ -43,5 +43,10 @@ SVN に存在せず、社内 SVN サーバは **URL ＋ 基本認証**で十分�
   svn 行の update/cleanup・worktree 抑止）。clone/閲覧/セッション起動の git 経路は無改造。
 - **限界（意図）**: セッション内でエージェントが自分で叩く `svn`（update/commit）は透過認証されない。
   REST 経路（Console の更新ボタン）は creds を注入するが、対話 svn は creds を都度供給する必要がある。
-- **限界（環境）**: 自己署名証明書の SVN サーバは非対話で失敗しうる（`--trust-server-cert` は未対応・将来）。
-  native(WSL) ランタイムはホストに `svn` が要る（不在時は `svn_missing` で明示エラー）。
+- **自己署名／未信頼証明書はサーバ単位の opt-in で信頼**: 非対話では既定で失敗するので、「自己署名証明書を
+  信頼」opt-in で `--trust-server-cert-failures=unknown-ca,cn-mismatch,expired,not-yet-valid,other`（旧
+  `--trust-server-cert` のフルセット版）を付与する。証明書信頼は秘密ではなくサーバ属性なので認証の保存とは
+  独立に扱い、checkout 時に必ず永続化して以後の update でも継続する（認証なしの公開自己署名は username 空の
+  trust-only エントリ）。トレードオフ＝そのサーバの証明書検証は無効化されるため、明示・サーバ単位の opt-in に
+  留める。
+- **限界（環境）**: native(WSL) ランタイムはホストに `svn` が要る（不在時は `svn_missing` で明示エラー）。
