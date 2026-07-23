@@ -27,6 +27,7 @@ import { TtsTab } from "./TtsTab.tsx";
 import { GitTab } from "./GitTab.tsx";
 import { SsmTab } from "./SsmTab.tsx";
 import { OpsTab } from "./OpsTab.tsx";
+import { ChatTab } from "./ChatTab.tsx";
 import { TokensTab } from "./TokensTab.tsx";
 import { DangerTab } from "./DangerTab.tsx";
 import { InternalReposTab } from "./InternalReposTab.tsx";
@@ -52,6 +53,7 @@ const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
       ["agents", "set.tab_agents"],
       ["git", "set.tab_git"],
       ["ops", "set.tab_ops"],
+      ["chat", "set.tab_chat"],
       ["tokens", "set.tab_tokens"],
     ],
   },
@@ -165,6 +167,7 @@ export function SettingsDialog() {
             {section === "env" && <EnvTab />}
             {section === "ssm" && <SsmTab />}
             {section === "ops" && <OpsTab />}
+            {section === "chat" && <ChatTab />}
             {section === "tokens" && <TokensTab />}
             {section === "internalrepos" && <InternalReposTab />}
             {section === "danger" && <DangerTab />}
