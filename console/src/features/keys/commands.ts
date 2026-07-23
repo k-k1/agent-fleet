@@ -30,6 +30,9 @@ import { toggleTtsPlayback } from "../../core/store/tts.ts";
 import { paneViewActions } from "../viewer/paneViewActions.ts";
 import { langFor, imageFormat } from "../../lib/filemeta.ts";
 import { focusPaneContent, focusRegion } from "./focus.ts";
+import { api, apiJSON } from "../../core/api/client.ts";
+import { toast } from "../../ui/toast.ts";
+import { t } from "../../lib/i18n/index.ts";
 
 const getLayout = () => useLayoutStore.getState().layout;
 const layoutStore = () => useLayoutStore.getState();
@@ -99,6 +102,37 @@ function toggleTheme(): void {
   setSetting("theme", getSettings().theme === "light" ? "dark" : "light");
 }
 
+// Toggle a chat-bridge service's notification master (Discord/Slack) from the keyboard —
+// same effect as the OnOff in Settings › Notifications. There's no always-mounted store for
+// the connection, so fetch it live to learn the current state, then PUT the flipped
+// notifyOff, resending the other fields the backend PUT would otherwise overwrite (mirrors
+// NotificationsTab.setNotify). No-ops with a hint when the service isn't connected.
+async function toggleChatNotify(kind: "discord" | "slack"): Promise<void> {
+  const name = kind === "slack" ? "Slack" : "Discord";
+  const conns = await api("api/connections");
+  const st = conns && !conns.error ? conns[kind] : null;
+  if (!st?.connected) {
+    toast(t("keys.toast.notifyNoConn", { name }), { kind: "info" });
+    return;
+  }
+  const wasOn = st.notify !== false; // notifications currently enabled?
+  const res = await apiJSON(`api/connections/${kind}`, "PUT", {
+    // token + destination omitted → the backend reuses the stored connection.
+    events: Array.isArray(st.events) ? st.events : [],
+    threads: !!st.threads,
+    receive: !!st.receive,
+    fullText: !!st.fullText,
+    mirrorInput: st.mirrorInput !== false,
+    mentionUserId: st.mentionUserId || "",
+    notifyOff: wasOn, // flip: on → off, off → on
+  });
+  if (res && res.error) {
+    toast(t("common.save_failed_msg", { msg: String(res.error.message || res.error) }));
+    return;
+  }
+  toast(t(wasOn ? "keys.toast.notifyOff" : "keys.toast.notifyOn", { name }), { kind: "success" });
+}
+
 // Leader groups (Leader → group key → action). `title` is an i18n key (resolved for
 // display by cmdLabel; see labels.ts). Titles show in the which-key overlay.
 export const GROUPS: Group[] = [
@@ -106,7 +140,7 @@ export const GROUPS: Group[] = [
   { id: "s", title: "keys.grp.session" },
   { id: "w", title: "keys.grp.workspace" },
   { id: "g", title: "keys.grp.open" },
-  { id: "n", title: "keys.grp.memo" },
+  { id: "n", title: "keys.grp.notify" },
   { id: "v", title: "keys.grp.view" },
 ];
 
@@ -147,14 +181,13 @@ export const ALL_COMMANDS: Command[] = [
   // ---- Session (leader s) ----
   { id: "session.new", title: "keys.cmd.sessionNew", seq: "s n", run: () => useSessionsStore.getState().openStart() },
 
-  // ---- Memo (leader n) ----
-  // A memo group (leader → n) rather than a single key: the top-level single key "m" is
-  // the voice read-aloud toggle (tts.toggle, m = mute), which stays instant. Memo takes a
-  // two-key path (n a = note→add) so it never competes with that fast toggle.
+  // ---- Memo (leader m = memo) ----
+  // The most-used quick action gets the top-level single key "m" (m = memo). The leader "n"
+  // group is now notifications (mute + Slack/Discord), so memo no longer needs its own group.
   {
     id: "memo.add",
     title: "keys.cmd.memoAdd",
-    seq: "n a",
+    seq: "m",
     run: () => {
       if (!useLeftRail.getState().open) useLeftRail.getState().toggle();
       useMemoStore.getState().requestCompose();
@@ -189,8 +222,12 @@ export const ALL_COMMANDS: Command[] = [
   { id: "open.usageAgy", title: "keys.cmd.openUsageAgy", seq: "g a", run: () => useUiOpen.getState().toggle("usage-agy") },
   { id: "open.resources", title: "keys.cmd.openResources", seq: "g r", run: () => useUiOpen.getState().toggle("resources") },
 
-  // ---- Media: toggle voice read-aloud (mnemonic m = mute). Shares TopBar's stop+OFF logic. ----
-  { id: "tts.toggle", title: "keys.cmd.ttsToggle", seq: "m", run: toggleTtsPlayback },
+  // ---- Notifications (leader n) — mute the voice read-aloud, or toggle a chat-bridge
+  // service's notification master. n m = mute (shares TopBar's stop+OFF logic); n s / n d
+  // flip Slack / Discord notifications (same effect as Settings › Notifications). ----
+  { id: "tts.toggle", title: "keys.cmd.ttsToggle", seq: "n m", run: toggleTtsPlayback },
+  { id: "notify.slack", title: "keys.cmd.slackToggle", seq: "n s", run: () => void toggleChatNotify("slack") },
+  { id: "notify.discord", title: "keys.cmd.discordToggle", seq: "n d", run: () => void toggleChatNotify("discord") },
 
   // ---- View / viewer (leader v, + Alt accelerators) — act on the active pane's
   // read-oriented view. Direct keys use Alt (not Ctrl): Ctrl+<letter> are the terminal's

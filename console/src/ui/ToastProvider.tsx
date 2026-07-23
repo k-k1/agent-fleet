@@ -6,11 +6,12 @@
 // Errors (role=alert) and any { persist:true } toast are logged to the notification center
 // via toastLog so they can be reviewed after leaving the screen; trivial toasts (copy 等)
 // stay purely ephemeral. Errors used to be sticky; they now auto-dismiss but persist.
-import { createContext, useCallback, useContext, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Icon } from "./Icon.tsx";
 import { useT } from "../lib/i18n/index.ts";
 import { pushToastLog } from "../lib/toastLog.ts";
+import { registerToastSink } from "./toast.ts";
 
 export type ToastKind = "error" | "warn" | "info" | "success";
 
@@ -66,6 +67,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     },
     [remove],
   );
+
+  // Expose this provider's toast to non-React callers (keyboard commands) while mounted.
+  useEffect(() => {
+    registerToastSink(toast);
+    return () => registerToastSink(null);
+  }, [toast]);
 
   return (
     <ToastCtx.Provider value={toast}>
