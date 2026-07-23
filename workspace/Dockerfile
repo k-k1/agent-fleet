@@ -53,8 +53,12 @@ RUN pip install --no-cache-dir uv \
 # BAKE_OPTIONAL_TOOLS=0 … chromium+CJK フォント・Go・awscli+SSM plugin・ops MCP 群を
 #   焼かない（サイズ理由・native rootfs 用。chromium の実行時ライブラリと
 #   fontconfig/DejaVu だけは残し、chromium 本体はオンデマンド DL — P2）。
-# 既定はどちらも 1 = 従来どおり全焼き込み（自社デプロイ・run-dev.sh は無変更）。
-ARG BAKE_AGENT_CLIS=1
+# 既定 BAKE_AGENT_CLIS=0 = プロプライエタリ CLI を焼かない安全既定。素の `docker build`
+#   でも再配布不可の CLI をイメージに含めないため、うっかり配布しても事故らない。CLI も
+#   焼いて初回起動を速くしたい自社デプロイは BAKE_AGENT_CLIS=1 を明示（run-dev.sh も対応）。
+# 既定 BAKE_OPTIONAL_TOOLS=1 = サイズ系ツール（chromium/CJK フォント・Go・awscli 等）は
+#   従来どおり焼き込み（ライセンス無関係・native lean rootfs だけが 0）。
+ARG BAKE_AGENT_CLIS=0
 ARG BAKE_OPTIONAL_TOOLS=1
 
 # mcp-grafana (official Grafana MCP server, Go single binary) baked for the ops
