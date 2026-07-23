@@ -67,7 +67,7 @@ chat bridge ([11](11-fleet-operator.md), [08](08-advanced.md)). ✓ = supported,
 | Runs in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
 | Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
-| Backs the assistant chat | ✓ | ✓ | — | — | ✓ | ✓ | — | — |
+| Usable as the assistant chat | ✓ | ✓ | — | — | ✓ | ✓ | — | — |
 | WS-bar usage / limit chip | ✓ | ✓ | — | ✓ | ✓ | — | — | — |
 
 ¹ copilot's model choice is plan-dependent (Free = Auto only).
