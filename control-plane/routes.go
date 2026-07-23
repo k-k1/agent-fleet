@@ -375,6 +375,10 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/repos/{name}/checkout", rest)
 	mux.HandleFunc("POST /api/repos/{name}/fetch", rest)
 	mux.HandleFunc("POST /api/repos/{name}/ff", rest)
+	// Subversion (docs/41) — checkout / update / cleanup, proxied to the Agent.
+	mux.HandleFunc("POST /api/repos/svn", rest)
+	mux.HandleFunc("POST /api/repos/{name}/svn-update", rest)
+	mux.HandleFunc("POST /api/repos/{name}/svn-cleanup", rest)
 	// Launch prompt templates (repo 起動 modal) — proxied to the Agent.
 	mux.HandleFunc("GET /api/repos/{name}/prompt-templates", rest)
 	// Source-control view + light edits (docs/17 P3-5) — proxied to the Agent.
@@ -468,6 +472,8 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/connections/agy/usage", rest)
 	mux.HandleFunc("PUT /api/connections/opencode", rest)
 	mux.HandleFunc("DELETE /api/connections/opencode/{env}", rest)
+	// SVN saved basic-auth creds (docs/41) — forget a stored server credential.
+	mux.HandleFunc("DELETE /api/connections/svn", rest)
 	// Codex auth — proxied to the Agent (codex owns auth.json; no public callback,
 	// device-auth polls OpenAI from inside the container).
 	mux.HandleFunc("POST /api/connections/codex/api-key", rest)

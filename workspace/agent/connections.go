@@ -58,6 +58,7 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		"cloudwatch": cloudwatchStatus(s),
 		"discord":    discordStatus(s),
 		"slack":      slackStatus(s),
+		"svn":        svnConnStatus(s), // saved SVN servers (urlPrefix + username; docs/41)
 	})
 }
 
