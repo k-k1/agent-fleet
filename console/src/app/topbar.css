@@ -235,6 +235,35 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 外観 popover header: title left, 詳細 link right */
+.appr-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px solid var(--border2, var(--border));
+}
+.appr-head .appr-head-title {
+  flex: 1;
+  min-width: 0;
+  border-bottom: none;
+}
+.appr-details {
+  flex-shrink: 0;
+  margin: 4px 6px 4px 0;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--link, var(--accent, #6b9fff));
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.appr-details:hover {
+  background: var(--hover-bg, var(--btn));
+}
 .acct-item {
   display: flex;
   align-items: center;

@@ -177,7 +177,21 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
           </button>
           {apprOpen && (
             <div className="acct-menu appr-menu" role="menu">
-              <div className="acct-email">{tr("topbar.appearance")}</div>
+              <div className="appr-head">
+                <div className="acct-email appr-head-title">{tr("topbar.appearance")}</div>
+                <button
+                  type="button"
+                  className="appr-details"
+                  role="menuitem"
+                  title={tr("topbar.appearance_details_title")}
+                  onClick={() => {
+                    setApprOpen(false);
+                    openSettings("display");
+                  }}
+                >
+                  {tr("topbar.appearance_details")}
+                </button>
+              </div>
               <div className="acct-theme">
                 <div className="ui-seg choice-seg acct-theme-seg">
                   {LOCALES.map((l) => (
