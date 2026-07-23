@@ -141,6 +141,56 @@ func TestClaudeDelegationPart(t *testing.T) {
 	}
 }
 
+// TestCollectInteractionAnswers models the reported "AUQ回答がミラーに反映されない" bug:
+// claude writes an AskUserQuestion tool_use at ASK time and its tool_result lands many
+// lines later (bookkeeping in between), so a live increment / page boundary can split them
+// and CollectTurns' window-local resolution leaves the question unanswered. The
+// whole-transcript map recovers the answer regardless of any window.
+func TestCollectInteractionAnswers(t *testing.T) {
+	lines := [][]byte{
+		[]byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"どちらにしますか"}]}}`),
+		[]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"q1","name":"AskUserQuestion","input":{"questions":[{"header":"範囲","question":"どれ","options":[{"label":"全部"},{"label":"一部"}]}]}}]}}`),
+		// Bookkeeping the CLI writes while the question is pending (a real ~10-min gap here).
+		[]byte(`{"type":"custom-title","title":"x"}`),
+		[]byte(`{"type":"mode","mode":"normal"}`),
+		[]byte(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"q1","content":"Your questions have been answered: \"どれ\"=\"全部\". You can now continue."}]}}`),
+		// A plan and a foreground/background delegation, to lock in the three tool classes.
+		[]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"p1","name":"ExitPlanMode","input":{"plan":"# Plan"}}]}}`),
+		[]byte(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"p1","content":"User approved the plan"}]}}`),
+		[]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"bg1","name":"Agent","input":{"description":"並列","prompt":"go","subagent_type":"Explore","run_in_background":true}}]}}`),
+		[]byte(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"bg1","content":"agent launched"}]}}`),
+	}
+	ans := CollectInteractionAnswers(lines)
+	if got := ans["q1"]; got != `Your questions have been answered: "どれ"="全部". You can now continue.` {
+		t.Errorf("question answer = %q", got)
+	}
+	if got := ans["p1"]; got != "User approved the plan" {
+		t.Errorf("plan answer = %q", got)
+	}
+	// A background delegation only ever gets a launch ack, never a final report — excluded,
+	// mirroring assistantParts' QID gating, so its card is never falsely marked completed.
+	if _, ok := ans["bg1"]; ok {
+		t.Errorf("background delegation must not be in the map: %v", ans["bg1"])
+	}
+	// The split that triggers the bug: a window with the question but NOT its tool_result
+	// yields an empty in-window Answer — which the map then covers.
+	split := CollectTurns(lines, 0, 4) // holds q1's tool_use (line 1), not its result (line 4)
+	var q *transcript.Part
+	for i := range split {
+		for pi := range split[i].Parts {
+			if split[i].Parts[pi].Kind == "question" {
+				q = &split[i].Parts[pi]
+			}
+		}
+	}
+	if q == nil || q.Answer != "" {
+		t.Fatalf("windowed question = %+v, want present with empty Answer", q)
+	}
+	if ans[q.QID] == "" {
+		t.Errorf("map must carry the answer for the split-out question qid %q", q.QID)
+	}
+}
+
 // TestQueuedCommandTurn checks that a mid-run steering prompt — logged only as an
 // attachment/queued_command event, never as a user line (claude ≥2.1.207) — parses
 // into a plain user turn, and that non-human / non-queued attachments stay invisible.
