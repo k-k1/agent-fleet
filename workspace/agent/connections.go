@@ -70,6 +70,7 @@ func discordStatus(s *secrets.Data) map[string]any {
 		return map[string]any{"connected": false}
 	}
 	m := map[string]any{"connected": true}
+	m["notify"] = !d.NotifyOff // master mute state (default on) for the 通知 toggle
 	if d.BotName != "" {
 		m["botName"] = d.BotName
 	}
@@ -202,6 +203,9 @@ type discordConnReq struct {
 	// A pointer so an omitted field means "default" (on) rather than false — the card
 	// always sends it, but an older/edit request that leaves it out keeps the default.
 	MirrorInput *bool `json:"mirrorInput"`
+	// NotifyOff is the master mute (個人設定 › 通知 / the card). A pointer so an omitted
+	// field preserves the stored value on an edit; the toggle sends it explicitly.
+	NotifyOff *bool `json:"notifyOff"`
 }
 
 // discordSnowflakeRe matches a Discord snowflake id — catches names/mentions
@@ -292,6 +296,11 @@ func handlePutDiscordConn(w http.ResponseWriter, r *http.Request) {
 	if req.MirrorInput != nil {
 		mirrorOff = !*req.MirrorInput
 	}
+	// Master mute (通知 ON/OFF). Preserve the stored value on an edit that omits it.
+	notifyOff := editing && s.Discord != nil && s.Discord.NotifyOff
+	if req.NotifyOff != nil {
+		notifyOff = *req.NotifyOff
+	}
 	creds := &secrets.DiscordCreds{Token: token, ChannelID: channelID, UserID: userID,
 		BotName: botName, Events: events, Lang: lang,
 		// Channel-mode extras (docs/37 P1.5 / P2a); meaningless for DM, so not stored there.
@@ -300,7 +309,8 @@ func handlePutDiscordConn(w http.ResponseWriter, r *http.Request) {
 		Receive: channelID != "" && req.Receive,
 		// Full-text mode (docs/37 全文ブリッジ) works in either destination mode —
 		// the body posts to the channel/thread or the DM alike.
-		FullText: req.FullText,
+		FullText:  req.FullText,
+		NotifyOff: notifyOff,
 		// Mirror opt-out is meaningful only alongside thread mode.
 		MirrorInputOff: channelID != "" && req.Threads && mirrorOff}
 	if channelID == "" {
@@ -321,14 +331,17 @@ func handlePutDiscordConn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res := discordStatus(s)
-	// Fire one synchronous test notification so "did it arrive?" is answered on
-	// the spot. The connection is saved either way — a failed test (e.g. missing
-	// channel permission) is surfaced to the card, not treated as a bad config.
-	if ps := bridge.Providers(s, nil, nil); len(ps) > 0 {
-		if err := ps[0].Send(bridge.Message{Kind: "bridge-test"}); err != nil {
-			res["testError"] = err.Error()
-		} else {
-			res["test"] = "sent"
+	// Fire one synchronous test notification on a FRESH connect so "did it arrive?" is
+	// answered on the spot — but NOT on a settings edit (the card auto-saves each toggle,
+	// so a test per change would spam the channel). Saved either way; a failed test (e.g.
+	// missing channel permission) is surfaced to the card, not treated as a bad config.
+	if !editing {
+		if ps := bridge.Providers(s, nil, nil); len(ps) > 0 {
+			if err := ps[0].Send(bridge.Message{Kind: "bridge-test"}); err != nil {
+				res["testError"] = err.Error()
+			} else {
+				res["test"] = "sent"
+			}
 		}
 	}
 	// docs/37 P3先取り: with receive + channel mode, stand up (or reuse) the dedicated

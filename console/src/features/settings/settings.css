@@ -842,6 +842,7 @@
 .p-badge.pb-bitbucket { background: #4a90e2; }
 .p-badge.pb-pagerduty { background: #06ac38; }
 .p-badge.pb-discord { background: #5865f2; }
+.p-badge.pb-slack { background: #4a154b; }
 .p-badge.pb-grafana { background: #f46800; }
 .p-badge.pb-cloudwatch { background: #e7157b; }
 .p-name {
