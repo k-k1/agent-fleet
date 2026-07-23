@@ -127,13 +127,49 @@ export const errText = (error: ApiError | string | null | undefined): string => 
 // plain-text body on some gateway errors. We fold both into the shape callers already
 // branch on — a 2xx with no body is an empty success ({}), any other empty/non-JSON
 // body becomes {error:{code,message}} so the UI shows a real message.
+// Conditional-GET layer: the CP tags JSON GET responses with a weak ETag and
+// answers a matching If-None-Match with an empty 304, so an unchanged poll costs
+// headers instead of a body (mobile). We remember the last {etag, parsed body}
+// per URL and replay the parsed body on 304. Callers therefore MUST treat api()
+// results as immutable — a 304 hands back the very same object as last time
+// (which also lets JSON-compare stores skip work by reference).
+const etagCache = new Map<string, { etag: string; json: unknown }>();
+const ETAG_CACHE_MAX = 200; // mirror delta URLs (?since=N) churn; keep the map bounded
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const api = (path: string, opts?: RequestInit): Promise<any> =>
-  fetch(rel(path), opts).then(async (r) => {
+export const api = (path: string, opts?: RequestInit): Promise<any> => {
+  const url = rel(path);
+  const method = (opts?.method ?? "GET").toUpperCase();
+  const cached = method === "GET" ? etagCache.get(url) : undefined;
+  if (cached) {
+    const headers = new Headers(opts?.headers);
+    headers.set("If-None-Match", cached.etag);
+    opts = { ...opts, headers };
+  }
+  return fetch(url, opts).then(async (r) => {
+    if (r.status === 304 && cached) {
+      etagCache.delete(url); // re-insert to refresh LRU position
+      etagCache.set(url, cached);
+      return cached.json;
+    }
     const text = await r.text();
     if (text) {
       try {
-        return JSON.parse(text);
+        const parsed = JSON.parse(text);
+        if (method === "GET" && r.ok) {
+          const etag = r.headers.get("ETag");
+          if (etag) {
+            etagCache.delete(url);
+            etagCache.set(url, { etag, json: parsed });
+            if (etagCache.size > ETAG_CACHE_MAX) {
+              for (const oldest of etagCache.keys()) {
+                etagCache.delete(oldest);
+                break;
+              }
+            }
+          }
+        }
+        return parsed;
       } catch {
         // Non-JSON body (plain-text proxy error, HTML error page): fall through
         // and synthesize a result from the HTTP status.
@@ -142,6 +178,7 @@ export const api = (path: string, opts?: RequestInit): Promise<any> =>
     if (r.ok) return {};
     return { error: { code: "http_" + r.status, message: text.trim() || r.status + " " + r.statusText } };
   });
+};
 
 // apiJSON is a convenience for the common "POST/PUT JSON body" shape.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
