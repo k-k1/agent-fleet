@@ -225,7 +225,7 @@ func scheduleNotifyStatus(status string) bool {
 		return true
 	}
 	switch status {
-	case "skipped_quota", "skipped_rate_limited", "skipped_membership_inactive":
+	case "skipped_quota", "skipped_rate_limited", "skipped_membership_inactive", "skipped_target_missing":
 		return true
 	}
 	return false

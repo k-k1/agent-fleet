@@ -140,6 +140,43 @@ type DiscordCreds struct {
 	MirrorInputOff bool `json:"mirrorInputOff,omitempty"`
 }
 
+// SlackCreds is the user's Slack chat-bridge connection (docs/37 Slack 追随), the
+// Socket-Mode twin of DiscordCreds. It needs TWO of the user's OWN tokens (no central
+// shared app, docs/37 契約3): BotToken (xoxb-) drives the Web API (post/react/update),
+// AppToken (xapp-, connections:write) opens the Socket-Mode WSS for receiving. Exactly one
+// destination: ChannelID posts to a channel; UserID DMs the bound Slack user. UserID is
+// also the identity binding of docs/37 契約5 (the receive path verifies replies/clicks
+// against it) AND the @mention target in channel mode — Slack has no guild-owner concept,
+// so one field serves both, unlike Discord's separate MentionUserID.
+//
+// Cached, non-secret fields (BotUserID/BotName/TeamName/DMChannelID) are resolved once at
+// connect time so the send path and the self-echo filter don't re-fetch. Threads groups
+// notifications into one thread per session (keyed by the root message ts — Slack threads
+// share the parent channel and have no separate id, so the store's Thread holds the ts).
+type SlackCreds struct {
+	BotToken    string   `json:"botToken"`
+	AppToken    string   `json:"appToken,omitempty"`    // xapp- (Socket Mode receive); only needed for Receive
+	ChannelID   string   `json:"channelId,omitempty"`   // channel destination (C…)
+	UserID      string   `json:"userId,omitempty"`      // bound user (U…): DM target + mention + identity binding
+	DMChannelID string   `json:"dmChannelId,omitempty"` // cache: IM channel resolved from UserID
+	BotUserID   string   `json:"botUserId,omitempty"`   // cache: to ignore the bot's own message echoes
+	BotName     string   `json:"botName,omitempty"`     // cache: bot account name for the UI
+	TeamName    string   `json:"teamName,omitempty"`    // cache: workspace name for the UI
+	Events      []string `json:"events,omitempty"`
+	Threads     bool     `json:"threads,omitempty"` // thread-per-session (channel mode only)
+	Lang        string   `json:"lang,omitempty"`    // notification language: "en" | "" (=ja)
+	// Receive opts into the Socket-Mode inbound WSS (docs/37 P2a): the bound user's thread
+	// replies route back into the session and button clicks are honored. Default off; needs
+	// the AppToken and bounds the daemon's memory to opted-in users only (docs/37「メモリ」).
+	Receive bool `json:"receive,omitempty"`
+	// FullText opts into the 全文ブリッジ (docs/37): the final assistant turn body rides the
+	// answer-ready push. Default off; secret-scrubbed and chunked to Slack's limit.
+	FullText bool `json:"fullText,omitempty"`
+	// MirrorInputOff opts OUT of echoing Console-typed prompts into the session thread
+	// (docs/37 Fix ②); stored inverted so the default is on (mirror both directions).
+	MirrorInputOff bool `json:"mirrorInputOff,omitempty"`
+}
+
 type Data struct {
 	Git         map[string]GitEntry    `json:"git"`                   // host -> https cred
 	GitIdentity map[string]GitIdentity `json:"gitIdentity,omitempty"` // host -> explicit commit identity
@@ -150,6 +187,7 @@ type Data struct {
 	Grafana     *GrafanaCreds          `json:"grafana,omitempty"`     // ops MCP credential (docs/25)
 	CloudWatch  *CloudWatchConn        `json:"cloudwatch,omitempty"`  // ops MCP settings (docs/25; no secret — AWS cred chain)
 	Discord     *DiscordCreds          `json:"discord,omitempty"`     // chat-bridge connection (docs/37)
+	Slack       *SlackCreds            `json:"slack,omitempty"`       // chat-bridge connection (docs/37 Slack 追随)
 }
 
 // agentSecretKey returns the 32-byte per-user key from AF_SECRET_KEY (hex), or
