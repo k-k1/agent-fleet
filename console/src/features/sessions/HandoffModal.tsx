@@ -1,14 +1,21 @@
 // HandoffModal — the unified "引き継ぎ" dialog. Replaces the per-target inline menu items
 // that only showed for a few kinds. It opens for ANY session that has a conversation
-// (caps.transcript), lets the user pick the target agent from the launchable+connected
-// kinds, and (via actions.handoff) opens an operator chat that fires the extraction turn
-// automatically — the assistant is called directly and comes back with a handoff proposal.
-import { useEffect, useMemo, useState } from "react";
+// (caps.transcript), lets the user pick the target agent, and (via actions.handoff) opens
+// an operator chat that fires the extraction turn automatically — the assistant is called
+// directly and comes back with a handoff proposal.
+//
+// The target picker is deliberately identical to the repo launch modal (same connected +
+// runsInDir agent set, same order, same `ui-seg big` seg-buttons). It reads the shared
+// connections cache the always-mounted repo rail warms, so the list appears instantly
+// instead of a beat late; it only self-fetches when the cache is still cold.
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { api } from "../../core/api/client.ts";
-import { AGENTS, agentOf, repoLaunchKinds } from "../../agents/registry.ts";
+import { agentOf, repoLaunchKinds } from "../../agents/registry.ts";
+import { getCachedConns, setCachedConns, subscribeConns } from "../repos/connsCache.ts";
+import { kindDisplayName } from "../../lib/sessionkind.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { displayName } from "../../lib/sessionview.ts";
 import type { Session, SessionKind, ConnectionsStatus } from "../../types/session.ts";
@@ -22,37 +29,39 @@ interface HandoffModalProps {
 
 export function HandoffModal({ session, actions, onClose }: HandoffModalProps) {
   const tr = useT();
-  const [conns, setConns] = useState<ConnectionsStatus | null>(null);
-  const [connsDone, setConnsDone] = useState(false);
+  const conns = useSyncExternalStore(subscribeConns, getCachedConns, getCachedConns);
+  const [tried, setTried] = useState(false); // a cold-cache self-fetch has settled
   const [note, setNote] = useState("");
   const [target, setTarget] = useState<SessionKind | "">("");
   const [busy, setBusy] = useState(false);
 
-  // Which agents can receive the handoff: a launchable kind (repoLaunchKinds, so ssm is
-  // out) that owns a conversation (caps.transcript, so shell is out) and is connected. The
-  // same auth gate the repo launch pickers use — an unauthenticated agent would fail on
-  // create_session, so don't offer it.
+  // Same agent set the launch modal offers: a connected, in-a-dir agent (runsInDir drops
+  // shell/ssm), in repoLaunchKinds order. Every such kind also owns a conversation, so it
+  // can be a handoff target.
   const targets = useMemo(
-    () => repoLaunchKinds.filter((k) => AGENTS[k].caps.transcript && !!conns && agentOf(k).available({ conns })),
+    () => repoLaunchKinds.filter((k) => agentOf(k).caps.runsInDir && !!conns && agentOf(k).available({ conns })),
     [conns],
   );
 
+  // Only fetch when the rail hasn't already warmed the cache — the common case is a hit,
+  // so the list renders on the first frame.
   useEffect(() => {
+    if (conns) return;
     let alive = true;
     api("api/connections")
       .then((d) => {
-        if (!alive) return;
-        setConns(d && !d.error ? (d as ConnectionsStatus) : null);
-        setConnsDone(true);
+        if (alive) setCachedConns(d && !d.error ? (d as ConnectionsStatus) : null);
       })
-      .catch(() => {
-        if (!alive) return;
-        setConnsDone(true);
+      .catch(() => {})
+      .finally(() => {
+        if (alive) setTried(true);
       });
     return () => {
       alive = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on open; `conns` is the warm-cache guard
   }, []);
+  const settling = !conns && !tried;
 
   // Default the target once the list settles: prefer the source session's own kind (a
   // like-for-like handoff), else the first available.
@@ -77,7 +86,6 @@ export function HandoffModal({ session, actions, onClose }: HandoffModalProps) {
     <Modal
       title={tr("handoff.title", { name: displayName(session) })}
       onClose={onClose}
-      className="session-modal"
       as="form"
       onSubmit={submit}
       lockClose={busy}
@@ -86,25 +94,31 @@ export function HandoffModal({ session, actions, onClose }: HandoffModalProps) {
         <div className="ui-field-hint">{tr("handoff.intro")}</div>
 
         <div className="ui-field">
-          <div className="ui-field-label">{tr("handoff.target_label")}</div>
-          {!connsDone ? (
-            <div className="ui-field-hint">{tr("handoff.checking")}</div>
-          ) : targets.length === 0 ? (
-            <div className="ui-field-hint">{tr("handoff.no_targets")}</div>
-          ) : (
-            <div className="ui-seg handoff-targets">
-              {targets.map((k) => (
+          <span className="ui-field-label">{tr("handoff.target_label")}</span>
+          {targets.length === 0 && (
+            // Empty means one of two things — still checking, or nothing is connected.
+            // Same copy as the launch modal so the two pickers read identically.
+            <div className="muted launch-noagents">
+              {tr(settling ? "launch.agents_checking" : "launch.agents_none")}
+            </div>
+          )}
+          <div className="ui-seg big">
+            {targets.map((k) => {
+              const a = agentOf(k);
+              return (
                 <button
                   key={k}
                   type="button"
-                  className={"seg-btn" + (target === k ? " active" : "")}
+                  className={"seg-btn kind-" + a.cssClass + (target === k ? " active" : "")}
                   onClick={() => setTarget(k)}
                 >
-                  <Icon name={agentOf(k).icon} /> {agentOf(k).displayName ?? agentOf(k).label}
+                  <Icon name={a.icon} className="seg-ic" />
+                  {kindDisplayName(k)}
+                  <span className="seg-sub">{tr(a.launchHintKey)}</span>
                 </button>
-              ))}
-            </div>
-          )}
+              );
+            })}
+          </div>
         </div>
 
         <div className="ui-field">
