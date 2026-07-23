@@ -333,10 +333,28 @@ chatId は別空間）。
    **TUI(tmux ペイン)には安全な注入シームが無い**（Program 文字列へ埋めると `ps` 露出）。
    採るなら「managed 子＋status/models プローブにのみ注入し、TUI は login 必須」と割り切るか、
    LaunchPlan に per-session env マップを足す設計変更が要る。
-1. **WS バー使用量チップは v1 スキップ**: プラン残量の公式 API/コマンドが無い
-   （CLI から見えるのは context 使用量のみ — フォーラム確認）。非公式 API
-   （`cursor.com/api/usage`・`api2.cursor.sh GetCurrentPeriodUsage`）は usage-chip 429 事件と
-   同じ脆さのため不採用。stream-json の per-turn トークンでセッション単位表示は将来可。
+1. **WS バー使用量表示は v1 スキップ（プラン残量・セッション使用トークンの両方）**。
+   2 種を分けて判断した（後者を §使用量表示の実現可否プローブ で実測）:
+   - **プラン残量チップ**: 公式 API/コマンドが無く、非公式 API
+     （`cursor.com/api/usage`・`api2.cursor.sh GetCurrentPeriodUsage`）は usage-chip 429 事件と
+     同じ脆さのため不採用（この判断は不変）。
+   - **セッション使用トークン数**（他エージェントの ContextBar 相当。残量ではなく消費済み）:
+     **ライブ経路（managed=ACP／TUI=JSONL）には公式契約上トークン情報が一切乗らないため v1
+     不採用**。実測（2026-07-23 session2）: ①**ACP** の `session/prompt` 応答は
+     `{"stopReason":"end_turn"}` のみ、`session/update` 通知も text/thought/tool/mode/info の
+     チャンクのみで **usage/token フィールドは皆無**。②**JSONL 転写**（"Claude Code 互換" を
+     謳うが）は role/message/turn_ended だけで **`message.usage` を持たない**（本物の Claude
+     Code JSONL と異なる — TUI/-p 両方の実転写で確認）。③トークンが載るのは
+     **`-p --output-format json|stream-json` の終端 `result.usage`
+     （`{inputTokens,outputTokens,cacheReadTokens,cacheWriteTokens}`）だけ**だが、これは
+     one-shot batch 経路であってライブのオーケストレーションセッション（managed=ACP／TUI）
+     では使わない。よって「stream-json の per-turn トークンでセッション単位表示」は
+     **assistant チャット（下記 3・`-p` 基盤）でのみ将来可**であって、WS バーの
+     セッション使用量には届かない。TUI フッタは `Running N tokens`/`context X%` を描くが、
+     これは TUI 描画文字列であり JSONL に無い＝依存は false-idle 教訓のドリフト禁忌に抵触。
+     実装するなら (a) cursor 上流が ACP `session/update`／prompt 応答に usage を載せるのを待つ、
+     (b) managed を `-p` stream-json 駆動へ切替（＝ACP の `session/load` クロスプロセス resume を
+     捨てる＝ADR0023 決定1の放棄）のいずれかが要り、v1 では割に合わない。
 2. rtk: base-URL 差し替え不可（プロバイダ直結でない）→ **hooks seam**（`rtk hook cursor` を
    rtk 側に新設し `beforeShellExecution` に配線）。cursor hooks がコマンド書換
    （copilot `modifiedArgs` 相当）を許すかは要プローブ — 許さなければ指示ベース（codex/agy 同格）。
@@ -451,3 +469,47 @@ chatId は別空間）。
 - trust の永続先は未特定（`agent-cli-state.json` には無し。`--trust` フラグ運用で回避可能なため深追いせず）。
 - 実測に使った chat: `d78190b4-...`（-p/hooks 検証）・`3d3a3c8f-...`（TUI）・`dd16d662-...`（ACP）。
   probe 用 hooks.json は撤去済み。
+
+## 使用量表示の実現可否プローブ（2026-07-23 session2、v2026.07.20-8cc9c0b、本コンテナ・認証済み）
+
+利用者フィードバック（「他エージェント同様のセッション使用トークン数を WS バーに出せないか」）
+を受け、ライブ ACP／JSONL 転写／`-p` の 3 経路で **token/usage の有無**を実バイナリで採取した
+（Track D-1 の判断根拠）。結論: **ライブ経路には usage が乗らず、載るのは `-p` batch のみ**。
+
+| 経路 | usage/token の有無 | 実測 |
+|---|---|---|
+| **ACP `session/prompt` 応答** | ❌ | `{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}` — stopReason だけ |
+| **ACP `session/update` 通知** | ❌ | `agent_message_chunk`/`agent_thought_chunk`/`tool_call`/`tool_call_update`/`session_info_update`（title）/`available_commands_update`/`current_mode_update` のみ。token 系の update 種別は出ない |
+| **JSONL 転写（TUI/-p が書く "Claude Code 互換"）** | ❌ | 行は `{"role":"user"/"assistant","message":{content:[…]}}` と `{"type":"turn_ended","status"}` のみ。**`message.usage` を持たない**（本物の Claude Code JSONL との最大差）。TUI 実転写・`-p` 実転写の両方で確認 |
+| **`-p --output-format json`** | ✅ | `…"result":"pong","usage":{"inputTokens":3693,"outputTokens":65,"cacheReadTokens":22144,"cacheWriteTokens":0}` |
+| **`-p --output-format stream-json`** | ✅（終端 `result` 行のみ） | 中間の `thinking`/`assistant` 行に usage は無く、終端 `result` 行に上記 usage が載る |
+| **TUI フッタ描画** | ⚠️ 表示のみ | `⠘⠆ Running 67 tokens`／`Auto · 5.1%` を描くが JSONL には無い＝描画文字列。依存は false-idle 禁忌 |
+
+- 現状のコードは cursor で usage を一切拾っていない（`driver.go onNotify` の decode 構造体に
+  usage フィールド無し・`runTurn` は `session/prompt` 応答を `{StopReason}` のみで unmarshal・
+  `mirror.go`/`transcript.go` は `transcript.Turn` の `InTok/OutTok/CacheRead/CacheCreate/CtxWindow`
+  を設定しない）。`registry.ts` の descriptor も `contextBar:false`。**この設計は上記実測で追認**
+  （拾いたくても経路にデータが無い）。
+- **判断**: WS バーのセッション使用トークン表示は **v1 見送り（Track D 継続）**。実現には上流が
+  ACP に usage を載せるのを待つか、managed を `-p` stream-json 駆動に替えて ACP の
+  `session/load` クロスプロセス resume（ADR0023 決定1）を捨てるかが要る。`-p` の `result.usage`
+  はアシスタントチャット headless バックエンド（Track D-3）でのみ活きる。
+
+### Free プラン時のモデル制約（同 session2 実測 — 起動既定に影響）
+
+利用者から「GLM-5.2 を選んだらアップグレードしろと言われた」との報告。実測で **Free プランは
+named model を一切使えない**ことを確認:
+
+- `-p --model <named>` で `glm-5.2`/`claude-opus-4-8`/`gpt-5.2`/`grok-4.5`/`gemini-3-flash` は全て
+  `ActionRequiredError: Named models unavailable Free plans can only use Auto. Switch to Auto or
+  upgrade plans to continue.`。ACP 経路では同事象が assistant テキスト `Upgrade your plan to
+  continue` として表面化。
+- Free で通ったのは **`default[]`（Auto）と `composer-2.5`（Cursor 自社モデル）のみ**（`result:"ok"`
+  ＋usage 正常）。
+- **起動既定の注意（要検討）**: buildProgram（TUI）/driver.spawn（managed）は `model=="" || "auto"`
+  のとき `--model` を渡さず、cursor のサーバ側アカウント既定に委ねる。この既定は揺れる（session2
+  の ACP プローブで一度 `glm-5.2`、後で `default[]` を観測）。Free ユーザがモデル未選択で起動すると
+  **初回ターンでいきなり free wall に当たり得る**。頑健化するなら未選択時に明示的に `--model
+  default[]`（Auto）を前置する（`-p`・ACP 双方で `currentModelId=default[]` になることを実測）。
+  ただし有料ユーザのアカウント既定モデルを Auto で上書きする副作用があるため、既定変更は
+  利用者判断に委ねる（Track D／要実機検証）。

@@ -46,9 +46,20 @@ Cursor CLI（`cursor-agent`/`agent`、Anysphere）は `agent acp`（ACP = JSON-R
    pasted code とは異なる）。
 6. **モデルカタログは `agent models` によるアカウント連動ライブ取得**（公式コマンドが
    あるため copilot のような TUI スクレイプは不要見込み）。
-7. **WS バー使用量チップは v1 不採用**: プラン残量の公式 API/CLI が存在せず、非公式
-   API は usage-chip 429 事件と同じ脆さのため。stream-json の per-turn トークンによる
-   セッション単位表示を将来課題とする。
+7. **WS バー使用量表示は v1 不採用（プラン残量・セッション使用トークンの両方）**:
+   - プラン残量チップ: 公式 API/CLI が無く、非公式 API は usage-chip 429 事件と同じ脆さのため。
+   - セッション使用トークン数（他エージェント ContextBar 相当）: **2026-07-23 の実バイナリ
+     プローブで、ライブ経路（managed=ACP／TUI=JSONL）に token/usage が一切乗らないことを
+     確認**したため不採用。ACP は `session/prompt` 応答が `stopReason` のみ・`session/update` に
+     usage 種別なし。JSONL は "Claude Code 互換" を謳うが `message.usage` を持たない。トークンが
+     載るのは `-p --output-format json|stream-json` の終端 `result.usage` だけで、これは one-shot
+     batch 経路（アシスタントチャット headless 用）でありライブセッションでは使わない。実現には
+     上流が ACP に usage を載せるのを待つか、managed を `-p` 駆動に替えて **決定1（ACP
+     `session/load` クロスプロセス resume）を捨てる**ことが要り、割に合わない。詳細は
+     [docs/40 §使用量表示の実現可否プローブ](../40-cursor-agent-kind.md)。
+   - 付随実測: **Free プランは named model 不可**（`Named models unavailable. Free plans can only
+     use Auto.`）で Auto/composer-2.5 のみ可。起動でモデル未選択時にサーバ側既定が named に振れると
+     free wall に当たり得るため、未選択時の Auto 明示前置を Track D の頑健化候補として記録。
 8. **rtk は hooks seam**（`rtk hook cursor` 新設 → `beforeShellExecution` 配線）:
    CLI は `api2.cursor.sh` 経由でプロバイダ直結でないため base-URL 差し替え不可。
    コマンド書換可否はプローブし、不可なら指示ベース（codex/agy 同格）に落とす。
