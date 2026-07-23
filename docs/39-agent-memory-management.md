@@ -188,6 +188,31 @@ CP 側は `control-plane/routes.go` に同パスを `rest` で登録（**登録�
   日付ピッカーからの「この日時時点へ」も同じ restore に解決。
 - 下段: export（bundle / tar 選択 DL）・import（ファイル選択 → プロジェクト選択 preview → 適用）。
 
+## 先行 OSS の調査（2026-07-23 追記）
+
+「agent-memory」という名前の OSS は 2 つあり、性質が違う。本設計との関係を整理する。
+
+| プロジェクト | 実態 | 本設計との関係 |
+|--------------|------|----------------|
+| [jayzeng/agentmemory](https://github.com/jayzeng/agentmemory)（CLI 名 `agent-memory`・11★・MIT） | [tobi/qmd](https://github.com/tobi/qmd)（Shopify Tobi 氏のローカル markdown 検索エンジン・28k★・BM25+ベクトル+リランクを全ローカル GGUF で実行）の上に載る**検索・注入系**。`~/.agent-memory/` に MEMORY.md/daily/topics/scratchpad の素 md を置き、SKILL.md でエージェントに書かせ、セッション開始時に優先度付き 16K 注入＋プロンプト連動の qmd 検索結果を差し込む。**版管理・import/export は皆無**（「git-friendly なので各自どうぞ」） | **別軸**。当設計＝メモリの**ライフサイクル**（履歴・巻き戻し・移送）、こちら＝メモリの**活用**（検索・想起）。競合せず、md をメモリの正とする点は当設計の妥当性を裏付ける |
+| [xChuCx/agent-memory](https://github.com/xChuCx/agent-memory)（同名別物・Go・Apache-2.0・qmd 不使用） | 「git-native な per-repo メモリ」。**staged write→`review --diff`→apply の人間レビューゲート**、**書き込み時の secret/PII スキャン**、SQLite FTS5、git commit にピン留めした共有ストア | むしろ**こちらが当設計の直接の先行事例**（md の正＋git が同期、ベクトル DB なし）。取り込む価値のある発想が 2 つ（下記） |
+
+取り込む点 / 確認できた点:
+
+1. **export/snapshot 時の secret スキャン**（xChuCx 由来）: ★4 の防御を強化。export 生成時に
+   軽量な secret パターン検査（gitleaks 級の正規表現）をかけ、検出時は警告付き確認にする。
+   v1 の要件に昇格させる価値あり（実装コストは小さい）。
+2. **「検索索引は派生状態」原則の裏付け**: qmd の索引（`~/.cache/qmd/index.sqlite`）も codex の
+   `memories_1.sqlite` も md から再構築可能な派生状態であり、版管理対象は md だけで良い——
+   ★9 の一般化。将来メモリ検索を足す場合も md が正のままで済む。
+3. **将来トラック（本設計とは別機能）**: フリート横断のメモリ検索・セッション注入をやるなら
+   qmd が有力バックエンド（MCP サーバ内蔵・BM25 のみなら軽量）。ただしベクトル系は
+   ローカル GGUF 模型 ~2GB＋CPU 消費があり、メモリ制約ホストでは BM25 限定から。
+   これは「メモリ活用」の独立機能であり docs/39 のスコープ外とする。
+
+採らない点: グローバル単一ストア（jayzeng 型。当環境はプロジェクト/kind 分離が正）、
+per-repo コミット型ストア（xChuCx 型。リポジトリに個人メモリを混ぜない方針と衝突）。
+
 ## 検討して捨てた選択肢
 
 | 案 | 捨てた理由 |
