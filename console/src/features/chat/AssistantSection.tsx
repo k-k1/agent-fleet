@@ -379,6 +379,12 @@ export function AssistantSection() {
                   <Icon name="edit" /> {tr("asst.rename")}
                 </button>
               </li>
+              <li className="ui-menu-sep" aria-hidden="true" />
+              <li>
+                <button type="button" className="ui-menu-item danger" onClick={() => runConvMenu(() => void removeConv(convMenu.c.id))}>
+                  <Icon name="trash" /> {tr("asst.delete_chat")}
+                </button>
+              </li>
             </ul>,
             document.body,
           )}
