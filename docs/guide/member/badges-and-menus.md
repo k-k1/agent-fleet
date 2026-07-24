@@ -7,7 +7,7 @@ English | [日本語](badges-and-menus.ja.md)
 
 ## Session display
 
-The colored icon at the start of a row indicates the kind: `claude`, `codex`, `opencode`, `shell`, or `ssm`.
+The colored icon at the start of a row indicates the kind: `claude`, `codex`, `cursor`, `copilot`, `agy`, `opencode`, `shell`, or `ssm`.
 Hover over the state icon at the end of the row to see the state name. States that need action from you are
 shown as text as well, not just an icon.
 
@@ -59,9 +59,9 @@ A collapsed parent repository also aggregates the sessions of the worktrees unde
 ### Sessions
 
 Depending on state and kind you'll see resume, re-login to SSM, stop, open the remote session, copy the ID,
-rename, rename the branch, fork the conversation, archive / delete, and recreate.
+rename, rename the branch, hand the conversation off, archive / delete, and recreate.
 Archive keeps the conversation but hides it from the list; recreate archives the current conversation and starts
-a new one in the same place. When there is no working folder, resume, fork, and recreate are not shown.
+a new one in the same place. When there is no working folder, resume, handoff, and recreate are not shown.
 
 ### Repositories / worktrees
 

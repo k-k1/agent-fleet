@@ -18,18 +18,19 @@ working folder.
 
 - **claude** — launches Claude Code.
 - **codex** — launches Codex.
+- **cursor** — launches Cursor (needs a Cursor plan; appears once connected — [06](06-agents.md)).
 - **copilot** — launches GitHub Copilot (rides on the GitHub connection — [06](06-agents.md)).
 - **agy** — launches Antigravity (experimental slot; appears once connected).
 - **opencode** — launches OpenCode.
 - **shell** — a plain shell (bash). Opens right away from "Start".
 
-claude / codex / opencode / copilot / agy appear in "Start" once you connect the corresponding
+claude / codex / cursor / opencode / copilot / agy appear in "Start" once you connect the corresponding
 agent (connections: [06 Agents](06-agents.md)). (**ssm**, which logs in to another host, is
 covered in [08 Advanced usage](08-advanced.md).)
 
 ## Execution method — Managed and Terminal (CLI)
 
-On the start screen for Codex / opencode / GitHub Copilot you can choose the **execution
+On the start screen for Codex / cursor / opencode / GitHub Copilot you can choose the **execution
 method**. This is the difference in the path Agent Fleet uses to run the agent and deliver your
 instructions (internally, the "driver"). It chooses **how a session of the same kind is run** —
 it does not give the conversation a separate storage location or a separate working folder.
@@ -37,13 +38,13 @@ it does not give the conversation a separate storage location or a separate work
 - **Managed (recommended, default)** — Agent Fleet controls the agent directly.
   You operate it through the chat view; there is no terminal. Codex / opencode run on a shared
   execution runtime and have no per-session CLI process, so they save memory and suit
-  parallel work (GitHub Copilot runs in a dedicated per-session process even when managed,
-  so its memory use is on par with Terminal (CLI)).
+  parallel work (GitHub Copilot and cursor run a dedicated per-session process even when managed,
+  so their memory use is on par with Terminal (CLI)).
 - **Terminal (CLI)** — launches the agent's CLI per session, and you can operate its
   interactive screen directly from the terminal. Suited to cases that need CLI-specific screens
   or commands; each session uses extra memory.
 
-New Codex / opencode / GitHub Copilot sessions default to managed. claude / agy use
+New Codex / cursor / opencode / GitHub Copilot sessions default to managed. claude / agy use
 Terminal (CLI), and shell / SSM use only the terminal path. For kinds that support managed
 execution, you can switch the execution method from the session's ⋯ menu whenever the session
 is not stopped and the agent is not in the middle of processing. **The conversation carries over
@@ -151,7 +152,7 @@ heading. AI sessions are archived; shell / SSM are deleted.
 
 ## When you can — and can't — resume
 
-Stopped sessions can be opened and resumed with a click. However, claude / codex / opencode
+Stopped sessions can be opened and resumed with a click. However, claude / codex / cursor / copilot / agy / opencode
 **cannot resume if the working folder they were launched in is gone**. In that case the state
 display becomes **"Folder missing — can't resume"**, and the row is struck through and can no
 longer be clicked ("Can't resume — the working folder no longer exists"). The typical case is
@@ -174,9 +175,9 @@ The working tree the running agent sees may have been swapped out, and its edits
 no longer line up. If this doesn't ring a bell, check whether an unintended branch switch has
 happened. For parallel work, giving each session its own worktree avoids this confusion.
 
-## Forking a conversation (fork)
+## Handing a conversation off (handoff)
 
-From the **⋯** menu of a running claude, codex, or opencode session, you can choose a handoff
+From the **⋯** menu of a running claude, codex, cursor, copilot, agy, or opencode session, you can choose a handoff
 target such as **"Prepare handoff to codex"**. Rather than handing over the whole original
 conversation as is, the **fleet operator** reads the source session's situation and drafts a
 handoff proposal: the key points, unfinished tasks, changed files, and next steps.

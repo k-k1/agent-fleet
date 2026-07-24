@@ -149,7 +149,7 @@ workspace again).
 
 - **Time zone (TZ)** — the default is Japan time. Applying a change requires stopping and starting the workspace.
 - **Node.js / Java (JAVA_HOME)** — pick the versions to use.
-- **Agent CLI updates** — "Update the agent CLIs and rtk to the latest on start" (covers claude / opencode / codex / GitHub Copilot / Antigravity (agy) / rtk). Default is OFF (pinned to the versions baked into the image).
+- **Agent CLI updates** — "Update the agent CLIs and rtk to the latest on start" (covers claude / opencode / codex / cursor / GitHub Copilot / Antigravity (agy) / rtk). Default is OFF (pinned to the versions baked into the image).
 
 ### Recreating the workspace (danger zone)
 
