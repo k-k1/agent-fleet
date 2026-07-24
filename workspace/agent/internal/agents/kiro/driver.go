@@ -107,10 +107,11 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	h := handles[m.Name]
 	if h == nil {
 		h = &threadHandle{
-			name:    m.Name,
-			dir:     m.Dir,
-			slotSid: slotSid,
-			events:  make(chan agents.Event, 64),
+			name:      m.Name,
+			dir:       m.Dir,
+			slotSid:   slotSid,
+			createdAt: slotCreatedAt(m), // discoverSid のフェンス（read 層 resolveSid と同じ）
+			events:    make(chan agents.Event, 64),
 		}
 		handles[m.Name] = h
 	}
@@ -324,9 +325,10 @@ func stopChild(cmd *exec.Cmd, stdin io.Closer) {
 // --- thread handle -----------------------------------------------------------
 
 type threadHandle struct {
-	name    string
-	dir     string
-	slotSid string
+	name      string
+	dir       string
+	slotSid   string
+	createdAt time.Time // slot 作成時刻（discoverSid のフェンス・前身セッション誤採用防止）
 
 	spawnMu sync.Mutex // serializes spawns for this handle（並行 Resume の二重 spawn 防止・A2-4）
 
@@ -405,11 +407,14 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 		sid = sids.Read(h.slotSid)
 	}
 	// sid キャッシュが空でも、この cwd に既存の kiro セッションがあれば拾う（read 層
-	// resolveSid と同じ discover＝cwd+mtime。Terminal→managed 切替で TUI 側の sid が
+	// resolveSid と同じ discover＝cwd+mtime）。Terminal→managed 切替で TUI 側の sid が
 	// sidstore に未キャッシュのまま切り替わると、ここが無いと無言で新規会話を切ってしまう
-	// — A2-3）。worktree で dir が分かれる前提の同一 cwd 制約は resolveSid と同じ。
+	// （A2-3）。**フェンス（slot 作成時刻）必須**: recreate は同一 dir に新スラグを切るため、
+	// フェンス無しの discover は前身の旧セッション .json を拾い、A2-1 の「ストア健在なら
+	// load 成功」ロジックで旧会話へ無言継続してしまう（managed 経路での A-1 再発）。
+	// worktree で dir が分かれる前提の同一 cwd 制約も resolveSid と同じ。
 	if sid == "" {
-		if d := discoverSid(h.dir); d != "" {
+		if d := discoverSid(h.dir, h.createdAt); d != "" {
 			sid = d
 			sids.Write(h.slotSid, d)
 		}
