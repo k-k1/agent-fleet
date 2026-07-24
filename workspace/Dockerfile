@@ -327,6 +327,43 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       cursor-agent --disable-auto-update --version; \
     fi
 
+# Kiro CLI（kind="kiro"、docs/43 / docs/decisions/0026）。旧 Amazon Q Developer CLI
+# の版付きネイティブバイナリ配布（bundled kiro-cli + kiro-cli-chat + kiro-cli-term）。
+# 公式 manifest（prod.download.cli.kiro.dev/stable/latest/manifest.json）が版付き URL
+# ＋ sha256 を掲載しており、agy と同じ「版付き URL ＋ sha256 ピン」で焼ける。zip 内は
+# `kirocli/{BUILD-INFO,bin/*,install.sh}` で、同梱 install.sh を Q_INSTALL_GLOBAL=1
+# Q_SKIP_SETUP=1 で回すと 3 バイナリだけを /usr/local/bin へ入れる（integrations/setup は
+# 走らない）。展開後 ~855MB と桁違いに巨大なので、既定（BAKE_AGENT_CLIS=0）では焼かず
+# オンデマンド導入（workspace-agent install-kiro／初回起動時の自動導入・§4-2 決定）に回し、
+# BAKE_AGENT_CLIS=1（覚悟のノブ）でのみ焼く。
+#
+# arch 別アセット: x86_64 は gnu 版（install.sh の glibc 下限 2.34・Debian 12 は 2.36 で
+# 充足）、aarch64 は **musl 版**（gnu は glibc 2.39 要求で Debian 12 では動かない — 実測）。
+# sha256 は manifest 掲載値をそのまま ARG に写す（bump は KIRO_VERSION と両 arch の sha を
+# 揃えて書き換え。値は `curl -fsSL .../stable/latest/manifest.json | jq` で確認）。
+#
+# 自己更新（既定 ON）はビルド時 ENV 相当のノブが無く、~/.kiro/settings/cli.json の
+# `app.disableAutoupdates` で止める設定型なので、封殺は runtime（entrypoint 起動毎再固定
+# ＋ 縦割りの ensureSettings）に寄せる（copilot の COPILOT_AUTO_UPDATE とは違い build ENV
+# では止められない）。
+ARG KIRO_VERSION=2.14.1
+ARG KIRO_SHA256_X64=2e35416019a8681586772dc5b0c32539d1712e1469280dbf8cd4bdedc751ea1a
+ARG KIRO_SHA256_ARM64=4a1acf145e440ec8e597841b7797b44036c29143da78c3379af98c9eb18a8eec
+RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
+      arch="$(dpkg --print-architecture)"; \
+      case "$arch" in \
+        amd64) kasset="kirocli-x86_64-linux.zip";      sha="${KIRO_SHA256_X64}" ;; \
+        arm64) kasset="kirocli-aarch64-linux-musl.zip"; sha="${KIRO_SHA256_ARM64}" ;; \
+        *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
+      esac; \
+      curl -fsSL "https://prod.download.cli.kiro.dev/stable/${KIRO_VERSION}/${kasset}" -o /tmp/kiro.zip; \
+      echo "${sha}  /tmp/kiro.zip" | sha256sum -c -; \
+      unzip -q /tmp/kiro.zip -d /tmp/kiro; \
+      Q_INSTALL_GLOBAL=1 Q_SKIP_SETUP=1 sh /tmp/kiro/kirocli/install.sh; \
+      rm -rf /tmp/kiro.zip /tmp/kiro; \
+      kiro-cli --version; \
+    fi
+
 # ビルド時ピンをコンテナ内へ書き出す（ARG はビルド後に消えて実行時に参照できない）。
 # 設定 UI「ツールのバージョン」の「ピン vs 実体」表示・スモークの検証材料に加え、
 # lean variant（BAKE_AGENT_CLIS=0 / BAKE_OPTIONAL_TOOLS=0）では entrypoint の
@@ -348,12 +385,12 @@ RUN mkdir -p /var/lib/af/claude /usr/local/share/agent-fleet/docs /usr/lib/jvm
 RUN set -eux; mkdir -p /usr/local/share/agent-fleet; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in \
-      amd64) agy_sha="${AGY_SHA256_X64}"; cursor_sha="${CURSOR_SHA256_X64}" ;; \
-      arm64) agy_sha="${AGY_SHA256_ARM64}"; cursor_sha="${CURSOR_SHA256_ARM64}" ;; \
-      *) agy_sha=""; cursor_sha="" ;; \
+      amd64) agy_sha="${AGY_SHA256_X64}"; cursor_sha="${CURSOR_SHA256_X64}"; kiro_sha="${KIRO_SHA256_X64}" ;; \
+      arm64) agy_sha="${AGY_SHA256_ARM64}"; cursor_sha="${CURSOR_SHA256_ARM64}"; kiro_sha="${KIRO_SHA256_ARM64}" ;; \
+      *) agy_sha=""; cursor_sha=""; kiro_sha="" ;; \
     esac; \
-    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_sha256":"%s","copilot":"%s","cursor":"%s","cursor_sha256":"%s","rtk":"%s","go":"%s","gh":"%s","chromium":"%s","chromium_cft":"%s","chromium_dl":"%s","noto_cjk":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","awscli":"%s","session_manager_plugin":"%s"}\n' \
-      "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$AGY_VERSION" "$agy_sha" "$COPILOT_VERSION" "$CURSOR_VERSION" "$cursor_sha" "$RTK_VERSION" "$GO_VERSION" "$GH_VERSION" "$CHROMIUM_VERSION" \
+    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_sha256":"%s","copilot":"%s","cursor":"%s","cursor_sha256":"%s","kiro":"%s","kiro_sha256":"%s","rtk":"%s","go":"%s","gh":"%s","chromium":"%s","chromium_cft":"%s","chromium_dl":"%s","noto_cjk":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","awscli":"%s","session_manager_plugin":"%s"}\n' \
+      "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$AGY_VERSION" "$agy_sha" "$COPILOT_VERSION" "$CURSOR_VERSION" "$cursor_sha" "$KIRO_VERSION" "$kiro_sha" "$RTK_VERSION" "$GO_VERSION" "$GH_VERSION" "$CHROMIUM_VERSION" \
       "$CHROMIUM_CFT_VERSION" "$CHROMIUM_DL_VERSION" "$NOTO_CJK_VERSION" "$MCP_GRAFANA_VERSION" "$CLOUDWATCH_MCP_VERSION" "$AWSCLI_VERSION" "$SESSION_MANAGER_PLUGIN_VERSION" \
       > /usr/local/share/agent-fleet/versions.json
 

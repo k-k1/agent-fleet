@@ -122,7 +122,18 @@ func buildProgram(model, effort, mode, resumeID string) string {
 	if resumeID != "" {
 		flags += " --resume-id " + session.ShellQuote(resumeID)
 	}
-	return strings.TrimSpace(bin() + " " + flags)
+	core := strings.TrimSpace(bin() + " " + flags)
+	// On-demand first-use install (docs/43 Track B / §4-2). kiro's ~855MB bundle is
+	// NOT baked or boot-installed for everyone; it lands in the user's ~/.local the
+	// first time they actually launch kiro. tmux runs the pane program via /bin/sh,
+	// so guard the launch: install (progress visible in the pane) only when the CLI
+	// is missing, then run it. A baked / already-installed kiro makes this a no-op
+	// `command -v` check. Only for the default binary — an AGENT_KIRO_BIN override
+	// (tests, alt paths) skips the bootstrap so it never triggers a real install.
+	if bin() == "kiro-cli" {
+		return "command -v kiro-cli >/dev/null 2>&1 || workspace-agent install-kiro; " + core
+	}
+	return core
 }
 
 // ensureSettings pins the two fleet-required kiro settings ONCE per process, best
