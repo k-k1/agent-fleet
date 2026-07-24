@@ -3268,6 +3268,11 @@ function Turn({
       ),
     );
   const fromOperator = isUser && turn.source === "operator";
+  // Schedule origin (docs/38): the prompt was fired by scheduled execution — either a
+  // timed fire ("schedule") or a run-now ("schedule-manual") — badged so schedule-driven
+  // turns are never mistaken for typed or operator input, and 定期/手動 read apart.
+  const fromSchedule = isUser && (turn.source === "schedule" || turn.source === "schedule-manual");
+  const scheduleManual = isUser && turn.source === "schedule-manual";
   // Chat-bridge origin (docs/37 P2a): a reply the user sent from Discord/Slack, injected
   // into the session — badged distinctly from self-typed input, like operator turns.
   const chatProvider = isUser
@@ -3284,6 +3289,7 @@ function Turn({
         (isUser ? "user" : "assistant") +
         (turn.sidechain ? " sidechain" : "") +
         (fromOperator ? " from-operator" : "") +
+        (fromSchedule ? " from-schedule" : "") +
         (chatProvider ? " from-chat" : "")
       }
       data-turn-idx={turn.idx}
@@ -3295,6 +3301,16 @@ function Turn({
           // the user — badge it so the two are never confused.
           <span className="mt-op" title={tr("mirror.from_operator_title")}>
             <Icon name="broadcast" /> {tr("mirror.from_operator")}
+          </span>
+        )}
+        {fromSchedule && (
+          // Fired by scheduled execution (docs/38) — timed (定時) vs run-now (手動発火).
+          <span
+            className="mt-op mt-sched"
+            title={tr(scheduleManual ? "mirror.from_schedule_manual_title" : "mirror.from_schedule_title")}
+          >
+            <Icon name={scheduleManual ? "play" : "clock"} />{" "}
+            {tr(scheduleManual ? "mirror.from_schedule_manual" : "mirror.from_schedule")}
           </span>
         )}
         {chatProvider && (
