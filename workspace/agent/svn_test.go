@@ -41,6 +41,26 @@ func TestSvnBuildURL(t *testing.T) {
 	}
 }
 
+// TestResolveRepoDirUnicode locks in that a folder name may be Japanese (or any
+// Unicode letters/numbers) — an SVN checkout target can be named 日本語プロジェクト —
+// while path traversal and other unsafe names stay rejected.
+func TestResolveRepoDirUnicode(t *testing.T) {
+	ok := []string{"日本語プロジェクト", "repo", "repo-2", "my.repo", "x@feat-1", "数字123", "café"}
+	for _, name := range ok {
+		if dir, valid := resolveRepoDir(name); !valid {
+			t.Errorf("resolveRepoDir(%q) rejected a valid name", name)
+		} else if filepath.Base(dir) != name {
+			t.Errorf("resolveRepoDir(%q) mapped to %q", name, dir)
+		}
+	}
+	bad := []string{"", "..", "../evil", "a/b", ".hidden", "-flag", "@at", "a b", "sub\x00null"}
+	for _, name := range bad {
+		if _, valid := resolveRepoDir(name); valid {
+			t.Errorf("resolveRepoDir(%q) accepted an unsafe name", name)
+		}
+	}
+}
+
 func TestSvnLocked(t *testing.T) {
 	locked := []string{
 		"svn: E155004: Working copy '/x' locked",

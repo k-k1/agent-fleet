@@ -65,7 +65,8 @@ export function StartHost() {
           path={launch.path}
           kinds={agentKinds}
           settling={ctx.connsSettling}
-          allowWorktree={!launch.worktree}
+          allowWorktree={!launch.worktree && launch.vcs !== "svn"}
+          isSvn={launch.vcs === "svn"}
           initialPrompt={seedPrompt || undefined}
           onClose={() => {
             clearLaunch();
