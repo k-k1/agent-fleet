@@ -51,6 +51,18 @@ describe("echoLanded", () => {
     ).toBe(true);
   });
 
+  it("スキル形（<command-message> 先頭）の command ターンでも解消する", () => {
+    // 実バグの再現（定時 /scout・2.1.215）: スキル起動はタグ順が逆で
+    // <command-message> が先頭に来る。name-first 前提だと永久に「反映待ち」。
+    expect(
+      echoLanded(
+        { text: "/scout", sinceIdx: 10 },
+        [{ role: "user", text: "<command-message>scout</command-message>\n<command-name>/scout</command-name>", idx: 11 }],
+        (t) => (t.text || "").replace(/^\s+/, "").startsWith("<command-message>"),
+      ),
+    ).toBe(true);
+  });
+
   it("送信より前の command ターンでは解消しない", () => {
     expect(
       echoLanded(
