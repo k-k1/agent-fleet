@@ -225,14 +225,19 @@ func (sc *scheduler) fireOne(ctx context.Context, sch Schedule, now time.Time) {
 
 // scheduleNotifyStatus reports whether an outcome deserves an unattended-failure
 // notification. Hard failures always do; among the soft skips, quota/rate-limit/
-// membership are surprises worth surfacing, but a policy "skip" of a stopped workspace
-// is the user's explicit choice (recorded in history, not notified).
+// membership/target-missing are surprises worth surfacing. skipped_overlap is also
+// surfaced: the fire WAS due and expected to deliver but couldn't because the reuse
+// target's prior turn is still running — a busy-forever target would otherwise silently
+// never run, the same "unattended non-delivery" class as the sbk7oej drop. Only
+// skipped_stopped stays quiet — a policy "skip" of a stopped workspace is the user's
+// explicit no-wake choice where nothing was expected to run (recorded in history only).
 func scheduleNotifyStatus(status string) bool {
 	if strings.HasPrefix(status, "error") {
 		return true
 	}
 	switch status {
-	case "skipped_quota", "skipped_rate_limited", "skipped_membership_inactive", "skipped_target_missing":
+	case "skipped_quota", "skipped_rate_limited", "skipped_membership_inactive",
+		"skipped_target_missing", "skipped_overlap":
 		return true
 	}
 	return false
