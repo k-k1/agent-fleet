@@ -196,6 +196,7 @@ var techKana = map[string]string{
 	"gemini":      "ジェミニ",
 	"copilot":     "コパイロット",
 	"cursor":      "カーサー",
+	"kiro":        "キロ",
 	"datadog":     "データドッグ",
 	"sentry":      "セントリー",
 	"twilio":      "トゥイリオ",

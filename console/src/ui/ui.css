@@ -539,6 +539,7 @@
 .ui-seg.big .seg-btn.kind-opencode:not(.active) .seg-ic { color: var(--kind-opencode); }
 .ui-seg.big .seg-btn.kind-agy:not(.active) .seg-ic { color: var(--kind-agy); }
 .ui-seg.big .seg-btn.kind-copilot:not(.active) .seg-ic { color: var(--kind-copilot); }
+.ui-seg.big .seg-btn.kind-kiro:not(.active) .seg-ic { color: var(--kind-kiro); }
 .ui-seg.big .seg-btn.kind-shell:not(.active) .seg-ic { color: var(--kind-shell); }
 .ui-seg.big .seg-btn.kind-ssm:not(.active) .seg-ic { color: var(--kind-ssm); }
 

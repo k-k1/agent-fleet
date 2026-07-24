@@ -14,6 +14,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -55,6 +56,15 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "install-awscli" {
 		runInstallAWSCLI(os.Args[2:])
+		return
+	}
+	// On-demand Kiro CLI installer (kind="kiro", docs/43 Track B): kiro is ~855MB
+	// extracted, so unlike the other agent CLIs it is NOT baked/boot-installed for
+	// everyone — it lands in the per-user home only when that user actually uses it
+	// (the kiro launch program runs this when the binary is missing; the connection
+	// card install button does too). Pinned by versions.json. See install_kiro.go.
+	if len(os.Args) > 1 && os.Args[1] == "install-kiro" {
+		runInstallKiro(os.Args[2:])
 		return
 	}
 	// claude hook helper: records session working/idle/question state.
@@ -137,6 +147,7 @@ func main() {
 	go codex.ReconcileManaged("agent boot")
 	go copilot.ReconcileManaged("agent boot")
 	go cursor.ReconcileManaged("agent boot")
+	go kiro.ReconcileManaged("agent boot")
 
 	addr := envOr("AGENT_ADDR", ":7700")
 

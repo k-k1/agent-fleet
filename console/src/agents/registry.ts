@@ -307,6 +307,57 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // connected; an unfetched conns bag stays visible (same policy as agy).
     available: (c) => c.conns?.copilot?.supported !== false && !!c.conns?.copilot?.connected,
   },
+  kiro: {
+    id: "kiro",
+    icon: "compass", // codicon — Kiro の spec/guide 志向（kiro_guide モード）に寄せた中立形。既存8種と非衝突
+    label: "Kiro",
+    displayName: "Kiro CLI",
+    assistantName: "Kiro",
+    short: "ki",
+    cssClass: "kiro",
+    launchHintKey: "agent.launch_hint.kiro",
+    launchSuffix: "-ki",
+    planCycleKey: "", // TUI は 3 モード循環（kiro_default/planner/guide を跨ぐ）— キー駆動トグルは出さない（cursor 同型）
+    planEnterCmd: "",
+    defaultModeLabel: "Agent",
+    // Kiro CLI（kiro-cli・旧 Amazon Q Developer CLI。docs/43, ADR 0026 予定）。
+    // Terminal(TUI) ＋ Managed 両対応（Track A2）: managed は per-session child の
+    // ACP（`kiro-cli acp`・cursor/copilot 同型）で、session/load のクロスプロセス resume＋
+    // 文脈保持を実測（起動 UI に Terminal/Managed のドライバ選択を出す）。
+    // chat/transcript: read 正本は v2 JSONL（~/.kiro/sessions/cli/<sid>.jsonl）——新 TUI ＋
+    // ACP が
+    // append-only で書き、toolUse 入力＋toolResult 出力まで載る（cursor で不可だった tool
+    // 出力まで描ける）。状態検出は TUI 明示テキスト契約（state.go: "Kiro is working" /
+    // "requires approval" / "ask a question or describe a task"）— 2.14.1 に Stop hook が
+    // 無いため（実測）。
+    // model: launch-time only（`kiro-cli chat --list-models -f json` のアカウント連動ライブ
+    // カタログ → `--model`。Free でも named 指定可＝既定 auto。ACP set_model はあるが
+    // 稼働中変更は Track A2 判定＝DynamicModel は立てない）。
+    // effort: kiro には別フラグ `--effort` があり program.go は渡すが、モデルカタログに
+    // effort メタデータが無く per-model の対応も未検証のため v1 は picker を出さない
+    // （copilot/cursor の「未検証の caps を立てない」1854d 教訓）。
+    // contextBar なし（v2 JSONL 転写にトークン数が無い。managed ACP の _kiro.dev/metadata は
+    // ライブ context%/credits を持つが UI 配線は Track A2 スコープ外＝将来 Track）。planMode なし
+    // （3 モード循環でクリーンな二値でない — cursor 同型）。imagePaste は ACP に image:true が
+    // あるが v1 未配線でオフ。headlessChat なし（§4-3 決定: ASSISTANT_AGENT_KINDS に kiro を
+    // 加えない — タイトル提案は generic read 層で動く）。
+    // 認証は device-flow ログイン（Builder ID/free・API キーは Track D）。
+    managedDriver: true,
+    // per-session child なので CLI(TUI) を選んでも常駐プロセス数は変わらない（どちらも kiro
+    // 1 プロセス/セッション）— 追加コスト表示なし（cursor/copilot 同型）。
+    tuiMemoryCost: "",
+    caps: caps({
+      chat: true,
+      transcript: true,
+      model: true,
+      tuiStartMode: true, // program.go は mode=plan で --trust-all-tools を外す（承認待ちは state.go が "question" で拾う）
+      runsInDir: true,
+      launchableFromRepo: true,
+    }),
+    // Hidden when the CLI is not installed yet (supported === false・オンデマンド導入前) or
+    // kiro is not signed in; an unfetched conns bag stays visible (same policy as cursor/copilot).
+    available: (c) => c.conns?.kiro?.supported !== false && !!c.conns?.kiro?.connected,
+  },
   opencode: {
     id: "opencode",
     icon: "hubot",
@@ -409,6 +460,6 @@ export function availableKinds(ctx: AvailCtx): Record<SessionKind, boolean> {
 
 // Kinds offered in a repo row's launch menu, in display order. Every entry must
 // carry the launchableFromRepo cap (asserted below); the order is presentational.
-export const repoLaunchKinds: SessionKind[] = ["claude", "codex", "cursor", "copilot", "agy", "opencode", "shell"];
+export const repoLaunchKinds: SessionKind[] = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "shell"];
 
 export type { SsmHost };

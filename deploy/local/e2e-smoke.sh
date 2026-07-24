@@ -51,12 +51,15 @@ if [ "${1:-}" = "--inner" ]; then
     cursor_out="$(cursor-agent --disable-auto-update --version 2>&1 | head -1)"
     if [ "$cursor_out" = "$EXPECT_CURSOR" ]; then echo "ok  cursor $cursor_out"
     else echo "NG  cursor: actual ${cursor_out:-?} != pin $EXPECT_CURSOR"; fail=1; fi
+    # kiro is baked only under BAKE_AGENT_CLIS=1 (like cursor/agy); when the agent
+    # CLIs are baked it must be present at the pinned version (`kiro-cli 2.14.1`).
+    check_ver kiro "$EXPECT_KIRO" kiro-cli --version
   else
     # Lean distribution variant (BAKE_AGENT_CLIS=0, docs/35 §35.7.1-7): verify the
     # agent CLIs really are absent (= we do not redistribute proprietary CLIs).
     # Whether the pinned versions are installable is covered by the versions.json
     # all-pins check (below) and the separate P1-gate boot-install run (needs network).
-    for c in claude opencode codex copilot cursor-agent agy rtk; do
+    for c in claude opencode codex copilot cursor-agent agy rtk kiro-cli; do
       if command -v "$c" >/dev/null 2>&1; then
         echo "NG  lean: $c is baked in (expected BAKE_AGENT_CLIS=0)"; fail=1
       else
@@ -98,7 +101,7 @@ if [ "${1:-}" = "--inner" ]; then
   VJ=/usr/local/share/agent-fleet/versions.json
   if [ -f "$VJ" ]; then
     for pair in "claude=$EXPECT_CLAUDE" "opencode=$EXPECT_OPENCODE" "codex=$EXPECT_CODEX" "copilot=$EXPECT_COPILOT" \
-                "cursor=$EXPECT_CURSOR" \
+                "cursor=$EXPECT_CURSOR" "kiro=$EXPECT_KIRO" \
                 "agy=$EXPECT_AGY" "rtk=$EXPECT_RTK_VER" \
                 "go=$EXPECT_GO" "gh=$EXPECT_GH" "chromium=$EXPECT_CHROMIUM" \
                 "chromium_cft=$EXPECT_CHROMIUM_CFT" \
@@ -135,6 +138,19 @@ if [ "${1:-}" = "--inner" ]; then
       echo "ok  versions.json cursor_sha256=$got"
     else
       echo "NG  versions.json cursor_sha256: ${got:-?} != ${cursor_sha_want:-?}"; fail=1
+    fi
+    # kiro_sha256 も arch 依存の焼き込み値（on-demand install-kiro の検証材料）。
+    # x86_64=gnu 版 sha、aarch64=musl 版 sha（install-kiro が arch でアセットを選ぶのと対）。
+    case "$(dpkg --print-architecture)" in
+      amd64) kiro_sha_want="$EXPECT_KIRO_SHA_X64" ;;
+      arm64) kiro_sha_want="$EXPECT_KIRO_SHA_ARM64" ;;
+      *)     kiro_sha_want="" ;;
+    esac
+    got="$(jq -r .kiro_sha256 "$VJ" 2>/dev/null)"
+    if [ -n "$kiro_sha_want" ] && [ "$got" = "$kiro_sha_want" ]; then
+      echo "ok  versions.json kiro_sha256=$got"
+    else
+      echo "NG  versions.json kiro_sha256: ${got:-?} != ${kiro_sha_want:-?}"; fail=1
     fi
   else
     echo "NG  $VJ missing"; fail=1
@@ -243,6 +259,9 @@ EXPECT_COPILOT="$(arg_pin COPILOT_VERSION)"
 EXPECT_CURSOR="$(arg_pin CURSOR_VERSION)"
 EXPECT_CURSOR_SHA_X64="$(arg_pin CURSOR_SHA256_X64)"
 EXPECT_CURSOR_SHA_ARM64="$(arg_pin CURSOR_SHA256_ARM64)"
+EXPECT_KIRO="$(arg_pin KIRO_VERSION)"
+EXPECT_KIRO_SHA_X64="$(arg_pin KIRO_SHA256_X64)"
+EXPECT_KIRO_SHA_ARM64="$(arg_pin KIRO_SHA256_ARM64)"
 EXPECT_AGY="$(arg_pin AGY_VERSION)"
 EXPECT_AGY_SHA_X64="$(arg_pin AGY_SHA256_X64)"
 EXPECT_AGY_SHA_ARM64="$(arg_pin AGY_SHA256_ARM64)"
@@ -272,6 +291,9 @@ exec docker run --rm -i --init --network none --memory "$SMOKE_MEMORY" --cap-add
   -e EXPECT_CURSOR="$EXPECT_CURSOR" \
   -e EXPECT_CURSOR_SHA_X64="$EXPECT_CURSOR_SHA_X64" \
   -e EXPECT_CURSOR_SHA_ARM64="$EXPECT_CURSOR_SHA_ARM64" \
+  -e EXPECT_KIRO="$EXPECT_KIRO" \
+  -e EXPECT_KIRO_SHA_X64="$EXPECT_KIRO_SHA_X64" \
+  -e EXPECT_KIRO_SHA_ARM64="$EXPECT_KIRO_SHA_ARM64" \
   -e EXPECT_AGY="$EXPECT_AGY" \
   -e EXPECT_AGY_SHA_X64="$EXPECT_AGY_SHA_X64" \
   -e EXPECT_AGY_SHA_ARM64="$EXPECT_AGY_SHA_ARM64" \

@@ -852,6 +852,7 @@
 .p-badge.pb-codex { background: var(--kind-codex); }
 .p-badge.pb-cursor { background: var(--kind-cursor); }
 .p-badge.pb-copilot { background: var(--kind-copilot); }
+.p-badge.pb-kiro { background: var(--kind-kiro); }
 .p-badge.pb-opencode { background: var(--kind-opencode); }
 .p-badge.pb-agy { background: var(--kind-agy); }
 .p-badge.pb-github { background: #c9d1d9; }

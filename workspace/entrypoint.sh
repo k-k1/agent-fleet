@@ -172,6 +172,19 @@ if [ "$LEAN_CLIS" = 1 ]; then
   fi
 fi
 
+# Kiro CLI（kind="kiro"、docs/43 Track B / §4-2）は ~855MB と桁違いに巨大なため、
+# 上の CLI 群と違い全ユーザー一律の boot-install は「しない」— kiro を使うユーザーの
+# 初回起動時に `workspace-agent install-kiro` が ~/.local へ manifest sha256 ピン付きで
+# 導入する（オンデマンド・利用ユーザー限定）。ここでやるのは自己更新封殺の毎起動再固定
+# だけ: kiro は copilot の COPILOT_AUTO_UPDATE のような build ENV ノブを持たず、
+# app.disableAutoupdates（~/.kiro/settings/cli.json・平文）で止める設定型なので、
+# 焼き込み（/usr/local・BAKE=1）でも home 導入済みでも毎起動固定する。未導入なら無音スキップ。
+if command -v kiro-cli >/dev/null 2>&1; then
+  kiro-cli settings app.disableAutoupdates true >/dev/null 2>&1 || true
+  kiro-cli settings chat.disableTrustAllConfirmation true >/dev/null 2>&1 || true
+  echo "[entrypoint] kiro: pinned app.disableAutoupdates (version managed by rebuild / on-demand install)"
+fi
+
 if [ "${CLAUDE_INSTALL:-1}" = "1" ]; then
   if command -v claude >/dev/null 2>&1; then
     case "$(command -v claude)" in

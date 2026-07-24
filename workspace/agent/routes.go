@@ -8,6 +8,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 )
 
@@ -226,6 +227,16 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /connections/cursor/start", cursor.HandleStart)
 	mux.HandleFunc("POST /connections/cursor/poll", cursor.HandlePoll)
 	mux.HandleFunc("DELETE /connections/cursor", cursor.HandleDisconnect)
+	// kiro login（docs/43 Track C）: device-flow 型（codex/cursor と同じ start→poll）。
+	// kiro-cli 自身が AWS SSO をポーリングし、承認後に資格情報を書く。コード貼付は無く
+	// URL+確認コードを表示するだけ。
+	mux.HandleFunc("POST /connections/kiro/start", kiro.HandleStart)
+	mux.HandleFunc("POST /connections/kiro/poll", kiro.HandlePoll)
+	mux.HandleFunc("DELETE /connections/kiro", kiro.HandleDisconnect)
+	// kiro on-demand install（docs/43 Track B/C）: lean イメージは ~855MB を焼かないため
+	// 接続カードの「インストール」ボタンが叩く。POST で背景導入を開始、GET で進捗状態。
+	mux.HandleFunc("POST /connections/kiro/install", handleKiroInstall)
+	mux.HandleFunc("GET /connections/kiro/install", handleKiroInstall)
 	mux.HandleFunc("PUT /connections/pagerduty", handlePutPagerDutyConn)
 	mux.HandleFunc("DELETE /connections/pagerduty", handleDeletePagerDutyConn)
 	mux.HandleFunc("PUT /connections/grafana", handlePutGrafanaConn)

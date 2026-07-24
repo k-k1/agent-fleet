@@ -19,7 +19,7 @@ import { type ScheduleDTO, type ScheduleEditable, scheduleTitle } from "./read.t
 
 // Known agent kinds for the edit picker; the schedule's current kind is always included so
 // an unfamiliar value is never silently dropped from the select.
-const AGENT_KINDS = ["claude", "codex", "opencode", "copilot", "cursor"];
+const AGENT_KINDS = ["claude", "codex", "opencode", "copilot", "cursor", "kiro"];
 const SPEC_KINDS = ["cron", "interval", "once"];
 const WAKE_POLICIES = ["wake", "skip", "catch_up"];
 

@@ -51,6 +51,11 @@ var toolSpecs = []toolSpec{
 	// はその wrapper への symlink（realpath で版ディレクトリを解決）。版は日付形式
 	// （2026.07.20-8cc9c0b）で semver でないが、`cursor-agent --version` はその文字列を返す。
 	{Name: "cursor", Cmd: "cursor-agent", Baked: "/usr/local/bin/cursor-agent", Pin: "cursor"},
+	// kiro（kind="kiro"、docs/43）は焼き込み（/usr/local・BAKE=1）でも、既定では
+	// オンデマンドで ~/.local へ入る（~855MB のため全ユーザー boot-install しない）。
+	// 実効/焼き込み/ユーザー local の 3 版表示は他 CLI と同じ（未導入なら effective/baked
+	// とも null＝「未導入」がそのまま可視化される）。`kiro-cli --version` は「kiro-cli 2.14.1」。
+	{Name: "kiro", Cmd: "kiro-cli", Baked: "/usr/local/bin/kiro-cli", Pin: "kiro"},
 	{Name: "rtk", Cmd: "rtk", Baked: "/usr/local/bin/rtk", Pin: "rtk"},
 	{Name: "gh", Cmd: "gh", Baked: "/usr/local/libexec/gh", Pin: "gh"}, // /usr/local/bin/gh は透過認証ラッパー
 	{Name: "go", Cmd: "go", Baked: "/usr/local/go/bin/go", Args: []string{"version"}, Pin: "go"},
