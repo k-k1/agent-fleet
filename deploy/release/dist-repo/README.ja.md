@@ -8,7 +8,7 @@
 ## Agent Fleet とは
 
 Agent Fleet は、AI コーディングエージェント（Claude Code / Codex CLI /
-GitHub Copilot CLI / Antigravity CLI / Cursor CLI / OpenCode）を「フリート」として
+GitHub Copilot CLI / Antigravity CLI / Cursor CLI / Kiro CLI / OpenCode）を「フリート」として
 まとめて運用するための、セルフホスト型の Web コンソールです。利用者ごとに隔離された
 ワークスペースが割り当てられ、ブラウザからエージェントセッションを起動・操作・監視
 できます。各ワークスペースは、CPU / メモリを cgroup クォータで絞った Docker コンテナ
@@ -17,8 +17,8 @@ GitHub Copilot CLI / Antigravity CLI / Cursor CLI / OpenCode）を「フリー�
 
 主な機能:
 
-- **6 種のエージェント CLI をひとつのコンソールで** — Claude Code / Codex /
-  GitHub Copilot / Antigravity / Cursor / OpenCode のセッションを並べて実行。
+- **7 種のエージェント CLI をひとつのコンソールで** — Claude Code / Codex /
+  GitHub Copilot / Antigravity / Cursor / Kiro / OpenCode のセッションを並べて実行。
   セッション毎のモデル選択に対応し、CLI の版は動作検証済みの組み合わせにピン止め
   （self-update は opt-in）。
 - **実 git リポジトリ上の並行セッション** — HTTPS（GitHub / Bitbucket の
@@ -75,35 +75,36 @@ GitHub Copilot CLI / Antigravity CLI / Cursor CLI / OpenCode）を「フリー�
 CLI が公開している範囲に依存します）。早見表は以下のとおりです（✓ = 対応、
 — = 非対応 / 該当なし）:
 
-| 機能 | Claude | Codex | Cursor | Copilot | Antigravity | OpenCode | Shell |
-|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| マネージド（paneless）実行 | — | ✓ | ✓ | ✓ | — | ✓ | — |
-| ターミナル（CLI）実行 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| 実行中のチャットミラー | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| 停止中の履歴表示（読み取り専用） | ✓ | ✓ | —³ | ✓ | ✓ | ✓ | — |
-| 起動時のモデル選択 | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | — |
-| reasoning effort 指定 | ✓ | ✓ | —² | ✓ | —² | ✓ | — |
-| Plan モード | ✓ | ✓ | ✓ | ✓ | — | ✓ | — |
-| コンテキスト使用量ゲージ | ✓ | ✓ | — | — | — | ✓ | — |
-| 画像貼り付け | ✓ | ✓ | — | — | ✓ | ✓ | — |
-| 会話の引き継ぎ（handoff） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| git worktree で起動 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| 定時実行（無人実行） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| チャットブリッジ（Discord / Slack） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| アシスタントチャットとして利用可 | ✓ | ✓ | ✓ | — | ✓ | ✓ | — |
-| WSバーの使用量 / 残量チップ | ✓ | ✓ | — | ✓ | ✓ | — | — |
+| 機能 | Claude | Codex | Cursor | Copilot | Kiro | Antigravity | OpenCode | Shell |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| マネージド（paneless）実行 | — | ✓ | ✓ | ✓ | ✓ | — | ✓ | — |
+| ターミナル（CLI）実行 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 実行中のチャットミラー | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| 停止中の履歴表示（読み取り専用） | ✓ | ✓ | —³ | ✓ | ✓ | ✓ | ✓ | — |
+| 起動時のモデル選択 | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | ✓ | — |
+| reasoning effort 指定 | ✓ | ✓ | —² | ✓ | — | —² | ✓ | — |
+| Plan モード | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | — |
+| コンテキスト使用量ゲージ | ✓ | ✓ | — | — | ✓ | — | ✓ | — |
+| 画像貼り付け | ✓ | ✓ | — | — | — | ✓ | ✓ | — |
+| 会話の引き継ぎ（handoff） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| git worktree で起動 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 定時実行（無人実行） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| チャットブリッジ（Discord / Slack） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| アシスタントチャットとして利用可 | ✓ | ✓ | ✓ | — | — | ✓ | ✓ | — |
+| WSバーの使用量 / 残量チップ | ✓ | ✓ | — | ✓ | — | ✓ | — | — |
 
 ¹ Copilot のモデル選択はプラン依存です（Free は Auto のみ）。
 
 ² Cursor と Antigravity は reasoning effort をモデル名に内包するため、別途の指定は
-ありません。
+ありません。Kiro は effort フラグを受け付けますが、モデル別の effort ピッカーは出しません。
 
 ³ Cursor はマネージド（既定）実行ではローカルに転写を残さないため、**停止中**の
 Cursor セッションには表示できる履歴がありません（実行中のミラーは動作し、ターミナル
-（CLI）で実行した場合は読み取り可能な履歴が残ります）。
+（CLI）で実行した場合は読み取り可能な履歴が残ります）。一方 Kiro はマネージド実行でも
+読み取り可能な転写を残すため、停止中の Kiro セッションでも履歴が表示できます。
 
 WSバーの使用量チップはアカウント単位の残量枠がある場合に表示されます——
-opencode（各自のプロバイダ API キー）と Cursor にはその枠がありません。**SSM**
+opencode（各自のプロバイダ API キー）・Cursor・Kiro にはその枠がありません。**SSM**
 セッション（AWS SSM 経由のリモートログイン）は Shell と同様にターミナルのみで、
 会話はなく、ワークスペースの worktree にも紐づきません。
 
@@ -112,6 +113,7 @@ opencode（各自のプロバイダ API キー）と Cursor にはその枠が�
 既定にしています: Claude → Sonnet 5 · Codex → `gpt-5.6-luna` · OpenCode →
 `opencode/nemotron-3-ultra-free` · Antigravity → Gemini 3.5 Flash · Cursor →
 Cursor 自身の既定（Auto）。なお Cursor のアシスタントは**読み取り専用**（`--mode ask`）です。
+Kiro はアシスタントチャットとしては**利用できません**（headless チャットを持たないため）。
 
 ## はじめに — どの版を選ぶ？
 
@@ -251,7 +253,7 @@ rm -rf ~/.local/opt/agent-fleet
 
 - 本配布物のイメージと rootfs は **lean 構成**（エージェント CLI を焼き込まない
   ビルド）です。エージェント CLI（Claude Code / Codex / GitHub Copilot /
-  Antigravity / Cursor / OpenCode）の本体は同梱せず、各ワークスペースの初回起動時に、
+  Antigravity / Cursor / Kiro / OpenCode）の本体は同梱せず、各ワークスペースの初回起動時に、
   利用者ごとにそれぞれの公式配布元から検証済みのピン版を取得し、各自のアカウントで
   サインインします。本配布物は、プロプライエタリな CLI を再配布しません。
 - 同梱している OSS の帰属表示は、各 tar 内の `NOTICE` を参照してください。

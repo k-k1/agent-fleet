@@ -1,4 +1,4 @@
-# 06. Agents — connecting and choosing claude / codex / opencode / GitHub Copilot / Cursor
+# 06. Agents — connecting and choosing claude / codex / opencode / GitHub Copilot / Cursor / Kiro
 
 English | [日本語](06-agents.ja.md)
 
@@ -8,32 +8,33 @@ English | [日本語](06-agents.ja.md)
 
 ## Supported agents and how to choose
 
-Five major CLI coding agents are supported (the experimental Antigravity (agy) slot is
+Six major CLI coding agents are supported (the experimental Antigravity (agy) slot is
 covered in [08](08-advanced.md)). Connection changes take effect immediately; behavior
 settings apply **from each agent's new sessions**.
 
-| | claude | codex | opencode | copilot | cursor |
-|--|--------|-------|----------|---------|--------|
-| Authentication | OAuth connection (paste a code) | ChatGPT subscription / API key | Provider API keys (env) | Rides the GitHub connection (no separate sign-in) | Sign in with a Cursor account (browser approval only) |
-| Model choice at launch | Yes | Yes | Yes | Yes (plan-dependent — Free is Auto only) | Yes (tied to the account) |
-| States | Working / Question / Plan ready / Awaiting approval / Ready | Working / Question / Plan ready / Ready | Working / Question / Ready | Working / Awaiting approval / Ready | Working / Ready |
-| Chat view & history | Yes | Yes | Yes | Yes | Live: yes (simplified tool output). Stopped: no history under Managed |
-| Plan mode | Yes | Yes | Yes | Set at launch + switchable from managed settings | Yes |
-| Execution method | Terminal (CLI) | Managed (default) / Terminal (CLI) | Managed (default) / Terminal (CLI) | Managed (default) / Terminal (CLI) | Managed (default) / Terminal (CLI) |
-| Resume | Yes (not if the working folder is gone) | Yes (not if the working folder is gone) | Yes (not if the working folder is gone) | Yes (not if the working folder is gone) | Yes (can't resume across execution methods) |
-| Hand off | Yes | Yes | Yes | Yes | Yes |
-| Image paste | Yes | Yes | Yes (model-dependent) | Not supported | Not supported |
+| | claude | codex | opencode | copilot | cursor | kiro |
+|--|--------|-------|----------|---------|--------|------|
+| Authentication | OAuth connection (paste a code) | ChatGPT subscription / API key | Provider API keys (env) | Rides the GitHub connection (no separate sign-in) | Sign in with a Cursor account (browser approval only) | Device-flow sign-in (Builder ID / Google / GitHub — browser approval only) |
+| Model choice at launch | Yes | Yes | Yes | Yes (plan-dependent — Free is Auto only) | Yes (tied to the account) | Yes (named models even on Free) |
+| States | Working / Question / Plan ready / Awaiting approval / Ready | Working / Question / Plan ready / Ready | Working / Question / Ready | Working / Awaiting approval / Ready | Working / Ready | Working / Awaiting approval / Ready |
+| Chat view & history | Yes | Yes | Yes | Yes | Live: yes (simplified tool output). Stopped: no history under Managed | Yes (readable history even under Managed) |
+| Plan mode | Yes | Yes | Yes | Set at launch + switchable from managed settings | Yes | Not supported |
+| Execution method | Terminal (CLI) | Managed (default) / Terminal (CLI) | Managed (default) / Terminal (CLI) | Managed (default) / Terminal (CLI) | Managed (default) / Terminal (CLI) | Managed (default) / Terminal (CLI) |
+| Resume | Yes (not if the working folder is gone) | Yes (not if the working folder is gone) | Yes (not if the working folder is gone) | Yes (not if the working folder is gone) | Yes (can't resume across execution methods) | Yes (not if the working folder is gone) |
+| Hand off | Yes | Yes | Yes | Yes | Yes | Yes |
+| Image paste | Yes | Yes | Yes (model-dependent) | Not supported | Not supported | Not supported |
 
 If you're unsure, choose by the subscription or models you use. If you use an Anthropic
 account, pick **claude**; if you use ChatGPT or the OpenAI API, pick **codex**; if you want
 to switch between API keys from multiple providers, pick **opencode**; if you have a
 GitHub Copilot subscription, pick **copilot**; if you have a Cursor plan, pick
-**cursor**. They all support the conversation view, answering questions, Plan mode, and
-handing a conversation off to another agent; the context gauge is on claude / codex / opencode.
+**cursor**; if you use an AWS Builder ID (or Kiro plan), pick **kiro**. They all support
+the conversation view, answering questions, and handing a conversation off to another
+agent; the context gauge is on claude / codex / opencode / kiro.
 
-**Managed execution** for Codex / opencode / copilot / cursor lets you handle your everyday
+**Managed execution** for Codex / opencode / copilot / cursor / kiro lets you handle your everyday
 work entirely from the conversation view (Codex / opencode carry no extra per-session
-process, which makes them well suited to parallel work; copilot / cursor run a dedicated
+process, which makes them well suited to parallel work; copilot / cursor / kiro run a dedicated
 per-session process even when Managed). Pick **Terminal (CLI)** only when you need the
 CLI's own black screen. For details, see
 [02 Sessions](02-sessions.md#execution-method--managed-and-terminal-cli).
@@ -46,41 +47,42 @@ new session ([02](02-sessions.md)).
 
 ## Feature matrix (all agent kinds)
 
-The table at the top compares the five main agents. This one adds Antigravity (agy) and
+The table at the top compares the six main agents. This one adds Antigravity (agy) and
 the non-agent session kinds (shell / SSM), and rolls in the cross-cutting features
 covered elsewhere in this guide — worktrees ([04](04-git.md)), scheduled runs and the
 chat bridge ([11](11-fleet-operator.md), [08](08-advanced.md)). ✓ = supported,
 — = not applicable / not supported.
 
-| Capability | claude | codex | cursor | copilot | agy | opencode | shell | ssm |
-|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| Managed (paneless) execution | — | ✓ | ✓ | ✓ | — | ✓ | — | — |
-| Terminal (CLI) execution | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Live chat mirror | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
-| History when stopped (read-only) | ✓ | ✓ | —³ | ✓ | ✓ | ✓ | — | — |
-| Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | — | — |
-| Reasoning-effort control | ✓ | ✓ | —² | ✓ | —² | ✓ | — | — |
-| Plan mode | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
-| Context-window gauge | ✓ | ✓ | — | — | — | ✓ | — | — |
-| Image paste | ✓ | ✓ | — | — | ✓ | ✓ | — | — |
-| Hand off a conversation | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
-| Runs in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
-| Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
-| Usable as the assistant chat | ✓ | ✓ | ✓ | — | ✓ | ✓ | — | — |
-| WS-bar usage / limit chip | ✓ | ✓ | — | ✓ | ✓ | — | — | — |
+| Capability | claude | codex | cursor | copilot | kiro | agy | opencode | shell | ssm |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| Managed (paneless) execution | — | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
+| Terminal (CLI) execution | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Live chat mirror | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
+| History when stopped (read-only) | ✓ | ✓ | —³ | ✓ | ✓ | ✓ | ✓ | — | — |
+| Model choice at launch | ✓ | ✓ | ✓ | ✓¹ | ✓ | ✓ | ✓ | — | — |
+| Reasoning-effort control | ✓ | ✓ | —² | ✓ | — | —² | ✓ | — | — |
+| Plan mode | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | — | — |
+| Context-window gauge | ✓ | ✓ | — | — | ✓ | — | ✓ | — | — |
+| Image paste | ✓ | ✓ | — | — | — | ✓ | ✓ | — | — |
+| Hand off a conversation | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
+| Runs in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
+| Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
+| Usable as the assistant chat | ✓ | ✓ | ✓ | — | — | ✓ | ✓ | — | — |
+| WS-bar usage / limit chip | ✓ | ✓ | — | ✓ | — | ✓ | — | — | — |
 
 ¹ copilot's model choice is plan-dependent (Free = Auto only).
 
 ² cursor and agy fold the reasoning effort into the model name, so there is no separate
-control.
+control. kiro accepts a `--effort` flag but exposes no per-model effort picker.
 
 ³ cursor's managed (default) execution keeps no local transcript — a **stopped** cursor
 session has no history to show (the live mirror works while running, and running cursor
-as Terminal (CLI) does persist a readable history).
+as Terminal (CLI) does persist a readable history). kiro, by contrast, persists a readable
+transcript even under Managed, so a stopped kiro session still shows its history.
 
 The WS-bar usage chip needs an account-level limit to show — opencode
-(bring-your-own provider API keys) and cursor expose none. **shell** is a raw shell and
+(bring-your-own provider API keys), cursor, and kiro expose none. **shell** is a raw shell and
 **ssm** is a remote login over AWS SSM — both are terminal-only with no conversation,
 state model, or notifications.
 
@@ -89,6 +91,7 @@ claude's default is settable deployment-wide via `AF_CHAT_MODEL`. Fast, low-cost
 the defaults because the assistant is conversational: claude → Sonnet 5 · codex →
 `gpt-5.6-luna` · opencode → `opencode/nemotron-3-ultra-free` · agy → Gemini 3.5 Flash ·
 cursor → its own default (Auto). cursor's assistant runs **read-only** (`--mode ask`).
+kiro is **not** available as an assistant chat (it has no headless chat mode).
 
 > **A note on autonomous execution.** Agents run commands, edit files, and push on your
 > behalf — including unattended (scheduled runs) and, in permission-bypassing modes,
@@ -160,9 +163,30 @@ supported.
 - The usage chip, context gauge, and image paste are not supported for cursor.
   Check your plan's remaining quota on the Cursor dashboard.
 
+## Kiro
+
+**kiro** (Kiro CLI — formerly Amazon Q Developer CLI) — on the **Kiro** card in the
+"Agents" tab, press **"Sign in to Kiro"**. It's a **device-flow** sign-in: an authorize
+link with a confirmation code is shown; open it in your browser and approve (Builder ID /
+Google / GitHub etc.). Once you approve, the card shows "Connected" with your account
+email. Connecting with an API key is not supported.
+
+- **On-demand install.** Kiro's CLI is large (~855 MB) and is **not baked into the image**
+  by default. The first time you use it, it's downloaded into your home directory — the
+  connection card shows an **"Install"** button with progress before you can sign in.
+  (Deployments that set `BAKE_AGENT_CLIS=1` ship it pre-installed.)
+- The model choices at launch are fetched live; **named models are available even on the
+  Free plan** (Auto, Claude Sonnet / Haiku, and others). There's no separate
+  reasoning-effort picker.
+- Both **Managed (default)** and **Terminal (CLI)** execution are supported. Unlike cursor,
+  a **stopped** kiro session still shows a readable history, and running kiro exposes a
+  live **context gauge**.
+- The image paste, Plan mode, and the WS-bar usage chip are not supported for kiro, and it
+  can't be used as the left-pane assistant chat.
+
 ## Checking remaining context
 
-In claude / codex / opencode sessions, a **"Context"** gauge (`ctx` when the screen is
+In claude / codex / opencode / kiro sessions, a **"Context"** gauge (`ctx` when the screen is
 narrow) appears at the top. Hover over it to see how many tokens the current conversation
 is using, the limit, and the breakdown into cache reuse, new cache writes, and uncached.
 As you approach the limit, a "May be auto-compacted soon" warning appears. If a long

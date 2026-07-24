@@ -60,7 +60,7 @@ forward while keeping an eye on another.
 
 On desktop you can arrange up to 4 columns × 2 rows. On phones it's 1 column, up to 2 panes.
 
-Each pane's content is independent. For claude / codex / cursor / copilot / agy / opencode running as Terminal (CLI),
+Each pane's content is independent. For claude / codex / cursor / copilot / kiro / agy / opencode running as Terminal (CLI),
 the **Chat ⇄ Terminal** toggle at the top switches between the conversation's Markdown view and
 the terminal view. Managed sessions use only the chat view ([07 Chat and memos](07-chat-memo.md)).
 

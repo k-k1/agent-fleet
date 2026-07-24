@@ -56,7 +56,7 @@ branch switches); the other option is **"Directly in this copy"**.
 - **New worktree** (default) — carves out an independent working copy dedicated to that task. Since edits never collide with other sessions, this is the safe choice for parallel work (you can pick the base branch and branch name; if left empty, a provisional name `temp/…` is used).
 - **Directly in this copy** — works directly in the folder currently open.
 
-The **▾** to the right of "Launch" lets you pick a kind (claude / codex / cursor / copilot / agy / opencode / shell) and
+The **▾** to the right of "Launch" lets you pick a kind (claude / codex / cursor / copilot / kiro / agy / opencode / shell) and
 **launch instantly** without opening the settings screen (Ctrl / middle-click launches in a new pane).
 
 Rows also show status indicators. Learning to read them helps you catch things before pushing.
