@@ -7,7 +7,7 @@ English | [日本語](badges-and-menus.ja.md)
 
 ## Session display
 
-The colored icon at the start of a row indicates the kind: `claude`, `codex`, `cursor`, `copilot`, `agy`, `opencode`, `shell`, or `ssm`.
+The colored icon at the start of a row indicates the kind: `claude`, `codex`, `cursor`, `copilot`, `kiro`, `agy`, `opencode`, `shell`, or `ssm`.
 Hover over the state icon at the end of the row to see the state name. States that need action from you are
 shown as text as well, not just an icon.
 

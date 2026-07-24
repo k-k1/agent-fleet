@@ -1,7 +1,7 @@
 # deploy/ — deployment targets and release tooling
 
 Agent Fleet is a self-hosted web console for running AI coding agents (Claude Code,
-Codex CLI, GitHub Copilot CLI, Antigravity CLI, OpenCode) as a managed fleet: each member gets an
+Codex CLI, GitHub Copilot CLI, Antigravity CLI, Cursor CLI, Kiro CLI, OpenCode) as a managed fleet: each member gets an
 isolated workspace with a persistent home and git working copies, and drives agent
 sessions from the browser. This directory contains everything needed to deploy it
 and to build/publish its release artifacts.

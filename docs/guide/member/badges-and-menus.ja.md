@@ -7,7 +7,7 @@
 
 ## セッションの表示
 
-行の先頭にある色付きアイコンは、`claude`、`codex`、`cursor`、`copilot`、`agy`、`opencode`、`shell`、`ssm` の種類を
+行の先頭にある色付きアイコンは、`claude`、`codex`、`cursor`、`copilot`、`kiro`、`agy`、`opencode`、`shell`、`ssm` の種類を
 表します。行末の状態アイコンにマウスを重ねると状態名を確認できます。利用者の操作が必要な
 状態は、アイコンだけでなく文字も表示されます。
 

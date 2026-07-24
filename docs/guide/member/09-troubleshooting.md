@@ -19,7 +19,7 @@ You can check the connection status in ⚙ Settings → the "Agents" tab ([06](0
 ### A session won't resume / is shown struck through
 
 If the state is **"Folder missing — can't resume"**, that session's **working folder is gone**
-(typically after deleting the whole worktree). claude / codex / cursor / copilot / agy / opencode cannot resume from this state.
+(typically after deleting the whole worktree). claude / codex / cursor / copilot / kiro / agy / opencode cannot resume from this state.
 Start the same work over as a new session. shell falls back to home and resumes if the
 working folder is missing ([02](02-sessions.md)).
 

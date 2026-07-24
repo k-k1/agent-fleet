@@ -24,7 +24,7 @@ to look up colored marks and right-click actions, see [Icons, badges, and menus]
 3. [Terminal](03-terminal.md) — Working the black screen, copy & paste, shortcuts, phones
 4. [Repositories and git](04-git.md) — Cloning, reviewing changes, committing, pushing (SVN too)
 5. [Files](05-files.md) — Tree, viewer, Markdown/slide display
-6. [Agents](06-agents.md) — Connecting and choosing claude / codex / opencode / GitHub Copilot / Cursor
+6. [Agents](06-agents.md) — Connecting and choosing claude / codex / opencode / GitHub Copilot / Cursor / Kiro CLI
 7. [Chat and memos](07-chat-memo.md) — Questions and translations without a repository, collecting memos
 8. [Going further](08-advanced.md) — Browser pane / lightweight preview, Discord / Slack integration, other hosts, environment settings
 9. [Troubleshooting](09-troubleshooting.md) — Fixes by symptom, plus an FAQ

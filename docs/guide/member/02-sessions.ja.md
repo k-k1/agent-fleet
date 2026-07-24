@@ -6,7 +6,7 @@
 > 再開できる条件、複製とブランチ名変更までを扱います。
 
 セッションは、AI に任せる 1 つの仕事を、**会話・作業場所・実行状態**ごとまとめた単位です。
-ターミナルの有無とは別の概念で、Codex / opencode / GitHub Copilot は黒い画面を持たない
+ターミナルの有無とは別の概念で、Codex / opencode / GitHub Copilot / Kiro CLI は黒い画面を持たない
 マネージド実行でもセッションとして動きます。左ペインでは作業場所に対応する **リポジトリ** の下に並び、
 リポジトリに属さないものは **その他のセッション** に並びます。複数のセッションを並行して
 持て、それぞれが独立した会話・作業フォルダを持ちます。
@@ -17,30 +17,31 @@
 - **codex** — Codex を起動。
 - **cursor** — Cursor を起動（Cursor プランが必要。接続すると並びます — [06](06-agents.ja.md)）。
 - **copilot** — GitHub Copilot を起動（GitHub 連携に相乗り — [06](06-agents.ja.md)）。
+- **kiro** — Kiro CLI を起動（デバイスフローのサインインが必要。接続すると並びます — [06](06-agents.ja.md)）。
 - **agy** — Antigravity を起動（実験枠。接続すると並びます）。
 - **opencode** — OpenCode を起動。
 - **shell** — 通常のシェル（bash）。「はじめる」からすぐ開けます。
 
-claude / codex / cursor / opencode / copilot / agy は、対応するエージェントを接続すると「はじめる」に並びます
+claude / codex / cursor / opencode / copilot / kiro / agy は、対応するエージェントを接続すると「はじめる」に並びます
 （接続は [06 エージェント](06-agents.ja.md)）。（別ホストへ入る **ssm** は
 [08 一歩進んだ使い方](08-advanced.ja.md)。）
 
 ## 実行方式 — マネージドとターミナル（CLI）
 
-Codex / cursor / opencode / GitHub Copilot の開始画面では **実行方式**を選べます。これは Agent Fleet がエージェントを
+Codex / cursor / opencode / GitHub Copilot / Kiro CLI の開始画面では **実行方式**を選べます。これは Agent Fleet がエージェントを
 動かし、指示を届ける経路（内部では「ドライバ」）の違いです。**同じ種類のセッションを
 どう動かすか**を選ぶもので、会話の保存先や作業フォルダが別になるわけではありません。
 
 - **マネージド（推奨・既定）** — Agent Fleet がエージェントを直接制御します。
   操作はチャット表示で行い、ターミナルはありません。Codex / opencode は共有の実行基盤で動き、
   セッション専用の CLI プロセスを持たないため省メモリで並行作業に向きます
-  （GitHub Copilot と cursor はマネージドでもセッションごとの専用プロセスで動くため、メモリは
+  （GitHub Copilot・cursor・Kiro CLI はマネージドでもセッションごとの専用プロセスで動くため、メモリは
   ターミナル（CLI）と同等です）。
 - **ターミナル（CLI）** — エージェントの CLI をセッションごとに起動し、その対話画面を
   ターミナルから直接操作できます。CLI 固有の画面やコマンドが必要な場合向けで、セッションごとに
   追加のメモリを使います。
 
-新しい Codex / cursor / opencode / GitHub Copilot セッションはマネージドが既定です。claude / agy は
+新しい Codex / cursor / opencode / GitHub Copilot / Kiro CLI セッションはマネージドが既定です。claude / agy は
 ターミナル（CLI）、shell / SSM はターミナル経路だけを使います。マネージド対応の種類は停止中でなく、エージェントが処理中でもないとき、
 セッションの ⋯ メニューから実行方式を切り替えられます。**会話はそのまま引き継がれます**。
 ターミナル（CLI）からチャット表示を開くこともできますが、マネージドにターミナル画面はありません。
@@ -138,7 +139,7 @@ Codex / cursor / opencode / GitHub Copilot の開始画面では **実行方式*
 
 ## 再開できる／できない
 
-停止中のセッションはクリックで開いて再開できます。ただし claude / codex / cursor / copilot / agy / opencode は、
+停止中のセッションはクリックで開いて再開できます。ただし claude / codex / cursor / copilot / kiro / agy / opencode は、
 **起動時の作業フォルダが消えていると再開できません**。この場合、状態表示が
 **「フォルダ無し — 再開不可」** になり、行は打ち消し線でクリックできなくなります
 （「作業フォルダが存在しないため再開できません」）。作業コピーを worktree ごと消したあとが
@@ -162,7 +163,7 @@ Codex / cursor / opencode / GitHub Copilot の開始画面では **実行方式*
 
 ## 会話を引き継ぐ（handoff）
 
-稼働中の claude、codex、cursor、copilot、agy、opencode セッションの **⋯** メニューから、引継ぎ先の
+稼働中の claude、codex、cursor、copilot、kiro、agy、opencode セッションの **⋯** メニューから、引継ぎ先の
 **「codex への引継ぎを準備」** などを選べます。元の会話をそのまま丸ごと渡すのではなく、
 **フリート・オペレーター**が元セッションの状況を読み、要点・未完了タスク・変更済みファイル・次の作業を
 引継ぎ案にまとめます。

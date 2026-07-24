@@ -56,7 +56,7 @@
 
 デスクトップでは最大 4 列×2 段まで並べられます。スマホは 1 列・最大 2 枚までです。
 
-各ペインの内容は独立しています。ターミナル（CLI）実行の claude / codex / cursor / copilot / agy / opencode なら上部の
+各ペインの内容は独立しています。ターミナル（CLI）実行の claude / codex / cursor / copilot / kiro / agy / opencode なら上部の
 **チャット ⇄ ターミナル**で会話の Markdown 表示と端末表示を切り替えられます。マネージド実行の
 セッションはチャット表示だけを使います（[07 チャットとメモ](07-chat-memo.ja.md)）。
 
