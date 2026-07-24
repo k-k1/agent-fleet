@@ -1,6 +1,6 @@
 # 43. Kiro CLI エージェント種別（kind=kiro・第8種）— Track 0 実測記録
 
-status: Track 0（着工前プローブ）完了＋方針4点決定（2026-07-24）。**Track A（workspace agent 本体・read 層＋TUI）実装完了（2026-07-24・temp/snznjpk）**。**Track B（配備・オンデマンド導入＋焼き込みノブ）実装完了（2026-07-24・temp/snznjpk・§7）**。Track A2/C/D 未着手・ADR 未起票（→ 0026 予定）。
+status: Track 0（着工前プローブ）完了＋方針4点決定（2026-07-24）。**Track A（workspace agent 本体・read 層＋TUI）実装完了（2026-07-24・temp/snznjpk）**。**Track B（配備・オンデマンド導入＋焼き込みノブ）実装完了（2026-07-24・temp/snznjpk・§7）**。**Track C（CP＋Console 配線・色3種同時変更）実装完了（2026-07-24・temp/snznjpk・§8）**。Track A2/D 未着手・ADR 未起票（→ 0026 予定）。
 関連: docs/40（cursor・章立てのテンプレ）/ docs/36（copilot）/ docs/32（agy）/ decisions/0015（managed driver）。
 
 ## 0. 対象と背景
@@ -147,3 +147,49 @@ Track A では**設定固定の冪等ヘルパ（`ensureSettings`）だけ先行
 - **env_tool_versions.go**: `{Name:"kiro", Cmd:"kiro-cli", Baked:"/usr/local/bin/kiro-cli", Pin:"kiro"}` を追加（未導入なら effective/baked とも null＝「未導入」がそのまま3版表示に出る）。
 - **e2e-smoke.sh**: baked（EXPECT_AGENT_CLIS=1）で `check_ver kiro`／lean で不在ループに `kiro-cli` 追加／versions.json の `kiro` ピン＋arch 依存 `kiro_sha256`（cursor/agy と同じ arch 分岐）を検証。
 - **検証**: `go build ./...`／`go vet`／`gofmt` 緑。kiro パッケージ test 7 件緑（buildProgram のガード前置は `strings.Contains` 系アサートに無影響・override 早期 return は不変）。`bash -n e2e-smoke.sh`／`sh -n entrypoint.sh` 緑。manifest 到達・sha256・zip レイアウト・install.sh 挙動は実測で裏取り済み（855MB 実 DL は未実施＝焼き込み/実導入の通し目視は実フリート再ビルド後）。残=Track A2（managed）/C（CP+Console・色3種同時変更）/D＋ADR0026 起票／実導入の実機目視。
+
+## 8. Track C 実装メモ（2026-07-24・temp/snznjpk）— CP＋Console 配線＋色3種同時変更
+
+§4-1（色）・§3 の契約を CP／Console へ配線。cursor Track C（docs/40）を雛形に、kiro は
+**Terminal 専用**（managed/ACP driver は A2 送り）である点だけ非対称に扱う。
+
+- **両 routes.go**（cp-rest-proxy-allowlist 教訓＝CP は明示許可リスト）: workspace/agent と
+  control-plane の**両方**に device-flow ログイン `POST /connections/kiro/{start,poll}`＋
+  `DELETE /connections/kiro`、およびオンデマンド導入 `POST|GET /connections/kiro/install` を登録。
+- **auth.go（login フロー）**: `kiro-cli login --license free --use-device-flow` を PTY 起動して
+  検証 URL（user_code 埋め込み済み）＋確認コードをスクレイプ、`whoami -f json` を uncached で
+  ポーリング（codex/cursor と同じ start→poll・コード貼付なし）。切断は `kiro-cli logout`。
+- **オンデマンド導入の HTTP 面（kiro_install_http.go・新）**: lean は ~855MB を焼かないため、
+  接続カードの「インストール」ボタンが `POST /connections/kiro/install` を叩く。背景 goroutine で
+  Track B の `installKiro()` を回し、`{state: idle|installing|done|error}` を GET でポーリング公開。
+  完了で次の /connections poll が supported=true を返しログインへ遷移（起動ガードは available が
+  connected を要求するため lean では install ボタンが唯一のブートストラップ導線）。`kiro.Installed()` 追加。
+- **MCP kind enum 両総ざらい**（mcp_stdio.go＋CP mcp.go）: list_models whitelist／create_session
+  kind enum／list_my_sessions／get_session_usage（agy・cursor と同じく「転写にトークン無し＝
+  context 空・cumulative 0」）／get_agent_usage（「使用量ソース無し」側）に kiro を追加。
+  **create_session の driver=managed 分岐には kiro を入れない**（Terminal 専用）。bridge/format.go
+  kindLabel に "Kiro"。enkana_dict.go（TTS 読み）に `kiro→キロ`。
+- **types/session.ts**: SessionKind union に "kiro"、SESSION_KINDS を copilot の後に挿入、
+  ProviderConn `kiro?`。
+- **registry.ts descriptor**（caps 全項目を根拠明示）: icon=`compass`（ユーザー確認済み・spec/guide 志向）、
+  label=Kiro/displayName=Kiro CLI/short=ki/launchSuffix=-ki。**managedDriver:false**（A2 未）、
+  caps= chat/transcript/model/tuiStartMode/runsInDir/launchableFromRepo。effort/tuiEffort=false
+  （--effort はあるがカタログに effort メタ無し・per-model 未検証＝picker 出さない）、contextBar=false
+  （転写にトークン無し・ライブ使用量 _kiro.dev/metadata は A2）、planMode=false（3 モード循環で
+  クリーン二値でない・cursor 同型）、imagePaste=false（未配線）、headlessChat=false（§4-3）。
+  available= supported!==false && connected。repoLaunchKinds に kiro。表示順=copilot の後（ユーザー確認済み）。
+- **色3種同時変更**（tokens.css dark/light＋色クラス twin 6 ファイル: app/terminal/sessions/settings/ui.css）:
+  **kiro=紫**（dark #a371f7 / light #8250df＝旧 copilot 値を継承）、**copilot=中立チャコール**
+  （dark #7d8590 / light #30363d）、**opencode=薄いスレートグレー**（dark #aab4be / light #6e7781）。
+  **最終値は両テーマの実描画（headless chromium スウォッチ）で確定**——方針の候補（copilot dark
+  #6b7075／light #24292f、opencode light #9aa4ae）は暗背景のチャコール低コントラスト／白背景の
+  淡グレー低コントラストで視認性が落ちたため、階層（copilot=濃いめ・opencode=薄め）を保ったまま
+  可読値へ寄せた。両テーマで 9 色すべて非衝突・kiro 紫が明瞭。settings チップ（pb-kiro）含め twin 総ざらい。
+- **AgentsTab KiroCard**: 未導入＝install ボタン＋進捗（855MB 注記）、導入済み未認証＝device-flow
+  ログイン（URL＋コード表示・DeviceSteps）、認証済み＝email＋切断。LaunchDefaults kind union に kiro。
+  ScheduleDetailModal の AGENT_KINDS に kiro（定時実行の kind ピッカー）。i18n ja/en（kiro_* 12 キー＋
+  launch_hint.kiro）。
+- **検証**: workspace/agent `go build`／`go vet`／kiro+bridge test 73 緑。control-plane
+  `go build`／`go vet`／test 233 緑。Console typecheck／i18n:lint（裸和文ゼロ）／vitest 413／
+  vite build 緑。色は headless chromium スウォッチで両テーマ実描画確認済み。残=Track A2（managed
+  driver）／D＋ADR0026 起票／実フリート再ビルド後の実機目視（実 device-flow ログイン・855MB 実導入）。
