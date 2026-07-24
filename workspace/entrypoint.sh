@@ -215,24 +215,41 @@ if [ "${CLAUDE_INSTALL:-1}" = "1" ]; then
 fi
 
 # Agent CLI self-update (opt-in + operator-gated). The CLIs (claude/opencode/codex/
-# agy) and rtk are baked at /usr/local, pinned to the image version. Both gates come
-# from the CP as env at container start: AF_AGENT_SELF_UPDATE_ALLOWED=1 (the tenant
-# policy) AND AF_AGENT_SELF_UPDATE=1 (the member's per-workspace opt-in, stored in the
-# CP DB so it can be toggled while the container is stopped). When both are set the
-# CLIs are updated to latest IN PLACE here — no image rebuild. The npm-global tree is
-# dev-owned (Dockerfile chown), so the npm trio needs no root; agy and rtk are root-
+# copilot), agy, and rtk are baked at /usr/local, pinned to the image version. Both
+# gates come from the CP as env at container start: AF_AGENT_SELF_UPDATE_ALLOWED=1 (the
+# tenant policy) AND AF_AGENT_SELF_UPDATE=1 (the member's per-workspace opt-in, stored
+# in the CP DB so it can be toggled while the container is stopped). When both are set
+# the CLIs are updated to latest IN PLACE here — no image rebuild. The npm-global tree
+# is dev-owned (Dockerfile chown), so the npm trio needs no root; agy and rtk are root-
 # owned bakes, so their updates land in ~/.local/bin as PATH-first shadows instead
 # (removed by the else branch below when the opt-in is off). Stop→Start recreates the
 # container from the image, so turning the toggle off reverts to the baked versions.
+#
+# PATH is "$HOME/.local/bin:$PATH" (top of file). In the lean variant the npm CLIs are
+# boot-installed under ~/.local (and a `claude install` native likewise), so ~/.local —
+# not the default npm-global /usr/local — is the copy that actually runs. Updating the
+# default prefix would then land latest where PATH never looks, leaving the effective
+# CLI pinned (the bug this guards against). So target the PATH-effective prefix: if the
+# npm CLI resolves under ~/.local, update AND version-compare that prefix; otherwise
+# (baked at /usr/local) keep the default-prefix behavior. Same idea as the agy/rtk/
+# cursor ~/.local shadows below.
 if [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE:-0}" = "1" ]; then
   echo "[entrypoint] agent self-update: checking versions (member opt-in, operator-allowed) ..."
-  # 版比較スキップ: レジストリの latest とグローバル導入版が全一致なら再インストールを
-  # 丸ごと省く（毎起動の tarball 取得を新リリース時だけに）。判定不能時は従来どおり更新。
-  NPM_NEED=$(node -e '
+  if [ -x "$HOME/.local/bin/claude" ]; then
+    NPM_PREFIX_DIR="$HOME/.local"   # lean/native: ~/.local is PATH-effective
+    NPM_PREFIX_ARG="--prefix $HOME/.local"
+  else
+    NPM_PREFIX_DIR=""               # baked: default npm-global (/usr/local)
+    NPM_PREFIX_ARG=""
+  fi
+  # 版比較スキップ: レジストリの latest と（PATH 実効 prefix の）導入版が全一致なら再
+  # インストールを丸ごと省く（毎起動の tarball 取得を新リリース時だけに）。判定不能時は更新。
+  NPM_NEED=$(NPM_PREFIX_DIR="$NPM_PREFIX_DIR" node -e '
     const { execSync } = require("child_process");
+    const pfx = process.env.NPM_PREFIX_DIR ? " --prefix " + process.env.NPM_PREFIX_DIR : "";
     const run = (c) => execSync(c, { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
     try {
-      const ls = JSON.parse(run("npm ls -g --depth=0 --json"));
+      const ls = JSON.parse(run("npm ls -g --depth=0 --json" + pfx));
       let need = 0;
       for (const p of ["@anthropic-ai/claude-code", "opencode-ai", "@openai/codex", "@github/copilot"]) {
         const cur = ((ls.dependencies || {})[p] || {}).version || "";
@@ -244,8 +261,8 @@ if [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE:-
   ' 2>/dev/null || echo 1)
   if [ "$NPM_NEED" = "0" ]; then
     echo "[entrypoint] agent CLIs already latest; skip"
-  elif npm install -g @anthropic-ai/claude-code@latest opencode-ai@latest @openai/codex@latest @github/copilot@latest >/dev/null 2>&1; then
-    echo "[entrypoint] agent CLIs updated: claude $(claude --version 2>/dev/null | head -1) | opencode $(opencode --version 2>/dev/null | head -1) | codex $(codex --version 2>/dev/null | head -1) | copilot $(copilot --version 2>/dev/null | head -1)"
+  elif npm install -g $NPM_PREFIX_ARG @anthropic-ai/claude-code@latest opencode-ai@latest @openai/codex@latest @github/copilot@latest >/dev/null 2>&1; then
+    echo "[entrypoint] agent CLIs updated${NPM_PREFIX_DIR:+ (~/.local)}: claude $(claude --version 2>/dev/null | head -1) | opencode $(opencode --version 2>/dev/null | head -1) | codex $(codex --version 2>/dev/null | head -1) | copilot $(copilot --version 2>/dev/null | head -1)"
   else
     echo "[entrypoint] WARN: agent CLI update failed (using baked versions)"
   fi
