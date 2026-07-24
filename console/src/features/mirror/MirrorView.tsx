@@ -1592,6 +1592,12 @@ export function MirrorView({
     }
     setDraft(text);
     setHistIdx(null);
+    // スマホ: チップ差し込みで textarea にフォーカスすると GBoard が開いて画面を覆う。タッチ端末では
+    // フォーカスしない（キーボードを出さない）— ユーザーは送信 or タップして編集を選べる。
+    if (coarsePointer()) {
+      inputRef.current?.blur(); // 既に開いていたキーボードも畳む
+      return;
+    }
     requestAnimationFrame(() => {
       const el = inputRef.current;
       if (el) {
