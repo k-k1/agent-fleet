@@ -790,6 +790,18 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
       ? { cls: "working", icon: "loading", spin: true, text: tr("chat.state_running") }
       : { cls: "on", icon: "check", spin: false, text: tr("chat.state_idle") };
 
+  // When a turn finishes (streaming or reattach-poll → idle) on the active pane, return
+  // focus to the composer so the user can type a follow-up right away. Fires on the
+  // true→false transition of showStreaming, so it covers both the live send path and the
+  // reattach path. Suppressed on touch devices for the same reason as the on-open focus
+  // above — re-focusing would pop the on-screen keyboard the moment the answer lands.
+  const wasStreamingRef = useRef(showStreaming);
+  useEffect(() => {
+    const was = wasStreamingRef.current;
+    wasStreamingRef.current = showStreaming;
+    if (was && !showStreaming && active && !coarsePointer()) inputRef.current?.focus();
+  }, [showStreaming, active]);
+
   // assistantTheme scopes the base tokens (tokens.css) via data-theme; assistantColor gives
   // the assistant chat its own surface bg/accent (--chat-bg/--chat-accent, shared contract
   // with the mirror). Both derived for the chat's own effective theme. "inherit"/"default"
