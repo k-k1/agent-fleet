@@ -8,7 +8,7 @@ import {
 } from "../../lib/settings.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { SwatchGrid } from "../../ui/SwatchGrid.tsx";
-import { Choice, OnOff, OrderList, Row } from "./controls.tsx";
+import { Choice, OnOff, OrderList, Row, Slider } from "./controls.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 
 // AssistantTab — アシスタント・チャットの設定：挙動（タイトルAI提案 / 回答言語 /
@@ -49,6 +49,17 @@ export function AssistantTab() {
           <OnOff value={s.assistantAutoTurn} onChange={(v) => setSetting("assistantAutoTurn", v)} />
         </Row>
         <p className="muted ds-note">{tr("assistant.note_auto_turn")}</p>
+        <Row label={tr("assistant.auto_turn_limit")}>
+          <Slider
+            value={s.assistantAutoTurnLimit}
+            min={1}
+            max={50}
+            step={1}
+            format={(v) => String(v)}
+            onChange={(v) => setSetting("assistantAutoTurnLimit", v)}
+          />
+        </Row>
+        <p className="muted ds-note">{tr("assistant.note_auto_turn_limit")}</p>
         <Row label={tr("assistant.auto_pilot")}>
           <OnOff value={s.assistantAutoPilot} onChange={(v) => setSetting("assistantAutoPilot", v)} />
         </Row>
