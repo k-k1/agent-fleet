@@ -317,7 +317,7 @@ func (a workspaceAPI) sessionCreate(w http.ResponseWriter, r *http.Request, res 
 			return
 		}
 	}
-	if aerr := a.sessionQuotaExceeded(ctx, res); aerr != nil {
+	if aerr := a.sessionQuotaExceeded(ctx, res, peekSessionKind(r)); aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
@@ -336,7 +336,7 @@ func (a workspaceAPI) sessionFork(w http.ResponseWriter, r *http.Request, res *r
 			return
 		}
 	}
-	if aerr := a.sessionQuotaExceeded(ctx, res); aerr != nil {
+	if aerr := a.sessionQuotaExceeded(ctx, res, ""); aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
@@ -396,7 +396,34 @@ func (a workspaceAPI) ssmInstances(w http.ResponseWriter, r *http.Request, res *
 // (or tenant-default) concurrent-session cap, else nil. 0/unset = unlimited. Shared
 // by session create and fork (both add a running session). If the workspace isn't
 // reachable the check is skipped — the proxy reports the real error.
-func (a workspaceAPI) sessionQuotaExceeded(ctx context.Context, res *resolved) *apiError {
+//
+// createKind is the kind of the session being created ("" for fork, which is always
+// claude). shell/ssm are unmetered terminals, so creating one is never blocked (and
+// countSessions already omits them from the running count). Native runtime is a
+// single-user host with no shared-host contention, so the cap is not enforced there.
+// peekSessionKind reads a create-session request body to extract its kind, then
+// restores the body so the proxy can forward it unchanged. Returns "" on any read/
+// parse failure — the quota check then treats it as a metered agent session (the
+// safe default) and the Agent surfaces the real error.
+func peekSessionKind(r *http.Request) string {
+	body, err := readAllBody(r)
+	if err != nil {
+		return ""
+	}
+	restoreBody(r, body)
+	var peek struct {
+		Kind string `json:"kind"`
+	}
+	if err := json.Unmarshal(body, &peek); err != nil {
+		return ""
+	}
+	return peek.Kind
+}
+
+func (a workspaceAPI) sessionQuotaExceeded(ctx context.Context, res *resolved, createKind string) *apiError {
+	if a.mgr.nativeRuntime || isUnmeteredKind(createKind) {
+		return nil
+	}
 	lim := 0
 	if ul, ok, _ := a.mgr.store.GetUserLimit(ctx, res.mv.MembershipID); ok && ul.MaxSessions > 0 {
 		lim = ul.MaxSessions

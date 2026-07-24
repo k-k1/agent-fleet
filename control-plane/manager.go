@@ -29,6 +29,11 @@ type manager struct {
 	// ECS on AWS; P3-7). Every runtime is constructed through it — see runtimeFor.
 	rtFactory RuntimeFactory
 
+	// nativeRuntime is true when AF_RUNTIME is native/wsl (containerless, single-user;
+	// docs/34). Native is a personal dev host with no shared-host contention, so the
+	// concurrent-session quota is not enforced there — see sessionQuotaExceeded.
+	nativeRuntime bool
+
 	// template fields shared by every runtime
 	image    string
 	dataRoot string

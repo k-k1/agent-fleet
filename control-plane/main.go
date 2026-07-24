@@ -159,6 +159,7 @@ func main() {
 		log.Fatalf("runtime factory: %v", err)
 	}
 	mgr.rtFactory = rtFactory
+	mgr.nativeRuntime = rtProfile == "native" || rtProfile == "wsl"
 
 	publicBaseURL := os.Getenv("PUBLIC_BASE_URL")
 	// Internal git provider: the clone host workspaces authenticate against is the
