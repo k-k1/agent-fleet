@@ -7,6 +7,7 @@ import { ConfirmProvider } from "../ui/ConfirmProvider.tsx";
 import { PaneHoverProvider } from "../lib/panehover.tsx";
 import { wireViewport } from "./viewport.ts";
 import { registerShareSW } from "../features/memo/share.ts";
+import { consumePopoutBoot } from "../features/panes/popout.ts";
 import "@vscode/codicons/dist/codicon.css";
 import "../styles/tokens.css";
 import "../styles/base.css";
@@ -32,6 +33,11 @@ import "../features/keys/keys.css";
 
 // Pin the frame's bars above the mobile soft keyboard (iOS visual-viewport fit).
 wireViewport();
+
+// Pop-out tab boot (?pane=<nonce>): redeem the handoff descriptor, pin the
+// tenant and set the tab mode BEFORE anything renders or fetches — synchronous
+// and once-only here, so StrictMode's double effects can't re-consume it.
+consumePopoutBoot();
 
 // Install the Web Share Target service worker so the installed PWA can receive shares
 // from Android's 共有シート into the memo queue (docs/21 画像添付). Best-effort.

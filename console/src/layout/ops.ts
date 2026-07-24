@@ -16,6 +16,19 @@ export const freshLayout = (): Layout => ({
   activeId: "p0",
 });
 
+/** A 1-pane layout showing exactly one descriptor — the pop-out tab's seed
+ * (features/panes/popout.ts). Uses the freshLayout ids so a later persist/restore
+ * round-trips identically. */
+export const singlePaneLayout = (
+  content: PaneContent,
+  session: string | null,
+  wrap: boolean | null = null,
+): Layout => ({
+  cols: [{ id: "c0", rowRatio: 0.5, panes: [{ id: "p0", session, content, wrap }] }],
+  colRatios: [1],
+  activeId: "p0",
+});
+
 export const allPanes = (l: Layout): Pane[] => l.cols.flatMap((c) => c.panes);
 export const paneById = (l: Layout, id: string): Pane | undefined =>
   allPanes(l).find((p) => p.id === id);

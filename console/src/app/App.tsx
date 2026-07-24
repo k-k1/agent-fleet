@@ -49,6 +49,11 @@ import { CommandPalette } from "../features/keys/CommandPalette.tsx";
 import { CheatSheet } from "../features/keys/CheatSheet.tsx";
 import { useUpdateCheck } from "../lib/useUpdateCheck.tsx";
 import { consumeSessionDeepLink } from "../lib/sessionDeepLink.ts";
+import { usePopoutMode } from "../lib/popoutMode.ts";
+import { takePendingPopout, takeStalePopoutLink } from "../features/panes/popout.ts";
+import { PopoutTitleBar } from "../features/panes/PopoutTitleBar.tsx";
+import { toast } from "../ui/toast.ts";
+import { t } from "../lib/i18n/index.ts";
 
 // Refresh FILES (and repos/sessions/chat list on start) whenever the workspace
 // actually flips running↔stopped — including external changes the 4s sync catches
@@ -90,6 +95,9 @@ export function App() {
   const [booted, setBooted] = useState(false);
   const notificationSource = useNotificationStore((s) => s.sourceState);
   const workspaceRunning = useWorkspaceStore((s) => s.state) === "running";
+  // Pop-out tab (ペインの別タブ切り離し): "popout" renders minimal chrome below;
+  // "full" is a normal console seeded with the popped pane (no branch needed).
+  const popout = usePopoutMode();
 
   // Detect a newer deployed build and offer a one-tap, cache-busting reload.
   useUpdateCheck();
@@ -302,14 +310,45 @@ export function App() {
     restartPush();
     useNotificationStore.getState().reset();
     void useNotificationStore.getState().refresh();
-    useLayoutStore.getState().load(tenant);
+    // Pop-out first boot: seed the layout from the handed-off descriptor
+    // instead of restoring the saved split. Handed over exactly once —
+    // reloads and tenant switches fall back to the normal load().
+    const popped = takePendingPopout();
+    if (popped) useLayoutStore.getState().initSinglePane(popped.content, popped.session, popped.wrap);
+    else useLayoutStore.getState().load(tenant);
+    if (takeStalePopoutLink()) toast(t("popout.stale_link"), { kind: "info" });
     void useWorkspaceStore.getState().refresh();
     void useSessionsStore.getState().refresh();
   }, [booted, tenant]);
 
   // Desktop notifications on claude state arrivals — lives at the shell now that
-  // the flat Sessions section no longer owns the rail.
-  useSessionNotifications(notificationSource === "unsupported");
+  // the flat Sessions section no longer owns the rail. A minimal pop-out tab
+  // suppresses them: the main console tab already fires the same notifications,
+  // so a satellite tab would just duplicate every ping.
+  useSessionNotifications(notificationSource === "unsupported" || popout === "popout");
+
+  // Minimal pop-out chrome: title bar + the (1-pane) PaneHost, plus the overlay
+  // layer (dialogs the reduced command set can still reach + auth/workspace
+  // modals). No rail / TopBar / WsBar — 展開 (PopoutTitleBar) converts in place.
+  if (popout === "popout") {
+    return (
+      <div className="app-shell popout">
+        <PopoutTitleBar />
+        <main className="app-main">
+          <PaneHost />
+        </main>
+        {settingsOpen && <SettingsDialog />}
+        {adminOpen && <AdminDialog />}
+        {guideOpen && <GuideModal />}
+        <SessionModals />
+        <WsStartingDialog />
+        <AuthExpiredModal />
+        <WhichKey />
+        <CommandPalette />
+        <CheatSheet />
+      </div>
+    );
+  }
 
   return (
     <div

@@ -31,6 +31,8 @@ import { isManagedSession } from "../../types/session.ts";
 import type { Session } from "../../types/session.ts";
 import { PaneFind } from "./PaneFind.tsx";
 import { BrowserPane } from "../browser/BrowserPane.tsx";
+import { canPopout, openPanePopout } from "./popout.ts";
+import { usePopoutMode } from "../../lib/popoutMode.ts";
 
 // Drag payload MIME — identifies a pane-to-pane drag (vs any other drag).
 const DND = "application/x-af-pane";
@@ -72,6 +74,9 @@ export function Pane({
   const tr = useT();
   const paneRef = useRef<HTMLDivElement>(null);
   const isTerm = pane.content.kind === "terminal";
+  // Minimal pop-out tab: hide the pop-out button (the pane already IS its own
+  // tab); reappears after 展開 to full-console mode.
+  const popoutTabMode = usePopoutMode();
   // Cross-highlight: glow this pane while its rail row / mini-map cell is
   // hovered (and vice-versa). Keyed by pane id or a shared session name.
   const { hover, setHover } = usePaneHover();
@@ -231,6 +236,13 @@ export function Pane({
         </button>
       )}
       <div className="pane-controls">
+        {popoutTabMode !== "popout" && canPopout(pane) && (
+          <IconButton
+            icon="link-external"
+            label={tr("ui.popout_pane_hint")}
+            onClick={() => openPanePopout(pane, "popout")}
+          />
+        )}
         {canWrap && (
           <IconButton
             icon="word-wrap"
