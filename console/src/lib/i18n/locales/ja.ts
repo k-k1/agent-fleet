@@ -1038,6 +1038,9 @@ export const ja = {
   "keys.kt.shellPassLabel": "shell / SSM 端末へキーをすべて渡す（Ctrl+K・Ctrl+P 含む）",
   "keys.kt.shellPassNote":
     "オンにすると、shell・SSM 端末にフォーカスがある間は純ターミナルになります。上の項目と違い、リーダー（Ctrl/⌘+K）とパレット（Ctrl/⌘+P）も渡すので、Ctrl+K（行末まで削除）や Ctrl+P（履歴を前へ）などがシェルに届きます。対象は shell/SSM 端末のみで、エージェント端末は従来どおりです。アプリのショートカットに戻すには別のペインにフォーカスしてください。既定はオフ。",
+  "keys.kt.quickRepliesLabel": "返信サジェストを表示（コンポーサー上に候補チップ）",
+  "keys.kt.quickRepliesNote":
+    "オンにすると、コンポーサーの上によく使う短い返信（OK・進めて・commit など）と直近の回答に沿った候補をチップで表示します。クリックで入力欄に差し込み、⌥（Alt）を押しながらで即送信。候補はあなたが送った短文から学習します。既定はオン。",
   "keys.kt.assignTitle": "ショートカットの割り当て",
   "keys.kt.resetAll": "すべて既定に戻す",
   "keys.kt.assignNote":
@@ -1376,6 +1379,7 @@ export const ja = {
   "mirror.update_choice_hint": "アップデート確認の選択待ち",
   "mirror.resuming": "再開中… 準備ができると入力できます",
   // コンポーザ
+  "mirror.suggest_hint": "クリックで入力欄へ・⌥（Alt）で即送信",
   "mirror.prev_input": "前の入力",
   "mirror.next_input": "次の入力",
   "mirror.todo_dismiss": "このToDoリストを消す",
