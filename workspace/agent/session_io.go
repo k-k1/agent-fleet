@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -184,6 +185,11 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// the prompt's turn reaches an awaiting-input state. Sent by the af_write MCP's
 		// send_to_session, which carries its own conversation id (--conv).
 		ReportTo string `json:"report_to"`
+		// Confirm (docs/38 配達検証) makes the {prompt} path block until the prompt
+		// provably started a turn, self-heal once, and answer 502 delivery_unconfirmed
+		// otherwise. Set by unattended senders (the CP scheduler's reuse send) whose
+		// prompt is always a real task; NOT for turnless UI slash commands (/model …).
+		Confirm bool `json:"confirm"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_body", "invalid JSON body")
@@ -291,8 +297,26 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name})
 		return
 	}
+	// 配達検証の基線はタイプ前に取る（confirm 時のみ）。meta が読めない session は
+	// 検証不能として従来意味論のまま通す。
+	var confirmMeta session.Meta
+	var confirmBase deliverySnapshot
+	if body.Confirm {
+		if m, ok := session.ReadMeta(name); ok {
+			confirmMeta = m
+			confirmBase = deliveryBaseline(m)
+		}
+	}
 	if !submitPromptTUI(w, name, pane, body.Prompt) {
 		return
+	}
+	if body.Confirm && confirmMeta.Name != "" {
+		if err := confirmPromptDelivery(confirmMeta, pane, body.Prompt, confirmBase); err != nil {
+			// 未確認は成功と偽らない: 呼び出し元（CP スケジューラ / operator MCP）が
+			// error として記録・通知し、偽 fired を作らない（docs/38 配達検証）。
+			httpx.WriteErr(w, http.StatusBadGateway, "delivery_unconfirmed", err.Error())
+			return
+		}
 	}
 	// Each delivered instruction re-arms exactly one report (docs/30 の指示1件=報告1回)
 	// and — being operator-originated (report_to present) — is remembered so the mirror
@@ -487,9 +511,10 @@ func deliverInitialPrompt(name, prompt string) {
 	// has actually drawn its composer, using the same readiness signal the Console's
 	// launch seed uses: paneMode reads the status/footer line that claude/codex/opencode
 	// draw only once ready. Cap the wait, then fall back to the old fixed beat.
+	meta, metaOK := session.ReadMeta(name)
 	kind := session.KindClaude
-	if m, ok := session.ReadMeta(name); ok {
-		kind = m.Kind
+	if metaOK {
+		kind = meta.Kind
 	}
 	ready := false
 	for i := 0; i < 60; i++ {
@@ -502,6 +527,10 @@ func deliverInitialPrompt(name, prompt string) {
 	if !ready {
 		time.Sleep(2500 * time.Millisecond) // composer never detected — best-effort send anyway
 	}
+	var base deliverySnapshot
+	if metaOK {
+		base = deliveryBaseline(meta)
+	}
 	if typeLineAndSubmit(name, pane, prompt) != nil {
 		return
 	}
@@ -512,6 +541,15 @@ func deliverInitialPrompt(name, prompt string) {
 	_ = tmuxx.Cmd("send-keys", "-t", pane, "Enter").Run()
 	// A real task starts a turn — mark working so the chip reacts before the agent's hook.
 	markSessionWorking(name)
+	// 配達検証（docs/38）: 打鍵と nudge の後、ターンが実際に始まった証拠を確認し、
+	// 出なければ自己修復を 1 巡試す。この経路は create 応答から切り離された goroutine
+	// なので HTTP では失敗を返せない — 最終的に未確認ならログに残す（reuse 送信側の
+	// confirm と違い、ここは best-effort のまま）。
+	if metaOK && base != nil {
+		if err := confirmPromptDelivery(meta, pane, prompt, base); err != nil {
+			log.Printf("initial prompt delivery UNCONFIRMED for %s: %v", name, err)
+		}
+	}
 }
 
 // disconnectRemoteControl best-effort disconnects an active claude.ai Remote
