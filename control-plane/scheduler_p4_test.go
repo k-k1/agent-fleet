@@ -163,7 +163,8 @@ func TestJitterGateDefersCronFire(t *testing.T) {
 }
 
 func TestScheduleNotifyStatus(t *testing.T) {
-	notify := []string{"error:boom", "error", "skipped_quota", "skipped_rate_limited", "skipped_membership_inactive"}
+	notify := []string{"error:boom", "error", "skipped_quota", "skipped_rate_limited",
+		"skipped_membership_inactive", "skipped_target_missing", "skipped_overlap"}
 	quiet := []string{"fired", "fired_noop", "skipped_stopped", ""}
 	for _, s := range notify {
 		if !scheduleNotifyStatus(s) {
