@@ -64,7 +64,7 @@ func runRecordExit(args []string) {
 	switch reason {
 	case "oom", "crashed", "killed":
 		if reportArmed(name) {
-			kickSessionReport(name, "exit", "", reason)
+			kickSessionReport(name, "exit", reason)
 		}
 		// Abnormal exits don't pass through the notice outbox (the sessions list
 		// surfaces ExitInfo directly), so the chat bridge (docs/37 P1) gets its

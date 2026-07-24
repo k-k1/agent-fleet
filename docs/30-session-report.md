@@ -74,18 +74,48 @@ status ストアを書くため、**当初は完了しても報告が構造的�
   全 codex managed セッションの通知配送を止める。
 - `TurnUnknown`（runtime 喪失）は idle を書くが**報告しない** — turn は相手側で走り続けて
   いるかもしれず「完了しました」は嘘になる。arm は残し、本当の完了で報告する。
-- 報告の「直近の出力（抜粋）」は managed では**空**（claude の MessageDisplay hook に当たる
-  ストリーミング捕捉が無く、opencode は `/message` の本文を捨て、codex の `turn/completed` も
-  本文を運ばない）。報告は本文なしで届き、オペレーターは `get_session_output` で詳細を読む。
+
+### 報告本文 — 事実のみ・全 kind 統一（2026-07-25）
+
+報告は「完了した／異常終了した」という**事実のみ**を運び、出力抜粋を载せない。
+当初 TUI（claude）だけ pending-text バッファ末尾の「直近の出力（抜粋）」を添えていたが、
+managed（抜粋を取る手段が構造的に無い）と非対称だった。オペレーターはどのみち
+`get_session_output` でセッション状況を確認して要約するので、抜粋は冗長 — **managed 側の
+シンプルな形に揃えた**（`buildReportContent` から抜粋部を削除、kick も excerpt を運ばない）。
+全文ブリッジ（docs/37）の `body`（answer-ready notice の payload）は別機構で、従来どおり
+turn テキストを運ぶ。
+
+### BG サブエージェント実行中の早期 Stop — 報告の保留（2026-07-25）
+
+**実測不具合**（2026-07-24 saga5uc）: claude がレビュー用サブエージェント4体を
+run_in_background で起動し、主ターンが3分で Stop → その answer-ready 報告が arm を消費。
+実作業は BG エージェントで数十分続き、本完了（最終まとめターンの Stop）は arm 消費済みで
+**二度と報告されなかった**（利用者の「終わったみたい」で発覚）。
+
+対策は **サーバ側（`handleChatReport`）での配送保留**:
+
+- answer-ready の kick を受けたとき `claude.SubagentBusy(sid)`（サブエージェント/Workflow の
+  per-agent jsonl 鮮度・90s TTL — workflow-bg-detection と同じ検出）が真なら、**disarm せず**
+  waiter goroutine（セッションごとに1つ、15s poll）に配送を委ねる。
+- waiter は「BG が静止（jsonl stale）かつ status=idle」で arm を原子的に消費
+  （`consumeReportArm`、後続 kick とのレースは mutex で調停）して配送する。最終まとめターン
+  自身の Stop kick が先に非 busy を観測すればそちらが勝つ — どちらか1回だけ配送される。
+- waiter は arm が他所で消費された（後続 kick が配送・stop_session が disarm・新指示で
+  再 arm）とき、またはセッション停止時に何もせず退出する（停止時は arm 温存 — 再開後の
+  完了で報告する既存規約どおり）。
+- 異常終了（kind=exit）の kick は保留しない — プロセスは死んでおり待つ意味がない。
+- 対象は kind=claude のみ（サブエージェント transcript は claude 固有のシグナル。
+  プロセスツリー系の `BackgroundBusy` / `BackgroundShellBusy` は使わない — 常駐 dev サーバや
+  監視ループを「未完了」と誤認して報告を永久に保留し得るため）。
 
 ### 配送 — Agent 内で完結
 
 hook / record-exit は独立プロセスなので、会話ファイルへの直接追記はしない
 （convLocks / liveTurns はサーバプロセス内のため競合する）。代わりに:
 
-1. hook（`recordSessionNotification`）が arm を確認し、**turn テキスト
-   （pending-text バッファ、applyPendingPayloads で消える前に捕獲）の末尾抜粋**を添えて
-   `POST /chat/report` を localhost Agent へ kick（AGENT_TOKEN はコンテナ env で hook にもある）。
+1. hook（`recordSessionNotification`）が arm を確認し、`POST /chat/report` を
+   localhost Agent へ kick（AGENT_TOKEN はコンテナ env で hook にもある）。kick は
+   `{name, kind, reason}` のみ — 出力抜粋は運ばない（上記「報告本文」）。
 2. サーバ（`chat_report.go handleChatReport`）が arm 検証 → disarm → 即時応答し、
    goroutine で処理:
    - 会話に **role="report"** のメッセージを追記（`Session` フィールドにセッション名。
@@ -124,7 +154,10 @@ hook / record-exit は独立プロセスなので、会話ファイルへの直�
 
 ## 制限 / 将来
 
-- managed driver セッションの報告は本文抜粋なし（上記 — 完了の事実だけが飛ぶ）。
+- 報告は全 kind で本文抜粋なし（上記 — 完了の事実だけが飛ぶ。詳細は `get_session_output`）。
+- BG 保留はサブエージェント/Workflow（jsonl 鮮度）のみ対象。`Bash run_in_background` の
+  ビルド等はプロセスツリー検出しか手段がなく、常駐プロセスとの区別が付かないため保留しない —
+  BG ビルド起動直後の Stop は従来どおりその時点で報告される。
 - **managed driver の daemon 異常死は報告されない**: pane ラッパー経路（`record_exit.go`）は
   oom/crashed/killed を報告するが、managed の daemon 死は `serve.go` が
   `status.PersistExit` を書くだけで report kick を持たない（tui ルートとの非対称）。
@@ -132,5 +165,5 @@ hook / record-exit は独立プロセスなので、会話ファイルへの直�
 - 報告は `answer-ready`（完了・入力待ち）と異常終了のみ。中間の質問/承認/許可待ちは
   オペレーター報告しない（通知センターには出る）。キュー済みプロンプトが残っている等で
   厳密なタスク完了とずれることはあり得る（オペレーターが get_session_output で確認する前提）。
-- 将来: Meta への起動元（LaunchedBy）記録、managed 報告への本文抜粋、managed daemon 異常死の
-  報告、報告のバッチング。
+- 将来: Meta への起動元（LaunchedBy）記録、managed daemon 異常死の報告、報告のバッチング。
+  （managed 報告への本文抜粋は不採用で確定 — 逆に TUI を managed のシンプルな形に揃えた。）
