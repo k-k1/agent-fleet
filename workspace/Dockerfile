@@ -403,6 +403,15 @@ RUN set -eux; mkdir -p /usr/local/share/agent-fleet; \
 # DISABLE_UPDATES, so explicit `claude update`/`claude install` still work).
 ENV DISABLE_AUTOUPDATER=1
 
+# opencode ships a background auto-updater that self-updates via `npm install` on
+# startup (its `autoupdate` config defaults to on). On the root-owned baked /usr/local
+# tree that write fails (and with the self-update opt-in it would silently mutate the
+# ~/.local shadow) — both unwanted in the version-pinned model. Disable it via env;
+# explicit `opencode upgrade` still works. (codex, by contrast, only *notifies* on
+# startup by default and self-writes only on explicit `codex update` / opt-in
+# autoUpdate, so it needs no analogous flag.)
+ENV OPENCODE_DISABLE_AUTOUPDATE=true
+
 # NEVER let git fall back to an interactive /dev/tty credential prompt. This fixes a
 # real "the claude session accepts NO keyboard input" bug (gate k, docs/35 §35.9-10):
 # when a user works in a github.com repo but has NOT connected GitHub, our global
