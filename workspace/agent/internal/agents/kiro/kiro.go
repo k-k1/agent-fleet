@@ -20,6 +20,7 @@ package kiro
 
 import (
 	"os"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -87,9 +88,26 @@ func resolveSid(m session.Meta) string {
 		// The cached session's files were deleted (kiro --delete-session / manual): fall
 		// through and rediscover so the mirror doesn't stick on a vanished conversation.
 	}
-	if sid := discoverSid(m.Dir); sid != "" {
+	// Fence discovery to this slot's creation time so a predecessor session lingering
+	// in the same dir (recreate cuts a new slug into the same dir) is never adopted
+	// during the fresh-launch window — A-1. An unparseable CreatedAt degrades to no
+	// fence rather than never resolving.
+	if sid := discoverSid(m.Dir, slotCreatedAt(m)); sid != "" {
 		sids.Write(slot, sid)
 		return sid
 	}
 	return ""
+}
+
+// slotCreatedAt parses the slot's creation time (Meta.CreatedAt, set at create and
+// stable across resumes). Zero time when absent/unparseable = no discovery fence.
+func slotCreatedAt(m session.Meta) time.Time {
+	if m.CreatedAt == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, m.CreatedAt)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }

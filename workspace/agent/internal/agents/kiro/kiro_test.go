@@ -130,6 +130,34 @@ func TestClassifyPane(t *testing.T) {
 	}
 }
 
+// TestClassifyPaneBodyQuote is the A-3 regression: an assistant answer that QUOTES a
+// contract phrase in the conversation body must NOT spoof the state once the pane is
+// back at the idle footer. classifyPane looks only at the footer window, and idle wins.
+func TestClassifyPaneBodyQuote(t *testing.T) {
+	// Body far above quotes "Kiro is working"; the live footer is idle.
+	pane := `> You asked me to explain the footer.
+> When busy, kiro shows "Kiro is working · Type to steer".
+> That is the working indicator.
+
+kiro_default · auto · ◔ 5%                         /work/a
+
+ ask a question or describe a task ↵
+                                             /copy to clipboard
+`
+	if got := classifyPane(pane); got != "idle" {
+		t.Errorf("body quote of a working phrase must not spoof state: got %q, want idle", got)
+	}
+	// A working footer at the bottom is still detected even with body text above.
+	working := `> Here is the plan.
+Some earlier answer text.
+
+ Kiro is working · Type to steer · Ctrl+S to queue
+`
+	if got := classifyPane(working); got != "working" {
+		t.Errorf("real working footer not detected: got %q, want working", got)
+	}
+}
+
 // fixture: 実測 `kiro-cli chat --list-models -f json`（縮約）。
 const modelsFixture = `{"models":[
 {"model_name":"auto","description":"Models chosen by task","model_id":"auto","context_window_tokens":1000000},
@@ -196,6 +224,9 @@ func TestStampModelAssistantOnly(t *testing.T) {
 	}
 }
 
+// baseTime is a fixed epoch the discovery tests hang timestamps off of.
+var baseTime = time.Unix(1_700_000_000, 0).UTC()
+
 // TestDiscoverSid verifies cwd-scoped, newest-wins discovery over a fake sessions dir.
 func TestDiscoverSid(t *testing.T) {
 	dir := t.TempDir()
@@ -205,29 +236,75 @@ func TestDiscoverSid(t *testing.T) {
 		t.Fatal(err)
 	}
 	// mtime drives newest-wins; set it explicitly so the test doesn't depend on the
-	// filesystem's timestamp resolution.
-	write := func(sid, cwd string, min int) {
-		b, _ := json.Marshal(sessionMeta{SessionID: sid, Cwd: cwd})
+	// filesystem's timestamp resolution. createdMin sets the session's created_at (the
+	// A-1 fence key), which is independent of file mtime.
+	write := func(sid, cwd string, createdMin, mtimeMin int) {
+		created := baseTime.Add(time.Duration(createdMin) * time.Minute)
+		b, _ := json.Marshal(sessionMeta{SessionID: sid, Cwd: cwd, CreatedAt: created.Format(time.RFC3339)})
 		p := filepath.Join(sd, sid+".json")
 		if err := os.WriteFile(p, b, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		when := time.Unix(1_700_000_000+int64(min)*60, 0)
+		when := baseTime.Add(time.Duration(mtimeMin) * time.Minute)
 		if err := os.Chtimes(p, when, when); err != nil {
 			t.Fatal(err)
 		}
 	}
-	write("old-sid", "/work/a", 0)
-	write("other-sid", "/work/b", 5) // different cwd — must be ignored (newer, wrong cwd)
-	write("new-sid", "/work/a", 3)   // newest for /work/a
-	if got := discoverSid("/work/a"); got != "new-sid" {
+	write("old-sid", "/work/a", 0, 0)
+	write("other-sid", "/work/b", 5, 5) // different cwd — must be ignored (newer, wrong cwd)
+	write("new-sid", "/work/a", 3, 3)   // newest for /work/a
+	// Unfenced (zero time): newest-mtime wins within the cwd.
+	if got := discoverSid("/work/a", time.Time{}); got != "new-sid" {
 		t.Errorf("discoverSid(/work/a) = %q, want new-sid", got)
 	}
-	if got := discoverSid("/work/none"); got != "" {
+	if got := discoverSid("/work/none", time.Time{}); got != "" {
 		t.Errorf("no session for cwd must yield empty, got %q", got)
 	}
 	// Trailing-slash / uncleaned cwd still matches.
-	if got := discoverSid("/work/a/"); got != "new-sid" {
+	if got := discoverSid("/work/a/", time.Time{}); got != "new-sid" {
 		t.Errorf("uncleaned cwd should match: got %q", got)
+	}
+}
+
+// TestDiscoverSidFence is the A-1 regression: a predecessor session lingering in the
+// same dir must NOT be adopted when the slot was created after it (recreate cuts a new
+// slug into the same dir). Only sessions created at/after the fence qualify.
+func TestDiscoverSidFence(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	sd := sessionsDir()
+	if err := os.MkdirAll(sd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(sid string, createdMin, mtimeMin int) {
+		created := baseTime.Add(time.Duration(createdMin) * time.Minute)
+		b, _ := json.Marshal(sessionMeta{SessionID: sid, Cwd: "/work/a", CreatedAt: created.Format(time.RFC3339)})
+		p := filepath.Join(sd, sid+".json")
+		if err := os.WriteFile(p, b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		when := baseTime.Add(time.Duration(mtimeMin) * time.Minute)
+		_ = os.Chtimes(p, when, when)
+	}
+	// Predecessor created at t=0; the new slot is created at t=+10.
+	write("predecessor", 0, 0)
+	fence := baseTime.Add(10 * time.Minute)
+
+	// During the fresh-launch window (kiro hasn't written its own .json yet), the ONLY
+	// candidate is the predecessor — the fence must reject it so discovery returns "".
+	if got := discoverSid("/work/a", fence); got != "" {
+		t.Fatalf("fence must reject the pre-fence predecessor, got %q", got)
+	}
+	// Once kiro writes its own session (created after the fence), discovery finds it.
+	write("mine", 11, 11)
+	if got := discoverSid("/work/a", fence); got != "mine" {
+		t.Errorf("post-fence session should be adopted, got %q", got)
+	}
+	// Even if the predecessor is later touched so its mtime is the NEWEST, the fence
+	// still excludes it by created_at — mtime alone must not resurrect it.
+	touch := baseTime.Add(20 * time.Minute)
+	_ = os.Chtimes(filepath.Join(sd, "predecessor.json"), touch, touch)
+	if got := discoverSid("/work/a", fence); got != "mine" {
+		t.Errorf("predecessor with newer mtime must stay excluded by the fence, got %q", got)
 	}
 }

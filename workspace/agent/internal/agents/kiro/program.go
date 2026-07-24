@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -55,19 +56,34 @@ func sessionsDir() string { return filepath.Join(Home(), "sessions", "cli") }
 func sessionJSONPath(sid string) string { return filepath.Join(sessionsDir(), sid+".json") }
 func transcriptPath(sid string) string  { return filepath.Join(sessionsDir(), sid+".jsonl") }
 
-// sessionMeta is the subset of <sid>.json we read to attribute a session to a cwd.
+// sessionMeta is the subset of <sid>.json we read to attribute a session to a cwd
+// and fence it by creation time.
 type sessionMeta struct {
 	SessionID string `json:"session_id"`
 	Cwd       string `json:"cwd"`
+	CreatedAt string `json:"created_at"` // RFC3339 — when kiro minted the session
 }
 
-// discoverSid finds the newest v2 session launched in dir. kiro writes <sid>.json at
-// session start (before the first turn — 実測), so a fresh launch's session is the
-// newest for its cwd; once resolveSid caches it, the choice sticks. Same-cwd
-// collisions (two AF slots in ONE dir) are the known edge — worktrees give distinct
-// dirs, which is the fleet's parallel-isolation mechanism, so this stays correct in
-// practice. Recency = the .json file's mtime (rewritten each turn).
-func discoverSid(dir string) string {
+// discoverSid finds the newest v2 session launched in dir AT OR AFTER notBefore. kiro
+// writes <sid>.json at session start (before the first turn — 実測), so a fresh
+// launch's session is the newest for its cwd; once resolveSid caches it, the choice
+// sticks.
+//
+// The notBefore fence is essential (A-1): recreate cuts a NEW slug into the SAME dir,
+// so the predecessor's <sid>.json always lingers there. Without the fence, a fresh
+// launch's mirror poll would adopt that predecessor during the window before kiro
+// writes its own <sid>.json (minutes, if this is the on-demand first install), cache
+// it permanently, break the start-empty contract, and hand `--resume-id <old sid>` to
+// the next resume — continuing an unrelated conversation. Fenced to the slot's
+// creation time (kiro's session created_at ≥ the slot's CreatedAt, same host clock),
+// the predecessor is excluded and discovery simply returns "" until the real session
+// exists. Same-cwd collisions between two LIVE slots remain the known edge — worktrees
+// give distinct dirs, the fleet's parallel-isolation mechanism.
+//
+// Recency = the .json file's mtime (rewritten each turn). notBefore zero = no fence
+// (unparseable slot CreatedAt — degrade to the pre-A-1 behavior rather than never
+// resolving).
+func discoverSid(dir string, notBefore time.Time) string {
 	want := filepath.Clean(dir)
 	entries, err := os.ReadDir(sessionsDir())
 	if err != nil {
@@ -86,6 +102,12 @@ func discoverSid(dir string) string {
 		}
 		if filepath.Clean(sm.Cwd) != want {
 			continue
+		}
+		if !notBefore.IsZero() {
+			ct, err := time.Parse(time.RFC3339, sm.CreatedAt)
+			if err != nil || ct.Before(notBefore) {
+				continue // predecessor (or undatable) session — never adopt it
+			}
 		}
 		fi, err := e.Info()
 		if err != nil {
