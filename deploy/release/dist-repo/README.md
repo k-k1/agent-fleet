@@ -87,7 +87,7 @@ upstream CLI exposes. This matrix is the quick reference (✓ = supported,
 | Plan mode | ✓ | ✓ | ✓ | ✓ | — | ✓ | — |
 | Context-window gauge | ✓ | ✓ | — | — | — | ✓ | — |
 | Image paste | ✓ | ✓ | — | — | ✓ | ✓ | — |
-| Fork a conversation | ✓ | ✓ | — | — | — | ✓ | — |
+| Hand off a conversation | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | Runs in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |

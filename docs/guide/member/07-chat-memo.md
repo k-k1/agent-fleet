@@ -88,7 +88,7 @@ notification center), so deal with it via "Compact" or a new chat.
 
 ## Reading and replying to a running agent's conversation
 
-claude, codex, and opencode sessions can be driven from the **Chat** view. With Terminal (CLI)
+claude, codex, cursor, copilot, agy, and opencode sessions can be driven from the **Chat** view. With Terminal (CLI)
 execution, switch with **Chat ⇄ Terminal** at the top of the pane; with Managed execution
 you use only the chat view from the start. In the chat view the
 exchange reads as **per-turn Markdown**, and you can reply right there. It suits
