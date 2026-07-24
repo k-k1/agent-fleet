@@ -716,10 +716,19 @@ func handleSessionStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	alive := sessionAlive(meta)
 	state := driveState(meta, alive, true)
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"name": name, "kind": meta.Kind, "alive": alive, "status": state,
 		"ready": sessionInputReady(meta, alive),
-	})
+	}
+	// A pending AskUserQuestion rides along (claude: the hook-captured payload) so
+	// the operator can relay the options to the user and answer via
+	// /answer-question without scraping the terminal.
+	if meta.Kind == session.KindClaude {
+		if raw, ok := status.ReadPendingQuestion(session.UUID(meta.Dir, name)); ok && len(raw) > 0 {
+			resp["questions"] = json.RawMessage(raw)
+		}
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
 // sessionInputReady is stricter than liveness: a newly resumed terminal session can
