@@ -1,6 +1,6 @@
 # 43. Kiro CLI エージェント種別（kind=kiro・第8種）— Track 0 実測記録
 
-status: Track 0（着工前プローブ）完了＋方針4点決定（2026-07-24）。Track A 以降は未着手・ADR 未起票（→ 0026 予定）。
+status: Track 0（着工前プローブ）完了＋方針4点決定（2026-07-24）。**Track A（workspace agent 本体・read 層＋TUI）実装完了（2026-07-24・temp/snznjpk）**。Track A2/B/C/D 未着手・ADR 未起票（→ 0026 予定）。
 関連: docs/40（cursor・章立てのテンプレ）/ docs/36（copilot）/ docs/32（agy）/ decisions/0015（managed driver）。
 
 ## 0. 対象と背景
@@ -102,8 +102,35 @@ status: Track 0（着工前プローブ）完了＋方針4点決定（2026-07-24
 3. **headlessChat = 不要（v1 スコープ外で確定）**。ASSISTANT_AGENT_KINDS / defaultHeadlessOrder に kiro を加えない。**タイトル AI 提案は現行機構のままで動く**: session_title.go は oneShotHeadless（既存の利用可能バックエンド）で生成し、対象セッションの転写は generic read 層から読む＝Track A の転写実装のみが前提。
 4. **ToS = 注意事項として記載**（Builder ID free の業務利用可否・組織ポリシー整合は採用組織側の確認事項として docs/ADR に明記）。**開発・検証は Free（Builder ID）で進める**。
 
-## 5. 残る実装時判断（次セッション向け）
+## 5. 残る実装時判断（Track A 着手前の3点・実測で決着 2026-07-24）
 
-1. hooks（Stop）のライブ検証と、フッタ文字列契約との両建て構成（状態検出の正の置き方）。
-2. `--agent-engine v3` / `kiro-cli --v3` の扱い（v1 は v2 エンジン固定を提案）。
-3. オンデマンド導入の具体設計（Track B 相当）: 導入コマンドの置き場（workspace-agent サブコマンド案）・進捗表示・失敗時の再試行・lean/フル両イメージでの挙動。
+### 5.1 Stop hook のライブ検証 → **Stop hook は 2.14.1 に存在しない・状態源は TUI 文字列契約に確定**
+
+- 実バイナリ（`kiro-cli-chat`）の hook トリガ enum を strings で確認: **AgentSpawn / PrePrompt / PreToolUse / PostToolUse の4種のみ**。Track 0 で「hooks 公式5種（Stop あり）」としたのは web ドキュメント由来で、**出荷バイナリと不一致**（Stop トリガは無い）。hook config を書いて headless ターンを走らせても Stop 相当のマーカーは発火せず。
+- 結論: **claude 型の hook マーカー方式は取り得ない**。状態源は**明示テキスト契約**（`internal/agents/kiro/state.go`）に一本化する:
+  - working = 「Kiro is working · Type to steer · Ctrl+S to queue」
+  - question = 「shell requires approval」（plan モード等で trust-all を外したとき・**cursor では取れなかった許可待ちが取れる**）
+  - idle = 「ask a question or describe a task ↵」
+- これは固定の明示句で版ドリフトに強く、false-idle 教訓（スピナーグリフ regex 回避）に整合。文字列が消えたら空を返し、`driveState` の generic 経路（`/input` が積む楽観 working）へフォールバックする。turn 完了（working→idle）はこの poll が唯一の観測点なので `agents.MarkTurnEnd` を発火（docs/30 ②・cursor/copilot と同型）。
+
+### 5.2 `--agent-engine` v2/v3 の扱い → **v2 を明示ピン**
+
+- `--agent-engine` の**既定は現状すでに v2**（`chat --help` 実測。v3 は「Launch the next generation Kiro agent」の opt-in）。read 正本の v2 JSONL ストアは v2 エンジンが書く。
+- 決定: 起動コマンドに **`--agent-engine v2` を明示付与**（`program.go` defaultFlags）。既定が将来 v3 へ振れても本実装の read/状態契約（v2 JSONL・TUI 文字列）が崩れないようにするドリフト保険。v3 対応（別ストア/別 UI）は将来 Track。
+
+### 5.3 オンデマンド導入の具体設計（Track B 相当・設計のみ確定／実装は Track B）
+
+Track A では**設定固定の冪等ヘルパ（`ensureSettings`）だけ先行実装**した（素の home でも launch pane が危険モード確認ダイアログで固着しないよう、`app.disableAutoupdates=true` と `chat.disableTrustAllConfirmation=true` をプロセス内 1 回だけ best-effort で書く。`chat.disableTrustAllConfirmation` は「Yes, and don't ask again」が書く設定キーと同一・実測）。導入本体（Track B）の設計:
+
+- **配置**: `workspace-agent install-kiro`（`install-jdk` と同じ workspace-agent サブコマンド流儀）。manifest（`prod.download.cli.kiro.dev/stable/latest/manifest.json`）から版・**sha256**・arch 別 URL を引き、sha256 一致を検証して `~/.local`（home 永続ボリューム・855MB）へ展開。arm64/Debian12 は **musl 変種**（glibc 2.39 要求回避）。
+- **導線**: 接続カードの「インストール」ボタン（未導入時に Status().supported=false で出す）または初回起動時の自動導入。`versions.json` にピンを載せる。
+- **進捗/失敗**: DL 進捗表示＋sha256 失敗/回線失敗時のリトライ。導入完了時に上記2設定を固定。
+- **lean/フル両対応**: `BAKE_AGENT_CLIS=1` では焼き込み（覚悟のノブ・§4-2）。既定 lean では焼かず、kiro 利用ユーザーの初回のみ導入。
+
+## 6. Track A 実装メモ（2026-07-24・temp/snznjpk）
+
+- **パッケージ** `workspace/agent/internal/agents/kiro/`: `kiro.go`（agentImpl・sid 解決）/ `program.go`（起動コマンド・パス・sid 発見・ensureSettings）/ `transcript.go`（v2 JSONL パーサ）/ `state.go`（TUI 文字列分類）/ `auth.go`（Status/LoggedIn＝whoami -f json）/ `models.go`（--list-models -f json）/ `kiro_test.go` ＋ `live_test.go`（KIRO_LIVE=1 ゲート）。
+- **セッション同一性（cursor との最大差）**: kiro は**セッション ID を CLI が採番**し、自己採番 `--resume-id` を渡しても採用されない（実測: 独自 ID を切る）。よって**起動後に `~/.kiro/sessions/cli/<sid>.json`（cwd 記録付き）を cwd＋mtime で発見**し sidstore にキャッシュ（codex rollout 発見と同型）。BuildLaunch はキャッシュ済み sid のみ resume に使う（fresh 枠が同一 cwd の無関係セッションを掴まない）。同一 cwd 複数枠は既知の縁（worktree は別 dir なので実運用で問題化しない）。
+- **read 正本**: v2 JSONL（Prompt/AssistantMessage/ToolResults）。`ToolResults` を `toolUseId` で対応 tool パートに突合し**ツール出力（stdout）まで描ける**（cursor では不可だった）。ハードキル後の `--resume-id` 復帰も実測 PASS（`.lock` は終了で消え、resume は履歴再生）→ GracefulStop 不要。
+- **root 配線**: `session.go`（KindKiro）/ `agent.go`（registry＋driveState 分岐）/ `connections.go`（Status）/ `agent_models.go`（Models）/ `fs.go` denylist（`.kiro` ＋ `.local/share/kiro-cli`）/ `session_io.go`（paneMode readiness・bracketed paste・readiness 待ち）。
+- **検証**: `go build ./...`／全 test 緑（kiro 8 件＋main/session 既存）。**ライブ E2E（KIRO_LIVE=1）**= 実 TUI 起動→idle 描画→プロンプト→**cwd 発見→転写パース（user＋tool 出力 attach 確認）**→working→idle 状態遷移まで実測 PASS（sid=40a4893f・turns=2・sawUser/sawToolOut=true）。models 8 件・whoami connected も実測。

@@ -1,0 +1,233 @@
+package kiro
+
+// read 層のユニットテスト: 起動コマンド組み立て・v2 JSONL 転写のパース（tool 出力の
+// toolUseId 突合・Turn.Idx 単調 — agy 30c5e21 の教訓で必須）・TUI 文字列の状態分類・
+// models JSON パース・cwd による sid 発見。フィクスチャは 2.14.1 の実測（docs/43）。
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestBuildProgram(t *testing.T) {
+	sid := "32595b50-8232-496c-8c30-e5669f5911cb"
+	got := buildProgram("", "", "", sid)
+	for _, want := range []string{"kiro-cli ", "chat", "--agent-engine v2", "--trust-all-tools", "--resume-id", sid} {
+		if !strings.Contains(got+" ", want) {
+			t.Errorf("program %q lacks %q", got, want)
+		}
+	}
+	// plan は bypass（--trust-all-tools）を外す。engine ピンと chat は残す。
+	got = buildProgram("", "", "plan", sid)
+	if strings.Contains(got, "--trust-all-tools") || !strings.Contains(got, "--agent-engine v2") ||
+		!strings.Contains(got, "chat") {
+		t.Errorf("plan program wrong: %q", got)
+	}
+	// model / effort を渡す。"auto" は無指定と同義（--model を付けない）。
+	got = buildProgram("claude-sonnet-4.5", "high", "", sid)
+	if !strings.Contains(got, "--model") || !strings.Contains(got, "claude-sonnet-4.5") ||
+		!strings.Contains(got, "--effort") || !strings.Contains(got, "high") {
+		t.Errorf("model/effort program wrong: %q", got)
+	}
+	if got := buildProgram("auto", "", "", sid); strings.Contains(got, "--model") {
+		t.Errorf("auto must not emit --model: %q", got)
+	}
+	// fresh（resumeID 無し）は --resume-id を付けない。
+	if got := buildProgram("", "", "", ""); strings.Contains(got, "--resume-id") {
+		t.Errorf("fresh launch must not resume: %q", got)
+	}
+	t.Setenv("AGENT_KIRO_CMD", "echo override")
+	if got := buildProgram("", "", "", sid); got != "echo override" {
+		t.Errorf("override ignored: %q", got)
+	}
+}
+
+// fixture: 実測 v2 JSONL（2.14.1）。PONG → 1..40 → shell tool（sleep 30 && echo done）で
+// toolUse＋ToolResults（stdout="done\n"）→ 最終 text。末尾に走行中の Prompt を足す。
+const transcriptFixture = `{"version":"v1","kind":"Prompt","data":{"message_id":"a1","content":[{"kind":"text","data":"Reply with exactly: PONG"}],"meta":{"timestamp":1784869360}}}
+{"version":"v1","kind":"AssistantMessage","data":{"message_id":"a2","content":[{"kind":"text","data":"PONG"}]}}
+{"version":"v1","kind":"Prompt","data":{"message_id":"a3","content":[{"kind":"text","data":"Run the shell command: sleep 30 && echo done"}],"meta":{"timestamp":1784869421}}}
+{"version":"v1","kind":"AssistantMessage","data":{"message_id":"a4","content":[{"kind":"text","data":""},{"kind":"toolUse","data":{"toolUseId":"tooluse_X","name":"shell","input":{"command":"sleep 30 && echo done","__tool_use_purpose":"Run the sleep command"}}}]}}
+{"version":"v1","kind":"ToolResults","data":{"message_id":"a5","content":[{"kind":"toolResult","data":{"toolUseId":"tooluse_X","content":[{"kind":"json","data":{"exit_status":"exit status: 0","stdout":"done\n","stderr":""}}],"status":"success"}}]}}
+{"version":"v1","kind":"AssistantMessage","data":{"message_id":"a6","content":[{"kind":"text","data":"Command completed successfully."}]}}
+{"version":"v1","kind":"Prompt","data":{"message_id":"a7","content":[{"kind":"text","data":"second"}],"meta":{"timestamp":1784869500}}}
+`
+
+func writeFixture(t *testing.T, content string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "chat.jsonl")
+	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestParseTranscript(t *testing.T) {
+	turns := parseTranscript(writeFixture(t, transcriptFixture))
+	// user(PONG) / assistant(PONG) / user(shell) / assistant(tool+text 畳み) / user(second)
+	if len(turns) != 5 {
+		t.Fatalf("want 5 turns, got %d: %+v", len(turns), turns)
+	}
+	if turns[0].Role != "user" || turns[0].Text != "Reply with exactly: PONG" {
+		t.Errorf("first user turn wrong: %+v", turns[0])
+	}
+	if turns[0].TS == "" {
+		t.Errorf("user turn should carry a timestamp: %+v", turns[0])
+	}
+	if turns[1].Role != "assistant" || turns[1].Text != "PONG" {
+		t.Errorf("first assistant turn wrong: %+v", turns[1])
+	}
+	// The tool turn folds toolUse + final text into ONE assistant turn, with the
+	// ToolResults stdout attached to the tool part by toolUseId.
+	a := turns[3]
+	if a.Role != "assistant" {
+		t.Fatalf("want assistant tool turn, got %+v", a)
+	}
+	var tool *struct{ Tool, Info, Output string }
+	for _, p := range a.Parts {
+		if p.Kind == "tool" {
+			tool = &struct{ Tool, Info, Output string }{p.Tool, p.Info, p.Output}
+		}
+	}
+	if tool == nil || tool.Tool != "shell" || tool.Info != "sleep 30 && echo done" {
+		t.Errorf("tool part wrong: %+v", a.Parts)
+	}
+	if tool == nil || tool.Output != "done\n" {
+		t.Errorf("tool output not attached from ToolResults: %+v", a.Parts)
+	}
+	if a.Text != "Command completed successfully." {
+		t.Errorf("assistant text concat wrong: %q", a.Text)
+	}
+	if turns[4].Role != "user" || turns[4].Text != "second" {
+		t.Errorf("trailing user turn wrong: %+v", turns[4])
+	}
+	// Idx は単調増加（Console の pendingEcho/MirrorView 契約 — 必須）。
+	last := -1
+	for i, tn := range turns {
+		if tn.Idx <= last {
+			t.Fatalf("Idx not monotonic at %d: %+v", i, turns)
+		}
+		last = tn.Idx
+	}
+}
+
+func TestClassifyPane(t *testing.T) {
+	cases := map[string]string{
+		"kiro_default · auto · ◔ 3%    /tmp/x\n\n ask a question or describe a task ↵\n": "idle",
+		" Kiro is working · Type to steer · Ctrl+S to queue\n":                           "working",
+		" shell requires approval\n ❯ Yes, single permission\n":                          "question",
+		"":                           "",
+		"some unrelated boot text\n": "",
+	}
+	for in, want := range cases {
+		if got := classifyPane(in); got != want {
+			t.Errorf("classifyPane(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// fixture: 実測 `kiro-cli chat --list-models -f json`（縮約）。
+const modelsFixture = `{"models":[
+{"model_name":"auto","description":"Models chosen by task","model_id":"auto","context_window_tokens":1000000},
+{"model_name":"claude-sonnet-4.5","description":"Claude Sonnet 4.5 model","model_id":"claude-sonnet-4.5","context_window_tokens":200000},
+{"model_name":"claude-haiku-4.5","description":"The latest Claude Haiku model","model_id":"claude-haiku-4.5","context_window_tokens":200000}
+],"default_model":"auto"}`
+
+func TestParseModels(t *testing.T) {
+	got := parseModels([]byte(modelsFixture))
+	if len(got) != 2 { // auto は除外
+		t.Fatalf("want 2 models (auto excluded), got %+v", got)
+	}
+	want := map[string]string{
+		"claude-sonnet-4.5": "Claude Sonnet 4.5 model",
+		"claude-haiku-4.5":  "The latest Claude Haiku model",
+	}
+	for _, mc := range got {
+		if mc.ID == "auto" {
+			t.Errorf("auto must be excluded")
+		}
+		if want[mc.ID] != mc.Label {
+			t.Errorf("model %q label = %q, want %q", mc.ID, mc.Label, want[mc.ID])
+		}
+	}
+	// 壊れた JSON は非 nil 空（既定のみで安全側）。
+	if got := parseModels([]byte("not json")); got == nil || len(got) != 0 {
+		t.Errorf("broken json must yield non-nil empty: %+v", got)
+	}
+}
+
+func TestDisplayModel(t *testing.T) {
+	cases := map[string]string{
+		"":                  "Auto",
+		"auto":              "Auto",
+		"default":           "Auto",
+		"claude-sonnet-4.5": "claude-sonnet-4.5",
+		"glm-5":             "glm-5",
+	}
+	for in, want := range cases {
+		if got := displayModel(in); got != want {
+			t.Errorf("displayModel(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestStampModelAssistantOnly(t *testing.T) {
+	turns := parseTranscript(writeFixture(t, transcriptFixture))
+	stampModel(turns, "claude-haiku-4.5")
+	for _, tn := range turns {
+		if tn.Role == "assistant" && tn.Model != "claude-haiku-4.5" {
+			t.Errorf("assistant turn not stamped: %+v", tn)
+		}
+		if tn.Role == "user" && tn.Model != "" {
+			t.Errorf("user turn must not carry a model: %+v", tn)
+		}
+	}
+	// 空モデルは no-op（既存を汚さない）。
+	turns2 := parseTranscript(writeFixture(t, transcriptFixture))
+	stampModel(turns2, "")
+	for _, tn := range turns2 {
+		if tn.Model != "" {
+			t.Errorf("empty model must not stamp: %+v", tn)
+		}
+	}
+}
+
+// TestDiscoverSid verifies cwd-scoped, newest-wins discovery over a fake sessions dir.
+func TestDiscoverSid(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir) // Home() = $HOME/.kiro
+	sd := sessionsDir()
+	if err := os.MkdirAll(sd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// mtime drives newest-wins; set it explicitly so the test doesn't depend on the
+	// filesystem's timestamp resolution.
+	write := func(sid, cwd string, min int) {
+		b, _ := json.Marshal(sessionMeta{SessionID: sid, Cwd: cwd})
+		p := filepath.Join(sd, sid+".json")
+		if err := os.WriteFile(p, b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		when := time.Unix(1_700_000_000+int64(min)*60, 0)
+		if err := os.Chtimes(p, when, when); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("old-sid", "/work/a", 0)
+	write("other-sid", "/work/b", 5) // different cwd — must be ignored (newer, wrong cwd)
+	write("new-sid", "/work/a", 3)   // newest for /work/a
+	if got := discoverSid("/work/a"); got != "new-sid" {
+		t.Errorf("discoverSid(/work/a) = %q, want new-sid", got)
+	}
+	if got := discoverSid("/work/none"); got != "" {
+		t.Errorf("no session for cwd must yield empty, got %q", got)
+	}
+	// Trailing-slash / uncleaned cwd still matches.
+	if got := discoverSid("/work/a/"); got != "new-sid" {
+		t.Errorf("uncleaned cwd should match: got %q", got)
+	}
+}

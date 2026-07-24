@@ -97,6 +97,8 @@ var fsDeny = map[string]bool{
 	".copilot":              true, // copilot auth token (キーチェーン無しでは平文) + session store
 	".cursor":               true, // cursor chats/store.db + transcripts + hooks/cli config
 	".config/cursor":        true, // cursor auth.json (accessToken/refreshToken 平文)
+	".kiro":                 true, // kiro settings + v2 session store (sessions/cli)
+	".local/share/kiro-cli": true, // kiro auth (data.sqlite3 auth_kv・平文相当) + classic store
 	".aws":                  true, // SSM login: SSO token cache + generated configs
 }
 

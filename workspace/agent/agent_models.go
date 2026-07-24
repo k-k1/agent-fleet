@@ -9,6 +9,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
@@ -37,6 +38,9 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	case "cursor":
 		// `cursor-agent models` の行パース（id - 表示名・アカウント連動 — docs/40）。
 		list = cursor.Models()
+	case "kiro":
+		// `kiro-cli chat --list-models -f json`（完全機械可読・アカウント連動 — docs/43）。
+		list = kiro.Models()
 	case "opencode":
 		for _, id := range opencode.Models() {
 			list = append(list, agents.ModelChoice{ID: id, Label: id})
