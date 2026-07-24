@@ -266,3 +266,47 @@ body.row-resizing {
   align-items: center;
   justify-content: center;
 }
+
+/* ── Pop-out tab (ペインの別タブ切り離し) — minimal chrome ─────────────────
+   The shell is just a thin title bar + .app-main (flex column, App.tsx popout
+   branch). The pane fills the rest; the ordinal grip / dimming never apply
+   (single pane). */
+.app-shell.popout .app-main {
+  flex: 1;
+  min-height: 0;
+}
+.popout-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  padding: 4px 10px;
+  background: var(--leftpane-bg);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.popout-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--fg);
+}
+.popout-spacer {
+  flex: 1;
+}
+/* Session state dot — same palette as the LayoutMap cells (.lm-dot, app.css). */
+.popout-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted2);
+}
+.popout-dot.on { background: var(--ok); }
+.popout-dot.working { background: var(--accent); }
+.popout-dot.question { background: var(--warn); }
+.popout-dot.bg { background: var(--warn); }
+.popout-dot.off { background: var(--muted2); }
