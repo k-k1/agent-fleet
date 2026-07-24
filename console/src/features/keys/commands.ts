@@ -33,9 +33,25 @@ import { focusPaneContent, focusRegion } from "./focus.ts";
 import { api, apiJSON } from "../../core/api/client.ts";
 import { toast } from "../../ui/toast.ts";
 import { t } from "../../lib/i18n/index.ts";
+import { popoutMode } from "../../lib/popoutMode.ts";
+import { canPopout, openPanePopout } from "../panes/popout.ts";
 
 const getLayout = () => useLayoutStore.getState().layout;
 const layoutStore = () => useLayoutStore.getState();
+
+// Minimal pop-out tabs run a reduced command set: pane splitting/navigation,
+// rail and new-session commands are gated off (the tab has one pane and no
+// rail by design — 展開 restores everything). In-pane commands stay.
+const notMinimalPopout = () => popoutMode() !== "popout";
+// The active pane can be torn off into its own tab (leader p t / p f).
+const canPopoutActive = () => {
+  const p = activePane(getLayout());
+  return !!p && canPopout(p) && notMinimalPopout();
+};
+const popoutActive = (ui: "popout" | "full") => {
+  const p = activePane(getLayout());
+  if (p) openPanePopout(p, ui);
+};
 
 /** Activate a pane by id (no-op if undefined), mark the region "main", and move
  * keyboard focus to its content once React has committed the new active pane. */
@@ -171,32 +187,34 @@ const paneOrdinalCommands: Command[] = Array.from({ length: PANE_ORD_COUNT }, (_
     keys: [`alt+${n}`],
     seq: `p ${n}`,
     // Only claim the direct key when that pane exists — else Alt+N flows to the terminal.
-    when: () => paneByOrdinal(getLayout(), n) != null,
+    when: () => notMinimalPopout() && paneByOrdinal(getLayout(), n) != null,
     run: () => focusPane(paneByOrdinal(getLayout(), n)),
   };
 });
 
 export const ALL_COMMANDS: Command[] = [
   // ---- Pane / layout (leader p, + Alt accelerators) ----
-  { id: "pane.splitRight", title: "keys.cmd.splitRight", seq: "p r", run: () => layoutStore().splitRight() },
-  { id: "pane.splitDown", title: "keys.cmd.splitDown", seq: "p d", run: () => layoutStore().splitDown(getLayout().activeId) },
+  { id: "pane.splitRight", title: "keys.cmd.splitRight", seq: "p r", when: notMinimalPopout, run: () => layoutStore().splitRight() },
+  { id: "pane.splitDown", title: "keys.cmd.splitDown", seq: "p d", when: notMinimalPopout, run: () => layoutStore().splitDown(getLayout().activeId) },
   { id: "pane.close", title: "keys.cmd.close", seq: "p w", run: () => layoutStore().closePane(getLayout().activeId) },
-  { id: "pane.closeAll", title: "keys.cmd.closeAll", seq: "p a", run: () => layoutStore().resetToTerminal() },
+  { id: "pane.closeAll", title: "keys.cmd.closeAll", seq: "p a", when: notMinimalPopout, run: () => layoutStore().resetToTerminal() },
   { id: "pane.wrap", title: "keys.cmd.wrap", seq: "p \\", run: toggleWrap },
-  { id: "pane.focusLeft", title: "keys.cmd.focusLeft", seq: "p h", run: () => focusDir("left") },
-  { id: "pane.focusDown", title: "keys.cmd.focusDown", seq: "p j", run: () => focusDir("down") },
-  { id: "pane.focusUp", title: "keys.cmd.focusUp", seq: "p k", run: () => focusDir("up") },
-  { id: "pane.focusRight", title: "keys.cmd.focusRight", seq: "p l", run: () => focusDir("right") },
+  { id: "pane.popout", title: "keys.cmd.popout", seq: "p t", when: canPopoutActive, run: () => popoutActive("popout") },
+  { id: "pane.popoutFull", title: "keys.cmd.popoutFull", seq: "p f", when: canPopoutActive, run: () => popoutActive("full") },
+  { id: "pane.focusLeft", title: "keys.cmd.focusLeft", seq: "p h", when: notMinimalPopout, run: () => focusDir("left") },
+  { id: "pane.focusDown", title: "keys.cmd.focusDown", seq: "p j", when: notMinimalPopout, run: () => focusDir("down") },
+  { id: "pane.focusUp", title: "keys.cmd.focusUp", seq: "p k", when: notMinimalPopout, run: () => focusDir("up") },
+  { id: "pane.focusRight", title: "keys.cmd.focusRight", seq: "p l", when: notMinimalPopout, run: () => focusDir("right") },
   ...paneOrdinalCommands,
-  { id: "pane.next", title: "keys.cmd.next", keys: ["alt+]"], seq: "p ]", run: () => focusPane(cyclePane(getLayout(), 1)) },
-  { id: "pane.prev", title: "keys.cmd.prev", keys: ["alt+["], seq: "p [", run: () => focusPane(cyclePane(getLayout(), -1)) },
+  { id: "pane.next", title: "keys.cmd.next", keys: ["alt+]"], seq: "p ]", when: notMinimalPopout, run: () => focusPane(cyclePane(getLayout(), 1)) },
+  { id: "pane.prev", title: "keys.cmd.prev", keys: ["alt+["], seq: "p [", when: notMinimalPopout, run: () => focusPane(cyclePane(getLayout(), -1)) },
 
   // ---- Region focus (direct only) ----
-  { id: "region.next", title: "keys.cmd.regionNext", keys: ["f6"], run: () => cycleRegion(1) },
-  { id: "region.prev", title: "keys.cmd.regionPrev", keys: ["shift+f6"], run: () => cycleRegion(-1) },
+  { id: "region.next", title: "keys.cmd.regionNext", keys: ["f6"], when: notMinimalPopout, run: () => cycleRegion(1) },
+  { id: "region.prev", title: "keys.cmd.regionPrev", keys: ["shift+f6"], when: notMinimalPopout, run: () => cycleRegion(-1) },
 
   // ---- Session (leader s) ----
-  { id: "session.new", title: "keys.cmd.sessionNew", seq: "s n", run: () => useSessionsStore.getState().openStart() },
+  { id: "session.new", title: "keys.cmd.sessionNew", seq: "s n", when: notMinimalPopout, run: () => useSessionsStore.getState().openStart() },
 
   // ---- Memo (leader m = memo) ----
   // The most-used quick action gets the top-level single key "m" (m = memo). The leader "n"
@@ -205,6 +223,7 @@ export const ALL_COMMANDS: Command[] = [
     id: "memo.add",
     title: "keys.cmd.memoAdd",
     seq: "m",
+    when: notMinimalPopout,
     run: () => {
       if (!useLeftRail.getState().open) useLeftRail.getState().toggle();
       useMemoStore.getState().requestCompose();
@@ -213,8 +232,8 @@ export const ALL_COMMANDS: Command[] = [
 
   // ---- Workspace (leader w) ----
   { id: "workspace.toggle", title: "keys.cmd.workspaceToggle", seq: "w s", run: toggleWorkspace },
-  { id: "workspace.toggleRail", title: "keys.cmd.toggleRail", keys: ["mod+b"], seq: "w b", run: () => useLeftRail.getState().toggle() },
-  { id: "workspace.railMode", title: "keys.cmd.railMode", seq: "w m", run: () => useLeftRail.getState().toggleMode() },
+  { id: "workspace.toggleRail", title: "keys.cmd.toggleRail", keys: ["mod+b"], seq: "w b", when: notMinimalPopout, run: () => useLeftRail.getState().toggle() },
+  { id: "workspace.railMode", title: "keys.cmd.railMode", seq: "w m", when: notMinimalPopout, run: () => useLeftRail.getState().toggleMode() },
   { id: "workspace.fullscreen", title: "keys.cmd.fullscreen", seq: "w f", run: toggleFullscreen },
   { id: "workspace.theme", title: "keys.cmd.theme", seq: "w t", run: toggleTheme },
 

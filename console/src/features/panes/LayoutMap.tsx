@@ -12,10 +12,12 @@ import { displayName, stateInfo } from "../../lib/sessionview.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import type { Session } from "../../types/session.ts";
 import type { PaneKind } from "../../layout/types.ts";
-import { useT, t as tI18n } from "../../lib/i18n/index.ts";
-import type { MsgKey } from "../../lib/i18n/index.ts";
+import { useT } from "../../lib/i18n/index.ts";
+import { jaKind } from "./paneTitle.ts";
 
-// Short label / Japanese name for a non-session pane shown in a map cell.
+// Short label for a non-session pane shown in a narrow map cell. The localized
+// long name (jaKind / KIND_JA) lives in paneTitle.ts, shared with the pop-out
+// title bar.
 const KIND_ABBR: Partial<Record<PaneKind, string>> = {
   file: "file",
   scm: "scm",
@@ -26,22 +28,6 @@ const KIND_ABBR: Partial<Record<PaneKind, string>> = {
   diff: "diff",
   chat: "chat",
 };
-const KIND_JA: Partial<Record<PaneKind, MsgKey>> = {
-  file: "pane.kind.file",
-  scm: "pane.kind.scm",
-  changes: "pane.kind.changes",
-  commit: "pane.kind.commit",
-  wtdiff: "pane.kind.wtdiff",
-  doc: "pane.kind.doc",
-  diff: "pane.kind.diff",
-  chat: "pane.kind.chat",
-};
-
-// Resolve a non-session pane kind to its localized label (falls back to the raw kind).
-function jaKind(k: PaneKind): string {
-  const key = KIND_JA[k];
-  return key ? tI18n(key) : k;
-}
 
 export function LayoutMap() {
   const layout = useLayoutStore((s) => s.layout);

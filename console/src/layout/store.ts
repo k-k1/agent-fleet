@@ -7,11 +7,12 @@
 // The terminal service subscribes to this store and reconciles xterm instances
 // (terminal/service.ts) — no effects scattered through components.
 import { create } from "zustand";
-import type { Layout, OpenTarget } from "./types.ts";
+import type { Layout, OpenTarget, PaneContent } from "./types.ts";
 import * as ops from "./ops.ts";
 import { loadStoredLayout, LKEY_NEW } from "./migrate.ts";
 import { getTenant, getUser } from "../core/api/client.ts";
 import { mobileMatches } from "../lib/device.ts";
+import { popoutMode } from "../lib/popoutMode.ts";
 
 interface LayoutStore {
   layout: Layout;
@@ -21,6 +22,9 @@ interface LayoutStore {
   commit(next: Layout, push?: boolean): void;
   /** Restore the tenant's saved split (or reset). Called at boot + tenant switch. */
   load(slug: string): void;
+  /** Seed a 1-pane layout from a pop-out descriptor (instead of load()) on the
+   * pop-out tab's first boot. Persists immediately so a reload restores it. */
+  initSinglePane(content: PaneContent, session: string | null, wrap: boolean | null): void;
   /** popstate: adopt a history-restored layout without pushing/persisting anew. */
   setFromHistory(l: Layout): void;
   // navigation
@@ -50,7 +54,12 @@ function persist(layout: Layout): void {
   // from (it holds whatever layout was last active in any tab). loadStoredLayout
   // reads the per-tab copy first, then this one.
   try { sessionStorage.setItem(key, json); } catch {}
-  try { localStorage.setItem(key, json); } catch {}
+  // A minimal pop-out tab is a satellite view — its 1-pane layout must not
+  // become the shared seed other/new tabs restore from. Once expanded to a
+  // full console ("full") it behaves like any other tab again.
+  if (popoutMode() !== "popout") {
+    try { localStorage.setItem(key, json); } catch {}
+  }
 }
 
 export const useLayoutStore = create<LayoutStore>((set, get) => {
@@ -81,14 +90,31 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
       } catch {}
     },
 
+    initSinglePane(content, session, wrap) {
+      const l = ops.singlePaneLayout(content, session, wrap);
+      set({ layout: l, hydrated: true });
+      persist(l);
+      try {
+        history.replaceState({ __af: true, layout: l }, "");
+      } catch {}
+    },
+
     setFromHistory(l: Layout) {
       set({ layout: l });
       if (get().hydrated) persist(l);
     },
 
     openTarget: (target) => commit(ops.openActive(get().layout, target)),
+    // Minimal pop-out tabs have exactly one pane by design: "open in a new
+    // pane" callers (scm → commit, mirror → doc/file, …) replace in place
+    // there — commit() still pushes history, so the browser Back button
+    // restores the previous content. Splitting stays available via 展開.
     openTargetInNew: (target, force = false) =>
-      commit(ops.openInNew(get().layout, target, { mobile: mobileMatches(), force })),
+      commit(
+        popoutMode() === "popout"
+          ? ops.openActive(get().layout, target)
+          : ops.openInNew(get().layout, target, { mobile: mobileMatches(), force }),
+      ),
     setPaneTarget: (paneId, target) => commit(ops.setPaneTarget(get().layout, paneId, target), false),
 
     splitRight: () => commit(ops.splitRight(get().layout)),
