@@ -355,6 +355,9 @@ export function MirrorView({
   const draftKey = session ? "af.mirror-draft." + session : null;
   const [draft, setDraft] = useDraft(draftKey);
   const [sending, setSending] = useState(false);
+  // 返信サジェスト v2: ✨ボタンで取得した LLM 文脈候補（Layer A のチップ列にマージ）と取得中フラグ。
+  const [llmSuggestions, setLlmSuggestions] = useState<string[]>([]);
+  const [suggesting, setSuggesting] = useState(false);
   // Pasted images awaiting send: {path} is the session-saved absolute path (referenced in
   // the prompt), {url} an object URL for the local chip preview, {name} the basename.
   const [attachments, setAttachments] = useState<{ path: string; name: string; url: string; image: boolean }[]>([]);
@@ -1598,6 +1601,25 @@ export function MirrorView({
     });
   };
 
+  // v2: ✨ボタン — 直近の会話ログを一発ヘッドレス LLM に渡し、文脈に沿った返信候補を取得して
+  // チップ列にマージする（session_suggest_reply.go）。押した時だけトークンを使う on-demand。
+  const fetchLlmSuggestions = async () => {
+    if (!session || suggesting || wsDown()) return;
+    setSuggesting(true);
+    try {
+      const j = await apiJSON(`api/sessions/${q(session)}/suggest-replies`, "POST", {});
+      const list = Array.isArray(j?.suggestions) ? (j.suggestions as unknown[]).filter((x): x is string => typeof x === "string") : [];
+      setLlmSuggestions(list);
+      // 候補ゼロ = バックエンド不在（claude/codex/opencode いずれも無い）か会話が浅い。無反応だと
+      // 壊れて見えるので一言知らせる（Layer A のチップはそのまま残る）。
+      if (!list.length) toast(tr("mirror.suggest_none"));
+    } catch {
+      toast(tr("mirror.suggest_failed")); // 生成失敗（機能OFF含む）— 学習チップはそのまま
+    } finally {
+      setSuggesting(false);
+    }
+  };
+
   // Open a plan's Markdown in its own pane (manual — via a button, not automatic).
   const openPlan = (plan: string) => showDoc(planTitle(plan), plan);
 
@@ -1753,7 +1775,7 @@ export function MirrorView({
   const lastUserGi = latestWorkPromptIndex(groups);
   const replyGroup = lastUserGi >= 0 ? groups[lastUserGi + 1] : undefined;
   const lastReplyText = replyGroup && replyGroup.role === "assistant" ? textOfParts(replyGroup.parts) : "";
-  const suggestions = settings.quickRepliesEnabled
+  const learned = settings.quickRepliesEnabled
     ? rankQuickReplies(settings.quickReplies || {}, {
         draft,
         lastReply: lastReplyText,
@@ -1761,6 +1783,17 @@ export function MirrorView({
         limit: 6,
       })
     : [];
+  // v2 の LLM 候補を先頭に、Layer A の学習候補を後ろにマージ（重複は畳む）。llm フラグで見た目を分ける。
+  const llmSet = new Set(llmSuggestions.map((s) => s.toLowerCase()));
+  const suggestChips: { text: string; llm: boolean }[] = [
+    ...llmSuggestions.map((text) => ({ text, llm: true })),
+    ...learned.filter((s) => !llmSet.has(s.toLowerCase())).map((text) => ({ text, llm: false })),
+  ];
+  // 会話が進む（新しい回答が来る）と古い LLM 候補は文脈遅れになるので、直近回答の変化とセッション
+  // 切替で捨てる。lastReplyText 確定後に置くことで依存の TDZ を避ける。
+  useEffect(() => {
+    setLlmSuggestions([]);
+  }, [session, lastReplyText]);
 
   // Hold the "working" indicator across the idle→reply-renders gap (see `finalizing`).
   // finalizingRef is set SYNCHRONOUSLY alongside the state so the poll loop's next-tick
@@ -2358,19 +2391,30 @@ export function MirrorView({
         </div>
       ) : (
         <div className="mirror-compose">
-          {/* 返信サジェスト: 常用短文＋直近回答に沿った候補。クリックで差し込み、⌥で即送信。
-              flex 全幅 (.mirror-suggest) なのでコンポーサー入力行の上に載る。 */}
-          {!composerLocked && suggestions.length > 0 && (
+          {/* 返信サジェスト: 常用短文＋直近回答に沿った候補（Layer A）＋✨で取得する LLM 候補（v2）。
+              クリックで差し込み、⌥で即送信。flex 全幅 (.mirror-suggest) で入力行の上に載る。 */}
+          {!composerLocked && (suggestChips.length > 0 || settings.replySuggestEnabled) && (
             <div className="mirror-suggest">
-              {suggestions.map((sg) => (
+              {settings.replySuggestEnabled && (
                 <button
-                  key={sg}
                   type="button"
-                  className="mirror-suggest-chip"
-                  title={tr("mirror.suggest_hint")}
-                  onClick={(e) => applySuggestion(sg, e.altKey || e.metaKey)}
+                  className="mirror-suggest-ai"
+                  title={tr("mirror.suggest_ai")}
+                  disabled={suggesting || wsDown()}
+                  onClick={fetchLlmSuggestions}
                 >
-                  {sg}
+                  <Icon name={suggesting ? "loading" : "sparkle"} spin={suggesting} />
+                </button>
+              )}
+              {suggestChips.map((sg) => (
+                <button
+                  key={(sg.llm ? "l:" : "a:") + sg.text}
+                  type="button"
+                  className={"mirror-suggest-chip" + (sg.llm ? " llm" : "")}
+                  title={tr("mirror.suggest_hint")}
+                  onClick={(e) => applySuggestion(sg.text, e.altKey || e.metaKey)}
+                >
+                  {sg.text}
                 </button>
               ))}
             </div>
