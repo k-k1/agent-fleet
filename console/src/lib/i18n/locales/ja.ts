@@ -1038,6 +1038,12 @@ export const ja = {
   "keys.kt.shellPassLabel": "shell / SSM 端末へキーをすべて渡す（Ctrl+K・Ctrl+P 含む）",
   "keys.kt.shellPassNote":
     "オンにすると、shell・SSM 端末にフォーカスがある間は純ターミナルになります。上の項目と違い、リーダー（Ctrl/⌘+K）とパレット（Ctrl/⌘+P）も渡すので、Ctrl+K（行末まで削除）や Ctrl+P（履歴を前へ）などがシェルに届きます。対象は shell/SSM 端末のみで、エージェント端末は従来どおりです。アプリのショートカットに戻すには別のペインにフォーカスしてください。既定はオフ。",
+  "keys.kt.quickRepliesLabel": "返信サジェストを表示（コンポーサー上に候補チップ）",
+  "keys.kt.quickRepliesNote":
+    "オンにすると、コンポーサーの上によく使う短い返信（OK・進めて・commit など）と直近の回答に沿った候補をチップで表示します。クリックで入力欄に差し込み、⌥（Alt）を押しながらで即送信。候補はあなたが送った短文から学習します。既定はオン。",
+  "keys.kt.replySuggestLabel": "AI返信候補の✨ボタンを表示",
+  "keys.kt.replySuggestNote":
+    "オンにすると、返信サジェストの左に✨ボタンが出ます。押すと直近の会話をAIに渡し、文脈に沿った返信候補を生成してチップに追加します。トークンを使うのは押した時だけ。利用できるAIは claude→codex→opencode→cursor の順に自動選択するので、Claude が使えなくても他があれば動きます。既定はオン。",
   "keys.kt.assignTitle": "ショートカットの割り当て",
   "keys.kt.resetAll": "すべて既定に戻す",
   "keys.kt.assignNote":
@@ -1284,6 +1290,9 @@ export const ja = {
   "chat.report_role": "セッション報告",
   "chat.working": "作業中…",
   "chat.thinking": "考え中…",
+  "chat.suggest_ai": "AIに返信候補を出してもらう（直近の会話から）",
+  "chat.suggest_none": "返信候補を作れませんでした（会話が浅いか、利用できるAIがありません）",
+  "chat.suggest_failed": "返信候補の生成に失敗しました",
   "chat.remove": "削除",
   "chat.uploading": "アップロード中…",
   "chat.stop": "停止",
@@ -1379,6 +1388,10 @@ export const ja = {
   "mirror.update_choice_hint": "アップデート確認の選択待ち",
   "mirror.resuming": "再開中… 準備ができると入力できます",
   // コンポーザ
+  "mirror.suggest_hint": "クリックで入力欄へ・⌥（Alt）で即送信",
+  "mirror.suggest_ai": "AIに返信候補を出してもらう（直近の会話から）",
+  "mirror.suggest_none": "返信候補を作れませんでした（会話が浅いか、利用できるAIがありません）",
+  "mirror.suggest_failed": "返信候補の生成に失敗しました",
   "mirror.prev_input": "前の入力",
   "mirror.next_input": "次の入力",
   "mirror.todo_dismiss": "このToDoリストを消す",
