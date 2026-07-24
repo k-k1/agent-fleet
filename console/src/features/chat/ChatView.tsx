@@ -7,7 +7,7 @@ import { openSessionChatSplit } from "../sessions/open.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useChatStore } from "./store.ts";
-import { chatGet, chatStream, chatStop, chatCreate, chatCompact, assistantGet, chatPasteImage } from "./api.ts";
+import { chatGet, chatStream, chatStop, chatCreate, chatCompact, assistantGet, chatPasteImage, chatSuggestReplies } from "./api.ts";
 import { errText, raw, isTransientErr } from "../../core/api/client.ts";
 import { takeChatSeed } from "../../lib/chatSeed.ts";
 import { useDraft, moveDraft, clearDraft } from "../../lib/draft.ts";
@@ -104,6 +104,9 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const [reattaching, setReattaching] = useState(false); // a reloaded turn is still running on the backend; polling for the reply
   const [pendingAuto, setPendingAuto] = useState<string | null>(null); // handoff: fire this first turn automatically once the conversation loads
   const [histIdx, setHistIdx] = useState<number | null>(null); // position in composer history (↑/↓ recall), or null
+  // 返信サジェスト v2: ✨ボタンで取得した LLM 候補（Layer A のチップ列にマージ）と取得中フラグ。
+  const [llmSuggestions, setLlmSuggestions] = useState<string[]>([]);
+  const [suggesting, setSuggesting] = useState(false);
   const [karaoke, setKaraoke] = useState<string | null>(null); // 読み上げ中の文（ライブ配信カラオケ・docs/19）
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
@@ -731,7 +734,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
       break;
     }
   }
-  const suggestions = settings.quickRepliesEnabled
+  const learned = settings.quickRepliesEnabled
     ? rankQuickReplies(settings.quickReplies || {}, {
         draft: input,
         lastReply: chatLastReply,
@@ -739,6 +742,16 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
         limit: 6,
       })
     : [];
+  // v2 の LLM 候補を先頭に、Layer A の学習候補を後ろにマージ（重複は畳む）。llm フラグで見た目を分ける。
+  const llmSet = new Set(llmSuggestions.map((s) => s.toLowerCase()));
+  const suggestChips: { text: string; llm: boolean }[] = [
+    ...llmSuggestions.map((text) => ({ text, llm: true })),
+    ...learned.filter((s) => !llmSet.has(s.toLowerCase())).map((text) => ({ text, llm: false })),
+  ];
+  // 会話が進む（新しい回答が来る）と古い LLM 候補は文脈遅れ。直近回答と会話切替で捨てる。
+  useEffect(() => {
+    setLlmSuggestions([]);
+  }, [conversationId, chatLastReply]);
   // サジェストのチップ: 通常クリックはコンポーサーへ差し込み、⌥/Alt で即送信（MirrorView と同挙動）。
   const applySuggestion = (text: string, immediate: boolean) => {
     if (showStreaming) return;
@@ -755,6 +768,22 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
         el.setSelectionRange(el.value.length, el.value.length);
       }
     });
+  };
+  // v2: ✨ボタン — 会話ログを一発ヘッドレス LLM に渡し、文脈に沿った返信候補をチップ列にマージ
+  // （chat_suggest_reply.go）。会話が確定していない（下書き）ときは押せない。
+  const fetchLlmSuggestions = async () => {
+    if (!conversationId || suggesting) return;
+    setSuggesting(true);
+    try {
+      const j = await chatSuggestReplies(conversationId);
+      const list = Array.isArray(j?.suggestions) ? j.suggestions.filter((x): x is string => typeof x === "string") : [];
+      setLlmSuggestions(list);
+      if (!list.length) toast(t("chat.suggest_none"));
+    } catch {
+      toast(t("chat.suggest_failed"));
+    } finally {
+      setSuggesting(false);
+    }
   };
 
   // Recall the previous / next prompt (shared by ↑/↓ and the on-screen buttons shown on
@@ -1079,18 +1108,30 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
           </div>
         ) : (
         <>
-        {/* 返信サジェスト: 常用短文＋直近回答に沿った候補。クリックで差し込み・⌥で即送信。 */}
-        {(conv || isDraft) && !showStreaming && suggestions.length > 0 && (
+        {/* 返信サジェスト: 常用短文＋直近回答に沿った候補（Layer A）＋✨の LLM 候補（v2）。
+            クリックで差し込み・⌥で即送信。 */}
+        {(conv || isDraft) && !showStreaming && (suggestChips.length > 0 || (settings.replySuggestEnabled && conversationId)) && (
           <div className="chat-suggest">
-            {suggestions.map((sg) => (
+            {settings.replySuggestEnabled && conversationId && (
               <button
-                key={sg}
                 type="button"
-                className="chat-suggest-chip"
-                title={tr("mirror.suggest_hint")}
-                onClick={(e) => applySuggestion(sg, e.altKey || e.metaKey)}
+                className="chat-suggest-ai"
+                title={tr("chat.suggest_ai")}
+                disabled={suggesting}
+                onClick={fetchLlmSuggestions}
               >
-                {sg}
+                <Icon name={suggesting ? "loading" : "sparkle"} spin={suggesting} />
+              </button>
+            )}
+            {suggestChips.map((sg) => (
+              <button
+                key={(sg.llm ? "l:" : "a:") + sg.text}
+                type="button"
+                className={"chat-suggest-chip" + (sg.llm ? " llm" : "")}
+                title={tr("mirror.suggest_hint")}
+                onClick={(e) => applySuggestion(sg.text, e.altKey || e.metaKey)}
+              >
+                {sg.text}
               </button>
             ))}
           </div>
