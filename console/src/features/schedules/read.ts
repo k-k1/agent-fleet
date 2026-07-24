@@ -5,6 +5,8 @@
 import type { MsgKey } from "../../lib/i18n/index.ts";
 
 // Wire shape returned by GET /api/schedules — mirrors the CP scheduleDTO (schedule.go).
+// The list response already carries every field below; the detail/edit modal (P5.2) reads
+// the reuse/rotation/target fields for its read-only section and patches the editable ones.
 export interface ScheduleDTO {
   id: string;
   spec_kind: "cron" | "interval" | "once" | string;
@@ -12,18 +14,46 @@ export interface ScheduleDTO {
   spec_label?: string;
   tz?: string;
   wake_policy?: string;
+  session_mode?: "new" | "reuse" | string;
+  reuse_target?: string;
   agent_kind?: string;
   model?: string;
   repo?: string;
+  worktree?: string;
+  new_branch?: boolean;
+  prompt?: string;
+  overlap_policy?: string;
+  rotation?: string;
+  missing_target_policy?: string;
+  reuse_session?: string;
+  reuse_run_count?: number;
+  owner_conv?: string;
   enabled: boolean;
   next_run?: string;
   next_run_local?: string;
   last_run?: string;
   last_status?: string;
+  created_at?: string;
+  updated_at?: string;
   // Set by run-now/create when the CP scheduler goroutine is disabled on this deployment —
   // the schedule is stored but will never fire until an operator enables it. Relayed to the
   // user as a warning toast.
   warning?: string;
+}
+
+// The subset the detail/edit modal patches — the structured fields that need no NL->spec
+// translation. Sent to PATCH /api/schedules/{id}; omitted keys are left unchanged (the CP
+// schedulePatch treats a missing field as "no change"), so the modal only sends what the
+// user actually edited (and never resets next_run by re-submitting an unchanged spec).
+export interface ScheduleEditable {
+  spec_kind?: string;
+  spec?: string;
+  tz?: string;
+  spec_label?: string;
+  prompt?: string;
+  wake_policy?: string;
+  agent_kind?: string;
+  model?: string;
 }
 
 // One row from GET /api/schedules/{id}/runs.

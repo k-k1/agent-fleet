@@ -244,3 +244,59 @@
   font-size: 11px;
   color: var(--muted);
 }
+
+/* Detail / edit modal (docs/38 P5.2). Reuses the shared .ui-field / .ui-field-row form
+   controls; only the layout widths, the mono prompt box, and the read-only definition
+   list are schedule-specific. */
+.sched-detail-modal {
+  width: min(560px, 92vw);
+}
+/* The kind / wake / agent selects stay compact next to their wide sibling input. */
+.sched-detail-modal .sched-narrow {
+  flex: 0 1 130px;
+}
+.sched-detail-modal .sched-prompt {
+  width: 100%;
+  resize: vertical;
+  min-height: 96px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--panel2);
+  color: var(--fg);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+.sched-detail-modal .sched-prompt:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+
+/* Read-only advanced fields — a two-column label/value grid under a muted heading. */
+.sched-readonly {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.sched-readonly-head {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.sched-dl {
+  display: grid;
+  grid-template-columns: minmax(96px, auto) 1fr;
+  gap: 4px 12px;
+  margin: 0;
+}
+.sched-dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+.sched-dd {
+  margin: 0;
+  font-size: 12px;
+  word-break: break-word;
+  font-family: var(--mono);
+}
