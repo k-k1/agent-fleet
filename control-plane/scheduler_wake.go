@@ -219,6 +219,17 @@ func injectDriver(kind string) string {
 	}
 }
 
+// scheduleSource is the injection-origin tag stamped on every prompt this scheduler
+// delivers (create initial_prompt and reuse /input), so the mirror can badge the turn
+// as schedule-driven — and distinguish a run-now（手動発火）from a timed fire. The
+// Agent whitelists these values (session_injections.go injectionSource).
+func scheduleSource(sch Schedule) string {
+	if sch.ManualFirePending {
+		return "schedule-manual"
+	}
+	return "schedule"
+}
+
 // scheduleIdempotencyKey derives a deterministic create key from (schedule, slot) so a
 // CP restart that re-fires the same slot collapses onto the first session via the
 // Agent's create_session ledger (★4). The slot (not now) is the dedupe axis.
@@ -237,6 +248,7 @@ func buildInjectBody(sch Schedule, slot time.Time) []byte {
 		"driver":          injectDriver(kind),
 		"report_to":       sch.OwnerConv,
 		"idempotency_key": scheduleIdempotencyKey(sch.ID, slot),
+		"source":          scheduleSource(sch), // mirror badge: 定期/手動発火 (docs/38)
 	}
 	b, _ := json.Marshal(body)
 	return b
