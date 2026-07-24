@@ -113,12 +113,17 @@
 .memo-cat {
   margin-left: 2px;
 }
+/* Category header reads as a distinct bar (a filled row with an uppercase label) so it's
+   never mistaken for a memo — the uncategorized (未分類) and named categories share the
+   same treatment and left edge. */
 .memo-cat-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 6px;
-  padding: 2px 0;
+  padding: 3px 5px;
+  margin: 5px 0 2px;
+  background: color-mix(in srgb, var(--muted) 12%, transparent);
+  border-radius: 5px;
 }
 .memo-cat-check {
   display: flex;
@@ -294,12 +299,18 @@
   flex: none;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  width: 16px; /* fixed column so categories + memo rows share one left edge */
   color: var(--muted2);
   cursor: grab;
   opacity: 0;
   font-size: 12px;
 }
-.memo-cat-head:hover .memo-cat-grip,
+/* 未分類's grip is a spacer only — no drag handle, so never reveal it on hover. */
+.memo-cat-grip.placeholder {
+  cursor: default;
+}
+.memo-cat-head:hover .memo-cat-grip:not(.placeholder),
 .memo-row:hover .memo-grip {
   opacity: 0.7;
 }

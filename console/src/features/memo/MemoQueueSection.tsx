@@ -7,7 +7,7 @@
 //     drag — memos within/between categories, and the categories themselves;
 //   - "送信…" opens SendMemoModal to edit the concatenated text and pick a destination.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { MouseEvent as RMouseEvent } from "react";
+import type { MouseEvent as RMouseEvent, DragEvent as RDragEvent } from "react";
 import { createPortal } from "react-dom";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -38,6 +38,7 @@ import { MemoTidyModal } from "./MemoTidyModal.tsx";
 import { SendMemoModal } from "./SendMemoModal.tsx";
 import { MemoImageThumb } from "./MemoImageThumb.tsx";
 import { consumeShare } from "./share.ts";
+import { setMemoDragData } from "./dnd.ts";
 
 const POLL_MS = 10000;
 const SECTION_KEY = "af-section-memos"; // shared with the Section component's own key
@@ -623,7 +624,7 @@ export function MemoQueueSection() {
                       }}
                     >
                       <div className="memo-cat-head">
-                        {cat && (
+                        {cat ? (
                           <span
                             className="memo-cat-grip"
                             draggable
@@ -633,6 +634,10 @@ export function MemoQueueSection() {
                           >
                             <Icon name="gripper" />
                           </span>
+                        ) : (
+                          // 未分類 isn't reorderable/deletable, but keep the grip column so its
+                          // header aligns with the named categories (and the memo rows) below.
+                          <span className="memo-cat-grip placeholder" aria-hidden="true" />
                         )}
                         <input
                           type="checkbox"
@@ -701,7 +706,12 @@ export function MemoQueueSection() {
                           onSave={(body, category) => void saveEdit(m, body, category)}
                           onOpenMenu={(e) => openMemoMenu(e, m)}
                           onOpenKebab={(e) => openMemoMenuBtn(e, m)}
-                          onDragStart={() => (dragMemo.current = m.id)}
+                          onDragStart={(e) => {
+                            dragMemo.current = m.id;
+                            // Also carry the memo's text so a drop onto a session composer
+                            // inserts it (a copy — the memo stays queued).
+                            setMemoDragData(e.dataTransfer, m);
+                          }}
                           onDragEnd={() => {
                             dragMemo.current = null;
                             setDropCat(null);
@@ -808,7 +818,7 @@ interface MemoRowProps {
   onSave: (body: string, category: string) => void;
   onOpenMenu: (e: RMouseEvent) => void;
   onOpenKebab: (e: RMouseEvent) => void;
-  onDragStart: () => void;
+  onDragStart: (e: RDragEvent) => void;
   onDragEnd: () => void;
   onDropBefore: () => void;
 }
