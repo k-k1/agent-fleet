@@ -6,9 +6,10 @@ describe("isQuickReplyCandidate", () => {
     expect(isQuickReplyCandidate("進めて", false)).toBe(true);
     expect(isQuickReplyCandidate("  ok  ", false)).toBe(true);
   });
-  it("rejects empty, long, multiline, slash, or attachment-bearing", () => {
+  it("rejects empty, long (>20), multiline, slash, or attachment-bearing", () => {
     expect(isQuickReplyCandidate("", false)).toBe(false);
-    expect(isQuickReplyCandidate("x".repeat(41), false)).toBe(false);
+    expect(isQuickReplyCandidate("x".repeat(21), false)).toBe(false); // 20字超は質問文/プロンプト扱い
+    expect(isQuickReplyCandidate("x".repeat(20), false)).toBe(true); // ちょうど20はOK
     expect(isQuickReplyCandidate("line1\nline2", false)).toBe(false);
     expect(isQuickReplyCandidate("/compact", false)).toBe(false);
     expect(isQuickReplyCandidate("ok", true)).toBe(false);
@@ -48,6 +49,16 @@ describe("rankQuickReplies", () => {
     const out = rankQuickReplies(base(), { draft: "", lastReply: "", locale: "ja", limit: 3 });
     expect(out[0]).toBe("進めて");
     expect(out[1]).toBe("commit");
+  });
+
+  it("hides already-stored entries longer than 20 chars", () => {
+    const m: QuickReplyMap = {
+      long: { text: "この環境、イメージにあるcliよりも古いのはなんでだろう", count: 9, at: 100 },
+      ok: { text: "OK", count: 1, at: 50 },
+    };
+    const out = rankQuickReplies(m, { draft: "", lastReply: "", locale: "ja" });
+    expect(out).not.toContain("この環境、イメージにあるcliよりも古いのはなんでだろう");
+    expect(out).toContain("OK");
   });
 
   it("seeds defaults when empty so ok/進めて/commit appear", () => {
