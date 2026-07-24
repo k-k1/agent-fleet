@@ -1,6 +1,6 @@
 # 43. Kiro CLI エージェント種別（kind=kiro・第8種）— Track 0 実測記録
 
-status: Track 0（着工前プローブ）完了＋方針4点決定（2026-07-24）。**Track A（workspace agent 本体・read 層＋TUI）実装完了（2026-07-24・temp/snznjpk）**。**Track B（配備・オンデマンド導入＋焼き込みノブ）実装完了（2026-07-24・temp/snznjpk・§7）**。**Track C（CP＋Console 配線・色3種同時変更）実装完了（2026-07-24・temp/snznjpk・§8）**。Track A2/D 未着手・ADR 未起票（→ 0026 予定）。
+status: Track 0（着工前プローブ）完了＋方針4点決定（2026-07-24）。**Track A（workspace agent 本体・read 層＋TUI）実装完了（2026-07-24・temp/snznjpk）**。**Track B（配備・オンデマンド導入＋焼き込みノブ）実装完了（2026-07-24・temp/snznjpk・§7）**。**Track C（CP＋Console 配線・色3種同時変更）実装完了（2026-07-24・temp/snznjpk・§8）**。**Track A2（managed driver・`kiro-cli acp`）実装完了（2026-07-24・temp/kiro-track-a2・§9）**。Track D 未着手・ADR 未起票（→ 0026 予定）。
 関連: docs/40（cursor・章立てのテンプレ）/ docs/36（copilot）/ docs/32（agy）/ decisions/0015（managed driver）。
 
 ## 0. 対象と背景
@@ -193,3 +193,55 @@ Track A では**設定固定の冪等ヘルパ（`ensureSettings`）だけ先行
   `go build`／`go vet`／test 233 緑。Console typecheck／i18n:lint（裸和文ゼロ）／vitest 413／
   vite build 緑。色は headless chromium スウォッチで両テーマ実描画確認済み。残=Track A2（managed
   driver）／D＋ADR0026 起票／実フリート再ビルド後の実機目視（実 device-flow ログイン・855MB 実導入）。
+
+## 9. Track A2 実装メモ（2026-07-24・temp/kiro-track-a2）— managed driver（`kiro-cli acp`）
+
+§1 の「managed 合格」を per-session child の ACP driver として実装。cursor Track A2（docs/40）を
+雛形にしつつ、着工前に**実 CLI（2.14.1）で ACP 契約を再プローブ**して kiro 固有の 2 差分を確定した。
+
+- **着工前プローブで確定した契約**（実 `kiro-cli acp` に生 JSON-RPC を流して実測）:
+  - initialize→`agentCapabilities.loadSession:true`／session/new→`sessionId`（CLI 採番）＋
+    `modes{currentModeId:"kiro_default", availableModes:[kiro_default/kiro_planner/kiro_guide]}`＋
+    `models{currentModelId:"auto", availableModels:[…]}`。
+  - session/update は **ACP 標準の判別子**（`agent_message_chunk` 等）で cursor と同型。加えて
+    `_kiro.dev/*` 名前空間の独自**通知**（`metadata`／`subagent/list_update`／`commands/available`／
+    `session/update=retry_warning`）を流す＝すべて id 無しなので onNotify で受けて未使用は捨てる。
+  - **`.lock` によるクロスプロセス排他**（cursor に無い）: `~/.kiro/sessions/cli/<sid>.lock`（pid 入り）を
+    握った所有プロセスが生きている間、別プロセスの session/load は「Session is active in another
+    process (PID …)」で拒否（-32603）。**停止は stdin を閉じて EOF で正規終了**させると kiro-cli acp が
+    exit 0 ＋ .lock 除去（実測）→後続 resume の lock 競合が消える。ハードキル時は pid 死亡で解放。
+  - **session/load は履歴を `user_message_chunk`＋`agent_message_chunk` として再生**（実測）＝cursor と
+    同じリプレイ経路でミラーを再構築できる。**クロスプロセス文脈保持も実測 PASS**（codeword 再答）。
+  - session/prompt は blocking＝`{stopReason:"end_turn"}`（cancelled/refusal も観測）。
+- **driver.go / acp.go / mirror.go**: cursor 骨格をそのまま（turn 状態機械・permission→Interaction・
+  reconciliation・ledger 冪等化・per-session child ＋ Setpgid）流用。kiro 固有:
+  1. **spawn** = `kiro-cli acp --agent-engine v2 --trust-all-tools [--model …] [--effort …]`（plan は
+     `--trust-all-tools` を外し session/set_mode `kiro_planner`。承認は onServerRequest が拾う）。
+     モード語彙は `kiro_default`/`kiro_planner`（`kiro_guide` は normal 扱い）。
+  2. **停止**（stopChild）= stdin を閉じて .lock を綺麗に手放させ、EOF 無視の安全網として
+     プロセスグループへ SIGTERM→SIGKILL。**resume（loadWithLockRetry）は「active in another
+     process」を検出して旧所有者の消滅を数回リトライで待つ**（非 lock エラーは即 session/new へ）。
+  3. **転写**（mirror.go transcriptBuf）= 生きた handle は session/update のメモリ構築でライブ配信。
+     **kiro は ACP 転写を v2 JSONL にも persist する**（cursor は書かない）ので、停止して handle が
+     無いときは transcript.go の `fileTranscript` がその JSONL を読む（cursor は停止中は空ミラーだった
+     ——kiro は停止中でも履歴を出せる）。managedTranscript が両者を切替える。
+  4. **Capabilities** = ProcessModel:per-session-child／Steer（driver 内キュー）／Questions のみ。
+     Dynamic* は全 false（モデル/effort/モードは起動フラグ固定・registry も UI を出さない）＝
+     UpdateSettings は稼働中変更を明示エラーで拒否。
+- **除外指定の managed 対応化**（Track C は「managed 系に kiro を入れない」としていた箇所を A2 で反転。
+  cursor 参照サイトを grep 総ざらいして採否判定）: `session_turn.go` managedDrivers／`session_handlers.go`
+  の 4 switch（ManagedAlive/Busy/DropHandle/RemoveLedger）／`main.go` ReconcileManaged／`shutdown.go`
+  AbortManaged＋Shutdown／`mcp_stdio.go` create_session の driver=managed 既定／CP `scheduler_wake.go`
+  injectDriver＋CP `mcp.go` create_session 既定＋desc に kiro を追加。**Console `registry.ts` は
+  `managedDriver:true` へ反転**（起動 UI に Terminal/Managed の選択が出る）。**headlessChat 系
+  （chat_providers.go／chat_provider_context.go）には引き続き kiro を入れない**（§4-3 で確定）。
+- **ライブ使用量（`_kiro.dev/metadata` の contextUsagePercentage/credits）は v1 A2 では UI 未配線**。
+  取得は onNotify で拾える seam にあるが、コンテキストバー表示は percentage↔token モデルの整合＋
+  registry contextBar／get_session_usage の配線（A2 のファイルスコープ外）が要るため将来 Track 送り。
+- **検証**: workspace/agent `go build`／`go vet`／gofmt／kiro test 16（内訳: fake-ACP turn 状態機械・
+  permission 往復・session/update→転写構築・モード/lock 純関数）緑。control-plane `go build`／`go vet`／
+  test 緑（既存の events SSE テスト 1 件は timing flaky＝単独再実行で緑・本変更と無関係）。Console
+  typecheck／i18n:lint（裸和文ゼロ）／vitest 413／vite build 緑。**実バイナリ契約テスト
+  （`KIRO_LIVE=1 TestLiveManagedSpawnPromptResume`）= 実 `kiro-cli acp` で spawn→prompt(completed)→
+  in-memory 転写＋v2 JSONL persist→stdin EOF 正規終了（.lock 解放）→別プロセス session/load 再生→
+  文脈保持まで実測 PASS（16s）**。残=Track D／ADR0026 起票／実フリート再ビルド後の実機目視。

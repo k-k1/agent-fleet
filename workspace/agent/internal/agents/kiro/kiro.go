@@ -2,7 +2,8 @@
 // パッケージ（docs/43 Track A）。read 層（Agent 実装・v2 JSONL セッションストアの
 // transcript／TUI 文字列契約の状態読み）を種別内に閉じる。managed driver
 // （`kiro-cli acp`、per-session child・ACP JSON-RPC over stdio）は Track A2 で
-// driver.go/serve.go を足す。
+// driver.go/acp.go/mirror.go に実装済み（cursor/copilot 同型・session/load の
+// クロスプロセス resume＋文脈保持を実測）。
 //
 // セッション同一性（cursor との最大の差異）: kiro は**セッション ID を CLI 側で
 // 採番**する。`--resume-id <uuid>` に自己採番の未知 UUID を渡しても採用されず、CLI

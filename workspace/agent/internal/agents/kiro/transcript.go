@@ -28,16 +28,30 @@ import (
 )
 
 func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
+	// managed（ACP）: 生きた handle があれば driver が session/update から組んだメモリ転写を
+	// 返す（ライブストリーミング）。停止中は下の fileTranscript にフォールバックする——kiro の
+	// acp は転写を v2 JSONL へ persist するので、cursor と違い停止中でも履歴を出せる
+	// （driver.go managedTranscript）。
+	if m.DriverKind() == session.DriverManaged {
+		return managedTranscript(m), true
+	}
+	return fileTranscript(m), true
+}
+
+// fileTranscript renders the session's v2 JSONL store into turns. Used by the TUI route
+// and, for a stopped/detached managed session, by managedTranscript as the persisted
+// fallback (kiro's acp writes the same store the TUI does).
+func fileTranscript(m session.Meta) agents.TranscriptData {
 	sid := resolveSid(m)
 	if sid == "" {
-		return agents.TranscriptData{}, true // まだ会話なし（起動前）— 空ミラー
+		return agents.TranscriptData{} // まだ会話なし（起動前）— 空ミラー
 	}
 	path := transcriptPath(sid)
 	td := agents.TranscriptData{Path: path, Turns: parseTranscript(path), Mode: modeOf(m)}
 	// v2 JSONL はモデルを assistant レコードに書かない（実測）ので、起動モデル
 	// （セッション固定）を各 assistant ターンにスタンプしてミラーのモデルバッジに出す。
 	stampModel(td.Turns, displayModel(m.Model))
-	return td, true
+	return td
 }
 
 // modeOf normalizes the slot's launch mode for the mirror's plan indicator. kiro's
