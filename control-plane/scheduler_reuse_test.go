@@ -144,6 +144,7 @@ func TestReuseSendBodyRequestsConfirm(t *testing.T) {
 		Prompt   string `json:"prompt"`
 		ReportTo string `json:"report_to"`
 		Confirm  bool   `json:"confirm"`
+		Source   string `json:"source"`
 	}
 	raw := reuseSendBody(Schedule{Prompt: "/scout", OwnerConv: "conv-1"}, time.Date(2026, 7, 24, 11, 0, 0, 0, time.UTC))
 	if err := json.Unmarshal(raw, &body); err != nil {
@@ -154,6 +155,14 @@ func TestReuseSendBodyRequestsConfirm(t *testing.T) {
 	}
 	if !body.Confirm {
 		t.Fatal("reuse send must set confirm:true — keystroke-200 is not delivery")
+	}
+	if body.Source != "schedule" {
+		t.Fatalf("source = %q, want schedule (mirror badge, docs/38)", body.Source)
+	}
+	raw = reuseSendBody(Schedule{Prompt: "/scout", OwnerConv: "conv-1", ManualFirePending: true}, time.Date(2026, 7, 24, 11, 0, 0, 0, time.UTC))
+	_ = json.Unmarshal(raw, &body)
+	if body.Source != "schedule-manual" {
+		t.Fatalf("manual-fire source = %q, want schedule-manual", body.Source)
 	}
 }
 

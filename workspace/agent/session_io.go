@@ -205,6 +205,10 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// otherwise. Set by unattended senders (the CP scheduler's reuse send) whose
 		// prompt is always a real task; NOT for turnless UI slash commands (/model …).
 		Confirm bool `json:"confirm"`
+		// Source attributes a report_to-carrying injection's origin for the mirror badge
+		// (docs/38): "schedule" / "schedule-manual" from the CP scheduler; anything else
+		// (incl. empty — the operator MCP) records as "operator". Whitelisted server-side.
+		Source string `json:"source"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_body", "invalid JSON body")
@@ -222,7 +226,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	// /input 側の分岐が漏れていた）。{keys}/{seq}（生 TUI 駆動）は tui 専用のまま。
 	if len(body.Keys) == 0 && len(body.Seq) == 0 {
 		if meta, ok := session.ReadMeta(name); ok && meta.DriverKind() == session.DriverManaged {
-			handleManagedInputPrompt(w, meta, body.Prompt, body.ReportTo)
+			handleManagedInputPrompt(w, meta, body.Prompt, body.ReportTo, body.Source)
 			return
 		}
 	}
@@ -334,11 +338,11 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Each delivered instruction re-arms exactly one report (docs/30 の指示1件=報告1回)
-	// and — being operator-originated (report_to present) — is remembered so the mirror
-	// can badge the resulting user turn (docs/30 ②).
+	// and — carrying report_to (operator / scheduler) — is remembered with its origin so
+	// the mirror can badge the resulting user turn (docs/30 ② / docs/38 バッジ).
 	if body.ReportTo != "" {
 		armSessionReport(name, body.ReportTo)
-		recordOperatorInjection(name, body.Prompt)
+		recordInjection(name, body.Prompt, injectionSource(body.Source))
 	} else {
 		// Genuine Console-typed input (not an operator/MCP injection): mirror it into
 		// the session's Discord thread so the thread reflects both directions (docs/37
@@ -352,7 +356,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 // start op (session_turn.go) — same ThreadHandle.Send delivery, but keeps /input's
 // report_to contract (armSessionReport / recordOperatorInjection) that /turn doesn't
 // carry, so send_to_session's docs/30 auto-report keeps working for managed sessions.
-func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, reportTo string) {
+func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, reportTo, source string) {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
 		httpx.WriteErr(w, http.StatusBadRequest, "empty_prompt", "prompt, keys or seq is required")
@@ -386,7 +390,7 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 	markSessionWorking(meta.Name)
 	if reportTo != "" {
 		armSessionReport(meta.Name, reportTo)
-		recordOperatorInjection(meta.Name, prompt)
+		recordInjection(meta.Name, prompt, injectionSource(source))
 	} else {
 		go bridge.MirrorUserInput(meta.Name, prompt) // docs/37 Fix ②: Console-input mirror
 	}

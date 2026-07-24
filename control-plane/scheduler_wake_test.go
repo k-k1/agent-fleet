@@ -102,6 +102,16 @@ func TestBuildInjectBody(t *testing.T) {
 	if m["dir"] != "/home/dev/repos/x" {
 		t.Errorf("dir = %v", m["dir"])
 	}
+	// The mirror badges schedule-driven prompts (docs/38): a timed fire tags "schedule",
+	// a run-now（手動発火・ManualFirePending）tags "schedule-manual".
+	if m["source"] != "schedule" {
+		t.Errorf("source = %v, want schedule", m["source"])
+	}
+	sch.ManualFirePending = true
+	_ = json.Unmarshal(buildInjectBody(sch, slot), &m)
+	if m["source"] != "schedule-manual" {
+		t.Errorf("manual-fire source = %v, want schedule-manual", m["source"])
+	}
 }
 
 func TestBuildInjectBodyDefaultsKind(t *testing.T) {
