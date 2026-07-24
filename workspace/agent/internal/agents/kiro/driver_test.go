@@ -11,8 +11,10 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,6 +28,9 @@ type fakeACP struct {
 	gotPrompt chan int64
 	gotCancel chan struct{}
 	gotResp   chan json.RawMessage
+
+	mu       sync.Mutex
+	loadBusy int // reply session/load with a lock-busy error this many more times, then succeed
 }
 
 func newFakeACP(t *testing.T) (*acpClient, *fakeACP) {
@@ -67,6 +72,18 @@ func (f *fakeACP) serve(r io.Reader) {
 			f.gotCancel <- struct{}{}
 		case "session/set_mode":
 			f.reply(id, map[string]any{})
+		case "session/load":
+			f.mu.Lock()
+			busy := f.loadBusy > 0
+			if busy {
+				f.loadBusy--
+			}
+			f.mu.Unlock()
+			if busy {
+				f.replyErr(id, -32603, "Internal error", `"Failed to start session: Session is active in another process (PID 1)"`)
+			} else {
+				f.reply(id, map[string]any{"modes": map[string]any{"currentModeId": "kiro_default"}})
+			}
 		default:
 			if len(msg.ID) > 0 {
 				f.reply(id, map[string]any{})
@@ -77,6 +94,13 @@ func (f *fakeACP) serve(r io.Reader) {
 
 func (f *fakeACP) reply(id int64, result any) {
 	b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
+	_, _ = f.toClient.Write(append(b, '\n'))
+}
+
+// replyErr emits a JSON-RPC error (data is a raw JSON fragment, e.g. a quoted string).
+func (f *fakeACP) replyErr(id int64, code int, msg, data string) {
+	b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id,
+		"error": map[string]any{"code": code, "message": msg, "data": json.RawMessage(data)}})
 	_, _ = f.toClient.Write(append(b, '\n'))
 }
 
@@ -306,11 +330,59 @@ func TestIsLockBusy(t *testing.T) {
 	if !isLockBusy(busy) {
 		t.Fatalf("lock-busy error not detected: %v", busy)
 	}
-	if isLockBusy(errors.New("No session found with id")) {
-		t.Fatal("unrelated error must not read as lock-busy")
+	// wrapped rpcError is still detected (errors.As unwraps).
+	if !isLockBusy(fmt.Errorf("load failed: %w", busy)) {
+		t.Fatal("wrapped lock-busy error not detected")
+	}
+	// same message but a DIFFERENT code must NOT read as lock-busy (code is ANDed).
+	wrongCode := &rpcError{Code: -32000, Message: "x",
+		Data: json.RawMessage(`"Session is active in another process (PID 1)"`)}
+	if isLockBusy(wrongCode) {
+		t.Fatal("wrong code must not read as lock-busy")
+	}
+	// -32603 but an unrelated message must NOT match.
+	if isLockBusy(&rpcError{Code: -32603, Message: "Internal error", Data: json.RawMessage(`"No session found with id"`)}) {
+		t.Fatal("unrelated -32603 must not read as lock-busy")
+	}
+	// a plain (non-rpcError) error is never lock-busy — the fail-safe default (A2-1).
+	if isLockBusy(errors.New("active in another process")) {
+		t.Fatal("plain error must not read as lock-busy (fail-safe)")
 	}
 	if isLockBusy(nil) {
 		t.Fatal("nil is not lock-busy")
+	}
+}
+
+func TestLoadWithLockRetryExhausts(t *testing.T) {
+	oldA, oldD := lockRetryAttempts, lockRetryDelay
+	lockRetryAttempts, lockRetryDelay = 3, time.Millisecond
+	t.Cleanup(func() { lockRetryAttempts, lockRetryDelay = oldA, oldD })
+
+	h, f := newTestHandle(t)
+	f.mu.Lock()
+	f.loadBusy = 100 // always lock-busy
+	f.mu.Unlock()
+	_, err := h.loadWithLockRetry(h.cl, "sess-1")
+	if err == nil || !isLockBusy(err) {
+		t.Fatalf("exhausted retry must return the lock-busy error, got %v", err)
+	}
+}
+
+func TestLoadWithLockRetrySucceedsAfterLockClears(t *testing.T) {
+	oldA, oldD := lockRetryAttempts, lockRetryDelay
+	lockRetryAttempts, lockRetryDelay = 6, time.Millisecond
+	t.Cleanup(func() { lockRetryAttempts, lockRetryDelay = oldA, oldD })
+
+	h, f := newTestHandle(t)
+	f.mu.Lock()
+	f.loadBusy = 2 // lock releases after two rejects
+	f.mu.Unlock()
+	res, err := h.loadWithLockRetry(h.cl, "sess-1")
+	if err != nil {
+		t.Fatalf("load should succeed once the lock clears, got %v", err)
+	}
+	if currentModeOf(res) != "kiro_default" {
+		t.Fatalf("load result not parsed: %s", res)
 	}
 }
 
