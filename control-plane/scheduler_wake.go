@@ -38,8 +38,11 @@ type wakeFirer struct {
 	// settle is how long the keep-alive is held after a fire so the reaper does not
 	// reclaim the freshly-woken workspace before its session runs and reports (★1).
 	settle time.Duration
-	// readyTimeout bounds the wait for the Agent to come up after a wake.
+	// readyTimeout bounds the wait for the Agent to come up after a wake. It also bounds
+	// the per-session input-readiness wait a reuse send makes before typing (awaitSessionReady).
 	readyTimeout time.Duration
+	// readyInterval is the poll gap for awaitSessionReady (0 -> 1s). Tests set it small.
+	readyInterval time.Duration
 }
 
 func newWakeFirer(mgr *manager, settle, readyTimeout time.Duration) *wakeFirer {
