@@ -29,20 +29,43 @@ func LiveState(m session.Meta) string {
 	return classifyPane(tmuxx.CapturePane(session.TmuxName(m.Name)))
 }
 
+// footerWindow bounds classification to the composer footer region（下端の非空行）。
+// 画面全文を走査すると、assistant が本文で「Kiro is working」等の契約句を引用した
+// とき idle 復帰後も working 判定が続き MarkTurnEnd が飛ばない（完了報告不発）。
+// paneMode（session_io.go）も同じ理由で paneTail に限定している。フッタ＋承認パネル
+// （最大 5 行程度）が収まる幅に採る。
+const footerWindow = 8
+
 // classifyPane is the pure decision over one captured frame（テストのため純関数に分離）。
-// 判定順は question → working → idle: 承認待ちはコンポーザを置き換えるので working/idle
-// の句とは同時に出ない（実測）が、明示に順序で優先する。
+// フッタ数行に限定したうえで idle → question → working の順に判定する。idle の
+// プレースホルダ（「ask a question or describe a task」）は idle コンポーザにのみ出て
+// working/question とは排他（実測）なので**最優先**——フッタ窓に working/approval の
+// 引用が紛れても idle を正しく返す（A-3 の二重防御）。承認待ちはコンポーザを置き換える
+// ので idle 句とは同時に出ない。
 func classifyPane(s string) string {
 	if s == "" {
 		return ""
 	}
+	footer := tailLines(s, footerWindow)
 	switch {
-	case strings.Contains(s, "requires approval"):
-		return "question"
-	case strings.Contains(s, "Kiro is working"):
-		return "working"
-	case strings.Contains(s, "ask a question or describe a task"):
+	case strings.Contains(footer, "ask a question or describe a task"):
 		return "idle"
+	case strings.Contains(footer, "requires approval"):
+		return "question"
+	case strings.Contains(footer, "Kiro is working"):
+		return "working"
 	}
 	return ""
+}
+
+// tailLines returns the last n non-empty lines of s（paneMode の paneTail と同型）。
+func tailLines(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	var out []string
+	for i := len(lines) - 1; i >= 0 && len(out) < n; i-- {
+		if strings.TrimSpace(lines[i]) != "" {
+			out = append(out, lines[i])
+		}
+	}
+	return strings.Join(out, "\n")
 }

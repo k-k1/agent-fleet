@@ -92,7 +92,7 @@ func TestLiveTUIRoundTrip(t *testing.T) {
 
 	// Discovery must find the session by cwd, and the parser must render the turn with
 	// the tool output attached.
-	sid := discoverSid(dir)
+	sid := discoverSid(dir, time.Time{}) // unfenced: this temp dir has only our session
 	if sid == "" {
 		t.Fatal("discoverSid found no session for the live cwd")
 	}
