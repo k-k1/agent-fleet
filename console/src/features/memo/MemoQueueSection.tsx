@@ -6,7 +6,9 @@
 //   - categories are first-class (add empty, rename, delete) and everything reorders by
 //     drag — memos within/between categories, and the categories themselves;
 //   - "送信…" opens SendMemoModal to edit the concatenated text and pick a destination.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { MouseEvent as RMouseEvent } from "react";
+import { createPortal } from "react-dom";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { Button } from "../../ui/Button.tsx";
@@ -25,6 +27,9 @@ import {
   memoImageGC,
 } from "./api.ts";
 import { useMemoStore } from "./store.ts";
+import { useDismiss } from "../../lib/useDismiss.ts";
+import { useMenuRoving } from "../../lib/useMenuRoving.ts";
+import { placeFixed } from "../../lib/placeFixed.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { useDraft } from "../../lib/draft.ts";
@@ -409,6 +414,37 @@ export function MemoQueueSection() {
     setSendOpen(true);
   };
 
+  // ---- per-row menu (⋯ kebab + right-click) ------------------------------------
+  // A single menu, opened either at the cursor (context menu) or anchored under the
+  // ⋯ button. Delete lives here so touch users get a deliberate two-step delete
+  // instead of a one-tap trash button (mirrors the chat assistant rows).
+  const [memoMenu, setMemoMenu] = useState<{ x: number; y: number; m: Memo; anchor?: DOMRect } | null>(null);
+  const memoMenuRef = useRef<HTMLUListElement>(null);
+  const openMemoMenu = (e: RMouseEvent, m: Memo) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setMemoMenu({ x: e.clientX, y: e.clientY, m });
+  };
+  const openMemoMenuBtn = (e: RMouseEvent, m: Memo) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const r = e.currentTarget.getBoundingClientRect();
+    setMemoMenu({ x: r.left, y: r.bottom + 2, m, anchor: r });
+  };
+  useDismiss(memoMenuRef, !!memoMenu, () => setMemoMenu(null));
+  useMenuRoving(memoMenuRef, !!memoMenu);
+  useLayoutEffect(() => {
+    const el = memoMenuRef.current;
+    if (!memoMenu || !el) return;
+    const bounds = el.closest<HTMLElement>(".app-rail");
+    if (memoMenu.anchor) placeFixed(el, memoMenu.anchor.right - el.offsetWidth, memoMenu.anchor.bottom + 2, bounds);
+    else placeFixed(el, memoMenu.x, memoMenu.y, bounds);
+  });
+  const runMemoMenu = (fn: () => void) => {
+    setMemoMenu(null);
+    fn();
+  };
+
   const actions = (
     <>
       <Button
@@ -663,7 +699,8 @@ export function MemoQueueSection() {
                           onEdit={() => setEditing(m.id)}
                           onCancelEdit={() => setEditing(null)}
                           onSave={(body, category) => void saveEdit(m, body, category)}
-                          onDelete={() => void remove(m.id)}
+                          onOpenMenu={(e) => openMemoMenu(e, m)}
+                          onOpenKebab={(e) => openMemoMenuBtn(e, m)}
                           onDragStart={() => (dragMemo.current = m.id)}
                           onDragEnd={() => {
                             dragMemo.current = null;
@@ -697,6 +734,29 @@ export function MemoQueueSection() {
             </Button>
           </div>
         )}
+
+        {memoMenu &&
+          createPortal(
+            <ul className="ui-menu" ref={memoMenuRef} style={{ left: memoMenu.x, top: memoMenu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => runMemoMenu(() => setEditing(memoMenu.m.id))}>
+                  <Icon name="edit" /> {tr("memo.edit")}
+                </button>
+              </li>
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => runMemoMenu(() => sendGroup([memoMenu.m.id]))}>
+                  <Icon name="send" /> {tr("memo.send_one")}
+                </button>
+              </li>
+              <li className="ui-menu-sep" aria-hidden="true" />
+              <li>
+                <button type="button" className="ui-menu-item danger" onClick={() => runMemoMenu(() => void remove(memoMenu.m.id))}>
+                  <Icon name="trash" /> {tr("common.delete")}
+                </button>
+              </li>
+            </ul>,
+            document.body,
+          )}
       </Section>
 
       {tidy && (
@@ -746,7 +806,8 @@ interface MemoRowProps {
   onEdit: () => void;
   onCancelEdit: () => void;
   onSave: (body: string, category: string) => void;
-  onDelete: () => void;
+  onOpenMenu: (e: RMouseEvent) => void;
+  onOpenKebab: (e: RMouseEvent) => void;
   onDragStart: () => void;
   onDragEnd: () => void;
   onDropBefore: () => void;
@@ -822,6 +883,7 @@ function MemoRow(props: MemoRowProps) {
         (expanded ? " exp" : "") +
         (dragOver ? " dragover" : "")
       }
+      onContextMenu={props.onOpenMenu}
       onDragOver={(e) => {
         e.preventDefault();
         setDragOver(true);
@@ -874,8 +936,8 @@ function MemoRow(props: MemoRowProps) {
           </div>
         )}
       </div>
-      <button type="button" className="memo-del" title={tr("common.delete")} aria-label={tr("common.delete")} onClick={props.onDelete}>
-        <Icon name="trash" />
+      <button type="button" className="memo-menu-btn" title={tr("srow.menu")} aria-haspopup="menu" onClick={props.onOpenKebab}>
+        <Icon name="ellipsis" />
       </button>
     </div>
   );
