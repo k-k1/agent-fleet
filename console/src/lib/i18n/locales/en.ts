@@ -1238,6 +1238,9 @@ export const en: Record<keyof typeof ja, string> = {
   "topbar.admin": "Admin",
   "topbar.logout": "Sign out",
   "topbar.build": "Build {label}",
+  "topbar.host_version": "Agent Fleet v{v}",
+  "topbar.update_ready": "Update available · restart to apply v{v}",
+  "topbar.update_badge": "Update",
   "topbar.settings_title": "Settings (Display / Workspace / Agents / Git / AWS SSM / MCP)",
 
   // === P2 ChatView (features/chat/ChatView.tsx) ===

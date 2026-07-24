@@ -6,6 +6,7 @@ import { useTenantStore } from "../core/store/tenant.ts";
 import { useLayoutStore } from "../layout/store.ts";
 import { useTtsStore, toggleTtsPlayback } from "../core/store/tts.ts";
 import { useSettingsUI } from "../features/settings/store.ts";
+import { useHostUpdate } from "../features/settings/hostUpdate.ts";
 import { rel, clearLocalState } from "../core/api/client.ts";
 import { useSettings, setSetting, THEMES, SURFACE_TARGETS, LOCALES } from "../lib/settings.ts";
 import { useT, getLocale } from "../lib/i18n/index.ts";
@@ -96,6 +97,11 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
 
   const openSettings = useSettingsUI((st) => st.openSettings);
   const openAdmin = useSettingsUI((st) => st.openAdmin);
+  // Native host self-update (docs/42): null on non-native deployments. When a newer
+  // version is staged we surface it here — next to the build stamp — as a nudge into
+  // 設定 → ツールチェーン, where the actual "再起動して適用" action lives.
+  const hostUpdate = useHostUpdate();
+  const updateReady = !!hostUpdate?.restartRequired;
   const openGuide = useSettingsUI((st) => st.openGuide);
   // The guide ships per language: English is canonical (README.md), Japanese
   // lives beside it as README.ja.md — open the one matching the UI locale.
@@ -228,9 +234,20 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
         </div>
         <NotificationCenter />
         <div className="acct" ref={acctRef}>
-            <button className="whoami acct-btn" title={me || tr("topbar.menu")} onClick={() => setMenuOpen((o) => !o)}>
+            <button
+              className={"whoami acct-btn" + (updateReady ? " has-update" : "")}
+              title={updateReady ? tr("topbar.update_ready", { v: hostUpdate!.installed }) : me || tr("topbar.menu")}
+              onClick={() => setMenuOpen((o) => !o)}
+            >
               <Icon name="account" /> {me && <span className="acct-name">{me}</span>}
               <Icon name="chevron-down" className="acct-caret" />
+              {updateReady && (
+                <span
+                  className="acct-update-dot"
+                  role="img"
+                  aria-label={tr("topbar.update_ready", { v: hostUpdate!.installed })}
+                />
+              )}
             </button>
             {menuOpen && (
               <div className="acct-menu" role="menu">
@@ -284,9 +301,30 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                     </button>
                   </>
                 )}
+                {/* Version zone. Native host self-update (docs/42) sits above the FE
+                    build stamp: a CTA when a newer af is staged (→ 設定 for the restart),
+                    else the current host version. Both hidden on non-native (hostUpdate
+                    null). The build stamp below is the Console FRONTEND bundle — a
+                    separate thing — so each carries its own label. */}
+                <div className="acct-sep" />
+                {hostUpdate &&
+                  (updateReady ? (
+                    <button
+                      className="acct-item acct-update"
+                      role="menuitem"
+                      onClick={() => run(() => openSettings("env"))}
+                    >
+                      <Icon name="cloud-download" />
+                      <span className="acct-update-txt">{tr("topbar.update_ready", { v: hostUpdate.installed })}</span>
+                      <span className="acct-update-badge">{tr("topbar.update_badge")}</span>
+                    </button>
+                  ) : (
+                    <div className="acct-build">
+                      <Icon name="rocket" /> {tr("topbar.host_version", { v: hostUpdate.current })}
+                    </div>
+                  ))}
                 {/* Build stamp — so the running version is visible at a glance (no more
                     guessing which build a phone is on). Selectable for easy reporting. */}
-                <div className="acct-sep" />
                 <div className="acct-build" title={buildInfo.sha ? `commit ${buildInfo.sha}` : undefined}>
                   <Icon name="tag" /> {tr("topbar.build", { label: buildLabel() })}
                 </div>
