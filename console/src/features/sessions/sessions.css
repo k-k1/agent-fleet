@@ -132,6 +132,7 @@
 .sess-kic.kind-opencode { color: var(--kind-opencode); background: color-mix(in srgb, var(--kind-opencode) 14%, transparent); }
 .sess-kic.kind-agy { color: var(--kind-agy); background: color-mix(in srgb, var(--kind-agy) 14%, transparent); }
 .sess-kic.kind-copilot { color: var(--kind-copilot); background: color-mix(in srgb, var(--kind-copilot) 14%, transparent); }
+.sess-kic.kind-kiro { color: var(--kind-kiro); background: color-mix(in srgb, var(--kind-kiro) 14%, transparent); }
 .sess-kic.kind-shell { color: var(--kind-shell); background: color-mix(in srgb, var(--kind-shell) 14%, transparent); }
 .sess-kic.kind-ssm { color: var(--kind-ssm); background: color-mix(in srgb, var(--kind-ssm) 14%, transparent); }
 [data-theme="light"] .sess-kic.kind-claude { background: color-mix(in srgb, var(--kind-claude) 20%, transparent); }
@@ -140,6 +141,7 @@
 [data-theme="light"] .sess-kic.kind-opencode { background: color-mix(in srgb, var(--kind-opencode) 20%, transparent); }
 [data-theme="light"] .sess-kic.kind-agy { background: color-mix(in srgb, var(--kind-agy) 20%, transparent); }
 [data-theme="light"] .sess-kic.kind-copilot { background: color-mix(in srgb, var(--kind-copilot) 20%, transparent); }
+[data-theme="light"] .sess-kic.kind-kiro { background: color-mix(in srgb, var(--kind-kiro) 20%, transparent); }
 [data-theme="light"] .sess-kic.kind-shell { background: color-mix(in srgb, var(--kind-shell) 20%, transparent); }
 [data-theme="light"] .sess-kic.kind-ssm { background: color-mix(in srgb, var(--kind-ssm) 20%, transparent); }
 /* The state chip is span.session-state (old markup — rules at the bottom of this

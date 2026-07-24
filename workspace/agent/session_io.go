@@ -17,6 +17,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -123,6 +124,20 @@ func paneMode(kind, tn string) string {
 			if strings.Contains(line, "Add a follow-up") ||
 				strings.Contains(line, "Plan, search, build anything") ||
 				strings.Contains(line, "ctrl+c to stop") || strings.Contains(line, "Running") {
+				return "Default"
+			}
+		}
+	case session.KindKiro:
+		// kiro's composer footer (2.14.1 実測): idle placeholder "ask a question or
+		// describe a task ↵"、その上の行にモデル/コンテキスト "kiro_default · auto ·
+		// ◔ n%   <cwd>"、working は "Kiro is working · Type to steer · Ctrl+S to queue"。
+		// フッタはコンポーザ描画後にのみ出る（chat.disableTrustAllConfirmation 固定で
+		// 危険モード確認ダイアログは出ないが、ブート直後は無い）ので、これが launch-seed
+		// の readiness 信号を兼ねる。plan は起動時固定（--trust-all-tools を外す）＝meta が
+		// 真実なので、ここでは描画済み/未描画のみ判定し非 plan ラベルを返す。
+		for _, line := range strings.Split(paneTail(s, 4), "\n") {
+			if strings.Contains(line, "ask a question or describe a task") ||
+				strings.Contains(line, "Kiro is working") || strings.Contains(line, "requires approval") {
 				return "Default"
 			}
 		}
@@ -401,7 +416,8 @@ func submitPromptTUI(w http.ResponseWriter, name, pane, prompt string) bool {
 	// copilot: 同型 — trust 事前追記済みでもタブ UI の描画までコンポーザは無く、
 	// ブート画面に送った文字は無音で消える（8780956 の教訓）。フッタが readiness。
 	if meta, ok := session.ReadMeta(name); ok &&
-		(meta.Kind == session.KindAgy || meta.Kind == session.KindCopilot || meta.Kind == session.KindCursor) {
+		(meta.Kind == session.KindAgy || meta.Kind == session.KindCopilot || meta.Kind == session.KindCursor ||
+			meta.Kind == session.KindKiro) {
 		tn := session.TmuxName(name)
 		for i := 0; i < 30 && paneMode(meta.Kind, tn) == ""; i++ {
 			time.Sleep(500 * time.Millisecond)
@@ -454,7 +470,7 @@ func typePromptText(name, pane, text string) error {
 	}
 	// copilot も bracketed paste が必要: 実測（v1.0.73）で literal keys と同じ
 	// send-keys 内の Enter がペースト折り畳みに食われ、プロンプトが確定しない。
-	if kind != session.KindCodex && kind != session.KindOpencode && kind != session.KindCopilot && kind != session.KindCursor {
+	if kind != session.KindCodex && kind != session.KindOpencode && kind != session.KindCopilot && kind != session.KindCursor && kind != session.KindKiro {
 		if out, err := tmuxx.Cmd("send-keys", "-t", pane, "-l", text).CombinedOutput(); err != nil {
 			return fmt.Errorf("%v: %s", err, out)
 		}
@@ -652,6 +668,14 @@ func questionPending(name string) bool {
 	// 唯一のソース（tui の許可メニュー / managed の Interaction 双方を同じ形で拾う）。
 	if meta.Kind == session.KindCopilot {
 		return copilot.LiveState(meta) == "question"
+	}
+	// kiro: hooks 無し — "question"（承認待ち「shell requires approval」）は driveState が
+	// 返すだけで status ストアに書かれないため、下の汎用フォールバック（status.Read）は
+	// kiro では常に false。TUI 経路で承認パネル中に自由文を送ると素通しになる穴なので、
+	// TUI 文字列を直接読んでガードする（copilot 同型。managed は ErrQuestionPending で
+	// 別途ガード済み）。
+	if meta.Kind == session.KindKiro {
+		return kiro.LiveState(meta) == "question"
 	}
 	st, ok := status.Read(session.UUID(meta.Dir, name))
 	return ok && st.State == "question"

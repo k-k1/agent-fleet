@@ -11,6 +11,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -85,11 +86,13 @@ func gracefulShutdown(budget time.Duration) {
 	codex.AbortManaged()
 	copilot.AbortManaged()
 	cursor.AbortManaged()
+	kiro.AbortManaged()
 	if len(owned) == 0 {
 		opencode.Serve().Shutdown()
 		codex.Serve().Shutdown()
 		copilot.Shutdown()
 		cursor.Shutdown()
+		kiro.Shutdown()
 		return
 	}
 	for _, tn := range owned {
@@ -117,6 +120,7 @@ func gracefulShutdown(budget time.Duration) {
 	codex.Serve().Shutdown()
 	copilot.Shutdown()
 	cursor.Shutdown()
+	kiro.Shutdown()
 	for _, tn := range owned {
 		_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).Run()
 	}

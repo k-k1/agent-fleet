@@ -380,9 +380,10 @@ const DEFAULT_AGENT_LAUNCH: AgentLaunchDefaults = {
   claude: { model: DEFAULT_MODEL, effort: "", startMode: "normal" },
   codex: { model: "", effort: "", startMode: "normal" },
   cursor: { model: "", effort: "", startMode: "normal" },
+  copilot: { model: "", effort: "", startMode: "normal" },
+  kiro: { model: "", effort: "", startMode: "normal" },
   agy: { model: "", effort: "", startMode: "normal" },
   opencode: { model: "", effort: "", startMode: "normal" },
-  copilot: { model: "", effort: "", startMode: "normal" },
 };
 
 const DEFAULTS: Settings = {
@@ -637,7 +638,11 @@ function load(): Settings {
 function normalizeAgentLaunchDefaults(rows: unknown, legacyClaudeModel = DEFAULT_MODEL): AgentLaunchDefaults {
   const src = rows && typeof rows === "object" ? rows as Record<string, Partial<AgentLaunchDefault>> : {};
   const out: AgentLaunchDefaults = {};
-  for (const kind of ["claude", "codex", "cursor", "agy", "opencode"]) {
+  // Drive the set of normalized kinds from DEFAULT_AGENT_LAUNCH — the single source of
+  // truth — rather than a parallel literal list that silently drifts (copilot was
+  // dropped that way, discarding its saved launch defaults on reload). Adding a kind's
+  // default above now normalizes it automatically.
+  for (const kind of Object.keys(DEFAULT_AGENT_LAUNCH)) {
     const base = DEFAULT_AGENT_LAUNCH[kind];
     const row = src[kind] || {};
     out[kind] = {

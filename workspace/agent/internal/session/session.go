@@ -19,6 +19,7 @@ const (
 	KindOpencode = "opencode"
 	KindCodex    = "codex"
 	KindCursor   = "cursor"
+	KindKiro     = "kiro"
 	KindAgy      = "agy"
 	KindCopilot  = "copilot"
 	KindShell    = "shell"
