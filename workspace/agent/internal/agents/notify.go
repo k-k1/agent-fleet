@@ -69,11 +69,10 @@ func MarkTurnStart(sid string) {
 // 相手側で走り続けているかもしれず、「応答が完了しました」と報告するのは嘘になる
 // （回復は §6 の reconcile、プロセスの異常終了は record-exit / serve.go の責務）。
 //
-// excerpt（報告の「直近の出力（抜粋）」）は現状 managed では空: claude の
-// MessageDisplay hook に当たるストリーミング捕捉が managed には無く、opencode は
-// /message のレスポンス本文を捨て、codex の turn/completed も本文を運ばない。
-// 報告は本文なしで届き（buildReportContent は空 excerpt を省く）、オペレーターは
-// get_session_output で詳細を読む（docs/30 の想定どおり）。
+// excerpt は managed では空（claude の MessageDisplay hook に当たるストリーミング
+// 捕捉が無い）。オペレーター報告は TUI/managed とも本文抜粋なしの事実のみ
+// （docs/30）なので報告経路では使われず、TUI では全文ブリッジ（docs/37）の body に
+// だけ乗る。オペレーターは get_session_output で詳細を読む。
 func MarkTurnEnd(sid string, st TurnState) {
 	previous, _ := status.Read(sid)
 	status.Persist(sid, "idle")
