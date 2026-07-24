@@ -378,6 +378,7 @@ func reuseSendBody(sch Schedule, slot time.Time) []byte {
 		"prompt":    expandSchedulePrompt(sch, slot),
 		"report_to": sch.OwnerConv,
 		"confirm":   true,
+		"source":    scheduleSource(sch), // mirror badge: 定期/手動発火 (docs/38)
 	})
 	return b
 }
@@ -395,6 +396,7 @@ func buildReuseCreateBody(sch Schedule, slot time.Time, title string) []byte {
 		"driver":          injectDriver(kind),
 		"report_to":       sch.OwnerConv,
 		"idempotency_key": scheduleIdempotencyKey(sch.ID, slot),
+		"source":          scheduleSource(sch), // mirror badge: 定期/手動発火 (docs/38)
 	}
 	b, _ := json.Marshal(body)
 	return b
