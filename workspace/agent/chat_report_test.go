@@ -167,29 +167,15 @@ func TestAutoTurnPausedContent(t *testing.T) {
 }
 
 func TestBuildReportContent(t *testing.T) {
-	got := buildReportContent("リファクタ作業", "slot07", "answer-ready", "", "最後の出力です")
-	for _, want := range []string{"リファクタ作業", "slot07", "入力待ち", "最後の出力です"} {
+	got := buildReportContent("リファクタ作業", "slot07", "answer-ready", "")
+	for _, want := range []string{"リファクタ作業", "slot07", "入力待ち"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("content missing %q:\n%s", want, got)
 		}
 	}
-	exit := buildReportContent("x", "slot08", "exit", "oom", "")
+	exit := buildReportContent("x", "slot08", "exit", "oom")
 	if !strings.Contains(exit, "OOM") {
 		t.Fatalf("exit content missing OOM label:\n%s", exit)
-	}
-	if strings.Contains(exit, "直近の出力") {
-		t.Fatal("empty excerpt should omit the excerpt section")
-	}
-}
-
-func TestTailRunes(t *testing.T) {
-	if got := tailRunes("  abc  ", 10); got != "abc" {
-		t.Fatalf("got %q", got)
-	}
-	long := strings.Repeat("あ", 30)
-	got := tailRunes(long, 10)
-	if !strings.HasPrefix(got, "…") || len([]rune(got)) != 11 {
-		t.Fatalf("got %q (%d runes)", got, len([]rune(got)))
 	}
 }
 
@@ -273,6 +259,113 @@ func TestSessionReportDeliveredAfterHealWipedMarker(t *testing.T) {
 	}
 	if reportArmed(m.Name) {
 		t.Fatal("arm must be consumed by the delivered report (指示1件=報告1回)")
+	}
+}
+
+// TestSessionReportDeferredWhileSubagentBusy pins the premature-completion fix
+// (docs/30, 実測 2026-07-24 saga5uc): claude launches background subagents and Stops
+// minutes before the instruction is actually done. That early answer-ready kick must
+// NOT consume the one-shot arm — delivery waits until the subagent transcripts go
+// stale and the session sits at idle, then fires exactly once.
+func TestSessionReportDeferredWhileSubagentBusy(t *testing.T) {
+	home := withTempHome(t)
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg) // claude.SubagentBusy globs under this dir
+	if err := os.MkdirAll(filepath.Join(home, ".config", "agent-fleet"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// The delivery under test is the report card; pin the auto turn off (it would
+	// call a real provider).
+	if err := os.WriteFile(filepath.Join(home, ".config", "agent-fleet", "ui-prefs.json"),
+		[]byte(`{"assistantAutoTurn":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldPoll := reportWaiterPoll
+	reportWaiterPoll = 20 * time.Millisecond
+	t.Cleanup(func() { reportWaiterPoll = oldPoll })
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /chat/report", handleChatReport)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	t.Setenv("AGENT_ADDR", strings.TrimPrefix(srv.URL, "http://"))
+
+	conv := &chatConversation{ID: randUUID(), Agent: "claude", Messages: []chatMessage{}}
+	if err := saveConv(conv); err != nil {
+		t.Fatal(err)
+	}
+	m := session.Meta{Name: "slot43", Dir: t.TempDir(), Kind: session.KindClaude, Title: "BG検証"}
+	session.WriteMeta(m)
+	sid := session.UUID(m.Dir, m.Name)
+
+	// A live in-process background subagent: its per-agent transcript is fresh.
+	agDir := filepath.Join(cfg, "projects", "p1", sid, "subagents")
+	if err := os.MkdirAll(agDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	logp := filepath.Join(agDir, "agent-1.jsonl")
+	if err := os.WriteFile(logp, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	armSessionReport(m.Name, conv.ID)
+	status.Persist(sid, "working")
+	runSessionStatusHook([]string{"idle", sid}) // Stop right after the BG launch → kick
+
+	countReports := func() int {
+		unlock := lockConv(conv.ID)
+		defer unlock()
+		c, err := loadConv(conv.ID)
+		if err != nil {
+			return -1
+		}
+		n := 0
+		for i := range c.Messages {
+			if c.Messages[i].Role == "report" {
+				n++
+			}
+		}
+		return n
+	}
+
+	// Deferred: the arm survives the premature Stop and no report card lands.
+	time.Sleep(100 * time.Millisecond)
+	if !reportArmed(m.Name) {
+		t.Fatal("premature Stop consumed the arm despite live background agents")
+	}
+	if n := countReports(); n != 0 {
+		t.Fatalf("report delivered while background agents run (n=%d)", n)
+	}
+
+	// The agents go quiet (transcript stale) with the session at idle → the waiter
+	// delivers exactly one report and consumes the arm.
+	stale := time.Now().Add(-3 * time.Minute)
+	if err := os.Chtimes(logp, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for countReports() == 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if n := countReports(); n != 1 {
+		t.Fatalf("deferred report count = %d, want 1", n)
+	}
+	if reportArmed(m.Name) {
+		t.Fatal("arm must be consumed by the deferred delivery")
+	}
+	unlock := lockConv(conv.ID)
+	c, err := loadConv(conv.ID)
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range c.Messages {
+		if c.Messages[i].Role != "report" {
+			continue
+		}
+		if !strings.Contains(c.Messages[i].Content, "入力待ち") || strings.Contains(c.Messages[i].Content, "直近の出力") {
+			t.Fatalf("report card = %q", c.Messages[i].Content)
+		}
 	}
 }
 
