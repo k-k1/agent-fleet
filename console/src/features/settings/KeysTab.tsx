@@ -78,6 +78,12 @@ export function KeysTab() {
           />
         </Row>
         <p className="muted ds-note">{s.mirrorSend === "enter" ? t("display.send_note_enter") : t("display.send_note_mod")}</p>
+
+        <div className="ds-row">
+          <span className="ds-label">{t("keys.kt.quickRepliesLabel")}</span>
+          <OnOff value={s.quickRepliesEnabled} onChange={(v) => setSetting("quickRepliesEnabled", v)} />
+        </div>
+        <p className="muted ds-note">{t("keys.kt.quickRepliesNote")}</p>
       </section>
 
       <section className="ds-group">

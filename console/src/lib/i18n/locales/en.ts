@@ -1033,6 +1033,9 @@ export const en: Record<keyof typeof ja, string> = {
   "keys.kt.shellPassLabel": "Pass all keys to shell / SSM terminals (incl. Ctrl+K, Ctrl+P)",
   "keys.kt.shellPassNote":
     "When on, a focused shell or SSM terminal becomes a pure terminal: unlike the option above, even the leader (Ctrl/⌘+K) and palette (Ctrl/⌘+P) are passed through, so Ctrl+K (kill-line), Ctrl+P (previous command) and the like reach the shell. Only shell/SSM terminals are affected; agent terminals are unchanged. To use app shortcuts again, focus another pane. Default off.",
+  "keys.kt.quickRepliesLabel": "Show reply suggestions (candidate chips above the composer)",
+  "keys.kt.quickRepliesNote":
+    "When on, chips above the composer suggest your frequent short replies (OK, proceed, commit, …) plus candidates tuned to the latest reply. Click to drop one into the input, or hold ⌥ (Alt) to send immediately. Suggestions are learned from the short messages you send. Default on.",
   "keys.kt.assignTitle": "Shortcut assignments",
   "keys.kt.resetAll": "Reset all to defaults",
   "keys.kt.assignNote":
@@ -1352,6 +1355,7 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.skip_until_next": "Skip until the next version",
   "mirror.update_choice_hint": "Waiting to choose on the update prompt",
   "mirror.resuming": "Resuming… you can type once it's ready",
+  "mirror.suggest_hint": "Click to insert · ⌥ (Alt) to send now",
   "mirror.prev_input": "Previous input",
   "mirror.next_input": "Next input",
   "mirror.todo_dismiss": "Dismiss this ToDo list",

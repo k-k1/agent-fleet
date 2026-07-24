@@ -1735,6 +1735,32 @@ button.mt-bash-toggle:hover {
   align-items: center;
   gap: 8px;
 }
+/* 返信サジェストのチップ行（コンポーサー入力の上・全幅で横に並ぶ）。 */
+.mirror-suggest {
+  flex: 0 0 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.mirror-suggest-chip {
+  max-width: 100%;
+  padding: 3px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mirror-suggest-chip:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+}
 .ma-chip {
   position: relative;
   width: 56px;

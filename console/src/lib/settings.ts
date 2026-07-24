@@ -233,6 +233,11 @@ export interface Settings {
   // 接続モーダルの「クイック接続」カードの並び（頻度優先・同数は最近優先）に使う。
   // startSsm 成功時に更新（ssmHostColors と同じくクライアント settings のみで完結）。
   ssmHostUsage: Record<string, { count: number; at: number }>;
+  // 返信サジェスト（クイック返信・lib/quickReplies）の ON/OFF。既定 ON。
+  quickRepliesEnabled: boolean;
+  // 返信サジェストの学習データ: 正規化キー → { text=表示綴り, count=送信回数, at=最終送信 epoch ms }。
+  // send() 成功時に更新（ssmHostUsage と同型でサーバミラー＝複数デバイス同期）。
+  quickReplies: Record<string, { text: string; count: number; at: number }>;
   // 音声読み上げ（TTS, docs/24 + ADR0013）。エージェント回答を VOICEVOX（ずんだもん）で
   // 読み上げる。CP-native な /api/tts/synthesize を句点区切りで逐次呼ぶ（features/chat/tts.ts）。
   ttsEnabled: boolean;
@@ -460,6 +465,8 @@ const DEFAULTS: Settings = {
   terminalPriority: false,
   shellTermPassthrough: false,
   ssmHostUsage: {},
+  quickRepliesEnabled: true,
+  quickReplies: {},
 };
 
 // VOICEVOX ずんだもんのスタイル（speaker 番号 → ラベル）。設定 UI の話者選択に使う。
