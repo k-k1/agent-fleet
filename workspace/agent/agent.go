@@ -7,6 +7,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -26,6 +27,7 @@ var agentRegistry = map[string]agents.Agent{
 	session.KindOpencode: opencode.New(),
 	session.KindCodex:    codex.New(),
 	session.KindCursor:   cursor.New(),
+	session.KindKiro:     kiro.New(),
 	session.KindAgy:      agy.New(),
 	session.KindCopilot:  copilot.New(),
 	session.KindShell:    shellAgent{},
@@ -116,6 +118,21 @@ func driveState(m session.Meta, alive, heal bool) string {
 	// は driver の runTurn が MarkTurnEnd 済みで status も idle — 二重発火しない。
 	if m.Kind == session.KindCursor {
 		if st := cursor.LiveState(m); st != "" {
+			if st == "idle" && status.LiveState(session.UUID(m.Dir, m.Name)) == "working" {
+				agents.MarkTurnEnd(session.UUID(m.Dir, m.Name), agents.TurnCompleted)
+			}
+			return st
+		}
+	}
+	// kiro: no hooks — 2.14.1 は Stop hook を持たない（hook トリガは AgentSpawn/
+	// PrePrompt/PreToolUse/PostToolUse のみ・実測 docs/43 §5-1）ので、状態源は TUI
+	// 文字列契約（state.go）。cursor/copilot と同型で、この poll が turn 完了の唯一の
+	// 観測点（TUI ルート）なので working→idle の遷移で MarkTurnEnd を発火する（docs/30
+	// ②）。承認待ち（"question"）は idle でないので発火せず素通し。managed（Track A2）は
+	// driver の runTurn が MarkTurnEnd 済みで status も idle — 二重発火しない。空（フッタ
+	// 未描画）のときは generic 経路（/input の楽観 working）へフォールバックする。
+	if m.Kind == session.KindKiro {
+		if st := kiro.LiveState(m); st != "" {
 			if st == "idle" && status.LiveState(session.UUID(m.Dir, m.Name)) == "working" {
 				agents.MarkTurnEnd(session.UUID(m.Dir, m.Name), agents.TurnCompleted)
 			}
