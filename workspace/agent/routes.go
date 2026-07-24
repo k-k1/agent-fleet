@@ -47,6 +47,9 @@ func buildMux() *http.ServeMux {
 	// tui は tmux 経路へ委譲、managed は ThreadHandle へ（P2: opencode / P3: codex）。
 	mux.HandleFunc("POST /sessions/{name}/turn", handleSessionTurn)
 	mux.HandleFunc("POST /sessions/{name}/respond", handleSessionRespond)
+	// オペレーターの AUQ 回答（docs/30）: 質問フォーム全体を choices（1-based）で
+	// 一括回答。TUI claude はキー駆動、managed は Interaction 応答に落ちる。
+	mux.HandleFunc("POST /sessions/{name}/answer-question", handleSessionAnswerQuestion)
 	// ThreadSettings の動的更新（docs/27 §9.4-3、managed 専用 — 稼働中セッションの
 	// モデル/effort/モード変更）。tui は従来どおり /input のキー操作。
 	mux.HandleFunc("GET /sessions/{name}/settings", handleSessionSettingsGet)

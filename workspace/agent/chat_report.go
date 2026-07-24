@@ -128,7 +128,10 @@ func reportHeadFor(kind, reason string) string {
 	case "answer-ready":
 		return "応答が完了し、入力待ちになりました。"
 	case "question":
-		return "質問（選択肢）を提示して停止しています。回答は Console から行う必要があります。"
+		return "質問（選択肢）を提示して停止しています。get_session_status で質問と選択肢を確認し、" +
+			"利用者に選択肢を提示して意向を確認のうえ answer_session_question で回答してください" +
+			"（利用者が事前に判断を任せている場合のみ自分で選択可。Console からも回答できます）。" +
+			"これは途中経過の報告で、指示の完了報告は別途届きます。"
 	case "plan-approval":
 		return "プランを提示して承認待ちで停止しています。承認は Console から行う必要があります。"
 	case "permission-request":
@@ -350,6 +353,17 @@ func handleChatReport(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Kind == reportKindAnswerReady && deferReportWhileBackgroundBusy(body.Name) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"reported": false, "deferred": true})
+		return
+	}
+	// Interim question report (docs/30): delivered WITHOUT consuming the arm — the
+	// one-shot still belongs to the instruction's completion (answer-ready / exit).
+	// The operator relays the options to the user and can answer via
+	// answer_session_question.
+	if body.Kind == "question" {
+		if link, ok := reportLinks.Read(body.Name); ok && link.Conv != "" {
+			go deliverSessionReport(body.Name, link.Conv, body.Kind, body.Reason)
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"reported": true, "interim": true})
 		return
 	}
 	link, ok := consumeReportArm(body.Name) // one report per instruction — disarm before the slow work

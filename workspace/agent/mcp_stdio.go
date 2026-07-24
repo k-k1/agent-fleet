@@ -145,7 +145,7 @@ var mcpStdioTools = []map[string]any{
 	},
 	{
 		"name":        "get_session_status",
-		"description": "指定セッションのライブ状態（working/idle/入力待ち等）を返す。特定セッションが動作中か聞かれた時に呼ぶ。",
+		"description": "指定セッションのライブ状態（working/idle/question 等）を返す。question のとき、保留中の質問と選択肢が questions として付く（claude）。特定セッションが動作中か聞かれた時や、質問への回答（answer_session_question）の前に呼ぶ。",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -411,6 +411,18 @@ var mcpStdioWriteTools = []map[string]any{
 		},
 	},
 	{
+		"name":        "answer_session_question",
+		"description": "セッションが提示している質問（選択肢フォーム）に回答する。質問と選択肢は get_session_status の questions（または get_session_output）で確認し、原則として選択肢を利用者に提示して意向を確認してから回答すること（質問は本来利用者に向けられたもの。利用者が事前に判断を任せている場合のみ自分で選んでよい）。choices は質問順に 1-based の選択肢番号を1つずつ並べた配列（質問が1つなら要素1つ）。自由入力（Other）や複数選択の質問には使えない（Console から回答してもらう）。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name":    map[string]any{"type": "string", "description": "回答先セッション名（例: s7）"},
+				"choices": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "質問順の選択肢番号（1-based）。例: 質問1で2番を選ぶなら [2]"},
+			},
+			"required": []string{"name", "choices"},
+		},
+	},
+	{
 		// 停止は /halt（再開可能）への中継。破壊的な /stop（メタごと忘却）は意図して
 		// 公開しない — 広告ツール集合がゲートなので、不可逆操作は Console に残す。
 		"name":        "stop_session",
@@ -541,6 +553,8 @@ func mcpStdioCall(req mcpReq) []byte {
 		Worktree      bool   `json:"worktree"`
 		Branch        string `json:"branch"`
 		NewBranch     string `json:"new_branch"`
+		// answer_session_question args: 質問順の 1-based 選択肢番号。
+		Choices []int `json:"choices"`
 		// memo args (id in the path; the rest are forwarded verbatim via p.Args).
 		// ID doubles as the cleanup-archive id (restore/purge). Repo names the branch's repo.
 		ID   string `json:"id"`
@@ -771,6 +785,22 @@ func mcpStdioCall(req mcpReq) []byte {
 		}
 		b, _ := json.Marshal(result)
 		return mcpTextResult(req.ID, string(b))
+	case "answer_session_question":
+		if !mcpWriteEnabled {
+			return mcpToolErr(req.ID, "このアシスタントは書き込みツールを許可されていません")
+		}
+		if a.Name == "" {
+			return mcpToolErr(req.ID, "name（セッション名）が必要です")
+		}
+		if len(a.Choices) == 0 {
+			return mcpToolErr(req.ID, "choices（質問順の 1-based 選択肢番号の配列）が必要です")
+		}
+		reqBody, _ := json.Marshal(map[string]any{"choices": a.Choices})
+		out, err := agentPOST("/sessions/"+url.PathEscape(a.Name)+"/answer-question", reqBody)
+		if err != nil {
+			return mcpToolErr(req.ID, "質問への回答に失敗しました: "+err.Error())
+		}
+		return mcpTextResult(req.ID, out)
 	case "stop_session":
 		if !mcpWriteEnabled {
 			return mcpToolErr(req.ID, "このアシスタントはセッションの停止を許可されていません")
