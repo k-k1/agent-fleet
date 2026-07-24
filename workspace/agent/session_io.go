@@ -720,12 +720,16 @@ func handleSessionStatus(w http.ResponseWriter, r *http.Request) {
 		"name": name, "kind": meta.Kind, "alive": alive, "status": state,
 		"ready": sessionInputReady(meta, alive),
 	}
-	// A pending AskUserQuestion rides along (claude: the hook-captured payload) so
-	// the operator can relay the options to the user and answer via
-	// /answer-question without scraping the terminal.
+	// A pending AskUserQuestion / ExitPlanMode plan rides along (claude: the
+	// hook-captured payloads) so the operator can relay them to the user and act via
+	// /answer-question // /plan-respond without scraping the terminal.
 	if meta.Kind == session.KindClaude {
-		if raw, ok := status.ReadPendingQuestion(session.UUID(meta.Dir, name)); ok && len(raw) > 0 {
+		sid := session.UUID(meta.Dir, name)
+		if raw, ok := status.ReadPendingQuestion(sid); ok && len(raw) > 0 {
 			resp["questions"] = json.RawMessage(raw)
+		}
+		if plan, ok := status.ReadPendingPlan(sid); ok && plan != "" {
+			resp["plan"] = plan
 		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, resp)

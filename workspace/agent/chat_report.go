@@ -128,12 +128,39 @@ func reportHeadFor(kind, reason string) string {
 	case "answer-ready":
 		return "応答が完了し、入力待ちになりました。"
 	case "question":
+		// 自動走行 (opt-in): the interim report itself carries the mode's marching
+		// orders, so the operator needs no separate state — OFF asks the user first,
+		// ON answers with the SESSION'S recommendation under explicit guardrails.
+		if chatAutoPilotEnabled() {
+			return "質問（選択肢）を提示して停止しています。【自動走行モード ON】" +
+				"get_session_status で質問と選択肢を、必要なら get_session_output で文脈を確認し、" +
+				"セッションの推奨（『推奨』/『(Recommended)』等のラベルや直前の出力の推奨）が明確なら、" +
+				"answer_session_question でその選択肢を回答し、どれを・なぜ選んだかを利用者に共有してください。" +
+				"推奨が読み取れない場合や、選択が破壊的・不可逆な結果（削除・上書き・外部送信・コスト増等）に" +
+				"つながり得る場合は自動回答せず、選択肢を利用者に提示して確認してください。" +
+				"これは途中経過の報告で、指示の完了報告は別途届きます。"
+		}
 		return "質問（選択肢）を提示して停止しています。get_session_status で質問と選択肢を確認し、" +
 			"利用者に選択肢を提示して意向を確認のうえ answer_session_question で回答してください" +
 			"（利用者が事前に判断を任せている場合のみ自分で選択可。Console からも回答できます）。" +
 			"これは途中経過の報告で、指示の完了報告は別途届きます。"
 	case "plan-approval":
-		return "プランを提示して承認待ちで停止しています。承認は Console から行う必要があります。"
+		// 自動走行: drive the plan through review → feedback → approval (the user's
+		// standing delegation is the mode toggle itself); OFF relays to the user.
+		if chatAutoPilotEnabled() {
+			return "プランを提示して承認待ちで停止しています。【自動走行モード ON】" +
+				"get_session_status でプラン本文を確認し、別セッションにプランのレビューをさせてください" +
+				"（同リポジトリの適切な作業コピーで新規作成してよい。レビューは読み取り専用の作業として指示する）。" +
+				"レビュー結果が問題なしなら respond_session_plan(approve) で承認して実行を開始させ、" +
+				"指摘があれば respond_session_plan(reject, feedback=指摘の要約) で修正を求め、改訂プランも同様に扱ってください。" +
+				"何をどう判断したかは毎回利用者に共有してください。" +
+				"プランに破壊的・不可逆な操作（削除・強制push・外部送信・コスト増等）が含まれる場合は自動承認せず、" +
+				"利用者に確認してください。これは途中経過の報告で、指示の完了報告は別途届きます。"
+		}
+		return "プランを提示して承認待ちで停止しています。get_session_status でプラン本文を確認し、" +
+			"要約を利用者に提示して意向（承認／修正フィードバック／別セッションでのレビュー）を確認してください。" +
+			"承認は respond_session_plan(approve)、修正は respond_session_plan(reject, feedback=修正指示)。" +
+			"Console からも操作できます。これは途中経過の報告で、指示の完了報告は別途届きます。"
 	case "permission-request":
 		return "ツール実行の許可待ちで停止しています。許可は Console から行う必要があります。"
 	case "exit":
@@ -355,11 +382,11 @@ func handleChatReport(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"reported": false, "deferred": true})
 		return
 	}
-	// Interim question report (docs/30): delivered WITHOUT consuming the arm — the
-	// one-shot still belongs to the instruction's completion (answer-ready / exit).
-	// The operator relays the options to the user and can answer via
-	// answer_session_question.
-	if body.Kind == "question" {
+	// Interim question / plan-approval reports (docs/30): delivered WITHOUT
+	// consuming the arm — the one-shot still belongs to the instruction's completion
+	// (answer-ready / exit). The operator relays to the user (or, in 自動走行,
+	// answers / drives the review-approve loop itself).
+	if body.Kind == "question" || body.Kind == "plan-approval" {
 		if link, ok := reportLinks.Read(body.Name); ok && link.Conv != "" {
 			go deliverSessionReport(body.Name, link.Conv, body.Kind, body.Reason)
 		}

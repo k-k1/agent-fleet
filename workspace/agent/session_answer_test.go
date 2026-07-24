@@ -1,6 +1,9 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -33,6 +36,34 @@ func TestValidateAnswerChoices(t *testing.T) {
 	}
 	if _, err := validateAnswerChoices(nil, []int{1}); err == nil {
 		t.Fatal("no questions must fail")
+	}
+}
+
+// TestPlanRespondGuards pins the /plan-respond preconditions: unknown session,
+// non-claude kind, and no pending plan all fail cleanly before any key is sent.
+func TestPlanRespondGuards(t *testing.T) {
+	withTempHome(t)
+	do := func(name, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/sessions/"+name+"/plan-respond", strings.NewReader(body))
+		req.SetPathValue("name", name)
+		rec := httptest.NewRecorder()
+		handleSessionPlanRespond(rec, req)
+		return rec
+	}
+	if rec := do("slot61", `{"decision":"approve"}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown session: %d %s", rec.Code, rec.Body.String())
+	}
+	session.WriteMeta(session.Meta{Name: "slot62", Dir: t.TempDir(), Kind: session.KindCodex})
+	if rec := do("slot62", `{"decision":"approve"}`); rec.Code != http.StatusNotImplemented {
+		t.Fatalf("non-claude kind: %d %s", rec.Code, rec.Body.String())
+	}
+	session.WriteMeta(session.Meta{Name: "slot63", Dir: t.TempDir(), Kind: session.KindClaude})
+	if rec := do("slot63", `{"decision":"approve"}`); rec.Code != http.StatusConflict {
+		t.Fatalf("no pending plan: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := do("slot63", `{"decision":"maybe"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad decision: %d %s", rec.Code, rec.Body.String())
 	}
 }
 

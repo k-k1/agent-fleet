@@ -222,6 +222,13 @@ export interface Settings {
   // process it. Default ON; the backend caps unattended turns at 10 per conversation
   // (reset by a user message) regardless of this switch.
   assistantAutoTurn: boolean;
+  // 自動走行 (docs/30): when an instructed session stops at an AskUserQuestion, the
+  // operator answers with the session's own recommendation; when it stops at plan
+  // approval, the operator has another session review the plan, feeds back findings,
+  // and approves once clean — sharing each decision in chat. Default OFF — acting in
+  // the user's stead is consequential, so this is a deliberate opt-in; unclear or
+  // destructive choices/plans still ask the user.
+  assistantAutoPilot: boolean;
   // Preventive auto-compaction (docs/33 第4段): when a chat's context is still at/above
   // the backend threshold (90%) as a new turn starts, summarize-and-hand-off first.
   // Default ON — the 80% notice gives a manual window before this fires.
@@ -417,6 +424,7 @@ const DEFAULTS: Settings = {
   outputLanguage: "auto",
   assistantAgentOrder: [...ASSISTANT_AGENT_KINDS],
   assistantAutoTurn: true,
+  assistantAutoPilot: false,
   assistantAutoCompact: true,
   ssmHostColors: {},
   // 音声読み上げの初期値＝おすすめ設定。設定タブの「リセット」ボタンが戻す値（TTS_RESET）と

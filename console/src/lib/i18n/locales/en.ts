@@ -653,6 +653,9 @@ export const en: Record<keyof typeof ja, string> = {
   "assistant.auto_turn": "Auto-respond to session reports",
   "assistant.note_auto_turn":
     "When a session launched or steered by the Fleet Operator (or another assistant with AF write access) reports back, the assistant runs one turn automatically to process it. As a runaway guard, at most 10 unattended turns run per conversation (reset whenever you send a message).",
+  "assistant.auto_pilot": "Auto-pilot (auto-handle questions & plans)",
+  "assistant.note_auto_pilot":
+    "When ON, if an instructed session stops at a multiple-choice question the operator answers with the session's recommendation automatically, and when it stops at plan approval the operator has another session review the plan, feeds back findings, and approves once clean. Every decision is shared in chat. Unclear questions and choices/plans involving destructive or irreversible operations still come to you first. Default OFF.",
   "assistant.auto_compact": "Auto-compact chat context",
   "assistant.note_auto_compact":
     "When a chat's context usage is still above 90% as a new exchange starts, the conversation is summarized and handed to a fresh session automatically first (the summary costs one turn of tokens). The notice at 80% lets you compact manually before this fires.",
