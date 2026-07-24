@@ -213,6 +213,7 @@
 .lm-kind.kc-cursor { color: var(--kind-cursor); }
 .lm-kind.kc-opencode { color: var(--kind-opencode); }
 .lm-kind.kc-copilot { color: var(--kind-copilot); }
+.lm-kind.kc-kiro { color: var(--kind-kiro); }
 .lm-kind.kc-agy { color: var(--kind-agy); }
 .lm-kind.kc-shell { color: var(--kind-shell); }
 .lm-kind.kc-ssm { color: var(--kind-ssm); }

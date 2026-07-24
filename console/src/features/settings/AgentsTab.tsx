@@ -135,6 +135,7 @@ export function AgentsTab() {
           />
           <CursorCard running={running} st={conns?.cursor} reload={reload} />
           <CopilotCard running={running} st={conns?.copilot} agents={agents} updateAgents={updateAgents} />
+          <KiroCard running={running} st={conns?.kiro} reload={reload} />
           <AgyCard running={running} st={conns?.agy} reload={reload} agents={agents} updateAgents={updateAgents} />
           <OpencodeCard
             running={running}
@@ -192,7 +193,7 @@ function ConnPaused() {
 // LaunchDefaults: the common, per-agent starting point. A repo's last-used values
 // still win in the launch dialog, so these are useful global defaults without
 // repeatedly overwriting deliberate per-repo choices.
-function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "cursor" | "agy" | "opencode" | "copilot" }) {
+function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "cursor" | "kiro" | "agy" | "opencode" | "copilot" }) {
   const s = useSettings();
   const tr = useT();
   const desc = agentOf(kind);
@@ -937,6 +938,173 @@ function CursorCard({ running, st, reload }: { running: boolean; st: any; reload
       )}
       <CardSettings>
         <LaunchDefaults kind="cursor" />
+      </CardSettings>
+    </ProviderCard>
+  );
+}
+
+// Kiro: on-demand install + device-flow login (docs/43 Track C). Kiro's ~855MB
+// bundle is NOT baked on the lean image (decision §4-2), so a fresh workspace reports
+// supported=false; the card offers an "install" button that lands the CLI in the
+// user's ~/.local (POST /connections/kiro/install runs in the background, we poll
+// GET for progress). Once installed, `kiro-cli login --license free --use-device-flow`
+// prints a verification URL (+ short confirmation code) and self-polls AWS SSO until
+// the user approves in a browser — so the UI shows both and polls
+// api/connections/kiro/poll (no pasted code, like Codex/Cursor). v1 is login-only
+// (Builder ID / free); the API-key path (KIRO_API_KEY, Pro+) is deferred to Track D.
+// No RTK toggle yet — kiro's rtk hook seam is Track D.
+function KiroCard({ running, st, reload }: { running: boolean; st: any; reload: () => void }) {
+  const tr = useT();
+  const toast = useToast();
+  const poll = usePolling();
+  const [flow, setFlow] = useState<any>(null); // { url, user_code, flow_id, status } while a login is in flight
+  const [installing, setInstalling] = useState<null | "installing" | "error">(null);
+  const [busy, setBusy] = useState(false);
+  const unsupported = st?.supported === false; // CLI not installed yet (on-demand)
+
+  const install = async () => {
+    setBusy(true);
+    setInstalling("installing");
+    try {
+      const res = await api("api/connections/kiro/install", { method: "POST" });
+      if (!res || res.error) {
+        setInstalling("error");
+        toast(tr("agents.kiro_install_failed", { msg: res?.error?.message || "" }));
+        return;
+      }
+      if (res.state === "done") {
+        setInstalling(null);
+        reload();
+        return;
+      }
+      // Poll the background install until it finishes; the ~855MB download is slow.
+      poll({
+        deadlineMs: 20 * 60 * 1000,
+        firstDelayMs: 4000,
+        onExpire: () => setInstalling("error"),
+        step: async () => {
+          let p;
+          try {
+            p = await api("api/connections/kiro/install");
+          } catch {
+            p = null;
+          }
+          if (p && p.state === "done") {
+            setInstalling(null);
+            reload();
+            return { stop: true };
+          }
+          if (p && p.state === "error") {
+            setInstalling("error");
+            toast(tr("agents.kiro_install_failed", { msg: p.error || "" }));
+            return { stop: true };
+          }
+          return { stop: false, nextMs: 4000 };
+        },
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const startLogin = async () => {
+    setBusy(true);
+    try {
+      const res = await api("api/connections/kiro/start", { method: "POST" });
+      if (!res || res.error || !res.url) {
+        toast(tr("agents.kiro_auth_failed", { msg: res?.error?.message || "" }));
+        return;
+      }
+      setFlow({ url: res.url, user_code: res.user_code, flow_id: res.flow_id, status: tr("git.oauth_waiting") });
+      poll({
+        deadlineMs: 15 * 60 * 1000,
+        firstDelayMs: 3000,
+        onExpire: () => setFlow((f: any) => (f ? { ...f, status: tr("git.oauth_expired") } : f)),
+        step: async () => {
+          let p;
+          try {
+            p = await apiJSON("api/connections/kiro/poll", "POST", { flow_id: res.flow_id });
+          } catch {
+            p = null;
+          }
+          if (p && p.connected) {
+            setFlow(null);
+            reload();
+            return { stop: true };
+          }
+          return { stop: false, nextMs: 2500 };
+        },
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const disconnect = async () => {
+    await raw("api/connections/kiro", { method: "DELETE" });
+    setFlow(null);
+    reload();
+  };
+
+  return (
+    <ProviderCard
+      id="kiro"
+      name={kindDisplayName("kiro")}
+      status={
+        running ? (
+          <StatusPill on={st?.connected}>{st?.connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>
+        ) : undefined
+      }
+    >
+      {!running ? (
+        <ConnPaused />
+      ) : st?.connected ? (
+        <div className="p-who">
+          <span className="p-em" title={st.email || ""}>
+            {st.email || "Kiro"}
+          </span>
+          <DisconnectButton onClick={disconnect} />
+        </div>
+      ) : unsupported ? (
+        // Not installed yet — offer the on-demand install (~855MB into the home volume).
+        <>
+          <div className="p-desc">{tr("agents.kiro_install_desc")}</div>
+          <div className="p-body">
+            {installing === "installing" ? (
+              <p className="ps-note ps-note-warn">{tr("agents.kiro_installing")}</p>
+            ) : (
+              <>
+                <div className="p-opts">
+                  <button type="button" className="p-opt" disabled={busy} onClick={install}>
+                    <span className="p-opt-t">{tr("agents.kiro_install")}</span>
+                    <span className="p-opt-s">{tr("agents.kiro_install_note")}</span>
+                  </button>
+                </div>
+                {installing === "error" && <p className="ps-note ps-note-warn">{tr("agents.kiro_install_error")}</p>}
+              </>
+            )}
+          </div>
+        </>
+      ) : flow ? (
+        <div className="p-body">
+          {/* device flow: URL + a short code to confirm in the browser; kiro self-polls. */}
+          <DeviceSteps code={flow.user_code} url={flow.url} status={flow.status} />
+        </div>
+      ) : (
+        <>
+          <div className="p-desc">{tr("agents.kiro_desc")}</div>
+          <div className="p-body">
+            <div className="p-opts">
+              <button type="button" className="p-opt" disabled={busy} onClick={startLogin}>
+                <span className="p-opt-t">{tr("agents.kiro_connect")}</span>
+                <span className="p-opt-s">{tr("agents.kiro_connect_note")}</span>
+              </button>
+            </div>
+            <Hint>{tr("agents.kiro_hint")}</Hint>
+          </div>
+        </>
+      )}
+      <CardSettings>
+        <LaunchDefaults kind="kiro" />
       </CardSettings>
     </ProviderCard>
   );

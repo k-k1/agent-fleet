@@ -481,6 +481,18 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/connections/cursor/start", rest)
 	mux.HandleFunc("POST /api/connections/cursor/poll", rest)
 	mux.HandleFunc("DELETE /api/connections/cursor", rest)
+	// kiro (Kiro CLI, docs/43) — dedicated device-flow login: start returns the
+	// verification URL (+ user_code + flow_id), poll checks AWS-side approval (kiro
+	// self-polls, no pasted code). Proxied to the Agent (kiro owns its credential
+	// store under ~/.local/share/kiro-cli).
+	mux.HandleFunc("POST /api/connections/kiro/start", rest)
+	mux.HandleFunc("POST /api/connections/kiro/poll", rest)
+	mux.HandleFunc("DELETE /api/connections/kiro", rest)
+	// kiro on-demand install (docs/43 Track B/C) — the ~855MB bundle is not baked on
+	// the lean image, so the connection card triggers a background install (POST) and
+	// polls its progress (GET). Proxied to the Agent (installs into the user's ~/.local).
+	mux.HandleFunc("POST /api/connections/kiro/install", rest)
+	mux.HandleFunc("GET /api/connections/kiro/install", rest)
 	mux.HandleFunc("PUT /api/connections/opencode", rest)
 	mux.HandleFunc("DELETE /api/connections/opencode/{env}", rest)
 	// SVN saved basic-auth creds (docs/41) — forget a stored server credential.
