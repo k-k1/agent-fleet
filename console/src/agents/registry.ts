@@ -336,8 +336,10 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // effort: kiro には別フラグ `--effort` があり program.go は渡すが、モデルカタログに
     // effort メタデータが無く per-model の対応も未検証のため v1 は picker を出さない
     // （copilot/cursor の「未検証の caps を立てない」1854d 教訓）。
-    // contextBar なし（v2 JSONL 転写にトークン数が無い。managed ACP の _kiro.dev/metadata は
-    // ライブ context%/credits を持つが UI 配線は Track A2 スコープ外＝将来 Track）。planMode なし
+    // contextBar あり（Track D）: v2 JSONL 転写にトークン数は無いが、managed ACP の
+    // _kiro.dev/metadata が運ぶライブ contextUsagePercentage を実 window に対する概算トークンへ
+    // 変換して ContextReporter(ContextFill) 経由でミラーの ContextBar に配線（agy と同じ
+    // セッションレベル fallback 経路）。稼働中 managed のみ表示・TUI/停止中は非表示。planMode なし
     // （3 モード循環でクリーンな二値でない — cursor 同型）。imagePaste は ACP に image:true が
     // あるが v1 未配線でオフ。headlessChat なし（§4-3 決定: ASSISTANT_AGENT_KINDS に kiro を
     // 加えない — タイトル提案は generic read 層で動く）。
@@ -350,6 +352,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       chat: true,
       transcript: true,
       model: true,
+      contextBar: true, // Track D: managed ACP の _kiro.dev/metadata ライブ context% → ContextFill 経由
       tuiStartMode: true, // program.go は mode=plan で --trust-all-tools を外す（承認待ちは state.go が "question" で拾う）
       runsInDir: true,
       launchableFromRepo: true,

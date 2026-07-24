@@ -166,7 +166,7 @@ const modelsFixture = `{"models":[
 ],"default_model":"auto"}`
 
 func TestParseModels(t *testing.T) {
-	got := parseModels([]byte(modelsFixture))
+	got, windows := parseModels([]byte(modelsFixture))
 	if len(got) != 2 { // auto は除外
 		t.Fatalf("want 2 models (auto excluded), got %+v", got)
 	}
@@ -182,9 +182,16 @@ func TestParseModels(t *testing.T) {
 			t.Errorf("model %q label = %q, want %q", mc.ID, mc.Label, want[mc.ID])
 		}
 	}
-	// 壊れた JSON は非 nil 空（既定のみで安全側）。
-	if got := parseModels([]byte("not json")); got == nil || len(got) != 0 {
-		t.Errorf("broken json must yield non-nil empty: %+v", got)
+	// windows は auto を含め全モデルの context_window_tokens を保持する（pct→token 変換用）。
+	wantWin := map[string]int{"auto": 1000000, "claude-sonnet-4.5": 200000, "claude-haiku-4.5": 200000}
+	for id, w := range wantWin {
+		if windows[id] != w {
+			t.Errorf("window[%q] = %d, want %d", id, windows[id], w)
+		}
+	}
+	// 壊れた JSON は非 nil 空リスト＋非 nil 空 window マップ（既定のみで安全側）。
+	if list, win := parseModels([]byte("not json")); list == nil || len(list) != 0 || win == nil {
+		t.Errorf("broken json must yield non-nil empty list+map: %+v %+v", list, win)
 	}
 }
 

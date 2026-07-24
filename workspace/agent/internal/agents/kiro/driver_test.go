@@ -312,6 +312,94 @@ func TestManagedTranscriptFromUpdates(t *testing.T) {
 	}
 }
 
+// meta emits a _kiro.dev/metadata notification.
+func (f *fakeACP) meta(params map[string]any) {
+	f.send(map[string]any{"jsonrpc": "2.0", "method": "_kiro.dev/metadata", "params": params})
+}
+
+// TestManagedContextFromMetadata: _kiro.dev/metadata の contextUsagePercentage が最新値
+// として保持され（縮小も反映）、meteringUsage の credit が累積し、ManagedContext /
+// ContextFill が pct→token 変換を厳密に往復することを検証する（Track D）。
+func TestManagedContextFromMetadata(t *testing.T) {
+	h, f := newTestHandle(t)
+	handlesMu.Lock()
+	handles["s1"] = h
+	handlesMu.Unlock()
+	t.Cleanup(func() { handlesMu.Lock(); delete(handles, "s1"); handlesMu.Unlock() })
+
+	// window は通常 spawn 時に ModelWindow で埋まる。ユニットテストは spawn を通さないので直挿し。
+	h.usageMu.Lock()
+	h.ctxWindow = 200_000
+	h.usageMu.Unlock()
+
+	// metadata 未受信: ok=false（context bar は出ない）。
+	if _, _, _, _, ok := ManagedContext("s1"); ok {
+		t.Fatalf("no metadata yet must be ok=false")
+	}
+
+	f.meta(map[string]any{"contextUsagePercentage": 3.39})
+	f.meta(map[string]any{
+		"contextUsagePercentage": 1.25,
+		"meteringUsage":          []any{map[string]any{"value": 0.02, "unit": "credit"}},
+	})
+	f.meta(map[string]any{ // credit のみ（pct 据え置き）＋ credit 累積
+		"meteringUsage": []any{map[string]any{"value": 0.03, "unit": "credit"}},
+	})
+	// readLoop がドレインするのを待つ。
+	deadline := time.Now().Add(2 * time.Second)
+	var pct, credits float64
+	var window int
+	var ok bool
+	for time.Now().Before(deadline) {
+		pct, window, credits, _, ok = ManagedContext("s1")
+		if ok && credits > 0.049 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !ok {
+		t.Fatalf("ManagedContext ok=false after metadata")
+	}
+	if pct != 1.25 { // 最新値（3.39→1.25、縮小を反映）
+		t.Errorf("pct = %v, want latest 1.25", pct)
+	}
+	if window != 200_000 {
+		t.Errorf("window = %d, want 200000", window)
+	}
+	if credits < 0.049 || credits > 0.051 { // 0.02 + 0.03 累積
+		t.Errorf("credits = %v, want ~0.05", credits)
+	}
+
+	// ContextFill: pct(1.25%) × window(200k) → tokens、window 明示で厳密往復。
+	c := (agentImpl{}).ContextFill(session.Meta{Name: "s1"})
+	if c == nil {
+		t.Fatalf("ContextFill returned nil with live metadata")
+	}
+	if c.Window != 200_000 {
+		t.Errorf("ContextFill window = %d, want 200000", c.Window)
+	}
+	wantTok := int(1.25 / 100 * 200_000) // 2500
+	if c.Tokens != wantTok {
+		t.Errorf("ContextFill tokens = %d, want %d", c.Tokens, wantTok)
+	}
+	// フロントは tokens/window から pct を再計算する — 元の pct に一致（丸め内）。
+	back := float64(c.Tokens) / float64(c.Window) * 100
+	if back < 1.24 || back > 1.26 {
+		t.Errorf("pct round-trip = %v, want ~1.25", back)
+	}
+
+	// 停止した handle は ok=false（TUI/停止中は context 非表示）。
+	h.mu.Lock()
+	h.alive = false
+	h.mu.Unlock()
+	if _, _, _, _, ok := ManagedContext("s1"); ok {
+		t.Errorf("stopped handle must be ok=false")
+	}
+	if (agentImpl{}).ContextFill(session.Meta{Name: "s1"}) != nil {
+		t.Errorf("ContextFill must be nil for a stopped handle")
+	}
+}
+
 func TestModeMapping(t *testing.T) {
 	if acpModeID("plan") != "kiro_planner" || acpModeID("normal") != "kiro_default" || acpModeID("") != "kiro_default" {
 		t.Fatal("acpModeID wrong")
