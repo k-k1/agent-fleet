@@ -84,6 +84,12 @@ export function KeysTab() {
           <OnOff value={s.quickRepliesEnabled} onChange={(v) => setSetting("quickRepliesEnabled", v)} />
         </div>
         <p className="muted ds-note">{t("keys.kt.quickRepliesNote")}</p>
+
+        <div className="ds-row">
+          <span className="ds-label">{t("keys.kt.replySuggestLabel")}</span>
+          <OnOff value={s.replySuggestEnabled} onChange={(v) => setSetting("replySuggestEnabled", v)} />
+        </div>
+        <p className="muted ds-note">{t("keys.kt.replySuggestNote")}</p>
       </section>
 
       <section className="ds-group">

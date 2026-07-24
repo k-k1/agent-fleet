@@ -231,7 +231,8 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/sessions/{name}/title/dismiss", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/title/suggest", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/title/set", rest)
-	mux.HandleFunc("POST /api/sessions/{name}/suggest-branch", rest) // LLM branch-name suggestion (this session's convo)
+	mux.HandleFunc("POST /api/sessions/{name}/suggest-branch", rest)  // LLM branch-name suggestion (this session's convo)
+	mux.HandleFunc("POST /api/sessions/{name}/suggest-replies", rest) // LLM reply suggestion v2 (this session's convo)
 	mux.HandleFunc("POST /api/sessions/{name}/rename-branch", rest)  // worktree deferred-naming: git branch -m
 }
 

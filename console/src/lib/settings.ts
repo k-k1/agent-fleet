@@ -235,6 +235,9 @@ export interface Settings {
   ssmHostUsage: Record<string, { count: number; at: number }>;
   // 返信サジェスト（クイック返信・lib/quickReplies）の ON/OFF。既定 ON。
   quickRepliesEnabled: boolean;
+  // 返信サジェスト v2（LLM 文脈生成の✨ボタン）の ON/OFF。既定 ON（押した時だけトークン消費）。
+  // Agent 側 replySuggestEnabled（ui-prefs）と同じ既定に合わせる。
+  replySuggestEnabled: boolean;
   // 返信サジェストの学習データ: 正規化キー → { text=表示綴り, count=送信回数, at=最終送信 epoch ms }。
   // send() 成功時に更新（ssmHostUsage と同型でサーバミラー＝複数デバイス同期）。
   quickReplies: Record<string, { text: string; count: number; at: number }>;
@@ -466,6 +469,7 @@ const DEFAULTS: Settings = {
   shellTermPassthrough: false,
   ssmHostUsage: {},
   quickRepliesEnabled: true,
+  replySuggestEnabled: true,
   quickReplies: {},
 };
 

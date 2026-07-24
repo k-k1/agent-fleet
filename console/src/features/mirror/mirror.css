@@ -1761,6 +1761,31 @@ button.mt-bash-toggle:hover {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, var(--bg));
 }
+/* v2: LLM 生成候補は accent 寄りの見た目で学習候補と区別。 */
+.mirror-suggest-chip.llm {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+}
+/* v2: ✨ トリガーボタン（on-demand で LLM 候補を取得）。 */
+.mirror-suggest-ai {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 8px;
+  color: var(--accent);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.mirror-suggest-ai:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+}
+.mirror-suggest-ai:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .ma-chip {
   position: relative;
   width: 56px;

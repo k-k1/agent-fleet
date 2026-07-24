@@ -74,6 +74,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /sessions/{name}/title/suggest", handleSuggestTitle)
 	mux.HandleFunc("POST /sessions/{name}/title/set", handleSetTitle)
 	mux.HandleFunc("POST /sessions/{name}/suggest-branch", handleSessionSuggestBranch)
+	mux.HandleFunc("POST /sessions/{name}/suggest-replies", handleSuggestReplies) // LLM 返信サジェスト v2（preview 専用）
 	mux.HandleFunc("POST /sessions/{name}/rename-branch", handleSessionRenameBranch)
 	mux.HandleFunc("GET /ws/pty", handlePTY)
 	// Browser pane — ephemeral BrowserContext + Page ownership and a restricted
