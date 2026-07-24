@@ -1508,6 +1508,8 @@ export const ja = {
   "memo.rename_category": "クリックでカテゴリ名を変更",
   "memo.delete_category": "カテゴリを削除",
   "memo.reorder_category": "ドラッグでカテゴリを並べ替え",
+  "memo.collapse_category": "カテゴリを折りたたむ",
+  "memo.expand_category": "カテゴリを展開",
   "memo.reorder_memo": "ドラッグで並べ替え／別カテゴリへ移動",
   "memo.edit_hint": "Ctrl+Enter で保存 · Esc で取消",
   "memo.edit_hint_file": "Ctrl+Enter で保存 · Esc で取消 · ファイル参照へのコメントを編集中",
