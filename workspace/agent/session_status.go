@@ -93,7 +93,8 @@ func runSessionStatusHook(args []string) {
 	}
 	previous, _ := status.Read(sid)
 	// Capture the turn's streamed text BEFORE applyPendingPayloads clears it on idle:
-	// it becomes the session report's "直近の出力（抜粋）" (docs/30).
+	// it becomes the full-text bridge body (docs/37). The operator report itself
+	// carries no excerpt (docs/30: fact-only, uniform with managed).
 	turnText, _ := status.ReadPendingText(sid)
 	status.Persist(sid, state)
 	applyPendingPayloads(sid, state, h)
@@ -166,7 +167,7 @@ func recordSessionNotification(sid, previous, state, turnText string) {
 		// observed bug). Interim events still hit the notification center above; the
 		// arm survives until answer-ready (here) or an abnormal exit (record_exit.go).
 		if kind == reportKindAnswerReady && reportArmed(m.Name) {
-			kickSessionReport(m.Name, kind, turnText, "")
+			kickSessionReport(m.Name, kind, "")
 		}
 		return
 	}

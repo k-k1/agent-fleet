@@ -19,13 +19,16 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
 // reportLink is the per-session arm record: which conversation gets the report and
@@ -85,30 +88,15 @@ const reportKindAnswerReady = "answer-ready"
 // this is the structural stop for a runaway follow-up loop.
 const maxAutoTurns = 10
 
-// reportExcerptCap bounds the "最終出力（抜粋）" tail carried in a report. The
-// pending-text buffer itself is capped at 16 KiB; the report only needs the ending.
-const reportExcerptCap = 2000
-
-// bridgeBodyCap bounds the full-text bridge body (docs/37 Fix ③). It is far larger
-// than the report excerpt because the chat is standing in for the Console — the whole
-// answer should arrive (split across messages by chunkMessage / maxBodyChunks), not a
-// 2000-rune tail. Kept under the 16 KiB pending-text buffer with headroom for the
-// table-fence expansion, and matched to maxBodyChunks so nothing is silently dropped.
+// bridgeBodyCap bounds the full-text bridge body (docs/37 Fix ③). It is large
+// because the chat is standing in for the Console — the whole answer should arrive
+// (split across messages by chunkMessage / maxBodyChunks). Kept under the 16 KiB
+// pending-text buffer with headroom for the table-fence expansion, and matched to
+// maxBodyChunks so nothing is silently dropped.
 const bridgeBodyCap = 12000
 
-// tailRunes returns the last n runes of s (whole string when shorter), prefixing
-// an ellipsis when truncated.
-func tailRunes(s string, n int) string {
-	r := []rune(strings.TrimSpace(s))
-	if len(r) <= n {
-		return string(r)
-	}
-	return "…" + string(r[len(r)-n:])
-}
-
 // headRunes returns the FIRST n runes of s (whole string when shorter), appending an
-// ellipsis when truncated. The full-text bridge body wants the answer from the START
-// (unlike the report excerpt's tail).
+// ellipsis when truncated. The full-text bridge body wants the answer from the START.
 func headRunes(s string, n int) string {
 	r := []rune(strings.TrimSpace(s))
 	if len(r) <= n {
@@ -119,9 +107,12 @@ func headRunes(s string, n int) string {
 
 // kickSessionReport posts the report event to the local Agent server, best-effort.
 // Runs in the hook / record-exit process; the server does the conversation work.
-func kickSessionReport(name, kind, excerpt, reason string) {
+// No turn-text excerpt rides along: the report is the completion FACT only, uniform
+// across TUI and managed sessions — the operator reads details via
+// get_session_output (it summarizes the session state anyway).
+func kickSessionReport(name, kind, reason string) {
 	body, err := json.Marshal(map[string]string{
-		"name": name, "kind": kind, "excerpt": excerpt, "reason": reason,
+		"name": name, "kind": kind, "reason": reason,
 	})
 	if err != nil {
 		return
@@ -158,16 +149,11 @@ func reportHeadFor(kind, reason string) string {
 }
 
 // buildReportContent renders the report message body appended to the conversation
-// (and displayed as the session-origin card).
-func buildReportContent(display, name, kind, reason, excerpt string) string {
-	var b strings.Builder
-	b.WriteString("セッション「" + display + "」(" + name + ") からの報告: ")
-	b.WriteString(reportHeadFor(kind, reason))
-	if strings.TrimSpace(excerpt) != "" {
-		b.WriteString("\n\n直近の出力（抜粋）:\n\n")
-		b.WriteString(strings.TrimSpace(excerpt))
-	}
-	return b.String()
+// (and displayed as the session-origin card). Fact-only by design — no output
+// excerpt (TUI と managed で統一): the operator confirms details with
+// get_session_output before summarizing to the user.
+func buildReportContent(display, name, kind, reason string) string {
+	return "セッション「" + display + "」(" + name + ") からの報告: " + reportHeadFor(kind, reason)
 }
 
 // undeliveredReports returns the report messages not yet fed into the provider's
@@ -258,16 +244,98 @@ func noteAutoTurnPaused(c *chatConversation) {
 	_ = notice.Put(ev)
 }
 
-// handleChatReport (POST /chat/report {name, kind, excerpt, reason}) receives the
-// one-shot report kick from the hook / record-exit process. It validates + disarms
+// reportArmMu serializes arm consumption: the kick handler and a background waiter
+// can race for the same one-shot arm (the final turn's Stop kick vs the waiter's
+// poll); read-check-disarm must be atomic or both deliver.
+var reportArmMu sync.Mutex
+
+// consumeReportArm atomically claims the pending one-shot report for the session.
+func consumeReportArm(name string) (reportLink, bool) {
+	reportArmMu.Lock()
+	defer reportArmMu.Unlock()
+	l, ok := reportLinks.Read(name)
+	if !ok || !l.Armed || l.Conv == "" {
+		return reportLink{}, false
+	}
+	l.Armed = false
+	_ = reportLinks.Write(name, l)
+	return l, true
+}
+
+// reportWaiterPoll is how often a deferred-report waiter re-checks the session.
+// A var so tests can shrink it.
+var reportWaiterPoll = 15 * time.Second
+
+// reportWaiters holds the sessions with a deferred-report waiter running (one per
+// session — a re-kick while deferred must not stack a second waiter).
+var reportWaiters sync.Map
+
+// deferReportWhileBackgroundBusy decides whether an answer-ready kick is premature.
+// A claude turn can launch run_in_background subagents / Workflow agents and Stop
+// right away（実測 2026-07-24 saga5uc: レビュー4体をBG起動→3分でStop→早期報告が
+// arm を消費→数十分後の本完了は報告されず・利用者の催促で発覚）. Delivering on that
+// Stop consumes the one-shot arm while the instruction's real work is still running,
+// so the true completion could never report. While the session's background agents
+// are live (SubagentBusy: per-agent jsonl freshness), keep the arm and let a waiter
+// deliver once they go quiet and the session is back at idle. The digest turn's own
+// Stop kick usually beats the waiter — whichever consumes the arm first wins.
+func deferReportWhileBackgroundBusy(name string) bool {
+	m, ok := session.ReadMeta(name)
+	if !ok || m.Kind != session.KindClaude {
+		return false // subagent transcripts are a claude signal; other kinds have no BG seam
+	}
+	sid := session.UUID(m.Dir, m.Name)
+	if !claude.SubagentBusy(sid) {
+		return false
+	}
+	if _, running := reportWaiters.LoadOrStore(name, struct{}{}); running {
+		return true // an earlier kick already posted a waiter; it will deliver
+	}
+	go waitReportUntilBackgroundDone(name, sid)
+	return true
+}
+
+// waitReportUntilBackgroundDone delivers the deferred one-shot report once the
+// session's background agents go quiet and it sits at idle. Exits without
+// delivering when the arm is consumed elsewhere (a later kick won the race, the
+// operator's stop_session disarmed, or a new instruction re-armed — its own
+// completion kick reports) or when the session stops (docs/30: a kept arm reports
+// on the post-resume completion instead).
+func waitReportUntilBackgroundDone(name, sid string) {
+	defer reportWaiters.Delete(name)
+	for {
+		time.Sleep(reportWaiterPoll)
+		if !reportArmed(name) {
+			return
+		}
+		if m, ok := session.ReadMeta(name); !ok || m.StoppedAt != "" {
+			return
+		}
+		if claude.SubagentBusy(sid) {
+			continue // background agents still writing
+		}
+		if status.LiveState(sid) != "idle" {
+			continue // digest turn (or a question/plan/permission wait) still in flight
+		}
+		link, ok := consumeReportArm(name)
+		if !ok {
+			return
+		}
+		deliverSessionReport(name, link.Conv, reportKindAnswerReady, "")
+		return
+	}
+}
+
+// handleChatReport (POST /chat/report {name, kind, reason}) receives the one-shot
+// report kick from the hook / record-exit process. It validates + disarms
 // synchronously (single writer for the arm store lives here) and does the slow
-// conversation work in a goroutine so the dying hook process isn't held up.
+// conversation work in a goroutine so the dying hook process isn't held up. An
+// answer-ready kick while background agents run is deferred instead (arm kept).
 func handleChatReport(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name    string `json:"name"`
-		Kind    string `json:"kind"`
-		Excerpt string `json:"excerpt"`
-		Reason  string `json:"reason"`
+		Name   string `json:"name"`
+		Kind   string `json:"kind"`
+		Reason string `json:"reason"`
 	}
 	if !httpx.DecodeJSON(w, r, &body) {
 		return
@@ -276,20 +344,26 @@ func handleChatReport(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_report", "name and kind are required")
 		return
 	}
-	link, ok := reportLinks.Read(body.Name)
-	if !ok || !link.Armed || link.Conv == "" {
+	if !reportArmed(body.Name) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"reported": false})
 		return
 	}
-	link.Armed = false // one report per instruction — disarm before the slow work
-	_ = reportLinks.Write(body.Name, link)
-	go deliverSessionReport(body.Name, link.Conv, body.Kind, body.Reason, tailRunes(body.Excerpt, reportExcerptCap))
+	if body.Kind == reportKindAnswerReady && deferReportWhileBackgroundBusy(body.Name) {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"reported": false, "deferred": true})
+		return
+	}
+	link, ok := consumeReportArm(body.Name) // one report per instruction — disarm before the slow work
+	if !ok {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"reported": false})
+		return
+	}
+	go deliverSessionReport(body.Name, link.Conv, body.Kind, body.Reason)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"reported": true})
 }
 
 // deliverSessionReport appends the report message to the conversation, mirrors it
 // into the notification center, then runs the operator's auto turn when allowed.
-func deliverSessionReport(name, convID, kind, reason, excerpt string) {
+func deliverSessionReport(name, convID, kind, reason string) {
 	display, sessKind := name, ""
 	var title string
 	if m, ok := session.ReadMeta(name); ok {
@@ -303,7 +377,7 @@ func deliverSessionReport(name, convID, kind, reason, excerpt string) {
 		return // conversation deleted since arming — drop the report
 	}
 	c.Messages = append(c.Messages, chatMessage{
-		Role: "report", Content: buildReportContent(display, name, kind, reason, excerpt),
+		Role: "report", Content: buildReportContent(display, name, kind, reason),
 		Session: name, TS: nowMs(),
 	})
 	c.UpdatedAt = nowMs()
