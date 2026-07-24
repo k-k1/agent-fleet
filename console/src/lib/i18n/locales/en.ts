@@ -652,7 +652,10 @@ export const en: Record<keyof typeof ja, string> = {
     "Priority order of the CLIs that power the assistant chat and title suggestions: the first CONNECTED one from the top is used (disconnected ones are skipped). Antigravity defaults to last — its free-plan quota is scarce. Takes effect from a new conversation with the built-in assistant (custom assistants prefer their own agent setting).",
   "assistant.auto_turn": "Auto-respond to session reports",
   "assistant.note_auto_turn":
-    "When a session launched or steered by the Fleet Operator (or another assistant with AF write access) reports back, the assistant runs one turn automatically to process it. As a runaway guard, at most 10 unattended turns run per conversation (reset whenever you send a message).",
+    "When a session launched or steered by the Fleet Operator (or another assistant with AF write access) reports back, the assistant runs one turn automatically to process it. As a runaway guard, unattended turns per conversation are capped at the limit below (reset whenever you send a message).",
+  "assistant.auto_turn_limit": "Unattended auto-reply limit",
+  "assistant.note_auto_turn_limit":
+    "How many auto-replies may run in a row without a message from you (default 10, max 50). At the limit a pause notice arrives, and your next message resumes the loop. Unlimited is not available.",
   "assistant.auto_pilot": "Auto-pilot (auto-handle questions & plans)",
   "assistant.note_auto_pilot":
     "When ON, if an instructed session stops at a multiple-choice question the operator answers with the session's recommendation automatically, and when it stops at plan approval the operator has another session review the plan, feeds back findings, and approves once clean. Every decision is shared in chat. Unclear questions and choices/plans involving destructive or irreversible operations still come to you first. Default OFF.",

@@ -222,6 +222,10 @@ export interface Settings {
   // process it. Default ON; the backend caps unattended turns at 10 per conversation
   // (reset by a user message) regardless of this switch.
   assistantAutoTurn: boolean;
+  // Ceiling on unattended auto turns per conversation (reset whenever the user sends
+  // a message). Backend clamps to [1, 50] — there is no unlimited mode; the clamp is
+  // the structural runaway stop (docs/30).
+  assistantAutoTurnLimit: number;
   // 自動走行 (docs/30): when an instructed session stops at an AskUserQuestion, the
   // operator answers with the session's own recommendation; when it stops at plan
   // approval, the operator has another session review the plan, feeds back findings,
@@ -424,6 +428,7 @@ const DEFAULTS: Settings = {
   outputLanguage: "auto",
   assistantAgentOrder: [...ASSISTANT_AGENT_KINDS],
   assistantAutoTurn: true,
+  assistantAutoTurnLimit: 10,
   assistantAutoPilot: false,
   assistantAutoCompact: true,
   ssmHostColors: {},

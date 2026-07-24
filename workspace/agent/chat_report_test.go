@@ -107,7 +107,7 @@ func TestRunReportAutoTurnCapNotifiesOnce(t *testing.T) {
 	withTempHome(t)
 	conv := &chatConversation{
 		ID: randUUID(), Agent: "claude", Tools: toolsAFWrite,
-		AutoTurns: maxAutoTurns, // unattended budget already spent
+		AutoTurns: defaultAutoTurns, // unattended budget already spent
 		Messages:  []chatMessage{{Role: "report", Content: "レポートA", Session: "slot01"}},
 	}
 	if err := saveConv(conv); err != nil {
@@ -155,14 +155,41 @@ func TestRunReportAutoTurnCapNotifiesOnce(t *testing.T) {
 }
 
 func TestAutoTurnPausedContent(t *testing.T) {
-	got := autoTurnPausedContent(3)
-	for _, want := range []string{"10", "3 件", "続け", "リセット"} {
+	got := autoTurnPausedContent(25, 3)
+	for _, want := range []string{"25", "3 件", "続け", "リセット"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("content missing %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(autoTurnPausedContent(0), "残っています") {
+	if strings.Contains(autoTurnPausedContent(10, 0), "残っています") {
 		t.Fatal("zero pending should omit the pending-count clause")
+	}
+}
+
+// TestChatAutoTurnLimit pins the configurable ceiling: default 10 when unset, the
+// stored value inside range, and a hard clamp to [1, 50] — no unlimited mode.
+func TestChatAutoTurnLimit(t *testing.T) {
+	home := withTempHome(t)
+	if err := os.MkdirAll(filepath.Join(home, ".config", "agent-fleet"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	prefs := filepath.Join(home, ".config", "agent-fleet", "ui-prefs.json")
+	if got := chatAutoTurnLimit(); got != defaultAutoTurns {
+		t.Fatalf("default = %d, want %d", got, defaultAutoTurns)
+	}
+	for raw, want := range map[string]int{"30": 30, "0": 1, "-5": 1, "999": 50, "50": 50, "1": 1} {
+		if err := os.WriteFile(prefs, []byte(`{"assistantAutoTurnLimit":`+raw+`}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got := chatAutoTurnLimit(); got != want {
+			t.Fatalf("limit(%s) = %d, want %d", raw, got, want)
+		}
+	}
+	if err := os.WriteFile(prefs, []byte(`{"assistantAutoTurnLimit":"lots"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := chatAutoTurnLimit(); got != defaultAutoTurns {
+		t.Fatalf("invalid type = %d, want default %d", got, defaultAutoTurns)
 	}
 }
 

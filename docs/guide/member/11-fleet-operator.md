@@ -56,7 +56,7 @@ A session the operator instructed reports back to the conversation automatically
 - **When a session stops at plan approval, an interim report arrives as well.** From chat you can approve ("approve it") or send revision feedback ("have it fix ◯◯"), and asking "have another session review it" makes the operator broker the plan review → feedback → approval.
 - Turning ON **"Auto-pilot"** in ⚙Settings → Assistant makes the operator answer questions with the session's recommendation automatically, and drive plans through review by another session, feedback, and approval (every decision is shared in chat; unclear questions and choices/plans involving destructive or irreversible operations still come to you first). Default OFF.
 - When a report arrives, by default the operator **replies automatically** (summarizing results, sending follow-up instructions, deciding whether to start the next task, and so on). You can turn this auto-reply off with **"Auto-respond to session reports"** in ⚙Settings → the **Assistant** tab.
-- To prevent runaway loops, **auto-replies without any input from you are capped at 10 in a row**. When the cap is reached, a pause notice appears, and sending your next message resumes it. The design ensures your judgment is inserted periodically even in long hauls.
+- To prevent runaway loops, **auto-replies without any input from you are capped** (⚙Settings → Assistant "Unattended auto-reply limit", default 10, max 50 — unlimited is not available). When the cap is reached, a pause notice appears, and sending your next message resumes it. The design ensures your judgment is inserted periodically even in long hauls.
 - Reports **also arrive in the notification center**, so you notice them even while looking at another screen (clicking opens that conversation).
 
 ## Basic usage
@@ -106,8 +106,9 @@ Useful for design problems where approaches diverge, or when you want a differen
 A pattern that uses reports as the "trigger for the next stage." If you describe the
 sequence up front — "when implementation finishes, run the tests; if tests fail, follow up
 with fixes; if they pass, do another pass from a review perspective" — the operator judges
-each report and advances the stages. Because of the auto-reply cap (10), plan long
-pipelines with the expectation that you'll say "continue" at milestones.
+each report and advances the stages. Because of the auto-reply cap (default 10, up to
+50 in settings), plan long pipelines with the expectation that you'll say "continue"
+at milestones, or raise the limit.
 
 ### Pattern 5: status briefing and memo triage
 

@@ -104,6 +104,25 @@ func chatAutoTurnEnabled() bool {
 	return !ok || v
 }
 
+// chatAutoTurnLimit is the per-conversation ceiling on unattended auto turns
+// (docs/30, 設定 > アシスタント「自動応答の上限回数」). Missing/invalid ⇒
+// defaultAutoTurns; always clamped to [1, maxAutoTurnLimit] — there is no
+// unlimited mode, the clamp is the runaway stop.
+func chatAutoTurnLimit() int {
+	v, ok := readUIPrefs()["assistantAutoTurnLimit"].(float64)
+	if !ok {
+		return defaultAutoTurns
+	}
+	n := int(v)
+	if n < 1 {
+		return 1
+	}
+	if n > maxAutoTurnLimit {
+		return maxAutoTurnLimit
+	}
+	return n
+}
+
 // chatAutoPilotEnabled is the global ON/OFF for 自動走行 (docs/30, 設定 >
 // アシスタント「自動走行」): the operator autonomously answers a session's
 // AskUserQuestion with the session's own recommendation, and drives a presented plan
