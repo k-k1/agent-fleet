@@ -115,6 +115,25 @@ export function MemoQueueSection() {
   const [cats, setCats] = useState<MemoCategory[]>([]);
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  // Collapsed category groups, keyed by repo\x00category and persisted so the fold state
+  // survives reloads (clicking a category header toggles it).
+  const [collapsedCats, setCollapsedCats] = useState<Record<string, boolean>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("af.memo-collapsed") || "{}");
+    } catch {
+      return {};
+    }
+  });
+  const toggleCollapse = (key: string) =>
+    setCollapsedCats((s) => {
+      const n = { ...s, [key]: !s[key] };
+      try {
+        localStorage.setItem("af.memo-collapsed", JSON.stringify(n));
+      } catch {
+        /* private mode / quota — fold state just won't persist */
+      }
+      return n;
+    });
   const [editing, setEditing] = useState<string | null>(null);
   const [renameCat, setRenameCat] = useState<string | null>(null); // category id being renamed
   const [composerOpen, setComposerOpen] = useState(false);
@@ -603,6 +622,7 @@ export function MemoQueueSection() {
                   const allSel = ids.length > 0 && ids.every((id) => sel[id]);
                   const cat = g.catId ? cats.find((c) => c.id === g.catId) : undefined;
                   const dropKey = rb.repo + "\x00" + g.category;
+                  const collapsed = !!collapsedCats[dropKey];
                   return (
                     <div
                       key={g.category || "\x00unfiled"}
@@ -623,12 +643,31 @@ export function MemoQueueSection() {
                         else if (dragCat.current && cat) dropCatOnCat(dragCat.current, cat.id);
                       }}
                     >
-                      <div className="memo-cat-head">
+                      {/* The header bar toggles the group's fold on click; interactive
+                          children (grip, checkbox, name, buttons) stop propagation so they
+                          keep their own behaviour. */}
+                      <div
+                        className={"memo-cat-head" + (collapsed ? " collapsed" : "")}
+                        onClick={() => toggleCollapse(dropKey)}
+                      >
+                        <button
+                          type="button"
+                          className="memo-cat-caret"
+                          aria-expanded={!collapsed}
+                          aria-label={tr(collapsed ? "memo.expand_category" : "memo.collapse_category")}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleCollapse(dropKey);
+                          }}
+                        >
+                          <Icon name={collapsed ? "chevron-right" : "chevron-down"} />
+                        </button>
                         {cat ? (
                           <span
                             className="memo-cat-grip"
                             draggable
                             title={tr("memo.reorder_category")}
+                            onClick={(e) => e.stopPropagation()}
                             onDragStart={() => (dragCat.current = cat.id)}
                             onDragEnd={() => (dragCat.current = null)}
                           >
@@ -636,7 +675,7 @@ export function MemoQueueSection() {
                           </span>
                         ) : (
                           // 未分類 isn't reorderable/deletable, but keep the grip column so its
-                          // header aligns with the named categories (and the memo rows) below.
+                          // header aligns with the named categories below.
                           <span className="memo-cat-grip placeholder" aria-hidden="true" />
                         )}
                         <input
@@ -644,6 +683,7 @@ export function MemoQueueSection() {
                           className="memo-cat-check"
                           checked={allSel}
                           disabled={ids.length === 0}
+                          onClick={(e) => e.stopPropagation()}
                           onChange={() =>
                             setSel((s) => {
                               const n = { ...s };
@@ -657,6 +697,7 @@ export function MemoQueueSection() {
                             className="memo-cat-rename"
                             defaultValue={cat.name}
                             autoFocus
+                            onClick={(e) => e.stopPropagation()}
                             onBlur={(e) => void commitRename(cat, e.target.value)}
                             onKeyDown={(e) => {
                               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
@@ -667,14 +708,27 @@ export function MemoQueueSection() {
                           <span
                             className="memo-cat-name"
                             title={cat ? tr("memo.rename_category") : undefined}
-                            onClick={() => cat && setRenameCat(cat.id)}
+                            onClick={(e) => {
+                              // A named category renames on click; the uncategorized bucket
+                              // has no rename, so its name click just toggles the fold.
+                              e.stopPropagation();
+                              if (cat) setRenameCat(cat.id);
+                              else toggleCollapse(dropKey);
+                            }}
                           >
                             {catLabel(g.category)}
                           </span>
                         )}
                         <span className="memo-cat-n">{g.memos.length}</span>
                         {ids.length > 0 && (
-                          <button type="button" className="memo-cat-send linkish sm" onClick={() => sendGroup(ids)}>
+                          <button
+                            type="button"
+                            className="memo-cat-send linkish sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              sendGroup(ids);
+                            }}
+                          >
                             {tr("common.send")}
                           </button>
                         )}
@@ -684,43 +738,50 @@ export function MemoQueueSection() {
                             className="memo-cat-del"
                             title={tr("memo.delete_category")}
                             aria-label={tr("memo.delete_category")}
-                            onClick={() => void deleteCategory(cat)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void deleteCategory(cat);
+                            }}
                           >
                             <Icon name="trash" />
                           </button>
                         )}
                       </div>
 
-                      {g.memos.map((m) => (
-                        <MemoRow
-                          key={m.id}
-                          memo={m}
-                          selected={!!sel[m.id]}
-                          expanded={!!expanded[m.id]}
-                          editing={editing === m.id}
-                          currentCat={g.category}
-                          onToggle={() => toggle(m.id)}
-                          onExpand={() => setExpanded((s) => ({ ...s, [m.id]: true }))}
-                          onEdit={() => setEditing(m.id)}
-                          onCancelEdit={() => setEditing(null)}
-                          onSave={(body, category) => void saveEdit(m, body, category)}
-                          onOpenMenu={(e) => openMemoMenu(e, m)}
-                          onOpenKebab={(e) => openMemoMenuBtn(e, m)}
-                          onDragStart={(e) => {
-                            dragMemo.current = m.id;
-                            // Also carry the memo's text so a drop onto a session composer
-                            // inserts it (a copy — the memo stays queued).
-                            setMemoDragData(e.dataTransfer, m);
-                          }}
-                          onDragEnd={() => {
-                            dragMemo.current = null;
-                            setDropCat(null);
-                          }}
-                          onDropBefore={() => {
-                            if (dragMemo.current) dropMemoOnMemo(dragMemo.current, m.id);
-                          }}
-                        />
-                      ))}
+                      {!collapsed && (
+                        <div className="memo-cat-items">
+                          {g.memos.map((m) => (
+                            <MemoRow
+                              key={m.id}
+                              memo={m}
+                              selected={!!sel[m.id]}
+                              expanded={!!expanded[m.id]}
+                              editing={editing === m.id}
+                              currentCat={g.category}
+                              onToggle={() => toggle(m.id)}
+                              onExpand={() => setExpanded((s) => ({ ...s, [m.id]: true }))}
+                              onEdit={() => setEditing(m.id)}
+                              onCancelEdit={() => setEditing(null)}
+                              onSave={(body, category) => void saveEdit(m, body, category)}
+                              onOpenMenu={(e) => openMemoMenu(e, m)}
+                              onOpenKebab={(e) => openMemoMenuBtn(e, m)}
+                              onDragStart={(e) => {
+                                dragMemo.current = m.id;
+                                // Also carry the memo's text so a drop onto a session composer
+                                // inserts it (a copy — the memo stays queued).
+                                setMemoDragData(e.dataTransfer, m);
+                              }}
+                              onDragEnd={() => {
+                                dragMemo.current = null;
+                                setDropCat(null);
+                              }}
+                              onDropBefore={() => {
+                                if (dragMemo.current) dropMemoOnMemo(dragMemo.current, m.id);
+                              }}
+                            />
+                          ))}
+                        </div>
+                      )}
                     </div>
                   );
                 })}

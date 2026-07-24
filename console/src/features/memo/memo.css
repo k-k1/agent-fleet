@@ -113,9 +113,10 @@
 .memo-cat {
   margin-left: 2px;
 }
-/* Category header reads as a distinct bar (a filled row with an uppercase label) so it's
-   never mistaken for a memo — the uncategorized (未分類) and named categories share the
-   same treatment and left edge. */
+/* Category header reads as a distinct bar so it's never mistaken for a memo — the
+   uncategorized (未分類) and named categories share the same treatment and left edge, and
+   the memos below them sit indented one level (.memo-cat-items). Clicking the bar folds
+   the group. */
 .memo-cat-head {
   display: flex;
   align-items: center;
@@ -124,6 +125,31 @@
   margin: 5px 0 2px;
   background: color-mix(in srgb, var(--muted) 12%, transparent);
   border-radius: 5px;
+  cursor: pointer;
+  user-select: none;
+}
+/* Fold caret: chevron that flips right (collapsed) / down (expanded). */
+.memo-cat-caret {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+.memo-cat-caret:hover {
+  color: var(--text);
+}
+/* Memos nest one level under their category header — indented past the header's caret +
+   checkbox so a memo's checkbox sits to the right of the category's (a clear parent→child
+   step, not a shared column). */
+.memo-cat-items {
+  padding-left: 30px;
 }
 .memo-cat-check {
   display: flex;

@@ -1474,6 +1474,8 @@ export const en: Record<keyof typeof ja, string> = {
   "memo.rename_category": "Click to rename category",
   "memo.delete_category": "Delete category",
   "memo.reorder_category": "Drag to reorder categories",
+  "memo.collapse_category": "Collapse category",
+  "memo.expand_category": "Expand category",
   "memo.reorder_memo": "Drag to reorder / move to another category",
   "memo.edit_hint": "Ctrl+Enter to save · Esc to cancel",
   "memo.edit_hint_file": "Ctrl+Enter to save · Esc to cancel · editing the comment on a file reference",
