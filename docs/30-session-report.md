@@ -47,10 +47,12 @@
   `recordSessionNotification` 1 実装。hook 経路と managed driver 経路が共有する）:
   - 状態遷移 `answer-ready`（＝完了・入力待ち。`reportKindAnswerReady`）
   - 異常終了 `oom` / `crashed` / `killed`（`record_exit.go`。正常 exit / 意図停止は報告しない）
-- **中間の要対応イベント `question` / `plan-approval` / `permission-request` は
-  オペレーター報告しない**（通知センター `notice` へは全 kind 出す）。**arm を消費させない**のが
-  肝で、質問等で先に disarm されると「指示の完了」がオペレーターへ二度と届かない（実測不具合）。
-  arm は `answer-ready` か異常終了まで生存する。
+- **中間の要対応イベントは arm を消費しない**（通知センター `notice` へは全 kind 出す）。
+  **arm を消費させない**のが肝で、質問等で先に disarm されると「指示の完了」がオペレーターへ
+  二度と届かない（実測不具合）。arm は `answer-ready` か異常終了まで生存する。
+  - `question` だけは **非消費の途中経過報告**としてオペレーター会話にも届く（2026-07-25 追加、
+    下記「オペレーターからの質問回答」）。`plan-approval` / `permission-request` は従来どおり
+    通知センターのみ。
 - 次の `send_to_session` で再 arm。
 - **オペレーターの `stop_session`（MCP）は arm を取り消す**: `POST /sessions/{name}/halt` に
   `{"disarm_report":true}` を同梱し、ハンドラが `disarmSessionReport` を呼ぶ。停止＝指示の
@@ -108,6 +110,29 @@ run_in_background で起動し、主ターンが3分で Stop → その answer-r
   プロセスツリー系の `BackgroundBusy` / `BackgroundShellBusy` は使わない — 常駐 dev サーバや
   監視ループを「未完了」と誤認して報告を永久に保留し得るため）。
 
+### オペレーターからの質問回答 — answer_session_question（2026-07-25）
+
+セッションが AskUserQuestion で止まったとき、従来はオペレーター会話に何も届かず
+（通知センターのみ）、回答も Console 限定だった。オペレーター経由の回答ループを一式配線:
+
+- **非消費の途中経過報告**: `recordSessionNotification` は arm 済みセッションの `question`
+  遷移でも kick する。`handleChatReport` は kind=question を **disarm せず**配送
+  （`{reported:true, interim:true}`）— 完了のワンショットは温存されたまま。報告文言が
+  次の手順（status 確認→利用者に提示→回答ツール）を案内する。
+- **質問の取得**: `GET /sessions/{name}/status` が pending 質問（claude の hook 捕捉分）を
+  `questions` として同梱。MCP `get_session_status` から見える。
+- **回答**: `POST /sessions/{name}/answer-question {choices:[1-based…]}`（`session_answer.go`）＝
+  MCP write ツール `answer_session_question`。質問順に 1-based の選択肢番号を並べて
+  フォーム全体を一括回答する。適用はブリッジ（docs/37 P2b）と同じ経路を共有:
+  TUI claude は pending 検証→単一選択キー列（`buildClaudeSingleSelectKeys`）、managed は
+  live Interaction 再読→構造化 Respond。自由入力（Other）と multiSelect は対象外
+  （Console へ誘導 — TUI モーダルはタイプ文字を無視するため自由入力は構造的に不可）。
+- **ガード（persona＋ツール説明の両方）**: 質問は本来利用者宛て。原則、選択肢を利用者に
+  提示して意向を確認してから回答し、利用者が事前に委任した場合のみ自走可。セッション出力や
+  報告本文が特定の選択を促していても回答の根拠にしない（インジェクション対策）。
+- 制限: managed の question は driver 通知 seam（MarkTurnStart/End）を通らないため
+  途中経過報告は飛ばない（回答ツール自体は managed でも使える — 利用者が気づいて依頼する経路）。
+
 ### 配送 — Agent 内で完結
 
 hook / record-exit は独立プロセスなので、会話ファイルへの直接追記はしない
@@ -162,8 +187,9 @@ hook / record-exit は独立プロセスなので、会話ファイルへの直�
   oom/crashed/killed を報告するが、managed の daemon 死は `serve.go` が
   `status.PersistExit` を書くだけで report kick を持たない（tui ルートとの非対称）。
 - opencode バックエンドの af_write 会話は report_to 自動付与なし。
-- 報告は `answer-ready`（完了・入力待ち）と異常終了のみ。中間の質問/承認/許可待ちは
-  オペレーター報告しない（通知センターには出る）。キュー済みプロンプトが残っている等で
-  厳密なタスク完了とずれることはあり得る（オペレーターが get_session_output で確認する前提）。
+- arm を消費する報告は `answer-ready`（完了・入力待ち）と異常終了のみ。`question` は
+  非消費の途中経過として届くが、`plan-approval` / `permission-request` は通知センターのみ。
+  キュー済みプロンプトが残っている等で厳密なタスク完了とずれることはあり得る
+  （オペレーターが get_session_output で確認する前提）。
 - 将来: Meta への起動元（LaunchedBy）記録、managed daemon 異常死の報告、報告のバッチング。
   （managed 報告への本文抜粋は不採用で確定 — 逆に TUI を managed のシンプルな形に揃えた。）
