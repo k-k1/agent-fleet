@@ -5,6 +5,7 @@ import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond, se
 import type { InteractionAnswer, ManagedThreadSettings, TurnResult } from "../../core/api/client.ts";
 import { isManagedSession } from "../../types/session.ts";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
+import { MEMO_DND_MIME } from "../memo/dnd.ts";
 import { useSettings, chatFontStack, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
@@ -1486,18 +1487,33 @@ export function MirrorView({
   // depth counter drives the highlight; drop is ignored while the composer is hidden
   // (read-only history) or locked.
   const canDropFiles = canPasteImage && !readOnly && !composerLocked;
+  // A memo dragged from the left-pane queue drops its text into the composer — but ONLY
+  // when this session is 入力待ち (alive and idle: not working, no lingering background run,
+  // not mid-finalize, composer not locked by an AUQ/plan). A busy session would just queue
+  // the text unseen, so we refuse the drop there.
+  const sessionIdle = alive && !readOnly && !composerLocked && status !== "working" && !bgBusy && !finalizing;
+  const canDropMemo = sessionIdle;
+  // Which kind of drop, if any, this drag offers here (types are readable on enter/over;
+  // getData is not, so the branch is decided from the type list).
+  const dragIntent = (e: RDragEvent): "file" | "memo" | null => {
+    const types = e.dataTransfer?.types;
+    if (!types) return null;
+    if (canDropFiles && types.includes("Files")) return "file";
+    if (canDropMemo && types.includes(MEMO_DND_MIME)) return "memo";
+    return null;
+  };
   const onDragEnter = (e: RDragEvent) => {
-    if (!canDropFiles || !e.dataTransfer?.types?.includes("Files")) return;
+    if (!dragIntent(e)) return;
     e.preventDefault();
     dragDepth.current++;
     setDragging(true);
   };
   const onDragOver = (e: RDragEvent) => {
-    if (!canDropFiles || !e.dataTransfer?.types?.includes("Files")) return;
+    if (!dragIntent(e)) return;
     e.preventDefault();
   };
   const onDragLeave = (e: RDragEvent) => {
-    if (!canDropFiles) return;
+    if (!dragIntent(e)) return;
     e.preventDefault();
     if (--dragDepth.current <= 0) {
       dragDepth.current = 0;
@@ -1505,12 +1521,32 @@ export function MirrorView({
     }
   };
   const onDrop = async (e: RDragEvent) => {
-    if (!canDropFiles) return;
+    const intent = dragIntent(e);
+    if (!intent) return;
     e.preventDefault();
     dragDepth.current = 0;
     setDragging(false);
+    if (intent === "memo") {
+      const text = e.dataTransfer.getData(MEMO_DND_MIME);
+      if (text) insertMemoText(text); // the memo stays queued — this is a copy
+      return;
+    }
     const files = Array.from(e.dataTransfer?.files || []);
     await addFiles(files);
+  };
+
+  // Drop a dragged memo's text into the composer: append below any existing draft, then
+  // focus and park the caret at the end. Never sends — the user reviews and submits.
+  const insertMemoText = (text: string) => {
+    setDraft((d) => (d ? d.replace(/\s*$/, "") + "\n" + text : text));
+    setHistIdx(null);
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (el) {
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+      }
+    });
   };
 
   const send = async () => {
