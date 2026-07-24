@@ -29,6 +29,7 @@ import {
   scheduleRunNow,
   scheduleDelete,
 } from "./api.ts";
+import { ScheduleDetailModal } from "./ScheduleDetailModal.tsx";
 import {
   type ScheduleDTO,
   type ScheduleRun,
@@ -64,12 +65,13 @@ interface ScheduleRowProps {
   runsOpen: boolean;
   runs: ScheduleRun[] | undefined;
   onToggleRuns: (s: ScheduleDTO) => void;
+  onDetail: (s: ScheduleDTO) => void;
   onPause: (s: ScheduleDTO) => void;
   onRunNow: (s: ScheduleDTO) => void;
   onDelete: (s: ScheduleDTO) => void;
 }
 
-function ScheduleRow({ s, rowBusy, runsOpen, runs, onToggleRuns, onPause, onRunNow, onDelete }: ScheduleRowProps) {
+function ScheduleRow({ s, rowBusy, runsOpen, runs, onToggleRuns, onDetail, onPause, onRunNow, onDelete }: ScheduleRowProps) {
   const tr = useT();
   const paused = !s.enabled;
   const tone = statusTone(s.last_status);
@@ -155,6 +157,9 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, onToggleRuns, onPause, onRunN
           {menuOpen &&
             createPortal(
               <div className="ui-menu sched-menu" ref={menuElRef} onMouseDown={(e) => e.stopPropagation()}>
+                <button type="button" className="ui-menu-item" onClick={() => runAction(onDetail)}>
+                  <Icon name="edit" /> {tr("sched.detail")}
+                </button>
                 <button type="button" className="ui-menu-item" disabled={rowBusy} onClick={() => runAction(onPause)}>
                   <Icon name={paused ? "debug-start" : "debug-pause"} /> {paused ? tr("sched.resume") : tr("sched.pause")}
                 </button>
@@ -237,6 +242,7 @@ export function SchedulesSection() {
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [openRuns, setOpenRuns] = useState<string | null>(null);
   const [runs, setRuns] = useState<Record<string, ScheduleRun[]>>({});
+  const [detail, setDetail] = useState<ScheduleDTO | null>(null);
   const serRef = useRef("");
 
   // Refetch on mount / tenant switch, and poll while mounted (CP is pull-only — no push).
@@ -364,12 +370,23 @@ export function SchedulesSection() {
               runsOpen={openRuns === s.id}
               runs={openRuns === s.id ? runs[s.id] : undefined}
               onToggleRuns={(x) => void toggleRuns(x)}
+              onDetail={(x) => setDetail(x)}
               onPause={(x) => void doToggle(x)}
               onRunNow={(x) => void doRunNow(x)}
               onDelete={(x) => void doDelete(x)}
             />
           ))}
         </div>
+      )}
+      {detail && (
+        <ScheduleDetailModal
+          s={detail}
+          onClose={() => setDetail(null)}
+          onSaved={(dto) => {
+            applyDTO(dto);
+            setDetail(null);
+          }}
+        />
       )}
     </Section>
   );

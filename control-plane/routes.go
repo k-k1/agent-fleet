@@ -344,9 +344,13 @@ func registerScheduleRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /internal/schedules/{id}/runs", s.withScheduleToken(s.runs))
 
 	// Console member routes (P5): the logged-in member manages their own schedules. No
-	// create/update here — those require the operator's NL->spec translation.
+	// create here — authoring a schedule from natural language is the operator's NL->spec
+	// translation. update IS exposed (P5.2 detail/edit modal): the Console form edits the
+	// STRUCTURED fields directly (spec_kind/spec/tz/label/prompt/wake/agent/model), which
+	// needs no NL translation — the same structured patch the operator's update tool sends.
 	mux.HandleFunc("GET /api/schedules", scheduleMember(s, s.list))
 	mux.HandleFunc("GET /api/schedules/{id}/runs", scheduleMember(s, s.runs))
+	mux.HandleFunc("PATCH /api/schedules/{id}", scheduleMember(s, s.update))
 	mux.HandleFunc("POST /api/schedules/{id}/pause", scheduleMember(s, s.pause))
 	mux.HandleFunc("POST /api/schedules/{id}/resume", scheduleMember(s, s.resume))
 	mux.HandleFunc("POST /api/schedules/{id}/run-now", scheduleMember(s, s.runNow))

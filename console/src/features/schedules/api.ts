@@ -4,12 +4,19 @@
 // Routes). The tenant header rides every request via the global fetch wrapper (client.ts),
 // so callers pass nothing extra.
 import { api, apiJSON, raw } from "../../core/api/client.ts";
-import type { ScheduleDTO, ScheduleRun } from "./read.ts";
+import type { ScheduleDTO, ScheduleEditable, ScheduleRun } from "./read.ts";
 
 const q = (id: string) => encodeURIComponent(id);
 
 export function scheduleList(): Promise<ScheduleDTO[] | { error?: unknown }> {
   return api("api/schedules");
+}
+
+// PATCH the structured, no-NL-needed fields (label/prompt/spec/tz/wake/agent/model). The
+// detail/edit modal sends only the changed fields; the CP leaves omitted fields unchanged
+// and recomputes next_run when the timing (spec_kind/spec/tz) changed. (P5.2)
+export function scheduleUpdate(id: string, patch: ScheduleEditable): Promise<ScheduleDTO | { error?: unknown }> {
+  return apiJSON(`api/schedules/${q(id)}`, "PATCH", patch);
 }
 
 export function scheduleRuns(id: string): Promise<{ schedule_id: string; runs: ScheduleRun[] } | { error?: unknown }> {
