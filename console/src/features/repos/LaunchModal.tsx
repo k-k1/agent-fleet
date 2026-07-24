@@ -60,6 +60,9 @@ interface LaunchModalProps {
    * already an isolated checkout, so only in-place launch is offered; new worktrees
    * are created from the base clone. */
   allowWorktree?: boolean;
+  /** The working copy is an SVN checkout (docs/41): it has no worktree concept, so
+   * the in-place location note drops the worktree wording. */
+  isSvn?: boolean;
   onClose: () => void;
   /** Present when opened from the はじめる hub: 場所を変更 returns to it. */
   onBack?: () => void;
@@ -69,7 +72,7 @@ interface LaunchModalProps {
   onLaunch: (opts: LaunchOpts) => Promise<LaunchResult>;
 }
 
-export function LaunchModal({ repo, branch, path, kinds, settling = false, allowWorktree = true, onClose, onBack, initialPrompt, onLaunch }: LaunchModalProps) {
+export function LaunchModal({ repo, branch, path, kinds, settling = false, allowWorktree = true, isSvn = false, onClose, onBack, initialPrompt, onLaunch }: LaunchModalProps) {
   const settings = useSettings();
   const last = readRepoLast(repo);
   // Default to the last agent used in this repo when still available, else the first.
@@ -362,7 +365,11 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
           <div className="ui-field">
             <span className="ui-field-label">{tr("launch.field.location")}</span>
             <span className="ui-field-hint">
-              <Trans k="launch.worktree_direct_note" vars={{ branch: branch || tr("launch.current_wc") }} components={[<code />]} />
+              {isSvn ? (
+                tr("launch.svn_direct_note")
+              ) : (
+                <Trans k="launch.worktree_direct_note" vars={{ branch: branch || tr("launch.current_wc") }} components={[<code />]} />
+              )}
             </span>
           </div>
         ) : (

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { deriveRepoName, sanitizeSeg, uniqueRepoName, repoNameRe } from "./reponame.ts";
+import { deriveRepoName, sanitizeSeg, sanitizeFolderName, uniqueRepoName, repoNameRe } from "./reponame.ts";
 
 describe("deriveRepoName", () => {
   it("takes the last path segment minus .git", () => {
@@ -24,6 +24,33 @@ describe("sanitizeSeg", () => {
     // Non-ASCII becomes "-", then leading dashes strip to "" → fallback… but a
     // trailing dash may survive: assert the result still fits the folder charset.
     expect(repoNameRe.test(`x@${sanitizeSeg("日本語")}`)).toBe(true);
+  });
+});
+
+describe("repoNameRe", () => {
+  it("accepts Japanese and other Unicode folder names", () => {
+    expect(repoNameRe.test("日本語プロジェクト")).toBe(true);
+    expect(repoNameRe.test("数字123")).toBe(true);
+    expect(repoNameRe.test("café")).toBe(true);
+    expect(repoNameRe.test("repo")).toBe(true);
+    expect(repoNameRe.test("x@feat-1")).toBe(true);
+  });
+  it("still rejects traversal and unsafe names", () => {
+    for (const bad of ["", "..", "../evil", "a/b", ".hidden", "-flag", "@at", "a b"]) {
+      expect(repoNameRe.test(bad)).toBe(false);
+    }
+  });
+});
+
+describe("sanitizeFolderName", () => {
+  it("preserves Unicode letters/numbers", () => {
+    expect(sanitizeFolderName("日本語")).toBe("日本語");
+    expect(sanitizeFolderName("my repo!")).toBe("my-repo-");
+    expect(repoNameRe.test(sanitizeFolderName("日本語 プロジェクト"))).toBe(true);
+  });
+  it("strips leading chars repoNameRe forbids as the first char", () => {
+    expect(sanitizeFolderName("--x")).toBe("x");
+    expect(sanitizeFolderName("@名前")).toBe("名前");
   });
 });
 
