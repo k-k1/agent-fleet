@@ -5,6 +5,7 @@ import { api, apiJSON, getTenant } from "../../core/api/client.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { OnOff, Row } from "./controls.tsx";
+import { useHostUpdate } from "./hostUpdate.ts";
 import { useT } from "../../lib/i18n/index.ts";
 
 // EnvTab (ツールチェーン) selects the workspace toolchains: timezone, node (via nvm),
@@ -110,14 +111,8 @@ function HostUpdateSection() {
   const tr = useT();
   const toast = useToast();
   const askConfirm = useConfirm();
-  const [st, setSt] = useState<any>(null); // { current, installed, restartRequired, systemd } | null
+  const st = useHostUpdate(); // native-only; null on other deployments (or while loading)
   const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    api("api/update/status")
-      .then((res) => setSt(res && !res.error ? res : null))
-      .catch(() => setSt(null));
-  }, []);
 
   if (!st) return null; // non-native deployment (or status unavailable)
 

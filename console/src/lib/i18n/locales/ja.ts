@@ -1253,6 +1253,9 @@ export const ja = {
   "topbar.admin": "管理",
   "topbar.logout": "ログアウト",
   "topbar.build": "ビルド {label}",
+  "topbar.host_version": "Agent Fleet v{v}",
+  "topbar.update_ready": "更新あり · v{v} を再起動で適用",
+  "topbar.update_badge": "更新",
   "topbar.settings_title": "設定（表示 / ワークスペース / エージェント / Git / AWS SSM / MCP）",
 
   // === P2 ChatView（features/chat/ChatView.tsx）===
