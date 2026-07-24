@@ -148,6 +148,9 @@ type fakeAgent struct {
 	archived  []string
 	created   int
 	startedAt []string
+	// unready names report alive-but-not-input-ready on /status (a booting/zombie pane),
+	// so awaitSessionReady never clears for them — models the sbk7oej silent-drop.
+	unready map[string]bool
 }
 
 func (a *fakeAgent) handler() http.Handler {
@@ -158,6 +161,21 @@ func (a *fakeAgent) handler() http.Handler {
 		switch {
 		case r.Method == http.MethodGet && p == "/sessions":
 			_ = json.NewEncoder(w).Encode(map[string]any{"sessions": a.sessions})
+		case r.Method == http.MethodGet && strings.HasSuffix(p, "/status"):
+			name := sessionSeg(p)
+			alive := false
+			for _, s := range a.sessions {
+				if s.Name == name && s.Alive {
+					alive = true
+				}
+			}
+			for _, s := range a.startedAt {
+				if s == name { // a resumed session reports alive on the next status read
+					alive = true
+				}
+			}
+			ready := alive && !a.unready[name]
+			_ = json.NewEncoder(w).Encode(map[string]any{"alive": alive, "ready": ready})
 		case r.Method == http.MethodPost && p == "/sessions":
 			a.created++
 			w.WriteHeader(http.StatusCreated)
@@ -328,5 +346,58 @@ func TestFireReuseOverlapQueueSends(t *testing.T) {
 	}
 	if len(a.inputs) != 1 {
 		t.Errorf("queue overlap should send to the busy session (inputs=%v)", a.inputs)
+	}
+}
+
+// A stopped reuse target (WS running, session stopped — the sbk7oej shape) is resumed and
+// only THEN sent, gated on input-readiness rather than mere aliveness: the fire must
+// /start the session, wait for /status ready, and deliver exactly one /input.
+func TestFireReuseResumesStoppedTargetThenSends(t *testing.T) {
+	a := &fakeAgent{sessions: []sessionWire{{Name: "pinned", Alive: false, State: "stopped"}}}
+	sch := Schedule{ID: "sch_stop", SessionMode: "reuse", ReuseTarget: "pinned", OwnerConv: "conv1", Prompt: "go"}
+	f, res, st, ctx := newReuseFixture(t, a, sch)
+	f.readyInterval = time.Millisecond // no need to slow the poll
+
+	status, _, err := f.fireReuse(ctx, res, sch, time.Now().UTC())
+	if err != nil || status != "fired" {
+		t.Fatalf("status=%q err=%v, want fired/nil", status, err)
+	}
+	if len(a.startedAt) != 1 || a.startedAt[0] != "pinned" {
+		t.Fatalf("startedAt=%v, want [pinned] (stopped target must be resumed)", a.startedAt)
+	}
+	if len(a.inputs) != 1 || a.inputs[0] != "pinned" {
+		t.Fatalf("inputs=%v, want [pinned] (send after resume)", a.inputs)
+	}
+	got, _, _ := st.GetSchedule(ctx, "sch_stop")
+	if got.ReuseRunCount != 1 {
+		t.Errorf("run count = %d, want 1 (advanced only after a real delivery)", got.ReuseRunCount)
+	}
+}
+
+// Regression for the sbk7oej silent-drop: a reuse target that is alive but never becomes
+// input-ready (a booting or zombie pane whose CLI can't accept the prompt) must NOT be
+// recorded as a successful "fired" send. Before the readiness gate, /input returned 200 for
+// keystrokes typed into that pane and reuse_run_count advanced even though nothing ran.
+// Now the fire errors (surfaced to the operator) and the ledger does not advance.
+func TestFireReuseUnreadyTargetErrorsNotSilentFire(t *testing.T) {
+	a := &fakeAgent{
+		sessions: []sessionWire{{Name: "zombie", Alive: true, State: "idle"}},
+		unready:  map[string]bool{"zombie": true},
+	}
+	sch := Schedule{ID: "sch_zomb", SessionMode: "reuse", ReuseTarget: "zombie", OwnerConv: "conv1", Prompt: "go"}
+	f, res, st, ctx := newReuseFixture(t, a, sch)
+	f.readyTimeout = 150 * time.Millisecond // bound the not-ready wait for the test
+	f.readyInterval = 5 * time.Millisecond
+
+	status, _, err := f.fireReuse(ctx, res, sch, time.Now().UTC())
+	if err == nil {
+		t.Fatalf("want an error for an unready target, got status=%q nil err", status)
+	}
+	if len(a.inputs) != 0 {
+		t.Errorf("must not POST /input to an unready pane (inputs=%v)", a.inputs)
+	}
+	got, _, _ := st.GetSchedule(ctx, "sch_zomb")
+	if got.ReuseRunCount != 0 {
+		t.Errorf("run count advanced on a swallowed send: %d, want 0", got.ReuseRunCount)
 	}
 }

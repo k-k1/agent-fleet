@@ -127,24 +127,33 @@ func (f *wakeFirer) deliverReuse(ctx context.Context, rt Runtime, sch Schedule, 
 	return "", nil
 }
 
-// sendToSession delivers body to an existing session's /input, resuming it first when it
-// is stopped. It mirrors the Agent-side agentSendToSession contract: a session that
-// stopped between the list read and the POST (409 not_running) is resumed and retried.
+// sendToSession delivers body to an existing session's /input, first confirming the
+// session is actually input-ready — its composer is drawn, not a still-booting or zombie
+// pane — so a typed prompt cannot silently vanish. It mirrors the Agent-side
+// agentSendToSession contract (a session that stopped between the list read and the POST,
+// 409 not_running, is resumed and retried) but adds the readiness gate on the ALREADY-ALIVE
+// path too: /input types keystrokes into the pane and returns 200 regardless of whether
+// the CLI can accept them, and the unattended cron has no human to notice a swallowed
+// prompt. This is the sbk7oej silent-drop fix (docs/38 + ADR0021).
 func (f *wakeFirer) sendToSession(ctx context.Context, rt Runtime, name string, alive bool, body []byte) error {
 	inputPath := "/sessions/" + url.PathEscape(name) + "/input"
 	if !alive {
 		return f.resumeAndSend(ctx, rt, name, inputPath, body)
 	}
-	_, status, err := f.agentReq(ctx, rt, http.MethodPost, inputPath, body)
+	if err := f.awaitSessionReady(ctx, rt, name); err != nil {
+		return err
+	}
+	respBody, status, err := f.agentReq(ctx, rt, http.MethodPost, inputPath, body)
 	if err != nil {
 		return err
 	}
-	if status == http.StatusConflict {
-		// Stopped between the list read and this POST — resume and retry.
+	if status == http.StatusConflict && respHasCode(respBody, "not_running") {
+		// Stopped between the readiness check and this POST — resume and retry. Other
+		// conflicts (e.g. question_pending) are real errors, not a reason to resend.
 		return f.resumeAndSend(ctx, rt, name, inputPath, body)
 	}
 	if status >= 300 {
-		return fmt.Errorf("send_to_session %d", status)
+		return fmt.Errorf("send_to_session %d: %s", status, strings.TrimSpace(string(respBody)))
 	}
 	return nil
 }
@@ -155,15 +164,19 @@ func (f *wakeFirer) resumeAndSend(ctx context.Context, rt Runtime, name, inputPa
 	} else if status >= 300 {
 		return fmt.Errorf("resume %d", status)
 	}
-	if err := f.awaitSessionAlive(ctx, rt, name); err != nil {
+	// Wait for input-readiness (alive AND composer drawn), not mere aliveness: a freshly
+	// resumed TUI has a pane before its composer is up, and a prompt typed into that boot
+	// screen is lost while /input still returns 200 (the sbk7oej silent-drop — WS running,
+	// session stopped, resumed at the fire). Mirrors the Agent's agentWaitSessionReady.
+	if err := f.awaitSessionReady(ctx, rt, name); err != nil {
 		return err
 	}
-	_, status, err := f.agentReq(ctx, rt, http.MethodPost, inputPath, body)
+	respBody, status, err := f.agentReq(ctx, rt, http.MethodPost, inputPath, body)
 	if err != nil {
 		return err
 	}
 	if status >= 300 {
-		return fmt.Errorf("send after resume %d", status)
+		return fmt.Errorf("send after resume %d: %s", status, strings.TrimSpace(string(respBody)))
 	}
 	return nil
 }
@@ -198,26 +211,58 @@ func (f *wakeFirer) retireSession(ctx context.Context, rt Runtime, name string) 
 	}
 }
 
-// awaitSessionAlive polls the session list until the named session reports alive or a
-// short deadline passes, so a resume is settled before the /input POST.
-func (f *wakeFirer) awaitSessionAlive(ctx context.Context, rt Runtime, name string) error {
-	deadline := time.Now().Add(30 * time.Second)
+// awaitSessionReady polls the session's /status until it reports input-ready (alive AND
+// its composer is drawn — the Agent's sessionInputReady), or a deadline passes. This is
+// the delivery precondition the old awaitSessionAlive missed: liveness ("a tmux pane
+// exists") is not readiness ("the CLI can accept a prompt"), so a reuse send gated only on
+// alive could type into a booting/zombie pane and lose the prompt while /input returned 200
+// and reuse_run_count still advanced. A timeout surfaces as an error, so the fire is
+// recorded "error:" and the operator is notified — never a bogus "fired" with an unadvanced
+// session.
+func (f *wakeFirer) awaitSessionReady(ctx context.Context, rt Runtime, name string) error {
+	timeout := f.readyTimeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	interval := f.readyInterval
+	if interval <= 0 {
+		interval = time.Second
+	}
+	deadline := time.Now().Add(timeout)
 	for {
-		sessions, err := f.mgr.agentSessions(ctx, rt)
-		if err == nil {
-			if s := findSessionByName(sessions, name); s != nil && s.Alive {
-				return nil
-			}
+		if ready, err := f.sessionReady(ctx, rt, name); err == nil && ready {
+			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("timed out waiting for session %s to resume", name)
+			return fmt.Errorf("timed out waiting for session %s to become input-ready", name)
 		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(time.Second):
+		case <-time.After(interval):
 		}
 	}
+}
+
+// sessionReady reads the Agent's /status input-readiness for one session (alive && ready).
+// A transport/HTTP/parse error is returned so the caller's poll can retry within its
+// deadline rather than treating a hiccup as "not ready forever".
+func (f *wakeFirer) sessionReady(ctx context.Context, rt Runtime, name string) (bool, error) {
+	body, status, err := f.agentReq(ctx, rt, http.MethodGet, "/sessions/"+url.PathEscape(name)+"/status", nil)
+	if err != nil {
+		return false, err
+	}
+	if status >= 300 {
+		return false, fmt.Errorf("status %d", status)
+	}
+	var st struct {
+		Alive bool `json:"alive"`
+		Ready bool `json:"ready"`
+	}
+	if err := json.Unmarshal(body, &st); err != nil {
+		return false, err
+	}
+	return st.Alive && st.Ready, nil
 }
 
 // saveReuse persists the reuse ledger, logging (not failing the fire) on a write error —
@@ -259,6 +304,17 @@ func (f *wakeFirer) agentReq(ctx context.Context, rt Runtime, method, path strin
 }
 
 // --- pure helpers (unit-tested) -------------------------------------------------
+
+// respHasCode reports whether an Agent JSON error body carries {"code": code}. Lets the
+// reuse send distinguish a "stopped between check and POST" 409 (not_running -> resume and
+// retry) from other conflicts (e.g. question_pending) that must surface as errors rather
+// than trigger a spurious resend. Mirrors the Agent-side agentHTTPError.hasCode.
+func respHasCode(body []byte, code string) bool {
+	var b struct {
+		Code string `json:"code"`
+	}
+	return json.Unmarshal(body, &b) == nil && b.Code == code
+}
 
 // findSessionByName returns the session with the given name, or nil. An empty name never
 // matches (a reuse schedule with no adopted session yet).
