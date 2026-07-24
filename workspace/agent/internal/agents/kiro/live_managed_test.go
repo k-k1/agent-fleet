@@ -98,6 +98,26 @@ func TestLiveManagedSpawnPromptResume(t *testing.T) {
 	if !found {
 		t.Fatalf("assistant turn missing from in-memory transcript: %+v", turns)
 	}
+
+	// Track D: 実 `_kiro.dev/metadata` から ライブ context% ＋ credits を捕捉できたか。
+	// ContextFill が pct→token 変換で非 nil を返し、window が実カタログ値であることも裏取り。
+	pct, window, credits, model, ok := ManagedContext("livem1")
+	if !ok {
+		t.Fatalf("ManagedContext: no live usage captured after a completed turn")
+	}
+	if pct <= 0 || pct > 100 {
+		t.Fatalf("contextUsagePercentage out of range: %v", pct)
+	}
+	if window <= 0 {
+		t.Fatalf("model %q context window not resolved (got %d)", model, window)
+	}
+	if credits < 0 {
+		t.Fatalf("credits negative: %v", credits)
+	}
+	if c := (agentImpl{}).ContextFill(managedMeta("livem1", work)); c == nil || c.Window != window {
+		t.Fatalf("ContextFill did not surface the live context: %+v", c)
+	}
+	t.Logf("Track D live usage: pct=%.2f%% window=%d credits=%.4f model=%s", pct, window, credits, model)
 	// kiro は転写を v2 JSONL にも persist する（cursor と違う）— 停止中フォールバックの裏取り。
 	if fileTranscript(managedMeta("livem1", work)).Turns == nil {
 		t.Fatalf("kiro should have persisted the ACP turns to the v2 JSONL")

@@ -7,11 +7,13 @@ package main
 // status is a cheap polling primitive, while this reads and folds whole transcripts.
 
 import (
+	"math"
 	"net/http"
 	"regexp"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
@@ -46,6 +48,10 @@ type cumulativeUsage struct {
 	CacheRead   int `json:"cacheRead"`
 	CacheCreate int `json:"cacheCreate"`
 	Spend       int `json:"spend"`
+	// Credits is the metered credit spend (kiro's _kiro.dev/metadata meteringUsage,
+	// live-only — a running managed handle's lifetime sum). omitempty ⇒ absent for the
+	// token-metered agents. Not tokens, so it lives alongside (not folded into) Spend.
+	Credits float64 `json:"credits,omitempty"`
 }
 
 type sessionUsage struct {
@@ -75,6 +81,7 @@ func handleSessionsUsage(w http.ResponseWriter, r *http.Request) {
 		}
 		u := aggregateUsage(usageTurns(m))
 		u.Name, u.Display, u.Kind = m.Name, session.Display(m), string(m.Kind)
+		overlayKiroLiveUsage(m, &u)
 		out = append(out, u)
 	}
 	if nameFilter != "" && len(out) == 0 {
@@ -83,6 +90,35 @@ func handleSessionsUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sessions": out})
+}
+
+// overlayKiroLiveUsage fills a running managed kiro session's context + credits from
+// its live ACP handle (Track D — docs/43 §10). kiro's v2 JSONL transcript carries no
+// token counts, so aggregateUsage leaves Context nil; but the managed driver holds the
+// latest _kiro.dev/metadata contextUsagePercentage in memory. We convert the % to a
+// token count against the model's real context window (so pct is exact and the token
+// figure is a faithful estimate), and surface the metered credit spend. No live handle
+// / no metadata yet ⇒ unchanged (Context stays nil, credits absent) — honest.
+func overlayKiroLiveUsage(m session.Meta, u *sessionUsage) {
+	if m.Kind != session.KindKiro {
+		return
+	}
+	pct, window, credits, model, ok := kiro.ManagedContext(m.Name)
+	if !ok || window <= 0 {
+		return
+	}
+	tokens := int(math.Round(pct / 100 * float64(window)))
+	u.Context = &contextUsage{
+		Tokens: tokens,
+		Fresh:  tokens, // single un-broken-down segment (no cache-read/create split available)
+		Window: window,
+		// The window is the model's real catalog size, but tokens are derived from the
+		// reported %, so mark the count as estimated (the % itself is exact).
+		WindowSource: "estimated",
+		Pct:          pct,
+		Model:        model,
+	}
+	u.Cumulative.Credits = credits
 }
 
 // usageTurns loads the full transcript for aggregation: claude via its jsonl
