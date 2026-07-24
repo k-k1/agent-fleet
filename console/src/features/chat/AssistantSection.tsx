@@ -59,7 +59,7 @@ export function AssistantSection() {
   const menuRef = useRef<HTMLUListElement>(null);
   // Right-click menu for a conversation row (title rename + copy id) — same
   // portal/roving/dismiss pattern as the assistant-template menu above.
-  const [convMenu, setConvMenu] = useState<{ x: number; y: number; c: ConversationMeta } | null>(null);
+  const [convMenu, setConvMenu] = useState<{ x: number; y: number; c: ConversationMeta; anchor?: DOMRect } | null>(null);
   const convMenuRef = useRef<HTMLUListElement>(null);
 
   const refresh = useCallback(() => {
@@ -124,10 +124,23 @@ export function AssistantSection() {
     e.stopPropagation();
     setConvMenu({ x: e.clientX, y: e.clientY, c });
   };
+  // ⋯ kebab: anchor the menu under the button (right-aligned) rather than at a
+  // cursor point, so touch users get a two-step delete instead of a mis-tappable
+  // trash button.
+  const openConvMenuBtn = (e: RMouseEvent, c: ConversationMeta) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const r = e.currentTarget.getBoundingClientRect();
+    setConvMenu({ x: r.left, y: r.bottom + 2, c, anchor: r });
+  };
   useDismiss(convMenuRef, !!convMenu, () => setConvMenu(null));
   useMenuRoving(convMenuRef, !!convMenu);
   useLayoutEffect(() => {
-    if (convMenu && convMenuRef.current) placeFixed(convMenuRef.current, convMenu.x, convMenu.y);
+    const el = convMenuRef.current;
+    if (!convMenu || !el) return;
+    const bounds = el.closest<HTMLElement>(".app-rail");
+    if (convMenu.anchor) placeFixed(el, convMenu.anchor.right - el.offsetWidth, convMenu.anchor.bottom + 2, bounds);
+    else placeFixed(el, convMenu.x, convMenu.y, bounds);
   });
   const runConvMenu = (fn: () => void) => {
     setConvMenu(null);
@@ -326,8 +339,8 @@ export function AssistantSection() {
                     </span>
                   ) : null}
                   <span className="chat-actions">
-                    <button type="button" className="ui-btn ui-btn-ghost ui-iconbtn chat-del" title={tr("asst.delete_chat")} onClick={() => void removeConv(c.id)}>
-                      <Icon name="trash" />
+                    <button type="button" className="chat-menu-btn" title={tr("srow.menu")} aria-haspopup="menu" onClick={(e) => openConvMenuBtn(e, c)}>
+                      <Icon name="ellipsis" />
                     </button>
                   </span>
                 </li>

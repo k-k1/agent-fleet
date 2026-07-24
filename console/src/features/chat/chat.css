@@ -410,13 +410,43 @@
   align-items: center;
   gap: 2px;
 }
-.chat-row .chat-del {
+/* ⋯ kebab: hover-revealed on pointer devices (mirrors the session row menu). It
+   opens a menu whose delete item is a deliberate second tap — no accidental
+   one-tap delete. */
+.chat-menu-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
   opacity: 0;
   pointer-events: none;
 }
-.chat-row:hover .chat-del {
+.chat-row:hover .chat-menu-btn,
+.chat-menu-btn:focus-visible,
+.chat-row.active .chat-menu-btn {
   opacity: 1;
   pointer-events: auto;
+}
+.chat-menu-btn:hover {
+  background: var(--btn);
+  color: var(--fg);
+}
+/* Touch: no hover, so keep the ⋯ button always visible and tappable. Drop the
+   absolute overlay and let it sit in-flow after the count/state chip so the two
+   don't stack on top of each other. */
+@media (hover: none) {
+  .chat-actions {
+    position: static;
+  }
+  .chat-menu-btn {
+    opacity: 1;
+    pointer-events: auto;
+    padding: 4px 6px;
+  }
 }
 /* Hand the right edge over to the action buttons on hover so they don't stack
    on top of the count / state chip. */
