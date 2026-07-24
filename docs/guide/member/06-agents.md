@@ -21,15 +21,15 @@ settings apply **from each agent's new sessions**.
 | Plan mode | Yes | Yes | Yes | Set at launch + switchable from managed settings | Yes |
 | Execution method | Terminal (CLI) | Managed (default) / Terminal (CLI) | Managed (default) / Terminal (CLI) | Managed (default) / Terminal (CLI) | Managed (default) / Terminal (CLI) |
 | Resume | Yes (not if the working folder is gone) | Yes (not if the working folder is gone) | Yes (not if the working folder is gone) | Yes (not if the working folder is gone) | Yes (can't resume across execution methods) |
-| Fork | Yes | Yes | Yes | No | No |
+| Hand off | Yes | Yes | Yes | Yes | Yes |
 | Image paste | Yes | Yes | Yes (model-dependent) | Not supported | Not supported |
 
 If you're unsure, choose by the subscription or models you use. If you use an Anthropic
 account, pick **claude**; if you use ChatGPT or the OpenAI API, pick **codex**; if you want
 to switch between API keys from multiple providers, pick **opencode**; if you have a
 GitHub Copilot subscription, pick **copilot**; if you have a Cursor plan, pick
-**cursor**. All three support the conversation view, answering questions, Plan mode,
-the context gauge, and fork.
+**cursor**. They all support the conversation view, answering questions, Plan mode, and
+handing a conversation off to another agent; the context gauge is on claude / codex / opencode.
 
 **Managed execution** for Codex / opencode / copilot / cursor lets you handle your everyday
 work entirely from the conversation view (Codex / opencode carry no extra per-session
@@ -63,7 +63,7 @@ chat bridge ([11](11-fleet-operator.md), [08](08-advanced.md)). ✓ = supported,
 | Plan mode | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
 | Context-window gauge | ✓ | ✓ | — | — | — | ✓ | — | — |
 | Image paste | ✓ | ✓ | — | — | ✓ | ✓ | — | — |
-| Fork a conversation | ✓ | ✓ | — | — | — | ✓ | — | — |
+| Hand off a conversation | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
 | Runs in a git worktree | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | Scheduled (unattended) runs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
 | Chat bridge (Discord / Slack) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
@@ -154,7 +154,7 @@ supported.
 
 - The model choices at launch are **exactly the models available to that account**
   (fetched live). You can't change the model after a session has started.
-- The usage chip, context gauge, image paste, and fork are not supported for cursor.
+- The usage chip, context gauge, and image paste are not supported for cursor.
   Check your plan's remaining quota on the Cursor dashboard.
 
 ## Checking remaining context
