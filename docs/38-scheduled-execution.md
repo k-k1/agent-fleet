@@ -474,6 +474,37 @@ reuse でも wake→keep-alive→settle 後 release。停止中だった WS は 
 - 退役セッションは operator の掃除ツール群（cleanup 機構）に乗せる。archive か stop-only かは
   掃除ポリシーに合わせる。
 
+### 配達検証（confirm・2026-07-24 追補 — sbk7oej 再発の恒久対策）
+
+**事象（2026-07-24 朝 08:01 JST）**: reuse 発火が `fired`（成功）を記録したのに、対象
+セッション（sbk7oej）の会話 jsonl には user ターンが一切追記されず、タスクは実行され
+なかった。WS は稼働中・セッションは停止中（Tier1 idle halt 済み・設計どおり）で、
+resume→readiness ゲート→`/input` 200 まで全部通っている。つまり **readiness ゲート
+（silent-drop 第1弾修正）だけでは足りない**: `tmux send-keys` の成功は「キーがペインに
+届いた」ことしか保証せず、CLI 側の一瞬の受け付け不能（resume 直後のスラッシュコマンド
+登録前・ペースト折り畳みで Enter が食われる・モーダルの文字無視、いずれも版依存で再現
+条件が揮発する）でプロンプトは無音で消える。同じ穴はオペレーターの `send_to_session`
+（停止中セッションへの指示）でも踏んだ（conv bc5d685e）。
+
+**対策 — 成功の定義を「打鍵」から「ターン開始の証拠」へ引き上げる**:
+
+- Agent `/input {prompt}` に **`confirm:true`（オプトイン）** を追加
+  （`session_delivery.go`）。証拠 = **claude の会話 jsonl に user ターンが追記された**
+  （`claude.TranscriptSnapshot`/`UserTurnAppendedSince`・提出の一次記録）∨ ペインが
+  実行中スピナー（`tmuxx.IsBusy`・jsonl フラッシュ遅延の保険）。
+- 証拠が窓（12s）内に出なければ**自己修復を 1 巡**: コンポーザに下書きが残っていれば
+  Enter 再送（提出済みなら no-op で安全）、下書きごと消えていれば全文再タイプ（証拠なし
+  ＝未提出なので二重実行しない）。再窓（12s）でも証拠が出なければ
+  **502 `delivery_unconfirmed`** を返す。
+- 設定側: CP スケジューラの reuse 送信（`reuseSendBody`）と operator MCP の
+  `send_to_session` が `confirm:true` を付ける。スケジューラは失敗を `error:` として
+  台帳に記録し★3 通知を出す — **偽 `fired` は作らない**。create 経路の
+  `deliverInitialPrompt` も同じ検証＋自己修復を行う（goroutine のため最終失敗はログ）。
+- オプトインの理由: `/model` などターンを生まない UI スラッシュコマンドや、人が見て
+  いる Console 送信の意味論を変えないため。検証手段の無い kind（非 claude TUI）では
+  no-op（「検証できない」を「配達失敗」と混同しない）。
+- MCP 側クライアントタイムアウトは 45s（検証ブロックの最悪 ~26s を上回る値）。
+
 ### 決定（2026-07-23）
 
 1. **主モード**: **(A) ピン留め / (B) 管理 の両対応。ツール表面の既定は (B) 管理**
