@@ -95,15 +95,17 @@ upstream CLI exposes. This matrix is the quick reference (✓ = supported,
 | WS-bar usage / limit chip | ✓ | ✓ | — | ✓ | ✓ | — | — |
 
 ¹ Copilot's model choice is plan-dependent (Free = Auto only).
+
 ² Cursor and Antigravity fold the reasoning effort into the model name, so there is
-no separate control. The WS-bar usage chip needs an account-level limit to show —
-opencode (bring-your-own provider API keys) and Cursor expose none. **SSM** sessions
-(remote login over AWS SSM) behave like Shell: terminal only, no conversation, and not
-tied to a workspace worktree.
+no separate control.
 
 ³ Cursor's managed (default) execution keeps no local transcript — a **stopped** Cursor
 session has no history to show (the live mirror works while running, and running Cursor
 as Terminal (CLI) does persist a readable history).
+
+The WS-bar usage chip needs an account-level limit to show — opencode (bring-your-own
+provider API keys) and Cursor expose none. **SSM** sessions (remote login over AWS SSM)
+behave like Shell: terminal only, no conversation, and not tied to a workspace worktree.
 
 **Default model for the assistant chat** — each assistant can pin its own, and Claude's
 default is also settable deployment-wide via `AF_CHAT_MODEL`. These favour fast, low-cost
