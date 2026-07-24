@@ -145,8 +145,8 @@ export function BrowserPane({ paneId, port, path }: BrowserPaneProps) {
   return (
     <div className="browser-pane">
       <form className="browser-toolbar" onSubmit={submitTarget}>
-        <IconButton icon="arrow-left" label={tr("browser.back")} disabled={!snapshot.canBack} onClick={() => controller.history("back")} />
-        <IconButton icon="arrow-right" label={tr("browser.forward")} disabled={!snapshot.canForward} onClick={() => controller.history("forward")} />
+        <IconButton icon="arrow-left" className="browser-nav" label={tr("browser.back")} disabled={!snapshot.canBack} onClick={() => controller.history("back")} />
+        <IconButton icon="arrow-right" className="browser-nav" label={tr("browser.forward")} disabled={!snapshot.canForward} onClick={() => controller.history("forward")} />
         <IconButton icon="refresh" label={tr("browser.reload")} onClick={() => controller.reload()} />
         <span className="browser-host">127.0.0.1:</span>
         <input

@@ -16,6 +16,13 @@
   border: 1px solid var(--border2);
   border-radius: 4px;
   overflow: hidden;
+  /* Reserved width for the top-right control cluster. --pane-ctl-n (inline,
+     Pane.tsx) is the number of buttons actually rendered (popout/wrap/close),
+     so view headers pad with var(--pane-ctl-w) instead of per-view magic
+     numbers that break whenever the cluster gains a button. Geometry: 8px
+     right offset + 4px cluster padding + n×22px buttons + gaps/divider +
+     breathing ≈ 16px + n×24px (n=1 → 40px, the old lone-× value). */
+  --pane-ctl-w: calc(16px + var(--pane-ctl-n, 2) * 24px);
 }
 .pane {
   transition:
