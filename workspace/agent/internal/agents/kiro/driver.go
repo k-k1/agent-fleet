@@ -237,6 +237,36 @@ func ManagedAlive(name string) bool {
 	return h.alive
 }
 
+// ManagedContext returns the live context fill for a managed kiro session (Track D —
+// docs/43 §10): the latest `_kiro.dev/metadata` contextUsagePercentage (0–100), the
+// running model's context window in tokens, the accumulated meteringUsage credits, and
+// the model id. ok=false when there's no live handle or no metadata has arrived yet —
+// so TUI sessions and pre-first-turn managed sessions show no context bar. Cheap
+// (in-memory read); safe to call from the /sessions/usage aggregation.
+func ManagedContext(name string) (pct float64, window int, credits float64, model string, ok bool) {
+	h := handleFor(name)
+	if h == nil {
+		return 0, 0, 0, "", false
+	}
+	h.mu.Lock()
+	alive := h.alive
+	model = h.model
+	h.mu.Unlock()
+	if !alive {
+		return 0, 0, 0, "", false
+	}
+	h.usageMu.Lock()
+	defer h.usageMu.Unlock()
+	if !h.hasUsage {
+		return 0, 0, 0, "", false
+	}
+	window = h.ctxWindow
+	if window <= 0 {
+		window = kiroDefaultWindow
+	}
+	return h.ctxPct, window, h.credits, model, true
+}
+
 // ManagedBusy reports a turn is running or queued (graceful shutdown の待ち条件).
 func ManagedBusy(name string) bool {
 	h := handleFor(name)
@@ -351,6 +381,17 @@ type threadHandle struct {
 	events   chan agents.Event
 
 	buf transcriptBuf // ACP session/update から構築する転写（別ロックで保護）
+
+	// ライブ使用量（Track D — docs/43 §10）。`_kiro.dev/metadata` 通知が運ぶ
+	// contextUsagePercentage（最新値）と meteringUsage（累積 credit）を保持する。
+	// onNotify（readLoop goroutine）が更新するので h.mu とは別ロックにして turn 配管と
+	// 競合させない。読み手は ManagedContext（context.go / session_usage.go 経由でミラーの
+	// ContextBar と get_session_usage に配線）。
+	usageMu   sync.Mutex
+	ctxWindow int     // 現在モデルの context window（tokens・spawn 時に ModelWindow で確定）
+	ctxPct    float64 // 最新の contextUsagePercentage（0–100）
+	credits   float64 // meteringUsage の累積（この handle の生存中・in-memory）
+	hasUsage  bool    // metadata を一度でも受けたか（未受信は context 非表示）
 }
 
 // spawn starts the child runtime, initializes ACP and loads/creates the kiro session.
@@ -478,6 +519,15 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	}
 	wantMode := h.settings.Mode
 	h.mu.Unlock()
+
+	// Track D: この子のモデルの context window を確定（pct→token 変換の分母）。metadata の
+	// pct は window を運ばないのでカタログ（--list-models）から引く。resume/再spawn では
+	// pct/credits を持ち越さず ctxWindow だけ更新（credits は in-memory な生存中カウント）。
+	if win := ModelWindow(modelID); win > 0 {
+		h.usageMu.Lock()
+		h.ctxWindow = win
+		h.usageMu.Unlock()
+	}
 
 	// meta の希望モードが runtime の現在モードと違えば再表明（resume 後の既定戻り対策・
 	// best-effort）。plan 起動時は kiro_planner へ。
@@ -846,8 +896,12 @@ func (h *threadHandle) Snapshot() (agents.ThreadSnapshot, error) {
 // （metadata / subagent / commands / retry_warning）はここで受けるが v1 A2 は使わない
 // （ライブ使用量の UI 配線は将来 Track — driver.go 冒頭参照）。
 func (h *threadHandle) onNotify(method string, params json.RawMessage) {
+	if method == "_kiro.dev/metadata" {
+		h.onMetadata(params) // Track D: ライブ context% / credits
+		return
+	}
 	if method != "session/update" {
-		return // _kiro.dev/* 独自通知は v1 A2 では無視（応答不要の通知）
+		return // その他の _kiro.dev/*（subagent / commands / retry_warning）は使わない
 	}
 	var p struct {
 		Update struct {
@@ -889,6 +943,37 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 			cur := h.settings
 			h.mu.Unlock()
 			h.emit(agents.Event{Kind: "settings", Settings: &cur})
+		}
+	}
+}
+
+// onMetadata folds a `_kiro.dev/metadata` notification into the handle's live usage
+// (Track D). Called on the readLoop goroutine — must be fast (a single lock, no RPC).
+// The percentage is the CURRENT context fill (it can shrink after compaction, so we
+// keep the latest, not a max); credits accumulate per turn（実測: value は当該ターンの
+// 消費・ターン終了時のみ付く）。A metadata notification may carry only one of the two
+// (実測: percentage 単独 / percentage+credits) — a nil field leaves the prior value.
+func (h *threadHandle) onMetadata(params json.RawMessage) {
+	var p struct {
+		ContextUsagePercentage *float64 `json:"contextUsagePercentage"`
+		MeteringUsage          []struct {
+			Value float64 `json:"value"`
+			Unit  string  `json:"unit"`
+		} `json:"meteringUsage"`
+	}
+	if json.Unmarshal(params, &p) != nil {
+		return
+	}
+	h.usageMu.Lock()
+	defer h.usageMu.Unlock()
+	if p.ContextUsagePercentage != nil {
+		h.ctxPct = *p.ContextUsagePercentage
+		h.hasUsage = true
+	}
+	for _, mu := range p.MeteringUsage {
+		if mu.Unit == "credit" {
+			h.credits += mu.Value
+			h.hasUsage = true
 		}
 	}
 }

@@ -1,7 +1,7 @@
 # 43. Kiro CLI エージェント種別（kind=kiro・第8種）— Track 0 実測記録
 
-status: Track 0（着工前プローブ）完了＋方針4点決定（2026-07-24）。**Track A（workspace agent 本体・read 層＋TUI）実装完了（2026-07-24・temp/snznjpk）**。**Track B（配備・オンデマンド導入＋焼き込みノブ）実装完了（2026-07-24・temp/snznjpk・§7）**。**Track C（CP＋Console 配線・色3種同時変更）実装完了（2026-07-24・temp/snznjpk・§8）**。**Track A2（managed driver・`kiro-cli acp`）実装完了（2026-07-24・temp/kiro-track-a2・§9）**。Track D 未着手・ADR 未起票（→ 0026 予定）。
-関連: docs/40（cursor・章立てのテンプレ）/ docs/36（copilot）/ docs/32（agy）/ decisions/0015（managed driver）。
+status: Track 0（着工前プローブ）完了＋方針4点決定（2026-07-24）。**Track A（workspace agent 本体・read 層＋TUI）実装完了（2026-07-24・temp/snznjpk）**。**Track B（配備・オンデマンド導入＋焼き込みノブ）実装完了（2026-07-24・temp/snznjpk・§7）**。**Track C（CP＋Console 配線・色3種同時変更）実装完了（2026-07-24・temp/snznjpk・§8）**。**Track A2（managed driver・`kiro-cli acp`）実装完了（2026-07-24・temp/kiro-track-a2・§9）**。**Track A/B/C/A2 は全レビュー修正込みで develop へマージ済み（merge 8ab548b8）**。**Track D（ライブ使用量の UI 配線）実装完了（2026-07-24・temp/kiro-track-d・§10）＋ADR0026 起票**。
+関連: docs/40（cursor・章立てのテンプレ）/ docs/36（copilot）/ docs/32（agy）/ decisions/0015（managed driver）/ decisions/0026（本件の ADR）。
 
 ## 0. 対象と背景
 
@@ -247,3 +247,59 @@ Track A では**設定固定の冪等ヘルパ（`ensureSettings`）だけ先行
   （`KIRO_LIVE=1 TestLiveManagedSpawnPromptResume`）= 実 `kiro-cli acp` で spawn→prompt(completed)→
   in-memory 転写＋v2 JSONL persist→stdin EOF 正規終了（.lock 解放）→別プロセス session/load 再生→
   文脈保持まで実測 PASS（16s）**。残=Track D／ADR0026 起票／実フリート再ビルド後の実機目視。
+
+## 10. Track D 実装メモ（2026-07-24・temp/kiro-track-d）— ライブ使用量の UI 配線
+
+Track A2 で「取得 seam はあるが %↔token 変換モデル＋registry contextBar 配線が要るため A2 ファイル
+スコープ外」として送りにした、**`_kiro.dev/metadata` のライブ使用量（contextUsagePercentage・
+meteringUsage credits）を UI へ配線**する。着工前に実 `kiro-cli acp` 2.14.1 に生 JSON-RPC を流して
+metadata の正確な shape を再プローブし確定した。
+
+- **metadata の実測 shape（プローブ再確認）**: `_kiro.dev/metadata` 通知 =
+  `{sessionId, contextUsagePercentage: float(0–100), meteringUsage:[{value, unit:"credit", unitPlural}], turnDurationMs}`。
+  重要な観測: ①**contextUsagePercentage は 0–100 スケール**（例 3.39=3.39%・TUI の「◔ 3%」と一致）。
+  ②**ターン内で複数回流れ、値は変動する**（3.39→1.23→1.23＝縮小もあり得る）ので**最新値を保持**（max ではない）。
+  ③**meteringUsage はターン終了時のみ付く**（当該ターンの credit 消費・pct 単独の通知もある）。
+- **%→token 変換モデル（この Track の肝）**: 既存の ContextBar / get_session_usage は**転写の per-turn
+  トークン数ベース**（read/create/fresh を window に対して描く）だが、kiro の v2 JSONL 転写にはトークンが
+  無く、metadata は % を直接くれる。そこで **% をモデルの実 context window（`--list-models` の
+  `context_window_tokens`・auto=1M）に対するトークン数へ変換**して単一セグメントとして載せる。**window を
+  明示で渡す**ため、フロントが tokens/window から % を再計算しても**元の % に厳密一致**する（丸め誤差のみ・
+  window の推定精度に依存しない）。この経路は agy の ContextReporter（/context PTY スクレイプ）と同じ
+  セッションレベル fallback だが、kiro は値が生きた ACP handle にインメモリで載っているので**サブプロセス
+  不要・非ブロッキング**。
+- **実装**:
+  - `kiro/driver.go`: threadHandle に `usageMu`/`ctxWindow`/`ctxPct`/`credits`/`hasUsage` を追加。`onNotify` の
+    冒頭で `_kiro.dev/metadata` を分岐し `onMetadata` へ（contextUsagePercentage=最新値・meteringUsage credit=
+    累積・pointer フィールドで片方欠落に耐える）。spawn で currentModelId → `ModelWindow` を確定（分母）。
+    package-level `ManagedContext(name)→(pct,window,credits,model,ok)` を追加（生きた handle かつ metadata 受信済み
+    のみ ok・停止中/TUI/未受信は ok=false＝正直に非表示）。
+  - `kiro/models.go`: `--list-models` パースを `context_window_tokens` 込みに拡張し、**auto を含む**全モデルの
+    id→window マップと `ModelWindow(id)` を追加（picker リストは従来どおり auto を除外）。
+  - `kiro/context.go`（新）: `agents.ContextReporter.ContextFill` を実装（ManagedContext → pct×window の tokens を
+    `transcript.Context{Tokens,Window}` で返す）。**フロントは無改修**——ミラーの既存 agy fallback 経路
+    （`/messages` の `d.context` → `agentCtx` → ContextBar・window 明示）がそのまま描く。**managed(paneless)
+    セッションはミラーが唯一のビュー**なのでここが主表示。
+  - `session_usage.go`: `get_session_usage` に `overlayKiroLiveUsage` を追加（kiro のみ、稼働中 managed の
+    ManagedContext から context{pct,tokens,window,model}＋`cumulative.credits` を上書き）。`cumulativeUsage` に
+    `Credits float64 json:"credits,omitempty"` を追加（トークンではないので Spend に畳まず併置）。
+  - MCP ツール説明（`mcp_stdio.go`／CP `mcp.go` の get_session_usage）: 「kiro は context 空・cumulative 0」を
+    「稼働中 managed は metadata のライブ context（pct＋概算 tokens）＋credits を返す・停止中/TUI は空」に更新。
+  - Console `registry.ts`: kiro caps に `contextBar: true`（ContextFill 経由でミラーの ContextBar が点灯）。
+- **不採用/送り（Track D の判断）**:
+  - **アシスタントチャット（headlessChat）は §4-3 決定どおり不採用のまま**（ASSISTANT_AGENT_KINDS に kiro を
+    加えない）。タイトル AI 提案は generic read 層で既に動く。Track D で再検討したが変更なし。
+  - **API キー（`ksk_`/KIRO_API_KEY）認証は v1 不採用・login-only 継続**。cursor ADR0023 決定5 と同じ理由＝
+    TUI(tmux ペイン)への env 注入は `ps` 露出（平文資格禁止に抵触）で、device-flow login（ambient 資格）が
+    TUI/managed/status/models 全経路を env 注入ゼロで賄うため。
+  - **プラン残量チップ（/usage PTY スクレイプ → get_agent_usage）は本 Track では見送り**。機械可読手段が無く
+    （issue #7752）agy 型 PTY スクレイプ harness が要る一方、本 Track のセッション使用量（context%＋credits）で
+    「どれだけ使ったか」は賄える。cursor ADR0023 決定7 と同じく WS バー常駐チップは非公式 API/スクレイプの
+    脆さ（[[usage-chip-statusline]] の 429 事件）を避け、必要になれば別途起票する。
+- **検証**: workspace/agent `go build`／`go vet`／gofmt／全 test 緑（kiro に `TestManagedContextFromMetadata`＝
+  pct 最新値保持・credit 累積・pct→token 厳密往復・停止 handle で ok=false を追加）。control-plane
+  `go build`／`go vet`／test233 緑。Console typecheck／i18n:lint（裸和文ゼロ）／vitest417／vite build 緑。
+  **実バイナリ E2E（`KIRO_LIVE=1 TestLiveManagedSpawnPromptResume` に Track D assertion 追加）= 実
+  `kiro-cli acp` で 1 ターン完了後 `ManagedContext` が `pct=1.23% window=1000000(auto=1M・カタログ由来)
+  credits=0.0295 model=auto` を返し ContextFill が非 nil を実測 PASS（19s）**。残=実フリート再ビルド後の実機
+  目視（ミラーの ContextBar 描画・複数ターンでの pct 推移）。
