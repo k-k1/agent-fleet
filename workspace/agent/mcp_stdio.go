@@ -145,7 +145,7 @@ var mcpStdioTools = []map[string]any{
 	},
 	{
 		"name":        "get_session_status",
-		"description": "指定セッションのライブ状態（working/idle/question 等）を返す。question のとき、保留中の質問と選択肢が questions として付く（claude）。特定セッションが動作中か聞かれた時や、質問への回答（answer_session_question）の前に呼ぶ。",
+		"description": "指定セッションのライブ状態（working/idle/question/plan 等）を返す。保留中の質問と選択肢は questions、承認待ちのプラン本文は plan として付く（claude）。特定セッションが動作中か聞かれた時や、質問への回答（answer_session_question）・プランへの応答（respond_session_plan）の前に呼ぶ。",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -423,6 +423,19 @@ var mcpStdioWriteTools = []map[string]any{
 		},
 	},
 	{
+		"name":        "respond_session_plan",
+		"description": "セッションが承認待ちで提示しているプラン（実行計画）に応答する（claude セッションのみ）。プラン本文は get_session_status の plan で確認する。decision=approve は承認して実行を開始させる。decision=reject は承認ダイアログを閉じて中断し、feedback を修正指示として送る（改訂プランが再提示される）。原則、利用者の意向（または自動走行モードの報告に含まれる指示）に基づいて使うこと。プランに破壊的・不可逆な操作が含まれる場合は承認前に必ず利用者に確認する。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name":     map[string]any{"type": "string", "description": "対象セッション名（例: s7）"},
+				"decision": map[string]any{"type": "string", "description": "approve | reject"},
+				"feedback": map[string]any{"type": "string", "description": "reject 時の修正指示（推奨。省略すると却下のみで指示なし）"},
+			},
+			"required": []string{"name", "decision"},
+		},
+	},
+	{
 		// 停止は /halt（再開可能）への中継。破壊的な /stop（メタごと忘却）は意図して
 		// 公開しない — 広告ツール集合がゲートなので、不可逆操作は Console に残す。
 		"name":        "stop_session",
@@ -555,6 +568,9 @@ func mcpStdioCall(req mcpReq) []byte {
 		NewBranch     string `json:"new_branch"`
 		// answer_session_question args: 質問順の 1-based 選択肢番号。
 		Choices []int `json:"choices"`
+		// respond_session_plan args
+		Decision string `json:"decision"`
+		Feedback string `json:"feedback"`
 		// memo args (id in the path; the rest are forwarded verbatim via p.Args).
 		// ID doubles as the cleanup-archive id (restore/purge). Repo names the branch's repo.
 		ID   string `json:"id"`
@@ -799,6 +815,22 @@ func mcpStdioCall(req mcpReq) []byte {
 		out, err := agentPOST("/sessions/"+url.PathEscape(a.Name)+"/answer-question", reqBody)
 		if err != nil {
 			return mcpToolErr(req.ID, "質問への回答に失敗しました: "+err.Error())
+		}
+		return mcpTextResult(req.ID, out)
+	case "respond_session_plan":
+		if !mcpWriteEnabled {
+			return mcpToolErr(req.ID, "このアシスタントは書き込みツールを許可されていません")
+		}
+		if a.Name == "" {
+			return mcpToolErr(req.ID, "name（セッション名）が必要です")
+		}
+		if a.Decision != "approve" && a.Decision != "reject" {
+			return mcpToolErr(req.ID, "decision は approve か reject を指定してください")
+		}
+		reqBody, _ := json.Marshal(map[string]string{"decision": a.Decision, "feedback": a.Feedback})
+		out, err := agentPOST("/sessions/"+url.PathEscape(a.Name)+"/plan-respond", reqBody)
+		if err != nil {
+			return mcpToolErr(req.ID, "プランへの応答に失敗しました: "+err.Error())
 		}
 		return mcpTextResult(req.ID, out)
 	case "stop_session":

@@ -50,6 +50,8 @@ func buildMux() *http.ServeMux {
 	// オペレーターの AUQ 回答（docs/30）: 質問フォーム全体を choices（1-based）で
 	// 一括回答。TUI claude はキー駆動、managed は Interaction 応答に落ちる。
 	mux.HandleFunc("POST /sessions/{name}/answer-question", handleSessionAnswerQuestion)
+	// オペレーターのプラン承認/却下（docs/30）: approve=Enter、reject=中断＋feedback 送信。
+	mux.HandleFunc("POST /sessions/{name}/plan-respond", handleSessionPlanRespond)
 	// ThreadSettings の動的更新（docs/27 §9.4-3、managed 専用 — 稼働中セッションの
 	// モデル/effort/モード変更）。tui は従来どおり /input のキー操作。
 	mux.HandleFunc("GET /sessions/{name}/settings", handleSessionSettingsGet)

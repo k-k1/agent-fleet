@@ -133,6 +133,41 @@ run_in_background で起動し、主ターンが3分で Stop → その answer-r
 - 制限: managed の question は driver 通知 seam（MarkTurnStart/End）を通らないため
   途中経過報告は飛ばない（回答ツール自体は managed でも使える — 利用者が気づいて依頼する経路）。
 
+### プラン承認とレビューループ — respond_session_plan（2026-07-25）
+
+`plan-approval` も非消費の途中経過報告に追加し、オペレーターがプランの
+レビュー→フィードバック→承認まで回せるようにした:
+
+- `GET /sessions/{name}/status` が承認待ちプラン本文を `plan` として同梱
+  （claude の ExitPlanMode hook 捕捉分）。
+- `POST /sessions/{name}/plan-respond {decision, feedback}`＝MCP `respond_session_plan`
+  （claude 専用 — plan mode は claude の概念）:
+  - **approve** = Enter（ブリッジ `planKeys` と同じ「先頭＝承認」契約）。
+  - **reject** = **Escape で中断**し、feedback があればコンポーザ復帰（AtIdlePrompt、
+    最大 ~5s ポーリング）を待って修正指示として送信する。位置固定キー（Down×3）での
+    却下は CLI 更新で承認に化けた実測（plan-reject-approves）があるため使わない。
+    feedback をハンドラ内で送り切るのは、plan モーダル表示中に send_to_session すると
+    本文がモーダルに食われ末尾 Enter が**承認**になる誤爆経路を閉じるため（復帰を確認
+    できなければ `feedback_delivered:false`＋send_to_session への誘導を返す）。
+- レビューのオーケストレーション自体は専用機構を持たない — オペレーターが既存ツール
+  （create_session / send_to_session / 完了報告）で別セッションにレビューさせ、結果を
+  もって respond_session_plan する（persona と報告文面が手順を案内）。
+
+### 自動走行モード — assistantAutoPilot（2026-07-25・既定 OFF）
+
+設定 > アシスタント「自動走行」。ON のとき**途中経過報告の文面自体**が自動対応の指示に
+変わる（オペレーター側に状態を持たない — モードの正は ui-prefs、読み出しは
+`chatAutoPilotEnabled`、分岐は `reportHeadFor` のみ）:
+
+- **質問**: セッションの推奨（『(Recommended)』ラベル・直前出力の推奨）が明確なら
+  answer_session_question で自動回答し、選択と根拠を利用者へ共有。
+- **プラン**: 別セッションにレビューさせ（読み取り専用作業として指示）、問題なしなら
+  approve、指摘があれば reject+feedback で改訂を待つ — 承認まで自走。
+- **ガード**（文面と persona の両方）: 判断は毎回会話で共有。推奨不明瞭な質問、
+  破壊的・不可逆な操作（削除・強制push・外部送信・コスト増等）を含む選択・プランは
+  自動対応せず利用者に確認。OFF（既定）は従来どおり利用者の意向確認が先。
+  モード設定そのものが利用者の事前委任にあたる、という整理。
+
 ### 配送 — Agent 内で完結
 
 hook / record-exit は独立プロセスなので、会話ファイルへの直接追記はしない

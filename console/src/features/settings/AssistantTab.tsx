@@ -49,6 +49,10 @@ export function AssistantTab() {
           <OnOff value={s.assistantAutoTurn} onChange={(v) => setSetting("assistantAutoTurn", v)} />
         </Row>
         <p className="muted ds-note">{tr("assistant.note_auto_turn")}</p>
+        <Row label={tr("assistant.auto_pilot")}>
+          <OnOff value={s.assistantAutoPilot} onChange={(v) => setSetting("assistantAutoPilot", v)} />
+        </Row>
+        <p className="muted ds-note">{tr("assistant.note_auto_pilot")}</p>
         <Row label={tr("assistant.auto_compact")}>
           <OnOff value={s.assistantAutoCompact} onChange={(v) => setSetting("assistantAutoCompact", v)} />
         </Row>
