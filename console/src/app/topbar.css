@@ -306,6 +306,43 @@
 .acct-build .codicon {
   font-size: 12px;
 }
+/* Native host self-update nudge (docs/42). The account button carries an attention
+   dot when a newer af is staged; the menu row deep-links into 設定 → ツールチェーン. */
+.acct-btn.has-update {
+  position: relative;
+}
+.acct-update-dot {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent, #6b9fff);
+  box-shadow: 0 0 0 2px var(--bg, var(--panel));
+}
+.acct-update.acct-item {
+  color: var(--fg);
+}
+.acct-update .acct-update-txt {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.acct-update-badge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent, #6b9fff);
+}
+.acct-update .codicon {
+  color: var(--accent, #6b9fff);
+}
 .gear {
   font-size: 13px;
 }
