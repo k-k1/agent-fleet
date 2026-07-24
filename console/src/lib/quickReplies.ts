@@ -10,8 +10,10 @@
 export type QuickReplyUse = { text: string; count: number; at: number };
 export type QuickReplyMap = Record<string, QuickReplyUse>;
 
-// 候補として学習する短文の上限長（これを超えるものは「プロンプト」とみなし学習しない）。
-const MAX_LEN = 40;
+// 候補とする短文の上限長（これを超えるものは「クイック返信」ではなく質問文/プロンプトとみなす）。
+// 学習時（isQuickReplyCandidate）と表示時（rankQuickReplies）の両方に効かせ、閾値を下げたとき
+// 過去に学習済みの長いエントリも遡って隠れるようにする。チップが1行を占有しない長さに合わせて 20。
+const MAX_LEN = 20;
 // 保存する最大エントリ数。超えたら最弱（count→at 昇順）から間引く。
 const MAX_ENTRIES = 60;
 
@@ -96,9 +98,13 @@ export type RankArgs = {
 export function rankQuickReplies(map: QuickReplyMap, args: RankArgs): string[] {
   const { draft, lastReply, locale, limit = 6 } = args;
   const seeds = SEEDS[locale] ?? SEEDS.ja;
-  // 学習エントリ + 未学習シードを統合（キー重複はシードを捨てる）。
+  // 学習エントリ + 未学習シードを統合（キー重複はシードを捨てる）。閾値を下げたとき過去に
+  // 学習済みの長いエントリを遡って隠すため、ここでも MAX_LEN 超は取り込まない。
   const byKey = new Map<string, { text: string; count: number; at: number }>();
-  for (const e of Object.values(map)) byKey.set(keyOf(e.text), { ...e });
+  for (const e of Object.values(map)) {
+    if (normalize(e.text).length > MAX_LEN) continue;
+    byKey.set(keyOf(e.text), { ...e });
+  }
   for (const s of seeds) {
     const k = keyOf(s);
     if (!byKey.has(k)) byKey.set(k, { text: normalize(s), count: 0, at: 0 });
