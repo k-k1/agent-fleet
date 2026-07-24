@@ -15,7 +15,8 @@ import { scrollComposerViewport } from "../../lib/keyScroll.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
 import { t, tCount, useT } from "../../lib/i18n/index.ts";
 import { coarsePointer } from "../../lib/device.ts";
-import { useSettings, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
+import { useSettings, setSetting, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
+import { rankQuickReplies, recordQuickReply, isQuickReplyCandidate } from "../../lib/quickReplies.ts";
 import {
   startTts,
   stopTtsForReplacement,
@@ -477,6 +478,10 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     const text = (override ?? input).trim();
     const paths = attachments.map((a) => a.path);
     if (!text && !paths.length) return;
+    // 返信サジェスト（lib/quickReplies）の学習: 短い純テキストのみ取り込む。
+    if (text && isQuickReplyCandidate(text, paths.length > 0)) {
+      setSetting("quickReplies", recordQuickReply(settings.quickReplies || {}, text, Date.now()));
+    }
     setError("");
     setSending(true);
     setStreamText("");
@@ -716,6 +721,41 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     const s = splitPastedImages(m.content).text.trim();
     if (s && history[history.length - 1] !== s) history.push(s);
   }
+
+  // 返信サジェスト（lib/quickReplies）。直近アシスタント発話を B-1 の文脈にし、頻度学習と統合。
+  let chatLastReply = "";
+  const msgs = conv?.messages ?? [];
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role === "assistant") {
+      chatLastReply = splitPastedImages(msgs[i].content).text.trim();
+      break;
+    }
+  }
+  const suggestions = settings.quickRepliesEnabled
+    ? rankQuickReplies(settings.quickReplies || {}, {
+        draft: input,
+        lastReply: chatLastReply,
+        locale: settings.locale,
+        limit: 6,
+      })
+    : [];
+  // サジェストのチップ: 通常クリックはコンポーサーへ差し込み、⌥/Alt で即送信（MirrorView と同挙動）。
+  const applySuggestion = (text: string, immediate: boolean) => {
+    if (showStreaming) return;
+    if (immediate) {
+      void send(text);
+      return;
+    }
+    setInput(text);
+    setHistIdx(null);
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (el) {
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+      }
+    });
+  };
 
   // Recall the previous / next prompt (shared by ↑/↓ and the on-screen buttons shown on
   // phones, which have no arrow keys). Mirrors MirrorView's composer history.
@@ -1038,6 +1078,23 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
             <span className="muted mirror-resume-hint">{tr("mirror.viewing_history_ws_stopped")}</span>
           </div>
         ) : (
+        <>
+        {/* 返信サジェスト: 常用短文＋直近回答に沿った候補。クリックで差し込み・⌥で即送信。 */}
+        {(conv || isDraft) && !showStreaming && suggestions.length > 0 && (
+          <div className="chat-suggest">
+            {suggestions.map((sg) => (
+              <button
+                key={sg}
+                type="button"
+                className="chat-suggest-chip"
+                title={tr("mirror.suggest_hint")}
+                onClick={(e) => applySuggestion(sg, e.altKey || e.metaKey)}
+              >
+                {sg}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="chat-composer-row">
           {/* History nav for phones (no arrow keys); hidden on wider screens via CSS. */}
           <div className="chat-hist">
@@ -1101,6 +1158,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
             </button>
           )}
         </div>
+        </>
         )}
       </div>
     </div>

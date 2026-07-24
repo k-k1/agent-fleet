@@ -220,6 +220,31 @@
   gap: 12px;
   min-height: 54px;
 }
+/* 返信サジェストのチップ行（コンポーサー入力の上に横並び）。MirrorView と同じ見た目。 */
+.chat-suggest {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.chat-suggest-chip {
+  max-width: 100%;
+  padding: 3px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-suggest-chip:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+}
 /* Pasted-image attachment chips in the composer (before send). */
 .chat-attach {
   display: flex;
