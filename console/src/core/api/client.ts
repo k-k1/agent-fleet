@@ -490,6 +490,10 @@ export const chatRename = (id: string, title: string): Promise<Conversation> =>
 // writes the conversation's title, just returns a candidate for the rename dialog.
 export const chatSuggestTitle = (id: string): Promise<{ suggestedTitle?: string; error?: ApiError }> =>
   apiJSON(`api/chat/conversations/${encodeURIComponent(id)}/title/suggest`, "POST");
+// Preview-only LLM reply suggestions v2 (chat_suggest_reply.go): context-aware short
+// reply candidates for the composer's ✨ button. Never writes anything.
+export const chatSuggestReplies = (id: string): Promise<{ suggestions?: string[]; error?: ApiError }> =>
+  apiJSON(`api/chat/conversations/${encodeURIComponent(id)}/suggest-replies`, "POST");
 export const chatDelete = (id: string): Promise<Response> =>
   raw(`api/chat/conversations/${encodeURIComponent(id)}`, { method: "DELETE" });
 // Stop an in-flight assistant turn. The streaming turn is detached from its request
