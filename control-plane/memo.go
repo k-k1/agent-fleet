@@ -173,6 +173,18 @@ func memoCreateFor(ctx context.Context, store MemoStore, mv MembershipView, in m
 	if aerr != nil {
 		return memoDTO{}, aerr
 	}
+	// New memos always join the end of their own repo/category group.  Clients do
+	// not need to coordinate a position (and an omitted JSON position otherwise
+	// becomes zero, which used to put every new memo at the top of the group).
+	rows, err := store.ListMemos(ctx, m.MembershipID, "")
+	if err != nil {
+		return memoDTO{}, internalErr(err)
+	}
+	for _, row := range rows {
+		if row.Repo == m.Repo && row.Category == m.Category && row.Position >= m.Position {
+			m.Position = row.Position + 1
+		}
+	}
 	m.ID = newID()
 	m.CreatedAt = nowTS()
 	if err := store.CreateMemo(ctx, m); err != nil {
@@ -264,13 +276,12 @@ func (a memoAPI) update(w http.ResponseWriter, r *http.Request, _ Identity, mv M
 	writeJSON(w, http.StatusOK, dto)
 }
 
-// buildFlushMessage concatenates the selected memos into one message, grouping by
-// category (empty category -> 未分類) and preserving the ORDER of the resolved memos
+// buildFlushMessage concatenates the selected memos directly, grouping by category
+// (empty category -> 未分類) and preserving the ORDER of the resolved memos
 // (already sorted by category/position on the way in). File memos surface their
 // ~/repos ref path plus any comment, text memos surface their body.
 func buildFlushMessage(memos []Memo) string {
 	var b strings.Builder
-	b.WriteString("以下のメモをまとめて処理して。\n")
 	lastCat := "\x00" // sentinel so the first real category (incl. "") emits a heading
 	n := 0
 	var imgPaths []string // absolute in-container image paths, appended once at the end
@@ -281,7 +292,10 @@ func buildFlushMessage(memos []Memo) string {
 			if cat == "" {
 				cat = "未分類"
 			}
-			b.WriteString("\n## " + cat + "\n")
+			if b.Len() > 0 {
+				b.WriteByte('\n')
+			}
+			b.WriteString("## " + cat + "\n")
 			n = 0
 		}
 		n++

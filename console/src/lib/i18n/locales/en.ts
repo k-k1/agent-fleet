@@ -1540,7 +1540,6 @@ export const en: Record<keyof typeof ja, string> = {
   "memo.new_hint": "Launches, then sends this as the first prompt. The memos stay in the queue.",
   "memo.assistant_hint": "Opens an assistant chat and sends this. The memos stay in the queue.",
   "memo.new_session_started": "Started launching a new session",
-  "memo.flush_header": "Please handle these memos together.",
   "memo.flush_file": "Target file: {path}",
   "memo.assistant_title": "Memos",
   "keys.cmd.memoAdd": "Add memo",

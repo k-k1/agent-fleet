@@ -21,7 +21,6 @@ func TestBuildFlushMessage(t *testing.T) {
 	got := buildFlushMessage(memos)
 
 	for _, want := range []string{
-		"以下のメモをまとめて処理して。",
 		"## frontend",
 		"1. 対象ファイル: ~/repos/a/Button.tsx",
 		"   余白を詰めて",
@@ -34,6 +33,9 @@ func TestBuildFlushMessage(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("message missing %q\n---\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, "以下のメモを") {
+		t.Fatalf("flush message retains the removed instruction template\n%s", got)
 	}
 	// The api heading restarts numbering at 1 (not continuing frontend's count).
 	if strings.Contains(got, "3. エラーハンドリング追加") {
