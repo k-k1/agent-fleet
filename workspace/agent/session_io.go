@@ -16,6 +16,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -629,6 +630,14 @@ func questionPending(name string) bool {
 	// 唯一のソース（tui の許可メニュー / managed の Interaction 双方を同じ形で拾う）。
 	if meta.Kind == session.KindCopilot {
 		return copilot.LiveState(meta) == "question"
+	}
+	// kiro: hooks 無し — "question"（承認待ち「shell requires approval」）は driveState が
+	// 返すだけで status ストアに書かれないため、下の汎用フォールバック（status.Read）は
+	// kiro では常に false。TUI 経路で承認パネル中に自由文を送ると素通しになる穴なので、
+	// TUI 文字列を直接読んでガードする（copilot 同型。managed は ErrQuestionPending で
+	// 別途ガード済み）。
+	if meta.Kind == session.KindKiro {
+		return kiro.LiveState(meta) == "question"
 	}
 	st, ok := status.Read(session.UUID(meta.Dir, name))
 	return ok && st.State == "question"
