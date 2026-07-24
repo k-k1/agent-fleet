@@ -28,7 +28,8 @@ func chatReplySuggestPrompt(msgs []chatMessage) string {
 	var b strings.Builder
 	b.WriteString("会話ログの続きとして、ユーザーが次に送る返信の候補を最大3件、改行区切りで出力してください。\n")
 	b.WriteString("直前のアシスタントの発言に噛み合う短文にすること。丁寧語にせず、常体・命令形で簡潔に。\n")
-	b.WriteString("例（すべて常体で簡潔に・承認/続行/回答/中断）: 進めて / OK / 1番で / 待って / 修正して\n\n")
+	b.WriteString("数字/英字で選択肢が提示されていればその識別子だけ（1・2・A・P1 等）。\n")
+	b.WriteString("例（すべて常体で簡潔に・承認/続行/回答/中断/選択）: 進めて / OK / 修正して / 待って / 1 / A\n\n")
 	b.WriteString("--- 会話ログ ---\n")
 	for _, m := range real {
 		text := strings.TrimSpace(m.Content)
