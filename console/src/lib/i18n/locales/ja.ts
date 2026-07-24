@@ -1230,6 +1230,7 @@ export const ja = {
   "topbar.appearance_details": "詳細",
   "topbar.appearance_details_title": "表示設定を開く（フォント・詳細な配色など）",
   "topbar.tenant": "テナント",
+  "topbar.menu": "メニュー",
   "topbar.user_guide": "利用ガイド",
   "topbar.guide": "はじめかたガイド",
   "topbar.settings": "設定",

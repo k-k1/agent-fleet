@@ -24,9 +24,11 @@ interface TopBarProps {
 }
 
 // Top bar: product name, tenant picker (hidden for single-membership users), and
-// an account menu folding in settings, admin (super_admin only) and sign-out
-// (oauth mode). The menu shows whenever an identity resolved; otherwise a bare
-// settings button keeps settings reachable.
+// an account menu folding in the guides, settings, admin (super_admin only) and
+// sign-out (oauth mode). The menu always shows so the guides / settings / build
+// stay reachable even when no identity resolved (e.g. the native runtime has no
+// login); the identity-dependent bits — the name in the button, the email header
+// and sign-out — only render once an identity is present.
 export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
   const whoami = useTenantStore((s) => s.whoami);
   const tenants = useTenantStore((s) => s.tenants);
@@ -225,15 +227,14 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
           )}
         </div>
         <NotificationCenter />
-        {me ? (
-          <div className="acct" ref={acctRef}>
-            <button className="whoami acct-btn" title={me} onClick={() => setMenuOpen((o) => !o)}>
-              <Icon name="account" /> <span className="acct-name">{me}</span>
+        <div className="acct" ref={acctRef}>
+            <button className="whoami acct-btn" title={me || tr("topbar.menu")} onClick={() => setMenuOpen((o) => !o)}>
+              <Icon name="account" /> {me && <span className="acct-name">{me}</span>}
               <Icon name="chevron-down" className="acct-caret" />
             </button>
             {menuOpen && (
               <div className="acct-menu" role="menu">
-                <div className="acct-email" title={me}>{me}</div>
+                {me && <div className="acct-email" title={me}>{me}</div>}
                 {/* テナント選択はアカウントメニュー内に集約（上部バーの横幅を節約）。 */}
                 {showPicker && (
                   <>
@@ -291,12 +292,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                 </div>
               </div>
             )}
-          </div>
-        ) : (
-          <button className="gear" title={tr("topbar.settings_title")} onClick={() => openSettings()}>
-            <Icon name="gear" /> {tr("topbar.settings")}
-          </button>
-        )}
+        </div>
       </div>
     </header>
   );
