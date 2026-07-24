@@ -321,9 +321,11 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     planEnterCmd: "",
     defaultModeLabel: "Agent",
     // Kiro CLI（kiro-cli・旧 Amazon Q Developer CLI。docs/43, ADR 0026 予定）。
-    // v1 は Terminal(TUI) のみ: managed（ACP `kiro-cli acp`）driver は Track A2 で足す
-    // ため、ここでは managedDriver:false（起動 UI にドライバ選択を出さない）。
-    // chat/transcript: read 正本は v2 JSONL（~/.kiro/sessions/cli/<sid>.jsonl）——新 TUI が
+    // Terminal(TUI) ＋ Managed 両対応（Track A2）: managed は per-session child の
+    // ACP（`kiro-cli acp`・cursor/copilot 同型）で、session/load のクロスプロセス resume＋
+    // 文脈保持を実測（起動 UI に Terminal/Managed のドライバ選択を出す）。
+    // chat/transcript: read 正本は v2 JSONL（~/.kiro/sessions/cli/<sid>.jsonl）——新 TUI ＋
+    // ACP が
     // append-only で書き、toolUse 入力＋toolResult 出力まで載る（cursor で不可だった tool
     // 出力まで描ける）。状態検出は TUI 明示テキスト契約（state.go: "Kiro is working" /
     // "requires approval" / "ask a question or describe a task"）— 2.14.1 に Stop hook が
@@ -334,13 +336,15 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // effort: kiro には別フラグ `--effort` があり program.go は渡すが、モデルカタログに
     // effort メタデータが無く per-model の対応も未検証のため v1 は picker を出さない
     // （copilot/cursor の「未検証の caps を立てない」1854d 教訓）。
-    // contextBar なし（v2 JSONL 転写にトークン数が無い。ライブ使用量 _kiro.dev/metadata は
-    // ACP=Track A2/D）。planMode なし（3 モード循環でクリーンな二値でない — cursor 同型）。
-    // imagePaste は ACP に image:true があるが v1 未配線でオフ。headlessChat なし
-    // （§4-3 決定: ASSISTANT_AGENT_KINDS に kiro を加えない — タイトル提案は generic read 層で動く）。
+    // contextBar なし（v2 JSONL 転写にトークン数が無い。managed ACP の _kiro.dev/metadata は
+    // ライブ context%/credits を持つが UI 配線は Track A2 スコープ外＝将来 Track）。planMode なし
+    // （3 モード循環でクリーンな二値でない — cursor 同型）。imagePaste は ACP に image:true が
+    // あるが v1 未配線でオフ。headlessChat なし（§4-3 決定: ASSISTANT_AGENT_KINDS に kiro を
+    // 加えない — タイトル提案は generic read 層で動く）。
     // 認証は device-flow ログイン（Builder ID/free・API キーは Track D）。
-    managedDriver: false,
-    // Terminal 専用（driver 選択が無い）ので managed 比較の追加 RSS 表示は出さない。
+    managedDriver: true,
+    // per-session child なので CLI(TUI) を選んでも常駐プロセス数は変わらない（どちらも kiro
+    // 1 プロセス/セッション）— 追加コスト表示なし（cursor/copilot 同型）。
     tuiMemoryCost: "",
     caps: caps({
       chat: true,

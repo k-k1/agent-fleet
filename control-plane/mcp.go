@@ -411,13 +411,13 @@ func memberTools() []mcpTool {
 		},
 		{
 			name: "create_session", minScope: scopeWrite,
-			desc: "Start a NEW coding session in your Workspace. `dir` selects the repo to launch in (a `dir` from list_my_sessions or a `path` from list_repos; omitted = home). Set `worktree=true` to create an isolated git worktree from that repo before launch; `branch` optionally selects its base and `new_branch` optionally names the new branch (omitted = server-generated temporary branch). Before a model override (any kind), call list_models and use a returned model id; Codex, OpenCode, Copilot and Cursor sessions default to the managed driver, not TUI. If `initial_prompt` is set it is delivered as the session's first task once its CLI boots (no separate send_to_session needed) — use it to hand off context from another session (read it first with get_session_output) or to kick off a task decided in chat. Returns the new session; drive it with get_session_status / get_session_output by the returned `name`.",
+			desc: "Start a NEW coding session in your Workspace. `dir` selects the repo to launch in (a `dir` from list_my_sessions or a `path` from list_repos; omitted = home). Set `worktree=true` to create an isolated git worktree from that repo before launch; `branch` optionally selects its base and `new_branch` optionally names the new branch (omitted = server-generated temporary branch). Before a model override (any kind), call list_models and use a returned model id; Codex, OpenCode, Copilot, Cursor and Kiro sessions default to the managed driver, not TUI. If `initial_prompt` is set it is delivered as the session's first task once its CLI boots (no separate send_to_session needed) — use it to hand off context from another session (read it first with get_session_output) or to kick off a task decided in chat. Returns the new session; drive it with get_session_status / get_session_output by the returned `name`.",
 			schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"dir":            map[string]any{"type": "string", "description": "working directory (repo working copy); omitted = home"},
 					"title":          map[string]any{"type": "string", "description": "display name (optional)"},
-					"kind":           map[string]any{"type": "string", "description": "agent kind: claude (default) | codex | opencode | agy | copilot | cursor | kiro | shell. agy is the Antigravity CLI (launchable only when connected). copilot is the GitHub Copilot CLI (needs the GitHub connection + a Copilot subscription). cursor is the Cursor CLI (launchable only when connected). kiro is the Kiro CLI (launchable only when connected; Terminal driver only). shell is a raw shell with no agent guardrails — initial_prompt and any string sent to it run verbatim as commands, so confirm the exact command with the user before launching or sending."},
+					"kind":           map[string]any{"type": "string", "description": "agent kind: claude (default) | codex | opencode | agy | copilot | cursor | kiro | shell. agy is the Antigravity CLI (launchable only when connected). copilot is the GitHub Copilot CLI (needs the GitHub connection + a Copilot subscription). cursor is the Cursor CLI (launchable only when connected). kiro is the Kiro CLI (launchable only when connected; defaults to the managed driver). shell is a raw shell with no agent guardrails — initial_prompt and any string sent to it run verbatim as commands, so confirm the exact command with the user before launching or sending."},
 					"model":          map[string]any{"type": "string", "description": "model override (optional)"},
 					"initial_prompt": map[string]any{"type": "string", "description": "first task/hand-off text, auto-sent after boot (optional)"},
 					"worktree":       map[string]any{"type": "boolean", "description": "create a new isolated worktree from dir before launch (optional; default false)"},
@@ -428,7 +428,7 @@ func memberTools() []mcpTool {
 			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
 				kind := argStr(args, "kind")
 				driver := ""
-				if kind == "codex" || kind == "opencode" || kind == "copilot" || kind == "cursor" {
+				if kind == "codex" || kind == "opencode" || kind == "copilot" || kind == "cursor" || kind == "kiro" {
 					driver = "managed"
 				}
 				body, _ := json.Marshal(map[string]any{
