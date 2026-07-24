@@ -2644,10 +2644,15 @@ function parseBashOutput(t: Turn): { stdout: string; stderr: string } | null {
 // A `/`-run slash command or skill is logged as a user turn
 // `<command-name>/foo</command-name><command-message>…</command-message><command-args>…</command-args>`.
 // It's hidden by isNoise; parseCommand recovers the name + args so it can surface as a chip.
+// Tag order varies: built-ins log <command-name> first, but skill invocations (2.1.215
+// 実測・定時 /scout) log <command-message> FIRST. Requiring name-first made those turns
+// unparseable → isNoise dropped them entirely → no user-turn boundary, so every fire's
+// reply merged into one assistant block anchored at the last visible turn (footer stuck
+// at the old date). Accept either tag at the start and take the name wherever it sits.
 function parseCommand(t: Turn): { name: string; args: string } | null {
   if (t.role !== "user") return null;
   const s = (t.text || "").replace(/^\s+/, "");
-  if (!s.startsWith("<command-name>")) return null;
+  if (!s.startsWith("<command-name>") && !s.startsWith("<command-message>")) return null;
   const name = s.match(/<command-name>([\s\S]*?)<\/command-name>/);
   if (!name || !name[1].trim()) return null;
   const args = s.match(/<command-args>([\s\S]*?)<\/command-args>/);
