@@ -89,10 +89,14 @@ function contentFromFlat(p: any): PaneContent {
   }
 }
 
-/** New-format content — re-validated on load (still untrusted JSON). */
-function contentFromStored(c: any): PaneContent {
-  return contentFromFlat(c ? { ...c, chat: c.chat } : null);
+/** New-format content — re-validated on load (still untrusted JSON). Exported
+ * as the shared validator for other untrusted PaneContent inputs (the pop-out
+ * handoff payload, layout/popout.ts). */
+export function validateStoredContent(c: unknown): PaneContent {
+  const o = c as any;
+  return contentFromFlat(o ? { ...o, chat: o.chat } : null);
 }
+const contentFromStored = validateStoredContent;
 
 function paneFrom(raw: any): Pane | null {
   const id = str(raw?.id);

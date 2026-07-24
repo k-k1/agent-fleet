@@ -18,12 +18,37 @@ export const rel = (p: string): string => new URL(p, document.baseURI).toString(
 // wrapping window.fetch so every request — including ones we don't author here —
 // carries it. The terminal WebSocket can't send headers, so attach() appends
 // &tenant=<slug> to its URL instead (see term.js).
-let selectedTenant = localStorage.getItem("af-tenant") || "";
+// Pop-out tabs pin their tenant per-tab (sessionStorage) so the descriptor's
+// membership sticks even if another tab later switches the shared selection —
+// and, symmetrically, a pinned tab never writes the shared key, so it can't
+// hijack the other tabs' tenant either. Unpinned tabs keep the shared
+// localStorage behavior unchanged.
+const TAB_TENANT_KEY = "af-tenant-tab";
+const initialTabTenant = ((): string => {
+  try {
+    return sessionStorage.getItem(TAB_TENANT_KEY) || "";
+  } catch {
+    return "";
+  }
+})();
+let tenantPinned = !!initialTabTenant;
+let selectedTenant = initialTabTenant || localStorage.getItem("af-tenant") || "";
 
 export const getTenant = (): string => selectedTenant;
 export function setTenant(slug: string | null | undefined): void {
   selectedTenant = slug || "";
-  localStorage.setItem("af-tenant", selectedTenant);
+  if (tenantPinned) {
+    try {
+      sessionStorage.setItem(TAB_TENANT_KEY, selectedTenant);
+    } catch {}
+  } else {
+    localStorage.setItem("af-tenant", selectedTenant);
+  }
+}
+/** Pin this tab's tenant (pop-out boot). Runs before any fetch / tenant.init(). */
+export function pinTenantForTab(slug: string): void {
+  tenantPinned = true;
+  setTenant(slug);
 }
 
 // --- signed-in user (layout scoping) ---
@@ -56,6 +81,10 @@ export function clearLocalState(): void {
   } catch {
     /* private-mode / quota — best effort */
   }
+  try {
+    sessionStorage.removeItem(TAB_TENANT_KEY);
+  } catch {}
+  tenantPinned = false;
   selectedTenant = "";
   currentUser = "";
 }
