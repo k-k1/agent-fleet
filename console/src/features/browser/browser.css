@@ -4,6 +4,9 @@
   min-width: 0;
   min-height: 0;
   flex-direction: column;
+  /* Inline-size container: the toolbar collapses by PANE width (a narrow pane
+     in a 4-column desktop split, not just a narrow viewport). */
+  container: browserpane / inline-size;
   color: var(--fg);
   background: var(--bg);
 }
@@ -15,7 +18,8 @@
   gap: 3px;
   min-width: 0;
   height: 34px;
-  padding: 3px 70px 3px 5px;
+  /* right clears the pane control cluster (--pane-ctl-w, panes.css) */
+  padding: 3px calc(var(--pane-ctl-w, 64px) + 6px) 3px 5px;
   border-bottom: 1px solid var(--border2);
   background: var(--panel);
 }
@@ -124,10 +128,26 @@
 .browser-log-warn,
 .browser-log-warning { color: #ffd479; }
 
-@media (max-width: 760px) {
-  .browser-toolbar { padding-right: 66px; }
+/* Narrow PANE (4-column split or a phone): drop the host label and collapse the
+   console toggle to its icon so the toolbar's fixed items never spill under the
+   control cluster. Container query (pane width), not @media — a desktop pane in
+   a 4-column split is just as narrow as a phone viewport. */
+@container browserpane (max-width: 560px) {
+  .browser-toolbar { padding-right: calc(var(--pane-ctl-w, 64px) + 2px); }
   .browser-host { display: none; }
   .browser-console-toggle { font-size: 0; }
   .browser-console-toggle .codicon,
   .browser-console-toggle .browser-log-badge { font-size: 12px; }
+}
+/* Tighter tiers for a really narrow pane (e.g. a 4-column split): drop the
+   back/forward pair, then the console toggle, and let the inputs shrink —
+   whatever remains must fit INSIDE the toolbar's content box, never under the
+   pane control cluster. */
+@container browserpane (max-width: 480px) {
+  .browser-nav { display: none; }
+}
+@container browserpane (max-width: 390px) {
+  .browser-console-toggle { display: none; }
+  .browser-port { flex: 0 1 54px; min-width: 34px; }
+  .browser-path { min-width: 28px; }
 }

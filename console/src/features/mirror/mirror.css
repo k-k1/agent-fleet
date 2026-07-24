@@ -1973,19 +1973,12 @@ button.mt-bash-toggle:hover {
      only text chips and would render ~4px shorter. 36px = 23px content + 12px
      vertical padding + 1px border-bottom (border-box). */
   min-height: 36px;
-  /* right padding reserves room for the pane control cluster overlaid at the top-right;
-     left padding reserves room for the drag grip overlaid at the top-left, just left of
-     the badge. Split moved to the WS bar, so the cluster is now just wrap+close (file/scm)
-     or close alone (terminal/chat, tightened below). */
-  padding: 6px 56px 6px 34px;
+  /* right padding reserves room for the pane control cluster overlaid at the top-right
+     (sized from the rendered button count — --pane-ctl-w, panes.css); left padding
+     reserves room for the drag grip overlaid at the top-left, just left of the badge. */
+  padding: 6px var(--pane-ctl-w, 56px) 6px 34px;
   background: var(--bar);
   border-bottom: 1px solid var(--border);
-}
-/* Terminal/chat panes have no wrap button — their control cluster is just the × — so the
-   head needs less right padding, pulling the チャット/ターミナル toggle closer to the ×. */
-.termview .view-head,
-.mirrorview .view-head {
-  padding-right: 40px;
 }
 
 .managed-settings-btn {

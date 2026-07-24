@@ -175,6 +175,13 @@ export function Pane({
     })();
   };
 
+  // The control cluster overlays the pane's top-right; every view header
+  // reserves right padding for it. Button count varies per pane (popout/wrap/
+  // close), so publish it as --pane-ctl-n and let CSS derive the reserved
+  // width (--pane-ctl-w, panes.css) instead of per-view magic numbers.
+  const showPopout = popoutTabMode !== "popout" && canPopout(pane);
+  const ctlCount = (showPopout ? 1 : 0) + (canWrap ? 1 : 0) + (canClose ? 1 : 0);
+
   const onDragStart = (e: RDragEvent) => {
     e.dataTransfer.setData(DND, pane.id);
     e.dataTransfer.effectAllowed = "move";
@@ -213,7 +220,7 @@ export function Pane({
     <div
       ref={paneRef}
       className={cx("pane", active && "active", zone && "droptarget", hovered && "pane-hover", ordCls)}
-      style={style}
+      style={{ ...style, "--pane-ctl-n": ctlCount } as CSSProperties}
       data-pane-id={pane.id}
       onMouseDownCapture={() => onActivate(pane.id)}
       onMouseEnter={() => setHover({ session: pane.session || null, paneId: pane.id })}
@@ -236,7 +243,7 @@ export function Pane({
         </button>
       )}
       <div className="pane-controls">
-        {popoutTabMode !== "popout" && canPopout(pane) && (
+        {showPopout && (
           <IconButton
             icon="link-external"
             label={tr("ui.popout_pane_hint")}
