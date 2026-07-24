@@ -20,7 +20,7 @@ import (
 const (
 	replySuggestTimeout   = 60 * time.Second
 	replySuggestCount     = 3  // 返す候補の最大数
-	replySuggestMaxRunes  = 40 // 1 候補の長さ上限（これを超える行はプロンプト扱いで捨てる）
+	replySuggestMaxRunes  = 20 // 1 候補の長さ上限（超える行はプロンプト扱いで捨てる・ペルソナの20字と一致）
 	replySuggestTailTurns = 8  // 直近何ターンを文脈に入れるか（返信は「今」の文脈が全て）
 )
 
