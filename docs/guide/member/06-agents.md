@@ -71,15 +71,18 @@ chat bridge ([11](11-fleet-operator.md), [08](08-advanced.md)). ✓ = supported,
 | WS-bar usage / limit chip | ✓ | ✓ | — | ✓ | ✓ | — | — | — |
 
 ¹ copilot's model choice is plan-dependent (Free = Auto only).
+
 ² cursor and agy fold the reasoning effort into the model name, so there is no separate
-control. The WS-bar usage chip needs an account-level limit to show — opencode
-(bring-your-own provider API keys) and cursor expose none. **shell** is a raw shell and
-**ssm** is a remote login over AWS SSM — both are terminal-only with no conversation,
-state model, or notifications.
+control.
 
 ³ cursor's managed (default) execution keeps no local transcript — a **stopped** cursor
 session has no history to show (the live mirror works while running, and running cursor
 as Terminal (CLI) does persist a readable history).
+
+The WS-bar usage chip needs an account-level limit to show — opencode
+(bring-your-own provider API keys) and cursor expose none. **shell** is a raw shell and
+**ssm** is a remote login over AWS SSM — both are terminal-only with no conversation,
+state model, or notifications.
 
 **Default model for the assistant chat** — each assistant can pin its own model, and
 claude's default is settable deployment-wide via `AF_CHAT_MODEL`. Fast, low-cost tiers are
