@@ -93,8 +93,12 @@ status: Track 0（着工前プローブ）完了＋方針4点決定（2026-07-24
 
 ## 4. 決定事項（2026-07-24 ユーザー決定・ADR0026 に転記予定）
 
-1. **色 = 紫**（Kiro ブランド）。現行パレットは copilot が紫（dark #a371f7 / light #8250df）を占有しているため **copilot の色を移動する**。空き色相は実質 紅(crimson) 帯のみ（橙=claude/緑=codex/ローズ=cursor/青=agy・ssm/テール=shell/グレー=opencode）。copilot の新色の最終値と Kiro の表示順・アイコン（codicon）は Track C 着手前にユーザー確認。色変更は kind-color-css-checklist の全 twin（tokens/app/terminal/sessions/settings/ui.css × dark/light）を copilot・kiro 両方について総ざらいすること。
-2. **配備 = オンデマンド導入・利用ユーザー限定**。イメージへは焼かない（BAKE_AGENT_CLIS=1 でも kiro は対象外）。全ユーザー一律の boot-install もしない。**kiro を使うユーザーの初回利用時に、その ~/.local へ manifest sha256 ピン付きで導入**する新パターン（導線は接続カードの「インストール」or 起動時導入。versions.json にピンは載せる。導入時に app.disableAutoupdates を固定）。855MB がユーザーの home ボリュームに載る旨は UI で明示。
+1. **色 = 紫**（Kiro が copilot から紫を引き継ぐ）。**copilot は黒/グレー系へ、opencode は現行スレートグレーより薄いグレーへ移動**（ユーザー決定 2026-07-24）。3種同時変更になるため候補値を先置きする:
+   - kiro: dark #a371f7 / light #8250df（現 copilot 値を継承。Kiro ブランド紫と整合）
+   - copilot: 黒寄りグレー — dark #6b7075（チャコール・dark 背景で視認可） / light #24292f（GitHub 黒）
+   - opencode: 薄いグレー — dark #aab4be / light #9aa4ae（copilot のチャコールと明度差で分離）
+   最終値は Track C の実描画（両テーマ）で確定。色変更は kind-color-css-checklist の全 twin（tokens/app/terminal/sessions/settings/ui.css × dark/light）を **kiro・copilot・opencode の3種**について総ざらいすること。表示順・アイコン（codicon）は Track C 着手前にユーザー確認。
+2. **配備 = 既定はオンデマンド導入・利用ユーザー限定、BAKE_AGENT_CLIS=1 では焼いてよい**（ユーザー決定 2026-07-24: BAKE は利用者が覚悟の上で立てるノブのため kiro も対象に含める）。既定（lean / BAKE=0）ではイメージへ焼かず全ユーザー一律 boot-install もしない。**kiro を使うユーザーの初回利用時に、その ~/.local へ manifest sha256 ピン付きで導入**する新パターン（導線は接続カードの「インストール」or 起動時導入。versions.json にピンは載せる。導入時に app.disableAutoupdates を固定）。855MB がユーザーの home ボリュームに載る旨は UI で明示。
 3. **headlessChat = 不要（v1 スコープ外で確定）**。ASSISTANT_AGENT_KINDS / defaultHeadlessOrder に kiro を加えない。**タイトル AI 提案は現行機構のままで動く**: session_title.go は oneShotHeadless（既存の利用可能バックエンド）で生成し、対象セッションの転写は generic read 層から読む＝Track A の転写実装のみが前提。
 4. **ToS = 注意事項として記載**（Builder ID free の業務利用可否・組織ポリシー整合は採用組織側の確認事項として docs/ADR に明記）。**開発・検証は Free（Builder ID）で進める**。
 
