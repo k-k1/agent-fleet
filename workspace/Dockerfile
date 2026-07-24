@@ -403,6 +403,15 @@ RUN set -eux; mkdir -p /usr/local/share/agent-fleet; \
 # DISABLE_UPDATES, so explicit `claude update`/`claude install` still work).
 ENV DISABLE_AUTOUPDATER=1
 
+# opencode ships a background auto-updater that self-updates via `npm install` on
+# startup (its `autoupdate` config defaults to on). On the root-owned baked /usr/local
+# tree that write fails (and with the self-update opt-in it would silently mutate the
+# ~/.local shadow) — both unwanted in the version-pinned model. Disable it via env;
+# explicit `opencode upgrade` still works. (codex, by contrast, only *notifies* on
+# startup by default and self-writes only on explicit `codex update` / opt-in
+# autoUpdate, so it needs no analogous flag.)
+ENV OPENCODE_DISABLE_AUTOUPDATE=true
+
 # NEVER let git fall back to an interactive /dev/tty credential prompt. This fixes a
 # real "the claude session accepts NO keyboard input" bug (gate k, docs/35 §35.9-10):
 # when a user works in a github.com repo but has NOT connected GitHub, our global
@@ -434,13 +443,15 @@ ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
     DISABLE_TELEMETRY=1 \
     DISABLE_ERROR_REPORTING=1
 
-# Hand the npm-global tree to `dev` so an opted-in member can update the baked CLIs
-# (claude/opencode/codex) to latest IN PLACE at container start (entrypoint runs as
-# dev). Single-user container, so dev owning its own /usr/local node_modules is no
-# escalation. Gated by the operator (AF_AGENT_SELF_UPDATE_ALLOWED); Stop→Start
-# recreates from the image, so turning the toggle off reverts to these baked versions.
-# Numeric uid:gid 1000 (the node/dev user; the node→dev rename happens further down).
-RUN chown -R 1000:1000 /usr/local/lib/node_modules /usr/local/bin
+# The baked npm-global tree at /usr/local is the PINNED, IMMUTABLE baseline. The opt-in
+# self-update no longer updates it in place — it installs latest under ~/.local as a
+# PATH-first shadow (entrypoint's "agent self-update" block), leaving the baked copy
+# untouched so a broken @latest can never corrupt the known-good baseline; toggling the
+# opt-in off drops the shadow and PATH falls back to this pin. So /usr/local is left
+# root-owned (default) — dev never writes it at runtime — which also reinforces the
+# pin's immutability. (Claude Code's background auto-updater, which would otherwise try
+# and fail to write this root-owned tree, is separately silenced by DISABLE_AUTOUPDATER
+# above.)
 
 # UTF-8 ロケール。未設定(POSIX)だと tmux が UTF-8 を無効化し日本語等が化ける。
 # C.UTF-8 は locale 生成不要で Debian に存在する。
