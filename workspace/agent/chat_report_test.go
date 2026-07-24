@@ -262,6 +262,62 @@ func TestSessionReportDeliveredAfterHealWipedMarker(t *testing.T) {
 	}
 }
 
+// TestQuestionReportInterimKeepsArm pins the interim question report (docs/30):
+// a pending AskUserQuestion is reported to the operator conversation so it can
+// relay/answer, but the one-shot arm survives — the instruction's completion
+// still gets its own report.
+func TestQuestionReportInterimKeepsArm(t *testing.T) {
+	home := withTempHome(t)
+	if err := os.MkdirAll(filepath.Join(home, ".config", "agent-fleet"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".config", "agent-fleet", "ui-prefs.json"),
+		[]byte(`{"assistantAutoTurn":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	conv := &chatConversation{ID: randUUID(), Agent: "claude", Messages: []chatMessage{}}
+	if err := saveConv(conv); err != nil {
+		t.Fatal(err)
+	}
+	m := session.Meta{Name: "slot44", Dir: t.TempDir(), Kind: session.KindClaude, Title: "質問検証"}
+	session.WriteMeta(m)
+	armSessionReport(m.Name, conv.ID)
+
+	req := httptest.NewRequest(http.MethodPost, "/chat/report",
+		strings.NewReader(`{"name":"slot44","kind":"question"}`))
+	rec := httptest.NewRecorder()
+	handleChatReport(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	var got *chatMessage
+	for i := 0; i < 100 && got == nil; i++ {
+		unlock := lockConv(conv.ID)
+		c, err := loadConv(conv.ID)
+		unlock()
+		if err == nil {
+			for j := range c.Messages {
+				if c.Messages[j].Role == "report" {
+					got = &c.Messages[j]
+				}
+			}
+		}
+		if got == nil {
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	if got == nil {
+		t.Fatal("no interim question report reached the conversation")
+	}
+	if !strings.Contains(got.Content, "質問") || !strings.Contains(got.Content, "answer_session_question") {
+		t.Fatalf("question report card = %q", got.Content)
+	}
+	if !reportArmed(m.Name) {
+		t.Fatal("interim question report must NOT consume the arm (完了報告は別途)")
+	}
+}
+
 // TestSessionReportDeferredWhileSubagentBusy pins the premature-completion fix
 // (docs/30, 実測 2026-07-24 saga5uc): claude launches background subagents and Stops
 // minutes before the instruction is actually done. That early answer-ready kick must
