@@ -505,6 +505,24 @@ resume→readiness ゲート→`/input` 200 まで全部通っている。つま
   no-op（「検証できない」を「配達失敗」と混同しない）。
 - MCP 側クライアントタイムアウトは 45s（検証ブロックの最悪 ~26s を上回る値）。
 
+### 注入元バッジ（source・2026-07-25 追補）
+
+スケジュール発のプロンプトをミラー上で識別可能にする。既存の注入元記録
+（`session_injections.go`・operator/discord/slack）を拡張:
+
+- CP スケジューラは create（initial_prompt）と reuse 送信（/input）の両方に
+  **`source: "schedule"`（定時発火）/ `"schedule-manual"`（run-now 手動発火・
+  `manual_fire_pending` 由来）** を付与。Agent はホワイトリスト
+  （`injectionSource`）で受け、未知値は従来どおり "operator" に落とす（任意
+  バッジ文字列の鋳造防止）。
+- **スラッシュコマンド注入の照合修正**: 記録は送信生テキスト（"/scout"）だが
+  transcript の user turn は `<command-*>` タグブロック（スキルは message 先頭・
+  ビルトインは name 先頭）で完全一致しない → `commandSlashForm` が "/name args"
+  を復元して照合。これは operator バッジがスラッシュコマンドで効いていなかった
+  既存欠陥の修正でもある。
+- Console: user turn に緑系ピル「定時実行」（clock）/「手動発火」（play）を表示
+  （operator=橙 broadcast・チャット=青と並ぶ第3の注入元色）。
+
 ### 決定（2026-07-23）
 
 1. **主モード**: **(A) ピン留め / (B) 管理 の両対応。ツール表面の既定は (B) 管理**

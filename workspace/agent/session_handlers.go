@@ -198,6 +198,10 @@ type createReq struct {
 	// create_session (which knows its own conversation id via --conv); Console creates
 	// leave it empty.
 	ReportTo string `json:"report_to"`
+	// Source attributes the initial_prompt injection's origin for the mirror badge
+	// (docs/38): "schedule" / "schedule-manual" from the CP scheduler; anything else
+	// (incl. empty — the operator MCP) records as "operator". Whitelisted server-side.
+	Source string `json:"source"`
 	// Optional clone-then-start: when remote_url is set, the repo is cloned
 	// (or reused) under ~/repos and its path becomes the session CWD, ignoring dir.
 	// RepoName overrides the target folder so two branches of the same repo can
@@ -518,7 +522,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		// the link is still recorded for forward-compat.
 		if req.ReportTo != "" {
 			armSessionReport(name, req.ReportTo)
-			recordOperatorInjection(name, req.InitialPrompt) // operator-driven start (docs/30 ②)
+			recordInjection(name, req.InitialPrompt, injectionSource(req.Source)) // orchestrated start (docs/30 ② / docs/38)
 		}
 		writeCreated(meta)
 		return
@@ -536,11 +540,11 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	// docs/30: arm the one-shot completion report to the creating conversation. Armed
 	// even without an initial_prompt — the operator may steer the session manually next.
-	// The initial_prompt, when present, is an operator injection (docs/30 ②) — remember it
-	// so the mirror badges its user turn.
+	// The initial_prompt, when present, is an orchestrated injection (docs/30 ② /
+	// docs/38) — remember it with its origin so the mirror badges its user turn.
 	if req.ReportTo != "" {
 		armSessionReport(name, req.ReportTo)
-		recordOperatorInjection(name, req.InitialPrompt)
+		recordInjection(name, req.InitialPrompt, injectionSource(req.Source))
 	}
 
 	writeCreated(meta)
