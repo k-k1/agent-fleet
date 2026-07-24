@@ -1,6 +1,6 @@
 # 43. Kiro CLI エージェント種別（kind=kiro・第8種）— Track 0 実測記録
 
-status: Track 0（着工前プローブ）完了＋方針4点決定（2026-07-24）。**Track A（workspace agent 本体・read 層＋TUI）実装完了（2026-07-24・temp/snznjpk）**。Track A2/B/C/D 未着手・ADR 未起票（→ 0026 予定）。
+status: Track 0（着工前プローブ）完了＋方針4点決定（2026-07-24）。**Track A（workspace agent 本体・read 層＋TUI）実装完了（2026-07-24・temp/snznjpk）**。**Track B（配備・オンデマンド導入＋焼き込みノブ）実装完了（2026-07-24・temp/snznjpk・§7）**。Track A2/C/D 未着手・ADR 未起票（→ 0026 予定）。
 関連: docs/40（cursor・章立てのテンプレ）/ docs/36（copilot）/ docs/32（agy）/ decisions/0015（managed driver）。
 
 ## 0. 対象と背景
@@ -134,3 +134,16 @@ Track A では**設定固定の冪等ヘルパ（`ensureSettings`）だけ先行
 - **read 正本**: v2 JSONL（Prompt/AssistantMessage/ToolResults）。`ToolResults` を `toolUseId` で対応 tool パートに突合し**ツール出力（stdout）まで描ける**（cursor では不可だった）。ハードキル後の `--resume-id` 復帰も実測 PASS（`.lock` は終了で消え、resume は履歴再生）→ GracefulStop 不要。
 - **root 配線**: `session.go`（KindKiro）/ `agent.go`（registry＋driveState 分岐）/ `connections.go`（Status）/ `agent_models.go`（Models）/ `fs.go` denylist（`.kiro` ＋ `.local/share/kiro-cli`）/ `session_io.go`（paneMode readiness・bracketed paste・readiness 待ち）。
 - **検証**: `go build ./...`／全 test 緑（kiro 8 件＋main/session 既存）。**ライブ E2E（KIRO_LIVE=1）**= 実 TUI 起動→idle 描画→プロンプト→**cwd 発見→転写パース（user＋tool 出力 attach 確認）**→working→idle 状態遷移まで実測 PASS（sid=40a4893f・turns=2・sawUser/sawToolOut=true）。models 8 件・whoami connected も実測。
+
+## 7. Track B 実装メモ（2026-07-24・temp/snznjpk）— 配備（オンデマンド導入＋焼き込みノブ）
+
+§4-2 決定（既定オンデマンド・利用ユーザー限定／BAKE_AGENT_CLIS=1 でのみ焼く）を、他 CLI と非対称な「巨大・per-user」配備として実装。
+
+- **manifest 実測**（`prod.download.cli.kiro.dev/stable/latest/manifest.json`・2.14.1）: linux zip の sha256 を確定。**x86_64=gnu**（`kirocli-x86_64-linux.zip`・`2e354160…`）、**aarch64=musl**（`kirocli-aarch64-linux-musl.zip`・`4a1acf14…`）。zip 内レイアウト= `kirocli/{BUILD-INFO,bin/{kiro-cli,kiro-cli-chat,kiro-cli-term,q,qchat},install.sh,README}`。install.sh は 3 バイナリのみ設置（q/qchat シムは触らない）＋ gnu ビルドのみ glibc 下限ガード（x86_64=2.34・aarch64=2.39／musl は無ガード）＝Debian 12(2.36) では x64 gnu が通り arm64 は musl 必須が裏取れる。
+- **Dockerfile**（`workspace/Dockerfile`・BAKE_AGENT_CLIS=1 ゲート）: `ARG KIRO_VERSION` ＋両 arch sha256。版付き URL DL→sha256 検証→unzip→`Q_INSTALL_GLOBAL=1 Q_SKIP_SETUP=1 sh install.sh`（/usr/local/bin へ 3 バイナリ・setup/integrations 無し）→`kiro-cli --version`。versions.json に `kiro` ＋ arch 依存 `kiro_sha256`（agy/cursor と同型・BAKE ノブに関わらず常に書く）を追加。自己更新封殺は build ENV ノブが無い（copilot と違う）ため焼かず runtime に寄せる。
+- **オンデマンド導入（新パターン）**: `workspace-agent install-kiro`（`workspace/agent/install_kiro.go`）。他 CLI と違い**全ユーザー一律 boot-install しない**（~855MB）。versions.json の `kiro`＋`kiro_sha256` ピンで版付き zip を DL→sha256 検証→同梱 install.sh を `KIRO_CLI_SKIP_SETUP=1` で回し **~/.local/bin** へ設置→導入直後に `app.disableAutoupdates`＋`chat.disableTrustAllConfirmation` を固定（`pinKiroSettings`）。冪等（PATH/`~/.local/bin` に居れば設定固定のみで即 return）。arch 別アセットは install-jdk 系と同じ idiom（staging→検証→設置）。
+  - **初回起動時の自動導入（導線）**: kiro の launch program（`kiro/program.go buildProgram`）先頭に `command -v kiro-cli || workspace-agent install-kiro;` ガードを前置（tmux は /bin/sh でペイン実行）。**未導入ユーザーが kiro セッションを起動した初回だけ**、ペインに DL 進捗を出して導入→そのまま `kiro-cli chat …` へ。焼き込み/導入済みなら `command -v` の no-op。`AGENT_KIRO_BIN` override（テスト/別パス）時はガードを付けない。**ensureSettings（BuildLaunch）は初回起動時点でバイナリ不在→no-op になるため、設定固定は install-kiro 側が担うのが必須**（sync.Once で agent プロセス内は再発火しないため）。接続カードの「インストール」ボタン（Track C）も同 `install-kiro` を叩く。
+- **entrypoint.sh**: kiro は lean 一律 boot-install ループに**入れない**。代わりに「kiro-cli が居れば（焼き込み/home 導入済みの双方）毎起動 `app.disableAutoupdates`＋`chat.disableTrustAllConfirmation` を再固定」する小ブロックのみ（未導入なら無音スキップ）。
+- **env_tool_versions.go**: `{Name:"kiro", Cmd:"kiro-cli", Baked:"/usr/local/bin/kiro-cli", Pin:"kiro"}` を追加（未導入なら effective/baked とも null＝「未導入」がそのまま3版表示に出る）。
+- **e2e-smoke.sh**: baked（EXPECT_AGENT_CLIS=1）で `check_ver kiro`／lean で不在ループに `kiro-cli` 追加／versions.json の `kiro` ピン＋arch 依存 `kiro_sha256`（cursor/agy と同じ arch 分岐）を検証。
+- **検証**: `go build ./...`／`go vet`／`gofmt` 緑。kiro パッケージ test 7 件緑（buildProgram のガード前置は `strings.Contains` 系アサートに無影響・override 早期 return は不変）。`bash -n e2e-smoke.sh`／`sh -n entrypoint.sh` 緑。manifest 到達・sha256・zip レイアウト・install.sh 挙動は実測で裏取り済み（855MB 実 DL は未実施＝焼き込み/実導入の通し目視は実フリート再ビルド後）。残=Track A2（managed）/C（CP+Console・色3種同時変更）/D＋ADR0026 起票／実導入の実機目視。
