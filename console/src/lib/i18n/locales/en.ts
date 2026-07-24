@@ -1471,6 +1471,8 @@ export const en: Record<keyof typeof ja, string> = {
   "memo.edit_hint": "Ctrl+Enter to save · Esc to cancel",
   "memo.edit_hint_file": "Ctrl+Enter to save · Esc to cancel · editing the comment on a file reference",
   "memo.expand_hint": "…click to expand",
+  "memo.edit": "Edit",
+  "memo.send_one": "Send this memo",
   "memo.save": "Save",
   "memo.moved": "Moved to “{cat}”",
   "memo.cat_added": "Category added",
