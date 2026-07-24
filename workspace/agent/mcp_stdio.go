@@ -756,7 +756,11 @@ func mcpStdioCall(req mcpReq) []byte {
 				return mcpToolErr(req.ID, err.Error())
 			}
 		}
-		reqBody, _ := json.Marshal(map[string]string{"prompt": a.Prompt, "report_to": mcpConvID})
+		// confirm（docs/38 配達検証）: オペレーター送信は無人経路 — 打鍵 200 では
+		// なく「ターンが実際に始まった証拠」まで待つ。飲まれた場合は Agent 側が
+		// 自己修復（Enter 再送/再タイプ）し、それでも未確認なら delivery_unconfirmed
+		// がツールエラーとして返る（停止中セッションへの指示空振り bc5d685e の対策）。
+		reqBody, _ := json.Marshal(map[string]any{"prompt": a.Prompt, "report_to": mcpConvID, "confirm": true})
 		out, resumed, err := agentSendToSession(a.Name, reqBody)
 		if err != nil {
 			return mcpToolErr(req.ID, "Agent への送信に失敗しました: "+err.Error())
@@ -1202,7 +1206,10 @@ func agentSendToSession(name string, body []byte) (out string, resumed bool, err
 	if !state.Alive {
 		return agentResumeAndSend(name, inputPath, body)
 	}
-	out, err = agentPOST(inputPath, body)
+	// /input with confirm (配達検証) blocks until the turn provably started — up to two
+	// evidence windows plus one self-heal — so the client budget must exceed the
+	// server-side worst case (agentPOST's default 15s does not).
+	out, err = agentDoTimeout(http.MethodPost, inputPath, body, 45*time.Second)
 	if err == nil {
 		return out, false, nil
 	}
@@ -1222,7 +1229,9 @@ func agentResumeAndSend(name, inputPath string, body []byte) (out string, resume
 	if err = agentWaitSessionReady(name, 30*time.Second, 500*time.Millisecond); err != nil {
 		return "", true, err
 	}
-	out, err = agentPOST(inputPath, body)
+	// 45s for the same reason as the alive path: /input with confirm blocks until the
+	// prompt provably became a turn (配達検証), beyond agentPOST's default 15s.
+	out, err = agentDoTimeout(http.MethodPost, inputPath, body, 45*time.Second)
 	if err != nil {
 		return "", true, fmt.Errorf("再開後の送信に失敗しました: %w", err)
 	}
