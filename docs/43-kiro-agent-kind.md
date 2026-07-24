@@ -1,6 +1,6 @@
 # 43. Kiro CLI エージェント種別（kind=kiro・第8種）— Track 0 実測記録
 
-status: Track 0（着工前プローブ）完了（2026-07-24）。Track A 以降は未着手・ADR 未起票（→ 0026 予定）。
+status: Track 0（着工前プローブ）完了＋方針4点決定（2026-07-24）。Track A 以降は未着手・ADR 未起票（→ 0026 予定）。
 関連: docs/40（cursor・章立てのテンプレ）/ docs/36（copilot）/ docs/32（agy）/ decisions/0015（managed driver）。
 
 ## 0. 対象と背景
@@ -91,11 +91,15 @@ status: Track 0（着工前プローブ）完了（2026-07-24）。Track A 以�
 | 使用量 | セッション使用量= _kiro.dev/metadata（managed）／プラン残量チップ= /usage PTY スクレイプ（Track D） | cursor と違い v1 から現実的 |
 | 配備 | manifest sha256 ピン焼込み（agy 型）＋ app.disableAutoupdates を entrypoint 起動毎再固定。arm64 は musl 変種 | **855MB → lean/boot-install 側へ寄せる判断が必要（未決）** |
 
-## 4. 未決点（ADR0026 起票前に決める）
+## 4. 決定事項（2026-07-24 ユーザー決定・ADR0026 に転記予定）
 
-1. **焼込み vs boot-install**: 展開 855MB は npm 4種合計より大きい。BAKE_AGENT_CLIS=1 でも kiro だけ boot-install 限定にするか。
-2. 表示順・色・アイコン（ユーザー決定事項）。
-3. hooks（Stop）ライブ検証と、フッタ文字列契約とどちらを状態検出の正にするか（両建てが既定路線）。
-4. headlessChat を v1 スコープに入れるか（入れるなら ACP 経由 or --no-interactive+ANSI strip）。
-5. `--agent-engine v3` / `kiro-cli --v3` の扱い（v1 は v2 エンジン固定でよいか）。
-6. ToS/組織ポリシー面の確認（Builder ID free の業務利用可否、1社=1デプロイとの整合）。
+1. **色 = 紫**（Kiro ブランド）。現行パレットは copilot が紫（dark #a371f7 / light #8250df）を占有しているため **copilot の色を移動する**。空き色相は実質 紅(crimson) 帯のみ（橙=claude/緑=codex/ローズ=cursor/青=agy・ssm/テール=shell/グレー=opencode）。copilot の新色の最終値と Kiro の表示順・アイコン（codicon）は Track C 着手前にユーザー確認。色変更は kind-color-css-checklist の全 twin（tokens/app/terminal/sessions/settings/ui.css × dark/light）を copilot・kiro 両方について総ざらいすること。
+2. **配備 = オンデマンド導入・利用ユーザー限定**。イメージへは焼かない（BAKE_AGENT_CLIS=1 でも kiro は対象外）。全ユーザー一律の boot-install もしない。**kiro を使うユーザーの初回利用時に、その ~/.local へ manifest sha256 ピン付きで導入**する新パターン（導線は接続カードの「インストール」or 起動時導入。versions.json にピンは載せる。導入時に app.disableAutoupdates を固定）。855MB がユーザー home 볼륨に載る旨は UI で明示。
+3. **headlessChat = 不要（v1 スコープ外で確定）**。ASSISTANT_AGENT_KINDS / defaultHeadlessOrder に kiro を加えない。**タイトル AI 提案は現行機構のままで動く**: session_title.go は oneShotHeadless（既存の利用可能バックエンド）で生成し、対象セッションの転写は generic read 層から読む＝Track A の転写実装のみが前提。
+4. **ToS = 注意事項として記載**（Builder ID free の業務利用可否・組織ポリシー整合は採用組織側の確認事項として docs/ADR に明記）。**開発・検証は Free（Builder ID）で進める**。
+
+## 5. 残る実装時判断（次セッション向け）
+
+1. hooks（Stop）のライブ検証と、フッタ文字列契約との両建て構成（状態検出の正の置き方）。
+2. `--agent-engine v3` / `kiro-cli --v3` の扱い（v1 は v2 エンジン固定を提案）。
+3. オンデマンド導入の具体設計（Track B 相当）: 導入コマンドの置き場（workspace-agent サブコマンド案）・進捗表示・失敗時の再試行・lean/フル両イメージでの挙動。
