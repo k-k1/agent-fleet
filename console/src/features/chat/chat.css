@@ -220,6 +220,56 @@
   gap: 12px;
   min-height: 54px;
 }
+/* 返信サジェストのチップ行（コンポーサー入力の上に横並び）。MirrorView と同じ見た目。 */
+.chat-suggest {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.chat-suggest-chip {
+  max-width: 100%;
+  padding: 3px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-suggest-chip:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+}
+/* v2: LLM 生成候補は accent 寄りで学習候補と区別。 */
+.chat-suggest-chip.llm {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+}
+/* v2: ✨ トリガーボタン（on-demand で LLM 候補を取得）。 */
+.chat-suggest-ai {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 8px;
+  color: var(--accent);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.chat-suggest-ai:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+}
+.chat-suggest-ai:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 /* Pasted-image attachment chips in the composer (before send). */
 .chat-attach {
   display: flex;

@@ -6,7 +6,8 @@ import type { InteractionAnswer, ManagedThreadSettings, TurnResult } from "../..
 import { isManagedSession } from "../../types/session.ts";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
 import { MEMO_DND_MIME } from "../memo/dnd.ts";
-import { useSettings, chatFontStack, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
+import { useSettings, setSetting, chatFontStack, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
+import { rankQuickReplies, recordQuickReply, isQuickReplyCandidate } from "../../lib/quickReplies.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
@@ -354,6 +355,9 @@ export function MirrorView({
   const draftKey = session ? "af.mirror-draft." + session : null;
   const [draft, setDraft] = useDraft(draftKey);
   const [sending, setSending] = useState(false);
+  // 返信サジェスト v2: ✨ボタンで取得した LLM 文脈候補（Layer A のチップ列にマージ）と取得中フラグ。
+  const [llmSuggestions, setLlmSuggestions] = useState<string[]>([]);
+  const [suggesting, setSuggesting] = useState(false);
   // Pasted images awaiting send: {path} is the session-saved absolute path (referenced in
   // the prompt), {url} an object URL for the local chip preview, {name} the basename.
   const [attachments, setAttachments] = useState<{ path: string; name: string; url: string; image: boolean }[]>([]);
@@ -1549,10 +1553,15 @@ export function MirrorView({
     });
   };
 
-  const send = async () => {
+  // override が来たらそのテキストを送る（サジェストチップの⌥即送信）。無ければコンポーサーの draft。
+  const send = async (override?: string) => {
     if (composerLocked) return;
-    const text = draft.trim();
+    const text = (override ?? draft).trim();
     if (!text && !attachments.length) return;
+    // 短い純テキストは返信サジェストの学習に取り込む（send 経由のみ＝AUQ/plan 応答は自然に除外）。
+    if (text && isQuickReplyCandidate(text, attachments.length > 0)) {
+      setSetting("quickReplies", recordQuickReply(settings.quickReplies || {}, text, Date.now()));
+    }
     // このセッションを読み上げている最中にコンポーサーから送信したら、その読み上げを止める。
     // 割り込み・追撃の意思なので、今さら古い回答（カラオケ・要約アナウンス）を聞かされても
     // 混乱するだけ。sessionName で判定し、他セッション由来の再生（不一致）はそのまま流す。
@@ -1571,6 +1580,44 @@ export function MirrorView({
     if (coarsePointer()) inputRef.current?.blur();
     await sendPrompt(prompt, managed ? paths : undefined);
     if (!coarsePointer()) inputRef.current?.focus();
+  };
+
+  // 返信サジェストのチップ: 通常クリックはコンポーサーへ差し込み（編集してから Enter）、
+  // ⌥/Alt 併用で即送信。差し込み時はキャレットを末尾に置いてフォーカスする。
+  const applySuggestion = (text: string, immediate: boolean) => {
+    if (composerLocked) return;
+    if (immediate) {
+      void send(text);
+      return;
+    }
+    setDraft(text);
+    setHistIdx(null);
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (el) {
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+      }
+    });
+  };
+
+  // v2: ✨ボタン — 直近の会話ログを一発ヘッドレス LLM に渡し、文脈に沿った返信候補を取得して
+  // チップ列にマージする（session_suggest_reply.go）。押した時だけトークンを使う on-demand。
+  const fetchLlmSuggestions = async () => {
+    if (!session || suggesting || wsDown()) return;
+    setSuggesting(true);
+    try {
+      const j = await apiJSON(`api/sessions/${q(session)}/suggest-replies`, "POST", {});
+      const list = Array.isArray(j?.suggestions) ? (j.suggestions as unknown[]).filter((x): x is string => typeof x === "string") : [];
+      setLlmSuggestions(list);
+      // 候補ゼロ = バックエンド不在（claude/codex/opencode いずれも無い）か会話が浅い。無反応だと
+      // 壊れて見えるので一言知らせる（Layer A のチップはそのまま残る）。
+      if (!list.length) toast(tr("mirror.suggest_none"));
+    } catch {
+      toast(tr("mirror.suggest_failed")); // 生成失敗（機能OFF含む）— 学習チップはそのまま
+    } finally {
+      setSuggesting(false);
+    }
   };
 
   // Open a plan's Markdown in its own pane (manual — via a button, not automatic).
@@ -1722,6 +1769,31 @@ export function MirrorView({
   // answer to the latest turn hasn't rendered. This is the signal that the mirror is still
   // waiting for the reply even if the session already reads idle.
   const replyPending = awaitingReply(groups);
+
+  // 返信サジェスト（lib/quickReplies）。直近ユーザー発話の次グループ = 最新の回答。その最終
+  // テキストを B-1 ヒューリスティックの文脈に、頻度学習（settings.quickReplies）と合わせて候補化。
+  const lastUserGi = latestWorkPromptIndex(groups);
+  const replyGroup = lastUserGi >= 0 ? groups[lastUserGi + 1] : undefined;
+  const lastReplyText = replyGroup && replyGroup.role === "assistant" ? textOfParts(replyGroup.parts) : "";
+  const learned = settings.quickRepliesEnabled
+    ? rankQuickReplies(settings.quickReplies || {}, {
+        draft,
+        lastReply: lastReplyText,
+        locale: settings.locale,
+        limit: 6,
+      })
+    : [];
+  // v2 の LLM 候補を先頭に、Layer A の学習候補を後ろにマージ（重複は畳む）。llm フラグで見た目を分ける。
+  const llmSet = new Set(llmSuggestions.map((s) => s.toLowerCase()));
+  const suggestChips: { text: string; llm: boolean }[] = [
+    ...llmSuggestions.map((text) => ({ text, llm: true })),
+    ...learned.filter((s) => !llmSet.has(s.toLowerCase())).map((text) => ({ text, llm: false })),
+  ];
+  // 会話が進む（新しい回答が来る）と古い LLM 候補は文脈遅れになるので、直近回答の変化とセッション
+  // 切替で捨てる。lastReplyText 確定後に置くことで依存の TDZ を避ける。
+  useEffect(() => {
+    setLlmSuggestions([]);
+  }, [session, lastReplyText]);
 
   // Hold the "working" indicator across the idle→reply-renders gap (see `finalizing`).
   // finalizingRef is set SYNCHRONOUSLY alongside the state so the poll loop's next-tick
@@ -2319,6 +2391,34 @@ export function MirrorView({
         </div>
       ) : (
         <div className="mirror-compose">
+          {/* 返信サジェスト: 常用短文＋直近回答に沿った候補（Layer A）＋✨で取得する LLM 候補（v2）。
+              クリックで差し込み、⌥で即送信。flex 全幅 (.mirror-suggest) で入力行の上に載る。 */}
+          {!composerLocked && (suggestChips.length > 0 || settings.replySuggestEnabled) && (
+            <div className="mirror-suggest">
+              {settings.replySuggestEnabled && (
+                <button
+                  type="button"
+                  className="mirror-suggest-ai"
+                  title={tr("mirror.suggest_ai")}
+                  disabled={suggesting || wsDown()}
+                  onClick={fetchLlmSuggestions}
+                >
+                  <Icon name={suggesting ? "loading" : "sparkle"} spin={suggesting} />
+                </button>
+              )}
+              {suggestChips.map((sg) => (
+                <button
+                  key={(sg.llm ? "l:" : "a:") + sg.text}
+                  type="button"
+                  className={"mirror-suggest-chip" + (sg.llm ? " llm" : "")}
+                  title={tr("mirror.suggest_hint")}
+                  onClick={(e) => applySuggestion(sg.text, e.altKey || e.metaKey)}
+                >
+                  {sg.text}
+                </button>
+              ))}
+            </div>
+          )}
           {(attachments.length > 0 || pasting) && (
             <div className="mirror-attach">
               {attachments.map((a, i) => (
@@ -2451,7 +2551,7 @@ export function MirrorView({
               type="button"
               className="btn primary mirror-send"
               disabled={(!draft.trim() && !attachments.length) || sending || composerLocked}
-              onClick={send}
+              onClick={() => send()}
               title={tr("chat.send")}
             >
               <Icon name="send" />

@@ -1,0 +1,121 @@
+// 返信サジェスト（クイック返信）— コンポーサー直上に出す短文候補の学習・ランキング。
+//
+// Layer A: ユーザーが過去に送った短文の頻度/最近度を学習し、上位を候補に出す
+//          （ok / 進めて / commit のような常用返信が自然に並ぶ）。
+// Layer B-1: 直近のエージェント回答の内容で並びを押し上げる（トークン0のヒューリスティック）。
+//
+// 保存は settings.quickReplies（ssmHostUsage と同型 = サーバミラーで複数デバイス同期）。
+// キーは正規化 + 小文字化（"OK"/"ok" を同一視）、表示テキストは最後に送った綴りを保持。
+
+export type QuickReplyUse = { text: string; count: number; at: number };
+export type QuickReplyMap = Record<string, QuickReplyUse>;
+
+// 候補として学習する短文の上限長（これを超えるものは「プロンプト」とみなし学習しない）。
+const MAX_LEN = 40;
+// 保存する最大エントリ数。超えたら最弱（count→at 昇順）から間引く。
+const MAX_ENTRIES = 60;
+
+// 空白畳み・トリム。表示・突合の両方に使う。
+function normalize(text: string): string {
+  return text.trim().replace(/\s+/g, " ");
+}
+function keyOf(text: string): string {
+  return normalize(text).toLowerCase();
+}
+
+// この送信テキストを学習対象にするか。1行・短い・添付なし・スラッシュ/パス類でないこと。
+export function isQuickReplyCandidate(text: string, hasAttachments: boolean): boolean {
+  if (hasAttachments) return false;
+  const t = text.trim();
+  if (!t) return false;
+  if (t.length > MAX_LEN) return false;
+  if (/[\r\n]/.test(t)) return false; // 複数行は返信テンプレではない
+  if (t.startsWith("/")) return false; // スラッシュコマンド / 絶対パス
+  return true;
+}
+
+// 送信テキストを頻度マップへ記録し、新しいマップを返す（純関数）。上限超過分は間引く。
+export function recordQuickReply(map: QuickReplyMap, text: string, now: number): QuickReplyMap {
+  const norm = normalize(text);
+  const k = keyOf(norm);
+  const prev = map[k];
+  const next: QuickReplyMap = {
+    ...map,
+    [k]: { text: norm, count: (prev?.count ?? 0) + 1, at: now },
+  };
+  const keys = Object.keys(next);
+  if (keys.length > MAX_ENTRIES) {
+    // 最弱（使用回数→最近度）から落とす。今書いたキーは新しいので残る。
+    keys
+      .sort((a, b) => next[a].count - next[b].count || next[a].at - next[b].at)
+      .slice(0, keys.length - MAX_ENTRIES)
+      .forEach((dead) => delete next[dead]);
+  }
+  return next;
+}
+
+// i18n-exempt-start: 以下はサジェストの seed 語と突合用の辞書データ（翻訳対象の UI 文言ではなく、
+// locale キーで ja/en を出し分ける“中身”。fontStack の生値や VOICEVOX 名と同じ扱い）。
+// 初期シード（学習が空でも ok/進めて/commit が並ぶよう種まき）。count 0 なので実利用が即上回る。
+const SEEDS: Record<string, string[]> = {
+  ja: ["OK", "進めて", "続けて", "commit して", "やめて"],
+  en: ["OK", "Go ahead", "Continue", "Commit it", "Stop"],
+};
+
+// 肯定/否定の短答セット（末尾が「？」の回答直後に押し上げる対象）。小文字で突合。
+const AFFIRM = new Set(["ok", "はい", "yes", "y", "進めて", "続けて", "go ahead", "continue", "sure"]);
+const NEGATE = new Set(["no", "いいえ", "n", "やめて", "待って", "stop", "cancel", "キャンセル"]);
+
+// 直近回答（lastReply）から加点する（B-1）。lastReply は小文字化済みを渡す想定はせず内部で処理。
+function contextBoost(entryText: string, lastReply: string): number {
+  if (!lastReply) return 0;
+  const lr = lastReply.toLowerCase();
+  const et = entryText.toLowerCase();
+  let boost = 0;
+  // 質問（末尾「?」/「？」）→ 肯定・否定の短答を押し上げる。
+  if (/[?？]\s*$/.test(lastReply)) {
+    if (AFFIRM.has(et) || NEGATE.has(et)) boost += 120;
+  }
+  // 「commit / コミット」の話題 → commit 系を押し上げる。
+  if ((lr.includes("commit") || lr.includes("コミット")) && (et.includes("commit") || et.includes("コミット")))
+    boost += 100;
+  // 「続ける/進める/proceed/continue」の話題 → 続行系を押し上げる。
+  if (/続け|進め|proceed|continue/.test(lr) && /続け|進め|proceed|continue|ok/.test(et)) boost += 80;
+  return boost;
+}
+// i18n-exempt-end
+
+export type RankArgs = {
+  draft: string; // 現在のコンポーサー入力（前方一致フィルタに使う）
+  lastReply: string; // 直近エージェント回答の最終テキスト（B-1）
+  locale: string; // "ja" | "en"（シード言語の選択）
+  limit?: number; // 返す候補数（既定 6）
+};
+
+// 候補を算出して並べて返す（表示テキストの配列）。
+export function rankQuickReplies(map: QuickReplyMap, args: RankArgs): string[] {
+  const { draft, lastReply, locale, limit = 6 } = args;
+  const seeds = SEEDS[locale] ?? SEEDS.ja;
+  // 学習エントリ + 未学習シードを統合（キー重複はシードを捨てる）。
+  const byKey = new Map<string, { text: string; count: number; at: number }>();
+  for (const e of Object.values(map)) byKey.set(keyOf(e.text), { ...e });
+  for (const s of seeds) {
+    const k = keyOf(s);
+    if (!byKey.has(k)) byKey.set(k, { text: normalize(s), count: 0, at: 0 });
+  }
+
+  const draftNorm = normalize(draft).toLowerCase();
+  const scored = [...byKey.values()]
+    // draft 入力中は前方一致で絞り、draft そのものと一致する候補は除く（無意味なので）。
+    .filter((e) => {
+      const et = e.text.toLowerCase();
+      if (draftNorm && !et.startsWith(draftNorm)) return false;
+      if (draftNorm && et === draftNorm) return false;
+      return true;
+    })
+    .map((e) => ({ text: e.text, score: e.count + contextBoost(e.text, lastReply), at: e.at }))
+    // スコア降順 → 同点は最近度 → なお同点は使用回数の代替として at。
+    .sort((a, b) => b.score - a.score || b.at - a.at);
+
+  return scored.slice(0, limit).map((e) => e.text);
+}
