@@ -117,6 +117,19 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	handlesMu.Unlock()
 
 	h.mu.Lock()
+	alive := h.alive && h.cl != nil && !h.cl.dead()
+	h.mu.Unlock()
+	if alive {
+		return h, nil
+	}
+
+	// spawn を handle 単位で直列化する（A2-4）: boot の ReconcileManaged と直後の /turn が
+	// 並行に Resume すると check-then-spawn が非直列で二重 spawn し、後発の子が先発の .lock に
+	// 弾かれて枯渇→session/new へ直行しかねない。spawnMu を取ってから liveness を再確認し、
+	// 先発が既に立てていればその handle を再利用する（二度目の spawn はしない）。
+	h.spawnMu.Lock()
+	defer h.spawnMu.Unlock()
+	h.mu.Lock()
 	if h.alive && h.cl != nil && !h.cl.dead() {
 		h.mu.Unlock()
 		return h, nil
@@ -173,7 +186,17 @@ func liveHandles() []*threadHandle {
 // interrupt any running turn, gracefully terminate the child (stdin EOF → kiro exits
 // and releases its .lock), forget the handle. The conversation stays on disk (v2 JSONL);
 // a later Resume re-spawns and session/load reattaches（実測: 履歴リプレイ＋文脈保持）。
-func DropHandle(name string) {
+func DropHandle(name string) { dropHandle(name, 0) }
+
+// DropHandleWait is DropHandle that additionally waits (bounded) for the child to
+// actually exit. Used by the managed→TUI driver switch (A2-2): the TUI relaunch does a
+// `--resume-id` on the same session, and kiro's per-sid .lock rejects that (or mints a
+// new sid = split-brain) while the managed child still holds it. Waiting for the graceful
+// stdin-EOF exit (which releases the .lock) closes that race. Best-effort: on timeout we
+// proceed anyway (the TUI launch will surface any residual lock error itself).
+func DropHandleWait(name string, wait time.Duration) { dropHandle(name, wait) }
+
+func dropHandle(name string, wait time.Duration) {
 	handlesMu.Lock()
 	h := handles[name]
 	delete(handles, name)
@@ -184,12 +207,18 @@ func DropHandle(name string) {
 	h.mu.Lock()
 	h.alive = false
 	h.queue = nil
-	cmd, cl, stdin, sid, running := h.cmd, h.cl, h.stdin, h.sid, h.running
+	cmd, cl, stdin, sid, running, exited := h.cmd, h.cl, h.stdin, h.sid, h.running, h.exited
 	h.mu.Unlock()
 	if running && cl != nil && sid != "" {
 		_ = cl.notifyPeer("session/cancel", map[string]any{"sessionId": sid})
 	}
 	stopChild(cmd, stdin)
+	if wait > 0 && exited != nil {
+		select {
+		case <-exited:
+		case <-time.After(wait):
+		}
+	}
 }
 
 // RemoveLedger drops the ClientMessageID ledger（/stop — スロットのアイデンティティごと
@@ -299,9 +328,12 @@ type threadHandle struct {
 	dir     string
 	slotSid string
 
+	spawnMu sync.Mutex // serializes spawns for this handle（並行 Resume の二重 spawn 防止・A2-4）
+
 	mu       sync.Mutex
 	cmd      *exec.Cmd
 	stdin    io.WriteCloser // kept so stop can EOF-close it (graceful .lock release)
+	exited   chan struct{}  // closed by watch when the current child exits（切替の有界待ち・A2-2）
 	cl       *acpClient
 	sid      string // kiro session UUID（CLI 採番）
 	model    string // ACP currentModelId（モデルバッジ用・auto は "auto"）
@@ -358,7 +390,8 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	cl := newACPClient(stdin, stdout)
 	cl.onRequest = h.onServerRequest
 	cl.onNotify = h.onNotify
-	go h.watch(cmd, cl)
+	exited := make(chan struct{})
+	go h.watch(cmd, cl, exited)
 
 	if _, err := cl.call("initialize", map[string]any{
 		"protocolVersion": 1, "clientCapabilities": map[string]any{},
@@ -371,6 +404,16 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	if sid == "" {
 		sid = sids.Read(h.slotSid)
 	}
+	// sid キャッシュが空でも、この cwd に既存の kiro セッションがあれば拾う（read 層
+	// resolveSid と同じ discover＝cwd+mtime。Terminal→managed 切替で TUI 側の sid が
+	// sidstore に未キャッシュのまま切り替わると、ここが無いと無言で新規会話を切ってしまう
+	// — A2-3）。worktree で dir が分かれる前提の同一 cwd 制約は resolveSid と同じ。
+	if sid == "" {
+		if d := discoverSid(h.dir); d != "" {
+			sid = d
+			sids.Write(h.slotSid, d)
+		}
+	}
 	mode := ""
 	modelID := ""
 	if sid != "" {
@@ -379,9 +422,20 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 		// stopChild が旧子を落とす猶予ぶんだけ数回リトライして待つ。
 		res, lerr := h.loadWithLockRetry(cl, sid)
 		if lerr != nil {
-			log.Printf("kiro managed: session/load %s: %v — 新規セッションで再開", h.name, lerr)
-			sid = ""
-			h.buf.reset()
+			// session/new へ落ちてよいのは、その sid のストア（<sid>.json）が実際に消えている
+			// ＝会話が削除済みのときだけ。ストアが健在なままの load 失敗（別プロセスが .lock を
+			// 握っている／文言ドリフトで lock と判定できなかった／一時失敗）で session/new すると、
+			// **生きた会話を切り離し slot の sid を新セッションで上書きしてしまう**（A2-1）。よって
+			// ストア健在時はエラーを返し、セッションは停止中のまま（再開クリックで再試行可能）に
+			// する。判定はディスク上のストア存在（決定的）で行い、脆い文字列マッチには依存しない。
+			if _, statErr := os.Stat(sessionJSONPath(sid)); statErr != nil {
+				log.Printf("kiro managed: session/load %s: store gone (%v) — 新規セッションで再開", h.name, lerr)
+				sid = ""
+				h.buf.reset()
+			} else {
+				stopChild(cmd, stdin)
+				return fmt.Errorf("kiro セッションを読み込めませんでした（別プロセスが占有中の可能性・時間をおいて再開してください）: %w", lerr)
+			}
 		} else {
 			mode = currentModeOf(res)
 			modelID = currentModelOf(res)
@@ -410,6 +464,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 
 	h.mu.Lock()
 	h.cmd, h.stdin, h.cl, h.sid, h.alive = cmd, stdin, cl, sid, true
+	h.exited = exited              // この子の終了シグナル（DropHandleWait の有界待ち用）
 	h.state = agents.TurnCompleted // 子は生まれたて — 走行中 turn は存在しない
 	h.model = modelID
 	h.inter, h.permID, h.permOpts = nil, nil, nil
@@ -433,9 +488,16 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 // session's .lock（「active in another process」）. Non-lock errors return immediately so
 // spawn can fall back to a fresh session/new. Each attempt resets the replay buffer so a
 // partial replay before an error isn't double-counted.
+// lockRetryAttempts / lockRetryDelay bound the .lock wait（~6s 既定）。テストが縮められる
+// よう var にする。
+var (
+	lockRetryAttempts = 10
+	lockRetryDelay    = 600 * time.Millisecond
+)
+
 func (h *threadHandle) loadWithLockRetry(cl *acpClient, sid string) (json.RawMessage, error) {
 	var lastErr error
-	for attempt := 0; attempt < 10; attempt++ {
+	for attempt := 0; attempt < lockRetryAttempts; attempt++ {
 		h.buf.reset()
 		h.buf.setLoading(true)
 		res, err := cl.call("session/load", map[string]any{
@@ -450,15 +512,22 @@ func (h *threadHandle) loadWithLockRetry(cl *acpClient, sid string) (json.RawMes
 			return nil, err
 		}
 		h.buf.reset()
-		time.Sleep(600 * time.Millisecond) // 旧所有プロセスが消えて .lock が解放されるのを待つ
+		time.Sleep(lockRetryDelay) // 旧所有プロセスが消えて .lock が解放されるのを待つ
 	}
 	return nil, lastErr
 }
 
 // isLockBusy reports the "Session is active in another process" refusal (kiro's per-sid
-// .lock is still held by a just-killed prior owner — retry until it exits).
+// .lock is still held by a just-killed prior owner — retry until it exits). Requires the
+// JSON-RPC error code (-32603) AND the message so an unrelated error can't be misread as a
+// lock-busy. Only gates the RETRY decision — the session/new-vs-fail choice in spawn is made
+// from the on-disk store, not this string, so a message drift stays fail-safe (A2-1).
 func isLockBusy(err error) bool {
-	return err != nil && strings.Contains(strings.ToLower(err.Error()), "active in another process")
+	var re *rpcError
+	if !errors.As(err, &re) {
+		return false
+	}
+	return re.Code == -32603 && strings.Contains(strings.ToLower(re.Error()), "active in another process")
 }
 
 // currentModeOf extracts modes.currentModeId from a session/new・load result.
@@ -487,7 +556,8 @@ func currentModelOf(res json.RawMessage) string {
 // watch reaps the child and records its exit（per-session child なので daemon supervisor
 // と違い帰属が正確）。stdin EOF 由来（DropHandle/Shutdown）は exit 0＝"stopped" 相当で
 // Console は通常の 停止中 を出す。
-func (h *threadHandle) watch(cmd *exec.Cmd, cl *acpClient) {
+func (h *threadHandle) watch(cmd *exec.Cmd, cl *acpClient, exited chan struct{}) {
+	defer close(exited) // 切替の DropHandleWait を解放（この子固有のチャネル）
 	_ = cmd.Wait()
 	code, sig := 0, 0
 	if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok {

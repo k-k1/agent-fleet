@@ -19,7 +19,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -91,7 +93,15 @@ func handleSessionDriver(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	dropManagedRuntime(m)
+	// Stop the old managed runtime. For a managed→TUI switch of kiro, whose per-sid `.lock`
+	// guards the session cross-process, wait bounded for the child to exit + release the lock
+	// so the TUI's `--resume-id` relaunch below doesn't race it into an error or a split-brain
+	// new sid (A2-2). Other kinds / directions don't gate on a lock, so drop asynchronously.
+	if m.DriverKind() == session.DriverManaged && target == session.DriverTUI && m.Kind == session.KindKiro {
+		kiro.DropHandleWait(name, 5*time.Second)
+	} else {
+		dropManagedRuntime(m)
+	}
 	status.Remove(sid)
 
 	// flip → resume: 新ドライバで同じ会話を再開する。失敗したら Driver を戻して
