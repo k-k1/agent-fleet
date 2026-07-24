@@ -9,7 +9,7 @@ import { Button } from "../../ui/Button.tsx";
 import { CloneForm } from "./CloneForm.tsx";
 import type { CloneSource } from "./CloneForm.tsx";
 import type { CloneRequest, SvnCheckoutRequest } from "./clone.ts";
-import { deriveRepoName, sanitizeSeg, uniqueRepoName, repoNameRe } from "../../lib/reponame.ts";
+import { deriveRepoName, sanitizeSeg, sanitizeFolderName, uniqueRepoName, repoNameRe } from "../../lib/reponame.ts";
 import { useT } from "../../lib/i18n/index.ts";
 
 export type { CloneRequest };
@@ -28,11 +28,20 @@ function deriveSvnName(url: string, subpath: string): string {
   const base = url.replace(/\/+$/, "");
   const sp = subpath.trim().replace(/^\/+|\/+$/g, "");
   const full = (sp ? base + "/" + sp : base).replace(/\/+$/, "");
+  // Decode percent-encoding so a Japanese path segment (…/%E6%97%A5%E6%9C%AC) is
+  // suggested as 日本 rather than the raw escape. Malformed escapes fall back to raw.
+  const decode = (s: string) => {
+    try {
+      return decodeURIComponent(s);
+    } catch {
+      return s;
+    }
+  };
   const segs = full.split("/").filter((s) => s && !s.endsWith(":"));
   if (!segs.length) return "";
   const last = segs[segs.length - 1];
-  if (last === "trunk" && segs.length >= 2) return segs[segs.length - 2];
-  return last;
+  if (last === "trunk" && segs.length >= 2) return decode(segs[segs.length - 2]);
+  return decode(last);
 }
 
 export function NewRepoModal({ onClose, onClone, onSvnCheckout, repos = [] }: NewRepoModalProps) {
@@ -72,7 +81,7 @@ export function NewRepoModal({ onClose, onClone, onSvnCheckout, repos = [] }: Ne
   const [svnName, setSvnName] = useState("");
   const [svnNameEdited, setSvnNameEdited] = useState(false);
   const svnDerived = svnUrl.trim() ? deriveSvnName(svnUrl.trim(), subpath) : "";
-  const svnSuggested = svnDerived ? uniqueRepoName(sanitizeSeg(svnDerived), repoNames) : "";
+  const svnSuggested = svnDerived ? uniqueRepoName(sanitizeFolderName(svnDerived), repoNames) : "";
   useEffect(() => {
     if (!svnNameEdited) setSvnName(svnSuggested);
   }, [svnSuggested, svnNameEdited]);

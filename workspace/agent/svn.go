@@ -309,7 +309,7 @@ func handleSvnCheckout(w http.ResponseWriter, r *http.Request) {
 	}
 	dir, ok := resolveRepoDir(name)
 	if !ok {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "name must match [A-Za-z0-9][A-Za-z0-9._-]{0,95}")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "name must start with a letter or number, may contain letters/numbers plus . _ @ -, and be at most 96 characters")
 		return
 	}
 	if _, err := os.Stat(dir); err == nil {

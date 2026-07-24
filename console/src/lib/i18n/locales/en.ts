@@ -1756,6 +1756,7 @@ export const en: Record<keyof typeof ja, string> = {
   "launch.tui_note": "Direct CLI access · memory +{cost}",
   "launch.worktree_direct_note":
     "Launches directly in this worktree (<0>{branch}</0>). Create a new worktree from the base repository.",
+  "launch.svn_direct_note": "Launches directly in this working copy.",
   "launch.current_wc": "current working copy",
   "launch.new_worktree": "New worktree",
   "launch.new_worktree_sub": "Isolated · safe across branch switches",

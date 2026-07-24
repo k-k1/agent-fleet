@@ -25,10 +25,13 @@ import (
 // delegates every operation here (docs/06 §6.4, docs/07 §7.3).
 
 // repoNameRe constrains a repo (folder) name; it doubles as path-traversal guard.
-// "@" is allowed so a worktree folder can be named "<repo>@<branch>" (branch slashes
-// are sanitized to "-" by the caller); it can't form ".." or "/", so traversal stays
-// blocked. Length is 96 to fit repo@branch without truncating common branch names.
-var repoNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._@-]{0,95}$`)
+// The charset is Unicode letters/numbers (\p{L}\p{N}) so a folder can be named in
+// Japanese (or any script) — an SVN checkout target, say — plus "." "_" "@" "-" in
+// the body; "@" lets a worktree folder be named "<repo>@<branch>" (branch slashes
+// are sanitized to "-" by the caller). The first char must be a letter/number, and
+// neither "/" nor a leading "." is allowed, so a name can never form ".." or "/" —
+// traversal stays blocked. Length is 96 runes to fit repo@branch without truncating.
+var repoNameRe = regexp.MustCompile(`^[\p{L}\p{N}][\p{L}\p{N}._@-]{0,95}$`)
 
 func reposRoot() string { return filepath.Join(homeDir(), "repos") }
 

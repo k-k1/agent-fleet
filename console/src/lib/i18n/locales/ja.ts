@@ -1792,6 +1792,7 @@ export const ja = {
   "launch.tui_note": "CLI 画面を直接操作・メモリ +{cost}",
   "launch.worktree_direct_note":
     "この worktree（<0>{branch}</0>）で直接起動します。新しい worktree はベースのリポジトリから作成してください。",
+  "launch.svn_direct_note": "この作業コピーで直接起動します。",
   "launch.current_wc": "現在の作業コピー",
   "launch.new_worktree": "新しい worktree",
   "launch.new_worktree_sub": "隔離・ブランチ切替から安全",
