@@ -24,6 +24,17 @@ export interface SvnCheckoutRequest {
   trustCert?: boolean;
 }
 
+// revealNewRepo surfaces a freshly cloned/checked-out working copy in the Files
+// tree. A reveal alone only expands + selects a path; the tree renders its root
+// level from a separately-fetched `entries` snapshot that refreshes on the files
+// tick, so without also bumping the tick the brand-new top-level folder would not
+// re-fetch and would stay invisible until a manual refresh. Bump first (refetch
+// the root), then reveal (expand + scroll to it).
+function revealNewRepo(name: string): void {
+  useFilesStore.getState().bump();
+  useFilesStore.getState().revealInFiles("repos/" + name);
+}
+
 export async function cloneRepo(
   req: CloneRequest,
   toast: (msg: string) => void,
@@ -51,11 +62,11 @@ export async function cloneRepo(
         toast(t("rp.clone_failed", { err: errText(res.error) }));
         return { ok: false, name: "" };
       }
-      useFilesStore.getState().revealInFiles("repos/" + added.name);
+      revealNewRepo(added.name);
       return { ok: true, name: added.name };
     }
     await refreshRepos();
-    if (res && res.name) useFilesStore.getState().revealInFiles("repos/" + res.name);
+    if (res && res.name) revealNewRepo(res.name);
     else useFilesStore.getState().bump();
     return { ok: true, name: res?.name || "" };
   } catch (e) {
@@ -90,11 +101,11 @@ export async function svnCheckout(
         toast(t("rp.svn_checkout_failed", { err: errText(res.error) }));
         return { ok: false, name: "" };
       }
-      useFilesStore.getState().revealInFiles("repos/" + added.name);
+      revealNewRepo(added.name);
       return { ok: true, name: added.name };
     }
     await refreshRepos();
-    if (res && res.name) useFilesStore.getState().revealInFiles("repos/" + res.name);
+    if (res && res.name) revealNewRepo(res.name);
     else useFilesStore.getState().bump();
     return { ok: true, name: res?.name || "" };
   } catch (e) {

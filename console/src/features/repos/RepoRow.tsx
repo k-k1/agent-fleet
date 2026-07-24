@@ -425,6 +425,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
           // worktrees are created from the base clone (any base branch). SVN has no
           // worktree at all (docs/41), so it too launches in place only.
           allowWorktree={!r.worktree && !isSvn}
+          isSvn={isSvn}
           onClose={() => setLaunchModal(false)}
           onLaunch={onStartWork}
         />
