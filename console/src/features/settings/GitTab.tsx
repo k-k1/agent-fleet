@@ -253,6 +253,12 @@ function GithubRow({ st, reload }: RowProps) {
             </button>
           </div>
           <IssueLink url="https://github.com/settings/tokens" />
+          <Hint>
+            {tr("git.github_token_hint")} <code>repo</code>
+            {tr("git.github_token_hint_read")} <code>public_repo</code>
+            {tr("git.github_token_hint_pub")} <code>Contents: Read and write</code>
+            {tr("git.github_token_hint_fg")}
+          </Hint>
         </div>
       ) : (
         <>
