@@ -136,6 +136,27 @@ func TestReusePolicyDefaults(t *testing.T) {
 	}
 }
 
+// reuseSendBody must request delivery confirmation (docs/38 配達検証): without
+// confirm the Agent answers 200 on mere keystroke delivery, and a swallowed prompt
+// records a bogus "fired" (the 2026-07-24 sbk7oej recurrence).
+func TestReuseSendBodyRequestsConfirm(t *testing.T) {
+	var body struct {
+		Prompt   string `json:"prompt"`
+		ReportTo string `json:"report_to"`
+		Confirm  bool   `json:"confirm"`
+	}
+	raw := reuseSendBody(Schedule{Prompt: "/scout", OwnerConv: "conv-1"}, time.Date(2026, 7, 24, 11, 0, 0, 0, time.UTC))
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Prompt != "/scout" || body.ReportTo != "conv-1" {
+		t.Fatalf("body mismatch: %+v", body)
+	}
+	if !body.Confirm {
+		t.Fatal("reuse send must set confirm:true — keystroke-200 is not delivery")
+	}
+}
+
 // --- fireReuse integration (fake Agent) -----------------------------------------
 
 // fakeAgent records the create/input/archive/start calls a reuse fire makes and serves a

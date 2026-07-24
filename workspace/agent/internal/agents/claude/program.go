@@ -5,6 +5,7 @@ package claude
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,6 +75,50 @@ func jsonlPaths(sid string) []string {
 // it exists buildProgram uses --resume; otherwise --session-id starts new.
 // A wrong answer here makes claude exit ("Session ID is already in use").
 func SessionJSONLExists(sid string) bool { return len(jsonlPaths(sid)) > 0 }
+
+// TranscriptSnapshot records the current byte size of each conversation log file for
+// sid — the baseline UserTurnAppendedSince compares against. A file that does not
+// exist yet simply has no entry (the create path: the log materializes with the first
+// turn). Never nil, so callers can distinguish "no baseline support" (nil) from "no
+// log yet" (empty map).
+func TranscriptSnapshot(sid string) map[string]int64 {
+	snap := map[string]int64{}
+	for _, p := range jsonlPaths(sid) {
+		if fi, err := os.Stat(p); err == nil {
+			snap[p] = fi.Size()
+		}
+	}
+	return snap
+}
+
+// UserTurnAppendedSince reports whether a `"type":"user"` line landed in sid's log
+// AFTER snap was taken. claude persists a submitted prompt as a user line within well
+// under a second of a real submit, so this — not tmux send-keys exiting 0, which only
+// proves keystrokes reached the pane — is the ground truth that a typed prompt became
+// a turn (配達検証, docs/38). Appends are whole lines, so seeking to the recorded EOF
+// never splits the type token.
+func UserTurnAppendedSince(sid string, snap map[string]int64) bool {
+	for _, p := range jsonlPaths(sid) {
+		off := snap[p] // 0 for a file born after the snapshot: scan it from the start
+		fi, err := os.Stat(p)
+		if err != nil || fi.Size() <= off {
+			continue
+		}
+		f, err := os.Open(p)
+		if err != nil {
+			continue
+		}
+		var appended []byte
+		if _, err := f.Seek(off, io.SeekStart); err == nil {
+			appended, _ = io.ReadAll(io.LimitReader(f, 4<<20))
+		}
+		f.Close()
+		if strings.Contains(string(appended), `"type":"user"`) {
+			return true
+		}
+	}
+	return false
+}
 
 // JSONLResumable reports whether sid's log holds an actual conversation (a user or
 // assistant turn) — not just bookkeeping lines (Remote Control "bridge-session",

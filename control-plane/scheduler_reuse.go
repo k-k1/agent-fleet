@@ -365,10 +365,19 @@ func reuseCreateTitle(sch Schedule, pinned bool) string {
 
 // reuseSendBody is the /input body for a reuse fire: the expanded prompt plus the
 // operator conversation as report_to so completion rides docs/30 back to the operator.
+// confirm (docs/38 配達検証) is the second sbk7oej fix: the first (the readiness gate)
+// still declared "fired" on tmux keystroke success, and a CLI that momentarily could
+// not accept input (cold resume before slash commands register, a swallowed Enter)
+// silently ate the prompt while the ledger recorded success (2026-07-24 朝の再発).
+// With confirm the Agent blocks until the prompt provably became a turn (a user line
+// appended to the conversation log), self-heals once, and otherwise answers
+// delivery_unconfirmed — which lands here as an error: status plus a notification,
+// never a bogus "fired".
 func reuseSendBody(sch Schedule, slot time.Time) []byte {
-	b, _ := json.Marshal(map[string]string{
+	b, _ := json.Marshal(map[string]any{
 		"prompt":    expandSchedulePrompt(sch, slot),
 		"report_to": sch.OwnerConv,
+		"confirm":   true,
 	})
 	return b
 }
