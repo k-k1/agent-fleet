@@ -1574,7 +1574,6 @@ export const ja = {
   "memo.new_hint": "起動後、この内容を最初のプロンプトとして送ります。メモはキューに残ります。",
   "memo.assistant_hint": "アシスタントチャットを開いて、この内容を送ります。メモはキューに残ります。",
   "memo.new_session_started": "新規セッションの起動を開始しました",
-  "memo.flush_header": "以下のメモをまとめて処理して。",
   "memo.flush_file": "対象ファイル: {path}",
   "memo.assistant_title": "メモ",
   "keys.cmd.memoAdd": "メモを追加",

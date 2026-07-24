@@ -7,7 +7,7 @@
 //     drag — memos within/between categories, and the categories themselves;
 //   - "送信…" opens SendMemoModal to edit the concatenated text and pick a destination.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { MouseEvent as RMouseEvent, DragEvent as RDragEvent } from "react";
+import type { MouseEvent as RMouseEvent, DragEvent as RDragEvent, RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -57,6 +57,17 @@ interface RepoBlock {
 
 const repoLabel = (repo: string) => repo || t("memo.common");
 const catLabel = (cat: string) => cat || t("memo.uncategorized");
+
+// Keep memo composition fields as compact as their content permits, while letting a
+// longer note grow without the user having to drag the resize handle first.
+function useAutosizeTextarea(ref: RefObject<HTMLTextAreaElement | null>, value: string) {
+  useLayoutEffect(() => {
+    const textarea = ref.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  }, [ref, value]);
+}
 
 // Group memos into repo → ordered categories. Category ORDER comes from the categories
 // table (by position); the uncategorized bucket leads, then any legacy memo-only category
@@ -152,6 +163,7 @@ export function MemoQueueSection() {
   const [open, setOpen] = useState(() => localStorage.getItem(SECTION_KEY) !== "0");
   const serRef = useRef("");
   const composerTextRef = useRef<HTMLTextAreaElement>(null);
+  useAutosizeTextarea(composerTextRef, newText);
 
   // Refetch memos + categories on mount / bump / tenant switch, and poll while mounted.
   useEffect(() => {
@@ -891,6 +903,7 @@ function MemoRow(props: MemoRowProps) {
   const [body, setBody] = useState(m.body);
   const [cat, setCat] = useState(currentCat);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  useAutosizeTextarea(taRef, body);
 
   useEffect(() => {
     if (editing) {
