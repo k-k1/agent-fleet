@@ -72,6 +72,10 @@ jobs:
           # "Select login method" unless this non-secret state is present. Production's
           # claude.ensureFolderTrusted writes the same keys before every TUI launch.
           jq -n '{hasCompletedOnboarding:true,theme:"dark"}' > "$HOME/.claude.json"
+          # Production's entrypoint seeds this separate settings file. Without it the
+          # bypass subtest stops at the dangerous-mode acknowledgement dialog.
+          mkdir -p "$HOME/.claude"
+          jq -n '{skipDangerousModePermissionPrompt:true}' > "$HOME/.claude/settings.json"
 
       # Pass credentials via env (never typed or logged) and drive the real interactive
       # CLI in a real tmux pane. The Go test calls production tmuxx functions directly.
