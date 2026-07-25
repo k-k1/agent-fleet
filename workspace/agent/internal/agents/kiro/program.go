@@ -156,12 +156,20 @@ func buildProgram(model, effort, mode, resumeID string) string {
 	// On-demand first-use install (docs/43 Track B / §4-2). kiro's ~855MB bundle is
 	// NOT baked or boot-installed for everyone; it lands in the user's ~/.local the
 	// first time they actually launch kiro. tmux runs the pane program via /bin/sh,
-	// so guard the launch: install (progress visible in the pane) only when the CLI
-	// is missing, then run it. A baked / already-installed kiro makes this a no-op
-	// `command -v` check. Only for the default binary — an AGENT_KIRO_BIN override
-	// (tests, alt paths) skips the bootstrap so it never triggers a real install.
+	// so guard the launch: install (progress visible in the pane), then run it.
+	//
+	// The guard is unconditional — NOT `command -v kiro-cli ||` as it once was. That
+	// form only ever covered "missing", so the copy in the home volume stayed on the
+	// version of its first install forever: it survives image rebuilds, has no
+	// boot-install to refresh it, and its self-updater is pinned off. A versions.json
+	// pin bump therefore never reached the user. `install-kiro --if-needed` decides
+	// for itself: silent (a marker stat) when the pinned version is already there,
+	// re-install with visible progress when the installed version drifts from the pin.
+	// Failure falls through to launching whatever is installed (`;`, not `&&`).
+	// Only for the default binary — an AGENT_KIRO_BIN override (tests, alt paths)
+	// skips the bootstrap so it never triggers a real install.
 	if bin() == "kiro-cli" {
-		return "command -v kiro-cli >/dev/null 2>&1 || workspace-agent install-kiro; " + core
+		return "workspace-agent install-kiro --if-needed; " + core
 	}
 	return core
 }

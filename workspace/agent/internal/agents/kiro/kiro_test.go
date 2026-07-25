@@ -46,6 +46,26 @@ func TestBuildProgram(t *testing.T) {
 	}
 }
 
+// TestBuildProgramPinGuard: 既定バイナリの起動には毎回 `install-kiro --if-needed` が
+// 前置される。未導入ユーザーの初回導入だけでなく、**versions.json のピンが上がった
+// 時に home の ~/.local 版を追従させる**のがこのガードの役目（旧 `command -v ||` 形は
+// 「不在」しか見ないため、一度入った kiro が永久に古いままだった）。`;` 連結なので
+// 導入/更新に失敗しても既存バイナリでの起動は続く。AGENT_KIRO_BIN 差し替え時は付けない。
+func TestBuildProgramPinGuard(t *testing.T) {
+	got := buildProgram("", "", "", "")
+	want := "workspace-agent install-kiro --if-needed; "
+	if !strings.HasPrefix(got, want) {
+		t.Errorf("program %q must start with %q", got, want)
+	}
+	if strings.Contains(got, "command -v kiro-cli") {
+		t.Errorf("guard must not be conditional on presence (pin drift would never be fixed): %q", got)
+	}
+	t.Setenv("AGENT_KIRO_BIN", "/tmp/fake-kiro")
+	if got := buildProgram("", "", "", ""); strings.Contains(got, "install-kiro") {
+		t.Errorf("AGENT_KIRO_BIN override must skip the bootstrap: %q", got)
+	}
+}
+
 // fixture: 実測 v2 JSONL（2.14.1）。PONG → 1..40 → shell tool（sleep 30 && echo done）で
 // toolUse＋ToolResults（stdout="done\n"）→ 最終 text。末尾に走行中の Prompt を足す。
 const transcriptFixture = `{"version":"v1","kind":"Prompt","data":{"message_id":"a1","content":[{"kind":"text","data":"Reply with exactly: PONG"}],"meta":{"timestamp":1784869360}}}
