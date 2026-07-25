@@ -262,6 +262,9 @@ the same tag is referenced and no re-download happens. Always verify downloads
 against `SHA256SUMS` / the sha256 in `rootfs.json` (install.sh and `af start` do
 this automatically).
 
+What changed in each version is in the notes on every release, indexed in
+[CHANGELOG.md](CHANGELOG.md).
+
 ## License / bundled software
 
 - The distributed images and rootfs are a **lean build**: the agent CLIs
