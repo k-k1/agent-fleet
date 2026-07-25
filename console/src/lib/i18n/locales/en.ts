@@ -2000,7 +2000,7 @@ export const en: Record<keyof typeof ja, string> = {
   "asst.proposal": "Suggestion",
   "asst.adopt": "Use this",
   "asst.suggest_fetch_failed": "Failed to get a suggestion (network error)",
-  "asst.copy_id": "Copy ID",
+  "asst.copy_id": "Copy ID ({id})",
   "asst.id_copied": "Copied chat ID \"{id}\"",
   "asst.new_chat": "New chat",
   "asst.builtin_badge": "Built-in",
