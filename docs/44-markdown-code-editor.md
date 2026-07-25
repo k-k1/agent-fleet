@@ -121,7 +121,7 @@ GETとdownloadもsymlinkを追跡しない。対象または親componentがsymli
 ### 1.5 保存クライアントの世代管理
 
 同一file paneからのPUTは一度に1件だけ送る。送信時に `{paneId, path, bufferGeneration,
-bufferRevision, content, baseDiskRevision}` のsnapshotを保持する。応答時、現在のbufferGeneration
+bufferRevision, content, baseDiskRevision}` のsnapshotを保持する。通常保存の200応答時、現在のbufferGeneration
 またはbufferRevisionがsnapshotと同じ場合だけdirtyを解除し、成功レスポンスのrevisionを新しい
 `baseDiskRevision`として保持する。入力が続いていた場合はdirtyを維持し、現在bufferを次の保存対象にする。
 
@@ -144,8 +144,10 @@ liveが送信本文と一致した場合の明示的な再保存では、復旧G
 ユーザー操作によりPUTを開始し、親directory fsyncまで成功した200を受けて初めて通常の世代規則で
 cleanにする。この場合のdurabilityリスク承認も自動判定ではなくユーザー操作とし、現在bufferが
 送信snapshotと同じなら `CleanRiskAccepted`、保存中に追加入力があれば観測revisionをbaseにした
-`Dirty` とする。どちらもリスク承認済みであることをセッション中に表示する。保存中の入力を
-復旧結果で誤ってcleanにしない。
+`Dirty` とする。`CleanRiskAccepted` はdirtyを解除したclean系状態だが、送信本文のlive反映を
+確認したユーザーがdurabilityリスクを明示承認した場合に限る。これは「通常保存は200でのみ
+clean」の唯一の例外であり、GET一致やtimeoutだけで自動遷移しない。どちらもリスク承認済みで
+あることをセッション中に表示し、保存中の入力を復旧結果で誤ってcleanにしない。
 
 ### 1.6 409競合の解決状態
 
@@ -218,11 +220,16 @@ CodeMirror documentとAI適用境界で先に実行するPhase 2/4の共通契�
 - current fileの判定はstatだけで決めず、GET/PUTとも最大2 MiB+1 bytesを実際に読み、超過を
   `too_large`（GETは`editable:false`）として扱う。外部writerで対象が読み取り中に成長しても、
   上限を超えて読み込まない。
-- GETの `size` は、安全にopenした対象fdに対するsnapshot開始時の `fstat` が返すファイルサイズとする。
-  bounded readで観測したbytes数は `size` に使わない。`truncated`はfstat値が2 MiBを超える場合、または
-  bounded readが2 MiB超を観測した場合にtrueとする。full snapshotでfstat値とread bytes数が食い違う
-  場合はboundedに再取得し、安定したsnapshotを得られなければ`read_failed`とする。これにより既存viewerの
-  実ファイルサイズ表示との互換性を維持する。
+- GETのsnapshot取得は最大2試行（初回＋再取得1回）とする。各試行で安全にopenした同一対象fdに
+  `fstat-before → offset 0から2 MiB+1 bytesのbounded read → fstat-after` を行う。両fstat値が
+  一致して2 MiB以下なら、read bytes数も同値の試行だけをfull responseに採用する。両fstat値が
+  一致して2 MiB超なら、bounded readが2 MiB+1 bytesを観測した試行を`truncated:true`に採用する。
+  その他の組み合わせは不安定とし、初回なら2回目を行い、2回目も不安定なら`read_failed`とする。
+- fullまたはtruncatedとして採用した最終試行の `fstat-after` が返したファイルサイズを `size` に使う。
+  bounded readの観測bytes数は `size` に使わないため、既存viewerの実ファイルサイズ表示と互換である。
+- ここで「安定したsnapshot」とはsize/content-lengthが整合したfull responseだけを意味する。
+  同じsizeのまま外部writerがin-place writeした場合の混在読み取りは検出できず、ファイルのある瞬間に
+  対するsnapshot保証は持たない。これは同一API PUTのmutexに参加しない外部writerの制約である。
 - ファイルの新規作成、ディレクトリ作成、rename、delete は本APIの責務ではない。既存の fs 操作を
   使用する別フローとし、PUT は存在する通常ファイルの本文置換だけを行う。
 
@@ -283,9 +290,9 @@ Content-Typeは `application/json` とする。サーバーは互換性のため
 }
 ```
 
-- `size` は、安全にopenした対象fdに対するsnapshot開始時の `fstat` が返したraw byteサイズである。
-  bounded readの観測bytes数ではなく、truncated時も実ファイルサイズを返す。§2.2の再取得規則により、
-  full snapshotでは `content` のraw byte数と一致する。
+- `size` は、§2.2の最終試行で安全にopenした対象fdに対する `fstat-after` が返した
+  raw byteサイズである。bounded readの観測bytes数ではなく、truncated時も実ファイルサイズを返す。
+  full responseでは両fstat値および `content` のraw byte数と一致する。
 - `path` はcanonical display pathであり、browse root配下の絶対入力は相対pathへ変換される。scratch/docs
   の絶対入力はread-only rootの絶対pathとして返る。
 - `content` はファイル全体をJSON文字列として返す。改行等はJSONの通常のescapeだけを行う。
@@ -335,8 +342,8 @@ Content-Typeは `application/json` とする。サーバーは互換性のため
 ```
 
 成功時は `content` を返さず、保存した本文の raw byte サイズと新しい revision を返す。新しい
-revision がリクエスト本文のハッシュと一致することをクライアントが確認できる。dirty はこの
-応答を受けて初めて解除する。
+revision がリクエスト本文のハッシュと一致することをクライアントが確認できる。通常保存のdirtyはこの
+200応答を受けて初めて解除する。§1.5のユーザーによるdurabilityリスク承認だけが例外である。
 
 #### Atomic write と revision 検査
 
@@ -389,14 +396,14 @@ PUT が追加する確定コードは次のとおり。
 |---:|---|---|---|
 | 400 | `bad_path` | 空、絶対、traversal、NUL、Windows形式、長さ超過、またはcanonical相対パス規則違反 | 変更なし |
 | 400 | `symlink_not_allowed` | 対象または親componentにsymlinkがある。文字列/LstatだけではTOCTOUを防げないため、fd-relative操作で拒否する | 変更なし |
-| 400 | `bad_request` | JSON不正、必須フィールド欠落、型違い、未知フィールド、revision形式違い | 変更なし |
+| 400 | `bad_request` | wire bodyのUTF-8不正、JSON不正、必須フィールド欠落、型違い、未知フィールド、revision形式違い | 変更なし |
 | 415 | `unsupported_media_type` | Content-Typeが `application/json`（charset=utf-8含む）ではない | 変更なし |
 | 403 | `denied` | denylist、書込み不可root、権限・認可境界に該当 | 変更なし |
 | 404 | `not_file` | 対象が存在しない、ディレクトリ、通常ファイルでない | 変更なし |
 | 409 | `revision_conflict` | 比較時点で現在のrevisionが `baseDiskRevision` と一致しない | 変更なし |
 | 413 | `too_large` | current fileまたはdecoded contentが2 MiB超、またはHTTP body全体が16 MiB超 | 変更なし |
-| 415 | `binary_not_supported` | current fileまたはrequest contentにNUL byteかUTF-8不正がある | 変更なし |
-| 415 | `unsupported_newline` | current fileまたはrequest contentにCRLF、CR単独、混在改行がある | 変更なし |
+| 415 | `binary_not_supported` | current fileにUTF-8不正かNUL byteがある、またはdecoded request `content`にNULがある | 変更なし |
+| 415 | `unsupported_newline` | current fileまたはdecoded request `content`にCRLF、CR単独、混在改行がある | 変更なし |
 | 500 | `read_failed` | 現在本文の読み込みに失敗 | 変更なし（保証できない場合は保存処理を開始しない） |
 | 500 | `write_failed` | rename前の一時書込み、fsync等に失敗 | 旧本文を保持 |
 | 500 | `write_state_unknown` | rename後の親directory fsync等に失敗し、live namespaceは新だがdurabilityが不明 | `SaveStateUnknown`でmineを保持 |
@@ -407,9 +414,12 @@ PUT が追加する確定コードは次のとおり。
 その対象への操作権限を明示的に拒否するためである。Workspace stopped/starting、未認証、membership外
 などの共通エラーは、この表のPUT固有コードより優先される既存の横断契約（通常は401/403/409）を使う。
 
-PUT固有エラーは、requestのContent-Type/body上限/JSON形/field/decoded contentとpath字句検証を先に
-確定し、mutex取得後にfd-relativeな安全境界・対象種別・read結果を判定する。current本文については
-`too_large`、`binary_not_supported`（NULまたはUTF-8不正）、`unsupported_newline`（CRを含む）の順に
+PUT固有エラーは、requestのContent-Type/body上限を検査し、wire bodyがUTF-8不正またはJSONとして
+不正な場合はdecoded `content`の検査前に400 `bad_request` とする。decode後はfield、decoded `content`、
+path字句検証を確定し、mutex取得後にfd-relativeな安全境界・対象種別・read結果を判定する。
+decoded request `content`は `too_large`、`binary_not_supported`（NUL）、`unsupported_newline`（CRを含む）の順に
+判定する。current本文は `too_large`、`binary_not_supported`（NULまたはUTF-8不正）、
+`unsupported_newline`（CRを含む）の順に
 編集可否を判定し、いずれかに該当すれば `baseDiskRevision`が不一致でもそのエラーを返す。
 `revision_conflict`はcurrent本文が編集条件を全て満たしrevisionを計算できた後にだけ判定する。
 
@@ -428,10 +438,13 @@ Consoleの英日カタログへ登録する。
 Phase 1のAgent/CP実装は、現在の `httpx.DecodeJSON` の単純な一回decodeを拡張する。
 
 - HTTP bodyを16 MiBでhard limitし、超過を読み込まない。
+- hard limit内のwire body全体が厳密なUTF-8であることをJSON decode前に検査し、不正UTF-8は
+  400 `bad_request` とする。wire bodyを不正UTF-8のままdecoded `content` として扱わない。
 - JSON objectを1個だけ受け付け、decode後に末尾のwhitespace以外がないことを検査する。第2 JSON値、
   trailing garbage、空bodyを拒否する。
 - `DisallowUnknownFields`相当で未知フィールドを拒否し、required fieldと型を検証する。
-- decoded `content` のUTF-8 byte数を2 MiB以下で検査し、NUL/CR/UTF-8不正を保存前に拒否する。
+- decoded `content` のUTF-8 byte数を2 MiB以下で検査し、NULは415 `binary_not_supported`、
+  CRは415 `unsupported_newline` として保存前に拒否する。
 - CPの監査用body抽出も同じ16 MiB上限を使い、JSON本文を監査ログへ記録しない。
 
 ## 4. AI提案の構造化フォーマット
@@ -527,7 +540,8 @@ wire envelope が必要な場合は version を持たせる。
   Marpのプレビューはこのpreview側の描画方式であり、別の編集モードを増やさない。
 - Saveボタンはタッチ端末を含む全環境で提供し、Ctrl+S / Cmd+Sと同じsnapshot保存処理を呼ぶ。
   saving中は同一paneのSaveを無効化し、追加入力は可能だが別PUTを並行送信しない。
-- dirty、saving、saved、revision conflict、conflict remote unavailable、write state unknownは `role="status"` と
+- dirty、saving、saved、risk accepted、revision conflict、conflict remote unavailable、write state unknownは
+  `role="status"` と
   `aria-live="polite"` で状態変化を告知する。競合・状態不明は `role="alert"` 相当で明示し、
   再取得・差分確認・再保存・リスク承認・mineのコピー・破棄の該当する選択肢をfocus可能にする。
 - Phase 2の受け入れでは、マウスなしのview/edit切替・保存・競合表示、タッチ端末のSave操作、
@@ -549,8 +563,8 @@ wire envelope が必要な場合は version を持たせる。
 - LF-onlyの編集バッファ、raw byte revision、CodeMirror UTF-16 offsetの整合とCRLFの将来拡張条件が
   固定されている。
 - rename後directory fsync失敗の `write_state_unknown`、live反映とdurabilityの区別、
-  `SaveStateUnknown`からの再保存/リスク承認、permission bitsのみ保持、owner/ACL/xattr非保証が
-  固定されている。
+  `SaveStateUnknown`からの再保存/リスク承認、通常保存の200-only cleanと明示リスク承認の
+  例外、permission bitsのみ保持、owner/ACL/xattr非保証が固定されている。
 - `baseDiskRevision`（保存API）と `baseRevision`/`bufferRevision`（AI/バッファ）を区別し、
   save snapshot、generation、応答喪失時の`SaveStateUnknown`とGET結果別遷移、dirty guard全経路が
   固定されている。
@@ -558,9 +572,10 @@ wire envelope が必要な場合は version を持たせる。
   保持する`ConflictRemoteUnavailable`、remote base更新とforce overwrite禁止が固定されている。
 - typing/IME/paste/undo/redo/AI replacementの共通buffer validator、LF/NUL/unpaired surrogate/size
   invariant、revision regex検証が固定されている。
-- GETの `editable`/`editabilityReason`、opened fdのfstatを使う`size`、decoded content 2 MiB、
-  HTTP body 16 MiB、strict JSON decoder、JSONエラーとplain-text gateway errorの境界、
-  `suggestion_stale`のUIコードが固定されている。
+- GETの `editable`/`editabilityReason`、opened fdのfstatを使う`size`、最大2回のsnapshot取得と
+  size/content-length整合の保証範囲、decoded content 2 MiB、HTTP body 16 MiB、strict JSON decoder、
+  wireの不正UTF-8とdecoded contentのNUL/CRのエラー分類、JSONエラーとplain-text gateway
+  errorの境界、`suggestion_stale`のUIコードが固定されている。
 - current file/path resource bound、`fs.file.put`のwrite_state_unknown監査、live namespaceとdurabilityを
   分けた説明、同一uidのnamespace mutator/hardlinkを脅威モデル外とする範囲が固定されている。
 - Phase 1以降の実装コード・依存追加・保存API実装・UI実装は本Phase 0の作業に含めない。
@@ -576,12 +591,13 @@ wire envelope が必要な場合は version を持たせる。
   JSON error bodyを監査判定前にbounded readできる構造にし、`action: fs.file.put`、canonical path、
   `detail/outcome: write_state_unknown`、`http_status: 500` を記録する。通常の他の失敗は既存方針に
   従うが、live namespaceは新本文でdurabilityが不明となるこの結果だけは欠落させない。
-- `httpx.DecodeJSON`相当のstrict decoder、Content-Type、body/decoded size、trailing value、厳密UTF-8、
+- `httpx.DecodeJSON`相当のstrict decoder、Content-Type、body/decoded size、trailing value、wireの厳密UTF-8、
   unknown field検査を実装する。server error codeはAgent/CP定数とConsoleの英日i18nへ同時登録する。
 - fd-relative path操作とGET/file/downloadのsymlink拒否を実装し、safeBrowsePath系helperをPUTへ流用しない。
 - GETのeditable判定、LF-only、revision、opened fdのfstatによるsize、CASの同一API直列化を実装する。
-- path全体4096 bytes、component255 bytes、current fileの2 MiB+1 read boundを実装し、stat/read raceで
-  full snapshotを安定して得られなければ`read_failed`にする。
+- path全体4096 bytes、component255 bytes、current fileの2 MiB+1 read boundを実装する。GETは各回に
+  fstat-before/read/fstat-afterを行う最大2試行とし、size/content-lengthの不一致が続けば
+  `read_failed`にする。同サイズの外部in-place writeは瞬間snapshot保証の対象外とする。
 - symlink、path alias、外部writerのrace、GET読み取りrace、revision conflict、rename前失敗、
   同一APIの並行PUT、rename後directory fsync失敗をfailure injectionを含むGo単体テストで検証する。
   同一APIの並行PUTは一方のopen/readが先行PUTの結果確定後になることを確認する。外部writer raceは
@@ -590,7 +606,8 @@ wire envelope が必要な場合は version を持たせる。
 ### Phase 2（Text/コード編集MVP）
 
 - CodeMirror導入、view/edit、dirty、single-flight PUT、送信snapshot/generation、応答時dirty判定、
-  `baseDiskRevision`更新、`SaveStateUnknown`とGET結果別の復旧、明示再保存/リスク承認を実装する。
+  `baseDiskRevision`更新、`SaveStateUnknown`とGET結果別の復旧、通常保存の200-only clean、
+  明示再保存/リスク承認に限定した `CleanRiskAccepted` を実装する。
 - 全buffer input transaction（typing/IME/paste/undo/redo）にLF/NUL/unpaired surrogate/2 MiB validatorを
   適用し、失敗時はtransactionを適用せず通知する。
 - 409競合のConflictSnapshotとstate machine（remote採用、mine破棄、remoteをbaseにした手動merge、
