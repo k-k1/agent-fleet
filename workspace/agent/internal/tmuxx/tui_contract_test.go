@@ -180,6 +180,15 @@ func waitReady(t *testing.T, name, tn string) {
 	deadline := time.Now().Add(readyWait)
 	for time.Now().Before(deadline) {
 		s := CapturePane(tn)
+		// A pristine hosted runner has no saved theme. The workspace image normally
+		// inherits an initialized persistent Claude config, so this one-time selector
+		// is harness onboarding rather than the composer contract under test.
+		if strings.Contains(s, "Syntax theme:") &&
+			(strings.Contains(s, "Dark mode") || strings.Contains(s, "Light mode")) {
+			_ = exec.Command("tmux", "send-keys", "-t", tn, "Enter").Run()
+			time.Sleep(2 * time.Second)
+			continue
+		}
 		// 起動時のフォルダ信頼ダイアログ（--dangerously-skip-permissions でも出る）。
 		if strings.Contains(s, "trust this folder") || strings.Contains(s, "Do you trust the files") {
 			_ = exec.Command("tmux", "send-keys", "-t", tn, "Enter").Run()
