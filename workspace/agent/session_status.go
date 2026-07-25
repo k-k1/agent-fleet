@@ -163,11 +163,12 @@ func recordSessionNotification(sid, previous, state, turnText string) {
 		// session (docs/30). Only TERMINAL events CONSUME the arm: an instruction's
 		// one report must be its COMPLETION, so an interim attention event must not
 		// disarm — otherwise the eventual completion never reaches the operator
-		// (that was the observed bug). A pending QUESTION is additionally reported
-		// WITHOUT consuming the arm (handleChatReport keeps it armed for interim
-		// kinds), so the operator can relay the options to the user and answer via
-		// answer_session_question; plan/permission stay notification-center only.
-		if (kind == reportKindAnswerReady || kind == "question") && reportArmed(m.Name) {
+		// (that was the observed bug). A pending QUESTION / PLAN is additionally
+		// reported WITHOUT consuming the arm (handleChatReport keeps it armed for
+		// interim kinds), so the operator can relay/answer (answer_session_question)
+		// or drive the plan review loop (respond_session_plan); permission stays
+		// notification-center only.
+		if (kind == reportKindAnswerReady || kind == "question" || kind == "plan-approval") && reportArmed(m.Name) {
 			kickSessionReport(m.Name, kind, "")
 		}
 		return

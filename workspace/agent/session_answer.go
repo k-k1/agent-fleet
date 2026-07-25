@@ -1,6 +1,7 @@
 package main
 
-// オペレーター（af_write アシスタント）からの AskUserQuestion 回答（docs/30）。
+// オペレーター（af_write アシスタント）からの AskUserQuestion 回答と
+// ExitPlanMode プラン承認/却下（docs/30）。
 //
 // POST /sessions/{name}/answer-question {choices:[1,2,…]} — 質問順に 1-based の
 // 選択肢番号を1つずつ渡し、フォーム全体を一括で回答する。ブリッジ（docs/37 P2b、
@@ -16,11 +17,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
@@ -175,4 +178,90 @@ func handleSessionAnswerQuestion(w http.ResponseWriter, r *http.Request) {
 	markSessionWorking(name)
 	clearBridgeAnswer(name)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"answered": name, "picked": labels})
+}
+
+// handleSessionPlanRespond (POST /sessions/{name}/plan-respond {decision, feedback})
+// applies the operator's decision to a pending ExitPlanMode approval (claude TUI —
+// plan mode is a claude concept).
+//
+//   - approve: Enter on the approval dialog（ブリッジ planKeys と同じ・オプション先頭が
+//     承認である契約は Console mirror と共通）。
+//   - reject: Escape で承認ダイアログを閉じて中断し、feedback があればコンポーザ復帰を
+//     待ってから修正指示として送信する。位置固定キー（Down×3）での却下は CLI 更新で
+//     承認に化けた実測があるため使わない（中断→通常プロンプトが版に依存しない）。
+//     フィードバックをここで送り切るのは、plan モーダルが開いたまま send_to_session
+//     すると本文がモーダルに食われ Enter が承認になる誤爆経路を閉じるため。
+func handleSessionPlanRespond(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !session.ValidName(name) {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		return
+	}
+	var req struct {
+		Decision string `json:"decision"`
+		Feedback string `json:"feedback"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_body", "invalid JSON body")
+		return
+	}
+	if req.Decision != "approve" && req.Decision != "reject" {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_decision", "decision must be approve or reject")
+		return
+	}
+	meta, ok := session.ReadMeta(name)
+	if !ok {
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
+	}
+	if meta.Kind != session.KindClaude {
+		httpx.WriteErr(w, http.StatusNotImplemented, "plan_unsupported",
+			"プラン承認は claude セッションのみ対象です")
+		return
+	}
+	sid := session.UUID(meta.Dir, meta.Name)
+	if st, _ := status.Read(sid); st.State != "plan" {
+		httpx.WriteErr(w, http.StatusConflict, "no_plan", "no pending plan approval (already handled?)")
+		return
+	}
+	pane, err := claudePane(name)
+	if err != nil {
+		httpx.WriteErr(w, http.StatusConflict, "not_running", err.Error())
+		return
+	}
+	if req.Decision == "approve" {
+		if err := sendNamedKeys(pane, []string{"Enter"}); err != nil {
+			httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
+			return
+		}
+		markSessionWorking(name)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"responded": name, "decision": "approve"})
+		return
+	}
+	// reject: interrupt the dialog, then (best-effort) deliver the feedback once the
+	// composer is back. If the composer never shows, report it so the operator falls
+	// back to send_to_session (delivery-confirmed) instead of silently losing text.
+	if err := sendNamedKeys(pane, []string{"Escape"}); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
+		return
+	}
+	resp := map[string]any{"responded": name, "decision": "reject"}
+	if req.Feedback != "" {
+		delivered := false
+		for i := 0; i < 20; i++ { // ~5s: the dialog closes fast; boot-like stalls don't apply
+			time.Sleep(250 * time.Millisecond)
+			if tmuxx.AtIdlePrompt(name) {
+				delivered = typeLineAndSubmit(name, pane, req.Feedback) == nil
+				break
+			}
+		}
+		if delivered {
+			markSessionWorking(name)
+		}
+		resp["feedback_delivered"] = delivered
+		if !delivered {
+			resp["hint"] = "コンポーザ復帰を確認できませんでした。send_to_session でフィードバックを送ってください"
+		}
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }
