@@ -3,6 +3,11 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.3.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.3.0) — 2026-07-25
+
+Kiro joins the agent CLI lineup, the composer gains reply suggestions, and the
+fleet operator can now answer questions and review plans on your behalf.
+
 ## [0.2.3](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.2.3) — 2026-07-24
 
 Memos can be dragged straight into a session, and a set of smaller fixes.
