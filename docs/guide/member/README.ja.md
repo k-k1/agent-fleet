@@ -23,7 +23,7 @@
 3. [ターミナル](03-terminal.ja.md) — 黒い画面の操作・コピペ・ショートカット・スマホ
 4. [リポジトリと git](04-git.ja.md) — クローン・変更の確認・コミット・push（SVN もこちら）
 5. [ファイル](05-files.ja.md) — ツリー・ビュアー・Markdown/スライドの表示
-6. [エージェント](06-agents.ja.md) — claude / codex / opencode / GitHub Copilot / Cursor / Kiro CLI の接続と選び方
+6. [エージェント](06-agents.ja.md) — claude / codex / opencode / GitHub Copilot / Cursor / Kiro の接続と選び方
 7. [チャットとメモ](07-chat-memo.ja.md) — リポジトリを使わない質問・翻訳・メモ溜め
 8. [一歩進んだ使い方](08-advanced.ja.md) — ブラウザペイン／軽量プレビュー・Discord / Slack 連携・別ホスト・環境設定
 9. [困ったとき](09-troubleshooting.ja.md) — 症状別の対処と FAQ
