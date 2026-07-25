@@ -36,18 +36,24 @@ Console の File ペインは現在、Workspace のファイルを読み取り�
    `write_failed`、rename後のdirectory fsync等の失敗は現在のlive namespaceでは新本文だが
    durabilityが不明な `write_state_unknown` とする。GET照合だけではdurabilityを確定できないため、
    クライアントはdirtyなmineを保持する `SaveStateUnknown` へ遷移し、明示的な再保存またはリスク承認を
-   要求する。保持する属性は `mode.Perm()` のみで、owner/ACL/xattr/special bitsはv1で保証しない。
+   要求する。通常保存は200応答でのみcleanとし、送信本文のlive反映を確認した後の明示的な
+   durabilityリスク承認だけを例外とする。保持する属性は `mode.Perm()` のみで、owner/ACL/xattr/
+   special bitsはv1で保証しない。
 6. **操作面ごとにfd-relativeな境界を分離する。** v1のLinux Agentはroot/parent directory fdを固定し、
    `openat2(RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS)`、`fstatat(AT_SYMLINK_NOFOLLOW)`、`renameat`相当を
    GET/file、download、PUTで使う。PUTはbrowse-root相対canonical pathのみ、GET/downloadは既存
    `allowedReadRoots`（browse/scratch/docs）配下のcanonical絶対pathも許可し、許可rootを選んでroot fd
    から相対化する。既存の字句検査＋Lstat helperはrequest-controlled pathのTOCTOU対策として再利用しない。
    symlinkによるpath迂回は抑止するが、同一uidのnamespace mutatorやhardlinkによるinode別名はv1の
-   非協調writer脅威モデル外で、denylistはinode出自まで保証しない。
+   非協調writer脅威モデル外で、denylistはinode出自まで保証しない。GETは最大2回の
+   `fstat-before → 2 MiB+1 bounded read → fstat-after`でsize/content-length整合を確認するが、
+   同サイズの外部in-place writeに対する瞬間snapshotは保証しない。
 7. **編集対象はLF-onlyのUTF-8テキストとする。** CRLF/CR単独/混在改行は読み取り専用にし、raw byte
    revisionとCodeMirror 6のdocument offsetを変換なしで一致させる。typing/IME/paste/undo/redo/AI
-   replacementの全transactionへCR/NUL/unpaired surrogate/2 MiB validatorを適用する。将来の改行
-   マッピングやCRLF対応は別設計で固定してから追加する。
+   replacementの全transactionへCR/NUL/unpaired surrogate/2 MiB validatorを適用する。PUTのwire bodyが
+   UTF-8不正またはJSON不正なら400 `bad_request`、current fileのUTF-8不正/NULとdecoded contentのNULは
+   415 `binary_not_supported`、CRは415 `unsupported_newline` とする。将来の改行マッピングや
+   CRLF対応は別設計で固定してから追加する。
 8. **AIは変更提案チャネルで編集バッファまでしか変更しない。** 一般のClaude/Codex等にはWrite/Edit/
    Bash能力があり得るため、AI全体の権限を「書込みtoolなし」とは表現しない。Phase 4の提案生成だけは
    read-only allowlist経路に限定し、`EditSuggestion`をpaneId/filePath/requestId/sourceRevisionと
