@@ -39,6 +39,9 @@ func TestDriftAgyPaneMode(t *testing.T) {
 	needBin(t, "agy")
 	needBin(t, "tmux")
 	if !agy.SignedIn() {
+		if os.Getenv("E2E_REQUIRE") == "1" {
+			t.Fatal("agy is not signed in (E2E_REQUIRE=1 requires the real TUI credential)")
+		}
 		t.Skip("agy is not signed in (needs a real token — the boot-time sign-in can't be faked)")
 	}
 
