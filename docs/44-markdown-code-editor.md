@@ -143,11 +143,13 @@ Agentから明示的な `500 write_state_unknown` を受けた場合、または
 liveが送信本文と一致した場合の明示的な再保存では、復旧GETで観測した送信本文のrevisionをbaseとして
 ユーザー操作によりPUTを開始し、親directory fsyncまで成功した200を受けて初めて通常の世代規則で
 cleanにする。この場合のdurabilityリスク承認も自動判定ではなくユーザー操作とし、現在bufferが
-送信snapshotと同じなら `CleanRiskAccepted`、保存中に追加入力があれば観測revisionをbaseにした
-`Dirty` とする。`CleanRiskAccepted` はdirtyを解除したclean系状態だが、送信本文のlive反映を
-確認したユーザーがdurabilityリスクを明示承認した場合に限る。これは「通常保存は200でのみ
-clean」の唯一の例外であり、GET一致やtimeoutだけで自動遷移しない。どちらもリスク承認済みで
-あることをセッション中に表示し、保存中の入力を復旧結果で誤ってcleanにしない。
+送信snapshotと同じかにかかわらず、まず復旧GETで確認した送信本文のrevisionを
+`baseDiskRevision`へ設定する。その上で、現在bufferが送信snapshotと同じなら
+`CleanRiskAccepted`、保存中に追加入力があればその観測revisionをbaseにした `Dirty` とする。
+`CleanRiskAccepted` はdirtyを解除したclean系状態だが、送信本文のlive反映を確認したユーザーが
+durabilityリスクを明示承認した場合に限る。これは「通常保存は200でのみclean」の唯一の例外であり、
+GET一致やtimeoutだけで自動遷移しない。どちらもリスク承認済みであることをセッション中に表示し、
+保存中の入力を復旧結果で誤ってcleanにしない。
 
 ### 1.6 409競合の解決状態
 
@@ -325,7 +327,7 @@ Content-Typeは `application/json` とする。サーバーは互換性のため
 | field | 型 | 必須 | 契約 |
 |---|---|---:|---|
 | `path` | string | yes | browse root 相対の既存通常ファイル。GETと同一の文字列を使う。 |
-| `content` | string | yes | 保存後のファイル全体。UTF-8、NUL/CRなし、LF-only、2 MiB以下。空文字列を許可。 |
+| `content` | string | yes | 保存後のファイル全体。Unicode scalar valueからなるUTF-8、NUL/CRなし、LF-only、2 MiB以下。空文字列を許可。 |
 | `baseDiskRevision` | string | yes | `sha256:` + lowercase hex 64桁。クライアントが最後に取得/確認したディスク本文のrevision。 |
 
 未知のフィールドは拒否する。必須フィールドの欠落、型違い、revisionの形式違いは保存前に拒否する。
@@ -396,7 +398,7 @@ PUT が追加する確定コードは次のとおり。
 |---:|---|---|---|
 | 400 | `bad_path` | 空、絶対、traversal、NUL、Windows形式、長さ超過、またはcanonical相対パス規則違反 | 変更なし |
 | 400 | `symlink_not_allowed` | 対象または親componentにsymlinkがある。文字列/LstatだけではTOCTOUを防げないため、fd-relative操作で拒否する | 変更なし |
-| 400 | `bad_request` | wire bodyのUTF-8不正、JSON不正、必須フィールド欠落、型違い、未知フィールド、revision形式違い | 変更なし |
+| 400 | `bad_request` | wire bodyのUTF-8不正、JSON不正、lone high/low surrogate escape、必須フィールド欠落、型違い、未知フィールド、revision形式違い | 変更なし |
 | 415 | `unsupported_media_type` | Content-Typeが `application/json`（charset=utf-8含む）ではない | 変更なし |
 | 403 | `denied` | denylist、書込み不可root、権限・認可境界に該当 | 変更なし |
 | 404 | `not_file` | 対象が存在しない、ディレクトリ、通常ファイルでない | 変更なし |
@@ -414,9 +416,10 @@ PUT が追加する確定コードは次のとおり。
 その対象への操作権限を明示的に拒否するためである。Workspace stopped/starting、未認証、membership外
 などの共通エラーは、この表のPUT固有コードより優先される既存の横断契約（通常は401/403/409）を使う。
 
-PUT固有エラーは、requestのContent-Type/body上限を検査し、wire bodyがUTF-8不正またはJSONとして
-不正な場合はdecoded `content`の検査前に400 `bad_request` とする。decode後はfield、decoded `content`、
-path字句検証を確定し、mutex取得後にfd-relativeな安全境界・対象種別・read結果を判定する。
+PUT固有エラーは、requestのContent-Type/body上限を検査し、wire bodyがUTF-8不正、JSONとして不正、
+またはJSON文字列にlone high/low surrogate escapeを含む場合はdecoded `content`の検査前に
+400 `bad_request` とする。decode後はfield、decoded `content`、path字句検証を確定し、mutex取得後に
+fd-relativeな安全境界・対象種別・read結果を判定する。
 decoded request `content`は `too_large`、`binary_not_supported`（NUL）、`unsupported_newline`（CRを含む）の順に
 判定する。current本文は `too_large`、`binary_not_supported`（NULまたはUTF-8不正）、
 `unsupported_newline`（CRを含む）の順に
@@ -440,6 +443,13 @@ Phase 1のAgent/CP実装は、現在の `httpx.DecodeJSON` の単純な一回dec
 - HTTP bodyを16 MiBでhard limitし、超過を読み込まない。
 - hard limit内のwire body全体が厳密なUTF-8であることをJSON decode前に検査し、不正UTF-8は
   400 `bad_request` とする。wire bodyを不正UTF-8のままdecoded `content` として扱わない。
+- Go `encoding/json`等が不正なsurrogateをU+FFFDへ置換する前に、全JSON string tokenのescapeを
+  JSON構文として検証する。high surrogate（`\uD800`〜`\uDBFF`）は直後のlow surrogate
+  （`\uDC00`〜`\uDFFF`）と正しいpairを作る場合だけ許可し、lone high surrogateとlone low surrogateは
+  400 `bad_request` とする。正しいpairは対応するUnicode scalar valueへdecodeする。raw JSON上の
+  escaped backslashに続く文字列（例: `"\\ud800"`）はsurrogate escapeではないため拒否しない。
+- 実際のU+FFFDは有効なUnicode scalar valueである。UTF-8で直接表現されたU+FFFDとJSON escape
+  `\uFFFD`はどちらも許可し、lone surrogateを置換した結果のU+FFFDとは区別する。
 - JSON objectを1個だけ受け付け、decode後に末尾のwhitespace以外がないことを検査する。第2 JSON値、
   trailing garbage、空bodyを拒否する。
 - `DisallowUnknownFields`相当で未知フィールドを拒否し、required fieldと型を検証する。
@@ -564,7 +574,8 @@ wire envelope が必要な場合は version を持たせる。
   固定されている。
 - rename後directory fsync失敗の `write_state_unknown`、live反映とdurabilityの区別、
   `SaveStateUnknown`からの再保存/リスク承認、通常保存の200-only cleanと明示リスク承認の
-  例外、permission bitsのみ保持、owner/ACL/xattr非保証が固定されている。
+  例外、リスク承認時の`baseDiskRevision`更新、permission bitsのみ保持、owner/ACL/xattr非保証が
+  固定されている。
 - `baseDiskRevision`（保存API）と `baseRevision`/`bufferRevision`（AI/バッファ）を区別し、
   save snapshot、generation、応答喪失時の`SaveStateUnknown`とGET結果別遷移、dirty guard全経路が
   固定されている。
@@ -574,8 +585,9 @@ wire envelope が必要な場合は version を持たせる。
   invariant、revision regex検証が固定されている。
 - GETの `editable`/`editabilityReason`、opened fdのfstatを使う`size`、最大2回のsnapshot取得と
   size/content-length整合の保証範囲、decoded content 2 MiB、HTTP body 16 MiB、strict JSON decoder、
-  wireの不正UTF-8とdecoded contentのNUL/CRのエラー分類、JSONエラーとplain-text gateway
-  errorの境界、`suggestion_stale`のUIコードが固定されている。
+  wireの不正UTF-8、lone surrogate escape、decoded contentのNUL/CRのエラー分類、正しいsurrogate pairと
+  U+FFFDの許可、JSONエラーとplain-text gateway errorの境界、`suggestion_stale`のUIコードが
+  固定されている。
 - current file/path resource bound、`fs.file.put`のwrite_state_unknown監査、live namespaceとdurabilityを
   分けた説明、同一uidのnamespace mutator/hardlinkを脅威モデル外とする範囲が固定されている。
 - Phase 1以降の実装コード・依存追加・保存API実装・UI実装は本Phase 0の作業に含めない。
@@ -592,7 +604,9 @@ wire envelope が必要な場合は version を持たせる。
   `detail/outcome: write_state_unknown`、`http_status: 500` を記録する。通常の他の失敗は既存方針に
   従うが、live namespaceは新本文でdurabilityが不明となるこの結果だけは欠落させない。
 - `httpx.DecodeJSON`相当のstrict decoder、Content-Type、body/decoded size、trailing value、wireの厳密UTF-8、
-  unknown field検査を実装する。server error codeはAgent/CP定数とConsoleの英日i18nへ同時登録する。
+  surrogate pair、unknown field検査を実装する。server error codeはAgent/CP定数とConsoleの英日i18nへ
+  同時登録する。lone high/low surrogateの拒否、正しいpair、literal/escaped U+FFFD、escaped
+  backslash文字列をstrict decoderのGo単体テストへ追加する。
 - fd-relative path操作とGET/file/downloadのsymlink拒否を実装し、safeBrowsePath系helperをPUTへ流用しない。
 - GETのeditable判定、LF-only、revision、opened fdのfstatによるsize、CASの同一API直列化を実装する。
 - path全体4096 bytes、component255 bytes、current fileの2 MiB+1 read boundを実装する。GETは各回に
@@ -607,7 +621,8 @@ wire envelope が必要な場合は version を持たせる。
 
 - CodeMirror導入、view/edit、dirty、single-flight PUT、送信snapshot/generation、応答時dirty判定、
   `baseDiskRevision`更新、`SaveStateUnknown`とGET結果別の復旧、通常保存の200-only clean、
-  明示再保存/リスク承認に限定した `CleanRiskAccepted` を実装する。
+  明示再保存/リスク承認に限定した `CleanRiskAccepted`、リスク承認時の観測revisionによるbase更新を
+  実装する。
 - 全buffer input transaction（typing/IME/paste/undo/redo）にLF/NUL/unpaired surrogate/2 MiB validatorを
   適用し、失敗時はtransactionを適用せず通知する。
 - 409競合のConflictSnapshotとstate machine（remote採用、mine破棄、remoteをbaseにした手動merge、
