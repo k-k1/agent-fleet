@@ -165,7 +165,7 @@ supported.
 
 ## Kiro
 
-**kiro** (Kiro CLI — formerly Amazon Q Developer CLI) — on the **Kiro** card in the
+**kiro** (Kiro — formerly Amazon Q Developer CLI) — on the **Kiro** card in the
 "Agents" tab, press **"Sign in to Kiro"**. It's a **device-flow** sign-in: an authorize
 link with a confirmation code is shown; open it in your browser and approve (Builder ID /
 Google / GitHub etc.). Once you approve, the card shows "Connected" with your account

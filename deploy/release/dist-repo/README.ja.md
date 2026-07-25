@@ -8,7 +8,7 @@
 ## Agent Fleet とは
 
 Agent Fleet は、AI コーディングエージェント（Claude Code / Codex CLI /
-GitHub Copilot CLI / Antigravity CLI / Cursor CLI / Kiro CLI / OpenCode）を「フリート」として
+GitHub Copilot CLI / Antigravity CLI / Cursor CLI / Kiro / OpenCode）を「フリート」として
 まとめて運用するための、セルフホスト型の Web コンソールです。利用者ごとに隔離された
 ワークスペースが割り当てられ、ブラウザからエージェントセッションを起動・操作・監視
 できます。各ワークスペースは、CPU / メモリを cgroup クォータで絞った Docker コンテナ
