@@ -54,10 +54,15 @@ jobs:
           test -f "agent-fleet-images-$VERSION.tar.gz"   # B
           test -f SHA256SUMS                             # D
           sha256sum -c SHA256SUMS
-          # A bundles the aws/ tree and NOTICE, and .env.example is pinned to VERSION
+          # A bundles the aws/ tree, LICENSE and NOTICE, and .env.example is pinned to VERSION
           tar tzf "agent-fleet-$VERSION.tar.gz" | grep -q "^agent-fleet-$VERSION/aws/ecs/cfn/30-ingress.yaml$"
           tar tzf "agent-fleet-$VERSION.tar.gz" | grep -q "^agent-fleet-$VERSION/aws/ec2-single/cfn.yaml$"
           tar tzf "agent-fleet-$VERSION.tar.gz" | grep -q "^agent-fleet-$VERSION/NOTICE$"
+          tar tzf "agent-fleet-$VERSION.tar.gz" | grep -q "^agent-fleet-$VERSION/LICENSE$"
+          # NOTICE must keep the primary-distribution URL that Apache-2.0 4(d) makes
+          # redistributors carry forward
+          tar xzf "agent-fleet-$VERSION.tar.gz" "agent-fleet-$VERSION/NOTICE" -O \
+            | grep -q "github.com/k-k1/agent-fleet-dist"
           # release-ecr.sh is bundled with the execute bit set (P3 §35.7.3-5)
           tar tvzf "agent-fleet-$VERSION.tar.gz" | grep -E "^-rwx.* agent-fleet-$VERSION/aws/ecs/release-ecr\.sh$"
           tar xzf "agent-fleet-$VERSION.tar.gz" "agent-fleet-$VERSION/.env.example" -O | grep -q "^VERSION=$VERSION$"
@@ -165,11 +170,12 @@ jobs:
           # the rootfs.json pin matches R (af verifies/extracts against this sha)
           sha="$(sed -n 's/.*"sha256": *"\([^"]*\)".*/\1/p' "$C/rootfs.json")"
           echo "$sha  $R" | sha256sum -c -
-          # console / docs (denylist applied) / NOTICE / VERSION are bundled
+          # console / docs (denylist applied) / LICENSE / NOTICE / VERSION are bundled
           test -f "$C/console/index.html"
           test -f "$C/docs/35-packaging.md" && test -d "$C/docs/dev"
           test ! -e "$C/docs/HANDOFF.md" && test ! -e "$C/docs/talk" && test ! -e "$C/docs/history"
-          test -f "$C/NOTICE" && test -f "$C/README.md"
+          test -f "$C/NOTICE" && test -f "$C/README.md" && test -f "$C/LICENSE"
+          grep -q "github.com/k-k1/agent-fleet-dist" "$C/NOTICE"
           test "$(cat "$C/VERSION")" = "$VERSION"
           # the image-env manifest is injected into the rootfs (CP rootfs mode
           # depends on it)

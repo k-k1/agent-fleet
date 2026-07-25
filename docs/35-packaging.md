@@ -399,6 +399,26 @@ GitHub API の license 表示で確認）:
 - 社内・自社デプロイ用のイメージ（配布しない）は全焼き込みのままでよい — ライセンス問題は
   「頒布」で生じ、自社内利用では生じない。
 
+**自分の側の表示（決定・2026-07-25）。** 監査したところ、著作権表示は `NOTICE`
+（`Copyright 2026 k-k1` ＋ Apache-2.0 明記）とルート `README.md` §License にしかなく、
+**公開 dist repo には LICENSE も NOTICE も無かった**（README×2 と install スクリプト×2
+だけ＝GitHub 上は「ライセンス未設定」に見える）。docs 配下の md に copyright ヘッダが
+無いのは Apache-2.0 では正常（ルートの LICENSE + NOTICE が著作物全体を覆う）ので、
+per-file ヘッダは**入れない**方針とする。対処:
+
+- **1 次配布元の URL は `NOTICE` に書く。** Apache-2.0 **§4(d)** が「再配布時は NOTICE の
+  帰属表示を可読な形で引き継ぐこと」を義務付けているため、NOTICE に書けば再配布者に
+  自動で伝播する。README だけに書いてもこの効力は無い。文面は帰属表示＋§4(d)/§4(b) の
+  再掲に留め、**「本 NOTICE はライセンスに条件を追加しない」と明記**する（§4(d) は
+  追加の帰属表示を認めるが、ライセンスを改変すると解される記述は禁じているため）。
+- dist repo へ `LICENSE` / `NOTICE` を seed する。**ソースはリポジトリルート**とし
+  dist-repo/ に複製を置かない（tar 同梱物との drift 防止）。
+- 配布 tar（A/C）には元から両方入っていたが、release-gate は `NOTICE` しか検査して
+  いなかった。`LICENSE` の同梱と、NOTICE 内の 1 次配布元 URL の残存を assert に追加
+  （`dist-stub-test.sh` case 12 でも URL を守る）。
+- 受領者が読む `deploy/native/README.md` / `deploy/compose/README.md` と dist README
+  （en/ja）にも 1 次配布元と §4(d) の一文を追記。
+
 ### 35.4.2 公開 dist repo（決定・2026-07-21）
 
 **`k-k1/agent-fleet-dist`（public）を新設**し、成果物の置き場とする（ユーザー決定）。

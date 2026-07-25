@@ -3,6 +3,18 @@ Copyright 2026 k-k1
 
 This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 
+Primary distribution:
+  https://github.com/k-k1/agent-fleet-dist
+
+  Official Agent Fleet releases are published only at the URL above. Section 4(d)
+  of the Apache License requires redistributions to carry the attribution notices
+  in this NOTICE file, so please keep the line above intact when you redistribute
+  Agent Fleet or a derivative work, so that recipients can find the original. If
+  you modified the work, section 4(b) separately requires the modified files to
+  carry prominent notice of the change.
+
+  Nothing in this NOTICE adds conditions to the Apache License, Version 2.0.
+
 --------------------------------------------------------------------------------
 This product bundles the CMU Pronouncing Dictionary (used by the TTS English→katakana
 preprocessing in control-plane/enkana.go):
