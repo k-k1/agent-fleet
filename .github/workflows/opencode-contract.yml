@@ -59,6 +59,11 @@ jobs:
   contract:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # A pinned contract must stay pinned. Without the same guard as the workspace
+      # image, opencode starts a background `npm install @latest`; the executable can
+      # disappear between tests and the "pinned" matrix silently tests another version.
+      OPENCODE_DISABLE_AUTOUPDATE: "true"
     strategy:
       fail-fast: false # even if pinned breaks we want latest's result (and vice versa)
       matrix:
