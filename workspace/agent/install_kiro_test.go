@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -25,24 +26,108 @@ func TestKiroAsset(t *testing.T) {
 	}
 }
 
-// TestInstallKiroIdempotentSkip: an already-present kiro-cli short-circuits before any
-// download. A killed prior install that left a broken kiro-cli would be treated as
-// "installed" here — that is exactly why the real install now places kiro-cli LAST via
-// atomic rename, so this fast path only ever sees a fully-installed binary.
-func TestInstallKiroIdempotentSkip(t *testing.T) {
+// fakeKiroHome sets up HOME with a stub kiro-cli that reports version ver from
+// `--version` (and swallows `settings …`, i.e. pinKiroSettings), plus a versions.json
+// pinning kiro=pin. Returns ~/.local/bin. ver=="" makes `--version` print nothing.
+func fakeKiroHome(t *testing.T, ver, pin string) string {
+	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	binDir := filepath.Join(home, ".local", "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// A fake kiro-cli that swallows `settings …` (pinKiroSettings) and exits 0.
-	fake := filepath.Join(binDir, "kiro-cli")
-	if err := os.WriteFile(fake, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	script := "#!/bin/sh\nexit 0\n"
+	if ver != "" {
+		script = "#!/bin/sh\ncase \"$1\" in --version) echo \"kiro-cli " + ver + "\";; esac\nexit 0\n"
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "kiro-cli"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := installKiro(); err != nil {
-		t.Fatalf("installKiro with present binary should skip cleanly, got %v", err)
+	pins := filepath.Join(home, "versions.json")
+	if err := os.WriteFile(pins, []byte(`{"kiro":"`+pin+`","kiro_sha256":"deadbeef"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	orig := buildPinsPath
+	buildPinsPath = pins
+	t.Cleanup(func() { buildPinsPath = orig })
+	return binDir
+}
+
+// TestInstallKiroIdempotentSkip: a kiro-cli already at the PINNED version short-circuits
+// before any download, and records the marker so the next launch is exec-free. A killed
+// prior install that left a broken kiro-cli would be treated as "installed" here — that
+// is exactly why the real install places kiro-cli LAST via atomic rename, so this fast
+// path only ever sees a fully-installed binary.
+func TestInstallKiroIdempotentSkip(t *testing.T) {
+	binDir := fakeKiroHome(t, "2.14.2", "2.14.2")
+	if err := installKiro(false); err != nil {
+		t.Fatalf("installKiro with pinned binary should skip cleanly, got %v", err)
+	}
+	b, err := os.ReadFile(kiroVersionMarkerPath(binDir))
+	if err != nil || strings.TrimSpace(string(b)) != "2.14.2" {
+		t.Fatalf("marker not recorded for the skip fast path: %q / %v", string(b), err)
+	}
+	if !kiroInstallCurrent() {
+		t.Error("kiroInstallCurrent() = false for a binary already at the pin")
+	}
+}
+
+// TestKiroCheckPinDrift is the regression this whole path exists for: the ~/.local copy
+// survives image rebuilds, so when versions.json bumps the pin (2.14.1 → 2.14.2) the
+// installed kiro must be reported STALE — the old presence-only check left users on the
+// first version they ever installed, forever (kiro's own updater is pinned off).
+func TestKiroCheckPinDrift(t *testing.T) {
+	binDir := fakeKiroHome(t, "2.14.1", "2.14.2")
+	p, cur, st := kiroCheck(binDir, "2.14.2")
+	if st != kiroStale || cur != "2.14.1" || p != filepath.Join(binDir, "kiro-cli") {
+		t.Fatalf("kiroCheck = (%q, %q, %v), want stale at 2.14.1", p, cur, st)
+	}
+	if kiroSkipInstall(binDir, "2.14.2", "", false) {
+		t.Error("a stale install must NOT be skipped")
+	}
+	if kiroInstallCurrent() {
+		t.Error("kiroInstallCurrent() = true for a stale install (the install route would answer \"done\")")
+	}
+	// Same version → current, and the recorded marker then short-circuits the probe.
+	if _, _, st := kiroCheck(binDir, "2.14.1"); st != kiroCurrent {
+		t.Errorf("matching version must be current, got %v", st)
+	}
+}
+
+// TestKiroCheckMarkerFastPath: the marker written by a successful install lets the
+// per-launch guard answer "current" from a stat, without exec'ing the 855MB binary.
+func TestKiroCheckMarkerFastPath(t *testing.T) {
+	binDir := fakeKiroHome(t, "", "2.14.2") // stub reports NO version
+	if _, _, st := kiroCheck(binDir, "2.14.2"); st != kiroUnknownVer {
+		t.Fatalf("without a marker an unreadable version must be kiroUnknownVer, got %v", st)
+	}
+	writeKiroVersionMarker(binDir, "2.14.2")
+	if _, _, st := kiroCheck(binDir, "2.14.2"); st != kiroCurrent {
+		t.Errorf("marker matching the pin must short-circuit to current, got %v", st)
+	}
+	// A marker from an older pin is only a fast path for "current" — it must not be
+	// trusted to declare staleness on its own; the binary probe decides.
+	if _, _, st := kiroCheck(binDir, "2.15.0"); st != kiroUnknownVer {
+		t.Errorf("marker mismatch must fall through to the probe, got %v", st)
+	}
+}
+
+// TestInstallKiroUnknownVersionLeavesAlone: a binary that can't report a version is left
+// in place (warn only) rather than triggering a 554MB re-download on every launch.
+func TestInstallKiroUnknownVersionLeavesAlone(t *testing.T) {
+	fakeKiroHome(t, "", "2.14.2")
+	if err := installKiro(true); err != nil {
+		t.Fatalf("unparsable version should skip cleanly, got %v", err)
+	}
+}
+
+// TestInstallKiroNoPinLeavesAlone: no versions.json (hand-built image) → nothing to
+// compare against, so a present binary is left alone instead of being re-installed.
+func TestInstallKiroNoPinLeavesAlone(t *testing.T) {
+	fakeKiroHome(t, "2.14.1", "")
+	if err := installKiro(true); err != nil {
+		t.Fatalf("missing pin with a present binary should skip cleanly, got %v", err)
 	}
 }
 
