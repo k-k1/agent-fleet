@@ -59,6 +59,11 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
+	if m.Locked {
+		httpx.WriteErr(w, http.StatusForbidden, errCodeLocked,
+			"session is locked against deletion; unlock it first")
+		return
+	}
 	if sessionAlive(m) {
 		httpx.WriteErr(w, http.StatusConflict, "session_running",
 			"session is running; stop it before deleting")
