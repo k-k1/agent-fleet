@@ -18,7 +18,7 @@ description: Go / Node / tmux と指定エージェントの実 CLI を runner �
 
 inputs:
   agent:
-    description: "claude | codex | opencode"
+    description: "claude | codex | opencode | copilot"
     required: true
   version:
     description: "pinned（Dockerfile の ARG ピン）| latest（実フリートが走らせる版）| 明示の版（例 0.144.3）"
@@ -63,7 +63,8 @@ runs:
           claude)   arg=CLAUDE_CODE_VERSION; pkg="@anthropic-ai/claude-code" ;;
           codex)    arg=CODEX_VERSION;       pkg="@openai/codex" ;;
           opencode) arg=OPENCODE_VERSION;    pkg="opencode-ai" ;;
-          *) echo "::error::agent 入力が不正: '$AGENT'（claude | codex | opencode）"; exit 1 ;;
+          copilot)  arg=COPILOT_VERSION;     pkg="@github/copilot" ;;
+          *) echo "::error::agent 入力が不正: '$AGENT'（claude | codex | opencode | copilot）"; exit 1 ;;
         esac
 
         if [ "$VERSION" = pinned ]; then
