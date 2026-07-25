@@ -8,6 +8,7 @@
 import { create } from "zustand";
 import { api, getTenant, setTenant, setUser } from "../api/client.ts";
 import type { Whoami, Tenant } from "../../types/app.ts";
+import { confirmDirtyNavigation } from "../../features/editor/dirtyRegistry.ts";
 
 interface TenantStore {
   whoami: Whoami | null;
@@ -20,7 +21,7 @@ interface TenantStore {
   /** Resolve identity + memberships once at boot. */
   init(): Promise<void>;
   /** Switch the active tenant (picker). Callers re-sync their own data. */
-  select(slug: string): void;
+  select(slug: string): Promise<void>;
 }
 
 export const useTenantStore = create<TenantStore>((set) => ({
@@ -62,7 +63,9 @@ export const useTenantStore = create<TenantStore>((set) => ({
     set({ tenant: cur, showPicker: true });
   },
 
-  select(slug: string) {
+  async select(slug: string) {
+    if (slug === getTenant()) return;
+    if (!(await confirmDirtyNavigation("tenant"))) return;
     setTenant(slug);
     set({ tenant: slug });
   },

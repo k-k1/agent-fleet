@@ -8,6 +8,7 @@ import { useFilesStore } from "../files/store.ts";
 import { ConfirmDialog } from "../../ui/ConfirmDialog.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
+import { confirmDirtyNavigation } from "../editor/dirtyRegistry.ts";
 
 // DangerTab: the destructive workspace-lifecycle actions (作り直す / ホームを掃除する),
 // split out of the toolchains (ワークスペース) tab into their own rail item so a
@@ -21,9 +22,12 @@ export function DangerTab() {
   // views point at is about to go away (the terminal reconciler disposes the other
   // panes' xterms after resetToTerminal), then we refresh sessions/repos/files.
   const runDestructive = async (action: () => Promise<string | null>, failMsg: string) => {
-    useLayoutStore.getState().resetToTerminal();
+    if (!(await confirmDirtyNavigation("workspace_lifecycle"))) return;
     const err = await action();
     if (err) toast(failMsg + err);
+    // The lifecycle store performs the dirty guard before issuing the request.
+    // Resetting first could destroy a buffer before that guard is shown.
+    useLayoutStore.getState().resetToTerminal();
     void useSessionsStore.getState().refresh();
     void useReposStore.getState().refresh();
     useFilesStore.getState().bump();
@@ -40,8 +44,8 @@ export function DangerTab() {
       setBusy(false);
     }
   };
-  const doRecreate = () => run(() => useWorkspaceStore.getState().recreate(), tr("env.recreate_failed"));
-  const doCleanHome = () => run(() => useWorkspaceStore.getState().cleanHome(), tr("env.cleanhome_failed"));
+  const doRecreate = () => run(() => useWorkspaceStore.getState().recreate(true), tr("env.recreate_failed"));
+  const doCleanHome = () => run(() => useWorkspaceStore.getState().cleanHome(true), tr("env.cleanhome_failed"));
 
   return (
     <div className="display-settings">

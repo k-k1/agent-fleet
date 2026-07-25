@@ -41,3 +41,66 @@ test("Console → セッションを開く → 打鍵がコンテナに届く", 
     )
     .toContain(nonce);
 });
+
+test("Text編集 → keyboard/ボタン保存 → CAS競合をmine保持で表示", async ({ page, request }) => {
+  await page.goto(base + "/");
+
+  // home scopeの再帰検索から、先行テストが実コンテナに作成したテキストを開く。
+  const files = page.locator(".ui-section", { has: page.locator(".ui-section-title", { hasText: /ファイル|Files/ }) });
+  const toggle = files.locator(".ui-section-toggle");
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+  await files.locator(".files-search-scope button").nth(1).click();
+  await files.locator(".proj-filter input").fill("ui-marker.txt");
+  const row = files.locator('.fsrow[data-path="ui-marker.txt"]');
+  await expect(row).toBeVisible({ timeout: 30_000 });
+  await row.click();
+
+  const tabs = page.getByRole("tablist", { name: /ファイル表示モード|File display mode/ });
+  const viewTab = tabs.getByRole("tab", { name: /表示|View/ });
+  const editTab = tabs.getByRole("tab", { name: /編集|Edit/ });
+  await expect(viewTab).toHaveAttribute("aria-selected", "true");
+  await editTab.click();
+  await expect(editTab).toHaveAttribute("aria-selected", "true");
+  const cm = page.locator(".file-editor-cm .cm-content");
+  await expect(cm).toBeFocused();
+
+  // Ctrl/Cmd+S と常設Saveボタンを同じsnapshotフローで検証する。
+  const first = `keyboard-save-${Date.now()}\n`;
+  await page.keyboard.press("Control+A");
+  await page.keyboard.type(first);
+  await page.keyboard.press("Control+S");
+  await expect(page.locator(".fileview").getByRole("status")).toContainText(/保存しました|Saved/);
+  await expect.poll(async () => (await (await request.get(`${base}/api/fs/file?path=ui-marker.txt`)).json()).content)
+    .toBe(first);
+
+  const second = `button-save-${Date.now()}\n`;
+  await page.keyboard.press("Control+A");
+  await page.keyboard.type(second);
+  await page.locator(".fileview").getByRole("button", { name: /保存|Save/, exact: true }).click();
+  await expect(page.locator(".fileview").getByRole("status")).toContainText(/保存しました|Saved/);
+
+  // 外部writerを挟んで旧baseのPUTを409にし、mine/remote差分と解決操作を確認する。
+  const beforeConflict: any = await (await request.get(`${base}/api/fs/file?path=ui-marker.txt`)).json();
+  const mine = `mine-${Date.now()}\n`;
+  await cm.click();
+  await page.keyboard.press("Control+A");
+  await page.keyboard.type(mine);
+  const remote = `remote-${Date.now()}\n`;
+  const external = await request.put(`${base}/api/fs/file`, {
+    headers: { "content-type": "application/json" },
+    data: {
+      path: "ui-marker.txt",
+      content: remote,
+      baseDiskRevision: beforeConflict.revision,
+    },
+  });
+  expect(external.status()).toBe(200);
+  await page.keyboard.press("Control+S");
+  const conflict = page.getByRole("alert", { name: /リビジョン競合|Revision conflict/ });
+  await expect(conflict).toBeVisible();
+  await expect(conflict).toContainText(mine.trim());
+  await expect(conflict).toContainText(remote.trim());
+  await conflict.getByRole("button", { name: /remoteを採用|Adopt remote/ }).click();
+  await expect(page.locator(".fileview").getByRole("status")).toContainText(/保存済み|Saved/);
+  await expect(cm).toContainText(remote.trim());
+});

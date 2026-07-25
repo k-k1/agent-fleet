@@ -21,6 +21,9 @@
      content panes below are transparent so they sit on it. Default = theme --bg. */
   background: var(--viewer-bg, var(--bg));
 }
+.fileview {
+  position: relative;
+}
 
 .mt-toolrun.open > .mt-toolrun-head {
   opacity: 0.7;
@@ -944,6 +947,148 @@
   word-break: break-word;
   overflow: auto;
   padding: 8px 14px;
+}
+
+/* Phase 2 text/code editor. The CodeMirror tree stays mounted while view mode is
+   selected so its in-memory undo history is not discarded. `hidden` removes only
+   the inactive shell from layout; no editor content enters layout persistence. */
+.file-viewer-shell,
+.file-editor-shell {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.file-viewer-shell[hidden],
+.file-editor-shell[hidden] {
+  display: none;
+}
+.file-viewer-shell > .codeview-wrap,
+.file-viewer-shell > .md-scroll,
+.file-viewer-shell > .filebody {
+  flex: 1;
+  min-height: 0;
+}
+.file-editor-cm {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.file-editor-cm .cm-editor {
+  height: 100%;
+  color: var(--fg);
+}
+.file-editor-cm .cm-gutters {
+  color: var(--muted);
+  background: color-mix(in srgb, var(--bg) 94%, var(--fg));
+  border-color: var(--border);
+}
+.file-editor-cm .cm-activeLine,
+.file-editor-cm .cm-activeLineGutter {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.file-editor-cm .cm-focused {
+  outline: none;
+}
+.file-mode-tabs {
+  flex: 0 0 auto;
+}
+.file-save-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.file-editor-status {
+  flex: 0 0 auto;
+  min-height: 22px;
+  padding: 2px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+.file-editor-status.is-alert {
+  color: var(--warning, #d29922);
+  font-weight: 600;
+}
+.file-editor-resolution {
+  position: absolute;
+  z-index: 8;
+  inset: auto 10px 10px 10px;
+  max-height: min(70%, 620px);
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--warning, #d29922);
+  border-radius: 8px;
+  background: var(--surface, var(--bg));
+  box-shadow: 0 8px 28px rgb(0 0 0 / 35%);
+}
+.file-editor-resolution.collapsed {
+  inset: auto 10px 10px auto;
+  padding: 6px;
+}
+.file-editor-resolution h4,
+.file-editor-resolution p {
+  margin: 0 0 8px;
+}
+.file-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.file-mine-remote-diff {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  max-height: 300px;
+}
+.file-diff-column {
+  min-width: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.file-diff-column > strong {
+  display: block;
+  position: sticky;
+  top: 0;
+  padding: 4px 8px;
+  background: var(--surface, var(--bg));
+}
+.file-diff-column pre,
+.file-merge-reference pre {
+  margin: 0;
+  padding: 6px 8px;
+  font: 12px/1.45 var(--mono);
+  white-space: pre;
+}
+.file-diff-column span {
+  display: block;
+}
+.file-diff-column .diff-mine {
+  background: rgb(248 81 73 / 14%);
+}
+.file-diff-column .diff-remote {
+  background: rgb(63 185 80 / 14%);
+}
+.file-merge-reference {
+  max-height: 30%;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 90%, var(--fg));
+}
+.file-merge-reference > strong {
+  display: block;
+  padding: 4px 8px;
+}
+@container paneview (max-width: 600px) {
+  .file-mine-remote-diff {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Floating action pills by a code selection (→ 送る / 読み上げ). body-portaled group,
