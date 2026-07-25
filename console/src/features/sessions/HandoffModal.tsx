@@ -9,7 +9,7 @@
 // connections cache the always-mounted repo rail warms, so the list appears instantly
 // instead of a beat late; it only self-fetches when the cache is still cold.
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import type { FormEvent } from "react";
+import type { FormEvent, KeyboardEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { api } from "../../core/api/client.ts";
@@ -17,6 +17,7 @@ import { agentOf, repoLaunchKinds } from "../../agents/registry.ts";
 import { getCachedConns, setCachedConns, subscribeConns } from "../repos/connsCache.ts";
 import { kindDisplayName } from "../../lib/sessionkind.ts";
 import { useT } from "../../lib/i18n/index.ts";
+import { useSettings } from "../../lib/settings.ts";
 import { displayName } from "../../lib/sessionview.ts";
 import type { Session, SessionKind, ConnectionsStatus } from "../../types/session.ts";
 import type { SessionActions } from "./useSessionActions.tsx";
@@ -29,6 +30,7 @@ interface HandoffModalProps {
 
 export function HandoffModal({ session, actions, onClose }: HandoffModalProps) {
   const tr = useT();
+  const settings = useSettings();
   const conns = useSyncExternalStore(subscribeConns, getCachedConns, getCachedConns);
   const [tried, setTried] = useState(false); // a cold-cache self-fetch has settled
   const [note, setNote] = useState("");
@@ -70,8 +72,7 @@ export function HandoffModal({ session, actions, onClose }: HandoffModalProps) {
     setTarget(targets.includes(session.kind) ? session.kind : targets[0]);
   }, [targets, target, session.kind]);
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
+  const start = async () => {
     if (!target || busy) return;
     setBusy(true);
     try {
@@ -79,6 +80,19 @@ export function HandoffModal({ session, actions, onClose }: HandoffModalProps) {
       onClose();
     } finally {
       setBusy(false);
+    }
+  };
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    void start();
+  };
+  const onNoteKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+    const mod = e.metaKey || e.ctrlKey;
+    const submitWithKey = settings.mirrorSend !== "enter" ? mod : !e.shiftKey && !mod;
+    if (submitWithKey) {
+      e.preventDefault();
+      void start();
     }
   };
 
@@ -128,6 +142,7 @@ export function HandoffModal({ session, actions, onClose }: HandoffModalProps) {
             <textarea
               value={note}
               onChange={(e) => setNote(e.target.value)}
+              onKeyDown={onNoteKeyDown}
               rows={3}
               placeholder={tr("handoff.note_ph")}
             />

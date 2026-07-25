@@ -239,9 +239,13 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   };
   const submit = () => void start(false);
 
-  // ⌘/Ctrl+Enter submits from the prompt box (plain Enter newlines).
+  // Follow the shared composer send-key setting: Ctrl/⌘+Enter (default), or
+  // Enter with Shift+Enter reserved for a newline.
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+    if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+    const mod = e.metaKey || e.ctrlKey;
+    const submitWithKey = settings.mirrorSend !== "enter" ? mod : !e.shiftKey && !mod;
+    if (submitWithKey) {
       e.preventDefault();
       submit();
     }
