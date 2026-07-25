@@ -302,15 +302,33 @@ jobs:
           set -eux
           for f in deploy/release/publish-dist.sh deploy/release/dist-repo/install.sh \
                    deploy/release/dist-repo/install-compose.sh \
+                   deploy/release/notes-body.sh deploy/release/gen-changelog.sh \
                    deploy/local/dist-stub-test.sh; do
             bash -n "$f"
           done
           shellcheck deploy/release/publish-dist.sh deploy/release/dist-repo/install.sh \
             deploy/release/dist-repo/install-compose.sh \
+            deploy/release/notes-body.sh deploy/release/gen-changelog.sh \
             deploy/local/dist-stub-test.sh
 
       - name: publish/install stub run (call-sequence + file:// flow)
         run: deploy/local/dist-stub-test.sh
+
+      # The seeded CHANGELOGs are generated from notes/index.tsv + the notes files;
+      # this catches a ledger row or notes edit that was not regenerated.
+      - name: dist CHANGELOG is up to date
+        run: deploy/release/gen-changelog.sh --check
+
+      # Every version in the ledger must have canonical (English) notes, or the
+      # publish would fail at render time.
+      - name: every released version has notes
+        run: |
+          set -eu
+          while IFS="$(printf '\t')" read -r v _date _commit; do
+            case "$v" in ''|\#*) continue ;; esac
+            test -f "deploy/release/notes/$v.md" \
+              || { echo "::error::missing release notes: deploy/release/notes/$v.md"; exit 1; }
+          done < deploy/release/notes/index.tsv
 
       - name: chromium CDN real download (pinned build)
         run: |
