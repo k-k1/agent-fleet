@@ -229,8 +229,11 @@ function ToolVersions({ running }: { running: boolean }) {
                 </td>
                 <td>
                   {cell(t.baked)}
-                  {t.pin && t.baked && t.baked.version !== t.pin && (
-                    <span className="tool-ver-pin" title={tr("env.pin_title")}>
+                  {/* ピンは versions.json 由来なので焼き込み実体が無くても出す。lean
+                      variant（BAKE_AGENT_CLIS=0）は /usr/local に CLI を焼かないため
+                      baked=null になり、以前はここでピン表示ごと消えていた。 */}
+                  {t.pin && (!t.baked || t.baked.version !== t.pin) && (
+                    <span className="tool-ver-pin" title={t.baked ? tr("env.pin_title") : tr("env.pin_only_title")}>
                       {tr("env.pin_label", { pin: t.pin })}
                     </span>
                   )}
