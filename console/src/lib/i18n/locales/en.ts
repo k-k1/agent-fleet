@@ -1035,7 +1035,7 @@ export const en: Record<keyof typeof ja, string> = {
     "When on, a focused shell or SSM terminal becomes a pure terminal: unlike the option above, even the leader (Ctrl/⌘+K) and palette (Ctrl/⌘+P) are passed through, so Ctrl+K (kill-line), Ctrl+P (previous command) and the like reach the shell. Only shell/SSM terminals are affected; agent terminals are unchanged. To use app shortcuts again, focus another pane. Default off.",
   "keys.kt.quickRepliesLabel": "Show reply suggestions (candidate chips above the composer)",
   "keys.kt.quickRepliesNote":
-    "When on, chips above the composer suggest your frequent short replies (OK, proceed, commit, …) plus candidates tuned to the latest reply. Click to drop one into the input, or hold ⌥ (Alt) to send immediately. Suggestions are learned from the short messages you send. Default on.",
+    "When on, chips above the composer suggest your frequent short replies (OK, proceed, commit, …) plus candidates tuned to the latest reply. Click to drop one into the input, or Ctrl/⌘/Alt-click to send immediately. Suggestions are learned from the short messages you send. Default on.",
   "keys.kt.replySuggestLabel": "Show the ✨ AI reply-suggestion button",
   "keys.kt.replySuggestNote":
     "When on, a ✨ button sits left of the reply suggestions. Pressing it sends the recent conversation to an AI and adds context-aware reply candidates to the chips. Tokens are only spent when you press it. The AI backend is auto-picked in order claude→codex→opencode→cursor, so it still works when Claude is unavailable as long as another is. Default on.",
@@ -1361,7 +1361,7 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.skip_until_next": "Skip until the next version",
   "mirror.update_choice_hint": "Waiting to choose on the update prompt",
   "mirror.resuming": "Resuming… you can type once it's ready",
-  "mirror.suggest_hint": "Click to insert · ⌥ (Alt) to send now",
+  "mirror.suggest_hint": "Click to insert · Ctrl/⌘/Alt-click to send now",
   "mirror.suggest_ai": "Suggest replies with AI (from the recent conversation)",
   "mirror.suggest_none": "Couldn't suggest replies (too little conversation, or no AI backend available)",
   "mirror.suggest_failed": "Failed to generate reply suggestions",
