@@ -10,9 +10,13 @@
 #     re-downloads for users).
 #   - app release `v<v>`          … attaches A / B / C (+ -bundle) / SHA256SUMS.
 #     An existing tag fails (releases are immutable — redo by bumping the version).
-# --seed pushes the dist repo contents (README.md / README.ja.md / install.sh /
-# install-compose.sh) from deploy/release/dist-repo/ via the contents API (skipped when identical =
-# idempotent). Creates the repo if it does not exist.
+#     The body is rendered from deploy/release/notes/<v>.md (+ .ja.md) by
+#     notes-body.sh; a missing notes file is a hard error.
+# --seed pushes the dist repo contents (README.md / README.ja.md / CHANGELOG.md /
+# CHANGELOG.ja.md / install.sh / install-compose.sh) from deploy/release/dist-repo/ via the
+# contents API (skipped when identical = idempotent). Creates the repo if it does not
+# exist. The CHANGELOGs are generated — run gen-changelog.sh after adding the
+# notes/index.tsv row, before publishing.
 # Auth via gh (local = gh auth login / CI = GH_TOKEN set to DIST_PUBLISH_TOKEN).
 # Runbook for a real publish: docs/35 §35.8.2.
 set -euo pipefail
@@ -75,7 +79,7 @@ if [ "$SEED" = 1 ]; then
     run gh repo create "$REPO" --public \
       --description "Agent Fleet — distribution artifacts (no source here)"
   fi
-  for f in README.md README.ja.md install.sh install-compose.sh; do
+  for f in README.md README.ja.md CHANGELOG.md CHANGELOG.ja.md install.sh install-compose.sh; do
     local_b64="$(base64 -w0 < "$HERE/dist-repo/$f")"
     resp="$(gh api "repos/$REPO/contents/$f" \
       --jq '.sha + " " + (.content | gsub("\n"; ""))' 2>/dev/null)" || resp=""
@@ -127,10 +131,20 @@ for f in "agent-fleet-$VERSION.tar.gz" "agent-fleet-images-$VERSION.tar.gz" \
   assets+=("$p")
 done
 assets+=("$DIST/SHA256SUMS")
+
+# Release notes come from deploy/release/notes/<v>.md (+ .ja.md) — see that dir's
+# README. Rendering is a hard requirement: a release with no notes is a bug, so a
+# missing notes file fails here rather than publishing a bare tag. The rendered
+# body is written into the dist dir so it can be reviewed after the fact.
+NOTES_BODY="$DIST/RELEASE_NOTES-$VERSION.md"
+echo "==> [publish] render release notes"
+VERSION="$VERSION" ROOTFS="$R_VER" REPO="$REPO" ARCH="$ARCH" \
+  "$HERE/notes-body.sh" > "$NOTES_BODY"
+
 echo "==> [publish] create release v$VERSION (${#assets[@]} assets)"
 run gh release create "v$VERSION" -R "$REPO" \
   --title "agent-fleet $VERSION" \
-  --notes "Agent Fleet $VERSION. Native: install.sh (see README). Compose: agent-fleet-$VERSION.tar.gz. Rootfs: rootfs-$R_VER." \
+  --notes-file "$NOTES_BODY" \
   "${assets[@]}"
 
 cat <<EOF

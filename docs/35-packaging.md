@@ -928,12 +928,31 @@ gh secret set DIST_PUBLISH_TOKEN   # プロンプトに PAT を貼る
 リリース（毎回）:
 
 ```bash
-# CI 経路（推奨）: Actions → publish-dist → Run workflow（version=0.1.0 等）
-gh workflow run publish-dist.yml -f version=0.1.0
-# ローカル経路（docker のあるホスト。<r> 不変リリースはこちら）:
-VERSION=0.1.0 deploy/release/build.sh --all [--rootfs-json <既存 rootfs.json>]
-VERSION=0.1.0 deploy/release/publish-dist.sh --seed
+# 0) リリースノートを書く（publish の前提。無いと publish は render 時に fail する）
+#    deploy/release/notes/<v>.md（英語＝正）と <v>.ja.md。書き方は notes/README.md
+VERSION=0.3.0 ROOTFS=<既存の r でよい> deploy/release/notes-body.sh   # 本文プレビュー
+# 1) 台帳へ 1 行追加（版 / 公開日 / ビルド元 commit）→ CHANGELOG 再生成 → commit
+$EDITOR deploy/release/notes/index.tsv
+deploy/release/gen-changelog.sh
+# 2) publish（--seed で CHANGELOG も dist repo へ push される）
+#    CI 経路（推奨）: Actions → publish-dist → Run workflow（version=0.3.0 等）
+gh workflow run publish-dist.yml -f version=0.3.0
+#    ローカル経路（docker のあるホスト。<r> 不変リリースはこちら）:
+VERSION=0.3.0 deploy/release/build.sh --all [--rootfs-json <既存 rootfs.json>]
+VERSION=0.3.0 deploy/release/publish-dist.sh --seed
+# 3) ビルド元 commit にタグを打って push（版→commit の対応を git 側にも残す）
+git tag -a v0.3.0 <build commit> -m "agent-fleet 0.3.0" && git push origin v0.3.0
 ```
+
+リリースノートの扱い（2026-07-25 整備）: 本文は `deploy/release/notes/<v>.md`
+（＋`.ja.md`）を正とし、`notes-body.sh` が「英語 → 日本語 → 成果物 footer」の順に
+組み立てる。footer（asset 名・`rootfs-<r>`・install 一行）は `<r>` がビルド時にしか
+確定しないため**ノート側には書かない**。publish はノート未整備を hard error にする
+（dist-stub-test の case 10/11 で固定）。release-gate の dist-gate が
+`gen-changelog.sh --check` と「台帳の全版にノートがある」ことを検査する。
+**アセットは不変だがノート本文はメタデータなので後から差し替え可能**
+（`gh release edit v<v> --notes-file -`）。0.1.0〜0.2.3 のノートはこの経路で後追い
+整備済み。
 
 検証（publish のたび）: 任意の Linux で
 `curl -fsSL https://raw.githubusercontent.com/k-k1/agent-fleet-dist/main/install.sh | bash`
@@ -1212,3 +1231,34 @@ claude 入力全断/curl --retry を反映した hotfix）。ただし **dist re
   AWS 行＋「AWS への導入」セクションを削除。配布物の `aws/` 同梱は不変）。
 - 定時実行・native 自動更新の bullet は 0.1.1 publish 後に seed へ追記済み＝次リリースで
   初公開となる（本節の範囲に含まれる）。
+
+> 本節の内容は 0.2.0 のリリースノート（`deploy/release/notes/0.2.0.md` / `.ja.md`）へ
+> 反映済み。「v0.1.2 で配布済み」と注記された修正は 0.1.2 のノート側へ分けてある。
+
+## 35.11 リリース台帳とノート（2026-07-25 整備）
+
+公開済みの版・公開日・**ビルド元 commit** は `deploy/release/notes/index.tsv`。
+各版の利用者向けノートは同ディレクトリの `<v>.md`（英語＝正）と `<v>.ja.md`。運用手順は
+`deploy/release/notes/README.md`、publish 手順への組み込みは §35.8.2。
+
+**なぜ台帳が必要だったか（再発防止）。** 0.1.0〜0.2.3 は publish 時にタグを打っておらず、
+版 → commit の対応が git 上に一切残っていなかった。復元は
+`gh run list --workflow publish-dist.yml --json headSha,createdAt` の `head_sha` を
+リリース作成時刻順に突き合わせて行った（全 7 版が develop の祖先で時系列順に並ぶことを
+`git merge-base --is-ancestor` で確認）。この経路は publish が workflow_dispatch である
+ことに依存しており、ログ保持期限を過ぎれば失われる。以後は **publish のたびに
+`v<version>` タグを打ち、台帳へ 1 行追加する**（§35.8.2 の手順 1・3）。7 版分のタグは
+遡って作成済み。
+
+| 版 | 公開日 | ビルド元 commit | rootfs |
+|---|---|---|---|
+| 0.1.0 | 2026-07-21 | `361deca1` | `fc943ac06dfa` |
+| 0.1.1 | 2026-07-21 | `790f756b` | `4677f9f5a67d` |
+| 0.1.2 | 2026-07-21 | `045dd714` | `1aadff3b24b7` |
+| 0.2.0 | 2026-07-23 | `b3c69ac9` | `eaa7b0d414de` |
+| 0.2.1 | 2026-07-23 | `8b85e0b9` | `f6f45f69b8ad` |
+| 0.2.2 | 2026-07-24 | `8ea59a6d` | `8a80051d6c2e` |
+| 0.2.3 | 2026-07-24 | `1836e496` | `0acd1112b7b0` |
+
+公開済み 7 版のノート本文は、この整備で 1 行のテンプレート文から書き下ろしへ差し替えた
+（`gh release edit --notes-file`。アセットは不変だがノートはメタデータなので可能）。
