@@ -61,9 +61,11 @@ CodeMirrorのoffsetに変換表を設けずに済む。将来CRLFを扱う場合
 
 保存成功時のrevisionは保存したraw bytesから再計算する。同じ本文は同じrevisionになる。
 
-同一APIの保存は、検証後に得た正規化相対パスをmutex keyとして対象パスごとに直列化する。
-入力文字列をkeyにしないため、`a/../b` 等の別名で直列化を回避できない。APIは比較時点で観測した
-現在本文のrevisionと `baseDiskRevision` が一致する場合だけ書込みを開始する。
+同一APIの保存は、request pathの字句検証で確定したcanonical相対pathをmutex keyとして対象パスごとに
+直列化する。入力文字列をkeyにせず、canonicalでない別名は拒否するため、`a/../b` 等で直列化を
+回避できない。key確定後は、対象や親directoryのfd安全検証、open、current本文のread/hashより前に
+mutexを取得し、親directoryのfsync成否を含む保存結果が確定するまで保持する。APIはmutex保持中に
+観測した現在本文のrevisionと `baseDiskRevision` が一致する場合だけ書込みを開始する。
 
 このCASは、**比較時点までにAgentが観測できた変更を検出し、同一APIの保存を直列化する契約**である。
 shell、Claude/Codex、git checkout等の外部writerをこのmutexへ参加させないv1では、比較後rename前の
@@ -123,13 +125,31 @@ bufferRevision, content, baseDiskRevision}` のsnapshotを保持する。応答�
 またはbufferRevisionがsnapshotと同じ場合だけdirtyを解除し、成功レスポンスのrevisionを新しい
 `baseDiskRevision`として保持する。入力が続いていた場合はdirtyを維持し、現在bufferを次の保存対象にする。
 
-応答を失った場合はGETでremoteのeditable/revisionを確認する。remote revisionが送信本文のhashと
-一致すればsnapshotの保存成功として上記ルールを適用し、一致しなければ競合または
-`write_state_unknown`としてユーザー確認を求める。保存中の入力を成功応答で誤ってcleanにしない。
+Agentから明示的な `500 write_state_unknown` を受けた場合、またはPUTがAgentへ到達した可能性を
+否定できないまま応答を失った場合は、`SaveSnapshot`と現在のmineを保持して
+`SaveStateUnknown`へ遷移する。この状態ではmineをdirtyのままとし、GETの一致だけで自動的にcleanへ
+遷移しない。GETで分かるのは現在のlive namespaceであり、renameのクラッシュ耐久性ではないためである。
+
+復旧GETの結果ごとの最小状態遷移は次のとおり。
+
+| GET結果 | 遷移と保持内容 | 許可する次の操作 |
+|---|---|---|
+| `editable:true` かつrevisionが送信本文のhashと一致 | `SaveStateUnknown`を維持。live反映済みだがdurability未確定としてmineと`SaveSnapshot`を保持する。 | ユーザーが明示的に再保存するか、durabilityリスクを承認する。自動clean・自動再送はしない。 |
+| `editable:true` かつrevisionがPUT送信時の旧`baseDiskRevision`と一致 | `SaveStateUnknown`を維持。mineをdirtyのまま保持する。 | ユーザー確認後に旧baseのまま再保存する。自動再送はしない。 |
+| `editable:true` かつ上記以外の第三のrevision | `Conflict`へ遷移し、取得本文から`ConflictSnapshot`を作る。 | §1.6の通常競合解決を行う。 |
+| GET失敗、404、または安全境界エラー | `SaveStateUnknown`を維持。mineと`SaveSnapshot`を保持する。 | 復旧を待って再取得するか、mineをコピーするか、明示確認して閉じる。 |
+| `editable:false` | `SaveStateUnknown`を維持。revisionを推測せず、mineと`SaveSnapshot`を保持する。 | 再取得・mineのコピー・明示確認して閉じる。 |
+
+liveが送信本文と一致した場合の明示的な再保存では、復旧GETで観測した送信本文のrevisionをbaseとして
+ユーザー操作によりPUTを開始し、親directory fsyncまで成功した200を受けて初めて通常の世代規則で
+cleanにする。この場合のdurabilityリスク承認も自動判定ではなくユーザー操作とし、現在bufferが
+送信snapshotと同じなら `CleanRiskAccepted`、保存中に追加入力があれば観測revisionをbaseにした
+`Dirty` とする。どちらもリスク承認済みであることをセッション中に表示する。保存中の入力を
+復旧結果で誤ってcleanにしない。
 
 ### 1.6 409競合の解決状態
 
-409を受けたとき、クライアントはGETで得たremote本文・remote revision・取得時刻を
+409を受けたとき、クライアントはGETが `editable:true` で返したremote本文・remote revision・取得時刻を
 `ConflictSnapshot`として別状態に保持し、現在のdirty bufferを上書きしない。解決が完了するまで
 `baseDiskRevision`はPUT送信時の旧値のままとし、remote revisionだけをbaseへ差し替えてmineを
 そのまま保存する操作は提供しない（実質的なforce overwriteになるため）。
@@ -146,6 +166,18 @@ bufferRevision, content, baseDiskRevision}` のsnapshotを保持する。応答�
 手動マージでremoteをbaseにするのは、remote本文を表示してユーザーが明示的に採用した後だけとする。
 自動rebase、remote revisionだけの更新、mineの暗黙上書きは行わない。Phase 2でこのstate machine、
 mine/remoteの差分表示、3つの解決操作、キャンセル、競合後の保存を実装・テストする。
+
+409後のGETまでに対象が削除・巨大化・バイナリ化・CRLF化・symlink化するなどして、404、安全境界
+エラー、`editable:false`、または取得失敗になった場合は `ConflictSnapshot`を捏造せず、
+`ConflictRemoteUnavailable`へ遷移する。この状態でもmineとPUT送信時の旧`baseDiskRevision`を保持し、
+保存は許可しない。
+
+| 操作 | 遷移 | 本文とbase |
+|---|---|---|
+| remoteを再取得 | 編集可能なら`Conflict`、取得不能なら`ConflictRemoteUnavailable` | 成功時だけ取得本文・revision・取得時刻から`ConflictSnapshot`を作る。mineは変更しない。 |
+| mineをコピー | `ConflictRemoteUnavailable`のまま | mineをクリップボードへコピーし、bufferとbaseは変更しない。 |
+| 閉じる | `ConflictRemoteUnavailable` → `Closed` | 明示確認後にmineを破棄する。通常のdirty guardを迂回しない。 |
+| キャンセル | `ConflictRemoteUnavailable`のまま | mineと旧baseを変更せず、解決を延期する。 |
 
 ### 1.7 バッファ不変条件
 
@@ -185,8 +217,12 @@ CodeMirror documentとAI適用境界で先に実行するPhase 2/4の共通契�
 - 2 MiB を超えるファイルは viewer の既存 truncated 表示に留め、編集モードへ遷移しない。
 - current fileの判定はstatだけで決めず、GET/PUTとも最大2 MiB+1 bytesを実際に読み、超過を
   `too_large`（GETは`editable:false`）として扱う。外部writerで対象が読み取り中に成長しても、
-  上限を超えて読み込まない。GETのfull snapshotでは `size` を実際に読み取った本文bytesと一致させ、
-  truncated snapshotでは上限+1までにcapした観測bytesをsizeとする。
+  上限を超えて読み込まない。
+- GETの `size` は、安全にopenした対象fdに対するsnapshot開始時の `fstat` が返すファイルサイズとする。
+  bounded readで観測したbytes数は `size` に使わない。`truncated`はfstat値が2 MiBを超える場合、または
+  bounded readが2 MiB超を観測した場合にtrueとする。full snapshotでfstat値とread bytes数が食い違う
+  場合はboundedに再取得し、安定したsnapshotを得られなければ`read_failed`とする。これにより既存viewerの
+  実ファイルサイズ表示との互換性を維持する。
 - ファイルの新規作成、ディレクトリ作成、rename、delete は本APIの責務ではない。既存の fs 操作を
   使用する別フローとし、PUT は存在する通常ファイルの本文置換だけを行う。
 
@@ -247,7 +283,9 @@ Content-Typeは `application/json` とする。サーバーは互換性のため
 }
 ```
 
-- `size` は raw bytes のサイズ。
+- `size` は、安全にopenした対象fdに対するsnapshot開始時の `fstat` が返したraw byteサイズである。
+  bounded readの観測bytes数ではなく、truncated時も実ファイルサイズを返す。§2.2の再取得規則により、
+  full snapshotでは `content` のraw byte数と一致する。
 - `path` はcanonical display pathであり、browse root配下の絶対入力は相対pathへ変換される。scratch/docs
   の絶対入力はread-only rootの絶対pathとして返る。
 - `content` はファイル全体をJSON文字列として返す。改行等はJSONの通常のescapeだけを行う。
@@ -304,21 +342,27 @@ revision がリクエスト本文のハッシュと一致することをクラ�
 
 成功処理は次の順序を守る。
 
-1. PUT相対pathをcanonical化し、denylist・symlink・通常ファイルとしてfd-relativeに検証する。
-   current本文は最大2 MiB+1 bytesだけ読み、超過なら`too_large`で停止する。
-2. 現在の本文のrevisionと `baseDiskRevision` を比較する。不一致なら旧ファイルを変更せず409。
-3. 同じdirectoryの一時ファイルへ新本文を書き、既存 `mode.Perm()` を `fchmod(temp, oldMode.Perm())`
+1. HTTP envelope、request本文、PUT相対pathを検証し、pathの字句検証からcanonical相対pathのmutex keyを
+   確定する。この段階では対象や親directoryをopenせず、current本文も読まない。
+2. keyのmutexを取得する。以降の全手順と早期エラーの結果が確定するまで保持する。
+3. mutex保持中にroot/parent fdから対象を解決し、denylist・symlink・通常ファイル条件をfd-relativeに
+   検証してopenする。current本文を最大2 MiB+1 bytesだけ読み、size、UTF-8、NUL、CRを検証する。
+4. 検証済みcurrent本文のrevisionと `baseDiskRevision` を比較する。不一致なら旧ファイルを変更せず409。
+5. 同じdirectoryの一時ファイルへ新本文を書き、既存 `mode.Perm()` を `fchmod(temp, oldMode.Perm())`
    で設定してから `fsync(temp)` する。fchmodはtemp fsyncより前に行う。
-4. 一時ファイルを対象名へrenameする。renameが成功した時点で、現在のnamespace上の対象は新本文。
-5. 親directoryをfsyncする。これが成功したときだけ耐久性まで含む成功として新revisionを返す。
+6. 一時ファイルを対象名へrenameする。renameが成功した時点で、現在のnamespace上の対象は新本文。
+7. 親directoryをfsyncする。成否から200または`write_state_unknown`を確定した後にmutexを解放する。
+   fsyncが成功したときだけ耐久性まで含む成功として新revisionを返す。
 
-revisionの比較からrenameまでを同一正規化相対パスの排他的処理にする。ただし、この排他は同一API
-の保存同士に限られ、外部writerは保護しない。renameは同一ファイルシステム内で行う。
+同一APIの後続PUTは先行PUTの親directory fsync結果が確定してmutexが解放された後にcurrent本文を
+open/readするため、先行PUTが保存したrevisionを観測し、旧baseなら409になる。ただし、この排他は
+同一APIの保存同士に限られ、外部writerは保護しない。renameは同一ファイルシステム内で行う。
 
 rename前の一時書込み/fchmod/fsync失敗では、旧ファイルを変更せず一時ファイルを片付け、500
 `write_failed`を返す。rename後の親directory fsync失敗では、**現在のnamespace上は新本文**だが、
 クラッシュ後もrenameが永続するかが不明である。500 `write_state_unknown`を返し、クライアントは
-GETでrevisionを照合する。`write_state_unknown`を通常の競合として自動再送してはならない。
+`SaveStateUnknown`へ遷移してGETでlive revisionを照合する。GET一致だけではdurabilityを確定できず、
+通常の競合としても自動再送してはならない。
 
 置換時に保持するのは既存regular fileのUnix permission bits（`mode.Perm()`）だけとする。owner、
 ACL、xattr、setuid/setgid/sticky等のspecial bitsの保持はv1で保証しない。temp fileとrename後の
@@ -351,17 +395,23 @@ PUT が追加する確定コードは次のとおり。
 | 404 | `not_file` | 対象が存在しない、ディレクトリ、通常ファイルでない | 変更なし |
 | 409 | `revision_conflict` | 比較時点で現在のrevisionが `baseDiskRevision` と一致しない | 変更なし |
 | 413 | `too_large` | current fileまたはdecoded contentが2 MiB超、またはHTTP body全体が16 MiB超 | 変更なし |
-| 415 | `binary_not_supported` | NUL byteまたはUTF-8不正の本文を保存しようとした | 変更なし |
-| 415 | `unsupported_newline` | CRLF、CR単独、混在改行を含む本文を保存しようとした | 変更なし |
+| 415 | `binary_not_supported` | current fileまたはrequest contentにNUL byteかUTF-8不正がある | 変更なし |
+| 415 | `unsupported_newline` | current fileまたはrequest contentにCRLF、CR単独、混在改行がある | 変更なし |
 | 500 | `read_failed` | 現在本文の読み込みに失敗 | 変更なし（保証できない場合は保存処理を開始しない） |
 | 500 | `write_failed` | rename前の一時書込み、fsync等に失敗 | 旧本文を保持 |
-| 500 | `write_state_unknown` | rename後の親directory fsync等に失敗し、live namespaceは新だがdurabilityが不明 | GET照合が必要 |
+| 500 | `write_state_unknown` | rename後の親directory fsync等に失敗し、live namespaceは新だがdurabilityが不明 | `SaveStateUnknown`でmineを保持 |
 
 クライアントは競合時に自動再送せず、GETで現在本文を取得してユーザーに差分確認を求める。
 `symlink_not_allowed`を400にするのは、認証済み利用者の権限不足ではなく、要求されたpath形式と
 安全な解決条件が不正だからである。denylist/readonly rootを403にするのは、path形式は妥当でも
 その対象への操作権限を明示的に拒否するためである。Workspace stopped/starting、未認証、membership外
 などの共通エラーは、この表のPUT固有コードより優先される既存の横断契約（通常は401/403/409）を使う。
+
+PUT固有エラーは、requestのContent-Type/body上限/JSON形/field/decoded contentとpath字句検証を先に
+確定し、mutex取得後にfd-relativeな安全境界・対象種別・read結果を判定する。current本文については
+`too_large`、`binary_not_supported`（NULまたはUTF-8不正）、`unsupported_newline`（CRを含む）の順に
+編集可否を判定し、いずれかに該当すれば `baseDiskRevision`が不一致でもそのエラーを返す。
+`revision_conflict`はcurrent本文が編集条件を全て満たしrevisionを計算できた後にだけ判定する。
 
 CPとAgentが到達できずCPのproxyが生成するplain-text 502/504は、アプリケーションエラー契約の外側
 である。Consoleの `api()` は既存どおり `http_<status>` として扱い、JSONエラーと混同しない。
@@ -477,9 +527,9 @@ wire envelope が必要な場合は version を持たせる。
   Marpのプレビューはこのpreview側の描画方式であり、別の編集モードを増やさない。
 - Saveボタンはタッチ端末を含む全環境で提供し、Ctrl+S / Cmd+Sと同じsnapshot保存処理を呼ぶ。
   saving中は同一paneのSaveを無効化し、追加入力は可能だが別PUTを並行送信しない。
-- dirty、saving、saved、revision conflict、write state unknownは `role="status"` と
+- dirty、saving、saved、revision conflict、conflict remote unavailable、write state unknownは `role="status"` と
   `aria-live="polite"` で状態変化を告知する。競合・状態不明は `role="alert"` 相当で明示し、
-  再読込・差分確認・破棄の選択肢をfocus可能にする。
+  再取得・差分確認・再保存・リスク承認・mineのコピー・破棄の該当する選択肢をfocus可能にする。
 - Phase 2の受け入れでは、マウスなしのview/edit切替・保存・競合表示、タッチ端末のSave操作、
   focus移動、`aria-selected`/`aria-pressed`/announceを確認する。
 
@@ -491,22 +541,26 @@ wire envelope が必要な場合は version を持たせる。
   Markdown/Marpの3モード対応、未保存本文のメモリ限定、一般AIセッションと提案生成チャネルの
   権限差が明記されている。
 - CAS保証を「比較時点までに観測した変更の検出 + 同一API保存の直列化」に限定し、外部writerとの
-  raceを保証しないこと、mutex keyを検証後canonical relative pathにすることが固定されている。
+  raceを保証しないこと、字句検証後のcanonical relative pathをmutex keyにして対象open/read/hash前から
+  parent fsync結果確定まで保持することが固定されている。
 - PUTのbrowse-root相対pathと、GET/downloadのallowedReadRoots配下canonical絶対pathを分離し、
   root選択後fdから相対化する契約、Linux fd-relative操作、`openat2`/`fstatat`/`renameat`相当、
   GET/downloadのsymlink拒否、safeBrowsePathの不適格性、POSIX/Windows形式pathの判定が固定されている。
 - LF-onlyの編集バッファ、raw byte revision、CodeMirror UTF-16 offsetの整合とCRLFの将来拡張条件が
   固定されている。
-- rename後directory fsync失敗の `write_state_unknown`、permission bitsのみ保持、owner/ACL/xattr
-  非保証が固定されている。
+- rename後directory fsync失敗の `write_state_unknown`、live反映とdurabilityの区別、
+  `SaveStateUnknown`からの再保存/リスク承認、permission bitsのみ保持、owner/ACL/xattr非保証が
+  固定されている。
 - `baseDiskRevision`（保存API）と `baseRevision`/`bufferRevision`（AI/バッファ）を区別し、
-  save snapshot、generation、応答喪失時GET復旧、dirty guard全経路が固定されている。
-- 409後のConflictSnapshot、remote/mine/手動merge/cancelのstate machine、remote base更新とforce
-  overwrite禁止が固定されている。
+  save snapshot、generation、応答喪失時の`SaveStateUnknown`とGET結果別遷移、dirty guard全経路が
+  固定されている。
+- 409後のConflictSnapshot、remote/mine/手動merge/cancelのstate machine、remote取得不能時にmineを
+  保持する`ConflictRemoteUnavailable`、remote base更新とforce overwrite禁止が固定されている。
 - typing/IME/paste/undo/redo/AI replacementの共通buffer validator、LF/NUL/unpaired surrogate/size
   invariant、revision regex検証が固定されている。
-- GETの `editable`/`editabilityReason`、decoded content 2 MiB、HTTP body 16 MiB、strict JSON decoder、
-  JSONエラーとplain-text gateway errorの境界、`suggestion_stale`のUIコードが固定されている。
+- GETの `editable`/`editabilityReason`、opened fdのfstatを使う`size`、decoded content 2 MiB、
+  HTTP body 16 MiB、strict JSON decoder、JSONエラーとplain-text gateway errorの境界、
+  `suggestion_stale`のUIコードが固定されている。
 - current file/path resource bound、`fs.file.put`のwrite_state_unknown監査、live namespaceとdurabilityを
   分けた説明、同一uidのnamespace mutator/hardlinkを脅威モデル外とする範囲が固定されている。
 - Phase 1以降の実装コード・依存追加・保存API実装・UI実装は本Phase 0の作業に含めない。
@@ -521,26 +575,27 @@ wire envelope が必要な場合は version を持たせる。
 - 監査対象は2xxだけに限定しない。Agentが `500 write_state_unknown` を返した場合も、CPは小さい
   JSON error bodyを監査判定前にbounded readできる構造にし、`action: fs.file.put`、canonical path、
   `detail/outcome: write_state_unknown`、`http_status: 500` を記録する。通常の他の失敗は既存方針に
-  従うが、live namespaceが新本文の可能性を持つこの結果だけは欠落させない。
+  従うが、live namespaceは新本文でdurabilityが不明となるこの結果だけは欠落させない。
 - `httpx.DecodeJSON`相当のstrict decoder、Content-Type、body/decoded size、trailing value、厳密UTF-8、
   unknown field検査を実装する。server error codeはAgent/CP定数とConsoleの英日i18nへ同時登録する。
 - fd-relative path操作とGET/file/downloadのsymlink拒否を実装し、safeBrowsePath系helperをPUTへ流用しない。
-- GETのeditable判定、LF-only、revision、CASの同一API直列化を実装する。
+- GETのeditable判定、LF-only、revision、opened fdのfstatによるsize、CASの同一API直列化を実装する。
 - path全体4096 bytes、component255 bytes、current fileの2 MiB+1 read boundを実装し、stat/read raceで
-  sizeとfull snapshotが不整合にならないようにする。
+  full snapshotを安定して得られなければ`read_failed`にする。
 - symlink、path alias、外部writerのrace、GET読み取りrace、revision conflict、rename前失敗、
-  rename後directory fsync失敗をfailure injectionを含むGo単体テストで検証する。外部writer raceは
+  同一APIの並行PUT、rename後directory fsync失敗をfailure injectionを含むGo単体テストで検証する。
+  同一APIの並行PUTは一方のopen/readが先行PUTの結果確定後になることを確認する。外部writer raceは
   「保証しない範囲」を再現し、誤って保証を主張しないこともテスト文書に残す。
 
 ### Phase 2（Text/コード編集MVP）
 
 - CodeMirror導入、view/edit、dirty、single-flight PUT、送信snapshot/generation、応答時dirty判定、
-  `baseDiskRevision`更新、応答喪失時GET復旧を実装する。
+  `baseDiskRevision`更新、`SaveStateUnknown`とGET結果別の復旧、明示再保存/リスク承認を実装する。
 - 全buffer input transaction（typing/IME/paste/undo/redo）にLF/NUL/unpaired surrogate/2 MiB validatorを
   適用し、失敗時はtransactionを適用せず通知する。
 - 409競合のConflictSnapshotとstate machine（remote採用、mine破棄、remoteをbaseにした手動merge、
-  cancel）、mine/remote差分、競合後保存を実装・テストする。remote revisionだけを更新してmineを
-  force overwriteする経路は作らない。
+  cancel）、`ConflictRemoteUnavailable`（再取得、mineコピー、明示close）、mine/remote差分、競合後
+  保存を実装・テストする。remote revisionだけを更新してmineをforce overwriteする経路は作らない。
 - dirty registry/navigation guardをlayout commit前に接続し、openActive/openInNew再利用、history、
   tenant/reset、reader、popout、reload、logout、version update、workspace lifecycleを網羅する。
   layout storageへ本文を入れない。version updateのterminal例外をeditorへ流用しない。

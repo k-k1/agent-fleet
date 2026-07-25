@@ -26,14 +26,17 @@ Console の File ペインは現在、Workspace のファイルを読み取り�
    Agent 内部の実体は `PUT /fs/file` とし、CP は既存の fs 中継規約で転送する。
 4. **保存は観測時点CAS＋同一API直列化とする。** ファイルの生バイトSHA-256をrevisionとし、
    保存APIの `baseDiskRevision` と比較時点のrevisionが一致する場合だけ保存する。一致しなければ
-   `409 revision_conflict` とする。同一APIのPUTは、fd安全検証後のcanonical相対pathをmutex keyに
-   して直列化する。shell、Claude/Codex、git checkout等の外部writerはこのmutexに参加しないため、
-   比較後rename前の外部変更を防止・検出する保証は持たない。全writer協調ロックは採用しない。
+   `409 revision_conflict` とする。同一APIのPUTは、字句検証で確定したcanonical相対pathをmutex key
+   とし、対象のfd安全検証・open・read・hashより前にmutexを取得する。親directoryのfsync結果を
+   確定するまで保持して直列化する。shell、Claude/Codex、git checkout等の外部writerはこのmutexに
+   参加しないため、比較後rename前の外部変更を防止・検出する保証は持たない。全writer協調ロックは
+   採用しない。
 5. **保存はatomic writeとし、rename後失敗を別状態にする。** 対象と同じディレクトリに一時ファイルを
    書き、fsyncしてからrenameし、親directoryもfsyncする。rename前の失敗は旧本文を保持して
-   `write_failed`、rename後のdirectory fsync等の失敗は実体不明として `write_state_unknown` とし、
-   クライアントにGET照合を要求する。保持する属性は `mode.Perm()` のみで、owner/ACL/xattr/special
-   bitsはv1で保証しない。
+   `write_failed`、rename後のdirectory fsync等の失敗は現在のlive namespaceでは新本文だが
+   durabilityが不明な `write_state_unknown` とする。GET照合だけではdurabilityを確定できないため、
+   クライアントはdirtyなmineを保持する `SaveStateUnknown` へ遷移し、明示的な再保存またはリスク承認を
+   要求する。保持する属性は `mode.Perm()` のみで、owner/ACL/xattr/special bitsはv1で保証しない。
 6. **操作面ごとにfd-relativeな境界を分離する。** v1のLinux Agentはroot/parent directory fdを固定し、
    `openat2(RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS)`、`fstatat(AT_SYMLINK_NOFOLLOW)`、`renameat`相当を
    GET/file、download、PUTで使う。PUTはbrowse-root相対canonical pathのみ、GET/downloadは既存
@@ -58,8 +61,9 @@ Console の File ペインは現在、Workspace のファイルを読み取り�
     保護する。reload、logout、version update、workspace recreate/clean-home/stopも対象とし、
     terminal用のversion update例外をeditorへ流用しない。dirty popoutはv1では拒否または明示確認とする。
 11. **409競合は別remote snapshotを持つstate machineで解決する。** dirty mineを上書きせず、remote採用、
-    mine破棄、remoteをbaseにした手動merge、cancelをPhase 2で提供する。remote revisionだけを更新して
-    mineをforce overwriteする経路は作らない。
+    mine破棄、remoteをbaseにした手動merge、cancelをPhase 2で提供する。409後のGETで対象消失・安全境界
+    エラー・編集不可となった場合はmineを保持する `ConflictRemoteUnavailable` とし、再取得・コピー・
+    明示的に閉じる操作を提供する。remote revisionだけを更新してmineをforce overwriteする経路は作らない。
 
 ## 対象範囲とフェーズ境界
 
@@ -68,8 +72,9 @@ Console の File ペインは現在、Workspace のファイルを読み取り�
 - Phase 1 は Agent/CP route、中継、監査（`write_state_unknown`含む）、strict decoder、fd-relative操作、
   GET/download race、symlink/CAS/failure injection、current file/path boundを含む保存API基盤とGo単体
   テストを行う。
-- Phase 2 は CodeMirror 6、Fileペインのview/edit、single-flight保存、snapshot/generation、全buffer
-  validator、409競合state machine、dirty registry/navigation guard、beforeunload、ARIA、Saveボタンを実装する。
+- Phase 2 は CodeMirror 6、Fileペインのview/edit、single-flight保存、snapshot/generation、
+  `SaveStateUnknown`、409競合とremote取得不能のstate machine、全buffer validator、dirty registry/
+  navigation guard、beforeunload、ARIA、Saveボタンを実装する。
 - Phase 3 は Markdown/Marpのedit/preview/split、通常preview/slide renderer切替と既存描画資産の
   回帰テストを実装する。
 - Phase 4 は read-only提案生成チャネル、identity付き構造化提案、差分レビュー、accept/rejectを実装する。
