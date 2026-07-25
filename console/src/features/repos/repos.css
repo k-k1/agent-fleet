@@ -305,6 +305,12 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 削除ロック（docs/45）: 作業コピー行の鍵バッジ（セッション行の .sess-lock と対）。 */
+.repo-lock {
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+}
 .repo-state {
   flex: none;
   display: inline-flex;

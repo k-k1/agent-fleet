@@ -39,8 +39,9 @@ const groupHeading = (dir: string, head?: ArchivedSession): { repo?: string; lab
 
 // "Old" cutoff for bulk-prune. No createdAt = never pruned by age.
 const OLD_DAYS = 7;
+// 削除ロック（docs/45）済みは一括削除の対象外 — Agent が 403 で拒むので、件数にも入れない。
 const isOld = (s: ArchivedSession, now: number) => {
-  if (!s.createdAt) return false;
+  if (!s.createdAt || s.locked) return false;
   const t = new Date(s.createdAt).getTime();
   return !isNaN(t) && now - t > OLD_DAYS * 86400_000;
 };
@@ -282,10 +283,10 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
                               {tr("arch.restore")}
                             </Button>
                             <IconButton
-                              icon="trash"
-                              label={tr("arch.delete_perm")}
+                              icon={s.locked ? "lock" : "trash"}
+                              label={s.locked ? tr("srow.locked_hint") : tr("arch.delete_perm")}
                               variant="danger"
-                              disabled={busy}
+                              disabled={busy || !!s.locked}
                               onClick={() => del(s.name, displayName(s))}
                             />
                           </div>

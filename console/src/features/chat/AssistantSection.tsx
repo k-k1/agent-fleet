@@ -27,6 +27,7 @@ import { useT } from "../../lib/i18n/index.ts";
 import {
   chatList,
   chatDelete,
+  chatSetLock,
   assistantList,
   assistantCreate,
   assistantUpdate,
@@ -193,6 +194,19 @@ export function AssistantSection() {
     }
   };
 
+  // 削除ロック（docs/45）: この会話を削除保護に固定/解除する。保護そのものは Agent
+  // 側（DELETE が 403）で、ここは切替と見た目の抑止だけ。
+  const toggleConvLock = async (c: ConversationMeta) => {
+    const locked = !c.locked;
+    const res = await chatSetLock(c.id, locked);
+    if (res?.error) {
+      toast(tr("asst.lock_failed"));
+      return;
+    }
+    toast(locked ? tr("asst.locked_on") : tr("asst.locked_off"), { kind: "success" });
+    refresh();
+  };
+
   // Copy the conversation's short slug ("a…", docs/38 アシスタント発火) — the id humans
   // and schedules address a conversation by. UUID fallback only for a conversation the
   // agent hasn't backfilled yet.
@@ -314,6 +328,8 @@ export function AssistantSection() {
                     </span>
                     <span className="chat-open-title">{c.title}</span>
                     {c.message_count > 0 && <span className="chat-open-meta">{c.message_count}</span>}
+                    {/* 削除ロック（docs/45）の鍵バッジ — セッション行と同じ語彙。 */}
+                    {c.locked && <Icon name="lock" className="sess-lock" title={tr("asst.locked_hint")} />}
                     {chatBusy[c.id] ? (
                       <span className="session-state working mini" title={tr("asst.in_progress")}>
                         <Icon name="loading" spin />
@@ -398,7 +414,19 @@ export function AssistantSection() {
               </li>
               <li className="ui-menu-sep" aria-hidden="true" />
               <li>
-                <button type="button" className="ui-menu-item danger" onClick={() => runConvMenu(() => void removeConv(convMenu.c.id))}>
+                <button type="button" className="ui-menu-item" onClick={() => runConvMenu(() => void toggleConvLock(convMenu.c))}>
+                  <Icon name={convMenu.c.locked ? "unlock" : "lock"} />{" "}
+                  {convMenu.c.locked ? tr("asst.unlock") : tr("asst.lock")}
+                </button>
+              </li>
+              <li>
+                <button
+                  type="button"
+                  className="ui-menu-item danger"
+                  disabled={!!convMenu.c.locked}
+                  title={convMenu.c.locked ? tr("asst.locked_hint") : undefined}
+                  onClick={() => runConvMenu(() => void removeConv(convMenu.c.id))}
+                >
                   <Icon name="trash" /> {tr("asst.delete_chat")}
                 </button>
               </li>

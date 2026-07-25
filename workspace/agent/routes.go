@@ -39,6 +39,10 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /cleanup/archives", handleListCleanupArchives)
 	mux.HandleFunc("POST /cleanup/archives/{id}/restore", handleRestoreCleanupArchive)
 	mux.HandleFunc("DELETE /cleanup/archives/{id}", handlePurgeCleanupArchive)
+	// 削除ロック（docs/45）: セッションを削除保護に固定/解除する。効くのは削除系
+	// （/stop のメタ忘却・DELETE・TTL 自動 prune・作業コピー削除の巻き添え）だけで、
+	// halt / archive は従来どおり通る。
+	mux.HandleFunc("POST /sessions/{name}/lock", handleSessionLock)
 	mux.HandleFunc("POST /sessions/{name}/archive", handleArchiveSession)
 	mux.HandleFunc("POST /sessions/{name}/restore", handleRestoreSession)
 	// Programmatic drive I/O for the MCP tools (docs/0006 P3-6 E).
@@ -98,6 +102,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /chat/conversations/{id}/title/suggest", handleChatSuggestTitle)
 	mux.HandleFunc("POST /chat/conversations/{id}/suggest-replies", handleChatSuggestReplies) // LLM 返信サジェスト v2（preview 専用）
 	mux.HandleFunc("DELETE /chat/conversations/{id}", handleChatDelete)
+	mux.HandleFunc("POST /chat/conversations/{id}/lock", handleChatLock) // 削除ロック（docs/45）
 	mux.HandleFunc("POST /chat/conversations/{id}/messages", handleChatSend)
 	mux.HandleFunc("POST /chat/conversations/{id}/stream", handleChatStream)   // SSE (Phase B)
 	mux.HandleFunc("POST /chat/conversations/{id}/stop", handleChatStop)       // cancel a detached in-flight turn
@@ -131,6 +136,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /repos", handleListRepos)
 	mux.HandleFunc("POST /repos", handleCloneRepo)
 	mux.HandleFunc("DELETE /repos/{name}", handleDeleteRepo)
+	mux.HandleFunc("POST /repos/{name}/lock", handleRepoLock) // 削除ロック（docs/45）
 	mux.HandleFunc("GET /repos/{name}/status", handleRepoStatus)
 	mux.HandleFunc("GET /repos/{name}/branches", handleRepoBranches)
 	mux.HandleFunc("DELETE /repos/{name}/branch", handleDeleteBranch) // ?branch=<name> (may contain "/")
