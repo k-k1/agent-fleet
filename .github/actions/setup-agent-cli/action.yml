@@ -108,6 +108,12 @@ runs:
           agy)
             if [ "$VERSION_INPUT" = latest ]; then
               curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir "$bin_dir"
+              # The official latest installer currently ignores --dir for its
+              # final binary and writes ~/.local/bin/agy after its own setup.
+              # Keep the runner's current shell and later steps on that actual
+              # path; GITHUB_PATH alone is not applied until the next step.
+              echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+              export PATH="$HOME/.local/bin:$PATH"
             else
               case "$(uname -m)" in
                 x86_64|amd64) asset=agy_cli_linux_x64.tar.gz; sha_arg=AGY_SHA256_X64 ;;
