@@ -3,6 +3,11 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.3.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.3.0) — 2026-07-25
+
+エージェント CLI に Kiro が加わり、コンポーサーに返信サジェストが付き、フリート・
+オペレーターが質問への回答とプランのレビューを代行できるようになりました。
+
 ## [0.2.3](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.2.3) — 2026-07-24
 
 メモをセッションへ直接ドラッグできるようになりました。あわせて小さな修正をいくつか
