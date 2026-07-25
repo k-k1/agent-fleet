@@ -13,14 +13,16 @@
 #     The body is rendered from deploy/release/notes/<v>.md (+ .ja.md) by
 #     notes-body.sh; a missing notes file is a hard error.
 # --seed pushes the dist repo contents (README.md / README.ja.md / CHANGELOG.md /
-# CHANGELOG.ja.md / install.sh / install-compose.sh) from deploy/release/dist-repo/ via the
-# contents API (skipped when identical = idempotent). Creates the repo if it does not
-# exist. The CHANGELOGs are generated — run gen-changelog.sh after adding the
-# notes/index.tsv row, before publishing.
+# CHANGELOG.ja.md / LICENSE / NOTICE / install.sh / install-compose.sh) via the contents
+# API (skipped when identical = idempotent). Creates the repo if it does not exist.
+# Sources are deploy/release/dist-repo/, except LICENSE / NOTICE which come from the
+# repo root so the public copy matches the one bundled in the tars. The CHANGELOGs are
+# generated — run gen-changelog.sh after adding the notes/index.tsv row, before publishing.
 # Auth via gh (local = gh auth login / CI = GH_TOKEN set to DIST_PUBLISH_TOKEN).
 # Runbook for a real publish: docs/35 §35.8.2.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$HERE/../.." && pwd)"
 
 VERSION="${VERSION:?set VERSION=<semver> (e.g. VERSION=0.1.0)}"
 REPO="k-k1/agent-fleet-dist"
@@ -79,8 +81,17 @@ if [ "$SEED" = 1 ]; then
     run gh repo create "$REPO" --public \
       --description "Agent Fleet — distribution artifacts (no source here)"
   fi
-  for f in README.md README.ja.md CHANGELOG.md CHANGELOG.ja.md install.sh install-compose.sh; do
-    local_b64="$(base64 -w0 < "$HERE/dist-repo/$f")"
+  # LICENSE / NOTICE are seeded from the repo root rather than a copy under
+  # dist-repo/, so the public copy cannot drift from the one bundled in the tars.
+  # NOTICE carries the primary-distribution URL that Apache-2.0 §4(d) makes
+  # redistributors propagate, so the dist repo must show it too.
+  for f in README.md README.ja.md CHANGELOG.md CHANGELOG.ja.md LICENSE NOTICE \
+           install.sh install-compose.sh; do
+    case "$f" in
+      LICENSE|NOTICE) src="$ROOT/$f" ;;
+      *)              src="$HERE/dist-repo/$f" ;;
+    esac
+    local_b64="$(base64 -w0 < "$src")"
     resp="$(gh api "repos/$REPO/contents/$f" \
       --jq '.sha + " " + (.content | gsub("\n"; ""))' 2>/dev/null)" || resp=""
     sha="${resp%% *}"
