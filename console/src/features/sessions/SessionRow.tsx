@@ -190,6 +190,8 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
         {speaking && (
           <Icon name="unmute" className="sess-speaking" title={tr("srow.speaking")} />
         )}
+        {/* 削除ロック（docs/45）: 鍵バッジ。「なぜ削除が押せないのか」を行の上で示す。 */}
+        {s.locked && <Icon name="lock" className="sess-lock" title={tr("srow.locked_badge")} />}
         <span className={"session-state " + st.cls + (loud ? "" : " mini")} title={st.text}>
           <Icon name={st.icon} spin={st.spin} />
           {loud && <> {st.text}</>}
@@ -354,10 +356,25 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
                     <Icon name="git-branch" /> {tr("srow.handoff")}
                   </button>
                 )}
+                {/* 削除ロック（docs/45）: この行を削除保護に固定/解除する。保護の実体は
+                    Agent 側（403）なので、ここは切替と見た目の抑止だけを担う。 */}
+                <button
+                  type="button"
+                  className="ui-menu-item"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    void actions.setLocked(s, !s.locked);
+                  }}
+                >
+                  <Icon name={s.locked ? "unlock" : "lock"} />{" "}
+                  {s.locked ? tr("srow.unlock") : tr("srow.lock")}
+                </button>
                 {agentOf(s.kind).caps.ephemeral ? (
                   <button
                     type="button"
                     className="ui-menu-item danger"
+                    disabled={s.locked}
+                    title={s.locked ? tr("srow.locked_hint") : undefined}
                     onClick={() => {
                       setMenuOpen(false);
                       void actions.deleteSession(s);

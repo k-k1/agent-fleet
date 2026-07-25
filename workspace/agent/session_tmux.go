@@ -123,6 +123,25 @@ func sessionsInDir(metas []session.Meta, live map[string]bool, dir string) []str
 	return names
 }
 
+// lockedSessionsInDir returns the display names of DELETE-LOCKED sessions (docs/45)
+// whose cwd is dir or sits beneath it — running or not, archived included. Removing
+// the working copy would strand them (their dir vanishes, resume is gone), which is
+// exactly what the lock exists to prevent, so a working-copy delete refuses while any
+// of these live there. Pure, for the same reason as sessionsInDir.
+func lockedSessionsInDir(metas []session.Meta, dir string) []string {
+	var names []string
+	for _, m := range metas {
+		if !m.Locked {
+			continue
+		}
+		if m.Dir == dir || strings.HasPrefix(m.Dir, dir+string(os.PathSeparator)) {
+			names = append(names, session.Display(m))
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
 // worktreeHasSessions reports whether ANY session meta (live, stopped, or archived)
 // still has its cwd at or under dir. Auto-pruning a worktree checks this first so a
 // working copy that a stopped/archived session could still resume or restore into is

@@ -93,6 +93,11 @@ type Session struct {
 	ExitReason string `json:"exitReason,omitempty"`
 	ExitCode   int    `json:"exitCode,omitempty"`
 	ExitSignal int    `json:"exitSignal,omitempty"`
+	// Locked mirrors Meta.Locked: the user pinned this session against deletion, so
+	// every removal path (stop=forget meta / delete / TTL prune / a working-copy
+	// delete that would take it down with it) refuses until it is unlocked. The
+	// Console badges the row and disables its delete item off this flag.
+	Locked bool `json:"locked,omitempty"`
 }
 
 // ContextUsage is a claude session's current context fill — the newest assistant
@@ -160,6 +165,12 @@ type Meta struct {
 	CreatedAt string `json:"createdAt"` // RFC3339, set at create
 	StoppedAt string `json:"stoppedAt"` // RFC3339, set lazily when first seen exited; "" while live
 	Archived  bool   `json:"archived"`  // true = hidden from the active list, restorable (jsonl kept)
+	// Locked pins the session against deletion: /stop（メタ忘却）・DELETE /sessions/{name}・
+	// 停止中 TTL の自動 prune・作業コピー削除の巻き添え、いずれも locked の間は拒否される
+	// （アーカイブは可逆なので許可）。解除は POST /sessions/{name}/lock {"locked":false}。
+	// 保護は Agent の REST 層で効くので、Console・オペレーター（MCP）・ブリッジのどこから
+	// 来た削除でも同じように止まる。
+	Locked bool `json:"locked,omitempty"`
 	// ForkFrom is the SOURCE conversation id this session was forked from, in the
 	// kind's own id space: claude = the source slot's sid (jsonl), opencode = its
 	// ses_… id, codex = its session uuid. It only affects the FIRST launch — each

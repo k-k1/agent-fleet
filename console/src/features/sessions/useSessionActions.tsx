@@ -2,7 +2,7 @@
 // drive a session row wherever it renders (the flat list AND the per-working-copy
 // nodes of the project tree). Each op hits the Agent, then refreshes the store and
 // closes any stale panes; confirmations and error toasts are built in.
-import { raw } from "../../core/api/client.ts";
+import { raw, sessionSetLock } from "../../core/api/client.ts";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -21,6 +21,9 @@ export interface SessionActions {
   archive(s: Session): Promise<void>;
   /** Delete outright (shell/ssm — no conversation worth keeping). Irreversible. */
   deleteSession(s: Session): Promise<void>;
+  /** 削除ロック（docs/45）の切替。ON の間、この行はどの削除経路（Console・掃除・
+   *  7日自動prune・オペレーター）からも消せなくなる。 */
+  setLocked(s: Session, locked: boolean): Promise<void>;
   /** Clear all stopped: agent sessions archive (restorable), shell/ssm delete. */
   clearStopped(): Promise<void>;
   /** Bulk-clear every "その他のセッション" (orphan whose working copy is gone),
@@ -74,8 +77,20 @@ export function useSessionActions(): SessionActions {
     void refreshSessions();
   };
 
+  const setLocked = async (s: Session, locked: boolean) => {
+    const res = await sessionSetLock(s.name, locked);
+    if (res?.error) {
+      toast(t("sess.lock_failed"));
+      return;
+    }
+    toast(locked ? t("sess.locked_on") : t("sess.locked_off"), { kind: "success" });
+    void refreshSessions();
+  };
+
   const clearStopped = async () => {
-    const stopped = useSessionsStore.getState().sessions.filter((s) => !s.alive);
+    // 削除ロック（docs/45）済みは一括掃除の対象外 — Agent が拒否するので数だけ合わない
+    // 一括実行にならないよう、確認ダイアログの件数からも先に外す。
+    const stopped = useSessionsStore.getState().sessions.filter((s) => !s.alive && !s.locked);
     if (stopped.length === 0) return;
     const ephemeral = stopped.filter((s) => agentOf(s.kind).caps.ephemeral);
     const keepable = stopped.filter((s) => !agentOf(s.kind).caps.ephemeral);
@@ -103,7 +118,8 @@ export function useSessionActions(): SessionActions {
     void refreshSessions();
   };
 
-  const clearOrphans = async (orphans: Session[]) => {
+  const clearOrphans = async (all: Session[]) => {
+    const orphans = all.filter((s) => !s.locked); // 削除ロック（docs/45）は一括掃除に載せない
     if (orphans.length === 0) return;
     // Same split as clearStopped: agent sessions archive (conversation kept,
     // restorable); shell/ssm have no conversation worth keeping, so they delete.
@@ -273,5 +289,5 @@ export function useSessionActions(): SessionActions {
     }
   };
 
-  return { archive, deleteSession, clearStopped, clearOrphans, halt, recreate, handoff, switchDriver };
+  return { archive, deleteSession, setLocked, clearStopped, clearOrphans, halt, recreate, handoff, switchDriver };
 }

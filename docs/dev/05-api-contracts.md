@@ -16,11 +16,11 @@ L1 認証（authGate）通過後に到達。認可は「自分のリソースの
 |----------|---------|----------|------|
 | identity / tenant | `GET /api/whoami`・`GET /api/tenants` | CP | [03](03-control-plane.md) |
 | workspace | `GET /api/workspace`・`POST /api/workspace/{start,stop,recreate,clean-home}`・`GET /api/workspace/stats` | CP（Runtime）| [03](03-control-plane.md) |
-| sessions | `GET/POST /api/sessions`・lifecycle `POST …/{stop,halt,recreate,archive,restore,fork,start}`・意味論操作 `POST …/{turn,respond,settings,driver}`・端末操作 `POST …/{input,paste-image}`・`GET …/{status,output,messages,settings}`・title/branch 系・`GET /api/sessions/archived` | 生成/fork/start=CP→Agent、他は中継 | [04](04-workspace-agent.md) |
-| repos (SCM) | `GET/POST /api/repos`・`/api/repos/{name}/{status,branches,checkout,fetch,ff,changes,diff,log,graph,show,stage,unstage,discard,commit,identity,prompt-templates}` | 中継 | [04](04-workspace-agent.md) |
+| sessions | `GET/POST /api/sessions`・lifecycle `POST …/{stop,halt,recreate,archive,restore,fork,start}`・意味論操作 `POST …/{turn,respond,settings,driver}`・端末操作 `POST …/{input,paste-image}`・`GET …/{status,output,messages,settings}`・title/branch 系・`GET /api/sessions/archived`・削除ロック `POST …/lock`（docs/45）| 生成/fork/start=CP→Agent、他は中継 | [04](04-workspace-agent.md) |
+| repos (SCM) | `GET/POST /api/repos`・`/api/repos/{name}/{status,branches,checkout,fetch,ff,changes,diff,log,graph,show,stage,unstage,discard,commit,identity,prompt-templates}`・削除ロック `POST /api/repos/{name}/lock`（docs/45）| 中継 | [04](04-workspace-agent.md) |
 | fs | `GET /api/fs/{tree,file,download,changes,linemarks}`・`POST /api/fs/{upload,mkdir,newfile,rename,delete}` | 中継 | [04](04-workspace-agent.md) |
 | connections | `GET /api/connections`・git `PUT/DELETE /api/connections/git/{host}`（+ GitHub Device / Bitbucket OAuth / claude / codex / opencode）| 中継（Bitbucket OAuth 開始と callback のみ CP）| [08](08-integrations.md) |
-| chat / assistants | `/api/chat/conversations*`（stream は SSE）・`POST /api/chat/ask`・`/api/assistants*` | 中継 | [04](04-workspace-agent.md) |
+| chat / assistants | `/api/chat/conversations*`（stream は SSE、削除ロック `POST …/{id}/lock`）・`POST /api/chat/ask`・`/api/assistants*` | 中継 | [04](04-workspace-agent.md) |
 | env / settings | `GET/PUT /api/env/{toolchains,ui-prefs}`・`GET/PUT /api/env/ws-settings`・`GET/PUT /api/claude/settings`・`GET /api/{claude,codex,copilot}/usage`（各 WsBar 使用量チップ。claude/codex=サブスク枠、copilot=アカウント
 クレジット残量。応答にプランと利用アカウントを含む。agy は `GET /api/connections/agy/usage`）・`GET/PUT /api/agents/rtk`・`GET /api/agents/rtk/gain`（rtk 節約履歴＝WsBar「rtk 効果」チップ、`rtk gain --format json` 素通し）| ws-settings=CP、他は中継 | [04](04-workspace-agent.md) |
 | memo | `GET/POST/PATCH/DELETE /api/memos*`・`POST /api/memos/flush` | CP（flush 時のみ Agent へ）| [03](03-control-plane.md) |
