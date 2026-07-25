@@ -81,7 +81,9 @@ jobs:
         env:
           # Fail instead of skip when the CLI is missing (a silent skip is a false green).
           E2E_REQUIRE: "1"
-        run: go test -tags drift -run TestDrift -v -timeout 10m ./...
+        # The drift build tag is shared with agy's signed-in pane probe. Restrict by
+        # test name so a codex-only runner never fails merely because agy is absent.
+        run: go test -tags drift -run '^TestDriftCodex' -v -timeout 10m ./...
       - name: remember successfully tested latest
         if: matrix.version == 'latest' && github.event_name != 'pull_request'
         env:

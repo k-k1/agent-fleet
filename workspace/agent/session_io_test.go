@@ -58,6 +58,36 @@ esac
 	}
 }
 
+func TestRememberCodexTUIModePersistsMirrorToggle(t *testing.T) {
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
+	const name = "codex_mode_memory"
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex})
+
+	rememberCodexTUIMode(name, "/plan", nil)
+	m, _ := session.ReadMeta(name)
+	if m.Mode != "plan" {
+		t.Fatalf("/plan mode = %q, want plan", m.Mode)
+	}
+
+	rememberCodexTUIMode(name, "", []string{"BTab"})
+	m, _ = session.ReadMeta(name)
+	if m.Mode != "normal" {
+		t.Fatalf("BTab from plan mode = %q, want normal", m.Mode)
+	}
+
+	rememberCodexTUIMode(name, "", []string{"BTab"})
+	m, _ = session.ReadMeta(name)
+	if m.Mode != "plan" {
+		t.Fatalf("BTab from normal mode = %q, want plan", m.Mode)
+	}
+
+	rememberCodexTUIMode(name, "/model", nil)
+	m, _ = session.ReadMeta(name)
+	if m.Mode != "plan" {
+		t.Fatalf("unrelated slash command changed mode to %q", m.Mode)
+	}
+}
+
 // Codex and OpenCode need an explicit bracketed-paste boundary before the submit
 // Enter. A raw send-keys -l burst leaves their paste detector active and can swallow
 // Enter, which is especially visible in create_session's first prompt delivery.
