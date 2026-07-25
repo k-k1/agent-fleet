@@ -95,16 +95,34 @@ func TestDriftCodexPaneMode(t *testing.T) {
 			"session.\npane:\n%s", got, capturePane(tn))
 	}
 
-	// Plan mode: shift+tab cycles, and the footer gains the "Plan mode" label.
+	// Plan mode: shift+tab cycles. Up through 0.144 the footer gained a "Plan mode"
+	// label; 0.145 removed that label but prints a trusted TUI system message confirming
+	// the transition. Production persists mirror-driven mode changes in session meta.
 	if out, err := exec.Command("tmux", "send-keys", "-t", tn, "BTab").CombinedOutput(); err != nil {
 		t.Fatalf("send-keys BTab: %v: %s", err, out)
 	}
-	if got := awaitPaneMode(t, tn, "Plan"); got != "Plan" {
+	if got, pane := awaitCodexPlanTransition(t, tn); got != "Plan" &&
+		!strings.Contains(pane, "for Plan mode.") {
 		diagnosePane(t, tn)
-		t.Fatalf("after shift+tab paneMode = %q, want \"Plan\".\nEither the mode-cycle key "+
-			"changed or the footer no longer says \"Plan mode\".\npane:\n%s", got, capturePane(tn))
+		t.Fatalf("after shift+tab neither the footer nor the TUI system message confirms "+
+			"Plan mode.\npaneMode=%q\npane:\n%s", got, pane)
 	}
-	t.Log("ok: codex footer reads Default and Plan via the production launch plan")
+	t.Log("ok: codex composer readiness and Plan transition survive the production launch plan")
+}
+
+func awaitCodexPlanTransition(t *testing.T, tn string) (string, string) {
+	t.Helper()
+	lastMode, lastPane := "", ""
+	deadline := time.Now().Add(120 * time.Second)
+	for time.Now().Before(deadline) {
+		lastMode = paneMode(session.KindCodex, tn)
+		lastPane = capturePane(tn)
+		if lastMode == "Plan" || strings.Contains(lastPane, "for Plan mode.") {
+			return lastMode, lastPane
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	return lastMode, lastPane
 }
 
 // diagnosePane fails with the REAL reason when the pane never reached the composer, so

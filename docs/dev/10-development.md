@@ -200,11 +200,12 @@ opencode / copilot / agy / cursor / kiro）で、npm・GitHub Releases・各社 
 それぞれの公開版の正本として読む。
 
 `cli-release-watch.yml` は毎日この公開版を前回処理版と比較し、**版が変わった CLI だけ**
-contract を dispatch する。claude / codex / opencode は contract 成功時に
-`CLI_RELEASE_TESTED_<CLI>` repository variable を更新するため、失敗時は翌日も再試行する。
-まだ無人の実認証 contract がない copilot / agy / cursor / kiro は
-`CLI_RELEASE_SEEN_<CLI>` を記録し、フリート上で必要な TUI／ミラー probe を追跡 issue に
-upsert する（「検出済み」と「テスト成功」を混同しない）。
+contract を dispatch する。状態は専用 issue `CLI release watcher state` の追記型コメント
+（`cli-release-state tested|seen <cli>=<version>`）に保存する。repository variables は
+`GITHUB_TOKEN` から書けず 403 になるため使わない。claude / codex / opencode は contract
+成功時だけ `tested` を追記するので、失敗時は翌日も再試行する。まだ無人の実認証 contract
+がない copilot / agy / cursor / kiro は `seen` を記録し、フリート上で必要な TUI／ミラー
+probe を追跡 issue に upsert する（「検出済み」と「テスト成功」を混同しない）。
 
 **ワークフローはエージェント毎に 1 ファイル**（`claude-tui-contract.yml` /
 `codex-contract.yml` / `opencode-contract.yml`）。パス条件も `workflow_dispatch` の入力も

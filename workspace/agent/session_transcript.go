@@ -373,7 +373,14 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 				}
 			}
 		} else if pm := paneMode(meta.Kind, session.TmuxName(meta.Name)); pm != "" {
-			resp["mode"] = pm
+			// Codex 0.145.0 no longer prints "Plan mode" in the footer. paneMode still
+			// returns Default as the composer-readiness signal; mirror-driven /plan and
+			// BTab changes are persisted in meta by rememberCodexTUIMode.
+			if meta.Kind == session.KindCodex && pm == "Default" && meta.Mode == "plan" {
+				resp["mode"] = "Plan"
+			} else {
+				resp["mode"] = pm
+			}
 		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
