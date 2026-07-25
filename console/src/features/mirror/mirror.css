@@ -1745,15 +1745,28 @@ button.mt-bash-toggle:hover {
   align-items: center;
   gap: 8px;
 }
-/* 返信サジェストのチップ行（コンポーサー入力の上・全幅で横に並ぶ）。 */
+/* 返信サジェストのチップ行（コンポーサー入力の上・全幅）。折り返さず必ず1行に収め、あふれた分は
+   左右スクロール（タッチ=スワイプはネイティブ、マウス=ドラッグは useDragScroll）。スクロールバーは
+   隠す（行が細く、出ると窮屈なため）。 */
 .mirror-suggest {
   flex: 0 0 100%;
+  min-width: 0; /* flex-basis 100% でも収縮できるように（これが無いと overflow が効かない） */
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain; /* 端まで来ても親ペイン/ページを動かさない */
+  user-select: none; /* ドラッグでテキスト選択にならないように */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none;
+}
+.mirror-suggest::-webkit-scrollbar {
+  display: none;
 }
 .mirror-suggest-chip {
+  flex: 0 0 auto; /* 1行スクロールなので縮ませない */
   max-width: 100%;
   padding: 3px 10px;
   font-size: 12px;
@@ -1778,6 +1791,7 @@ button.mt-bash-toggle:hover {
 }
 /* v2: ✨ トリガーボタン（on-demand で LLM 候補を取得）。 */
 .mirror-suggest-ai {
+  flex: 0 0 auto; /* 1行スクロールなので縮ませない */
   display: inline-flex;
   align-items: center;
   justify-content: center;
