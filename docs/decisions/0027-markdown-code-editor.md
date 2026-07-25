@@ -24,34 +24,47 @@ Console の File ペインは現在、Workspace のファイルを読み取り�
    編集バッファを表示する。
 3. **保存APIは `PUT /fs/file` とする。** Console の公開入口は `PUT /api/fs/file`、Workspace
    Agent 内部の実体は `PUT /fs/file` とし、CP は既存の fs 中継規約で転送する。
-4. **保存は compare-and-swap とする。** ファイルの生バイトSHA-256を `revision` とし、クライアントが
-   直前に取得した `baseRevision` と現在の revision が一致する場合だけ保存する。一致しなければ
-   `409 revision_conflict` とし、上書き保存や自動マージは行わない。
-5. **保存は atomic write とする。** 対象と同じディレクトリに一時ファイルを書き、内容を fsync
-   してから rename する。rename 後は親ディレクトリも fsync する。書込み失敗時に旧ファイルを
-   部分的な内容で壊さない。
-6. **書込み境界は既存の fs 読取り境界より狭くする。** パスは browse root 相対の相対パスだけを
-   受け付け、絶対パス・traversal・denylist・symlink を拒否する。scratch とロール別 docs mount
-   は読み取り専用のため保存対象にしない。
-7. **AIは編集バッファまでしか変更しない。** AIが返す変更は構造化された `EditSuggestion` とし、
-   適用は現在のバッファへ行う。ディスクへの保存は AI の経路から分離し、ユーザーの明示操作
-   （Ctrl+S / Cmd+S）で `PUT /api/fs/file` を呼ぶ。
-8. **Markdownは既存資産を再利用する。** 編集・プレビュー・左右分割の3モードを File ペイン内で
-   提供し、既存の MarkdownView、MarpView、Mermaid の遅延ロードを再利用する。Markdown の
-   編集モードに専用ペインを追加しない。
-9. **未保存本文はメモリ限定とする。** dirty な本文、undo 履歴、未適用の提案はタブ内メモリだけに
-   保持し、localStorage/sessionStorage/IndexedDB などのブラウザストレージには永続化しない。
-   タブを閉じる、再読み込みする、Workspace を失う場合の復元は保証しない。
+4. **保存は観測時点CAS＋同一API直列化とする。** ファイルの生バイトSHA-256をrevisionとし、
+   保存APIの `baseDiskRevision` と比較時点のrevisionが一致する場合だけ保存する。一致しなければ
+   `409 revision_conflict` とする。同一APIのPUTは、fd安全検証後のcanonical相対pathをmutex keyに
+   して直列化する。shell、Claude/Codex、git checkout等の外部writerはこのmutexに参加しないため、
+   比較後rename前の外部変更を防止・検出する保証は持たない。全writer協調ロックは採用しない。
+5. **保存はatomic writeとし、rename後失敗を別状態にする。** 対象と同じディレクトリに一時ファイルを
+   書き、fsyncしてからrenameし、親directoryもfsyncする。rename前の失敗は旧本文を保持して
+   `write_failed`、rename後のdirectory fsync等の失敗は実体不明として `write_state_unknown` とし、
+   クライアントにGET照合を要求する。保持する属性は `mode.Perm()` のみで、owner/ACL/xattr/special
+   bitsはv1で保証しない。
+6. **fd-relativeな書込み・読取り境界を採用する。** v1のLinux Agentはroot/parent directory fdを固定し、
+   `openat2(RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS)`、`fstatat(AT_SYMLINK_NOFOLLOW)`、`renameat`相当を
+   GET/file、download、PUTで使う。既存の字句検査＋Lstat helperはTOCTOU対策として再利用しない。
+   POSIX canonical relative pathだけを受け付け、絶対・traversal・空component・backslash・Windows drive/
+   UNC形式・denylist・symlinkを拒否する。scratchとrole別docs mountは読み取り専用とする。
+7. **編集対象はLF-onlyのUTF-8テキストとする。** CRLF/CR単独/混在改行は読み取り専用にし、raw byte
+   revisionとCodeMirror 6のdocument offsetを変換なしで一致させる。将来の改行マッピングやCRLF対応は
+   別設計で固定してから追加する。
+8. **AIは変更提案チャネルで編集バッファまでしか変更しない。** 一般のClaude/Codex等にはWrite/Edit/
+   Bash能力があり得るため、AI全体の権限を「書込みtoolなし」とは表現しない。Phase 4の提案生成だけは
+   read-only allowlist経路に限定し、`EditSuggestion`をpaneId/filePath/requestId/sourceRevisionと
+   ともに検証する。acceptはPUTを呼ばず、保存はユーザーのCtrl+S/Cmd+SまたはSaveボタンに限定する。
+9. **Markdownは既存資産を再利用する。** 編集・プレビュー・左右分割の3モードをFileペイン内で提供し、
+   MarkdownView、MarpView、Mermaidの遅延ロードを再利用する。現行sourceはedit、slidesはMarp previewへ
+   対応させ、編集専用ペインは追加しない。
+10. **未保存本文はメモリ限定とし、全navigationをguardする。** dirty本文、undo、提案、世代を
+    PaneContent/layoutへ入れず、layoutがstorageに永続化されても本文を保存しない。closeだけでなく
+    active差し替え、pane再利用、history、tenant/reset、reader、popout、beforeunloadをdirty registryで
+    保護する。dirty popoutはv1では拒否または明示確認とする。
 
 ## 対象範囲とフェーズ境界
 
 - Phase 0（本ADRと [docs/44](../44-markdown-code-editor.md)）で、設計・API・revision/競合・提案形式・
   入力制約を固定する。
-- Phase 1 は保存APIの実装と Go 単体テストを行う。
-- Phase 2 は CodeMirror 6、File ペインの view/edit、dirty、明示保存を実装する。
-- Phase 3 は Markdown の編集・プレビュー・分割を実装する。
-- Phase 4 で AI 提案の選択範囲アクション、差分レビュー、accept/reject を実装する。
-- Phase 5 の複数候補・hunk 単位 accept・セッション連携・補完は本ADRの必須範囲ではない。
+- Phase 1 は Agent/CP route、中継、監査、strict decoder、fd-relative操作、GET/download race、
+  symlink/CAS/failure injectionを含む保存API基盤とGo単体テストを行う。
+- Phase 2 は CodeMirror 6、Fileペインのview/edit、single-flight保存、snapshot/generation、dirty
+  registry/navigation guard、beforeunload、ARIA、Saveボタンを実装する。
+- Phase 3 は Markdown/Marpのedit/preview/splitと既存描画資産の回帰テストを実装する。
+- Phase 4 は read-only提案生成チャネル、identity付き構造化提案、差分レビュー、accept/rejectを実装する。
+- Phase 5 の複数候補・hunk単位accept・セッション連携・補完・CRLF対応は別設計後に着手する。
 
 ## 却下した選択肢
 
@@ -64,6 +77,8 @@ Console の File ペインは現在、Workspace のファイルを読み取り�
 - **localStorageへのdraft保存:** 共有端末やアカウント切替時の残留、機微なソースコードの意図しない
   永続化を招くため採らない。
 - **revisionなしの上書き保存:** 別タブ、外部エージェント、git操作による変更を黙って消すため採らない。
+- **全writerを協調ロック下に置く:** shell/agent/gitを含む全書込み経路の統合はv1の変更範囲と権限境界を
+  大きくするため採らない。比較時点CASの限界を契約とテストに明記する。
 
 ## 結果と受け入れる制約
 
