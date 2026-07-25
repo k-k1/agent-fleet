@@ -15,6 +15,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { baseName, imageFormat } from "../../lib/filemeta.ts";
 import { useDraft } from "../../lib/draft.ts";
+import { useDragScroll } from "../../lib/dragScroll.ts";
 import { scrollComposerViewport } from "../../lib/keyScroll.ts";
 import { useBackClose } from "../../lib/backClose.ts";
 import { fmtDateTime, fmtNum } from "../../lib/intl.ts";
@@ -359,6 +360,7 @@ export function MirrorView({
   const [llmSuggestions, setLlmSuggestions] = useState<string[]>([]);
   const [suggesting, setSuggesting] = useState(false);
   const suggestRef = useRef<HTMLDivElement>(null); // チップ行（Tab でここへフォーカスを移す）
+  useDragScroll(suggestRef); // 1行に収めた候補列をマウスドラッグで左右スクロール（スワイプは既定動作）
   // Pasted images awaiting send: {path} is the session-saved absolute path (referenced in
   // the prompt), {url} an object URL for the local chip preview, {name} the basename.
   const [attachments, setAttachments] = useState<{ path: string; name: string; url: string; image: boolean }[]>([]);
@@ -1708,6 +1710,14 @@ export function MirrorView({
   const suggestRing = (): HTMLButtonElement[] =>
     Array.from(suggestRef.current?.querySelectorAll<HTMLButtonElement>("button") ?? []);
 
+  // チップ行は1行スクロール（はみ出した候補は画面外）。キー移動のフォーカス先が隠れないよう
+  // 横だけ最小限スクロールして追従させる。focus 既定のスクロールは縦にも効いて本文が飛ぶので
+  // preventScroll で殺し、inline/block:nearest の scrollIntoView で必要分だけ動かす。
+  const focusRingItem = (el: HTMLButtonElement) => {
+    el.focus({ preventScroll: true });
+    el.scrollIntoView({ block: "nearest", inline: "nearest" });
+  };
+
   // リング内の移動。Tab/Shift+Tab は「候補＋入力欄」を一巡（端まで来たら入力欄へ戻る＝
   // 入力欄→候補1→候補2→入力欄…のループ）。←/→ は候補内だけで循環。Escape で入力欄へ。
   // 処理したら true を返し、呼び出し側はそこで打ち切る。
@@ -1725,13 +1735,13 @@ export function MirrorView({
       e.preventDefault();
       const next = e.shiftKey ? i - 1 : i + 1;
       if (next < 0 || next >= ring.length) inputRef.current?.focus(); // 端 → 入力欄へ戻る
-      else ring[next].focus();
+      else focusRingItem(ring[next]);
       return true;
     }
     if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
       e.preventDefault();
       const d = e.key === "ArrowRight" ? 1 : -1;
-      ring[(i + d + ring.length) % ring.length].focus(); // ←/→ は候補内で循環
+      focusRingItem(ring[(i + d + ring.length) % ring.length]); // ←/→ は候補内で循環
       return true;
     }
     return false;
@@ -1759,7 +1769,7 @@ export function MirrorView({
         : suggestRef.current?.querySelector<HTMLButtonElement>(".mirror-suggest-chip");
       if (target) {
         e.preventDefault();
-        target.focus();
+        focusRingItem(target);
         return;
       }
     }
