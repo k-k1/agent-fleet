@@ -92,6 +92,7 @@ func awaitPaneModeKind(t *testing.T, kind, tn, want string) string {
 	t.Helper()
 	last := ""
 	advancedAgyTheme := false
+	advancedAgyToS := false
 	deadline := time.Now().Add(120 * time.Second)
 	for time.Now().Before(deadline) {
 		// agy 1.1.7 adds a one-time color-scheme chooser before its signed-in
@@ -99,16 +100,32 @@ func awaitPaneModeKind(t *testing.T, kind, tn, want string) string {
 		// default once, then keep this contract focused on the production
 		// composer footer.  The setting persists in the real HOME, so the plan
 		// subtest (and later launches) must not see it again.
-		if kind == session.KindAgy && !advancedAgyTheme {
+		if kind == session.KindAgy && (!advancedAgyTheme || !advancedAgyToS) {
 			out, _ := exec.Command("tmux", "-L", os.Getenv("AF_TMUX_SOCKET"),
 				"capture-pane", "-p", "-t", tn).Output()
-			if strings.Contains(string(out), "Choose your color scheme:") {
+			pane := string(out)
+			if !advancedAgyTheme && strings.Contains(pane, "Choose your color scheme:") {
 				if err := exec.Command("tmux", "-L", os.Getenv("AF_TMUX_SOCKET"),
 					"send-keys", "-t", tn, "Enter").Run(); err != nil {
 					t.Fatalf("confirm agy color scheme: %v", err)
 				}
 				advancedAgyTheme = true
 				time.Sleep(500 * time.Millisecond)
+				continue
+			}
+			// Token-only CI restores no agy settings.  Complete the same initial
+			// ToS step the production connection flow drives: toggle Interactions
+			// data collection OFF, then select Done.  A normal AF login has already
+			// done this, so the screen simply never appears there.
+			if !advancedAgyToS && strings.Contains(pane, "Terms of Service & Data Use") {
+				for _, key := range []string{"Enter", "Down", "Right", "Enter"} {
+					if err := exec.Command("tmux", "-L", os.Getenv("AF_TMUX_SOCKET"),
+						"send-keys", "-t", tn, key).Run(); err != nil {
+						t.Fatalf("confirm agy terms: %v", err)
+					}
+					time.Sleep(250 * time.Millisecond)
+				}
+				advancedAgyToS = true
 				continue
 			}
 		}
