@@ -358,6 +358,7 @@ export function MirrorView({
   // 返信サジェスト v2: ✨ボタンで取得した LLM 文脈候補（Layer A のチップ列にマージ）と取得中フラグ。
   const [llmSuggestions, setLlmSuggestions] = useState<string[]>([]);
   const [suggesting, setSuggesting] = useState(false);
+  const suggestRef = useRef<HTMLDivElement>(null); // チップ行（Tab でここへフォーカスを移す）
   // Pasted images awaiting send: {path} is the session-saved absolute path (referenced in
   // the prompt), {url} an object URL for the local chip preview, {name} the basename.
   const [attachments, setAttachments] = useState<{ path: string; name: string; url: string; image: boolean }[]>([]);
@@ -1702,7 +1703,33 @@ export function MirrorView({
     inputRef.current?.focus();
   };
 
+  // 返信サジェストのチップ上でのキー操作。Enter/Ctrl(⌘)+Enter の役割はコンポーサーの送信キー
+  // 設定に合わせる: modSend（Ctrl+Enter で送信）なら mod+Enter=送信・素の Enter=差し込み、
+  // enter モード（Enter で送信）なら逆。Escape はコンポーサーへ戻る。
+  const onSuggestKeyDown = (e: RKeyboardEvent, text: string) => {
+    if (e.nativeEvent.isComposing) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      inputRef.current?.focus();
+      return;
+    }
+    if (e.key !== "Enter") return;
+    const mod = e.ctrlKey || e.metaKey;
+    e.preventDefault(); // ボタン既定の click（＝差し込み）と二重発火させない
+    applySuggestion(text, modSend ? mod : !mod);
+  };
+
   const onKeyDown = (e: RKeyboardEvent) => {
+    // 入力欄が空なら Tab で返信サジェストへフォーカスを移す。以降の候補間移動（Tab=次 /
+    // Shift+Tab=前）はチップが隣接した button なのでブラウザ既定の順送りがそのまま効く。
+    if (e.key === "Tab" && !e.shiftKey && !e.nativeEvent.isComposing && draft === "") {
+      const first = suggestRef.current?.querySelector<HTMLButtonElement>(".mirror-suggest-chip");
+      if (first) {
+        e.preventDefault();
+        first.focus();
+        return;
+      }
+    }
     // Scroll the transcript without leaving the composer: Shift+↑/↓ nudges, Ctrl/⌘+↑/↓
     // and Ctrl/⌘+[ / ] page. Checked before history recall so the modified arrows don't
     // get swallowed by the ↑/↓ recall path below.
@@ -2400,7 +2427,7 @@ export function MirrorView({
           {/* 返信サジェスト: 常用短文＋直近回答に沿った候補（Layer A）＋✨で取得する LLM 候補（v2）。
               クリックで差し込み、⌥で即送信。flex 全幅 (.mirror-suggest) で入力行の上に載る。 */}
           {!composerLocked && (suggestChips.length > 0 || settings.replySuggestEnabled) && (
-            <div className="mirror-suggest">
+            <div className="mirror-suggest" ref={suggestRef}>
               {settings.replySuggestEnabled && (
                 <button
                   type="button"
@@ -2419,6 +2446,7 @@ export function MirrorView({
                   className={"mirror-suggest-chip" + (sg.llm ? " llm" : "")}
                   title={tr("mirror.suggest_hint")}
                   onClick={(e) => applySuggestion(sg.text, e.ctrlKey || e.altKey || e.metaKey)}
+                  onKeyDown={(e) => onSuggestKeyDown(e, sg.text)}
                 >
                   {sg.text}
                 </button>

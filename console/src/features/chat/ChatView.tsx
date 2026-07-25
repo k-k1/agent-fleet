@@ -107,6 +107,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   // 返信サジェスト v2: ✨ボタンで取得した LLM 候補（Layer A のチップ列にマージ）と取得中フラグ。
   const [llmSuggestions, setLlmSuggestions] = useState<string[]>([]);
   const [suggesting, setSuggesting] = useState(false);
+  const suggestRef = useRef<HTMLDivElement>(null); // チップ行（Tab でここへフォーカスを移す）
   const [karaoke, setKaraoke] = useState<string | null>(null); // 読み上げ中の文（ライブ配信カラオケ・docs/19）
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
@@ -814,7 +815,33 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     inputRef.current?.focus();
   };
 
+  // 返信サジェストのチップ上でのキー操作（MirrorView と同挙動）。Enter/Ctrl(⌘)+Enter の役割は
+  // コンポーサーの送信キー設定に合わせる: modSend なら mod+Enter=送信・素の Enter=差し込み、
+  // enter モードなら逆。Escape はコンポーサーへ戻る。
+  const onSuggestKeyDown = (e: KeyboardEvent<HTMLButtonElement>, text: string) => {
+    if (e.nativeEvent.isComposing) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      inputRef.current?.focus();
+      return;
+    }
+    if (e.key !== "Enter") return;
+    const mod = e.ctrlKey || e.metaKey;
+    e.preventDefault(); // ボタン既定の click（＝差し込み）と二重発火させない
+    applySuggestion(text, modSend ? mod : !mod);
+  };
+
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // 入力欄が空なら Tab で返信サジェストへフォーカスを移す。以降の候補間移動（Tab=次 /
+    // Shift+Tab=前）はチップが隣接した button なのでブラウザ既定の順送りがそのまま効く。
+    if (e.key === "Tab" && !e.shiftKey && !e.nativeEvent.isComposing && input === "") {
+      const first = suggestRef.current?.querySelector<HTMLButtonElement>(".chat-suggest-chip");
+      if (first) {
+        e.preventDefault();
+        first.focus();
+        return;
+      }
+    }
     // Scroll the message list without leaving the composer: Shift+↑/↓ nudges, Ctrl/⌘+↑/↓
     // and Ctrl/⌘+[ / ] page. Checked before history recall so the modified arrows don't get
     // swallowed by the ↑/↓ recall path below.
@@ -1117,7 +1144,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
         {/* 返信サジェスト: 常用短文＋直近回答に沿った候補（Layer A）＋✨の LLM 候補（v2）。
             クリックで差し込み・⌥で即送信。 */}
         {(conv || isDraft) && !showStreaming && (suggestChips.length > 0 || (settings.replySuggestEnabled && conversationId)) && (
-          <div className="chat-suggest">
+          <div className="chat-suggest" ref={suggestRef}>
             {settings.replySuggestEnabled && conversationId && (
               <button
                 type="button"
@@ -1136,6 +1163,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
                 className={"chat-suggest-chip" + (sg.llm ? " llm" : "")}
                 title={tr("mirror.suggest_hint")}
                 onClick={(e) => applySuggestion(sg.text, e.ctrlKey || e.altKey || e.metaKey)}
+                onKeyDown={(e) => onSuggestKeyDown(e, sg.text)}
               >
                 {sg.text}
               </button>
