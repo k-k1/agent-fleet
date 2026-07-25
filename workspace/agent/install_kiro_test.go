@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -161,4 +164,34 @@ func TestKiroInstallLockExcludes(t *testing.T) {
 		t.Fatalf("lock not released: %v", err)
 	}
 	_ = syscall.Flock(int(f2.Fd()), syscall.LOCK_UN)
+}
+
+// TestKiroInstallGETReportsPinDrift: the connection card's update affordance is driven
+// by this payload. A home copy older than the versions.json pin must report
+// updateAvailable=true with both versions, so the user can SEE that an update exists and
+// press the button when a multi-minute download suits them (docs/43 §11).
+func TestKiroInstallGETReportsPinDrift(t *testing.T) {
+	fakeKiroHome(t, "2.14.1", "2.14.2")
+	kiroInstaller = kiroInstall{}
+
+	rec := httptest.NewRecorder()
+	handleKiroInstall(rec, httptest.NewRequest(http.MethodGet, "/connections/kiro/install", nil))
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v (%s)", err, rec.Body.String())
+	}
+	if got["installed"] != true || got["updateAvailable"] != true ||
+		got["version"] != "2.14.1" || got["pin"] != "2.14.2" {
+		t.Fatalf("GET payload = %v, want installed/updateAvailable with 2.14.1 → 2.14.2", got)
+	}
+
+	// Same version as the pin → no nagging.
+	fakeKiroHome(t, "2.14.2", "2.14.2")
+	rec = httptest.NewRecorder()
+	handleKiroInstall(rec, httptest.NewRequest(http.MethodGet, "/connections/kiro/install", nil))
+	got = nil
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	if got["updateAvailable"] != false || got["installed"] != true {
+		t.Fatalf("GET payload = %v, want installed with no update", got)
+	}
 }
