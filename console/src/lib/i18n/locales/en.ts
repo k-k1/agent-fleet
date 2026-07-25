@@ -321,6 +321,7 @@ export const en: Record<keyof typeof ja, string> = {
   "env.pin_label": " (pin: {pin})",
   "env.pin_title": "The current binary differs from the image build-time pin (e.g. after a self-update).",
   "env.pin_only_title": "This image bakes no binary (lean); the pinned version is installed into ~/.local at start.",
+  "env.pin_paren": "({pin})",
   "env.tv_note": "Effective = the binary resolved on PATH (~/.local/bin wins over the image). Hover a cell to see its path and raw output.",
   "env.tc_note_1": "Changes apply to ",
   "env.tc_note_strong": "sessions/shells started after this",
