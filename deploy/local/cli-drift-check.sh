@@ -33,7 +33,7 @@ TARGETS=(
   "opencode|OPENCODE_VERSION|npm|opencode-ai"
   "codex|CODEX_VERSION|npm|@openai/codex"
   "copilot|COPILOT_VERSION|npm|@github/copilot"
-  "agy|AGY_VERSION|github|google-antigravity/antigravity-cli"
+  "agy|AGY_VERSION|agy|https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json"
   "cursor|CURSOR_VERSION|cursor|https://cursor.com/install"
   "kiro|KIRO_VERSION|kiro|https://prod.download.cli.kiro.dev/stable/latest/manifest.json"
 )
@@ -75,6 +75,9 @@ for t in "${TARGETS[@]}"; do
       latest="$(curl -fsSL --max-time 20 \
         "https://api.github.com/repos/${locator}/releases/latest" 2>/dev/null |
         jq -r '.tag_name // empty' 2>/dev/null)" ;;
+    agy)
+      latest="$(curl -fsSL --max-time 20 "$locator" 2>/dev/null |
+        jq -r '.version // empty' 2>/dev/null)" ;;
     cursor)
       latest="$(curl -fsSL --max-time 20 "$locator" 2>/dev/null |
         sed -n 's|.*versions/\([0-9.]*-[a-f0-9]*\)/.*|\1|p' | head -1)" ;;

@@ -133,8 +133,8 @@ self-update opt-in の `~/.local/bin` shadow 機構（claude/opencode/codex/rtk/
 - entrypoint は各 CLI について「`/usr/local/bin` にも `~/.local/bin` にも無ければ、
   versions.json のピン版を `~/.local/bin` へインストール」する（claude/codex/opencode は
   rootfs 内の node で `npm install -g`（prefix=`~/.local`）、rtk は checksums 検証付き DL、
-  agy は GitHub Releases の versioned アセット + `agy_sha256` 検証 — P1 実装時にピン化。
-  下の 2026-07-21 追記参照）。
+  agy は公式installer manifestの不変 GCS object + `agy_build` + `agy_sha256` 検証 —
+  P1 実装時にピン化。下の 2026-07-25 追記参照）。
 - 仮想 HOME は永続なので **DL は初回起動の一度きり**。2回目以降はオフラインでも起動する。
 - self-update opt-in（`AF_AGENT_SELF_UPDATE`）ON なら従来どおり最新へ追従、OFF なら
   ピン版のまま。書き込み先はすべて bind した仮想 HOME 側なので **ro rootfs のまま成立**する。
@@ -543,14 +543,13 @@ P1→P2 が本丸（native が唯一のゼロ→イチ）。P3 は独立に並�
   （lean では ~/.local が boot-install 品そのものなので消してはならない）。
 - e2e-smoke の既存バグ修正: `EXPECT_COPILOT` が docker run へ渡っておらず、copilot
   統合後の smoke は set -u で落ちる状態だった。
-- **agy も真のピンへ昇格**（P1 追補・2026-07-21）: GitHub Releases
-  （`google-antigravity/antigravity-cli`）が全旧版の versioned アセットを恒久保存して
-  おり、GCS の install.sh 配布物と**バイト同一**（1.1.5 で sha256・manifest sha512 の
-  一致を実測）。焼き込み・boot-install とも install.sh（常に latest・ピン不可）を廃し、
-  `AGY_VERSION` + アセット digest（`AGY_SHA256_X64/ARM64` → versions.json `agy_sha256`）
-  の検証付き直接取得に変更。「agy だけビルド時 latest の記録」という例外は解消
-  （self-update opt-in の latest 追従は manifest 経路のまま）。versioned manifest API・
-  バケット listing は無し（実測 404/401）なので、供給元は GitHub Releases が唯一。
+- **agy も真のピンへ昇格**（P1 追補・2026-07-25）: 焼き込み・boot-install とも
+  install.sh（常に latest・ピン不可）を廃し、公式installer manifestが示す不変 GCS object
+  を `AGY_VERSION` + `AGY_RELEASE_BUILD` + アセット digest
+  （`AGY_SHA256_X64/ARM64` → versions.json `agy_sha256`、build-id は `agy_build`）で検証して
+  直接取得する。1.1.7 で GitHub Releases が追随しないことを確認したため、供給元を公式
+  manifest/GCSへ統一した。「agy だけビルド時 latest の記録」という例外は解消
+  （self-update opt-in の latest 追従は manifest 経路のまま）。
 - 検証済み: CP/agent 全 Go テスト緑（151+451）・shell 構文・docs ステージングの実走
   （114→90 file、denylist 4 種のみ除外）・entrypoint boot-install のサンドボックス実走
   （lean 初回=ピン npm 導入+update 抑止 / 2 回目=no-op / baked=no-op / 失敗時ソフト続行）。
