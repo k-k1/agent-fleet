@@ -1,0 +1,56 @@
+# Cursor credentials are refreshable local auth state, so a real turn is dispatched
+# only when its encrypted CI secret is configured. A failed/expired auth never advances
+# the release marker and remains visible to cli-release-watch's tracking issue.
+name: cursor-contract
+
+on:
+  workflow_dispatch:
+    inputs:
+      cli_version:
+        description: "cursor-agent version to verify (latest for self-update-enabled Workspaces)"
+        type: string
+        default: latest
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: cursor-contract
+  cancel-in-progress: false
+
+jobs:
+  tui-mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: restore encrypted Cursor auth state
+        env:
+          AUTH: ${{ secrets.E2E_CURSOR_AUTH_JSON }}
+        run: |
+          set -euo pipefail
+          [ -n "$AUTH" ] || { echo '::error::register secrets.E2E_CURSOR_AUTH_JSON'; exit 1; }
+          install -d -m 700 "$HOME/.config/cursor"
+          umask 077
+          printf '%s' "$AUTH" > "$HOME/.config/cursor/auth.json"
+          jq -e . "$HOME/.config/cursor/auth.json" >/dev/null
+      - uses: ./.github/actions/setup-agent-cli
+        id: cli
+        with:
+          agent: cursor
+          version: ${{ inputs.cli_version }}
+      - name: real TUI and mirror contract
+        working-directory: workspace/agent
+        env:
+          E2E_REQUIRE: "1"
+        run: go test -tags tui_contract -run '^TestCursorTUIMirrorContract$' -count=1 -v -timeout 12m .
+      - name: remember successfully tested latest
+        if: success() && inputs.cli_version == 'latest'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EFFECTIVE: ${{ steps.cli.outputs.version }}
+        run: |
+          version="$(printf '%s' "$EFFECTIVE" | head -1)"
+          [ -n "$version" ]
+          deploy/local/cli-release-state.sh set tested cursor "$version"
