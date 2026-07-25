@@ -1,0 +1,181 @@
+# Public agent-CLI release watcher.
+#
+# cli-drift.yml answers "are image pins behind?". This workflow answers the
+# different question "did a public version change since we last reacted?" and
+# dispatches the expensive TUI/pane contracts only on that edge.
+#
+# CLI_RELEASE_TESTED_<CLI> is written by a successful automated contract.
+# CLI_RELEASE_SEEN_<CLI> is used only for CLIs that still require a fleet probe and
+# is written after the tracking issue is updated. A failed automated contract does
+# not advance TESTED, so the watcher retries it the next day.
+name: cli-release-watch
+
+on:
+  schedule:
+    - cron: "30 20 * * *" # daily 05:30 JST, after cli-drift at 05:00
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+
+concurrency:
+  group: cli-release-watch
+  cancel-in-progress: false
+
+jobs:
+  detect-and-dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SEEN_CLAUDE: ${{ vars.CLI_RELEASE_TESTED_CLAUDE }}
+      SEEN_CODEX: ${{ vars.CLI_RELEASE_TESTED_CODEX }}
+      SEEN_OPENCODE: ${{ vars.CLI_RELEASE_TESTED_OPENCODE }}
+      SEEN_COPILOT: ${{ vars.CLI_RELEASE_SEEN_COPILOT }}
+      SEEN_AGY: ${{ vars.CLI_RELEASE_SEEN_AGY }}
+      SEEN_CURSOR: ${{ vars.CLI_RELEASE_SEEN_CURSOR }}
+      SEEN_KIRO: ${{ vars.CLI_RELEASE_SEEN_KIRO }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: fetch all public versions
+        id: versions
+        run: |
+          set +e
+          deploy/local/cli-drift-check.sh
+          code=$?
+          set -e
+          # 1 is normal pin drift. 2 means a release source could not be read.
+          [ "$code" != 2 ] || exit 2
+
+      - name: detect release edges
+        id: changed
+        env:
+          LATEST_CLAUDE: ${{ steps.versions.outputs.latest_claude }}
+          LATEST_CODEX: ${{ steps.versions.outputs.latest_codex }}
+          LATEST_OPENCODE: ${{ steps.versions.outputs.latest_opencode }}
+          LATEST_COPILOT: ${{ steps.versions.outputs.latest_copilot }}
+          LATEST_AGY: ${{ steps.versions.outputs.latest_agy }}
+          LATEST_CURSOR: ${{ steps.versions.outputs.latest_cursor }}
+          LATEST_KIRO: ${{ steps.versions.outputs.latest_kiro }}
+        run: |
+          set -euo pipefail
+          changed=()
+          for name in CLAUDE CODEX OPENCODE COPILOT AGY CURSOR KIRO; do
+            eval "latest=\${LATEST_${name}}"
+            eval "seen=\${SEEN_${name}:-}"
+            if [ "$latest" != "$seen" ]; then
+              lower="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')"
+              echo "$lower=true" >> "$GITHUB_OUTPUT"
+              changed+=("$lower=$latest")
+            fi
+          done
+          {
+            echo "## Public CLI release edges"
+            echo
+            if [ "${#changed[@]}" -eq 0 ]; then
+              echo "No public version changed; all contract dispatches skipped."
+            else
+              printf -- "- \`%s\`\n" "${changed[@]}"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          printf 'count=%s\n' "${#changed[@]}" >> "$GITHUB_OUTPUT"
+
+      - name: dispatch existing latest TUI / pane contracts
+        id: dispatch
+        if: steps.changed.outputs.count != '0'
+        env:
+          CLAUDE_CHANGED: ${{ steps.changed.outputs.claude }}
+          CODEX_CHANGED: ${{ steps.changed.outputs.codex }}
+          OPENCODE_CHANGED: ${{ steps.changed.outputs.opencode }}
+          CLAUDE_KEY: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
+          CLAUDE_TOKEN: ${{ secrets.E2E_CLAUDE_OAUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "$CLAUDE_CHANGED" = true ]; then
+            if [ -n "$CLAUDE_KEY" ] || [ -n "$CLAUDE_TOKEN" ]; then
+              gh workflow run claude-tui-contract.yml -f cli_version=latest
+            else
+              echo "claude_unavailable=true" >> "$GITHUB_OUTPUT"
+              echo "::warning::Claude changed but no TUI-contract credential is configured"
+            fi
+          fi
+          if [ "$CODEX_CHANGED" = true ]; then
+            gh workflow run codex-contract.yml
+          fi
+          if [ "$OPENCODE_CHANGED" = true ]; then
+            gh workflow run opencode-contract.yml
+          fi
+
+      - name: report CLIs without an automated live contract
+        if: steps.dispatch.outputs.claude_unavailable == 'true' || steps.changed.outputs.copilot == 'true' || steps.changed.outputs.agy == 'true' || steps.changed.outputs.cursor == 'true' || steps.changed.outputs.kiro == 'true'
+        env:
+          CLAUDE_CHANGED: ${{ steps.dispatch.outputs.claude_unavailable }}
+          COPILOT_CHANGED: ${{ steps.changed.outputs.copilot }}
+          AGY_CHANGED: ${{ steps.changed.outputs.agy }}
+          CURSOR_CHANGED: ${{ steps.changed.outputs.cursor }}
+          KIRO_CHANGED: ${{ steps.changed.outputs.kiro }}
+          LATEST_CLAUDE: ${{ steps.versions.outputs.latest_claude }}
+          LATEST_COPILOT: ${{ steps.versions.outputs.latest_copilot }}
+          LATEST_AGY: ${{ steps.versions.outputs.latest_agy }}
+          LATEST_CURSOR: ${{ steps.versions.outputs.latest_cursor }}
+          LATEST_KIRO: ${{ steps.versions.outputs.latest_kiro }}
+        run: |
+          set -euo pipefail
+          title="CLI release needs fleet TUI/mirror probe"
+          body="$(mktemp)"
+          {
+            echo "The release watcher found public versions whose unattended live contract could not be run:"
+            echo
+            for name in CLAUDE COPILOT AGY CURSOR KIRO; do
+              eval "changed=\${${name}_CHANGED:-}"
+              eval "latest=\${LATEST_${name}}"
+              [ "$changed" = true ] && echo "- \`${name,,}=$latest\`"
+            done
+            cat <<'EOF'
+
+          Run the real signed-in CLI through Terminal (CLI), then verify (Claude is
+          listed here only when its CI credential is not configured):
+
+          1. the composer readiness/footer is detected;
+          2. a prompt sent from the mirror reaches the TUI;
+          3. user/assistant turns appear in `/messages`;
+          4. working returns to idle after the response.
+
+          This issue is intentionally not called a passing contract. Close it only after the
+          fleet probe succeeds or an automated contract replaces it.
+          EOF
+          } > "$body"
+          num="$(gh issue list --state open --search "in:title $title" --json number,title \
+            --jq ".[] | select(.title == \"$title\") | .number" | head -1)"
+          gh label create cli-drift --color FBCA04 --description "upstream CLI version drift" 2>/dev/null || true
+          if [ -n "$num" ]; then
+            gh issue comment "$num" --body-file "$body"
+          else
+            gh issue create --title "$title" --body-file "$body" --label cli-drift
+          fi
+
+      - name: remember handled releases
+        if: steps.changed.outputs.count != '0'
+        env:
+          CHANGED_COPILOT: ${{ steps.changed.outputs.copilot }}
+          CHANGED_AGY: ${{ steps.changed.outputs.agy }}
+          CHANGED_CURSOR: ${{ steps.changed.outputs.cursor }}
+          CHANGED_KIRO: ${{ steps.changed.outputs.kiro }}
+          LATEST_COPILOT: ${{ steps.versions.outputs.latest_copilot }}
+          LATEST_AGY: ${{ steps.versions.outputs.latest_agy }}
+          LATEST_CURSOR: ${{ steps.versions.outputs.latest_cursor }}
+          LATEST_KIRO: ${{ steps.versions.outputs.latest_kiro }}
+        run: |
+          set -euo pipefail
+          # Automated contracts write their own TESTED variable only after success.
+          # These four have no unattended signed-in contract yet; SEEN suppresses
+          # duplicate daily issue edits without pretending they passed a test.
+          for name in COPILOT AGY CURSOR KIRO; do
+            eval "changed=\${CHANGED_${name}:-}"
+            [ "$changed" = true ] || continue
+            eval "latest=\${LATEST_${name}}"
+            gh variable set "CLI_RELEASE_SEEN_${name}" --body "$latest"
+          done
