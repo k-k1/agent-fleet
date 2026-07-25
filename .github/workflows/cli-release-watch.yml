@@ -4,10 +4,10 @@
 # different question "did a public version change since we last reacted?" and
 # dispatches the expensive TUI/pane contracts only on that edge.
 #
-# CLI_RELEASE_TESTED_<CLI> is written by a successful automated contract.
-# CLI_RELEASE_SEEN_<CLI> is used only for CLIs that still require a fleet probe and
-# is written after the tracking issue is updated. A failed automated contract does
-# not advance TESTED, so the watcher retries it the next day.
+# Successful contracts append a "tested" marker to the release-state issue.
+# CLIs that still require a fleet probe append a separate "seen" marker after their
+# tracking issue is updated. A failed contract does not advance tested state, so the
+# watcher retries it the next day.
 name: cli-release-watch
 
 on:
@@ -30,15 +30,20 @@ jobs:
     timeout-minutes: 15
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      SEEN_CLAUDE: ${{ vars.CLI_RELEASE_TESTED_CLAUDE }}
-      SEEN_CODEX: ${{ vars.CLI_RELEASE_TESTED_CODEX }}
-      SEEN_OPENCODE: ${{ vars.CLI_RELEASE_TESTED_OPENCODE }}
-      SEEN_COPILOT: ${{ vars.CLI_RELEASE_SEEN_COPILOT }}
-      SEEN_AGY: ${{ vars.CLI_RELEASE_SEEN_AGY }}
-      SEEN_CURSOR: ${{ vars.CLI_RELEASE_SEEN_CURSOR }}
-      SEEN_KIRO: ${{ vars.CLI_RELEASE_SEEN_KIRO }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: load durable release state
+        id: state
+        run: |
+          set -euo pipefail
+          deploy/local/cli-release-state.sh ensure tested watcher
+          for name in claude codex opencode; do
+            echo "seen_$name=$(deploy/local/cli-release-state.sh get tested "$name")" >> "$GITHUB_OUTPUT"
+          done
+          for name in copilot agy cursor kiro; do
+            echo "seen_$name=$(deploy/local/cli-release-state.sh get seen "$name")" >> "$GITHUB_OUTPUT"
+          done
 
       - name: fetch all public versions
         id: versions
@@ -53,6 +58,13 @@ jobs:
       - name: detect release edges
         id: changed
         env:
+          SEEN_CLAUDE: ${{ steps.state.outputs.seen_claude }}
+          SEEN_CODEX: ${{ steps.state.outputs.seen_codex }}
+          SEEN_OPENCODE: ${{ steps.state.outputs.seen_opencode }}
+          SEEN_COPILOT: ${{ steps.state.outputs.seen_copilot }}
+          SEEN_AGY: ${{ steps.state.outputs.seen_agy }}
+          SEEN_CURSOR: ${{ steps.state.outputs.seen_cursor }}
+          SEEN_KIRO: ${{ steps.state.outputs.seen_kiro }}
           LATEST_CLAUDE: ${{ steps.versions.outputs.latest_claude }}
           LATEST_CODEX: ${{ steps.versions.outputs.latest_codex }}
           LATEST_OPENCODE: ${{ steps.versions.outputs.latest_opencode }}
@@ -177,5 +189,5 @@ jobs:
             eval "changed=\${CHANGED_${name}:-}"
             [ "$changed" = true ] || continue
             eval "latest=\${LATEST_${name}}"
-            gh variable set "CLI_RELEASE_SEEN_${name}" --body "$latest"
+            deploy/local/cli-release-state.sh set seen "${name,,}" "$latest"
           done

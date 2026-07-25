@@ -30,8 +30,8 @@
 name: opencode-contract
 
 permissions:
-  actions: write
   contents: read
+  issues: write
 
 on:
   # Not run on pushes to develop (billing spread; CONTRIBUTING "Commits & PRs").
@@ -93,11 +93,11 @@ jobs:
         run: go test -tags clicontract -run TestContractLive -v -count=1 -timeout 15m ./internal/agents/opencode/
 
       - name: remember successfully tested latest
-        if: matrix.version == 'latest'
+        if: matrix.version == 'latest' && github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EFFECTIVE: ${{ steps.cli.outputs.version }}
         run: |
           version="$(printf '%s' "$EFFECTIVE" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)"
           [ -n "$version" ]
-          gh variable set CLI_RELEASE_TESTED_OPENCODE --body "$version"
+          deploy/local/cli-release-state.sh set tested opencode "$version"
