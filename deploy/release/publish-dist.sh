@@ -13,10 +13,11 @@
 #     The body is rendered from deploy/release/notes/<v>.md (+ .ja.md) by
 #     notes-body.sh; a missing notes file is a hard error.
 # --seed pushes the dist repo contents (README.md / README.ja.md / CHANGELOG.md /
-# CHANGELOG.ja.md / LICENSE / NOTICE / install.sh / install-compose.sh) via the contents
-# API (skipped when identical = idempotent). Creates the repo if it does not exist.
-# Sources are deploy/release/dist-repo/, except LICENSE / NOTICE which come from the
-# repo root so the public copy matches the one bundled in the tars. The CHANGELOGs are
+# CHANGELOG.ja.md / LICENSE / NOTICE / install.sh / install-compose.sh + the README
+# screenshots under docs/img/) via the contents API (skipped when identical =
+# idempotent). Creates the repo if it does not exist.
+# Sources are deploy/release/dist-repo/, except LICENSE / NOTICE / docs/img which come
+# from the repo root so the public copy matches the one bundled in the tars. The CHANGELOGs are
 # generated — run gen-changelog.sh after adding the notes/index.tsv row, before publishing.
 # Auth via gh (local = gh auth login / CI = GH_TOKEN set to DIST_PUBLISH_TOKEN).
 # Runbook for a real publish: docs/35 §35.8.2.
@@ -85,11 +86,19 @@ if [ "$SEED" = 1 ]; then
   # dist-repo/, so the public copy cannot drift from the one bundled in the tars.
   # NOTICE carries the primary-distribution URL that Apache-2.0 §4(d) makes
   # redistributors propagate, so the dist repo must show it too.
+  # The README screenshots live in the repo's docs/img/ (regenerate with
+  # console/scripts/shots — docs/35 §35.7.4-1) and are pushed under the same path,
+  # so both READMEs can reference them relatively. Binary content rides the same
+  # base64 contents API as the text files.
+  shots=()
+  for p in "$ROOT"/docs/img/*.webp; do
+    [ -f "$p" ] && shots+=("docs/img/$(basename "$p")")
+  done
   for f in README.md README.ja.md CHANGELOG.md CHANGELOG.ja.md LICENSE NOTICE \
-           install.sh install-compose.sh; do
+           install.sh install-compose.sh ${shots[@]+"${shots[@]}"}; do
     case "$f" in
-      LICENSE|NOTICE) src="$ROOT/$f" ;;
-      *)              src="$HERE/dist-repo/$f" ;;
+      LICENSE|NOTICE|docs/img/*) src="$ROOT/$f" ;;
+      *)                         src="$HERE/dist-repo/$f" ;;
     esac
     local_b64="$(base64 -w0 < "$src")"
     resp="$(gh api "repos/$REPO/contents/$f" \
