@@ -233,10 +233,10 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 換えて再ビルド → 各 Workspace を Stop→Start。latest の確認は `npm view <pkg> version`。
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
-ARG CLAUDE_CODE_VERSION=2.1.215
-ARG OPENCODE_VERSION=1.18.3
-ARG CODEX_VERSION=0.144.6
-ARG COPILOT_VERSION=1.0.73
+ARG CLAUDE_CODE_VERSION=2.1.220
+ARG OPENCODE_VERSION=1.18.5
+ARG CODEX_VERSION=0.145.0
+ARG COPILOT_VERSION=1.0.75
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
         "opencode-ai@${OPENCODE_VERSION}" \
@@ -253,26 +253,25 @@ ENV COPILOT_AUTO_UPDATE=false
 
 # Antigravity CLI（kind="agy"、docs/decisions/0008 / docs/32）。npm でなく Go バイナリ
 # 配布なので別 RUN。かつては install.sh（常に latest manifest・版ピン不可）だったが、
-# GitHub Releases（google-antigravity/antigravity-cli）が全旧版の versioned アセットを
-# 恒久保存しており、GCS の install.sh 配布物と**バイト同一**（2026-07-21 実測:
-# sha256/manifest sha512 一致）— これを供給元に他 CLI と同じ真のピンにする。
-# sha256 はリリースアセットの digest（GitHub API）を ARG に写して検証。bump は
-# AGY_VERSION と両 arch の sha を揃えて書き換える（digest は
-# `gh api repos/google-antigravity/antigravity-cli/releases/tags/<v>` で取れる）。
+# 1.1.7以降は GitHub Releases が追随しないため、公式installerが返す不変のGCS
+# object（version-build-idを含むURL）を直接取得する。sha256 はその公式manifestの
+# sha512検証済みアーカイブから計算して二重に固定する。bump は AGY_VERSION、
+# AGY_RELEASE_BUILD と両archのshaを揃えて書き換える。
 # 注意: agy は Go BoringCrypto(FIPS) ビルドで、x86 では RDRAND 命令が無いホストだと
 # 起動即 SIGABRT する（0008 PoC: Ryzen Embedded R2514）。RDRAND 非提示のビルドホスト
 # でもイメージは焼けるよう、起動を伴う --version 検証は rdrand 提示時だけ行う。
-ARG AGY_VERSION=1.1.5
-ARG AGY_SHA256_X64=1d586501b8a13d146e8aa3c7f00634f50c6034e2c428ea7d013377d36315a69a
-ARG AGY_SHA256_ARM64=d61ace663d7efee9dfd8f4f881e6f1021eff904a0688a91cd4d84359ee76f044
+ARG AGY_VERSION=1.1.7
+ARG AGY_RELEASE_BUILD=5951805767680000
+ARG AGY_SHA256_X64=946cd06258d0ede72d0311550c914315798821f6a397f53ac760919826a19af4
+ARG AGY_SHA256_ARM64=0d6d488851745e80e69b8935d063e742945811b47111994b1a6dbd27df3010d5
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
-        amd64) asset="agy_cli_linux_x64.tar.gz"; sha="${AGY_SHA256_X64}" ;; \
-        arm64) asset="agy_cli_linux_arm64.tar.gz"; sha="${AGY_SHA256_ARM64}" ;; \
+        amd64) asset="linux-x64/cli_linux_x64.tar.gz"; sha="${AGY_SHA256_X64}" ;; \
+        arm64) asset="linux-arm/cli_linux_arm64.tar.gz"; sha="${AGY_SHA256_ARM64}" ;; \
         *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
       esac; \
-      curl -fsSL "https://github.com/google-antigravity/antigravity-cli/releases/download/${AGY_VERSION}/${asset}" -o /tmp/agy.tgz; \
+      curl -fsSL "https://storage.googleapis.com/antigravity-public/antigravity-cli/${AGY_VERSION}-${AGY_RELEASE_BUILD}/${asset}" -o /tmp/agy.tgz; \
       echo "${sha}  /tmp/agy.tgz" | sha256sum -c -; \
       tar -C /tmp -xzf /tmp/agy.tgz antigravity; \
       install -m 0755 /tmp/antigravity /usr/local/bin/agy; \
@@ -307,9 +306,9 @@ ENV AGY_CLI_DISABLE_AUTO_UPDATE=1
 # setTimeout(...).unref() で走るが `disableAutoUpdate || channel==="static"` でスキップ）。
 # 焼き込みでは AF が起動フラグ `--disable-auto-update`（全経路）＋ entrypoint の
 # cli-config.json `channel:"static"` 再固定の二重で封じる（詳細 docs/40 Track B）。
-ARG CURSOR_VERSION=2026.07.20-8cc9c0b
-ARG CURSOR_SHA256_X64=6e9f17247ffeb5f8f7e2246b4bcd6bb26cb2d5a9f9a4b0012c9a80d868ed25b4
-ARG CURSOR_SHA256_ARM64=2986152b283c70a666b015035b2e99a96d13afd2660a587b8639417cfdd147fb
+ARG CURSOR_VERSION=2026.07.23-e383d2b
+ARG CURSOR_SHA256_X64=702ad595213bee5df0268be9f80a19f29fcceaa2a42fc55e39f2b5199051f0c4
+ARG CURSOR_SHA256_ARM64=f40b99647cb24e0da885e97620a2048034f1fe8961910d573d827d77c4d26dcb
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -346,9 +345,9 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # `app.disableAutoupdates` で止める設定型なので、封殺は runtime（entrypoint 起動毎再固定
 # ＋ 縦割りの ensureSettings）に寄せる（copilot の COPILOT_AUTO_UPDATE とは違い build ENV
 # では止められない）。
-ARG KIRO_VERSION=2.14.1
-ARG KIRO_SHA256_X64=2e35416019a8681586772dc5b0c32539d1712e1469280dbf8cd4bdedc751ea1a
-ARG KIRO_SHA256_ARM64=4a1acf145e440ec8e597841b7797b44036c29143da78c3379af98c9eb18a8eec
+ARG KIRO_VERSION=2.14.2
+ARG KIRO_SHA256_X64=b144d4b1f8ca0083967fe13a5c35db18bd9543ecede6f1eec166f3b0a04f876a
+ARG KIRO_SHA256_ARM64=b7deac65336778a4edd656cc6fc4b5518372937d8e439df284f136a814c09b57
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -389,8 +388,8 @@ RUN set -eux; mkdir -p /usr/local/share/agent-fleet; \
       arm64) agy_sha="${AGY_SHA256_ARM64}"; cursor_sha="${CURSOR_SHA256_ARM64}"; kiro_sha="${KIRO_SHA256_ARM64}" ;; \
       *) agy_sha=""; cursor_sha=""; kiro_sha="" ;; \
     esac; \
-    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_sha256":"%s","copilot":"%s","cursor":"%s","cursor_sha256":"%s","kiro":"%s","kiro_sha256":"%s","rtk":"%s","go":"%s","gh":"%s","chromium":"%s","chromium_cft":"%s","chromium_dl":"%s","noto_cjk":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","awscli":"%s","session_manager_plugin":"%s"}\n' \
-      "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$AGY_VERSION" "$agy_sha" "$COPILOT_VERSION" "$CURSOR_VERSION" "$cursor_sha" "$KIRO_VERSION" "$kiro_sha" "$RTK_VERSION" "$GO_VERSION" "$GH_VERSION" "$CHROMIUM_VERSION" \
+    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_build":"%s","agy_sha256":"%s","copilot":"%s","cursor":"%s","cursor_sha256":"%s","kiro":"%s","kiro_sha256":"%s","rtk":"%s","go":"%s","gh":"%s","chromium":"%s","chromium_cft":"%s","chromium_dl":"%s","noto_cjk":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","awscli":"%s","session_manager_plugin":"%s"}\n' \
+      "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$AGY_VERSION" "$AGY_RELEASE_BUILD" "$agy_sha" "$COPILOT_VERSION" "$CURSOR_VERSION" "$cursor_sha" "$KIRO_VERSION" "$kiro_sha" "$RTK_VERSION" "$GO_VERSION" "$GH_VERSION" "$CHROMIUM_VERSION" \
       "$CHROMIUM_CFT_VERSION" "$CHROMIUM_DL_VERSION" "$NOTO_CJK_VERSION" "$MCP_GRAFANA_VERSION" "$CLOUDWATCH_MCP_VERSION" "$AWSCLI_VERSION" "$SESSION_MANAGER_PLUGIN_VERSION" \
       > /usr/local/share/agent-fleet/versions.json
 

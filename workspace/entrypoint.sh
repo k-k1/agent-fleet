@@ -116,23 +116,22 @@ if [ "$LEAN_CLIS" = 1 ]; then
   elif cli_present rtk; then
     echo "[entrypoint] boot-install: rtk already present (skip)"
   fi
-  # agy: GitHub Releases（google-antigravity/antigravity-cli）のピン版
-  # （versions.json の agy + agy_sha256 で取得・検証 — Dockerfile 焼き込みと同じ経路。
-  # GCS の install.sh 配布物とバイト同一を実測確認済み、docs/35 §35.4.1）。
+  # agy: 公式installer manifestが示す不変GCS objectのピン版。
+  # （versions.json の agy + agy_build + agy_sha256 で取得・検証 — Dockerfile焼き込みと同じ経路）。
   # self-update の版比較マーカーも書いておく（ピン導入直後の無駄な再取得を防ぐ）。
-  if ! cli_present agy && [ -n "$(vj_pin agy)" ] && [ -n "$(vj_pin agy_sha256)" ]; then
+  if ! cli_present agy && [ -n "$(vj_pin agy)" ] && [ -n "$(vj_pin agy_build)" ] && [ -n "$(vj_pin agy_sha256)" ]; then
     (
       set -e
-      aver="$(vj_pin agy)"; asha="$(vj_pin agy_sha256)"
+      aver="$(vj_pin agy)"; abuild="$(vj_pin agy_build)"; asha="$(vj_pin agy_sha256)"
       arch="$(dpkg --print-architecture 2>/dev/null || uname -m)"
       case "$arch" in
-        amd64 | x86_64) asset="agy_cli_linux_x64.tar.gz" ;;
-        arm64 | aarch64) asset="agy_cli_linux_arm64.tar.gz" ;;
+        amd64 | x86_64) asset="linux-x64/cli_linux_x64.tar.gz" ;;
+        arm64 | aarch64) asset="linux-arm/cli_linux_arm64.tar.gz" ;;
         *) echo "unsupported arch: $arch" >&2; exit 1 ;;
       esac
       tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
       cd "$tmp"
-      curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "https://github.com/google-antigravity/antigravity-cli/releases/download/${aver}/${asset}" -o agy.tgz
+      curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "https://storage.googleapis.com/antigravity-public/antigravity-cli/${aver}-${abuild}/${asset}" -o agy.tgz
       echo "${asha}  agy.tgz" | sha256sum -c - >/dev/null
       tar -xzf agy.tgz antigravity
       install -D -m 0755 antigravity "$HOME/.local/bin/agy"
