@@ -19,7 +19,7 @@
 # CLIs (P1).
 #
 # Usage:
-#   deploy/local/cli-drift-check.sh            # check all CLIs
+#   deploy/local/cli-drift-check.sh            # check all agent CLIs
 #   deploy/local/cli-drift-check.sh claude     # just one
 # Exit codes: 0 = pins match latest / 1 = drift / 2 = execution error (fetch failure etc.)
 set -uo pipefail
@@ -27,11 +27,15 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DOCKERFILE="$ROOT/workspace/Dockerfile"
 
-# name|ARG name|npm package
+# name|ARG name|release source|package / endpoint
 TARGETS=(
-  "claude|CLAUDE_CODE_VERSION|@anthropic-ai/claude-code"
-  "opencode|OPENCODE_VERSION|opencode-ai"
-  "codex|CODEX_VERSION|@openai/codex"
+  "claude|CLAUDE_CODE_VERSION|npm|@anthropic-ai/claude-code"
+  "opencode|OPENCODE_VERSION|npm|opencode-ai"
+  "codex|CODEX_VERSION|npm|@openai/codex"
+  "copilot|COPILOT_VERSION|npm|@github/copilot"
+  "agy|AGY_VERSION|github|google-antigravity/antigravity-cli"
+  "cursor|CURSOR_VERSION|cursor|https://cursor.com/install"
+  "kiro|KIRO_VERSION|kiro|https://prod.download.cli.kiro.dev/stable/latest/manifest.json"
 )
 
 arg_pin() {
@@ -55,7 +59,7 @@ SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/null}"
 
 printf '%-10s %-14s %-14s %s\n' "CLI" "PIN" "LATEST" ""
 for t in "${TARGETS[@]}"; do
-  IFS='|' read -r name arg pkg <<< "$t"
+  IFS='|' read -r name arg source locator <<< "$t"
   [ -n "$want" ] && [ "$want" != "$name" ] && continue
 
   if ! pin="$(arg_pin "$arg")"; then
@@ -63,13 +67,31 @@ for t in "${TARGETS[@]}"; do
     errors=1
     continue
   fi
-  # npm view can return empty on a network outage. Keep that case separate so an
-  # empty result is not misread as "no drift".
-  if ! latest="$(npm view "$pkg" version 2>/dev/null)" || [ -z "$latest" ]; then
-    printf '%-10s %-14s %-14s %s\n' "$name" "$pin" "?" "ERROR: npm view $pkg failed"
+  # Keep fetch failures separate so an empty response is never read as "no drift".
+  case "$source" in
+    npm)
+      latest="$(npm view "$locator" version 2>/dev/null)" ;;
+    github)
+      latest="$(curl -fsSL --max-time 20 \
+        "https://api.github.com/repos/${locator}/releases/latest" 2>/dev/null |
+        jq -r '.tag_name // empty' 2>/dev/null)" ;;
+    cursor)
+      latest="$(curl -fsSL --max-time 20 "$locator" 2>/dev/null |
+        sed -n 's|.*versions/\([0-9.]*-[a-f0-9]*\)/.*|\1|p' | head -1)" ;;
+    kiro)
+      latest="$(curl -fsSL --max-time 20 "$locator" 2>/dev/null |
+        jq -r '.version // .Version // empty' 2>/dev/null)" ;;
+    *)
+      latest="" ;;
+  esac
+  if [ -z "$latest" ]; then
+    printf '%-10s %-14s %-14s %s\n' "$name" "$pin" "?" "ERROR: latest fetch failed ($source)"
     echo "| $name | \`$pin\` | ? | ⚠ fetch failed |" >> "$SUMMARY"
     errors=1
     continue
+  fi
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    printf 'pin_%s=%s\nlatest_%s=%s\n' "$name" "$pin" "$name" "$latest" >> "$GITHUB_OUTPUT"
   fi
 
   if [ "$pin" = "$latest" ]; then

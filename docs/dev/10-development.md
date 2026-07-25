@@ -188,21 +188,31 @@ L4 は headless の `claude -p` で TUI もフッタも描画されない。こ�
 
 | | `cli-drift.yml` | `*-contract.yml` |
 |---|---|---|
-| 見る物 | 版**番号**のズレ（ピン vs npm latest） | **挙動**（実 CLI に当てて壊れたか） |
+| 見る物 | 版**番号**のズレ（ピン vs 公開 latest） | **挙動**（実 CLI に当てて壊れたか） |
 | 答える問い | 「見に行くべき時か？」 | 「実際に壊れたか？」 |
 | 費用 | 無料（`npm view` だけ） | 無料〜サブスク枠（Tier で違う） |
 | 頻度 | 毎日 cron | 関連パスの push + 週次 cron |
 | 赤くなる時 | 検査自体の失敗のみ（ドリフトは issue upsert） | 契約が破れた時 |
 
 ドリフトは**常態**（claude は数日で版が進む）なので `cli-drift.yml` は赤くせず追跡 issue を
-1 本 upsert する（解消で自動 close）。合図は「issue が来たら contract を叩く」。
+1 本 upsert する（解消で自動 close）。対象はミラー対応の7 CLI（claude / codex /
+opencode / copilot / agy / cursor / kiro）で、npm・GitHub Releases・各社 manifest を
+それぞれの公開版の正本として読む。
+
+`cli-release-watch.yml` は毎日この公開版を前回処理版と比較し、**版が変わった CLI だけ**
+contract を dispatch する。claude / codex / opencode は contract 成功時に
+`CLI_RELEASE_TESTED_<CLI>` repository variable を更新するため、失敗時は翌日も再試行する。
+まだ無人の実認証 contract がない copilot / agy / cursor / kiro は
+`CLI_RELEASE_SEEN_<CLI>` を記録し、フリート上で必要な TUI／ミラー probe を追跡 issue に
+upsert する（「検出済み」と「テスト成功」を混同しない）。
 
 **ワークフローはエージェント毎に 1 ファイル**（`claude-tui-contract.yml` /
 `codex-contract.yml` / `opencode-contract.yml`）。パス条件も `workflow_dispatch` の入力も
 **ワークフロー単位**なので、`e2e.yml` に同居させると (1) 無関係な変更で走り、(2) 入力が
 他エージェントと混ざる（実際 codex の Tier2 と claude の live-smoke が 1 つの `live` 入力を
 共有し、1 回の dispatch で両方の枠が減っていた）。分離すればこの結合が構造的に起きない。
-`cli-drift.yml` だけは 3 CLI 横断・`issues: write` が要る・毎日回す、と性質が違うので独立のまま。
+`cli-drift.yml` と `cli-release-watch.yml` だけは7 CLI横断・毎日実行という性質が違うので
+エージェント別 contract から独立させる。
 
 共通セットアップ（Go / Node / tmux / 実 CLI 導入）は
 **`.github/actions/setup-agent-cli`**（composite action）に集約。`version: pinned|latest|<版>`

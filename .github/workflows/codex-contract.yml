@@ -13,6 +13,10 @@
 # is cli-drift.yml.
 name: codex-contract
 
+permissions:
+  actions: write
+  contents: read
+
 on:
   # Not run on pushes to develop (billing spread; CONTRIBUTING "Commits & PRs").
   # Contract checks are concentrated on PRs to main (when relevant paths changed)
@@ -53,24 +57,40 @@ jobs:
     # (measured). Things that need a real turn — the Stop hook, rollout events, turn/*
     # notifications — are covered by live-drift below (costs money).
     #
-    # Version matches the Dockerfile ARG pin (= verifies what actually gets baked in).
-    # Note: Workspaces with self-update opt-in run @latest, so this version can drift
-    # from what the fleet actually runs. That skew itself is monitored by cli-drift.yml
-    # (daily, issue notification).
+    # The matrix checks both the Dockerfile ARG pin (= baked fallback) and @latest
+    # (= self-update-enabled workspaces). cli-release-watch dispatches this workflow
+    # only when latest moves; the weekly cron remains the backstop.
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # pinned protects the baked fallback; latest protects self-update-enabled
+        # workspaces. Keeping both makes an upstream regression distinguishable
+        # from a repository regression in one run.
+        version: [pinned, latest]
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-agent-cli
+        id: cli
         with:
           agent: codex
-          version: pinned
-      - name: codex drift (Tier 1)
+          version: ${{ matrix.version }}
+      - name: codex drift (Tier 1, ${{ matrix.version }})
         working-directory: workspace/agent
         env:
           # Fail instead of skip when the CLI is missing (a silent skip is a false green).
           E2E_REQUIRE: "1"
         run: go test -tags drift -run TestDrift -v -timeout 10m ./...
+      - name: remember successfully tested latest
+        if: matrix.version == 'latest'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EFFECTIVE: ${{ steps.cli.outputs.version }}
+        run: |
+          version="$(printf '%s' "$EFFECTIVE" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)"
+          [ -n "$version" ]
+          gh variable set CLI_RELEASE_TESTED_CODEX --body "$version"
 
   live-drift:
     # Tier 2 — **consumes real turns**. Covers only the 4 things Tier 1 (free) cannot
