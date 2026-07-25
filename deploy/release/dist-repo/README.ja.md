@@ -249,6 +249,9 @@ rm -rf ~/.local/opt/agent-fleet
 再ダウンロードは発生しません。取得物は必ず `SHA256SUMS` / `rootfs.json` の sha256 で
 検証してください（install.sh と `af start` は自動で行います）。
 
+各版の変更内容は個々のリリースのノートにあります。索引は
+[CHANGELOG.ja.md](CHANGELOG.ja.md) です。
+
 ## ライセンス / 同梱物について
 
 - 本配布物のイメージと rootfs は **lean 構成**（エージェント CLI を焼き込まない
