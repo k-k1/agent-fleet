@@ -56,7 +56,13 @@ type chatMessage struct {
 
 // chatConversation is the persisted record (one JSON file per conversation).
 type chatConversation struct {
-	ID    string `json:"id"`
+	ID string `json:"id"`
+	// Slug is the conversation's short addressable identity ("a"+6 base32 — the
+	// assistant twin of session slugs "s…"), used wherever a human or an automation
+	// (schedules, operator tools) references a conversation without a UUID. Assigned at
+	// creation; conversations from before the field are backfilled at agent start
+	// (backfillConvSlugs). Immutable once set.
+	Slug  string `json:"slug,omitempty"`
 	Agent string `json:"agent"` // preferred provider snapshotted at creation
 	// ActiveAgent is the backend that generated the latest successful assistant turn.
 	// Keeping it separate preserves the user's preferred provider while letting the UI
@@ -241,6 +247,7 @@ func (c *chatConversation) knowledgeDirs() []string {
 // chatMeta is the light shape returned by the list endpoint (no message bodies).
 type chatMeta struct {
 	ID           string        `json:"id"`
+	Slug         string        `json:"slug,omitempty"` // short addressable id ("a…", see chatConversation.Slug)
 	Agent        string        `json:"agent"`
 	ActiveAgent  string        `json:"active_agent,omitempty"`
 	AssistantID  string        `json:"assistant_id,omitempty"` // which assistant backs this thread (Q2)

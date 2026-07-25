@@ -148,6 +148,10 @@ func main() {
 	go copilot.ReconcileManaged("agent boot")
 	go cursor.ReconcileManaged("agent boot")
 	go kiro.ReconcileManaged("agent boot")
+	// Assistant-conversation slugs (docs/38 アシスタント発火): stamp "a…" slugs onto
+	// conversations created before the field existed, so schedules/operator tools can
+	// address every conversation. One-time per store state; cheap when nothing to do.
+	go backfillConvSlugs()
 
 	addr := envOr("AGENT_ADDR", ":7700")
 

@@ -130,7 +130,7 @@ func listConvs() ([]chatMeta, error) {
 			continue // skip unreadable entries rather than failing the whole list
 		}
 		out = append(out, chatMeta{
-			ID: c.ID, Agent: c.Agent, ActiveAgent: c.ActiveAgent, AssistantID: c.AssistantID, Title: c.Title, Model: c.Model,
+			ID: c.ID, Slug: c.Slug, Agent: c.Agent, ActiveAgent: c.ActiveAgent, AssistantID: c.AssistantID, Title: c.Title, Model: c.Model,
 			CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt, MessageCount: len(c.Messages),
 			Context: c.Context,
 		})
