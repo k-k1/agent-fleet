@@ -165,6 +165,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /fs/tree", handleFSTree)
 	mux.HandleFunc("GET /fs/search", handleFSSearch)
 	mux.HandleFunc("GET /fs/file", handleFSFile)
+	mux.HandleFunc("PUT /fs/file", handleFSFilePut)
 	mux.HandleFunc("GET /fs/download", handleFSDownload)
 	mux.HandleFunc("POST /fs/upload", handleFSUpload)
 	mux.HandleFunc("GET /fs/changes", handleFSChanges)
