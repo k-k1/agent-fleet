@@ -2418,7 +2418,7 @@ export function MirrorView({
                   type="button"
                   className={"mirror-suggest-chip" + (sg.llm ? " llm" : "")}
                   title={tr("mirror.suggest_hint")}
-                  onClick={(e) => applySuggestion(sg.text, e.altKey || e.metaKey)}
+                  onClick={(e) => applySuggestion(sg.text, e.ctrlKey || e.altKey || e.metaKey)}
                 >
                   {sg.text}
                 </button>
