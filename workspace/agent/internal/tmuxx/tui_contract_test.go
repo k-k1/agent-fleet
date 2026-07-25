@@ -12,8 +12,9 @@
 // なぜ agent モジュール内に置くか: e2e/ は独立モジュールで、Go の internal 制約により
 // internal/tmuxx を import できない。判定ロジックを e2e 側で書き直したら「実コードを
 // 検証していないテスト」になり、今回の失敗を繰り返す。実関数をそのまま呼べる場所＝ここ。
-// イメージには Go と tmux と claude が入っているので、コンテナ内で
-// `go test -tags tui_contract ./internal/tmuxx/` として走らせる（claude-tui-contract.yml）。
+// CI は共通setup actionで Go・tmux・claudeをrunnerへ入れ、
+// `go test -tags tui_contract ./internal/tmuxx/` として走らせる
+// （claude-tui-contract.yml）。巨大なWorkspaceイメージ自体は必要ない。
 //
 // なぜ `claude -p` ではダメか: 既存 L4（e2e/live_test.go）は headless の -p を使うため
 // **フッタもスピナーも一切描画されない**。だから 3 回の破壊を 1 度も検知できなかった。

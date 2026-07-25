@@ -10,9 +10,8 @@
 # claude の状態検出が 3 回とも CI 緑のまま実フリートで壊れたのは、CI が pinned しか
 # 見ていなかったから（詳細は deploy/local/cli-drift-check.sh の頭）。
 #
-# 注: claude の TUI 契約（claude-tui-contract.yml）はこの action を使わない。あちらは
-# 実ワークスペースイメージを build してコンテナ内で TUI を起動する必要があり、runner に
-# CLI を入れる本 action とは戦略が違う（意図的な非対称）。
+# claude の TUI 契約もこの action を使う。production の状態判定は Go test が実 tmux
+# pane 上の実 CLI に直接当てるため、巨大なWorkspaceイメージをbuildする必要はない。
 name: setup-agent-cli
 description: Go / Node / tmux と指定エージェントの実 CLI を runner に入れる（contract・ドリフト検知テスト用）
 
