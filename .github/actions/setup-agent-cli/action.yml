@@ -184,6 +184,12 @@ runs:
             cmd=kiro-cli
             ;;
         esac
+        # GITHUB_PATH applies only to subsequent Actions steps.  The version
+        # assertion below is in this same composite-action step, so custom
+        # archive installs must also update this shell's PATH now.  npm installs
+        # are already globally visible; prepending an empty-or-owned bin dir is
+        # harmless for all agents.
+        export PATH="$bin_dir:$PATH"
         v="$("$cmd" --version 2>&1 | head -1)"
         echo "version=$v" >> "$GITHUB_OUTPUT"
         echo "effective $AGENT: $v"
