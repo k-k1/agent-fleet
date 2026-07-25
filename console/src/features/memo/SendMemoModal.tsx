@@ -29,18 +29,19 @@ import type { Memo } from "../../types/memo.ts";
 import type { Session } from "../../types/session.ts";
 import type { Assistant } from "../../types/assistant.ts";
 
-// Concatenate the selected memos into one message, grouped by category, mirroring the
-// server's buildFlushMessage (memo.go) so an unedited send is byte-for-byte the old flush.
+// Concatenate the selected memos directly, grouped by category, mirroring the server's
+// buildFlushMessage (memo.go) so an unedited send is byte-for-byte the server flush.
 export function composeMemoMessage(memos: Memo[]): string {
   const sorted = memos.slice().sort((a, b) => (a.category < b.category ? -1 : a.category > b.category ? 1 : 0));
-  const lines: string[] = [t("memo.flush_header")];
+  const lines: string[] = [];
   let lastCat = "\x00";
   let n = 0;
   for (const m of sorted) {
     if (m.category !== lastCat) {
       lastCat = m.category;
       n = 0;
-      lines.push("", "## " + (m.category || t("memo.uncategorized")));
+      if (lines.length) lines.push("");
+      lines.push("## " + (m.category || t("memo.uncategorized")));
     }
     n++;
     if (m.kind === "file") {
