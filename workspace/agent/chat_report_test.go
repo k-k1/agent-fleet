@@ -107,7 +107,7 @@ func TestRunReportAutoTurnCapNotifiesOnce(t *testing.T) {
 	withTempHome(t)
 	conv := &chatConversation{
 		ID: randUUID(), Agent: "claude", Tools: toolsAFWrite,
-		AutoTurns: maxAutoTurns, // unattended budget already spent
+		AutoTurns: defaultAutoTurns, // unattended budget already spent
 		Messages:  []chatMessage{{Role: "report", Content: "レポートA", Session: "slot01"}},
 	}
 	if err := saveConv(conv); err != nil {
@@ -155,14 +155,41 @@ func TestRunReportAutoTurnCapNotifiesOnce(t *testing.T) {
 }
 
 func TestAutoTurnPausedContent(t *testing.T) {
-	got := autoTurnPausedContent(3)
-	for _, want := range []string{"10", "3 件", "続け", "リセット"} {
+	got := autoTurnPausedContent(25, 3)
+	for _, want := range []string{"25", "3 件", "続け", "リセット"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("content missing %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(autoTurnPausedContent(0), "残っています") {
+	if strings.Contains(autoTurnPausedContent(10, 0), "残っています") {
 		t.Fatal("zero pending should omit the pending-count clause")
+	}
+}
+
+// TestChatAutoTurnLimit pins the configurable ceiling: default 10 when unset, the
+// stored value inside range, and a hard clamp to [1, 50] — no unlimited mode.
+func TestChatAutoTurnLimit(t *testing.T) {
+	home := withTempHome(t)
+	if err := os.MkdirAll(filepath.Join(home, ".config", "agent-fleet"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	prefs := filepath.Join(home, ".config", "agent-fleet", "ui-prefs.json")
+	if got := chatAutoTurnLimit(); got != defaultAutoTurns {
+		t.Fatalf("default = %d, want %d", got, defaultAutoTurns)
+	}
+	for raw, want := range map[string]int{"30": 30, "0": 1, "-5": 1, "999": 50, "50": 50, "1": 1} {
+		if err := os.WriteFile(prefs, []byte(`{"assistantAutoTurnLimit":`+raw+`}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got := chatAutoTurnLimit(); got != want {
+			t.Fatalf("limit(%s) = %d, want %d", raw, got, want)
+		}
+	}
+	if err := os.WriteFile(prefs, []byte(`{"assistantAutoTurnLimit":"lots"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := chatAutoTurnLimit(); got != defaultAutoTurns {
+		t.Fatalf("invalid type = %d, want default %d", got, defaultAutoTurns)
 	}
 }
 
@@ -315,6 +342,93 @@ func TestQuestionReportInterimKeepsArm(t *testing.T) {
 	}
 	if !reportArmed(m.Name) {
 		t.Fatal("interim question report must NOT consume the arm (完了報告は別途)")
+	}
+}
+
+// TestReportHeadForAutoPilot pins the 自動走行 toggle: the interim question/plan
+// report text carries the mode's marching orders when ON (auto-answer with the
+// session's recommendation / drive the review-approve loop) and the confirm-first
+// instructions when OFF (the default — the key is opt-in).
+func TestReportHeadForAutoPilot(t *testing.T) {
+	home := withTempHome(t)
+	if err := os.MkdirAll(filepath.Join(home, ".config", "agent-fleet"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	prefs := filepath.Join(home, ".config", "agent-fleet", "ui-prefs.json")
+
+	// Default (no key): confirm-first.
+	q, pl := reportHeadFor("question", ""), reportHeadFor("plan-approval", "")
+	if strings.Contains(q, "自動走行") || strings.Contains(pl, "自動走行") {
+		t.Fatalf("auto-pilot text without opt-in:\nq=%q\npl=%q", q, pl)
+	}
+	if !strings.Contains(q, "answer_session_question") || !strings.Contains(pl, "respond_session_plan") {
+		t.Fatalf("tool guidance missing:\nq=%q\npl=%q", q, pl)
+	}
+
+	if err := os.WriteFile(prefs, []byte(`{"assistantAutoPilot":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	q, pl = reportHeadFor("question", ""), reportHeadFor("plan-approval", "")
+	if !strings.Contains(q, "自動走行") || !strings.Contains(q, "answer_session_question") {
+		t.Fatalf("auto-pilot question head = %q", q)
+	}
+	if !strings.Contains(pl, "自動走行") || !strings.Contains(pl, "respond_session_plan") || !strings.Contains(pl, "レビュー") {
+		t.Fatalf("auto-pilot plan head = %q", pl)
+	}
+	// The guardrails must survive in BOTH modes: destructive cases go to the user.
+	if !strings.Contains(q, "破壊的") || !strings.Contains(pl, "破壊的") {
+		t.Fatal("auto-pilot heads must keep the destructive-case guard")
+	}
+}
+
+// TestPlanReportInterimKeepsArm mirrors the question test for plan-approval: the
+// interim plan report reaches the conversation without consuming the arm.
+func TestPlanReportInterimKeepsArm(t *testing.T) {
+	home := withTempHome(t)
+	if err := os.MkdirAll(filepath.Join(home, ".config", "agent-fleet"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".config", "agent-fleet", "ui-prefs.json"),
+		[]byte(`{"assistantAutoTurn":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	conv := &chatConversation{ID: randUUID(), Agent: "claude", Messages: []chatMessage{}}
+	if err := saveConv(conv); err != nil {
+		t.Fatal(err)
+	}
+	m := session.Meta{Name: "slot45", Dir: t.TempDir(), Kind: session.KindClaude, Title: "プラン検証"}
+	session.WriteMeta(m)
+	armSessionReport(m.Name, conv.ID)
+
+	req := httptest.NewRequest(http.MethodPost, "/chat/report",
+		strings.NewReader(`{"name":"slot45","kind":"plan-approval"}`))
+	rec := httptest.NewRecorder()
+	handleChatReport(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	found := false
+	for i := 0; i < 100 && !found; i++ {
+		unlock := lockConv(conv.ID)
+		c, err := loadConv(conv.ID)
+		unlock()
+		if err == nil {
+			for j := range c.Messages {
+				if c.Messages[j].Role == "report" && strings.Contains(c.Messages[j].Content, "プラン") {
+					found = true
+				}
+			}
+		}
+		if !found {
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	if !found {
+		t.Fatal("no interim plan report reached the conversation")
+	}
+	if !reportArmed(m.Name) {
+		t.Fatal("interim plan report must NOT consume the arm")
 	}
 }
 
