@@ -5,19 +5,25 @@ import { Sparkline } from "../../ui/Sparkline.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { fmtNum } from "../../lib/intl.ts";
 
-// contextWindow returns the model's context length. The current Claude family
-// (Opus 5/4.8/4.7/4.6, Sonnet 5/4.6, Fable/Mythos 5) is 1M-native — 1M is the default
-// window, not a 200k default you grow into. GPT-5.x is 272k (codex normally records
-// its real window; this is the fallback for paths without it, e.g. the assistant
-// chat's codex exec). Haiku is 200k. Unknown/older models assume 200k but grow to
-// fit if a 1M beta is clearly in use.
+// contextWindow returns the model's context length. Claude is 1M-native from Opus
+// 4.6 / Sonnet 4.6 onward and new models are expected to stay that way, so 1M is the
+// default and only the *small* windows are enumerated — listing the big ones instead
+// meant every new model (Opus 5, Sonnet 5, …) silently read as 200k until someone
+// remembered to add it. SMALL_WINDOW_CLAUDE covers haiku (200k through 4.5), Claude
+// 3.x and older, and Opus 4.0/4.1/4.5 + Sonnet 4.0/4.5 — dated ids look like
+// opus-4-20250514, hence the "4-2" in the class (it can't collide with the 1M-side
+// 4-6/4-7/4-8). GPT-5.x is 272k (codex normally records its real window; this is the
+// fallback for paths without it, e.g. the assistant chat's codex exec). Non-Claude
+// unknowns assume 200k but grow to fit once observed usage exceeds it.
 // Mirrored in Go as contextWindowGuess() (workspace/agent/session_usage.go, the MCP
 // get_session_usage aggregation) — keep the two in sync.
+const SMALL_WINDOW_CLAUDE = /haiku|claude-[123]|opus-4-[0125]|sonnet-4-[025]/;
+
 export function contextWindow(model: string | null | undefined, used: number): number {
   const m = (model || "").toLowerCase();
-  if (/opus-(4-[678]|5)|sonnet-(4-6|5)|fable-5|mythos-5/.test(m)) return 1000000;
   if (/gpt-5/.test(m)) return 272000;
-  if (/haiku/.test(m)) return 200000;
+  if (SMALL_WINDOW_CLAUDE.test(m)) return 200000;
+  if (m.includes("claude")) return 1000000;
   return used > 200000 ? 1000000 : 200000;
 }
 
