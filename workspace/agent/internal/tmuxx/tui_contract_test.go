@@ -106,8 +106,9 @@ func runContract(t *testing.T, mode string, args []string) {
 
 	frames, seen := sampleTurn(t, tn)
 
-	// A: スピナー行そのものを一度も観測できないなら、表示仕様が根本から変わったか
-	// ターンが走っていない。以降の判定が無意味になるので先に落とす。
+	// A: working表示そのものを一度も観測できないなら、表示仕様が根本から変わったか
+	// ターンが走っていない。2.1.220は短いターンで経過タイマーを描かず、footerの
+	// "esc to interrupt"だけを出すため、両方を独立証拠として扱う。
 	nGT := 0
 	for _, f := range frames {
 		if f.gt != "" {
@@ -115,18 +116,18 @@ func runContract(t *testing.T, mode string, args []string) {
 		}
 	}
 	if nGT == 0 {
-		t.Errorf("ターンを走らせたのに、経過タイマー付きのスピナー行を 1 度も観測できなかった"+
+		t.Errorf("ターンを走らせたのに、経過タイマーまたはesc-to-interrupt表示を1度も観測できなかった"+
 			"（%d フレーム）— TUI の表示仕様が根本的に変わった可能性\n観測した行:\n%s",
 			len(frames), strings.Join(seen, "\n"))
 		return
 	}
 
-	// B（本命）: **スピナーが出ているフレームは必ず busy と判定できねばならない**。
+	// B（本命）: **working表示が出ているフレームは必ず busy と判定できねばならない**。
 	// 3 回の回帰はいずれも「spinnerRe が実物より狭い」形で起きた（"esc to interrupt" 必須 →
 	// ローテーションで消えて破綻／"tokens" 必須 → 思考中はトークンが出ず破綻）。この差分
 	// 判定はその失敗モードを直接突く: 判定ロジックとは独立のゆるい基準（括弧付き経過
-	// タイマー）で「スピナーが出ている」フレームを拾い、production の spinnerActive が
-	// 追随できているかを見る。ターンの長さや思考時間のブレに依存しないのが要点。
+	// タイマー、または2.1.220の短いターンで唯一残るesc-to-interrupt footer）で
+	// workingフレームを拾い、production の spinnerActive が追随できているかを見る。
 	miss := 0
 	for i, f := range frames {
 		if f.gt != "" && !f.busy {
@@ -223,15 +224,16 @@ type frame struct {
 // ターン後要約「✻ Cogitated for 6s」は括弧が無いので当たらない（＝busy を要求しない）。
 var gtSpinnerRe = regexp.MustCompile(`\([^)\n]*[0-9]+(?:h|m|s)\b`)
 
-// gtSpinnerLine は「スピナーが出ている」証拠行を返す（無ければ ""）。ウェルカムボックス等の
-// 枠行は除く（「Opus 4.8 (1M context)」のような紛れを避ける）。
+// gtSpinnerLine は「working表示が出ている」証拠行を返す（無ければ ""）。
+// 2.1.220は短いターンでタイマー付きheaderを省き、footerの"esc to interrupt"だけを
+// 描く。ウェルカムボックス等の枠行は除く。
 func gtSpinnerLine(s string) string {
 	for _, ln := range strings.Split(s, "\n") {
 		t := strings.TrimSpace(ln)
 		if strings.HasPrefix(t, "│") || strings.HasPrefix(t, "╭") || strings.HasPrefix(t, "╰") {
 			continue
 		}
-		if gtSpinnerRe.MatchString(t) {
+		if gtSpinnerRe.MatchString(t) || strings.Contains(t, "esc to interrupt") {
 			return t
 		}
 	}
