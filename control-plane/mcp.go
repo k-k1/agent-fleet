@@ -299,7 +299,11 @@ func memberTools() []mcpTool {
 				"name": map[string]any{"type": "string", "description": "worktree name (the id of a list_cleanup_candidates worktree candidate)"},
 			}, "required": []string{"name"}},
 			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
-				return agentText(ctx, res.rt, "DELETE", "/repos/"+url.PathEscape(argStr(args, "name"))+"?prune_sessions=1", nil)
+				name := argStr(args, "name")
+				if err := scheduleGuardErr(ctx, a.mgr.store, res.mv.MembershipID, name, ""); err != nil {
+					return "", err
+				}
+				return agentText(ctx, res.rt, "DELETE", "/repos/"+url.PathEscape(name)+"?prune_sessions=1", nil)
 			},
 		},
 		{
@@ -307,7 +311,11 @@ func memberTools() []mcpTool {
 			desc:   "Delete a session for good and reclaim its disk (its transcript jsonl is removed), bundling it to a recoverable cleanup archive first. Unlike archive_session (which only hides it), this removes it. Acts on a list_cleanup_candidates action=delete_session item. A running session is refused (stop it first). Near-irreversible — confirm which session with the user before running; recover via restore_cleanup_archive.",
 			schema: nameArg,
 			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
-				return agentText(ctx, res.rt, "DELETE", "/sessions/"+url.PathEscape(argStr(args, "name"))+"?reclaim=1", nil)
+				name := argStr(args, "name")
+				if err := scheduleGuardErr(ctx, a.mgr.store, res.mv.MembershipID, "", name); err != nil {
+					return "", err
+				}
+				return agentText(ctx, res.rt, "DELETE", "/sessions/"+url.PathEscape(name)+"?reclaim=1", nil)
 			},
 		},
 		{
