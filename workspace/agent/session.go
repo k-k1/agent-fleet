@@ -31,7 +31,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		Repo: m.Repo, Title: m.Title, Display: session.Display(m), Color: m.Color, Label: m.Label,
 		Started: started, CreatedAt: m.CreatedAt, Branch: m.Branch,
 		RemoteUrl: li.RemoteURL, State: li.State, Alive: alive, Resumable: li.Resumable,
-		BackgroundBusy: li.BackgroundBusy, Context: li.Context,
+		BackgroundBusy: li.BackgroundBusy, Context: li.Context, Locked: m.Locked,
 	}
 	// For a stopped session, surface WHY it ended (crash / OOM) if the pane recorder
 	// captured a cause. A clean quit (exited) or a deliberate stop (empty reason) leaves

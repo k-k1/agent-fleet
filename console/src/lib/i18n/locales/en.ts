@@ -23,6 +23,10 @@ export const en: Record<keyof typeof ja, string> = {
     "This worktree has uncommitted/unpushed changes. Force-deleting it will lose them.",
   "err.has_worktrees":
     "This working copy has derived worktrees attached to it. Delete the worktrees first.",
+  "err.locked":
+    "This is locked against deletion. Unlock it first, then delete.",
+  "err.locked_sessions":
+    "This working copy hosts sessions that are locked against deletion; removing it would leave them unresumable. Unlock those sessions first.",
   "err.worktree_remove_failed": "Failed to remove the worktree.",
   "err.question_pending":
     "The agent is waiting for an answer to its question. Answer it from the question card before sending.",
@@ -1646,6 +1650,9 @@ export const en: Record<keyof typeof ja, string> = {
   "common.focus_pane": "Focus pane {ordinal}",
 
   // === P2 session actions (features/sessions/useSessionActions.tsx) ===
+  "sess.lock_failed": "Failed to change the deletion lock",
+  "sess.locked_on": "Locked against deletion",
+  "sess.locked_off": "Deletion lock removed",
   "sess.archive_failed": "Failed to archive",
   "sess.delete_title": "Delete session",
   "sess.delete_body": "Delete “{name}”. This can't be undone.",
@@ -1776,6 +1783,10 @@ export const en: Record<keyof typeof ja, string> = {
   "handoff.note_hint": "Extra instructions for the handoff — what to focus on, what to leave out.",
   "handoff.note_ph": "e.g. Carry over only the API refactor; skip the test scaffolding.",
   "handoff.start": "Start handoff",
+  "srow.lock": "Lock against deletion",
+  "srow.unlock": "Unlock (allow deletion)",
+  "srow.locked_badge": "Locked against deletion (skipped by cleanup and auto-prune)",
+  "srow.locked_hint": "Locked against deletion. Unlock it first.",
   "srow.archive": "Archive (remove from the list)",
   "srow.recreate": "Recreate (current conversation goes to the archive)",
 
@@ -1920,6 +1931,12 @@ export const en: Record<keyof typeof ja, string> = {
   "repo.switch_branch": "Switch branch",
   "repo.copy_branch": "Copy the branch name",
   "repo.launch_kind": "Launch {label}",
+  "repo.lock": "Lock against deletion",
+  "repo.unlock": "Unlock (allow deletion)",
+  "repo.locked_hint": "Locked against deletion (skipped by auto-prune). Unlock it first.",
+  "repo.lock_failed": "Failed to change the deletion lock: {err}",
+  "repo.locked_on": "Locked {name} against deletion",
+  "repo.locked_off": "Removed the deletion lock on {name}",
   "repo.delete_wc": "Delete the working copy",
   "repo.svn_update": "Update (svn)",
   "repo.svn_cleanup": "Clean up lock",
@@ -2016,6 +2033,12 @@ export const en: Record<keyof typeof ja, string> = {
   "asst.in_progress": "In progress",
   "asst.waiting": "Idle",
   "asst.focus_pane": "Focus pane {n}",
+  "asst.lock": "Lock against deletion",
+  "asst.unlock": "Unlock (allow deletion)",
+  "asst.locked_hint": "Locked against deletion. Unlock it first.",
+  "asst.lock_failed": "Failed to change the deletion lock",
+  "asst.locked_on": "Locked against deletion",
+  "asst.locked_off": "Deletion lock removed",
   "asst.delete_chat": "Delete this chat",
   "asst.open_new_pane": "Open in a new pane",
 

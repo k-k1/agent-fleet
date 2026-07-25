@@ -52,6 +52,10 @@ export interface Session {
   exitReason?: "oom" | "killed" | "crashed" | string;
   exitCode?: number;
   exitSignal?: number;
+  // 削除ロック（docs/45）: true の間、削除系（削除＝メタ忘却・完全削除・停止中の
+  // 7日自動prune・作業コピー削除の巻き添え）を Agent が 403 で拒否する。停止/
+  // アーカイブは可逆なので通る。行の鍵バッジと削除項目の無効化はこれを見る。
+  locked?: boolean;
 }
 
 // isManagedSession: a managed (paneless) session has no tmux pane — the chat

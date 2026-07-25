@@ -24,6 +24,10 @@ export const ja = {
     "この worktree には未コミット/未pushの変更があります。強制削除すると失われます。",
   "err.has_worktrees":
     "この作業コピーには派生した worktree がぶら下がっています。先に worktree 側を削除してください。",
+  "err.locked":
+    "削除ロックがかかっています。先にロックを解除してから削除してください。",
+  "err.locked_sessions":
+    "この作業コピーには削除ロック中のセッションがあります。削除すると再開できなくなるため、先にそのセッションのロックを解除してください。",
   "err.worktree_remove_failed": "worktree の削除に失敗しました。",
   "err.question_pending":
     "エージェントが質問への回答を待っています。質問カードから回答してから送信してください。",
@@ -1680,6 +1684,9 @@ export const ja = {
   "common.focus_pane": "ペイン{ordinal}にフォーカス",
 
   // === P2 セッション操作（features/sessions/useSessionActions.tsx）===
+  "sess.lock_failed": "削除ロックの変更に失敗しました",
+  "sess.locked_on": "削除ロックをかけました",
+  "sess.locked_off": "削除ロックを解除しました",
   "sess.archive_failed": "アーカイブに失敗しました",
   "sess.delete_title": "セッションを削除",
   "sess.delete_body": "「{name}」を削除します。この操作は取り消せません。",
@@ -1810,6 +1817,10 @@ export const ja = {
   "handoff.note_hint": "引継ぎへの追加指示 — 重点や省く範囲など。",
   "handoff.note_ph": "例: API リファクタだけ引き継ぎ、テストの足場は省略。",
   "handoff.start": "引き継ぎを開始",
+  "srow.lock": "削除ロックをかける",
+  "srow.unlock": "削除ロックを解除する",
+  "srow.locked_badge": "削除ロック中（削除・自動整理の対象外）",
+  "srow.locked_hint": "削除ロック中です。先にロックを解除してください。",
   "srow.archive": "アーカイブする（一覧から消す）",
   "srow.recreate": "作り直す（今の会話はアーカイブへ）",
 
@@ -1956,6 +1967,12 @@ export const ja = {
   "repo.switch_branch": "ブランチ切替",
   "repo.copy_branch": "ブランチ名をコピー",
   "repo.launch_kind": "{label} を起動",
+  "repo.lock": "削除ロックをかける",
+  "repo.unlock": "削除ロックを解除する",
+  "repo.locked_hint": "削除ロック中です（自動整理の対象外）。先にロックを解除してください。",
+  "repo.lock_failed": "削除ロックの変更に失敗しました: {err}",
+  "repo.locked_on": "{name} に削除ロックをかけました",
+  "repo.locked_off": "{name} の削除ロックを解除しました",
   "repo.delete_wc": "ワーキングコピーを削除",
   "repo.svn_update": "更新（svn）",
   "repo.svn_cleanup": "ロックを解除",
@@ -2052,6 +2069,12 @@ export const ja = {
   "asst.in_progress": "進行中",
   "asst.waiting": "待機中",
   "asst.focus_pane": "ペイン{n}にフォーカス",
+  "asst.lock": "削除ロックをかける",
+  "asst.unlock": "削除ロックを解除する",
+  "asst.locked_hint": "削除ロック中です。先にロックを解除してください。",
+  "asst.lock_failed": "削除ロックの変更に失敗しました",
+  "asst.locked_on": "削除ロックをかけました",
+  "asst.locked_off": "削除ロックを解除しました",
   "asst.delete_chat": "このチャットを削除",
   "asst.open_new_pane": "新しいペインで開く",
 

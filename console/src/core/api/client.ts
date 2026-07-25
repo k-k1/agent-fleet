@@ -598,6 +598,18 @@ export async function chatStream(
   }
 }
 
+// --- 削除ロック（docs/45） ---
+// セッション / 作業コピー（worktree 含む）/ アシスタント会話を削除保護に固定・解除する。
+// 保護そのものは Agent の REST 層で効くので、ここを通らない削除（オペレーターの MCP
+// ツール・ブリッジ）も同じ 403 locked で止まる。UI 側は locked を見て削除項目を無効化
+// するだけ — 判定の正は常にサーバー。
+export const sessionSetLock = (name: string, locked: boolean): Promise<{ locked?: boolean; error?: ApiError }> =>
+  apiJSON(`api/sessions/${encodeURIComponent(name)}/lock`, "POST", { locked });
+export const repoSetLock = (name: string, locked: boolean): Promise<{ locked?: boolean; error?: ApiError }> =>
+  apiJSON(`api/repos/${encodeURIComponent(name)}/lock`, "POST", { locked });
+export const chatSetLock = (id: string, locked: boolean): Promise<{ locked?: boolean; error?: ApiError }> =>
+  apiJSON(`api/chat/conversations/${encodeURIComponent(id)}/lock`, "POST", { locked });
+
 // --- assistant templates (docs/19 Q2) ---
 // Configurable chat personas. Builtins are code-injected on the Agent (not editable);
 // user-defined ones support create/update/delete.
