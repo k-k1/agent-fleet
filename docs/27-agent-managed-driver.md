@@ -18,7 +18,7 @@ P3（Codex managed 化 — 第2 Driver、daemon drain、双方向排他切替）
 > （追記 2026-07-21: 第3の Driver 実装として copilot が加わった — 共有 daemon でなく
 > **per-session child**（`copilot --acp`、ACP JSON-RPC over stdio）という新しい
 > ProcessModel。[docs/36](36-copilot-agent-kind.md) / [decisions/0019](decisions/0019-copilot-agent-kind.md)）
-> （追記 2026-07-24: 同じ per-session child ACP ProcessModel の実装として kiro（Kiro CLI、
+> （追記 2026-07-24: 同じ per-session child ACP ProcessModel の実装として kiro（Kiro、
 > 旧 Amazon Q Developer CLI）が加わった — `kiro-cli acp`（ACP JSON-RPC over stdio）。
 > [docs/43](43-kiro-agent-kind.md) / [decisions/0026](decisions/0026-kiro-agent-kind.md)）
 

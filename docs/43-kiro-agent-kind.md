@@ -1,11 +1,11 @@
-# 43. Kiro CLI エージェント種別（kind=kiro・第8種）— Track 0 実測記録
+# 43. Kiro エージェント種別（kind=kiro・第8種）— Track 0 実測記録
 
 status: Track 0（着工前プローブ）完了＋方針4点決定（2026-07-24）。**Track A（workspace agent 本体・read 層＋TUI）実装完了（2026-07-24・temp/snznjpk）**。**Track B（配備・オンデマンド導入＋焼き込みノブ）実装完了（2026-07-24・temp/snznjpk・§7）**。**Track C（CP＋Console 配線・色3種同時変更）実装完了（2026-07-24・temp/snznjpk・§8）**。**Track A2（managed driver・`kiro-cli acp`）実装完了（2026-07-24・temp/kiro-track-a2・§9）**。**Track A/B/C/A2 は全レビュー修正込みで develop へマージ済み（merge 8ab548b8）**。**Track D（ライブ使用量の UI 配線）実装完了（2026-07-24・temp/kiro-track-d・§10）＋ADR0026 起票**。
 関連: docs/40（cursor・章立てのテンプレ）/ docs/36（copilot）/ docs/32（agy）/ decisions/0015（managed driver）/ decisions/0026（本件の ADR）。
 
 ## 0. 対象と背景
 
-- **Kiro CLI** = 旧 Amazon Q Developer CLI（2025-11-17 改名）。AWS の Kiro（IDE）のターミナル版。
+- **Kiro** = 旧 Amazon Q Developer CLI（2025-11-17 改名）。AWS の Kiro（IDE）のターミナル版。
 - 実測対象: **2.14.1**（stable、BUILD_DATE 2026-07-23）。実バイナリを本 Workspace（Debian 12 / x86_64 / glibc 2.36）へ導入し、認証（Builder ID free / device flow）込みで全プローブを実施。
 - CLI 本体は非 OSS（旧 aws/amazon-q-developer-cli は MIT/Apache で公開継続・系譜の参照用）。issue は kirodotdev/Kiro。
 - `q`/`qchat` は kiro-cli を呼ぶ 65B シムとして同梱（後方互換）。`--v3`（次世代エンジン）のバナーが出るが v1 対象外。
@@ -82,7 +82,7 @@ status: Track 0（着工前プローブ）完了＋方針4点決定（2026-07-24
 | 項目 | 提案 | 備考 |
 |---|---|---|
 | kind スラグ | `kiro` | session.KindKiro |
-| 3段命名 | label=`Kiro` / displayName=`Kiro CLI` / assistantName=`Kiro` / short=`ki` | 表示順はユーザー決定待ち |
+| 表示名 | label=`Kiro` / displayName=`Kiro` / assistantName=`Kiro` / short=`ki` | 表示順はユーザー決定待ち |
 | 色 | AWS系オレンジ〜アンバー帯（--kind-kiro、dark/light、既存8色と非衝突を tokens.css で確定） | copilot 紫衝突の教訓 → 着手前に twin 全ファイル確定 |
 | 実行方式 | v1 から Terminal + Managed（per-session child `kiro-cli acp`、cursor/copilot 同型） | resume は session/load 実測合格済み |
 | 認証 | v1 login-only（device flow start→poll、stdout スクレイプ）。API キーは Track D | whoami を状態プローブに |
@@ -174,7 +174,7 @@ Track A では**設定固定の冪等ヘルパ（`ensureSettings`）だけ先行
 - **types/session.ts**: SessionKind union に "kiro"、SESSION_KINDS を copilot の後に挿入、
   ProviderConn `kiro?`。
 - **registry.ts descriptor**（caps 全項目を根拠明示）: icon=`compass`（ユーザー確認済み・spec/guide 志向）、
-  label=Kiro/displayName=Kiro CLI/short=ki/launchSuffix=-ki。**managedDriver:false**（A2 未）、
+  label=Kiro/displayName=Kiro/short=ki/launchSuffix=-ki。**managedDriver:false**（A2 未）、
   caps= chat/transcript/model/tuiStartMode/runsInDir/launchableFromRepo。effort/tuiEffort=false
   （--effort はあるがカタログに effort メタ無し・per-model 未検証＝picker 出さない）、contextBar=false
   （転写にトークン無し・ライブ使用量 _kiro.dev/metadata は A2）、planMode=false（3 モード循環で
