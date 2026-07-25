@@ -297,7 +297,7 @@ export function AssistantSection() {
                   <button
                     type="button"
                     className="chat-open"
-                    title={`${c.title}\nID: ${c.id}`}
+                    title={`${c.title}\n${c.slug ? `slug: ${c.slug}\n` : ""}ID: ${c.id}`}
                     onClick={(e) => (e.ctrlKey || e.metaKey ? openTargetInNew(convTarget(c.id)) : openChat(c.id))}
                     onMouseDown={(e) => e.button === 1 && e.preventDefault()}
                     onAuxClick={(e) => e.button === 1 && openTargetInNew(convTarget(c.id))}

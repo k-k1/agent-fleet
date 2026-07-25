@@ -21,6 +21,8 @@ import { t, useT } from "../../lib/i18n/index.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { openSessionChat, openSessionTerminal } from "../sessions/open.ts";
+import { openChat } from "../chat/open.ts";
+import { chatList } from "../chat/api.ts";
 import {
   scheduleList,
   scheduleRuns,
@@ -55,7 +57,19 @@ function shortLocal(iso?: string): string {
 
 // Open the session a fire drove. new-mode sessions take the schedule's agent kind, so a
 // chat-capable kind opens the mirror and a terminal kind opens the terminal pane.
+// An assistant fire (docs/38 session_mode=assistant) records the CONVERSATION slug
+// ("a"+6 chars) instead of a session name — resolve it via the chat list and open the
+// assistant chat pane.
 function openRunSession(agentKind: string | undefined, name: string): void {
+  if (/^a[a-z2-7]{6}$/.test(name)) {
+    void chatList()
+      .then((r) => {
+        const conv = (r.conversations || []).find((c) => c.slug === name);
+        if (conv) openChat(conv.id);
+      })
+      .catch(() => {});
+    return;
+  }
   (agentOf(agentKind || "claude").caps.chat ? openSessionChat : openSessionTerminal)(name);
 }
 

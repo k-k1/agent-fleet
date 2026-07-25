@@ -100,6 +100,11 @@ func (f *wakeFirer) fire(ctx context.Context, sch Schedule, slot time.Time) (str
 	if err := f.awaitAgentReady(ctx, res.rt); err != nil {
 		return "", "", fmt.Errorf("agent not ready: %w", err)
 	}
+	// session_mode=assistant (docs/38 アシスタント発火): run one assistant-chat turn
+	// instead of driving a session.
+	if sch.SessionMode == "assistant" {
+		return f.fireAssistant(ctx, res, sch, slot)
+	}
 	// session_mode=reuse (P6): send into the long-lived session instead of creating one.
 	if sch.SessionMode == "reuse" {
 		return f.fireReuse(ctx, res, sch, slot)

@@ -105,6 +105,9 @@ func buildMux() *http.ServeMux {
 	// Assistant-to-assistant consult (docs/19): af_write orchestrators' ask_assistant tool
 	// hits this via the local stdio MCP. Internal (Agent REST) only — not proxied by the CP.
 	mux.HandleFunc("POST /chat/ask", handleChatAsk)
+	// スケジュール発のアシスタント発火（docs/38 session_mode=assistant）: CP スケジューラが
+	// 会話（UUID/slug）へ 1 ターンを同期実行する。runOperatorTurn 委譲（assistant_turn.go）。
+	mux.HandleFunc("POST /assistant-turns", handleAssistantTurn)
 	// Session report kick (docs/30): the session-status hook / record-exit process posts
 	// here when an operator-armed session reaches an awaiting-input / abnormal-exit
 	// state. Internal (Agent REST) only — not proxied by the CP.

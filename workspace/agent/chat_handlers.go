@@ -95,7 +95,7 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	now := nowMs()
 	c := &chatConversation{
-		ID: randUUID(), Title: title, CreatedAt: now, UpdatedAt: now, Messages: []chatMessage{},
+		ID: randUUID(), Slug: newConvSlug(), Title: title, CreatedAt: now, UpdatedAt: now, Messages: []chatMessage{},
 	}
 
 	switch {

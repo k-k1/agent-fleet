@@ -150,8 +150,12 @@ func validateScheduleFields(s Schedule) *apiError {
 	if !oneOf(s.OverlapPolicy, "skip", "queue", "restart") {
 		return &apiError{http.StatusBadRequest, "bad_overlap_policy", "overlap_policy must be skip, queue, or restart"}
 	}
-	if !oneOf(s.SessionMode, "new", "reuse") {
-		return &apiError{http.StatusBadRequest, "bad_session_mode", "session_mode must be new or reuse"}
+	// "assistant" (docs/38 アシスタント発火): the fire runs one assistant-chat turn in a
+	// conversation (reuse_target = "a…" slug / UUID, empty = the schedule's owner_conv)
+	// instead of driving a session. repo/agent_kind/model are ignored in that mode —
+	// the conversation carries its own provider/model/persona.
+	if !oneOf(s.SessionMode, "new", "reuse", "assistant") {
+		return &apiError{http.StatusBadRequest, "bad_session_mode", "session_mode must be new, reuse, or assistant"}
 	}
 	if s.MissingTargetPolicy != "" && !oneOf(s.MissingTargetPolicy, "recreate", "fail") {
 		return &apiError{http.StatusBadRequest, "bad_missing_target_policy", "missing_target_policy must be recreate or fail"}
