@@ -189,24 +189,31 @@ func aggregateUsage(turns []transcript.Turn) sessionUsage {
 	return u
 }
 
-var bigWindowModelRe = regexp.MustCompile(`opus-(4-[678]|5)|sonnet-(4-6|5)|fable-5|mythos-5`)
+// smallWindowClaudeRe は「200k 側」の Claude だけを列挙する。Claude は Opus 4.6 /
+// Sonnet 4.6 以降 1M ネイティブで、今後出るモデルも 1M 前提なので、大きい方を
+// 列挙して新モデルのたびに追記する（＝漏れたら 200k に誤認される）運用をやめ、
+// 既定 1M・小さいものだけ例外、に反転してある。
+//   - haiku 系（4.5 まで 200k）
+//   - Claude 3.x 以前（claude-2 / claude-3-*）
+//   - Opus 4.0/4.1/4.5・Sonnet 4.0/4.5。日付入りIDは opus-4-20250514 の形なので
+//     「4-2」も旧世代側に含める（1M 側の 4-6/4-7/4-8 とは重ならない）。
+var smallWindowClaudeRe = regexp.MustCompile(`haiku|claude-[123]|opus-4-[0125]|sonnet-4-[025]`)
 
 // contextWindowGuess mirrors the Console's contextWindow() (ContextBar.tsx — keep
-// the two in sync): current 1M-native families (Opus 5/4.8/4.7/4.6, Sonnet 5/4.6,
-// Fable/Mythos 5), 272k for GPT-5.x (codex normally
-// records its real window, so this is the fallback — e.g. the assistant chat's
-// `codex exec`, whose events don't carry it), 200k for haiku, and a grow-to-fit
-// fallback when the observed usage already exceeds 200k.
+// the two in sync). Order: 272k for GPT-5.x (codex normally records its real
+// window, so this is the fallback — e.g. the assistant chat's `codex exec`, whose
+// events don't carry it) → 200k for the legacy Claude generations above → 1M for
+// every other Claude → for non-Claude unknowns, 200k with a grow-to-fit fallback
+// when the observed usage already exceeds it.
 func contextWindowGuess(model string, used int) int {
 	m := strings.ToLower(model)
-	if bigWindowModelRe.MatchString(m) {
-		return 1_000_000
-	}
-	if strings.Contains(m, "gpt-5") {
+	switch {
+	case strings.Contains(m, "gpt-5"):
 		return 272_000
-	}
-	if strings.Contains(m, "haiku") {
+	case smallWindowClaudeRe.MatchString(m):
 		return 200_000
+	case strings.Contains(m, "claude"):
+		return 1_000_000
 	}
 	if used > 200_000 {
 		return 1_000_000
