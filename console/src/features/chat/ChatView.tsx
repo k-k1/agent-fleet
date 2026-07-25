@@ -11,6 +11,7 @@ import { chatGet, chatStream, chatStop, chatCreate, chatCompact, assistantGet, c
 import { errText, raw, isTransientErr } from "../../core/api/client.ts";
 import { takeChatSeed } from "../../lib/chatSeed.ts";
 import { useDraft, moveDraft, clearDraft } from "../../lib/draft.ts";
+import { useDragScroll } from "../../lib/dragScroll.ts";
 import { scrollComposerViewport } from "../../lib/keyScroll.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
 import { t, tCount, useT } from "../../lib/i18n/index.ts";
@@ -108,6 +109,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const [llmSuggestions, setLlmSuggestions] = useState<string[]>([]);
   const [suggesting, setSuggesting] = useState(false);
   const suggestRef = useRef<HTMLDivElement>(null); // チップ行（Tab でここへフォーカスを移す）
+  useDragScroll(suggestRef); // 1行に収めた候補列をマウスドラッグで左右スクロール（スワイプは既定動作）
   const [karaoke, setKaraoke] = useState<string | null>(null); // 読み上げ中の文（ライブ配信カラオケ・docs/19）
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
@@ -819,6 +821,13 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const suggestRing = (): HTMLButtonElement[] =>
     Array.from(suggestRef.current?.querySelectorAll<HTMLButtonElement>("button") ?? []);
 
+  // チップ行は1行スクロールなので、キー移動のフォーカス先が隠れないよう横だけ最小限追従させる
+  // （focus 既定のスクロールは縦にも効いて本文が飛ぶため preventScroll で殺す）。
+  const focusRingItem = (el: HTMLButtonElement) => {
+    el.focus({ preventScroll: true });
+    el.scrollIntoView({ block: "nearest", inline: "nearest" });
+  };
+
   // リング内の移動。Tab/Shift+Tab は「候補＋入力欄」を一巡（端まで来たら入力欄へ戻る）。
   // ←/→ は候補内だけで循環。Escape で入力欄へ。処理したら true。
   const onSuggestNav = (e: KeyboardEvent<HTMLButtonElement>): boolean => {
@@ -835,13 +844,13 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
       e.preventDefault();
       const next = e.shiftKey ? i - 1 : i + 1;
       if (next < 0 || next >= ring.length) inputRef.current?.focus(); // 端 → 入力欄へ戻る
-      else ring[next].focus();
+      else focusRingItem(ring[next]);
       return true;
     }
     if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
       e.preventDefault();
       const d = e.key === "ArrowRight" ? 1 : -1;
-      ring[(i + d + ring.length) % ring.length].focus(); // ←/→ は候補内で循環
+      focusRingItem(ring[(i + d + ring.length) % ring.length]); // ←/→ は候補内で循環
       return true;
     }
     return false;
@@ -868,7 +877,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
         : suggestRef.current?.querySelector<HTMLButtonElement>(".chat-suggest-chip");
       if (target) {
         e.preventDefault();
-        target.focus();
+        focusRingItem(target);
         return;
       }
     }
