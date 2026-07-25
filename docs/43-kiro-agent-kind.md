@@ -341,3 +341,22 @@ unknown 版据え置き／ピン欠落時の縮退／起動ガード文字列）
 **未修正の同型リスク（別件・要判断）**: lean 配布の boot-install（entrypoint）も `cli_present` の presence 判定なので、
 self-update OFF のまま npm4種/rtk/agy/cursor のピンを上げても `~/.local` の boot-install 品は前進しない。
 kiro と違い ON にすれば latest へ追従するため露見しにくいが、構造は同じ。
+
+### 11.1 更新 UI（接続カード・2026-07-25）
+
+自動追従（起動ガード）だけだと「気づかないうちに起動が数分止まる」ので、**任意のタイミングで押せるボタン**を接続カードに足した。
+
+- **導入と認証の関係（前提の再確認）**: 認証時に導入は走らない。`kiro.Status()` はバイナリ不在で `supported=false`＝
+  Console 上は「未導入」表示で、ログイン（`kiro-cli login`）自体がバイナリを要求する。したがって初回導線は
+  **設定 > エージェント > Kiro >「Kiro を導入」→ サインイン（device flow）→ 起動** の順。`available` が connected ゲートのため
+  未導入のうちは起動モーダルに kiro が出ず、起動ガードの自動導入は「home を掃除した」等で消えた時の保険という位置づけ。
+- **GET `/connections/kiro/install` を拡張**（新ルート追加ではない＝CP 許可リスト変更不要）: `{state, error}` に
+  `installed / version / pin / updateAvailable` を追加。`updateAvailable` は `kiroStale` の時だけ true
+  （版が読めない・ピンが無い時は false ＝ 憶測で 554MB を促さない）。install 実行中は版の読み取り自体を省く（tree が入れ替え中）。
+- **POST は据え置き**（stale なら再導入に回る＝§11）。カードは install と同じ state machine をポーリングする。
+- **Console（AgentsTab の KiroCard）**: 接続の有無に関わらず（＝バイナリの話であって auth の話ではない）
+  「新しい版が利用できます（導入済み {cur} → ピン {pin}）」＋「Kiro を更新」ボタンを表示。更新中は
+  「実行中の Kiro セッションはそのまま動き続けます（次回起動から新しい版）」と明示（rename 差し替えの実挙動どおり）。
+  i18n は ja/en 4 キー（`agents.kiro_update_avail` / `_update` / `_update_note` / `_updating`）。
+- **検証**: workspace/agent test 669 緑（GET ペイロードのドリフト報告テスト追加）。Console typecheck／i18n:lint／vitest 429 緑。
+  実描画（カードに更新ボタンが出る／押して 855MB 更新が通る）は実フリート再ビルド後の目視が残る。

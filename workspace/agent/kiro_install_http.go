@@ -12,9 +12,18 @@ package main
 // exposes a tiny state machine the card polls: POST starts it (idempotent while
 // running), GET reports {state, error}. Once state=done, the next /connections poll
 // sees supported=true and the card switches to the login flow.
+//
+// The SAME route drives updates. kiro's home copy survives image rebuilds and has no
+// self-updater (we pin app.disableAutoupdates off), so after a versions.json pin bump
+// the user sits on an old version until something re-installs. The launch guard does it
+// automatically at the next kiro launch, but that is an implicit multi-minute stall the
+// user didn't ask for — so GET also reports {installed, version, pin, updateAvailable}
+// and the card turns that into a visible "update available → press when you want to"
+// affordance. POST then performs the upgrade exactly like a first install.
 
 import (
 	"net/http"
+	"path/filepath"
 	"sync"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -44,7 +53,20 @@ func (k *kiroInstall) snapshot() (string, string) {
 func handleKiroInstall(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		st, e := kiroInstaller.snapshot()
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"state": st, "error": e})
+		body := map[string]any{"state": st, "error": e}
+		// Version facts for the card. Skipped while an install is running: the tree is
+		// mid-swap, so any version we read is meaningless (and the poll is 4s-tight).
+		if st != "installing" {
+			pin := readBuildPins()["kiro"]
+			_, cur, vst := kiroCheck(filepath.Join(homeDir(), ".local", "bin"), pin)
+			body["installed"] = vst != kiroMissing
+			body["version"] = cur // "" when the binary can't report one
+			body["pin"] = pin
+			// Only claim an update when we KNOW the versions differ: an unreadable
+			// version or a missing pin must not nag the user with a 554MB download.
+			body["updateAvailable"] = vst == kiroStale
+		}
+		httpx.WriteJSON(w, http.StatusOK, body)
 		return
 	}
 	// POST. Nothing to do when the PINNED version is already present (baked or a prior
