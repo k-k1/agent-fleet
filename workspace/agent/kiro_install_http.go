@@ -17,7 +17,6 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
@@ -48,8 +47,11 @@ func handleKiroInstall(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"state": st, "error": e})
 		return
 	}
-	// POST. Already present (baked or a prior install) → nothing to do.
-	if kiro.Installed() {
+	// POST. Nothing to do when the PINNED version is already present (baked or a prior
+	// install). A present-but-stale kiro (the home copy predates a versions.json pin
+	// bump) is NOT "done" — it falls through so this route can bring it to the pin,
+	// the same upgrade the launch guard performs.
+	if kiroInstallCurrent() {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"state": "done"})
 		return
 	}
@@ -63,7 +65,7 @@ func handleKiroInstall(w http.ResponseWriter, r *http.Request) {
 	kiroInstaller.err = ""
 	kiroInstaller.mu.Unlock()
 	go func() {
-		err := installKiro()
+		err := installKiro(false)
 		kiroInstaller.mu.Lock()
 		if err != nil {
 			kiroInstaller.state = "error"
