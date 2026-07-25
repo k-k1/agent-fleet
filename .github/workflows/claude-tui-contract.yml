@@ -66,6 +66,13 @@ jobs:
           agent: claude
           version: ${{ inputs.cli_version }}
 
+      - name: seed non-secret interactive onboarding state
+        run: |
+          # CLAUDE_CODE_OAUTH_TOKEN supplies auth, but the interactive TUI still opens
+          # "Select login method" unless this non-secret state is present. Production's
+          # claude.ensureFolderTrusted writes the same keys before every TUI launch.
+          jq -n '{hasCompletedOnboarding:true,theme:"dark"}' > "$HOME/.claude.json"
+
       # Pass credentials via env (never typed or logged) and drive the real interactive
       # CLI in a real tmux pane. The Go test calls production tmuxx functions directly.
       - name: TUI contract probe
