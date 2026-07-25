@@ -33,8 +33,11 @@ for i in $(seq 1 "$max_chunks"); do
   if [ -f "$part" ]; then
     gh secret set "$name" < "$part"
   else
-    # Clear stale trailing fragments from a previous, larger credential DB.
-    gh secret set "$name" --body ''
+    # Delete stale trailing fragments from a previous, larger credential DB.
+    # `gh secret set --body ''` falls back to an interactive "Paste your
+    # secret" prompt on some gh versions, which is both misleading and
+    # unnecessary: an absent fragment is read as an empty string by Actions.
+    gh secret delete "$name" --yes 2>/dev/null || true
   fi
 done
 
