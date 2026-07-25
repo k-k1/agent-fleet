@@ -85,6 +85,29 @@ $ claude -p --no-session-persistence --output-format json --dangerously-skip-per
 claude 固有の手札である点にも注意（codex は `-c` 設定、opencode / cursor はプロンプト前置きのみで
 同等の「既定プロンプト置換」が無い）。**まず claude 経路だけ塞ぐ**のが費用対効果で最良。
 
+#### 実装済み（P0.5・2026-07-25）
+
+`oneShotHeadless` を上記 E 相当へ（`claudeOneShotArgs` / `claudeOneShotEnv`）。codex 側も
+同じ発想で2点（`codexOneShotArgs`）:
+
+- **`-m <小型モデル>`** — カタログ（`codex debug models`）から `mini`/`flash`/`lite`/`small`/
+  `nano`/`haiku` を含む id を拾う（`cheapOneShotModel`）。**モデル名を直書きしない**のは、
+  名前は数週間で変わるがこの語彙は変わらないから。実カタログでは `gpt-5.4-mini`。
+- **`-c model_reasoning_effort="low"`** — `MAX_THINKING_TOKENS=0` の codex 版。利用者の
+  `config.toml` は `high` のことが多く（実機がまさにそう）、一発呼び出しにまでそれが効いていた。
+
+実 CLI 契約テスト（`chat_oneshot_test.go`・opt-in）で3機能とも回帰確認済み:
+title=「使用量グラフの台帳設計」/ branch=`usage-graph` / 返信候補3件、いずれも 1.7〜2.3s
+（従来 6.2s）。codex 経路も `gpt-5.4-mini` + `low` で件名が返ることを実機確認。
+
+> **★ 実測で判明した罠 — カタログに載っている ≠ そのアカウントで使える。**
+> 同じ手を opencode にも当てて `opencode/claude-haiku-4-5`（`opencode models` に載っている）を
+> 選ばせたら、実行が `Unexpected server error` で落ちた。`--model` 無しの既定は正常に応答する。
+> **opencode では安価モデルの自動ピンをしない**（`AF_TITLE_MODEL_OPENCODE` の明示のみ）。
+> codex 側は実機で動くことを確認済みだが、他アカウントで同じ罠を踏みうるので、**自前で選んだ
+> 時に限りモデル指定なしで1回だけリトライ**する（`codexOneShotArgsNoModel`）。利用者が
+> 環境変数で明示したモデルは決して外さない。タイトル提案が壊れることの方が、トークン代より高い。
+
 ### 1-b. 対話セッション本体（既に転写に記録されている）
 
 `transcript.Turn` が `InTok/OutTok/CacheRead/CacheCreate` + `TS` + `Model` + `Sidechain` を持つ
@@ -324,7 +347,7 @@ GET /usage/series?from=&to=&bucket=day|hour&by=feature|kind|model|trigger|origin
 | P | 内容 | 完了条件 |
 |---|---|---|
 | P0 | 本 doc + ADR0029 確定（enum とワイヤ形の凍結） | レビュー済み |
-| **P0.5** | **測る前に確定できる是正**（§1-a-2）: `oneShotHeadless` の claude 経路を `--tools ""` + `--system-prompt` 置換 + `MAX_THINKING_TOKENS=0` へ。codex/opencode/cursor に安価モデルの既定ピン（§2-b） | 3機能（title/branch/suggest）の出力品質を実 CLI で回帰確認・入力側トークンが実測で落ちること |
+| ~~P0.5~~ **完了** | **測る前に確定できる是正**（§1-a-2）: claude 経路を `--tools ""` + `--system-prompt` 置換 + `MAX_THINKING_TOKENS=0`、codex 経路を小型モデル自動ピン + `model_reasoning_effort="low"`（opencode は罠のため見送り、cursor は `auto` のまま） | ✅ 3機能を実 CLI で回帰確認（1.7〜2.3s / 従来 6.2s）・go test 674 緑・契約テスト `chat_oneshot_test.go` 追加 |
 | P1 | 台帳 + 補助呼び出し計装（UI 無し）＋**モデル報告プローブ**（codex/opencode/cursor の実出力に model が乗るか実測して `model_src` を確定） | 13箇所タグ付け・go test 緑・実 CLI で1行記録を実測・claude はモデル別行が割れること |
 | P2 | セッション折り込み（watermark + バックフィル + 削除時確定）＋ **`Meta.Origin`/`OriginConv` 追加**（Console=user / MCP=operator / スケジュール=schedule / handoff・recreate は継承）と既存セッションの推定バックフィル | 冪等性テスト・既存 `get_session_usage` と突合一致・4経路の出自が実際に付くこと |
 | P3 | `/usage/series` + CP 両側登録 | curl で系列取得 |
@@ -353,9 +376,9 @@ GET /usage/series?from=&to=&bucket=day|hour&by=feature|kind|model|trigger|origin
    補助専用のダッシュボードにする。
 4. **保持期間**: raw 90日・rollup 無期限（推奨）。
 5. **フリート横断（P6）**: 自ワークスペース内で十分か、CP 集約まで要るか。
-6. **是正の順序** → 推奨は **P0.5 を台帳より先に出す**。§1-a-2 は直接実測で効果が確定して
-   おり、台帳の完成を待つ理由がない。「before」は本 doc の実測表が担うので、台帳は
-   **after の定常状態**を見せる役になる。ただし codex/opencode/cursor の既定モデルピン
-   （§2-b）は「どのモデルが実際に選ばれているか」が未確認なので、**P1 のプローブ後**でよい。
+6. ~~是正の順序~~ → **決着: P0.5 を台帳より先に実施済み**（2026-07-25）。「before」は本 doc の
+   実測表が担い、台帳は after の定常状態を見せる役になる。残るモデル面の判断は cursor
+   （`auto` のまま = 解決後モデル不明）と opencode（カタログ≠権利の罠で自動ピン見送り）の2つで、
+   どちらも台帳が動き出してから実データで再考する。
 7. **`compact`（要約）に思考トークン抑制を効かせるか**: 要約は品質が引き継ぎに直結するので、
    一律 0 にはしない。実測してから判断。

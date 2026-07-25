@@ -973,35 +973,154 @@ func headlessPrompt(persona string, knowledge []string, prompt string) string {
 	return b.String()
 }
 
+// claudeOneShotArgs is the argv for a claude one-shot (title / branch name / reply
+// candidate). Three deliberate departures from a chat turn (docs/46 §1-a-2, 実測
+// 2026-07-25) — a one-shot is a pure classification-and-format task, so everything that
+// makes claude a coding agent is dead weight paid on every call:
+//
+//	--system-prompt … REPLACES the default system prompt instead of appending to it
+//	                  (--append-system-prompt left the whole Claude Code persona on).
+//	--tools ""      … loads no built-in tool definitions at all (they were still being
+//	                  sent even though the useful ones were disallowed).
+//
+// plus MAX_THINKING_TOKENS=0 (claudeOneShotEnv) — an 18-character title was costing
+// ~500 thinking tokens. Measured on the title prompt: 入力側 16.0k→4.3k / out 533→13 /
+// 6.2s→1.2s, same answer quality. With no tools there is nothing to permit, so
+// --dangerously-skip-permissions is gone too. --no-session-persistence is claude's
+// --ephemeral analog (print-mode only, no transcript written, no resume): a one-shot
+// never resumes, so don't pile per-call jsonl into Claude's projects tree.
+//
+// --tools MUST stay last: it is variadic, so a following positional would be eaten.
+func claudeOneShotArgs(persona, model string) []string {
+	return []string{"-p", "--no-session-persistence", "--output-format", "json",
+		"--system-prompt", persona, "--model", model, "--tools", ""}
+}
+
+// claudeOneShotEnv is applied on top of chatClaudeCmd's env for one-shots only — a chat
+// turn still reasons, so the thinking budget is cut here and nowhere else.
+var claudeOneShotEnv = []string{"MAX_THINKING_TOKENS=0"}
+
+// cheapOneShotMarkers are the size markers vendors put in model ids for their small
+// models. Matching on the marker rather than on a hardcoded id is what keeps this
+// working across catalog drift: model names churn every few weeks, "mini"/"flash"/
+// "lite" do not.
+var cheapOneShotMarkers = []string{"mini", "flash", "lite", "small", "nano", "haiku"}
+
+// cheapOneShotModel picks the cheapest-looking entry of a live model catalog for a
+// one-shot (title / branch name / reply candidate) — docs/46 §2-b. claude and agy pin a
+// cheap default explicitly (haiku / Flash); codex and opencode used to pass no model at
+// all unless AF_TITLE_MODEL_* was set, which silently ran these throwaway calls on the
+// CLI's own default — on a real workspace that was gpt-5.6-luna at "high" effort.
+//
+// Returns "" when nothing in the catalog looks small (or the catalog is unavailable,
+// e.g. the CLI is not logged in): the caller then passes no model flag and behaves
+// exactly as before. Never guessing a name that might not exist is the point — a wrong
+// -m is a hard failure, while falling back only costs what we already spend today.
+func cheapOneShotModel(ids []string) string {
+	for _, id := range ids {
+		low := strings.ToLower(id)
+		for _, marker := range cheapOneShotMarkers {
+			if strings.Contains(low, marker) {
+				return id
+			}
+		}
+	}
+	return ""
+}
+
+// modelChoiceIDs adapts a rich catalog (codex) to the id list cheapOneShotModel wants;
+// opencode's catalog is already []string.
+func modelChoiceIDs(list []agents.ModelChoice) []string {
+	out := make([]string, 0, len(list))
+	for _, m := range list {
+		out = append(out, m.ID)
+	}
+	return out
+}
+
+// codexOneShotArgs is the argv for a codex one-shot. --ephemeral: a one-shot never
+// needs resume, so don't persist a thread even into the chat-only CODEX_HOME.
+//
+// The two savings knobs (docs/46 §1-a-2 / §2-b), mirroring what the claude path does:
+//   - -m <cheap model>: without it codex ran throwaway calls on whatever config.toml
+//     pins — on a real workspace gpt-5.6-luna. AF_TITLE_MODEL_CODEX still wins, and an
+//     empty pick (unknown catalog) falls back to today's "no -m" behaviour.
+//   - -c model_reasoning_effort="low": the analog of MAX_THINKING_TOKENS=0. A title is
+//     not a reasoning problem, and the user's configured effort (often "high") would
+//     otherwise apply to every one-shot. "low" is supported by every listed model.
+//
+// The trailing "-" makes codex read the prompt from stdin; it must stay last.
+func codexOneShotArgs() (args []string, autoPicked bool) {
+	args = []string{"exec", "--json", "--skip-git-repo-check", "--ephemeral", "--color", "never", "-C", chatWorkdir()}
+	if m := os.Getenv("AF_TITLE_MODEL_CODEX"); m != "" {
+		args = append(args, "-m", m) // explicit user choice: never second-guess it
+	} else if m := cheapOneShotModel(modelChoiceIDs(codex.Models())); m != "" {
+		args, autoPicked = append(args, "-m", m), true
+	}
+	return append(args, "-c", `model_reasoning_effort="low"`, "-"), autoPicked
+}
+
+// codexOneShotArgsNoModel strips OUR OWN -m pick for the one retry: a catalog entry the
+// account cannot actually run must degrade to the previous behaviour, not to a broken
+// feature (the opencode note below is the same trap, found by measurement).
+func codexOneShotArgsNoModel(args []string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-m" && i+1 < len(args) {
+			i++
+			continue
+		}
+		out = append(out, args[i])
+	}
+	return out
+}
+
+// runCodexOneShot executes one codex exec argv and returns the reply. codex reports a
+// failure two ways — a non-zero exit AND a turn.failed/error event — so both are folded
+// into err here, which is what makes the caller's single retry cover either shape.
+func runCodexOneShot(ctx context.Context, args []string, prompt string) (string, error) {
+	cmd := chatCodexCmd(ctx, args...)
+	cmd.Stdin = strings.NewReader(prompt)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("codex execution failed: %s", cliErr(err))
+	}
+	reply, _, execErr, _ := parseCodexExecEvents(out)
+	if execErr != "" {
+		return "", errors.New(execErr)
+	}
+	return reply, nil
+}
+
 // oneShotHeadless runs one prompt through the preferred available backend and returns
 // the reply text — the backend-agnostic core of the title/branch suggestions. persona
-// is passed natively where possible (claude --append-system-prompt) and as a prompt
-// preamble otherwise. claudeModel applies to the claude backend only (codex/opencode
-// run their own configured defaults; override via AF_TITLE_MODEL_CODEX/_OPENCODE).
+// is passed natively where possible (claude --system-prompt) and as a prompt preamble
+// otherwise. claudeModel applies to the claude backend only (codex/opencode run their
+// own configured defaults; override via AF_TITLE_MODEL_CODEX/_OPENCODE — docs/46 §2-b
+// flags that an unset override means the CLI's own default, usually the flagship).
 func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (string, error) {
 	switch preferredHeadlessAgent() {
 	case session.KindCodex:
-		// --ephemeral: a one-shot never needs resume, so don't persist a thread even
-		// into the chat-only CODEX_HOME.
-		args := []string{"exec", "--json", "--skip-git-repo-check", "--ephemeral", "--color", "never", "-C", chatWorkdir()}
-		if m := os.Getenv("AF_TITLE_MODEL_CODEX"); m != "" {
-			args = append(args, "-m", m)
-		}
-		args = append(args, "-")
-		cmd := chatCodexCmd(ctx, args...)
 		defer func() { _, _ = chatCodexHome() }()
-		cmd.Stdin = strings.NewReader(headlessPrompt(persona, nil, prompt))
-		out, err := cmd.Output()
-		if err != nil {
-			return "", fmt.Errorf("codex execution failed: %s", cliErr(err))
+		full := headlessPrompt(persona, nil, prompt)
+		args, autoPicked := codexOneShotArgs()
+		reply, err := runCodexOneShot(ctx, args, full)
+		if err != nil && autoPicked {
+			// The cheap model came from the catalog, and a catalog entry is not proof the
+			// account may run it (実測: opencode lists claude-haiku-4-5 and then 500s on it).
+			// Fall back to the configured default once — a title that costs more still beats
+			// a title feature that is broken.
+			reply, err = runCodexOneShot(ctx, codexOneShotArgsNoModel(args), full)
 		}
-		reply, _, execErr, _ := parseCodexExecEvents(out)
-		if execErr != "" {
-			return "", errors.New(execErr)
-		}
-		return reply, nil
+		return reply, err
 	case session.KindOpencode:
 		args := []string{"run", "--format", "json", "--dir", chatWorkdir()}
+		// NOTE: deliberately NOT auto-picking a cheap model here (docs/46 §1-a-2). opencode's
+		// catalog is a LISTING, not an entitlement: `opencode/claude-haiku-4-5` is listed and
+		// selectable, yet running it returns "Unexpected server error" on an account without
+		// it, while the configured default answers fine (実測 2026-07-25). A hard failure of
+		// title/branch/reply suggestions is worse than their token cost, so opencode keeps the
+		// user's default unless AF_TITLE_MODEL_OPENCODE names something explicitly.
 		if m := os.Getenv("AF_TITLE_MODEL_OPENCODE"); m != "" {
 			args = append(args, "--model", m)
 		}
@@ -1077,10 +1196,9 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 	// claude (default): the historical path, kept native. --no-session-persistence is
 	// claude's --ephemeral analog (print-mode only, no transcript written, no resume):
 	// a one-shot never resumes, so don't pile per-call jsonl into Claude's projects tree.
-	args := []string{"-p", "--no-session-persistence", "--output-format", "json", "--dangerously-skip-permissions",
-		"--append-system-prompt", persona, "--model", claudeModel}
-	args = append(args, chatToolLimits()...)
-	cmd := chatClaudeCmd(ctx, args...)
+	//
+	cmd := chatClaudeCmd(ctx, claudeOneShotArgs(persona, claudeModel)...)
+	cmd.Env = append(cmd.Env, claudeOneShotEnv...)
 	cmd.Stdin = strings.NewReader(prompt)
 	out, err := cmd.Output()
 	if err != nil {
