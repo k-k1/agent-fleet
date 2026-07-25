@@ -815,30 +815,60 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     inputRef.current?.focus();
   };
 
-  // 返信サジェストのチップ上でのキー操作（MirrorView と同挙動）。Enter/Ctrl(⌘)+Enter の役割は
-  // コンポーサーの送信キー設定に合わせる: modSend なら mod+Enter=送信・素の Enter=差し込み、
-  // enter モードなら逆。Escape はコンポーサーへ戻る。
-  const onSuggestKeyDown = (e: KeyboardEvent<HTMLButtonElement>, text: string) => {
-    if (e.nativeEvent.isComposing) return;
+  // 返信サジェストのフォーカスリング = ✨ボタン＋候補チップ（DOM 順）。MirrorView と同挙動。
+  const suggestRing = (): HTMLButtonElement[] =>
+    Array.from(suggestRef.current?.querySelectorAll<HTMLButtonElement>("button") ?? []);
+
+  // リング内の移動。Tab/Shift+Tab は「候補＋入力欄」を一巡（端まで来たら入力欄へ戻る）。
+  // ←/→ は候補内だけで循環。Escape で入力欄へ。処理したら true。
+  const onSuggestNav = (e: KeyboardEvent<HTMLButtonElement>): boolean => {
+    if (e.nativeEvent.isComposing) return false;
     if (e.key === "Escape") {
       e.preventDefault();
       inputRef.current?.focus();
-      return;
+      return true;
     }
-    if (e.key !== "Enter") return;
+    const ring = suggestRing();
+    const i = ring.indexOf(e.currentTarget);
+    if (i < 0 || !ring.length) return false;
+    if (e.key === "Tab") {
+      e.preventDefault();
+      const next = e.shiftKey ? i - 1 : i + 1;
+      if (next < 0 || next >= ring.length) inputRef.current?.focus(); // 端 → 入力欄へ戻る
+      else ring[next].focus();
+      return true;
+    }
+    if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+      e.preventDefault();
+      const d = e.key === "ArrowRight" ? 1 : -1;
+      ring[(i + d + ring.length) % ring.length].focus(); // ←/→ は候補内で循環
+      return true;
+    }
+    return false;
+  };
+
+  // チップ上のキー操作。移動系は onSuggestNav に委ね、Enter/Ctrl(⌘)+Enter の役割はコンポーサーの
+  // 送信キー設定に合わせる: modSend なら mod+Enter=送信・素の Enter=差し込み、enter モードなら逆。
+  const onSuggestKeyDown = (e: KeyboardEvent<HTMLButtonElement>, text: string) => {
+    if (onSuggestNav(e)) return;
+    if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
     const mod = e.ctrlKey || e.metaKey;
     e.preventDefault(); // ボタン既定の click（＝差し込み）と二重発火させない
     applySuggestion(text, modSend ? mod : !mod);
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    // 入力欄が空なら Tab で返信サジェストへフォーカスを移す。以降の候補間移動（Tab=次 /
-    // Shift+Tab=前）はチップが隣接した button なのでブラウザ既定の順送りがそのまま効く。
-    if (e.key === "Tab" && !e.shiftKey && !e.nativeEvent.isComposing && input === "") {
-      const first = suggestRef.current?.querySelector<HTMLButtonElement>(".chat-suggest-chip");
-      if (first) {
+    // 入力欄が空なら Tab で返信サジェストへ入る（＝入力欄→候補1→候補2→入力欄…のループ）。
+    // 素の Tab は最初の「候補チップ」から（先頭の✨は飛ばす／Shift+Tab で戻れる）。Shift+Tab は
+    // 逆回りなのでリング末尾から入る。テキストがあるときは従来どおりの Tab。
+    if (e.key === "Tab" && !e.nativeEvent.isComposing && input === "") {
+      const ring = suggestRing();
+      const target = e.shiftKey
+        ? ring[ring.length - 1]
+        : suggestRef.current?.querySelector<HTMLButtonElement>(".chat-suggest-chip");
+      if (target) {
         e.preventDefault();
-        first.focus();
+        target.focus();
         return;
       }
     }
@@ -1152,6 +1182,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
                 title={tr("chat.suggest_ai")}
                 disabled={suggesting}
                 onClick={fetchLlmSuggestions}
+                onKeyDown={onSuggestNav} // Enter は既定の click（＝候補取得）に任せる
               >
                 <Icon name={suggesting ? "loading" : "sparkle"} spin={suggesting} />
               </button>
