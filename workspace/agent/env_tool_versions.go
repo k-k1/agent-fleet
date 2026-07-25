@@ -23,7 +23,9 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
-const buildPinsPath = "/usr/local/share/agent-fleet/versions.json"
+// buildPinsPath は Dockerfile が ARG から書き出すピン一覧。var なのはテストで
+// 差し替えるため（install_kiro のピン比較テスト）— 実行時は書き換えない。
+var buildPinsPath = "/usr/local/share/agent-fleet/versions.json"
 
 // toolSpec は 1 ツール分の観測点。Cmd は PATH 解決（実効）と ~/.local/bin/<Cmd>
 // （ユーザー local）の両方に使う。Baked はイメージが焼く実体パス（gh はラッパーでは
