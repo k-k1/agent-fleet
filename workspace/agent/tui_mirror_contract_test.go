@@ -58,7 +58,15 @@ func runTUIMirrorContract(t *testing.T, spec tuiMirrorContractSpec) {
 	// this same isolated server without reimplementing any product command.
 	sock := fmt.Sprintf("af-tui-contract-%s-%d", spec.kind, os.Getpid())
 	t.Setenv("AF_TMUX_SOCKET", sock)
-	t.Cleanup(func() { _ = tmuxx.Cmd("kill-server").Run() })
+	// This must be a defer, not t.Cleanup: each caller's isolated HOME is a
+	// t.TempDir, whose cleanup may otherwise race Cursor's short-lived compiler
+	// cache writer after the test function has returned.  Defers run before
+	// testing.T's registered TempDir cleanup, and the socket is private to this
+	// contract, so killing its server cannot affect a production tmux session.
+	defer func() {
+		_ = tmuxx.Cmd("kill-server").Run()
+		time.Sleep(750 * time.Millisecond)
+	}()
 
 	meta := session.Meta{Name: name, Dir: t.TempDir(), Kind: spec.kind}
 	plan, err := spec.agent.BuildLaunch(meta, agents.LaunchOpts{})
@@ -70,7 +78,6 @@ func runTUIMirrorContract(t *testing.T, spec tuiMirrorContractSpec) {
 	if out, err := tmuxx.Cmd("new-session", "-d", "-s", tn, "-x", "200", "-y", "50", "-c", plan.Cwd, plan.Program).CombinedOutput(); err != nil {
 		t.Fatalf("tmux new-session: %v: %s", err, out)
 	}
-	t.Cleanup(func() { _ = tmuxx.Cmd("kill-session", "-t", tn).Run() })
 
 	// paneMode は Console の launch-seed readiness gate そのもの。ここで composer
 	// を認識できない場合は、最初のミラープロンプトが起動画面に食われる。
