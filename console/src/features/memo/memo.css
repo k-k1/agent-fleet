@@ -51,7 +51,8 @@
 }
 .memo-add-text {
   width: 100%;
-  resize: vertical;
+  resize: none;
+  overflow-y: hidden;
   font: inherit;
   font-size: 12px;
   padding: 5px 7px;
@@ -489,7 +490,8 @@
 }
 .memo-edit-text {
   width: 100%;
-  resize: vertical;
+  resize: none;
+  overflow-y: hidden;
   font: inherit;
   font-size: 12px;
   padding: 6px 7px;
