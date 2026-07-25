@@ -5,7 +5,7 @@
 // views/FileView onto the zustand stores.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { CSSProperties } from "react";
+import type { CSSProperties, KeyboardEvent } from "react";
 import { SendSelectionModal } from "../memo/SendSelectionModal.tsx";
 import hljs from "highlight.js/lib/common";
 import { api, downloadURL, isTransientErr } from "../../core/api/client.ts";
@@ -23,6 +23,10 @@ import { CodeView } from "./CodeView.tsx";
 import { ImageView } from "./ImageView.tsx";
 import { registerPaneViewActions } from "./paneViewActions.ts";
 import type { LineMarks } from "./CodeView.tsx";
+import { CodeEditor } from "../editor/CodeEditor.tsx";
+import { useFileEditor } from "../editor/useFileEditor.ts";
+import { revisionOf, type BufferValidationError } from "../editor/buffer.ts";
+import type { FileEditorModel } from "../editor/model.ts";
 
 type MdMode = "preview" | "source" | "slides";
 
@@ -69,11 +73,15 @@ interface FileViewProps {
 
 interface FileData {
   error?: { message?: string };
+  path?: string;
   binary?: boolean;
   content?: string;
   size?: number;
   truncated?: boolean;
   lfs?: boolean;
+  editable?: boolean;
+  editabilityReason?: string | null;
+  revision?: string;
 }
 
 export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: FileViewProps) {
@@ -93,6 +101,12 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   const bodyRef = useRef<HTMLDivElement>(null);
   const [sel, setSel] = useState<{ quote: string; startLine: number; endLine: number; x: number; y: number } | null>(null);
   const [sendOpen, setSendOpen] = useState(false);
+  const [mode, setMode] = useState<"view" | "edit">("view");
+  const [editorNotice, setEditorNotice] = useState("");
+  const [resolutionOpen, setResolutionOpen] = useState(true);
+  const viewTabRef = useRef<HTMLButtonElement>(null);
+  const editTabRef = useRef<HTMLButtonElement>(null);
+  const editorFocusRef = useRef<(() => void) | null>(null);
 
   const showFile = (path: string, line?: number, column?: number, openInNew = false) => {
     const target = { content: { kind: "file" as const, filePath: path, targetLine: line, targetColumn: column } };
@@ -184,14 +198,53 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
       start = nl + 1;
     }
   }, [isText, data, lines]);
-  const isMarkdown = isText && !huge && langFor(filePath) === "markdown";
+  const markdownLanguage = langFor(filePath) === "markdown";
+  const isMarkdown = isText && !huge && markdownLanguage;
   const isMarp = isMarkdown && isMarpDoc(data!.content);
+  const editableSnapshotValid = useMemo(() => {
+    if (data?.editable !== true || typeof data.content !== "string" || typeof data.revision !== "string") return false;
+    try {
+      return revisionOf(data.content) === data.revision;
+    } catch {
+      return false;
+    }
+  }, [data]);
+  const canEdit =
+    !!paneId &&
+    isText &&
+    !markdownLanguage &&
+    !isImage &&
+    editableSnapshotValid;
+  const editorInitial = useMemo(
+    () =>
+      canEdit
+        ? {
+            path: data!.path || filePath,
+            content: data!.content!,
+            revision: data!.revision!,
+          }
+        : null,
+    [canEdit, data, filePath],
+  );
+  const editor = useFileEditor(paneId || `file:${filePath}`, editorInitial);
+  const viewContent = editor.model?.content ?? data?.content ?? "";
 
   // A line citation always opens Markdown as source so the referenced source row exists.
   // Otherwise a freshly opened Marp deck defaults to slides and other Markdown to preview.
   useEffect(() => {
     if (isText) setMdMode(targetLine ? "source" : isMarp ? "slides" : "preview");
   }, [data, isMarp, isText, targetLine]);
+
+  useEffect(() => {
+    setMode("view");
+    setEditorNotice("");
+    setResolutionOpen(true);
+  }, [filePath]);
+
+  useEffect(() => {
+    if (mode !== "edit" || !canEdit) return;
+    queueMicrotask(() => editorFocusRef.current?.());
+  }, [canEdit, mode]);
 
   const showSlides = isMarp && mdMode === "slides";
   const showPreview = isMarkdown && mdMode === "preview";
@@ -219,11 +272,38 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
     const lang = langFor(filePath);
     try {
       if (lang && lang !== "markdown" && hljs.getLanguage(lang)) {
-        return hljs.highlight(data!.content!, { language: lang, ignoreIllegals: true }).value;
+        return hljs.highlight(viewContent, { language: lang, ignoreIllegals: true }).value;
       }
     } catch {}
-    return escapeHtml(data!.content!);
-  }, [isText, huge, data, filePath]);
+    return escapeHtml(viewContent);
+  }, [isText, huge, viewContent, filePath]);
+
+  const onEditorValidationError = (error: BufferValidationError) => {
+    const messages: Record<BufferValidationError["code"], string> = {
+      too_large: tr("editor.validation.too_large"),
+      binary_not_supported: tr("editor.validation.binary_not_supported"),
+      unsupported_newline: tr("editor.validation.unsupported_newline"),
+      invalid_unicode: tr("editor.validation.invalid_unicode"),
+    };
+    setEditorNotice(messages[error.code]);
+  };
+
+  const changeMode = (next: "view" | "edit") => {
+    if (next === mode) return;
+    setMode(next);
+    if (next === "view") queueMicrotask(() => viewTabRef.current?.focus());
+  };
+
+  const onModeKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const next =
+      event.key === "ArrowLeft" || event.key === "Home"
+        ? "view"
+        : "edit";
+    changeMode(next);
+    (next === "view" ? viewTabRef : editTabRef).current?.focus();
+  };
 
   // After a mouse selection in the code/source view, surface a floating "送る" pill by
   // the selection. Scoped to CodeView because it queries that view's <code> element
@@ -270,6 +350,32 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
 
   if (!filePath) return <div className="fileview" />;
 
+  const phase = editor.model?.phase;
+  const editorStatus =
+    editorNotice ||
+    (phase === "dirty" && editor.model?.message) ||
+    (phase === "saving"
+      ? tr("editor.status.saving")
+      : phase === "saved"
+        ? tr("editor.status.saved")
+        : phase === "clean_risk_accepted"
+          ? tr("editor.status.risk_accepted")
+          : phase === "save_state_unknown"
+            ? tr("editor.status.unknown")
+            : phase === "conflict"
+              ? tr("editor.status.conflict")
+              : phase === "conflict_remote_unavailable"
+                ? tr("editor.status.remote_unavailable")
+                : editor.model?.dirty
+                  ? editor.model.riskAccepted
+                    ? tr("editor.status.dirty_risk")
+                    : tr("editor.status.dirty")
+                  : tr("editor.status.clean"));
+  const editorAlert =
+    phase === "save_state_unknown" ||
+    phase === "conflict" ||
+    phase === "conflict_remote_unavailable";
+
   const viewerStyle = {
     "--viewer-font": fontStack(settings.viewerFont),
     "--viewer-size": settings.viewerSize + "px",
@@ -307,27 +413,75 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
             {tr("view.lfs_pointer")}
           </span>
         )}
+        {canEdit && (
+          <>
+            <div
+              className="ui-seg sm file-mode-tabs"
+              role="tablist"
+              aria-label={tr("editor.mode_group")}
+              onKeyDown={onModeKeyDown}
+            >
+              <button
+                ref={viewTabRef}
+                type="button"
+                className={"seg-btn" + (mode === "view" ? " active" : "")}
+                role="tab"
+                aria-selected={mode === "view"}
+                tabIndex={mode === "view" ? 0 : -1}
+                onClick={() => changeMode("view")}
+              >
+                {tr("editor.mode.view")}
+              </button>
+              <button
+                ref={editTabRef}
+                type="button"
+                className={"seg-btn" + (mode === "edit" ? " active" : "")}
+                role="tab"
+                aria-selected={mode === "edit"}
+                tabIndex={mode === "edit" ? 0 : -1}
+                onClick={() => changeMode("edit")}
+              >
+                {tr("editor.mode.edit")}
+              </button>
+            </div>
+            <button
+              type="button"
+              className="file-save-btn"
+              disabled={
+                !editor.model?.dirty ||
+                phase === "saving" ||
+                phase === "conflict" ||
+                phase === "conflict_remote_unavailable" ||
+                phase === "save_state_unknown"
+              }
+              onClick={() => void editor.save()}
+              title={tr("editor.save_tip")}
+            >
+              <Icon name={phase === "saving" ? "loading" : "save"} spin={phase === "saving"} /> {tr("editor.save")}
+            </button>
+          </>
+        )}
         {isMarkdown && (
-          <span className="ui-seg sm md-toggle">
+          <span className="ui-seg sm md-toggle" role="group" aria-label={tr("view.markdown_display_mode")}>
             {isMarp && (
-              <button type="button" className={"seg-btn" + (mdMode === "slides" ? " active" : "")} onClick={() => setMdMode("slides")}>
+              <button type="button" aria-pressed={mdMode === "slides"} className={"seg-btn" + (mdMode === "slides" ? " active" : "")} onClick={() => setMdMode("slides")}>
                 {tr("view.slides")}
               </button>
             )}
-            <button type="button" className={"seg-btn" + (mdMode === "preview" ? " active" : "")} onClick={() => setMdMode("preview")}>
+            <button type="button" aria-pressed={mdMode === "preview"} className={"seg-btn" + (mdMode === "preview" ? " active" : "")} onClick={() => setMdMode("preview")}>
               {tr("view.preview")}
             </button>
-            <button type="button" className={"seg-btn" + (mdMode === "source" ? " active" : "")} onClick={() => setMdMode("source")}>
+            <button type="button" aria-pressed={mdMode === "source"} className={"seg-btn" + (mdMode === "source" ? " active" : "")} onClick={() => setMdMode("source")}>
               {tr("view.source")}
             </button>
           </span>
         )}
         {isImage && isText && (
-          <span className="ui-seg sm md-toggle">
-            <button type="button" className={"seg-btn" + (imgMode === "preview" ? " active" : "")} onClick={() => setImgMode("preview")}>
+          <span className="ui-seg sm md-toggle" role="group" aria-label={tr("view.image_display_mode")}>
+            <button type="button" aria-pressed={imgMode === "preview"} className={"seg-btn" + (imgMode === "preview" ? " active" : "")} onClick={() => setImgMode("preview")}>
               {tr("view.preview")}
             </button>
-            <button type="button" className={"seg-btn" + (imgMode === "source" ? " active" : "")} onClick={() => setImgMode("source")}>
+            <button type="button" aria-pressed={imgMode === "source"} className={"seg-btn" + (imgMode === "source" ? " active" : "")} onClick={() => setImgMode("source")}>
               {tr("view.source")}
             </button>
           </span>
@@ -347,32 +501,88 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
         </a>
       </header>
 
-      {err ? (
-        <pre className="filebody muted">({err})</pre>
-      ) : data == null ? (
-        <pre className="filebody muted">…</pre>
-      ) : isImage && (!isText || imgMode === "preview") ? (
-        <ImageView src={downloadURL(filePath)} alt={baseName(filePath)} onLoad={setImgDims} />
-      ) : data.binary ? (
-        <pre className="filebody muted">({tr("view.binary")}, {humanSize(data.size)})</pre>
-      ) : huge ? (
-        <pre className="filebody fb-plain">{data.content}</pre>
-      ) : showSlides ? (
-        <MarpView source={data.content} />
-      ) : showPreview ? (
-        <div className="md-scroll">
-          <MarkdownView source={data.content} basePath={filePath} onOpenFile={showFile} onOpenDir={revealInFiles} />
+      {canEdit && (
+        <div
+          className={"file-editor-status" + (editorAlert ? " is-alert" : "")}
+          role="status"
+          aria-live="polite"
+        >
+          {editorStatus}
         </div>
-      ) : (
-        <CodeView
-          html={html}
-          lines={lines}
-          lineNumbers={settings.lineNumbers}
-          wrap={wrapOn}
-          minimap={settings.minimap}
-          marks={marks}
-          targetLine={targetLine}
-          targetColumn={targetColumn}
+      )}
+
+      {canEdit && editor.model && (
+        <div className="file-editor-shell" hidden={mode !== "edit"}>
+          <CodeEditor
+            path={editor.model.path}
+            content={editor.model.content}
+            wrap={wrapOn}
+            onChange={editor.edit}
+            onSave={() => void editor.save()}
+            onValidationError={onEditorValidationError}
+            onReady={(focus) => {
+              editorFocusRef.current = focus;
+              if (mode === "edit") queueMicrotask(focus);
+            }}
+          />
+          {editor.mergeMine && (
+            <aside className="file-merge-reference" aria-label={tr("editor.merge_reference_aria")}>
+              <strong>{tr("editor.merge_reference")}</strong>
+              <pre>{editor.mergeMine}</pre>
+            </aside>
+          )}
+        </div>
+      )}
+
+      <div className="file-viewer-shell" hidden={canEdit && mode === "edit"}>
+        {err ? (
+          <pre className="filebody muted">({err})</pre>
+        ) : data == null ? (
+          <pre className="filebody muted">…</pre>
+        ) : isImage && (!isText || imgMode === "preview") ? (
+          <ImageView src={downloadURL(filePath)} alt={baseName(filePath)} onLoad={setImgDims} />
+        ) : data.binary ? (
+          <pre className="filebody muted">({tr("view.binary")}, {humanSize(data.size)})</pre>
+        ) : huge ? (
+          <pre className="filebody fb-plain">{viewContent}</pre>
+        ) : showSlides ? (
+          <MarpView source={viewContent} />
+        ) : showPreview ? (
+          <div className="md-scroll">
+            <MarkdownView source={viewContent} basePath={filePath} onOpenFile={showFile} onOpenDir={revealInFiles} />
+          </div>
+        ) : (
+          <CodeView
+            html={html}
+            lines={countLines(viewContent)}
+            lineNumbers={settings.lineNumbers}
+            wrap={wrapOn}
+            minimap={settings.minimap}
+            marks={marks}
+            targetLine={targetLine}
+            targetColumn={targetColumn}
+          />
+        )}
+      </div>
+
+      {editor.model && editorAlert && (
+        <EditorResolutionPanel
+          model={editor.model}
+          open={resolutionOpen}
+          onOpen={() => setResolutionOpen(true)}
+          onCancel={() => setResolutionOpen(false)}
+          onRetryConflict={() => void editor.recoverConflict()}
+          onRetryUnknown={() => void editor.recoverUnknown()}
+          onResave={() => void editor.resaveUnknown()}
+          onRiskAccept={editor.riskAccept}
+          onTakeRemote={editor.takeRemote}
+          onDiscardMine={editor.discardRemote}
+          onManualMerge={editor.manualMerge}
+          onCopyMine={() => void navigator.clipboard.writeText(editor.model!.content)}
+          onClose={() => {
+            editor.discard();
+            if (paneId) useLayoutStore.getState().closePane(paneId);
+          }}
         />
       )}
 
@@ -426,4 +636,131 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
 
 function escapeHtml(s: string) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+interface EditorResolutionPanelProps {
+  model: FileEditorModel;
+  open: boolean;
+  onOpen(): void;
+  onCancel(): void;
+  onRetryConflict(): void;
+  onRetryUnknown(): void;
+  onResave(): void;
+  onRiskAccept(): void;
+  onTakeRemote(): void;
+  onDiscardMine(): void;
+  onManualMerge(): void;
+  onCopyMine(): void;
+  onClose(): void;
+}
+
+function EditorResolutionPanel(props: EditorResolutionPanelProps) {
+  const tr = useT();
+  const { model } = props;
+  if (!props.open) {
+    return (
+      <div className="file-editor-resolution collapsed" role="alert">
+        <button type="button" autoFocus onClick={props.onOpen}>{tr("editor.resolve")}</button>
+      </div>
+    );
+  }
+  if (model.phase === "conflict") {
+    return (
+      <section className="file-editor-resolution" role="alert" aria-label={tr("editor.status.conflict")}>
+        <h4>{tr("editor.conflict.title")}</h4>
+        <p>{tr("editor.conflict.body")}</p>
+        {model.conflict && <MineRemoteDiff mine={model.content} remote={model.conflict.content} />}
+        <div className="file-editor-actions">
+          <button type="button" autoFocus onClick={props.onTakeRemote}>{tr("editor.conflict.adopt_remote")}</button>
+          <button type="button" onClick={props.onDiscardMine}>{tr("editor.conflict.discard_mine")}</button>
+          <button type="button" onClick={props.onManualMerge}>{tr("editor.conflict.manual_merge")}</button>
+          <button type="button" onClick={props.onCopyMine}>{tr("editor.copy_mine")}</button>
+          <button type="button" onClick={props.onCancel}>{tr("editor.cancel")}</button>
+        </div>
+      </section>
+    );
+  }
+  if (model.phase === "conflict_remote_unavailable") {
+    return (
+      <section className="file-editor-resolution" role="alert" aria-label={tr("editor.status.remote_unavailable")}>
+        <h4>{tr("editor.status.remote_unavailable")}</h4>
+        <p>{tr("editor.remote_unavailable.body")}</p>
+        <div className="file-editor-actions">
+          <button type="button" autoFocus onClick={props.onRetryConflict}>{tr("editor.retry_get")}</button>
+          <button type="button" onClick={props.onCopyMine}>{tr("editor.copy_mine")}</button>
+          <button type="button" onClick={props.onClose}>{tr("editor.close_without_save")}</button>
+          <button type="button" onClick={props.onCancel}>{tr("editor.cancel")}</button>
+        </div>
+      </section>
+    );
+  }
+  const observation = model.unknownObservation;
+  return (
+    <section className="file-editor-resolution" role="alert" aria-label={tr("editor.status.unknown")}>
+      <h4>{tr("editor.status.unknown")}</h4>
+      <p>
+        {observation?.kind === "sent_live"
+          ? tr("editor.unknown.sent_live")
+          : observation?.kind === "old_base_live"
+            ? tr("editor.unknown.old_base")
+            : tr("editor.unknown.unavailable")}
+      </p>
+      <div className="file-editor-actions">
+        {observation?.kind === "sent_live" && (
+          <>
+            <button type="button" autoFocus onClick={props.onResave}>{tr("editor.unknown.resave")}</button>
+            <button type="button" onClick={props.onRiskAccept}>{tr("editor.unknown.accept_risk")}</button>
+          </>
+        )}
+        {observation?.kind === "old_base_live" && (
+          <button type="button" autoFocus onClick={props.onResave}>{tr("editor.unknown.resave_old")}</button>
+        )}
+        {(!observation || observation.kind === "unavailable") && (
+          <button type="button" autoFocus onClick={props.onRetryUnknown}>{tr("editor.unknown.retry")}</button>
+        )}
+        <button type="button" onClick={props.onCopyMine}>{tr("editor.copy_mine")}</button>
+        <button type="button" onClick={props.onClose}>{tr("editor.close_without_save")}</button>
+        <button type="button" onClick={props.onCancel}>{tr("editor.cancel")}</button>
+      </div>
+    </section>
+  );
+}
+
+function MineRemoteDiff({ mine, remote }: { mine: string; remote: string }) {
+  const tr = useT();
+  const mineLines = mine.split("\n");
+  const remoteLines = remote.split("\n");
+  let prefix = 0;
+  while (
+    prefix < mineLines.length &&
+    prefix < remoteLines.length &&
+    mineLines[prefix] === remoteLines[prefix]
+  ) prefix++;
+  let suffix = 0;
+  while (
+    suffix < mineLines.length - prefix &&
+    suffix < remoteLines.length - prefix &&
+    mineLines[mineLines.length - 1 - suffix] === remoteLines[remoteLines.length - 1 - suffix]
+  ) suffix++;
+  const column = (lines: string[], side: "mine" | "remote") => (
+    <div className="file-diff-column">
+      <strong>{side}</strong>
+      <pre>
+        {lines.map((line, index) => {
+          const changed = index >= prefix && index < lines.length - suffix;
+          return (
+            <span key={index} className={changed ? `diff-${side}` : "diff-same"}>
+              {changed ? (side === "mine" ? "− " : "+ ") : "  "}{line}{"\n"}
+            </span>
+          );
+        })}
+      </pre>
+    </div>
+  );
+  return (
+    <div className="file-mine-remote-diff" aria-label={tr("editor.diff_aria")}>
+      {column(mineLines, "mine")}
+      {column(remoteLines, "remote")}
+    </div>
+  );
 }

@@ -1,0 +1,115 @@
+import { afterEach, describe, expect, it } from "vitest";
+import type { Layout } from "../../layout/types.ts";
+import * as ops from "../../layout/ops.ts";
+import {
+  cancelDirtyGuardRequest,
+  clearDirtyRegistryForTests,
+  confirmDirtyNavigation,
+  currentDirtyGuardRequest,
+  dirtyPanesDestroyedByLayout,
+  discardDirtyGuardRequest,
+  registerDirtyEditor,
+  saveDirtyGuardRequest,
+} from "./dirtyRegistry.ts";
+
+const layout = (content: Layout["cols"][number]["panes"][number]["content"]): Layout => ({
+  cols: [{ id: "c1", rowRatio: 1, panes: [{ id: "p1", session: null, wrap: null, content }] }],
+  colRatios: [1],
+  activeId: "p1",
+});
+
+afterEach(clearDirtyRegistryForTests);
+
+describe("dirty navigation registry", () => {
+  it("guards pane replacement but not moves that preserve pane identity and file", () => {
+    let dirty = true;
+    registerDirtyEditor({
+      paneId: "p1",
+      label: "a.txt",
+      isDirty: () => dirty,
+      save: async () => false,
+      discard: () => { dirty = false; },
+    });
+    const current = layout({ kind: "file", filePath: "a.txt" });
+    expect(dirtyPanesDestroyedByLayout(current, structuredClone(current))).toEqual([]);
+    expect(dirtyPanesDestroyedByLayout(current, layout({ kind: "file", filePath: "b.txt" }))).toEqual(["p1"]);
+    expect(dirtyPanesDestroyedByLayout(current, layout({ kind: "read", filePath: "a.txt" }))).toEqual(["p1"]);
+  });
+
+  it("covers close, active replacement, reader, reset, and 8-pane reuse", () => {
+    let dirty = true;
+    registerDirtyEditor({
+      paneId: "p1",
+      label: "a.txt",
+      isDirty: () => dirty,
+      save: async () => false,
+      discard: () => { dirty = false; },
+    });
+    const current = layout({ kind: "file", filePath: "a.txt" });
+    expect(dirtyPanesDestroyedByLayout(current, ops.openActive(current, {
+      content: { kind: "terminal", chat: false },
+    }))).toEqual(["p1"]);
+    expect(dirtyPanesDestroyedByLayout(current, ops.setPaneTarget(current, "p1", {
+      content: { kind: "read", filePath: "a.txt" },
+    }))).toEqual(["p1"]);
+    expect(dirtyPanesDestroyedByLayout(current, ops.closePane(current, "p1"))).toEqual(["p1"]);
+    expect(dirtyPanesDestroyedByLayout(current, ops.freshLayout())).toEqual(["p1"]);
+
+    clearDirtyRegistryForTests();
+    const panes = Array.from({ length: 8 }, (_, i) => ({
+      id: `p${i + 1}`,
+      session: null,
+      wrap: null,
+      content: { kind: "file" as const, filePath: `${i + 1}.txt` },
+    }));
+    const full: Layout = {
+      cols: [0, 1, 2, 3].map((i) => ({
+        id: `c${i + 1}`,
+        rowRatio: 0.5,
+        panes: panes.slice(i * 2, i * 2 + 2),
+      })),
+      colRatios: [0.25, 0.25, 0.25, 0.25],
+      activeId: "p1",
+    };
+    registerDirtyEditor({
+      paneId: "p8",
+      label: "8.txt",
+      isDirty: () => true,
+      save: async () => false,
+      discard: () => {},
+    });
+    const reused = ops.openInNew(full, { content: { kind: "file", filePath: "new.txt" } }, {
+      mobile: false,
+      force: true,
+    });
+    expect(dirtyPanesDestroyedByLayout(full, reused)).toContain("p8");
+  });
+
+  it("supports save, discard, and cancel decisions", async () => {
+    let dirty = true;
+    let saves = 0;
+    registerDirtyEditor({
+      paneId: "p1",
+      label: "a.txt",
+      isDirty: () => dirty,
+      save: async () => { saves++; dirty = false; return true; },
+      discard: () => { dirty = false; },
+    });
+    const saveDecision = confirmDirtyNavigation("reload");
+    await saveDirtyGuardRequest(currentDirtyGuardRequest()!.id);
+    await expect(saveDecision).resolves.toBe(true);
+    expect(saves).toBe(1);
+
+    dirty = true;
+    const discardDecision = confirmDirtyNavigation("layout");
+    discardDirtyGuardRequest(currentDirtyGuardRequest()!.id);
+    await expect(discardDecision).resolves.toBe(true);
+    expect(dirty).toBe(false);
+
+    dirty = true;
+    const cancelDecision = confirmDirtyNavigation("tenant");
+    cancelDirtyGuardRequest(currentDirtyGuardRequest()!.id);
+    await expect(cancelDecision).resolves.toBe(false);
+    expect(dirty).toBe(true);
+  });
+});

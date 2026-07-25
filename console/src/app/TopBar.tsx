@@ -17,6 +17,7 @@ import { SwatchGrid } from "../ui/SwatchGrid.tsx";
 import { useDismiss } from "../lib/useDismiss.ts";
 import { NotificationCenter } from "../features/notifications/NotificationCenter.tsx";
 import { hintSuffix } from "../features/keys/keyHint.ts";
+import { confirmDirtyNavigation } from "../features/editor/dirtyRegistry.ts";
 
 interface TopBarProps {
   toggleNav: () => void;
@@ -170,7 +171,15 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
         </button>
         {/* PWA (standalone) 起動時はブラウザの再読み込みUIが無いので、代替のリロードボタンを出す。 */}
         {isStandalonePWA() && (
-          <button className="gear reload-toggle" title={tr("topbar.reload")} onClick={() => window.location.reload()}>
+          <button
+            className="gear reload-toggle"
+            title={tr("topbar.reload")}
+            onClick={() => {
+              void confirmDirtyNavigation("reload").then((proceed) => {
+                if (proceed) window.location.reload();
+              });
+            }}
+          >
             <Icon name="refresh" />
           </button>
         )}
@@ -290,11 +299,14 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                       className="acct-item"
                       role="menuitem"
                       onClick={() => {
-                        // Drop all client-side state BEFORE bouncing to the CP logout,
-                        // so a different account on this browser can't see the prior
-                        // user's layout / drafts / tenant selection.
-                        clearLocalState();
-                        location.assign(rel("oauth2/logout"));
+                        void confirmDirtyNavigation("logout").then((proceed) => {
+                          if (!proceed) return;
+                          // Drop all client-side state BEFORE bouncing to the CP logout,
+                          // so a different account on this browser can't see the prior
+                          // user's layout / drafts / tenant selection.
+                          clearLocalState();
+                          location.assign(rel("oauth2/logout"));
+                        });
                       }}
                     >
                       <Icon name="sign-out" /> {tr("topbar.logout")}
