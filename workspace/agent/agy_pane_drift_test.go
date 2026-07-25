@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -90,8 +91,27 @@ func TestDriftAgyPaneMode(t *testing.T) {
 func awaitPaneModeKind(t *testing.T, kind, tn, want string) string {
 	t.Helper()
 	last := ""
+	advancedAgyTheme := false
 	deadline := time.Now().Add(120 * time.Second)
 	for time.Now().Before(deadline) {
+		// agy 1.1.7 adds a one-time color-scheme chooser before its signed-in
+		// composer.  It is not an auth or readiness state: accept its selected
+		// default once, then keep this contract focused on the production
+		// composer footer.  The setting persists in the real HOME, so the plan
+		// subtest (and later launches) must not see it again.
+		if kind == session.KindAgy && !advancedAgyTheme {
+			out, _ := exec.Command("tmux", "-L", os.Getenv("AF_TMUX_SOCKET"),
+				"capture-pane", "-p", "-t", tn).Output()
+			if strings.Contains(string(out), "Choose your color scheme:") {
+				if err := exec.Command("tmux", "-L", os.Getenv("AF_TMUX_SOCKET"),
+					"send-keys", "-t", tn, "Enter").Run(); err != nil {
+					t.Fatalf("confirm agy color scheme: %v", err)
+				}
+				advancedAgyTheme = true
+				time.Sleep(500 * time.Millisecond)
+				continue
+			}
+		}
 		if last = paneMode(kind, tn); last == want {
 			return last
 		}
