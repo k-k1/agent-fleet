@@ -67,6 +67,7 @@ jobs:
           tags: ${{ env.WS_IMAGE }}
           load: true
           build-args: |
+            BAKE_AGENT_CLIS=1
             CLAUDE_CODE_VERSION=${{ inputs.cli_version }}
           cache-from: type=gha
 

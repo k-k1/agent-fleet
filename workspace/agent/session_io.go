@@ -142,11 +142,12 @@ func paneMode(kind, tn string) string {
 			}
 		}
 	case session.KindCodex:
-		// codex's composer footer is "<model> <effort> · <cwd>  Plan mode [(shift+tab to
-		// cycle)]" — "Plan mode" appears ONLY in plan mode (Default shows no label). The
-		// "(shift+tab to cycle)" suffix is truncated on a narrow pane, so DON'T require it.
-		// Check the FOOTER line itself (identified by the effort regex) so the history line
-		// "… for Plan mode." can't spoof the detection. No footer line → composer not drawn.
+		// codex's composer footer is "<model> <effort> · <cwd>". Through 0.144 it
+		// appended "Plan mode [(shift+tab to cycle)]" in plan mode; 0.145 removed that
+		// textual marker. Keep accepting it for pinned/older versions, while the bare
+		// footer remains the composer-readiness signal and mirror-driven mode is persisted
+		// in meta (rememberCodexTUIMode). Never inspect history text here: a stale
+		// "… for Plan mode." line would spoof the current state.
 		for _, line := range strings.Split(paneTail(s, 3), "\n") {
 			if codexFooterEffortRe.MatchString(line) {
 				if strings.Contains(line, "Plan mode") {
@@ -264,6 +265,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 			return
 		}
+		rememberCodexTUIMode(name, "", keys)
 		// Only a submit (a key sequence containing Enter — answering a question) starts a
 		// turn; pure navigation / mode-cycle (BTab, Tab) / stop (Escape) must NOT mark the
 		// session working, or codex sticks on 進行中 after a plan-mode toggle (no Stop hook
@@ -329,6 +331,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	if !submitPromptTUI(w, name, pane, body.Prompt) {
 		return
 	}
+	rememberCodexTUIMode(name, body.Prompt, nil)
 	if body.Confirm && confirmMeta.Name != "" {
 		if err := confirmPromptDelivery(confirmMeta, pane, body.Prompt, confirmBase); err != nil {
 			// 未確認は成功と偽らない: 呼び出し元（CP スケジューラ / operator MCP）が
@@ -446,6 +449,34 @@ func submitPromptTUI(w http.ResponseWriter, name, pane, prompt string) bool {
 // slashCmdRe matches a single-token slash command like "/plan" or "/model foo" (but not a
 // path such as /home/dev/x, which has a second slash).
 var slashCmdRe = regexp.MustCompile(`^/[A-Za-z][\w-]*(\s|$)`)
+
+// rememberCodexTUIMode persists mirror-driven TUI mode changes. Codex 0.145.0
+// removed the "Plan mode" label from the composer footer, so pane scraping can
+// still prove readiness but cannot distinguish Default from Plan. The mirror owns
+// these two inputs (/plan to enter, BTab to leave/toggle), making meta the reliable
+// desired-next-turn state. A user toggling directly in the terminal remains
+// invisible on 0.145+ because the upstream TUI exposes no textual state signal.
+func rememberCodexTUIMode(name, prompt string, keys []string) {
+	meta, ok := session.ReadMeta(name)
+	if !ok || meta.Kind != session.KindCodex || meta.DriverKind() == session.DriverManaged {
+		return
+	}
+	mode := ""
+	switch {
+	case strings.TrimSpace(prompt) == "/plan":
+		mode = "plan"
+	case len(keys) == 1 && keys[0] == "BTab":
+		if meta.Mode == "plan" {
+			mode = "normal"
+		} else {
+			mode = "plan"
+		}
+	}
+	if mode != "" && meta.Mode != mode {
+		meta.Mode = mode
+		session.WriteMeta(meta)
+	}
+}
 
 // typeLineAndSubmit types a literal line into the session's pane and submits it —
 // the same type-then-Enter primitive as handleSessionInput's {prompt} path, but
