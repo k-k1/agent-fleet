@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "i18n:lint": "node scripts/i18n-lint.mjs"
+    "i18n:lint": "node scripts/i18n-lint.mjs",
+    "shots": "node scripts/shots/capture.mjs"
   },
   "dependencies": {
     "@marp-team/marp-core": "^4.3.0",
