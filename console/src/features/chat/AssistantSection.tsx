@@ -193,9 +193,13 @@ export function AssistantSection() {
     }
   };
 
+  // Copy the conversation's short slug ("a…", docs/38 アシスタント発火) — the id humans
+  // and schedules address a conversation by. UUID fallback only for a conversation the
+  // agent hasn't backfilled yet.
   const copyId = (c: ConversationMeta) => {
-    void copyText(c.id).then((ok) =>
-      ok ? toast(tr("asst.id_copied", { id: c.id }), { kind: "success" }) : toast(tr("common.copy_failed")),
+    const ref = c.slug || c.id;
+    void copyText(ref).then((ok) =>
+      ok ? toast(tr("asst.id_copied", { id: ref }), { kind: "success" }) : toast(tr("common.copy_failed")),
     );
   };
 
@@ -384,7 +388,7 @@ export function AssistantSection() {
             <ul className="ui-menu" ref={convMenuRef} style={{ left: convMenu.x, top: convMenu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
               <li>
                 <button type="button" className="ui-menu-item" onClick={() => runConvMenu(() => copyId(convMenu.c))}>
-                  <Icon name="copy" /> {tr("asst.copy_id")}
+                  <Icon name="copy" /> {tr("asst.copy_id", { id: convMenu.c.slug || convMenu.c.id })}
                 </button>
               </li>
               <li>

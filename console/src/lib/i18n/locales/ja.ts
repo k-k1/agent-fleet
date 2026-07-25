@@ -2036,7 +2036,7 @@ export const ja = {
   "asst.proposal": "提案",
   "asst.adopt": "この案にする",
   "asst.suggest_fetch_failed": "提案の取得に失敗しました（通信エラー）",
-  "asst.copy_id": "IDをコピー",
+  "asst.copy_id": "ID（{id}）をコピー",
   "asst.id_copied": "チャットID「{id}」をコピーしました",
   "asst.new_chat": "新規チャット",
   "asst.builtin_badge": "常設",
