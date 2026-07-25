@@ -1,0 +1,270 @@
+package main
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"net/http"
+	"net/url"
+	"path/filepath"
+	"regexp"
+	"sync"
+	"unicode/utf8"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+)
+
+const maxFSFilePUTBodyBytes = 16 << 20
+
+var revisionPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+func fileRevision(content []byte) string {
+	sum := sha256.Sum256(content)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+type keyedFileMutex struct {
+	mu    sync.Mutex
+	locks map[string]*keyedFileMutexEntry
+}
+
+type keyedFileMutexEntry struct {
+	mu   sync.Mutex
+	refs int
+}
+
+func (m *keyedFileMutex) lock(key string) func() {
+	m.mu.Lock()
+	if m.locks == nil {
+		m.locks = make(map[string]*keyedFileMutexEntry)
+	}
+	entry := m.locks[key]
+	if entry == nil {
+		entry = &keyedFileMutexEntry{}
+		m.locks[key] = entry
+	}
+	entry.refs++
+	m.mu.Unlock()
+
+	entry.mu.Lock()
+	return func() {
+		entry.mu.Unlock()
+		m.mu.Lock()
+		entry.refs--
+		if entry.refs == 0 {
+			delete(m.locks, key)
+		}
+		m.mu.Unlock()
+	}
+}
+
+type fsFileService struct {
+	locks         *keyedFileMutex
+	writeOps      fsAtomicWriteOps
+	snapshotHooks snapshotHooks
+}
+
+var defaultFSFileService = fsFileService{
+	locks:    &keyedFileMutex{},
+	writeOps: defaultFSAtomicWriteOps,
+}
+
+type fsFilePUTWire struct {
+	Path             *string `json:"path"`
+	Content          *string `json:"content"`
+	BaseDiskRevision *string `json:"baseDiskRevision"`
+}
+
+type fsFilePUTRequest struct {
+	path             string
+	content          []byte
+	baseDiskRevision string
+}
+
+func decodeFSFilePUT(r *http.Request) (fsFilePUTRequest, *fsAPIError) {
+	var wire fsFilePUTWire
+	if derr := httpx.DecodeStrictJSON(r, &wire, maxFSFilePUTBodyBytes); derr != nil {
+		return fsFilePUTRequest{}, fsErr(derr.Status, derr.Code, derr.Message)
+	}
+	if wire.Path == nil || wire.Content == nil || wire.BaseDiskRevision == nil {
+		return fsFilePUTRequest{}, fsErr(400, errCodeFSBadRequest, "path, content, and baseDiskRevision are required")
+	}
+	if !revisionPattern.MatchString(*wire.BaseDiskRevision) {
+		return fsFilePUTRequest{}, fsErr(400, errCodeFSBadRequest, "baseDiskRevision is invalid")
+	}
+	content := []byte(*wire.Content)
+	switch {
+	case len(content) > maxEditorFileBytes:
+		return fsFilePUTRequest{}, fsErr(413, errCodeFSTooLarge, "decoded content exceeds 2 MiB")
+	case bytes.IndexByte(content, 0) >= 0:
+		return fsFilePUTRequest{}, fsErr(415, errCodeFSBinaryNotSupported, "NUL bytes are not supported")
+	case bytes.IndexByte(content, '\r') >= 0:
+		return fsFilePUTRequest{}, fsErr(415, errCodeFSUnsupportedNewline, "only LF newlines are supported")
+	}
+	path, aerr := resolveFDWritePath(*wire.Path)
+	if aerr != nil {
+		return fsFilePUTRequest{}, aerr
+	}
+	return fsFilePUTRequest{
+		path: path, content: content, baseDiskRevision: *wire.BaseDiskRevision,
+	}, nil
+}
+
+type fsFilePUTResponse struct {
+	Path     string `json:"path"`
+	Size     int    `json:"size"`
+	Revision string `json:"revision"`
+}
+
+func putFSFile(req fsFilePUTRequest, service fsFileService) (fsFilePUTResponse, *fsAPIError) {
+	if service.locks == nil {
+		service.locks = &keyedFileMutex{}
+	}
+	unlock := service.locks.lock(req.path)
+	defer unlock()
+
+	if isDenied(req.path) {
+		return fsFilePUTResponse{}, fsErr(403, errCodeFSDenied, "file path is denied")
+	}
+	root, err := absoluteTrustedRoot(browseRoot())
+	if err != nil {
+		return fsFilePUTResponse{}, fsErr(500, errCodeFSReadFailed, "cannot resolve browse root")
+	}
+	opened, aerr := openFDFile(fdReadPath{
+		root: root, relative: req.path, display: req.path, browseRoot: true,
+	})
+	if aerr != nil {
+		return fsFilePUTResponse{}, aerr
+	}
+	defer opened.close()
+
+	current, aerr := readStableFileSnapshot(opened.file, service.snapshotHooks)
+	if aerr != nil {
+		return fsFilePUTResponse{}, aerr
+	}
+	switch {
+	case current.size > maxEditorFileBytes:
+		return fsFilePUTResponse{}, fsErr(413, errCodeFSTooLarge, "current file exceeds 2 MiB")
+	case bytes.IndexByte(current.bytes, 0) >= 0 || !utf8.Valid(current.bytes):
+		return fsFilePUTResponse{}, fsErr(415, errCodeFSBinaryNotSupported, "current file is not supported text")
+	case bytes.IndexByte(current.bytes, '\r') >= 0:
+		return fsFilePUTResponse{}, fsErr(415, errCodeFSUnsupportedNewline, "current file does not use LF-only newlines")
+	}
+	if fileRevision(current.bytes) != req.baseDiskRevision {
+		return fsFilePUTResponse{}, fsErr(409, errCodeFSRevisionConflict, "file changed since it was read")
+	}
+
+	result := atomicReplace(opened, req.content, current.mode, service.writeOps)
+	if result.err != nil {
+		return fsFilePUTResponse{}, result.err
+	}
+	return fsFilePUTResponse{
+		Path: req.path, Size: len(req.content), Revision: fileRevision(req.content),
+	}, nil
+}
+
+func writeFSError(w http.ResponseWriter, aerr *fsAPIError) {
+	httpx.WriteErr(w, aerr.status, aerr.code, aerr.message)
+}
+
+func handleFSFilePut(w http.ResponseWriter, r *http.Request) {
+	req, aerr := decodeFSFilePUT(r)
+	if aerr != nil {
+		writeFSError(w, aerr)
+		return
+	}
+	resp, aerr := putFSFile(req, defaultFSFileService)
+	if aerr != nil {
+		writeFSError(w, aerr)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
+}
+
+func handleFSFile(w http.ResponseWriter, r *http.Request) {
+	path, aerr := resolveFDReadPath(r.URL.Query().Get("path"))
+	if aerr != nil {
+		writeFSError(w, aerr)
+		return
+	}
+	opened, aerr := openFDFile(path)
+	if aerr != nil {
+		writeFSError(w, aerr)
+		return
+	}
+	defer opened.close()
+	snapshot, aerr := readStableFileSnapshot(opened.file, snapshotHooks{})
+	if aerr != nil {
+		writeFSError(w, aerr)
+		return
+	}
+
+	resp := map[string]any{
+		"path": path.display, "size": snapshot.size,
+		"binary": false, "truncated": false,
+		"editable": false, "editabilityReason": nil,
+	}
+	tooLarge := snapshot.size > maxEditorFileBytes
+	hasNUL := bytes.IndexByte(snapshot.bytes, 0) >= 0
+	validUTF8 := utf8.Valid(snapshot.bytes)
+	hasCR := bytes.IndexByte(snapshot.bytes, '\r') >= 0
+
+	switch {
+	case tooLarge:
+		resp["truncated"] = true
+		resp["content"] = "(file too large to preview)"
+	case hasNUL:
+		resp["binary"] = true
+	case !validUTF8:
+		resp["binary"] = true
+	default:
+		resp["content"] = string(snapshot.bytes)
+		if isLFSPointer(snapshot.bytes) {
+			resp["lfs"] = true
+		}
+	}
+
+	switch {
+	case path.readOnly:
+		resp["editabilityReason"] = "read_only_root"
+	case tooLarge:
+		resp["editabilityReason"] = "too_large"
+	case hasNUL:
+		resp["editabilityReason"] = "binary"
+	case !validUTF8:
+		resp["editabilityReason"] = "invalid_utf8"
+	case hasCR:
+		resp["editabilityReason"] = "unsupported_newline"
+	default:
+		resp["editable"] = true
+		resp["revision"] = fileRevision(snapshot.bytes)
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
+}
+
+func handleFSDownload(w http.ResponseWriter, r *http.Request) {
+	path, aerr := resolveFDReadPath(r.URL.Query().Get("path"))
+	if aerr != nil {
+		writeFSError(w, aerr)
+		return
+	}
+	opened, aerr := openFDFile(path)
+	if aerr != nil {
+		writeFSError(w, aerr)
+		return
+	}
+	defer opened.close()
+	fi, err := opened.file.Stat()
+	if err != nil {
+		writeFSError(w, fsErr(500, errCodeFSReadFailed, "cannot stat opened file"))
+		return
+	}
+	name := filepath.Base(path.display)
+	ct := "application/octet-stream"
+	if it := imageContentType(name); it != "" {
+		ct = it
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(name))
+	http.ServeContent(w, r, name, fi.ModTime(), opened.file)
+}

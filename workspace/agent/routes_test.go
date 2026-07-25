@@ -88,3 +88,11 @@ func TestSmokeAssistantsBuiltins(t *testing.T) {
 		t.Fatalf("assistants payload has no ids: %s", w.Body.String())
 	}
 }
+
+func TestFSFilePutRouteRegistered(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPut, "/fs/file", nil)
+	_, pattern := buildMux().Handler(req)
+	if pattern != "PUT /fs/file" {
+		t.Fatalf("route pattern=%q", pattern)
+	}
+}

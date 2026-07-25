@@ -5,6 +5,22 @@ package main
 // developer メッセージへフォールバックする — 変更は必ず両側同時に。CP 側の対は
 // control-plane/errcodes.go（quota_sessions）。
 const (
+	// File editor API (docs/44 Phase 1). Keep these synchronized with the CP
+	// proxy constants and Console err.<code> catalogs.
+	errCodeFSBadPath            = "bad_path"
+	errCodeFSSymlinkNotAllowed  = "symlink_not_allowed"
+	errCodeFSBadRequest         = "bad_request"
+	errCodeFSUnsupportedMedia   = "unsupported_media_type"
+	errCodeFSDenied             = "denied"
+	errCodeFSNotFile            = "not_file"
+	errCodeFSRevisionConflict   = "revision_conflict"
+	errCodeFSTooLarge           = "too_large"
+	errCodeFSBinaryNotSupported = "binary_not_supported"
+	errCodeFSUnsupportedNewline = "unsupported_newline"
+	errCodeFSReadFailed         = "read_failed"
+	errCodeFSWriteFailed        = "write_failed"
+	errCodeFSWriteStateUnknown  = "write_state_unknown"
+
 	errCodeSessionsRunning       = "sessions_running"
 	errCodeSessionsRunningDelete = "sessions_running_delete"
 	errCodeWorktreeDirty         = "worktree_dirty"
