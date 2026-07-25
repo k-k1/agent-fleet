@@ -107,6 +107,11 @@ runs:
             ;;
           agy)
             if [ "$VERSION_INPUT" = latest ]; then
+              # The installer runs `agy` as its own final sanity check after
+              # placing it in ~/.local/bin.  Make that path visible *before*
+              # entering the installer; otherwise its internal check exits 127
+              # and set -e prevents this action from reaching the later export.
+              export PATH="$HOME/.local/bin:$PATH"
               curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir "$bin_dir"
               # The official latest installer currently ignores --dir for its
               # final binary and writes ~/.local/bin/agy after its own setup.
