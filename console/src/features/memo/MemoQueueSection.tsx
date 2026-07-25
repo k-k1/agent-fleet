@@ -33,6 +33,7 @@ import { placeFixed } from "../../lib/placeFixed.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { useDraft } from "../../lib/draft.ts";
+import { useSettings } from "../../lib/settings.ts";
 import type { Memo, MemoCategory, MemoAttachment } from "../../types/memo.ts";
 import { MemoTidyModal } from "./MemoTidyModal.tsx";
 import { SendMemoModal } from "./SendMemoModal.tsx";
@@ -899,6 +900,7 @@ interface MemoRowProps {
 function MemoRow(props: MemoRowProps) {
   const { memo: m, selected, expanded, editing, currentCat } = props;
   const tr = useT();
+  const settings = useSettings();
   const [dragOver, setDragOver] = useState(false);
   const [body, setBody] = useState(m.body);
   const [cat, setCat] = useState(currentCat);
@@ -930,10 +932,17 @@ function MemoRow(props: MemoRowProps) {
             rows={3}
             onChange={(e) => setBody(e.target.value)}
             onKeyDown={(e) => {
-              if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+              if (e.key === "Escape") {
+                props.onCancelEdit();
+                return;
+              }
+              if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+              const mod = e.ctrlKey || e.metaKey;
+              const submitWithKey = settings.mirrorSend !== "enter" ? mod : !e.shiftKey && !mod;
+              if (submitWithKey) {
                 e.preventDefault();
                 props.onSave(body, cat);
-              } else if (e.key === "Escape") props.onCancelEdit();
+              }
             }}
           />
           <div className="memo-edit-row">
