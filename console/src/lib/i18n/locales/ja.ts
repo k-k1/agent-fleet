@@ -322,6 +322,7 @@ export const ja = {
   "env.pin_label": "（ピン: {pin}）",
   "env.pin_title": "イメージビルド時のピンと現在の実体がずれています（自己更新など）",
   "env.pin_only_title": "このイメージは実体を焼き込みません（lean）。起動時にこのピン版を ~/.local へ導入します",
+  "env.pin_paren": "（{pin}）",
   "env.tv_note": "実効 = PATH で解決される実体（~/.local/bin がイメージより優先）。セルにカーソルを載せるとパスと元の出力を表示します。",
   "env.tc_note_1": "変更は",
   "env.tc_note_strong": "この後に起動するセッション/シェル",
