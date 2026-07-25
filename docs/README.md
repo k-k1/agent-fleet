@@ -34,6 +34,7 @@
 - [38-scheduled-execution.md](38-scheduled-execution.md) — 定時実行（オペレーター cron 型）: CP scheduler・wakeFirer・run 履歴・Console UI（✅ v1 コア実装済み。設計判断は [decisions/0021](decisions/0021-scheduled-execution.md)）
 - [40-cursor-agent-kind.md](40-cursor-agent-kind.md) — `kind=cursor`（Cursor CLI）を第7種別として Terminal+Managed 両対応で実装（📋 計画・実装未着手。実 CLI 実測記録・着工前プローブ一覧を含む。設計判断は [decisions/0023](decisions/0023-cursor-agent-kind.md)）
 - [43-kiro-agent-kind.md](43-kiro-agent-kind.md) — `kind=kiro`（Kiro、旧 Amazon Q Developer CLI）を第8種別として Terminal+Managed 両対応で実装（✅ Track A/B/C/A2/D 実装済み・実 CLI E2E 通過。設計判断は [decisions/0026](decisions/0026-kiro-agent-kind.md)）
+- [44-markdown-code-editor.md](44-markdown-code-editor.md) — Console の File ペイン編集、Markdown 3モード、`/fs/file` 保存API、revision競合、AI提案フォーマット（📋 Phase 0 設計固定。ADR は [decisions/0027](decisions/0027-markdown-code-editor.md)）
 
 > 完了後も実装契約や実測リファレンスとしてコードから参照する 24・26〜30 は番号付きのまま残す。
 > 時系列の実装プランとして役目を終えたものは history/ へ移動: [19 assistant-chat](history/19-assistant-chat.md) /
