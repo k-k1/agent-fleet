@@ -115,7 +115,9 @@ claude 固有の手札である点にも注意（codex は `-c` 設定、opencod
   "ts": "2026-07-25T09:31:07Z",   // 呼び出し完了時刻（UTC）
   "call": "9f2c…",                // 呼び出し ID（1呼び出しが複数モデル行に割れる時に束ねる）
   "feature": "title.session",     // 1-a/1-b の列挙値（固定 enum・Console 側で i18n）
-  "trigger": "auto",              // user | auto | manual | schedule | operator | bridge | recovery
+  "trigger": "auto",              // ターン注入元: user | auto | manual | schedule | operator | bridge | recovery
+  "origin": "operator",           // セッションの出自（§2-c）: user | operator | schedule | handoff | unknown
+  "origin_conv": "a3f9k2p",       // 出自がオペレーターの時、作成元のアシスタント会話 slug
   "kind": "claude",               // 実際に実行したエージェント種別（要求ではなく実行結果）
   "model": "claude-haiku-4-5",    // 実行側が報告した正規モデル（§2-b）
   "model_raw": "claude-haiku-4-5-20251001", // 報告された生の id（版込み）
@@ -172,6 +174,36 @@ opencode → cursor → agy の順で **最初に使えるもの** を選ぶ。�
 > ワークスペースでは補助呼び出しが最上位モデルに流れている可能性が高い。グラフの
 > 「機能 × モデル」でこれが一目で出る（対処は測ってから: 安価モデルを既定ピンする）。
 
+### 2-c. セッションの出自（`origin`）— 誰が始めたセッションの消費か
+
+**`trigger`（ターン注入元）とは別の軸**として、セッション自体の出自を記録する。
+「自分で開いたセッション」と「オペレーター（アシスタント）が勝手に立てたセッション」では
+消費の意味がまるで違う — 後者は自動走行・定時実行と組み合わさると**無人で増える**。
+
+| 値 | 意味 | 記録点 |
+|---|---|---|
+| `user` | Console の起動モーダルから人が開始（既定） | `session_handlers.go` の create |
+| `operator` | af_write アシスタントの `create_session`（＋作成元の会話 slug） | `mcp_stdio.go` の create_session が body に載せる |
+| `schedule` | 定時実行が到来時に起こした新規セッション（docs/38） | スケジュール発火の create |
+| `handoff` | 引き継ぎ（旧 fork）で生えたセッション | `session_handlers.go` の fork 経路 |
+| `unknown` | この機能より前に作られた既存セッション | — |
+
+**現状 `session.Meta` に作成者フィールドは無い**（`CreatedAt` / `ForkFrom` はあるが出自は不明）。
+→ `Meta.Origin` / `Meta.OriginConv` を追加する。実装上は create リクエストの1フィールドで、
+**MCP 経路が `"operator"` を明示、スケジュールが `"schedule"`、Console は `"user"`**。
+未指定は `user`（人の操作だけがラベル無しで通る経路）、**既存セッションは `unknown`**（0 でも
+user でもない、を守る）。recreate は元の出自を引き継ぎ、handoff は `handoff` + 親を持つ。
+
+**遡及（best-effort）**: 既存セッションでも、オペレーター注入台帳（`session_injections.go` の
+`operatorInjections`）に最初のユーザーターンと一致する記録があれば `operator` と推定できる。
+推定値は `origin_src:"inferred"` を立てて実測と区別する。docs/44（オペレーター↔セッションの
+ディスパッチ台帳）が入れば、そちらが一次ソースになる。
+
+**補助呼び出しにも伝播させる**: あるセッションのタイトル提案・返信サジェストは、そのセッションの
+`origin` を引き継いで記録する（`ref` から解決して**行に焼き込む**。セッション削除後も集計が壊れない
+ため、他の次元と同じ思想）。これで「オペレーターが立てたセッション**群**の総消費（本体＋付随の
+補助呼び出し）」が1本の系列として出る。
+
 ## 3. 収集アーキテクチャ
 
 ### 3-a. 補助呼び出し = ctx タグ + プロバイダ層1点記録
@@ -225,7 +257,7 @@ usage を解析しているのは **プロバイダ実装の内側**（`claudeCh
 ## 4. API
 
 ```
-GET /usage/series?from=&to=&bucket=day|hour&by=feature|kind|model|trigger
+GET /usage/series?from=&to=&bucket=day|hour&by=feature|kind|model|trigger|origin
                  &split=<第2軸>&filter=kind:claude,feature:title.*&include=session,aux
  → { buckets:[{t, series:{<key>:{spend,in,out,cread,ccreate,calls,cost_usd}}}],
      totals:{...}, matrix:{<by>:{<split>:{…}}},        // split 指定時のみ（機能×モデル等）
@@ -271,8 +303,13 @@ GET /usage/series?from=&to=&bucket=day|hour&by=feature|kind|model|trigger
   3. **表 = 機能 × モデル**（`by=feature&split=model`）: calls / spend / 1回あたり平均 / cost。
      **「この機能はどのモデルで走っているか」が本命のビュー**（§2-b の既定モデル問題がここに出る）。
      エージェント × モデルへの切替も同じ表で。
-  4. 期間 24h / 7d / 30d、cache_read 表示トグル、feature・kind・model フィルタ。
-  5. **未計測バナー**: 「cursor/agy はトークンを報告しないため回数のみ」「codex/cursor は
+  4. **出自の対比**（§2-c）: 「人が始めたセッション（`user`）」vs「オペレーター/定時が立てた
+     セッション（`operator`/`schedule`）」の2系列を積み上げ棒に重ねる。無人で増える消費が
+     いちばん見たい絵なので、時系列の**既定の割り方の切替候補**として feature と並べる。
+     `origin=operator` を選ぶと `origin_conv` で会話別にも割れる（どのオペレーター会話が高い
+     買い物をしたか）。
+  5. 期間 24h / 7d / 30d、cache_read 表示トグル、feature・kind・model・origin フィルタ。
+  6. **未計測バナー**: 「cursor/agy はトークンを報告しないため回数のみ」「codex/cursor は
      モデルが要求値ベース」を `coverage` から自動生成して常時明示（手書きしない＝ドリフトしない）。
 - i18n: 文字列は ja/en 両方（`i18n:lint` が裸和文を落とす）。
 
@@ -289,7 +326,7 @@ GET /usage/series?from=&to=&bucket=day|hour&by=feature|kind|model|trigger
 | P0 | 本 doc + ADR0029 確定（enum とワイヤ形の凍結） | レビュー済み |
 | **P0.5** | **測る前に確定できる是正**（§1-a-2）: `oneShotHeadless` の claude 経路を `--tools ""` + `--system-prompt` 置換 + `MAX_THINKING_TOKENS=0` へ。codex/opencode/cursor に安価モデルの既定ピン（§2-b） | 3機能（title/branch/suggest）の出力品質を実 CLI で回帰確認・入力側トークンが実測で落ちること |
 | P1 | 台帳 + 補助呼び出し計装（UI 無し）＋**モデル報告プローブ**（codex/opencode/cursor の実出力に model が乗るか実測して `model_src` を確定） | 13箇所タグ付け・go test 緑・実 CLI で1行記録を実測・claude はモデル別行が割れること |
-| P2 | セッション折り込み（watermark + バックフィル + 削除時確定） | 冪等性テスト・既存 `get_session_usage` と突合一致 |
+| P2 | セッション折り込み（watermark + バックフィル + 削除時確定）＋ **`Meta.Origin`/`OriginConv` 追加**（Console=user / MCP=operator / スケジュール=schedule / handoff・recreate は継承）と既存セッションの推定バックフィル | 冪等性テスト・既存 `get_session_usage` と突合一致・4経路の出自が実際に付くこと |
 | P3 | `/usage/series` + CP 両側登録 | curl で系列取得 |
 | P4 | Console ペイン + グラフ + i18n | typecheck/vitest/i18n:lint 緑・headless 実描画検証 |
 | P5 | MCP ツール + 設定（保持日数 / 記録 OFF） | ライブでオペレーターに聞けること |
