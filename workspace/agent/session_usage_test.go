@@ -88,6 +88,12 @@ func TestContextWindowGuess(t *testing.T) {
 	}{
 		{"claude-fable-5", 0, 1_000_000},
 		{"claude-opus-4-8", 0, 1_000_000},
+		{"claude-opus-5", 0, 1_000_000},
+		{"claude-sonnet-5", 0, 1_000_000},
+		// 世代番号の「4-5」を「5」と取り違えないこと（旧世代は 200k のまま）。
+		{"claude-opus-4-5", 0, 200_000},
+		{"claude-sonnet-4-5-20250929", 0, 200_000},
+		{"claude-3-5-sonnet-20241022", 0, 200_000},
 		{"claude-haiku-4-5-20251001", 0, 200_000},
 		{"claude-3-7-sonnet", 0, 200_000},         // older model, small usage
 		{"claude-3-7-sonnet", 250_000, 1_000_000}, // grow to fit

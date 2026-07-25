@@ -189,10 +189,11 @@ func aggregateUsage(turns []transcript.Turn) sessionUsage {
 	return u
 }
 
-var bigWindowModelRe = regexp.MustCompile(`opus-4-[678]|sonnet-4-6|fable-5|mythos-5`)
+var bigWindowModelRe = regexp.MustCompile(`opus-(4-[678]|5)|sonnet-(4-6|5)|fable-5|mythos-5`)
 
 // contextWindowGuess mirrors the Console's contextWindow() (ContextBar.tsx — keep
-// the two in sync): current 1M-native families, 272k for GPT-5.x (codex normally
+// the two in sync): current 1M-native families (Opus 5/4.8/4.7/4.6, Sonnet 5/4.6,
+// Fable/Mythos 5), 272k for GPT-5.x (codex normally
 // records its real window, so this is the fallback — e.g. the assistant chat's
 // `codex exec`, whose events don't carry it), 200k for haiku, and a grow-to-fit
 // fallback when the observed usage already exceeds 200k.
