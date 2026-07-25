@@ -37,8 +37,9 @@ Console の File ペインは現在、Workspace のファイルを読み取り�
    durabilityが不明な `write_state_unknown` とする。GET照合だけではdurabilityを確定できないため、
    クライアントはdirtyなmineを保持する `SaveStateUnknown` へ遷移し、明示的な再保存またはリスク承認を
    要求する。通常保存は200応答でのみcleanとし、送信本文のlive反映を確認した後の明示的な
-   durabilityリスク承認だけを例外とする。保持する属性は `mode.Perm()` のみで、owner/ACL/xattr/
-   special bitsはv1で保証しない。
+   durabilityリスク承認だけを例外とする。リスク承認時は復旧GETで確認した送信本文のrevisionを
+   `baseDiskRevision`へ設定してからclean/dirtyを分岐する。保持する属性は `mode.Perm()` のみで、
+   owner/ACL/xattr/special bitsはv1で保証しない。
 6. **操作面ごとにfd-relativeな境界を分離する。** v1のLinux Agentはroot/parent directory fdを固定し、
    `openat2(RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS)`、`fstatat(AT_SYMLINK_NOFOLLOW)`、`renameat`相当を
    GET/file、download、PUTで使う。PUTはbrowse-root相対canonical pathのみ、GET/downloadは既存
@@ -52,8 +53,9 @@ Console の File ペインは現在、Workspace のファイルを読み取り�
    revisionとCodeMirror 6のdocument offsetを変換なしで一致させる。typing/IME/paste/undo/redo/AI
    replacementの全transactionへCR/NUL/unpaired surrogate/2 MiB validatorを適用する。PUTのwire bodyが
    UTF-8不正またはJSON不正なら400 `bad_request`、current fileのUTF-8不正/NULとdecoded contentのNULは
-   415 `binary_not_supported`、CRは415 `unsupported_newline` とする。将来の改行マッピングや
-   CRLF対応は別設計で固定してから追加する。
+   415 `binary_not_supported`、CRは415 `unsupported_newline` とする。JSON文字列のlone high/low
+   surrogate escapeも400 `bad_request`とし、正しいsurrogate pairと実際のU+FFFDは許可する。
+   将来の改行マッピングやCRLF対応は別設計で固定してから追加する。
 8. **AIは変更提案チャネルで編集バッファまでしか変更しない。** 一般のClaude/Codex等にはWrite/Edit/
    Bash能力があり得るため、AI全体の権限を「書込みtoolなし」とは表現しない。Phase 4の提案生成だけは
    read-only allowlist経路に限定し、`EditSuggestion`をpaneId/filePath/requestId/sourceRevisionと
