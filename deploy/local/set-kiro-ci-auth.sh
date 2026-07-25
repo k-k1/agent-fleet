@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Upload Kiro's device-flow credential DB as GitHub Actions secrets without
 # printing it.  A single base64 value exceeds GitHub's 48 KiB secret cap, so the
-# stream is split into four independently redacted values and reassembled by
+# stream is split into eight independently redacted values and reassembled by
 # .github/workflows/kiro-contract.yml.
 #
 # Run after `kiro-cli login` from a trusted machine that holds the dedicated CI
@@ -11,7 +11,7 @@ set -euo pipefail
 
 db="${HOME}/.local/share/kiro-cli/data.sqlite3"
 chunk_bytes=45000
-max_chunks=4
+max_chunks=8
 
 [ -f "$db" ] || { echo "Kiro credential DB not found: $db" >&2; exit 1; }
 command -v gh >/dev/null || { echo "gh is required" >&2; exit 1; }
