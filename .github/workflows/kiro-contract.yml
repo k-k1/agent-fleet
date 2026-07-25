@@ -24,14 +24,23 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
-      - name: restore encrypted Kiro auth state
+      - name: restore split Kiro auth state
         env:
-          AUTH_B64: ${{ secrets.E2E_KIRO_AUTH_DB_B64 }}
+          AUTH_B64_1: ${{ secrets.E2E_KIRO_AUTH_DB_B64_1 }}
+          AUTH_B64_2: ${{ secrets.E2E_KIRO_AUTH_DB_B64_2 }}
+          AUTH_B64_3: ${{ secrets.E2E_KIRO_AUTH_DB_B64_3 }}
+          AUTH_B64_4: ${{ secrets.E2E_KIRO_AUTH_DB_B64_4 }}
         run: |
           set -euo pipefail
-          [ -n "$AUTH_B64" ] || { echo '::error::register secrets.E2E_KIRO_AUTH_DB_B64'; exit 1; }
+          [ -n "$AUTH_B64_1" ] || { echo '::error::register secrets.E2E_KIRO_AUTH_DB_B64_1..4 with deploy/local/set-kiro-ci-auth.sh'; exit 1; }
           install -d -m 700 "$HOME/.local/share/kiro-cli"
-          printf '%s' "$AUTH_B64" | base64 --decode > "$HOME/.local/share/kiro-cli/data.sqlite3"
+          # The SQLite credential database exceeds GitHub's 48 KiB per-secret
+          # limit after base64 encoding.  The local helper splits one unchanged
+          # base64 stream; concatenate before decoding so SQLite sees its original
+          # bytes (and never put any fragment in the job log).
+          # shellcheck disable=SC2153 # GitHub Actions injects the env block above.
+          printf '%s%s%s%s' "$AUTH_B64_1" "$AUTH_B64_2" "$AUTH_B64_3" "$AUTH_B64_4" \
+            | base64 --decode > "$HOME/.local/share/kiro-cli/data.sqlite3"
           chmod 600 "$HOME/.local/share/kiro-cli/data.sqlite3"
       - uses: ./.github/actions/setup-agent-cli
         id: cli
