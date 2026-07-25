@@ -7,7 +7,7 @@
 //   - an assistant chat (opens a chat prefilled with the text — memos stay queued).
 // The composed default mirrors the server's buildFlushMessage so "send as-is" is identical
 // to the old one-tap flush.
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -84,6 +84,7 @@ export function SendMemoModal({ memos, onClose, onSent }: SendMemoModalProps) {
   const setSeed = useLaunchSeed((s) => s.set);
   const toast = useToast();
   const tr = useT();
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [assistants, setAssistants] = useState<Assistant[]>([]);
   const [text, setText] = useState(() => composeMemoMessage(memos));
   const [target, setTarget] = useState<Target | null>(null);
@@ -93,6 +94,12 @@ export function SendMemoModal({ memos, onClose, onSent }: SendMemoModalProps) {
     assistantList()
       .then((r) => setAssistants(r.assistants || []))
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.focus();
+    }
   }, []);
 
   const ids = useMemo(() => memos.map((m) => m.id), [memos]);
@@ -177,6 +184,7 @@ export function SendMemoModal({ memos, onClose, onSent }: SendMemoModalProps) {
             {tr("memo.content_label")} <span className="memo-send-hint">{tr("memo.content_hint")}</span>
           </div>
           <textarea
+            ref={textareaRef}
             className="memo-send-text"
             value={text}
             onChange={(e) => setText(e.target.value)}
