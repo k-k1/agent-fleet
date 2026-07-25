@@ -29,6 +29,10 @@
 # cli-drift.yml. Shared setup (Go/Node/tmux/CLI install) is .github/actions/setup-agent-cli.
 name: opencode-contract
 
+permissions:
+  actions: write
+  contents: read
+
 on:
   # Not run on pushes to develop (billing spread; CONTRIBUTING "Commits & PRs").
   # Contract checks are concentrated on PRs to main (when relevant paths changed)
@@ -62,6 +66,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-agent-cli
+        id: cli
         with:
           agent: opencode
           version: ${{ matrix.version }}
@@ -86,3 +91,13 @@ jobs:
           E2E_REQUIRE: "1"
           OPENCODE_CONTRACT_LIVE: "1"
         run: go test -tags clicontract -run TestContractLive -v -count=1 -timeout 15m ./internal/agents/opencode/
+
+      - name: remember successfully tested latest
+        if: matrix.version == 'latest'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EFFECTIVE: ${{ steps.cli.outputs.version }}
+        run: |
+          version="$(printf '%s' "$EFFECTIVE" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)"
+          [ -n "$version" ]
+          gh variable set CLI_RELEASE_TESTED_OPENCODE --body "$version"

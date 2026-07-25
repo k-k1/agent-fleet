@@ -33,6 +33,7 @@ on:
         default: "latest"
 
 permissions:
+  actions: write
   contents: read
 
 concurrency:
@@ -70,7 +71,13 @@ jobs:
           cache-from: type=gha
 
       - name: claude version in image
-        run: docker run --rm --entrypoint /bin/bash "$WS_IMAGE" -lc "claude --version"
+        id: cli
+        run: |
+          effective="$(docker run --rm --entrypoint /bin/bash "$WS_IMAGE" -lc "claude --version")"
+          echo "$effective"
+          version="$(printf '%s' "$effective" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)"
+          [ -n "$version" ]
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       # Pass credentials via env (never typed or logged). The source is mounted
       # read-only; Go caches go to writable /tmp (the mount source is runner-owned).
@@ -98,3 +105,10 @@ jobs:
           name: claude-tui-contract-log
           path: /tmp/contract.log
           if-no-files-found: ignore
+
+      - name: remember successfully tested latest
+        if: success() && inputs.cli_version == 'latest'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.cli.outputs.version }}
+        run: gh variable set CLI_RELEASE_TESTED_CLAUDE --body "$VERSION"
