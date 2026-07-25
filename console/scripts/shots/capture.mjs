@@ -10,6 +10,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { DETAIL_SHA } from "./fixtures.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "../../..");
@@ -65,13 +66,18 @@ const SCENES = [
     layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
   },
   {
+    // Graph on the left, the selected commit's diff on the right — the shape you get
+    // by ctrl/⌘-clicking a commit in the graph.
     name: "scm",
     sections: FOCUS_TREE,
-    width: 1280,
-    height: 780,
+    width: 1900,
+    height: 900,
     layout: {
-      cols: [col("c0", [pane("p0", null, { kind: "scm", scmRepo: "webshop" })])],
-      colRatios: [1],
+      cols: [
+        col("c0", [pane("p0", null, { kind: "scm", scmRepo: "webshop" })]),
+        col("c1", [pane("p1", null, { kind: "commit", scmRepo: "webshop", commitSha: DETAIL_SHA })]),
+      ],
+      colRatios: [0.5, 0.5],
       activeId: "p0",
     },
   },

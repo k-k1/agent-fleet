@@ -268,12 +268,19 @@ export function tasks(locale) {
 
 // ---- commit graph (webshop) ------------------------------------------------------
 
+// A short sha padded to a plausible 40-hex object id (zero-padding would show up in
+// the commit-detail header, which prints the first 10 characters).
+export const fullSha = (short) => (short + "9f3ac1d7e05b6482ca71d0e9b3f45a8c76d21e0f").slice(0, 40);
+
+/** The commit the SCM scene opens next to the graph. */
+export const DETAIL_SHA = fullSha("5c1b9f4");
+
 export function graph(locale) {
   const ja = locale === "ja";
   const c = (sha, parents, author, min, subject, refs = []) => ({
-    sha: sha.padEnd(40, "0"),
+    sha: fullSha(sha),
     short: sha.slice(0, 7),
-    parents: parents.map((p) => p.padEnd(40, "0")),
+    parents: parents.map(fullSha),
     author,
     date: ago(min),
     subject,
@@ -380,16 +387,69 @@ export function changes(locale, repo) {
   };
 }
 
+// One commit's detail, as the commit pane renders it (GitDiff.CommitData): the header
+// fields plus a real unified diff, which the view splits into per-file foldable blocks.
+const SHOW_DIFF = `diff --git a/src/cart/CartBadge.tsx b/src/cart/CartBadge.tsx
+index 2f1a9c4..8b7e0d3 100644
+--- a/src/cart/CartBadge.tsx
++++ b/src/cart/CartBadge.tsx
+@@ -1,20 +1,22 @@
+-import { useEffect, useState } from "react";
+-import { fetchCart } from "../api/cart";
++import { useCartCount } from "./useCartCount";
+
+ export function CartBadge() {
+-  const [count, setCount] = useState(0);
+-
+-  // Polled every 5s: drifts from the real cart between
+-  // ticks, and keeps firing on an unwatched tab.
+-  useEffect(() => {
+-    const t = setInterval(() => {
+-      void fetchCart().then((c) => setCount(c.items.length));
+-    }, 5000);
+-    return () => clearInterval(t);
+-  }, []);
++  // Driven by the cart store's subscription, so the badge
++  // updates on the same tick the cart itself does.
++  const count = useCartCount();
+
+   if (count === 0) return null;
+   return (
+-    <span className="cart-badge">{count}</span>
++    <span className="cart-badge" aria-label={\`\${count} items in cart\`}>
++      {count > 99 ? "99+" : count}
++    </span>
+   );
+ }
+diff --git a/src/cart/CartBadge.test.tsx b/src/cart/CartBadge.test.tsx
+index 71c0ab2..d95f118 100644
+--- a/src/cart/CartBadge.test.tsx
++++ b/src/cart/CartBadge.test.tsx
+@@ -12,4 +12,10 @@ it("hides itself on an empty cart", () => {
+   render(<CartBadge />);
+   expect(screen.queryByLabelText(/items in cart/)).toBeNull();
+ });
++
++it("caps the label at 99+", () => {
++  cart.set(Array.from({ length: 120 }, item));
++  render(<CartBadge />);
++  expect(screen.getByLabelText("120 items in cart").textContent).toBe("99+");
++});
+`;
+
 export function show(locale, sha) {
   return {
     sha,
+    short: (sha || "").slice(0, 7),
     subject: locale === "ja" ? "カートバッジの件数を購読で更新" : "Update the cart badge from a subscription",
+    body:
+      locale === "ja"
+        ? "5 秒ポーリングをストアの購読に置き換え。バックグラウンドタブでの無駄な取得もなくなる。"
+        : "Replace the 5s poll with a store subscription; also stops the pointless fetches on a background tab.",
     author: "Rin Takada",
     email: "rin@example.com",
     date: ago(35),
-    body: "",
-    files: [{ path: "src/cart/Badge.tsx", added: 14, deleted: 3, status: "M" }],
-    diff: "",
+    diff: SHOW_DIFF,
   };
 }
 

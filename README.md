@@ -48,8 +48,8 @@ without Docker) is covered by
 |---|---|
 | ![Launch dialog: pick the agent CLI, its model, reasoning effort, start mode and whether to run in a fresh git worktree](docs/img/launch-en.webp) | ![Chat mirror: the agent's question rendered as an answerable card with the options it offered](docs/img/mirror-en.webp) |
 | **Start anything from one dialog** — agent, model, reasoning effort, start mode, and a fresh git worktree or the working copy as-is. | **Follow and steer from the browser** — questions, plans and permission prompts arrive as cards you answer in place. |
-| ![Three panes: the chat mirror, a live terminal attached to a shell session, and the repository's working-tree changes with a commit box](docs/img/split-en.webp) | ![Commit graph view with branch lanes, ref chips and per-commit author and time](docs/img/scm-en.webp) |
-| **Split panes** — mirror, live terminal and working-tree changes side by side; each pane can also pop out into its own tab. | **Real git, in the console** — commit graph, diffs, staging and commit, per working copy and worktree. |
+| ![Three panes: the chat mirror, a live terminal attached to a shell session, and the repository's working-tree changes with a commit box](docs/img/split-en.webp) | ![Split panes: the commit graph with branch lanes on the left, the selected commit's diff on the right](docs/img/scm-en.webp) |
+| **Split panes** — mirror, live terminal and working-tree changes side by side; each pane can also pop out into its own tab. | **Real git, in the console** — commit graph beside the selected commit's diff, plus staging and commit, per working copy and worktree. |
 | ![A terminal pane attached to a shell session, showing a build and a git status run](docs/img/terminal-en.webp) | ![The same console in Japanese, with the repo tree, chat mirror and commit graph](docs/img/console-ja.webp) |
 | **A real terminal, too** — every session (agent or plain shell) is attachable as a live PTY. | **English / Japanese UI** — switched per user in ⚙ Settings. |
 
