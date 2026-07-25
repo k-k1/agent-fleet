@@ -267,6 +267,12 @@ What changed in each version is in the notes on every release, indexed in
 
 ## License / bundled software
 
+- Agent Fleet is licensed under the **Apache License, Version 2.0** — see
+  [LICENSE](LICENSE), with the attribution notices in [NOTICE](NOTICE).
+- **This repository is the primary distribution.** Official releases are published
+  only here: <https://github.com/k-k1/agent-fleet-dist>. If you redistribute Agent
+  Fleet, Apache-2.0 §4(d) requires you to carry the notices in `NOTICE` forward —
+  which includes that URL — so recipients can find the original.
 - The distributed images and rootfs are a **lean build**: the agent CLIs
   (Claude Code / Codex / GitHub Copilot / Antigravity / Cursor / Kiro / OpenCode) are
   not bundled. On first start each user fetches verified, pinned versions from
