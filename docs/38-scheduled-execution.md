@@ -523,6 +523,33 @@ resume→readiness ゲート→`/input` 200 まで全部通っている。つま
 - Console: user turn に緑系ピル「定時実行」（clock）/「手動発火」（play）を表示
   （operator=橙 broadcast・チャット=青と並ぶ第3の注入元色）。
 
+### アシスタント発火（session_mode=assistant・2026-07-25 追補）
+
+スケジュールから**セッションではなくアシスタント会話**へ発火する第3のモード。
+「毎朝オペレーターにフリート状況をまとめさせる」等、会話（persona＋af ツール）に
+定時タスクを直接やらせる。
+
+- **会話 slug**: 会話に短い不変 ID「a＋base32 6字」を導入（セッション slug "s…" の
+  対称）。作成時採番＋既存会話は agent 起動時に backfill（`chat_slug.go`）。UUID と
+  slug の両方で参照可（`resolveConvRef`）。一覧 API（chatMeta.slug）と Console の
+  会話行 tooltip に露出。
+- **対象解決**: `reuse_target` に会話 slug/UUID。**空なら owner_conv（スケジュールを
+  作ったオペレーター会話）** — 追加設定なしで「自分のオペレーターを蹴る」が既定。
+  repo/agent_kind/model は無視（会話側の設定が正）。
+- **実行**: CP `fireAssistant`（`scheduler_assistant.go`）→ wake/keep-alive/agent 到達
+  待ちは new/reuse と同一 → Agent `POST /assistant-turns {conv, prompt}`
+  （`assistant_turn.go`）→ **runOperatorTurn 委譲**（Discord @メンション経路と同一＝
+  ロック・自動圧縮・overflow 自己修復・AutoTurns リセット・無人承認ゲート[破壊的
+  ツールはブリッジ承認、未接続なら fail-closed]まで同挙動）。
+- **同期意味論**: 200＝ターン完走・エラー＝未実行なので配達検証（confirm）は不要。
+  実行中の会話への発火は 409 `turn_in_progress` → `skipped_overlap`（busy reuse と
+  同じ無人非配送サーフェス・通知対象）。会話消失は `skipped_target_missing`。
+  タイムアウトは CP 側 8m ＞ agent 側 operatorTurnTimeout 6m（先に諦めるのは agent）。
+- **履歴リンク**: run.session に会話 slug を記録。Console の実行履歴クリックは
+  a-slug を検出してチャットペインを開く（セッションは従来どおり）。
+- rotation はアシスタント発火には不適用（会話の肥大は docs/33 の自動圧縮が受け持つ
+  ＝ローテーション不要という綺麗な分業）。
+
 ### 決定（2026-07-23）
 
 1. **主モード**: **(A) ピン留め / (B) 管理 の両対応。ツール表面の既定は (B) 管理**
