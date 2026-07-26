@@ -15,7 +15,7 @@ func TestResolveChatModel(t *testing.T) {
 	}{
 		{session.KindCodex, "", defaultCodexChatModel},
 		{session.KindCodex, "  gpt-5.6  ", "gpt-5.6"},
-		{session.KindClaude, "", ""},
+		{session.KindClaude, "", "sonnet"},
 		{session.KindOpencode, "", defaultOpencodeChatModel},
 		{session.KindOpencode, "  anthropic/claude-opus-4-6  ", "anthropic/claude-opus-4-6"},
 		{session.KindAgy, "", defaultAgyChatModel},
@@ -38,5 +38,29 @@ func TestResolveChatModelUsesAssistantPreference(t *testing.T) {
 	}
 	if got := resolveChatModel(session.KindCodex, "explicit"); got != "explicit" {
 		t.Fatalf("conversation pin must win, got %q", got)
+	}
+}
+
+func TestResolveChatModelRecommended(t *testing.T) {
+	writeUIPrefs(t, `{"assistantModels":{"claude":"recommended","codex":"recommended","cursor":"recommended"}}`)
+	tests := map[string]string{
+		session.KindClaude: "sonnet",
+		session.KindCodex:  defaultCodexChatModel,
+		session.KindCursor: "",
+	}
+	for kind, want := range tests {
+		if got := resolveChatModel(kind, ""); got != want {
+			t.Errorf("%s recommendation = %q, want %q", kind, got, want)
+		}
+	}
+}
+
+func TestRecommendedCatalogModelRequiresExactEntitlement(t *testing.T) {
+	const target = "opencode-go/glm-5.2"
+	if got := recommendedCatalogModel([]string{"opencode/glm-5.2", target}, target, "fallback"); got != target {
+		t.Fatalf("Go entitlement = %q", got)
+	}
+	if got := recommendedCatalogModel([]string{"opencode/glm-5.2"}, target, "fallback"); got != "fallback" {
+		t.Fatalf("Zen twin must not prove Go entitlement: %q", got)
 	}
 }
