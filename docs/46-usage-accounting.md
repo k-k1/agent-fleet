@@ -5,7 +5,8 @@
 要約引き継ぎ、タイトル提案、返信サジェスト、報告への自動ターン…）を **同じ物差しで並べる** のが主眼。
 
 決定は [ADR 0029](decisions/0029-usage-accounting.md)。ステータス: **P0.5（是正）＋ P1（台帳＋計装）
-＋ P2（出自＋セッション折り込み）実装済み。P3（`/usage/series` + rollup）以降は未着手**。
+＋ P2（出自＋折り込み）＋ P3（`/usage/series` + rollup + CP 両側登録）実装済み。
+P4（Console UI）以降は未着手**。
 
 ## 0. なぜ要るのか（実測が先）
 
@@ -298,6 +299,40 @@ GET /usage/series?from=&to=&bucket=day|hour&by=feature|kind|model|trigger|origin
 ⚠️ 新 REST は `workspace/agent/routes.go` と `control-plane/routes.go` の **両方** に登録する
 （CP は明示許可リスト方式。片方漏れると backend 正常でも Console から 404）。
 
+### 4-a. 実装済み（P3・2026-07-26）
+
+`usage_series.go`（ハンドラ＋集計）/ `usage_rollup.go`（rollup）。登録は
+`workspace/agent/routes.go` の `GET /usage/series` と `control-plane/routes.go` の
+`GET /api/usage/series`（CP は `rest` プロキシで `/api` を落として素通し）。
+
+確定した契約（上のワイヤ形に加えて）:
+
+- **軸の語彙**は `feature` / `kind` / `model` / `trigger` / `origin` / `origin_conv` /
+  `verb` / `model_src` / `measured`。`by` と `split` と `filter` のキーは全部これ。
+  **未知の軸は 400 で弾く**（黙って無視すると「指定したのに効かない」が静かに起きる）。
+- **`filter` は同じ軸が OR・違う軸が AND**。`filter=kind:claude,kind:codex` は「claude か
+  codex」、`filter=kind:claude,feature:title.*` は「claude かつ title 系」。末尾 `*` だけを
+  前方一致として扱う。
+- **`from`/`to` は RFC3339 と `YYYY-MM-DD` の両方**。日付だけの `to` は**その日いっぱい**
+  （0 時と解釈すると `from=to=今日` の hour クエリが空になる）。既定は直近7日。
+- **`bucket=hour` は raw の保持期間内だけ**。rollup は日粒度なので、畳んだ後に prune された
+  期間は時間粒度で復元できない。その場合は **`truncated: true`** を返す — 黙って短い系列を
+  返すと「その期間は消費が無かった」に見えるため。
+- **`ref`（セッション名 / 会話 id）はクエリ軸に無く、応答にも出さない**。rollup のキーに
+  入れると際限なく増えて「小さい」前提が壊れるのと、集計 API から個別の名前を出さない
+  （プライバシー）を兼ねる。ref 単位の追跡は raw の保持期間内に台帳を直接読む。
+- `ms`（レイテンシ）は raw には入っているが v1 の集計には出さない。読み手が決まってから。
+
+**rollup の設計**（`usage/rollup/YYYY-MM.json` ＋ `usage/rollup/state.json`）:
+
+- **バケットは行の `ts`（消費が起きた時刻）で刻む。追記先のファイル日ではない。**
+  → 下の §7-3 の実機で踏んだ穴。
+- 二重計上しない不変条件は1つ: **raw の各ファイル日は「畳み済み（行は rollup にある）」か
+  「未畳み（raw を読む）」のどちらか一方**。当日は行がまだ増えるので必ず未畳み側。
+- 畳んだ消費日ごとに**寄与元のファイル日（`src`）を残す**ので、途中で落ちて state を
+  書けなくても、やり直しは skip されるだけで二重に足さない。
+- 契機は fold-on-read と同じ（`/usage/series` と `/sessions/usage`）。常駐タイマーは無い。
+
 ## 5. Console
 
 - **置き場 = 設定モーダルの新タブ「使用量」**（`SettingsDialog.tsx` の `GROUPS` の
@@ -351,7 +386,7 @@ GET /usage/series?from=&to=&bucket=day|hour&by=feature|kind|model|trigger|origin
 | ~~P0.5~~ **完了** | **測る前に確定できる是正**（§1-a-2）: claude 経路を `--tools ""` + `--system-prompt` 置換 + `MAX_THINKING_TOKENS=0`、codex 経路を小型モデル自動ピン + `model_reasoning_effort="low"`（opencode は罠のため見送り、cursor は `auto` のまま） | ✅ 3機能を実 CLI で回帰確認（1.7〜2.3s / 従来 6.2s）・go test 674 緑・契約テスト `chat_oneshot_test.go` 追加 |
 | ~~P1~~ **完了** | 台帳 + 補助呼び出し計装（UI 無し）＋**モデル報告プローブ** | ✅ 下記 §7-1 |
 | ~~P2~~ **完了** | セッション折り込み（watermark + バックフィル + 削除時確定）＋ **`Meta.Origin`/`OriginConv`** | ✅ 下記 §7-2 |
-| P3 | `/usage/series` + CP 両側登録 | curl で系列取得 |
+| ~~P3~~ **完了** | `/usage/series` + rollup + CP 両側登録 | ✅ 下記 §7-3 |
 | P4 | Console ペイン + グラフ + i18n | typecheck/vitest/i18n:lint 緑・headless 実描画検証 |
 | P5 | MCP ツール + 設定（保持日数 / 記録 OFF） | ライブでオペレーターに聞けること |
 | P6（任意） | CP 横断集計（tenant/member 別・showback と同居） | admin から見えること |
@@ -407,6 +442,41 @@ in=3 out=13 cread=4412 ccreate=0 spend=16 cost_usd=0.0005092 ms=2964 ok=true mea
 **突合検証**: 実ワークスペースの **158 セッション（claude / codex / copilot）全件**で、
 折り込みの spend 合計・論理ターン数が `get_session_usage` の cumulative と**完全一致**
 （`TestFoldMatchesSessionUsageLive`・opt-in `AF_USAGE_FOLD_LIVE=1`）。
+
+#### 7-3. P3 実装済み（2026-07-26）
+
+契約は §4-a。両側登録済み（agent `GET /usage/series` / CP `GET /api/usage/series`）。
+
+> **★ 実機で最初に踏んだ穴 — バケットを raw ファイルの日で刻んでいた。**
+> 実バイナリを起動して `/usage/series` を叩いたら、**11日分あるはずの系列が「今日」1本**に
+> なった。原因は集計が追記先のファイル日で刻んでいたこと。セッション折り込みは過去の転写を
+> 後から取り込む（バックフィルは導入日に数か月分が一度に入る）ので、ファイル日で刻むと
+> **過去の消費が全部「導入日」に積み上がり、時系列として無意味になる**。行の `ts` で刻むよう
+> rollup とクエリを作り直した（`usageRowTime`）。単体テストは全部緑のまま通っていた —
+> 合成データはファイル日＝消費日で書いていたので、この差が出なかった。回帰は
+> `TestUsageSeriesBucketsByConsumptionTimeNotFileDay` / `TestRollupKeysByConsumptionDay`。
+
+もう1つ、テスト側で踏んだ穴: 集計ハンドラのテストが fold-on-read 経由で**実ワークスペースの
+セッションを畳んで**しまい、期待値が実データで壊れた（合計が数百万トークンになった）。
+`useIsolatedUsageDir` で `HOME` ごと隔離して解決（実 CLI を撃つライブテストは認証が HOME
+配下なので `useTempUsageDir` のまま）。
+
+**実機確認（実バイナリ + curl・実データ）**:
+
+```
+GET /usage/series?from=2026-01-01&by=kind
+→ 11 バケット（2026-07-16〜07-26）/ calls=853 / spend=19,624,212
+  coverage: claude{exact,reported} codex{exact,reported} copilot{partial,reported}
+GET /usage/series?from=2026-01-01&by=feature&split=model   ← 本命ビュー
+→ session×claude-opus-4-8 calls=461 spend=11,464,050 / ×claude-fable-5 201/5,056,597
+  ×gpt-5.6-terra 71/939,073 / ×claude-opus-5 31/1,146,638 …
+GET /usage/series?from=2026-01-01&by=origin        → {unknown: 全部}（既存セッション＝設計通り）
+GET /usage/series?from=2026-01-01&filter=feature:title.*  → 0（補助呼び出しは導入日以降）
+```
+
+`copilot` が `partial` として自動で出ている（転写に `outTok` しかない）のが、`coverage` を
+手書きせずデータから起こしている効果。`origin` が全部 `unknown` なのも正しい — 既存セッション
+は出自を持たない（`0` でも `user` でもない、を守っている）。
 
 ## 8. 限界とリスク（先に言っておく）
 
