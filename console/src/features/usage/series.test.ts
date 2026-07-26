@@ -5,10 +5,13 @@ import {
   breakdownRows,
   coverageNotes,
   matrixRows,
+  filterParam,
+  foldedFilterOn,
   metricOf,
   perCall,
   rangeOf,
   stackModel,
+  toggleFoldedFilter,
   totalsByKey,
 } from "./series.ts";
 import { OTHER_KEY } from "./colors.ts";
@@ -163,5 +166,74 @@ describe("指標・期間", () => {
     expect(r.to).toBe("2026-07-26T09:00:00.000Z");
     expect(r.from).toBe("2026-07-25T09:00:00.000Z");
     expect(r.bucket).toBe("hour");
+  });
+});
+
+// --- レビュー P2-6: 畳まれた系列（色スロットの無い feature）の扱い ------------------
+
+describe("その他（畳み込み）の絞り込み", () => {
+  // 凍結 enum 12 個に対して色スロットは 8 つ。溢れた feature は必ずグレーの「その他」に
+  // 入るので、その他が実キーへ展開できないと**グレーの棒だけ中身を確かめられない**。
+  it("expands OTHER into every folded key (same-axis OR)", () => {
+    const folded = ["assistant.ask", "title.chat"];
+    const on = toggleFoldedFilter([], "feature", folded);
+    expect(on.map((f) => f.dim + ":" + f.value).sort()).toEqual(["feature:assistant.ask", "feature:title.chat"]);
+    expect(filterParam(on)).toContain("feature:assistant.ask");
+    expect(foldedFilterOn(on, "feature", folded)).toBe(true);
+    // もう一度押すと全部外れる（他の軸の絞り込みは残す）。
+    const withOther = [...on, { dim: "kind", value: "claude" }];
+    const off = toggleFoldedFilter(withOther, "feature", folded);
+    expect(off).toEqual([{ dim: "kind", value: "claude" }]);
+    expect(foldedFilterOn(off, "feature", folded)).toBe(false);
+  });
+
+  it("treats a partially selected OTHER as off (pressing it selects all)", () => {
+    const folded = ["assistant.ask", "title.chat"];
+    const partial = [{ dim: "feature", value: "title.chat" }];
+    expect(foldedFilterOn(partial, "feature", folded)).toBe(false);
+    expect(toggleFoldedFilter(partial, "feature", folded)).toHaveLength(2);
+  });
+
+  it("does nothing when there is nothing folded", () => {
+    const cur = [{ dim: "feature", value: "session" }];
+    expect(toggleFoldedFilter(cur, "feature", [])).toBe(cur);
+    expect(foldedFilterOn(cur, "feature", [])).toBe(false);
+  });
+
+  // 色スロットを持たない feature（assistant.ask / title.chat / branch.suggest /
+  // suggest.chat）は必ず畳まれる＝凡例に「その他」が要る、を stackModel 側で固定する。
+  it("folds the four slot-less features into OTHER", () => {
+    const b: UsageBucket[] = [
+      {
+        t: "2026-07-26T00:00:00Z",
+        series: {
+          "assistant.ask": agg(10),
+          "title.chat": agg(20),
+          "branch.suggest": agg(30),
+          "suggest.chat": agg(40),
+        },
+      },
+    ];
+    const m = stackModel(b, "feature", "spend");
+    expect(m.foldedKeys.sort()).toEqual(["assistant.ask", "branch.suggest", "suggest.chat", "title.chat"]);
+    expect(m.legend.map((l) => l.key)).toEqual([OTHER_KEY]);
+    expect(m.rows[0].total).toBe(100);
+  });
+});
+
+// P3-9: サーバが空バケットもゼロで返すようになった。位置を保ったまま「棒の無い日」として
+// 描けること（合計 0・セグメント無し）＝時間軸が読める形。
+describe("ゼロ埋めされたバケット", () => {
+  it("keeps empty buckets as gaps instead of collapsing the axis", () => {
+    const buckets: UsageBucket[] = [
+      { t: "2026-07-24T00:00:00Z", series: { session: agg(100) } },
+      { t: "2026-07-25T00:00:00Z", series: {} },
+      { t: "2026-07-26T00:00:00Z", series: { session: agg(300) } },
+    ];
+    const m = stackModel(buckets, "feature", "spend");
+    expect(m.rows.map((r) => r.t)).toEqual(buckets.map((b) => b.t));
+    expect(m.rows[1].total).toBe(0);
+    expect(m.rows[1].segs).toEqual([]);
+    expect(m.max).toBe(300); // 空バケットは縦軸を動かさない
   });
 });

@@ -29,11 +29,21 @@ import (
 )
 
 // usageFoldMark は1セッション分の watermark。
+//
+// **件数（Groups）だけでは足りない。** claude は1つの sid に対して兄弟 jsonl を持ちうり
+// （cwd 変更・CLAUDE_CONFIG_DIR 切替・Remote Control のスタブ）、読む1本は **mtime で
+// 選ばれる**（internal/agents/claude/transcript.go）。選択が入れ替わると件数ベースの差分は
+// 二通りに壊れる — 短い方へ入れ替わると `len(rows) <= Groups` で**折り込みが永久に止まり**、
+// 長い方へ入れ替わると別の会話の**先頭ターンを既折り込み扱いで落とす**。そこで
+// **件数と時刻の両方**で「まだ折り込んでいないターン」を判定する（LastTS は診断用ではなく
+// 判定に効く値）。
 type usageFoldMark struct {
-	// Groups は折り込み済みの論理ターン数。転写は追記のみなので、論理ターンの通し番号は
-	// kind に依らず安定で、(session, idx) の冪等キーになる。各 kind の Turn.Idx（行番号）を
-	// 使わないのは、番号体系が kind ごとに違って watermark が混ざるから。
-	Groups int    `json:"groups"`
+	// Groups は折り込み済みの論理ターン数（＝到達した最大の通し番号）。転写は追記のみなので、
+	// 論理ターンの通し番号は kind に依らず安定。各 kind の Turn.Idx（行番号）を使わないのは、
+	// 番号体系が kind ごとに違って watermark が混ざるから。
+	Groups int `json:"groups"`
+	// LastTS は折り込み済みの最大ターン時刻。転写が入れ替わっても「これより新しいターンは
+	// まだ数えていない」が言える。
 	LastTS string `json:"lastTS,omitempty"`
 	// LastIdx は最後に折り込んだイベントの転写行番号（診断用）。
 	LastIdx int `json:"lastIdx,omitempty"`
@@ -200,15 +210,21 @@ func foldSessionUsageLocked(m session.Meta, st *usageFoldState, includeTrailing 
 func foldSessionUsageWithTurns(m session.Meta, st *usageFoldState, turns []transcript.Turn, includeTrailing bool) (int, error) {
 	mark := st.Sessions[m.Name]
 	rows := foldTurnRows(turns, includeTrailing)
-	if len(rows) <= mark.Groups {
-		// 転写が縮んだ（アーカイブ復元・手動編集）ケースを含む。watermark は下げない —
-		// 下げると同じターンをもう一度数えてしまう。
+	fresh := unfoldedTurnRows(rows, mark)
+	if len(fresh) == 0 {
+		// 転写が縮んだ（アーカイブ復元・手動編集・兄弟 jsonl への入れ替わり）ケースを含む。
+		// watermark は下げない — 下げると同じターンをもう一度数えてしまう。
 		return 0, nil
+	}
+	if len(rows) < mark.Groups {
+		// 短い転写へ入れ替わった。件数だけで差分を採っていた頃はここで永久に止まっていた。
+		log.Printf("usage: fold %s: 転写が %d → %d 論理ターンへ入れ替わった（時刻で差分を採る）",
+			m.Name, mark.Groups, len(rows))
 	}
 	origin, originConv := session.OriginOf(m), m.OriginConv
 	measured := usageMeasuredForKind(m.Kind)
-	out := make([]usageRecord, 0, len(rows)-mark.Groups)
-	for _, r := range rows[mark.Groups:] {
+	out := make([]usageRecord, 0, len(fresh))
+	for _, r := range fresh {
 		rec := usageRecord{
 			TS: r.TS, Call: randUUID(), Feature: usageFeatureSession, Trigger: r.Trigger,
 			Origin: origin, OriginConv: originConv, Kind: m.Kind,
@@ -230,14 +246,64 @@ func foldSessionUsageWithTurns(m session.Meta, st *usageFoldState, turns []trans
 		}
 		out = append(out, rec)
 	}
-	// 行が書けなかったら watermark は進めない。進めてしまうと、この分の消費は次のパスでも
-	// 差分に出てこず**二度と台帳へ入らない**（台帳側に取りこぼしを拾い直す口は無い）。
+	// 行が書けなかったら watermark は進めない。次回パスで同じターンが差分として出てくるので、
+	// **取りこぼしは復旧後に必ず回収される**（部分的に書けていた分は集計側の (ref, idx)
+	// 重複排除が落とす — usage_dedup.go）。進めてしまうと、この分は次のパスでも差分に出てこず
+	// 二度と台帳へ入らない（台帳側に取りこぼしを拾い直す口は無い）。
 	if err := appendUsageRows(out); err != nil {
 		return 0, err
 	}
-	last := rows[len(rows)-1]
-	st.Sessions[m.Name] = usageFoldMark{Groups: len(rows), LastTS: last.TS, LastIdx: last.LastIdx}
+	last := fresh[len(fresh)-1]
+	// watermark は上げるだけ（入れ替わった短い転写で下げない）。
+	st.Sessions[m.Name] = usageFoldMark{
+		Groups:  max(mark.Groups, len(rows)),
+		LastTS:  laterUsageTS(mark.LastTS, last.TS),
+		LastIdx: last.LastIdx,
+	}
 	return len(out), nil
+}
+
+// unfoldedTurnRows は「まだ折り込んでいない論理ターン」を返す。件数と時刻の **両方** で
+// 判定するのがここの肝（usageFoldMark のコメント）:
+//
+//   - 通常（追記のみで転写が伸びた）: 通し番号が watermark を超えた分＝末尾の差分。
+//     従来と同じ結果になる。
+//   - 転写が入れ替わった: 通し番号が重なっていても **watermark より新しい時刻のターンは
+//     まだ数えていない**ので拾う。逆に古い時刻のターンは拾わない（別の会話の焼き直しを
+//     数えない）。取り違えて二重に拾った分は集計側の (ref, idx) 重複排除が受け止める。
+func unfoldedTurnRows(rows []usageTurnRow, mark usageFoldMark) []usageTurnRow {
+	var out []usageTurnRow
+	for _, r := range rows {
+		if r.Idx > mark.Groups || usageTSAfter(r.TS, mark.LastTS) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// usageTSAfter は a が b より後か。**解けない時刻は「後ではない」に倒す** — 判定できない
+// ものを新しい扱いにすると、転写を読むたびに同じターンを積み増してしまう。
+func usageTSAfter(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	ta, err := time.Parse(time.RFC3339, a)
+	if err != nil {
+		return false
+	}
+	tb, err := time.Parse(time.RFC3339, b)
+	if err != nil {
+		return false
+	}
+	return ta.After(tb)
+}
+
+// laterUsageTS は新しい方の時刻を返す（watermark を巻き戻さないため）。
+func laterUsageTS(cur, next string) string {
+	if usageTSAfter(next, cur) || cur == "" {
+		return next
+	}
+	return cur
 }
 
 // commitSessionUsageFold は1セッション分を「state 読み → 行の追記 → watermark 書き」まで

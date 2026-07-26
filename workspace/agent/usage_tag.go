@@ -87,6 +87,35 @@ func (c *usageCall) setTotals(in, out, cread, ccreate int) {
 	c.Totals = usageTokens{In: in, Out: out, CacheRead: cread, CacheCreate: ccreate}
 }
 
+// add は同じ呼び出しの中で二度撃った分を足す（codex 一発呼び出しのモデル外しリトライ）。
+// 別プロセスを2回起動しているので、入力側もスナップショットではなく実消費の合算になる。
+func (t usageTokens) add(o usageTokens) usageTokens {
+	return usageTokens{
+		In: t.In + o.In, Out: t.Out + o.Out,
+		CacheRead: t.CacheRead + o.CacheRead, CacheCreate: t.CacheCreate + o.CacheCreate,
+	}
+}
+
+func (t usageTokens) any() bool { return t.In+t.Out+t.CacheRead+t.CacheCreate > 0 }
+
+// fallbackTotals は「モデル別内訳が取れなかった時」だけ効く縮退の記録口。claude は通常
+// result の modelUsage でモデル別に割れるが、**利用者の停止操作や result 前の異常終了では
+// modelUsage が来ない**。そこで残っている usage スナップショットを採る — ここで何も採らないと
+// 実際に使ったコンテキストが「トークン 0 / measured=none」として消え、止めた回だけ消費が
+// 見えなくなる（止めるのは重いターンほど多い）。
+//
+// measured は呼び出し側が申告する: 完結した result 由来なら空（＝exact 判定に委ねる）、
+// 途中のスナップショット由来なら partial。
+func (c *usageCall) fallbackTotals(t usageTokens, measured string) {
+	if len(c.Models) > 0 || c.Totals.any() || !t.any() {
+		return
+	}
+	c.Totals = t
+	if measured != "" {
+		c.Measured = measured
+	}
+}
+
 // recordUsageCall は台帳へ1呼び出し分（＝1行以上）を書く。ctx はタグを読むためだけに
 // 使うので、キャンセル済み ctx（利用者の停止操作・タイムアウト）でも記録は必ず残る。
 func recordUsageCall(ctx context.Context, c *usageCall, started time.Time) {

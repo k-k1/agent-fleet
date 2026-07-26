@@ -200,6 +200,8 @@ func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) 
 	}
 	// 失敗した result にも usage は乗る（超過エラーは特に高い）ので、OK 判定より先に採る。
 	call.Models, call.CostUSD = usageModelRows(r.ModelUsage), r.TotalCostUSD
+	// modelUsage の無い result（古い CLI・異常終了）でも総量は残す。
+	call.fallbackTotals(r.Usage.ledgerTokens(), "")
 	if r.SessionID != "" {
 		c.ClaudeSessionID = r.SessionID
 	}
@@ -349,6 +351,7 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 					resultErr = sl.IsError
 					ctxTrack.observeResult(sl.Usage, sl.ModelUsage)
 					call.Models, call.CostUSD = usageModelRows(sl.ModelUsage), sl.TotalCostUSD
+					call.fallbackTotals(sl.Usage.ledgerTokens(), "")
 				}
 			}
 		}
@@ -357,6 +360,11 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 		}
 	}
 	waitErr := cmd.Wait()
+	// 利用者の停止操作や result イベント前の異常終了では modelUsage が来ない。assistant
+	// イベントで見た最後のスナップショットを縮退として採る（出力側は途中なので partial）。
+	// 採らないと「トークン 0 / measured=none」の行になり、**止めた回の消費だけが台帳から
+	// 消える** — 止められるのは重いターンほど多いので、そこが欠けると配分の絵が狂う。
+	call.fallbackTotals(ctxTrack.snap.ledgerTokens(), usageMeasuredPartial)
 	// An error result (e.g. context overflow) rides the stream's `result` event AND makes
 	// claude exit non-zero. Prefer the parsed message so the overflow self-heal can see
 	// "Prompt is too long …" (chat_recover.go); a bare "exit status 1" from waitErr would
@@ -1152,6 +1160,32 @@ func runCodexOneShot(ctx context.Context, args []string, prompt string) (string,
 	return reply, usage, nil
 }
 
+// codexOneShotRun は runCodexOneShot の形（テストで差し替える）。
+type codexOneShotRun func(ctx context.Context, args []string, prompt string) (string, codexUsage, error)
+
+// codexOneShotWithRetry は自前ピクの小型モデルで撃ち、失敗したらモデルを外して1度だけ
+// 撃ち直す。**2回分のトークンを合算して返す**のが台帳側の要点。
+//
+// The cheap model came from the catalog, and a catalog entry is not proof the account may
+// run it (実測: opencode lists claude-haiku-4-5 and then 500s on it). Falling back to the
+// configured default once — a title that costs more still beats a title feature that is broken.
+//
+// 1回目の消費は失敗しても発生している。リトライ結果で上書きすると、実際に撃った分が台帳から
+// 消える — 「安いモデルで失敗 → 既定のフラッグシップで撃ち直し」は**最も高くつく経路**なので、
+// そこが1回分に見えるのが一番まずい。要求値（model_req）は「モデルを外して撃ち直した」ことが
+// 分かるようリトライ側で上書きする（行は1本なので、後勝ちで実際に答えを出した方を載せる）。
+func codexOneShotWithRetry(ctx context.Context, args []string, autoPicked bool, prompt string,
+	run codexOneShotRun) (reply string, tok usageTokens, modelReq string, err error) {
+	modelReq = argValue(args, "-m")
+	reply, usage, err := run(ctx, args, prompt)
+	tok = usage.ledgerTokens()
+	if err != nil && autoPicked {
+		reply, usage, err = run(ctx, codexOneShotArgsNoModel(args), prompt)
+		tok, modelReq = tok.add(usage.ledgerTokens()), ""
+	}
+	return reply, tok, modelReq, err
+}
+
 // oneShotHeadless runs one prompt through the preferred available backend and returns
 // the reply text — the backend-agnostic core of the title/branch suggestions. persona
 // is passed natively where possible (claude --system-prompt) and as a prompt preamble
@@ -1172,19 +1206,8 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		defer func() { _, _ = chatCodexHome() }()
 		full := headlessPrompt(persona, nil, prompt)
 		args, autoPicked := codexOneShotArgs()
-		call.ModelReq = argValue(args, "-m")
-		reply, usage, err := runCodexOneShot(ctx, args, full)
-		if err != nil && autoPicked {
-			// The cheap model came from the catalog, and a catalog entry is not proof the
-			// account may run it (実測: opencode lists claude-haiku-4-5 and then 500s on it).
-			// Fall back to the configured default once — a title that costs more still beats
-			// a title feature that is broken.
-			// 台帳には「モデルを外して撃ち直した」ことが分かるよう、要求値もリトライ側で上書きする。
-			args = codexOneShotArgsNoModel(args)
-			call.ModelReq = ""
-			reply, usage, err = runCodexOneShot(ctx, args, full)
-		}
-		call.Totals, call.OK = usage.ledgerTokens(), err == nil
+		reply, tok, modelReq, err := codexOneShotWithRetry(ctx, args, autoPicked, full, runCodexOneShot)
+		call.ModelReq, call.Totals, call.OK = modelReq, tok, err == nil
 		return reply, err
 	case session.KindOpencode:
 		call.Kind = session.KindOpencode
@@ -1289,14 +1312,16 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 	cmd.Env = append(cmd.Env, claudeOneShotEnv...)
 	cmd.Stdin = strings.NewReader(prompt)
 	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("claude execution failed: %s", cliErr(err))
-	}
 	var r claudeResult
 	perr := json.Unmarshal(out, &r)
 	// claude だけはモデル別の実測内訳とコストが返る（docs/46 §0）— エラー result でも
-	// 課金は発生しているので、OK 判定より先に採る。
+	// 課金は発生しているので、OK 判定より先に採る。exec エラー（停止・非ゼロ終了）でも
+	// claude は構造化 result を吐いていることがあるので、**エラー return より先に**解析する。
 	call.Models, call.CostUSD = usageModelRows(r.ModelUsage), r.TotalCostUSD
+	call.fallbackTotals(r.Usage.ledgerTokens(), "") // modelUsage の無い応答の縮退
+	if err != nil {
+		return "", fmt.Errorf("claude execution failed: %s", cliErr(err))
+	}
 	if perr != nil || r.IsError {
 		return "", errors.New("claude returned an invalid response/error")
 	}

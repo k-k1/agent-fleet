@@ -2422,6 +2422,7 @@ export const ja = {
   "usage.col_bucket": "期間",
   "usage.col_calls": "回数",
   "usage.col_spend": "消費",
+  "usage.calls_shared": "この呼び出しは複数モデルに割れています（回数は最も消費したモデルに1回だけ計上）",
   "usage.col_avg": "1回あたり",
   "usage.col_cost": "換算額",
   "usage.breakdown_feature": "機能別",

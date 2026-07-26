@@ -226,4 +226,29 @@ export function rangeOf(hours: number, now: Date): { from: string; to: string; b
 export const seriesIsEmpty = (s: UsageSeries | null): boolean =>
   !s || !s.buckets?.length || (s.totals?.calls || 0) === 0;
 
+/** 絞り込み1件（軸 × 値）。API へは `dim:value` のカンマ連結で渡す（同一軸は OR）。 */
+export interface FilterTerm {
+  dim: string;
+  value: string;
+}
+
+export const filterParam = (terms: FilterTerm[]): string => terms.map((f) => `${f.dim}:${f.value}`).join(",");
+
+/**
+ * 「その他」の絞り込みトグル。**畳まれた実キー全部の OR に展開する**（同一軸は OR）。
+ *
+ * その他は実体ではないので、そのままでは絞り込めない = グレーの棒だけ中身を確かめる手段が
+ * 無くなる（色スロットを持たない feature が1つ出た時にまさにこれが起きていた）。全部
+ * 選択済みなら解除、そうでなければ全部立てる。
+ */
+export function toggleFoldedFilter(cur: FilterTerm[], dim: string, keys: string[]): FilterTerm[] {
+  if (!keys.length) return cur;
+  const without = cur.filter((f) => !(f.dim === dim && keys.includes(f.value)));
+  return foldedFilterOn(cur, dim, keys) ? without : [...without, ...keys.map((value) => ({ dim, value }))];
+}
+
+/** 畳まれたキーが全部絞り込まれているか（＝「その他」が選択状態か）。 */
+export const foldedFilterOn = (cur: FilterTerm[], dim: string, keys: string[]): boolean =>
+  keys.length > 0 && keys.every((k) => cur.some((f) => f.dim === dim && f.value === k));
+
 export { MAX_SLOTS, OTHER_KEY };
