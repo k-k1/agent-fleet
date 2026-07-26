@@ -5,6 +5,7 @@ import {
   classifyUnknownRemote,
   conflictFound,
   createFileEditorModel,
+  createRemoteSnapshot,
   discardToBase,
   editBuffer,
   prepareUnknownResave,
@@ -17,6 +18,27 @@ import { revisionOf } from "./buffer.ts";
 const initial = () => createFileEditorModel("p1", "repos/a.txt", "base\n", revisionOf("base\n"));
 
 describe("file editor save model", () => {
+  it("records and validates the fetched time in a remote snapshot", () => {
+    const content = "remote\n";
+    expect(createRemoteSnapshot(
+      "repos/a.txt",
+      content,
+      revisionOf(content),
+      123_456,
+    )).toEqual({
+      path: "repos/a.txt",
+      content,
+      revision: revisionOf(content),
+      fetchedAt: 123_456,
+    });
+    expect(() => createRemoteSnapshot(
+      "repos/a.txt",
+      content,
+      revisionOf(content),
+      Number.NaN,
+    )).toThrow("invalid fetchedAt");
+  });
+
   it("cleans when generation or revision still matches the sent snapshot", () => {
     const dirty = editBuffer(initial(), "first\n");
     const [saving, snapshot] = beginSave(dirty);
@@ -48,16 +70,19 @@ describe("file editor save model", () => {
       path: snapshot.path,
       content: snapshot.content,
       revision: snapshot.bufferRevision,
+      fetchedAt: 100,
     }).kind).toBe("sent_live");
     expect(classifyUnknownRemote(snapshot, {
       path: snapshot.path,
       content: "base\n",
       revision: snapshot.baseDiskRevision,
+      fetchedAt: 101,
     }).kind).toBe("old_base_live");
     expect(classifyUnknownRemote(snapshot, {
       path: snapshot.path,
       content: "third\n",
       revision: revisionOf("third\n"),
+      fetchedAt: 102,
     }).kind).toBe("third_revision");
   });
 
@@ -69,7 +94,12 @@ describe("file editor save model", () => {
       ...unknown,
       unknownObservation: {
         kind: "sent_live",
-        remote: { path: snapshot.path, content: snapshot.content, revision: snapshot.bufferRevision },
+        remote: {
+          path: snapshot.path,
+          content: snapshot.content,
+          revision: snapshot.bufferRevision,
+          fetchedAt: 100,
+        },
       },
     };
     expect(acceptUnknownRisk(unknown).phase).toBe("clean_risk_accepted");
@@ -91,7 +121,12 @@ describe("file editor save model", () => {
       ...saveStateUnknown(saving, snapshot, "unknown"),
       unknownObservation: {
         kind: "old_base_live" as const,
-        remote: { path: snapshot.path, content: "base\n", revision: snapshot.baseDiskRevision },
+        remote: {
+          path: snapshot.path,
+          content: "base\n",
+          revision: snapshot.baseDiskRevision,
+          fetchedAt: 100,
+        },
       },
     };
     expect(prepareUnknownResave(unknown).baseDiskRevision).toBe(snapshot.baseDiskRevision);
@@ -100,7 +135,12 @@ describe("file editor save model", () => {
 
   it("keeps mine separate on conflict and manual merge starts from remote", () => {
     const mine = editBuffer(initial(), "mine\n");
-    const remote = { path: mine.path, content: "remote\n", revision: revisionOf("remote\n") };
+    const remote = {
+      path: mine.path,
+      content: "remote\n",
+      revision: revisionOf("remote\n"),
+      fetchedAt: 100,
+    };
     const conflict = conflictFound(mine, remote);
     expect(conflict.content).toBe("mine\n");
     expect(conflict.conflict?.content).toBe("remote\n");
@@ -133,6 +173,26 @@ describe("file editor save model", () => {
     expect(discarded.content).toBe("saved\n");
     expect(discarded.bufferRevision).toBe(snapshot.bufferRevision);
     expect(discarded.baseDiskContent).toBe("saved\n");
+    expect(discarded.dirty).toBe(false);
+    expect(discarded.phase).toBe("clean");
+  });
+
+  it("discards a conflict to the fetched remote snapshot", () => {
+    const mine = editBuffer(initial(), "mine\n");
+    const remote = {
+      path: mine.path,
+      content: "remote\n",
+      revision: revisionOf("remote\n"),
+      fetchedAt: 123_456,
+    };
+    const conflict = conflictFound(mine, remote);
+
+    expect(conflict.conflict?.fetchedAt).toBe(123_456);
+    const discarded = discardToBase(conflict);
+    expect(discarded.content).toBe(remote.content);
+    expect(discarded.bufferRevision).toBe(remote.revision);
+    expect(discarded.baseDiskContent).toBe(remote.content);
+    expect(discarded.baseDiskRevision).toBe(remote.revision);
     expect(discarded.dirty).toBe(false);
     expect(discarded.phase).toBe("clean");
   });

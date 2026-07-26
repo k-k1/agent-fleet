@@ -23,6 +23,19 @@ export interface RemoteSnapshot {
   path: string;
   content: string;
   revision: string;
+  fetchedAt: number;
+}
+
+export function createRemoteSnapshot(
+  path: string,
+  content: string,
+  revision: string,
+  fetchedAt: number,
+): RemoteSnapshot {
+  const validRevision = requireRevision(revision);
+  if (revisionOf(content) !== validRevision) throw new Error("revision/content mismatch");
+  if (!Number.isFinite(fetchedAt) || fetchedAt < 0) throw new Error("invalid fetchedAt");
+  return { path, content, revision: validRevision, fetchedAt };
 }
 
 export type UnknownObservation =
@@ -259,11 +272,13 @@ export function startManualMerge(model: FileEditorModel): FileEditorModel {
 }
 
 export function discardToBase(model: FileEditorModel): FileEditorModel {
+  const content = model.conflict?.content ?? model.baseDiskContent;
+  const revision = model.conflict?.revision ?? model.baseDiskRevision;
   const clean = createFileEditorModel(
     model.paneId,
     model.path,
-    model.baseDiskContent,
-    model.baseDiskRevision,
+    content,
+    revision,
   );
   return { ...clean, bufferGeneration: model.bufferGeneration + 1 };
 }

@@ -7,6 +7,7 @@ import {
   classifyUnknownRemote,
   conflictFound,
   conflictUnavailable,
+  createRemoteSnapshot,
   createFileEditorModel,
   discardToBase,
   editBuffer,
@@ -20,7 +21,7 @@ import {
   type RemoteSnapshot,
   type SaveSnapshot,
 } from "./model.ts";
-import { revisionOf } from "./buffer.ts";
+import { OperationEpoch } from "./operationEpoch.ts";
 import { RecoveryCoordinator } from "./recovery.ts";
 import {
   notifyDirtyEditorChanged,
@@ -34,9 +35,16 @@ interface InitialEditableFile {
   revision: string;
 }
 
-function remoteFromFile(file: Awaited<ReturnType<typeof getEditableFile>>): RemoteSnapshot {
-  if (revisionOf(file.content) !== file.revision) throw new Error("revision/content mismatch");
-  return { path: file.path, content: file.content, revision: file.revision };
+function remoteFromFile(
+  file: Awaited<ReturnType<typeof getEditableFile>>,
+  fetchedAt = Date.now(),
+): RemoteSnapshot {
+  return createRemoteSnapshot(
+    file.path,
+    file.content,
+    file.revision,
+    fetchedAt,
+  );
 }
 
 export function useFileEditor(paneId: string, initial: InitialEditableFile | null) {
@@ -47,6 +55,8 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
   const savingRef = useRef<Promise<boolean> | null>(null);
   const mergeMineRef = useRef<string | null>(null);
   const mountedRef = useRef(true);
+  const operationEpochRef = useRef<OperationEpoch | null>(null);
+  if (!operationEpochRef.current) operationEpochRef.current = new OperationEpoch();
   const recoveryRef = useRef<RecoveryCoordinator | null>(null);
   if (!recoveryRef.current) recoveryRef.current = new RecoveryCoordinator();
 
@@ -54,6 +64,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      operationEpochRef.current?.invalidate();
       recoveryRef.current?.invalidate();
     };
   }, []);
@@ -67,6 +78,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
 
   useEffect(() => {
     if (!initial) {
+      operationEpochRef.current?.invalidate();
       recoveryRef.current?.invalidate();
       modelRef.current = null;
       setReactModel(null);
@@ -74,6 +86,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     }
     const current = modelRef.current;
     if (current?.path === initial.path) return;
+    operationEpochRef.current?.invalidate();
     recoveryRef.current?.invalidate();
     const next = createFileEditorModel(paneId, initial.path, initial.content, initial.revision);
     modelRef.current = next;
@@ -169,10 +182,14 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     } catch {
       return false;
     }
+    const operationEpoch = operationEpochRef.current!.capture();
     setModel(saving);
     const operation = (async () => {
       try {
         const result = await putFile(snapshot.path, snapshot.content, snapshot.baseDiskRevision);
+        if (!operationEpochRef.current!.isCurrent(operationEpoch)) {
+          return !modelRef.current?.dirty;
+        }
         if (result.ok) {
           try {
             if (result.path !== snapshot.path) throw new Error("save response path mismatch");
@@ -195,6 +212,9 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
           setModel(saveFailed(modelRef.current!, errText(result.error)));
         }
       } catch (error) {
+        if (!operationEpochRef.current!.isCurrent(operationEpoch)) {
+          return !modelRef.current?.dirty;
+        }
         // A thrown transport failure may have lost a response after the Agent
         // committed the rename. It is never treated as an ordinary failed save.
         setModel(saveStateUnknown(modelRef.current!, snapshot, String(error)));
@@ -219,6 +239,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
   const discard = useCallback(() => {
     const current = modelRef.current;
     if (!current) return;
+    operationEpochRef.current?.invalidate();
     recoveryRef.current?.invalidate();
     mergeMineRef.current = null;
     setModel(discardToBase(current));
@@ -249,6 +270,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
   const riskAccept = useCallback(() => {
     const current = modelRef.current;
     if (current) {
+      operationEpochRef.current?.invalidate();
       recoveryRef.current?.invalidate();
       setModel(acceptUnknownRisk(current));
     }
@@ -257,6 +279,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
   const takeRemote = useCallback(() => {
     const current = modelRef.current;
     if (current?.conflict) {
+      operationEpochRef.current?.invalidate();
       recoveryRef.current?.invalidate();
       mergeMineRef.current = null;
       setModel(adoptRemote(current));
@@ -266,6 +289,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
   const manualMerge = useCallback(() => {
     const current = modelRef.current;
     if (current?.conflict) {
+      operationEpochRef.current?.invalidate();
       recoveryRef.current?.invalidate();
       mergeMineRef.current = current.content;
       setModel(startManualMerge(current));
