@@ -100,18 +100,34 @@ if [ "$SEED" = 1 ]; then
       LICENSE|NOTICE|docs/img/*) src="$ROOT/$f" ;;
       *)                         src="$HERE/dist-repo/$f" ;;
     esac
-    local_b64="$(base64 -w0 < "$src")"
+    # base64 and JSON body stay in files — screenshots exceed Linux
+    # MAX_ARG_STRLEN (~128KiB per argv), so neither -f content= nor jq --arg
+    # can carry the payload on the command line.
+    b64f="$(mktemp)"; body="$(mktemp)"
+    base64 -w0 < "$src" > "$b64f"
+    local_b64="$(cat "$b64f")"
     resp="$(gh api "repos/$REPO/contents/$f" \
       --jq '.sha + " " + (.content | gsub("\n"; ""))' 2>/dev/null)" || resp=""
     sha="${resp%% *}"
     cur="${resp#* }"
     if [ -n "$resp" ] && [ "$cur" = "$local_b64" ]; then
+      rm -f "$b64f" "$body"
       echo "    $f: unchanged (skipped)"
       continue
     fi
-    put=(-X PUT "repos/$REPO/contents/$f" -f "message=seed: $f" -f "content=$local_b64")
-    if [ -n "$sha" ]; then put+=(-f "sha=$sha"); fi
-    run gh api "${put[@]}" > /dev/null
+    if [ -n "$sha" ]; then
+      jq -n --arg message "seed: $f" --arg sha "$sha" --rawfile content "$b64f" \
+        '{message: $message, content: $content, sha: $sha}' > "$body"
+    else
+      jq -n --arg message "seed: $f" --rawfile content "$b64f" \
+        '{message: $message, content: $content}' > "$body"
+    fi
+    if [ "$DRY" = 1 ]; then
+      echo "DRY-RUN: gh api -X PUT repos/$REPO/contents/$f --input - (seed body)" >&2
+    else
+      gh api -X PUT "repos/$REPO/contents/$f" --input "$body" > /dev/null
+    fi
+    rm -f "$b64f" "$body"
     echo "    $f: pushed"
   done
 fi
