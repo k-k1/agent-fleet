@@ -244,9 +244,10 @@ func foldSessionUsageWithTurns(m session.Meta, st *usageFoldState, turns []trans
 // **1つのクリティカルセクションで閉じる**。パス全体を1トランザクションにしない理由は2つ:
 //
 //  1. **二重計上の窓を1セッションに縮める。** 行を追記した後 watermark を書く前に落ちると、
-//     その分は次回パスで再追記される（冪等性を担保しているのは watermark だけで、行側に
-//     (ref, idx) の重複排除は無い）。全セッション分をパス末尾でまとめて1回書いていた頃は、
-//     ~20 秒のパスのどこで落ちても、それまでに畳んだ全セッションが丸ごと重複しえた。
+//     その分は次回パスで再追記される（追記先と watermark は別ファイルで、原子的には
+//     書けない）。全セッション分をパス末尾でまとめて1回書いていた頃は、~20 秒のパスの
+//     どこで落ちても、それまでに畳んだ全セッションが丸ごと重複しえた。窓は消せないので、
+//     **残る1セッション分は集計側が (ref, idx) で落とす**（usage_dedup.go）。
 //  2. **ロックを長時間握らない**（上の usageFoldMu の注記）。
 func commitSessionUsageFold(m session.Meta, includeTrailing bool) (int, error) {
 	usageFoldMu.Lock()

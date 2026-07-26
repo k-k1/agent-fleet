@@ -86,10 +86,10 @@ type usageRecord struct {
 	Verb     string `json:"verb,omitempty"` // assistant.chat のサブ次元（translate|summarize）
 	// Sidechain は feature=session のサブ次元（サブエージェント / Workflow の消費）。
 	Sidechain bool `json:"sidechain,omitempty"`
-	// Idx は feature=session の論理ターン通し番号（1始まり）。**冪等性を担保しているのは
-	// これではなく usage/state.json の watermark** で、集計側は Idx を一切読まない
-	// （usageKey にも入らない）。Idx が要るのは事後の監査 — 折り込みが途中で落ちた等で
-	// (ref, idx) が重複した行が残っていないかを、raw を直接読んで確かめられるようにするため。
+	// Idx は feature=session の論理ターン通し番号（1始まり）。書き手側の冪等性は
+	// usage/state.json の watermark が担保するが、**追記と watermark は別ファイルで
+	// 原子的に書けない**（間で落ちると再追記される）ので、集計側は (ref, Idx) を読んで
+	// 重複を落とす（usage_dedup.go）。次元ではないので usageKey には入らない。
 	Idx         int     `json:"idx,omitempty"`
 	In          int     `json:"in"`
 	Out         int     `json:"out"`
