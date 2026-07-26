@@ -1,0 +1,183 @@
+// Stub Control Plane for the README screenshot harness.
+//
+// Serves the real console bundle (console/dist) plus just enough of the CP's API
+// surface, answered from fixtures.mjs, for the Console to render a populated fleet
+// with no backend, no Docker and no real data. Unknown /api paths answer {} and are
+// logged, so a missing endpoint shows up as a log line instead of a hung view.
+//
+//   node console/scripts/shots/server.mjs [--port 8765] [--locale ja]
+import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
+import { fileURLToPath } from "node:url";
+import * as fx from "./fixtures.mjs";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const DIST = path.resolve(HERE, "../../dist");
+
+const argv = process.argv.slice(2);
+const arg = (name, dflt) => {
+  const i = argv.indexOf(`--${name}`);
+  return i >= 0 && argv[i + 1] ? argv[i + 1] : dflt;
+};
+const PORT = Number(arg("port", 8765));
+const LOCALE = arg("locale", "ja");
+
+const MIME = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".webp": "image/webp",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+  ".ico": "image/x-icon",
+};
+
+// ---- API surface ------------------------------------------------------------------
+// Each entry is (query) => JSON body. Keys are exact paths; `re` entries match by
+// regexp and receive the captured groups.
+const exact = {
+  "/api/version": () => ({ version: "0.3.0", commit: "demo" }),
+  "/api/whoami": () => ({ ...fx.USER, scheduler_enabled: true, role: "member" }),
+  "/api/tenants": () => ({ tenants: [{ slug: "demo", name: "Demo Team", role: "member" }], super_admin: false }),
+  "/api/workspace": () => ({ state: "running", bootPhase: "" }),
+  "/api/sessions": () => ({ sessions: fx.sessions(LOCALE) }),
+  "/api/repos": () => ({ repos: fx.repos(LOCALE) }),
+  // Four connected agents: at five the launch dialog's per-card sub-label starts to
+  // clip (real behavior — see the note in this directory's README), which reads as a
+  // rendering bug in a screenshot.
+  "/api/connections": () => ({
+    claude: { connected: true },
+    codex: { connected: true },
+    cursor: { connected: true },
+    copilot: { connected: false },
+    kiro: { connected: false },
+    agy: { connected: false },
+    opencode: { connected: true },
+    github: { connected: true },
+    bitbucket: { connected: true },
+  }),
+  "/api/notifications-shaped": () => ({ items: [], maxSeq: 0, unseenCount: 0, sourceState: "ready" }),
+  "/api/notifications": () => ({ items: [], maxSeq: 0, unseenCount: 0, sourceState: "ready" }),
+  "/api/chat/conversations": () => ({ conversations: fx.conversations(LOCALE) }),
+  "/api/assistants": () => fx.assistants(LOCALE),
+  "/api/memos": () => fx.memos(LOCALE),
+  "/api/memo-categories": () => fx.memoCategories(LOCALE),
+  "/api/schedules": () => fx.schedules(LOCALE),
+  "/api/env/ui-prefs": () => ({}),
+  "/api/update/status": () => ({ current: "0.3.0", latest: "0.3.0" }),
+  "/api/usage": () => ({ agents: fx.usage(LOCALE) }),
+  "/api/stats": () => fx.stats(),
+  "/api/ssm/hosts": () => ({ hosts: [] }),
+  "/api/ssm/profiles": () => ({ profiles: [] }),
+  "/api/browser/pages": () => ({ pages: [] }),
+  "/api/tts/speakers": () => ({ speakers: [] }),
+  "/api/internal-git/repos": () => ({ repos: [] }),
+  "/api/pat": () => ({}),
+  "/api/tts/dict": () => ({ entries: [] }),
+  "/api/workspace/stats": () => fx.stats(),
+};
+
+const re = [
+  [/^\/api\/sessions\/([^/]+)\/messages$/, (m) => fx.messages(LOCALE, decodeURIComponent(m[1]))],
+  [/^\/api\/repos\/([^/]+)\/graph$/, (m) => fx.graph(LOCALE, decodeURIComponent(m[1]))],
+  [/^\/api\/repos\/([^/]+)\/status$/, (m) => fx.scmStatus(LOCALE, decodeURIComponent(m[1]))],
+  [/^\/api\/repos\/([^/]+)\/changes$/, (m) => fx.changes(LOCALE, decodeURIComponent(m[1]))],
+  [/^\/api\/repos\/([^/]+)\/submodules$/, () => ({ submodules: [] })],
+  [/^\/api\/repos\/([^/]+)\/identity$/, () => ({ name: "Demo User", email: "demo@example.com" })],
+  [/^\/api\/repos\/([^/]+)\/show$/, (m, q) => fx.show(LOCALE, q.get("sha") || "")],
+  [/^\/api\/repos\/([^/]+)\/diff$/, (m, q) => fx.diff(LOCALE, q.get("path") || "")],
+  [/^\/api\/fs\/list$/, (m, q) => fx.fsList(LOCALE, q.get("path") || "")],
+  [/^\/api\/fs\/file$/, (m, q) => fx.fsFile(LOCALE, q.get("path") || "")],
+];
+
+const seenUnknown = new Set();
+
+function apiBody(pathname, query) {
+  if (exact[pathname]) return exact[pathname](query);
+  for (const [rx, fn] of re) {
+    const m = rx.exec(pathname);
+    if (m) return fn(m, query);
+  }
+  if (!seenUnknown.has(pathname)) {
+    seenUnknown.add(pathname);
+    console.log("[stub] unhandled:", pathname);
+  }
+  return {};
+}
+
+// ---- HTTP -------------------------------------------------------------------------
+const server = http.createServer((req, res) => {
+  const url = new URL(req.url, "http://localhost");
+  const p = url.pathname;
+
+  if (p === "/api/events") {
+    // Not implemented — a 404 makes the Console fall back to its REST pollers,
+    // which is the path this harness feeds.
+    res.writeHead(404).end();
+    return;
+  }
+  if (p.startsWith("/api/")) {
+    const body = JSON.stringify(apiBody(p, url.searchParams));
+    res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+    res.end(body);
+    return;
+  }
+
+  // Static: the real bundle, with SPA fallback to index.html.
+  let file = path.join(DIST, p === "/" ? "index.html" : decodeURIComponent(p));
+  if (!file.startsWith(DIST)) return void res.writeHead(403).end();
+  if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(DIST, "index.html");
+  const buf = fs.readFileSync(file);
+  res.writeHead(200, { "content-type": MIME[path.extname(file)] || "application/octet-stream", "cache-control": "no-store" });
+  res.end(buf);
+});
+
+// ---- terminal WebSocket -----------------------------------------------------------
+// Minimal server-side WebSocket: handshake + unmasked binary frames. The Console's
+// xterm attach writes whatever bytes arrive, so replaying a canned screen renders
+// exactly like a live PTY. Client frames (input/resize/ping) are ignored.
+function wsFrame(payload, opcode = 0x2) {
+  const len = payload.length;
+  let header;
+  if (len < 126) header = Buffer.from([0x80 | opcode, len]);
+  else if (len < 65536) {
+    header = Buffer.alloc(4);
+    header[0] = 0x80 | opcode;
+    header[1] = 126;
+    header.writeUInt16BE(len, 2);
+  } else {
+    header = Buffer.alloc(10);
+    header[0] = 0x80 | opcode;
+    header[1] = 127;
+    header.writeBigUInt64BE(BigInt(len), 2);
+  }
+  return Buffer.concat([header, payload]);
+}
+
+server.on("upgrade", (req, socket) => {
+  const url = new URL(req.url, "http://localhost");
+  if (!url.pathname.endsWith("/ws/terminal")) return void socket.destroy();
+  const key = req.headers["sec-websocket-key"] || "";
+  const accept = crypto
+    .createHash("sha1")
+    .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+    .digest("base64");
+  socket.write(
+    "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+      `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+  );
+  socket.on("error", () => {});
+  socket.on("data", () => {}); // drain input/resize/ping frames
+  const screen = Buffer.from("\x1b[2J\x1b[H" + fx.ptyScreen(LOCALE), "utf8");
+  setTimeout(() => socket.writable && socket.write(wsFrame(screen)), 150);
+});
+
+server.listen(PORT, "127.0.0.1", () => {
+  console.log(`[stub] console+api on http://127.0.0.1:${PORT} (locale=${LOCALE}, dist=${DIST})`);
+});
