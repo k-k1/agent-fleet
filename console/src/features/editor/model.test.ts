@@ -5,6 +5,7 @@ import {
   classifyUnknownRemote,
   conflictFound,
   createFileEditorModel,
+  discardToBase,
   editBuffer,
   prepareUnknownResave,
   saveStateUnknown,
@@ -16,7 +17,7 @@ import { revisionOf } from "./buffer.ts";
 const initial = () => createFileEditorModel("p1", "repos/a.txt", "base\n", revisionOf("base\n"));
 
 describe("file editor save model", () => {
-  it("cleans only when generation and revision still match the sent snapshot", () => {
+  it("cleans when generation or revision still matches the sent snapshot", () => {
     const dirty = editBuffer(initial(), "first\n");
     const [saving, snapshot] = beginSave(dirty);
     expect(saveSucceeded(saving, snapshot, snapshot.bufferRevision).dirty).toBe(false);
@@ -26,6 +27,16 @@ describe("file editor save model", () => {
     expect(completed.dirty).toBe(true);
     expect(completed.content).toBe("second\n");
     expect(completed.baseDiskRevision).toBe(snapshot.bufferRevision);
+
+    const undoneToSnapshot = editBuffer(typedDuringSave, snapshot.content);
+    const completedAfterUndo = saveSucceeded(
+      undoneToSnapshot,
+      snapshot,
+      snapshot.bufferRevision,
+    );
+    expect(completedAfterUndo.bufferGeneration).not.toBe(snapshot.bufferGeneration);
+    expect(completedAfterUndo.bufferRevision).toBe(snapshot.bufferRevision);
+    expect(completedAfterUndo.dirty).toBe(false);
   });
 
   it("classifies unknown saves without auto-cleaning", () => {
@@ -67,6 +78,9 @@ describe("file editor save model", () => {
     const accepted = acceptUnknownRisk(later);
     expect(accepted.dirty).toBe(true);
     expect(accepted.baseDiskRevision).toBe(snapshot.bufferRevision);
+
+    const undoneToSnapshot = editBuffer(later, snapshot.content);
+    expect(acceptUnknownRisk(undoneToSnapshot).dirty).toBe(false);
   });
 
   it("explicit re-save uses the observed revision as CAS base", () => {
@@ -107,5 +121,19 @@ describe("file editor save model", () => {
     expect(later.phase).toBe("save_state_unknown");
     expect(later.saveSnapshot).toEqual(snapshot);
     expect(() => beginSave(later)).toThrow("save not available");
+  });
+
+  it("discards the buffer content back to the latest saved base", () => {
+    const dirty = editBuffer(initial(), "saved\n");
+    const [saving, snapshot] = beginSave(dirty);
+    const saved = saveSucceeded(saving, snapshot, snapshot.bufferRevision);
+    const later = editBuffer(saved, "discard me\n");
+
+    const discarded = discardToBase(later);
+    expect(discarded.content).toBe("saved\n");
+    expect(discarded.bufferRevision).toBe(snapshot.bufferRevision);
+    expect(discarded.baseDiskContent).toBe("saved\n");
+    expect(discarded.dirty).toBe(false);
+    expect(discarded.phase).toBe("clean");
   });
 });

@@ -8,6 +8,7 @@ import {
   conflictFound,
   conflictUnavailable,
   createFileEditorModel,
+  discardToBase,
   editBuffer,
   observeUnknown,
   prepareUnknownResave,
@@ -20,6 +21,7 @@ import {
   type SaveSnapshot,
 } from "./model.ts";
 import { revisionOf } from "./buffer.ts";
+import { RecoveryCoordinator } from "./recovery.ts";
 import {
   notifyDirtyEditorChanged,
   registerDirtyEditor,
@@ -45,11 +47,14 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
   const savingRef = useRef<Promise<boolean> | null>(null);
   const mergeMineRef = useRef<string | null>(null);
   const mountedRef = useRef(true);
+  const recoveryRef = useRef<RecoveryCoordinator | null>(null);
+  if (!recoveryRef.current) recoveryRef.current = new RecoveryCoordinator();
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      recoveryRef.current?.invalidate();
     };
   }, []);
 
@@ -62,40 +67,95 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
 
   useEffect(() => {
     if (!initial) {
+      recoveryRef.current?.invalidate();
       modelRef.current = null;
       setReactModel(null);
       return;
     }
     const current = modelRef.current;
     if (current?.path === initial.path) return;
+    recoveryRef.current?.invalidate();
     const next = createFileEditorModel(paneId, initial.path, initial.content, initial.revision);
     modelRef.current = next;
     setReactModel(next);
   }, [initial, paneId]);
 
-  const recoverConflict = useCallback(async () => {
+  const recoverConflict = useCallback((): Promise<void> => {
     const current = modelRef.current;
-    if (!current) return;
-    try {
-      const remote = remoteFromFile(await getEditableFile(current.path));
-      if (remote.path !== current.path) throw new Error("path mismatch");
-      setModel(conflictFound(modelRef.current!, remote));
-    } catch (error) {
-      setModel(conflictUnavailable(modelRef.current!, String(error)));
-    }
+    if (!current) return Promise.resolve();
+    const path = current.path;
+    const baseDiskRevision = current.baseDiskRevision;
+    return recoveryRef.current!.run(
+      `conflict:${path}:${baseDiskRevision}`,
+      async () => {
+        try {
+          const remote = remoteFromFile(await getEditableFile(path));
+          if (remote.path !== path) throw new Error("path mismatch");
+          return { ok: true as const, remote };
+        } catch (error) {
+          return { ok: false as const, message: String(error) };
+        }
+      },
+      (result) => {
+        const latest = modelRef.current;
+        if (
+          !latest ||
+          latest.path !== path ||
+          latest.baseDiskRevision !== baseDiskRevision ||
+          !["saving", "conflict", "conflict_remote_unavailable"].includes(latest.phase)
+        ) return;
+        setModel(
+          result.ok
+            ? conflictFound(latest, result.remote)
+            : conflictUnavailable(latest, result.message),
+        );
+      },
+    );
   }, [setModel]);
 
-  const recoverUnknown = useCallback(async (snapshot?: SaveSnapshot) => {
+  const recoverUnknown = useCallback((snapshot?: SaveSnapshot): Promise<void> => {
     const current = modelRef.current;
     const sent = snapshot || current?.saveSnapshot;
-    if (!current || !sent) return;
-    try {
-      const remote = remoteFromFile(await getEditableFile(current.path));
-      if (remote.path !== current.path) throw new Error("path mismatch");
-      setModel(observeUnknown(modelRef.current!, classifyUnknownRemote(sent, remote)));
-    } catch (error) {
-      setModel(observeUnknown(modelRef.current!, { kind: "unavailable", message: String(error) }));
-    }
+    if (!current || !sent) return Promise.resolve();
+    const path = current.path;
+    const snapshotKey = [
+      sent.bufferGeneration,
+      sent.bufferRevision,
+      sent.baseDiskRevision,
+    ].join(":");
+    return recoveryRef.current!.run(
+      `unknown:${path}:${snapshotKey}`,
+      async () => {
+        try {
+          const remote = remoteFromFile(await getEditableFile(path));
+          if (remote.path !== path) throw new Error("path mismatch");
+          return { ok: true as const, remote };
+        } catch (error) {
+          return { ok: false as const, message: String(error) };
+        }
+      },
+      (result) => {
+        const latest = modelRef.current;
+        const latestSnapshot = latest?.saveSnapshot;
+        if (
+          !latest ||
+          latest.path !== path ||
+          !latestSnapshot ||
+          latestSnapshot.path !== sent.path ||
+          latestSnapshot.bufferGeneration !== sent.bufferGeneration ||
+          latestSnapshot.bufferRevision !== sent.bufferRevision ||
+          latestSnapshot.baseDiskRevision !== sent.baseDiskRevision
+        ) return;
+        setModel(
+          observeUnknown(
+            latest,
+            result.ok
+              ? classifyUnknownRemote(sent, result.remote)
+              : { kind: "unavailable", message: result.message },
+          ),
+        );
+      },
+    );
   }, [setModel]);
 
   const save = useCallback(async (): Promise<boolean> => {
@@ -159,7 +219,9 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
   const discard = useCallback(() => {
     const current = modelRef.current;
     if (!current) return;
-    setModel({ ...current, dirty: false, phase: "clean", saveSnapshot: null, conflict: null });
+    recoveryRef.current?.invalidate();
+    mergeMineRef.current = null;
+    setModel(discardToBase(current));
   }, [setModel]);
 
   useEffect(() => {
@@ -186,12 +248,16 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
 
   const riskAccept = useCallback(() => {
     const current = modelRef.current;
-    if (current) setModel(acceptUnknownRisk(current));
+    if (current) {
+      recoveryRef.current?.invalidate();
+      setModel(acceptUnknownRisk(current));
+    }
   }, [setModel]);
 
   const takeRemote = useCallback(() => {
     const current = modelRef.current;
     if (current?.conflict) {
+      recoveryRef.current?.invalidate();
       mergeMineRef.current = null;
       setModel(adoptRemote(current));
     }
@@ -200,6 +266,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
   const manualMerge = useCallback(() => {
     const current = modelRef.current;
     if (current?.conflict) {
+      recoveryRef.current?.invalidate();
       mergeMineRef.current = current.content;
       setModel(startManualMerge(current));
     }

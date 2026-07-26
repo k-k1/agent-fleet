@@ -37,6 +37,7 @@ export interface FileEditorModel {
   content: string;
   bufferGeneration: number;
   bufferRevision: string;
+  baseDiskContent: string;
   baseDiskRevision: string;
   dirty: boolean;
   phase: EditorPhase;
@@ -63,6 +64,7 @@ export function createFileEditorModel(
     content,
     bufferGeneration: 0,
     bufferRevision: validRevision,
+    baseDiskContent: content,
     baseDiskRevision: validRevision,
     dirty: false,
     phase: "clean",
@@ -119,10 +121,11 @@ export function saveSucceeded(
   const revision = requireRevision(responseRevision);
   if (revision !== snapshot.bufferRevision) throw new Error("save response revision mismatch");
   const unchanged =
-    model.bufferGeneration === snapshot.bufferGeneration &&
+    model.bufferGeneration === snapshot.bufferGeneration ||
     model.bufferRevision === snapshot.bufferRevision;
   return {
     ...model,
+    baseDiskContent: snapshot.content,
     baseDiskRevision: revision,
     dirty: !unchanged,
     phase: unchanged ? "saved" : "dirty",
@@ -202,10 +205,11 @@ export function acceptUnknownRisk(model: FileEditorModel): FileEditorModel {
   const snapshot = model.saveSnapshot;
   if (!snapshot || observation?.kind !== "sent_live") throw new Error("risk acceptance unavailable");
   const unchanged =
-    model.bufferGeneration === snapshot.bufferGeneration &&
+    model.bufferGeneration === snapshot.bufferGeneration ||
     model.bufferRevision === snapshot.bufferRevision;
   return {
     ...model,
+    baseDiskContent: observation.remote.content,
     baseDiskRevision: observation.remote.revision,
     dirty: !unchanged,
     phase: unchanged ? "clean_risk_accepted" : "dirty",
@@ -223,6 +227,7 @@ export function prepareUnknownResave(model: FileEditorModel): FileEditorModel {
   }
   return {
     ...model,
+    baseDiskContent: observation.remote.content,
     baseDiskRevision: observation.remote.revision,
     phase: "dirty",
     saveSnapshot: null,
@@ -239,6 +244,7 @@ export function adoptRemote(model: FileEditorModel, dirty = false): FileEditorMo
     content: model.conflict.content,
     bufferGeneration: model.bufferGeneration + 1,
     bufferRevision: model.conflict.revision,
+    baseDiskContent: model.conflict.content,
     baseDiskRevision: model.conflict.revision,
     dirty,
     phase: dirty ? "dirty" : "clean",
@@ -252,7 +258,12 @@ export function startManualMerge(model: FileEditorModel): FileEditorModel {
   return adoptRemote(model, true);
 }
 
-export function discardToBase(model: FileEditorModel, content: string, revision: string): FileEditorModel {
-  const clean = createFileEditorModel(model.paneId, model.path, content, revision);
+export function discardToBase(model: FileEditorModel): FileEditorModel {
+  const clean = createFileEditorModel(
+    model.paneId,
+    model.path,
+    model.baseDiskContent,
+    model.baseDiskRevision,
+  );
   return { ...clean, bufferGeneration: model.bufferGeneration + 1 };
 }

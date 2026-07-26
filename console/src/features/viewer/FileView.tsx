@@ -246,6 +246,13 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
     queueMicrotask(() => editorFocusRef.current?.());
   }, [canEdit, mode]);
 
+  // A rejected transaction gets an immediate validation announcement. Once a
+  // valid edit or state transition follows, return the live region to the normal
+  // dirty/saving/saved/recovery status instead of letting the old error mask it.
+  useEffect(() => {
+    setEditorNotice("");
+  }, [editor.model?.bufferGeneration, editor.model?.phase]);
+
   const showSlides = isMarp && mdMode === "slides";
   const showPreview = isMarkdown && mdMode === "preview";
 
@@ -454,7 +461,10 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
                 phase === "conflict_remote_unavailable" ||
                 phase === "save_state_unknown"
               }
-              onClick={() => void editor.save()}
+              onClick={() => {
+                setEditorNotice("");
+                void editor.save();
+              }}
               title={tr("editor.save_tip")}
             >
               <Icon name={phase === "saving" ? "loading" : "save"} spin={phase === "saving"} /> {tr("editor.save")}
@@ -517,8 +527,14 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
             path={editor.model.path}
             content={editor.model.content}
             wrap={wrapOn}
-            onChange={editor.edit}
-            onSave={() => void editor.save()}
+            onChange={(content) => {
+              setEditorNotice("");
+              editor.edit(content);
+            }}
+            onSave={() => {
+              setEditorNotice("");
+              void editor.save();
+            }}
             onValidationError={onEditorValidationError}
             onReady={(focus) => {
               editorFocusRef.current = focus;
@@ -571,16 +587,36 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
           open={resolutionOpen}
           onOpen={() => setResolutionOpen(true)}
           onCancel={() => setResolutionOpen(false)}
-          onRetryConflict={() => void editor.recoverConflict()}
-          onRetryUnknown={() => void editor.recoverUnknown()}
-          onResave={() => void editor.resaveUnknown()}
-          onRiskAccept={editor.riskAccept}
-          onTakeRemote={editor.takeRemote}
-          onDiscardMine={editor.discardRemote}
-          onManualMerge={editor.manualMerge}
+          onRetryConflict={() => {
+            setEditorNotice("");
+            void editor.recoverConflict();
+          }}
+          onRetryUnknown={() => {
+            setEditorNotice("");
+            void editor.recoverUnknown();
+          }}
+          onResave={() => {
+            setEditorNotice("");
+            void editor.resaveUnknown();
+          }}
+          onRiskAccept={() => {
+            setEditorNotice("");
+            editor.riskAccept();
+          }}
+          onTakeRemote={() => {
+            setEditorNotice("");
+            editor.takeRemote();
+          }}
+          onDiscardMine={() => {
+            setEditorNotice("");
+            editor.discardRemote();
+          }}
+          onManualMerge={() => {
+            setEditorNotice("");
+            editor.manualMerge();
+          }}
           onCopyMine={() => void navigator.clipboard.writeText(editor.model!.content)}
           onClose={() => {
-            editor.discard();
             if (paneId) useLayoutStore.getState().closePane(paneId);
           }}
         />
