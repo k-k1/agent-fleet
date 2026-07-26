@@ -112,3 +112,11 @@ Console の File ペインは現在、Workspace のファイルを読み取り�
 - dirty バッファはタブのメモリにしか存在しないため、ブラウザ再起動後の復元機能は提供しない。
 - 同一uidのnamespace mutatorやhardlinkによるinode別名は非協調writer脅威モデル外であり、fd境界は
   request-controlled pathとsymlink解決の保護範囲として説明する。
+- **既知の制約:** クライアントがPUTをタイムアウトで打ち切った後の復旧GETは、Agent内の
+  path mutex共有とmutex取得直後のcontext検査でAgentプロセス内の競合を閉じている。ただし
+  PUTと復旧GETは別々のCP→Agent HTTPリクエストであり、CPはキャンセルの伝播順序を保証しない
+  ため、「mutex取得前に停止していたPUTへcancelが届くより先に復旧GETが旧baseを読み、その後
+  再開したPUTが検査を通過してrenameする」極めて狭い窓が残る（docs/44 §3.2）。発生には
+  goroutineスケジューリングとネットワークタイミングの重なりが必要で確率は極めて低く、v1では
+  受け入れる。解消はCP側でのpath単位進行中PUT追跡、または保存operation IDによるGETの
+  待ち合わせを要する将来課題とする。

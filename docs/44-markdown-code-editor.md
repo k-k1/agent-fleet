@@ -342,6 +342,17 @@ Content-Typeは `application/json` とする。サーバーは互換性のため
   mutex取得前のキャンセル→書き込まない（この検査で中止）、取得後のキャンセル→rename/エラー
   確定まで完走し後続GETがその結果を待つ。書込み途中でのキャンセル検査は行わない。499応答は
   離脱済みクライアントには届かないのが通常で、目的はdisk無変更の保証である。
+- **既知の限界（v1で対応を見送る）:** 上記のmutex＋context検査でAgentプロセス内の競合は閉じて
+  いるが、CPはブラウザのrequest contextをそのままAgentへ中継し、PUTと復旧GETは別々の
+  CP→Agent HTTPリクエストであるため、キャンセルの**伝播順序**は保証されない。次の極めて狭い
+  窓が残る: (1) PUT goroutineがAgent側mutex取得前で停止している間にクライアントの15秒
+  タイムアウトがabortし復旧GETを開始する。(2) 復旧GETが旧PUTへのcancel伝播より先にAgentへ
+  到着し、mutexを取って旧baseを読む。(3) その後PUT goroutineが再開し、Agent側でまだcancelが
+  観測されていないcontextのまま検査を通過してrenameし、GETが返した旧baseを無効化する。発生には
+  goroutineスケジューリング遅延とネットワークタイミングの両方が重なる必要があり、実運用上の
+  発生確率は極めて低いと判断してv1では対応しない。解消にはCP側アーキテクチャの変更が必要で、
+  path単位の進行中PUTをCPが追跡して対象PUTの確定までGETを遅延させるか、保存operation IDを
+  導入してGETがPUT確定を待ち合わせる仕組みが将来の改善候補である。
 
 ### 3.3 PUT `/fs/file`
 
