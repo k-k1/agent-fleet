@@ -34,6 +34,12 @@ type lockLedger struct {
 // must not lose one another's entry).
 var lockMu sync.Mutex
 
+// sessionLockMu covers the handful of metadata updates that may race a lock
+// toggle. In particular GET /sessions stamps StoppedAt as a side effect; without
+// this mutex, a list request that read the old meta could write it back just
+// after POST /sessions/{name}/lock and silently clear Locked again.
+var sessionLockMu sync.Mutex
+
 func lockLedgerPath() string {
 	return filepath.Join(homeDir(), ".config", "agent-fleet", "locks.json")
 }
@@ -126,6 +132,8 @@ func handleSessionLock(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
+	sessionLockMu.Lock()
+	defer sessionLockMu.Unlock()
 	m, ok := session.ReadMeta(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
@@ -134,6 +142,20 @@ func handleSessionLock(w http.ResponseWriter, r *http.Request) {
 	m.Locked = req.Locked
 	session.WriteMeta(m)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"name": name, "locked": m.Locked})
+}
+
+// writeSessionMetaKeepingLock writes a lifecycle-only update (currently the
+// StoppedAt bookkeeping from GET /sessions) without allowing an older snapshot
+// to overwrite the user's newer lock choice. Callers must use this rather than
+// session.WriteMeta when they started from a listed meta.
+func writeSessionMetaKeepingLock(m session.Meta) session.Meta {
+	sessionLockMu.Lock()
+	defer sessionLockMu.Unlock()
+	if current, ok := session.ReadMeta(m.Name); ok {
+		m.Locked = current.Locked
+	}
+	session.WriteMeta(m)
+	return m
 }
 
 // handleRepoLock (POST /repos/{name}/lock) pins/unpins a working copy (a clone or
