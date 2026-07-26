@@ -311,7 +311,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     id: "kiro",
     icon: "compass", // codicon — Kiro の spec/guide 志向（kiro_guide モード）に寄せた中立形。既存8種と非衝突
     label: "Kiro",
-    displayName: "Kiro CLI",
+  displayName: "Kiro",
     assistantName: "Kiro",
     short: "ki",
     cssClass: "kiro",

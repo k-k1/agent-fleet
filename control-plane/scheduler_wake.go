@@ -100,6 +100,11 @@ func (f *wakeFirer) fire(ctx context.Context, sch Schedule, slot time.Time) (str
 	if err := f.awaitAgentReady(ctx, res.rt); err != nil {
 		return "", "", fmt.Errorf("agent not ready: %w", err)
 	}
+	// session_mode=assistant (docs/38 アシスタント発火): run one assistant-chat turn
+	// instead of driving a session.
+	if sch.SessionMode == "assistant" {
+		return f.fireAssistant(ctx, res, sch, slot)
+	}
 	// session_mode=reuse (P6): send into the long-lived session instead of creating one.
 	if sch.SessionMode == "reuse" {
 		return f.fireReuse(ctx, res, sch, slot)
@@ -219,6 +224,17 @@ func injectDriver(kind string) string {
 	}
 }
 
+// scheduleSource is the injection-origin tag stamped on every prompt this scheduler
+// delivers (create initial_prompt and reuse /input), so the mirror can badge the turn
+// as schedule-driven — and distinguish a run-now（手動発火）from a timed fire. The
+// Agent whitelists these values (session_injections.go injectionSource).
+func scheduleSource(sch Schedule) string {
+	if sch.ManualFirePending {
+		return "schedule-manual"
+	}
+	return "schedule"
+}
+
 // scheduleIdempotencyKey derives a deterministic create key from (schedule, slot) so a
 // CP restart that re-fires the same slot collapses onto the first session via the
 // Agent's create_session ledger (★4). The slot (not now) is the dedupe axis.
@@ -237,6 +253,7 @@ func buildInjectBody(sch Schedule, slot time.Time) []byte {
 		"driver":          injectDriver(kind),
 		"report_to":       sch.OwnerConv,
 		"idempotency_key": scheduleIdempotencyKey(sch.ID, slot),
+		"source":          scheduleSource(sch), // mirror badge: 定期/手動発火 (docs/38)
 	}
 	b, _ := json.Marshal(body)
 	return b

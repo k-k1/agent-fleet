@@ -145,7 +145,7 @@ var mcpStdioTools = []map[string]any{
 	},
 	{
 		"name":        "get_session_status",
-		"description": "指定セッションのライブ状態（working/idle/入力待ち等）を返す。特定セッションが動作中か聞かれた時に呼ぶ。",
+		"description": "指定セッションのライブ状態（working/idle/question/plan 等）を返す。保留中の質問と選択肢は questions、承認待ちのプラン本文は plan として付く（claude）。特定セッションが動作中か聞かれた時や、質問への回答（answer_session_question）・プランへの応答（respond_session_plan）の前に呼ぶ。",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -314,6 +314,7 @@ var mcpStdioWriteTools = []map[string]any{
 			"登録すると解釈した spec と next_run_local（次回発火の具体日時）が返るので、必ず利用者に読み上げて確認する（例『毎日 09:00 JST に実行、次回は 7/23 09:00 でよいですか?』）。元の自然言語表現は spec_label に入れておくと一覧で人に見せられる。" +
 			"prompt には固定メタ変数 {{date}} {{time}} {{datetime}} {{tz}} {{schedule_id}} {{schedule_label}} {{last_run}} を埋め込め、発火時に置換される（未定義の変数はそのまま残る）。" +
 			"session_mode=reuse を指定すると、毎回新規ではなく同一の長寿命セッションへ prompt を送り会話文脈を継続できる（既定は new）。reuse_target に既存セッション名を渡せばそこへ送り、省略すればスケジュール専用セッションを自動作成し rotation（ローテーション設定）で作り直す。reuse×自動作成では kind/model/repo は最初の作成時のみ使われ、以後は既存セッション側が正。" +
+			"session_mode=assistant を指定すると、セッションではなく【アシスタント会話】に1ターン投入する（アシスタント発火）。reuse_target に会話の slug（a始まり7字・list_schedules の履歴や Console で確認可）を渡せばその会話へ、省略すればこのオペレーター会話（owner_conv）に投入される＝「毎朝オペレーターに◯◯させる」が追加設定なしで成立。repo/agent_kind/model は無視（会話側の設定が正）。実行中の会話への発火は skipped_overlap になる。" +
 			"注意: 停止中WSを無人で起こして agent を回す強力な操作なので、登録前に必ず利用者へ内容（何時・何を・どのリポジトリ、reuse なら継続 or 新規かも）を確認すること。reuse は過去の会話が文脈に残り続ける点も踏まえて確認する。" +
 			"応答に warning フィールドがあれば（このデプロイでスケジューラが無効等）、その内容を必ず利用者に伝えること。",
 		"inputSchema": map[string]any{
@@ -328,8 +329,8 @@ var mcpStdioWriteTools = []map[string]any{
 				"model":                 map[string]any{"type": "string", "description": "モデル上書き（任意）"},
 				"repo":                  map[string]any{"type": "string", "description": "作業ディレクトリ（任意。list_repos の path）"},
 				"wake_policy":           map[string]any{"type": "string", "description": "停止中WSの扱い（任意。wake 既定=起こす | skip=見送り | catch_up）"},
-				"session_mode":          map[string]any{"type": "string", "description": "new（既定・毎回新規セッション）| reuse（同一の長寿命セッションへ毎回送信し文脈を継続）"},
-				"reuse_target":          map[string]any{"type": "string", "description": "reuse 時のみ。送信先の既存セッション名（list_my_sessions の name）。省略でスケジュール専用セッションを自動作成し rotation 対象にする"},
+				"session_mode":          map[string]any{"type": "string", "description": "new（既定・毎回新規セッション）| reuse（同一の長寿命セッションへ毎回送信し文脈を継続）| assistant（アシスタント会話へ1ターン投入）"},
+				"reuse_target":          map[string]any{"type": "string", "description": "reuse 時: 送信先の既存セッション名（list_my_sessions の name）。省略でスケジュール専用セッションを自動作成し rotation 対象にする。assistant 時: 対象会話の slug（a始まり7字）。省略でこのオペレーター会話に投入"},
 				"rotation":              map[string]any{"type": "string", "description": "reuse×自動作成時のローテーション設定（JSON文字列。例 {\"every_runs\":20,\"after\":\"7d\",\"calendar\":\"weekly\"}）。every_runs=N発火ごと / after=経過(7d,12h,30m 等) / calendar=daily|weekly|monthly のどれか成立で新品に作り直す。weekly は週境界=「月曜は新セッション」。省略で作り直さない"},
 				"missing_target_policy": map[string]any{"type": "string", "description": "reuse×reuse_target 時のみ。対象セッションが消えていた場合（recreate 既定=作り直す | fail=失敗通知で止める）"},
 				"overlap_policy":        map[string]any{"type": "string", "description": "reuse 時のみ。前回実行が走行中に次が来た場合（skip 既定=見送り | queue=キュー投入 | restart=中断して送る）"},
@@ -353,8 +354,8 @@ var mcpStdioWriteTools = []map[string]any{
 				"model":                 map[string]any{"type": "string", "description": "新しいモデル（任意）"},
 				"repo":                  map[string]any{"type": "string", "description": "新しい作業ディレクトリ（任意）"},
 				"wake_policy":           map[string]any{"type": "string", "description": "新しい wake_policy（任意）"},
-				"session_mode":          map[string]any{"type": "string", "description": "new | reuse（任意）"},
-				"reuse_target":          map[string]any{"type": "string", "description": "reuse の送信先セッション名（任意・空で自動作成に戻す）"},
+				"session_mode":          map[string]any{"type": "string", "description": "new | reuse | assistant（任意）"},
+				"reuse_target":          map[string]any{"type": "string", "description": "reuse の送信先セッション名 / assistant の会話 slug（任意・空で自動作成／オペレーター会話に戻す）"},
 				"rotation":              map[string]any{"type": "string", "description": "ローテーション設定 JSON（任意・空で無効化）。create_schedule と同じ形式"},
 				"missing_target_policy": map[string]any{"type": "string", "description": "recreate | fail（任意）"},
 				"overlap_policy":        map[string]any{"type": "string", "description": "skip | queue | restart（任意・reuse 時）"},
@@ -408,6 +409,31 @@ var mcpStdioWriteTools = []map[string]any{
 				"prompt": map[string]any{"type": "string", "description": "送信するプロンプト本文"},
 			},
 			"required": []string{"name", "prompt"},
+		},
+	},
+	{
+		"name":        "answer_session_question",
+		"description": "セッションが提示している質問（選択肢フォーム）に回答する。質問と選択肢は get_session_status の questions（または get_session_output）で確認し、原則として選択肢を利用者に提示して意向を確認してから回答すること（質問は本来利用者に向けられたもの。利用者が事前に判断を任せている場合のみ自分で選んでよい）。choices は質問順に 1-based の選択肢番号を1つずつ並べた配列（質問が1つなら要素1つ）。自由入力（Other）や複数選択の質問には使えない（Console から回答してもらう）。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name":    map[string]any{"type": "string", "description": "回答先セッション名（例: s7）"},
+				"choices": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "質問順の選択肢番号（1-based）。例: 質問1で2番を選ぶなら [2]"},
+			},
+			"required": []string{"name", "choices"},
+		},
+	},
+	{
+		"name":        "respond_session_plan",
+		"description": "セッションが承認待ちで提示しているプラン（実行計画）に応答する（claude セッションのみ）。プラン本文は get_session_status の plan で確認する。decision=approve は承認して実行を開始させる。decision=reject は承認ダイアログを閉じて中断し、feedback を修正指示として送る（改訂プランが再提示される）。原則、利用者の意向（または自動走行モードの報告に含まれる指示）に基づいて使うこと。プランに破壊的・不可逆な操作が含まれる場合は承認前に必ず利用者に確認する。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name":     map[string]any{"type": "string", "description": "対象セッション名（例: s7）"},
+				"decision": map[string]any{"type": "string", "description": "approve | reject"},
+				"feedback": map[string]any{"type": "string", "description": "reject 時の修正指示（推奨。省略すると却下のみで指示なし）"},
+			},
+			"required": []string{"name", "decision"},
 		},
 	},
 	{
@@ -541,6 +567,11 @@ func mcpStdioCall(req mcpReq) []byte {
 		Worktree      bool   `json:"worktree"`
 		Branch        string `json:"branch"`
 		NewBranch     string `json:"new_branch"`
+		// answer_session_question args: 質問順の 1-based 選択肢番号。
+		Choices []int `json:"choices"`
+		// respond_session_plan args
+		Decision string `json:"decision"`
+		Feedback string `json:"feedback"`
 		// memo args (id in the path; the rest are forwarded verbatim via p.Args).
 		// ID doubles as the cleanup-archive id (restore/purge). Repo names the branch's repo.
 		ID   string `json:"id"`
@@ -771,6 +802,38 @@ func mcpStdioCall(req mcpReq) []byte {
 		}
 		b, _ := json.Marshal(result)
 		return mcpTextResult(req.ID, string(b))
+	case "answer_session_question":
+		if !mcpWriteEnabled {
+			return mcpToolErr(req.ID, "このアシスタントは書き込みツールを許可されていません")
+		}
+		if a.Name == "" {
+			return mcpToolErr(req.ID, "name（セッション名）が必要です")
+		}
+		if len(a.Choices) == 0 {
+			return mcpToolErr(req.ID, "choices（質問順の 1-based 選択肢番号の配列）が必要です")
+		}
+		reqBody, _ := json.Marshal(map[string]any{"choices": a.Choices})
+		out, err := agentPOST("/sessions/"+url.PathEscape(a.Name)+"/answer-question", reqBody)
+		if err != nil {
+			return mcpToolErr(req.ID, "質問への回答に失敗しました: "+err.Error())
+		}
+		return mcpTextResult(req.ID, out)
+	case "respond_session_plan":
+		if !mcpWriteEnabled {
+			return mcpToolErr(req.ID, "このアシスタントは書き込みツールを許可されていません")
+		}
+		if a.Name == "" {
+			return mcpToolErr(req.ID, "name（セッション名）が必要です")
+		}
+		if a.Decision != "approve" && a.Decision != "reject" {
+			return mcpToolErr(req.ID, "decision は approve か reject を指定してください")
+		}
+		reqBody, _ := json.Marshal(map[string]string{"decision": a.Decision, "feedback": a.Feedback})
+		out, err := agentPOST("/sessions/"+url.PathEscape(a.Name)+"/plan-respond", reqBody)
+		if err != nil {
+			return mcpToolErr(req.ID, "プランへの応答に失敗しました: "+err.Error())
+		}
+		return mcpTextResult(req.ID, out)
 	case "stop_session":
 		if !mcpWriteEnabled {
 			return mcpToolErr(req.ID, "このアシスタントはセッションの停止を許可されていません")

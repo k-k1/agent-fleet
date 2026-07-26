@@ -52,7 +52,7 @@ if [ "${1:-}" = "--inner" ]; then
     if [ "$cursor_out" = "$EXPECT_CURSOR" ]; then echo "ok  cursor $cursor_out"
     else echo "NG  cursor: actual ${cursor_out:-?} != pin $EXPECT_CURSOR"; fail=1; fi
     # kiro is baked only under BAKE_AGENT_CLIS=1 (like cursor/agy); when the agent
-    # CLIs are baked it must be present at the pinned version (`kiro-cli 2.14.1`).
+    # CLIs are baked it must be present at the pinned version.
     check_ver kiro "$EXPECT_KIRO" kiro-cli --version
   else
     # Lean distribution variant (BAKE_AGENT_CLIS=0, docs/35 §35.7.1-7): verify the
@@ -102,7 +102,7 @@ if [ "${1:-}" = "--inner" ]; then
   if [ -f "$VJ" ]; then
     for pair in "claude=$EXPECT_CLAUDE" "opencode=$EXPECT_OPENCODE" "codex=$EXPECT_CODEX" "copilot=$EXPECT_COPILOT" \
                 "cursor=$EXPECT_CURSOR" "kiro=$EXPECT_KIRO" \
-                "agy=$EXPECT_AGY" "rtk=$EXPECT_RTK_VER" \
+                "agy=$EXPECT_AGY" "agy_build=$EXPECT_AGY_BUILD" "rtk=$EXPECT_RTK_VER" \
                 "go=$EXPECT_GO" "gh=$EXPECT_GH" "chromium=$EXPECT_CHROMIUM" \
                 "chromium_cft=$EXPECT_CHROMIUM_CFT" \
                 "chromium_dl=$EXPECT_CHROMIUM_DL" "noto_cjk=$EXPECT_NOTO_CJK" \
@@ -263,6 +263,7 @@ EXPECT_KIRO="$(arg_pin KIRO_VERSION)"
 EXPECT_KIRO_SHA_X64="$(arg_pin KIRO_SHA256_X64)"
 EXPECT_KIRO_SHA_ARM64="$(arg_pin KIRO_SHA256_ARM64)"
 EXPECT_AGY="$(arg_pin AGY_VERSION)"
+EXPECT_AGY_BUILD="$(arg_pin AGY_RELEASE_BUILD)"
 EXPECT_AGY_SHA_X64="$(arg_pin AGY_SHA256_X64)"
 EXPECT_AGY_SHA_ARM64="$(arg_pin AGY_SHA256_ARM64)"
 EXPECT_RTK_VER="$(arg_pin RTK_VERSION)"
@@ -295,6 +296,7 @@ exec docker run --rm -i --init --network none --memory "$SMOKE_MEMORY" --cap-add
   -e EXPECT_KIRO_SHA_X64="$EXPECT_KIRO_SHA_X64" \
   -e EXPECT_KIRO_SHA_ARM64="$EXPECT_KIRO_SHA_ARM64" \
   -e EXPECT_AGY="$EXPECT_AGY" \
+  -e EXPECT_AGY_BUILD="$EXPECT_AGY_BUILD" \
   -e EXPECT_AGY_SHA_X64="$EXPECT_AGY_SHA_X64" \
   -e EXPECT_AGY_SHA_ARM64="$EXPECT_AGY_SHA_ARM64" \
   -e EXPECT_RTK_VER="$EXPECT_RTK_VER" \

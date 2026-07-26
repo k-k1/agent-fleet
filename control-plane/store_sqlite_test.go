@@ -125,10 +125,18 @@ func TestSQLiteMemo(t *testing.T) {
 			t.Fatalf("create: %v", err)
 		}
 	}
+	// A newly-created memo joins the end of its repo/category group, rather than
+	// inheriting the zero-value position supplied by an omitted API field.
+	created, aerr := memoCreateFor(ctx, st, MembershipView{MembershipID: memA.ID}, memoDTO{
+		Repo: "repo-a", Category: "frontend", Kind: "text", Body: "add at bottom",
+	})
+	if aerr != nil || created.Position != 1 {
+		t.Fatalf("new memo position: err=%v memo=%+v", aerr, created)
+	}
 
 	// List is scoped to the caller's membership.
 	rows, err := st.ListMemos(ctx, memA.ID, past)
-	if err != nil || len(rows) != 2 {
+	if err != nil || len(rows) != 3 {
 		t.Fatalf("list A: err=%v n=%d", err, len(rows))
 	}
 
@@ -152,13 +160,13 @@ func TestSQLiteMemo(t *testing.T) {
 		t.Fatalf("foreign memo was stamped: %+v", o)
 	}
 	// Sent-but-within-retention memos still list (cutoff in the far past).
-	if rows, _ := st.ListMemos(ctx, memA.ID, past); len(rows) != 2 {
-		t.Fatalf("sent-within-retention list = %d, want 2", len(rows))
+	if rows, _ := st.ListMemos(ctx, memA.ID, past); len(rows) != 3 {
+		t.Fatalf("sent-within-retention list = %d, want 3", len(rows))
 	}
 	// A cutoff after the sent stamp hides them from the list.
 	future := "2999-01-01T00:00:00Z"
-	if rows, _ := st.ListMemos(ctx, memA.ID, future); len(rows) != 0 {
-		t.Fatalf("expired list = %d, want 0", len(rows))
+	if rows, _ := st.ListMemos(ctx, memA.ID, future); len(rows) != 1 {
+		t.Fatalf("expired list = %d, want 1", len(rows))
 	}
 
 	// Sweep drops sent memos before the cutoff; unsent survive.

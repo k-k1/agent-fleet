@@ -7,7 +7,7 @@
 //     drag — memos within/between categories, and the categories themselves;
 //   - "送信…" opens SendMemoModal to edit the concatenated text and pick a destination.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { MouseEvent as RMouseEvent, DragEvent as RDragEvent } from "react";
+import type { MouseEvent as RMouseEvent, DragEvent as RDragEvent, RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -33,6 +33,7 @@ import { placeFixed } from "../../lib/placeFixed.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { useDraft } from "../../lib/draft.ts";
+import { useSettings } from "../../lib/settings.ts";
 import type { Memo, MemoCategory, MemoAttachment } from "../../types/memo.ts";
 import { MemoTidyModal } from "./MemoTidyModal.tsx";
 import { SendMemoModal } from "./SendMemoModal.tsx";
@@ -57,6 +58,17 @@ interface RepoBlock {
 
 const repoLabel = (repo: string) => repo || t("memo.common");
 const catLabel = (cat: string) => cat || t("memo.uncategorized");
+
+// Keep memo composition fields as compact as their content permits, while letting a
+// longer note grow without the user having to drag the resize handle first.
+function useAutosizeTextarea(ref: RefObject<HTMLTextAreaElement | null>, value: string) {
+  useLayoutEffect(() => {
+    const textarea = ref.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  }, [ref, value]);
+}
 
 // Group memos into repo → ordered categories. Category ORDER comes from the categories
 // table (by position); the uncategorized bucket leads, then any legacy memo-only category
@@ -152,6 +164,7 @@ export function MemoQueueSection() {
   const [open, setOpen] = useState(() => localStorage.getItem(SECTION_KEY) !== "0");
   const serRef = useRef("");
   const composerTextRef = useRef<HTMLTextAreaElement>(null);
+  useAutosizeTextarea(composerTextRef, newText);
 
   // Refetch memos + categories on mount / bump / tenant switch, and poll while mounted.
   useEffect(() => {
@@ -887,10 +900,12 @@ interface MemoRowProps {
 function MemoRow(props: MemoRowProps) {
   const { memo: m, selected, expanded, editing, currentCat } = props;
   const tr = useT();
+  const settings = useSettings();
   const [dragOver, setDragOver] = useState(false);
   const [body, setBody] = useState(m.body);
   const [cat, setCat] = useState(currentCat);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  useAutosizeTextarea(taRef, body);
 
   useEffect(() => {
     if (editing) {
@@ -917,10 +932,17 @@ function MemoRow(props: MemoRowProps) {
             rows={3}
             onChange={(e) => setBody(e.target.value)}
             onKeyDown={(e) => {
-              if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+              if (e.key === "Escape") {
+                props.onCancelEdit();
+                return;
+              }
+              if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+              const mod = e.ctrlKey || e.metaKey;
+              const submitWithKey = settings.mirrorSend !== "enter" ? mod : !e.shiftKey && !mod;
+              if (submitWithKey) {
                 e.preventDefault();
                 props.onSave(body, cat);
-              } else if (e.key === "Escape") props.onCancelEdit();
+              }
             }}
           />
           <div className="memo-edit-row">

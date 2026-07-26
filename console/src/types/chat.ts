@@ -44,6 +44,9 @@ export interface ChatContextUsage {
 // Light shape from GET /api/chat/conversations (no message bodies).
 export interface ConversationMeta {
   id: string;
+  // Short addressable identity ("a"+6 chars — the assistant twin of session slugs),
+  // used by schedules (docs/38 アシスタント発火) and shown in the row tooltip.
+  slug?: string;
   agent: SessionKind;
   active_agent?: SessionKind; // backend used by the latest successful turn
   assistant_id?: string; // which assistant backs this thread (Q2)
@@ -53,6 +56,7 @@ export interface ConversationMeta {
   updated_at: number;
   message_count: number;
   context?: ChatContextUsage; // current context fill (chat_usage.go)
+  locked?: boolean; // 削除ロック（docs/45）: true の間 DELETE は 403 で拒否される
 }
 
 // Full conversation from GET/POST /api/chat/conversations/{id}.

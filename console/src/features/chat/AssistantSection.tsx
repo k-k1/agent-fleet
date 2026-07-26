@@ -17,7 +17,7 @@ import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useMenuRoving } from "../../lib/useMenuRoving.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { useLayoutStore } from "../../layout/store.ts";
-import { chatPanes, ordClass, paneCount } from "../../layout/badges.ts";
+import { activeChatId, chatPanes, ordClass, paneCount } from "../../layout/badges.ts";
 import { useChatStore } from "./store.ts";
 import { openChat, openAssistantDraft, convTarget, draftTarget } from "./open.ts";
 import { AssistantModal } from "./AssistantModal.tsx";
@@ -27,6 +27,7 @@ import { useT } from "../../lib/i18n/index.ts";
 import {
   chatList,
   chatDelete,
+  chatSetLock,
   assistantList,
   assistantCreate,
   assistantUpdate,
@@ -43,7 +44,11 @@ export function AssistantSection() {
   const chatBusy = useChatStore((s) => s.busy);
   const running = useWorkspaceStore((s) => s.state) === "running";
   const multiPane = paneCount(layout) > 1;
-  const cPanes = multiPane ? chatPanes(layout) : null;
+  // Which chats are on screen, and which one the focused pane is showing. Ordinal badges
+  // stay a split-only affordance, but the open/current marks apply with a single pane too
+  // — that's the case where nothing else in the rail said which chat you were talking to.
+  const cPanes = chatPanes(layout);
+  const currentChat = activeChatId(layout);
   const toast = useToast();
   const askConfirm = useConfirm();
   const tr = useT(); // docs/28 P3: re-render builtin assistant names/descriptions on locale switch
@@ -193,9 +198,26 @@ export function AssistantSection() {
     }
   };
 
+  // 削除ロック（docs/45）: この会話を削除保護に固定/解除する。保護そのものは Agent
+  // 側（DELETE が 403）で、ここは切替と見た目の抑止だけ。
+  const toggleConvLock = async (c: ConversationMeta) => {
+    const locked = !c.locked;
+    const res = await chatSetLock(c.id, locked);
+    if (res?.error) {
+      toast(tr("asst.lock_failed"));
+      return;
+    }
+    toast(locked ? tr("asst.locked_on") : tr("asst.locked_off"), { kind: "success" });
+    refresh();
+  };
+
+  // Copy the conversation's short slug ("a…", docs/38 アシスタント発火) — the id humans
+  // and schedules address a conversation by. UUID fallback only for a conversation the
+  // agent hasn't backfilled yet.
   const copyId = (c: ConversationMeta) => {
-    void copyText(c.id).then((ok) =>
-      ok ? toast(tr("asst.id_copied", { id: c.id }), { kind: "success" }) : toast(tr("common.copy_failed")),
+    const ref = c.slug || c.id;
+    void copyText(ref).then((ok) =>
+      ok ? toast(tr("asst.id_copied", { id: ref }), { kind: "success" }) : toast(tr("common.copy_failed")),
     );
   };
 
@@ -292,12 +314,18 @@ export function AssistantSection() {
           <ul className="sess-list">
             {startedConvs.map((c) => {
               const a = c.assistant_id ? byId[c.assistant_id] : undefined;
+              const opens = cPanes.get(c.id);
+              const current = currentChat === c.id;
               return (
-                <li key={c.id} className="chat-row">
+                <li
+                  key={c.id}
+                  className={"chat-row" + (opens?.length ? " is-open" : "") + (current ? " active" : "")}
+                >
                   <button
                     type="button"
                     className="chat-open"
-                    title={`${c.title}\nID: ${c.id}`}
+                    aria-current={current ? "true" : undefined}
+                    title={`${c.title}\n${c.slug ? `slug: ${c.slug}\n` : ""}ID: ${c.id}`}
                     onClick={(e) => (e.ctrlKey || e.metaKey ? openTargetInNew(convTarget(c.id)) : openChat(c.id))}
                     onMouseDown={(e) => e.button === 1 && e.preventDefault()}
                     onAuxClick={(e) => e.button === 1 && openTargetInNew(convTarget(c.id))}
@@ -310,6 +338,8 @@ export function AssistantSection() {
                     </span>
                     <span className="chat-open-title">{c.title}</span>
                     {c.message_count > 0 && <span className="chat-open-meta">{c.message_count}</span>}
+                    {/* 削除ロック（docs/45）の鍵バッジ — セッション行と同じ語彙。 */}
+                    {c.locked && <Icon name="lock" className="sess-lock" title={tr("asst.locked_hint")} />}
                     {chatBusy[c.id] ? (
                       <span className="session-state working mini" title={tr("asst.in_progress")}>
                         <Icon name="loading" spin />
@@ -320,9 +350,9 @@ export function AssistantSection() {
                       </span>
                     )}
                   </button>
-                  {cPanes?.get(c.id)?.length ? (
+                  {multiPane && opens?.length ? (
                     <span className="sess-ords">
-                      {cPanes.get(c.id)!.map((o) => (
+                      {opens.map((o) => (
                         <button
                           key={o.id}
                           type="button"
@@ -384,7 +414,7 @@ export function AssistantSection() {
             <ul className="ui-menu" ref={convMenuRef} style={{ left: convMenu.x, top: convMenu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
               <li>
                 <button type="button" className="ui-menu-item" onClick={() => runConvMenu(() => copyId(convMenu.c))}>
-                  <Icon name="copy" /> {tr("asst.copy_id")}
+                  <Icon name="copy" /> {tr("asst.copy_id", { id: convMenu.c.slug || convMenu.c.id })}
                 </button>
               </li>
               <li>
@@ -394,7 +424,19 @@ export function AssistantSection() {
               </li>
               <li className="ui-menu-sep" aria-hidden="true" />
               <li>
-                <button type="button" className="ui-menu-item danger" onClick={() => runConvMenu(() => void removeConv(convMenu.c.id))}>
+                <button type="button" className="ui-menu-item" onClick={() => runConvMenu(() => void toggleConvLock(convMenu.c))}>
+                  <Icon name={convMenu.c.locked ? "unlock" : "lock"} />{" "}
+                  {convMenu.c.locked ? tr("asst.unlock") : tr("asst.lock")}
+                </button>
+              </li>
+              <li>
+                <button
+                  type="button"
+                  className="ui-menu-item danger"
+                  disabled={!!convMenu.c.locked}
+                  title={convMenu.c.locked ? tr("asst.locked_hint") : undefined}
+                  onClick={() => runConvMenu(() => void removeConv(convMenu.c.id))}
+                >
                   <Icon name="trash" /> {tr("asst.delete_chat")}
                 </button>
               </li>

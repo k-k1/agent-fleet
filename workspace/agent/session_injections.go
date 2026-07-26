@@ -12,6 +12,7 @@ package main
 // matching user turn with that origin (transcript.Turn.Source → a Console badge).
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
@@ -25,7 +26,24 @@ const (
 	turnSourceOperator = "operator" // fleet operator injected (docs/30 ②)
 	turnSourceDiscord  = "discord"  // chat bridge — Discord thread reply (docs/37 P2a)
 	turnSourceSlack    = "slack"    // chat bridge — Slack (P2 follow-up)
+	turnSourceSchedule = "schedule" // scheduled execution fired it (docs/38 — CP scheduler create/reuse send)
+	// turnSourceScheduleManual is a schedule fired by run-now（手動発火）— same pipeline as
+	// "schedule" but user-initiated, so the mirror can badge 定期/手動 distinctly (docs/38).
+	turnSourceScheduleManual = "schedule-manual"
 )
+
+// injectionSource maps a caller-supplied source onto the recordable vocabulary. The
+// /input and create_session wire fields are reachable by any client, so an unknown
+// value degrades to "operator" (the pre-existing meaning of a report_to-carrying
+// injection) instead of minting arbitrary badge strings in the Console.
+func injectionSource(s string) string {
+	switch s {
+	case turnSourceSchedule, turnSourceScheduleManual:
+		return s
+	default:
+		return turnSourceOperator
+	}
+}
 
 // maxOperatorInjections caps the per-session record. Membership is all the tagging needs,
 // so we keep the newest N distinct texts (a long-lived session steered many times stays
@@ -88,6 +106,13 @@ func operatorInjections(name string) []string {
 // tagInjectedTurns stamps each user turn whose text matches a recorded injection with that
 // injection's origin (transcript.Turn.Source). A cheap no-op when nothing was injected (the
 // common case: one file read, then return).
+//
+// Slash-command / skill injections need a second matching form: the injected text is the
+// raw "/scout arg" the sender posted, but claude logs the turn as a
+// `<command-name>/<command-message>` tag block (either tag first — 2.1.215 実測 skills are
+// message-first), so an exact text compare never hits and the badge silently vanished for
+// every injected slash command. commandSlashForm recovers "/name args" from the tag block
+// so those turns tag too.
 func tagInjectedTurns(name string, turns []transcript.Turn) {
 	if len(turns) == 0 {
 		return
@@ -104,8 +129,36 @@ func tagInjectedTurns(name string, turns []transcript.Turn) {
 		if turns[i].Role != "user" {
 			continue
 		}
-		if src, hit := bySource[strings.TrimSpace(turns[i].Text)]; hit {
+		text := strings.TrimSpace(turns[i].Text)
+		src, hit := bySource[text]
+		if !hit {
+			if slash := commandSlashForm(text); slash != "" {
+				src, hit = bySource[slash]
+			}
+		}
+		if hit {
 			turns[i].Source = src
 		}
 	}
+}
+
+var commandNameRe = regexp.MustCompile(`<command-name>([\s\S]*?)</command-name>`)
+var commandArgsRe = regexp.MustCompile(`<command-args>([\s\S]*?)</command-args>`)
+
+// commandSlashForm recovers the "/name args" a sender actually posted from claude's
+// command-tag user turn. "" when the text is not a command block. The leading tag is
+// required (not just a regex hit anywhere) so prose merely quoting the tags can't match.
+func commandSlashForm(text string) string {
+	if !strings.HasPrefix(text, "<command-name>") && !strings.HasPrefix(text, "<command-message>") {
+		return ""
+	}
+	m := commandNameRe.FindStringSubmatch(text)
+	if m == nil || strings.TrimSpace(m[1]) == "" {
+		return ""
+	}
+	out := strings.TrimSpace(m[1])
+	if a := commandArgsRe.FindStringSubmatch(text); a != nil && strings.TrimSpace(a[1]) != "" {
+		out += " " + strings.TrimSpace(a[1])
+	}
+	return out
 }

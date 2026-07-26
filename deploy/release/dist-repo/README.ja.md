@@ -8,7 +8,7 @@
 ## Agent Fleet とは
 
 Agent Fleet は、AI コーディングエージェント（Claude Code / Codex CLI /
-GitHub Copilot CLI / Antigravity CLI / Cursor CLI / Kiro CLI / OpenCode）を「フリート」として
+GitHub Copilot CLI / Antigravity CLI / Cursor CLI / Kiro / OpenCode）を「フリート」として
 まとめて運用するための、セルフホスト型の Web コンソールです。利用者ごとに隔離された
 ワークスペースが割り当てられ、ブラウザからエージェントセッションを起動・操作・監視
 できます。各ワークスペースは、CPU / メモリを cgroup クォータで絞った Docker コンテナ
@@ -249,8 +249,17 @@ rm -rf ~/.local/opt/agent-fleet
 再ダウンロードは発生しません。取得物は必ず `SHA256SUMS` / `rootfs.json` の sha256 で
 検証してください（install.sh と `af start` は自動で行います）。
 
+各版の変更内容は個々のリリースのノートにあります。索引は
+[CHANGELOG.ja.md](CHANGELOG.ja.md) です。
+
 ## ライセンス / 同梱物について
 
+- Agent Fleet は **Apache License, Version 2.0** で提供されます。
+  [LICENSE](LICENSE) と、帰属表示をまとめた [NOTICE](NOTICE) を参照してください。
+- **本リポジトリが 1 次配布元です。** 公式のリリースはここでのみ公開されます:
+  <https://github.com/k-k1/agent-fleet-dist>。Agent Fleet を再配布する場合、
+  Apache-2.0 §4(d) により `NOTICE` の記載（上記 URL を含みます）を引き継ぐ必要が
+  あります。受け取った人が原典を辿れるようにするためです。
 - 本配布物のイメージと rootfs は **lean 構成**（エージェント CLI を焼き込まない
   ビルド）です。エージェント CLI（Claude Code / Codex / GitHub Copilot /
   Antigravity / Cursor / Kiro / OpenCode）の本体は同梱せず、各ワークスペースの初回起動時に、

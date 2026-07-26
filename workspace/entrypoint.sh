@@ -116,23 +116,22 @@ if [ "$LEAN_CLIS" = 1 ]; then
   elif cli_present rtk; then
     echo "[entrypoint] boot-install: rtk already present (skip)"
   fi
-  # agy: GitHub Releases（google-antigravity/antigravity-cli）のピン版
-  # （versions.json の agy + agy_sha256 で取得・検証 — Dockerfile 焼き込みと同じ経路。
-  # GCS の install.sh 配布物とバイト同一を実測確認済み、docs/35 §35.4.1）。
+  # agy: 公式installer manifestが示す不変GCS objectのピン版。
+  # （versions.json の agy + agy_build + agy_sha256 で取得・検証 — Dockerfile焼き込みと同じ経路）。
   # self-update の版比較マーカーも書いておく（ピン導入直後の無駄な再取得を防ぐ）。
-  if ! cli_present agy && [ -n "$(vj_pin agy)" ] && [ -n "$(vj_pin agy_sha256)" ]; then
+  if ! cli_present agy && [ -n "$(vj_pin agy)" ] && [ -n "$(vj_pin agy_build)" ] && [ -n "$(vj_pin agy_sha256)" ]; then
     (
       set -e
-      aver="$(vj_pin agy)"; asha="$(vj_pin agy_sha256)"
+      aver="$(vj_pin agy)"; abuild="$(vj_pin agy_build)"; asha="$(vj_pin agy_sha256)"
       arch="$(dpkg --print-architecture 2>/dev/null || uname -m)"
       case "$arch" in
-        amd64 | x86_64) asset="agy_cli_linux_x64.tar.gz" ;;
-        arm64 | aarch64) asset="agy_cli_linux_arm64.tar.gz" ;;
+        amd64 | x86_64) asset="linux-x64/cli_linux_x64.tar.gz" ;;
+        arm64 | aarch64) asset="linux-arm/cli_linux_arm64.tar.gz" ;;
         *) echo "unsupported arch: $arch" >&2; exit 1 ;;
       esac
       tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
       cd "$tmp"
-      curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "https://github.com/google-antigravity/antigravity-cli/releases/download/${aver}/${asset}" -o agy.tgz
+      curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "https://storage.googleapis.com/antigravity-public/antigravity-cli/${aver}-${abuild}/${asset}" -o agy.tgz
       echo "${asha}  agy.tgz" | sha256sum -c - >/dev/null
       tar -xzf agy.tgz antigravity
       install -D -m 0755 antigravity "$HOME/.local/bin/agy"
@@ -175,7 +174,9 @@ fi
 # Kiro CLI（kind="kiro"、docs/43 Track B / §4-2）は ~855MB と桁違いに巨大なため、
 # 上の CLI 群と違い全ユーザー一律の boot-install は「しない」— kiro を使うユーザーの
 # 初回起動時に `workspace-agent install-kiro` が ~/.local へ manifest sha256 ピン付きで
-# 導入する（オンデマンド・利用ユーザー限定）。ここでやるのは自己更新封殺の毎起動再固定
+# 導入する（オンデマンド・利用ユーザー限定）。導入済み home 版のピン追従（versions.json
+# が上がったら再導入）は kiro 起動ガードの `workspace-agent install-kiro --if-needed` が
+# 毎起動見るので、ここでは 855MB の DL を起動時にぶら下げない。ここでやるのは自己更新封殺の毎起動再固定
 # だけ: kiro は copilot の COPILOT_AUTO_UPDATE のような build ENV ノブを持たず、
 # app.disableAutoupdates（~/.kiro/settings/cli.json・平文）で止める設定型なので、
 # 焼き込み（/usr/local・BAKE=1）でも home 導入済みでも毎起動固定する。未導入なら無音スキップ。
@@ -215,24 +216,34 @@ if [ "${CLAUDE_INSTALL:-1}" = "1" ]; then
 fi
 
 # Agent CLI self-update (opt-in + operator-gated). The CLIs (claude/opencode/codex/
-# agy) and rtk are baked at /usr/local, pinned to the image version. Both gates come
-# from the CP as env at container start: AF_AGENT_SELF_UPDATE_ALLOWED=1 (the tenant
-# policy) AND AF_AGENT_SELF_UPDATE=1 (the member's per-workspace opt-in, stored in the
-# CP DB so it can be toggled while the container is stopped). When both are set the
-# CLIs are updated to latest IN PLACE here — no image rebuild. The npm-global tree is
-# dev-owned (Dockerfile chown), so the npm trio needs no root; agy and rtk are root-
-# owned bakes, so their updates land in ~/.local/bin as PATH-first shadows instead
-# (removed by the else branch below when the opt-in is off). Stop→Start recreates the
-# container from the image, so turning the toggle off reverts to the baked versions.
+# copilot), agy, and rtk are baked at /usr/local, pinned to the image version. Both
+# gates come from the CP as env at container start: AF_AGENT_SELF_UPDATE_ALLOWED=1 (the
+# tenant policy) AND AF_AGENT_SELF_UPDATE=1 (the member's per-workspace opt-in, stored
+# in the CP DB so it can be toggled while the container is stopped).
+#
+# Model (all self-updatable tools identical): the baked /usr/local copy is the PINNED,
+# IMMUTABLE baseline — self-update never writes it. When ON, latest is installed under
+# ~/.local as a PATH-first shadow ("$HOME/.local/bin:$PATH", top of file); when OFF the
+# else branch removes that shadow so PATH falls back to the /usr/local pin — no container
+# recreate needed. This unifies the npm trio with the agy/rtk/cursor shadows below and
+# keeps the known-good baked baseline untouched even if an @latest release is broken.
+#
+# lean variant (no /usr/local bake): the boot-install品 under ~/.local IS the pin, so
+# there is no separate immutable baseline — ON updates it in place, and OFF leaves it
+# (the shadow cleanup below is gated on the /usr/local pin existing).
 if [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE:-0}" = "1" ]; then
   echo "[entrypoint] agent self-update: checking versions (member opt-in, operator-allowed) ..."
-  # 版比較スキップ: レジストリの latest とグローバル導入版が全一致なら再インストールを
-  # 丸ごと省く（毎起動の tarball 取得を新リリース時だけに）。判定不能時は従来どおり更新。
-  NPM_NEED=$(node -e '
+  # 常に ~/.local を対象（/usr/local ピンは不変。PATH 先勝ちの shadow だけ更新・版比較）。
+  NPM_PREFIX_DIR="$HOME/.local"
+  NPM_PREFIX_ARG="--prefix $HOME/.local"
+  # 版比較スキップ: レジストリの latest と（PATH 実効 prefix の）導入版が全一致なら再
+  # インストールを丸ごと省く（毎起動の tarball 取得を新リリース時だけに）。判定不能時は更新。
+  NPM_NEED=$(NPM_PREFIX_DIR="$NPM_PREFIX_DIR" node -e '
     const { execSync } = require("child_process");
+    const pfx = process.env.NPM_PREFIX_DIR ? " --prefix " + process.env.NPM_PREFIX_DIR : "";
     const run = (c) => execSync(c, { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
     try {
-      const ls = JSON.parse(run("npm ls -g --depth=0 --json"));
+      const ls = JSON.parse(run("npm ls -g --depth=0 --json" + pfx));
       let need = 0;
       for (const p of ["@anthropic-ai/claude-code", "opencode-ai", "@openai/codex", "@github/copilot"]) {
         const cur = ((ls.dependencies || {})[p] || {}).version || "";
@@ -244,8 +255,8 @@ if [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE:-
   ' 2>/dev/null || echo 1)
   if [ "$NPM_NEED" = "0" ]; then
     echo "[entrypoint] agent CLIs already latest; skip"
-  elif npm install -g @anthropic-ai/claude-code@latest opencode-ai@latest @openai/codex@latest @github/copilot@latest >/dev/null 2>&1; then
-    echo "[entrypoint] agent CLIs updated: claude $(claude --version 2>/dev/null | head -1) | opencode $(opencode --version 2>/dev/null | head -1) | codex $(codex --version 2>/dev/null | head -1) | copilot $(copilot --version 2>/dev/null | head -1)"
+  elif npm install -g $NPM_PREFIX_ARG @anthropic-ai/claude-code@latest opencode-ai@latest @openai/codex@latest @github/copilot@latest >/dev/null 2>&1; then
+    echo "[entrypoint] agent CLIs updated${NPM_PREFIX_DIR:+ (~/.local)}: claude $(claude --version 2>/dev/null | head -1) | opencode $(opencode --version 2>/dev/null | head -1) | codex $(codex --version 2>/dev/null | head -1) | copilot $(copilot --version 2>/dev/null | head -1)"
   else
     echo "[entrypoint] WARN: agent CLI update failed (using baked versions)"
   fi
@@ -331,6 +342,12 @@ else
   # 同じ「OFF に戻して Stop→Start で焼き込み版へ復帰」の意味論に揃える。
   # lean（焼き込みが無い）では ~/.local が boot-install 品そのものなので消さない —
   # 「復帰先の焼き込み版がある時だけ shadow を掃除」に限定する。
+  # npm 系4CLI: 焼き込みピン(/usr/local)がある時だけ ~/.local の shadow を撤去し、PATH を
+  # 焼き込みピンへ即復帰させる（lean=~/.local がピン本体の時は消さない）。
+  if [ -x /usr/local/bin/claude ]; then
+    npm uninstall -g --prefix "$HOME/.local" \
+      @anthropic-ai/claude-code opencode-ai @openai/codex @github/copilot >/dev/null 2>&1 || true
+  fi
   if [ -x /usr/local/bin/rtk ]; then rm -f "$HOME/.local/bin/rtk"; fi
   if [ -x /usr/local/bin/agy ]; then rm -f "$HOME/.local/bin/agy" "$HOME/.local/bin/.agy.version"; fi
   # cursor: install.sh は agent/cursor-agent の両シンボリックリンクと share ツリーを

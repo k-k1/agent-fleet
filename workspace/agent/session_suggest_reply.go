@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -11,6 +12,11 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
+
+// replyMarkerRe は行頭の箇条書き/番号マーカーだけを剥がす。記号（- * ・ >）は空白の有無に
+// かかわらず、番号は「1. / 1) のあと空白＋本文」の形のときだけ剥がす。こうすることで、選択肢の
+// 識別子そのもの（"1" "A" "P1"）を答えとして出したときに丸ごと消してしまわない。
+var replyMarkerRe = regexp.MustCompile(`^\s*(?:[-*・>]\s*|[0-9]+[.)]\s+)`)
 
 // 返信サジェスト v2（LLM 文脈生成）。直近の会話ログを一発ヘッドレス（oneShotHeadless・
 // タイトル/ブランチ提案と同じ backend-agnostic 経路）に渡し、ユーザーが次に送りそうな短い
@@ -20,17 +26,24 @@ import (
 const (
 	replySuggestTimeout   = 60 * time.Second
 	replySuggestCount     = 3  // 返す候補の最大数
-	replySuggestMaxRunes  = 40 // 1 候補の長さ上限（これを超える行はプロンプト扱いで捨てる）
+	replySuggestMaxRunes  = 20 // 1 候補の長さ上限（超える行はプロンプト扱いで捨てる・ペルソナの20字と一致）
 	replySuggestTailTurns = 8  // 直近何ターンを文脈に入れるか（返信は「今」の文脈が全て）
 )
 
 // replySuggestPersona: 会話の言語に合わせ、前置き・番号・引用符なしで 1 行 1 候補を出させる。
 // 件名提案（第三者視点の名詞句）と違い、視点は「ユーザー本人が送る返信」であることを明示する。
+// ★スタイル: ユーザーは開発者でエージェントに手短に指示する。丁寧語・敬語を付けると（"修正して"
+// でよいところ "修正をお願いします" になり）そのまま無駄トークンとして送られるので、常体・命令形で
+// 簡潔に。「です／ます／してください／お願いします」や「なるほど／では」等の前置きは禁止。
 const replySuggestPersona = "あなたはチャットの会話ログを読み、ユーザーが次にエージェントへ送る短い返信の候補を作る専用ツールです。" +
-	"直前のエージェントの発言（質問・確認・提案）に対して、ユーザーが実際に打ちそうな自然な返信を考えます。" +
-	"承認・却下・続行の指示、質問への短い回答、次の依頼など、文脈に沿った短文にしてください。" +
-	"会話と同じ言語で、1 候補 1 行、最大3件。各候補は20文字程度まで。" +
-	"番号・箇条書き・引用符・前置き・説明は一切付けず、候補そのものだけを改行区切りで出力してください。"
+	"直前のエージェントの発言（質問・確認・提案）に対して、ユーザーが実際に打ちそうな返信を考えます。" +
+	"ユーザーは開発者で、エージェントに手短に指示します。文体は常体・命令形で簡潔に。" +
+	"敬語・丁寧語（です／ます／してください／お願いします 等）や前置き（なるほど／では 等）は一切付けない。" +
+	"例: 『修正をお願いします』ではなく『修正して』、『それで進めてください』ではなく『進めて』。" +
+	"エージェントが選択肢を数字や英字（1・2・A・B・P1 等）で提示している場合は、言葉を足さずその識別子だけを候補にする" +
+	"（例: 『1番でお願い』『1番で』ではなく『1』、『Aにして』ではなく『A』）。" +
+	"承認・却下・続行の指示、質問への短い回答、次の依頼などを、会話と同じ言語で、1 候補 1 行・最大3件・各20文字以内で。" +
+	"番号・箇条書き・引用符・説明は一切付けず、候補そのものだけを改行区切りで出力してください。"
 
 // replySuggestModel: 短い候補生成には安価/高速なモデルで十分。deployment 単位で上書き可。
 func replySuggestModel() string { return envOr("AF_SUGGEST_MODEL", "haiku") }
@@ -57,8 +70,9 @@ func replySuggestPrompt(turns []transcript.Turn) string {
 	}
 	var b strings.Builder
 	b.WriteString("会話ログの続きとして、ユーザーが次に送る返信の候補を最大3件、改行区切りで出力してください。\n")
-	b.WriteString("直前のエージェントの発言に噛み合う短文にすること。\n")
-	b.WriteString("例（承認/続行/回答/中断）: 進めて / それでOK / 1番でお願い / いったん待って\n\n")
+	b.WriteString("直前のエージェントの発言に噛み合う短文にすること。丁寧語にせず、常体・命令形で簡潔に。\n")
+	b.WriteString("数字/英字で選択肢が提示されていればその識別子だけ（1・2・A・P1 等）。\n")
+	b.WriteString("例（すべて常体で簡潔に・承認/続行/回答/中断/選択）: 進めて / OK / 修正して / 待って / 1 / A\n\n")
 	b.WriteString("--- 会話ログ ---\n")
 	writeConversationWindow(&b, real) // タイトル側と共有（末尾窓・1ターン長キャップ）
 	return b.String()
@@ -71,8 +85,9 @@ func cleanSuggestedReplies(s string) []string {
 	seen := map[string]bool{}
 	for _, line := range strings.Split(s, "\n") {
 		c := strings.TrimSpace(line)
-		// 先頭の箇条書き/番号（"1. " "- " "* " "・" "1) " 等）を剥がす。
-		c = strings.TrimLeft(c, "0123456789.)-*・>　 \t")
+		// 先頭の箇条書き/番号マーカー（"1. 進めて" "- OK" "・待って" 等）だけを剥がす。裸の
+		// 選択肢識別子（"1" "A" "P1"）は答えそのものなので replyMarkerRe では消えない。
+		c = replyMarkerRe.ReplaceAllString(c, "")
 		c = strings.Trim(c, "\"'「」『』`")
 		c = strings.TrimSpace(c)
 		if c == "" {

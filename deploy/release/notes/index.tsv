@@ -1,0 +1,17 @@
+# Published release ledger — version <TAB> publish date (UTC) <TAB> build commit.
+#
+# The build commit is the private repo's commit the artifacts were built from. It
+# was originally recovered from the publish-dist workflow runs' head_sha (no tags
+# existed for 0.1.0-0.2.3); every published version is now also tagged v<version>,
+# so `git show v0.2.3` is the quicker lookup and this file is the human-readable
+# index. gen-changelog.sh reads it to build the dist repo's CHANGELOG.
+#
+# Append a row as part of publishing (docs/35 §35.8.2), newest last.
+0.1.0	2026-07-21	361deca1f5c3eba1ffe1ea6161022db20c2ac5b4
+0.1.1	2026-07-21	790f756b3bb54683d4df5ea4a3c8763b303358a8
+0.1.2	2026-07-21	045dd714bf99249329e028a1e18deb1f59ba013a
+0.2.0	2026-07-23	b3c69ac9a2894a3a9d812397ee8bb578627b2bc5
+0.2.1	2026-07-23	8b85e0b919d4f3457bf614027e229e4ea1b6829c
+0.2.2	2026-07-24	8ea59a6dd352381cc3ea968a8e6dd79d659bbfb9
+0.2.3	2026-07-24	1836e496faea7f3f8b5adc32a0f218cd0d675d9d
+0.3.0	2026-07-25	5e3aa77499c1ddeb5d93a67a32148f13bc9eb842

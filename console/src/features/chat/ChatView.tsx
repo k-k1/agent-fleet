@@ -11,6 +11,7 @@ import { chatGet, chatStream, chatStop, chatCreate, chatCompact, assistantGet, c
 import { errText, raw, isTransientErr } from "../../core/api/client.ts";
 import { takeChatSeed } from "../../lib/chatSeed.ts";
 import { useDraft, moveDraft, clearDraft } from "../../lib/draft.ts";
+import { useDragScroll } from "../../lib/dragScroll.ts";
 import { scrollComposerViewport } from "../../lib/keyScroll.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
 import { t, tCount, useT } from "../../lib/i18n/index.ts";
@@ -86,6 +87,16 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const modSend = settings.mirrorSend !== "enter";
   const [conv, setConv] = useState<Conversation | null>(null);
   const [draftAsst, setDraftAsst] = useState<Assistant | null>(null); // greeting source in draft mode
+  // 回答の混線を防ぐキー。Opening another chat from the rail REPLACES the active pane's
+  // content (layout/ops.openActive) — it does not remount this view — while a streaming
+  // turn is a detached fetch that outlives the switch. So every piece of turn state below
+  // is tagged with the chat it belongs to and only rendered while the pane still shows
+  // that chat; otherwise assistant A's spinner, answer, error and karaoke would paint
+  // onto assistant B's transcript. paneKey = the conversation id, or a draft's assistant
+  // until its first turn creates the conversation.
+  const paneKey = conversationId ?? (draftAssistantId ? "draft:" + draftAssistantId : null);
+  const paneKeyRef = useRef(paneKey); // same value, readable from async turn callbacks
+  paneKeyRef.current = paneKey;
   // Composer draft, persisted per conversation (draft panes key by assistant) so a
   // reload — or the browser dying — keeps what you were typing (mirrors MirrorView).
   const draftKey = conversationId
@@ -96,29 +107,67 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const [input, setInput] = useDraft(draftKey);
   const [attachments, setAttachments] = useState<{ path: string; name: string; url: string }[]>([]);
   const [pasting, setPasting] = useState(false); // an image upload is in flight
-  const [sending, setSending] = useState(false);
-  const [compacting, setCompacting] = useState(false); // 要約引き継ぎ実行中（docs/33）
-  const [streamText, setStreamText] = useState(""); // live-accumulating (tentative) answer
-  const [streamSteps, setStreamSteps] = useState<ChatStep[]>([]); // working steps committed this turn (分離)
-  const [streamAgent, setStreamAgent] = useState<SessionKind | null>(null); // actual backend for this turn
-  const [reattaching, setReattaching] = useState(false); // a reloaded turn is still running on the backend; polling for the reply
-  const [pendingAuto, setPendingAuto] = useState<string | null>(null); // handoff: fire this first turn automatically once the conversation loads
+  // Chats this pane is streaming a turn for. A set, not a flag: after switching away
+  // mid-answer the old turn keeps running here, and the new chat must still be sendable.
+  const [sendingKeys, setSendingKeys] = useState<Record<string, true>>({});
+  const markSending = (key: string, on: boolean) =>
+    setSendingKeys((m) => {
+      if (on) return m[key] ? m : { ...m, [key]: true };
+      if (!m[key]) return m;
+      const n = { ...m };
+      delete n[key];
+      return n;
+    });
+  const sending = !!paneKey && !!sendingKeys[paneKey];
+  const [compactKey, setCompactKey] = useState<string | null>(null); // 要約引き継ぎ実行中の会話（docs/33）
+  const compacting = !!paneKey && compactKey === paneKey;
+  // a reloaded turn is still running on the backend; polling for the reply
+  const [reattachKey, setReattachKey] = useState<string | null>(null);
+  const reattaching = !!conversationId && reattachKey === conversationId;
+  // handoff: fire this first turn automatically once the conversation loads
+  const [pendingAuto, setPendingAuto] = useState<{ key: string; text: string } | null>(null);
   const [histIdx, setHistIdx] = useState<number | null>(null); // position in composer history (↑/↓ recall), or null
   // 返信サジェスト v2: ✨ボタンで取得した LLM 候補（Layer A のチップ列にマージ）と取得中フラグ。
   const [llmSuggestions, setLlmSuggestions] = useState<string[]>([]);
   const [suggesting, setSuggesting] = useState(false);
-  const [karaoke, setKaraoke] = useState<string | null>(null); // 読み上げ中の文（ライブ配信カラオケ・docs/19）
-  const [error, setError] = useState("");
+  const suggestRef = useRef<HTMLDivElement>(null); // チップ行（Tab でここへフォーカスを移す）
+  useDragScroll(suggestRef); // 1行に収めた候補列をマウスドラッグで左右スクロール（スワイプは既定動作）
+  // 読み上げ中の文（ライブ配信カラオケ・docs/19）と、直近のターンエラー。どちらも
+  // 発生元の会話で括り、別チャットへ切り替えた後に相手の吹き出しへ出ないようにする。
+  const [karaoke, setKaraoke] = useState<{ key: string; text: string } | null>(null);
+  const [err, setErr] = useState<{ key: string; text: string } | null>(null);
+  const karaokeText = karaoke && karaoke.key === paneKey ? karaoke.text : null;
+  // Clear only OUR highlight: a turn ending in one chat must not wipe the sentence
+  // another chat is currently speaking.
+  const clearKaraokeFor = (key: string) => setKaraoke((k) => (k && k.key !== key ? k : null));
+  const error = err && err.key === paneKey ? err.text : "";
+  const setErrorFor = (key: string | null, text: string) => setErr(text && key ? { key, text } : null);
   const [loadError, setLoadError] = useState("");
   const [loadingConv, setLoadingConv] = useState(false); // fetching the conversation (with retry while the WS agent boots)
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const convRef = useRef<Conversation | null>(null); // mirror of conv, to guard reloads
-  const abortRef = useRef<AbortController | null>(null); // aborts the in-flight streaming turn
-  const ttsRef = useRef<TtsController | null>(null); // 音声読み上げ（docs/24）。有効時のみ生成
+  // Aborts an in-flight streaming turn, per chat: a turn left running when the pane was
+  // pointed at another chat must still be the one 中断 stops when you come back to it.
+  const abortsRef = useRef(new Map<string, AbortController>());
+  // 音声読み上げ（docs/24）。有効時のみ生成。The pane plays one voice at a time, so the
+  // slot is tagged with the chat that owns it: a turn finishing in the chat you switched
+  // AWAY from must not adopt (or tear down) the playback the current chat just started.
+  const ttsRef = useRef<{ key: string; ctl: TtsController } | null>(null);
+  const paneTts = (key: string) => (ttsRef.current?.key === key ? ttsRef.current.ctl : null);
+  const setPaneTts = (key: string, ctl: TtsController | null) => {
+    if (ctl) ttsRef.current = { key, ctl };
+    else if (ttsRef.current?.key === key) ttsRef.current = null;
+  };
   const applyConv = (c: Conversation | null) => {
     convRef.current = c;
     setConv(c);
+  };
+  // Adopt a server copy only while the pane still shows that chat — a turn that finishes
+  // after the user switched away publishes to the store instead (whoever shows it picks
+  // it up), rather than dropping conversation A's transcript into conversation B's pane.
+  const applyConvIfCurrent = (c: Conversation) => {
+    if (paneKeyRef.current === c.id) applyConv(c);
   };
 
   // アシスタントの声（docs/24）: 明示指定（assistant.voice、作成/編集で設定）を読み上げの
@@ -150,11 +199,15 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   useEffect(() => {
     let cancelled = false;
     let timer = 0;
-    setError("");
     setLoadError("");
     setHistIdx(null); // switching conversations/drafts resets composer history-recall
     if (conversationId) {
       if (convRef.current?.id === conversationId) return; // already have it (e.g. just promoted)
+      // Genuine switch to another chat (not a draft promotion): drop the previous chat's
+      // error, and its pasted images — those were uploaded into THAT conversation's store
+      // and must not ride along with the next prompt.
+      setErr(null);
+      clearAttachments();
       applyConv(null);
       setDraftAsst(null);
       // One-shot seed (Phase C prefill, or a session handoff). auto=false prefills the
@@ -163,7 +216,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
       // persisted draft (which useDraft reloads on the key change) is left standing.
       const seed = takeChatSeed(conversationId);
       if (seed) {
-        if (seed.auto) setPendingAuto(seed.text);
+        if (seed.auto) setPendingAuto({ key: conversationId, text: seed.text });
         else setInput(seed.text);
       }
       // Load the conversation, retrying transient failures. When the workspace agent is
@@ -220,6 +273,8 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
       };
     } else if (draftAssistantId) {
       setLoadingConv(false);
+      setErr(null);
+      clearAttachments(); // a fresh draft starts clean — no stale error / pasted images (see above)
       applyConv(null);
       setDraftAsst(null);
       assistantGet(draftAssistantId)
@@ -256,10 +311,10 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const inProgress = !!conv?.in_progress;
   useEffect(() => {
     if (!conversationId || sending || !inProgress) {
-      setReattaching(false);
+      setReattachKey(null);
       return;
     }
-    setReattaching(true);
+    setReattachKey(conversationId);
     let alive = true;
     let tries = 0;
     const maxTries = 200; // ~280s at 1.4s — past the backend chatTimeout ceiling
@@ -272,7 +327,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
         if (c && c.id) {
           applyConv(c);
           if (!c.in_progress) {
-            setReattaching(false);
+            setReattachKey(null);
             return; // reply landed (or the turn ended) — stop polling
           }
         }
@@ -280,7 +335,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
         /* transient fetch failure — keep polling */
       }
       if (++tries >= maxTries) {
-        setReattaching(false);
+        setReattachKey(null);
         return;
       }
       timer = window.setTimeout(tick, 1400);
@@ -329,10 +384,10 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   // live karaoke is following the spoken sentence, defer to its scrollIntoView instead —
   // otherwise bottom-pin and the karaoke follow fight over the scroll position.
   useEffect(() => {
-    if (karaoke) return;
+    if (karaokeText) return;
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [conv?.messages.length, sending, streamText, streamSteps, liveTurn, karaoke]);
+  }, [conv?.messages.length, sending, liveTurn, karaokeText]);
 
   // Auto-grow the composer to fit its content (up to the CSS max-height, then it scrolls),
   // same as MirrorView's composer. Reset to auto first so it also shrinks when text is
@@ -373,6 +428,9 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     moveDraft(draftKey, chatDraftKey(created.id));
     applyConv(created);
     promoteDraft(paneId, created.id);
+    // The pane now shows the created conversation — move the key with it before any
+    // await, so the first turn's callbacks recognise it as the current chat.
+    paneKeyRef.current = created.id;
     setDraftAsst(null);
     return created;
   };
@@ -453,30 +511,31 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
       }))
     )
       return;
-    setError("");
-    setCompacting(true);
-    markChatBusy(conversationId, true);
+    const key = conversationId;
+    setErrorFor(key, "");
+    setCompactKey(key);
+    markChatBusy(key, true);
     try {
-      const c2 = await chatCompact(conversationId);
+      const c2 = await chatCompact(key);
       if (c2 && c2.id) {
-        applyConv(c2);
+        applyConvIfCurrent(c2);
         publishSnapshot(c2); // 他ペイン/一覧にも新しい会話状態を届ける
         bumpChatList();
       } else {
-        setError(c2?.error ? errText(c2.error) : tr("chat.compact_failed"));
+        setErrorFor(key, c2?.error ? errText(c2.error) : tr("chat.compact_failed"));
       }
     } catch {
-      setError(tr("chat.compact_failed"));
+      setErrorFor(key, tr("chat.compact_failed"));
     } finally {
-      markChatBusy(conversationId, false);
-      setCompacting(false);
+      markChatBusy(key, false);
+      setCompactKey((k) => (k === key ? null : k));
     }
   };
 
   const send = async (override?: string) => {
     // Block a second turn on this conversation, whether it was started here or by another
     // pane whose turn is still running in the background (store busy).
-    if (sending || compacting || (conversationId && storeBusy)) return;
+    if (!paneKey || sending || compacting || (conversationId && storeBusy)) return;
     // `override` drives the auto-sent handoff first turn (its text isn't in the composer).
     const text = (override ?? input).trim();
     const paths = attachments.map((a) => a.path);
@@ -485,10 +544,10 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     if (text && isQuickReplyCandidate(text, paths.length > 0)) {
       setSetting("quickReplies", recordQuickReply(settings.quickReplies || {}, text, Date.now()));
     }
-    setError("");
-    setSending(true);
-    setStreamText("");
-    setStreamAgent(null);
+    // A draft is keyed by its assistant until the conversation exists (see paneKey).
+    const startKey = paneKey;
+    setErrorFor(startKey, "");
+    markSending(startKey, true);
 
     // Draft: create + promote the conversation before the first turn (approach A).
     let target: Conversation | null = conv;
@@ -499,10 +558,15 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
         target = null;
       }
       if (!target) {
-        setError(t("chat.create_failed"));
-        setSending(false);
+        setErrorFor(startKey, t("chat.create_failed"));
+        markSending(startKey, false);
         return;
       }
+    }
+    if (target.id !== startKey) {
+      // Promoted draft: the turn now belongs to the created conversation.
+      markSending(startKey, false);
+      markSending(target.id, true);
     }
 
     // Append the machine-facing image instruction + paths (kind-appropriate wording:
@@ -522,8 +586,9 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     // On touch devices, drop focus so the soft keyboard (GBoard) retracts once the
     // turn is sent — the reply is what the user wants to read, not keep typing.
     if (coarsePointer()) inputRef.current?.blur();
+    const convId = target.id;
     const ac = new AbortController();
-    abortRef.current = ac;
+    abortsRef.current.set(convId, ac);
     // 小声読みが OFF のときは従来どおり delta をライブ再生。ON のときは、途中テキストを
     // onStep で「作業過程」と確定してから小声で読み、onDone の最終回答を通常声で読む。
     const baseVoice = {
@@ -542,17 +607,17 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
             },
             work ? t("chat.tts_source_work") : t("chat.label"),
             (reason) => {
-              if (!work) setKaraoke(null);
+              if (!work) clearKaraokeFor(convId);
               onEnd?.(reason);
             },
             "",
             // 通常声はライブ中も最終回答確定後もカラオケ表示する。
             // 作業過程の小声再生だけは disclosure 内なのでハイライトしない。
-            !work ? (t) => setKaraoke(t) : undefined,
+            !work ? (t) => setKaraoke({ key: convId, text: t }) : undefined,
           )
         : null;
-    stopTtsForReplacement(ttsRef.current);
-    ttsRef.current = workMode === "off" ? makeTts() : null;
+    stopTtsForReplacement(ttsRef.current?.ctl ?? null); // whatever this pane was reading
+    setPaneTts(convId, workMode === "off" ? makeTts() : null);
 
     // 作業過程は確定順に 1 本ずつ読む。次の step が来ても再生中の step は止めず、
     // 最終回答が来た時点でだけ再生中・未再生をまとめて破棄して通常声へ譲る。
@@ -570,7 +635,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
       const text = workQueue.shift()!;
       const c = makeTts(true, (reason) => {
         if (workCurrent === c) workCurrent = null;
-        if (ttsRef.current === c) ttsRef.current = null;
+        if (paneTts(convId) === c) setPaneTts(convId, null);
         if (reason === "explicit") {
           workClosed = true;
           workQueue.length = 0;
@@ -581,7 +646,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
       });
       if (!c) return;
       workCurrent = c;
-      ttsRef.current = c;
+      setPaneTts(convId, c);
       c.push(text);
       c.flush();
     };
@@ -597,15 +662,15 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
       workClosed = true;
       workQueue.length = 0;
       stopTtsForReplacement(workCurrent);
-      if (ttsRef.current === workCurrent) ttsRef.current = null;
+      if (paneTts(convId) === workCurrent) setPaneTts(convId, null);
       workCurrent = null;
     };
     let streamDone = false;
-    markChatBusy(target.id, true); // publish 進行中 to the rail
-    // Mirror the live reply + working steps + final conversation into the store so a pane
-    // re-opened on this conversation mid-stream re-attaches and picks up the answer even if
-    // THIS pane (and component) is gone by the time the turn finishes.
-    const convId = target.id;
+    markChatBusy(convId, true); // publish 進行中 to the rail
+    // The live reply + working steps + final conversation live in the store, keyed by
+    // conversation, and the bubble renders from there — so the turn survives this pane
+    // being closed OR pointed at another chat, and can only ever be painted into the
+    // conversation it belongs to.
     let acc = ""; // current (tentative) answer text
     const steps: ChatStep[] = []; // working steps committed so far this turn
     let liveAgent: SessionKind | undefined;
@@ -617,11 +682,9 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     const teardown = () => {
       clearLive(convId);
       markChatBusy(convId, false);
-      setStreamText("");
-      setStreamSteps([]);
-      setStreamAgent(null);
-      setKaraoke(null);
-      setSending(false);
+      clearKaraokeFor(convId);
+      markSending(convId, false);
+      abortsRef.current.delete(convId);
     };
     await chatStream(
       convId,
@@ -629,48 +692,44 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
       {
         onAgent: (actual) => {
           liveAgent = actual;
-          setStreamAgent(actual);
           setLive(convId, { text: acc, steps: [...steps], agent: actual });
         },
         onDelta: (t) => {
           acc += t;
-          setStreamText(acc);
           setLive(convId, { text: acc, steps, agent: liveAgent }); // steps only change in onStep
-          if (workMode === "off") ttsRef.current?.push(t);
+          if (workMode === "off") paneTts(convId)?.push(t);
         },
         onStep: (step) => {
           // A tool-using message finished: its narration becomes a working step and the
           // tentative answer resets, so the next message streams as a fresh answer.
           steps.push(step);
           acc = "";
-          setStreamText("");
-          setStreamSteps([...steps]);
-          setKaraoke(null);
+          clearKaraokeFor(convId);
           setLive(convId, { text: "", steps: [...steps], agent: liveAgent });
           if (workMode === "off") {
-            stopTtsForReplacement(ttsRef.current);
-            ttsRef.current = makeTts(); // 従来動作: 次の tentative message をライブ再生
+            stopTtsForReplacement(paneTts(convId));
+            setPaneTts(convId, makeTts()); // 従来動作: 次の tentative message をライブ再生
           } else if (step.text?.trim()) {
             workQueue.push(step.text);
             pumpWork();
           }
         },
-        onError: (m) => setError(m),
+        onError: (m) => setErrorFor(convId, m),
         onDone: (updated) => {
           streamDone = true;
           if (updated) {
-            applyConv(updated);
+            applyConvIfCurrent(updated);
             publishSnapshot(updated); // reaches any live pane, even after this one unmounts
           }
           teardown(); // same synchronous batch as applyConv → no duplicate-bubble frame
           if (workMode === "off") {
-            ttsRef.current?.flush();
+            paneTts(convId)?.flush();
           } else {
             // 最終回答の到着で、残っている小声再生を置換して通常声へ戻す。
             closeWork();
             const finalText = acc.trim() || updated?.messages.at(-1)?.content || "";
             const c = finalText ? makeTts() : null;
-            ttsRef.current = c;
+            setPaneTts(convId, c);
             c?.push(finalText);
             c?.flush();
           }
@@ -682,7 +741,6 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     if (!streamDone) closeWork();
     // Abort/error paths emit no done event, so clear the streaming state here too. teardown is
     // idempotent — after a normal completion this re-run is a harmless no-op.
-    abortRef.current = null;
     teardown();
     bumpChatList(); // a new/updated thread should surface in the rail list
   };
@@ -694,26 +752,28 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   sendRef.current = send;
   useEffect(() => {
     if (pendingAuto == null) return;
+    if (pendingAuto.key !== conversationId) return; // seeded for a chat this pane no longer shows
     if (!conv || conv.in_progress) return; // wait for the conversation to exist and no turn to be running
     if (sending || compacting) return;
-    const text = pendingAuto;
+    const text = pendingAuto.text;
     setPendingAuto(null);
     void sendRef.current(text);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sendRef is a stable ref
-  }, [pendingAuto, conv, sending, compacting]);
+  }, [pendingAuto, conversationId, conv, sending, compacting]);
 
   // Stop the in-flight turn. The turn is now detached from its SSE request on the backend
   // (so a reload can't kill it), which means aborting the fetch alone no longer cancels the
   // headless process — an explicit stop call does. We still abort the local fetch to stop
   // reading + tear down, and stop the 読み上げ.
   const stop = () => {
-    if (conversationId) void chatStop(conversationId); // cancel the detached backend turn
-    abortRef.current?.abort();
-    ttsRef.current?.stop(); // 読み上げも即停止（in-flight abort・再生停止・キュー破棄）
+    if (!conversationId) return;
+    void chatStop(conversationId); // cancel the detached backend turn
+    abortsRef.current.get(conversationId)?.abort(); // …and this pane's reader, if it owns one
+    paneTts(conversationId)?.stop(); // 読み上げも即停止（in-flight abort・再生停止・キュー破棄）
   };
 
   // ペインを閉じる/アンマウント時は読み上げを止める（音声が居残らないように）。
-  useEffect(() => () => stopTtsForReplacement(ttsRef.current), []);
+  useEffect(() => () => stopTtsForReplacement(ttsRef.current?.ctl ?? null), []);
 
   // Composer history = the user's own prompts in this conversation, so ↑ recalls them even
   // after a reload (built from conv, not just this mount). The visible words only — the
@@ -761,6 +821,12 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     }
     setInput(text);
     setHistIdx(null);
+    // スマホ: チップ差し込みで textarea にフォーカスすると GBoard が開いて画面を覆う。タッチ端末では
+    // フォーカスしない（キーボードを出さない）— ユーザーは送信 or タップして編集を選べる。
+    if (coarsePointer()) {
+      inputRef.current?.blur(); // 既に開いていたキーボードも畳む
+      return;
+    }
     requestAnimationFrame(() => {
       const el = inputRef.current;
       if (el) {
@@ -808,7 +874,70 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     inputRef.current?.focus();
   };
 
+  // 返信サジェストのフォーカスリング = ✨ボタン＋候補チップ（DOM 順）。MirrorView と同挙動。
+  const suggestRing = (): HTMLButtonElement[] =>
+    Array.from(suggestRef.current?.querySelectorAll<HTMLButtonElement>("button") ?? []);
+
+  // チップ行は1行スクロールなので、キー移動のフォーカス先が隠れないよう横だけ最小限追従させる
+  // （focus 既定のスクロールは縦にも効いて本文が飛ぶため preventScroll で殺す）。
+  const focusRingItem = (el: HTMLButtonElement) => {
+    el.focus({ preventScroll: true });
+    el.scrollIntoView({ block: "nearest", inline: "nearest" });
+  };
+
+  // リング内の移動。Tab/Shift+Tab は「候補＋入力欄」を一巡（端まで来たら入力欄へ戻る）。
+  // ←/→ は候補内だけで循環。Escape で入力欄へ。処理したら true。
+  const onSuggestNav = (e: KeyboardEvent<HTMLButtonElement>): boolean => {
+    if (e.nativeEvent.isComposing) return false;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      inputRef.current?.focus();
+      return true;
+    }
+    const ring = suggestRing();
+    const i = ring.indexOf(e.currentTarget);
+    if (i < 0 || !ring.length) return false;
+    if (e.key === "Tab") {
+      e.preventDefault();
+      const next = e.shiftKey ? i - 1 : i + 1;
+      if (next < 0 || next >= ring.length) inputRef.current?.focus(); // 端 → 入力欄へ戻る
+      else focusRingItem(ring[next]);
+      return true;
+    }
+    if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+      e.preventDefault();
+      const d = e.key === "ArrowRight" ? 1 : -1;
+      focusRingItem(ring[(i + d + ring.length) % ring.length]); // ←/→ は候補内で循環
+      return true;
+    }
+    return false;
+  };
+
+  // チップ上のキー操作。移動系は onSuggestNav に委ね、Enter/Ctrl(⌘)+Enter の役割はコンポーサーの
+  // 送信キー設定に合わせる: modSend なら mod+Enter=送信・素の Enter=差し込み、enter モードなら逆。
+  const onSuggestKeyDown = (e: KeyboardEvent<HTMLButtonElement>, text: string) => {
+    if (onSuggestNav(e)) return;
+    if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+    const mod = e.ctrlKey || e.metaKey;
+    e.preventDefault(); // ボタン既定の click（＝差し込み）と二重発火させない
+    applySuggestion(text, modSend ? mod : !mod);
+  };
+
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // 入力欄が空なら Tab で返信サジェストへ入る（＝入力欄→候補1→候補2→入力欄…のループ）。
+    // 素の Tab は最初の「候補チップ」から（先頭の✨は飛ばす／Shift+Tab で戻れる）。Shift+Tab は
+    // 逆回りなのでリング末尾から入る。テキストがあるときは従来どおりの Tab。
+    if (e.key === "Tab" && !e.nativeEvent.isComposing && input === "") {
+      const ring = suggestRing();
+      const target = e.shiftKey
+        ? ring[ring.length - 1]
+        : suggestRef.current?.querySelector<HTMLButtonElement>(".chat-suggest-chip");
+      if (target) {
+        e.preventDefault();
+        focusRingItem(target);
+        return;
+      }
+    }
     // Scroll the message list without leaving the composer: Shift+↑/↓ nudges, Ctrl/⌘+↑/↓
     // and Ctrl/⌘+[ / ] page. Checked before history recall so the modified arrows don't get
     // swallowed by the ↑/↓ recall path below.
@@ -839,7 +968,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   };
 
   // Header/badge come from the live conversation, or the draft assistant while composing.
-  const agentKind = streamAgent || liveTurn?.agent || conv?.active_agent || conv?.agent || draftAsst?.agent || null;
+  const agentKind = liveTurn?.agent || conv?.active_agent || conv?.agent || draftAsst?.agent || null;
   const agent = agentKind ? agentOf(agentKind) : null;
   const title = conv?.title || (draftAsst && assistantName(draftAsst)) || t("chat.label");
   const isDraft = !conversationId && !!draftAssistantId;
@@ -847,8 +976,10 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   // conversation (started before the pane was closed + re-opened) is still running, or
   // because we reloaded into a detached turn and are polling for its reply (reattaching).
   const showStreaming = sending || storeBusy || reattaching;
-  const streamBody = sending ? streamText : (liveTurn?.text ?? "");
-  const liveSteps = sending ? streamSteps : (liveTurn?.steps ?? []);
+  // Always the store's copy for THIS conversation — the pane never renders a turn it
+  // merely happens to have started (that turn keeps streaming into its own chat).
+  const streamBody = liveTurn?.text ?? "";
+  const liveSteps = liveTurn?.steps ?? [];
   const empty = (!conv || conv.messages.length === 0) && !loadError && !showStreaming && !loadingConv;
   // Status chip like the Sessions list / MirrorView header: 停止中 when the workspace agent
   // is down (matches SessionRow/MirrorView's stateInfo for a stopped session), else 進行中
@@ -1015,7 +1146,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
                   ts={m.ts}
                   agentName={turnAgent?.assistantName || tr("chat.assistant_fallback")}
                   voice={{ ...(assistantVoiceOpts(assistId, assistVoice) ?? {}), paneId }}
-                  highlight={i === conv.messages.length - 1 ? karaoke : null}
+                  highlight={i === conv.messages.length - 1 ? karaokeText : null}
                 />
               </div>
             );
@@ -1054,7 +1185,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
             {liveSteps.length > 0 && <ChatSteps steps={liveSteps} defaultOpen live />}
             {streamBody ? (
               <div className="chat-body">
-                <StreamingMarkdown text={streamBody} highlight={karaoke} />
+                <StreamingMarkdown text={streamBody} highlight={karaokeText} />
               </div>
             ) : liveSteps.length > 0 ? (
               // A step just committed; the next answer hasn't started streaming yet.
@@ -1111,7 +1242,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
         {/* 返信サジェスト: 常用短文＋直近回答に沿った候補（Layer A）＋✨の LLM 候補（v2）。
             クリックで差し込み・⌥で即送信。 */}
         {(conv || isDraft) && !showStreaming && (suggestChips.length > 0 || (settings.replySuggestEnabled && conversationId)) && (
-          <div className="chat-suggest">
+          <div className="chat-suggest" ref={suggestRef}>
             {settings.replySuggestEnabled && conversationId && (
               <button
                 type="button"
@@ -1119,6 +1250,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
                 title={tr("chat.suggest_ai")}
                 disabled={suggesting}
                 onClick={fetchLlmSuggestions}
+                onKeyDown={onSuggestNav} // Enter は既定の click（＝候補取得）に任せる
               >
                 <Icon name={suggesting ? "loading" : "sparkle"} spin={suggesting} />
               </button>
@@ -1129,7 +1261,8 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
                 type="button"
                 className={"chat-suggest-chip" + (sg.llm ? " llm" : "")}
                 title={tr("mirror.suggest_hint")}
-                onClick={(e) => applySuggestion(sg.text, e.altKey || e.metaKey)}
+                onClick={(e) => applySuggestion(sg.text, e.ctrlKey || e.altKey || e.metaKey)}
+                onKeyDown={(e) => onSuggestKeyDown(e, sg.text)}
               >
                 {sg.text}
               </button>

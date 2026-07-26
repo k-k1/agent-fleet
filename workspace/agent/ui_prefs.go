@@ -104,6 +104,38 @@ func chatAutoTurnEnabled() bool {
 	return !ok || v
 }
 
+// chatAutoTurnLimit is the per-conversation ceiling on unattended auto turns
+// (docs/30, 設定 > アシスタント「自動応答の上限回数」). Missing/invalid ⇒
+// defaultAutoTurns; always clamped to [1, maxAutoTurnLimit] — there is no
+// unlimited mode, the clamp is the runaway stop.
+func chatAutoTurnLimit() int {
+	v, ok := readUIPrefs()["assistantAutoTurnLimit"].(float64)
+	if !ok {
+		return defaultAutoTurns
+	}
+	n := int(v)
+	if n < 1 {
+		return 1
+	}
+	if n > maxAutoTurnLimit {
+		return maxAutoTurnLimit
+	}
+	return n
+}
+
+// chatAutoPilotEnabled is the global ON/OFF for 自動走行 (docs/30, 設定 >
+// アシスタント「自動走行」): the operator autonomously answers a session's
+// AskUserQuestion with the session's own recommendation, and drives a presented plan
+// through review-by-another-session → feedback → approval. Missing/invalid key ⇒
+// FALSE — acting in the user's stead is consequential, so unlike auto-turn this mode
+// is a deliberate opt-in. The mode gates only the INSTRUCTION text carried on the
+// interim reports (reportHeadFor); the guardrails (share every decision, never
+// auto-handle destructive or unclear cases) ride in that text and in the persona.
+func chatAutoPilotEnabled() bool {
+	v, ok := readUIPrefs()["assistantAutoPilot"].(bool)
+	return ok && v
+}
+
 // chatAutoCompactEnabled is the global ON/OFF for the assistant chat's preventive
 // auto-compaction at the context threshold (docs/33 第4段, 設定 > アシスタント
 // 「コンテキストの自動圧縮」). Missing/invalid key ⇒ true, matching the frontend

@@ -35,7 +35,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"mime"
 	"net/http"
@@ -444,7 +443,10 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 	agents.MarkTurnStart(h.ocSid)
 	// 終端の turn 状態で idle を刻む（＋完了なら docs/30 の報告を出す）。以下の return
 	// 経路はすべて手前で setState 済みなので、defer 時点の state が turn の終端。
-	defer func() { agents.MarkTurnEnd(h.ocSid, h.currentState()) }()
+	// failure は失敗の理由（errors.go）— オペレーター報告とチャットブリッジ本文が
+	// 「エラーで終わった」を言えるように終端まで運ぶ。
+	failure := ""
+	defer func() { agents.MarkTurnEndErr(h.ocSid, h.currentState(), failure) }()
 	h.setState(agents.TurnStarting)
 	h.mu.Lock()
 	addr, ses := h.addr, h.ses
@@ -491,7 +493,11 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 		return
 	}
 	defer res.Body.Close()
-	_, _ = io.Copy(io.Discard, res.Body)
+	// 200 でも失敗していることがある: opencode はプロバイダ側の失敗を HTTP ステータス
+	// ではなく assistant message の error フィールドで返す（errors.go の実測）。status
+	// だけ見ていた頃は残高切れ・認証エラーが「正常完了」として idle に戻り、転写にも
+	// 何も残らなかった。
+	turnErr, failed := decodeTurnError(res.Body)
 	h.mu.Lock()
 	interrupted := h.state == agents.TurnInterrupting
 	h.inter = nil // turn が終わった＝質問はもう待っていない
@@ -500,7 +506,12 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 	case interrupted:
 		h.setState(agents.TurnCancelled)
 	case res.StatusCode >= 400:
+		failure = fmt.Sprintf("[error] HTTP %d", res.StatusCode)
 		log.Printf("opencode managed: turn failed name=%s status=%d", h.name, res.StatusCode)
+		h.setState(agents.TurnFailed)
+	case failed:
+		failure = turnErr.summary()
+		log.Printf("opencode managed: turn failed name=%s model=%s %s", h.name, st.Model, turnErr.summary())
 		h.setState(agents.TurnFailed)
 	default:
 		h.setState(agents.TurnCompleted)

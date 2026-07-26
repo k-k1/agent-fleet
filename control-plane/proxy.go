@@ -78,6 +78,10 @@ func newAgentProxyAPI(m *manager) agentProxyAPI { return agentProxyAPI{memberAut
 // The Control Plane never talks to tmux directly; it delegates to the Agent.
 func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolved) {
 	rt := res.rt
+	if err := scheduleDeleteGuard(r.Context(), a.mgr.store, res.mv.MembershipID, r); err != nil {
+		writeAPIErr(w, &apiError{http.StatusConflict, "schedule_in_use", err.Error()})
+		return
+	}
 	// P3-9: only mutating calls (session input/create, repo clone, connections…)
 	// count as activity. Background GET polling (session list, workspace state)
 	// must NOT keep a workspace warm, or a left-open tab would defeat idle-stop —

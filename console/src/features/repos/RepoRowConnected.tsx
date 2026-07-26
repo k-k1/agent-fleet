@@ -3,7 +3,7 @@
 // copy appears (the flat Repos list, each node of the project tree). All the launch
 // / clone-target / delete / fast-forward / open-SCM logic that used to live inline
 // in ReposSection lives here once.
-import { apiJSON, raw, errText } from "../../core/api/client.ts";
+import { apiJSON, raw, errText, repoSetLock } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
@@ -90,6 +90,16 @@ export function RepoRowConnected({ r, ctx, onToggle, sess }: RepoRowConnectedPro
         void refreshRepos();
         toast(tr("rp.svn_cleanup_success", { name: r.name }), { kind: "success" });
       } : undefined}
+      // 削除ロック（docs/45）: 作業コピー（worktree 含む）を削除保護に固定/解除する。
+      onToggleLock={async (locked) => {
+        const res = await repoSetLock(r.name, locked);
+        if (res?.error) {
+          toast(tr("repo.lock_failed", { err: errText(res.error) }));
+          return;
+        }
+        void refreshRepos();
+        toast(locked ? tr("repo.locked_on", { name: r.name }) : tr("repo.locked_off", { name: r.name }), { kind: "success" });
+      }}
       onDelete={async () => {
         const ok = await askConfirm({
           title: tr("rp.delete_workcopy_title"),

@@ -80,6 +80,10 @@ type Repo struct {
 	// parent working copy's current HEAD. It is deliberately separate from
 	// Ahead/Behind above, which describe the branch's configured upstream.
 	Integration *RepoIntegration `json:"integration,omitempty"`
+	// Locked marks the working copy as pinned against deletion (docs/45, locks.go):
+	// DELETE /repos/{name} is refused even with force=true, and the automatic
+	// worktree prune skips it. Toggled by POST /repos/{name}/lock.
+	Locked bool `json:"locked,omitempty"`
 }
 
 // RepoIntegration is a local-only comparison; it never fetches. TargetUnique is
@@ -282,6 +286,12 @@ func handleListRepos(w http.ResponseWriter, r *http.Request) {
 		integration := gitWorktreeIntegration(parentDir, repos[i].Path, targetBranch)
 		repos[i].Integration = &integration
 	}
+	// Delete lock (docs/45): one ledger read for the whole list, not one per row.
+	if locked := lockedRepoDirs(); len(locked) > 0 {
+		for i := range repos {
+			repos[i].Locked = locked[absPath(repos[i].Path)]
+		}
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"repos": repos})
 }
 
@@ -473,6 +483,9 @@ func linkedWorktreeCount(dir string) int {
 func maybePruneWorktree(dir string) {
 	if dir == "" || !isLinkedWorktree(dir) || worktreeHasSessions(dir) {
 		return
+	}
+	if repoLocked(dir) {
+		return // 削除ロック（docs/45）は自動 prune にも効く
 	}
 	if st, err := gitStatus(dir); err != nil || st.Dirty || st.Ahead > 0 {
 		return // keep dirty/unpushed worktrees; the user force-deletes those explicitly
@@ -1146,6 +1159,19 @@ func handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 				len(running), strings.Join(running, ", ")))
 		return
 	}
+	// 削除ロック（docs/45）: 作業コピー自身のロックと、そこに住むロック済みセッションの
+	// 巻き添え。どちらも force=true では越えられない — ロック解除が唯一の道。
+	if repoLocked(dir) {
+		httpx.WriteErr(w, http.StatusForbidden, errCodeLocked,
+			"working copy is locked against deletion; unlock it first")
+		return
+	}
+	if locked := lockedSessionsInDir(session.ListMetas(), dir); len(locked) > 0 {
+		httpx.WriteErr(w, http.StatusForbidden, errCodeLockedSessions,
+			fmt.Sprintf("%d locked session(s) live in this working copy (%s); deleting it would strand them. Unlock them first.",
+				len(locked), strings.Join(locked, ", ")))
+		return
+	}
 	// An SVN working copy has no worktree registry — just a folder with a .svn dir.
 	// Remove it directly (after the session guard above); the git worktree logic below
 	// applies only to git working copies.
@@ -1233,6 +1259,9 @@ func forgetNonLiveMetasUnder(dir string) {
 		}
 		if live[m.Name] || (m.DriverKind() == session.DriverManaged && managedAlive(m)) {
 			continue
+		}
+		if m.Locked {
+			continue // 削除ロック（docs/45）— 掃除の巻き添えでも消さない
 		}
 		session.RemoveMeta(m.Name)
 	}

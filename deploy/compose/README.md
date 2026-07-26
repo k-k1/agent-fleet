@@ -1,7 +1,7 @@
 # Agent Fleet — on-prem deployment (Docker Compose)
 
 Agent Fleet is a self-hosted web console for running AI coding agents (Claude Code,
-Codex CLI, GitHub Copilot CLI, Antigravity CLI, Cursor CLI, Kiro CLI, OpenCode) as a managed fleet. Each member gets an
+Codex CLI, GitHub Copilot CLI, Antigravity CLI, Cursor CLI, Kiro, OpenCode) as a managed fleet. Each member gets an
 isolated workspace container — with cgroup CPU/memory quotas — holding a persistent
 home and git working copies, and drives agent sessions from the browser. A Go
 control plane orchestrates the workspaces; deployment targets include this on-prem
@@ -213,3 +213,7 @@ distributed under the **Apache License 2.0** and is provided **"AS IS", WITHOUT
 WARRANTIES OR CONDITIONS OF ANY KIND**; the authors accept **no liability** for any
 damage, data loss, downtime, or cost arising from its use. See `LICENSE`, and `NOTICE`
 for bundled-OSS attribution.
+
+Official releases come only from <https://github.com/k-k1/agent-fleet-dist>. If you
+pass this bundle on, Apache-2.0 §4(d) requires you to keep the notices in `NOTICE`
+with it — that URL included — so the next recipient can find the original.

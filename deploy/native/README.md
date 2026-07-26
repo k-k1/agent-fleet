@@ -1,7 +1,7 @@
 # Agent Fleet — native package (no Docker, single user)
 
 Agent Fleet is a self-hosted web console for running AI coding agents (Claude Code,
-Codex CLI, GitHub Copilot CLI, Antigravity CLI, Cursor CLI, Kiro CLI, OpenCode) as a managed fleet. This native package runs
+Codex CLI, GitHub Copilot CLI, Antigravity CLI, Cursor CLI, Kiro, OpenCode) as a managed fleet. This native package runs
 it without Docker on a single-user Linux host (including WSL2): the control plane and
 console run as host processes, and the workspace runs inside a bubblewrap
 (user-namespace) sandbox on a downloaded rootfs. For multi-user service with
@@ -319,3 +319,7 @@ prefer the approval gates for destructive actions. This software is distributed 
 the **Apache License 2.0** and is provided **"AS IS", WITHOUT WARRANTIES OR CONDITIONS
 OF ANY KIND**; the authors accept **no liability** for any damage, data loss, or cost
 arising from its use. See `LICENSE`, and `NOTICE` for bundled-OSS attribution.
+
+Official releases come only from <https://github.com/k-k1/agent-fleet-dist>. If you
+pass this package on, Apache-2.0 §4(d) requires you to keep the notices in `NOTICE`
+with it — that URL included — so the next recipient can find the original.

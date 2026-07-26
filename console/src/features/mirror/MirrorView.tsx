@@ -15,6 +15,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { baseName, imageFormat } from "../../lib/filemeta.ts";
 import { useDraft } from "../../lib/draft.ts";
+import { useDragScroll } from "../../lib/dragScroll.ts";
 import { scrollComposerViewport } from "../../lib/keyScroll.ts";
 import { useBackClose } from "../../lib/backClose.ts";
 import { fmtDateTime, fmtNum } from "../../lib/intl.ts";
@@ -358,6 +359,8 @@ export function MirrorView({
   // 返信サジェスト v2: ✨ボタンで取得した LLM 文脈候補（Layer A のチップ列にマージ）と取得中フラグ。
   const [llmSuggestions, setLlmSuggestions] = useState<string[]>([]);
   const [suggesting, setSuggesting] = useState(false);
+  const suggestRef = useRef<HTMLDivElement>(null); // チップ行（Tab でここへフォーカスを移す）
+  useDragScroll(suggestRef); // 1行に収めた候補列をマウスドラッグで左右スクロール（スワイプは既定動作）
   // Pasted images awaiting send: {path} is the session-saved absolute path (referenced in
   // the prompt), {url} an object URL for the local chip preview, {name} the basename.
   const [attachments, setAttachments] = useState<{ path: string; name: string; url: string; image: boolean }[]>([]);
@@ -1592,6 +1595,12 @@ export function MirrorView({
     }
     setDraft(text);
     setHistIdx(null);
+    // スマホ: チップ差し込みで textarea にフォーカスすると GBoard が開いて画面を覆う。タッチ端末では
+    // フォーカスしない（キーボードを出さない）— ユーザーは送信 or タップして編集を選べる。
+    if (coarsePointer()) {
+      inputRef.current?.blur(); // 既に開いていたキーボードも畳む
+      return;
+    }
     requestAnimationFrame(() => {
       const el = inputRef.current;
       if (el) {
@@ -1696,7 +1705,74 @@ export function MirrorView({
     inputRef.current?.focus();
   };
 
+  // 返信サジェストのフォーカスリング = ✨ボタン＋候補チップ（DOM 順）。✨も候補の一員として
+  // 巡回に含める（Enter はボタン既定の click ＝ LLM 候補取得がそのまま走る）。
+  const suggestRing = (): HTMLButtonElement[] =>
+    Array.from(suggestRef.current?.querySelectorAll<HTMLButtonElement>("button") ?? []);
+
+  // チップ行は1行スクロール（はみ出した候補は画面外）。キー移動のフォーカス先が隠れないよう
+  // 横だけ最小限スクロールして追従させる。focus 既定のスクロールは縦にも効いて本文が飛ぶので
+  // preventScroll で殺し、inline/block:nearest の scrollIntoView で必要分だけ動かす。
+  const focusRingItem = (el: HTMLButtonElement) => {
+    el.focus({ preventScroll: true });
+    el.scrollIntoView({ block: "nearest", inline: "nearest" });
+  };
+
+  // リング内の移動。Tab/Shift+Tab は「候補＋入力欄」を一巡（端まで来たら入力欄へ戻る＝
+  // 入力欄→候補1→候補2→入力欄…のループ）。←/→ は候補内だけで循環。Escape で入力欄へ。
+  // 処理したら true を返し、呼び出し側はそこで打ち切る。
+  const onSuggestNav = (e: RKeyboardEvent<HTMLButtonElement>): boolean => {
+    if (e.nativeEvent.isComposing) return false;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      inputRef.current?.focus();
+      return true;
+    }
+    const ring = suggestRing();
+    const i = ring.indexOf(e.currentTarget);
+    if (i < 0 || !ring.length) return false;
+    if (e.key === "Tab") {
+      e.preventDefault();
+      const next = e.shiftKey ? i - 1 : i + 1;
+      if (next < 0 || next >= ring.length) inputRef.current?.focus(); // 端 → 入力欄へ戻る
+      else focusRingItem(ring[next]);
+      return true;
+    }
+    if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+      e.preventDefault();
+      const d = e.key === "ArrowRight" ? 1 : -1;
+      focusRingItem(ring[(i + d + ring.length) % ring.length]); // ←/→ は候補内で循環
+      return true;
+    }
+    return false;
+  };
+
+  // チップ上のキー操作。移動系は onSuggestNav に委ね、Enter/Ctrl(⌘)+Enter の役割はコンポーサーの
+  // 送信キー設定に合わせる: modSend（Ctrl+Enter で送信）なら mod+Enter=送信・素の Enter=差し込み、
+  // enter モード（Enter で送信）なら逆。
+  const onSuggestKeyDown = (e: RKeyboardEvent<HTMLButtonElement>, text: string) => {
+    if (onSuggestNav(e)) return;
+    if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+    const mod = e.ctrlKey || e.metaKey;
+    e.preventDefault(); // ボタン既定の click（＝差し込み）と二重発火させない
+    applySuggestion(text, modSend ? mod : !mod);
+  };
+
   const onKeyDown = (e: RKeyboardEvent) => {
+    // 入力欄が空なら Tab で返信サジェストへ入る（＝入力欄→候補1→候補2→入力欄…のループ）。
+    // 素の Tab は最初の「候補チップ」から始める（先頭の✨は飛ばす／Shift+Tab で戻れる）。
+    // Shift+Tab は逆回りなのでリング末尾から入る。テキストがあるときは従来どおりの Tab。
+    if (e.key === "Tab" && !e.nativeEvent.isComposing && draft === "") {
+      const ring = suggestRing();
+      const target = e.shiftKey
+        ? ring[ring.length - 1]
+        : suggestRef.current?.querySelector<HTMLButtonElement>(".mirror-suggest-chip");
+      if (target) {
+        e.preventDefault();
+        focusRingItem(target);
+        return;
+      }
+    }
     // Scroll the transcript without leaving the composer: Shift+↑/↓ nudges, Ctrl/⌘+↑/↓
     // and Ctrl/⌘+[ / ] page. Checked before history recall so the modified arrows don't
     // get swallowed by the ↑/↓ recall path below.
@@ -2394,7 +2470,7 @@ export function MirrorView({
           {/* 返信サジェスト: 常用短文＋直近回答に沿った候補（Layer A）＋✨で取得する LLM 候補（v2）。
               クリックで差し込み、⌥で即送信。flex 全幅 (.mirror-suggest) で入力行の上に載る。 */}
           {!composerLocked && (suggestChips.length > 0 || settings.replySuggestEnabled) && (
-            <div className="mirror-suggest">
+            <div className="mirror-suggest" ref={suggestRef}>
               {settings.replySuggestEnabled && (
                 <button
                   type="button"
@@ -2402,6 +2478,7 @@ export function MirrorView({
                   title={tr("mirror.suggest_ai")}
                   disabled={suggesting || wsDown()}
                   onClick={fetchLlmSuggestions}
+                  onKeyDown={onSuggestNav} // Enter は既定の click（＝候補取得）に任せる
                 >
                   <Icon name={suggesting ? "loading" : "sparkle"} spin={suggesting} />
                 </button>
@@ -2412,7 +2489,8 @@ export function MirrorView({
                   type="button"
                   className={"mirror-suggest-chip" + (sg.llm ? " llm" : "")}
                   title={tr("mirror.suggest_hint")}
-                  onClick={(e) => applySuggestion(sg.text, e.altKey || e.metaKey)}
+                  onClick={(e) => applySuggestion(sg.text, e.ctrlKey || e.altKey || e.metaKey)}
+                  onKeyDown={(e) => onSuggestKeyDown(e, sg.text)}
                 >
                   {sg.text}
                 </button>
@@ -2644,10 +2722,15 @@ function parseBashOutput(t: Turn): { stdout: string; stderr: string } | null {
 // A `/`-run slash command or skill is logged as a user turn
 // `<command-name>/foo</command-name><command-message>…</command-message><command-args>…</command-args>`.
 // It's hidden by isNoise; parseCommand recovers the name + args so it can surface as a chip.
+// Tag order varies: built-ins log <command-name> first, but skill invocations (2.1.215
+// 実測・定時 /scout) log <command-message> FIRST. Requiring name-first made those turns
+// unparseable → isNoise dropped them entirely → no user-turn boundary, so every fire's
+// reply merged into one assistant block anchored at the last visible turn (footer stuck
+// at the old date). Accept either tag at the start and take the name wherever it sits.
 function parseCommand(t: Turn): { name: string; args: string } | null {
   if (t.role !== "user") return null;
   const s = (t.text || "").replace(/^\s+/, "");
-  if (!s.startsWith("<command-name>")) return null;
+  if (!s.startsWith("<command-name>") && !s.startsWith("<command-message>")) return null;
   const name = s.match(/<command-name>([\s\S]*?)<\/command-name>/);
   if (!name || !name[1].trim()) return null;
   const args = s.match(/<command-args>([\s\S]*?)<\/command-args>/);
@@ -3082,6 +3165,25 @@ function ThinkingBlock({
   );
 }
 
+// ErrorBlock renders a turn that ended in a provider-side error instead of an answer
+// (part kind "error"): the agent recorded a failure — an expired login, an exhausted
+// balance, a rate limit — and produced no output. Always expanded and visually distinct:
+// this used to be invisible, so the session just went quiet and read 入力待ち again.
+// The message is provider text, not Markdown, so it renders verbatim.
+function ErrorBlock({ info, text }: { info?: string; text?: string }) {
+  if (!text && !info) return null;
+  return (
+    <div className="mirror-error" role="alert">
+      <div className="mirror-error-head">
+        <Icon name="error" />
+        <span className="mte-title">{tr("mirror.error_label")}</span>
+        {info && <span className="mte-code">{info}</span>}
+      </div>
+      {text && <div className="mirror-error-body">{text}</div>}
+    </div>
+  );
+}
+
 // stripAnsi removes SGR color/style escape sequences so shell output renders as plain text.
 function stripAnsi(s: string): string {
   // eslint-disable-next-line no-control-regex
@@ -3258,11 +3360,20 @@ function Turn({
         <ThinkingBlock key={item.i} text={item.p.text} baseDir={turn.cwd} repo={repo} onOpenFile={onOpenFile} />
       ) : item.p.kind === "delegation" ? (
         <DelegationCard key={item.i} p={item.p} agentName={agentName} />
+      ) : item.p.kind === "error" ? (
+        // The turn failed instead of answering (managed driver: the agent's own
+        // error record, e.g. auth/quota/rate-limit) — never fold it away.
+        <ErrorBlock key={item.i} info={item.p.info} text={item.p.text} />
       ) : (
         <MarkdownView key={item.i} source={item.p.text} baseDir={turn.cwd} repo={repo} onOpenFile={onOpenFile} />
       ),
     );
   const fromOperator = isUser && turn.source === "operator";
+  // Schedule origin (docs/38): the prompt was fired by scheduled execution — either a
+  // timed fire ("schedule") or a run-now ("schedule-manual") — badged so schedule-driven
+  // turns are never mistaken for typed or operator input, and 定期/手動 read apart.
+  const fromSchedule = isUser && (turn.source === "schedule" || turn.source === "schedule-manual");
+  const scheduleManual = isUser && turn.source === "schedule-manual";
   // Chat-bridge origin (docs/37 P2a): a reply the user sent from Discord/Slack, injected
   // into the session — badged distinctly from self-typed input, like operator turns.
   const chatProvider = isUser
@@ -3279,6 +3390,7 @@ function Turn({
         (isUser ? "user" : "assistant") +
         (turn.sidechain ? " sidechain" : "") +
         (fromOperator ? " from-operator" : "") +
+        (fromSchedule ? " from-schedule" : "") +
         (chatProvider ? " from-chat" : "")
       }
       data-turn-idx={turn.idx}
@@ -3290,6 +3402,16 @@ function Turn({
           // the user — badge it so the two are never confused.
           <span className="mt-op" title={tr("mirror.from_operator_title")}>
             <Icon name="broadcast" /> {tr("mirror.from_operator")}
+          </span>
+        )}
+        {fromSchedule && (
+          // Fired by scheduled execution (docs/38) — timed (定時) vs run-now (手動発火).
+          <span
+            className="mt-op mt-sched"
+            title={tr(scheduleManual ? "mirror.from_schedule_manual_title" : "mirror.from_schedule_title")}
+          >
+            <Icon name={scheduleManual ? "play" : "clock"} />{" "}
+            {tr(scheduleManual ? "mirror.from_schedule_manual" : "mirror.from_schedule")}
           </span>
         )}
         {chatProvider && (

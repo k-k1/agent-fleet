@@ -220,14 +220,26 @@
   gap: 12px;
   min-height: 54px;
 }
-/* 返信サジェストのチップ行（コンポーサー入力の上に横並び）。MirrorView と同じ見た目。 */
+/* 返信サジェストのチップ行（コンポーサー入力の上）。MirrorView と同じで、折り返さず必ず1行に
+   収め、あふれた分は左右スクロール（タッチ=スワイプ／マウス=ドラッグ）。スクロールバーは隠す。 */
 .chat-suggest {
+  min-width: 0;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  user-select: none;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none;
+}
+.chat-suggest::-webkit-scrollbar {
+  display: none;
 }
 .chat-suggest-chip {
+  flex: 0 0 auto; /* 1行スクロールなので縮ませない */
   max-width: 100%;
   padding: 3px 10px;
   font-size: 12px;
@@ -252,6 +264,7 @@
 }
 /* v2: ✨ トリガーボタン（on-demand で LLM 候補を取得）。 */
 .chat-suggest-ai {
+  flex: 0 0 auto; /* 1行スクロールなので縮ませない */
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -432,6 +445,19 @@
 }
 .chat-open:hover {
   background: var(--hover-bg);
+}
+/* 「どのチャットを開いているのか」を左ペインで示す。セッション行（.sess-row）と同じ語彙:
+   .is-open = どこかのペインに出ている（控えめなアクセントバー）、.active = フォーカス中の
+   ペインが開いている会話（＝いま話している相手。バー＋行の塗り）。 */
+.chat-row.is-open {
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--lp-accent, var(--accent)) 45%, transparent);
+}
+.chat-row.active {
+  background: var(--lp-active-bg, var(--active-bg));
+  box-shadow: inset 2px 0 0 var(--lp-accent, var(--accent));
+}
+.chat-row.active .chat-open-title {
+  font-weight: 600;
 }
 .chat-kic {
   color: var(--lp-accent, var(--accent));

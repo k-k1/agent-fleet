@@ -56,7 +56,13 @@ type chatMessage struct {
 
 // chatConversation is the persisted record (one JSON file per conversation).
 type chatConversation struct {
-	ID    string `json:"id"`
+	ID string `json:"id"`
+	// Slug is the conversation's short addressable identity ("a"+6 base32 — the
+	// assistant twin of session slugs "s…"), used wherever a human or an automation
+	// (schedules, operator tools) references a conversation without a UUID. Assigned at
+	// creation; conversations from before the field are backfilled at agent start
+	// (backfillConvSlugs). Immutable once set.
+	Slug  string `json:"slug,omitempty"`
 	Agent string `json:"agent"` // preferred provider snapshotted at creation
 	// ActiveAgent is the backend that generated the latest successful assistant turn.
 	// Keeping it separate preserves the user's preferred provider while letting the UI
@@ -105,6 +111,11 @@ type chatConversation struct {
 	// ["pagerduty"]. mcpConfigArgs attaches each read-only via mcp-run when the user
 	// has the matching connection configured.
 	Integrations []string `json:"integrations,omitempty"`
+	// Locked pins the conversation against deletion (docs/45): while true,
+	// DELETE /chat/conversations/{id} is refused with 403 locked. Toggled by
+	// POST /chat/conversations/{id}/lock; nothing else writes it, so a turn that
+	// rewrites the conversation preserves it like any other field.
+	Locked bool `json:"locked,omitempty"`
 	// Seed is a transient first-turn prompt returned by create (Files attach, docs/19
 	// Phase C) for the Console to prefill the composer. It is set AFTER saveConv, so it is
 	// never persisted — the composer owns it thereafter.
@@ -241,6 +252,7 @@ func (c *chatConversation) knowledgeDirs() []string {
 // chatMeta is the light shape returned by the list endpoint (no message bodies).
 type chatMeta struct {
 	ID           string        `json:"id"`
+	Slug         string        `json:"slug,omitempty"` // short addressable id ("a…", see chatConversation.Slug)
 	Agent        string        `json:"agent"`
 	ActiveAgent  string        `json:"active_agent,omitempty"`
 	AssistantID  string        `json:"assistant_id,omitempty"` // which assistant backs this thread (Q2)
@@ -250,6 +262,7 @@ type chatMeta struct {
 	UpdatedAt    int64         `json:"updated_at"`
 	MessageCount int           `json:"message_count"`
 	Context      *contextUsage `json:"context,omitempty"` // current context fill (chat_usage.go)
+	Locked       bool          `json:"locked,omitempty"`  // 削除ロック（docs/45）: true の間 DELETE は拒否
 }
 
 // chatPersona keeps the headless agent in plain conversational mode (translate,

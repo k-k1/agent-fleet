@@ -9,7 +9,7 @@ Distribution artifacts for [Agent Fleet](https://github.com/k-k1/agent-fleet).
 
 Agent Fleet is a self-hosted web console for running AI coding agents
 (Claude Code, Codex CLI, GitHub Copilot CLI, Antigravity CLI, Cursor CLI,
-Kiro CLI, OpenCode) as a managed fleet. Each member gets an isolated workspace — a
+Kiro, OpenCode) as a managed fleet. Each member gets an isolated workspace — a
 Docker container with cgroup CPU/memory quotas (or a bubblewrap-sandboxed
 rootfs in the native edition) with a persistent home and git working copies —
 and starts, drives and monitors agent sessions from the browser. A Go control plane orchestrates the
@@ -262,8 +262,17 @@ the same tag is referenced and no re-download happens. Always verify downloads
 against `SHA256SUMS` / the sha256 in `rootfs.json` (install.sh and `af start` do
 this automatically).
 
+What changed in each version is in the notes on every release, indexed in
+[CHANGELOG.md](CHANGELOG.md).
+
 ## License / bundled software
 
+- Agent Fleet is licensed under the **Apache License, Version 2.0** — see
+  [LICENSE](LICENSE), with the attribution notices in [NOTICE](NOTICE).
+- **This repository is the primary distribution.** Official releases are published
+  only here: <https://github.com/k-k1/agent-fleet-dist>. If you redistribute Agent
+  Fleet, Apache-2.0 §4(d) requires you to carry the notices in `NOTICE` forward —
+  which includes that URL — so recipients can find the original.
 - The distributed images and rootfs are a **lean build**: the agent CLIs
   (Claude Code / Codex / GitHub Copilot / Antigravity / Cursor / Kiro / OpenCode) are
   not bundled. On first start each user fetches verified, pinned versions from
