@@ -28,12 +28,15 @@ codex の memories ワークスペースの 2 つ。** codex は本フリート�
 第 3 のルート候補（root 1 行で追加可能・watch）。opencode/agy は上流動向の watch、
 copilot/cursor はサーバー側のため対象外。
 
-参考（非採用 CLI の動向）: Gemini CLI は v0.40 で**完全ローカル md の 4 層 tiered memory**
-（プロジェクト/サブディレクトリ/プライベート/グローバル GEMINI.md）＋実験的 Auto Memory
-（アイドル時に transcript を採掘し SKILL.md 化→`/memory inbox` でレビュー）へ刷新、
-Goose も `~/.config/goose/memory` にローカル md メモリを持つ。**「md がメモリの正」は業界の
-主流収斂**であり、将来これらを種別採用してもルート追加だけで本機構に載る。逆に
-Cursor/Copilot はサーバー側管理へ寄せており、この系統はローカル版管理の対象にならない。
+参考（非採用 CLI の動向）: Gemini CLI は v0.40 で完全ローカル md の 4 層 tiered memory＋
+実験的 Auto Memory（transcript 採掘→SKILL.md 化→`/memory inbox` レビュー）へ刷新した直後、
+**2026-05 の I/O で廃止が発表され 2026-06-18 に無料/Pro/Ultra 向け提供を終了**（後継は
+Antigravity CLI に一本化。Enterprise ライセンス・有償 API キーのみ延命）。よって
+「Gemini CLI を種別採用」の線は消えたが、そのメモリ設計は md 正・階層化・レビュー付き
+自動抽出の参考事例として有効で、**後継 = agy 系譜へ機能が流れてくる可能性が watch の本命**
+になった。Goose も `~/.config/goose/memory` にローカル md メモリを持つ。**「md がメモリの正」
+は業界の主流収斂**であり、これらはルート追加だけで本機構に載る。逆に Cursor/Copilot は
+サーバー側管理へ寄せており、この系統はローカル版管理の対象にならない。
 
 なお上流では codex が `external_agent_memory_import`（開発中フラグ）で **Claude Code の
 `projects/<slug>/memory/*.md` をそのまま読み取り自分の MEMORY.md へ統合する**機能を作っており、
