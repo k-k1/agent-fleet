@@ -3,6 +3,7 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import hljs from "highlight.js/lib/common";
 import { dirName, baseName, isExternalUrl, resolveMarkdownFileTarget, slug } from "../../lib/filemeta.ts";
+import { withoutYamlFrontMatter } from "../../lib/markdown.ts";
 import { api, downloadURL } from "../../core/api/client.ts";
 import { useSettings } from "../../lib/settings.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -73,7 +74,9 @@ export function MarkdownView({
     if (!el) return;
     let alive = true;
 
-    const rawHtml = marked.parse(source ?? "", { gfm: true, breaks }) as string;
+    // YAML front matter is document metadata rather than visible Markdown. Keep
+    // an unfinished delimiter block intact so a streaming reply is not hidden.
+    const rawHtml = marked.parse(withoutYamlFrontMatter(source ?? ""), { gfm: true, breaks }) as string;
     el.innerHTML = DOMPurify.sanitize(rawHtml);
 
     renderEmoji(el); // :shortcode: → emoji (skips code / pre)
