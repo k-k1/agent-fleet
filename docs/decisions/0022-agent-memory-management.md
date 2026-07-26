@@ -10,8 +10,11 @@
 エージェントが書き溜める永続メモリのローカル実体は 2 つある: claude の auto-memory
 （`projects/<slug>/memory/*.md`・既定 ON）と、codex の memories ワークスペース
 （`~/.codex/memories/` の md 群＋派生状態 sqlite。feature flag は stable だが**既定 OFF**＝
-本フリートでは未使用なだけで機構は存在する）。opencode はネイティブ実装なし（上流 issue open）、
-agy CLI は一級メモリ未確認、copilot のメモリは GitHub サーバー側でローカル実体が無い。
+本フリートでは未使用なだけで機構は存在する）。全 8 種別を調査した結果、他はローカル実体を
+持たない: opencode はネイティブ実装なし（上流 issue open）、agy CLI は一級メモリ未確認、
+copilot（Copilot Memory）と cursor（旧 Memories は削除済・現存は Automations 用）は
+サーバー側管理、kiro は自動メモリなし（steering md＋派生状態の knowledge 索引のみ。
+global steering `~/.kiro/steering/*.md` は将来ルート候補）。
 これらメモリは消えない置き場にある一方、**履歴が無い**。誤学習・誤った書き換えを巻き戻す手段も、
 日時を指定して当時の状態を見る手段も、別の agent-fleet 環境へ持ち出す手段も無い。
 既存のバックアップは ops 層の DATA_DIR 丸ごと tar のみで、個人単位・プロジェクト単位の粒度を持たない。
@@ -41,9 +44,11 @@ agy CLI は一級メモリ未確認、copilot のメモリは GitHub サーバ�
    「置き換え＝新 commit」。.md の 3-way merge は意味的衝突を機械解決できないためやらない。
 6. **メモリルートは宣言テーブル化し、v1 から claude と codex の 2 件を宣言**。codex は
    `~/.codex/memories/` の存在検知で自動有効になる（フリートとして memories 機能を ON に
-   するかは別判断・別配線）。opencode/agy は上流実装待ちの watch、copilot はローカル実体が
-   無いため対象外。上流で codex が Claude Code のメモリレイアウトを直接 import する機能を
-   開発中である（`external_agent_memory_import`）ことは、この汎用ルート設計の妥当性を裏付ける。
+   するかは別判断・別配線）。kiro global steering は第 3 ルート候補（watch）、opencode/agy は
+   上流実装待ちの watch、copilot/cursor はサーバー側管理でローカル実体が無いため対象外。
+   上流で codex が Claude Code のメモリレイアウトを直接 import する機能を開発中である
+   （`external_agent_memory_import`）こと、Gemini CLI v0.40 が完全ローカル md の階層メモリへ
+   刷新したことは、「md ディレクトリを正とする汎用ルート設計」の妥当性を裏付ける。
 
 ## 結果（見込みと受け入れる制約）
 

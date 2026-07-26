@@ -16,13 +16,24 @@
 | opencode | ネイティブ無し（確認済: 上流 schema にメモリ表なし・docs にも無し・feature request #16077 が open のまま。サードパーティ plugin で補う文化） | `~/.config/opencode/AGENTS.md` は毎起動 `cp -f` refresh のフリート管理ファイル | ×（上流が実装したら root 追加） |
 | agy | CLI には一級メモリ未確認（Antigravity **IDE** には Knowledge Items があるが `~/.gemini/antigravity/` 配下でレイアウト非公開。CLI 側 `~/.gemini/antigravity-cli/brain/` は会話 artifacts でありメモリではない） | — | ×（watch） |
 | copilot | **Copilot Memory はあるが GitHub サーバー側サービス**（repo スコープ事実＋ユーザー選好・28 日失効・管理は GitHub 設定画面）。ローカル `~/.copilot` にはセッションストアのみ | ローカル実体なし | ×（対象外＝versioning する実体がローカルに無い） |
+| cursor | **旧 Memories は製品から削除済み**（〜v2.1、公式の代替は Rules＝`.cursor/rules/*.md`＝リポジトリ内で git 管理可能）。現存する memories は cloud **Automations 専用のサーバー側エントリ**。CLI バンドル内の proto（`aiserver.v1.ListAutomationMemories*` / `PotentiallyGenerateMemory` / `KnowledgeBase*`）で全てクラウド RPC であることを実バイナリ確認 | ローカル実体なし（`~/.cursor` は transcript/worker のみ） | ×（対象外＝サーバー側） |
+| kiro | **自動メモリなし**（changelog 確認済）。永続は ① steering md（workspace `.kiro/steering/` はリポジトリ内＝既に git 管理圏、**global `~/.kiro/steering/*.md`** はユーザー所有・依頼すればエージェントも書く）② `/knowledge`（experimental・既定 OFF・`~/.local/share/kiro-cli/knowledge_bases/` の BM25/意味検索**索引＝派生状態**。実バイナリで knowledge_store/KnowledgeBase リソース確認） | global steering のみ将来ルート候補 | △（watch。global steering は md ディレクトリなので root 1 行で追加可能。索引は ★9 原則で対象外） |
 | （共通） | `AGENTS.md`（codex/opencode/agy） | entrypoint が毎起動イメージ内容へ上書きするフリート管理ファイル＝ユーザーメモリではない | × |
 
-**結論（改訂）: 版管理対象になるローカル実体は claude の auto-memory と codex の memories
-ワークスペースの 2 つ。** codex は本フリートで機能を有効化していないだけで、有効化すれば
-`~/.codex/memories/` に md ファイル群として育つ。よって v1 から**ルートを 2 つ宣言**し、
-codex 側はディレクトリ存在検知で自動的に対象へ入る（フリートとして memories を有効化するか
-どうかは別判断＝未決事項 4）。opencode/agy は上流動向の watch、copilot はサーバー側のため対象外。
+**結論（全 8 種別調査済・改訂）: 版管理対象になるローカル実体は claude の auto-memory と
+codex の memories ワークスペースの 2 つ。** codex は本フリートで機能を有効化していないだけで、
+有効化すれば `~/.codex/memories/` に md ファイル群として育つ。よって v1 から**ルートを
+2 つ宣言**し、codex 側はディレクトリ存在検知で自動的に対象へ入る（フリートとして memories を
+有効化するかどうかは別判断＝未決事項 4）。kiro の global steering（`~/.kiro/steering/*.md`）は
+第 3 のルート候補（root 1 行で追加可能・watch）。opencode/agy は上流動向の watch、
+copilot/cursor はサーバー側のため対象外。
+
+参考（非採用 CLI の動向）: Gemini CLI は v0.40 で**完全ローカル md の 4 層 tiered memory**
+（プロジェクト/サブディレクトリ/プライベート/グローバル GEMINI.md）＋実験的 Auto Memory
+（アイドル時に transcript を採掘し SKILL.md 化→`/memory inbox` でレビュー）へ刷新、
+Goose も `~/.config/goose/memory` にローカル md メモリを持つ。**「md がメモリの正」は業界の
+主流収斂**であり、将来これらを種別採用してもルート追加だけで本機構に載る。逆に
+Cursor/Copilot はサーバー側管理へ寄せており、この系統はローカル版管理の対象にならない。
 
 なお上流では codex が `external_agent_memory_import`（開発中フラグ）で **Claude Code の
 `projects/<slug>/memory/*.md` をそのまま読み取り自分の MEMORY.md へ統合する**機能を作っており、
