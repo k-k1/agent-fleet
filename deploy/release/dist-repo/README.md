@@ -2,6 +2,15 @@
 
 English | [日本語](README.ja.md)
 
+**Close your laptop. The AI keeps working.**
+
+Run Claude Code, Codex, Copilot, Cursor, and other coding agents in parallel on your
+server, and orchestrate them all from one console. There is no need to stay glued to
+a terminal—attach to any session whenever you need it. Check progress and send the
+next instruction from Discord, Slack, or your phone's browser, wherever you are.
+Session titles and suggested next instructions keep you from losing track of what
+you delegated and what to ask for next.
+
 Distribution artifacts for [Agent Fleet](https://github.com/k-k1/agent-fleet).
 **There is no source code here** — binaries and bundles are attached to Releases.
 
