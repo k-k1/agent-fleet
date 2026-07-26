@@ -63,18 +63,35 @@ func TestMarkTurnEndNotifiesCompletion(t *testing.T) {
 	}
 }
 
-// TurnFailed/TurnCancelled still end the turn: the session is idle awaiting input, the
-// same shape the claude Stop hook reports for an errored turn.
-func TestMarkTurnEndNotifiesFailedAndCancelled(t *testing.T) {
-	for _, st := range []TurnState{TurnFailed, TurnCancelled} {
-		t.Run(string(st), func(t *testing.T) {
-			got := captureNotifier(t)
-			MarkTurnStart("sid-x")
-			MarkTurnEnd("sid-x", st)
-			if tr := waitTransition(t, got); tr.state != "idle" || tr.previous != "working" {
-				t.Fatalf("transition = %+v", tr)
-			}
-		})
+// A cancelled turn ended normally (the user interrupted it): idle, nothing special.
+func TestMarkTurnEndNotifiesCancelled(t *testing.T) {
+	got := captureNotifier(t)
+	MarkTurnStart("sid-x")
+	MarkTurnEnd("sid-x", TurnCancelled)
+	if tr := waitTransition(t, got); tr.state != "idle" || tr.previous != "working" {
+		t.Fatalf("transition = %+v", tr)
+	}
+}
+
+// A FAILED turn also ends (status → idle, the session really is awaiting input) but must
+// be distinguishable: reporting it as a plain completion is what made a provider error —
+// an exhausted balance, an expired login — read as 応答が完了 with no output at all. The
+// reason rides the excerpt so the report and the chat bridge can quote it.
+func TestMarkTurnEndFailedNotifiesFailureWithReason(t *testing.T) {
+	got := captureNotifier(t)
+	MarkTurnStart("sid-f")
+	MarkTurnEndErr("sid-f", TurnFailed, "[error] APIError (HTTP 401): Insufficient balance")
+	tr := waitTransition(t, got)
+	if tr.previous != "working" || tr.state != StateFailed {
+		t.Fatalf("transition = %+v, want working→%s", tr, StateFailed)
+	}
+	if tr.excerpt != "[error] APIError (HTTP 401): Insufficient balance" {
+		t.Fatalf("excerpt = %q, want the driver's failure summary", tr.excerpt)
+	}
+	// The status store must still say idle — WireLive のフォールバックと
+	// anySessionWorking はここを読むので、failed を書くと 進行中 に張り付く。
+	if st, _ := status.Read("sid-f"); st.State != "idle" {
+		t.Fatalf("status = %q, want idle", st.State)
 	}
 }
 
