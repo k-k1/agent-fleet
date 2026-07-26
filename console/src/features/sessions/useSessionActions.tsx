@@ -83,6 +83,9 @@ export function useSessionActions(): SessionActions {
       toast(t("sess.lock_failed"));
       return;
     }
+    // The accepted POST is authoritative. Do not leave the row wording to a
+    // cached or in-flight list refresh.
+    useSessionsStore.getState().setLocked(s.name, res?.locked ?? locked);
     toast(locked ? t("sess.locked_on") : t("sess.locked_off"), { kind: "success" });
     void refreshSessions();
   };
