@@ -671,10 +671,11 @@ export const en: Record<keyof typeof ja, string> = {
     "Priority of the CLIs that power assistant chat and utility generation. The first connected CLI is used; disconnected ones are skipped. Choose each CLI's model below. Takes effect for new built-in-assistant conversations; an explicit custom-assistant setting wins.",
   "assistant.models": "Assistant models",
   "assistant.note_models":
-    "Model used by built-in assistants for new conversations. If priority falls back to another CLI, that CLI uses the model selected on its row. “Default” delegates model selection to the CLI.",
+    "Model used by built-in assistants for new conversations. If priority falls back to another CLI, that CLI uses its row's model. “Recommended” chooses a safe model from the connected catalog and shows the current resolution.",
   "assistant.utility_models": "Title and suggestion models",
   "assistant.note_utility_models":
-    "Models for session/chat titles, branch names, and AI reply suggestions. CLI selection follows the priority above. “Default” uses the CLI default or its compatibility-focused automatic choice.",
+    "Models for session/chat titles, branch names, and AI reply suggestions. CLI selection follows the priority above. “Recommended” chooses an available fast, low-cost model and safely falls back to the CLI default.",
+  "assistant.recommended_now": "Recommended (currently: {model})",
   "assistant.auto_turn": "Auto-respond to session reports",
   "assistant.note_auto_turn":
     "When a session launched or steered by the Fleet Operator (or another assistant with AF write access) reports back, the assistant runs one turn automatically to process it. As a runaway guard, unattended turns per conversation are capped at the limit below (reset whenever you send a message).",

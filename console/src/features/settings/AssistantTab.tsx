@@ -3,6 +3,7 @@ import {
   setSetting,
   OUTPUT_LANGUAGES,
   ASSISTANT_AGENT_KINDS,
+  ASSISTANT_RECOMMENDED_MODEL,
   normalizeAssistantOrder,
   REGION_THEMES,
 } from "../../lib/settings.ts";
@@ -14,19 +15,51 @@ import { useModelOptions } from "../../lib/agentModels.ts";
 
 function AssistantModelRow({
   kind,
+  utility,
   value,
   onChange,
 }: {
   kind: (typeof ASSISTANT_AGENT_KINDS)[number];
+  utility: boolean;
   value: string;
   onChange: (v: string) => void;
 }) {
   const tr = useT();
   const live = useModelOptions(kind) || [["", tr("ui.default")]];
+  const ids = live.map(([id]) => id);
+  const cheap = ids.find((id) => ["mini", "flash", "lite", "small", "nano", "haiku"].some((x) => id.toLowerCase().includes(x)));
+  const recommended = utility
+    ? kind === "claude"
+      ? "haiku"
+      : kind === "codex"
+        ? cheap || ""
+        : kind === "opencode" && ids.includes("opencode-go/deepseek-v4-flash")
+          ? "opencode-go/deepseek-v4-flash"
+          : kind === "agy"
+            ? "Gemini 3.5 Flash (Medium)"
+            : ""
+    : kind === "claude"
+      ? "sonnet"
+      : kind === "codex"
+        ? "gpt-5.6-luna"
+        : kind === "opencode"
+          ? ids.includes("opencode-go/glm-5.2")
+            ? "opencode-go/glm-5.2"
+            : "opencode/nemotron-3-ultra-free"
+          : kind === "agy"
+            ? "Gemini 3.5 Flash (Medium)"
+            : "";
+  const resolvedLabel = live.find(([id]) => id === recommended)?.[1] || recommended || tr("ui.default");
+  const recommendedOption: [string, string] = [
+    ASSISTANT_RECOMMENDED_MODEL,
+    tr("assistant.recommended_now", { model: resolvedLabel }),
+  ];
+  const choices = [recommendedOption, ...live];
   // Preserve a configured model that temporarily disappeared from a live catalog
   // (workspace stopped, provider disconnected, upstream rename). Dropping it from
   // the select would make the visible value lie about the persisted setting.
-  const options = value && !live.some(([id]) => id === value) ? [...live, [value, value] as [string, string]] : live;
+  const options =
+    value && !choices.some(([id]) => id === value) ? [...choices, [value, value] as [string, string]] : choices;
   return (
     <Row label={agentOf(kind).assistantName}>
       <Select value={value} options={options} onChange={onChange} />
@@ -74,6 +107,7 @@ export function AssistantTab() {
           <AssistantModelRow
             key={`assistant-${kind}`}
             kind={kind}
+            utility={false}
             value={s.assistantModels?.[kind] || ""}
             onChange={(model) => setSetting("assistantModels", { ...s.assistantModels, [kind]: model })}
           />
@@ -84,6 +118,7 @@ export function AssistantTab() {
           <AssistantModelRow
             key={`utility-${kind}`}
             kind={kind}
+            utility
             value={s.assistantUtilityModels?.[kind] || ""}
             onChange={(model) =>
               setSetting("assistantUtilityModels", { ...s.assistantUtilityModels, [kind]: model })
