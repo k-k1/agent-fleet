@@ -49,6 +49,8 @@ interface ReposStore {
    * a caller that knows the workspace state can tell "booting → retry" from "stopped →
    * show empty"; see ProjectTree's useRetryLoad + clear(). */
   refresh(): Promise<boolean>;
+  /** Reflect a successful deletion-lock toggle before the next list refresh. */
+  setLocked(name: string, locked: boolean): void;
   /** Settle to empty. For a caller that knows the repos really are gone/unreachable
    * (a stopped workspace), since refresh() alone never blanks the list. */
   clear(): void;
@@ -66,6 +68,9 @@ export const useReposStore = create<ReposStore>((set) => ({
     if (isTransientErr(d)) return false;
     set({ repos: d.repos || [] });
     return true;
+  },
+  setLocked(name, locked) {
+    set((s) => ({ repos: s.repos.map((r) => (r.name === name ? { ...r, locked } : r)) }));
   },
   clear: () => set({ repos: [] }),
 }));
