@@ -335,6 +335,13 @@ Content-Typeは `application/json` とする。サーバーは互換性のため
   クライアント側のGETタイムアウトが先に切れた場合は通常の取得不能と同じ扱いで、
   `SaveStateUnknown`/`ConflictRemoteUnavailable` を維持しdiscardは失敗する。read-only rootの
   GETはPUT対象外でありmutexを取得しない（相対表記が偶然一致する別ファイルとの誤競合を避ける）。
+- mutexだけでは「PUT goroutineがmutex取得前に停止している間にクライアントがタイムアウトし、
+  復旧GETが先にmutexを取って旧baseを読み、その後に再開したPUTが旧baseとのCASに成功する」
+  順序を防げない。PUTはmutex取得直後にrequest contextのキャンセルを検査し、既に打ち切られて
+  いればdiskを変更せず499 `write_cancelled` で終了する。これで打ち切りの境界は二値になる:
+  mutex取得前のキャンセル→書き込まない（この検査で中止）、取得後のキャンセル→rename/エラー
+  確定まで完走し後続GETがその結果を待つ。書込み途中でのキャンセル検査は行わない。499応答は
+  離脱済みクライアントには届かないのが通常で、目的はdisk無変更の保証である。
 
 ### 3.3 PUT `/fs/file`
 
@@ -430,6 +437,7 @@ PUT が追加する確定コードは次のとおり。
 | 413 | `too_large` | current fileまたはdecoded contentが2 MiB超、またはHTTP body全体が16 MiB超 | 変更なし |
 | 415 | `binary_not_supported` | current fileにUTF-8不正かNUL byteがある、またはdecoded request `content`にNULがある | 変更なし |
 | 415 | `unsupported_newline` | current fileまたはdecoded request `content`にCRLF、CR単独、混在改行がある | 変更なし |
+| 499 | `write_cancelled` | mutex取得時点でrequest contextが既にキャンセル済み（クライアントのタイムアウト/切断） | 変更なし。応答は離脱済みクライアントに届かないのが通常で、Console i18n登録は不要 |
 | 500 | `read_failed` | 現在本文の読み込みに失敗 | 変更なし（保証できない場合は保存処理を開始しない） |
 | 500 | `write_failed` | rename前の一時書込み、fsync等に失敗 | 旧本文を保持 |
 | 500 | `write_state_unknown` | rename後の親directory fsync等に失敗し、live namespaceは新だがdurabilityが不明 | `SaveStateUnknown`でmineを保持 |

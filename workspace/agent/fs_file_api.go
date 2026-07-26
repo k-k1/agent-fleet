@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
@@ -116,12 +117,26 @@ type fsFilePUTResponse struct {
 	Revision string `json:"revision"`
 }
 
-func putFSFile(req fsFilePUTRequest, service fsFileService) (fsFilePUTResponse, *fsAPIError) {
+func putFSFile(ctx context.Context, req fsFilePUTRequest, service fsFileService) (fsFilePUTResponse, *fsAPIError) {
 	if service.locks == nil {
 		service.locks = &keyedFileMutex{}
 	}
 	unlock := service.locks.lock(req.path)
 	defer unlock()
+
+	// The mutex alone cannot serialize a PUT whose goroutine was still parked
+	// before this lock when the client timed out: a recovery GET can win the
+	// lock, observe the old base, and hand the client a discard target that a
+	// late CAS-and-rename would then invalidate. Checking the request context
+	// here makes the abandonment boundary two-valued: cancelled before the
+	// lock → abort with the disk untouched (this check); cancelled after → the
+	// write runs to its rename/error decision and a queued GET waits for that
+	// outcome. No cancellation check happens mid-write. The 499 response
+	// normally reaches no one — the client is already gone — its purpose is
+	// guaranteeing the disk stayed unchanged.
+	if ctx.Err() != nil {
+		return fsFilePUTResponse{}, fsErr(499, errCodeFSWriteCancelled, "request was cancelled before the write began")
+	}
 
 	if isDenied(req.path) {
 		return fsFilePUTResponse{}, fsErr(403, errCodeFSDenied, "file path is denied")
@@ -173,7 +188,7 @@ func handleFSFilePut(w http.ResponseWriter, r *http.Request) {
 		writeFSError(w, aerr)
 		return
 	}
-	resp, aerr := putFSFile(req, defaultFSFileService)
+	resp, aerr := putFSFile(r.Context(), req, defaultFSFileService)
 	if aerr != nil {
 		writeFSError(w, aerr)
 		return
