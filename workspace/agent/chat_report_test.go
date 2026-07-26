@@ -357,7 +357,7 @@ func TestReportHeadForAutoPilot(t *testing.T) {
 	prefs := filepath.Join(home, ".config", "agent-fleet", "ui-prefs.json")
 
 	// Default (no key): confirm-first.
-	q, pl := reportHeadFor("question", ""), reportHeadFor("plan-approval", "")
+	q, pl := reportHeadFor("question", "", 0), reportHeadFor("plan-approval", "", 0)
 	if strings.Contains(q, "自動走行") || strings.Contains(pl, "自動走行") {
 		t.Fatalf("auto-pilot text without opt-in:\nq=%q\npl=%q", q, pl)
 	}
@@ -368,7 +368,7 @@ func TestReportHeadForAutoPilot(t *testing.T) {
 	if err := os.WriteFile(prefs, []byte(`{"assistantAutoPilot":true}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	q, pl = reportHeadFor("question", ""), reportHeadFor("plan-approval", "")
+	q, pl = reportHeadFor("question", "", 0), reportHeadFor("plan-approval", "", 0)
 	if !strings.Contains(q, "自動走行") || !strings.Contains(q, "answer_session_question") {
 		t.Fatalf("auto-pilot question head = %q", q)
 	}
@@ -588,5 +588,79 @@ func TestReportLinkFileLocation(t *testing.T) {
 	p := filepath.Join(home, ".config", "agent-fleet", "session-report", "slot09.json")
 	if _, err := os.Stat(p); err != nil {
 		t.Fatalf("expected link at %s: %v", p, err)
+	}
+}
+
+// TestReportHeadForTurnAborted covers the 中断時の自動再開 wording (docs/47): ON asks the
+// operator to resume, OFF asks it to confirm with the user first, and past the cap the
+// report escalates instead of asking for yet another resume. The language instruction is
+// part of the contract — sending JA into a session working in EN (or the reverse) flips
+// its output language for every following turn, and there is no per-session language to
+// read, so the operator has to be told to match the session.
+func TestReportHeadForTurnAborted(t *testing.T) {
+	home := withTempHome(t)
+	if err := os.MkdirAll(filepath.Join(home, ".config", "agent-fleet"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	prefs := filepath.Join(home, ".config", "agent-fleet", "ui-prefs.json")
+
+	// Default (no key) = ON: nudge the session to continue.
+	on := reportHeadFor(reportKindAnswerReady, reportReasonTurnAborted, 1)
+	for _, want := range []string{"中断", "send_to_session", "言語", "破壊的"} {
+		if !strings.Contains(on, want) {
+			t.Fatalf("auto-resume head missing %q:\n%s", want, on)
+		}
+	}
+
+	// OFF: confirm with the user before resuming, but still explain the interruption.
+	if err := os.WriteFile(prefs, []byte(`{"assistantAutoResume":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	off := reportHeadFor(reportKindAnswerReady, reportReasonTurnAborted, 1)
+	if !strings.Contains(off, "確認") || !strings.Contains(off, "言語") {
+		t.Fatalf("auto-resume OFF head = %q", off)
+	}
+	if strings.Contains(off, "ON】") {
+		t.Fatalf("OFF head advertises the ON mode:\n%s", off)
+	}
+
+	// Past the cap: escalate to the user, never ask for another resume — this is the
+	// stop for an error that keeps recurring.
+	capped := reportHeadFor(reportKindAnswerReady, reportReasonTurnAborted, maxAutoResumeAttempts+1)
+	if !strings.Contains(capped, "上限") || strings.Contains(capped, "send_to_session") {
+		t.Fatalf("capped head must escalate without asking for a resume:\n%s", capped)
+	}
+
+	// A clean completion keeps its old wording — the abort branch must not leak into it.
+	clean := reportHeadFor(reportKindAnswerReady, "", 0)
+	if strings.Contains(clean, "中断") {
+		t.Fatalf("clean completion head changed:\n%s", clean)
+	}
+}
+
+// TestAutoResumeCounter: consecutive aborts accumulate up to the cap and a clean
+// completion resets the budget, so a session that recovers is not penalised later.
+func TestAutoResumeCounter(t *testing.T) {
+	withTempHome(t)
+	if n := autoResumeAttempts("slot20"); n != 0 {
+		t.Fatalf("fresh session count = %d, want 0", n)
+	}
+	if n := bumpAutoResume("slot20"); n != 1 {
+		t.Fatalf("first bump = %d, want 1", n)
+	}
+	if n := bumpAutoResume("slot20"); n != 2 {
+		t.Fatalf("second bump = %d, want 2", n)
+	}
+	if n := autoResumeAttempts("slot20"); n != 2 {
+		t.Fatalf("read back = %d, want 2", n)
+	}
+	resetAutoResume("slot20")
+	if n := autoResumeAttempts("slot20"); n != 0 {
+		t.Fatalf("after reset = %d, want 0", n)
+	}
+	// Counters are per session.
+	bumpAutoResume("slot21")
+	if n := autoResumeAttempts("slot20"); n != 0 {
+		t.Fatalf("slot20 picked up slot21's count: %d", n)
 	}
 }

@@ -240,6 +240,13 @@ export interface Settings {
   // the user's stead is consequential, so this is a deliberate opt-in; unclear or
   // destructive choices/plans still ask the user.
   assistantAutoPilot: boolean;
+  // 中断時の自動再開 (docs/47): when a session's turn is CUT OFF before it answered by
+  // something that clears on its own (dropped connection, temporary rate limit), the
+  // operator nudges it to continue instead of only relaying to the user. Default ON —
+  // unlike auto-pilot this makes no decision on the user's behalf, it just re-runs work
+  // they already asked for; failures whose cause won't clear (usage limit, prompt too
+  // long) are classified out and never auto-resumed.
+  assistantAutoResume: boolean;
   // Preventive auto-compaction (docs/33 第4段): when a chat's context is still at/above
   // the backend threshold (90%) as a new turn starts, summarize-and-hand-off first.
   // Default ON — the 80% notice gives a manual window before this fires.
@@ -446,6 +453,7 @@ const DEFAULTS: Settings = {
   assistantAutoTurn: true,
   assistantAutoTurnLimit: 10,
   assistantAutoPilot: false,
+  assistantAutoResume: true,
   assistantAutoCompact: true,
   ssmHostColors: {},
   // 音声読み上げの初期値＝おすすめ設定。設定タブの「リセット」ボタンが戻す値（TTS_RESET）と
