@@ -24,6 +24,7 @@ import { t, tCount, useT } from "../lib/i18n/index.ts";
 import type { MsgKey } from "../lib/i18n/index.ts";
 import { fmtGiB as fg } from "../lib/bytes.ts";
 import { useUsageResetNotify } from "./usageResetNotify.ts";
+import { useSettingsUI } from "../features/settings/store.ts";
 import { browserTarget } from "../features/browser/target.ts";
 
 const HIST_N = 60; // sparkline ring buffer: ~4 min at the 4s poll cadence
@@ -198,6 +199,26 @@ function agoText(sec: number | null | undefined) {
   if (sec >= 3600) return tCount("wsbar.ago_hour", Math.round(sec / 3600));
   if (sec >= 60) return tCount("wsbar.ago_min", Math.round(sec / 60));
   return tCount("wsbar.ago_sec", Math.max(0, sec));
+}
+
+// UsageBreakdownLink: 使用量チップ → 設定「使用量」タブへのディープリンク（docs/46 §5）。
+// このチップが答えるのは「サブスク枠がどれだけ残っているか」で、「何にトークンを使ったか」は
+// 別の問い。枠を見て「で、何に消えた?」となった所からそのまま渡す導線。
+function UsageBreakdownLink({ onNavigate }: { onNavigate: () => void }) {
+  const tr = useT();
+  const openSettings = useSettingsUI((s) => s.openSettings);
+  return (
+    <button
+      type="button"
+      className="wu-manage"
+      onClick={() => {
+        onNavigate();
+        openSettings("usage");
+      }}
+    >
+      <Icon name="graph" /> {tr("wsbar.usage.breakdown")}
+    </button>
+  );
 }
 
 // UsageRow: one limit window in the usage dropdown — label + percent, a fill bar, and
@@ -425,6 +446,7 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
             )}
           </div>
           {!unavailable && !src.live && src.noteKey && <div className="wu-note muted">{tr(src.noteKey)}</div>}
+          <UsageBreakdownLink onNavigate={() => setOpen(false)} />
           {src.manageURL && (
             <a className="wu-manage" href={src.manageURL} target="_blank" rel="noopener">
               <Icon name="link-external" /> {tr("wsbar.usage.open_page")}
@@ -534,6 +556,7 @@ function AgyUsageChip({ tenant }: { tenant: string | null }) {
               <Icon name="refresh" spin={refreshing} /> {tr("wsbar.usage.refresh")}
             </button>
           </div>
+          <UsageBreakdownLink onNavigate={() => setOpen(false)} />
         </div>
       )}
     </div>
@@ -631,6 +654,7 @@ function CopilotUsageChip({ tenant }: { tenant: string | null }) {
               <Icon name="refresh" spin={refreshing} /> {tr("wsbar.usage.refresh")}
             </button>
           </div>
+          <UsageBreakdownLink onNavigate={() => setOpen(false)} />
           {/* Manage link on its own row (same as the generic UsageChip) — cramming it
               into wu-foot alongside 取得/更新 broke the layout. */}
           <a className="wu-manage" href="https://github.com/settings/copilot" target="_blank" rel="noopener">

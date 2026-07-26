@@ -199,6 +199,8 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	// safety-net archive (list/restore/purge). Proxied verbatim; also used by the MCP
 	// cleanup tools, which reach the Agent directly via the resolved runtime.
 	mux.HandleFunc("GET /api/sessions/usage", rest)
+	// 機能別使用量の時系列（docs/46 P3 / ADR0029）— Agent 側で集計済みの結果をそのまま中継。
+	mux.HandleFunc("GET /api/usage/series", rest)
 	mux.HandleFunc("GET /api/sessions/cleanup", rest)
 	mux.HandleFunc("DELETE /api/sessions/{name}", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/lock", rest) // 削除ロック（docs/45）

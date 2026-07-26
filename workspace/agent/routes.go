@@ -33,6 +33,9 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /sessions/{name}/recreate", handleRecreateSession)
 	mux.HandleFunc("GET /sessions/archived", handleListArchived)
 	mux.HandleFunc("GET /sessions/usage", handleSessionsUsage)
+	// 機能別使用量の時系列（docs/46 P3 / ADR0029）。サーバ側で集計して返す。
+	// ⚠️ control-plane/routes.go にも同じパスの登録が要る（CP は明示許可リスト方式）。
+	mux.HandleFunc("GET /usage/series", handleUsageSeries)
 	mux.HandleFunc("GET /sessions/cleanup", handleSessionsCleanup)
 	mux.HandleFunc("DELETE /sessions/{name}", handleDeleteSession)
 	// Cleanup archive (docs/32): the gz safety net for destructive tidy-up.

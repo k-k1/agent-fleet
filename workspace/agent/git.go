@@ -1263,6 +1263,7 @@ func forgetNonLiveMetasUnder(dir string) {
 		if m.Locked {
 			continue // 削除ロック（docs/45）— 掃除の巻き添えでも消さない
 		}
+		finalizeSessionUsage(m) // 使用量台帳へ確定してから忘れる（docs/46 §3-b）
 		session.RemoveMeta(m.Name)
 	}
 }

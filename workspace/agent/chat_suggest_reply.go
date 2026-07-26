@@ -72,6 +72,7 @@ func handleChatSuggestReplies(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), replySuggestTimeout)
 	defer cancel()
+	ctx = withUsageTag(ctx, usageTag{Feature: usageFeatureSuggestChat, Trigger: usageTriggerManual, Ref: c.ID})
 	reps, err := runChatReplySuggestLLM(ctx, c.Messages)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "generation_failed", "reply suggestion failed")

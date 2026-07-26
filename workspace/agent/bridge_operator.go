@@ -24,7 +24,19 @@ import (
 // runOperatorTurn runs ONE operator turn over the conversation and returns the assistant
 // reply. On failure it returns an already-localized reason line (for the receiver to post
 // back) plus the error to log — mirroring ReceiverDeps.Inject's (reason, err) contract.
+//
+// This is the Discord/Slack entry point. The scheduled assistant fire (docs/38
+// session_mode=assistant) shares the same machinery through runOperatorTurnAs — the two
+// are the same turn but NOT the same consumption to a reader of the usage graph, so the
+// usage tag is the caller's to supply (ADR 0029 §2).
 func runOperatorTurn(conv, text string) (string, error) {
+	return runOperatorTurnAs(conv, text, usageTag{
+		Feature: usageFeatureAssistantBridge, Trigger: usageTriggerBridge, Ref: conv,
+	})
+}
+
+// runOperatorTurnAs is runOperatorTurn with an explicit usage tag.
+func runOperatorTurnAs(conv, text string, tag usageTag) (string, error) {
 	en := bridgeAnswerEN()
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -56,6 +68,7 @@ func runOperatorTurn(conv, text string) (string, error) {
 	// human approval (bridgeApprovalTimeout), which must fit inside the turn.
 	ctx, cancel := context.WithTimeout(context.Background(), operatorTurnTimeout)
 	defer cancel()
+	ctx = withUsageTag(ctx, tag)                 // 使用量台帳（ADR 0029 §3）
 	deregister := registerLiveTurn(conv, cancel) // Stop button / in_progress work as usual
 	defer deregister()
 
