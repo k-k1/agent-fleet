@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -103,6 +104,7 @@ func runSessionStatusHook(args []string) {
 
 func recordSessionNotification(sid, previous, state, turnText string) {
 	kind := ""
+	reason := ""
 	switch {
 	// A turn that ENDED: the marker said "working", or it is GONE. The pane-based idle
 	// heal (WireLive / liveStateOf) does status.Remove(sid) whenever the TUI *looks* like
@@ -116,6 +118,14 @@ func recordSessionNotification(sid, previous, state, turnText string) {
 	// permission) stay excluded — they are not completions and must not consume the arm.
 	case state == "idle" && (previous == "working" || previous == ""):
 		kind = reportKindAnswerReady
+	// A managed turn that ended in a provider-side error (agents.StateFailed). As an
+	// EVENT it is the same terminal completion as answer-ready — the session is back at
+	// 入力待ち and the instruction's one report must fire and consume the arm — but the
+	// report has to say it errored: a silent 応答が完了 is exactly how an exhausted
+	// opencode Zen balance passed for a finished turn. turnText holds the driver's
+	// one-line reason, so it also rides the full-text bridge body below.
+	case state == agents.StateFailed && (previous == "working" || previous == ""):
+		kind, reason = reportKindAnswerReady, reportReasonTurnFailed
 	case state == "question" && previous != "question":
 		kind = "question"
 	case state == "plan" && previous != "plan":
@@ -169,7 +179,7 @@ func recordSessionNotification(sid, previous, state, turnText string) {
 		// or drive the plan review loop (respond_session_plan); permission stays
 		// notification-center only.
 		if (kind == reportKindAnswerReady || kind == "question" || kind == "plan-approval") && reportArmed(m.Name) {
-			kickSessionReport(m.Name, kind, "")
+			kickSessionReport(m.Name, kind, reason)
 		}
 		return
 	}

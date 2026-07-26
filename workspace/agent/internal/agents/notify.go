@@ -73,10 +73,28 @@ func MarkTurnStart(sid string) {
 // 捕捉が無い）。オペレーター報告は TUI/managed とも本文抜粋なしの事実のみ
 // （docs/30）なので報告経路では使われず、TUI では全文ブリッジ（docs/37）の body に
 // だけ乗る。オペレーターは get_session_output で詳細を読む。
-func MarkTurnEnd(sid string, st TurnState) {
+func MarkTurnEnd(sid string, st TurnState) { MarkTurnEndErr(sid, st, "") }
+
+// StateFailed is the transition label MarkTurnEndErr hands the notifier for a turn that
+// ended in an error. It is NOT a status value — the status store still gets "idle"
+// (the session really is back at 入力待ち, and WireLive / anySessionWorking depend on
+// that). It exists because "終わった" and "エラーで終わった" were indistinguishable to
+// every consumer: a provider-side failure was reported to the operator as 応答が完了,
+// which is how an exhausted balance looked exactly like a finished turn.
+const StateFailed = "failed"
+
+// MarkTurnEndErr is MarkTurnEnd carrying the reason a turn failed. failure is the
+// one-line summary the driver built (empty for a clean turn); it rides the notifier's
+// excerpt so the operator report can say the turn errored and the chat bridge can post
+// the reason. Drivers that don't yet distinguish failures keep calling MarkTurnEnd.
+func MarkTurnEndErr(sid string, st TurnState, failure string) {
 	previous, _ := status.Read(sid)
 	status.Persist(sid, "idle")
 	if st == TurnUnknown {
+		return
+	}
+	if st == TurnFailed {
+		notify(sid, previous.State, StateFailed, failure)
 		return
 	}
 	notify(sid, previous.State, "idle", "")

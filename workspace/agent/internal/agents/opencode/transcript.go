@@ -534,6 +534,19 @@ func parseMessage(db *sql.DB, msgID string, data []byte, idx int) (transcript.Tu
 		return transcript.Turn{}, false // system / synthetic messages are not part of the chat
 	}
 	parts, text := readParts(db, msgID)
+	// A failed turn (errors.go) carries its reason in the message row, not in a part,
+	// and typically has NO parts at all — so the error part has to be appended BEFORE
+	// the empty-turn drop below, or the turn (and the only explanation the user gets)
+	// vanishes from the mirror while the session quietly reads idle.
+	if e, ok := decodeMessageError(data); ok {
+		parts = append(parts, e.part())
+		// Text is the flattened form (copy button, get_session_output, chat bridge):
+		// the operator must see the failure there too, not just in the rendered block.
+		if text != "" {
+			text += "\n\n"
+		}
+		text += e.summary()
+	}
 	if len(parts) == 0 {
 		return transcript.Turn{}, false
 	}

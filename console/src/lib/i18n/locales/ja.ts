@@ -1426,6 +1426,7 @@ export const ja = {
   "mirror.after_compact": "圧縮後",
   // ThinkingBlock / BashBlock
   "mirror.thinking_label": "思考",
+  "mirror.error_label": "エラーで終了",
   "mirror.collapse_output": "出力をたたむ",
   "mirror.show_output": "出力を表示",
   "mirror.output_lines": "出力 ({lines} 行)",

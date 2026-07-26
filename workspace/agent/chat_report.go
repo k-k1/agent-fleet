@@ -83,6 +83,13 @@ func disarmSessionReport(name string) {
 // so the completion report is never pre-empted (docs/30).
 const reportKindAnswerReady = "answer-ready"
 
+// reportReasonTurnFailed qualifies an answer-ready report whose turn ended in a
+// provider-side error rather than an answer (agents.StateFailed). The kind stays
+// answer-ready because the EVENT is the same terminal completion; only the wording
+// differs, so the operator is told to read the error instead of the (non-existent)
+// result.
+const reportReasonTurnFailed = "turn-failed"
+
 // defaultAutoTurns / maxAutoTurnLimit bound the operator turns run WITHOUT a user
 // message in between (reset on every user send). The ceiling is user-configurable
 // (設定 > アシスタント, ui-prefs assistantAutoTurnLimit — chatAutoTurnLimit) but
@@ -131,6 +138,12 @@ func kickSessionReport(name, kind, reason string) {
 func reportHeadFor(kind, reason string) string {
 	switch kind {
 	case "answer-ready":
+		if reason == reportReasonTurnFailed {
+			return "ターンがモデル／プロバイダ側のエラーで終了し、入力待ちに戻りました（応答は生成されていません）。" +
+				"get_session_output でエラー本文を確認し、原因（認証切れ・残高不足・レート制限・モデル指定など）を利用者に伝えて、" +
+				"対処（モデル変更・接続設定の見直しなど）を相談してください。" +
+				"原因が解消しないうちに同じ指示を再送しても同じ結果になります。"
+		}
 		return "応答が完了し、入力待ちになりました。"
 	case "question":
 		// 自動走行 (opt-in): the interim report itself carries the mode's marching
