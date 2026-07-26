@@ -1,5 +1,7 @@
 # Agent Fleet — a self-hosted console for running AI coding agents as a fleet
 
+![The Agent Fleet Console: repo tree with live sessions, a chat mirror of a running agent, and the repository's commit graph side by side](docs/img/console-en.webp)
+
 Agent Fleet is a web service that lets a team share AI coding agents — Claude Code,
 Codex CLI, GitHub Copilot CLI, Antigravity CLI, Cursor CLI, Kiro, OpenCode — efficiently and safely.
 Each member gets an isolated per-user environment — a Docker container with cgroup
@@ -39,6 +41,21 @@ constraints are collected in **[deploy/compose/README.md](deploy/compose/README.
 [`deploy/local/run-dev.sh`](deploy/local/run-dev.sh); personal WSL use (with or
 without Docker) is covered by
 [deploy/local/README-wsl.md](deploy/local/README-wsl.md).
+
+## A look around
+
+| | |
+|---|---|
+| ![Launch dialog: pick the agent CLI, its model, reasoning effort, start mode and whether to run in a fresh git worktree](docs/img/launch-en.webp) | ![Chat mirror: the agent's question rendered as an answerable card with the options it offered](docs/img/mirror-en.webp) |
+| **Start anything from one dialog** — agent, model, reasoning effort, start mode, and a fresh git worktree or the working copy as-is. | **Follow and steer from the browser** — questions, plans and permission prompts arrive as cards you answer in place. |
+| ![Three panes: the chat mirror, a live terminal attached to a shell session, and the repository's working-tree changes with a commit box](docs/img/split-en.webp) | ![Split panes: the commit graph with branch lanes on the left, the selected commit's diff on the right](docs/img/scm-en.webp) |
+| **Split panes** — mirror, live terminal and working-tree changes side by side; each pane can also pop out into its own tab. | **Real git, in the console** — commit graph beside the selected commit's diff, plus staging and commit, per working copy and worktree. |
+| ![A terminal pane attached to a shell session, showing a build and a git status run](docs/img/terminal-en.webp) | ![The same console in Japanese, with the repo tree, chat mirror and commit graph](docs/img/console-ja.webp) |
+| **A real terminal, too** — every session (agent or plain shell) is attachable as a live PTY. | **English / Japanese UI** — switched per user in ⚙ Settings. |
+
+Screenshots are captured from the real Console bundle against a demo dataset —
+regenerate them with `node console/scripts/shots/capture.mjs`
+([how](console/scripts/shots/README.md)).
 
 ## Settled assumptions (v1)
 

@@ -668,7 +668,13 @@ export const en: Record<keyof typeof ja, string> = {
     "The reply language for the assistant chat. “Match input” replies in the language of the text or question you give it. Choosing Japanese/English replies in that language even for text in another language (translation assistants excluded).",
   "assistant.agent_order": "Agent priority",
   "assistant.note_agent_order":
-    "Priority order of the CLIs that power the assistant chat and title suggestions: the first CONNECTED one from the top is used (disconnected ones are skipped). Antigravity defaults to last — its free-plan quota is scarce. Takes effect from a new conversation with the built-in assistant (custom assistants prefer their own agent setting).",
+    "Priority of the CLIs that power assistant chat and utility generation. The first connected CLI is used; disconnected ones are skipped. Choose each CLI's model below. Takes effect for new built-in-assistant conversations; an explicit custom-assistant setting wins.",
+  "assistant.models": "Assistant models",
+  "assistant.note_models":
+    "Model used by built-in assistants for new conversations. If priority falls back to another CLI, that CLI uses the model selected on its row. “Default” delegates model selection to the CLI.",
+  "assistant.utility_models": "Title and suggestion models",
+  "assistant.note_utility_models":
+    "Models for session/chat titles, branch names, and AI reply suggestions. CLI selection follows the priority above. “Default” uses the CLI default or its compatibility-focused automatic choice.",
   "assistant.auto_turn": "Auto-respond to session reports",
   "assistant.note_auto_turn":
     "When a session launched or steered by the Fleet Operator (or another assistant with AF write access) reports back, the assistant runs one turn automatically to process it. As a runaway guard, unattended turns per conversation are capped at the limit below (reset whenever you send a message).",
