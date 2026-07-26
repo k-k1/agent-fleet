@@ -3165,6 +3165,25 @@ function ThinkingBlock({
   );
 }
 
+// ErrorBlock renders a turn that ended in a provider-side error instead of an answer
+// (part kind "error"): the agent recorded a failure — an expired login, an exhausted
+// balance, a rate limit — and produced no output. Always expanded and visually distinct:
+// this used to be invisible, so the session just went quiet and read 入力待ち again.
+// The message is provider text, not Markdown, so it renders verbatim.
+function ErrorBlock({ info, text }: { info?: string; text?: string }) {
+  if (!text && !info) return null;
+  return (
+    <div className="mirror-error" role="alert">
+      <div className="mirror-error-head">
+        <Icon name="error" />
+        <span className="mte-title">{tr("mirror.error_label")}</span>
+        {info && <span className="mte-code">{info}</span>}
+      </div>
+      {text && <div className="mirror-error-body">{text}</div>}
+    </div>
+  );
+}
+
 // stripAnsi removes SGR color/style escape sequences so shell output renders as plain text.
 function stripAnsi(s: string): string {
   // eslint-disable-next-line no-control-regex
@@ -3341,6 +3360,10 @@ function Turn({
         <ThinkingBlock key={item.i} text={item.p.text} baseDir={turn.cwd} repo={repo} onOpenFile={onOpenFile} />
       ) : item.p.kind === "delegation" ? (
         <DelegationCard key={item.i} p={item.p} agentName={agentName} />
+      ) : item.p.kind === "error" ? (
+        // The turn failed instead of answering (managed driver: the agent's own
+        // error record, e.g. auth/quota/rate-limit) — never fold it away.
+        <ErrorBlock key={item.i} info={item.p.info} text={item.p.text} />
       ) : (
         <MarkdownView key={item.i} source={item.p.text} baseDir={turn.cwd} repo={repo} onOpenFile={onOpenFile} />
       ),
