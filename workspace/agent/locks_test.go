@@ -73,6 +73,36 @@ func TestSessionLockRefusesDeletion(t *testing.T) {
 	}
 }
 
+// A GET /sessions list has a small side effect: it stamps a stopped session's
+// StoppedAt. Its meta snapshot can predate a concurrent lock toggle, so that
+// bookkeeping must not write Locked=false back over the newly saved lock.
+func TestListMetaWriteKeepsNewerSessionLock(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
+	dir := filepath.Join(home, "repos", "app")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stale := session.Meta{Name: "slot01", Dir: dir, Kind: session.KindShell}
+	session.WriteMeta(stale)
+
+	// Simulate POST /lock completing after GET /sessions took its snapshot.
+	fresh, ok := session.ReadMeta("slot01")
+	if !ok {
+		t.Fatal("session meta missing")
+	}
+	fresh.Locked = true
+	session.WriteMeta(fresh)
+	stale.StoppedAt = time.Now().Format(time.RFC3339)
+	writeSessionMetaKeepingLock(stale)
+
+	got, ok := session.ReadMeta("slot01")
+	if !ok || !got.Locked {
+		t.Fatalf("list bookkeeping cleared a newer lock: meta=%+v ok=%v", got, ok)
+	}
+}
+
 // TestSessionLockSurvivesTTLPrune: the 7-day auto-prune of stopped sessions is a
 // deletion too — a locked row must stay listed past its TTL while its unlocked twin
 // is pruned away.
