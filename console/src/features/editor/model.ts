@@ -272,8 +272,21 @@ export function startManualMerge(model: FileEditorModel): FileEditorModel {
 }
 
 export function discardToBase(model: FileEditorModel): FileEditorModel {
-  const content = model.conflict?.content ?? model.baseDiskContent;
-  const revision = model.conflict?.revision ?? model.baseDiskRevision;
+  const observed =
+    model.conflict ||
+    (model.unknownObservation?.kind !== "unavailable"
+      ? model.unknownObservation?.remote
+      : null);
+  if (
+    model.phase === "saving" ||
+    (model.phase === "save_state_unknown" && !observed) ||
+    (model.phase === "conflict" && !observed) ||
+    model.phase === "conflict_remote_unavailable"
+  ) {
+    throw new Error("discard target unavailable");
+  }
+  const content = observed?.content ?? model.baseDiskContent;
+  const revision = observed?.revision ?? model.baseDiskRevision;
   const clean = createFileEditorModel(
     model.paneId,
     model.path,

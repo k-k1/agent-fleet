@@ -5,7 +5,7 @@ export interface DirtyEditorEntry {
   label: string;
   isDirty(): boolean;
   save(): Promise<boolean>;
-  discard(): void;
+  discard(): boolean | void | Promise<boolean | void>;
 }
 
 export type DirtyGuardReason =
@@ -111,11 +111,23 @@ export async function saveDirtyGuardRequest(id: number): Promise<boolean> {
   return true;
 }
 
-export function discardDirtyGuardRequest(id: number): void {
+export async function discardDirtyGuardRequest(id: number): Promise<boolean> {
   const active = request;
-  if (!active || active.id !== id) return;
-  for (const entry of active.entries) entry.discard();
+  if (!active || active.id !== id) return false;
+  for (const entry of active.entries) {
+    if (!entry.isDirty()) continue;
+    let discarded: boolean | void;
+    try {
+      discarded = await entry.discard();
+    } catch {
+      return false;
+    }
+    if (request !== active) return false;
+    if (discarded === false || entry.isDirty()) return false;
+  }
+  if (request !== active) return false;
   active.resolve(true);
+  return true;
 }
 
 export function cancelDirtyGuardRequest(id: number): void {
