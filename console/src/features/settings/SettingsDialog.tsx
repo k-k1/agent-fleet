@@ -9,14 +9,15 @@
 // Section keys are unchanged (display/keys/env/agents/assistant/tts/git/ssm/ops/tokens)
 // so every openSettings(section) deep-link still lands on the right item.
 //
-// Mobile (≤760px): the two panes become a drill-down — the rail is the list, tapping an
-// item shows its content with a ‹ back control; a horizontal swipe steps to the adjacent
-// section. Desktop/tablet show both panes at once (`entered` is irrelevant there).
+// Mobile (≤760px): the two panes become a drill-down — the rail is shown first, then
+// tapping an item shows its content. The back control and device/browser back return to
+// the rail; one more back closes the modal. Desktop/tablet show both panes at once
+// (`entered` is irrelevant there).
 import { useEffect, useRef, useState } from "react";
-import type { TouchEvent as RTouchEvent } from "react";
 import { useT } from "../../lib/i18n/index.ts";
 import { useSettingsUI, rememberSettingsSection } from "./store.ts";
 import { mobileMatches } from "../../lib/device.ts";
+import { useBackClose } from "../../lib/backClose.ts";
 import { Modal } from "../../ui/Modal.tsx";
 import { DisplayTab } from "./DisplayTab.tsx";
 import { KeysTab } from "./KeysTab.tsx";
@@ -72,7 +73,6 @@ const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
     ],
   },
 ];
-// Flat section order for adjacent-swipe navigation on mobile.
 const ALL_SECTIONS = GROUPS.flatMap((g) => g.items.map(([k]) => k));
 
 export function SettingsDialog() {
@@ -84,15 +84,24 @@ export function SettingsDialog() {
   const [section, setSection] = useState(
     ALL_SECTIONS.includes(settingsSection) ? settingsSection : "display",
   );
-  // Mobile drill-down: `entered` = viewing a section's content. Defaults true so
-  // opening lands directly on the section (as the old tab bar did); the ‹ control
-  // returns to the rail. Ignored by the desktop two-pane layout (CSS).
-  const [entered, setEntered] = useState(true);
+  // Mobile drill-down: `entered` = viewing a section's content. Settings always opens
+  // to the rail on a phone; the selected/remembered section only marks the active item.
+  // Ignored by the desktop two-pane layout (CSS).
+  const [entered, setEntered] = useState(false);
+  // A detail view gets its own history layer above Modal's close layer. Therefore the
+  // first device/browser back returns to this list and the second closes the modal.
+  useBackClose(() => setEntered(false), mobileMatches() && entered);
 
   // Follow programmatic section requests (openSettings(section) called while the modal
   // is already open) — e.g. a cross-tab pointer like Copilot → Gitホスティング or
-  // CloudWatch → AWS SSM jumps the rail to the target and drills in on mobile.
+  // CloudWatch → AWS SSM jumps the rail to the target and drills in on mobile. Skip
+  // the mount pass so a newly opened phone modal still begins at the list.
+  const mountedSettingsSection = useRef(false);
   useEffect(() => {
+    if (!mountedSettingsSection.current) {
+      mountedSettingsSection.current = true;
+      return;
+    }
     if (ALL_SECTIONS.includes(settingsSection)) {
       setSection(settingsSection);
       setEntered(true);
@@ -105,7 +114,7 @@ export function SettingsDialog() {
     rememberSettingsSection(section);
   }, [section]);
 
-  // Keep the active rail item in view as the section changes (tap or swipe).
+  // Keep the active rail item in view as the section changes.
   const railRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = railRef.current?.querySelector(".settings-rail-item.active") as HTMLElement | null;
@@ -125,29 +134,9 @@ export function SettingsDialog() {
       "set.title") as Parameters<typeof tr>[0],
   );
 
-  // Mobile: a horizontal swipe moves to the adjacent section (left → next, right →
-  // prev). Passive; only fires on a clearly-horizontal drag so content still scrolls.
-  const touch = useRef<{ x: number; y: number } | null>(null);
-  const onTouchStart = (e: RTouchEvent) => {
-    const t = e.touches[0];
-    touch.current = t ? { x: t.clientX, y: t.clientY } : null;
-  };
-  const onTouchEnd = (e: RTouchEvent) => {
-    const s = touch.current;
-    touch.current = null;
-    const t = e.changedTouches[0];
-    if (!s || !t || !mobileMatches() || !entered) return;
-    const dx = t.clientX - s.x;
-    const dy = t.clientY - s.y;
-    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return; // not horizontal
-    const i = ALL_SECTIONS.indexOf(section);
-    const n = i + (dx < 0 ? 1 : -1);
-    if (n >= 0 && n < ALL_SECTIONS.length) setSection(ALL_SECTIONS[n]);
-  };
-
   return (
     <Modal title={tr("set.title")} onClose={closeSettings} className="settings-modal">
-      <div className="ui-modal-body" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+      <div className="ui-modal-body">
         <div className={"settings-layout" + (entered ? " entered" : "")}>
           <nav className="settings-rail" ref={railRef} aria-label={tr("set.title")}>
             {GROUPS.map((g) => (

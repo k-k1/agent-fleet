@@ -205,8 +205,7 @@ export function App() {
       // (tablets) — a mouse desktop shouldn't get an edge-swipe rail.
       const tablet = !phone && coarsePointer();
       drawer = phone;
-      // While a modal is up, don't let an edge swipe open the rail behind it (the
-      // settings modal also uses horizontal swipes for its own tabs).
+      // While a modal is up, don't let an edge swipe open the rail behind it.
       const { settingsOpen, adminOpen } = useSettingsUI.getState();
       if (t && (phone || tablet) && !settingsOpen && !adminOpen) {
         const isOpen = phone ? navOpenRef.current : useLeftRail.getState().open;
