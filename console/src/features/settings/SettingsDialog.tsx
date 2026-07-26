@@ -32,6 +32,9 @@ import { TokensTab } from "./TokensTab.tsx";
 import { DangerTab } from "./DangerTab.tsx";
 import { InternalReposTab } from "./InternalReposTab.tsx";
 import { NotificationsTab } from "./NotificationsTab.tsx";
+// 使用量タブは features/usage の View をそのまま差す薄いラッパ（モーダル非依存に
+// 保つ＝将来ペインへ昇格させるときに同じ View を差し替えなしで使える。docs/46 §5）。
+import { UsageView } from "../usage/UsageView.tsx";
 
 // Rail groups. Each item = [section key, i18n label key]. Order here IS the rail order.
 const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
@@ -61,6 +64,7 @@ const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
     key: "workspace",
     label: "set.group_workspace",
     items: [
+      ["usage", "set.tab_usage"],
       ["env", "set.tab_env"],
       ["ssm", "set.tab_ssm"],
       ["internalrepos", "set.tab_internalrepos"],
@@ -177,6 +181,7 @@ export function SettingsDialog() {
             {section === "tts" && <TtsTab />}
             {section === "notifications" && <NotificationsTab />}
             {section === "git" && <GitTab />}
+            {section === "usage" && <UsageView />}
             {section === "env" && <EnvTab />}
             {section === "ssm" && <SsmTab />}
             {section === "ops" && <OpsTab />}

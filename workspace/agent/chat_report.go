@@ -491,6 +491,11 @@ func runReportAutoTurn(convID string) {
 	actualAgent := chatProviderKind(c, prov)
 	ctx, cancel := context.WithTimeout(context.Background(), chatTimeout)
 	defer cancel()
+	// 使用量台帳（ADR 0029 §3）: 完了報告への自動ターンは連鎖しうる無人消費 — 独立した
+	// feature として、利用者が撃ったターンと混ぜずに数える。
+	ctx = withUsageTag(ctx, usageTag{
+		Feature: usageFeatureAssistantAutoTur, Trigger: usageTriggerAuto, Ref: c.ID, Verb: c.SeedVerb,
+	})
 	deregister := registerLiveTurn(convID, cancel) // Stop button + in_progress work as usual
 	defer deregister()
 	// docs/33 第4段: 無人の自動ターンでも、閾値超過のままなら先に予防的自動圧縮

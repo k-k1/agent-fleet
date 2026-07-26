@@ -69,6 +69,10 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 			"session is running; stop it before deleting")
 		return
 	}
+	// fold-on-delete（docs/46 §3-b）: 転写が消える前に末尾ターンまで台帳へ確定させる。
+	// 通常の折り込みは「開いているターン」を残すので、ここで確定しないと最後の1ターンが
+	// 永久に入らない。
+	finalizeSessionUsage(m)
 	reclaim := r.URL.Query().Get("reclaim") == "1" || r.URL.Query().Get("reclaim") == "true"
 	if !reclaim {
 		session.RemoveMeta(name)
