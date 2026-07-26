@@ -224,6 +224,12 @@ export interface Settings {
   // key — hydrateUIPrefs migrates a stored pin by promoting it to the front, and
   // the Agent normalizes partial/stale lists against its own default order.
   assistantAgentOrder: string[];
+  // Per-backend models for builtin assistant conversations and short one-shot
+  // helpers. Empty means that backend's documented automatic/default choice.
+  // Explicit models are kept for every backend so priority fallback never silently
+  // changes the requested model.
+  assistantModels: Record<string, string>;
+  assistantUtilityModels: Record<string, string>;
   // Auto turn on session reports (docs/30): when a session an af_write assistant
   // launched/steered reports back, the assistant runs one turn automatically to
   // process it. Default ON; the backend caps unattended turns at 10 per conversation
@@ -450,6 +456,20 @@ const DEFAULTS: Settings = {
   assistantTitleSuggest: true,
   outputLanguage: "auto",
   assistantAgentOrder: [...ASSISTANT_AGENT_KINDS],
+  assistantModels: {
+    claude: "sonnet",
+    codex: "gpt-5.6-luna",
+    opencode: "opencode/nemotron-3-ultra-free",
+    cursor: "",
+    agy: "Gemini 3.5 Flash (Medium)",
+  },
+  assistantUtilityModels: {
+    claude: "haiku",
+    codex: "",
+    opencode: "",
+    cursor: "",
+    agy: "Gemini 3.5 Flash (Medium)",
+  },
   assistantAutoTurn: true,
   assistantAutoTurnLimit: 10,
   assistantAutoPilot: false,

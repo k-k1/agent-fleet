@@ -9,3 +9,7 @@ HANDOFF.md
 CHANGELOG-handoff.md
 talk
 history
+# README スクリーンショット（docs/img/*.webp）。参照するのは公開リポジトリの README
+# だけで、配布物内の docs からは誰も参照しない ＝ tar/イメージに入れる意味がない。
+# 生成は console/scripts/shots、dist repo へは publish-dist.sh --seed が push する。
+img
