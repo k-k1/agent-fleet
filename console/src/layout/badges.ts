@@ -77,6 +77,17 @@ export function chatPanes(layout: Layout | null | undefined): Map<string, Ref[]>
   return m;
 }
 
+/** Conversation shown in the ACTIVE pane — the rail marks that row as current, the
+ * chat twin of `activePane(l)?.session` for session rows. null when the active pane
+ * isn't a chat, or holds a draft that hasn't become a conversation yet. */
+export function activeChatId(layout: Layout | null | undefined): string | null {
+  for (const r of paneRows(layout)) {
+    if (r.id !== layout?.activeId) continue;
+    return r.pane.content.kind === "chat" ? r.pane.content.conversationId : null;
+  }
+  return null;
+}
+
 export function paneCount(layout: Layout | null | undefined): number {
   let n = 0;
   for (const c of layout?.cols ?? []) n += c.panes.length;
