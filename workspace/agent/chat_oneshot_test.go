@@ -222,6 +222,18 @@ func TestCheapOneShotModel(t *testing.T) {
 	}
 }
 
+func TestRecommendedUtilityModelStableBackends(t *testing.T) {
+	if got := recommendedUtilityModel(session.KindClaude); got != "haiku" {
+		t.Errorf("claude recommendation = %q", got)
+	}
+	if got := recommendedUtilityModel(session.KindCursor); got != "" {
+		t.Errorf("cursor recommendation = %q, want Auto", got)
+	}
+	if got := recommendedUtilityModel(session.KindAgy); got != defaultAgyChatModel {
+		t.Errorf("agy recommendation = %q", got)
+	}
+}
+
 func TestCodexOneShotArgs(t *testing.T) {
 	t.Setenv("AF_TITLE_MODEL_CODEX", "gpt-5.4-mini") // カタログ取得（実 CLI）に依存させない
 	args, _ := codexOneShotArgs()

@@ -17,9 +17,11 @@ package main
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -295,6 +297,33 @@ const defaultOpencodeChatModel = "opencode/nemotron-3-ultra-free"
 // upstream degrades to agy's own default instead of a hard error.
 const defaultAgyChatModel = "Gemini 3.5 Flash (Medium)"
 
+const assistantRecommendedModel = "recommended"
+
+func recommendedCatalogModel(ids []string, target, fallback string) string {
+	if slices.Contains(ids, target) {
+		return target
+	}
+	return fallback
+}
+
+// recommendedAssistantModel resolves the safe product recommendation against the
+// live catalog. OpenCode Go ids are selected only when this account actually lists
+// them; a non-Go account keeps the universally available Nemotron fallback.
+func recommendedAssistantModel(agent string) string {
+	switch agent {
+	case session.KindClaude:
+		return "sonnet"
+	case session.KindCodex:
+		return defaultCodexChatModel
+	case session.KindOpencode:
+		const goModel = "opencode-go/glm-5.2"
+		return recommendedCatalogModel(opencode.Models(), goModel, defaultOpencodeChatModel)
+	case session.KindAgy:
+		return defaultAgyChatModel
+	}
+	return "" // cursor: Auto is the only entitlement-safe recommendation
+}
+
 // resolveChatModel applies an agent-specific default only when the assistant did not
 // pin a model. The resolved value is snapshotted onto a new conversation, so an
 // existing thread keeps its prior model selection.
@@ -303,17 +332,12 @@ func resolveChatModel(agent, model string) string {
 		return model
 	}
 	if model, ok := assistantChatModelPref(agent); ok {
-		return strings.TrimSpace(model)
+		model = strings.TrimSpace(model)
+		if model != assistantRecommendedModel {
+			return model
+		}
 	}
-	switch agent {
-	case session.KindCodex:
-		return defaultCodexChatModel
-	case session.KindOpencode:
-		return defaultOpencodeChatModel
-	case session.KindAgy:
-		return defaultAgyChatModel
-	}
-	return ""
+	return recommendedAssistantModel(agent)
 }
 
 // chatModel resolves the --model for a conversation: its own model if set, else the
