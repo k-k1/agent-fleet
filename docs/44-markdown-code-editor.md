@@ -161,9 +161,11 @@ GET一致やtimeoutだけで自動遷移しない。どちらもリスク承認�
 PUTと復旧GETはクライアント側で`AbortController`による15秒のタイムアウトを持ち、guardの
 破棄待ちやモーダルが無期限に停止しないことを保証する。PUTの打ち切りは応答喪失と同じ扱いで、
 Agentがrenameを確定済みの可能性を否定できないため通常の保存失敗にせず`SaveStateUnknown`へ
-遷移する（200のbody読取中の打ち切りも同様）。復旧GETの打ち切りは取得不能（unavailable）として
-扱い、破棄は失敗してdirtyとguardを維持したまま操作可能な状態へ戻る。タイムアウトによる
-自動clean・自動再送は行わない。
+遷移する（200のbody読取中の打ち切りも同様）。2xx応答のbodyがタイムアウト以外の理由
+（不正JSON・途中切断・空本文）で読めない場合も同じく応答喪失であり、通常の保存失敗へ
+分類してはならない。確定失敗として扱えるのは非2xxステータスを受信できた場合だけである。
+復旧GETの打ち切りは取得不能（unavailable）として扱い、破棄は失敗してdirtyとguardを維持した
+まま操作可能な状態へ戻る。タイムアウトによる自動clean・自動再送は行わない。
 
 ### 1.6 409競合の解決状態
 
@@ -325,6 +327,14 @@ Content-Typeは `application/json` とする。サーバーは互換性のため
   PUTへ渡せる。絶対入力文字列をそのままPUTへ再利用することはできない。
 - symlink、denylist、traversalなど安全境界違反は `editable:false` へ丸めず、GET/downloadとも
   対応するHTTPエラーを返す。GETでバイナリを403に変更することはしない。
+- browse root配下のGETは、PUTと同じpath単位mutex（キーはcanonical相対path文字列。§2.3で
+  別名表記は拒否済み）を取得してから読み取る。クライアントがPUTをタイムアウトで打ち切っても
+  Agent側のatomic writeは継続するため、mutexを共有しない読み取りは「rename確定直前の旧base」を
+  復旧GETへ返し、クライアントがその旧baseへdiscardした直後にrenameが完了してmodel/diskが
+  不一致になる。GETは進行中PUTのrename確定（またはエラー確定）を待ってから読む。この待機中に
+  クライアント側のGETタイムアウトが先に切れた場合は通常の取得不能と同じ扱いで、
+  `SaveStateUnknown`/`ConflictRemoteUnavailable` を維持しdiscardは失敗する。read-only rootの
+  GETはPUT対象外でありmutexを取得しない（相対表記が偶然一致する別ファイルとの誤競合を避ける）。
 
 ### 3.3 PUT `/fs/file`
 

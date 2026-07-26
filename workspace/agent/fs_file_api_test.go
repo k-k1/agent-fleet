@@ -572,6 +572,65 @@ func TestFSFileConcurrentPUTsSerializeThroughParentSync(t *testing.T) {
 	}
 }
 
+func TestFSFileGetWaitsForInFlightPut(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("AF_BROWSE_ROOT", root)
+	target := filepath.Join(root, "a.txt")
+	if err := os.WriteFile(target, []byte("old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	renameEntered := make(chan struct{})
+	releaseRename := make(chan struct{})
+	ops := defaultFSAtomicWriteOps
+	ops.renameat = func(oldFD int, oldPath string, newFD int, newPath string) error {
+		close(renameEntered)
+		<-releaseRename
+		return unix.Renameat(oldFD, oldPath, newFD, newPath)
+	}
+	service := serviceWithOps(ops)
+
+	// A PUT whose client already timed out and disconnected keeps running on
+	// the Agent. A recovery GET issued after that timeout must not observe the
+	// pre-rename base while the rename is still pending.
+	putDone := make(chan *fsAPIError, 1)
+	go func() {
+		_, aerr := putFSFile(directPut("a.txt", "new\n", []byte("old\n")), service)
+		putDone <- aerr
+	}()
+	select {
+	case <-renameEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("PUT did not reach rename")
+	}
+
+	type getResult struct {
+		resp map[string]any
+		err  *fsAPIError
+	}
+	getDone := make(chan getResult, 1)
+	go func() {
+		resp, aerr := readFSFile("a.txt", service)
+		getDone <- getResult{resp, aerr}
+	}()
+	select {
+	case got := <-getDone:
+		t.Fatalf("recovery GET overtook the in-flight PUT: %+v", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(releaseRename)
+	if aerr := <-putDone; aerr != nil {
+		t.Fatalf("PUT: %+v", aerr)
+	}
+	got := <-getDone
+	if got.err != nil {
+		t.Fatalf("GET: %+v", got.err)
+	}
+	if got.resp["content"] != "new\n" || got.resp["revision"] != fileRevision([]byte("new\n")) {
+		t.Fatalf("GET observed the pre-rename base: %#v", got.resp)
+	}
+}
+
 func TestFSFileExternalWriterRaceIsOutsideCASGuarantee(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("AF_BROWSE_ROOT", root)

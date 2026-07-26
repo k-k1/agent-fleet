@@ -70,6 +70,10 @@ export function putFile(
       // A body read cut off by the timeout may hide a committed 200; it must
       // surface as io_timeout (lost response), not as an ordinary failed save.
       if (signal.aborted) throw error;
+      // The same holds for any unreadable 2xx body (truncated stream, invalid
+      // JSON): the Agent may have committed the rename, so this is a lost
+      // response, never a confirmed ordinary failure.
+      if (response.ok) throw new Error("invalid save response");
       return apiError(response.status, null);
     }
     if (!response.ok) return apiError(response.status, body);
