@@ -1400,6 +1400,7 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.before_compact": "Before",
   "mirror.after_compact": "After",
   "mirror.thinking_label": "Thinking",
+  "mirror.error_label": "Failed",
   "mirror.collapse_output": "Collapse output",
   "mirror.show_output": "Show output",
   "mirror.output_lines": "Output ({lines} lines)",

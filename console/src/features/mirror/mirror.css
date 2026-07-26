@@ -1342,6 +1342,38 @@ button.mt-tool-outhead {
   padding: 2px 8px 4px 20px;
   opacity: 0.8;
 }
+/* A turn that failed instead of answering (part kind "error"): the agent recorded a
+   provider-side error — expired auth, exhausted balance, rate limit — and produced no
+   output. Unlike the thinking block this is never collapsed and never faint: the whole
+   point is that a failed turn used to be indistinguishable from a finished one. */
+.mirror-error {
+  margin: 4px 0;
+  border: 1px solid color-mix(in srgb, var(--del) 45%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--del) 8%, transparent);
+}
+.mirror-error-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  color: var(--del);
+}
+.mte-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+.mte-code {
+  font-size: 11px;
+  opacity: 0.85;
+  font-family: var(--mono, monospace);
+}
+.mirror-error-body {
+  padding: 0 8px 6px 26px;
+  font-size: 0.95em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 /* Edit-family traces are clickable — they open a diff pane. Reset the button and
    lift the opacity so they read as interactive, not just a faint trace. */
 button.mt-tool-diff {
