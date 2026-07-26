@@ -56,6 +56,7 @@ import { displayName, stateInfo } from "../../lib/sessionview.ts";
 import { awaitingReply, confirmedWorkEnd, latestWorkPromptIndex, textOfParts, workSplit } from "./mirrorParts.ts";
 import { echoLanded, type PendingEcho } from "./pendingEcho.ts";
 import { PLAN_APPROVE_KEYS, planOutcome } from "./planDecision.ts";
+import { patchAnswers } from "./interactionAnswers.ts";
 import {
   buildClaudeSeq,
   buildMenuSeq,
@@ -201,41 +202,6 @@ interface TurnTtsWiring {
 type SendEcho = PendingEcho & { id: number };
 const echoStore = new Map<string, SendEcho[]>();
 let echoSeqCounter = 0;
-
-// patchAnswers reconciles late-arriving interaction answers (the server's `answers` map:
-// tool_use id → answer text) onto turns already held. claude writes an AskUserQuestion /
-// ExitPlanMode / Agent tool_use at ASK time, so its answer can land in a LATER poll whose
-// window no longer re-emits that turn — the append-only merge would then leave it forever
-// unanswered (the reported "AUQ回答がミラーに反映されない"). Idempotent: only fills a part
-// whose answer/output isn't set yet, and returns the SAME array reference when nothing
-// changed, so a steady-state poll (answers resent every tick) triggers no re-render.
-function patchAnswers(turns: Turn[], answers: Record<string, string> | null | undefined): Turn[] {
-  if (!answers) return turns;
-  let changed = false;
-  const next = turns.map((t) => {
-    if (!t.parts) return t;
-    let pchanged = false;
-    const parts = t.parts.map((p) => {
-      const a = p.qid ? answers[p.qid] : undefined;
-      if (!a) return p;
-      // question and plan both surface their result through part.answer (PlanBlock reads it
-      // as `outcome`); a delegation flips to completed and shows its (server-capped) output.
-      if ((p.kind === "question" || p.kind === "plan") && !p.answer) {
-        pchanged = true;
-        return { ...p, answer: a };
-      }
-      if (p.kind === "delegation" && p.status !== "completed") {
-        pchanged = true;
-        return { ...p, output: a, status: "completed" };
-      }
-      return p;
-    });
-    if (!pchanged) return t;
-    changed = true;
-    return { ...t, parts };
-  });
-  return changed ? next : turns;
-}
 
 // MirrorView (user-facing: チャット) is a read-mostly Markdown view of a claude
 // session, built on the same Agent endpoints the MCP drive tools use: GET
@@ -2242,7 +2208,15 @@ export function MirrorView({
                 pending
                 sending={sending}
                 onOpen={() => openPlan(pendingPlan)}
-                onApprove={() => sendKeys([...PLAN_APPROVE_KEYS])}
+                onApprove={() => {
+                  // A rejected plan may be refined and re-presented with identical Markdown.
+                  // The optimistic marker is keyed by that Markdown (the pending payload has
+                  // no tool-use id), so it belongs only until the next decision. Clear it
+                  // before approving the new presentation; its real tool_result still keeps
+                  // the older historical card correctly badged 却下.
+                  rejectedPlansRef.current.delete(pendingPlan.trim());
+                  void sendKeys([...PLAN_APPROVE_KEYS]);
+                }}
                 // 却下 = 中断（Escape）で keep-planning に倒す。ExitPlanMode メニューの
                 // 選択肢数/順序は claude 版依存で、位置固定キー（旧 Down×3 で「4. Tell Claude
                 // what to change」を狙う実装）は短いラップするメニューでは先頭の「Yes」行へ
