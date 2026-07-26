@@ -50,12 +50,14 @@ without Docker) is covered by
 | **Start anything from one dialog** — agent, model, reasoning effort, start mode, and a fresh git worktree or the working copy as-is. | **Follow and steer from the browser** — questions, plans and permission prompts arrive as cards you answer in place. |
 | ![Three panes: the chat mirror, a live terminal attached to a shell session, and the repository's working-tree changes with a commit box](docs/img/split-en.webp) | ![Split panes: the commit graph with branch lanes on the left, the selected commit's diff on the right](docs/img/scm-en.webp) |
 | **Split panes** — mirror, live terminal and working-tree changes side by side; each pane can also pop out into its own tab. | **Real git, in the console** — commit graph beside the selected commit's diff, plus staging and commit, per working copy and worktree. |
-| ![A terminal pane attached to a shell session, showing a build and a git status run](docs/img/terminal-en.webp) | ![The same console in Japanese, with the repo tree, chat mirror and commit graph](docs/img/console-ja.webp) |
-| **A real terminal, too** — every session (agent or plain shell) is attachable as a live PTY. | **English / Japanese UI** — switched per user in ⚙ Settings. |
+| ![Usage tab: a stacked per-feature token chart over 30 days, KPI tiles for tokens, calls, cache reads, API-equivalent cost and unmeasured calls, and breakdowns by feature, agent and model](docs/img/usage-en.webp) | ![A terminal pane attached to a shell session, showing a build and a git status run](docs/img/terminal-en.webp) |
+| **See where the tokens went** — per feature, per agent and per model, over 24h / 7d / 30d. Calls that report no tokens are counted separately, never as zero. | **A real terminal, too** — every session (agent or plain shell) is attachable as a live PTY. |
 
-Screenshots are captured from the real Console bundle against a demo dataset —
-regenerate them with `node console/scripts/shots/capture.mjs`
-([how](console/scripts/shots/README.md)).
+The UI is English or Japanese, switched per user in ⚙ Settings — every view above also
+exists in Japanese (`docs/img/*-ja.webp`, e.g.
+[the console](docs/img/console-ja.webp)). Screenshots are captured from the real
+Console bundle against a demo dataset — regenerate them with
+`node console/scripts/shots/capture.mjs` ([how](console/scripts/shots/README.md)).
 
 ## Settled assumptions (v1)
 
