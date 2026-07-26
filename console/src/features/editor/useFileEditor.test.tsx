@@ -228,6 +228,22 @@ describe("useFileEditor discard during save", () => {
   });
 });
 
+describe("useFileEditor save classification", () => {
+  it("treats a rejected PUT (unreadable 200 body) as SaveStateUnknown, not a failed save", async () => {
+    vi.mocked(putFile).mockRejectedValue(new Error("invalid save response"));
+    vi.mocked(getEditableFile).mockRejectedValue(new Error("offline"));
+    const current = await renderEditor();
+    await act(async () => current.edit("mine\n"));
+    await act(async () => {
+      await current.save();
+    });
+
+    expect(editor!.model?.phase).toBe("save_state_unknown");
+    expect(editor!.model?.dirty).toBe(true);
+    expect(editor!.model?.saveSnapshot).not.toBeNull();
+  });
+});
+
 describe("useFileEditor discard abort", () => {
   it("keeps the dirty buffer when the guard aborts while awaiting the PUT", async () => {
     const mine = "mine\n";

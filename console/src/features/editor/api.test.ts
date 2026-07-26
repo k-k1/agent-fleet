@@ -60,6 +60,31 @@ describe("editor api timeout", () => {
     await failure;
   });
 
+  it("treats an unreadable 200 body before the deadline as a lost response", async () => {
+    vi.stubGlobal("fetch", vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.reject(new SyntaxError("Unexpected end of JSON input")),
+      } as Response)));
+    await expect(putFile("a.txt", "x\n", revisionOf("base\n")))
+      .rejects.toThrow("invalid save response");
+  });
+
+  it("keeps an unreadable non-2xx body as an ordinary status failure", async () => {
+    vi.stubGlobal("fetch", vi.fn(() =>
+      Promise.resolve({
+        ok: false,
+        status: 400,
+        json: () => Promise.reject(new SyntaxError("Unexpected end of JSON input")),
+      } as Response)));
+    await expect(putFile("a.txt", "x\n", revisionOf("base\n"))).resolves.toEqual({
+      ok: false,
+      status: 400,
+      error: { code: "http_400", message: "HTTP 400" },
+    });
+  });
+
   it("does not abort a PUT that answers within the deadline", async () => {
     const content = "x\n";
     vi.stubGlobal("fetch", vi.fn(() =>

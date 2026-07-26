@@ -181,22 +181,34 @@ func handleFSFilePut(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
-func handleFSFile(w http.ResponseWriter, r *http.Request) {
-	path, aerr := resolveFDReadPath(r.URL.Query().Get("path"))
+func readFSFile(input string, service fsFileService) (map[string]any, *fsAPIError) {
+	path, aerr := resolveFDReadPath(input)
 	if aerr != nil {
-		writeFSError(w, aerr)
-		return
+		return nil, aerr
+	}
+	if path.browseRoot {
+		// An editor recovery GET must observe the outcome of any in-flight PUT
+		// on the same path. A client-side PUT timeout does not stop the Agent's
+		// atomic write, so an unserialized read could return the pre-rename base
+		// and let the client discard to a snapshot the pending rename is about
+		// to replace. path.relative is the same canonical spelling as the PUT
+		// mutex key (aliases are rejected at validation). Read-only roots are
+		// not PUT targets and stay unlocked: their relative spelling could
+		// collide with an unrelated browse-root key.
+		if service.locks == nil {
+			service.locks = &keyedFileMutex{}
+		}
+		unlock := service.locks.lock(path.relative)
+		defer unlock()
 	}
 	opened, aerr := openFDFile(path)
 	if aerr != nil {
-		writeFSError(w, aerr)
-		return
+		return nil, aerr
 	}
 	defer opened.close()
 	snapshot, aerr := readStableFileSnapshot(opened.file, snapshotHooks{})
 	if aerr != nil {
-		writeFSError(w, aerr)
-		return
+		return nil, aerr
 	}
 
 	resp := map[string]any{
@@ -238,6 +250,15 @@ func handleFSFile(w http.ResponseWriter, r *http.Request) {
 	default:
 		resp["editable"] = true
 		resp["revision"] = fileRevision(snapshot.bytes)
+	}
+	return resp, nil
+}
+
+func handleFSFile(w http.ResponseWriter, r *http.Request) {
+	resp, aerr := readFSFile(r.URL.Query().Get("path"), defaultFSFileService)
+	if aerr != nil {
+		writeFSError(w, aerr)
+		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
