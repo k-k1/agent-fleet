@@ -35,7 +35,7 @@ const agentSessionsPayload = `{"sessions":[{
 	"name":"s1","tmux":"claude_s1","dir":"/home/dev/repos/x","kind":"claude",
 	"driver":"managed","repo":"x","title":"t","display":"[AF] t","color":"#332211",
 	"label":"[AF] t","started":"07/15 12:00","createdAt":"2026-07-15T12:00:00+09:00",
-	"remoteUrl":"","state":"","alive":false,"resumable":true,"backgroundBusy":false,
+	"remoteUrl":"","state":"","alive":false,"resumable":true,"locked":true,"backgroundBusy":false,
 	"context":{"read":1000,"create":200,"fresh":30,"model":"claude-fable-5"},
 	"branch":"main","currentBranch":"dev","branchDrift":true,"worktree":true,
 	"exitReason":"oom","exitCode":137,"exitSignal":9
@@ -90,6 +90,8 @@ func TestAgentSessionsRelayKeepsFields(t *testing.T) {
 		"currentBranch": "dev",
 		"branchDrift":   true,
 		"worktree":      true,
+		// 削除ロック（docs/45）— CP 中継で落とすと鍵バッジと解除メニューが消える。
+		"locked": true,
 	}
 	for k, v := range want {
 		if got[k] != v {

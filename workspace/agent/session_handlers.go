@@ -129,7 +129,7 @@ func handleListSessions(w http.ResponseWriter, r *http.Request) {
 			// Running: clear any prior stopped mark so resume resets the clock.
 			if m.StoppedAt != "" {
 				m.StoppedAt = ""
-				session.WriteMeta(m)
+				m = writeSessionMetaKeepingLock(m)
 			}
 			sessions = append(sessions, wireSession(m, true))
 			continue
@@ -138,7 +138,7 @@ func handleListSessions(w http.ResponseWriter, r *http.Request) {
 		// otherwise keep it listed as resumable.
 		if m.StoppedAt == "" {
 			m.StoppedAt = now.Format(time.RFC3339)
-			session.WriteMeta(m)
+			m = writeSessionMetaKeepingLock(m)
 		} else if t, e := time.Parse(time.RFC3339, m.StoppedAt); e == nil && now.Sub(t) > ttl && !m.Locked {
 			// 削除ロック（docs/45）は自動削除にも効く — locked な行は TTL を過ぎても
 			// prune せず、停止中のまま一覧に残す。
