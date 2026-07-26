@@ -94,7 +94,20 @@ export function DirtyGuardHost() {
         >
           {tr("editor.guard.save")}
         </button>
-        <button type="button" disabled={saving} onClick={() => discardDirtyGuardRequest(current.id)}>
+        <button
+          type="button"
+          disabled={saving}
+          onClick={() => {
+            setSaving(true);
+            setSaveFailed(false);
+            void discardDirtyGuardRequest(current.id).then((ok) => {
+              if (!ok) {
+                setSaving(false);
+                setSaveFailed(true);
+              }
+            });
+          }}
+        >
           {tr("editor.guard.discard")}
         </button>
         <button type="button" disabled={saving} onClick={() => cancelDirtyGuardRequest(current.id)}>

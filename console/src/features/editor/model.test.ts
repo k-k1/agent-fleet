@@ -196,4 +196,13 @@ describe("file editor save model", () => {
     expect(discarded.dirty).toBe(false);
     expect(discarded.phase).toBe("clean");
   });
+
+  it("refuses to invent a discard base while the live disk is unknown", () => {
+    const dirty = editBuffer(initial(), "mine\n");
+    const [saving, snapshot] = beginSave(dirty);
+    expect(() => discardToBase(saving)).toThrow("discard target unavailable");
+    expect(() => discardToBase(
+      saveStateUnknown(saving, snapshot, "unknown"),
+    )).toThrow("discard target unavailable");
+  });
 });

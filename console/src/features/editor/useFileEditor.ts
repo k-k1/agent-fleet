@@ -21,7 +21,6 @@ import {
   type RemoteSnapshot,
   type SaveSnapshot,
 } from "./model.ts";
-import { OperationEpoch } from "./operationEpoch.ts";
 import { RecoveryCoordinator } from "./recovery.ts";
 import {
   notifyDirtyEditorChanged,
@@ -55,8 +54,6 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
   const savingRef = useRef<Promise<boolean> | null>(null);
   const mergeMineRef = useRef<string | null>(null);
   const mountedRef = useRef(true);
-  const operationEpochRef = useRef<OperationEpoch | null>(null);
-  if (!operationEpochRef.current) operationEpochRef.current = new OperationEpoch();
   const recoveryRef = useRef<RecoveryCoordinator | null>(null);
   if (!recoveryRef.current) recoveryRef.current = new RecoveryCoordinator();
 
@@ -64,7 +61,6 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      operationEpochRef.current?.invalidate();
       recoveryRef.current?.invalidate();
     };
   }, []);
@@ -78,7 +74,6 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
 
   useEffect(() => {
     if (!initial) {
-      operationEpochRef.current?.invalidate();
       recoveryRef.current?.invalidate();
       modelRef.current = null;
       setReactModel(null);
@@ -86,7 +81,6 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     }
     const current = modelRef.current;
     if (current?.path === initial.path) return;
-    operationEpochRef.current?.invalidate();
     recoveryRef.current?.invalidate();
     const next = createFileEditorModel(paneId, initial.path, initial.content, initial.revision);
     modelRef.current = next;
@@ -182,14 +176,10 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     } catch {
       return false;
     }
-    const operationEpoch = operationEpochRef.current!.capture();
     setModel(saving);
     const operation = (async () => {
       try {
         const result = await putFile(snapshot.path, snapshot.content, snapshot.baseDiskRevision);
-        if (!operationEpochRef.current!.isCurrent(operationEpoch)) {
-          return !modelRef.current?.dirty;
-        }
         if (result.ok) {
           try {
             if (result.path !== snapshot.path) throw new Error("save response path mismatch");
@@ -212,9 +202,6 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
           setModel(saveFailed(modelRef.current!, errText(result.error)));
         }
       } catch (error) {
-        if (!operationEpochRef.current!.isCurrent(operationEpoch)) {
-          return !modelRef.current?.dirty;
-        }
         // A thrown transport failure may have lost a response after the Agent
         // committed the rename. It is never treated as an ordinary failed save.
         setModel(saveStateUnknown(modelRef.current!, snapshot, String(error)));
@@ -236,14 +223,39 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     setModel(editBuffer(current, content));
   }, [setModel]);
 
-  const discard = useCallback(() => {
-    const current = modelRef.current;
-    if (!current) return;
-    operationEpochRef.current?.invalidate();
-    recoveryRef.current?.invalidate();
-    mergeMineRef.current = null;
-    setModel(discardToBase(current));
-  }, [setModel]);
+  const discard = useCallback(async (): Promise<boolean> => {
+    const requested = modelRef.current;
+    if (!requested) return true;
+    const path = requested.path;
+
+    try {
+      // A PUT cannot be cancelled after the Agent may have committed its rename.
+      // Wait for its complete save/recovery path before choosing the disk-backed
+      // discard target.
+      if (savingRef.current) await savingRef.current;
+      let current = modelRef.current;
+      if (!current || current.path !== path) return false;
+
+      if (
+        current.phase === "save_state_unknown" &&
+        (!current.unknownObservation || current.unknownObservation.kind === "unavailable")
+      ) {
+        await recoverUnknown();
+      } else if (current.phase === "conflict_remote_unavailable") {
+        await recoverConflict();
+      }
+      current = modelRef.current;
+      if (!current || current.path !== path) return false;
+
+      mergeMineRef.current = null;
+      setModel(discardToBase(current));
+      return true;
+    } catch {
+      // Without a verified live snapshot, marking the buffer clean would invent
+      // a disk base. Keep the guard open so the user can retry or cancel.
+      return false;
+    }
+  }, [recoverConflict, recoverUnknown, setModel]);
 
   useEffect(() => {
     if (!initial) return;
@@ -270,7 +282,6 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
   const riskAccept = useCallback(() => {
     const current = modelRef.current;
     if (current) {
-      operationEpochRef.current?.invalidate();
       recoveryRef.current?.invalidate();
       setModel(acceptUnknownRisk(current));
     }
@@ -279,7 +290,6 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
   const takeRemote = useCallback(() => {
     const current = modelRef.current;
     if (current?.conflict) {
-      operationEpochRef.current?.invalidate();
       recoveryRef.current?.invalidate();
       mergeMineRef.current = null;
       setModel(adoptRemote(current));
@@ -289,7 +299,6 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
   const manualMerge = useCallback(() => {
     const current = modelRef.current;
     if (current?.conflict) {
-      operationEpochRef.current?.invalidate();
       recoveryRef.current?.invalidate();
       mergeMineRef.current = current.content;
       setModel(startManualMerge(current));

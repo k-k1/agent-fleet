@@ -102,7 +102,7 @@ describe("dirty navigation registry", () => {
 
     dirty = true;
     const discardDecision = confirmDirtyNavigation("layout");
-    discardDirtyGuardRequest(currentDirtyGuardRequest()!.id);
+    await discardDirtyGuardRequest(currentDirtyGuardRequest()!.id);
     await expect(discardDecision).resolves.toBe(true);
     expect(dirty).toBe(false);
 
@@ -111,5 +111,53 @@ describe("dirty navigation registry", () => {
     cancelDirtyGuardRequest(currentDirtyGuardRequest()!.id);
     await expect(cancelDecision).resolves.toBe(false);
     expect(dirty).toBe(true);
+  });
+
+  it("waits for asynchronous discard before resolving the guard", async () => {
+    let dirty = true;
+    let finishDiscard!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      finishDiscard = resolve;
+    });
+    registerDirtyEditor({
+      paneId: "p1",
+      label: "a.txt",
+      isDirty: () => dirty,
+      save: async () => false,
+      discard: async () => {
+        await pending;
+        dirty = false;
+        return true;
+      },
+    });
+
+    const decision = confirmDirtyNavigation("workspace_lifecycle");
+    const discard = discardDirtyGuardRequest(currentDirtyGuardRequest()!.id);
+    let decided = false;
+    void decision.then(() => { decided = true; });
+    await Promise.resolve();
+    expect(decided).toBe(false);
+
+    finishDiscard();
+    await expect(discard).resolves.toBe(true);
+    await expect(decision).resolves.toBe(true);
+  });
+
+  it("keeps the guard open when disk-safe discard cannot complete", async () => {
+    registerDirtyEditor({
+      paneId: "p1",
+      label: "a.txt",
+      isDirty: () => true,
+      save: async () => false,
+      discard: async () => false,
+    });
+
+    const decision = confirmDirtyNavigation("workspace_lifecycle");
+    const request = currentDirtyGuardRequest()!;
+    await expect(discardDirtyGuardRequest(request.id)).resolves.toBe(false);
+    expect(currentDirtyGuardRequest()?.id).toBe(request.id);
+
+    cancelDirtyGuardRequest(request.id);
+    await expect(decision).resolves.toBe(false);
   });
 });
