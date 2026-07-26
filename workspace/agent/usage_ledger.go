@@ -190,34 +190,52 @@ func pruneUsageRawLocked() {
 	}
 }
 
-// readUsageRows は台帳の全行を時系列で読む（テストと、後続フェーズの集計 API 用）。
-func readUsageRows() []usageRecord {
+// usageRawDays は台帳に存在する日（UTC の YYYY-MM-DD）を昇順で返す。
+func usageRawDays() []string {
 	ents, err := os.ReadDir(usageRawDir())
 	if err != nil {
 		return nil
 	}
-	names := make([]string, 0, len(ents))
+	days := make([]string, 0, len(ents))
 	for _, e := range ents {
-		if !e.IsDir() && filepath.Ext(e.Name()) == ".jsonl" {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names) // ファイル名が日付なので辞書順＝時系列
-	var out []usageRecord
-	for _, n := range names {
-		b, err := os.ReadFile(filepath.Join(usageRawDir(), n))
-		if err != nil {
+		n := e.Name()
+		if e.IsDir() || filepath.Ext(n) != ".jsonl" {
 			continue
 		}
-		for _, ln := range bytes.Split(b, []byte("\n")) {
-			if len(bytes.TrimSpace(ln)) == 0 {
-				continue
-			}
-			var r usageRecord
-			if json.Unmarshal(ln, &r) == nil && r.Feature != "" {
-				out = append(out, r)
-			}
+		day := n[:len(n)-len(".jsonl")]
+		if _, err := time.Parse("2006-01-02", day); err == nil {
+			days = append(days, day)
 		}
+	}
+	sort.Strings(days) // 日付名なので辞書順＝時系列
+	return days
+}
+
+// readUsageDay は1日分の行を追記順で読む。順序を保つことが重要 — 1呼び出しが複数モデル行に
+// 割れたとき、同じ call の最初の行を「呼び出しを数える行」とみなすため（usage_rollup.go）。
+func readUsageDay(day string) []usageRecord {
+	b, err := os.ReadFile(filepath.Join(usageRawDir(), day+".jsonl"))
+	if err != nil {
+		return nil
+	}
+	var out []usageRecord
+	for _, ln := range bytes.Split(b, []byte("\n")) {
+		if len(bytes.TrimSpace(ln)) == 0 {
+			continue
+		}
+		var r usageRecord
+		if json.Unmarshal(ln, &r) == nil && r.Feature != "" {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// readUsageRows は台帳の全行を時系列で読む（テストと小規模な走査用）。
+func readUsageRows() []usageRecord {
+	var out []usageRecord
+	for _, day := range usageRawDays() {
+		out = append(out, readUsageDay(day)...)
 	}
 	return out
 }

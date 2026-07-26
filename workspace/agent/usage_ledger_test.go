@@ -26,6 +26,17 @@ func useTempUsageDir(t *testing.T) string {
 	return dir
 }
 
+// useIsolatedUsageDir は台帳に加えて HOME も差し替える。集計 API のテストはハンドラ経由で
+// fold-on-read を踏むので、HOME を分けないと**実ワークスペースのセッションを畳んで**
+// 期待値が実データで壊れる（実際に踏んだ — 合計が数百万トークンになった）。実 CLI を撃つ
+// ライブテストでは使えない（認証が HOME 配下にある）ので、そちらは useTempUsageDir のまま。
+func useIsolatedUsageDir(t *testing.T) string {
+	t.Helper()
+	dir := useTempUsageDir(t)
+	t.Setenv("HOME", t.TempDir())
+	return dir
+}
+
 func TestRecordUsageCallSplitsClaudeModelRows(t *testing.T) {
 	useTempUsageDir(t)
 	ctx := withUsageTag(context.Background(), usageTag{
