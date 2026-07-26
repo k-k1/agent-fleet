@@ -23,6 +23,7 @@ import { getTenant, pinTenantForTab, rel } from "../../core/api/client.ts";
 import { setPopoutMode } from "../../lib/popoutMode.ts";
 import { toast } from "../../ui/toast.ts";
 import { t } from "../../lib/i18n/index.ts";
+import { dirtyPaneIds } from "../editor/dirtyRegistry.ts";
 
 export { canPopout };
 
@@ -36,6 +37,17 @@ function newNonce(): string {
  * "full" = a normal console seeded with this one pane). On success the origin
  * pane is removed outright; on failure (popup blocked) it stays put. */
 export function openPanePopout(pane: Pane, ui: "popout" | "full"): void {
+  // v1 deliberately has no cross-tab buffer transfer. Reject while dirty so a
+  // delayed post-save popup cannot lose browser user activation (or leave an
+  // explicitly discarded buffer behind when the popup is blocked).
+  if (dirtyPaneIds().includes(pane.id)) {
+    toast(t("editor.popout_dirty"), { kind: "info" });
+    return;
+  }
+  openPanePopoutUnchecked(pane, ui);
+}
+
+function openPanePopoutUnchecked(pane: Pane, ui: "popout" | "full"): void {
   if (!canPopout(pane)) {
     toast(t("popout.cannot"), { kind: "info" });
     return;

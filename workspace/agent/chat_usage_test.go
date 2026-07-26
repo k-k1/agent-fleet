@@ -112,12 +112,16 @@ func TestParseOpencodeRunEventsUsage(t *testing.T) {
 		`{"type":"text","sessionID":"ses_1","part":{"id":"p2","type":"text","text":"2"}}`,
 		`{"type":"step_finish","sessionID":"ses_1","part":{"id":"p3","type":"step-finish","tokens":{"total":11910,"input":11887,"output":2,"reasoning":21,"cache":{"write":30,"read":40}}}}`,
 	}, "\n")
-	reply, sesID, usage := parseOpencodeRunEvents([]byte(out))
+	reply, sesID, _, usage := parseOpencodeRunEvents([]byte(out))
 	if reply != "2" || sesID != "ses_1" {
 		t.Fatalf("parse = (%q, %q)", reply, sesID)
 	}
 	if usage.Input != 11887 || usage.Cache.Read != 40 || usage.Cache.Write != 30 {
 		t.Fatalf("usage = %+v", usage)
+	}
+	// 使用量台帳向け（docs/46 §2）: output も同じ part から拾う。
+	if usage.Output != 2 {
+		t.Fatalf("output = %d, want 2", usage.Output)
 	}
 }
 

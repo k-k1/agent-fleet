@@ -63,9 +63,12 @@ type PAT struct {
 
 // AuditLog records one administrative action (docs/decisions/0006, P3-6).
 // ActorKind ∈ user | admin | mcp | system; ActorID is the identity/PAT id behind
-// it. TenantID scopes the entry ("" = deployment-wide). At is RFC3339.
+// it. TenantID scopes the entry ("" = deployment-wide). HTTPStatus is the
+// proxied operation's status when recorded (0 for legacy/non-HTTP events).
+// At is RFC3339.
 type AuditLog struct {
 	ID, TenantID, ActorKind, ActorID, Action, Target, Detail, At string
+	HTTPStatus                                                   int
 }
 
 // EgressStat is one destination host with its would-allow / would-block hit counts

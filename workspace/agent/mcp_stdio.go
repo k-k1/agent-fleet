@@ -28,6 +28,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 const mcpStdioProtocol = "2025-06-18"
@@ -224,7 +226,7 @@ var mcpStdioTools = []map[string]any{
 var mcpStdioWriteTools = []map[string]any{
 	{
 		"name":        "list_models",
-		"description": "指定エージェントで現在選べるモデル一覧を返す。model 指定で create_session する前には必ず呼び、返った id を使うこと。claude は固定のティア別名（fable/opus/sonnet/haiku）、codex／opencode／agy／copilot／cursor／kiro は接続状態を反映したライブカタログ（copilot はプラン反映 — Free は Auto のみで空になる。cursor は effort をモデル id に畳んだアカウント連動カタログ。kiro は Free でも named 指定可・既定は auto。未指定は auto ルーティング）。利用者が terra のような略称で指定した場合も、一覧から対応する完全な id（例: gpt-5.6-terra）を選ぶ。",
+		"description": "指定エージェントで現在選べるモデル一覧を返す。model 指定で create_session する前には必ず呼び、返った id を使うこと。claude は固定のティア別名（fable/opus/sonnet/haiku）、codex／opencode／agy／copilot／cursor／kiro は接続状態を反映したライブカタログ（copilot はプラン反映 — Free は Auto のみで空になる。cursor は effort をモデル id に畳んだアカウント連動カタログ。kiro は Free でも named 指定可・既定は auto。未指定は auto ルーティング）。利用者が terra のような略称で指定した場合も、一覧から対応する完全な id（例: gpt-5.6-terra）を選ぶ。opencode は同じモデルが 2 つの課金経路で並ぶことがある（opencode-go/… = Go サブスクの範囲内、opencode/… = Zen の従量課金）。同名が両方にある場合は先に並んでいる opencode-go/… を選ぶこと（一覧の並びは利用者の設定で整形済み）。利用者が Zen を明示した場合だけ opencode/… を使う。",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -764,6 +766,11 @@ func mcpStdioCall(req mcpReq) []byte {
 			"driver":          driver,
 			"report_to":       mcpConvID, // docs/30: 完了報告をこの会話へ（空なら無効）
 			"idempotency_key": idemKey,
+			// ADR 0029 §6: オペレーターが立てたセッションであることを出自として明示する。
+			// 無人で増える消費（自動走行・定時実行との組み合わせ）を使用量集計で
+			// 「人が開いたセッション」と分けるための軸。
+			"origin":      session.OriginOperator,
+			"origin_conv": mcpConvID,
 		})
 		out, err := agentCreateSession(reqBody, idemKey)
 		if err != nil {

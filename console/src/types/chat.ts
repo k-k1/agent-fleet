@@ -56,6 +56,7 @@ export interface ConversationMeta {
   updated_at: number;
   message_count: number;
   context?: ChatContextUsage; // current context fill (chat_usage.go)
+  locked?: boolean; // 削除ロック（docs/45）: true の間 DELETE は 403 で拒否される
 }
 
 // Full conversation from GET/POST /api/chat/conversations/{id}.

@@ -1,0 +1,498 @@
+/* 使用量ビュー（docs/46 P4）— features/usage/UsageView.tsx 専用。
+ *
+ * ルート class は .usage-board。AdminTab の showback にも .usage-view があるので、
+ * 名前がぶつからないよう別系統にしてある。
+ *
+ * 色は tokens.css の --viz-*（検証済みカテゴリカル 8 スロット）と --kind-*（エージェント
+ * 識別色の1ソース）だけを使う。このファイルで色を作らない＝検証を通っていない色が
+ * 混ざらない。
+ *
+ * マークの規約（dataviz）: 棒は最大 24px・データ端だけ 4px 丸め・積み上げの境目は
+ * 2px の「面の色の隙間」（枠線ではなく余白で分ける）・グリッドは 1px 実線で背景から
+ * 1段だけ浮かせる・値のラベルは要所だけ。
+ */
+
+.usage-board {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* --- フィルタ行（下の全チャート・表を同じスライスに揃える） ------------------- */
+
+.usage-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.uc-group {
+  display: inline-flex;
+  border: 1px solid var(--btn-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.uc-seg {
+  border: 0;
+  background: var(--btn);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.uc-group .uc-seg + .uc-seg {
+  border-left: 1px solid var(--btn-border);
+}
+.uc-seg:hover {
+  background: var(--btn-h);
+}
+.uc-seg.active {
+  background: var(--sel-bg);
+  color: var(--sel-fg);
+}
+.uc-head-actions .uc-seg {
+  border: 1px solid var(--btn-border);
+  border-radius: 6px;
+}
+.uc-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.uc-field select {
+  background: var(--btn);
+  color: var(--fg);
+  border: 1px solid var(--btn-border);
+  border-radius: 6px;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 12px;
+}
+.uc-lab {
+  white-space: nowrap;
+}
+.usage-controls .uc-reload {
+  margin-left: auto;
+}
+
+.usage-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.usage-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--btn-border);
+  border-radius: 999px;
+  background: var(--sel-bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.usage-chip .codicon {
+  opacity: 0.7;
+}
+
+/* 再取得中は前の描画を薄く保持する（スケルトンで作り直すとレイアウトが跳ねる）。 */
+.usage-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  transition: opacity 0.15s;
+}
+.usage-stage.reloading {
+  opacity: 0.55;
+}
+
+/* --- KPI ------------------------------------------------------------------- */
+
+.usage-kpis {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.ukpi {
+  flex: 1 1 110px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel2);
+  padding: 8px 10px;
+}
+.ukpi-val {
+  /* 大きい単独の数値は比例数字（tabular-nums は列で揃えるときだけ）。 */
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.ukpi.hero .ukpi-val {
+  font-size: 28px;
+}
+.ukpi-lab {
+  margin-top: 2px;
+}
+.ukpi.unmeasured {
+  /* 「0」ではなく「測れていない」を色ではなくハッチで示す（未計測は状態であって値ではない）。 */
+  background: repeating-linear-gradient(
+    135deg,
+    var(--panel2),
+    var(--panel2) 6px,
+    var(--panel) 6px,
+    var(--panel) 12px
+  );
+}
+
+/* --- カード ---------------------------------------------------------------- */
+
+.usage-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel2);
+  padding: 10px 12px 12px;
+}
+.usage-card .uc-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.usage-card h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.uc-head-actions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.uc-sub {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+.usage-warn {
+  color: var(--warn);
+  font-size: 12px;
+}
+
+/* --- 積み上げ棒（時系列） --------------------------------------------------- */
+
+.usage-chart {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.ux-yaxis {
+  width: 46px;
+  height: 180px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  text-align: right;
+  font-size: 11px;
+  color: var(--muted2);
+  font-variant-numeric: tabular-nums;
+}
+.ux-plot {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.ux-grid {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 180px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  pointer-events: none;
+}
+.ux-grid span {
+  height: 1px;
+  background: var(--viz-grid);
+}
+.ux-cols {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  overflow-x: auto;
+}
+.ux-col {
+  flex: 1 1 0;
+  min-width: 14px;
+  /* 棒は太らせない（帯の余りは空気にする）。 */
+  max-width: 34px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: default;
+  color: inherit;
+}
+.ux-stack {
+  width: 100%;
+  max-width: 24px;
+  height: 180px;
+  display: flex;
+  flex-direction: column-reverse;
+  justify-content: flex-start;
+  /* 面の色の隙間。枠線でマークを囲まない。 */
+  gap: 2px;
+}
+.ux-seg {
+  width: 100%;
+  min-height: 2px;
+  border-radius: 0;
+}
+/* データ端（＝積み上げの一番上）だけ 4px 丸め、ベースライン側は角のまま。 */
+.ux-seg.topmost {
+  border-radius: 4px 4px 0 0;
+}
+/* ホバー/フォーカスした列は帯で応答する（読み手は日付を狙うのであって 2px の棒を狙わない
+   ＝当たり判定はマークより広い列全体）。グローバルな button:hover に任せず自分で定義する。 */
+.ux-col:hover,
+.ux-col.on {
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  border-radius: 4px;
+}
+.ux-col.on .ux-stack {
+  filter: brightness(1.12);
+}
+.ux-tick {
+  font-size: 10px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.ux-tip {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  z-index: 5;
+  min-width: 132px;
+  max-width: 240px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  pointer-events: none;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+.ux-tip.right {
+  transform: translateX(-100%);
+}
+.uxt-head {
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.uxt-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 1.6;
+}
+/* 凡例は面（棒/面グラフ）なので四角、ツールチップ内は短い線キー。 */
+.uxt-key {
+  width: 10px;
+  height: 2px;
+  border-radius: 1px;
+  flex: none;
+}
+.uxt-key.empty {
+  background: none;
+}
+.uxt-val {
+  /* 値が主役・系列名が従（凡例とは階層が逆）。 */
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+.uxt-name {
+  flex: none;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.uxt-row.total {
+  border-top: 1px solid var(--border);
+  margin-top: 3px;
+  padding-top: 3px;
+}
+
+/* --- 凡例 ------------------------------------------------------------------ */
+
+.usage-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 10px;
+}
+.ulg {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 1px 7px 1px 4px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--fg);
+  cursor: pointer;
+}
+.ulg:hover {
+  border-color: var(--btn-border);
+}
+.ulg.on {
+  border-color: var(--accent);
+  background: var(--sel-bg);
+}
+.ulg-sw {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex: none;
+}
+
+/* --- 内訳（横棒） ---------------------------------------------------------- */
+
+.usage-breakdowns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.ubd-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ubd-row {
+  display: grid;
+  /* 値列を内容幅にすると、内訳カードごとにバーの始点がずれる。表示桁を
+     固定して、機能・エージェント・モデルの各カードでベースラインを揃える。 */
+  grid-template-columns: minmax(0, 1fr) 1.1fr 5ch;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 1px 3px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--fg);
+  cursor: pointer;
+  text-align: left;
+}
+.ubd-row:hover {
+  border-color: var(--btn-border);
+}
+.ubd-row.on {
+  border-color: var(--accent);
+  background: var(--sel-bg);
+}
+.ubd-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ubd-bar {
+  height: 10px;
+  display: block;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.ubd-fill {
+  display: block;
+  height: 100%;
+  /* データ端だけ丸める（ベースライン側は角）。 */
+  border-radius: 0 4px 4px 0;
+  min-width: 2px;
+}
+.ubd-val {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted2);
+  white-space: nowrap;
+}
+
+/* --- 表（グラフの双子・行列表） --------------------------------------------- */
+
+/* 表は行数がデータ次第（30日 × 系列 / 機能×モデルの全組み合わせ）なので、カードの中で
+   スクロールさせる。見出しは sticky なので、スクロールしても列の意味を見失わない。 */
+.usage-table-wrap {
+  overflow: auto;
+  max-height: 340px;
+}
+.usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.usage-table th,
+.usage-table td {
+  border-bottom: 1px solid var(--border2);
+  padding: 3px 6px;
+  text-align: left;
+  white-space: nowrap;
+}
+.usage-table thead th {
+  color: var(--muted2);
+  font-weight: 500;
+  position: sticky;
+  top: 0;
+  background: var(--panel2);
+}
+.usage-table tbody th {
+  font-weight: 500;
+}
+.usage-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.usage-table .strong {
+  font-weight: 600;
+}
+
+/* --- 未計測バナー ---------------------------------------------------------- */
+
+.usage-coverage .ucov-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+.usage-coverage .ucov-list li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+@media (max-width: 760px) {
+  .usage-breakdowns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .usage-controls .uc-reload {
+    margin-left: 0;
+  }
+  .ux-yaxis {
+    width: 38px;
+  }
+}

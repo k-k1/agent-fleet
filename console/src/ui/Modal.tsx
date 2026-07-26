@@ -20,6 +20,9 @@ interface ModalProps {
   as?: "div" | "form";
   onSubmit?: (e: FormEvent) => void;
   lockClose?: boolean;
+  /** Disable the throwaway browser-history entry for dialogs that themselves
+   * arbitrate layout history (the dirty editor guard). */
+  backClose?: boolean;
   children?: ReactNode;
 }
 
@@ -30,6 +33,7 @@ export function Modal({
   as = "div",
   onSubmit,
   lockClose = false,
+  backClose = true,
   children,
 }: ModalProps) {
   const tr = useT();
@@ -38,7 +42,7 @@ export function Modal({
   useEscLayer(onClose, !lockClose);
   // The device/browser back button (and back-swipe) closes the modal too, instead
   // of navigating the page away — same layered peel as Esc.
-  useBackClose(onClose, !lockClose);
+  useBackClose(onClose, !lockClose && backClose);
 
   // On touch devices, undo any child's autoFocus once the panel mounts so opening a
   // dialog doesn't pop the soft keyboard (GBoard) — the user usually reviews/taps

@@ -17,6 +17,9 @@ export interface Repo {
   worktree?: boolean; // linked git worktree (not a standalone clone)
   parent?: string; // for a worktree, the parent working copy's folder name
   createdAt?: string; // for a worktree, its creation time (RFC3339); orders worktrees under a base
+  /** 削除ロック（docs/45）: true の間、削除は force 付きでも 403 で拒否され、
+   * 空になった worktree の自動 prune も対象外になる。 */
+  locked?: boolean;
 
   /** Working-copy kind (docs/41): "git" (default/omitted) or "svn". SVN copies are
    * flat — no branch/ahead/behind/worktree — so the Console gates git-only actions
@@ -46,6 +49,8 @@ interface ReposStore {
    * a caller that knows the workspace state can tell "booting → retry" from "stopped →
    * show empty"; see ProjectTree's useRetryLoad + clear(). */
   refresh(): Promise<boolean>;
+  /** Reflect a successful deletion-lock toggle before the next list refresh. */
+  setLocked(name: string, locked: boolean): void;
   /** Settle to empty. For a caller that knows the repos really are gone/unreachable
    * (a stopped workspace), since refresh() alone never blanks the list. */
   clear(): void;
@@ -63,6 +68,9 @@ export const useReposStore = create<ReposStore>((set) => ({
     if (isTransientErr(d)) return false;
     set({ repos: d.repos || [] });
     return true;
+  },
+  setLocked(name, locked) {
+    set((s) => ({ repos: s.repos.map((r) => (r.name === name ? { ...r, locked } : r)) }));
   },
   clear: () => set({ repos: [] }),
 }));

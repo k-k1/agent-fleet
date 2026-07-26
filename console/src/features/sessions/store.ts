@@ -20,6 +20,8 @@ interface SessionsStore {
   /** Publish a session list (poll result or pushed api/events frame) — only on
    * an actual change (serialized compare, see the header note). */
   applyList(list: Session[]): void;
+  /** Reflect a successful deletion-lock toggle before the next list refresh. */
+  setLocked(name: string, locked: boolean): void;
   /** Resume/launch a stopped session (POST start). The caller re-attaches. */
   start(name: string): Promise<void>;
 }
@@ -37,6 +39,12 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
       ser = s;
       set({ sessions: list });
     }
+  },
+
+  setLocked(name: string, locked: boolean) {
+    const list = get().sessions.map((s) => (s.name === name ? { ...s, locked } : s));
+    ser = JSON.stringify(list);
+    set({ sessions: list });
   },
 
   async refresh() {

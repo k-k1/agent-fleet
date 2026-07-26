@@ -143,7 +143,15 @@ func driveState(m session.Meta, alive, heal bool) string {
 	state := status.LiveState(sid)
 	if heal && state != "idle" && tmuxx.AtIdlePrompt(m.Name) {
 		state = "idle"
-		status.Remove(sid)
+		// claude は「API エラーでターンが落ちた」を transcript 末尾から見分けられるので、
+		// その 1 ケースだけ黙って消さず終端イベントとして通知する（docs/47）。判別材料が
+		// claude の jsonl 形式に固有なので、他 kind は従来どおりマーカー削除のみ。
+		// normalizeKind: 空 kind の旧セッションも claude なので、生の比較では取り逃がす。
+		if normalizeKind(m.Kind) == session.KindClaude {
+			claude.HealIdle(sid)
+		} else {
+			status.Remove(sid)
+		}
 	} else if heal && state == "idle" && tmuxx.IsBusy(m.Name) {
 		// Reverse-heal: the hook state reads idle (its "working" file was never written,
 		// or the self-heal above removed it during a transient prompt frame) but the pane

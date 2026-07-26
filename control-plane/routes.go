@@ -199,8 +199,11 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	// safety-net archive (list/restore/purge). Proxied verbatim; also used by the MCP
 	// cleanup tools, which reach the Agent directly via the resolved runtime.
 	mux.HandleFunc("GET /api/sessions/usage", rest)
+	// 機能別使用量の時系列（docs/46 P3 / ADR0029）— Agent 側で集計済みの結果をそのまま中継。
+	mux.HandleFunc("GET /api/usage/series", rest)
 	mux.HandleFunc("GET /api/sessions/cleanup", rest)
 	mux.HandleFunc("DELETE /api/sessions/{name}", rest)
+	mux.HandleFunc("POST /api/sessions/{name}/lock", rest) // 削除ロック（docs/45）
 	mux.HandleFunc("GET /api/cleanup/archives", rest)
 	mux.HandleFunc("POST /api/cleanup/archives/{id}/restore", rest)
 	mux.HandleFunc("DELETE /api/cleanup/archives/{id}", rest)
@@ -233,7 +236,7 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/sessions/{name}/title/set", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/suggest-branch", rest)  // LLM branch-name suggestion (this session's convo)
 	mux.HandleFunc("POST /api/sessions/{name}/suggest-replies", rest) // LLM reply suggestion v2 (this session's convo)
-	mux.HandleFunc("POST /api/sessions/{name}/rename-branch", rest)  // worktree deferred-naming: git branch -m
+	mux.HandleFunc("POST /api/sessions/{name}/rename-branch", rest)   // worktree deferred-naming: git branch -m
 }
 
 // Assistant chat (docs/19) — headless-CLI LLM chat/translation, proxied to the
@@ -245,9 +248,10 @@ func registerChatRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/chat/conversations", rest)
 	mux.HandleFunc("GET /api/chat/conversations/{id}", rest)
 	mux.HandleFunc("PATCH /api/chat/conversations/{id}", rest)
-	mux.HandleFunc("POST /api/chat/conversations/{id}/title/suggest", rest)    // preview-only AI title suggestion (chat_title.go, Agent-side)
+	mux.HandleFunc("POST /api/chat/conversations/{id}/title/suggest", rest)   // preview-only AI title suggestion (chat_title.go, Agent-side)
 	mux.HandleFunc("POST /api/chat/conversations/{id}/suggest-replies", rest) // LLM reply suggestion v2 (chat_suggest_reply.go, Agent-side)
 	mux.HandleFunc("DELETE /api/chat/conversations/{id}", rest)
+	mux.HandleFunc("POST /api/chat/conversations/{id}/lock", rest) // 削除ロック（docs/45）
 	mux.HandleFunc("POST /api/chat/conversations/{id}/messages", rest)
 	mux.HandleFunc("POST /api/chat/conversations/{id}/stream", proxy.withResolved(proxy.stream)) // SSE (Phase B)
 	mux.HandleFunc("POST /api/chat/conversations/{id}/stop", rest)                               // cancel a detached in-flight turn
@@ -376,6 +380,7 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/repos", rest)
 	mux.HandleFunc("POST /api/repos", rest)
 	mux.HandleFunc("DELETE /api/repos/{name}", rest)
+	mux.HandleFunc("POST /api/repos/{name}/lock", rest) // 削除ロック（docs/45）
 	mux.HandleFunc("GET /api/repos/{name}/status", rest)
 	mux.HandleFunc("GET /api/repos/{name}/branches", rest)
 	mux.HandleFunc("DELETE /api/repos/{name}/branch", rest) // ?branch=<name>; cleanup (docs/32)
@@ -406,6 +411,7 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/fs/tree", rest)
 	mux.HandleFunc("GET /api/fs/search", rest)
 	mux.HandleFunc("GET /api/fs/file", rest)
+	mux.HandleFunc("PUT /api/fs/file", proxy.withResolved(proxy.fsFilePut))
 	mux.HandleFunc("GET /api/fs/download", rest)
 	mux.HandleFunc("POST /api/fs/upload", rest)
 	mux.HandleFunc("GET /api/fs/changes", rest)

@@ -100,6 +100,11 @@ const (
 	TurnFailed             TurnState = "failed"
 	TurnCancelled          TurnState = "cancelled"
 	TurnUnknown            TurnState = "unknown" // 切断時の正直な状態 — §6 の手順で解決
+	// TurnAborted は「回答を出す前に途中で落ちたが、再送すれば続きから走れる」ターン
+	// （接続断・一時的なレート制限など）。TurnFailed と分けるのは、原因が解消しない
+	// 限り再送が無意味な失敗（残高切れ・プロンプト長超過）と、再送で直る中断とで
+	// オペレーターに促すべき行動が正反対だから（docs/47）。
+	TurnAborted TurnState = "aborted"
 )
 
 // Event is a live notification from a managed runtime. 語彙の確定は購読実装と同時

@@ -199,6 +199,13 @@ export interface Settings {
   // Sessions only — the assistant-chat side split off into assistantTitleSuggest.
   // Default true so existing users get it without an explicit opt-in.
   autoTitleSuggest: boolean;
+  // How the opencode launch-model list is shaped (AgentsTab > opencode). One
+  // OPENCODE_API_KEY opens both opencode.ai billing routes, so the same model shows up
+  // twice: opencode/… (Zen, pay-per-request) and opencode-go/… (the Go subscription).
+  // "go-first" (default) hoists Go, "hide-zen" also drops the metered twins, "all"
+  // leaves the catalog as reported. The Agent reads this from ui-prefs, so it shapes
+  // the MCP list_models an assistant picks from as well as this picker.
+  opencodeCatalog: "go-first" | "hide-zen" | "all";
   // ON/OFF for the assistant-chat title AI suggestion (AssistantTab; the rename
   // dialog's 「AIに提案してもらう」 button). Split out of autoTitleSuggest so sessions
   // and chats gate independently; load()/hydrateUIPrefs migrate an explicit legacy
@@ -217,6 +224,12 @@ export interface Settings {
   // key — hydrateUIPrefs migrates a stored pin by promoting it to the front, and
   // the Agent normalizes partial/stale lists against its own default order.
   assistantAgentOrder: string[];
+  // Per-backend models for builtin assistant conversations and short one-shot
+  // helpers. Empty means that backend's documented automatic/default choice.
+  // Explicit models are kept for every backend so priority fallback never silently
+  // changes the requested model.
+  assistantModels: Record<string, string>;
+  assistantUtilityModels: Record<string, string>;
   // Auto turn on session reports (docs/30): when a session an af_write assistant
   // launched/steered reports back, the assistant runs one turn automatically to
   // process it. Default ON; the backend caps unattended turns at 10 per conversation
@@ -233,6 +246,13 @@ export interface Settings {
   // the user's stead is consequential, so this is a deliberate opt-in; unclear or
   // destructive choices/plans still ask the user.
   assistantAutoPilot: boolean;
+  // 中断時の自動再開 (docs/47): when a session's turn is CUT OFF before it answered by
+  // something that clears on its own (dropped connection, temporary rate limit), the
+  // operator nudges it to continue instead of only relaying to the user. Default ON —
+  // unlike auto-pilot this makes no decision on the user's behalf, it just re-runs work
+  // they already asked for; failures whose cause won't clear (usage limit, prompt too
+  // long) are classified out and never auto-resumed.
+  assistantAutoResume: boolean;
   // Preventive auto-compaction (docs/33 第4段): when a chat's context is still at/above
   // the backend threshold (90%) as a new turn starts, summarize-and-hand-off first.
   // Default ON — the 80% notice gives a manual window before this fires.
@@ -432,12 +452,28 @@ const DEFAULTS: Settings = {
   defaultModel: DEFAULT_MODEL, // concrete tier (avoids claude's release-varying own pick)
   agentLaunchDefaults: DEFAULT_AGENT_LAUNCH,
   autoTitleSuggest: true,
+  opencodeCatalog: "go-first",
   assistantTitleSuggest: true,
   outputLanguage: "auto",
   assistantAgentOrder: [...ASSISTANT_AGENT_KINDS],
+  assistantModels: {
+    claude: "sonnet",
+    codex: "gpt-5.6-luna",
+    opencode: "opencode/nemotron-3-ultra-free",
+    cursor: "",
+    agy: "Gemini 3.5 Flash (Medium)",
+  },
+  assistantUtilityModels: {
+    claude: "haiku",
+    codex: "",
+    opencode: "",
+    cursor: "",
+    agy: "Gemini 3.5 Flash (Medium)",
+  },
   assistantAutoTurn: true,
   assistantAutoTurnLimit: 10,
   assistantAutoPilot: false,
+  assistantAutoResume: true,
   assistantAutoCompact: true,
   ssmHostColors: {},
   // 音声読み上げの初期値＝おすすめ設定。設定タブの「リセット」ボタンが戻す値（TTS_RESET）と

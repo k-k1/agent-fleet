@@ -4,24 +4,33 @@ import "testing"
 
 func TestClassifySessionCleanup(t *testing.T) {
 	// Live → skipped entirely (working, not clutter).
-	if _, _, _, ok := classifySessionCleanup(false, true); ok {
+	if _, _, _, ok := classifySessionCleanup(false, false, true); ok {
 		t.Fatal("live session must not be a cleanup candidate")
 	}
 	// Stopped, not archived → propose archive, but review (stopped ≠ finished).
-	action, safety, _, ok := classifySessionCleanup(false, false)
+	action, safety, _, ok := classifySessionCleanup(false, false, false)
 	if !ok || action != "archive_session" || safety != "review" {
 		t.Fatalf("stopped: action=%q safety=%q ok=%v", action, safety, ok)
 	}
 	// Already archived → delete_session reclaims it (TTL-exempt, so it accumulates).
-	action, safety, _, ok = classifySessionCleanup(true, false)
+	action, safety, _, ok = classifySessionCleanup(false, true, false)
 	if !ok || action != "delete_session" || safety != "review" {
 		t.Fatalf("archived: action=%q safety=%q ok=%v", action, safety, ok)
+	}
+	// 削除ロック（docs/45）: listed, but keep and with no action — the operator must
+	// never propose a tool call that the Agent will refuse with 403.
+	for _, archived := range []bool{false, true} {
+		action, safety, reason, ok := classifySessionCleanup(true, archived, false)
+		if !ok || action != "" || safety != "keep" || reason == "" {
+			t.Fatalf("locked(archived=%v): action=%q safety=%q reason=%q ok=%v", archived, action, safety, reason, ok)
+		}
 	}
 }
 
 func TestClassifyWorktreeCleanup(t *testing.T) {
 	cases := []struct {
 		name       string
+		locked     bool
 		liveCount  int
 		ahead      int
 		dirty      bool
@@ -29,17 +38,19 @@ func TestClassifyWorktreeCleanup(t *testing.T) {
 		wantAction string
 		wantSafety string
 	}{
-		{"live session blocks", 1, 0, false, "contained", "", "keep"},
-		{"dirty is protected", 0, 0, true, "contained", "", "keep"},
-		{"ahead is protected", 0, 2, false, "contained", "", "keep"},
-		{"merged clean is safe", 0, 0, false, "contained", "delete_worktree", "safe"},
-		{"same as parent is safe", 0, 0, false, "same", "delete_worktree", "safe"},
-		{"clean unmerged needs review", 0, 0, false, "unmerged", "delete_worktree", "review"},
-		{"clean diverged needs review", 0, 0, false, "diverged", "delete_worktree", "review"},
-		{"unknown relation reviews", 0, 0, false, "", "delete_worktree", "review"},
+		{"live session blocks", false, 1, 0, false, "contained", "", "keep"},
+		{"dirty is protected", false, 0, 0, true, "contained", "", "keep"},
+		{"ahead is protected", false, 0, 2, false, "contained", "", "keep"},
+		{"merged clean is safe", false, 0, 0, false, "contained", "delete_worktree", "safe"},
+		{"same as parent is safe", false, 0, 0, false, "same", "delete_worktree", "safe"},
+		{"clean unmerged needs review", false, 0, 0, false, "unmerged", "delete_worktree", "review"},
+		{"clean diverged needs review", false, 0, 0, false, "diverged", "delete_worktree", "review"},
+		{"unknown relation reviews", false, 0, 0, false, "", "delete_worktree", "review"},
+		// 削除ロック（docs/45）は「安全に消せる」条件を満たしていても keep で止める。
+		{"locked beats safe", true, 0, 0, false, "contained", "", "keep"},
 	}
 	for _, c := range cases {
-		action, safety, reason := classifyWorktreeCleanup(c.liveCount, c.ahead, c.dirty, c.relation)
+		action, safety, reason := classifyWorktreeCleanup(c.locked, c.liveCount, c.ahead, c.dirty, c.relation)
 		if action != c.wantAction || safety != c.wantSafety {
 			t.Errorf("%s: action=%q safety=%q (want %q/%q)", c.name, action, safety, c.wantAction, c.wantSafety)
 		}

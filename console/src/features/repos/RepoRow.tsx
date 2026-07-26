@@ -77,6 +77,9 @@ export interface RepoRowProps {
   onOpenChanges?: () => void;
   onFF?: () => void;
   onDelete?: () => void;
+  /** 削除ロック（docs/45）の切替。ロック中は削除メニューが無効になり、空になった
+   * worktree の自動 prune も止まる（保護の実体は Agent 側の 403）。 */
+  onToggleLock?: (locked: boolean) => void;
   /** SVN (docs/41): update to the latest revision / clear a wedged working-copy lock. */
   onUpdate?: () => void;
   onCleanup?: () => void;
@@ -87,7 +90,7 @@ export interface RepoRowProps {
   onFocusPane?: (id: string) => void;
 }
 
-export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, sess, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onDelete, onUpdate, onCleanup, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane }: RepoRowProps) {
+export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, sess, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onDelete, onToggleLock, onUpdate, onCleanup, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane }: RepoRowProps) {
   // SVN working copies (docs/41) are flat: no branch/SCM view/worktree, so the card
   // never opens Source Control and the menu shows svn actions (update/cleanup) instead
   // of git ones (branch switch / FF / commit).
@@ -191,6 +194,8 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                 r{r.revision}
               </span>
             )}
+            {/* 削除ロック（docs/45）: 鍵バッジ。削除メニューが灰色な理由をここで示す。 */}
+            {r.locked && <Icon name="lock" className="repo-lock" title={tr("repo.locked_hint")} />}
           </span>
           {(r.dirty || r.integration || ((r.ahead || r.behind) ?? 0) > 0) && (
             <span className="repo-state">
@@ -391,15 +396,26 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                 </button>
               </li>
             ))}
+            {(onDelete || onToggleLock) && <li className="ui-menu-sep" role="separator" />}
+            {onToggleLock && (
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onToggleLock(!r.locked); }}>
+                  <Icon name={r.locked ? "unlock" : "lock"} /> {r.locked ? tr("repo.unlock") : tr("repo.lock")}
+                </button>
+              </li>
+            )}
             {onDelete && (
-              <>
-                <li className="ui-menu-sep" role="separator" />
-                <li>
-                  <button type="button" className="ui-menu-item danger" onClick={() => { setMenu(null); onDelete(); }}>
-                    <Icon name="trash" /> {tr("repo.delete_wc")}
-                  </button>
-                </li>
-              </>
+              <li>
+                <button
+                  type="button"
+                  className="ui-menu-item danger"
+                  disabled={!!r.locked}
+                  title={r.locked ? tr("repo.locked_hint") : undefined}
+                  onClick={() => { setMenu(null); onDelete(); }}
+                >
+                  <Icon name="trash" /> {tr("repo.delete_wc")}
+                </button>
+              </li>
             )}
           </ul>,
           document.body,
