@@ -236,7 +236,7 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/sessions/{name}/title/set", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/suggest-branch", rest)  // LLM branch-name suggestion (this session's convo)
 	mux.HandleFunc("POST /api/sessions/{name}/suggest-replies", rest) // LLM reply suggestion v2 (this session's convo)
-	mux.HandleFunc("POST /api/sessions/{name}/rename-branch", rest)  // worktree deferred-naming: git branch -m
+	mux.HandleFunc("POST /api/sessions/{name}/rename-branch", rest)   // worktree deferred-naming: git branch -m
 }
 
 // Assistant chat (docs/19) — headless-CLI LLM chat/translation, proxied to the
@@ -248,7 +248,7 @@ func registerChatRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/chat/conversations", rest)
 	mux.HandleFunc("GET /api/chat/conversations/{id}", rest)
 	mux.HandleFunc("PATCH /api/chat/conversations/{id}", rest)
-	mux.HandleFunc("POST /api/chat/conversations/{id}/title/suggest", rest)    // preview-only AI title suggestion (chat_title.go, Agent-side)
+	mux.HandleFunc("POST /api/chat/conversations/{id}/title/suggest", rest)   // preview-only AI title suggestion (chat_title.go, Agent-side)
 	mux.HandleFunc("POST /api/chat/conversations/{id}/suggest-replies", rest) // LLM reply suggestion v2 (chat_suggest_reply.go, Agent-side)
 	mux.HandleFunc("DELETE /api/chat/conversations/{id}", rest)
 	mux.HandleFunc("POST /api/chat/conversations/{id}/lock", rest) // 削除ロック（docs/45）
@@ -411,6 +411,7 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/fs/tree", rest)
 	mux.HandleFunc("GET /api/fs/search", rest)
 	mux.HandleFunc("GET /api/fs/file", rest)
+	mux.HandleFunc("PUT /api/fs/file", proxy.withResolved(proxy.fsFilePut))
 	mux.HandleFunc("GET /api/fs/download", rest)
 	mux.HandleFunc("POST /api/fs/upload", rest)
 	mux.HandleFunc("GET /api/fs/changes", rest)

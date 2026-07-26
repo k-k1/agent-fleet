@@ -901,9 +901,9 @@ func (s *sqlStore) ListLFSObjectOIDs(ctx context.Context, tenantID, repo string)
 
 func (s *sqlStore) InsertAudit(ctx context.Context, a AuditLog) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO audit_log(id, tenant_id, actor_kind, actor_id, action, target, detail, at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.ID, a.TenantID, a.ActorKind, a.ActorID, a.Action, a.Target, a.Detail, a.At)
+		`INSERT INTO audit_log(id, tenant_id, actor_kind, actor_id, action, target, detail, at, http_status)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.ID, a.TenantID, a.ActorKind, a.ActorID, a.Action, a.Target, a.Detail, a.At, a.HTTPStatus)
 	return err
 }
 
@@ -913,7 +913,7 @@ func (s *sqlStore) ListAuditByTenant(ctx context.Context, tenantID string, limit
 	}
 	// tenantID=="" spans every tenant (super_admin, deployment-wide view); a set
 	// tenantID scopes to that tenant only.
-	q := `SELECT id, tenant_id, actor_kind, actor_id, action, target, detail, at FROM audit_log`
+	q := `SELECT id, tenant_id, actor_kind, actor_id, action, target, detail, at, http_status FROM audit_log`
 	args := []any{}
 	if tenantID != "" {
 		q += ` WHERE tenant_id=?`
@@ -930,7 +930,7 @@ func (s *sqlStore) ListAuditByTenant(ctx context.Context, tenantID string, limit
 	for rows.Next() {
 		var a AuditLog
 		if err := rows.Scan(&a.ID, &a.TenantID, &a.ActorKind, &a.ActorID,
-			&a.Action, &a.Target, &a.Detail, &a.At); err != nil {
+			&a.Action, &a.Target, &a.Detail, &a.At, &a.HTTPStatus); err != nil {
 			return nil, err
 		}
 		out = append(out, a)

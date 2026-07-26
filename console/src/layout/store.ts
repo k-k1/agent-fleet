@@ -13,6 +13,10 @@ import { loadStoredLayout, LKEY_NEW } from "./migrate.ts";
 import { getTenant, getUser } from "../core/api/client.ts";
 import { mobileMatches } from "../lib/device.ts";
 import { popoutMode } from "../lib/popoutMode.ts";
+import {
+  confirmDirtyNavigation,
+  dirtyPanesDestroyedByLayout,
+} from "../features/editor/dirtyRegistry.ts";
 
 interface LayoutStore {
   layout: Layout;
@@ -63,7 +67,7 @@ function persist(layout: Layout): void {
 }
 
 export const useLayoutStore = create<LayoutStore>((set, get) => {
-  const commit = (next: Layout, push = true): void => {
+  const commitUnchecked = (next: Layout, push = true): void => {
     const cur = get().layout;
     if (next === cur) return; // ops returned the input — a no-op
     if (push && JSON.stringify(next) === JSON.stringify(cur)) return; // no dup history entry
@@ -74,6 +78,17 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
         history.pushState({ __af: true, layout: next }, "");
       } catch {}
     }
+  };
+  const commit = (next: Layout, push = true): void => {
+    const cur = get().layout;
+    const destroyed = dirtyPanesDestroyedByLayout(cur, next);
+    if (destroyed.length === 0) {
+      commitUnchecked(next, push);
+      return;
+    }
+    void confirmDirtyNavigation("layout", destroyed).then((proceed) => {
+      if (proceed) commitUnchecked(next, push);
+    });
   };
   return {
     layout: ops.freshLayout(),
@@ -100,8 +115,23 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
     },
 
     setFromHistory(l: Layout) {
-      set({ layout: l });
-      if (get().hydrated) persist(l);
+      const cur = get().layout;
+      const destroyed = dirtyPanesDestroyedByLayout(cur, l);
+      if (destroyed.length === 0) {
+        set({ layout: l });
+        if (get().hydrated) persist(l);
+        return;
+      }
+      void confirmDirtyNavigation("history", destroyed).then((proceed) => {
+        if (proceed) {
+          set({ layout: l });
+          if (get().hydrated) persist(l);
+        } else {
+          // popstate already moved the browser cursor. Restore the current layout as
+          // a fresh entry so Cancel also cancels the visible navigation.
+          try { history.pushState({ __af: true, layout: cur }, ""); } catch {}
+        }
+      });
     },
 
     openTarget: (target) => commit(ops.openActive(get().layout, target)),

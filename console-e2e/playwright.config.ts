@@ -15,5 +15,6 @@ export default defineConfig({
   use: {
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
+    launchOptions: { executablePath: "/usr/bin/chromium" },
   },
 });

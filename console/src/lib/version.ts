@@ -8,6 +8,7 @@
 // carries the SAME stamp for the *currently served* build. Comparing the two lets the
 // running app notice a newer deploy and reload past the stale cache (see reloadForUpdate
 // / useUpdateCheck).
+import { confirmDirtyNavigation } from "../features/editor/dirtyRegistry.ts";
 
 export interface BuildId {
   time: string; // ISO 8601 build time — the canonical, unique-per-build id
@@ -74,7 +75,8 @@ export function markUpdating(): void {
 // the app to the old bundle — a changing URL forces a fresh fetch (verified: adding a
 // query string is what unstuck the phone). The tag is the server build's SHA (or its
 // compacted timestamp) so re-navigations to the same version reuse one cache entry.
-export function reloadForUpdate(server?: BuildId): void {
+export async function reloadForUpdate(server?: BuildId): Promise<void> {
+  if (!(await confirmDirtyNavigation("version_update"))) return;
   markUpdating();
   const tag =
     ((server?.sha || server?.time || "") + "").replace(/[^A-Za-z0-9]/g, "").slice(0, 16) || String(Date.now());
