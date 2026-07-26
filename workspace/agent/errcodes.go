@@ -30,6 +30,10 @@ const (
 	errCodeWorktreeDirty         = "worktree_dirty"
 	errCodeWorktreeRemoveFailed  = "worktree_remove_failed"
 	errCodeHasWorktrees          = "has_worktrees"
+	// 削除ロック（docs/45）: 対象そのものがロックされている / ロックされた
+	// セッションを巻き添えにする削除を拒んだとき。
+	errCodeLocked         = "locked"
+	errCodeLockedSessions = "locked_sessions"
 )
 
 // docs/28 P3: 以前は各ハンドラに和文でハードコードされていたユーザー向けエラーを

@@ -132,7 +132,7 @@ func listConvs() ([]chatMeta, error) {
 		out = append(out, chatMeta{
 			ID: c.ID, Slug: c.Slug, Agent: c.Agent, ActiveAgent: c.ActiveAgent, AssistantID: c.AssistantID, Title: c.Title, Model: c.Model,
 			CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt, MessageCount: len(c.Messages),
-			Context: c.Context,
+			Context: c.Context, Locked: c.Locked,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt > out[j].UpdatedAt })

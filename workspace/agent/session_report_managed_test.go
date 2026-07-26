@@ -134,3 +134,31 @@ func TestManagedRuntimeLossDoesNotReport(t *testing.T) {
 		t.Fatalf("status = %q, want idle (進行中 に張り付かせない)", st.State)
 	}
 }
+
+// A turn that FAILED (provider error) is terminal too — the report must fire and consume
+// the arm exactly like a completion — but it must say the turn errored. Reporting
+// 応答が完了 for a turn that produced nothing is what let an exhausted opencode Zen
+// balance look like a finished task to the operator.
+func TestManagedTurnFailureReportsAsError(t *testing.T) {
+	m, sid, convID := managedReportFixture(t)
+
+	agents.MarkTurnStart(sid)
+	agents.MarkTurnEndErr(sid, agents.TurnFailed, "[error] APIError (HTTP 401): Insufficient balance.")
+
+	got := awaitReportCard(t, convID)
+	if got == nil {
+		t.Fatal("失敗したターンもオペレーターへ報告されなければならない")
+	}
+	if strings.Contains(got.Content, "応答が完了") {
+		t.Fatalf("失敗が完了として報告された: %+v", got)
+	}
+	if !strings.Contains(got.Content, "エラー") {
+		t.Fatalf("report card = %+v", got)
+	}
+	if reportArmed(m.Name) {
+		t.Fatal("arm must be consumed — a failure ends the instruction just as a completion does")
+	}
+	if st, _ := status.Read(sid); st.State != "idle" {
+		t.Fatalf("status = %q, want idle (the session really is awaiting input)", st.State)
+	}
+}

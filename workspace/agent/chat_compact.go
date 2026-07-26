@@ -55,12 +55,32 @@ const (
 	compactReasonRecovery = "コンテキスト超過エラーからの自動復旧のため、圧縮しました。" // 第3段・超過リトライ
 )
 
+// compactTrigger maps the notice reason onto the ledger's trigger vocabulary, so the
+// usage graph can tell "the user pressed 圧縮" from "we compacted on our own" — the
+// latter is what silently multiplies on a long-lived operator conversation.
+func compactTrigger(reason string) string {
+	switch reason {
+	case compactReasonAuto:
+		return usageTriggerAuto
+	case compactReasonRecovery:
+		return usageTriggerRecovery
+	default:
+		return usageTriggerManual
+	}
+}
+
 // compactConversation runs the summary turn on the CURRENT provider session, then
 // resets the resume handles and parks the summary for injection. reason opens the
 // appended notice (compactReason*). The caller holds the conversation lock and
 // saves afterwards.
 func compactConversation(ctx context.Context, c *chatConversation, prov chatProvider, reason string) error {
 	agent := chatProviderKind(c, prov)
+	// 使用量台帳（ADR 0029 §3）: 圧縮はチャットターンの内側から呼ばれるので、ここで
+	// タグを上書きしないと外側の assistant.chat として数えられてしまう。要約は現行
+	// セッション上で撃つ＝コンテキストが積み上がったところに1回撃つので、単価が高い。
+	ctx = withUsageTag(ctx, usageTag{
+		Feature: usageFeatureCompact, Trigger: compactTrigger(reason), Ref: c.ID,
+	})
 	prompt := syncProviderPrompt(c, agent, compactSummaryPrompt, len(c.Messages))
 	summary, err := prov.send(ctx, c, prompt)
 	if err != nil {

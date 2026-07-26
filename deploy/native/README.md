@@ -319,3 +319,7 @@ prefer the approval gates for destructive actions. This software is distributed 
 the **Apache License 2.0** and is provided **"AS IS", WITHOUT WARRANTIES OR CONDITIONS
 OF ANY KIND**; the authors accept **no liability** for any damage, data loss, or cost
 arising from its use. See `LICENSE`, and `NOTICE` for bundled-OSS attribution.
+
+Official releases come only from <https://github.com/k-k1/agent-fleet-dist>. If you
+pass this package on, Apache-2.0 §4(d) requires you to keep the notices in `NOTICE`
+with it — that URL included — so the next recipient can find the original.

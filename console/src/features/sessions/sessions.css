@@ -178,6 +178,15 @@
   animation: af-pulse 1.4s ease-in-out infinite;
 }
 
+/* 削除ロック（docs/45）の鍵バッジ — 行が削除保護に固定されていることを示す。
+   主張しすぎないよう muted、警告色は使わない（異常ではなく利用者の意図）。
+   アシスタント会話の行（.chat-row）も同じクラスを使う。 */
+.sess-lock {
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 /* Ordinal badges (right side, shown while split). */
 .sess-ords {
   display: flex;

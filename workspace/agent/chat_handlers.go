@@ -200,6 +200,8 @@ func handleChatAsk(w http.ResponseWriter, r *http.Request) {
 	prov := chatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
 	ctx, cancel := context.WithTimeout(r.Context(), chatTimeout)
 	defer cancel()
+	// 使用量台帳（ADR 0029 §3）。会話は非永続なので ref は空 — 束ねる先が無い。
+	ctx = withUsageTag(ctx, usageTag{Feature: usageFeatureAssistantAsk, Trigger: usageTriggerUser})
 	reply, err := prov.send(ctx, c, prompt)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusBadGateway, "provider", err.Error())
@@ -272,6 +274,13 @@ func handleChatDelete(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "invalid id")
 		return
 	}
+	// 削除ロック（docs/45）: ロック中の会話は消さない。読めない会話は素通り
+	// （下の os.Remove が not-exist を許容するのと同じで、掃除は続けたい）。
+	if c, err := loadConv(id); err == nil && c.Locked {
+		httpx.WriteErr(w, http.StatusForbidden, errCodeLocked,
+			"conversation is locked against deletion; unlock it first")
+		return
+	}
 	if err := os.Remove(convPath(id)); err != nil && !os.IsNotExist(err) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "chat_delete", err.Error())
 		return
@@ -324,6 +333,7 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), chatTimeout)
 	defer cancel()
+	ctx = withUsageTag(ctx, chatTurnUsageTag(c, usageTriggerUser)) // 使用量台帳（ADR 0029 §3）
 	reply, err := prov.send(ctx, c, prompt)
 	if err != nil && recoverForRetry(ctx, c, prov, err) {
 		// docs/33 第3段: 超過を検知 → 現行セッションを要約して畳み、新セッションで
@@ -418,6 +428,7 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 	// cancel func (handleChatStop); the bounded chatTimeout caps a runaway turn.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), chatTimeout)
 	defer cancel()
+	ctx = withUsageTag(ctx, chatTurnUsageTag(c, usageTriggerUser)) // 使用量台帳（ADR 0029 §3）
 	deregister := registerLiveTurn(id, cancel)
 	defer deregister()
 

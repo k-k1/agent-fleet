@@ -115,6 +115,7 @@ func generateSessionTitle(name string, turns []transcript.Turn) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), titleSuggestTimeout)
 	defer cancel()
+	ctx = withUsageTag(ctx, usageTag{Feature: usageFeatureTitleSession, Trigger: usageTriggerAuto, Ref: name})
 	title, err := runTitleSuggestLLM(ctx, turns)
 	if err != nil || title == "" {
 		return // ok stays false -> backoff before the next attempt
@@ -313,6 +314,7 @@ func generateTitleNow(ctx context.Context, name string, turns []transcript.Turn)
 	succeeded := false
 	defer func() { titleGenDone(name, succeeded) }()
 
+	ctx = withUsageTag(ctx, usageTag{Feature: usageFeatureTitleSession, Trigger: usageTriggerManual, Ref: name})
 	title, err := runTitleSuggestLLM(ctx, turns)
 	if err != nil || title == "" {
 		return "", fmt.Errorf("title generation failed: %w", err)
@@ -475,6 +477,7 @@ func handleSessionSuggestBranch(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), titleSuggestTimeout)
 	defer cancel()
+	ctx = withUsageTag(ctx, usageTag{Feature: usageFeatureBranchSuggest, Trigger: usageTriggerManual, Ref: name})
 	branch, err := runBranchSuggestLLM(ctx, turns)
 	if err != nil {
 		// Surface the underlying reason (auth/CLI/timeout) instead of a generic string.

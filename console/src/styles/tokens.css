@@ -91,6 +91,26 @@
   --kind-opencode: #aab4be; /* light slate grey — lighter than copilot's charcoal for clear separation */
   --kind-shell: #46c9d0;
   --kind-ssm: #6d8bf5;
+  /* Data-viz categorical slots (docs/46 P4 — 使用量ビュー). A validated 8-hue
+     categorical palette: fixed slot ORDER is the colorblind-safety mechanism, so
+     series are always painted (and stacked) in slot order — never re-ordered by
+     rank. Verified with the dataviz validator against this theme's modal surface
+     (--panel #181818): lightness band / chroma floor PASS, worst adjacent CVD ΔE
+     8.4, normal-vision ΔE 19.3, contrast all ≥3:1. Do NOT hand-tune one slot:
+     re-run the validator on the whole set if these ever change.
+     --viz-other is the fold bucket ("その他"): deliberately gray so it never
+     impersonates a series, and never assigned to a real entity. */
+  --viz-1: #3987e5;
+  --viz-2: #d95926;
+  --viz-3: #199e70;
+  --viz-4: #c98500;
+  --viz-5: #d55181;
+  --viz-6: #008300;
+  --viz-7: #9085e9;
+  --viz-8: #e66767;
+  --viz-other: #6e7781;
+  /* Chart chrome: gridlines/axes one step off the surface (recessive, hairline). */
+  --viz-grid: #333;
 }
 
 /* Light theme — applied via document.documentElement[data-theme="light"]. The bare
@@ -160,6 +180,22 @@
   --kind-opencode: #6e7781; /* mid slate grey (light) — lighter than copilot's near-black */
   --kind-shell: #15828a;
   --kind-ssm: #3140b8;
+  /* Data-viz slots, light steps of the SAME eight hues (not an automatic flip —
+     selected and validated for the light modal surface --panel #f4f5f7: worst
+     adjacent CVD ΔE 9.1, normal-vision ΔE 19.6). Four slots sit below 3:1 on the
+     light surface, which the validator flags as "relief required" — the view ships
+     that relief: every series is named in the legend and every value is reachable
+     in the table view (UsageView 表 tab), never color-alone. */
+  --viz-1: #2a78d6;
+  --viz-2: #eb6834;
+  --viz-3: #1baf7a;
+  --viz-4: #eda100;
+  --viz-5: #e87ba4;
+  --viz-6: #008300;
+  --viz-7: #4a3aa7;
+  --viz-8: #e34948;
+  --viz-other: #8a919b;
+  --viz-grid: #d2d6dc;
 }
 
 /* --sel-* re-derivation for regions that rebind --sel-accent (.mirror-toggle →

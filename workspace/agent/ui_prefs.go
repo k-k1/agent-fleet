@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
@@ -47,6 +48,17 @@ func readUIPrefs() map[string]any {
 func autoTitleSuggestEnabled() bool {
 	v, ok := readUIPrefs()["autoTitleSuggest"].(bool)
 	return !ok || v
+}
+
+// opencodeCatalogPref is how the opencode launch-model list is shaped (設定 >
+// エージェント > opencode, ui-prefs opencodeCatalog). One key serves both opencode.ai
+// billing routes, so the same model can appear as opencode/… (Zen, metered) and
+// opencode-go/… (the Go subscription); a Go subscriber rarely wants the metered twins
+// in the list at all. Read live per request — the Console picker and the MCP
+// list_models both go through handleAgentModels, so one preference shapes both.
+func opencodeCatalogPref() string {
+	v, _ := readUIPrefs()["opencodeCatalog"].(string)
+	return opencode.CatalogPref(v)
 }
 
 // assistantTitleSuggestEnabled is the ON/OFF for the assistant-chat title suggestion
@@ -134,6 +146,18 @@ func chatAutoTurnLimit() int {
 func chatAutoPilotEnabled() bool {
 	v, ok := readUIPrefs()["assistantAutoPilot"].(bool)
 	return ok && v
+}
+
+// chatAutoResumeEnabled is the global ON/OFF for 中断時の自動再開 (docs/47, 設定 >
+// アシスタント): on an aborted turn (接続断・一時的なレート制限で切れた — 原因が
+// 自然に解消する中断) the operator is told to nudge the session to continue instead of
+// only relaying to the user. Missing/invalid key ⇒ TRUE, unlike 自動走行: the nudge
+// carries no decision of the user's — it re-runs work the user already asked for, and
+// its blast radius is bounded by the retryable/blocked split (a failure whose cause
+// won't clear is never auto-resumed) and by maxAutoResumeAttempts.
+func chatAutoResumeEnabled() bool {
+	v, ok := readUIPrefs()["assistantAutoResume"].(bool)
+	return !ok || v
 }
 
 // chatAutoCompactEnabled is the global ON/OFF for the assistant chat's preventive

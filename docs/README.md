@@ -32,9 +32,13 @@
 - [36-copilot-agent-kind.md](36-copilot-agent-kind.md) — `kind=copilot`（GitHub Copilot CLI）を第5種別として Terminal+Managed 両対応で実装（✅ 実装済み・実 CLI 契約テスト通過。設計判断は [decisions/0019](decisions/0019-copilot-agent-kind.md)）
 - [37-chat-bridge.md](37-chat-bridge.md) — チャットブリッジ（Slack/Discord 連携）: 通知・双方向操縦・AUQ ボタン・承認ゲート（📋 計画・未実装。設計判断は [decisions/0020](decisions/0020-chat-bridge.md)）
 - [38-scheduled-execution.md](38-scheduled-execution.md) — 定時実行（オペレーター cron 型）: CP scheduler・wakeFirer・run 履歴・Console UI（✅ v1 コア実装済み。設計判断は [decisions/0021](decisions/0021-scheduled-execution.md)）
+- [39-agent-memory-management.md](39-agent-memory-management.md) — エージェントメモリ管理（git 差分管理・時点/プロジェクト単位ロールバック・環境間 import/export）（📋 設計中・意思決定前。設計判断は [decisions/0022](decisions/0022-agent-memory-management.md)）
 - [40-cursor-agent-kind.md](40-cursor-agent-kind.md) — `kind=cursor`（Cursor CLI）を第7種別として Terminal+Managed 両対応で実装（📋 計画・実装未着手。実 CLI 実測記録・着工前プローブ一覧を含む。設計判断は [decisions/0023](decisions/0023-cursor-agent-kind.md)）
 - [43-kiro-agent-kind.md](43-kiro-agent-kind.md) — `kind=kiro`（Kiro、旧 Amazon Q Developer CLI）を第8種別として Terminal+Managed 両対応で実装（✅ Track A/B/C/A2/D 実装済み・実 CLI E2E 通過。設計判断は [decisions/0026](decisions/0026-kiro-agent-kind.md)）
-- [44-markdown-code-editor.md](44-markdown-code-editor.md) — Console の File ペイン編集、Markdown 3モード、`/fs/file` 保存API、revision競合、AI提案フォーマット（📋 Phase 0 設計固定。ADR は [decisions/0027](decisions/0027-markdown-code-editor.md)）
+- [44-markdown-code-editor.md](44-markdown-code-editor.md) — Console の File ペイン編集、Markdown 3モード、`/fs/file` 保存API、revision競合、AI提案フォーマット（◐ Phase 2（Text/コード編集 MVP）実装済み。ADR は [decisions/0027](decisions/0027-markdown-code-editor.md)）
+- [45-deletion-lock.md](45-deletion-lock.md) — セッション / 作業コピー / アシスタント会話の削除ロック（手動削除も自動 prune も止める。✅ 実装済み・実機目視待ち。設計判断は [decisions/0028](decisions/0028-deletion-lock.md)）
+- [46-usage-accounting.md](46-usage-accounting.md) — 使用量アカウンティング（機能別トークン計測とグラフ化）: 補助 LLM 呼び出し（アシスタント/要約/タイトル/サジェスト）とセッション本体を同じ台帳で測る（◐ P0.5〜P3 実装済み・Console UI は未着手。実測記録を含む。設計判断は [decisions/0029](decisions/0029-usage-accounting.md)）
+- [47-turn-abort-auto-resume.md](47-turn-abort-auto-resume.md) — 中断ターンの検知と自動再開: API エラーで切れたターン（Stop フックが鳴らない）を自己修復経路で取りこぼさず通知・報告し、再送で直る中断だけアシスタントが再開させる（✅ 実装済み・実機目視待ち。実測記録を含む。設計判断は [decisions/0030](decisions/0030-turn-abort-auto-resume.md)）
 
 > 完了後も実装契約や実測リファレンスとしてコードから参照する 24・26〜30 は番号付きのまま残す。
 > 時系列の実装プランとして役目を終えたものは history/ へ移動: [19 assistant-chat](history/19-assistant-chat.md) /
@@ -73,8 +77,13 @@
 - [0013-tts-zundamon.md](decisions/0013-tts-zundamon.md) — 回答の音声読み上げ：CP-native TTS・プロバイダ抽象・ずんだもん主役/Polly 受け皿・ECS オンデマンド（設計 [24](24-tts-zundamon.md)）
 - [0014-agent-exit-recording.md](decisions/0014-agent-exit-recording.md) — エージェント終了理由記録：pane ラッパーで exit code 捕捉・自 cgroup で OOM 帰属・意図停止フラグ不要・CP は cgroup 直読み（設計 [26](26-agent-exit-recording.md)）
 - [0015-agent-managed-driver.md](decisions/0015-agent-managed-driver.md) — Codex / OpenCode は共有 runtime の managed を既定、CLI ルートを常設（実装記録 [27](27-agent-managed-driver.md)）
+- [0016-i18n.md](decisions/0016-i18n.md) — Console i18n は自前軽量層（ja/en・AST 裸和文 lint）（設計 [28](28-i18n.md)）
 - [0017-keyboard-system.md](decisions/0017-keyboard-system.md) — Console キーボード操作体系：capture-phase 単一ディスパッチャで xterm を貫く・Leader(⌘K)/パレット/少数アクセラレータ・直接キー＋予約キーのみ再割当・端末入力優先は Leader だけ残す（設計 [29](29-keyboard-system.md)）
 - [0018-container-browser-pane.md](decisions/0018-container-browser-pane.md) — Chromium を Workspace 内で動かし、localhost の描画と許可済み入力だけをブラウザペインへ中継（設計 [31](31-container-browser-pane.md)）
+- [0019-copilot-agent-kind.md](decisions/0019-copilot-agent-kind.md) — GitHub Copilot CLI（`copilot`）を第 5 のエージェント種別に（設計 [36](36-copilot-agent-kind.md)）
+- [0020-chat-bridge.md](decisions/0020-chat-bridge.md) — チャットブリッジ：Slack/Discord から通知受領と双方向操縦（設計 [37](37-chat-bridge.md)）
+- [0021-scheduled-execution.md](decisions/0021-scheduled-execution.md) — 定時実行：定義は CP の DB・自前 cron・wakeFirer で停止中も発火（設計 [38](38-scheduled-execution.md)）
+- [0022-agent-memory-management.md](decisions/0022-agent-memory-management.md) — エージェントメモリは agent 側 git bare repo で版管理し bundle で環境間移送（設計 [39](39-agent-memory-management.md)）
 
 ## history/ — 使い終わった実装プラン（P3-6 は ◐ 段1 完了・admin 残）
 
