@@ -665,6 +665,9 @@ export const en: Record<keyof typeof ja, string> = {
   "assistant.auto_pilot": "Auto-pilot (auto-handle questions & plans)",
   "assistant.note_auto_pilot":
     "When ON, if an instructed session stops at a multiple-choice question the operator answers with the session's recommendation automatically, and when it stops at plan approval the operator has another session review the plan, feeds back findings, and approves once clean. Every decision is shared in chat. Unclear questions and choices/plans involving destructive or irreversible operations still come to you first. Default OFF.",
+  "assistant.auto_resume": "Auto-resume interrupted turns",
+  "assistant.note_auto_resume":
+    "When an instructed session's turn is cut off part-way by a dropped connection or a temporary rate limit, the operator sends a plain \"please continue\" to resume it (matching the language the session is working in). Every resume is shared in chat. Interruptions whose cause won't clear on its own (usage limit, exhausted credit, prompt too long) would fail the same way on a re-send, so they are not auto-resumed — you get a note about fixing the cause instead. Resumes up to twice in a row; if it keeps getting cut off, it reports to you. Default ON.",
   "assistant.auto_compact": "Auto-compact chat context",
   "assistant.note_auto_compact":
     "When a chat's context usage is still above 90% as a new exchange starts, the conversation is summarized and handed to a fresh session automatically first (the summary costs one turn of tokens). The notice at 80% lets you compact manually before this fires.",

@@ -90,6 +90,50 @@ const reportKindAnswerReady = "answer-ready"
 // result.
 const reportReasonTurnFailed = "turn-failed"
 
+// reportReasonTurnAborted qualifies an answer-ready report whose turn was CUT OFF
+// before it answered by something that clears on its own — a dropped connection, a
+// temporary rate limit (docs/47). It is deliberately distinct from turn-failed: there
+// the operator must NOT re-send until the cause is fixed, here re-sending IS the fix,
+// which is what 中断時の自動再開 acts on.
+const reportReasonTurnAborted = "turn-aborted"
+
+// maxAutoResumeAttempts caps the CONSECUTIVE auto-resumes for one session. A session
+// that keeps getting cut off is not a transient hiccup any more — past the cap the
+// report stops asking for a resume and escalates to the user instead. The counter is
+// reset by any clean completion, so a session that recovers starts over with a full
+// budget. (chatAutoTurnLimit remains the structural clamp on the operator's turns.)
+const maxAutoResumeAttempts = 2
+
+// resumeState counts the consecutive auto-resume nudges sent for a session. A separate
+// per-session file for the same reason as reportLink: several independent writers touch
+// session state and Meta is a single blob they would clobber.
+type resumeState struct {
+	Count int    `json:"count"`
+	At    string `json:"at"` // RFC3339 of the last bump
+}
+
+var resumeStates = fstore.JSON[resumeState](paths.AgentConfigDir, "session-resume", ".json")
+
+// autoResumeAttempts is the consecutive auto-resume count recorded for the session.
+func autoResumeAttempts(name string) int {
+	s, _ := resumeStates.Read(name)
+	return s.Count
+}
+
+// bumpAutoResume records one more consecutive auto-resume nudge and returns the new
+// count. Called when an aborted-turn report is delivered — that report IS the nudge.
+func bumpAutoResume(name string) int {
+	s, _ := resumeStates.Read(name)
+	s.Count++
+	s.At = time.Now().Format(time.RFC3339)
+	_ = resumeStates.Write(name, s)
+	return s.Count
+}
+
+// resetAutoResume clears the counter after a turn that completed normally: the session
+// is healthy again, so the next abort gets the full retry budget.
+func resetAutoResume(name string) { resumeStates.Remove(name) }
+
 // defaultAutoTurns / maxAutoTurnLimit bound the operator turns run WITHOUT a user
 // message in between (reset on every user send). The ceiling is user-configurable
 // (設定 > アシスタント, ui-prefs assistantAutoTurnLimit — chatAutoTurnLimit) but
@@ -135,9 +179,37 @@ func kickSessionReport(name, kind, reason string) {
 // reportHeadFor renders the event line of a report message. Stored conversation
 // content is JA like the personas (docs/19: JA-first product; the output-language
 // rule steers the model's replies, not the data).
-func reportHeadFor(kind, reason string) string {
+// resumeAttempts is the session's consecutive auto-resume count (0 for kinds/reasons
+// where it doesn't apply); the aborted-turn wording escalates once it passes the cap.
+func reportHeadFor(kind, reason string, resumeAttempts int) string {
 	switch kind {
 	case "answer-ready":
+		// 中断（再送で直る）: the session is at 入力待ち with an unfinished turn. The
+		// resume prompt's LANGUAGE is part of the instruction on purpose — sending JA
+		// into a session working in EN (or the reverse) flips its output language for
+		// every following turn, and there is no per-session language field to read.
+		if reason == reportReasonTurnAborted {
+			head := "ターンが中断して入力待ちに戻りました（接続断や一時的なレート制限など、時間をおけば解消する原因で、回答は完成していません）。" +
+				"再送すれば続きから走れる中断です。"
+			if resumeAttempts > maxAutoResumeAttempts {
+				return head + "【自動再開の上限（" + strconv.Itoa(maxAutoResumeAttempts) + "回）に達しています】" +
+					"これ以上は自動で再開せず、中断が繰り返されている事実と get_session_output で見た直前の出力を利用者に伝えて、" +
+					"対処（モデル変更・接続設定の見直し・作業の分割など）を相談してください。"
+			}
+			if !chatAutoResumeEnabled() {
+				return head + "【中断時の自動再開 OFF】中断した事実と直前の出力の要点を利用者に伝え、" +
+					"再開してよいか確認したうえで send_to_session で続行を促してください。" +
+					"送信文はそのセッションが直前に使っている言語に合わせ（日本語で作業していれば日本語、英語なら英語）、" +
+					"「中断したので続けてほしい」旨だけにして新しい指示を混ぜないでください。"
+			}
+			return head + "【中断時の自動再開 ON】get_session_output で直前の出力を確認し、" +
+				"send_to_session で「中断したので続けてほしい」旨だけを送って再開させてください。" +
+				"送信文はそのセッションが直前に使っている言語に合わせてください" +
+				"（日本語で作業していれば日本語、英語なら英語。判断がつかなければ最初の指示と同じ言語）。" +
+				"新しい指示や追加の依頼は混ぜないこと。再開させたことは利用者にも一言共有してください。" +
+				"ただし、破壊的・不可逆な操作（削除・強制 push・外部送信・コスト増等）の途中で落ちたと読み取れる場合は" +
+				"自動で再開せず、利用者に確認してください。"
+		}
 		if reason == reportReasonTurnFailed {
 			return "ターンがモデル／プロバイダ側のエラーで終了し、入力待ちに戻りました（応答は生成されていません）。" +
 				"get_session_output でエラー本文を確認し、原因（認証切れ・残高不足・レート制限・モデル指定など）を利用者に伝えて、" +
@@ -203,7 +275,8 @@ func reportHeadFor(kind, reason string) string {
 // excerpt (TUI と managed で統一): the operator confirms details with
 // get_session_output before summarizing to the user.
 func buildReportContent(display, name, kind, reason string) string {
-	return "セッション「" + display + "」(" + name + ") からの報告: " + reportHeadFor(kind, reason)
+	return "セッション「" + display + "」(" + name + ") からの報告: " +
+		reportHeadFor(kind, reason, autoResumeAttempts(name))
 }
 
 // undeliveredReports returns the report messages not yet fed into the provider's
@@ -429,6 +502,19 @@ func deliverSessionReport(name, convID, kind, reason string) {
 	var title string
 	if m, ok := session.ReadMeta(name); ok {
 		display, sessKind = session.Display(m), m.Kind
+	}
+
+	// 自動再開のカウンタは報告を組み立てる前に動かす（docs/47）。中断報告そのものが
+	// オペレーターへの「再開しろ」の指示なので、その配信を 1 回と数える — 上限に達した
+	// 報告は自分で escalation 文言に切り替わる。正常完了はカウンタを畳んで、回復した
+	// セッションが次の中断でまた満額の再試行枠を持てるようにする。
+	if kind == reportKindAnswerReady {
+		switch reason {
+		case reportReasonTurnAborted:
+			bumpAutoResume(name)
+		case "":
+			resetAutoResume(name)
+		}
 	}
 
 	unlock := lockConv(convID)

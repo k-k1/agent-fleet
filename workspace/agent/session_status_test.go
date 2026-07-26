@@ -2,8 +2,10 @@ package main
 
 import (
 	"os"
+	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -174,5 +176,48 @@ func TestBootDoesNotQueueAnswerReadyNotification(t *testing.T) {
 	feedStatusHook(t, "boot", `{"session_id":"`+sid+`","source":"resume"}`)
 	if events := notice.List(); len(events) != 0 {
 		t.Errorf("boot queued %d notification(s), want 0: %+v", len(events), events)
+	}
+}
+
+// TestAbortedTurnReportsAsAnswerReady pins the transition the docs/47 fix rests on: a
+// turn cut off by a transient error is a TERMINAL event (the session is back at 入力待ち,
+// the instruction's one report must fire) but carries the turn-aborted reason so the
+// operator is told to resume rather than to stop and fix a cause. previous=="" must work
+// too — the pane heal can have removed the working marker before this runs.
+func TestAbortedTurnReportsAsAnswerReady(t *testing.T) {
+	for _, previous := range []string{"working", ""} {
+		t.Run("previous="+previous, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			m := session.Meta{Name: "s-abort", Dir: t.TempDir(), Kind: session.KindClaude, Title: "Project"}
+			session.WriteMeta(m)
+			sid := session.UUID(m.Dir, m.Name)
+
+			recordSessionNotification(sid, previous, agents.StateAborted, "API Error: Connection closed mid-response.")
+
+			events := notice.List()
+			if len(events) != 1 {
+				t.Fatalf("queued %d notification(s), want 1: %+v", len(events), events)
+			}
+			if events[0].Kind != reportKindAnswerReady {
+				t.Errorf("kind = %q, want %q", events[0].Kind, reportKindAnswerReady)
+			}
+			if body, _ := events[0].Payload["body"].(string); !strings.Contains(body, "Connection closed") {
+				t.Errorf("bridge body lost the error text: %q", body)
+			}
+		})
+	}
+}
+
+// An aborted turn is a completion, not an interim event: question / plan must NOT be
+// reported as one (they leave the arm intact by design).
+func TestAbortedStateOnlyFiresFromWorkingOrEmpty(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := session.Meta{Name: "s-abort2", Dir: t.TempDir(), Kind: session.KindClaude, Title: "Project"}
+	session.WriteMeta(m)
+	sid := session.UUID(m.Dir, m.Name)
+
+	recordSessionNotification(sid, "question", agents.StateAborted, "boom")
+	if events := notice.List(); len(events) != 0 {
+		t.Errorf("aborted from %q queued %d notification(s), want 0: %+v", "question", len(events), events)
 	}
 }
