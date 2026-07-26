@@ -17,7 +17,7 @@ import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useMenuRoving } from "../../lib/useMenuRoving.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { useLayoutStore } from "../../layout/store.ts";
-import { chatPanes, ordClass, paneCount } from "../../layout/badges.ts";
+import { activeChatId, chatPanes, ordClass, paneCount } from "../../layout/badges.ts";
 import { useChatStore } from "./store.ts";
 import { openChat, openAssistantDraft, convTarget, draftTarget } from "./open.ts";
 import { AssistantModal } from "./AssistantModal.tsx";
@@ -44,7 +44,11 @@ export function AssistantSection() {
   const chatBusy = useChatStore((s) => s.busy);
   const running = useWorkspaceStore((s) => s.state) === "running";
   const multiPane = paneCount(layout) > 1;
-  const cPanes = multiPane ? chatPanes(layout) : null;
+  // Which chats are on screen, and which one the focused pane is showing. Ordinal badges
+  // stay a split-only affordance, but the open/current marks apply with a single pane too
+  // — that's the case where nothing else in the rail said which chat you were talking to.
+  const cPanes = chatPanes(layout);
+  const currentChat = activeChatId(layout);
   const toast = useToast();
   const askConfirm = useConfirm();
   const tr = useT(); // docs/28 P3: re-render builtin assistant names/descriptions on locale switch
@@ -310,11 +314,17 @@ export function AssistantSection() {
           <ul className="sess-list">
             {startedConvs.map((c) => {
               const a = c.assistant_id ? byId[c.assistant_id] : undefined;
+              const opens = cPanes.get(c.id);
+              const current = currentChat === c.id;
               return (
-                <li key={c.id} className="chat-row">
+                <li
+                  key={c.id}
+                  className={"chat-row" + (opens?.length ? " is-open" : "") + (current ? " active" : "")}
+                >
                   <button
                     type="button"
                     className="chat-open"
+                    aria-current={current ? "true" : undefined}
                     title={`${c.title}\n${c.slug ? `slug: ${c.slug}\n` : ""}ID: ${c.id}`}
                     onClick={(e) => (e.ctrlKey || e.metaKey ? openTargetInNew(convTarget(c.id)) : openChat(c.id))}
                     onMouseDown={(e) => e.button === 1 && e.preventDefault()}
@@ -340,9 +350,9 @@ export function AssistantSection() {
                       </span>
                     )}
                   </button>
-                  {cPanes?.get(c.id)?.length ? (
+                  {multiPane && opens?.length ? (
                     <span className="sess-ords">
-                      {cPanes.get(c.id)!.map((o) => (
+                      {opens.map((o) => (
                         <button
                           key={o.id}
                           type="button"
