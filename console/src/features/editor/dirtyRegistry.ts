@@ -5,7 +5,7 @@ export interface DirtyEditorEntry {
   label: string;
   isDirty(): boolean;
   save(): Promise<boolean>;
-  discard(): boolean | void | Promise<boolean | void>;
+  discard(signal?: AbortSignal): boolean | void | Promise<boolean | void>;
 }
 
 export type DirtyGuardReason =
@@ -22,6 +22,8 @@ export interface DirtyGuardRequest {
   id: number;
   reason: DirtyGuardReason;
   entries: DirtyEditorEntry[];
+  /** Fires when the request is cancelled; a pending discard must stop before cleaning its buffer. */
+  signal: AbortSignal;
   resolve(proceed: boolean): void;
 }
 
@@ -86,16 +88,25 @@ export function confirmDirtyNavigation(
   if (affected.length === 0) return Promise.resolve(true);
   if (request) return Promise.resolve(false);
   return new Promise<boolean>((resolve) => {
-    request = {
+    const abort = new AbortController();
+    let settled = false;
+    const next: DirtyGuardRequest = {
       id: ++sequence,
       reason,
       entries: affected,
+      signal: abort.signal,
       resolve: (proceed) => {
-        request = null;
+        // A stalled save/discard can resolve long after this request was
+        // cancelled; a second resolve must not clobber a newer request.
+        if (settled) return;
+        settled = true;
+        if (request === next) request = null;
+        if (!proceed) abort.abort();
         emit();
         resolve(proceed);
       },
     };
+    request = next;
     emit();
   });
 }
@@ -107,6 +118,7 @@ export async function saveDirtyGuardRequest(id: number): Promise<boolean> {
     if (!entry.isDirty()) continue;
     if (!(await entry.save()) || entry.isDirty()) return false;
   }
+  if (request !== active) return false;
   active.resolve(true);
   return true;
 }
@@ -118,7 +130,7 @@ export async function discardDirtyGuardRequest(id: number): Promise<boolean> {
     if (!entry.isDirty()) continue;
     let discarded: boolean | void;
     try {
-      discarded = await entry.discard();
+      discarded = await entry.discard(active.signal);
     } catch {
       return false;
     }

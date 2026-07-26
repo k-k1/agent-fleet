@@ -46,7 +46,9 @@ export function DirtyGuardHost() {
     // This dialog deliberately has no useBackClose history sentinel: consuming
     // such a sentinel after a layout decision would emit popstate and restore
     // the just-discarded file layout. Back instead cancels the pending decision;
-    // layout history's own listener restores the current entry.
+    // layout history's own listener restores the current entry. Cancelling is
+    // safe even while a save/discard is processing: the request's AbortSignal
+    // stops a pending discard before it cleans the buffer.
     const onPop = () => cancelDirtyGuardRequest(current.id);
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
@@ -58,11 +60,18 @@ export function DirtyGuardHost() {
   }, [current?.id]);
 
   if (!current) return null;
+  // A save/discard can stall on the network for its full I/O timeout; cancel
+  // and close stay enabled the whole time as the abort-propagating escape
+  // hatch. Only the save/discard buttons lock against double submission.
+  const settle = (ok: boolean) => {
+    if (ok || currentDirtyGuardRequest()?.id !== current.id) return;
+    setSaving(false);
+    setSaveFailed(true);
+  };
   return (
     <Modal
       title={tr("editor.guard.title")}
       onClose={() => cancelDirtyGuardRequest(current.id)}
-      lockClose={saving}
       backClose={false}
       className="dirty-guard-modal"
     >
@@ -84,12 +93,7 @@ export function DirtyGuardHost() {
           onClick={() => {
             setSaving(true);
             setSaveFailed(false);
-            void saveDirtyGuardRequest(current.id).then((ok) => {
-              if (!ok) {
-                setSaving(false);
-                setSaveFailed(true);
-              }
-            });
+            void saveDirtyGuardRequest(current.id).then(settle);
           }}
         >
           {tr("editor.guard.save")}
@@ -100,17 +104,12 @@ export function DirtyGuardHost() {
           onClick={() => {
             setSaving(true);
             setSaveFailed(false);
-            void discardDirtyGuardRequest(current.id).then((ok) => {
-              if (!ok) {
-                setSaving(false);
-                setSaveFailed(true);
-              }
-            });
+            void discardDirtyGuardRequest(current.id).then(settle);
           }}
         >
           {tr("editor.guard.discard")}
         </button>
-        <button type="button" disabled={saving} onClick={() => cancelDirtyGuardRequest(current.id)}>
+        <button type="button" onClick={() => cancelDirtyGuardRequest(current.id)}>
           {tr("editor.cancel")}
         </button>
       </footer>
