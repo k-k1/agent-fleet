@@ -216,6 +216,10 @@ type sessionWire struct {
 	State     string `json:"state"`
 	Alive     bool   `json:"alive"`
 	Resumable bool   `json:"resumable"`
+	// Locked is the user's deletion lock. sessionWire decode→re-emits the Agent
+	// response for both GET /api/sessions and SSE, so omitting this field makes a
+	// successfully saved lock immediately disappear from the Console.
+	Locked bool `json:"locked,omitempty"`
 	// BackgroundBusy passes through the Agent's "idle but a run_in_background task is
 	// still running" flag so the Console can badge it. Not persisted to the DB mirror
 	// (a stopped workspace has no live background work).
