@@ -17,9 +17,11 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -41,11 +43,22 @@ type usageFoldState struct {
 	Sessions map[string]usageFoldMark `json:"sessions"`
 }
 
+// ロックは3つに分けてある。まとめると fold-on-read を非同期にした意味が消えるため:
+//
+//   - usageFoldMu は state.json の読み書きと **1セッション分** の折り込みを直列化する。
+//     一括折り込みはセッションの切れ目で必ず手放すので、並行する /usage/series・
+//     /sessions/usage・削除時の確定が待つのは最大でも1セッション分になる。以前はパス
+//     全体（実測 158 セッションで ~20s）を握っていて、Console が1画面で3本撃つ
+//     /usage/series の2本目以降がまるごとブロックされていた。
+//   - usageFoldRunning は多重起動ガード。**ロックを取らずに読める**必要がある — 走行中か
+//     を聞くだけの呼び出しが、走行中の折り込みの後ろに並んではいけない。
+//   - usageFoldGate はスロットル時刻だけを守る極小ロック（保持は数命令）。
 var (
-	usageFoldMu     sync.Mutex // state.json の読み書きと折り込みを直列化
-	usageFoldedAt   time.Time  // 最後の fold-on-read（スロットル用）
-	usageFoldInWork bool       // 走行中の一括折り込み（多重起動ガード）
-	usageFoldPeriod = time.Minute
+	usageFoldMu      sync.Mutex  // state.json の読み書きと1セッション分の折り込み
+	usageFoldRunning atomic.Bool // 走行中の一括折り込み（ロック不要で読める多重起動ガード）
+	usageFoldGate    sync.Mutex  // usageFoldedAt 専用
+	usageFoldedAt    time.Time   // 最後の fold-on-read（スロットル用・usageFoldGate 保持で触る）
+	usageFoldPeriod  = time.Minute
 )
 
 func usageStatePath() string { return filepath.Join(usageDir(), "state.json") }
@@ -62,19 +75,21 @@ func readUsageFoldState() usageFoldState {
 	return st
 }
 
-func writeUsageFoldState(st usageFoldState) {
+// writeUsageFoldState は watermark を tmp+rename で置き換える。**エラーは握り潰さない** —
+// 書けていないのに成功として進むと、既に追記した行の分だけ次回パスが再追記する（＝二重計上）。
+func writeUsageFoldState(st usageFoldState) error {
 	b, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
-		return
+		return err
 	}
-	if os.MkdirAll(usageDir(), 0o700) != nil {
-		return
+	if err := os.MkdirAll(usageDir(), 0o700); err != nil {
+		return err
 	}
 	tmp := usageStatePath() + ".tmp"
-	if os.WriteFile(tmp, append(b, '\n'), 0o600) != nil {
-		return
+	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil {
+		return err
 	}
-	_ = os.Rename(tmp, usageStatePath()) // 途中で落ちても壊れた state を残さない
+	return os.Rename(tmp, usageStatePath()) // 途中で落ちても壊れた state を残さない
 }
 
 // usageTurnRow は転写から折り込む論理ターン1件。純関数の出力なので単体テストできる。
@@ -172,21 +187,23 @@ func usageMeasuredForKind(kind string) string {
 // foldSessionUsage は1セッションの未折り込み分を台帳へ書き、折り込んだ論理ターン数を返す。
 // includeTrailing=true は「転写がもう伸びない」と分かっている時（削除・アーカイブ）だけ。
 // usageFoldMu 保持前提。
-func foldSessionUsageLocked(m session.Meta, st *usageFoldState, includeTrailing bool) int {
+func foldSessionUsageLocked(m session.Meta, st *usageFoldState, includeTrailing bool) (int, error) {
 	if !agentOf(m.Kind).Caps().CanTranscript {
-		return 0 // shell/ssm には転写が無い
+		return 0, nil // shell/ssm には転写が無い
 	}
 	return foldSessionUsageWithTurns(m, st, usageTurns(m), includeTrailing)
 }
 
 // foldSessionUsageWithTurns は転写ロードを切り離した本体（実転写なしで冪等性を検証できる）。
-func foldSessionUsageWithTurns(m session.Meta, st *usageFoldState, turns []transcript.Turn, includeTrailing bool) int {
+// 戻り値の int は台帳へ追記した行数で、**0 なら st は書き換わっていない**（呼び出し元は
+// watermark を書き直さなくてよい）。
+func foldSessionUsageWithTurns(m session.Meta, st *usageFoldState, turns []transcript.Turn, includeTrailing bool) (int, error) {
 	mark := st.Sessions[m.Name]
 	rows := foldTurnRows(turns, includeTrailing)
 	if len(rows) <= mark.Groups {
 		// 転写が縮んだ（アーカイブ復元・手動編集）ケースを含む。watermark は下げない —
 		// 下げると同じターンをもう一度数えてしまう。
-		return 0
+		return 0, nil
 	}
 	origin, originConv := session.OriginOf(m), m.OriginConv
 	measured := usageMeasuredForKind(m.Kind)
@@ -213,10 +230,38 @@ func foldSessionUsageWithTurns(m session.Meta, st *usageFoldState, turns []trans
 		}
 		out = append(out, rec)
 	}
-	appendUsageRows(out)
+	// 行が書けなかったら watermark は進めない。進めてしまうと、この分の消費は次のパスでも
+	// 差分に出てこず**二度と台帳へ入らない**（台帳側に取りこぼしを拾い直す口は無い）。
+	if err := appendUsageRows(out); err != nil {
+		return 0, err
+	}
 	last := rows[len(rows)-1]
 	st.Sessions[m.Name] = usageFoldMark{Groups: len(rows), LastTS: last.TS, LastIdx: last.LastIdx}
-	return len(out)
+	return len(out), nil
+}
+
+// commitSessionUsageFold は1セッション分を「state 読み → 行の追記 → watermark 書き」まで
+// **1つのクリティカルセクションで閉じる**。パス全体を1トランザクションにしない理由は2つ:
+//
+//  1. **二重計上の窓を1セッションに縮める。** 行を追記した後 watermark を書く前に落ちると、
+//     その分は次回パスで再追記される（冪等性を担保しているのは watermark だけで、行側に
+//     (ref, idx) の重複排除は無い）。全セッション分をパス末尾でまとめて1回書いていた頃は、
+//     ~20 秒のパスのどこで落ちても、それまでに畳んだ全セッションが丸ごと重複しえた。
+//  2. **ロックを長時間握らない**（上の usageFoldMu の注記）。
+func commitSessionUsageFold(m session.Meta, includeTrailing bool) (int, error) {
+	usageFoldMu.Lock()
+	defer usageFoldMu.Unlock()
+	st := readUsageFoldState()
+	n, err := foldSessionUsageLocked(m, &st, includeTrailing)
+	if err != nil || n == 0 {
+		return 0, err // n==0 なら st は無傷 — 書き直す必要が無い
+	}
+	if err := writeUsageFoldState(st); err != nil {
+		// 行は既にディスクにある。ここで黙って成功にすると、次回パスが同じターンを
+		// もう一度追記したことに誰も気づけない。
+		return n, err
+	}
+	return n, nil
 }
 
 // foldAllSessionUsage は全セッションの差分を折り込む。導入直後の1回目は watermark 0 から
@@ -226,14 +271,16 @@ func foldAllSessionUsage() int {
 	if !usageEnabled() {
 		return 0
 	}
-	usageFoldMu.Lock()
-	defer usageFoldMu.Unlock()
-	st := readUsageFoldState()
 	n := 0
 	for _, m := range session.ListMetas() {
-		n += foldSessionUsageLocked(m, &st, false)
+		// 1セッションが失敗しても残りは畳む（1つの壊れた転写でフリート全体の計測が
+		// 止まる方が悪い）。取りこぼしは黙って消さず、必ずログに残す。
+		c, err := commitSessionUsageFold(m, false)
+		if err != nil {
+			log.Printf("usage: fold %s: %v", m.Name, err)
+		}
+		n += c
 	}
-	writeUsageFoldState(st)
 	return n
 }
 
@@ -246,21 +293,27 @@ func maybeFoldSessionUsage() {
 	if !usageEnabled() {
 		return
 	}
-	usageFoldMu.Lock()
-	skip := usageFoldInWork || (!usageFoldedAt.IsZero() && time.Since(usageFoldedAt) < usageFoldPeriod)
-	if !skip {
-		usageFoldedAt, usageFoldInWork = time.Now(), true
+	// 走行中の判定に usageFoldMu を使わない。使うと「走っているか?」を聞くだけの呼び出しが
+	// 折り込み本体のロック解放を待つことになり、非同期にした意味が無くなる（Console の
+	// 使用量ビューは1画面で /usage/series を3本撃つので、2本目以降がまるごと待たされていた）。
+	if usageFoldRunning.Load() {
+		return
 	}
-	usageFoldMu.Unlock()
+	usageFoldGate.Lock()
+	skip := !usageFoldedAt.IsZero() && time.Since(usageFoldedAt) < usageFoldPeriod
+	if !skip {
+		// CAS で勝った1本だけが走る（Load からここまでの隙間で別の呼び出しが起動しうる）。
+		skip = !usageFoldRunning.CompareAndSwap(false, true)
+	}
+	if !skip {
+		usageFoldedAt = time.Now()
+	}
+	usageFoldGate.Unlock()
 	if skip {
 		return
 	}
 	go func() {
-		defer func() {
-			usageFoldMu.Lock()
-			usageFoldInWork = false
-			usageFoldMu.Unlock()
-		}()
+		defer usageFoldRunning.Store(false)
 		foldAllSessionUsage()
 	}()
 }
@@ -275,8 +328,13 @@ func finalizeSessionUsage(m session.Meta) {
 	usageFoldMu.Lock()
 	defer usageFoldMu.Unlock()
 	st := readUsageFoldState()
-	foldSessionUsageLocked(m, &st, true)
-	// 台帳側は ref に焼き込み済みなので、消えたセッションの watermark は持ち続けない。
+	if _, err := foldSessionUsageLocked(m, &st, true); err != nil {
+		log.Printf("usage: finalize %s: %v", m.Name, err)
+	}
+	// 台帳側は ref に焼き込み済みなので、消えたセッションの watermark は持ち続けない
+	// （残すと state.json が「もう存在しないセッション」の分だけ単調に増える）。
 	delete(st.Sessions, m.Name)
-	writeUsageFoldState(st)
+	if err := writeUsageFoldState(st); err != nil {
+		log.Printf("usage: finalize %s: watermark: %v", m.Name, err)
+	}
 }

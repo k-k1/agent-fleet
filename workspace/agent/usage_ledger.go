@@ -86,7 +86,10 @@ type usageRecord struct {
 	Verb     string `json:"verb,omitempty"` // assistant.chat のサブ次元（translate|summarize）
 	// Sidechain は feature=session のサブ次元（サブエージェント / Workflow の消費）。
 	Sidechain bool `json:"sidechain,omitempty"`
-	// Idx は feature=session の論理ターン通し番号。(ref, idx) が折り込みの冪等キー。
+	// Idx は feature=session の論理ターン通し番号（1始まり）。**冪等性を担保しているのは
+	// これではなく usage/state.json の watermark** で、集計側は Idx を一切読まない
+	// （usageKey にも入らない）。Idx が要るのは事後の監査 — 折り込みが途中で落ちた等で
+	// (ref, idx) が重複した行が残っていないかを、raw を直接読んで確かめられるようにするため。
 	Idx         int     `json:"idx,omitempty"`
 	In          int     `json:"in"`
 	Out         int     `json:"out"`
@@ -136,28 +139,40 @@ var (
 
 // appendUsageRows は行群を当日のファイルへ追記する。1呼び出しが複数モデルに割れた行は
 // 同じ Call を共有した状態で渡ってくる（呼び出し回数を二重に数えないため）。
-// ベストエフォート: 台帳が書けないことでチャットやタイトル提案が失敗してはならない。
-func appendUsageRows(rows []usageRecord) {
+//
+// 書けなかったことは error で返す。呼び出し元の扱いは2種類に分かれる:
+//   - 補助呼び出しの記録（recordUsageCall）は**ベストエフォート**。台帳が書けないことで
+//     チャットやタイトル提案が失敗してはならないので、握り潰す。
+//   - セッション折り込み（usage_fold.go）は**失敗を伝播させる**。書けていないのに
+//     watermark を進めると、その分の消費が二度と入らない。
+func appendUsageRows(rows []usageRecord) error {
 	if len(rows) == 0 || !usageEnabled() {
-		return
+		return nil
 	}
 	usageMu.Lock()
 	defer usageMu.Unlock()
 	dir := usageRawDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return
+		return err
 	}
 	day := time.Now().UTC().Format("2006-01-02")
 	f, err := os.OpenFile(filepath.Join(dir, day+".jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		return
+		return err
 	}
-	defer f.Close()
 	enc := json.NewEncoder(f)
 	for _, r := range rows {
-		_ = enc.Encode(r)
+		if err := enc.Encode(r); err != nil {
+			f.Close()
+			return err
+		}
+	}
+	// Close のエラーまで見る — 追記は書き込みが遅延しうるので、Close が最後の関門になる。
+	if err := f.Close(); err != nil {
+		return err
 	}
 	pruneUsageRawLocked()
+	return nil
 }
 
 // pruneUsageRawLocked は保持期間を過ぎた日次ファイルを消す。usageMu 保持前提。

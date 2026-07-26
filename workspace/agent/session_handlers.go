@@ -719,6 +719,14 @@ func handleStopSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if hadMeta {
+		// fold-on-delete（docs/46 §3-b）: /stop は Console の「削除」で、この後 meta を
+		// 忘れる＝ListMetas から消えて二度と折り込まれない（転写が残っていても対象外）。
+		// 通常の折り込みは開いている末尾ターンを残すので、ここで確定させないと最後の
+		// 1ターンが永久に台帳へ入らない。tmux を落とした後に呼ぶのは、終了時に書かれる
+		// 最後のイベントまで転写に乗せてから読むため。
+		finalizeSessionUsage(meta)
+	}
 	session.RemoveMeta(name)
 	removeTerminalHistory(name)
 	// Stopping forgets the session; if it was the last one in a worktree and that
