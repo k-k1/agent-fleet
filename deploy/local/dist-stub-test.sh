@@ -36,14 +36,18 @@ case "$*" in
   "api repos/"*)
     if [ "${STUB_SEED_EXISTS:-0}" = 1 ]; then
       f="${2##*/}"
-      echo "fakesha $(base64 -w0 < "$STUB_SEED_DIR/$f")"
+      # resolve like publish does: dist-repo/, falling back to the repo root
+      # (LICENSE / NOTICE are seeded from there)
+      src="$STUB_SEED_DIR/$f"; [ -f "$src" ] || src="$STUB_ROOT/$f"
+      echo "fakesha $(base64 -w0 < "$src")"
       exit 0
     fi
     exit 1 ;;
 esac
 FAKE
 chmod +x "$STUB/gh"
-export PATH="$STUB:$PATH" STUB_LOG="$LOG" STUB_SEED_DIR="$ROOT/deploy/release/dist-repo"
+export PATH="$STUB:$PATH" STUB_LOG="$LOG" STUB_SEED_DIR="$ROOT/deploy/release/dist-repo" \
+       STUB_ROOT="$ROOT"
 
 fail() { echo "NG: $1"; echo "--- full log ---"; cat "$LOG" 2>/dev/null; exit 1; }
 expect_set() { diff <(LC_ALL=C sort "$1") <(LC_ALL=C sort "$LOG") || fail "call set mismatch"; }
@@ -62,6 +66,13 @@ RV=0123456789ab
 CN="agent-fleet-native-$V-linux-amd64"
 RN="agent-fleet-rootfs-$RV-linux-amd64.tar.zst"
 DISTD="$WORK/dist"
+
+# publish renders the release body from the notes dir and refuses to publish
+# without one. Point it at a fixture so the fake version needs no checked-in notes.
+export NOTES_DIR="$WORK/notes"
+mkdir -p "$NOTES_DIR"
+printf 'stub notes for %s.\n' "$V" > "$NOTES_DIR/$V.md"
+printf '%s のスタブノート。\n' "$V" > "$NOTES_DIR/$V.ja.md"
 
 make_dist() { # make_dist <url-base>  (base baked into rootfs.json's url)
   rm -rf "$DISTD" "$WORK/c"
@@ -94,7 +105,7 @@ cat > "$WORK/want1" <<EOF
 gh release view rootfs-$RV -R $REPO
 gh release create rootfs-$RV -R $REPO --title rootfs $RV (linux-amd64) --notes workspace rootfs (content hash $RV). Referenced by the app release's native tar; not for standalone use. $DISTD/$RN
 gh release view v$V -R $REPO
-gh release create v$V -R $REPO --title agent-fleet $V --notes Agent Fleet $V. Native: install.sh (see README). Compose: agent-fleet-$V.tar.gz. Rootfs: rootfs-$RV. $DISTD/agent-fleet-$V.tar.gz $DISTD/agent-fleet-images-$V.tar.gz $DISTD/$CN.tar.gz $DISTD/SHA256SUMS
+gh release create v$V -R $REPO --title agent-fleet $V --notes-file $DISTD/RELEASE_NOTES-$V.md $DISTD/agent-fleet-$V.tar.gz $DISTD/agent-fleet-images-$V.tar.gz $DISTD/$CN.tar.gz $DISTD/SHA256SUMS
 EOF
 expect_set "$WORK/want1"
 expect_order "gh release view rootfs-$RV" "gh release create rootfs-$RV"
@@ -134,7 +145,8 @@ echo "== case 5: --seed (no repo → create; contents absent → PUT ×N) =="
 : > "$LOG"
 STUB_REPO_MISSING=1 VERSION=$V "$PUBLISH" --repo "$REPO" --dist-dir "$DISTD" --seed > /dev/null
 grep -q "repo create $REPO --public" "$LOG" || fail "repo create was not called"
-for f in README.md README.ja.md install.sh install-compose.sh; do
+for f in README.md README.ja.md CHANGELOG.md CHANGELOG.ja.md LICENSE NOTICE \
+         install.sh install-compose.sh; do
   grep -q "api -X PUT repos/$REPO/contents/$f -f message=seed: $f -f content=<b64>" "$LOG" \
     || fail "seed PUT($f) missing"
 done
@@ -180,6 +192,36 @@ AF_DIST_URL_BASE="file://$WORK/layout" AF_VERSION=$V AF_PREFIX="$WORK/prefix9" \
 [ "$rc" = 1 ] || fail "expected exit 1, got $rc"
 grep -q "sha256 mismatch" "$WORK/err9.txt" || { cat "$WORK/err9.txt"; fail "no sha mismatch guidance"; }
 [ -e "$WORK/prefix9/bin/af" ] && fail "installed despite failed verification"
+echo "ok"
+
+echo "== case 10: missing release notes → fail, no create =="
+: > "$LOG"
+rc=0
+NOTES_DIR="$WORK/notes-empty" VERSION=$V "$PUBLISH" --repo "$REPO" --dist-dir "$DISTD" \
+  > /dev/null 2> "$WORK/err10.txt" || rc=$?
+[ "$rc" = 0 ] && fail "published without release notes"
+grep -q "release notes not found" "$WORK/err10.txt" \
+  || { cat "$WORK/err10.txt"; fail "no missing-notes guidance"; }
+grep -q "release create v$V" "$LOG" && fail "created app release despite missing notes"
+echo "ok"
+
+echo "== case 11: rendered body carries both languages and the rootfs tag =="
+: > "$LOG"
+VERSION=$V "$PUBLISH" --repo "$REPO" --dist-dir "$DISTD" > /dev/null
+B="$DISTD/RELEASE_NOTES-$V.md"
+[ -f "$B" ] || fail "rendered body not written to the dist dir"
+grep -q "stub notes for $V" "$B" || fail "English notes missing from body"
+grep -q "## 日本語" "$B" || fail "Japanese section missing from body"
+grep -q "rootfs-$RV" "$B" || fail "rootfs tag missing from body"
+grep -q "agent-fleet-$V.tar.gz" "$B" || fail "asset footer missing from body"
+echo "ok"
+
+echo "== case 12: seeded NOTICE keeps the primary-distribution URL =="
+# Apache-2.0 4(d) makes redistributors carry NOTICE forward, so the URL in it is
+# what points them back here — guard it against an edit that drops it.
+grep -q "github.com/k-k1/agent-fleet-dist" "$ROOT/NOTICE" \
+  || fail "NOTICE lost the primary distribution URL"
+grep -q "Apache License" "$ROOT/NOTICE" || fail "NOTICE lost the license statement"
 echo "ok"
 
 echo "== dist stub test OK =="

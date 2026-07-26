@@ -309,6 +309,16 @@ button.wu-reload {
 .wu-manage:hover {
   text-decoration: underline;
 }
+/* 「機能別の内訳」= 設定 › 使用量 へのディープリンク。見た目は wu-manage と同じだが
+   ボタン要素なので、素のボタン装飾を消しておく。 */
+button.wu-manage {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
 /* In the mobile ⋯ popover the tiles stack, so the group divider is horizontal. */
 .ws-more-stats .ws-graph-sep {
   width: 100%;

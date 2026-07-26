@@ -128,6 +128,10 @@ type mockServe struct {
 	replies   []string      // question reply bodies
 	rejects   int
 	turnDelay time.Duration
+	// turnBody overrides the assistant message the blocking /message call answers with.
+	// opencode reports a provider-side failure INSIDE a 200 response (errors.go), so a
+	// failing turn is simulated by the body, not by the status code.
+	turnBody string
 }
 
 func newMockServe(t *testing.T) (*mockServe, *httptest.Server) {
@@ -172,8 +176,12 @@ func newMockServe(t *testing.T) (*mockServe, *httptest.Server) {
 		}
 		m.mu.Lock()
 		m.busy = false
+		resp := m.turnBody
 		m.mu.Unlock()
-		w.Write([]byte(`{"info":{"role":"assistant"},"parts":[]}`))
+		if resp == "" {
+			resp = `{"info":{"role":"assistant"},"parts":[]}`
+		}
+		w.Write([]byte(resp))
 	})
 	mux.HandleFunc("POST /session/ses_test/abort", func(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()

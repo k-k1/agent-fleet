@@ -1169,6 +1169,36 @@ const OC_PRESETS = [
   ["custom", "", "", ""], // label resolved via i18n (agents.oc_custom) at render
 ];
 
+// One OPENCODE_API_KEY opens both opencode.ai billing routes, so `opencode models`
+// returns the Go subscription's ids (opencode-go/…) alongside Zen's metered ones
+// (opencode/…) — with 10 of the 16 Go models colliding by name. A Go subscriber rarely
+// wants the metered twins in the list at all, so this shapes it. The Agent reads the
+// same preference from ui-prefs, which is what makes it apply to the MCP list_models an
+// assistant picks from — the path that actually caused a launch on the wrong route.
+// It only shapes the MENU: an explicitly requested model id is still honored verbatim.
+function OpencodeCatalogRow() {
+  const s = useSettings();
+  const tr = useT();
+  return (
+    <>
+      <SettingRow label={tr("agents.oc_catalog")}>
+        <Choice
+          value={s.opencodeCatalog}
+          options={[
+            ["go-first", tr("agents.oc_catalog_go_first")],
+            ["hide-zen", tr("agents.oc_catalog_hide_zen")],
+            ["all", tr("agents.oc_catalog_all")],
+          ]}
+          onChange={(v) =>
+            setSettings({ opencodeCatalog: v === "hide-zen" || v === "all" ? v : "go-first" })
+          }
+        />
+      </SettingRow>
+      <p className="ps-note">{tr("agents.oc_catalog_note")}</p>
+    </>
+  );
+}
+
 function OpencodeCard({
   running,
   st,
@@ -1284,6 +1314,7 @@ function OpencodeCard({
         </>
       )}
       <CardSettings>
+        <OpencodeCatalogRow />
         <LaunchDefaults kind="opencode" />
         {agents && agents !== false && (
           <RtkRow

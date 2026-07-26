@@ -446,6 +446,19 @@
 .chat-open:hover {
   background: var(--hover-bg);
 }
+/* 「どのチャットを開いているのか」を左ペインで示す。セッション行（.sess-row）と同じ語彙:
+   .is-open = どこかのペインに出ている（控えめなアクセントバー）、.active = フォーカス中の
+   ペインが開いている会話（＝いま話している相手。バー＋行の塗り）。 */
+.chat-row.is-open {
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--lp-accent, var(--accent)) 45%, transparent);
+}
+.chat-row.active {
+  background: var(--lp-active-bg, var(--active-bg));
+  box-shadow: inset 2px 0 0 var(--lp-accent, var(--accent));
+}
+.chat-row.active .chat-open-title {
+  font-weight: 600;
+}
 .chat-kic {
   color: var(--lp-accent, var(--accent));
   background: color-mix(in srgb, var(--lp-accent, var(--accent)) 14%, transparent);

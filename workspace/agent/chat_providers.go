@@ -161,9 +161,16 @@ type claudeResult struct {
 	// carries the model's real contextWindow.
 	Usage      claudeUsage                 `json:"usage"`
 	ModelUsage map[string]claudeModelUsage `json:"modelUsage"`
+	// TotalCostUSD is claude's OWN measured cost for this call — the one backend that
+	// doesn't need a price table (docs/46 §0). Recorded as the ledger's cost_usd.
+	TotalCostUSD float64 `json:"total_cost_usd"`
 }
 
 func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) (string, error) {
+	// 使用量台帳（ADR 0029 §3）: 呼び出しの開始時点で記録を defer に積む。成功・エラー
+	// result・exec 失敗・パース失敗のどの経路を通っても必ず1回だけ行が残る。
+	call := usageCall{Kind: session.KindClaude, ModelReq: chatModel(c)}
+	defer recordUsageCall(ctx, &call, time.Now())
 	args := []string{"-p", "--output-format", "json", "--dangerously-skip-permissions",
 		"--append-system-prompt", c.personaOf()}
 	args = append(args, "--model", chatModel(c))
@@ -191,6 +198,10 @@ func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) 
 		}
 		return "", fmt.Errorf("failed to parse claude response: %v", jerr)
 	}
+	// 失敗した result にも usage は乗る（超過エラーは特に高い）ので、OK 判定より先に採る。
+	call.Models, call.CostUSD = usageModelRows(r.ModelUsage), r.TotalCostUSD
+	// modelUsage の無い result（古い CLI・異常終了）でも総量は残す。
+	call.fallbackTotals(r.Usage.ledgerTokens(), "")
 	if r.SessionID != "" {
 		c.ClaudeSessionID = r.SessionID
 	}
@@ -200,6 +211,7 @@ func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) 
 	if err != nil {
 		return "", fmt.Errorf("claude execution failed: %s", cliErr(err))
 	}
+	call.OK = true
 	t := claudeCtx{model: chatModel(c)}
 	t.observeResult(r.Usage, r.ModelUsage)
 	t.apply(c) // context-fill snapshot (chat_usage.go)
@@ -238,10 +250,11 @@ type streamLine struct {
 		Model string      `json:"model"`
 		Usage claudeUsage `json:"usage"`
 	} `json:"message"`
-	// Usage/ModelUsage ride the final "result" line (same shape as claudeResult).
-	Usage      claudeUsage                 `json:"usage"`
-	ModelUsage map[string]claudeModelUsage `json:"modelUsage"`
-	Event      struct {
+	// Usage/ModelUsage/TotalCostUSD ride the final "result" line (same shape as claudeResult).
+	Usage        claudeUsage                 `json:"usage"`
+	ModelUsage   map[string]claudeModelUsage `json:"modelUsage"`
+	TotalCostUSD float64                     `json:"total_cost_usd"`
+	Event        struct {
 		Type         string `json:"type"`
 		ContentBlock struct {
 			Type string `json:"type"` // "text" | "thinking" | "tool_use"
@@ -256,6 +269,9 @@ type streamLine struct {
 }
 
 func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt string, emit func(chatStreamEvent)) (string, []chatStep, error) {
+	// 使用量台帳（ADR 0029 §3）— send と同じく全経路で1回記録する。
+	call := usageCall{Kind: session.KindClaude, ModelReq: chatModel(c)}
+	defer recordUsageCall(ctx, &call, time.Now())
 	// stream-json requires --verbose with -p; --include-partial-messages adds the
 	// per-token text_delta events we forward for live display.
 	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
@@ -334,6 +350,8 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 					result = sl.Result
 					resultErr = sl.IsError
 					ctxTrack.observeResult(sl.Usage, sl.ModelUsage)
+					call.Models, call.CostUSD = usageModelRows(sl.ModelUsage), sl.TotalCostUSD
+					call.fallbackTotals(sl.Usage.ledgerTokens(), "")
 				}
 			}
 		}
@@ -342,6 +360,11 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 		}
 	}
 	waitErr := cmd.Wait()
+	// 利用者の停止操作や result イベント前の異常終了では modelUsage が来ない。assistant
+	// イベントで見た最後のスナップショットを縮退として採る（出力側は途中なので partial）。
+	// 採らないと「トークン 0 / measured=none」の行になり、**止めた回の消費だけが台帳から
+	// 消える** — 止められるのは重いターンほど多いので、そこが欠けると配分の絵が狂う。
+	call.fallbackTotals(ctxTrack.snap.ledgerTokens(), usageMeasuredPartial)
 	// An error result (e.g. context overflow) rides the stream's `result` event AND makes
 	// claude exit non-zero. Prefer the parsed message so the overflow self-heal can see
 	// "Prompt is too long …" (chat_recover.go); a bare "exit status 1" from waitErr would
@@ -352,6 +375,7 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 	if waitErr != nil {
 		return "", nil, fmt.Errorf("claude execution failed: %s", stderrOr(waitErr, &stderr))
 	}
+	call.OK = true
 	ctxTrack.apply(c) // context-fill snapshot (chat_usage.go)
 	// The final answer is what streamed into the last (end_turn) message — this is exactly
 	// what the answer bubble displayed live, so the saved/`done` content matches it (no
@@ -386,6 +410,10 @@ func stderrOr(err error, stderr *bytes.Buffer) string {
 type codexChat struct{}
 
 func (codexChat) send(ctx context.Context, c *chatConversation, prompt string) (string, error) {
+	// 使用量台帳（ADR 0029 §3）。codex はどのイベントにもモデルを載せない（実測）ので、
+	// -m を渡した時だけ requested、未指定なら default_unknown に縮退する。
+	call := usageCall{Kind: session.KindCodex, ModelReq: c.Model}
+	defer recordUsageCall(ctx, &call, time.Now())
 	// The default read-only sandbox is exactly the chat contract (no file writes, no
 	// state mutation) — the claude side enforces the same via --disallowedTools. Global
 	// exec flags must precede the resume subcommand (verified live: resume rejects
@@ -412,6 +440,7 @@ func (codexChat) send(ctx context.Context, c *chatConversation, prompt string) (
 		return "", fmt.Errorf("codex execution failed: %s", cliErr(err))
 	}
 	reply, threadID, execErr, usage := parseCodexExecEvents(out)
+	call.Totals = usage.ledgerTokens()
 	if threadID != "" {
 		c.CodexSessionID = threadID
 	}
@@ -421,6 +450,7 @@ func (codexChat) send(ctx context.Context, c *chatConversation, prompt string) (
 	if reply == "" {
 		return "", errors.New("no response from codex")
 	}
+	call.OK = true
 	// codex の input_tokens は cached を含む（chat_usage.go）: fresh = input - cached。
 	setChatContext(c, usage.InputTokens-usage.CachedInputTokens, usage.CachedInputTokens,
 		0, 0, chatCtxModelFor(c))
@@ -550,6 +580,8 @@ func tomlString(s string) string {
 type opencodeChat struct{}
 
 func (opencodeChat) send(ctx context.Context, c *chatConversation, prompt string) (string, error) {
+	call := usageCall{Kind: session.KindOpencode, ModelReq: c.Model} // 使用量台帳（ADR 0029 §3）
+	defer recordUsageCall(ctx, &call, time.Now())
 	dir := opencodeChatDir(c)
 	args := []string{"run", "--format", "json", "--dir", dir}
 	if c.OpencodeSessionID != "" {
@@ -566,13 +598,18 @@ func (opencodeChat) send(ctx context.Context, c *chatConversation, prompt string
 	if err != nil {
 		return "", fmt.Errorf("opencode execution failed: %s", cliErr(err))
 	}
-	reply, sesID, usage := parseOpencodeRunEvents(out)
+	reply, sesID, model, usage := parseOpencodeRunEvents(out)
+	call.Totals = usage.ledgerTokens()
+	if model != "" {
+		call.Models = []usageModelRow{{Model: model, ModelRaw: model, Tokens: call.Totals}}
+	}
 	if sesID != "" {
 		c.OpencodeSessionID = sesID
 	}
 	if reply == "" {
 		return "", errors.New("no response from opencode")
 	}
+	call.OK = true
 	setChatContext(c, usage.Input, usage.Cache.Read, usage.Cache.Write, 0, chatCtxModelFor(c))
 	return reply, nil
 }
@@ -622,7 +659,12 @@ func opencodeChatDir(c *chatConversation) string {
 // text parts in arrival order (deduped by part id — opencode may re-emit a part as it
 // settles), every event carries the session id for resume, and step_finish parts carry
 // the per-call tokens that feed the context-fill snapshot (chat_usage.go; last wins).
-func parseOpencodeRunEvents(out []byte) (reply, sesID string, usage opencodeUsage) {
+//
+// model is best-effort for the usage ledger (ADR 0029 §4): opencode's store records a
+// modelID on the message, and the run stream is expected to carry it too, but this
+// workspace has no opencode login to verify against. We read it wherever it plausibly
+// rides and degrade to "" (→ requested / default_unknown) rather than guessing a schema.
+func parseOpencodeRunEvents(out []byte) (reply, sesID, model string, usage opencodeUsage) {
 	texts := map[string]string{} // part id -> latest text
 	var order []string
 	for _, ln := range bytes.Split(out, []byte("\n")) {
@@ -632,18 +674,28 @@ func parseOpencodeRunEvents(out []byte) (reply, sesID string, usage opencodeUsag
 		var ev struct {
 			Type      string `json:"type"`
 			SessionID string `json:"sessionID"`
+			ModelID   string `json:"modelID"`
 			Part      struct {
-				ID     string        `json:"id"`
-				Type   string        `json:"type"`
-				Text   string        `json:"text"`
-				Tokens opencodeUsage `json:"tokens"`
+				ID      string        `json:"id"`
+				Type    string        `json:"type"`
+				Text    string        `json:"text"`
+				ModelID string        `json:"modelID"`
+				Tokens  opencodeUsage `json:"tokens"`
 			} `json:"part"`
+			Message struct {
+				ModelID string `json:"modelID"`
+			} `json:"message"`
 		}
 		if json.Unmarshal(ln, &ev) != nil {
 			continue
 		}
 		if ev.SessionID != "" {
 			sesID = ev.SessionID
+		}
+		for _, m := range []string{ev.ModelID, ev.Part.ModelID, ev.Message.ModelID} {
+			if m != "" {
+				model = m // 最後に見えたものが正（1 run 内でモデルが変わることは想定しない）
+			}
 		}
 		if ev.Type == "text" && ev.Part.Type == "text" && strings.TrimSpace(ev.Part.Text) != "" {
 			if _, seen := texts[ev.Part.ID]; !seen {
@@ -660,7 +712,7 @@ func parseOpencodeRunEvents(out []byte) (reply, sesID string, usage opencodeUsag
 	for _, id := range order {
 		parts = append(parts, texts[id])
 	}
-	return strings.TrimRight(strings.Join(parts, "\n\n"), "\n"), sesID, usage
+	return strings.TrimRight(strings.Join(parts, "\n\n"), "\n"), sesID, model, usage
 }
 
 // agyChat runs `agy -p` (print mode, plain-text stdout — v1.1.4 has no structured
@@ -682,6 +734,10 @@ func parseOpencodeRunEvents(out []byte) (reply, sesID string, usage opencodeUsag
 type agyChat struct{}
 
 func (agyChat) send(ctx context.Context, c *chatConversation, prompt string) (string, error) {
+	// 使用量台帳（ADR 0029 §3）: agy は素のテキストしか返さないので measured=none —
+	// トークンは 0 ではなく「未計測」として、回数だけを数える。
+	call := usageCall{Kind: session.KindAgy, ModelReq: c.Model, Measured: usageMeasuredNone}
+	defer recordUsageCall(ctx, &call, time.Now())
 	home, wd, err := chatAgyHome(c)
 	if err != nil {
 		// Never fall back to the real HOME: the MCP/permission config is global
@@ -709,6 +765,7 @@ func (agyChat) send(ctx context.Context, c *chatConversation, prompt string) (st
 	if reply == "" {
 		return "", errors.New("no response from agy")
 	}
+	call.OK = true
 	return reply, nil
 }
 
@@ -888,6 +945,13 @@ type cursorResult struct {
 }
 
 func (cursorChat) send(ctx context.Context, c *chatConversation, prompt string) (string, error) {
+	// 使用量台帳（ADR 0029 §3）。cursor は result にモデルを載せない（実測）ので requested
+	// 止まり。"auto" は --model を渡さない＝解決後のモデル不明なので default_unknown。
+	call := usageCall{Kind: session.KindCursor}
+	if c.Model != "" && c.Model != "auto" {
+		call.ModelReq = c.Model
+	}
+	defer recordUsageCall(ctx, &call, time.Now())
 	args := cursorChatBaseArgs()
 	if m := c.Model; m != "" && m != "auto" { // "auto" = cursor's default = no --model
 		args = append(args, "--model", m)
@@ -907,6 +971,7 @@ func (cursorChat) send(ctx context.Context, c *chatConversation, prompt string) 
 	if perr != nil {
 		return "", perr
 	}
+	call.setTotals(r.Usage.InputTokens, r.Usage.OutputTokens, r.Usage.CacheReadTokens, r.Usage.CacheWriteTokens)
 	if r.SessionID != "" {
 		c.CursorSessionID = r.SessionID // adopt the id cursor echoes back (self-heals a drift)
 	}
@@ -917,6 +982,7 @@ func (cursorChat) send(ctx context.Context, c *chatConversation, prompt string) 
 	if reply == "" {
 		return "", errors.New("no response from cursor")
 	}
+	call.OK = true
 	setChatContext(c, r.Usage.InputTokens, r.Usage.CacheReadTokens, r.Usage.CacheWriteTokens, 0, chatCtxModelFor(c))
 	return reply, nil
 }
@@ -973,37 +1039,188 @@ func headlessPrompt(persona string, knowledge []string, prompt string) string {
 	return b.String()
 }
 
+// claudeOneShotArgs is the argv for a claude one-shot (title / branch name / reply
+// candidate). Three deliberate departures from a chat turn (docs/46 §1-a-2, 実測
+// 2026-07-25) — a one-shot is a pure classification-and-format task, so everything that
+// makes claude a coding agent is dead weight paid on every call:
+//
+//	--system-prompt … REPLACES the default system prompt instead of appending to it
+//	                  (--append-system-prompt left the whole Claude Code persona on).
+//	--tools ""      … loads no built-in tool definitions at all (they were still being
+//	                  sent even though the useful ones were disallowed).
+//
+// plus MAX_THINKING_TOKENS=0 (claudeOneShotEnv) — an 18-character title was costing
+// ~500 thinking tokens. Measured on the title prompt: 入力側 16.0k→4.3k / out 533→13 /
+// 6.2s→1.2s, same answer quality. With no tools there is nothing to permit, so
+// --dangerously-skip-permissions is gone too. --no-session-persistence is claude's
+// --ephemeral analog (print-mode only, no transcript written, no resume): a one-shot
+// never resumes, so don't pile per-call jsonl into Claude's projects tree.
+//
+// --tools MUST stay last: it is variadic, so a following positional would be eaten.
+func claudeOneShotArgs(persona, model string) []string {
+	return []string{"-p", "--no-session-persistence", "--output-format", "json",
+		"--system-prompt", persona, "--model", model, "--tools", ""}
+}
+
+// claudeOneShotEnv is applied on top of chatClaudeCmd's env for one-shots only — a chat
+// turn still reasons, so the thinking budget is cut here and nowhere else.
+var claudeOneShotEnv = []string{"MAX_THINKING_TOKENS=0"}
+
+// cheapOneShotMarkers are the size markers vendors put in model ids for their small
+// models. Matching on the marker rather than on a hardcoded id is what keeps this
+// working across catalog drift: model names churn every few weeks, "mini"/"flash"/
+// "lite" do not.
+var cheapOneShotMarkers = []string{"mini", "flash", "lite", "small", "nano", "haiku"}
+
+// cheapOneShotModel picks the cheapest-looking entry of a live model catalog for a
+// one-shot (title / branch name / reply candidate) — docs/46 §2-b. claude and agy pin a
+// cheap default explicitly (haiku / Flash); codex and opencode used to pass no model at
+// all unless AF_TITLE_MODEL_* was set, which silently ran these throwaway calls on the
+// CLI's own default — on a real workspace that was gpt-5.6-luna at "high" effort.
+//
+// Returns "" when nothing in the catalog looks small (or the catalog is unavailable,
+// e.g. the CLI is not logged in): the caller then passes no model flag and behaves
+// exactly as before. Never guessing a name that might not exist is the point — a wrong
+// -m is a hard failure, while falling back only costs what we already spend today.
+func cheapOneShotModel(ids []string) string {
+	for _, id := range ids {
+		low := strings.ToLower(id)
+		for _, marker := range cheapOneShotMarkers {
+			if strings.Contains(low, marker) {
+				return id
+			}
+		}
+	}
+	return ""
+}
+
+// modelChoiceIDs adapts a rich catalog (codex) to the id list cheapOneShotModel wants;
+// opencode's catalog is already []string.
+func modelChoiceIDs(list []agents.ModelChoice) []string {
+	out := make([]string, 0, len(list))
+	for _, m := range list {
+		out = append(out, m.ID)
+	}
+	return out
+}
+
+// codexOneShotArgs is the argv for a codex one-shot. --ephemeral: a one-shot never
+// needs resume, so don't persist a thread even into the chat-only CODEX_HOME.
+//
+// The two savings knobs (docs/46 §1-a-2 / §2-b), mirroring what the claude path does:
+//   - -m <cheap model>: without it codex ran throwaway calls on whatever config.toml
+//     pins — on a real workspace gpt-5.6-luna. AF_TITLE_MODEL_CODEX still wins, and an
+//     empty pick (unknown catalog) falls back to today's "no -m" behaviour.
+//   - -c model_reasoning_effort="low": the analog of MAX_THINKING_TOKENS=0. A title is
+//     not a reasoning problem, and the user's configured effort (often "high") would
+//     otherwise apply to every one-shot. "low" is supported by every listed model.
+//
+// The trailing "-" makes codex read the prompt from stdin; it must stay last.
+func codexOneShotArgs() (args []string, autoPicked bool) {
+	args = []string{"exec", "--json", "--skip-git-repo-check", "--ephemeral", "--color", "never", "-C", chatWorkdir()}
+	if m := os.Getenv("AF_TITLE_MODEL_CODEX"); m != "" {
+		args = append(args, "-m", m) // explicit user choice: never second-guess it
+	} else if m := cheapOneShotModel(modelChoiceIDs(codex.Models())); m != "" {
+		args, autoPicked = append(args, "-m", m), true
+	}
+	return append(args, "-c", `model_reasoning_effort="low"`, "-"), autoPicked
+}
+
+// codexOneShotArgsNoModel strips OUR OWN -m pick for the one retry: a catalog entry the
+// account cannot actually run must degrade to the previous behaviour, not to a broken
+// feature (the opencode note below is the same trap, found by measurement).
+func codexOneShotArgsNoModel(args []string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-m" && i+1 < len(args) {
+			i++
+			continue
+		}
+		out = append(out, args[i])
+	}
+	return out
+}
+
+// runCodexOneShot executes one codex exec argv and returns the reply. codex reports a
+// failure two ways — a non-zero exit AND a turn.failed/error event — so both are folded
+// into err here, which is what makes the caller's single retry cover either shape.
+// usage も返すのは、一発呼び出しを台帳に載せるため（ADR 0029 §3）— 失敗して
+// リトライした場合は「2回撃った」ことが2行として残るのが正しい。
+func runCodexOneShot(ctx context.Context, args []string, prompt string) (string, codexUsage, error) {
+	cmd := chatCodexCmd(ctx, args...)
+	cmd.Stdin = strings.NewReader(prompt)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", codexUsage{}, fmt.Errorf("codex execution failed: %s", cliErr(err))
+	}
+	reply, _, execErr, usage := parseCodexExecEvents(out)
+	if execErr != "" {
+		return "", usage, errors.New(execErr)
+	}
+	return reply, usage, nil
+}
+
+// codexOneShotRun は runCodexOneShot の形（テストで差し替える）。
+type codexOneShotRun func(ctx context.Context, args []string, prompt string) (string, codexUsage, error)
+
+// codexOneShotWithRetry は自前ピクの小型モデルで撃ち、失敗したらモデルを外して1度だけ
+// 撃ち直す。**2回分のトークンを合算して返す**のが台帳側の要点。
+//
+// The cheap model came from the catalog, and a catalog entry is not proof the account may
+// run it (実測: opencode lists claude-haiku-4-5 and then 500s on it). Falling back to the
+// configured default once — a title that costs more still beats a title feature that is broken.
+//
+// 1回目の消費は失敗しても発生している。リトライ結果で上書きすると、実際に撃った分が台帳から
+// 消える — 「安いモデルで失敗 → 既定のフラッグシップで撃ち直し」は**最も高くつく経路**なので、
+// そこが1回分に見えるのが一番まずい。要求値（model_req）は「モデルを外して撃ち直した」ことが
+// 分かるようリトライ側で上書きする（行は1本なので、後勝ちで実際に答えを出した方を載せる）。
+func codexOneShotWithRetry(ctx context.Context, args []string, autoPicked bool, prompt string,
+	run codexOneShotRun) (reply string, tok usageTokens, modelReq string, err error) {
+	modelReq = argValue(args, "-m")
+	reply, usage, err := run(ctx, args, prompt)
+	tok = usage.ledgerTokens()
+	if err != nil && autoPicked {
+		reply, usage, err = run(ctx, codexOneShotArgsNoModel(args), prompt)
+		tok, modelReq = tok.add(usage.ledgerTokens()), ""
+	}
+	return reply, tok, modelReq, err
+}
+
 // oneShotHeadless runs one prompt through the preferred available backend and returns
 // the reply text — the backend-agnostic core of the title/branch suggestions. persona
-// is passed natively where possible (claude --append-system-prompt) and as a prompt
-// preamble otherwise. claudeModel applies to the claude backend only (codex/opencode
-// run their own configured defaults; override via AF_TITLE_MODEL_CODEX/_OPENCODE).
+// is passed natively where possible (claude --system-prompt) and as a prompt preamble
+// otherwise. claudeModel applies to the claude backend only (codex/opencode run their
+// own configured defaults; override via AF_TITLE_MODEL_CODEX/_OPENCODE — docs/46 §2-b
+// flags that an unset override means the CLI's own default, usually the flagship).
 func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (string, error) {
+	// 使用量台帳（ADR 0029 §3）。この関数は claude → codex → opencode → cursor → agy の
+	// うち「最初に使えるもの」を選ぶので、kind は分岐の中で実行結果として埋める — 要求値を
+	// 書くと claude-less ワークスペースの消費が全部 claude に化ける（docs/46 §2）。
+	// oneShotHeadless の戻り値を広げず内部で記録するのは、記録点がここの内側にある以上、
+	// 呼び出し側4箇所を触る理由がないため。
+	call := usageCall{}
+	defer recordUsageCall(ctx, &call, time.Now())
 	switch preferredHeadlessAgent() {
 	case session.KindCodex:
-		// --ephemeral: a one-shot never needs resume, so don't persist a thread even
-		// into the chat-only CODEX_HOME.
-		args := []string{"exec", "--json", "--skip-git-repo-check", "--ephemeral", "--color", "never", "-C", chatWorkdir()}
-		if m := os.Getenv("AF_TITLE_MODEL_CODEX"); m != "" {
-			args = append(args, "-m", m)
-		}
-		args = append(args, "-")
-		cmd := chatCodexCmd(ctx, args...)
+		call.Kind = session.KindCodex
 		defer func() { _, _ = chatCodexHome() }()
-		cmd.Stdin = strings.NewReader(headlessPrompt(persona, nil, prompt))
-		out, err := cmd.Output()
-		if err != nil {
-			return "", fmt.Errorf("codex execution failed: %s", cliErr(err))
-		}
-		reply, _, execErr, _ := parseCodexExecEvents(out)
-		if execErr != "" {
-			return "", errors.New(execErr)
-		}
-		return reply, nil
+		full := headlessPrompt(persona, nil, prompt)
+		args, autoPicked := codexOneShotArgs()
+		reply, tok, modelReq, err := codexOneShotWithRetry(ctx, args, autoPicked, full, runCodexOneShot)
+		call.ModelReq, call.Totals, call.OK = modelReq, tok, err == nil
+		return reply, err
 	case session.KindOpencode:
+		call.Kind = session.KindOpencode
 		args := []string{"run", "--format", "json", "--dir", chatWorkdir()}
+		// NOTE: deliberately NOT auto-picking a cheap model here (docs/46 §1-a-2). opencode's
+		// catalog is a LISTING, not an entitlement: `opencode/claude-haiku-4-5` is listed and
+		// selectable, yet running it returns "Unexpected server error" on an account without
+		// it, while the configured default answers fine (実測 2026-07-25). A hard failure of
+		// title/branch/reply suggestions is worse than their token cost, so opencode keeps the
+		// user's default unless AF_TITLE_MODEL_OPENCODE names something explicitly.
 		if m := os.Getenv("AF_TITLE_MODEL_OPENCODE"); m != "" {
 			args = append(args, "--model", m)
+			call.ModelReq = m
 		}
 		args = append(args, headlessPrompt(persona, nil, prompt))
 		cmd := exec.CommandContext(ctx, "opencode", args...)
@@ -1013,7 +1230,11 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		if err != nil {
 			return "", fmt.Errorf("opencode execution failed: %s", cliErr(err))
 		}
-		reply, sesID, _ := parseOpencodeRunEvents(out)
+		reply, sesID, model, usage := parseOpencodeRunEvents(out)
+		call.Totals, call.OK = usage.ledgerTokens(), true
+		if model != "" {
+			call.Models = []usageModelRow{{Model: model, ModelRaw: model, Tokens: call.Totals}}
+		}
 		// opencode has no ephemeral mode — delete the throwaway session so one-shots
 		// don't pile "New session…" rows into the shared store. Best-effort, detached
 		// from ctx (the reply is already in hand; cleanup shouldn't be cancelled).
@@ -1030,9 +1251,11 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		// cursor has no ephemeral mode; without --resume each one-shot mints a fresh
 		// chat, leaving a throwaway in ~/.cursor (same trade-off as agy/opencode
 		// one-shots). No tools/persona-native flag — persona rides the preamble.
+		call.Kind = session.KindCursor
 		args := cursorChatBaseArgs()
 		if m := os.Getenv("AF_TITLE_MODEL_CURSOR"); m != "" {
 			args = append(args, "--model", m)
+			call.ModelReq = m
 		}
 		cmd := exec.CommandContext(ctx, cursor.Bin(), args...)
 		cmd.Dir = chatWorkdir()
@@ -1045,9 +1268,11 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		if perr != nil {
 			return "", perr
 		}
+		call.setTotals(r.Usage.InputTokens, r.Usage.OutputTokens, r.Usage.CacheReadTokens, r.Usage.CacheWriteTokens)
 		if r.IsError {
 			return "", errors.New(strings.TrimSpace(r.Result))
 		}
+		call.OK = true
 		return strings.TrimRight(strings.TrimSpace(r.Result), "\n"), nil
 	case session.KindAgy:
 		// agy has no ephemeral mode, so each one-shot leaves a throwaway conversation
@@ -1055,6 +1280,8 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		// user's real agy state (which would also spawn their own global MCP servers
 		// on every title call). Runs on the cheap Flash default (quota-scarce free
 		// plan) unless overridden.
+		// agy は素のテキスト出力なのでトークンが一切取れない — measured=none で回数だけ数える。
+		call.Kind, call.Measured = session.KindAgy, usageMeasuredNone
 		home, wdir, err := chatAgyHome(&chatConversation{ID: "oneshot"})
 		if err != nil {
 			return "", fmt.Errorf("agy chat home: %v", err)
@@ -1062,6 +1289,7 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		var args []string
 		if m := agyChatModel(envOr("AF_TITLE_MODEL_AGY", defaultAgyChatModel), agy.Models()); m != "" {
 			args = append(args, "--model", m)
+			call.ModelReq = m
 		}
 		args = append(args, "-p", headlessPrompt(persona, nil, prompt))
 		cmd := exec.CommandContext(ctx, "agy", args...)
@@ -1072,25 +1300,44 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		if err != nil {
 			return "", fmt.Errorf("agy execution failed: %s", cliErr(err))
 		}
+		call.OK = true
 		return strings.TrimRight(strings.TrimSpace(string(out)), "\n"), nil
 	}
 	// claude (default): the historical path, kept native. --no-session-persistence is
 	// claude's --ephemeral analog (print-mode only, no transcript written, no resume):
 	// a one-shot never resumes, so don't pile per-call jsonl into Claude's projects tree.
-	args := []string{"-p", "--no-session-persistence", "--output-format", "json", "--dangerously-skip-permissions",
-		"--append-system-prompt", persona, "--model", claudeModel}
-	args = append(args, chatToolLimits()...)
-	cmd := chatClaudeCmd(ctx, args...)
+	//
+	call.Kind, call.ModelReq = session.KindClaude, claudeModel
+	cmd := chatClaudeCmd(ctx, claudeOneShotArgs(persona, claudeModel)...)
+	cmd.Env = append(cmd.Env, claudeOneShotEnv...)
 	cmd.Stdin = strings.NewReader(prompt)
 	out, err := cmd.Output()
+	var r claudeResult
+	perr := json.Unmarshal(out, &r)
+	// claude だけはモデル別の実測内訳とコストが返る（docs/46 §0）— エラー result でも
+	// 課金は発生しているので、OK 判定より先に採る。exec エラー（停止・非ゼロ終了）でも
+	// claude は構造化 result を吐いていることがあるので、**エラー return より先に**解析する。
+	call.Models, call.CostUSD = usageModelRows(r.ModelUsage), r.TotalCostUSD
+	call.fallbackTotals(r.Usage.ledgerTokens(), "") // modelUsage の無い応答の縮退
 	if err != nil {
 		return "", fmt.Errorf("claude execution failed: %s", cliErr(err))
 	}
-	var r claudeResult
-	if json.Unmarshal(out, &r) != nil || r.IsError {
+	if perr != nil || r.IsError {
 		return "", errors.New("claude returned an invalid response/error")
 	}
+	call.OK = true
 	return strings.TrimRight(r.Result, "\n"), nil
+}
+
+// argValue は argv 中のフラグに続く値を返す（見つからなければ ""）。台帳の model_req に
+// 「結局どのモデルを要求したか」を、引数を組み立てた側の分岐を二重に書かずに載せるため。
+func argValue(args []string, flag string) string {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == flag {
+			return args[i+1]
+		}
+	}
+	return ""
 }
 
 // cliErr renders an exec error, surfacing captured stderr when present.

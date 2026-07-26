@@ -13,6 +13,7 @@ package main
 // codex-cli 0.144 / opencode 1.18）。usage の取れなかったターンでは前回値を保持する。
 
 import (
+	"sort"
 	"strconv"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
@@ -30,10 +31,13 @@ const chatCtxWarnPct = 80.0
 // ショット（実測: 最後の要素が最終的なコンテキスト占有。ツール多段ターンでも
 // トップレベルの合算値ではなく末尾要素を使えば正確）。
 type claudeUsage struct {
-	InputTokens              int           `json:"input_tokens"`
-	CacheCreationInputTokens int           `json:"cache_creation_input_tokens"`
-	CacheReadInputTokens     int           `json:"cache_read_input_tokens"`
-	Iterations               []claudeUsage `json:"iterations,omitempty"`
+	InputTokens              int `json:"input_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	// OutputTokens はコンテキスト占有には効かない（出力は次ターンの入力として戻る）が、
+	// 使用量台帳の spend には要る（docs/46 §2）。実測で存在を確認済み。
+	OutputTokens int           `json:"output_tokens"`
+	Iterations   []claudeUsage `json:"iterations,omitempty"`
 }
 
 // contextTokens は入力側スナップショットの合計 = コンテキスト占有量。
@@ -41,10 +45,57 @@ func (u claudeUsage) contextTokens() int {
 	return u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
 }
 
-// claudeModelUsage は result イベントの modelUsage エントリのうち必要な分。
-// contextWindow はモデルの実ウィンドウ（recorded として使える）。
+// ledgerTokens は使用量台帳のトークン内訳（docs/46）。**modelUsage が取れなかった時の
+// 縮退用**で、モデル別の内訳は失われるが総量は残る。トップレベルの値を使うのは、台帳が
+// 見たいのが「この呼び出しで実際に課金された量」だから — コンテキスト占有（iterations
+// 末尾のスナップショット）とは別の量。
+func (u claudeUsage) ledgerTokens() usageTokens {
+	return usageTokens{
+		In: u.InputTokens, Out: u.OutputTokens,
+		CacheRead: u.CacheReadInputTokens, CacheCreate: u.CacheCreationInputTokens,
+	}
+}
+
+// claudeModelUsage は result イベントの modelUsage エントリのうち必要な分。マップの
+// キーは版込みの生モデル id（claude-haiku-4-5-20251001）で、CanonicalModel が版を畳んだ
+// 系列キー（claude-haiku-4-5）— 版が上がっても台帳の系列が分断されないよう両方を持つ。
+// contextWindow はモデルの実ウィンドウ（recorded として使える）。トークン4種と CostUSD は
+// 使用量台帳のモデル別行（ADR 0029 §1）。claude は1呼び出しが複数モデルに割れることが
+// あるので、ここが唯一「モデル毎の内訳」を実測で持つ経路。全フィールド実測確認済み。
 type claudeModelUsage struct {
-	ContextWindow int `json:"contextWindow"`
+	ContextWindow            int     `json:"contextWindow"`
+	InputTokens              int     `json:"inputTokens"`
+	OutputTokens             int     `json:"outputTokens"`
+	CacheReadInputTokens     int     `json:"cacheReadInputTokens"`
+	CacheCreationInputTokens int     `json:"cacheCreationInputTokens"`
+	CostUSD                  float64 `json:"costUSD"`
+	CanonicalModel           string  `json:"canonicalModel"`
+}
+
+// usageModelRows は modelUsage を台帳のモデル別行へ変換する。キー（生 id）を model_raw、
+// canonicalModel を系列キーにする。順序はキー昇順に固定 — マップ反復順のままだと同じ
+// 呼び出しでも行順が揺れ、テストと台帳の読み口が不安定になる。
+func usageModelRows(mu map[string]claudeModelUsage) []usageModelRow {
+	if len(mu) == 0 {
+		return nil
+	}
+	raws := make([]string, 0, len(mu))
+	for raw := range mu {
+		raws = append(raws, raw)
+	}
+	sort.Strings(raws)
+	rows := make([]usageModelRow, 0, len(raws))
+	for _, raw := range raws {
+		m := mu[raw]
+		rows = append(rows, usageModelRow{
+			Model: m.CanonicalModel, ModelRaw: raw, CostUSD: m.CostUSD,
+			Tokens: usageTokens{
+				In: m.InputTokens, Out: m.OutputTokens,
+				CacheRead: m.CacheReadInputTokens, CacheCreate: m.CacheCreationInputTokens,
+			},
+		})
+	}
+	return rows
 }
 
 // claudeCtx は 1 回の claude 実行のイベント列からコンテキスト占有を追跡する。
@@ -105,16 +156,42 @@ func (t *claudeCtx) apply(c *chatConversation) {
 type codexUsage struct {
 	InputTokens       int `json:"input_tokens"`
 	CachedInputTokens int `json:"cached_input_tokens"`
+	// 使用量台帳向け（docs/46 §2）。実測（codex-cli 0.144.x）で turn.completed が
+	// cache_write_input_tokens / output_tokens / reasoning_output_tokens も運ぶことを確認。
+	// reasoning は output に含まれる内訳なので spend では足さない。
+	CacheWriteInputTokens int `json:"cache_write_input_tokens"`
+	OutputTokens          int `json:"output_tokens"`
+}
+
+// ledgerTokens は codex のターン合算 usage を台帳の内訳へ写す。input_tokens は cached を
+// 含む（rollout の token_count と同じ流儀）ので、fresh = input - cached。
+func (u codexUsage) ledgerTokens() usageTokens {
+	fresh := u.InputTokens - u.CachedInputTokens
+	if fresh < 0 {
+		fresh = 0
+	}
+	return usageTokens{
+		In: fresh, Out: u.OutputTokens,
+		CacheRead: u.CachedInputTokens, CacheCreate: u.CacheWriteInputTokens,
+	}
 }
 
 // opencodeUsage は opencode run --format json の step_finish が運ぶ part.tokens。
 // input はキャッシュ分を含まない（SQLite ストアの message.data.tokens と同じ形）。
 type opencodeUsage struct {
 	Input int `json:"input"`
-	Cache struct {
+	// Output は使用量台帳向け（docs/46 §2）。このワークスペースは opencode 未ログインで
+	// ライブ検証できていないので、取れなければ 0 のまま — 推測で埋めない（ADR 0029 §4）。
+	Output int `json:"output"`
+	Cache  struct {
 		Read  int `json:"read"`
 		Write int `json:"write"`
 	} `json:"cache"`
+}
+
+// ledgerTokens は opencode の内訳を台帳の形へ写す（input はキャッシュ分を含まない）。
+func (u opencodeUsage) ledgerTokens() usageTokens {
+	return usageTokens{In: u.Input, Out: u.Output, CacheRead: u.Cache.Read, CacheCreate: u.Cache.Write}
 }
 
 // setChatContext は共通の格納口。スナップショットが空のターン（usage の取れない
