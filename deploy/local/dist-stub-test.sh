@@ -15,17 +15,38 @@ trap 'rm -rf "$WORK"' EXIT
 STUB="$WORK/bin"; LOG="$WORK/calls.log"
 mkdir -p "$STUB"
 
-# fake gh: records calls (content= base64 normalized to <b64>) and switches
-# responses via STUB_* env vars. The success/failure of read calls (view /
-# api GET) drives publish's branching.
+# fake gh: records calls (seed PUT body summarized; content= normalized) and
+# switches responses via STUB_* env vars. The success/failure of read calls
+# (view / api GET) drives publish's branching.
 cat > "$STUB/gh" <<'FAKE'
 #!/usr/bin/env bash
 norm=()
+input=""
+prev=""
 for a in "$@"; do
-  case "$a" in content=*) a="content=<b64>" ;; esac
+  if [ "$prev" = "--input" ]; then input="$a"; prev=""; continue; fi
+  case "$a" in
+    --input) prev="--input"; continue ;;
+    content=*) a="content=<b64>" ;;
+  esac
   norm+=("$a")
 done
-echo "gh ${norm[*]}" >> "$STUB_LOG"
+if [ -n "$input" ]; then
+  # seed PUT: path is repos/.../contents/<path>; summarize body fields
+  path=""; msg=""; has_sha=0
+  for a in "${norm[@]}"; do
+    case "$a" in repos/*/contents/*) path="${a#repos/}" ;; esac
+  done
+  if [ -f "$input" ]; then
+    msg="$(jq -r '.message // empty' "$input" 2>/dev/null || true)"
+    jq -e '.sha != null' "$input" >/dev/null 2>&1 && has_sha=1
+  fi
+  line="gh api -X PUT repos/${path} --input - message=${msg}"
+  [ "$has_sha" = 1 ] && line+=" sha=<sha>"
+  echo "$line" >> "$STUB_LOG"
+else
+  echo "gh ${norm[*]}" >> "$STUB_LOG"
+fi
 case "$*" in
   "repo view "*)   [ "${STUB_REPO_MISSING:-0}" = 1 ] && exit 1 || exit 0 ;;
   "repo create "*) exit 0 ;;
@@ -35,9 +56,9 @@ case "$*" in
   "api -X PUT "*) echo "{}"; exit 0 ;;
   "api repos/"*)
     if [ "${STUB_SEED_EXISTS:-0}" = 1 ]; then
-      f="${2##*/}"
+      f="${2#repos/*/contents/}"
       # resolve like publish does: dist-repo/, falling back to the repo root
-      # (LICENSE / NOTICE are seeded from there)
+      # (LICENSE / NOTICE / docs/img are seeded from there)
       src="$STUB_SEED_DIR/$f"; [ -f "$src" ] || src="$STUB_ROOT/$f"
       echo "fakesha $(base64 -w0 < "$src")"
       exit 0
@@ -147,9 +168,12 @@ STUB_REPO_MISSING=1 VERSION=$V "$PUBLISH" --repo "$REPO" --dist-dir "$DISTD" --s
 grep -q "repo create $REPO --public" "$LOG" || fail "repo create was not called"
 for f in README.md README.ja.md CHANGELOG.md CHANGELOG.ja.md LICENSE NOTICE \
          install.sh install-compose.sh; do
-  grep -q "api -X PUT repos/$REPO/contents/$f -f message=seed: $f -f content=<b64>" "$LOG" \
+  grep -qF "api -X PUT repos/$REPO/contents/$f --input - message=seed: $f" "$LOG" \
     || fail "seed PUT($f) missing"
 done
+# screenshots ride the same --input path (must not blow MAX_ARG_STRLEN)
+grep -qE "api -X PUT repos/$REPO/contents/docs/img/[^ ]+\.webp --input -" "$LOG" \
+  || fail "seed PUT(docs/img/*.webp) missing"
 echo "ok"
 
 echo "== case 6: --seed identical contents → no PUT (idempotent) =="
