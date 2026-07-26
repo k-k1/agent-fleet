@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
-import { clearDirtyRegistryForTests } from "./dirtyRegistry.ts";
+import {
+  cancelDirtyGuardRequest,
+  clearDirtyRegistryForTests,
+  confirmDirtyNavigation,
+  currentDirtyGuardRequest,
+  discardDirtyGuardRequest,
+} from "./dirtyRegistry.ts";
 import { getEditableFile, putFile, type EditableFile, type PutFileResult } from "./api.ts";
 import { revisionOf } from "./buffer.ts";
 import { useFileEditor } from "./useFileEditor.ts";
@@ -219,5 +225,125 @@ describe("useFileEditor discard during save", () => {
     expect(discarded).toBe(false);
     expect(editor!.model?.phase).toBe("save_state_unknown");
     expect(editor!.model?.dirty).toBe(true);
+  });
+});
+
+describe("useFileEditor discard abort", () => {
+  it("keeps the dirty buffer when the guard aborts while awaiting the PUT", async () => {
+    const mine = "mine\n";
+    const pendingPut = deferred<PutFileResult>();
+    vi.mocked(putFile).mockReturnValue(pendingPut.promise);
+    const current = await renderEditor();
+    await act(async () => current.edit(mine));
+
+    const controller = new AbortController();
+    let save!: Promise<boolean>;
+    let discard!: Promise<boolean>;
+    await act(async () => {
+      save = current.save();
+      await Promise.resolve();
+      discard = current.discard(controller.signal);
+      await Promise.resolve();
+    });
+    controller.abort();
+    pendingPut.resolve({
+      ok: false,
+      status: 400,
+      error: { code: "invalid_request", message: "rejected" },
+    });
+    let discarded = true;
+    await act(async () => {
+      await save;
+      discarded = await discard;
+    });
+
+    expect(discarded).toBe(false);
+    expect(editor!.model?.content).toBe(mine);
+    expect(editor!.model?.dirty).toBe(true);
+    expect(editor!.model?.phase).toBe("dirty");
+  });
+
+  it("keeps SaveStateUnknown when the guard aborts while recovery is pending", async () => {
+    const mine = "mine\n";
+    const pendingPut = deferred<PutFileResult>();
+    const pendingGet = deferred<EditableFile>();
+    vi.mocked(putFile).mockReturnValue(pendingPut.promise);
+    vi.mocked(getEditableFile).mockReturnValue(pendingGet.promise);
+    const current = await renderEditor();
+    await act(async () => current.edit(mine));
+
+    const controller = new AbortController();
+    let save!: Promise<boolean>;
+    let discard!: Promise<boolean>;
+    await act(async () => {
+      save = current.save();
+      await Promise.resolve();
+      discard = current.discard(controller.signal);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      pendingPut.resolve({
+        ok: false,
+        status: 500,
+        error: { code: "write_state_unknown", message: "unknown" },
+      });
+      await Promise.resolve();
+    });
+    controller.abort();
+    pendingGet.resolve(editableFile(mine));
+    let discarded = true;
+    await act(async () => {
+      await save;
+      discarded = await discard;
+    });
+
+    expect(discarded).toBe(false);
+    expect(editor!.model?.content).toBe(mine);
+    expect(editor!.model?.dirty).toBe(true);
+    expect(editor!.model?.phase).toBe("save_state_unknown");
+  });
+
+  it("popstate-style guard cancel during a delayed discard refuses navigation without wiping the buffer", async () => {
+    // Full chain: the hook registers its entry, the guard starts a discard that
+    // waits on an in-flight PUT, and Back (DirtyGuardHost's popstate handler)
+    // cancels the request. The cancellation must propagate into the pending
+    // discard so the buffer survives even though the modal already closed.
+    const mine = "mine\n";
+    const pendingPut = deferred<PutFileResult>();
+    vi.mocked(putFile).mockReturnValue(pendingPut.promise);
+    const current = await renderEditor();
+    await act(async () => current.edit(mine));
+
+    let save!: Promise<boolean>;
+    await act(async () => {
+      save = current.save();
+      await Promise.resolve();
+    });
+
+    const decision = confirmDirtyNavigation("history");
+    const request = currentDirtyGuardRequest()!;
+    let discardRun!: Promise<boolean>;
+    await act(async () => {
+      discardRun = discardDirtyGuardRequest(request.id);
+      await Promise.resolve();
+    });
+
+    cancelDirtyGuardRequest(request.id);
+    await expect(decision).resolves.toBe(false);
+    expect(currentDirtyGuardRequest()).toBeNull();
+
+    pendingPut.resolve({
+      ok: false,
+      status: 400,
+      error: { code: "invalid_request", message: "rejected" },
+    });
+    await act(async () => {
+      await save;
+      await expect(discardRun).resolves.toBe(false);
+    });
+
+    expect(editor!.model?.content).toBe(mine);
+    expect(editor!.model?.dirty).toBe(true);
+    expect(editor!.model?.phase).toBe("dirty");
   });
 });

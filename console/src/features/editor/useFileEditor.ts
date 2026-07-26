@@ -223,16 +223,20 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     setModel(editBuffer(current, content));
   }, [setModel]);
 
-  const discard = useCallback(async (): Promise<boolean> => {
+  const discard = useCallback(async (signal?: AbortSignal): Promise<boolean> => {
     const requested = modelRef.current;
     if (!requested) return true;
+    if (signal?.aborted) return false;
     const path = requested.path;
 
     try {
       // A PUT cannot be cancelled after the Agent may have committed its rename.
       // Wait for its complete save/recovery path before choosing the disk-backed
-      // discard target.
+      // discard target. The waits themselves are cancellable: when the guard
+      // request aborts (Back/cancel while this discard is pending), the
+      // navigation was already refused, so the buffer must never be cleaned.
       if (savingRef.current) await savingRef.current;
+      if (signal?.aborted) return false;
       let current = modelRef.current;
       if (!current || current.path !== path) return false;
 
@@ -244,6 +248,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       } else if (current.phase === "conflict_remote_unavailable") {
         await recoverConflict();
       }
+      if (signal?.aborted) return false;
       current = modelRef.current;
       if (!current || current.path !== path) return false;
 

@@ -143,6 +143,74 @@ describe("dirty navigation registry", () => {
     await expect(decision).resolves.toBe(true);
   });
 
+  it("aborts a pending discard's signal when the request is cancelled", async () => {
+    let dirty = true;
+    let seenSignal: AbortSignal | undefined;
+    let finishDiscard!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      finishDiscard = resolve;
+    });
+    registerDirtyEditor({
+      paneId: "p1",
+      label: "a.txt",
+      isDirty: () => dirty,
+      save: async () => false,
+      discard: async (signal) => {
+        seenSignal = signal;
+        await pending;
+        if (signal?.aborted) return false;
+        dirty = false;
+        return true;
+      },
+    });
+
+    const decision = confirmDirtyNavigation("history");
+    const request = currentDirtyGuardRequest()!;
+    const discard = discardDirtyGuardRequest(request.id);
+    await Promise.resolve();
+    expect(seenSignal?.aborted).toBe(false);
+
+    cancelDirtyGuardRequest(request.id);
+    expect(seenSignal?.aborted).toBe(true);
+    await expect(decision).resolves.toBe(false);
+
+    finishDiscard();
+    await expect(discard).resolves.toBe(false);
+    expect(dirty).toBe(true);
+  });
+
+  it("does not let a stale completion clobber a newer request", async () => {
+    let finishSave!: (ok: boolean) => void;
+    const pending = new Promise<boolean>((resolve) => {
+      finishSave = resolve;
+    });
+    let dirty = true;
+    registerDirtyEditor({
+      paneId: "p1",
+      label: "a.txt",
+      isDirty: () => dirty,
+      save: () => pending.then((ok) => { dirty = !ok; return ok; }),
+      discard: () => {},
+    });
+
+    const first = confirmDirtyNavigation("history");
+    const firstId = currentDirtyGuardRequest()!.id;
+    const stale = saveDirtyGuardRequest(firstId);
+    cancelDirtyGuardRequest(firstId);
+    await expect(first).resolves.toBe(false);
+
+    const second = confirmDirtyNavigation("layout");
+    const secondId = currentDirtyGuardRequest()!.id;
+    expect(secondId).not.toBe(firstId);
+
+    finishSave(true);
+    await expect(stale).resolves.toBe(false);
+    expect(currentDirtyGuardRequest()?.id).toBe(secondId);
+
+    cancelDirtyGuardRequest(secondId);
+    await expect(second).resolves.toBe(false);
+  });
+
   it("keeps the guard open when disk-safe discard cannot complete", async () => {
     registerDirtyEditor({
       paneId: "p1",
