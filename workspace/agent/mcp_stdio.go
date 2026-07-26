@@ -28,6 +28,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 const mcpStdioProtocol = "2025-06-18"
@@ -764,6 +766,11 @@ func mcpStdioCall(req mcpReq) []byte {
 			"driver":          driver,
 			"report_to":       mcpConvID, // docs/30: 完了報告をこの会話へ（空なら無効）
 			"idempotency_key": idemKey,
+			// ADR 0029 §6: オペレーターが立てたセッションであることを出自として明示する。
+			// 無人で増える消費（自動走行・定時実行との組み合わせ）を使用量集計で
+			// 「人が開いたセッション」と分けるための軸。
+			"origin":      session.OriginOperator,
+			"origin_conv": mcpConvID,
 		})
 		out, err := agentCreateSession(reqBody, idemKey)
 		if err != nil {

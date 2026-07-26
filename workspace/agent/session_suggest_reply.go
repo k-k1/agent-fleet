@@ -141,6 +141,7 @@ func handleSuggestReplies(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), replySuggestTimeout)
 	defer cancel()
+	ctx = withUsageTag(ctx, usageTag{Feature: usageFeatureSuggestSession, Trigger: usageTriggerManual, Ref: name})
 	reps, err := runReplySuggestLLM(ctx, turns)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "generation_failed", "reply suggestion failed")

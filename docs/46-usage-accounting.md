@@ -4,8 +4,8 @@
 対話セッションだけでなく、フリート自身が裏で撃っている補助 LLM 呼び出し（アシスタントチャット、
 要約引き継ぎ、タイトル提案、返信サジェスト、報告への自動ターン…）を **同じ物差しで並べる** のが主眼。
 
-決定は ADR 0029（本 doc の確定後に起票）。ステータス: **P0.5（測る前に確定できる是正・§1-a-2）
-実装済み。台帳本体（P1 以降）は未着手**。
+決定は [ADR 0029](decisions/0029-usage-accounting.md)。ステータス: **P0.5（是正）＋ P1（台帳＋計装）
+＋ P2（出自＋セッション折り込み）実装済み。P3（`/usage/series` + rollup）以降は未着手**。
 
 ## 0. なぜ要るのか（実測が先）
 
@@ -349,12 +349,64 @@ GET /usage/series?from=&to=&bucket=day|hour&by=feature|kind|model|trigger|origin
 |---|---|---|
 | P0 | 本 doc + ADR0029 確定（enum とワイヤ形の凍結） | レビュー済み |
 | ~~P0.5~~ **完了** | **測る前に確定できる是正**（§1-a-2）: claude 経路を `--tools ""` + `--system-prompt` 置換 + `MAX_THINKING_TOKENS=0`、codex 経路を小型モデル自動ピン + `model_reasoning_effort="low"`（opencode は罠のため見送り、cursor は `auto` のまま） | ✅ 3機能を実 CLI で回帰確認（1.7〜2.3s / 従来 6.2s）・go test 674 緑・契約テスト `chat_oneshot_test.go` 追加 |
-| P1 | 台帳 + 補助呼び出し計装（UI 無し）＋**モデル報告プローブ**（codex/opencode/cursor の実出力に model が乗るか実測して `model_src` を確定） | 13箇所タグ付け・go test 緑・実 CLI で1行記録を実測・claude はモデル別行が割れること |
-| P2 | セッション折り込み（watermark + バックフィル + 削除時確定）＋ **`Meta.Origin`/`OriginConv` 追加**（Console=user / MCP=operator / スケジュール=schedule / handoff・recreate は継承）と既存セッションの推定バックフィル | 冪等性テスト・既存 `get_session_usage` と突合一致・4経路の出自が実際に付くこと |
+| ~~P1~~ **完了** | 台帳 + 補助呼び出し計装（UI 無し）＋**モデル報告プローブ** | ✅ 下記 §7-1 |
+| ~~P2~~ **完了** | セッション折り込み（watermark + バックフィル + 削除時確定）＋ **`Meta.Origin`/`OriginConv`** | ✅ 下記 §7-2 |
 | P3 | `/usage/series` + CP 両側登録 | curl で系列取得 |
 | P4 | Console ペイン + グラフ + i18n | typecheck/vitest/i18n:lint 緑・headless 実描画検証 |
 | P5 | MCP ツール + 設定（保持日数 / 記録 OFF） | ライブでオペレーターに聞けること |
 | P6（任意） | CP 横断集計（tenant/member 別・showback と同居） | admin から見えること |
+
+#### 7-1. P1 実装済み（2026-07-26）
+
+`usage_ledger.go`（行の形＋raw jsonl 追記・日次ローテ・90日 prune）/ `usage_tag.go`（ctx タグと
+プロバイダ層1点記録）。消費源はタグ1行ずつ、記録は provider の usage 解析地点に集約。
+記録は各 provider 関数の先頭で `defer` に積むので、**成功・エラー result・exec 失敗・早期
+return の全経路で必ず1回**残る（失敗行は `ok:false`）。
+
+**モデル報告プローブの結果**（実 CLI・本ワークスペース）: 表は
+[ADR 0029 §4](decisions/0029-usage-accounting.md)。要点は3つ —
+
+- claude は `modelUsage` の**キーが版込みの生 id**、値に `canonicalModel` / `costUSD` /
+  トークン4種。top-level に `usage.output_tokens` / `total_cost_usd` / `duration_ms`。
+  §2-b の想定どおり **claude だけがモデル・トークン・コストを全部実測で返す**。
+- **codex はどのイベントにもモデルを載せない**（`thread.started` にも無い＝要プローブだった
+  点の決着）。`turn.completed.usage` には `cache_write_input_tokens` / `output_tokens` /
+  `reasoning_output_tokens` も乗る。→ `requested` / `default_unknown`。
+- **cursor も `result` にモデル無し**（docs/40 probe 9 の再確認）。→ 同上。
+- **opencode は未検証**: このワークスペースが未ログイン（`opencode auth list` = 0 credentials）。
+  実装は `modelID` を拾って `reported`、取れなければ縮退する形にしてある（推測でスキーマを
+  固めない）。ログインのある環境で再プローブが要る。
+
+実 CLI 検証（`TestUsageLedgerLive`・opt-in `AF_TITLE_LIVE=1`）で落ちた実際の1行:
+
+```
+feature=title.session trigger=manual ref=slot99 kind=claude
+model=claude-haiku-4-5 model_raw=claude-haiku-4-5-20251001 model_req=haiku model_src=reported
+in=3 out=13 cread=4412 ccreate=0 spend=16 cost_usd=0.0005092 ms=2964 ok=true measured=exact
+```
+
+#### 7-2. P2 実装済み（2026-07-26）
+
+`usage_fold.go`（`foldTurnRows` は純関数）＋ `session.Meta.Origin/OriginConv`。
+
+- **idx は論理ターンの通し番号**にした。転写は追記のみなので kind に依らず安定で、
+  `(session, idx)` が冪等キーになる。各 kind の `Turn.Idx`（行番号）は番号体系が違い、
+  watermark に混ぜると壊れる。
+- **開いている末尾ターンは折り込まない**。折り込み後に同じ論理ターンへイベントが足されると
+  入力スナップショット（置換セマンティクス）を二重に数えるため。次のユーザーターンで閉じた時か、
+  **削除時（`finalizeSessionUsage`）** に確定する。
+- **契機**: `GET /sessions/usage` を間借りした fold-on-read（60 秒スロットル）と削除時確定。
+  全転写の読み直しは実測 ~20s（158 セッション）なので**非同期に回して応答を待たせない**。
+  常駐タイマーは増やしていない。
+- **バックフィルは自動**（watermark 0 から走る）。実データで **848 行**が一度に入り、
+  2回目は 0 行（冪等）。
+- **出自**: Console=`user` / MCP `create_session`=`operator`＋会話 slug / handoff=`handoff` /
+  recreate=継承 / 既存メタ=`unknown`。**スケジュールは CP を触らず、既存の `source=schedule`
+  から導出**した（docs/38 が既に送っている＝新しいワイヤ項目を増やさない）。
+
+**突合検証**: 実ワークスペースの **158 セッション（claude / codex / copilot）全件**で、
+折り込みの spend 合計・論理ターン数が `get_session_usage` の cumulative と**完全一致**
+（`TestFoldMatchesSessionUsageLive`・opt-in `AF_USAGE_FOLD_LIVE=1`）。
 
 ## 8. 限界とリスク（先に言っておく）
 
@@ -369,17 +421,23 @@ GET /usage/series?from=&to=&bucket=day|hour&by=feature|kind|model|trigger|origin
 
 ## 9. 未決（要判断）
 
+1〜5 は **2026-07-26 に全て推奨案で決着**（ADR 0029 §7）。
+
 1. ~~UI の置き場~~ → **決定: 設定モーダルの新タブ**（§5 の5点）。View をモーダル非依存に切って
    ペイン昇格の余地だけ残す。
-2. **コスト表示**: claude だけ実測 $ が出せる。「API 換算相当額（claude のみ）」として出すか、
-   v1 はトークンのみに徹するか。
-3. **セッション本体を含めるか**: 含めて feature フィルタで補助だけに絞れる形（推奨） /
-   補助専用のダッシュボードにする。
-4. **保持期間**: raw 90日・rollup 無期限（推奨）。
-5. **フリート横断（P6）**: 自ワークスペース内で十分か、CP 集約まで要るか。
+2. ~~コスト表示~~ → **決定: `cost_usd` は claude で実測が取れた時だけ記録**し、UI では
+   「API 換算相当額（claude のみ実測）」と明記した**副次表示**に留める。主指標は `spend`。
+3. ~~セッション本体を含めるか~~ → **決定: 含める**（`feature=session`）。補助だけ見たい時は
+   feature フィルタで絞る。
+4. ~~保持期間~~ → **決定: raw 90日**（`AF_USAGE_RETENTION_DAYS`）・**rollup 無期限**。
+5. ~~フリート横断（P6）~~ → **決定: v1 はワークスペース内で閉じる**。CP 集約は P6（任意）で
+   集計値のみ。
 6. ~~是正の順序~~ → **決着: P0.5 を台帳より先に実施済み**（2026-07-25）。「before」は本 doc の
    実測表が担い、台帳は after の定常状態を見せる役になる。残るモデル面の判断は cursor
    （`auto` のまま = 解決後モデル不明）と opencode（カタログ≠権利の罠で自動ピン見送り）の2つで、
    どちらも台帳が動き出してから実データで再考する。
 7. **`compact`（要約）に思考トークン抑制を効かせるか**: 要約は品質が引き継ぎに直結するので、
-   一律 0 にはしない。実測してから判断。
+   一律 0 にはしない。実測してから判断。**台帳が動いたので、`feature=compact` の
+   `trigger`（manual/auto/recovery）別実測が出てから決める**。
+8. **opencode のモデル報告**: 未検証のまま（本ワークスペースは未ログイン）。ログインのある
+   環境で `opencode run --format json` に `modelID` が乗るかを実測し、`model_src` を確定する。

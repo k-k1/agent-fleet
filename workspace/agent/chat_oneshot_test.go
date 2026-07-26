@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
@@ -96,6 +97,56 @@ func TestTitleSuggestLive(t *testing.T) {
 		t.Fatalf("件名は1行のはず: %q", title)
 	}
 	t.Logf("title=%q (raw=%q)", title, reply)
+}
+
+// TestUsageLedgerLive は実 claude を1回撃ち、台帳に「実測の1行」が実際に落ちることを
+// 見る opt-in テスト（docs/46 P1 完了条件）。単体テストは組み立てた usageCall しか通らない
+// ので、CLI の出力形が変わったこと（modelUsage のキー名・canonicalModel・total_cost_usd）は
+// ここでしか検知できない。
+// 実行例: AF_TITLE_LIVE=1 go test -run TestUsageLedgerLive -v .
+func TestUsageLedgerLive(t *testing.T) {
+	if os.Getenv("AF_TITLE_LIVE") != "1" {
+		t.Skip("AF_TITLE_LIVE=1 で有効化")
+	}
+	useTempUsageDir(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	ctx = withUsageTag(ctx, usageTag{
+		Feature: usageFeatureTitleSession, Trigger: usageTriggerManual, Ref: "slot99",
+	})
+	if _, err := oneShotHeadless(ctx, titleSuggestPersona,
+		"以下の会話に件名を付けてください。\nuser: 使用量のグラフを作りたい\nassistant: 台帳を設計します",
+		titleModel()); err != nil {
+		t.Fatalf("oneShotHeadless: %v", err)
+	}
+	rows := readUsageRows()
+	if len(rows) == 0 {
+		t.Fatal("台帳に1行も落ちていない")
+	}
+	r := rows[0]
+	t.Logf("row = %+v", r)
+	if r.Feature != usageFeatureTitleSession || r.Trigger != usageTriggerManual || r.Ref != "slot99" {
+		t.Fatalf("タグが行に乗っていない: %+v", r)
+	}
+	if !r.OK || r.Kind == "" {
+		t.Fatalf("実行結果の kind と成否が入っていない: %+v", r)
+	}
+	if r.Kind != session.KindClaude {
+		t.Skipf("claude 以外（%s）で実行された — 以降はコスト実測の検証なのでスキップ", r.Kind)
+	}
+	// claude だけはモデル・トークン・コストが全部実測で返る（docs/46 §0）。
+	if r.ModelSrc != usageModelReported || r.Model == "" || r.ModelRaw == "" {
+		t.Fatalf("モデルが報告値として記録されていない: %+v", r)
+	}
+	if r.Model == r.ModelRaw {
+		t.Errorf("canonicalModel と生 id が同じ — 版を畳めていない可能性: %q", r.Model)
+	}
+	if r.Spend <= 0 || r.Measured != usageMeasuredExact {
+		t.Fatalf("トークンが実測で入っていない: %+v", r)
+	}
+	if r.CostUSD <= 0 {
+		t.Fatalf("コスト実測が入っていない: %+v", r)
+	}
 }
 
 // liveTurns は3機能に食わせる最小の会話ログ。
@@ -235,7 +286,7 @@ func TestOpencodeOneShotLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("opencode 実行失敗: %s", cliErr(err))
 	}
-	reply, _, _ := parseOpencodeRunEvents(out)
+	reply, _, _, _ := parseOpencodeRunEvents(out)
 	if title := cleanSuggestedTitle(reply); title == "" {
 		t.Fatalf("件名が空: reply=%q", reply)
 	} else {
