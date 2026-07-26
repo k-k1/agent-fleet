@@ -107,6 +107,27 @@ func assistantAgentOrderPref() []string {
 	return out
 }
 
+// assistantModelPref returns a per-backend model selected in AssistantTab. The
+// boolean distinguishes a missing (pre-feature) map from an explicit empty value:
+// empty means "let this CLI choose its default", while missing keeps the historical
+// backend-specific defaults.
+func assistantModelPref(key, kind string) (string, bool) {
+	raw, ok := readUIPrefs()[key].(map[string]any)
+	if !ok {
+		return "", false
+	}
+	v, ok := raw[kind].(string)
+	return v, ok
+}
+
+func assistantChatModelPref(kind string) (string, bool) {
+	return assistantModelPref("assistantModels", kind)
+}
+
+func assistantUtilityModelPref(kind string) (string, bool) {
+	return assistantModelPref("assistantUtilityModels", kind)
+}
+
 // chatAutoTurnEnabled is the global ON/OFF for the operator's automatic turn on a
 // session report (docs/30, 設定 > アシスタント「セッション報告への自動応答」). Missing/invalid
 // key ⇒ true, matching the frontend default — the feature ships ON, with the

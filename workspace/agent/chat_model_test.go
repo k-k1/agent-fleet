@@ -7,6 +7,7 @@ import (
 )
 
 func TestResolveChatModel(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	tests := []struct {
 		agent string
 		model string
@@ -24,5 +25,18 @@ func TestResolveChatModel(t *testing.T) {
 		if got := resolveChatModel(tt.agent, tt.model); got != tt.want {
 			t.Errorf("resolveChatModel(%q, %q) = %q, want %q", tt.agent, tt.model, got, tt.want)
 		}
+	}
+}
+
+func TestResolveChatModelUsesAssistantPreference(t *testing.T) {
+	writeUIPrefs(t, `{"assistantModels":{"codex":"gpt-custom","opencode":""}}`)
+	if got := resolveChatModel(session.KindCodex, ""); got != "gpt-custom" {
+		t.Fatalf("codex preference = %q", got)
+	}
+	if got := resolveChatModel(session.KindOpencode, ""); got != "" {
+		t.Fatalf("explicit CLI default = %q, want empty", got)
+	}
+	if got := resolveChatModel(session.KindCodex, "explicit"); got != "explicit" {
+		t.Fatalf("conversation pin must win, got %q", got)
 	}
 }

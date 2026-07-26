@@ -8,8 +8,31 @@ import {
 } from "../../lib/settings.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { SwatchGrid } from "../../ui/SwatchGrid.tsx";
-import { Choice, OnOff, OrderList, Row, Slider } from "./controls.tsx";
+import { Choice, OnOff, OrderList, Row, Select, Slider } from "./controls.tsx";
 import { useT } from "../../lib/i18n/index.ts";
+import { useModelOptions } from "../../lib/agentModels.ts";
+
+function AssistantModelRow({
+  kind,
+  value,
+  onChange,
+}: {
+  kind: (typeof ASSISTANT_AGENT_KINDS)[number];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const tr = useT();
+  const live = useModelOptions(kind) || [["", tr("ui.default")]];
+  // Preserve a configured model that temporarily disappeared from a live catalog
+  // (workspace stopped, provider disconnected, upstream rename). Dropping it from
+  // the select would make the visible value lie about the persisted setting.
+  const options = value && !live.some(([id]) => id === value) ? [...live, [value, value] as [string, string]] : live;
+  return (
+    <Row label={agentOf(kind).assistantName}>
+      <Select value={value} options={options} onChange={onChange} />
+    </Row>
+  );
+}
 
 // AssistantTab — アシスタント・チャットの設定：挙動（タイトルAI提案 / 回答言語 /
 // エージェント優先順位 / 報告への自動応答 / コンテキスト自動圧縮）と 外観（テーマ /
@@ -45,6 +68,28 @@ export function AssistantTab() {
           />
         </Row>
         <p className="muted ds-note">{tr("assistant.note_agent_order")}</p>
+        <h4 className="ds-title">{tr("assistant.models")}</h4>
+        <p className="muted ds-note">{tr("assistant.note_models")}</p>
+        {ASSISTANT_AGENT_KINDS.map((kind) => (
+          <AssistantModelRow
+            key={`assistant-${kind}`}
+            kind={kind}
+            value={s.assistantModels?.[kind] || ""}
+            onChange={(model) => setSetting("assistantModels", { ...s.assistantModels, [kind]: model })}
+          />
+        ))}
+        <h4 className="ds-title">{tr("assistant.utility_models")}</h4>
+        <p className="muted ds-note">{tr("assistant.note_utility_models")}</p>
+        {ASSISTANT_AGENT_KINDS.map((kind) => (
+          <AssistantModelRow
+            key={`utility-${kind}`}
+            kind={kind}
+            value={s.assistantUtilityModels?.[kind] || ""}
+            onChange={(model) =>
+              setSetting("assistantUtilityModels", { ...s.assistantUtilityModels, [kind]: model })
+            }
+          />
+        ))}
         <Row label={tr("assistant.auto_turn")}>
           <OnOff value={s.assistantAutoTurn} onChange={(v) => setSetting("assistantAutoTurn", v)} />
         </Row>

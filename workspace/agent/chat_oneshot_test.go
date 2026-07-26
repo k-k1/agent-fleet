@@ -51,6 +51,13 @@ func TestClaudeOneShotArgs(t *testing.T) {
 	}
 }
 
+func TestClaudeOneShotArgsAllowsCLIDefault(t *testing.T) {
+	args := claudeOneShotArgs("persona", "")
+	if got := argValue(args, "--model"); got != "" {
+		t.Fatalf("model = %q, want no explicit model", got)
+	}
+}
+
 func TestClaudeOneShotEnvCutsThinking(t *testing.T) {
 	if !hasArg(claudeOneShotEnv, "MAX_THINKING_TOKENS=0") {
 		t.Fatalf("18文字の件名に思考トークンは要らない: %v", claudeOneShotEnv)
@@ -231,6 +238,17 @@ func TestCodexOneShotArgs(t *testing.T) {
 	}
 	if args[len(args)-1] != "-" {
 		t.Fatalf("stdin 読みの \"-\" は末尾でなければならない: %q", joined)
+	}
+}
+
+func TestCodexOneShotArgsForSelectedModel(t *testing.T) {
+	t.Setenv("AF_TITLE_MODEL_CODEX", "env-model")
+	args, auto := codexOneShotArgsFor("ui-model")
+	if auto {
+		t.Fatal("an explicit UI model must not be treated as an automatic cheap-model pick")
+	}
+	if got := argValue(args, "-m"); got != "ui-model" {
+		t.Fatalf("model = %q, want ui-model", got)
 	}
 }
 

@@ -1058,8 +1058,12 @@ func headlessPrompt(persona string, knowledge []string, prompt string) string {
 //
 // --tools MUST stay last: it is variadic, so a following positional would be eaten.
 func claudeOneShotArgs(persona, model string) []string {
-	return []string{"-p", "--no-session-persistence", "--output-format", "json",
-		"--system-prompt", persona, "--model", model, "--tools", ""}
+	args := []string{"-p", "--no-session-persistence", "--output-format", "json",
+		"--system-prompt", persona}
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+	return append(args, "--tools", "")
 }
 
 // claudeOneShotEnv is applied on top of chatClaudeCmd's env for one-shots only — a chat
@@ -1117,8 +1121,14 @@ func modelChoiceIDs(list []agents.ModelChoice) []string {
 //
 // The trailing "-" makes codex read the prompt from stdin; it must stay last.
 func codexOneShotArgs() (args []string, autoPicked bool) {
+	return codexOneShotArgsFor("")
+}
+
+func codexOneShotArgsFor(selected string) (args []string, autoPicked bool) {
 	args = []string{"exec", "--json", "--skip-git-repo-check", "--ephemeral", "--color", "never", "-C", chatWorkdir()}
-	if m := os.Getenv("AF_TITLE_MODEL_CODEX"); m != "" {
+	if selected != "" {
+		args = append(args, "-m", selected)
+	} else if m := os.Getenv("AF_TITLE_MODEL_CODEX"); m != "" {
 		args = append(args, "-m", m) // explicit user choice: never second-guess it
 	} else if m := cheapOneShotModel(modelChoiceIDs(codex.Models())); m != "" {
 		args, autoPicked = append(args, "-m", m), true
@@ -1200,12 +1210,15 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 	// 呼び出し側4箇所を触る理由がないため。
 	call := usageCall{}
 	defer recordUsageCall(ctx, &call, time.Now())
-	switch preferredHeadlessAgent() {
+	kind := preferredHeadlessAgent()
+	selected, configured := assistantUtilityModelPref(kind)
+	selected = strings.TrimSpace(selected)
+	switch kind {
 	case session.KindCodex:
 		call.Kind = session.KindCodex
 		defer func() { _, _ = chatCodexHome() }()
 		full := headlessPrompt(persona, nil, prompt)
-		args, autoPicked := codexOneShotArgs()
+		args, autoPicked := codexOneShotArgsFor(selected)
 		reply, tok, modelReq, err := codexOneShotWithRetry(ctx, args, autoPicked, full, runCodexOneShot)
 		call.ModelReq, call.Totals, call.OK = modelReq, tok, err == nil
 		return reply, err
@@ -1218,7 +1231,11 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		// it, while the configured default answers fine (実測 2026-07-25). A hard failure of
 		// title/branch/reply suggestions is worse than their token cost, so opencode keeps the
 		// user's default unless AF_TITLE_MODEL_OPENCODE names something explicitly.
-		if m := os.Getenv("AF_TITLE_MODEL_OPENCODE"); m != "" {
+		m := selected
+		if !configured {
+			m = os.Getenv("AF_TITLE_MODEL_OPENCODE")
+		}
+		if m != "" {
 			args = append(args, "--model", m)
 			call.ModelReq = m
 		}
@@ -1253,7 +1270,11 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		// one-shots). No tools/persona-native flag — persona rides the preamble.
 		call.Kind = session.KindCursor
 		args := cursorChatBaseArgs()
-		if m := os.Getenv("AF_TITLE_MODEL_CURSOR"); m != "" {
+		m := selected
+		if !configured {
+			m = os.Getenv("AF_TITLE_MODEL_CURSOR")
+		}
+		if m != "" {
 			args = append(args, "--model", m)
 			call.ModelReq = m
 		}
@@ -1287,7 +1308,11 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 			return "", fmt.Errorf("agy chat home: %v", err)
 		}
 		var args []string
-		if m := agyChatModel(envOr("AF_TITLE_MODEL_AGY", defaultAgyChatModel), agy.Models()); m != "" {
+		m := selected
+		if !configured {
+			m = envOr("AF_TITLE_MODEL_AGY", defaultAgyChatModel)
+		}
+		if m := agyChatModel(m, agy.Models()); m != "" {
 			args = append(args, "--model", m)
 			call.ModelReq = m
 		}
@@ -1307,6 +1332,9 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 	// claude's --ephemeral analog (print-mode only, no transcript written, no resume):
 	// a one-shot never resumes, so don't pile per-call jsonl into Claude's projects tree.
 	//
+	if configured {
+		claudeModel = selected
+	}
 	call.Kind, call.ModelReq = session.KindClaude, claudeModel
 	cmd := chatClaudeCmd(ctx, claudeOneShotArgs(persona, claudeModel)...)
 	cmd.Env = append(cmd.Env, claudeOneShotEnv...)
