@@ -8,6 +8,7 @@ export {
   chatSuggestTitle,
   chatSuggestReplies,
   chatDelete,
+  chatSetLock,
   chatSend,
   chatStream,
   chatStop,
