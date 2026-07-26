@@ -148,6 +148,18 @@ func chatAutoPilotEnabled() bool {
 	return ok && v
 }
 
+// chatAutoResumeEnabled is the global ON/OFF for 中断時の自動再開 (docs/47, 設定 >
+// アシスタント): on an aborted turn (接続断・一時的なレート制限で切れた — 原因が
+// 自然に解消する中断) the operator is told to nudge the session to continue instead of
+// only relaying to the user. Missing/invalid key ⇒ TRUE, unlike 自動走行: the nudge
+// carries no decision of the user's — it re-runs work the user already asked for, and
+// its blast radius is bounded by the retryable/blocked split (a failure whose cause
+// won't clear is never auto-resumed) and by maxAutoResumeAttempts.
+func chatAutoResumeEnabled() bool {
+	v, ok := readUIPrefs()["assistantAutoResume"].(bool)
+	return !ok || v
+}
+
 // chatAutoCompactEnabled is the global ON/OFF for the assistant chat's preventive
 // auto-compaction at the context threshold (docs/33 第4段, 設定 > アシスタント
 // 「コンテキストの自動圧縮」). Missing/invalid key ⇒ true, matching the frontend

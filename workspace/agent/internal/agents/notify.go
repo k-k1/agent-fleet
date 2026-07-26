@@ -83,6 +83,14 @@ func MarkTurnEnd(sid string, st TurnState) { MarkTurnEndErr(sid, st, "") }
 // which is how an exhausted balance looked exactly like a finished turn.
 const StateFailed = "failed"
 
+// StateAborted is the transition label for a turn that was CUT OFF before it produced
+// an answer but can simply be re-run (接続断・一時的なレート制限). Like StateFailed it
+// is not a status value — the status store still gets "idle". It is separate from
+// StateFailed because the operator's next move differs: a failed turn must not be
+// re-sent until its cause is fixed, while an aborted one only needs a nudge to
+// continue — which is what makes 中断時の自動再開 safe (docs/47).
+const StateAborted = "aborted"
+
 // MarkTurnEndErr is MarkTurnEnd carrying the reason a turn failed. failure is the
 // one-line summary the driver built (empty for a clean turn); it rides the notifier's
 // excerpt so the operator report can say the turn errored and the chat bridge can post
@@ -95,6 +103,10 @@ func MarkTurnEndErr(sid string, st TurnState, failure string) {
 	}
 	if st == TurnFailed {
 		notify(sid, previous.State, StateFailed, failure)
+		return
+	}
+	if st == TurnAborted {
+		notify(sid, previous.State, StateAborted, failure)
 		return
 	}
 	notify(sid, previous.State, "idle", "")
