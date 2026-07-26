@@ -3,6 +3,11 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.4.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.4.0) — 2026-07-27
+
+Token usage is broken down by feature, files open for edit in the Console, and
+things you lock stay put — plus auto-resume when a turn dies mid-flight.
+
 ## [0.3.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.3.0) — 2026-07-25
 
 Kiro joins the agent CLI lineup, the composer gains reply suggestions, and the

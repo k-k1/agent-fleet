@@ -3,6 +3,11 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.4.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.4.0) — 2026-07-27
+
+機能別のトークン使用量が見えるようになり、Console の File ペインで本文を編集でき、
+ロックした対象は消えなくなりました。途中で切れたターンの自動再開も入ります。
+
 ## [0.3.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.3.0) — 2026-07-25
 
 エージェント CLI に Kiro が加わり、コンポーサーに返信サジェストが付き、フリート・
