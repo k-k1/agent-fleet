@@ -1,6 +1,12 @@
 import { useEffect, useRef } from "react";
 import { basicSetup } from "codemirror";
-import { Compartment, EditorState, type Extension, type Transaction } from "@codemirror/state";
+import {
+  Compartment,
+  EditorState,
+  Prec,
+  type Extension,
+  type Transaction,
+} from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { defaultKeymap, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { searchKeymap } from "@codemirror/search";
@@ -29,15 +35,37 @@ export function filterBufferTransaction(
   return [];
 }
 
-export function validateEditorInsertion(
-  state: EditorState,
-  from: number,
-  to: number,
-  text: string,
-): BufferValidationError | null {
-  return validateEditorBuffer(
-    state.doc.sliceString(0, from) + text + state.doc.sliceString(to),
-  );
+const REJECTED_CLIPBOARD_TEXT = "\u0000";
+
+export function bufferValidationExtensions(
+  reject: (error: BufferValidationError) => void,
+): Extension {
+  let validationQueued = false;
+  const report = (error: BufferValidationError) => {
+    if (validationQueued) return;
+    validationQueued = true;
+    queueMicrotask(() => {
+      validationQueued = false;
+      reject(error);
+    });
+  };
+  return [
+    // CodeMirror's paste implementation calls clipboardInputFilter with the raw
+    // clipboard string before EditorState.toText normalizes CR/CRLF to LF. Replace
+    // rejected input with a sentinel that the transaction filter below refuses, so
+    // invalid clipboard data is reported and never reaches the document.
+    Prec.highest(
+      EditorView.clipboardInputFilter.of((text) => {
+        const error = validateEditorBuffer(text);
+        if (!error) return text;
+        report(error);
+        return REJECTED_CLIPBOARD_TEXT;
+      }),
+    ),
+    EditorState.transactionFilter.of((transaction) => {
+      return filterBufferTransaction(transaction, report);
+    }),
+  ];
 }
 
 export function CodeEditor({
@@ -60,7 +88,6 @@ export function CodeEditor({
     if (!hostRef.current) return;
     const language = new Compartment();
     const wrapping = wrappingRef.current!;
-    let validationQueued = false;
     const extensions: Extension[] = [
       basicSetup,
       language.of([]),
@@ -70,32 +97,7 @@ export function CodeEditor({
         "aria-multiline": "true",
         spellcheck: "false",
       }),
-      // CodeMirror normalizes CR/CRLF to its internal LF line separator before a
-      // Transaction exists. Inspect the raw DOM/IME/paste insertion here so CR is
-      // rejected instead of silently normalized.
-      EditorView.inputHandler.of((view, from, to, text) => {
-        const error = validateEditorInsertion(view.state, from, to, text);
-        if (!error) return false;
-        if (!validationQueued) {
-          validationQueued = true;
-          queueMicrotask(() => {
-            validationQueued = false;
-            callbacks.current.onValidationError(error);
-          });
-        }
-        return true;
-      }),
-      EditorState.transactionFilter.of((transaction) => {
-        return filterBufferTransaction(transaction, (error) => {
-          if (!validationQueued) {
-            validationQueued = true;
-            queueMicrotask(() => {
-              validationQueued = false;
-              callbacks.current.onValidationError(error);
-            });
-          }
-        });
-      }),
+      bufferValidationExtensions((error) => callbacks.current.onValidationError(error)),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) callbacks.current.onChange(update.state.doc.toString());
       }),

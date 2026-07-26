@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { EditorState, Transaction } from "@codemirror/state";
-import { filterBufferTransaction, validateEditorInsertion } from "./CodeEditor.tsx";
+import { EditorView } from "@codemirror/view";
+import {
+  bufferValidationExtensions,
+  filterBufferTransaction,
+} from "./CodeEditor.tsx";
 import {
   MAX_EDIT_BYTES,
   REVISION_RE,
@@ -44,9 +48,33 @@ describe("editor buffer invariant", () => {
     },
   );
 
-  it("rejects raw CR before CodeMirror can normalize it to LF", () => {
-    const state = EditorState.create({ doc: "ok\n" });
-    expect(validateEditorInsertion(state, state.doc.length, state.doc.length, "\r\n")?.code)
-      .toBe("unsupported_newline");
+  it("rejects CR/CRLF through CodeMirror's raw clipboard and transaction APIs", async () => {
+    const errors: string[] = [];
+    const state = EditorState.create({
+      doc: "ok\n",
+      extensions: bufferValidationExtensions((error) => errors.push(error.code)),
+    });
+    const rawClipboard = "x\r\ny\r";
+
+    // This is the normalization boundary that made a transaction filter alone
+    // insufficient: a direct CodeMirror transaction has already lost every CR.
+    const normalized = state.update({
+      changes: { from: state.doc.length, insert: rawClipboard },
+      annotations: Transaction.userEvent.of("input.paste"),
+    });
+    expect(normalized.newDoc.toString()).toBe("ok\nx\ny\n");
+
+    // Exercise the same public facets and conversion APIs used by CodeMirror's
+    // paste handler: raw clipboard filters run before state.toText().
+    let filtered = rawClipboard;
+    for (const filter of state.facet(EditorView.clipboardInputFilter)) {
+      filtered = filter(filtered, state);
+    }
+    const rejected = state.update(state.replaceSelection(state.toText(filtered)), {
+      annotations: Transaction.userEvent.of("input.paste"),
+    });
+    expect(rejected.newDoc.toString()).toBe("ok\n");
+    await Promise.resolve();
+    expect(errors).toEqual(["unsupported_newline"]);
   });
 });
