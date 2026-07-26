@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/url"
@@ -20,6 +22,11 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 	q := r.URL.Query()
 	name := r.PathValue("name") // repo / session name for {name} routes ("" otherwise)
 	switch r.Method {
+	case http.MethodPut:
+		if p == "/api/fs/file" {
+			target, ok := r.Context().Value(fsPutAuditTargetContextKey{}).(string)
+			return "fs.file.put", target, ok && target != ""
+		}
 	case http.MethodPost:
 		switch {
 		case p == "/api/fs/upload":
@@ -111,13 +118,38 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 	}
 	defer resp.Body.Close()
 
+	var bufferedResponse []byte
+	var fsPutOutcome string
+	if r.Method == http.MethodPut && r.URL.Path == "/api/fs/file" {
+		// PUT errors are deliberately small JSON envelopes. Read only a bounded
+		// prefix before the audit decision so write_state_unknown cannot be lost,
+		// while still forwarding an unexpectedly larger upstream response.
+		bufferedResponse, _ = io.ReadAll(io.LimitReader(resp.Body, (64<<10)+1))
+		if len(bufferedResponse) <= 64<<10 {
+			var envelope struct {
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+			if json.Unmarshal(bufferedResponse, &envelope) == nil {
+				fsPutOutcome = envelope.Error.Code
+			}
+		}
+	}
+
 	// M1 audit (docs/20): record a successful change operation. actor/tenant come from
 	// the resolved request; best-effort with a detached context so a client disconnect
 	// during the body copy below can't cancel the write.
-	if action, target, ok := auditActionTarget(r); ok && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+	if action, target, ok := auditActionTarget(r); ok &&
+		((resp.StatusCode >= 200 && resp.StatusCode < 300) ||
+			(resp.StatusCode == http.StatusInternalServerError && fsPutOutcome == errCodeFSWriteStateUnknown)) {
+		detail := ""
+		if fsPutOutcome == errCodeFSWriteStateUnknown {
+			detail = "write_state_unknown"
+		}
 		_ = a.mgr.store.InsertAudit(context.Background(), AuditLog{
 			ID: newID(), TenantID: res.ws.TenantID, ActorKind: "user", ActorID: res.ident.ID,
-			Action: action, Target: target, At: nowTS(),
+			Action: action, Target: target, Detail: detail, HTTPStatus: resp.StatusCode, At: nowTS(),
 		})
 	}
 
@@ -127,6 +159,9 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
+	if len(bufferedResponse) > 0 {
+		_, _ = io.Copy(w, bytes.NewReader(bufferedResponse))
+	}
 	_, _ = io.Copy(w, resp.Body)
 }
 

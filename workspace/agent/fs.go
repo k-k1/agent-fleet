@@ -4,13 +4,11 @@ import (
 	"bytes"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
@@ -198,78 +196,6 @@ func handleFSTree(w http.ResponseWriter, r *http.Request) {
 	// root: the absolute browse root, so the Console can build an absolute path for a
 	// row ("パスをコピー"). It's the same for every entry, so it rides on the response.
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"path": rel, "entries": out, "root": browseRoot()})
-}
-
-func handleFSFile(w http.ResponseWriter, r *http.Request) {
-	full, rel, ok := safeBrowsePath(r.URL.Query().Get("path"))
-	if !ok {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
-		return
-	}
-	fi, err := os.Stat(full)
-	if err != nil || fi.IsDir() {
-		httpx.WriteErr(w, http.StatusNotFound, "not_file", "not a file: "+rel)
-		return
-	}
-	if fi.Size() > maxViewBytes {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"path": rel, "size": fi.Size(), "truncated": true, "binary": false, "content": "(file too large to preview)"})
-		return
-	}
-	b, err := os.ReadFile(full)
-	if err != nil {
-		httpx.WriteErr(w, http.StatusInternalServerError, "read_failed", err.Error())
-		return
-	}
-	if bytes.IndexByte(b, 0) >= 0 || !utf8.Valid(b) {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"path": rel, "size": fi.Size(), "binary": true})
-		return
-	}
-	resp := map[string]any{"path": rel, "size": fi.Size(), "content": string(b)}
-	if isLFSPointer(b) {
-		// The working-tree file is a Git LFS pointer, not the real binary (LFS wasn't
-		// smudged — e.g. the repo was cloned before git-lfs was configured). Flag it so
-		// the viewer can say so and suggest `git lfs pull`.
-		resp["lfs"] = true
-	}
-	httpx.WriteJSON(w, http.StatusOK, resp)
-}
-
-// handleFSDownload streams a file's raw bytes as an attachment. Same guards as
-// the viewer (safeBrowsePath: traversal + denylist), but no size cap and no
-// text/binary handling — http.ServeContent streams (Range-capable) so large or
-// binary files download directly without buffering.
-func handleFSDownload(w http.ResponseWriter, r *http.Request) {
-	full, rel, ok := safeBrowsePath(r.URL.Query().Get("path"))
-	if !ok {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
-		return
-	}
-	fi, err := os.Stat(full)
-	if err != nil || fi.IsDir() {
-		httpx.WriteErr(w, http.StatusNotFound, "not_file", "not a file: "+rel)
-		return
-	}
-	f, err := os.Open(full)
-	if err != nil {
-		httpx.WriteErr(w, http.StatusInternalServerError, "read_failed", err.Error())
-		return
-	}
-	defer f.Close()
-	name := filepath.Base(rel)
-	// Serve a proper image Content-Type for known image extensions so the Console's
-	// <img> preview renders them. Raster formats (png/jpeg/…) the browser sniffs even
-	// under octet-stream, but SVG is NOT sniffed in an <img> — it needs image/svg+xml,
-	// or it shows as a broken image. Everything else stays octet-stream. The attachment
-	// disposition below is kept regardless: <img> ignores it (so previews still render),
-	// while a direct navigation to an SVG downloads it instead of executing its scripts.
-	ct := "application/octet-stream"
-	if it := imageContentType(name); it != "" {
-		ct = it
-	}
-	w.Header().Set("Content-Type", ct)
-	// filename* (RFC 5987) carries UTF-8 names safely.
-	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(name))
-	http.ServeContent(w, r, name, fi.ModTime(), f)
 }
 
 // imageContentType maps a filename to its image MIME type (mirrors the Console's

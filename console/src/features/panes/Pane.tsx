@@ -333,6 +333,7 @@ export function Pane({
       )}
       {pane.content.kind === "file" && (
         <FileView
+          key={pane.content.filePath}
           paneId={pane.id}
           filePath={pane.content.filePath}
           targetLine={pane.content.targetLine}

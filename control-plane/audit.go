@@ -60,6 +60,7 @@ func (a adminAPI) audit(w http.ResponseWriter, r *http.Request) {
 			"action":      row.Action,
 			"target":      row.Target,
 			"detail":      row.Detail,
+			"http_status": row.HTTPStatus,
 			"at":          row.At,
 		})
 	}

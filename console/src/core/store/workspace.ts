@@ -11,6 +11,7 @@ import { create } from "zustand";
 import { api } from "../api/client.ts";
 import { pushHealthy, pushStamp } from "../push/events.ts";
 import { t } from "../../lib/i18n/index.ts";
+import { confirmDirtyNavigation } from "../../features/editor/dirtyRegistry.ts";
 
 interface WorkspaceStore {
   state: string;
@@ -32,12 +33,12 @@ interface WorkspaceStore {
    * connections persist; cloned repos and running sessions are wiped — the caller
    * guards this behind a warning dialog (設定 > 環境) and resets the layout first.
    * Returns the error message on failure (the caller toasts). */
-  recreate(): Promise<string | null>;
+  recreate(skipDirtyGuard?: boolean): Promise<string | null>;
   /** Deeper reset than recreate: wipe the whole home EXCEPT logins/connections
    * (repos, ~/.local, ~/.cache, dotfiles all go), then start fresh from the image.
    * For when something under home outside ~/repos is wedged. Returns the error
    * message on failure (the caller toasts). */
-  cleanHome(): Promise<string | null>;
+  cleanHome(skipDirtyGuard?: boolean): Promise<string | null>;
 }
 
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
@@ -95,6 +96,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   },
 
   async stop() {
+    if (!(await confirmDirtyNavigation("workspace_lifecycle"))) return;
     // Optimistic transition so the toggle goes inert (busy = trailing "…") and the
     // poll skips mid-stop — otherwise a second click re-issues the stop / a poll
     // clobbers the state during the multi-second docker stop.
@@ -107,7 +109,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     await get().refresh();
   },
 
-  async recreate() {
+  async recreate(skipDirtyGuard = false) {
+    if (!skipDirtyGuard && !(await confirmDirtyNavigation("workspace_lifecycle"))) return null;
     set({ state: "recreating…" });
     let err: string | null = null;
     try {
@@ -120,7 +123,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     return err;
   },
 
-  async cleanHome() {
+  async cleanHome(skipDirtyGuard = false) {
+    if (!skipDirtyGuard && !(await confirmDirtyNavigation("workspace_lifecycle"))) return null;
     set({ state: "recreating…" });
     let err: string | null = null;
     try {

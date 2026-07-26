@@ -986,7 +986,10 @@ func (a mcpAPI) mcpTailAudit(ctx context.Context, ac *adminCtx, limit int) (stri
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for _, a := range rows {
-		out = append(out, map[string]any{"at": a.At, "actor_kind": a.ActorKind, "action": a.Action, "target": a.Target, "detail": a.Detail})
+		out = append(out, map[string]any{
+			"at": a.At, "actor_kind": a.ActorKind, "action": a.Action,
+			"target": a.Target, "detail": a.Detail, "http_status": a.HTTPStatus,
+		})
 	}
 	b, _ := json.Marshal(map[string]any{"audit": out})
 	return string(b), nil
