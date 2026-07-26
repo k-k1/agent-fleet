@@ -2,8 +2,12 @@ package main
 
 import (
 	"context"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,9 +24,10 @@ func useTempUsageDir(t *testing.T) string {
 	usageMu.Lock()
 	usagePrunedAt = time.Time{}
 	usageMu.Unlock()
-	usageFoldMu.Lock()
+	usageFoldGate.Lock()
 	usageFoldedAt = time.Time{}
-	usageFoldMu.Unlock()
+	usageFoldGate.Unlock()
+	usageFoldRunning.Store(false)
 	return dir
 }
 
@@ -251,11 +256,17 @@ func TestFoldSessionUsageIsIdempotent(t *testing.T) {
 	}
 	m := session.Meta{Name: "slot01", Kind: session.KindClaude, Origin: session.OriginOperator, OriginConv: "a1b2c3d"}
 	fold := func(includeTrailing bool) int {
+		t.Helper()
 		usageFoldMu.Lock()
 		defer usageFoldMu.Unlock()
 		st := readUsageFoldState()
-		n := foldSessionUsageWithTurns(m, &st, turns, includeTrailing)
-		writeUsageFoldState(st)
+		n, err := foldSessionUsageWithTurns(m, &st, turns, includeTrailing)
+		if err != nil {
+			t.Fatalf("折り込みに失敗: %v", err)
+		}
+		if err := writeUsageFoldState(st); err != nil {
+			t.Fatalf("watermark の書き込みに失敗: %v", err)
+		}
 		return n
 	}
 	if n := fold(false); n != 2 {
@@ -414,4 +425,178 @@ func TestCompactTriggerMapping(t *testing.T) {
 			t.Errorf("%q -> %q, want %q", reason, got, want)
 		}
 	}
+}
+
+// --- 折り込みの耐障害性（レビュー P1 の回帰）--------------------------------------
+
+// 行が書けなかったら watermark を進めない。進めてしまうと、その分の消費は次のパスでも
+// 差分に出てこず二度と台帳へ入らない（台帳側に取りこぼしを拾い直す口は無い）。
+func TestFoldDoesNotAdvanceWatermarkWhenAppendFails(t *testing.T) {
+	dir := useTempUsageDir(t)
+	turns := []transcript.Turn{
+		{Role: "user", Text: "1"},
+		asst("claude-haiku-4-5", 100, 10, 0, 20, false),
+		{Role: "user", Text: "2"},
+		asst("claude-haiku-4-5", 200, 20, 0, 0, false),
+		{Role: "user", Text: "3"}, // 末尾は閉じている＝2ターンとも折り込める
+	}
+	m := session.Meta{Name: "slot01", Kind: session.KindClaude}
+
+	// raw/ の場所にファイルを置いて追記を失敗させる（MkdirAll が ENOTDIR で落ちる）。
+	raw := filepath.Join(dir, "raw")
+	if err := os.WriteFile(raw, []byte("not a dir"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st := readUsageFoldState()
+	n, err := foldSessionUsageWithTurns(m, &st, turns, false)
+	if err == nil {
+		t.Fatal("追記が失敗したのに error が返っていない")
+	}
+	if n != 0 {
+		t.Fatalf("失敗した折り込みが %d 行を報告した, want 0", n)
+	}
+	if mark, ok := st.Sessions[m.Name]; ok {
+		t.Fatalf("追記に失敗したのに watermark が進んだ: %+v", mark)
+	}
+
+	// 書けるようになったら、取りこぼさず全部入る。
+	if err := os.Remove(raw); err != nil {
+		t.Fatal(err)
+	}
+	if n, err = foldSessionUsageWithTurns(m, &st, turns, false); err != nil || n != 2 {
+		t.Fatalf("復旧後の折り込み = %d 行 / err=%v, want 2 / nil", n, err)
+	}
+	if rows := readUsageRows(); len(rows) != 2 {
+		t.Fatalf("台帳 = %d 行, want 2", len(rows))
+	}
+	if st.Sessions[m.Name].Groups != 2 {
+		t.Fatalf("watermark = %+v, want groups=2", st.Sessions[m.Name])
+	}
+}
+
+// commitSessionUsageFold はセッション1件ごとに watermark まで書き切る。パス末尾で
+// まとめて1回書いていた頃は、途中で落ちるとそれまでの全セッションが次回パスで重複した。
+func TestCommitSessionUsageFoldPersistsWatermarkPerSession(t *testing.T) {
+	useIsolatedUsageDir(t)
+	m := session.Meta{Name: "slot01", Kind: session.KindShell} // 転写を持たない kind
+	session.WriteMeta(m)
+	if _, err := commitSessionUsageFold(m, false); err != nil {
+		t.Fatalf("commit に失敗: %v", err)
+	}
+	// 転写が無いので行も watermark も増えない（空の state を書き散らかさない）。
+	if rows := readUsageRows(); len(rows) != 0 {
+		t.Fatalf("台帳 = %d 行, want 0", len(rows))
+	}
+
+	// watermark を持つセッションは、その1件を畳んだ時点でディスクに落ちている。
+	usageFoldMu.Lock()
+	st := readUsageFoldState()
+	st.Sessions["slot02"] = usageFoldMark{Groups: 3}
+	if err := writeUsageFoldState(st); err != nil {
+		t.Fatalf("watermark の書き込みに失敗: %v", err)
+	}
+	usageFoldMu.Unlock()
+	if got := readUsageFoldState().Sessions["slot02"].Groups; got != 3 {
+		t.Fatalf("再読み込みした watermark = %d, want 3", got)
+	}
+}
+
+// fold-on-read は「走行中か?」を聞くだけで、折り込み本体のロックを待ってはいけない。
+// 待つと Console の使用量ビュー（1画面で /usage/series を3本撃つ）の2本目以降が、
+// 実測 ~20 秒の一括折り込みが終わるまで丸ごとブロックされる。
+func TestFoldOnReadDoesNotBlockOnRunningPass(t *testing.T) {
+	useIsolatedUsageDir(t)
+	usageFoldMu.Lock() // 走行中の折り込みが握っているロックを模す
+	done := make(chan struct{})
+	go func() {
+		maybeFoldSessionUsage()
+		close(done)
+	}()
+	select {
+	case <-done:
+		usageFoldMu.Unlock()
+	case <-time.After(2 * time.Second):
+		usageFoldMu.Unlock()
+		t.Fatal("fold-on-read が折り込み本体のロックを待ってブロックした")
+	}
+	// 起動した非同期パスを回収してから抜ける（グローバル状態を次のテストへ持ち越さない）。
+	for i := 0; usageFoldRunning.Load() && i < 200; i++ {
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// finalizeSessionUsage は消えるセッションの watermark を忘れる。残すと state.json が
+// 「もう存在しないセッション」の分だけ単調に増える。
+func TestFinalizeSessionUsageForgetsWatermark(t *testing.T) {
+	useIsolatedUsageDir(t)
+	m := session.Meta{Name: "slot01", Kind: session.KindShell}
+	usageFoldMu.Lock()
+	st := readUsageFoldState()
+	st.Sessions[m.Name] = usageFoldMark{Groups: 5}
+	if err := writeUsageFoldState(st); err != nil {
+		t.Fatalf("watermark の書き込みに失敗: %v", err)
+	}
+	usageFoldMu.Unlock()
+
+	finalizeSessionUsage(m)
+	if mark, ok := readUsageFoldState().Sessions[m.Name]; ok {
+		t.Fatalf("削除後も watermark が残っている: %+v", mark)
+	}
+}
+
+// meta を忘れる経路は、忘れる前に必ず使用量を確定させること。忘れた瞬間に ListMetas から
+// 外れて二度と折り込まれないので、開いた末尾ターンがここで確定しないと永久に台帳へ入らない。
+// 実際に handleStopSession（Console の「削除」）がこれを落としていた。
+func TestMetaRemovalPathsFinalizeUsage(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	checked := 0
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		af, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		for _, d := range af.Decls {
+			fd, ok := d.(*ast.FuncDecl)
+			if !ok || fd.Body == nil {
+				continue
+			}
+			removes, finalizes := false, false
+			ast.Inspect(fd.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				switch fn := call.Fun.(type) {
+				case *ast.SelectorExpr:
+					if x, ok := fn.X.(*ast.Ident); ok && x.Name == "session" && fn.Sel.Name == "RemoveMeta" {
+						removes = true
+					}
+				case *ast.Ident:
+					if fn.Name == "finalizeSessionUsage" {
+						finalizes = true
+					}
+				}
+				return true
+			})
+			if !removes {
+				continue
+			}
+			checked++
+			if !finalizes {
+				t.Errorf("%s: %s が session.RemoveMeta を呼ぶのに finalizeSessionUsage を呼んでいない"+
+					"（docs/46 §3-b: meta を忘れる前に末尾ターンを確定させる）", name, fd.Name.Name)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("session.RemoveMeta の呼び出しを1つも見つけられなかった（走査が壊れている）")
+	}
+	t.Logf("meta 削除経路 %d 件を確認", checked)
 }
