@@ -199,6 +199,13 @@ export interface Settings {
   // Sessions only — the assistant-chat side split off into assistantTitleSuggest.
   // Default true so existing users get it without an explicit opt-in.
   autoTitleSuggest: boolean;
+  // How the opencode launch-model list is shaped (AgentsTab > opencode). One
+  // OPENCODE_API_KEY opens both opencode.ai billing routes, so the same model shows up
+  // twice: opencode/… (Zen, pay-per-request) and opencode-go/… (the Go subscription).
+  // "go-first" (default) hoists Go, "hide-zen" also drops the metered twins, "all"
+  // leaves the catalog as reported. The Agent reads this from ui-prefs, so it shapes
+  // the MCP list_models an assistant picks from as well as this picker.
+  opencodeCatalog: "go-first" | "hide-zen" | "all";
   // ON/OFF for the assistant-chat title AI suggestion (AssistantTab; the rename
   // dialog's 「AIに提案してもらう」 button). Split out of autoTitleSuggest so sessions
   // and chats gate independently; load()/hydrateUIPrefs migrate an explicit legacy
@@ -432,6 +439,7 @@ const DEFAULTS: Settings = {
   defaultModel: DEFAULT_MODEL, // concrete tier (avoids claude's release-varying own pick)
   agentLaunchDefaults: DEFAULT_AGENT_LAUNCH,
   autoTitleSuggest: true,
+  opencodeCatalog: "go-first",
   assistantTitleSuggest: true,
   outputLanguage: "auto",
   assistantAgentOrder: [...ASSISTANT_AGENT_KINDS],

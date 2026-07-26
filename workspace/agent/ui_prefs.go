@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
@@ -47,6 +48,17 @@ func readUIPrefs() map[string]any {
 func autoTitleSuggestEnabled() bool {
 	v, ok := readUIPrefs()["autoTitleSuggest"].(bool)
 	return !ok || v
+}
+
+// opencodeCatalogPref is how the opencode launch-model list is shaped (設定 >
+// エージェント > opencode, ui-prefs opencodeCatalog). One key serves both opencode.ai
+// billing routes, so the same model can appear as opencode/… (Zen, metered) and
+// opencode-go/… (the Go subscription); a Go subscriber rarely wants the metered twins
+// in the list at all. Read live per request — the Console picker and the MCP
+// list_models both go through handleAgentModels, so one preference shapes both.
+func opencodeCatalogPref() string {
+	v, _ := readUIPrefs()["opencodeCatalog"].(string)
+	return opencode.CatalogPref(v)
 }
 
 // assistantTitleSuggestEnabled is the ON/OFF for the assistant-chat title suggestion

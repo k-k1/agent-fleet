@@ -10,7 +10,7 @@
 // which launches the CLI on its own default model.
 import { useEffect, useState } from "react";
 import { api } from "../core/api/client.ts";
-import { CLAUDE_MODELS } from "./settings.ts";
+import { CLAUDE_MODELS, useSettings } from "./settings.ts";
 import { t } from "./i18n/index.ts";
 
 export type ModelOption = [string, string]; // [value sent as `model`, display label]
@@ -32,6 +32,26 @@ const cache = new Map<string, ModelOption[]>();
 const descriptors = new Map<string, ModelDescriptor[]>();
 const inflight = new Map<string, Promise<ModelOption[]>>();
 
+// opencode ships the SAME model under two opencode.ai billing routes — opencode/… is
+// Zen (pay-per-request from a balance) and opencode-go/… is the Go subscription — and
+// 10 of the 16 Go models collide by name. The id says which route it is, but reading a
+// prefix off a dropdown is not something a user should have to do, so the picker spells
+// it out: every Go entry is marked, and a metered entry is marked only when a Go twin
+// exists (marking all ~59 Zen ids would be noise). Localized here rather than server
+// side so the label follows the Console language.
+function decorateLabel(kind: string, label: string, all: ModelDescriptor[]): string {
+  if (kind !== "opencode") return label;
+  const GO = "opencode-go/";
+  const ZEN = "opencode/";
+  if (label.startsWith(GO)) return t("agents.oc_model_go", { model: label.slice(GO.length) });
+  if (label.startsWith(ZEN)) {
+    const name = label.slice(ZEN.length);
+    const twin = all.some((m) => m.id === GO + name);
+    if (twin) return t("agents.oc_model_zen", { model: name });
+  }
+  return label;
+}
+
 function fetchModels(kind: string): Promise<ModelOption[]> {
   const cacheable = kind !== "opencode";
   const hit = cacheable ? cache.get(kind) : undefined;
@@ -51,7 +71,7 @@ function fetchModels(kind: string): Promise<ModelOption[]> {
             efforts: Array.isArray(m.efforts) ? m.efforts.filter((x): x is string => typeof x === "string" && !!x) : [],
             defaultEffort: typeof m.defaultEffort === "string" ? m.defaultEffort : "",
           }));
-        const opts = desc.map((m): ModelOption => [m.id, m.label]);
+        const opts = desc.map((m): ModelOption => [m.id, decorateLabel(kind, m.label, desc)]);
         if (!opts.length) throw new Error("empty"); // workspace stopped / CLI absent — retry next open
         const full = [...defaultOnly(), ...opts];
         descriptors.set(kind, desc);
@@ -121,6 +141,11 @@ export function useEffortOptions(kind: string, model: string): EffortOption[] {
 // first, the full list once fetched.
 export function useModelOptions(kind: string): ModelOption[] | null {
   const [opts, setOpts] = useState<ModelOption[]>(() => cache.get(kind) || defaultOnly());
+  // The opencode catalog is SHAPED server-side by this preference (Go first / hide the
+  // metered twins), so a change has to refetch — otherwise the picker keeps showing the
+  // old list until the Console is reloaded.
+  const catalogPref = useSettings().opencodeCatalog;
+  const pref = kind === "opencode" ? catalogPref : "";
   useEffect(() => {
     if (!isDynamic(kind)) return;
     let alive = true;
@@ -129,7 +154,7 @@ export function useModelOptions(kind: string): ModelOption[] | null {
     return () => {
       alive = false;
     };
-  }, [kind]);
+  }, [kind, pref]);
   if (kind === "claude") return CLAUDE_MODELS;
   if (isDynamic(kind)) return opts;
   return null;
