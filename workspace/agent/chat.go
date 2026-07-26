@@ -302,6 +302,9 @@ func resolveChatModel(agent, model string) string {
 	if model = strings.TrimSpace(model); model != "" {
 		return model
 	}
+	if model, ok := assistantChatModelPref(agent); ok {
+		return strings.TrimSpace(model)
+	}
 	switch agent {
 	case session.KindCodex:
 		return defaultCodexChatModel

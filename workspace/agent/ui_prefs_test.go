@@ -51,3 +51,19 @@ func TestAssistantAgentOrderPref(t *testing.T) {
 		})
 	}
 }
+
+func TestAssistantModelPrefs(t *testing.T) {
+	writeUIPrefs(t, `{
+		"assistantModels":{"opencode":"opencode-go/glm-5.2"},
+		"assistantUtilityModels":{"opencode":"","claude":"haiku"}
+	}`)
+	if got, ok := assistantChatModelPref("opencode"); !ok || got != "opencode-go/glm-5.2" {
+		t.Fatalf("chat model = %q, %v", got, ok)
+	}
+	if got, ok := assistantUtilityModelPref("opencode"); !ok || got != "" {
+		t.Fatalf("explicit utility default = %q, %v", got, ok)
+	}
+	if _, ok := assistantUtilityModelPref("codex"); ok {
+		t.Fatal("missing backend must remain distinguishable from explicit default")
+	}
+}
