@@ -36,6 +36,39 @@ const (
 	DriverManaged = "managed"
 )
 
+// セッションの出自（docs/46 §2-c・ADR 0029 §6）: 誰が始めたセッションの消費か。
+// ターン注入元（transcript.Turn.Source）とは別の軸で、「自分で開いたセッション」と
+// 「オペレーターが勝手に立てたセッション」を使用量集計で分けるために持つ — 後者は
+// 自動走行・定時実行と組み合わさると無人で増える。
+const (
+	OriginUser     = "user"     // Console の起動導線から人が開始（既定）
+	OriginOperator = "operator" // af_write アシスタントの create_session（＋作成元の会話）
+	OriginSchedule = "schedule" // 定時実行が起こした（docs/38）
+	OriginHandoff  = "handoff"  // 引き継ぎ（旧 fork）で生えた
+	// OriginUnknown はこの機能より前に作られた既存セッション。0 でも user でもない、を守る。
+	OriginUnknown = "unknown"
+)
+
+// ValidOrigin は外部から届いた出自を記録可能な語彙へ丸める。create のワイヤ項目は
+// どのクライアントからも到達しうるので、未知の値は user（ラベル無しで通る人の操作）へ
+// 縮退させ、任意の文字列が集計の次元に混ざらないようにする。
+func ValidOrigin(s string) string {
+	switch s {
+	case OriginUser, OriginOperator, OriginSchedule, OriginHandoff, OriginUnknown:
+		return s
+	}
+	return OriginUser
+}
+
+// OriginOf は集計用の出自。フィールドを持たない既存メタは unknown（推定で user に
+// 寄せると「人が開いた分」を過大に見せてしまう）。
+func OriginOf(m Meta) string {
+	if m.Origin == "" {
+		return OriginUnknown
+	}
+	return m.Origin
+}
+
 // tmux session naming: friendly name "slot01" <-> tmux "claude_slot01".
 const TmuxPrefix = "claude_"
 
@@ -93,6 +126,11 @@ type Session struct {
 	ExitReason string `json:"exitReason,omitempty"`
 	ExitCode   int    `json:"exitCode,omitempty"`
 	ExitSignal int    `json:"exitSignal,omitempty"`
+	// Locked mirrors Meta.Locked: the user pinned this session against deletion, so
+	// every removal path (stop=forget meta / delete / TTL prune / a working-copy
+	// delete that would take it down with it) refuses until it is unlocked. The
+	// Console badges the row and disables its delete item off this flag.
+	Locked bool `json:"locked,omitempty"`
 }
 
 // ContextUsage is a claude session's current context fill — the newest assistant
@@ -160,6 +198,12 @@ type Meta struct {
 	CreatedAt string `json:"createdAt"` // RFC3339, set at create
 	StoppedAt string `json:"stoppedAt"` // RFC3339, set lazily when first seen exited; "" while live
 	Archived  bool   `json:"archived"`  // true = hidden from the active list, restorable (jsonl kept)
+	// Locked pins the session against deletion: /stop（メタ忘却）・DELETE /sessions/{name}・
+	// 停止中 TTL の自動 prune・作業コピー削除の巻き添え、いずれも locked の間は拒否される
+	// （アーカイブは可逆なので許可）。解除は POST /sessions/{name}/lock {"locked":false}。
+	// 保護は Agent の REST 層で効くので、Console・オペレーター（MCP）・ブリッジのどこから
+	// 来た削除でも同じように止まる。
+	Locked bool `json:"locked,omitempty"`
 	// ForkFrom is the SOURCE conversation id this session was forked from, in the
 	// kind's own id space: claude = the source slot's sid (jsonl), opencode = its
 	// ses_… id, codex = its session uuid. It only affects the FIRST launch — each
@@ -169,6 +213,13 @@ type Meta struct {
 	// conversation. Once that exists, later launches resume normally and ForkFrom
 	// is ignored — a restart never re-forks. Empty for non-forked sessions.
 	ForkFrom string `json:"forkFrom,omitempty"`
+	// Origin / OriginConv はこのセッションの出自（Origin* 定数・ADR 0029 §6）。使用量
+	// 集計で「人が始めた消費」と「オペレーター/定時が無人で回した消費」を分ける軸。
+	// 未設定＝この機能より前のセッションで、OriginOf が unknown に読み替える（既定値の
+	// user へ寄せない）。OriginConv は origin=operator のとき作成元のアシスタント会話 slug。
+	// recreate は元の出自を継承し、handoff は handoff を立てる。
+	Origin     string `json:"origin,omitempty"`
+	OriginConv string `json:"originConv,omitempty"`
 	// SSM holds the (non-secret) coordinates for a kind=ssm session: which instance,
 	// run-as document, region, and the SSO profile to authenticate with. Persisted so
 	// a relaunch regenerates ~/.aws/config and re-runs `aws sso login` (if the cached

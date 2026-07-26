@@ -139,7 +139,10 @@ func handleListSessions(w http.ResponseWriter, r *http.Request) {
 		if m.StoppedAt == "" {
 			m.StoppedAt = now.Format(time.RFC3339)
 			session.WriteMeta(m)
-		} else if t, e := time.Parse(time.RFC3339, m.StoppedAt); e == nil && now.Sub(t) > ttl {
+		} else if t, e := time.Parse(time.RFC3339, m.StoppedAt); e == nil && now.Sub(t) > ttl && !m.Locked {
+			// 削除ロック（docs/45）は自動削除にも効く — locked な行は TTL を過ぎても
+			// prune せず、停止中のまま一覧に残す。
+			finalizeSessionUsage(m) // 使用量台帳へ確定してから忘れる（docs/46 §3-b）
 			session.RemoveMeta(name)
 			maybePruneWorktree(m.Dir) // last reference expired → clean up its worktree if clean
 			continue
@@ -211,6 +214,13 @@ type createReq struct {
 	// (docs/38): "schedule" / "schedule-manual" from the CP scheduler; anything else
 	// (incl. empty — the operator MCP) records as "operator". Whitelisted server-side.
 	Source string `json:"source"`
+	// Origin / OriginConv record who STARTED this session (docs/46 §2-c, ADR 0029 §6) —
+	// a different axis from Source (which attributes one injected prompt). The MCP
+	// create_session sends "operator" plus its own conversation slug; the Console sends
+	// nothing and defaults to "user". Schedule creates are resolved from Source, so the
+	// CP scheduler needs no new wire field. Whitelisted server-side (session.ValidOrigin).
+	Origin     string `json:"origin"`
+	OriginConv string `json:"origin_conv"`
 	// Optional clone-then-start: when remote_url is set, the repo is cloned
 	// (or reused) under ~/repos and its path becomes the session CWD, ignoring dir.
 	// RepoName overrides the target folder so two branches of the same repo can
@@ -290,6 +300,31 @@ func resolveLiveModel(requested string, choices []agents.ModelChoice) (string, e
 		return "", fmt.Errorf("モデル %q は曖昧です。利用可能なモデルから完全名を指定してください: %s", requested, strings.Join(matches, ", "))
 	}
 	return "", fmt.Errorf("モデル %q は利用できません。利用可能なモデル: %s", requested, strings.Join(available, ", "))
+}
+
+// createOrigin resolves a new session's origin (ADR 0029 §6) from the create request.
+// Precedence — most specific caller wins:
+//  1. an explicit origin field (the af_write MCP's create_session sends "operator" plus
+//     the conversation slug it belongs to);
+//  2. Source="schedule"/"schedule-manual", which the CP scheduler ALREADY sends for the
+//     mirror badge (docs/38) — deriving from it keeps the scheduler free of a new field;
+//  3. "user" — the Console launch flow, the only path a human drives, and the only one
+//     that legitimately arrives unlabeled.
+//
+// The conversation slug is only meaningful for operator-started sessions ("which operator
+// conversation made this expensive purchase"), so it is dropped otherwise.
+func createOrigin(req *createReq) (origin, conv string) {
+	if req.Origin != "" {
+		origin = session.ValidOrigin(req.Origin)
+	} else if s := injectionSource(req.Source); s == turnSourceSchedule || s == turnSourceScheduleManual {
+		origin = session.OriginSchedule
+	} else {
+		origin = session.OriginUser
+	}
+	if origin == session.OriginOperator {
+		conv = req.OriginConv
+	}
+	return origin, conv
 }
 
 // handleCreateSession launches a claude session inside a detached tmux session.
@@ -503,10 +538,12 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			ssm.Region = ssm.SSORegion
 		}
 	}
+	origin, originConv := createOrigin(&req)
 	meta := session.Meta{
 		Name: name, Dir: req.Dir, Model: req.Model, Effort: req.Effort, Mode: req.Mode, Kind: kind, Driver: driver, Title: title, Color: req.Color, Label: label,
 		Repo: filepath.Base(req.Dir), Branch: gitCurrentBranch(req.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: ssm,
+		Origin: origin, OriginConv: originConv,
 	}
 	if meta.DriverKind() == session.DriverManaged {
 		// managed（docs/27 P2）: tmux pane を作らず、driver が共有 runtime に thread
@@ -617,6 +654,10 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 		Repo:      filepath.Base(src.Dir),
 		Branch:    gitCurrentBranch(src.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), ForkFrom: forkFrom,
+		// 引き継ぎで生えたセッションは出自 handoff（ADR 0029 §6）。元の出自を継ぐと
+		// 「人が開いた数」に紛れ、引き継ぎで増えた消費が見えなくなる。作成元の会話は
+		// 親から引き継ぐ（オペレーター発のセッションからの引き継ぎも同じ系列で追える）。
+		Origin: session.OriginHandoff, OriginConv: src.OriginConv,
 	}
 	if ag.Caps().UsesLabel {
 		meta.Label = sessionLabelFor(src.Dir, title)
@@ -659,6 +700,13 @@ func handleStopSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
+	// /stop FORGETS the meta — it is the Console's 削除. A locked session (docs/45)
+	// refuses it; stopping without losing the row is /halt, which stays open.
+	if hadMeta && meta.Locked {
+		httpx.WriteErr(w, http.StatusForbidden, errCodeLocked,
+			"session is locked against deletion; unlock it first (or use /halt to stop it and keep the row)")
+		return
+	}
 	if hadMeta {
 		status.Remove(session.UUID(meta.Dir, name))
 		status.RemoveExit(name)
@@ -670,6 +718,14 @@ func handleStopSession(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", fmt.Sprintf("%v: %s", err, out))
 			return
 		}
+	}
+	if hadMeta {
+		// fold-on-delete（docs/46 §3-b）: /stop は Console の「削除」で、この後 meta を
+		// 忘れる＝ListMetas から消えて二度と折り込まれない（転写が残っていても対象外）。
+		// 通常の折り込みは開いている末尾ターンを残すので、ここで確定させないと最後の
+		// 1ターンが永久に台帳へ入らない。tmux を落とした後に呼ぶのは、終了時に書かれる
+		// 最後のイベントまで転写に乗せてから読むため。
+		finalizeSessionUsage(meta)
 	}
 	session.RemoveMeta(name)
 	removeTerminalHistory(name)
@@ -845,6 +901,8 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		Kind: m.Kind, Driver: m.Driver,
 		Title: m.Title, Color: m.Color, Repo: m.Repo, Branch: gitCurrentBranch(m.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: m.SSM,
+		// recreate は「同じ枠を空で作り直す」なので出自は引き継ぐ（ADR 0029 §6）。
+		Origin: session.OriginOf(m), OriginConv: m.OriginConv,
 	}
 	if agentOf(newMeta.Kind).Caps().UsesLabel {
 		newMeta.Label = sessionLabelFor(newMeta.Dir, newMeta.Title)

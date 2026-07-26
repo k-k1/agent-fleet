@@ -42,9 +42,11 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 		// `kiro-cli chat --list-models -f json`（完全機械可読・アカウント連動 — docs/43）。
 		list = kiro.Models()
 	case "opencode":
-		for _, id := range opencode.Models() {
-			list = append(list, agents.ModelChoice{ID: id, Label: id})
-		}
+		// 一覧の整形だけ（catalog.go）: 1 本のキーが Zen（従量）と Go（サブスク）の
+		// 両プロバイダを開けるので、同名モデルが両方に並ぶ。並び順と Zen の表示可否は
+		// ユーザー設定（ui-prefs opencodeCatalog）に従う。モデル指定の検証は
+		// handleCreateSession が整形前の全カタログで行うので、明示指定は握り潰さない。
+		list = opencode.Catalog(opencode.Models(), opencodeCatalogPref())
 	case "agy":
 		list = agy.Models()
 	case "copilot":

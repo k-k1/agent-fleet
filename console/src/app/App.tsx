@@ -54,6 +54,7 @@ import { takePendingPopout, takeStalePopoutLink } from "../features/panes/popout
 import { PopoutTitleBar } from "../features/panes/PopoutTitleBar.tsx";
 import { toast } from "../ui/toast.ts";
 import { t } from "../lib/i18n/index.ts";
+import { DirtyGuardHost } from "../features/editor/DirtyGuardHost.tsx";
 
 // Refresh FILES (and repos/sessions/chat list on start) whenever the workspace
 // actually flips running↔stopped — including external changes the 4s sync catches
@@ -343,6 +344,7 @@ export function App() {
         <SessionModals />
         <WsStartingDialog />
         <AuthExpiredModal />
+        <DirtyGuardHost />
         <WhichKey />
         <CommandPalette />
         <CheatSheet />
@@ -420,6 +422,7 @@ export function App() {
       <SessionModals />
       <WsStartingDialog />
       <AuthExpiredModal />
+      <DirtyGuardHost />
       <WhichKey />
       <CommandPalette />
       <CheatSheet />

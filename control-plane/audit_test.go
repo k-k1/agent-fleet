@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
@@ -49,6 +50,11 @@ func TestAuditActionTarget(t *testing.T) {
 				c.method, c.target, a, tg, ok, c.wantAction, c.wantTgt, c.wantOK)
 		}
 	}
+	put := httptest.NewRequest(http.MethodPut, "/api/fs/file", nil)
+	put = put.WithContext(context.WithValue(put.Context(), fsPutAuditTargetContextKey{}, "repos/foo/a.txt"))
+	if action, target, ok := auditActionTarget(put); !ok || action != "fs.file.put" || target != "repos/foo/a.txt" {
+		t.Fatalf("PUT /api/fs/file: got (%q,%q,%v)", action, target, ok)
+	}
 }
 
 // InsertAudit + ListAuditByTenant: "" spans every tenant, a set id scopes to it.
@@ -65,7 +71,7 @@ func TestAuditStoreScope(t *testing.T) {
 	ins := func(tenant, action string) {
 		if err := st.InsertAudit(ctx, AuditLog{
 			ID: newID(), TenantID: tenant, ActorKind: "user", ActorID: "id1",
-			Action: action, At: nowTS(),
+			Action: action, HTTPStatus: http.StatusAccepted, At: nowTS(),
 		}); err != nil {
 			t.Fatalf("insert: %v", err)
 		}
@@ -87,5 +93,8 @@ func TestAuditStoreScope(t *testing.T) {
 	}
 	if len(t1) != 1 || t1[0].Action != "fs.delete" {
 		t.Fatalf("tenant scope: want [fs.delete] got %+v", t1)
+	}
+	if t1[0].HTTPStatus != http.StatusAccepted {
+		t.Fatalf("audit http_status=%d want=%d", t1[0].HTTPStatus, http.StatusAccepted)
 	}
 }

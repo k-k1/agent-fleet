@@ -44,7 +44,11 @@ func handleAssistantTurn(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusConflict, "turn_in_progress", "an assistant turn is already running for this conversation")
 		return
 	}
-	reply, err := runOperatorTurn(id, req.Prompt)
+	// 使用量台帳（ADR 0029 §3）: 機構はブリッジと同じでも、消費の意味は「定時実行が
+	// 無人で回したチャット1ターン」— feature=assistant.chat / trigger=schedule で数える。
+	reply, err := runOperatorTurnAs(id, req.Prompt, usageTag{
+		Feature: usageFeatureAssistantChat, Trigger: usageTriggerSchedule, Ref: id,
+	})
 	if err != nil {
 		// reply carries the localized reason line (runOperatorTurn's contract).
 		msg := strings.TrimSpace(reply)
