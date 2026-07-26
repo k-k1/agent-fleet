@@ -264,6 +264,10 @@ func handleUsageSeries(w http.ResponseWriter, r *http.Request) {
 //   - hour: rollup は日粒度なので使えない。ディスクに残っている raw を直接読む（各行は
 //     ちょうど1つのファイルにあるので、こちらも二重にならない）。prune 済みで読めない
 //     期間があれば truncated で正直に言う。
+//
+// どちらの経路も (ref, idx) 重複排除を通す。hour だけは「原本が prune 済みファイルにあり
+// 重複が残っている」形を落とせない（水位を空から積むため）が、折り込みの再試行は分単位で
+// 走るので、原本と重複が保持期間（既定90日）を跨ぐことは実質起きない。
 func collectUsageSamples(from, to time.Time, bucket string) (samples []usageSample, truncated bool) {
 	ensureUsageRollups()
 	st := readUsageRollupState()
@@ -274,6 +278,18 @@ func collectUsageSamples(from, to time.Time, bucket string) (samples []usageSamp
 		for k, a := range agg {
 			samples = append(samples, usageSample{T: t, Key: k, Agg: a})
 		}
+	}
+
+	// (ref, idx) 重複排除（usage_dedup.go）。折り込みが「行を追記 → watermark を書く」の
+	// 間で落ちると、そのセッションの数ターン分が次のパスで再追記される。
+	//
+	//   - day: 畳み済みファイルは読まないので、その分の水位を rollup state から引き継ぐ
+	//     （原本が rollup にあり、重複だけが未畳みの raw に残っている形を落とすため）。
+	//   - hour: rollup を使わず**畳み済みも含めて raw を全部読み直す**ので、水位は空から
+	//     積み直す。ここで state の水位を引き継ぐと、原本の側まで落としてしまう。
+	dd := usageDedupIndex{}
+	if bucket == "day" {
+		dd = st.Folded.clone()
 	}
 
 	if bucket == "day" {
@@ -296,6 +312,11 @@ func collectUsageSamples(from, to time.Time, bucket string) (samples []usageSamp
 		byBucket := map[string][]usageRecord{}
 		for _, r := range rows {
 			ts := usageRowTime(r, fileDay)
+			// **期間で絞る前に**通す。どの行を「最初の1件」とみなすかがクエリ期間で
+			// 変わると、期間を変えただけで同じ日の合計が動く。
+			if !dd.accept(r, ts) {
+				continue
+			}
 			day := ts.Format("2006-01-02")
 			if !inDayRange(day) {
 				continue

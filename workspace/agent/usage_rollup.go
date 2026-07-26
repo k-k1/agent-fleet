@@ -24,6 +24,7 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -94,8 +95,21 @@ type usageRolledFile struct {
 	MaxDay string `json:"maxDay"`
 }
 
+// usageRollupVersion は rollup ファイルの版。上げると次回の ensureUsageRollups が
+// 「raw から作り直せる分だけ」作り直す（rebuildUsageRollupsLocked）。
+//
+//	v1: 初版（P3）。
+//	v2: (ref, idx) 重複排除を入れた（usage_dedup.go）。v1 の集計には折り込みの
+//	    クラッシュ窓で入り込んだ重複が畳み込まれている可能性があり、集計は加算済みで
+//	    引き算できないので作り直す以外に落とす方法が無い。
+const usageRollupVersion = 2
+
 type usageRollupState struct {
-	Rolled map[string]usageRolledFile `json:"rolled"`
+	Version int                        `json:"v"`
+	Rolled  map[string]usageRolledFile `json:"rolled"`
+	// Folded は畳み込み済みの (ref, idx) 水位。rollup へ入った分の重複を、raw が prune
+	// された後（＝原本の行がもう読めない後）でも落とせるようにするため state に残す。
+	Folded usageDedupIndex `json:"folded,omitempty"`
 }
 
 var usageRollupMu sync.Mutex
@@ -119,13 +133,16 @@ func readUsageRollup(month string) usageRollupMonth {
 }
 
 func readUsageRollupState() usageRollupState {
-	st := usageRollupState{Rolled: map[string]usageRolledFile{}}
+	st := usageRollupState{Rolled: map[string]usageRolledFile{}, Folded: usageDedupIndex{}}
 	b, err := os.ReadFile(usageRollupStatePath())
 	if err != nil {
 		return st
 	}
 	if json.Unmarshal(b, &st) != nil || st.Rolled == nil {
 		st.Rolled = map[string]usageRolledFile{}
+	}
+	if st.Folded == nil {
+		st.Folded = usageDedupIndex{}
 	}
 	return st
 }
@@ -250,6 +267,14 @@ func ensureUsageRollups() {
 	months := map[string]usageRollupMonth{}
 	dirty := map[string]bool{}
 	stateChanged := false
+	if st.Version < usageRollupVersion {
+		st = rebuildUsageRollupsLocked(st)
+		stateChanged = true // 版だけでも必ず残す（毎回作り直しを試みない）
+	}
+	// (ref, idx) 重複排除の水位は **ファイル日を跨いで持ち回る**。折り込みのクラッシュ窓が
+	// 日付を跨ぐと、重複は原本と別のファイルへ落ちるため（usage_dedup.go）。
+	dd := st.Folded
+	dropped := 0
 
 	for _, fileDay := range usageRawDays() {
 		if fileDay >= today {
@@ -264,7 +289,12 @@ func ensureUsageRollups() {
 		byDay := map[string][]usageRecord{}
 		var days []string
 		for _, r := range readUsageDay(fileDay) {
-			d := usageRowTime(r, fileDay).Format("2006-01-02")
+			ts := usageRowTime(r, fileDay)
+			if !dd.accept(r, ts) {
+				dropped++ // 追記済み・watermark 未更新で落ちた分の再追記
+				continue
+			}
+			d := ts.Format("2006-01-02")
 			if _, ok := byDay[d]; !ok {
 				days = append(days, d)
 			}
@@ -297,15 +327,73 @@ func ensureUsageRollups() {
 		st.Rolled[fileDay] = mark
 		stateChanged = true
 	}
+	if dropped > 0 {
+		// 黙って落とさない — 起きたことは必ず言う（折り込みが途中で落ちた痕跡でもある）。
+		log.Printf("usage: rollup: (ref,idx) 重複 %d 行を集計から落とした", dropped)
+	}
 	if !stateChanged {
 		return
 	}
+	st.Folded = dd
 	// 月ファイル → state の順で書く。逆順だと、間で落ちた時に「畳み済み扱いだが集計が無い」
 	// = 消費の取りこぼしになる。この順なら最悪もう一度畳もうとするだけで、Src が弾く。
 	for month := range dirty {
 		_ = writeUsageJSON(usageRollupPath(month), months[month])
 	}
 	_ = writeUsageJSON(usageRollupStatePath(), st)
+}
+
+// rebuildUsageRollupsLocked は版が上がった時に rollup を作り直す。usageRollupMu 保持前提。
+//
+// 既に畳んである集計は加算済みで、後から特定の行だけ引き算できない。v1 の rollup へ
+// 折り込みのクラッシュ窓由来の重複が入っている可能性がある以上、**作り直す以外に落とす
+// 手が無い**。作り直せるのは寄与元の raw がまだディスクにある分だけなので、
+//
+//   - 畳んだファイル日が全部残っている（＝まだ何も prune されていない）: 月ファイルを
+//     捨てて全部やり直す。呼び出し元のループがそのまま畳み直す。
+//   - 1つでも prune 済み: **作り直さない**。消えた raw の分の集計を失う方が、残っている
+//     かもしれない重複より重い。代わりに、見えている畳み済みファイルから重複排除の水位
+//     だけ復元して、以後に入る重複は落とせるようにする。
+//
+// 本機能は導入直後（rollup が raw の保持期間より古くなる前）なので、実際には前者を通る。
+func rebuildUsageRollupsLocked(st usageRollupState) usageRollupState {
+	onDisk := map[string]bool{}
+	for _, d := range usageRawDays() {
+		onDisk[d] = true
+	}
+	pruned := 0
+	for fileDay := range st.Rolled {
+		if !onDisk[fileDay] {
+			pruned++
+		}
+	}
+	if pruned > 0 {
+		log.Printf("usage: rollup v%d: 寄与元 raw が %d 日分 prune 済みのため作り直さない"+
+			"（既存集計に重複が残る可能性あり・以後の重複は落とす）", usageRollupVersion, pruned)
+		fresh := usageRollupState{Version: usageRollupVersion, Rolled: st.Rolled, Folded: usageDedupIndex{}}
+		for _, fileDay := range usageRawDays() { // 昇順＝追記順
+			if _, done := st.Rolled[fileDay]; !done {
+				continue // 未畳みの分は呼び出し元のループが同じ索引で処理する
+			}
+			for _, r := range readUsageDay(fileDay) {
+				fresh.Folded.accept(r, usageRowTime(r, fileDay))
+			}
+		}
+		return fresh
+	}
+	ents, _ := os.ReadDir(usageRollupDir())
+	for _, e := range ents {
+		n := e.Name()
+		if e.IsDir() || filepath.Ext(n) != ".json" || n == "state.json" {
+			continue
+		}
+		_ = os.Remove(filepath.Join(usageRollupDir(), n))
+	}
+	if len(st.Rolled) > 0 {
+		log.Printf("usage: rollup を v%d へ作り直す（%d ファイル日を raw から畳み直す）",
+			usageRollupVersion, len(st.Rolled))
+	}
+	return usageRollupState{Version: usageRollupVersion, Rolled: map[string]usageRolledFile{}, Folded: usageDedupIndex{}}
 }
 
 // rolledUpEntries は指定期間の消費日ごとの集計を返す（rollup が正である分）。
