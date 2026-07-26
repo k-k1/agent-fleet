@@ -21,9 +21,10 @@ node console/scripts/shots/capture.mjs --locale en
   global `WebSocket` — no Playwright/Puppeteer), seeds `localStorage` the way a
   returning user's browser would look (locale, theme, the saved pane layout, rail
   section fold state), then screenshots each scene as WebP at `deviceScaleFactor: 2`.
-- Scenes live at the top of `capture.mjs`: a pane layout + a viewport, optionally an
-  `action` snippet evaluated after boot (the launch-dialog scene clicks its way into
-  the agent picker).
+- Scenes live at the top of `capture.mjs`: a pane layout + a viewport, optionally a
+  `settings` section to pre-select and an `action` snippet evaluated after boot (the
+  launch-dialog scene clicks its way into the agent picker; the usage scene opens
+  Settings › Usage and switches the range to 30 days).
 
 ## Rules for the fixtures
 

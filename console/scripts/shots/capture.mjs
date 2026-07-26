@@ -111,6 +111,28 @@ const SCENES = [
     settle: 1400,
   },
   {
+    // Settings › workspace › Usage: the per-feature / per-agent / per-model token
+    // ledger. Seeded as the remembered section, then opened from the account menu.
+    name: "usage",
+    sections: FOCUS_TREE,
+    settings: "usage",
+    width: 1500,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      // 30 days: the bars are capped at 34px and left-aligned by design, so the 7-day
+      // preset leaves most of the plot empty — 30 daily buckets fill it.
+      await new Promise((r) => setTimeout(r, 1200));
+      const btns = [...document.querySelectorAll("button")];
+      btns.find((el) => /^(30日|30 days)$/.test((el.textContent || "").trim()))?.click();
+    })()`,
+    settle: 2500,
+  },
+  {
     name: "split",
     sections: SHOW_TOOLS,
     width: 1600,
@@ -229,6 +251,7 @@ try {
         ${sections}
         localStorage.setItem("af-display-settings", ${JSON.stringify(JSON.stringify({ locale: LOCALE, theme: THEME }))});
         localStorage.setItem("af-tenant", "demo");
+        ${scene.settings ? `localStorage.setItem("af-settings-section", ${JSON.stringify(scene.settings)});` : ""}
         localStorage.setItem("af.layout2.demo@example.com.demo", ${JSON.stringify(JSON.stringify(scene.layout))});
       } catch (e) {}
     `;
