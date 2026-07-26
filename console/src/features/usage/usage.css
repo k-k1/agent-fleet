@@ -384,7 +384,9 @@
 }
 .ubd-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 1.1fr auto;
+  /* 値列を内容幅にすると、内訳カードごとにバーの始点がずれる。表示桁を
+     固定して、機能・エージェント・モデルの各カードでベースラインを揃える。 */
+  grid-template-columns: minmax(0, 1fr) 1.1fr 5ch;
   align-items: center;
   gap: 6px;
   background: none;
