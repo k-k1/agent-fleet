@@ -1,0 +1,223 @@
+package main
+
+// 使用量台帳（docs/46 / ADR0029 P1）。1行 = LLM 呼び出し1回、または折り込んだ
+// セッションの論理ターン1回。
+//
+// 非交渉の原則: プロンプト本文・応答本文は一切記録しない（トークン数とメタのみ）。
+//
+// 保存は ~/.local/share/agent-fleet/usage/raw/YYYY-MM-DD.jsonl（追記のみ・日次ローテ・
+// 既定90日保持）。~/.local は Workspace の recreate を跨いで残る（Workspace Guide）。
+// 1行 ≈ 200B なので、補助 100 呼び出し/日 + セッション 2,000 ターン/日 でも ~420KB/日。
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"sync"
+	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+)
+
+// feature — 消費源の列挙（ADR0029 §2 で凍結。Console 側で i18n する）。
+const (
+	usageFeatureAssistantChat    = "assistant.chat"     // 利用者のチャット1ターン
+	usageFeatureAssistantAsk     = "assistant.ask"      // 単発アドバイザリ（非永続）
+	usageFeatureAssistantAutoTur = "assistant.autoturn" // セッション完了報告への自動ターン
+	usageFeatureAssistantBridge  = "assistant.bridge"   // Discord/Slack からのオペレーター応答
+	usageFeatureCompact          = "compact"            // 要約引き継ぎ（docs/33）
+	usageFeatureTitleSession     = "title.session"      // セッション件名の提案
+	usageFeatureTitleChat        = "title.chat"         // 会話タイトルの提案
+	usageFeatureBranchSuggest    = "branch.suggest"     // ブランチ名の提案
+	usageFeatureSuggestSession   = "suggest.session"    // ミラーの ✨ 返信候補
+	usageFeatureSuggestChat      = "suggest.chat"       // チャットの ✨ 返信候補
+	usageFeatureSession          = "session"            // 対話セッション本体（転写から折り込み）
+	// usageFeatureUnknown はタグの付いていない呼び出し。新しい補助機能がタグを付け忘れても
+	// 必ず1行残す（無記録＝見えない消費、を作らないことをタグの正しさより優先する）。
+	usageFeatureUnknown = "unknown"
+)
+
+// trigger — ターンの注入元。
+const (
+	usageTriggerUser     = "user"
+	usageTriggerAuto     = "auto"
+	usageTriggerManual   = "manual"
+	usageTriggerSchedule = "schedule"
+	usageTriggerOperator = "operator"
+	usageTriggerBridge   = "bridge"
+	usageTriggerRecovery = "recovery"
+)
+
+// model_src — モデル次元をどこから得たかの自己申告（ADR0029 §4）。
+const (
+	usageModelReported = "reported"        // 実行側が報告した（claude / 転写の Turn.Model）
+	usageModelRequest  = "requested"       // こちらが要求した値しか分からない
+	usageModelUnknown  = "default_unknown" // CLI 側の既定に委ねた＝解決後のモデル不明
+)
+
+// measured — 「0」と「未計測」を絶対に混同させないための自己申告。
+const (
+	usageMeasuredExact   = "exact"   // in/out/cache すべて取れた
+	usageMeasuredPartial = "partial" // 一部だけ（copilot の outTok のみ 等）
+	usageMeasuredNone    = "none"    // トークンを報告しない CLI — 回数だけ数える
+)
+
+// usageRecord は台帳1行。JSON タグは Console/API と対の凍結ワイヤ（ADR0029 §1）。
+type usageRecord struct {
+	TS   string `json:"ts"`   // 呼び出し完了時刻（UTC・RFC3339）
+	Call string `json:"call"` // 呼び出し ID: 1呼び出しが複数モデル行に割れる時に束ねる
+	// Feature/Trigger/Ref/Verb は ctx の usageTag 由来（usage_tag.go）。
+	Feature string `json:"feature"`
+	Trigger string `json:"trigger,omitempty"`
+	// Origin/OriginConv はセッションの出自（ADR0029 §6）。ref から解決して行へ焼き込む
+	// ので、セッションが削除されても集計が壊れない。
+	Origin     string `json:"origin,omitempty"`
+	OriginConv string `json:"origin_conv,omitempty"`
+	// Kind は実際に実行したエージェント種別（要求ではなく実行結果）。
+	Kind     string `json:"kind"`
+	Model    string `json:"model,omitempty"`     // 正規モデル名（版を畳んだ系列キー）
+	ModelRaw string `json:"model_raw,omitempty"` // 報告された生 id（版込み）
+	ModelReq string `json:"model_req,omitempty"` // 要求した値（食い違い＝フォールバック検知）
+	ModelSrc string `json:"model_src,omitempty"`
+	Ref      string `json:"ref,omitempty"`  // セッション名 or 会話 id
+	Verb     string `json:"verb,omitempty"` // assistant.chat のサブ次元（translate|summarize）
+	// Sidechain は feature=session のサブ次元（サブエージェント / Workflow の消費）。
+	Sidechain bool `json:"sidechain,omitempty"`
+	// Idx は feature=session の論理ターン通し番号。(ref, idx) が折り込みの冪等キー。
+	Idx         int     `json:"idx,omitempty"`
+	In          int     `json:"in"`
+	Out         int     `json:"out"`
+	CacheRead   int     `json:"cread"`
+	CacheCreate int     `json:"ccreate"`
+	Spend       int     `json:"spend"`              // = in + ccreate + out（cache_read を含めない）
+	CostUSD     float64 `json:"cost_usd,omitempty"` // 実測が取れた時だけ（claude）
+	MS          int     `json:"ms,omitempty"`
+	OK          bool    `json:"ok"`
+	Measured    string  `json:"measured"`
+}
+
+// usageSpend は主指標。cache_read を含めないのは既存の get_session_usage / ミラーの
+// ContextBar と同じ定義に揃えるため（二つの画面が食い違わない方が、理論的な正しさより重い）。
+func usageSpend(in, create, out int) int { return in + create + out }
+
+// usageEnabled — 記録の全体スイッチ。AF_USAGE_RECORD=0 で完全に止める（P5 の設定 UI が
+// 書き換える口）。既定 ON。
+func usageEnabled() bool { return os.Getenv("AF_USAGE_RECORD") != "0" }
+
+// usageDir は台帳のルート。AF_USAGE_DIR はテスト用の差し替え口。
+func usageDir() string {
+	if v := os.Getenv("AF_USAGE_DIR"); v != "" {
+		return v
+	}
+	return filepath.Join(paths.AgentDataDir(), "usage")
+}
+
+func usageRawDir() string { return filepath.Join(usageDir(), "raw") }
+
+// usageRetentionDays — raw の保持日数（rollup は無期限・ADR0029 §7-3）。
+func usageRetentionDays() int {
+	if v := os.Getenv("AF_USAGE_RETENTION_DAYS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 90
+}
+
+var (
+	usageMu sync.Mutex // 追記と prune を直列化（同一プロセス内の並行ターン）
+	// usagePrunedAt は最後に保持期間 prune を走らせた時刻。追記のたびにディレクトリを
+	// 走査しないための節流 — 台帳は追記の方が桁違いに多い。
+	usagePrunedAt time.Time
+)
+
+// appendUsageRows は行群を当日のファイルへ追記する。1呼び出しが複数モデルに割れた行は
+// 同じ Call を共有した状態で渡ってくる（呼び出し回数を二重に数えないため）。
+// ベストエフォート: 台帳が書けないことでチャットやタイトル提案が失敗してはならない。
+func appendUsageRows(rows []usageRecord) {
+	if len(rows) == 0 || !usageEnabled() {
+		return
+	}
+	usageMu.Lock()
+	defer usageMu.Unlock()
+	dir := usageRawDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return
+	}
+	day := time.Now().UTC().Format("2006-01-02")
+	f, err := os.OpenFile(filepath.Join(dir, day+".jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	enc := json.NewEncoder(f)
+	for _, r := range rows {
+		_ = enc.Encode(r)
+	}
+	pruneUsageRawLocked()
+}
+
+// pruneUsageRawLocked は保持期間を過ぎた日次ファイルを消す。usageMu 保持前提。
+// 1時間に1回までしか走らない（追記のホットパスに ReadDir を積まない）。
+func pruneUsageRawLocked() {
+	now := time.Now()
+	if !usagePrunedAt.IsZero() && now.Sub(usagePrunedAt) < time.Hour {
+		return
+	}
+	usagePrunedAt = now
+	dir := usageRawDir()
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	cutoff := now.UTC().AddDate(0, 0, -usageRetentionDays())
+	for _, e := range ents {
+		name := e.Name()
+		if e.IsDir() || filepath.Ext(name) != ".jsonl" {
+			continue
+		}
+		// ファイル名の日付だけで判定する（mtime は copy/restore でずれる）。
+		day, err := time.Parse("2006-01-02", name[:len(name)-len(".jsonl")])
+		if err != nil {
+			continue // 想定外の名前には触らない
+		}
+		if day.Before(cutoff) {
+			_ = os.Remove(filepath.Join(dir, name))
+		}
+	}
+}
+
+// readUsageRows は台帳の全行を時系列で読む（テストと、後続フェーズの集計 API 用）。
+func readUsageRows() []usageRecord {
+	ents, err := os.ReadDir(usageRawDir())
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(ents))
+	for _, e := range ents {
+		if !e.IsDir() && filepath.Ext(e.Name()) == ".jsonl" {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names) // ファイル名が日付なので辞書順＝時系列
+	var out []usageRecord
+	for _, n := range names {
+		b, err := os.ReadFile(filepath.Join(usageRawDir(), n))
+		if err != nil {
+			continue
+		}
+		for _, ln := range bytes.Split(b, []byte("\n")) {
+			if len(bytes.TrimSpace(ln)) == 0 {
+				continue
+			}
+			var r usageRecord
+			if json.Unmarshal(ln, &r) == nil && r.Feature != "" {
+				out = append(out, r)
+			}
+		}
+	}
+	return out
+}

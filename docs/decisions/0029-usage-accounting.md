@@ -1,0 +1,149 @@
+# 0029. 使用量アカウンティング — 機能別トークン台帳を1本持つ
+
+- 状態: **採用（P0.5 是正済み・P1 台帳＋計装／P2 出自＋折り込み 実装中）**（2026-07-26）。
+- 関連: 設計・実測の本体は [docs/46](../46-usage-accounting.md)。
+  [0016](0016-i18n.md)（Console 文言は ja/en 両方）、[0021](0021-scheduled-execution.md)（`source=schedule`
+  — 本 ADR の `origin=schedule` の一次ソース）、[0022] はエージェントメモリ版管理（未マージ
+  `temp/s7in3bh`）、[0027] はオペレーター↔セッション相互作用図（未マージ `temp/sjoad3a`）が
+  使用中のため 0029 を採番。
+
+## 背景
+
+フリートは対話セッションの外側でも LLM を撃っている（アシスタントチャット、要約引き継ぎ、
+タイトル提案、ブランチ名提案、返信サジェスト、完了報告への自動ターン、ブリッジ応答）。
+これらは **現状ゼロ計測** で、実測すると「haiku だから誤差」という直感が外れていた
+（タイトル提案1回で入力側 16k トークン・$0.023 — docs/46 §0）。
+どの機能がいくら食っているかを1本の物差しで並べる台帳を持つ。
+
+## 決定
+
+### 1. 台帳1行 = LLM 呼び出し1回（または折り込んだセッションの論理ターン1回）
+
+**本文は一切記録しない**（トークン数とメタのみ）。これは非交渉。
+保存は `~/.local/share/agent-fleet/usage/raw/YYYY-MM-DD.jsonl`（追記のみ・日次ローテ）。
+`~/.local` は Workspace の recreate を跨いで残る。
+
+行のワイヤ形（凍結）— フィールドの意味は docs/46 §2:
+
+```jsonc
+{"ts","call","feature","trigger","origin","origin_conv","kind",
+ "model","model_raw","model_req","model_src","ref","verb","sidechain","idx",
+ "in","out","cread","ccreate","spend","cost_usd","ms","ok","measured"}
+```
+
+- **`spend` = in + ccreate + out**（cache_read を含めない）。既存の `get_session_usage` /
+  ミラーの ContextBar と同じ定義 — 二つの画面が食い違わないことを優先する。
+- **`kind` は「要求」ではなく「実行結果」を書く**。`chatProviderFor` / `oneShotHeadless` は
+  使えるバックエンドへフォールバックするので、要求値を書くと claude-less ワークスペースの
+  消費が全部 claude に化ける。
+- **1呼び出しが複数モデルに割れる場合はモデル毎に1行**、`call`（呼び出し ID）で束ねる。
+  集計の `calls` は distinct `call` で数える。
+- **`measured` で「0」と「未計測」を区別する**（`exact` | `partial` | `none`）。
+  トークンを報告しない CLI でも **回数だけは必ず数える**。
+
+### 2. enum（凍結。Console 側で i18n する）
+
+| 次元 | 値 |
+|---|---|
+| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `session` / `unknown` |
+| `trigger` | `user` / `auto` / `manual` / `schedule` / `operator` / `bridge` / `recovery` |
+| `origin` | `user` / `operator` / `schedule` / `handoff` / `unknown` |
+| `model_src` | `reported` / `requested` / `default_unknown` |
+| `measured` | `exact` / `partial` / `none` |
+
+`feature=unknown` を enum に含めるのは、**新しい補助機能がタグを付け忘れても必ず1行残す**ため。
+無記録（＝見えない消費）を作らないことを、タグの正しさより優先する。
+
+### 3. 収集は「ctx タグ ＋ プロバイダ層1点記録」
+
+usage を解析しているのはプロバイダ実装の内側で、そこは既にモデルもトークンも持っている。
+足りないのは「何のための呼び出しか」だけなので、`context.Context` に
+`usageTag{feature, trigger, ref, verb}` を載せ、**消費源は1箇所1行だけ変える**。
+記録はプロバイダ側の解析地点に集約する（claude send/sendStream・codex・opencode・cursor・agy・
+`oneShotHeadless`）。
+
+- 記録は各プロバイダ関数の先頭で `defer` に積み、**成功・失敗・早期 return の全経路で必ず1回**走る。
+  失敗行は `ok:false` / `measured:"none"` で残る（回数は数える）。
+- `oneShotHeadless` は**戻り値を広げず、内部で記録する**（docs/46 §3-a は kind と usage を返す案
+  だったが、記録点が関数の内側にある以上、呼び出し側4箇所を触る理由がない）。
+
+### 4. モデル次元は取れた粒度を自己申告する（実測で確定）
+
+実 CLI プローブ（2026-07-26・本ワークスペース）:
+
+| kind | トークン | モデル | コスト | `model_src` |
+|---|---|---|---|---|
+| claude | `usage.{input,output,cache_read_input,cache_creation_input}_tokens` ◎ | `modelUsage` の**キーが生 id**、値に `canonicalModel` ◎ | `total_cost_usd` / `modelUsage[].costUSD` ◎ **実測** | `reported` |
+| codex | `turn.completed.usage.{input,cached_input,cache_write_input,output,reasoning_output}_tokens` ◎ | **どのイベントにも無し**（`thread.started` にも無い） | 無し | `requested` / `default_unknown` |
+| cursor | `result.usage.{inputTokens,outputTokens,cacheReadTokens,cacheWriteTokens}` ◎ | **`result` に無し** | 無し | `requested` / `default_unknown` |
+| opencode | `step_finish` の `part.tokens` ○ | `modelID` を拾えれば `reported`、無ければ縮退 | 要実測 | 未確定 |
+| agy | 無し（素のテキスト出力） | — | 無し | `requested` |
+
+- **表示は `canonicalModel` 相当で束ね、生 id は `model_raw` に残す**（版が上がっても系列が
+  分断されない）。claude では `modelUsage` のキーが版込みの生 id、値の `canonicalModel` が正規名。
+- **`model_req` を別に持つ**。要求と報告の食い違い（過負荷時のフォールバック、alias 解決先の
+  変更、設定ミス）が1列の差分として出る。
+- opencode はこのワークスペースが未ログイン（`opencode auth list` = 0 credentials）で
+  ライブ検証できていない。**実装は `modelID` を拾い、取れなければ `requested`/`default_unknown`
+  へ縮退する**（推測でスキーマを固めない）。
+
+### 5. セッション本体は転写の差分折り込み（watermark）
+
+セッション消費は別プロセス（CLI）が出すので、転写を読んで台帳へ折り込む。
+
+- **論理ターンの通し番号（ordinal）を idx にする**。転写は追記のみなので kind に依らず安定で、
+  `(session, idx)` が冪等キーになる。各 kind の `Turn.Idx`（行番号）を使わないのは、
+  番号体系が kind ごとに違い watermark が混ざるため。
+- **開いている末尾グループは折り込まない**。折り込み後に同じ論理ターンへイベントが追加されると
+  入力スナップショットを二重に数えてしまう。次のユーザーターンが来て閉じた時、または
+  **セッション削除・アーカイブ時（`includeTrailing`）** に確定させる。
+- 契機は **fold-on-read**（`GET /sessions/usage` を 60 秒スロットルで間借り）＋
+  **fold-on-delete**。**常駐タイマーは増やさない**（メモリ制約ホスト・docs/26 の教訓）。
+- **初回バックフィルは自動**: watermark 0 から走るので、導入時の1回目で過去の全ターンが入る。
+  補助呼び出しは記録が無いので遡れない＝導入日以降。
+- 二重計上しない: 折り込み対象は**登録済みセッション（`session.Meta`）のみ**で、アシスタント
+  会話（`~/.claude/projects` に転写を書く）は含まない。
+
+### 6. セッションの出自（`origin`）を `session.Meta` に持つ
+
+`trigger`（ターン注入元）とは別軸。「自分で開いたセッション」と「オペレーターが勝手に立てた
+セッション」では消費の意味が違う — 後者は自動走行・定時実行と組み合わさると**無人で増える**。
+
+- `Meta.Origin` / `Meta.OriginConv` を追加。**Console = `user`（既定）/ MCP `create_session` =
+  `operator`＋作成元の会話 slug / スケジュール = `schedule` / handoff = `handoff`**。
+  recreate は元の出自を継承し、**フィールドを持たない既存セッションは `unknown`**
+  （`0` でも `user` でもない、を守る）。
+- **スケジュールは CP を触らずに導出する**: CP scheduler は既に `source=schedule` /
+  `schedule-manual` を create に載せている（docs/38）ので、サーバ側でそこから解決する。
+  新しいワイヤ項目を CP に増やさない。
+- **補助呼び出しにも焼き込む**: あるセッションのタイトル提案・返信サジェストは、`ref` から
+  そのセッションの origin を解決して**行に焼き込む**（セッション削除後も集計が壊れない。
+  他の次元と同じ思想）。会話スコープの機能（`assistant.*`）の origin は空 — 出自の軸は
+  セッションのものだから。
+
+### 7. §9 の未決 → 決定（すべて推奨案）
+
+1. **コスト**: `cost_usd` は claude で実測が取れた時だけ記録する。UI では
+   **「API 換算相当額（claude のみ実測）」と明記した副次表示**に留める（サブスク定額で $ を
+   主役にすると誤読を招く）。主指標は `spend`。
+2. **セッション本体を含める**: 含める（`feature=session`）。補助だけ見たい時は feature フィルタ。
+3. **保持**: raw 90日（`AF_USAGE_RETENTION_DAYS`）・rollup 無期限。
+4. **CP 横断集計**: v1 はワークスペース内で閉じる。P6（任意）で集計値のみ CP へ。
+5. UI は設定モーダルの新タブ（docs/46 §5 で決着済み。`features/usage/UsageView.tsx` を
+   モーダル非依存に切り、ペイン昇格の余地だけ残す）。
+
+### 8. 段階
+
+rollup（`usage/rollup/YYYY-MM.json`）と `/usage/series` は **P3 で同時に入れる**。
+読み手のいない集計を先に作らない。P1 は raw 台帳＋計装、P2 は出自＋折り込みまで。
+
+## 結果
+
+- 「どの機能・どのエージェント・どのモデルが食っているか」が1つの物差しで並ぶ。
+  最初に暴くはずの穴は docs/46 §2-b の**既定モデル問題**（`AF_TITLE_MODEL_{CODEX,OPENCODE,CURSOR}`
+  未設定なら CLI 既定＝通常フラッグシップで補助呼び出しが走る）。
+- 計測自体のコストは 0 — 既存の CLI 出力を解析するだけで、追加の LLM 呼び出しはしない。
+- **限界**: サブスク枠はトークンから逆算できない（枠の正は使用量チップ＝statusline `rate_limits`）。
+  rtk の節約量は別軸（台帳が測るのは rtk 適用「後」の実消費）。
+  copilot は `outTok` のみ・kiro/cursor/agy は転写にトークンが無い＝`measured` で正直に出す。
+- **プライバシー**: 本文非記録。台帳はワークスペース内に閉じる。
