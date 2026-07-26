@@ -70,3 +70,46 @@ func itoa(n int) string {
 	}
 	return string(b)
 }
+
+// Schedule-driven injections (docs/38) tag with their own origins — and a slash-command
+// injection must tag its <command-*> tag-block turn (either tag order), since the
+// transcript never contains the raw "/scout" text that was recorded.
+func TestScheduleInjectionTaggingCommandForm(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	recordInjection("slot04", "/scout", turnSourceSchedule)
+	recordInjection("slot04", "/review 今日の差分", turnSourceScheduleManual)
+
+	turns := []transcript.Turn{
+		// Skill invocation (2.1.215 実測): <command-message> FIRST.
+		{Role: "user", Text: "<command-message>scout</command-message>\n<command-name>/scout</command-name>"},
+		// Built-in style: <command-name> first, args carried separately.
+		{Role: "user", Text: "<command-name>/review</command-name><command-message>review</command-message><command-args>今日の差分</command-args>"},
+		// Prose merely quoting the tag must NOT match (leading-tag guard).
+		{Role: "user", Text: "この <command-name>/scout</command-name> という記録について教えて"},
+		{Role: "user", Text: "/scout"}, // raw text form still matches directly
+	}
+	tagInjectedTurns("slot04", turns)
+
+	want := []string{turnSourceSchedule, turnSourceScheduleManual, "", turnSourceSchedule}
+	for i, w := range want {
+		if turns[i].Source != w {
+			t.Errorf("turn %d (%q): Source = %q, want %q", i, turns[i].Text, turns[i].Source, w)
+		}
+	}
+}
+
+// injectionSource whitelists what callers may record: schedule origins pass through,
+// anything unknown (or empty) degrades to operator — no arbitrary badge strings.
+func TestInjectionSourceWhitelist(t *testing.T) {
+	for in, want := range map[string]string{
+		"schedule":        turnSourceSchedule,
+		"schedule-manual": turnSourceScheduleManual,
+		"":                turnSourceOperator,
+		"evil-badge":      turnSourceOperator,
+	} {
+		if got := injectionSource(in); got != want {
+			t.Errorf("injectionSource(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

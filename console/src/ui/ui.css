@@ -185,6 +185,25 @@
     width: 100%;
     max-height: calc(100dvh - 24px);
   }
+  /* The agent picker can contain every connected provider. Keep cards large
+     enough to tap, and make the remaining choices reachable by a direct
+     horizontal swipe instead of shrinking their labels into illegibility. */
+  .ui-seg.big {
+    justify-content: flex-start;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .ui-seg.big::-webkit-scrollbar {
+    display: none;
+  }
+  .ui-seg.big .seg-btn {
+    flex: 0 0 128px;
+    min-width: 128px;
+    scroll-snap-align: start;
+  }
 }
 
 /* ---- Confirm ---- */

@@ -41,7 +41,7 @@ jobs:
     timeout-minutes: 10
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      TITLE: "CLI version drift: Dockerfile pins are behind npm latest"
+      TITLE: "CLI version drift: Dockerfile pins are behind public latest"
     steps:
       - uses: actions/checkout@v4
 
@@ -62,7 +62,7 @@ jobs:
         id: issue
         run: |
           num="$(gh issue list --state open --search "in:title CLI version drift" --json number,title \
-                 --jq ".[] | select(.title == \"$TITLE\") | .number" | head -1)"
+                 --jq '.[] | select(.title | startswith("CLI version drift:")) | .number' | head -1)"
           echo "num=$num" >> "$GITHUB_OUTPUT"
 
       - name: open / update tracking issue
@@ -71,7 +71,7 @@ jobs:
           # Build the body with quoted heredocs (don't let the shell interpret the report text).
           {
             cat <<'HEAD'
-          The ARG pins in `workspace/Dockerfile` are behind npm latest.
+          The ARG pins in `workspace/Dockerfile` are behind their public release sources.
 
           ```
           HEAD
@@ -79,16 +79,13 @@ jobs:
             cat <<'TAIL'
           ```
 
-          **Workspaces opted into self-update are running these latest versions** (what CI
-          verifies is the pinned versions). Check that no upstream breakage has slipped in:
+          **Self-update-enabled workspaces may be running these latest versions** while the
+          baked fallback remains pinned. Check that no upstream breakage has slipped in:
 
-          1. Run `claude --version` on a real workspace to confirm the effective version
-             (don't trust the pin).
-          2. Re-verify the state-detection footer contract — recapture real panes following
-             `workspace/agent/internal/tmuxx/testdata/footers/SOURCE.txt` and diff against
-             the golden corpus.
-          3. If all is well, bump the ARGs (= bring what CI verifies back in line with the
-             live fleet).
+          1. Inspect the corresponding `cli-release-watch` dispatch/result.
+          2. For a CLI without an unattended contract, run its signed-in fleet TUI/mirror
+             probe from the companion issue.
+          3. If all is well, bump the ARGs and their architecture checksums where applicable.
 
           <sub>Auto-updated by cli-drift.yml. Closes automatically once the pins catch up
           to latest.</sub>

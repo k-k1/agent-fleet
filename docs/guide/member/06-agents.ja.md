@@ -163,7 +163,7 @@ GitHub を連携すると自動的に「接続済み」になります**（連�
 
 ## Kiro
 
-**kiro**（Kiro CLI・旧 Amazon Q Developer CLI）は「エージェント」タブの **Kiro** カードで
+**kiro**（Kiro・旧 Amazon Q Developer CLI）は「エージェント」タブの **Kiro** カードで
 **「Kiro にサインイン」** を押します。**device-flow** のサインインで、確認コード付きの
 認可リンクが表示されるので、ブラウザで開いて承認します（Builder ID / Google / GitHub
 など）。承認するとカードにアカウントのメールとともに「接続済み」が表示されます。API キーでの

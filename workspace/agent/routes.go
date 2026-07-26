@@ -39,6 +39,10 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /cleanup/archives", handleListCleanupArchives)
 	mux.HandleFunc("POST /cleanup/archives/{id}/restore", handleRestoreCleanupArchive)
 	mux.HandleFunc("DELETE /cleanup/archives/{id}", handlePurgeCleanupArchive)
+	// 削除ロック（docs/45）: セッションを削除保護に固定/解除する。効くのは削除系
+	// （/stop のメタ忘却・DELETE・TTL 自動 prune・作業コピー削除の巻き添え）だけで、
+	// halt / archive は従来どおり通る。
+	mux.HandleFunc("POST /sessions/{name}/lock", handleSessionLock)
 	mux.HandleFunc("POST /sessions/{name}/archive", handleArchiveSession)
 	mux.HandleFunc("POST /sessions/{name}/restore", handleRestoreSession)
 	// Programmatic drive I/O for the MCP tools (docs/0006 P3-6 E).
@@ -47,6 +51,11 @@ func buildMux() *http.ServeMux {
 	// tui は tmux 経路へ委譲、managed は ThreadHandle へ（P2: opencode / P3: codex）。
 	mux.HandleFunc("POST /sessions/{name}/turn", handleSessionTurn)
 	mux.HandleFunc("POST /sessions/{name}/respond", handleSessionRespond)
+	// オペレーターの AUQ 回答（docs/30）: 質問フォーム全体を choices（1-based）で
+	// 一括回答。TUI claude はキー駆動、managed は Interaction 応答に落ちる。
+	mux.HandleFunc("POST /sessions/{name}/answer-question", handleSessionAnswerQuestion)
+	// オペレーターのプラン承認/却下（docs/30）: approve=Enter、reject=中断＋feedback 送信。
+	mux.HandleFunc("POST /sessions/{name}/plan-respond", handleSessionPlanRespond)
 	// ThreadSettings の動的更新（docs/27 §9.4-3、managed 専用 — 稼働中セッションの
 	// モデル/effort/モード変更）。tui は従来どおり /input のキー操作。
 	mux.HandleFunc("GET /sessions/{name}/settings", handleSessionSettingsGet)
@@ -93,6 +102,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /chat/conversations/{id}/title/suggest", handleChatSuggestTitle)
 	mux.HandleFunc("POST /chat/conversations/{id}/suggest-replies", handleChatSuggestReplies) // LLM 返信サジェスト v2（preview 専用）
 	mux.HandleFunc("DELETE /chat/conversations/{id}", handleChatDelete)
+	mux.HandleFunc("POST /chat/conversations/{id}/lock", handleChatLock) // 削除ロック（docs/45）
 	mux.HandleFunc("POST /chat/conversations/{id}/messages", handleChatSend)
 	mux.HandleFunc("POST /chat/conversations/{id}/stream", handleChatStream)   // SSE (Phase B)
 	mux.HandleFunc("POST /chat/conversations/{id}/stop", handleChatStop)       // cancel a detached in-flight turn
@@ -102,6 +112,9 @@ func buildMux() *http.ServeMux {
 	// Assistant-to-assistant consult (docs/19): af_write orchestrators' ask_assistant tool
 	// hits this via the local stdio MCP. Internal (Agent REST) only — not proxied by the CP.
 	mux.HandleFunc("POST /chat/ask", handleChatAsk)
+	// スケジュール発のアシスタント発火（docs/38 session_mode=assistant）: CP スケジューラが
+	// 会話（UUID/slug）へ 1 ターンを同期実行する。runOperatorTurn 委譲（assistant_turn.go）。
+	mux.HandleFunc("POST /assistant-turns", handleAssistantTurn)
 	// Session report kick (docs/30): the session-status hook / record-exit process posts
 	// here when an operator-armed session reaches an awaiting-input / abnormal-exit
 	// state. Internal (Agent REST) only — not proxied by the CP.
@@ -123,6 +136,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /repos", handleListRepos)
 	mux.HandleFunc("POST /repos", handleCloneRepo)
 	mux.HandleFunc("DELETE /repos/{name}", handleDeleteRepo)
+	mux.HandleFunc("POST /repos/{name}/lock", handleRepoLock) // 削除ロック（docs/45）
 	mux.HandleFunc("GET /repos/{name}/status", handleRepoStatus)
 	mux.HandleFunc("GET /repos/{name}/branches", handleRepoBranches)
 	mux.HandleFunc("DELETE /repos/{name}/branch", handleDeleteBranch) // ?branch=<name> (may contain "/")

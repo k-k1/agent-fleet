@@ -10,18 +10,17 @@
 # claude の状態検出が 3 回とも CI 緑のまま実フリートで壊れたのは、CI が pinned しか
 # 見ていなかったから（詳細は deploy/local/cli-drift-check.sh の頭）。
 #
-# 注: claude の TUI 契約（claude-tui-contract.yml）はこの action を使わない。あちらは
-# 実ワークスペースイメージを build してコンテナ内で TUI を起動する必要があり、runner に
-# CLI を入れる本 action とは戦略が違う（意図的な非対称）。
+# claude の TUI 契約もこの action を使う。production の状態判定は Go test が実 tmux
+# pane 上の実 CLI に直接当てるため、巨大なWorkspaceイメージをbuildする必要はない。
 name: setup-agent-cli
 description: Go / Node / tmux と指定エージェントの実 CLI を runner に入れる（contract・ドリフト検知テスト用）
 
 inputs:
   agent:
-    description: "claude | codex | opencode"
+    description: "claude | codex | opencode | copilot | agy | cursor | kiro"
     required: true
   version:
-    description: "pinned（Dockerfile の ARG ピン）| latest（実フリートが走らせる版）| 明示の版（例 0.144.3）"
+    description: "pinned（Dockerfile の ARG ピン）| latest（実フリートが走らせる版）| npm CLIのみ明示の版（例 0.144.3）"
     required: false
     default: pinned
 
@@ -45,9 +44,9 @@ runs:
       with:
         node-version: 22
 
-    - name: install tmux
+    - name: install tmux and archive tools
       shell: bash
-      run: sudo apt-get update && sudo apt-get install -y tmux
+      run: sudo apt-get update && sudo apt-get install -y tmux unzip
 
     - name: resolve ${{ inputs.agent }} version
       id: resolve
@@ -57,13 +56,23 @@ runs:
         VERSION: ${{ inputs.version }}
       run: |
         set -euo pipefail
-        # agent -> Dockerfile の ARG 名 / npm パッケージ名
+        # agent -> Dockerfile の ARG 名 / npm パッケージ名。npm 以外は install
+        # step が公式の versioned archive / manifest を使う（Dockerfile と同じ供給元）。
         # （deploy/local/cli-drift-check.sh の TARGETS と同じ対応表。片方だけ足すとズレる）
         case "$AGENT" in
           claude)   arg=CLAUDE_CODE_VERSION; pkg="@anthropic-ai/claude-code" ;;
           codex)    arg=CODEX_VERSION;       pkg="@openai/codex" ;;
           opencode) arg=OPENCODE_VERSION;    pkg="opencode-ai" ;;
-          *) echo "::error::agent 入力が不正: '$AGENT'（claude | codex | opencode）"; exit 1 ;;
+          copilot)  arg=COPILOT_VERSION;     pkg="@github/copilot" ;;
+          agy)      arg=AGY_VERSION;         pkg="" ;;
+          cursor)   arg=CURSOR_VERSION;      pkg="" ;;
+          kiro)     arg=KIRO_VERSION;        pkg="" ;;
+          *) echo "::error::agent 入力が不正: '$AGENT'（claude | codex | opencode | copilot | agy | cursor | kiro）"; exit 1 ;;
+        esac
+
+        case "$AGENT:$VERSION" in
+          agy:pinned|agy:latest|cursor:pinned|cursor:latest|kiro:pinned|kiro:latest) ;;
+          agy:*|cursor:*|kiro:*) echo "::error::$AGENT の version は pinned または latest のみ対応"; exit 1 ;;
         esac
 
         if [ "$VERSION" = pinned ]; then
@@ -86,10 +95,108 @@ runs:
         AGENT: ${{ inputs.agent }}
         PKG: ${{ steps.resolve.outputs.pkg }}
         SPEC: ${{ steps.resolve.outputs.spec }}
+        VERSION_INPUT: ${{ inputs.version }}
       run: |
         set -euo pipefail
-        npm install -g "$PKG@$SPEC"
-        v="$("$AGENT" --version 2>&1 | head -1)"
+        bin_dir="$RUNNER_TEMP/agent-cli-bin"
+        mkdir -p "$bin_dir"
+        case "$AGENT" in
+          claude|codex|opencode|copilot)
+            npm install -g "$PKG@$SPEC"
+            cmd="$AGENT"
+            ;;
+          agy)
+            if [ "$VERSION_INPUT" = latest ]; then
+              # The installer runs `agy` as its own final sanity check after
+              # placing it in ~/.local/bin.  Make that path visible *before*
+              # entering the installer; otherwise its internal check exits 127
+              # and set -e prevents this action from reaching the later export.
+              export PATH="$HOME/.local/bin:$PATH"
+              curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir "$bin_dir"
+              # The official latest installer currently ignores --dir for its
+              # final binary and writes ~/.local/bin/agy after its own setup.
+              # Keep the runner's current shell and later steps on that actual
+              # path; GITHUB_PATH alone is not applied until the next step.
+              echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+              export PATH="$HOME/.local/bin:$PATH"
+            else
+              case "$(uname -m)" in
+                x86_64|amd64) asset=linux-x64/cli_linux_x64.tar.gz; sha_arg=AGY_SHA256_X64 ;;
+                aarch64|arm64) asset=linux-arm/cli_linux_arm64.tar.gz; sha_arg=AGY_SHA256_ARM64 ;;
+                *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+              esac
+              sha="$(sed -n "s/^ARG $sha_arg=//p" workspace/Dockerfile | head -1)"
+              release_build="$(sed -n 's/^ARG AGY_RELEASE_BUILD=//p' workspace/Dockerfile | head -1)"
+              test -n "$sha" && test -n "$release_build"
+              tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+              curl -fsSL "https://storage.googleapis.com/antigravity-public/antigravity-cli/${SPEC}-${release_build}/${asset}" -o "$tmp/agy.tgz"
+              echo "$sha  $tmp/agy.tgz" | sha256sum -c -
+              tar -xzf "$tmp/agy.tgz" -C "$tmp" antigravity
+              install -m 0755 "$tmp/antigravity" "$bin_dir/agy"
+            fi
+            echo "$bin_dir" >> "$GITHUB_PATH"
+            cmd=agy
+            ;;
+          cursor)
+            if [ "$VERSION_INPUT" = latest ]; then
+              curl -fsSL https://cursor.com/install | bash
+            else
+              case "$(uname -m)" in
+                x86_64|amd64) asset=x64; sha_arg=CURSOR_SHA256_X64 ;;
+                aarch64|arm64) asset=arm64; sha_arg=CURSOR_SHA256_ARM64 ;;
+                *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+              esac
+              sha="$(sed -n "s/^ARG $sha_arg=//p" workspace/Dockerfile | head -1)"
+              test -n "$sha"
+              tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+              curl -fsSL "https://downloads.cursor.com/lab/${SPEC}/linux/${asset}/agent-cli-package.tar.gz" -o "$tmp/cursor.tgz"
+              echo "$sha  $tmp/cursor.tgz" | sha256sum -c -
+              dir="$HOME/.local/share/cursor-agent/versions/$SPEC"
+              mkdir -p "$dir"
+              tar --strip-components=1 -xzf "$tmp/cursor.tgz" -C "$dir"
+              mkdir -p "$HOME/.local/bin"
+              ln -sf "$dir/cursor-agent" "$HOME/.local/bin/cursor-agent"
+            fi
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.local/bin:$PATH"
+            cmd=cursor-agent
+            ;;
+          kiro)
+            case "$(uname -m)" in
+              x86_64|amd64) asset=kirocli-x86_64-linux.zip; arch=x86_64; sha_arg=KIRO_SHA256_X64 ;;
+              aarch64|arm64) asset=kirocli-aarch64-linux-musl.zip; arch=aarch64; sha_arg=KIRO_SHA256_ARM64 ;;
+              *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+            esac
+            if [ "$VERSION_INPUT" = latest ]; then
+              manifest="$(mktemp)"
+              curl -fsSL https://prod.download.cli.kiro.dev/stable/latest/manifest.json -o "$manifest"
+              read -r download sha < <(jq -r --arg arch "$arch" '.packages[] | select(.os == "linux" and .architecture == $arch and .fileType == "zip" and .variant == "headless") | "\(.download) \(.sha256)"' "$manifest" | head -1)
+              rm -f "$manifest"
+              test -n "${download:-}" && test -n "${sha:-}"
+              url="https://prod.download.cli.kiro.dev/stable/$download"
+            else
+              sha="$(sed -n "s/^ARG $sha_arg=//p" workspace/Dockerfile | head -1)"
+              test -n "$sha"
+              url="https://prod.download.cli.kiro.dev/stable/${SPEC}/${asset}"
+            fi
+            tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+            curl -fsSL "$url" -o "$tmp/kiro.zip"
+            echo "$sha  $tmp/kiro.zip" | sha256sum -c -
+            unzip -q "$tmp/kiro.zip" -d "$tmp"
+            for binary in kiro-cli kiro-cli-chat kiro-cli-term; do
+              install -m 0755 "$tmp/kirocli/bin/$binary" "$bin_dir/$binary"
+            done
+            echo "$bin_dir" >> "$GITHUB_PATH"
+            cmd=kiro-cli
+            ;;
+        esac
+        # GITHUB_PATH applies only to subsequent Actions steps.  The version
+        # assertion below is in this same composite-action step, so custom
+        # archive installs must also update this shell's PATH now.  npm installs
+        # are already globally visible; prepending an empty-or-owned bin dir is
+        # harmless for all agents.
+        export PATH="$bin_dir:$PATH"
+        v="$("$cmd" --version 2>&1 | head -1)"
         echo "version=$v" >> "$GITHUB_OUTPUT"
         echo "effective $AGENT: $v"
         # 実効版はジョブログを遡らなくても分かるようにサマリへ出す（ドリフト調査の起点）。

@@ -1,11 +1,11 @@
-# 43. Kiro CLI エージェント種別（kind=kiro・第8種）— Track 0 実測記録
+# 43. Kiro エージェント種別（kind=kiro・第8種）— Track 0 実測記録
 
-status: Track 0（着工前プローブ）完了＋方針4点決定（2026-07-24）。**Track A（workspace agent 本体・read 層＋TUI）実装完了（2026-07-24・temp/snznjpk）**。**Track B（配備・オンデマンド導入＋焼き込みノブ）実装完了（2026-07-24・temp/snznjpk・§7）**。**Track C（CP＋Console 配線・色3種同時変更）実装完了（2026-07-24・temp/snznjpk・§8）**。**Track A2（managed driver・`kiro-cli acp`）実装完了（2026-07-24・temp/kiro-track-a2・§9）**。**Track A/B/C/A2 は全レビュー修正込みで develop へマージ済み（merge 8ab548b8）**。**Track D（ライブ使用量の UI 配線）実装完了（2026-07-24・temp/kiro-track-d・§10）＋ADR0026 起票**。
+status: Track 0（着工前プローブ）完了＋方針4点決定（2026-07-24）。**Track A（workspace agent 本体・read 層＋TUI）実装完了（2026-07-24・temp/snznjpk）**。**Track B（配備・オンデマンド導入＋焼き込みノブ）実装完了（2026-07-24・temp/snznjpk・§7）**。**Track C（CP＋Console 配線・色3種同時変更）実装完了（2026-07-24・temp/snznjpk・§8）**。**Track A2（managed driver・`kiro-cli acp`）実装完了（2026-07-24・temp/kiro-track-a2・§9）**。**Track A/B/C/A2 は全レビュー修正込みで develop へマージ済み（merge 8ab548b8）**。**Track D（ライブ使用量の UI 配線）実装完了（2026-07-24・temp/kiro-track-d・§10）＋ADR0026 起票**。**ピン追従の修正（導入済み kiro が新ピンへ上がらない不具合）完了（2026-07-25・temp/syzjob2・§11）**。
 関連: docs/40（cursor・章立てのテンプレ）/ docs/36（copilot）/ docs/32（agy）/ decisions/0015（managed driver）/ decisions/0026（本件の ADR）。
 
 ## 0. 対象と背景
 
-- **Kiro CLI** = 旧 Amazon Q Developer CLI（2025-11-17 改名）。AWS の Kiro（IDE）のターミナル版。
+- **Kiro** = 旧 Amazon Q Developer CLI（2025-11-17 改名）。AWS の Kiro（IDE）のターミナル版。
 - 実測対象: **2.14.1**（stable、BUILD_DATE 2026-07-23）。実バイナリを本 Workspace（Debian 12 / x86_64 / glibc 2.36）へ導入し、認証（Builder ID free / device flow）込みで全プローブを実施。
 - CLI 本体は非 OSS（旧 aws/amazon-q-developer-cli は MIT/Apache で公開継続・系譜の参照用）。issue は kirodotdev/Kiro。
 - `q`/`qchat` は kiro-cli を呼ぶ 65B シムとして同梱（後方互換）。`--v3`（次世代エンジン）のバナーが出るが v1 対象外。
@@ -82,7 +82,7 @@ status: Track 0（着工前プローブ）完了＋方針4点決定（2026-07-24
 | 項目 | 提案 | 備考 |
 |---|---|---|
 | kind スラグ | `kiro` | session.KindKiro |
-| 3段命名 | label=`Kiro` / displayName=`Kiro CLI` / assistantName=`Kiro` / short=`ki` | 表示順はユーザー決定待ち |
+| 表示名 | label=`Kiro` / displayName=`Kiro` / assistantName=`Kiro` / short=`ki` | 表示順はユーザー決定待ち |
 | 色 | AWS系オレンジ〜アンバー帯（--kind-kiro、dark/light、既存8色と非衝突を tokens.css で確定） | copilot 紫衝突の教訓 → 着手前に twin 全ファイル確定 |
 | 実行方式 | v1 から Terminal + Managed（per-session child `kiro-cli acp`、cursor/copilot 同型） | resume は session/load 実測合格済み |
 | 認証 | v1 login-only（device flow start→poll、stdout スクレイプ）。API キーは Track D | whoami を状態プローブに |
@@ -174,7 +174,7 @@ Track A では**設定固定の冪等ヘルパ（`ensureSettings`）だけ先行
 - **types/session.ts**: SessionKind union に "kiro"、SESSION_KINDS を copilot の後に挿入、
   ProviderConn `kiro?`。
 - **registry.ts descriptor**（caps 全項目を根拠明示）: icon=`compass`（ユーザー確認済み・spec/guide 志向）、
-  label=Kiro/displayName=Kiro CLI/short=ki/launchSuffix=-ki。**managedDriver:false**（A2 未）、
+  label=Kiro/displayName=Kiro/short=ki/launchSuffix=-ki。**managedDriver:false**（A2 未）、
   caps= chat/transcript/model/tuiStartMode/runsInDir/launchableFromRepo。effort/tuiEffort=false
   （--effort はあるがカタログに effort メタ無し・per-model 未検証＝picker 出さない）、contextBar=false
   （転写にトークン無し・ライブ使用量 _kiro.dev/metadata は A2）、planMode=false（3 モード循環で
@@ -303,3 +303,60 @@ metadata の正確な shape を再プローブし確定した。
   `kiro-cli acp` で 1 ターン完了後 `ManagedContext` が `pct=1.23% window=1000000(auto=1M・カタログ由来)
   credits=0.0295 model=auto` を返し ContextFill が非 nil を実測 PASS（19s）**。残=実フリート再ビルド後の実機
   目視（ミラーの ContextBar 描画・複数ターンでの pct 推移）。
+
+## 11. ピン追従の修正（2026-07-25・temp/syzjob2）— 導入済み kiro が新ピンへ更新されない
+
+**症状**（設定 > ツールのバージョン表）: `kiro` が 実効 2.14.1 / イメージ (2.14.2) / ~/.local 2.14.1。
+イメージのピンを 2.14.2 に上げて再ビルドしても、既に導入済みユーザーの kiro が永久に 2.14.1 のまま。
+
+**真因**: kiro だけ「ピンを前進させる経路が存在しなかった」。他 CLI と違い、
+(1) `~/.local` の実体は home ボリュームなのでイメージ再ビルドでは replace されず、
+(2) 855MB のため lean の boot-install ループにも入れておらず（§7）、
+(3) 自己更新（`app.disableAutoupdates`）は entrypoint／`pinKiroSettings`／`ensureSettings` の三重で封殺しており、
+(4) 唯一の導入経路である起動ガードが `command -v kiro-cli >/dev/null 2>&1 || workspace-agent install-kiro`
+＝**「不在」しか見ない**（`installKiro` も冒頭で presence 判定だけして即 return）。
+結果、最初に入った版が終着点になる。self-update opt-in（ON）も kiro を対象にしていない（npm4種/agy/rtk/cursor のみ）ので救われない。
+
+**修正**（`install_kiro.go` / `kiro/program.go` / `kiro_install_http.go`）:
+- **判定を presence から「ピンとの一致」へ**（`kiroCheck` → `kiroMissing`/`kiroCurrent`/`kiroStale`/`kiroUnknownVer`）。
+  導入版 ≠ versions.json ピンなら再導入（**上げも下げも**＝ピンが「検証済みの版」という契約側が正）。
+  - `kiroUnknownVer`（`--version` が版を返さない）は**据え置き＋WARN**。554MB の再 DL を毎起動空回りさせない。
+  - ピンが読めない（versions.json 無しの手組みイメージ）時は比較対象が無いので presence 時代の挙動へ縮退（触らない）。
+- **起動ガードを無条件化**: `workspace-agent install-kiro --if-needed; kiro-cli chat …`。
+  `--if-needed` は「一致なら**完全に無言**で exit 0」（ペインに 1 行も出さない＝TUI 文字列契約に触らない）、
+  ずれていればこれまで通りペインに DL 進捗を出して再導入。`;` 連結なので失敗しても既存版で起動は続く。
+- **毎起動コストをゼロ近くに**: 導入時に `~/.local/bin/.kiro.version` マーカーを書き（agy の `.agy.version` と同型）、
+  一致判定は **stat だけ**で済ませる。マーカーが無い／ずれている時のみ実バイナリを `--version` で probe するので、
+  マーカーの陳腐化（本修正以前の導入・焼き込み `/usr/local` 版）で誤 DL することはない。
+  `pinKiroSettings` も `~/.kiro/settings/cli.json` に両キー true が既にあれば skip（855MB バイナリの exec×2 を毎起動やらない）。
+- **上書き設置の安全性**: 更新時の rename は既存ファイルへ着地するが、rename はディレクトリエントリの差し替えなので
+  **旧版で走行中の kiro セッションは旧 inode を掴んだまま無傷**（in-place 書き込みと違い ETXTBSY も無い）。
+  中断耐性は §7 の設計そのまま（kiro-cli を最後に rename／マーカーは設置前に削除するので半端な「新版です」表示は残らない）。
+  ピーク disk は「旧設置分＋新展開分」になる。
+- **HTTP 経路**（接続カードの「インストール」）も presence 判定 → ピン一致判定へ（`kiroInstallCurrent`）。stale は "done" と答えず再導入に回る。
+
+**検証**: `go build ./...`／`go vet` 緑、workspace/agent test **668 件緑**（新規=ピンドリフト検出／マーカー fast path ／
+unknown 版据え置き／ピン欠落時の縮退／起動ガード文字列）。実 855MB の再 DL 通しは未実施（実フリート再ビルド後の実機目視が残）。
+
+**未修正の同型リスク（別件・要判断）**: lean 配布の boot-install（entrypoint）も `cli_present` の presence 判定なので、
+self-update OFF のまま npm4種/rtk/agy/cursor のピンを上げても `~/.local` の boot-install 品は前進しない。
+kiro と違い ON にすれば latest へ追従するため露見しにくいが、構造は同じ。
+
+### 11.1 更新 UI（接続カード・2026-07-25）
+
+自動追従（起動ガード）だけだと「気づかないうちに起動が数分止まる」ので、**任意のタイミングで押せるボタン**を接続カードに足した。
+
+- **導入と認証の関係（前提の再確認）**: 認証時に導入は走らない。`kiro.Status()` はバイナリ不在で `supported=false`＝
+  Console 上は「未導入」表示で、ログイン（`kiro-cli login`）自体がバイナリを要求する。したがって初回導線は
+  **設定 > エージェント > Kiro >「Kiro を導入」→ サインイン（device flow）→ 起動** の順。`available` が connected ゲートのため
+  未導入のうちは起動モーダルに kiro が出ず、起動ガードの自動導入は「home を掃除した」等で消えた時の保険という位置づけ。
+- **GET `/connections/kiro/install` を拡張**（新ルート追加ではない＝CP 許可リスト変更不要）: `{state, error}` に
+  `installed / version / pin / updateAvailable` を追加。`updateAvailable` は `kiroStale` の時だけ true
+  （版が読めない・ピンが無い時は false ＝ 憶測で 554MB を促さない）。install 実行中は版の読み取り自体を省く（tree が入れ替え中）。
+- **POST は据え置き**（stale なら再導入に回る＝§11）。カードは install と同じ state machine をポーリングする。
+- **Console（AgentsTab の KiroCard）**: 接続の有無に関わらず（＝バイナリの話であって auth の話ではない）
+  「新しい版が利用できます（導入済み {cur} → ピン {pin}）」＋「Kiro を更新」ボタンを表示。更新中は
+  「実行中の Kiro セッションはそのまま動き続けます（次回起動から新しい版）」と明示（rename 差し替えの実挙動どおり）。
+  i18n は ja/en 4 キー（`agents.kiro_update_avail` / `_update` / `_update_note` / `_updating`）。
+- **検証**: workspace/agent test 669 緑（GET ペイロードのドリフト報告テスト追加）。Console typecheck／i18n:lint／vitest 429 緑。
+  実描画（カードに更新ボタンが出る／押して 855MB 更新が通る）は実フリート再ビルド後の目視が残る。

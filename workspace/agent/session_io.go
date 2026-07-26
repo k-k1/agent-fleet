@@ -142,11 +142,12 @@ func paneMode(kind, tn string) string {
 			}
 		}
 	case session.KindCodex:
-		// codex's composer footer is "<model> <effort> · <cwd>  Plan mode [(shift+tab to
-		// cycle)]" — "Plan mode" appears ONLY in plan mode (Default shows no label). The
-		// "(shift+tab to cycle)" suffix is truncated on a narrow pane, so DON'T require it.
-		// Check the FOOTER line itself (identified by the effort regex) so the history line
-		// "… for Plan mode." can't spoof the detection. No footer line → composer not drawn.
+		// codex's composer footer is "<model> <effort> · <cwd>". Through 0.144 it
+		// appended "Plan mode [(shift+tab to cycle)]" in plan mode; 0.145 removed that
+		// textual marker. Keep accepting it for pinned/older versions, while the bare
+		// footer remains the composer-readiness signal and mirror-driven mode is persisted
+		// in meta (rememberCodexTUIMode). Never inspect history text here: a stale
+		// "… for Plan mode." line would spoof the current state.
 		for _, line := range strings.Split(paneTail(s, 3), "\n") {
 			if codexFooterEffortRe.MatchString(line) {
 				if strings.Contains(line, "Plan mode") {
@@ -205,6 +206,10 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// otherwise. Set by unattended senders (the CP scheduler's reuse send) whose
 		// prompt is always a real task; NOT for turnless UI slash commands (/model …).
 		Confirm bool `json:"confirm"`
+		// Source attributes a report_to-carrying injection's origin for the mirror badge
+		// (docs/38): "schedule" / "schedule-manual" from the CP scheduler; anything else
+		// (incl. empty — the operator MCP) records as "operator". Whitelisted server-side.
+		Source string `json:"source"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_body", "invalid JSON body")
@@ -222,7 +227,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	// /input 側の分岐が漏れていた）。{keys}/{seq}（生 TUI 駆動）は tui 専用のまま。
 	if len(body.Keys) == 0 && len(body.Seq) == 0 {
 		if meta, ok := session.ReadMeta(name); ok && meta.DriverKind() == session.DriverManaged {
-			handleManagedInputPrompt(w, meta, body.Prompt, body.ReportTo)
+			handleManagedInputPrompt(w, meta, body.Prompt, body.ReportTo, body.Source)
 			return
 		}
 	}
@@ -260,6 +265,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 			return
 		}
+		rememberCodexTUIMode(name, "", keys)
 		// Only a submit (a key sequence containing Enter — answering a question) starts a
 		// turn; pure navigation / mode-cycle (BTab, Tab) / stop (Escape) must NOT mark the
 		// session working, or codex sticks on 進行中 after a plan-mode toggle (no Stop hook
@@ -325,6 +331,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	if !submitPromptTUI(w, name, pane, body.Prompt) {
 		return
 	}
+	rememberCodexTUIMode(name, body.Prompt, nil)
 	if body.Confirm && confirmMeta.Name != "" {
 		if err := confirmPromptDelivery(confirmMeta, pane, body.Prompt, confirmBase); err != nil {
 			// 未確認は成功と偽らない: 呼び出し元（CP スケジューラ / operator MCP）が
@@ -334,11 +341,11 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Each delivered instruction re-arms exactly one report (docs/30 の指示1件=報告1回)
-	// and — being operator-originated (report_to present) — is remembered so the mirror
-	// can badge the resulting user turn (docs/30 ②).
+	// and — carrying report_to (operator / scheduler) — is remembered with its origin so
+	// the mirror can badge the resulting user turn (docs/30 ② / docs/38 バッジ).
 	if body.ReportTo != "" {
 		armSessionReport(name, body.ReportTo)
-		recordOperatorInjection(name, body.Prompt)
+		recordInjection(name, body.Prompt, injectionSource(body.Source))
 	} else {
 		// Genuine Console-typed input (not an operator/MCP injection): mirror it into
 		// the session's Discord thread so the thread reflects both directions (docs/37
@@ -352,7 +359,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 // start op (session_turn.go) — same ThreadHandle.Send delivery, but keeps /input's
 // report_to contract (armSessionReport / recordOperatorInjection) that /turn doesn't
 // carry, so send_to_session's docs/30 auto-report keeps working for managed sessions.
-func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, reportTo string) {
+func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, reportTo, source string) {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
 		httpx.WriteErr(w, http.StatusBadRequest, "empty_prompt", "prompt, keys or seq is required")
@@ -386,7 +393,7 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 	markSessionWorking(meta.Name)
 	if reportTo != "" {
 		armSessionReport(meta.Name, reportTo)
-		recordOperatorInjection(meta.Name, prompt)
+		recordInjection(meta.Name, prompt, injectionSource(source))
 	} else {
 		go bridge.MirrorUserInput(meta.Name, prompt) // docs/37 Fix ②: Console-input mirror
 	}
@@ -442,6 +449,34 @@ func submitPromptTUI(w http.ResponseWriter, name, pane, prompt string) bool {
 // slashCmdRe matches a single-token slash command like "/plan" or "/model foo" (but not a
 // path such as /home/dev/x, which has a second slash).
 var slashCmdRe = regexp.MustCompile(`^/[A-Za-z][\w-]*(\s|$)`)
+
+// rememberCodexTUIMode persists mirror-driven TUI mode changes. Codex 0.145.0
+// removed the "Plan mode" label from the composer footer, so pane scraping can
+// still prove readiness but cannot distinguish Default from Plan. The mirror owns
+// these two inputs (/plan to enter, BTab to leave/toggle), making meta the reliable
+// desired-next-turn state. A user toggling directly in the terminal remains
+// invisible on 0.145+ because the upstream TUI exposes no textual state signal.
+func rememberCodexTUIMode(name, prompt string, keys []string) {
+	meta, ok := session.ReadMeta(name)
+	if !ok || meta.Kind != session.KindCodex || meta.DriverKind() == session.DriverManaged {
+		return
+	}
+	mode := ""
+	switch {
+	case strings.TrimSpace(prompt) == "/plan":
+		mode = "plan"
+	case len(keys) == 1 && keys[0] == "BTab":
+		if meta.Mode == "plan" {
+			mode = "normal"
+		} else {
+			mode = "plan"
+		}
+	}
+	if mode != "" && meta.Mode != mode {
+		meta.Mode = mode
+		session.WriteMeta(meta)
+	}
+}
 
 // typeLineAndSubmit types a literal line into the session's pane and submits it —
 // the same type-then-Enter primitive as handleSessionInput's {prompt} path, but
@@ -716,10 +751,23 @@ func handleSessionStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	alive := sessionAlive(meta)
 	state := driveState(meta, alive, true)
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"name": name, "kind": meta.Kind, "alive": alive, "status": state,
 		"ready": sessionInputReady(meta, alive),
-	})
+	}
+	// A pending AskUserQuestion / ExitPlanMode plan rides along (claude: the
+	// hook-captured payloads) so the operator can relay them to the user and act via
+	// /answer-question // /plan-respond without scraping the terminal.
+	if meta.Kind == session.KindClaude {
+		sid := session.UUID(meta.Dir, name)
+		if raw, ok := status.ReadPendingQuestion(sid); ok && len(raw) > 0 {
+			resp["questions"] = json.RawMessage(raw)
+		}
+		if plan, ok := status.ReadPendingPlan(sid); ok && plan != "" {
+			resp["plan"] = plan
+		}
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
 // sessionInputReady is stricter than liveness: a newly resumed terminal session can

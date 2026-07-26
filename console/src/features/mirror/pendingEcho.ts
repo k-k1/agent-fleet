@@ -29,7 +29,13 @@ function slashName(text: string): string | null {
   return name.length > 1 ? name : null;
 }
 function commandTurnName(text: string): string | null {
-  const m = (text || "").replace(/^\s+/, "").match(/^<command-name>([\s\S]*?)<\/command-name>/);
+  const s = (text || "").replace(/^\s+/, "");
+  // Tag order varies by command type/CLI build: built-ins log <command-name> first,
+  // skills (2.1.215 実測) log <command-message> first. Require a command tag at the
+  // start (so prose merely quoting the tag can't match), then take the name wherever
+  // it sits.
+  if (!s.startsWith("<command-name>") && !s.startsWith("<command-message>")) return null;
+  const m = s.match(/<command-name>([\s\S]*?)<\/command-name>/);
   return m && m[1].trim() ? m[1].trim() : null;
 }
 

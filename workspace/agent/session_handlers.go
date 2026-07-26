@@ -139,7 +139,9 @@ func handleListSessions(w http.ResponseWriter, r *http.Request) {
 		if m.StoppedAt == "" {
 			m.StoppedAt = now.Format(time.RFC3339)
 			session.WriteMeta(m)
-		} else if t, e := time.Parse(time.RFC3339, m.StoppedAt); e == nil && now.Sub(t) > ttl {
+		} else if t, e := time.Parse(time.RFC3339, m.StoppedAt); e == nil && now.Sub(t) > ttl && !m.Locked {
+			// 削除ロック（docs/45）は自動削除にも効く — locked な行は TTL を過ぎても
+			// prune せず、停止中のまま一覧に残す。
 			session.RemoveMeta(name)
 			maybePruneWorktree(m.Dir) // last reference expired → clean up its worktree if clean
 			continue
@@ -207,6 +209,10 @@ type createReq struct {
 	// create_session (which knows its own conversation id via --conv); Console creates
 	// leave it empty.
 	ReportTo string `json:"report_to"`
+	// Source attributes the initial_prompt injection's origin for the mirror badge
+	// (docs/38): "schedule" / "schedule-manual" from the CP scheduler; anything else
+	// (incl. empty — the operator MCP) records as "operator". Whitelisted server-side.
+	Source string `json:"source"`
 	// Optional clone-then-start: when remote_url is set, the repo is cloned
 	// (or reused) under ~/repos and its path becomes the session CWD, ignoring dir.
 	// RepoName overrides the target folder so two branches of the same repo can
@@ -527,7 +533,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		// the link is still recorded for forward-compat.
 		if req.ReportTo != "" {
 			armSessionReport(name, req.ReportTo)
-			recordOperatorInjection(name, req.InitialPrompt) // operator-driven start (docs/30 ②)
+			recordInjection(name, req.InitialPrompt, injectionSource(req.Source)) // orchestrated start (docs/30 ② / docs/38)
 		}
 		writeCreated(meta)
 		return
@@ -545,11 +551,11 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	// docs/30: arm the one-shot completion report to the creating conversation. Armed
 	// even without an initial_prompt — the operator may steer the session manually next.
-	// The initial_prompt, when present, is an operator injection (docs/30 ②) — remember it
-	// so the mirror badges its user turn.
+	// The initial_prompt, when present, is an orchestrated injection (docs/30 ② /
+	// docs/38) — remember it with its origin so the mirror badges its user turn.
 	if req.ReportTo != "" {
 		armSessionReport(name, req.ReportTo)
-		recordOperatorInjection(name, req.InitialPrompt)
+		recordInjection(name, req.InitialPrompt, injectionSource(req.Source))
 	}
 
 	writeCreated(meta)
@@ -653,6 +659,13 @@ func handleStopSession(w http.ResponseWriter, r *http.Request) {
 	live := tmuxx.HasSession(tn)
 	if !live && !hadMeta {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
+	}
+	// /stop FORGETS the meta — it is the Console's 削除. A locked session (docs/45)
+	// refuses it; stopping without losing the row is /halt, which stays open.
+	if hadMeta && meta.Locked {
+		httpx.WriteErr(w, http.StatusForbidden, errCodeLocked,
+			"session is locked against deletion; unlock it first (or use /halt to stop it and keep the row)")
 		return
 	}
 	if hadMeta {

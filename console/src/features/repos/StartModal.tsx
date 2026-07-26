@@ -524,7 +524,10 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+                  const mod = e.metaKey || e.ctrlKey;
+                  const submitWithKey = settings.mirrorSend !== "enter" ? mod : !e.shiftKey && !mod;
+                  if (submitWithKey) {
                     e.preventDefault();
                     void startHome();
                   }

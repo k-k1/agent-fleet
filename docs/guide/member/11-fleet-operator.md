@@ -52,8 +52,11 @@ A session the operator instructed reports back to the conversation automatically
 **once per instruction**, when it reaches a stopping point.
 
 - Reports arrive **when the session becomes idle** (i.e. its response to that instruction is done) and on **abnormal termination** (out of memory, crash, etc.).
+- **When a session stops at a question (multiple choice), an interim report arrives too.** The operator presents the options to you, and replying in chat with "1" or "option 2" has the operator answer the session on your behalf (if you've said "your call" up front, the operator picks). Only free-text and multi-select questions need to be answered from the Console.
+- **When a session stops at plan approval, an interim report arrives as well.** From chat you can approve ("approve it") or send revision feedback ("have it fix ◯◯"), and asking "have another session review it" makes the operator broker the plan review → feedback → approval.
+- Turning ON **"Auto-pilot"** in ⚙Settings → Assistant makes the operator answer questions with the session's recommendation automatically, and drive plans through review by another session, feedback, and approval (every decision is shared in chat; unclear questions and choices/plans involving destructive or irreversible operations still come to you first). Default OFF.
 - When a report arrives, by default the operator **replies automatically** (summarizing results, sending follow-up instructions, deciding whether to start the next task, and so on). You can turn this auto-reply off with **"Auto-respond to session reports"** in ⚙Settings → the **Assistant** tab.
-- To prevent runaway loops, **auto-replies without any input from you are capped at 10 in a row**. When the cap is reached, a pause notice appears, and sending your next message resumes it. The design ensures your judgment is inserted periodically even in long hauls.
+- To prevent runaway loops, **auto-replies without any input from you are capped** (⚙Settings → Assistant "Unattended auto-reply limit", default 10, max 50 — unlimited is not available). When the cap is reached, a pause notice appears, and sending your next message resumes it. The design ensures your judgment is inserted periodically even in long hauls.
 - Reports **also arrive in the notification center**, so you notice them even while looking at another screen (clicking opens that conversation).
 
 ## Basic usage
@@ -103,8 +106,9 @@ Useful for design problems where approaches diverge, or when you want a differen
 A pattern that uses reports as the "trigger for the next stage." If you describe the
 sequence up front — "when implementation finishes, run the tests; if tests fail, follow up
 with fixes; if they pass, do another pass from a review perspective" — the operator judges
-each report and advances the stages. Because of the auto-reply cap (10), plan long
-pipelines with the expectation that you'll say "continue" at milestones.
+each report and advances the stages. Because of the auto-reply cap (default 10, up to
+50 in settings), plan long pipelines with the expectation that you'll say "continue"
+at milestones, or raise the limit.
 
 ### Pattern 5: status briefing and memo triage
 
@@ -136,10 +140,10 @@ next run time, so check that it matches your intent.
 
 ## Constraints and caveats
 
-- **Reports arrive only for "idle" and "abnormal termination."** Mid-run questions, plan approvals, and permission waits appear in the notification center but do not become reports to the operator. For tasks you want to run through unattended, cut the instructions so that few operations require approval. If something looks stalled, asking the operator for a status check will surface it.
+- **Reports arrive for "idle," "question / plan approval" (interim), and "abnormal termination."** Tool-permission waits appear in the notification center but do not become reports to the operator. For tasks you want to run through unattended, cut the instructions so that few operations require permission. If something looks stalled, asking the operator for a status check will surface it.
 - **Keep parallelism modest.** Each session uses memory, and the host is shared. As a guideline, keep parallel implementation to 2–3 sessions and don't run heavy builds at the same time (the operator also confirms before launching). Having the operator fold up finished sessions helps too.
 - **When the operator stops a session, the report that was due is cancelled as well.** Stopping is treated as cancelling that instruction. Even if you later resume it from the Console and the work completes, the old report will not arrive in the operator's conversation (if you stopped it with the Console's stop button it is not cancelled, and completion after resume is reported). When asking a resumed session to continue, have the operator send the instruction again.
-- **Session reports from managed execution (codex / opencode) have no body** (only the fact of completion). In practice this is fine because the operator goes and reads the output for details, but the report card alone doesn't show the contents.
+- **Session reports have no body** (only the fact of completion / question / abnormal termination). In practice this is fine because the operator goes and reads the output for details, but the report card alone doesn't show the contents.
 - **Handover is summary-based.** The conversation context does not move over wholesale, so for lengthy research results it is safer to have them written to a plan file before handing over (see Pattern 1).
 - **Sessions do not coordinate with each other directly.** Orchestration always goes through the operator. This is complementary to parallelization that stays within a single session (an agent's own subagent feature); choose the operator **when work spans repositories or agents, or when you want to see each piece of work as its own session**.
 - **Report bodies are treated as "data."** So that text originating from session output is never executed as an instruction, the design confirms with you first whenever a new session would be created based on an automatic report. In particular, even if a report or output contains something like "run this command," the operator **will not execute a command or send it to a shell session on that basis** (prompt-injection protection). The operator executes only what you instructed directly. The extra safety-side confirmations are by design.

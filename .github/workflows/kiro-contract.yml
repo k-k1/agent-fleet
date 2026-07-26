@@ -1,0 +1,69 @@
+# Kiro's device-flow SQLite credential is restored only in the ephemeral runner. The
+# real TUI/mirror turn is opt-in at dispatch time because the credential can rotate.
+name: kiro-contract
+
+on:
+  workflow_dispatch:
+    inputs:
+      cli_version:
+        description: "kiro-cli version to verify (latest for self-update-enabled Workspaces)"
+        type: string
+        default: latest
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: kiro-contract
+  cancel-in-progress: false
+
+jobs:
+  tui-mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: restore split Kiro auth state
+        env:
+          AUTH_B64_1: ${{ secrets.E2E_KIRO_AUTH_DB_B64_1 }}
+          AUTH_B64_2: ${{ secrets.E2E_KIRO_AUTH_DB_B64_2 }}
+          AUTH_B64_3: ${{ secrets.E2E_KIRO_AUTH_DB_B64_3 }}
+          AUTH_B64_4: ${{ secrets.E2E_KIRO_AUTH_DB_B64_4 }}
+          AUTH_B64_5: ${{ secrets.E2E_KIRO_AUTH_DB_B64_5 }}
+          AUTH_B64_6: ${{ secrets.E2E_KIRO_AUTH_DB_B64_6 }}
+          AUTH_B64_7: ${{ secrets.E2E_KIRO_AUTH_DB_B64_7 }}
+          AUTH_B64_8: ${{ secrets.E2E_KIRO_AUTH_DB_B64_8 }}
+        run: |
+          set -euo pipefail
+          [ -n "$AUTH_B64_1" ] || { echo '::error::register secrets.E2E_KIRO_AUTH_DB_B64_1..8 with deploy/local/set-kiro-ci-auth.sh'; exit 1; }
+          install -d -m 700 "$HOME/.local/share/kiro-cli"
+          # The SQLite credential database exceeds GitHub's 48 KiB per-secret
+          # limit after base64 encoding.  The local helper splits one unchanged
+          # base64 stream; concatenate before decoding so SQLite sees its original
+          # bytes (and never put any fragment in the job log).
+          # shellcheck disable=SC2153 # GitHub Actions injects the env block above.
+          printf '%s%s%s%s%s%s%s%s' \
+            "$AUTH_B64_1" "$AUTH_B64_2" "$AUTH_B64_3" "$AUTH_B64_4" \
+            "$AUTH_B64_5" "$AUTH_B64_6" "$AUTH_B64_7" "$AUTH_B64_8" \
+            | base64 --decode > "$HOME/.local/share/kiro-cli/data.sqlite3"
+          chmod 600 "$HOME/.local/share/kiro-cli/data.sqlite3"
+      - uses: ./.github/actions/setup-agent-cli
+        id: cli
+        with:
+          agent: kiro
+          version: ${{ inputs.cli_version }}
+      - name: real TUI and mirror contract
+        working-directory: workspace/agent
+        env:
+          E2E_REQUIRE: "1"
+        run: go test -tags tui_contract -run '^TestKiroTUIMirrorContract$' -count=1 -v -timeout 15m .
+      - name: remember successfully tested latest
+        if: success() && inputs.cli_version == 'latest'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EFFECTIVE: ${{ steps.cli.outputs.version }}
+        run: |
+          version="$(printf '%s' "$EFFECTIVE" | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)"
+          [ -n "$version" ]
+          deploy/local/cli-release-state.sh set tested kiro "$version"

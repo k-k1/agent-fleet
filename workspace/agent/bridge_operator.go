@@ -109,7 +109,7 @@ func createOperatorConversation() (string, error) {
 	}
 	now := nowMs()
 	c := &chatConversation{
-		ID: randUUID(), Title: a.Name, CreatedAt: now, UpdatedAt: now, Messages: []chatMessage{},
+		ID: randUUID(), Slug: newConvSlug(), Title: a.Name, CreatedAt: now, UpdatedAt: now, Messages: []chatMessage{},
 		AssistantID: a.ID, Agent: a.Agent, Model: resolveChatModel(a.Agent, a.Model),
 		Persona: a.Persona, Tools: a.Tools, Knowledge: a.Knowledge, Integrations: a.Integrations,
 	}

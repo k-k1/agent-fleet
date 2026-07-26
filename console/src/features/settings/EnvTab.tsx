@@ -227,12 +227,25 @@ function ToolVersions({ running }: { running: boolean }) {
                     </span>
                   )}
                 </td>
+                {/* ピンは versions.json 由来なので焼き込み実体が無くても出せる。lean
+                    variant（BAKE_AGENT_CLIS=0）は /usr/local に CLI を焼かないので
+                    baked=null になり、以前はこの列が「—」だけでピンが見えなかった。
+                    焼き込み有り: 実体の版（ピンとズレていればバッジ併記）。
+                    焼き込み無し + ピン有り: 実体が無いことを括弧付きの版で表す。 */}
                 <td>
-                  {cell(t.baked)}
-                  {t.pin && t.baked && t.baked.version !== t.pin && (
-                    <span className="tool-ver-pin" title={tr("env.pin_title")}>
-                      {tr("env.pin_label", { pin: t.pin })}
+                  {!t.baked && t.pin ? (
+                    <span className="tool-ver-pin-only" title={tr("env.pin_only_title")}>
+                      {tr("env.pin_paren", { pin: t.pin })}
                     </span>
+                  ) : (
+                    <>
+                      {cell(t.baked)}
+                      {t.pin && t.baked && t.baked.version !== t.pin && (
+                        <span className="tool-ver-pin" title={tr("env.pin_title")}>
+                          {tr("env.pin_label", { pin: t.pin })}
+                        </span>
+                      )}
+                    </>
                   )}
                 </td>
                 <td>{cell(t.userLocal)}</td>

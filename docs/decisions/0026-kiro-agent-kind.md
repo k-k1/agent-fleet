@@ -1,4 +1,4 @@
-# 0026. `kind=kiro`（Kiro CLI）を第8のエージェント種別として追加する
+# 0026. `kind=kiro`（Kiro）を第8のエージェント種別として追加する
 
 - 状態: **採用（Track A＋A2＋B＋C＋D 実装済み）**（2026-07-24。Track 0 プローブ合格 →
   read 層＋TUI＋managed driver＋配備＋CP/Console＋ライブ使用量配線を実装。`go build`/`go vet`/
@@ -16,7 +16,7 @@
 
 ## 背景
 
-Kiro CLI（`kiro-cli`・旧 Amazon Q Developer CLI、2025-11-17 改名。AWS Kiro IDE のターミナル版）
+Kiro（`kiro-cli`・旧 Amazon Q Developer CLI、2025-11-17 改名。AWS Kiro IDE のターミナル版）
 は `kiro-cli acp`（ACP = JSON-RPC over stdio）・`chat`（TUI）・`--list-models -f json`・
 `--resume-id`・v2 JSONL セッションストア（`~/.kiro/sessions/cli/<sid>.jsonl`・TUI と ACP が共用）を
 備える。実バイナリ 2.14.1 を本 Workspace（Debian 12/x86_64/glibc 2.36）へ導入し Builder ID（free）

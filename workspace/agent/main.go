@@ -61,8 +61,9 @@ func main() {
 	// On-demand Kiro CLI installer (kind="kiro", docs/43 Track B): kiro is ~855MB
 	// extracted, so unlike the other agent CLIs it is NOT baked/boot-installed for
 	// everyone — it lands in the per-user home only when that user actually uses it
-	// (the kiro launch program runs this when the binary is missing; the connection
-	// card install button does too). Pinned by versions.json. See install_kiro.go.
+	// (the kiro launch program runs this with --if-needed on every launch, so a
+	// versions.json pin bump also reaches the already-installed home copy; the
+	// connection card install button does too). See install_kiro.go.
 	if len(os.Args) > 1 && os.Args[1] == "install-kiro" {
 		runInstallKiro(os.Args[2:])
 		return
@@ -148,6 +149,10 @@ func main() {
 	go copilot.ReconcileManaged("agent boot")
 	go cursor.ReconcileManaged("agent boot")
 	go kiro.ReconcileManaged("agent boot")
+	// Assistant-conversation slugs (docs/38 アシスタント発火): stamp "a…" slugs onto
+	// conversations created before the field existed, so schedules/operator tools can
+	// address every conversation. One-time per store state; cheap when nothing to do.
+	go backfillConvSlugs()
 
 	addr := envOr("AGENT_ADDR", ":7700")
 

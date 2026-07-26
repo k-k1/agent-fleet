@@ -23,7 +23,9 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
-const buildPinsPath = "/usr/local/share/agent-fleet/versions.json"
+// buildPinsPath は Dockerfile が ARG から書き出すピン一覧。var なのはテストで
+// 差し替えるため（install_kiro のピン比較テスト）— 実行時は書き換えない。
+var buildPinsPath = "/usr/local/share/agent-fleet/versions.json"
 
 // toolSpec は 1 ツール分の観測点。Cmd は PATH 解決（実効）と ~/.local/bin/<Cmd>
 // （ユーザー local）の両方に使う。Baked はイメージが焼く実体パス（gh はラッパーでは
@@ -40,8 +42,8 @@ var toolSpecs = []toolSpec{
 	{Name: "claude", Cmd: "claude", Baked: "/usr/local/bin/claude", Pin: "claude"},
 	{Name: "opencode", Cmd: "opencode", Baked: "/usr/local/bin/opencode", Pin: "opencode"},
 	{Name: "codex", Cmd: "codex", Baked: "/usr/local/bin/codex", Pin: "codex"},
-	// agy は GitHub Releases（google-antigravity/antigravity-cli）の versioned アセット
-	// からの真のピン（workspace/Dockerfile の AGY_VERSION + sha256 検証）。RDRAND 非提示
+	// agy は公式installer manifestが示す不変GCS objectからの真のピン
+	// （workspace/Dockerfile の AGY_VERSION + AGY_RELEASE_BUILD + sha256 検証）。RDRAND 非提示
 	// ホストでは --version 自体が SIGABRT するため probeVersion は "(取得失敗)" になる
 	// （それ自体がガード対象ホストの兆候）。
 	{Name: "agy", Cmd: "agy", Baked: "/usr/local/bin/agy", Pin: "agy"},

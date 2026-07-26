@@ -14,6 +14,9 @@ func TestCleanSuggestedReplies(t *testing.T) {
 	}{
 		{"plain lines", "進めて\nそれでOK\nいったん待って", []string{"進めて", "それでOK", "いったん待って"}},
 		{"strips numbering and bullets", "1. 進めて\n- それでOK\n・待って", []string{"進めて", "それでOK", "待って"}},
+		{"keeps bare numeric/letter selectors", "1\n2\nA", []string{"1", "2", "A"}},
+		{"keeps P1-style selectors", "P1\nP2", []string{"P1", "P2"}},
+		{"strips list marker but keeps identifier answer", "1) 修正して\n2", []string{"修正して", "2"}},
 		{"strips quotes", "「進めて」\n\"OK\"", []string{"進めて", "OK"}},
 		{"dedupes case-insensitively", "OK\nok\n進めて", []string{"OK", "進めて"}},
 		{"drops blanks", "\n進めて\n\n\nOK\n", []string{"進めて", "OK"}},

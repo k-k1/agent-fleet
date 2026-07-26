@@ -471,6 +471,16 @@
 .mirror-turn.user.from-chat {
   border-left: 2px solid color-mix(in srgb, var(--accent, #5e9ce0) 55%, var(--border));
 }
+/* Schedule-injected user turn (docs/38): the prompt was fired by a schedule — timed
+   ("定時") or a run-now ("手動発火"). Same pill shape, its own (ok/green) hue so the
+   three injected origins (operator / chat / schedule) read apart at a glance. */
+.mt-sched {
+  background: color-mix(in srgb, var(--ok, #5ec07a) 18%, transparent);
+  color: var(--ok, #5ec07a);
+}
+.mirror-turn.user.from-schedule {
+  border-left: 2px solid color-mix(in srgb, var(--ok, #5ec07a) 55%, var(--border));
+}
 /* Reasoning effort/variant chip (codex reasoning_effort / opencode variant), shown
    right after the model. A faint pill so it reads as secondary metadata. */
 .mt-effort {
@@ -1332,6 +1342,38 @@ button.mt-tool-outhead {
   padding: 2px 8px 4px 20px;
   opacity: 0.8;
 }
+/* A turn that failed instead of answering (part kind "error"): the agent recorded a
+   provider-side error — expired auth, exhausted balance, rate limit — and produced no
+   output. Unlike the thinking block this is never collapsed and never faint: the whole
+   point is that a failed turn used to be indistinguishable from a finished one. */
+.mirror-error {
+  margin: 4px 0;
+  border: 1px solid color-mix(in srgb, var(--del) 45%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--del) 8%, transparent);
+}
+.mirror-error-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  color: var(--del);
+}
+.mte-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+.mte-code {
+  font-size: 11px;
+  opacity: 0.85;
+  font-family: var(--mono, monospace);
+}
+.mirror-error-body {
+  padding: 0 8px 6px 26px;
+  font-size: 0.95em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 /* Edit-family traces are clickable — they open a diff pane. Reset the button and
    lift the opacity so they read as interactive, not just a faint trace. */
 button.mt-tool-diff {
@@ -1735,15 +1777,28 @@ button.mt-bash-toggle:hover {
   align-items: center;
   gap: 8px;
 }
-/* 返信サジェストのチップ行（コンポーサー入力の上・全幅で横に並ぶ）。 */
+/* 返信サジェストのチップ行（コンポーサー入力の上・全幅）。折り返さず必ず1行に収め、あふれた分は
+   左右スクロール（タッチ=スワイプはネイティブ、マウス=ドラッグは useDragScroll）。スクロールバーは
+   隠す（行が細く、出ると窮屈なため）。 */
 .mirror-suggest {
   flex: 0 0 100%;
+  min-width: 0; /* flex-basis 100% でも収縮できるように（これが無いと overflow が効かない） */
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain; /* 端まで来ても親ペイン/ページを動かさない */
+  user-select: none; /* ドラッグでテキスト選択にならないように */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none;
+}
+.mirror-suggest::-webkit-scrollbar {
+  display: none;
 }
 .mirror-suggest-chip {
+  flex: 0 0 auto; /* 1行スクロールなので縮ませない */
   max-width: 100%;
   padding: 3px 10px;
   font-size: 12px;
@@ -1768,6 +1823,7 @@ button.mt-bash-toggle:hover {
 }
 /* v2: ✨ トリガーボタン（on-demand で LLM 候補を取得）。 */
 .mirror-suggest-ai {
+  flex: 0 0 auto; /* 1行スクロールなので縮ませない */
   display: inline-flex;
   align-items: center;
   justify-content: center;

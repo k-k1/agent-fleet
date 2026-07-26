@@ -960,7 +960,26 @@ function KiroCard({ running, st, reload }: { running: boolean; st: any; reload: 
   const [flow, setFlow] = useState<any>(null); // { url, user_code, flow_id, status } while a login is in flight
   const [installing, setInstalling] = useState<null | "installing" | "error">(null);
   const [busy, setBusy] = useState(false);
+  // { installed, version, pin, updateAvailable } — the version facts behind the update
+  // affordance below. Kiro is the one CLI whose copy lives in the home volume with no
+  // self-updater and no boot-install, so a versions.json pin bump only reaches it when
+  // something re-installs. The launch guard does that implicitly at the next launch;
+  // this makes it EXPLICIT (you see that an update exists and press the button when a
+  // multi-minute download suits you, instead of being surprised mid-launch).
+  const [inst, setInst] = useState<any>(null);
   const unsupported = st?.supported === false; // CLI not installed yet (on-demand)
+
+  const loadInstall = useCallback(async () => {
+    if (!running) return;
+    try {
+      setInst(await api("api/connections/kiro/install"));
+    } catch {
+      /* stopped workspace / transient 502 — the card just shows no update notice */
+    }
+  }, [running]);
+  useEffect(() => {
+    void loadInstall();
+  }, [loadInstall, st?.supported]);
 
   const install = async () => {
     setBusy(true);
@@ -974,6 +993,7 @@ function KiroCard({ running, st, reload }: { running: boolean; st: any; reload: 
       }
       if (res.state === "done") {
         setInstalling(null);
+        void loadInstall();
         reload();
         return;
       }
@@ -991,6 +1011,7 @@ function KiroCard({ running, st, reload }: { running: boolean; st: any; reload: 
           }
           if (p && p.state === "done") {
             setInstalling(null);
+            void loadInstall(); // refresh version / updateAvailable after an upgrade
             reload();
             return { stop: true };
           }
@@ -1102,6 +1123,31 @@ function KiroCard({ running, st, reload }: { running: boolean; st: any; reload: 
             <Hint>{tr("agents.kiro_hint")}</Hint>
           </div>
         </>
+      )}
+      {/* Update affordance. Rendered outside the connection branches above because it
+          applies whether or not you are signed in — it is about the BINARY, not the
+          auth. Shown only when the agent positively reports a version mismatch against
+          the versions.json pin (an unreadable version or a missing pin says nothing, so
+          the user is never nagged into a 554MB download on a guess). */}
+      {running && !unsupported && inst?.updateAvailable && (
+        <div className="p-body">
+          {installing === "installing" ? (
+            <p className="ps-note ps-note-warn">{tr("agents.kiro_updating")}</p>
+          ) : (
+            <>
+              <p className="ps-note ps-note-warn">
+                {tr("agents.kiro_update_avail", { cur: inst.version || "?", pin: inst.pin || "?" })}
+              </p>
+              <div className="p-opts">
+                <button type="button" className="p-opt" disabled={busy} onClick={install}>
+                  <span className="p-opt-t">{tr("agents.kiro_update")}</span>
+                  <span className="p-opt-s">{tr("agents.kiro_update_note")}</span>
+                </button>
+              </div>
+              {installing === "error" && <p className="ps-note ps-note-warn">{tr("agents.kiro_install_error")}</p>}
+            </>
+          )}
+        </div>
       )}
       <CardSettings>
         <LaunchDefaults kind="kiro" />
