@@ -44,10 +44,14 @@ type cleanupCandidate struct {
 
 // classifySessionCleanup grades a session meta. Returns ok=false to skip it entirely
 // (it is live — working, not clutter). Pure: no git/tmux, so it is unit-tested.
-func classifySessionCleanup(archived, live bool) (action, safety, reason string, ok bool) {
+func classifySessionCleanup(locked, archived, live bool) (action, safety, reason string, ok bool) {
 	switch {
 	case live:
 		return "", "", "", false // running — not a cleanup target
+	case locked:
+		// 削除ロック（docs/45）: 掃除の対象外。黙って隠すのではなく keep として見せる —
+		// 「なぜ片付かないのか」が利用者にもオペレーターにも分かるように。
+		return "", "keep", "ロック中（削除保護。解除するまで掃除対象外）", true
 	case archived:
 		// Archived rows are TTL-exempt (handleListSessions skips them before the prune),
 		// so they accumulate. delete_session reclaims them (meta + jsonl), bundled to a
@@ -64,8 +68,10 @@ func classifySessionCleanup(archived, live bool) (action, safety, reason string,
 // state. Pure — the handler supplies the git facts. Mirrors maybePruneWorktree's
 // conservatism (never touch dirty/ahead) but also proposes merged worktrees the passive
 // prune leaves for 7 days.
-func classifyWorktreeCleanup(liveCount, ahead int, dirty bool, relation string) (action, safety, reason string) {
+func classifyWorktreeCleanup(locked bool, liveCount, ahead int, dirty bool, relation string) (action, safety, reason string) {
 	switch {
+	case locked:
+		return "", "keep", "ロック中（削除保護。解除するまで掃除対象外）" // docs/45
 	case liveCount > 0:
 		return "", "keep", "稼働中のセッションがある（先に停止が必要）"
 	case dirty || ahead > 0:
@@ -85,7 +91,7 @@ func handleSessionsCleanup(w http.ResponseWriter, r *http.Request) {
 	live := tmuxx.LiveSessionNames()
 	for _, m := range session.ListMetas() {
 		isLive := live[m.Name] || (m.DriverKind() == session.DriverManaged && managedAlive(m))
-		action, safety, reason, ok := classifySessionCleanup(m.Archived, isLive)
+		action, safety, reason, ok := classifySessionCleanup(m.Locked, m.Archived, isLive)
 		if !ok {
 			continue
 		}
@@ -122,7 +128,7 @@ func handleSessionsCleanup(w http.ResponseWriter, r *http.Request) {
 		if parent := worktreeParent(dir); parent != "" {
 			relation = gitWorktreeIntegration(parent, dir, gitCurrentBranch(parent)).Relation
 		}
-		action, safety, reason := classifyWorktreeCleanup(liveCount, st.Ahead, st.Dirty, relation)
+		action, safety, reason := classifyWorktreeCleanup(repoLocked(dir), liveCount, st.Ahead, st.Dirty, relation)
 		out = append(out, cleanupCandidate{
 			Type: "worktree", Action: action, ID: e.Name(), Path: dir, Branch: st.Branch,
 			Relation: relation, Dirty: st.Dirty, Ahead: st.Ahead, Safety: safety, Reason: reason,
