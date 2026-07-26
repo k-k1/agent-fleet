@@ -591,3 +591,153 @@ export function usage(locale) {
 export function stats() {
   return { cpu: 0.18, memUsed: 2147483648, memLimit: 10737418240 };
 }
+
+// ---- usage ledger (GET /api/usage/series) ------------------------------------------
+// The Console asks for three series per view (the selected axis over time, feature ×
+// model, kind × model), so this answers any (by, split, bucket) combination from one
+// weight table. Wire shape: workspace/agent/usage_series.go ↔ features/usage/api.ts.
+
+// Relative weight of each value on each axis. Numbers are invented but ordered the way
+// a real week looks: session work dwarfs everything, claude/opus carry most of it.
+const USAGE_WEIGHTS = {
+  feature: {
+    session: 0.72,
+    "assistant.chat": 0.13,
+    compact: 0.06,
+    "suggest.session": 0.04,
+    "title.session": 0.03,
+    "assistant.autoturn": 0.02,
+  },
+  kind: { claude: 0.61, codex: 0.22, cursor: 0.1, opencode: 0.07 },
+  model: {
+    "claude-opus-5": 0.44,
+    "claude-sonnet-5": 0.19,
+    "gpt-5.6-luna": 0.22,
+    "composer-1": 0.1,
+    "opencode/nemotron-3-ultra-free": 0.05,
+  },
+  origin: { user: 0.78, schedule: 0.13, operator: 0.07, handoff: 0.02 },
+  trigger: { user: 0.74, schedule: 0.13, auto: 0.08, operator: 0.05 },
+};
+
+// Which models each feature / agent actually used, so the "× model" matrices are not a
+// dense grid of every combination (a real one is sparse).
+const USAGE_PAIRS = {
+  feature: {
+    session: ["claude-opus-5", "gpt-5.6-luna", "composer-1", "opencode/nemotron-3-ultra-free"],
+    "assistant.chat": ["claude-sonnet-5", "gpt-5.6-luna"],
+    compact: ["claude-sonnet-5"],
+    "suggest.session": ["claude-sonnet-5"],
+    "title.session": ["claude-sonnet-5"],
+    "assistant.autoturn": ["claude-sonnet-5"],
+  },
+  kind: {
+    claude: ["claude-opus-5", "claude-sonnet-5"],
+    codex: ["gpt-5.6-luna"],
+    cursor: ["composer-1"],
+    opencode: ["opencode/nemotron-3-ultra-free"],
+  },
+};
+
+const WEEK_SPEND = 41_800_000; // total spend across the default 7-day window
+
+// A deterministic 0.6–1.4 shape per bucket so the stacked chart has a weekday rhythm
+// instead of flat bars (no Math.random — a re-run must not reshuffle the picture).
+const bucketShape = (i, n) => 0.62 + 0.78 * Math.abs(Math.sin((i + 1) * 1.7)) * (i === n - 1 ? 0.55 : 1);
+
+function agg(spend, calls) {
+  const inTok = Math.round(spend * 0.34);
+  const ccreate = Math.round(spend * 0.11);
+  return {
+    spend: Math.round(spend),
+    in: inTok,
+    out: Math.round(spend - inTok - ccreate),
+    cread: Math.round(spend * 4.6), // cache reads dominate and are excluded from spend
+    ccreate,
+    calls: Math.max(1, Math.round(calls)),
+    cost_usd: Math.round(spend * 0.0000042 * 10000) / 10000,
+  };
+}
+
+const addAgg = (a, b) => ({
+  spend: a.spend + b.spend,
+  in: a.in + b.in,
+  out: a.out + b.out,
+  cread: a.cread + b.cread,
+  ccreate: a.ccreate + b.ccreate,
+  calls: a.calls + b.calls,
+  cost_usd: Math.round((a.cost_usd + b.cost_usd) * 10000) / 10000,
+});
+
+const EMPTY_AGG = { spend: 0, in: 0, out: 0, cread: 0, ccreate: 0, calls: 0, cost_usd: 0 };
+
+export function usageSeries(locale, q) {
+  const by = q.get("by") || "feature";
+  const split = q.get("split") || "";
+  const bucket = q.get("bucket") === "hour" ? "hour" : "day";
+  const to = q.get("to") ? new Date(q.get("to")) : NOW;
+  const from = q.get("from") ? new Date(q.get("from")) : new Date(to.getTime() - 7 * 86400_000);
+  const stepMs = bucket === "hour" ? 3600_000 : 86400_000;
+  const n = Math.max(1, Math.min(48, Math.round((to - from) / stepMs)));
+  const weights = USAGE_WEIGHTS[by] || USAGE_WEIGHTS.feature;
+  // Scale to the requested window so a 24h view isn't shown a week's worth of tokens.
+  const windowSpend = (WEEK_SPEND * (to - from)) / (7 * 86400_000);
+
+  const shapes = Array.from({ length: n }, (_, i) => bucketShape(i, n));
+  const shapeSum = shapes.reduce((a, b) => a + b, 0);
+
+  // Bucket starts run backwards from the newest one, aligned to a LOCAL day/hour
+  // boundary: the chart labels buckets in local time, so aligning to UTC would leave
+  // the newest bucket short of "to" and the chart would end with dead space.
+  const newest = new Date(to.getTime());
+  if (bucket === "day") newest.setHours(0, 0, 0, 0);
+  else newest.setMinutes(0, 0, 0);
+
+  const buckets = [];
+  let totals = { ...EMPTY_AGG };
+  for (let i = 0; i < n; i++) {
+    const t = new Date(newest.getTime() - (n - 1 - i) * stepMs);
+    const bSpend = (windowSpend * shapes[i]) / shapeSum;
+    const series = {};
+    for (const [key, w] of Object.entries(weights)) {
+      const a = agg(bSpend * w, (bSpend * w) / 26_000);
+      series[key] = a;
+      totals = addAgg(totals, a);
+    }
+    buckets.push({ t: t.toISOString(), series });
+  }
+
+  const resp = {
+    from: from.toISOString(),
+    to: to.toISOString(),
+    bucket,
+    by,
+    buckets,
+    totals,
+    coverage: {
+      claude: { tokens: "exact", model: "reported" },
+      codex: { tokens: "exact", model: "reported" },
+      cursor: { tokens: "none", model: "requested" },
+      opencode: { tokens: "partial", model: "reported" },
+    },
+    unmeasured_calls: 37,
+  };
+
+  if (split) {
+    resp.split = split;
+    resp.matrix = {};
+    const pairs = USAGE_PAIRS[by];
+    for (const [key, w] of Object.entries(weights)) {
+      const models = (pairs && pairs[key]) || Object.keys(USAGE_WEIGHTS.model);
+      const rowSpend = windowSpend * w;
+      // Split the row across its models by their own weights, renormalized to the row.
+      const norm = models.reduce((s, m) => s + (USAGE_WEIGHTS.model[m] || 0.05), 0);
+      resp.matrix[key] = {};
+      for (const m of models) {
+        const share = (USAGE_WEIGHTS.model[m] || 0.05) / norm;
+        resp.matrix[key][m] = agg(rowSpend * share, (rowSpend * share) / 26_000);
+      }
+    }
+  }
+  return resp;
+}

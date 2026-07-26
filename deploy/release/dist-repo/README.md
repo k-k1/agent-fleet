@@ -43,7 +43,12 @@ Key features:
   for secrets at rest, and per-workspace memory quotas.
 - **Usage visibility** — see each agent account's usage and rate limits (and
   when they reset) at a glance, plus per-session context usage with warnings
-  and summarized handover before the context window fills up.
+  and summarized handover before the context window fills up. A **token ledger
+  breaks spend down by feature, agent and model** (Settings › Usage), so the
+  interactive sessions and the auxiliary LLM calls the fleet makes on its own
+  (title suggestions, compaction, reply suggestions…) are measured on one
+  yardstick. Calls from CLIs that report no tokens are counted as *unmeasured*
+  rather than zero, so nothing looks free that wasn't.
 - **Assistant chat & fleet orchestration** — a built-in assistant that can
   drive the fleet: start and steer multiple agent sessions, orchestrate work
   across different agents and hand tasks over between them with summarized
@@ -80,6 +85,8 @@ share any AI-provider credentials.
 | **Start anything from one dialog** — agent, model, reasoning effort, start mode, and a fresh git worktree or the working copy as-is. | **Follow and steer from the browser** — the agent's questions, plans and permission prompts arrive as cards you answer in place. |
 | ![Three panes: the chat mirror, a live terminal attached to a shell session, and the repository's working-tree changes with a commit box](docs/img/split-en.webp) | ![Split panes: the commit graph with branch lanes on the left, the selected commit's diff on the right](docs/img/scm-en.webp) |
 | **Split panes** — mirror, live terminal and working-tree changes side by side; each pane can also pop out into its own tab. | **Real git, in the console** — commit graph beside the selected commit's diff, plus staging and commit, per working copy and worktree. |
+| ![Usage tab: a stacked per-feature token chart over 30 days, KPI tiles for tokens, calls, cache reads, API-equivalent cost and unmeasured calls, and breakdowns by feature, agent and model](docs/img/usage-en.webp) | ![A terminal pane attached to a shell session, showing a build and a git status run](docs/img/terminal-en.webp) |
+| **See where the tokens went** — per feature, per agent and per model, over 24h / 7d / 30d. Calls that report no tokens are counted separately, never as zero. | **A real terminal, too** — every session (agent or plain shell) is attachable as a live PTY. |
 
 <sub>Screenshots use a demo dataset; the same views in Japanese are in
 [README.ja.md](README.ja.md).</sub>
