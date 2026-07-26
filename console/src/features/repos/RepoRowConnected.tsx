@@ -97,6 +97,9 @@ export function RepoRowConnected({ r, ctx, onToggle, sess }: RepoRowConnectedPro
           toast(tr("repo.lock_failed", { err: errText(res.error) }));
           return;
         }
+        // The POST has already saved the value. Update the open row now;
+        // refreshRepos below remains reconciliation only.
+        useReposStore.getState().setLocked(r.name, res?.locked ?? locked);
         void refreshRepos();
         toast(locked ? tr("repo.locked_on", { name: r.name }) : tr("repo.locked_off", { name: r.name }), { kind: "success" });
       }}

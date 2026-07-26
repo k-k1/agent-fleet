@@ -207,6 +207,9 @@ export function AssistantSection() {
       toast(tr("asst.lock_failed"));
       return;
     }
+    // A list refresh can race this mutation. Keep the menu and badge in sync
+    // with the value the server just accepted.
+    setConvs((all) => all.map((item) => (item.id === c.id ? { ...item, locked: res?.locked ?? locked } : item)));
     toast(locked ? tr("asst.locked_on") : tr("asst.locked_off"), { kind: "success" });
     refresh();
   };
