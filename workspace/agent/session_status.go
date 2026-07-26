@@ -126,6 +126,12 @@ func recordSessionNotification(sid, previous, state, turnText string) {
 	// one-line reason, so it also rides the full-text bridge body below.
 	case state == agents.StateFailed && (previous == "working" || previous == ""):
 		kind, reason = reportKindAnswerReady, reportReasonTurnFailed
+	// A turn CUT OFF before it answered, by something that clears on its own (接続断・
+	// 一時的なレート制限). Same terminal event as above — the session is at 入力待ち and
+	// the instruction's one report must fire — but here re-running the turn is the right
+	// next move, so the report says so instead of "原因を直すまで再送するな" (docs/47).
+	case state == agents.StateAborted && (previous == "working" || previous == ""):
+		kind, reason = reportKindAnswerReady, reportReasonTurnAborted
 	case state == "question" && previous != "question":
 		kind = "question"
 	case state == "plan" && previous != "plan":

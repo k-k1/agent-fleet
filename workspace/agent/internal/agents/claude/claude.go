@@ -78,10 +78,13 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		li.State = status.LiveState(sid)
 		// Self-heal a stale cache: a non-idle state that no longer matches the terminal
 		// (killed+resumed, rejected permission, abandoned question) — if the pane is
-		// back at the ready prompt, it's idle.
+		// back at the ready prompt, it's idle. HealIdle additionally recognises the one
+		// case that IS a real turn end — an API error cut the turn off, so no Stop hook
+		// ever fired — and routes it through the notifier instead of silently dropping
+		// the completion (docs/47).
 		if li.State != "idle" && tmuxx.AtIdlePrompt(m.Name) {
 			li.State = "idle"
-			status.Remove(sid)
+			HealIdle(sid)
 		}
 		// Idle by hook, but the pane may actually be mid-turn: the "working" status file
 		// can go missing (never written, or removed by the self-heal above during a
