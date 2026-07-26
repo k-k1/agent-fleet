@@ -600,3 +600,113 @@ func TestMetaRemovalPathsFinalizeUsage(t *testing.T) {
 	}
 	t.Logf("meta 削除経路 %d 件を確認", checked)
 }
+
+// asstAt は時刻を指定した assistant イベント（転写の入れ替わりを組み立てるため）。
+func asstAt(ts string, in, out int) transcript.Turn {
+	t := asst("claude-haiku-4-5", in, out, 0, 0, false)
+	t.TS = ts
+	return t
+}
+
+// P2-8: claude は1つの sid に兄弟 jsonl を持ちうり、読む1本は mtime で選ばれる
+// （internal/agents/claude/transcript.go）。件数だけで差分を採ると、選択が入れ替わった
+// 瞬間に **折り込みが永久に止まる**（短い方へ）か、**別の会話の先頭ターンを既折り込み扱いで
+// 落とす**（長い方へ）。件数と時刻の両方で判定すること。
+func TestFoldSurvivesTranscriptFileSwitch(t *testing.T) {
+	useTempUsageDir(t)
+	m := session.Meta{Name: "slot01", Kind: session.KindClaude}
+	fold := func(turns []transcript.Turn, st *usageFoldState) int {
+		t.Helper()
+		n, err := foldSessionUsageWithTurns(m, st, turns, false)
+		if err != nil {
+			t.Fatalf("折り込みに失敗: %v", err)
+		}
+		return n
+	}
+	st := readUsageFoldState()
+
+	// 本体の転写: 3論理ターン（末尾のユーザーターンで閉じている）。
+	main3 := []transcript.Turn{
+		{Role: "user"}, asstAt("2026-07-26T01:00:00Z", 100, 10),
+		{Role: "user"}, asstAt("2026-07-26T02:00:00Z", 200, 20),
+		{Role: "user"}, asstAt("2026-07-26T03:00:00Z", 300, 30),
+		{Role: "user"},
+	}
+	if n := fold(main3, &st); n != 3 {
+		t.Fatalf("初回 = %d 行, want 3", n)
+	}
+
+	// mtime が兄弟ファイル（短い・**より新しい**）へ振れた。件数ベースだとここで永久に止まる。
+	sibling := []transcript.Turn{
+		{Role: "user"}, asstAt("2026-07-26T04:00:00Z", 400, 40),
+		{Role: "user"}, asstAt("2026-07-26T05:00:00Z", 500, 50),
+		{Role: "user"},
+	}
+	if n := fold(sibling, &st); n != 2 {
+		t.Fatalf("入れ替わった転写の新しいターン = %d 行, want 2（件数だけで見ると 0 になる）", n)
+	}
+	if got := st.Sessions[m.Name]; got.Groups != 3 || got.LastTS != "2026-07-26T05:00:00Z" {
+		t.Fatalf("watermark = %+v, want groups 3（下げない）/ lastTS 05:00", got)
+	}
+
+	// 古い兄弟（スタブ）へ振れた時は何も拾わない — 済んだ会話を数え直さない。
+	oldStub := []transcript.Turn{
+		{Role: "user"}, asstAt("2026-07-25T01:00:00Z", 900, 90),
+		{Role: "user"},
+	}
+	if n := fold(oldStub, &st); n != 0 {
+		t.Fatalf("古い転写から %d 行を拾った, want 0", n)
+	}
+
+	// 本体が伸びたら続きだけを拾う（通常の差分折り込みは変わらない）。
+	grown := append(append([]transcript.Turn{}, main3...),
+		asstAt("2026-07-26T06:00:00Z", 600, 60), transcript.Turn{Role: "user"})
+	if n := fold(grown, &st); n != 1 {
+		t.Fatalf("伸びた本体の続き = %d 行, want 1", n)
+	}
+	rows := readUsageRows()
+	if len(rows) != 6 {
+		t.Fatalf("台帳 = %d 行, want 6", len(rows))
+	}
+	spend := 0
+	for _, r := range rows {
+		spend += r.Spend
+	}
+	if want := 110 + 220 + 330 + 440 + 550 + 660; spend != want {
+		t.Fatalf("spend 合計 = %d, want %d", spend, want)
+	}
+}
+
+// P3-10: 追記が途中まで書けた状態でプロセスが落ちても、復旧後に **過不足なく** 回収される。
+// watermark を進めないので次回パスが同じターンを再追記し、集計側の (ref, idx) 重複排除が
+// 重なりを落とす — 書き手と読み手の二段構えが噛み合っていることの回帰。
+func TestFoldRecoversAfterPartialAppend(t *testing.T) {
+	useIsolatedUsageDir(t)
+	m := session.Meta{Name: "slot01", Kind: session.KindClaude}
+	turns := []transcript.Turn{
+		{Role: "user"}, asstAt("2026-07-26T01:00:00Z", 100, 10),
+		{Role: "user"}, asstAt("2026-07-26T02:00:00Z", 200, 20),
+		{Role: "user"},
+	}
+	// 1ターン目だけがディスクに載って落ちた状態を作る（watermark は書かれていない）。
+	st := readUsageFoldState()
+	partial := usageFoldState{Sessions: map[string]usageFoldMark{}}
+	if _, err := foldSessionUsageWithTurns(m, &partial, turns[:2], true); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(readUsageRows()); n != 1 {
+		t.Fatalf("前提が崩れている: 台帳 = %d 行, want 1", n)
+	}
+
+	// 復旧後のパスは watermark 0 から走るので、1ターン目を再追記する。
+	if n, err := foldSessionUsageWithTurns(m, &st, turns, false); err != nil || n != 2 {
+		t.Fatalf("復旧後の折り込み = %d 行 / err=%v, want 2 / nil", n, err)
+	}
+	if n := len(readUsageRows()); n != 3 {
+		t.Fatalf("台帳 = %d 行, want 3（1件は重複として残る）", n)
+	}
+	got := getSeries(t, "from=2026-07-26&to=2026-07-26")
+	if want := 110 + 220; got.Totals.Spend != want || got.Totals.Calls != 2 {
+		t.Fatalf("集計 = %+v, want spend %d / calls 2（重複を数えていないか）", got.Totals, want)
+	}
+}

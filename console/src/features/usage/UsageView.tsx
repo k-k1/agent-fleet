@@ -28,8 +28,18 @@ import { Icon } from "../../ui/Icon.tsx";
 import { fetchUsageSeries } from "./api.ts";
 import type { UsageAgg, UsageDim, UsageSeries } from "./api.ts";
 import { OTHER_KEY } from "./colors.ts";
-import { breakdownRows, coverageNotes, matrixRows, perCall, rangeOf, stackModel } from "./series.ts";
-import type { UsageMetric } from "./series.ts";
+import {
+  breakdownRows,
+  coverageNotes,
+  filterParam,
+  foldedFilterOn,
+  matrixRows,
+  perCall,
+  rangeOf,
+  stackModel,
+  toggleFoldedFilter,
+} from "./series.ts";
+import type { FilterTerm, UsageMetric } from "./series.ts";
 
 // 期間プリセット（dataviz: 日付レンジが読み手の最初に触るフィルタ）。
 const RANGES: { hours: number; key: MsgKey }[] = [
@@ -72,12 +82,6 @@ export function fmtMetric(metric: UsageMetric, v: number): string {
   if (metric === "calls") return fmtNum(Math.round(v));
   return fmtTok(Math.round(v));
 }
-
-interface FilterTerm {
-  dim: string;
-  value: string;
-}
-const filterParam = (terms: FilterTerm[]): string => terms.map((f) => `${f.dim}:${f.value}`).join(",");
 
 export function UsageView() {
   const tr = useT();
@@ -148,7 +152,6 @@ export function UsageView() {
   const notes = covers.filter((c) => !c.complete);
 
   const toggleFilter = (dim: string, value: string) => {
-    if (value === OTHER_KEY) return; // 「その他」は実体ではないので絞り込めない
     setFilters((cur) =>
       cur.some((f) => f.dim === dim && f.value === value)
         ? cur.filter((f) => !(f.dim === dim && f.value === value))
@@ -156,6 +159,14 @@ export function UsageView() {
     );
   };
   const isFiltered = (dim: string, value: string) => filters.some((f) => f.dim === dim && f.value === value);
+
+  // 「その他」は実体ではないので、畳まれた実キー全部の OR へ展開して絞る（series.ts）。
+  const pickSeries = (dim: string, value: string, folded: string[]) =>
+    value === OTHER_KEY
+      ? setFilters((cur) => toggleFoldedFilter(cur, dim, folded))
+      : toggleFilter(dim, value);
+  const seriesOn = (dim: string, value: string, folded: string[]) =>
+    value === OTHER_KEY ? foldedFilterOn(filters, dim, folded) : isFiltered(dim, value);
 
   if (!running) {
     return (
@@ -271,7 +282,12 @@ export function UsageView() {
             ) : (
               <StackChart stack={stack} by={by} metric={metric} bucket={series?.bucket || "day"} />
             )}
-            <Legend stack={stack} by={by} onPick={(k) => toggleFilter(by, k)} isOn={(k) => isFiltered(by, k)} />
+            <Legend
+              stack={stack}
+              by={by}
+              onPick={(k) => pickSeries(by, k, stack.foldedKeys)}
+              isOn={(k) => seriesOn(by, k, stack.foldedKeys)}
+            />
           </section>
 
           <div className="usage-breakdowns">
@@ -509,8 +525,11 @@ function StackChart({ stack, by, metric, bucket }: ChartProps) {
   );
 }
 
-// 凡例は2系列以上で常に出す（色だけに identity を持たせない）。クリックでその系列に絞る。
-function Legend({
+// 凡例は2系列以上、**または畳み込みがある時**に出す（色だけに identity を持たせない）。
+// 畳みがあるのに凡例を隠すと「名前のないグレーの棒」だけが残り、何の消費か読めなくなる
+// （色スロットを持たない feature が1つだけ出た時にまさにこれが起きていた）。
+// クリックでその系列に絞る — 「その他」は畳まれた実キー全部の OR で絞る。
+export function Legend({
   stack,
   by,
   onPick,
@@ -522,7 +541,7 @@ function Legend({
   isOn: (key: string) => boolean;
 }) {
   const tr = useT();
-  if (stack.legend.length < 2) return null;
+  if (stack.legend.length < 2 && !stack.foldedKeys.length) return null;
   return (
     <div className="usage-legend">
       {stack.legend.map((l) => (
@@ -531,7 +550,11 @@ function Legend({
           type="button"
           className={"ulg" + (isOn(l.key) ? " on" : "")}
           onClick={() => onPick(l.key)}
-          title={l.key === OTHER_KEY ? stack.foldedKeys.map((k) => dimLabel(by, k)).join(", ") : tr("usage.filter_add")}
+          title={
+            l.key === OTHER_KEY
+              ? stack.foldedKeys.map((k) => dimLabel(by, k)).join(", ") + " — " + tr("usage.filter_add")
+              : tr("usage.filter_add")
+          }
         >
           <span className="ulg-sw" style={{ background: l.color }} />
           {dimLabel(by, l.key)}
@@ -662,9 +685,14 @@ function MatrixTable({ src, rowDim }: { src: UsageSeries | null; rowDim: string 
                   </th>
                 )}
                 <td>{dimLabel("model", c.key)}</td>
-                <td className="num">{fmtNum(c.agg.calls)}</td>
+                {/* 1呼び出しが複数モデルに割れた時、回数は最も消費したモデル1行にだけ付く
+                    （サーバ側 aggregateUsageRows）。0 回・消費ありの行はその相方なので、
+                    「1回あたり」を 0 と書かずに — を出し、理由をツールチップに置く。 */}
+                <td className="num" title={c.agg.calls === 0 && c.agg.spend > 0 ? tr("usage.calls_shared") : undefined}>
+                  {fmtNum(c.agg.calls)}
+                </td>
                 <td className="num">{fmtTok(c.agg.spend)}</td>
-                <td className="num">{fmtTok(Math.round(perCall(c.agg)))}</td>
+                <td className="num">{c.agg.calls > 0 ? fmtTok(Math.round(perCall(c.agg))) : "—"}</td>
                 <td className="num">{c.agg.cost_usd ? fmtUSD(c.agg.cost_usd) : "—"}</td>
               </tr>
             )),

@@ -31,7 +31,23 @@ export const MAX_SLOTS = 8;
 
 export const OTHER_KEY = "__other__";
 
-/** feature の固定スロット表（docs/46 §1-a の列挙）。ここに無い feature はその他へ。 */
+/**
+ * feature の固定スロット表（docs/46 §1-a の列挙）。
+ *
+ * 凍結 enum は12個あり、スロットは8つしかない。**9色目を作らない**（規約3）ので、
+ * 溢れる4つは常にグレーの「その他」へ入る — これは取りこぼしではなく選択で、色を持つ8つは
+ * 「単独で桁が立ちうるもの」を採ってある:
+ *
+ * - `assistant.ask`（単発アドバイザリ・非永続）は `assistant.chat` の陰に隠れる量。
+ * - `title.chat` / `suggest.chat` は会話1本あたり数回で、`title.session` /
+ *   `suggest.session`（セッション毎に自動発火）より1桁小さい。
+ * - `branch.suggest` は手動起動のみ。
+ *
+ * **畳んだ分を見えなくしない**のがこの表の条件で、UI 側で3つ担保している: 畳みが1つでも
+ * あれば凡例に「その他」を必ず出す（系列が1本でも出す）／ツールチップに畳まれた実キーを
+ * 並べる／「その他」クリックで畳まれたキー全部の絞り込みを掛ける（同一軸 OR）。
+ * 内訳リストと表ビューは畳まずに実キーのまま出す。
+ */
 const FEATURE_SLOT: Record<string, number> = {
   session: 1,
   "assistant.chat": 2,

@@ -45,6 +45,17 @@ func (u claudeUsage) contextTokens() int {
 	return u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
 }
 
+// ledgerTokens は使用量台帳のトークン内訳（docs/46）。**modelUsage が取れなかった時の
+// 縮退用**で、モデル別の内訳は失われるが総量は残る。トップレベルの値を使うのは、台帳が
+// 見たいのが「この呼び出しで実際に課金された量」だから — コンテキスト占有（iterations
+// 末尾のスナップショット）とは別の量。
+func (u claudeUsage) ledgerTokens() usageTokens {
+	return usageTokens{
+		In: u.InputTokens, Out: u.OutputTokens,
+		CacheRead: u.CacheReadInputTokens, CacheCreate: u.CacheCreationInputTokens,
+	}
+}
+
 // claudeModelUsage は result イベントの modelUsage エントリのうち必要な分。マップの
 // キーは版込みの生モデル id（claude-haiku-4-5-20251001）で、CanonicalModel が版を畳んだ
 // 系列キー（claude-haiku-4-5）— 版が上がっても台帳の系列が分断されないよう両方を持つ。

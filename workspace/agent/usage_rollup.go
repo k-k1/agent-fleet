@@ -186,9 +186,22 @@ func usageRowTime(r usageRecord, fileDay string) time.Time {
 
 // aggregateUsageRows は行群を次元別に畳む。seen は「既に数えた call」— 呼び出し回数の
 // 二重計上を防ぐために呼び出し側と共有する。
+//
+// **呼び出し回数はその call の「代表行」に付ける。** claude は1呼び出しがモデル別行に
+// 割れ、行の並びは `usageModelRows` が付ける **生 id の昇順**（＝綴り順）でしかない。
+// 「最初の行」で数えると、calls=1 が付くモデルが id の綴り次第で決まり、`by=model` や
+// `split=model` で**主力モデルが 0 回・脇役が 1 回**と出る（機能×モデル表の平均も同時に
+// 壊れる）。代表は **その呼び出しで最も spend の大きいモデル行**とし、同点は model_raw →
+// model の昇順で決定的に選ぶ。
+//
+// 按分（1/N や spend 比）にしないのは calls を整数の「回数」として凍結してあるから
+// （ADR0029 §1）。どの軸で足しても合計が distinct call 数に一致する性質は代表方式でも
+// 保たれる。代表以外のモデル行は spend>0 / calls=0 になるので、平均を出す表は 0 除算を
+// 「—」で出す（console 側 `perCall`）。
 func aggregateUsageRows(rows []usageRecord, seen map[string]bool) map[usageKey]usageAgg {
+	rep := usageCallRepresentatives(rows)
 	out := map[usageKey]usageAgg{}
-	for _, r := range rows {
+	for i, r := range rows {
 		k := keyOf(r)
 		a := out[k]
 		a.Spend += r.Spend
@@ -199,13 +212,39 @@ func aggregateUsageRows(rows []usageRecord, seen map[string]bool) map[usageKey]u
 		a.CostUSD += r.CostUSD
 		if r.Call == "" {
 			a.Calls++ // 呼び出し ID の無い行は行＝呼び出しとみなす
-		} else if !seen[r.Call] {
+		} else if rep[r.Call] == i && !seen[r.Call] {
 			seen[r.Call] = true
-			a.Calls++ // その呼び出しの最初の行だけを1回として数える
+			a.Calls++ // その呼び出しの代表行だけを1回として数える
 		}
 		out[k] = a
 	}
 	return out
+}
+
+// usageCallRepresentatives は call ごとに「回数を数える行」の添字を選ぶ。
+func usageCallRepresentatives(rows []usageRecord) map[string]int {
+	rep := make(map[string]int, len(rows))
+	for i, r := range rows {
+		if r.Call == "" {
+			continue
+		}
+		if j, ok := rep[r.Call]; !ok || usageRowOutranks(r, rows[j]) {
+			rep[r.Call] = i
+		}
+	}
+	return rep
+}
+
+// usageRowOutranks は「どちらの行がその呼び出しの代表か」。実態（消費の大きい方）を採り、
+// 同点は名前で決める — 同じ入力から常に同じ帰属になることが集計の再現性に要る。
+func usageRowOutranks(a, b usageRecord) bool {
+	if a.Spend != b.Spend {
+		return a.Spend > b.Spend
+	}
+	if a.ModelRaw != b.ModelRaw {
+		return a.ModelRaw < b.ModelRaw
+	}
+	return a.Model < b.Model
 }
 
 // sortedRollupEntries は集計マップを決定的な並びのエントリ列にする（同じ入力から同じ
@@ -283,12 +322,16 @@ func ensureUsageRollups() {
 		if _, done := st.Rolled[fileDay]; done {
 			continue
 		}
+		rawRows, closed := readUsageDayForRollup(fileDay)
+		if !closed {
+			continue // まだ追記されうる日（UTC 日跨ぎの競合）— 次回に回す
+		}
 		// 消費日ごとに仕分ける。1つの raw ファイルが複数の日（バックフィルなら数か月）へ
 		// 寄与しうるのがこの層の肝。
 		seen := map[string]bool{} // call の重複排除はファイル単位で共有する
 		byDay := map[string][]usageRecord{}
 		var days []string
-		for _, r := range readUsageDay(fileDay) {
+		for _, r := range rawRows {
 			ts := usageRowTime(r, fileDay)
 			if !dd.accept(r, ts) {
 				dropped++ // 追記済み・watermark 未更新で落ちた分の再追記
@@ -337,10 +380,37 @@ func ensureUsageRollups() {
 	st.Folded = dd
 	// 月ファイル → state の順で書く。逆順だと、間で落ちた時に「畳み済み扱いだが集計が無い」
 	// = 消費の取りこぼしになる。この順なら最悪もう一度畳もうとするだけで、Src が弾く。
+	//
+	// **1つでも月ファイルが書けなければ state を進めない。** 進めると、その月へ寄与する
+	// はずだった消費は「畳み済み」扱いのまま集計から消え、raw が prune された時点で
+	// 二度と戻らない。書けた月の分は Src が「畳み済み」を覚えているので、次回の畳み直しで
+	// 二重に足されることもない。
 	for month := range dirty {
-		_ = writeUsageJSON(usageRollupPath(month), months[month])
+		if err := writeUsageJSON(usageRollupPath(month), months[month]); err != nil {
+			log.Printf("usage: rollup %s の書き込みに失敗: %v（state は進めない＝次回やり直す）", month, err)
+			return
+		}
 	}
-	_ = writeUsageJSON(usageRollupStatePath(), st)
+	if err := writeUsageJSON(usageRollupStatePath(), st); err != nil {
+		log.Printf("usage: rollup state の書き込みに失敗: %v", err)
+	}
+}
+
+// readUsageDayForRollup は追記と競合しない形で1日分を読む。**usageMu を保持したまま
+// 「その日はもう追記されないか」を確かめて読む**のが要点。
+//
+// 追記側（appendUsageRows）は usageMu を取ってから追記先の日を決めるので、ここでロック内
+// に「今日」を取り直して `day < today` を確認できれば、その後にロックを取る追記は必ず
+// もっと新しい日を選ぶ＝このファイルはもう伸びない。両者が別ロックだと、UTC 日跨ぎの直前に
+// 日を決めた追記がロールアップの後にそのファイルへ着地し、「畳み済み」判定で二度と読まれない
+// （＝その行が黙って消える）。窓は極小だが、消え方が静かなので塞ぐ。
+func readUsageDayForRollup(day string) (rows []usageRecord, closed bool) {
+	usageMu.Lock()
+	defer usageMu.Unlock()
+	if day >= time.Now().UTC().Format("2006-01-02") {
+		return nil, false
+	}
+	return readUsageDay(day), true
 }
 
 // rebuildUsageRollupsLocked は版が上がった時に rollup を作り直す。usageRollupMu 保持前提。

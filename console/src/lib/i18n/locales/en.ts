@@ -2384,6 +2384,7 @@ export const en: Record<keyof typeof ja, string> = {
   "usage.col_bucket": "Period",
   "usage.col_calls": "Calls",
   "usage.col_spend": "Spend",
+  "usage.calls_shared": "This call split across models (counted once, on the model that consumed most)",
   "usage.col_avg": "Per call",
   "usage.col_cost": "Cost",
   "usage.breakdown_feature": "By feature",

@@ -249,11 +249,52 @@ func handleUsageSeries(w http.ResponseWriter, r *http.Request) {
 		observeUsageCoverage(resp.Coverage, s.Key)
 	}
 	sort.Strings(order)
+	// 消費の無いバケットもゼロで埋める。落とすと「離れた2日」が隣り合う棒として描かれ、
+	// 時間軸として読めなくなる（4日空いたのか連続なのかが絵から消える）。
+	order = fillUsageBuckets(order, from, to, bucket)
 	resp.Buckets = make([]usageBucketWire, 0, len(order))
 	for _, t := range order {
-		resp.Buckets = append(resp.Buckets, usageBucketWire{T: t, Series: byBucket[t]})
+		s := byBucket[t]
+		if s == nil {
+			s = map[string]usageAgg{}
+		}
+		resp.Buckets = append(resp.Buckets, usageBucketWire{T: t, Series: s})
 	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
+}
+
+// usageMaxFilledBuckets はゼロ埋めの上限。これを超える密度の系列は棒グラフとして読めない
+// （90日 × hour = 2,160 本）ので、埋めずに実データだけを返す — 上限で切り詰めるのではなく
+// **埋めるのをやめる**（データを黙って落とさない）。
+const usageMaxFilledBuckets = 1000
+
+// fillUsageBuckets は要求期間のバケット並びを作り、実データの無いバケットも位置として残す。
+// 返すのは昇順のバケットキー列（既存キーは必ず含む）。
+func fillUsageBuckets(have []string, from, to time.Time, bucket string) []string {
+	step := 24 * time.Hour
+	cur := from.UTC().Truncate(24 * time.Hour)
+	if bucket == "hour" {
+		step = time.Hour
+		cur = from.UTC().Truncate(time.Hour)
+	}
+	if to.Before(cur) || int(to.Sub(cur)/step) >= usageMaxFilledBuckets {
+		return have
+	}
+	seen := make(map[string]bool, len(have))
+	out := make([]string, 0, len(have))
+	for ; !cur.After(to); cur = cur.Add(step) {
+		key := cur.Format(time.RFC3339)
+		seen[key] = true
+		out = append(out, key)
+	}
+	// 期間の端（from の時刻成分より前のバケット等）に落ちた実データは必ず残す。
+	for _, t := range have {
+		if !seen[t] {
+			out = append(out, t)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // collectUsageSamples は期間内のサンプルを集める。**バケットは行の ts（消費が起きた時刻）

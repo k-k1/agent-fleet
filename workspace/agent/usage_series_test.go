@@ -153,15 +153,20 @@ func TestUsageSeriesBucketsByConsumptionTimeNotFileDay(t *testing.T) {
 		at(row("c3", usageFeatureSession, session.KindClaude, "haiku", 300), today),
 	)
 	got := getSeries(t, "from="+old2+"&to="+today)
-	if len(got.Buckets) != 3 {
-		t.Fatalf("bucket 数 = %d, want 3（消費日ごとに分かれるはず）: %+v", len(got.Buckets), got.Buckets)
+	hit := nonEmptyBuckets(got)
+	if len(hit) != 3 {
+		t.Fatalf("消費のあるバケット数 = %d, want 3（消費日ごとに分かれるはず）: %+v", len(hit), got.Buckets)
+	}
+	// 期間はゼロ埋めして返す（41日空いていることが絵から消えない）。
+	if len(got.Buckets) != 42 {
+		t.Fatalf("bucket 数 = %d, want 42（%s〜%s のゼロ埋め）", len(got.Buckets), old2, today)
 	}
 	want := map[string]int{
 		old2 + "T00:00:00Z":  200,
 		old1 + "T00:00:00Z":  100,
 		today + "T00:00:00Z": 300,
 	}
-	for _, b := range got.Buckets {
+	for _, b := range hit {
 		if b.Series[usageFeatureSession].Spend != want[b.T] {
 			t.Fatalf("bucket %s = %d, want %d", b.T, b.Series[usageFeatureSession].Spend, want[b.T])
 		}
@@ -221,6 +226,19 @@ func TestParseUsageFilter(t *testing.T) {
 	if _, bad := parseUsageFilter("nope:1"); bad != "nope:1" {
 		t.Fatalf("未知の軸を弾いていない: %q", bad)
 	}
+}
+
+// nonEmptyBuckets は実データの乗ったバケットだけを返す。応答は要求期間をゼロ埋めする
+// （空バケットを落とすと離れた日が隣接した棒として描かれ、時間軸として読めない）ので、
+// 「何日分の消費があったか」を見るテストはこちらを使う。
+func nonEmptyBuckets(r usageSeriesResp) []usageBucketWire {
+	var out []usageBucketWire
+	for _, b := range r.Buckets {
+		if len(b.Series) > 0 {
+			out = append(out, b)
+		}
+	}
+	return out
 }
 
 func getSeries(t *testing.T, query string) usageSeriesResp {
@@ -316,14 +334,19 @@ func TestUsageSeriesHourBucket(t *testing.T) {
 	writeUsageDay(t, day, r1, r2, r3)
 
 	got := getSeries(t, "from="+day+"&to="+day+"&bucket=hour")
-	if len(got.Buckets) != 2 {
-		t.Fatalf("buckets = %+v", got.Buckets)
+	hit := nonEmptyBuckets(got)
+	if len(hit) != 2 {
+		t.Fatalf("消費のあるバケット = %+v", got.Buckets)
 	}
-	if got.Buckets[0].T != day+"T01:00:00Z" || got.Buckets[0].Series[usageFeatureAssistantChat].Spend != 30 {
-		t.Fatalf("bucket0 = %+v", got.Buckets[0])
+	if hit[0].T != day+"T01:00:00Z" || hit[0].Series[usageFeatureAssistantChat].Spend != 30 {
+		t.Fatalf("bucket0 = %+v", hit[0])
 	}
-	if got.Buckets[1].T != day+"T05:00:00Z" {
-		t.Fatalf("bucket1 = %+v", got.Buckets[1])
+	if hit[1].T != day+"T05:00:00Z" {
+		t.Fatalf("bucket1 = %+v", hit[1])
+	}
+	// 1日分の hour バケットはゼロ埋めして 24 本（空き時間が絵から消えない）。
+	if len(got.Buckets) != 24 {
+		t.Fatalf("bucket 数 = %d, want 24（ゼロ埋め）", len(got.Buckets))
 	}
 	if got.Totals.Spend != 70 {
 		t.Fatalf("totals = %+v", got.Totals)
@@ -343,8 +366,8 @@ func TestUsageSeriesHourReportsTruncationAfterPrune(t *testing.T) {
 	if !got.Truncated {
 		t.Fatal("raw が消えた期間を hour で要求したのに truncated が立っていない")
 	}
-	if len(got.Buckets) != 0 {
-		t.Fatalf("buckets = %+v", got.Buckets)
+	if hit := nonEmptyBuckets(got); len(hit) != 0 {
+		t.Fatalf("消費のあるバケットが出た: %+v", hit)
 	}
 }
 
@@ -376,5 +399,163 @@ func TestUsageSeriesDoesNotLeakRefs(t *testing.T) {
 	handleUsageSeries(rec, req)
 	if body := rec.Body.String(); strings.Contains(body, "slot-secret") {
 		t.Fatalf("ref が応答に漏れている: %s", body)
+	}
+}
+
+// --- レビュー P2/P3 の回帰 -----------------------------------------------------
+
+// modelRow は claude の「1呼び出しがモデル別行に割れた」1行。
+func modelRow(call, modelRaw, model string, spend int) usageRecord {
+	r := row(call, usageFeatureAssistantChat, session.KindClaude, model, spend)
+	r.ModelRaw = modelRaw
+	return r
+}
+
+// P2-5: 呼び出し回数は「その call で最も食ったモデル行」に付く。行の並びは生 id の
+// 綴り順でしかないので、先頭行で数えると主力モデルが calls=0 と出る。
+func TestCallsGoToTheDominantModelRow(t *testing.T) {
+	day := daysAgo(0)
+	rows := []usageRecord{
+		// 綴り順では a-model が先、実際に食ったのは z-model。
+		at(modelRow("c1", "a-model-20260101", "a-model", 100), day),
+		at(modelRow("c1", "z-model-20260101", "z-model", 9000), day),
+	}
+	agg := aggregateUsageRows(rows, map[string]bool{})
+	byModel := map[string]usageAgg{}
+	calls := 0
+	for k, a := range agg {
+		byModel[k.Model] = a
+		calls += a.Calls
+	}
+	if calls != 1 {
+		t.Fatalf("calls 合計 = %d, want 1（distinct call）", calls)
+	}
+	if byModel["z-model"].Calls != 1 || byModel["a-model"].Calls != 0 {
+		t.Fatalf("主力モデルに回数が付いていない: %+v", byModel)
+	}
+	// 同点は決定的に決める（同じ入力から同じ帰属＝集計が再現する）。
+	tie := []usageRecord{
+		at(modelRow("c2", "b-raw", "b", 50), day),
+		at(modelRow("c2", "a-raw", "a", 50), day),
+	}
+	for i := 0; i < 3; i++ {
+		got := aggregateUsageRows(tie, map[string]bool{})
+		for k, a := range got {
+			if a.Calls == 1 && k.Model != "a" {
+				t.Fatalf("同点の代表が model=%q になった（生 id 昇順で決めるはず）", k.Model)
+			}
+		}
+	}
+}
+
+// 同じことを API 越しに。`by=model` で主力モデルの calls が 0 に見えないこと。
+func TestUsageSeriesCallsFollowDominantModel(t *testing.T) {
+	useIsolatedUsageDir(t)
+	day := daysAgo(0)
+	writeUsageDay(t, day,
+		at(modelRow("c1", "a-model-20260101", "a-model", 100), day),
+		at(modelRow("c1", "z-model-20260101", "z-model", 9000), day),
+	)
+	got := getSeries(t, "from="+day+"&to="+day+"&by=model")
+	series := nonEmptyBuckets(got)[0].Series
+	if series["z-model"].Calls != 1 || series["a-model"].Calls != 0 {
+		t.Fatalf("by=model の calls = %+v", series)
+	}
+	if got.Totals.Calls != 1 || got.Totals.Spend != 9100 {
+		t.Fatalf("totals = %+v, want calls 1 / spend 9100", got.Totals)
+	}
+}
+
+// P2-4: 月ファイルが書けなかったら state を進めない。進めると、その月へ寄与するはずだった
+// 消費は「畳み済み」扱いのまま集計から消え、raw が prune された時点で二度と戻らない。
+func TestRollupKeepsStateWhenMonthWriteFails(t *testing.T) {
+	useIsolatedUsageDir(t)
+	day := daysAgo(1)
+	writeUsageDay(t, day, at(row("c1", usageFeatureSession, session.KindClaude, "haiku", 500), day))
+	// 月ファイルの置き場所をディレクトリで塞ぐ（rename が必ず失敗する）。
+	blocked := usageRollupPath(day[:7])
+	if err := os.MkdirAll(filepath.Join(blocked, "x"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	ensureUsageRollups()
+	if st := readUsageRollupState(); len(st.Rolled) != 0 {
+		t.Fatalf("月ファイルを書けていないのに畳み済みにした: %+v", st.Rolled)
+	}
+
+	// 塞ぎを外せば次のパスで畳み直せる（取りこぼしが復旧後に回収される）。
+	if err := os.RemoveAll(blocked); err != nil {
+		t.Fatal(err)
+	}
+	ensureUsageRollups()
+	entries := readUsageRollup(day[:7]).Days[day].Entries
+	if len(entries) != 1 || entries[0].Agg.Spend != 500 {
+		t.Fatalf("復旧後の集計 = %+v, want spend 500", entries)
+	}
+	if _, ok := readUsageRollupState().Rolled[day]; !ok {
+		t.Fatal("復旧後に畳み済みとして記録されていない")
+	}
+}
+
+// P3-12: 追記と畳み込みが別ロックなので、UTC 日跨ぎ直前に日を決めた追記が畳み込みの後に
+// 着地しうる。畳む側は usageMu を保持して「その日はもう伸びないか」を確かめてから読む。
+func TestRollupRefusesToReadTheOpenDay(t *testing.T) {
+	useIsolatedUsageDir(t)
+	today, yesterday := daysAgo(0), daysAgo(1)
+	writeUsageDay(t, today, at(row("c1", usageFeatureSession, session.KindClaude, "haiku", 10), today))
+	writeUsageDay(t, yesterday, at(row("c2", usageFeatureSession, session.KindClaude, "haiku", 20), yesterday))
+
+	if rows, closed := readUsageDayForRollup(today); closed || len(rows) != 0 {
+		t.Fatalf("当日のファイルを畳み込み対象として読んでしまった（rows=%d closed=%v）", len(rows), closed)
+	}
+	rows, closed := readUsageDayForRollup(yesterday)
+	if !closed || len(rows) != 1 {
+		t.Fatalf("完了した日を読めていない（rows=%d closed=%v）", len(rows), closed)
+	}
+}
+
+// P3-9: 消費の無い日もゼロで埋めて返す。落とすと「離れた2日」が隣り合う棒になり、
+// 空白期間が絵から消える。
+func TestUsageSeriesFillsEmptyBuckets(t *testing.T) {
+	useIsolatedUsageDir(t)
+	from, gap, to := daysAgo(4), daysAgo(2), daysAgo(0)
+	writeUsageDay(t, to,
+		at(row("c1", usageFeatureSession, session.KindClaude, "haiku", 100), from),
+		at(row("c2", usageFeatureSession, session.KindClaude, "haiku", 200), to),
+	)
+	got := getSeries(t, "from="+from+"&to="+to)
+	if len(got.Buckets) != 5 {
+		t.Fatalf("bucket 数 = %d, want 5（%s〜%s の全日）", len(got.Buckets), from, to)
+	}
+	if len(nonEmptyBuckets(got)) != 2 {
+		t.Fatalf("消費のあるバケット = %+v", nonEmptyBuckets(got))
+	}
+	var mid *usageBucketWire
+	for i, b := range got.Buckets {
+		if b.T == gap+"T00:00:00Z" {
+			mid = &got.Buckets[i]
+		}
+	}
+	if mid == nil || len(mid.Series) != 0 {
+		t.Fatalf("空の日が位置として残っていない: %+v", got.Buckets)
+	}
+	// 埋めても合計は動かない。
+	if got.Totals.Spend != 300 || got.Totals.Calls != 2 {
+		t.Fatalf("totals = %+v", got.Totals)
+	}
+}
+
+// 埋めるのが無意味な密度（90日 × hour）では埋めない。切り詰めるのではなく埋めるのをやめる
+// ＝実データは必ず全部返る。
+func TestUsageSeriesDoesNotFillAbsurdRanges(t *testing.T) {
+	useIsolatedUsageDir(t)
+	day := daysAgo(0)
+	writeUsageDay(t, day, at(row("c1", usageFeatureSession, session.KindClaude, "haiku", 10), day))
+	got := getSeries(t, "from="+daysAgo(89)+"&to="+day+"&bucket=hour")
+	if len(got.Buckets) != 1 {
+		t.Fatalf("bucket 数 = %d, want 1（上限を超える密度は埋めない）", len(got.Buckets))
+	}
+	if got.Totals.Spend != 10 {
+		t.Fatalf("totals = %+v", got.Totals)
 	}
 }
