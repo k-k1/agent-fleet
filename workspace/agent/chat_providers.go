@@ -1108,6 +1108,25 @@ func modelChoiceIDs(list []agents.ModelChoice) []string {
 	return out
 }
 
+// recommendedUtilityModel picks the cheap model shown as 「推奨（現在: …）」 in
+// AssistantTab. The OpenCode Go route is pinned only when the live account catalog
+// proves it is available; otherwise an empty result deliberately delegates to the
+// CLI default rather than risking a metered/unentitled Zen model.
+func recommendedUtilityModel(kind string) string {
+	switch kind {
+	case session.KindClaude:
+		return "haiku"
+	case session.KindCodex:
+		return cheapOneShotModel(modelChoiceIDs(codex.Models()))
+	case session.KindOpencode:
+		const goModel = "opencode-go/deepseek-v4-flash"
+		return recommendedCatalogModel(opencode.Models(), goModel, "")
+	case session.KindAgy:
+		return defaultAgyChatModel
+	}
+	return ""
+}
+
 // codexOneShotArgs is the argv for a codex one-shot. --ephemeral: a one-shot never
 // needs resume, so don't persist a thread even into the chat-only CODEX_HOME.
 //
@@ -1213,12 +1232,21 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 	kind := preferredHeadlessAgent()
 	selected, configured := assistantUtilityModelPref(kind)
 	selected = strings.TrimSpace(selected)
+	autoRecommended := selected == assistantRecommendedModel
+	if selected == assistantRecommendedModel {
+		selected, configured = recommendedUtilityModel(kind), true
+	}
 	switch kind {
 	case session.KindCodex:
 		call.Kind = session.KindCodex
 		defer func() { _, _ = chatCodexHome() }()
 		full := headlessPrompt(persona, nil, prompt)
+		if !configured && os.Getenv("AF_TITLE_MODEL_CODEX") == "" {
+			selected = recommendedUtilityModel(kind)
+			autoRecommended = selected != ""
+		}
 		args, autoPicked := codexOneShotArgsFor(selected)
+		autoPicked = autoPicked || autoRecommended
 		reply, tok, modelReq, err := codexOneShotWithRetry(ctx, args, autoPicked, full, runCodexOneShot)
 		call.ModelReq, call.Totals, call.OK = modelReq, tok, err == nil
 		return reply, err
@@ -1234,6 +1262,9 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		m := selected
 		if !configured {
 			m = os.Getenv("AF_TITLE_MODEL_OPENCODE")
+			if m == "" {
+				m = recommendedUtilityModel(kind)
+			}
 		}
 		if m != "" {
 			args = append(args, "--model", m)
@@ -1273,6 +1304,9 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		m := selected
 		if !configured {
 			m = os.Getenv("AF_TITLE_MODEL_CURSOR")
+			if m == "" {
+				m = recommendedUtilityModel(kind)
+			}
 		}
 		if m != "" {
 			args = append(args, "--model", m)

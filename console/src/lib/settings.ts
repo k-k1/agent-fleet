@@ -225,9 +225,10 @@ export interface Settings {
   // the Agent normalizes partial/stale lists against its own default order.
   assistantAgentOrder: string[];
   // Per-backend models for builtin assistant conversations and short one-shot
-  // helpers. Empty means that backend's documented automatic/default choice.
-  // Explicit models are kept for every backend so priority fallback never silently
-  // changes the requested model.
+  // helpers. "recommended" resolves against the live catalog (and is shown with
+  // its current concrete result); empty delegates to the CLI default. Explicit
+  // models are kept for every backend so priority fallback never silently changes
+  // the requested model.
   assistantModels: Record<string, string>;
   assistantUtilityModels: Record<string, string>;
   // Auto turn on session reports (docs/30): when a session an af_write assistant
@@ -400,6 +401,7 @@ export const DEFAULT_MODEL = "sonnet";
 // defaultHeadlessOrder; agy last — its free-plan quota is scarce). Display labels
 // come from the agent registry (assistantName), not i18n.
 export const ASSISTANT_AGENT_KINDS = ["claude", "codex", "opencode", "cursor", "agy"] as const;
+export const ASSISTANT_RECOMMENDED_MODEL = "recommended";
 
 // normalizeAssistantOrder folds any stored value into a total order over
 // ASSISTANT_AGENT_KINDS: unknown entries and dupes drop, missing kinds append in
@@ -457,18 +459,18 @@ const DEFAULTS: Settings = {
   outputLanguage: "auto",
   assistantAgentOrder: [...ASSISTANT_AGENT_KINDS],
   assistantModels: {
-    claude: "sonnet",
-    codex: "gpt-5.6-luna",
-    opencode: "opencode/nemotron-3-ultra-free",
-    cursor: "",
-    agy: "Gemini 3.5 Flash (Medium)",
+    claude: ASSISTANT_RECOMMENDED_MODEL,
+    codex: ASSISTANT_RECOMMENDED_MODEL,
+    opencode: ASSISTANT_RECOMMENDED_MODEL,
+    cursor: ASSISTANT_RECOMMENDED_MODEL,
+    agy: ASSISTANT_RECOMMENDED_MODEL,
   },
   assistantUtilityModels: {
-    claude: "haiku",
-    codex: "",
-    opencode: "",
-    cursor: "",
-    agy: "Gemini 3.5 Flash (Medium)",
+    claude: ASSISTANT_RECOMMENDED_MODEL,
+    codex: ASSISTANT_RECOMMENDED_MODEL,
+    opencode: ASSISTANT_RECOMMENDED_MODEL,
+    cursor: ASSISTANT_RECOMMENDED_MODEL,
+    agy: ASSISTANT_RECOMMENDED_MODEL,
   },
   assistantAutoTurn: true,
   assistantAutoTurnLimit: 10,
