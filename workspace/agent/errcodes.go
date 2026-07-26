@@ -20,6 +20,10 @@ const (
 	errCodeFSReadFailed         = "read_failed"
 	errCodeFSWriteFailed        = "write_failed"
 	errCodeFSWriteStateUnknown  = "write_state_unknown"
+	// Sent only when the client already abandoned the request (timeout /
+	// disconnect observed at mutex acquisition), so no live client ever renders
+	// it — deliberately absent from the Console i18n catalogs.
+	errCodeFSWriteCancelled = "write_cancelled"
 
 	errCodeSessionsRunning       = "sessions_running"
 	errCodeSessionsRunningDelete = "sessions_running_delete"

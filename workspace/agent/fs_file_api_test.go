@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -466,7 +467,7 @@ func TestFSFileAtomicFailureClassification(t *testing.T) {
 			}
 			ops := defaultFSAtomicWriteOps
 			tc.mutate(&ops)
-			_, aerr := putFSFile(directPut("a.txt", "new\n", []byte("old\n")), serviceWithOps(ops))
+			_, aerr := putFSFile(t.Context(), directPut("a.txt", "new\n", []byte("old\n")), serviceWithOps(ops))
 			if aerr == nil || aerr.code != tc.wantCode {
 				t.Fatalf("error=%+v want %s", aerr, tc.wantCode)
 			}
@@ -508,7 +509,7 @@ func TestFSFileAtomicWriteOrdering(t *testing.T) {
 		order = append(order, "rename")
 		return unix.Renameat(oldFD, oldPath, newFD, newPath)
 	}
-	if _, aerr := putFSFile(directPut("a.txt", "new\n", []byte("old\n")), serviceWithOps(ops)); aerr != nil {
+	if _, aerr := putFSFile(t.Context(), directPut("a.txt", "new\n", []byte("old\n")), serviceWithOps(ops)); aerr != nil {
 		t.Fatalf("PUT: %+v", aerr)
 	}
 	if got, want := strings.Join(order, ","), "fchmod,temp_fsync,rename,parent_fsync"; got != want {
@@ -543,7 +544,7 @@ func TestFSFileConcurrentPUTsSerializeThroughParentSync(t *testing.T) {
 	first := make(chan result, 1)
 	second := make(chan result, 1)
 	go func() {
-		resp, err := putFSFile(directPut("a.txt", "first\n", []byte("old\n")), service)
+		resp, err := putFSFile(t.Context(), directPut("a.txt", "first\n", []byte("old\n")), service)
 		first <- result{resp, err}
 	}()
 	select {
@@ -552,7 +553,7 @@ func TestFSFileConcurrentPUTsSerializeThroughParentSync(t *testing.T) {
 		t.Fatal("first PUT did not reach parent fsync")
 	}
 	go func() {
-		resp, err := putFSFile(directPut("a.txt", "second\n", []byte("old\n")), service)
+		resp, err := putFSFile(t.Context(), directPut("a.txt", "second\n", []byte("old\n")), service)
 		second <- result{resp, err}
 	}()
 	select {
@@ -594,7 +595,7 @@ func TestFSFileGetWaitsForInFlightPut(t *testing.T) {
 	// pre-rename base while the rename is still pending.
 	putDone := make(chan *fsAPIError, 1)
 	go func() {
-		_, aerr := putFSFile(directPut("a.txt", "new\n", []byte("old\n")), service)
+		_, aerr := putFSFile(t.Context(), directPut("a.txt", "new\n", []byte("old\n")), service)
 		putDone <- aerr
 	}()
 	select {
@@ -631,6 +632,78 @@ func TestFSFileGetWaitsForInFlightPut(t *testing.T) {
 	}
 }
 
+func TestFSFilePutCancelledBeforeLockDoesNotWrite(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("AF_BROWSE_ROOT", root)
+	target := filepath.Join(root, "a.txt")
+	if err := os.WriteFile(target, []byte("old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var writeTouched atomic.Bool
+	ops := defaultFSAtomicWriteOps
+	ops.fchmod = func(fd int, mode uint32) error {
+		writeTouched.Store(true)
+		return unix.Fchmod(fd, mode)
+	}
+	service := serviceWithOps(ops)
+
+	// The client timed out while this PUT's goroutine was still parked before
+	// the path mutex, so the recovery GET won the lock first and observed the
+	// old base as its discard target.
+	got, aerr := readFSFile("a.txt", service)
+	if aerr != nil || got["content"] != "old\n" {
+		t.Fatalf("GET before cancelled PUT: %#v error=%+v", got, aerr)
+	}
+
+	// The parked PUT resumes with its request context already cancelled. It
+	// must abort at the post-lock check: a CAS against the old base would
+	// otherwise succeed and invalidate the snapshot the GET just returned.
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, aerr = putFSFile(ctx, directPut("a.txt", "new\n", []byte("old\n")), service)
+	if aerr == nil || aerr.status != 499 || aerr.code != errCodeFSWriteCancelled {
+		t.Fatalf("cancelled PUT error=%+v", aerr)
+	}
+	if writeTouched.Load() {
+		t.Fatal("cancelled PUT reached the write path")
+	}
+	if got, err := os.ReadFile(target); err != nil || string(got) != "old\n" {
+		t.Fatalf("cancelled PUT changed disk: %q err=%v", got, err)
+	}
+	matches, err := filepath.Glob(filepath.Join(root, ".af-edit-*"))
+	if err != nil || len(matches) != 0 {
+		t.Fatalf("temporary files remain: %v err=%v", matches, err)
+	}
+	// The aborted PUT released the lock without writing; a follow-up GET reads
+	// the unchanged base instead of waiting behind a write.
+	got, aerr = readFSFile("a.txt", service)
+	if aerr != nil || got["content"] != "old\n" || got["revision"] != fileRevision([]byte("old\n")) {
+		t.Fatalf("GET after cancelled PUT: %#v error=%+v", got, aerr)
+	}
+}
+
+func TestFSFilePutHandlerHonorsRequestCancellation(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("AF_BROWSE_ROOT", root)
+	target := filepath.Join(root, "a.txt")
+	if err := os.WriteFile(target, []byte("old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	req := httptest.NewRequest(http.MethodPut, "/fs/file",
+		strings.NewReader(putJSONBody("a.txt", "new\n", fileRevision([]byte("old\n"))))).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handleFSFilePut(rec, req)
+	if rec.Code != 499 || responseErrorCode(t, rec) != errCodeFSWriteCancelled {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got, err := os.ReadFile(target); err != nil || string(got) != "old\n" {
+		t.Fatalf("cancelled handler PUT changed disk: %q err=%v", got, err)
+	}
+}
+
 func TestFSFileExternalWriterRaceIsOutsideCASGuarantee(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("AF_BROWSE_ROOT", root)
@@ -647,7 +720,7 @@ func TestFSFileExternalWriterRaceIsOutsideCASGuarantee(t *testing.T) {
 		}
 		return unix.Renameat(oldFD, oldPath, newFD, newPath)
 	}
-	if _, aerr := putFSFile(directPut("a.txt", "saved\n", []byte("old\n")), serviceWithOps(ops)); aerr != nil {
+	if _, aerr := putFSFile(t.Context(), directPut("a.txt", "saved\n", []byte("old\n")), serviceWithOps(ops)); aerr != nil {
 		t.Fatalf("PUT: %+v", aerr)
 	}
 	if got, _ := os.ReadFile(target); string(got) != "saved\n" {
@@ -686,7 +759,7 @@ func TestFSFileAtomicVisibility(t *testing.T) {
 		}()
 	}
 	req := fsFilePUTRequest{path: "a.txt", content: newContent, baseDiskRevision: fileRevision(oldContent)}
-	_, aerr := putFSFile(req, serviceWithOps(defaultFSAtomicWriteOps))
+	_, aerr := putFSFile(t.Context(), req, serviceWithOps(defaultFSAtomicWriteOps))
 	close(stop)
 	wg.Wait()
 	if aerr != nil {
