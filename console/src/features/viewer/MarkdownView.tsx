@@ -3,7 +3,7 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import hljs from "highlight.js/lib/common";
 import { dirName, baseName, isExternalUrl, resolveMarkdownFileTarget, slug } from "../../lib/filemeta.ts";
-import { withoutYamlFrontMatter } from "../../lib/markdown.ts";
+import { splitYamlFrontMatter } from "../../lib/markdown.ts";
 import { api, downloadURL } from "../../core/api/client.ts";
 import { useSettings } from "../../lib/settings.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -74,10 +74,10 @@ export function MarkdownView({
     if (!el) return;
     let alive = true;
 
-    // YAML front matter is document metadata rather than visible Markdown. Keep
-    // an unfinished delimiter block intact so a streaming reply is not hidden.
-    const rawHtml = marked.parse(withoutYamlFrontMatter(source ?? ""), { gfm: true, breaks }) as string;
+    const frontMatter = splitYamlFrontMatter(source ?? "");
+    const rawHtml = marked.parse(frontMatter?.body ?? source ?? "", { gfm: true, breaks }) as string;
     el.innerHTML = DOMPurify.sanitize(rawHtml);
+    if (frontMatter) renderFrontMatter(el, frontMatter.attributes);
 
     renderEmoji(el); // :shortcode: → emoji (skips code / pre)
 
@@ -174,6 +174,33 @@ export function MarkdownView({
   }, [source, basePath, baseDir, repo, breaks, streaming, theme, toast]);
 
   return <div className="markdown" ref={ref} />;
+}
+
+// Front matter belongs above the document as a compact property list. It is
+// created through DOM APIs (rather than injected HTML) so YAML scalar strings
+// are always rendered as text.
+function renderFrontMatter(root: HTMLElement, attributes: Record<string, unknown>) {
+  const panel = document.createElement("dl");
+  panel.className = "md-frontmatter";
+  for (const [key, value] of Object.entries(attributes)) {
+    const name = document.createElement("dt");
+    name.textContent = key;
+    const content = document.createElement("dd");
+    content.textContent = formatFrontMatterValue(value);
+    panel.append(name, content);
+  }
+  if (panel.childElementCount) root.prepend(panel);
+}
+
+function formatFrontMatterValue(value: unknown): string {
+  if (value === null) return "null";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+  if (value instanceof Date) return value.toISOString();
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
 
 // Common GitHub-style emoji shortcodes (:tada: → 🎉). A curated subset covering what
