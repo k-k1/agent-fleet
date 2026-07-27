@@ -6,6 +6,8 @@ import { AGENTS } from "../../agents/registry.ts";
 import { SESSION_KINDS } from "../../types/session.ts";
 import type { SessionKind } from "../../types/session.ts";
 import type { Assistant, AssistantInput, ToolGrant } from "../../types/assistant.ts";
+import { api } from "../../core/api/client.ts";
+import type { McpServer } from "../settings/mcpWire.ts";
 import { readerVoiceChoices } from "./tts.ts";
 import { loadSpeakers } from "./ttsSpeakers.ts";
 import { useT, type MsgKey } from "../../lib/i18n/index.ts";
@@ -46,6 +48,27 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
   const [knowledge, setKnowledge] = useState((initial?.knowledge ?? []).join("\n"));
   const [voice, setVoice] = useState(initial?.voice ?? "");
   const [busy, setBusy] = useState(false);
+  // Attachable MCP servers come from the EFFECTIVE registry (docs/48 §7): the builtin
+  // ops integrations, the user's own registrations, and anything the tenant
+  // distributes — one list, exactly what the chat will actually resolve. null = still
+  // loading, so an empty registry and a pending fetch don't look alike.
+  const [mcp, setMcp] = useState<McpServer[] | null>(null);
+  const [integrations, setIntegrations] = useState<string[]>(initial?.integrations ?? []);
+  useEffect(() => {
+    let alive = true;
+    void api("api/mcp-servers")
+      .then((d) => {
+        if (!alive) return;
+        const servers: McpServer[] = d && !d.error && Array.isArray(d.servers) ? d.servers : [];
+        setMcp(servers.filter((s) => s.targets?.assistant));
+      })
+      .catch(() => alive && setMcp([]));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const toggleIntegration = (id: string) =>
+    setIntegrations((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
   // 声の選択肢はキャラクター設定×エンジン実カタログ（tts.ts）。届いたら再レンダ。
   const [, setCatalogLoaded] = useState(false);
   useEffect(() => {
@@ -78,6 +101,7 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
           .split("\n")
           .map((s) => s.trim())
           .filter(Boolean),
+        integrations,
         voice,
       });
       onClose();
@@ -202,6 +226,33 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
             ))}
           </div>
           <div className="ui-field-hint">{tr(TOOLS.find((t) => t.value === tools)?.helpKey ?? "asst.tool_none_help")}</div>
+        </div>
+
+        <div className="ui-field">
+          <div className="ui-field-label">{tr("asst.mcp_label")}</div>
+          <div className="ui-field-hint">{tr("asst.mcp_hint")}</div>
+          {mcp !== null && mcp.length === 0 && <div className="ui-field-hint">{tr("asst.mcp_empty")}</div>}
+          {mcp?.map((s) => {
+            // A definition scoped away from this backend, or still missing a value it
+            // needs, is shown but flagged: it stays selectable (the scope or the
+            // credential can be fixed later) and simply won't attach until then.
+            const scoped = !s.kinds?.length || s.kinds.includes(agent);
+            return (
+              <label key={s.id} className="assistant-mcp-opt">
+                <input
+                  type="checkbox"
+                  checked={integrations.includes(s.id)}
+                  onChange={() => toggleIntegration(s.id)}
+                />
+                <span className="assistant-mcp-name">{s.label || s.name}</span>
+                {!s.enabled && <span className="ui-field-hint">{tr("asst.mcp_disabled")}</span>}
+                {s.enabled && !s.ready && <span className="ui-field-hint">{tr("asst.mcp_not_ready")}</span>}
+                {s.enabled && s.ready && !scoped && (
+                  <span className="ui-field-hint">{tr("asst.mcp_out_of_scope", { agent: AGENTS[agent].assistantName })}</span>
+                )}
+              </label>
+            );
+          })}
         </div>
 
         <div className="ui-field">

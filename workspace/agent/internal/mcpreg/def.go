@@ -193,14 +193,36 @@ func validateURL(raw string) error {
 // AppliesTo reports whether d should be handed to a session of the given agent kind.
 // An empty Kinds list means every kind.
 func AppliesTo(d ServerDef, kind string) bool {
-	if !d.Enabled || !d.Targets.Session {
-		return false
-	}
+	return d.Enabled && d.Targets.Session && KindAllowed(d, kind)
+}
+
+// KindAllowed reports whether d is scoped to the given agent kind. An empty Kinds
+// list means every kind. It gates BOTH consumers: an assistant runs on one backend
+// CLI, so a definition scoped away from that CLI is no more usable in the chat than
+// it is in an interactive session of the same kind.
+func KindAllowed(d ServerDef, kind string) bool {
 	if len(d.Kinds) == 0 {
 		return true
 	}
 	for _, k := range d.Kinds {
 		if k == kind {
+			return true
+		}
+	}
+	return false
+}
+
+// HasSecrets reports whether a definition carries any secret VALUE. Callers use it to
+// refuse a fallback path that would put the definition somewhere weaker than a 0600
+// file (docs/48 §5.1) — a definition with no secrets has nothing to protect.
+func HasSecrets(d ServerDef) bool {
+	for _, v := range d.Env {
+		if v != "" {
+			return true
+		}
+	}
+	for _, v := range d.Headers {
+		if v != "" {
 			return true
 		}
 	}

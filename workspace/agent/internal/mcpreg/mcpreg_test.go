@@ -307,7 +307,7 @@ func TestForSessionFiltersAndForAssistant(t *testing.T) {
 	if got, _ := ForSession(session.KindClaude); len(got) != 0 {
 		t.Fatalf("ForSession(claude) = %+v, want empty", got)
 	}
-	forChat, err := ForAssistant()
+	forChat, err := ForAssistant(session.KindClaude)
 	if err != nil || len(forChat) != 1 {
 		t.Fatalf("ForAssistant = %+v, %v", forChat, err)
 	}

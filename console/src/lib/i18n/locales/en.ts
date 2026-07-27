@@ -379,8 +379,6 @@ export const en: Record<keyof typeof ja, string> = {
     "Distributed by a tenant admin. You cannot edit it, but you can disable it in your own workspace.",
   "mcp.session_restart_note":
     "Sessions pick this up from the next session you start (already-running sessions are unaffected).",
-  "mcp.codex_header_warn":
-    "codex cannot carry headers other than Authorization, so this server will not be available there.",
   "mcp.f_name": "Name",
   "mcp.f_name_hint": "The server key written into each CLI's config. Letters, digits, dash and underscore, up to 48 chars.",
   "mcp.f_name_bad": "Use 1-48 characters of letters, digits, dash or underscore, starting with a letter or digit.",
@@ -2127,6 +2125,12 @@ export const en: Record<keyof typeof ja, string> = {
   "asst.persona_hint": "Describe the assistant's role, tone, and constraints. Leave blank to act as a general-purpose assistant.",
   "asst.persona_ph": "e.g. You are a technical-document translator. Return only the translated text.",
   "asst.tools_label": "Tool permissions",
+  "asst.mcp_label": "MCP servers (optional)",
+  "asst.mcp_hint": "Choose the MCP servers this assistant's chat connects to. The list holds the builtin integrations (PagerDuty / Grafana / CloudWatch) plus anything registered under Settings > MCP servers.",
+  "asst.mcp_empty": "No MCP server is available to attach. Register one under Settings > MCP servers, or connect an integration on the Ops & monitoring tab.",
+  "asst.mcp_disabled": "Disabled (will not attach)",
+  "asst.mcp_not_ready": "Incomplete configuration (will not attach)",
+  "asst.mcp_out_of_scope": "Out of scope for {agent} (will not attach)",
   "asst.knowledge_label": "Knowledge directories (optional, one per line)",
   "asst.knowledge_hint": "Specify directories (absolute paths inside the container) that hold documents you want referenced, and they can be read during the conversation.",
   "asst.cancel": "Cancel",

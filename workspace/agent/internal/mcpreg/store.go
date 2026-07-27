@@ -179,20 +179,51 @@ func Get(id string) (ServerDef, error) {
 	return ServerDef{}, ErrNotFound
 }
 
-// ForAssistant returns the enabled, ready definitions an assistant may attach,
-// keyed by id for the chat's integration lookup.
-func ForAssistant() (map[string]ServerDef, error) {
+// ForAssistant returns the enabled, ready definitions an assistant running on the
+// given backend kind may attach, keyed by id for the chat's integration lookup.
+// A kind of "" skips the scope filter (used for listing, not for attaching).
+func ForAssistant(kind string) (map[string]ServerDef, error) {
 	reg, err := Load()
 	if err != nil {
 		return nil, err
 	}
 	out := map[string]ServerDef{}
 	for _, d := range reg.Servers {
-		if d.Targets.Assistant && Ready(d) {
-			out[d.ID] = d
+		if !d.Targets.Assistant || !Ready(d) {
+			continue
 		}
+		if kind != "" && !KindAllowed(d, kind) {
+			continue
+		}
+		out[d.ID] = d
 	}
 	return out, nil
+}
+
+// Known reports whether id names something an assistant may hold. It deliberately
+// looks past enabled/ready: an assistant keeps its selection while the underlying
+// connection is missing or the server is switched off (the pre-registry behavior for
+// the builtins — a disconnected PagerDuty left the SRE assistant's id in place), so
+// re-connecting restores the tools instead of silently having dropped them on save.
+func Known(id string) bool {
+	if IsBuiltin(id) {
+		return true
+	}
+	s, err := secrets.Load()
+	if err != nil {
+		return false
+	}
+	for _, d := range s.MCP {
+		if d.ID == id {
+			return true
+		}
+	}
+	for _, d := range loadTenantCache().Servers {
+		if d.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // ForSession returns the definitions to materialize into the given agent kind's
