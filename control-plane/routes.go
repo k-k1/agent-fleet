@@ -443,6 +443,20 @@ func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/agents/rtk/gain", rest)
 	// codex / opencode model catalogs (launch model picker) — proxied to the Agent.
 	mux.HandleFunc("GET /api/agents/{kind}/models", rest)
+	// エージェントメモリの版管理（docs/39 / ADR 0022 P1〜P3）— Agent 側で完結する処理の中継。
+	// {kind}/models とは最終セグメントが違うのでパターンは衝突しない。
+	mux.HandleFunc("GET /api/agents/memory/roots", rest)
+	mux.HandleFunc("GET /api/agents/memory/snapshots", rest)
+	mux.HandleFunc("POST /api/agents/memory/snapshots", rest)
+	mux.HandleFunc("GET /api/agents/memory/diff", rest)
+	mux.HandleFunc("GET /api/agents/memory/tree", rest)
+	mux.HandleFunc("POST /api/agents/memory/restore", rest)
+	mux.HandleFunc("PUT /api/agents/memory/settings", rest)
+	// 環境間の移送（P3）。export は Content-Disposition 付きの本文をそのまま流し、
+	// import は multipart をそのまま Agent へ渡す（rest は body/ヘッダを素通しする）。
+	mux.HandleFunc("GET /api/agents/memory/export", rest)
+	mux.HandleFunc("POST /api/agents/memory/import", rest)
+	mux.HandleFunc("POST /api/agents/memory/import/apply", rest)
 	// Toolchain selection (node / java) — proxied to the Agent.
 	mux.HandleFunc("GET /api/env/toolchains", rest)
 	mux.HandleFunc("PUT /api/env/toolchains", rest)
