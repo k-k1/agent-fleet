@@ -98,12 +98,15 @@ export function surfacesFor(state: FileModeState, caps: FileModeCaps): FileSurfa
       : { ...none, source: true };
   }
   const renderer = effectiveRenderer(state, caps);
-  if (state.md === "preview") return { ...none, preview: renderer };
-  // `split` without an edit surface cannot happen once reconciled, but stays
-  // total here: it degrades to the read-only source beside the preview.
-  const sourceSide = caps.editable ? { editor: true } : { source: true };
-  if (state.md === "split") return { ...none, ...sourceSide, preview: renderer, split: true };
-  return { ...none, ...sourceSide };
+  // `split` needs an edit surface. A non-editable document is never offered it
+  // (docs/44 §1.1 keeps that case on preview / source / slides), so a state that
+  // still carries it — one render before reconcileFileMode clamps it, or a
+  // direct call — degrades to the same preview that clamp lands on.
+  if (state.md === "preview" || (state.md === "split" && !caps.editable)) {
+    return { ...none, preview: renderer };
+  }
+  if (state.md === "split") return { ...none, editor: true, preview: renderer, split: true };
+  return { ...none, ...(caps.editable ? { editor: true } : { source: true }) };
 }
 
 /** The ordered presentation states the Markdown mode command cycles through.
