@@ -64,8 +64,9 @@ Antigravity CLI に一本化。Enterprise ライセンス・有償 API キーの
 | 論点 | 既定 | 備考 |
 |------|------|------|
 | 対象データ | v1 = claude `projects/*/memory/**` ＋ codex `~/.codex/memories/**`（存在時のみ・`.git` と sqlite は除外）。**allowlist 方式** | transcript / `.credentials.json` / `settings.json` / `memories_1.sqlite` は構造的に対象外（★1・★9） |
-| 履歴エンジン | **git**（bare repo + 一時 staging コピー） | 差分・時点解決・bundle 移送・パススコープ復元が全部標準機能で載る |
+| 履歴エンジン | **git**（bare repo + staging コピー） | 差分・時点解決・bundle 移送・パススコープ復元が全部標準機能で載る |
 | repo の置き場 | `/var/lib/af/claude/af-memory.git`（claude 専用マウント内・**codex 分の履歴も同居**） | このマウントが最も強い生存保証を持つため全 kind 共通の置き場にする。ファイルブラウザ非公開領域・recreate / clean-home 生存・ECS でも agent から見える。live ツリーには `.git` を置かない |
+| staging の置き場 | `/var/lib/af/claude/af-memory.staging`（**repo と同じマウント**。P1 実装で `$TMPDIR` から変更） | EFS 越しのクロスデバイスコピーを避け、bare repo の index と work-tree の内容を一致させるため。live ツリーに `.git` を置かないという本質的な制約は変わらない |
 | 実行主体 | **workspace-agent**（uid=dev、git あり、全 runtime で一様） | CP は REST proxy（dual allowlist）のみ。ECS で CP がファイル直アクセスできない制約を回避 |
 | snapshot 契機 | 自動（claude 全セッション idle 遷移 + debounce）＝**既定 ON**＋手動＋（将来 scheduler） | 無変更なら commit しない。debounce 既定 5 分 |
 | ロールバック | **履歴は書き換えない**。restore は「新しい snapshot commit」として積む。適用前に pre-restore snapshot 自動取得 | ロールバックのロールバックが常に可能 |
@@ -82,7 +83,7 @@ live:    /var/lib/af/claude/projects/<slug>/memory/**     ← claude が読み�
          ~/.codex/memories/**（.git と sqlite を除く）    ← codex 統合パイプラインが読み書き（無改変・存在時のみ）
                │ ① allowlist copy（idle 契機・数百KB）
                ▼
-staging: $TMPDIR/af-memory-staging/{claude,codex}/...
+staging: /var/lib/af/claude/af-memory.staging/{claude/projects,codex}/...
                │ ② git commit（--git-dir=af-memory.git・専用 identity）
                ▼
 repo:    /var/lib/af/claude/af-memory.git（bare・agent 管理・マウントと同寿命）
@@ -124,9 +125,24 @@ repo 内レイアウトは `claude/projects/<slug>/...`・`codex/...` と kind �
 
 ### ② snapshot エンジン
 
-- **契機**: 既存の状態検知（working→idle 遷移。false-idle 対策で整備済みの機構）に載せ、
-  「claude の全セッションが idle」になってから debounce（既定 5 分）で 1 回。加えて
-  15 分 tick の保険と、Console からの手動 snapshot。
+- **契機（P1 実装で確定）**: 「claude の全セッションが idle になってから debounce（既定
+  5 分）」という意味論はそのままに、実装は**フック相乗りではなく常駐側のポーリング**にした。
+  claude の working→idle 遷移は `workspace-agent session-status` という**フックの別プロセス**
+  で観測されるため（`session_status.go`）、常駐プロセス側に debounce タイマーを置けない。
+  マーカーファイルで渡す設計も可能だが、フックの取りこぼしがそのまま「snapshot が積まれない」
+  に直結する。そこで毎 tick（既定 1 分）に
+  ①ルート配下の最新 mtime ②前回 snapshot 以降の変更の有無 ③静穏時間が debounce を超えたか
+  ④対象 kind のセッションが誰も working でないか、を見て判定する（`memory_trigger.go` の
+  `memoryShouldSnapshot` — 純関数なのでテストは実時間を待たない）。走査は
+  `projects/*/memory` に glob で限定するので、同じマウントにある 883MB の transcript は
+  一切 stat しない。ポーリングなので**「15 分 tick の保険」は本体に統合された**。
+  加えて Console からの手動 snapshot。
+- **busy 先送りの上限**: 実行中セッションがあるうちは待つが、変更から `MaxDefer`（既定 30 分）
+  経つと busy を押し切って積む。状態マーカーは壊れ得る（停止済みセッションに working が
+  残る等 — false-idle 対策で分かっているとおり）ので、busy 判定の誤りが「履歴が永久に
+  積まれない」という最悪の壊れ方に化けないようにするため。
+- **環境変数**: `AF_MEMORY_SNAPSHOT`（off で自動 snapshot を停止）・
+  `AF_MEMORY_SNAPSHOT_INTERVAL` / `_DEBOUNCE` / `_MAX_DEFER`。
 - **無変更 skip**: staging へ copy 後 `git status --porcelain` が空なら commit しない
   （空コミットで履歴を汚さない）。
 - **コミットメッセージ**: 1 行目 `snapshot: 2026-07-23T12:00+09:00 (2 projects changed)`、
@@ -147,6 +163,13 @@ repo 内レイアウトは `claude/projects/<slug>/...`・`codex/...` と kind �
 | `GET  /api/agents/memory/export?format=bundle\|tar` | DL（Content-Disposition。CP proxy は既存 `rest` でストリーム可） |
 | `POST /api/agents/memory/import` | multipart 受領 → 検証 → preview `{importId, projects[], snapshots, headTs}` |
 | `POST /api/agents/memory/import/apply` | `{importId, projects: [slug...]}` → 選択分を live へ適用（=新 commit） |
+
+P1 で実装済みなのは上表のうち `roots` / `snapshots`(GET,POST) / `diff` の 4 本
+（`workspace/agent/memory_handlers.go`）。diff は `?from=&to=&at=&path=` を受け、`from` 省略で
+「その snapshot が入れた変更」（初回 snapshot は空ツリーとの差分）を返す。エラーは
+`memory_bad_request` / `memory_bad_rev` / `memory_bad_path` / `memory_no_snapshots` /
+`memory_snapshot_failed` / `memory_diff_failed` の安定コード（i18n カタログ両言語に登録済み）。
+手動 snapshot の `trigger` は `manual` 固定で、`restore` 等を API から詐称させない。
 
 `at`（日時指定）は agent 側で `git rev-list -1 --before=<at>` により snapshot に解決する。
 CP 側は `control-plane/routes.go` に同パスを `rest` で登録（**登録漏れ=FE 404** の既知罠。
@@ -244,6 +267,13 @@ per-repo コミット型ストア（xChuCx 型。リポジトリに個人メモ�
 - **★1 巻き込み事故**: 対象は roots の allowlist（claude: `*/memory/**`、codex:
   `memories/**` − `.git`）で構造的に限定。deny 方式にしない。transcript・credentials・
   sqlite が repo に入る経路をコード上作らない（テストで担保）。
+  **P1 実装で追加した防御**: allowlist の内側にシンボリックリンクを置かれると、リンク先
+  （`.credentials.json` 等）を allowlist 内のファイルとして読めてしまう。よって収集時に
+  **シンボリックリンクは種別を問わず不採用**にする（ファイルもディレクトリも辿らない）。
+  回帰テストは本番同様の live ツリー（transcript jsonl・`.credentials.json`・`settings.json`・
+  `af-usage.json`・`memories_1.sqlite`・codex の自前 `.git`・メモリ内から資格情報へ抜ける
+  シンボリックリンク）を置いた隔離 HOME で snapshot し、HEAD ツリーが許可 md と完全一致
+  すること＋資格情報の中身がどの blob からも grep できないことを見る。
 - **★2 restore と live 書き込みの競合**: pre-restore snapshot の自動取得＋実行中セッション
   警告。restore 自体も commit として積むので、どの順で何が起きたか常に履歴から復元可能。
 - **★3 import は外部入力**: サイズ上限・traversal 防御・allowlist 外拒否・監査。bundle は
@@ -269,7 +299,7 @@ per-repo コミット型ストア（xChuCx 型。リポジトリに個人メモ�
 
 | フェーズ | 内容 | 出口条件 |
 |----------|------|----------|
-| P1 | snapshot エンジン（roots 宣言 = claude+codex・staging・bare repo・自動/手動契機）＋ REST（roots/snapshots/diff）＋ dual allowlist 登録 | 自動 snapshot が実データで積まれ、一覧/差分が API で取れる（codex は dir 存在環境で） |
+| P1 ✅ | snapshot エンジン（roots 宣言 = claude+codex・staging・bare repo・自動/手動契機）＋ REST（roots/snapshots/diff）＋ dual allowlist 登録 | 自動 snapshot が実データで積まれ、一覧/差分が API で取れる（codex は dir 存在環境で） |
 | P2 | restore（全体/プロジェクト・pre-restore・rsync scope 限定）＋ Console タブ（履歴/差分/復元） | UI から日時指定・プロジェクト単位の巻き戻しが往復できる |
 | P3 | export/import（bundle/tar・preview・選択適用・検証・監査） | 2 環境間で bundle 持ち回りの移送が実際に通る |
 | P4 | 拡張: codex memories のフリート有効化配線（config.toml `[features] memories` の Console トグル・`[memories]` チューニング seed）・CP internal git への push mirror（停止中閲覧・直接同期）・operator MCP ツール・scheduler 連携・opencode/agy の上流 watch | — |
