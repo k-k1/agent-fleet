@@ -59,5 +59,7 @@ global steering `~/.kiro/steering/*.md` は将来ルート候補）。
   CP mirror で解消）。import は merge しない（選択置き換えのみ）。codex のロールバック
   粒度は全体のみ。opencode/agy はネイティブメモリが無く対象外、copilot はサーバー側で対象外。
 - リスクと手当: import は外部入力（サイズ上限・traversal 防御・bundle verify 必須）。
-  export は個人情報を含みうる（本人操作限定・監査・UI 注意書き）。repo 肥大は追記型 md の
-  性質上緩慢で、定期 `git gc --auto` で足りる見込み。
+  export は個人情報を含みうる（本人操作限定・監査・UI 注意書き）——加えて **v1 は平文 DL を
+  選ぶ代わりに、export 経路の secret スキャンを必須要件とする**（検出時は既定でブロックし、
+  内容を確認した本人の明示 ack でだけ通す。bundle は全履歴を運ぶので走査も全履歴を見る）。
+  repo 肥大は追記型 md の性質上緩慢で、定期 `git gc --auto` で足りる見込み。

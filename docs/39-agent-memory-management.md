@@ -1,6 +1,6 @@
 # 39. エージェントメモリ管理 — git 差分管理・時点ロールバック・環境間 import/export
 
-- 状態: **実装中（2026-07-27〜）。P1・P2 完了、次は P3（export/import）**。
+- 状態: **実装中（2026-07-27〜）。P1・P2・P3 完了、残るは P4（拡張）**。
   設計は確定し、未決事項 4 点も既定値で決着済み（下記「決着した未決事項」）。
   意思決定は [decisions/0022](decisions/0022-agent-memory-management.md)。
 - 要望: 各エージェントの「メモリ」を管理したい。①git での差分管理 ②日時・履歴指定でのロールバック
@@ -75,7 +75,7 @@ Antigravity CLI に一本化。Enterprise ライセンス・有償 API キーの
 | export | **git bundle（全履歴）を既定**、tar.gz（最新ツリーのみ）も選択可。**v1 は平文 DL**（暗号化なし） | bundle は 1 ファイル・履歴込み・`git bundle verify` で検証可能 |
 | import | bundle → `refs/imports/<ts>` に fetch / tar → staging 展開。適用は**プロジェクト選択式の置き換え（=新 commit）** | 3-way merge はしない（v1）。ローカル履歴は保全される |
 | UI | 設定モーダル「ワークスペース」グループに「エージェントメモリ」タブ | 破壊操作は P4a の統一確認ダイアログ |
-| 監査 | `proxy.go auditActionTarget` に restore / import / export をマップ | export DL は本人操作のみ。restore の target は URL 由来のヒント（本文は読まない） |
+| 監査 | `proxy.go auditActionTarget` に restore / import / import.apply / export をマップ | export は GET だが「持ち出しの唯一の経路」なので読み取りの例外として監査する。target は URL 由来のヒントのみ（本文は読まない） |
 
 ## アーキテクチャ
 
@@ -163,16 +163,17 @@ repo 内レイアウトは `claude/projects/<slug>/...`・`codex/...` と kind �
 | `GET  /api/agents/memory/tree?rev=\|at=` | **その時点**のツリー概況（kind 別・プロジェクト別のファイル数/バイト数）。P2 追加 |
 | `POST /api/agents/memory/restore` | `{rev \| at, scope: {all \| kinds: [kind...] \| projects: [slug...]}}`。手順は ④ |
 | `PUT  /api/agents/memory/settings` | 自動 snapshot の ON/OFF トグル（`{auto:bool}`）。P2 追加 |
-| `GET  /api/agents/memory/export?format=bundle\|tar` | DL（Content-Disposition。CP proxy は既存 `rest` でストリーム可） |
-| `POST /api/agents/memory/import` | multipart 受領 → 検証 → preview `{importId, projects[], snapshots, headTs}` |
-| `POST /api/agents/memory/import/apply` | `{importId, projects: [slug...]}` → 選択分を live へ適用（=新 commit） |
+| `GET  /api/agents/memory/export?format=bundle\|tar&ack=1` | DL（Content-Disposition。CP proxy は既存 `rest` でストリーム可）。**生成前に secret スキャンを通し、検出時は 409 + findings。`ack=1` でだけ通す**（P3 実装） |
+| `POST /api/agents/memory/import` | multipart 受領 → 検証 → preview `{importId, format, ref, head, headTs, snapshots, kinds[], projects[], unavailable[], rejected[], secrets[]}` |
+| `POST /api/agents/memory/import/apply` | `{importId, scope: {all \| kinds \| projects}}` → 選択分を live へ適用（=新 commit） |
 
-P1 で `roots` / `snapshots`(GET,POST) / `diff`、P2 で `tree` / `restore` / `settings` を実装済み
-（`workspace/agent/memory_handlers.go`）。残るは export / import（P3）。diff は
+P1 で `roots` / `snapshots`(GET,POST) / `diff`、P2 で `tree` / `restore` / `settings`、
+P3 で `export` / `import` / `import/apply` を実装済み（`workspace/agent/memory_handlers.go`）。diff は
 `?from=&to=&at=&path=` を受け、`from` 省略で「その snapshot が入れた変更」（初回 snapshot は
 空ツリーとの差分）を返す。エラーは `memory_bad_request` / `memory_bad_rev` / `memory_bad_path` /
 `memory_bad_scope` / `memory_no_snapshots` / `memory_snapshot_failed` / `memory_diff_failed` /
-`memory_restore_failed` の安定コード（i18n カタログ両言語に登録済み）。
+`memory_restore_failed` / `memory_export_failed` / `memory_import_failed` / `memory_bad_import` /
+`memory_secret_detected` / `memory_too_large` の安定コード（i18n カタログ両言語に登録済み）。
 手動 snapshot の `trigger` は `manual` 固定で、`restore` 等を API から詐称させない。
 
 **P2 で表に足した 2 本の理由**:
@@ -224,25 +225,51 @@ CP 側は `control-plane/routes.go` に同パスを `rest` で登録（**登録�
   入り、受け側で `git bundle verify` により完全性検証できる。「最新だけ軽く持ち出したい」
   用に tar.gz（HEAD ツリーのみ）も併設。
 - **import**:
-  - bundle → `git fetch <file> +refs/heads/*:refs/imports/<ts>/*`。ローカル履歴とは独立の
+  - bundle → `git bundle verify` を必須に通してから
+    `git fetch <file> +refs/heads/*:refs/imports/<ts>/*`。ローカル履歴とは独立の
     系譜として保持（graft しない）。preview はこの ref から生成。
-  - tar.gz → 検証しつつ staging に展開し、import commit の材料にする。
+  - tar.gz → 検証しつつ **work dir**（staging ではない）へ展開し、専用 index で
+    `write-tree` → `commit-tree` して**同じ `refs/imports/<ts>/main` へ載せる**。
+    P3 実装で staging 展開から変えた理由: staging は bare repo の index と対になって
+    いて snapshot/restore が使い続けるため、外部入力の展開先に流用すると
+    「取り込みに失敗したら live の版管理が止まる」という結合が生まれる。ref に
+    揃えれば preview も apply も bundle と 1 本の経路で書ける。
   - **apply はプロジェクト選択式**: 含まれる slug 一覧を見せ、選んだものだけを
     「置き換え = 新 commit」で live に適用。3-way merge は .md の意味的衝突を機械で
     解決できないためやらない。取り込まなかった側もローカル履歴に残るので後悔がない。
+    実装は **restore と同じ経路**（`memoryApplyRev`）で契機と trailer だけが違う
+    （`AF-Trigger: import` / `AF-Import-Id` / `AF-Import-Ref`）。したがって取り込みでも
+    pre-restore snapshot が積まれ、**取り込み自体を巻き戻せる**。
 - **slug 互換性**: リポジトリは全環境で `~/repos/<repo>` 規約なので、同名リポジトリなら
   slug（パス由来）が環境間で一致する。worktree suffix 付き slug はメモリを持たない
   （claude のメモリディレクトリは git リポジトリ由来で worktree 間共有）ため衝突しない。
 - **codex の import 単位**: グローバル 1 ワークスペースなので kind 単位の置き換え
   （claude のようなプロジェクト選択はできない）。UI は kind ごとにチェックボックスを分ける。
-- **検証**（★3）: サイズ上限（既定 64MB）/ tar path traversal 防御（`cleanup_archive.go`
-  の guard と同型）/ allowlist glob に合致しないエントリの拒否 / import・export とも監査ログ。
+- **検証**（★3）: サイズ上限（既定 64MB・`AF_MEMORY_IMPORT_MAX`）/ tar path traversal 防御
+  （`cleanup_archive.go` の guard と同型）/ allowlist glob に合致しないエントリの拒否 /
+  通常ファイル以外（symlink・hardlink・device）の拒否 / import・export とも監査ログ。
+  拒否したエントリは黙って捨てず preview の `rejected` に出す。判定に使うのは
+  `memoryRootDecls()`（**この環境で有効なルートではない**）で、codex を有効化していない
+  環境でも codex 分を取り込むことはでき、live へ書く段（`memoryApplyScopeToLive`）で
+  初めて弾かれる — preview の `unavailable` がそれを事前に伝える。
+- **secret スキャン**（★4・決着 #2 で v1 必須へ格上げ・`memory_secrets.go`）: export 生成前に
+  gitleaks 級の高シグネチャ正規表現で走査し、検出時は **409 でブロック**、`ack=1` を
+  付け直したときだけ通す（UI 任せにせず API 単体で止まる）。走査範囲は運ぶ範囲に合わせる —
+  tar は HEAD ツリーのみ、**bundle は到達可能な全 blob**（「一度書いて消した鍵」は HEAD に
+  無くても bundle には入っている）。現ツリーに同じ blob が無い検出は `history` 印を付ける。
+  **返すのは規則名・パス・行番号・先頭数文字のマスク済みヒントだけで、生値は API 応答にも
+  ログにも出さない** — ここで生値を返すと、防御のつもりの機構が秘密を新しい場所
+  （監査ログ・ブラウザ履歴）へ配る経路に化ける。import 側も同じ走査をかけるが、本人の
+  データを持ち込む操作なのでブロックはせず preview に件数を出すだけにする。
+- **repo 肥大**（★8）: snapshot commit と import の後に `git gc --auto`（閾値判断は git に
+  任せる）。取り込み系譜は新しい 10 件を残して `update-ref -d` で刈る — 適用済みの内容は
+  main 側の import commit として残るので、ref を消しても失われない。
 - **将来（P4）**: CP 内部 git プロバイダ（ADR 0010 の bare+http-backend）へ agent が
   push mirror する経路を足すと、(a) WS 停止中の履歴閲覧・export、(b) scoped token による
   環境間の**直接** pull 同期、が同じ repo 形式のまま手に入る。v1 のデータ形式（git repo）
   を変えずに積み増しできることが、git を選ぶ決め手の一つ。
 
-### Console UI（P2）
+### Console UI（P2・P3）
 
 設定モーダル「ワークスペース」グループに「エージェントメモリ」タブを追加
 （`SettingsDialog.tsx` の GROUPS へ 1 エントリ + `MemoryTab.tsx`）。
@@ -253,7 +280,7 @@ CP 側は `control-plane/routes.go` に同パスを `rest` で登録（**登録�
 - 操作: 「この時点に戻す」（全体 / プロジェクト選択）→ 統一確認ダイアログ（P4a）。
   日付ピッカーからの「この日時時点へ」も同じ restore に解決。
 - 下段: export（bundle / tar 選択 DL）・import（ファイル選択 → プロジェクト選択 preview → 適用）。
-  **これは P3**（P2 実装ではまだ出さない）。
+  **これは P3**。
 
 P2 実装の実際（`console/src/features/settings/MemoryTab.tsx`）:
 
@@ -267,7 +294,18 @@ P2 実装の実際（`console/src/features/settings/MemoryTab.tsx`）:
   `useRetryLoad` + `isTransientErr` で吸収する（running ゲート必須の既知パターン）。
 - restore の POST は rev を**クエリにも**載せる。CP の監査台帳は URL からしか target を
   採らない（本文は読まない = docs/20 §A.6）ため、監査行に戻し元が残るようにするための
-  ヒントで、実処理に使うのは本文側。
+  ヒントで、実処理に使うのは本文側。import/apply の `importId` も同じ理由でクエリに載せる。
+
+P3 実装の実際（同ファイル `TransferSection`）:
+
+- 書き出しは素のリンク遷移ではなく **fetch → Blob → 一時 URL** で保存する。409（secret 検出）
+  を JSON として受け取り、**何が引っかかったかを見せてから** ack して叩き直す必要があるため。
+  自動 ack はしない（それをやると防御が実質無効になる）。値そのものは表示しない。
+- 取り込みは「ファイル選択（受領）」と「範囲を選んで適用」を別操作にした。受領だけでは live に
+  触れないので、中身（形式・スナップショット数・最終時刻・プロジェクト一覧・拒否件数・
+  秘密情報の件数）を見てから決められる。
+- 適用の選択肢は preview が返す `kinds` / `projects` から作り、`unavailable`（この環境に
+  受け皿が無い kind）は選ばせない。
 
 ## 先行 OSS の調査（2026-07-23 追記）
 
@@ -282,7 +320,10 @@ P2 実装の実際（`console/src/features/settings/MemoryTab.tsx`）:
 
 1. **export/snapshot 時の secret スキャン**（xChuCx 由来）: ★4 の防御を強化。export 生成時に
    軽量な secret パターン検査（gitleaks 級の正規表現）をかけ、検出時は警告付き確認にする。
-   v1 の要件に昇格させる価値あり（実装コストは小さい）。
+   v1 の要件に昇格させる価値あり（実装コストは小さい）。→ **P3 で実装済み**
+   （`memory_secrets.go`。警告ではなく既定ブロック＋明示 ack にした。snapshot 側には
+   かけない — 自動 snapshot をブロックすると履歴が欠け、それは本件の主訴そのものを
+   壊すため。持ち出しの瞬間に止めるのが正しい位置）。
 2. **「検索索引は派生状態」原則の裏付け**: qmd の索引（`~/.cache/qmd/index.sqlite`）も codex の
    `memories_1.sqlite` も md から再構築可能な派生状態であり、版管理対象は md だけで良い——
    ★9 の一般化。将来メモリ検索を足す場合も md が正のままで済む。
@@ -320,17 +361,25 @@ per-repo コミット型ストア（xChuCx 型。リポジトリに個人メモ�
 - **★2 restore と live 書き込みの競合**: pre-restore snapshot の自動取得＋実行中セッション
   警告。restore 自体も commit として積むので、どの順で何が起きたか常に履歴から復元可能。
 - **★3 import は外部入力**: サイズ上限・traversal 防御・allowlist 外拒否・監査。bundle は
-  `git bundle verify` 通過を必須にする。
-- **★4 メモリは個人情報**: export は本人操作のみ・監査ログ必須。UI に「共有前に内容確認」
-  の注意書き。運用ポリシー上メモリに秘密を書かない規約はあるが、防御はそれに依存しない。
+  `git bundle verify` 通過を必須にする。**P3 実装で確認した効き方**: 取り込んだ ref に何が
+  入っていようと、live へ書く段は restore と同じ `memoryApplyScopeToLive` を通るので、
+  allowlist の外へは 1 バイトも書かれない（★1 の裏返しが import にもそのまま効く）。
+  回帰テストは traversal・allowlist 外・`.git`・symlink を混ぜた敵対 tar を取り込ませ、
+  ツリーに残るのが許可 md 1 件だけであることと、live 側に痕跡が無いことを見る。
+- **★4 メモリは個人情報**: export は本人操作のみ・監査ログ必須（GET だが読み取りの例外として
+  `auditActionTarget` に載せる）。UI に「共有前に内容確認・書き出したファイルは暗号化されて
+  いない」の注意書き。運用ポリシー上メモリに秘密を書かない規約はあるが、防御はそれに依存
+  しない。**P3 でこれを secret スキャン（既定ブロック＋明示 ack）まで実装した**（⑤ 参照）。
 - **★5 git 実行環境の独立**: repo 専用に `user.name=af-memory` / `user.email` を固定し、
   ユーザーの `~/.gitconfig`（signing 設定等）を継がない（`GIT_CONFIG_GLOBAL=/dev/null`）。
 - **★6 slug の表示**: `-home-dev-repos-agent-fleet` をそのまま見せず、リポ名へ整形
   （markdown-ref-linkify で使った slug→表示名対応を流用）。
 - **★7 ECS 実測**: agent 側完結なので動く設計だが、EFS 上の staging copy レイテンシは実測
   項目（対象が小さいため実害なしの見込み）。
-- **★8 repo 肥大**: 追記型 md ＋テキスト差分なので伸びは遅い。snapshot N 回ごとに
-  `git gc --auto`（`git_gc.go` の流儀に倣う）。
+- **★8 repo 肥大**: 追記型 md ＋テキスト差分なので伸びは遅い。P3 実装では snapshot commit と
+  import の直後に毎回 `git gc --auto` を呼ぶ（実際に走るかの閾値判断は git 側に任せる方が、
+  自前で「N 回ごと」を数えるより壊れにくい）。失敗は握り潰す — snapshot は成立している
+  のに失敗として返すと「積めたのに失敗」に見えてしまう。取り込み系譜の刈り込みも同様。
 - **★9 codex の派生状態との整合**: `memories_1.sqlite`（stage1 抽出・jobs の watermark）と
   `~/.codex/memories/.git`（統合ベースライン）は**派生状態なので snapshot に含めない**。
   md だけを restore すると一時的に不整合になるが、codex の統合は diff 駆動なので次回
@@ -344,7 +393,7 @@ per-repo コミット型ストア（xChuCx 型。リポジトリに個人メモ�
 |----------|------|----------|
 | P1 ✅ | snapshot エンジン（roots 宣言 = claude+codex・staging・bare repo・自動/手動契機）＋ REST（roots/snapshots/diff）＋ dual allowlist 登録 | 自動 snapshot が実データで積まれ、一覧/差分が API で取れる（codex は dir 存在環境で） |
 | P2 ✅ | restore（全体/プロジェクト・pre-restore・scope 限定の適用）＋ `tree` / `settings` REST ＋ Console タブ（履歴/差分/復元/自動取得トグル） | UI から日時指定・プロジェクト単位の巻き戻しが往復できる |
-| P3 | export/import（bundle/tar・preview・選択適用・検証・監査） | 2 環境間で bundle 持ち回りの移送が実際に通る |
+| P3 ✅ | export/import（bundle/tar・preview・選択適用・検証・監査）＋ **★4 secret スキャン**（決着 #2 で v1 必須へ格上げ）＋ ★8 `git gc --auto` | 2 環境間で bundle 持ち回りの移送が実際に通る（隔離 HOME を 2 つ演じる往復テストで担保。実データでの実機往復は未実施） |
 | P4 | 拡張: codex memories のフリート有効化配線（config.toml `[features] memories` の Console トグル・`[memories]` チューニング seed）・CP internal git への push mirror（停止中閲覧・直接同期）・operator MCP ツール・scheduler 連携・opencode/agy の上流 watch | — |
 
 ## 決着した未決事項（2026-07-27 利用者承認・実装はこの前提で進める）
