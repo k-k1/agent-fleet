@@ -56,8 +56,14 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 		case name != "" && strings.HasSuffix(p, "/ff"):
 			return "git.ff", name, true
 		case p == "/api/agents/memory/snapshots":
-			// エージェントメモリの手動 snapshot（docs/39）。import / export は P3 で足す。
+			// エージェントメモリの手動 snapshot（docs/39）。
 			return "memory.snapshot", "", true
+		case p == "/api/agents/memory/import":
+			// 受領（refs/imports への取り込み。live にはまだ触れない）。
+			return "memory.import", "", true
+		case p == "/api/agents/memory/import/apply":
+			// 取り込んだ内容の live への適用。どの系譜かは URL のヒントから採る。
+			return "memory.import.apply", q.Get("importId"), true
 		case p == "/api/agents/memory/restore":
 			// 巻き戻し（docs/39 ④）。戻し元 rev は Console が **監査用のヒントとして**
 			// クエリにも載せる（本文は読まない = §A.6）。実処理は本文の rev/at/scope が正で、
@@ -69,6 +75,13 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 			return "session.fork", name, true
 		case name != "" && strings.HasSuffix(p, "/stop"):
 			return "session.stop", name, true
+		}
+	case http.MethodGet:
+		// 読み取りは原則として監査しないが、メモリの export だけは例外にする（docs/39 ★4）:
+		// 個人のメモリを環境の外へ持ち出す唯一の経路であり、「誰がいつ何形式で出したか」が
+		// 残らないと後追いができない。target は形式のみ（本文も内容も読まない）。
+		if p == "/api/agents/memory/export" {
+			return "memory.export", q.Get("format"), true
 		}
 	case http.MethodDelete:
 		switch {

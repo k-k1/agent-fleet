@@ -90,7 +90,24 @@ func memoryRestore(sc memoryRestoreScope, rev, at string, now time.Time) (memory
 	if err != nil {
 		return res, memoryErrf(http.StatusBadRequest, errCodeMemoryBadRev, "%s", err.Error())
 	}
-	res.From = from
+	return memoryApplyRevLocked(sc, from, memoryTriggerRestore, nil, now)
+}
+
+// memoryApplyRev は「解決済みの commit の内容を scope 単位で live へ書き戻す」共通経路。
+// restore（履歴上の時点へ戻す）と import の apply（取り込んだ系譜の内容を採る）は、
+// 出どころの commit が違うだけで手順は同一なので、契機と trailer だけを引数で受ける。
+func memoryApplyRev(sc memoryRestoreScope, from, trigger string, extraTrailers []string, now time.Time) (memoryRestoreResult, error) {
+	memorySnapshotMu.Lock()
+	defer memorySnapshotMu.Unlock()
+	if err := memoryEnsureRepo(); err != nil {
+		return memoryRestoreResult{}, err
+	}
+	return memoryApplyRevLocked(sc, from, trigger, extraTrailers, now)
+}
+
+// memoryApplyRevLocked は memorySnapshotMu を握った状態の本体（docs/39 ④ の手順そのもの）。
+func memoryApplyRevLocked(sc memoryRestoreScope, from, trigger string, extraTrailers []string, now time.Time) (memoryRestoreResult, error) {
+	res := memoryRestoreResult{From: from, Scopes: []string{}, Written: []string{}, Deleted: []string{}, Projects: []memoryProjectRef{}}
 	targets, err := memoryResolveScope(sc)
 	if err != nil {
 		return res, err
@@ -157,7 +174,8 @@ func memoryRestore(sc memoryRestoreScope, rev, at string, now time.Time) (memory
 	for _, t := range targets {
 		trailers = append(trailers, "AF-Restore-Scope: "+t.Repo)
 	}
-	done, err := memorySnapshotLocked(memoryTriggerRestore, now, trailers...)
+	trailers = append(trailers, extraTrailers...)
+	done, err := memorySnapshotLocked(trigger, now, trailers...)
 	if err != nil {
 		return res, fmt.Errorf("restore snapshot: %w", err)
 	}
@@ -423,10 +441,17 @@ func memoryTreeAt(rev, at string) (string, []memoryTreeKind, []memoryTreeProject
 	if err != nil {
 		return "", nil, nil, memoryErrf(http.StatusBadRequest, errCodeMemoryBadRev, "%s", err.Error())
 	}
+	kinds, projects, err := memoryTreeOfRev(sha)
+	return sha, kinds, projects, err
+}
+
+// memoryTreeOfRev は解決済み commit のツリーを kind 別 / プロジェクト別に畳む。
+// import の preview も同じ形（「取り込んだ系譜には何が入っているか」）を要るのでここに置く。
+func memoryTreeOfRev(sha string) ([]memoryTreeKind, []memoryTreeProject, error) {
 	// --long は "<mode> blob <sha> <size>\t<path>" を返す（size で当時の容量が出せる）。
 	out, err := memoryGitRun("ls-tree", "-r", "--long", sha)
 	if err != nil {
-		return "", nil, nil, err
+		return nil, nil, err
 	}
 	decls := map[string]memoryRoot{}
 	for _, r := range memoryRootDecls() {
@@ -476,5 +501,5 @@ func memoryTreeAt(rev, at string) (string, []memoryTreeKind, []memoryTreeProject
 		}
 	}
 	sort.Slice(projects, func(i, j int) bool { return projects[i].Display < projects[j].Display })
-	return sha, kinds, projects, nil
+	return kinds, projects, nil
 }

@@ -203,8 +203,8 @@ func buildMux() *http.ServeMux {
 	// Live model catalogs (codex: `codex debug models` / opencode: `opencode models`)
 	// for the Console's launch model picker.
 	mux.HandleFunc("GET /agents/{kind}/models", handleAgentModels)
-	// エージェントメモリの版管理（docs/39 / ADR 0022 P1・P2）: claude/codex のメモリ md を
-	// bare repo へ snapshot し、履歴・差分・指定時点への巻き戻しを返す。export / import は P3。
+	// エージェントメモリの版管理（docs/39 / ADR 0022 P1〜P3）: claude/codex のメモリ md を
+	// bare repo へ snapshot し、履歴・差分・指定時点への巻き戻し・環境間の移送を提供する。
 	// ⚠️ control-plane/routes.go にも同じパスの登録が要る（CP は明示許可リスト方式）。
 	mux.HandleFunc("GET /agents/memory/roots", handleMemoryRoots)
 	mux.HandleFunc("GET /agents/memory/snapshots", handleMemorySnapshots)
@@ -213,6 +213,11 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /agents/memory/tree", handleMemoryTree)
 	mux.HandleFunc("POST /agents/memory/restore", handleMemoryRestore)
 	mux.HandleFunc("PUT /agents/memory/settings", handleMemorySettings)
+	// export は secret スキャン（★4）を通してから DL させる。import は独立系譜として
+	// 受けてから、選んだ範囲だけを live へ適用する（P3）。
+	mux.HandleFunc("GET /agents/memory/export", handleMemoryExport)
+	mux.HandleFunc("POST /agents/memory/import", handleMemoryImport)
+	mux.HandleFunc("POST /agents/memory/import/apply", handleMemoryImportApply)
 
 	// Toolchain selection (node via nvm / java via pre-baked Temurin) — Console.
 	mux.HandleFunc("GET /env/toolchains", handleToolchainsGet)

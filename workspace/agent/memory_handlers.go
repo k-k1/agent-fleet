@@ -1,14 +1,17 @@
 package main
 
 // エージェントメモリの版管理（docs/39 / ADR 0022）— REST
-// （P1: roots / snapshots / diff、P2: tree / restore）。
+// （P1: roots / snapshots / diff、P2: tree / restore / settings、P3: export / import）。
 //
 // ⚠️ ここに足したパスは control-plane/routes.go にも同じものを登録する（CP は明示許可
 // リスト方式で、片側漏れ = Console から 404）。
 
 import (
 	"errors"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -207,6 +210,89 @@ func handleMemoryRestore(w http.ResponseWriter, r *http.Request) {
 	res, err := memoryRestore(body.Scope, body.Rev, body.At, time.Now())
 	if err != nil {
 		memoryWriteErr(w, err, errCodeMemoryRestoreFailed)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+// handleMemoryImport は bundle / tar.gz を受領し、refs/imports/<id> へ独立系譜として
+// 取り込んで preview を返す（docs/39 ⑤）。この時点では live に一切触れない — 何を
+// 適用するかは利用者が preview を見て決める。
+func handleMemoryImport(w http.ResponseWriter, r *http.Request) {
+	if err := memoryEnsureRepo(); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, errCodeMemoryImportFailed, err.Error())
+		return
+	}
+	if err := os.MkdirAll(memoryWorkDir(), 0o700); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, errCodeMemoryImportFailed, err.Error())
+		return
+	}
+	// 受領はストリームで行い、メモリに丸ごと載せない（★3 サイズ上限もここで効かせる）。
+	mr, err := r.MultipartReader()
+	if err != nil {
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeMemoryBadRequest, "expected multipart/form-data")
+		return
+	}
+	max := memoryImportMaxBytes()
+	tmp, name := "", ""
+	for {
+		part, perr := mr.NextPart()
+		if perr == io.EOF {
+			break
+		}
+		if perr != nil {
+			httpx.WriteErr(w, http.StatusBadRequest, errCodeMemoryBadRequest, perr.Error())
+			return
+		}
+		if part.FormName() != "file" || part.FileName() == "" {
+			continue
+		}
+		f, cerr := os.CreateTemp(memoryWorkDir(), "upload-*")
+		if cerr != nil {
+			httpx.WriteErr(w, http.StatusInternalServerError, errCodeMemoryImportFailed, cerr.Error())
+			return
+		}
+		n, werr := io.Copy(f, io.LimitReader(part, max+1))
+		_ = f.Close()
+		if werr != nil || n > max {
+			_ = os.Remove(f.Name())
+			if n > max {
+				httpx.WriteErr(w, http.StatusRequestEntityTooLarge, errCodeMemoryTooLarge, "file exceeds the import size limit")
+			} else {
+				httpx.WriteErr(w, http.StatusInternalServerError, errCodeMemoryImportFailed, "upload failed")
+			}
+			return
+		}
+		tmp, name = f.Name(), filepath.Base(part.FileName())
+		break
+	}
+	if tmp == "" {
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeMemoryBadRequest, "no file part in the request")
+		return
+	}
+	defer os.Remove(tmp)
+
+	pv, err := memoryImportPrepare(tmp, name, time.Now())
+	if err != nil {
+		memoryWriteErr(w, err, errCodeMemoryImportFailed)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, pv)
+}
+
+// handleMemoryImportApply は取り込んだ系譜から、選んだプロジェクト / kind だけを live へ
+// 適用する（置き換え = 新しい commit。3-way merge はしない — ADR 0022 決定 5）。
+func handleMemoryImportApply(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ImportID string             `json:"importId"`
+		Scope    memoryRestoreScope `json:"scope"`
+	}
+	if !httpx.DecodeJSON(w, r, &body) {
+		return
+	}
+	res, err := memoryImportApply(body.ImportID, body.Scope, time.Now())
+	if err != nil {
+		memoryWriteErr(w, err, errCodeMemoryImportFailed)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, res)
