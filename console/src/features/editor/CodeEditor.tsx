@@ -19,6 +19,10 @@ import { t } from "../../lib/i18n/index.ts";
  *  selection start is scrolled out of the rendered range. */
 export interface EditorSelectionReport extends EditorSelectionRange {
   coords: { left: number; top: number } | null;
+  /** `selection` when the user moved the selection or edited the document,
+   *  `geometry` when only the layout moved and the same selection is being
+   *  re-measured. A re-measurement must not be mistaken for a new selection. */
+  reason: "selection" | "geometry";
 }
 
 interface CodeEditorProps {
@@ -127,13 +131,15 @@ export function CodeEditor({
         // Geometry matters too: scrolling moves the selection's screen position
         // (and can push it out of the rendered range), so any UI anchored to it
         // has to be told. The quote itself always comes from the document.
-        if (!update.docChanged && !update.selectionSet && !update.geometryChanged) return;
+        const moved = update.docChanged || update.selectionSet;
+        if (!moved && !update.geometryChanged) return;
         const report = callbacks.current.onSelectionChange;
         if (!report) return;
+        const reason = moved ? "selection" : "geometry";
         const range = selectionRangeOf(update.state);
         if (!range) return report(null);
         const coords = update.view.coordsAtPos(range.from);
-        report({ ...range, coords: coords ? { left: coords.left, top: coords.top } : null });
+        report({ ...range, coords: coords ? { left: coords.left, top: coords.top } : null, reason });
       }),
       keymap.of([
         {
