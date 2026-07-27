@@ -40,6 +40,7 @@
 - [46-usage-accounting.md](46-usage-accounting.md) — 使用量アカウンティング（機能別トークン計測とグラフ化）: 補助 LLM 呼び出し（アシスタント/要約/タイトル/サジェスト）とセッション本体を同じ台帳で測る（◐ P0.5〜P3 実装済み・Console UI は未着手。実測記録を含む。設計判断は [decisions/0029](decisions/0029-usage-accounting.md)）
 - [47-turn-abort-auto-resume.md](47-turn-abort-auto-resume.md) — 中断ターンの検知と自動再開: API エラーで切れたターン（Stop フックが鳴らない）を自己修復経路で取りこぼさず通知・報告し、再送で直る中断だけアシスタントが再開させる（✅ 実装済み・実機目視待ち。実測記録を含む。設計判断は [decisions/0030](decisions/0030-turn-abort-auto-resume.md)）
 - [48-mcp-registry.md](48-mcp-registry.md) — ユーザー / テナント独自 MCP サーバーの登録: 固定 3 連携をレジストリへ一般化し、アシスタントには起動単位で、対話セッションには各 CLI のネイティブ設定へ書き出して配る（◐ P0 実装済み・P1 以降未着手。各 CLI の MCP 設定形の実測記録を含む。設計判断は [decisions/0031](decisions/0031-mcp-registry.md)）
+- [49-mcp-2026-07-28.md](49-mcp-2026-07-28.md) — MCP 2026-07-28（ステートレス版）対応: initialize/セッション廃止と per-request `_meta` へ、af の MCP サーバー2本と接続テストを両 era 同時対応にする（◐ 実装済み・認可の OAuth 2.1 整合は範囲外。仕様契約と実測記録を含む。設計判断は [decisions/0032](decisions/0032-mcp-2026-07-28.md)）
 
 > 完了後も実装契約や実測リファレンスとしてコードから参照する 24・26〜30 は番号付きのまま残す。
 > 時系列の実装プランとして役目を終えたものは history/ へ移動: [19 assistant-chat](history/19-assistant-chat.md) /
