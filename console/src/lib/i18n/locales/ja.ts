@@ -2760,6 +2760,13 @@ export const ja = {
   "mem.auto_label": "自動スナップショット",
   "mem.auto_hint": "エージェントが停止して数分たつと自動で取得します。変更がなければ積みません。",
   "mem.auto_locked": "この環境では運用側の設定（AF_MEMORY_SNAPSHOT）で自動取得が止められています。",
+  "mem.reason_codex_memories_disabled": "メモリ機能が無効です（Codex の既定）",
+  "mem.reason_codex_memories_pending": "有効化済み。次に Codex が動くとメモリが作られます",
+  "mem.reason_absent": "この環境では見つかりません",
+  "mem.codex_cost_hint":
+    "有効にすると Codex がバックグラウンドで会話からメモリを抽出・統合します。その分のトークンを継続的に消費します。",
+  "mem.codex_enabled": "Codex のメモリ機能を有効にしました。次に Codex が動くと履歴の対象になります。",
+  "mem.codex_disabled_toast": "Codex のメモリ機能を無効にしました。取得済みの履歴は残ります。",
   "mem.history_title": "履歴",
   "mem.history_empty": "スナップショットはまだありません。",
   "mem.n_files": "{n}ファイル",

@@ -68,6 +68,12 @@ func TestMemoryAPIRoundTrip(t *testing.T) {
 	if roots.Roots[1].Kind != "codex" || roots.Roots[1].Scopes || roots.Roots[1].Files != 2 {
 		t.Errorf("codex root = %+v", roots.Roots[1])
 	}
+	// docs/39 P4: memories を有効化して codex がワークスペースを作ると、ルートは
+	// inactive から active へ移る。切り戻しの導線が消えないよう、有効なルートにも
+	// トグルの状態を載せる。
+	if !roots.Roots[1].Toggleable {
+		t.Errorf("the active codex root lost its enable toggle: %+v", roots.Roots[1])
+	}
 
 	// snapshot が 1 件も無いうちは一覧が空、diff は 404。
 	if w := smokeDo(t, h, "GET", "/agents/memory/snapshots", "smoke-token", ""); w.Code != http.StatusOK ||

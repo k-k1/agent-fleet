@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
@@ -28,6 +29,11 @@ type memoryRootView struct {
 	Modified string             `json:"modified,omitempty"` // 最新 mtime（RFC3339）
 	Busy     bool               `json:"busy"`               // この kind に実行中セッションがある
 	Projects []memoryProjectRef `json:"projects"`           // claude のみ（scopes=false は空）
+	// Toggleable / Enabled は「エージェント側がメモリを書くこと」の ON/OFF（docs/39 P4）。
+	// 有効なルートにも載せる — codex が一度ワークスペースを作ると inactive から消えるので、
+	// ここに無いと有効化した後に切り戻す導線が UI から失われる。
+	Toggleable bool `json:"toggleable,omitempty"`
+	Enabled    bool `json:"enabled,omitempty"`
 }
 
 // memoryWriteErr は memoryUserErr（入力起因の失敗）を安定コードへ、それ以外を
@@ -52,6 +58,11 @@ func handleMemoryRoots(w http.ResponseWriter, r *http.Request) {
 			Kind: root.Kind, Label: root.Label, Scopes: root.Scopes,
 			Busy: busy[root.Kind], Projects: []memoryProjectRef{},
 		}
+		if root.Kind == "codex" {
+			// 無効にしても既存の md は残り、版管理の対象からは外れない
+			// （codex が更新しなくなるだけ）。履歴が欠けないのが正しい。
+			v.Toggleable, v.Enabled = true, codex.MemoriesEnabled()
+		}
 		var newest time.Time
 		seen := map[string]bool{}
 		for _, f := range memoryCollect(root) {
@@ -75,7 +86,11 @@ func handleMemoryRoots(w http.ResponseWriter, r *http.Request) {
 	}
 	out := map[string]any{
 		"roots": views,
-		"auto":  memoryAutoEnabled(),
+		// 宣言はあるが今は有効でないルート（codex memories が未有効 等）を理由付きで
+		// 返す。黙って落とすと Console が「なぜ出てこないか」も「どう有効化するか」も
+		// 示せない（docs/39 P4）。
+		"inactive": memoryInactiveRoots(),
+		"auto":     memoryAutoEnabled(),
 		// locked = 運用側が AF_MEMORY_SNAPSHOT で止めている（UI トグルでは戻せない）。
 		"autoLocked": memoryAutoLocked(),
 	}

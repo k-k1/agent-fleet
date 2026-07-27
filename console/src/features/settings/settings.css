@@ -2908,6 +2908,10 @@
   flex-wrap: wrap;
   font-size: 12px;
 }
+/* 未有効のルート（docs/39 P4）。一覧には出すが、有効なものと同じ強さでは見せない。 */
+.mem-root-off .mem-kind {
+  opacity: 0.65;
+}
 /* kind 色は tokens.css の --kind-* に一本化（新 kind 追加時はそちらだけ足す）。 */
 .mem-kind {
   font-weight: 600;

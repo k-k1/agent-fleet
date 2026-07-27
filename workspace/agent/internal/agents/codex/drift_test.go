@@ -489,3 +489,84 @@ func keys(m map[string]string) []string {
 	}
 	return out
 }
+
+// TestDriftCodexMemoriesFeatureExists guards the P4 有効化配線 (docs/39): our toggle
+// writes `features.memories` into config.toml, which only means something while codex
+// still ships that gate. A rename/removal upstream turns the Console toggle into a
+// switch that writes a dead key — the memories workspace never appears and the memory
+// root silently never shows up.
+func TestDriftCodexMemoriesFeatureExists(t *testing.T) {
+	bin := codexBin(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, bin, "features", "list").CombinedOutput()
+	if err != nil {
+		t.Fatalf("codex features list: %v\n%s", err, out)
+	}
+	stage := ""
+	found := false
+	for _, ln := range strings.Split(string(out), "\n") {
+		f := strings.Fields(ln)
+		if len(f) < 3 || f[0] != "memories" {
+			continue
+		}
+		stage, found = strings.Join(f[1:len(f)-1], " "), true
+	}
+	if !found || stage == "removed" {
+		t.Fatalf("the `memories` feature is gone/removed upstream (stage=%q, present=%v) — "+
+			"the Console memories toggle now writes a dead config key, so enabling it can "+
+			"never produce ~/.codex/memories and the codex memory root stays invisible", stage, found)
+	}
+	t.Logf("ok: memories stage=%q", stage)
+}
+
+// TestDriftCodexMemoriesTuningKeysValid feeds the tuning table we seed on enable to the
+// real binary under --strict-config, which rejects unknown configuration fields.
+// Production runs codex WITHOUT --strict-config, so a renamed key is silently ignored:
+// the seed would stop capping how much background extract/consolidation work runs, and
+// nothing would report an error. The keys come from memoriesTuning(), never a literal.
+func TestDriftCodexMemoriesTuningKeysValid(t *testing.T) {
+	bin := codexBin(t)
+	prev := cheapModelFn
+	cheapModelFn = func() string { return "gpt-5.4-mini" } // pin: the catalog must not decide coverage
+	defer func() { cheapModelFn = prev }()
+
+	run := func(t *testing.T, vals ...string) error {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		args := []string{"app-server", "--strict-config"}
+		for _, v := range vals {
+			args = append(args, "-c", v)
+		}
+		args = append(args, "--listen", "stdio://")
+		cmd := exec.CommandContext(ctx, bin, args...)
+		cmd.Env = append(os.Environ(), "HOME="+t.TempDir())
+		cmd.Stdin = strings.NewReader("")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Logf("codex said: %s", strings.TrimSpace(string(out)))
+		}
+		return err
+	}
+
+	overrides := []string{"features.memories=true"}
+	for _, kv := range memoriesTuning() {
+		overrides = append(overrides, "memories."+kv[0]+"="+kv[1])
+	}
+	if len(overrides) < 4 {
+		t.Fatalf("memoriesTuning() emitted almost nothing (%v) — the seed lost its content", overrides)
+	}
+	if err := run(t, overrides...); err != nil {
+		t.Fatalf("codex rejected the memories tuning we seed %v: %v\n"+
+			"A key was renamed/removed upstream. In production (no --strict-config) this "+
+			"does NOT error — the cap is silently ignored and background extract/"+
+			"consolidation runs at codex's own, more expensive, defaults.", overrides, err)
+	}
+
+	// Negative control: without this, a --strict-config that stopped validating would
+	// make the check above pass forever while detecting nothing.
+	if err := run(t, "memories.af_drift_canary_not_a_real_key=true"); err == nil {
+		t.Fatal("--strict-config accepted a bogus memories key: this detector is now vacuous")
+	}
+}

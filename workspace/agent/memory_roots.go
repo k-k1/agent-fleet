@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 )
 
 // memoryRoot は版管理する 1 つのメモリルートの宣言。
@@ -63,9 +64,11 @@ func memoryRootDecls() []memoryRoot {
 			Scopes:  true,
 		},
 		{
-			Kind:       "codex",
-			Label:      "Codex",
-			Dir:        filepath.Join(homeDir(), ".codex", "memories"),
+			Kind:  "codex",
+			Label: "Codex",
+			// 有効化配線（codex.setMemories）と同じ定義を使う。ここがズレると
+			// 「有効化したのにルートが現れない」という追いにくい壊れ方をする。
+			Dir:        codex.MemoriesDir(),
 			RepoPrefix: "codex",
 			Include:    []string{"**"},
 			// .git は codex の統合パイプラインが差分ベースラインに使う（上流 PR #18982）。
@@ -88,6 +91,46 @@ func memoryRoots() []memoryRoot {
 			}
 		}
 		out = append(out, r)
+	}
+	return out
+}
+
+// memoryInactiveRoot は「宣言はされているが今この環境では有効でない」ルートの説明
+// （docs/39 P4）。RequireDir のルートを黙って落とすと、Console 側は「codex のメモリが
+// 出てこない」理由を示せず、利用者は有効化の導線にも辿り着けない。
+type memoryInactiveRoot struct {
+	Kind   string `json:"kind"`
+	Label  string `json:"label"`
+	Reason string `json:"reason"` // "codex_memories_disabled" | "codex_memories_pending" | "absent"
+	// Toggleable は Console から有効化/無効化できるか。true のとき Enabled が現在値。
+	Toggleable bool `json:"toggleable"`
+	Enabled    bool `json:"enabled"`
+}
+
+// memoryInactiveRoots は memoryRoots() が落としたルートを理由付きで返す。
+func memoryInactiveRoots() []memoryInactiveRoot {
+	active := map[string]bool{}
+	for _, r := range memoryRoots() {
+		active[r.Kind] = true
+	}
+	out := []memoryInactiveRoot{}
+	for _, r := range memoryRootDecls() {
+		if active[r.Kind] {
+			continue
+		}
+		v := memoryInactiveRoot{Kind: r.Kind, Label: r.Label, Reason: "absent"}
+		if r.Kind == "codex" {
+			v.Toggleable = true
+			v.Enabled = codex.MemoriesEnabled()
+			// 有効化しても ~/.codex/memories は次に codex が走るまで生えない。
+			// 「設定が効いていない」と「まだ作られていない」は別物なので区別する。
+			if v.Enabled {
+				v.Reason = "codex_memories_pending"
+			} else {
+				v.Reason = "codex_memories_disabled"
+			}
+		}
+		out = append(out, v)
 	}
 	return out
 }

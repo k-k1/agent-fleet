@@ -137,3 +137,47 @@ func memoryRootKinds() []string {
 	}
 	return out
 }
+
+// docs/39 P4: memories を有効化していない環境で codex ルートを黙って落とすと、Console は
+// 「なぜ codex のメモリが出てこないか」も「どう有効化するか」も示せない。inactive が
+// その理由を持つことを固定する。
+func TestMemoryInactiveRootsExplainCodex(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, "claude-config"))
+
+	find := func(t *testing.T, kind string) memoryInactiveRoot {
+		t.Helper()
+		for _, v := range memoryInactiveRoots() {
+			if v.Kind == kind {
+				return v
+			}
+		}
+		t.Fatalf("kind %q missing from inactive roots: %+v", kind, memoryInactiveRoots())
+		return memoryInactiveRoot{}
+	}
+
+	// ① 機能 OFF・ワークスペース無し = 有効化を勧められる状態。
+	v := find(t, "codex")
+	if v.Reason != "codex_memories_disabled" || !v.Toggleable || v.Enabled {
+		t.Fatalf("disabled codex root described wrongly: %+v", v)
+	}
+
+	// ② 有効化直後（config は ON だが codex がまだ ~/.codex/memories を作っていない）。
+	// 「設定が効いていない」と混同されると、利用者は無意味に何度も切り替える。
+	memoryWrite(t, filepath.Join(home, ".codex", "config.toml"), "[features]\nmemories = true\n")
+	if v := find(t, "codex"); v.Reason != "codex_memories_pending" || !v.Enabled {
+		t.Fatalf("enabled-but-unmaterialized codex root described wrongly: %+v", v)
+	}
+
+	// ③ codex がワークスペースを作ったら inactive から消え、通常のルートになる。
+	memoryMkdirAll(t, filepath.Join(home, ".codex", "memories"))
+	for _, v := range memoryInactiveRoots() {
+		if v.Kind == "codex" {
+			t.Fatalf("materialized codex root is still reported inactive: %+v", v)
+		}
+	}
+	if _, ok := memoryRootByKind("codex"); !ok {
+		t.Fatal("codex root did not become active once ~/.codex/memories existed")
+	}
+}

@@ -11,61 +11,78 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
-var (
-	tomlSectionRE = regexp.MustCompile(`^\s*\[([^]]+)]\s*(?:#.*)?$`)
-	nudgeKeyRE    = regexp.MustCompile(`^\s*hide_rate_limit_model_nudge\s*=\s*(true|false)\s*(?:#.*)?$`)
-)
+var tomlSectionRE = regexp.MustCompile(`^\s*\[([^]]+)]\s*(?:#.*)?$`)
 
 func codexConfigPath() string {
 	return filepath.Join(paths.HomeDir(), ".codex", "config.toml")
 }
 
-// rateLimitModelNudgeEnabled follows Codex's default: an absent notice key means
-// the model-switch reminder is shown.
-func rateLimitModelNudgeEnabled(b []byte) bool {
-	inNotice := false
+// tomlBoolKeyRE matches `key = true|false` (with optional trailing comment) for a
+// single key. Built per call — these files are a few KB and the edits are rare.
+func tomlBoolKeyRE(key string) *regexp.Regexp {
+	return regexp.MustCompile(`^\s*` + regexp.QuoteMeta(key) + `\s*=\s*(true|false)\s*(?:#.*)?$`)
+}
+
+// tomlBool reads section.key as a boolean. found=false when the section or the key
+// is absent, so callers apply Codex's own default rather than guessing.
+func tomlBool(b []byte, section, key string) (val, found bool) {
+	keyRE := tomlBoolKeyRE(key)
+	inSection := false
 	for _, line := range strings.Split(string(b), "\n") {
 		if m := tomlSectionRE.FindStringSubmatch(line); m != nil {
-			inNotice = m[1] == "notice"
+			inSection = m[1] == section
 			continue
 		}
-		if inNotice {
-			if m := nudgeKeyRE.FindStringSubmatch(line); m != nil {
-				return m[1] != "true"
+		if inSection {
+			if m := keyRE.FindStringSubmatch(line); m != nil {
+				return m[1] == "true", true
 			}
 		}
 	}
-	return true
+	return false, false
 }
 
-// setRateLimitModelNudge edits only Codex's notice key, preserving the rest of
-// config.toml byte-for-byte (including comments and project trust sections).
-func setRateLimitModelNudge(b []byte, enabled bool) []byte {
+// tomlHasSection reports whether the file already declares [section]. Used to
+// leave user-tuned tables strictly alone.
+func tomlHasSection(b []byte, section string) bool {
+	for _, line := range strings.Split(string(b), "\n") {
+		if m := tomlSectionRE.FindStringSubmatch(line); m != nil && m[1] == section {
+			return true
+		}
+	}
+	return false
+}
+
+// tomlSetBool writes section.key = v, preserving the rest of config.toml
+// byte-for-byte (including comments and [projects.*] trust sections). Codex owns
+// this file; we only ever touch the one key the user toggled.
+func tomlSetBool(b []byte, section, key string, v bool) []byte {
+	keyRE := tomlBoolKeyRE(key)
 	lines := strings.Split(string(b), "\n")
-	inNotice, noticeFound := false, false
+	inSection, sectionFound := false, false
 	value := "false"
-	if !enabled {
+	if v {
 		value = "true"
 	}
-	entry := "hide_rate_limit_model_nudge = " + value
+	entry := key + " = " + value
 	for i, line := range lines {
 		if m := tomlSectionRE.FindStringSubmatch(line); m != nil {
-			if inNotice {
+			if inSection {
 				lines = append(lines[:i], append([]string{entry}, lines[i:]...)...)
 				return []byte(strings.Join(lines, "\n"))
 			}
-			inNotice = m[1] == "notice"
-			if inNotice {
-				noticeFound = true
+			inSection = m[1] == section
+			if inSection {
+				sectionFound = true
 			}
 			continue
 		}
-		if inNotice && nudgeKeyRE.MatchString(line) {
+		if inSection && keyRE.MatchString(line) {
 			lines[i] = entry
 			return []byte(strings.Join(lines, "\n"))
 		}
 	}
-	if noticeFound {
+	if sectionFound {
 		// Split preserves the trailing empty line, so insert before it.
 		at := len(lines)
 		if at > 0 && lines[at-1] == "" {
@@ -74,19 +91,41 @@ func setRateLimitModelNudge(b []byte, enabled bool) []byte {
 		lines = append(lines[:at], append([]string{entry}, lines[at:]...)...)
 		return []byte(strings.Join(lines, "\n"))
 	}
-	prefix := ""
-	if len(b) > 0 {
-		prefix = "\n"
-		if !strings.HasSuffix(string(b), "\n") {
-			prefix = "\n\n"
-		}
+	return append(b, []byte(tomlAppendPrefix(b)+"["+section+"]\n"+entry+"\n")...)
+}
+
+// tomlAppendPrefix is the blank-line padding needed before appending a new table.
+func tomlAppendPrefix(b []byte) string {
+	if len(b) == 0 {
+		return ""
 	}
-	return append(b, []byte(prefix+"[notice]\n"+entry+"\n")...)
+	if strings.HasSuffix(string(b), "\n") {
+		return "\n"
+	}
+	return "\n\n"
+}
+
+// rateLimitModelNudgeEnabled follows Codex's default: an absent notice key means
+// the model-switch reminder is shown.
+func rateLimitModelNudgeEnabled(b []byte) bool {
+	hidden, found := tomlBool(b, "notice", "hide_rate_limit_model_nudge")
+	return !found || !hidden
+}
+
+// setRateLimitModelNudge edits only Codex's notice key.
+func setRateLimitModelNudge(b []byte, enabled bool) []byte {
+	return tomlSetBool(b, "notice", "hide_rate_limit_model_nudge", !enabled)
 }
 
 func settingsBody() map[string]any {
 	b, _ := os.ReadFile(codexConfigPath())
-	return map[string]any{"rate_limit_model_nudge": rateLimitModelNudgeEnabled(b)}
+	return map[string]any{
+		"rate_limit_model_nudge": rateLimitModelNudgeEnabled(b),
+		"memories":               memoriesEnabled(b),
+		// Whether Codex has actually materialized ~/.codex/memories yet — enabling
+		// the flag only takes effect the next time a Codex session runs.
+		"memories_ready": MemoriesMaterialized(),
+	}
 }
 
 // HandleSettingsGet reports user-editable Codex behavior settings.
@@ -96,36 +135,46 @@ func HandleSettingsGet(w http.ResponseWriter, _ *http.Request) {
 
 type settingsReq struct {
 	RateLimitModelNudge *bool `json:"rate_limit_model_nudge"`
+	Memories            *bool `json:"memories"`
 }
 
 // HandleSettingsPut updates Codex behavior settings without rewriting unrelated
-// user configuration.
+// user configuration. Every requested key is folded into one read-modify-write so
+// a multi-key request cannot leave the file half-updated.
 func HandleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	var req settingsReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
+	if req.RateLimitModelNudge == nil && req.Memories == nil {
+		httpx.WriteJSON(w, http.StatusOK, settingsBody())
+		return
+	}
+	path := codexConfigPath()
+	b, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		httpx.WriteErr(w, http.StatusInternalServerError, "read_failed", err.Error())
+		return
+	}
 	if req.RateLimitModelNudge != nil {
-		path := codexConfigPath()
-		b, err := os.ReadFile(path)
-		if err != nil && !os.IsNotExist(err) {
-			httpx.WriteErr(w, http.StatusInternalServerError, "read_failed", err.Error())
-			return
-		}
-		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-			httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
-			return
-		}
-		tmp := path + ".af-tmp"
-		if err := os.WriteFile(tmp, setRateLimitModelNudge(b, *req.RateLimitModelNudge), 0o600); err != nil {
-			httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
-			return
-		}
-		if err := os.Rename(tmp, path); err != nil {
-			_ = os.Remove(tmp)
-			httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
-			return
-		}
+		b = setRateLimitModelNudge(b, *req.RateLimitModelNudge)
+	}
+	if req.Memories != nil {
+		b = setMemories(b, *req.Memories)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
+		return
+	}
+	tmp := path + ".af-tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
+		return
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
+		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, settingsBody())
 }
