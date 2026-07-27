@@ -2862,3 +2862,178 @@
     grid-area: conflict;
   }
 }
+
+/* ── MCP サーバー（McpTab・docs/48 P1）. The registry list reuses the SSM tab's
+   card/field primitives (.ssm-list / .ssm-item / .ssm-fgrid / .ssm-fld) so both
+   registries read as one system; only what's genuinely new lives here — the origin
+   badge, the key/value secret editor, and the connection-test result block. */
+.mcp-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mcp-empty {
+  margin: 12px 0 0;
+}
+.mcp-list {
+  margin-top: 12px;
+}
+/* A disabled row still has to be readable (its definition is what you edit before
+   turning it back on), so dim rather than hide. */
+.mcp-item.off .ssm-alias,
+.mcp-item.off .ssm-meta {
+  opacity: 0.55;
+}
+.mcp-item .ssm-item-head {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+.mcp-name {
+  font-family: var(--mono);
+}
+/* Wider key column than the SSM cards': these labels ("対象エージェント" / "Environment
+   variables") wrap to two lines at the shared 92px basis. */
+.mcp-item .ssm-meta-k {
+  flex-basis: 118px;
+}
+.mcp-label {
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mcp-transport {
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--muted2);
+}
+.mcp-actions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.mcp-btn {
+  font-size: 11.5px;
+  padding: 2px 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+/* Origin badge — who owns the row, and therefore what may be done to it here.
+   Colors are semantic (tenant = accent "handed to you", built-in = neutral) rather
+   than agent-kind colors, which belong to sessions. */
+.mcp-origin {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border2);
+  color: var(--muted);
+  flex: none;
+}
+.mcp-origin-tenant {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border2));
+}
+.mcp-origin-builtin {
+  color: var(--muted2);
+}
+/* key/value secret editor (env vars / headers) */
+.mcp-kv {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mcp-kv-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+.mcp-kv-row .cinput {
+  min-width: 0;
+  width: 100%;
+}
+.mcp-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+.mcp-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--fg);
+}
+.mcp-ta {
+  width: 100%;
+  min-width: 0;
+  font-family: var(--mono);
+  resize: vertical;
+}
+.mcp-frm {
+  margin-top: 0;
+}
+.mcp-newform {
+  margin-top: 10px;
+}
+/* connection-test result (docs/48 §10) */
+.mcp-probe {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin-top: 8px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  border: 1px solid var(--border2);
+  min-width: 0;
+}
+.mcp-probe > div {
+  min-width: 0;
+}
+.mcp-probe.ok {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 40%, var(--border2));
+  background: color-mix(in srgb, var(--ok) 8%, transparent);
+}
+.mcp-probe.bad {
+  color: var(--del);
+  border-color: color-mix(in srgb, var(--del) 40%, var(--border2));
+  background: color-mix(in srgb, var(--del) 8%, transparent);
+}
+.mcp-probe .muted {
+  color: var(--muted);
+}
+.mcp-probe .mono {
+  font-family: var(--mono);
+  word-break: break-all;
+}
+/* The server's own stderr / body tail, shown verbatim — wrap it instead of letting
+   a long line stretch the modal. */
+.mcp-probe-detail {
+  margin: 4px 0 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 9em;
+  overflow: auto;
+}
+@media (max-width: 560px) {
+  .mcp-kv-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  }
+  .mcp-actions {
+    margin-left: 0;
+    width: 100%;
+  }
+}

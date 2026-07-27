@@ -25,13 +25,13 @@ import (
 )
 
 // ErrNotFound is returned for an unknown id.
-var ErrNotFound = errors.New("MCP サーバーが見つかりません")
+var ErrNotFound = errors.New("MCP server not found")
 
 // ErrReadOnly is returned when a tenant/builtin row is edited or deleted locally.
-var ErrReadOnly = errors.New("このサーバーは編集できません（無効化のみ可能です）")
+var ErrReadOnly = errors.New("this server is not editable (it can only be disabled)")
 
 // ErrNameTaken is returned when a name already exists in the effective registry.
-var ErrNameTaken = errors.New("同じ名前のサーバーが既に登録されています")
+var ErrNameTaken = errors.New("a server with this name is already registered")
 
 func tenantCachePath() string {
 	return filepath.Join(paths.AgentConfigDir(), "mcp-tenant.json")

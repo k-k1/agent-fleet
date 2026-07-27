@@ -63,18 +63,49 @@ var knownKinds = map[string]bool{
 // ValidationError marks a refusal caused by the definition itself — the caller sent
 // something unusable, so it maps to a 400. Typed rather than string-sniffed so a
 // store/IO failure can never be misreported as the user's fault (and vice versa).
-type ValidationError struct{ Msg string }
+//
+// Code is the stable machine code the handler puts on the wire; the Console resolves
+// it through its "err.<code>" catalog and only falls back to Msg (a language-neutral
+// developer string) when a code is unmapped. One code per REASON — reusing a single
+// "invalid" for every rule is what docs/23 P0-3 set out to remove. 追加・改名時は
+// console/src/lib/i18n/locales/{ja,en}.ts の "err.<code>" も必ず同時に足すこと。
+type ValidationError struct {
+	Code string
+	Msg  string
+}
 
 func (e *ValidationError) Error() string { return e.Msg }
 
-func invalid(format string, a ...any) error {
-	return &ValidationError{Msg: fmt.Sprintf(format, a...)}
+// Validation codes. Prefixed so they never collide with another subsystem's codes.
+const (
+	CodeNameInvalid     = "mcp_name_invalid"
+	CodeNameReserved    = "mcp_name_reserved"
+	CodeTransport       = "mcp_transport_unsupported"
+	CodeCommandRequired = "mcp_command_required"
+	CodeStdioNoURL      = "mcp_stdio_no_url"
+	CodeTenantStdio     = "mcp_tenant_stdio"
+	CodeURLRequired     = "mcp_url_required"
+	CodeURLInvalid      = "mcp_url_invalid"
+	CodeURLScheme       = "mcp_url_scheme"
+	CodeURLHost         = "mcp_url_host"
+	CodeURLCredentials  = "mcp_url_credentials"
+	CodeHTTPNoCommand   = "mcp_http_no_command"
+	CodeEnvName         = "mcp_env_name_invalid"
+	CodeHeaderName      = "mcp_header_name_invalid"
+	CodeHeaderValue     = "mcp_header_value_invalid"
+	CodeKindUnknown     = "mcp_kind_unknown"
+	CodeTimeoutRange    = "mcp_timeout_range"
+)
+
+func invalid(code, format string, a ...any) error {
+	return &ValidationError{Code: code, Msg: fmt.Sprintf(format, a...)}
 }
 
 // ErrTenantStdio is the refusal behind ADR0031 決定 2: a tenant-distributed stdio
 // server would let an admin run an arbitrary command in every member's container.
 var ErrTenantStdio error = &ValidationError{
-	Msg: "テナント配布の MCP サーバーは stdio を使えません（リモートのみ）",
+	Code: CodeTenantStdio,
+	Msg:  "tenant-distributed MCP servers cannot use stdio (remote only)",
 }
 
 // Validate checks a definition for internal consistency. It does NOT check
@@ -82,18 +113,18 @@ var ErrTenantStdio error = &ValidationError{
 // it needs the whole effective list.
 func Validate(d ServerDef) error {
 	if !nameRe.MatchString(d.Name) {
-		return invalid("名前は英数字・ハイフン・アンダースコア 48 文字以内で、先頭は英数字にしてください: %q", d.Name)
+		return invalid(CodeNameInvalid, "name must be 1-48 chars of [a-zA-Z0-9_-] starting alphanumeric: %q", d.Name)
 	}
 	if reservedNames[strings.ToLower(d.Name)] {
-		return invalid("%q は Agent Fleet が使用する予約名です", d.Name)
+		return invalid(CodeNameReserved, "%q is a name reserved by Agent Fleet", d.Name)
 	}
 	switch d.Transport {
 	case TransportStdio:
 		if strings.TrimSpace(d.Command) == "" {
-			return invalid("stdio サーバーにはコマンドが必要です")
+			return invalid(CodeCommandRequired, "a stdio server needs a command")
 		}
 		if d.URL != "" || len(d.Headers) > 0 {
-			return invalid("stdio サーバーに URL / ヘッダは指定できません")
+			return invalid(CodeStdioNoURL, "a stdio server cannot carry a URL or headers")
 		}
 		if d.Origin == OriginTenant {
 			return ErrTenantStdio
@@ -103,33 +134,33 @@ func Validate(d ServerDef) error {
 			return err
 		}
 		if d.Command != "" || len(d.Args) > 0 || len(d.Env) > 0 {
-			return invalid("リモートサーバーにコマンド / 引数 / 環境変数は指定できません")
+			return invalid(CodeHTTPNoCommand, "a remote server cannot carry a command, args or env")
 		}
 	default:
-		return invalid("未対応のトランスポートです: %q（stdio / http）", d.Transport)
+		return invalid(CodeTransport, "unsupported transport: %q (stdio / http)", d.Transport)
 	}
 	for k := range d.Env {
 		if !envNameRe.MatchString(k) {
-			return invalid("環境変数名が不正です: %q", k)
+			return invalid(CodeEnvName, "invalid environment variable name: %q", k)
 		}
 	}
 	for k := range d.Headers {
 		if strings.TrimSpace(k) == "" || strings.ContainsAny(k, "\r\n:") {
-			return invalid("ヘッダ名が不正です: %q", k)
+			return invalid(CodeHeaderName, "invalid header name: %q", k)
 		}
 	}
 	for _, v := range d.Headers {
 		if strings.ContainsAny(v, "\r\n") {
-			return invalid("ヘッダ値に改行は使えません")
+			return invalid(CodeHeaderValue, "a header value cannot contain a newline")
 		}
 	}
 	for _, k := range d.Kinds {
 		if !knownKinds[k] {
-			return invalid("未知のエージェント種別です: %q", k)
+			return invalid(CodeKindUnknown, "unknown agent kind: %q", k)
 		}
 	}
 	if d.TimeoutMS != 0 && (d.TimeoutMS < 1000 || d.TimeoutMS > 120000) {
-		return invalid("タイムアウトは 1000〜120000 ミリ秒で指定してください: %d", d.TimeoutMS)
+		return invalid(CodeTimeoutRange, "timeout must be between 1000 and 120000 ms: %d", d.TimeoutMS)
 	}
 	return nil
 }
@@ -141,20 +172,20 @@ var envNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // plain sight, where the masking contract can't reach it.
 func validateURL(raw string) error {
 	if strings.TrimSpace(raw) == "" {
-		return invalid("リモートサーバーには URL が必要です")
+		return invalid(CodeURLRequired, "a remote server needs a URL")
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return invalid("URL を解釈できません: %v", err)
+		return invalid(CodeURLInvalid, "cannot parse URL: %v", err)
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return invalid("URL は http / https で指定してください: %q", raw)
+		return invalid(CodeURLScheme, "URL must be http / https: %q", raw)
 	}
 	if u.Host == "" {
-		return invalid("URL にホストがありません: %q", raw)
+		return invalid(CodeURLHost, "URL has no host: %q", raw)
 	}
 	if u.User != nil {
-		return invalid("URL に資格情報を埋め込まないでください（ヘッダを使ってください）")
+		return invalid(CodeURLCredentials, "do not embed credentials in the URL (use a header)")
 	}
 	return nil
 }

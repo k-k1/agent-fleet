@@ -1,7 +1,8 @@
 # 48. ユーザー / テナント独自 MCP サーバーの登録（MCP レジストリ）— 設計
 
-- 状態: **◐ P0 実装済み**（型・実効レジストリ合成・user スコープ CRUD・接続テスト）。
-  P1 以降は未着手。意思決定は [decisions/0031](decisions/0031-mcp-registry.md)。
+- 状態: **◐ P0 / P1 実装済み**（型・実効レジストリ合成・user スコープ CRUD・接続テスト・
+  Console「MCP サーバー」タブ）。P2 以降は未着手。
+  意思決定は [decisions/0031](decisions/0031-mcp-registry.md)。
 - 関連: docs/19（アシスタント）/ [25](25-ops-monitoring.md)（組み込み ops 連携 = 本設計が一般化する対象）/
   [20](20-container-audit-egress.md)（egress allowlist）/ [46](46-usage-accounting.md)（残 P5 = MCP の使用量計上）/
   [27](27-agent-managed-driver.md) §codex thread MCP / [32](32-agy-agent-kind.md) §MCP / [43](43-kiro-agent-kind.md) §2.6
@@ -312,15 +313,34 @@ Workspace agent ──(AF_MCP_TOKEN)──▶ CP GET /internal/mcp-servers      
 
 ## 11. Console UI
 
-- 設定モーダルの**接続グループに「MCP サーバー」タブを新設**（`console/src/features/settings/McpTab.tsx`）。
-  - 一覧: 名前 / 由来バッジ（テナント・個人・組み込み）/ トランスポート / 利用先チップ（アシスタント・セッション）
-    / 有効トグル / 最終テスト結果。
-  - 追加・編集フォーム: stdio（command / args / env）とリモート（URL / ヘッダ）を切り替え。
-    テナント行は読み取り専用＋「無効化」のみ。
-  - 「接続テスト」ボタン（§10）。
+### 11.1 「MCP サーバー」タブ（P1 実装済み）
+
+設定モーダルの**接続グループ**に新設（`console/src/features/settings/McpTab.tsx`、section key = `mcp`）。
+
+- **一覧は実効レジストリそのまま**（組み込み ∪ テナント ∪ 個人）。アシスタントとセッションが
+  実際に見る集合と 1 対 1 にするため、由来で分けたセクションにはしない。行の由来バッジが
+  「ここで何ができるか」を表す＝ user は全 CRUD、tenant は無効化のみ、builtin は無効化のみ
+  （接続情報は 運用・監視 タブへ誘導）。
+- 行: 名前（mono）/ 表示名 / 由来バッジ / トランスポート / コマンドか URL / 利用先 / 対象エージェント /
+  秘密の**キー名だけ**（値は出さない）。`enabled && !ready` の行には「値が未入力」の警告を出す。
+- 追加・編集フォーム: stdio（command / args / env）とリモート（URL / ヘッダ）をトランスポートで切り替え。
+  秘密は `type="password"` の KV 行で、保存済みの値は `***` として現れ、そのまま送れば維持される（§5.1）。
+- 「接続テスト」は**保存前のフォームからも**押せる（§10 の id 解決が保存済み定義とマージするため）。
+  結果はサーバー名 / 版 / ツール数 / プロトコル版と、失敗時は stderr / ボディ末尾をそのまま表示する。
+- 注記: `targets.session` を選んだフォームには「**新規セッションから有効**」を出す（§8.3）。
+  リモート＋ `Authorization` 以外のヘッダには「codex では使えません」を出す（§7）。
+- **ワークスペース稼働ゲート必須**。停止中は「登録ゼロ」に見えてしまうため、起動 CTA を出して一覧は描かない。
+  取得は CP 502（agent 起動途中）をリトライし、既存スナップショットを空へ落とさない。
+- 型・フォーム↔定義の変換・マスク往復は `mcpWire.ts` に分離し、`mcpWire.test.ts` で固定している
+  （コンポーネントを起動せずにワイヤ契約だけを回帰できる）。
+
+### 11.2 残り（P2 以降）
+
 - 管理モーダル（`AdminTab.tsx`）に**テナント MCP セクション**を追加（tenant_admin 以上に表示）。
 - アシスタント編集ダイアログの「連携」欄が、固定 3 種からレジストリ由来の一覧に変わる。
 - **i18n 必須**: `ja` / `en` 両方に文言を追加する。裸和文の AST lint が CI で落とすので、文字列は必ず `tr()` 経由。
+  サーバー側の拒否理由も **1 理由 = 1 コード**（`mcpreg.ValidationError.Code`）にして
+  `err.<code>` カタログで解決する（Go 側の message は言語非依存の developer fallback）。
 - 色トークンの追加は不要（新しい agent kind ではない）。
 
 ---
@@ -330,7 +350,7 @@ Workspace agent ──(AF_MCP_TOKEN)──▶ CP GET /internal/mcp-servers      
 | P | 内容 | 主な触り所 |
 |---|------|-----------|
 | **P0** ✅ | 型・実効レジストリ合成・user CRUD REST・接続テスト。builtin 3 種を `ServerDef` へ正規化 | `internal/mcpreg/`（新設）、`secrets.go`、`assistants.go`、`routes.go`（agent + CP 両方） |
-| **P1** | Console 「MCP サーバー」タブ（user スコープ）＋ i18n | `McpTab.tsx`、`SettingsDialog.tsx`、i18n |
+| **P1** ✅ | Console 「MCP サーバー」タブ（実効レジストリ一覧＋ user CRUD＋接続テスト）＋ i18n（ja/en）＋検証コード化 | `McpTab.tsx`、`mcpWire.ts`、`SettingsDialog.tsx`、`settings.css`、i18n、`mcpreg/def.go` |
 | **P2** | アシスタント配線（claude / codex / opencode / agy）。`mcpConfigArgs` の一般化 | `chat_providers.go` |
 | **P3** | セッション materialize — **claude / codex 先行** | `internal/mcpreg/materialize_*.go`、`startSessionTmux` |
 | **P4** | テナントスコープ: CP テーブル・管理 API・ブリッジ・配布キャッシュ・`AdminTab` UI・`user_secret` | `control-plane/mcp_server.go`（新設）、`workspace_lifecycle.go`、`AdminTab.tsx` |
@@ -344,6 +364,9 @@ P0〜P3 で「個人が登録して claude / codex で使う」が閉じる。P4
 
 - **unit**: 実効レジストリの合成（優先順・衝突・opt-out）、各 kind のシリアライズ（黄金ファイル比較）、
   マスク往復（`***` で既存値保持）、テナント stdio 拒否、name のバリデーション。
+  Console 側は `mcpWire.test.ts`（name 規則・マスク往復・トランスポート別に片側だけ送る・
+  codex 非対応判定）。**UI は headless Chromium ＋素の CDP で実描画を確認**する
+  （`console/scripts/shots/server.mjs` の `/api/mcp-servers` スタブが由来 3 種を返す）。
 - **materialize の非破壊性**: 利用者手書きのキーを持つ既存設定に対して書き→消しを往復させ、
   **手書き分が残り af 分だけ消える**ことを検証する。opencode のコメント入り設定は skip されること。
 - **drift 検知**: 各 CLI の設定契約は版で壊れる（`false-idle-reverse-heal` の教訓）。
