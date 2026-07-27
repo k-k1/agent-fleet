@@ -1,6 +1,7 @@
 # 48. ユーザー / テナント独自 MCP サーバーの登録（MCP レジストリ）— 設計
 
-- 状態: **📋 設計（実装未着手）**。意思決定は [decisions/0031](decisions/0031-mcp-registry.md)。
+- 状態: **◐ P0 実装済み**（型・実効レジストリ合成・user スコープ CRUD・接続テスト）。
+  P1 以降は未着手。意思決定は [decisions/0031](decisions/0031-mcp-registry.md)。
 - 関連: docs/19（アシスタント）/ [25](25-ops-monitoring.md)（組み込み ops 連携 = 本設計が一般化する対象）/
   [20](20-container-audit-egress.md)（egress allowlist）/ [46](46-usage-accounting.md)（残 P5 = MCP の使用量計上）/
   [27](27-agent-managed-driver.md) §codex thread MCP / [32](32-agy-agent-kind.md) §MCP / [43](43-kiro-agent-kind.md) §2.6
@@ -49,7 +50,8 @@
 ## 2. 決定サマリ（利用者判断 2026-07-27）
 
 1. **スコープは user + tenant の両方**。実効レジストリ = テナント配布 ∪ 個人登録。
-2. **トランスポート**: 個人 = stdio + リモート（HTTP/SSE）、**テナント配布 = リモートのみ**。
+2. **トランスポート**: 個人 = stdio + リモート、**テナント配布 = リモートのみ**。
+   リモートは **Streamable HTTP のみ**とする（実装時の絞り込み。理由は §3.1）。
    テナント配布の stdio は「管理者が全員のコンテナで任意コマンドを実行できる」ことと等価なので許可しない。
 3. **利用先はアシスタント＋対話セッション（全 kind）**。ただし実装は **claude / codex を先行**させ、
    残り kind（opencode / kiro / cursor / copilot / agy）は後続フェーズ。
@@ -61,20 +63,23 @@
 
 ### 3.1 サーバー定義（agent 側 Go 型 / ワイヤ表現）
 
+実体は `internal/secrets.MCPServer`（user スコープの保存先がそのストアなので、資格情報型と
+同じ場所に置く）。`mcpreg.ServerDef` はその型エイリアス。
+
 ```go
-// workspace/agent/internal/mcpreg/def.go（新設）
-type ServerDef struct {
+// workspace/agent/internal/secrets/secrets.go（型）/ internal/mcpreg/def.go（検証・合成）
+type MCPServer struct {
     ID        string            `json:"id"`        // 内部 id（uuid 風）
     Name      string            `json:"name"`      // CLI 上のサーバー名。^[a-zA-Z0-9_-]{1,48}$
     Label     string            `json:"label,omitempty"`
     Origin    string            `json:"origin"`    // "user" | "tenant" | "builtin"
-    Transport string            `json:"transport"` // "stdio" | "http" | "sse"
+    Transport string            `json:"transport"` // "stdio" | "http"
 
     Command string            `json:"command,omitempty"` // stdio
     Args    []string          `json:"args,omitempty"`
     Env     map[string]string `json:"env,omitempty"`     // 値は秘密扱い
 
-    URL     string            `json:"url,omitempty"`     // http / sse
+    URL     string            `json:"url,omitempty"`     // http
     Headers map[string]string `json:"headers,omitempty"` // 値は秘密扱い
 
     Enabled   bool     `json:"enabled"`
@@ -94,6 +99,9 @@ type Targets struct {
 
 - `Name` が **各 CLI の設定ファイル上のキー**になる。CLI 側の許容文字が最も狭いところ
   （codex の TOML bare key）に合わせて `[a-zA-Z0-9_-]` に限定する。
+- **リモートは Streamable HTTP のみ**。旧来の HTTP+SSE トランスポートは MCP 仕様上 deprecated で、
+  接続テスト（§10）を通すだけでも GET ストリームと POST の二経路を持つ別クライアントが要る。
+  中途半端に「対応」と書くより落とす方が正しいので、v1 の enum から外した（積み残し §14）。
 - `Origin=builtin` は既存 3 種（pagerduty / grafana / cloudwatch）を同じ型に正規化したもの。
   レジストリの中では読み取り専用の行として現れ、`Enabled` だけ利用者が触れる。
   こうすることで `mcpConfigArgs` の分岐が「組み込み or 登録」ではなく **1 本のリスト処理**になる。
@@ -102,7 +110,7 @@ type Targets struct {
 
 | Origin | 保存 | 暗号化 | 編集者 |
 |--------|------|--------|--------|
-| `user` | `~/.config/agent-fleet/secrets.enc`（`secrets.Data.MCPServers []ServerDef`） | 既存 AES-GCM（`AF_SECRET_KEY` = ラップ済み DEK） | 本人 |
+| `user` | `~/.config/agent-fleet/secrets.enc`（`secrets.Data.MCP []secrets.MCPServer`） | 既存 AES-GCM（`AF_SECRET_KEY` = ラップ済み DEK） | 本人 |
 | `tenant` | CP DB `mcp_server` テーブル | 秘密フィールドのみ tenant KEK でラップ（`custodian`, `dek.go` と同型） | tenant_admin 以上 |
 | `builtin` | コード | — | — |
 
@@ -318,7 +326,7 @@ Workspace agent ──(AF_MCP_TOKEN)──▶ CP GET /internal/mcp-servers      
 
 | P | 内容 | 主な触り所 |
 |---|------|-----------|
-| **P0** | 型・実効レジストリ合成・user CRUD REST・接続テスト。builtin 3 種を `ServerDef` へ正規化 | `internal/mcpreg/`（新設）、`secrets.go`、`assistants.go`、`routes.go`（agent + CP 両方） |
+| **P0** ✅ | 型・実効レジストリ合成・user CRUD REST・接続テスト。builtin 3 種を `ServerDef` へ正規化 | `internal/mcpreg/`（新設）、`secrets.go`、`assistants.go`、`routes.go`（agent + CP 両方） |
 | **P1** | Console 「MCP サーバー」タブ（user スコープ）＋ i18n | `McpTab.tsx`、`SettingsDialog.tsx`、i18n |
 | **P2** | アシスタント配線（claude / codex / opencode / agy）。`mcpConfigArgs` の一般化 | `chat_providers.go` |
 | **P3** | セッション materialize — **claude / codex 先行** | `internal/mcpreg/materialize_*.go`、`startSessionTmux` |

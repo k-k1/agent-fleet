@@ -214,6 +214,16 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /env/ui-prefs", handleGetUIPrefs)
 	mux.HandleFunc("PUT /env/ui-prefs", handlePutUIPrefs)
 
+	// MCP レジストリ（docs/48 P0 / ADR0031）— ユーザー登録 MCP サーバーの CRUD と接続テスト。
+	// テナント配布と組み込み連携は同じ一覧に読み取り専用で混ざる。
+	// ⚠️ control-plane/routes.go にも同じパスの登録が要る（CP は明示許可リスト方式）。
+	mux.HandleFunc("GET /mcp-servers", handleMCPServersGet)
+	mux.HandleFunc("POST /mcp-servers", handleMCPServerCreate)
+	mux.HandleFunc("POST /mcp-servers/test", handleMCPServerTest)
+	mux.HandleFunc("PUT /mcp-servers/{id}", handleMCPServerUpdate)
+	mux.HandleFunc("POST /mcp-servers/{id}/enabled", handleMCPServerEnabled)
+	mux.HandleFunc("DELETE /mcp-servers/{id}", handleMCPServerDelete)
+
 	// Connections — per-user provider credentials (git tokens; Claude in Stage 3).
 	mux.HandleFunc("GET /connections", handleConnectionsGet)
 	mux.HandleFunc("GET /connections/git/{host}/repos", handleListRemoteRepos)
