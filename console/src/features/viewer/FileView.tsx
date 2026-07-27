@@ -30,12 +30,12 @@ import { useDebounced } from "../../lib/useDebounced.ts";
 import { revisionOf, type BufferValidationError } from "../editor/buffer.ts";
 import type { FileEditorModel } from "../editor/model.ts";
 import {
-  availableMarkdownModes,
-  availableRenderers,
   cycleFileMode,
   initialFileMode,
+  markdownModeControls,
   paneModeOf,
   reconcileFileMode,
+  rendererControls,
   surfacesFor,
   withMarkdownMode,
   withPaneMode,
@@ -152,6 +152,8 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   const viewTabRef = useRef<HTMLButtonElement>(null);
   const editTabRef = useRef<HTMLButtonElement>(null);
   const editorFocusRef = useRef<(() => void) | null>(null);
+  const editorWantsFocusRef = useRef(false);
+  const modeGroupRef = useRef<HTMLSpanElement>(null);
 
   const showFile = (path: string, line?: number, column?: number, openInNew = false) => {
     const target = { content: { kind: "file" as const, filePath: path, targetLine: line, targetColumn: column } };
@@ -303,18 +305,44 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   const fileMode = modeState.key === data ? reconcileFileMode(modeState.mode, caps) : startingMode();
   const paneMode = paneModeOf(fileMode, caps);
   const surfaces = surfacesFor(fileMode, caps);
+  const renderers = rendererControls(fileMode, caps);
+  // The keyboard command's handler is registered once per file, so it must read
+  // the current mode through a ref rather than the render it was created in.
+  const fileModeRef = useRef(fileMode);
+  fileModeRef.current = fileMode;
 
+  // Focus follows the mode, but only when the user asked for the mode (docs/44
+  // §5). Opening a file — a citation lands in the source surface — must not pull
+  // focus out of whatever the user was typing in.
   const updateMode = (next: (prev: FileModeState) => FileModeState) => {
-    setModeState((prev) => ({ key: prev.key, mode: next(reconcileFileMode(prev.mode, capsRef.current)) }));
+    const target = next(fileModeRef.current);
+    const nextSurfaces = surfacesFor(target, capsRef.current);
+    const editorEl = bodyRef.current?.querySelector(".file-editor-cm");
+    const leavingFocusedEditor =
+      !nextSurfaces.editor && !!editorEl && editorEl.contains(document.activeElement);
+    setModeState((prev) => ({ key: prev.key, mode: target }));
+    if (nextSurfaces.editor) {
+      editorWantsFocusRef.current = true;
+    } else if (leavingFocusedEditor) {
+      // The keyboard command can hide the surface that holds focus; hand it to
+      // the control that describes where we landed instead of dropping it.
+      queueMicrotask(() =>
+        modeGroupRef.current?.querySelector<HTMLButtonElement>('[aria-pressed="true"]')?.focus(),
+      );
+    }
   };
 
   useEffect(() => {
     setEditorNotice("");
     setResolutionOpen(true);
+    // A grant that never got consumed (the mode was clamped away before the
+    // surface appeared) must not follow the pane into the next file.
+    editorWantsFocusRef.current = false;
   }, [filePath]);
 
   useEffect(() => {
-    if (!surfaces.editor) return;
+    if (!surfaces.editor || !editorWantsFocusRef.current) return;
+    editorWantsFocusRef.current = false;
     queueMicrotask(() => editorFocusRef.current?.());
   }, [surfaces.editor]);
 
@@ -608,38 +636,43 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
         )}
         {fileMode.kind === "markdown" && (
           <>
-            <span className="ui-seg sm md-toggle" role="group" aria-label={tr("view.markdown_display_mode")}>
-              {availableMarkdownModes(caps).map((md) => (
+            <span
+              ref={modeGroupRef}
+              className="ui-seg sm md-toggle"
+              role="group"
+              aria-label={tr("view.markdown_display_mode")}
+            >
+              {markdownModeControls(fileMode, caps).map((control) => (
                 <button
-                  key={md}
+                  key={control.mode}
                   type="button"
-                  aria-pressed={fileMode.md === md}
-                  className={"seg-btn" + (fileMode.md === md ? " active" : "")}
-                  onClick={() => changeMarkdownMode(md)}
+                  aria-pressed={control.pressed}
+                  className={"seg-btn" + (control.pressed ? " active" : "")}
+                  onClick={() => changeMarkdownMode(control.mode)}
                 >
-                  {/* Without an edit surface, `edit` is the read-only source view
-                      this pane has always offered — label it as such. */}
-                  {md === "edit"
-                    ? canEdit
-                      ? tr("editor.mode.edit")
-                      : tr("view.source")
-                    : md === "split"
-                      ? tr("editor.mode.split")
-                      : tr("view.preview")}
+                  {control.mode === "split"
+                    ? tr("editor.mode.split")
+                    : control.mode === "preview"
+                      ? tr("view.preview")
+                      : // Without an edit surface this is the read-only source
+                        // view the pane has always offered — say so.
+                        control.readOnlySource
+                        ? tr("view.source")
+                        : tr("editor.mode.edit")}
                 </button>
               ))}
             </span>
-            {isMarp && surfaces.preview && (
+            {renderers.length > 0 && (
               <span className="ui-seg sm md-toggle" role="group" aria-label={tr("editor.renderer_group")}>
-                {availableRenderers(caps).map((renderer) => (
+                {renderers.map((control) => (
                   <button
-                    key={renderer}
+                    key={control.renderer}
                     type="button"
-                    aria-pressed={surfaces.preview === renderer}
-                    className={"seg-btn" + (surfaces.preview === renderer ? " active" : "")}
-                    onClick={() => changeRenderer(renderer)}
+                    aria-pressed={control.pressed}
+                    className={"seg-btn" + (control.pressed ? " active" : "")}
+                    onClick={() => changeRenderer(control.renderer)}
                   >
-                    {renderer === "slides" ? tr("view.slides") : tr("editor.renderer.doc")}
+                    {control.renderer === "slides" ? tr("view.slides") : tr("editor.renderer.doc")}
                   </button>
                 ))}
               </span>
@@ -700,8 +733,10 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
               }}
               onValidationError={onEditorValidationError}
               onReady={(focus) => {
+                // Focus is granted by updateMode, never by the surface merely
+                // appearing: the editor mounts as soon as the file is editable,
+                // which is often before the user has asked to edit anything.
                 editorFocusRef.current = focus;
-                if (surfaces.editor) queueMicrotask(focus);
               }}
             />
             {editor.mergeMine && (

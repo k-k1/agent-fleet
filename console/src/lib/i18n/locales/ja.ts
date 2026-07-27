@@ -1044,7 +1044,7 @@ export const ja = {
   "keys.toast.notifyOn": "{name} 通知を ON にしました",
   "keys.toast.notifyOff": "{name} 通知を OFF にしました",
   "keys.toast.notifyNoConn": "{name} は未接続です（接続 › チャット連携で接続してください）",
-  "keys.cmd.mdMode": "Markdown プレビュー / ソース切替",
+  "keys.cmd.mdMode": "Markdown 表示モードを切り替え",
   "keys.cmd.reader": "朗読モード切替",
   "keys.palette.placeholder": "コマンド・セッションを検索…",
   "keys.palette.placeholder_changed": "変更ファイルを検索…",

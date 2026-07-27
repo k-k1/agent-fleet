@@ -6,8 +6,10 @@ import {
   effectiveRenderer,
   fileModeCycle,
   initialFileMode,
+  markdownModeControls,
   paneModeOf,
   reconcileFileMode,
+  rendererControls,
   surfacesFor,
   withMarkdownMode,
   withPaneMode,
@@ -142,6 +144,45 @@ describe("surfacesFor", () => {
   it("renders the selected renderer in preview and clamps a stale one", () => {
     expect(surfacesFor(md({ md: "preview", renderer: "slides" }), caps({ marp: true })).preview).toBe("slides");
     expect(surfacesFor(md({ md: "preview", renderer: "slides" }), caps()).preview).toBe("normal");
+  });
+});
+
+describe("control groups", () => {
+  it("marks the pressed mode and labels edit as the read-only source", () => {
+    expect(markdownModeControls(md({ md: "preview" }), caps())).toEqual([
+      { mode: "edit", pressed: false, readOnlySource: false },
+      { mode: "preview", pressed: true, readOnlySource: false },
+      { mode: "split", pressed: false, readOnlySource: false },
+    ]);
+    expect(markdownModeControls(md({ md: "edit" }), caps({ editable: false }))).toEqual([
+      { mode: "edit", pressed: true, readOnlySource: true },
+      { mode: "preview", pressed: false, readOnlySource: false },
+    ]);
+  });
+
+  it("has no mode group for a non-Markdown file", () => {
+    expect(markdownModeControls({ kind: "plain", mode: "view" }, caps({ markdown: false }))).toEqual([]);
+  });
+
+  it("offers renderers only with a preview on screen and a Marp deck", () => {
+    const marp = caps({ marp: true });
+    expect(rendererControls(md({ md: "preview" }), marp)).toEqual([
+      { renderer: "normal", pressed: true },
+      { renderer: "slides", pressed: false },
+    ]);
+    expect(rendererControls(md({ md: "split", renderer: "slides" }), marp)).toEqual([
+      { renderer: "normal", pressed: false },
+      { renderer: "slides", pressed: true },
+    ]);
+    // No preview on screen, and nothing to choose between on a plain document.
+    expect(rendererControls(md({ md: "edit" }), marp)).toEqual([]);
+    expect(rendererControls(md({ md: "preview" }), caps())).toEqual([]);
+  });
+
+  it("marks the renderer actually in use when the selection went stale", () => {
+    // The deck's front matter lost `marp: true` while slides was selected: the
+    // group disappears rather than showing a pressed button that does nothing.
+    expect(rendererControls(md({ md: "preview", renderer: "slides" }), caps())).toEqual([]);
   });
 });
 
