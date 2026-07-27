@@ -39,9 +39,25 @@ interface MemoryRoot {
   modified?: string;
   busy?: boolean;
   projects: ProjectRef[];
+  /** エージェント側がメモリを書くことの ON/OFF（今は codex のみ・docs/39 P4）。 */
+  toggleable?: boolean;
+  enabled?: boolean;
+}
+/**
+ * 宣言はされているが今この環境では有効でないルート（docs/39 P4）。codex の memories は
+ * 上流の既定が OFF なので、黙って一覧から消すと「なぜ出てこないか」も「どう有効化するか」も
+ * 伝わらない。toggleable なものはここから直接切り替える。
+ */
+interface InactiveRoot {
+  kind: string;
+  label: string;
+  reason: string;
+  toggleable?: boolean;
+  enabled?: boolean;
 }
 interface RootsPayload {
   roots: MemoryRoot[];
+  inactive?: InactiveRoot[];
   auto: boolean;
   autoLocked: boolean;
   lastSnapshot?: string;
@@ -93,6 +109,10 @@ interface ImportPreview {
 // そのままキーに使い、未知の値は生のまま出す（新しい契機を足しても画面は壊れない）。
 const triggerLabel = (trigger: string): string =>
   tMaybe("mem.trigger_" + trigger.replace(/-/g, "_")) ?? trigger ?? "";
+
+// 無効なルートの理由。契機ラベルと同じ流儀で、未知の理由は生のまま出す
+// （Agent が新しい理由を返しても画面は壊れない）。
+const reasonLabel = (reason: string): string => tMaybe("mem.reason_" + reason) ?? reason ?? "";
 
 export function MemoryTab() {
   const tr = useT();
@@ -173,6 +193,20 @@ export function MemoryTab() {
       return;
     }
     setData((d) => (d ? { ...d, auto: !!res.auto, autoLocked: !!res.autoLocked } : d));
+  };
+
+  // codex memories のフリート有効化（docs/39 P4・決着 #4）。設定の実体は codex 自身の
+  // config.toml なので、書き込みは既存の /codex/settings を使う。有効化しても
+  // ~/.codex/memories は次に codex が走るまで生えないため、直後は「有効だが未生成」で
+  // 出る（roots を読み直して状態を Agent 側から取り直す）。
+  const setCodexMemories = async (on: boolean) => {
+    const res = await apiJSON("api/codex/settings", "PUT", { memories: on });
+    if (res?.error) {
+      toast(errText(res.error));
+      return;
+    }
+    toast(on ? tr("mem.codex_enabled") : tr("mem.codex_disabled_toast"));
+    setReload((n) => n + 1);
   };
 
   const snapshotNow = async () => {
@@ -282,7 +316,7 @@ export function MemoryTab() {
         </div>
         {!data ? (
           <p className="muted pad">{tr("common.loading")}</p>
-        ) : data.roots.length === 0 ? (
+        ) : data.roots.length === 0 && !data.inactive?.length ? (
           <p className="muted pad">{tr("mem.no_roots")}</p>
         ) : (
           <ul className="mem-roots">
@@ -293,6 +327,9 @@ export function MemoryTab() {
                   {tr("mem.root_stats", { files: r.files, size: humanSize(r.bytes) })}
                 </span>
                 {r.busy && <span className="mem-badge busy">{tr("mem.busy_badge")}</span>}
+                {r.toggleable && (
+                  <OnOff value={!!r.enabled} onChange={(v) => void setCodexMemories(v)} />
+                )}
                 {r.projects.length > 0 && (
                   <span className="mem-projects">
                     {r.projects.map((p) => (
@@ -304,7 +341,19 @@ export function MemoryTab() {
                 )}
               </li>
             ))}
+            {(data.inactive ?? []).map((r) => (
+              <li key={r.kind} className="mem-root mem-root-off">
+                <span className={"mem-kind kind-" + r.kind}>{r.label}</span>
+                <span className="muted">{reasonLabel(r.reason)}</span>
+                {r.toggleable && <OnOff value={!!r.enabled} onChange={(v) => void setCodexMemories(v)} />}
+              </li>
+            ))}
           </ul>
+        )}
+        {/* 有効化はトークンを継続的に消費する（バックグラウンドの抽出・統合）。
+            トグルの隣で必ず伝える — 「ただのスイッチ」に見せない。 */}
+        {data?.inactive?.some((r) => r.toggleable && !r.enabled) && (
+          <p className="muted ds-hint">{tr("mem.codex_cost_hint")}</p>
         )}
         <Row label={tr("mem.auto_label")}>
           <OnOff value={!!data?.auto} onChange={(v) => void setAuto(v)} />

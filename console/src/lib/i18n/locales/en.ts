@@ -2722,6 +2722,13 @@ export const en: Record<keyof typeof ja, string> = {
   "mem.auto_label": "Automatic snapshots",
   "mem.auto_hint": "Taken a few minutes after the agents go idle. Nothing is recorded when nothing changed.",
   "mem.auto_locked": "Automatic snapshots are disabled for this environment by the operator (AF_MEMORY_SNAPSHOT).",
+  "mem.reason_codex_memories_disabled": "Memories are off (Codex's own default)",
+  "mem.reason_codex_memories_pending": "Enabled — memories appear the next time Codex runs",
+  "mem.reason_absent": "Not found in this environment",
+  "mem.codex_cost_hint":
+    "Once enabled, Codex extracts and consolidates memories from your conversations in the background, spending tokens on an ongoing basis.",
+  "mem.codex_enabled": "Codex memories enabled. They join the history the next time Codex runs.",
+  "mem.codex_disabled_toast": "Codex memories disabled. Snapshots already taken are kept.",
   "mem.history_title": "History",
   "mem.history_empty": "No snapshots yet.",
   "mem.n_files": "{n} files",
