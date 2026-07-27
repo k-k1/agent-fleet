@@ -88,6 +88,8 @@ export const ja = {
   "err.memory_no_snapshots": "スナップショットがまだありません",
   "err.memory_snapshot_failed": "スナップショットの取得に失敗しました",
   "err.memory_diff_failed": "差分の取得に失敗しました",
+  "err.memory_bad_scope": "戻す範囲の指定が不正です",
+  "err.memory_restore_failed": "巻き戻しに失敗しました",
 
   // --- ビルトインアシスタント（docs/28 P3。id は assistants.go の固定集合。Agent は
   //     和文を返すが、表示は builtin のとき Console カタログが解決する）---
@@ -2401,6 +2403,7 @@ export const ja = {
   "set.tab_display": "表示",
   "set.tab_keys": "キー操作",
   "set.tab_usage": "使用量",
+  "set.tab_memory": "エージェントメモリ",
   "set.tab_env": "ツールチェーン",
   "set.tab_agents": "エージェント",
   "set.tab_assistant": "アシスタント",
@@ -2730,5 +2733,53 @@ export const ja = {
   "editor.unknown.retry": "状態を再取得",
   "editor.diff_aria": "mineとremoteの差分",
   "editor.popout_dirty": "未保存のファイルは別タブへ切り離せません。保存または破棄してから再試行してください。",
+
+
+  // === エージェントメモリの版管理（docs/39 P2 / ADR 0022・features/settings/MemoryTab.tsx） ===
+  // mem.trigger_* のキー名は Agent の commit trailer（AF-Trigger）の値そのもの
+  // （"-" は "_" に置換）。未知の契機はカタログに無くても生の値で表示される。
+  "mem.intro":
+    "エージェントが書き溜めるメモリ（claude の自動メモリ・codex の memories）の履歴です。変更のたびにスナップショットを積み、差分の確認と任意時点への巻き戻しができます。メモリには個人的な内容が含まれることがあるため、共有する前に中身を確認してください。",
+  "mem.ws_required_title": "ワークスペースが停止しています",
+  "mem.ws_required_hint": "メモリの履歴はワークスペース内で管理しているため、起動中のみ操作できます。",
+  "mem.start_ws": "ワークスペースを起動",
+  "mem.roots_title": "対象",
+  "mem.no_roots": "版管理の対象になるメモリがありません。",
+  "mem.root_stats": "{files}ファイル・{size}",
+  "mem.busy_badge": "実行中",
+  "mem.last_snapshot": "最終スナップショット: {when}",
+  "mem.never": "スナップショットはまだありません",
+  "mem.snapshot_now": "今すぐスナップショット",
+  "mem.snapshot_taken": "スナップショットを取得しました",
+  "mem.snapshot_unchanged": "変更がないため取得しませんでした",
+  "mem.auto_label": "自動スナップショット",
+  "mem.auto_hint": "エージェントが停止して数分たつと自動で取得します。変更がなければ積みません。",
+  "mem.auto_locked": "この環境では運用側の設定（AF_MEMORY_SNAPSHOT）で自動取得が止められています。",
+  "mem.history_title": "履歴",
+  "mem.history_empty": "スナップショットはまだありません。",
+  "mem.n_files": "{n}ファイル",
+  "mem.jump_at": "日時指定",
+  "mem.jump_go": "この日時時点へ",
+  "mem.jump_none": "その日時以前のスナップショットがありません",
+  "mem.trigger_auto": "自動",
+  "mem.trigger_manual": "手動",
+  "mem.trigger_pre_restore": "巻き戻し前",
+  "mem.trigger_restore": "巻き戻し",
+  "mem.trigger_import": "取り込み",
+  "mem.restore": "この時点に戻す",
+  "mem.restore_title": "戻す範囲",
+  "mem.scope_all": "すべて",
+  "mem.scope_pick": "選んで戻す",
+  "mem.scope_whole_root": "{label}（全体）",
+  "mem.tree_empty": "この時点にはメモリがありません。",
+  "mem.restore_do": "戻す",
+  "mem.restore_confirm_title": "この時点に戻しますか",
+  "mem.restore_confirm_body": "{scope} のメモリを、選んだ時点の内容で置き換えます。",
+  "mem.restore_undo_hint":
+    "戻す直前の状態は自動でスナップショットに残るので、この操作自体もあとから取り消せます。",
+  "mem.restore_busy_warn":
+    "実行中のセッションがあります。戻したあとにそのセッションが書いた内容は、新しいスナップショットとして履歴に現れます。",
+  "mem.restored": "戻しました（更新{written}・削除{deleted}）",
+  "mem.restore_nochange": "すでにその時点と同じ内容でした",
 
 };
