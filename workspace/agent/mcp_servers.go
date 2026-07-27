@@ -17,12 +17,24 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 )
 
+// Wire error codes. The per-rule validation codes live in mcpreg (ValidationError.Code)
+// so the reason survives to the Console; these three are the store-level outcomes.
+// 追加・改名時は console/src/lib/i18n/locales/{ja,en}.ts の "err.<code>" も同時に。
 const (
 	errCodeMCPNotFound = "mcp_not_found"
 	errCodeMCPReadOnly = "mcp_read_only"
 	errCodeMCPInvalid  = "mcp_invalid"
 	errCodeMCPConflict = "mcp_name_taken"
 )
+
+// mcpInvalidCode returns the rule-specific code a ValidationError carries, falling
+// back to the generic one so an unlabeled refusal is still a 400 the Console renders.
+func mcpInvalidCode(ve *mcpreg.ValidationError) string {
+	if ve.Code != "" {
+		return ve.Code
+	}
+	return errCodeMCPInvalid
+}
 
 // handleMCPServersGet returns the effective registry with every secret masked.
 func handleMCPServersGet(w http.ResponseWriter, r *http.Request) {
@@ -146,7 +158,7 @@ func handleMCPServerTest(w http.ResponseWriter, r *http.Request) {
 	probe := in
 	probe.Enabled = true
 	if err := mcpreg.Validate(probe); err != nil {
-		httpx.WriteErr(w, http.StatusBadRequest, errCodeMCPInvalid, err.Error())
+		writeMCPErr(w, err)
 		return
 	}
 	ctx, cancel := context.WithCancel(r.Context())
@@ -164,7 +176,7 @@ func writeMCPErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, mcpreg.ErrNameTaken):
 		httpx.WriteErr(w, http.StatusConflict, errCodeMCPConflict, err.Error())
 	case errors.As(err, &ve):
-		httpx.WriteErr(w, http.StatusBadRequest, errCodeMCPInvalid, err.Error())
+		httpx.WriteErr(w, http.StatusBadRequest, mcpInvalidCode(ve), err.Error())
 	default:
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 	}
