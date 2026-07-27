@@ -305,6 +305,9 @@ Workspace agent ──(AF_MCP_TOKEN)──▶ CP GET /internal/mcp-servers      
 登録直後にここが green にならないと、利用者は「セッションを立てて初めて壊れているとわかる」ことになる。
 このフェーズを P0 に入れるのはそのため。
 
+接続テストは **MCP 2026-07-28（ステートレス版）と 2025-* の両方**を喋る。詳細は
+[49](49-mcp-2026-07-28.md) §3.2（`server/discover` 先行 → 旧版 fallback）。
+
 ---
 
 ## 11. Console UI

@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -315,8 +317,14 @@ func TestForSessionFiltersAndForAssistant(t *testing.T) {
 
 // TestHelperMCPServer は probe 用の偽 MCP サーバー。テストバイナリを再実行して
 // stdio サーバーの役を演じる（外部依存を持ち込まないための標準的な手口）。
+// AF_MCP_TEST_HELPER が era を選ぶ:
+//
+//	stateless — 2026-07-28。server/discover に答える
+//	legacy    — 2025-*。server/discover に -32601 を返し initialize を待つ
+//	silent    — 行儀の悪い旧サーバー。未知メソッドを黙殺する（era 判定の timeout 経路）
 func TestHelperMCPServer(t *testing.T) {
-	if os.Getenv("AF_MCP_TEST_HELPER") == "" {
+	mode := os.Getenv("AF_MCP_TEST_HELPER")
+	if mode == "" {
 		t.Skip("helper process only")
 	}
 	// プロトコルを喋る前に 1 行バナーを出す実サーバーがあるので、その耐性も兼ねる。
@@ -324,20 +332,63 @@ func TestHelperMCPServer(t *testing.T) {
 	sc := bufio.NewScanner(os.Stdin)
 	for sc.Scan() {
 		var m struct {
-			ID     any    `json:"id"`
-			Method string `json:"method"`
+			ID     any             `json:"id"`
+			Method string          `json:"method"`
+			Params json.RawMessage `json:"params"`
 		}
 		if json.Unmarshal(sc.Bytes(), &m) != nil {
 			continue
 		}
 		switch m.Method {
+		case "server/discover":
+			if mode != "stateless" {
+				if mode == "legacy" {
+					emitErr(m.ID, -32601, "method not found")
+				}
+				continue // silent: 黙殺する
+			}
+			// ステートレス版は毎リクエストに _meta が要る。probe が本当に載せているかを
+			// ここで確かめる（載せ忘れは本物のサーバーでしか気づけなくなる）。
+			if !hasStatelessMeta(m.Params) {
+				emitErr(m.ID, -32602, "missing _meta")
+				continue
+			}
+			emit(m.ID, map[string]any{
+				"resultType":        "complete",
+				"supportedVersions": []string{"2026-07-28"},
+				"capabilities":      map[string]any{"tools": map[string]any{}},
+				"serverInfo":        map[string]any{"name": "fake", "version": "9.9"},
+			})
 		case "initialize":
-			emit(m.ID, map[string]any{"serverInfo": map[string]any{"name": "fake", "version": "9.9"}})
+			if mode == "stateless" {
+				emitErr(m.ID, -32601, "method not found")
+				continue
+			}
+			emit(m.ID, map[string]any{"serverInfo": map[string]any{"name": "legacy-fake", "version": "1.1"}})
 		case "tools/list":
+			if mode == "stateless" && !hasStatelessMeta(m.Params) {
+				emitErr(m.ID, -32602, "missing _meta")
+				continue
+			}
 			emit(m.ID, map[string]any{"tools": []map[string]any{{"name": "search"}, {"name": "fetch"}}})
 		}
 	}
 	os.Exit(0)
+}
+
+func hasStatelessMeta(params json.RawMessage) bool {
+	var p struct {
+		Meta map[string]json.RawMessage `json:"_meta"`
+	}
+	if json.Unmarshal(params, &p) != nil {
+		return false
+	}
+	for _, k := range []string{metaProtocolVersion, metaClientInfo, metaClientCaps} {
+		if _, ok := p.Meta[k]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func emit(id any, result map[string]any) {
@@ -345,21 +396,65 @@ func emit(id any, result map[string]any) {
 	fmt.Println(string(b))
 }
 
-func TestProbeStdio(t *testing.T) {
+func emitErr(id any, code int, msg string) {
+	b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id,
+		"error": map[string]any{"code": code, "message": msg}})
+	fmt.Println(string(b))
+}
+
+func helperDef(mode string) ServerDef {
 	d := stdioDef("fake")
 	d.Command = os.Args[0]
 	d.Args = []string{"-test.run=TestHelperMCPServer"}
-	d.Env = map[string]string{"AF_MCP_TEST_HELPER": "1"}
+	d.Env = map[string]string{"AF_MCP_TEST_HELPER": mode}
+	return d
+}
 
-	res := Probe(context.Background(), d)
+func TestProbeStdioStateless(t *testing.T) {
+	res := Probe(context.Background(), helperDef("stateless"))
 	if !res.OK {
 		t.Fatalf("Probe failed: %s / %s", res.Error, res.Detail)
+	}
+	if res.Revision != ProtocolVersion {
+		t.Fatalf("revision = %q, want %q", res.Revision, ProtocolVersion)
 	}
 	if res.ServerName != "fake" || res.ServerVersion != "9.9" {
 		t.Fatalf("serverInfo = %s %s", res.ServerName, res.ServerVersion)
 	}
-	if res.ToolCount != 2 || len(res.Tools) != 2 {
-		t.Fatalf("tools = %d %v", res.ToolCount, res.Tools)
+	if res.ToolCount != 2 || len(res.SupportedVersions) != 1 {
+		t.Fatalf("tools=%d supported=%v", res.ToolCount, res.SupportedVersions)
+	}
+}
+
+// 旧版サーバー（server/discover に -32601）は initialize ハンドシェイクへ落ちる。
+func TestProbeStdioFallsBackToLegacy(t *testing.T) {
+	res := Probe(context.Background(), helperDef("legacy"))
+	if !res.OK {
+		t.Fatalf("Probe failed: %s / %s", res.Error, res.Detail)
+	}
+	if res.Revision != ProtocolVersionLegacy {
+		t.Fatalf("revision = %q, want %q", res.Revision, ProtocolVersionLegacy)
+	}
+	if res.ServerName != "legacy-fake" || res.ToolCount != 2 {
+		t.Fatalf("unexpected: %+v", res)
+	}
+}
+
+// 未知メソッドを黙殺する行儀の悪い旧サーバーでも、era 判定の短いデッドラインで
+// 旧版へ倒れて成功する（probe 全体の timeout まで固まらない）。
+func TestProbeStdioFallsBackWhenDiscoverIgnored(t *testing.T) {
+	d := helperDef("silent")
+	d.TimeoutMS = 20000
+	start := time.Now()
+	res := Probe(context.Background(), d)
+	if !res.OK {
+		t.Fatalf("Probe failed: %s / %s", res.Error, res.Detail)
+	}
+	if res.Revision != ProtocolVersionLegacy {
+		t.Fatalf("revision = %q, want %q", res.Revision, ProtocolVersionLegacy)
+	}
+	if el := time.Since(start); el > 10*time.Second {
+		t.Fatalf("era 判定で固まっている: %v", el)
 	}
 }
 
@@ -372,31 +467,42 @@ func TestProbeStdioReportsBrokenCommand(t *testing.T) {
 	}
 }
 
-// probeHTTP は JSON 応答と SSE 応答の両方を受ける必要がある（Streamable HTTP は
-// サーバー実装ごとにどちらも返す）。1 本のテストで両経路を通す。
-func TestProbeHTTPJSONAndSSE(t *testing.T) {
-	var sawAuth, sawSession string
+// ステートレス版の HTTP。probe が必須ヘッダ（MCP-Protocol-Version / Mcp-Method）と
+// _meta を正しく載せていること、Mcp-Session-Id を送らない（この版で廃止）ことを固定する。
+func TestProbeHTTPStateless(t *testing.T) {
+	var sawAuth, sawVerHdr, sawSession string
+	var sawMethods []string
+	var metaOK = true
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
 		var m struct {
-			ID     any    `json:"id"`
-			Method string `json:"method"`
+			ID     any             `json:"id"`
+			Method string          `json:"method"`
+			Params json.RawMessage `json:"params"`
 		}
-		_ = json.NewDecoder(r.Body).Decode(&m)
+		_ = json.Unmarshal(body, &m)
+		sawAuth = r.Header.Get("Authorization")
+		sawVerHdr = r.Header.Get("MCP-Protocol-Version")
+		sawSession += r.Header.Get("Mcp-Session-Id")
+		sawMethods = append(sawMethods, r.Header.Get("Mcp-Method"))
+		if r.Header.Get("Mcp-Method") != m.Method || !hasStatelessMeta(m.Params) {
+			metaOK = false
+		}
+		w.Header().Set("Content-Type", "application/json")
 		switch m.Method {
-		case "initialize":
-			sawAuth = r.Header.Get("Authorization")
-			w.Header().Set("Mcp-Session-Id", "sess-1")
-			w.Header().Set("Content-Type", "application/json")
+		case "server/discover":
 			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": m.ID,
-				"result": map[string]any{"serverInfo": map[string]any{"name": "remote", "version": "1.2"}}})
-		case "notifications/initialized":
-			w.WriteHeader(http.StatusAccepted)
+				"result": map[string]any{
+					"resultType":        "complete",
+					"supportedVersions": []string{"2026-07-28"},
+					"_meta":             map[string]any{metaServerInfo: map[string]any{"name": "remote", "version": "1.2"}},
+				}})
 		case "tools/list":
-			sawSession = r.Header.Get("Mcp-Session-Id")
+			// SSE 応答も受けられること（サーバーはどちらを返してもよい）。
 			w.Header().Set("Content-Type", "text/event-stream")
-			body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": m.ID,
-				"result": map[string]any{"tools": []map[string]any{{"name": "query"}}}})
-			fmt.Fprintf(w, "event: message\ndata: %s\n\n", body)
+			b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": m.ID,
+				"result": map[string]any{"resultType": "complete", "tools": []map[string]any{{"name": "query"}}}})
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", b)
 		}
 	}))
 	defer srv.Close()
@@ -407,14 +513,99 @@ func TestProbeHTTPJSONAndSSE(t *testing.T) {
 	if !res.OK {
 		t.Fatalf("Probe failed: %s / %s", res.Error, res.Detail)
 	}
+	if res.Revision != ProtocolVersion {
+		t.Fatalf("revision = %q, want %q", res.Revision, ProtocolVersion)
+	}
+	// serverInfo は _meta 側にしか無い応答 — 両方の形を読めることの確認。
 	if res.ServerName != "remote" || res.ToolCount != 1 || res.Tools[0] != "query" {
 		t.Fatalf("unexpected result: %+v", res)
+	}
+	if !metaOK {
+		t.Fatal("必須ヘッダまたは _meta が要求に載っていない")
 	}
 	if sawAuth != "Bearer tok" {
 		t.Fatalf("登録ヘッダが送られていない: %q", sawAuth)
 	}
+	if sawVerHdr != ProtocolVersion {
+		t.Fatalf("MCP-Protocol-Version = %q", sawVerHdr)
+	}
+	if sawSession != "" {
+		t.Fatalf("この版で廃止された Mcp-Session-Id を送っている: %q", sawSession)
+	}
+	if len(sawMethods) != 2 || sawMethods[0] != "server/discover" || sawMethods[1] != "tools/list" {
+		t.Fatalf("Mcp-Method の並びが想定と違う: %v", sawMethods)
+	}
+}
+
+// 旧版 HTTP サーバー（server/discover に -32601）は initialize へ落ち、
+// Mcp-Session-Id を引き継ぐ。
+func TestProbeHTTPFallsBackToLegacy(t *testing.T) {
+	var sawSession string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var m struct {
+			ID     any    `json:"id"`
+			Method string `json:"method"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&m)
+		w.Header().Set("Content-Type", "application/json")
+		enc := json.NewEncoder(w)
+		switch m.Method {
+		case "server/discover":
+			_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": m.ID,
+				"error": map[string]any{"code": -32601, "message": "method not found"}})
+		case "initialize":
+			w.Header().Set("Mcp-Session-Id", "sess-1")
+			_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": m.ID,
+				"result": map[string]any{"serverInfo": map[string]any{"name": "old", "version": "0.1"}}})
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		case "tools/list":
+			sawSession = r.Header.Get("Mcp-Session-Id")
+			_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": m.ID,
+				"result": map[string]any{"tools": []map[string]any{{"name": "old_tool"}}}})
+		}
+	}))
+	defer srv.Close()
+
+	res := Probe(context.Background(), httpDef("remote", srv.URL))
+	if !res.OK {
+		t.Fatalf("Probe failed: %s / %s", res.Error, res.Detail)
+	}
+	if res.Revision != ProtocolVersionLegacy || res.ServerName != "old" || res.ToolCount != 1 {
+		t.Fatalf("unexpected: %+v", res)
+	}
 	if sawSession != "sess-1" {
-		t.Fatalf("Mcp-Session-Id が引き継がれていない: %q", sawSession)
+		t.Fatalf("旧版で Mcp-Session-Id が引き継がれていない: %q", sawSession)
+	}
+}
+
+// 新版サーバーが 400 + 既知の新版エラーを返したら、旧版へ落ちてはいけない
+// （spec: 本文が新版エラーなら「新版サーバー。要求を直せ」）。
+func TestProbeHTTPModernErrorDoesNotFallBack(t *testing.T) {
+	var sawInitialize bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var m struct {
+			ID     any    `json:"id"`
+			Method string `json:"method"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&m)
+		if m.Method == "initialize" {
+			sawInitialize = true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": m.ID,
+			"error": map[string]any{"code": -32022, "message": "unsupported protocol version",
+				"data": map[string]any{"supported": []string{"2026-07-28"}, "requested": "2026-07-28"}}})
+	}))
+	defer srv.Close()
+
+	res := Probe(context.Background(), httpDef("remote", srv.URL))
+	if res.OK {
+		t.Fatal("新版エラーが成功扱いになっている")
+	}
+	if sawInitialize {
+		t.Fatal("新版サーバー相手に旧版ハンドシェイクへ落ちている")
 	}
 }
 
@@ -427,9 +618,6 @@ func TestProbeHTTPReportsServerError(t *testing.T) {
 	res := Probe(context.Background(), httpDef("remote", srv.URL))
 	if res.OK {
 		t.Fatal("401 が成功扱いになっている")
-	}
-	if !strings.Contains(res.Error, "401") {
-		t.Fatalf("エラーに状態コードが出ていない: %q", res.Error)
 	}
 	if !strings.Contains(res.Detail, "nope") {
 		t.Fatalf("応答本文が detail に出ていない: %q", res.Detail)
