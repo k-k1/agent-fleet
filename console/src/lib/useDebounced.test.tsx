@@ -80,6 +80,16 @@ describe("useDebounced", () => {
     expect(latest()).toBe("other");
   });
 
+  it("seeds content that arrives with a new key, however long it was empty", () => {
+    // The shape FileView relies on: while a file loads there is no key and no
+    // content; when the response lands, both change at once. Waiting out the
+    // delay here would run the initial Marp check on an empty document.
+    render("", "loading");
+    act(() => void vi.advanceTimersByTime(1000));
+    update("---\nmarp: true\n---\n", "loaded");
+    expect(latest()).toBe("---\nmarp: true\n---\n");
+  });
+
   it("drops a pending value when the key changes mid-flight", () => {
     render("one");
     update("two");

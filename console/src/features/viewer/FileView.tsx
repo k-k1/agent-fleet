@@ -143,10 +143,11 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   const [sendOpen, setSendOpen] = useState(false);
   // Keyed by the loaded file so a new document re-picks its starting mode. The
   // stored mode is the user's intent; what renders is derived from it below.
-  const [modeState, setModeState] = useState<{ key: FileData | null; mode: FileModeState }>({
-    key: null,
-    mode: { kind: "plain", mode: "view" },
-  });
+  const [modeState, setModeState] = useState<{
+    key: FileData | null;
+    targetLine: number | undefined;
+    mode: FileModeState;
+  }>({ key: null, targetLine: undefined, mode: { kind: "plain", mode: "view" } });
   const [editorNotice, setEditorNotice] = useState("");
   const [resolutionOpen, setResolutionOpen] = useState(true);
   const viewTabRef = useRef<HTMLButtonElement>(null);
@@ -280,8 +281,13 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   // re-run Mermaid on every keystroke. Debouncing also settles the Marp check:
   // a deck's front matter is edited character by character, and reacting to each
   // intermediate state would make the renderer buttons appear and disappear
-  // while typing (docs/44 §1.1). A new file adopts its content immediately.
-  const previewSource = useDebounced(viewContent, PREVIEW_DEBOUNCE_MS, filePath);
+  // while typing (docs/44 §1.1).
+  //
+  // The delay applies to editing only. Keying on the loaded file — not its path,
+  // which does not change when a GET lands — seeds the freshly read content at
+  // once. Otherwise the initial Marp check would run on an empty preview source
+  // and open a deck in the normal preview, which reconcile then keeps.
+  const previewSource = useDebounced(viewContent, PREVIEW_DEBOUNCE_MS, data);
   const isMarp = isMarkdown && isMarpDoc(previewSource);
 
   // What the loaded file allows. The mode state machine (docs/44 §1.1) derives
@@ -298,11 +304,15 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   // Markdown as a preview. The choice is made on the render the file lands —
   // deferring it to an effect would let one frame paint the other control group,
   // since capabilities become known before the state that reads them.
+  // A new citation re-picks it too: retargeting the pane at a line of the file it
+  // already shows leaves `data` untouched, and staying in the preview would hide
+  // the very row that was asked for (docs/44 §1.8).
   const startingMode = () => initialFileMode(caps, { hasTargetLine: !!targetLine });
-  if (data && modeState.key !== data) setModeState({ key: data, mode: startingMode() });
+  const modeIsCurrent = modeState.key === data && modeState.targetLine === targetLine;
+  if (data && !modeIsCurrent) setModeState({ key: data, targetLine, mode: startingMode() });
   // Capability changes after that only clamp the selection, so editing a deck's
   // front matter cannot yank the user back to the initial mode.
-  const fileMode = modeState.key === data ? reconcileFileMode(modeState.mode, caps) : startingMode();
+  const fileMode = modeIsCurrent ? reconcileFileMode(modeState.mode, caps) : startingMode();
   const paneMode = paneModeOf(fileMode, caps);
   const surfaces = surfacesFor(fileMode, caps);
   const renderers = rendererControls(fileMode, caps);
@@ -320,7 +330,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
     const editorEl = bodyRef.current?.querySelector(".file-editor-cm");
     const leavingFocusedEditor =
       !nextSurfaces.editor && !!editorEl && editorEl.contains(document.activeElement);
-    setModeState((prev) => ({ key: prev.key, mode: target }));
+    setModeState((prev) => ({ ...prev, mode: target }));
     if (nextSurfaces.editor) {
       editorWantsFocusRef.current = true;
     } else if (leavingFocusedEditor) {
@@ -468,17 +478,25 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   // come from the CodeMirror document, and the pill is placed from coordsAtPos.
   const captureEditorSelection = (selection: EditorSelectionReport | null) => {
     if (sendOpen) return;
-    if (!selection || !selection.coords) {
-      setSel((prev) => (prev?.origin === "editor" ? null : prev));
-      return;
-    }
-    setSel({
-      quote: selection.quote,
-      startLine: selection.startLine,
-      endLine: selection.endLine,
-      x: Math.round(selection.coords.left),
-      y: Math.round(selection.coords.top - 34),
-      origin: "editor",
+    const drop = () => setSel((prev) => (prev?.origin === "editor" ? null : prev));
+    // A hidden editing surface keeps its selection in CodeMirror state and still
+    // reports layout changes; neither can put a pill on screen.
+    if (!surfaces.editor || !selection || !selection.coords) return drop();
+    const coords = selection.coords;
+    setSel((prev) => {
+      // Only a real selection change takes ownership. Re-measuring an unchanged
+      // selection after a scroll or resize may move this surface's own pill, but
+      // must never take the pill back from a selection made elsewhere — that is
+      // how "one pill at a time" (docs/44 §1.8) would otherwise be lost.
+      if (selection.reason === "geometry" && prev?.origin !== "editor") return prev;
+      return {
+        quote: selection.quote,
+        startLine: selection.startLine,
+        endLine: selection.endLine,
+        x: Math.round(coords.left),
+        y: Math.round(coords.top - 34),
+        origin: "editor",
+      };
     });
   };
 
