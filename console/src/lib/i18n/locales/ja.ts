@@ -82,6 +82,12 @@ export const ja = {
   "err.fork_missing_dir": "作業フォルダが存在しないため分岐できません",
   "err.title_feature_disabled": "AI 提案が無効です（表示設定のタイトル自動提案をオンに）",
   "err.title_no_content": "会話がまだ足りません（数往復してから試してください）",
+  "err.memory_bad_request": "リクエストの形式が不正です",
+  "err.memory_bad_rev": "指定した時点のスナップショットが見つかりません",
+  "err.memory_bad_path": "メモリの管理対象外のパスです",
+  "err.memory_no_snapshots": "スナップショットがまだありません",
+  "err.memory_snapshot_failed": "スナップショットの取得に失敗しました",
+  "err.memory_diff_failed": "差分の取得に失敗しました",
 
   // --- ビルトインアシスタント（docs/28 P3。id は assistants.go の固定集合。Agent は
   //     和文を返すが、表示は builtin のとき Console カタログが解決する）---

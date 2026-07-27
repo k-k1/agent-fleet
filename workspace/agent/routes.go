@@ -203,6 +203,13 @@ func buildMux() *http.ServeMux {
 	// Live model catalogs (codex: `codex debug models` / opencode: `opencode models`)
 	// for the Console's launch model picker.
 	mux.HandleFunc("GET /agents/{kind}/models", handleAgentModels)
+	// エージェントメモリの版管理（docs/39 / ADR 0022 P1）: claude/codex のメモリ md を
+	// bare repo へ snapshot し、履歴と差分を返す。restore / export / import は P2・P3。
+	// ⚠️ control-plane/routes.go にも同じパスの登録が要る（CP は明示許可リスト方式）。
+	mux.HandleFunc("GET /agents/memory/roots", handleMemoryRoots)
+	mux.HandleFunc("GET /agents/memory/snapshots", handleMemorySnapshots)
+	mux.HandleFunc("POST /agents/memory/snapshots", handleMemorySnapshotCreate)
+	mux.HandleFunc("GET /agents/memory/diff", handleMemoryDiff)
 
 	// Toolchain selection (node via nvm / java via pre-baked Temurin) — Console.
 	mux.HandleFunc("GET /env/toolchains", handleToolchainsGet)
