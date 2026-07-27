@@ -1002,6 +1002,25 @@
 .file-surfaces.is-split > .file-viewer-shell {
   border-left: 1px solid var(--border);
 }
+/* Side by side needs width for two usable columns. In a narrow pane — a phone,
+   or a file pane in a 3-column layout — stack them instead of squeezing both
+   (docs/44 §1.1). Splitting the height keeps the editor's caret and the preview
+   on screen at once, which is the point of the mode. */
+@container filepane (max-width: 640px) {
+  .file-surfaces.is-split {
+    flex-direction: column;
+  }
+  .file-surfaces.is-split > .file-editor-shell,
+  .file-surfaces.is-split > .file-viewer-shell {
+    flex: 1 1 50%;
+    width: auto;
+    height: 50%;
+  }
+  .file-surfaces.is-split > .file-viewer-shell {
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+}
 .file-viewer-shell,
 .file-editor-shell {
   flex: 1;
