@@ -125,13 +125,18 @@ describe("surfacesFor", () => {
       preview: "normal",
       split: true,
     });
-    // A non-editable document is not offered split, but the mapping stays total.
-    expect(surfacesFor(md({ md: "split" }), caps({ editable: false }))).toMatchObject({
+    // A non-editable document is never offered split. A state that still carries
+    // it must render what reconcileFileMode clamps it to — a plain preview — and
+    // never a split the contract does not allow (docs/44 §1.1).
+    expect(surfacesFor(md({ md: "split" }), caps({ editable: false }))).toEqual({
       editor: false,
-      source: true,
+      source: false,
       preview: "normal",
-      split: true,
+      split: false,
     });
+    expect(surfacesFor(md({ md: "split" }), caps({ editable: false }))).toEqual(
+      surfacesFor(reconcileFileMode(md({ md: "split" }), caps({ editable: false })), caps({ editable: false })),
+    );
   });
 
   it("renders the selected renderer in preview and clamps a stale one", () => {
