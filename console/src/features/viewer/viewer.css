@@ -1014,7 +1014,7 @@
 }
 .file-editor-cm .cm-gutters {
   color: var(--muted);
-  background: color-mix(in srgb, var(--bg) 94%, var(--fg));
+  background: color-mix(in srgb, var(--viewer-bg, var(--bg)) 94%, var(--fg));
   border-color: var(--border);
 }
 .file-editor-cm .cm-activeLine,

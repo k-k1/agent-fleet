@@ -116,7 +116,9 @@ export function CodeEditor({
         ...searchKeymap,
       ]),
       EditorView.theme({
-        "&": { height: "100%", backgroundColor: "var(--surface, #111)" },
+        // Keep the editor on the same configurable surface as FileView rather
+        // than falling back to CodeMirror's dark default in a light viewer.
+        "&": { height: "100%", backgroundColor: "var(--viewer-bg, var(--bg))" },
         ".cm-scroller": { fontFamily: "var(--viewer-font)", fontSize: "var(--viewer-size)" },
         ".cm-content": { minHeight: "100%" },
       }),
