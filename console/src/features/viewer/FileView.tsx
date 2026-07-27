@@ -5,7 +5,7 @@
 // views/FileView onto the zustand stores.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { CSSProperties, KeyboardEvent } from "react";
+import type { CSSProperties, FocusEvent, KeyboardEvent } from "react";
 import { SendSelectionModal } from "../memo/SendSelectionModal.tsx";
 import hljs from "highlight.js/lib/common";
 import { api, downloadURL, isTransientErr } from "../../core/api/client.ts";
@@ -13,6 +13,7 @@ import { baseName, langFor, langLabel, humanSize, countLines, isMarpDoc, imageFo
 import FileIcon from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useSettings, fontStack } from "../../lib/settings.ts";
+import { coarsePointer } from "../../lib/device.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useFilesStore } from "../files/store.ts";
 import { useT } from "../../lib/i18n/index.ts";
@@ -84,10 +85,22 @@ interface FileData {
   revision?: string;
 }
 
+// A read-only file can use contentEditable for caret browsing, but that makes
+// Android treat it as a text field and summon Gboard.  Reading on a touch device
+// should leave the screen for the file, not the keyboard.
+function dismissSoftKeyboard(): void {
+  const focused = document.activeElement;
+  if (focused instanceof HTMLElement) focused.blur();
+  const virtualKeyboard = (navigator as Navigator & { virtualKeyboard?: { hide?(): void } }).virtualKeyboard;
+  virtualKeyboard?.hide?.();
+}
+
 export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: FileViewProps) {
   const tr = useT();
   const openTarget = useLayoutStore((s) => s.openTarget);
   const openTargetInNew = useLayoutStore((s) => s.openTargetInNew);
+  const setActivePane = useLayoutStore((s) => s.setActive);
+  const isActivePane = useLayoutStore((s) => s.layout.activeId === paneId);
   const revealInFiles = useFilesStore((s) => s.revealInFiles);
   const settings = useSettings();
   // wrap is the per-pane override; fall back to the global setting.
@@ -246,6 +259,13 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
     queueMicrotask(() => editorFocusRef.current?.());
   }, [canEdit, mode]);
 
+  // Opening or returning to a file view from a composer/terminal must also
+  // retract Gboard.  This runs only for the active file pane and deliberately
+  // leaves edit mode alone, where a keyboard is needed for CodeMirror.
+  useEffect(() => {
+    if (mode === "view" && isActivePane && coarsePointer()) dismissSoftKeyboard();
+  }, [filePath, isActivePane, mode]);
+
   // A rejected transaction gets an immediate validation announcement. Once a
   // valid edit or state transition follows, return the live region to the normal
   // dirty/saving/saved/recovery status instead of letting the old error mask it.
@@ -310,6 +330,21 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
         : "edit";
     changeMode(next);
     (next === "view" ? viewTabRef : editTabRef).current?.focus();
+  };
+
+  const onFocusCapture = (event: FocusEvent<HTMLDivElement>) => {
+    // A focus move (Tab, programmatic reader focus, or a click) is just as much
+    // an activation as pane mouse-down.  Keeping layout.activeId in sync makes
+    // ProjectFiles highlight this exact file in the left rail.
+    if (paneId) setActivePane(paneId);
+    if (mode === "view" && coarsePointer()) {
+      // In particular, prevent CodeView's read-only contentEditable from being
+      // interpreted as an editing field by Android/Gboard.
+      const target = event.target;
+      if (target instanceof HTMLElement) target.blur();
+      const virtualKeyboard = (navigator as Navigator & { virtualKeyboard?: { hide?(): void } }).virtualKeyboard;
+      virtualKeyboard?.hide?.();
+    }
   };
 
   // After a mouse selection in the code/source view, surface a floating "送る" pill by
@@ -394,7 +429,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
     // listener below, NOT onKeyUp: firing per keypress made a held Shift+↓ run
     // range.toString() + a state update on every repeat, degrading O(n²) as the selection
     // grew. Mouse selection keeps its instant onMouseUp (one event per drag).
-    <div className="fileview" style={viewerStyle} ref={bodyRef} onMouseUp={captureSelection}>
+    <div className="fileview" style={viewerStyle} ref={bodyRef} onFocusCapture={onFocusCapture} onMouseUp={captureSelection}>
       <header className="view-head fileinfo">
         <span className="fi-name mono">
           <FileIcon name={baseName(filePath)} /> {baseName(filePath)}
