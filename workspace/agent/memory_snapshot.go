@@ -48,7 +48,9 @@ func memorySnapshot(trigger string, now time.Time) (memorySnapshotResult, error)
 	return memorySnapshotLocked(trigger, now)
 }
 
-func memorySnapshotLocked(trigger string, now time.Time) (memorySnapshotResult, error) {
+// memorySnapshotLocked は memorySnapshotMu を握った状態で 1 往復する。trailers は
+// AF-Trigger の後ろに足す追加の trailer 行（restore が戻し元 rev と scope を刻む）。
+func memorySnapshotLocked(trigger string, now time.Time, trailers ...string) (memorySnapshotResult, error) {
 	res := memorySnapshotResult{Trigger: trigger, Changed: []string{}, Projects: []memoryProjectRef{}, Kinds: []string{}}
 	roots := memoryRoots()
 	if len(roots) == 0 {
@@ -85,7 +87,7 @@ func memorySnapshotLocked(trigger string, now time.Time) (memorySnapshotResult, 
 	sort.Strings(res.Changed)
 	_, res.Projects, _ = memorySummarizePaths(res.Changed)
 
-	msg := memoryCommitMessage(trigger, now, res.Changed, res.Projects)
+	msg := memoryCommitMessage(trigger, now, res.Changed, res.Projects, trailers)
 	if _, err := memoryGitRun("commit", "--quiet", "--no-verify", "-m", msg); err != nil {
 		return res, fmt.Errorf("commit memory snapshot: %w", err)
 	}
@@ -99,20 +101,30 @@ func memorySnapshotLocked(trigger string, now time.Time) (memorySnapshotResult, 
 
 // memoryCommitMessage は 1 行目のサマリと trailer（AF-Trigger / AF-Changed）を組む。
 // trailer は最終段落に固めて置く — `git log --pretty=%(trailers:...)` が拾える形。
-func memoryCommitMessage(trigger string, now time.Time, changed []string, projects []memoryProjectRef) string {
+func memoryCommitMessage(trigger string, now time.Time, changed []string, projects []memoryProjectRef, trailers []string) string {
+	// 1 行目の動詞で「積んだ理由」が一覧の先頭から読めるようにする（詳細は trailer）。
+	verb := "snapshot"
+	if trigger == memoryTriggerRestore {
+		verb = "restore"
+	}
 	var subject string
 	switch {
 	case len(projects) == 1:
-		subject = fmt.Sprintf("snapshot: %s (%s)", now.Format(time.RFC3339), projects[0].Display)
+		subject = fmt.Sprintf("%s: %s (%s)", verb, now.Format(time.RFC3339), projects[0].Display)
 	case len(projects) > 1:
-		subject = fmt.Sprintf("snapshot: %s (%d projects changed)", now.Format(time.RFC3339), len(projects))
+		subject = fmt.Sprintf("%s: %s (%d projects changed)", verb, now.Format(time.RFC3339), len(projects))
 	default:
-		subject = fmt.Sprintf("snapshot: %s (%d files changed)", now.Format(time.RFC3339), len(changed))
+		subject = fmt.Sprintf("%s: %s (%d files changed)", verb, now.Format(time.RFC3339), len(changed))
 	}
 	var b strings.Builder
 	b.WriteString(subject)
 	b.WriteString("\n\n")
 	b.WriteString("AF-Trigger: " + trigger + "\n")
+	for _, t := range trailers {
+		if t = strings.TrimSpace(t); t != "" {
+			b.WriteString(t + "\n")
+		}
+	}
 	for _, p := range projects {
 		b.WriteString("AF-Changed: " + p.Slug + "\n")
 	}
