@@ -1039,7 +1039,7 @@ export const en: Record<keyof typeof ja, string> = {
   "keys.toast.notifyOn": "{name} notifications on",
   "keys.toast.notifyOff": "{name} notifications off",
   "keys.toast.notifyNoConn": "{name} isn't connected (connect in Connections › Chat)",
-  "keys.cmd.mdMode": "Toggle Markdown preview / source",
+  "keys.cmd.mdMode": "Cycle Markdown display mode",
   "keys.cmd.reader": "Toggle read-aloud view",
   "keys.palette.placeholder": "Search commands and sessions…",
   "keys.palette.placeholder_changed": "Search changed files…",

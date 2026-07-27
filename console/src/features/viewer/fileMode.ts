@@ -109,6 +109,39 @@ export function surfacesFor(state: FileModeState, caps: FileModeCaps): FileSurfa
   return { ...none, ...(caps.editable ? { editor: true } : { source: true }) };
 }
 
+/** One button of the Markdown mode group (docs/44 §5: a button group with
+ *  `aria-pressed`, not a tablist). */
+export interface MarkdownModeControl {
+  mode: MarkdownMode;
+  pressed: boolean;
+  /** True when `edit` is the read-only CodeView rather than the editor, which
+   *  is what the label has to say. */
+  readOnlySource: boolean;
+}
+
+export function markdownModeControls(
+  state: FileModeState,
+  caps: FileModeCaps,
+): MarkdownModeControl[] {
+  if (state.kind !== "markdown") return [];
+  return availableMarkdownModes(caps).map((mode) => ({
+    mode,
+    pressed: state.md === mode,
+    readOnlySource: mode === "edit" && !caps.editable,
+  }));
+}
+
+/** One button of the preview renderer group. Empty when there is no renderer
+ *  choice to make: no preview on screen, or not a Marp deck. */
+export function rendererControls(
+  state: FileModeState,
+  caps: FileModeCaps,
+): { renderer: PreviewRenderer; pressed: boolean }[] {
+  const shown = surfacesFor(state, caps).preview;
+  if (!shown || !caps.marp) return [];
+  return availableRenderers(caps).map((renderer) => ({ renderer, pressed: shown === renderer }));
+}
+
 /** The ordered presentation states the Markdown mode command cycles through.
  *
  *  Modes are the outer axis and the renderer the inner one, so a Marp deck
