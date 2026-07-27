@@ -3048,6 +3048,41 @@
   font-size: 12px;
   margin: 4px 0;
 }
+/* 持ち出し / 取り込み（P3）。形式選択とファイル選択は .mem-scope の行組みを流用する。 */
+.mem-transfer + .mem-transfer {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.mem-transfer .mem-scope {
+  align-items: center;
+  margin-bottom: 4px;
+}
+.mem-transfer input[type="file"] {
+  font-size: 12px;
+  padding: 3px;
+}
+.mem-import {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+/* 検出結果の一覧。値そのものは出さない（規則名・場所・マスク済みヒントのみ）。 */
+.mem-secrets {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+  max-height: 200px;
+  overflow: auto;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.mem-secrets code {
+  color: var(--del, #e57373);
+}
 /* 狭い幅（スマホ・タブレット縦）では 2 ペインが成立しないので縦に積む。 */
 @media (max-width: 760px) {
   .mem-body {

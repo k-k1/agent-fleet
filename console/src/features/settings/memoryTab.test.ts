@@ -34,6 +34,10 @@ describe("設定モーダルのエージェントメモリタブ", () => {
         "api/agents/memory/tree",
         "api/agents/memory/restore",
         "api/agents/memory/settings",
+        // P3。import/apply は正規表現が最終セグメント前で切るので "import" で代表される
+        // （CP 側の登録は下の contains で /api/agents/memory/import を含むことで見る）。
+        "api/agents/memory/export",
+        "api/agents/memory/import",
       ]),
     );
     for (const p of new Set(paths)) {
@@ -51,6 +55,12 @@ describe("設定モーダルのエージェントメモリタブ", () => {
       expect(ja, `ja に ${key} がない`).toHaveProperty(key);
       expect(en, `en に ${key} がない`).toHaveProperty(key);
     }
+  });
+
+  it("import/apply も両側に登録されている（1 本だけ抜ける漏れ方をする）", () => {
+    expect(tab).toContain("api/agents/memory/import/apply");
+    expect(cpRoutes).toContain("/api/agents/memory/import/apply");
+    expect(agentRoutes).toContain("/agents/memory/import/apply");
   });
 
   it("契機バッジのキーは Agent の AF-Trigger 値を網羅する", () => {
