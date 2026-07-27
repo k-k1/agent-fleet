@@ -289,6 +289,10 @@ func handleChatDelete(w http.ResponseWriter, r *http.Request) {
 	// validConvID above already blocked traversal in id. Best-effort; empty for
 	// conversations on other backends is a no-op.
 	_ = os.RemoveAll(filepath.Join(homeDir(), ".config", "agent-fleet", "chat-wd", "agy-"+id))
+	// claude chats get a per-conversation --mcp-config file (docs/48 P2) — it holds
+	// the attached servers' credentials, so it goes with the thread rather than
+	// lingering until the next container rebuild.
+	removeChatMCPConfig(id)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

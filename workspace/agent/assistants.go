@@ -26,7 +26,6 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
 // Tool grants an assistant can hold. af_read attaches the local read-only stdio MCP
@@ -52,18 +51,11 @@ const (
 	integrationCloudWatch = mcpreg.BuiltinCloudWatch
 )
 
-func validIntegration(id string) bool { return mcpreg.IsBuiltin(id) }
-
-// integrationReady reports whether the user has configured the credential an
-// integration needs, so mcpConfigArgs attaches only servers that can actually
-// start (a missing connection means the assistant just has no ops tools).
-func integrationReady(id string) bool {
-	s, err := secrets.Load()
-	if err != nil {
-		return false
-	}
-	return mcpreg.BuiltinReady(id, s)
-}
+// validIntegration accepts any id the effective registry knows (docs/48 P2): the
+// builtins as before, plus the user's own registrations and anything the tenant
+// distributes. The builtin ids stay their own literal strings, so assistants saved
+// before the registry existed need no migration.
+func validIntegration(id string) bool { return mcpreg.Known(id) }
 
 // assistant is a chat persona template (builtin or user-defined).
 type assistant struct {
@@ -79,10 +71,14 @@ type assistant struct {
 	Persona     string   `json:"persona,omitempty"` // system prompt (--append-system-prompt)
 	Tools       string   `json:"tools"`             // "none" | "af_read" | "af_write"
 	Knowledge   []string `json:"knowledge,omitempty"`
-	// Integrations are external ops MCP servers attached to this assistant's chat,
-	// orthogonal to the af tools grant (docs/25 Phase 1). Each id (e.g. "pagerduty")
-	// is launched read-only via `workspace-agent mcp-run <id>`, which injects the
-	// user's stored key — so a server attaches only when the user has connected it.
+	// Integrations are the MCP servers attached to this assistant's chat, orthogonal
+	// to the af tools grant. Each entry is an id in the effective registry (docs/48
+	// §7): a builtin ops integration ("pagerduty" …, launched read-only via
+	// `workspace-agent mcp-run <id>` so the stored key is injected at spawn rather
+	// than written to a config), a server the user registered, or one the tenant
+	// distributes. A server attaches only while it is enabled and has everything it
+	// needs to start, so an unconfigured one just leaves the assistant without those
+	// tools instead of failing the turn.
 	Integrations []string `json:"integrations,omitempty"`
 	// Voice is the Console-side TTS voice override ("vv:<speaker>" / "polly:<VoiceId>").
 	// "" = auto (the Console assigns one from the user's character pool). The agent only

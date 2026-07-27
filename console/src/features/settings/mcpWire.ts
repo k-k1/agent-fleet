@@ -154,10 +154,9 @@ export const formValid = (f: Form): boolean =>
   NAME_RE.test(f.name.trim()) &&
   (f.transport === "stdio" ? f.command.trim() !== "" : /^https?:\/\/.+/.test(f.url.trim()));
 
-// codexUnsupported — codex can only carry a bearer token on a remote MCP server
-// (`bearer_token_env_var`), not arbitrary headers (docs/48 §7). A definition with any
-// other header simply cannot be expressed there, so say so at registration time
-// instead of letting codex silently come up without the server.
-export const codexUnsupported = (transport: string, headers: KV[]): boolean =>
-  transport === "http" &&
-  headers.some((h) => h.k.trim() && h.k.trim().toLowerCase() !== "authorization");
+// NOTE: this file used to export a codexUnsupported() helper, on the premise that
+// codex could carry nothing but a bearer token on a remote MCP server. That premise
+// was measured false on codex-cli 0.145.0 (docs/48 §7): `http_headers` and
+// `env_http_headers` both round-trip through the config AND arrive on the wire. The
+// helper and its "not supported on codex" warning are gone rather than left showing a
+// warning that is not true.

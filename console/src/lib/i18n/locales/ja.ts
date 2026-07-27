@@ -381,8 +381,6 @@ export const ja = {
     "テナント管理者が配布した定義です。編集はできませんが、自分のワークスペースでは無効化できます。",
   "mcp.session_restart_note":
     "セッションへ反映されるのは次に起動したセッションからです（起動中のセッションには効きません）。",
-  "mcp.codex_header_warn":
-    "codex は Authorization 以外のヘッダを扱えないため、このサーバーは codex では利用できません。",
   "mcp.f_name": "名前",
   "mcp.f_name_hint": "各 CLI の設定に載るサーバー名。英数字・ハイフン・アンダースコアで 48 文字以内。",
   "mcp.f_name_bad": "英数字・ハイフン・アンダースコア 48 文字以内で、先頭は英数字にしてください。",
@@ -2164,6 +2162,12 @@ export const ja = {
   "asst.persona_hint": "アシスタントの役割・口調・制約を書きます。空欄なら汎用アシスタントとして動きます。",
   "asst.persona_ph": "例: あなたは技術文書の翻訳者です。訳文のみを返してください。",
   "asst.tools_label": "ツール許可",
+  "asst.mcp_label": "MCP サーバー（任意）",
+  "asst.mcp_hint": "このアシスタントのチャットに接続する MCP サーバーを選びます。組み込み連携（PagerDuty / Grafana / CloudWatch）と、設定＞MCP サーバー で登録したものが並びます。",
+  "asst.mcp_empty": "接続できる MCP サーバーがありません。設定＞MCP サーバー で登録するか、運用・監視 タブで連携を接続してください。",
+  "asst.mcp_disabled": "無効化中（接続されません）",
+  "asst.mcp_not_ready": "設定が未完了（接続されません）",
+  "asst.mcp_out_of_scope": "{agent} は対象外（接続されません）",
   "asst.knowledge_label": "知識ディレクトリ（任意・1行に1つ）",
   "asst.knowledge_hint": "参照させたいドキュメントのあるディレクトリ（コンテナ内の絶対パス）を指定すると、会話で読み取れます。",
   "asst.cancel": "キャンセル",

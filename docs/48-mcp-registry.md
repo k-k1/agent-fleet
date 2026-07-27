@@ -1,7 +1,7 @@
 # 48. ユーザー / テナント独自 MCP サーバーの登録（MCP レジストリ）— 設計
 
-- 状態: **◐ P0 / P1 実装済み**（型・実効レジストリ合成・user スコープ CRUD・接続テスト・
-  Console「MCP サーバー」タブ）。P2 以降は未着手。
+- 状態: **◐ P0 / P1 / P2 実装済み**（型・実効レジストリ合成・user スコープ CRUD・接続テスト・
+  Console「MCP サーバー」タブ・アシスタント配線）。P3 以降は未着手。
   意思決定は [decisions/0031](decisions/0031-mcp-registry.md)。
 - 関連: docs/19（アシスタント）/ [25](25-ops-monitoring.md)（組み込み ops 連携 = 本設計が一般化する対象）/
   [20](20-container-audit-egress.md)（egress allowlist）/ [46](46-usage-accounting.md)（残 P5 = MCP の使用量計上）/
@@ -222,21 +222,44 @@ Workspace agent ──(AF_MCP_TOKEN)──▶ CP GET /internal/mcp-servers      
 
 | プロバイダ | 注入口 | stdio | remote |
 |-----------|--------|-------|--------|
-| claude | `--mcp-config <json>` + `--strict-mcp-config` | `{"type":"stdio","command","args","env"}` | `{"type":"http","url","headers"}` |
-| codex | `-c mcp_servers.<name>.…`（起動単位） | `command` / `args` / `env` | `url` / `bearer_token_env_var` |
+| claude | `--mcp-config <ファイル>` + `--strict-mcp-config` | `{"type":"stdio","command","args","env"}` | `{"type":"http","url","headers"}` |
+| codex | `-c mcp_servers.<name>.…`（起動単位）＋ 環境変数 | `command` / `args` / `env_vars`（衝突時のみ `env`） | `url` / `env_http_headers` |
 | opencode | チャット用 dir の `opencode.json` `mcp` | `{"type":"local","command":[…],"environment":{}}` | `{"type":"remote","url","headers"}` |
 | agy | 隔離 HOME の `config/mcp_config.json`（claude 型）＋ `mcp(<name>/*)` 許可ルール | 同左 | 同左 |
 | cursor / copilot | チャット未配線（現状どおり） | — | — |
 
+**秘密を argv へ出さない**（P2 実装で最優先した不変条件）。argv は同一 uid から
+`/proc/<pid>/cmdline` で読め、CLI 自身のログにも載り得るため、§5.1 が約束する 0600 ファイルより
+弱い置き場になる。したがって:
+
+- claude / opencode / agy は**設定ファイル**（0600）に書く。claude はこれまで `--mcp-config` へ
+  JSON 文字列を直に渡していたが、会話ごとの `~/.config/agent-fleet/chat-mcp/<convID>.json` へ
+  切り替えた（`--mcp-config` はファイルパスも受ける。**claude 2.1.220 で実測確認**。会話削除時に
+  一緒に消す）。書き込みに失敗した場合だけ、秘密を持たないサーバーに絞って従来のインライン JSON
+  へ縮退する（af ツールを巻き添えで失わせないため）。
+- codex には 1 回の exec に効く設定ファイルが無い（`-c` の argv のみ）ので、**値は環境変数で渡し
+  argv には名前だけ**置く。stdio は `env_vars`（codex 自身の env から同名で転送）、リモートは
+  `env_http_headers`（ヘッダ名 → af が採番した変数名）。
+
 **制約（実測に基づく）**:
 
-- **codex にはリモートの任意ヘッダが無い**。`--bearer-token-env-var` 相当（`bearer_token_env_var`）だけ。
-  `Authorization: Bearer …` 以外のヘッダを持つサーバーは codex では使えないので、Console で
-  「このサーバーは codex 非対応」と明示する。Bearer の場合は af が env 名を採番して注入する。
-- **opencode のチャット用 dir は現在 grant 別の共有ディレクトリ**（`chat-wd/opencode-<grant>`,
-  `chat_providers.go:632`）。サーバー集合がアシスタントごとに違うので、dir キーを
-  `<grant>-<サーバー集合のハッシュ>` に変える必要がある。
-- agy は MCP 設定が**グローバルのみ**（docs/32）。既存の隔離 HOME 方式に相乗りする。
+- ⚠️ **「codex にはリモートの任意ヘッダが無い」は誤り**だった（旧 CLI の記述）。**codex-cli 0.145.0
+  で実測**: `codex mcp list --json` が streamable_http の `http_headers` / `env_http_headers` を
+  往復し、ヘッダ記録用のリスナーへ実際に `codex exec` を当てて両方が wire に載ることを確認した。
+  よって **codex 非対応というバッジは不要**（`mcpWire.ts` の `codexUnsupported` は当面残すが、
+  リモートヘッダの根拠としては失効）。`codex mcp add` に header 系フラグが無いだけで、設定は持つ。
+- **codex の MCP 子プロセスの環境は既定 deny**（実測 0.145.0）。既定で渡るのは
+  `HOME / PATH / LANG / LC_ALL / PWD / SHELL / SHLVL / TERM / TZ` の core セットのみで、それ以外は
+  `env_vars` か `env` で明示する必要がある。HOME / PATH が core にあるおかげで、組み込み連携の
+  `mcp-run` ラッパーは暗号化ストアの鍵 `AF_SECRET_KEY` だけ足せばよい。
+- `env_vars` は**同名転送**なので、2 つのサーバーが同じ変数名を別の値で要求すると表現できない。
+  その場合だけ後勝ちを避けて `env` の直値（argv）へ縮退する（片方に他方の秘密を渡さないため）。
+- **opencode のチャット用 dir は grant 別の共有ディレクトリ**だった（`chat-wd/opencode-<grant>`）。
+  サーバー集合がアシスタントごとに違うので、dir キーを `<grant>-<サーバー集合のハッシュ>` にした。
+  レジストリのサーバーが 0 件なら従来どおりの `opencode-<grant>`（既存 dir をそのまま使う）。
+- agy は MCP 設定が**グローバルのみ**（docs/32）。既存の隔離 HOME 方式に相乗りする。組み込み連携は
+  レジストリ上「このバイナリ + `mcp-run <id>`」なので、agy の隔離 HOME 用に解決した exe へ
+  差し替えてから渡す。
 
 ---
 
@@ -334,10 +357,20 @@ Workspace agent ──(AF_MCP_TOKEN)──▶ CP GET /internal/mcp-servers      
 - 型・フォーム↔定義の変換・マスク往復は `mcpWire.ts` に分離し、`mcpWire.test.ts` で固定している
   （コンポーネントを起動せずにワイヤ契約だけを回帰できる）。
 
-### 11.2 残り（P2 以降）
+### 11.2 アシスタントの「MCP サーバー」欄（P2 実装済み）
+
+アシスタント作成/編集ダイアログ（`AssistantModal.tsx`）に追加した。実効レジストリのうち
+`targets.assistant` の行だけを 1 リストで出し、チェックで `integrations` に入れる。
+P1 以前は**そもそも UI が無く**（組み込み 3 種は SRE アシスタントにコード固定）、利用者が
+自分のアシスタントに MCP を付ける手段が無かったので、これは「固定 3 種の置き換え」ではなく新設。
+
+- 実際には接続されない行も**隠さずに出して理由を添える**（無効化中 / 設定が未完了 /
+  このエージェントは対象外）。選択自体は残せるので、後から鍵を入れたりスコープを直せば効く。
+- 由来（builtin / tenant / user）でセクションを割らないのは §11.1 と同じ理由。
+
+### 11.3 残り（P4 以降）
 
 - 管理モーダル（`AdminTab.tsx`）に**テナント MCP セクション**を追加（tenant_admin 以上に表示）。
-- アシスタント編集ダイアログの「連携」欄が、固定 3 種からレジストリ由来の一覧に変わる。
 - **i18n 必須**: `ja` / `en` 両方に文言を追加する。裸和文の AST lint が CI で落とすので、文字列は必ず `tr()` 経由。
   サーバー側の拒否理由も **1 理由 = 1 コード**（`mcpreg.ValidationError.Code`）にして
   `err.<code>` カタログで解決する（Go 側の message は言語非依存の developer fallback）。
@@ -351,7 +384,7 @@ Workspace agent ──(AF_MCP_TOKEN)──▶ CP GET /internal/mcp-servers      
 |---|------|-----------|
 | **P0** ✅ | 型・実効レジストリ合成・user CRUD REST・接続テスト。builtin 3 種を `ServerDef` へ正規化 | `internal/mcpreg/`（新設）、`secrets.go`、`assistants.go`、`routes.go`（agent + CP 両方） |
 | **P1** ✅ | Console 「MCP サーバー」タブ（実効レジストリ一覧＋ user CRUD＋接続テスト）＋ i18n（ja/en）＋検証コード化 | `McpTab.tsx`、`mcpWire.ts`、`SettingsDialog.tsx`、`settings.css`、i18n、`mcpreg/def.go` |
-| **P2** | アシスタント配線（claude / codex / opencode / agy）。`mcpConfigArgs` の一般化 | `chat_providers.go` |
+| **P2** ✅ | アシスタント配線（claude / codex / opencode / agy）。`mcpConfigArgs` の一般化＋アシスタント編集 UI | `mcpreg/attach.go`（新設）、`chat_mcp.go`（新設）、`chat_providers.go`、`AssistantModal.tsx` |
 | **P3** | セッション materialize — **claude / codex 先行** | `internal/mcpreg/materialize_*.go`、`startSessionTmux` |
 | **P4** | テナントスコープ: CP テーブル・管理 API・ブリッジ・配布キャッシュ・`AdminTab` UI・`user_secret` | `control-plane/mcp_server.go`（新設）、`workspace_lifecycle.go`、`AdminTab.tsx` |
 | **P5** | 残り kind の materialize（opencode / kiro / cursor / copilot / agy）＋ egress allowlist 連携 | 同上 + `egress.go` |
@@ -364,8 +397,8 @@ P0〜P3 で「個人が登録して claude / codex で使う」が閉じる。P4
 
 - **unit**: 実効レジストリの合成（優先順・衝突・opt-out）、各 kind のシリアライズ（黄金ファイル比較）、
   マスク往復（`***` で既存値保持）、テナント stdio 拒否、name のバリデーション。
-  Console 側は `mcpWire.test.ts`（name 規則・マスク往復・トランスポート別に片側だけ送る・
-  codex 非対応判定）。**UI は headless Chromium ＋素の CDP で実描画を確認**する
+  Console 側は `mcpWire.test.ts`（name 規則・マスク往復・トランスポート別に片側だけ送る）。
+  **UI は headless Chromium ＋素の CDP で実描画を確認**する
   （`console/scripts/shots/server.mjs` の `/api/mcp-servers` スタブが由来 3 種を返す）。
 - **materialize の非破壊性**: 利用者手書きのキーを持つ既存設定に対して書き→消しを往復させ、
   **手書き分が残り af 分だけ消える**ことを検証する。opencode のコメント入り設定は skip されること。
@@ -374,6 +407,21 @@ P0〜P3 で「個人が登録して claude / codex で使う」が閉じる。P4
   （codex の既存 `drift_test.go` と同じ作法）。**契約が変わったら赤くする**のが目的。
 - **実機**: 実 MCP サーバー 1 本（stdio 1 / remote 1）を登録し、アシスタントと claude/codex セッションの
   双方でツールが見えることを確認する。
+
+**P2 で済ませた分**（`internal/mcpreg/attach_test.go`）:
+
+- 各プロバイダのキー名を固定（claude の `type`、opencode の `command` 配列と `environment`、
+  agy が `type` を持たないこと、overlay と定義値の優先順）。
+- **秘密が argv に出ないこと**を独立した assertion にした（codex の args を全結合して秘密文字列を
+  検索する）。ここは仕様というより本実装の不変条件なので、壊れたら赤くなる形にしておく。
+- `env_vars` 同名衝突 → `env` 直値への縮退。同名**同値**なら縮退しないことも合わせて。
+- 実 CLI での確認（本コンテナの焼き込み版）:
+  **claude 2.1.220** = `--mcp-config <ファイル>` に `type:"stdio"` / `type:"http"` を渡して
+  両サーバーが登録され、リモートのヘッダが wire に載ることをヘッダ記録リスナーで確認。
+  **codex-cli 0.145.0** = `env_vars` / `env` / `env_http_headers` / `http_headers` の挙動を
+  実 exec で確認（子プロセス env の core セット、ヘッダ到達）。
+- **未検証**: アシスタント編集ダイアログの MCP 欄はブラウザで実操作していない
+  （tsc / vitest / i18n lint / 本番ビルドは通っている）。opencode / agy チャットでの実ターンも未実施。
 
 ---
 

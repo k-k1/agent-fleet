@@ -3,7 +3,6 @@ import {
   MASKED,
   NAME_RE,
   bodyOf,
-  codexUnsupported,
   emptyForm,
   formOf,
   formValid,
@@ -148,17 +147,3 @@ describe("formValid", () => {
   });
 });
 
-describe("codexUnsupported (docs/48 §7)", () => {
-  it("flags a remote server carrying a header other than Authorization", () => {
-    expect(codexUnsupported("http", [{ k: "X-Api-Key", v: "s" }])).toBe(true);
-  });
-  it("does not flag a bearer-only remote server", () => {
-    expect(codexUnsupported("http", [{ k: "authorization", v: "s" }])).toBe(false);
-  });
-  it("does not flag a stdio server (env vars are expressible in codex)", () => {
-    expect(codexUnsupported("stdio", [{ k: "X-Api-Key", v: "s" }])).toBe(false);
-  });
-  it("ignores a half-typed blank row", () => {
-    expect(codexUnsupported("http", [{ k: "  ", v: "s" }])).toBe(false);
-  });
-});

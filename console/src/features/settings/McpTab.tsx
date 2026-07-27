@@ -17,7 +17,6 @@ import {
   MASKED,
   NAME_RE,
   bodyOf,
-  codexUnsupported,
   emptyForm,
   formOf,
   formValid,
@@ -593,9 +592,6 @@ function ServerForm({
             </div>
           </Field>
         </div>
-        {codexUnsupported(form.transport, form.headers) && (
-          <p className="ps-note ps-note-warn">{tr("mcp.codex_header_warn")}</p>
-        )}
         {form.session && <p className="ps-note">{tr("mcp.session_restart_note")}</p>}
       </div>
       <ProbeView probe={probe} />
