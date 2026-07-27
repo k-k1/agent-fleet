@@ -90,6 +90,11 @@ export const ja = {
   "err.memory_diff_failed": "差分の取得に失敗しました",
   "err.memory_bad_scope": "戻す範囲の指定が不正です",
   "err.memory_restore_failed": "巻き戻しに失敗しました",
+  "err.memory_export_failed": "書き出しに失敗しました",
+  "err.memory_import_failed": "取り込みに失敗しました",
+  "err.memory_bad_import": "取り込めない形式のファイルです（別環境の書き出しファイルを選んでください）",
+  "err.memory_secret_detected": "書き出す内容に秘密情報らしき記述があります",
+  "err.memory_too_large": "ファイルが大きすぎます",
 
   // --- ビルトインアシスタント（docs/28 P3。id は assistants.go の固定集合。Agent は
   //     和文を返すが、表示は builtin のとき Console カタログが解決する）---
@@ -2781,5 +2786,34 @@ export const ja = {
     "実行中のセッションがあります。戻したあとにそのセッションが書いた内容は、新しいスナップショットとして履歴に現れます。",
   "mem.restored": "戻しました（更新{written}・削除{deleted}）",
   "mem.restore_nochange": "すでにその時点と同じ内容でした",
+
+  // --- 持ち出し / 取り込み（docs/39 P3）---
+  "mem.transfer_title": "持ち出し / 取り込み",
+  "mem.export_format_bundle": "bundle（全履歴）",
+  "mem.export_format_tar": "tar.gz（最新のみ）",
+  "mem.export_do": "書き出す",
+  "mem.export_done": "書き出しました",
+  "mem.export_failed": "書き出しに失敗しました",
+  "mem.export_note":
+    "メモリには個人的な内容が含まれます。共有する前に中身を確認してください。書き出したファイルは暗号化されていません。",
+  "mem.export_secret_title": "秘密情報らしき記述が見つかりました",
+  "mem.export_secret_body": "書き出す内容に、秘密情報らしき記述が{n}件あります。",
+  "mem.export_secret_hint":
+    "値そのものは表示していません（先頭数文字のみ）。確認のうえ問題なければ、このまま書き出せます。",
+  "mem.export_secret_history": "（過去の版）",
+  "mem.export_anyway": "確認のうえ書き出す",
+  "mem.import_hint":
+    "別環境で書き出したファイル（bundle / tar.gz）を選ぶと、中身を確認してから取り込めます。選んだだけでは反映されません。",
+  "mem.import_failed": "取り込みに失敗しました",
+  "mem.import_summary": "{format} / スナップショット{snapshots}件 / 最終 {when}",
+  "mem.import_none": "この環境に取り込める内容がありません。",
+  "mem.import_rejected": "対象外として取り込まなかった項目が{n}件あります。",
+  "mem.import_unavailable": "この環境に受け皿がないため取り込めません: {kinds}",
+  "mem.import_secrets": "取り込む内容に、秘密情報らしき記述が{n}件あります。",
+  "mem.import_do": "取り込む",
+  "mem.import_confirm_title": "取り込みますか",
+  "mem.import_confirm_body": "{scope} のメモリを、取り込んだ内容で置き換えます。",
+  "mem.import_done": "取り込みました（更新{written}・削除{deleted}）",
+  "mem.import_nochange": "すでに同じ内容でした",
 
 };

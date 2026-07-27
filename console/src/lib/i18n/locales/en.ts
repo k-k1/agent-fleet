@@ -89,6 +89,11 @@ export const en: Record<keyof typeof ja, string> = {
   "err.memory_diff_failed": "Failed to load the diff.",
   "err.memory_bad_scope": "The restore scope is invalid.",
   "err.memory_restore_failed": "The restore failed.",
+  "err.memory_export_failed": "The export failed.",
+  "err.memory_import_failed": "The import failed.",
+  "err.memory_bad_import": "That file can't be imported (pick a file exported from another environment).",
+  "err.memory_secret_detected": "The contents to export contain possible secrets.",
+  "err.memory_too_large": "The file is too large.",
 
   // --- builtin assistants (docs/28 P3; ids are the fixed set in assistants.go. The
   //     Agent returns Japanese, but for builtins the Console catalog resolves display) ---
@@ -2743,5 +2748,34 @@ export const en: Record<keyof typeof ja, string> = {
     "A session is running. Anything it writes after the restore will show up as a new snapshot in the history.",
   "mem.restored": "Restored ({written} updated, {deleted} removed).",
   "mem.restore_nochange": "The contents already matched that point.",
+
+  // --- export / import (docs/39 P3) ---
+  "mem.transfer_title": "Export / import",
+  "mem.export_format_bundle": "bundle (full history)",
+  "mem.export_format_tar": "tar.gz (latest only)",
+  "mem.export_do": "Export",
+  "mem.export_done": "Exported.",
+  "mem.export_failed": "The export failed.",
+  "mem.export_note":
+    "Memory can contain personal information. Review the contents before sharing — the exported file is not encrypted.",
+  "mem.export_secret_title": "Possible secrets found",
+  "mem.export_secret_body": "The export contains {n} item(s) that look like secrets.",
+  "mem.export_secret_hint":
+    "The values themselves are not shown (only the first few characters). You can proceed once you have checked them.",
+  "mem.export_secret_history": "(older revision)",
+  "mem.export_anyway": "Export anyway",
+  "mem.import_hint":
+    "Pick a file exported from another environment (bundle / tar.gz) to review it before importing. Selecting a file alone changes nothing.",
+  "mem.import_failed": "The import failed.",
+  "mem.import_summary": "{format} / {snapshots} snapshot(s) / latest {when}",
+  "mem.import_none": "There is nothing this environment can import.",
+  "mem.import_rejected": "{n} entry/entries were skipped as out of scope.",
+  "mem.import_unavailable": "Cannot import — this environment has no destination for: {kinds}",
+  "mem.import_secrets": "The imported contents include {n} item(s) that look like secrets.",
+  "mem.import_do": "Import",
+  "mem.import_confirm_title": "Import these contents?",
+  "mem.import_confirm_body": "Memory for {scope} will be replaced with the imported contents.",
+  "mem.import_done": "Imported ({written} updated, {deleted} removed).",
+  "mem.import_nochange": "The contents already matched.",
 
 };
