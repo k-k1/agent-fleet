@@ -23,11 +23,14 @@ package main
 // 誤りが「履歴が永久に積まれない」という最悪の壊れ方に化けないようにする。
 
 import (
+	"encoding/json"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
@@ -38,11 +41,53 @@ const (
 	memoryDefaultMaxDefer = 30 * time.Minute
 )
 
-// memoryAutoEnabled は自動 snapshot の既定 ON（docs/39 決着 #1）。AF_MEMORY_SNAPSHOT=off
-// で止められる（UI トグルは P2）。
-func memoryAutoEnabled() bool {
+// memoryAutoLocked は環境変数による強制 OFF（AF_MEMORY_SNAPSHOT=off）。運用側の指定が
+// UI トグルより強い、という関係を明示するために分けてある。
+func memoryAutoLocked() bool {
 	v := strings.TrimSpace(os.Getenv("AF_MEMORY_SNAPSHOT"))
-	return !(v == "0" || strings.EqualFold(v, "off") || strings.EqualFold(v, "false"))
+	return v == "0" || strings.EqualFold(v, "off") || strings.EqualFold(v, "false")
+}
+
+// memoryPrefs は Console の UI トグルで切り替わる設定（docs/39 決着 #1「全体 OFF は
+// UI トグル（P2）」）。repo と同じマウントに置くので、recreate / clean-home を生き残る。
+type memoryPrefs struct {
+	Auto *bool `json:"auto,omitempty"` // nil = 未設定（= 既定 ON）
+}
+
+func memoryPrefsPath() string { return filepath.Join(claude.ConfigDir(), "af-memory.json") }
+
+func memoryLoadPrefs() memoryPrefs {
+	var p memoryPrefs
+	b, err := os.ReadFile(memoryPrefsPath())
+	if err != nil {
+		return p
+	}
+	_ = json.Unmarshal(b, &p) // 壊れていたら既定（自動 ON）に戻す — 履歴が止まる方が困る
+	return p
+}
+
+// memorySetAuto は UI トグルの保存。環境変数の強制 OFF は上書きしない（読み出し側で勝つ）。
+func memorySetAuto(on bool) error {
+	if err := os.MkdirAll(claude.ConfigDir(), 0o700); err != nil {
+		return err
+	}
+	b, err := json.Marshal(memoryPrefs{Auto: &on})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(memoryPrefsPath(), b, 0o600)
+}
+
+// memoryAutoEnabled は自動 snapshot の既定 ON（docs/39 決着 #1）。環境変数で強制 OFF に
+// できるほか、Console のトグルでも止められる。毎 tick 読み直すので、トグルは即座に効く。
+func memoryAutoEnabled() bool {
+	if memoryAutoLocked() {
+		return false
+	}
+	if a := memoryLoadPrefs().Auto; a != nil {
+		return *a
+	}
+	return true
 }
 
 // memoryEnvDuration は AF_MEMORY_* の duration 上書きを読む（不正値は既定へフォールバック）。
@@ -114,28 +159,34 @@ func memoryNewestChange() time.Time {
 	return newest
 }
 
-// memoryKindsBusy は版管理対象 kind のセッションに working のものがあるかを返す。
+// memoryBusyKinds は版管理対象 kind のうち working のセッションを持つものを返す。
 // 状態は既存の状態検知（status ストア）から読む — snapshot のために新しい観測経路を
-// 増やさない。
-func memoryKindsBusy() bool {
-	kinds := map[string]bool{}
+// 増やさない。restore は kind 単位で警告を出すため、真偽値ではなく集合で返す。
+func memoryBusyKinds() map[string]bool {
+	target := map[string]bool{}
 	for _, r := range memoryRoots() {
-		kinds[r.Kind] = true
+		target[r.Kind] = true
 	}
+	busy := map[string]bool{}
 	for _, m := range session.ListMetas() {
-		if !kinds[m.Kind] {
+		if !target[m.Kind] || busy[m.Kind] {
 			continue
 		}
 		if status.LiveState(session.UUID(m.Dir, m.Name)) == "working" {
-			return true
+			busy[m.Kind] = true
 		}
 	}
-	return false
+	return busy
 }
 
-// startMemorySnapshotLoop は自動 snapshot のポーリングループを起こす（無効なら no-op）。
+// memoryKindsBusy は「対象 kind に 1 つでも working がいるか」（自動 snapshot の先送り判定）。
+func memoryKindsBusy() bool { return len(memoryBusyKinds()) > 0 }
+
+// startMemorySnapshotLoop は自動 snapshot のポーリングループを起こす。
+// 環境変数で強制 OFF のときだけループ自体を建てない — UI トグルは実行中に切り替わる
+// ので、そちらは毎 tick 読み直す（再起動を要求しない）。
 func startMemorySnapshotLoop() {
-	if !memoryAutoEnabled() {
+	if memoryAutoLocked() {
 		log.Printf("memory-snapshot: auto snapshot disabled (AF_MEMORY_SNAPSHOT)")
 		return
 	}
@@ -143,7 +194,9 @@ func startMemorySnapshotLoop() {
 	go func() {
 		time.Sleep(45 * time.Second) // 起動直後の混雑（reconcile / cred seeding）を避ける
 		for {
-			memorySnapshotTick(time.Now(), debounce, maxDefer)
+			if memoryAutoEnabled() {
+				memorySnapshotTick(time.Now(), debounce, maxDefer)
+			}
 			time.Sleep(interval)
 		}
 	}()

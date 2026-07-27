@@ -56,8 +56,13 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 		case name != "" && strings.HasSuffix(p, "/ff"):
 			return "git.ff", name, true
 		case p == "/api/agents/memory/snapshots":
-			// エージェントメモリの手動 snapshot（docs/39）。restore / import / export は P2・P3 で足す。
+			// エージェントメモリの手動 snapshot（docs/39）。import / export は P3 で足す。
 			return "memory.snapshot", "", true
+		case p == "/api/agents/memory/restore":
+			// 巻き戻し（docs/39 ④）。戻し元 rev は Console が **監査用のヒントとして**
+			// クエリにも載せる（本文は読まない = §A.6）。実処理は本文の rev/at/scope が正で、
+			// 何が起きたかは repo の restore commit（AF-Restore-Rev / -Scope）に残る。
+			return "memory.restore", q.Get("rev"), true
 		case p == "/api/sessions":
 			return "session.create", "", true
 		case name != "" && strings.HasSuffix(p, "/fork"):

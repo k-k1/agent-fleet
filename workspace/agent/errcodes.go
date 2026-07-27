@@ -98,4 +98,6 @@ const (
 	errCodeMemoryNoSnapshots    = "memory_no_snapshots"
 	errCodeMemorySnapshotFailed = "memory_snapshot_failed"
 	errCodeMemoryDiffFailed     = "memory_diff_failed"
+	errCodeMemoryBadScope       = "memory_bad_scope"
+	errCodeMemoryRestoreFailed  = "memory_restore_failed"
 )
