@@ -24,8 +24,9 @@ import { CodeView } from "./CodeView.tsx";
 import { ImageView } from "./ImageView.tsx";
 import { registerPaneViewActions } from "./paneViewActions.ts";
 import type { LineMarks } from "./CodeView.tsx";
-import { CodeEditor } from "../editor/CodeEditor.tsx";
+import { CodeEditor, type EditorSelectionReport } from "../editor/CodeEditor.tsx";
 import { useFileEditor } from "../editor/useFileEditor.ts";
+import { useDebounced } from "../../lib/useDebounced.ts";
 import { revisionOf, type BufferValidationError } from "../editor/buffer.ts";
 import type { FileEditorModel } from "../editor/model.ts";
 import {
@@ -76,6 +77,10 @@ function lineNoOf(node: Node, root: Element): number | null {
   return null;
 }
 
+/** How long the Markdown preview waits after typing stops. Long enough that a
+ *  burst of keystrokes renders once, short enough to feel live. */
+const PREVIEW_DEBOUNCE_MS = 200;
+
 interface FileViewProps {
   filePath: string;
   targetLine?: number;
@@ -125,9 +130,23 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   const [imgDims, setImgDims] = useState<{ w: number; h: number } | null>(null);
   const [marks, setMarks] = useState<LineMarks | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
-  const [sel, setSel] = useState<{ quote: string; startLine: number; endLine: number; x: number; y: number } | null>(null);
+  // `origin` keeps the two capture paths (the read-only grid's DOM walk and the
+  // editor's own report) from clearing each other's pill (docs/44 §1.8).
+  const [sel, setSel] = useState<{
+    quote: string;
+    startLine: number;
+    endLine: number;
+    x: number;
+    y: number;
+    origin: "view" | "editor";
+  } | null>(null);
   const [sendOpen, setSendOpen] = useState(false);
-  const [fileMode, setFileMode] = useState<FileModeState>({ kind: "plain", mode: "view" });
+  // Keyed by the loaded file so a new document re-picks its starting mode. The
+  // stored mode is the user's intent; what renders is derived from it below.
+  const [modeState, setModeState] = useState<{ key: FileData | null; mode: FileModeState }>({
+    key: null,
+    mode: { kind: "plain", mode: "view" },
+  });
   const [editorNotice, setEditorNotice] = useState("");
   const [resolutionOpen, setResolutionOpen] = useState(true);
   const viewTabRef = useRef<HTMLButtonElement>(null);
@@ -226,7 +245,6 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   }, [isText, data, lines]);
   const markdownLanguage = langFor(filePath) === "markdown";
   const isMarkdown = isText && !huge && markdownLanguage;
-  const isMarp = isMarkdown && isMarpDoc(data!.content);
   const editableSnapshotValid = useMemo(() => {
     if (data?.editable !== true || typeof data.content !== "string" || typeof data.revision !== "string") return false;
     try {
@@ -235,7 +253,14 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
       return false;
     }
   }, [data]);
-  const canEdit = !!paneId && isText && !isImage && editableSnapshotValid;
+  // Markdown in the viewer's plain fallback offers neither control group: the
+  // three-mode group needs a preview the fallback cannot render, and the
+  // non-Markdown tablist must not appear on a Markdown file (docs/44 §1.1). It
+  // therefore stays read-only, pinned to view. Other huge text files keep their
+  // editing surface — CodeMirror virtualises rows, so only the read-only grid
+  // needed the fallback in the first place.
+  const plainModeMarkdown = huge && markdownLanguage;
+  const canEdit = !!paneId && isText && !isImage && !plainModeMarkdown && editableSnapshotValid;
   const editorInitial = useMemo(
     () =>
       canEdit
@@ -249,6 +274,13 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   );
   const editor = useFileEditor(paneId || `file:${filePath}`, editorInitial);
   const viewContent = editor.model?.content ?? data?.content ?? "";
+  // The preview renders the buffer, so it would otherwise re-parse + sanitise +
+  // re-run Mermaid on every keystroke. Debouncing also settles the Marp check:
+  // a deck's front matter is edited character by character, and reacting to each
+  // intermediate state would make the renderer buttons appear and disappear
+  // while typing (docs/44 §1.1). A new file adopts its content immediately.
+  const previewSource = useDebounced(viewContent, PREVIEW_DEBOUNCE_MS, filePath);
+  const isMarp = isMarkdown && isMarpDoc(previewSource);
 
   // What the loaded file allows. The mode state machine (docs/44 §1.1) derives
   // the pane's view/edit layer and the surfaces to render from these.
@@ -258,25 +290,25 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   );
   const capsRef = useRef(caps);
   capsRef.current = caps;
-  const paneMode = paneModeOf(fileMode, caps);
-  const surfaces = surfacesFor(fileMode, caps);
 
   // A freshly loaded file picks its own starting mode: a line citation opens the
   // source surface so the cited row exists, a Marp deck opens as slides, other
-  // Markdown as a preview. Capability changes afterwards only clamp the current
-  // selection (reconcile), so editing a deck's front matter cannot yank the user
-  // back to the initial mode.
-  useEffect(() => {
-    if (!data) return;
-    setFileMode(initialFileMode(capsRef.current, { hasTargetLine: !!targetLine }));
-  }, [data, targetLine]);
+  // Markdown as a preview. The choice is made on the render the file lands —
+  // deferring it to an effect would let one frame paint the other control group,
+  // since capabilities become known before the state that reads them.
+  const startingMode = () => initialFileMode(caps, { hasTargetLine: !!targetLine });
+  if (data && modeState.key !== data) setModeState({ key: data, mode: startingMode() });
+  // Capability changes after that only clamp the selection, so editing a deck's
+  // front matter cannot yank the user back to the initial mode.
+  const fileMode = modeState.key === data ? reconcileFileMode(modeState.mode, caps) : startingMode();
+  const paneMode = paneModeOf(fileMode, caps);
+  const surfaces = surfacesFor(fileMode, caps);
+
+  const updateMode = (next: (prev: FileModeState) => FileModeState) => {
+    setModeState((prev) => ({ key: prev.key, mode: next(reconcileFileMode(prev.mode, capsRef.current)) }));
+  };
 
   useEffect(() => {
-    setFileMode((prev) => reconcileFileMode(prev, caps));
-  }, [caps]);
-
-  useEffect(() => {
-    setFileMode({ kind: "plain", mode: "view" });
     setEditorNotice("");
     setResolutionOpen(true);
   }, [filePath]);
@@ -307,7 +339,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   useEffect(() => {
     if (!paneId || !isMarkdown) return;
     return registerPaneViewActions(paneId, {
-      toggleMdMode: () => setFileMode((prev) => cycleFileMode(prev, capsRef.current)),
+      toggleMdMode: () => updateMode((prev) => cycleFileMode(prev, capsRef.current)),
     });
   }, [paneId, isMarkdown]);
 
@@ -340,7 +372,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
 
   const changeMode = (next: "view" | "edit") => {
     if (next === paneMode) return;
-    setFileMode((prev) => withPaneMode(prev, next, capsRef.current));
+    updateMode((prev) => withPaneMode(prev, next, capsRef.current));
     if (next === "view") queueMicrotask(() => viewTabRef.current?.focus());
   };
 
@@ -356,11 +388,11 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   };
 
   const changeMarkdownMode = (next: MarkdownMode) => {
-    setFileMode((prev) => withMarkdownMode(prev, next, capsRef.current));
+    updateMode((prev) => withMarkdownMode(prev, next, capsRef.current));
   };
 
   const changeRenderer = (next: PreviewRenderer) => {
-    setFileMode((prev) => withRenderer(prev, next, capsRef.current));
+    updateMode((prev) => withRenderer(prev, next, capsRef.current));
   };
 
   const onFocusCapture = (event: FocusEvent<HTMLDivElement>) => {
@@ -386,16 +418,48 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
     // the React tree, so a click inside the (body-portaled) modal reaches this handler and
     // would clear `sel` (the modal is gated on it), closing the modal on the first click.
     if (sendOpen) return;
+    // A selection inside CodeMirror belongs to the editing surface, which reports
+    // it from its own document (docs/44 §1.8). Walking the DOM for it would read
+    // a virtualised, possibly truncated copy of the same selection.
+    const editorEl = bodyRef.current?.querySelector(".file-editor-cm");
+    const live = window.getSelection();
+    if (editorEl && live?.anchorNode && editorEl.contains(live.anchorNode)) return;
+    // Only one pill at a time: a selection outside the editor supersedes the
+    // editor's, even when there is no code grid here to select in (a preview).
     const codeEl = bodyRef.current?.querySelector(".codeview .codegrid");
-    if (!codeEl) return;
-    const r = lineRangeOfSelection(codeEl);
+    const r = codeEl ? lineRangeOfSelection(codeEl) : null;
     if (!r) {
       setSel(null);
       return;
     }
-    const rect = window.getSelection()!.getRangeAt(0).getBoundingClientRect();
-    setSel({ ...r, x: Math.round(rect.left), y: Math.round(rect.top - 34) });
+    const rect = live!.getRangeAt(0).getBoundingClientRect();
+    setSel({ ...r, x: Math.round(rect.left), y: Math.round(rect.top - 34), origin: "view" });
   };
+
+  // The editing surface reports its own selection: line numbers and the quote
+  // come from the CodeMirror document, and the pill is placed from coordsAtPos.
+  const captureEditorSelection = (selection: EditorSelectionReport | null) => {
+    if (sendOpen) return;
+    if (!selection || !selection.coords) {
+      setSel((prev) => (prev?.origin === "editor" ? null : prev));
+      return;
+    }
+    setSel({
+      quote: selection.quote,
+      startLine: selection.startLine,
+      endLine: selection.endLine,
+      x: Math.round(selection.coords.left),
+      y: Math.round(selection.coords.top - 34),
+      origin: "editor",
+    });
+  };
+
+  // Leaving the editing surface drops its pill: the selection survives in the
+  // editor state, but it is no longer on screen to send from.
+  useEffect(() => {
+    if (surfaces.editor) return;
+    setSel((prev) => (prev?.origin === "editor" ? null : prev));
+  }, [surfaces.editor]);
 
   // Touch text-selection (long-press + drag handles on mobile) does NOT fire mouseup/
   // keyup, so the pill never appeared on phones. `selectionchange` fires for touch too;
@@ -624,6 +688,8 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
               path={editor.model.path}
               content={editor.model.content}
               wrap={wrapOn}
+              targetLine={targetLine}
+              onSelectionChange={captureEditorSelection}
               onChange={(content) => {
                 setEditorNotice("");
                 editor.edit(content);
@@ -659,10 +725,10 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
           ) : huge ? (
             <pre className="filebody fb-plain">{viewContent}</pre>
           ) : surfaces.preview === "slides" ? (
-            <MarpView source={viewContent} />
+            <MarpView source={previewSource} />
           ) : surfaces.preview === "normal" ? (
             <div className="md-scroll">
-              <MarkdownView source={viewContent} basePath={filePath} onOpenFile={showFile} onOpenDir={revealInFiles} />
+              <MarkdownView source={previewSource} basePath={filePath} onOpenFile={showFile} onOpenDir={revealInFiles} />
             </div>
           ) : (
             <CodeView
