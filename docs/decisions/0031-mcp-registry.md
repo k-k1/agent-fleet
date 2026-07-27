@@ -1,6 +1,7 @@
 # 0031. 独自 MCP サーバーは「レジストリ」に登録し、各 CLI のネイティブ設定へ af が書き出す
 
-- 状態: **採用・P0 実装済み**（レジストリ型 / 合成 / user CRUD / 接続テスト）。設計は [docs/48](../48-mcp-registry.md)。
+- 状態: **採用・P0〜P3 実装済み**（レジストリ型 / 合成 / user CRUD / 接続テスト / Console タブ /
+  アシスタント配線 / claude・codex のセッション materialize）。設計は [docs/48](../48-mcp-registry.md)。
 - 関連: docs/19（アシスタント）/ [0020](0020-chat-bridge.md)（同型の CP ブリッジ）/
   docs/25（一般化の対象となる組み込み ops 連携）/ docs/20（egress allowlist）
 
@@ -50,8 +51,11 @@ af が書いた名前だけを別ファイルに記録し、**削除は af が�
 
 - **設定契約が CLI の版ごとに壊れうる**。文字列契約と同じ問題（`false-idle-reverse-heal`）なので、
   `<cli> mcp add` を隔離 HOME で実行して生成物を比較する **drift テスト**を各 kind に置き、
-  壊れたら CI が赤くなるようにする。
+  壊れたら CI が赤くなるようにする（P3: claude / codex 分を
+  `.github/workflows/mcp-config-contract.yml` に配線済み）。
 - **反映は次のセッションから**。どの CLI も設定を起動時に読む。Console に明示する。
+  managed セッションだけは CLI プロセスを起動し直さないので前提が別で、codex の共有 app-server が
+  `thread/start` ごとに config を読み直すことを実測し、それ自体を drift テストで固定した（docs/48 §8.3）。
 
 アシスタントチャットは逆に**起動単位の隔離が正**なので、従来どおり `--mcp-config` /
 codex `-c` / 隔離 dir を使い続ける。チャットとセッションで方式が違うのは意図的で、

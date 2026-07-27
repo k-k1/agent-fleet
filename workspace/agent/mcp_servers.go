@@ -7,6 +7,10 @@ package main
 // そのまま返してきたら保存済みの値を維持する（connections の既存作法と同じ）。
 //
 // ⚠️ ここに足したパスは control-plane/routes.go にも登録が要る（CP は明示許可リスト方式）。
+//
+// 変更のたびに materializeMCPAll() を呼ぶ（docs/48 §8.3）。セッション起動時にも書くので
+// 冗長に見えるが、こちらが「登録した瞬間に各 CLI の設定へ反映される」を担保する — 利用者が
+// Console を閉じて手でターミナルから CLI を叩く経路には起動フックが無い。
 
 import (
 	"context"
@@ -80,6 +84,7 @@ func handleMCPServerCreate(w http.ResponseWriter, r *http.Request) {
 		writeMCPErr(w, err)
 		return
 	}
+	materializeMCPAll()
 	httpx.WriteJSON(w, http.StatusOK, wireMCPServer(out))
 }
 
@@ -93,6 +98,7 @@ func handleMCPServerUpdate(w http.ResponseWriter, r *http.Request) {
 		writeMCPErr(w, err)
 		return
 	}
+	materializeMCPAll()
 	httpx.WriteJSON(w, http.StatusOK, wireMCPServer(out))
 }
 
@@ -101,6 +107,7 @@ func handleMCPServerDelete(w http.ResponseWriter, r *http.Request) {
 		writeMCPErr(w, err)
 		return
 	}
+	materializeMCPAll()
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"deleted": r.PathValue("id")})
 }
 
@@ -119,6 +126,7 @@ func handleMCPServerEnabled(w http.ResponseWriter, r *http.Request) {
 		writeMCPErr(w, err)
 		return
 	}
+	materializeMCPAll()
 	handleMCPServersGet(w, r)
 }
 

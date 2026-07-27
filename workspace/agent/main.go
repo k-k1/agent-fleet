@@ -129,6 +129,10 @@ func main() {
 	// reseeded the base AGENTS.md / status plugin just before us). claude's rtk is
 	// handled separately via its settings.json hook.
 	reconcileAgentRTK()
+	// Write the MCP registry into each CLI's own config (docs/48 P3) so the servers a
+	// user registered are live from container start — including for a CLI they launch
+	// by hand in a terminal, which never passes through the session launch hook.
+	materializeMCPAll()
 	startTerminalHistoryJanitor()
 	// managed driver（hook を持たない）の turn 完了を、hook 経路と同じ通知/報告
 	// （応答あり notice ＋ docs/30 のオペレーター報告）へ流す。driver は
