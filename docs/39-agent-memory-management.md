@@ -1,6 +1,7 @@
 # 39. エージェントメモリ管理 — git 差分管理・時点ロールバック・環境間 import/export
 
-- 状態: **実装中（2026-07-27〜）**。設計は確定し、未決事項 4 点も既定値で決着済み（下記「決着した未決事項」）。
+- 状態: **実装中（2026-07-27〜）。P1・P2 完了、次は P3（export/import）**。
+  設計は確定し、未決事項 4 点も既定値で決着済み（下記「決着した未決事項」）。
   意思決定は [decisions/0022](decisions/0022-agent-memory-management.md)。
 - 要望: 各エージェントの「メモリ」を管理したい。①git での差分管理 ②日時・履歴指定でのロールバック
   ③特定プロジェクトだけのロールバック ④他の agent-fleet 環境への import/export。
@@ -74,7 +75,7 @@ Antigravity CLI に一本化。Enterprise ライセンス・有償 API キーの
 | export | **git bundle（全履歴）を既定**、tar.gz（最新ツリーのみ）も選択可。**v1 は平文 DL**（暗号化なし） | bundle は 1 ファイル・履歴込み・`git bundle verify` で検証可能 |
 | import | bundle → `refs/imports/<ts>` に fetch / tar → staging 展開。適用は**プロジェクト選択式の置き換え（=新 commit）** | 3-way merge はしない（v1）。ローカル履歴は保全される |
 | UI | 設定モーダル「ワークスペース」グループに「エージェントメモリ」タブ | 破壊操作は P4a の統一確認ダイアログ |
-| 監査 | `proxy.go auditActionTarget` に restore / import / export をマップ | export DL は本人操作のみ |
+| 監査 | `proxy.go auditActionTarget` に restore / import / export をマップ | export DL は本人操作のみ。restore の target は URL 由来のヒント（本文は読まない） |
 
 ## アーキテクチャ
 
@@ -159,17 +160,34 @@ repo 内レイアウトは `claude/projects/<slug>/...`・`codex/...` と kind �
 | `GET  /api/agents/memory/snapshots?limit=&before=` | snapshot 一覧（id/ts/契機/変更パスサマリ） |
 | `POST /api/agents/memory/snapshots` | 手動 snapshot（`{trigger:"manual"}`） |
 | `GET  /api/agents/memory/diff?from=&to=&path=` | unified diff（path 省略で全体、`projects/<slug>` で絞り込み） |
-| `POST /api/agents/memory/restore` | `{rev \| at, scope: {all \| projects: [slug...]}}`。手順は ④ |
+| `GET  /api/agents/memory/tree?rev=\|at=` | **その時点**のツリー概況（kind 別・プロジェクト別のファイル数/バイト数）。P2 追加 |
+| `POST /api/agents/memory/restore` | `{rev \| at, scope: {all \| kinds: [kind...] \| projects: [slug...]}}`。手順は ④ |
+| `PUT  /api/agents/memory/settings` | 自動 snapshot の ON/OFF トグル（`{auto:bool}`）。P2 追加 |
 | `GET  /api/agents/memory/export?format=bundle\|tar` | DL（Content-Disposition。CP proxy は既存 `rest` でストリーム可） |
 | `POST /api/agents/memory/import` | multipart 受領 → 検証 → preview `{importId, projects[], snapshots, headTs}` |
 | `POST /api/agents/memory/import/apply` | `{importId, projects: [slug...]}` → 選択分を live へ適用（=新 commit） |
 
-P1 で実装済みなのは上表のうち `roots` / `snapshots`(GET,POST) / `diff` の 4 本
-（`workspace/agent/memory_handlers.go`）。diff は `?from=&to=&at=&path=` を受け、`from` 省略で
-「その snapshot が入れた変更」（初回 snapshot は空ツリーとの差分）を返す。エラーは
-`memory_bad_request` / `memory_bad_rev` / `memory_bad_path` / `memory_no_snapshots` /
-`memory_snapshot_failed` / `memory_diff_failed` の安定コード（i18n カタログ両言語に登録済み）。
+P1 で `roots` / `snapshots`(GET,POST) / `diff`、P2 で `tree` / `restore` / `settings` を実装済み
+（`workspace/agent/memory_handlers.go`）。残るは export / import（P3）。diff は
+`?from=&to=&at=&path=` を受け、`from` 省略で「その snapshot が入れた変更」（初回 snapshot は
+空ツリーとの差分）を返す。エラーは `memory_bad_request` / `memory_bad_rev` / `memory_bad_path` /
+`memory_bad_scope` / `memory_no_snapshots` / `memory_snapshot_failed` / `memory_diff_failed` /
+`memory_restore_failed` の安定コード（i18n カタログ両言語に登録済み）。
 手動 snapshot の `trigger` は `manual` 固定で、`restore` 等を API から詐称させない。
+
+**P2 で表に足した 2 本の理由**:
+
+- `tree` — restore のスコープ選択は「**その時点**に何が入っていたか」から作る必要がある。
+  現在の roots を選択肢にすると、既に消えたプロジェクトを選べず「誤って消したメモリを
+  戻す」という本命のユースケースが成立しない。
+- `settings` — 決着 #1 の「全体 OFF は UI トグル（P2）で提供」の受け口。設定は
+  `<CLAUDE_CONFIG_DIR>/af-memory.json` に永続し（repo と同じマウント＝同寿命）、
+  ポーリングループが毎 tick 読み直すので再起動を要さない。`AF_MEMORY_SNAPSHOT=off`
+  による運用側の強制はトグルより強く、UI からは戻せない（`autoLocked` で提示する）。
+
+`scope` に `kinds` を足したのは、`Scopes=false` のルート（codex）を「まるごと」指す
+表現が `all` と `projects` だけでは作れないため。`all` は個別指定を飲み込み、同じ
+prefix を二重に適用しない。
 
 `at`（日時指定）は agent 側で `git rev-list -1 --before=<at>` により snapshot に解決する。
 CP 側は `control-plane/routes.go` に同パスを `rest` で登録（**登録漏れ=FE 404** の既知罠。
@@ -179,9 +197,19 @@ CP 側は `control-plane/routes.go` に同パスを `rest` で登録（**登録�
 
 1. `restore` 受領 → まず **pre-restore snapshot** を自動取得（現在の live を必ず保全）。
 2. 対象 rev の staging checkout（scope 指定時は `git checkout <rev> -- claude/projects/<slug>/`）。
-3. live への適用は **allowlist prefix 限定の rsync --delete**。scope 外・allowlist 外の
-   ファイルには一切触れない（`memory/` に無いファイルを消さない・作らない）。
-4. 適用結果を **restore commit** として積む（`AF-Trigger: restore`、対象 rev を trailer に記録）。
+3. live への適用は **allowlist 限定の rsync --delete 相当**（P2 実装では外部コマンドに
+   頼らず Go で書いた）。要は非対称の組み方が肝で、「望ましい状態」は staging 側の列挙、
+   「今の状態」は `memoryCollect`（= allowlist とシンボリックリンク不追従が効いた経路）から
+   取る。削除候補が allowlist を通ったファイルに限られるので、transcript や資格情報を
+   消す経路が**構造的に**存在しない（★1 の裏返し）。書き込み先も 1 セグメントずつ検査し、
+   経路にシンボリックリンクがあれば拒否する（リンク越しに live の外を上書きしない）。
+   削除で空になったディレクトリだけ畳み、非メモリが残る枝では必ず止まる。
+4. 適用結果を **restore commit** として積む（`AF-Trigger: restore`、戻し元 rev を
+   `AF-Restore-Rev`、適用範囲を `AF-Restore-Scope` として trailer に記録）。ここは live を
+   読み直して commit するので、「実際に何が起きたか」が履歴の側で確定する（③ の結果を
+   信用しない）。pre-restore commit にも `AF-Restore-Rev` を刻むので、履歴だけを見て
+   「何に戻そうとした操作か」が follow できる。無変更なら commit しない（既に同じ内容
+   だった場合）が、その場合でも API は「戻す前の状態を指す rev」として直近 snapshot を返す。
 5. 実行ゲート: 当該 kind のセッションが実行中（working）の場合は警告を返し、Console 側で
    確認ダイアログを一段強くする（既定は続行可。実行中セッションが後からメモリを
    書けば restore 後の新 commit として現れるだけで、履歴上は追跡可能）。
@@ -225,6 +253,21 @@ CP 側は `control-plane/routes.go` に同パスを `rest` で登録（**登録�
 - 操作: 「この時点に戻す」（全体 / プロジェクト選択）→ 統一確認ダイアログ（P4a）。
   日付ピッカーからの「この日時時点へ」も同じ restore に解決。
 - 下段: export（bundle / tar 選択 DL）・import（ファイル選択 → プロジェクト選択 preview → 適用）。
+  **これは P3**（P2 実装ではまだ出さない）。
+
+P2 実装の実際（`console/src/features/settings/MemoryTab.tsx`）:
+
+- 上段の手動 snapshot に加えて**自動取得トグル**を置いた（決着 #1）。運用側が
+  `AF_MEMORY_SNAPSHOT` で止めている環境では disabled ではなく理由を添えて提示する。
+- 中段の diff は SCM のコミットペインと同じ `<Diff>` を流用（見え方を 2 つに増やさない）。
+- 戻し操作は P4a の統一確認ダイアログではなく、既存の `useConfirm`（danger）を使う。
+  文面に「戻す直前の状態も自動でスナップショットに残る＝この操作自体を取り消せる」ことを
+  明記し、実行中セッションがあるときだけ警告を 1 行足す（④-5）。
+- ワークスペース停止中は起動導線の EmptyState に落とし、起動直後の 502 は
+  `useRetryLoad` + `isTransientErr` で吸収する（running ゲート必須の既知パターン）。
+- restore の POST は rev を**クエリにも**載せる。CP の監査台帳は URL からしか target を
+  採らない（本文は読まない = docs/20 §A.6）ため、監査行に戻し元が残るようにするための
+  ヒントで、実処理に使うのは本文側。
 
 ## 先行 OSS の調査（2026-07-23 追記）
 
@@ -300,7 +343,7 @@ per-repo コミット型ストア（xChuCx 型。リポジトリに個人メモ�
 | フェーズ | 内容 | 出口条件 |
 |----------|------|----------|
 | P1 ✅ | snapshot エンジン（roots 宣言 = claude+codex・staging・bare repo・自動/手動契機）＋ REST（roots/snapshots/diff）＋ dual allowlist 登録 | 自動 snapshot が実データで積まれ、一覧/差分が API で取れる（codex は dir 存在環境で） |
-| P2 | restore（全体/プロジェクト・pre-restore・rsync scope 限定）＋ Console タブ（履歴/差分/復元） | UI から日時指定・プロジェクト単位の巻き戻しが往復できる |
+| P2 ✅ | restore（全体/プロジェクト・pre-restore・scope 限定の適用）＋ `tree` / `settings` REST ＋ Console タブ（履歴/差分/復元/自動取得トグル） | UI から日時指定・プロジェクト単位の巻き戻しが往復できる |
 | P3 | export/import（bundle/tar・preview・選択適用・検証・監査） | 2 環境間で bundle 持ち回りの移送が実際に通る |
 | P4 | 拡張: codex memories のフリート有効化配線（config.toml `[features] memories` の Console トグル・`[memories]` チューニング seed）・CP internal git への push mirror（停止中閲覧・直接同期）・operator MCP ツール・scheduler 連携・opencode/agy の上流 watch | — |
 
