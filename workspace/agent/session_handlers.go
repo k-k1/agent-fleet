@@ -550,7 +550,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		// を起こす。初回プロンプトは boot 画面スクレイプ不要でそのまま Send できる
 		// （§10.2-9 — ClientMessageID で冪等）。
 		d, _ := driverOf(meta)
-		h, err := d.Resume(meta)
+		h, err := startManagedSession(d, meta)
 		if err != nil {
 			httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
 			return
@@ -669,7 +669,7 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 				"managed driver はこの kind ではまだ利用できません")
 			return
 		}
-		if _, err := d.Resume(meta); err != nil {
+		if _, err := startManagedSession(d, meta); err != nil {
 			httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
 			return
 		}
@@ -909,7 +909,7 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if newMeta.DriverKind() == session.DriverManaged {
 		if d, ok := driverOf(newMeta); ok {
-			if _, err := d.Resume(newMeta); err != nil {
+			if _, err := startManagedSession(d, newMeta); err != nil {
 				m.Archived = false
 				session.WriteMeta(m)
 				httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())

@@ -28,12 +28,7 @@ const rtkBlock = "## rtk (token saver) — prefer it for shell commands\n" +
 
 // home mirrors codex's own resolution: $CODEX_HOME, else ~/.codex (where the
 // entrypoint seeds AGENTS.md).
-func home() string {
-	if d := os.Getenv("CODEX_HOME"); d != "" {
-		return d
-	}
-	return filepath.Join(paths.HomeDir(), ".codex")
-}
+func home() string { return paths.CodexHome() }
 
 func agentsPath() string { return filepath.Join(home(), "AGENTS.md") }
 

@@ -114,7 +114,7 @@ func handleSessionDriver(w http.ResponseWriter, r *http.Request) {
 	}
 	if target == session.DriverManaged {
 		d, _ := driverOf(m)
-		if _, err := d.Resume(m); err != nil {
+		if _, err := startManagedSession(d, m); err != nil {
 			m.Driver = prev
 			session.WriteMeta(m)
 			httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())

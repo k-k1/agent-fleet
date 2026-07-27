@@ -16,8 +16,11 @@ var (
 	nudgeKeyRE    = regexp.MustCompile(`^\s*hide_rate_limit_model_nudge\s*=\s*(true|false)\s*(?:#.*)?$`)
 )
 
+// codexConfigPath is codex's own config file. It follows $CODEX_HOME like the CLI
+// does (paths.CodexHome) — unset in the workspace, so this is ~/.codex/config.toml
+// as before, and the same file the MCP registry materializes into (docs/48 §8).
 func codexConfigPath() string {
-	return filepath.Join(paths.HomeDir(), ".codex", "config.toml")
+	return filepath.Join(paths.CodexHome(), "config.toml")
 }
 
 // rateLimitModelNudgeEnabled follows Codex's default: an absent notice key means

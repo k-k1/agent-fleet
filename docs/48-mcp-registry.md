@@ -1,7 +1,8 @@
 # 48. ユーザー / テナント独自 MCP サーバーの登録（MCP レジストリ）— 設計
 
-- 状態: **◐ P0 / P1 / P2 実装済み**（型・実効レジストリ合成・user スコープ CRUD・接続テスト・
-  Console「MCP サーバー」タブ・アシスタント配線）。P3 以降は未着手。
+- 状態: **◐ P0 / P1 / P2 / P3 実装済み**（型・実効レジストリ合成・user スコープ CRUD・接続テスト・
+  Console「MCP サーバー」タブ・アシスタント配線・**claude / codex のセッション materialize**）。
+  P4（テナントスコープ）以降は未着手。
   意思決定は [decisions/0031](decisions/0031-mcp-registry.md)。
 - 関連: docs/19（アシスタント）/ [25](25-ops-monitoring.md)（組み込み ops 連携 = 本設計が一般化する対象）/
   [20](20-container-audit-egress.md)（egress allowlist）/ [46](46-usage-accounting.md)（残 P5 = MCP の使用量計上）/
@@ -269,6 +270,10 @@ Workspace agent ──(AF_MCP_TOKEN)──▶ CP GET /internal/mcp-servers      
 （materialize）方式を採る。起動フラグ方式（claude `--mcp-config` 等）は
 `--strict-mcp-config` を伴い、利用者自身のプロジェクト `.mcp.json` を締め出してしまうため採らない。
 
+**P3 実装済み = claude / codex**（`internal/mcpreg/materialize.go` + `materialize_claude.go` +
+`materialize_codex.go`、契機は `mcp_materialize.go`）。残り kind は P5。未配線の kind は
+エラーではなく `Skipped` を返す — 「まだ配線していない」は失敗ではない。
+
 ### 8.1 実測した設定契約（2026-07-27・本コンテナの焼き込み版）
 
 | kind | 版 | ファイル | 形 | 確認方法 |
@@ -284,24 +289,58 @@ Workspace agent ──(AF_MCP_TOKEN)──▶ CP GET /internal/mcp-servers      
 未確認の 2 件（kiro のリモート形、cursor のリモート形）は **実装フェーズで実機確認してから配線する**。
 推測で書かない。
 
+**P3 で再実測して確定した分**（claude 2.1.220 / codex-cli 0.145.0、隔離 HOME での `mcp add` 生成物）:
+
+- claude の user スコープは `$CLAUDE_CONFIG_DIR/.claude.json` の `mcpServers` で確定。
+  形はアシスタント用の `ClaudeServers()` と**同一**だったので、シリアライザは 1 本のまま両消費側に使う。
+- codex の設定**ファイル**でもリモートの任意ヘッダが使える（`[mcp_servers.<name>.http_headers]`）。
+  `codex mcp list --json` が `http_headers` / `startup_timeout_sec` をそのまま読み返すことを確認した。
+  `codex mcp add` に header フラグが無いだけで、設定は持つ（§7 の訂正と同じ話）。
+- materialize はアシスタント配線と違い、**ヘッダ / env の値を設定ファイルへ直に書く**。
+  §5.1 が平文化を許す場所は 0600 ファイルであり、codex に「1 回の exec に効く設定ファイル」が
+  無いという §7 の制約はここでは効かない（読むのは CLI 本体で、argv は絡まない）。
+
 ### 8.2 書き込み規約
 
-- **既存の利用者手書き設定を壊さない**。af が書いた行だけを識別できるように、各サーバー名を
-  そのまま鍵にしつつ、`~/.config/agent-fleet/mcp-managed.json` に「af が書いた名前の一覧（kind 別）」を
-  残す。レジストリから消えたサーバーは、この一覧にあるものだけを削除する。
-- 書き込みは **read → merge → 一時ファイル → `os.Rename`**（原子的）。既存キーは保存する。
-  codex の TOML は `internal/agents/codex/settings.go` の既存編集器（コメント・trust セクション保存）に合わせる。
+- **既存の利用者手書き設定を壊さない**。af が書いた名前の一覧（kind 別）を
+  `~/.config/agent-fleet/mcp-managed.json` に残し、レジストリから消えたサーバーは
+  **この一覧にあるものだけ**を削除する。台帳が壊れて読めないときは materialize ごと中止する
+  （「af は何も所有していない」と解釈すると、書いた行が誰にも消せない孤児になるため）。
+- 例外が 1 つある: **これから書く名前**の既存セクション / キーは、手書きでも置き換える。
+  TOML は重複テーブルをエラーにするので、`[mcp_servers.x]` を残したまま追記すると
+  **config.toml 全体が読めなくなり codex が起動しなくなる**。MCP が 1 本増えない程度では済まない。
+- 書き込みは **read → merge → 一時ファイル → `os.Rename`**（原子的）、モードは `0600`。
+- **変わっていなければ書かない**。`.claude.json` は claude 自身が絶えず書き換える生の状態ファイル
+  （オンボーディング・trust ダイアログ）なので、無変更の起動で再シリアライズすると無駄に整形が変わり、
+  こちらの rename が claude の書き込みを踏み潰す窓も広がる。
+  比較は**デコード後の構造**で行う（`json.MarshalIndent` のバイト比較だと毎回差分になる）。
+- **壊れた設定ファイルは触らない**。`.claude.json` が JSON として読めなければエラーで戻る。
+  上書きすると trust ダイアログが飛び、`hasCompletedOnboarding` を失って**認証が通っていても
+  ログイン画面が出る**（`internal/agents/claude/settings.go` の教訓）。
+- codex の TOML は `internal/agents/codex/settings.go` と同じ**行ベース編集**にする。パースして
+  再出力するとコメントと project trust セクションが黙って再整形される。af は自分が所有する
+  テーブル（とその下位テーブル）だけを行ごと抜き、末尾に新しいテーブルを足す。
 - opencode は本ホストで `.jsonc`。`entrypoint.sh:414` の既存作法（**素の JSON として読めなければ触らない**）を
-  踏襲する。コメント入りは skip し、Console に「opencode の設定にコメントがあるため反映できません」と出す。
-- ファイルモードは `0600`。
+  踏襲する。コメント入りは skip し、Console に「opencode の設定にコメントがあるため反映できません」と出す（P5）。
 
 ### 8.3 反映タイミング
 
-- **セッション起動直前**に materialize する（`startSessionTmux` の `BuildLaunch` 前フック）。
-  こうすると「登録 → 新しいセッションを立てる」が最短で通る。
-- レジストリ変更時（CRUD / テナント配布の取得）にも全 kind へ書き出す。
+- **agent 起動時**（`main.go`）。コンテナを起こした直後から効かせる。Console を開かずに
+  ターミナルから直接 CLI を叩く経路には、この契機しか無い。
+- **セッション起動直前**。tui は `startSessionTmux` の `BuildLaunch` 前フック、managed は
+  `startManagedSession`（launch 用の `Resume` ラッパー）。「登録 → 新しいセッションを立てる」が最短で通る。
+  ⚠️ managed の `Resume` は**走行中スレッドへの再アタッチにも使われる**（turn 送信・ブリッジ・回答）。
+  そちらまで materialize すると 1 メッセージごとにレジストリを読むことになるので、**起動 5 箇所だけ**を
+  ラッパー経由にしてある。
+- **レジストリ変更時**（CRUD）にも全 kind へ書き出す。テナント配布の取得は P4。
 - **既に走っているセッションには効かない**（どの CLI も起動時に設定を読む）。Console に
-  「新規セッションから有効」を明示する。ここを曖昧にすると「登録したのに使えない」の問い合わせになる。
+  「新規セッションから有効」を明示する（`mcp.session_restart_note`）。ここを曖昧にすると
+  「登録したのに使えない」の問い合わせになる。
+- ⚠️ **managed codex は共有 `codex app-server` に相乗りする**（docs/27）ので、daemon が config を
+  プロセス起動時に 1 度しか読まないなら materialize が効かない。**実測（0.145.0）では
+  `thread/start` ごとに読み直す**ので、`Supervisor.Restart`（workspace 内の codex 全セッションを
+  drain する重い操作）は要らない。この前提はドリフトテストで固定してある
+  （`codex/mcp_config_drift_test.go` — 崩れたら「登録したのに managed だけ効かない」になる）。
 
 ---
 
@@ -385,7 +424,7 @@ P1 以前は**そもそも UI が無く**（組み込み 3 種は SRE アシス�
 | **P0** ✅ | 型・実効レジストリ合成・user CRUD REST・接続テスト。builtin 3 種を `ServerDef` へ正規化 | `internal/mcpreg/`（新設）、`secrets.go`、`assistants.go`、`routes.go`（agent + CP 両方） |
 | **P1** ✅ | Console 「MCP サーバー」タブ（実効レジストリ一覧＋ user CRUD＋接続テスト）＋ i18n（ja/en）＋検証コード化 | `McpTab.tsx`、`mcpWire.ts`、`SettingsDialog.tsx`、`settings.css`、i18n、`mcpreg/def.go` |
 | **P2** ✅ | アシスタント配線（claude / codex / opencode / agy）。`mcpConfigArgs` の一般化＋アシスタント編集 UI | `mcpreg/attach.go`（新設）、`chat_mcp.go`（新設）、`chat_providers.go`、`AssistantModal.tsx` |
-| **P3** | セッション materialize — **claude / codex 先行** | `internal/mcpreg/materialize_*.go`、`startSessionTmux` |
+| **P3** ✅ | セッション materialize — **claude / codex 先行**（所有台帳・非破壊書き込み・起動/CRUD 契機・drift CI） | `mcpreg/materialize*.go`（新設）、`mcp_materialize.go`（新設）、`session_tmux.go`、`paths.go`、`.github/workflows/mcp-config-contract.yml`（新設） |
 | **P4** | テナントスコープ: CP テーブル・管理 API・ブリッジ・配布キャッシュ・`AdminTab` UI・`user_secret` | `control-plane/mcp_server.go`（新設）、`workspace_lifecycle.go`、`AdminTab.tsx` |
 | **P5** | 残り kind の materialize（opencode / kiro / cursor / copilot / agy）＋ egress allowlist 連携 | 同上 + `egress.go` |
 
@@ -422,6 +461,24 @@ P0〜P3 で「個人が登録して claude / codex で使う」が閉じる。P4
   実 exec で確認（子プロセス env の core セット、ヘッダ到達）。
 - **未検証**: アシスタント編集ダイアログの MCP 欄はブラウザで実操作していない
   （tsc / vitest / i18n lint / 本番ビルドは通っている）。opencode / agy チャットでの実ターンも未実施。
+
+**P3 で済ませた分**（`internal/mcpreg/materialize_test.go` / `materialize_drift_test.go` /
+`internal/agents/codex/mcp_config_drift_test.go`）:
+
+- **非破壊性**: 利用者手書きの `.claude.json`（オンボーディング・trust・自前 `mcp add` 分）と
+  `config.toml`（コメント・`[projects."…"]`・自前 `[mcp_servers.mine]`）に対し、書き→消しを往復させ、
+  **codex は元ファイルとバイト同一に戻る**ことまで固定した。claude は「手書き分だけが残る」を確認。
+- **冪等性**: 同じ定義で 2 回目を走らせると `changed=false`（ファイルを触らない）。
+- 壊れた `.claude.json` を上書きしないこと。同名テーブルを 1 つに畳むこと（TOML 重複回避）。
+  ヘッダ名に `.` を含むときクオートすること（さもないと入れ子テーブルになり別ヘッダになる）。
+- 台帳が壊れたら materialize を続行しないこと。`targets.session` / `enabled` / `kinds` の絞り込み。
+- **drift（実 CLI）**: `<cli> mcp add` に生成させた設定と af の materialize 結果を**構造比較**する
+  （期待値を手で書き写さない）。claude は stdio / remote の 2 形、codex は stdio を `mcp add` と比較し、
+  リモートは `codex mcp list --json` に af の出力を読み返させて `http_headers` /
+  `startup_timeout_sec` を確認。加えて **app-server の config リロード契約**（§8.3）。
+  CI は `.github/workflows/mcp-config-contract.yml`（pinned × latest のマトリクス、認証・課金なし）。
+- **未検証**: Console からの実操作、実 MCP サーバーを登録しての claude / codex セッション実起動。
+  CI ワークフロー自体の実行（GitHub Actions の支払い停止中）。
 
 ---
 

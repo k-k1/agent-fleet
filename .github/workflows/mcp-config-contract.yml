@@ -1,0 +1,65 @@
+# MCP レジストリの materialize 契約（docs/48 §8 / §13）。**認証も課金も不要**。
+#
+# 何を検証するか: af は「各 CLI のグローバル MCP 設定はこういう形だ」という契約の上で
+# 利用者の設定ファイルを書き換えている（claude = $CLAUDE_CONFIG_DIR/.claude.json の
+# mcpServers、codex = $CODEX_HOME/config.toml の [mcp_servers.*]）。CLI 側が形を変えても
+# af のユニットテストは緑のまま — 自分の出力を自分で読んでいるだけだからで、気付くのは
+# 利用者が「登録したのにツールが出ない」と言うときになる。ここでは **CLI 自身の
+# `mcp add` に書かせた設定と af の materialize 結果を構造比較**し、加えて
+# `codex mcp list --json` に af が書いたファイルを読ませて、契約が動いたら赤くする。
+#
+# なぜ agent 別ファイルでなく 1 本か: 検証対象は「MCP 設定ファイルの形」という
+# **レジストリ側の 1 つの契約**で、複数 CLI に同時に跨がる。codex-contract.yml は
+# `-run '^TestDriftCodex'` を ./... に当てているので codex 側は変更時に二重に走るが、
+# mcpreg 自体を触った PR を拾うのはこのワークフローの役目。
+#
+# 版マトリクス: pinned = イメージに焼かれる版、latest = self-update を opt-in した
+# Workspace が実際に走らせる版（cli-drift-check.sh の頭にある教訓）。
+name: mcp-config-contract
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "workspace/agent/internal/mcpreg/**"
+      - "workspace/agent/internal/paths/paths.go"
+      - "workspace/Dockerfile"
+      - ".github/workflows/mcp-config-contract.yml"
+      - ".github/actions/setup-agent-cli/action.yml"
+  schedule:
+    # 毎週月曜 6:45 JST。codex-contract（21:15 UTC）/ e2e（21:00 UTC）とずらす。
+    - cron: "45 21 * * 0"
+  workflow_dispatch:
+
+concurrency:
+  group: mcp-config-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  materialize-drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [claude, codex]
+        version: [pinned, latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-agent-cli
+        with:
+          agent: ${{ matrix.agent }}
+          version: ${{ matrix.version }}
+      - name: materialize drift (${{ matrix.agent }}, ${{ matrix.version }})
+        working-directory: workspace/agent
+        env:
+          # CLI が居ないときは skip ではなく fail（黙った skip は偽の緑）。
+          E2E_REQUIRE: "1"
+        # drift タグは他エージェントの probe と共有なので、テスト名で自分の分だけに絞る。
+        run: |
+          go test -tags drift -count=1 -v -timeout 10m \
+            -run '^TestDrift${{ matrix.agent == 'claude' && 'Claude' || 'Codex' }}' \
+            ./internal/mcpreg/
