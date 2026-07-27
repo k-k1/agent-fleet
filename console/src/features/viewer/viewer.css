@@ -983,6 +983,25 @@
 /* Phase 2 text/code editor. The CodeMirror tree stays mounted while view mode is
    selected so its in-memory undo history is not discarded. `hidden` removes only
    the inactive shell from layout; no editor content enters layout persistence. */
+.file-surfaces {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* Markdown `split`: the source surface and the preview share the row. */
+.file-surfaces.is-split {
+  flex-direction: row;
+}
+.file-surfaces.is-split > .file-editor-shell,
+.file-surfaces.is-split > .file-viewer-shell {
+  flex: 1 1 50%;
+  width: 50%;
+}
+.file-surfaces.is-split > .file-viewer-shell {
+  border-left: 1px solid var(--border);
+}
 .file-viewer-shell,
 .file-editor-shell {
   flex: 1;

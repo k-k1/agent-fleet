@@ -28,8 +28,22 @@ import { CodeEditor } from "../editor/CodeEditor.tsx";
 import { useFileEditor } from "../editor/useFileEditor.ts";
 import { revisionOf, type BufferValidationError } from "../editor/buffer.ts";
 import type { FileEditorModel } from "../editor/model.ts";
-
-type MdMode = "preview" | "source" | "slides";
+import {
+  availableMarkdownModes,
+  availableRenderers,
+  cycleFileMode,
+  initialFileMode,
+  paneModeOf,
+  reconcileFileMode,
+  surfacesFor,
+  withMarkdownMode,
+  withPaneMode,
+  withRenderer,
+  type FileModeCaps,
+  type FileModeState,
+  type MarkdownMode,
+  type PreviewRenderer,
+} from "./fileMode.ts";
 
 // lineRangeOfSelection derives the 1-based line range + text of the current selection
 // within the code grid. Each code cell carries data-ln (its 1-based logical line), so
@@ -107,14 +121,13 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   const wrapOn = wrap === undefined || wrap === null ? settings.wrap : wrap;
   const [data, setData] = useState<FileData | null>(null);
   const [err, setErr] = useState("");
-  const [mdMode, setMdMode] = useState<MdMode>("preview");
   const [imgMode, setImgMode] = useState<"preview" | "source">("preview");
   const [imgDims, setImgDims] = useState<{ w: number; h: number } | null>(null);
   const [marks, setMarks] = useState<LineMarks | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const [sel, setSel] = useState<{ quote: string; startLine: number; endLine: number; x: number; y: number } | null>(null);
   const [sendOpen, setSendOpen] = useState(false);
-  const [mode, setMode] = useState<"view" | "edit">("view");
+  const [fileMode, setFileMode] = useState<FileModeState>({ kind: "plain", mode: "view" });
   const [editorNotice, setEditorNotice] = useState("");
   const [resolutionOpen, setResolutionOpen] = useState(true);
   const viewTabRef = useRef<HTMLButtonElement>(null);
@@ -222,12 +235,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
       return false;
     }
   }, [data]);
-  const canEdit =
-    !!paneId &&
-    isText &&
-    !markdownLanguage &&
-    !isImage &&
-    editableSnapshotValid;
+  const canEdit = !!paneId && isText && !isImage && editableSnapshotValid;
   const editorInitial = useMemo(
     () =>
       canEdit
@@ -242,29 +250,48 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   const editor = useFileEditor(paneId || `file:${filePath}`, editorInitial);
   const viewContent = editor.model?.content ?? data?.content ?? "";
 
-  // A line citation always opens Markdown as source so the referenced source row exists.
-  // Otherwise a freshly opened Marp deck defaults to slides and other Markdown to preview.
+  // What the loaded file allows. The mode state machine (docs/44 §1.1) derives
+  // the pane's view/edit layer and the surfaces to render from these.
+  const caps = useMemo<FileModeCaps>(
+    () => ({ markdown: isMarkdown, marp: isMarp, editable: canEdit }),
+    [canEdit, isMarkdown, isMarp],
+  );
+  const capsRef = useRef(caps);
+  capsRef.current = caps;
+  const paneMode = paneModeOf(fileMode, caps);
+  const surfaces = surfacesFor(fileMode, caps);
+
+  // A freshly loaded file picks its own starting mode: a line citation opens the
+  // source surface so the cited row exists, a Marp deck opens as slides, other
+  // Markdown as a preview. Capability changes afterwards only clamp the current
+  // selection (reconcile), so editing a deck's front matter cannot yank the user
+  // back to the initial mode.
   useEffect(() => {
-    if (isText) setMdMode(targetLine ? "source" : isMarp ? "slides" : "preview");
-  }, [data, isMarp, isText, targetLine]);
+    if (!data) return;
+    setFileMode(initialFileMode(capsRef.current, { hasTargetLine: !!targetLine }));
+  }, [data, targetLine]);
 
   useEffect(() => {
-    setMode("view");
+    setFileMode((prev) => reconcileFileMode(prev, caps));
+  }, [caps]);
+
+  useEffect(() => {
+    setFileMode({ kind: "plain", mode: "view" });
     setEditorNotice("");
     setResolutionOpen(true);
   }, [filePath]);
 
   useEffect(() => {
-    if (mode !== "edit" || !canEdit) return;
+    if (!surfaces.editor) return;
     queueMicrotask(() => editorFocusRef.current?.());
-  }, [canEdit, mode]);
+  }, [surfaces.editor]);
 
   // Opening or returning to a file view from a composer/terminal must also
   // retract Gboard.  This runs only for the active file pane and deliberately
   // leaves edit mode alone, where a keyboard is needed for CodeMirror.
   useEffect(() => {
-    if (mode === "view" && isActivePane && coarsePointer()) dismissSoftKeyboard();
-  }, [filePath, isActivePane, mode]);
+    if (paneMode === "view" && isActivePane && coarsePointer()) dismissSoftKeyboard();
+  }, [filePath, isActivePane, paneMode]);
 
   // A rejected transaction gets an immediate validation announcement. Once a
   // valid edit or state transition follows, return the live region to the normal
@@ -273,20 +300,16 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
     setEditorNotice("");
   }, [editor.model?.bufferGeneration, editor.model?.phase]);
 
-  const showSlides = isMarp && mdMode === "slides";
-  const showPreview = isMarkdown && mdMode === "preview";
-
-  // Expose the preview/source toggle to the keyboard system (viewer.mdMode command).
-  // Cycles the available modes: [slides,] preview, source. Registered only for Markdown,
-  // so the command no-ops on other files. Keyed by the host pane's id.
+  // Expose the Markdown mode walk to the keyboard system (viewer.mdMode command).
+  // Modes are the outer axis and the preview renderer the inner one, so a Marp
+  // deck reaches both of its previews without a fourth top-level mode (§1.1).
+  // Registered only for Markdown, so the command no-ops on other files.
   useEffect(() => {
     if (!paneId || !isMarkdown) return;
-    const modes: MdMode[] = isMarp ? ["slides", "preview", "source"] : ["preview", "source"];
     return registerPaneViewActions(paneId, {
-      toggleMdMode: () =>
-        setMdMode((prev) => modes[(modes.indexOf(prev) + 1) % modes.length]),
+      toggleMdMode: () => setFileMode((prev) => cycleFileMode(prev, capsRef.current)),
     });
-  }, [paneId, isMarkdown, isMarp]);
+  }, [paneId, isMarkdown]);
 
   // Highlight once per file load; fall back to escaped plain text. Huge files
   // skip highlighting entirely (plain mode below). Markdown source is deliberately
@@ -316,8 +339,8 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   };
 
   const changeMode = (next: "view" | "edit") => {
-    if (next === mode) return;
-    setMode(next);
+    if (next === paneMode) return;
+    setFileMode((prev) => withPaneMode(prev, next, capsRef.current));
     if (next === "view") queueMicrotask(() => viewTabRef.current?.focus());
   };
 
@@ -332,12 +355,20 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
     (next === "view" ? viewTabRef : editTabRef).current?.focus();
   };
 
+  const changeMarkdownMode = (next: MarkdownMode) => {
+    setFileMode((prev) => withMarkdownMode(prev, next, capsRef.current));
+  };
+
+  const changeRenderer = (next: PreviewRenderer) => {
+    setFileMode((prev) => withRenderer(prev, next, capsRef.current));
+  };
+
   const onFocusCapture = (event: FocusEvent<HTMLDivElement>) => {
     // A focus move (Tab, programmatic reader focus, or a click) is just as much
     // an activation as pane mouse-down.  Keeping layout.activeId in sync makes
     // ProjectFiles highlight this exact file in the left rail.
     if (paneId) setActivePane(paneId);
-    if (mode === "view" && coarsePointer()) {
+    if (paneMode === "view" && coarsePointer()) {
       // In particular, prevent CodeView's read-only contentEditable from being
       // interpreted as an editing field by Android/Gboard.
       const target = event.target;
@@ -457,35 +488,40 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
         )}
         {canEdit && (
           <>
-            <div
-              className="ui-seg sm file-mode-tabs"
-              role="tablist"
-              aria-label={tr("editor.mode_group")}
-              onKeyDown={onModeKeyDown}
-            >
-              <button
-                ref={viewTabRef}
-                type="button"
-                className={"seg-btn" + (mode === "view" ? " active" : "")}
-                role="tab"
-                aria-selected={mode === "view"}
-                tabIndex={mode === "view" ? 0 : -1}
-                onClick={() => changeMode("view")}
+            {/* Non-Markdown keeps the view/edit tablist. Markdown drives the same
+                pane layer from its own top-level button group below, so the two
+                control kinds never appear together (docs/44 §1.1, §5). */}
+            {fileMode.kind === "plain" && (
+              <div
+                className="ui-seg sm file-mode-tabs"
+                role="tablist"
+                aria-label={tr("editor.mode_group")}
+                onKeyDown={onModeKeyDown}
               >
-                {tr("editor.mode.view")}
-              </button>
-              <button
-                ref={editTabRef}
-                type="button"
-                className={"seg-btn" + (mode === "edit" ? " active" : "")}
-                role="tab"
-                aria-selected={mode === "edit"}
-                tabIndex={mode === "edit" ? 0 : -1}
-                onClick={() => changeMode("edit")}
-              >
-                {tr("editor.mode.edit")}
-              </button>
-            </div>
+                <button
+                  ref={viewTabRef}
+                  type="button"
+                  className={"seg-btn" + (paneMode === "view" ? " active" : "")}
+                  role="tab"
+                  aria-selected={paneMode === "view"}
+                  tabIndex={paneMode === "view" ? 0 : -1}
+                  onClick={() => changeMode("view")}
+                >
+                  {tr("editor.mode.view")}
+                </button>
+                <button
+                  ref={editTabRef}
+                  type="button"
+                  className={"seg-btn" + (paneMode === "edit" ? " active" : "")}
+                  role="tab"
+                  aria-selected={paneMode === "edit"}
+                  tabIndex={paneMode === "edit" ? 0 : -1}
+                  onClick={() => changeMode("edit")}
+                >
+                  {tr("editor.mode.edit")}
+                </button>
+              </div>
+            )}
             <button
               type="button"
               className="file-save-btn"
@@ -506,20 +542,45 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
             </button>
           </>
         )}
-        {isMarkdown && (
-          <span className="ui-seg sm md-toggle" role="group" aria-label={tr("view.markdown_display_mode")}>
-            {isMarp && (
-              <button type="button" aria-pressed={mdMode === "slides"} className={"seg-btn" + (mdMode === "slides" ? " active" : "")} onClick={() => setMdMode("slides")}>
-                {tr("view.slides")}
-              </button>
+        {fileMode.kind === "markdown" && (
+          <>
+            <span className="ui-seg sm md-toggle" role="group" aria-label={tr("view.markdown_display_mode")}>
+              {availableMarkdownModes(caps).map((md) => (
+                <button
+                  key={md}
+                  type="button"
+                  aria-pressed={fileMode.md === md}
+                  className={"seg-btn" + (fileMode.md === md ? " active" : "")}
+                  onClick={() => changeMarkdownMode(md)}
+                >
+                  {/* Without an edit surface, `edit` is the read-only source view
+                      this pane has always offered — label it as such. */}
+                  {md === "edit"
+                    ? canEdit
+                      ? tr("editor.mode.edit")
+                      : tr("view.source")
+                    : md === "split"
+                      ? tr("editor.mode.split")
+                      : tr("view.preview")}
+                </button>
+              ))}
+            </span>
+            {isMarp && surfaces.preview && (
+              <span className="ui-seg sm md-toggle" role="group" aria-label={tr("editor.renderer_group")}>
+                {availableRenderers(caps).map((renderer) => (
+                  <button
+                    key={renderer}
+                    type="button"
+                    aria-pressed={surfaces.preview === renderer}
+                    className={"seg-btn" + (surfaces.preview === renderer ? " active" : "")}
+                    onClick={() => changeRenderer(renderer)}
+                  >
+                    {renderer === "slides" ? tr("view.slides") : tr("editor.renderer.doc")}
+                  </button>
+                ))}
+              </span>
             )}
-            <button type="button" aria-pressed={mdMode === "preview"} className={"seg-btn" + (mdMode === "preview" ? " active" : "")} onClick={() => setMdMode("preview")}>
-              {tr("view.preview")}
-            </button>
-            <button type="button" aria-pressed={mdMode === "source"} className={"seg-btn" + (mdMode === "source" ? " active" : "")} onClick={() => setMdMode("source")}>
-              {tr("view.source")}
-            </button>
-          </span>
+          </>
         )}
         {isImage && isText && (
           <span className="ui-seg sm md-toggle" role="group" aria-label={tr("view.image_display_mode")}>
@@ -556,64 +617,66 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
         </div>
       )}
 
-      {canEdit && editor.model && (
-        <div className="file-editor-shell" hidden={mode !== "edit"}>
-          <CodeEditor
-            path={editor.model.path}
-            content={editor.model.content}
-            wrap={wrapOn}
-            onChange={(content) => {
-              setEditorNotice("");
-              editor.edit(content);
-            }}
-            onSave={() => {
-              setEditorNotice("");
-              void editor.save();
-            }}
-            onValidationError={onEditorValidationError}
-            onReady={(focus) => {
-              editorFocusRef.current = focus;
-              if (mode === "edit") queueMicrotask(focus);
-            }}
-          />
-          {editor.mergeMine && (
-            <aside className="file-merge-reference" aria-label={tr("editor.merge_reference_aria")}>
-              <strong>{tr("editor.merge_reference")}</strong>
-              <pre>{editor.mergeMine}</pre>
-            </aside>
+      <div className={"file-surfaces" + (surfaces.split ? " is-split" : "")}>
+        {canEdit && editor.model && (
+          <div className="file-editor-shell" hidden={!surfaces.editor}>
+            <CodeEditor
+              path={editor.model.path}
+              content={editor.model.content}
+              wrap={wrapOn}
+              onChange={(content) => {
+                setEditorNotice("");
+                editor.edit(content);
+              }}
+              onSave={() => {
+                setEditorNotice("");
+                void editor.save();
+              }}
+              onValidationError={onEditorValidationError}
+              onReady={(focus) => {
+                editorFocusRef.current = focus;
+                if (surfaces.editor) queueMicrotask(focus);
+              }}
+            />
+            {editor.mergeMine && (
+              <aside className="file-merge-reference" aria-label={tr("editor.merge_reference_aria")}>
+                <strong>{tr("editor.merge_reference")}</strong>
+                <pre>{editor.mergeMine}</pre>
+              </aside>
+            )}
+          </div>
+        )}
+
+        <div className="file-viewer-shell" hidden={!surfaces.source && !surfaces.preview}>
+          {err ? (
+            <pre className="filebody muted">({err})</pre>
+          ) : data == null ? (
+            <pre className="filebody muted">…</pre>
+          ) : isImage && (!isText || imgMode === "preview") ? (
+            <ImageView src={downloadURL(filePath)} alt={baseName(filePath)} onLoad={setImgDims} />
+          ) : data.binary ? (
+            <pre className="filebody muted">({tr("view.binary")}, {humanSize(data.size)})</pre>
+          ) : huge ? (
+            <pre className="filebody fb-plain">{viewContent}</pre>
+          ) : surfaces.preview === "slides" ? (
+            <MarpView source={viewContent} />
+          ) : surfaces.preview === "normal" ? (
+            <div className="md-scroll">
+              <MarkdownView source={viewContent} basePath={filePath} onOpenFile={showFile} onOpenDir={revealInFiles} />
+            </div>
+          ) : (
+            <CodeView
+              html={html}
+              lines={countLines(viewContent)}
+              lineNumbers={settings.lineNumbers}
+              wrap={wrapOn}
+              minimap={settings.minimap}
+              marks={marks}
+              targetLine={targetLine}
+              targetColumn={targetColumn}
+            />
           )}
         </div>
-      )}
-
-      <div className="file-viewer-shell" hidden={canEdit && mode === "edit"}>
-        {err ? (
-          <pre className="filebody muted">({err})</pre>
-        ) : data == null ? (
-          <pre className="filebody muted">…</pre>
-        ) : isImage && (!isText || imgMode === "preview") ? (
-          <ImageView src={downloadURL(filePath)} alt={baseName(filePath)} onLoad={setImgDims} />
-        ) : data.binary ? (
-          <pre className="filebody muted">({tr("view.binary")}, {humanSize(data.size)})</pre>
-        ) : huge ? (
-          <pre className="filebody fb-plain">{viewContent}</pre>
-        ) : showSlides ? (
-          <MarpView source={viewContent} />
-        ) : showPreview ? (
-          <div className="md-scroll">
-            <MarkdownView source={viewContent} basePath={filePath} onOpenFile={showFile} onOpenDir={revealInFiles} />
-          </div>
-        ) : (
-          <CodeView
-            html={html}
-            lines={countLines(viewContent)}
-            lineNumbers={settings.lineNumbers}
-            wrap={wrapOn}
-            minimap={settings.minimap}
-            marks={marks}
-            targetLine={targetLine}
-            targetColumn={targetColumn}
-          />
-        )}
       </div>
 
       {editor.model && editorAlert && (
