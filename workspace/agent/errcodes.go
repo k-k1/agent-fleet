@@ -90,4 +90,12 @@ const (
 	// literal コードのまま英語 developer message を表示する（session_title.go 参照）。
 	errCodeTitleFeatureDisabled = "title_feature_disabled"
 	errCodeTitleNoContent       = "title_no_content"
+
+	// エージェントメモリの版管理（memory_handlers.go, docs/39 / ADR 0022）
+	errCodeMemoryBadRequest     = "memory_bad_request"
+	errCodeMemoryBadRev         = "memory_bad_rev"
+	errCodeMemoryBadPath        = "memory_bad_path"
+	errCodeMemoryNoSnapshots    = "memory_no_snapshots"
+	errCodeMemorySnapshotFailed = "memory_snapshot_failed"
+	errCodeMemoryDiffFailed     = "memory_diff_failed"
 )

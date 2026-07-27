@@ -55,6 +55,9 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 			return "git.fetch", name, true
 		case name != "" && strings.HasSuffix(p, "/ff"):
 			return "git.ff", name, true
+		case p == "/api/agents/memory/snapshots":
+			// エージェントメモリの手動 snapshot（docs/39）。restore / import / export は P2・P3 で足す。
+			return "memory.snapshot", "", true
 		case p == "/api/sessions":
 			return "session.create", "", true
 		case name != "" && strings.HasSuffix(p, "/fork"):

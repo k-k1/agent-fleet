@@ -166,6 +166,11 @@ func main() {
 	// "origin advanced" without a manual fetch (fetch_loop.go).
 	startAutoFetch()
 
+	// エージェントメモリの自動 snapshot（docs/39 / ADR 0022 P1）: claude/codex の
+	// メモリ md を bare repo へ差分保存する。ポーリング契機（memory_trigger.go）で、
+	// 変更が静穏かつ対象セッションが非稼働のときだけ積む。AF_MEMORY_SNAPSHOT=off で無効。
+	startMemorySnapshotLoop()
+
 	// Chat-bridge delivery loop (docs/37 P1): drains the on-disk queue that
 	// notice.Put / record-exit enqueue into (possibly from hook subprocesses)
 	// and pushes to the configured chat providers (Discord first).

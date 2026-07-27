@@ -81,6 +81,12 @@ export const en: Record<keyof typeof ja, string> = {
   "err.fork_missing_dir": "Can't fork: the working folder doesn't exist.",
   "err.title_feature_disabled": "AI suggestions are off (turn on title auto-suggestion in Display settings).",
   "err.title_no_content": "Not enough conversation yet (try again after a few exchanges).",
+  "err.memory_bad_request": "The request is malformed.",
+  "err.memory_bad_rev": "No snapshot was found for that point in time.",
+  "err.memory_bad_path": "That path is outside the managed memory roots.",
+  "err.memory_no_snapshots": "There are no snapshots yet.",
+  "err.memory_snapshot_failed": "Failed to take the snapshot.",
+  "err.memory_diff_failed": "Failed to load the diff.",
 
   // --- builtin assistants (docs/28 P3; ids are the fixed set in assistants.go. The
   //     Agent returns Japanese, but for builtins the Console catalog resolves display) ---
