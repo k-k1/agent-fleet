@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -593,20 +594,34 @@ func (opencodeChat) send(ctx context.Context, c *chatConversation, prompt string
 	args = append(args, headlessPrompt(c.personaOf(), c.knowledgeDirs(), prompt))
 	cmd := exec.CommandContext(ctx, "opencode", args...)
 	cmd.Dir = dir
-	cmd.Env = envWith(opencode.Env()...)
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("opencode execution failed: %s", cliErr(err))
+	env := opencode.Env()
+	if cfg := opencodeChatConfig(c); cfg != "" {
+		env = append(env, "OPENCODE_CONFIG="+cfg)
 	}
-	reply, sesID, model, usage := parseOpencodeRunEvents(out)
+	cmd.Env = envWith(env...)
+	out, err := cmd.Output()
+	// Parse BEFORE the error branch: a failed run still prints its events, and both the
+	// reason (turnErr) and whatever tokens it burned are in there.
+	reply, sesID, model, turnErr, usage := parseOpencodeRunEvents(out)
 	call.Totals = usage.ledgerTokens()
 	if model != "" {
 		call.Models = []usageModelRow{{Model: model, ModelRaw: model, Tokens: call.Totals}}
 	}
+	if err != nil {
+		if turnErr != "" {
+			return "", fmt.Errorf("opencode turn failed: %s", turnErr)
+		}
+		return "", fmt.Errorf("opencode execution failed: %s", cliErr(err))
+	}
+	// Only a turn that answered adopts its session id: a failed run mints a session too,
+	// and switching to it would strand the conversation's context on the retry.
 	if sesID != "" {
 		c.OpencodeSessionID = sesID
 	}
 	if reply == "" {
+		if turnErr != "" {
+			return "", fmt.Errorf("opencode turn failed: %s", turnErr)
+		}
 		return "", errors.New("no response from opencode")
 	}
 	call.OK = true
@@ -614,12 +629,24 @@ func (opencodeChat) send(ctx context.Context, c *chatConversation, prompt string
 	return reply, nil
 }
 
+// opencodeChatPolicy is the chat contract every opencode chat run carries: file edits
+// and shell denied — the opencode analog of chatToolLimits. It rides BOTH config files
+// below so the posture holds whether opencode merges OPENCODE_CONFIG with the project
+// config or replaces it (undocumented; not worth betting on).
+func opencodeChatPolicy() map[string]any {
+	return map[string]any{"edit": "deny", "bash": "deny"}
+}
+
 // opencodeChatDir prepares the per-tool-grant working dir for a chat's opencode run,
-// with an opencode.json carrying the chat policy: file edits and shell denied (the
-// opencode analog of chatToolLimits), plus — for af grants — the local Agent Fleet MCP
-// server. Grants get separate dirs (none/read/write) because the config is per-dir and
-// conversations with different grants run concurrently. Falls back to the shared
-// chat workdir when the dir can't be prepared (opencode then runs with its defaults).
+// with an opencode.json carrying the chat policy. The dir is opencode's PROJECT: its
+// session store is scoped to it, so the path a conversation runs in is part of its
+// resume identity (実測 1.18.5: `run --session <id>` from another dir hangs outright
+// rather than erroring). That is why the grant split (none/read/write) stays even
+// though the file no longer differs per grant — collapsing it would strand every
+// existing conversation's session. The af MCP server is NOT here: it needs the
+// conversation id (docs/30 report_to), which is per conversation, not per grant —
+// see opencodeChatConfig. Falls back to the shared chat workdir when the dir can't
+// be prepared (opencode then runs with its defaults).
 func opencodeChatDir(c *chatConversation) string {
 	grant := "none"
 	if c.afToolsEnabled() {
@@ -634,16 +661,7 @@ func opencodeChatDir(c *chatConversation) string {
 	}
 	cfg := map[string]any{
 		"$schema":    "https://opencode.ai/config.json",
-		"permission": map[string]any{"edit": "deny", "bash": "deny"},
-	}
-	if grant != "none" {
-		mcpArgs := []string{paths.ExePath(), "mcp-stdio"}
-		if grant == "write" {
-			mcpArgs = append(mcpArgs, "--write")
-		}
-		cfg["mcp"] = map[string]any{
-			"af": map[string]any{"type": "local", "command": mcpArgs, "enabled": true},
-		}
+		"permission": opencodeChatPolicy(),
 	}
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
@@ -655,6 +673,55 @@ func opencodeChatDir(c *chatConversation) string {
 	return dir
 }
 
+// opencodeChatConfig writes this conversation's own opencode config and returns its
+// path for OPENCODE_CONFIG (honored by opencode 1.18.5 — verified live: a server
+// defined only in the env-pointed file shows up connected in `opencode mcp list`).
+//
+// It exists because opencode's config is per FILE and the af MCP server must carry
+// `--conv <id>`: without it mcp-stdio has no conversation to attach report_to to, so
+// create_session / send_to_session arm no report and the operator never gets the
+// 【セッション報告】 it is told to wait for (docs/30). claude/codex/agy pass --conv in
+// their own per-conversation config; opencode used to have nowhere to put it because
+// its only config was the per-GRANT project dir shared by every conversation.
+//
+// Pointing OPENCODE_CONFIG at a per-conversation file keeps --dir (the session's
+// project identity) untouched, so existing conversations resume normally. Returns ""
+// when the conversation holds no af grant, or when the file can't be written — the
+// run then falls back to the project config (policy intact, no af tools).
+func opencodeChatConfig(c *chatConversation) string {
+	if !c.afToolsEnabled() || !validConvID(c.ID) {
+		return ""
+	}
+	dir := filepath.Join(homeDir(), ".config", "agent-fleet", "chat-wd", "opencode-conv")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		log.Printf("opencode chat config: %v (af tools unavailable this turn)", err)
+		return ""
+	}
+	mcpArgs := []string{paths.ExePath(), "mcp-stdio"}
+	if c.afWriteEnabled() {
+		// --conv rides the write grant only: it exists for report_to / origin_conv,
+		// which are write-side plumbing (mcp_stdio.go).
+		mcpArgs = append(mcpArgs, "--write", "--conv", c.ID)
+	}
+	cfg := map[string]any{
+		"$schema":    "https://opencode.ai/config.json",
+		"permission": opencodeChatPolicy(),
+		"mcp": map[string]any{
+			"af": map[string]any{"type": "local", "command": mcpArgs, "enabled": true},
+		},
+	}
+	b, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return ""
+	}
+	p := filepath.Join(dir, c.ID+".json")
+	if err := os.WriteFile(p, append(b, '\n'), 0o600); err != nil {
+		log.Printf("opencode chat config: %v (af tools unavailable this turn)", err)
+		return ""
+	}
+	return p
+}
+
 // parseOpencodeRunEvents walks an opencode run --format json stream: the reply is the
 // text parts in arrival order (deduped by part id — opencode may re-emit a part as it
 // settles), every event carries the session id for resume, and step_finish parts carry
@@ -664,7 +731,17 @@ func opencodeChatDir(c *chatConversation) string {
 // modelID on the message, and the run stream is expected to carry it too, but this
 // workspace has no opencode login to verify against. We read it wherever it plausibly
 // rides and degrade to "" (→ requested / default_unknown) rather than guessing a schema.
-func parseOpencodeRunEvents(out []byte) (reply, sesID, model string, usage opencodeUsage) {
+//
+// turnErr is the reason a run produced no answer. opencode reports a provider failure
+// as an EVENT on stdout and exits non-zero with an empty stderr (実測 1.18.5):
+//
+//	{"type":"error","sessionID":"ses_…","error":{"name":"UnknownError",
+//	 "data":{"message":"Unexpected server error. Check server logs for details.",
+//	         "ref":"err_26a07104"}}}
+//
+// Without reading it the caller can only say "exit status 1" / "no response from
+// opencode", which is what made a silently failed assistant turn undiagnosable.
+func parseOpencodeRunEvents(out []byte) (reply, sesID, model, turnErr string, usage opencodeUsage) {
 	texts := map[string]string{} // part id -> latest text
 	var order []string
 	for _, ln := range bytes.Split(out, []byte("\n")) {
@@ -685,12 +762,24 @@ func parseOpencodeRunEvents(out []byte) (reply, sesID, model string, usage openc
 			Message struct {
 				ModelID string `json:"modelID"`
 			} `json:"message"`
+			Error struct {
+				Name string `json:"name"`
+				Data struct {
+					Message string `json:"message"`
+					Ref     string `json:"ref"`
+				} `json:"data"`
+			} `json:"error"`
 		}
 		if json.Unmarshal(ln, &ev) != nil {
 			continue
 		}
 		if ev.SessionID != "" {
 			sesID = ev.SessionID
+		}
+		if ev.Type == "error" {
+			if msg := opencodeErrText(ev.Error.Name, ev.Error.Data.Message, ev.Error.Data.Ref); msg != "" {
+				turnErr = msg // 最後のエラーが正（後続の方が具体的なことが多い）
+			}
 		}
 		for _, m := range []string{ev.ModelID, ev.Part.ModelID, ev.Message.ModelID} {
 			if m != "" {
@@ -712,7 +801,23 @@ func parseOpencodeRunEvents(out []byte) (reply, sesID, model string, usage openc
 	for _, id := range order {
 		parts = append(parts, texts[id])
 	}
-	return strings.TrimRight(strings.Join(parts, "\n\n"), "\n"), sesID, model, usage
+	return strings.TrimRight(strings.Join(parts, "\n\n"), "\n"), sesID, model, turnErr, usage
+}
+
+// opencodeErrText renders an error event as one line for the user. The ref is kept:
+// it is the only handle opencode support has on a server-side failure.
+func opencodeErrText(name, msg, ref string) string {
+	out := strings.TrimSpace(msg)
+	if out == "" {
+		out = strings.TrimSpace(name)
+	}
+	if out == "" {
+		return ""
+	}
+	if ref = strings.TrimSpace(ref); ref != "" {
+		out += " (ref: " + ref + ")"
+	}
+	return out
 }
 
 // agyChat runs `agy -p` (print mode, plain-text stdout — v1.1.4 has no structured
@@ -1275,10 +1380,13 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		cmd.Dir = chatWorkdir()
 		cmd.Env = envWith(opencode.Env()...)
 		out, err := cmd.Output()
+		reply, sesID, model, turnErr, usage := parseOpencodeRunEvents(out)
 		if err != nil {
+			if turnErr != "" {
+				return "", fmt.Errorf("opencode turn failed: %s", turnErr)
+			}
 			return "", fmt.Errorf("opencode execution failed: %s", cliErr(err))
 		}
-		reply, sesID, model, usage := parseOpencodeRunEvents(out)
 		call.Totals, call.OK = usage.ledgerTokens(), true
 		if model != "" {
 			call.Models = []usageModelRow{{Model: model, ModelRaw: model, Tokens: call.Totals}}
