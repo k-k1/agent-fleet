@@ -24,6 +24,27 @@ Marpではトップレベルの `edit` / `preview` / `split` を維持し、prev
 `source` は新しい `edit` に対応し、`preview` と `slides` はそれぞれこの2つのpreview rendererへ
 対応付ける。トップレベルに4つ目のモードは増やさないため、Marpの通常previewを失わない。
 
+Markdownファイルでは、この3モードをペイン上部の唯一のトップレベル操作とし、冒頭の表の
+`mode: "view" | "edit"` はそこから導出する。`edit` と `split` は編集バッファを持つ
+`mode: "edit"`、`preview` は `mode: "view"` に対応する。非Markdownのテキストは従来どおり
+view/editの2択を直接操作する。編集可能なMarkdownに読み取り専用の `source` モードは設けない。
+現行の `source` が持っていた選択→送ると行引用のジャンプは、§1.8のとおり編集面が引き継ぐ。
+
+編集できないMarkdown（`editable:false`、2 MiB超、viewerのplainモード）は3モード群を出さず、
+現行の preview / source / slides をそのまま維持する。この場合ペインは `mode: "view"` に固定される。
+
+`preview` と `split` のプレビューは、ディスクの本文ではなく現在の編集バッファから描画する。
+未保存の変更がそのまま見えることが編集モードの目的であり、保存の有無でプレビューの入力を
+切り替えない。プレビューの再描画は入力ごとではなくデバウンスし、書きかけのMermaid図やMarp
+スライドを毎打鍵描画しない。
+
+Marpかどうか（front matterの `marp: true`）は編集で変わり得る。判定を毎打鍵で追従させると
+モード群のボタンが増減して不安定になるため、判定にも同じデバウンスを用いる。判定が変わって
+選択中のrendererが使えなくなった場合は、通常previewへ落とす。
+
+3モードとpreview rendererの選択はペイン内のUI状態であり、本文・revision・undo・提案と同じく
+layout descriptorへ永続化しない。ブラウザ再読込後は初期状態から始める。
+
 編集開始時に GET した本文をタブ内のバッファへコピーし、同時にその本文の
 `baseDiskRevision` と保存対象パスを保持する。入力でバッファが変われば dirty とする。
 dirty 本文、undo 履歴、提案、バッファ世代はメモリだけに置く。`PaneContent` や layout descriptor
@@ -214,6 +235,25 @@ mine/remoteの差分表示、3つの解決操作、キャンセル、競合後�
 replacement単体と適用後全文の両方を同じvalidatorで検査する。これはPUT側のvalidationとは別に、
 CodeMirror documentとAI適用境界で先に実行するPhase 2/4の共通契約である。
 
+### 1.8 編集面の選択操作と行ジャンプ
+
+読み取り専用のCodeViewが持つ2つの操作は、編集面（CodeMirror 6）でも同じ機能として提供する。
+読み取り専用のsource面をモードとして併存させる方式は採らない（§1.1）。編集面がsource面の
+機能を包含することが、モードを3つに保てる前提である。
+
+- **選択→送る:** 選択範囲の行番号はDOMの `data-ln` 属性ではなくCodeMirrorのdocumentから求める。
+  引用文字列も**documentから切り出す**。CodeMirrorは行を仮想化するため、画面外へ伸びた選択を
+  DOMのSelectionから読むと引用が途中で欠落する。読み取り専用のCodeViewは全行をDOMに持つため
+  この問題が無かったので、移植時に同じ実装を流用してはならない。
+- **行ジャンプ:** `targetLine` はdocument上の位置へ変換し、スクロールと一時的な行ハイライトで
+  示す。現行のCodeViewが `targetColumn` を使っていないため、v1も行単位で揃える。エディタの
+  生成完了前に `targetLine` が与えられた場合と、生成後に変化した場合の双方を扱う。
+- `split` では選択の捕捉面が編集側とプレビュー側の2つになる。ピルは一度に1つだけ表示し、
+  片方で選択が起きたらもう片方の捕捉状態を解除する。
+- モード切替でCodeMirrorをアンマウントしない。undo履歴と選択を保持したまま表示だけを切り替える。
+- ペイン内検索（Console側のDOM走査）は仮想化された編集面には及ばず、編集面ではCodeMirror内蔵の
+  検索を使う。これはPhase 2からの既知の差であり、Phase 3で変わるものではない。
+
 ## 2. ファイル対象の固定条件
 
 ### 2.1 対応するファイル
@@ -353,6 +393,33 @@ Content-Typeは `application/json` とする。サーバーは互換性のため
   発生確率は極めて低いと判断してv1では対応しない。解消にはCP側アーキテクチャの変更が必要で、
   path単位の進行中PUTをCPが追跡して対象PUTの確定までGETを遅延させるか、保存operation IDを
   導入してGETがPUT確定を待ち合わせる仕組みが将来の改善候補である。
+
+#### メタデータのみの応答（`meta=1`）
+
+外部変更の検知（§7）のために、GETは本文を返さないメタデータ応答を持つ。新しいルートは作らず、
+既存の `GET /fs/file` に `meta=1` を加える。CPの中継はクエリをそのまま透過するため、CP側の
+ルート追加は不要である。
+
+```json
+{
+  "path": "repos/example/README.md",
+  "size": 1842,
+  "binary": false,
+  "truncated": false,
+  "editable": true,
+  "editabilityReason": null,
+  "revision": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+}
+```
+
+- 応答は通常のGETから `content` を除いたものとする。各fieldの意味、`editable` の判定順序、
+  `revision` を返す条件、エラー契約はすべて通常のGETと同一で、`meta=1` 専用の分岐は設けない。
+- path解決、denylist、symlink拒否、許可rootの選択、browse-root配下でのpath mutex取得も通常の
+  GETと同じ経路を通る。進行中のPUTがあれば同じくその確定を待つ。
+- `meta=1` は監視専用であり、`SaveStateUnknown` / `Conflict` の復旧GETの代替にはしない。復旧は
+  §1.5・§1.6のとおり本文を伴うGETで行う。
+- `editable:false` のファイルは `revision` を持たないため、`meta=1` でも本文が変化したかを
+  確定できない。§7の自動追従の対象は `editable:true` に限る。
 
 ### 3.3 PUT `/fs/file`
 
@@ -591,6 +658,9 @@ wire envelope が必要な場合は version を持たせる。
   移動できる。
 - Markdownのedit/preview/split切替はbutton groupとし、トグル状態を `aria-pressed` で表す。
   Marpのプレビューはこのpreview側の描画方式であり、別の編集モードを増やさない。
+  Markdownではこのbutton groupがトップレベル操作であり、非Markdownの `role="tablist"` による
+  view/edit切替と同じペインに同時に出さない（§1.1）。preview rendererの切替（通常preview /
+  slides）も同じ階層のbutton groupとし、`split` では右側のプレビューに作用する。
 - Saveボタンはタッチ端末を含む全環境で提供し、Ctrl+S / Cmd+Sと同じsnapshot保存処理を呼ぶ。
   saving中は同一paneのSaveを無効化し、追加入力は可能だが別PUTを並行送信しない。
 - dirty、saving、saved、risk accepted、revision conflict、conflict remote unavailable、write state unknownは
@@ -599,6 +669,8 @@ wire envelope が必要な場合は version を持たせる。
   再取得・差分確認・再保存・リスク承認・mineのコピー・破棄の該当する選択肢をfocus可能にする。
 - Phase 2の受け入れでは、マウスなしのview/edit切替・保存・競合表示、タッチ端末のSave操作、
   focus移動、`aria-selected`/`aria-pressed`/announceを確認する。
+- 外部変更のadvisory通知（§7）は `role="status"` / `aria-live="polite"` とする。`role="alert"`
+  相当は従来どおり競合・状態不明にだけ用い、入力中の告知でfocusや読み上げを奪わない。
 
 ## 6. フェーズ受け入れ条件
 
@@ -679,8 +751,29 @@ wire envelope が必要な場合は version を持たせる。
 ### Phase 3（Markdown編集）
 
 - edit/preview/splitの既存MarkdownView/MarpView/Mermaid遅延ロード再利用を実装する。
+- Markdownではトップレベルを3モードへ一本化し、ペインの `mode` をそこから導出する（§1.1）。
+  編集できないMarkdownは現行のpreview/source/slidesへフォールバックする。
+- 編集面に選択→送るピルと行ジャンプを実装する（§1.8）。行番号と引用文字列をCodeMirrorの
+  documentから求め、画面外へ伸びた選択でも引用が欠落しないことをテストする。
 - 現行source/preview/slidesとの対応、Marpの通常preview/slide renderer、split中のrenderer切替、
   LF-only、dirty guardを回帰テストする。
+- プレビューとMarp判定のデバウンス、モード切替でCodeMirrorをアンマウントせずundo履歴と選択を
+  保持することを確認する。
+- Markdown編集に必要なCodeMirrorの言語拡張は動的importとし、初期バンドルへ含めない。
+- 外部変更の追従（Phase 3.5）はこのフェーズに含めない。
+
+### Phase 3.5（外部変更追従）
+
+設計方針は §7。実装時の受け入れ条件は次のとおり。
+
+- Agentへ `meta=1` のメタデータ応答を実装し、通常のGETと同じ安全境界・判定順序・エラー契約を
+  共有することをGo単体テストで確認する。新規ルートとCPのルート追加は行わない。
+- Consoleのプローブを実装する。可視時のみ動き、`saving` 中は停止し、Workspaceが `running` の
+  ときだけ実行することをテストする。
+- dirtyのときはadvisory通知に留め、プローブが `phase` を遷移させないことをテストで保証する。
+- cleanの自動追従で、undo履歴に旧本文が残らないこと（Ctrl+Zで外部変更を巻き戻して保存できない
+  こと）と、自分の保存を外部変更として誤検知しないことをテストする。
+- 読み取り専用のviewペインが同じプローブで追従することを確認する。
 
 ### Phase 4（AI変更提案）
 
@@ -695,3 +788,94 @@ wire envelope が必要な場合は version を持たせる。
 
 - 複数候補、hunk単位accept、セッション連携、補完、CRLF/改行マッピング対応は別ADRまたは本ADRの
   改訂で設計してから着手する。
+
+## 7. 外部変更の追従（Phase 3.5 設計方針）
+
+> 本節はPhase 3.5の方針を固定するもので、実装は未着手である。
+
+### 7.1 前提
+
+Workspaceのファイルは、Console以外の書き手が日常的に変更する。コーディングエージェント
+（Claude/Codex等）のWrite/Edit、shell、git checkout、その他のプロセスがそれにあたる。
+
+現在のConsole/Agentにはこれを検知する仕組みがない。ファイルペインは開いた時に一度GETするだけで
+以後は再取得せず、ファイルツリーとgit変更一覧も手動リフレッシュである。Agentはfsnotify等の
+ファイル監視を持たず、CPのpushストリームにもfs系のstreamはない。したがって現状の外部変更検知は
+**保存時のCAS（`409 revision_conflict`）による事後検知だけ**である。
+
+Phase 3.5の目的は、この事後検知に能動的な検知を足すことである。CASを置き換えるものではなく、
+保存の正しさの根拠は引き続き§1.2のCASにある。プローブはあくまで早期警告であり、保証を増やさない。
+
+### 7.2 検知方式
+
+`meta=1` のメタデータGET（§3.2）をポーリングする。全文GETのポーリングは、開いているペインごとに
+最大2 MiBを繰り返し転送するため採らない。
+
+プローブは次を全て満たすときだけ実行する。
+
+- Workspaceが `running` である。
+- タブが前面（`document.hidden` でない）かつ対象ペインが可視である。
+- 対象ファイルを `editable:true` として取得済みである。
+- `phase` が `saving` でない。進行中のPUTの結果は200応答で確定させ、プローブで先回りしない。
+
+トリガは、`visibilitychange`・ウィンドウfocus・ペインのactivateによる即時プローブと、低頻度の
+定期プローブ（10〜15秒程度。既存のセッションポーリング4秒より明確に緩く）を併用する。ブラウザへ
+戻った瞬間に気付けることが実用上もっとも効くため、即時トリガを主、定期実行を補助とする。
+プローブの失敗・タイムアウトは無音で扱い、次のトリガで再試行する。トーストは出さない。
+
+比較対象は `baseDiskRevision` とする。保存が成功すると `baseDiskRevision` は保存した本文の
+revisionへ更新されるため、自分の保存を外部変更として誤検知しない。
+
+### 7.3 dirty（未保存バッファがある）ときの扱い
+
+自動リロードは行わない。dirtyなmineを暗黙に上書きしない原則（§1.6）をそのまま適用する。
+
+外部変更は `phase` とは独立したadvisoryな観測として保持する。**プローブは `phase` を遷移させて
+はならない。** 「`Conflict` は409応答を受けたときにだけ発生する」という§1.6の不変条件を維持し、
+Phase 2で固定した状態遷移とそのテストを変更せずに載せる。
+
+- ステータス行へ外部変更を告知する。`role="status"` / `aria-live="polite"` とし、入力中に
+  `role="alert"` へ化けさせない（§5）。
+- 「差分を確認する」操作を提供する。実行時に本文を伴うGETを行い、成功すれば§1.6の
+  `ConflictSnapshot` を作って通常の競合UI（remote採用・mine破棄・手動merge・cancel）を開く。
+  取得できなければ `ConflictRemoteUnavailable` と同じ扱いにする。
+- ユーザーが何もしなくても、保存すれば409となり§1.6の経路で解決できる。
+- 観測したrevisionが現在の `bufferRevision` と一致する場合は競合ではない（外部の書き手が自分の
+  未保存本文と同じ内容を書いた）。§1.5の `classifyUnknownRemote` と同型に分類し、競合とは別の
+  文言で示す。
+
+### 7.4 clean（未編集）のときの扱い
+
+自動で最新化してよい。ただし次を守る。
+
+- **undo履歴に旧本文を残さない。** 現在の編集バッファへ全文置換のtransactionを流す実装をそのまま
+  使うと、Ctrl+Zで外部変更を巻き戻した本文を保存できてしまう。自動追従はエディタの状態を作り直す
+  等、履歴に残さない方法で行う。
+- カーソル位置とスクロール位置は行番号ベースで可能な範囲まで復元する。
+- `clean_risk_accepted` も自動追従の対象とするが、追従後はリスク承認の表示を解除する。
+- 読み取り専用のviewペインも同じプローブで追従する。編集バッファを持たないぶん扱いは単純で、
+  取得した本文で表示を差し替える。
+
+### 7.5 境界条件
+
+| 観測 | 扱い |
+|---|---|
+| 404（削除・rename） | ペインを自動で閉じない。dirtyならmineを保持して告知し、cleanでも告知に留める。 |
+| `editable:false` へ転落（CRLF化・巨大化・バイナリ化・read-only化） | 保存を試みる前に「保存できなくなった」ことを告知する。自動追従はしない。 |
+| symlink化・denylist該当などの安全境界エラー | 取得不能として扱い告知のみ。mineと `baseDiskRevision` は変更しない。 |
+| プローブ自体の失敗・タイムアウト・Workspace停止 | 無音で失敗させ、次のトリガで再試行する。 |
+
+`editable:false` のファイルは `revision` を持たないため、本文が変化したかを確定できない。v1の
+自動追従の対象は `editable:true` のファイルに限る。読み取り可能だが編集不可のファイル
+（`unsupported_newline`、`invalid_utf8`、`read_only_root`）へ追従を広げるには、これらにも
+raw byte revisionを返す契約拡張が必要であり、将来課題とする。
+
+### 7.6 v1で採らない選択肢
+
+- **Agentのfsnotify + pushストリーム:** リアルタイム性は高いが、監視レジストリ、CP経由の新しい
+  streamの配線、コンテナFSでのinotify挙動とwatch上限の検討が必要で、v1の変更範囲を大きく超える。
+  プローブでは不足だと確認された時点で別設計とする。
+- **全文GETのポーリング:** 通信量が開いているペイン数に比例して増える。
+- **dirtyなバッファへの自動マージ・自動リベース:** §1.6で採らないと決めた方針をそのまま適用する。
+- **ファイルツリー・git変更一覧の自動追従:** 本節の対象は開いているファイルペインに限る。左ペインの
+  自動更新は別の設計とする。

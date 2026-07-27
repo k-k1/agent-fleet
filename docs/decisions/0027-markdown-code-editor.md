@@ -1,6 +1,6 @@
 # 0027. File ペインに CodeMirror 6 の編集モードを追加し、保存を明示操作に限定する
 
-- 状態: **採用・Phase 0 設計固定**（2026-07-25）
+- 状態: **採用・Phase 2 まで実装済み / Phase 3・3.5 設計追補**（2026-07-27）
 - 詳細契約: [docs/44-markdown-code-editor.md](../44-markdown-code-editor.md)
 - 関連: [docs/dev/02-console.md](../dev/02-console.md)（Console のペイン構成）/
   [docs/dev/04-workspace-agent.md](../dev/04-workspace-agent.md)（fs の境界と denylist）/
@@ -72,6 +72,18 @@ Console の File ペインは現在、Workspace のファイルを読み取り�
     mine破棄、remoteをbaseにした手動merge、cancelをPhase 2で提供する。409後のGETで対象消失・安全境界
     エラー・編集不可となった場合はmineを保持する `ConflictRemoteUnavailable` とし、再取得・コピー・
     明示的に閉じる操作を提供する。remote revisionだけを更新してmineをforce overwriteする経路は作らない。
+12. **Markdownのトップレベルモードは3つに保ち、編集面がsource面の機能を包含する。** Markdownでは
+    edit/preview/splitを唯一のトップレベル操作とし、ペインの `mode` をそこから導出する。編集可能な
+    Markdownに読み取り専用の `source` モードは残さない。代わりに、CodeViewが持っていた選択→送ると
+    行引用のジャンプをCodeMirrorの編集面へ実装する。行番号と引用文字列はDOMではなくCodeMirrorの
+    documentから求める（仮想化により画面外の選択がDOMに存在しないため）。編集できないMarkdownは
+    従来のpreview/source/slidesへフォールバックする。
+13. **外部変更の追従はadvisoryなrevisionプローブとし、CASを置き換えない。** Console以外の書き手
+    （エージェント・shell・git）によるファイル変更を、本文を返さない `GET /fs/file?meta=1` の
+    ポーリングで検知する。新規ルートは作らずクエリフラグとし、CPのルート追加を不要にする。dirtyの
+    ときは通知だけを行い `phase` を遷移させず、`Conflict` は409応答からのみ発生するという不変条件を
+    維持する。cleanのときは自動追従してよいが、undo履歴に旧本文を残さない。追従対象は `revision` を
+    持つ `editable:true` のファイルに限る。
 
 ## 対象範囲とフェーズ境界
 
@@ -83,8 +95,10 @@ Console の File ペインは現在、Workspace のファイルを読み取り�
 - Phase 2 は CodeMirror 6、Fileペインのview/edit、single-flight保存、snapshot/generation、
   `SaveStateUnknown`、409競合とremote取得不能のstate machine、全buffer validator、dirty registry/
   navigation guard、beforeunload、ARIA、Saveボタンを実装する。
-- Phase 3 は Markdown/Marpのedit/preview/split、通常preview/slide renderer切替と既存描画資産の
-  回帰テストを実装する。
+- Phase 3 は Markdown/Marpのedit/preview/split、通常preview/slide renderer切替、編集面の選択→送ると
+  行ジャンプ、既存描画資産の回帰テストを実装する。
+- Phase 3.5 は `meta=1` メタデータGET、Consoleのプローブ、dirty時のadvisory通知、clean時の自動追従
+  （読み取り専用のviewペインを含む）を実装する。
 - Phase 4 は read-only提案生成チャネル、identity付き構造化提案、差分レビュー、accept/rejectを実装する。
 - Phase 5 の複数候補・hunk単位accept・セッション連携・補完・CRLF対応は別設計後に着手する。
 
@@ -101,6 +115,15 @@ Console の File ペインは現在、Workspace のファイルを読み取り�
 - **revisionなしの上書き保存:** 別タブ、外部エージェント、git操作による変更を黙って消すため採らない。
 - **全writerを協調ロック下に置く:** shell/agent/gitを含む全書込み経路の統合はv1の変更範囲と権限境界を
   大きくするため採らない。比較時点CASの限界を契約とテストに明記する。
+- **編集可能なMarkdownに読み取り専用のsourceモードを残す:** トップレベルのモードが4つ（Marpでは実質
+  5つ）になり、キーボードでの巡回とスマホ幅のレイアウトが破綻する。さらに、見た目がほぼ同じ
+  プレーンテキスト面が2つ並び、送るピル・検索・編集可否が面ごとに食い違う。編集面へ機能を移せば
+  この重複自体が不要になるため採らない。
+- **Agentのfsnotify + pushストリームで外部変更を検知する:** 監視レジストリ、CP経由の新しいstream配線、
+  コンテナFSのinotify挙動とwatch上限の検討が必要で、v1の変更範囲を大きく超える。プローブで不足だと
+  確認された時点で別設計とする。
+- **全文GETをポーリングして外部変更を検知する:** 開いているペインごとに最大2 MiBを繰り返し転送し、
+  Console↔CPの通信量削減の方針に反するため採らない。
 
 ## 結果と受け入れる制約
 
@@ -110,6 +133,9 @@ Console の File ペインは現在、Workspace のファイルを読み取り�
   大容量ファイル、denylist 配下、symlink 経由のファイルは編集対象外とする。GET/downloadは
   scratch/docsのallowed read root絶対pathをread-onlyで許可する。
 - dirty バッファはタブのメモリにしか存在しないため、ブラウザ再起動後の復元機能は提供しない。
+- 外部変更の検知はポーリングであり、リアルタイムではない。タブが背面のあいだ、およびプローブ間隔の
+  ぶんだけ気付くのが遅れる。`editable:false` のファイルは `revision` を持たないため追従対象外である。
+  検知は早期警告にすぎず、保存の正しさは引き続き比較時点CASが担保する。
 - 同一uidのnamespace mutatorやhardlinkによるinode別名は非協調writer脅威モデル外であり、fd境界は
   request-controlled pathとsymlink解決の保護範囲として説明する。
 - **既知の制約:** クライアントがPUTをタイムアウトで打ち切った後の復旧GETは、Agent内の
