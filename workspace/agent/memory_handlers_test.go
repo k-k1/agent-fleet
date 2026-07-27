@@ -25,6 +25,12 @@ func TestMemoryRoutesRegistered(t *testing.T) {
 		{"GET", "/agents/memory/snapshots", "GET /agents/memory/snapshots"},
 		{"POST", "/agents/memory/snapshots", "POST /agents/memory/snapshots"},
 		{"GET", "/agents/memory/diff", "GET /agents/memory/diff"},
+		{"GET", "/agents/memory/tree", "GET /agents/memory/tree"},
+		{"POST", "/agents/memory/restore", "POST /agents/memory/restore"},
+		{"PUT", "/agents/memory/settings", "PUT /agents/memory/settings"},
+		{"GET", "/agents/memory/export", "GET /agents/memory/export"},
+		{"POST", "/agents/memory/import", "POST /agents/memory/import"},
+		{"POST", "/agents/memory/import/apply", "POST /agents/memory/import/apply"},
 		// 既存のパターンルートと共存できていること（{kind} に食われない）。
 		{"GET", "/agents/codex/models", "GET /agents/{kind}/models"},
 	} {

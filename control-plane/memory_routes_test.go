@@ -20,6 +20,9 @@ func TestMemoryRoutesProxiedByCP(t *testing.T) {
 		{"GET", "/api/agents/memory/tree", "GET /api/agents/memory/tree"},
 		{"POST", "/api/agents/memory/restore", "POST /api/agents/memory/restore"},
 		{"PUT", "/api/agents/memory/settings", "PUT /api/agents/memory/settings"},
+		{"GET", "/api/agents/memory/export", "GET /api/agents/memory/export"},
+		{"POST", "/api/agents/memory/import", "POST /api/agents/memory/import"},
+		{"POST", "/api/agents/memory/import/apply", "POST /api/agents/memory/import/apply"},
 		// 既存のパターンルートに食われていないこと（/api/agents/{kind}/models と共存）。
 		{"GET", "/api/agents/codex/models", "GET /api/agents/{kind}/models"},
 	} {
@@ -30,8 +33,9 @@ func TestMemoryRoutesProxiedByCP(t *testing.T) {
 	}
 }
 
-// 手動 snapshot と restore は変更操作なので監査に載る（docs/39 の監査要件。import /
-// export は P3 で同じ表へ足す）。target は URL 由来のみで body は読まない。
+// 手動 snapshot・restore・import は変更操作なので監査に載る。export は読み取りだが、
+// 「個人のメモリを環境の外へ出す唯一の経路」なので docs/39 ★4 の要件として例外的に
+// 載せる。target は URL 由来のみで body は読まない。
 func TestMemorySnapshotIsAudited(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/agents/memory/snapshots", nil)
 	action, _, ok := auditActionTarget(req)
@@ -44,7 +48,23 @@ func TestMemorySnapshotIsAudited(t *testing.T) {
 	if !ok || action != "memory.restore" || target != "deadbeef" {
 		t.Fatalf("auditActionTarget = (%q, %q, ok=%v), want memory.restore/deadbeef", action, target, ok)
 	}
-	// 読み取り系は監査しない。
+	// import は受領と適用を別の行として残す（受領だけして適用しない、が普通に起きる）。
+	req = httptest.NewRequest(http.MethodPost, "/api/agents/memory/import", nil)
+	if action, _, ok := auditActionTarget(req); !ok || action != "memory.import" {
+		t.Fatalf("auditActionTarget = (%q, ok=%v), want memory.import", action, ok)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/agents/memory/import/apply?importId=20260727T010203Z", nil)
+	action, target, ok = auditActionTarget(req)
+	if !ok || action != "memory.import.apply" || target != "20260727T010203Z" {
+		t.Fatalf("auditActionTarget = (%q, %q, ok=%v), want memory.import.apply", action, target, ok)
+	}
+	// export は GET だが持ち出しなので監査する（target は形式だけ）。
+	req = httptest.NewRequest(http.MethodGet, "/api/agents/memory/export?format=bundle", nil)
+	action, target, ok = auditActionTarget(req)
+	if !ok || action != "memory.export" || target != "bundle" {
+		t.Fatalf("auditActionTarget = (%q, %q, ok=%v), want memory.export/bundle", action, target, ok)
+	}
+	// その他の読み取り系は監査しない。
 	for _, p := range []string{"/api/agents/memory/snapshots", "/api/agents/memory/tree", "/api/agents/memory/diff"} {
 		if _, _, ok := auditActionTarget(httptest.NewRequest(http.MethodGet, p, nil)); ok {
 			t.Errorf("GET %s should not be audited", p)

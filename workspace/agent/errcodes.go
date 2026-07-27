@@ -100,4 +100,10 @@ const (
 	errCodeMemoryDiffFailed     = "memory_diff_failed"
 	errCodeMemoryBadScope       = "memory_bad_scope"
 	errCodeMemoryRestoreFailed  = "memory_restore_failed"
+	// P3（export / import・memory_export.go / memory_import.go）
+	errCodeMemoryExportFailed   = "memory_export_failed"
+	errCodeMemoryImportFailed   = "memory_import_failed"
+	errCodeMemoryBadImport      = "memory_bad_import"
+	errCodeMemorySecretDetected = "memory_secret_detected"
+	errCodeMemoryTooLarge       = "memory_too_large"
 )

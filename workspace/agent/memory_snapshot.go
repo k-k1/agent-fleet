@@ -96,6 +96,9 @@ func memorySnapshotLocked(trigger string, now time.Time, trailers ...string) (me
 		return res, err
 	}
 	res.Committed, res.Rev = true, rev
+	// ★8 repo 肥大: 判断は git に任せる（--auto は閾値を超えたときだけ働く）。失敗しても
+	// snapshot は成立しているので握り潰す — ここで返すと「積めたのに失敗」に見えてしまう。
+	_, _ = memoryGitRun("gc", "--auto", "--quiet")
 	return res, nil
 }
 
@@ -104,8 +107,11 @@ func memorySnapshotLocked(trigger string, now time.Time, trailers ...string) (me
 func memoryCommitMessage(trigger string, now time.Time, changed []string, projects []memoryProjectRef, trailers []string) string {
 	// 1 行目の動詞で「積んだ理由」が一覧の先頭から読めるようにする（詳細は trailer）。
 	verb := "snapshot"
-	if trigger == memoryTriggerRestore {
+	switch trigger {
+	case memoryTriggerRestore:
 		verb = "restore"
+	case memoryTriggerImport:
+		verb = "import"
 	}
 	var subject string
 	switch {
