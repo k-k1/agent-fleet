@@ -1,6 +1,7 @@
 # 39. エージェントメモリ管理 — git 差分管理・時点ロールバック・環境間 import/export
 
-- 状態: **実装中（2026-07-27〜）。P1・P2・P3 完了、残るは P4（拡張）**。
+- 状態: **完了（2026-07-27）。P1〜P4 実装済み**。P4 は 5 項目のうち 2 つを実装し、
+  1 つを阻害要因つきで将来トラックへ、2 つを不要と判断して落とした（下記「P4 の実際」）。
   設計は確定し、未決事項 4 点も既定値で決着済み（下記「決着した未決事項」）。
   意思決定は [decisions/0022](decisions/0022-agent-memory-management.md)。
 - 要望: 各エージェントの「メモリ」を管理したい。①git での差分管理 ②日時・履歴指定でのロールバック
@@ -69,7 +70,7 @@ Antigravity CLI に一本化。Enterprise ライセンス・有償 API キーの
 | repo の置き場 | `/var/lib/af/claude/af-memory.git`（claude 専用マウント内・**codex 分の履歴も同居**） | このマウントが最も強い生存保証を持つため全 kind 共通の置き場にする。ファイルブラウザ非公開領域・recreate / clean-home 生存・ECS でも agent から見える。live ツリーには `.git` を置かない |
 | staging の置き場 | `/var/lib/af/claude/af-memory.staging`（**repo と同じマウント**。P1 実装で `$TMPDIR` から変更） | EFS 越しのクロスデバイスコピーを避け、bare repo の index と work-tree の内容を一致させるため。live ツリーに `.git` を置かないという本質的な制約は変わらない |
 | 実行主体 | **workspace-agent**（uid=dev、git あり、全 runtime で一様） | CP は REST proxy（dual allowlist）のみ。ECS で CP がファイル直アクセスできない制約を回避 |
-| snapshot 契機 | 自動（claude 全セッション idle 遷移 + debounce）＝**既定 ON**＋手動＋（将来 scheduler） | 無変更なら commit しない。debounce 既定 5 分 |
+| snapshot 契機 | 自動（claude 全セッション idle 遷移 + debounce）＝**既定 ON**＋手動 | 無変更なら commit しない。debounce 既定 5 分。当初併記していた scheduler 連携は、P1 で契機が常駐ポーリングになった時点で二重機構になるため落とした（「P4 の実際」④） |
 | ロールバック | **履歴は書き換えない**。restore は「新しい snapshot commit」として積む。適用前に pre-restore snapshot 自動取得 | ロールバックのロールバックが常に可能 |
 | スコープ | claude: 全体 / プロジェクト単位（`projects/<slug>/`）。codex: **ワークスペース全体のみ**（プロジェクト区分がファイル内エントリのためディレクトリ粒度が存在しない） | 日時指定は「その時刻以前の直近 snapshot」に解決 |
 | export | **git bundle（全履歴）を既定**、tar.gz（最新ツリーのみ）も選択可。**v1 は平文 DL**（暗号化なし） | bundle は 1 ファイル・履歴込み・`git bundle verify` で検証可能 |
@@ -91,7 +92,7 @@ repo:    /var/lib/af/claude/af-memory.git（bare・agent 管理・マウント�
                │ ③ REST（dual allowlist: workspace/agent/routes.go + control-plane/routes.go）
                ▼
 Console: 履歴一覧 / 差分 / ロールバック / export DL / import UL
-               │ ④（P4）push mirror
+               │ ④ push mirror（**未実装** — 内部 git に所有者限定 repo の概念が要る）
                ▼
 CP 内部 git（bare+http-backend 流用）→ 停止中閲覧・環境間直接同期
 ```
@@ -156,7 +157,7 @@ repo 内レイアウトは `claude/projects/<slug>/...`・`codex/...` と kind �
 
 | メソッド/パス | 内容 |
 |---------------|------|
-| `GET  /api/agents/memory/roots` | ルート一覧（kind・プロジェクト数・最終 snapshot 時刻） |
+| `GET  /api/agents/memory/roots` | ルート一覧（kind・プロジェクト数・最終 snapshot 時刻）。P4 で **`inactive`**（宣言はあるが今は無効なルートと理由）を追加 |
 | `GET  /api/agents/memory/snapshots?limit=&before=` | snapshot 一覧（id/ts/契機/変更パスサマリ） |
 | `POST /api/agents/memory/snapshots` | 手動 snapshot（`{trigger:"manual"}`） |
 | `GET  /api/agents/memory/diff?from=&to=&path=` | unified diff（path 省略で全体、`projects/<slug>` で絞り込み） |
@@ -168,7 +169,9 @@ repo 内レイアウトは `claude/projects/<slug>/...`・`codex/...` と kind �
 | `POST /api/agents/memory/import/apply` | `{importId, scope: {all \| kinds \| projects}}` → 選択分を live へ適用（=新 commit） |
 
 P1 で `roots` / `snapshots`(GET,POST) / `diff`、P2 で `tree` / `restore` / `settings`、
-P3 で `export` / `import` / `import/apply` を実装済み（`workspace/agent/memory_handlers.go`）。diff は
+P3 で `export` / `import` / `import/apply` を実装済み（`workspace/agent/memory_handlers.go`）。
+P4 の codex 有効化はこの表に足さず、**既存の `GET/PUT /api/codex/settings` に `memories` を
+1 キー足す**形にした（両側登録済みのパスなので、CP 許可リスト漏れの罠を踏まない）。diff は
 `?from=&to=&at=&path=` を受け、`from` 省略で「その snapshot が入れた変更」（初回 snapshot は
 空ツリーとの差分）を返す。エラーは `memory_bad_request` / `memory_bad_rev` / `memory_bad_path` /
 `memory_bad_scope` / `memory_no_snapshots` / `memory_snapshot_failed` / `memory_diff_failed` /
@@ -264,9 +267,11 @@ CP 側は `control-plane/routes.go` に同パスを `rest` で登録（**登録�
 - **repo 肥大**（★8）: snapshot commit と import の後に `git gc --auto`（閾値判断は git に
   任せる）。取り込み系譜は新しい 10 件を残して `update-ref -d` で刈る — 適用済みの内容は
   main 側の import commit として残るので、ref を消しても失われない。
-- **将来（P4）**: CP 内部 git プロバイダ（ADR 0010 の bare+http-backend）へ agent が
-  push mirror する経路を足すと、(a) WS 停止中の履歴閲覧・export、(b) scoped token による
-  環境間の**直接** pull 同期、が同じ repo 形式のまま手に入る。v1 のデータ形式（git repo）
+- **将来トラック（P4 で見送り）**: CP 内部 git プロバイダ（ADR 0010 の bare+http-backend）へ
+  agent が push mirror する経路を足すと、(a) WS 停止中の履歴閲覧・export、(b) scoped token に
+  よる環境間の**直接** pull 同期、が同じ repo 形式のまま手に入る……はずだったが、内部 git の
+  認可がテナント単位で per-user ACL を持たないため、そのまま載せると個人メモリが同僚から
+  読める（「P4 の実際」③）。前提条件を満たすまで着手しない。v1 のデータ形式（git repo）
   を変えずに積み増しできることが、git を選ぶ決め手の一つ。
 
 ### Console UI（P2・P3）
@@ -307,6 +312,96 @@ P3 実装の実際（同ファイル `TransferSection`）:
 - 適用の選択肢は preview が返す `kinds` / `projects` から作り、`unavailable`（この環境に
   受け皿が無い kind）は選ばせない。
 
+## P4 の実際（2026-07-27）
+
+P4 として並べていた 5 項目は確度が大きく違った。**実装したのは 2 つ**で、1 つは
+設計上の阻害要因が見つかったため実装せず前提条件つきで将来トラックへ送り、2 つは
+不要と判断して落とした。
+
+### ①-P4 codex memories のフリート有効化配線（実装）
+
+決着 #4 が P4 へ送った「フリートとして memories を有効にするか」の受け口。有効化の実体は
+`~/.codex/config.toml` の `features.memories = true`（`codex features enable memories` と等価）で、
+書き込みは**既存の `GET/PUT /codex/settings`** を拡張して賄う（新規 REST を足さないので、
+CP 許可リストの片側漏れ = FE 404 という既知の罠を踏まない）。`rate_limit_model_nudge` が
+使っていた TOML 外科編集を汎用化し（`tomlBool` / `tomlSetBool` / `tomlHasSection`）、
+利用者のコメントと `[projects.*]` 信頼設定をバイト単位で保つ。
+
+- **コストへの手当**: 有効化すると抽出（Phase1）と統合（Phase2）がバックグラウンドで走り
+  トークンを消費する。そこでトグルは「スイッチ 1 個」にせず、**有効化と同時に保守的な
+  `[memories]` を seed** する（`min_rollout_idle_hours = 12` / `max_rollouts_per_startup = 4`、
+  および抽出・統合モデルの安価な pin）。振れ幅は「走る量が減る方向」にしか取らない。
+  既に `[memories]` がある設定には一切触らない（利用者の調整値が正）。**無効化では
+  seed を消さない** — トグルの往復で調整値が飛ぶと「元に戻したつもり」が設定の消失になる。
+- **モデル pin は焼き込まない**: スラッグはカタログ側で入れ替わるため、有効化時点の
+  カタログ（`codex debug models`）から安価なものを引き、引けなければ**何も書かない**。
+  当たらない pin を残すより自己無効化する方が安全。
+- **「有効だが未生成」を区別する**: 有効化しても `~/.codex/memories` は次に codex が
+  走るまで生えない。ルート宣言は `RequireDir` なのでその間ルートは現れないが、黙って
+  落とすと「設定が効いていない」と読めてしまう。そこで `roots` API に **`inactive`** を
+  足し、`codex_memories_disabled`（未有効）/ `codex_memories_pending`（有効・未生成）/
+  `absent` を理由として返す。Console はこの行に有効化トグルとコスト注意書きを出す。
+- **ドリフト検知**: 本番の codex 起動は `--strict-config` を付けない＝**未知のキーは黙って
+  無視される**ので、上流が改名しても seed は無言で効かなくなる。`drift_test.go` に 2 本
+  追加した: `memories` が `codex features list` に stage 付きで在ること、seed する
+  `[memories]` キー全部が `app-server --strict-config` を通ること（存在しないキーを
+  与えて拒否されることを毎回確かめる負の対照つき）。期待値は手書きせず
+  `memoriesTuning()` から組み立てる。codex 0.145.0 で 4 キーとも受理を実測。
+
+### ②-P4 operator MCP（実装・持ち出し系は意図して非公開）
+
+`mcp_stdio.go` に 3 本足した。読み取り 2 本は af_read の会話にも出し、破壊的な 1 本は
+`--write` の会話にだけ広告する（広告ツール集合がゲート＝既存の流儀）。
+
+| ツール | 種別 | 中身 |
+|--------|------|------|
+| `list_memory_snapshots` | 読み取り | 履歴一覧（時刻・契機・変更プロジェクト） |
+| `get_memory_snapshot` | 読み取り | `tree`（その時点の中身）＋ `diff`（その snapshot の変更）を 1 回で返す |
+| `restore_memory_snapshot` | 書き込み | 指定時点へ戻す。範囲は `all` / `projects` / `kinds` |
+
+- **範囲の省略を「全体」と解釈しない**。モデルがフィールドを落としただけでメモリ全体が
+  巻き戻る事故を引数の段で潰す（利用者の承認は「この範囲を」に対して得られているので、
+  暗黙の拡大は裏切りになる）。rev / at の省略も同様に拒否する。
+- **export / import は公開しない**。P3 で持ち出しに secret スキャン＋本人の明示 ack を
+  課したのに、MCP 経由で「モデルが ack してファイルを吐ける」経路を作ると、その防御を
+  迂回する二つ目の出口になる。加えて MCP の応答はテキストで、bundle はバイナリかつ
+  MB 級＝そもそも器が合わない。持ち出し／取り込みは Console の本人操作に限る。
+  この不在は回帰テストで固定してある（ツール名に export/import を含むものが
+  広告集合に現れたら失敗する）。
+
+### ③-P4 CP internal git への push mirror（**実装せず・将来トラック**）
+
+「WS 停止中の閲覧/export」と「環境間の直接同期」を狙った項目だが、**現行の内部 git
+プロバイダにそのまま載せてはいけない**ことが分かったので実装しなかった。
+
+- **阻害要因（本質）**: `control-plane/git_http.go` の `authorizeGitRepo` は認可が
+  **テナント境界まで**で、`canPush` が write を role で絞る一方、**read は当該テナントの
+  アクティブメンバー全員に開いている**。repo 台帳も `ListGitReposByTenant` とテナント単位で、
+  per-user ACL の概念が無い。つまり個人メモリを内部 git repo として mirror すると、
+  **テナント同僚の誰もが clone できる**。★4（メモリは個人情報・export は本人操作のみ）と
+  正面から衝突し、P3 の secret スキャンによる持ち出しゲートも mirror 経路が丸ごと迂回する。
+- **副次の重さ**: 停止中閲覧を成立させるには CP 側に snapshots / diff / tree / export の
+  読み取り API 一式（＋export の secret スキャン）を持つ必要があり、ADR 0022 が
+  「v1 で CP に台帳・認証・GC を持つのは可動部過多」として退けた構図がそのまま戻る。
+- **着手の前提条件**: (a) 内部 git に所有者限定 repo の概念を入れる、または (b) 台帳に
+  載せない per-user のミラー領域（`<dataRoot>/memory-mirror/<membership>.git`）と
+  専用 API を新設する。いずれも docs/39 の範囲を超えるので**別 ADR 相当**。
+  v1 のデータ形式（git repo）は変えていないので、前提が整えば形式無変更で接続できる
+  ——「git を選ぶ決め手」は生きたまま残る。
+
+### ④-P4 scheduler 連携（**削除**）
+
+不要と判断した。P1 で契機がフック相乗りではなく**常駐ポーリング（既定 1 分 tick）**に
+なった時点で、定時実行から snapshot を叩く機構は二重になる（②に「ポーリングなので
+『15 分 tick の保険』は本体に統合された」と書いたのと同じ理由）。頻度を変えたいなら
+`AF_MEMORY_SNAPSHOT_INTERVAL` / `_DEBOUNCE` があり、全体 OFF は UI トグルがある。
+
+### ⑤-P4 opencode / agy の上流 watch（**コード作業なし**）
+
+ルート宣言テーブルは P1 で「1 行足せば snapshot / rollback / export が全部付く」形に
+なっており、上流がメモリを実装するまで触る余地が無い。kiro の global steering
+（`~/.kiro/steering/*.md`）も同じく root 1 行で載る候補のまま。
+
 ## 先行 OSS の調査（2026-07-23 追記）
 
 「agent-memory」という名前の OSS は 2 つあり、性質が違う。本設計との関係を整理する。
@@ -339,7 +434,7 @@ per-repo コミット型ストア（xChuCx 型。リポジトリに個人メモ�
 
 | 案 | 捨てた理由 |
 |----|-----------|
-| CP ホスト bare repo を v1 の正にする（内部 git 流用） | WS 停止中も操作できる利点はあるが、ECS では CP がユーザーデータへ直接ファイルアクセスできず、結局 agent push 型が必須。v1 から CP 側に台帳・認証・GC を持つのは可動部過多。P4 の mirror として積む |
+| CP ホスト bare repo を v1 の正にする（内部 git 流用） | WS 停止中も操作できる利点はあるが、ECS では CP がユーザーデータへ直接ファイルアクセスできず、結局 agent push 型が必須。v1 から CP 側に台帳・認証・GC を持つのは可動部過多。P4 の mirror として積む予定だったが、内部 git の認可がテナント単位で per-user ACL が無いことが分かり見送り（「P4 の実際」③） |
 | live ツリーへ直接 `git init` | claude 自身がメモリ列挙で `.git` を見る・エージェントの誤操作/破損リスク・allowlist 外ファイル混入。staging コピーはメモリが小さいので実質無料 |
 | `/var/lib/af/claude` 全体の版管理 | transcript 883MB と `.credentials.json` を巻き込む。論外 |
 | restic / 定期 tar 世代管理 | 差分 UX・時点解決・プロジェクト単位の選択復元・環境間移送のすべてで git に劣る。git はこの4要求の共通基盤 |
@@ -394,7 +489,7 @@ per-repo コミット型ストア（xChuCx 型。リポジトリに個人メモ�
 | P1 ✅ | snapshot エンジン（roots 宣言 = claude+codex・staging・bare repo・自動/手動契機）＋ REST（roots/snapshots/diff）＋ dual allowlist 登録 | 自動 snapshot が実データで積まれ、一覧/差分が API で取れる（codex は dir 存在環境で） |
 | P2 ✅ | restore（全体/プロジェクト・pre-restore・scope 限定の適用）＋ `tree` / `settings` REST ＋ Console タブ（履歴/差分/復元/自動取得トグル） | UI から日時指定・プロジェクト単位の巻き戻しが往復できる |
 | P3 ✅ | export/import（bundle/tar・preview・選択適用・検証・監査）＋ **★4 secret スキャン**（決着 #2 で v1 必須へ格上げ）＋ ★8 `git gc --auto` | 2 環境間で bundle 持ち回りの移送が実際に通る（隔離 HOME を 2 つ演じる往復テストで担保。実データでの実機往復は未実施） |
-| P4 | 拡張: codex memories のフリート有効化配線（config.toml `[features] memories` の Console トグル・`[memories]` チューニング seed）・CP internal git への push mirror（停止中閲覧・直接同期）・operator MCP ツール・scheduler 連携・opencode/agy の上流 watch | — |
+| P4 ✅ | 拡張: codex memories のフリート有効化配線（`[features] memories` の Console トグル＋`[memories]` チューニング seed）／operator MCP ツール（読み取り＋restore）。CP mirror は阻害要因つきで将来トラックへ、scheduler 連携は不要と判断して削除（下記「P4 の実際」） | 有効化トグルが実バイナリで効くこと（drift テスト）・MCP から履歴閲覧と復元が通ること |
 
 ## 決着した未決事項（2026-07-27 利用者承認・実装はこの前提で進める）
 
@@ -405,7 +500,8 @@ per-repo コミット型ストア（xChuCx 型。リポジトリに個人メモ�
 | 1 | 自動 snapshot の既定 | **ON**（claude 全セッション idle 遷移 + **debounce 5 分**） | 履歴が無いことが本件の主訴なので、既定 OFF では機能が存在しないのと同じ。無変更 skip があるので履歴は汚れず、対象が数百 KB なのでコストも無視できる。debounce・保険 tick は環境変数で上書き可能にする（`AF_MEMORY_SNAPSHOT_*`）。全体 OFF は UI トグル（P2）で提供 |
 | 2 | export の暗号化 | **v1 は平文 DL**（HTTPS・本人操作のみ・監査ログ前提） | 経路は TLS で保護され、DL 主体は本人に限定される。パスフレーズ暗号化（age 等）は「持ち出したファイルの保管中の保護」であり別レイヤの要件——**将来トラック**として残し v1 の要件にはしない。代わりに ★4 の secret スキャン＋UI 注意書きを v1 で必ず入れる |
 | 3 | UI の置き場 | **設定モーダル「ワークスペース」群の新タブ**（`SettingsDialog.tsx` GROUPS ＋ `MemoryTab.tsx`） | データ管理は設定群と同質で、日常的に開く画面ではない。左レール常設が要るほどの操作頻度ではないと判断。必要になれば P2 の実装をそのまま差し替え可能（タブの中身はコンポーネント 1 個） |
-| 4 | codex memories のフリート有効化 | **P4 で判断（本フェーズでは有効化しない）** | 統合パイプラインが extract/consolidation モデルをバックグラウンドで呼びトークンを消費するため、有効化はコストを伴う独立の判断。**P1 は「有効化されていれば自動で対象化」まで**を実装する（`~/.codex/memories/` の存在検知でルートが現れる）ので、後から有効化しても配線変更は不要 |
+| 4 | codex memories のフリート有効化 | **P4 で配線を実装。有効化そのものは利用者の選択に委ねる（既定は OFF のまま）** | 統合パイプラインが extract/consolidation モデルをバックグラウンドで呼びトークンを消費するため、有効化はコストを伴う独立の判断。**P1 は「有効化されていれば自動で対象化」まで**を実装し、**P4 でその ON/OFF を Console から選べるようにした**（コスト注意書き＋保守的な `[memories]` seed 付き。「P4 の実際」①） |
 
 将来トラック（v1 のスコープ外・要求が出たら着手）: export のパスフレーズ暗号化、
-codex memories のフリート有効化配線（P4）、CP internal git への push mirror（P4）。
+CP internal git への push mirror（**前提条件つき** — 内部 git に所有者限定の概念が要る。
+「P4 の実際」③）、メモリ検索・セッション注入（qmd 等・本設計とは別機能）。

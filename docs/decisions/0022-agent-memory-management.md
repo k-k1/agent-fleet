@@ -44,8 +44,10 @@ global steering `~/.kiro/steering/*.md` は将来ルート候補）。
    `refs/imports/<ts>` へ独立系譜として取り込み、適用はプロジェクト選択式の
    「置き換え＝新 commit」。.md の 3-way merge は意味的衝突を機械解決できないためやらない。
 6. **メモリルートは宣言テーブル化し、v1 から claude と codex の 2 件を宣言**。codex は
-   `~/.codex/memories/` の存在検知で自動有効になる（フリートとして memories 機能を ON に
-   するかは別判断・別配線）。kiro global steering は第 3 ルート候補（watch）、opencode/agy は
+   `~/.codex/memories/` の存在検知で自動有効になる。フリートとして memories 機能を ON に
+   するかは別判断で、**P4 でその配線（`features.memories` の Console トグル＋コストを抑える
+   `[memories]` seed）を入れた**が、既定は codex 自身と同じ OFF のまま——有効化は
+   バックグラウンドのトークン消費を伴うので、利用者が選ぶ。kiro global steering は第 3 ルート候補（watch）、opencode/agy は
    上流実装待ちの watch、copilot/cursor はサーバー側管理でローカル実体が無いため対象外。
    上流で codex が Claude Code のメモリレイアウトを直接 import する機能を開発中である
    （`external_agent_memory_import`）こと、Gemini CLI v0.40 が完全ローカル md の階層メモリへ
@@ -55,8 +57,15 @@ global steering `~/.kiro/steering/*.md` は将来ルート候補）。
 
 - 得るもの: メモリの全変更履歴（いつ・どのプロジェクトが変わったか）、日時/履歴指定・
   プロジェクト単位のロールバック、bundle 1 ファイルでの環境間移送、監査ログ付きの操作面。
-- 受け入れる制約: v1 は WS 起動中のみ操作可能（agent 側実行のため。停止中閲覧は P4 の
-  CP mirror で解消）。import は merge しない（選択置き換えのみ）。codex のロールバック
+- 受け入れる制約: **WS 起動中のみ操作可能**（agent 側実行のため）。当初これは「P4 の
+  CP mirror で解消」する前提だったが、P4 の調査で内部 git プロバイダの認可が
+  **テナント単位で per-user ACL を持たない**ことが判明した（`git_http.go` の
+  `authorizeGitRepo`：read は当該テナントのアクティブメンバー全員に開く）。個人メモリを
+  そのまま mirror すると同僚から clone でき、本 ADR が「メモリは個人情報・export は本人
+  操作のみ」として置いた前提と衝突するため、**mirror は実装せず前提条件つきの将来トラック
+  へ送った**（内部 git に所有者限定 repo の概念を入れるか、台帳外の per-user ミラー領域と
+  専用 API を新設するか。いずれも別 ADR 相当）。よって**停止中閲覧は当面できない**。
+  import は merge しない（選択置き換えのみ）。codex のロールバック
   粒度は全体のみ。opencode/agy はネイティブメモリが無く対象外、copilot はサーバー側で対象外。
 - リスクと手当: import は外部入力（サイズ上限・traversal 防御・bundle verify 必須）。
   export は個人情報を含みうる（本人操作限定・監査・UI 注意書き）——加えて **v1 は平文 DL を
