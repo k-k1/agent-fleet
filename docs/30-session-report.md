@@ -31,8 +31,16 @@
   MCP の `isError=true` に変換し、モデルには `sent=true` を確認するまで送信済みと回答させない。
   これにより、停止中の TUI へ文字を送って消失する経路と、エラー JSON を成功結果として読む
   経路をどちらも閉じる。
-- opencode バックエンドは対象外（write 用 opencode.json が grant 単位の共有ディレクトリで
-  会話 id を焼き込めない）。claude / codex の af_write 会話で有効。
+- opencode バックエンド（`chat_providers.go opencodeChatConfig`・2026-07-27 対応）: opencode の
+  設定は**ファイル単位**で、作業ディレクトリ（`--dir`）は grant 単位の共有プロジェクトなので、
+  そこには会話 id を焼き込めなかった。会話別の設定ファイル
+  （`chat-wd/opencode-conv/<会話id>.json`）を `OPENCODE_CONFIG` で渡し、そちらに
+  `["mcp-stdio","--write","--conv",<id>]` を書く。`--dir` は据え置き（そのパスが opencode の
+  プロジェクト＝セッション resume の同一性で、変えると既存会話の `--session` が復帰不能に
+  なる。実測 1.18.5: 別ディレクトリからの resume はエラーにならず**ハングする**）。
+  プロジェクト側の `opencode.json` には af MCP を書かない（併合されても `--conv` 無しの
+  サーバが復活しないように、定義は会話別ファイルの1か所だけにする）。
+  ドリフト検知は `TestContractOpencodeEnvConfig`（`-tags clicontract`）。
 
 ### arm/disarm — 「指示1件につき報告1回・報告は完了（終端）で」
 
@@ -226,7 +234,8 @@ hook / record-exit は独立プロセスなので、会話ファイルへの直�
 - **managed driver の daemon 異常死は報告されない**: pane ラッパー経路（`record_exit.go`）は
   oom/crashed/killed を報告するが、managed の daemon 死は `serve.go` が
   `status.PersistExit` を書くだけで report kick を持たない（tui ルートとの非対称）。
-- opencode バックエンドの af_write 会話は report_to 自動付与なし。
+- ~~opencode バックエンドの af_write 会話は report_to 自動付与なし。~~（2026-07-27 解消 —
+  上記 `OPENCODE_CONFIG` 経路。cursor は v1 で af ツール自体が未配線のため引き続き対象外）
 - arm を消費する報告は `answer-ready`（完了・入力待ち）と異常終了のみ。`question` は
   非消費の途中経過として届くが、`plan-approval` / `permission-request` は通知センターのみ。
   キュー済みプロンプトが残っている等で厳密なタスク完了とずれることはあり得る

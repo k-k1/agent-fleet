@@ -316,7 +316,7 @@ func TestOpencodeOneShotLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("opencode 実行失敗: %s", cliErr(err))
 	}
-	reply, _, _, _ := parseOpencodeRunEvents(out)
+	reply, _, _, _, _ := parseOpencodeRunEvents(out)
 	if title := cleanSuggestedTitle(reply); title == "" {
 		t.Fatalf("件名が空: reply=%q", reply)
 	} else {

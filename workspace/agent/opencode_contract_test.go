@@ -18,8 +18,10 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -102,4 +104,49 @@ func TestContractOpencodeTUIPaneMode(t *testing.T) {
 	}
 	pane, _ := exec.Command("tmux", "capture-pane", "-p", "-t", name).Output()
 	t.Errorf("after Tab paneMode = %q, want \"Plan\" — the agent/mode readout moved in opencode %s.\npane:\n%s", got, ver, pane)
+}
+
+// TestContractOpencodeEnvConfig is the drift alarm for OPENCODE_CONFIG, which the
+// assistant chat's report wiring rests on: the af MCP server must carry `--conv <id>`
+// (docs/30), the id is per conversation, and opencode's config is per FILE — so the
+// per-conversation config is handed over as OPENCODE_CONFIG while --dir stays the
+// per-grant project dir (that path IS the session's resume identity).
+//
+// If opencode ever stops honoring the env var, every opencode assistant silently goes
+// back to running with no af tools at all, which is exactly the class of failure this
+// test exists to catch loudly.
+//
+//	go test -tags clicontract -run TestContractOpencodeEnvConfig ./
+func TestContractOpencodeEnvConfig(t *testing.T) {
+	requireBins(t, "opencode")
+	home, dir := t.TempDir(), t.TempDir()
+	// The project config defines NO server: anything `mcp list` reports can only have
+	// come from the env-pointed file.
+	if err := os.WriteFile(filepath.Join(dir, "opencode.json"),
+		[]byte(`{"$schema":"https://opencode.ai/config.json","permission":{"edit":"deny","bash":"deny"}}`+"\n"),
+		0o600); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+	cfg := filepath.Join(home, "conv.json")
+	// /bin/echo is not an MCP server — it exits at once and `mcp list` reports the entry
+	// as failed. That is fine: the contract under test is that the entry is READ.
+	if err := os.WriteFile(cfg,
+		[]byte(`{"$schema":"https://opencode.ai/config.json","mcp":{"afconvprobe":{"type":"local","command":["/bin/echo","probe"],"enabled":true}}}`+"\n"),
+		0o600); err != nil {
+		t.Fatalf("write conv config: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "opencode", "mcp", "list")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "HOME="+home, "OPENCODE_CONFIG="+cfg)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("opencode mcp list: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "afconvprobe") {
+		t.Fatalf("OPENCODE_CONFIG no longer honored by opencode %s — the per-conversation af MCP config "+
+			"(and with it --conv / セッション報告) is silently dropped.\nmcp list:\n%s", opencodeVer(t), out)
+	}
 }
