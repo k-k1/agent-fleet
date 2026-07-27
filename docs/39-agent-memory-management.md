@@ -1,6 +1,7 @@
 # 39. エージェントメモリ管理 — git 差分管理・時点ロールバック・環境間 import/export
 
-- 状態: **設計中（意思決定前・2026-07-23）**。意思決定は [decisions/0022](decisions/0022-agent-memory-management.md)。
+- 状態: **実装中（2026-07-27〜）**。設計は確定し、未決事項 4 点も既定値で決着済み（下記「決着した未決事項」）。
+  意思決定は [decisions/0022](decisions/0022-agent-memory-management.md)。
 - 要望: 各エージェントの「メモリ」を管理したい。①git での差分管理 ②日時・履歴指定でのロールバック
   ③特定プロジェクトだけのロールバック ④他の agent-fleet 環境への import/export。
 
@@ -66,10 +67,10 @@ Antigravity CLI に一本化。Enterprise ライセンス・有償 API キーの
 | 履歴エンジン | **git**（bare repo + 一時 staging コピー） | 差分・時点解決・bundle 移送・パススコープ復元が全部標準機能で載る |
 | repo の置き場 | `/var/lib/af/claude/af-memory.git`（claude 専用マウント内・**codex 分の履歴も同居**） | このマウントが最も強い生存保証を持つため全 kind 共通の置き場にする。ファイルブラウザ非公開領域・recreate / clean-home 生存・ECS でも agent から見える。live ツリーには `.git` を置かない |
 | 実行主体 | **workspace-agent**（uid=dev、git あり、全 runtime で一様） | CP は REST proxy（dual allowlist）のみ。ECS で CP がファイル直アクセスできない制約を回避 |
-| snapshot 契機 | 自動（claude 全セッション idle 遷移 + debounce）＋手動＋（将来 scheduler） | 無変更なら commit しない |
+| snapshot 契機 | 自動（claude 全セッション idle 遷移 + debounce）＝**既定 ON**＋手動＋（将来 scheduler） | 無変更なら commit しない。debounce 既定 5 分 |
 | ロールバック | **履歴は書き換えない**。restore は「新しい snapshot commit」として積む。適用前に pre-restore snapshot 自動取得 | ロールバックのロールバックが常に可能 |
 | スコープ | claude: 全体 / プロジェクト単位（`projects/<slug>/`）。codex: **ワークスペース全体のみ**（プロジェクト区分がファイル内エントリのためディレクトリ粒度が存在しない） | 日時指定は「その時刻以前の直近 snapshot」に解決 |
-| export | **git bundle（全履歴）を既定**、tar.gz（最新ツリーのみ）も選択可 | bundle は 1 ファイル・履歴込み・`git bundle verify` で検証可能 |
+| export | **git bundle（全履歴）を既定**、tar.gz（最新ツリーのみ）も選択可。**v1 は平文 DL**（暗号化なし） | bundle は 1 ファイル・履歴込み・`git bundle verify` で検証可能 |
 | import | bundle → `refs/imports/<ts>` に fetch / tar → staging 展開。適用は**プロジェクト選択式の置き換え（=新 commit）** | 3-way merge はしない（v1）。ローカル履歴は保全される |
 | UI | 設定モーダル「ワークスペース」グループに「エージェントメモリ」タブ | 破壊操作は P4a の統一確認ダイアログ |
 | 監査 | `proxy.go auditActionTarget` に restore / import / export をマップ | export DL は本人操作のみ |
@@ -273,14 +274,16 @@ per-repo コミット型ストア（xChuCx 型。リポジトリに個人メモ�
 | P3 | export/import（bundle/tar・preview・選択適用・検証・監査） | 2 環境間で bundle 持ち回りの移送が実際に通る |
 | P4 | 拡張: codex memories のフリート有効化配線（config.toml `[features] memories` の Console トグル・`[memories]` チューニング seed）・CP internal git への push mirror（停止中閲覧・直接同期）・operator MCP ツール・scheduler 連携・opencode/agy の上流 watch | — |
 
-## 未決事項（ユーザー判断待ち）
+## 決着した未決事項（2026-07-27 利用者承認・実装はこの前提で進める）
 
-1. 自動 snapshot の既定: ON（idle+5 分 debounce）を推奨。OFF 既定にする理由は見当たらない。
-2. export の暗号化: v1 は平文 DL（HTTPS 前提・本人操作のみ）。パスフレーズ付き暗号化
-   （age 等）を要件にするか。
-3. UI の置き場: 設定モーダル案を推奨（データ管理は設定の「ワークスペース」群と同質）。
-   スケジュール同様の左レール常設が良ければ P2 で差し替え可能。
-4. **codex memories をフリートで有効化するか**: 本設計は「有効化されていれば自動で対象化」
-   まで（P1）。有効化そのものは別判断——統合パイプラインが extract/consolidation モデルを
-   バックグラウンドで呼ぶためトークンを消費する（`min_rate_limit_remaining_percent` 等の
-   ガードは上流にあり）。有効化する場合の配線（config seed + Console トグル）は P4。
+設計時に持ち越した 4 点は、いずれも推奨既定値のまま採用で決着した。
+
+| # | 論点 | 決定 | 根拠 / 実装への含意 |
+|---|------|------|--------------------|
+| 1 | 自動 snapshot の既定 | **ON**（claude 全セッション idle 遷移 + **debounce 5 分**） | 履歴が無いことが本件の主訴なので、既定 OFF では機能が存在しないのと同じ。無変更 skip があるので履歴は汚れず、対象が数百 KB なのでコストも無視できる。debounce・保険 tick は環境変数で上書き可能にする（`AF_MEMORY_SNAPSHOT_*`）。全体 OFF は UI トグル（P2）で提供 |
+| 2 | export の暗号化 | **v1 は平文 DL**（HTTPS・本人操作のみ・監査ログ前提） | 経路は TLS で保護され、DL 主体は本人に限定される。パスフレーズ暗号化（age 等）は「持ち出したファイルの保管中の保護」であり別レイヤの要件——**将来トラック**として残し v1 の要件にはしない。代わりに ★4 の secret スキャン＋UI 注意書きを v1 で必ず入れる |
+| 3 | UI の置き場 | **設定モーダル「ワークスペース」群の新タブ**（`SettingsDialog.tsx` GROUPS ＋ `MemoryTab.tsx`） | データ管理は設定群と同質で、日常的に開く画面ではない。左レール常設が要るほどの操作頻度ではないと判断。必要になれば P2 の実装をそのまま差し替え可能（タブの中身はコンポーネント 1 個） |
+| 4 | codex memories のフリート有効化 | **P4 で判断（本フェーズでは有効化しない）** | 統合パイプラインが extract/consolidation モデルをバックグラウンドで呼びトークンを消費するため、有効化はコストを伴う独立の判断。**P1 は「有効化されていれば自動で対象化」まで**を実装する（`~/.codex/memories/` の存在検知でルートが現れる）ので、後から有効化しても配線変更は不要 |
+
+将来トラック（v1 のスコープ外・要求が出たら着手）: export のパスフレーズ暗号化、
+codex memories のフリート有効化配線（P4）、CP internal git への push mirror（P4）。
