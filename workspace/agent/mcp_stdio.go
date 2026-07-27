@@ -217,6 +217,34 @@ var mcpStdioTools = []map[string]any{
 			"required":   []string{"id"},
 		},
 	},
+	{
+		// docs/39 P4。export / import は意図して公開しない —— P3 で持ち出しに
+		// secret スキャン＋本人の明示 ack を課したのに、MCP 経由で「モデルが ack して
+		// ファイルを吐ける」経路を作ると、その防御を迂回する二つ目の出口になる。
+		// 持ち出し／取り込みは Console の本人操作に限る。
+		"name": "list_memory_snapshots",
+		"description": "エージェントメモリ（claude の auto-memory / codex の memories）の変更履歴を新しい順に返す。各行は時刻・契機（auto/manual/pre-restore/restore/import）・変更されたプロジェクトを持つ。" +
+			"「メモリがいつ変わったか」「おかしくなったのはいつからか」を聞かれた時や、restore_memory_snapshot で戻す時点を選ぶ前に呼ぶ。中身の差分は get_memory_snapshot を見る。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"limit": map[string]any{"type": "integer", "description": "返す件数（既定 20）"},
+			},
+		},
+	},
+	{
+		"name": "get_memory_snapshot",
+		"description": "指定時点のエージェントメモリの中身を返す。その時点に何が入っていたか（kind 別・プロジェクト別のファイル数）と、その snapshot が入れた変更の差分を返す。" +
+			"rev（list_memory_snapshots の id）か at（日時。その時刻以前の直近 snapshot に解決）のどちらかを指定する。restore_memory_snapshot で戻す前に「戻したら何がどう変わるか」を確認するために呼ぶ。差分が大きい時は path で絞る。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"rev":  map[string]any{"type": "string", "description": "snapshot id（list_memory_snapshots の id）"},
+				"at":   map[string]any{"type": "string", "description": "日時（RFC3339 等）。その時刻以前の直近 snapshot に解決する"},
+				"path": map[string]any{"type": "string", "description": "差分を絞る repo 内パス（例: claude/projects/<slug>）。省略で全体"},
+			},
+		},
+	},
 }
 
 // mcpStdioWriteTools — Agent Fleet write/orchestrate tools, advertised only under --write
@@ -531,6 +559,25 @@ var mcpStdioWriteTools = []map[string]any{
 		},
 	},
 	{
+		// 破壊的だが可逆（適用前に pre-restore snapshot が必ず積まれる = docs/39 ④）。
+		// この「取り消せる」性質を description に書いておかないと、モデルは安全側に
+		// 倒しすぎて利用者の依頼を実行しないか、逆に軽く見て確認を省く。
+		"name": "restore_memory_snapshot",
+		"description": "エージェントメモリを指定時点へ戻す。rev（list_memory_snapshots の id）か at（日時）で戻す先を指定し、範囲は all（全体）／projects（claude のプロジェクト単位）／kinds（claude・codex 単位）で指定する。範囲は必ず明示すること（省略は拒否される）。" +
+			"履歴は書き換えず、戻す直前の状態も自動で snapshot に残るので、この操作自体を後から取り消せる。誤って消した／誤学習したメモリを戻す時に使う。" +
+			"実行前に必ず get_memory_snapshot で戻り先の中身を確認し、『どの時点へ・どの範囲を戻すか』を利用者に示して承認を得ること。対象 kind のセッションが実行中だと結果の busy=true で返る。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"rev":      map[string]any{"type": "string", "description": "戻す先の snapshot id（list_memory_snapshots の id）"},
+				"at":       map[string]any{"type": "string", "description": "戻す先の日時（RFC3339 等）。その時刻以前の直近 snapshot に解決する"},
+				"all":      map[string]any{"type": "boolean", "description": "true で全体を戻す"},
+				"projects": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "戻す claude プロジェクトの slug（get_memory_snapshot の projects）"},
+				"kinds":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "まるごと戻す kind（claude / codex）"},
+			},
+		},
+	},
+	{
 		"name":        "list_assistants",
 		"description": "利用可能なアシスタント（常設ビルトイン＋ユーザー定義）の一覧を返す。ask_assistant で誰に相談するか選ぶ前に呼ぶ。",
 		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
@@ -578,6 +625,15 @@ func mcpStdioCall(req mcpReq) []byte {
 		// ID doubles as the cleanup-archive id (restore/purge). Repo names the branch's repo.
 		ID   string `json:"id"`
 		Repo string `json:"repo"`
+		// agent-memory args (docs/39 P4). Rev/At pick the snapshot; All/Kinds/Projects
+		// are the restore scope. Limit/Path narrow the read tools.
+		Rev      string   `json:"rev"`
+		At       string   `json:"at"`
+		Path     string   `json:"path"`
+		Limit    int      `json:"limit"`
+		All      bool     `json:"all"`
+		Kinds    []string `json:"kinds"`
+		Projects []string `json:"projects"`
 	}
 	_ = json.Unmarshal(p.Args, &a)
 
@@ -856,6 +912,62 @@ func mcpStdioCall(req mcpReq) []byte {
 			return mcpToolErr(req.ID, "セッションの停止に失敗しました: "+err.Error())
 		}
 		return mcpTextResult(req.ID, out)
+	case "get_memory_snapshot":
+		// tree（その時点に何が入っていたか）と diff（その snapshot が入れた変更）を
+		// 1 回で返す。restore の範囲は tree からしか作れない — 現在のルートを選択肢に
+		// すると、既に消えたプロジェクトを選べず「誤って消したメモリを戻す」という
+		// 本命が成立しない（docs/39 ③ が tree を足した理由）。
+		if a.Rev == "" && a.At == "" {
+			return mcpToolErr(req.ID, "rev（snapshot id）か at（日時）のどちらかが必要です")
+		}
+		q := url.Values{}
+		if a.Rev != "" {
+			q.Set("rev", a.Rev)
+		}
+		if a.At != "" {
+			q.Set("at", a.At)
+		}
+		tree, err := agentGET("/agents/memory/tree?" + q.Encode())
+		if err != nil {
+			return mcpToolErr(req.ID, "メモリの時点情報の取得に失敗しました: "+err.Error())
+		}
+		q.Del("rev")
+		if a.Rev != "" {
+			q.Set("to", a.Rev)
+		}
+		if a.Path != "" {
+			q.Set("path", a.Path)
+		}
+		diff, err := agentGET("/agents/memory/diff?" + q.Encode())
+		if err != nil {
+			return mcpToolErr(req.ID, "メモリの差分の取得に失敗しました: "+err.Error())
+		}
+		out, _ := json.Marshal(map[string]any{
+			"tree": json.RawMessage(tree), "diff": json.RawMessage(diff),
+		})
+		return mcpTextResult(req.ID, string(out))
+	case "restore_memory_snapshot":
+		if !mcpWriteEnabled {
+			return mcpToolErr(req.ID, "このアシスタントはメモリの復元を許可されていません")
+		}
+		if a.Rev == "" && a.At == "" {
+			return mcpToolErr(req.ID, "rev（snapshot id）か at（日時）のどちらかが必要です")
+		}
+		// 範囲の省略を「全体」と解釈しない。モデルがフィールドを落としただけで
+		// メモリ全体が巻き戻る事故を、引数の段で構造的に潰す（利用者の承認は
+		// 「この範囲を」に対して得られているはずなので、暗黙の拡大は裏切りになる）。
+		if !a.All && len(a.Kinds) == 0 && len(a.Projects) == 0 {
+			return mcpToolErr(req.ID, "戻す範囲が必要です（all=true か projects / kinds を指定してください）")
+		}
+		reqBody, _ := json.Marshal(map[string]any{
+			"rev": a.Rev, "at": a.At,
+			"scope": map[string]any{"all": a.All, "kinds": a.Kinds, "projects": a.Projects},
+		})
+		out, err := agentPOST("/agents/memory/restore", reqBody)
+		if err != nil {
+			return mcpToolErr(req.ID, "メモリの復元に失敗しました: "+err.Error())
+		}
+		return mcpTextResult(req.ID, out)
 	case "resume_session":
 		if !mcpWriteEnabled {
 			return mcpToolErr(req.ID, "このアシスタントはセッションの再開を許可されていません")
@@ -1004,6 +1116,12 @@ func mcpStdioCall(req mcpReq) []byte {
 		if a.Name != "" {
 			path += "?name=" + url.QueryEscape(a.Name)
 		}
+	case "list_memory_snapshots":
+		limit := a.Limit
+		if limit <= 0 {
+			limit = 20
+		}
+		path = "/agents/memory/snapshots?limit=" + strconv.Itoa(limit)
 	case "list_cleanup_candidates":
 		path = "/sessions/cleanup"
 	case "list_cleanup_archives":

@@ -376,3 +376,140 @@ func TestMCPStopResumeSessionRelay(t *testing.T) {
 	default:
 	}
 }
+
+// mcpMemoryStub は Agent REST を差し替え、叩かれたパスを記録する。
+func mcpMemoryStub(t *testing.T, body func(path string) string) *[]string {
+	t.Helper()
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		_, _ = w.Write([]byte(body(r.URL.Path)))
+	}))
+	t.Cleanup(srv.Close)
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENT_ADDR", u.Host)
+	return &paths
+}
+
+func mcpCall(t *testing.T, name string, args map[string]any) string {
+	t.Helper()
+	ab, _ := json.Marshal(args)
+	params, _ := json.Marshal(map[string]any{"name": name, "arguments": json.RawMessage(ab)})
+	return string(mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params}))
+}
+
+func mcpIsError(t *testing.T, resp string) bool {
+	t.Helper()
+	var parsed struct {
+		Result struct {
+			IsError bool `json:"isError"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("decode %s: %v", resp, err)
+	}
+	return parsed.Result.IsError
+}
+
+// docs/39 P4: メモリの持ち出し／取り込みは MCP に出さない。P3 で export に
+// secret スキャン＋本人の明示 ack を課したのに、モデルが ack できる経路を作ると
+// 防御を迂回する二つ目の出口になる。広告ツール集合がゲートなので、ここで固定する。
+func TestMCPMemoryToolsExposeNoExportOrImport(t *testing.T) {
+	old := mcpWriteEnabled
+	mcpWriteEnabled = true
+	t.Cleanup(func() { mcpWriteEnabled = old })
+	names := map[string]bool{}
+	for _, tool := range mcpStdioToolList() {
+		names[tool["name"].(string)] = true
+	}
+	for _, want := range []string{"list_memory_snapshots", "get_memory_snapshot", "restore_memory_snapshot"} {
+		if !names[want] {
+			t.Errorf("tool %q is not advertised", want)
+		}
+	}
+	for name := range names {
+		if strings.Contains(name, "memory") && (strings.Contains(name, "export") || strings.Contains(name, "import")) {
+			t.Errorf("tool %q exposes the memory transfer path to the model", name)
+		}
+	}
+	// 読み取り専用の会話には restore を一切広告しない。
+	mcpWriteEnabled = false
+	for _, tool := range mcpStdioToolList() {
+		if tool["name"] == "restore_memory_snapshot" {
+			t.Fatal("restore_memory_snapshot is advertised to an af_read conversation")
+		}
+	}
+}
+
+// 範囲の省略は「全体」ではなく拒否。モデルがフィールドを落としただけでメモリ全体が
+// 巻き戻ると、利用者が承認した範囲を超えた操作になる。
+func TestMCPRestoreMemoryRequiresExplicitScope(t *testing.T) {
+	paths := mcpMemoryStub(t, func(string) string { return `{"committed":true}` })
+	old := mcpWriteEnabled
+	mcpWriteEnabled = true
+	t.Cleanup(func() { mcpWriteEnabled = old })
+
+	if resp := mcpCall(t, "restore_memory_snapshot", map[string]any{"rev": "abc"}); !mcpIsError(t, resp) {
+		t.Fatalf("a scope-less restore was accepted: %s", resp)
+	}
+	if resp := mcpCall(t, "restore_memory_snapshot", map[string]any{"all": true}); !mcpIsError(t, resp) {
+		t.Fatalf("a restore without rev/at was accepted: %s", resp)
+	}
+	if len(*paths) != 0 {
+		t.Fatalf("a rejected restore still called the Agent: %v", *paths)
+	}
+
+	resp := mcpCall(t, "restore_memory_snapshot", map[string]any{"rev": "abc", "projects": []string{"-home-dev-repos-demo"}})
+	if mcpIsError(t, resp) {
+		t.Fatalf("a scoped restore was rejected: %s", resp)
+	}
+	if got := strings.Join(*paths, ","); got != "POST /agents/memory/restore" {
+		t.Fatalf("Agent calls = %q", got)
+	}
+}
+
+func TestMCPRestoreMemoryDeniedWithoutWrite(t *testing.T) {
+	paths := mcpMemoryStub(t, func(string) string { return `{}` })
+	old := mcpWriteEnabled
+	mcpWriteEnabled = false
+	t.Cleanup(func() { mcpWriteEnabled = old })
+	if resp := mcpCall(t, "restore_memory_snapshot", map[string]any{"rev": "abc", "all": true}); !mcpIsError(t, resp) {
+		t.Fatalf("an af_read conversation restored memory: %s", resp)
+	}
+	if len(*paths) != 0 {
+		t.Fatalf("a denied restore still called the Agent: %v", *paths)
+	}
+}
+
+// get_memory_snapshot は tree（その時点の中身）と diff（その snapshot の変更）を
+// 1 回で返す。restore の範囲は tree からしか作れない（docs/39 ③）。
+func TestMCPGetMemorySnapshotJoinsTreeAndDiff(t *testing.T) {
+	paths := mcpMemoryStub(t, func(p string) string {
+		if strings.HasSuffix(p, "/tree") {
+			return `{"rev":"abc","projects":[{"slug":"s"}]}`
+		}
+		return `{"diff":"--- a\n+++ b\n"}`
+	})
+	old := mcpWriteEnabled
+	mcpWriteEnabled = false // 読み取りツールなので af_read でも使える
+	t.Cleanup(func() { mcpWriteEnabled = old })
+
+	if resp := mcpCall(t, "get_memory_snapshot", map[string]any{}); !mcpIsError(t, resp) {
+		t.Fatalf("a snapshot lookup without rev/at was accepted: %s", resp)
+	}
+	resp := mcpCall(t, "get_memory_snapshot", map[string]any{"rev": "abc"})
+	if mcpIsError(t, resp) {
+		t.Fatalf("get_memory_snapshot failed: %s", resp)
+	}
+	if got := strings.Join(*paths, ","); got != "GET /agents/memory/tree,GET /agents/memory/diff" {
+		t.Fatalf("Agent calls = %q", got)
+	}
+	for _, want := range []string{`tree`, `diff`, `abc`} {
+		if !strings.Contains(resp, want) {
+			t.Fatalf("response is missing %q: %s", want, resp)
+		}
+	}
+}
