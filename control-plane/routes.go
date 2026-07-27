@@ -461,6 +461,13 @@ func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
 func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	proxy := newAgentProxyAPI(cfg.mgr)
 	rest := proxy.withResolved(proxy.rest)
+	// MCP レジストリ（docs/48 P0）— 実体は Agent 側（workspace/agent/mcp_servers.go）。
+	mux.HandleFunc("GET /api/mcp-servers", rest)
+	mux.HandleFunc("POST /api/mcp-servers", rest)
+	mux.HandleFunc("POST /api/mcp-servers/test", rest)
+	mux.HandleFunc("PUT /api/mcp-servers/{id}", rest)
+	mux.HandleFunc("POST /api/mcp-servers/{id}/enabled", rest)
+	mux.HandleFunc("DELETE /api/mcp-servers/{id}", rest)
 	mux.HandleFunc("GET /api/connections", rest)
 	mux.HandleFunc("GET /api/connections/git/{host}/repos", rest)
 	mux.HandleFunc("GET /api/connections/git/{host}/branches", rest)

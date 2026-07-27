@@ -25,6 +25,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -887,12 +888,12 @@ func agyChatServers(c *chatConversation) map[string]any {
 		servers["af"] = map[string]any{"command": exe, "args": sargs, "env": env}
 	}
 	for _, id := range c.Integrations {
-		reg, ok := opsIntegrations[id]
+		runArgs, ok := mcpreg.BuiltinRunArgs(id)
 		if !ok || !integrationReady(id) {
 			continue // unknown, or the user hasn't connected it — skip silently
 		}
-		sargs := make([]any, len(reg.runArgs))
-		for i, a := range reg.runArgs {
+		sargs := make([]any, len(runArgs))
+		for i, a := range runArgs {
 			sargs[i] = a
 		}
 		servers[id] = map[string]any{"command": exe, "args": sargs, "env": env}
@@ -1565,12 +1566,12 @@ func (c *chatConversation) mcpConfigArgs() []string {
 		servers["af"] = map[string]any{"command": exe, "args": sargs}
 	}
 	for _, id := range c.Integrations {
-		reg, ok := opsIntegrations[id]
+		runArgs, ok := mcpreg.BuiltinRunArgs(id)
 		if !ok || !integrationReady(id) {
 			continue // unknown, or the user hasn't connected it — skip silently
 		}
-		sargs := make([]any, len(reg.runArgs))
-		for i, a := range reg.runArgs {
+		sargs := make([]any, len(runArgs))
+		for i, a := range runArgs {
 			sargs[i] = a
 		}
 		servers[id] = map[string]any{"command": exe, "args": sargs}

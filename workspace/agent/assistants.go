@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
@@ -42,48 +43,26 @@ func validToolGrant(t string) bool {
 }
 
 // Ops integration ids (docs/25 Phase 1). Each maps to an external MCP server the
-// chat attaches read-only via `workspace-agent mcp-run <id>`.
+// chat attaches read-only via `workspace-agent mcp-run <id>`. The catalog itself now
+// lives in internal/mcpreg as builtin registry entries (docs/48 / ADR0031 決定 6) so
+// there is ONE list of MCP servers rather than a builtin catalog beside a registry.
 const (
-	integrationPagerDuty  = "pagerduty"
-	integrationGrafana    = "grafana"
-	integrationCloudWatch = "cloudwatch"
+	integrationPagerDuty  = mcpreg.BuiltinPagerDuty
+	integrationGrafana    = mcpreg.BuiltinGrafana
+	integrationCloudWatch = mcpreg.BuiltinCloudWatch
 )
 
-// opsIntegration describes how one integration's MCP server is launched. runArgs
-// are the subcommand args passed to this binary (mcp-run injects the user's key).
-type opsIntegration struct {
-	runArgs []string
-}
-
-// opsIntegrations is the catalog of supported external ops MCP servers. Adding
-// Grafana / CloudWatch later is a new entry here plus a mcp-run provider case.
-var opsIntegrations = map[string]opsIntegration{
-	integrationPagerDuty:  {runArgs: []string{"mcp-run", "pagerduty"}},
-	integrationGrafana:    {runArgs: []string{"mcp-run", "grafana"}},
-	integrationCloudWatch: {runArgs: []string{"mcp-run", "cloudwatch"}},
-}
-
-func validIntegration(id string) bool {
-	_, ok := opsIntegrations[id]
-	return ok
-}
+func validIntegration(id string) bool { return mcpreg.IsBuiltin(id) }
 
 // integrationReady reports whether the user has configured the credential an
 // integration needs, so mcpConfigArgs attaches only servers that can actually
 // start (a missing connection means the assistant just has no ops tools).
 func integrationReady(id string) bool {
-	switch id {
-	case integrationPagerDuty:
-		s, err := secrets.Load()
-		return err == nil && s.PagerDuty != nil && s.PagerDuty.APIKey != ""
-	case integrationGrafana:
-		s, err := secrets.Load()
-		return err == nil && s.Grafana != nil && s.Grafana.URL != "" && s.Grafana.Token != ""
-	case integrationCloudWatch:
-		s, err := secrets.Load()
-		return err == nil && s.CloudWatch != nil && s.CloudWatch.Profile != ""
+	s, err := secrets.Load()
+	if err != nil {
+		return false
 	}
-	return false
+	return mcpreg.BuiltinReady(id, s)
 }
 
 // assistant is a chat persona template (builtin or user-defined).
