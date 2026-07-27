@@ -6,7 +6,7 @@
 // in a SEPARATE modal — see AdminDialog — so admin actions stay distinct from personal
 // settings.
 //
-// Section keys are unchanged (display/keys/env/agents/assistant/tts/git/ssm/ops/tokens)
+// Section keys are unchanged (display/keys/env/agents/assistant/tts/git/ssm/ops/tokens/memory)
 // so every openSettings(section) deep-link still lands on the right item.
 //
 // Mobile (≤760px): the two panes become a drill-down — the rail is shown first, then
@@ -33,6 +33,7 @@ import { TokensTab } from "./TokensTab.tsx";
 import { DangerTab } from "./DangerTab.tsx";
 import { InternalReposTab } from "./InternalReposTab.tsx";
 import { NotificationsTab } from "./NotificationsTab.tsx";
+import { MemoryTab } from "./MemoryTab.tsx";
 // 使用量タブは features/usage の View をそのまま差す薄いラッパ（モーダル非依存に
 // 保つ＝将来ペインへ昇格させるときに同じ View を差し替えなしで使える。docs/46 §5）。
 import { UsageView } from "../usage/UsageView.tsx";
@@ -66,6 +67,7 @@ const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
     label: "set.group_workspace",
     items: [
       ["usage", "set.tab_usage"],
+      ["memory", "set.tab_memory"],
       ["env", "set.tab_env"],
       ["ssm", "set.tab_ssm"],
       ["internalrepos", "set.tab_internalrepos"],
@@ -171,6 +173,7 @@ export function SettingsDialog() {
             {section === "notifications" && <NotificationsTab />}
             {section === "git" && <GitTab />}
             {section === "usage" && <UsageView />}
+            {section === "memory" && <MemoryTab />}
             {section === "env" && <EnvTab />}
             {section === "ssm" && <SsmTab />}
             {section === "ops" && <OpsTab />}

@@ -87,6 +87,8 @@ export const en: Record<keyof typeof ja, string> = {
   "err.memory_no_snapshots": "There are no snapshots yet.",
   "err.memory_snapshot_failed": "Failed to take the snapshot.",
   "err.memory_diff_failed": "Failed to load the diff.",
+  "err.memory_bad_scope": "The restore scope is invalid.",
+  "err.memory_restore_failed": "The restore failed.",
 
   // --- builtin assistants (docs/28 P3; ids are the fixed set in assistants.go. The
   //     Agent returns Japanese, but for builtins the Console catalog resolves display) ---
@@ -2365,6 +2367,7 @@ export const en: Record<keyof typeof ja, string> = {
   "set.tab_display": "Display",
   "set.tab_keys": "Keyboard",
   "set.tab_usage": "Usage",
+  "set.tab_memory": "Agent memory",
   "set.tab_env": "Toolchains",
   "set.tab_agents": "Agents",
   "set.tab_assistant": "Assistant",
@@ -2692,5 +2695,53 @@ export const en: Record<keyof typeof ja, string> = {
   "editor.unknown.retry": "Fetch save state",
   "editor.diff_aria": "Diff between mine and remote",
   "editor.popout_dirty": "A file with unsaved changes cannot be popped out. Save or discard it, then retry.",
+
+
+  // === agent memory versioning (docs/39 P2 / ADR 0022; features/settings/MemoryTab.tsx) ===
+  // mem.trigger_* keys mirror the Agent's commit trailer (AF-Trigger) values, with
+  // "-" replaced by "_". An unknown trigger falls back to the raw value.
+  "mem.intro":
+    "History for the memory your agents build up (Claude's auto-memory, Codex's memories). A snapshot is taken whenever it changes, so you can review diffs and roll back to any point. Memory can contain personal notes — review it before sharing.",
+  "mem.ws_required_title": "The workspace is stopped",
+  "mem.ws_required_hint": "Memory history lives inside the workspace, so it can only be managed while it is running.",
+  "mem.start_ws": "Start the workspace",
+  "mem.roots_title": "Covered memory",
+  "mem.no_roots": "No memory is available for versioning.",
+  "mem.root_stats": "{files} files · {size}",
+  "mem.busy_badge": "running",
+  "mem.last_snapshot": "Last snapshot: {when}",
+  "mem.never": "No snapshots yet",
+  "mem.snapshot_now": "Snapshot now",
+  "mem.snapshot_taken": "Snapshot taken.",
+  "mem.snapshot_unchanged": "Nothing changed, so no snapshot was taken.",
+  "mem.auto_label": "Automatic snapshots",
+  "mem.auto_hint": "Taken a few minutes after the agents go idle. Nothing is recorded when nothing changed.",
+  "mem.auto_locked": "Automatic snapshots are disabled for this environment by the operator (AF_MEMORY_SNAPSHOT).",
+  "mem.history_title": "History",
+  "mem.history_empty": "No snapshots yet.",
+  "mem.n_files": "{n} files",
+  "mem.jump_at": "Point in time",
+  "mem.jump_go": "Go to this time",
+  "mem.jump_none": "No snapshot exists at or before that time.",
+  "mem.trigger_auto": "auto",
+  "mem.trigger_manual": "manual",
+  "mem.trigger_pre_restore": "pre-restore",
+  "mem.trigger_restore": "restore",
+  "mem.trigger_import": "import",
+  "mem.restore": "Restore this point",
+  "mem.restore_title": "What to restore",
+  "mem.scope_all": "Everything",
+  "mem.scope_pick": "Pick what to restore",
+  "mem.scope_whole_root": "{label} (all)",
+  "mem.tree_empty": "There is no memory at this point in time.",
+  "mem.restore_do": "Restore",
+  "mem.restore_confirm_title": "Restore this point?",
+  "mem.restore_confirm_body": "Memory for {scope} will be replaced with its contents at the selected point.",
+  "mem.restore_undo_hint":
+    "The state right before the restore is snapshotted automatically, so this action can itself be undone later.",
+  "mem.restore_busy_warn":
+    "A session is running. Anything it writes after the restore will show up as a new snapshot in the history.",
+  "mem.restored": "Restored ({written} updated, {deleted} removed).",
+  "mem.restore_nochange": "The contents already matched that point.",
 
 };
