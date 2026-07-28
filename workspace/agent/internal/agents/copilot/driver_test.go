@@ -33,8 +33,8 @@ type fakeACP struct {
 
 func newFakeACP(t *testing.T) (*acpClient, *fakeACP) {
 	t.Helper()
-	cIn, sOut := io.Pipe()  // server writes → client reads
-	sIn, cOut := io.Pipe()  // client writes → server reads
+	cIn, sOut := io.Pipe() // server writes → client reads
+	sIn, cOut := io.Pipe() // client writes → server reads
 	f := &fakeACP{toClient: sOut,
 		gotPrompt: make(chan int64, 8),
 		gotCancel: make(chan struct{}, 8),
