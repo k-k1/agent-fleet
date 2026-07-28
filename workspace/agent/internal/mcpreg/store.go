@@ -41,9 +41,9 @@ func optOutPath() string {
 	return filepath.Join(paths.AgentConfigDir(), "mcp-optout.json")
 }
 
-// tenantCache is what the CP bridge writes (P4). Reading it here already — with a
-// missing file meaning "no tenant servers" — keeps the composition final, so the
-// tenant phase only has to add the fetcher.
+// tenantCache is what the CP bridge writes (tenant.go, P4): the distributed set plus
+// when it was last confirmed. A missing file means "no tenant servers", which is also
+// what a deployment without the bridge looks like.
 type tenantCache struct {
 	FetchedAt int64       `json:"fetchedAt"`
 	Servers   []ServerDef `json:"servers"`
@@ -144,6 +144,9 @@ func compose(s *secrets.Data, tc tenantCache, opted map[string]bool) Registry {
 	}
 	for _, d := range tc.Servers {
 		d.Origin = OriginTenant
+		if d.UserSecret {
+			d.Headers = withMemberSecrets(d.Headers, s.MCPSecrets[d.ID])
+		}
 		if opted[d.ID] {
 			d.Enabled = false
 		}
@@ -331,6 +334,82 @@ func Delete(id string) error {
 		return ErrReadOnly
 	}
 	return ErrNotFound
+}
+
+// withMemberSecrets fills a user_secret definition's header values from the member's
+// own store (docs/48 §5.2). Only the NAMES the tenant distributed are filled: a stale
+// local value for a header the tenant has since removed is ignored rather than sent, so
+// the tenant stays in control of WHICH headers the server sees.
+func withMemberSecrets(names map[string]string, mine map[string]string) map[string]string {
+	if len(names) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(names))
+	for k, v := range names {
+		if own, ok := mine[k]; ok && own != "" {
+			out[k] = own
+			continue
+		}
+		out[k] = v // still empty — Ready() holds the server back until it is filled
+	}
+	return out
+}
+
+// SetTenantSecrets stores the member's own header values for a tenant-distributed
+// user_secret definition. Masked values keep what is already stored (the same round-trip
+// contract as MergeSecrets), and a name the tenant did not distribute is refused —
+// otherwise the local store would accumulate values that nothing can ever use.
+//
+// It is the ONE write a member has into a tenant row's content, and it stays in the
+// member's own encrypted store: the tenant definition itself is never modified.
+func SetTenantSecrets(id string, incoming map[string]string) error {
+	var def ServerDef
+	found := false
+	for _, d := range loadTenantCache().Servers {
+		if d.ID == id {
+			def, found = d, true
+			break
+		}
+	}
+	if !found {
+		return ErrNotFound
+	}
+	if !def.UserSecret {
+		return ErrReadOnly
+	}
+	s, err := secrets.Load()
+	if err != nil {
+		return err
+	}
+	stored := s.MCPSecrets[id]
+	next := map[string]string{}
+	for k, v := range incoming {
+		if _, ok := def.Headers[k]; !ok {
+			continue // not a header this tenant server asks for
+		}
+		if v == MaskedValue {
+			if old, ok := stored[k]; ok {
+				next[k] = old
+			}
+			continue
+		}
+		if strings.TrimSpace(v) == "" {
+			continue // blank clears the value
+		}
+		if strings.ContainsAny(v, "\r\n") {
+			return invalid(CodeHeaderValue, "a header value cannot contain a newline")
+		}
+		next[k] = v
+	}
+	if s.MCPSecrets == nil {
+		s.MCPSecrets = map[string]map[string]string{}
+	}
+	if len(next) == 0 {
+		delete(s.MCPSecrets, id)
+	} else {
+		s.MCPSecrets[id] = next
+	}
+	return s.Save()
 }
 
 // SetEnabled toggles a definition. For a user row it flips the stored flag; for a

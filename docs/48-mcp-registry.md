@@ -1,8 +1,9 @@
 # 48. ユーザー / テナント独自 MCP サーバーの登録（MCP レジストリ）— 設計
 
-- 状態: **◐ P0 / P1 / P2 / P3 実装済み**（型・実効レジストリ合成・user スコープ CRUD・接続テスト・
-  Console「MCP サーバー」タブ・アシスタント配線・**claude / codex のセッション materialize**）。
-  P4（テナントスコープ）以降は未着手。
+- 状態: **◐ P0 / P1 / P2 / P3 / P4 実装済み**（型・実効レジストリ合成・user スコープ CRUD・接続テスト・
+  Console「MCP サーバー」タブ・アシスタント配線・**claude / codex のセッション materialize**・
+  **テナントスコープの配布（CP テーブル / 管理 API / ブリッジ / 配布キャッシュ / `user_secret`）**）。
+  P5（残り kind の materialize ＋ egress allowlist 連携）は未着手。
   意思決定は [decisions/0031](decisions/0031-mcp-registry.md)。
 - 関連: docs/19（アシスタント）/ [25](25-ops-monitoring.md)（組み込み ops 連携 = 本設計が一般化する対象）/
   [20](20-container-audit-egress.md)（egress allowlist）/ [46](46-usage-accounting.md)（残 P5 = MCP の使用量計上）/
@@ -122,7 +123,7 @@ type Targets struct {
 ### 3.3 CP 側テーブル
 
 ```sql
--- control-plane/migrations/0028_mcp_server.sql
+-- control-plane/migrations/0028_mcp_server.sql（+ migrations-pg/0011_mcp_server.sql）
 CREATE TABLE IF NOT EXISTS mcp_server(
   id          TEXT PRIMARY KEY,
   tenant_id   TEXT NOT NULL,
@@ -130,10 +131,11 @@ CREATE TABLE IF NOT EXISTS mcp_server(
   label       TEXT NOT NULL DEFAULT '',
   transport   TEXT NOT NULL DEFAULT 'http',
   url         TEXT NOT NULL DEFAULT '',
-  headers_enc BLOB,
+  headers_enc TEXT NOT NULL DEFAULT '',
   key_ref     TEXT NOT NULL DEFAULT '',
   targets     TEXT NOT NULL DEFAULT 'assistant,session',
   kinds       TEXT NOT NULL DEFAULT '',
+  timeout_ms  INTEGER NOT NULL DEFAULT 0,
   enabled     INTEGER NOT NULL DEFAULT 1,
   user_secret INTEGER NOT NULL DEFAULT 0,
   created_by  TEXT NOT NULL DEFAULT '',
@@ -145,6 +147,25 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_server_name ON mcp_server(tenant_id, n
 
 `command` / `args` / `env` 列を**持たない**のが要点で、テナント stdio を「後から足せる」状態に
 しないためにスキーマで落とす（決定 2）。マイグレータは `;` で分割するので、コメントに `;` を書かない。
+
+**P4 実装時の 2 点の変更**（設計時のスケッチからの差分）:
+
+- `headers_enc` は `BLOB` ではなく **`TEXT`**。custodian が返すのは base64 文字列で、かつ
+  Postgres に `BLOB` 型が無い（`migrations-pg/` は SQLite 版と DDL を同一に保つ方針）。
+- `timeout_ms` を**追加**した。落としてあるのは `command` 系だけで、そこがセキュリティ上の
+  不変条件（決定 2）。タイムアウトは無害で、無いとテナント配布だけ user スコープより機能が
+  劣ることになる。
+- 秘密の封は **`custodian.Wrap/Unwrap`（AES-256-GCM・AAD = keyRef）をヘッダ JSON そのものに
+  当てる**。名目は DEK エンベロープだが中身は任意バイト列の AEAD で、§3.2 の「秘密フィールドのみ
+  tenant KEK でラップ」がそのままこの形。master 鍵が無い環境では **平文 JSON ＋ `key_ref=''`** に
+  縮退する（Agent の暗号化ストアと同じ割り切り）。`key_ref` があるのに custodian が無い場合は
+  **エラーで返す**（nil 参照でも「ヘッダ無しで配布」でもなく、原因を名指しする）。
+
+**テーブル列 ≠ per-tenant の隔離境界**という点は明示しておく: `localCustodian` の KEK は
+master 由来（`custodian.go` に既述）なので、`key_ref` は暗号学的なテナント分離ではない。
+実際に別テナントの行へ届かないようにしているのは **store の全文が `tenant_id` を WHERE に持つ**
+ことと、配布面が **トークン→membership→tenant で解決し、リクエストの値を一切使わない**ことの
+2 点（`mcp_server_test.go` で固定）。
 
 ---
 
@@ -188,6 +209,21 @@ effective = builtin(接続済みのものだけ) ∪ tenant(enabled) ∪ user
 `user_secret=1` で値が未入力のサーバーは **materialize しない**（起動して失敗するより、出さない方が良い）。
 Console にはその旨のバッジを出す。
 
+**P4 実装（`user_secret` の機構は入れた・既定は `0`）**:
+
+- CP 側は `user_secret=1` のとき **入ってくる値をその場で捨てる**（`stripValues`）。出力時だけ
+  隠すのでは、フラグを立てる前に管理者が貼ったトークンが DB に残り続け、誰も読まないのに
+  漏洩面だけが残る。
+- メンバー側の値は `secrets.Data.MCPSecrets`（`サーバー id → ヘッダ名 → 値`）に入る。**テナントが
+  配ったヘッダ名しか埋めない**（`withMemberSecrets`）— どのヘッダを送るかはテナントが決める、を
+  保つため。ローカルの古い値は無視される。
+- 書き込み口は `PUT /mcp-servers/{id}/secrets` の 1 本だけで、**`user_secret=1` のテナント行以外は
+  `ErrReadOnly`**。値込みで配られた行の値をメンバーが差し替えられると、テナントが意図した資格情報で
+  接続できなくなる。
+- `Masked()` は **空の値を `***` にしない**。未入力は「秘密を隠している」のではなく「誰も入れていない」で、
+  そこを潰すと *自分が* 値を入れる番だと Console から判別できなくなる（CP 側の `maskHeaders` も同じ規則）。
+- ⚠️ 「`user_secret=1` を既定にするか」の**運用方針は依然として未決**（§14-5）。入れたのは機構だけ。
+
 ---
 
 ## 6. テナント配布の経路
@@ -203,12 +239,30 @@ Workspace agent ──(AF_MCP_TOKEN)──▶ CP GET /internal/mcp-servers      
 ```
 
 - `AF_MCP_TOKEN` は per-membership。`workspace_lifecycle.go` の `AF_MEMO_TOKEN` /
-  `AF_SCHEDULE_TOKEN` と同じ mint 方式（membership id + 切り詰め HMAC タグ）で注入する。
-- agent 側の取得契機: ①コンテナ起動時 ②5 分間隔のポーリング ③Console からの明示リフレッシュ。
+  `AF_SCHEDULE_TOKEN` と同じ mint 方式（membership id + 切り詰め HMAC タグ・`afm_` プレフィクス）で
+  注入する（`control-plane/mcp_server_bridge.go`）。**別建てのトークンにする理由が memo / schedule より
+  強い**: この応答は `user_secret=0` のテナント秘密を載せるので、漏洩範囲を MCP 定義の読み取りだけに
+  閉じたい。テナントは **トークン→membership→tenant** で解決し、リクエスト側の値は一切使わない。
+- agent 側の取得契機: ①コンテナ起動時 ②5 分間隔のポーリング ③Console からの明示リフレッシュ
+  （`workspace/agent/mcp_tenant.go` が契機だけを持ち、取得本体は `internal/mcpreg/tenant.go`）。
 - **CP 到達不能ならキャッシュを使う**（fail-open）。Console には最終取得時刻を出し、stale を可視化する。
   ここを fail-closed にすると CP 瞬断でセッションから MCP が消えるので取らない。
+- **中身が変わったときだけ materialize する**。無変更でも `fetchedAt` は書き直す（確認済みなのに
+  「古い」と見えるのを避けるため）が、`changed=false` なので CLI 設定は触らない。ここを取り違えると
+  claude が絶えず書き換える `.claude.json` を 5 分ごとに踏むことになる（§8.2）。
+- **受け取った定義は agent 側でも再検証して、通らないものは落とす**（`acceptTenant`）。ADR0031 決定 2 の
+  3 段目で、**コマンドを実際に実行する当のマシン上で走る唯一の検査**。`origin` / `enabled` も正規化する
+  （「自分は user 行だ」と偽って読み取り専用の扱いを外せないようにする）。CP が復号できなかった行と
+  ここで落とした行は Console にトースト（`mcp.tenant_incomplete`）で件数を出す — 黙って消えると
+  「管理者が登録していない」に見える。
 - ⚠️ **新 REST は `workspace/agent/routes.go` と `control-plane/routes.go` の両方に登録**する
   （CP は明示許可リスト方式。片方漏れると Console から 404）。`/internal/*` はセッション免除。
+  P4 で足したのは admin 4 本（`/api/admin/mcp-servers*`）＋ 配布 1 本（`GET /internal/mcp-servers`）＋
+  Agent プロキシ 2 本（`POST /api/mcp-servers/tenant-refresh` / `PUT /api/mcp-servers/{id}/secrets`）。
+- ⚠️ **検証は CP と agent で二重に持つ**（別 Go モジュールなのでコードを共有できない）。
+  **エラーコードは意図して同一**にしてあり、Console は同じ `err.<code>` カタログで解決する。
+  ドリフトは agent 側の再検証で「配られたが使われない」として現れる（落ちるのは CI ではなく実運用なので、
+  コード追加・改名時は両方に足すこと）。
 
 ---
 
@@ -310,6 +364,12 @@ Workspace agent ──(AF_MCP_TOKEN)──▶ CP GET /internal/mcp-servers      
   TOML は重複テーブルをエラーにするので、`[mcp_servers.x]` を残したまま追記すると
   **config.toml 全体が読めなくなり codex が起動しなくなる**。MCP が 1 本増えない程度では済まない。
 - 書き込みは **read → merge → 一時ファイル → `os.Rename`**（原子的）、モードは `0600`。
+- **materialize 全体を 1 本の mutex で直列化する**（P4 で追加）。呼び出し元は複数あり
+  （レジストリ CRUD の HTTP ハンドラ・各セッション起動・P4 のテナント 5 分ポーリング）、
+  1 パスは設定ファイルと**所有台帳の両方**に対する read-modify-write なので、交錯すると片方の
+  書き込みが失われる。失うのが台帳の側だと悪い方に転ぶ — **af が自分の所有を忘れ、その名前は
+  誰も消せない孤児になる**（台帳がまさに防いでいる失敗）。kind ごとではなく全体で 1 本なのは、
+  kind 間で台帳ファイルを共有しているため。
 - **変わっていなければ書かない**。`.claude.json` は claude 自身が絶えず書き換える生の状態ファイル
   （オンボーディング・trust ダイアログ）なので、無変更の起動で再シリアライズすると無駄に整形が変わり、
   こちらの rename が claude の書き込みを踏み潰す窓も広がる。
@@ -407,13 +467,32 @@ P1 以前は**そもそも UI が無く**（組み込み 3 種は SRE アシス�
   このエージェントは対象外）。選択自体は残せるので、後から鍵を入れたりスコープを直せば効く。
 - 由来（builtin / tenant / user）でセクションを割らないのは §11.1 と同じ理由。
 
-### 11.3 残り（P4 以降）
+### 11.3 テナント配布の UI（P4 実装済み）
 
-- 管理モーダル（`AdminTab.tsx`）に**テナント MCP セクション**を追加（tenant_admin 以上に表示）。
-- **i18n 必須**: `ja` / `en` 両方に文言を追加する。裸和文の AST lint が CI で落とすので、文字列は必ず `tr()` 経由。
-  サーバー側の拒否理由も **1 理由 = 1 コード**（`mcpreg.ValidationError.Code`）にして
-  `err.<code>` カタログで解決する（Go 側の message は言語非依存の developer fallback）。
-- 色トークンの追加は不要（新しい agent kind ではない）。
+**管理モーダルの「MCP 配布」モード**（`AdminTab.tsx` の `McpAdminView`、mode key = `mcp`）。
+テナントを選んで配布中の一覧・追加・編集・削除。`tenantAdminFor` でハンドラ内ゲートなので、
+super_admin は全テナント、tenant_admin は自分のテナントだけが見える。
+
+- フォームは**リモート専用の別シェイプ**（`mcpWire.ts` の `TenantForm` / `bodyOfTenant`）にした。
+  member 用 `Form` からフィールドを隠す作りにすると「stdio を作れてしまう状態」が理屈上残る。
+  `transport` はフォームから取らず `"http"` 固定で、`bodyOfTenant` は `command` / `args` / `env` を
+  **そもそも出力しない**（`mcpWire.test.ts` で固定）。
+- 「認証の値は各メンバーが入力する」トグル（`user_secret`）を入れると値の入力欄が**消える**。
+  無効化して無視するのではなく消すのは、そこに入れた値がどこにも保存されないため。
+- 削除は「各メンバーのワークスペースからは次回の取得時に消えます」と明示する（即時ではない）。
+
+**メンバー側タブ（`McpTab.tsx`）の追随**:
+
+- テナント配布の**最終取得時刻＋明示リフレッシュ**（fail-open が「黙って古い」にならないための唯一の手掛かり）。
+  取得したことが一度も無い環境（ブリッジ未設定）では行そのものを出さない — 説明の無い「未取得」は障害に見える。
+- `user_secret` 行には「値を入力」ボタンと、ヘッダ**名だけ固定**の値入力フォーム（`SecretsForm`）。
+- `enabled && !ready` の警告を 2 通りに割った: **自分が値を入れれば直る**（`mcp.needs_member_secrets`）か、
+  それ以外（従来の `mcp.not_ready`）か。前者は行動可能なので同じ文言にしてはいけない。
+
+**i18n 必須**: `ja` / `en` 両方に文言を追加する。裸和文の AST lint が CI で落とすので、文字列は必ず `tr()` 経由。
+サーバー側の拒否理由も **1 理由 = 1 コード**（`mcpreg.ValidationError.Code` / CP の `codeMCP*`）にして
+`err.<code>` カタログで解決する（Go 側の message は言語非依存の developer fallback）。
+色トークンの追加は不要（新しい agent kind ではない）。
 
 ---
 
@@ -425,7 +504,7 @@ P1 以前は**そもそも UI が無く**（組み込み 3 種は SRE アシス�
 | **P1** ✅ | Console 「MCP サーバー」タブ（実効レジストリ一覧＋ user CRUD＋接続テスト）＋ i18n（ja/en）＋検証コード化 | `McpTab.tsx`、`mcpWire.ts`、`SettingsDialog.tsx`、`settings.css`、i18n、`mcpreg/def.go` |
 | **P2** ✅ | アシスタント配線（claude / codex / opencode / agy）。`mcpConfigArgs` の一般化＋アシスタント編集 UI | `mcpreg/attach.go`（新設）、`chat_mcp.go`（新設）、`chat_providers.go`、`AssistantModal.tsx` |
 | **P3** ✅ | セッション materialize — **claude / codex 先行**（所有台帳・非破壊書き込み・起動/CRUD 契機・drift CI） | `mcpreg/materialize*.go`（新設）、`mcp_materialize.go`（新設）、`session_tmux.go`、`paths.go`、`.github/workflows/mcp-config-contract.yml`（新設） |
-| **P4** | テナントスコープ: CP テーブル・管理 API・ブリッジ・配布キャッシュ・`AdminTab` UI・`user_secret` | `control-plane/mcp_server.go`（新設）、`workspace_lifecycle.go`、`AdminTab.tsx` |
+| **P4** ✅ | テナントスコープ: CP テーブル・管理 API・ブリッジ・配布キャッシュ・`AdminTab` UI・`user_secret` | `control-plane/mcp_server.go` / `mcp_server_bridge.go` / `migrations/0028` + `migrations-pg/0011`（新設）、`store.go`・`store_sqlite.go`・`routes.go`・`workspace_lifecycle.go`、`mcpreg/tenant.go`・`mcp_tenant.go`（新設）、`AdminTab.tsx`・`McpTab.tsx`・`mcpWire.ts` |
 | **P5** | 残り kind の materialize（opencode / kiro / cursor / copilot / agy）＋ egress allowlist 連携 | 同上 + `egress.go` |
 
 P0〜P3 で「個人が登録して claude / codex で使う」が閉じる。P4 で組織配布、P5 で全 kind。
@@ -480,6 +559,29 @@ P0〜P3 で「個人が登録して claude / codex で使う」が閉じる。P4
 - **未検証**: Console からの実操作、実 MCP サーバーを登録しての claude / codex セッション実起動。
   CI ワークフロー自体の実行（GitHub Actions の支払い停止中）。
 
+**P4 で済ませた分**（`control-plane/mcp_server_test.go` / `internal/mcpreg/tenant_test.go` /
+`console/.../mcpWire.test.ts`）:
+
+- **決定 2 の 3 段**を別々に固定した: CP の API が `transport=stdio` を `mcp_tenant_stdio` で 400、
+  Console の `bodyOfTenant` が `command` / `args` / `env` を出力しない、agent の `acceptTenant` が
+  stdio と「http なのにコマンドを持つ」定義を落とす。3 つ目が**コマンドを実行する当のマシン上の検査**。
+- **テナント隔離**: `mcp_server` の get / list / update / delete を別テナント id で叩き、見えない・
+  改名できない・消せないことを確認（id は Console とメンバーのキャッシュに載るので秘密ではなく、
+  隔離しているのは `tenant_id` の WHERE）。配布面も membership の tenant だけを返すことを確認。
+- **秘密の往復**: `***` で保存済みが維持される / 省略が削除になる / **保存先の無い `***` は捨てる**
+  （生の `"***"` を資格情報として送らないため）/ `user_secret` は値を**その場で捨てる**（隠すだけでは
+  DB に残る）/ 空の値は `***` にしない。封は AAD が keyRef なので別テナント鍵では開かないこと、
+  master 鍵の無い環境では平文へ縮退すること、**封済みなのに custodian が無い**場合はエラーになること
+  （nil 参照でも「ヘッダ無しで配布」でもない）。
+- **復号できない行は配布しない**（件数だけ返す）。ヘッダ無しで配ると、メンバーが鍵設定ではなく
+  MCP サーバー自体を疑うことになる。
+- **fail-open と冪等**: 到達不能な CP でキャッシュが残る / 同内容の再取得は `changed=false` で
+  CLI 設定を触らないが `fetchedAt` は前進する / ブリッジ未設定ではキャッシュファイルすら作らない。
+- **トークン**: membership ごとに決定的（毎回の注入が冪等）、改竄・別 master 鍵・**schedule トークンの
+  流用**を拒否。
+- **未検証**: 管理モーダルとメンバータブのブラウザ実操作、実 MCP サーバーを配布しての実セッション、
+  Postgres バックエンドでのマイグレーション適用（DDL は SQLite 版と同一・SQLite で実行済み）。
+
 ---
 
 ## 14. 未決 / 積み残し
@@ -490,6 +592,6 @@ P0〜P3 で「個人が登録して claude / codex で使う」が閉じる。P4
    サーバー単位より細かい制御を入れるか。
 3. **使用量計上**（docs/46 残 P5）。MCP ツール呼び出しのトークンを台帳のどのバケットに入れるか。
 4. **オペレーター MCP からの登録**。`mcp_stdio.go` / CP `mcp.go` に `list_mcp_servers` 等を出すか（v1 は出さない）。
-5. **テナント配布の秘密がコンテナ内で平文になる**件（§5.2）。`user_secret=1` を既定にするか、
-   運用ガイドで「露出前提のトークンだけ配る」とするか。
+5. **テナント配布の秘密がコンテナ内で平文になる**件（§5.2）。**機構は P4 で入った**（`user_secret`）が、
+   `1` を既定にするか、運用ガイドで「露出前提のトークンだけ配る」とするかは依然として未決。
 6. kiro / cursor の**リモート設定形が未確認**（§8.1）。P5 着手時に実機で確定させる。

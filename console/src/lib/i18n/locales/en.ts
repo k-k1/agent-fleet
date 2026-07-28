@@ -93,6 +93,10 @@ export const en: Record<keyof typeof ja, string> = {
   "err.mcp_header_value_invalid": "A header value cannot contain a newline.",
   "err.mcp_kind_unknown": "Unknown agent kind.",
   "err.mcp_timeout_range": "The timeout must be between 1000 and 120000 ms.",
+  "err.mcp_headers_unreadable": "The stored headers cannot be decrypted — re-enter every header value.",
+  "err.mcp_tenant_bridge_off":
+    "Tenant distribution is unavailable in this deployment (the CP public URL / token is unset).",
+  "err.mcp_tenant_fetch_failed": "Could not fetch the tenant set.",
   "err.assistant_not_found": "Assistant not found.",
   "err.assistant_builtin_readonly_edit": "Builtin assistants can't be edited.",
   "err.assistant_builtin_readonly_delete": "Builtin assistants can't be deleted.",
@@ -410,6 +414,24 @@ export const en: Record<keyof typeof ja, string> = {
   "mcp.enabled_on": "Enabled",
   "mcp.kv_value": "Value",
   "mcp.kv_masked_hint": "*** is the stored value. Leave it as-is to keep it unchanged.",
+  // --- Tenant distribution (docs/48 P4) ---
+  "mcp.tenant_fetched_at": "Tenant set last fetched: {when}",
+  "mcp.tenant_never_fetched":
+    "The tenant set has not been fetched yet (check the admin configuration or the connection).",
+  "mcp.tenant_refresh": "Fetch tenant set",
+  "mcp.tenant_refreshing": "Fetching…",
+  "mcp.tenant_refresh_failed": "Could not fetch the tenant set: {msg}",
+  "mcp.tenant_incomplete":
+    "{n} of the distributed servers could not be taken in — ask your tenant admin to check the configuration.",
+  "mcp.tenant_user_secret_note":
+    "Distributed by a tenant admin. The endpoint comes from the tenant, but you supply the credential yourself.",
+  "mcp.enter_secrets": "Enter values",
+  "mcp.needs_member_secrets":
+    "No credential entered, so nothing is handed over even while enabled. Set it from “Enter values”.",
+  "mcp.secrets_intro":
+    "Enter the header values {name} needs. They are stored encrypted in this workspace and never sent back to the tenant.",
+  "mcp.secrets_hint": "The header names are set by the tenant admin and cannot be changed — only the values.",
+  "mcp.secrets_none": "This server needs no values from you.",
   // --- common (save) ---
   "common.save_failed": "Failed to save.",
 
@@ -907,7 +929,26 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.mode_usage": "Usage",
   "admin.mode_audit": "Audit",
   "admin.mode_egress": "Egress",
+  "admin.mode_mcp": "MCP",
   "admin.mode_tts": "Read-aloud",
+  // --- Tenant-distributed MCP servers (docs/48 P4, AdminTab's McpAdminView) ---
+  "admin.mcp_intro":
+    "MCP servers distributed to every member of the tenant. Only remote (Streamable HTTP) servers can be distributed — a stdio server cannot, because distributing a command is equivalent to running arbitrary code in every member's container.",
+  "admin.mcp_distributed": "Distributed MCP servers",
+  "admin.mcp_none": "No MCP servers are distributed.",
+  "admin.mcp_add": "Distribute an MCP server",
+  "admin.mcp_disabled": "Disabled",
+  "admin.mcp_user_secret_badge": "Member-supplied value",
+  "admin.mcp_user_secret": "Each member enters the credential",
+  "admin.mcp_user_secret_hint":
+    "Only the endpoint and the header names are distributed; each member enters the values in their own workspace. A value distributed here is readable in plaintext inside every member's container.",
+  "admin.mcp_url_hint": "The MCP endpoint URL. Put credentials in a header, not in the URL.",
+  "admin.mcp_enabled_hint": "Disabling keeps the definition but stops distributing it to anyone.",
+  "admin.mcp_restart_note":
+    "Member workspaces fetch this every 5 minutes, and it takes effect in sessions started after that.",
+  "admin.mcp_del_title": "Remove distribution",
+  "admin.mcp_del_body":
+    "Removes the distribution of {name}. It disappears from each member's workspace at their next fetch.",
   "admin.crumb_tenants": "Tenants",
   "admin.tenant": "Tenant",
   "admin.all_tenants": "All tenants",

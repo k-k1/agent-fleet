@@ -7,8 +7,13 @@ import {
   formOf,
   formValid,
   fromKV,
+  bodyOfTenant,
+  emptyTenantForm,
+  needsMemberSecrets,
+  tenantFormOf,
+  tenantFormValid,
 } from "./mcpWire.ts";
-import type { McpServer } from "./mcpWire.ts";
+import type { McpServer, TenantServer } from "./mcpWire.ts";
 
 // The MCP registry tab's wire contract (docs/48 P1). These rules are enforced on the
 // agent side too — the point here is that the Console never SENDS something the agent
@@ -147,3 +152,75 @@ describe("formValid", () => {
   });
 });
 
+
+// --- tenant distribution (docs/48 P4) ---------------------------------------------
+//
+// The invariant worth a test rather than a review: a tenant definition can never carry
+// a command. ADR0031 決定 2 refuses distributed stdio because it is an admin running
+// arbitrary code in every member's container, and the wire body is the last place the
+// Console could reintroduce one.
+
+const tenantRow: TenantServer = {
+  id: "t1",
+  name: "corp-wiki",
+  label: "Corp Wiki",
+  transport: "http",
+  url: "https://wiki.corp.example/mcp",
+  headers: { Authorization: MASKED, "X-Team": MASKED },
+  targets: { assistant: true, session: true },
+  kinds: ["claude"],
+  enabled: true,
+};
+
+describe("bodyOfTenant", () => {
+  it("never sends a command, args or env", () => {
+    const b = bodyOfTenant(tenantFormOf(tenantRow), "acme");
+    for (const k of ["command", "args", "env"]) expect(b).not.toHaveProperty(k);
+    expect(b.transport).toBe("http");
+  });
+  it("keeps masked header values so an untouched edit does not clear the credential", () => {
+    const b = bodyOfTenant(tenantFormOf(tenantRow), "acme");
+    expect(b.headers).toEqual({ Authorization: MASKED, "X-Team": MASKED });
+  });
+  it("sends header NAMES with blank values when the member supplies the credential", () => {
+    const f = { ...tenantFormOf(tenantRow), userSecret: true };
+    const b = bodyOfTenant(f, "acme");
+    // A real value must not travel just because it was in the form before the toggle:
+    // with user_secret on, nothing stores it and nothing would ever read it.
+    expect(b.headers).toEqual({ Authorization: "", "X-Team": "" });
+    expect(b.user_secret).toBe(true);
+  });
+  it("carries the tenant it is being distributed to", () => {
+    expect(bodyOfTenant(emptyTenantForm(), "acme").tenant_slug).toBe("acme");
+  });
+});
+
+describe("tenantFormValid", () => {
+  it("requires a valid name and an http(s) URL", () => {
+    const base = emptyTenantForm();
+    expect(tenantFormValid(base)).toBe(false);
+    expect(tenantFormValid({ ...base, name: "wiki" })).toBe(false);
+    expect(tenantFormValid({ ...base, name: "wiki", url: "ftp://x/y" })).toBe(false);
+    expect(tenantFormValid({ ...base, name: "bad name", url: "https://x/y" })).toBe(false);
+    expect(tenantFormValid({ ...base, name: "wiki", url: "https://x/y" })).toBe(true);
+  });
+});
+
+describe("needsMemberSecrets", () => {
+  // An empty value is the tenant saying "you supply this"; MASKED is a value that is
+  // already stored. Confusing the two either hides the action or invents one.
+  const row = (over: Partial<McpServer>): McpServer =>
+    ({ ...tenantRow, origin: "tenant", editable: false, ready: false, ...over }) as McpServer;
+  it("is true for a tenant user_secret row with an unfilled value", () => {
+    expect(needsMemberSecrets(row({ userSecret: true, headers: { Authorization: "" } }))).toBe(true);
+  });
+  it("is false once every value is stored", () => {
+    expect(needsMemberSecrets(row({ userSecret: true, headers: { Authorization: MASKED } }))).toBe(false);
+  });
+  it("is false for a plain tenant row — the values are not the member's to enter", () => {
+    expect(needsMemberSecrets(row({ headers: { Authorization: "" } }))).toBe(false);
+  });
+  it("is false for a user row, whose empty value is its own owner's to fill", () => {
+    expect(needsMemberSecrets(row({ origin: "user", userSecret: true, headers: { A: "" } }))).toBe(false);
+  });
+});
