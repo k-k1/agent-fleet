@@ -24,7 +24,9 @@ import { CodeView } from "./CodeView.tsx";
 import { ImageView } from "./ImageView.tsx";
 import { registerPaneViewActions } from "./paneViewActions.ts";
 import type { LineMarks } from "./CodeView.tsx";
-import { CodeEditor, type EditorSelectionReport } from "../editor/CodeEditor.tsx";
+import { CodeEditor } from "../editor/CodeEditor.tsx";
+import type { EditorSelectionReport } from "../editor/selection.ts";
+import { editorPill, type SelectionPill } from "./selectionPill.ts";
 import { useFileEditor } from "../editor/useFileEditor.ts";
 import { useDebounced } from "../../lib/useDebounced.ts";
 import { revisionOf, type BufferValidationError } from "../editor/buffer.ts";
@@ -132,14 +134,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   const bodyRef = useRef<HTMLDivElement>(null);
   // `origin` keeps the two capture paths (the read-only grid's DOM walk and the
   // editor's own report) from clearing each other's pill (docs/44 §1.8).
-  const [sel, setSel] = useState<{
-    quote: string;
-    startLine: number;
-    endLine: number;
-    x: number;
-    y: number;
-    origin: "view" | "editor";
-  } | null>(null);
+  const [sel, setSel] = useState<SelectionPill | null>(null);
   const [sendOpen, setSendOpen] = useState(false);
   // Keyed by the loaded file so a new document re-picks its starting mode. The
   // stored mode is the user's intent; what renders is derived from it below.
@@ -148,12 +143,14 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
     targetLine: number | undefined;
     mode: FileModeState;
   }>({ key: null, targetLine: undefined, mode: { kind: "plain", mode: "view" } });
+  // Bumped by each mode selection that lands on the editing surface; the effect
+  // below turns one bump into one focus move (docs/44 §5).
+  const [focusRequest, setFocusRequest] = useState(0);
   const [editorNotice, setEditorNotice] = useState("");
   const [resolutionOpen, setResolutionOpen] = useState(true);
   const viewTabRef = useRef<HTMLButtonElement>(null);
   const editTabRef = useRef<HTMLButtonElement>(null);
   const editorFocusRef = useRef<(() => void) | null>(null);
-  const editorWantsFocusRef = useRef(false);
   const modeGroupRef = useRef<HTMLSpanElement>(null);
 
   const showFile = (path: string, line?: number, column?: number, openInNew = false) => {
@@ -332,7 +329,13 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
       !nextSurfaces.editor && !!editorEl && editorEl.contains(document.activeElement);
     setModeState((prev) => ({ ...prev, mode: target }));
     if (nextSurfaces.editor) {
-      editorWantsFocusRef.current = true;
+      // The selection itself is the unit of focus, not the surface appearing:
+      // split and edit both show the editor, so a switch between them changes no
+      // surface and would never re-run a visibility-driven effect. Counting the
+      // requests also makes a superseded one harmless — the effect reads the
+      // surface as it ends up, so a request the next selection cancelled just
+      // finds nothing to focus.
+      setFocusRequest((n) => n + 1);
     } else if (leavingFocusedEditor) {
       // The keyboard command can hide the surface that holds focus; hand it to
       // the control that describes where we landed instead of dropping it.
@@ -345,16 +348,15 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   useEffect(() => {
     setEditorNotice("");
     setResolutionOpen(true);
-    // A grant that never got consumed (the mode was clamped away before the
-    // surface appeared) must not follow the pane into the next file.
-    editorWantsFocusRef.current = false;
   }, [filePath]);
 
+  // Deliberately keyed on the request, not on the surface: the same request id
+  // must fire once per user selection even when the surface was already there.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (!surfaces.editor || !editorWantsFocusRef.current) return;
-    editorWantsFocusRef.current = false;
+    if (!focusRequest || !surfaces.editor) return;
     queueMicrotask(() => editorFocusRef.current?.());
-  }, [surfaces.editor]);
+  }, [focusRequest]);
 
   // Opening or returning to a file view from a composer/terminal must also
   // retract Gboard.  This runs only for the active file pane and deliberately
@@ -478,26 +480,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   // come from the CodeMirror document, and the pill is placed from coordsAtPos.
   const captureEditorSelection = (selection: EditorSelectionReport | null) => {
     if (sendOpen) return;
-    const drop = () => setSel((prev) => (prev?.origin === "editor" ? null : prev));
-    // A hidden editing surface keeps its selection in CodeMirror state and still
-    // reports layout changes; neither can put a pill on screen.
-    if (!surfaces.editor || !selection || !selection.coords) return drop();
-    const coords = selection.coords;
-    setSel((prev) => {
-      // Only a real selection change takes ownership. Re-measuring an unchanged
-      // selection after a scroll or resize may move this surface's own pill, but
-      // must never take the pill back from a selection made elsewhere — that is
-      // how "one pill at a time" (docs/44 §1.8) would otherwise be lost.
-      if (selection.reason === "geometry" && prev?.origin !== "editor") return prev;
-      return {
-        quote: selection.quote,
-        startLine: selection.startLine,
-        endLine: selection.endLine,
-        x: Math.round(coords.left),
-        y: Math.round(coords.top - 34),
-        origin: "editor",
-      };
-    });
+    setSel((prev) => editorPill(prev, selection, surfaces.editor));
   };
 
   // Leaving the editing surface drops its pill: the selection survives in the

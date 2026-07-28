@@ -19,6 +19,16 @@ export interface EditorSelectionRange {
   from: number;
 }
 
+/** A selection, plus where to put UI beside it. `coords` is null when the
+ *  selection start is scrolled out of the rendered range. */
+export interface EditorSelectionReport extends EditorSelectionRange {
+  coords: { left: number; top: number } | null;
+  /** `selection` when the user moved the selection or edited the document,
+   *  `geometry` when only the layout moved and the same selection is being
+   *  re-measured. A re-measurement must not be mistaken for a new selection. */
+  reason: "selection" | "geometry";
+}
+
 /** The main selection as line numbers + text, or null when there is nothing
  *  quotable (an empty selection, or only whitespace). */
 export function selectionRangeOf(state: EditorState): EditorSelectionRange | null {
