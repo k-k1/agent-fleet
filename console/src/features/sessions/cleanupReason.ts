@@ -13,3 +13,24 @@ import { tMaybe } from "../../lib/i18n/index.ts";
 export function cleanupReasonText(c: { reason_key?: string; reason: string }): string {
   return (c.reason_key ? tMaybe(c.reason_key) : undefined) ?? c.reason;
 }
+
+// The reason rendered as a STATE BADGE plus a supporting hint sentence — the row's
+// second line. Split per key in the catalogs (clean.reason_badge.* / clean.reason_hint.*)
+// because a whole reason sentence squeezed into one pill wraps into a mess, while the
+// state alone ("停止中", "マージ済み", "未コミット/未push") is what the eye scans for.
+// A key without a badge entry (version skew: an Agent newer than this Console) degrades
+// to the full sentence, same as cleanupReasonText.
+export interface CleanupReasonParts {
+  badge?: string;
+  text: string;
+}
+
+export function cleanupReasonParts(c: { reason_key?: string; reason: string }): CleanupReasonParts {
+  const key = c.reason_key;
+  if (key?.startsWith("clean.reason.")) {
+    const suffix = key.slice("clean.reason.".length);
+    const badge = tMaybe("clean.reason_badge." + suffix);
+    if (badge) return { badge, text: tMaybe("clean.reason_hint." + suffix) ?? "" };
+  }
+  return { text: cleanupReasonText(c) };
+}
