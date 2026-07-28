@@ -23,7 +23,9 @@ import (
 //   - opencode: .opencode/command(s)（project）+ ~/.config/opencode/command(s)（user）→ "/name"
 //   - cursor:   ACP 広告リスト（builtin skill ＋ global ＋ project 全部入り）が正。
 //               runtime 不在時は project の .cursor/commands + .cursor/skills へフォールバック → "/name"
-// その他の kind はエラーでなく空（kiro は広告ペイロードの user 定義形が未検証 — docs/50 §7）。
+// さらに全 chat kind へ、他規約の SKILL.md ツリーを **foreign（クロススキル注入 — §8）**
+// として足す: CLI が自力で発見しないスキルも「Path を読んで指示に従え」プロンプトで
+// 実行できる（ファイル無書込・kind/ドライバ不問）。shell/ssm は空。
 // 読み取り専用・都度走査（ピッカーを開いた時に 1 回呼ぶだけなのでキャッシュ不要）。
 
 type sessionSkill struct {
@@ -32,7 +34,15 @@ type sessionSkill struct {
 	ArgumentHint string `json:"argumentHint,omitempty"` // frontmatter argument-hint（あれば）
 	Source       string `json:"source"`                 // project | user | cli（同梱/CLI 広告）
 	Type         string `json:"type"`                   // skill | command
-	Invoke       string `json:"invoke"`                 // コンポーザーへ差し込む起動文字列（末尾空白込み。例 "/name " / "$name "）
+	// ネイティブ起動: コンポーザーへ差し込む起動文字列（末尾空白込み。"/name " / "$name "）。
+	// foreign エントリ（下記）では空。
+	Invoke string `json:"invoke,omitempty"`
+	// クロススキル注入（docs/50 §8）: この kind の CLI が自力では発見しない他規約の
+	// スキル。Path は repo 相対の SKILL.md、Origin は規約ディレクトリ（".claude" 等）。
+	// Console はこれを「Path を読んで指示に従え」というプロンプトに組んで差し込む —
+	// ただの指示文なので kind もドライバも選ばない。
+	Path   string `json:"path,omitempty"`
+	Origin string `json:"origin,omitempty"`
 }
 
 const maxSessionSkills = 200 // 全体の上限（repo_prompts の maxPromptItems と同じ発想の安全弁）
@@ -48,19 +58,91 @@ func handleSessionSkills(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	// Console 側の caps ゲートが第一防壁で、こちらは前方互換な契約（未対応 kind は空）。
+	// ネイティブ列挙（kind の CLI が自力で発見・起動できるもの）に加え、他規約の
+	// SKILL.md ツリーを foreign（注入方式 — §8）として足す。shell/ssm はチャットが
+	// 無いので空。Console 側の caps ゲートが第一防壁。
 	skills := []sessionSkill{}
+	var nativeConvs []string
 	switch meta.Kind {
 	case session.KindClaude:
 		skills = scanSlashSkills(filepath.Join(meta.Dir, ".claude"), claude.ConfigDir())
+		nativeConvs = []string{".claude/skills"}
 	case session.KindCodex:
 		skills = codexSkills(meta.Dir)
+		nativeConvs = []string{".codex/skills", ".agents/skills"}
 	case session.KindOpencode:
 		skills = opencodeSkills(meta.Dir)
 	case session.KindCursor:
 		skills = cursorSkills(meta)
+	case session.KindKiro, session.KindCopilot, session.KindAgy:
+		// ネイティブ列挙なし（ユーザー起動可能な機構が未確認/未検証 — §7）。foreign 注入のみ。
+	default:
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"skills": skills})
+		return
 	}
+	skills = appendForeignSkills(skills, meta.Dir, nativeConvs)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"skills": skills})
+}
+
+// foreignConvs — foreign として見に行く repo 内の SKILL.md ツリー規約（§8）。
+// commands 系（本文がプロンプトの md）は v1 対象外。
+var foreignConvs = []string{".claude/skills", ".codex/skills", ".agents/skills"}
+
+// appendForeignSkills adds skills from OTHER conventions' SKILL.md trees as
+// injection candidates（Invoke 空・Path/Origin 付き）。ネイティブと同名は
+// ネイティブ勝ち。`user-invocable: false` はここでも除外する。
+func appendForeignSkills(native []sessionSkill, dir string, nativeConvs []string) []sessionSkill {
+	seen := map[string]bool{}
+	for _, s := range native {
+		seen[s.Name] = true
+	}
+	skip := map[string]bool{}
+	for _, c := range nativeConvs {
+		skip[c] = true
+	}
+	out := native
+	for _, conv := range foreignConvs {
+		if skip[conv] {
+			continue
+		}
+		root := filepath.Join(dir, filepath.FromSlash(conv))
+		ents, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, e := range ents {
+			if !e.IsDir() {
+				continue
+			}
+			b, err := os.ReadFile(filepath.Join(root, e.Name(), "SKILL.md"))
+			if err != nil {
+				continue
+			}
+			fm, _ := splitFrontmatter(string(b))
+			if isNo(fm["user-invocable"]) {
+				continue
+			}
+			nm := fm["name"]
+			if nm == "" {
+				nm = e.Name()
+			}
+			if nm == "" || seen[nm] || len(out) >= maxSessionSkills {
+				continue
+			}
+			seen[nm] = true
+			out = append(out, sessionSkill{
+				Name:         nm,
+				Description:  fm["description"],
+				ArgumentHint: fm["argument-hint"],
+				Source:       "project",
+				Type:         "skill",
+				Path:         conv + "/" + e.Name() + "/SKILL.md",
+				Origin:       strings.SplitN(conv, "/", 2)[0], // ".claude" | ".codex" | ".agents"
+			})
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }
 
 // skillRoot is one directory to scan: form "skills" = <dir>/*/SKILL.md tree,

@@ -187,6 +187,7 @@ func TestHandleSessionSkills(t *testing.T) {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	var resp struct{ Skills []sessionSkill }
+	resp.Skills = nil // omitempty フィールドが前回要素の値を引き継がないようリセット
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +195,8 @@ func TestHandleSessionSkills(t *testing.T) {
 		t.Fatalf("skills = %#v", resp.Skills)
 	}
 
-	// codex セッション → $CODEX_HOME/skills を "$name" 起動で返す（v2）
+	// codex セッション → ネイティブ（.codex/skills を "$name" 起動）＋ foreign
+	// （.claude/skills の scout — 注入候補として path/origin 付き・invoke 空）
 	t.Setenv("CODEX_HOME", t.TempDir())
 	writeFile(t, filepath.Join(dir, ".codex", "skills", "probe", "SKILL.md"),
 		"---\nname: probe\ndescription: 検証\n---\nbody")
@@ -203,11 +205,42 @@ func TestHandleSessionSkills(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("codex status = %d", rec.Code)
 	}
+	resp.Skills = nil // omitempty フィールドが前回要素の値を引き継がないようリセット
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if len(resp.Skills) != 1 || resp.Skills[0].Invoke != "$probe " {
+	if len(resp.Skills) != 2 {
 		t.Fatalf("codex skills = %#v", resp.Skills)
+	}
+	for _, sk := range resp.Skills {
+		switch sk.Name {
+		case "probe":
+			if sk.Invoke != "$probe " || sk.Path != "" {
+				t.Errorf("native probe = %#v", sk)
+			}
+		case "scout":
+			if sk.Invoke != "" || sk.Path != ".claude/skills/scout/SKILL.md" || sk.Origin != ".claude" {
+				t.Errorf("foreign scout = %#v", sk)
+			}
+		default:
+			t.Errorf("unexpected %#v", sk)
+		}
+	}
+
+	// kiro セッション → ネイティブ無し・foreign のみ（注入方式は kind 不問）
+	session.WriteMeta(session.Meta{Name: "sk_kiro", Dir: dir, Kind: session.KindKiro})
+	rec = get("sk_kiro")
+	resp.Skills = nil // omitempty フィールドが前回要素の値を引き継がないようリセット
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Skills) != 2 { // .claude/scout + .codex/probe（どちらも foreign）
+		t.Fatalf("kiro skills = %#v", resp.Skills)
+	}
+	for _, sk := range resp.Skills {
+		if sk.Invoke != "" || sk.Path == "" {
+			t.Errorf("kiro entry should be foreign: %#v", sk)
+		}
 	}
 
 	// 未対応 kind（shell）→ エラーでなく空（前方互換な契約）
@@ -216,6 +249,7 @@ func TestHandleSessionSkills(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("shell status = %d", rec.Code)
 	}
+	resp.Skills = nil // omitempty フィールドが前回要素の値を引き継がないようリセット
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
