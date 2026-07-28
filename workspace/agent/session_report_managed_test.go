@@ -36,6 +36,9 @@ func managedReportFixture(t *testing.T) (session.Meta, string, string) {
 		[]byte(`{"assistantAutoTurn":false}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// 消費判定はリコンサイラの tick（docs/51 Phase 1）— managed の MarkTurnEnd も
+	// 「起床ヒント＋レベルの証拠」として同じ経路を通る。
+	withTestReconciler(t, 20*time.Millisecond)
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /chat/report", handleChatReport)
 	srv := httptest.NewServer(mux)
@@ -98,9 +101,7 @@ func TestManagedTurnDeliversSessionReport(t *testing.T) {
 		!strings.Contains(got.Content, "入力待ち") {
 		t.Fatalf("report card = %+v", got)
 	}
-	if reportArmed(m.Name) {
-		t.Fatal("arm must be consumed by the delivered report (指示1件=報告1回)")
-	}
+	awaitDisarmed(t, m.Name)
 	if st, _ := status.Read(sid); st.State != "idle" {
 		t.Fatalf("status = %q, want idle", st.State)
 	}
@@ -109,6 +110,9 @@ func TestManagedTurnDeliversSessionReport(t *testing.T) {
 // Losing the runtime is NOT a completion: the turn may still be running on the other
 // side, so no report may go out and the arm must survive for the real completion
 // (§6 reconcile resolves it; process death is record-exit's story).
+// レベル判定（docs/51）ではここが効く: TurnUnknown も status には idle を書くので、
+// 状態文字列だけを見るリコンサイラは「完了」と読んでしまう。書込みが「ターンの終端」
+// かどうかの 1bit（status.TurnEnd）を立てないことで、不明は不明のまま扱われる。
 func TestManagedRuntimeLossDoesNotReport(t *testing.T) {
 	m, sid, convID := managedReportFixture(t)
 
@@ -155,9 +159,7 @@ func TestManagedTurnFailureReportsAsError(t *testing.T) {
 	if !strings.Contains(got.Content, "エラー") {
 		t.Fatalf("report card = %+v", got)
 	}
-	if reportArmed(m.Name) {
-		t.Fatal("arm must be consumed — a failure ends the instruction just as a completion does")
-	}
+	awaitDisarmed(t, m.Name) // a failure ends the instruction just as a completion does
 	if st, _ := status.Read(sid); st.State != "idle" {
 		t.Fatalf("status = %q, want idle (the session really is awaiting input)", st.State)
 	}

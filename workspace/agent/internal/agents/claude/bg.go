@@ -309,15 +309,25 @@ func SubagentBusy(sid string) bool {
 // turn instead of its background agents: a mid-turn think gap fires no hooks, so the
 // status marker alone cannot distinguish "quiet because thinking" from "done".
 func TranscriptBusy(sid string) bool {
+	at, ok := TranscriptTouched(sid)
+	return ok && at.After(time.Now().Add(-subagentFreshTTL))
+}
+
+// TranscriptTouched returns WHEN the session's main transcript was last appended
+// (the newest of the matching jsonl files). Callers that hold an independent
+// turn-end event（Stop フックが書いたマーカー等）compare against it instead of using
+// the bare freshness window: 「マーカーより後にも転写が伸びている」なら、そのマーカーは
+// ターンの終わりではない。
+func TranscriptTouched(sid string) (time.Time, bool) {
 	if sid == "" {
-		return false
+		return time.Time{}, false
 	}
-	cutoff := time.Now().Add(-subagentFreshTTL)
+	var newest time.Time
 	logs, _ := filepath.Glob(filepath.Join(ConfigDir(), "projects", "*", sid+".jsonl"))
 	for _, p := range logs {
-		if fi, err := os.Stat(p); err == nil && fi.ModTime().After(cutoff) {
-			return true
+		if fi, err := os.Stat(p); err == nil && fi.ModTime().After(newest) {
+			newest = fi.ModTime()
 		}
 	}
-	return false
+	return newest, !newest.IsZero()
 }

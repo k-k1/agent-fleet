@@ -1,6 +1,7 @@
 # 51. セッション報告 v2 — 指示台帳とレベル駆動リコンサイラ
 
-- 状態: **設計**（2026-07-28・実装前）。[docs/30](30-session-report.md) の報告機構の後継設計。
+- 状態: **移行中** — Phase 1（判定の一本化）実装済み（2026-07-29）/ Phase 2・3 は設計のまま。
+  [docs/30](30-session-report.md) の報告機構の後継設計。
 - 決定記録: [ADR 0035](decisions/0035-session-report-v2-ledger.md)
 - 関連: [docs/47](47-turn-abort-auto-resume.md)（中断分類・自動再開）/ [docs/27](27-agent-managed-driver.md)（notify seam）/ [docs/38](38-scheduled-execution.md)（配達検証）
 
@@ -177,12 +178,37 @@ reopen は行あたり2回まで。上限到達時は「判定が振動してい
 
 | Phase | 内容 | 閉じる穴 | 撤去するもの |
 |---|---|---|---|
-| 1 | 判定の一本化: kick の即消費をやめ、arm bit のままリコンサイラが settle 述語（2 tick デバウンス込み）で消費判定 | C, D, F | deferReportWhileBackgroundBusy / waitReportUntilBackgroundDone / reportWaiters（waiter 特例が述語に畳まれる） |
+| 1 ✅ | 判定の一本化: kick の即消費をやめ、arm bit のままリコンサイラが settle 述語（2 tick デバウンス込み）で消費判定 | C, D, F | deferReportWhileBackgroundBusy / waitReportUntilBackgroundDone / reportWaiters（waiter 特例が述語に畳まれる） |
 | 2 | 台帳置換: arm 書込み箇所（create_session / /input / /turn / bridge / スケジューラ）を行追加へ。disarm → cancelled。起動時に既存 `armed=true` を1行に変換 | A, B | session-report/*.json（読み替え互換の後に削除）・consumeReportArm |
 | 3 | 補償 reopen ＋ 自己申告ファストパス | E の実害（誤報告→訂正に縮退） | — |
 
 - 各 Phase は独立にリリース／ロールバック可能。Phase 1 の時点で v1 の外部契約
   （報告本文・interim・自動ターン・disarm 規約）は不変。
+
+### Phase 1 実装メモ（2026-07-29 / `chat_report_reconcile.go`）
+
+設計との差分・実装で決めたことだけを記す（残りは上記のとおり）。
+
+- **idle 証拠は「明示 idle マーカー」1本＋2つの限定**にした。マーカーの実在だけでは
+  足りない: `status.TurnEnd`（その書込みが**ターンの終端**かの1bit）と「指示（arm）
+  以降の書込みか」を要求する。SessionStart の idle リセットと managed の runtime 喪失
+  （`TurnUnknown`）も同じ `"idle"` を書くので、状態文字列だけでは「終わった」と
+  「分からない」が同型になり、レベル判定が誤完了を作る。この1bit が §progressed の
+  最小実装も兼ねる（kind 別カーソルは Phase 2 の台帳で）。
+- **transcript 鮮度は常設ゲートにしない**。素の 90s TTL を busy 証拠に置くと、正常な
+  完了報告が毎回 90s 遅れる（v1 は waiter 経路でしか使っていなかった）。Stop が書いた
+  終端マーカーという positive な証拠がある以上、「マーカーより後にも転写が伸びているか」
+  の相対比較が正しい。鮮度は安全弁として併用し、上限は v1 と同じ 90s に収める。
+- **`tmuxx.IsBusy` は claude TUI のみ**（v1 waiter と同じ適用範囲）。実装が claude の
+  スピナー契約を読むので、他 kind のペインで誤検知すると報告が永久に出ない。
+- **異常系の qualifier**（turn-failed / turn-aborted）はレベルから読めない（どちらも
+  status には idle が書かれる）ので、唯一ヒントが運ぶ情報にした。ヒントを失うと素の
+  完了報告に縮退する — 消失ではなく情報の欠落。
+- **異常終了（exit）は ExitInfo をレベルで読む**ため、設計どおり穴 G（managed daemon の
+  異常死が報告されない）も Phase 1 の時点で閉じた。
+- 配送は deliver-then-consume。会話が消えていれば arm を畳み（配送先が無い）、追記に
+  失敗したときだけ再試行する。プロセスが「追記成功→消費」の間で落ちると報告が重複し
+  得るが、Phase 1 の 1bit ではそこまで — 重複は Phase 2 の行ID冪等で消える。
 - v1 回帰テストは意味論を引き継ぐ: DeferredWhileSubagentBusy → busy 証拠、
   WaiterIgnoresFalseIdle → 「無マーカー=不明」、HaltDisarmsOnlyWhenFlagged →
   cancelled、DeliveredAfterHealWipedMarker → ヒント喪失時の tick 回収。

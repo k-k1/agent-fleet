@@ -1,6 +1,7 @@
 # 0035. セッション報告 v2 — エッジ駆動＋1bit arm を捨て、指示台帳＋レベル駆動リコンサイラへ
 
-- 状態: **採用・設計済み**（2026-07-28・実装前）。設計本文は [51-session-report-v2-ledger.md](../51-session-report-v2-ledger.md)。
+- 状態: **採用・移行中**（2026-07-28 決定 / 2026-07-29 に Phase 1「判定の一本化」実装）。
+  設計本文は [51-session-report-v2-ledger.md](../51-session-report-v2-ledger.md)。
 - 関連: [0013 相当 docs/30](../30-session-report.md)（v1 の設計と事故史）/
   [0030](0030-turn-abort-auto-resume.md)（中断分類 — v2 の述語に吸収）/
   [0015](0015-codex-app-server.md)（notify seam — v2 でヒント化）
