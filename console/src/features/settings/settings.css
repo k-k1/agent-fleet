@@ -2800,10 +2800,17 @@
   color: var(--warn);
   border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
 }
+/* ピンずれバッジは方向で色分け: behind（ピンより古い＝更新が届いていない）は警告色、
+   ahead（ピンより新しい＝自己更新などの前進・想定内）は情報色。トークンはテーマ両対応。 */
 .tool-ver-pin {
   margin-left: 4px;
-  color: var(--warn);
   font-size: 11.5px;
+}
+.tool-ver-pin.is-behind {
+  color: var(--warn);
+}
+.tool-ver-pin.is-ahead {
+  color: var(--accent);
 }
 /* lean variant: no baked binary, so the image column shows the versions.json pin in
    parentheses instead of a bare dash. Muted — it's a declared pin, not a live probe. */
