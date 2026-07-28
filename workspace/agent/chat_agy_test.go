@@ -39,13 +39,17 @@ func TestAgyChatModelDropsStalePin(t *testing.T) {
 
 func TestAgyChatArgsFlagsBeforePrompt(t *testing.T) {
 	c := &chatConversation{Model: "", AgyConversationID: "u-1"}
-	got := agyChatArgs(c, "PROMPT")
+	got, model := agyChatArgs(c, "PROMPT")
 	want := []string{"--conversation", "u-1", "-p", "PROMPT"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("resume args = %q, want %q", got, want)
 	}
+	// No pin = agy runs on its own default: nothing truthful to record for the turn.
+	if model != "" {
+		t.Fatalf("unpinned turn model = %q, want empty", model)
+	}
 	first := &chatConversation{}
-	got = agyChatArgs(first, "PROMPT")
+	got, _ = agyChatArgs(first, "PROMPT")
 	if len(got) < 2 || got[len(got)-2] != "-p" || got[len(got)-1] != "PROMPT" {
 		t.Fatalf("first-turn args = %q, want trailing -p PROMPT", got)
 	}

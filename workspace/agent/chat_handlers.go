@@ -361,7 +361,7 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 		c.PendingHandoff = "" // carried into the new session — done
 	}
 
-	assistant := chatMessage{Role: "assistant", Content: reply, Agent: actualAgent, TS: nowMs()}
+	assistant := chatMessage{Role: "assistant", Content: reply, Agent: actualAgent, Model: c.turnModel, TS: nowMs()}
 	c.Messages = append(c.Messages, assistant)
 	c.ActiveAgent = actualAgent
 	markProviderSynced(c, actualAgent, len(c.Messages))
@@ -486,7 +486,7 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 		c.PendingHandoff = "" // carried into the new session — done
 	}
 
-	assistant := chatMessage{Role: "assistant", Content: reply, Steps: steps, Agent: actualAgent, TS: nowMs()}
+	assistant := chatMessage{Role: "assistant", Content: reply, Steps: steps, Agent: actualAgent, Model: c.turnModel, TS: nowMs()}
 	c.Messages = append(c.Messages, assistant)
 	c.ActiveAgent = actualAgent
 	markProviderSynced(c, actualAgent, len(c.Messages))

@@ -69,6 +69,14 @@
 .chat-msg.role-user .chat-role {
   color: var(--chat-accent, var(--accent));
 }
+/* The model that produced the reply, faint beside the agent name — same treatment as
+   the mirror's .mt-model so a model reads identically in both views. */
+.chat-model {
+  margin-left: 6px;
+  font-weight: 400;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
 .chat-body {
   border-radius: 8px;
   padding: 8px 11px;
