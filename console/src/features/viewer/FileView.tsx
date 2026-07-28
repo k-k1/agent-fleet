@@ -344,12 +344,20 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
       // Picking a preview renderer changes no surface, so it leaves focus on the
       // renderer group the user is working in (docs/44 §5).
       setFocusRequest((n) => n + 1);
-    } else if (leavingFocusedEditor) {
-      // The keyboard command can hide the surface that holds focus; hand it to
-      // the control that describes where we landed instead of dropping it.
-      queueMicrotask(() =>
-        modeGroupRef.current?.querySelector<HTMLButtonElement>('[aria-pressed="true"]')?.focus(),
-      );
+    } else {
+      // Every other selection — picking a preview renderer, re-picking the mode
+      // already shown — is the user working somewhere else in the header. A
+      // request still waiting for the editor to come up belongs to an earlier
+      // selection, so it must not outlive this one and pull focus out of the
+      // group being operated.
+      consumedFocusRef.current = focusRequestRef.current;
+      if (leavingFocusedEditor) {
+        // The keyboard command can hide the surface that holds focus; hand it to
+        // the control that describes where we landed instead of dropping it.
+        queueMicrotask(() =>
+          modeGroupRef.current?.querySelector<HTMLButtonElement>('[aria-pressed="true"]')?.focus(),
+        );
+      }
     }
   };
 
