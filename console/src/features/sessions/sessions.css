@@ -500,6 +500,24 @@
 .clean-target { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .clean-reason { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .clean-act { color: var(--muted); font-size: 11px; white-space: nowrap; }
+/* Candidate tree: repo → working copy → rows. The headings reuse .sess-group-* (the
+   left pane / archived modal grouping look); only the indent and the working-copy
+   heading's own bits live here. */
+.clean-copies, .clean-rows { list-style: none; margin: 0; padding: 0; }
+.clean-copies { padding-left: 10px; }
+.clean-copy-btn { font-size: 11px; padding-top: 3px; }
+.clean-copy-seg { color: var(--fg); }
+.clean-copy-branch { color: var(--muted); font-weight: 400; }
+.clean-copy-branch::before { content: "·"; margin: 0 5px; opacity: 0.6; }
+.clean-copy-main { color: var(--muted); font-weight: 400; margin-left: 5px; }
+.clean-copy .clean-rows { padding-left: 10px; }
+.clean-group-safe { flex: none; font-size: 11px; color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); border-radius: 999px; padding: 0 6px; }
+/* Worktree rows carry no target (the group heading is their name): the reason takes
+   that column too, instead of starting after an empty one. Narrow layouts stack the
+   columns anyway, so this only applies above the breakpoint. */
+@media (min-width: 561px) {
+  .clean-row.is-notarget .clean-reason { grid-column: 4 / 6; }
+}
 .clean-archive-row { grid-template-columns: auto 1fr auto; }
 .clean-arch-when { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .clean-arch-what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

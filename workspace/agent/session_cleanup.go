@@ -28,12 +28,18 @@ import (
 // action names the tool that acts on it ("archive_session" / "delete_worktree"), or
 // "" when there is no assistant action (informational — orphan panes, archived rows).
 type cleanupCandidate struct {
-	Type      string `json:"type"` // "session" | "worktree"
-	Action    string `json:"action,omitempty"`
-	ID        string `json:"id"` // session name, or repo base name (delete_worktree arg)
-	Display   string `json:"display,omitempty"`
-	Kind      string `json:"kind,omitempty"`
-	Path      string `json:"path,omitempty"`
+	Type    string `json:"type"` // "session" | "worktree"
+	Action  string `json:"action,omitempty"`
+	ID      string `json:"id"` // session name, or repo base name (delete_worktree arg)
+	Display string `json:"display,omitempty"`
+	Kind    string `json:"kind,omitempty"`
+	Path    string `json:"path,omitempty"`
+	// Repo is the working-copy FOLDER basename under ~/repos ("agent-fleet@wip-sw32vcm"
+	// for a worktree, "agent-fleet" for the clone). Every type carries it — it is what
+	// the Console groups the list by (repo → working copy), so a session candidate has to
+	// name its working copy just like the worktree and branch candidates do. "" for an
+	// orphan pane (no meta ⇒ no known dir).
+	Repo      string `json:"repo,omitempty"`
 	Branch    string `json:"branch,omitempty"`
 	Relation  string `json:"relation,omitempty"` // worktree vs parent: same|contained|unmerged|diverged
 	Dirty     bool   `json:"dirty,omitempty"`
@@ -140,7 +146,8 @@ func handleSessionsCleanup(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, cleanupCandidate{
 			Type: "session", Action: action, ID: m.Name, Display: session.Display(m),
-			Kind: m.Kind, Safety: safety, ReasonKey: reasonKey, Reason: cleanupReasonText(reasonKey),
+			Kind: m.Kind, Path: m.Dir, Repo: m.Repo, Safety: safety,
+			ReasonKey: reasonKey, Reason: cleanupReasonText(reasonKey),
 		})
 	}
 	// Orphan tmux panes (live session, no meta): can't be archived by name until a meta
@@ -173,7 +180,7 @@ func handleSessionsCleanup(w http.ResponseWriter, r *http.Request) {
 		}
 		action, safety, reasonKey := classifyWorktreeCleanup(repoLocked(dir), liveCount, st.Ahead, st.Dirty, relation)
 		out = append(out, cleanupCandidate{
-			Type: "worktree", Action: action, ID: e.Name(), Path: dir, Branch: st.Branch,
+			Type: "worktree", Action: action, ID: e.Name(), Path: dir, Repo: e.Name(), Branch: st.Branch,
 			Relation: relation, Dirty: st.Dirty, Ahead: st.Ahead, Safety: safety,
 			ReasonKey: reasonKey, Reason: cleanupReasonText(reasonKey),
 		})
@@ -193,7 +200,7 @@ func handleSessionsCleanup(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, b := range mergedLocalBranches(dir) {
 			out = append(out, cleanupCandidate{
-				Type: "branch", Action: "delete_branch", ID: e.Name(), Branch: b,
+				Type: "branch", Action: "delete_branch", ID: e.Name(), Repo: e.Name(), Branch: b,
 				Safety: "safe", ReasonKey: cleanReasonBranchMerged, Reason: cleanupReasonText(cleanReasonBranchMerged),
 			})
 		}
