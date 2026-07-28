@@ -27,6 +27,18 @@ export interface AgentCaps {
   tuiStartMode: boolean; // the TUI launch command can start deterministically in plan/normal
   contextBar: boolean; // shows the context-window token gauge
   imagePaste: boolean; // chat composer accepts pasted images (claude Read-tool flow)
+  // composer offers the skill/command picker (GET /sessions/{name}/skills — docs/50).
+  // Native listings: claude/codex/opencode scan filesystem conventions; cursor serves
+  // the CLI-advertised ACP list. Every chat kind additionally gets "foreign" entries
+  // (other conventions' SKILL.md, fired via prompt injection — docs/50 §8), which is
+  // why kiro/copilot/agy are on too (foreign-only; no verified native mechanism).
+  slashSkills: boolean;
+  // …and NATIVE entries also show for MANAGED (paneless) sessions. Off for opencode:
+  // its /commands are a TUI feature and firing them over the server API is unverified
+  // (docs/50 §7) — foreign (injection) entries are exempt from this gate, being plain
+  // prompts. cursor is verified (ACP session/prompt "/cmd" fired — 実測 2026-07-28);
+  // codex "$skill" is a plain text mention, channel-agnostic by construction.
+  slashSkillsManaged: boolean;
   planMode: boolean; // chat offers a plan-mode toggle (drives the TUI's mode-cycle key)
   ephemeral: boolean; // archiving deletes it (no keep) — shell / ssm
   runsInDir: boolean; // launches in a working dir (clone / dir source) — the agents
@@ -78,6 +90,10 @@ export interface AgentDescriptor {
   // plan (the real label follows from the next poll). claude "Bypass", codex "Default",
   // opencode "Build". "" for agents without a mode chip.
   defaultModeLabel: string;
+  // the head-of-input character that opens the skill picker while typing ("/" for
+  // slash-command kinds, "$" for codex skill mentions). "" = the picker opens from
+  // its button only (kinds whose entries are all injection prompts — no slash form).
+  skillTrigger: string;
   // managed driver（docs/27 P2/P3）: この kind が共有 runtime 駆動（paneless）のセッション
   // 作成に対応しているか。true の kind は起動 UI にドライバ選択が出て、既定が managed
   // になる（§9.2 — CLI(TUI) はユーザーの明示的なメモリトレードオフ）。
@@ -102,6 +118,8 @@ function caps(overrides: Partial<AgentCaps>): AgentCaps {
     tuiStartMode: false,
     contextBar: false,
     imagePaste: false,
+    slashSkills: false,
+    slashSkillsManaged: false,
     planMode: false,
     ephemeral: false,
     runsInDir: false,
@@ -126,6 +144,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     planCycleKey: "BTab", // Shift+Tab cycles normal / auto-accept / plan (used to exit)
     planEnterCmd: "/plan", // claude has a direct command to enter plan mode
     defaultModeLabel: "Bypass",
+    skillTrigger: "/",
     managedDriver: false,
     tuiMemoryCost: "",
     caps: caps({
@@ -138,6 +157,8 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       tuiStartMode: true, // --permission-mode plan / bypassPermissions
       contextBar: true,
       imagePaste: true,
+      slashSkills: true,
+      slashSkillsManaged: true,
       planMode: true,
       runsInDir: true,
       launchableFromRepo: true,
@@ -156,6 +177,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     planCycleKey: "BTab", // Shift+Tab cycles the collaboration mode (used to exit plan)
     planEnterCmd: "/plan", // codex also has /plan ("switch to Plan mode")
     defaultModeLabel: "Default",
+    skillTrigger: "$",
     // Chat mirror lit up (段1): turns come from codex's rollout JSONL, normalized by the
     // Agent's transcript() and windowed by the generic /messages handler. The context
     // gauge works — codex logs token counts too. Plan mode + inline request_user_input
@@ -176,6 +198,8 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       tuiEffort: true, // -c model_reasoning_effort=…
       contextBar: true,
       imagePaste: true,
+      slashSkills: true, // $CODEX_HOME/skills + .codex/skills — "$name" mention (docs/50 §7)
+      slashSkillsManaged: true, // a text mention works on any channel
       planMode: true,
       runsInDir: true,
       launchableFromRepo: true,
@@ -195,6 +219,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     planCycleKey: "", // TUI の Shift+Tab は 3 モード循環（agent/plan/ask を跨ぐ）— キー駆動トグルは出さない
     planEnterCmd: "",
     defaultModeLabel: "Agent",
+    skillTrigger: "/",
     // Cursor CLI (docs/40, ADR 0023). Managed が既定: per-session child の
     // `cursor-agent acp`（ACP JSON-RPC over stdio）を driver が駆動する（Track A2）。
     // TUI も同じ Claude Code 互換 JSONL 転写を書くのでミラー/状態は両ドライバで成立。
@@ -215,6 +240,8 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       transcript: true,
       model: true,
       tuiStartMode: true, // --plan（plan で起動）
+      slashSkills: true, // ACP 広告リスト（builtin skill+global+project）が正 — docs/50 §7
+      slashSkillsManaged: true, // ACP session/prompt "/cmd" の発火を実測（2026-07-28）
       runsInDir: true,
       launchableFromRepo: true,
     }),
@@ -235,6 +262,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     planCycleKey: "",
     planEnterCmd: "",
     defaultModeLabel: "",
+    skillTrigger: "",
     // Antigravity CLI (docs/32, ADR 0008). v1.1.4 has no structured output, so
     // Terminal (CLI) is the only driver — no managed mode until agy grows an
     // event stream. The chat mirror works: the agent reads the per-conversation
@@ -258,6 +286,8 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       transcript: true,
       model: true,
       imagePaste: true,
+      slashSkills: true, // foreign（注入）エントリのみ — docs/50 §8
+      slashSkillsManaged: true, // 注入はただのプロンプト（agy に managed は無いが明示）
       runsInDir: true,
       launchableFromRepo: true,
     }),
@@ -279,6 +309,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     planCycleKey: "", // TUI の Shift+Tab は 3 モード循環（autopilot を跨ぐ）— キー駆動トグルは出さない
     planEnterCmd: "",
     defaultModeLabel: "Default",
+    skillTrigger: "",
     // GitHub Copilot CLI (docs/36). Managed が既定: per-session child の
     // `copilot --acp`（ACP JSON-RPC over stdio）を driver が駆動する。TUI も同じ
     // events.jsonl を書くのでミラー/状態は両ドライバで同一実装。
@@ -300,6 +331,8 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       effort: true,
       tuiEffort: true, // --effort
       tuiStartMode: true, // --mode plan
+      slashSkills: true, // foreign（注入）エントリのみ — docs/50 §8
+      slashSkillsManaged: true,
       runsInDir: true,
       launchableFromRepo: true,
     }),
@@ -320,6 +353,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     planCycleKey: "", // TUI は 3 モード循環（kiro_default/planner/guide を跨ぐ）— キー駆動トグルは出さない（cursor 同型）
     planEnterCmd: "",
     defaultModeLabel: "Agent",
+    skillTrigger: "",
     // Kiro CLI（kiro-cli・旧 Amazon Q Developer CLI。docs/43, ADR 0026 予定）。
     // Terminal(TUI) ＋ Managed 両対応（Track A2）: managed は per-session child の
     // ACP（`kiro-cli acp`・cursor/copilot 同型）で、session/load のクロスプロセス resume＋
@@ -354,6 +388,8 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       model: true,
       contextBar: true, // Track D: managed ACP の _kiro.dev/metadata ライブ context% → ContextFill 経由
       tuiStartMode: true, // program.go は mode=plan で --trust-all-tools を外す（承認待ちは state.go が "question" で拾う）
+      slashSkills: true, // foreign（注入）エントリのみ — docs/50 §8
+      slashSkillsManaged: true,
       runsInDir: true,
       launchableFromRepo: true,
     }),
@@ -374,6 +410,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     planCycleKey: "Tab", // Tab cycles the agent (build / plan)
     planEnterCmd: "",
     defaultModeLabel: "Build",
+    skillTrigger: "/",
     // Chat mirror lit up (段2): turns come from opencode's SQLite store (message+part),
     // normalized by the Agent's transcript() and windowed by the generic /messages
     // handler. Context gauge works (per-message tokens); plan mode + inline question tool.
@@ -395,6 +432,9 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       tuiStartMode: true, // --agent plan|build
       contextBar: true,
       imagePaste: true,
+      slashSkills: true, // .opencode/command(s) + ~/.config/opencode/command — docs/50 §7
+      // slashSkillsManaged stays false: /command は TUI 機能で、server API 経由の
+      // 発火は未検証（未検証の caps を立てない — 1854d の教訓）。
       planMode: true,
       runsInDir: true,
       launchableFromRepo: true,
@@ -416,6 +456,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     planCycleKey: "",
     planEnterCmd: "",
     defaultModeLabel: "",
+    skillTrigger: "",
     managedDriver: false,
     tuiMemoryCost: "",
     caps: caps({
@@ -438,6 +479,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     planCycleKey: "",
     planEnterCmd: "",
     defaultModeLabel: "",
+    skillTrigger: "",
     // Like shell: a plain login shell with no working/idle model, so its liveness is a
     // fixed 起動中 chip (not 入力待ち) and it raises no answer/question notifications.
     managedDriver: false,
