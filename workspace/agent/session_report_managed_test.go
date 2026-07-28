@@ -59,7 +59,7 @@ func managedReportFixture(t *testing.T) (session.Meta, string, string) {
 	agents.SetStateNotifier(recordSessionNotification)
 	t.Cleanup(func() { agents.SetStateNotifier(nil) })
 
-	armSessionReport(m.Name, conv.ID) // create_session / send_to_session with report_to
+	addInstruction(m.Name, conv.ID, turnSourceOperator) // create_session / send_to_session with report_to
 	return m, session.UUID(m.Dir, m.Name), conv.ID
 }
 
@@ -101,7 +101,7 @@ func TestManagedTurnDeliversSessionReport(t *testing.T) {
 		!strings.Contains(got.Content, "入力待ち") {
 		t.Fatalf("report card = %+v", got)
 	}
-	awaitDisarmed(t, m.Name)
+	awaitReported(t, m.Name)
 	if st, _ := status.Read(sid); st.State != "idle" {
 		t.Fatalf("status = %q, want idle", st.State)
 	}
@@ -131,7 +131,7 @@ func TestManagedRuntimeLossDoesNotReport(t *testing.T) {
 			t.Fatalf("runtime 喪失を完了として報告した: %+v", msg)
 		}
 	}
-	if !reportArmed(m.Name) {
+	if !sessionReportPending(m.Name) {
 		t.Fatal("arm must survive an unknown outcome — 本当の完了が報告されなくなる")
 	}
 	if st, _ := status.Read(sid); st.State != "idle" {
@@ -159,7 +159,7 @@ func TestManagedTurnFailureReportsAsError(t *testing.T) {
 	if !strings.Contains(got.Content, "エラー") {
 		t.Fatalf("report card = %+v", got)
 	}
-	awaitDisarmed(t, m.Name) // a failure ends the instruction just as a completion does
+	awaitReported(t, m.Name) // a failure ends the instruction just as a completion does
 	if st, _ := status.Read(sid); st.State != "idle" {
 		t.Fatalf("status = %q, want idle (the session really is awaiting input)", st.State)
 	}

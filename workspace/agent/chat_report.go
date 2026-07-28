@@ -13,8 +13,10 @@ package main
 // からも Agent REST を叩ける）。
 //
 // **消費の判定は chat_report_reconcile.go に一本化されている**（docs/51 Phase 1 /
-// ADR 0035）。このファイルが持つのは arm ストア・報告本文・配送（会話追記＋自動
-// ターン）で、「いつ消費してよいか」はもう kick 側では決めない — kick は起床ヒント。
+// ADR 0035）。このファイルが持つのは報告本文・配送（会話追記＋自動ターン）で、
+// 「いつ消費してよいか」はもう kick 側では決めない — kick は起床ヒント。
+// **指示の同一性は chat_report_ledger.go の指示台帳**（Phase 2）で、arm の1bit は
+// 廃止された（このファイルに残る reportLink は起動時の移行が読むだけの v1 互換）。
 
 import (
 	"context"
@@ -23,7 +25,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
@@ -33,10 +34,10 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// reportLink is the per-session arm record: which conversation gets the report and
-// whether one is pending. A SEPARATE file from Meta on purpose (same reasoning as
-// ExitInfo): the hook, record-exit and the API handlers all touch session state, and
-// Meta is a single JSON blob they'd clobber.
+// reportLink is the v1 arm record (session-report/<name>.json): 1セッション = 1bit。
+// **Phase 2 で廃止された** — 指示の同一性は instr-ledger の行が持つ。型とストアが残って
+// いるのは、起動時の移行（migrateReportArms）が古いファイルを読んで行へ変換するため
+// だけ。移行が済めばファイルは消えるので、ストアごと削除できる。
 type reportLink struct {
 	Conv  string `json:"conv"`  // conversation id to report to
 	Armed bool   `json:"armed"` // one report pending (docs/30: 指示1件につき報告1回)
@@ -45,44 +46,14 @@ type reportLink struct {
 
 var reportLinks = fstore.JSON[reportLink](paths.AgentConfigDir, "session-report", ".json")
 
-// armSessionReport links a session to a conversation and arms a one-shot report.
-// Called on create_session (report_to) and on each /input carrying report_to —
-// each instruction re-arms exactly one report.
-func armSessionReport(name, convID string) {
-	if !session.ValidName(name) || !validConvID(convID) {
-		return
-	}
-	if _, err := loadConv(convID); err != nil {
-		return // unknown conversation — don't arm against a dangling id
-	}
-	_ = reportLinks.Write(name, reportLink{Conv: convID, Armed: true, At: time.Now().Format(time.RFC3339)})
-	// 新しい指示 = 判定のやり直し。前の指示で溜まったデバウンス（静穏カウント）や
-	// 中断ヒントを持ち越すと、走り出す前のセッションを「完了」と読みかねない。
-	reportRec.forget(name)
-}
-
-// reportArmed reports whether a one-shot report is pending for this session — read
-// by the hook/record-exit processes to skip the kick entirely when nothing is armed.
-func reportArmed(name string) bool {
-	l, ok := reportLinks.Read(name)
-	return ok && l.Armed && l.Conv != ""
-}
-
-// disarmSessionReport cancels a pending one-shot report for the session. Called from
+// disarmSessionReport cancels the session's outstanding instructions. Called from
 // handleHaltSession when the stop carries disarm_report (the operator's stop_session):
 // stopping the session cancels the outstanding instruction, so a later user-driven
 // resume + completion must not deliver a stale report to the operator conversation.
-// A Console halt (no flag) keeps the arm — if the user resumes and the session then
-// completes the instruction, that report is still the instruction's completion.
-func disarmSessionReport(name string) {
-	reportArmMu.Lock() // リコンサイラの消費と同じ mutex 下で（読取→書込の取りこぼし防止）
-	if l, ok := reportLinks.Read(name); ok && l.Armed {
-		l.Armed = false
-		_ = reportLinks.Write(name, l)
-	}
-	reportArmMu.Unlock()
-	reportRec.forget(name)
-}
+// A Console halt (no flag) leaves the rows open — if the user resumes and the session
+// then completes the instruction, that report is still the instruction's completion.
+// docs/51 Phase 2: disarm = 行を cancelled にする（規約は v1 のまま）。
+func disarmSessionReport(name string) { cancelInstructions(name) }
 
 // reportKindAnswerReady is the one TERMINAL state-transition report kind (an
 // instruction's completion). Only it (and an abnormal "exit", record_exit.go)
@@ -380,24 +351,6 @@ func noteAutoTurnPaused(c *chatConversation, limit int) {
 	_ = notice.Put(ev)
 }
 
-// reportArmMu serializes arm consumption. 消費者はリコンサイラの単一 goroutine だけに
-// なった（docs/51 Phase 1）が、stop_session の disarm はハンドラ goroutine から来る —
-// read-check-write はその2者の間で原子的である必要がある。
-var reportArmMu sync.Mutex
-
-// consumeReportArm atomically claims the pending one-shot report for the session.
-func consumeReportArm(name string) (reportLink, bool) {
-	reportArmMu.Lock()
-	defer reportArmMu.Unlock()
-	l, ok := reportLinks.Read(name)
-	if !ok || !l.Armed || l.Conv == "" {
-		return reportLink{}, false
-	}
-	l.Armed = false
-	_ = reportLinks.Write(name, l)
-	return l, true
-}
-
 // handleChatReport (POST /chat/report {name, kind, reason}) receives the report kick
 // from the hook / record-exit / notify-seam process.
 //
@@ -420,18 +373,22 @@ func handleChatReport(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_report", "name and kind are required")
 		return
 	}
-	if !reportArmed(body.Name) {
+	open := openInstrRows(body.Name)
+	if len(open) == 0 {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"reported": false})
 		return
 	}
-	// Interim question / plan-approval reports (docs/30): delivered WITHOUT
-	// consuming the arm — the one-shot still belongs to the instruction's completion
-	// (answer-ready / exit). The operator relays to the user (or, in 自動走行,
-	// answers / drives the review-approve loop itself).
+	// Interim question / plan-approval reports (docs/30): delivered WITHOUT closing the
+	// rows — the one-shot still belongs to the instruction's completion (answer-ready /
+	// exit). The operator relays to the user (or, in 自動走行, answers / drives the
+	// review-approve loop itself). docs/51 Phase 2: 台帳には「既報」として刻むだけで
+	// **抑止はしない** — 1つの指示の中で質問が2回起きるのは普通なので、行あたり1回に
+	// 絞ると2問目にオペレーターが答えられなくなる。
 	if body.Kind == "question" || body.Kind == "plan-approval" {
-		if link, ok := reportLinks.Read(body.Name); ok && link.Conv != "" {
-			go deliverSessionReport(body.Name, link.Conv, body.Kind, body.Reason)
+		for _, conv := range instrConvs(open) {
+			go deliverSessionReport(body.Name, conv, body.Kind, body.Reason)
 		}
+		markInstrInterim(body.Name, body.Kind, time.Now())
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"reported": true, "interim": true})
 		return
 	}
@@ -441,9 +398,10 @@ func handleChatReport(w http.ResponseWriter, r *http.Request) {
 
 // deliverSessionReport is the interim (non-consuming) delivery: 会話に追記し、通知
 // センターへ流し、許可されていればオペレーターの自動ターンを回す。呼び出し側が
-// 既に goroutine なので自動ターンは同期で回す。
+// 既に goroutine なので自動ターンは同期で回す。行IDは運ばない — interim は「1回だけ」の
+// 契約を持たない（同じ指示の中で何度でも起きる）。
 func deliverSessionReport(name, convID, kind, reason string) {
-	if recordSessionReport(name, convID, kind, reason) != reportSinkOK {
+	if recordSessionReport(name, convID, kind, reason, nil) != reportSinkOK {
 		return
 	}
 	if chatAutoTurnEnabled() {
@@ -452,9 +410,14 @@ func deliverSessionReport(name, convID, kind, reason string) {
 }
 
 // recordSessionReport appends the report message to the conversation and mirrors it
-// into the notification center. 戻り値は「arm を進めてよいか」の判定材料になる
+// into the notification center. 戻り値は「台帳の行を進めてよいか」の判定材料になる
 // （docs/51 §配送: 追記に失敗したら台帳を動かさず次 tick で再試行する）。
-func recordSessionReport(name, convID, kind, reason string) reportSinkResult {
+//
+// rows は完了報告が畳んだ指示行（interim は nil）。**配送の冪等化はここで行う**
+// （docs/51 §配送: 会話ロック下で「この行IDの報告が既にあるか」を見てから追記）:
+// 「追記成功 → 台帳更新」の間でプロセスが落ちても、次 tick の再送は同じ行IDを見つけて
+// 二重投稿せず、そのまま行を reported に進められる。
+func recordSessionReport(name, convID, kind, reason string, rows []instrRow) reportSinkResult {
 	display, sessKind := name, ""
 	var title string
 	if m, ok := session.ReadMeta(name); ok {
@@ -475,11 +438,17 @@ func recordSessionReport(name, convID, kind, reason string) reportSinkResult {
 	c, err := loadConv(convID)
 	if err != nil {
 		unlock()
-		return reportSinkDrop // conversation deleted since arming — drop the report
+		return reportSinkDrop // conversation deleted since the instruction — drop it
+	}
+	fresh := undeliveredInstrRows(c, rows)
+	if len(rows) > 0 && len(fresh) == 0 {
+		unlock()
+		return reportSinkOK // 既に配送済みの行だけ — 二重投稿せず台帳だけ進める
 	}
 	c.Messages = append(c.Messages, chatMessage{
-		Role: "report", Content: buildReportContent(display, name, kind, reason, attempts),
-		Session: name, TS: nowMs(),
+		Role:    "report",
+		Content: buildReportContent(display, name, kind, reason, attempts) + instrFoldNote(fresh),
+		Session: name, Instr: instrKeys(fresh), TS: nowMs(),
 	})
 	c.UpdatedAt = nowMs()
 	if err := saveConv(c); err != nil {

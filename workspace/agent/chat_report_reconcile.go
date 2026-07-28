@@ -29,7 +29,6 @@ package main
 import (
 	"context"
 	"log"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -58,7 +57,8 @@ const (
 type reportSignals struct {
 	MarkerState    string // status マーカーの state。"" = ファイル無し＝**不明**
 	MarkerTurnEnd  bool   // その idle が「ターンの終端」で書かれたか（status.TurnEnd）
-	MarkerAfterArm bool   // マーカーが指示（arm）以降に書かれたか＝最小の progressed
+	MarkerAfterArm bool   // マーカーが最古の未報告指示以降に書かれたか＝最小の progressed
+	MarkerTS       string // そのマーカーの RFC3339（どの指示行までを覆うかの判定に使う）
 
 	PendingQuestion   bool // 質問待ち（interim — そもそも完了ではない）
 	PendingPlan       bool // プラン承認待ち
@@ -68,8 +68,9 @@ type reportSignals struct {
 	TranscriptBusy bool // メイン transcript の鮮度（claude・思考ギャップ対策）
 	PaneBusy       bool // ペインの中断アフォーダンス（tmuxx.IsBusy・TUI のみ）
 
-	Stopped bool   // 意図停止（arm は温存 — 再開後の完了で報告する v1 規約）
+	Stopped bool   // 意図停止（行は温存 — 再開後の完了で報告する v1 規約）
 	Exit    string // 指示以降の異常終了（oom/crashed/killed）— 終端の事実
+	ExitAt  string // その異常終了の RFC3339
 
 	HintReason string // 直近のヒントが運んだ qualifier（turn-failed / turn-aborted）
 }
@@ -158,14 +159,16 @@ func evalReportEvidence(s reportSignals) reportVerdict {
 	}
 }
 
-// collectReportSignals reads the current level state for one armed session.
-func collectReportSignals(m session.Meta, link reportLink, hintReason string) reportSignals {
+// collectReportSignals reads the current level state for one session with open
+// instruction rows. since は**最古の未報告指示のカーソル**（docs/51 §progressed の
+// 下限）— それより前の証拠は「前の指示の話」なので今回の完了にはならない。
+func collectReportSignals(m session.Meta, since string, hintReason string) reportSignals {
 	sid := session.UUID(m.Dir, m.Name)
 	s := reportSignals{Stopped: m.StoppedAt != "", HintReason: hintReason}
 	var markerAt time.Time
 	if st, ok := status.Read(sid); ok {
-		s.MarkerState, s.MarkerTurnEnd = st.State, st.TurnEnd
-		s.MarkerAfterArm = !reportTimeBefore(st.TS, link.At)
+		s.MarkerState, s.MarkerTurnEnd, s.MarkerTS = st.State, st.TurnEnd, st.TS
+		s.MarkerAfterArm = !reportTimeBefore(st.TS, since)
 		if t, err := time.Parse(time.RFC3339, st.TS); err == nil && st.TurnEnd {
 			markerAt = t
 		}
@@ -193,8 +196,8 @@ func collectReportSignals(m session.Meta, link reportLink, hintReason string) re
 			// **読めること**を要求する: 異常終了はデバウンス無しで arm を消費するので、
 			// 判定不能を「今回の死」に倒すと生きているセッションへ誤報告しかねない
 			// （書き手は全経路 At を必ず入れる）。
-			if _, err := time.Parse(time.RFC3339, e.At); err == nil && !reportTimeBefore(e.At, link.At) {
-				s.Exit = e.Reason
+			if _, err := time.Parse(time.RFC3339, e.At); err == nil && !reportTimeBefore(e.At, since) {
+				s.Exit, s.ExitAt = e.Reason, e.At
 			}
 		}
 	}
@@ -264,14 +267,15 @@ const (
 )
 
 // reportSink is the delivery seam (tests substitute a fake to drive the reconciler
-// without a conversation store).
-type reportSink func(name, convID, kind, reason string) reportSinkResult
+// without a conversation store). rows は畳んだ指示行 — 冪等キー（行ID）と「指示N件ぶん」
+// の本文はシンクが組み立てる。
+type reportSink func(name, convID, kind, reason string, rows []instrRow) reportSinkResult
 
 // deliverReportCard is the production sink: 会話への追記は同期（失敗を返せるように）、
 // オペレーターの自動ターンは別 goroutine。自動ターンは provider 呼び出しで分単位
 // かかり得るので、リコンサイラの単一 goroutine を塞がせない。
-func deliverReportCard(name, convID, kind, reason string) reportSinkResult {
-	res := recordSessionReport(name, convID, kind, reason)
+func deliverReportCard(name, convID, kind, reason string, rows []instrRow) reportSinkResult {
+	res := recordSessionReport(name, convID, kind, reason, rows)
 	if res == reportSinkOK && chatAutoTurnEnabled() {
 		go runReportAutoTurn(convID)
 	}
@@ -419,16 +423,16 @@ func (rc *reportReconciler) resetSettle(name string) {
 	rc.mu.Unlock()
 }
 
-// sweep re-evaluates every armed session once.
+// sweep re-evaluates every session with open instruction rows once.
 func (rc *reportReconciler) sweep(now time.Time) {
-	armed := armedReportSessions()
-	for _, name := range armed {
+	pending := instrPendingSessions()
+	for _, name := range pending {
 		rc.evaluate(name, now)
 	}
-	rc.prune(armed)
+	rc.prune(pending)
 }
 
-// prune drops bookkeeping for sessions that are no longer armed (配送済み・disarm・
+// prune drops bookkeeping for sessions with no open rows left (報告済み・cancelled・
 // セッション削除)。
 func (rc *reportReconciler) prune(armed []string) {
 	live := make(map[string]bool, len(armed))
@@ -449,18 +453,24 @@ func (rc *reportReconciler) prune(armed []string) {
 	rc.mu.Unlock()
 }
 
-// evaluate is the whole decision for one session: 証拠を集める → 述語 → デバウンス →
-// 配送 → 配送できたときだけ arm を消費。
+// evaluate is the whole decision for one session: 未報告の指示行を読む → 証拠を集める →
+// 述語 → デバウンス → 証拠が覆う行だけを配送 → 配送できた行だけを reported にする。
+//
+// docs/51 Phase 2 の肝は最後の2段。判定は「セッションが静穏か」という**セッション単位**
+// の話だが、報告義務は**指示単位**なので、静穏の証拠（idle マーカー / ExitInfo）より
+// **後に**投入された指示は同じ静穏では完了になり得ない。その行は pending のまま残り、
+// 次のターンの終端で改めて報告される — v1 で arm が上書きされて消えていた穴A が、
+// ここでは「消えない行」として定義から外れる。
 func (rc *reportReconciler) evaluate(name string, now time.Time) {
-	link, ok := reportLinks.Read(name)
-	if !ok || !link.Armed || link.Conv == "" {
+	open := openInstrRows(name)
+	if len(open) == 0 {
 		return
 	}
 	m, ok := session.ReadMeta(name)
 	if !ok {
-		return // メタが無ければ判定材料が無い（arm はそのまま — 誤消費より温存）
+		return // メタが無ければ判定材料が無い（行はそのまま — 誤報告より温存）
 	}
-	sig := collectReportSignals(m, link, rc.hintFor(name))
+	sig := collectReportSignals(m, open[0].Cursor.At, rc.hintFor(name))
 	v := evalReportEvidence(sig)
 	if v.Quiet && !v.Terminal && reportPaneBusy(m) {
 		sig.PaneBusy = true
@@ -470,40 +480,36 @@ func (rc *reportReconciler) evaluate(name string, now time.Time) {
 		rc.resetSettle(name)
 		return
 	}
+	at := sig.MarkerTS
+	if v.Terminal {
+		at = sig.ExitAt
+	}
+	covered := instrRowsCoveredBy(open, at)
+	if len(covered) == 0 {
+		// 証拠は静穏だが、どの指示もその証拠より後に投入されている（＝まだ走り出して
+		// いない）。デバウンスも積まない — 次の本物の終端を待つ。
+		rc.resetSettle(name)
+		return
+	}
 	if !v.Terminal && !rc.debounce(name, now) {
 		return // まだ 2 tick 連続に足りない
 	}
-	switch rc.sink(name, link.Conv, v.Kind, v.Reason) {
-	case reportSinkRetry:
-		// 台帳（arm）は動かさない。次 tick で同じ判定に戻ってきて再送する。
-		return
-	case reportSinkDrop:
-		log.Printf("session-report: %s の報告先会話が見つからない — arm を畳む", name)
-	}
-	consumeReportArm(name)
-	rc.forget(name)
-	log.Printf("session-report: settled %s kind=%s reason=%q (%s)", name, v.Kind, v.Reason, v.Why)
-}
-
-// armedReportSessions lists the sessions with a pending one-shot report. arm ファイルの
-// ディレクトリを直接見るので、定常コストは readdir 1回＋armed な行の小さな read だけ。
-func armedReportSessions() []string {
-	ents, err := os.ReadDir(reportLinks.Dir())
-	if err != nil {
-		return nil
-	}
-	var out []string
-	for _, e := range ents {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+	retry := false
+	for _, conv := range instrConvs(covered) {
+		rows := instrRowsForConv(covered, conv)
+		switch rc.sink(name, conv, v.Kind, v.Reason, rows) {
+		case reportSinkRetry:
+			// 台帳は動かさない。次 tick で同じ判定に戻ってきて再送する（行IDで冪等）。
+			retry = true
 			continue
+		case reportSinkDrop:
+			log.Printf("session-report: %s の報告先会話 %s が見つからない — 行を畳む", name, conv)
 		}
-		name := strings.TrimSuffix(e.Name(), ".json")
-		if !session.ValidName(name) {
-			continue
-		}
-		if l, ok := reportLinks.Read(name); ok && l.Armed && l.Conv != "" {
-			out = append(out, name)
-		}
+		markInstrReported(name, instrIDs(rows), now)
+		log.Printf("session-report: settled %s kind=%s reason=%q rows=%v (%s)",
+			name, v.Kind, v.Reason, instrIDs(rows), v.Why)
 	}
-	return out
+	if !retry {
+		rc.forget(name)
+	}
 }

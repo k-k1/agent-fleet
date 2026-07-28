@@ -563,11 +563,10 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 				markSessionWorking(name)
 			}
 		}
-		// docs/30: arm the one-shot report link. Note managed sessions don't run the
-		// session-status hook subcommand, so v1 reports fire for tui sessions only —
-		// the link is still recorded for forward-compat.
+		// docs/51 Phase 2: 指示台帳へ1行追加する（旧 arm の1bit）。managed は
+		// session-status hook を持たないが、完了は notify seam → リコンサイラで拾われる。
 		if req.ReportTo != "" {
-			armSessionReport(name, req.ReportTo)
+			addInstruction(name, req.ReportTo, injectionSource(req.Source))
 			recordInjection(name, req.InitialPrompt, injectionSource(req.Source)) // orchestrated start (docs/30 ② / docs/38)
 		}
 		writeCreated(meta)
@@ -584,12 +583,12 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(req.InitialPrompt) != "" {
 		go deliverInitialPrompt(name, req.InitialPrompt)
 	}
-	// docs/30: arm the one-shot completion report to the creating conversation. Armed
-	// even without an initial_prompt — the operator may steer the session manually next.
+	// docs/51 Phase 2: 起動元の会話宛に指示行を1件立てる。initial_prompt が無くても立てる
+	// — オペレーターがこの後 send_to_session で手動 steer することがある。
 	// The initial_prompt, when present, is an orchestrated injection (docs/30 ② /
 	// docs/38) — remember it with its origin so the mirror badges its user turn.
 	if req.ReportTo != "" {
-		armSessionReport(name, req.ReportTo)
+		addInstruction(name, req.ReportTo, injectionSource(req.Source))
 		recordInjection(name, req.InitialPrompt, injectionSource(req.Source))
 	}
 

@@ -340,11 +340,12 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Each delivered instruction re-arms exactly one report (docs/30 の指示1件=報告1回)
-	// and — carrying report_to (operator / scheduler) — is remembered with its origin so
-	// the mirror can badge the resulting user turn (docs/30 ② / docs/38 バッジ).
+	// Each delivered instruction ADDS one ledger row (docs/51 Phase 2 — 指示1件=報告1回。
+	// 追加であって上書きではないので、キュー投入で先行指示が潰れない)。carrying report_to
+	// (operator / scheduler) それ自体は、ミラーが user ターンにバッジを付けるための由来
+	// としても覚える (docs/30 ② / docs/38 バッジ).
 	if body.ReportTo != "" {
-		armSessionReport(name, body.ReportTo)
+		addInstruction(name, body.ReportTo, injectionSource(body.Source))
 		recordInjection(name, body.Prompt, injectionSource(body.Source))
 	} else {
 		// Genuine Console-typed input (not an operator/MCP injection): mirror it into
@@ -357,7 +358,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 
 // handleManagedInputPrompt is /input's {prompt} counterpart to handleManagedTurn's
 // start op (session_turn.go) — same ThreadHandle.Send delivery, but keeps /input's
-// report_to contract (armSessionReport / recordOperatorInjection) that /turn doesn't
+// report_to contract (addInstruction / recordOperatorInjection) that /turn doesn't
 // carry, so send_to_session's docs/30 auto-report keeps working for managed sessions.
 func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, reportTo, source string) {
 	prompt = strings.TrimSpace(prompt)
@@ -392,7 +393,7 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 	}
 	markSessionWorking(meta.Name)
 	if reportTo != "" {
-		armSessionReport(meta.Name, reportTo)
+		addInstruction(meta.Name, reportTo, injectionSource(source))
 		recordInjection(meta.Name, prompt, injectionSource(source))
 	} else {
 		go bridge.MirrorUserInput(meta.Name, prompt) // docs/37 Fix ②: Console-input mirror
