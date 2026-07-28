@@ -168,6 +168,7 @@ type claudeResult struct {
 }
 
 func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) (string, error) {
+	c.startTurn()
 	// 使用量台帳（ADR 0029 §3）: 呼び出しの開始時点で記録を defer に積む。成功・エラー
 	// result・exec 失敗・パース失敗のどの経路を通っても必ず1回だけ行が残る。
 	call := usageCall{Kind: session.KindClaude, ModelReq: chatModel(c)}
@@ -270,6 +271,7 @@ type streamLine struct {
 }
 
 func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt string, emit func(chatStreamEvent)) (string, []chatStep, error) {
+	c.startTurn()
 	// 使用量台帳（ADR 0029 §3）— send と同じく全経路で1回記録する。
 	call := usageCall{Kind: session.KindClaude, ModelReq: chatModel(c)}
 	defer recordUsageCall(ctx, &call, time.Now())
@@ -411,6 +413,7 @@ func stderrOr(err error, stderr *bytes.Buffer) string {
 type codexChat struct{}
 
 func (codexChat) send(ctx context.Context, c *chatConversation, prompt string) (string, error) {
+	c.startTurn()
 	// 使用量台帳（ADR 0029 §3）。codex はどのイベントにもモデルを載せない（実測）ので、
 	// -m を渡した時だけ requested、未指定なら default_unknown に縮退する。
 	call := usageCall{Kind: session.KindCodex, ModelReq: c.Model}
@@ -452,6 +455,9 @@ func (codexChat) send(ctx context.Context, c *chatConversation, prompt string) (
 		return "", errors.New("no response from codex")
 	}
 	call.OK = true
+	// codex はモデルを名乗らないので、記録できるのは -m で渡した値だけ（未指定なら
+	// codex 自身の既定＝こちらからは不明なので空のまま）。
+	c.noteTurnModel(c.Model)
 	// codex の input_tokens は cached を含む（chat_usage.go）: fresh = input - cached。
 	setChatContext(c, usage.InputTokens-usage.CachedInputTokens, usage.CachedInputTokens,
 		0, 0, chatCtxModelFor(c))
@@ -581,6 +587,7 @@ func tomlString(s string) string {
 type opencodeChat struct{}
 
 func (opencodeChat) send(ctx context.Context, c *chatConversation, prompt string) (string, error) {
+	c.startTurn()
 	call := usageCall{Kind: session.KindOpencode, ModelReq: c.Model} // 使用量台帳（ADR 0029 §3）
 	defer recordUsageCall(ctx, &call, time.Now())
 	dir := opencodeChatDir(c)
@@ -625,6 +632,13 @@ func (opencodeChat) send(ctx context.Context, c *chatConversation, prompt string
 		return "", errors.New("no response from opencode")
 	}
 	call.OK = true
+	// opencode はイベントに実モデルを載せる（parseOpencodeRunEvents）。取れなかった
+	// 版では --model に渡した値へ退がる（渡していなければ空＝非表示）。
+	if model != "" {
+		c.noteTurnModel(model)
+	} else {
+		c.noteTurnModel(c.Model)
+	}
 	setChatContext(c, usage.Input, usage.Cache.Read, usage.Cache.Write, 0, chatCtxModelFor(c))
 	return reply, nil
 }
@@ -839,6 +853,7 @@ func opencodeErrText(name, msg, ref string) string {
 type agyChat struct{}
 
 func (agyChat) send(ctx context.Context, c *chatConversation, prompt string) (string, error) {
+	c.startTurn()
 	// 使用量台帳（ADR 0029 §3）: agy は素のテキストしか返さないので measured=none —
 	// トークンは 0 ではなく「未計測」として、回数だけを数える。
 	call := usageCall{Kind: session.KindAgy, ModelReq: c.Model, Measured: usageMeasuredNone}
@@ -849,7 +864,7 @@ func (agyChat) send(ctx context.Context, c *chatConversation, prompt string) (st
 		// there and would leak into the user's interactive agy sessions.
 		return "", fmt.Errorf("agy chat home: %v", err)
 	}
-	args := agyChatArgs(c, headlessPrompt(c.personaOf(), c.knowledgeDirs(), prompt))
+	args, model := agyChatArgs(c, headlessPrompt(c.personaOf(), c.knowledgeDirs(), prompt))
 	cmd := exec.CommandContext(ctx, "agy", args...)
 	cmd.Dir = wd
 	cmd.Env = envWith("HOME=" + home)
@@ -871,23 +886,29 @@ func (agyChat) send(ctx context.Context, c *chatConversation, prompt string) (st
 		return "", errors.New("no response from agy")
 	}
 	call.OK = true
+	c.noteTurnModel(model) // 渡した --model のみ（agy は名乗らない）
 	return reply, nil
 }
 
 // agyChatArgs builds the argv for one agy chat turn: flags first, the prompt as
 // `-p`'s value last (verified live v1.1.4 — `-p <prompt>` with the display-name
-// --model and --conversation resume all honored).
-func agyChatArgs(c *chatConversation, prompt string) []string {
+// --model and --conversation resume all honored). The second return is the model
+// actually passed ("" when the pin was dropped or none was set, i.e. agy runs on its
+// own default) — agy prints plain text and names no model, so this is the only
+// truthful thing to record for the turn.
+func agyChatArgs(c *chatConversation, prompt string) ([]string, string) {
 	var args []string
+	var model string
 	if c.Model != "" { // fetch the catalog only when there is a pin to validate
 		if m := agyChatModel(c.Model, agy.Models()); m != "" {
 			args = append(args, "--model", m)
+			model = m
 		}
 	}
 	if c.AgyConversationID != "" {
 		args = append(args, "--conversation", c.AgyConversationID)
 	}
-	return append(args, "-p", prompt)
+	return append(args, "-p", prompt), model
 }
 
 // agyChatModel returns the --model value for a turn, self-healing a stale pin:
@@ -1050,6 +1071,7 @@ type cursorResult struct {
 }
 
 func (cursorChat) send(ctx context.Context, c *chatConversation, prompt string) (string, error) {
+	c.startTurn()
 	// 使用量台帳（ADR 0029 §3）。cursor は result にモデルを載せない（実測）ので requested
 	// 止まり。"auto" は --model を渡さない＝解決後のモデル不明なので default_unknown。
 	call := usageCall{Kind: session.KindCursor}
@@ -1088,6 +1110,9 @@ func (cursorChat) send(ctx context.Context, c *chatConversation, prompt string) 
 		return "", errors.New("no response from cursor")
 	}
 	call.OK = true
+	// 台帳の ModelReq と同じ基準: --model を渡した時だけ記録し、auto/未指定は空
+	// （cursor 側で解決されたモデルは result に出ないので推測しない）。
+	c.noteTurnModel(call.ModelReq)
 	setChatContext(c, r.Usage.InputTokens, r.Usage.CacheReadTokens, r.Usage.CacheWriteTokens, 0, chatCtxModelFor(c))
 	return reply, nil
 }
