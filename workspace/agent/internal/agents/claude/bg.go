@@ -302,3 +302,22 @@ func SubagentBusy(sid string) bool {
 	}
 	return false
 }
+
+// TranscriptBusy reports whether the session's MAIN transcript
+// (ConfigDir()/projects/*/<sid>.jsonl) was appended recently — the turn itself is
+// still running. Same freshness signal and TTL as SubagentBusy, aimed at the main
+// turn instead of its background agents: a mid-turn think gap fires no hooks, so the
+// status marker alone cannot distinguish "quiet because thinking" from "done".
+func TranscriptBusy(sid string) bool {
+	if sid == "" {
+		return false
+	}
+	cutoff := time.Now().Add(-subagentFreshTTL)
+	logs, _ := filepath.Glob(filepath.Join(ConfigDir(), "projects", "*", sid+".jsonl"))
+	for _, p := range logs {
+		if fi, err := os.Stat(p); err == nil && fi.ModTime().After(cutoff) {
+			return true
+		}
+	}
+	return false
+}
