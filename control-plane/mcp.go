@@ -206,8 +206,14 @@ func (a mcpAPI) dispatchMCP(ctx context.Context, prin *mcpPrincipal, req rpcRequ
 		// Removed in 2026-07-28 (any RPC proves liveness), kept for initialize-era clients.
 		return rpcOK(req.ID, map[string]any{"resultType": "complete"})
 	case "tools/list":
+		// ttlMs / cacheScope は 2026-07-28 の list 系結果の必須フィールド（キャッシュ可能
+		// リスト）。新 era クライアント（opencode 1.18.8 実測）は欠落を検証で弾いて
+		// サーバーごと切断する。旧クライアントは resultType 同様に未知キーとして無視。
+		// ツール集合は principal のスコープ依存なので private。
 		return rpcOK(req.ID, map[string]any{
 			"resultType": "complete",
+			"ttlMs":      60000,
+			"cacheScope": "private",
 			"tools":      a.mcpToolList(ctx, prin),
 		})
 	case "tools/call":
