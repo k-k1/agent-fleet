@@ -78,6 +78,15 @@ async function settle(): Promise<void> {
   });
 }
 
+async function rerender(props: { targetLine?: number; filePath?: string }): Promise<void> {
+  await act(async () => {
+    root!.render(
+      <FileView filePath={props.filePath ?? "repos/x/doc.md"} paneId="pane-1" targetLine={props.targetLine} />,
+    );
+  });
+  await settle();
+}
+
 beforeEach(async () => {
   latestOnReady = null;
   host = document.createElement("div");
@@ -117,6 +126,41 @@ describe("a mode chosen before the editor is ready", () => {
 
     await reportReady();
     expect(document.activeElement).not.toBe(stubContent());
+  });
+
+  it("is retired by leaving the surface, even if the surface later returns", async () => {
+    // Regression: an unconsumed request outlived the selection that made it. Ask
+    // for edit before the editor is ready, leave again, and then let something
+    // other than the user put the surface back — a citation retargeting the pane
+    // — and the stale request would fire and steal focus.
+    await act(async () => modeButton("Edit").click());
+    await settle();
+    await act(async () => modeButton("Preview").click());
+    await settle();
+
+    const outside = document.createElement("input");
+    document.body.appendChild(outside);
+    outside.focus();
+
+    await rerender({ targetLine: 3 });
+    expect(host.querySelector(".file-editor-shell")?.hasAttribute("hidden")).toBe(false);
+    await reportReady();
+    expect(document.activeElement).toBe(outside);
+    outside.remove();
+  });
+
+  it("is retired by opening another file", async () => {
+    await act(async () => modeButton("Edit").click());
+    await settle();
+
+    const outside = document.createElement("input");
+    document.body.appendChild(outside);
+    outside.focus();
+
+    await rerender({ filePath: "repos/x/other.md", targetLine: 2 });
+    await reportReady();
+    expect(document.activeElement).toBe(outside);
+    outside.remove();
   });
 
   it("is served immediately when the editor was ready all along", async () => {

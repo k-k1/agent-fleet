@@ -147,6 +147,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   // Bumped by each mode selection that lands on the editing surface; the effect
   // below turns one bump into one focus move (docs/44 §5).
   const [focusRequest, setFocusRequest] = useState(0);
+  const focusRequestRef = useRef(0);
   const consumedFocusRef = useRef(0);
   const [editorNotice, setEditorNotice] = useState("");
   const [resolutionOpen, setResolutionOpen] = useState(true);
@@ -355,6 +356,24 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   useEffect(() => {
     setEditorNotice("");
     setResolutionOpen(true);
+  }, [filePath]);
+
+  focusRequestRef.current = focusRequest;
+
+  // Leaving the editing surface retires every request still outstanding. A
+  // request only survives its own selection: without this, one made while the
+  // editor was still mounting would sit there until the surface came back for
+  // some other reason — a citation, a new file — and steal focus from whatever
+  // the user had moved on to.
+  useEffect(() => {
+    if (surfaces.editor) return;
+    consumedFocusRef.current = focusRequestRef.current;
+  }, [surfaces.editor]);
+
+  useEffect(() => {
+    // A new file is a new pane as far as focus is concerned; a request aimed at
+    // the previous one must not follow it here.
+    consumedFocusRef.current = focusRequestRef.current;
   }, [filePath]);
 
   // Deliberately keyed on the request, not on the surface: the same request id
