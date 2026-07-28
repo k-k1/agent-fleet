@@ -2001,6 +2001,16 @@ export const ja = {
   "clean.purge_title": "退避アーカイブを完全に削除しますか？",
   "clean.purge_body": "このアーカイブは元に戻せなくなります（容量を回収します）。",
   "clean.purge_do": "完全に削除",
+  // 掃除候補の「理由」（Agent は clean.reason.* のキーだけを返す・ADR 0033）。
+  "clean.reason.locked": "ロック中（削除保護。解除するまで掃除対象外）",
+  "clean.reason.archived": "アーカイブ済み（自動prune対象外。削除で回収可・復元可）",
+  "clean.reason.stopped": "停止中（再開可能）。完了していればアーカイブで一覧から整理",
+  "clean.reason.orphan_pane": "orphan（メタ無しの実行中ペイン）。Console でアタッチ/整理",
+  "clean.reason.wt_live": "稼働中のセッションがある（先に停止が必要）",
+  "clean.reason.wt_dirty": "未コミット/未pushの変更あり（push か Console で強制削除）",
+  "clean.reason.wt_merged": "マージ済み・クリーン（親に取り込み済み）",
+  "clean.reason.wt_unmerged": "クリーンだが未マージ（固有コミットあり。削除でブランチは残るが要確認）",
+  "clean.reason.branch_merged": "マージ済みローカルブランチ（親に取り込み済み。削除しても復元可）",
 
   // === P2 セッション行（features/sessions/SessionRow.tsx）===
   "srow.id_copied": "IDをコピーしました: {name}",
