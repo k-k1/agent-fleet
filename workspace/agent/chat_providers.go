@@ -666,8 +666,16 @@ func (opencodeChat) send(ctx context.Context, c *chatConversation, prompt string
 
 // opencodeChatPolicy is the chat contract every opencode chat run carries: file edits
 // and shell denied — the opencode analog of chatToolLimits. It rides BOTH config files
-// below so the posture holds whether opencode merges OPENCODE_CONFIG with the project
-// config or replaces it (undocumented; not worth betting on).
+// below because either one can be the only config a run gets: opencodeChatDir falls
+// back to the shared workdir (no project config) and opencodeChatConfig returns ""
+// without an af grant.
+//
+// 実測 1.18.7（`opencode debug config`、opencode_contract_test.go が固定）: opencode
+// MERGES every config source rather than letting one replace the others, and on a key
+// collision the nearest project config wins — precedence is
+// project(opencode.json) > OPENCODE_CONFIG > global(~/.config/opencode). Carrying the
+// same posture in both files is therefore consistent, never contradictory: a chat's
+// deny also beats whatever the user's global opencode config says.
 func opencodeChatPolicy() map[string]any {
 	return map[string]any{"edit": "deny", "bash": "deny"}
 }
@@ -686,10 +694,16 @@ func opencodeChatPolicy() map[string]any {
 // rewrite decides which servers this turn gets. The dir key is therefore the grant
 // plus a digest of the resolved registry set (docs/48 §7 制約), not the grant alone.
 //
-// The af MCP server is NOT here: it needs the conversation id (docs/30 report_to),
-// which is per conversation, not per grant, and a second definition without --conv
-// could resurface here on merge — see opencodeChatConfig. Falls back to the shared
-// chat workdir when the dir can't be prepared (opencode then runs with its defaults).
+// The af MCP server is NOT here, and that is load-bearing rather than tidy: it needs
+// the conversation id (docs/30 report_to), which is per conversation, not per grant.
+// opencode merges the config sources and **the project config wins the collision**
+// (実測 1.18.7), so an af entry here would not merely "resurface" — it would BEAT the
+// per-conversation one and strip --conv from every chat, silently killing セッション報告
+// for good. Registry servers are safe to carry here because both files derive them from
+// the same conversation, so the copies never disagree. See opencodeChatConfig.
+//
+// Falls back to the shared chat workdir when the dir can't be prepared (opencode then
+// runs with its defaults).
 func opencodeChatDir(c *chatConversation) string {
 	grant := "none"
 	if c.afToolsEnabled() {
@@ -738,9 +752,11 @@ func opencodeChatDir(c *chatConversation) string {
 // no af tools).
 //
 // The attached registry servers (docs/48 §7) ride here as well as in the project
-// config, for the same reason the policy does: if opencode REPLACES the project config
-// with this one rather than merging, a conversation's servers must not vanish the
-// moment it holds an af grant.
+// config, for the same reason the policy does: opencodeChatDir degrades to the shared
+// chat workdir when it can't prepare its dir, and that fallback has no project config
+// at all — this file is then the only thing standing between the conversation and a
+// turn with none of its servers. Under the measured merge the project copy wins the
+// collision, but both are built from the same conversation, so they agree.
 func opencodeChatConfig(c *chatConversation) string {
 	if !c.afToolsEnabled() || !validConvID(c.ID) {
 		return ""

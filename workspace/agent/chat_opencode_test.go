@@ -98,8 +98,11 @@ func TestOpencodeChatConfigSkippedWithoutGrant(t *testing.T) {
 	}
 }
 
-// プロジェクト側（--dir）の設定には af MCP を書かない。会話別設定と二重定義になると
-// 併合時に --conv 無しのサーバーが復活しかねない。
+// プロジェクト側（--dir）の設定には af MCP を書かない。opencode は設定を**併合**し、
+// 衝突時は**プロジェクト設定が勝つ**（1.18.7 実測・TestContractOpencodeConfigPrecedence
+// が固定）ので、ここに af を書くと会話別設定の --conv 付き定義を上書きしてしまい、
+// セッション報告（docs/30）が恒久的に届かなくなる。レジストリサーバーは両方の設定が
+// 同じ会話から作るので食い違わず、ここに載っていて構わない。
 func TestOpencodeChatDirHasNoMCP(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

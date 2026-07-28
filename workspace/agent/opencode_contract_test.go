@@ -150,3 +150,77 @@ func TestContractOpencodeEnvConfig(t *testing.T) {
 			"(and with it --conv / セッション報告) is silently dropped.\nmcp list:\n%s", opencodeVer(t), out)
 	}
 }
+
+// TestContractOpencodeConfigPrecedence pins HOW opencode combines its config sources,
+// which is what decides where the af MCP server may live (chat_providers.go).
+//
+// Measured on 1.18.7 with `opencode debug config`:
+//   - every source is MERGED (union of the `mcp` maps) — none replaces another;
+//   - on a name collision the nearest project config WINS, over both OPENCODE_CONFIG
+//     and the global ~/.config/opencode config.
+//
+// The second half is the dangerous one. The chat writes af ONLY into the per-conversation
+// OPENCODE_CONFIG file because that is the only place `--conv <id>` can live; if a future
+// opencode flipped precedence — or if someone "helpfully" added af to the project config —
+// the --conv-less entry would win and every opencode assistant would stop reporting back
+// (docs/30), with nothing else looking broken.
+//
+//	go test -tags clicontract -run TestContractOpencodeConfigPrecedence ./
+func TestContractOpencodeConfigPrecedence(t *testing.T) {
+	requireBins(t, "opencode")
+	home, dir := t.TempDir(), t.TempDir()
+	write := func(path, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(path, []byte(body+"\n"), 0o600); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	// The same name "dup" in all three sources, plus one name unique to each: the unique
+	// ones prove the merge, "dup" proves the precedence. /bin/echo is not an MCP server —
+	// the entries fail to connect, which is fine, the contract is that they are READ.
+	write(filepath.Join(home, ".config", "opencode", "opencode.json"),
+		`{"$schema":"https://opencode.ai/config.json","mcp":{`+
+			`"globalonly":{"type":"local","command":["/bin/echo","g"],"enabled":true},`+
+			`"dup":{"type":"local","command":["/bin/echo","FROM-GLOBAL"],"enabled":true}}}`)
+	write(filepath.Join(dir, "opencode.json"),
+		`{"$schema":"https://opencode.ai/config.json","permission":{"edit":"deny","bash":"deny"},"mcp":{`+
+			`"projonly":{"type":"local","command":["/bin/echo","p"],"enabled":true},`+
+			`"dup":{"type":"local","command":["/bin/echo","FROM-PROJECT"],"enabled":true}}}`)
+	cfg := filepath.Join(home, "conv.json")
+	write(cfg, `{"$schema":"https://opencode.ai/config.json","mcp":{`+
+		`"envonly":{"type":"local","command":["/bin/echo","e"],"enabled":true},`+
+		`"dup":{"type":"local","command":["/bin/echo","FROM-ENV"],"enabled":true}}}`)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "opencode", "debug", "config")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "HOME="+home, "OPENCODE_CONFIG="+cfg)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("opencode debug config: %v\n%s", err, out)
+	}
+	got := string(out)
+	// Merge: a source contributing a name found nowhere else must survive.
+	for _, name := range []string{"globalonly", "projonly", "envonly"} {
+		if !strings.Contains(got, name) {
+			t.Fatalf("opencode %s no longer MERGES its config sources — %q is missing, so one source "+
+				"is replacing the others. chat_providers.go assumes the union.\ndebug config:\n%s",
+				opencodeVer(t), name, got)
+		}
+	}
+	// Precedence: the project config must win the collision.
+	if !strings.Contains(got, "FROM-PROJECT") {
+		t.Fatalf("opencode %s no longer resolves a colliding MCP name to the PROJECT config — "+
+			"config precedence moved. Re-check that af still belongs only in the per-conversation "+
+			"OPENCODE_CONFIG file (chat_providers.go opencodeChatConfig).\ndebug config:\n%s",
+			opencodeVer(t), got)
+	}
+	if strings.Contains(got, "FROM-ENV") || strings.Contains(got, "FROM-GLOBAL") {
+		t.Fatalf("opencode %s resolved the colliding MCP name to something other than the project "+
+			"config — precedence moved (see above).\ndebug config:\n%s", opencodeVer(t), got)
+	}
+}
