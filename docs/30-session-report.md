@@ -118,6 +118,35 @@ run_in_background で起動し、主ターンが3分で Stop → その answer-r
   プロセスツリー系の `BackgroundBusy` / `BackgroundShellBusy` は使わない — 常駐 dev サーバや
   監視ループを「未完了」と誤認して報告を永久に保留し得るため）。
 
+### waiter の誤 idle — 配送条件の強化（2026-07-28）
+
+**実測不具合**（2026-07-28 sqmconc / azw7wys）: 上記 waiter の idle 判定が素の
+`status.LiveState`（**マーカーファイル無し = idle 既定**）頼みだったため、ターン途中の
+思考ギャップ（フック書込みが無い数十秒）にペイン起点の誤 idle ヒール
+（`AtIdlePrompt`→`HealIdle`→`status.Remove` — TUI 文字列契約ドリフトで誤発火し得る）が
+マーカーを消した十数秒の窓を waiter が「完了」と誤認。ターン途中で arm を消費して
+「応答が完了」を誤配送し、27分後の本完了の Stop kick は armed=false で棄却 —
+**報告が二度と届かなかった**。saga5uc 対策で入れた waiter 自身が新たな早期消費経路に
+なった合成不具合。
+
+対策は **waiter の配送条件を「明示・多重に裏取りされた idle」へ強化**
+（`waitReportUntilBackgroundDone`）:
+
+- `status.Read` が**明示的に** `state=="idle"` を返すこと（Stop が書いたファイルの実在を
+  要求。無ファイル= idle の既定を信用しない — 不在はヒールの削除跡かもしれない）。
+- `claude.TranscriptBusy(sid)`（メイン transcript `projects/*/<sid>.jsonl` の鮮度・
+  `SubagentBusy` と同じ 90s TTL）が偽であること — 思考ギャップはフックを発火しないが
+  ターン中の jsonl は直近に書かれている。
+- `tmuxx.IsBusy`（逆ヒールと同じ根拠 = ペインの中断アフォーダンス表示）が偽であること。
+
+Stop フック kick と違い waiter には「ターンが終わった」というイベントの裏付けが無いので、
+独立シグナル全部の一致を要求する。誤って**温存**した arm は次の本物の Stop kick で
+自己回復するが、誤って**消費**した arm は回復不能 — 迷ったら配送しない側に倒す。
+副作用は本完了後の配送が最大 TTL+poll ぶん遅れ得ることのみ（保留経路は元々 SubagentBusy
+の 90s stale 待ちを含むため、実質の追加遅延はほぼ無い）。回帰は
+`TestSessionReportWaiterIgnoresFalseIdle`（マーカー不在／明示 idle＋transcript 新鮮の
+両ケースで不配送 → 明示 idle＋stale で1回だけ配送）で pin。
+
 ### オペレーターからの質問回答 — answer_session_question（2026-07-25）
 
 セッションが AskUserQuestion で止まったとき、従来はオペレーター会話に何も届かず
