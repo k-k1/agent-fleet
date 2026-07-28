@@ -7,6 +7,7 @@ import { useSessionsStore } from "../sessions/store.ts";
 import { OnOff, Row } from "./controls.tsx";
 import { useHostUpdate } from "./hostUpdate.ts";
 import { useT } from "../../lib/i18n/index.ts";
+import { pinDrift } from "../../lib/pinDrift.ts";
 
 // EnvTab (ツールチェーン) selects the workspace toolchains: timezone, node (via nvm),
 // go, and java (a pre-baked Temurin JDK), plus the read-only bundled-tool versions and
@@ -167,8 +168,9 @@ function HostUpdateSection() {
 // ToolVersions: バンドルツール（claude / opencode / codex / rtk / gh / go / node /
 // python）の版を「実効（PATH 解決）/ イメージ焼き込み / ~/.local override」の 3 観点で
 // 表示する read-only セクション。PATH は ~/.local/bin が優先なので実効≠イメージが
-// 起こり得る（override バッジ）。イメージ列にはビルド時ピンとのずれも出す（自己更新
-// opt-in で上がった場合など）。Agent 経由なので workspace が起動中のときだけ取れる。
+// 起こり得る（override バッジ）。ビルド時ピンとのずれは方向つきで色分けする
+// （ピンより古い＝warn / 新しい＝accent、pinDrift）。Agent 経由なので workspace が
+// 起動中のときだけ取れる。
 function ToolVersions({ running }: { running: boolean }) {
   const tr = useT();
   const [tv, setTv] = useState<any>(null);
@@ -189,6 +191,21 @@ function ToolVersions({ running }: { running: boolean }) {
   const cell = (bin: any) => {
     if (!bin) return <span className="muted">—</span>;
     return <span title={bin.path + (bin.raw ? "\n" + bin.raw : "")}>{bin.version || bin.raw || "?"}</span>;
+  };
+
+  // ピンずれバッジ（方向つき色分け）: ピンより古い＝warn（更新が届いていない・kiro の
+  // 固着型）、新しい＝accent（自己更新などの前進・想定内）。一致/判定不能は出さない。
+  const pinBadge = (bin: any, pin: string) => {
+    const d = pinDrift(bin?.version, pin);
+    if (d !== "behind" && d !== "ahead") return null;
+    return (
+      <span
+        className={"tool-ver-pin is-" + d}
+        title={tr(d === "behind" ? "env.pin_behind_title" : "env.pin_ahead_title")}
+      >
+        {tr("env.pin_label", { pin })}
+      </span>
+    );
   };
 
   return (
@@ -226,6 +243,9 @@ function ToolVersions({ running }: { running: boolean }) {
                       override
                     </span>
                   )}
+                  {/* 実効とピンのずれ（lean/焼き込みどちらの variant でも出す。cursor の
+                      sha 接尾辞付きピンなどの版形状差は pinDrift が吸収する） */}
+                  {pinBadge(t.effective, t.pin)}
                 </td>
                 {/* ピンは versions.json 由来なので焼き込み実体が無くても出せる。lean
                     variant（BAKE_AGENT_CLIS=0）は /usr/local に CLI を焼かないので
@@ -240,11 +260,7 @@ function ToolVersions({ running }: { running: boolean }) {
                   ) : (
                     <>
                       {cell(t.baked)}
-                      {t.pin && t.baked && t.baked.version !== t.pin && (
-                        <span className="tool-ver-pin" title={tr("env.pin_title")}>
-                          {tr("env.pin_label", { pin: t.pin })}
-                        </span>
-                      )}
+                      {pinBadge(t.baked, t.pin)}
                     </>
                   )}
                 </td>

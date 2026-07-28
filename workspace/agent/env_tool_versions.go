@@ -77,7 +77,9 @@ type toolReport struct {
 	Effective *toolBin `json:"effective"`     // PATH 解決の実体（無ければ null）
 	Baked     *toolBin `json:"baked"`         // イメージの実体（無ければ null）
 	UserLocal *toolBin `json:"userLocal"`     // ~/.local/bin の override（無ければ null）
-	// Overridden: 実効が home 配下を指している（= ユーザー local が焼き込みを隠している）。
+	// Overridden: 焼き込み実体が在り、かつ実効がそれとは別の home 配下実体を指している
+	// （= ユーザー local が焼き込みを隠している）。焼き込みが無い lean variant では
+	// ~/.local がピン本体そのものなので false（従来は全行に override が点いて無意味だった）。
 	// 実効と焼き込みの単純パス比較にしないのは、gh のようにラッパー経由が正常なツールが
 	// あるため（home 配下でなければ「イメージ由来」とみなす）。
 	Overridden bool `json:"overridden"`
@@ -142,12 +144,12 @@ func collectToolVersions() []toolReport {
 		go func(i int, spec toolSpec) {
 			defer wg.Done()
 			r := toolReport{Name: spec.Name, Pin: pins[spec.Pin]}
+			effPath := ""
 			if p, err := exec.LookPath(spec.Cmd); err == nil {
+				// symlink（~/.local/bin/claude → share 配下など）は実体で判定する
+				effPath = p
 				if abs, err := filepath.EvalSymlinks(p); err == nil {
-					// symlink（~/.local/bin/claude → share 配下など）は実体で判定する
-					r.Overridden = strings.HasPrefix(abs, home+string(os.PathSeparator))
-				} else {
-					r.Overridden = strings.HasPrefix(p, home+string(os.PathSeparator))
+					effPath = abs
 				}
 				r.Effective = probeVersion(p, spec.Args)
 			}
@@ -158,6 +160,16 @@ func collectToolVersions() []toolReport {
 				if vers := installedGoVersions(); len(vers) > 0 {
 					r.Baked = probeVersion(filepath.Join(goHomeRoot(), vers[len(vers)-1], "bin", "go"), spec.Args)
 				}
+			}
+			// Overridden は「隠される焼き込み実体がある」時だけ（struct コメント参照）。
+			// go の on-demand toolchain（home 配下を Baked に立てる）は実効＝焼き込みの
+			// 同一実体なので実体パス比較で除外される。
+			if effPath != "" && r.Baked != nil {
+				bakedPath := r.Baked.Path
+				if abs, err := filepath.EvalSymlinks(bakedPath); err == nil {
+					bakedPath = abs
+				}
+				r.Overridden = strings.HasPrefix(effPath, home+string(os.PathSeparator)) && effPath != bakedPath
 			}
 			r.UserLocal = probeVersion(filepath.Join(home, ".local", "bin", spec.Cmd), spec.Args)
 			out[i] = r
