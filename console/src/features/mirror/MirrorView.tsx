@@ -330,14 +330,16 @@ export function MirrorView({
   const [suggesting, setSuggesting] = useState(false);
   const suggestRef = useRef<HTMLDivElement>(null); // チップ行（Tab でここへフォーカスを移す）
   useDragScroll(suggestRef); // 1行に収めた候補列をマウスドラッグで左右スクロール（スワイプは既定動作）
-  // スキルピッカー（docs/50 / ADR0034、v2 でクロスエージェント化）: セッションで呼べる
-  // スキル/コマンドの補完リスト。開き方は 2 系統 — 先頭トリガ文字のタイプ（キーボード派。
-  // claude/opencode/cursor は「/」、codex は「$」メンション）と専用ボタン（マウス/タップ派）。
-  // 選択はフォーカスを textarea に残す sel-index 方式（CommandPalette と同型 — チップ行の
-  // フォーカス移動式だとスマホでキーボードが落ちる）。managed 経路の発火が未検証の kind は
-  // slashSkillsManaged=false でゲート（opencode — docs/50 §7）。
-  const canSkills = agent.caps.slashSkills && (!managed || agent.caps.slashSkillsManaged);
-  const skillTrigger = agent.skillTrigger || "/";
+  // スキルピッカー（docs/50 / ADR0034、v2 クロスエージェント＋§8 クロススキル注入）:
+  // セッションで呼べるスキル/コマンドの補完リスト。ネイティブ起動（invoke — "/name" や
+  // codex "$name"）に加え、他規約の SKILL.md（foreign — path/origin 付き）は「path を
+  // 読んで指示に従え」プロンプトとして差し込む — ただの指示文なので kind/ドライバ不問。
+  // 開き方は 2 系統 — 先頭トリガ文字のタイプ（キーボード派。skillTrigger="" の kind は
+  // ボタンのみ）と専用ボタン（マウス/タップ派）。選択はフォーカスを textarea に残す
+  // sel-index 方式（CommandPalette と同型）。managed 発火未検証の kind（opencode）は
+  // ネイティブ項目だけ slashSkillsManaged=false で落とす — foreign はゲート対象外。
+  const canSkills = agent.caps.slashSkills;
+  const skillTrigger = agent.skillTrigger; // "" = ボタンのみ（タイプでは開かない）
   const [skills, setSkills] = useState<SessionSkill[] | null>(null); // null = 未取得
   const [slashTok, setSlashTok] = useState<SlashToken | null>(null); // 入力中の先頭 /トークン
   const [skillBtnOpen, setSkillBtnOpen] = useState(false); // ボタン起点で開いた（全件表示）
@@ -1601,8 +1603,14 @@ export function MirrorView({
   // （素の /plan 等の手打ちを覆い隠さない）。ボタン起点は空でも「無い」ことを見せる。
   const slashOpen = canSkills && !composerLocked && slashTok !== null && skillDismissRef.current !== slashTok.token;
   const skillsOpen = canSkills && !composerLocked && (skillBtnOpen || slashOpen);
-  const skillItems = skills ? filterSkills(skills, skillBtnOpen ? "" : (slashTok?.token ?? "")) : [];
+  const skillItems = (skills ? filterSkills(skills, skillBtnOpen ? "" : (slashTok?.token ?? "")) : [])
+    // managed 発火未検証 kind はネイティブ項目だけ落とす（foreign=注入はただのプロンプト）。
+    .filter((s) => !!s.path || !managed || agent.caps.slashSkillsManaged);
   const skillListVisible = skillsOpen && (skillBtnOpen || skills === null || skillItems.length > 0);
+  // ネイティブは invoke をそのまま、foreign は「path を読んで指示に従え」プロンプトに組む
+  // （末尾空白 — 続けて引数を打てる）。
+  const skillInsertText = (s: SessionSkill): string =>
+    s.invoke || tr("mirror.skills_use_foreign", { path: s.path ?? "" }) + " ";
 
   // 開いた時に取得（セッション替えでリセット）。都度取得 — セッション途中で SKILL.md を
   // 作らせる使い方が普通にあるので、開くたびに新鮮なリストを引く（走査は安い）。
@@ -1826,7 +1834,7 @@ export function MirrorView({
       }
       if (((e.key === "Enter" && !e.ctrlKey && !e.metaKey && !e.shiftKey) || e.key === "Tab") && skillItems[skillSel]) {
         e.preventDefault();
-        pickSkill(skillItems[skillSel].invoke);
+        pickSkill(skillInsertText(skillItems[skillSel]));
         return;
       }
       if (e.key === "Escape") {
@@ -2652,15 +2660,16 @@ export function MirrorView({
                     onClick={(ev) => {
                       if (ev.ctrlKey || ev.altKey || ev.metaKey) {
                         closeSkillPicker();
-                        void send(s.invoke.trim());
+                        void send(skillInsertText(s).trim());
                         return;
                       }
-                      pickSkill(s.invoke);
+                      pickSkill(skillInsertText(s));
                     }}
                   >
-                    <span className="mirror-skill-name">{s.invoke.trim()}</span>
+                    <span className="mirror-skill-name">{s.invoke ? s.invoke.trim() : s.name}</span>
                     {s.argumentHint ? <span className="mirror-skill-hint">{s.argumentHint}</span> : null}
                     {s.description ? <span className="mirror-skill-desc">{s.description}</span> : null}
+                    {s.origin ? <span className="mirror-skill-src">{s.origin}</span> : null}
                     {s.source === "user" ? <span className="mirror-skill-src">{tr("mirror.skills_src_user")}</span> : null}
                     {s.source === "cli" ? <span className="mirror-skill-src">{tr("mirror.skills_src_cli")}</span> : null}
                   </button>
@@ -2686,7 +2695,7 @@ export function MirrorView({
               }}
             >
               <span className="mirror-skill-glyph" aria-hidden="true">
-                {skillTrigger}
+                {skillTrigger || "✦"}
               </span>
             </button>
           )}

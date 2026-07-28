@@ -651,7 +651,14 @@ export interface SessionSkill {
   argumentHint?: string;
   source: "project" | "user" | "cli";
   type: "skill" | "command";
-  invoke: string; // exact string to insert into the composer ("/name " / "$name ")
+  // Native invocation: exact string to insert into the composer ("/name " / "$name ").
+  // Empty for foreign entries (below).
+  invoke?: string;
+  // Cross-skill injection (docs/50 §8): a skill from ANOTHER convention this kind's
+  // CLI won't discover natively. The composer turns it into a "read {path} and follow
+  // its instructions" prompt — plain text, so it works on any kind/driver.
+  path?: string; // repo-relative SKILL.md path
+  origin?: string; // convention dir (".claude" | ".codex" | ".agents") — shown as a badge
 }
 export const sessionSkills = (session: string): Promise<{ skills: SessionSkill[] }> =>
   api(`api/sessions/${encodeURIComponent(session)}/skills`);

@@ -28,12 +28,15 @@ export interface AgentCaps {
   contextBar: boolean; // shows the context-window token gauge
   imagePaste: boolean; // chat composer accepts pasted images (claude Read-tool flow)
   // composer offers the skill/command picker (GET /sessions/{name}/skills — docs/50).
-  // claude/codex/opencode scan filesystem conventions; cursor serves the CLI-advertised
-  // ACP list. kiro/copilot/agy stay off (no verified user-invocable mechanism — docs/50 §7).
+  // Native listings: claude/codex/opencode scan filesystem conventions; cursor serves
+  // the CLI-advertised ACP list. Every chat kind additionally gets "foreign" entries
+  // (other conventions' SKILL.md, fired via prompt injection — docs/50 §8), which is
+  // why kiro/copilot/agy are on too (foreign-only; no verified native mechanism).
   slashSkills: boolean;
-  // …and the picker also shows for MANAGED (paneless) sessions. Off for opencode:
+  // …and NATIVE entries also show for MANAGED (paneless) sessions. Off for opencode:
   // its /commands are a TUI feature and firing them over the server API is unverified
-  // (docs/50 §7). cursor is verified (ACP session/prompt "/cmd" fired — 実測 2026-07-28);
+  // (docs/50 §7) — foreign (injection) entries are exempt from this gate, being plain
+  // prompts. cursor is verified (ACP session/prompt "/cmd" fired — 実測 2026-07-28);
   // codex "$skill" is a plain text mention, channel-agnostic by construction.
   slashSkillsManaged: boolean;
   planMode: boolean; // chat offers a plan-mode toggle (drives the TUI's mode-cycle key)
@@ -88,7 +91,8 @@ export interface AgentDescriptor {
   // opencode "Build". "" for agents without a mode chip.
   defaultModeLabel: string;
   // the head-of-input character that opens the skill picker while typing ("/" for
-  // slash-command kinds, "$" for codex skill mentions). "" = button-only / no picker.
+  // slash-command kinds, "$" for codex skill mentions). "" = the picker opens from
+  // its button only (kinds whose entries are all injection prompts — no slash form).
   skillTrigger: string;
   // managed driver（docs/27 P2/P3）: この kind が共有 runtime 駆動（paneless）のセッション
   // 作成に対応しているか。true の kind は起動 UI にドライバ選択が出て、既定が managed
@@ -282,6 +286,8 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       transcript: true,
       model: true,
       imagePaste: true,
+      slashSkills: true, // foreign（注入）エントリのみ — docs/50 §8
+      slashSkillsManaged: true, // 注入はただのプロンプト（agy に managed は無いが明示）
       runsInDir: true,
       launchableFromRepo: true,
     }),
@@ -325,6 +331,8 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       effort: true,
       tuiEffort: true, // --effort
       tuiStartMode: true, // --mode plan
+      slashSkills: true, // foreign（注入）エントリのみ — docs/50 §8
+      slashSkillsManaged: true,
       runsInDir: true,
       launchableFromRepo: true,
     }),
@@ -380,6 +388,8 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       model: true,
       contextBar: true, // Track D: managed ACP の _kiro.dev/metadata ライブ context% → ContextFill 経由
       tuiStartMode: true, // program.go は mode=plan で --trust-all-tools を外す（承認待ちは state.go が "question" で拾う）
+      slashSkills: true, // foreign（注入）エントリのみ — docs/50 §8
+      slashSkillsManaged: true,
       runsInDir: true,
       launchableFromRepo: true,
     }),

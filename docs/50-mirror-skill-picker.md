@@ -113,7 +113,7 @@ kind ゲートは `AgentCaps.slashSkills` ＋ managed セッションでは `sla
 
 | 層 | ファイル |
 |---|---|
-| Agent | `workspace/agent/session_skills.go`（+ `_test.go`）・`routes.go`・`internal/agents/commands.go`（広告リスト共有ストア）・`internal/agents/cursor/driver.go`（onNotify で publish）・`internal/skillbridge/`（§8 双方向同期。claude/codex の BuildLaunch ＋ codex driver から呼ぶ） |
+| Agent | `workspace/agent/session_skills.go`（+ `_test.go` — foreign 列挙 `appendForeignSkills` 含む）・`routes.go`・`internal/agents/commands.go`（広告リスト共有ストア）・`internal/agents/cursor/driver.go`（onNotify で publish） |
 | CP | `control-plane/routes.go`・`session_skills_routes_test.go` |
 | Console API | `core/api/client.ts`（`SessionSkill` / `sessionSkills`） |
 | Console UI | `features/mirror/MirrorView.tsx`・`mirror.css`・`skillPicker.ts`（+ `.test.ts`）・`agents/registry.ts`（`caps.slashSkills` / `slashSkillsManaged` / `skillTrigger`） |
@@ -215,34 +215,40 @@ repo 内の既存ドキュメントには claude 以外の「スキル相当」�
   読まない**（3 規約同時設置の exec 実測＋バイナリにパス文字列なし）。
 - claude 固有 frontmatter（`argument-hint` / `user-invocable` / `allowed-tools` /
   `disable-model-invocation`）を全部付けた SKILL.md も codex の認識は壊れない（実測）
-  — **置き場所さえ合わせればファイルはそのまま流用できる**。§8 のブリッジの根拠。
+  — **形式は相互に読める**。§8（クロススキル注入）が素直に効く前提。
 - 補: codex app-server には `skills/extraRoots/set` RPC が存在する（バイナリ実測・
   ファイル無書込でルート追加できる口）。claude 側に相当機構が無く双方向要件を満たせ
   ないため §8 では採らなかったが、codex 片方向だけ軽くやる時の代替として記録する。
 
-## 8. スキルブリッジ — `.claude/skills` ⇄ `.codex/skills` の双方向自動同期
+## 8. クロススキル注入 — 他規約のスキルを「読んで従え」プロンプトで呼ぶ
 
-**要件（利用者指定）**: リポジトリへリンクやコピーを自分で置かずに、どちらの
-フォルダにあるスキルも claude / codex 両方から使えること。**シンボリックリンクは
-使わない**。
+**要件の変遷（利用者指定）**: ①リポジトリへリンクやコピーを自分で置かずに橋渡し →
+②シンボリックリンク不使用 → ③両フォルダのスキルをどちらのエージェントからも →
+④**プロジェクトディレクトリを一切汚さない**。①〜③で一度「マーカー付きコピーの
+双方向同期＋info/exclude」（`internal/skillbridge`）を実装したが、④で撤回した
+（git status には出ないが実ファイルは置く方式だったため。経緯は ADR0034 追記 v3/v4）。
 
-**仕組み**（`internal/skillbridge`・実装は同パッケージの doc comment が正）:
-- claude / codex セッションの**起動直前**（`BuildLaunch`、codex managed は driver の
-  thread 再確立点）に `skillbridge.Sync(dir)` が走り、作業コピー内で
-  `.claude/skills/<name>` ⇄ `.codex/skills/<name>` を**マーカー付きコピー**として
-  双方向同期する。
-- マーカー（`.af-skill-bridge` — 中身は元の repo 相対パス）が「agent-fleet が作った・
-  消してよい」印。**実体（マーカー無し）が居る名前には触らない**（ネイティブ優先、
-  同名衝突は両者無傷）。マーカー付きはソース扱いしない（ブリッジのブリッジ＝ループ
-  を作らない）。元が消えたら剪定、元が変われば次の起動で作り直し（内容追随）。
-- コピーは git の**リポジトリローカル** exclude（`$GIT_DIR/info/exclude` — コミット
-  されない・worktree 共通）へ番兵ブロックで登録し `git status` を汚さない。ユーザーの
-  実スキルは登録しない（未コミットの新規スキルが status から消えると困る）。無変更なら
-  ファイルを書かない。SVN 作業コピーでは unversioned に見えるが許容。
-- 全 best-effort — ブリッジの失敗でセッション起動は止めない。ピッカー（§2.1）は
-  変更不要: ブリッジ産コピーは通常のファイルとして各 kind の走査に載る（claude では
-  `/name`、codex では `$name` で起動）。
+**採った方式 — プロンプト注入**（利用者提案）: ファイルには一切触らない。
 
-**効き方**: 例えば repo に `.claude/skills/proofread` しか無くても、codex セッションを
-起動した時点で `.codex/skills/proofread`（コピー）が生え、codex から `$proofread` で
-呼べる。逆も同じ。スキルの正本はどちらか片方に置けばよい。
+- API（§2.1）が、その kind の CLI が自力で発見しない**他規約の SKILL.md** を
+  **foreign エントリ**（`invoke` 空・`path`＝repo 相対 SKILL.md・`origin`＝規約 dir）
+  として一覧に混ぜる。foreign として見るのは repo 内の `.claude/skills` /
+  `.codex/skills` / `.agents/skills`（SKILL.md ツリーのみ。commands 系は対象外）。
+  ネイティブと同名はネイティブ勝ち。`user-invocable: false` は foreign でも除外。
+- ピッカーで foreign を選ぶと、Console が
+  「`{path} を読んで、そのスキルの指示に従って実行して。`」（i18n:
+  `mirror.skills_use_foreign`・現在ロケール）を差し込む — **ただの指示文なので
+  kind もドライバも選ばない**。引数はプロンプトの後ろに打ち足す。リスト行には
+  origin バッジ（`.claude` 等）が付く。
+- これにより **kiro / copilot / agy でもピッカーが点く**（ネイティブ列挙は無し・
+  foreign のみ。`skillTrigger: ""` ＝タイプでは開かずボタンのみ）。opencode の
+  managed ゲート（slashSkillsManaged=false）は**ネイティブ項目だけ**に効く —
+  foreign は注入なので managed でも出す。
+- 限界（正直に）: ネイティブ起動と違い、スキル本文の解釈精度はモデル任せ
+  （claude の `context: fork` や `allowed-tools` 等のランタイム挙動は再現されない）。
+  codex ⇄ claude は SKILL.md 形式互換（§7.6）なので実用上は素直に動く見込み。
+
+**効き方**: repo に `.claude/skills/proofread` しか無くても、codex / opencode /
+cursor / kiro / copilot / agy のミラーでピッカーに `proofread`（`.claude` バッジ）が
+並び、選ぶと「.claude/skills/proofread/SKILL.md を読んで指示に従え」が入力欄に入る。
+スキルの正本はどちらか片方に置けばよい。

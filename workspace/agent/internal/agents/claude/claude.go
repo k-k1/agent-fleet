@@ -14,7 +14,6 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/skillbridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
@@ -52,9 +51,6 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// Pre-trust the launch dir so claude doesn't stall on the folder-trust dialog
 	// (not skippable via --dangerously-skip-permissions).
 	ensureFolderTrusted(m.Dir)
-	// スキルブリッジ（docs/50 §8）: .claude/skills ⇄ .codex/skills を双方向同期して
-	// から起動する（skills はプロセス起動時に発見されるため）。
-	skillbridge.Sync(m.Dir)
 	sid := session.UUID(m.Dir, m.Name)
 	// A jsonl can exist yet hold no real conversation — e.g. only a Remote Control
 	// "bridge-session" line when RC connected but nothing was said. claude --resume
