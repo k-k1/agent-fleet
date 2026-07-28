@@ -87,6 +87,10 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /sessions/{name}/title/set", handleSetTitle)
 	mux.HandleFunc("POST /sessions/{name}/suggest-branch", handleSessionSuggestBranch)
 	mux.HandleFunc("POST /sessions/{name}/suggest-replies", handleSuggestReplies) // LLM 返信サジェスト v2（preview 専用）
+	// ミラーのスキルピッカー（docs/50 / ADR0034）: セッションの worktree ＋ユーザーレベル
+	// .claude/skills・commands を列挙する。
+	// ⚠️ control-plane/routes.go にも同じパスの登録が要る（CP は明示許可リスト方式）。
+	mux.HandleFunc("GET /sessions/{name}/skills", handleSessionSkills)
 	mux.HandleFunc("POST /sessions/{name}/rename-branch", handleSessionRenameBranch)
 	mux.HandleFunc("GET /ws/pty", handlePTY)
 	// Browser pane — ephemeral BrowserContext + Page ownership and a restricted

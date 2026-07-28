@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent, DragEvent as RDragEvent, RefObject, ReactNode } from "react";
-import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond, sessionSettings, downloadURL } from "../../core/api/client.ts";
-import type { InteractionAnswer, ManagedThreadSettings, TurnResult } from "../../core/api/client.ts";
+import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond, sessionSettings, sessionSkills, downloadURL } from "../../core/api/client.ts";
+import type { InteractionAnswer, ManagedThreadSettings, SessionSkill, TurnResult } from "../../core/api/client.ts";
 import { isManagedSession } from "../../types/session.ts";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
 import { MEMO_DND_MIME } from "../memo/dnd.ts";
@@ -65,6 +65,8 @@ import {
   buildSinglePickKeys,
 } from "./questionKeys.ts";
 import { coarsePointer } from "../../lib/device.ts";
+import { useDismiss } from "../../lib/useDismiss.ts";
+import { applySkillToDraft, filterSkills, slashTokenAt, type SlashToken } from "./skillPicker.ts";
 import { ManagedSettingsModal } from "./ManagedSettingsModal.tsx";
 
 const q = encodeURIComponent;
@@ -328,6 +330,19 @@ export function MirrorView({
   const [suggesting, setSuggesting] = useState(false);
   const suggestRef = useRef<HTMLDivElement>(null); // チップ行（Tab でここへフォーカスを移す）
   useDragScroll(suggestRef); // 1行に収めた候補列をマウスドラッグで左右スクロール（スワイプは既定動作）
+  // スキルピッカー（docs/50 / ADR0034）: セッションで呼べるスラッシュ起動（.claude/skills・
+  // commands）の補完リスト。開き方は 2 系統 — 先頭「/」のタイプ（キーボード派）と専用
+  // ボタン（マウス/タップ派）。選択はフォーカスを textarea に残す sel-index 方式
+  // （CommandPalette と同型 — チップ行のフォーカス移動式だとスマホでキーボードが落ちる）。
+  const canSkills = agent.caps.slashSkills;
+  const [skills, setSkills] = useState<SessionSkill[] | null>(null); // null = 未取得
+  const [slashTok, setSlashTok] = useState<SlashToken | null>(null); // 入力中の先頭 /トークン
+  const [skillBtnOpen, setSkillBtnOpen] = useState(false); // ボタン起点で開いた（全件表示）
+  const [skillSel, setSkillSel] = useState(0);
+  const skillDismissRef = useRef<string | null>(null); // Esc/外クリックで閉じた時点の token（変わるまで再表示しない）
+  const skillPopRef = useRef<HTMLDivElement>(null);
+  const skillBtnRef = useRef<HTMLButtonElement>(null);
+  const skillSelRef = useRef<HTMLButtonElement>(null);
   // Pasted images awaiting send: {path} is the session-saved absolute path (referenced in
   // the prompt), {url} an object URL for the local chip preview, {name} the basename.
   const [attachments, setAttachments] = useState<{ path: string; name: string; url: string; image: boolean }[]>([]);
@@ -1577,6 +1592,75 @@ export function MirrorView({
     });
   };
 
+  // --- スキルピッカー（docs/50） ---
+  // slashOpen: 先頭「/」トークンが生きていて、かつ直前に閉じられていない。
+  // skillListVisible: 実際にリストを描く条件 — タイプ起点は該当ゼロなら出さない
+  // （素の /plan 等の手打ちを覆い隠さない）。ボタン起点は空でも「無い」ことを見せる。
+  const slashOpen = canSkills && !composerLocked && slashTok !== null && skillDismissRef.current !== slashTok.token;
+  const skillsOpen = canSkills && !composerLocked && (skillBtnOpen || slashOpen);
+  const skillItems = skills ? filterSkills(skills, skillBtnOpen ? "" : (slashTok?.token ?? "")) : [];
+  const skillListVisible = skillsOpen && (skillBtnOpen || skills === null || skillItems.length > 0);
+
+  // 開いた時に取得（セッション替えでリセット）。都度取得 — セッション途中で SKILL.md を
+  // 作らせる使い方が普通にあるので、開くたびに新鮮なリストを引く（走査は安い）。
+  useEffect(() => setSkills(null), [session]);
+  useEffect(() => {
+    if (!skillsOpen || !session) return;
+    let live = true;
+    sessionSkills(session)
+      .then((d) => live && setSkills(d.skills || []))
+      .catch(() => live && setSkills((s) => s ?? [])); // 失敗時: 既取得はそのまま、未取得は空扱い
+    return () => {
+      live = false;
+    };
+  }, [skillsOpen, session]);
+
+  // draft が手元の token とずれたら（送信でクリア・履歴呼び出し等の setDraft 直書き）閉じる。
+  useEffect(() => {
+    if (!slashTok) return;
+    if (!draft.startsWith("/") || draft.slice(1, slashTok.end) !== slashTok.token) setSlashTok(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft]);
+
+  // 絞り込みが変わったら選択を先頭へ戻し、選択が動いたら見える位置へ追従。
+  useEffect(() => setSkillSel(0), [slashTok?.token, skillBtnOpen]);
+  useEffect(() => skillSelRef.current?.scrollIntoView({ block: "nearest" }), [skillSel, skillItems.length]);
+
+  // 差し込み: 入力中の /トークン（無ければ下書き全体の頭）を "/name " に置換し、既存の
+  // 本文は引数として残す。タッチ端末はフォーカスしない（GBoard が画面を覆う —
+  // applySuggestion と同じ規約）。送信はしない — 引数を足してからユーザーが送る。
+  const pickSkill = (name: string) => {
+    const el = inputRef.current;
+    const caret = el ? (el.selectionStart ?? draft.length) : draft.length;
+    const { next, caret: nc } = applySkillToDraft(draft, caret, name);
+    setDraft(next);
+    setHistIdx(null);
+    setSkillBtnOpen(false);
+    skillDismissRef.current = null;
+    setSlashTok(slashTokenAt(next, nc)); // "/name " 直後は必ず null → 閉じる
+    if (coarsePointer()) {
+      inputRef.current?.blur();
+      return;
+    }
+    requestAnimationFrame(() => {
+      const el2 = inputRef.current;
+      if (el2) {
+        el2.focus();
+        el2.setSelectionRange(nc, nc);
+      }
+    });
+  };
+
+  // 閉じる（Esc・外クリック・ボタン再押下）。タイプ起点は「いまの token のままなら
+  // 再表示しない」印を残す — 消して打ち直したら（token が変われば）また開く。
+  const closeSkillPicker = () => {
+    setSkillBtnOpen(false);
+    skillDismissRef.current = slashTok?.token ?? null;
+  };
+  // 外クリックで閉じる。textarea 内クリック（キャレット移動）は対象外 — onSelect が
+  // token を追い直してリストが生きるべき操作なので、refs に inputRef も含める。
+  useDismiss([skillPopRef, skillBtnRef, inputRef], skillListVisible, closeSkillPicker);
+
   // v2: ✨ボタン — 直近の会話ログを一発ヘッドレス LLM に渡し、文脈に沿った返信候補を取得して
   // チップ列にマージする（session_suggest_reply.go）。押した時だけトークンを使う on-demand。
   const fetchLlmSuggestions = async () => {
@@ -1726,6 +1810,27 @@ export function MirrorView({
   };
 
   const onKeyDown = (e: RKeyboardEvent) => {
+    // スキルピッカーが開いている間は ↑/↓（選択移動）・Enter/Tab（確定）・Esc（閉じる）を
+    // ここで横取りする — 下の履歴呼び出し（↑/↓）・チップ Tab・送信 Enter より先。IME の
+    // 変換中は触らない。Ctrl/⌘+Enter と Shift+Enter は素通し（そのまま送信/改行できる逃げ道）。
+    if (skillListVisible && !e.nativeEvent.isComposing) {
+      if ((e.key === "ArrowDown" || e.key === "ArrowUp") && skillItems.length) {
+        e.preventDefault();
+        const n = skillItems.length;
+        setSkillSel((s) => (s + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
+        return;
+      }
+      if (((e.key === "Enter" && !e.ctrlKey && !e.metaKey && !e.shiftKey) || e.key === "Tab") && skillItems[skillSel]) {
+        e.preventDefault();
+        pickSkill(skillItems[skillSel].name);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeSkillPicker();
+        return;
+      }
+    }
     // 入力欄が空なら Tab で返信サジェストへ入る（＝入力欄→候補1→候補2→入力欄…のループ）。
     // 素の Tab は最初の「候補チップ」から始める（先頭の✨は飛ばす／Shift+Tab で戻れる）。
     // Shift+Tab は逆回りなのでリング末尾から入る。テキストがあるときは従来どおりの Tab。
@@ -2517,6 +2622,69 @@ export function MirrorView({
               <Icon name="chevron-down" />
             </button>
           </div>
+          {/* スキルピッカー（docs/50）: コンポーサー上に浮く補完リスト。マウスは onMouseMove で
+              選択追従＋クリック確定（mousedown は preventDefault でフォーカスを奪わない —
+              CommandPalette と同型）、タップはそのまま確定、キーボードは onKeyDown が駆動。 */}
+          {skillListVisible && (
+            <div className="mirror-skills" ref={skillPopRef} role="listbox" aria-label={tr("mirror.skills_btn")}>
+              {skills === null ? (
+                <div className="mirror-skills-note">
+                  <Icon name="loading" spin /> {tr("mirror.skills_loading")}
+                </div>
+              ) : skillItems.length === 0 ? (
+                <div className="mirror-skills-note">{tr("mirror.skills_empty")}</div>
+              ) : (
+                skillItems.map((s, i) => (
+                  <button
+                    type="button"
+                    key={s.type + ":" + s.source + ":" + s.name}
+                    ref={i === skillSel ? skillSelRef : undefined}
+                    className={"mirror-skill-item" + (i === skillSel ? " sel" : "")}
+                    role="option"
+                    aria-selected={i === skillSel}
+                    title={tr("mirror.skills_item_hint")}
+                    onMouseMove={() => setSkillSel(i)}
+                    onMouseDown={(ev) => ev.preventDefault()}
+                    onClick={(ev) => {
+                      if (ev.ctrlKey || ev.altKey || ev.metaKey) {
+                        closeSkillPicker();
+                        void send("/" + s.name);
+                        return;
+                      }
+                      pickSkill(s.name);
+                    }}
+                  >
+                    <span className="mirror-skill-name">/{s.name}</span>
+                    {s.argumentHint ? <span className="mirror-skill-hint">{s.argumentHint}</span> : null}
+                    {s.description ? <span className="mirror-skill-desc">{s.description}</span> : null}
+                    {s.source === "user" ? <span className="mirror-skill-src">{tr("mirror.skills_src_user")}</span> : null}
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+          {/* 「/」ボタン: マウス/タップだけでスキルを呼ぶ入口（キーボード派は素の「/」タイプ）。 */}
+          {canSkills && (
+            <button
+              type="button"
+              ref={skillBtnRef}
+              className={"ghost mirror-skill-btn" + (skillListVisible ? " on" : "")}
+              title={tr("mirror.skills_btn")}
+              disabled={composerLocked}
+              onClick={() => {
+                if (skillListVisible) {
+                  closeSkillPicker();
+                  return;
+                }
+                skillDismissRef.current = null;
+                setSkillBtnOpen(true);
+              }}
+            >
+              <span className="mirror-skill-glyph" aria-hidden="true">
+                /
+              </span>
+            </button>
+          )}
           {/* ＋ attach: the drag&drop-less path (phones foremost, handy everywhere).
               Any file type; the same addFiles upload the paste/drop paths use. */}
           {canPasteImage && (
@@ -2563,6 +2731,17 @@ export function MirrorView({
             onChange={(e) => {
               setDraft(e.target.value);
               setHistIdx(null); // typing leaves history-recall mode
+              if (canSkills) {
+                // スキルピッカーのトリガ追跡: 先頭「/」の 1 トークン内にキャレットがある間
+                // だけ token が立つ。トークンが死んだら Esc 抑止も解除（打ち直しで再表示）。
+                const tok = slashTokenAt(e.target.value, e.target.selectionStart ?? e.target.value.length);
+                if (!tok) skillDismissRef.current = null;
+                setSlashTok(tok);
+              }
+            }}
+            onSelect={(e) => {
+              // キャレット移動（クリック・矢印）でも token の生死を追い直す。
+              if (canSkills) setSlashTok(slashTokenAt(e.currentTarget.value, e.currentTarget.selectionStart ?? 0));
             }}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
