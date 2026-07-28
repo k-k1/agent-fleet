@@ -12,6 +12,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -104,18 +105,18 @@ func (f *fakeReportClock) waitSweep(t *testing.T, rc *reportReconciler) {
 	}
 }
 
-// awaitDisarmed polls until the one-shot arm is consumed. 配送（会話への追記）が
-// 成功してから arm を畳む順序なので、報告カードを見つけた瞬間はまだ armed のことが
-// ある — 「消費された」の確認は待って行う。
-func awaitDisarmed(t *testing.T, name string) {
+// awaitReported polls until the session has no open instruction row left. 配送（会話への
+// 追記）が成功してから行を reported に進める順序なので、報告カードを見つけた瞬間はまだ
+// pending のことがある — 「報告済み」の確認は待って行う。
+func awaitReported(t *testing.T, name string) {
 	t.Helper()
 	for i := 0; i < 150; i++ {
-		if !reportArmed(name) {
+		if !sessionReportPending(name) {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("arm must be consumed by the delivered report (指示1件=報告1回): %s", name)
+	t.Fatalf("指示行は配送された報告で reported になるべき (指示1件=報告1回): %s", name)
 }
 
 // newFakeReconciler wires a fake clock + a counting sink and starts the loop.
@@ -129,11 +130,17 @@ func newFakeReconciler(t *testing.T, interval time.Duration, sink reportSink) (*
 	return rc, clock
 }
 
-// armedFixture creates a temp HOME, an operator conversation and an armed session.
-func armedFixture(t *testing.T, name string) (session.Meta, string, string) {
+// ledgerFixture creates a temp HOME, an operator conversation and a session with an
+// EMPTY ledger — 指示の投入時刻をテスト側が決めたいケース（キュー投入・畳み込み）向け。
+// 自動ターンは切っておく（実シンクを使うテストが provider を叩かないように）。
+func ledgerFixture(t *testing.T, name string) (session.Meta, string, string) {
 	t.Helper()
 	home := withTempHome(t)
 	if err := os.MkdirAll(filepath.Join(home, ".config", "agent-fleet"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".config", "agent-fleet", "ui-prefs.json"),
+		[]byte(`{"assistantAutoTurn":false}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	conv := &chatConversation{ID: randUUID(), Agent: "claude", Messages: []chatMessage{}}
@@ -142,8 +149,48 @@ func armedFixture(t *testing.T, name string) (session.Meta, string, string) {
 	}
 	m := session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude, Title: "リコンサイラ検証"}
 	session.WriteMeta(m)
-	armSessionReport(m.Name, conv.ID)
 	return m, session.UUID(m.Dir, m.Name), conv.ID
+}
+
+// armedFixture is ledgerFixture plus one instruction row delivered now (v1 の arm 相当).
+func armedFixture(t *testing.T, name string) (session.Meta, string, string) {
+	t.Helper()
+	m, sid, convID := ledgerFixture(t, name)
+	addInstruction(m.Name, convID, turnSourceOperator)
+	return m, sid, convID
+}
+
+// countReportCards counts the report cards in a conversation (会話ロック下で読む —
+// saveConv は非アトミックな os.WriteFile なので、素の読みは truncate 中を掴む)。
+func countReportCards(t *testing.T, convID string) int {
+	t.Helper()
+	unlock := lockConv(convID)
+	defer unlock()
+	c, err := loadConv(convID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for i := range c.Messages {
+		if c.Messages[i].Role == "report" {
+			n++
+		}
+	}
+	return n
+}
+
+// waitPastCursor blocks until the wall clock has passed the row cursor, so the NEXT
+// status marker（TS = 現在時刻・秒精度）はその指示より後に書かれたことになる。
+// 指示と証拠の前後関係が判定の核心なので、ここだけは実時間を進める必要がある。
+func waitPastCursor(t *testing.T, cursor string) {
+	t.Helper()
+	for i := 0; i < 60; i++ {
+		if time.Now().Format(time.RFC3339) > cursor {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("カーソル %s を跨げなかった", cursor)
 }
 
 // --- 述語のテーブル ---------------------------------------------------------------
@@ -211,19 +258,31 @@ func TestReportEvidenceTable(t *testing.T) {
 // countingSink records the deliveries and lets the test fail the first N of them.
 type countingSink struct {
 	mu    sync.Mutex
-	calls []string // "kind:reason" の並び
-	fail  int      // 残り何回 Retry を返すか
+	calls []string   // "kind:reason" の並び
+	rows  [][]string // 各配送が畳んだ指示行のID（Phase 2 — 冪等キー）
+	fail  int        // 残り何回 Retry を返すか
 }
 
-func (cs *countingSink) sink(name, convID, kind, reason string) reportSinkResult {
+func (cs *countingSink) sink(name, convID, kind, reason string, rows []instrRow) reportSinkResult {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	cs.calls = append(cs.calls, kind+":"+reason)
+	cs.rows = append(cs.rows, instrIDs(rows))
 	if cs.fail > 0 {
 		cs.fail--
 		return reportSinkRetry
 	}
 	return reportSinkOK
+}
+
+// rowIDs returns the ledger row ids the i-th delivery folded.
+func (cs *countingSink) rowIDs(i int) []string {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	if i >= len(cs.rows) {
+		return nil
+	}
+	return cs.rows[i]
 }
 
 func (cs *countingSink) count() int {
@@ -246,7 +305,7 @@ func TestReportReconcilerSettleDebounce(t *testing.T) {
 	if cs.count() != 0 {
 		t.Fatalf("1 tick 目で配送した（デバウンスが効いていない）: %v", cs.calls)
 	}
-	if !reportArmed(m.Name) {
+	if !sessionReportPending(m.Name) {
 		t.Fatal("1 tick 目で arm を消費した")
 	}
 
@@ -257,7 +316,7 @@ func TestReportReconcilerSettleDebounce(t *testing.T) {
 	if cs.calls[0] != reportKindAnswerReady+":" {
 		t.Fatalf("配送 = %q", cs.calls[0])
 	}
-	if reportArmed(m.Name) {
+	if sessionReportPending(m.Name) {
 		t.Fatal("配送に成功したら arm を消費する（指示1件=報告1回）")
 	}
 
@@ -293,7 +352,7 @@ func TestReportReconcilerBusyResetsDebounce(t *testing.T) {
 	if cs.count() != 1 {
 		t.Fatalf("リセット後の 2 tick で配送されるべき: %v", cs.calls)
 	}
-	if reportArmed(m.Name) {
+	if sessionReportPending(m.Name) {
 		t.Fatal("arm が消費されていない")
 	}
 }
@@ -309,20 +368,20 @@ func TestReportReconcilerSinkRetry(t *testing.T) {
 	status.PersistTurnEnd(sid, "idle")
 	clock.advance(t, rc, reportTickDefault)
 	clock.advance(t, rc, reportTickDefault) // settle → 1 回目の配送（失敗）
-	if cs.count() != 1 || !reportArmed(m.Name) {
-		t.Fatalf("失敗した配送で arm を消費した（calls=%d armed=%v）", cs.count(), reportArmed(m.Name))
+	if cs.count() != 1 || !sessionReportPending(m.Name) {
+		t.Fatalf("失敗した配送で arm を消費した（calls=%d armed=%v）", cs.count(), sessionReportPending(m.Name))
 	}
 
 	clock.advance(t, rc, reportTickDefault) // 2 回目（失敗）
-	if cs.count() != 2 || !reportArmed(m.Name) {
-		t.Fatalf("再試行されていない（calls=%d armed=%v）", cs.count(), reportArmed(m.Name))
+	if cs.count() != 2 || !sessionReportPending(m.Name) {
+		t.Fatalf("再試行されていない（calls=%d armed=%v）", cs.count(), sessionReportPending(m.Name))
 	}
 
 	clock.advance(t, rc, reportTickDefault) // 3 回目（成功）
 	if cs.count() != 3 {
 		t.Fatalf("calls = %d, want 3", cs.count())
 	}
-	if reportArmed(m.Name) {
+	if sessionReportPending(m.Name) {
 		t.Fatal("配送に成功したら arm を消費する")
 	}
 	clock.advance(t, rc, reportTickDefault)
@@ -354,7 +413,7 @@ func TestReportReconcilerRecoversWithoutHint(t *testing.T) {
 	if elapsed > v1WaiterWait {
 		t.Fatalf("配送まで %v — v1 waiter の %v より悪化している", elapsed, v1WaiterWait)
 	}
-	if reportArmed(m.Name) {
+	if sessionReportPending(m.Name) {
 		t.Fatal("arm が消費されていない")
 	}
 	if elapsed != 2*reportTickDefault {
@@ -379,7 +438,7 @@ func TestReportReconcilerExitReportsWithoutDebounce(t *testing.T) {
 	if cs.count() != 1 || cs.calls[0] != "exit:oom" {
 		t.Fatalf("異常終了が1 tick で報告されなかった: %v", cs.calls)
 	}
-	if reportArmed(m.Name) {
+	if sessionReportPending(m.Name) {
 		t.Fatal("arm が消費されていない")
 	}
 }
@@ -398,5 +457,139 @@ func TestReportReconcilerHintCarriesReason(t *testing.T) {
 	clock.advance(t, rc, reportTickDefault)
 	if cs.count() != 1 || cs.calls[0] != reportKindAnswerReady+":"+reportReasonTurnAborted {
 		t.Fatalf("中断の qualifier が報告に乗っていない: %v", cs.calls)
+	}
+}
+
+// --- 指示台帳（docs/51 Phase 2） -----------------------------------------------------
+
+// TestReportReconcilerQueuedInstructionSurvives は**穴A の解消**を固定する。
+// v1 では指示2の re-arm が指示1の arm（1bit）を上書きし、直後に来た指示1の Stop が
+// その bit を消費した時点で「指示2の完了は誰にも報告されない」状態になっていた。
+// 台帳では指示 = 行なので、先行指示が reported になっても後行指示の行は pending のまま
+// 残り、その完了で別途報告される（同一性が bit から行IDへ移ったことの実利そのもの）。
+func TestReportReconcilerQueuedInstructionSurvives(t *testing.T) {
+	m, sid, conv := ledgerFixture(t, "slot60")
+	var cs countingSink
+	rc, clock := newFakeReconciler(t, reportTickDefault, cs.sink)
+
+	now := time.Now()
+	id1 := addInstructionAt(m.Name, conv, turnSourceOperator, now.Add(-60*time.Second))
+	status.PersistTurnEnd(sid, "idle") // 指示1のターンが Stop で終わった
+	// キュー投入: その終端より後に届いた指示2。まだ1文字も走っていないので、同じ静穏で
+	// 「完了」になってはいけない。
+	id2 := addInstructionAt(m.Name, conv, turnSourceOperator, now.Add(2*time.Second))
+
+	clock.advance(t, rc, reportTickDefault)
+	clock.advance(t, rc, reportTickDefault)
+	if cs.count() != 1 {
+		t.Fatalf("指示1の完了が報告されていない: %v", cs.calls)
+	}
+	if got := cs.rowIDs(0); len(got) != 1 || got[0] != id1 {
+		t.Fatalf("報告が畳んだ行 = %v, want [%s]（後行指示を巻き込んだ）", got, id1)
+	}
+	open := openInstrRows(m.Name)
+	if len(open) != 1 || open[0].ID != id2 || open[0].State != instrPending {
+		t.Fatalf("後行指示の行が残っていない: %+v", open)
+	}
+	// 証拠（マーカー）が指示2より前のままなら、何 tick 回しても報告されない。
+	clock.advance(t, rc, reportTickDefault)
+	clock.advance(t, rc, reportTickDefault)
+	if cs.count() != 1 {
+		t.Fatalf("走り出していない指示を完了として報告した: %v", cs.calls)
+	}
+
+	// 指示2のターンが終わる（マーカーが指示2のカーソルより後になる）。
+	waitPastCursor(t, open[0].Cursor.At)
+	status.PersistTurnEnd(sid, "idle")
+	clock.advance(t, rc, reportTickDefault)
+	clock.advance(t, rc, reportTickDefault)
+	if cs.count() != 2 {
+		t.Fatalf("後行指示が別途報告されなかった: %v", cs.calls)
+	}
+	if got := cs.rowIDs(1); len(got) != 1 || got[0] != id2 {
+		t.Fatalf("2通目が畳んだ行 = %v, want [%s]", got, id2)
+	}
+	if n := len(openInstrRows(m.Name)); n != 0 {
+		t.Fatalf("未報告の行が %d 件残っている", n)
+	}
+}
+
+// TestReportReconcilerFoldsOverlappingInstructions: 同じ静穏に**両方とも覆われる**
+// 指示が複数あるときは、スパムせず1通に畳んで全行を reported にする（docs/51 §データ
+// モデル「潰れる」ではなく「明示的に束ねる」）。
+func TestReportReconcilerFoldsOverlappingInstructions(t *testing.T) {
+	m, sid, conv := ledgerFixture(t, "slot61")
+	var cs countingSink
+	rc, clock := newFakeReconciler(t, reportTickDefault, cs.sink)
+
+	now := time.Now()
+	id1 := addInstructionAt(m.Name, conv, turnSourceOperator, now.Add(-90*time.Second))
+	id2 := addInstructionAt(m.Name, conv, turnSourceOperator, now.Add(-60*time.Second))
+	status.PersistTurnEnd(sid, "idle")
+
+	clock.advance(t, rc, reportTickDefault)
+	clock.advance(t, rc, reportTickDefault)
+	if cs.count() != 1 {
+		t.Fatalf("配送は1通に畳まれるべき: %v", cs.calls)
+	}
+	got := cs.rowIDs(0)
+	if len(got) != 2 || got[0] != id1 || got[1] != id2 {
+		t.Fatalf("畳んだ行 = %v, want [%s %s]", got, id1, id2)
+	}
+	if n := len(openInstrRows(m.Name)); n != 0 {
+		t.Fatalf("畳んだのに %d 件が未報告のまま", n)
+	}
+	// 本文には「指示N件ぶん」と各投入時刻が添えられる（1件のときは何も足さない）。
+	rows := readInstrRows(m.Name)
+	note := instrFoldNote(rows)
+	if !strings.Contains(note, "2 件") || !strings.Contains(note, rows[0].DeliveredAt) {
+		t.Fatalf("畳み込みの注記 = %q", note)
+	}
+	if instrFoldNote(rows[:1]) != "" {
+		t.Fatal("単一指示の報告本文は v1 と1文字も変えない")
+	}
+}
+
+// TestReportReconcilerDeliveryIsIdempotent: 同一行IDの重複配送が安全であること
+// （docs/51 §配送）。deliver-then-consume なので「会話への追記は成功したが、台帳を
+// 進める前にプロセスが落ちた」窓が構造的に存在する — 再送はシンク側の行ID照合で
+// 二重投稿にならず、台帳だけが前に進む。
+func TestReportReconcilerDeliveryIsIdempotent(t *testing.T) {
+	m, sid, conv := ledgerFixture(t, "slot62")
+	id := addInstruction(m.Name, conv, turnSourceOperator)
+	status.PersistTurnEnd(sid, "idle")
+
+	// 1回目: 実シンクで配送だけ済ませ、台帳は進めない（＝落ちた）。
+	rows := openInstrRows(m.Name)
+	if res := deliverReportCard(m.Name, conv, reportKindAnswerReady, "", rows); res != reportSinkOK {
+		t.Fatalf("配送 = %v", res)
+	}
+	if n := countReportCards(t, conv); n != 1 {
+		t.Fatalf("報告カード = %d 枚", n)
+	}
+	if !sessionReportPending(m.Name) {
+		t.Fatal("台帳を進めていないのに行が閉じた")
+	}
+
+	// 2回目: リコンサイラが同じ行を再送する。カードは増えず、行は reported になる。
+	rc, clock := newFakeReconciler(t, reportTickDefault, deliverReportCard)
+	clock.advance(t, rc, reportTickDefault)
+	clock.advance(t, rc, reportTickDefault)
+	if n := countReportCards(t, conv); n != 1 {
+		t.Fatalf("同一行の再送で報告カードが %d 枚に増えた", n)
+	}
+	awaitReported(t, m.Name)
+
+	// 冪等キーには reopen 世代が混ざる: 補償で開き直した行は「配送済み」と誤判定されず、
+	// 本完了でもう一度報告される（行IDだけを鍵にすると Phase 3 が壊れる）。
+	if !reopenInstrRow(m.Name, id) {
+		t.Fatal("reopen できない")
+	}
+	reopened := openInstrRows(m.Name)
+	if res := deliverReportCard(m.Name, conv, reportKindAnswerReady, "", reopened); res != reportSinkOK {
+		t.Fatalf("再開後の配送 = %v", res)
+	}
+	if n := countReportCards(t, conv); n != 2 {
+		t.Fatalf("reopen 後の報告カード = %d 枚, want 2", n)
 	}
 }

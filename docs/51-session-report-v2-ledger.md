@@ -115,7 +115,10 @@ arm の1bit（`session-report/<name>.json`）を廃止し、指示1件=台帳1�
 - managed driver の turn 終端（MarkTurnEnd 済み）
 - opencode: SQLite の終端レコード / codex: rollout 終端（既存の kind 別 LiveState 源）
 - TUI ルート（kiro 等）: `AtIdlePrompt` — ただし単独では 2 tick 連続要求が実質の
-  デバウンスになる（穴Cの一律解消）
+  デバウンスになる（**穴Cは「一律解消」ではなく「窓の縮小」**: footer の1回誤読は
+  2 tick で落とせるが、TUI 文字列契約が丸ごとドリフトして「常時 idle に見える」状態は
+  何 tick 連続でも通る。恒久策は kind 別 live state の**再導出**を busy 証拠に足すこと
+  — §移行 Phase 2 の TODO）
 - 自己申告（§ファストパス — Phase 3）
 
 **progressed(行)** — 完了報告の前提: 行の `cursor` より後にセッションが実際に働いた
@@ -179,7 +182,7 @@ reopen は行あたり2回まで。上限到達時は「判定が振動してい
 | Phase | 内容 | 閉じる穴 | 撤去するもの |
 |---|---|---|---|
 | 1 ✅ | 判定の一本化: kick の即消費をやめ、arm bit のままリコンサイラが settle 述語（2 tick デバウンス込み）で消費判定 | C, D, F | deferReportWhileBackgroundBusy / waitReportUntilBackgroundDone / reportWaiters（waiter 特例が述語に畳まれる） |
-| 2 | 台帳置換: arm 書込み箇所（create_session / /input / /turn / bridge / スケジューラ）を行追加へ。disarm → cancelled。起動時に既存 `armed=true` を1行に変換 | A, B | session-report/*.json（読み替え互換の後に削除）・consumeReportArm |
+| 2 ✅ | 台帳置換: arm 書込み箇所（create_session / /input / /turn / bridge / スケジューラ）を行追加へ。disarm → cancelled。起動時に既存 `armed=true` を1行に変換 | A, B | session-report/*.json（起動時の移行が読んで削除）・consumeReportArm・reportArmMu |
 | 3 | 補償 reopen ＋ 自己申告ファストパス | E の実害（誤報告→訂正に縮退） | — |
 
 - 各 Phase は独立にリリース／ロールバック可能。Phase 1 の時点で v1 の外部契約
@@ -213,10 +216,57 @@ reopen は行あたり2回まで。上限到達時は「判定が振動してい
   WaiterIgnoresFalseIdle → 「無マーカー=不明」、HaltDisarmsOnlyWhenFlagged →
   cancelled、DeliveredAfterHealWipedMarker → ヒント喪失時の tick 回収。
 
+### Phase 2 実装メモ（2026-07-29 / `chat_report_ledger.go`）
+
+設計との差分・実装で決めたことだけを記す。
+
+- **台帳はセッション1ファイル**（`instr-ledger/<session>.json` に `rows` 配列）。行を
+  ファイル1枚ずつにしなかったのは、判定が常に「そのセッションの未報告行**全体**」を
+  必要とするから（最古カーソル・畳み込み・cancel は行の集合演算）。read-modify-write は
+  セッション単位の in-process mutex で直列化する。
+- **どの行が「この静穏」で完了したかは証拠の時刻で切る**。settle は「セッションが静穏か」
+  というセッション単位の判定だが、報告義務は指示単位なので、idle マーカー（または
+  ExitInfo）**より後に投入された指示行はその静穏では完了になり得ない** — 行は pending の
+  まま残り、次のターンの終端で改めて報告される。これがキュー投入（穴A）の解消の実体で、
+  「1bit の上書き」という現象そのものが定義から消える。逆に、証拠に覆われる行が複数
+  あれば1通に畳む（`instrFoldNote` が「指示N件ぶん」と各 delivered_at を添える。
+  1件のときは本文を1文字も変えない）。
+- **カーソルは秒精度の RFC3339 のまま**（Phase 1 の arm 時刻と同じ意味）。比較相手の
+  status マーカーが秒精度なので、カーソルだけを nano にすると「投入と同じ秒に終わった
+  速いターン」がマーカー < カーソルに見えて永久に settle しない。kind 別の濃いカーソル
+  （jsonl サイズ・ターン連番）は将来課題のまま。
+- **配送の冪等キーは「行ID＋reopen 世代」**。行IDだけにすると、補償で開き直した行
+  （Phase 3）が「配送済み」と誤判定されて本完了の報告を握り潰す。会話メッセージ側に
+  `instr` として持たせ、シンクは会話ロック下でこれを照合してから追記する。
+  「追記は成功したが台帳を進める前に落ちた」窓は再送で二重投稿にならず、行だけが進む。
+- **interim（質問 / プラン）は既報を刻むだけで抑止しない**。設計本文は「行ごとに1回」と
+  書いたが、1つの指示の中で質問が2回起きるのは普通で、2問目を握り潰すとオペレーターが
+  答えられなくなる（外部契約「interim 非消費」の実質を壊す）。状態は
+  `pending → interim_reported` へ進むが行は open のままで、完了報告の義務は残る。
+- **reopen（reported → reopened）は台帳側だけ実装**。遷移を引く検出（reported 行の
+  grace 監視で busy が復活したか）と訂正 notice は Phase 3。ここを Phase 2 で入れておく
+  のは、状態機械の出口が無いと Phase 3 がスキーマ変更から始まるため。上限は行あたり2回。
+- **移行は起動時に1回**（`migrateReportArms`）。`armed=true` の v1 ファイルを1行へ変換し、
+  変換元を消す（再起動のたびに行が増えないため）。代償は「Phase 1 バイナリへ戻すと
+  移行済みの未完了指示は報告されない」こと — 二重報告より軽い方に倒した。
+- **穴C の残り（TUI 由来 kind の live state 再導出）は TODO**。kiro / cursor は Stop 相当の
+  フックを持たず、idle 証拠が TUI 文字列契約に依存する。2 tick デバウンスで「1回の誤読」は
+  落ちるが「契約ドリフトで常時 idle に見える」状態は落ちない。恒久策は各 kind の live
+  state（`AtIdlePrompt` 等）を**リコンサイラ側で再導出して busy 証拠にも足す**こと
+  （現状 busy 証拠は claude 由来のシグナルに偏っている）。Phase 3 か kind 追加時に着手する。
+- v1 回帰テストは Phase 1 の読み替えを維持したまま、arm ではなく行の状態を見るように
+  だけ書き換えた（`sessionReportPending` / `awaitReported`）。追加は台帳の状態機械・
+  キュー投入で後行指示が残ること・配送の冪等性・移行の4本。
+
 ## トレードオフ / 受容するもの
 
-- **レイテンシ**: ヒントが生きていれば従来同等、死んでいても +1〜2 tick（〜60s）。
-  v1 waiter の 90s 待ちより悪化しないことをテストで固定する。
+- **レイテンシ**: 実測どおりに言うと、**ヒントが生きていても従来同等ではない** —
+  v1 は Stop kick でその場で配送していたので、settle デバウンス（2 tick 連続＋tick 間隔
+  ぶんの経過）が入るぶん**全ての完了報告が 15〜30s 遅れる**。通知センター側の
+  「応答あり」通知は従来どおり即時なので、利用者からは「通知は出たのにオペレーターの
+  報告カードは十数秒後」という時差として見える（オペレーターの自動ターン自体が数十秒
+  かかるので、後続処理の体感差は小さい）。ヒントが死んだ場合も遅延は同じ 1〜2 tick で、
+  **上限は v1 と同じ 90s**（transcript 鮮度の TTL）から悪化しないことをテストで固定する。
 - **Bash run_in_background**（穴E）は busy 証拠に入れない判断を継続する（常駐 dev
   サーバとの区別が原理的に付かない — docs/30 の受容理由のまま）。ただし Phase 3 の
   補償により「誤完了報告→続行検出→訂正」に落ちる。`CLAUDE_CONFIG_DIR/tasks/` を

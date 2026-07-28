@@ -193,7 +193,7 @@ func recordSessionNotification(sid, previous, state, turnText string) {
 		// docs/51 Phase 1: この kick は終端イベントでは「配送」ではなく**起床ヒント**。
 		// 消費してよいかの判定はリコンサイラが状態をレベルで見て決める（この関数は
 		// 「何が起きたか」を伝えるだけで、「もう報告してよいか」は決めない）。
-		if (kind == reportKindAnswerReady || kind == "question" || kind == "plan-approval") && reportArmed(m.Name) {
+		if (kind == reportKindAnswerReady || kind == "question" || kind == "plan-approval") && sessionReportPending(m.Name) {
 			kickSessionReport(m.Name, kind, reason)
 		}
 		return

@@ -1,6 +1,7 @@
 # 0035. セッション報告 v2 — エッジ駆動＋1bit arm を捨て、指示台帳＋レベル駆動リコンサイラへ
 
-- 状態: **採用・移行中**（2026-07-28 決定 / 2026-07-29 に Phase 1「判定の一本化」実装）。
+- 状態: **採用・移行中**（2026-07-28 決定 / 2026-07-29 に Phase 1「判定の一本化」・
+  Phase 2「台帳置換」実装。残りは Phase 3 = 補償 reopen ＋自己申告ファストパス）。
   設計本文は [51-session-report-v2-ledger.md](../51-session-report-v2-ledger.md)。
 - 関連: [0013 相当 docs/30](../30-session-report.md)（v1 の設計と事故史）/
   [0030](0030-turn-abort-auto-resume.md)（中断分類 — v2 の述語に吸収）/
@@ -58,3 +59,6 @@ consume-then-deliver の配送消失・agent 再起動中の kick 消失）は�
 - ヒント喪失時のレイテンシは +1〜2 tick（〜60s）。v1 waiter の 90s 待ちより悪化しない
   ことをテストで固定する。
 - `session-report/*.json`・waiter・世代調停コードは Phase 2 完了時点で撤去される。
+  （2026-07-29 実装: arm ストアは起動時の移行 `migrateReportArms` が読むだけの残骸になり、
+  `consumeReportArm` / `reportArmMu` は消えた。指示の同一性は `instr-ledger/<session>.json` の
+  行IDが持つ。）

@@ -22,42 +22,166 @@ func withTempHome(t *testing.T) string {
 	return dir
 }
 
-func TestArmSessionReportRoundTrip(t *testing.T) {
+// TestInstrLedgerRoundTrip is the v1 TestArmSessionReportRoundTrip read through the
+// Phase 2 ledger (docs/51): 投入は行の**追加**で、宛先の無い指示は行にならない。
+// 決定的な違いが最後の2行 — v1 の re-arm は前の指示の bit を上書きしたが、行は増える。
+func TestInstrLedgerRoundTrip(t *testing.T) {
 	withTempHome(t)
 	conv := &chatConversation{ID: randUUID(), Agent: "claude", Messages: []chatMessage{}}
 	if err := saveConv(conv); err != nil {
 		t.Fatal(err)
 	}
 
-	// Unknown conversation id → not armed.
-	armSessionReport("slot01", randUUID())
-	if reportArmed("slot01") {
-		t.Fatal("armed against a dangling conversation id")
+	// Unknown conversation id → no row (宛先の無い行は作らない).
+	if id := addInstruction("slot01", randUUID(), turnSourceOperator); id != "" {
+		t.Fatal("dangling conversation id へ行を立てた")
 	}
-	// Invalid session name → not armed.
-	armSessionReport("bad/../name", conv.ID)
-	if reportArmed("bad/../name") {
-		t.Fatal("armed for an invalid session name")
+	// Invalid session name → no row.
+	if id := addInstruction("bad/../name", conv.ID, turnSourceOperator); id != "" {
+		t.Fatal("不正なセッション名で行を立てた")
+	}
+	if sessionReportPending("slot01") {
+		t.Fatal("行が無いのに未報告扱い")
 	}
 
-	armSessionReport("slot01", conv.ID)
-	if !reportArmed("slot01") {
-		t.Fatal("expected armed after a valid arm")
+	id1 := addInstruction("slot01", conv.ID, turnSourceOperator)
+	if id1 == "" || !sessionReportPending("slot01") {
+		t.Fatalf("投入で pending 行ができていない (id=%q)", id1)
 	}
-	l, ok := reportLinks.Read("slot01")
-	if !ok || l.Conv != conv.ID || !l.Armed {
-		t.Fatalf("link = %+v ok=%v", l, ok)
+	rows := openInstrRows("slot01")
+	if len(rows) != 1 || rows[0].Conv != conv.ID || rows[0].State != instrPending ||
+		rows[0].Source != turnSourceOperator || rows[0].Cursor.At == "" {
+		t.Fatalf("row = %+v", rows)
 	}
-	// Disarm (what handleChatReport does before delivering).
-	l.Armed = false
-	_ = reportLinks.Write("slot01", l)
-	if reportArmed("slot01") {
-		t.Fatal("still armed after disarm")
+
+	// 2件目の指示は**追加**される（v1 の re-arm は1bitの上書きだった＝穴A）。
+	id2 := addInstruction("slot01", conv.ID, turnSourceOperator)
+	if rows := openInstrRows("slot01"); len(rows) != 2 {
+		t.Fatalf("2件目の指示で行が %d 件（上書きされた）", len(rows))
 	}
-	// Re-arm re-enables exactly one more report (指示1件=報告1回).
-	armSessionReport("slot01", conv.ID)
-	if !reportArmed("slot01") {
-		t.Fatal("expected re-armed")
+
+	// 1件目だけを報告 → その行だけ閉じ、2件目は open のまま。
+	markInstrReported("slot01", []string{id1}, time.Now())
+	rows = openInstrRows("slot01")
+	if len(rows) != 1 || rows[0].ID != id2 {
+		t.Fatalf("先行指示の報告が後行指示を巻き添えにした: %+v", rows)
+	}
+	if !sessionReportPending("slot01") {
+		t.Fatal("後行指示が残っているのに未報告なしと判定された")
+	}
+}
+
+// TestInstrLedgerStateMachine pins the row's state machine (docs/51 §データモデル):
+// pending → interim_reported（非消費）→ reported → reopened → reported、および
+// stop_session の cancelled。閉じた行が勝手に開かない・上限で reopen が止まることも。
+func TestInstrLedgerStateMachine(t *testing.T) {
+	withTempHome(t)
+	conv := &chatConversation{ID: randUUID(), Agent: "claude", Messages: []chatMessage{}}
+	if err := saveConv(conv); err != nil {
+		t.Fatal(err)
+	}
+	stateOf := func(name, id string) string {
+		for _, r := range readInstrRows(name) {
+			if r.ID == id {
+				return r.State
+			}
+		}
+		return "<missing>"
+	}
+
+	id := addInstruction("slot02", conv.ID, turnSourceOperator)
+	if got := stateOf("slot02", id); got != instrPending {
+		t.Fatalf("初期状態 = %q", got)
+	}
+
+	// interim（質問）は**非消費**: 状態は進むが行は open のまま — 完了報告の義務は残る。
+	markInstrInterim("slot02", "question", time.Now())
+	if got := stateOf("slot02", id); got != instrInterim {
+		t.Fatalf("interim 後 = %q", got)
+	}
+	if !sessionReportPending("slot02") {
+		t.Fatal("interim 報告が完了のワンショットを食った（v1 の実測不具合）")
+	}
+	markInstrInterim("slot02", "plan-approval", time.Now())
+	rows := readInstrRows("slot02")
+	if rows[0].Interim.QuestionAt == "" || rows[0].Interim.PlanAt == "" {
+		t.Fatalf("interim の既報記録が無い: %+v", rows[0])
+	}
+
+	markInstrReported("slot02", []string{id}, time.Now())
+	if got := stateOf("slot02", id); got != instrReported {
+		t.Fatalf("完了報告後 = %q", got)
+	}
+	if sessionReportPending("slot02") {
+		t.Fatal("reported の行がまだ未報告扱い")
+	}
+
+	// 補償（§Phase 3 が引く遷移）: reported → reopened → reported。
+	if !reopenInstrRow("slot02", id) {
+		t.Fatal("reported 行を reopen できない")
+	}
+	if got := stateOf("slot02", id); got != instrReopened || !sessionReportPending("slot02") {
+		t.Fatalf("reopen 後 = %q pending=%v", stateOf("slot02", id), sessionReportPending("slot02"))
+	}
+	markInstrReported("slot02", []string{id}, time.Now())
+	if got := stateOf("slot02", id); got != instrReported {
+		t.Fatalf("再報告後 = %q", got)
+	}
+	// reopen は行あたり instrReopenMax 回まで（判定が振動している行を打ち切る）。
+	for i := 1; i < instrReopenMax; i++ {
+		if !reopenInstrRow("slot02", id) {
+			t.Fatalf("%d 回目の reopen が拒否された", i+1)
+		}
+		markInstrReported("slot02", []string{id}, time.Now())
+	}
+	if reopenInstrRow("slot02", id) {
+		t.Fatalf("reopen 上限（%d）を超えて開き直した", instrReopenMax)
+	}
+
+	// stop_session（disarm）は open な行を cancelled にする。cancelled は開き直らない。
+	id2 := addInstruction("slot02", conv.ID, turnSourceOperator)
+	if n := cancelInstructions("slot02"); n != 1 {
+		t.Fatalf("cancel した行数 = %d, want 1", n)
+	}
+	if got := stateOf("slot02", id2); got != instrCancelled {
+		t.Fatalf("cancel 後 = %q", got)
+	}
+	if sessionReportPending("slot02") {
+		t.Fatal("cancelled の行がまだ報告義務を持っている")
+	}
+	markInstrReported("slot02", []string{id2}, time.Now())
+	if got := stateOf("slot02", id2); got != instrCancelled {
+		t.Fatalf("cancelled が報告で上書きされた: %q", got)
+	}
+}
+
+// TestMigrateReportArms covers the Phase 2 migration (docs/51 §移行): 起動時に v1 の
+// armed=true を1行へ変換し、変換元のファイルは消す（再起動のたびに行が増えないこと）。
+func TestMigrateReportArms(t *testing.T) {
+	withTempHome(t)
+	conv := &chatConversation{ID: randUUID(), Agent: "claude", Messages: []chatMessage{}}
+	if err := saveConv(conv); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().Add(-5 * time.Minute).Format(time.RFC3339)
+	_ = reportLinks.Write("slot03", reportLink{Conv: conv.ID, Armed: true, At: at})
+	_ = reportLinks.Write("slot04", reportLink{Conv: conv.ID, Armed: false, At: at}) // 消費済み
+
+	migrateReportArms()
+
+	rows := openInstrRows("slot03")
+	if len(rows) != 1 || rows[0].Conv != conv.ID || rows[0].Cursor.At != at {
+		t.Fatalf("移行された行 = %+v", rows)
+	}
+	if sessionReportPending("slot04") {
+		t.Fatal("armed でない v1 レコードから行を作った")
+	}
+	if _, ok := reportLinks.Read("slot03"); ok {
+		t.Fatal("移行元の v1 ファイルが残っている（再起動のたびに行が増える）")
+	}
+	migrateReportArms() // 2回目は何もしない
+	if n := len(openInstrRows("slot03")); n != 1 {
+		t.Fatalf("再移行で行が %d 件に増えた", n)
 	}
 }
 
@@ -256,7 +380,7 @@ func TestSessionReportDeliveredAfterHealWipedMarker(t *testing.T) {
 	session.WriteMeta(m)
 	sid := session.UUID(m.Dir, m.Name)
 
-	armSessionReport(m.Name, conv.ID) // create_session / send_to_session with report_to
+	addInstruction(m.Name, conv.ID, turnSourceOperator) // create_session / send_to_session with report_to
 
 	status.Persist(sid, "working") // the operator's instruction starts a turn
 	// A real turn leaves a FRESH main transcript behind (the answer was just written).
@@ -298,7 +422,7 @@ func TestSessionReportDeliveredAfterHealWipedMarker(t *testing.T) {
 	if got.Session != m.Name || !strings.Contains(got.Content, "検証タスク") || !strings.Contains(got.Content, "入力待ち") {
 		t.Fatalf("report card = %+v", got)
 	}
-	awaitDisarmed(t, m.Name)
+	awaitReported(t, m.Name)
 }
 
 // TestQuestionReportInterimKeepsArm pins the interim question report (docs/30):
@@ -320,7 +444,7 @@ func TestQuestionReportInterimKeepsArm(t *testing.T) {
 	}
 	m := session.Meta{Name: "slot44", Dir: t.TempDir(), Kind: session.KindClaude, Title: "質問検証"}
 	session.WriteMeta(m)
-	armSessionReport(m.Name, conv.ID)
+	addInstruction(m.Name, conv.ID, turnSourceOperator)
 
 	req := httptest.NewRequest(http.MethodPost, "/chat/report",
 		strings.NewReader(`{"name":"slot44","kind":"question"}`))
@@ -352,7 +476,7 @@ func TestQuestionReportInterimKeepsArm(t *testing.T) {
 	if !strings.Contains(got.Content, "質問") || !strings.Contains(got.Content, "answer_session_question") {
 		t.Fatalf("question report card = %q", got.Content)
 	}
-	if !reportArmed(m.Name) {
+	if !sessionReportPending(m.Name) {
 		t.Fatal("interim question report must NOT consume the arm (完了報告は別途)")
 	}
 }
@@ -410,7 +534,7 @@ func TestPlanReportInterimKeepsArm(t *testing.T) {
 	}
 	m := session.Meta{Name: "slot45", Dir: t.TempDir(), Kind: session.KindClaude, Title: "プラン検証"}
 	session.WriteMeta(m)
-	armSessionReport(m.Name, conv.ID)
+	addInstruction(m.Name, conv.ID, turnSourceOperator)
 
 	req := httptest.NewRequest(http.MethodPost, "/chat/report",
 		strings.NewReader(`{"name":"slot45","kind":"plan-approval"}`))
@@ -439,7 +563,7 @@ func TestPlanReportInterimKeepsArm(t *testing.T) {
 	if !found {
 		t.Fatal("no interim plan report reached the conversation")
 	}
-	if !reportArmed(m.Name) {
+	if !sessionReportPending(m.Name) {
 		t.Fatal("interim plan report must NOT consume the arm")
 	}
 }
@@ -490,7 +614,7 @@ func TestSessionReportDeferredWhileSubagentBusy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	armSessionReport(m.Name, conv.ID)
+	addInstruction(m.Name, conv.ID, turnSourceOperator)
 	status.Persist(sid, "working")
 	runSessionStatusHook([]string{"idle", sid}) // Stop right after the BG launch → kick
 
@@ -512,7 +636,7 @@ func TestSessionReportDeferredWhileSubagentBusy(t *testing.T) {
 
 	// Deferred: the arm survives the premature Stop and no report card lands.
 	time.Sleep(100 * time.Millisecond)
-	if !reportArmed(m.Name) {
+	if !sessionReportPending(m.Name) {
 		t.Fatal("premature Stop consumed the arm despite live background agents")
 	}
 	if n := countReports(); n != 0 {
@@ -532,7 +656,7 @@ func TestSessionReportDeferredWhileSubagentBusy(t *testing.T) {
 	if n := countReports(); n != 1 {
 		t.Fatalf("deferred report count = %d, want 1", n)
 	}
-	awaitDisarmed(t, m.Name)
+	awaitReported(t, m.Name)
 	unlock := lockConv(conv.ID)
 	c, err := loadConv(conv.ID)
 	unlock()
@@ -600,7 +724,7 @@ func TestSessionReportIgnoresFalseIdle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	armSessionReport(m.Name, conv.ID)
+	addInstruction(m.Name, conv.ID, turnSourceOperator)
 	status.Persist(sid, "working")
 	runSessionStatusHook([]string{"idle", sid}) // early Stop → kick → deferred (BG busy)
 
@@ -633,7 +757,7 @@ func TestSessionReportIgnoresFalseIdle(t *testing.T) {
 	if n := countReports(); n != 0 {
 		t.Fatalf("delivered on a missing marker + fresh transcript (n=%d)", n)
 	}
-	if !reportArmed(m.Name) {
+	if !sessionReportPending(m.Name) {
 		t.Fatal("false idle consumed the arm")
 	}
 
@@ -672,7 +796,7 @@ func TestSessionReportIgnoresFalseIdle(t *testing.T) {
 	if n := countReports(); n != 1 {
 		t.Fatalf("report count = %d, want 1", n)
 	}
-	awaitDisarmed(t, m.Name)
+	awaitReported(t, m.Name)
 }
 
 // TestHaltDisarmsReportOnlyWhenFlagged pins the halt/disarm contract: the MCP
@@ -701,29 +825,29 @@ func TestHaltDisarmsReportOnlyWhenFlagged(t *testing.T) {
 
 	for _, name := range []string{"slot11", "slot12"} {
 		session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude})
-		armSessionReport(name, conv.ID)
+		addInstruction(name, conv.ID, turnSourceOperator)
 	}
 
 	halt("slot11", `{"disarm_report":true}`)
-	if reportArmed("slot11") {
+	if sessionReportPending("slot11") {
 		t.Fatal("stop_session halt must disarm the pending report")
 	}
 	halt("slot12", "")
-	if !reportArmed("slot12") {
+	if !sessionReportPending("slot12") {
 		t.Fatal("Console halt (no body) must keep the arm")
 	}
 }
 
-func TestReportLinkFileLocation(t *testing.T) {
+func TestInstrLedgerFileLocation(t *testing.T) {
 	home := withTempHome(t)
 	conv := &chatConversation{ID: randUUID(), Agent: "claude", Messages: []chatMessage{}}
 	if err := saveConv(conv); err != nil {
 		t.Fatal(err)
 	}
-	armSessionReport("slot09", conv.ID)
-	p := filepath.Join(home, ".config", "agent-fleet", "session-report", "slot09.json")
+	addInstruction("slot09", conv.ID, turnSourceOperator)
+	p := filepath.Join(home, ".config", "agent-fleet", "instr-ledger", "slot09.json")
 	if _, err := os.Stat(p); err != nil {
-		t.Fatalf("expected link at %s: %v", p, err)
+		t.Fatalf("expected ledger at %s: %v", p, err)
 	}
 }
 
