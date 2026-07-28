@@ -112,14 +112,18 @@ func scanSlashSkills(projectBase, userBase string) []sessionSkill {
 }
 
 // codexSkills: SKILL.md 規約は claude 互換（0.145 実測 — frontmatter name/description、
-// $CODEX_HOME/skills が auto-discover、repo 側 skills root は .codex/skills）。同梱の
-// .system は user ルートの直下走査には掛からない（SKILL.md がディレクトリ直下に無い）
-// ので別ルートとして拾い、source "cli" で区別する。起動は "$name" メンション（スラッシュ
-// ではない — バイナリのシステムプロンプト実測「names an available skill (with $SkillName …)」）。
+// $CODEX_HOME/skills が auto-discover、repo 側は .codex/skills と .agents/skills の両方
+// — `codex exec` でどちらも認識されることを実測）。同梱の .system は user ルートの直下
+// 走査には掛からない（SKILL.md がディレクトリ直下に無い）ので別ルートとして拾い、
+// source "cli" で区別する。起動は "$name" メンション（スラッシュではない — バイナリの
+// システムプロンプト実測「names an available skill (with $SkillName …)」）。
+// .codex/skills にはスキルブリッジ（docs/50 §8）が張った claude スキルへのリンクも
+// 含まれる — 通常ファイルと同様に os.ReadFile が辿るので特別扱い不要。
 func codexSkills(dir string) []sessionSkill {
 	home := paths.CodexHome()
 	return scanSkillRoots([]skillRoot{
 		{filepath.Join(dir, ".codex", "skills"), "project", "skills"},
+		{filepath.Join(dir, ".agents", "skills"), "project", "skills"},
 		{filepath.Join(home, "skills"), "user", "skills"},
 		{filepath.Join(home, "skills", ".system"), "cli", "skills"},
 	}, "$")

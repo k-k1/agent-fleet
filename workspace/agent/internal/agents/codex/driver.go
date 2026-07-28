@@ -42,6 +42,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/skillbridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
@@ -127,6 +128,10 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	}
 	tid := h.tid
 	h.mu.Unlock()
+
+	// スキルブリッジ（docs/50 §8）: thread を確立し直すここが managed の「起動直前」。
+	// 冪等・軽量なので再接続のたびに走って構わない。
+	skillbridge.Sync(m.Dir)
 
 	if tid == "" {
 		tid = sids.Read(slotSid)
