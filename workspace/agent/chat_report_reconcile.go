@@ -72,6 +72,13 @@ type reportSignals struct {
 	Exit    string // 指示以降の異常終了（oom/crashed/killed）— 終端の事実
 	ExitAt  string // その異常終了の RFC3339
 
+	// SelfReported は自己申告ファストパス（docs/51 §自己申告・Phase 3）: セッション自身が
+	// af_report MCP ツールで「この指示は終わった」と申告した。**意味的完了を直接測る
+	// 唯一のシグナル**だが、呼び忘れ・早呼びがあるので backbone にはしない — busy 証拠は
+	// これより強く、申告があっても進行中なら settle しない。
+	SelfReported bool
+	SelfReportAt string // その申告の RFC3339
+
 	HintReason string // 直近のヒントが運んだ qualifier（turn-failed / turn-aborted）
 }
 
@@ -79,8 +86,10 @@ type reportSignals struct {
 type reportVerdict struct {
 	Quiet    bool   // この sweep で「idle 証拠 ≥1 ∧ busy 証拠 = 0」だったか
 	Terminal bool   // 異常終了 — デバウンス不要（プロセスは既に死んでいる）
+	Fast     bool   // 自己申告あり — デバウンスを 2 tick から 1 tick に短縮
 	Kind     string // 報告 kind（answer-ready / exit）
 	Reason   string // 報告 reason（turn-failed / turn-aborted / oom …）
+	At       string // 証拠の時刻（RFC3339）— どの指示行までを覆うかの判定に使う
 	Why      string // 判定根拠（ログ用の証拠名）
 }
 
@@ -124,11 +133,35 @@ func (s reportSignals) busyEvidence() []string {
 //     「終わった」と「分からない」が区別できない。
 //   - その書込みが指示（arm）以降であること＝最小の progressed。前のターンの終端
 //     マーカーが残っているだけの状態を「今回の指示の完了」と読まないための下限。
+//
+// Phase 3 で2つ目の証拠として自己申告（af_report）が加わる。マーカーと同格に**列挙**
+// するだけで、busy 証拠より強くはしない — 早呼びは「busy 証拠がゼロになるまで保留」に
+// 落ちる。
 func (s reportSignals) idleEvidence() []string {
-	if s.MarkerState == "idle" && s.MarkerTurnEnd && s.MarkerAfterArm {
-		return []string{"marker-idle"}
+	var ev []string
+	if s.markerIdle() {
+		ev = append(ev, "marker-idle")
 	}
-	return nil
+	if s.SelfReported {
+		ev = append(ev, "self-report")
+	}
+	return ev
+}
+
+// markerIdle reports whether the status marker itself is the 3点そろった明示 idle.
+func (s reportSignals) markerIdle() bool {
+	return s.MarkerState == "idle" && s.MarkerTurnEnd && s.MarkerAfterArm
+}
+
+// evidenceAt is the time the settle evidence was observed — 「この時刻までに投入された
+// 指示行だけが、この静穏で完了になり得る」の基準（instrRowsCoveredBy）。マーカーが
+// 立っていればその書込み時刻、自己申告だけならその申告時刻。両方あればマーカーを採る
+// （ターンの終端そのものを指す、より強い証拠）。
+func (s reportSignals) evidenceAt() string {
+	if s.markerIdle() {
+		return s.MarkerTS
+	}
+	return s.SelfReportAt
 }
 
 // evalReportEvidence is the settle predicate（docs/51 §settled/progressed 述語）。
@@ -139,7 +172,10 @@ func evalReportEvidence(s reportSignals) reportVerdict {
 	// （死ぬ直前まで transcript は新鮮なままになる）、デバウンスもしない。ExitInfo を
 	// レベルで読むので、kick を持たない managed daemon の異常死も同じ経路で拾える。
 	if s.Exit != "" {
-		return reportVerdict{Quiet: true, Terminal: true, Kind: "exit", Reason: s.Exit, Why: "exit:" + s.Exit}
+		return reportVerdict{
+			Quiet: true, Terminal: true, Kind: "exit", Reason: s.Exit,
+			At: s.ExitAt, Why: "exit:" + s.Exit,
+		}
 	}
 	if s.Stopped {
 		// 停止＝指示の取り消しではない（取り消しは stop_session の disarm）。arm は
@@ -154,17 +190,58 @@ func evalReportEvidence(s reportSignals) reportVerdict {
 		return reportVerdict{Why: "unknown"} // 不明は不明のまま — idle と既定しない
 	}
 	return reportVerdict{
-		Quiet: true, Kind: reportKindAnswerReady, Reason: s.HintReason,
-		Why: "idle:" + strings.Join(idle, ","),
+		Quiet: true, Fast: s.SelfReported, Kind: reportKindAnswerReady, Reason: s.HintReason,
+		At: s.evidenceAt(), Why: "idle:" + strings.Join(idle, ","),
 	}
+}
+
+// evalReportResumed is the COMPENSATION predicate（docs/51 §補償）: 完了報告のあと、
+// セッションが**その報告より後に**働き始めた証拠。settle 述語の busy 証拠と同じ列を見る
+// が、判定の向きが逆なので条件が1つ増える —「報告の時点で既にそう見えていた」ものを
+// 除く必要がある。マーカー系は書込み時刻で切れる（MarkerAfterArm は since=報告時刻で
+// 集めた場合「報告より後のマーカー」を意味する）。鮮度ベースの証拠（サブエージェント・
+// 転写・ペイン）は、報告が出た時点では必ず false だったもの（busy 証拠がゼロでなければ
+// 報告は出ない）なので、いま true なら新しい書込みがあったということ。
+func evalReportResumed(s reportSignals) []string {
+	var ev []string
+	switch s.MarkerState {
+	case "working", "question", "plan", "permission":
+		if s.MarkerAfterArm {
+			ev = append(ev, "marker-"+s.MarkerState)
+		}
+	}
+	if s.PendingQuestion {
+		ev = append(ev, "pending-question")
+	}
+	if s.PendingPlan {
+		ev = append(ev, "pending-plan")
+	}
+	if s.PendingPermission {
+		ev = append(ev, "pending-permission")
+	}
+	if s.SubagentBusy {
+		ev = append(ev, "subagent-busy")
+	}
+	if s.TranscriptBusy {
+		ev = append(ev, "transcript-busy")
+	}
+	if s.PaneBusy {
+		ev = append(ev, "pane-busy")
+	}
+	return ev
 }
 
 // collectReportSignals reads the current level state for one session with open
 // instruction rows. since は**最古の未報告指示のカーソル**（docs/51 §progressed の
 // 下限）— それより前の証拠は「前の指示の話」なので今回の完了にはならない。
-func collectReportSignals(m session.Meta, since string, hintReason string) reportSignals {
+// selfAt は自己申告の時刻（無ければ空）。since より前の申告は前の指示の話なので捨てる —
+// マーカーに課している progressed の下限を、自己申告にも同じ形で課す。
+func collectReportSignals(m session.Meta, since, hintReason, selfAt string) reportSignals {
 	sid := session.UUID(m.Dir, m.Name)
 	s := reportSignals{Stopped: m.StoppedAt != "", HintReason: hintReason}
+	if selfAt != "" && !reportTimeBefore(selfAt, since) {
+		s.SelfReported, s.SelfReportAt = true, selfAt
+	}
 	var markerAt time.Time
 	if st, ok := status.Read(sid); ok {
 		s.MarkerState, s.MarkerTurnEnd, s.MarkerTS = st.State, st.TurnEnd, st.TS
@@ -316,6 +393,7 @@ type reportReconciler struct {
 
 	mu     sync.Mutex
 	hints  map[string]string // name → 直近ヒントの reason（turn-failed / turn-aborted）
+	selfs  map[string]string // name → 自己申告（af_report）の RFC3339
 	states map[string]reportSettleState
 }
 
@@ -327,6 +405,7 @@ func newReportReconciler(interval time.Duration) *reportReconciler {
 		wake:     make(chan struct{}, 1),
 		swept:    make(chan struct{}, 1),
 		hints:    map[string]string{},
+		selfs:    map[string]string{},
 		states:   map[string]reportSettleState{},
 	}
 }
@@ -372,6 +451,30 @@ func (rc *reportReconciler) hint(name, kind, reason string) {
 	rc.nudge()
 }
 
+// selfReport records the session's own「終わった」claim (docs/51 §自己申告ファストパス)
+// and wakes the sweep. **これは backbone ではない** — 記録するのは申告の時刻だけで、
+// 報告そのものは通常どおりリコンサイラが述語で決める。申告が来なければ settle が拾い、
+// 早すぎれば busy 証拠に止められる。
+//
+// 保持がプロセス内メモリなのは意図的: agent が落ちれば申告は消えるが、そのとき縮退する
+// のは「2 tick が 1 tick になる」高速化だけで、報告の有無は台帳（ディスク）が持っている。
+// ファストパスの状態を永続化して台帳と二重に真実を持つ方が高くつく。
+func (rc *reportReconciler) selfReport(name string, at time.Time) {
+	if !session.ValidName(name) {
+		return
+	}
+	rc.mu.Lock()
+	rc.selfs[name] = at.Format(time.RFC3339)
+	rc.mu.Unlock()
+	rc.nudge()
+}
+
+func (rc *reportReconciler) selfReportFor(name string) string {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	return rc.selfs[name]
+}
+
 // nudge wakes the sweep loop without blocking (wake は容量1 — 連打は畳まれる)。
 func (rc *reportReconciler) nudge() {
 	select {
@@ -386,6 +489,7 @@ func (rc *reportReconciler) forget(name string) {
 	rc.mu.Lock()
 	delete(rc.states, name)
 	delete(rc.hints, name)
+	delete(rc.selfs, name)
 	rc.mu.Unlock()
 }
 
@@ -414,6 +518,11 @@ func (rc *reportReconciler) debounce(name string, now time.Time) bool {
 // resetSettle clears the debounce for a session that is demonstrably not quiet.
 // ヒントの qualifier も捨てる: 中断の報告が出る前に次のターンが走り出したなら、その
 // 中断はもう「今の状態」ではない。
+//
+// **自己申告は捨てない**。それは「今の状態」ではなく「この指示は自分としては終わった」
+// という指示単位の主張なので、早呼び（申告のあとにまだ動いていた）で失効させると、
+// ファストパスが「モデルが最後の1トークンを吐いた後に呼んだときだけ効く」ものになる。
+// 申告が捨てられるのは新しい指示が来たときと配送が済んだとき（どちらも forget）。
 func (rc *reportReconciler) resetSettle(name string) {
 	rc.mu.Lock()
 	if _, ok := rc.states[name]; ok {
@@ -423,11 +532,15 @@ func (rc *reportReconciler) resetSettle(name string) {
 	rc.mu.Unlock()
 }
 
-// sweep re-evaluates every session with open instruction rows once.
+// sweep re-evaluates every session with open instruction rows once, then compensates
+// the sessions whose recent completion report may have been premature (docs/51 §補償)。
 func (rc *reportReconciler) sweep(now time.Time) {
-	pending := instrPendingSessions()
+	pending, grace := instrSweepSessions(now)
 	for _, name := range pending {
 		rc.evaluate(name, now)
+	}
+	for _, name := range grace {
+		rc.compensate(name, now)
 	}
 	rc.prune(pending)
 }
@@ -450,6 +563,11 @@ func (rc *reportReconciler) prune(armed []string) {
 			delete(rc.hints, name)
 		}
 	}
+	for name := range rc.selfs {
+		if !live[name] {
+			delete(rc.selfs, name)
+		}
+	}
 	rc.mu.Unlock()
 }
 
@@ -470,7 +588,7 @@ func (rc *reportReconciler) evaluate(name string, now time.Time) {
 	if !ok {
 		return // メタが無ければ判定材料が無い（行はそのまま — 誤報告より温存）
 	}
-	sig := collectReportSignals(m, open[0].Cursor.At, rc.hintFor(name))
+	sig := collectReportSignals(m, open[0].Cursor.At, rc.hintFor(name), rc.selfReportFor(name))
 	v := evalReportEvidence(sig)
 	if v.Quiet && !v.Terminal && reportPaneBusy(m) {
 		sig.PaneBusy = true
@@ -480,21 +598,22 @@ func (rc *reportReconciler) evaluate(name string, now time.Time) {
 		rc.resetSettle(name)
 		return
 	}
-	at := sig.MarkerTS
-	if v.Terminal {
-		at = sig.ExitAt
-	}
-	covered := instrRowsCoveredBy(open, at)
+	covered := instrRowsCoveredBy(open, v.At)
 	if len(covered) == 0 {
 		// 証拠は静穏だが、どの指示もその証拠より後に投入されている（＝まだ走り出して
 		// いない）。デバウンスも積まない — 次の本物の終端を待つ。
 		rc.resetSettle(name)
 		return
 	}
-	if !v.Terminal && !rc.debounce(name, now) {
+	// Fast: 自己申告があるときはデバウンスを1 tick に短縮する（docs/51 §ファストパス）。
+	// 時間的な裏取りが要るのは「機械的 idle が意味的完了とズレる」からで、セッション自身が
+	// 完了だと言っている以上、その2つはズレていない。busy 証拠のゲートは通ったままなので、
+	// 早呼びは短縮の対象にならない（そもそも Quiet にならない）。
+	if !v.Terminal && !v.Fast && !rc.debounce(name, now) {
 		return // まだ 2 tick 連続に足りない
 	}
 	retry := false
+	delivered := false
 	for _, conv := range instrConvs(covered) {
 		rows := instrRowsForConv(covered, conv)
 		switch rc.sink(name, conv, v.Kind, v.Reason, rows) {
@@ -504,12 +623,100 @@ func (rc *reportReconciler) evaluate(name string, now time.Time) {
 			continue
 		case reportSinkDrop:
 			log.Printf("session-report: %s の報告先会話 %s が見つからない — 行を畳む", name, conv)
+		default:
+			delivered = true
 		}
 		markInstrReported(name, instrIDs(rows), now)
 		log.Printf("session-report: settled %s kind=%s reason=%q rows=%v (%s)",
 			name, v.Kind, v.Reason, instrIDs(rows), v.Why)
 	}
+	// 自動再開のカウンタ（docs/47）は**セッション単位のイベント**を数える。1つの静穏を
+	// 複数のオペレーター会話へ配ったときに会話数ぶん加算すると、2会話から指示されている
+	// セッションは中断1回で上限（2回）に届いてしまう。数えるのは「中断報告を配った」と
+	// いう事実1つなので、会話ループの外で1回だけ動かす。
+	if delivered && v.Kind == reportKindAnswerReady {
+		switch v.Reason {
+		case reportReasonTurnAborted:
+			bumpAutoResume(name)
+		case "":
+			resetAutoResume(name)
+		}
+	}
 	if !retry {
+		rc.forget(name)
+	}
+}
+
+// reportReopenGrace is how long a reported row stays under compensation watch
+// (docs/51 §補償)。この窓を過ぎてからの busy 復帰は「新しい仕事」であって誤報告の
+// 続きではない、という線引き。
+const reportReopenGrace = 10 * time.Minute
+
+// compensate is the self-repair for a WRONG「完了」(docs/51 §補償 / ADR 0035 決定4)。
+//
+// v1 の非対称はここだった: 誤って arm を消費すると二度と報告されない（誤消費＝回復
+// 不能）。台帳では報告は行の状態でしかないので、grace の間だけ「その報告のあとに
+// セッションが働き出していないか」を見張り、働き出していたら**訂正を配ってから**行を
+// 開き直す。以後は通常の settle 経路が本完了を報告する。
+//
+// 訂正 → reopen の順は落とせない: 逆順だと、訂正の配送に失敗したときに「黙って
+// 開き直しただけ」になり、利用者から見れば v1 の消失と区別が付かない。
+func (rc *reportReconciler) compensate(name string, now time.Time) {
+	cands := instrReopenCandidates(readInstrRows(name), now, reportReopenGrace)
+	if len(cands) == 0 {
+		return
+	}
+	m, ok := session.ReadMeta(name)
+	if !ok {
+		return
+	}
+	// since = 監視対象のうち最も新しい報告時刻。これより後の証拠だけを「復帰」と読む。
+	since := ""
+	for _, r := range cands {
+		if r.ReportedAt > since {
+			since = r.ReportedAt
+		}
+	}
+	sig := collectReportSignals(m, since, "", "")
+	if sig.Stopped || sig.Exit != "" {
+		return // 停止・異常終了は「続行中」ではない（異常終了は別の指示行が拾う）
+	}
+	resumed := evalReportResumed(sig)
+	if len(resumed) == 0 {
+		if !reportPaneBusy(m) {
+			return
+		}
+		sig.PaneBusy = true
+		resumed = evalReportResumed(sig)
+	}
+	why := strings.Join(resumed, ",")
+	reopened := false
+	for _, conv := range instrConvs(cands) {
+		var reopen, capped []instrRow
+		for _, r := range instrRowsForConv(cands, conv) {
+			if r.ReopenCount >= instrReopenMax {
+				capped = append(capped, r)
+			} else {
+				reopen = append(reopen, r)
+			}
+		}
+		if len(reopen) > 0 && rc.sink(name, conv, reportKindReopened, "", reopen) == reportSinkOK {
+			for _, r := range reopen {
+				if reopenInstrRow(name, r.ID) {
+					reopened = true
+				}
+			}
+			log.Printf("session-report: reopened %s rows=%v (%s)", name, instrIDs(reopen), why)
+		}
+		// 上限に達した行は開き直さない。黙って打ち切ると「報告が来ない」だけになるので、
+		// 判定が振動している事実そのものを1回だけ利用者向けに報告する（docs/47 の
+		// 自動再開上限と同じイディオム）。配送は行IDで冪等なので毎 tick は繰り返さない。
+		if len(capped) > 0 {
+			rc.sink(name, conv, reportKindReopened, reportReasonReopenCapped, capped)
+		}
+	}
+	if reopened {
+		// 開き直した行は「これから完了する指示」なので、判定はまっさらから始める。
 		rc.forget(name)
 	}
 }

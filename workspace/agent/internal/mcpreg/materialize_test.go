@@ -310,15 +310,17 @@ func TestMaterializeUsesSessionTargetAndKind(t *testing.T) {
 	if res.Err != "" {
 		t.Fatalf("claude: %s", res.Err)
 	}
-	if !reflect.DeepEqual(res.Written, []string{"both"}) {
-		t.Fatalf("claude written = %v, want [both]", res.Written)
+	// af は自己申告ファストパスの組み込みサーバー（docs/51 Phase 3）で、接続不要・全 kind
+	// 配布なので、どの kind の materialize にも必ず入る。
+	if !reflect.DeepEqual(res.Written, []string{"af", "both"}) {
+		t.Fatalf("claude written = %v, want [af both]", res.Written)
 	}
 	res = Materialize(session.KindCodex)
 	if res.Err != "" {
 		t.Fatalf("codex: %s", res.Err)
 	}
-	if !reflect.DeepEqual(res.Written, []string{"both", "codexonly"}) {
-		t.Fatalf("codex written = %v, want [both codexonly]", res.Written)
+	if !reflect.DeepEqual(res.Written, []string{"af", "both", "codexonly"}) {
+		t.Fatalf("codex written = %v, want [af both codexonly]", res.Written)
 	}
 
 	// 台帳が kind 別に記録されていること（削除を許すのはこの一覧だけ）。
@@ -326,8 +328,8 @@ func TestMaterializeUsesSessionTargetAndKind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(m.Kinds[session.KindClaude], []string{"both"}) ||
-		!reflect.DeepEqual(m.Kinds[session.KindCodex], []string{"both", "codexonly"}) {
+	if !reflect.DeepEqual(m.Kinds[session.KindClaude], []string{"af", "both"}) ||
+		!reflect.DeepEqual(m.Kinds[session.KindCodex], []string{"af", "both", "codexonly"}) {
 		t.Fatalf("台帳が不正: %+v", m.Kinds)
 	}
 }

@@ -397,6 +397,7 @@ export const en: Record<keyof typeof ja, string> = {
   "mcp.not_ready":
     "Missing required values, so it is not handed out even while enabled (a header has no value).",
   "mcp.builtin_note": "A built-in integration. Its credentials are configured under Connections › Ops & monitoring.",
+  "mcp.builtin_af_note": "Agent Fleet's own server, handed to every session. It lets a session report that the instruction it was given is done, so the completion report reaches the operator sooner. No setup needed.",
   "mcp.tenant_note":
     "Distributed by a tenant admin. You cannot edit it, but you can disable it in your own workspace.",
   "mcp.session_restart_note":

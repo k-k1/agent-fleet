@@ -219,6 +219,14 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "empty_prompt", "prompt, keys or seq is required")
 		return
 	}
+	// docs/51 Phase 3 §自己申告ファストパス: 報告義務を負う指示（report_to 付き）にだけ
+	// 「終わったら af_report を呼べ」を1行足す。managed/tui の分岐より前に置くのは、
+	// どちらの経路でも同じ1行が乗るようにするため（分岐の後だと片方で漏れる）。
+	if body.ReportTo != "" {
+		if m, ok := session.ReadMeta(name); ok {
+			body.Prompt = withSelfReportHint(body.Prompt, m)
+		}
+	}
 	// managed セッションの {prompt} は tmux ペインを持たない（app-server 経由）ので、
 	// tmux 存在チェックより先に ThreadHandle.Send へ回す。send_to_session（MCP の
 	// af_write ツール）など /input を直叩きする呼び出し元は tui/managed を意識しない

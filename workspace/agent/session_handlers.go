@@ -545,6 +545,12 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: ssm,
 		Origin: origin, OriginConv: originConv,
 	}
+	// docs/51 Phase 3 §自己申告ファストパス: 起動タスクにも「終わったら af_report を
+	// 呼べ」を1行足す（report_to 付き＝報告義務のある指示のときだけ）。managed と tui の
+	// 分岐より前に置いて、どちらの起動経路でも同じ1行が乗るようにする。
+	if req.ReportTo != "" {
+		req.InitialPrompt = withSelfReportHint(req.InitialPrompt, meta)
+	}
 	if meta.DriverKind() == session.DriverManaged {
 		// managed（docs/27 P2）: tmux pane を作らず、driver が共有 runtime に thread
 		// を起こす。初回プロンプトは boot 画面スクレイプ不要でそのまま Send できる
