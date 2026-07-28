@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -169,5 +170,77 @@ func TestInjectSessionAgentError(t *testing.T) {
 	_, err := f.injectSession(context.Background(), stubRuntime{endpoint: srv.URL}, []byte(`{}`))
 	if err == nil {
 		t.Fatal("expected error on 409, got nil")
+	}
+}
+
+// --- unattended-start hardening (8:00 スカウト取りこぼしの回帰) --------------------
+//
+// The failure: a scheduled wake started the container, the entrypoint's synchronous
+// agent-CLI self-update ran before `exec workspace-agent`, and the fixed 15s health
+// budget elapsed while it was still installing — so the fire was recorded as
+// "error:wake: agent did not become healthy within 15s" and the prompt never landed.
+
+// TestStartHealthWaitSelfUpdate: the docker start budget stretches only for a boot that
+// can actually run the long pre-agent update, and an unattended start (which skips the
+// update block) keeps the short one.
+func TestStartHealthWaitSelfUpdate(t *testing.T) {
+	cases := []struct {
+		name string
+		env  []string
+		want time.Duration
+	}{
+		{"no self-update", []string{"FOO=1"}, 15 * time.Second},
+		{"opt-in allowed but off", []string{"AF_AGENT_SELF_UPDATE_ALLOWED=1"}, 15 * time.Second},
+		{"self-update on", []string{"AF_AGENT_SELF_UPDATE_ALLOWED=1", "AF_AGENT_SELF_UPDATE=1"}, 300 * time.Second},
+		// The unattended marker wins even alongside the opt-in: no update runs, so the
+		// container has nothing long to do before listening.
+		{"unattended overrides", []string{"AF_AGENT_SELF_UPDATE=1", unattendedStartEnv}, 15 * time.Second},
+		{"unattended alone", []string{unattendedStartEnv}, 15 * time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := &dockerRuntime{extraEnv: tc.env}
+			if got := d.startHealthWait(); got != tc.want {
+				t.Fatalf("startHealthWait(%v) = %v, want %v", tc.env, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestUnattendedStartEnvIsNotOptOut pins the distinction that makes the per-boot skip
+// safe: it must NOT be spelled as the member opt-in being off, whose entrypoint branch
+// also tears down the ~/.local shadow and reverts to the baked pin.
+func TestUnattendedStartEnvIsNotOptOut(t *testing.T) {
+	if unattendedStartEnv == "AF_AGENT_SELF_UPDATE=0" {
+		t.Fatal("unattended start must not reuse the opt-in-off env: that branch uninstalls the ~/.local CLI shadow")
+	}
+	if !strings.HasSuffix(unattendedStartEnv, "=1") || !strings.HasPrefix(unattendedStartEnv, "AF_") {
+		t.Fatalf("unexpected unattended marker %q", unattendedStartEnv)
+	}
+}
+
+// TestAwaitAgentReadyToleratesSlowBoot is the tolerance the fire path now falls through
+// to when a wake overruns its health budget: an Agent that is not answering yet (still
+// installing / still booting) is polled, not failed. This is why a slow start must no
+// longer abort the fire — the very next step already waits patiently.
+func TestAwaitAgentReadyToleratesSlowBoot(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls < 3 { // still coming up
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"sessions":[]}`))
+	}))
+	defer srv.Close()
+
+	f := &wakeFirer{mgr: &manager{}, readyTimeout: 30 * time.Second, readyInterval: time.Millisecond}
+	if err := f.awaitAgentReady(context.Background(), stubRuntime{endpoint: srv.URL}); err != nil {
+		t.Fatalf("awaitAgentReady should tolerate a slow boot, got %v", err)
+	}
+	if calls < 3 {
+		t.Fatalf("expected retries until ready, got %d calls", calls)
 	}
 }

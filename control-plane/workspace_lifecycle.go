@@ -155,6 +155,32 @@ func (m *manager) cleanHomeByMembership(ctx context.Context, membershipID string
 // membership); an admin limits edit evicts the tenant's cache (evictTenantCache) so
 // a policy change reaches the next container start. Best-effort: on a lookup error
 // we inject nothing (safe default = pinned).
+// unattendedStartEnv marks a container start that nobody is watching (currently only
+// the scheduler's wake). The entrypoint skips its agent CLI self-update for that boot
+// and runs the already-installed versions. Deliberately NOT "AF_AGENT_SELF_UPDATE=0":
+// that is the member's opt-in being OFF, whose entrypoint branch also TEARS DOWN the
+// ~/.local shadow to fall back to the baked pin — on a baked image an unattended start
+// would then uninstall ~1.3GB of CLIs that the next interactive start reinstalls. This
+// is a per-boot skip, not a policy change.
+const unattendedStartEnv = "AF_AGENT_SELF_UPDATE_SKIP=1"
+
+// runtimeForUnattended rebuilds a workspace's Runtime so its NEXT container start
+// carries unattendedStartEnv. Mirrors the construction in resolveByMembership (the
+// per-workspace env is fixed at `docker run` time, so an override has to be in place
+// before Start). The result is intentionally NOT written to the runtime cache: only
+// this one start differs, and every later call (state/exec/endpoint) is unaffected by
+// container env.
+func (m *manager) runtimeForUnattended(ctx context.Context, res *resolved) (Runtime, error) {
+	dekHex, err := m.resolveDEK(ctx, res.ws, res.ident.UserKey)
+	if err != nil {
+		return nil, err
+	}
+	ws := res.ws
+	ws.MemBytes = m.resolveWorkspaceMemBytes(ctx, ws)
+	env := append(m.workspaceExtraEnv(ctx, ws), unattendedStartEnv)
+	return m.runtimeFor(ws, dekHex, env...), nil
+}
+
 func (m *manager) workspaceExtraEnv(ctx context.Context, ws Workspace) []string {
 	t, err := m.store.GetTenant(ctx, ws.TenantID)
 	if err != nil {
