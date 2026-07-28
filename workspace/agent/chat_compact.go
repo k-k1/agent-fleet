@@ -96,14 +96,27 @@ func compactConversation(ctx context.Context, c *chatConversation, prov chatProv
 	// 旧セッションの占有スナップショットはもう実体を指さない。バーは次ターン
 	// （新セッション）の usage で復活する。
 	c.Context, c.CtxWarned = nil, false
-	c.Messages = append(c.Messages, chatMessage{
-		Role: "notice", Content: compactNoticeContent(reason, summary), TS: nowMs(),
-	})
+	c.Messages = append(c.Messages, newNotice(compactNoticeKey(reason),
+		map[string]string{"summary": summary}, compactNoticeContent(reason, summary)))
 	return nil
 }
 
-// compactNoticeContent は圧縮完了 notice の本文。要約をそのまま見せる（利用者が
-// 引き継がれる内容を検証できることが、黙って捨てないことと同じくらい大事）。
+// compactNoticeKey は圧縮 notice のカタログキー（発動理由ごとに 1 本 — 冒頭の一文が
+// 理由で変わるため、理由を引数にせずキーで分ける）。
+func compactNoticeKey(reason string) string {
+	switch reason {
+	case compactReasonAuto:
+		return noticeKeyCompactAuto
+	case compactReasonRecovery:
+		return noticeKeyCompactRecovery
+	default:
+		return noticeKeyCompactManual
+	}
+}
+
+// compactNoticeContent は圧縮完了 notice の正本言語（ja）フォールバック本文。要約を
+// そのまま見せる（利用者が引き継がれる内容を検証できることが、黙って捨てないことと
+// 同じくらい大事）。表示は compactNoticeKey のカタログ訳が担う（ADR 0033）。
 func compactNoticeContent(reason, summary string) string {
 	if reason == "" {
 		reason = compactReasonManual
