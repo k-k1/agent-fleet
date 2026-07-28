@@ -276,7 +276,7 @@ func TestCodexOneShotLive(t *testing.T) {
 
 	args, _ := codexOneShotArgs()
 	t.Logf("argv: codex %s", strings.Join(args, " "))
-	cmd := chatCodexCmd(ctx, args...)
+	cmd := chatCodexCmd(ctx, nil, args...)
 	cmd.Stdin = strings.NewReader(headlessPrompt(titleSuggestPersona, nil,
 		"以下の会話に件名を付けてください。\nuser: 使用量のグラフを作りたい\nassistant: 台帳を設計します"))
 	out, err := cmd.Output()

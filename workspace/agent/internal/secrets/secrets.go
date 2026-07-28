@@ -201,6 +201,54 @@ type SVNCred struct {
 	TrustCert bool `json:"trustCert,omitempty"`
 }
 
+// MCPServer is one registered MCP server definition (docs/48 + ADR0031). It is the
+// single shape for every origin: a user-registered server (stored here, in this
+// encrypted store), a tenant-distributed one (cached from the CP), and the builtin
+// ops integrations normalized into the same type. Name is what the target CLI sees
+// as the server key, so it is restricted to the narrowest character set among the
+// CLIs (codex writes it as a TOML bare key).
+//
+// Env / Headers VALUES are secret: they are masked on the wire (see mcpreg.Masked)
+// and only ever written out at materialize time, into 0600 files under home.
+type MCPServer struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Label     string `json:"label,omitempty"`
+	Origin    string `json:"origin"`    // "user" | "tenant" | "builtin"
+	Transport string `json:"transport"` // "stdio" | "http"
+
+	// stdio
+	Command string            `json:"command,omitempty"`
+	Args    []string          `json:"args,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+
+	// http
+	URL     string            `json:"url,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"`
+
+	Enabled   bool       `json:"enabled"`
+	Targets   MCPTargets `json:"targets"`
+	Kinds     []string   `json:"kinds,omitempty"` // empty = every agent kind
+	TimeoutMS int        `json:"timeoutMs,omitempty"`
+	CreatedAt int64      `json:"createdAt,omitempty"`
+	UpdatedAt int64      `json:"updatedAt,omitempty"`
+
+	// UserSecret marks a TENANT-distributed definition that arrives with header NAMES
+	// but no values: the tenant describes the endpoint, each member supplies their own
+	// credential into this store (docs/48 §5.2 / P4). It exists because a token in a
+	// distributed header is readable in plaintext by every member of the tenant, which
+	// per-user container isolation cannot prevent. Never set on a user-scope row —
+	// there is nobody else to supply the value.
+	UserSecret bool `json:"userSecret,omitempty"`
+}
+
+// MCPTargets selects where a server is handed to. Both false means the definition is
+// stored but attached nowhere — legal (a staging state), just inert.
+type MCPTargets struct {
+	Assistant bool `json:"assistant"` // selectable as an assistant integration
+	Session   bool `json:"session"`   // materialized into the agent CLIs' native config
+}
+
 type Data struct {
 	Git         map[string]GitEntry    `json:"git"`                   // host -> https cred
 	GitIdentity map[string]GitIdentity `json:"gitIdentity,omitempty"` // host -> explicit commit identity
@@ -213,6 +261,12 @@ type Data struct {
 	Discord     *DiscordCreds          `json:"discord,omitempty"`     // chat-bridge connection (docs/37)
 	Slack       *SlackCreds            `json:"slack,omitempty"`       // chat-bridge connection (docs/37 Slack 追随)
 	SVN         []SVNCred              `json:"svn,omitempty"`         // SVN basic-auth creds by URL prefix (docs/41)
+	MCP         []MCPServer            `json:"mcp,omitempty"`         // user-registered MCP servers (docs/48)
+	// MCPSecrets holds the member's OWN header values for tenant-distributed servers
+	// marked user_secret (docs/48 §5.2): server id -> header name -> value. Keyed by the
+	// tenant definition's id, so it survives the tenant editing the label/URL and is
+	// dropped naturally when the definition stops being distributed.
+	MCPSecrets map[string]map[string]string `json:"mcpSecrets,omitempty"`
 }
 
 // agentSecretKey returns the 32-byte per-user key from AF_SECRET_KEY (hex), or

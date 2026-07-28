@@ -24,8 +24,6 @@ import (
 // role/scope; tenant is fixed by the token (no client-supplied tenant). Gated by
 // AF_MCP_ENABLED so deployments opt in.
 
-const mcpProtocolVersion = "2025-06-18"
-
 // mcpAPI is the MCP feature handler set (docs/23 残③): the /mcp endpoint plus
 // its tool registry/impls, converted receiver-only from config. Auth is a
 // Bearer PAT (authMCP), never the session gateway; everything it needs hangs
@@ -51,6 +49,9 @@ type rpcRequest struct {
 type rpcError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+	// Data carries the structured payload the stateless-era errors define
+	// (UnsupportedProtocolVersion lists `supported`/`requested`).
+	Data any `json:"data,omitempty"`
 }
 
 type rpcResponse struct {
@@ -64,7 +65,7 @@ func rpcOK(id json.RawMessage, result any) *rpcResponse {
 	return &rpcResponse{JSONRPC: "2.0", ID: id, Result: result}
 }
 func rpcErr(id json.RawMessage, code int, msg string) *rpcResponse {
-	return &rpcResponse{JSONRPC: "2.0", ID: id, Error: &rpcError{code, msg}}
+	return &rpcResponse{JSONRPC: "2.0", ID: id, Error: &rpcError{Code: code, Message: msg}}
 }
 
 // handleMCP is the /mcp endpoint. Registered only when AF_MCP_ENABLED=true.
@@ -101,7 +102,8 @@ func (a mcpAPI) handleMCP(w http.ResponseWriter, r *http.Request) {
 		}
 		var out []*rpcResponse
 		for _, req := range reqs {
-			if resp := a.dispatchMCP(r.Context(), prin, req); resp != nil {
+			// A batch is answered 200 as a whole: per-item HTTP status has nowhere to go.
+			if resp, _ := a.dispatchMCPHTTP(r, prin, req); resp != nil {
 				out = append(out, resp)
 			}
 		}
@@ -118,12 +120,35 @@ func (a mcpAPI) handleMCP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, rpcErr(nil, -32700, "parse error"))
 		return
 	}
-	resp := a.dispatchMCP(r.Context(), prin, req)
+	resp, status := a.dispatchMCPHTTP(r, prin, req)
 	if resp == nil { // notification
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, status, resp)
+}
+
+// dispatchMCPHTTP applies the stateless-era request validation (docs/49) and then
+// dispatches, returning the HTTP status the answer must carry. The stateless revision
+// ties specific statuses to specific errors — 400 for version/header/params problems,
+// 404 for an unknown method — because that is what lets a client tell a modern server
+// apart from a legacy one without parsing every body.
+//
+// Initialize-era requests keep the previous behavior exactly: always 200.
+func (a mcpAPI) dispatchMCPHTTP(r *http.Request, prin *mcpPrincipal, req rpcRequest) (*rpcResponse, int) {
+	p := parseParamsMeta(req.Params)
+	era := eraOf(p)
+	if !era.Stateless {
+		return a.dispatchMCP(r.Context(), prin, req), http.StatusOK
+	}
+	if resp, status := validateStateless(r, req, p, era); resp != nil {
+		return resp, status
+	}
+	resp := a.dispatchMCP(r.Context(), prin, req)
+	if resp != nil && resp.Error != nil && resp.Error.Code == rpcMethodNotFound {
+		return resp, http.StatusNotFound
+	}
+	return resp, http.StatusOK
 }
 
 // authMCP resolves the Bearer PAT to a principal, rejecting missing/unknown/
@@ -153,9 +178,16 @@ func (a mcpAPI) authMCP(r *http.Request) (*mcpPrincipal, *apiError) {
 func (a mcpAPI) dispatchMCP(ctx context.Context, prin *mcpPrincipal, req rpcRequest) *rpcResponse {
 	isNotification := len(req.ID) == 0
 	switch req.Method {
+	case "server/discover":
+		// 2026-07-28: servers MUST implement this. It replaces initialize as the way a
+		// client learns versions/capabilities, and is what a stdio client probes with.
+		return rpcOK(req.ID, mcpDiscoverResult("agent-fleet", "p3-6",
+			"Agent Fleet の運用 MCP。自分のセッションの観測・操縦と、管理者向けのワークスペース管理を提供する。"))
 	case "initialize":
-		// Echo a compatible protocol version; advertise tools capability.
-		ver := mcpProtocolVersion
+		// Initialize-era clients (2025-*) only. Removed in 2026-07-28, but a server that
+		// wants to serve both eras MAY keep it (SEP-2575 Backward Compatibility), and
+		// dropping it would strand every claude/codex that has not upgraded yet.
+		ver := mcpVersionLegacy
 		var p struct {
 			ProtocolVersion string `json:"protocolVersion"`
 		}
@@ -171,16 +203,20 @@ func (a mcpAPI) dispatchMCP(ctx context.Context, prin *mcpPrincipal, req rpcRequ
 	case "notifications/initialized", "notifications/cancelled":
 		return nil // notifications get no response
 	case "ping":
-		return rpcOK(req.ID, map[string]any{})
+		// Removed in 2026-07-28 (any RPC proves liveness), kept for initialize-era clients.
+		return rpcOK(req.ID, map[string]any{"resultType": "complete"})
 	case "tools/list":
-		return rpcOK(req.ID, map[string]any{"tools": a.mcpToolList(ctx, prin)})
+		return rpcOK(req.ID, map[string]any{
+			"resultType": "complete",
+			"tools":      a.mcpToolList(ctx, prin),
+		})
 	case "tools/call":
 		return a.mcpToolCall(ctx, prin, req)
 	default:
 		if isNotification {
 			return nil
 		}
-		return rpcErr(req.ID, -32601, "method not found: "+req.Method)
+		return rpcErr(req.ID, rpcMethodNotFound, "method not found: "+req.Method)
 	}
 }
 
@@ -635,7 +671,8 @@ func (a mcpAPI) mcpToolCall(ctx context.Context, prin *mcpPrincipal, req rpcRequ
 		return rpcOK(req.ID, toolError(err.Error()))
 	}
 	return rpcOK(req.ID, map[string]any{
-		"content": []map[string]any{{"type": "text", "text": text}},
+		"resultType": "complete",
+		"content":    []map[string]any{{"type": "text", "text": text}},
 	})
 }
 
@@ -643,8 +680,9 @@ func (a mcpAPI) mcpToolCall(ctx context.Context, prin *mcpPrincipal, req rpcRequ
 // failures are results, not protocol errors).
 func toolError(msg string) map[string]any {
 	return map[string]any{
-		"content": []map[string]any{{"type": "text", "text": msg}},
-		"isError": true,
+		"resultType": "complete",
+		"content":    []map[string]any{{"type": "text", "text": msg}},
+		"isError":    true,
 	}
 }
 

@@ -18,7 +18,7 @@ func TestCodexChatBaseArgsNeverPromptAndStayReadOnly(t *testing.T) {
 }
 
 func TestCodexMCPArgsPreApproveHeadlessTools(t *testing.T) {
-	got := codexMCPArgs(true, "00000000-0000-4000-8000-000000000000")
+	got, _ := codexMCPArgs(afWriteConv())
 	want := "mcp_servers.af.default_tools_approval_mode=\"approve\""
 	if !containsString(got, want) {
 		t.Fatalf("codex MCP args = %q, missing %q", got, want)
@@ -26,11 +26,17 @@ func TestCodexMCPArgsPreApproveHeadlessTools(t *testing.T) {
 }
 
 func TestCodexMCPArgsForwardAgentAndMemoCredentials(t *testing.T) {
-	got := codexMCPArgs(true, "00000000-0000-4000-8000-000000000000")
+	got, _ := codexMCPArgs(afWriteConv())
 	want := `mcp_servers.af.env_vars=["AGENT_TOKEN","AGENT_ADDR","AF_CP_BASE_URL","AF_MEMO_TOKEN","AF_SCHEDULE_TOKEN"]`
 	if !containsString(got, want) {
 		t.Fatalf("codex MCP args = %q, missing %q", got, want)
 	}
+}
+
+// afWriteConv is a conversation with the af_write grant and no registry servers —
+// the shape these af-plumbing assertions have always described.
+func afWriteConv() *chatConversation {
+	return &chatConversation{ID: "00000000-0000-4000-8000-000000000000", Tools: toolsAFWrite}
 }
 
 func containsString(xs []string, want string) bool {

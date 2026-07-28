@@ -32,7 +32,31 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-const mcpStdioProtocol = "2025-06-18"
+// MCP の版（docs/49 + ADR0032）。2026-07-28 は initialize ハンドシェイクを廃し、版・
+// クライアント情報・能力を毎リクエストの `_meta` で運ぶ。この stdio サーバーは元から
+// セッション状態を持たない純粋な switch なので、両方の作法をそのまま受けられる。
+const (
+	mcpStdioProtocol = "2026-07-28" // 推奨（ステートレス版）
+	mcpStdioLegacy   = "2025-06-18" // initialize を送る旧クライアントへ echo する版
+)
+
+// mcpStdioSupportedVersions は server/discover が広告する版（新しい順）。
+var mcpStdioSupportedVersions = []string{mcpStdioProtocol, "2025-11-25", mcpStdioLegacy}
+
+// ステートレス版の per-request `_meta` キー（SEP-2575）。
+const (
+	mcpMetaProtocolVersion = "io.modelcontextprotocol/protocolVersion"
+	mcpMetaClientInfo      = "io.modelcontextprotocol/clientInfo"
+	mcpMetaClientCaps      = "io.modelcontextprotocol/clientCapabilities"
+	mcpMetaServerInfo      = "io.modelcontextprotocol/serverInfo"
+)
+
+// spec が予約する -320xx のプロトコル定義エラー。
+const (
+	mcpErrUnsupportedVersion = -32022
+	mcpErrMethodNotFound     = -32601
+	mcpErrInvalidParams      = -32602
+)
 
 // mcpWriteEnabled gates the write tools. Set once from the `--write` arg before the
 // stdio loop starts; a global is safe because each spawn is a fresh short-lived process
@@ -102,29 +126,122 @@ func dispatchMCPStdio(line []byte) []byte {
 		return nil
 	}
 	isNotif := len(bytes.TrimSpace(req.ID)) == 0 || string(bytes.TrimSpace(req.ID)) == "null"
+	// ステートレス版で来た要求は、まず `_meta` の必須項目と版を検証する。旧版
+	// （initialize を送るクライアント）は素通しで、従来の挙動をそのまま保つ。
+	if resp, stop := mcpStdioValidate(req); stop {
+		return resp
+	}
 	switch req.Method {
+	case "server/discover":
+		// 2026-07-28 ではサーバー実装が MUST。stdio には版を判別する HTTP ステータスが
+		// 無いので、両対応クライアントはまずこれを投げて era を決める（SEP-2575）。
+		return mcpResult(req.ID, mcpStdioDiscoverResult())
 	case "initialize":
+		// 旧クライアント専用。2026-07-28 で削除されたが、両対応したいサーバーは残して
+		// よい（SEP-2575 Backward Compatibility）。落とすと未更新の CLI が全部死ぬ。
+		ver := mcpStdioLegacy
+		var p struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		}
+		_ = json.Unmarshal(req.Params, &p)
+		if p.ProtocolVersion != "" {
+			ver = p.ProtocolVersion
+		}
 		return mcpResult(req.ID, map[string]any{
-			"protocolVersion": mcpStdioProtocol,
+			"protocolVersion": ver,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      map[string]any{"name": "agent-fleet-local", "version": "q1"},
 		})
 	case "notifications/initialized", "notifications/cancelled":
 		return nil
 	case "ping":
+		// 2026-07-28 で両方向とも削除（任意の RPC が生存証明になる）。旧版向けに残す。
 		if isNotif {
 			return nil
 		}
-		return mcpResult(req.ID, map[string]any{})
+		return mcpResult(req.ID, map[string]any{"resultType": "complete"})
 	case "tools/list":
-		return mcpResult(req.ID, map[string]any{"tools": mcpStdioToolList()})
+		return mcpResult(req.ID, map[string]any{
+			"resultType": "complete",
+			"tools":      mcpStdioToolList(),
+		})
 	case "tools/call":
 		return mcpStdioCall(req)
 	default:
 		if isNotif {
 			return nil
 		}
-		return mcpError(req.ID, -32601, "method not found: "+req.Method)
+		return mcpError(req.ID, mcpErrMethodNotFound, "method not found: "+req.Method)
+	}
+}
+
+// mcpStdioValidate checks a stateless-era request's `_meta`. stop=true means the
+// caller must return resp immediately (resp is nil for a malformed notification,
+// which gets no answer). An initialize-era request passes straight through.
+func mcpStdioValidate(req mcpReq) (resp []byte, stop bool) {
+	var p struct {
+		Meta map[string]json.RawMessage `json:"_meta"`
+	}
+	if len(req.Params) > 0 {
+		_ = json.Unmarshal(req.Params, &p)
+	}
+	raw, ok := p.Meta[mcpMetaProtocolVersion]
+	if !ok {
+		return nil, false // initialize era — nothing to validate here
+	}
+	var ver string
+	if json.Unmarshal(raw, &ver) != nil || ver == "" {
+		return nil, false
+	}
+	isNotif := len(bytes.TrimSpace(req.ID)) == 0 || string(bytes.TrimSpace(req.ID)) == "null"
+	fail := func(code int, msg string, data any) ([]byte, bool) {
+		if isNotif {
+			return nil, true
+		}
+		if data == nil {
+			return mcpError(req.ID, code, msg), true
+		}
+		b, _ := json.Marshal(map[string]any{
+			"jsonrpc": "2.0", "id": req.ID,
+			"error": map[string]any{"code": code, "message": msg, "data": data},
+		})
+		return b, true
+	}
+	if !mcpStdioVersionSupported(ver) {
+		return fail(mcpErrUnsupportedVersion, "unsupported protocol version: "+ver,
+			map[string]any{"supported": mcpStdioSupportedVersions, "requested": ver})
+	}
+	// clientInfo / clientCapabilities are REQUIRED on every stateless request.
+	for _, k := range []string{mcpMetaClientInfo, mcpMetaClientCaps} {
+		if _, ok := p.Meta[k]; !ok {
+			return fail(mcpErrInvalidParams, "missing required _meta field: "+k, nil)
+		}
+	}
+	return nil, false
+}
+
+func mcpStdioVersionSupported(v string) bool {
+	for _, s := range mcpStdioSupportedVersions {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
+// mcpStdioDiscoverResult answers server/discover. serverInfo is emitted BOTH
+// top-level (SEP-2575 の DiscoverResult) と `_meta` 配下（draft ドキュメントの例）に
+// 出す — 両者が食い違っており、余分なフィールドは無害なので、どちらを読む
+// クライアントでも見つかるようにする。
+func mcpStdioDiscoverResult() map[string]any {
+	info := map[string]any{"name": "agent-fleet-local", "version": "q1"}
+	return map[string]any{
+		"resultType":        "complete",
+		"supportedVersions": mcpStdioSupportedVersions,
+		"capabilities":      map[string]any{"tools": map[string]any{}},
+		"serverInfo":        info,
+		"_meta":             map[string]any{mcpMetaServerInfo: info},
+		"instructions":      "Agent Fleet のローカル MCP。自分の Workspace のセッションを観測し、--write のときは操縦もする。",
 	}
 }
 
@@ -1142,7 +1259,8 @@ func mcpStdioCall(req mcpReq) []byte {
 // mcpTextResult returns a tools/call RESULT carrying a single text content block.
 func mcpTextResult(id json.RawMessage, text string) []byte {
 	return mcpResult(id, map[string]any{
-		"content": []any{map[string]any{"type": "text", "text": text}},
+		"resultType": "complete",
+		"content":    []any{map[string]any{"type": "text", "text": text}},
 	})
 }
 
@@ -1150,8 +1268,9 @@ func mcpTextResult(id json.RawMessage, text string) []byte {
 // model reads and can react to — rather than a JSON-RPC protocol error.
 func mcpToolErr(id json.RawMessage, msg string) []byte {
 	return mcpResult(id, map[string]any{
-		"content": []any{map[string]any{"type": "text", "text": msg}},
-		"isError": true,
+		"resultType": "complete",
+		"content":    []any{map[string]any{"type": "text", "text": msg}},
+		"isError":    true,
 	})
 }
 

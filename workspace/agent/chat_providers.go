@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"log"
 	"os"
@@ -26,6 +27,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -429,14 +431,13 @@ func (codexChat) send(ctx context.Context, c *chatConversation, prompt string) (
 	if c.Model != "" {
 		args = append(args, "-m", c.Model)
 	}
-	if c.afToolsEnabled() {
-		args = append(args, codexMCPArgs(c.afWriteEnabled(), c.ID)...)
-	}
+	mcpArgs, mcpEnv := codexMCPArgs(c)
+	args = append(args, mcpArgs...)
 	if c.CodexSessionID != "" {
 		args = append(args, "resume", c.CodexSessionID)
 	}
 	args = append(args, "-") // read the prompt from stdin (personas can exceed argv comfort)
-	cmd := chatCodexCmd(ctx, args...)
+	cmd := chatCodexCmd(ctx, mcpEnv, args...)
 	defer func() { _, _ = chatCodexHome() }() // fold a rotated token back to shared (see chatCodexHome)
 	cmd.Stdin = strings.NewReader(headlessPrompt(c.personaOf(), c.knowledgeDirs(), prompt))
 	out, err := cmd.Output()
@@ -488,37 +489,57 @@ func chatCodexHome() (string, error) {
 }
 
 // chatCodexCmd builds a codex exec configured for the chat: run in chatWorkdir with
-// the chat-only CODEX_HOME (shared login). Falls back to the inherited env (the real
-// ~/.codex) if the isolated home can't be prepared.
-func chatCodexCmd(ctx context.Context, args ...string) *exec.Cmd {
+// the chat-only CODEX_HOME (shared login). extraEnv carries the MCP credentials the
+// -c overrides refer to by name (codexMCPArgs), so it must be applied even on the
+// fallback path where the isolated home can't be prepared — otherwise an attached
+// server comes up unauthenticated instead of not at all.
+func chatCodexCmd(ctx context.Context, extraEnv []string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "codex", args...)
 	cmd.Dir = chatWorkdir()
+	over := extraEnv
 	if home, err := chatCodexHome(); err == nil {
-		cmd.Env = envWith("CODEX_HOME=" + home)
+		over = append(append([]string(nil), extraEnv...), "CODEX_HOME="+home)
+	}
+	if len(over) > 0 {
+		cmd.Env = envWith(over...)
 	}
 	return cmd
 }
 
-// codexMCPArgs attaches the local Agent Fleet stdio MCP server to a codex exec via
-// -c config overrides (codex's mcp_servers table) — the codex analog of chatMCPArgs.
-// convID rides along for write grants (docs/30 report_to auto-attach; see mcpConfigArgs).
-func codexMCPArgs(write bool, convID string) []string {
-	serverArgs := `["mcp-stdio"]`
-	if write {
-		serverArgs = `["mcp-stdio","--write","--conv",` + tomlString(convID) + `]`
+// codexMCPArgs attaches this conversation's MCP servers to a codex exec via -c config
+// overrides (codex's mcp_servers table) — the codex analog of mcpConfigArgs: the local
+// Agent Fleet server per the tool grant, plus the attached registry servers (docs/48
+// §7). convID rides along for write grants (docs/30 report_to auto-attach).
+//
+// The returned env MUST be put on the codex process: codex's remote headers and any
+// stdio server's own variables are passed by NAME in argv and read from codex's
+// environment, which is what keeps registered credentials out of argv.
+func codexMCPArgs(c *chatConversation) (args, env []string) {
+	if sargs, ok := c.afServerArgs(); ok {
+		args = append(args,
+			"-c", "mcp_servers.af.command="+tomlString(paths.ExePath()),
+			"-c", "mcp_servers.af.args="+tomlStringArray(sargs),
+			// Codex only forwards explicitly allowlisted variables to stdio MCP children.
+			// Without these, the isolated chat process starts the Agent Fleet server but
+			// every Agent call is unauthenticated and memo calls lose their CP bridge.
+			"-c", `mcp_servers.af.env_vars=["AGENT_TOKEN","AGENT_ADDR","AF_CP_BASE_URL","AF_MEMO_TOKEN","AF_SCHEDULE_TOKEN"]`,
+			// Codex has a distinct MCP approval layer. Headless exec has no UI to answer
+			// it, so the default policy reports "user cancelled MCP tool call" unless the
+			// explicitly granted Agent Fleet server is pre-approved.
+			"-c", "mcp_servers.af.default_tools_approval_mode=\"approve\"",
+		)
 	}
-	return []string{
-		"-c", "mcp_servers.af.command=" + tomlString(paths.ExePath()),
-		"-c", "mcp_servers.af.args=" + serverArgs,
-		// Codex only forwards explicitly allowlisted variables to stdio MCP children.
-		// Without these, the isolated chat process starts the Agent Fleet server but
-		// every Agent call is unauthenticated and memo calls lose their CP bridge.
-		"-c", `mcp_servers.af.env_vars=["AGENT_TOKEN","AGENT_ADDR","AF_CP_BASE_URL","AF_MEMO_TOKEN","AF_SCHEDULE_TOKEN"]`,
-		// Codex has a distinct MCP approval layer. Headless exec has no UI to answer
-		// it, so the default policy reports "user cancelled MCP tool call" unless the
-		// explicitly granted Agent Fleet server is pre-approved.
-		"-c", "mcp_servers.af.default_tools_approval_mode=\"approve\"",
+	regArgs, regEnv := mcpreg.CodexOverrides(c.mcpServersFor(session.KindCodex), mcpreg.CodexOpts{Approve: true})
+	return append(args, regArgs...), regEnv
+}
+
+// tomlStringArray renders a TOML array of basic strings for a codex -c override.
+func tomlStringArray(vals []string) string {
+	parts := make([]string, len(vals))
+	for i, v := range vals {
+		parts[i] = tomlString(v)
 	}
+	return "[" + strings.Join(parts, ",") + "]"
 }
 
 // parseCodexExecEvents walks a codex exec --json JSONL stream: the reply is the
@@ -651,16 +672,24 @@ func opencodeChatPolicy() map[string]any {
 	return map[string]any{"edit": "deny", "bash": "deny"}
 }
 
-// opencodeChatDir prepares the per-tool-grant working dir for a chat's opencode run,
-// with an opencode.json carrying the chat policy. The dir is opencode's PROJECT: its
-// session store is scoped to it, so the path a conversation runs in is part of its
-// resume identity (実測 1.18.5: `run --session <id>` from another dir hangs outright
-// rather than erroring). That is why the grant split (none/read/write) stays even
-// though the file no longer differs per grant — collapsing it would strand every
-// existing conversation's session. The af MCP server is NOT here: it needs the
-// conversation id (docs/30 report_to), which is per conversation, not per grant —
-// see opencodeChatConfig. Falls back to the shared chat workdir when the dir can't
-// be prepared (opencode then runs with its defaults).
+// opencodeChatDir prepares the working dir for a chat's opencode run, with an
+// opencode.json carrying the chat policy and the attached registry servers
+// (docs/48 §7). The dir is opencode's PROJECT: its session store is scoped to it, so
+// the path a conversation runs in is part of its resume identity (実測 1.18.5:
+// `run --session <id>` from another dir hangs outright rather than erroring). That is
+// why the grant split (none/read/write) stays even though the file itself no longer
+// differs per grant — collapsing it would strand every existing conversation's
+// session.
+//
+// opencode takes this config from the DIR, not per invocation, so conversations that
+// resolve to different server sets must not share one — otherwise a concurrent turn's
+// rewrite decides which servers this turn gets. The dir key is therefore the grant
+// plus a digest of the resolved registry set (docs/48 §7 制約), not the grant alone.
+//
+// The af MCP server is NOT here: it needs the conversation id (docs/30 report_to),
+// which is per conversation, not per grant, and a second definition without --conv
+// could resurface here on merge — see opencodeChatConfig. Falls back to the shared
+// chat workdir when the dir can't be prepared (opencode then runs with its defaults).
 func opencodeChatDir(c *chatConversation) string {
 	grant := "none"
 	if c.afToolsEnabled() {
@@ -669,16 +698,20 @@ func opencodeChatDir(c *chatConversation) string {
 			grant = "write"
 		}
 	}
-	dir := filepath.Join(homeDir(), ".config", "agent-fleet", "chat-wd", "opencode-"+grant)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return chatWorkdir()
-	}
 	cfg := map[string]any{
 		"$schema":    "https://opencode.ai/config.json",
 		"permission": opencodeChatPolicy(),
 	}
+	servers := mcpreg.OpencodeServers(c.mcpServersFor(session.KindOpencode))
+	if len(servers) > 0 {
+		cfg["mcp"] = servers
+	}
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
+		return chatWorkdir()
+	}
+	dir := filepath.Join(homeDir(), ".config", "agent-fleet", "chat-wd", "opencode-"+grant+serverSetKey(servers))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return chatWorkdir()
 	}
 	if err := os.WriteFile(filepath.Join(dir, "opencode.json"), append(b, '\n'), 0o600); err != nil {
@@ -701,7 +734,13 @@ func opencodeChatDir(c *chatConversation) string {
 // Pointing OPENCODE_CONFIG at a per-conversation file keeps --dir (the session's
 // project identity) untouched, so existing conversations resume normally. Returns ""
 // when the conversation holds no af grant, or when the file can't be written — the
-// run then falls back to the project config (policy intact, no af tools).
+// run then falls back to the project config (policy intact, registry servers intact,
+// no af tools).
+//
+// The attached registry servers (docs/48 §7) ride here as well as in the project
+// config, for the same reason the policy does: if opencode REPLACES the project config
+// with this one rather than merging, a conversation's servers must not vanish the
+// moment it holds an af grant.
 func opencodeChatConfig(c *chatConversation) string {
 	if !c.afToolsEnabled() || !validConvID(c.ID) {
 		return ""
@@ -717,12 +756,12 @@ func opencodeChatConfig(c *chatConversation) string {
 		// which are write-side plumbing (mcp_stdio.go).
 		mcpArgs = append(mcpArgs, "--write", "--conv", c.ID)
 	}
+	servers := mcpreg.OpencodeServers(c.mcpServersFor(session.KindOpencode))
+	servers["af"] = map[string]any{"type": "local", "command": mcpArgs, "enabled": true}
 	cfg := map[string]any{
 		"$schema":    "https://opencode.ai/config.json",
 		"permission": opencodeChatPolicy(),
-		"mcp": map[string]any{
-			"af": map[string]any{"type": "local", "command": mcpArgs, "enabled": true},
-		},
+		"mcp":        servers,
 	}
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
@@ -734,6 +773,32 @@ func opencodeChatConfig(c *chatConversation) string {
 		return ""
 	}
 	return p
+}
+
+// serverSetKey is the dir-key suffix distinguishing two opencode chat configs that
+// share a tool grant. It digests the REGISTRY servers only (af is already implied by
+// the grant), so an assistant with none keeps the long-standing
+// opencode-none/read/write dir instead of migrating to a hashed one. The digest
+// covers the serialized entries, not just the names, so editing a server's URL or
+// credential lands in a fresh dir rather than racing a concurrent turn's rewrite.
+func serverSetKey(servers map[string]any) string {
+	names := make([]string, 0, len(servers))
+	for n := range servers {
+		if n != "af" {
+			names = append(names, n)
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	sort.Strings(names)
+	h := fnv.New32a()
+	for _, n := range names {
+		b, _ := json.Marshal(servers[n])
+		_, _ = h.Write([]byte(n))
+		_, _ = h.Write(b)
+	}
+	return fmt.Sprintf("-%08x", h.Sum32())
 }
 
 // parseOpencodeRunEvents walks an opencode run --format json stream: the reply is the
@@ -999,29 +1064,26 @@ var agyChatExe = paths.ExePath
 
 // agyChatServers builds the mcp_config.json server map for this conversation —
 // the agy analog of claude's mcpConfigArgs: the local af server per the tool
-// grant, plus one server per READY ops integration. env.HOME pins the spawned
-// servers back to the real home (they inherit agy's isolated-HOME env otherwise).
+// grant, plus the attached registry servers (docs/48 §7). env.HOME pins the spawned
+// servers back to the real home (they inherit agy's isolated-HOME env otherwise);
+// a builtin's mcp-run wrapper in particular resolves the encrypted store from HOME.
+//
+// agy is the one provider whose command is NOT this binary: the chat runs from an
+// isolated HOME, so the exe is resolved separately (agyChatExe). Registry-registered
+// servers carry their own absolute command and are unaffected — only the builtins,
+// which the registry defines as `<this binary> mcp-run <id>`, need rewriting.
 func agyChatServers(c *chatConversation) map[string]any {
 	exe := agyChatExe()
 	env := map[string]any{"HOME": homeDir()}
-	servers := map[string]any{}
-	if c.afToolsEnabled() {
-		sargs := []any{"mcp-stdio"}
-		if c.afWriteEnabled() {
-			sargs = []any{"mcp-stdio", "--write", "--conv", c.ID}
+	defs := c.mcpServersFor(session.KindAgy)
+	for i, d := range defs {
+		if runArgs, ok := mcpreg.BuiltinRunArgs(d.ID); ok {
+			defs[i].Command, defs[i].Args = exe, runArgs
 		}
-		servers["af"] = map[string]any{"command": exe, "args": sargs, "env": env}
 	}
-	for _, id := range c.Integrations {
-		reg, ok := opsIntegrations[id]
-		if !ok || !integrationReady(id) {
-			continue // unknown, or the user hasn't connected it — skip silently
-		}
-		sargs := make([]any, len(reg.runArgs))
-		for i, a := range reg.runArgs {
-			sargs[i] = a
-		}
-		servers[id] = map[string]any{"command": exe, "args": sargs, "env": env}
+	servers := mcpreg.AgyServers(defs, map[string]string{"HOME": homeDir()})
+	if sargs, ok := c.afServerArgs(); ok {
+		servers["af"] = map[string]any{"command": exe, "args": anyArgs(sargs), "env": env}
 	}
 	return servers
 }
@@ -1306,7 +1368,7 @@ func codexOneShotArgsNoModel(args []string) []string {
 // usage も返すのは、一発呼び出しを台帳に載せるため（ADR 0029 §3）— 失敗して
 // リトライした場合は「2回撃った」ことが2行として残るのが正しい。
 func runCodexOneShot(ctx context.Context, args []string, prompt string) (string, codexUsage, error) {
-	cmd := chatCodexCmd(ctx, args...)
+	cmd := chatCodexCmd(ctx, nil, args...)
 	cmd.Stdin = strings.NewReader(prompt)
 	out, err := cmd.Output()
 	if err != nil {
@@ -1674,48 +1736,6 @@ func chatToolLimits() []string {
 	return []string{"--disallowedTools",
 		"Agent", "Task", "Workflow",
 		"Bash", "Edit", "Write", "MultiEdit", "NotebookEdit"}
-}
-
-// mcpConfigArgs builds the chat's --mcp-config from two orthogonal sources, scoped
-// strictly to this claude (--strict-mcp-config: no global/project MCP leaks in, and
-// none of these leak out to the interactive sessions). docs/19 Q1, docs/25 Phase 1.
-//   - the local Agent Fleet stdio server ("af"), when the assistant grants af tools;
-//     with af_write it also advertises the write tools (the advertised set is the gate).
-//   - one server per ops integration ("pagerduty" …) the assistant holds, launched via
-//     `workspace-agent mcp-run <id>` which injects the user's stored key at spawn — so a
-//     server is attached only when that connection is actually configured.
-func (c *chatConversation) mcpConfigArgs() []string {
-	exe := paths.ExePath()
-	servers := map[string]any{}
-	if c.afToolsEnabled() {
-		sargs := []any{"mcp-stdio"}
-		if c.afWriteEnabled() {
-			// --conv hands the server its owning conversation id so create_session /
-			// send_to_session auto-attach report_to (docs/30) — the report link is
-			// tool-side plumbing, never something the model has to carry.
-			sargs = []any{"mcp-stdio", "--write", "--conv", c.ID}
-		}
-		servers["af"] = map[string]any{"command": exe, "args": sargs}
-	}
-	for _, id := range c.Integrations {
-		reg, ok := opsIntegrations[id]
-		if !ok || !integrationReady(id) {
-			continue // unknown, or the user hasn't connected it — skip silently
-		}
-		sargs := make([]any, len(reg.runArgs))
-		for i, a := range reg.runArgs {
-			sargs[i] = a
-		}
-		servers[id] = map[string]any{"command": exe, "args": sargs}
-	}
-	if len(servers) == 0 {
-		return nil
-	}
-	cfg, err := json.Marshal(map[string]any{"mcpServers": servers})
-	if err != nil {
-		return nil
-	}
-	return []string{"--mcp-config", string(cfg), "--strict-mcp-config"}
 }
 
 // chatClaudeCmd runs chat turns against Claude's single shared config directory. This
