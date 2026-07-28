@@ -705,9 +705,10 @@
 .markdown a.anchor-link {
   color: var(--accent);
 }
-/* Auto-linked references in prose: a bare commit hash (→ commit pane) and a session
-   slug (→ that session's mirror). Non-navigating anchors (no href) wired by MarkdownView;
-   a dotted underline distinguishes them from real Markdown links. */
+/* Auto-linked references in prose: a bare commit hash (→ commit pane), a session
+   slug (→ that session's mirror) and an assistant-conversation slug (→ that chat pane).
+   Non-navigating anchors (no href) wired by MarkdownView; a dotted underline
+   distinguishes them from real Markdown links. */
 .markdown a.md-ref-link {
   cursor: pointer;
   text-decoration: underline;
@@ -741,6 +742,17 @@
 }
 :root[data-theme="light"] .markdown a.md-session-link {
   color: #0e4a75;
+}
+/* Assistant-conversation slug ("a…") → that chat pane. Violet keeps it apart from the
+   blue session slug and the amber commit hash. */
+.markdown a.md-conv-link {
+  color: #b39ddb;
+}
+.markdown a.md-conv-link:hover {
+  color: #cdbde8;
+}
+:root[data-theme="light"] .markdown a.md-conv-link {
+  color: #5b21b6;
 }
 .markdown code {
   font-family: var(--viewer-font, var(--mono));

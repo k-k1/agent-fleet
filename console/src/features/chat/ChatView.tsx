@@ -4,6 +4,7 @@ import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
 import { openSessionChatSplit } from "../sessions/open.ts";
+import { openChatSplit } from "./open.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useChatStore } from "./store.ts";
@@ -1425,9 +1426,10 @@ function ChatMarkdown({ source, breaks, streaming }: { source: string; breaks?: 
       onOpenFile={(path, line, column) =>
         openTargetInNew({ content: { kind: "file", filePath: path, targetLine: line, targetColumn: column } }, true)
       }
-      // The chat lives in its own pane; opening a session in-place would replace it. Like
-      // file citations above, always open the session's mirror in a NEW pane.
+      // The chat lives in its own pane; opening a session or another conversation
+      // in-place would replace it. Like file citations above, always open in a NEW pane.
       onOpenSession={(name) => openSessionChatSplit(name)}
+      onOpenConversation={(id) => openChatSplit(id)}
     />
   );
 }
