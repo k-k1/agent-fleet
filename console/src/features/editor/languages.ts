@@ -11,6 +11,11 @@ const byExtension: Record<string, Loader> = {
   ts: async () => (await import("@codemirror/lang-javascript")).javascript({ typescript: true }),
   tsx: async () => (await import("@codemirror/lang-javascript")).javascript({ jsx: true, typescript: true }),
   json: async () => (await import("@codemirror/lang-json")).json(),
+  // Markdown loads without `codeLanguages`: nesting every fenced block's grammar
+  // would pull the other language packages into this chunk (docs/44 §6 Phase 3).
+  md: async () => (await import("@codemirror/lang-markdown")).markdown(),
+  markdown: async () => (await import("@codemirror/lang-markdown")).markdown(),
+  mdx: async () => (await import("@codemirror/lang-markdown")).markdown(),
   jsonc: async () => (await import("@codemirror/lang-javascript")).javascript(),
   css: async () => (await import("@codemirror/lang-css")).css(),
   html: async () => (await import("@codemirror/lang-html")).html(),

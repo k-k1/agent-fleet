@@ -78,8 +78,10 @@ function toggleWrap(): void {
   const on = p.wrap ?? getSettings().wrap;
   layoutStore().setPaneWrap(p.id, !on);
 }
-// Cycle the active Markdown file's preview/source (Marp: slides too) toggle. Drives
-// FileView's local mode via the pane-view action registry; no-ops on non-Markdown.
+// Walk the active Markdown file's display modes: edit, preview and (when the file
+// can be edited) split, with the Marp renderer as the inner step so a deck reaches
+// both of its previews (docs/44 §1.1). Drives FileView's local mode via the
+// pane-view action registry; no-ops on non-Markdown and on the plain fallback.
 function toggleMarkdownMode(): void {
   const p = activePane(getLayout());
   if (p) paneViewActions(p.id)?.toggleMdMode?.();
