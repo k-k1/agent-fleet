@@ -47,7 +47,7 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 
 // displayModel normalizes a cursor model id for the mirror's per-response badge:
 // ACP の bracket パラメータ（`claude-opus-4-8[thinking=true,context=300k,effort=high]`）を
-// 剥がして素の id にし、Auto 系（``/`auto`/`default[]`）は "Auto" に寄せる。ピッカーの
+// 剥がして素の id にし、Auto 系（空文字列 /`auto`/`default[]`）は "Auto" に寄せる。ピッカーの
 // dash 形式（`composer-2.5` 等）はそのまま。cursor は**セッションでモデル固定**（per-session
 // child・DynamicModel:false）なので、全 assistant ターンに同じ値が載る（docs/40 §モデル表示）。
 // 注意: これは**設定モデル**であって、Auto が各ターンで実際に解決した具体モデルではない

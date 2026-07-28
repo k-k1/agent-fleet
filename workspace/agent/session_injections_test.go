@@ -14,7 +14,7 @@ func TestOperatorInjectionTagging(t *testing.T) {
 
 	recordOperatorInjection("slot01", "  リファクタして  ") // trimmed on store
 	recordOperatorInjection("slot01", "テストも直して")
-	recordOperatorInjection("slot01", "リファクタして")               // dup of the first (post-trim) — no growth
+	recordOperatorInjection("slot01", "リファクタして")            // dup of the first (post-trim) — no growth
 	recordInjection("slot01", "スマホから返信", turnSourceDiscord) // chat-bridge origin (docs/37 P2a)
 
 	if got := operatorInjections("slot01"); len(got) != 3 {
@@ -26,7 +26,7 @@ func TestOperatorInjectionTagging(t *testing.T) {
 		{Role: "user", Text: "自分で打った質問"},     // user's own — untagged
 		{Role: "assistant", Text: "テストも直して"}, // assistant echo — never tagged (role guard)
 		{Role: "user", Text: "  テストも直して  "},  // operator (matches after trim)
-		{Role: "user", Text: "スマホから返信"},       // chat bridge → "discord"
+		{Role: "user", Text: "スマホから返信"},      // chat bridge → "discord"
 	}
 	tagInjectedTurns("slot01", turns)
 

@@ -55,7 +55,7 @@ func liveStateFromFile(path string) string {
 }
 
 func classify(r io.Reader) string {
-	open := false          // user.message / turn_start 以後、turn_end 前
+	open := false              // user.message / turn_start 以後、turn_end 前
 	perms := map[string]bool{} // requested かつ未 completed の requestId
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 256*1024), 8*1024*1024)

@@ -27,8 +27,8 @@ func toolchainsPath() string {
 }
 
 type toolchains struct {
-	Node     string `json:"node"`
-	Java     string `json:"java"`
+	Node string `json:"node"`
+	Java string `json:"java"`
 	// Go: ""/"system" keeps the baked /usr/local/go (or none, on a lean rootfs);
 	// a version string selects an on-demand toolchain the entrypoint installs
 	// into the home via `workspace-agent install-go` (docs/35 §35.7.2-5).
