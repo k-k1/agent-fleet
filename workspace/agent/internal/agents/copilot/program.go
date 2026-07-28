@@ -26,12 +26,7 @@ func envOr(key, def string) string {
 // (trustedFolders), mcp-config.json, logs/, session-store.db and
 // session-state/<sid>/. The tree is denylisted from the file browser (fs.go):
 // キーチェーンの無いコンテナでは auth トークンが平文で保存され得る（公式 docs）。
-func Home() string {
-	if d := os.Getenv("COPILOT_HOME"); d != "" {
-		return d
-	}
-	return filepath.Join(paths.HomeDir(), ".copilot")
-}
+func Home() string { return paths.CopilotHome() }
 
 func configPath() string { return filepath.Join(Home(), "config.json") }
 

@@ -26,6 +26,7 @@ func buildMux(cfg config) *http.ServeMux {
 	registerSSMRoutes(mux, cfg)
 	registerMemoRoutes(mux, cfg)
 	registerScheduleRoutes(mux, cfg)
+	registerMCPServerRoutes(mux, cfg)
 	registerNotificationRoutes(mux, cfg)
 	registerUpdateRoutes(mux, cfg)
 	registerRepoFSRoutes(mux, cfg)
@@ -121,7 +122,7 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	exemptPrefix("/internal/")
 	tn := newTenantAPI(cfg.mgr)
 	adm := newAdminAPI(cfg.mgr)
-	eg := newEgressAPI(cfg.mgr, cfg.egressToken, cfg.egressDedup)
+	eg := newEgressAPI(cfg.mgr, cfg.egressToken, cfg.egressProxyAddr, cfg.egressDedup)
 	mux.HandleFunc("GET /api/tenants", tn.withIdentity(tn.list))
 	mux.HandleFunc("GET /api/admin/tenants", adm.withIdentity(adm.listTenants))
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/members", adm.listMembers)
@@ -146,6 +147,11 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/admin/egress/allowlist/{id}/state", eg.withSuperAdmin(eg.allowlistState)) // approve/retire (super_admin)
 	mux.HandleFunc("GET /api/admin/egress/mode", eg.withSuperAdmin(eg.mode))                            // read egress mode (super_admin)
 	mux.HandleFunc("PUT /api/admin/egress/mode", eg.withSuperAdmin(eg.mode))                            // set log-only/enforce (super_admin)
+	// Member face (docs/48 §9): "can a workspace reach this MCP server's host, and if not,
+	// let me ask". The write produces a PROPOSED entry only — approval stays super_admin
+	// on the routes above, so this cannot widen egress (egress_member.go).
+	mux.HandleFunc("GET /api/egress/check", eg.withMembership(eg.checkHosts)) // per-host verdict + deployment mode
+	mux.HandleFunc("POST /api/egress/propose", eg.withMembership(eg.propose)) // request an allowlist entry (proposed)
 }
 
 // Personal Access Tokens (Console-issued) for the MCP endpoint (docs/0006).
@@ -372,6 +378,29 @@ func scheduleMember(s scheduleAPI, h func(http.ResponseWriter, *http.Request, Me
 	})
 }
 
+// Tenant-distributed MCP servers (docs/48 P4 + ADR0031) — the definitions a
+// tenant_admin distributes to every member of a tenant. Two faces over one table
+// (mcp_server.go):
+//
+//   - /api/admin/mcp-servers*  Console admin modal, gated per-tenant mid-handler
+//     (tenantAdminFor: super_admin any tenant, tenant_admin their own). Audited.
+//   - GET /internal/mcp-servers  the Workspace agent's poll, authenticated by the
+//     per-membership AF_MCP_TOKEN (mcp_server_bridge.go) and session-exempt via the
+//     /internal/ prefix already declared by registerTenantAdminRoutes.
+//
+// The member-facing registry (/api/mcp-servers) is NOT here — it is proxied to the
+// Agent by registerConnectionRoutes, because the effective registry is composed inside
+// the workspace where the user's own encrypted store lives.
+func registerMCPServerRoutes(mux *http.ServeMux, cfg config) {
+	exemptPrefix("/internal/")
+	m := newMCPServerAPI(cfg.mgr)
+	mux.HandleFunc("GET /api/admin/mcp-servers", m.adminList)
+	mux.HandleFunc("POST /api/admin/mcp-servers", m.adminUpsert)
+	mux.HandleFunc("PUT /api/admin/mcp-servers/{id}", m.adminUpsert)
+	mux.HandleFunc("DELETE /api/admin/mcp-servers/{id}", m.adminDelete)
+	mux.HandleFunc("GET /internal/mcp-servers", m.withMCPToken(m.distribute))
+}
+
 // Repository ops + source-control view + file browser — proxied to the Workspace
 // Agent (/api stripped -> /repos*, /git/identity, /fs/*).
 func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
@@ -475,6 +504,17 @@ func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
 func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	proxy := newAgentProxyAPI(cfg.mgr)
 	rest := proxy.withResolved(proxy.rest)
+	// MCP レジストリ（docs/48 P0）— 実体は Agent 側（workspace/agent/mcp_servers.go）。
+	mux.HandleFunc("GET /api/mcp-servers", rest)
+	mux.HandleFunc("POST /api/mcp-servers", rest)
+	mux.HandleFunc("POST /api/mcp-servers/test", rest)
+	mux.HandleFunc("PUT /api/mcp-servers/{id}", rest)
+	mux.HandleFunc("POST /api/mcp-servers/{id}/enabled", rest)
+	mux.HandleFunc("DELETE /api/mcp-servers/{id}", rest)
+	// P4: the member's half of tenant distribution — pull the tenant set now (instead of
+	// waiting for the poll), and fill in the values of a user_secret server's headers.
+	mux.HandleFunc("POST /api/mcp-servers/tenant-refresh", rest)
+	mux.HandleFunc("PUT /api/mcp-servers/{id}/secrets", rest)
 	mux.HandleFunc("GET /api/connections", rest)
 	mux.HandleFunc("GET /api/connections/git/{host}/repos", rest)
 	mux.HandleFunc("GET /api/connections/git/{host}/branches", rest)

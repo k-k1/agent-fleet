@@ -28,6 +28,12 @@ status: **検討＋M1 実装済**。roadmap の **P3-9 残項目**（「監査�
   - 実装：`control-plane/claude_audit.go` の背景 sweeper。稼働中の claude セッションの `GET /sessions/{name}/messages` を per-session cursor（`deployment_setting` kv）で増分取得し、assistant の tool_use（Write/Edit/MultiEdit/NotebookEdit/Bash）を `audit_log`（`actor_kind=claude`、`action=claude.write|edit|bash`、target=file か command、tenant=ws）へ記録。**初回はベースラインのみ（遡及記録しない）**、transcript reset 時はその回スキップ。`AF_CLAUDE_AUDIT_INTERVAL=0`（既定）で無効＝opt-in（全セッション polling ゆえ）。
   - UI：既存「監査」タブに `claude.*` 行が並ぶ（色分け追加）。テスト=`claude_audit_test.go`（抽出の網羅：read/text/user は除外、file 優先・Bash は command）。
   - 限界：pull ゆえ polling ラグあり、transcript の fork/複数 jsonl エッジで取りこぼし得る（hook push は分離制約で不可）。live 検証は稼働 claude セッションが要る（本セッションでは未実施）。
+- **member 面（allowlist の照会＋申請）＝実装済**（`control-plane/egress_member.go`、docs/48 §9.1 の一部として追加）。
+  - **なぜ member に開けたか**：リモート MCP サーバーの登録者は多くの場合 admin ではない。宛先が未許可だと enforce では繋がらず、log-only では**今日は動いて enforce 切替の日に壊れる**——どちらも CLI の中からは「MCP サーバーが壊れている」としか見えないので、登録画面で言う必要があった。
+  - `GET /api/egress/check?host=…`（`withMembership`）＝宛先ごとに `allowed` / `proposed` ＋ 配備の mode。`POST /api/egress/propose`（同）＝`state=proposed` の行だけを作る。**active 化は従来どおり super_admin** で、M4 のツールと同じ「頼めるが通せない」分割。
+  - **`configured` は `AF_EGRESS_PROXY_ADDR` に従う**（`AF_EGRESS_TOKEN` ではない）。コンテナ配線が既定 OFF なので、ここを取り違えると egress を入れていない配備で警告が出続ける。
+  - 申請は**ホストか `.suffix` のみ**（スキーム/ポート/パス付きは 400 — policy が剥がさないので「保存できたのに永遠に一致しない」になる）、**TLD 丸ごとは拒否**、同一項目の重複は行を増やさない（`retired` からの再申請のみ新規）。行は `tenant_id=""`（承認の効果が配備全体なので）、テナントは監査行 `egress.propose`（`actor_kind=user`）側。
+  - テスト=`control-plane/egress_member_test.go`（判定が proxy と同じ policy／`configured` の由来／proposed が effective にならない／重複の畳み込み／不正項目）。
 - 残：aws Network Firewall／DNS Firewall（M6）、per-tenant 属性＋enforce 強化、egress deny アラート/週次 digest（通知チャネル要）、P3-10 設定化（M7）。
 
 関連: [reference/security.md](reference/security.md)（脅威モデル §4.3/§4.6/§4.7）、[roadmap.md](roadmap.md) P3-9（`egress 統制` L318 / `監査` L232）、

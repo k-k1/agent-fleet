@@ -21,6 +21,9 @@ export interface Assistant {
   persona?: string;
   tools: ToolGrant;
   knowledge?: string[];
+  // このアシスタントのチャットへ接続する MCP サーバーの id（実効レジストリ上の id。
+  // 組み込み連携は "pagerduty" 等の固定 id のまま）。docs/48 §7。
+  integrations?: string[];
   // 読み上げの声（"vv:<speaker>" / "polly:<VoiceId>"。"" = 自動 = キャラプールから割り当て）。
   // 保存はエージェント側、解決・合成はすべて Console 側（docs/24）。
   voice?: string;
@@ -38,5 +41,6 @@ export interface AssistantInput {
   persona?: string;
   tools: ToolGrant;
   knowledge?: string[];
+  integrations?: string[];
   voice?: string;
 }

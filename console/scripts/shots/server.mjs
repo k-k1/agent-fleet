@@ -75,6 +75,34 @@ const exact = {
   "/api/stats": () => fx.stats(),
   "/api/ssm/hosts": () => ({ hosts: [] }),
   "/api/ssm/profiles": () => ({ profiles: [] }),
+  // MCP registry (docs/48). One row per origin so the settings tab shows all three
+  // editability states (user = full CRUD, tenant = disable-only, builtin = code).
+  // Secret values arrive masked, exactly as the agent sends them.
+  "/api/mcp-servers": () => ({
+    servers: [
+      {
+        id: "b1", name: "pagerduty", label: "PagerDuty", origin: "builtin", transport: "stdio",
+        command: "/usr/local/bin/workspace-agent", args: ["mcp-run", "pagerduty"],
+        enabled: true, targets: { assistant: true, session: false }, editable: false, ready: true,
+      },
+      {
+        id: "t1", name: "corp-wiki", label: "Corp Wiki", origin: "tenant", transport: "http",
+        url: "https://mcp.corp.example.com/mcp", headers: { Authorization: "***" },
+        enabled: true, targets: { assistant: true, session: true }, editable: false, ready: true,
+      },
+      {
+        id: "u1", name: "filesystem", origin: "user", transport: "stdio",
+        command: "npx", args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/dev/repos"],
+        enabled: true, targets: { assistant: false, session: true }, kinds: ["claude", "codex"],
+        editable: true, ready: true,
+      },
+    ],
+    tenantFetchedAt: 1753600000,
+  }),
+  "/api/mcp-servers/test": () => ({
+    ok: true, serverName: "example-mcp", serverVersion: "1.2.0", toolCount: 3,
+    tools: ["search", "fetch_page", "list_spaces"], revision: "2026-07-28", elapsedMs: 214,
+  }),
   "/api/browser/pages": () => ({ pages: [] }),
   "/api/tts/speakers": () => ({ speakers: [] }),
   "/api/internal-git/repos": () => ({ repos: [] }),
@@ -95,6 +123,20 @@ const re = [
   [/^\/api\/usage\/series$/, (m, q) => fx.usageSeries(LOCALE, q)],
   [/^\/api\/fs\/list$/, (m, q) => fx.fsList(LOCALE, q.get("path") || "")],
   [/^\/api\/fs\/file$/, (m, q) => fx.fsFile(LOCALE, q.get("path") || "")],
+  // Egress allowlist verdicts for the MCP tab (docs/48 §9). This deployment HAS the
+  // proxy wired and is still log-only, and the corp wiki host is not on the list — the
+  // combination that renders the "works today, blocked once enforced" warning.
+  [
+    /^\/api\/egress\/check$/,
+    (m, q) => ({
+      configured: true,
+      mode: "log-only",
+      enforce: false,
+      hosts: Object.fromEntries(
+        q.getAll("host").map((h) => [h, { host: h, allowed: h.endsWith(".anthropic.com"), proposed: false }]),
+      ),
+    }),
+  ],
 ];
 
 const seenUnknown = new Set();

@@ -21,6 +21,10 @@ import (
 // the resume/new program (claude 縦割りの buildProgram が jsonl の有無で --resume を
 // 選ぶ); for shell it runs a login bash.
 func startSessionTmux(m session.Meta, ssmForce bool) error {
+	// Write the MCP registry into this kind's own config before the CLI reads it
+	// (docs/48 §8.3). Doing it here rather than in BuildLaunch keeps it out of the
+	// per-kind agents, and covers every tui launch — create, start, recreate, handoff.
+	materializeMCP(m.Kind)
 	// The kind decides the pane program and launch dir; the agent builds both.
 	plan, err := agentOf(m.Kind).BuildLaunch(m, agents.LaunchOpts{SSMForce: ssmForce})
 	if err != nil {
@@ -70,7 +74,7 @@ func ensureSessionTmux(name string, ssmForce bool) bool {
 		if !dok {
 			return false
 		}
-		if _, err := d.Resume(m); err != nil {
+		if _, err := startManagedSession(d, m); err != nil {
 			log.Printf("managed resume %s: %v", name, err)
 			return false
 		}

@@ -25,7 +25,7 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 )
 
 // Tool grants an assistant can hold. af_read attaches the local read-only stdio MCP
@@ -42,49 +42,20 @@ func validToolGrant(t string) bool {
 }
 
 // Ops integration ids (docs/25 Phase 1). Each maps to an external MCP server the
-// chat attaches read-only via `workspace-agent mcp-run <id>`.
+// chat attaches read-only via `workspace-agent mcp-run <id>`. The catalog itself now
+// lives in internal/mcpreg as builtin registry entries (docs/48 / ADR0031 決定 6) so
+// there is ONE list of MCP servers rather than a builtin catalog beside a registry.
 const (
-	integrationPagerDuty  = "pagerduty"
-	integrationGrafana    = "grafana"
-	integrationCloudWatch = "cloudwatch"
+	integrationPagerDuty  = mcpreg.BuiltinPagerDuty
+	integrationGrafana    = mcpreg.BuiltinGrafana
+	integrationCloudWatch = mcpreg.BuiltinCloudWatch
 )
 
-// opsIntegration describes how one integration's MCP server is launched. runArgs
-// are the subcommand args passed to this binary (mcp-run injects the user's key).
-type opsIntegration struct {
-	runArgs []string
-}
-
-// opsIntegrations is the catalog of supported external ops MCP servers. Adding
-// Grafana / CloudWatch later is a new entry here plus a mcp-run provider case.
-var opsIntegrations = map[string]opsIntegration{
-	integrationPagerDuty:  {runArgs: []string{"mcp-run", "pagerduty"}},
-	integrationGrafana:    {runArgs: []string{"mcp-run", "grafana"}},
-	integrationCloudWatch: {runArgs: []string{"mcp-run", "cloudwatch"}},
-}
-
-func validIntegration(id string) bool {
-	_, ok := opsIntegrations[id]
-	return ok
-}
-
-// integrationReady reports whether the user has configured the credential an
-// integration needs, so mcpConfigArgs attaches only servers that can actually
-// start (a missing connection means the assistant just has no ops tools).
-func integrationReady(id string) bool {
-	switch id {
-	case integrationPagerDuty:
-		s, err := secrets.Load()
-		return err == nil && s.PagerDuty != nil && s.PagerDuty.APIKey != ""
-	case integrationGrafana:
-		s, err := secrets.Load()
-		return err == nil && s.Grafana != nil && s.Grafana.URL != "" && s.Grafana.Token != ""
-	case integrationCloudWatch:
-		s, err := secrets.Load()
-		return err == nil && s.CloudWatch != nil && s.CloudWatch.Profile != ""
-	}
-	return false
-}
+// validIntegration accepts any id the effective registry knows (docs/48 P2): the
+// builtins as before, plus the user's own registrations and anything the tenant
+// distributes. The builtin ids stay their own literal strings, so assistants saved
+// before the registry existed need no migration.
+func validIntegration(id string) bool { return mcpreg.Known(id) }
 
 // assistant is a chat persona template (builtin or user-defined).
 type assistant struct {
@@ -100,10 +71,14 @@ type assistant struct {
 	Persona     string   `json:"persona,omitempty"` // system prompt (--append-system-prompt)
 	Tools       string   `json:"tools"`             // "none" | "af_read" | "af_write"
 	Knowledge   []string `json:"knowledge,omitempty"`
-	// Integrations are external ops MCP servers attached to this assistant's chat,
-	// orthogonal to the af tools grant (docs/25 Phase 1). Each id (e.g. "pagerduty")
-	// is launched read-only via `workspace-agent mcp-run <id>`, which injects the
-	// user's stored key — so a server attaches only when the user has connected it.
+	// Integrations are the MCP servers attached to this assistant's chat, orthogonal
+	// to the af tools grant. Each entry is an id in the effective registry (docs/48
+	// §7): a builtin ops integration ("pagerduty" …, launched read-only via
+	// `workspace-agent mcp-run <id>` so the stored key is injected at spawn rather
+	// than written to a config), a server the user registered, or one the tenant
+	// distributes. A server attaches only while it is enabled and has everything it
+	// needs to start, so an unconfigured one just leaves the assistant without those
+	// tools instead of failing the turn.
 	Integrations []string `json:"integrations,omitempty"`
 	// Voice is the Console-side TTS voice override ("vv:<speaker>" / "polly:<VoiceId>").
 	// "" = auto (the Console assigns one from the user's character pool). The agent only

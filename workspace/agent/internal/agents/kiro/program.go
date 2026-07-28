@@ -46,7 +46,7 @@ func Installed() bool {
 // Home is kiro's config/session root (~/.kiro): settings/cli.json、settings/mcp.json、
 // agents/、そして sessions/cli/（v2 セッションストア）。資格情報は別ツリー
 // （~/.local/share/kiro-cli/data.sqlite3）で、両方とも fs.go の denylist 対象。
-func Home() string { return filepath.Join(paths.HomeDir(), ".kiro") }
+func Home() string { return paths.KiroHome() }
 
 // sessionsDir is ~/.kiro/sessions/cli — the flat v2 session store (per-sid
 // <sid>.json meta + <sid>.jsonl transcript + <sid>.lock + <sid>.history).

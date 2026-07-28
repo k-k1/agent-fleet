@@ -27,7 +27,7 @@ func envOr(key, def string) string {
 // denylisted from the file browser (fs.go) because the OAuth token persists in
 // plaintext under it when no keyring is present (docs/decisions/0008 再PoC).
 // (tokenPath / SignedIn live in usage.go — Track C 側の定義を正とする。)
-func stateDir() string { return filepath.Join(paths.HomeDir(), ".gemini", "antigravity-cli") }
+func stateDir() string { return filepath.Join(paths.GeminiHome(), "antigravity-cli") }
 
 func settingsPath() string { return filepath.Join(stateDir(), "settings.json") }
 

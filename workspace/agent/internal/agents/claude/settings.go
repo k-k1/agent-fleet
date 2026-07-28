@@ -21,12 +21,7 @@ import (
 // plaintext claude state out of home via CLAUDE_CONFIG_DIR; when unset it is the
 // classic ~/.claude. Both settings.json and projects/*.jsonl live under this dir,
 // so session resume detection must agree with it (see SessionJSONLExists).
-func ConfigDir() string {
-	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
-		return d
-	}
-	return filepath.Join(paths.HomeDir(), ".claude")
-}
+func ConfigDir() string { return paths.ClaudeConfigDir() }
 
 func settingsPath() string {
 	return filepath.Join(ConfigDir(), "settings.json")

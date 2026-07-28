@@ -30,9 +30,7 @@ func envOr(key, def string) string {
 // （非公開 SQLite・読まない）、projects/<slug>/agent-transcripts/（読む JSONL）、
 // hooks.json・cli-config.json など。資格情報は別ツリー（~/.config/cursor/auth.json）
 // にあり、両方とも fs.go の denylist 対象（平文トークン保護 — docs/40 契約）。
-func Home() string {
-	return filepath.Join(paths.HomeDir(), ".cursor")
-}
+func Home() string { return paths.CursorHome() }
 
 // projectsDir is ~/.cursor/projects — the per-cwd transcript tree root.
 func projectsDir() string { return filepath.Join(Home(), "projects") }
