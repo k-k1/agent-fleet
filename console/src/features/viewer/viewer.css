@@ -1083,6 +1083,22 @@
   color: var(--warning, #d29922);
   font-weight: 600;
 }
+/* 外部変更のadvisory通知 (docs/44 §7.3): 状態行の中の控えめな注記＋差分確認ボタン。 */
+.file-external-note {
+  margin-left: 10px;
+  color: var(--warning, #d29922);
+}
+.file-external-note button {
+  margin-left: 6px;
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 16px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid currentcolor;
+  border-radius: 4px;
+  cursor: pointer;
+}
 .file-editor-resolution {
   position: absolute;
   z-index: 8;

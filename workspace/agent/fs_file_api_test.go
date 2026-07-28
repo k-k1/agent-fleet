@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -808,5 +809,111 @@ func TestReadStableFileSnapshotRetriesAndBounds(t *testing.T) {
 	})
 	if aerr == nil || aerr.code != errCodeFSReadFailed || calls != 2 {
 		t.Fatalf("unstable read: calls=%d error=%+v", calls, aerr)
+	}
+}
+
+// The meta=1 metadata GET (docs/44 §3.2) is contractually "the ordinary GET
+// minus content": every field, the editability order, and the revision-only-
+// when-editable rule must match the full response byte for byte.
+func TestFSFileGetMetaOmitsContentOnly(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("AF_BROWSE_ROOT", root)
+	files := map[string][]byte{
+		"note.md":   []byte("# title\nbody\n"),
+		"crlf.txt":  []byte("a\r\nb\r"),
+		"nul.bin":   {'a', 0, 'b'},
+		"large.txt": bytes.Repeat([]byte("x"), maxEditorFileBytes+1),
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(root, name), content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		responses := make([]map[string]any, 2)
+		for i, query := range []string{"/fs/file?path=" + name, "/fs/file?path=" + name + "&meta=1"} {
+			rec := httptest.NewRecorder()
+			handleFSFile(rec, httptest.NewRequest(http.MethodGet, query, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%s: status=%d body=%s", query, rec.Code, rec.Body.String())
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &responses[i]); err != nil {
+				t.Fatal(err)
+			}
+		}
+		full, meta := responses[0], responses[1]
+		if _, ok := meta["content"]; ok {
+			t.Errorf("%s: meta=1 leaked content", name)
+		}
+		delete(full, "content")
+		if !reflect.DeepEqual(full, meta) {
+			t.Errorf("%s: meta response diverged from the full GET:\nfull=%#v\nmeta=%#v", name, full, meta)
+		}
+		if name == "note.md" {
+			if meta["revision"] != fileRevision(content) || meta["editable"] != true {
+				t.Errorf("note.md meta: %#v", meta)
+			}
+		} else if _, ok := meta["revision"]; ok {
+			t.Errorf("%s: non-editable meta response leaked a revision", name)
+		}
+	}
+}
+
+func TestFSFileGetMetaReadOnlyRoot(t *testing.T) {
+	root := t.TempDir()
+	docs := t.TempDir()
+	t.Setenv("AF_BROWSE_ROOT", root)
+	t.Setenv("AGENT_DOCS_DIR", docs)
+	path := filepath.Join(docs, "guide.md")
+	if err := os.WriteFile(path, []byte("guide\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	handleFSFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(path)+"&meta=1", nil))
+	var got map[string]any
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &got) != nil {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got["editable"] != false || got["editabilityReason"] != "read_only_root" {
+		t.Fatalf("read-only meta response: %#v", got)
+	}
+	for _, field := range []string{"content", "revision"} {
+		if _, ok := got[field]; ok {
+			t.Fatalf("read-only meta response leaked %s: %#v", field, got)
+		}
+	}
+}
+
+// Safety-boundary errors must not be rounded to a metadata answer: meta=1 goes
+// through the same resolution as the full GET and returns the same code.
+func TestFSFileGetMetaSharesErrorContract(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("AF_BROWSE_ROOT", root)
+	if err := os.WriteFile(filepath.Join(root, "real.txt"), []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real.txt", filepath.Join(root, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".ssh", "config"), []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		path   string
+		status int
+		code   string
+	}{
+		{"link.txt", http.StatusBadRequest, errCodeFSSymlinkNotAllowed},
+		{".ssh/config", http.StatusForbidden, errCodeFSDenied},
+		{"/etc/passwd", http.StatusBadRequest, errCodeFSBadPath},
+		{"missing.txt", http.StatusNotFound, errCodeFSNotFile},
+	}
+	for _, tc := range cases {
+		rec := httptest.NewRecorder()
+		handleFSFile(rec, httptest.NewRequest(http.MethodGet, "/fs/file?path="+url.QueryEscape(tc.path)+"&meta=1", nil))
+		if rec.Code != tc.status || responseErrorCode(t, rec) != tc.code {
+			t.Errorf("meta GET %q: status=%d body=%s", tc.path, rec.Code, rec.Body.String())
+		}
 	}
 }
