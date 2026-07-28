@@ -97,10 +97,15 @@ const StateAborted = "aborted"
 // the reason. Drivers that don't yet distinguish failures keep calling MarkTurnEnd.
 func MarkTurnEndErr(sid string, st TurnState, failure string) {
 	previous, _ := status.Read(sid)
-	status.Persist(sid, "idle")
 	if st == TurnUnknown {
+		// runtime を見失っただけ。idle は書く（進行中に張り付かせない）が、これは
+		// 「ターンの終端」ではないので TurnEnd は立てない — レベルで判定する報告の
+		// リコンサイラ（docs/51）がこの idle を完了の証拠に数えると、まだ相手側で
+		// 走っているかもしれないターンを「完了しました」と報告してしまう。
+		status.Persist(sid, "idle")
 		return
 	}
+	status.PersistTurnEnd(sid, "idle")
 	if st == TurnFailed {
 		notify(sid, previous.State, StateFailed, failure)
 		return

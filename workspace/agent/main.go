@@ -143,6 +143,11 @@ func main() {
 	// internal/agents 配下で package main を import できないため、判定の 1 実装を
 	// ここで seam に登録する。app-server 起動と reconcile より前に張ること。
 	agents.SetStateNotifier(recordSessionNotification)
+	// 完了報告の消費判定（docs/51 Phase 1 / ADR 0035）。フック・notify seam・
+	// record-exit の kick は起床ヒントでしかなく、「指示が完了したか」を決めるのは
+	// このリコンサイラの tick だけ。ヒントが死んでも次の tick が同じ状態をレベルで
+	// 見て拾うので、取りこぼしは報告の消失ではなく遅延に縮退する。
+	startReportReconciler()
 	// Codex sessions use a shared local app-server when available（P3 からは
 	// codex.Serve() の RuntimeSupervisor が daemon を所有する）。AF attaches
 	// a read-only observer per loaded thread: compaction state, rate limits, and

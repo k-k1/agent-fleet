@@ -194,13 +194,13 @@ func TestChatAutoTurnLimit(t *testing.T) {
 }
 
 func TestBuildReportContent(t *testing.T) {
-	got := buildReportContent("リファクタ作業", "slot07", "answer-ready", "")
+	got := buildReportContent("リファクタ作業", "slot07", "answer-ready", "", 0)
 	for _, want := range []string{"リファクタ作業", "slot07", "入力待ち"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("content missing %q:\n%s", want, got)
 		}
 	}
-	exit := buildReportContent("x", "slot08", "exit", "oom")
+	exit := buildReportContent("x", "slot08", "exit", "oom", 0)
 	if !strings.Contains(exit, "OOM") {
 		t.Fatalf("exit content missing OOM label:\n%s", exit)
 	}
@@ -224,11 +224,14 @@ func TestMCPConvArgParsing(t *testing.T) {
 }
 
 // End-to-end over real HTTP: the claude Stop hook entrypoint → recordSessionNotification
-// → kickSessionReport → POST /chat/report → deliverSessionReport → the 【セッション報告】
-// card in the operator's conversation. Driven in the incident's exact shape — the pane
-// heal wiped the "working" marker before Stop fired — which used to end in silence.
+// → kickSessionReport → POST /chat/report（= リコンサイラの起床ヒント）→ tick の
+// settle → the 【セッション報告】 card in the operator's conversation. Driven in the
+// incident's exact shape — the pane heal wiped the "working" marker before Stop fired —
+// which used to end in silence. docs/51 Phase 1 では kick が消えても次の tick が同じ
+// 状態を見て拾う（ここではヒント有りの経路を通す）。
 func TestSessionReportDeliveredAfterHealWipedMarker(t *testing.T) {
 	home := withTempHome(t)
+	withTestReconciler(t, 20*time.Millisecond)
 	// The report's auto turn would call a real provider; the delivery under test is the
 	// report card itself, so pin the toggle off (設定 > エージェント「報告への自動応答」).
 	if err := os.MkdirAll(filepath.Join(home, ".config", "agent-fleet"), 0o700); err != nil {
@@ -256,7 +259,18 @@ func TestSessionReportDeliveredAfterHealWipedMarker(t *testing.T) {
 	armSessionReport(m.Name, conv.ID) // create_session / send_to_session with report_to
 
 	status.Persist(sid, "working") // the operator's instruction starts a turn
-	status.Remove(sid)             // …the pane heal wipes the marker mid-turn
+	// A real turn leaves a FRESH main transcript behind (the answer was just written).
+	// 転写の鮮度そのものを常設ゲートにすると、正常完了の報告が毎回 TTL(90s) ぶん遅れる —
+	// 完了の判定は「Stop のマーカーより後にも転写が伸びているか」の相対比較で行う。
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	if err := os.MkdirAll(filepath.Join(cfg, "projects", "p1"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfg, "projects", "p1", sid+".jsonl"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	status.Remove(sid) // …the pane heal wipes the marker mid-turn
 	runSessionStatusHook([]string{"idle", sid})
 
 	// deliverSessionReport finishes in a goroutine off the handler. Read under the
@@ -284,9 +298,7 @@ func TestSessionReportDeliveredAfterHealWipedMarker(t *testing.T) {
 	if got.Session != m.Name || !strings.Contains(got.Content, "検証タスク") || !strings.Contains(got.Content, "入力待ち") {
 		t.Fatalf("report card = %+v", got)
 	}
-	if reportArmed(m.Name) {
-		t.Fatal("arm must be consumed by the delivered report (指示1件=報告1回)")
-	}
+	awaitDisarmed(t, m.Name)
 }
 
 // TestQuestionReportInterimKeepsArm pins the interim question report (docs/30):
@@ -437,6 +449,8 @@ func TestPlanReportInterimKeepsArm(t *testing.T) {
 // minutes before the instruction is actually done. That early answer-ready kick must
 // NOT consume the one-shot arm — delivery waits until the subagent transcripts go
 // stale and the session sits at idle, then fires exactly once.
+// docs/51 Phase 1 の読み替え: 「保留 waiter」という特例は消え、SubagentBusy は
+// リコンサイラの **busy 証拠** になった（意味論は同じ — 判定が1か所に集まっただけ）。
 func TestSessionReportDeferredWhileSubagentBusy(t *testing.T) {
 	home := withTempHome(t)
 	cfg := t.TempDir()
@@ -450,9 +464,7 @@ func TestSessionReportDeferredWhileSubagentBusy(t *testing.T) {
 		[]byte(`{"assistantAutoTurn":false}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	oldPoll := reportWaiterPoll
-	reportWaiterPoll = 20 * time.Millisecond
-	t.Cleanup(func() { reportWaiterPoll = oldPoll })
+	withTestReconciler(t, 20*time.Millisecond)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /chat/report", handleChatReport)
@@ -520,9 +532,7 @@ func TestSessionReportDeferredWhileSubagentBusy(t *testing.T) {
 	if n := countReports(); n != 1 {
 		t.Fatalf("deferred report count = %d, want 1", n)
 	}
-	if reportArmed(m.Name) {
-		t.Fatal("arm must be consumed by the deferred delivery")
-	}
+	awaitDisarmed(t, m.Name)
 	unlock := lockConv(conv.ID)
 	c, err := loadConv(conv.ID)
 	unlock()
@@ -539,14 +549,16 @@ func TestSessionReportDeferredWhileSubagentBusy(t *testing.T) {
 	}
 }
 
-// TestSessionReportWaiterIgnoresFalseIdle pins the waiter's delivery gate against
-// the false-idle window (実測 2026-07-28 sqmconc/azw7wys): mid-turn, a think gap
-// fires no hooks and the pane-based self-heal can remove the status marker; the
-// bare LiveState then defaults to idle and the old waiter spent the one-shot arm
-// on a turn that was still running — the real completion 27 minutes later kicked
-// into armed=false and was silently dropped. The waiter must demand an EXPLICIT
-// idle marker AND a stale main transcript before consuming the arm.
-func TestSessionReportWaiterIgnoresFalseIdle(t *testing.T) {
+// TestSessionReportIgnoresFalseIdle pins the delivery gate against the false-idle
+// window (実測 2026-07-28 sqmconc/azw7wys): mid-turn, a think gap fires no hooks and
+// the pane-based self-heal can remove the status marker; the bare LiveState then
+// defaults to idle and the old waiter spent the one-shot arm on a turn that was still
+// running — the real completion 27 minutes later kicked into armed=false and was
+// silently dropped.
+// docs/51 Phase 1 の読み替え: waiter は消え、その配送条件は述語に畳まれた —
+// **無マーカーは「不明」であって idle ではない**、そして transcript の鮮度は busy 証拠。
+// （旧名 TestSessionReportWaiterIgnoresFalseIdle）
+func TestSessionReportIgnoresFalseIdle(t *testing.T) {
 	home := withTempHome(t)
 	cfg := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
@@ -557,9 +569,7 @@ func TestSessionReportWaiterIgnoresFalseIdle(t *testing.T) {
 		[]byte(`{"assistantAutoTurn":false}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	oldPoll := reportWaiterPoll
-	reportWaiterPoll = 20 * time.Millisecond
-	t.Cleanup(func() { reportWaiterPoll = oldPoll })
+	withTestReconciler(t, 20*time.Millisecond)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /chat/report", handleChatReport)
@@ -610,7 +620,7 @@ func TestSessionReportWaiterIgnoresFalseIdle(t *testing.T) {
 		return n
 	}
 	stale := time.Now().Add(-3 * time.Minute)
-	settle := func() { time.Sleep(150 * time.Millisecond) } // several waiter polls
+	settle := func() { time.Sleep(150 * time.Millisecond) } // several reconciler ticks
 
 	// Phase 1 — BG quiet, but the heal removed the marker while the main transcript
 	// is fresh: an absent marker must not read as idle, and a fresh transcript means
@@ -637,20 +647,21 @@ func TestSessionReportWaiterIgnoresFalseIdle(t *testing.T) {
 		t.Fatalf("delivered on a missing marker (n=%d)", n)
 	}
 
-	// Phase 3 — an explicit idle marker but a fresh transcript (mid-turn write):
-	// still no delivery.
-	status.Persist(sid, "idle")
-	now := time.Now()
-	if err := os.Chtimes(mainLog, now, now); err != nil {
+	// Phase 3 — an idle marker exists, but the main transcript KEPT GROWING after it
+	// (the incident's shape: the marker is not the turn's end — the turn is still
+	// appending during a think gap). No delivery.
+	status.PersistTurnEnd(sid, "idle")
+	after := time.Now().Add(10 * time.Second) // マーカーより後に伸びた転写
+	if err := os.Chtimes(mainLog, after, after); err != nil {
 		t.Fatal(err)
 	}
 	settle()
 	if n := countReports(); n != 0 {
-		t.Fatalf("delivered while the main transcript is fresh (n=%d)", n)
+		t.Fatalf("delivered while the transcript grew past the idle marker (n=%d)", n)
 	}
 
-	// Phase 4 — explicit idle + stale transcript: the real completion. Exactly one
-	// report, arm consumed.
+	// Phase 4 — explicit idle + a transcript that stopped growing before it: the real
+	// completion. Exactly one report, arm consumed.
 	if err := os.Chtimes(mainLog, stale, stale); err != nil {
 		t.Fatal(err)
 	}
@@ -661,9 +672,7 @@ func TestSessionReportWaiterIgnoresFalseIdle(t *testing.T) {
 	if n := countReports(); n != 1 {
 		t.Fatalf("report count = %d, want 1", n)
 	}
-	if reportArmed(m.Name) {
-		t.Fatal("arm must be consumed by the delivery")
-	}
+	awaitDisarmed(t, m.Name)
 }
 
 // TestHaltDisarmsReportOnlyWhenFlagged pins the halt/disarm contract: the MCP

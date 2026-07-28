@@ -97,7 +97,13 @@ func runSessionStatusHook(args []string) {
 	// it becomes the full-text bridge body (docs/37). The operator report itself
 	// carries no excerpt (docs/30: fact-only, uniform with managed).
 	turnText, _ := status.ReadPendingText(sid)
-	status.Persist(sid, state)
+	if state == "idle" {
+		// Stop フックの idle は「ターンが終わった」という主張。docs/51 のリコンサイラは
+		// この 1bit を完了の証拠に使う（boot の idle リセットと区別するため）。
+		status.PersistTurnEnd(sid, state)
+	} else {
+		status.Persist(sid, state)
+	}
 	applyPendingPayloads(sid, state, h)
 	recordSessionNotification(sid, previous.State, state, turnText)
 }
@@ -184,6 +190,9 @@ func recordSessionNotification(sid, previous, state, turnText string) {
 		// interim kinds), so the operator can relay/answer (answer_session_question)
 		// or drive the plan review loop (respond_session_plan); permission stays
 		// notification-center only.
+		// docs/51 Phase 1: この kick は終端イベントでは「配送」ではなく**起床ヒント**。
+		// 消費してよいかの判定はリコンサイラが状態をレベルで見て決める（この関数は
+		// 「何が起きたか」を伝えるだけで、「もう報告してよいか」は決めない）。
 		if (kind == reportKindAnswerReady || kind == "question" || kind == "plan-approval") && reportArmed(m.Name) {
 			kickSessionReport(m.Name, kind, reason)
 		}
