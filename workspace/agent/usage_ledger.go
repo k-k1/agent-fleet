@@ -34,6 +34,7 @@ const (
 	usageFeatureBranchSuggest    = "branch.suggest"     // ブランチ名の提案
 	usageFeatureSuggestSession   = "suggest.session"    // ミラーの ✨ 返信候補
 	usageFeatureSuggestChat      = "suggest.chat"       // チャットの ✨ 返信候補
+	usageFeatureSuggestEdit      = "suggest.edit"       // エディタの ✨ AI変更提案（docs/44 Phase 4）
 	usageFeatureSession          = "session"            // 対話セッション本体（転写から折り込み）
 	// usageFeatureUnknown はタグの付いていない呼び出し。新しい補助機能がタグを付け忘れても
 	// 必ず1行残す（無記録＝見えない消費、を作らないことをタグの正しさより優先する）。

@@ -1,6 +1,6 @@
 # 0027. File ペインに CodeMirror 6 の編集モードを追加し、保存を明示操作に限定する
 
-- 状態: **採用・Phase 3.5 まで実装済み**（2026-07-28）
+- 状態: **採用・Phase 4 まで実装済み**（2026-07-28）
 - 詳細契約: [docs/44-markdown-code-editor.md](../44-markdown-code-editor.md)
 - 関連: [docs/dev/02-console.md](../dev/02-console.md)（Console のペイン構成）/
   [docs/dev/04-workspace-agent.md](../dev/04-workspace-agent.md)（fs の境界と denylist）/
@@ -104,6 +104,13 @@ Console の File ペインは現在、Workspace のファイルを読み取り�
   Agent側は応答からの `content` 除去のみで判定・排他・エラー契約を通常GETと共有し、Console側は
   undo履歴を残さないEditorState再構築と行番号ベースのカーソル/スクロール復元で追従する。
 - Phase 4 は read-only提案生成チャネル、identity付き構造化提案、差分レビュー、accept/rejectを実装する。
+  **2026-07-28に実装完了**（docs/44 §6 Phase 4）。UXは「選択範囲＋指示文」（rangeはユーザー選択で
+  確定し、LLMにoffsetを計算させない。選択なしは全文）、transportは同期POST
+  `POST /fs/suggest-edit`（envelopeはwireに載せずConsoleが合成して§4.2の検証を通す）、生成は
+  タイトル/返信サジェストと同じ `oneShotHeadless` を再利用し、唯一read-onlyでなかったopencode
+  one-shotへ `OPENCODE_CONFIG` のedit/bash denyポリシーを追加して閉じた。staleは保存せず
+  `baseRevision !== bufferRevision` から導出し、適用はCodeMirrorの範囲transaction 1回
+  （undo可能・共通validatorフィルタ通過）で行う。
 - Phase 5 の複数候補・hunk単位accept・セッション連携・補完・CRLF対応は別設計後に着手する。
 
 ## 却下した選択肢

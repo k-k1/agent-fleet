@@ -23,7 +23,9 @@ interface DiffViewProps {
 }
 
 // A rendered diff row: context / addition / deletion, with old/new line numbers.
-interface DiffRow {
+// Exported for the editor's AI-suggestion review panel (docs/44 Phase 4), which
+// renders the selection → replacement pair through the same lineDiff.
+export interface DiffRow {
   t: "ctx" | "add" | "del";
   text: string;
   o?: number;
@@ -88,7 +90,7 @@ export function DiffView({ title, tool, edits, wrap }: DiffViewProps) {
 // ctx|add|del with old/new line numbers. Empty sides (a Write's old="") produce
 // all-added rows. A size guard falls back to a plain remove-then-add for pathologically
 // large blocks so the DP table can't blow up.
-function lineDiff(oldStr: string, newStr: string): DiffRow[] {
+export function lineDiff(oldStr: string, newStr: string): DiffRow[] {
   const a = oldStr === "" ? [] : oldStr.replace(/\n$/, "").split("\n");
   const b = newStr === "" ? [] : newStr.replace(/\n$/, "").split("\n");
   const n = a.length,

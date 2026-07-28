@@ -441,6 +441,8 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/fs/search", rest)
 	mux.HandleFunc("GET /api/fs/file", rest)
 	mux.HandleFunc("PUT /api/fs/file", proxy.withResolved(proxy.fsFilePut))
+	// エディタの AI 変更提案（docs/44 Phase 4）— read-only 生成、監査対象外。
+	mux.HandleFunc("POST /api/fs/suggest-edit", rest)
 	mux.HandleFunc("GET /api/fs/download", rest)
 	mux.HandleFunc("POST /api/fs/upload", rest)
 	mux.HandleFunc("GET /api/fs/changes", rest)

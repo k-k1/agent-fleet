@@ -2740,6 +2740,7 @@ export const ja = {
   "usage.val.feature.branch.suggest": "ブランチ名の提案",
   "usage.val.feature.suggest.session": "返信候補（ミラー）",
   "usage.val.feature.suggest.chat": "返信候補（チャット）",
+  "usage.val.feature.suggest.edit": "変更提案（エディタ）",
   "usage.val.feature.unknown": "未分類",
   "usage.val.trigger.user": "利用者",
   "usage.val.trigger.auto": "自動",
@@ -2979,6 +2980,23 @@ export const ja = {
   "editor.unknown.retry": "状態を再取得",
   "editor.diff_aria": "mineとremoteの差分",
   "editor.popout_dirty": "未保存のファイルは別タブへ切り離せません。保存または破棄してから再試行してください。",
+
+  // === AI変更提案（docs/44 Phase 4） ===
+  "editor.suggestion.button": "AI提案",
+  "editor.suggestion.button_tip": "選択範囲（未選択なら全文）への変更をAIに提案させる",
+  "editor.suggestion.title": "AIによる変更提案",
+  "editor.suggestion.compose_hint": "エディタの選択範囲が対象です。選択が無いときは全文が対象になります。",
+  "editor.suggestion.placeholder": "変更してほしい内容を指示（Ctrl+Enterで生成）",
+  "editor.suggestion.generate": "生成",
+  "editor.suggestion.generating": "生成中…",
+  "editor.suggestion.apply": "適用",
+  "editor.suggestion.reject": "却下",
+  "editor.suggestion.stale": "本文が変わったため、この提案は適用できません。再生成してください。",
+  "editor.suggestion.failed": "提案の生成に失敗しました。",
+  "editor.suggestion.timeout": "提案の生成がタイムアウトしました。",
+  "editor.suggestion.selection_too_large": "選択範囲が大きすぎて提案できません。",
+  "editor.suggestion.instruction_invalid": "指示文が空か長すぎます。",
+  "editor.suggestion.invalid": "この提案は適用できません。",
 
 
   // === エージェントメモリの版管理（docs/39 P2 / ADR 0022・features/settings/MemoryTab.tsx） ===

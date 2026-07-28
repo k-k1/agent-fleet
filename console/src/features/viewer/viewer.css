@@ -1160,6 +1160,43 @@
 .file-diff-column .diff-remote {
   background: rgb(63 185 80 / 14%);
 }
+/* AI提案パネル（docs/44 Phase 4）: 競合パネルの器を流用し、警告色ではなく
+   通常のボーダーで「エラーではない」ことを示す。 */
+.file-editor-suggest {
+  border-color: var(--border);
+}
+.file-editor-suggest textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 6px 8px;
+  font: 13px/1.5 var(--sans, inherit);
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  resize: vertical;
+}
+.file-suggest-diff {
+  max-height: 300px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.file-suggest-diff pre {
+  margin: 0;
+  padding: 6px 8px;
+  font: 12px/1.45 var(--mono);
+  white-space: pre;
+}
+.file-suggest-diff span {
+  display: block;
+}
+.file-suggest-diff .diff-mine {
+  background: rgb(248 81 73 / 14%);
+}
+.file-suggest-diff .diff-remote {
+  background: rgb(63 185 80 / 14%);
+}
 .file-merge-reference {
   max-height: 30%;
   overflow: auto;

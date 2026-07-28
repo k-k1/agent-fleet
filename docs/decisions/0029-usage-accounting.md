@@ -48,7 +48,7 @@
 
 | 次元 | 値 |
 |---|---|
-| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `session` / `unknown` |
+| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `unknown` |
 | `trigger` | `user` / `auto` / `manual` / `schedule` / `operator` / `bridge` / `recovery` |
 | `origin` | `user` / `operator` / `schedule` / `handoff` / `unknown` |
 | `model_src` | `reported` / `requested` / `default_unknown` |
