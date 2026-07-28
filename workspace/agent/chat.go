@@ -44,6 +44,13 @@ type chatMessage struct {
 	// from chatConversation.Agent when auth loss makes the chat fall back to another
 	// connected CLI. Empty on legacy messages whose executing backend was not recorded.
 	Agent string `json:"agent,omitempty"`
+	// Model is the model that drove THIS assistant turn — the value the CLI itself
+	// reported (claude/opencode) or, for the CLIs that report none, the exact value we
+	// passed on the command line for this turn. Never the conversation's current
+	// setting: a model change (or a fallback to another backend) must not rewrite what
+	// past turns were answered with. Empty when nothing was passed and nothing was
+	// reported (e.g. cursor's "auto") — the UI then shows no model rather than a guess.
+	Model string `json:"model,omitempty"`
 	// Steps is the assistant turn's working process (narration before each tool call),
 	// separated from Content (the final answer). Empty for user turns and tool-less replies.
 	Steps []chatStep `json:"steps,omitempty"`
@@ -154,7 +161,24 @@ type chatConversation struct {
 	// next prompt as a preamble — the new provider session's seed context. Cleared
 	// only after that turn succeeds (injectHandoff / chat_compact.go).
 	PendingHandoff string `json:"pending_handoff,omitempty"`
+	// turnModel carries the model of the turn currently running, from the provider
+	// (which alone knows what it passed / what the CLI reported) to the caller that
+	// appends the assistant message. Unexported = never persisted and never sent to the
+	// Console: it is scratch for one turn, while chatMessage.Model is the record.
+	// Every provider clears it on entry and sets it only on success, so a failed or
+	// non-answering call can never lend its model to the next appended message.
+	turnModel string
 }
+
+// startTurn resets the per-turn scratch state. Called at the top of every provider
+// send/sendStream — including the ones that end up not reporting a model at all, so a
+// previous call in the same request (an auto-compaction turn, a retry after recovery)
+// cannot leak its model into this turn's message.
+func (c *chatConversation) startTurn() { c.turnModel = "" }
+
+// noteTurnModel records the model that actually drove this turn. Providers call it at
+// their success point only.
+func (c *chatConversation) noteTurnModel(model string) { c.turnModel = strings.TrimSpace(model) }
 
 // afToolsEnabled reports whether the fleet MCP tools attach to this chat at all (read
 // or write grant). New conversations set Tools; pre-assistant conversations only have

@@ -14,6 +14,7 @@ import { useDraft, moveDraft, clearDraft } from "../../lib/draft.ts";
 import { useDragScroll } from "../../lib/dragScroll.ts";
 import { scrollComposerViewport } from "../../lib/keyScroll.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
+import { prettyModel } from "../../lib/modelName.ts";
 import { t, tCount, useT } from "../../lib/i18n/index.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { useSettings, setSetting, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
@@ -1145,6 +1146,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
                   steps={m.steps}
                   ts={m.ts}
                   agentName={turnAgent?.assistantName || tr("chat.assistant_fallback")}
+                  model={m.model}
                   voice={{ ...(assistantVoiceOpts(assistId, assistVoice) ?? {}), paneId }}
                   highlight={i === conv.messages.length - 1 ? karaokeText : null}
                 />
@@ -1551,6 +1553,7 @@ function AssistantTurn({
   steps,
   ts,
   agentName,
+  model,
   voice,
   highlight,
 }: {
@@ -1558,6 +1561,7 @@ function AssistantTurn({
   steps?: ChatStep[];
   ts: number;
   agentName: string;
+  model?: string;
   voice?: Partial<TtsOptions>;
   highlight?: string | null;
 }) {
@@ -1655,7 +1659,18 @@ function AssistantTurn({
 
   return (
     <>
-      <div className="chat-role">{agentName}</div>
+      <div className="chat-role">
+        {agentName}
+        {/* The model that answered, faint beside the agent name — the mirror's turn
+            header contract (.mt-model) applied to the chat. Recorded per turn, so a
+            thread that changed model (or fell back to another backend) shows what each
+            reply was actually produced with. title keeps the raw id copyable. */}
+        {model && (
+          <span className="chat-model" title={model}>
+            {prettyModel(model)}
+          </span>
+        )}
+      </div>
       {/* 作業過程（ツール応答）は最終回答の上に折りたたんで表示（既定は畳む・保持）。 */}
       {steps && steps.length > 0 && <ChatSteps steps={steps} />}
       <div className="chat-body" ref={bodyRef} onMouseUp={onMouseUp}>

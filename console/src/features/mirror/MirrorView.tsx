@@ -19,6 +19,7 @@ import { useDragScroll } from "../../lib/dragScroll.ts";
 import { scrollComposerViewport } from "../../lib/keyScroll.ts";
 import { useBackClose } from "../../lib/backClose.ts";
 import { fmtDateTime, fmtNum } from "../../lib/intl.ts";
+import { prettyModel } from "../../lib/modelName.ts";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import {
   readTurn,
@@ -4247,14 +4248,6 @@ function CopyButton({ text }: { text: string }) {
       <Icon name={done ? "check" : "copy"} /> {done ? tr("chat.copied") : tr("chat.copy")}
     </button>
   );
-}
-
-// prettyModel shortens a model id for the turn header: "claude-opus-4-8" → "opus 4.8".
-function prettyModel(m: string) {
-  return m
-    .replace(/^claude-/, "")
-    .replace(/-(\d+)-(\d+)$/, " $1.$2")
-    .replace(/-latest$/, "");
 }
 
 // prettyCwd collapses the home prefix to ~ so the working dir reads compactly.
