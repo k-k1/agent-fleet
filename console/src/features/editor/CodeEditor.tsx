@@ -12,18 +12,8 @@ import { defaultKeymap, historyKeymap, indentWithTab } from "@codemirror/command
 import { searchKeymap } from "@codemirror/search";
 import { loadLanguageExtension } from "./languages.ts";
 import { validateEditorBuffer, type BufferValidationError } from "./buffer.ts";
-import { lineStartOf, selectionRangeOf, type EditorSelectionRange } from "./selection.ts";
+import { lineStartOf, selectionRangeOf, type EditorSelectionReport } from "./selection.ts";
 import { t } from "../../lib/i18n/index.ts";
-
-/** A selection, plus where to put UI beside it. `coords` is null when the
- *  selection start is scrolled out of the rendered range. */
-export interface EditorSelectionReport extends EditorSelectionRange {
-  coords: { left: number; top: number } | null;
-  /** `selection` when the user moved the selection or edited the document,
-   *  `geometry` when only the layout moved and the same selection is being
-   *  re-measured. A re-measurement must not be mistaken for a new selection. */
-  reason: "selection" | "geometry";
-}
 
 interface CodeEditorProps {
   path: string;
