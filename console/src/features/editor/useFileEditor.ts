@@ -1,9 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getEditableFile, putFile, type EditableFile, type FileProbeResult } from "./api.ts";
+import {
+  getEditableFile,
+  putFile,
+  suggestEdit,
+  type EditableFile,
+  type FileProbeResult,
+} from "./api.ts";
 import {
   CLEAN_PHASES,
   acceptUnknownRisk,
   adoptRemote,
+  applySuggestion,
   beginSave,
   classifyUnknownRemote,
   conflictFound,
@@ -19,11 +26,19 @@ import {
   saveFailed,
   saveStateUnknown,
   saveSucceeded,
+  setSuggestion,
   startManualMerge,
   type FileEditorModel,
   type RemoteSnapshot,
   type SaveSnapshot,
 } from "./model.ts";
+import {
+  checkSuggestion,
+  suggestWindows,
+  SUGGEST_MAX_INSTRUCTION_BYTES,
+  type EditRange,
+  type EditSuggestionEnvelope,
+} from "./suggest.ts";
 import { RecoveryCoordinator } from "./recovery.ts";
 import {
   notifyDirtyEditorChanged,
@@ -39,6 +54,10 @@ interface InitialEditableFile {
 
 const isCleanForFollow = (model: FileEditorModel): boolean =>
   !model.dirty && CLEAN_PHASES.includes(model.phase);
+
+// 提案リクエストの識別子（docs/44 §4.1 requestId）。応答の合成先を特定できれば
+// よいので、セッション内で単調なカウンタで足りる。
+let suggestSeq = 0;
 
 function remoteFromFile(
   file: Awaited<ReturnType<typeof getEditableFile>>,
@@ -414,6 +433,111 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     }
   }, [setModel]);
 
+  // --- AI 変更提案（docs/44 §4 / Phase 4） ---
+
+  const [suggesting, setSuggesting] = useState(false);
+  const suggestReqRef = useRef<string | null>(null);
+
+  /** 選択範囲＋指示文で提案を生成する。成功時は model.suggestion に載せて null、
+   *  失敗時は表示用の安定 code を返す（提案は advisory なので例外は投げない）。
+   *  応答は identity（path/requestId）と revision 三重一致の再検証を通ったものだけ
+   *  採用する — 生成中にユーザーが入力していれば `suggestion_stale`。 */
+  const requestSuggestion = useCallback(
+    async (instruction: string, range: EditRange): Promise<string | null> => {
+      const current = modelRef.current;
+      if (!current || savingRef.current) return "suggestion_invalid";
+      const trimmed = instruction.trim();
+      if (
+        trimmed === "" ||
+        new TextEncoder().encode(trimmed).byteLength > SUGGEST_MAX_INSTRUCTION_BYTES
+      ) {
+        return "instruction_invalid";
+      }
+      const { from, to } = range;
+      if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < from || to > current.content.length) {
+        return "suggestion_invalid";
+      }
+      const windows = suggestWindows(current.content, range);
+      if (!windows) return "selection_too_large";
+      const path = current.path;
+      const paneIdAtRequest = current.paneId;
+      const sourceRevision = current.bufferRevision;
+      const requestId = `suggest-${++suggestSeq}`;
+      suggestReqRef.current = requestId;
+      setSuggesting(true);
+      try {
+        const result = await suggestEdit({ path, instruction: trimmed, ...windows });
+        // 新しいリクエスト・ファイル切替・reject に追い越された応答は黙って捨てる。
+        if (suggestReqRef.current !== requestId) return null;
+        const latest = modelRef.current;
+        if (!latest || latest.path !== path) return null;
+        if (!result.ok) return result.code;
+        const envelope: EditSuggestionEnvelope = {
+          kind: "edit_suggestion",
+          version: 1,
+          paneId: paneIdAtRequest,
+          filePath: path,
+          requestId,
+          sourceRevision,
+          suggestion: {
+            summary: result.summary,
+            replacement: result.replacement,
+            range,
+            baseRevision: sourceRevision,
+          },
+        };
+        const check = checkSuggestion(envelope, latest);
+        if (!check.ok) return check.code;
+        setModel(setSuggestion(latest, envelope));
+        return null;
+      } finally {
+        if (suggestReqRef.current === requestId) {
+          suggestReqRef.current = null;
+          setSuggesting(false);
+        }
+      }
+    },
+    [setModel],
+  );
+
+  /** 生成中のリクエストを破棄する（応答が来ても捨てる）。 */
+  const cancelSuggestion = useCallback(() => {
+    suggestReqRef.current = null;
+    setSuggesting(false);
+  }, []);
+
+  /** 提案をバッファへ適用する（docs/44 §4.3: PUT は呼ばない）。applyToView が
+   *  与えられ true を返した場合は CodeMirror の範囲 transaction（undo 1ステップ・
+   *  validator 通過済み）→ onChange → editBuffer が本文を進めるので、ここでは提案の
+   *  退役だけを行う。編集面が無いときは model 側で適用し content 同期に任せる。
+   *  失敗時は安定 code（`suggestion_stale` 等）を返し、提案は保持する。 */
+  const acceptSuggestion = useCallback(
+    (applyToView?: (edit: { from: number; to: number; insert: string }) => boolean): string | null => {
+      const current = modelRef.current;
+      const envelope = current?.suggestion;
+      if (!current || !envelope) return "suggestion_invalid";
+      const check = checkSuggestion(envelope, current);
+      if (!check.ok) return check.code;
+      if (applyToView) {
+        const { range } = envelope.suggestion;
+        if (!applyToView({ from: range.from, to: range.to, insert: envelope.suggestion.replacement })) {
+          return "suggestion_invalid";
+        }
+        setModel(setSuggestion(modelRef.current!, null));
+        return null;
+      }
+      setModel(applySuggestion(current));
+      return null;
+    },
+    [setModel],
+  );
+
+  /** 提案を破棄する。バッファは変更しない（docs/44 §1.3）。 */
+  const rejectSuggestion = useCallback(() => {
+    const current = modelRef.current;
+    if (current?.suggestion) setModel(setSuggestion(current, null));
+  }, [setModel]);
+
   const manualMerge = useCallback(() => {
     const current = modelRef.current;
     if (current?.conflict) {
@@ -438,5 +562,10 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     discard,
     applyProbeResult,
     confirmExternalChange,
+    suggesting,
+    requestSuggestion,
+    cancelSuggestion,
+    acceptSuggestion,
+    rejectSuggestion,
   };
 }

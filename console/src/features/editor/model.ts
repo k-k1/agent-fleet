@@ -1,4 +1,5 @@
 import { requireRevision, revisionOf, validateEditorBuffer } from "./buffer.ts";
+import { checkSuggestion, type EditSuggestionEnvelope } from "./suggest.ts";
 
 export type EditorPhase =
   | "clean"
@@ -78,6 +79,12 @@ export interface FileEditorModel {
   followEpoch: number;
   riskAccepted: boolean;
   message: string;
+  /** Pending AI edit suggestion (docs/44 §4). Advisory beside `phase` like
+   *  `externalObservation`: it never drives `phase`, and staleness is DERIVED
+   *  (suggestion.baseRevision !== bufferRevision) rather than stored, so a
+   *  buffer edit during review makes it stale without extra transitions.
+   *  Accept re-checks the revision triple; a stale accept never applies. */
+  suggestion: EditSuggestionEnvelope | null;
 }
 
 export function createFileEditorModel(
@@ -107,6 +114,7 @@ export function createFileEditorModel(
     followEpoch: 0,
     riskAccepted: false,
     message: "",
+    suggestion: null,
   };
 }
 
@@ -322,6 +330,29 @@ export function discardToBase(model: FileEditorModel): FileEditorModel {
   // The follow epoch is preserved: a discard replaces the buffer through the
   // ordinary content sync and stays undoable, unlike an auto-follow.
   return { ...clean, bufferGeneration: model.bufferGeneration + 1, followEpoch: model.followEpoch };
+}
+
+/** Record (or clear) the pending AI suggestion (docs/44 §4). Advisory only:
+ *  `phase`, the buffer, and every base revision stay untouched. The caller
+ *  validates the envelope (checkSuggestion) before recording it. */
+export function setSuggestion(
+  model: FileEditorModel,
+  suggestion: EditSuggestionEnvelope | null,
+): FileEditorModel {
+  return { ...model, suggestion };
+}
+
+/** Accept the pending suggestion into the buffer (docs/44 §4.2/§4.3): re-check
+ *  identity, the revision triple, the range, and the shared buffer validator
+ *  against the CURRENT buffer, then apply through editBuffer — the buffer goes
+ *  dirty and nothing here touches PUT. Throws the stable UI code
+ *  (`suggestion_stale` etc.) when the check fails; the suggestion is retired
+ *  either way only on success. */
+export function applySuggestion(model: FileEditorModel): FileEditorModel {
+  if (!model.suggestion) throw new Error("suggestion_invalid");
+  const check = checkSuggestion(model.suggestion, model);
+  if (!check.ok) throw new Error(check.code);
+  return { ...editBuffer(model, check.applied), suggestion: null };
 }
 
 /** Record (or clear) what the probe observed. Advisory only: `phase`, the
