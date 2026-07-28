@@ -161,8 +161,15 @@ func dispatchMCPStdio(line []byte) []byte {
 		}
 		return mcpResult(req.ID, map[string]any{"resultType": "complete"})
 	case "tools/list":
+		// ttlMs / cacheScope は 2026-07-28 の list 系結果の必須フィールド（キャッシュ可能
+		// リスト）。opencode 1.18.8 の新 era クライアントは欠落を zod で弾き「Failed to
+		// get tools」でサーバーごと切断する。旧クライアントは未知キーとして無視する
+		// （resultType と同じ扱い — 1.18.5 実測）。ツール集合は --write で決まる静的な
+		// 利用者固有リストなので private。
 		return mcpResult(req.ID, map[string]any{
 			"resultType": "complete",
+			"ttlMs":      60000,
+			"cacheScope": "private",
 			"tools":      mcpStdioToolList(),
 		})
 	case "tools/call":
