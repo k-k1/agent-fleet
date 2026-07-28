@@ -27,6 +27,10 @@ export interface AgentCaps {
   tuiStartMode: boolean; // the TUI launch command can start deterministically in plan/normal
   contextBar: boolean; // shows the context-window token gauge
   imagePaste: boolean; // chat composer accepts pasted images (claude Read-tool flow)
+  // composer offers the slash skill/command picker (GET /sessions/{name}/skills —
+  // docs/50). claude-only in v1; cursor/kiro could feed it from ACP
+  // available_commands later without touching the UI.
+  slashSkills: boolean;
   planMode: boolean; // chat offers a plan-mode toggle (drives the TUI's mode-cycle key)
   ephemeral: boolean; // archiving deletes it (no keep) — shell / ssm
   runsInDir: boolean; // launches in a working dir (clone / dir source) — the agents
@@ -102,6 +106,7 @@ function caps(overrides: Partial<AgentCaps>): AgentCaps {
     tuiStartMode: false,
     contextBar: false,
     imagePaste: false,
+    slashSkills: false,
     planMode: false,
     ephemeral: false,
     runsInDir: false,
@@ -138,6 +143,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       tuiStartMode: true, // --permission-mode plan / bypassPermissions
       contextBar: true,
       imagePaste: true,
+      slashSkills: true,
       planMode: true,
       runsInDir: true,
       launchableFromRepo: true,

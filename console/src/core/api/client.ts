@@ -641,6 +641,20 @@ export interface PromptTemplateGroup {
 export const repoPromptTemplates = (name: string): Promise<{ groups: PromptTemplateGroup[] }> =>
   api(`api/repos/${encodeURIComponent(name)}/prompt-templates`);
 
+// --- session slash skills (mirror スキルピッカー, docs/50 / ADR0034) ---
+// Slash-invocable skills/commands for a RUNNING session: the Agent scans the
+// session's worktree .claude/skills + .claude/commands plus the user-level
+// claude config dir. Claude-only in v1 (other kinds answer an empty list).
+export interface SessionSkill {
+  name: string; // slash name, no leading "/"
+  description?: string;
+  argumentHint?: string;
+  source: "project" | "user";
+  type: "skill" | "command";
+}
+export const sessionSkills = (session: string): Promise<{ skills: SessionSkill[] }> =>
+  api(`api/sessions/${encodeURIComponent(session)}/skills`);
+
 // --- memo queue (docs/21) ---
 // Per-membership notes accumulated across devices, then flushed to a session as one
 // message. Persisted in the Control Plane (membership-scoped), so they sync between
