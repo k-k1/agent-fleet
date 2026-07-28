@@ -46,6 +46,11 @@ type config struct {
 	// rows to one per (day, host). Both empty/nil unless egress is configured.
 	egressToken string
 	egressDedup *egressAuditDedup
+	// egressProxyAddr mirrors AF_EGRESS_PROXY_ADDR: set = workspace containers are
+	// actually routed through the forward proxy. The member-facing check reports it as
+	// `configured` so the Console only warns about unreachable MCP hosts on deployments
+	// where egress really is constrained (docs/48 §9).
+	egressProxyAddr string
 	// TTS 読み上げ（docs/24 + ADR0013）: CP が直接叩く VOICEVOX エンジンの base URL。
 	// dev は host 起動の CP から docker 公開の 127.0.0.1:50021 へ。AWS は ECS + Cloud Map
 	// の固定 DNS を差し込む（Phase 2）。
@@ -141,7 +146,8 @@ func main() {
 	// DEFAULT OFF — nothing changes unless AF_EGRESS_PROXY_ADDR is set. Must run BEFORE
 	// the runtime factory below, which snapshots mgr.extraEnv by value. Attribution is
 	// coarse in this first cut (shared env, no per-workspace identity; docs/20 §D.3).
-	if addr := os.Getenv("AF_EGRESS_PROXY_ADDR"); addr != "" {
+	egressProxyAddr := os.Getenv("AF_EGRESS_PROXY_ADDR")
+	if addr := egressProxyAddr; addr != "" {
 		pu := "http://" + addr
 		mgr.extraEnv = append(mgr.extraEnv,
 			"http_proxy="+pu, "https_proxy="+pu, "HTTP_PROXY="+pu, "HTTPS_PROXY="+pu,
@@ -192,6 +198,8 @@ func main() {
 		// docs/20 M2 egress ingestion auth + audit dedup (empty token => endpoint 401s).
 		egressToken: os.Getenv("AF_EGRESS_TOKEN"),
 		egressDedup: &egressAuditDedup{},
+		// Whether containers are actually routed through the proxy (docs/48 §9).
+		egressProxyAddr: egressProxyAddr,
 		// docs/24 TTS: 既定は dev の docker 公開先（host loopback）。
 		voicevoxURL: envOr("AF_VOICEVOX_URL", "http://127.0.0.1:50021"),
 	}

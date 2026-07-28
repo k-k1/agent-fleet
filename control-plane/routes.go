@@ -122,7 +122,7 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	exemptPrefix("/internal/")
 	tn := newTenantAPI(cfg.mgr)
 	adm := newAdminAPI(cfg.mgr)
-	eg := newEgressAPI(cfg.mgr, cfg.egressToken, cfg.egressDedup)
+	eg := newEgressAPI(cfg.mgr, cfg.egressToken, cfg.egressProxyAddr, cfg.egressDedup)
 	mux.HandleFunc("GET /api/tenants", tn.withIdentity(tn.list))
 	mux.HandleFunc("GET /api/admin/tenants", adm.withIdentity(adm.listTenants))
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/members", adm.listMembers)
@@ -147,6 +147,11 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/admin/egress/allowlist/{id}/state", eg.withSuperAdmin(eg.allowlistState)) // approve/retire (super_admin)
 	mux.HandleFunc("GET /api/admin/egress/mode", eg.withSuperAdmin(eg.mode))                            // read egress mode (super_admin)
 	mux.HandleFunc("PUT /api/admin/egress/mode", eg.withSuperAdmin(eg.mode))                            // set log-only/enforce (super_admin)
+	// Member face (docs/48 §9): "can a workspace reach this MCP server's host, and if not,
+	// let me ask". The write produces a PROPOSED entry only — approval stays super_admin
+	// on the routes above, so this cannot widen egress (egress_member.go).
+	mux.HandleFunc("GET /api/egress/check", eg.withMembership(eg.checkHosts)) // per-host verdict + deployment mode
+	mux.HandleFunc("POST /api/egress/propose", eg.withMembership(eg.propose)) // request an allowlist entry (proposed)
 }
 
 // Personal Access Tokens (Console-issued) for the MCP endpoint (docs/0006).

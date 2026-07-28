@@ -123,6 +123,20 @@ const re = [
   [/^\/api\/usage\/series$/, (m, q) => fx.usageSeries(LOCALE, q)],
   [/^\/api\/fs\/list$/, (m, q) => fx.fsList(LOCALE, q.get("path") || "")],
   [/^\/api\/fs\/file$/, (m, q) => fx.fsFile(LOCALE, q.get("path") || "")],
+  // Egress allowlist verdicts for the MCP tab (docs/48 §9). This deployment HAS the
+  // proxy wired and is still log-only, and the corp wiki host is not on the list — the
+  // combination that renders the "works today, blocked once enforced" warning.
+  [
+    /^\/api\/egress\/check$/,
+    (m, q) => ({
+      configured: true,
+      mode: "log-only",
+      enforce: false,
+      hosts: Object.fromEntries(
+        q.getAll("host").map((h) => [h, { host: h, allowed: h.endsWith(".anthropic.com"), proposed: false }]),
+      ),
+    }),
+  ],
 ];
 
 const seenUnknown = new Set();

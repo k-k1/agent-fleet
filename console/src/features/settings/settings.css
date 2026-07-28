@@ -1347,6 +1347,25 @@
 .ps-note-warn {
   color: var(--warn);
 }
+/* Egress allowlist warning + request form on an MCP row / form (docs/48 §9). Shares
+   .ps-note so it reads as one of the row's notes rather than a separate alert box. */
+.egress-mcp-note {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.egress-mcp-ask {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+.egress-mcp-ask .cinput {
+  flex: 1 1 220px;
+  min-width: 0;
+}
 /* Narrow screens: stack the label above its control so a wide segmented control
    (e.g. copilot's 7-option effort) wraps across the full width instead of crushing
    the label / overflowing the row. The control's .choice-seg already flex-wraps. */

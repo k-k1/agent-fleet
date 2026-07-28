@@ -24,6 +24,11 @@ import {
   toKV,
 } from "./mcpWire.ts";
 import type { Form, KV, McpServer, ProbeResult, Registry } from "./mcpWire.ts";
+// Egress allowlist tie-in (docs/48 §9): a remote server the deployment's proxy will not
+// let the workspace reach is warned about here, where it can still be acted on.
+import { EgressNote, useEgressCheck } from "./EgressNote.tsx";
+import { hostsOf } from "./egressCheck.ts";
+import type { EgressCheck } from "./egressCheck.ts";
 import { fmtDateTime, DATETIME_FULL } from "../../lib/intl.ts";
 
 // McpTab — the member's own MCP server registry (docs/48 P1 + ADR0031). Lists the
@@ -60,6 +65,11 @@ export function McpTab() {
   const [refreshing, setRefreshing] = useState(false);
   // Which tenant user_secret row is having its values entered ("" = none).
   const [secretFor, setSecretFor] = useState<McpServer | null>(null);
+  // Every remote destination on screen, including the one being typed into the open form.
+  // Declared here (not after the loading guards) because it feeds a hook.
+  const { check: egress, recheck: recheckEgress } = useEgressCheck(
+    hostsOf([...(reg?.servers || []).map((s) => s.url), form?.url]),
+  );
 
   // A CP 502 while the agent is still booting must not render as "no servers
   // registered" — retry, and never downgrade a snapshot we already have
@@ -214,6 +224,8 @@ export function McpTab() {
                   onSave={save}
                   onTest={test}
                   probe={probes[s.id]}
+                  egress={egress}
+                  onProposed={recheckEgress}
                   submitLabel={tr("common.save")}
                 />
               </li>
@@ -226,6 +238,8 @@ export function McpTab() {
                 key={s.id}
                 s={s}
                 probe={probes[s.id]}
+                egress={egress}
+                onProposed={recheckEgress}
                 onEdit={() => setForm(formOf(s))}
                 onTest={() => void test(formOf(s))}
                 onToggle={(on) => void setEnabled(s, on)}
@@ -244,6 +258,8 @@ export function McpTab() {
             onSave={save}
             onTest={test}
             probe={probes[""]}
+            egress={egress}
+            onProposed={recheckEgress}
             submitLabel={tr("mcp.add")}
           />
         </div>
@@ -270,6 +286,8 @@ function OriginBadge({ origin }: { origin: string }) {
 function ServerRow({
   s,
   probe,
+  egress,
+  onProposed,
   onEdit,
   onTest,
   onToggle,
@@ -278,6 +296,8 @@ function ServerRow({
 }: {
   s: McpServer;
   probe?: ProbeResult;
+  egress: EgressCheck | null;
+  onProposed: () => void;
   onEdit: () => void;
   onTest: () => void;
   onToggle: (on: boolean) => void;
@@ -356,6 +376,12 @@ function ServerRow({
           {needsMemberSecrets(s) ? tr("mcp.needs_member_secrets") : tr("mcp.not_ready")}
         </p>
       )}
+      <EgressNote
+        url={s.url}
+        check={egress}
+        defaultReason={tr("mcp.egress_reason_for", { name: s.name })}
+        onProposed={onProposed}
+      />
       {s.origin === "builtin" && <p className="ps-note">{tr("mcp.builtin_note")}</p>}
       {s.origin === "tenant" && (
         <p className="ps-note">{s.userSecret ? tr("mcp.tenant_user_secret_note") : tr("mcp.tenant_note")}</p>
@@ -567,6 +593,8 @@ function ServerForm({
   onSave,
   onTest,
   probe,
+  egress,
+  onProposed,
   submitLabel,
 }: {
   form: Form;
@@ -574,6 +602,8 @@ function ServerForm({
   onSave: (f: Form) => Promise<boolean>;
   onTest: (f: Form) => Promise<void>;
   probe?: ProbeResult;
+  egress: EgressCheck | null;
+  onProposed: () => void;
   submitLabel: string;
 }) {
   const tr = useT();
@@ -736,6 +766,14 @@ function ServerForm({
           </Field>
         </div>
         {form.session && <p className="ps-note">{tr("mcp.session_restart_note")}</p>}
+        {form.transport === "http" && (
+          <EgressNote
+            url={form.url}
+            check={egress}
+            defaultReason={tr("mcp.egress_reason_for", { name: form.name.trim() || form.url.trim() })}
+            onProposed={onProposed}
+          />
+        )}
       </div>
       <ProbeView probe={probe} />
       <div className="ssm-frm-foot">

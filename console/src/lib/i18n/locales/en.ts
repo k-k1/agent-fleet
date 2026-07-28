@@ -94,6 +94,11 @@ export const en: Record<keyof typeof ja, string> = {
   "err.mcp_kind_unknown": "Unknown agent kind.",
   "err.mcp_timeout_range": "The timeout must be between 1000 and 120000 ms.",
   "err.mcp_headers_unreadable": "The stored headers cannot be decrypted — re-enter every header value.",
+  // Egress allowlist requests (docs/48 §9 / control-plane/egress_member.go)
+  "err.egress_entry_invalid":
+    "An allowlist entry must be a host or a .suffix.example.com — no scheme, port or path.",
+  "err.egress_entry_too_broad": "A whole TLD (.com and the like) cannot be requested — name a domain.",
+  "err.egress_too_many_proposals": "Too many pending requests — ask an administrator to work through the queue.",
   "err.mcp_tenant_bridge_off":
     "Tenant distribution is unavailable in this deployment (the CP public URL / token is unset).",
   "err.mcp_tenant_fetch_failed": "Could not fetch the tenant set.",
@@ -415,6 +420,18 @@ export const en: Record<keyof typeof ja, string> = {
   "mcp.enabled_on": "Enabled",
   "mcp.kv_value": "Value",
   "mcp.kv_masked_hint": "*** is the stored value. Leave it as-is to keep it unchanged.",
+  // --- egress allowlist tie-in (docs/48 §9, EgressNote.tsx) ---
+  // Say that a destination is (or is about to be) blocked while it can still be fixed.
+  "mcp.egress_blocked":
+    "This destination ({host}) is not on the outbound allowlist, so the workspace cannot reach it.",
+  "mcp.egress_would_block":
+    "This destination ({host}) is not on the outbound allowlist. It still works while egress is log-only, but it will stop once enforcement is switched on.",
+  "mcp.egress_pending": "{host} has been requested and is awaiting an administrator's approval.",
+  "mcp.egress_propose": "Request access",
+  "mcp.egress_reason_ph": "Why this destination is needed",
+  "mcp.egress_reason_for": "Used by the MCP server {name}",
+  "mcp.egress_send": "Send request",
+  "mcp.egress_propose_failed": "Could not send the request: {msg}",
   // --- Tenant distribution (docs/48 P4) ---
   "mcp.tenant_fetched_at": "Tenant set last fetched: {when}",
   "mcp.tenant_never_fetched":
