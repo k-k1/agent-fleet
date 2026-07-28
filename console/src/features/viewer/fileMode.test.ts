@@ -10,6 +10,7 @@ import {
   paneModeOf,
   reconcileFileMode,
   rendererControls,
+  surfaceKey,
   surfacesFor,
   withMarkdownMode,
   withPaneMode,
@@ -183,6 +184,30 @@ describe("control groups", () => {
     // The deck's front matter lost `marp: true` while slides was selected: the
     // group disappears rather than showing a pressed button that does nothing.
     expect(rendererControls(md({ md: "preview", renderer: "slides" }), caps())).toEqual([]);
+  });
+});
+
+describe("surfaceKey", () => {
+  it("ignores which renderer draws the preview", () => {
+    // Choosing a renderer is not moving to another surface, so it must not read
+    // as one (docs/44 §5 — focus follows the mode).
+    const marp = caps({ marp: true });
+    expect(surfaceKey(surfacesFor(md({ md: "split", renderer: "normal" }), marp))).toBe(
+      surfaceKey(surfacesFor(md({ md: "split", renderer: "slides" }), marp)),
+    );
+    expect(surfaceKey(surfacesFor(md({ md: "preview", renderer: "normal" }), marp))).toBe(
+      surfaceKey(surfacesFor(md({ md: "preview", renderer: "slides" }), marp)),
+    );
+  });
+
+  it("separates every move between surfaces", () => {
+    const c = caps();
+    const keys = (["edit", "preview", "split"] as const).map((m) =>
+      surfaceKey(surfacesFor(md({ md: m }), c)),
+    );
+    expect(new Set(keys).size).toBe(3);
+    // The read-only source is a different surface from the editor.
+    expect(surfaceKey(surfacesFor(md({ md: "edit" }), caps({ editable: false })))).not.toBe(keys[0]);
   });
 });
 

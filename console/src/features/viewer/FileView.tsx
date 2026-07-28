@@ -38,6 +38,7 @@ import {
   paneModeOf,
   reconcileFileMode,
   rendererControls,
+  surfaceKey,
   surfacesFor,
   withMarkdownMode,
   withPaneMode,
@@ -146,6 +147,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   // Bumped by each mode selection that lands on the editing surface; the effect
   // below turns one bump into one focus move (docs/44 §5).
   const [focusRequest, setFocusRequest] = useState(0);
+  const consumedFocusRef = useRef(0);
   const [editorNotice, setEditorNotice] = useState("");
   const [resolutionOpen, setResolutionOpen] = useState(true);
   const viewTabRef = useRef<HTMLButtonElement>(null);
@@ -322,19 +324,24 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   // §5). Opening a file — a citation lands in the source surface — must not pull
   // focus out of whatever the user was typing in.
   const updateMode = (next: (prev: FileModeState) => FileModeState) => {
-    const target = next(fileModeRef.current);
+    const current = fileModeRef.current;
+    const target = next(current);
+    const currentSurfaces = surfacesFor(current, capsRef.current);
     const nextSurfaces = surfacesFor(target, capsRef.current);
     const editorEl = bodyRef.current?.querySelector(".file-editor-cm");
     const leavingFocusedEditor =
       !nextSurfaces.editor && !!editorEl && editorEl.contains(document.activeElement);
     setModeState((prev) => ({ ...prev, mode: target }));
-    if (nextSurfaces.editor) {
-      // The selection itself is the unit of focus, not the surface appearing:
-      // split and edit both show the editor, so a switch between them changes no
-      // surface and would never re-run a visibility-driven effect. Counting the
+    if (nextSurfaces.editor && surfaceKey(nextSurfaces) !== surfaceKey(currentSurfaces)) {
+      // The move between surfaces is the unit of focus, not the surface merely
+      // being on screen: split and edit both show the editor, so a switch
+      // between them would never re-run a visibility-driven effect. Counting the
       // requests also makes a superseded one harmless — the effect reads the
       // surface as it ends up, so a request the next selection cancelled just
       // finds nothing to focus.
+      //
+      // Picking a preview renderer changes no surface, so it leaves focus on the
+      // renderer group the user is working in (docs/44 §5).
       setFocusRequest((n) => n + 1);
     } else if (leavingFocusedEditor) {
       // The keyboard command can hide the surface that holds focus; hand it to
@@ -355,7 +362,14 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!focusRequest || !surfaces.editor) return;
-    queueMicrotask(() => editorFocusRef.current?.());
+    queueMicrotask(() => {
+      // CodeMirror may not have mounted yet — the pane's controls appear a commit
+      // before the editor does. Leave the request unconsumed and let onReady take
+      // it, rather than dropping the focus move on a slow start or a fast click.
+      if (consumedFocusRef.current === focusRequest || !editorFocusRef.current) return;
+      consumedFocusRef.current = focusRequest;
+      editorFocusRef.current();
+    });
   }, [focusRequest]);
 
   // Opening or returning to a file view from a composer/terminal must also
@@ -738,6 +752,14 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
                 // appearing: the editor mounts as soon as the file is editable,
                 // which is often before the user has asked to edit anything.
                 editorFocusRef.current = focus;
+                // This prop is rebuilt every render, so the request and surfaces
+                // read here are the current ones: a request made while the editor
+                // was still mounting is honoured, one the user has since left
+                // behind is not.
+                if (focusRequest && surfaces.editor && consumedFocusRef.current !== focusRequest) {
+                  consumedFocusRef.current = focusRequest;
+                  focus();
+                }
               }}
             />
             {editor.mergeMine && (
