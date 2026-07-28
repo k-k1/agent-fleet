@@ -792,7 +792,19 @@ jsdomにはレイアウトが無いため、送るピルの座標・行ジャン
 
 ### Phase 3.5（外部変更追従）
 
-設計方針は §7。実装時の受け入れ条件は次のとおり。
+**実装完了（2026-07-28）。** 設計方針は §7。Agent は既存 `GET /fs/file` に `meta=1` を追加した
+（`fs_file_api.go`。応答から `content` を除くだけの後処理であり、path解決・denylist・symlink
+拒否・path mutex 待ち・editable判定順序・エラー契約は通常GETと完全共有）。CPのルート追加は無い。
+Console は `features/editor/probe.ts`（§7.2のゲート判定と即時トリガ＋12秒間隔のフック）、
+`api.ts` の `probeFileMeta`（例外を投げず全失敗を `unavailable` に畳むadvisory GET）、model の
+`externalObservation` / `followEpoch` / `observeExternal` / `followExternal`、`useFileEditor` の
+`applyProbeResult` / `confirmExternalChange`、`CodeEditor` の `followDocument`（EditorState を
+作り直して undo 履歴を残さず、カーソル・スクロールを行番号ベースで復元）、FileView の配線
+（編集バッファを持たない view ペインは取得本文で data を差し替え、選択中モードを維持）からなる。
+undo 不能と行復元は jsdom に加えて実 Chromium で確認した（500行文書・カーソル行200→200、
+スクロール誤差は1行以内）。
+
+実装時の受け入れ条件は次のとおり（すべて検証済み）。
 
 - Agentへ `meta=1` のメタデータ応答を実装し、通常のGETと同じ安全境界・判定順序・エラー契約を
   共有することをGo単体テストで確認する。新規ルートとCPのルート追加は行わない。
@@ -819,7 +831,7 @@ jsdomにはレイアウトが無いため、送るピルの座標・行ジャン
 
 ## 7. 外部変更の追従（Phase 3.5 設計方針）
 
-> 本節はPhase 3.5の方針を固定するもので、実装は未着手である。
+> 本節はPhase 3.5の方針を固定するものである。実装は2026-07-28に完了した（§6 Phase 3.5）。
 
 ### 7.1 前提
 
