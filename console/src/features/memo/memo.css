@@ -121,7 +121,7 @@
 .memo-cat-head {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 0;
   padding: 3px 5px;
   margin: 5px 0 2px;
   background: color-mix(in srgb, var(--muted) 12%, transparent);
@@ -146,11 +146,11 @@
 .memo-cat-caret:hover {
   color: var(--text);
 }
-/* Memos nest one level under their category header — indented just enough that a memo's
-   checkbox sits to the right of the category's (a clear parent→child step, not a shared
-   column), without pushing the rows' grips far from the left edge. */
+/* Memos sit almost flush under their category header — a hair of left padding keeps the
+   rows from touching the pane edge while maximizing usable width; the category bar's
+   background is what marks the parent→child grouping. */
 .memo-cat-items {
-  padding-left: 16px;
+  padding-left: 3px;
 }
 .memo-cat-check {
   display: flex;
