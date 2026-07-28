@@ -19,6 +19,26 @@
 - コミットを実行する直前に、完成したコミットメッセージ全体が規約を満たしている
   ことを再確認する。
 
+## Console のテストを走らせるとき
+
+**必ず `console/` をカレントディレクトリにして実行する。** リポジトリルートから
+`npx vitest` を叩くと、ルートには `package.json` も `node_modules` も無いため npx が
+別の vitest をダウンロードし、`console/vite.config.js` を読まないまま起動する。設定が
+効かないので environment は node になり、DOM テストは `document is not defined` で落ち、
+`--project` は「プロジェクトが見つからない」になる。設定の不具合と紛らわしいので注意する。
+
+```
+cd console
+npm test                       # 全プロジェクト
+npx vitest run --project=node  # 純ロジック（既定）
+npx vitest run --project=dom   # レンダーテスト（jsdom）
+npx vitest run src/features/viewer/FileView.dom.test.tsx   # ファイル指定でも可
+```
+
+テストは2プロジェクトに分かれている（`console/vite.config.js`）。jsdom 環境の構築は
+テストファイル1本あたり約1.3秒かかるため、既定は node のままとし、実際にコンポーネントを
+マウントするテストだけ `*.dom.test.tsx` で opt-in する。
+
 ## このリポジトリの UI を利用者に見てもらうとき
 
 Console（`console/`）の変更を利用者に確認してもらう場合は、開発サーバーを

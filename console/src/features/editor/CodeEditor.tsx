@@ -12,16 +12,21 @@ import { defaultKeymap, historyKeymap, indentWithTab } from "@codemirror/command
 import { searchKeymap } from "@codemirror/search";
 import { loadLanguageExtension } from "./languages.ts";
 import { validateEditorBuffer, type BufferValidationError } from "./buffer.ts";
+import { lineStartOf, selectionRangeOf, type EditorSelectionReport } from "./selection.ts";
 import { t } from "../../lib/i18n/index.ts";
 
 interface CodeEditorProps {
   path: string;
   content: string;
   wrap: boolean;
+  /** 1-based line to reveal — a citation that opened this file (docs/44 §1.8). */
+  targetLine?: number;
   onChange(content: string): void;
   onSave(): void;
   onValidationError(error: BufferValidationError): void;
   onReady?(focus: () => void): void;
+  /** Fires on every selection change with the quotable selection, or null. */
+  onSelectionChange?(selection: EditorSelectionReport | null): void;
 }
 
 export function filterBufferTransaction(
@@ -68,21 +73,34 @@ export function bufferValidationExtensions(
   ];
 }
 
+/** Scroll a 1-based line into view and put the cursor on it. The cursor is what
+ *  marks the line: `basicSetup`'s active-line highlight follows it, which is the
+ *  editing surface's equivalent of CodeView's target-line row. */
+export function revealLine(view: EditorView, line: number): void {
+  const position = lineStartOf(view.state, line);
+  view.dispatch({
+    selection: { anchor: position },
+    effects: EditorView.scrollIntoView(position, { y: "center" }),
+  });
+}
+
 export function CodeEditor({
   path,
   content,
   wrap,
+  targetLine,
   onChange,
   onSave,
   onValidationError,
   onReady,
+  onSelectionChange,
 }: CodeEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const wrappingRef = useRef<Compartment | null>(null);
   if (!wrappingRef.current) wrappingRef.current = new Compartment();
-  const callbacks = useRef({ onChange, onSave, onValidationError, onReady });
-  callbacks.current = { onChange, onSave, onValidationError, onReady };
+  const callbacks = useRef({ onChange, onSave, onValidationError, onReady, onSelectionChange });
+  callbacks.current = { onChange, onSave, onValidationError, onReady, onSelectionChange };
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -100,6 +118,18 @@ export function CodeEditor({
       bufferValidationExtensions((error) => callbacks.current.onValidationError(error)),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) callbacks.current.onChange(update.state.doc.toString());
+        // Geometry matters too: scrolling moves the selection's screen position
+        // (and can push it out of the rendered range), so any UI anchored to it
+        // has to be told. The quote itself always comes from the document.
+        const moved = update.docChanged || update.selectionSet;
+        if (!moved && !update.geometryChanged) return;
+        const report = callbacks.current.onSelectionChange;
+        if (!report) return;
+        const reason = moved ? "selection" : "geometry";
+        const range = selectionRangeOf(update.state);
+        if (!range) return report(null);
+        const coords = update.view.coordsAtPos(range.from);
+        report({ ...range, coords: coords ? { left: coords.left, top: coords.top } : null, reason });
       }),
       keymap.of([
         {
@@ -159,6 +189,15 @@ export function CodeEditor({
       effects: wrappingRef.current!.reconfigure(wrap ? EditorView.lineWrapping : []),
     });
   }, [wrap]);
+
+  // Reveal the cited line. `path` is a dependency so a citation that opens a
+  // different file still jumps: the view above is rebuilt for the new path and
+  // this effect, declared after it, runs against the fresh instance.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || !targetLine) return;
+    revealLine(view, targetLine);
+  }, [path, targetLine]);
 
   return <div className="file-editor-cm" ref={hostRef} />;
 }

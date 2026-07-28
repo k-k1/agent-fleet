@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
 import { defineConfig } from "vite";
+import { configDefaults } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 // marp-core statically requires mathjax-full (~43MB) and katex for its math
@@ -70,15 +71,40 @@ export default defineConfig({
     sourcemap: false,
     chunkSizeWarningLimit: 1500,
   },
-  // vitest — pure-logic tests only (layout ops, parsers, stores); node env, no DOM.
-  // .tsx is included so component tests that assert on renderToStaticMarkup output run
-  // too: CommitGraph.test.tsx sat here silently unexecuted under a .ts-only glob while
-  // the graph it covers shipped with broken merge edges.
-  // Worker cap per the shared-host memory rule (workspace notes).
+  // vitest — two projects, because a jsdom environment costs ~1.3s to build per
+  // test FILE. Running everything under jsdom measured 10.8s -> 51.3s here, and
+  // the worker cap below (the shared-host memory rule, workspace notes) means
+  // that cannot be parallelised away. So the default stays node, and only tests
+  // that genuinely mount components opt in via the *.dom.test.tsx suffix.
   test: {
-    environment: "node",
-    include: ["src/**/*.test.{ts,tsx}"],
     maxWorkers: 2,
     minWorkers: 1,
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "node",
+          // Pure logic (layout ops, parsers, stores). .tsx is included so
+          // component tests that assert on renderToStaticMarkup output run too:
+          // CommitGraph.test.tsx sat here silently unexecuted under a .ts-only
+          // glob while the graph it covers shipped with broken merge edges.
+          environment: "node",
+          include: ["src/**/*.test.{ts,tsx}"],
+          exclude: [...configDefaults.exclude, "src/**/*.dom.test.tsx"],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          // Render tests: a real component tree over the real DOM. Vitest 4
+          // dropped the per-file `@vitest-environment` docblock, so the split
+          // has to be a project.
+          name: "dom",
+          environment: "jsdom",
+          include: ["src/**/*.dom.test.tsx"],
+          setupFiles: ["./src/test/domSetup.ts"],
+        },
+      },
+    ],
   },
 });
