@@ -1,9 +1,10 @@
 # 48. ユーザー / テナント独自 MCP サーバーの登録（MCP レジストリ）— 設計
 
-- 状態: **◐ P0 / P1 / P2 / P3 / P4 実装済み**（型・実効レジストリ合成・user スコープ CRUD・接続テスト・
-  Console「MCP サーバー」タブ・アシスタント配線・**claude / codex のセッション materialize**・
+- 状態: **◐ P0 / P1 / P2 / P3 / P4 実装済み＋P5 の materialize 完了**（型・実効レジストリ合成・
+  user スコープ CRUD・接続テスト・Console「MCP サーバー」タブ・アシスタント配線・
+  **全 kind のセッション materialize（claude / codex / opencode / copilot / cursor / kiro / agy）**・
   **テナントスコープの配布（CP テーブル / 管理 API / ブリッジ / 配布キャッシュ / `user_secret`）**）。
-  P5（残り kind の materialize ＋ egress allowlist 連携）は未着手。
+  P5 の残りは **egress allowlist 連携**のみ。
   意思決定は [decisions/0031](decisions/0031-mcp-registry.md)。
 - 関連: docs/19（アシスタント）/ [25](25-ops-monitoring.md)（組み込み ops 連携 = 本設計が一般化する対象）/
   [20](20-container-audit-egress.md)（egress allowlist）/ [46](46-usage-accounting.md)（残 P5 = MCP の使用量計上）/
@@ -324,24 +325,44 @@ Workspace agent ──(AF_MCP_TOKEN)──▶ CP GET /internal/mcp-servers      
 （materialize）方式を採る。起動フラグ方式（claude `--mcp-config` 等）は
 `--strict-mcp-config` を伴い、利用者自身のプロジェクト `.mcp.json` を締め出してしまうため採らない。
 
-**P3 実装済み = claude / codex**（`internal/mcpreg/materialize.go` + `materialize_claude.go` +
-`materialize_codex.go`、契機は `mcp_materialize.go`）。残り kind は P5。未配線の kind は
-エラーではなく `Skipped` を返す — 「まだ配線していない」は失敗ではない。
+**実装済み = 全 kind**（P3 で claude / codex、P5 で opencode / copilot / cursor / kiro / agy）。
+契機は `mcp_materialize.go`。codex 以外はどれも「JSON 文書の中のサーバー map 1 つ」なので、
+共通エンジン `materialize_json.go`（`jsonConfig`）＋ kind ごとの `materialize_<kind>.go`（ファイル・
+map のキー・エントリの綴り方）に分けてある。codex だけが TOML の行編集で例外
+（`materialize_codex.go`）。**エージェント CLI を持たない kind（shell / ssm）は `Skipped`** —
+書く先が無いのは失敗ではない。
 
-### 8.1 実測した設定契約（2026-07-27・本コンテナの焼き込み版）
+### 8.1 実測した設定契約（claude / codex は 2026-07-27、残りは P5 で 2026-07-28 に実測）
 
 | kind | 版 | ファイル | 形 | 確認方法 |
 |------|----|---------|----|---------|
 | claude | 2.1.220 | `$CLAUDE_CONFIG_DIR/.claude.json` | `mcpServers.<name> = {type:"stdio",command,args,env}` / `{type:"http",url,headers}` | `claude mcp add -s user` を隔離 `CLAUDE_CONFIG_DIR` で実行し生成物を確認 |
-| codex | 0.145.0 | `$CODEX_HOME/config.toml` | `[mcp_servers.<name>] command/args` + `[mcp_servers.<name>.env]` / `url` + `bearer_token_env_var` | `codex mcp add` を隔離 `CODEX_HOME` で実行し生成物を確認 |
-| copilot | 1.0.75 | `$COPILOT_HOME/mcp-config.json` | `mcpServers.<name> = {type:"local",command,args,tools:["*"]}` / `{type:"http",url,headers,tools:["*"]}` | `copilot mcp add` を隔離 `COPILOT_HOME` で実行し生成物を確認 |
-| opencode | 1.18.5 | `~/.config/opencode/opencode.jsonc` | `mcp.<name> = {type:"local",command:[…],environment,enabled}` / `{type:"remote",url,headers,enabled}` | 既存 af コード（`chat_providers.go:645`）＋ `opencode mcp add --url/--env/--header` のオプション |
-| kiro | 2.14.2 | `~/.kiro/settings/mcp.json` | `mcpServers.<name>`（command/args/env/timeout/disabled、`--url` で HTTP） | `kiro-cli mcp add --help`（**実生成物は未確認 — `mcp add` がログイン必須**） |
-| cursor | 2026.07.23 | `~/.cursor/mcp.json` | `mcpServers.<name>`（`command` の有無で stdio 判定。バンドル内に `.cursor/mcp.json` と `"command" in o` の分岐を確認） | CLI バンドルの静的確認（**リモート形は未確認**） |
-| agy | — | `~/.gemini/config/mcp_config.json` | claude 型 `mcpServers` | docs/32（本ホストは RDRAND 非対応で agy 実行不可） |
+| codex | 0.145.0 | `$CODEX_HOME/config.toml` | `[mcp_servers.<name>] command/args` + `[mcp_servers.<name>.env]` / `url` + `[mcp_servers.<name>.http_headers]` | `codex mcp add` を隔離 `CODEX_HOME` で実行し生成物を確認 |
+| copilot | 1.0.75 | `$COPILOT_HOME/mcp-config.json` | `mcpServers.<name> = {tools:["*"],type:"local",command,args,env}` / `{tools:["*"],type:"http",url,headers,timeout}` | `copilot mcp add` を隔離 `COPILOT_HOME` で実行し生成物を確認（0600 で生成される） |
+| opencode | 1.18.7 | `~/.config/opencode/opencode.jsonc` | `mcp.<name> = {type:"local",command:[…],environment}` / `{type:"remote",url,headers}` | `opencode mcp add --url/--env/--header` を隔離 HOME で実行し生成物を確認 |
+| kiro | 2.14.2 | `~/.kiro/settings/mcp.json` | `mcpServers.<name> = {command,args,env,timeout}` / `{url,headers,timeout}`（`type` 判別子なし） | `kiro-cli mcp add` を実行し生成物を確認（**`mcp` は全サブコマンドがログイン必須**）。ヘッダは実ターンで wire 到達まで確認 |
+| cursor | 2026.07.23 | `~/.cursor/mcp.json` | `mcpServers.<name> = {command,args,env,cwd}` / `{url,headers}`（`type` 判別子なし） | **`mcp add` が無い**ので逆向き — af が書いた設定を `cursor-agent mcp list` に読ませ、ヘッダは wire 到達まで確認 |
+| agy | — | `~/.gemini/config/mcp_config.json` | claude 型 `mcpServers`（`type` 判別子なし） | docs/32（本ホストは RDRAND 非対応で agy 実行不可・**唯一 drift 検知が置けない kind**） |
 
-未確認の 2 件（kiro のリモート形、cursor のリモート形）は **実装フェーズで実機確認してから配線する**。
-推測で書かない。
+**P5 で実測して確定した分**（未確認だった kiro / cursor のリモート形を含む）:
+
+- **kiro のリモートはヘッダを持てる**。`mcp add` に header フラグが無いだけで（codex と同じ話）、
+  手書きの `headers` は実際に wire へ載る — ヘッダ記録リスナー相手に `kiro-cli chat --no-interactive`
+  を 1 ターン走らせ、`Authorization` と独自ヘッダの到達を確認した。ここが無いと
+  **テナント配布サーバーだけが全滅する**（配布はリモート専用・決定 2、認証はヘッダ）。
+  `timeout` はミリ秒。`disabled` は既定 false なので af は書かない。
+- **cursor のリモートは `{url,headers}`**。`type` を付けても付けなくても `mcp list` は ready を返し、
+  独自ヘッダは wire に載った。バンドルのパーサも `"command" in o` / `"url"` で分岐しており、
+  読むのは `{command,args,env,cwd}` / `{url,headers}` だけ。**`timeout` は存在しない**ので書かない
+  （opencode も同様 — 効かない場所へ書くくらいなら落とす）。
+- **opencode は `opencode.jsonc` と `opencode.json` の両方を読んでマージする**。af は
+  **実在する方を 1 つだけ**編集する（`.jsonc` 優先 = CLI 自身と entrypoint が作る方）。
+  「もう一方」へ書くと同じサーバーが二重に載る。
+- **copilot の `timeout` はミリ秒**（codex の `startup_timeout_sec` と違い変換しない）。
+  `tools` は per-server のツールフィルタで、`mcp add` の既定は `["*"]`。af も同じ既定を明示する —
+  省略時の挙動が未文書で、**外すと「登録したのにツールが 1 つも出ない」に化けうる**唯一のキー。
+- **cursor / kiro / agy には `type` 判別子が無い**（`command` か `url` かで決まる）。claude・codex・
+  copilot・opencode は持つ。同じ `mcpServers` という名前でも中身の綴りは 3 系統に割れている。
 
 **P3 で再実測して確定した分**（claude 2.1.220 / codex-cli 0.145.0、隔離 HOME での `mcp add` 生成物）:
 
@@ -381,7 +402,10 @@ Workspace agent ──(AF_MCP_TOKEN)──▶ CP GET /internal/mcp-servers      
   再出力するとコメントと project trust セクションが黙って再整形される。af は自分が所有する
   テーブル（とその下位テーブル）だけを行ごと抜き、末尾に新しいテーブルを足す。
 - opencode は本ホストで `.jsonc`。`entrypoint.sh:414` の既存作法（**素の JSON として読めなければ触らない**）を
-  踏襲する。コメント入りは skip し、Console に「opencode の設定にコメントがあるため反映できません」と出す（P5）。
+  踏襲する。P5 の実装では **JSON 設定型の全 kind で同じ規約**にした（`materialize_json.go`）: 読めない
+  設定は上書きせずエラーで戻り、`mcp materialize <kind>: … is not plain JSON, leaving it alone` を
+  ログに残す。コメント入り `opencode.jsonc` はこの一般則に乗る（claude のオンボーディングフラグを
+  守る理由とまったく同じ — 読めない設定は整形し直してはいけない）。
 
 ### 8.3 反映タイミング
 
@@ -505,9 +529,10 @@ super_admin は全テナント、tenant_admin は自分のテナントだけが�
 | **P2** ✅ | アシスタント配線（claude / codex / opencode / agy）。`mcpConfigArgs` の一般化＋アシスタント編集 UI | `mcpreg/attach.go`（新設）、`chat_mcp.go`（新設）、`chat_providers.go`、`AssistantModal.tsx` |
 | **P3** ✅ | セッション materialize — **claude / codex 先行**（所有台帳・非破壊書き込み・起動/CRUD 契機・drift CI） | `mcpreg/materialize*.go`（新設）、`mcp_materialize.go`（新設）、`session_tmux.go`、`paths.go`、`.github/workflows/mcp-config-contract.yml`（新設） |
 | **P4** ✅ | テナントスコープ: CP テーブル・管理 API・ブリッジ・配布キャッシュ・`AdminTab` UI・`user_secret` | `control-plane/mcp_server.go` / `mcp_server_bridge.go` / `migrations/0028` + `migrations-pg/0011`（新設）、`store.go`・`store_sqlite.go`・`routes.go`・`workspace_lifecycle.go`、`mcpreg/tenant.go`・`mcp_tenant.go`（新設）、`AdminTab.tsx`・`McpTab.tsx`・`mcpWire.ts` |
-| **P5** | 残り kind の materialize（opencode / kiro / cursor / copilot / agy）＋ egress allowlist 連携 | 同上 + `egress.go` |
+| **P5** ◐ | 残り kind の materialize（opencode / copilot / cursor / kiro / agy）✅ ＋ egress allowlist 連携（未着手） | `mcpreg/materialize_json.go`・`materialize_{opencode,copilot,cursor,kiro,agy}.go`（新設）、`paths.go`、`materialize_drift_test.go` / 残りは + `egress.go` |
 
 P0〜P3 で「個人が登録して claude / codex で使う」が閉じる。P4 で組織配布、P5 で全 kind。
+P5 の materialize までが入り、残るのは egress allowlist 連携（§9）だけ。
 
 ---
 
@@ -559,6 +584,25 @@ P0〜P3 で「個人が登録して claude / codex で使う」が閉じる。P4
 - **未検証**: Console からの実操作、実 MCP サーバーを登録しての claude / codex セッション実起動。
   CI ワークフロー自体の実行（GitHub Actions の支払い停止中）。
 
+**P5 で済ませた分**（`internal/mcpreg/materialize_json_test.go` / `materialize_drift_test.go`）:
+
+- **非破壊性・冪等性・0600・読めない設定は触らない**を、P5 の 5 kind へ横断で当てた（表駆動）。
+  共通エンジンを通るので中身は同じ検証だが、**書く先のファイルと map のキーが kind ごとに違う**のが
+  このフェーズの実体で、取り違えると「登録したのに何も起きない」（別ファイルへ書いた）か
+  「利用者の設定を壊した」になる。加えて **書くものが無い kind は設定ファイルを作らない**こと
+  （使っていない CLI のホームに af の痕跡を増やさない）。
+- **エントリの形**は kind ごとに個別テスト: opencode の `command` 配列、copilot の `tools:["*"]` と
+  ミリ秒 `timeout`、kiro の `type` 無し＋ヘッダ、cursor の `timeout` を**書かない**こと。
+- **opencode のファイル選択**: `.jsonc` / `.json` のどちらが在るかで編集先が決まること（両方在れば
+  `.jsonc`、無ければ `.jsonc` を作る）。opencode は両方読んでマージするので、ここを外すと二重登録になる。
+- **drift（実 CLI・build tag `drift`）**: opencode / copilot は `mcp add` の生成物と構造比較。
+  **kiro は `mcp` 全サブコマンドがログイン必須**なので、CLI 側にだけ実 HOME の資格を渡し、書き込みは
+  CWD 配下の workspace スコープへ逃がす（開発者のグローバル設定を触らない）。未ログインなら skip。
+  **cursor は `mcp add` を持たない**ので参照は逆向き — af の書いた `~/.cursor/mcp.json` を
+  `cursor-agent mcp list` に読ませ、両サーバーが名前で出ることを見る。
+- **未検証**: agy（このホストでは起動不能）。実 MCP サーバーを登録しての 5 kind のセッション実起動、
+  Console からの実操作。egress allowlist 連携（P5 の残り半分）は未着手。
+
 **P4 で済ませた分**（`control-plane/mcp_server_test.go` / `internal/mcpreg/tenant_test.go` /
 `console/.../mcpWire.test.ts`）:
 
@@ -594,4 +638,6 @@ P0〜P3 で「個人が登録して claude / codex で使う」が閉じる。P4
 4. **オペレーター MCP からの登録**。`mcp_stdio.go` / CP `mcp.go` に `list_mcp_servers` 等を出すか（v1 は出さない）。
 5. **テナント配布の秘密がコンテナ内で平文になる**件（§5.2）。**機構は P4 で入った**（`user_secret`）が、
    `1` を既定にするか、運用ガイドで「露出前提のトークンだけ配る」とするかは依然として未決。
-6. kiro / cursor の**リモート設定形が未確認**（§8.1）。P5 着手時に実機で確定させる。
+6. ~~kiro / cursor のリモート設定形が未確認~~ → **P5 で実機確定**（§8.1）。残る穴は **agy だけ**で、
+   このホストでは agy が起動できない（RDRAND 非対応）ため drift 検知の層が置けない。RDRAND のある
+   ホストで一度当てるまでは、agy の設定形は「docs/32 とチャット経路の実績」に依存したままになる。

@@ -27,7 +27,7 @@ const rtkBlock = "## rtk (token saver) — prefer it for shell commands\n" +
 	"Skip it only when you need the raw, unfiltered stream; `rtk proxy <cmd>` runs a\n" +
 	"command without filtering.\n"
 
-func agentsPath() string { return filepath.Join(paths.HomeDir(), ".gemini", "AGENTS.md") }
+func agentsPath() string { return filepath.Join(paths.GeminiHome(), "AGENTS.md") }
 
 // stripMarkedBlock removes the region from start..end (inclusive) and rejoins. A
 // missing end marker (malformed file) drops everything from start onward.

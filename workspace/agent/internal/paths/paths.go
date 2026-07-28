@@ -45,6 +45,34 @@ func CodexHome() string {
 	return filepath.Join(HomeDir(), ".codex")
 }
 
+// OpencodeConfigDir is opencode's global config root (opencode.jsonc, plugin/,
+// AGENTS.md). opencode itself resolves it through XDG_CONFIG_HOME, but the workspace
+// never sets that variable and every other af writer into this tree (the rtk plugin,
+// the entrypoint's permission block and AGENTS.md seed) spells it from HOME — so this
+// stays HOME-based, and af's writes all land in the same directory.
+func OpencodeConfigDir() string {
+	return filepath.Join(HomeDir(), ".config", "opencode")
+}
+
+// CopilotHome is copilot's state root ($COPILOT_HOME, else ~/.copilot): config.json,
+// mcp-config.json, session-state/.
+func CopilotHome() string {
+	if d := os.Getenv("COPILOT_HOME"); d != "" {
+		return d
+	}
+	return filepath.Join(HomeDir(), ".copilot")
+}
+
+// CursorHome is cursor's state root (~/.cursor): mcp.json, cli-config.json, projects/.
+func CursorHome() string { return filepath.Join(HomeDir(), ".cursor") }
+
+// KiroHome is kiro's config/session root (~/.kiro): settings/, agents/, sessions/cli/.
+func KiroHome() string { return filepath.Join(HomeDir(), ".kiro") }
+
+// GeminiHome is the tree agy inherits from its gemini-cli lineage (~/.gemini, hardcoded
+// off $HOME): antigravity-cli/ for state and config/ for settings and mcp_config.json.
+func GeminiHome() string { return filepath.Join(HomeDir(), ".gemini") }
+
 // AgentDataDir is the per-user home volume for larger, persistent agent-fleet data
 // (survives container recreate — ~/.local persists). Distinct from AgentConfigDir
 // (small JSON state under ~/.config); used for the cleanup archive of removed

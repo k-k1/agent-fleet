@@ -16,9 +16,10 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// withTempCLIHomes isolates BOTH the af store and the two CLI config trees. The
-// CLAUDE_CONFIG_DIR override is not optional: the workspace sets it to the shared
-// claude state mount, so a test that forgot it would rewrite the real .claude.json.
+// withTempCLIHomes isolates BOTH the af store and every CLI config tree. HOME covers
+// most of them, but the three that have their own environment override do NOT: the
+// workspace points CLAUDE_CONFIG_DIR at the shared claude state mount, so a test that
+// forgot these would rewrite the developer's real config files.
 func withTempCLIHomes(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
@@ -26,6 +27,7 @@ func withTempCLIHomes(t *testing.T) string {
 	t.Setenv("AF_SECRET_KEY", "")
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, "claude-cfg"))
 	t.Setenv("CODEX_HOME", filepath.Join(home, "codex-home"))
+	t.Setenv("COPILOT_HOME", filepath.Join(home, "copilot-home"))
 	return home
 }
 
@@ -330,11 +332,13 @@ func TestMaterializeUsesSessionTargetAndKind(t *testing.T) {
 	}
 }
 
-func TestMaterializeSkipsUnimplementedKinds(t *testing.T) {
+// TestMaterializeSkipsKindsWithoutCLI: エージェント CLI を持たない kind（shell / ssm）は
+// 書く先が無い。エラーではなく Skipped で戻ること。
+func TestMaterializeSkipsKindsWithoutCLI(t *testing.T) {
 	withTempCLIHomes(t)
-	for _, k := range []string{session.KindOpencode, session.KindKiro, session.KindCursor, "shell"} {
+	for _, k := range []string{"shell", "ssm"} {
 		if res := Materialize(k); !res.Skipped || res.Err != "" {
-			t.Fatalf("%s = %+v, want skipped（未配線はエラーではない）", k, res)
+			t.Fatalf("%s = %+v, want skipped（書く先が無いのは失敗ではない）", k, res)
 		}
 	}
 }

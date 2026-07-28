@@ -1,6 +1,6 @@
 //go:build drift
 
-// materialize のドリフト検知（docs/48 §13）。**実 claude / codex バイナリに当てる**
+// materialize のドリフト検知（docs/48 §13）。**実エージェント CLI のバイナリに当てる**
 // テストで、通常の `go test ./...` からは build tag `drift` で除外される。
 //
 // なぜ要るか: materialize は「その CLI の設定ファイルはこういう形だ」という、こちらが
@@ -13,7 +13,11 @@
 // 生成させた設定と、af が同じ定義から materialize した設定を**構造比較**する。手写しの
 // 期待値だと「af のテストが af と一致するだけ」の同語反復になる。
 //
-// 認証不要: `mcp add` / `mcp list` は設定ファイルの読み書きだけで完結する。
+// 例外が 2 つある。**cursor には `mcp add` が無い**ので、参照は逆向き（af が書いた
+// ファイルを cursor に読ませる）。**kiro は `mcp` サブコマンド全部がログインを要求する**
+// ので、未ログイン環境では skip する。それ以外は認証不要 — `mcp add` / `mcp list` は
+// 設定ファイルの読み書きだけで完結する。agy はこのホストで起動できない（RDRAND 非対応）
+// ため、ドリフト検知の層が無い唯一の kind。
 
 package mcpreg
 
@@ -23,6 +27,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -40,13 +45,65 @@ func cliBin(t *testing.T, name string) string {
 
 func runCLI(t *testing.T, env []string, bin string, args ...string) []byte {
 	t.Helper()
+	return runCLIIn(t, "", env, bin, args...)
+}
+
+// runCLIIn is runCLI with a working directory — kiro's only login-free write scope is
+// the one under the CWD (see TestDriftKiroMatchesMCPAdd).
+func runCLIIn(t *testing.T, dir string, env []string, bin string, args ...string) []byte {
+	t.Helper()
 	cmd := exec.Command(bin, args...)
+	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), env...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("%s %v: %v\n%s", bin, args, err, out)
 	}
 	return out
+}
+
+// serverEntry pulls one server out of a CLI's JSON config: root[key][name].
+func serverEntry(t *testing.T, path, key, name string) map[string]any {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	root := map[string]any{}
+	if err := json.Unmarshal(b, &root); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	m, _ := root[key].(map[string]any)
+	e, ok := m[name].(map[string]any)
+	if !ok {
+		t.Fatalf("%s の %s に %q が無い: %v", path, key, name, m)
+	}
+	return e
+}
+
+// requireSameKeys compares what the CLI wrote with what af wrote, allowing af the
+// extra members named in afExtra (keys af sets on purpose that the CLI's own `mcp add`
+// leaves to a default). Anything else — a renamed key, a dropped key, a changed value —
+// is the drift this file exists to catch.
+func requireSameKeys(t *testing.T, kind string, got, want map[string]any, afExtra ...string) {
+	t.Helper()
+	for k, wv := range want {
+		if gv, ok := got[k]; !ok || !reflect.DeepEqual(gv, wv) {
+			gj, _ := json.MarshalIndent(got, "", "  ")
+			wj, _ := json.MarshalIndent(want, "", "  ")
+			t.Fatalf("%s の設定形が変わった（docs/48 §8.1 の更新が要る）: %q\n--- af\n%s\n--- %s mcp add\n%s",
+				kind, k, gj, kind, wj)
+		}
+	}
+	allowed := map[string]bool{}
+	for _, k := range afExtra {
+		allowed[k] = true
+	}
+	for k := range got {
+		if _, ok := want[k]; !ok && !allowed[k] {
+			t.Fatalf("%s: af だけが書いているキー %q（CLI 側が落としたか、af の書きすぎ）", kind, k)
+		}
+	}
 }
 
 // --- claude: $CLAUDE_CONFIG_DIR/.claude.json の mcpServers.<name> ----------------
@@ -226,5 +283,182 @@ func TestDriftCodexAcceptsUserFileWithAFBlocks(t *testing.T) {
 	tr, _ := got["transport"].(map[string]any)
 	if tr["command"] != "/bin/echo" {
 		t.Fatalf("同名の手書きテーブルが af 定義に置き換わっていない: %v", tr)
+	}
+}
+
+// --- opencode: ~/.config/opencode/opencode.jsonc の mcp.<name> --------------------
+
+func TestDriftOpencodeMatchesMCPAdd(t *testing.T) {
+	bin := cliBin(t, "opencode")
+	cases := []struct {
+		name string
+		def  ServerDef
+		add  []string
+	}{
+		{
+			name: "local",
+			def: sessionDef(ServerDef{Name: "afdrift", Origin: OriginUser, Transport: TransportStdio,
+				Command: "/bin/echo", Args: []string{"a", "b"}, Env: map[string]string{"K": "v"}}),
+			add: []string{"mcp", "add", "afdrift", "--env", "K=v", "--", "/bin/echo", "a", "b"},
+		},
+		{
+			name: "remote",
+			def: sessionDef(ServerDef{Name: "afdrift", Origin: OriginUser, Transport: TransportHTTP,
+				URL: "https://mcp.example.com/mcp", Headers: map[string]string{"Authorization": "Bearer t"}}),
+			add: []string{"mcp", "add", "afdrift", "--url", "https://mcp.example.com/mcp",
+				"--header", "Authorization=Bearer t"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cliHome := t.TempDir()
+			runCLI(t, []string{"HOME=" + cliHome, "XDG_CONFIG_HOME=" + filepath.Join(cliHome, ".config")},
+				bin, tc.add...)
+			want := serverEntry(t, filepath.Join(cliHome, ".config", "opencode", "opencode.jsonc"), "mcp", "afdrift")
+
+			afHome := t.TempDir()
+			t.Setenv("HOME", afHome)
+			if _, _, _, err := materializeOpencode([]ServerDef{tc.def}, nil); err != nil {
+				t.Fatalf("materializeOpencode: %v", err)
+			}
+			got := serverEntry(t, opencodeConfigPath(), "mcp", "afdrift")
+
+			// "enabled" は opencode の既定（true）を af が明示しているだけ。
+			requireSameKeys(t, "opencode", got, want, "enabled")
+		})
+	}
+}
+
+// --- copilot: $COPILOT_HOME/mcp-config.json の mcpServers.<name> ------------------
+
+func TestDriftCopilotMatchesMCPAdd(t *testing.T) {
+	bin := cliBin(t, "copilot")
+	cases := []struct {
+		name string
+		def  ServerDef
+		add  []string
+	}{
+		{
+			name: "local",
+			def: sessionDef(ServerDef{Name: "afdrift", Origin: OriginUser, Transport: TransportStdio,
+				Command: "/bin/echo", Args: []string{"a", "b"}, Env: map[string]string{"K": "v"}}),
+			add: []string{"mcp", "add", "afdrift", "--env", "K=v", "--", "/bin/echo", "a", "b"},
+		},
+		{
+			name: "remote",
+			def: sessionDef(ServerDef{Name: "afdrift", Origin: OriginUser, Transport: TransportHTTP,
+				URL: "https://mcp.example.com/mcp", Headers: map[string]string{"Authorization": "Bearer t"},
+				TimeoutMS: 12000}),
+			add: []string{"mcp", "add", "--transport", "http", "--timeout", "12000",
+				"--header", "Authorization: Bearer t", "afdrift", "https://mcp.example.com/mcp"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cliHome := t.TempDir()
+			runCLI(t, []string{"COPILOT_HOME=" + cliHome}, bin, tc.add...)
+			want := serverEntry(t, filepath.Join(cliHome, "mcp-config.json"), "mcpServers", "afdrift")
+
+			afHome := t.TempDir()
+			t.Setenv("HOME", afHome)
+			t.Setenv("COPILOT_HOME", filepath.Join(afHome, "copilot-home"))
+			if _, _, _, err := materializeCopilot([]ServerDef{tc.def}, nil); err != nil {
+				t.Fatalf("materializeCopilot: %v", err)
+			}
+			got := serverEntry(t, copilotMCPConfigPath(), "mcpServers", "afdrift")
+
+			requireSameKeys(t, "copilot", got, want)
+		})
+	}
+}
+
+// --- kiro: ~/.kiro/settings/mcp.json の mcpServers.<name> -------------------------
+
+// TestDriftKiroMatchesMCPAdd は kiro の設定形を `kiro-cli mcp add` に当てる。
+//
+// kiro だけ他と作りが違う: **`mcp` サブコマンドは全部ログインを要求する**ので、隔離 HOME
+// では CLI 側を走らせられない。そこで CLI には**実 HOME の資格を渡しつつ**、書き込み先は
+// CWD 配下の workspace スコープ（<cwd>/.kiro/settings/mcp.json）へ逃がす — 開発者の
+// グローバル設定を触らずに、生成物だけを手に入れる。af 側は通常どおり隔離 HOME。
+// 未ログイン環境（CI）では skip する。
+func TestDriftKiroMatchesMCPAdd(t *testing.T) {
+	bin := cliBin(t, "kiro-cli")
+	realHome, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("no home dir: %v", err)
+	}
+	if out, err := exec.Command(bin, "whoami").CombinedOutput(); err != nil {
+		if os.Getenv("E2E_REQUIRE") == "1" {
+			t.Fatalf("kiro-cli にログインしていない（E2E_REQUIRE=1）:\n%s", out)
+		}
+		t.Skipf("kiro-cli にログインしていないので設定形を確認できない:\n%s", out)
+	}
+
+	cases := []struct {
+		name string
+		def  ServerDef
+		add  []string
+	}{
+		{
+			name: "local",
+			def: sessionDef(ServerDef{Name: "afdrift", Origin: OriginUser, Transport: TransportStdio,
+				Command: "/bin/echo", Args: []string{"a", "b"}, Env: map[string]string{"K": "v"},
+				TimeoutMS: 12000}),
+			add: []string{"mcp", "add", "--scope", "workspace", "--name", "afdrift",
+				"--command", "/bin/echo", "--args", "a", "--args", "b", "--env", "K=v", "--timeout", "12000"},
+		},
+		{
+			name: "remote",
+			def: sessionDef(ServerDef{Name: "afdrift", Origin: OriginUser, Transport: TransportHTTP,
+				URL: "https://mcp.example.com/mcp", TimeoutMS: 12000}),
+			add: []string{"mcp", "add", "--scope", "workspace", "--name", "afdrift",
+				"--url", "https://mcp.example.com/mcp", "--timeout", "12000"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cliWS := t.TempDir()
+			runCLIIn(t, cliWS, []string{"HOME=" + realHome}, bin, tc.add...)
+			want := serverEntry(t, filepath.Join(cliWS, ".kiro", "settings", "mcp.json"), "mcpServers", "afdrift")
+
+			afHome := t.TempDir()
+			t.Setenv("HOME", afHome)
+			if _, _, _, err := materializeKiro([]ServerDef{tc.def}, nil); err != nil {
+				t.Fatalf("materializeKiro: %v", err)
+			}
+			got := serverEntry(t, kiroMCPConfigPath(), "mcpServers", "afdrift")
+
+			requireSameKeys(t, "kiro", got, want)
+		})
+	}
+}
+
+// --- cursor: ~/.cursor/mcp.json の mcpServers.<name> ------------------------------
+
+// TestDriftCursorReadsAFConfig: cursor-agent には `mcp add` が無い（list / enable /
+// login だけ）ので、参照は「cursor 自身が af の書いたファイルを読めるか」。名前が
+// `mcp list` に出れば、少なくとも mcpServers のキーとエントリの判別子は生きている。
+func TestDriftCursorReadsAFConfig(t *testing.T) {
+	bin := cliBin(t, "cursor-agent")
+	afHome := t.TempDir()
+	t.Setenv("HOME", afHome)
+	defs := []ServerDef{
+		sessionDef(ServerDef{Name: "afdriftlocal", Origin: OriginUser, Transport: TransportStdio,
+			Command: "/bin/echo", Args: []string{"a"}}),
+		sessionDef(ServerDef{Name: "afdriftremote", Origin: OriginUser, Transport: TransportHTTP,
+			URL: "https://mcp.example.com/mcp", Headers: map[string]string{"Authorization": "Bearer t"}}),
+	}
+	if _, _, _, err := materializeCursor(defs, nil); err != nil {
+		t.Fatalf("materializeCursor: %v", err)
+	}
+	// `mcp list` は到達できないサーバーをエラー行として出すので、終了コードは見ない。
+	cmd := exec.Command(bin, "mcp", "list")
+	cmd.Dir = afHome
+	cmd.Env = append(os.Environ(), "HOME="+afHome)
+	out, _ := cmd.CombinedOutput()
+	for _, name := range []string{"afdriftlocal", "afdriftremote"} {
+		if !strings.Contains(string(out), name) {
+			t.Fatalf("cursor が af の ~/.cursor/mcp.json を読めていない（%q が出ない）:\n%s", name, out)
+		}
 	}
 }
