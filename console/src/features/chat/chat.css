@@ -464,9 +464,8 @@
   background: var(--lp-active-bg, var(--active-bg));
   box-shadow: inset 2px 0 0 var(--lp-accent, var(--accent));
 }
-.chat-row.active .chat-open-title {
-  font-weight: 600;
-}
+/* フォーカス中の強調は塗り＋アクセントバーだけにする（セッション行 .sess-row.active
+   と同じ強さ）。ここで太字も足すと会話行だけ他より強く目立っていた。 */
 .chat-kic {
   color: var(--lp-accent, var(--accent));
   background: color-mix(in srgb, var(--lp-accent, var(--accent)) 14%, transparent);
