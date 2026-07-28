@@ -61,8 +61,11 @@ af が書いた名前だけを別ファイルに記録し、**削除は af が�
 
 - **設定契約が CLI の版ごとに壊れうる**。文字列契約と同じ問題（`false-idle-reverse-heal`）なので、
   `<cli> mcp add` を隔離 HOME で実行して生成物を比較する **drift テスト**を各 kind に置き、
-  壊れたら CI が赤くなるようにする（P3: claude / codex 分を
-  `.github/workflows/mcp-config-contract.yml` に配線済み）。
+  壊れたら CI が赤くなるようにする（`.github/workflows/mcp-config-contract.yml`。
+  P3 で claude / codex、P5 で opencode / copilot / cursor を配線）。
+  **この層を置けない kind が 2 つ残る**: kiro は `mcp` サブコマンドが全部ログインを要求するので
+  runner では走らせられず（未ログインなら skip し、確認はログイン済みの手元でしか取れない）、
+  agy は RDRAND の無いホストで起動しない。この 2 つは実測記録が唯一の裏取りになる。
 - **反映は次のセッションから**。どの CLI も設定を起動時に読む。Console に明示する。
   managed セッションだけは CLI プロセスを起動し直さないので前提が別で、codex の共有 app-server が
   `thread/start` ごとに config を読み直すことを実測し、それ自体を drift テストで固定した（docs/48 §8.3）。
@@ -128,7 +131,10 @@ P4 でこの機構を入れた（既定は `0`）。実装で決めた 3 点:
 - OAuth を要する MCP（各 CLI の `mcp login`）は af から駆動しない。
 - ツール単位の許可（agy の `mcp(server/tool)`、copilot の `--allow-tool`）は v1 では持たない。
 - MCP ツール呼び出しの使用量計上（docs/46 残 P5）はここでは決めない。
-- kiro / cursor のリモート設定形は未実測。P5 着手時に実機で確定させる（推測で書かない）。
+- ~~kiro / cursor のリモート設定形は未実測~~ → P5 で実機確定（docs/48 §8.1）。どちらもリモートで
+  独自ヘッダを運べることを、ヘッダ記録リスナー相手の実ターン / 実 `mcp list` まで確認した。
+  **テナント配布はリモート専用（決定 2）で認証はヘッダ**なので、ここが落ちていたら
+  「配布されたサーバーだけ動かない」形で壊れていた。
 - **定義の検証が CP と agent で二重**になっている（別 Go モジュールでコードを共有できない）。
   エラーコードは意図して同一にし、ドリフトは agent 側の再検証が「配られたが使われない」として
   現れる形にしたが、ルール追加時は両方に足す必要がある。

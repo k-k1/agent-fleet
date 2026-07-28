@@ -408,7 +408,8 @@ export const en: Record<keyof typeof ja, string> = {
   "mcp.f_kinds": "Agents",
   "mcp.f_kinds_hint": "Select none to target every agent.",
   "mcp.f_timeout": "Timeout (ms)",
-  "mcp.f_timeout_hint": "1000-120000. Leave blank to use each CLI's default.",
+  "mcp.f_timeout_hint":
+    "1000-120000. Leave blank to use each CLI's default. opencode and cursor have no equivalent setting, so a value is ignored there.",
   "mcp.f_enabled": "Enabled",
   "mcp.f_enabled_hint": "Disabling keeps the definition but stops handing it out.",
   "mcp.enabled_on": "Enabled",

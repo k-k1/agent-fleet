@@ -409,7 +409,8 @@ export const ja = {
   "mcp.f_kinds": "対象エージェント",
   "mcp.f_kinds_hint": "何も選ばなければ全エージェントが対象です。",
   "mcp.f_timeout": "タイムアウト (ms)",
-  "mcp.f_timeout_hint": "1000〜120000。空欄なら各 CLI の既定値に従います。",
+  "mcp.f_timeout_hint":
+    "1000〜120000。空欄なら各 CLI の既定値に従います。opencode と cursor には該当する設定が無いため、指定しても無視されます。",
   "mcp.f_enabled": "有効",
   "mcp.f_enabled_hint": "無効にすると、定義は残したままどこにも渡されなくなります。",
   "mcp.enabled_on": "有効にする",

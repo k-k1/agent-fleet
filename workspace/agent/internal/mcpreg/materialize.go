@@ -25,8 +25,9 @@ package mcpreg
 // the CLI has to be able to read them. The mitigation is the file mode and the
 // location (home only, never a repo).
 //
-// P3 implements claude and codex. Other kinds return a skipped result rather than an
-// error — "not wired yet" is not a failure (docs/48 P5).
+// P3 implemented claude and codex; P5 added opencode, copilot, cursor, kiro and agy —
+// every kind that runs an agent CLI. A kind with no CLI behind it (shell, ssm) returns
+// a skipped result rather than an error: "nothing to write here" is not a failure.
 
 import (
 	"encoding/json"
@@ -40,9 +41,13 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// MaterializedKinds are the agent kinds whose native MCP config af writes. Ordered
-// so MaterializeAll's results read deterministically.
-var MaterializedKinds = []string{session.KindClaude, session.KindCodex}
+// MaterializedKinds are the agent kinds whose native MCP config af writes — since P5,
+// every kind that runs an agent CLI. Ordered (session.go's declaration order) so
+// MaterializeAll's results read deterministically.
+var MaterializedKinds = []string{
+	session.KindClaude, session.KindOpencode, session.KindCodex,
+	session.KindCursor, session.KindKiro, session.KindAgy, session.KindCopilot,
+}
 
 // MaterializeResult is one kind's outcome, shaped for a log line and for a future
 // Console surface (docs/48 §11.3).
@@ -70,7 +75,19 @@ func writerFor(kind string) writer {
 		return materializeClaude
 	case session.KindCodex:
 		return materializeCodex
+	case session.KindOpencode:
+		return materializeOpencode
+	case session.KindCursor:
+		return materializeCursor
+	case session.KindKiro:
+		return materializeKiro
+	case session.KindAgy:
+		return materializeAgy
+	case session.KindCopilot:
+		return materializeCopilot
 	}
+	// Kinds that run no agent CLI (shell, ssm) have no config to write. Skipped, not
+	// an error — see MaterializeResult.Skipped.
 	return nil
 }
 
