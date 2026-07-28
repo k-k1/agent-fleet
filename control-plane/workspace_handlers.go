@@ -120,7 +120,26 @@ func (a workspaceAPI) cleanHome(w http.ResponseWriter, r *http.Request, res *res
 // counted authoritatively via docker). No-op if already running. Shared by the
 // explicit start/recreate handlers and P3-9 auto-start.
 func (a workspaceAPI) ensureWorkspaceStarted(ctx context.Context, res *resolved) *apiError {
-	rt := res.rt
+	return a.ensureWorkspaceStartedRT(ctx, res, res.rt)
+}
+
+// ensureWorkspaceStartedUnattended is ensureWorkspaceStarted for a start nobody is
+// watching (the scheduler's wake): the container comes up with unattendedStartEnv, so
+// the entrypoint keeps the installed agent CLI versions instead of pulling @latest
+// before the agent can listen. Falls back to the normal path if the override runtime
+// cannot be built — a start with self-update is better than no start at all.
+func (a workspaceAPI) ensureWorkspaceStartedUnattended(ctx context.Context, res *resolved) *apiError {
+	rt, err := a.mgr.runtimeForUnattended(ctx, res)
+	if err != nil {
+		log.Printf("unattended runtime for ws %s: %v (falling back to normal start)", res.ws.ID, err)
+		return a.ensureWorkspaceStarted(ctx, res)
+	}
+	return a.ensureWorkspaceStartedRT(ctx, res, rt)
+}
+
+// ensureWorkspaceStartedRT is the shared body, parameterized by the runtime that drives
+// this particular start (they differ only in the container env they would apply).
+func (a workspaceAPI) ensureWorkspaceStartedRT(ctx context.Context, res *resolved, rt Runtime) *apiError {
 	switch rt.State(ctx) {
 	case "running":
 		return nil
