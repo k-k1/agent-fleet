@@ -13,19 +13,22 @@ import { createRoot, type Root } from "react-dom/client";
 import { revisionOf } from "../editor/buffer.ts";
 
 const MD = "# Title\n\nalpha\n";
+const MARP = "---\nmarp: true\n---\n\n# Deck\n";
+
+let served = MD;
 
 vi.mock("../../core/api/client.ts", () => ({
   api: vi.fn(async (path: string) => {
     if (path.startsWith("api/fs/linemarks")) return { error: { message: "none" } };
     return {
       path: "repos/x/doc.md",
-      size: MD.length,
+      size: served.length,
       binary: false,
       truncated: false,
       editable: true,
       editabilityReason: null,
-      content: MD,
-      revision: revisionOf(MD),
+      content: served,
+      revision: revisionOf(served),
     };
   }),
   downloadURL: (p: string) => `/dl/${p}`,
@@ -87,7 +90,13 @@ async function rerender(props: { targetLine?: number; filePath?: string }): Prom
   await settle();
 }
 
+const rendererButton = (label: string) =>
+  [...host.querySelectorAll('[aria-label="Preview renderer"] button')].find(
+    (b) => b.textContent === label,
+  ) as HTMLButtonElement;
+
 beforeEach(async () => {
+  served = MD;
   latestOnReady = null;
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -182,6 +191,26 @@ describe("a mode chosen before the editor is ready", () => {
     await reportReady();
     expect(document.activeElement).toBe(outside);
     outside.remove();
+  });
+
+  it("is retired by choosing a preview renderer, which changes no surface", async () => {
+    // Regression: retiring keyed on the set of surfaces changing, and a renderer
+    // is not a surface — so a request raised by `split` before the editor was
+    // ready survived the renderer selection that followed, and stole focus out
+    // of the renderer group when the editor finally came up.
+    served = MARP;
+    await rerender({ filePath: "repos/x/deck.md" });
+    await act(async () => modeButton("Split").click());
+    await settle();
+
+    const document_ = rendererButton("Document");
+    document_.focus();
+    await act(async () => document_.click());
+    await settle();
+    expect(document.activeElement).toBe(document_);
+
+    await reportReady();
+    expect(document.activeElement).toBe(document_);
   });
 
   it("is served immediately when the editor was ready all along", async () => {
