@@ -86,6 +86,9 @@
 - [0020-chat-bridge.md](decisions/0020-chat-bridge.md) — チャットブリッジ：Slack/Discord から通知受領と双方向操縦（設計 [37](37-chat-bridge.md)）
 - [0021-scheduled-execution.md](decisions/0021-scheduled-execution.md) — 定時実行：定義は CP の DB・自前 cron・wakeFirer で停止中も発火（設計 [38](38-scheduled-execution.md)）
 - [0022-agent-memory-management.md](decisions/0022-agent-memory-management.md) — エージェントメモリは agent 側 git bare repo で版管理し bundle で環境間移送（設計 [39](39-agent-memory-management.md)）
+- [0033-stored-text-locale.md](decisions/0033-stored-text-locale.md) — 「保存データは JA 統一」を撤回：利用者が読む自前生成文（chat の notice）はキー＋引数で保存し Console のカタログで訳す。モデルが読む/書く文字列は据え置き（[0016](decisions/0016-i18n.md) §7 を一部上書き・設計 [28 §2.5/§4](28-i18n.md)）
+
+> 0023〜0032 は対応する設計ドキュメントの行（上記「番号付きの機能設計・実装記録」）に併記。
 
 ## history/ — 使い終わった実装プラン（P3-6 は ◐ 段1 完了・admin 残）
 

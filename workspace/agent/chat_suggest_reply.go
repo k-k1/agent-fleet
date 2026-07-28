@@ -14,10 +14,12 @@ import (
 )
 
 // chatReplySuggestPrompt は直近メッセージ（末尾窓）を文脈に、返信候補の生成を指示する。
+// report と notice は会話の話題ではない（notice 本文は表示用カタログの正本言語
+// フォールバックにすぎない — ADR 0033）ので窓から外す。
 func chatReplySuggestPrompt(msgs []chatMessage) string {
 	real := make([]chatMessage, 0, len(msgs))
 	for _, m := range msgs {
-		if m.Role == "report" || strings.TrimSpace(m.Content) == "" {
+		if m.Role == "report" || m.Role == "notice" || strings.TrimSpace(m.Content) == "" {
 			continue
 		}
 		real = append(real, m)

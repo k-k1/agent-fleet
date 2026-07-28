@@ -333,7 +333,8 @@ func markReportsDelivered(reports []*chatMessage) {
 // autoTurnPausedContent is the system notice appended to the conversation when the
 // operator's unattended auto-turn budget runs out. It both informs the user and asks
 // whether to continue — any reply resets the budget and carries the pending report(s)
-// into the operator's context (injectPendingReports). JA to match the stored thread.
+// into the operator's context (injectPendingReports). Source-language (ja) fallback:
+// the displayed text comes from noticeKeyAutoPaused (chat_notice.go / ADR 0033).
 func autoTurnPausedContent(limit, pendingCount int) string {
 	var b strings.Builder
 	b.WriteString("自動応答が連続 " + strconv.Itoa(limit) + " 回の上限に達したため、いったん停止しました。")
@@ -353,9 +354,11 @@ func noteAutoTurnPaused(c *chatConversation, limit int) {
 		return // already told the user for this cap-reach; don't spam further reports
 	}
 	c.AutoPausedNotified = true
-	c.Messages = append(c.Messages, chatMessage{
-		Role: "notice", Content: autoTurnPausedContent(limit, len(undeliveredReports(c))), TS: nowMs(),
-	})
+	pending := len(undeliveredReports(c))
+	c.Messages = append(c.Messages, newNotice(noticeKeyAutoPaused, map[string]string{
+		"limit":   strconv.Itoa(limit),
+		"pending": strconv.Itoa(pending),
+	}, autoTurnPausedContent(limit, pending)))
 	c.UpdatedAt = nowMs()
 	if err := saveConv(c); err != nil {
 		log.Printf("chat report: save auto-pause notice %s: %v", c.ID, err)

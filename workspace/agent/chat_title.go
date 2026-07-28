@@ -36,11 +36,13 @@ func chatTitleSuggestPrompt(msgs []chatMessage) string {
 
 // writeChatTitleWindow appends the opening + most recent non-empty user/assistant
 // messages (head/tail windowing, per-message length cap). Report cards (role=="report")
-// are skipped — they're session-origin, not conversation topic.
+// are skipped — they're session-origin, not conversation topic — and so are system
+// notices (role=="notice"), which are UI housekeeping whose body is only a
+// source-language fallback for the Console's catalog (ADR 0033).
 func writeChatTitleWindow(b *strings.Builder, msgs []chatMessage) {
 	real := make([]chatMessage, 0, len(msgs))
 	for _, m := range msgs {
-		if m.Role == "report" || strings.TrimSpace(m.Content) == "" {
+		if m.Role == "report" || m.Role == "notice" || strings.TrimSpace(m.Content) == "" {
 			continue
 		}
 		real = append(real, m)
