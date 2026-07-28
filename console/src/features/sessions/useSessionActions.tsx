@@ -24,10 +24,9 @@ export interface SessionActions {
   /** 削除ロック（docs/45）の切替。ON の間、この行はどの削除経路（Console・掃除・
    *  7日自動prune・オペレーター）からも消せなくなる。 */
   setLocked(s: Session, locked: boolean): Promise<void>;
-  /** Clear all stopped: agent sessions archive (restorable), shell/ssm delete. */
-  clearStopped(): Promise<void>;
-  /** Bulk-clear every "その他のセッション" (orphan whose working copy is gone),
-   * same split as clearStopped: agent sessions archive (restorable), shell/ssm delete. */
+  /** Bulk-clear every "その他のセッション" (orphan whose working copy is gone):
+   * agent sessions archive (restorable), shell/ssm delete. Repo-scoped stopped
+   * sessions are bulk-cleared from the Cleanup modal's stage ① instead. */
   clearOrphans(orphans: Session[]): Promise<void>;
   /** Halt a live session into 停止中 (resumable): kills tmux, keeps the meta. */
   halt(name: string, display: string): Promise<void>;
@@ -90,41 +89,10 @@ export function useSessionActions(): SessionActions {
     void refreshSessions();
   };
 
-  const clearStopped = async () => {
-    // 削除ロック（docs/45）済みは一括掃除の対象外 — Agent が拒否するので数だけ合わない
-    // 一括実行にならないよう、確認ダイアログの件数からも先に外す。
-    const stopped = useSessionsStore.getState().sessions.filter((s) => !s.alive && !s.locked);
-    if (stopped.length === 0) return;
-    const ephemeral = stopped.filter((s) => agentOf(s.kind).caps.ephemeral);
-    const keepable = stopped.filter((s) => !agentOf(s.kind).caps.ephemeral);
-    const parts = [];
-    if (keepable.length) parts.push(t("sess.cleanup_archive_n", { count: keepable.length }));
-    if (ephemeral.length) parts.push(t("sess.cleanup_delete_n", { count: ephemeral.length }));
-    if (
-      !(await askConfirm({
-        title: tr("sess.cleanup_title"),
-        body: tr("sess.cleanup_body", { parts: parts.join(tr("common.list_sep")) }),
-        confirmLabel: tr("sess.cleanup_confirm"),
-        danger: ephemeral.length > 0,
-      }))
-    )
-      return;
-    await Promise.all([
-      ...keepable.map((s) =>
-        raw(`api/sessions/${encodeURIComponent(s.name)}/archive`, { method: "POST" }).catch(() => {}),
-      ),
-      ...ephemeral.map((s) =>
-        raw(`api/sessions/${encodeURIComponent(s.name)}/stop`, { method: "POST" }).catch(() => {}),
-      ),
-    ]);
-    for (const s of stopped) closeSessionPanes(s.name);
-    void refreshSessions();
-  };
-
   const clearOrphans = async (all: Session[]) => {
     const orphans = all.filter((s) => !s.locked); // 削除ロック（docs/45）は一括掃除に載せない
     if (orphans.length === 0) return;
-    // Same split as clearStopped: agent sessions archive (conversation kept,
+    // Same split as the Cleanup modal's stage ①: agent sessions archive (conversation kept,
     // restorable); shell/ssm have no conversation worth keeping, so they delete.
     const ephemeral = orphans.filter((s) => agentOf(s.kind).caps.ephemeral);
     const keepable = orphans.filter((s) => !agentOf(s.kind).caps.ephemeral);
@@ -292,5 +260,5 @@ export function useSessionActions(): SessionActions {
     }
   };
 
-  return { archive, deleteSession, setLocked, clearStopped, clearOrphans, halt, recreate, handoff, switchDriver };
+  return { archive, deleteSession, setLocked, clearOrphans, halt, recreate, handoff, switchDriver };
 }
