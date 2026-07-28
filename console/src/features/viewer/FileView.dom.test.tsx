@@ -11,7 +11,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { EditorView } from "@codemirror/view";
 import { revisionOf } from "../editor/buffer.ts";
+import { clearDirtyRegistryForTests, hasDirtyEditors } from "../editor/dirtyRegistry.ts";
 
 const MARP = "---\nmarp: true\n---\n\n# Deck\n\nbody\n";
 const PLAIN_MD = "# Title\n\nalpha\nbeta\ngamma\n";
@@ -40,8 +42,19 @@ vi.mock("../../core/api/client.ts", () => ({
 }));
 // The renderers themselves are covered by their own suites; here they only need
 // to say which one the pane picked.
-vi.mock("./MarpView.tsx", () => ({ MarpView: () => <div data-surface="slides" /> }));
-vi.mock("./MarkdownView.tsx", () => ({ MarkdownView: () => <div data-surface="preview" /> }));
+const previewProps: Record<string, unknown>[] = [];
+vi.mock("./MarpView.tsx", () => ({
+  MarpView: (props: Record<string, unknown>) => {
+    previewProps.push({ ...props, renderer: "slides" });
+    return <div data-surface="slides" />;
+  },
+}));
+vi.mock("./MarkdownView.tsx", () => ({
+  MarkdownView: (props: Record<string, unknown>) => {
+    previewProps.push({ ...props, renderer: "preview" });
+    return <div data-surface="preview" />;
+  },
+}));
 
 const { FileView } = await import("./FileView.tsx");
 
@@ -82,7 +95,14 @@ const modeButton = (label: string) =>
     (b) => b.textContent === label,
   ) as HTMLButtonElement;
 
+/** The live CodeMirror instance behind the editing surface. */
+const editorView = () => EditorView.findFromDOM(host.querySelector(".cm-editor") as HTMLElement)!;
+
+const lastPreview = () => previewProps.at(-1);
+
 beforeEach(() => {
+  clearDirtyRegistryForTests();
+  previewProps.length = 0;
   served = { content: PLAIN_MD, editable: true };
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -93,6 +113,7 @@ afterEach(() => {
   act(() => root?.unmount());
   root = null;
   host.remove();
+  clearDirtyRegistryForTests();
 });
 
 describe("markdown mode controls", () => {
@@ -225,5 +246,106 @@ describe("the editing surface", () => {
     expect(editorVisible()).toBe(true);
     expect(document.activeElement).toBe(outside);
     outside.remove();
+  });
+});
+
+// docs/44 §6 Phase 3: the acceptance items that are about not losing what the
+// pane already did.
+describe("reuse of the existing rendering assets", () => {
+  it("keeps the normal preview reachable on a Marp deck", async () => {
+    // The whole reason the renderer is a separate axis: a deck must still be
+    // readable as a document, which the pre-Phase-3 pane offered as `preview`.
+    served = { content: MARP, editable: true };
+    await render({});
+    expect(surface()).toBe("slides");
+
+    const document_ = [...host.querySelectorAll('[aria-label="Preview renderer"] button')].find(
+      (b) => b.textContent === "Document",
+    ) as HTMLButtonElement;
+    await act(async () => document_.click());
+    expect(surface()).toBe("preview");
+    expect(pressed()).toEqual(["Preview", "Document"]);
+  });
+
+  it("switches the renderer of the right-hand side while split is showing", async () => {
+    served = { content: MARP, editable: true };
+    await render({});
+    await act(async () => modeButton("Split").click());
+    expect(editorVisible()).toBe(true);
+    expect(surface()).toBe("slides");
+
+    const document_ = [...host.querySelectorAll('[aria-label="Preview renderer"] button')].find(
+      (b) => b.textContent === "Document",
+    ) as HTMLButtonElement;
+    await act(async () => document_.click());
+    expect(editorVisible()).toBe(true);
+    expect(surface()).toBe("preview");
+  });
+
+  it("hands the preview the buffer and the same link wiring as before", async () => {
+    await render({});
+    expect(lastPreview()).toMatchObject({
+      source: PLAIN_MD,
+      basePath: "repos/x/doc.md",
+    });
+    // The link handlers are what make relative links and mermaid-bearing docs
+    // behave the same as in the read-only pane.
+    expect(typeof lastPreview()!.onOpenFile).toBe("function");
+    expect(typeof lastPreview()!.onOpenDir).toBe("function");
+  });
+});
+
+describe("the buffer behind the preview", () => {
+  it("renders unsaved edits after the debounce, not before", async () => {
+    await render({});
+    await act(async () => modeButton("Split").click());
+    expect(lastPreview()!.source).toBe(PLAIN_MD);
+
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        editorView().dispatch({ changes: { from: 0, insert: "# Edited\n" } });
+      });
+      // The keystroke is in the buffer immediately, but the preview waits.
+      expect(editorView().state.doc.toString().startsWith("# Edited")).toBe(true);
+      expect(lastPreview()!.source).toBe(PLAIN_MD);
+
+      await act(async () => {
+        vi.advanceTimersByTime(250);
+      });
+      expect(lastPreview()!.source).toBe("# Edited\n" + PLAIN_MD);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("registers a dirty buffer with the navigation guard", async () => {
+    // Markdown panes join the same dirty registry as code panes (docs/44 §1.1),
+    // so every navigation guard covers them without a second mechanism.
+    await render({});
+    expect(hasDirtyEditors()).toBe(false);
+    await act(async () => {
+      editorView().dispatch({ changes: { from: 0, insert: "x" } });
+    });
+    expect(hasDirtyEditors()).toBe(true);
+  });
+
+  it("puts Markdown edits through the same buffer validator", async () => {
+    // The validator itself is covered in buffer.test.ts; what matters here is
+    // that a Markdown pane is wired into it. NUL is the probe rather than CR:
+    // EditorState.toText normalises CRLF to LF before any transaction filter
+    // sees it, so a programmatic dispatch cannot carry a CR (that is what the
+    // separate clipboard filter is for).
+    await render({});
+    await act(async () => modeButton("Edit").click());
+    await act(async () => {
+      editorView().dispatch({ changes: { from: 0, insert: "a\u0000b" } });
+    });
+    expect(editorView().state.doc.toString()).toBe(PLAIN_MD);
+    expect(hasDirtyEditors()).toBe(false);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(host.querySelector(".file-editor-status")?.textContent).toContain("NUL");
   });
 });
