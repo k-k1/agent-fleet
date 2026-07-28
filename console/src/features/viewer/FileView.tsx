@@ -380,7 +380,16 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   // must fire once per user selection even when the surface was already there.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (!focusRequest || !surfaces.editor) return;
+    if (!focusRequest) return;
+    if (!surfaces.editor) {
+      // The request was raised for a surface this commit does not show, so the
+      // selection behind it has already been superseded — by another selection
+      // in the same batch, or by a clamp. Nothing is waiting for it. Retiring it
+      // here as well as on the surface disappearing covers the case where the
+      // surface never appeared at all, so its disappearance is never observed.
+      consumedFocusRef.current = focusRequest;
+      return;
+    }
     queueMicrotask(() => {
       // CodeMirror may not have mounted yet — the pane's controls appear a commit
       // before the editor does. Leave the request unconsumed and let onReady take

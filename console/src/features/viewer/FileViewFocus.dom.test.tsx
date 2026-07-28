@@ -149,6 +149,27 @@ describe("a mode chosen before the editor is ready", () => {
     outside.remove();
   });
 
+  it("is retired when the same batch chooses the surface and leaves it again", async () => {
+    // Regression: retiring keyed on the editor surface disappearing, but two
+    // selections in one batch never show it — the committed surface is the same
+    // before and after, while the request in between still counted up.
+    await act(async () => {
+      modeButton("Edit").click();
+      modeButton("Preview").click();
+    });
+    await settle();
+    expect(host.querySelector(".file-editor-shell")?.hasAttribute("hidden")).toBe(true);
+
+    const outside = document.createElement("input");
+    document.body.appendChild(outside);
+    outside.focus();
+
+    await rerender({ targetLine: 3 });
+    await reportReady();
+    expect(document.activeElement).toBe(outside);
+    outside.remove();
+  });
+
   it("is retired by opening another file", async () => {
     await act(async () => modeButton("Edit").click());
     await settle();
