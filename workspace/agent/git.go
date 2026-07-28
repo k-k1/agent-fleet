@@ -1263,6 +1263,12 @@ func forgetNonLiveMetasUnder(dir string) {
 		if m.Locked {
 			continue // 削除ロック（docs/45）— 掃除の巻き添えでも消さない
 		}
+		if m.Archived {
+			// アーカイブは「棚」— WT を消しても会話は棚に残し、回収は棚側の削除
+			// （delete_session の gz 退避付き）に任せる。ここで忘れると、①一括アーカイブ
+			// →②WT削除 の段階を踏んだ人の棚が黙って消える。行は「フォルダ無し」表示になる。
+			continue
+		}
 		finalizeSessionUsage(m) // 使用量台帳へ確定してから忘れる（docs/46 §3-b）
 		session.RemoveMeta(m.Name)
 	}
