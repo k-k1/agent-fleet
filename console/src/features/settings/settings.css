@@ -2619,39 +2619,12 @@
 .adm-mcp-row .as-repo {
   flex: 1;
 }
+/* The distribution form itself is the member tab's form (.ssm-frm / .ssm-fgrid /
+   .mcp-checks — see mcpForm.tsx); only the spacing inside the admin panel is local.
+   It deliberately declares no label rules: a `.adm-mcp-form > label` rule used to
+   out-specify .mcp-check and stack every checkbox into a centred column. */
 .adm-mcp-form {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 10px 4px;
-  border-bottom: 1px solid var(--border2);
-}
-.adm-mcp-form > label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 12px;
-}
-.adm-mcp-headers {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.adm-mcp-lbl {
-  font-size: 12px;
-  color: var(--muted);
-}
-.adm-mcp-check {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  font-size: 12px;
-}
-.adm-mcp-foot {
-  display: flex;
-  gap: 8px;
-  align-items: center;
+  margin-bottom: 6px;
 }
 
 /* member actions */
@@ -3275,6 +3248,16 @@
    user_secret row only edits values (McpTab SecretsForm). */
 .mcp-kv-row.two {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+/* keyonly = no value column: the admin distributes header NAMES and each member types
+   their own value (AdminTab, user_secret on). */
+.mcp-kv-row.keyonly {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+/* Keep the "add" button at its own width — as a lone flex/grid child in a column it
+   would otherwise stretch across the form and read as a centred banner. */
+.mcp-kv-add {
+  display: flex;
 }
 /* Tenant distribution status line (docs/48 P4): when the set was last confirmed, plus
    the explicit refresh. Stale-but-served is the fail-open contract, so the timestamp is

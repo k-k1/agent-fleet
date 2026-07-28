@@ -16,7 +16,6 @@ import { setTenantDict } from "../chat/ttsDict.ts";
 // name rule, the masked round-trip and the "remote only" shape are pinned by
 // mcpWire.test.ts rather than by this component.
 import {
-  MASKED,
   MCP_KINDS,
   NAME_RE,
   bodyOfTenant,
@@ -24,7 +23,10 @@ import {
   tenantFormOf,
   tenantFormValid,
 } from "./mcpWire.ts";
-import type { KV, TenantForm, TenantServer } from "./mcpWire.ts";
+import type { TenantForm, TenantServer } from "./mcpWire.ts";
+// Same field furniture as the member tab's form (McpTab), so the two MCP forms stay
+// one design instead of two.
+import { Field, KVEditor, CheckRow, Check } from "./mcpForm.tsx";
 // Egress allowlist tie-in (docs/48 §9). It matters more here than on the member tab: a
 // distributed server that the proxy blocks is broken for EVERY member of the tenant.
 import { EgressNote, useEgressCheck } from "./EgressNote.tsx";
@@ -902,130 +904,114 @@ function McpAdminForm({
   const patch = (part: Partial<TenantForm>) => setForm({ ...form, ...part });
   const valid = tenantFormValid(form);
   const nameBad = form.name.trim() !== "" && !NAME_RE.test(form.name.trim());
-  const patchHeader = (i: number, part: Partial<KV>) =>
-    patch({ headers: form.headers.map((h, j) => (i === j ? { ...h, ...part } : h)) });
 
   return (
-    <div className="adm-mcp-form">
-      <label>
-        {tr("mcp.f_name")}
-        <input
-          type="text"
-          value={form.name}
-          placeholder="wiki"
-          onChange={(e) => patch({ name: e.target.value })}
-        />
-        <span className="hint">{nameBad ? tr("mcp.f_name_bad") : tr("mcp.f_name_hint")}</span>
-      </label>
-      <label>
-        {tr("mcp.f_label")}
-        <input type="text" value={form.label} onChange={(e) => patch({ label: e.target.value })} />
-      </label>
-      <label>
-        URL
-        <input
-          type="text"
-          value={form.url}
-          placeholder="https://mcp.example.com/mcp"
-          onChange={(e) => patch({ url: e.target.value })}
-        />
-        <span className="hint">{tr("admin.mcp_url_hint")}</span>
-      </label>
-      <EgressNote
-        url={form.url}
-        check={egress}
-        defaultReason={tr("mcp.egress_reason_for", { name: form.name.trim() || form.url.trim() })}
-        onProposed={onProposed}
-      />
-
-      <div className="adm-mcp-headers">
-        <span className="adm-mcp-lbl">{tr("mcp.f_headers")}</span>
-        {form.headers.map((h, i) => (
-          <div key={i} className={"mcp-kv-row" + (form.userSecret ? " two" : "")}>
+    <div className="ssm-frm mcp-frm adm-mcp-form">
+      <div className="ssm-fgroup">
+        <p className="ssm-fg-title">{form.id ? tr("admin.mcp_edit_title") : tr("admin.mcp_add")}</p>
+        <div className="ssm-fgrid">
+          <Field label={tr("mcp.f_name")} req hint={nameBad ? tr("mcp.f_name_bad") : tr("mcp.f_name_hint")}>
             <input
-              type="text"
-              placeholder="Authorization"
-              value={h.k}
-              onChange={(e) => patchHeader(i, { k: e.target.value })}
+              className="cinput mono"
+              placeholder="wiki"
+              value={form.name}
+              onChange={(e) => patch({ name: e.target.value })}
+              autoFocus
             />
-            {/* With user_secret on, the value belongs to each member — there is nothing
-                for the admin to type, so the input is gone rather than ignored. */}
-            {!form.userSecret && (
-              <input
-                type="password"
-                placeholder={tr("mcp.kv_value")}
-                value={h.v}
-                onChange={(e) => patchHeader(i, { v: e.target.value })}
-              />
-            )}
-            <button
-              type="button"
-              className="ghost xs danger"
-              onClick={() => patch({ headers: form.headers.filter((_, j) => j !== i) })}
-            >
-              <Icon name="close" />
-            </button>
-          </div>
-        ))}
-        <button type="button" className="ghost xs" onClick={() => patch({ headers: [...form.headers, { k: "", v: "" }] })}>
-          <Icon name="add" /> {tr("mcp.add_header")}
-        </button>
-        {form.headers.some((h) => h.v === MASKED) && <span className="hint">{tr("mcp.kv_masked_hint")}</span>}
-      </div>
-
-      <label className="adm-mcp-check">
-        <input
-          type="checkbox"
-          checked={form.userSecret}
-          onChange={(e) => patch({ userSecret: e.target.checked })}
-        />
-        {tr("admin.mcp_user_secret")}
-        <span className="hint">{tr("admin.mcp_user_secret_hint")}</span>
-      </label>
-
-      <div className="adm-mcp-headers">
-        <span className="adm-mcp-lbl">{tr("mcp.f_targets")}</span>
-        <label className="adm-mcp-check">
-          <input type="checkbox" checked={form.assistant} onChange={(e) => patch({ assistant: e.target.checked })} />
-          {tr("mcp.target_assistant")}
-        </label>
-        <label className="adm-mcp-check">
-          <input type="checkbox" checked={form.session} onChange={(e) => patch({ session: e.target.checked })} />
-          {tr("mcp.target_session")}
-        </label>
-      </div>
-
-      <div className="adm-mcp-headers">
-        <span className="adm-mcp-lbl">{tr("mcp.f_kinds")}</span>
-        {MCP_KINDS.map((k) => (
-          <label key={k} className="adm-mcp-check">
+          </Field>
+          <Field label={tr("mcp.f_label")} hint={tr("mcp.f_label_hint")}>
             <input
-              type="checkbox"
-              checked={form.kinds.includes(k)}
-              onChange={() =>
-                patch({ kinds: form.kinds.includes(k) ? form.kinds.filter((x) => x !== k) : [...form.kinds, k] })
-              }
+              className="cinput"
+              placeholder={tr("mcp.f_label_placeholder")}
+              value={form.label}
+              onChange={(e) => patch({ label: e.target.value })}
             />
-            {kindLabel(k)}
-          </label>
-        ))}
-        <span className="hint">{tr("mcp.f_kinds_hint")}</span>
+          </Field>
+          <Field label="URL" req wide hint={tr("admin.mcp_url_hint")}>
+            <input
+              className="cinput"
+              placeholder="https://mcp.example.com/mcp"
+              value={form.url}
+              onChange={(e) => patch({ url: e.target.value })}
+            />
+          </Field>
+
+          {/* The credential decision comes BEFORE the headers, because it decides what
+              the header rows even ask for (name+value vs name only). */}
+          <Field label={tr("admin.mcp_secret_policy")} wide hint={tr("admin.mcp_user_secret_hint")}>
+            <CheckRow>
+              <Check checked={form.userSecret} onChange={(v) => patch({ userSecret: v })}>
+                {tr("admin.mcp_user_secret")}
+              </Check>
+            </CheckRow>
+          </Field>
+          <Field
+            label={tr("mcp.f_headers")}
+            wide
+            hint={form.userSecret ? tr("admin.mcp_headers_names_hint") : tr("admin.mcp_headers_hint")}
+          >
+            <KVEditor
+              rows={form.headers}
+              onChange={(headers) => patch({ headers })}
+              keyPlaceholder="Authorization"
+              addLabel={tr("mcp.add_header")}
+              noValue={form.userSecret}
+            />
+          </Field>
+
+          {/* Deliberately NOT marked required: both off is a legal staging state
+              (stored, distributed to nothing) — see secrets.MCPTargets. */}
+          <Field label={tr("mcp.f_targets")} wide hint={tr("mcp.f_targets_hint")}>
+            <CheckRow>
+              <Check checked={form.assistant} onChange={(v) => patch({ assistant: v })}>
+                {tr("mcp.target_assistant")}
+              </Check>
+              <Check checked={form.session} onChange={(v) => patch({ session: v })}>
+                {tr("mcp.target_session")}
+              </Check>
+            </CheckRow>
+          </Field>
+          <Field label={tr("mcp.f_kinds")} wide hint={tr("mcp.f_kinds_hint")}>
+            <CheckRow>
+              {MCP_KINDS.map((k) => (
+                <Check
+                  key={k}
+                  checked={form.kinds.includes(k)}
+                  onChange={() =>
+                    patch({ kinds: form.kinds.includes(k) ? form.kinds.filter((x) => x !== k) : [...form.kinds, k] })
+                  }
+                >
+                  {kindLabel(k)}
+                </Check>
+              ))}
+            </CheckRow>
+          </Field>
+          <Field label={tr("mcp.f_enabled")} wide hint={tr("admin.mcp_enabled_hint")}>
+            <CheckRow>
+              <Check checked={form.enabled} onChange={(v) => patch({ enabled: v })}>
+                {tr("mcp.enabled_on")}
+              </Check>
+            </CheckRow>
+          </Field>
+        </div>
+        <EgressNote
+          url={form.url}
+          check={egress}
+          defaultReason={tr("mcp.egress_reason_for", { name: form.name.trim() || form.url.trim() })}
+          onProposed={onProposed}
+        />
+        <p className="ps-note">{tr("admin.mcp_restart_note")}</p>
       </div>
-
-      <label className="adm-mcp-check">
-        <input type="checkbox" checked={form.enabled} onChange={(e) => patch({ enabled: e.target.checked })} />
-        {tr("mcp.enabled_on")}
-        <span className="hint">{tr("admin.mcp_enabled_hint")}</span>
-      </label>
-
-      <p className="muted">{tr("admin.mcp_restart_note")}</p>
-      <div className="adm-mcp-foot">
-        <button type="button" className="btn" disabled={busy || !valid} onClick={() => void onSave(form)}>
-          {form.id ? tr("common.save") : tr("admin.mcp_add")}
+      <div className="ssm-frm-foot">
+        <button type="button" className="primary" disabled={busy || !valid} onClick={() => void onSave(form)}>
+          {form.id ? tr("common.save") : tr("admin.mcp_save_add")}
         </button>
         <button type="button" className="ghost" onClick={() => setForm(null)}>
           {tr("common.cancel")}
         </button>
+        <span className="req-note">
+          <b>*</b> {tr("ssm.req_note")}
+        </span>
       </div>
     </div>
   );

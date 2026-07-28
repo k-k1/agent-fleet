@@ -24,6 +24,7 @@ import {
   toKV,
 } from "./mcpWire.ts";
 import type { Form, KV, McpServer, ProbeResult, Registry } from "./mcpWire.ts";
+import { Field, KVEditor } from "./mcpForm.tsx";
 // Egress allowlist tie-in (docs/48 §9): a remote server the deployment's proxy will not
 // let the workspace reach is warned about here, where it can still be acted on.
 import { EgressNote, useEgressCheck } from "./EgressNote.tsx";
@@ -510,82 +511,8 @@ function SecretsForm({
 }
 
 // --- form ------------------------------------------------------------------------
-
-function Field({
-  label,
-  req,
-  hint,
-  wide,
-  children,
-}: {
-  label: ReactNode;
-  req?: boolean;
-  hint?: ReactNode;
-  wide?: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <div className={"ssm-fld" + (wide ? " wide" : "")}>
-      <label>
-        {label}
-        {req && <span className="req">*</span>}
-      </label>
-      {children}
-      {hint && <div className="hint">{hint}</div>}
-    </div>
-  );
-}
-
-// KVEditor edits env / header pairs. Values render as password inputs: a stored secret
-// arrives as "***" and going back unchanged keeps it, so the real credential is never
-// in the DOM — and a newly typed one isn't shoulder-surfable either.
-function KVEditor({
-  rows,
-  onChange,
-  keyPlaceholder,
-  addLabel,
-}: {
-  rows: KV[];
-  onChange: (rows: KV[]) => void;
-  keyPlaceholder: string;
-  addLabel: string;
-}) {
-  const tr = useT();
-  const patch = (i: number, part: Partial<KV>) =>
-    onChange(rows.map((r, j) => (i === j ? { ...r, ...part } : r)));
-  return (
-    <div className="mcp-kv">
-      {rows.map((r, i) => (
-        <div key={i} className="mcp-kv-row">
-          <input
-            className="cinput"
-            placeholder={keyPlaceholder}
-            value={r.k}
-            onChange={(e) => patch(i, { k: e.target.value })}
-          />
-          <input
-            className="cinput"
-            type="password"
-            placeholder={tr("mcp.kv_value")}
-            value={r.v}
-            onChange={(e) => patch(i, { v: e.target.value })}
-          />
-          <button
-            className="ghost danger mcp-btn"
-            title={tr("common.delete")}
-            onClick={() => onChange(rows.filter((_, j) => j !== i))}
-          >
-            <Icon name="close" />
-          </button>
-        </div>
-      ))}
-      <button className="ghost mcp-btn" onClick={() => onChange([...rows, { k: "", v: "" }])}>
-        <Icon name="add" /> {addLabel}
-      </button>
-      {rows.some((r) => r.v === MASKED) && <div className="hint">{tr("mcp.kv_masked_hint")}</div>}
-    </div>
-  );
-}
+// Field / KVEditor / CheckRow live in mcpForm.tsx — the tenant distribution form in
+// AdminTab renders the same definition and shares them.
 
 function ServerForm({
   form,
