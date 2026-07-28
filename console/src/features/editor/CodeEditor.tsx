@@ -5,6 +5,7 @@ import {
   EditorState,
   Prec,
   type Extension,
+  type StateEffect,
   type Transaction,
 } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
@@ -27,6 +28,11 @@ interface CodeEditorProps {
   onReady?(focus: () => void): void;
   /** Fires on every selection change with the quotable selection, or null. */
   onSelectionChange?(selection: EditorSelectionReport | null): void;
+  /** Bumped when a clean buffer auto-followed an external change (docs/44
+   *  §7.4). The document is swapped by rebuilding the editor state — not by an
+   *  edit transaction — so undo cannot roll the external content back, and the
+   *  cursor and scroll positions are restored by line number. */
+  externalEpoch?: number;
 }
 
 export function filterBufferTransaction(
@@ -73,6 +79,36 @@ export function bufferValidationExtensions(
   ];
 }
 
+/** Replace the document without leaving the old content in the undo history
+ *  (docs/44 §7.4): a change transaction would let Ctrl+Z resurrect — and then
+ *  save — the pre-follow text, so the whole editor state is rebuilt instead.
+ *  Cursor and scroll are restored by line number, clamped to the new document.
+ *  `reconfigure` re-applies compartment values (language, wrapping) that the
+ *  fresh state resets to their initial configuration. */
+export function followDocument(
+  view: EditorView,
+  content: string,
+  extensions: Extension,
+  reconfigure: readonly StateEffect<unknown>[] = [],
+): void {
+  const oldState = view.state;
+  const cursorLine = oldState.doc.lineAt(oldState.selection.main.head).number;
+  let topLine = cursorLine;
+  try {
+    topLine = oldState.doc.lineAt(view.lineBlockAtHeight(view.scrollDOM.scrollTop).from).number;
+  } catch {
+    // No layout (headless tests) — fall back to keeping the cursor line visible.
+  }
+  view.setState(EditorState.create({ doc: content, extensions }));
+  const doc = view.state.doc;
+  const cursor = doc.line(Math.max(1, Math.min(cursorLine, doc.lines))).from;
+  const top = doc.line(Math.max(1, Math.min(topLine, doc.lines))).from;
+  view.dispatch({
+    selection: { anchor: cursor },
+    effects: [...reconfigure, EditorView.scrollIntoView(top, { y: "start" })],
+  });
+}
+
 /** Scroll a 1-based line into view and put the cursor on it. The cursor is what
  *  marks the line: `basicSetup`'s active-line highlight follows it, which is the
  *  editing surface's equivalent of CodeView's target-line row. */
@@ -94,17 +130,23 @@ export function CodeEditor({
   onValidationError,
   onReady,
   onSelectionChange,
+  externalEpoch,
 }: CodeEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const wrappingRef = useRef<Compartment | null>(null);
   if (!wrappingRef.current) wrappingRef.current = new Compartment();
-  const callbacks = useRef({ onChange, onSave, onValidationError, onReady, onSelectionChange });
-  callbacks.current = { onChange, onSave, onValidationError, onReady, onSelectionChange };
+  const languageRef = useRef<Compartment | null>(null);
+  if (!languageRef.current) languageRef.current = new Compartment();
+  const languageExtRef = useRef<Extension>([]);
+  const extensionsRef = useRef<Extension | null>(null);
+  const appliedEpochRef = useRef(externalEpoch ?? 0);
+  const callbacks = useRef({ onChange, onSave, onValidationError, onReady, onSelectionChange, externalEpoch });
+  callbacks.current = { onChange, onSave, onValidationError, onReady, onSelectionChange, externalEpoch };
 
   useEffect(() => {
     if (!hostRef.current) return;
-    const language = new Compartment();
+    const language = languageRef.current!;
     const wrapping = wrappingRef.current!;
     const extensions: Extension[] = [
       basicSetup,
@@ -153,6 +195,12 @@ export function CodeEditor({
         ".cm-content": { minHeight: "100%" },
       }),
     ];
+    extensionsRef.current = extensions;
+    // A fresh mount starts a fresh model, so its follow epoch is the baseline —
+    // without this, a pane whose previous file had auto-followed would treat the
+    // new file's epoch 0 as a change and pointlessly rebuild the state.
+    appliedEpochRef.current = callbacks.current.externalEpoch ?? 0;
+    languageExtRef.current = [];
     const view = new EditorView({
       state: EditorState.create({ doc: content, extensions }),
       parent: hostRef.current,
@@ -164,7 +212,9 @@ export function CodeEditor({
     });
     let alive = true;
     void loadLanguageExtension(path).then((extension) => {
-      if (alive) view.dispatch({ effects: language.reconfigure(extension) });
+      if (!alive) return;
+      languageExtRef.current = extension;
+      view.dispatch({ effects: language.reconfigure(extension) });
     });
     return () => {
       alive = false;
@@ -175,6 +225,24 @@ export function CodeEditor({
     // synchronized below without discarding undo history.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path]);
+
+  // Declared before the content-sync effect below so an auto-follow captures
+  // the cursor/scroll lines from the OLD document; the sync effect then finds
+  // the document already replaced and does nothing.
+  useEffect(() => {
+    const epoch = externalEpoch ?? 0;
+    if (appliedEpochRef.current === epoch) return;
+    appliedEpochRef.current = epoch;
+    const view = viewRef.current;
+    if (!view || !extensionsRef.current) return;
+    followDocument(view, content, extensionsRef.current, [
+      languageRef.current!.reconfigure(languageExtRef.current),
+      wrappingRef.current!.reconfigure(wrap ? EditorView.lineWrapping : []),
+    ]);
+    // The follow consumes the epoch bump alone; content/wrap are read from the
+    // same commit and have their own sync effects.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [externalEpoch]);
 
   useEffect(() => {
     const view = viewRef.current;

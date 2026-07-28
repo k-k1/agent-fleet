@@ -28,6 +28,8 @@ import { CodeEditor } from "../editor/CodeEditor.tsx";
 import type { EditorSelectionReport } from "../editor/selection.ts";
 import { editorPill, type SelectionPill } from "./selectionPill.ts";
 import { useFileEditor } from "../editor/useFileEditor.ts";
+import { useExternalChangeProbe } from "../editor/probe.ts";
+import { getEditableFile, type EditableFile, type FileProbeResult } from "../editor/api.ts";
 import { useDebounced } from "../../lib/useDebounced.ts";
 import { revisionOf, type BufferValidationError } from "../editor/buffer.ts";
 import type { FileEditorModel } from "../editor/model.ts";
@@ -128,6 +130,11 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   // wrap is the per-pane override; fall back to the global setting.
   const wrapOn = wrap === undefined || wrap === null ? settings.wrap : wrap;
   const [data, setData] = useState<FileData | null>(null);
+  const dataRef = useRef<FileData | null>(null);
+  dataRef.current = data;
+  // External-change notice for panes without an editor buffer (docs/44 §7.4's
+  // read-only view case); buffered panes speak through the editor status line.
+  const [viewNotice, setViewNotice] = useState("");
   const [err, setErr] = useState("");
   const [imgMode, setImgMode] = useState<"preview" | "source">("preview");
   const [imgDims, setImgDims] = useState<{ w: number; h: number } | null>(null);
@@ -186,6 +193,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
     let settled = false; // a terminal result (content or a real error) has landed
     setData(null);
     setErr("");
+    setViewNotice("");
     setImgDims(null);
     setImgMode("preview");
     // Load the file, retrying transient gateway failures. Right after a WS start the agent
@@ -277,6 +285,75 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   );
   const editor = useFileEditor(paneId || `file:${filePath}`, editorInitial);
   const viewContent = editor.model?.content ?? data?.content ?? "";
+
+  // --- 外部変更の追従 (docs/44 §7, Phase 3.5) ------------------------------
+  // Buffered panes route probe observations through the editor model; a pane
+  // showing an editable file without a buffer (the plain-mode Markdown
+  // fallback) follows by replacing the loaded data directly.
+  const syncFollowedData = (file: EditableFile) => {
+    const prev = dataRef.current;
+    if (!prev || prev.editable !== true) return;
+    const next: FileData = { ...prev, path: file.path, content: file.content, size: file.size, revision: file.revision };
+    setData(next);
+    // A follow is the same document with newer bytes, not a new file: carry the
+    // mode state over to the new data object so the user's chosen mode holds.
+    setModeState((m) => (m.key === prev ? { ...m, key: next } : m));
+  };
+
+  const applyViewProbe = async (result: FileProbeResult) => {
+    const current = dataRef.current;
+    if (!current || current.editable !== true || typeof current.revision !== "string") return;
+    if (result.kind === "revision") {
+      if (result.revision === current.revision) {
+        setViewNotice("");
+        return;
+      }
+      try {
+        const file = await getEditableFile(current.path || filePath);
+        if (dataRef.current !== current || file.revision === current.revision) return;
+        syncFollowedData(file);
+        setViewNotice(tr("editor.external.followed"));
+      } catch {
+        // Silent (docs/44 §7.5) — the next trigger retries.
+      }
+      return;
+    }
+    setViewNotice(
+      result.kind === "missing"
+        ? tr("editor.external.missing")
+        : result.kind === "uneditable"
+          ? tr("editor.external.uneditable")
+          : tr("editor.external.boundary"),
+    );
+  };
+
+  const probePath =
+    canEdit && editor.model
+      ? editor.model.path
+      : data?.editable === true && typeof data.revision === "string" && isText && !isImage
+        ? data.path || filePath
+        : null;
+
+  useExternalChangeProbe({
+    path: probePath,
+    paneActive: !!isActivePane,
+    isPaneVisible: () => {
+      // A phone keeps background columns mounted but display:none (PaneHost).
+      const el = bodyRef.current;
+      if (!el) return false;
+      return typeof el.checkVisibility === "function" ? el.checkVisibility() : el.offsetWidth > 0;
+    },
+    isSaving: () => editor.model?.phase === "saving",
+    onResult: (result) => {
+      if (editor.model) {
+        void editor.applyProbeResult(result).then((file) => {
+          if (file) syncFollowedData(file);
+        });
+      } else {
+        void applyViewProbe(result);
+      }
+    },
+  });
   // The preview renders the buffer, so it would otherwise re-parse + sanitise +
   // re-run Mermaid on every keystroke. Debouncing also settles the Marp check:
   // a deck's front matter is edited character by character, and reacting to each
@@ -421,6 +498,17 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   useEffect(() => {
     setEditorNotice("");
   }, [editor.model?.bufferGeneration, editor.model?.phase]);
+
+  // Announce a clean auto-follow (docs/44 §7.4). Declared after the clearing
+  // effect so the same commit's clear cannot mask the announcement; the next
+  // buffer change then clears it through the effect above.
+  const followEpoch = editor.model?.followEpoch ?? 0;
+  const followEpochRef = useRef(followEpoch);
+  useEffect(() => {
+    const was = followEpochRef.current;
+    followEpochRef.current = followEpoch;
+    if (followEpoch > was) setEditorNotice(tr("editor.external.followed"));
+  }, [followEpoch, tr]);
 
   // Expose the Markdown mode walk to the keyboard system (viewer.mdMode command).
   // Modes are the outer axis and the preview renderer the inner one, so a Marp
@@ -591,6 +679,21 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
     phase === "save_state_unknown" ||
     phase === "conflict" ||
     phase === "conflict_remote_unavailable";
+  // The probe's advisory (docs/44 §7.3): a polite status-line note, never an
+  // alert, and never a phase change. The resolution panels already speak for
+  // the alert phases, so the note yields to them.
+  const externalObs = !editorAlert ? (editor.model?.externalObservation ?? null) : null;
+  const externalNote = externalObs
+    ? externalObs.kind === "changed"
+      ? tr("editor.external.changed")
+      : externalObs.kind === "same_as_buffer"
+        ? tr("editor.external.same_as_buffer")
+        : externalObs.kind === "missing"
+          ? tr("editor.external.missing")
+          : externalObs.kind === "uneditable"
+            ? tr("editor.external.uneditable")
+            : tr("editor.external.boundary")
+    : "";
 
   const viewerStyle = {
     "--viewer-font": fontStack(settings.viewerFont),
@@ -762,6 +865,27 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
           aria-live="polite"
         >
           {editorStatus}
+          {externalNote && (
+            <span className="file-external-note">
+              {externalNote}
+              {externalObs?.kind === "changed" && phase === "dirty" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditorNotice("");
+                    void editor.confirmExternalChange();
+                  }}
+                >
+                  {tr("editor.external.check_diff")}
+                </button>
+              )}
+            </span>
+          )}
+        </div>
+      )}
+      {!canEdit && viewNotice && (
+        <div className="file-editor-status" role="status" aria-live="polite">
+          {viewNotice}
         </div>
       )}
 
@@ -773,6 +897,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
               content={editor.model.content}
               wrap={wrapOn}
               targetLine={targetLine}
+              externalEpoch={editor.model.followEpoch}
               onSelectionChange={captureEditorSelection}
               onChange={(content) => {
                 setEditorNotice("");
