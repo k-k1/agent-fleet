@@ -646,7 +646,9 @@ identityから応答受信時にenvelopeを合成し、本節の検証をその�
   `suggestion_stale` のUI code/stateとして棄却する。これはHTTPレスポンスcodeではない。paneが
   破棄・差し替え済みなら適用しない。
 - Phase 4 のMVPは単一rangeの1提案とする。複数hunk、複数候補、fuzzy match、自動rebaseはPhase 5
-  以降で別途設計する。
+  以降で別途設計する。Phase 5 の設計は §8 に固定した。hunk と複数候補は本節のwire契約
+  （`EditSuggestion` v1・単一range・1応答1提案）を**変えずに**Console側の導出と候補リストで
+  実現する。fuzzy matchと自動rebaseはPhase 5でも採らない。
 - `summary` は表示用メタデータであり、ファイル内容や権限を変更する命令として実行しない。
 
 ### 4.3 保存との関係
@@ -866,10 +868,30 @@ handler・ルート両側）、Console node（suggest/model/useFileEditor — ac
 - accept handlerがPUTを呼ばず、replacement適用前に共通buffer validatorを通し、メモリbufferだけを
   dirty化することをテストで保証する。
 
-### Phase 5（高度な支援）
+### Phase 5（提案の高度化 — hunk単位accept・複数候補）
 
-- 複数候補、hunk単位accept、セッション連携、補完、CRLF/改行マッピング対応は別ADRまたは本ADRの
-  改訂で設計してから着手する。
+**設計済み・実装未着手（2026-07-29）。** 設計方針は §8。スコープは hunk単位のaccept/rejectと
+複数候補の2つに限定し、セッション連携・補完・CRLF/改行マッピングは引き続き別設計とする
+（§8.1に対象外の理由を明記）。着手時にADR 0027の状態行とPhase 5境界の記述を改訂する。
+
+実装時の受け入れ条件:
+
+- hunkが `EditSuggestionEnvelope` v1と現在バッファだけから決定的に導出され、wire・
+  `EditSuggestion` 型・Agentの応答契約（`{summary, replacement}`）が変わらないことを
+  テストで確認する。導出の境界ケース（選択の行途中開始/終了、末尾改行なし、挿入のみの
+  hunk、置換文が旧本文と同一で差分0件、全行置換）を網羅する。
+- 選択したhunk集合の適用が元座標のchange配列による**単一のundoable transaction**で行われ、
+  適用前に`checkSuggestion`拡張（identity・revision三重一致・選択hunk合成後全文のvalidator）を
+  通ることをテストする。適用後に提案（全候補）がretireされ、残hunkの座標シフト・rebase・
+  継続レビュー経路が存在しないことを確認する。
+- 「別案」がオンデマンド追加（既定1案・単一in-flight・上限4候補）で生成され、`prior` を
+  未知フィールドとして拒否する旧Agentに対して prior なし再送のフォールバックが1回だけ
+  動くことをテストする。
+- staleは候補ごとに `baseRevision !== bufferRevision` から導出され、stale候補は適用不可の
+  表示になるが他候補の閲覧・適用を妨げないことをテストする。
+- accept handlerがPUTを呼ばないこと（Phase 4の既存保証）をhunk適用経路でも維持する。
+- hunkチェックボックス、候補切替、適用ボタンのdisabled条件（stale・選択0件・差分0件）の
+  ARIAと、i18n（英日）の同時登録を行う。
 
 ## 7. 外部変更の追従（Phase 3.5 設計方針）
 
@@ -961,3 +983,127 @@ raw byte revisionを返す契約拡張が必要であり、将来課題とする
 - **dirtyなバッファへの自動マージ・自動リベース:** §1.6で採らないと決めた方針をそのまま適用する。
 - **ファイルツリー・git変更一覧の自動追従:** 本節の対象は開いているファイルペインに限る。左ペインの
   自動更新は別の設計とする。
+
+## 8. 提案の高度化（Phase 5 設計方針）
+
+> 本節はPhase 5の方針を固定するものである。設計は2026-07-29に確定し、実装は未着手である。
+
+### 8.1 スコープ
+
+Phase 5は**hunk単位のaccept/reject**と**複数候補**の2つに限定する。どちらもPhase 4の提案フロー
+（選択範囲＋指示文→レビュー→accept/reject）の直接拡張であり、次の不変条件を**変えずに**実現する。
+
+- LLMにoffsetを計算させない。rangeはユーザー選択から確定する（§6 Phase 4）。
+- `EditSuggestion` v1（単一range・1提案）とwire契約（`POST /fs/suggest-edit` の応答
+  `{summary, replacement}`）を変更しない。
+- revision三重一致によるstale棄却を維持し、fuzzy match・自動rebaseを行わない（§4.2）。
+- acceptはメモリバッファのみをdirty化し、PUTを呼ばない（§4.3）。
+
+ADR 0027がPhase 5候補として列挙した残りは、性質が別物なので本設計の対象外とする。
+
+- **セッション連携**（既存のClaude/Codexセッションへ提案生成を依頼する）: 一般セッションは
+  Write/Edit/Bash能力を持ち得るため、read-only提案チャネルの境界（§1.3）の再定義が必要になる。
+  提案フローのUX拡張とは独立した権限設計として別途行う。
+- **補完**（インライン補完）: 打鍵に追従する低レイテンシ生成が必要で、90秒タイムアウトの
+  `oneShotHeadless` とは別のチャネル・別のコスト管理を要する。
+- **CRLF/改行マッピング**: §1.2のとおりraw/document間の改行マッピングを別バージョンで定義して
+  から対象を広げる。提案機能ではなく編集対象の拡張である。
+
+### 8.2 hunk単位のaccept/reject — クライアントdiff導出
+
+**hunkはwireに存在しない。** LLMは今までどおり選択範囲全体を差し替える `replacement` を1本
+返し、Consoleが「選択範囲の旧テキスト vs replacement」の行diff（`DiffView` からexport済みの
+LCS `lineDiff`。レビューUIの差分表示と同じ関数）から hunk を導出する。導出は
+`EditSuggestionEnvelope` v1と現在バッファだけを入力とする決定的な純関数であり、hunkを
+envelope・model・storageへ保存しない（表示のたびに再計算できる）。
+
+- **導出:** 旧テキスト `content.slice(range.from, range.to)` と `replacement` を行分割して
+  `lineDiff` にかけ、`same` 行を挟まず連続する `del`/`add` 行の塊を1 hunkとする。各hunkは
+  旧本文側の絶対UTF-16 offset `[from, to)`（`range.from` ＋ 旧側行の累積長から算出）と挿入文
+  （`add` 行の連結）を持つ。`add` 行だけのhunkは挿入（`from === to`）になる。
+- **行分割の規約:** 選択が行の途中で始まる/終わる場合、切り出したテキストの先頭・末尾の
+  部分行をそのまま1行として扱う。offsetは切り出しテキスト内の累積長で計算するため特別扱いは
+  不要だが、末尾改行の有無（`split("\n")` の末尾空要素）を含めてテストで固定する。
+- **UI:** hunkが2つ以上のとき、diff表示にhunkごとのチェックボックス（既定は全てON）を出し、
+  適用ボタンを「選択したhunkを適用（n/m）」にする。hunkが1つならPhase 4と同じ表示にする。
+  差分が0件（replacementが旧テキストと同一）なら「変更なし」を示し適用を無効化する。
+- **適用:** 選択されたhunkだけを `{from, to, insert}` のchange配列にし、**1回のundoable
+  transaction**でdispatchする。CodeMirrorは同一transaction内の全changeを適用前documentの
+  座標で解釈するため、座標シフトの計算は不要である。共通transactionフィルタ（validator）を
+  通す点、編集面が無い場合はmodel側適用＋content同期で代替する点はPhase 4と同じ。
+- **検証:** `checkSuggestion` を「選択hunk集合」を受け取る形へ拡張する。identityとrevisionの
+  三重一致検査はv1のまま、適用後全文は選択hunkだけを合成した本文（`same`行と非選択hunkの
+  旧行を保持、選択hunkは挿入文へ置換）に対して共通buffer validator（§1.7）を通す。
+  受信時（全hunk選択相当）と適用時の両方で呼ぶ。
+- **部分適用は1回で完結する。** 適用するとbufferRevisionが変わるため、残hunkは現行のstale
+  規則で棄却対象になる。ここに例外を作らない — 適用と同時に提案（複数候補があれば全候補）を
+  retireし、非選択hunkは破棄する。続きが欲しければ再生成する。適用済みhunk分のoffsetを
+  シフトして残hunkを新revision上へ生かす「継続レビュー」は、自動rebaseを行わない決定
+  （§4.2・§1.3）への例外となるため採らない。
+
+### 8.3 複数候補 — オンデマンド追加「別案」
+
+既定は現行どおり1案とし、レビュー画面に「別の案」操作を足す。常にN案を先出しする方式は
+採らない（§8.6）。
+
+- **生成:** 「別の案」は最初の候補と同じrange・指示文を**現在のバッファ**に対して再実行する
+  追加POSTである（文脈windowは現在本文から切り直し、新候補の `baseRevision` は現在の
+  bufferRevision）。rangeが現在本文で不正になっていれば（範囲外・surrogate分断）生成を拒否する。
+  生成は既存の単一in-flight（`suggestReqRef`）を共有し、並列生成しない。候補は最初の1案を
+  含めて**最大4件**とし、上限とin-flight中は「別の案」を無効化する。
+- **多様性:** リクエストへoptionalな `prior` フィールド（既出候補の `replacement` の配列。
+  各エントリは先頭16 KiBへ切り詰め、最大3件）を追加し、プロンプトに「既出の案（これらとは
+  別の方針にする）」として渡す。`instruction` へ畳み込む方式は4 KiB上限に収まらないため
+  採らない。
+- **互換:** Agentのstrict decoderは未知フィールドを拒否するため、自己更新のズレで旧Agentに
+  新Consoleが `prior` を送ると `bad_request` になる。この場合は `prior` を外して**1回だけ**
+  再送するフォールバックを置く（多様性ヒントが落ちるだけで機能は成立する）。
+- **model:** `model.suggestion: Envelope | null` を候補リスト＋active indexへ拡張する。候補は
+  それぞれ独自の `requestId` と `baseRevision` を持ち、staleは**候補ごと**に
+  `baseRevision !== bufferRevision` から導出する（生成タイミングが違えばbaseRevisionは
+  候補間で異なり得る）。stale候補は適用不可の表示になるが、閲覧と他候補の適用は妨げない。
+- **UI:** 候補はタブ（案1/案2/…）で切り替え、diff＋hunkチェックボックスはactiveな候補に
+  対して表示する。hunk選択は候補ごとに保持する。「適用」はactive候補の選択hunkを適用し、
+  全候補をretireする。「却下」は全候補を破棄してcompose（指示文入力）へ戻る。候補単位の
+  個別削除は設けない（タブ切替で十分なため）。
+- **費用と記録:** 「別の案」1回ごとに通常の生成1回分を消費し、usage台帳へは既存の
+  `suggest.edit`（trigger=manual）として候補ごとに記録される（追加の台帳変更なし）。
+
+### 8.4 Agent側の変更
+
+`POST /fs/suggest-edit` に閉じた小change のみで、新ルート・応答形の変更・並列化はしない。
+
+- `editSuggestRequest` へ optional `prior []string` を追加し、validateで件数（最大3）・
+  各エントリのbytes上限（16 KiB）・CR/NUL禁止を検査する。
+- `editSuggestPrompt` に既出案のセクションを追加する。personaへ「既出の案と実質同じ内容を
+  返さない」旨を足す。
+- タイムアウト（90秒）、モデル選択（`AF_EDIT_SUGGEST_MODEL`）、read-only生成チャネル
+  （§1.3）、応答 `{summary, replacement}` は変更しない。
+
+### 8.5 UIとアクセシビリティ
+
+- hunkの取捨はネイティブcheckboxとし、ラベルに位置と規模（例: 「hunk 2/3 −2行 +5行」）を
+  含める。チェック変更で適用ボタンの件数表示を更新する。
+- 候補切替は§5のview/edit切替と同じ `role="tablist"` / `aria-selected` パターンとする。
+  候補の追加完了は `role="status"` / `aria-live="polite"` で告知し、エラーではないので
+  `role="alert"` にしない（Phase 4と同じ）。
+- 適用ボタンのdisabled条件は「active候補がstale」「選択hunkが0件」「差分が0件」。staleの
+  文言はPhase 4の `editor.suggestion.stale` を流用し、候補・hunk関連の新規文言は英日を
+  同時登録する。
+
+### 8.6 v2で採らない選択肢
+
+- **LLMが構造化hunk（対象テキスト＋置換文の組）を返す:** 位置解決にテキスト照合が必要になり、
+  照合失敗・重複一致の扱いがPhase 0で却下したfuzzy matchへ近づく。`EditSuggestion` とAgent
+  応答の契約変更も伴う。クライアントdiff導出なら契約無変更で同じUXに到達できる。
+- **残hunkの座標シフトによる継続レビュー:** 自動rebaseをしない決定への例外を作り、三重一致の
+  検証規則の再設計が必要になる。1回適用で完結させ、続きは再生成で賄う。
+- **固定N案の並列生成:** コストN倍が常時発生し、headless CLIプロセスがN本同時に立つ
+  （メモリ制約ホストで不利）。使った分だけ課金されるオンデマンド追加で足りる。
+- **1回の生成でN案をJSON配列で返させる:** 置換文は最大256 KiBになり得るため出力がN倍に
+  膨らみ、巨大JSONの抽出（フェンス/散文混じり対応）が脆くなる。同一生成内の案は多様性も
+  低い。
+- **候補・hunk選択のlayout/storage永続化:** 本文・提案をメモリ限定とする§1.1の方針のまま、
+  候補リストとhunk選択もペインのメモリ状態に限る。
+- **選択範囲の外へ及ぶ提案:** rangeをユーザー選択から確定する不変条件を維持する。ファイル
+  全体への提案は従来どおり「選択なし＝全文range」で表現できる。
