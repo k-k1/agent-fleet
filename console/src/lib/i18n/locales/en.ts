@@ -1952,6 +1952,11 @@ export const en: Record<keyof typeof ja, string> = {
   "clean.selected_n": "{count} selected",
   "clean.run_selected": "Clean up selected",
   "clean.keep_hint": "Keep (running, or uncommitted/unpushed). Stop or push it, or force-delete in the Console.",
+  "clean.collapse_all": "Collapse",
+  "clean.expand_all": "Expand",
+  "clean.group_main": "(main clone)",
+  "clean.group_other": "Other",
+  "clean.group_safe_n": "{count} safe",
   "clean.action_archive_session": "Archive",
   "clean.action_delete_session": "Delete (with conversation, recoverable)",
   "clean.action_delete_worktree": "Delete worktree",
@@ -1973,6 +1978,16 @@ export const en: Record<keyof typeof ja, string> = {
   "clean.purge_title": "Permanently delete this recovery archive?",
   "clean.purge_body": "This archive can no longer be restored (reclaims its space).",
   "clean.purge_do": "Delete permanently",
+  // Candidate reasons — the Agent sends only the clean.reason.* key (ADR 0033).
+  "clean.reason.locked": "Locked (delete-protected; not a cleanup target until unlocked)",
+  "clean.reason.archived": "Archived (exempt from auto-prune; delete to reclaim, recoverable)",
+  "clean.reason.stopped": "Stopped (resumable). Archive it to clear the list once it's finished",
+  "clean.reason.orphan_pane": "Orphan (running pane with no metadata). Attach or tidy it in the Console",
+  "clean.reason.wt_live": "A session is still running here (stop it first)",
+  "clean.reason.wt_dirty": "Uncommitted/unpushed changes (push, or force-delete in the Console)",
+  "clean.reason.wt_merged": "Merged and clean (already in the parent)",
+  "clean.reason.wt_unmerged": "Clean but unmerged (has its own commits; the branch survives deletion, but check first)",
+  "clean.reason.branch_merged": "Merged local branch (already in the parent; recoverable after deletion)",
 
   // === P2 session row (features/sessions/SessionRow.tsx) ===
   "srow.id_copied": "Copied the ID: {name}",

@@ -47,6 +47,8 @@ const exact = {
   "/api/tenants": () => ({ tenants: [{ slug: "demo", name: "Demo Team", role: "member" }], super_admin: false }),
   "/api/workspace": () => ({ state: "running", bootPhase: "" }),
   "/api/sessions": () => ({ sessions: fx.sessions(LOCALE) }),
+  "/api/sessions/cleanup": () => ({ candidates: fx.cleanupCandidates(LOCALE) }),
+  "/api/cleanup/archives": () => ({ archives: fx.cleanupArchives(LOCALE) }),
   "/api/repos": () => ({ repos: fx.repos(LOCALE) }),
   // Four connected agents: at five the launch dialog's per-card sub-label starts to
   // clip (real behavior — see the note in this directory's README), which reads as a

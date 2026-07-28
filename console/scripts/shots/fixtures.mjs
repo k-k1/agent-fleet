@@ -741,3 +741,72 @@ export function usageSeries(locale, q) {
   }
   return resp;
 }
+
+// Cleanup survey (GET /sessions/cleanup) — a fleet that has drifted: several merged
+// worktrees of one repo, a live one that must be kept, leftover merged branches, and
+// stopped/archived sessions. Reasons travel as `reason_key` (ADR 0033), so the modal
+// renders them from the Console catalog; `reason` is the ja fallback the Agent sends.
+export function cleanupCandidates(locale) {
+  const wt = (seg, branch, safety, key, extra = {}) => ({
+    type: "worktree",
+    action: safety === "keep" ? undefined : "delete_worktree",
+    id: `webshop@${seg}`,
+    repo: `webshop@${seg}`,
+    path: `/home/dev/repos/webshop@${seg}`,
+    branch,
+    safety,
+    reason_key: key,
+    reason: "",
+    ...extra,
+  });
+  return [
+    wt("checkout-validation", "feat/checkout-validation", "keep", "clean.reason.wt_live"),
+    wt("cart-badge", "temp/cart-badge", "safe", "clean.reason.wt_merged", { relation: "contained" }),
+    wt("price-rounding", "temp/price-rounding", "safe", "clean.reason.wt_merged", { relation: "contained" }),
+    wt("search-facets", "temp/search-facets", "review", "clean.reason.wt_unmerged", { relation: "unmerged" }),
+    wt("i18n-sweep", "temp/i18n-sweep", "keep", "clean.reason.wt_dirty", { dirty: true, ahead: 1 }),
+    {
+      type: "branch", action: "delete_branch", id: "webshop", repo: "webshop",
+      branch: "temp/cart-badge", safety: "safe", reason_key: "clean.reason.branch_merged", reason: "",
+    },
+    {
+      type: "branch", action: "delete_branch", id: "webshop", repo: "webshop",
+      branch: "temp/legacy-checkout", safety: "safe", reason_key: "clean.reason.branch_merged", reason: "",
+    },
+    {
+      type: "session", action: "archive_session", id: "sk9wq1a",
+      display: L(locale, "カート表示のバッジ調整", "Cart badge tweak"), kind: "claude",
+      repo: "webshop@cart-badge", path: "/home/dev/repos/webshop@cart-badge",
+      safety: "review", reason_key: "clean.reason.stopped", reason: "",
+    },
+    {
+      type: "session", action: "delete_session", id: "sm2vt7c",
+      display: L(locale, "検索ファセットの設計メモ", "Search facet design notes"), kind: "codex",
+      repo: "webshop@search-facets", path: "/home/dev/repos/webshop@search-facets",
+      safety: "review", reason_key: "clean.reason.archived", reason: "",
+    },
+    {
+      type: "session", action: "archive_session", id: "sp3hd8k",
+      display: L(locale, "返金 API の契約整理", "Refund API contract"), kind: "codex",
+      repo: "payments-api", path: "/home/dev/repos/payments-api",
+      safety: "review", reason_key: "clean.reason.stopped", reason: "",
+    },
+    {
+      type: "branch", action: "delete_branch", id: "payments-api", repo: "payments-api",
+      branch: "temp/refund-contract", safety: "safe", reason_key: "clean.reason.branch_merged", reason: "",
+    },
+  ];
+}
+
+export function cleanupArchives(locale) {
+  return [
+    {
+      id: "20260726-091500-slot3", at: "2026-07-26T09:15:00Z", reason: "delete_session",
+      sessions: [{ name: "sq8kd2m", display: L(locale, "旧チェックアウト調査", "Old checkout probe") }],
+    },
+    {
+      id: "20260724-183000-slot1", at: "2026-07-24T18:30:00Z", reason: "delete_branch",
+      branches: [{ repo: "webshop", name: "temp/old-cart" }],
+    },
+  ];
+}
