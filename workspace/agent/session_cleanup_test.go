@@ -9,23 +9,29 @@ import (
 
 func TestClassifySessionCleanup(t *testing.T) {
 	// Live → skipped entirely (working, not clutter).
-	if _, _, _, ok := classifySessionCleanup(false, false, true); ok {
+	if _, _, _, ok := classifySessionCleanup(false, false, true, false); ok {
 		t.Fatal("live session must not be a cleanup candidate")
 	}
 	// Stopped, not archived → propose archive, but review (stopped ≠ finished).
-	action, safety, _, ok := classifySessionCleanup(false, false, false)
+	action, safety, _, ok := classifySessionCleanup(false, false, false, false)
 	if !ok || action != "archive_session" || safety != "review" {
 		t.Fatalf("stopped: action=%q safety=%q ok=%v", action, safety, ok)
 	}
 	// Already archived → delete_session reclaims it (TTL-exempt, so it accumulates).
-	action, safety, _, ok = classifySessionCleanup(false, true, false)
+	action, safety, _, ok = classifySessionCleanup(false, true, false, false)
 	if !ok || action != "delete_session" || safety != "review" {
 		t.Fatalf("archived: action=%q safety=%q ok=%v", action, safety, ok)
+	}
+	// Stopped shell/ssm: no conversation to archive — propose deletion, and safe
+	// (delete_session still bundles the meta to the recoverable archive).
+	action, safety, reasonKey, ok := classifySessionCleanup(false, false, false, true)
+	if !ok || action != "delete_session" || safety != "safe" || reasonKey != cleanReasonEphemeral {
+		t.Fatalf("ephemeral: action=%q safety=%q reason=%q ok=%v", action, safety, reasonKey, ok)
 	}
 	// 削除ロック（docs/45）: listed, but keep and with no action — the operator must
 	// never propose a tool call that the Agent will refuse with 403.
 	for _, archived := range []bool{false, true} {
-		action, safety, reasonKey, ok := classifySessionCleanup(true, archived, false)
+		action, safety, reasonKey, ok := classifySessionCleanup(true, archived, false, false)
 		if !ok || action != "" || safety != "keep" || reasonKey != cleanReasonLocked {
 			t.Fatalf("locked(archived=%v): action=%q safety=%q reason=%q ok=%v", archived, action, safety, reasonKey, ok)
 		}

@@ -62,6 +62,7 @@ const (
 	cleanReasonLocked       = "clean.reason.locked"
 	cleanReasonArchived     = "clean.reason.archived"
 	cleanReasonStopped      = "clean.reason.stopped"
+	cleanReasonEphemeral    = "clean.reason.ephemeral"
 	cleanReasonOrphanPane   = "clean.reason.orphan_pane"
 	cleanReasonWtLive       = "clean.reason.wt_live"
 	cleanReasonWtDirty      = "clean.reason.wt_dirty"
@@ -74,6 +75,7 @@ var cleanupReasonJA = map[string]string{
 	cleanReasonLocked:       "ロック中（削除保護。解除するまで掃除対象外）",
 	cleanReasonArchived:     "アーカイブ済み（自動prune対象外。delete_session で回収可・復元可）",
 	cleanReasonStopped:      "停止中（再開可能）。完了していれば archive で一覧から整理",
+	cleanReasonEphemeral:    "停止中の shell/ssm（残す会話なし）。削除で片付く",
 	cleanReasonOrphanPane:   "orphan（メタ無しの実行中ペイン）。Console でアタッチ/整理",
 	cleanReasonWtLive:       "稼働中のセッションがある（先に停止が必要）",
 	cleanReasonWtDirty:      "未コミット/未pushの変更あり（push か Console で強制削除）",
@@ -92,8 +94,10 @@ func cleanupReasonText(key string) string {
 }
 
 // classifySessionCleanup grades a session meta. Returns ok=false to skip it entirely
-// (it is live — working, not clutter). Pure: no git/tmux, so it is unit-tested.
-func classifySessionCleanup(locked, archived, live bool) (action, safety, reasonKey string, ok bool) {
+// (it is live — working, not clutter). ephemeral = shell/ssm: no conversation worth
+// keeping, so archiving is meaningless — deletion is the whole tidy-up. Pure: no
+// git/tmux, so it is unit-tested.
+func classifySessionCleanup(locked, archived, live, ephemeral bool) (action, safety, reasonKey string, ok bool) {
 	switch {
 	case live:
 		return "", "", "", false // running — not a cleanup target
@@ -106,6 +110,10 @@ func classifySessionCleanup(locked, archived, live bool) (action, safety, reason
 		// so they accumulate. delete_session reclaims them (meta + jsonl), bundled to a
 		// recoverable archive first — review before acting (archived ≠ throwaway).
 		return "delete_session", "review", cleanReasonArchived, true
+	case ephemeral:
+		// A stopped shell/ssm holds nothing restorable — delete_session still bundles
+		// its meta to the recoverable archive, so this is safe to act on in bulk.
+		return "delete_session", "safe", cleanReasonEphemeral, true
 	default:
 		// Stopped but resumable: finished work sitting in the active list. archive is
 		// reversible (restore), but "stopped" ≠ "finished", so review before acting.
@@ -140,7 +148,8 @@ func handleSessionsCleanup(w http.ResponseWriter, r *http.Request) {
 	live := tmuxx.LiveSessionNames()
 	for _, m := range session.ListMetas() {
 		isLive := live[m.Name] || (m.DriverKind() == session.DriverManaged && managedAlive(m))
-		action, safety, reasonKey, ok := classifySessionCleanup(m.Locked, m.Archived, isLive)
+		ephemeral := m.Kind == session.KindShell || m.Kind == session.KindSSM
+		action, safety, reasonKey, ok := classifySessionCleanup(m.Locked, m.Archived, isLive, ephemeral)
 		if !ok {
 			continue
 		}
