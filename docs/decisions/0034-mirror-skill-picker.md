@@ -78,9 +78,27 @@ Resume しない**（runtime を起こす副作用が出る）— 未着時は p
 - kiro は広告の `prompts`（ユーザー定義）が実データ 0 件で形未検証、組み込みだけでは
   雑音 → 見送り。copilot / agy は機構自体が未確認/suspect → 見送り。
 
+## 追記（同日 v3）: スキルブリッジ — claude ⇄ codex 双方向・シンボリックリンク不使用
+
+利用者要望「リンクを置かず実行時に橋渡し」「両方のフォルダのスキルをどちらの
+エージェントからも」「シンボリックリンクはしたくない」を受けた第 3 弾（docs/50 §8）。
+
+### 7. 橋渡しは起動時のマーカー付きコピー同期（リンクでも設定注入でもなく）
+
+- codex 片方向なら app-server の `skills/extraRoots/set` RPC（ファイル無書込）が最も
+  クリーンだが、**claude 側に相当機構が無く双方向要件を満たせない** → 両方向を 1 つの
+  機構で賄えるコピー同期を採った。symlink 案は利用者が明示的に却下。
+- 安全規約: マーカー（`.af-skill-bridge`）が所有権の印・実体優先・ループ防止・剪定は
+  自分のコピーだけ・`$GIT_DIR/info/exclude` の番兵ブロックで status 非汚染（ユーザーの
+  実スキルは exclude しない）・無変更なら書かない・best-effort。
+- シームは既存の起動前副作用（`ensureFolderTrusted`）の隣: claude/codex の
+  `BuildLaunch` ＋ codex managed の thread 再確立点。
+
 ## 残る非対称（既知・本 ADR の範囲外）
 
 - managed 経路はスラッシュでも `markSessionWorking` する（tui のガードの managed 版が
   無い）— 既存の非対称。直すなら別タスク。
 - kiro の広告リスト（`_kiro.dev/commands/available`）は引き続き読み捨て。取り込みは
   cursor と同じ publish 経路に流すだけ（docs/50 §7.4）。
+- ブリッジは repo 内の 2 規約のみ（`.agents/skills` と user レベルは対象外 — codex は
+  `.agents/skills` をネイティブに読むので不要、claude 側から見えないのは既知）。

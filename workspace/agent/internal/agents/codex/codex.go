@@ -11,6 +11,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/skillbridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
@@ -87,6 +88,9 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// Pre-accept codex's per-dir trust gate so a freshly cloned repo doesn't stall at
 	// the "Do you trust this directory?" prompt (the bypass flags don't cover it).
 	ensureFolderTrusted(m.Dir)
+	// スキルブリッジ（docs/50 §8）: .claude/skills ⇄ .codex/skills を双方向同期して
+	// から起動する（skills はプロセス起動時に発見されるため）。
+	skillbridge.Sync(m.Dir)
 	// Auth is codex's own ~/.codex/auth.json (codex login, written via the Connections
 	// flow), so no token is injected. State + per-slot resume are wired purely through
 	// codex hooks injected on the command line (-c), keyed by our deterministic slot

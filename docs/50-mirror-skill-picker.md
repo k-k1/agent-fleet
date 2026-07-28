@@ -113,7 +113,7 @@ kind ゲートは `AgentCaps.slashSkills` ＋ managed セッションでは `sla
 
 | 層 | ファイル |
 |---|---|
-| Agent | `workspace/agent/session_skills.go`（+ `_test.go`）・`routes.go`・`internal/agents/commands.go`（広告リスト共有ストア）・`internal/agents/cursor/driver.go`（onNotify で publish） |
+| Agent | `workspace/agent/session_skills.go`（+ `_test.go`）・`routes.go`・`internal/agents/commands.go`（広告リスト共有ストア）・`internal/agents/cursor/driver.go`（onNotify で publish）・`internal/skillbridge/`（§8 双方向同期。claude/codex の BuildLaunch ＋ codex driver から呼ぶ） |
 | CP | `control-plane/routes.go`・`session_skills_routes_test.go` |
 | Console API | `core/api/client.ts`（`SessionSkill` / `sessionSkills`） |
 | Console UI | `features/mirror/MirrorView.tsx`・`mirror.css`・`skillPicker.ts`（+ `.test.ts`）・`agents/registry.ts`（`caps.slashSkills` / `slashSkillsManaged` / `skillTrigger`） |
@@ -208,3 +208,41 @@ repo 内の既存ドキュメントには claude 以外の「スキル相当」�
 - agy: ADR0008 の `.agents/skills/*.md`（スラッシュコマンド）は**実装前の外部調査のまま
   未再検証**（docs/32 は AGENTS.md の読み込みですら ADR0008 の想定と違った実績あり）。
   suspect 扱いで見送り。
+
+### 7.6 claude スキルの codex 流用（`codex exec` 実測）
+
+- codex は repo の **`.codex/skills` と `.agents/skills` を読む**が **`.claude/skills` は
+  読まない**（3 規約同時設置の exec 実測＋バイナリにパス文字列なし）。
+- claude 固有 frontmatter（`argument-hint` / `user-invocable` / `allowed-tools` /
+  `disable-model-invocation`）を全部付けた SKILL.md も codex の認識は壊れない（実測）
+  — **置き場所さえ合わせればファイルはそのまま流用できる**。§8 のブリッジの根拠。
+- 補: codex app-server には `skills/extraRoots/set` RPC が存在する（バイナリ実測・
+  ファイル無書込でルート追加できる口）。claude 側に相当機構が無く双方向要件を満たせ
+  ないため §8 では採らなかったが、codex 片方向だけ軽くやる時の代替として記録する。
+
+## 8. スキルブリッジ — `.claude/skills` ⇄ `.codex/skills` の双方向自動同期
+
+**要件（利用者指定）**: リポジトリへリンクやコピーを自分で置かずに、どちらの
+フォルダにあるスキルも claude / codex 両方から使えること。**シンボリックリンクは
+使わない**。
+
+**仕組み**（`internal/skillbridge`・実装は同パッケージの doc comment が正）:
+- claude / codex セッションの**起動直前**（`BuildLaunch`、codex managed は driver の
+  thread 再確立点）に `skillbridge.Sync(dir)` が走り、作業コピー内で
+  `.claude/skills/<name>` ⇄ `.codex/skills/<name>` を**マーカー付きコピー**として
+  双方向同期する。
+- マーカー（`.af-skill-bridge` — 中身は元の repo 相対パス）が「agent-fleet が作った・
+  消してよい」印。**実体（マーカー無し）が居る名前には触らない**（ネイティブ優先、
+  同名衝突は両者無傷）。マーカー付きはソース扱いしない（ブリッジのブリッジ＝ループ
+  を作らない）。元が消えたら剪定、元が変われば次の起動で作り直し（内容追随）。
+- コピーは git の**リポジトリローカル** exclude（`$GIT_DIR/info/exclude` — コミット
+  されない・worktree 共通）へ番兵ブロックで登録し `git status` を汚さない。ユーザーの
+  実スキルは登録しない（未コミットの新規スキルが status から消えると困る）。無変更なら
+  ファイルを書かない。SVN 作業コピーでは unversioned に見えるが許容。
+- 全 best-effort — ブリッジの失敗でセッション起動は止めない。ピッカー（§2.1）は
+  変更不要: ブリッジ産コピーは通常のファイルとして各 kind の走査に載る（claude では
+  `/name`、codex では `$name` で起動）。
+
+**効き方**: 例えば repo に `.claude/skills/proofread` しか無くても、codex セッションを
+起動した時点で `.codex/skills/proofread`（コピー）が生え、codex から `$proofread` で
+呼べる。逆も同じ。スキルの正本はどちらか片方に置けばよい。
