@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestClassifySessionCleanup(t *testing.T) {
 	// Live → skipped entirely (working, not clutter).
@@ -20,9 +25,9 @@ func TestClassifySessionCleanup(t *testing.T) {
 	// 削除ロック（docs/45）: listed, but keep and with no action — the operator must
 	// never propose a tool call that the Agent will refuse with 403.
 	for _, archived := range []bool{false, true} {
-		action, safety, reason, ok := classifySessionCleanup(true, archived, false)
-		if !ok || action != "" || safety != "keep" || reason == "" {
-			t.Fatalf("locked(archived=%v): action=%q safety=%q reason=%q ok=%v", archived, action, safety, reason, ok)
+		action, safety, reasonKey, ok := classifySessionCleanup(true, archived, false)
+		if !ok || action != "" || safety != "keep" || reasonKey != cleanReasonLocked {
+			t.Fatalf("locked(archived=%v): action=%q safety=%q reason=%q ok=%v", archived, action, safety, reasonKey, ok)
 		}
 	}
 }
@@ -50,12 +55,31 @@ func TestClassifyWorktreeCleanup(t *testing.T) {
 		{"locked beats safe", true, 0, 0, false, "contained", "", "keep"},
 	}
 	for _, c := range cases {
-		action, safety, reason := classifyWorktreeCleanup(c.locked, c.liveCount, c.ahead, c.dirty, c.relation)
+		action, safety, reasonKey := classifyWorktreeCleanup(c.locked, c.liveCount, c.ahead, c.dirty, c.relation)
 		if action != c.wantAction || safety != c.wantSafety {
 			t.Errorf("%s: action=%q safety=%q (want %q/%q)", c.name, action, safety, c.wantAction, c.wantSafety)
 		}
-		if reason == "" {
-			t.Errorf("%s: empty reason", c.name)
+		// A classifier must return a KNOWN key — an ad-hoc sentence would reach the Console
+		// untranslated (ADR 0033) and cleanupReasonText would echo it back as its own text.
+		if _, known := cleanupReasonJA[reasonKey]; !known {
+			t.Errorf("%s: reason key %q is not in cleanupReasonJA", c.name, reasonKey)
+		}
+	}
+}
+
+// 掃除候補の理由キーは Console のカタログで訳される（ADR 0033）。Go 側でキーを足して
+// カタログに入れ忘れると、英語 Console だけが静かに ja フォールバックへ落ちて気づけない。
+func TestCleanupReasonKeysExistInConsoleCatalogs(t *testing.T) {
+	for _, locale := range []string{"ja", "en"} {
+		path := filepath.Join("..", "..", "console", "src", "lib", "i18n", "locales", locale+".ts")
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Skipf("catalog not available (%v)", err)
+		}
+		for key := range cleanupReasonJA {
+			if !strings.Contains(string(b), `"`+key+`"`) {
+				t.Errorf("%s.ts is missing %q", locale, key)
+			}
 		}
 	}
 }

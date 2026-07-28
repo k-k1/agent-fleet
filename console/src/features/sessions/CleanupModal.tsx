@@ -12,6 +12,7 @@ import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { api, rawJSON, raw } from "../../core/api/client.ts";
 import { t, useT } from "../../lib/i18n/index.ts";
+import { cleanupReasonText } from "./cleanupReason.ts";
 
 interface CleanupCandidate {
   type: "session" | "worktree" | "branch";
@@ -25,6 +26,7 @@ interface CleanupCandidate {
   dirty?: boolean;
   ahead?: number;
   safety: "safe" | "review" | "keep";
+  reason_key?: string;
   reason: string;
 }
 
@@ -252,7 +254,7 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
                       <span className="clean-target">
                         {c.type === "branch" ? c.branch : c.display || c.id}
                       </span>
-                      <span className="clean-reason">{c.reason}</span>
+                      <span className="clean-reason">{cleanupReasonText(c)}</span>
                       <span className="clean-act">
                         {tr(("clean.action_" + (c.action || "")) as "clean.action_archive_session")}
                       </span>
@@ -269,7 +271,7 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
                     <span className="clean-target">
                       {c.type === "branch" ? c.branch : c.display || c.id}
                     </span>
-                    <span className="clean-reason">{c.reason}</span>
+                    <span className="clean-reason">{cleanupReasonText(c)}</span>
                     <span className="clean-act" />
                   </li>
                 ))}
