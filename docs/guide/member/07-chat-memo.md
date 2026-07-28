@@ -40,6 +40,13 @@ agent. Currently the defaults are **Luna for codex** and **Nemotron for opencode
 a model here, that choice wins, and the model of a conversation you've already started
 doesn't change afterwards.
 
+Each reply carries the model that produced it next to the agent name (e.g. `sonnet 5`), the
+same way a session's mirror labels its turns. It is recorded per reply, so earlier answers
+keep the model they were actually written with even if the conversation later switches model
+or falls back to another agent. When a reply shows no model, the CLI ran on its own default
+and does not tell us which model that was (cursor's Auto, for instance) — we leave it blank
+rather than print a guess.
+
 - **None** — answers within the chat alone, with no external tools. This is plenty for translation and summarization.
 - **AF read** — can read your workspace's session list, statuses, and output, plus agent usage / limits (claude / codex usage rates and reset times) and each session's context size and cumulative token spend (no writing).
 - **AF write** — in addition to reading, can send prompts to sessions (doing work on your behalf). Grant this only for trusted uses.

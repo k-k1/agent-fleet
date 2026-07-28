@@ -101,7 +101,7 @@ func runOperatorTurnAs(conv, text string, tag usageTag) (string, error) {
 	if handoff {
 		c.PendingHandoff = ""
 	}
-	c.Messages = append(c.Messages, chatMessage{Role: "assistant", Content: reply, Agent: actualAgent, TS: nowMs()})
+	c.Messages = append(c.Messages, chatMessage{Role: "assistant", Content: reply, Agent: actualAgent, Model: c.turnModel, TS: nowMs()})
 	c.ActiveAgent = actualAgent
 	markProviderSynced(c, actualAgent, len(c.Messages))
 	noteContextPressure(c)

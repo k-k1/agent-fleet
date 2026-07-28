@@ -143,10 +143,13 @@ func (t *claudeCtx) observeResult(u claudeUsage, modelUsage map[string]claudeMod
 	}
 }
 
-// apply は追跡結果を会話へ格納する（成功ターンの saveConv 前に呼ぶ）。
+// apply は追跡結果を会話へ格納する（成功ターンの saveConv 前に呼ぶ）。claude は
+// イベントに実モデルを載せる数少ないプロバイダなので、ここがそのターンのモデル
+// （--model に渡したエイリアスではなく API が名乗った版込み id）の記録点でもある。
 func (t *claudeCtx) apply(c *chatConversation) {
 	setChatContext(c, t.snap.InputTokens, t.snap.CacheReadInputTokens,
 		t.snap.CacheCreationInputTokens, t.window, t.model)
+	c.noteTurnModel(t.model)
 }
 
 // codexUsage は codex exec --json の turn.completed が運ぶ usage。input_tokens は

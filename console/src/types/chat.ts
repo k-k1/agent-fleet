@@ -17,6 +17,11 @@ export interface ChatMessage {
   content: string;
   ts: number; // unix millis
   agent?: SessionKind; // backend that actually generated this assistant turn
+  // Model that drove THIS turn: what the CLI reported (claude/opencode) or what was
+  // passed on its command line (codex/cursor/agy, which name no model). Absent on
+  // legacy turns and whenever the backend ran on its own default — the UI then shows
+  // no model instead of standing in the conversation's current setting.
+  model?: string;
   steps?: ChatStep[]; // assistant working process, separated from the final content
   // role==="report" (docs/30): the reporting session's name — rendered as a
   // session-origin card, not a user/assistant bubble.

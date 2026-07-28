@@ -617,7 +617,7 @@ func runReportAutoTurn(convID string) {
 		c.PendingHandoff = "" // carried into the new session — done
 	}
 	c.AutoTurns++
-	c.Messages = append(c.Messages, chatMessage{Role: "assistant", Content: reply, Agent: actualAgent, TS: nowMs()})
+	c.Messages = append(c.Messages, chatMessage{Role: "assistant", Content: reply, Agent: actualAgent, Model: c.turnModel, TS: nowMs()})
 	c.ActiveAgent = actualAgent
 	markProviderSynced(c, actualAgent, len(c.Messages))
 	// 無人の自動ターンでも逼迫を見逃さない（notice＋通知センター、chat_usage.go）:
