@@ -255,6 +255,50 @@ running だった WS はスケジュール由来で止めない（reaper の通�
 前回実行が走行中に次が来る場合の `overlap_policy`: `skip`（既定・推奨）/ `queue` / `restart`。
 reuse セッションでは driver 切替中 `409 busy_switch` にも遭遇しうる。
 
+### ★6. 起動時の CLI 自己更新が wake を殺す（**実障害・2026-07-28 修正**）
+
+**症状**: 毎日 8:00 の定時実行が `error:wake: agent did not become healthy within 15s`
+で落ち、プロンプトが配信されなかった。それ以前 11 回の発火はすべて `fired`。
+
+**真因**: workspace の entrypoint は、エージェント CLI の自己更新（opt-in ON 時）を
+`exec workspace-agent` **より前に同期実行**する。その所要時間はそのまま CP 側
+`waitAgentHealthy` の待ち時間になるが、docker アダプタの予算は **15 秒固定**だった。
+実測（本番相当ホスト・約16MB/s の回線）:
+
+| 段階 | 実測 |
+|---|---|
+| 版チェック（`npm ls` + `npm view`×4 + curl×3）— 毎回必ず払う | 約 4 秒 |
+| npm 4CLI `@latest`（cold cache / warm cache） | **35.2 秒** / 15.2 秒 |
+| agy `install.sh`（52.5MB DL → 189MB バイナリ） | **15.1 秒** |
+| cursor（82.5MB DL → 303MB 展開） | **5.7 秒** |
+| rtk（4.5MB + checksum） | 約 1〜2 秒 |
+| **全部走った場合の合計** | **約 60 秒** |
+
+新リリースが無い日は版比較でスキップされ数秒で起動するため 15 秒に収まっていた。
+障害当日は `opencode-ai` に新版があり、実インストールが走って 23 秒かかった。
+**「たまにしか壊れない」のはこの版比較スキップのため**で、回線が遅い日・home が
+ネットワークボリュームの環境ではさらに容易に超える。
+
+**対策（3 段）**:
+1. **無人起動では自己更新を走らせない**（本命）。スケジュール wake は
+   `AF_AGENT_SELF_UPDATE_SKIP=1`（`unattendedStartEnv`）付きでコンテナを起動し、
+   entrypoint は導入済みの版のまま即起動する。起動時間だけの話ではなく、**未検証の
+   `@latest` を無人で引くと、その版の破壊的変更でエージェントが動かないまま無人実行に
+   入る**（TUI 文字列契約の破損は本リポジトリで再発済み）。更新は人が居る手動 Start に寄せる。
+   - **落とし穴**: これを `AF_AGENT_SELF_UPDATE=0` で表現しては**いけない**。opt-in OFF の
+     分岐は「`~/.local` の shadow を撤去して焼き込み版へ戻す」意味論を持つため、焼き込み
+     イメージでは無人起動のたびに約 1.3GB の uninstall →次回 reinstall のチャーンになる。
+     専用の「この boot だけスキップ」env を分ける必要がある。
+2. **docker の health 予算を適応化**。自己更新が走り得る起動（`AF_AGENT_SELF_UPDATE=1`）
+   のみ 300 秒へ。native アダプタが rootfs 経路で既に 300 秒を採っていた（同じ理由）のに
+   docker だけ 15 秒固定だった不揃いを解消。無人起動は 1. で更新が走らないので 15 秒のまま。
+3. **scheduler の二重タイムアウトを解消**。`ensureWorkspaceStarted` の固定期限で
+   hard fail していたため、その直後にある寛容な `awaitAgentReady`（`AF_SCHEDULE_WAKE_TIMEOUT`・
+   既定 90 秒のポーリング）に**到達できていなかった**。起動エラーは記録するに留め、
+   agent が上がってくれば発火を続行する。併せて **keep-alive の確保を wake の前**へ移動
+   （従来は起動が期限超過すると keep-alive 未確保のまま return し、★1 の reaper が
+   その発火で起こしたばかりの WS を回収し得た）。
+
 ### その他
 
 - **TZ / DST**: cron はユーザー TZ 基準で評価。夏時間跨ぎの二重/欠落時刻の扱いを規定。

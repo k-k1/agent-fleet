@@ -231,7 +231,20 @@ fi
 # lean variant (no /usr/local bake): the boot-install品 under ~/.local IS the pin, so
 # there is no separate immutable baseline — ON updates it in place, and OFF leaves it
 # (the shadow cleanup below is gated on the /usr/local pin existing).
-if [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE:-0}" = "1" ]; then
+#
+# 無人起動の抑止（AF_AGENT_SELF_UPDATE_SKIP=1）: スケジュール実行の wake など「人が
+# 見ていない起動」では、opt-in が ON でも今回の boot に限り更新を走らせない。狙いは 2 つ。
+#   ① 起動時間: 更新は exec workspace-agent より前の同期処理なので、そのまま /healthz の
+#      待ち時間になる（4CLI cold で実測 35s、agy 15s、cursor 6s ＝ 全部走ると約60s）。
+#   ② 事故: 未検証の @latest を無人で引くと、その版の破壊的変更でエージェントが動かない
+#      まま無人実行に入る（TUI 文字列契約の破損は本リポジトリで再発済み）。更新は人が
+#      いる起動＝手動 Start に寄せる。
+# ここは「今回はスキップ」であって OFF ではない。下の else（opt-in OFF）は ~/.local の
+# shadow を撤去して焼き込み版へ戻す意味論を持つので、無人起動でそれを踏むと 1.3GB の
+# uninstall→次回 reinstall のチャーンになる。専用の分岐に分けているのはそのため。
+if [ "${AF_AGENT_SELF_UPDATE_SKIP:-0}" = "1" ]; then
+  echo "[entrypoint] agent self-update: skipped for this boot (unattended start) — keeping installed versions"
+elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE:-0}" = "1" ]; then
   echo "[entrypoint] agent self-update: checking versions (member opt-in, operator-allowed) ..."
   # 常に ~/.local を対象（/usr/local ピンは不変。PATH 先勝ちの shadow だけ更新・版比較）。
   NPM_PREFIX_DIR="$HOME/.local"

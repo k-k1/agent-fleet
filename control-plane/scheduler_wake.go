@@ -79,26 +79,50 @@ func (f *wakeFirer) fire(ctx context.Context, sch Schedule, slot time.Time) (str
 	if soft != "" {
 		return soft, "", nil
 	}
-	if shouldWake {
-		if aerr := f.wsAPI.ensureWorkspaceStarted(ctx, res); aerr != nil {
-			if aerr.code == "quota_workspaces" {
-				return "skipped_quota", "", nil // soft: tenant is at its running cap
-			}
-			return "", "", fmt.Errorf("wake: %s", aerr.message)
-		}
-	}
-
 	// 3. keep-alive: hold a tier-2 pseudo-connection so the reaper cannot stop this
 	//    workspace while the session runs; release after the settle window (★1). The
 	//    settle grace also covers auto-turn follow-ups and a user opening the Console
 	//    right after. A workspace that was already running before this fire is left to
 	//    the reaper's normal timeout (we still hold+release, which only defers it).
+	//
+	//    Armed BEFORE the wake, not after: a start that overruns its health budget used
+	//    to return early from here, leaving a container that was still coming up with no
+	//    keep-alive at all — the reaper could then reclaim the very workspace this fire
+	//    had just booted. Holding it across the start closes that window, and the
+	//    AfterFunc release runs on every path (including the early returns below).
 	f.mgr.conns.addConn(res.ws.ID, "")
 	f.scheduleRelease(res.ws.ID)
 
+	var wakeErr error
+	if shouldWake {
+		if aerr := f.wsAPI.ensureWorkspaceStartedUnattended(ctx, res); aerr != nil {
+			if aerr.code == "quota_workspaces" {
+				return "skipped_quota", "", nil // soft: tenant is at its running cap
+			}
+			// NOT fatal on its own. ensureWorkspaceStarted's health budget is a fixed
+			// per-start deadline, while the very next step polls the Agent patiently for
+			// readyTimeout — so a container that is merely slow to boot used to be failed
+			// here and never reach the tolerant wait behind it. Remember the error and let
+			// awaitAgentReady adjudicate: if the Agent does come up, the fire proceeds; if
+			// it does not, the failure below reports both causes.
+			wakeErr = fmt.Errorf("wake: %s", aerr.message)
+		}
+	}
+
 	// 4. wait for the Agent, then inject.
 	if err := f.awaitAgentReady(ctx, res.rt); err != nil {
+		if wakeErr != nil {
+			return "", "", fmt.Errorf("%w (after %v)", err, wakeErr)
+		}
 		return "", "", fmt.Errorf("agent not ready: %w", err)
+	}
+	if wakeErr != nil {
+		// The start reported failure but the Agent is up — it was only slow. Finish the
+		// bookkeeping ensureWorkspaceStarted skipped on its error path, so the workspace
+		// is not left recorded as stopped while it is serving this fire.
+		log.Printf("scheduler: %s recovered — agent became ready after the start deadline (schedule %s)", res.ws.ID, sch.ID)
+		_ = f.mgr.store.SetWorkspaceState(ctx, res.ws.ID, "running")
+		f.mgr.conns.touch(res.ws.ID)
 	}
 	// session_mode=assistant (docs/38 アシスタント発火): run one assistant-chat turn
 	// instead of driving a session.

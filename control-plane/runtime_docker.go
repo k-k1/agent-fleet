@@ -174,7 +174,34 @@ func (d *dockerRuntime) Start(ctx context.Context) error {
 	if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("docker run: %v: %s", err, out)
 	}
-	return waitAgentHealthy(ctx, d.Endpoint(), agentHealthWait(15*time.Second))
+	return waitAgentHealthy(ctx, d.Endpoint(), agentHealthWait(d.startHealthWait()))
+}
+
+// startHealthWait is how long this container gets to answer /healthz after `docker
+// run`. The classic flat 15s only holds for a boot that cannot run a long pre-agent
+// install. When the member's agent self-update opt-in is ON, the entrypoint's update
+// block runs SYNCHRONOUSLY before `exec workspace-agent`, so its whole cost lands in
+// this wait: measured on a fast link, npm @latest for the 4 CLIs is ~35s cold (~15s
+// warm), agy ~15s, cursor ~6s — ~60s with everything updating, and proportionally
+// worse on a slow link or a network-backed home volume. 15s there is a FALSE failure
+// (the container is fine, just still installing), which is what dropped a scheduled
+// fire with "agent did not become healthy within 15s". runtime_native.go already
+// carries 300s for the identical reason on its rootfs path; this aligns the docker
+// adapter. AF_AGENT_HEALTH_WAIT_SEC still overrides either branch.
+func (d *dockerRuntime) startHealthWait() time.Duration {
+	for _, kv := range d.extraEnv {
+		// An unattended start skips the update block entirely (unattendedStartEnv), so
+		// it keeps the short budget even with the opt-in ON.
+		if kv == unattendedStartEnv {
+			return 15 * time.Second
+		}
+	}
+	for _, kv := range d.extraEnv {
+		if kv == "AF_AGENT_SELF_UPDATE=1" {
+			return 300 * time.Second
+		}
+	}
+	return 15 * time.Second
 }
 
 // ensureNetwork creates the per-user network if it does not already exist.
