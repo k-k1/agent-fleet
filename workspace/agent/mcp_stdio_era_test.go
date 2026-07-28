@@ -81,7 +81,9 @@ func TestStdioLegacyInitializeStillWorks(t *testing.T) {
 	}
 }
 
-// tools/list は両 era で通り、新版クライアント向けに resultType を持つ。
+// tools/list は両 era で通り、新版クライアント向けに resultType を持つ。ttlMs/cacheScope
+// は 2026-07-28 の list 系結果の必須フィールドで、欠くと新 era クライアント（opencode
+// 1.18.8 実測）が検証で弾いてサーバーごと切断する。
 func TestStdioToolsListBothEras(t *testing.T) {
 	for _, body := range []string{
 		`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
@@ -94,6 +96,12 @@ func TestStdioToolsListBothEras(t *testing.T) {
 		}
 		if res["resultType"] != "complete" {
 			t.Fatalf("%s → resultType = %v", body, res["resultType"])
+		}
+		if ms, ok := res["ttlMs"].(float64); !ok || ms < 0 {
+			t.Fatalf("%s → ttlMs = %v", body, res["ttlMs"])
+		}
+		if res["cacheScope"] != "private" {
+			t.Fatalf("%s → cacheScope = %v", body, res["cacheScope"])
 		}
 		if tools, _ := res["tools"].([]any); len(tools) == 0 {
 			t.Fatalf("%s → tools が空", body)
