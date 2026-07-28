@@ -121,7 +121,7 @@
 .memo-cat-head {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   padding: 3px 5px;
   margin: 5px 0 2px;
   background: color-mix(in srgb, var(--muted) 12%, transparent);
@@ -146,11 +146,11 @@
 .memo-cat-caret:hover {
   color: var(--text);
 }
-/* Memos nest one level under their category header — indented past the header's caret +
-   checkbox so a memo's checkbox sits to the right of the category's (a clear parent→child
-   step, not a shared column). */
+/* Memos nest one level under their category header — indented just enough that a memo's
+   checkbox sits to the right of the category's (a clear parent→child step, not a shared
+   column), without pushing the rows' grips far from the left edge. */
 .memo-cat-items {
-  padding-left: 30px;
+  padding-left: 16px;
 }
 .memo-cat-check {
   display: flex;
@@ -308,7 +308,8 @@
   border-radius: 8px;
   padding: 7px;
   background: var(--bg);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lp-accent, var(--accent)) 12%, transparent);
+  box-shadow: 0 0 0 3px
+    color-mix(in srgb, var(--lp-accent, var(--accent)) 12%, transparent);
 }
 .memo-add-text:focus,
 .memo-add-cat:focus {
@@ -332,6 +333,12 @@
   cursor: grab;
   opacity: 0;
   font-size: 12px;
+}
+/* Header grip: mostly collapsed out of the flow (negative margins) so the checkbox sits
+   close to the fold caret — the hover-revealed handle overlaps the slack around both. */
+.memo-cat-grip {
+  width: 14px;
+  margin: 0 -3px;
 }
 /* 未分類's grip is a spacer only — no drag handle, so never reveal it on hover. */
 .memo-cat-grip.placeholder {
@@ -402,8 +409,13 @@
 }
 /* Drop target highlight while dragging a memo/category over a category. */
 .memo-cat.drop {
-  background: color-mix(in srgb, var(--lp-accent, var(--accent)) 10%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lp-accent, var(--accent)) 45%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--lp-accent, var(--accent)) 10%,
+    transparent
+  );
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--lp-accent, var(--accent)) 45%, transparent);
   border-radius: 8px;
 }
 /* ＋カテゴリ pill. Tight vertical margins so it sits close under the last category. */
@@ -446,7 +458,11 @@
 }
 /* Memo row: selected gets an lp-accent spine (matches sessions/repos rows). */
 .memo-row.sel {
-  background: color-mix(in srgb, var(--lp-accent, var(--accent)) 16%, var(--leftpane-bg, var(--panel)));
+  background: color-mix(
+    in srgb,
+    var(--lp-accent, var(--accent)) 16%,
+    var(--leftpane-bg, var(--panel))
+  );
   box-shadow: inset 2px 0 0 var(--lp-accent, var(--accent));
 }
 .memo-row.dragover {
@@ -533,7 +549,11 @@
   gap: 8px;
   margin: 4px -2px 0;
   padding: 8px 4px 4px;
-  background: linear-gradient(to top, var(--leftpane-bg, var(--panel)) 78%, transparent);
+  background: linear-gradient(
+    to top,
+    var(--leftpane-bg, var(--panel)) 78%,
+    transparent
+  );
 }
 .memo-selbar-n {
   flex: 1;
