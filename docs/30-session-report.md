@@ -203,6 +203,10 @@ hook / record-exit は独立プロセスなので、会話ファイルへの直�
   既定 10）— サーバ側 `chatAutoTurnLimit` が [1, 50] にハードクランプし、無制限なし**
   （2026-07-25 に定数10から設定制へ）。ユーザーがメッセージを送ると 0 にリセット。
   ユーザー不在での暴走ループ（追撃→完了→報告→追撃…）の構造的歯止め。
+- 上限に達したら `role:"notice"` を **1 回だけ**追記（なぜ静かになったか・再開の仕方・未処理報告の件数）＋
+  通知センター `chat-auto-paused`。この notice はキー＋引数で保存し表示は Console のカタログが訳す
+  （`chat.notice.auto_paused.*`・ADR [0033](decisions/0033-stored-text-locale.md)）。**報告カード
+  （`role:"report"`）の本文は対象外**——表示とオペレーターへの指示を兼ねるので日本語のまま。
 - 実行: 未配送の report を定型プリアンブル付きで 1 プロンプトに連結し、通常の provider
   send（`registerLiveTurn` 登録 = 停止ボタン / in_progress 対応）。
 - **未配送 report の注入**: 自動ターンが OFF / 上限 / 実行中ターンありで走らなかった report は

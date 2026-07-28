@@ -36,6 +36,7 @@ import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { assistantName, assistantDesc } from "./assistantI18n.ts";
+import { noticeText } from "./notice.ts";
 import { kindClass } from "../../lib/sessionkind.ts";
 import type { Conversation, ChatMessage, ChatStep } from "../../types/chat.ts";
 import type { Assistant } from "../../types/assistant.ts";
@@ -1122,14 +1123,15 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
           }
           // System notices (docs/30) — e.g. the operator's auto-turn budget ran out and
           // the loop paused. Rendered as a centered informational card, not a bubble; it
-          // tells the user why the operator went quiet and how to resume.
+          // tells the user why the operator went quiet and how to resume. The body comes
+          // from the catalog (ADR 0033), so it follows the UI language even on old threads.
           if (m.role === "notice") {
             return (
               <div key={i} className="chat-msg role-notice">
                 <div className="chat-notice">
                   <Icon name="info" />
                   <div className="chat-notice-body">
-                    <ChatMarkdown source={m.content} breaks />
+                    <ChatMarkdown source={noticeText(m)} breaks />
                   </div>
                 </div>
               </div>

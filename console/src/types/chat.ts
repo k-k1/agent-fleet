@@ -30,6 +30,12 @@ export interface ChatMessage {
   // ran out and the loop paused) — rendered as a centered informational card.
   // report only: whether the report has been fed into the provider's context yet.
   delivered?: boolean;
+  // role==="notice" (ADR 0033): the catalog key + arguments the card is rendered from,
+  // so the text follows settings.locale instead of the language it was stored in.
+  // Absent on notices written before the change — those fall back to `content`, which
+  // still holds the same sentence in the source language. See features/chat/notice.ts.
+  notice_key?: string;
+  notice_args?: Record<string, string>;
 }
 
 // Current context-window fill, captured server-side from the provider's usage events

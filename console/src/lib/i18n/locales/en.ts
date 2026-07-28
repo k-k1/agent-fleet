@@ -1483,6 +1483,21 @@ export const en: Record<keyof typeof ja, string> = {
     "Send a message to start the conversation. You can ask it to translate or summarize a Markdown document, answer questions, and more.",
   "chat.you": "You",
   "chat.report_role": "Session report",
+  "chat.notice.ctx_pressure":
+    "This conversation has reached about {pct}% of its context limit ({tokens} / {window} tokens). Going further degrades answer quality, makes turns fail and burns more tokens. Use “Compact” at the right of the context bar in the header to carry only a summary into a fresh session, or start a new chat at a natural break.",
+  "chat.notice.ctx_overflow":
+    "The context limit was exceeded, so no reply could be generated. This conversation cannot continue as it is. Use “Compact” at the right of the context bar in the header to carry only a summary into a fresh session, or open a new chat and hand over just the points you still need.",
+  "chat.notice.auto_paused.head": "Automatic replies paused: the limit of {limit} consecutive turns was reached.",
+  "chat.notice.auto_paused.pending_one": " {count} session report is still unprocessed.",
+  "chat.notice.auto_paused.pending_other": " {count} session reports are still unprocessed.",
+  "chat.notice.auto_paused.tail":
+    " To continue, send a message in this chat (e.g. “go on”). The next message resets the automatic-reply count and carries the pending reports over.",
+  "chat.notice.compact_manual":
+    "Context compacted. Only the summary below is carried into a fresh session, and the conversation continues on top of it (the history in this view stays as it is).\n\n---\n\n{summary}",
+  "chat.notice.compact_auto":
+    "Context usage crossed the threshold, so it was compacted automatically. Only the summary below is carried into a fresh session, and the conversation continues on top of it (the history in this view stays as it is).\n\n---\n\n{summary}",
+  "chat.notice.compact_recovery":
+    "Compacted to recover automatically from a context-overflow error. Only the summary below is carried into a fresh session, and the conversation continues on top of it (the history in this view stays as it is).\n\n---\n\n{summary}",
   "chat.working": "Working…",
   "chat.thinking": "Thinking…",
   "chat.suggest_ai": "Suggest replies with AI (from the recent conversation)",
