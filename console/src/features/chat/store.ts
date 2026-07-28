@@ -10,7 +10,9 @@
 // re-opened on the same conversation re-attach to the live turn and pick up the final
 // answer instead of a stale pre-turn snapshot (docs/19: "close pane mid-stream" fix).
 import { create } from "zustand";
-import type { Conversation, ChatStep } from "../../types/chat.ts";
+import { chatList } from "./api.ts";
+import { isTransientErr } from "../../core/api/client.ts";
+import type { Conversation, ConversationMeta, ChatStep } from "../../types/chat.ts";
 import type { SessionKind } from "../../types/session.ts";
 
 // Live in-flight turn state: the tentative answer text plus the working steps committed so
@@ -24,6 +26,14 @@ export interface LiveTurn {
 interface ChatStore {
   listTick: number;
   bumpList(): void;
+  // Conversation list (light metas), shared app-wide so surfaces other than the
+  // left-rail AssistantSection can resolve a conversation slug ("a…") — the
+  // markdown auto-linkifier gates conv-slug links on existence here, the same way
+  // session slugs gate on the sessions store. null = never loaded (distinguishes
+  // "no chats yet" from "haven't asked"); AssistantSection keeps it fresh while
+  // mounted, ensureConvs() covers surfaces that render before/without it.
+  convs: ConversationMeta[] | null;
+  setConvs(convs: ConversationMeta[]): void;
   busy: Record<string, boolean>;
   markBusy(id: string, busy: boolean): void;
   // Accumulating assistant reply + working steps of an in-flight turn, so a re-opened pane
@@ -40,6 +50,8 @@ interface ChatStore {
 export const useChatStore = create<ChatStore>((set) => ({
   listTick: 0,
   bumpList: () => set((s) => ({ listTick: s.listTick + 1 })),
+  convs: null,
+  setConvs: (convs) => set({ convs }),
   busy: {},
   markBusy: (id, b) =>
     set((s) => {
@@ -61,6 +73,28 @@ export const useChatStore = create<ChatStore>((set) => ({
   snapshots: {},
   publishSnapshot: (c) => set((s) => ({ snapshots: { ...s.snapshots, [c.id]: c } })),
 }));
+
+// ensureConvs loads the conversation list into the store once, for surfaces that
+// need slug lookup before AssistantSection has fetched (or when it isn't mounted).
+// A single in-flight promise dedups concurrent callers. A transport failure or a
+// transient gateway error (api() resolves those as {error: http_5xx} while the
+// agent boots — the ws-boot-view-stuck class of bug) leaves convs = null instead
+// of confirming an empty list, so a later caller retries.
+let convsLoading: Promise<void> | null = null;
+export function ensureConvs(): Promise<void> {
+  if (useChatStore.getState().convs !== null) return Promise.resolve();
+  if (!convsLoading) {
+    convsLoading = chatList()
+      .then((r) => {
+        if (!isTransientErr(r)) useChatStore.getState().setConvs(r.conversations || []);
+      })
+      .catch(() => {})
+      .finally(() => {
+        convsLoading = null;
+      });
+  }
+  return convsLoading;
+}
 
 /** Poll every 15s while the tab is visible: bump listTick so AssistantSection's
  * useRetryLoad re-fetches. Unlike sessions/repos, chats are edited from any

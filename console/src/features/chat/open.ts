@@ -20,6 +20,13 @@ export function openChat(conversationId: string, seed?: string, auto = false): v
   useLayoutStore.getState().openTarget(convTarget(conversationId));
 }
 
+// openChatSplit opens the conversation in a NEW pane (split), leaving the current
+// pane alone — the conv twin of openSessionChatSplit, used by Ctrl/Cmd / middle
+// click on an auto-linked conversation slug.
+export function openChatSplit(conversationId: string): void {
+  useLayoutStore.getState().openTargetInNew(convTarget(conversationId));
+}
+
 export function openAssistantDraft(assistantId: string): void {
   useLayoutStore.getState().openTarget(draftTarget(assistantId));
 }

@@ -2917,6 +2917,8 @@ export const ja = {
   "view.open_commit": "コミット {sha} を開く",
   "view.commit_not_found": "コミットが見つかりません: {sha}",
   "view.open_session": "セッション {name} を開く",
+  "view.open_conversation": "チャット {slug} を開く",
+  "view.conversation_not_found": "会話が見つかりません: {slug}",
 
 
   // === P5 ログイン切れモーダル（AuthExpiredModal） ===
