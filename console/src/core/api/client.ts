@@ -641,6 +641,28 @@ export interface PromptTemplateGroup {
 export const repoPromptTemplates = (name: string): Promise<{ groups: PromptTemplateGroup[] }> =>
   api(`api/repos/${encodeURIComponent(name)}/prompt-templates`);
 
+// --- session skills (mirror スキルピッカー, docs/50 / ADR0034) ---
+// Invocable skills/commands for a RUNNING session. Sources are kind-specific
+// (claude/codex/opencode: filesystem conventions; cursor: the CLI-advertised
+// ACP list) — the Agent resolves them; unsupported kinds answer an empty list.
+export interface SessionSkill {
+  name: string; // invocation name, no "/" or "$" prefix
+  description?: string;
+  argumentHint?: string;
+  source: "project" | "user" | "cli";
+  type: "skill" | "command";
+  // Native invocation: exact string to insert into the composer ("/name " / "$name ").
+  // Empty for foreign entries (below).
+  invoke?: string;
+  // Cross-skill injection (docs/50 §8): a skill from ANOTHER convention this kind's
+  // CLI won't discover natively. The composer turns it into a "read {path} and follow
+  // its instructions" prompt — plain text, so it works on any kind/driver.
+  path?: string; // repo-relative SKILL.md path
+  origin?: string; // convention dir (".claude" | ".codex" | ".agents") — shown as a badge
+}
+export const sessionSkills = (session: string): Promise<{ skills: SessionSkill[] }> =>
+  api(`api/sessions/${encodeURIComponent(session)}/skills`);
+
 // --- memo queue (docs/21) ---
 // Per-membership notes accumulated across devices, then flushed to a session as one
 // message. Persisted in the Control Plane (membership-scoped), so they sync between

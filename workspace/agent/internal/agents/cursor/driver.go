@@ -747,6 +747,13 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 			RawOutput  json.RawMessage `json:"rawOutput"`
 			// current_mode_update
 			CurrentModeID string `json:"currentModeId"`
+			// available_commands_update — CLI 広告のスキル/コマンド一覧
+			// （builtin skill ＋ global ＋ project 全部入り。実測 2026-07-28:
+			// {name:"simplify", description:"…(global)"} 形・先頭スラッシュ無し）。
+			AvailableCommands []struct {
+				Name        string `json:"name"`
+				Description string `json:"description"`
+			} `json:"availableCommands"`
 		} `json:"update"`
 	}
 	if json.Unmarshal(params, &p) != nil {
@@ -754,6 +761,16 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 	}
 	u := p.Update
 	switch u.SessionUpdate {
+	case "available_commands_update":
+		// スキルピッカー（docs/50 v2）へ publish。map store 1 回なので readLoop を塞がない。
+		cmds := make([]agents.AdvertisedCommand, 0, len(u.AvailableCommands))
+		for _, c := range u.AvailableCommands {
+			cmds = append(cmds, agents.AdvertisedCommand{
+				Name:        strings.TrimPrefix(c.Name, "/"),
+				Description: c.Description,
+			})
+		}
+		agents.PublishCommands(h.name, cmds)
 	case "user_message_chunk":
 		h.buf.userChunk(u.Content.Text)
 	case "agent_message_chunk":
