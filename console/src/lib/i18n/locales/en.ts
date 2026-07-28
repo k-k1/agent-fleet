@@ -968,9 +968,16 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.mcp_distributed": "Distributed MCP servers",
   "admin.mcp_none": "No MCP servers are distributed.",
   "admin.mcp_add": "Distribute an MCP server",
+  "admin.mcp_edit_title": "Edit distribution",
+  "admin.mcp_save_add": "Distribute",
   "admin.mcp_disabled": "Disabled",
   "admin.mcp_user_secret_badge": "Member-supplied value",
+  "admin.mcp_secret_policy": "Credentials",
   "admin.mcp_user_secret": "Each member enters the credential",
+  "admin.mcp_headers_hint":
+    "Values are stored encrypted and distributed to every member. Put a bearer token in the Authorization header.",
+  "admin.mcp_headers_names_hint":
+    "Header names only — each member fills in the values in their own workspace.",
   "admin.mcp_user_secret_hint":
     "Only the endpoint and the header names are distributed; each member enters the values in their own workspace. A value distributed here is readable in plaintext inside every member's container.",
   "admin.mcp_url_hint": "The MCP endpoint URL. Put credentials in a header, not in the URL.",

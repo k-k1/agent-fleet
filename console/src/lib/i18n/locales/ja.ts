@@ -972,9 +972,16 @@ export const ja = {
   "admin.mcp_distributed": "配布中の MCP サーバー",
   "admin.mcp_none": "配布中の MCP サーバーはありません。",
   "admin.mcp_add": "配布する MCP サーバーを追加",
+  "admin.mcp_edit_title": "配布を編集",
+  "admin.mcp_save_add": "配布する",
   "admin.mcp_disabled": "無効",
   "admin.mcp_user_secret_badge": "値は各自入力",
+  "admin.mcp_secret_policy": "資格情報の扱い",
   "admin.mcp_user_secret": "認証の値は各メンバーが入力する",
+  "admin.mcp_headers_hint":
+    "値は暗号化保存され、全メンバーへ配布されます。Bearer トークンは Authorization ヘッダに入れてください。",
+  "admin.mcp_headers_names_hint":
+    "配布するのはヘッダ名だけです。値は各メンバーが自分のワークスペースで入力します。",
   "admin.mcp_user_secret_hint":
     "配布するのは接続先とヘッダ名だけになり、値は各メンバーが自分のワークスペースに入力します。ここで値を配布すると、そのトークンは全メンバーのコンテナ内で平文で読めます。",
   "admin.mcp_url_hint": "MCP エンドポイントの URL。資格情報は URL ではなくヘッダに入れてください。",
