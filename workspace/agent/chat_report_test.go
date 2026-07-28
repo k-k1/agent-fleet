@@ -539,6 +539,133 @@ func TestSessionReportDeferredWhileSubagentBusy(t *testing.T) {
 	}
 }
 
+// TestSessionReportWaiterIgnoresFalseIdle pins the waiter's delivery gate against
+// the false-idle window (実測 2026-07-28 sqmconc/azw7wys): mid-turn, a think gap
+// fires no hooks and the pane-based self-heal can remove the status marker; the
+// bare LiveState then defaults to idle and the old waiter spent the one-shot arm
+// on a turn that was still running — the real completion 27 minutes later kicked
+// into armed=false and was silently dropped. The waiter must demand an EXPLICIT
+// idle marker AND a stale main transcript before consuming the arm.
+func TestSessionReportWaiterIgnoresFalseIdle(t *testing.T) {
+	home := withTempHome(t)
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	if err := os.MkdirAll(filepath.Join(home, ".config", "agent-fleet"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".config", "agent-fleet", "ui-prefs.json"),
+		[]byte(`{"assistantAutoTurn":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldPoll := reportWaiterPoll
+	reportWaiterPoll = 20 * time.Millisecond
+	t.Cleanup(func() { reportWaiterPoll = oldPoll })
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /chat/report", handleChatReport)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	t.Setenv("AGENT_ADDR", strings.TrimPrefix(srv.URL, "http://"))
+
+	conv := &chatConversation{ID: randUUID(), Agent: "claude", Messages: []chatMessage{}}
+	if err := saveConv(conv); err != nil {
+		t.Fatal(err)
+	}
+	m := session.Meta{Name: "slot44", Dir: t.TempDir(), Kind: session.KindClaude, Title: "誤idle検証"}
+	session.WriteMeta(m)
+	sid := session.UUID(m.Dir, m.Name)
+
+	proj := filepath.Join(cfg, "projects", "p1")
+	agDir := filepath.Join(proj, sid, "subagents")
+	if err := os.MkdirAll(agDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	agLog := filepath.Join(agDir, "agent-1.jsonl")
+	if err := os.WriteFile(agLog, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The main turn's transcript, freshly appended (the turn is still running).
+	mainLog := filepath.Join(proj, sid+".jsonl")
+	if err := os.WriteFile(mainLog, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	armSessionReport(m.Name, conv.ID)
+	status.Persist(sid, "working")
+	runSessionStatusHook([]string{"idle", sid}) // early Stop → kick → deferred (BG busy)
+
+	countReports := func() int {
+		unlock := lockConv(conv.ID)
+		defer unlock()
+		c, err := loadConv(conv.ID)
+		if err != nil {
+			return -1
+		}
+		n := 0
+		for i := range c.Messages {
+			if c.Messages[i].Role == "report" {
+				n++
+			}
+		}
+		return n
+	}
+	stale := time.Now().Add(-3 * time.Minute)
+	settle := func() { time.Sleep(150 * time.Millisecond) } // several waiter polls
+
+	// Phase 1 — BG quiet, but the heal removed the marker while the main transcript
+	// is fresh: an absent marker must not read as idle, and a fresh transcript means
+	// the turn is still running. No delivery, arm intact.
+	if err := os.Chtimes(agLog, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+	status.Remove(sid)
+	settle()
+	if n := countReports(); n != 0 {
+		t.Fatalf("delivered on a missing marker + fresh transcript (n=%d)", n)
+	}
+	if !reportArmed(m.Name) {
+		t.Fatal("false idle consumed the arm")
+	}
+
+	// Phase 2 — transcript stale but the marker is still absent: absence alone
+	// (LiveState's idle default) must not be trusted either.
+	if err := os.Chtimes(mainLog, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+	settle()
+	if n := countReports(); n != 0 {
+		t.Fatalf("delivered on a missing marker (n=%d)", n)
+	}
+
+	// Phase 3 — an explicit idle marker but a fresh transcript (mid-turn write):
+	// still no delivery.
+	status.Persist(sid, "idle")
+	now := time.Now()
+	if err := os.Chtimes(mainLog, now, now); err != nil {
+		t.Fatal(err)
+	}
+	settle()
+	if n := countReports(); n != 0 {
+		t.Fatalf("delivered while the main transcript is fresh (n=%d)", n)
+	}
+
+	// Phase 4 — explicit idle + stale transcript: the real completion. Exactly one
+	// report, arm consumed.
+	if err := os.Chtimes(mainLog, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for countReports() == 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if n := countReports(); n != 1 {
+		t.Fatalf("report count = %d, want 1", n)
+	}
+	if reportArmed(m.Name) {
+		t.Fatal("arm must be consumed by the delivery")
+	}
+}
+
 // TestHaltDisarmsReportOnlyWhenFlagged pins the halt/disarm contract: the MCP
 // stop_session sends {"disarm_report":true} and must cancel the pending one-shot
 // report (stop = instruction cancelled), while the Console's bodyless halt keeps the

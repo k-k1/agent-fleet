@@ -29,6 +29,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // reportLink is the per-session arm record: which conversation gets the report and
@@ -427,6 +428,18 @@ func deferReportWhileBackgroundBusy(name string) bool {
 // operator's stop_session disarmed, or a new instruction re-armed — its own
 // completion kick reports) or when the session stops (docs/30: a kept arm reports
 // on the post-resume completion instead).
+//
+// "Idle" here must be an EXPLICIT, corroborated idle — not the bare LiveState
+// default（実測 2026-07-28 sqmconc: 思考ギャップ中にペイン起点の誤idleヒールが
+// status マーカーを削除 → LiveState は無ファイルを idle と既定 → waiter がターン
+// 途中で arm を消費し、本完了(27分後)の kick は armed=false で棄却・報告消滅）.
+// Unlike the Stop-hook kick, the waiter has no turn-end event to stand on, so it
+// cross-checks every independent liveness signal before spending the one-shot arm:
+// a marker file that SAYS idle (a Stop wrote it — absence proves nothing), a stale
+// main transcript (a thinking gap writes no hooks but the turn's jsonl is recent),
+// and a pane without the interrupt affordance (same evidence the reverse-heal
+// trusts). A wrongly-kept arm self-heals on the next real Stop kick; a
+// wrongly-spent arm is unrecoverable.
 func waitReportUntilBackgroundDone(name, sid string) {
 	defer reportWaiters.Delete(name)
 	for {
@@ -434,14 +447,21 @@ func waitReportUntilBackgroundDone(name, sid string) {
 		if !reportArmed(name) {
 			return
 		}
-		if m, ok := session.ReadMeta(name); !ok || m.StoppedAt != "" {
+		m, ok := session.ReadMeta(name)
+		if !ok || m.StoppedAt != "" {
 			return
 		}
 		if claude.SubagentBusy(sid) {
 			continue // background agents still writing
 		}
-		if status.LiveState(sid) != "idle" {
-			continue // digest turn (or a question/plan/permission wait) still in flight
+		if st, ok := status.Read(sid); !ok || st.State != "idle" {
+			continue // no marker, or a digest turn / question / plan / permission wait in flight
+		}
+		if claude.TranscriptBusy(sid) {
+			continue // main turn still appending its transcript (think gaps fire no hooks)
+		}
+		if tmuxx.IsBusy(m.Name) {
+			continue // pane shows the interrupt affordance — plainly mid-turn
 		}
 		link, ok := consumeReportArm(name)
 		if !ok {
