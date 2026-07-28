@@ -1638,11 +1638,12 @@ export const ja = {
   "mirror.toggle_mode": "モードを切り替え（Plan ⇄ 実装）",
   "mirror.pasted_image_zoom": "貼り付け画像（拡大）",
   // スキルピッカー（docs/50）
-  "mirror.skills_btn": "スキル / コマンド（.claude 配下から。入力欄で「/」でも開く）",
+  "mirror.skills_btn": "スキル / コマンド（入力欄の先頭でトリガ文字を打っても開く）",
   "mirror.skills_loading": "スキルを読み込み中…",
-  "mirror.skills_empty": "このセッションで使えるスキル / コマンドはありません（.claude/skills・.claude/commands）",
+  "mirror.skills_empty": "このセッションで使えるスキル / コマンドはありません",
   "mirror.skills_item_hint": "クリックで入力欄へ差し込み・Ctrl/⌘/Alt＋クリックで即送信",
   "mirror.skills_src_user": "ユーザー",
+  "mirror.skills_src_cli": "CLI",
   // CompactBlock
   "mirror.context_compacted": "コンテキストが圧縮されました",
   "mirror.token_change": "{before} → {after} トークン",

@@ -330,11 +330,14 @@ export function MirrorView({
   const [suggesting, setSuggesting] = useState(false);
   const suggestRef = useRef<HTMLDivElement>(null); // チップ行（Tab でここへフォーカスを移す）
   useDragScroll(suggestRef); // 1行に収めた候補列をマウスドラッグで左右スクロール（スワイプは既定動作）
-  // スキルピッカー（docs/50 / ADR0034）: セッションで呼べるスラッシュ起動（.claude/skills・
-  // commands）の補完リスト。開き方は 2 系統 — 先頭「/」のタイプ（キーボード派）と専用
-  // ボタン（マウス/タップ派）。選択はフォーカスを textarea に残す sel-index 方式
-  // （CommandPalette と同型 — チップ行のフォーカス移動式だとスマホでキーボードが落ちる）。
-  const canSkills = agent.caps.slashSkills;
+  // スキルピッカー（docs/50 / ADR0034、v2 でクロスエージェント化）: セッションで呼べる
+  // スキル/コマンドの補完リスト。開き方は 2 系統 — 先頭トリガ文字のタイプ（キーボード派。
+  // claude/opencode/cursor は「/」、codex は「$」メンション）と専用ボタン（マウス/タップ派）。
+  // 選択はフォーカスを textarea に残す sel-index 方式（CommandPalette と同型 — チップ行の
+  // フォーカス移動式だとスマホでキーボードが落ちる）。managed 経路の発火が未検証の kind は
+  // slashSkillsManaged=false でゲート（opencode — docs/50 §7）。
+  const canSkills = agent.caps.slashSkills && (!managed || agent.caps.slashSkillsManaged);
+  const skillTrigger = agent.skillTrigger || "/";
   const [skills, setSkills] = useState<SessionSkill[] | null>(null); // null = 未取得
   const [slashTok, setSlashTok] = useState<SlashToken | null>(null); // 入力中の先頭 /トークン
   const [skillBtnOpen, setSkillBtnOpen] = useState(false); // ボタン起点で開いた（全件表示）
@@ -1593,7 +1596,7 @@ export function MirrorView({
   };
 
   // --- スキルピッカー（docs/50） ---
-  // slashOpen: 先頭「/」トークンが生きていて、かつ直前に閉じられていない。
+  // slashOpen: 先頭トリガのトークンが生きていて、かつ直前に閉じられていない。
   // skillListVisible: 実際にリストを描く条件 — タイプ起点は該当ゼロなら出さない
   // （素の /plan 等の手打ちを覆い隠さない）。ボタン起点は空でも「無い」ことを見せる。
   const slashOpen = canSkills && !composerLocked && slashTok !== null && skillDismissRef.current !== slashTok.token;
@@ -1618,7 +1621,7 @@ export function MirrorView({
   // draft が手元の token とずれたら（送信でクリア・履歴呼び出し等の setDraft 直書き）閉じる。
   useEffect(() => {
     if (!slashTok) return;
-    if (!draft.startsWith("/") || draft.slice(1, slashTok.end) !== slashTok.token) setSlashTok(null);
+    if (!draft.startsWith(skillTrigger) || draft.slice(skillTrigger.length, slashTok.end) !== slashTok.token) setSlashTok(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft]);
 
@@ -1626,18 +1629,19 @@ export function MirrorView({
   useEffect(() => setSkillSel(0), [slashTok?.token, skillBtnOpen]);
   useEffect(() => skillSelRef.current?.scrollIntoView({ block: "nearest" }), [skillSel, skillItems.length]);
 
-  // 差し込み: 入力中の /トークン（無ければ下書き全体の頭）を "/name " に置換し、既存の
-  // 本文は引数として残す。タッチ端末はフォーカスしない（GBoard が画面を覆う —
-  // applySuggestion と同じ規約）。送信はしない — 引数を足してからユーザーが送る。
-  const pickSkill = (name: string) => {
+  // 差し込み: 入力中のトークン（無ければ下書き全体の頭）を起動文字列（invoke —
+  // "/name " や "$name "）に置換し、既存の本文は引数として残す。タッチ端末はフォーカス
+  // しない（GBoard が画面を覆う — applySuggestion と同じ規約）。送信はしない —
+  // 引数を足してからユーザーが送る。
+  const pickSkill = (invoke: string) => {
     const el = inputRef.current;
     const caret = el ? (el.selectionStart ?? draft.length) : draft.length;
-    const { next, caret: nc } = applySkillToDraft(draft, caret, name);
+    const { next, caret: nc } = applySkillToDraft(draft, caret, invoke, skillTrigger);
     setDraft(next);
     setHistIdx(null);
     setSkillBtnOpen(false);
     skillDismissRef.current = null;
-    setSlashTok(slashTokenAt(next, nc)); // "/name " 直後は必ず null → 閉じる
+    setSlashTok(slashTokenAt(next, nc, skillTrigger)); // invoke 直後は必ず null → 閉じる
     if (coarsePointer()) {
       inputRef.current?.blur();
       return;
@@ -1822,7 +1826,7 @@ export function MirrorView({
       }
       if (((e.key === "Enter" && !e.ctrlKey && !e.metaKey && !e.shiftKey) || e.key === "Tab") && skillItems[skillSel]) {
         e.preventDefault();
-        pickSkill(skillItems[skillSel].name);
+        pickSkill(skillItems[skillSel].invoke);
         return;
       }
       if (e.key === "Escape") {
@@ -2648,16 +2652,17 @@ export function MirrorView({
                     onClick={(ev) => {
                       if (ev.ctrlKey || ev.altKey || ev.metaKey) {
                         closeSkillPicker();
-                        void send("/" + s.name);
+                        void send(s.invoke.trim());
                         return;
                       }
-                      pickSkill(s.name);
+                      pickSkill(s.invoke);
                     }}
                   >
-                    <span className="mirror-skill-name">/{s.name}</span>
+                    <span className="mirror-skill-name">{s.invoke.trim()}</span>
                     {s.argumentHint ? <span className="mirror-skill-hint">{s.argumentHint}</span> : null}
                     {s.description ? <span className="mirror-skill-desc">{s.description}</span> : null}
                     {s.source === "user" ? <span className="mirror-skill-src">{tr("mirror.skills_src_user")}</span> : null}
+                    {s.source === "cli" ? <span className="mirror-skill-src">{tr("mirror.skills_src_cli")}</span> : null}
                   </button>
                 ))
               )}
@@ -2681,7 +2686,7 @@ export function MirrorView({
               }}
             >
               <span className="mirror-skill-glyph" aria-hidden="true">
-                /
+                {skillTrigger}
               </span>
             </button>
           )}
@@ -2732,16 +2737,16 @@ export function MirrorView({
               setDraft(e.target.value);
               setHistIdx(null); // typing leaves history-recall mode
               if (canSkills) {
-                // スキルピッカーのトリガ追跡: 先頭「/」の 1 トークン内にキャレットがある間
-                // だけ token が立つ。トークンが死んだら Esc 抑止も解除（打ち直しで再表示）。
-                const tok = slashTokenAt(e.target.value, e.target.selectionStart ?? e.target.value.length);
+                // スキルピッカーのトリガ追跡: 先頭トリガ文字の 1 トークン内にキャレットが
+                // ある間だけ token が立つ。トークンが死んだら Esc 抑止も解除（打ち直しで再表示）。
+                const tok = slashTokenAt(e.target.value, e.target.selectionStart ?? e.target.value.length, skillTrigger);
                 if (!tok) skillDismissRef.current = null;
                 setSlashTok(tok);
               }
             }}
             onSelect={(e) => {
               // キャレット移動（クリック・矢印）でも token の生死を追い直す。
-              if (canSkills) setSlashTok(slashTokenAt(e.currentTarget.value, e.currentTarget.selectionStart ?? 0));
+              if (canSkills) setSlashTok(slashTokenAt(e.currentTarget.value, e.currentTarget.selectionStart ?? 0, skillTrigger));
             }}
             onKeyDown={onKeyDown}
             onPaste={onPaste}

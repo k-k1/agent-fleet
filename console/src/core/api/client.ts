@@ -641,16 +641,17 @@ export interface PromptTemplateGroup {
 export const repoPromptTemplates = (name: string): Promise<{ groups: PromptTemplateGroup[] }> =>
   api(`api/repos/${encodeURIComponent(name)}/prompt-templates`);
 
-// --- session slash skills (mirror スキルピッカー, docs/50 / ADR0034) ---
-// Slash-invocable skills/commands for a RUNNING session: the Agent scans the
-// session's worktree .claude/skills + .claude/commands plus the user-level
-// claude config dir. Claude-only in v1 (other kinds answer an empty list).
+// --- session skills (mirror スキルピッカー, docs/50 / ADR0034) ---
+// Invocable skills/commands for a RUNNING session. Sources are kind-specific
+// (claude/codex/opencode: filesystem conventions; cursor: the CLI-advertised
+// ACP list) — the Agent resolves them; unsupported kinds answer an empty list.
 export interface SessionSkill {
-  name: string; // slash name, no leading "/"
+  name: string; // invocation name, no "/" or "$" prefix
   description?: string;
   argumentHint?: string;
-  source: "project" | "user";
+  source: "project" | "user" | "cli";
   type: "skill" | "command";
+  invoke: string; // exact string to insert into the composer ("/name " / "$name ")
 }
 export const sessionSkills = (session: string): Promise<{ skills: SessionSkill[] }> =>
   api(`api/sessions/${encodeURIComponent(session)}/skills`);
