@@ -609,7 +609,9 @@ type EditSuggestionEnvelope = {
 };
 ```
 
-wire envelope が必要な場合は version を持たせる。
+wire envelope が必要な場合は version を持たせる。Phase 4 の実装は同期POST
+（`POST /fs/suggest-edit`）を採り、wireへenvelopeを載せない。Consoleがリクエスト時に控えた
+identityから応答受信時にenvelopeを合成し、本節の検証をそのまま適用する（§6 Phase 4）。
 
 ```json
 {
@@ -816,6 +818,46 @@ undo 不能と行復元は jsdom に加えて実 Chromium で確認した（500�
 - 読み取り専用のviewペインが同じプローブで追従することを確認する。
 
 ### Phase 4（AI変更提案）
+
+**実装完了（2026-07-28）。** Phase 0 で未確定だった点は次のとおり確定した。
+
+- **リクエストUX = 選択範囲＋指示文。** range はエディタの選択（UTF-16 offset）から確定し、
+  LLMにoffsetを計算させない。選択が空のときは全文を range とする。LLMが返すのは
+  `summary` と `replacement` だけである。
+- **transport = 同期POST。** Agent `POST /fs/suggest-edit`（CPの許可リストへ
+  `POST /api/fs/suggest-edit` を追加）。本文はディスクではなく編集バッファのスナップショット
+  （選択と前後各16 KiBの文脈、選択は256 KiB上限）をリクエストで運ぶため、dirtyな本文への
+  提案が自然に成り立ち、Agentはfsを一切読まない。§4.1のenvelopeはwireに載せず、Consoleが
+  リクエスト時に控えた `paneId`/`filePath`/`requestId`/`sourceRevision` から応答受信時に合成し、
+  §4.2の検証（identity・revision三重一致・range・validator）を受信時と適用時の両方で通す。
+  応答の追い越し・ファイル切替後の遅延応答はrequestIdで棄却する。
+- **生成チャネル = `oneShotHeadless` の再利用。** タイトル/返信サジェストと同じ
+  backend-agnostic一発ヘッドレスで、claude `--tools ""`・codex tool無付与・cursor `--mode ask`
+  は既にread-onlyだった。唯一の穴だったopencode（素のchatWorkdirにはproject configが無く
+  ユーザーのglobal設定を継承）は、`OPENCODE_CONFIG` へ `{"edit":"deny","bash":"deny"}` の
+  静的ポリシーファイルを渡して閉じた（併合優先度 project > OPENCODE_CONFIG > global の実測に
+  基づく）。モデル既定は生成品質を考慮し `AF_EDIT_SUGGEST_MODEL`（既定 sonnet、claude backend
+  のみ）。usage台帳へ `suggest.edit` として記録する。
+- **staleは保存せず導出する。** 提案は `externalObservation` と同型の advisory
+  （`model.suggestion`）として `phase` の横に置き、受信後の入力は
+  `suggestion.baseRevision !== bufferRevision` から stale を導出してパネル表示と適用可否に
+  反映する。適用は `suggestion_stale` を含む安定UI codeで棄却する（i18n登録済み）。
+- **適用はCodeMirrorの範囲transaction。** `CodeEditorHandle.applyEdit` が1回のundoable
+  transactionとして流し、共通transactionフィルタ（validator）を通る。CR/CRLFはCodeMirrorが
+  dispatch時にLFへ正規化してフィルタに届かないため、改行契約は適用境界の `checkSuggestion` が
+  dispatch前に弾く。編集面が無い場合は model 側適用＋content同期で代替する。
+- **レビューUI** は競合パネルと同じオーバーレイに、`DiffView` の LCS `lineDiff`（export化）で
+  選択範囲→置換文の差分を描く。エラーではないため `role="alert"` にしない。
+
+実装: Agent `fs_suggest_edit.go`（strict decoder・フェンス/散文混じり応答からのJSON抽出・
+summary 240 bytes整形・CR/NUL拒否）、Console `editor/suggest.ts`（型と`checkSuggestion`・
+文脈切り出し）、`model.ts` の `setSuggestion`/`applySuggestion`、`useFileEditor` の
+request/cancel/accept/reject、FileViewの`EditorSuggestPanel`。テストはGo単体（検証・抽出・
+handler・ルート両側）、Console node（suggest/model/useFileEditor — accept が `putFile` を
+呼ばないことを含む）、dom（範囲適用がundo 1ステップ・フィルタ棄却）、実Chromiumでの
+一連のフロー目視（compose→生成→diffレビュー→適用→dirty→undo復元→stale導出）。
+
+元の受け入れ条件（すべて満たす）:
 
 - 書込みtoolを持たないread-only allowlist提案チャネルを実装し、一般のWrite/Edit/Bash可能な
   セッションをこの経路に接続しない。

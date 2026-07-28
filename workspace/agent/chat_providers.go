@@ -791,6 +791,36 @@ func opencodeChatConfig(c *chatConversation) string {
 	return p
 }
 
+// opencodeOneShotConfig writes the static read-only policy config for opencode
+// one-shots (title / branch / reply / edit-suggestion — oneShotHeadless) and returns
+// its path for OPENCODE_CONFIG. One-shots run in the bare chatWorkdir with no
+// opencode.json, so without this file the run inherited the user's global config —
+// the only backend of oneShotHeadless whose tool posture wasn't pinned read-only
+// (claude --tools "" / codex no tool grant / cursor --mode ask). docs/44 §1.3 の
+// read-only 提案生成チャネルはここで閉じる。Returns "" when the file can't be
+// written (the caller then degrades to today's behaviour rather than breaking
+// titles on a broken home).
+func opencodeOneShotConfig() string {
+	cfg := map[string]any{
+		"$schema":    "https://opencode.ai/config.json",
+		"permission": opencodeChatPolicy(),
+	}
+	b, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return ""
+	}
+	dir := chatWorkdir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return ""
+	}
+	p := filepath.Join(dir, "opencode-oneshot.json")
+	if err := os.WriteFile(p, append(b, '\n'), 0o600); err != nil {
+		log.Printf("opencode one-shot config: %v (running without deny policy)", err)
+		return ""
+	}
+	return p
+}
+
 // serverSetKey is the dir-key suffix distinguishing two opencode chat configs that
 // share a tool grant. It digests the REGISTRY servers only (af is already implied by
 // the grant), so an assistant with none keeps the long-standing
@@ -1461,6 +1491,14 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 	case session.KindOpencode:
 		call.Kind = session.KindOpencode
 		args := []string{"run", "--format", "json", "--dir", chatWorkdir()}
+		env := opencode.Env()
+		// read-only 姿勢（docs/44 §1.3）: chat と違い one-shot は素の chatWorkdir で走り
+		// project config（opencode.json）が無いため、OPENCODE_CONFIG の deny が実効になる
+		// （実測 1.18.7 の併合優先度: project > OPENCODE_CONFIG > global — opencodeChatDir 参照）。
+		// 書けなかったときは従来どおり素で走る（title/reply を壊さない）— ホーム破損時の縮退。
+		if cfg := opencodeOneShotConfig(); cfg != "" {
+			env = append(env, "OPENCODE_CONFIG="+cfg)
+		}
 		// NOTE: deliberately NOT auto-picking a cheap model here (docs/46 §1-a-2). opencode's
 		// catalog is a LISTING, not an entitlement: `opencode/claude-haiku-4-5` is listed and
 		// selectable, yet running it returns "Unexpected server error" on an account without
@@ -1481,7 +1519,7 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		args = append(args, headlessPrompt(persona, nil, prompt))
 		cmd := exec.CommandContext(ctx, "opencode", args...)
 		cmd.Dir = chatWorkdir()
-		cmd.Env = envWith(opencode.Env()...)
+		cmd.Env = envWith(env...)
 		out, err := cmd.Output()
 		reply, sesID, model, turnErr, usage := parseOpencodeRunEvents(out)
 		if err != nil {

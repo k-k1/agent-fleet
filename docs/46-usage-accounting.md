@@ -48,6 +48,7 @@ $ claude -p --no-session-persistence --output-format json --dangerously-skip-per
 | `branch.suggest` | manual | `session_title.go:417` | ブランチ名提案 |
 | `suggest.session` | manual | `session_suggest_reply.go:113` | ミラーの ✨ 返信候補 |
 | `suggest.chat` | manual | `chat_suggest_reply.go:45` | チャットの ✨ 返信候補 |
+| `suggest.edit` | manual | `fs_suggest_edit.go` | エディタの ✨ AI変更提案（docs/44 Phase 4） |
 
 `assistant.chat` は `SeedVerb`（`translate` / `summarize`）を **サブ次元** として持つ（Files 由来の
 翻訳/要約チャットを独立カテゴリとして見たいので、feature を増やさず verb で割る）。
@@ -602,8 +603,9 @@ watermark（`state.json`）は別ファイルで、原子的には書けない**
 
 **表示の誤読（P2/P3）**
 
-- **色スロットの無い feature を見えなくしない**（`colors.ts` / `UsageView.tsx`）。凍結 enum 12 個に
-  対しスロットは8つで、`assistant.ask` / `title.chat` / `branch.suggest` / `suggest.chat` は必ず
+- **色スロットの無い feature を見えなくしない**（`colors.ts` / `UsageView.tsx`）。enum 13 個
+  （凍結12＋docs/44 Phase 4 の `suggest.edit`）に対しスロットは8つで、`assistant.ask` /
+  `title.chat` / `branch.suggest` / `suggest.chat` / `suggest.edit` は必ず
   グレーの「その他」へ入る（9色目を作らない規約）。**畳みが1つでもあれば凡例を必ず出す**
   （系列が1本でも）／ツールチップに畳まれた実キーを並べる／**「その他」クリックで畳まれた
   キー全部の OR 絞り込み**が掛かるようにした。溢れる4つを選んだ理由は `FEATURE_SLOT` に明記。

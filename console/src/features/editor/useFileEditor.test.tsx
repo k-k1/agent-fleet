@@ -7,13 +7,21 @@ import {
   currentDirtyGuardRequest,
   discardDirtyGuardRequest,
 } from "./dirtyRegistry.ts";
-import { getEditableFile, putFile, type EditableFile, type PutFileResult } from "./api.ts";
+import {
+  getEditableFile,
+  putFile,
+  suggestEdit,
+  type EditableFile,
+  type PutFileResult,
+  type SuggestEditResult,
+} from "./api.ts";
 import { revisionOf } from "./buffer.ts";
 import { useFileEditor } from "./useFileEditor.ts";
 
 vi.mock("./api.ts", () => ({
   getEditableFile: vi.fn(),
   putFile: vi.fn(),
+  suggestEdit: vi.fn(),
 }));
 vi.mock("../../core/api/client.ts", () => ({
   errText: (error: { message: string }) => error.message,
@@ -67,6 +75,7 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.mocked(putFile).mockReset();
   vi.mocked(getEditableFile).mockReset();
+  vi.mocked(suggestEdit).mockReset();
 });
 
 afterEach(async () => {
@@ -519,5 +528,122 @@ describe("useFileEditor external change handling (docs/44 §7)", () => {
 
     expect(editor!.model?.phase).toBe("conflict_remote_unavailable");
     expect(editor!.model?.content).toBe("mine\n");
+  });
+});
+
+describe("useFileEditor AI suggestion (docs/44 §4)", () => {
+  it("records a suggestion whose envelope matches the request-time identity", async () => {
+    vi.mocked(suggestEdit).mockResolvedValue({ ok: true, summary: "改善", replacement: "new" });
+    const current = await renderEditor();
+    let code: string | null = "unset";
+    await act(async () => {
+      code = await current.requestSuggestion("直して", { from: 0, to: 4 });
+    });
+    expect(code).toBeNull();
+    const envelope = editor!.model!.suggestion!;
+    expect(envelope.paneId).toBe("p1");
+    expect(envelope.filePath).toBe(initial.path);
+    expect(envelope.sourceRevision).toBe(initial.revision);
+    expect(envelope.suggestion).toMatchObject({
+      replacement: "new",
+      range: { from: 0, to: 4 },
+      baseRevision: initial.revision,
+    });
+    expect(vi.mocked(suggestEdit).mock.calls[0][0]).toMatchObject({
+      path: initial.path,
+      instruction: "直して",
+      selection: "base",
+    });
+  });
+
+  it("rejects a response computed on an older buffer as suggestion_stale", async () => {
+    const pending = deferred<SuggestEditResult>();
+    vi.mocked(suggestEdit).mockReturnValue(pending.promise);
+    const current = await renderEditor();
+    let request!: Promise<string | null>;
+    await act(async () => {
+      request = current.requestSuggestion("直して", { from: 0, to: 4 });
+      await Promise.resolve();
+      current.edit("typed while generating\n");
+    });
+    pending.resolve({ ok: true, summary: "改善", replacement: "new" });
+    let code: string | null = null;
+    await act(async () => {
+      code = await request;
+    });
+    expect(code).toBe("suggestion_stale");
+    expect(editor!.model!.suggestion).toBeNull();
+  });
+
+  it("accept mutates only the in-memory buffer and never calls PUT", async () => {
+    vi.mocked(suggestEdit).mockResolvedValue({ ok: true, summary: "改善", replacement: "new" });
+    const current = await renderEditor();
+    await act(async () => {
+      await current.requestSuggestion("直して", { from: 0, to: 4 });
+    });
+    let code: string | null = "unset";
+    await act(async () => {
+      code = current.acceptSuggestion();
+    });
+    expect(code).toBeNull();
+    expect(editor!.model!.content).toBe("new\n");
+    expect(editor!.model!.dirty).toBe(true);
+    expect(editor!.model!.phase).toBe("dirty");
+    expect(editor!.model!.suggestion).toBeNull();
+    expect(vi.mocked(putFile)).not.toHaveBeenCalled();
+  });
+
+  it("accept through the view seam only retires the suggestion; the view's onChange owns the buffer", async () => {
+    vi.mocked(suggestEdit).mockResolvedValue({ ok: true, summary: "改善", replacement: "new" });
+    const current = await renderEditor();
+    await act(async () => {
+      await current.requestSuggestion("直して", { from: 0, to: 4 });
+    });
+    const applied: Array<{ from: number; to: number; insert: string }> = [];
+    await act(async () => {
+      expect(
+        current.acceptSuggestion((edit) => {
+          applied.push(edit);
+          return true;
+        }),
+      ).toBeNull();
+    });
+    expect(applied).toEqual([{ from: 0, to: 4, insert: "new" }]);
+    expect(editor!.model!.suggestion).toBeNull();
+    expect(vi.mocked(putFile)).not.toHaveBeenCalled();
+  });
+
+  it("reject leaves the buffer untouched", async () => {
+    vi.mocked(suggestEdit).mockResolvedValue({ ok: true, summary: "改善", replacement: "new" });
+    const current = await renderEditor();
+    await act(async () => {
+      await current.requestSuggestion("直して", { from: 0, to: 4 });
+    });
+    await act(async () => {
+      current.rejectSuggestion();
+    });
+    expect(editor!.model!.suggestion).toBeNull();
+    expect(editor!.model!.content).toBe(baseContent);
+    expect(editor!.model!.dirty).toBe(false);
+  });
+
+  it("a cancelled request drops its late response", async () => {
+    const pending = deferred<SuggestEditResult>();
+    vi.mocked(suggestEdit).mockReturnValue(pending.promise);
+    const current = await renderEditor();
+    let request!: Promise<string | null>;
+    await act(async () => {
+      request = current.requestSuggestion("直して", { from: 0, to: 4 });
+      await Promise.resolve();
+      current.cancelSuggestion();
+    });
+    pending.resolve({ ok: true, summary: "改善", replacement: "new" });
+    let code: string | null = "unset" as string | null;
+    await act(async () => {
+      code = await request;
+    });
+    expect(code).toBeNull();
+    expect(editor!.model!.suggestion).toBeNull();
+    expect(editor!.suggesting).toBe(false);
   });
 });

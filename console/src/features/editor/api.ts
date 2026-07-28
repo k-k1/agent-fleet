@@ -148,6 +148,59 @@ export async function probeFileMeta(path: string): Promise<FileProbeResult> {
   }
 }
 
+// --- AI 変更提案（docs/44 Phase 4） ---
+
+// LLM 生成はファイル IO の 15 秒では足りない。Agent 側の editSuggestTimeout（90s）
+// より広く取り、通常はサーバー側のタイムアウトが先に確定する。
+export const SUGGEST_EDIT_TIMEOUT_MS = 100_000;
+
+export interface SuggestEditRequest {
+  path: string;
+  instruction: string;
+  before: string;
+  selection: string;
+  after: string;
+}
+
+export type SuggestEditResult =
+  | { ok: true; summary: string; replacement: string }
+  | { ok: false; code: string };
+
+/** POST /api/fs/suggest-edit — 置換文の生成だけを頼む同期呼び出し。envelope
+ *  （paneId/requestId/sourceRevision）はクライアントが控えて応答へ合成するため
+ *  wire には載せない。例外を投げず、全失敗を code に畳む（提案は advisory）。 */
+export async function suggestEdit(request: SuggestEditRequest): Promise<SuggestEditResult> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SUGGEST_EDIT_TIMEOUT_MS);
+  try {
+    const response = await fetch(rel("api/fs/suggest-edit"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+      body: JSON.stringify(request),
+      signal: controller.signal,
+    });
+    let body: unknown = null;
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+    if (!response.ok) {
+      const error = (body as { error?: Partial<FileApiError> } | null)?.error;
+      return { ok: false, code: error?.code || `http_${response.status}` };
+    }
+    const value = body as { summary?: unknown; replacement?: unknown } | null;
+    if (typeof value?.summary !== "string" || typeof value?.replacement !== "string") {
+      return { ok: false, code: "generation_failed" };
+    }
+    return { ok: true, summary: value.summary, replacement: value.replacement };
+  } catch {
+    return { ok: false, code: controller.signal.aborted ? "io_timeout" : "unavailable" };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function getEditableFile(path: string): Promise<EditableFile> {
   return withTimeout(async (signal) => {
     const response = await fetch(rel(`api/fs/file?path=${encodeURIComponent(path)}`), {

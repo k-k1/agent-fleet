@@ -2708,6 +2708,7 @@ export const en: Record<keyof typeof ja, string> = {
   "usage.val.feature.branch.suggest": "Branch name suggestion",
   "usage.val.feature.suggest.session": "Reply suggestions (mirror)",
   "usage.val.feature.suggest.chat": "Reply suggestions (chat)",
+  "usage.val.feature.suggest.edit": "Edit suggestions (editor)",
   "usage.val.feature.unknown": "Untagged",
   "usage.val.trigger.user": "User",
   "usage.val.trigger.auto": "Automatic",
@@ -2947,6 +2948,23 @@ export const en: Record<keyof typeof ja, string> = {
   "editor.unknown.retry": "Fetch save state",
   "editor.diff_aria": "Diff between mine and remote",
   "editor.popout_dirty": "A file with unsaved changes cannot be popped out. Save or discard it, then retry.",
+
+  // === AI edit suggestions (docs/44 Phase 4) ===
+  "editor.suggestion.button": "AI suggest",
+  "editor.suggestion.button_tip": "Ask AI to propose a change to the selection (or the whole file)",
+  "editor.suggestion.title": "AI edit suggestion",
+  "editor.suggestion.compose_hint": "Targets the editor selection; with no selection, the whole file.",
+  "editor.suggestion.placeholder": "Describe the change you want (Ctrl+Enter to generate)",
+  "editor.suggestion.generate": "Generate",
+  "editor.suggestion.generating": "Generating…",
+  "editor.suggestion.apply": "Apply",
+  "editor.suggestion.reject": "Reject",
+  "editor.suggestion.stale": "The buffer has changed, so this suggestion no longer applies. Generate it again.",
+  "editor.suggestion.failed": "Failed to generate a suggestion.",
+  "editor.suggestion.timeout": "Suggestion generation timed out.",
+  "editor.suggestion.selection_too_large": "The selection is too large to suggest on.",
+  "editor.suggestion.instruction_invalid": "The instruction is empty or too long.",
+  "editor.suggestion.invalid": "This suggestion cannot be applied.",
 
 
   // === agent memory versioning (docs/39 P2 / ADR 0022; features/settings/MemoryTab.tsx) ===

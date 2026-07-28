@@ -182,3 +182,14 @@ func TestAuthExemptRegistry(t *testing.T) {
 		}
 	}
 }
+
+// エディタ AI 変更提案（docs/44 Phase 4）: CP は明示許可リスト方式なので、Agent 側
+// ルートに対応する /api/fs/suggest-edit の登録漏れを回帰検知する。
+func TestFSSuggestEditProxyRouteRegistered(t *testing.T) {
+	_, mux := smokeEnv(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/fs/suggest-edit", nil)
+	_, pattern := mux.Handler(req)
+	if pattern != "POST /api/fs/suggest-edit" {
+		t.Fatalf("route pattern=%q", pattern)
+	}
+}
