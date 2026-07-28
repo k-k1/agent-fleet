@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { api, apiJSON, rawJSON, errText, rel } from "../../core/api/client.ts";
 import { mobileMatches } from "../../lib/device.ts";
@@ -25,6 +25,11 @@ import {
   tenantFormValid,
 } from "./mcpWire.ts";
 import type { KV, TenantForm, TenantServer } from "./mcpWire.ts";
+// Egress allowlist tie-in (docs/48 §9). It matters more here than on the member tab: a
+// distributed server that the proxy blocks is broken for EVERY member of the tenant.
+import { EgressNote, useEgressCheck } from "./EgressNote.tsx";
+import { hostsOf } from "./egressCheck.ts";
+import type { EgressCheck } from "./egressCheck.ts";
 
 // Admin API shapes (only the fields the UI reads; server responses may carry more).
 interface Tenant {
@@ -715,6 +720,9 @@ function McpAdminView({ tenants }: { tenants: Tenant[] }) {
   const [form, setForm] = useState<TenantForm | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmDel, setConfirmDel] = useState<TenantServer | null>(null);
+  const { check: egress, recheck: recheckEgress } = useEgressCheck(
+    hostsOf([...(rows || []).map((s) => s.url), form?.url]),
+  );
 
   const load = useCallback(async () => {
     if (!slug) return;
@@ -798,31 +806,56 @@ function McpAdminView({ tenants }: { tenants: Tenant[] }) {
         ) : (
           rows.map((s) =>
             form && form.id === s.id ? (
-              <McpAdminForm key={s.id} form={form} setForm={setForm} busy={busy} onSave={save} />
+              <McpAdminForm
+                key={s.id}
+                form={form}
+                setForm={setForm}
+                busy={busy}
+                onSave={save}
+                egress={egress}
+                onProposed={recheckEgress}
+              />
             ) : (
-              <div key={s.id} className={"adm-mcp-row" + (s.enabled ? "" : " off")}>
-                <span className="as-name mono" title={s.name}>
-                  {s.name}
-                </span>
-                <span className="as-repo muted" title={s.url}>
-                  {s.label || s.url}
-                </span>
-                {s.user_secret && <span className="mcp-origin mcp-origin-tenant">{tr("admin.mcp_user_secret_badge")}</span>}
-                {!s.enabled && <span className="muted">{tr("admin.mcp_disabled")}</span>}
-                <span className="allow-acts">
-                  <button type="button" className="ghost xs" disabled={busy} onClick={() => setForm(tenantFormOf(s))}>
-                    {tr("mcp.edit")}
-                  </button>
-                  <button type="button" className="ghost xs danger" disabled={busy} onClick={() => setConfirmDel(s)}>
-                    {tr("common.delete")}
-                  </button>
-                </span>
-              </div>
+              <Fragment key={s.id}>
+                <div className={"adm-mcp-row" + (s.enabled ? "" : " off")}>
+                  <span className="as-name mono" title={s.name}>
+                    {s.name}
+                  </span>
+                  <span className="as-repo muted" title={s.url}>
+                    {s.label || s.url}
+                  </span>
+                  {s.user_secret && (
+                    <span className="mcp-origin mcp-origin-tenant">{tr("admin.mcp_user_secret_badge")}</span>
+                  )}
+                  {!s.enabled && <span className="muted">{tr("admin.mcp_disabled")}</span>}
+                  <span className="allow-acts">
+                    <button type="button" className="ghost xs" disabled={busy} onClick={() => setForm(tenantFormOf(s))}>
+                      {tr("mcp.edit")}
+                    </button>
+                    <button type="button" className="ghost xs danger" disabled={busy} onClick={() => setConfirmDel(s)}>
+                      {tr("common.delete")}
+                    </button>
+                  </span>
+                </div>
+                <EgressNote
+                  url={s.url}
+                  check={egress}
+                  defaultReason={tr("mcp.egress_reason_for", { name: s.name })}
+                  onProposed={recheckEgress}
+                />
+              </Fragment>
             ),
           )
         )}
         {form && form.id === "" ? (
-          <McpAdminForm form={form} setForm={setForm} busy={busy} onSave={save} />
+          <McpAdminForm
+            form={form}
+            setForm={setForm}
+            busy={busy}
+            onSave={save}
+            egress={egress}
+            onProposed={recheckEgress}
+          />
         ) : (
           !form && (
             <button type="button" className="ghost" disabled={!slug} onClick={() => setForm(emptyTenantForm())}>
@@ -855,11 +888,15 @@ function McpAdminForm({
   setForm,
   busy,
   onSave,
+  egress,
+  onProposed,
 }: {
   form: TenantForm;
   setForm: (f: TenantForm | null) => void;
   busy: boolean;
   onSave: (f: TenantForm) => Promise<void>;
+  egress: EgressCheck | null;
+  onProposed: () => void;
 }) {
   const tr = useT();
   const patch = (part: Partial<TenantForm>) => setForm({ ...form, ...part });
@@ -894,6 +931,12 @@ function McpAdminForm({
         />
         <span className="hint">{tr("admin.mcp_url_hint")}</span>
       </label>
+      <EgressNote
+        url={form.url}
+        check={egress}
+        defaultReason={tr("mcp.egress_reason_for", { name: form.name.trim() || form.url.trim() })}
+        onProposed={onProposed}
+      />
 
       <div className="adm-mcp-headers">
         <span className="adm-mcp-lbl">{tr("mcp.f_headers")}</span>

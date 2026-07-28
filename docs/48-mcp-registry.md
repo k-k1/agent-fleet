@@ -1,10 +1,10 @@
 # 48. ユーザー / テナント独自 MCP サーバーの登録（MCP レジストリ）— 設計
 
-- 状態: **◐ P0 / P1 / P2 / P3 / P4 実装済み＋P5 の materialize 完了**（型・実効レジストリ合成・
-  user スコープ CRUD・接続テスト・Console「MCP サーバー」タブ・アシスタント配線・
+- 状態: **✅ P0〜P5 実装済み**（型・実効レジストリ合成・user スコープ CRUD・接続テスト・
+  Console「MCP サーバー」タブ・アシスタント配線・
   **全 kind のセッション materialize（claude / codex / opencode / copilot / cursor / kiro / agy）**・
-  **テナントスコープの配布（CP テーブル / 管理 API / ブリッジ / 配布キャッシュ / `user_secret`）**）。
-  P5 の残りは **egress allowlist 連携**のみ。
+  **テナントスコープの配布（CP テーブル / 管理 API / ブリッジ / 配布キャッシュ / `user_secret`）**・
+  **egress allowlist 連携（§9.1）**）。残りは §14 の未決のみ。
   意思決定は [decisions/0031](decisions/0031-mcp-registry.md)。
 - 関連: docs/19（アシスタント）/ [25](25-ops-monitoring.md)（組み込み ops 連携 = 本設計が一般化する対象）/
   [20](20-container-audit-egress.md)（egress allowlist）/ [46](46-usage-accounting.md)（残 P5 = MCP の使用量計上）/
@@ -433,11 +433,63 @@ map のキー・エントリの綴り方）に分けてある。codex だけが 
 | 対象 | 仕掛け |
 |------|--------|
 | テナント配布の任意コマンド実行 | スキーマから `command` 系を落とす（決定 2）。API も transport=stdio を 400 で拒否 |
-| リモート先の外部通信 | egress allowlist（docs/20）。登録時に URL の host を照合し、未許可なら Console に警告＋申請導線（`egress_allowlist` の `proposed` 行を作る既存経路を再利用） |
+| リモート先の外部通信 | egress allowlist（docs/20）。登録時に URL の host を照合し、未許可なら Console に警告＋申請導線（§9.1・P5 実装済み） |
 | 権限 | テナント CRUD は tenant_admin 以上。RBAC は**サービス層で再検証**（roadmap の原則） |
 | 監査 | `audit_log` に `action=mcp.upsert` / `mcp.delete`、`actor_kind=admin`（MCP 経由なら `mcp`） |
 | 秘密の露出 | Console へはマスクして返す。ログ・監査 detail に値を書かない |
 | 壊れたサーバー | 接続テスト（§10）で登録時に検出。materialize は enabled かつ必要な秘密が揃ったものだけ |
+
+### 9.1 egress allowlist 連携（P5 実装済み）
+
+リモート MCP サーバーは**外向きの宛先そのもの**なので、egress 統制（docs/20）と噛み合わない
+限り「登録できたのに繋がらない」が残る。しかも失敗の出方が悪い:
+
+- **enforce**: proxy が弾く。CLI 側からは「MCP サーバーが壊れている」ようにしか見えない。
+- **log-only**: **今日は動く**。運用が enforce へ切り替えた日に、誰も何も変えていないのに壊れる。
+
+どちらも CLI セッションの中では原因が分からないので、**まだ直せる場所＝登録画面**で言う。
+
+**CP に member 面を 2 本足した**（`control-plane/egress_member.go`）。allowlist を持っているのは
+CP だけ（proxy は `/internal/egress/policy` をポーリングして受け取る側）なので、判定も申請も
+CP でしか成立しない:
+
+| ルート | 認可 | 役割 |
+|--------|------|------|
+| `GET /api/egress/check?host=…` | 任意のメンバー（`withMembership`） | 宛先ごとに `allowed` / `proposed` ＋ 配備の `mode` |
+| `POST /api/egress/propose` | 任意のメンバー（`withMembership`） | 許可の**申請**（`egress_allowlist` に `state=proposed` の行を作る） |
+
+**なぜ member に開けてよいか**: 書き込みは `proposed` しか作れない。有効化は従来どおり
+super_admin の `POST /api/admin/egress/allowlist/{id}/state`。M4 のエージェント用ツール
+（`propose_allowlist_change`）と同じ「頼めるが通せない」分割で、**申請導線を渡しても
+配備の egress は広がらない**。
+
+判定を出すときの原則が 3 つある。どれも「狼少年にしない」ためのもの:
+
+1. **`configured=false` なら何も言わない。** 実際にワークスペースを縛っているのは
+   `AF_EGRESS_PROXY_ADDR`（これが設定されたときだけ CP が `http(s)_proxy` をコンテナへ注入する）
+   であって、`AF_EGRESS_TOKEN` ではない。docs/20 M2 は**コンテナ配線が既定 OFF** なので、
+   ここを取り違えるとほぼ全配備で「存在しない制限」を警告し続けることになる。
+2. **答えが無い宛先は「無し」。** 未応答・失敗・未知のホストを「遮断」と推測しない。CP の
+   一時不調が全部ポリシー違反に見えてしまう。
+3. **申請済みが最優先。** `proposed` が既にあるなら、取れる行動は「待つ」であって「もう一度頼む」
+   ではない。申請済み判定は**同じ `newEgressPolicy` で照合**するので、`.example.com` の申請が
+   `mcp.example.com` を正しく覆う。
+
+申請側の作法:
+
+- 項目は**ホストか `.suffix`** のみ（スキーム / ポート / パスは 400）。policy はそれらを剥がさない
+  ので、受け付けると「保存できたのに永遠に一致しない」という一番たちの悪い壊れ方になる。
+- **TLD 丸ごと（`.com`）は拒否**。承認する管理者が列の中からこれを見分ける前提にしない。
+- **同じ項目の重複は行を増やさない**。`active` なら「もう許可されている」、`proposed` なら既存を
+  返す。`retired`（＝一度却下）からの再申請だけは新しい行を作る — 理由を添えて頼み直せるのが
+  却下の意味なので。
+- 行は**配備全体（`tenant_id=""`）**。承認の効果が実際に配備全体（`EffectiveAllowlist` はスコープを
+  見ない）なので、申請者のテナントを行に載せるとありもしないスコープを約束してしまう。テナントは
+  監査行（`egress.propose` / `actor_kind=user`）側に持たせる。
+
+Console 側は判定ロジックを `egressCheck.ts`（純粋関数・`egressCheck.test.ts` で固定）へ、
+取得と描画を `EgressNote.tsx` へ分けた。**メンバーの MCP タブとテナント配布の管理画面の両方**に
+出す — 配布定義が弾かれる場合はテナント全員分が同時に壊れるので、むしろ管理画面の方が効く。
 
 ---
 
@@ -475,6 +527,9 @@ map のキー・エントリの綴り方）に分けてある。codex だけが 
   結果はサーバー名 / 版 / ツール数 / プロトコル版と、失敗時は stderr / ボディ末尾をそのまま表示する。
 - 注記: `targets.session` を選んだフォームには「**新規セッションから有効**」を出す（§8.3）。
   リモート＋ `Authorization` 以外のヘッダには「codex では使えません」を出す（§7）。
+- **egress 警告**（§9.1・P5）: リモート行と URL 入力中のフォームに、宛先が許可リストに無いことと
+  「許可を申請」を出す（`EgressNote.tsx`）。判定は `egressCheck.ts` の純粋関数で、**未配線・未応答・
+  未知ホストは黙る**。同じ部品を管理モーダルの配布フォームにも置く（§11.3）。
 - **ワークスペース稼働ゲート必須**。停止中は「登録ゼロ」に見えてしまうため、起動 CTA を出して一覧は描かない。
   取得は CP 502（agent 起動途中）をリトライし、既存スナップショットを空へ落とさない。
 - 型・フォーム↔定義の変換・マスク往復は `mcpWire.ts` に分離し、`mcpWire.test.ts` で固定している
@@ -504,6 +559,8 @@ super_admin は全テナント、tenant_admin は自分のテナントだけが�
 - 「認証の値は各メンバーが入力する」トグル（`user_secret`）を入れると値の入力欄が**消える**。
   無効化して無視するのではなく消すのは、そこに入れた値がどこにも保存されないため。
 - 削除は「各メンバーのワークスペースからは次回の取得時に消えます」と明示する（即時ではない）。
+- **egress 警告はここにも出す**（§9.1）。配布定義が proxy に弾かれる場合、壊れるのは
+  テナント全員のセッションなので、メンバータブより先に気付ける場所がここになる。
 
 **メンバー側タブ（`McpTab.tsx`）の追随**:
 
@@ -529,10 +586,10 @@ super_admin は全テナント、tenant_admin は自分のテナントだけが�
 | **P2** ✅ | アシスタント配線（claude / codex / opencode / agy）。`mcpConfigArgs` の一般化＋アシスタント編集 UI | `mcpreg/attach.go`（新設）、`chat_mcp.go`（新設）、`chat_providers.go`、`AssistantModal.tsx` |
 | **P3** ✅ | セッション materialize — **claude / codex 先行**（所有台帳・非破壊書き込み・起動/CRUD 契機・drift CI） | `mcpreg/materialize*.go`（新設）、`mcp_materialize.go`（新設）、`session_tmux.go`、`paths.go`、`.github/workflows/mcp-config-contract.yml`（新設） |
 | **P4** ✅ | テナントスコープ: CP テーブル・管理 API・ブリッジ・配布キャッシュ・`AdminTab` UI・`user_secret` | `control-plane/mcp_server.go` / `mcp_server_bridge.go` / `migrations/0028` + `migrations-pg/0011`（新設）、`store.go`・`store_sqlite.go`・`routes.go`・`workspace_lifecycle.go`、`mcpreg/tenant.go`・`mcp_tenant.go`（新設）、`AdminTab.tsx`・`McpTab.tsx`・`mcpWire.ts` |
-| **P5** ◐ | 残り kind の materialize（opencode / copilot / cursor / kiro / agy）✅ ＋ egress allowlist 連携（未着手） | `mcpreg/materialize_json.go`・`materialize_{opencode,copilot,cursor,kiro,agy}.go`（新設）、`paths.go`、`materialize_drift_test.go` / 残りは + `egress.go` |
+| **P5** ✅ | 残り kind の materialize（opencode / copilot / cursor / kiro / agy）＋ egress allowlist 連携（§9.1） | `mcpreg/materialize_json.go`・`materialize_{opencode,copilot,cursor,kiro,agy}.go`（新設）、`paths.go`、`materialize_drift_test.go`、`control-plane/egress_member.go`（新設）・`egress.go`・`main.go`・`routes.go`、`console/.../egressCheck.ts`・`EgressNote.tsx`（新設）・`McpTab.tsx`・`AdminTab.tsx` |
 
-P0〜P3 で「個人が登録して claude / codex で使う」が閉じる。P4 で組織配布、P5 で全 kind。
-P5 の materialize までが入り、残るのは egress allowlist 連携（§9）だけ。
+P0〜P3 で「個人が登録して claude / codex で使う」が閉じる。P4 で組織配布、P5 で全 kind と
+egress 連携。**v1 の計画分はこれで全て入った**（未決は §14）。
 
 ---
 
@@ -600,8 +657,30 @@ P5 の materialize までが入り、残るのは egress allowlist 連携（§9�
   CWD 配下の workspace スコープへ逃がす（開発者のグローバル設定を触らない）。未ログインなら skip。
   **cursor は `mcp add` を持たない**ので参照は逆向き — af の書いた `~/.cursor/mcp.json` を
   `cursor-agent mcp list` に読ませ、両サーバーが名前で出ることを見る。
-- **未検証**: agy（このホストでは起動不能）。実 MCP サーバーを登録しての 5 kind のセッション実起動、
-  Console からの実操作。egress allowlist 連携（P5 の残り半分）は未着手。
+- **未検証**: agy（このホストでは起動不能）。実 MCP サーバーを登録しての 5 kind のセッション実起動。
+
+**P5 egress 連携で済ませた分**（`control-plane/egress_member_test.go` /
+`console/.../egressCheck.test.ts`）:
+
+- **判定は proxy と同じ policy**（製品既定 ∪ `active` 行）であること。`.suffix` の申請が
+  サブドメインを覆うこと、`retired` 行が許可にも申請中にも見えないこと、enforce の切替が
+  **文言だけを変えて判定を変えない**こと。
+- **`configured` は proxy 配線に従う**（`AF_EGRESS_PROXY_ADDR` 未設定なら `false`）。ここが
+  トークン依存になっていると、egress を配線していない配備で全リモート MCP に警告が出る。
+- **member の書き込みは有効化しない**: `propose` の後で `EffectiveAllowlist` に出ないこと、
+  行が `proposed` かつ `tenant_id=""` で、テナントは監査行（`actor_kind=user`）側に載ること。
+- **重複を積まない**: 同一項目の再申請は既存を返す（`active` なら「もう許可済み」）、`retired`
+  からの再申請だけが新しい行になること。
+- **形の悪い項目は 1 つも保存しない**: URL / ポート付き / パス付き / 空白入り / `..` は 400、
+  TLD 丸ごと（`.com`・`*.com`）は別コードで 400、`*.example.com` は `.example.com` へ正規化。
+- **Console 側は「黙る条件」を固定**（`egressCheck.test.ts`）: 未配線・未応答・未知ホスト・許可済みは
+  すべて「何も言わない」。申請中は遮断表示より優先。URL→host の抽出（大小・ポート・IPv6・
+  スキーム無しの入力途中）も込み。
+- **実描画**（headless Chromium ＋素の CDP、`shots/server.mjs` に `/api/egress/check` スタブを追加）:
+  log-only での警告文＋「許可を申請」→ 理由が前埋めされた申請フォーム → 申請済み表示、の 3 状態を
+  MCP タブ上で目視確認。
+- **未検証**: 実 proxy を立てての end-to-end（enforce で実際に弾かれる／承認後に通る）、
+  管理モーダル側の実描画、CP 実配備での 2 ルートの認可挙動。
 
 **P4 で済ませた分**（`control-plane/mcp_server_test.go` / `internal/mcpreg/tenant_test.go` /
 `console/.../mcpWire.test.ts`）:

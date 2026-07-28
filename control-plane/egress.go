@@ -71,12 +71,18 @@ type egressStore interface {
 type egressAPI struct {
 	memberAuth
 	token string // AF_EGRESS_TOKEN ("" = ingestion/policy disabled)
+	// proxy is AF_EGRESS_PROXY_ADDR — the ONLY thing that actually constrains a
+	// workspace (main.go injects http(s)_proxy into every container when it is set).
+	// Empty means this deployment has no egress control at all, which the member-facing
+	// check reports as configured=false so the Console does not warn about a restriction
+	// that is not there (egress_member.go).
+	proxy string
 	dedup *egressAuditDedup
 	store egressStore
 }
 
-func newEgressAPI(m *manager, token string, dedup *egressAuditDedup) egressAPI {
-	return egressAPI{memberAuth{m}, token, dedup, m.store}
+func newEgressAPI(m *manager, token, proxy string, dedup *egressAuditDedup) egressAPI {
+	return egressAPI{memberAuth{m}, token, proxy, dedup, m.store}
 }
 
 // auditAdmin records a deployment-wide admin action (docs/20 M3: allowlist/mode edits

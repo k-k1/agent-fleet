@@ -95,6 +95,11 @@ export const ja = {
   "err.mcp_kind_unknown": "未知のエージェント種別です",
   "err.mcp_timeout_range": "タイムアウトは 1000〜120000 ミリ秒で指定してください",
   "err.mcp_headers_unreadable": "保存済みのヘッダを復号できません。すべてのヘッダ値を再入力してください",
+  // egress 許可リストの申請（docs/48 §9 / control-plane/egress_member.go）
+  "err.egress_entry_invalid":
+    "許可リストにはホスト名か .suffix.example.com の形式を指定してください（スキーム・ポート・パスは使えません）",
+  "err.egress_entry_too_broad": "TLD 全体（.com など）は申請できません。ドメイン単位で指定してください",
+  "err.egress_too_many_proposals": "承認待ちの申請が多すぎます。管理者に処理を依頼してください",
   "err.mcp_tenant_bridge_off": "テナント配布はこの環境では利用できません（CP の公開URL/トークンが未設定）",
   "err.mcp_tenant_fetch_failed": "テナント配布を取得できませんでした",
   "err.assistant_not_found": "アシスタントが見つかりません",
@@ -416,6 +421,18 @@ export const ja = {
   "mcp.enabled_on": "有効にする",
   "mcp.kv_value": "値",
   "mcp.kv_masked_hint": "*** は保存済みの値です。そのままにすれば変更されません。",
+  // --- 外部通信の許可リスト連携（docs/48 §9・EgressNote.tsx）---
+  // 遮断されている / これから遮断される宛先を、まだ直せる場所（登録画面）で伝える。
+  "mcp.egress_blocked":
+    "この宛先（{host}）は外部通信の許可リストに無いため、ワークスペースから接続できません。",
+  "mcp.egress_would_block":
+    "この宛先（{host}）は外部通信の許可リストにありません。現在は記録のみのため接続できますが、遮断モードに切り替わると使えなくなります。",
+  "mcp.egress_pending": "{host} の許可を申請済みです（管理者の承認待ち）。",
+  "mcp.egress_propose": "許可を申請",
+  "mcp.egress_reason_ph": "申請の理由",
+  "mcp.egress_reason_for": "MCP サーバー {name} で使用",
+  "mcp.egress_send": "申請する",
+  "mcp.egress_propose_failed": "申請できませんでした: {msg}",
   // --- テナント配布（docs/48 P4）---
   "mcp.tenant_fetched_at": "テナント配布の最終取得: {when}",
   "mcp.tenant_never_fetched": "テナント配布はまだ取得できていません（管理側の設定または接続を確認してください）。",
