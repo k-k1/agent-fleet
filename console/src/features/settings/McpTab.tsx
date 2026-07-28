@@ -20,8 +20,11 @@ import {
   emptyForm,
   formOf,
   formValid,
+  needsMemberSecrets,
+  toKV,
 } from "./mcpWire.ts";
 import type { Form, KV, McpServer, ProbeResult, Registry } from "./mcpWire.ts";
+import { fmtDateTime, DATETIME_FULL } from "../../lib/intl.ts";
 
 // McpTab — the member's own MCP server registry (docs/48 P1 + ADR0031). Lists the
 // EFFECTIVE registry (builtin ∪ tenant ∪ user) as one table, because that is what the
@@ -54,6 +57,9 @@ export function McpTab() {
   // Probe results keyed by server id ("" = the unsaved form), so a test result stays
   // pinned to the row that produced it across a reload.
   const [probes, setProbes] = useState<Record<string, ProbeResult>>({});
+  const [refreshing, setRefreshing] = useState(false);
+  // Which tenant user_secret row is having its values entered ("" = none).
+  const [secretFor, setSecretFor] = useState<McpServer | null>(null);
 
   // A CP 502 while the agent is still booting must not render as "no servers
   // registered" — retry, and never downgrade a snapshot we already have
@@ -126,6 +132,41 @@ export function McpTab() {
     reload();
   };
 
+  // Pull the tenant-distributed set now instead of waiting for the agent's 5-minute
+  // poll (docs/48 §6). A failure is surfaced verbatim — a silently stale list is the
+  // thing this button exists to rule out.
+  const refreshTenant = async () => {
+    setRefreshing(true);
+    try {
+      const d = await apiJSON("api/mcp-servers/tenant-refresh", "POST", {});
+      if (d && d.error) {
+        toast(tr("mcp.tenant_refresh_failed", { msg: errText(d.error) }));
+        return;
+      }
+      setReg({ servers: Array.isArray(d.servers) ? d.servers : [], ...d });
+      // Rows the CP could not decrypt, and rows this agent refused, are both absent from
+      // the list. Saying so beats letting the member conclude the admin never added them.
+      const unreadable = Number(d.fetch?.unreadable) || 0;
+      const dropped = Number(d.fetch?.dropped) || 0;
+      if (unreadable + dropped > 0) toast(tr("mcp.tenant_incomplete", { n: unreadable + dropped }));
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  // Store the member's own header values for a tenant user_secret definition. Lands in
+  // this workspace's encrypted store; the distributed definition is never modified.
+  const saveSecrets = async (s: McpServer, headers: Record<string, string>) => {
+    const d = await apiJSON(`api/mcp-servers/${encodeURIComponent(s.id)}/secrets`, "PUT", { headers });
+    if (d && d.error) {
+      toast(tr("mcp.save_failed", { msg: errText(d.error) }));
+      return false;
+    }
+    setSecretFor(null);
+    reload();
+    return true;
+  };
+
   if (!running) {
     return (
       <EmptyState icon="debug-disconnect" title={tr("mcp.ws_required_title")} hint={tr("mcp.ws_required_hint")}>
@@ -138,11 +179,27 @@ export function McpTab() {
   if (!reg) return <p className="muted pad">{tr("common.loading")}</p>;
 
   const shadowed = reg.shadowed || [];
+  const hasTenant = reg.servers.some((s) => s.origin === "tenant") || !!reg.tenantFetchedAt;
   return (
     <div className="mcp-tab">
       <Hint>{tr("mcp.intro")}</Hint>
       {shadowed.length > 0 && (
         <p className="ps-note ps-note-warn">{tr("mcp.shadowed", { names: shadowed.join(", ") })}</p>
+      )}
+      {/* Tenant distribution status. Shown only once a set has actually been fetched:
+          on a deployment without the bridge (no CP public URL) there is nothing to say,
+          and an unexplained "last fetched: never" reads as a fault. */}
+      {hasTenant && (
+        <div className="mcp-tenant-bar">
+          <span className="muted">
+            {reg.tenantFetchedAt
+              ? tr("mcp.tenant_fetched_at", { when: fmtDateTime(reg.tenantFetchedAt * 1000, DATETIME_FULL) })
+              : tr("mcp.tenant_never_fetched")}
+          </span>
+          <button className="ghost mcp-btn" disabled={refreshing} onClick={() => void refreshTenant()}>
+            <Icon name="refresh" /> {refreshing ? tr("mcp.tenant_refreshing") : tr("mcp.tenant_refresh")}
+          </button>
+        </div>
       )}
       {reg.servers.length === 0 ? (
         <p className="muted mcp-empty">{tr("mcp.empty")}</p>
@@ -160,6 +217,10 @@ export function McpTab() {
                   submitLabel={tr("common.save")}
                 />
               </li>
+            ) : secretFor && secretFor.id === s.id ? (
+              <li key={s.id} className="ssm-item">
+                <SecretsForm s={s} onSave={saveSecrets} onCancel={() => setSecretFor(null)} />
+              </li>
             ) : (
               <ServerRow
                 key={s.id}
@@ -169,6 +230,7 @@ export function McpTab() {
                 onTest={() => void test(formOf(s))}
                 onToggle={(on) => void setEnabled(s, on)}
                 onDelete={() => void remove(s)}
+                onEnterSecrets={() => setSecretFor(s)}
               />
             ),
           )}
@@ -212,6 +274,7 @@ function ServerRow({
   onTest,
   onToggle,
   onDelete,
+  onEnterSecrets,
 }: {
   s: McpServer;
   probe?: ProbeResult;
@@ -219,6 +282,7 @@ function ServerRow({
   onTest: () => void;
   onToggle: (on: boolean) => void;
   onDelete: () => void;
+  onEnterSecrets: () => void;
 }) {
   const tr = useT();
   const askConfirm = useConfirm();
@@ -247,6 +311,13 @@ function ServerRow({
           {s.editable && (
             <button className="ghost mcp-btn" onClick={onEdit}>
               {tr("mcp.edit")}
+            </button>
+          )}
+          {/* A tenant user_secret row is not editable, but its VALUES are the member's
+              to supply — the one write a member has into a distributed definition. */}
+          {s.origin === "tenant" && s.userSecret && (
+            <button className="ghost mcp-btn" onClick={onEnterSecrets}>
+              {tr("mcp.enter_secrets")}
             </button>
           )}
           <button
@@ -280,9 +351,15 @@ function ServerRow({
       </div>
       {/* A row that is on but not "ready" would start and fail — say why rather than
           leaving the user to discover it from a broken session. */}
-      {s.enabled && !s.ready && <p className="ps-note ps-note-warn">{tr("mcp.not_ready")}</p>}
+      {s.enabled && !s.ready && (
+        <p className="ps-note ps-note-warn">
+          {needsMemberSecrets(s) ? tr("mcp.needs_member_secrets") : tr("mcp.not_ready")}
+        </p>
+      )}
       {s.origin === "builtin" && <p className="ps-note">{tr("mcp.builtin_note")}</p>}
-      {s.origin === "tenant" && <p className="ps-note">{tr("mcp.tenant_note")}</p>}
+      {s.origin === "tenant" && (
+        <p className="ps-note">{s.userSecret ? tr("mcp.tenant_user_secret_note") : tr("mcp.tenant_note")}</p>
+      )}
       <ProbeView probe={probe} />
     </li>
   );
@@ -335,6 +412,72 @@ function ProbeView({ probe }: { probe?: ProbeResult }) {
         </div>
         {probe.revision && <div className="muted">{tr("mcp.test_revision", { rev: probe.revision })}</div>}
         {probe.tools && probe.tools.length > 0 && <div className="muted mono">{probe.tools.join(", ")}</div>}
+      </div>
+    </div>
+  );
+}
+
+// --- member secrets for a tenant user_secret definition (docs/48 §5.2) -------------
+//
+// The tenant distributed WHICH headers this server needs; the values are the member's.
+// So the header names are fixed (read-only) and only the values are editable — adding a
+// header here would be a value nothing ever reads, since the agent fills in only the
+// names the tenant sent.
+
+function SecretsForm({
+  s,
+  onSave,
+  onCancel,
+}: {
+  s: McpServer;
+  onSave: (s: McpServer, headers: Record<string, string>) => Promise<boolean>;
+  onCancel: () => void;
+}) {
+  const tr = useT();
+  const [rows, setRows] = useState<KV[]>(() => toKV(s.headers));
+  const [busy, setBusy] = useState(false);
+  const patch = (i: number, v: string) => setRows(rows.map((r, j) => (i === j ? { ...r, v } : r)));
+
+  const submit = async () => {
+    setBusy(true);
+    try {
+      await onSave(s, Object.fromEntries(rows.map((r) => [r.k, r.v])));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="ssm-frm mcp-frm">
+      <div className="ssm-fgroup">
+        <p className="ps-note">{tr("mcp.secrets_intro", { name: s.name })}</p>
+        <Field label={tr("mcp.f_headers")} wide hint={tr("mcp.secrets_hint")}>
+          <div className="mcp-kv">
+            {rows.map((r, i) => (
+              <div key={r.k} className="mcp-kv-row two">
+                <input className="cinput mono" value={r.k} readOnly disabled />
+                <input
+                  className="cinput"
+                  type="password"
+                  placeholder={tr("mcp.kv_value")}
+                  value={r.v}
+                  onChange={(e) => patch(i, e.target.value)}
+                />
+              </div>
+            ))}
+            {rows.length === 0 && <div className="hint">{tr("mcp.secrets_none")}</div>}
+            {rows.some((r) => r.v === MASKED) && <div className="hint">{tr("mcp.kv_masked_hint")}</div>}
+          </div>
+        </Field>
+        {s.targets?.session && <p className="ps-note">{tr("mcp.session_restart_note")}</p>}
+      </div>
+      <div className="ssm-frm-foot">
+        <button className="primary" disabled={busy || rows.length === 0} onClick={submit}>
+          {tr("common.save")}
+        </button>
+        <button className="ghost" onClick={onCancel}>
+          {tr("common.cancel")}
+        </button>
       </div>
     </div>
   );

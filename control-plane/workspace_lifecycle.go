@@ -196,7 +196,12 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws Workspace) []string 
 			// Schedule bridge (docs/38 P3): separate per-membership token so the
 			// operator MCP can drive /internal/schedules over the same hairpin. A
 			// distinct credential from the memo token — a leak is scoped to schedules.
-			"AF_SCHEDULE_TOKEN="+mintScheduleToken(scheduleSignKey(m.master32), ws.MembershipID))
+			"AF_SCHEDULE_TOKEN="+mintScheduleToken(scheduleSignKey(m.master32), ws.MembershipID),
+			// MCP registry bridge (docs/48 P4): the agent polls /internal/mcp-servers for
+			// this tenant's distributed MCP definitions. Its own credential, because the
+			// response can carry tenant secrets (a user_secret=0 server's headers) — a leak
+			// must not also grant memo/schedule access, and vice versa.
+			"AF_MCP_TOKEN="+mintMCPToken(mcpSignKey(m.master32), ws.MembershipID))
 	}
 	return env
 }

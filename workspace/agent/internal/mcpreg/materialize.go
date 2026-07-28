@@ -34,6 +34,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -73,8 +74,26 @@ func writerFor(kind string) writer {
 	return nil
 }
 
+// materializeMu serializes materialize passes. Every pass is read → merge → rename over
+// a shared config file AND a read-modify-write of the ownership ledger, and there are
+// several concurrent callers (registry CRUD over HTTP, each session launch, and since P4
+// a 5-minute tenant poll). Two interleaved passes would lose one side's write; losing it
+// on mcp-managed.json is the worse half — af would forget it owns a name, and that name
+// becomes an orphan in the user's config that nothing is allowed to remove, which is the
+// exact failure the ledger exists to prevent (docs/48 §8.2).
+//
+// A global lock rather than one per kind: passes are short, run at most a few times a
+// minute, and MaterializeAll's whole point is that the kinds share the same ledger file.
+var materializeMu sync.Mutex
+
 // Materialize writes the registry into one kind's native config.
 func Materialize(kind string) MaterializeResult {
+	materializeMu.Lock()
+	defer materializeMu.Unlock()
+	return materializeLocked(kind)
+}
+
+func materializeLocked(kind string) MaterializeResult {
 	res := MaterializeResult{Kind: kind}
 	w := writerFor(kind)
 	if w == nil {
@@ -110,9 +129,13 @@ func Materialize(kind string) MaterializeResult {
 // failing must not stop the others (a broken ~/.codex/config.toml should not cost a
 // claude session its servers).
 func MaterializeAll() []MaterializeResult {
+	// One lock for the whole sweep, not per kind: the kinds share the ownership ledger, so
+	// releasing between them would reopen the lost-update window this lock closes.
+	materializeMu.Lock()
+	defer materializeMu.Unlock()
 	out := make([]MaterializeResult, 0, len(MaterializedKinds))
 	for _, k := range MaterializedKinds {
-		out = append(out, Materialize(k))
+		out = append(out, materializeLocked(k))
 	}
 	return out
 }

@@ -133,6 +133,10 @@ func main() {
 	// user registered are live from container start — including for a CLI they launch
 	// by hand in a terminal, which never passes through the session launch hook.
 	materializeMCPAll()
+	// Pull the tenant-distributed MCP set from the CP and keep it fresh (docs/48 P4).
+	// Backgrounded and fail-open: boot must not wait on the CP, and an unreachable CP
+	// keeps the cached set rather than stripping everyone's servers.
+	startMCPTenantSync()
 	startTerminalHistoryJanitor()
 	// managed driver（hook を持たない）の turn 完了を、hook 経路と同じ通知/報告
 	// （応答あり notice ＋ docs/30 のオペレーター報告）へ流す。driver は

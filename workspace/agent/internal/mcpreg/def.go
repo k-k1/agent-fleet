@@ -239,12 +239,21 @@ func Masked(d ServerDef) ServerDef {
 	return out
 }
 
+// maskMap replaces every value with MaskedValue — EXCEPT an empty one, which stays
+// empty. An absent value is not a secret being withheld, it is a value nobody has
+// entered yet (a tenant user_secret definition arrives exactly like this), and masking it
+// would tell the Console a credential is stored when none is, leaving the member no way
+// to see that they are the ones who have to supply it.
 func maskMap(m map[string]string) map[string]string {
 	if len(m) == 0 {
 		return nil
 	}
 	out := make(map[string]string, len(m))
-	for k := range m {
+	for k, v := range m {
+		if v == "" {
+			out[k] = ""
+			continue
+		}
 		out[k] = MaskedValue
 	}
 	return out

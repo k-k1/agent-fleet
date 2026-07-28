@@ -2578,6 +2578,63 @@
   padding: 2px 8px;
 }
 
+/* Tenant-distributed MCP servers (docs/48 P4, AdminTab McpAdminView). Row layout
+   follows .adm-allow-row so the admin panels read as one family. */
+.adm-mcp-row {
+  display: flex;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border2);
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+.adm-mcp-row.off .as-name,
+.adm-mcp-row.off .as-repo {
+  opacity: 0.55;
+}
+.adm-mcp-row .as-name {
+  flex-shrink: 0;
+  max-width: none;
+}
+.adm-mcp-row .as-repo {
+  flex: 1;
+}
+.adm-mcp-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--border2);
+}
+.adm-mcp-form > label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+.adm-mcp-headers {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.adm-mcp-lbl {
+  font-size: 12px;
+  color: var(--muted);
+}
+.adm-mcp-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.adm-mcp-foot {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 /* member actions */
 .member-actions {
   display: flex;
@@ -2959,6 +3016,23 @@
 .mcp-kv-row .cinput {
   min-width: 0;
   width: 100%;
+}
+/* two = no trailing delete button: the header NAMES are fixed by the tenant, so a
+   user_secret row only edits values (McpTab SecretsForm). */
+.mcp-kv-row.two {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+/* Tenant distribution status line (docs/48 P4): when the set was last confirmed, plus
+   the explicit refresh. Stale-but-served is the fail-open contract, so the timestamp is
+   the thing that makes it honest rather than silent. */
+.mcp-tenant-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 0 2px;
+  font-size: 12px;
 }
 .mcp-checks {
   display: flex;

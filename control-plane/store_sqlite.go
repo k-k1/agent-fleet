@@ -1666,3 +1666,74 @@ func (s *sqlStore) ListScheduleRuns(ctx context.Context, scheduleID, membershipI
 	}
 	return out, rows.Err()
 }
+
+// --- Tenant-distributed MCP servers (docs/48 P4 + ADR0031) ----------------------
+//
+// Every statement carries tenant_id, including the ones that already have the primary
+// key in the WHERE. An id is opaque but not secret (it travels to the Console and into
+// each member's cache), so scoping by tenant is what actually stops a tenant_admin of
+// one tenant from reaching another's row by guessing or replaying an id.
+
+const mcpServerCols = `SELECT id, tenant_id, name, label, transport, url, headers_enc, key_ref,
+	targets, kinds, timeout_ms, enabled, user_secret, created_by, created_at, updated_at FROM mcp_server`
+
+func scanMCPServer(row scanner) (MCPServerRow, error) {
+	var m MCPServerRow
+	var enabled, userSecret int
+	err := row.Scan(&m.ID, &m.TenantID, &m.Name, &m.Label, &m.Transport, &m.URL, &m.HeadersEnc, &m.KeyRef,
+		&m.Targets, &m.Kinds, &m.TimeoutMS, &enabled, &userSecret, &m.CreatedBy, &m.CreatedAt, &m.UpdatedAt)
+	m.Enabled = enabled != 0
+	m.UserSecret = userSecret != 0
+	return m, err
+}
+
+func (s *sqlStore) ListMCPServers(ctx context.Context, tenantID string) ([]MCPServerRow, error) {
+	rows, err := s.db.QueryContext(ctx, mcpServerCols+` WHERE tenant_id=? ORDER BY name`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MCPServerRow
+	for rows.Next() {
+		m, err := scanMCPServer(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlStore) GetMCPServer(ctx context.Context, tenantID, id string) (MCPServerRow, bool, error) {
+	m, err := scanMCPServer(s.db.QueryRowContext(ctx, mcpServerCols+` WHERE tenant_id=? AND id=?`, tenantID, id))
+	if err == sql.ErrNoRows {
+		return MCPServerRow{}, false, nil
+	}
+	return m, err == nil, err
+}
+
+func (s *sqlStore) CreateMCPServer(ctx context.Context, m MCPServerRow) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO mcp_server(id, tenant_id, name, label, transport, url, headers_enc, key_ref,
+		   targets, kinds, timeout_ms, enabled, user_secret, created_by, created_at, updated_at)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		m.ID, m.TenantID, m.Name, m.Label, m.Transport, m.URL, m.HeadersEnc, m.KeyRef,
+		m.Targets, m.Kinds, m.TimeoutMS, b2i(m.Enabled), b2i(m.UserSecret), m.CreatedBy, m.CreatedAt, m.UpdatedAt)
+	return err
+}
+
+func (s *sqlStore) UpdateMCPServer(ctx context.Context, m MCPServerRow) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE mcp_server SET name=?, label=?, transport=?, url=?, headers_enc=?, key_ref=?,
+		   targets=?, kinds=?, timeout_ms=?, enabled=?, user_secret=?, updated_at=?
+		 WHERE tenant_id=? AND id=?`,
+		m.Name, m.Label, m.Transport, m.URL, m.HeadersEnc, m.KeyRef,
+		m.Targets, m.Kinds, m.TimeoutMS, b2i(m.Enabled), b2i(m.UserSecret), m.UpdatedAt,
+		m.TenantID, m.ID)
+	return err
+}
+
+func (s *sqlStore) DeleteMCPServer(ctx context.Context, tenantID, id string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM mcp_server WHERE tenant_id=? AND id=?`, tenantID, id)
+	return err
+}

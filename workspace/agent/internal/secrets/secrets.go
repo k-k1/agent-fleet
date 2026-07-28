@@ -232,6 +232,14 @@ type MCPServer struct {
 	TimeoutMS int        `json:"timeoutMs,omitempty"`
 	CreatedAt int64      `json:"createdAt,omitempty"`
 	UpdatedAt int64      `json:"updatedAt,omitempty"`
+
+	// UserSecret marks a TENANT-distributed definition that arrives with header NAMES
+	// but no values: the tenant describes the endpoint, each member supplies their own
+	// credential into this store (docs/48 §5.2 / P4). It exists because a token in a
+	// distributed header is readable in plaintext by every member of the tenant, which
+	// per-user container isolation cannot prevent. Never set on a user-scope row —
+	// there is nobody else to supply the value.
+	UserSecret bool `json:"userSecret,omitempty"`
 }
 
 // MCPTargets selects where a server is handed to. Both false means the definition is
@@ -254,6 +262,11 @@ type Data struct {
 	Slack       *SlackCreds            `json:"slack,omitempty"`       // chat-bridge connection (docs/37 Slack 追随)
 	SVN         []SVNCred              `json:"svn,omitempty"`         // SVN basic-auth creds by URL prefix (docs/41)
 	MCP         []MCPServer            `json:"mcp,omitempty"`         // user-registered MCP servers (docs/48)
+	// MCPSecrets holds the member's OWN header values for tenant-distributed servers
+	// marked user_secret (docs/48 §5.2): server id -> header name -> value. Keyed by the
+	// tenant definition's id, so it survives the tenant editing the label/URL and is
+	// dropped naturally when the definition stops being distributed.
+	MCPSecrets map[string]map[string]string `json:"mcpSecrets,omitempty"`
 }
 
 // agentSecretKey returns the 32-byte per-user key from AF_SECRET_KEY (hex), or

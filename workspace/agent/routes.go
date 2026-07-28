@@ -223,6 +223,9 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("PUT /mcp-servers/{id}", handleMCPServerUpdate)
 	mux.HandleFunc("POST /mcp-servers/{id}/enabled", handleMCPServerEnabled)
 	mux.HandleFunc("DELETE /mcp-servers/{id}", handleMCPServerDelete)
+	// テナント配布（docs/48 P4）— 明示リフレッシュと、user_secret 定義の値入力。
+	mux.HandleFunc("POST /mcp-servers/tenant-refresh", handleMCPTenantRefresh)
+	mux.HandleFunc("PUT /mcp-servers/{id}/secrets", handleMCPServerSecrets)
 
 	// Connections — per-user provider credentials (git tokens; Claude in Stage 3).
 	mux.HandleFunc("GET /connections", handleConnectionsGet)

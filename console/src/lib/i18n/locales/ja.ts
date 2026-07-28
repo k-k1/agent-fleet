@@ -94,6 +94,9 @@ export const ja = {
   "err.mcp_header_value_invalid": "ヘッダ値に改行は使えません",
   "err.mcp_kind_unknown": "未知のエージェント種別です",
   "err.mcp_timeout_range": "タイムアウトは 1000〜120000 ミリ秒で指定してください",
+  "err.mcp_headers_unreadable": "保存済みのヘッダを復号できません。すべてのヘッダ値を再入力してください",
+  "err.mcp_tenant_bridge_off": "テナント配布はこの環境では利用できません（CP の公開URL/トークンが未設定）",
+  "err.mcp_tenant_fetch_failed": "テナント配布を取得できませんでした",
   "err.assistant_not_found": "アシスタントが見つかりません",
   "err.assistant_builtin_readonly_edit": "ビルトインは編集できません",
   "err.assistant_builtin_readonly_delete": "ビルトインは削除できません",
@@ -412,6 +415,23 @@ export const ja = {
   "mcp.enabled_on": "有効にする",
   "mcp.kv_value": "値",
   "mcp.kv_masked_hint": "*** は保存済みの値です。そのままにすれば変更されません。",
+  // --- テナント配布（docs/48 P4）---
+  "mcp.tenant_fetched_at": "テナント配布の最終取得: {when}",
+  "mcp.tenant_never_fetched": "テナント配布はまだ取得できていません（管理側の設定または接続を確認してください）。",
+  "mcp.tenant_refresh": "テナント配布を取得",
+  "mcp.tenant_refreshing": "取得中…",
+  "mcp.tenant_refresh_failed": "テナント配布を取得できませんでした: {msg}",
+  "mcp.tenant_incomplete":
+    "テナント配布のうち {n} 件は取り込めませんでした（管理者側の設定を確認してもらってください）。",
+  "mcp.tenant_user_secret_note":
+    "テナント管理者が配布した定義です。接続先は配布されていますが、認証の値は各自で入力します。",
+  "mcp.enter_secrets": "値を入力",
+  "mcp.needs_member_secrets":
+    "認証の値が未入力のため、有効でも実際には渡されません。「値を入力」から設定してください。",
+  "mcp.secrets_intro":
+    "{name} が必要とするヘッダの値を入力します。値はこのワークスペース内に暗号化保存され、テナント側には渡りません。",
+  "mcp.secrets_hint": "ヘッダ名はテナント管理者が決めたもので変更できません。値だけを入力します。",
+  "mcp.secrets_none": "このサーバーは値の入力を必要としていません。",
   // --- 共通（保存）---
   "common.save_failed": "保存に失敗しました",
 
@@ -913,7 +933,25 @@ export const ja = {
   "admin.mode_usage": "使用量",
   "admin.mode_audit": "監査",
   "admin.mode_egress": "通信",
+  "admin.mode_mcp": "MCP 配布",
   "admin.mode_tts": "読み上げ",
+  // --- テナント配布 MCP（docs/48 P4・AdminTab の McpAdminView）---
+  "admin.mcp_intro":
+    "テナントの全メンバーへ配布する MCP サーバーです。配布できるのはリモート（Streamable HTTP）だけで、コマンドを起動する stdio は配布できません（管理者が全員のコンテナで任意のコマンドを実行できることと等価になるため）。",
+  "admin.mcp_distributed": "配布中の MCP サーバー",
+  "admin.mcp_none": "配布中の MCP サーバーはありません。",
+  "admin.mcp_add": "配布する MCP サーバーを追加",
+  "admin.mcp_disabled": "無効",
+  "admin.mcp_user_secret_badge": "値は各自入力",
+  "admin.mcp_user_secret": "認証の値は各メンバーが入力する",
+  "admin.mcp_user_secret_hint":
+    "配布するのは接続先とヘッダ名だけになり、値は各メンバーが自分のワークスペースに入力します。ここで値を配布すると、そのトークンは全メンバーのコンテナ内で平文で読めます。",
+  "admin.mcp_url_hint": "MCP エンドポイントの URL。資格情報は URL ではなくヘッダに入れてください。",
+  "admin.mcp_enabled_hint": "無効にすると定義は残したまま、どのメンバーにも配布されなくなります。",
+  "admin.mcp_restart_note":
+    "各メンバーのワークスペースは 5 分ごとに取得します。反映されるのは、その後に起動したセッションからです。",
+  "admin.mcp_del_title": "配布を削除",
+  "admin.mcp_del_body": "{name} の配布を削除します。各メンバーのワークスペースからは次回の取得時に消えます。",
   "admin.crumb_tenants": "テナント",
   "admin.tenant": "テナント",
   "admin.all_tenants": "全テナント",

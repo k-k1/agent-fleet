@@ -190,6 +190,34 @@ type ScheduleRun struct {
 	Trigger                      string
 }
 
+// MCPServerRow is one tenant-distributed MCP server definition (docs/48 P4 +
+// ADR0031). It is deliberately NOT the agent's full ServerDef: there is no Command /
+// Args / Env, because a tenant-distributed stdio server would be an admin running an
+// arbitrary command in every member's container. The table has no such columns either,
+// so the refusal cannot be relaxed by editing one validation branch.
+//
+// HeadersEnc is the header map sealed by the tenant key custodian (KeyRef names the
+// key), or plaintext JSON with an empty KeyRef on a deployment with no master key —
+// the same degradation the Agent's secret store makes in dev. Targets and Kinds are
+// comma lists on the wire to the DB ("assistant,session"; empty Kinds = every kind).
+//
+// UserSecret=1 distributes the URL and the header NAMES only: each member supplies the
+// values into their own encrypted store (docs/48 §5.2). It exists because a token in a
+// distributed header is readable in plaintext by every member of the tenant, which
+// container isolation cannot prevent.
+type MCPServerRow struct {
+	ID, TenantID         string
+	Name, Label          string
+	Transport            string // always "http" — stdio is refused (ADR0031 決定 2)
+	URL                  string
+	HeadersEnc, KeyRef   string
+	Targets, Kinds       string
+	TimeoutMS            int
+	Enabled, UserSecret  bool
+	CreatedBy            string
+	CreatedAt, UpdatedAt string
+}
+
 // Notification is a membership-scoped, content-free activity record shared by
 // every browser the member uses. Payload contains only structured metadata; chat
 // answer/question text is deliberately never persisted here.
@@ -264,6 +292,7 @@ type Store interface {
 	MemoStore
 	NotificationStore
 	ScheduleStore
+	MCPServerStore
 
 	Close() error
 }
@@ -520,6 +549,19 @@ type ScheduleStore interface {
 	// ListScheduleRuns returns a schedule's most-recent runs (newest first), scoped by
 	// membership so a member only sees their own schedule's history.
 	ListScheduleRuns(ctx context.Context, scheduleID, membershipID string, limit int) ([]ScheduleRun, error)
+}
+
+// MCPServerStore is the tenant-distributed MCP server registry (docs/48 P4 +
+// ADR0031). Rows are tenant-scoped: every mutation carries tenant_id in the WHERE so a
+// tenant_admin of one tenant can never reach another's definitions even if an id leaks.
+// HeadersEnc is stored and returned as opaque ciphertext — decryption is the handler's
+// job (mcp_server.go), which keeps the crypto out of the SQL layer.
+type MCPServerStore interface {
+	ListMCPServers(ctx context.Context, tenantID string) ([]MCPServerRow, error)
+	GetMCPServer(ctx context.Context, tenantID, id string) (MCPServerRow, bool, error)
+	CreateMCPServer(ctx context.Context, row MCPServerRow) error
+	UpdateMCPServer(ctx context.Context, row MCPServerRow) error
+	DeleteMCPServer(ctx context.Context, tenantID, id string) error
 }
 
 // newID mints an opaque record id (not a strict UUID; sufficient for keys).
