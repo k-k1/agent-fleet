@@ -44,6 +44,20 @@ export type UnknownObservation =
   | { kind: "third_revision"; remote: RemoteSnapshot }
   | { kind: "unavailable"; message: string };
 
+/** Advisory record of what the external-change probe observed (docs/44 §7.3).
+ *  It lives beside `phase` and never drives it: `conflict` still only arises
+ *  from a 409 or from the user's explicit diff-check action. `same_as_buffer`
+ *  is the non-conflict case where an external writer produced exactly the
+ *  unsaved buffer content (§7.3, classified like classifyUnknownRemote). */
+export type ExternalObservation =
+  | { kind: "changed"; revision: string }
+  | { kind: "same_as_buffer"; revision: string }
+  | { kind: "missing" }
+  | { kind: "uneditable"; reason: string }
+  | { kind: "boundary" };
+
+export const CLEAN_PHASES: readonly EditorPhase[] = ["clean", "saved", "clean_risk_accepted"];
+
 export interface FileEditorModel {
   paneId: string;
   path: string;
@@ -57,6 +71,11 @@ export interface FileEditorModel {
   saveSnapshot: SaveSnapshot | null;
   conflict: RemoteSnapshot | null;
   unknownObservation: UnknownObservation | null;
+  externalObservation: ExternalObservation | null;
+  /** Bumped by each clean auto-follow. The editor surface keys its state
+   *  rebuild on it, which is what keeps the replaced content out of the undo
+   *  history (docs/44 §7.4). */
+  followEpoch: number;
   riskAccepted: boolean;
   message: string;
 }
@@ -84,6 +103,8 @@ export function createFileEditorModel(
     saveSnapshot: null,
     conflict: null,
     unknownObservation: null,
+    externalObservation: null,
+    followEpoch: 0,
     riskAccepted: false,
     message: "",
   };
@@ -143,6 +164,9 @@ export function saveSucceeded(
     dirty: !unchanged,
     phase: unchanged ? "saved" : "dirty",
     saveSnapshot: null,
+    // A 200 means the CAS compared equal at write time, so whatever the probe
+    // had observed was already resolved or stale.
+    externalObservation: null,
     message: "",
   };
 }
@@ -177,6 +201,7 @@ export function conflictFound(
     conflict: { ...remote, revision: requireRevision(remote.revision) },
     saveSnapshot: null,
     unknownObservation: null,
+    externalObservation: null,
     message: "",
   };
 }
@@ -263,6 +288,7 @@ export function adoptRemote(model: FileEditorModel, dirty = false): FileEditorMo
     phase: dirty ? "dirty" : "clean",
     conflict: null,
     saveSnapshot: null,
+    externalObservation: null,
     message: "",
   };
 }
@@ -293,5 +319,34 @@ export function discardToBase(model: FileEditorModel): FileEditorModel {
     content,
     revision,
   );
-  return { ...clean, bufferGeneration: model.bufferGeneration + 1 };
+  // The follow epoch is preserved: a discard replaces the buffer through the
+  // ordinary content sync and stays undoable, unlike an auto-follow.
+  return { ...clean, bufferGeneration: model.bufferGeneration + 1, followEpoch: model.followEpoch };
+}
+
+/** Record (or clear) what the probe observed. Advisory only: `phase`, the
+ *  buffer, and every base revision stay untouched (docs/44 §7.3). */
+export function observeExternal(
+  model: FileEditorModel,
+  observation: ExternalObservation | null,
+): FileEditorModel {
+  return { ...model, externalObservation: observation };
+}
+
+/** Adopt an externally changed file into a clean buffer (docs/44 §7.4). The
+ *  model is rebuilt from the remote snapshot — not edited — and the follow
+ *  epoch tells the editor surface to rebuild its state so undo cannot roll the
+ *  external change back. A risk-accepted clean base is followed too, and the
+ *  follow retires the risk marker. */
+export function followExternal(
+  model: FileEditorModel,
+  remote: RemoteSnapshot,
+): FileEditorModel {
+  if (model.dirty || !CLEAN_PHASES.includes(model.phase)) throw new Error("follow unavailable");
+  const clean = createFileEditorModel(model.paneId, model.path, remote.content, remote.revision);
+  return {
+    ...clean,
+    bufferGeneration: model.bufferGeneration + 1,
+    followEpoch: model.followEpoch + 1,
+  };
 }

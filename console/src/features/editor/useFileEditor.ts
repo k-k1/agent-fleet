@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getEditableFile, putFile } from "./api.ts";
+import { getEditableFile, putFile, type EditableFile, type FileProbeResult } from "./api.ts";
 import {
+  CLEAN_PHASES,
   acceptUnknownRisk,
   adoptRemote,
   beginSave,
@@ -11,6 +12,8 @@ import {
   createFileEditorModel,
   discardToBase,
   editBuffer,
+  followExternal,
+  observeExternal,
   observeUnknown,
   prepareUnknownResave,
   saveFailed,
@@ -33,6 +36,9 @@ interface InitialEditableFile {
   content: string;
   revision: string;
 }
+
+const isCleanForFollow = (model: FileEditorModel): boolean =>
+  !model.dirty && CLEAN_PHASES.includes(model.phase);
 
 function remoteFromFile(
   file: Awaited<ReturnType<typeof getEditableFile>>,
@@ -301,6 +307,113 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     }
   }, [setModel]);
 
+  // Clean auto-follow (docs/44 §7.4): the probe saw a new disk revision and the
+  // buffer holds no edits, so fetch the full body and rebuild the model on it.
+  // Returns the fetched file when the model actually followed, so the caller
+  // can refresh its own copy of the pane data from the same response.
+  const followExternalChange = useCallback(async (): Promise<EditableFile | null> => {
+    const current = modelRef.current;
+    if (!current || savingRef.current || !isCleanForFollow(current)) return null;
+    const path = current.path;
+    try {
+      const file = await getEditableFile(path);
+      const remote = remoteFromFile(file);
+      if (remote.path !== path) return null;
+      const latest = modelRef.current;
+      // Typing or a save that started while the GET was in flight wins; the
+      // next probe re-observes and reports the change as an advisory instead.
+      if (!latest || latest.path !== path || savingRef.current || !isCleanForFollow(latest)) return null;
+      if (remote.revision === latest.baseDiskRevision) {
+        if (latest.externalObservation) setModel(observeExternal(latest, null));
+        return null;
+      }
+      setModel(followExternal(latest, remote));
+      return file;
+    } catch (error) {
+      const latest = modelRef.current;
+      if (!latest || latest.path !== path || !isCleanForFollow(latest)) return null;
+      const code = error instanceof Error ? error.message : "";
+      // The full GET can disagree with the probe (§7.5): the file may have
+      // become uneditable or vanished in between. Those become advisories;
+      // transport failures stay silent and the next trigger retries.
+      if (code === "not_file" || code === "http_404") {
+        setModel(observeExternal(latest, { kind: "missing" }));
+      } else if (
+        ["binary", "invalid_utf8", "too_large", "unsupported_newline", "read_only_root", "not_editable"].includes(code)
+      ) {
+        setModel(observeExternal(latest, { kind: "uneditable", reason: code }));
+      }
+      return null;
+    }
+  }, [setModel]);
+
+  // Route one probe observation into the model (docs/44 §7.3–§7.5). Advisory
+  // by contract: apart from the clean auto-follow, the phase never moves.
+  const applyProbeResult = useCallback(
+    async (result: FileProbeResult): Promise<EditableFile | null> => {
+      const current = modelRef.current;
+      if (!current || savingRef.current) return null;
+      switch (result.kind) {
+        case "unavailable":
+          return null;
+        case "missing":
+          setModel(observeExternal(current, { kind: "missing" }));
+          return null;
+        case "uneditable":
+          setModel(observeExternal(current, { kind: "uneditable", reason: result.reason }));
+          return null;
+        case "boundary":
+          setModel(observeExternal(current, { kind: "boundary" }));
+          return null;
+        case "revision": {
+          if (result.revision === current.baseDiskRevision) {
+            // The disk matches the buffer's base again (our own save, or an
+            // external change that was reverted) — retire any stale advisory.
+            if (current.externalObservation) setModel(observeExternal(current, null));
+            return null;
+          }
+          if (isCleanForFollow(current)) return followExternalChange();
+          setModel(
+            observeExternal(current, {
+              kind: result.revision === current.bufferRevision ? "same_as_buffer" : "changed",
+              revision: result.revision,
+            }),
+          );
+          return null;
+        }
+      }
+    },
+    [followExternalChange, setModel],
+  );
+
+  // The dirty-side "差分を確認" action (docs/44 §7.3): the user asks to see the
+  // external change, so fetch the body and open the ordinary conflict UI. This
+  // explicit action — never the probe itself — is what may create Conflict.
+  const confirmExternalChange = useCallback(async (): Promise<void> => {
+    const current = modelRef.current;
+    if (!current || current.phase !== "dirty" || savingRef.current) return;
+    const path = current.path;
+    try {
+      const remote = remoteFromFile(await getEditableFile(path));
+      if (remote.path !== path) throw new Error("path mismatch");
+      const latest = modelRef.current;
+      if (!latest || latest.path !== path || latest.phase !== "dirty") return;
+      if (remote.revision === latest.bufferRevision) {
+        setModel(observeExternal(latest, { kind: "same_as_buffer", revision: remote.revision }));
+        return;
+      }
+      if (remote.revision === latest.baseDiskRevision) {
+        setModel(observeExternal(latest, null));
+        return;
+      }
+      setModel(conflictFound(latest, remote));
+    } catch (error) {
+      const latest = modelRef.current;
+      if (!latest || latest.path !== path || latest.phase !== "dirty") return;
+      setModel(conflictUnavailable(latest, String(error)));
+    }
+  }, [setModel]);
+
   const manualMerge = useCallback(() => {
     const current = modelRef.current;
     if (current?.conflict) {
@@ -323,5 +436,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     discardRemote: takeRemote,
     manualMerge,
     discard,
+    applyProbeResult,
+    confirmExternalChange,
   };
 }

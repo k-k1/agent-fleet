@@ -363,3 +363,161 @@ describe("useFileEditor discard abort", () => {
     expect(editor!.model?.phase).toBe("dirty");
   });
 });
+
+describe("useFileEditor external change handling (docs/44 §7)", () => {
+  const external = "external\n";
+
+  it("auto-follows a clean buffer and reports the fetched file", async () => {
+    vi.mocked(getEditableFile).mockResolvedValue(editableFile(external));
+    const current = await renderEditor();
+
+    let followed: EditableFile | null = null;
+    await act(async () => {
+      followed = await current.applyProbeResult({ kind: "revision", revision: revisionOf(external) });
+    });
+
+    expect(followed).toEqual(editableFile(external));
+    expect(editor!.model?.content).toBe(external);
+    expect(editor!.model?.baseDiskRevision).toBe(revisionOf(external));
+    expect(editor!.model?.phase).toBe("clean");
+    expect(editor!.model?.dirty).toBe(false);
+    expect(editor!.model?.followEpoch).toBe(1);
+  });
+
+  it("does not mistake its own save for an external change", async () => {
+    const mine = "mine\n";
+    vi.mocked(putFile).mockResolvedValue({
+      ok: true,
+      path: initial.path,
+      size: new TextEncoder().encode(mine).byteLength,
+      revision: revisionOf(mine),
+    });
+    const current = await renderEditor();
+    await act(async () => current.edit(mine));
+    await act(async () => {
+      await current.save();
+    });
+    expect(editor!.model?.phase).toBe("saved");
+
+    await act(async () => {
+      await current.applyProbeResult({ kind: "revision", revision: revisionOf(mine) });
+    });
+
+    expect(getEditableFile).not.toHaveBeenCalled();
+    expect(editor!.model?.content).toBe(mine);
+    expect(editor!.model?.phase).toBe("saved");
+    expect(editor!.model?.followEpoch).toBe(0);
+    expect(editor!.model?.externalObservation).toBeNull();
+  });
+
+  it("keeps a dirty buffer and phase, recording only an advisory", async () => {
+    const current = await renderEditor();
+    await act(async () => current.edit("mine\n"));
+
+    await act(async () => {
+      await current.applyProbeResult({ kind: "revision", revision: revisionOf(external) });
+    });
+
+    expect(getEditableFile).not.toHaveBeenCalled();
+    expect(editor!.model?.phase).toBe("dirty");
+    expect(editor!.model?.content).toBe("mine\n");
+    expect(editor!.model?.externalObservation).toEqual({
+      kind: "changed",
+      revision: revisionOf(external),
+    });
+
+    await act(async () => {
+      await current.applyProbeResult({ kind: "revision", revision: revisionOf("mine\n") });
+    });
+    expect(editor!.model?.externalObservation).toEqual({
+      kind: "same_as_buffer",
+      revision: revisionOf("mine\n"),
+    });
+    expect(editor!.model?.phase).toBe("dirty");
+  });
+
+  it("drops an auto-follow that raced a fresh edit", async () => {
+    const pendingGet = deferred<EditableFile>();
+    vi.mocked(getEditableFile).mockReturnValue(pendingGet.promise);
+    const current = await renderEditor();
+
+    let follow!: Promise<EditableFile | null>;
+    await act(async () => {
+      follow = current.applyProbeResult({ kind: "revision", revision: revisionOf(external) });
+      await Promise.resolve();
+    });
+    await act(async () => current.edit("typed while fetching\n"));
+    pendingGet.resolve(editableFile(external));
+
+    let followed: EditableFile | null = null;
+    await act(async () => {
+      followed = await follow;
+    });
+
+    expect(followed).toBeNull();
+    expect(editor!.model?.content).toBe("typed while fetching\n");
+    expect(editor!.model?.phase).toBe("dirty");
+    expect(editor!.model?.followEpoch).toBe(0);
+  });
+
+  it("records missing/uneditable observations without touching the buffer", async () => {
+    const current = await renderEditor();
+    await act(async () => {
+      await current.applyProbeResult({ kind: "missing" });
+    });
+    expect(editor!.model?.phase).toBe("clean");
+    expect(editor!.model?.externalObservation).toEqual({ kind: "missing" });
+
+    await act(async () => {
+      await current.applyProbeResult({ kind: "uneditable", reason: "unsupported_newline" });
+    });
+    expect(editor!.model?.externalObservation).toEqual({
+      kind: "uneditable",
+      reason: "unsupported_newline",
+    });
+    expect(editor!.model?.content).toBe(baseContent);
+  });
+
+  it("opens the ordinary conflict UI from the explicit diff check", async () => {
+    vi.mocked(getEditableFile).mockResolvedValue(editableFile(external));
+    const current = await renderEditor();
+    await act(async () => current.edit("mine\n"));
+
+    await act(async () => {
+      await current.confirmExternalChange();
+    });
+
+    expect(editor!.model?.phase).toBe("conflict");
+    expect(editor!.model?.conflict?.content).toBe(external);
+    expect(editor!.model?.content).toBe("mine\n");
+  });
+
+  it("classifies an identical external write as same-as-buffer, not a conflict", async () => {
+    vi.mocked(getEditableFile).mockResolvedValue(editableFile("mine\n"));
+    const current = await renderEditor();
+    await act(async () => current.edit("mine\n"));
+
+    await act(async () => {
+      await current.confirmExternalChange();
+    });
+
+    expect(editor!.model?.phase).toBe("dirty");
+    expect(editor!.model?.externalObservation).toEqual({
+      kind: "same_as_buffer",
+      revision: revisionOf("mine\n"),
+    });
+  });
+
+  it("falls to conflict-remote-unavailable when the diff check cannot fetch", async () => {
+    vi.mocked(getEditableFile).mockRejectedValue(new Error("offline"));
+    const current = await renderEditor();
+    await act(async () => current.edit("mine\n"));
+
+    await act(async () => {
+      await current.confirmExternalChange();
+    });
+
+    expect(editor!.model?.phase).toBe("conflict_remote_unavailable");
+    expect(editor!.model?.content).toBe("mine\n");
+  });
+});

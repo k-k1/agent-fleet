@@ -90,6 +90,64 @@ export function putFile(
   });
 }
 
+/** What one external-change probe observed (docs/44 §7). `unavailable` covers
+ *  transport failures, timeouts, and 5xx — the probe stays silent on those and
+ *  the next trigger retries. The other kinds are advisory observations. */
+export type FileProbeResult =
+  | { kind: "revision"; revision: string }
+  | { kind: "uneditable"; reason: string }
+  | { kind: "missing" }
+  | { kind: "boundary" }
+  | { kind: "unavailable" };
+
+/** Metadata-only GET (`meta=1`) for the external-change probe. Never throws:
+ *  a probe is advisory, so every failure folds into a FileProbeResult. */
+export async function probeFileMeta(path: string): Promise<FileProbeResult> {
+  try {
+    return await withTimeout(async (signal) => {
+      const response = await fetch(rel(`api/fs/file?path=${encodeURIComponent(path)}&meta=1`), {
+        cache: "no-store",
+        signal,
+      });
+      let body: unknown = null;
+      try {
+        body = await response.json();
+      } catch {
+        body = null;
+      }
+      if (!response.ok) {
+        // Application-level answers are observations (§7.5): the file is gone,
+        // or its path stopped resolving safely (symlink/denylist/bad path).
+        // Gateway/server failures are probe failures and stay silent.
+        if (response.status === 404) return { kind: "missing" };
+        if (response.status === 400 || response.status === 403) return { kind: "boundary" };
+        return { kind: "unavailable" };
+      }
+      const value = body as {
+        editable?: unknown;
+        editabilityReason?: unknown;
+        revision?: unknown;
+      } | null;
+      if (value?.editable === true) {
+        try {
+          return { kind: "revision", revision: requireRevision(value.revision) };
+        } catch {
+          return { kind: "unavailable" };
+        }
+      }
+      if (value?.editable === false) {
+        return {
+          kind: "uneditable",
+          reason: typeof value.editabilityReason === "string" ? value.editabilityReason : "not_editable",
+        };
+      }
+      return { kind: "unavailable" };
+    });
+  } catch {
+    return { kind: "unavailable" };
+  }
+}
+
 export function getEditableFile(path: string): Promise<EditableFile> {
   return withTimeout(async (signal) => {
     const response = await fetch(rel(`api/fs/file?path=${encodeURIComponent(path)}`), {

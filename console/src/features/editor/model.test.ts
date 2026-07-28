@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   acceptUnknownRisk,
+  adoptRemote,
   beginSave,
   classifyUnknownRemote,
   conflictFound,
@@ -8,6 +9,8 @@ import {
   createRemoteSnapshot,
   discardToBase,
   editBuffer,
+  followExternal,
+  observeExternal,
   prepareUnknownResave,
   saveStateUnknown,
   saveSucceeded,
@@ -204,5 +207,80 @@ describe("file editor save model", () => {
     expect(() => discardToBase(
       saveStateUnknown(saving, snapshot, "unknown"),
     )).toThrow("discard target unavailable");
+  });
+});
+
+describe("external change observation and follow (docs/44 §7)", () => {
+  const remoteOf = (content: string) =>
+    createRemoteSnapshot("repos/a.txt", content, revisionOf(content), 1_000);
+
+  it("records an advisory without moving the phase, for every phase", () => {
+    const dirty = editBuffer(initial(), "mine\n");
+    const observed = observeExternal(dirty, { kind: "changed", revision: revisionOf("ext\n") });
+    expect(observed.phase).toBe("dirty");
+    expect(observed.dirty).toBe(true);
+    expect(observed.content).toBe("mine\n");
+    expect(observed.baseDiskRevision).toBe(revisionOf("base\n"));
+    expect(observed.externalObservation).toEqual({ kind: "changed", revision: revisionOf("ext\n") });
+
+    const conflicted = conflictFound(dirty, remoteOf("remote\n"));
+    const observedConflict = observeExternal(conflicted, { kind: "missing" });
+    expect(observedConflict.phase).toBe("conflict");
+    expect(observeExternal(observedConflict, null).externalObservation).toBeNull();
+  });
+
+  it("follows a clean buffer onto the remote snapshot and bumps the follow epoch", () => {
+    const followed = followExternal(initial(), remoteOf("ext\n"));
+    expect(followed.content).toBe("ext\n");
+    expect(followed.baseDiskRevision).toBe(revisionOf("ext\n"));
+    expect(followed.bufferRevision).toBe(revisionOf("ext\n"));
+    expect(followed.dirty).toBe(false);
+    expect(followed.phase).toBe("clean");
+    expect(followed.followEpoch).toBe(1);
+    expect(followed.bufferGeneration).toBe(1);
+    expect(followed.externalObservation).toBeNull();
+  });
+
+  it("follows a risk-accepted clean base and retires the risk marker", () => {
+    const [saving, snapshot] = beginSave(editBuffer(initial(), "mine\n"));
+    const unknown = saveStateUnknown(saving, snapshot, "lost");
+    const observed = {
+      ...unknown,
+      unknownObservation: {
+        kind: "sent_live" as const,
+        remote: remoteOf("mine\n"),
+      },
+    };
+    const accepted = acceptUnknownRisk(observed);
+    expect(accepted.phase).toBe("clean_risk_accepted");
+    expect(accepted.riskAccepted).toBe(true);
+    const followed = followExternal(accepted, remoteOf("ext\n"));
+    expect(followed.phase).toBe("clean");
+    expect(followed.riskAccepted).toBe(false);
+    expect(followed.followEpoch).toBe(1);
+  });
+
+  it("refuses to follow a dirty buffer", () => {
+    expect(() => followExternal(editBuffer(initial(), "mine\n"), remoteOf("ext\n")))
+      .toThrow("follow unavailable");
+  });
+
+  it("clears the advisory when a save, a conflict snapshot, or a remote adoption lands", () => {
+    const observation = { kind: "changed" as const, revision: revisionOf("ext\n") };
+    const dirty = observeExternal(editBuffer(initial(), "mine\n"), observation);
+
+    const [saving, snapshot] = beginSave(dirty);
+    expect(saveSucceeded(saving, snapshot, revisionOf("mine\n")).externalObservation).toBeNull();
+
+    const conflicted = conflictFound(dirty, remoteOf("remote\n"));
+    expect(conflicted.externalObservation).toBeNull();
+    expect(adoptRemote(conflictFound(dirty, remoteOf("remote\n"))).externalObservation).toBeNull();
+  });
+
+  it("keeps a discard undoable: discardToBase preserves the follow epoch", () => {
+    const followed = followExternal(initial(), remoteOf("ext\n"));
+    const discarded = discardToBase(editBuffer(followed, "typed\n"));
+    expect(discarded.followEpoch).toBe(1);
+    expect(discarded.content).toBe("ext\n");
   });
 });

@@ -1,6 +1,6 @@
 # 0027. File ペインに CodeMirror 6 の編集モードを追加し、保存を明示操作に限定する
 
-- 状態: **採用・Phase 3 まで実装済み / Phase 3.5 は設計のみ**（2026-07-28）
+- 状態: **採用・Phase 3.5 まで実装済み**（2026-07-28）
 - 詳細契約: [docs/44-markdown-code-editor.md](../44-markdown-code-editor.md)
 - 関連: [docs/dev/02-console.md](../dev/02-console.md)（Console のペイン構成）/
   [docs/dev/04-workspace-agent.md](../dev/04-workspace-agent.md)（fs の境界と denylist）/
@@ -81,9 +81,10 @@ Console の File ペインは現在、Workspace のファイルを読み取り�
 13. **外部変更の追従はadvisoryなrevisionプローブとし、CASを置き換えない。** Console以外の書き手
     （エージェント・shell・git）によるファイル変更を、本文を返さない `GET /fs/file?meta=1` の
     ポーリングで検知する。新規ルートは作らずクエリフラグとし、CPのルート追加を不要にする。dirtyの
-    ときは通知だけを行い `phase` を遷移させず、`Conflict` は409応答からのみ発生するという不変条件を
-    維持する。cleanのときは自動追従してよいが、undo履歴に旧本文を残さない。追従対象は `revision` を
-    持つ `editable:true` のファイルに限る。
+    ときは通知だけを行い、**プローブは `phase` を遷移させない**。`Conflict` を作るのは409応答と、
+    ユーザーが明示的に「差分を確認」を実行して本文GETに成功した場合（docs/44 §7.3）に限り、
+    プローブがConflictを自動発生させない不変条件を維持する。cleanのときは自動追従してよいが、
+    undo履歴に旧本文を残さない。追従対象は `revision` を持つ `editable:true` のファイルに限る。
 
 ## 対象範囲とフェーズ境界
 
@@ -99,7 +100,9 @@ Console の File ペインは現在、Workspace のファイルを読み取り�
   行ジャンプ、既存描画資産の回帰テストを実装する。**2026-07-28に実装完了。** Console単独で完結し
   Agent/CPの変更は無い。レビュー8ラウンド・14件の指摘に対応し、既知の限界として残した項目は無い。
 - Phase 3.5 は `meta=1` メタデータGET、Consoleのプローブ、dirty時のadvisory通知、clean時の自動追従
-  （読み取り専用のviewペインを含む）を実装する。
+  （読み取り専用のviewペインを含む）を実装する。**2026-07-28に実装完了**（docs/44 §6 Phase 3.5）。
+  Agent側は応答からの `content` 除去のみで判定・排他・エラー契約を通常GETと共有し、Console側は
+  undo履歴を残さないEditorState再構築と行番号ベースのカーソル/スクロール復元で追従する。
 - Phase 4 は read-only提案生成チャネル、identity付き構造化提案、差分レビュー、accept/rejectを実装する。
 - Phase 5 の複数候補・hunk単位accept・セッション連携・補完・CRLF対応は別設計後に着手する。
 

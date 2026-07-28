@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { EDITOR_IO_TIMEOUT_MS, getEditableFile, putFile } from "./api.ts";
+import { EDITOR_IO_TIMEOUT_MS, getEditableFile, probeFileMeta, putFile } from "./api.ts";
 import { revisionOf } from "./buffer.ts";
 
 vi.mock("../../core/api/client.ts", () => ({
@@ -107,5 +107,59 @@ describe("editor api timeout", () => {
     });
     // The cleared timer must not fire an abort afterwards.
     await vi.advanceTimersByTimeAsync(EDITOR_IO_TIMEOUT_MS * 2);
+  });
+});
+
+describe("probeFileMeta classification (docs/44 §7.5)", () => {
+  const jsonResponse = (status: number, body: unknown) =>
+    vi.fn(() =>
+      Promise.resolve({
+        ok: status >= 200 && status < 300,
+        status,
+        json: () => Promise.resolve(body),
+      } as Response));
+
+  it("returns the revision of an editable file", async () => {
+    const revision = revisionOf("ext\n");
+    vi.stubGlobal("fetch", jsonResponse(200, {
+      path: "a.txt", size: 4, binary: false, truncated: false,
+      editable: true, editabilityReason: null, revision,
+    }));
+    await expect(probeFileMeta("a.txt")).resolves.toEqual({ kind: "revision", revision });
+    const [url] = vi.mocked(fetch).mock.calls[0] as [string];
+    expect(url).toContain("meta=1");
+  });
+
+  it("reports an uneditable file with its reason", async () => {
+    vi.stubGlobal("fetch", jsonResponse(200, {
+      path: "a.txt", size: 4, binary: false, truncated: false,
+      editable: false, editabilityReason: "unsupported_newline",
+    }));
+    await expect(probeFileMeta("a.txt")).resolves.toEqual({
+      kind: "uneditable",
+      reason: "unsupported_newline",
+    });
+  });
+
+  it("maps 404 to missing and safety-boundary statuses to boundary", async () => {
+    vi.stubGlobal("fetch", jsonResponse(404, { error: { code: "not_file" } }));
+    await expect(probeFileMeta("a.txt")).resolves.toEqual({ kind: "missing" });
+    vi.stubGlobal("fetch", jsonResponse(400, { error: { code: "symlink_not_allowed" } }));
+    await expect(probeFileMeta("a.txt")).resolves.toEqual({ kind: "boundary" });
+    vi.stubGlobal("fetch", jsonResponse(403, { error: { code: "denied" } }));
+    await expect(probeFileMeta("a.txt")).resolves.toEqual({ kind: "boundary" });
+  });
+
+  it("stays silent on gateway failures, malformed bodies, and timeouts", async () => {
+    vi.stubGlobal("fetch", jsonResponse(502, null));
+    await expect(probeFileMeta("a.txt")).resolves.toEqual({ kind: "unavailable" });
+    vi.stubGlobal("fetch", jsonResponse(200, { editable: true, revision: "not-a-revision" }));
+    await expect(probeFileMeta("a.txt")).resolves.toEqual({ kind: "unavailable" });
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new TypeError("network down"))));
+    await expect(probeFileMeta("a.txt")).resolves.toEqual({ kind: "unavailable" });
+    vi.stubGlobal("fetch", stalledFetch());
+    const stalled = probeFileMeta("a.txt");
+    await vi.advanceTimersByTimeAsync(EDITOR_IO_TIMEOUT_MS);
+    await expect(stalled).resolves.toEqual({ kind: "unavailable" });
   });
 });
