@@ -82,16 +82,15 @@ func recoverForRetry(ctx context.Context, c *chatConversation, prov chatProvider
 // unattended auto turn — docs/30 — is never silently lost). The caller holds the
 // conversation lock and saves afterwards.
 func noteContextOverflow(c *chatConversation) {
-	c.Messages = append(c.Messages, chatMessage{
-		Role: "notice", Content: contextOverflowContent(), TS: nowMs(),
-	})
+	c.Messages = append(c.Messages, newNotice(noticeKeyCtxOverflow, nil, contextOverflowContent()))
 	ev := notice.New("chat-context-overflow", "", "", c.Title)
 	ev.Payload["conversation_id"] = c.ID
 	ev.Payload["conversationTitle"] = c.Title
 	_ = notice.Put(ev)
 }
 
-// contextOverflowContent は超過 notice の本文。保存データは JA 統一（docs/19）。
+// contextOverflowContent は超過 notice の正本言語（ja）フォールバック本文。表示は
+// noticeKeyCtxOverflow のカタログ訳が担う（chat_notice.go / ADR 0033）。
 func contextOverflowContent() string {
 	return "コンテキストが上限を超えたため、応答を生成できませんでした。" +
 		"この会話はこのままでは続行が難しい状態です。ヘッダのコンテキストバー右にある「圧縮」で" +

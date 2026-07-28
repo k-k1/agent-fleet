@@ -252,17 +252,19 @@ func noteContextPressure(c *chatConversation) {
 		return
 	}
 	c.CtxWarned = true
-	c.Messages = append(c.Messages, chatMessage{
-		Role: "notice", Content: ctxPressureContent(u), TS: nowMs(),
-	})
+	c.Messages = append(c.Messages, newNotice(noticeKeyCtxPressure, map[string]string{
+		"pct":    strconv.Itoa(int(u.Pct)),
+		"tokens": fmtKTokens(u.Tokens),
+		"window": fmtKTokens(u.Window),
+	}, ctxPressureContent(u)))
 	ev := notice.New("chat-context-pressure", "", "", c.Title)
 	ev.Payload["conversation_id"] = c.ID
 	ev.Payload["conversationTitle"] = c.Title
 	_ = notice.Put(ev)
 }
 
-// ctxPressureContent は逼迫 notice の本文。保存される会話データは JA で統一
-// （docs/19: 報告・notice と同じ流儀）。
+// ctxPressureContent は逼迫 notice の正本言語（ja）フォールバック本文。表示は
+// noticeKeyCtxPressure のカタログ訳が担う（chat_notice.go / ADR 0033）。
 func ctxPressureContent(u *contextUsage) string {
 	return "この会話のコンテキスト使用量が上限の約" + strconv.Itoa(int(u.Pct)) + "%" +
 		"（" + fmtKTokens(u.Tokens) + " / " + fmtKTokens(u.Window) + " トークン）に達しました。" +

@@ -61,6 +61,11 @@ type chatMessage struct {
 	// by its own auto turn or injected into a later prompt). An undelivered report
 	// exists in the stored thread but the LLM hasn't seen it yet.
 	Delivered bool `json:"delivered,omitempty"`
+	// NoticeKey / NoticeArgs localize role=="notice" bodies (ADR 0033): the Console
+	// renders the catalog entry for the user's locale and only falls back to Content
+	// (source language) for notices written before the key existed. See chat_notice.go.
+	NoticeKey  string            `json:"notice_key,omitempty"`
+	NoticeArgs map[string]string `json:"notice_args,omitempty"`
 }
 
 // chatConversation is the persisted record (one JSON file per conversation).
