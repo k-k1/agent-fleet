@@ -65,6 +65,7 @@ const (
 	cleanReasonEphemeral    = "clean.reason.ephemeral"
 	cleanReasonOrphanPane   = "clean.reason.orphan_pane"
 	cleanReasonWtLive       = "clean.reason.wt_live"
+	cleanReasonWtLockedSess = "clean.reason.wt_locked_session"
 	cleanReasonWtDirty      = "clean.reason.wt_dirty"
 	cleanReasonWtMerged     = "clean.reason.wt_merged"
 	cleanReasonWtUnmerged   = "clean.reason.wt_unmerged"
@@ -78,6 +79,7 @@ var cleanupReasonJA = map[string]string{
 	cleanReasonEphemeral:    "停止中の shell/ssm（残す会話なし）。削除で片付く",
 	cleanReasonOrphanPane:   "orphan（メタ無しの実行中ペイン）。Console でアタッチ/整理",
 	cleanReasonWtLive:       "稼働中のセッションがある（先に停止が必要）",
+	cleanReasonWtLockedSess: "削除ロックされたセッションが残っている（解除するまで削除不可）",
 	cleanReasonWtDirty:      "未コミット/未pushの変更あり（push か Console で強制削除）",
 	cleanReasonWtMerged:     "マージ済み・クリーン（親に取り込み済み）",
 	cleanReasonWtUnmerged:   "クリーンだが未マージ（固有コミットあり。削除でブランチは残るが要確認）",
@@ -125,10 +127,14 @@ func classifySessionCleanup(locked, archived, live, ephemeral bool) (action, saf
 // state. Pure — the handler supplies the git facts. Mirrors maybePruneWorktree's
 // conservatism (never touch dirty/ahead) but also proposes merged worktrees the passive
 // prune leaves for 7 days.
-func classifyWorktreeCleanup(locked bool, liveCount, ahead int, dirty bool, relation string) (action, safety, reasonKey string) {
+func classifyWorktreeCleanup(locked bool, lockedSessions, liveCount, ahead int, dirty bool, relation string) (action, safety, reasonKey string) {
 	switch {
 	case locked:
 		return "", "keep", cleanReasonLocked // docs/45
+	case lockedSessions > 0:
+		// 削除ロック済みセッション（docs/45）が住む WT は handleDeleteRepo が 403 で拒む。
+		// safe と提案しても実行時に失敗するだけ — keep として理由ごと見せる。
+		return "", "keep", cleanReasonWtLockedSess
 	case liveCount > 0:
 		return "", "keep", cleanReasonWtLive
 	case dirty || ahead > 0:
@@ -146,7 +152,8 @@ func handleSessionsCleanup(w http.ResponseWriter, r *http.Request) {
 
 	// Sessions: finished/stale rows in (or hidden from) the active list.
 	live := tmuxx.LiveSessionNames()
-	for _, m := range session.ListMetas() {
+	metas := session.ListMetas()
+	for _, m := range metas {
 		isLive := live[m.Name] || (m.DriverKind() == session.DriverManaged && managedAlive(m))
 		ephemeral := m.Kind == session.KindShell || m.Kind == session.KindSSM
 		action, safety, reasonKey, ok := classifySessionCleanup(m.Locked, m.Archived, isLive, ephemeral)
@@ -187,7 +194,10 @@ func handleSessionsCleanup(w http.ResponseWriter, r *http.Request) {
 		if parent := worktreeParent(dir); parent != "" {
 			relation = gitWorktreeIntegration(parent, dir, gitCurrentBranch(parent)).Relation
 		}
-		action, safety, reasonKey := classifyWorktreeCleanup(repoLocked(dir), liveCount, st.Ahead, st.Dirty, relation)
+		// 削除ロック済みセッション（stopped/archived 含む）が居る WT は削除も 403 で
+		// 拒まれる — handleDeleteRepo と同じ判定（lockedSessionsInDir）で先に keep にする。
+		lockedSess := len(lockedSessionsInDir(metas, dir))
+		action, safety, reasonKey := classifyWorktreeCleanup(repoLocked(dir), lockedSess, liveCount, st.Ahead, st.Dirty, relation)
 		out = append(out, cleanupCandidate{
 			Type: "worktree", Action: action, ID: e.Name(), Path: dir, Repo: e.Name(), Branch: st.Branch,
 			Relation: relation, Dirty: st.Dirty, Ahead: st.Ahead, Safety: safety,

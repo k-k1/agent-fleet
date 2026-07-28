@@ -42,6 +42,7 @@ func TestClassifyWorktreeCleanup(t *testing.T) {
 	cases := []struct {
 		name       string
 		locked     bool
+		lockedSess int
 		liveCount  int
 		ahead      int
 		dirty      bool
@@ -49,19 +50,22 @@ func TestClassifyWorktreeCleanup(t *testing.T) {
 		wantAction string
 		wantSafety string
 	}{
-		{"live session blocks", false, 1, 0, false, "contained", "", "keep"},
-		{"dirty is protected", false, 0, 0, true, "contained", "", "keep"},
-		{"ahead is protected", false, 0, 2, false, "contained", "", "keep"},
-		{"merged clean is safe", false, 0, 0, false, "contained", "delete_worktree", "safe"},
-		{"same as parent is safe", false, 0, 0, false, "same", "delete_worktree", "safe"},
-		{"clean unmerged needs review", false, 0, 0, false, "unmerged", "delete_worktree", "review"},
-		{"clean diverged needs review", false, 0, 0, false, "diverged", "delete_worktree", "review"},
-		{"unknown relation reviews", false, 0, 0, false, "", "delete_worktree", "review"},
+		{"live session blocks", false, 0, 1, 0, false, "contained", "", "keep"},
+		{"dirty is protected", false, 0, 0, 0, true, "contained", "", "keep"},
+		{"ahead is protected", false, 0, 0, 2, false, "contained", "", "keep"},
+		{"merged clean is safe", false, 0, 0, 0, false, "contained", "delete_worktree", "safe"},
+		{"same as parent is safe", false, 0, 0, 0, false, "same", "delete_worktree", "safe"},
+		{"clean unmerged needs review", false, 0, 0, 0, false, "unmerged", "delete_worktree", "review"},
+		{"clean diverged needs review", false, 0, 0, 0, false, "diverged", "delete_worktree", "review"},
+		{"unknown relation reviews", false, 0, 0, 0, false, "", "delete_worktree", "review"},
 		// 削除ロック（docs/45）は「安全に消せる」条件を満たしていても keep で止める。
-		{"locked beats safe", true, 0, 0, false, "contained", "", "keep"},
+		{"locked beats safe", true, 0, 0, 0, false, "contained", "", "keep"},
+		// 削除ロック済みセッションが住む WT も同様 — handleDeleteRepo が 403 で拒むので
+		// safe と提案してはならない（停止中/アーカイブ済みのロックも数える）。
+		{"locked session inside beats safe", false, 1, 0, 0, false, "contained", "", "keep"},
 	}
 	for _, c := range cases {
-		action, safety, reasonKey := classifyWorktreeCleanup(c.locked, c.liveCount, c.ahead, c.dirty, c.relation)
+		action, safety, reasonKey := classifyWorktreeCleanup(c.locked, c.lockedSess, c.liveCount, c.ahead, c.dirty, c.relation)
 		if action != c.wantAction || safety != c.wantSafety {
 			t.Errorf("%s: action=%q safety=%q (want %q/%q)", c.name, action, safety, c.wantAction, c.wantSafety)
 		}
