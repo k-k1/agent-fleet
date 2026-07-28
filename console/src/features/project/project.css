@@ -178,12 +178,12 @@
 }
 
 /* Node body: sessions + child worktrees, indented under the repo with a guide
-   line so the nesting is obvious. The indent is deliberately deep (guide at
-   10px + 16px) so a session row's kind icon lands clearly right of its repo's
-   icon — the repo row itself keeps its icon tight against the caret. */
+   line so the nesting is obvious. Indent kept shallow (guide at 10px + 8px)
+   to preserve row width — the guide line, not the offset, carries most of the
+   nesting cue. */
 .proj-node-body {
   margin: 1px 0 3px 10px;
-  padding-left: 16px;
+  padding-left: 8px;
   border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
