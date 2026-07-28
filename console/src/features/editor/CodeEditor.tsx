@@ -16,6 +16,17 @@ import { validateEditorBuffer, type BufferValidationError } from "./buffer.ts";
 import { lineStartOf, selectionRangeOf, type EditorSelectionReport } from "./selection.ts";
 import { t } from "../../lib/i18n/index.ts";
 
+/** Imperative surface for the AI suggestion flow (docs/44 §4): read the current
+ *  selection when a suggestion is requested, and apply an accepted replacement
+ *  as ONE ranged transaction — undoable like a user edit, and filtered by the
+ *  shared buffer validator like every other transaction. */
+export interface CodeEditorHandle {
+  /** Current main selection as UTF-16 code-unit offsets into the document. */
+  selection(): { from: number; to: number };
+  /** Apply a ranged edit; returns false when the transaction was rejected. */
+  applyEdit(edit: { from: number; to: number; insert: string }): boolean;
+}
+
 interface CodeEditorProps {
   path: string;
   content: string;
@@ -26,6 +37,8 @@ interface CodeEditorProps {
   onSave(): void;
   onValidationError(error: BufferValidationError): void;
   onReady?(focus: () => void): void;
+  /** Receives the imperative handle on mount and null on unmount. */
+  onHandle?(handle: CodeEditorHandle | null): void;
   /** Fires on every selection change with the quotable selection, or null. */
   onSelectionChange?(selection: EditorSelectionReport | null): void;
   /** Bumped when a clean buffer auto-followed an external change (docs/44
@@ -129,6 +142,7 @@ export function CodeEditor({
   onSave,
   onValidationError,
   onReady,
+  onHandle,
   onSelectionChange,
   externalEpoch,
 }: CodeEditorProps) {
@@ -141,8 +155,8 @@ export function CodeEditor({
   const languageExtRef = useRef<Extension>([]);
   const extensionsRef = useRef<Extension | null>(null);
   const appliedEpochRef = useRef(externalEpoch ?? 0);
-  const callbacks = useRef({ onChange, onSave, onValidationError, onReady, onSelectionChange, externalEpoch });
-  callbacks.current = { onChange, onSave, onValidationError, onReady, onSelectionChange, externalEpoch };
+  const callbacks = useRef({ onChange, onSave, onValidationError, onReady, onHandle, onSelectionChange, externalEpoch });
+  callbacks.current = { onChange, onSave, onValidationError, onReady, onHandle, onSelectionChange, externalEpoch };
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -210,6 +224,22 @@ export function CodeEditor({
       view.requestMeasure();
       view.focus();
     });
+    callbacks.current.onHandle?.({
+      selection: () => {
+        const range = view.state.selection.main;
+        return { from: range.from, to: range.to };
+      },
+      applyEdit: ({ from, to, insert }) => {
+        const before = view.state.doc;
+        view.dispatch({
+          changes: { from, to, insert },
+          selection: { anchor: from + insert.length },
+          scrollIntoView: true,
+          userEvent: "input.suggest",
+        });
+        return view.state.doc !== before;
+      },
+    });
     let alive = true;
     void loadLanguageExtension(path).then((extension) => {
       if (!alive) return;
@@ -218,6 +248,7 @@ export function CodeEditor({
     });
     return () => {
       alive = false;
+      callbacks.current.onHandle?.(null);
       viewRef.current = null;
       view.destroy();
     };

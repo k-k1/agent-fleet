@@ -24,8 +24,10 @@ import { CodeView } from "./CodeView.tsx";
 import { ImageView } from "./ImageView.tsx";
 import { registerPaneViewActions } from "./paneViewActions.ts";
 import type { LineMarks } from "./CodeView.tsx";
-import { CodeEditor } from "../editor/CodeEditor.tsx";
+import { CodeEditor, type CodeEditorHandle } from "../editor/CodeEditor.tsx";
+import { lineDiff } from "./DiffView.tsx";
 import type { EditorSelectionReport } from "../editor/selection.ts";
+import type { EditSuggestionEnvelope } from "../editor/suggest.ts";
 import { editorPill, type SelectionPill } from "./selectionPill.ts";
 import { useFileEditor } from "../editor/useFileEditor.ts";
 import { useExternalChangeProbe } from "../editor/probe.ts";
@@ -161,7 +163,12 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   const viewTabRef = useRef<HTMLButtonElement>(null);
   const editTabRef = useRef<HTMLButtonElement>(null);
   const editorFocusRef = useRef<(() => void) | null>(null);
+  const editorHandleRef = useRef<CodeEditorHandle | null>(null);
   const modeGroupRef = useRef<HTMLSpanElement>(null);
+  // AI 提案（docs/44 Phase 4）: compose パネルの開閉と指示文。レビュー段階は
+  // editor.model.suggestion の有無が持つので、ここには置かない。
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [suggestInstruction, setSuggestInstruction] = useState("");
 
   const showFile = (path: string, line?: number, column?: number, openInNew = false) => {
     const target = { content: { kind: "file" as const, filePath: path, targetLine: line, targetColumn: column } };
@@ -441,6 +448,8 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   useEffect(() => {
     setEditorNotice("");
     setResolutionOpen(true);
+    setSuggestOpen(false);
+    setSuggestInstruction("");
   }, [filePath]);
 
   focusRequestRef.current = focusRequest;
@@ -546,6 +555,53 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
       invalid_unicode: tr("editor.validation.invalid_unicode"),
     };
     setEditorNotice(messages[error.code]);
+  };
+
+  // AI 提案の失敗/棄却コード → 表示文言（docs/44 §3.4: `suggestion_stale` は
+  // HTTP ではなく Console 側の安定 UI code）。buffer validator のコードは既存の
+  // editor.validation.* を再利用する。
+  const suggestErrText = (code: string): string => {
+    switch (code) {
+      case "suggestion_stale":
+        return tr("editor.suggestion.stale");
+      case "suggestion_invalid":
+        return tr("editor.suggestion.invalid");
+      case "selection_too_large":
+        return tr("editor.suggestion.selection_too_large");
+      case "instruction_invalid":
+        return tr("editor.suggestion.instruction_invalid");
+      case "io_timeout":
+        return tr("editor.suggestion.timeout");
+      case "too_large":
+      case "binary_not_supported":
+      case "unsupported_newline":
+      case "invalid_unicode":
+        return tr(`editor.validation.${code}`);
+      default:
+        return tr("editor.suggestion.failed");
+    }
+  };
+
+  // 選択範囲＋指示文で生成を依頼する。選択が空（カーソルのみ）なら全文を対象にする。
+  const submitSuggestion = () => {
+    const model = editor.model;
+    if (!model) return;
+    let range = editorHandleRef.current?.selection() ?? { from: 0, to: model.content.length };
+    if (range.from === range.to) range = { from: 0, to: model.content.length };
+    setEditorNotice("");
+    void editor.requestSuggestion(suggestInstruction, range).then((code) => {
+      if (code) setEditorNotice(suggestErrText(code));
+      else setSuggestInstruction("");
+    });
+  };
+
+  const acceptSuggestionIntoView = () => {
+    setEditorNotice("");
+    const code = editor.acceptSuggestion(
+      editorHandleRef.current ? (edit) => editorHandleRef.current!.applyEdit(edit) : undefined,
+    );
+    if (code) setEditorNotice(suggestErrText(code));
+    else setSuggestOpen(false);
   };
 
   const changeMode = (next: "view" | "edit") => {
@@ -786,6 +842,16 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
             >
               <Icon name={phase === "saving" ? "loading" : "save"} spin={phase === "saving"} /> {tr("editor.save")}
             </button>
+            <button
+              type="button"
+              className="file-save-btn file-suggest-btn"
+              disabled={editorAlert || phase === "saving" || editor.suggesting}
+              onClick={() => setSuggestOpen(true)}
+              title={tr("editor.suggestion.button_tip")}
+            >
+              <Icon name={editor.suggesting ? "loading" : "sparkle"} spin={editor.suggesting} />{" "}
+              {tr("editor.suggestion.button")}
+            </button>
           </>
         )}
         {fileMode.kind === "markdown" && (
@@ -908,6 +974,9 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
                 void editor.save();
               }}
               onValidationError={onEditorValidationError}
+              onHandle={(handle) => {
+                editorHandleRef.current = handle;
+              }}
               onReady={(focus) => {
                 // Focus is granted by updateMode, never by the surface merely
                 // appearing: the editor mounts as soon as the file is editable,
@@ -1001,6 +1070,31 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
           onCopyMine={() => void navigator.clipboard.writeText(editor.model!.content)}
           onClose={() => {
             if (paneId) useLayoutStore.getState().closePane(paneId);
+          }}
+        />
+      )}
+
+      {/* AI 提案（docs/44 Phase 4）。競合等のアラートパネルが出ているときは譲る
+          （プローブ advisory と同じ優先順位）。レビュー段階は model.suggestion が持ち、
+          staleness は revision から導出する。 */}
+      {canEdit && editor.model && !editorAlert && (suggestOpen || editor.suggesting || editor.model.suggestion) && (
+        <EditorSuggestPanel
+          model={editor.model}
+          suggestion={editor.model.suggestion}
+          suggesting={editor.suggesting}
+          instruction={suggestInstruction}
+          onInstructionChange={setSuggestInstruction}
+          onSubmit={submitSuggestion}
+          onAccept={acceptSuggestionIntoView}
+          onReject={() => {
+            setEditorNotice("");
+            editor.rejectSuggestion();
+            setSuggestOpen(true);
+          }}
+          onClose={() => {
+            editor.cancelSuggestion();
+            editor.rejectSuggestion();
+            setSuggestOpen(false);
           }}
         />
       )}
@@ -1140,6 +1234,109 @@ function EditorResolutionPanel(props: EditorResolutionPanelProps) {
         <button type="button" onClick={props.onCopyMine}>{tr("editor.copy_mine")}</button>
         <button type="button" onClick={props.onClose}>{tr("editor.close_without_save")}</button>
         <button type="button" onClick={props.onCancel}>{tr("editor.cancel")}</button>
+      </div>
+    </section>
+  );
+}
+
+interface EditorSuggestPanelProps {
+  model: FileEditorModel;
+  suggestion: EditSuggestionEnvelope | null;
+  suggesting: boolean;
+  instruction: string;
+  onInstructionChange(value: string): void;
+  onSubmit(): void;
+  onAccept(): void;
+  onReject(): void;
+  onClose(): void;
+}
+
+// AI 提案パネル（docs/44 Phase 4）。compose（指示文入力）→ 生成中 → レビュー
+// （summary＋選択範囲→置換文の diff＋適用/却下）の3段を1つのオーバーレイで持つ。
+// 競合パネルと違いエラーではないので role="alert" にはしない。適用可否は
+// baseRevision と現在 bufferRevision の一致から導出し、stale なら適用を無効化する。
+function EditorSuggestPanel(props: EditorSuggestPanelProps) {
+  const tr = useT();
+  const { model, suggestion } = props;
+  if (suggestion) {
+    const { range, replacement, summary } = suggestion.suggestion;
+    const stale = suggestion.suggestion.baseRevision !== model.bufferRevision;
+    const rows = stale ? [] : lineDiff(model.content.slice(range.from, range.to), replacement);
+    return (
+      <section className="file-editor-resolution file-editor-suggest" aria-label={tr("editor.suggestion.title")}>
+        <h4>
+          <Icon name="sparkle" /> {tr("editor.suggestion.title")}
+        </h4>
+        <p>{summary}</p>
+        {stale ? (
+          <p className="muted">{tr("editor.suggestion.stale")}</p>
+        ) : (
+          <div className="file-suggest-diff" aria-label={tr("editor.diff_aria")}>
+            <pre>
+              {rows.map((row, index) => (
+                <span
+                  key={index}
+                  className={row.t === "del" ? "diff-mine" : row.t === "add" ? "diff-remote" : "diff-same"}
+                >
+                  {row.t === "del" ? "− " : row.t === "add" ? "+ " : "  "}
+                  {row.text}
+                  {"\n"}
+                </span>
+              ))}
+            </pre>
+          </div>
+        )}
+        <div className="file-editor-actions">
+          <button type="button" autoFocus disabled={stale} onClick={props.onAccept}>
+            {tr("editor.suggestion.apply")}
+          </button>
+          <button type="button" onClick={props.onReject}>
+            {tr("editor.suggestion.reject")}
+          </button>
+          <button type="button" onClick={props.onClose}>
+            {tr("editor.cancel")}
+          </button>
+        </div>
+      </section>
+    );
+  }
+  return (
+    <section className="file-editor-resolution file-editor-suggest" aria-label={tr("editor.suggestion.title")}>
+      <h4>
+        <Icon name="sparkle" /> {tr("editor.suggestion.title")}
+      </h4>
+      <p className="muted">{tr("editor.suggestion.compose_hint")}</p>
+      <textarea
+        value={props.instruction}
+        placeholder={tr("editor.suggestion.placeholder")}
+        rows={3}
+        autoFocus
+        disabled={props.suggesting}
+        onChange={(event) => props.onInstructionChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !props.suggesting) {
+            event.preventDefault();
+            props.onSubmit();
+          }
+        }}
+      />
+      <div className="file-editor-actions">
+        <button
+          type="button"
+          disabled={props.suggesting || !props.instruction.trim()}
+          onClick={props.onSubmit}
+        >
+          {props.suggesting ? (
+            <>
+              <Icon name="loading" spin /> {tr("editor.suggestion.generating")}
+            </>
+          ) : (
+            tr("editor.suggestion.generate")
+          )}
+        </button>
+        <button type="button" onClick={props.onClose}>
+          {tr("editor.cancel")}
+        </button>
       </div>
     </section>
   );

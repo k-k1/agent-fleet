@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   acceptUnknownRisk,
   adoptRemote,
+  applySuggestion,
   beginSave,
   classifyUnknownRemote,
   conflictFound,
@@ -14,6 +15,7 @@ import {
   prepareUnknownResave,
   saveStateUnknown,
   saveSucceeded,
+  setSuggestion,
   startManualMerge,
 } from "./model.ts";
 import { revisionOf } from "./buffer.ts";
@@ -282,5 +284,53 @@ describe("external change observation and follow (docs/44 §7)", () => {
     const discarded = discardToBase(editBuffer(followed, "typed\n"));
     expect(discarded.followEpoch).toBe(1);
     expect(discarded.content).toBe("ext\n");
+  });
+});
+
+describe("AI suggestion (docs/44 §4)", () => {
+  const envelopeFor = (model: ReturnType<typeof initial>, replacement = "head\n") => ({
+    kind: "edit_suggestion" as const,
+    version: 1 as const,
+    paneId: model.paneId,
+    filePath: model.path,
+    requestId: "req-1",
+    sourceRevision: model.bufferRevision,
+    suggestion: {
+      summary: "書き換え",
+      replacement,
+      range: { from: 0, to: 4 },
+      baseRevision: model.bufferRevision,
+    },
+  });
+
+  it("records the envelope as an advisory beside the phase", () => {
+    const model = setSuggestion(initial(), envelopeFor(initial()));
+    expect(model.phase).toBe("clean");
+    expect(model.dirty).toBe(false);
+    expect(model.suggestion?.requestId).toBe("req-1");
+    expect(setSuggestion(model, null).suggestion).toBeNull();
+  });
+
+  it("accept applies through editBuffer: dirty, new revision, suggestion retired", () => {
+    const model = setSuggestion(initial(), envelopeFor(initial()));
+    const applied = applySuggestion(model);
+    expect(applied.content).toBe("head\n\n");
+    expect(applied.dirty).toBe(true);
+    expect(applied.phase).toBe("dirty");
+    expect(applied.bufferRevision).toBe(revisionOf("head\n\n"));
+    expect(applied.suggestion).toBeNull();
+  });
+
+  it("a buffer edit after receipt derives staleness and accept refuses", () => {
+    const model = editBuffer(setSuggestion(initial(), envelopeFor(initial())), "typed\n");
+    // 提案は保持されたまま（パネルが stale を導出して表示する）…
+    expect(model.suggestion).not.toBeNull();
+    // …だが適用は revision 三重一致で拒否される。
+    expect(() => applySuggestion(model)).toThrow("suggestion_stale");
+    expect(model.suggestion?.suggestion.baseRevision).not.toBe(model.bufferRevision);
+  });
+
+  it("accept without a pending suggestion refuses", () => {
+    expect(() => applySuggestion(initial())).toThrow("suggestion_invalid");
   });
 });
