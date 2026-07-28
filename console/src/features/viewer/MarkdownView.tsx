@@ -10,6 +10,8 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { t } from "../../lib/i18n/index.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { openSessionChat, openSessionChatSplit } from "../sessions/open.ts";
+import { useChatStore, ensureConvs } from "../chat/store.ts";
+import { openChat, openChatSplit } from "../chat/open.ts";
 import { openCommit } from "../scm/open.ts";
 
 // MarkdownView renders Markdown to sanitized HTML, highlights fenced code blocks,
@@ -24,7 +26,8 @@ interface MarkdownViewProps {
   baseDir?: string; // cwd for an agent reply; relative file citations resolve from here
   // SCM repo id (Session.repo) this markdown is "about" — supplied by the mirror from the
   // session it renders. Only when present do bare commit hashes get linkified (a hash is
-  // meaningless without a repo to resolve it in); session slugs linkify regardless.
+  // meaningless without a repo to resolve it in); session / conversation slugs linkify
+  // regardless.
   repo?: string | null;
   breaks?: boolean; // treat a single newline as <br> (chat prompts keep their line breaks)
   // Lightweight mode for a live-accumulating source (a streaming chat reply): the effect
@@ -41,6 +44,10 @@ interface MarkdownViewProps {
   // click opens a new pane. A surface whose own pane must not be replaced (the assistant
   // chat) passes this to force a new pane on every click.
   onOpenSession?: (name: string, openInNew?: boolean) => void;
+  // Click on an auto-linked assistant-conversation slug ("a…"). Same contract as
+  // onOpenSession: omitted → openChat / openChatSplit defaults; the assistant chat
+  // passes this to force a new pane so its own conversation isn't swapped out.
+  onOpenConversation?: (id: string, openInNew?: boolean) => void;
 }
 
 export function MarkdownView({
@@ -53,6 +60,7 @@ export function MarkdownView({
   onOpenFile,
   onOpenDir,
   onOpenSession,
+  onOpenConversation,
 }: MarkdownViewProps) {
   const ref = useRef<HTMLDivElement>(null);
   const toast = useToast();
@@ -65,9 +73,11 @@ export function MarkdownView({
   const onOpenFileRef = useRef(onOpenFile);
   const onOpenDirRef = useRef(onOpenDir);
   const onOpenSessionRef = useRef(onOpenSession);
+  const onOpenConversationRef = useRef(onOpenConversation);
   onOpenFileRef.current = onOpenFile;
   onOpenDirRef.current = onOpenDir;
   onOpenSessionRef.current = onOpenSession;
+  onOpenConversationRef.current = onOpenConversation;
 
   useEffect(() => {
     const el = ref.current;
@@ -110,17 +120,40 @@ export function MarkdownView({
     );
     wireImages(el, basePath);
 
-    // Auto-link bare git commit hashes (→ commit pane) and session slugs (→ that
-    // session's mirror) mentioned in prose. Runs AFTER wireLinks so the anchors it
-    // creates (no href) aren't reclassified as file links; skips code / pre / existing
-    // anchors like renderEmoji does. A slug only links when the session actually exists;
-    // a hash links optimistically and is verified against the repo on click.
-    linkifyRefs(el, repo, (message) => toast(message), (name, openInNew) => {
-      const cb = onOpenSessionRef.current;
-      if (cb) cb(name, openInNew);
-      else if (openInNew) openSessionChatSplit(name);
-      else openSessionChat(name);
-    });
+    // Auto-link bare git commit hashes (→ commit pane), session slugs (→ that
+    // session's mirror) and assistant-conversation slugs (→ that chat pane) mentioned
+    // in prose. Runs AFTER wireLinks so the anchors it creates (no href) aren't
+    // reclassified as file links; skips code / pre / existing anchors like renderEmoji
+    // does. Slugs only link when the session / conversation actually exists; a hash
+    // links optimistically and is verified against the repo on click.
+    const runLinkify = () =>
+      linkifyRefs(
+        el,
+        repo,
+        (message) => toast(message),
+        (name, openInNew) => {
+          const cb = onOpenSessionRef.current;
+          if (cb) cb(name, openInNew);
+          else if (openInNew) openSessionChatSplit(name);
+          else openSessionChat(name);
+        },
+        (id, openInNew) => {
+          const cb = onOpenConversationRef.current;
+          if (cb) cb(id, openInNew);
+          else if (openInNew) openChatSplit(id);
+          else openChat(id);
+        },
+      );
+    runLinkify();
+    // A conv slug can only be existence-checked once the conversation list is in the
+    // store. When this document mentions one before any surface has loaded the list
+    // (e.g. a mirror opened straight from a deep link, left rail not mounted yet),
+    // fetch it once and re-run the linkifier — idempotent: existing anchors are skipped.
+    if (useChatStore.getState().convs === null && CONV_HINT_RE.test(source ?? "")) {
+      void ensureConvs().then(() => {
+        if (alive) runLinkify();
+      });
+    }
 
     // VS Code-style sticky headings: when this markdown is inside a scroll container
     // (.md-scroll — the Doc / File viewers, not chat bubbles), pin the heading path of
@@ -245,10 +278,10 @@ function renderEmoji(root: HTMLElement) {
   }
 }
 
-// linkifyRefs turns bare git commit hashes and session slugs into clickable links,
-// mirroring renderEmoji's text-node walk (skips existing anchors so we never double-link).
-// Matches are scanned in one combined pass so the two token shapes can't overlap or fight
-// over the same run of text.
+// linkifyRefs turns bare git commit hashes, session slugs and assistant-conversation
+// slugs into clickable links, mirroring renderEmoji's text-node walk (skips existing
+// anchors so we never double-link). Matches are scanned in one combined pass so the
+// token shapes can't overlap or fight over the same run of text.
 //
 // - commit hash: 7–40 hex chars. Only linkified when a `repo` is known (a hash is
 //   unresolvable without one). Linked optimistically; the click handler verifies the sha
@@ -258,22 +291,34 @@ function renderEmoji(root: HTMLElement) {
 //   agent's randSlug, e.g. "sukbq4s"). Only linkified when a session with that exact name
 //   currently exists (looked up live in the sessions store); a stale/unknown slug is left
 //   as plain text (so a 7-char English s-word that isn't a live session never links).
+// - conversation slug: `a` + 6 lowercase base32 chars (Conversation.Slug — the assistant
+//   twin minted by randConvSlug, e.g. "azw7wys"). Existence-gated against the chat
+//   store's conversation list, so an English a-word ("against", "already") never links.
+//   Checked BEFORE the commit shape: an all-hex token like "abcdef2" is both a valid
+//   sha prefix and a valid conv slug, and a live conversation is the stronger signal —
+//   the commit branch keeps the token only when no such conversation exists.
 //
 // Code context: a fenced block (<pre>) is literal source and is never touched. INLINE
-// code (`s7` / `9219ab9` written in backticks — the common way both are mentioned) IS
-// linkified for both shapes: a slug in backticks references that session, and a hash in
-// backticks references that commit, so both become links (commit still click-verified).
+// code (`sukbq4s` / `9219ab9` written in backticks — the common way these are mentioned)
+// IS linkified for all shapes: a slug in backticks references that session/conversation,
+// and a hash in backticks references that commit (commit still click-verified).
 const COMMIT_RE = "[0-9a-f]{7,40}";
 const SLUG_RE = "s[a-z2-7]{6}"; // randSlug: "s" + 6 base32-lower chars (a-z, 2-7)
-// Combined; \b keeps us off sub-word matches. A slug always starts with "s" (non-hex), so
-// the two alternatives never match the same token — the commit branch owns bare hex.
-const REF_RE = new RegExp(`\\b(?:${COMMIT_RE}|${SLUG_RE})\\b`, "g");
+const CONV_RE = "a[a-z2-7]{6}"; // randConvSlug: "a" + 6 base32-lower chars
+// Combined; \b keeps us off sub-word matches. A session slug starts with "s" (non-hex)
+// so it never collides; "a" IS hex, so a rare all-hex conv slug is disambiguated by the
+// existence-gated classification order above, not by the regex.
+const REF_RE = new RegExp(`\\b(?:${COMMIT_RE}|${SLUG_RE}|${CONV_RE})\\b`, "g");
+// Cheap "does this document mention a conv-slug-shaped token at all" probe, used to
+// decide whether loading the conversation list is worth it (see ensureConvs call).
+const CONV_HINT_RE = new RegExp(`\\b${CONV_RE}\\b`);
 
 function linkifyRefs(
   root: HTMLElement,
   repo: string | null,
   onError: (message: string) => void,
   openSession: (name: string, openInNew: boolean) => void,
+  openConversation: (id: string, openInNew: boolean) => void,
 ) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(n) {
@@ -296,12 +341,17 @@ function linkifyRefs(
     let last = 0;
     do {
       const token = m[0];
-      const isCommit = /^[0-9a-f]{7,40}$/.test(token); // slugs start with "s" (non-hex)
       let a: HTMLAnchorElement | null = null;
-      if (isCommit) {
+      // conv-slug shape first (see the classification-order note above): link only if
+      // a conversation with that slug exists right now.
+      if (/^a[a-z2-7]{6}$/.test(token)) {
+        const convs = useChatStore.getState().convs;
+        if (convs?.some((c) => c.slug === token)) a = makeConversationLink(token, onError, openConversation);
+      }
+      if (!a && /^[0-9a-f]{7,40}$/.test(token)) {
         if (repo) a = makeCommitLink(token, repo, onError);
-      } else {
-        // slug shape: link only if that session exists right now
+      } else if (!a && /^s[a-z2-7]{6}$/.test(token)) {
+        // session-slug shape: link only if that session exists right now
         const exists = useSessionsStore.getState().sessions.some((s) => s.name === token);
         if (exists) a = makeSessionLink(token, openSession);
       }
@@ -350,6 +400,47 @@ function makeCommitLink(sha: string, repo: string, onError: (message: string) =>
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       void open();
+    }
+  });
+  return a;
+}
+
+// makeConversationLink builds a non-navigating anchor that opens an assistant
+// conversation's chat pane. The slug is re-resolved against the chat store at click
+// time (not captured at render) so a conversation deleted in between toasts instead
+// of opening a dead pane. Modifier keys follow the session-link convention.
+function makeConversationLink(
+  slugText: string,
+  onError: (message: string) => void,
+  openConversation: (id: string, openInNew: boolean) => void,
+): HTMLAnchorElement {
+  const a = document.createElement("a");
+  a.className = "md-ref-link md-conv-link";
+  a.textContent = slugText;
+  a.setAttribute("role", "link");
+  a.tabIndex = 0;
+  a.title = t("view.open_conversation", { slug: slugText });
+  const open = (openInNew: boolean) => {
+    const conv = useChatStore.getState().convs?.find((c) => c.slug === slugText);
+    if (!conv) {
+      onError(t("view.conversation_not_found", { slug: slugText }));
+      return;
+    }
+    openConversation(conv.id, openInNew);
+  };
+  a.addEventListener("click", (e) => {
+    e.preventDefault();
+    open(e.ctrlKey || e.metaKey);
+  });
+  a.addEventListener("auxclick", (e) => {
+    if (e.button !== 1) return; // middle click → new pane
+    e.preventDefault();
+    open(true);
+  });
+  a.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      open(e.ctrlKey || e.metaKey);
     }
   });
   return a;
