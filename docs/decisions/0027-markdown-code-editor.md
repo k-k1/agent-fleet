@@ -1,6 +1,6 @@
 # 0027. File ペインに CodeMirror 6 の編集モードを追加し、保存を明示操作に限定する
 
-- 状態: **採用・Phase 2 まで実装済み / Phase 3・3.5 設計追補**（2026-07-27）
+- 状態: **採用・Phase 3 まで実装済み / Phase 3.5 は設計のみ**（2026-07-28）
 - 詳細契約: [docs/44-markdown-code-editor.md](../44-markdown-code-editor.md)
 - 関連: [docs/dev/02-console.md](../dev/02-console.md)（Console のペイン構成）/
   [docs/dev/04-workspace-agent.md](../dev/04-workspace-agent.md)（fs の境界と denylist）/
@@ -96,7 +96,9 @@ Console の File ペインは現在、Workspace のファイルを読み取り�
   `SaveStateUnknown`、409競合とremote取得不能のstate machine、全buffer validator、dirty registry/
   navigation guard、beforeunload、ARIA、Saveボタンを実装する。
 - Phase 3 は Markdown/Marpのedit/preview/split、通常preview/slide renderer切替、編集面の選択→送ると
-  行ジャンプ、既存描画資産の回帰テストを実装する。
+  行ジャンプ、既存描画資産の回帰テストを実装する。**2026-07-28に実装完了。** Console単独で完結し
+  Agent/CPの変更は無い。レビュー5ラウンド・13件の指摘を修正し、1件（下記のfocus）は既知の限界と
+  して受け入れた。
 - Phase 3.5 は `meta=1` メタデータGET、Consoleのプローブ、dirty時のadvisory通知、clean時の自動追従
   （読み取り専用のviewペインを含む）を実装する。
 - Phase 4 は read-only提案生成チャネル、identity付き構造化提案、差分レビュー、accept/rejectを実装する。
@@ -138,6 +140,13 @@ Console の File ペインは現在、Workspace のファイルを読み取り�
   検知は早期警告にすぎず、保存の正しさは引き続き比較時点CASが担保する。
 - 同一uidのnamespace mutatorやhardlinkによるinode別名は非協調writer脅威モデル外であり、fd境界は
   request-controlled pathとsymlink解決の保護範囲として説明する。
+- **既知の制約（Phase 3）:** 編集面へのfocus移動は、モード選択ごとの世代番号をCodeMirrorのready後に
+  一度だけ消費する方式とし、面の組が変わらない操作（preview rendererの切替）では未消費の要求を
+  破棄しない。そのため「ready完了前に `split` を選び、ready前にrendererを切り替える」と、ready
+  完了時にfocusがrendererボタンから編集面へ移る窓が残る（docs/44 §5）。編集面はペインが編集可能に
+  なった時点でマウントされ通常はready済みであるため、発生にはreadyの遅延とその最中のrenderer操作の
+  重なりが必要で、影響はfocus位置のみ（バッファ・保存・表示状態は変わらない）。v1では受け入れ、
+  面を変えない操作での要求破棄、または要求への「その後の他コントロール操作」の記録を将来課題とする。
 - **既知の制約:** クライアントがPUTをタイムアウトで打ち切った後の復旧GETは、Agent内の
   path mutex共有とmutex取得直後のcontext検査でAgentプロセス内の競合を閉じている。ただし
   PUTと復旧GETは別々のCP→Agent HTTPリクエストであり、CPはキャンセルの伝播順序を保証しない
