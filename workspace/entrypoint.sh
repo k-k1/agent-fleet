@@ -74,12 +74,38 @@ if [ "$LEAN_CLIS" = 1 ]; then
   # cli_present=true で無音スキップし即起動する。これは設計どおりの正常動作で、
   # 「rootfs に CLI が焼かれている」わけではない（docs/35 §35.7.2-8）。
   echo "[entrypoint] lean variant: ensuring pinned agent CLIs under ~/.local (versions.json)"
+  # ピン再固定（repin）: self-update opt-in が OFF のこの起動では、過去の ON が
+  # ~/.local を最新へ進めていても versions.json のピン版へ戻す。焼き込み variant の
+  # 「OFF に戻して Stop→Start で焼き込み版へ復帰」と同じ意味論を lean にも与える。
+  # 従来は cli_present の在/不在ガードだけだったため、一度 ON で進んだ版が OFF に
+  # 戻しても永久に残った（kiro の起動ガードで直したのと同型の穴 — docs/43 §4-2）。
+  # 無人起動（AF_AGENT_SELF_UPDATE_SKIP=1）は「今回は触らない」意味論なので温存。
+  REPIN=0
+  if [ "${AF_AGENT_SELF_UPDATE_SKIP:-0}" != "1" ] \
+     && { [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" != "1" ] || [ "${AF_AGENT_SELF_UPDATE:-0}" != "1" ]; }; then
+    REPIN=1
+  fi
   # npm 配布の 4 CLI はまとめて 1 回の npm install（prefix=$HOME/.local → ~/.local/bin）。
+  # repin 判定用の導入済み版は npm ls 1 回で取る（CLI 自体の --version は数秒かかる）。
+  NPM_LS=""
+  if [ "$REPIN" = 1 ]; then
+    NPM_LS="$(npm ls -g --prefix "$HOME/.local" --depth=0 --json 2>/dev/null || true)"
+  fi
+  npm_cur() {
+    NPM_LS="$NPM_LS" node -e 'try{const d=JSON.parse(process.env.NPM_LS).dependencies||{};process.stdout.write(((d[process.argv[1]]||{}).version)||"")}catch{}' "$1" 2>/dev/null
+  }
   NPM_BOOT=""
   for pair in "claude=@anthropic-ai/claude-code" "opencode=opencode-ai" \
               "codex=@openai/codex" "copilot=@github/copilot"; do
     cli="${pair%%=*}"; pkg="${pair#*=}"; ver="$(vj_pin "$cli")"
-    if ! cli_present "$cli" && [ -n "$ver" ]; then NPM_BOOT="$NPM_BOOT ${pkg}@${ver}"; fi
+    [ -n "$ver" ] || continue
+    if ! cli_present "$cli"; then
+      NPM_BOOT="$NPM_BOOT ${pkg}@${ver}"
+    elif [ "$REPIN" = 1 ] && [ -e "$HOME/.local/bin/$cli" ]; then
+      # 進んだ shadow をピンへ戻す。npm 管理でない導入（版が取れない）は触らない。
+      cur="$(npm_cur "$pkg")"
+      if [ -n "$cur" ] && [ "$cur" != "$ver" ]; then NPM_BOOT="$NPM_BOOT ${pkg}@${ver}"; fi
+    fi
   done
   if [ -n "$NPM_BOOT" ]; then
     echo "[entrypoint] boot-install (pinned):$NPM_BOOT ..."
@@ -91,7 +117,16 @@ if [ "$LEAN_CLIS" = 1 ]; then
     echo "[entrypoint] boot-install: npm CLIs already present in ~/.local (skip)"
   fi
   # rtk: GitHub Releases のピン版（checksum 検証つき — Dockerfile 焼き込みと同じ経路）。
-  if ! cli_present rtk && [ -n "$(vj_pin rtk)" ]; then
+  RTK_NEED=0
+  if [ -n "$(vj_pin rtk)" ]; then
+    if ! cli_present rtk; then
+      RTK_NEED=1
+    elif [ "$REPIN" = 1 ] && [ -x "$HOME/.local/bin/rtk" ]; then
+      rtk_cur="$("$HOME/.local/bin/rtk" --version 2>/dev/null | head -1 | awk '{print $2}')"
+      if [ -n "$rtk_cur" ] && [ "$rtk_cur" != "$(vj_pin rtk)" ]; then RTK_NEED=1; fi
+    fi
+  fi
+  if [ "$RTK_NEED" = 1 ]; then
     (
       set -e
       rver="$(vj_pin rtk)"
@@ -119,7 +154,19 @@ if [ "$LEAN_CLIS" = 1 ]; then
   # agy: 公式installer manifestが示す不変GCS objectのピン版。
   # （versions.json の agy + agy_build + agy_sha256 で取得・検証 — Dockerfile焼き込みと同じ経路）。
   # self-update の版比較マーカーも書いておく（ピン導入直後の無駄な再取得を防ぐ）。
-  if ! cli_present agy && [ -n "$(vj_pin agy)" ] && [ -n "$(vj_pin agy_build)" ] && [ -n "$(vj_pin agy_sha256)" ]; then
+  # repin 判定もこのマーカーで行う: `agy --version` は RDRAND 非提示ホストで SIGABRT
+  # する（decisions/0008）ため実バイナリは叩かない。マーカー欠落は一度ピン再導入して
+  # 書き直すので収束する。
+  AGY_NEED=0
+  if [ -n "$(vj_pin agy)" ] && [ -n "$(vj_pin agy_build)" ] && [ -n "$(vj_pin agy_sha256)" ]; then
+    if ! cli_present agy; then
+      AGY_NEED=1
+    elif [ "$REPIN" = 1 ] && [ -x "$HOME/.local/bin/agy" ] \
+         && [ "$(cat "$HOME/.local/bin/.agy.version" 2>/dev/null)" != "$(vj_pin agy)" ]; then
+      AGY_NEED=1
+    fi
+  fi
+  if [ "$AGY_NEED" = 1 ]; then
     (
       set -e
       aver="$(vj_pin agy)"; abuild="$(vj_pin agy_build)"; asha="$(vj_pin agy_sha256)"
@@ -145,25 +192,43 @@ if [ "$LEAN_CLIS" = 1 ]; then
   # ~/.local/share/cursor-agent/versions/<版>/ へ展開し ~/.local/bin/cursor-agent を張る
   # （上流 install.sh と同レイアウト・Dockerfile 焼き込みと同経路）。sha256 は
   # versions.json の cursor_sha256（arch 依存の焼き込み値）で検証。
-  if ! cli_present cursor-agent && [ -n "$(vj_pin cursor)" ] && [ -n "$(vj_pin cursor_sha256)" ]; then
+  CUR_NEED=0
+  if [ -n "$(vj_pin cursor)" ] && [ -n "$(vj_pin cursor_sha256)" ]; then
+    if ! cli_present cursor-agent; then
+      CUR_NEED=1
+    elif [ "$REPIN" = 1 ] && [ -L "$HOME/.local/bin/cursor-agent" ]; then
+      # 現在版は symlink 先の versions/<版>/ から取る（cursor-agent --version は
+      # Node 起動で数秒かかるためパスで判定）。
+      cur_ver="$(readlink "$HOME/.local/bin/cursor-agent" 2>/dev/null | sed -n 's#.*/versions/\([^/]*\)/.*#\1#p')"
+      if [ -n "$cur_ver" ] && [ "$cur_ver" != "$(vj_pin cursor)" ]; then CUR_NEED=1; fi
+    fi
+  fi
+  if [ "$CUR_NEED" = 1 ]; then
     (
       set -e
       cver="$(vj_pin cursor)"; csha="$(vj_pin cursor_sha256)"
-      arch="$(dpkg --print-architecture 2>/dev/null || uname -m)"
-      case "$arch" in
-        amd64 | x86_64) casset="x64" ;;
-        arm64 | aarch64) casset="arm64" ;;
-        *) echo "unsupported arch: $arch" >&2; exit 1 ;;
-      esac
       dir="$HOME/.local/share/cursor-agent/versions/${cver}"
-      tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-      curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused \
-        "https://downloads.cursor.com/lab/${cver}/linux/${casset}/agent-cli-package.tar.gz" -o "$tmp/cursor.tgz"
-      echo "${csha}  $tmp/cursor.tgz" | sha256sum -c - >/dev/null
-      rm -rf "$dir"; mkdir -p "$dir"
-      tar --strip-components=1 -xzf "$tmp/cursor.tgz" -C "$dir"
+      # repin 時: self-update（上流 install.sh）は新版を別ディレクトリに足すだけで
+      # ピン版の展開先は残っているのが普通 — 残っていれば ~100MB の再取得を省いて
+      # symlink の張り替えだけで戻す。
+      if [ ! -x "$dir/cursor-agent" ]; then
+        arch="$(dpkg --print-architecture 2>/dev/null || uname -m)"
+        case "$arch" in
+          amd64 | x86_64) casset="x64" ;;
+          arm64 | aarch64) casset="arm64" ;;
+          *) echo "unsupported arch: $arch" >&2; exit 1 ;;
+        esac
+        tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+        curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused \
+          "https://downloads.cursor.com/lab/${cver}/linux/${casset}/agent-cli-package.tar.gz" -o "$tmp/cursor.tgz"
+        echo "${csha}  $tmp/cursor.tgz" | sha256sum -c - >/dev/null
+        rm -rf "$dir"; mkdir -p "$dir"
+        tar --strip-components=1 -xzf "$tmp/cursor.tgz" -C "$dir"
+      fi
       mkdir -p "$HOME/.local/bin"
       ln -sf "$dir/cursor-agent" "$HOME/.local/bin/cursor-agent"
+      # self-update の install.sh が張る agent エイリアスが残っていれば同じ版へ揃える
+      if [ -L "$HOME/.local/bin/agent" ]; then ln -sf "$dir/cursor-agent" "$HOME/.local/bin/agent"; fi
     ) && echo "[entrypoint] boot-install cursor $(vj_pin cursor)" \
       || echo "[entrypoint] WARN: cursor boot-install failed (retrying next start)"
   elif cli_present cursor-agent; then
@@ -229,8 +294,10 @@ fi
 # keeps the known-good baked baseline untouched even if an @latest release is broken.
 #
 # lean variant (no /usr/local bake): the boot-install品 under ~/.local IS the pin, so
-# there is no separate immutable baseline — ON updates it in place, and OFF leaves it
-# (the shadow cleanup below is gated on the /usr/local pin existing).
+# there is no separate immutable baseline — ON updates it in place. Reverting on OFF is
+# the boot-install REPIN's job (it reinstalls the versions.json pin over a drifted
+# ~/.local earlier in this script); the shadow cleanup below stays gated on the
+# /usr/local pin existing because in lean there is nothing to fall back to.
 #
 # 無人起動の抑止（AF_AGENT_SELF_UPDATE_SKIP=1）: スケジュール実行の wake など「人が
 # 見ていない起動」では、opt-in が ON でも今回の boot に限り更新を走らせない。狙いは 2 つ。
@@ -354,7 +421,8 @@ else
   # ~/.local/bin の rtk / agy shadow は焼き込み版を PATH で隠すので除去し、CLI 群と
   # 同じ「OFF に戻して Stop→Start で焼き込み版へ復帰」の意味論に揃える。
   # lean（焼き込みが無い）では ~/.local が boot-install 品そのものなので消さない —
-  # 「復帰先の焼き込み版がある時だけ shadow を掃除」に限定する。
+  # 「復帰先の焼き込み版がある時だけ shadow を掃除」に限定する。lean のピン復帰は
+  # 上の boot-install の REPIN（ピン版の再導入）が担う。
   # npm 系4CLI: 焼き込みピン(/usr/local)がある時だけ ~/.local の shadow を撤去し、PATH を
   # 焼き込みピンへ即復帰させる（lean=~/.local がピン本体の時は消さない）。
   if [ -x /usr/local/bin/claude ]; then

@@ -138,6 +138,13 @@ self-update opt-in の `~/.local/bin` shadow 機構（claude/opencode/codex/rtk/
 - 仮想 HOME は永続なので **DL は初回起動の一度きり**。2回目以降はオフラインでも起動する。
 - self-update opt-in（`AF_AGENT_SELF_UPDATE`）ON なら従来どおり最新へ追従、OFF なら
   ピン版のまま。書き込み先はすべて bind した仮想 HOME 側なので **ro rootfs のまま成立**する。
+  - **REPIN（2026-07-28 追補）**: ON で進んだ `~/.local` の版は、opt-in を OFF に戻した
+    次の起動（無人起動 `AF_AGENT_SELF_UPDATE_SKIP=1` を除く）に boot-install がピン版を
+    再導入して戻す。従来は boot-install のガードが在/不在（`cli_present`）だけだった
+    ため、一度 ON にすると OFF＋再起動でもピンへ戻らなかった（kiro の起動ガードで
+    直したのと同型の穴）。版比較は npm 4 CLI＝`npm ls` 1 回、rtk＝`--version`、
+    agy＝`.agy.version` マーカー（RDRAND 非提示ホストの SIGABRT 回避）、cursor＝
+    symlink 先の `versions/<版>/` パス。ピン一致のツールは触らない（DL なし）。
 
 社内・自社運用の Docker イメージも、**既定を lean-CLI（`BAKE_AGENT_CLIS=0`）へ反転した**
 （2026-07-23。素の `docker build` でも再配布不可のプロプライエタリ CLI をイメージに含めない
@@ -560,7 +567,8 @@ P1→P2 が本丸（native が唯一のゼロ→イチ）。P3 は独立に並�
   playwright 1.61.0 安定版同梱）を記録。供給元の最終選定・実 DL 検証は §35.9-7(a)
   のまま P2（この Workspace からは PRSS CDN が 400 を返し検証不能 — 実機/別回線で確認）。
 - entrypoint の self-update OFF 時 shadow 掃除は「焼き込み版が存在する時だけ」に限定
-  （lean では ~/.local が boot-install 品そのものなので消してはならない）。
+  （lean では ~/.local が boot-install 品そのものなので消してはならない。lean の
+  ピン復帰は boot-install の REPIN が担う — 上記 2026-07-28 追補）。
 - e2e-smoke の既存バグ修正: `EXPECT_COPILOT` が docker run へ渡っておらず、copilot
   統合後の smoke は set -u で落ちる状態だった。
 - **agy も真のピンへ昇格**（P1 追補・2026-07-25）: 焼き込み・boot-install とも
