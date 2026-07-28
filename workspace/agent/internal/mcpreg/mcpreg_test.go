@@ -197,20 +197,56 @@ func TestComposePrecedence(t *testing.T) {
 	}
 }
 
+// dropAF removes the af builtin (docs/51 Phase 3 §自己申告ファストパス) from a registry
+// slice. af は接続情報を持たず**常に**居るので、「登録したものだけが出ているか」を見る
+// アサーションからは外す — 外さないと、af とは無関係のテストが af の有無を数え始める。
+func dropAF(defs []ServerDef) []ServerDef {
+	var out []ServerDef
+	for _, d := range defs {
+		if d.ID != BuiltinAF {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
 func TestComposeBuiltinNeedsConnection(t *testing.T) {
 	reg := compose(&secrets.Data{}, tenantCache{}, map[string]bool{})
-	for _, d := range reg.Servers {
+	for _, d := range dropAF(reg.Servers) {
 		if d.Origin == OriginBuiltin {
 			t.Fatalf("未接続の組み込み連携が出ている: %s", d.Name)
 		}
 	}
 }
 
+// TestComposeAlwaysHasSelfReport: af（自己申告ファストパスのセッション側サーバー）は
+// 接続不要で常に居り、**セッションにだけ**配られる。ここが assistant に倒れると、
+// オペレーター会話が自分自身へ完了申告できてしまう。
+func TestComposeAlwaysHasSelfReport(t *testing.T) {
+	reg := compose(&secrets.Data{}, tenantCache{}, map[string]bool{})
+	var af *ServerDef
+	for i := range reg.Servers {
+		if reg.Servers[i].ID == BuiltinAF {
+			af = &reg.Servers[i]
+		}
+	}
+	if af == nil {
+		t.Fatal("af 組み込みが出ていない")
+	}
+	if !af.Targets.Session || af.Targets.Assistant {
+		t.Fatalf("af の配り先 = %+v, want session のみ", af.Targets)
+	}
+	if !Ready(*af) || af.Origin != OriginBuiltin {
+		t.Fatalf("af = %+v", *af)
+	}
+}
+
 func TestComposeTenantOptOut(t *testing.T) {
 	tc := tenantCache{Servers: []ServerDef{{ID: "t1", Name: "tickets", Enabled: true}}}
 	reg := compose(&secrets.Data{}, tc, map[string]bool{"t1": true})
-	if len(reg.Servers) != 1 || reg.Servers[0].Enabled {
-		t.Fatalf("ローカル opt-out が効いていない: %+v", reg.Servers)
+	servers := dropAF(reg.Servers)
+	if len(servers) != 1 || servers[0].Enabled {
+		t.Fatalf("ローカル opt-out が効いていない: %+v", servers)
 	}
 }
 
@@ -301,11 +337,11 @@ func TestForSessionFiltersAndForAssistant(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 	got, err := ForSession(session.KindCodex)
-	if err != nil || len(got) != 1 || got[0].Name != "sess" {
+	if got = dropAF(got); err != nil || len(got) != 1 || got[0].Name != "sess" {
 		t.Fatalf("ForSession(codex) = %+v, %v", got, err)
 	}
-	if got, _ := ForSession(session.KindClaude); len(got) != 0 {
-		t.Fatalf("ForSession(claude) = %+v, want empty", got)
+	if got, _ := ForSession(session.KindClaude); len(dropAF(got)) != 0 {
+		t.Fatalf("ForSession(claude) = %+v, want empty", dropAF(got))
 	}
 	forChat, err := ForAssistant(session.KindClaude)
 	if err != nil || len(forChat) != 1 {

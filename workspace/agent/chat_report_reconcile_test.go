@@ -239,6 +239,15 @@ func TestReportEvidenceTable(t *testing.T) {
 		{"異常終了は busy 証拠より強い（死んだ直後は転写が新鮮）",
 			with(func(s *reportSignals) { s.Exit = "crashed"; s.TranscriptBusy = true }),
 			true, "exit", "crashed", true},
+		// 自己申告（docs/51 Phase 3 §ファストパス）はマーカーと同格の idle 証拠。
+		// 「busy 証拠より強くはしない」ことがファストパスを backbone にしない判断の実体。
+		{"自己申告だけでも idle 証拠（マーカーを持たない kind）",
+			reportSignals{SelfReported: true, SelfReportAt: "2026-07-29T12:00:00Z"},
+			true, reportKindAnswerReady, "", false},
+		{"自己申告の早呼びは busy 証拠に止められる",
+			with(func(s *reportSignals) {
+				s.MarkerState, s.SelfReported = "working", true
+			}), false, "", "", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

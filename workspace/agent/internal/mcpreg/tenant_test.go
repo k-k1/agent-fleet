@@ -80,7 +80,7 @@ func TestFetchTenantWritesCacheAndDetectsChange(t *testing.T) {
 	if !res.Changed || res.Servers != 1 {
 		t.Fatalf("初回取得が変更として扱われていない: %+v", res)
 	}
-	if reg, err := Load(); err != nil || len(reg.Servers) != 1 || reg.Servers[0].Origin != OriginTenant {
+	if reg, err := Load(); err != nil || len(dropAF(reg.Servers)) != 1 || dropAF(reg.Servers)[0].Origin != OriginTenant {
 		t.Fatalf("キャッシュがレジストリに現れない: %+v %v", reg, err)
 	}
 
@@ -114,8 +114,8 @@ func TestFetchTenantKeepsCacheWhenCPFails(t *testing.T) {
 	if _, err := FetchTenant(); err == nil {
 		t.Fatal("到達不能な CP がエラーにならない")
 	}
-	if reg, _ := Load(); len(reg.Servers) != 1 {
-		t.Fatalf("失敗した取得がキャッシュを消した: %+v", reg.Servers)
+	if reg, _ := Load(); len(dropAF(reg.Servers)) != 1 {
+		t.Fatalf("失敗した取得がキャッシュを消した: %+v", dropAF(reg.Servers))
 	}
 }
 
@@ -161,8 +161,8 @@ func TestUserSecretIsHeldBackUntilFilled(t *testing.T) {
 	if Ready(got) {
 		t.Fatal("値未入力の user_secret 定義が Ready になっている")
 	}
-	if defs, _ := ForSession("claude"); len(defs) != 0 {
-		t.Fatalf("値未入力なのに materialize 対象になっている: %+v", defs)
+	if defs, _ := ForSession("claude"); len(dropAF(defs)) != 0 {
+		t.Fatalf("値未入力なのに materialize 対象になっている: %+v", dropAF(defs))
 	}
 
 	if err := SetTenantSecrets(d.ID, map[string]string{"Authorization": "Bearer mine"}); err != nil {
@@ -175,8 +175,8 @@ func TestUserSecretIsHeldBackUntilFilled(t *testing.T) {
 	if got.Headers["Authorization"] != "Bearer mine" || !Ready(got) {
 		t.Fatalf("メンバーの値が合成されていない: %+v", got.Headers)
 	}
-	if defs, _ := ForSession("claude"); len(defs) != 1 {
-		t.Fatalf("値入力後に materialize 対象にならない: %+v", defs)
+	if defs, _ := ForSession("claude"); len(dropAF(defs)) != 1 {
+		t.Fatalf("値入力後に materialize 対象にならない: %+v", dropAF(defs))
 	}
 
 	// マスク往復: Console は保存済みを *** で送り返す。

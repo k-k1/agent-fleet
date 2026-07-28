@@ -383,7 +383,11 @@ function ServerRow({
         defaultReason={tr("mcp.egress_reason_for", { name: s.name })}
         onProposed={onProposed}
       />
-      {s.origin === "builtin" && <p className="ps-note">{tr("mcp.builtin_note")}</p>}
+      {/* 組み込みの "af" は接続情報を持たない（自己申告ファストパスのセッション側サーバー・
+          docs/51 Phase 3）ので、運用連携と同じ「接続で設定してください」を出すと嘘になる。 */}
+      {s.origin === "builtin" && (
+        <p className="ps-note">{tr(s.id === "af" ? "mcp.builtin_af_note" : "mcp.builtin_note")}</p>
+      )}
       {s.origin === "tenant" && (
         <p className="ps-note">{s.userSecret ? tr("mcp.tenant_user_secret_note") : tr("mcp.tenant_note")}</p>
       )}

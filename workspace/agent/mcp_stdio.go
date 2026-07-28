@@ -69,13 +69,24 @@ var mcpWriteEnabled bool
 // link is tool-side plumbing, never something the model has to remember.
 var mcpConvID string
 
+// mcpSelfReportOnly serves the SESSION-side server (docs/51 Phase 3 §自己申告
+// ファストパス): the same stdio loop, but advertising exactly one tool — af_report.
+// このモードは builtin「af」として全 kind のセッション設定へ materialize される
+// （mcpreg/builtin.go）ので、広告するツール集合そのものがスコープの境界になる。
+// 観測・操縦のツールは1つも出さない: セッションは自分の完了を申告するだけでよく、
+// フリートを読ませる理由が無い。
+var mcpSelfReportOnly bool
+
 // runMCPStdio is the `workspace-agent mcp-stdio` subcommand: a blocking stdio loop.
-// Pass --write to additionally expose the write tools (docs/19 Q2 af_write opt-in).
+// Pass --write to additionally expose the write tools (docs/19 Q2 af_write opt-in),
+// or --self-report for the session-side single-tool server (docs/51 Phase 3).
 func runMCPStdio(args []string) {
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--write":
 			mcpWriteEnabled = true
+		case "--self-report":
+			mcpSelfReportOnly = true
 		case "--conv":
 			if i+1 < len(args) {
 				i++
@@ -255,10 +266,38 @@ func mcpStdioDiscoverResult() map[string]any {
 // mcpStdioToolList is the advertised tool set: the read-only tools always, plus the
 // write tools when the server was started with --write (docs/19 Q2 af_write opt-in).
 func mcpStdioToolList() []map[string]any {
+	if mcpSelfReportOnly {
+		return mcpStdioSelfReportTools
+	}
 	if mcpWriteEnabled {
 		return append(append([]map[string]any{}, mcpStdioTools...), mcpStdioWriteTools...)
 	}
 	return mcpStdioTools
+}
+
+// mcpStdioSelfReportTools — the SESSION-side tool set (docs/51 Phase 3): 自分が受けた
+// 指示の完了を1回申告するだけ。報告本文はサーバが組み立てるので、モデルが渡すのは
+// 「どのセッションか」だけ（ADR 0035 決定5: 申告はタイミング信号のみ）。
+var mcpStdioSelfReportTools = []map[string]any{
+	{
+		"name": "af_report",
+		"description": "Agent Fleet: 依頼された指示をやり切ったことを1回だけ申告する。" +
+			"プロンプトに [agent-fleet] の注記が付いた指示を完了し、これ以上やることが残っていない時点で呼ぶ。" +
+			"呼ばなくても完了は別途検出されるので、迷ったら呼ばなくてよい。" +
+			"質問・承認待ちで止まる場合や、まだ作業が続く場合は呼ばないこと（早い申告は無視される）。" +
+			"報告の本文はサーバが作るので、渡すのは自分のセッション名だけでよい。" +
+			" / Report ONCE that the instruction you were given is fully done. Do not call it if work remains.",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"session": map[string]any{
+					"type":        "string",
+					"description": "自分のセッション名（指示の [agent-fleet] 注記に書かれている値をそのまま渡す）",
+				},
+			},
+			"required": []string{"session"},
+		},
+	},
 }
 
 // mcpStdioTools — read-only Agent Fleet tools (names are prefixed mcp__af__<name> by
@@ -751,6 +790,9 @@ func mcpStdioCall(req mcpReq) []byte {
 		Repo string `json:"repo"`
 		// agent-memory args (docs/39 P4). Rev/At pick the snapshot; All/Kinds/Projects
 		// are the restore scope. Limit/Path narrow the read tools.
+		// af_report（docs/51 Phase 3）: 申告元のセッション名。Name と別にするのは、
+		// このツールが「観測対象を指す name」ではなく「自分は誰か」を運ぶから。
+		Session  string   `json:"session"`
 		Rev      string   `json:"rev"`
 		At       string   `json:"at"`
 		Path     string   `json:"path"`
@@ -766,6 +808,24 @@ func mcpStdioCall(req mcpReq) []byte {
 	// (available to af_read too); the mutating ones require --write. The tool args match
 	// the CP wire shape, so p.Args is forwarded as the request body verbatim.
 	switch p.Name {
+	case "af_report":
+		// 自己申告ファストパス（docs/51 Phase 3）。--self-report で起動したセッション側の
+		// サーバー専用 — アシスタントの af_read/af_write はこのツールを広告しないので、
+		// 広告していない経路から呼ばれたら断る（広告集合がスコープの境界・docs/19 Q2 と
+		// 同じ作法）。
+		if !mcpSelfReportOnly {
+			return mcpToolErr(req.ID, "af_report はセッション側の Agent Fleet サーバー専用です")
+		}
+		if !session.ValidName(a.Session) {
+			return mcpToolErr(req.ID, "session（自分のセッション名）が必要です")
+		}
+		body, _ := json.Marshal(map[string]string{"name": a.Session, "kind": reportKindSelfReport})
+		if _, err := agentPOST("/chat/report", body); err != nil {
+			return mcpToolErr(req.ID, "完了の申告に失敗しました: "+err.Error())
+		}
+		// 申告は「早める」だけで、報告そのものはサーバが判定して配る。ここでモデルに
+		// 「報告した」と言うと、呼び忘れ・早呼びの回復（リコンサイラ）が見えなくなる。
+		return mcpTextResult(req.ID, "完了を申告しました（報告は Agent Fleet 側が状態を確認して配信します）。")
 	case "get_agent_usage":
 		// Read-only merge of the two WsBar usage endpoints (5h/weekly windows captured
 		// locally from statusline / rollout — no network call). opencode has no usage

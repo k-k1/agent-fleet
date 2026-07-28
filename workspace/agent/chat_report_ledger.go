@@ -265,10 +265,10 @@ func markInstrInterim(name, kind string, at time.Time) {
 const instrReopenMax = 2
 
 // reopenInstrRow re-opens a reported row so the real completion gets another report
-// （docs/51 §補償 — 誤「完了」の自己修復）。**Phase 2 が持つのは状態機械のこの遷移
-// だけ**で、遷移を引く検出（reported 行の grace 監視中に busy 証拠が復活したか）と
-// 訂正 notice は Phase 3。v1 の「誤消費＝回復不能」を崩す出口が台帳側に開いていること
-// が要点で、ここが無いと Phase 3 は台帳のスキーマ変更から始めることになる。
+// （docs/51 §補償 — 誤「完了」の自己修復）。遷移を引く検出（reported 行の grace 監視中に
+// busy 証拠が復活したか）と訂正の配送は reportReconciler.compensate（Phase 3）にあり、
+// ここは台帳側の遷移だけを持つ。**訂正を配送してから**呼ぶこと: 逆順にすると、訂正が
+// 配送できなかったときに「黙って開き直しただけ」になり、v1 の消失と同じ見え方になる。
 func reopenInstrRow(name, id string) bool {
 	unlock := lockInstr(name)
 	defer unlock()
@@ -311,11 +311,19 @@ func cancelInstructions(name string) int {
 // instrPendingSessions lists the sessions with at least one open row — リコンサイラの
 // sweep 対象。定常コストは台帳ディレクトリの readdir 1回＋小さな read だけ。
 func instrPendingSessions() []string {
+	open, _ := instrSweepSessions(time.Now())
+	return open
+}
+
+// instrSweepSessions splits the ledger directory into the reconciler's two work sets in
+// ONE readdir + read pass: 完了を待っている（open 行あり）セッションと、誤「完了」の
+// 監視中（grace 内の reported 行あり）セッション（docs/51 §補償）。両方に載ることは
+// 普通にある — 1件が報告済みでもう1件が pending、という状態がそれ。
+func instrSweepSessions(now time.Time) (open, grace []string) {
 	ents, err := os.ReadDir(instrLedgers.Dir())
 	if err != nil {
-		return nil
+		return nil, nil
 	}
-	var out []string
 	for _, e := range ents {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
@@ -324,11 +332,18 @@ func instrPendingSessions() []string {
 		if !session.ValidName(name) {
 			continue
 		}
-		if sessionReportPending(name) {
-			out = append(out, name)
+		rows := readInstrRows(name)
+		for _, r := range rows {
+			if r.open() && r.Conv != "" {
+				open = append(open, name)
+				break
+			}
+		}
+		if len(instrReopenCandidates(rows, now, reportReopenGrace)) > 0 {
+			grace = append(grace, name)
 		}
 	}
-	return out
+	return open, grace
 }
 
 // --- 行集合のユーティリティ（リコンサイラ / シンクが使う） ------------------------
@@ -353,10 +368,25 @@ func instrDeliveryKey(r instrRow) string {
 	return r.ID + "#" + strconv.Itoa(r.ReopenCount)
 }
 
-func instrKeys(rows []instrRow) []string {
+// instrReopenKeySuffix namespaces the COMPENSATION notice's idempotency key away from
+// the completion report's (docs/51 §補償 / Phase 3)。訂正は「その世代の完了報告」に
+// 1対1で対応するので、鍵は同じ行ID＋同じ世代の別名前空間にする。行IDだけを共有すると
+// 訂正が「配送済み」の完了報告と衝突し、逆に世代を1つ進めた鍵にすると、次の本完了
+// （reopen 後の世代）の報告を握り潰す。
+const instrReopenKeySuffix = "~reopen"
+
+// instrDeliveryKeyFor is the row's idempotency key for a report of the given kind.
+func instrDeliveryKeyFor(kind string, r instrRow) string {
+	if kind == reportKindReopened {
+		return instrDeliveryKey(r) + instrReopenKeySuffix
+	}
+	return instrDeliveryKey(r)
+}
+
+func instrKeysFor(kind string, rows []instrRow) []string {
 	out := make([]string, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, instrDeliveryKey(r))
+		out = append(out, instrDeliveryKeyFor(kind, r))
 	}
 	return out
 }
@@ -401,9 +431,11 @@ func instrRowsCoveredBy(rows []instrRow, at string) []instrRow {
 	return out
 }
 
-// undeliveredInstrRows filters out the rows whose report already exists in the
-// conversation（配送の冪等化 — 呼び出し側は会話ロックを保持していること）。
-func undeliveredInstrRows(c *chatConversation, rows []instrRow) []instrRow {
+// undeliveredInstrRows filters out the rows whose report of THIS kind already exists in
+// the conversation（配送の冪等化 — 呼び出し側は会話ロックを保持していること）。kind を
+// 取るのは補償の訂正（docs/51 §補償）のため: 訂正と完了報告は同じ行・同じ世代を指すが
+// 別々の1通なので、鍵の名前空間を分けないと片方がもう片方を握り潰す。
+func undeliveredInstrRows(c *chatConversation, rows []instrRow, kind string) []instrRow {
 	if len(rows) == 0 {
 		return rows
 	}
@@ -418,9 +450,68 @@ func undeliveredInstrRows(c *chatConversation, rows []instrRow) []instrRow {
 	}
 	var out []instrRow
 	for _, r := range rows {
-		if !done[instrDeliveryKey(r)] {
+		if !done[instrDeliveryKeyFor(kind, r)] {
 			out = append(out, r)
 		}
+	}
+	return out
+}
+
+// reportedInstrTS finds when the conversation actually carried these rows' completion
+// report (unix millis, 0 when not found). **台帳の ReportedAt を使わない**のがこの関数
+// の存在理由: 補償は行を reopen した瞬間に ReportedAt を消す（reopenInstrRow）ので、
+// 「訂正の対象はいつの報告か」を台帳から読むと、訂正が再試行された second pass や
+// 2回目の補償で参照先が消えている。会話メッセージは訂正の対象そのものなので、そこから
+// 取れば世代がずれない。
+func reportedInstrTS(c *chatConversation, rows []instrRow) int64 {
+	want := map[string]bool{}
+	for _, r := range rows {
+		want[instrDeliveryKey(r)] = true
+	}
+	var ts int64
+	for i := range c.Messages {
+		if c.Messages[i].Role != "report" {
+			continue
+		}
+		for _, k := range c.Messages[i].Instr {
+			if want[k] && (ts == 0 || c.Messages[i].TS < ts) {
+				ts = c.Messages[i].TS
+			}
+		}
+	}
+	return ts
+}
+
+// instrReopenCandidates returns the reported rows still inside the compensation grace
+// window (docs/51 §補償: reported 行を grace 期間監視する)。純関数なので、grace の境界と
+// 「新指示があれば補償しない」規則をテーブルで固定できる。
+//
+// 「**新しい指示行が無いまま**」の実装がここ: セッションが再び busy になった理由が
+// 「その報告より後に投入された指示」で説明できるなら、それは誤報告ではなく次の仕事なので
+// 補償の対象から外す（外さないと、キュー投入のたびに直前の正しい報告を訂正してしまう）。
+func instrReopenCandidates(rows []instrRow, now time.Time, grace time.Duration) []instrRow {
+	newest := ""
+	for _, r := range rows {
+		if r.DeliveredAt > newest {
+			newest = r.DeliveredAt
+		}
+	}
+	var out []instrRow
+	for _, r := range rows {
+		if r.State != instrReported || r.ReportedAt == "" {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339, r.ReportedAt)
+		if err != nil {
+			continue // 時刻が読めない行は監視できない（grace の始点が無い）
+		}
+		if now.Before(at) || now.Sub(at) > grace {
+			continue
+		}
+		if reportTimeBefore(r.ReportedAt, newest) {
+			continue // 報告のあとに新しい指示が来ている — busy は説明が付く
+		}
+		out = append(out, r)
 	}
 	return out
 }

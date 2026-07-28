@@ -76,6 +76,25 @@ const reportReasonTurnFailed = "turn-failed"
 // which is what 中断時の自動再開 acts on.
 const reportReasonTurnAborted = "turn-aborted"
 
+// reportKindReopened is the COMPENSATION report (docs/51 §補償 / Phase 3): 先に配った
+// 完了報告が早計だったことの訂正。kind を分けるのは、これが「セッションの状態が変わった」
+// 報告ではなく「**こちらの前の報告が間違っていた**」という訂正だから — オペレーターは
+// 利用者へ伝えた完了を取り消す必要があり、そのために本文が違う。冪等キーの名前空間も
+// 完了報告と分かれる（instrDeliveryKeyFor）。
+const reportKindReopened = "reopened"
+
+// reportReasonReopenCapped qualifies the compensation report that gives up: 行あたりの
+// reopen 上限（instrReopenMax）に達した＝判定が振動している。開き直しを続けても同じ
+// 誤報告と訂正を往復するだけなので、その事実を利用者に上げて打ち切る。
+const reportReasonReopenCapped = "reopen-capped"
+
+// reportKindSelfReport is the SELF-REPORT kick (docs/51 §自己申告ファストパス / Phase 3):
+// セッション自身が af_report MCP ツールで完了を申告した。報告 kind ではない（この kind
+// で会話へ何かが書かれることはない）— リコンサイラへのヒント兼 idle 証拠として運ばれる
+// だけで、報告本文は従来どおりサーバが生成する（fact-only。prompt injection 面を
+// 増やさない — ADR 0035 決定5）。
+const reportKindSelfReport = "self-report"
+
 // maxAutoResumeAttempts caps the CONSECUTIVE auto-resumes for one session. A session
 // that keeps getting cut off is not a transient hiccup any more — past the cap the
 // report stops asking for a resume and escalates to the user instead. The counter is
@@ -232,6 +251,19 @@ func reportHeadFor(kind, reason string, resumeAttempts int) string {
 			"利用者の意向（承認／修正フィードバック／別セッションでのレビュー）を確認し、" +
 			"承認は respond_session_plan(approve)、修正は respond_session_plan(reject, feedback=修正指示)。" +
 			"Console からも操作できます。これは途中経過の報告で、指示の完了報告は別途届きます。"
+	case reportKindReopened:
+		// 補償（docs/51 §補償）。オペレーターは既に「完了した」と利用者へ伝えている
+		// 可能性が高いので、まず取り消しを求め、次の完了報告を待つよう指示する。
+		if reason == reportReasonReopenCapped {
+			return "先の完了報告は早計でしたが、完了判定が繰り返し揺れています" +
+				"（訂正の上限 " + strconv.Itoa(instrReopenMax) + " 回に達したため、これ以上の自動訂正は行いません）。" +
+				"この指示については自動の完了報告を待たず、get_session_status / get_session_output で現在の状態を確認したうえで、" +
+				"判定が安定しない事実とセッションの現況を利用者に伝えてください。"
+		}
+		return "先の完了報告は早計でした — セッションはその後も作業を続けています。" +
+			"利用者に完了を伝えていた場合は取り消して、まだ作業中であることを伝えてください。" +
+			"追加の指示は送らず、この指示の完了報告が改めて届くのを待ってください" +
+			"（状況を確認したいときは get_session_status / get_session_output を使ってください）。"
 	case "permission-request":
 		return "ツール実行の許可待ちで停止しています。許可は Console から行う必要があります。"
 	case "exit":
@@ -258,6 +290,18 @@ func reportHeadFor(kind, reason string, resumeAttempts int) string {
 func buildReportContent(display, name, kind, reason string, resumeAttempts int) string {
 	return "セッション「" + display + "」(" + name + ") からの報告: " +
 		reportHeadFor(kind, reason, resumeAttempts)
+}
+
+// reopenTargetNote names WHICH report the compensation corrects. 時刻は会話の報告
+// メッセージから取る（reportedInstrTS）: 台帳の ReportedAt は reopen で消えるので、
+// 訂正が再試行されたときや2回目の補償で参照先が無くなる。会話側は訂正の対象そのものなので
+// 消えようがない。読めなければ黙って省く — 訂正が出ないより時刻が欠ける方が軽い。
+func reopenTargetNote(c *chatConversation, rows []instrRow) string {
+	ts := reportedInstrTS(c, rows)
+	if ts == 0 {
+		return ""
+	}
+	return "（訂正の対象: " + time.UnixMilli(ts).Format("2006-01-02 15:04") + " の完了報告）"
 }
 
 // undeliveredReports returns the report messages not yet fed into the provider's
@@ -378,6 +422,14 @@ func handleChatReport(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"reported": false})
 		return
 	}
+	// 自己申告（docs/51 §ファストパス）。ヒントと同じ seam に乗せる — 申告は「今すぐ
+	// 見に行け」＋「セッション自身は終わったと言っている」という証拠を1つ足すだけで、
+	// 報告するかどうかはリコンサイラの述語が決める（早呼びは busy 証拠に止められる）。
+	if body.Kind == reportKindSelfReport {
+		reportRec.selfReport(body.Name, time.Now())
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"reported": false, "accepted": true})
+		return
+	}
 	// Interim question / plan-approval reports (docs/30): delivered WITHOUT closing the
 	// rows — the one-shot still belongs to the instruction's completion (answer-ready /
 	// exit). The operator relays to the user (or, in 自動走行, answers / drives the
@@ -426,9 +478,9 @@ func recordSessionReport(name, convID, kind, reason string, rows []instrRow) rep
 
 	// 自動再開のカウンタ（docs/47）。中断報告そのものがオペレーターへの「再開しろ」の
 	// 指示なので、その配信を 1 回と数える — 上限に達した報告は自分で escalation 文言に
-	// 切り替わる。正常完了はカウンタを畳んで、回復したセッションが次の中断でまた満額の
-	// 再試行枠を持てるようにする。**永続化は追記が成功してから**（再試行で二重に
-	// 数えると、配送されていない中断で上限に達してしまう）。本文には配信後の値を使う。
+	// 切り替わる。本文にはこの報告を配ったあとの値を使うが、**永続化はここではやらない**:
+	// 数える単位はセッションの中断イベント1回で、同じ静穏を複数の会話へ配る配送の回数
+	// ではないから（永続化は reportReconciler.evaluate が会話ループの外で1回だけ行う）。
 	attempts := autoResumeAttempts(name)
 	if kind == reportKindAnswerReady && reason == reportReasonTurnAborted {
 		attempts++
@@ -440,15 +492,22 @@ func recordSessionReport(name, convID, kind, reason string, rows []instrRow) rep
 		unlock()
 		return reportSinkDrop // conversation deleted since the instruction — drop it
 	}
-	fresh := undeliveredInstrRows(c, rows)
+	fresh := undeliveredInstrRows(c, rows, kind)
 	if len(rows) > 0 && len(fresh) == 0 {
 		unlock()
 		return reportSinkOK // 既に配送済みの行だけ — 二重投稿せず台帳だけ進める
 	}
+	content := buildReportContent(display, name, kind, reason, attempts)
+	if kind == reportKindReopened {
+		// 訂正の対象がどの報告かは、**会話メッセージ**から引く（reportedInstrTS）。
+		content += reopenTargetNote(c, fresh)
+	} else {
+		content += instrFoldNote(fresh)
+	}
 	c.Messages = append(c.Messages, chatMessage{
 		Role:    "report",
-		Content: buildReportContent(display, name, kind, reason, attempts) + instrFoldNote(fresh),
-		Session: name, Instr: instrKeys(fresh), TS: nowMs(),
+		Content: content,
+		Session: name, Instr: instrKeysFor(kind, fresh), TS: nowMs(),
 	})
 	c.UpdatedAt = nowMs()
 	if err := saveConv(c); err != nil {
@@ -458,15 +517,6 @@ func recordSessionReport(name, convID, kind, reason string, rows []instrRow) rep
 	}
 	title = c.Title
 	unlock()
-
-	if kind == reportKindAnswerReady {
-		switch reason {
-		case reportReasonTurnAborted:
-			bumpAutoResume(name)
-		case "":
-			resetAutoResume(name)
-		}
-	}
 
 	ev := notice.New("session-report", name, sessKind, display)
 	ev.Payload["conversation_id"] = convID
