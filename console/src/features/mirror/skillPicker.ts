@@ -1,24 +1,25 @@
 // スキルピッカーの純ロジック（docs/50 / ADR0034）。DOM もストアも触らない —
-// MirrorView が「/」トリガ判定・絞り込み・差し込みをここへ委譲する。
-// claude のスラッシュ起動は「入力の先頭」でだけ成立するので、トリガも先頭の
-// 1 トークン内にキャレットがある間だけ生きる（空白を打って引数に入ったら閉じる）。
+// MirrorView がトリガ判定・絞り込み・差し込みをここへ委譲する。
+// トリガ文字は kind 依存（claude/opencode/cursor は "/"、codex は "$" メンション —
+// registry の skillTrigger）。起動は「入力の先頭」でだけ成立するとみなし、トリガも
+// 先頭の 1 トークン内にキャレットがある間だけ生きる（空白を打って引数に入ったら閉じる）。
 
 import type { SessionSkill } from "../../core/api/client.ts";
 
 export interface SlashToken {
-  token: string; // 先頭 "/" を除いた入力中の断片（"" = "/" 直後）
-  start: number; // 常に 0（先頭スラッシュ）— 差し込み置換の左端
+  token: string; // トリガ文字を除いた入力中の断片（"" = トリガ直後）
+  start: number; // 常に 0（先頭トリガ）— 差し込み置換の左端
   end: number; // 置換の右端（最初の空白 or 文末）
 }
 
-// slashTokenAt: draft とキャレット位置から「補完対象のスラッシュトークン」を返す。
-// 対象外（先頭が "/" でない・キャレットがトークン外・改行を含む複数行の途中）は null。
-export function slashTokenAt(text: string, caret: number): SlashToken | null {
-  if (!text.startsWith("/")) return null;
+// slashTokenAt: draft とキャレット位置から「補完対象のトークン」を返す。
+// 対象外（先頭がトリガでない・キャレットがトークン外）は null。
+export function slashTokenAt(text: string, caret: number, trigger = "/"): SlashToken | null {
+  if (!trigger || !text.startsWith(trigger)) return null;
   const ws = text.search(/[\s]/); // 最初の空白（改行含む）でトークン終了
   const end = ws < 0 ? text.length : ws;
-  if (caret < 1 || caret > end) return null;
-  return { token: text.slice(1, end), start: 0, end };
+  if (caret < trigger.length || caret > end) return null;
+  return { token: text.slice(trigger.length, end), start: 0, end };
 }
 
 // filterSkills: 前方一致 > 名前部分一致 > 説明部分一致の順で並べる。大文字小文字は
@@ -40,22 +41,23 @@ export function filterSkills(skills: SessionSkill[], query: string): SessionSkil
     .map((x) => x.s);
 }
 
-// applySkillToDraft: 選択したスキルを draft へ差し込み、新しい draft とキャレット
-// 位置を返す。スラッシュ起動は先頭でだけ意味を持つので、常に「/name ＋既存の本文
-// （引数として残す）」に組み立てる。入力中の "/tok" は置換して消える。
+// applySkillToDraft: 選択したスキルの起動文字列（invoke — 末尾空白込み。"/name " や
+// "$name "）を draft へ差し込み、新しい draft とキャレット位置を返す。起動は先頭で
+// だけ意味を持つので、常に「invoke ＋既存の本文（引数として残す）」に組み立てる。
+// 入力中のトークンは置換して消える。
 export function applySkillToDraft(
   draft: string,
   caret: number,
-  name: string,
+  invoke: string,
+  trigger = "/",
 ): { next: string; caret: number } {
-  const inserted = "/" + name + " ";
-  const tok = slashTokenAt(draft, caret);
+  const tok = slashTokenAt(draft, caret, trigger);
   // トークンが生きていればその右側（既に書いた引数）を、そうでなければ（ボタン
-  // 起点）スラッシュで始まらない下書き全体を引数位置へ残す。
+  // 起点）トリガで始まらない下書き全体を引数位置へ残す。
   const tail = tok
     ? draft.slice(tok.end).trimStart()
-    : draft.startsWith("/")
+    : trigger && draft.startsWith(trigger)
       ? ""
       : draft.trimStart();
-  return { next: inserted + tail, caret: inserted.length };
+  return { next: invoke + tail, caret: invoke.length };
 }

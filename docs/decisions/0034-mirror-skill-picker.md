@@ -53,9 +53,34 @@ ACP `available_commands` を同じ形で返せる）。キャッシュ無し（�
 - **agent 側 TTL キャッシュ**: 走査コストが小さく、鮮度（セッション中の SKILL.md
   追加）の方が価値が高い。
 
+## 追記（同日 v2）: クロスエージェント化
+
+利用者要望「Claude 以外でも使いたい」を受け、codex / opencode / cursor を追加した。
+全ソース・起動形をライブ実測してから実装（docs/50 §7 が根拠）。
+
+### 4. 起動文字列は API が `invoke` として返す（UI は kind を知らない）
+
+起動形が kind で割れた（claude/opencode/cursor `/name`・codex は `$name` メンション）。
+UI に kind 分岐を持ち込まず、Agent が `invoke`（差し込む文字列そのもの）を返す契約に
+した。タイプで開くトリガ文字だけ registry（`skillTrigger`）に持つ。
+
+### 5. cursor は CLI 広告リストが正（FS 走査ではなく）
+
+ACP `available_commands_update` が builtin スキル＋global＋project の完全な一覧を
+流してくる（実測）。driver の onNotify（従来読み捨て）から in-memory ストア
+（`agents.PublishCommands`）へ publish し handler が読む。**GET から driver を
+Resume しない**（runtime を起こす副作用が出る）— 未着時は project FS へフォールバック。
+
+### 6. 未検証の経路・kind は立てない
+
+- opencode の managed（server API）経由 /command 発火は未検証 → `slashSkillsManaged:
+  false` でミラー側をゲート（TUI セッションのみ表示）。
+- kiro は広告の `prompts`（ユーザー定義）が実データ 0 件で形未検証、組み込みだけでは
+  雑音 → 見送り。copilot / agy は機構自体が未確認/suspect → 見送り。
+
 ## 残る非対称（既知・本 ADR の範囲外）
 
 - managed 経路はスラッシュでも `markSessionWorking` する（tui のガードの managed 版が
   無い）— 既存の非対称。直すなら別タスク。
-- cursor / kiro は CLI が ACP でスキル一覧を流してくるのに読み捨てている。API 契約は
-  受け皿になるよう設計済みだが配線は積み残し（docs/50 §6）。
+- kiro の広告リスト（`_kiro.dev/commands/available`）は引き続き読み捨て。取り込みは
+  cursor と同じ publish 経路に流すだけ（docs/50 §7.4）。

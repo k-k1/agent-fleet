@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -57,10 +58,109 @@ func TestScanSlashSkills(t *testing.T) {
 			t.Errorf("argument-hint not parsed: %#v", sk)
 		}
 	}
-	// ソート済み（name 昇順）であること
+	// ソート済み（name 昇順）・invoke はスラッシュ形であること
 	for i := 1; i < len(got); i++ {
 		if got[i-1].Name > got[i].Name {
 			t.Errorf("not sorted: %s > %s", got[i-1].Name, got[i].Name)
+		}
+	}
+	for _, sk := range got {
+		if sk.Invoke != "/"+sk.Name+" " {
+			t.Errorf("invoke = %q for %s", sk.Invoke, sk.Name)
+		}
+	}
+}
+
+// codex: SKILL.md 規約は claude 互換だが起動は "$name" メンション。同梱 .system は
+// source "cli"、project .codex/skills > user $CODEX_HOME/skills の先勝ち。
+func TestCodexSkills(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	writeFile(t, filepath.Join(dir, ".codex", "skills", "deploy", "SKILL.md"),
+		"---\nname: deploy\ndescription: project 側\n---\nbody")
+	writeFile(t, filepath.Join(home, "skills", "deploy", "SKILL.md"),
+		"---\nname: deploy\ndescription: user 側（負けるべき）\n---\nbody")
+	writeFile(t, filepath.Join(home, "skills", "research", "SKILL.md"),
+		"---\nname: research\ndescription: user スキル\n---\nbody")
+	writeFile(t, filepath.Join(home, "skills", ".system", "imagegen", "SKILL.md"),
+		"---\nname: imagegen\ndescription: 同梱\n---\nbody")
+
+	got := codexSkills(dir)
+	byName := map[string]sessionSkill{}
+	for _, sk := range got {
+		byName[sk.Name] = sk
+	}
+	if len(got) != 3 {
+		t.Fatalf("want 3, got %d: %#v", len(got), got)
+	}
+	if sk := byName["deploy"]; sk.Source != "project" || sk.Invoke != "$deploy " {
+		t.Errorf("deploy = %#v", sk)
+	}
+	if sk := byName["research"]; sk.Source != "user" || sk.Invoke != "$research " {
+		t.Errorf("research = %#v", sk)
+	}
+	if sk := byName["imagegen"]; sk.Source != "cli" {
+		t.Errorf("imagegen = %#v", sk)
+	}
+}
+
+// opencode: command md（単複両ディレクトリ名）を project > user で列挙。
+func TestOpencodeSkills(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeFile(t, filepath.Join(dir, ".opencode", "command", "deploy.md"),
+		"---\ndescription: デプロイ\n---\nDeploy it.")
+	writeFile(t, filepath.Join(dir, ".opencode", "commands", "lint.md"), "Lint it.")
+	writeFile(t, filepath.Join(home, ".config", "opencode", "command", "deploy.md"),
+		"---\ndescription: user 側（負けるべき）\n---\nbody")
+	writeFile(t, filepath.Join(home, ".config", "opencode", "command", "share.md"),
+		"---\ndescription: 共有\n---\nbody")
+
+	got := opencodeSkills(dir)
+	byName := map[string]sessionSkill{}
+	for _, sk := range got {
+		byName[sk.Name] = sk
+	}
+	if len(got) != 3 {
+		t.Fatalf("want 3, got %d: %#v", len(got), got)
+	}
+	if sk := byName["deploy"]; sk.Source != "project" || sk.Description != "デプロイ" || sk.Invoke != "/deploy " {
+		t.Errorf("deploy = %#v", sk)
+	}
+	if sk := byName["share"]; sk.Source != "user" {
+		t.Errorf("share = %#v", sk)
+	}
+}
+
+// cursor: ACP 広告リストが最優先（builtin+global+project 全部入り）、無ければ
+// project の .cursor/commands + .cursor/skills へフォールバック。
+func TestCursorSkills(t *testing.T) {
+	dir := t.TempDir()
+	meta := session.Meta{Name: "sk_cursor_scan", Dir: dir, Kind: session.KindCursor}
+	writeFile(t, filepath.Join(dir, ".cursor", "commands", "probe.md"), "Say probe-ok.")
+	writeFile(t, filepath.Join(dir, ".cursor", "skills", "helper", "SKILL.md"),
+		"---\nname: helper\ndescription: 補助\n---\nbody")
+
+	// 広告リスト未着 → FS フォールバック
+	got := cursorSkills(meta)
+	if len(got) != 2 || got[0].Name != "helper" || got[1].Name != "probe" {
+		t.Fatalf("fallback = %#v", got)
+	}
+
+	// 広告リスト到着後はそちらが正（先頭スラッシュは publish 側で剥がされている前提の素の名前）
+	agents.PublishCommands(meta.Name, []agents.AdvertisedCommand{
+		{Name: "simplify", Description: "Find cleanups (global)"},
+		{Name: "probe", Description: "AF probe (project)"},
+	})
+	got = cursorSkills(meta)
+	if len(got) != 2 {
+		t.Fatalf("advertised = %#v", got)
+	}
+	for _, sk := range got {
+		if sk.Source != "cli" || sk.Invoke != "/"+sk.Name+" " {
+			t.Errorf("advertised entry = %#v", sk)
 		}
 	}
 }
@@ -94,7 +194,10 @@ func TestHandleSessionSkills(t *testing.T) {
 		t.Fatalf("skills = %#v", resp.Skills)
 	}
 
-	// claude 以外の kind → エラーでなく空（前方互換な契約）
+	// codex セッション → $CODEX_HOME/skills を "$name" 起動で返す（v2）
+	t.Setenv("CODEX_HOME", t.TempDir())
+	writeFile(t, filepath.Join(dir, ".codex", "skills", "probe", "SKILL.md"),
+		"---\nname: probe\ndescription: 検証\n---\nbody")
 	session.WriteMeta(session.Meta{Name: "sk_codex", Dir: dir, Kind: session.KindCodex})
 	rec = get("sk_codex")
 	if rec.Code != http.StatusOK {
@@ -103,8 +206,21 @@ func TestHandleSessionSkills(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
+	if len(resp.Skills) != 1 || resp.Skills[0].Invoke != "$probe " {
+		t.Fatalf("codex skills = %#v", resp.Skills)
+	}
+
+	// 未対応 kind（shell）→ エラーでなく空（前方互換な契約）
+	session.WriteMeta(session.Meta{Name: "sk_shell", Dir: dir, Kind: session.KindShell})
+	rec = get("sk_shell")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("shell status = %d", rec.Code)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
 	if len(resp.Skills) != 0 {
-		t.Fatalf("codex skills should be empty: %#v", resp.Skills)
+		t.Fatalf("shell skills should be empty: %#v", resp.Skills)
 	}
 
 	// 未知セッション → 404
