@@ -275,3 +275,8 @@ hook / record-exit は独立プロセスなので、会話ファイルへの直�
   （オペレーターが get_session_output で確認する前提）。
 - 将来: Meta への起動元（LaunchedBy）記録、managed daemon 異常死の報告、報告のバッチング。
   （managed 報告への本文抜粋は不採用で確定 — 逆に TUI を managed のシンプルな形に揃えた。）
+- **後継設計（2026-07-28）**: 本機構の「エッジ駆動＋1bit arm」構造は sqmconc 事故を機に
+  見直し、指示台帳＋レベル駆動リコンサイラへ置き換える v2 を設計した —
+  [docs/51](51-session-report-v2-ledger.md) / [ADR 0035](decisions/0035-session-report-v2-ledger.md)。
+  上記の BG 保留 waiter・managed daemon 異常死非報告・キュー済みプロンプトのずれは
+  v2 の移行 Phase で解消される。
