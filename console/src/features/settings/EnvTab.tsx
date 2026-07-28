@@ -226,6 +226,20 @@ function ToolVersions({ running }: { running: boolean }) {
                       override
                     </span>
                   )}
+                  {/* lean（焼き込み無し）でのピンずれは実効列に出す（override バッジは
+                      焼き込みがある時専用になった）。cursor はピンが sha 接尾辞付き
+                      （2026.07.23-e383d2b）で実効版は日付部だけなので、前方一致は
+                      ずれ扱いにしない。 */}
+                  {!t.baked &&
+                    t.pin &&
+                    t.effective &&
+                    t.effective.version &&
+                    t.effective.version !== t.pin &&
+                    !t.pin.startsWith(t.effective.version) && (
+                      <span className="tool-ver-pin" title={tr("env.pin_title")}>
+                        {tr("env.pin_label", { pin: t.pin })}
+                      </span>
+                    )}
                 </td>
                 {/* ピンは versions.json 由来なので焼き込み実体が無くても出せる。lean
                     variant（BAKE_AGENT_CLIS=0）は /usr/local に CLI を焼かないので
