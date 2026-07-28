@@ -2876,6 +2876,8 @@ export const en: Record<keyof typeof ja, string> = {
   "view.open_commit": "Open commit {sha}",
   "view.commit_not_found": "Commit not found: {sha}",
   "view.open_session": "Open session {name}",
+  "view.open_conversation": "Open chat {slug}",
+  "view.conversation_not_found": "Conversation not found: {slug}",
 
 
   // === P5 ログイン切れモーダル（AuthExpiredModal） ===

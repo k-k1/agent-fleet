@@ -52,7 +52,10 @@ export function AssistantSection() {
   const toast = useToast();
   const askConfirm = useConfirm();
   const tr = useT(); // docs/28 P3: re-render builtin assistant names/descriptions on locale switch
-  const [convs, setConvs] = useState<ConversationMeta[]>([]);
+  // Conversation metas live in the chat store (not local state) so other surfaces —
+  // the markdown conv-slug linkifier — can resolve slugs without mounting this rail.
+  const convs = useChatStore((s) => s.convs) ?? [];
+  const setConvs = useChatStore((s) => s.setConvs);
   const [assistants, setAssistants] = useState<Assistant[]>([]);
   const [editing, setEditing] = useState<Assistant | null>(null);
   const [creating, setCreating] = useState(false);
@@ -74,7 +77,7 @@ export function AssistantSection() {
     assistantList()
       .then((r) => setAssistants(r.assistants || []))
       .catch(() => {});
-  }, []);
+  }, [setConvs]);
   // 一覧は agent へプロキシされるので、WS 起動直後は不通で {error: http_5xx} が返る（api() は
   // これを例外にせず解決するため上の .catch は拾わない）。この欄は他の左ペイン欄と違ってポーリングが
   // 無く、過渡応答を空と確定すると次の listTick まで「チャットはまだありません」のまま無期限に固着
@@ -209,7 +212,8 @@ export function AssistantSection() {
     }
     // A list refresh can race this mutation. Keep the menu and badge in sync
     // with the value the server just accepted.
-    setConvs((all) => all.map((item) => (item.id === c.id ? { ...item, locked: res?.locked ?? locked } : item)));
+    const all = useChatStore.getState().convs ?? [];
+    setConvs(all.map((item) => (item.id === c.id ? { ...item, locked: res?.locked ?? locked } : item)));
     toast(locked ? tr("asst.locked_on") : tr("asst.locked_off"), { kind: "success" });
     refresh();
   };
