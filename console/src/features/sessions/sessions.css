@@ -497,17 +497,21 @@
 /* 棚（アーカイブ一覧）への導線 — 段階③はここでは扱わない */
 .clean-shelf { display: flex; align-items: center; gap: 8px; padding: 8px 4px; border-top: 1px dashed var(--border); color: var(--muted); font-size: 12px; }
 .clean-shelf-text { flex: 1; }
-.clean-row { display: grid; grid-template-columns: 24px auto auto minmax(90px, auto) 1fr auto; align-items: center; gap: 8px; padding: 6px 4px; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+/* 2行グリッド: 1行目=check/安全/種別/名前/アクション、2行目=状態バッジ＋補足（名前と頭を揃える）。
+   理由文を1行目に押し込むと名前と取り合って見切れるため、全幅の2行目へ逃がす。 */
+.clean-row { display: grid; grid-template-columns: 24px auto auto 1fr auto; align-items: center; column-gap: 8px; row-gap: 2px; padding: 6px 4px; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
 .clean-row.is-keep { opacity: 0.6; }
-.clean-check { display: inline-flex; justify-content: center; }
+.clean-check { display: inline-flex; justify-content: center; grid-row: 1; grid-column: 1; }
 .clean-badge { font-size: 10px; padding: 1px 6px; border-radius: 9px; white-space: nowrap; }
 .clean-badge-safe { color: var(--ok); background: color-mix(in srgb, var(--ok) 16%, transparent); }
 .clean-badge-review { color: var(--warn); background: color-mix(in srgb, var(--warn) 16%, transparent); }
 .clean-badge-keep { color: var(--muted); background: color-mix(in srgb, var(--muted) 14%, transparent); }
-.clean-type { font-size: 11px; color: var(--muted); }
-.clean-target { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.clean-reason { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.clean-act { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.clean-type { font-size: 11px; color: var(--muted); grid-row: 1; }
+.clean-target { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; grid-row: 1; grid-column: 4; }
+.clean-act { color: var(--muted); font-size: 11px; white-space: nowrap; grid-row: 1; grid-column: 5; justify-self: end; }
+.clean-reason { grid-row: 2; grid-column: 2 / -1; display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.clean-reason-badge { flex: none; font-size: 10px; padding: 1px 6px; border-radius: 9px; white-space: nowrap; color: var(--muted); background: color-mix(in srgb, var(--muted) 14%, transparent); }
+.clean-reason-text { color: var(--muted); font-size: 12px; min-width: 0; }
 /* Candidate tree: repo → working copy → rows. The headings reuse .sess-group-* (the
    left pane / archived modal grouping look); only the indent and the working-copy
    heading's own bits live here. */
@@ -520,18 +524,15 @@
 .clean-copy-main { color: var(--muted); font-weight: 400; margin-left: 5px; }
 .clean-copy .clean-rows { padding-left: 10px; }
 .clean-group-safe { flex: none; font-size: 11px; color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); border-radius: 999px; padding: 0 6px; }
-/* Worktree rows carry no target (the group heading is their name): the reason takes
-   that column too, instead of starting after an empty one. Narrow layouts stack the
-   columns anyway, so this only applies above the breakpoint. */
-@media (min-width: 561px) {
-  .clean-row.is-notarget .clean-reason { grid-column: 4 / 6; }
-}
 .clean-archive-row { grid-template-columns: auto 1fr auto; }
 .clean-arch-when { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .clean-arch-what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .clean-arch-actions { display: inline-flex; gap: 4px; }
 @media (max-width: 560px) {
+  /* 狭幅は3行: バッジ類＋アクション / 名前 / 理由。 */
   .clean-row { grid-template-columns: 20px auto auto 1fr; }
-  .clean-target { grid-column: 2 / -1; }
-  .clean-reason, .clean-act { grid-column: 2 / -1; }
+  .clean-act { grid-row: 1; grid-column: 4; }
+  .clean-target { grid-row: 2; grid-column: 2 / -1; }
+  .clean-reason { grid-row: 3; grid-column: 2 / -1; flex-wrap: wrap; }
+  .clean-reason-text { white-space: normal; }
 }

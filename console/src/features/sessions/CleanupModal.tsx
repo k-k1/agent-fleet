@@ -18,7 +18,7 @@ import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { api, rawJSON, raw } from "../../core/api/client.ts";
 import { t, useT } from "../../lib/i18n/index.ts";
-import { cleanupReasonText } from "./cleanupReason.ts";
+import { cleanupReasonParts } from "./cleanupReason.ts";
 import { groupCandidates, rowLabel, type CleanupCandidate, type CleanupRepoGroup } from "./cleanupGroups.ts";
 import { useSessionUI } from "./ui.ts";
 
@@ -310,18 +310,14 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
                           {g.rows.map((c) => {
                             const key = rowKey(c);
                             const selectable = !!c.action && c.safety !== "keep";
-                            // A worktree row has no target of its own (the heading
-                            // names it) — give its column to the reason instead of
-                            // leaving a gap.
+                            // A worktree row has no target of its own — the heading
+                            // names it; its first line is just badges + action.
                             const label = rowLabel(c);
+                            const reason = cleanupReasonParts(c);
                             return (
                               <li
                                 key={key}
-                                className={
-                                  "clean-row" +
-                                  (selectable ? "" : " is-keep") +
-                                  (label ? "" : " is-notarget")
-                                }
+                                className={"clean-row" + (selectable ? "" : " is-keep")}
                                 title={selectable ? undefined : tr("clean.keep_hint")}
                               >
                                 {selectable ? (
@@ -342,12 +338,20 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
                                 <span className={"clean-type clean-type-" + c.type}>
                                   {tr(("clean.type_" + c.type) as "clean.type_session")}
                                 </span>
-                                {label && <span className="clean-target">{label}</span>}
-                                <span className="clean-reason">{cleanupReasonText(c)}</span>
+                                {label && (
+                                  <span className="clean-target" title={label}>
+                                    {label}
+                                  </span>
+                                )}
                                 <span className="clean-act">
                                   {c.action
                                     ? tr(("clean.action_" + c.action) as "clean.action_archive_session")
                                     : ""}
+                                </span>
+                                {/* 2行目: 状態バッジ＋補足。1行に押し込んで見切れていた理由列の置き換え。 */}
+                                <span className="clean-reason">
+                                  {reason.badge && <span className="clean-reason-badge">{reason.badge}</span>}
+                                  {reason.text && <span className="clean-reason-text">{reason.text}</span>}
                                 </span>
                               </li>
                             );

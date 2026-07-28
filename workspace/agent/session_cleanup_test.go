@@ -86,6 +86,15 @@ func TestCleanupReasonKeysExistInConsoleCatalogs(t *testing.T) {
 			if !strings.Contains(string(b), `"`+key+`"`) {
 				t.Errorf("%s.ts is missing %q", locale, key)
 			}
+			// The Console also renders each reason as a state badge + hint (row line 2,
+			// clean.reason_badge.* / clean.reason_hint.*). A missing pair degrades to the
+			// full sentence silently — keep the split catalogs complete instead.
+			suffix := strings.TrimPrefix(key, "clean.reason.")
+			for _, derived := range []string{"clean.reason_badge." + suffix, "clean.reason_hint." + suffix} {
+				if !strings.Contains(string(b), `"`+derived+`"`) {
+					t.Errorf("%s.ts is missing %q", locale, derived)
+				}
+			}
 		}
 	}
 }
