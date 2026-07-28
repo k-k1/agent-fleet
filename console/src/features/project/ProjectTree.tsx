@@ -144,12 +144,6 @@ export function ProjectTree() {
           </Button>
           <IconButton icon="refresh" label={tr("pj.refresh")} onClick={() => void refreshRepos()} />
           <span className="proj-head-sep" aria-hidden="true" />
-          <IconButton
-            icon="clear-all"
-            label={tr("pj.archive_stopped")}
-            disabled={!sessions.some((s) => !s.alive)}
-            onClick={actions.clearStopped}
-          />
           <IconButton icon="trash" label={tr("clean.open")} onClick={openCleanup} />
           <IconButton icon="archive" label={tr("pj.open_archive")} onClick={openArchived} />
         </>

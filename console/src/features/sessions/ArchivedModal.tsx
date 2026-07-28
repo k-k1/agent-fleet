@@ -1,6 +1,8 @@
-// ArchivedModal — archived sessions (hidden from the list but kept on disk):
-// restore (back as a stopped session) or delete permanently. Grouped by working
-// dir, filterable, bulk-prunable by age (>7 days).
+// ArchivedModal — the shelf: archived sessions (hidden from the list but kept on
+// disk). Restore (back as a stopped session), or delete — which reclaims the
+// conversation through DELETE ?reclaim=1, so it is bundled to the cleanup trash
+// (gz) first and stays restorable from the Cleanup modal's trash tab. Grouped by
+// working dir, filterable, bulk-prunable by age (>7 days).
 import { useEffect, useMemo, useState } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button, IconButton } from "../../ui/Button.tsx";
@@ -135,7 +137,12 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
     if (!ok) return;
     setBusy(true);
     try {
-      await raw(`api/sessions/${encodeURIComponent(name)}/stop`, { method: "POST" }).catch(() => {});
+      // reclaim=1: gz 退避してから meta+jsonl を回収（掃除のごみ箱タブから復元可）。
+      // 旧実装の /stop は行だけ消して jsonl を残す最悪の中間状態だった。
+      const res = await raw(`api/sessions/${encodeURIComponent(name)}?reclaim=1`, { method: "DELETE" }).catch(
+        () => null,
+      );
+      if (!res?.ok) toast(t("common.delete_failed"));
       await load();
     } finally {
       setBusy(false);
@@ -155,9 +162,11 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
     if (!ok) return;
     setBusy(true);
     try {
-      await Promise.all(
-        old.map((s) => raw(`api/sessions/${encodeURIComponent(s.name)}/stop`, { method: "POST" }).catch(() => {})),
-      );
+      // Sequential like the cleanup modal: each delete writes a gz archive on the
+      // Agent — no gain from bursting mutations at it.
+      for (const s of old) {
+        await raw(`api/sessions/${encodeURIComponent(s.name)}?reclaim=1`, { method: "DELETE" }).catch(() => {});
+      }
       await load();
     } finally {
       setBusy(false);

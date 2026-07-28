@@ -489,6 +489,14 @@
 .clean-toolbar-spacer { flex: 1; }
 .clean-selected { color: var(--muted); font-size: 12px; margin-right: 4px; }
 .clean-list { list-style: none; margin: 0; padding: 0; }
+/* 段階セクション（① セッション整理 / ② 作業コピー・ブランチ削除） */
+.clean-stage { margin: 0 0 14px; }
+.clean-stage-head { display: flex; align-items: center; gap: 6px; padding: 4px 0; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.clean-stage-title { font-size: 12px; font-weight: 600; }
+.clean-stage-empty { margin: 4px 0 0; padding: 6px 4px; color: var(--muted); font-size: 12px; }
+/* 棚（アーカイブ一覧）への導線 — 段階③はここでは扱わない */
+.clean-shelf { display: flex; align-items: center; gap: 8px; padding: 8px 4px; border-top: 1px dashed var(--border); color: var(--muted); font-size: 12px; }
+.clean-shelf-text { flex: 1; }
 .clean-row { display: grid; grid-template-columns: 24px auto auto minmax(90px, auto) 1fr auto; align-items: center; gap: 8px; padding: 6px 4px; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
 .clean-row.is-keep { opacity: 0.6; }
 .clean-check { display: inline-flex; justify-content: center; }
