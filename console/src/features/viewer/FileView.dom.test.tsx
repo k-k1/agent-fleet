@@ -237,6 +237,30 @@ describe("the editing surface", () => {
     outside.remove();
   });
 
+  it("leaves focus on the renderer group when only the renderer changes", async () => {
+    // Regression: renderer selection went through the same path as mode
+    // selection, so picking Document/Slides while split was showing yanked focus
+    // into CodeMirror — away from the button group the user was operating.
+    served = { content: MARP, editable: true };
+    await render({});
+    await act(async () => modeButton("Split").click());
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const document_ = [...host.querySelectorAll('[aria-label="Preview renderer"] button')].find(
+      (b) => b.textContent === "Document",
+    ) as HTMLButtonElement;
+    document_.focus();
+    await act(async () => document_.click());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(surface()).toBe("preview");
+    expect(editorVisible()).toBe(true);
+    expect(document.activeElement).toBe(document_);
+  });
+
   it("does not take focus merely because a citation opened the file", async () => {
     // Opening a file must not pull focus out of whatever the user was typing in.
     const outside = document.createElement("input");

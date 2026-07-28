@@ -109,6 +109,14 @@ export function surfacesFor(state: FileModeState, caps: FileModeCaps): FileSurfa
   return { ...none, ...(caps.editable ? { editor: true } : { source: true }) };
 }
 
+/** Identity of the set of surfaces on screen, ignoring which renderer draws the
+ *  preview. Choosing a renderer is not choosing a surface, so anything that
+ *  reacts to "the user moved to another surface" — focus, above all — must not
+ *  be triggered by it (docs/44 §5). */
+export function surfaceKey(surfaces: FileSurfaces): string {
+  return [surfaces.editor, surfaces.source, !!surfaces.preview, surfaces.split].join("|");
+}
+
 /** One button of the Markdown mode group (docs/44 §5: a button group with
  *  `aria-pressed`, not a tablist). */
 export interface MarkdownModeControl {
