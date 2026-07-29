@@ -18,9 +18,15 @@
 //	そこで「要再起動」が恒久点灯し、再起動しても消えない（バッジごと信用を失う）。
 //	実体比較ならこのとき「変わらない」と正しく判定できる。
 //
+// ★ 「実体」は必ず起動時に自分で控えた値と、現在の値を同じ問い合わせで比べること。
+//
+//	docker で「走っているコンテナの {{.Image}}」対「タグの image {{.Id}}」のような
+//	二辺比較をすると、containerd イメージストアでは同一イメージ由来でも digest の
+//	表現が違って恒久点灯する（実測と詳細は runtime_docker.go）。
+//
 // 実装は Runtime の任意インタフェース staleRuntime。判らないときは必ず false に倒す。
 //
-//	docker: 走っているコンテナの Image ID ≠ いまのタグの Image ID（runtime_docker.go）
+//	docker: 起動時に控えたタグの Image ID ≠ いまのタグの Image ID（runtime_docker.go）
 //	native: 起動時に控えた spawn 実体 ≠ 現在の spawn 実体（runtime_native.go）
 //	ecs   : 未実装（＝常に false）。誤警告を出さない側に倒してある。実装するなら
 //	        「走っているタスクの task definition と、いま Start が使う task definition」
@@ -87,4 +93,12 @@ func (c *ttlCache) get(key string, ttl time.Duration, load func() string) string
 	c.m[key] = ttlEntry{v: v, at: c.clock()}
 	c.mu.Unlock()
 	return v
+}
+
+// set overwrites an entry. Used when the caller has just learned the authoritative
+// value (docker Start) and a stale cached one would produce a wrong answer.
+func (c *ttlCache) set(key, v string) {
+	c.mu.Lock()
+	c.m[key] = ttlEntry{v: v, at: c.clock()}
+	c.mu.Unlock()
 }
