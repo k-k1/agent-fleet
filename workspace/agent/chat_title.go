@@ -25,10 +25,7 @@ const (
 // recent real exchanges, weighting the recent topic.
 func chatTitleSuggestPrompt(msgs []chatMessage) string {
 	var b strings.Builder
-	b.WriteString("会話ログから件名を1つ出力してください。\n")
-	b.WriteString("良い例: セッションタイトルの自動提案 / ログイン画面のバグ修正 / 請求APIのリファクタ\n")
-	b.WriteString("悪い例（文章・語尾つき・視点が話者）: 短く確認するのが良さそう / メニュー変更を行いたい\n")
-	b.WriteString("会話の途中でテーマが変わっている場合は、直近で話している内容を優先してください。\n\n")
+	b.WriteString(titleSuggestInstructions) // session_title.go と共有（前置き・ラベル禁止の 悪い例 込み）
 	b.WriteString("--- 会話ログ ---\n")
 	writeChatTitleWindow(&b, msgs)
 	return b.String()

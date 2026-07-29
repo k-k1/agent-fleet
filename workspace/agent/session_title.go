@@ -138,7 +138,9 @@ const titleSuggestPersona = "あなたはセッションの会話ログを読み
 	"会話で扱っている作業やトピックを、第三者が見て『何についてのセッションか』が分かる名詞句で表してください。" +
 	"会話が複数のテーマにまたがる場合は直近で扱っている内容を優先します。" +
 	"日本語18文字以内、1行のみ。文章にしない・語尾（〜する/〜したい/〜です/〜が良い 等）を付けない・" +
-	"説明・前置き・引用符・記号・箇条書きは一切付けない。"
+	"説明・前置き・引用符・記号・箇条書きは一切付けない。" +
+	"『件名:』『セッション件名:』のようなラベルや『会話の内容から件名をお作りします：』のような" +
+	"前置きの行も出力せず、件名そのものだけを出力すること。"
 
 // titleModel: a cheap/fast model is enough for a short label; override deployment-
 // wide with AF_TITLE_MODEL.
@@ -181,14 +183,22 @@ func titleSuggestPrompt(turns []transcript.Turn) string {
 	var b strings.Builder
 	// Few-shot anchors the output as a noun-phrase topic label rather than a sentence
 	// or the assistant's own reasoning.
-	b.WriteString("会話ログから件名を1つ出力してください。\n")
-	b.WriteString("良い例: セッションタイトルの自動提案 / ログイン画面のバグ修正 / 請求APIのリファクタ\n")
-	b.WriteString("悪い例（文章・語尾つき・視点が話者）: 短く確認するのが良さそう / メニュー変更を行いたい\n")
-	b.WriteString("会話の途中でテーマが変わっている場合は、直近で話している内容を優先してください。\n\n")
+	b.WriteString(titleSuggestInstructions)
 	b.WriteString("--- 会話ログ ---\n")
 	writeConversationWindow(&b, real)
 	return b.String()
 }
+
+// titleSuggestInstructions is the instruction block shared by the session and chat
+// title prompts. The 悪い例 list carries the two shapes actually observed being adopted
+// as titles — a lead-in sentence and a "件名:" label — because the persona's "前置き
+// 禁止" alone did not stop them.
+const titleSuggestInstructions = "会話ログから件名を1つ出力してください。\n" +
+	"良い例: セッションタイトルの自動提案 / ログイン画面のバグ修正 / 請求APIのリファクタ\n" +
+	"悪い例（文章・語尾つき・視点が話者）: 短く確認するのが良さそう / メニュー変更を行いたい\n" +
+	"悪い例（前置き・ラベル）: 会話の内容から、件名をお作りします： / セッション件名: / 件名は以下の通りです\n" +
+	"件名の文字列だけを1行で出力し、前置き行・ラベル・見出しは付けないでください。\n" +
+	"会話の途中でテーマが変わっている場合は、直近で話している内容を優先してください。\n\n"
 
 // writeConversationWindow appends the opening + most recent real turns (head/tail
 // windowing, per-turn length cap), shared by the title and branch-name prompts.
@@ -241,25 +251,142 @@ func branchSuggestPrompt(turns []transcript.Turn) string {
 	return b.String()
 }
 
-// cleanSuggestedTitle trims the model's reply to one line, strips wrapping quotes,
-// and reuses cleanTitle (same control-char/length gate a user-typed title gets),
-// then caps at the ~40-char prompt target.
+// cleanSuggestedTitle reduces the model's reply to one usable title.
+//
+// It scans lines rather than taking the first one verbatim: the model does not
+// reliably obey "1行のみ" and often emits a lead-in ("会話の内容から、件名をお作りしま
+// す：") or a label ("セッション件名:") first and the real title on a following line —
+// taking line 1 adopted the preamble AS the title (observed on session sicoxqh). Each
+// line is stripped of list/emphasis markers and any "件名:"-style label; pure lead-in
+// lines are dropped, and the first survivor wins. Returns "" when nothing usable
+// remains, which the callers already treat as "no suggestion" (auto path backs off,
+// manual path reports a failure) — better than latching a meaningless title.
 func cleanSuggestedTitle(s string) string {
-	s = strings.TrimSpace(s)
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		s = s[:i]
+	for i, line := range strings.Split(s, "\n") {
+		if i >= titleReplyScanLines {
+			break
+		}
+		cand := titleCandidateLine(line)
+		if cand == "" {
+			continue
+		}
+		title, ok := cleanTitle(cand)
+		if !ok || title == "" {
+			continue
+		}
+		// Hard cap well under the session-list label width so the applied title stays
+		// readable (not truncated) in the left pane; the prompt targets ~18.
+		if r := []rune(title); len(r) > 24 {
+			title = string(r[:24])
+		}
+		return title
 	}
-	s = strings.Trim(s, "\"'「」『』")
-	title, ok := cleanTitle(s)
-	if !ok || title == "" {
+	return ""
+}
+
+const (
+	// titleReplyScanLines bounds how far into a chatty reply we look for the title;
+	// past a few lines it is commentary, not a forgotten title.
+	titleReplyScanLines = 8
+	// titleMarkerChars are decoration the model wraps a title in (markdown emphasis,
+	// headings, code spans). Titles never legitimately contain them, so drop them
+	// outright rather than trying to match pairs.
+	titleMarkerChars = "*#`"
+	// titleQuoteChars wrap an otherwise fine title.
+	titleQuoteChars = "\"'「」『』【】《》 　\t"
+)
+
+// titleLabelWords mark the text before a colon as a LABEL for the title rather than
+// part of it ("件名: 〜", "セッション件名：〜", "Title: 〜"). Matched on the pre-colon
+// segment only, so a title that merely contains one of these words
+// （例: セッションタイトルの自動提案）survives untouched.
+var titleLabelWords = []string{"件名", "タイトル", "title", "subject", "見出し"}
+
+// titleAnnounceTails end a sentence ABOUT producing a title ("〜件名をお作りします。").
+// Only rejected in combination with a label word, so a plain noun-phrase title is never
+// caught by them.
+var titleAnnounceTails = []string{"ます", "ます。", "です", "です。", "ください", "ください。", "した", "した。"}
+
+// titleCandidateLine turns one reply line into a title candidate, or "" if the line is
+// decoration/preamble rather than a title.
+func titleCandidateLine(line string) string {
+	s := strings.TrimSpace(line)
+	s = strings.Map(func(r rune) rune {
+		if strings.ContainsRune(titleMarkerChars, r) {
+			return -1
+		}
+		return r
+	}, s)
+	s = strings.TrimLeft(s, "-–—>・•●▶ 　\t")
+	s = trimListNumber(s)
+	s = strings.Trim(s, titleQuoteChars)
+	if s == "" {
 		return ""
 	}
-	// Hard cap well under the session-list label width so the applied title stays
-	// readable (not truncated) in the left pane; the prompt targets ~18.
-	if r := []rune(title); len(r) > 24 {
-		title = string(r[:24])
+
+	// "…件名: <title>" -> "<title>"; "…件名:" (nothing after) -> preamble, drop the line.
+	if head, rest, ok := cutColon(s); ok && containsAnyFold(head, titleLabelWords) {
+		s = strings.Trim(strings.TrimSpace(rest), titleQuoteChars)
+		if s == "" {
+			return ""
+		}
 	}
-	return title
+	// A lead-in with no colon at all ("以下が件名です", "件名を考えました").
+	if containsAnyFold(s, titleLabelWords) && hasAnySuffix(s, titleAnnounceTails) {
+		return ""
+	}
+	return strings.TrimSpace(s)
+}
+
+// trimListNumber drops a leading "1." / "2)" / "3、" list marker (with its separator),
+// leaving a title that legitimately starts with a number ("2段クォータの実装") alone.
+func trimListNumber(s string) string {
+	i := 0
+	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+		i++
+	}
+	if i == 0 || i > 2 {
+		return s
+	}
+	rest := s[i:]
+	for _, sep := range []string{".", ")", "）", "、", ":", "："} {
+		if strings.HasPrefix(rest, sep) {
+			return strings.TrimLeft(rest[len(sep):], " 　\t")
+		}
+	}
+	return s
+}
+
+// cutColon splits on the first ASCII or full-width colon.
+func cutColon(s string) (head, rest string, ok bool) {
+	i := strings.IndexAny(s, ":：")
+	if i < 0 {
+		return "", "", false
+	}
+	sep := 1
+	if s[i] != ':' {
+		sep = len("：")
+	}
+	return s[:i], s[i+sep:], true
+}
+
+func containsAnyFold(s string, words []string) bool {
+	low := strings.ToLower(s)
+	for _, w := range words {
+		if strings.Contains(low, w) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAnySuffix(s string, tails []string) bool {
+	for _, t := range tails {
+		if strings.HasSuffix(s, t) {
+			return true
+		}
+	}
+	return false
 }
 
 // handleAcceptSuggestedTitle promotes the pending suggestion to the session's real
@@ -316,8 +443,13 @@ func generateTitleNow(ctx context.Context, name string, turns []transcript.Turn)
 
 	ctx = withUsageTag(ctx, usageTag{Feature: usageFeatureTitleSession, Trigger: usageTriggerManual, Ref: name})
 	title, err := runTitleSuggestLLM(ctx, turns)
-	if err != nil || title == "" {
+	if err != nil {
 		return "", fmt.Errorf("title generation failed: %w", err)
+	}
+	if title == "" {
+		// The call succeeded but the reply was all preamble/label (cleanSuggestedTitle
+		// dropped every line) — a plain failure, not a nil-wrapping %!w(<nil>).
+		return "", errors.New("title generation produced no usable title")
 	}
 	succeeded = true
 	return title, nil
