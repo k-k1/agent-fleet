@@ -203,12 +203,8 @@ func main() {
 	}
 }
 
-// handleHealth is the startup readiness probe (token-free). It also reports the
-// agent's own build version so the CP can tell that a running container predates
-// the currently deployed release and needs a stop→start to pick it up
-// (control-plane/workspace_stale.go ②). "dev" on unstamped builds.
 func handleHealth(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "version": buildVersion})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // --- small helpers ---
