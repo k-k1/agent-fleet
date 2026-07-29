@@ -66,7 +66,7 @@ import {
 } from "./questionKeys.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { useDismiss } from "../../lib/useDismiss.ts";
-import { applySkillToDraft, filterSkills, hasTriggerHead, originKind, slashTokenAt, type SlashToken } from "./skillPicker.ts";
+import { applySkillToDraft, filterSkills, hasTriggerHead, originKind, pickerTokenAt, slashTokenAt, type SlashToken } from "./skillPicker.ts";
 import { ManagedSettingsModal } from "./ManagedSettingsModal.tsx";
 
 const q = encodeURIComponent;
@@ -1614,9 +1614,12 @@ export function MirrorView({
   // slashOpen: 先頭トリガのトークンが生きていて、かつ直前に閉じられていない。
   // skillListVisible: 実際にリストを描く条件 — タイプ起点は該当ゼロなら出さない
   // （素の /plan 等の手打ちを覆い隠さない）。ボタン起点は空でも「無い」ことを見せる。
-  const slashOpen = canSkills && !composerLocked && slashTok !== null && skillDismissRef.current !== slashTok.token;
+  // 開く条件はトリガのタイプ（bare トークンでは開かない）、絞り込みはどちらの起点でも
+  // 同じトークンで効かせる — ボタンで開いてからタイプしても候補が絞れる。
+  const slashOpen = canSkills && !composerLocked && slashTok !== null && !slashTok.bare && skillDismissRef.current !== slashTok.token;
   const skillsOpen = canSkills && !composerLocked && (skillBtnOpen || slashOpen);
-  const skillItems = (skills ? filterSkills(skills, skillBtnOpen ? "" : (slashTok?.token ?? "")) : [])
+  const skillQuery = slashTok?.token ?? "";
+  const skillItems = (skills ? filterSkills(skills, skillQuery) : [])
     // managed 発火未検証 kind はネイティブ項目だけ落とす（foreign=注入はただのプロンプト）。
     .filter((s) => !!s.path || !managed || agent.caps.slashSkillsManaged);
   const skillListVisible = skillsOpen && (skillBtnOpen || skills === null || skillItems.length > 0);
@@ -1640,10 +1643,12 @@ export function MirrorView({
   }, [skillsOpen, session]);
 
   // draft が手元の token とずれたら（送信でクリア・履歴呼び出し等の setDraft 直書き）閉じる。
-  // 先頭は全角エイリアス（／・＄ — JP IME）も許すので startsWith でなく hasTriggerHead。
+  // 先頭は全角エイリアス（／・＄ — JP IME）も許すので startsWith でなく hasTriggerHead
+  // （bare トークンはそもそもトリガを持たないので、この確認は非 bare のときだけ）。
   useEffect(() => {
     if (!slashTok) return;
-    if (!hasTriggerHead(draft, skillTrigger) || !draft.slice(0, slashTok.end).endsWith(slashTok.token)) setSlashTok(null);
+    if ((!slashTok.bare && !hasTriggerHead(draft, skillTrigger)) || !draft.slice(0, slashTok.end).endsWith(slashTok.token))
+      setSlashTok(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft]);
 
@@ -1665,7 +1670,7 @@ export function MirrorView({
   const pickSkill = (invoke: string) => {
     const el = inputRef.current;
     const caret = el ? (el.selectionStart ?? draft.length) : draft.length;
-    const { next, caret: nc } = applySkillToDraft(draft, caret, invoke, skillTrigger);
+    const { next, caret: nc } = applySkillToDraft(draft, caret, invoke, skillTrigger, skillBtnOpen);
     setDraft(next);
     setHistIdx(null);
     setSkillBtnOpen(false);
@@ -2665,7 +2670,9 @@ export function MirrorView({
                   <Icon name="loading" spin /> {tr("mirror.skills_loading")}
                 </div>
               ) : skillItems.length === 0 ? (
-                <div className="mirror-skills-note">{tr("mirror.skills_empty")}</div>
+                // 絞り込みの結果ゼロ（ボタン起点だけがここへ来る — タイプ起点は非表示にする）と
+                // そもそも 1 つも無いのは別の話なので、文言を分ける。
+                <div className="mirror-skills-note">{tr(skillQuery ? "mirror.skills_no_match" : "mirror.skills_empty")}</div>
               ) : (
                 skillItems.map((s, i) => (
                   <button
@@ -2713,6 +2720,10 @@ export function MirrorView({
                 }
                 skillDismissRef.current = null;
                 setSkillBtnOpen(true);
+                // 既に書いてある先頭トークンを即クエリにする（開いた瞬間から絞り込まれた
+                // 状態で出す）。2 語目以降にキャレットがあれば null＝全件のまま。
+                const el = inputRef.current;
+                setSlashTok(pickerTokenAt(draft, el?.selectionStart ?? draft.length, skillTrigger, true));
               }}
             >
               <span className="mirror-skill-glyph" aria-hidden="true">
@@ -2769,14 +2780,15 @@ export function MirrorView({
               if (canSkills) {
                 // スキルピッカーのトリガ追跡: 先頭トリガ文字の 1 トークン内にキャレットが
                 // ある間だけ token が立つ。トークンが死んだら Esc 抑止も解除（打ち直しで再表示）。
-                const tok = slashTokenAt(e.target.value, e.target.selectionStart ?? e.target.value.length, skillTrigger);
+                // ボタンで開いている間はトリガ無しの先頭トークンも拾う（＝そのまま絞り込める）。
+                const tok = pickerTokenAt(e.target.value, e.target.selectionStart ?? e.target.value.length, skillTrigger, skillBtnOpen);
                 if (!tok) skillDismissRef.current = null;
                 setSlashTok(tok);
               }
             }}
             onSelect={(e) => {
               // キャレット移動（クリック・矢印）でも token の生死を追い直す。
-              if (canSkills) setSlashTok(slashTokenAt(e.currentTarget.value, e.currentTarget.selectionStart ?? 0, skillTrigger));
+              if (canSkills) setSlashTok(pickerTokenAt(e.currentTarget.value, e.currentTarget.selectionStart ?? 0, skillTrigger, skillBtnOpen));
             }}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
