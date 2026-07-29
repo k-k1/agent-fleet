@@ -34,6 +34,21 @@ const pickedIdx = (opts: QKOption[], labels: string[] | undefined): number[] =>
 
 const trimAt = (freeText: string[], qi: number) => (freeText[qi] || "").trim();
 
+// Free text bound for a TUI modal is folded to ONE line. A {t} step is delivered with
+// `tmux send-keys -l`, which puts the bytes on the pane verbatim (実測: a newline
+// arrives as a raw LF, not as typed characters) — so an embedded newline acts as Enter
+// on the single-line "Type something" field, and a tab/ESC moves focus or dismisses the
+// modal. Either way the row the rest of the sequence assumes is gone and the trailing
+// keys land on another tab / the review page / the composer, which is why a multi-line
+// answer behaved differently every time. Whitespace around the fold is absorbed so
+// "a\n\nb" types as "a b". Control characters are folded too, since none of them can
+// be *typed* into the field — they can only drive the TUI. The managed path
+// (buildRespondAnswers) answers structurally and keeps the text as written.
+const flatAt = (freeText: string[], qi: number) =>
+  trimAt(freeText, qi)
+    .replace(/\s*[\u0000-\u001f\u007f\u2028\u2029]+\s*/g, " ")
+    .trim();
+
 const downs = (n: number): KeyStep[] => Array.from({ length: Math.max(0, n) }, () => ({ k: "Down" }));
 
 // A single-select single question answered by clicking option `oi`: move Down to that
@@ -48,7 +63,7 @@ export function buildClaudeSeq(qs: QKQuestion[], sel: string[][], freeText: stri
   const seq: KeyStep[] = [];
   qs.forEach((q, qi) => {
     const opts = q.options || [];
-    const ft = trimAt(freeText, qi);
+    const ft = flatAt(freeText, qi);
     const idx = pickedIdx(opts, sel[qi]);
     if (q.multiSelect) {
       // Toggle each checked option in place (Enter toggles, cursor stays). Then, if a
@@ -110,7 +125,7 @@ export function buildMenuSeq(
   const seq: KeyStep[] = [];
   qs.forEach((q, qi) => {
     const opts = q.options || [];
-    const ft = writeIn ? trimAt(freeText, qi) : "";
+    const ft = writeIn ? flatAt(freeText, qi) : "";
     if (ft) {
       seq.push(...downs(opts.length));
       seq.push({ k: "Enter" }, { t: ft }, { k: "Enter" });
