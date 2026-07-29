@@ -1750,6 +1750,15 @@ export function MirrorView({
     openTargetInNew(target);
   };
 
+  // プランへのコメントを送れない理由（"" = 送れる）。コンポーザは停止中に丸ごと消えるが、
+  // プランカードは履歴として残り続けるので、送信ボタンだけは自前で塞ぐ必要がある。
+  // 停止中でもコメントを溜めること自体は妨げない（再開してから送れる）。
+  const planSendBlocked = !running
+    ? tr("mirror.ws_stopped")
+    : !alive || readOnly
+      ? tr("plan.send_needs_running")
+      : "";
+
   // 却下 → 修正 → 再提示で本文が差し替わったら、開いているレビュー面も追従させる。
   // これが無いと、利用者は古い本文を読みながらコメントを付け、送ったあとで「その記述は
   // もう無い」ことに気づく（doc ペインはスナップショットなので黙って古いまま残る）。
@@ -1773,7 +1782,15 @@ export function MirrorView({
   // 送信済みの印は「実際に届いた」ときだけ付ける — 届かなかったコメントを消してしまうと
   // 利用者は打ち直せない。
   const sendPlanComments = async (plan: string) => {
-    if (sending || wsDown()) return;
+    if (sending) return;
+    // 停止中のセッションには届かない。プランカードは履歴にも出る＝コンポーザと違って
+    // 「停止中は隠れる」という保護が効かないので、ここで明示的に止める（ボタンも
+    // planSendBlocked で無効化してあるが、押下と停止が競っても届かないよう二重にする）。
+    if (planSendBlocked) {
+      toast(planSendBlocked);
+      return;
+    }
+    if (wsDown()) return;
     const key = planKey(session, plan);
     const list = unsentComments(getPlanComments(key));
     if (!list.length) return;
@@ -2421,6 +2438,7 @@ export function MirrorView({
             sendPrompt,
             openPlan,
             (plan: string) => void sendPlanComments(plan),
+            planSendBlocked,
             openDiff,
             openFile,
             maxSpend,
@@ -2448,6 +2466,7 @@ export function MirrorView({
                 sending={sending}
                 onOpen={() => openPlan(pendingPlan)}
                 onSendComments={() => void sendPlanComments(pendingPlan)}
+                sendDisabled={planSendBlocked}
                 onApprove={() => {
                   // A rejected plan may be refined and re-presented with identical Markdown.
                   // The optimistic marker is keyed by that Markdown (the pending payload has
@@ -3204,6 +3223,7 @@ function renderGroups(
   onAnswer: (t: string) => void,
   onOpenPlan: (plan: string) => void,
   onSendPlanComments: (plan: string) => void,
+  planSendDisabled: string,
   onOpenDiff: (p: Part) => void,
   onOpenFile: (path: string, line?: number, column?: number) => void,
   maxSpend: number,
@@ -3252,6 +3272,7 @@ function renderGroups(
           onAnswer={onAnswer}
           onOpenPlan={onOpenPlan}
           onSendPlanComments={onSendPlanComments}
+          planSendDisabled={planSendDisabled}
           onOpenDiff={onOpenDiff}
           onOpenFile={onOpenFile}
           agentName={agentName}
@@ -3601,6 +3622,7 @@ function Turn({
   onAnswer,
   onOpenPlan,
   onSendPlanComments,
+  planSendDisabled,
   onOpenDiff,
   onOpenFile,
   agentName,
@@ -3617,6 +3639,7 @@ function Turn({
   onAnswer: (t: string) => void;
   onOpenPlan: (plan: string) => void;
   onSendPlanComments: (plan: string) => void;
+  planSendDisabled: string;
   onOpenDiff: (p: Part) => void;
   onOpenFile: (path: string, line?: number, column?: number) => void;
   agentName: string;
@@ -3653,6 +3676,7 @@ function Turn({
           forceRejected={isRejectedPlan(item.p.plan || "")}
           onOpen={() => onOpenPlan && onOpenPlan(item.p.plan || "")}
           onSendComments={() => onSendPlanComments(item.p.plan || "")}
+          sendDisabled={planSendDisabled}
         />
       ) : item.p.kind === "userfile" ? (
         // Files the agent shared via SendUserFile — a panel; each opens in a pane.
@@ -4431,6 +4455,7 @@ function PlanBlock({
   onApprove,
   onReject,
   onSendComments,
+  sendDisabled,
   sending,
 }: {
   plan?: string;
@@ -4444,6 +4469,8 @@ function PlanBlock({
   onApprove?: () => void;
   onReject?: () => void;
   onSendComments?: () => void;
+  /** 送信できない理由（"" / 未指定 = 送れる）。停止中セッションでボタンを塞ぐ。 */
+  sendDisabled?: string;
   sending?: boolean;
 }) {
   // A plan in the transcript was presented and resolved — classify its outcome text
@@ -4506,7 +4533,13 @@ function PlanBlock({
         {unsent.length > 0 && onSendComments && (
           // 承認待ちなら「却下して送る」（ダイアログを閉じないと本文が届かないため
           // 却下と一体）、それ以外は普通に送るだけ。
-          <button type="button" className="btn primary mt-plan-send" disabled={sending} onClick={onSendComments}>
+          <button
+            type="button"
+            className="btn primary mt-plan-send"
+            disabled={sending || !!sendDisabled}
+            title={sendDisabled || undefined}
+            onClick={onSendComments}
+          >
             <Icon name="comment-discussion" />{" "}
             {pending
               ? tr("plan.send_and_keep_planning", { count: unsent.length })
