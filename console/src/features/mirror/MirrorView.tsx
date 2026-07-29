@@ -4508,7 +4508,9 @@ function PlanBlock({
               <span className="mt-plan-comment-n">{i + 1}</span>
               <span className="mt-plan-comment-main">
                 <span className="mt-plan-comment-quote">{c.quote}</span>
-                <span className="mt-plan-comment-body">{c.body}</span>
+                <span className="mt-plan-comment-body" title={c.body}>
+                  {c.body}
+                </span>
               </span>
               {c.sentAt ? (
                 <span className="muted mt-plan-comment-sent">{tr("plan.sent")}</span>

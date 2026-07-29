@@ -5,7 +5,7 @@
 // コメント追加のピルが出て、付けたコメントは引用箇所にハイライトが付く。溜めるだけで、
 // 送信はミラーのプランカードが担う（送り先の状態＝承認待ちか却下後かで経路が変わるため、
 // 判断はセッションの状態を持っている側に置く）。
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { MarkdownView } from "./MarkdownView.tsx";
@@ -39,6 +39,24 @@ interface PendingComment {
 
 /** 選択ピルを選択の少し上に出すための持ち上げ量（FileView と同じ値）。 */
 const PILL_OFFSET = 34;
+/** 画面端との最小余白。 */
+const EDGE = 8;
+/** 控えの一覧に一度に見せる件数（超えたぶんはスクロール）。 */
+const VISIBLE_COMMENTS = 5;
+
+// clampFixed は position:fixed の浮遊要素を、実測サイズでビューポート内へ寄せる。
+// 選択位置をそのまま left/top にすると、右端や下端の選択でポップが画面外へ出て
+// ボタンに手が届かなくなる（実測: 右端の行を選ぶと「追加」が切れる）。描画後に測って
+// から寄せる必要があるので、state ではなく style を直接書く（再描画ループを作らない）。
+function clampFixed(el: HTMLElement | null, x: number, y: number) {
+  if (!el) return;
+  const w = el.offsetWidth;
+  const h = el.offsetHeight;
+  const maxX = Math.max(EDGE, window.innerWidth - w - EDGE);
+  const maxY = Math.max(EDGE, window.innerHeight - h - EDGE);
+  el.style.left = Math.round(Math.min(Math.max(EDGE, x), maxX)) + "px";
+  el.style.top = Math.round(Math.min(Math.max(EDGE, y), maxY)) + "px";
+}
 
 export function DocView({ title, content, session }: DocViewProps) {
   const tr = useT();
@@ -54,6 +72,46 @@ export function DocView({ title, content, session }: DocViewProps) {
   const [draft, setDraft] = useState<PendingComment | null>(null);
   const [body, setBody] = useState("");
   const [listOpen, setListOpen] = useState(true);
+  // 全文表示に開いたコメント（引用も本文も畳まずに出す）。既定は畳んだ一覧。
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const pillRef = useRef<HTMLDivElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLOListElement>(null);
+  // コンポーザーと同じ送信キー設定に従う（Ctrl+Enter か Enter か。lib/settings mirrorSend）。
+  const modSend = settings.mirrorSend !== "enter";
+
+  // 控えの一覧は5件ぶんの高さで打ち切る。行の高さはコメントの長さ（引用1行＋本文2行まで）で
+  // 変わるので、CSS の固定値では「5件」にならない — 6件目の位置から実測して決める。全文表示に
+  // 開いた行があっても伸びすぎないよう、画面の 40% で頭打ちにする。
+  useLayoutEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const rows = [...el.querySelectorAll<HTMLElement>(".doc-comment")];
+    if (rows.length <= VISIBLE_COMMENTS) {
+      el.style.maxHeight = "";
+      return;
+    }
+    const top = rows[0].getBoundingClientRect().top;
+    const fit = Math.round(rows[VISIBLE_COMMENTS].getBoundingClientRect().top - top);
+    el.style.maxHeight = Math.min(fit, Math.round(window.innerHeight * 0.4)) + "px";
+  }, [comments, listOpen, expanded]);
+
+  // 浮遊要素は描画されてから実測して寄せる。開いている間の resize でも追従させる
+  // （ペイン分割やスマホの回転で画面が縮んでも押せなくならないように）。
+  useLayoutEffect(() => {
+    if (!pill || draft) return;
+    const fit = () => clampFixed(pillRef.current, pill.x, pill.y);
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, [pill, draft]);
+  useLayoutEffect(() => {
+    if (!draft) return;
+    const fit = () => clampFixed(popRef.current, draft.x, draft.y);
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, [draft]);
 
   // 引用箇所のハイライトは、MarkdownView が innerHTML を描いたあとに被せる（子の effect が
   // 先に走るので、この effect の時点では本文が出来ている）。本文もコメントも変わらない
@@ -152,28 +210,44 @@ export function DocView({ title, content, session }: DocViewProps) {
             <span className="muted doc-comments-hint">{tr("plan.send_from_mirror")}</span>
           </button>
           {listOpen && (
-            <ol className="doc-comments-list">
-              {comments.map((c, i) => (
-                <li key={c.id} className={"doc-comment" + (c.sentAt ? " sent" : "")}>
-                  <span className="doc-comment-n">{i + 1}</span>
-                  <span className="doc-comment-main">
-                    <span className="doc-comment-quote">{c.quote}</span>
-                    <span className="doc-comment-body">{c.body}</span>
-                  </span>
-                  {c.sentAt ? (
-                    <span className="doc-comment-sent muted">{tr("plan.sent")}</span>
-                  ) : (
+            // 5件ぶんの高さで打ち切ってスクロール（本文の邪魔をしない）。各行は畳んだ状態で
+            // 高さが揃うので、この件数指定が実際の見え方と一致する。
+            <ol className="doc-comments-list" ref={listRef}>
+              {comments.map((c, i) => {
+                const open = expanded.has(c.id);
+                return (
+                  <li key={c.id} className={"doc-comment" + (c.sentAt ? " sent" : "") + (open ? " open" : "")}>
+                    <span className="doc-comment-n">{i + 1}</span>
                     <button
                       type="button"
-                      className="ghost doc-comment-del"
-                      title={tr("plan.delete_comment")}
-                      onClick={() => removePlanComment(key, c.id)}
+                      className="doc-comment-main"
+                      title={open ? tr("plan.collapse_comment") : tr("plan.expand_comment")}
+                      onClick={() =>
+                        setExpanded((prev) => {
+                          const next = new Set(prev);
+                          next.has(c.id) ? next.delete(c.id) : next.add(c.id);
+                          return next;
+                        })
+                      }
                     >
-                      <Icon name="close" />
+                      <span className="doc-comment-quote">{c.quote}</span>
+                      <span className="doc-comment-body">{c.body}</span>
                     </button>
-                  )}
-                </li>
-              ))}
+                    {c.sentAt ? (
+                      <span className="doc-comment-sent muted">{tr("plan.sent")}</span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="ghost doc-comment-del"
+                        title={tr("plan.delete_comment")}
+                        onClick={() => removePlanComment(key, c.id)}
+                      >
+                        <Icon name="close" />
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
             </ol>
           )}
         </div>
@@ -184,7 +258,7 @@ export function DocView({ title, content, session }: DocViewProps) {
       {pill &&
         !draft &&
         createPortal(
-          <div className="sel-pill-group" style={{ left: pill.x, top: Math.max(4, pill.y) }}>
+          <div className="sel-pill-group" ref={pillRef} style={{ left: pill.x, top: Math.max(EDGE, pill.y) }}>
             <button
               type="button"
               className="sel-send-pill"
@@ -200,20 +274,25 @@ export function DocView({ title, content, session }: DocViewProps) {
         )}
       {draft &&
         createPortal(
-          <div className="doc-comment-pop" style={{ left: draft.x, top: Math.max(4, draft.y) }}>
+          <div className="doc-comment-pop" ref={popRef} style={{ left: draft.x, top: Math.max(EDGE, draft.y) }}>
             <div className="doc-comment-pop-quote">{draft.quote}</div>
             <textarea
               className="doc-comment-pop-input"
               autoFocus
               rows={3}
               value={body}
-              placeholder={tr("plan.comment_placeholder")}
+              placeholder={tr(modSend ? "plan.comment_placeholder" : "plan.comment_placeholder_enter")}
               onChange={(e) => setBody(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Escape") {
                   e.preventDefault();
                   closeDraft();
-                } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                  return;
+                }
+                // 送信キーはコンポーザーと同じ設定に従う。IME の変換確定 Enter は横取りしない。
+                if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+                const mod = e.ctrlKey || e.metaKey;
+                if (modSend ? mod : !mod && !e.shiftKey) {
                   e.preventDefault();
                   submitDraft();
                 }
