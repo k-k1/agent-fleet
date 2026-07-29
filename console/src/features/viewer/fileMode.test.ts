@@ -48,6 +48,27 @@ describe("initialFileMode", () => {
     expect(initialFileMode(caps(), { hasTargetLine: true })).toEqual(md({ md: "edit" }));
     expect(initialFileMode(caps({ marp: true }), { hasTargetLine: true })).toEqual(md({ md: "edit" }));
   });
+
+  it("opens the edit surface when the opener asked for it (「編集」で開く)", () => {
+    expect(initialFileMode(caps({ markdown: false }), { requested: "edit" })).toEqual({ kind: "plain", mode: "edit" });
+    // Markdown's edit surface is its source mode, and it wins over the deck's
+    // usual slides opening — the user named the surface.
+    expect(initialFileMode(caps(), { requested: "edit" })).toEqual(md({ md: "edit" }));
+    expect(initialFileMode(caps({ marp: true }), { requested: "edit" })).toEqual(md({ md: "edit" }));
+  });
+
+  it("ignores an edit request the document cannot honour", () => {
+    expect(initialFileMode(caps({ markdown: false, editable: false }), { requested: "edit" })).toEqual({
+      kind: "plain",
+      mode: "view",
+    });
+    expect(initialFileMode(caps({ editable: false }), { requested: "edit" })).toEqual(md({ md: "preview" }));
+  });
+
+  it("treats a view request as the default opening", () => {
+    expect(initialFileMode(caps({ markdown: false }), { requested: "view" })).toEqual({ kind: "plain", mode: "view" });
+    expect(initialFileMode(caps({ marp: true }), { requested: "view" })).toEqual(md({ renderer: "slides" }));
+  });
 });
 
 describe("offered controls", () => {

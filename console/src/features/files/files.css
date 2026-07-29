@@ -143,6 +143,47 @@
   color: var(--del);
   background: color-mix(in srgb, var(--del) 15%, transparent);
 }
+/* ⋯ menu — overlaid on the row's right edge (like the session rows'), so a
+   resting row spends its whole width on the path instead of reserving a button
+   column; `background: inherit` picks up the hover fill that reveals it, which
+   masks the path underneath. */
+.chg-row {
+  position: relative;
+}
+.chg-menu-btn {
+  position: absolute;
+  right: 2px;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  border: 0;
+  padding: 0 4px;
+  background: inherit;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+}
+.chg-row:hover .chg-menu-btn,
+.chg-menu-btn:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.chg-menu-btn:hover {
+  color: var(--fg);
+}
+/* Touch has no hover to reveal it, so the button takes a column of its own —
+   overlaying a permanently visible button would cover the path. */
+@media (hover: none) {
+  .chg-menu-btn {
+    position: static;
+    flex: none;
+    margin-left: auto;
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
 
 /* ＋ menu head (target folder) + anchored wrap. */
 .files-ops {

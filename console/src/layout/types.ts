@@ -24,7 +24,9 @@
  * read-mostly Markdown mirror instead of the raw PTY). */
 export type PaneContent =
   | { kind: "terminal"; chat: boolean }
-  | { kind: "file"; filePath: string; targetLine?: number; targetColumn?: number }
+  /** `mode` is the opener's request for the starting display mode ("編集で開く"
+   * from a file menu); absent = the view picks its own (docs/44 §1.8). */
+  | { kind: "file"; filePath: string; targetLine?: number; targetColumn?: number; mode?: "view" | "edit" }
   | { kind: "read"; filePath: string } // 朗読ビュー（docs/24）: 本文を順次読み上げ＋縦書き閲覧
   | { kind: "scm"; scmRepo: string; scmPath?: string }
   | { kind: "changes"; scmRepo: string }

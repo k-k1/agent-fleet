@@ -61,7 +61,7 @@ const { FileView } = await import("./FileView.tsx");
 let root: Root | null = null;
 let host: HTMLDivElement;
 
-async function render(props: { targetLine?: number }): Promise<void> {
+async function render(props: { targetLine?: number; openMode?: "view" | "edit" }): Promise<void> {
   await act(async () => {
     root!.render(<FileView filePath="repos/x/doc.md" paneId="pane-1" {...props} />);
   });
@@ -148,6 +148,38 @@ describe("a citation that arrives after the file is already open", () => {
   it("opens straight into the source surface when the citation comes first", async () => {
     await render({ targetLine: 3 });
     expect(pressed()).toEqual(["Edit"]);
+  });
+});
+
+describe("an opener that names the mode (変更リストの「編集」/「表示」)", () => {
+  it("opens the edit surface on request", async () => {
+    await render({ openMode: "edit" });
+    expect(pressed()).toEqual(["Edit"]);
+    expect(editorVisible()).toBe(true);
+  });
+
+  it("switches a pane that already shows the file in preview", async () => {
+    // Same shape as the citation case above: retargeting the pane leaves the
+    // loaded file untouched, so only the request is new.
+    await render({});
+    expect(pressed()).toEqual(["Preview"]);
+    await render({ openMode: "edit" });
+    expect(pressed()).toEqual(["Edit"]);
+  });
+
+  it("keeps the preview when the file cannot be edited", async () => {
+    served = { content: PLAIN_MD, editable: false };
+    await render({ openMode: "edit" });
+    expect(pressed()).toEqual(["Preview"]);
+    expect(editorVisible()).toBe(false);
+  });
+
+  it("leaves the mode alone once the user picks another one", async () => {
+    await render({ openMode: "edit" });
+    await act(async () => {
+      modeButton("Preview").click();
+    });
+    expect(pressed()).toEqual(["Preview"]);
   });
 });
 
