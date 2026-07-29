@@ -321,6 +321,35 @@ export async function sessionTurn(
   return fail(err);
 }
 
+// sessionPlanRespond decides a pending ExitPlanMode approval (claude TUI).
+//
+// Why not /input: while the approval dialog is up, typed text is SWALLOWED by the
+// modal and the trailing Enter confirms its highlighted row — always an approval.
+// The Agent's /plan-respond instead interrupts the dialog, waits for the composer to
+// come back, and only then types the feedback; `delivered` reports whether that
+// second half actually happened (false = the text never reached the session, so the
+// caller must not treat its comments as sent).
+export interface PlanRespondResult {
+  ok: boolean;
+  message?: string;
+  code?: string;
+  delivered?: boolean;
+}
+export async function sessionPlanRespond(
+  session: string,
+  decision: "approve" | "reject",
+  feedback?: string,
+): Promise<PlanRespondResult> {
+  const r = await apiJSON(`api/sessions/${encodeURIComponent(session)}/plan-respond`, "POST", {
+    decision,
+    ...(feedback ? { feedback } : {}),
+  }).catch(() => ({ error: { message: t("err.network") } }));
+  const err = r?.error as ApiError | undefined;
+  if (err) return { ok: false, message: errText(err) || t("err.send_failed"), code: String(err.code || "") };
+  // No feedback asked for ⇒ nothing to deliver, so report delivered.
+  return { ok: true, delivered: feedback ? r?.feedback_delivered === true : true, message: r?.hint };
+}
+
 // One question's structured answer inside an Interaction reply (docs/27 §5).
 // A multi-question form replies with one entry per question, in order.
 export interface InteractionAnswer {

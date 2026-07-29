@@ -972,6 +972,78 @@
   gap: 4px;
   padding: 4px 12px;
 }
+.mt-plan-send {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+}
+/* プランレビューのコメント控え（doc ペインで付けたものをカード側で確認して送る）。 */
+.mt-plan-comments {
+  list-style: none;
+  margin: 6px 0 9px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.mt-plan-comment {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  font-size: 12px;
+  padding: 5px 7px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.mt-plan-comment.sent {
+  opacity: 0.55;
+}
+.mt-plan-comment-n {
+  flex: none;
+  min-width: 17px;
+  height: 17px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  background: color-mix(in srgb, var(--chat-accent) 30%, transparent);
+}
+.mt-plan-comment-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* 引用はプラン本文の抜粋 — 1行に潰して出典として添える（主役はコメント本文）。 */
+.mt-plan-comment-quote {
+  opacity: 0.7;
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-left: 2px solid color-mix(in srgb, var(--chat-accent) 45%, var(--border));
+  padding-left: 6px;
+}
+.mt-plan-comment-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.mt-plan-comment-sent {
+  margin-left: auto;
+  font-size: 11px;
+}
+.mt-plan-comment-del {
+  margin-left: auto;
+  flex: none;
+  padding: 1px 4px;
+  border-radius: 5px;
+  opacity: 0.65;
+}
+.mt-plan-comment-del:hover {
+  opacity: 1;
+}
 /* SendUserFile panel: files the agent shared, each a click-to-open row. */
 .mt-files {
   margin: 0.4em 0;

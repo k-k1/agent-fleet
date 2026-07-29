@@ -59,8 +59,14 @@ function contentFromFlat(p: any): PaneContent {
     }
     case "doc": {
       const docTitle = str(p.docTitle);
+      const docSession = str(p.docSession);
       return docTitle
-        ? { kind: "doc", docTitle, docContent: str(p.docContent) || "" }
+        ? {
+            kind: "doc",
+            docTitle,
+            docContent: str(p.docContent) || "",
+            ...(docSession ? { docSession } : {}),
+          }
         : { kind: "terminal", chat: false };
     }
     case "diff": {

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent, DragEvent as RDragEvent, RefObject, ReactNode } from "react";
-import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond, sessionSettings, sessionSkills, downloadURL } from "../../core/api/client.ts";
+import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond, sessionPlanRespond, sessionSettings, sessionSkills, downloadURL } from "../../core/api/client.ts";
 import type { InteractionAnswer, ManagedThreadSettings, SessionSkill, TurnResult } from "../../core/api/client.ts";
 import { isManagedSession } from "../../types/session.ts";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
@@ -57,6 +57,15 @@ import { displayName, stateInfo } from "../../lib/sessionview.ts";
 import { awaitingReply, confirmedWorkEnd, latestWorkPromptIndex, textOfParts, workSplit } from "./mirrorParts.ts";
 import { echoLanded, type PendingEcho } from "./pendingEcho.ts";
 import { PLAN_APPROVE_KEYS, planOutcome } from "./planDecision.ts";
+import {
+  formatPlanFeedback,
+  getPlanComments,
+  markPlanCommentsSent,
+  planKey,
+  removePlanComment,
+  unsentComments,
+  usePlanComments,
+} from "./planComments.ts";
 import { patchAnswers } from "./interactionAnswers.ts";
 import {
   buildClaudeSeq,
@@ -261,8 +270,8 @@ export function MirrorView({
   // Store bridge (old context values): plans open as doc panes, edit-diffs as
   // diff panes; bumpSessions refreshes the shared list; wsState gates attach.
   const openTargetInNew = useLayoutStore((s) => s.openTargetInNew);
-  const showDoc = (title: string, content: string) =>
-    openTargetInNew({ content: { kind: "doc", docTitle: title, docContent: content } });
+  const setPaneTarget = useLayoutStore((s) => s.setPaneTarget);
+  const setActivePane = useLayoutStore((s) => s.setActive);
   const showDiff = (title: string, edits: unknown, tool: string) =>
     openTargetInNew({ content: { kind: "diff", docTitle: title, diffTool: tool, diffEdits: edits } });
   const refreshSessions = useSessionsStore((s) => s.refresh);
@@ -1719,7 +1728,91 @@ export function MirrorView({
   };
 
   // Open a plan's Markdown in its own pane (manual — via a button, not automatic).
-  const openPlan = (plan: string) => showDoc(planTitle(plan), plan);
+  // The pane carries docSession so it becomes a REVIEW surface (select → comment);
+  // the comments are keyed by session + plan text, which is what makes the card below
+  // able to collect them again.
+  //
+  // Why not plain showDoc: doc panes are identified by TITLE alone (layout/ops
+  // sameTarget), so a revised plan re-presented under the same heading would just
+  // FOCUS the pane still showing the OLD text — and comments would then be written
+  // against text the agent no longer proposes. Replace the content of an already-open
+  // plan pane for this session instead, and fall back to opening a new one.
+  const openPlan = (plan: string) => {
+    const target = {
+      content: { kind: "doc" as const, docTitle: planTitle(plan), docContent: plan, docSession: session },
+    };
+    const open = findPlanPane(session);
+    if (open) {
+      setPaneTarget(open, target);
+      setActivePane(open);
+      return;
+    }
+    openTargetInNew(target);
+  };
+
+  // 却下 → 修正 → 再提示で本文が差し替わったら、開いているレビュー面も追従させる。
+  // これが無いと、利用者は古い本文を読みながらコメントを付け、送ったあとで「その記述は
+  // もう無い」ことに気づく（doc ペインはスナップショットなので黙って古いまま残る）。
+  useEffect(() => {
+    if (!pendingPlan) return;
+    const id = findPlanPane(session);
+    if (!id) return;
+    const pane = findPane(id);
+    if (pane?.content.kind !== "doc" || pane.content.docContent === pendingPlan) return;
+    setPaneTarget(id, {
+      content: { kind: "doc", docTitle: planTitle(pendingPlan), docContent: pendingPlan, docSession: session },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingPlan, session]);
+
+  // プランへのコメントを届ける。経路は「押した瞬間の状態」で決まる:
+  //   承認待ち → /plan-respond の reject（Escape でダイアログを閉じ、コンポーザが戻って
+  //     から投入するところまでサーバが面倒を見る）。開いたまま /input へ送ると本文が
+  //     モーダルに飲まれ Enter が承認になるため、この経路でしか安全に届かない。
+  //   それ以外（却下後・plan モードで入力待ち／実行中） → 普通の発話として送る。
+  // 送信済みの印は「実際に届いた」ときだけ付ける — 届かなかったコメントを消してしまうと
+  // 利用者は打ち直せない。
+  const sendPlanComments = async (plan: string) => {
+    if (sending || wsDown()) return;
+    const key = planKey(session, plan);
+    const list = unsentComments(getPlanComments(key));
+    if (!list.length) return;
+    const feedback = formatPlanFeedback(list);
+    const ids = list.map((c) => c.id);
+    const isPending = !!pendingPlan && pendingPlan.trim() === plan.trim();
+    if (!isPending) {
+      await sendPrompt(feedback);
+      markPlanCommentsSent(key, ids);
+      return;
+    }
+    setSending(true);
+    rejectedPlansRef.current.add(plan.trim()); // 楽観 却下 バッジ（実 outcome で planOutcome が調停）
+    wasWorkingRef.current = false; // 中断と同じ: 返信を待つ状態ではなくなる
+    finalizingRef.current = false;
+    setFinalizing(false);
+    const res = await sessionPlanRespond(session, "reject", feedback);
+    setSending(false);
+    if (!res.ok) {
+      // すでに別経路で判断済み（no_plan）なら、ただの発話として届ける。
+      if (res.code === "no_plan") {
+        await sendPrompt(feedback);
+        markPlanCommentsSent(key, ids);
+        return;
+      }
+      toast(res.message || tr("mirror.send_failed"));
+      return;
+    }
+    if (!res.delivered) {
+      // 却下は通ったがフィードバックは届いていない（コンポーザ復帰を確認できず）。
+      // 送信済みにせず、コンポーザから送り直せることを伝える。
+      toast(res.message || tr("plan.feedback_undelivered"));
+      return;
+    }
+    markPlanCommentsSent(key, ids);
+    const echoId = ++echoSeqCounter; // 実ターンが載るまでの楽観エコー（sendPrompt と同じ）
+    applyEchoes((p) => [...p, { id: echoId, text: feedback, sinceIdx: newestIdx() }]);
+    setTimeout(() => tickRef.current?.(), 400);
+  };
 
   // Open a SendUserFile entry in its own split pane (same as the file tree's split-open).
   const openFile = (path: string, line?: number, column?: number) =>
@@ -2327,6 +2420,7 @@ export function MirrorView({
             groups,
             sendPrompt,
             openPlan,
+            (plan: string) => void sendPlanComments(plan),
             openDiff,
             openFile,
             maxSpend,
@@ -2349,9 +2443,11 @@ export function MirrorView({
             <div className="mirror-turn-body">
               <PlanBlock
                 plan={pendingPlan}
+                session={session}
                 pending
                 sending={sending}
                 onOpen={() => openPlan(pendingPlan)}
+                onSendComments={() => void sendPlanComments(pendingPlan)}
                 onApprove={() => {
                   // A rejected plan may be refined and re-presented with identical Markdown.
                   // The optimistic marker is keyed by that Markdown (the pending payload has
@@ -3107,6 +3203,7 @@ function renderGroups(
   groups: Group[],
   onAnswer: (t: string) => void,
   onOpenPlan: (plan: string) => void,
+  onSendPlanComments: (plan: string) => void,
   onOpenDiff: (p: Part) => void,
   onOpenFile: (path: string, line?: number, column?: number) => void,
   maxSpend: number,
@@ -3154,6 +3251,7 @@ function renderGroups(
           onOpenImage={onOpenImage}
           onAnswer={onAnswer}
           onOpenPlan={onOpenPlan}
+          onSendPlanComments={onSendPlanComments}
           onOpenDiff={onOpenDiff}
           onOpenFile={onOpenFile}
           agentName={agentName}
@@ -3502,6 +3600,7 @@ function Turn({
   onOpenImage,
   onAnswer,
   onOpenPlan,
+  onSendPlanComments,
   onOpenDiff,
   onOpenFile,
   agentName,
@@ -3517,6 +3616,7 @@ function Turn({
   onOpenImage: (url: string) => void;
   onAnswer: (t: string) => void;
   onOpenPlan: (plan: string) => void;
+  onSendPlanComments: (plan: string) => void;
   onOpenDiff: (p: Part) => void;
   onOpenFile: (path: string, line?: number, column?: number) => void;
   agentName: string;
@@ -3547,10 +3647,12 @@ function Turn({
         <PlanBlock
           key={item.i}
           plan={item.p.plan}
+          session={session}
           answered
           outcome={item.p.answer}
           forceRejected={isRejectedPlan(item.p.plan || "")}
           onOpen={() => onOpenPlan && onOpenPlan(item.p.plan || "")}
+          onSendComments={() => onSendPlanComments(item.p.plan || "")}
         />
       ) : item.p.kind === "userfile" ? (
         // Files the agent shared via SendUserFile — a panel; each opens in a pane.
@@ -4320,6 +4422,7 @@ function QuestionBlock({
 // button that confirms the plan (Enter = "Yes, and bypass permissions").
 function PlanBlock({
   plan,
+  session,
   pending,
   answered,
   outcome,
@@ -4327,9 +4430,12 @@ function PlanBlock({
   onOpen,
   onApprove,
   onReject,
+  onSendComments,
   sending,
 }: {
   plan?: string;
+  /** コメントの束を引く鍵に使う（レビュー面と同じ planKey）。 */
+  session?: string;
   pending?: boolean;
   answered?: boolean;
   outcome?: string;
@@ -4337,6 +4443,7 @@ function PlanBlock({
   onOpen?: () => void;
   onApprove?: () => void;
   onReject?: () => void;
+  onSendComments?: () => void;
   sending?: boolean;
 }) {
   // A plan in the transcript was presented and resolved — classify its outcome text
@@ -4348,6 +4455,12 @@ function PlanBlock({
   const kind = planOutcome(outcome, !!forceRejected);
   const approved = kind === "approved";
   const rejected = kind === "rejected";
+  // レビュー面（doc ペイン）で溜めたコメント。承認待ちに限らず引く — 却下したあとでも
+  // 追加の指摘を送れるようにするため（plan モードのまま入力待ちに戻るので、そのときは
+  // 普通の発話として届く）。
+  const commentKey = session && plan ? planKey(session, plan) : null;
+  const comments = usePlanComments(commentKey);
+  const unsent = unsentComments(comments);
   return (
     <div className={"mt-plan" + (answered ? " decided" : "")}>
       <div className="mt-plan-head">
@@ -4361,10 +4474,45 @@ function PlanBlock({
         )}
       </div>
       {planSummary(plan) && <div className="mt-plan-summary">{planSummary(plan)}</div>}
+      {comments.length > 0 && (
+        <ol className="mt-plan-comments">
+          {comments.map((c, i) => (
+            <li key={c.id} className={"mt-plan-comment" + (c.sentAt ? " sent" : "")}>
+              <span className="mt-plan-comment-n">{i + 1}</span>
+              <span className="mt-plan-comment-main">
+                <span className="mt-plan-comment-quote">{c.quote}</span>
+                <span className="mt-plan-comment-body">{c.body}</span>
+              </span>
+              {c.sentAt ? (
+                <span className="muted mt-plan-comment-sent">{tr("plan.sent")}</span>
+              ) : (
+                <button
+                  type="button"
+                  className="ghost mt-plan-comment-del"
+                  title={tr("plan.delete_comment")}
+                  onClick={() => commentKey && removePlanComment(commentKey, c.id)}
+                >
+                  <Icon name="close" />
+                </button>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
       <div className="mt-plan-actions">
         <button type="button" className="ghost mt-plan-open" onClick={onOpen}>
           <Icon name="split-horizontal" /> {tr("mirror.open_in_pane_short")}
         </button>
+        {unsent.length > 0 && onSendComments && (
+          // 承認待ちなら「却下して送る」（ダイアログを閉じないと本文が届かないため
+          // 却下と一体）、それ以外は普通に送るだけ。
+          <button type="button" className="btn primary mt-plan-send" disabled={sending} onClick={onSendComments}>
+            <Icon name="comment-discussion" />{" "}
+            {pending
+              ? tr("plan.send_and_keep_planning", { count: unsent.length })
+              : tr("plan.send_comments", { count: unsent.length })}
+          </button>
+        )}
         {pending && (
           <>
             <button type="button" className="btn primary mt-plan-approve" disabled={sending} onClick={onApprove}>
@@ -4435,6 +4583,28 @@ function UserFileBlock({ files, caption, onOpen }: { files?: string[]; caption?:
       </div>
     </div>
   );
+}
+
+// findPlanPane returns the id of a pane already reviewing THIS session's plan, if any.
+// Read straight from the store (not a subscription): it is consulted at click time,
+// and subscribing would re-render the whole mirror on every layout change.
+function findPlanPane(session: string): string | null {
+  const layout = useLayoutStore.getState().layout;
+  for (const col of layout?.cols || []) {
+    for (const pane of col.panes) {
+      if (pane.content.kind === "doc" && pane.content.docSession === session) return pane.id;
+    }
+  }
+  return null;
+}
+
+/** findPane reads one pane out of the live layout (same no-subscription rationale). */
+function findPane(id: string) {
+  const layout = useLayoutStore.getState().layout;
+  for (const col of layout?.cols || []) {
+    for (const pane of col.panes) if (pane.id === id) return pane;
+  }
+  return null;
 }
 
 // planTitle / planSummary derive a compact heading + lead line from the plan Markdown.
