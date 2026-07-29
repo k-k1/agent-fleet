@@ -24,8 +24,9 @@ function contentFromFlat(p: any): PaneContent {
       const filePath = str(p.filePath);
       const targetLine = typeof p.targetLine === "number" && p.targetLine > 0 ? Math.floor(p.targetLine) : undefined;
       const targetColumn = typeof p.targetColumn === "number" && p.targetColumn > 0 ? Math.floor(p.targetColumn) : undefined;
+      const mode = p.mode === "view" || p.mode === "edit" ? p.mode : undefined;
       return filePath
-        ? { kind: "file", filePath, ...(targetLine ? { targetLine } : {}), ...(targetColumn ? { targetColumn } : {}) }
+        ? { kind: "file", filePath, ...(targetLine ? { targetLine } : {}), ...(targetColumn ? { targetColumn } : {}), ...(mode ? { mode } : {}) }
         : { kind: "terminal", chat: false };
     }
     case "read": {

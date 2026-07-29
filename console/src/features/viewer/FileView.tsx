@@ -93,6 +93,10 @@ interface FileViewProps {
   targetLine?: number;
   targetColumn?: number;
   wrap?: boolean | null;
+  /** The starting display mode the opener asked for ("編集で開く" from a file
+   * menu). Only the FIRST mode is taken from it — the pane's own controls own
+   * the mode from there on. */
+  openMode?: "view" | "edit";
   /** The host pane's id — lets global keyboard commands drive this view's local
    * Markdown preview/source toggle via the pane-view action registry. */
   paneId?: string;
@@ -121,7 +125,7 @@ function dismissSoftKeyboard(): void {
   virtualKeyboard?.hide?.();
 }
 
-export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: FileViewProps) {
+export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, paneId }: FileViewProps) {
   const tr = useT();
   const openTarget = useLayoutStore((s) => s.openTarget);
   const openTargetInNew = useLayoutStore((s) => s.openTargetInNew);
@@ -151,8 +155,9 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   const [modeState, setModeState] = useState<{
     key: FileData | null;
     targetLine: number | undefined;
+    openMode: "view" | "edit" | undefined;
     mode: FileModeState;
-  }>({ key: null, targetLine: undefined, mode: { kind: "plain", mode: "view" } });
+  }>({ key: null, targetLine: undefined, openMode: undefined, mode: { kind: "plain", mode: "view" } });
   // Bumped by each mode selection that lands on the editing surface; the effect
   // below turns one bump into one focus move (docs/44 §5).
   const [focusRequest, setFocusRequest] = useState(0);
@@ -391,9 +396,12 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   // A new citation re-picks it too: retargeting the pane at a line of the file it
   // already shows leaves `data` untouched, and staying in the preview would hide
   // the very row that was asked for (docs/44 §1.8).
-  const startingMode = () => initialFileMode(caps, { hasTargetLine: !!targetLine });
-  const modeIsCurrent = modeState.key === data && modeState.targetLine === targetLine;
-  if (data && !modeIsCurrent) setModeState({ key: data, targetLine, mode: startingMode() });
+  // A fresh open request re-picks it too, the same way a new citation does:
+  // choosing 編集 for the file a pane already shows retargets that pane (same
+  // `data`), and only the request is new.
+  const startingMode = () => initialFileMode(caps, { hasTargetLine: !!targetLine, requested: openMode });
+  const modeIsCurrent = modeState.key === data && modeState.targetLine === targetLine && modeState.openMode === openMode;
+  if (data && !modeIsCurrent) setModeState({ key: data, targetLine, openMode, mode: startingMode() });
   // Capability changes after that only clamp the selection, so editing a deck's
   // front matter cannot yank the user back to the initial mode.
   const fileMode = modeIsCurrent ? reconcileFileMode(modeState.mode, caps) : startingMode();

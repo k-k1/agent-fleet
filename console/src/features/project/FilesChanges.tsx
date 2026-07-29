@@ -4,14 +4,20 @@
 // viewer (same as the SCM pane's changes list); untracked/added files without a
 // diff still open it — DiffView falls back sensibly. Revived from the old
 // FilesSection (deleted eeded8a), minus its file-management extras.
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api, isTransientErr } from "../../core/api/client.ts";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
 import FileIcon from "../../ui/FileIcon.tsx";
+import { Icon } from "../../ui/Icon.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useFilesStore } from "../files/store.ts";
 import { openFileDiff } from "../scm/open.ts";
+import { openFileMode } from "../viewer/openFile.ts";
+import { placeFixed } from "../../lib/placeFixed.ts";
+import { useDismiss } from "../../lib/useDismiss.ts";
+import { useMenuRoving } from "../../lib/useMenuRoving.ts";
 import { useT, type MsgKey } from "../../lib/i18n/index.ts";
 
 // A git working-tree change (porcelain XY + repo), as api/fs/changes reports it.
@@ -23,14 +29,34 @@ interface FsChange {
   worktree?: string;
 }
 
+// The porcelain code that decides the row's badge: the worktree column when it
+// says anything, else the index column.
+const changeCode = (c: FsChange): string | undefined =>
+  c.worktree !== " " && c.worktree !== "" ? c.worktree : c.index;
+
 // Porcelain XY → a label key + color class (translated at render time).
 function changeBadge(c: FsChange): { cls: string; label: MsgKey } {
   if (c.untracked) return { cls: "st-add", label: "pj.st_untracked" };
-  const code = c.worktree !== " " && c.worktree !== "" ? c.worktree : c.index;
+  const code = changeCode(c);
   if (code === "D") return { cls: "st-del", label: "pj.st_deleted" };
   if (code === "A") return { cls: "st-add", label: "pj.st_added" };
   if (code === "R" || code === "C") return { cls: "st-mod", label: "pj.st_renamed" };
   return { cls: "st-mod", label: "pj.st_modified" };
+}
+
+// One row's menu target. `rel` and `staged` are what the diff needs, `path` (the
+// home-relative one the API reports) what the file view needs, and `deleted`
+// gates 表示 / 編集 — a deleted file has no content left to open.
+interface ChangeMenu {
+  x: number;
+  y: number;
+  /** The ⋯ button the menu hangs under; null when opened at the cursor. */
+  anchor: HTMLElement | null;
+  repo: string;
+  rel: string;
+  path: string;
+  staged: boolean;
+  deleted: boolean;
 }
 
 export function FilesChanges() {
@@ -38,6 +64,32 @@ export function FilesChanges() {
   const running = useWorkspaceStore((s) => s.state) === "running";
   const filesTick = useFilesStore((s) => s.tick);
   const [changes, setChanges] = useState<FsChange[] | null>(null);
+  const [menu, setMenu] = useState<ChangeMenu | null>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+  const menuRef = useRef<HTMLUListElement>(null);
+  const anchorRef = useRef<HTMLElement | null>(null);
+  anchorRef.current = menu?.anchor ?? null;
+
+  // Esc / outside-click close, ↑↓ roving, and role=menu — the same shared trio
+  // the session and repo row menus use.
+  useDismiss([menuRef, anchorRef], !!menu, () => setMenu(null));
+  useMenuRoving(menuRef, !!menu);
+  // Clamp EVERY render, before paint: the JSX re-applies the raw coordinates as
+  // inline style on each re-render, which would undo a one-shot clamp for a menu
+  // opened near the rail's foot (same reasoning as the file tree's menu).
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!menu || !el) return;
+    const bounds = listRef.current?.closest<HTMLElement>(".app-rail");
+    if (menu.anchor) {
+      const a = menu.anchor.getBoundingClientRect();
+      placeFixed(el, a.right - el.offsetWidth, a.bottom + 2, bounds);
+    } else placeFixed(el, menu.x, menu.y, bounds);
+  });
+  const runMenu = (fn: () => void) => {
+    setMenu(null);
+    fn();
+  };
 
   // WS 起動直後は agent 不通で api() が http_5xx を返すので過渡的失敗は再試行（isTransientErr）。
   useRetryLoad(async (signal) => {
@@ -65,35 +117,114 @@ export function FilesChanges() {
   }, {});
 
   return (
-    <ul className="fstree changeslist" role="list" aria-label={tr("pj.changed_files")}>
-      {Object.entries(byRepo).map(([repo, list]) => (
-        <li key={repo} className="chg-group">
-          <div className="chg-repo">{repo}</div>
-          <ul>
-            {list.map((c) => {
-              const b = changeBadge(c);
-              const rel = c.path.startsWith("repos/" + repo + "/") ? c.path.slice(("repos/" + repo + "/").length) : c.path;
-              const staged = !c.untracked && c.index !== " " && c.index !== "";
-              return (
-                <li
-                  key={c.path + (c.untracked ? "?" : "")}
-                  className="fsrow chg-row"
-                  title={c.path + tr("pj.click_open_diff")}
-                  onClick={() => openFileDiff(repo, rel, staged)}
-                >
-                  <span className="fs-file">
-                    <span className={"chg-badge " + b.cls}>{tr(b.label)}</span>
-                    <span className="fs-ic">
-                      <FileIcon name={rel.split("/").pop() || ""} />
+    <>
+      <ul ref={listRef} className="fstree changeslist" role="list" aria-label={tr("pj.changed_files")}>
+        {Object.entries(byRepo).map(([repo, list]) => (
+          <li key={repo} className="chg-group">
+            <div className="chg-repo">{repo}</div>
+            <ul>
+              {list.map((c) => {
+                const b = changeBadge(c);
+                const rel = c.path.startsWith("repos/" + repo + "/") ? c.path.slice(("repos/" + repo + "/").length) : c.path;
+                const staged = !c.untracked && c.index !== " " && c.index !== "";
+                const target = (e: { clientX: number; clientY: number }, anchor: HTMLElement | null): ChangeMenu => ({
+                  x: e.clientX,
+                  y: e.clientY,
+                  anchor,
+                  repo,
+                  rel,
+                  path: c.path,
+                  staged,
+                  deleted: !c.untracked && changeCode(c) === "D",
+                });
+                return (
+                  <li
+                    key={c.path + (c.untracked ? "?" : "")}
+                    className="fsrow chg-row"
+                    title={c.path + tr("pj.click_open_diff")}
+                    onClick={() => openFileDiff(repo, rel, staged)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setMenu(target(e, null));
+                    }}
+                  >
+                    <span className="fs-file">
+                      <span className={"chg-badge " + b.cls}>{tr(b.label)}</span>
+                      <span className="fs-ic">
+                        <FileIcon name={rel.split("/").pop() || ""} />
+                      </span>
+                      {rel}
                     </span>
-                    {rel}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        </li>
-      ))}
-    </ul>
+                    {/* ⋯ — the same menu the right-click opens, for pointers that
+                        have no right button and for keyboard reach. */}
+                    <button
+                      type="button"
+                      className="chg-menu-btn"
+                      title={tr("pj.row_menu")}
+                      aria-haspopup="menu"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation(); // the row itself opens the diff
+                        const btn = e.currentTarget;
+                        setMenu((m) => (m && m.anchor === btn ? null : target(e, btn)));
+                      }}
+                    >
+                      <Icon name="ellipsis" />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </li>
+        ))}
+      </ul>
+      {menu &&
+        createPortal(
+          <ul
+            className="ui-menu chg-ctxmenu"
+            ref={menuRef}
+            style={{ left: menu.x, top: menu.y }}
+            role="menu"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <li>
+              <button
+                type="button"
+                className="ui-menu-item"
+                onClick={() => runMenu(() => openFileDiff(menu.repo, menu.rel, menu.staged))}
+              >
+                <Icon name="git-compare" /> {tr("view.diff")}
+              </button>
+            </li>
+            {/* 表示 / 編集 open the file itself, so a deleted one has nothing to
+                show — the entries stay listed but disabled, with the reason on
+                the tooltip. */}
+            <li>
+              <button
+                type="button"
+                className="ui-menu-item"
+                disabled={menu.deleted}
+                title={menu.deleted ? tr("pj.deleted_no_open") : undefined}
+                onClick={() => runMenu(() => openFileMode(menu.path, "view"))}
+              >
+                <Icon name="eye" /> {tr("editor.mode.view")}
+              </button>
+            </li>
+            <li>
+              <button
+                type="button"
+                className="ui-menu-item"
+                disabled={menu.deleted}
+                title={menu.deleted ? tr("pj.deleted_no_open") : undefined}
+                onClick={() => runMenu(() => openFileMode(menu.path, "edit"))}
+              >
+                <Icon name="edit" /> {tr("editor.mode.edit")}
+              </button>
+            </li>
+          </ul>,
+          document.body,
+        )}
+    </>
   );
 }

@@ -387,6 +387,20 @@ export function changes(locale, repo) {
   };
 }
 
+// The left rail's 変更 view (FilesChanges) asks ONE cross-repo endpoint instead of
+// per-repo status, so its entries carry the working copy and a home-relative path.
+export function fsChanges(locale) {
+  const of = (repo) =>
+    changes(locale, repo).changes.map((c) => ({ ...c, repo, path: `repos/${repo}/${c.path}` }));
+  return {
+    changes: [
+      ...of("webshop@checkout-validation"),
+      { path: "repos/payments-api/src/refund/handler.go", repo: "payments-api", index: "", worktree: "M" },
+      { path: "repos/payments-api/src/refund/legacy.go", repo: "payments-api", index: "D", worktree: "" },
+    ],
+  };
+}
+
 // One commit's detail, as the commit pane renders it (GitDiff.CommitData): the header
 // fields plus a real unified diff, which the view splits into per-file foldable blocks.
 const SHOW_DIFF = `diff --git a/src/cart/CartBadge.tsx b/src/cart/CartBadge.tsx

@@ -338,6 +338,7 @@ export function Pane({
           filePath={pane.content.filePath}
           targetLine={pane.content.targetLine}
           targetColumn={pane.content.targetColumn}
+          openMode={pane.content.mode}
           wrap={pane.wrap}
         />
       )}

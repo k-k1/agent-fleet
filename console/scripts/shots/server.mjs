@@ -111,6 +111,8 @@ const exact = {
   "/api/pat": () => ({}),
   "/api/tts/dict": () => ({ entries: [] }),
   "/api/workspace/stats": () => fx.stats(),
+  // 左ペイン「変更」ビュー — cross-repo, one call (see FilesChanges).
+  "/api/fs/changes": () => fx.fsChanges(LOCALE),
 };
 
 const re = [
