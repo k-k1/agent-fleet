@@ -143,30 +143,93 @@ fi
 	}
 }
 
-// A {prompt} while an AskUserQuestion is pending would be typed into the modal, which
-// ignores the text and lets the Enter confirm the FIRST option (docs/dev/92). The
-// input handler must therefore see the session as question-pending and reject it.
-func TestQuestionPendingGatesPrompt(t *testing.T) {
+// A {prompt} sent while an interaction is pending would be typed into that modal,
+// which swallows the text and lets the Enter confirm its highlighted row: a wrong
+// AUQ answer (docs/dev/92), a SILENT PLAN APPROVAL, or a silent 許可. The gate is a
+// whitelist — only idle (new turn) and working (steering) pass — so a state added
+// upstream blocks by default instead of quietly joining the hole.
+func TestPromptBlockerGatesPrompt(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	const name = "auq_guard"
 	dir := t.TempDir()
 	session.WriteMeta(session.Meta{Name: name, Dir: dir, Kind: session.KindClaude})
 	sid := session.UUID(dir, name)
 
-	if questionPending(name) {
-		t.Fatal("no status recorded yet — must read as not-pending")
+	if got := promptBlocker(name); got != "" {
+		t.Fatalf("no status recorded yet — must read as free, got %q", got)
 	}
-	status.Persist(sid, "question")
-	if !questionPending(name) {
-		t.Fatal("status=question must gate the {prompt} path")
+	for _, blocked := range []string{"question", "plan", "permission", "some-new-state"} {
+		status.Persist(sid, blocked)
+		if got := promptBlocker(name); got != blocked {
+			t.Fatalf("status=%s must gate the {prompt} path, got %q", blocked, got)
+		}
 	}
-	// Answered → PostToolUse flips to working; the gate must lift.
-	status.Persist(sid, "working")
-	if questionPending(name) {
-		t.Fatal("status=working must not gate prompts")
+	// Free states: a new turn (idle) and steering the running one (working) must pass —
+	// blocking "working" would break every steer / queued injection.
+	for _, free := range []string{"idle", "working"} {
+		status.Persist(sid, free)
+		if got := promptBlocker(name); got != "" {
+			t.Fatalf("status=%s must not gate prompts, got %q", free, got)
+		}
 	}
-	if questionPending("no_such_session") {
-		t.Fatal("unknown session must read as not-pending")
+	if got := promptBlocker("no_such_session"); got != "" {
+		t.Fatalf("unknown session must read as free, got %q", got)
+	}
+}
+
+// Each blocking state gets its own wire code so the Console can explain it; the
+// question code keeps its exact historical spelling (the CP scheduler, the MCP drive
+// tools and the err.<code> i18n catalogs all classify on it).
+func TestBlockedErrCode(t *testing.T) {
+	for state, want := range map[string]string{
+		"question":   "question_pending",
+		"plan":       "plan_pending",
+		"permission": "permission_pending",
+		"whatever":   "interaction_pending",
+	} {
+		if got := blockedErrCode(state); got != want {
+			t.Errorf("blockedErrCode(%q) = %q, want %q", state, got, want)
+		}
+		if blockedErrMessage(state) == "" {
+			t.Errorf("blockedErrMessage(%q) is empty", state)
+		}
+	}
+}
+
+// Regression: a {prompt} sent while an ExitPlanMode approval is pending used to be
+// TYPED INTO THE DIALOG, where the text is swallowed and the trailing Enter confirms
+// the first row — always an approval. Every non-Console sender could reach it
+// (SendSelectionModal, memo / scheduler injections, send_to_session, the bridge). The
+// handler must refuse with 409 plan_pending and send NOTHING to the pane.
+func TestHandleSessionInputRefusesPendingPlan(t *testing.T) {
+	bin := t.TempDir()
+	logPath := filepath.Join(bin, "tmux.log")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_TEST_LOG"
+case "$1" in
+  has-session) exit 0 ;;
+  list-panes) printf '1 %%7\n' ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("TMUX_TEST_LOG", logPath)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
+
+	const name = "plan_guard"
+	dir := t.TempDir()
+	session.WriteMeta(session.Meta{Name: name, Dir: dir, Kind: session.KindClaude})
+	status.Persist(session.UUID(dir, name), "plan")
+
+	rec := postInput(t, name, `{"prompt":"別件のメモです"}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "plan_pending") {
+		t.Fatalf("status = %d, body = %s, want 409 plan_pending", rec.Code, rec.Body.String())
+	}
+	if b, err := os.ReadFile(logPath); err == nil && strings.Contains(string(b), "send-keys") {
+		t.Fatalf("nothing may be typed into the plan dialog, tmux commands = %q", b)
 	}
 }
 
