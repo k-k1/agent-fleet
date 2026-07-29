@@ -374,9 +374,8 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 		httpx.WriteErr(w, http.StatusBadRequest, "empty_prompt", "prompt, keys or seq is required")
 		return
 	}
-	if questionPending(meta.Name) {
-		httpx.WriteErr(w, http.StatusConflict, "question_pending",
-			"a question is awaiting an answer; answer it via the question card, not free text")
+	if st := promptBlocker(meta.Name); st != "" {
+		writeBlockedErr(w, st)
 		return
 	}
 	d, ok := driverOf(meta)
@@ -413,14 +412,14 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 // and /turn's tui start/steer route. Guards, types + submits, and marks working;
 // on failure the HTTP error is already written and false is returned.
 func submitPromptTUI(w http.ResponseWriter, name, pane, prompt string) bool {
-	// While an AskUserQuestion is awaiting an answer, the TUI modal IGNORES typed text
-	// on option rows and the trailing Enter confirms the highlighted FIRST option — a
-	// prompt here silently answers the wrong choice (v2.1.204 実測, docs/dev/92).
-	// Reject it for every prompt sender (Console composer, MCP drive tools); answers
-	// must go through {keys}/{seq} (tui) or /respond (managed).
-	if questionPending(name) {
-		httpx.WriteErr(w, http.StatusConflict, "question_pending",
-			"a question is awaiting an answer; answer it via the question card, not free text")
+	// While ANY interaction is pending (question / plan approval / permission), the TUI
+	// is showing a modal that swallows typed text and lets the trailing Enter confirm
+	// its highlighted row — a wrong answer, a silent plan approval, or a silent 許可.
+	// Reject it for every prompt sender (Console composer, SendSelectionModal, memo /
+	// scheduler injections, MCP drive tools); decisions must go through {keys}/{seq}
+	// (tui), /plan-respond (plan) or /respond (managed). See promptBlocker.
+	if st := promptBlocker(name); st != "" {
+		writeBlockedErr(w, st)
 		return false
 	}
 	// agy: the "Signing in..." boot screen eats typed text entirely (docs/32) — a
@@ -691,27 +690,45 @@ func opencodeInSubagentView(tn string) bool {
 	return strings.Contains(s, "Parent") && strings.Contains(s, "Next")
 }
 
-// questionPending reports whether the session is blocked on an AskUserQuestion
-// (status "question": written by the PreToolUse hook, cleared when the question's
-// own lifecycle moves on — answered→working / Stop→idle). Unknown sessions or a
-// missing status file read as not-pending.
-func questionPending(name string) bool {
+// promptFreeStates are the ONLY states in which a session may be handed free text:
+// idle (the composer owns the keystrokes — a new turn) and working (steering the
+// running turn, which every sender from the Console composer to the scheduler relies
+// on). Everything else is a MODAL the TUI drives by row selection.
+var promptFreeStates = map[string]bool{"idle": true, "working": true}
+
+// promptBlocker returns the interactive state that must be decided before free text
+// may be delivered, or "" when the composer is free. Unknown sessions and an
+// unreadable state read as free (delivery then fails on its own terms).
+//
+// WHITELIST, not a denylist. In every non-free state the TUI is showing a menu whose
+// highlighted row a typed line + Enter CONFIRMS — the text is swallowed and the Enter
+// decides for the user:
+//   - question:   the modal ignores typed text and Enter picks the FIRST option
+//     (v2.1.204 実測, docs/dev/92) — a silent wrong answer.
+//   - plan:       Enter confirms the first row of the ExitPlanMode dialog, which is
+//     always an approval — a prompt sent here SILENTLY APPROVES the plan. Decide it
+//     from the plan card / plan-respond instead.
+//   - permission: Enter confirms 許可 — a silent tool approval (docs/32 §agy に同型の実測)。
+//
+// A denylist (the previous `state == "question"` check) let plan and permission
+// through for claude even though the same accident applies, and any state added
+// upstream would silently join them. Anything not on the whitelist therefore blocks.
+func promptBlocker(name string) string {
 	meta, ok := session.ReadMeta(name)
 	if !ok {
-		return false
+		return ""
 	}
 	// agy has no status hooks — its pending interactive prompt is detected via the
-	// conversation-DB probe instead (pending.go). Both states must reject free text:
-	// question AND permission menus treat a typed line + Enter as confirming the
-	// highlighted row (docs/32 実測 — 許可メニューでは「1. Yes」確定 = 無言の承認事故)。
+	// conversation-DB probe instead (pending.go). It reports ONLY the blocking states
+	// ("question" / "permission"), so an empty probe means "nothing pending".
 	if meta.Kind == session.KindAgy {
 		st, _ := agy.Probe(meta)
-		return st != ""
+		return st
 	}
 	// copilot: hooks 無し — events.jsonl の未完了 permission.requested が保留の
 	// 唯一のソース（tui の許可メニュー / managed の Interaction 双方を同じ形で拾う）。
 	if meta.Kind == session.KindCopilot {
-		return copilot.LiveState(meta) == "question"
+		return blockingState(copilot.LiveState(meta))
 	}
 	// kiro: hooks 無し — "question"（承認待ち「shell requires approval」）は driveState が
 	// 返すだけで status ストアに書かれないため、下の汎用フォールバック（status.Read）は
@@ -719,10 +736,56 @@ func questionPending(name string) bool {
 	// TUI 文字列を直接読んでガードする（copilot 同型。managed は ErrQuestionPending で
 	// 別途ガード済み）。
 	if meta.Kind == session.KindKiro {
-		return kiro.LiveState(meta) == "question"
+		return blockingState(kiro.LiveState(meta))
 	}
 	st, ok := status.Read(session.UUID(meta.Dir, name))
-	return ok && st.State == "question"
+	if !ok {
+		return ""
+	}
+	return blockingState(st.State)
+}
+
+// blockingState maps a live state to "" (free) or the state itself (blocking). An
+// empty state is "no opinion" from a kind probe that couldn't tell — free, matching
+// driveState's own fallthrough.
+func blockingState(state string) string {
+	if state == "" || promptFreeStates[state] {
+		return ""
+	}
+	return state
+}
+
+// blockedErrCode / blockedErrMessage give each blocking state its own wire code and
+// hint. "question_pending" keeps its exact spelling — the Console (err.<code> i18n),
+// the CP scheduler and the MCP drive tools all classify on it. New codes need their
+// own err.<code> entry in both locale catalogs (docs/28 / ADR0016).
+func blockedErrCode(state string) string {
+	switch state {
+	case "question":
+		return "question_pending"
+	case "plan":
+		return "plan_pending"
+	case "permission":
+		return "permission_pending"
+	}
+	return "interaction_pending"
+}
+
+func blockedErrMessage(state string) string {
+	switch state {
+	case "question":
+		return "a question is awaiting an answer; answer it via the question card, not free text"
+	case "plan":
+		return "a plan is awaiting approval; decide it from the plan card (typed text would be swallowed by the dialog and the Enter would approve it)"
+	case "permission":
+		return "a permission prompt is awaiting a decision; answer it from the permission card (typed text would be swallowed by the menu and the Enter would allow it)"
+	}
+	return "the session is showing an interactive prompt (" + state + "); answer it from the Console, not free text"
+}
+
+// writeBlockedErr answers a free-text send that a pending interaction refuses.
+func writeBlockedErr(w http.ResponseWriter, state string) {
+	httpx.WriteErr(w, http.StatusConflict, blockedErrCode(state), blockedErrMessage(state))
 }
 
 // markSessionWorking optimistically marks the session working so a poll immediately

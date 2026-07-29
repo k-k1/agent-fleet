@@ -30,6 +30,12 @@ export const en: Record<keyof typeof ja, string> = {
   "err.worktree_remove_failed": "Failed to remove the worktree.",
   "err.question_pending":
     "The agent is waiting for an answer to its question. Answer it from the question card before sending.",
+  "err.plan_pending":
+    "The agent is waiting for a plan decision. Approve or reject it from the plan card before sending — typed text would be swallowed by the dialog and approve the plan.",
+  "err.permission_pending":
+    "The agent is waiting for a permission decision. Allow or deny it from the permission card before sending — typed text would be swallowed by the menu and allow it.",
+  "err.interaction_pending":
+    "The agent is showing an interactive prompt. Answer it from its card before sending.",
   "err.not_running": "The session is stopped. Resume it before sending.",
   "err.driver_unavailable": "Managed execution isn't available for this agent.",
   "err.runtime_failed": "Couldn't start the agent. Wait a moment and try again.",
