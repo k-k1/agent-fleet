@@ -84,6 +84,18 @@ chore, it's fine to just leave it.
 However, **uncommitted changes exist only inside the workspace**. For long-running work,
 committing and pushing frequently is the safe habit ([04](04-git.md)).
 
+### "A new version is available" and the **Restart needed** badge
+
+When the Console is updated, a toast offers an **Update** button. That button only reloads
+the browser — **it does not stop your running sessions**.
+
+If the update also moved the backend, the workspace you have running is still on the old
+one, and a **Restart needed** badge appears next to the power button in the workspace action
+bar. Clicking it explains the cost and offers **Restart now** (a stop→start). Unlike the
+reload, this **does stop running sessions** — they become *stopped* and are resumable — while
+repositories and files are left untouched. There is no hurry: pick a moment that suits you.
+The badge disappears on its own once the workspace is back on the current version.
+
 ### End-of-first-day checklist
 
 - Did you commit and push the changes that matter? (Only what you pushed survives outside the workspace.)
