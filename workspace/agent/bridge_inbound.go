@@ -22,15 +22,19 @@ var (
 	errInjectEmpty           = errors.New("empty prompt")
 	errInjectNotRunning      = errors.New("session is not running")
 	errInjectQuestionPending = errors.New("a question is awaiting an answer; it can't be free-texted")
+	// A plan approval / permission prompt is a DECISION menu: free text would be
+	// swallowed and its Enter would confirm the highlighted row (= 承認 / 許可).
+	errInjectDecisionPending = errors.New("a decision is awaiting an answer; it can't be free-texted")
 )
 
 // injectSessionPrompt delivers a free-text prompt into a running session with no HTTP layer —
 // the in-process entry point behind chat-bridge inbound (docs/37 P2a). It mirrors
 // handleSessionInput's {prompt} branch (session_io.go) but returns errors instead of writing
 // an HTTP response, and reuses the same primitives (typeLineAndSubmit / driver Send /
-// markSessionWorking) so behavior can't drift. It refuses to free-text a session with an
-// awaiting question — typed text there mis-answers the AUQ (same guard as submitPromptTUI);
-// P2b will map such answers to buttons instead.
+// markSessionWorking) so behavior can't drift. It refuses to free-text a session with a
+// pending interaction — typed text mis-answers an AUQ, and in the plan / permission
+// dialogs it is swallowed while the Enter confirms 承認 / 許可 (same guard as
+// submitPromptTUI); P2b will map such answers to buttons instead.
 func injectSessionPrompt(name, prompt string) error {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
@@ -39,8 +43,11 @@ func injectSessionPrompt(name, prompt string) error {
 	if !session.ValidName(name) {
 		return fmt.Errorf("invalid session name %q", name)
 	}
-	if questionPending(name) {
-		return errInjectQuestionPending
+	if st := promptBlocker(name); st != "" {
+		if st == "question" {
+			return errInjectQuestionPending
+		}
+		return errInjectDecisionPending
 	}
 	if meta, ok := session.ReadMeta(name); ok && meta.DriverKind() == session.DriverManaged {
 		return injectManagedPrompt(meta, prompt)
@@ -112,6 +119,9 @@ func injectFailureReason(err error) string {
 	case errors.Is(err, errInjectQuestionPending):
 		return fb(en, "⚠️ 質問への回答待ちです。テキストではなくボタン（または Console）で回答してください",
 			"⚠️ A question is awaiting an answer — reply with the buttons (or the Console), not free text")
+	case errors.Is(err, errInjectDecisionPending):
+		return fb(en, "⚠️ 承認/許可の判断待ちです。テキストは判断メニューに飲まれてしまうため、Console のカードから決めてください",
+			"⚠️ A plan/permission decision is pending — decide it from the Console card; free text would be swallowed by the menu")
 	case errors.Is(err, errInjectNotRunning):
 		return fb(en, "⚠️ セッションが停止しています。開始してから返信してください",
 			"⚠️ The session isn't running — start it, then reply")

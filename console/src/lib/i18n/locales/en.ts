@@ -30,6 +30,12 @@ export const en: Record<keyof typeof ja, string> = {
   "err.worktree_remove_failed": "Failed to remove the worktree.",
   "err.question_pending":
     "The agent is waiting for an answer to its question. Answer it from the question card before sending.",
+  "err.plan_pending":
+    "The agent is waiting for a plan decision. Approve or reject it from the plan card before sending — typed text would be swallowed by the dialog and approve the plan.",
+  "err.permission_pending":
+    "The agent is waiting for a permission decision. Allow or deny it from the permission card before sending — typed text would be swallowed by the menu and allow it.",
+  "err.interaction_pending":
+    "The agent is showing an interactive prompt. Answer it from its card before sending.",
   "err.not_running": "The session is stopped. Resume it before sending.",
   "err.driver_unavailable": "Managed execution isn't available for this agent.",
   "err.runtime_failed": "Couldn't start the agent. Wait a moment and try again.",
@@ -1591,6 +1597,20 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.no_conversation":
     "No conversation yet. Send a prompt from the field below, or interact in the terminal, and it appears here as per-turn Markdown.",
   "mirror.plan_pending": "Plan awaiting approval",
+  // Plan review (select in the doc pane → comment → send from the mirror)
+  "plan.review_tag": "Review",
+  "plan.review_hint": "Select text to add a comment. Send them from the plan card in the mirror.",
+  "plan.add_comment": "Comment",
+  "plan.comment_placeholder": "Your note on this passage (Ctrl+Enter to add)",
+  "plan.comments_count": "{count} comment(s)",
+  "plan.comments_full": "Comment limit reached",
+  "plan.send_from_mirror": "Send them from the plan card in the mirror",
+  "plan.sent": "Sent",
+  "plan.delete_comment": "Delete this comment",
+  "plan.send_and_keep_planning": "Send feedback and keep planning ({count})",
+  "plan.send_comments": "Send comments ({count})",
+  "plan.feedback_undelivered": "The plan was rejected, but the comments could not be delivered. Send them again from the composer.",
+  "mirror.plan_feedback_head": "{count} comment(s) on the plan. Please revise the plan to address them.",
   "mirror.perm_pending": "Awaiting permission",
   "mirror.perm_asking": "Requesting permission (edits, commands, etc.)",
   "mirror.allow": "Allow",

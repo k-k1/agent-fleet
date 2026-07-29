@@ -219,6 +219,11 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	// Semantic turn ops + Interaction reply (docs/27 P1.5) — proxied verbatim.
 	mux.HandleFunc("POST /api/sessions/{name}/turn", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/respond", rest)
+	// プラン承認応答（docs/30 / ExitPlanMode）— Console のプランカードが却下＋
+	// フィードバックを1操作で送るために使う。Agent 側が Escape → コンポーザ復帰待ち →
+	// 投入まで面倒を見る（承認ダイアログが開いたまま /input へ送ると本文がモーダルに
+	// 飲まれ Enter が承認になるため、この経路でしか安全に届けられない）。
+	mux.HandleFunc("POST /api/sessions/{name}/plan-respond", rest)
 	// managed セッションの ThreadSettings 取得・動的更新（docs/27 P2 §9.4-3）— proxied verbatim.
 	mux.HandleFunc("GET /api/sessions/{name}/settings", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/settings", rest)

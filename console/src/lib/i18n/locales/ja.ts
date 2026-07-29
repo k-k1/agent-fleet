@@ -31,6 +31,12 @@ export const ja = {
   "err.worktree_remove_failed": "worktree の削除に失敗しました。",
   "err.question_pending":
     "エージェントが質問への回答を待っています。質問カードから回答してから送信してください。",
+  "err.plan_pending":
+    "エージェントがプランの承認待ちです。プランカードから承認・却下してから送信してください（テキストは承認ダイアログに飲まれ、そのまま承認になります）。",
+  "err.permission_pending":
+    "エージェントが許可の判断待ちです。許可カードから許可・拒否してから送信してください（テキストは許可メニューに飲まれ、そのまま許可になります）。",
+  "err.interaction_pending":
+    "エージェントが対話中のプロンプトを表示しています。カードから回答してから送信してください。",
   "err.not_running": "セッションが停止しています。再開してから送信してください。",
   "err.driver_unavailable": "このエージェントではマネージド実行を利用できません。",
   "err.runtime_failed": "エージェントを起動できませんでした。しばらく待ってから再試行してください。",
@@ -1614,6 +1620,20 @@ export const ja = {
     "まだ会話はありません。下の欄からプロンプトを送るか、ターミナルで対話すると、ここに ターンごとの Markdown で表示されます。",
   // 状態バッジ／許可カード
   "mirror.plan_pending": "プラン承認待ち",
+  // プランレビュー（doc ペインで選択 → コメント → ミラーから送信）
+  "plan.review_tag": "レビュー",
+  "plan.review_hint": "本文を選択するとコメントを追加できます。送信はミラーのプランカードから。",
+  "plan.add_comment": "コメント",
+  "plan.comment_placeholder": "この箇所への指摘（Ctrl+Enter で追加）",
+  "plan.comments_count": "コメント {count} 件",
+  "plan.comments_full": "コメントが上限に達しています",
+  "plan.send_from_mirror": "ミラーのプランカードから送信します",
+  "plan.sent": "送信済み",
+  "plan.delete_comment": "このコメントを削除",
+  "plan.send_and_keep_planning": "コメントを送って却下（{count}）",
+  "plan.send_comments": "コメントを送る（{count}）",
+  "plan.feedback_undelivered": "却下しましたが、コメントを届けられませんでした。コンポーザから送り直してください。",
+  "mirror.plan_feedback_head": "プランへのコメント {count} 件です。指摘を反映してプランを修正してください。",
   "mirror.perm_pending": "許可待ち",
   "mirror.perm_asking": "許可を求めています（編集・コマンド等）",
   "mirror.allow": "許可",
