@@ -66,10 +66,23 @@ import {
 } from "./questionKeys.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { useDismiss } from "../../lib/useDismiss.ts";
-import { applySkillToDraft, filterSkills, slashTokenAt, type SlashToken } from "./skillPicker.ts";
+import { applySkillToDraft, filterSkills, hasTriggerHead, originKind, slashTokenAt, type SlashToken } from "./skillPicker.ts";
 import { ManagedSettingsModal } from "./ManagedSettingsModal.tsx";
 
 const q = encodeURIComponent;
+
+// foreign スキルの出所バッジ（docs/50 §8）: kind 色（--kind-* 1 ソース）のミニチップで
+// 出所エージェントを示す。.agents はどの kind でもない共有規約 → 中立の「共有」。
+// ネイティブ項目はバッジ無し（従来どおり）。
+function SkillOriginBadge({ origin }: { origin: string }) {
+  const k = originKind(origin);
+  if (!k) return <span className="mirror-skill-src" title={origin}>{tr("mirror.skills_src_shared")}</span>;
+  return (
+    <span className={"mirror-skill-src kind-" + kindClass(k)} title={origin}>
+      <Icon name={kindIcon(k)} /> {kindLabel(k)}
+    </span>
+  );
+}
 
 // Transcript window size (jsonl lines) for the initial tail load and each backward page.
 // The server clamps it; matches docs/decisions/0009 (P2).
@@ -1627,9 +1640,10 @@ export function MirrorView({
   }, [skillsOpen, session]);
 
   // draft が手元の token とずれたら（送信でクリア・履歴呼び出し等の setDraft 直書き）閉じる。
+  // 先頭は全角エイリアス（／・＄ — JP IME）も許すので startsWith でなく hasTriggerHead。
   useEffect(() => {
     if (!slashTok) return;
-    if (!draft.startsWith(skillTrigger) || draft.slice(skillTrigger.length, slashTok.end) !== slashTok.token) setSlashTok(null);
+    if (!hasTriggerHead(draft, skillTrigger) || !draft.slice(0, slashTok.end).endsWith(slashTok.token)) setSlashTok(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft]);
 
@@ -2669,7 +2683,7 @@ export function MirrorView({
                     <span className="mirror-skill-name">{s.invoke ? s.invoke.trim() : s.name}</span>
                     {s.argumentHint ? <span className="mirror-skill-hint">{s.argumentHint}</span> : null}
                     {s.description ? <span className="mirror-skill-desc">{s.description}</span> : null}
-                    {s.origin ? <span className="mirror-skill-src">{s.origin}</span> : null}
+                    {s.origin ? <SkillOriginBadge origin={s.origin} /> : null}
                     {s.source === "user" ? <span className="mirror-skill-src">{tr("mirror.skills_src_user")}</span> : null}
                     {s.source === "cli" ? <span className="mirror-skill-src">{tr("mirror.skills_src_cli")}</span> : null}
                   </button>
