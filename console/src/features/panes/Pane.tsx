@@ -343,7 +343,13 @@ export function Pane({
         />
       )}
       {pane.content.kind === "read" && <ReaderView filePath={pane.content.filePath} />}
-      {pane.content.kind === "doc" && <DocView title={pane.content.docTitle} content={pane.content.docContent} />}
+      {pane.content.kind === "doc" && (
+        <DocView
+          title={pane.content.docTitle}
+          content={pane.content.docContent}
+          session={pane.content.docSession}
+        />
+      )}
       {pane.content.kind === "diff" && (
         <DiffView
           title={pane.content.docTitle}

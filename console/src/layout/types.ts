@@ -32,7 +32,12 @@ export type PaneContent =
   | { kind: "changes"; scmRepo: string }
   | { kind: "commit"; scmRepo: string; scmPath?: string; commitSha: string }
   | { kind: "wtdiff"; scmRepo: string; filePath: string; diffStaged: boolean }
-  | { kind: "doc"; docTitle: string; docContent: string }
+  /** In-memory Markdown (a plan). `docSession` records WHICH session the document
+   *  was opened from — the plan review surface hangs off it (selection → comment),
+   *  and it is deliberately part of the CONTENT, not `pane.session`: that field means
+   *  "the session bound to this pane's xterm" and drives terminal attach / rail
+   *  badges, which a document must not join. */
+  | { kind: "doc"; docTitle: string; docContent: string; docSession?: string }
   | { kind: "diff"; docTitle: string; diffTool: string; diffEdits: unknown }
   | { kind: "chat"; conversationId: string | null; draftAssistantId: string | null }
   /** browserId is deliberately absent: Agent Page ids are runtime-only. */
