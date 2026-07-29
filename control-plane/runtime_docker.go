@@ -93,6 +93,39 @@ func (d *dockerRuntime) State(ctx context.Context) string {
 	}
 }
 
+// Stale reports whether the RUNNING container was created from a different image
+// than the one Start would use now (workspace_stale.go ①). Start always does a
+// fresh `docker run`, so a moved tag — a `docker compose build` locally, a pull of
+// a new release — means stop→start would swap in new backend code while the live
+// container keeps the old. Comparing IMAGE IDs (not tags) is what makes a rebuild
+// under the same `:latest` tag visible.
+//
+// Both probes are cached (workspace_stale.go): the tag's ID only moves on a
+// build/pull, the container's only on a restart. Any unreadable value (image not
+// present locally — e.g. a registry-only tag — or no container) → false.
+func (d *dockerRuntime) Stale(ctx context.Context) bool {
+	want := freshness.get("img:"+d.image, 60*time.Second, func() string {
+		return dockerInspectOne(ctx, "image", d.image, "{{.Id}}")
+	})
+	if want == "" {
+		return false
+	}
+	got := freshness.get("ctr:"+d.name, 15*time.Second, func() string {
+		return dockerInspectOne(ctx, "container", d.name, "{{.Image}}")
+	})
+	return got != "" && got != want
+}
+
+// dockerInspectOne runs a single-field `docker inspect`, returning "" on any error
+// (missing object, docker unavailable) so callers can treat it as "unknown".
+func dockerInspectOne(ctx context.Context, typ, ref, format string) string {
+	out, err := exec.CommandContext(ctx, "docker", "inspect", "--type="+typ, "-f", format, ref).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // Start launches the Workspace container and waits for the Agent to be healthy.
 func (d *dockerRuntime) Start(ctx context.Context) error {
 	if d.State(ctx) == "running" {

@@ -1440,6 +1440,20 @@ export const en: Record<keyof typeof ja, string> = {
   "wsbar.confirm.stop.body":
     "Stops the container. Running sessions become Stopped (resumable later), and opencode web / preview disconnect. Files are preserved.",
   "wsbar.confirm.stop.go": "Stop",
+  "wsbar.confirm.restart.title": "Restart the workspace",
+  "wsbar.confirm.restart.body":
+    "Stops and starts the container to apply the backend update. Repos and files are left untouched.",
+  "wsbar.confirm.restart.body_live":
+    "Stops and starts the container to apply the backend update. {n} running session(s) become Stopped (resumable later). Repos and files are left untouched.",
+  "wsbar.confirm.restart.go": "Restart",
+
+  // 要再起動 badge (backend update not applied yet)
+  "wsbar.stale.badge": "Restart needed",
+  "wsbar.stale.title": "The backend has been updated — stop→start to apply it",
+  "wsbar.stale.body":
+    "This workspace is still running the pre-update backend. Stop and start it whenever it suits you to apply the update. Running sessions become Stopped (resumable later); repos and files are left untouched.",
+  "wsbar.stale.restart": "Restart now",
+  "wsbar.stale.later": "Later",
 
   // === P2 TopBar (app/TopBar.tsx) ===
   "topbar.nav_toggle": "Left panel: click to toggle / double-click to switch mode (push ⇄ overlay)",
@@ -2811,6 +2825,9 @@ export const en: Record<keyof typeof ja, string> = {
   "ui.wk_back": "back",
   "ui.wk_cancel": "cancel",
   "ui.new_version_available": "A new version is available",
+  "ui.update_sessions_safe": "Updating does not stop running sessions.",
+  "ui.update_backend_note":
+    "The backend was updated too. Applying it needs a workspace stop→start whenever it suits you (running sessions stop, and can be resumed later).",
   "ui.update": "Update",
   "ui.recreate_failed": "Recreate failed",
   "ui.cleanup_failed": "Cleanup failed",

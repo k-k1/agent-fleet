@@ -248,6 +248,10 @@ func (n *nativeRuntime) Start(ctx context.Context) error {
 		_ = cmd.Process.Kill()
 		return fmt.Errorf("write pidfile: %w", err)
 	}
+	// Record what this process was spawned FROM, so Stale() can later tell that the
+	// deployment moved on (af update / a rebuild) while this process still runs the
+	// old code. Best-effort: a missing stamp just means "unknown" (never stale).
+	_ = os.WriteFile(n.binStampPath(), []byte(n.spawnStamp()), 0o644)
 	// Reap the child when it exits so it never lingers as a zombie under the CP.
 	go func() { _ = cmd.Wait() }()
 
@@ -279,6 +283,49 @@ func (n *nativeRuntime) Start(ctx context.Context) error {
 		return fmt.Errorf("%w (see %s)", err, filepath.Join(n.dataDir, "agent.log"))
 	}
 	return nil
+}
+
+// binStampPath / spawnStamp — what the agent was actually launched FROM, recorded
+// at Start so Stale() can notice the deployment moved on (workspace_stale.go).
+//
+// The identity differs by mode, and picking the wrong one is the whole trap:
+//   - rootfs mode (the packaged native deployment): the agent binary lives INSIDE
+//     the versioned rootfs, and agentBin is only bwrap — which is byte-identical
+//     across releases. So the rootfs directory (…/shared/rootfs/<r>, version-keyed
+//     by the launcher) is the identity; its .ok marker covers a same-version
+//     re-extract. An `af update` that reuses the pinned rootfs (docs/35 §35.3
+//     image-immutable release) leaves this unchanged — correctly, since restarting
+//     the workspace would then run exactly the same code.
+//   - plain mode (dev: AF_NATIVE_AGENT_BIN): the workspace-agent binary itself,
+//     by mtime+size — a rebuild moves at least one.
+func (n *nativeRuntime) binStampPath() string { return filepath.Join(n.dataDir, "agent.bin-stamp") }
+
+func (n *nativeRuntime) spawnStamp() string {
+	if n.rootfs != "" {
+		return "rootfs:" + n.rootfs + ":" + fileStamp(filepath.Join(n.rootfs, ".ok"))
+	}
+	return "bin:" + fileStamp(n.agentBin)
+}
+
+func fileStamp(path string) string {
+	fi, err := os.Stat(path) // follows the symlink — we want the real target's identity
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%d:%d", fi.ModTime().UnixNano(), fi.Size())
+}
+
+// Stale reports whether a fresh Start would launch the agent from something other
+// than what the running process was launched from. Unknown (no stamp from an older
+// start, unreadable path) → false: never nag on a guess.
+func (n *nativeRuntime) Stale(context.Context) bool {
+	b, err := os.ReadFile(n.binStampPath())
+	if err != nil {
+		return false
+	}
+	was := strings.TrimSpace(string(b))
+	now := n.spawnStamp()
+	return was != "" && was != "bin:" && was != now
 }
 
 // bootPhasePath is the file mirrorBootProgress keeps the latest boot-install

@@ -1453,6 +1453,20 @@ export const ja = {
   "wsbar.confirm.stop.body":
     "コンテナを停止します。実行中のセッションは停止（あとで再開可）になり、opencode web / プレビューは切断されます。ファイルは保持されます。",
   "wsbar.confirm.stop.go": "停止する",
+  "wsbar.confirm.restart.title": "ワークスペースを再起動",
+  "wsbar.confirm.restart.body":
+    "停止してから起動し、バックエンドの更新を反映します。リポジトリやファイルはそのままです。",
+  "wsbar.confirm.restart.body_live":
+    "停止してから起動し、バックエンドの更新を反映します。実行中のセッション {n} 件は停止（あとで再開可）になります。リポジトリやファイルはそのままです。",
+  "wsbar.confirm.restart.go": "再起動する",
+
+  // 要再起動バッジ（バックエンド更新の未反映）
+  "wsbar.stale.badge": "要再起動",
+  "wsbar.stale.title": "バックエンドが更新されています（停止→起動で反映）",
+  "wsbar.stale.body":
+    "このワークスペースは更新前のバックエンドで動いています。任意のタイミングで停止→起動すると反映されます。実行中のセッションは停止（あとで再開可）になり、リポジトリやファイルはそのままです。",
+  "wsbar.stale.restart": "今すぐ再起動",
+  "wsbar.stale.later": "あとで",
 
   // === P2 TopBar（app/TopBar.tsx）===
   "topbar.nav_toggle": "左パネル: クリックで開閉 / ダブルクリックで表示切替（Push⇄オーバーレイ）",
@@ -2853,6 +2867,9 @@ export const ja = {
   "ui.wk_back": "1つ戻る",
   "ui.wk_cancel": "キャンセル",
   "ui.new_version_available": "新しいバージョンがあります",
+  "ui.update_sessions_safe": "更新しても実行中のセッションは止まりません。",
+  "ui.update_backend_note":
+    "バックエンドも更新されています。反映には任意のタイミングでワークスペースの停止→起動が必要です（実行中のセッションは停止し、あとで再開できます）。",
   "ui.update": "更新",
   "ui.recreate_failed": "作り直しに失敗しました",
   "ui.cleanup_failed": "掃除に失敗しました",

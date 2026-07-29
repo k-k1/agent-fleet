@@ -87,6 +87,7 @@
    intent color of the action it will perform (amber = will stop, green = will
    start). */
 .ws-power {
+  position: relative; /* anchors the 要再起動 dot below */
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -376,6 +377,70 @@ button.wu-manage {
 }
 @media (max-width: 760px) {
   .ws-closeall .lbl {
+    display: none;
+  }
+}
+
+/* 要再起動 (backend drift): the container runs older code than the deployment.
+   Two coupled affordances — a dot ON the power button (that button IS the fix) and
+   a pill beside the state chip that opens the explanation + one-click restart. Warn
+   (amber), never red: nothing is broken and nothing is lost, it just isn't applied
+   yet. No animation — this can sit there for hours until the user picks a moment. */
+.ws-power.stale::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+.ws-stale {
+  position: relative;
+}
+.ws-stale-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px !important;
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--warn);
+  border-color: var(--warn) !important;
+  background: transparent !important;
+}
+.ws-stale-pill:hover:not(:disabled) {
+  background: var(--btn-h) !important;
+}
+.ws-stale-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 50;
+  width: min(86vw, 320px);
+  padding: 12px;
+  background: var(--panel2, var(--panel));
+  border: 1px solid var(--border2, var(--border));
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+.ws-stale-txt {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--fg);
+}
+.ws-stale-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.ws-stale-go {
+  color: var(--warn) !important;
+  border-color: var(--warn) !important;
+}
+@media (max-width: 760px) {
+  .ws-stale-pill .lbl {
     display: none;
   }
 }
