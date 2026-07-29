@@ -1604,6 +1604,7 @@ export const en: Record<keyof typeof ja, string> = {
   "plan.comment_placeholder": "Your note on this passage (Ctrl+Enter to add)",
   "plan.comments_count": "{count} comment(s)",
   "plan.comments_full": "Comment limit reached",
+  "plan.send_needs_running": "The session is stopped. Resume it before sending.",
   "plan.send_from_mirror": "Send them from the plan card in the mirror",
   "plan.sent": "Sent",
   "plan.delete_comment": "Delete this comment",
