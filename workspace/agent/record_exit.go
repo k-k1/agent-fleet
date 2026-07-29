@@ -63,7 +63,7 @@ func runRecordExit(args []string) {
 	// (docs/30) — a clean quit / graceful stop is not report-worthy.
 	switch reason {
 	case "oom", "crashed", "killed":
-		if reportArmed(name) {
+		if sessionReportPending(name) {
 			kickSessionReport(name, "exit", reason)
 		}
 		// Abnormal exits don't pass through the notice outbox (the sessions list

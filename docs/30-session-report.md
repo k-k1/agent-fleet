@@ -47,9 +47,18 @@
 「完了」という状態は存在しない（Stop hook は**毎ターン**発火する）。素朴に配線すると
 報告がターンごとに飛ぶため、one-shot の arm/disarm にする:
 
+> **現行のストアは arm の1bitではない**（2026-07-29・[docs/51](51-session-report-v2-ledger.md)
+> 移行 Phase 2）。`session-report/<name>.json` は**指示台帳**
+> `~/.config/agent-fleet/instr-ledger/<session>.json`（指示1件 = 1行・状態機械
+> `pending | interim_reported | reported | reopened | cancelled`）へ置き換わり、旧ファイルは
+> 起動時の移行で1行へ変換されて削除される。以下の arm/disarm の**契約**（指示1件につき
+> 報告1回・報告は完了で・interim は非消費・stop_session は取り消し）はそのまま生きている —
+> 変わったのは「1bit を上書きする」から「行を追加する」へという同一性の持ち方だけ。
+> 読み替えは §v2 Phase 2 での置き換え（本節末）を参照。
+
 - ストア: `~/.config/agent-fleet/session-report/<name>.json` = `{conv, armed, at}`
   （fstore。Meta には手を入れない — 動的状態を Meta と別ファイルに置くのは record-exit と
-  同じ理由のレース回避）。
+  同じ理由のレース回避）。**Phase 2 で instr-ledger へ移行済み**（上記）。
 - **arm**: `create_session`（report_to 付き）と `/input`（report_to 付き prompt 送信）の成功時。
 - **オペレーター報告（＋disarm）は終端イベントのみ**（判定は `session_status.go` の
   `recordSessionNotification` 1 実装。hook 経路と managed driver 経路が共有する）:
@@ -95,7 +104,14 @@ managed（抜粋を取る手段が構造的に無い）と非対称だった。�
 全文ブリッジ（docs/37）の `body`（answer-ready notice の payload）は別機構で、従来どおり
 turn テキストを運ぶ。
 
-### BG サブエージェント実行中の早期 Stop — 報告の保留（2026-07-25）
+### BG サブエージェント実行中の早期 Stop — 報告の保留（2026-07-25・**2026-07-29 に v2 Phase 1 が置換**）
+
+> **現行の実装はこの節ではない。** 下記の「保留 waiter」と次節の「waiter の誤 idle」は、
+> [docs/51](51-session-report-v2-ledger.md) 移行 Phase 1（2026-07-29）で**撤去**され、
+> レベル駆動リコンサイラの証拠テーブルへ畳まれた（`deferReportWhileBackgroundBusy` /
+> `waitReportUntilBackgroundDone` / `reportWaiters` は削除）。意味論は引き継がれている
+> ので、以下は「なぜその証拠が必要か」の事故史として読む。読み替えは
+> §v2 Phase 1 での置き換え（本節末）を参照。
 
 **実測不具合**（2026-07-24 saga5uc）: claude がレビュー用サブエージェント4体を
 run_in_background で起動し、主ターンが3分で Stop → その answer-ready 報告が arm を消費。
@@ -118,7 +134,7 @@ run_in_background で起動し、主ターンが3分で Stop → その answer-r
   プロセスツリー系の `BackgroundBusy` / `BackgroundShellBusy` は使わない — 常駐 dev サーバや
   監視ループを「未完了」と誤認して報告を永久に保留し得るため）。
 
-### waiter の誤 idle — 配送条件の強化（2026-07-28）
+### waiter の誤 idle — 配送条件の強化（2026-07-28・**v2 Phase 1 で述語へ畳み込み**）
 
 **実測不具合**（2026-07-28 sqmconc / azw7wys）: 上記 waiter の idle 判定が素の
 `status.LiveState`（**マーカーファイル無し = idle 既定**）頼みだったため、ターン途中の
@@ -146,6 +162,60 @@ Stop フック kick と違い waiter には「ターンが終わった」とい�
 の 90s stale 待ちを含むため、実質の追加遅延はほぼ無い）。回帰は
 `TestSessionReportWaiterIgnoresFalseIdle`（マーカー不在／明示 idle＋transcript 新鮮の
 両ケースで不配送 → 明示 idle＋stale で1回だけ配送）で pin。
+
+### v2 Phase 1 での置き換え（2026-07-29）— 判定の一本化
+
+上の2節（保留 waiter と配送3条件）は [docs/51](51-session-report-v2-ledger.md) /
+[ADR 0035](decisions/0035-session-report-v2-ledger.md) の移行 Phase 1 で撤去され、
+**消費の判定はサーバ内の単一リコンサイラ**（`chat_report_reconcile.go`・tick 15s ＋
+ヒント起床）に一本化された。arm の1bit（`session-report/*.json`）は Phase 2 まで据え置き。
+
+- `POST /chat/report` は残るが、終端イベント（answer-ready / exit）の kick は**配送も
+  消費もせず、リコンサイラを起こすだけ**（フックスクリプトと焼き込みイメージは不変）。
+  interim（question / plan-approval）は従来どおりその場で非消費配送。
+- settle 述語＝**idle 証拠 ≥1 ∧ busy 証拠 = 0 を 2 tick 連続**。
+  - idle 証拠は「明示 idle マーカー」だけ。**無マーカーは不明**であって idle ではない。
+    さらに `status.TurnEnd`（その idle が**ターンの終端**として書かれたかの1bit）と
+    「指示より後に書かれたか」を要求する — SessionStart の idle リセットや managed の
+    runtime 喪失（`TurnUnknown`）も同じ `"idle"` を書くので、状態文字列だけでは
+    「終わった」と「分からない」が区別できない（最小の progressed）。
+  - busy 証拠＝working/question/plan/permission マーカー・pending ペイロード・
+    `SubagentBusy`・メイン transcript が**マーカーより後に伸びている**こと・
+    `tmuxx.IsBusy`（claude TUI のみ・settle 候補時だけ tmux を叩く）。
+    transcript は素の鮮度ではなく相対比較にする — 鮮度を常設ゲートにすると正常な完了が
+    毎回 90s 遅れるため（安全弁として鮮度も併用し、上限は v1 と同じ 90s）。
+- 異常終了は `ExitInfo` をレベルで読む終端事実として、デバウンスなしで報告する。
+- **配送に成功してから arm を消費する**（v1 の consume-then-deliver をやめた）。追記に
+  失敗した報告は次 tick で再試行される。
+- 取りこぼしは「消失」ではなく「遅延」に縮退する: kick が全部死んでも次の tick が同じ
+  状態を見て拾う（agent 再起動中の kick 消失・TUI 文字列契約のドリフト）。
+- 回帰テストは意味論を引き継いで維持: `TestSessionReportDeferredWhileSubagentBusy`
+  （→ busy 証拠）/ `TestSessionReportIgnoresFalseIdle`（旧 …WaiterIgnoresFalseIdle →
+  無マーカー＝不明）/ `TestHaltDisarmsReportOnlyWhenFlagged` / 
+  `TestSessionReportDeliveredAfterHealWipedMarker`。リコンサイラ自体は fake clock の
+  時間駆動テスト（デバウンス・シンク失敗の再試行・ヒント喪失時の回収レイテンシ）を持つ。
+
+### v2 Phase 2 での置き換え（2026-07-29）— arm の1bit → 指示台帳
+
+[docs/51](51-session-report-v2-ledger.md) 移行 Phase 2。arm の1bit
+（`session-report/*.json`）を廃止し、指示1件 = 台帳1行
+（`instr-ledger/<session>.json`・`chat_report_ledger.go`）にした。外部契約
+（報告本文・interim 非消費・異常系・disarm 規約・自動ターン）は**不変**。
+
+- **投入は行の追加**（`addInstruction`）。create_session / `/input`・`/turn`（report_to 付き）
+  はもう上書きしない → キュー投入で先行指示の報告義務が潰れる穴が定義から消えた。
+  同じ静穏に覆われる複数行は**1通に畳んで**（「指示N件ぶん」）全行を reported にする。
+- **証拠より後に投入された行は、その静穏では完了にならない**。先行指示が reported に
+  なっても後行指示の行は pending のまま残り、次のターンの終端で改めて報告される。
+- **disarm（stop_session）は行を `cancelled` に**する。Console の停止（body なし）は
+  行を残す — 従来どおり、再開して完了すればそれは指示の完了。
+- **配送はシンク側で行IDにより冪等**（会話メッセージの `instr`）。「追記成功 → 台帳更新」の
+  間で落ちても、再送は二重投稿にならず行だけが進む。
+- **interim（question / plan-approval）は行に既報として刻むだけ**（`interim_reported`）。
+  抑止はしない — 1つの指示の中で質問は何度でも起きるので、行あたり1回に絞ると2問目に
+  オペレーターが答えられなくなる。行は open のまま＝完了報告の義務は残る。
+- 旧 arm ファイルは起動時に1行へ変換されて削除される（`migrateReportArms`）。
+  `consumeReportArm` / `reportArmMu` は撤去。
 
 ### オペレーターからの質問回答 — answer_session_question（2026-07-25）
 
@@ -264,19 +334,20 @@ hook / record-exit は独立プロセスなので、会話ファイルへの直�
 - BG 保留はサブエージェント/Workflow（jsonl 鮮度）のみ対象。`Bash run_in_background` の
   ビルド等はプロセスツリー検出しか手段がなく、常駐プロセスとの区別が付かないため保留しない —
   BG ビルド起動直後の Stop は従来どおりその時点で報告される。
-- **managed driver の daemon 異常死は報告されない**: pane ラッパー経路（`record_exit.go`）は
-  oom/crashed/killed を報告するが、managed の daemon 死は `serve.go` が
-  `status.PersistExit` を書くだけで report kick を持たない（tui ルートとの非対称）。
+- ~~**managed driver の daemon 異常死は報告されない**~~（2026-07-29 解消 — v2 Phase 1 の
+  リコンサイラが `ExitInfo` を**レベルで**読むため、kick を持たない `serve.go` の
+  `status.PersistExit` だけでも報告される）。
 - ~~opencode バックエンドの af_write 会話は report_to 自動付与なし。~~（2026-07-27 解消 —
   上記 `OPENCODE_CONFIG` 経路。cursor は v1 で af ツール自体が未配線のため引き続き対象外）
-- arm を消費する報告は `answer-ready`（完了・入力待ち）と異常終了のみ。`question` は
+- 行を閉じる報告は `answer-ready`（完了・入力待ち）と異常終了のみ。`question` は
   非消費の途中経過として届くが、`plan-approval` / `permission-request` は通知センターのみ。
-  キュー済みプロンプトが残っている等で厳密なタスク完了とずれることはあり得る
-  （オペレーターが get_session_output で確認する前提）。
+  キュー済み**指示**のずれは v2 Phase 2 で解消済み（行が残るので別途報告される）が、
+  同じターンの中でモデルが作業を続けている等、機械的 idle と意味的完了のずれ自体は
+  残る（オペレーターが get_session_output で確認する前提）。
 - 将来: Meta への起動元（LaunchedBy）記録、managed daemon 異常死の報告、報告のバッチング。
   （managed 報告への本文抜粋は不採用で確定 — 逆に TUI を managed のシンプルな形に揃えた。）
 - **後継設計（2026-07-28）**: 本機構の「エッジ駆動＋1bit arm」構造は sqmconc 事故を機に
   見直し、指示台帳＋レベル駆動リコンサイラへ置き換える v2 を設計した —
   [docs/51](51-session-report-v2-ledger.md) / [ADR 0035](decisions/0035-session-report-v2-ledger.md)。
-  上記の BG 保留 waiter・managed daemon 異常死非報告・キュー済みプロンプトのずれは
-  v2 の移行 Phase で解消される。
+  上記の BG 保留 waiter・managed daemon 異常死非報告（Phase 1）・キュー済み指示のずれ
+  （Phase 2）は解消済み。残りは Phase 3（補償 reopen ＋自己申告ファストパス）。
