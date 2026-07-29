@@ -1649,7 +1649,14 @@ export function MirrorView({
 
   // 絞り込みが変わったら選択を先頭へ戻し、選択が動いたら見える位置へ追従。
   useEffect(() => setSkillSel(0), [slashTok?.token, skillBtnOpen]);
-  useEffect(() => skillSelRef.current?.scrollIntoView({ block: "nearest" }), [skillSel, skillItems.length]);
+  // ★ ブロック本体で書くこと（式のまま返さない）: Chrome 150 以降 scrollIntoView() は
+  // スクロール完了の Promise を返すので、暗黙 return するとその Promise が effect の
+  // クリーンアップとして保存され、次回実行時に React が関数として呼んで TypeError →
+  // 未捕捉のまま root ごとアンマウント＝画面真っ黒になる（候補件数が変わるたびに再実行
+  // される effect なので、絞り込みが 1→0 件に変わった瞬間に踏む）。
+  useEffect(() => {
+    skillSelRef.current?.scrollIntoView({ block: "nearest" });
+  }, [skillSel, skillItems.length]);
 
   // 差し込み: 入力中のトークン（無ければ下書き全体の頭）を起動文字列（invoke —
   // "/name " や "$name "）に置換し、既存の本文は引数として残す。タッチ端末はフォーカス
