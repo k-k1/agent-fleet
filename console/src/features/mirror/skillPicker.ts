@@ -12,14 +12,34 @@ export interface SlashToken {
   end: number; // 置換の右端（最初の空白 or 文末）
 }
 
+// 全角エイリアス: 日本語 IME では「/」「$」が全角（／・＄）で入るため、トリガとして
+// 等価に受ける。確定時は invoke（半角の正しい起動形）で丸ごと置換されるので、全角の
+// まま送信される事故も起きない。
+const TRIGGER_ALIASES: Record<string, string[]> = { "/": ["/", "／"], $: ["$", "＄"] };
+
+// triggerHead: text の先頭がトリガ（または全角エイリアス）なら、その一致文字列を返す。
+function triggerHead(text: string, trigger: string): string | null {
+  if (!trigger) return null;
+  for (const a of TRIGGER_ALIASES[trigger] ?? [trigger]) {
+    if (text.startsWith(a)) return a;
+  }
+  return null;
+}
+
+// hasTriggerHead: MirrorView の「draft と token のずれ」ガードが使う公開判定。
+export function hasTriggerHead(text: string, trigger: string): boolean {
+  return triggerHead(text, trigger) !== null;
+}
+
 // slashTokenAt: draft とキャレット位置から「補完対象のトークン」を返す。
 // 対象外（先頭がトリガでない・キャレットがトークン外）は null。
 export function slashTokenAt(text: string, caret: number, trigger = "/"): SlashToken | null {
-  if (!trigger || !text.startsWith(trigger)) return null;
+  const head = triggerHead(text, trigger);
+  if (!head) return null;
   const ws = text.search(/[\s]/); // 最初の空白（改行含む）でトークン終了
   const end = ws < 0 ? text.length : ws;
-  if (caret < trigger.length || caret > end) return null;
-  return { token: text.slice(trigger.length, end), start: 0, end };
+  if (caret < head.length || caret > end) return null;
+  return { token: text.slice(head.length, end), start: 0, end };
 }
 
 // filterSkills: 前方一致 > 名前部分一致 > 説明部分一致の順で並べる。大文字小文字は
@@ -41,6 +61,14 @@ export function filterSkills(skills: SessionSkill[], query: string): SessionSkil
     .map((x) => x.s);
 }
 
+// originKind: foreign スキルの出所規約 dir → 表示上の kind。".agents" はエージェント
+// 横断の共有規約でどの kind にも属さない → null（中立の「共有」バッジになる）。
+export function originKind(origin: string | undefined): "claude" | "codex" | null {
+  if (origin === ".claude") return "claude";
+  if (origin === ".codex") return "codex";
+  return null;
+}
+
 // applySkillToDraft: 選択したスキルの起動文字列（invoke — 末尾空白込み。"/name " や
 // "$name "）を draft へ差し込み、新しい draft とキャレット位置を返す。起動は先頭で
 // だけ意味を持つので、常に「invoke ＋既存の本文（引数として残す）」に組み立てる。
@@ -56,7 +84,7 @@ export function applySkillToDraft(
   // 起点）トリガで始まらない下書き全体を引数位置へ残す。
   const tail = tok
     ? draft.slice(tok.end).trimStart()
-    : trigger && draft.startsWith(trigger)
+    : hasTriggerHead(draft, trigger)
       ? ""
       : draft.trimStart();
   return { next: invoke + tail, caret: invoke.length };

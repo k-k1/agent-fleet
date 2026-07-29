@@ -1907,7 +1907,7 @@ button.mt-bash-toggle:hover {
 .mirror-attach-btn {
   flex: none;
   align-self: stretch;
-  width: 34px;
+  width: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1923,7 +1923,7 @@ button.mt-bash-toggle:hover {
 .mirror-skill-btn {
   flex: none;
   align-self: stretch;
-  width: 34px;
+  width: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1996,11 +1996,26 @@ button.mt-bash-toggle:hover {
 }
 .mirror-skill-src {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   padding: 0 6px;
   border: 1px solid var(--border);
   border-radius: 999px;
   color: var(--muted);
   font-size: 10.5px;
+}
+.mirror-skill-src .codicon {
+  font-size: 10px;
+}
+/* foreign スキルの出所バッジ: kind 色（tokens.css --kind-* が dark/light 両テーマの 1 ソース）。 */
+.mirror-skill-src.kind-claude {
+  color: var(--kind-claude);
+  border-color: color-mix(in srgb, var(--kind-claude) 55%, var(--border));
+}
+.mirror-skill-src.kind-codex {
+  color: var(--kind-codex);
+  border-color: color-mix(in srgb, var(--kind-codex) 55%, var(--border));
 }
 .mirror-skills-note {
   display: flex;
@@ -2163,6 +2178,14 @@ button.mt-bash-toggle:hover {
 @media (max-width: 760px) {
   .mirror-hist {
     display: flex;
+  }
+  /* スマホは横幅が貴重: 補助ボタンをさらに細くし、行の隙間も詰めて textarea に返す。 */
+  .mirror-compose {
+    gap: 5px;
+  }
+  .mirror-attach-btn,
+  .mirror-skill-btn {
+    width: 24px;
   }
 }
 .view-head {
