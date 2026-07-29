@@ -205,7 +205,8 @@ export const ja = {
   "surface.assistant.short": "アシスタント",
   "surface.assistant.long": "アシスタントの背景",
 
-  // --- ミラー送信キー（lib/settings.ts MIRROR_SEND_MODES）---
+  // --- 送信キー（lib/settings.ts MIRROR_SEND_MODES。設定キー名は mirrorSend のままだが、
+  //     セッション／アシスタントのチャットやモーダルの複数行入力に共通で効く）---
   "mirror_send.mod_enter": "Ctrl+Enter で送信",
   "mirror_send.enter": "Enter で送信",
 
@@ -215,7 +216,7 @@ export const ja = {
   "display.session_theme": "セッションのテーマ",
   "display.assistant_theme": "アシスタントのテーマ",
   "display.region_theme_note":
-    "セッション（ミラー）とアシスタントチャットは、アプリ本体とは別のテーマ（ダーク／ライト）で表示できます（「アプリに合わせる」で本体に追従）。背景色も下でそれぞれ指定できます。",
+    "セッションのチャットとアシスタントのチャットは、アプリ本体とは別のテーマ（ダーク／ライト）で表示できます（「アプリに合わせる」で本体に追従）。背景色も下でそれぞれ指定できます。",
   "display.terminal": "ターミナル",
   "display.font": "フォント",
   "display.font_size": "文字サイズ",
@@ -224,10 +225,10 @@ export const ja = {
   "display.line_numbers": "行番号",
   "display.wrap": "折り返し",
   "display.minimap": "ミニマップ",
-  "display.session_mirror": "セッション（Markdownミラー）",
+  "display.session_mirror": "セッションのチャット",
   "display.send_key": "送信キー",
-  "display.send_note_enter": "Enter で送信、Shift+Enter で改行。",
-  "display.send_note_mod": "Ctrl+Enter（⌘+Enter）で送信、Enter で改行。スマホ向け。",
+  "display.send_note_enter": "Enter で送信、Shift+Enter で改行。セッション・アシスタントのチャットなど、複数行の入力欄に共通です。",
+  "display.send_note_mod": "Ctrl+Enter（⌘+Enter）で送信、Enter で改行。スマホ向け。セッション・アシスタントのチャットなど、複数行の入力欄に共通です。",
   "display.reader_view": "朗読ビュー",
   "display.file_icons": "ファイルアイコン",
   "display.icon_set": "アイコンセット",
@@ -854,7 +855,7 @@ export const ja = {
   "agents.session": "セッション",
   "agents.auto_title": "タイトル自動提案",
   "agents.note_auto_title":
-    "タイトル未設定のセッションで数回やり取りしたら、AIが短いタイトル案をミラー上部に表示します。チャットのタイトル提案は「アシスタント」タブで設定します。",
+    "タイトル未設定のセッションで数回やり取りしたら、AIが短いタイトル案をセッションのチャット上部に表示します。アシスタントのタイトル提案は「アシスタント」タブで設定します。",
   "agents.ws_required_title": "設定はワークスペース内で実行されます",
   "agents.ws_required_hint": "接続とエージェント設定はコンテナ内の Agent / CLI を経由するため、ワークスペースの起動が必要です。",
   "agents.note_apply": "接続の変更は即時、挙動設定は各エージェントの新しいセッションから反映されます。",
@@ -1620,7 +1621,7 @@ export const ja = {
     "まだ会話はありません。下の欄からプロンプトを送るか、ターミナルで対話すると、ここに ターンごとの Markdown で表示されます。",
   // 状態バッジ／許可カード
   "mirror.plan_pending": "プラン承認待ち",
-  // プランレビュー（doc ペインで選択 → コメント → ミラーから送信）
+  // プランレビュー（doc ペインで選択 → コメント → セッションのチャットから送信）
   "plan.review_tag": "レビュー",
   "plan.review_hint": "本文を選択するとコメントを追加できます。送信はセッションのチャットのプランカードから。",
   "plan.add_comment": "コメント",
@@ -2791,7 +2792,7 @@ export const ja = {
   "usage.val.feature.title.session": "セッション件名の提案",
   "usage.val.feature.title.chat": "会話タイトルの提案",
   "usage.val.feature.branch.suggest": "ブランチ名の提案",
-  "usage.val.feature.suggest.session": "返信候補（ミラー）",
+  "usage.val.feature.suggest.session": "返信候補（セッション）",
   "usage.val.feature.suggest.chat": "返信候補（チャット）",
   "usage.val.feature.suggest.edit": "変更提案（エディタ）",
   "usage.val.feature.unknown": "未分類",

@@ -215,7 +215,7 @@ export const en: Record<keyof typeof ja, string> = {
   "display.session_theme": "Session theme",
   "display.assistant_theme": "Assistant theme",
   "display.region_theme_note":
-    "The session (mirror) and the assistant chat can use their own theme (dark/light), separate from the app itself (“Match app” follows the app). You can also set each one's background color below.",
+    "The session chat and the assistant chat can use their own theme (dark/light), separate from the app itself (“Match app” follows the app). You can also set each one's background color below.",
   "display.terminal": "Terminal",
   "display.font": "Font",
   "display.font_size": "Font size",
@@ -224,10 +224,10 @@ export const en: Record<keyof typeof ja, string> = {
   "display.line_numbers": "Line numbers",
   "display.wrap": "Wrap",
   "display.minimap": "Minimap",
-  "display.session_mirror": "Session (Markdown mirror)",
+  "display.session_mirror": "Session chat",
   "display.send_key": "Send key",
-  "display.send_note_enter": "Enter sends, Shift+Enter for a newline.",
-  "display.send_note_mod": "Ctrl+Enter (⌘+Enter) sends, Enter for a newline. For phones.",
+  "display.send_note_enter": "Enter sends, Shift+Enter for a newline. Applies to every multi-line input — session and assistant chats included.",
+  "display.send_note_mod": "Ctrl+Enter (⌘+Enter) sends, Enter for a newline. For phones. Applies to every multi-line input — session and assistant chats included.",
   "display.reader_view": "Reader view",
   "display.file_icons": "File icons",
   "display.icon_set": "Icon set",
@@ -850,7 +850,7 @@ export const en: Record<keyof typeof ja, string> = {
   "agents.session": "Session",
   "agents.auto_title": "Auto-suggest title",
   "agents.note_auto_title":
-    "After a few exchanges in a session with no title, AI shows a short title suggestion at the top of the mirror. The chat-side title suggestion is configured on the Assistant tab.",
+    "After a few exchanges in a session with no title, AI shows a short title suggestion at the top of the session chat. The assistant-side title suggestion is configured on the Assistant tab.",
   "agents.ws_required_title": "Settings run inside the workspace",
   "agents.ws_required_hint": "Connections and agent settings go through the agent / CLI inside the container, so the workspace has to be running.",
   "agents.note_apply": "Connection changes are immediate; behavior settings take effect from each agent's new sessions.",
@@ -1597,7 +1597,7 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.no_conversation":
     "No conversation yet. Send a prompt from the field below, or interact in the terminal, and it appears here as per-turn Markdown.",
   "mirror.plan_pending": "Plan awaiting approval",
-  // Plan review (select in the doc pane → comment → send from the mirror)
+  // Plan review (select in the doc pane → comment → send from the session chat)
   "plan.review_tag": "Review",
   "plan.review_hint": "Select text to add a comment. Send them from the plan card in the session chat.",
   "plan.add_comment": "Comment",
@@ -2749,7 +2749,7 @@ export const en: Record<keyof typeof ja, string> = {
   "usage.val.feature.title.session": "Session title suggestion",
   "usage.val.feature.title.chat": "Chat title suggestion",
   "usage.val.feature.branch.suggest": "Branch name suggestion",
-  "usage.val.feature.suggest.session": "Reply suggestions (mirror)",
+  "usage.val.feature.suggest.session": "Reply suggestions (session)",
   "usage.val.feature.suggest.chat": "Reply suggestions (chat)",
   "usage.val.feature.suggest.edit": "Edit suggestions (editor)",
   "usage.val.feature.unknown": "Untagged",
