@@ -55,11 +55,22 @@ export interface FileSurfaces {
  *
  *  A line citation opens the source surface so the referenced row exists; a
  *  Marp deck otherwise opens as slides, and other Markdown as a preview. This
- *  matches the pre-Phase-3 behaviour, with `source` renamed to `edit`. */
+ *  matches the pre-Phase-3 behaviour, with `source` renamed to `edit`.
+ *
+ *  `requested` is the opener's explicit choice ("編集で開く" from a file menu).
+ *  It wins over the defaults above — the user named the surface they want — but
+ *  never over what the document allows: a non-editable file ignores `edit` and
+ *  falls back to the mode it would have opened in anyway. `view` needs no
+ *  special case: it IS the default (preview for Markdown). */
 export function initialFileMode(
   caps: FileModeCaps,
-  options: { hasTargetLine?: boolean } = {},
+  options: { hasTargetLine?: boolean; requested?: PaneMode } = {},
 ): FileModeState {
+  if (options.requested === "edit" && caps.editable) {
+    return caps.markdown
+      ? { kind: "markdown", md: "edit", renderer: "normal" }
+      : { kind: "plain", mode: "edit" };
+  }
   if (!caps.markdown) return { kind: "plain", mode: "view" };
   if (options.hasTargetLine) return { kind: "markdown", md: "edit", renderer: "normal" };
   return { kind: "markdown", md: "preview", renderer: caps.marp ? "slides" : "normal" };
