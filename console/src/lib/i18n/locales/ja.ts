@@ -1627,6 +1627,7 @@ export const ja = {
   "plan.comment_placeholder": "この箇所への指摘（Ctrl+Enter で追加）",
   "plan.comments_count": "コメント {count} 件",
   "plan.comments_full": "コメントが上限に達しています",
+  "plan.send_needs_running": "セッションが停止しています。再開してから送信してください。",
   "plan.send_from_mirror": "ミラーのプランカードから送信します",
   "plan.sent": "送信済み",
   "plan.delete_comment": "このコメントを削除",
