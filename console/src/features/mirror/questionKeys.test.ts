@@ -130,6 +130,50 @@ describe("buildClaudeSeq — AskUserQuestion tabbed modal", () => {
   });
 });
 
+describe("free text folded to one line (TUI paths only)", () => {
+  // A {t} step reaches the pane through `tmux send-keys -l`, which writes the bytes
+  // verbatim — a newline arrives as a raw LF and acts as Enter on the single-line
+  // "Type something" field, so the rest of the sequence (Enter / Down+Enter) then lands
+  // on a row that is no longer there. That is the "multi-line answer behaves differently
+  // every time" bug; folding at the builder is what keeps the sequence's assumption true.
+  const controlish = /[\u0000-\u001f\u007f\u2028\u2029]/;
+  const typed = (seq: KeyStep[]) => seq.filter((s) => s.t !== undefined).map((s) => s.t as string);
+
+  it("folds newlines in a single-select answer into single spaces", () => {
+    const seq = buildClaudeSeq([q3], [[]], ["一行目\n二行目"]);
+    expect(show(seq)).toBe("Down Down Down type:一行目 二行目 Enter Enter");
+  });
+
+  it("collapses blank lines and the whitespace around a fold", () => {
+    expect(typed(buildClaudeSeq([q3], [[]], ["a\n\n  b \r\n c"]))).toEqual(["a b c"]);
+  });
+
+  it("folds a multi-select custom entry too, keeping the Down-not-Enter exit", () => {
+    const q: QKQuestion = { ...opts("A", "B"), multiSelect: true };
+    expect(show(buildClaudeSeq([q], [["A"]], ["x\ny"]))).toBe("Enter Down Down type:x y Down Enter Enter");
+  });
+
+  it("folds agy's write-in text", () => {
+    expect(typed(buildMenuSeq([q3], [[]], ["紫\nがいい"], true))).toEqual(["紫 がいい"]);
+  });
+
+  it("never emits a control character — tab and ESC would drive the modal, not type", () => {
+    // A pasted answer can carry a TAB (focus move) or an ESC (dismisses the whole
+    // question); neither can be typed into the field, so both fold like a newline.
+    const seq = buildClaudeSeq([q3], [[]], ["a\tb\u001bc"]);
+    expect(typed(seq)).toEqual(["a b c"]);
+    expect(seq.every((s) => s.t === undefined || !controlish.test(s.t))).toBe(true);
+  });
+
+  it("treats a newline-only answer as blank and falls back to the option", () => {
+    expect(show(buildClaudeSeq([q3], [["青"]], ["\n \n"]))).toBe("Down Enter Enter");
+  });
+
+  it("leaves managed answers untouched — structured JSON carries newlines fine", () => {
+    expect(buildRespondAnswers([q3], [[]], ["一行目\n二行目"])).toEqual([{ text: "一行目\n二行目" }]);
+  });
+});
+
 describe("buildRespondAnswers — managed sessions (no modal)", () => {
   it("returns option indices in ascending order", () => {
     expect(buildRespondAnswers([q3], [["緑", "赤"]], [""])).toEqual([{ options: [0, 2] }]);
