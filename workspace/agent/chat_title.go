@@ -23,14 +23,11 @@ const (
 
 // chatTitleSuggestPrompt mirrors titleSuggestPrompt (session_title.go): opening + most
 // recent real exchanges, weighting the recent topic.
-func chatTitleSuggestPrompt(msgs []chatMessage) string {
+func chatTitleSuggestPrompt(msgs []chatMessage, lang string) string {
 	var b strings.Builder
-	b.WriteString("会話ログから件名を1つ出力してください。\n")
-	b.WriteString("良い例: セッションタイトルの自動提案 / ログイン画面のバグ修正 / 請求APIのリファクタ\n")
-	b.WriteString("悪い例（文章・語尾つき・視点が話者）: 短く確認するのが良さそう / メニュー変更を行いたい\n")
-	b.WriteString("会話の途中でテーマが変わっている場合は、直近で話している内容を優先してください。\n\n")
-	b.WriteString("--- 会話ログ ---\n")
+	b.WriteString(titleSuggestInstructions(lang)) // session_title.go と共有（前置き・ラベル禁止の 悪い例 込み）
 	writeChatTitleWindow(&b, msgs)
+	b.WriteString(titleSuggestFooter(lang)) // 会話の続きを書き始めるのを防ぐ後置きも共有
 	return b.String()
 }
 
@@ -70,7 +67,8 @@ func writeChatTitleWindow(b *strings.Builder, msgs []chatMessage) {
 }
 
 func runChatTitleSuggestLLM(ctx context.Context, msgs []chatMessage) (string, error) {
-	reply, err := oneShotHeadless(ctx, titleSuggestPersona, chatTitleSuggestPrompt(msgs), titleModel())
+	lang := titleLang() // セッション件名と同じ規約（表示言語で生成し、後からの切替では作り直さない）
+	reply, err := oneShotHeadless(ctx, titleSuggestPersona(lang), chatTitleSuggestPrompt(msgs, lang), titleModel())
 	if err != nil {
 		return "", fmt.Errorf("chat title generation failed: %w", err)
 	}

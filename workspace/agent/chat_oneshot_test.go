@@ -82,28 +82,56 @@ func hasFlagValue(args []string, flag, val string) bool {
 	return false
 }
 
-// TestTitleSuggestLive は実 claude を1回撃つ opt-in の契約テスト。
+// TestTitleSuggestLive は実 claude を撃つ opt-in の契約テスト。日本語ロケールと英語
+// ロケールの両方を1回ずつ通す — 会話ログは同じ日本語のまま、表示言語だけで出力言語が
+// 変わる（英語話者は日本語コードベースの会話でも英語の件名を読む）ことを実測で押さえる。
+// 単体テストはプロンプト文字列しか見られないので、実際に英語で返るかはここでしか分からない。
 // 実行例: AF_TITLE_LIVE=1 go test -run TestTitleSuggestLive -v .
 func TestTitleSuggestLive(t *testing.T) {
 	if os.Getenv("AF_TITLE_LIVE") != "1" {
 		t.Skip("AF_TITLE_LIVE=1 で実 claude のタイトル提案契約テストを有効化")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
+	const log = "user: 使用量のグラフを作りたい\nassistant: 台帳を設計します"
+	for _, lang := range []string{"ja", "en"} {
+		t.Run(lang, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			reply, err := oneShotHeadless(ctx, titleSuggestPersona(lang),
+				titleSuggestInstructions(lang)+log+"\n"+titleSuggestFooter(lang), titleModel())
+			if err != nil {
+				t.Fatalf("oneShotHeadless: %v", err)
+			}
+			title := cleanSuggestedTitle(reply)
+			if title == "" {
+				t.Fatalf("件名が空（前置き除去が効きすぎ／システムプロンプトの削りすぎ）: reply=%q", reply)
+			}
+			if strings.Contains(title, "\n") {
+				t.Fatalf("件名は1行のはず: %q", title)
+			}
+			switch lang {
+			case "en":
+				if hasJapanese(title) {
+					t.Fatalf("英語ロケールなのに日本語の件名: %q (raw=%q)", title, reply)
+				}
+			case "ja":
+				if !hasJapanese(title) {
+					t.Fatalf("日本語ロケールなのに日本語が無い件名: %q (raw=%q)", title, reply)
+				}
+			}
+			t.Logf("lang=%s title=%q (raw=%q)", lang, title, reply)
+		})
+	}
+}
 
-	reply, err := oneShotHeadless(ctx, titleSuggestPersona,
-		"以下の会話に件名を付けてください。\nuser: 使用量のグラフを作りたい\nassistant: 台帳を設計します", titleModel())
-	if err != nil {
-		t.Fatalf("oneShotHeadless: %v", err)
+// hasJapanese は仮名・漢字を1文字でも含むか。ロケール判定の実測用（英語件名に固有名詞
+// としての ASCII が混ざるのは正常なので、判定は「日本語文字の有無」で行う）。
+func hasJapanese(s string) bool {
+	for _, r := range s {
+		if (r >= 0x3040 && r <= 0x30FF) || (r >= 0x4E00 && r <= 0x9FFF) {
+			return true
+		}
 	}
-	title := cleanSuggestedTitle(reply)
-	if title == "" {
-		t.Fatalf("件名が空（ツール/システムプロンプトを削りすぎた可能性）: reply=%q", reply)
-	}
-	if strings.Contains(title, "\n") {
-		t.Fatalf("件名は1行のはず: %q", title)
-	}
-	t.Logf("title=%q (raw=%q)", title, reply)
+	return false
 }
 
 // TestUsageLedgerLive は実 claude を1回撃ち、台帳に「実測の1行」が実際に落ちることを
@@ -121,7 +149,7 @@ func TestUsageLedgerLive(t *testing.T) {
 	ctx = withUsageTag(ctx, usageTag{
 		Feature: usageFeatureTitleSession, Trigger: usageTriggerManual, Ref: "slot99",
 	})
-	if _, err := oneShotHeadless(ctx, titleSuggestPersona,
+	if _, err := oneShotHeadless(ctx, titleSuggestPersona("ja"),
 		"以下の会話に件名を付けてください。\nuser: 使用量のグラフを作りたい\nassistant: 台帳を設計します",
 		titleModel()); err != nil {
 		t.Fatalf("oneShotHeadless: %v", err)
@@ -277,7 +305,7 @@ func TestCodexOneShotLive(t *testing.T) {
 	args, _ := codexOneShotArgs()
 	t.Logf("argv: codex %s", strings.Join(args, " "))
 	cmd := chatCodexCmd(ctx, nil, args...)
-	cmd.Stdin = strings.NewReader(headlessPrompt(titleSuggestPersona, nil,
+	cmd.Stdin = strings.NewReader(headlessPrompt(titleSuggestPersona("ja"), nil,
 		"以下の会話に件名を付けてください。\nuser: 使用量のグラフを作りたい\nassistant: 台帳を設計します"))
 	out, err := cmd.Output()
 	if err != nil {
@@ -307,7 +335,7 @@ func TestOpencodeOneShotLive(t *testing.T) {
 	defer cancel()
 
 	args := []string{"run", "--format", "json", "--dir", chatWorkdir(),
-		headlessPrompt(titleSuggestPersona, nil,
+		headlessPrompt(titleSuggestPersona("ja"), nil,
 			"以下の会話に件名を付けてください。\nuser: 使用量のグラフを作りたい\nassistant: 台帳を設計します")}
 	cmd := exec.CommandContext(ctx, "opencode", args...)
 	cmd.Dir = chatWorkdir()

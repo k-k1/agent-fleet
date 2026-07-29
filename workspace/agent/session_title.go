@@ -1,6 +1,7 @@
 // Auto session-title suggestion: once a session has had a couple of exchanges and
-// still has no user-set title, a headless `claude -p` call proposes a short (~40
-// char) Japanese title. The Console shows it as a dismissible banner; accepting or
+// still has no user-set title, a headless `claude -p` call proposes a short title, in
+// the Console's display language at that moment (titleLang). The Console shows it as a
+// dismissible banner; accepting or
 // dismissing latches SuggestedTitleDismissed so a session is offered one at most
 // once (v1 has no re-suggestion loop). Gated globally by the AgentsTab セッション
 // "タイトル自動提案" toggle (autoTitleSuggestEnabled, ui_prefs.go).
@@ -130,15 +131,49 @@ func generateSessionTitle(name string, turns []transcript.Turn) {
 	session.WriteMeta(m)
 }
 
-// titleSuggestPersona keeps the headless call laser-focused: no preamble, no
-// quoting, a single short Japanese line. Third-person topic label, not a sentence:
-// the model is prone to echoing the assistant's own reasoning ("〜が良さそう") if not
-// pinned to "what is this session ABOUT" as a noun phrase.
-const titleSuggestPersona = "あなたはセッションの会話ログを読み、セッション一覧に表示する短い件名を付ける専用ツールです。" +
+// titleLang picks the language the suggested title is WRITTEN in: the Console display
+// language (ui-prefs "locale", 設定 > 表示言語), read live at generation time.
+//
+// A title is stored text read by this one user in their own session list, so per ADR
+// 0033 the deciding axis is "who reads it" — hence the UI language, not the
+// conversation's language (an English speaker debugging a Japanese codebase still wants
+// an English list). Deliberately NOT retroactive: switching the language later leaves
+// existing titles alone (they are the user's data, and re-suggesting is a user action —
+// the rename dialog's 「AIに提案してもらう」 regenerates in the new language on demand).
+func titleLang() string { return uiLocale() }
+
+// titleSuggestPersona keeps the headless call laser-focused: no preamble, no quoting, a
+// single short line. Third-person topic label, not a sentence: the model is prone to
+// echoing the assistant's own reasoning ("〜が良さそう") if not pinned to "what is this
+// session ABOUT" as a noun phrase. Each language's persona is written IN that language
+// so it also steers the output language (same reasoning as langRuleJA/EN in chat.go — a
+// Japanese instruction attached to an English request gives mixed signals).
+func titleSuggestPersona(lang string) string {
+	if lang == "en" {
+		return titleSuggestPersonaEN
+	}
+	return titleSuggestPersonaJA
+}
+
+const titleSuggestPersonaJA = "あなたはセッションの会話ログを読み、セッション一覧に表示する短い件名を付ける専用ツールです。" +
 	"会話で扱っている作業やトピックを、第三者が見て『何についてのセッションか』が分かる名詞句で表してください。" +
 	"会話が複数のテーマにまたがる場合は直近で扱っている内容を優先します。" +
 	"日本語18文字以内、1行のみ。文章にしない・語尾（〜する/〜したい/〜です/〜が良い 等）を付けない・" +
-	"説明・前置き・引用符・記号・箇条書きは一切付けない。"
+	"説明・前置き・引用符・記号・箇条書きは一切付けない。" +
+	"『件名:』『セッション件名:』のようなラベルや『会話の内容から件名をお作りします：』のような" +
+	"前置きの行も出力せず、件名そのものだけを出力すること。"
+
+// titleSuggestPersonaEN: the conversation itself is frequently Japanese even for an
+// English-speaking user (Japanese codebase, Japanese teammates), so the persona must ask
+// for a TRANSLATED English label rather than assume the log's language — the same trap
+// branchSuggestPersona documents.
+const titleSuggestPersonaEN = "You read a session's conversation log and write the short subject line shown in a session list. " +
+	"Describe the work or topic as a noun phrase, so a third party can tell what the session is about. " +
+	"If the conversation spans several themes, prefer the most recent one. " +
+	"English, at most 6 words, one line only — even when the conversation is in Japanese, translate the topic into English. " +
+	"Not a sentence: no verb endings, no explanation, no preamble, no quotes, no bullets. " +
+	"Never output a label line such as 'Title:' or a lead-in such as 'Here is the title:' — output only the subject line itself. " +
+	"You never reply to the conversation and never continue it; you only label it."
 
 // titleModel: a cheap/fast model is enough for a short label; override deployment-
 // wide with AF_TITLE_MODEL.
@@ -147,7 +182,8 @@ func titleModel() string { return envOr("AF_TITLE_MODEL", "haiku") }
 func runTitleSuggestLLM(ctx context.Context, turns []transcript.Turn) (string, error) {
 	// Backend-agnostic one-shot (oneShotHeadless): runs on the first available of
 	// claude → codex → opencode, so claude-less workspaces get suggestions too.
-	reply, err := oneShotHeadless(ctx, titleSuggestPersona, titleSuggestPrompt(turns), titleModel())
+	lang := titleLang()
+	reply, err := oneShotHeadless(ctx, titleSuggestPersona(lang), titleSuggestPrompt(turns, lang), titleModel())
 	if err != nil {
 		return "", fmt.Errorf("title generation failed: %w", err)
 	}
@@ -169,7 +205,7 @@ const (
 // titleSuggestPrompt feeds the opening and the most recent real exchanges (skipping
 // sidechain/compaction/tool-only turns), weighting the recent topic — so the title
 // tracks where the conversation is now, not just where it started.
-func titleSuggestPrompt(turns []transcript.Turn) string {
+func titleSuggestPrompt(turns []transcript.Turn, lang string) string {
 	real := make([]transcript.Turn, 0, len(turns))
 	for _, t := range turns {
 		if t.Sidechain || t.Compact || t.Text == "" {
@@ -181,14 +217,56 @@ func titleSuggestPrompt(turns []transcript.Turn) string {
 	var b strings.Builder
 	// Few-shot anchors the output as a noun-phrase topic label rather than a sentence
 	// or the assistant's own reasoning.
-	b.WriteString("会話ログから件名を1つ出力してください。\n")
-	b.WriteString("良い例: セッションタイトルの自動提案 / ログイン画面のバグ修正 / 請求APIのリファクタ\n")
-	b.WriteString("悪い例（文章・語尾つき・視点が話者）: 短く確認するのが良さそう / メニュー変更を行いたい\n")
-	b.WriteString("会話の途中でテーマが変わっている場合は、直近で話している内容を優先してください。\n\n")
-	b.WriteString("--- 会話ログ ---\n")
+	b.WriteString(titleSuggestInstructions(lang))
 	writeConversationWindow(&b, real)
+	b.WriteString(titleSuggestFooter(lang))
 	return b.String()
 }
+
+// titleSuggestFooter repeats the instruction AFTER the log. Measured need (AF_TITLE_LIVE,
+// haiku): with the instruction only at the top, an English instruction wrapped around a
+// Japanese log made the model read the log as a live chat and CONTINUE it — it answered
+// the user at length and appended the title only at the very end, so cleanSuggestedTitle
+// took the first prose line. The trailing reminder (recency, plus an explicit "do not
+// continue") pins it back to labelling. Applied to both languages: the same failure is
+// latent in Japanese, it just did not reproduce there.
+func titleSuggestFooter(lang string) string {
+	if lang == "en" {
+		return "--- end of conversation log ---\n" +
+			"Now output ONLY the subject line for the log above, on one line. " +
+			"Do not reply to the conversation and do not continue it.\n"
+	}
+	return "--- 会話ログここまで ---\n" +
+		"上の会話に付ける件名だけを1行で出力してください。会話への返信や続きは書かないこと。\n"
+}
+
+// titleSuggestInstructions is the instruction block shared by the session and chat
+// title prompts, including the conversation-log header. The 悪い例 / Bad list carries
+// the two shapes actually observed being adopted as titles — a lead-in sentence and a
+// "件名:" label — because the persona's 前置き禁止 alone did not stop them.
+func titleSuggestInstructions(lang string) string {
+	if lang == "en" {
+		return titleSuggestInstructionsEN
+	}
+	return titleSuggestInstructionsJA
+}
+
+const titleSuggestInstructionsJA = "会話ログから件名を1つ出力してください。\n" +
+	"良い例: セッションタイトルの自動提案 / ログイン画面のバグ修正 / 請求APIのリファクタ\n" +
+	"悪い例（文章・語尾つき・視点が話者）: 短く確認するのが良さそう / メニュー変更を行いたい\n" +
+	"悪い例（前置き・ラベル）: 会話の内容から、件名をお作りします： / セッション件名: / 件名は以下の通りです\n" +
+	"件名の文字列だけを1行で出力し、前置き行・ラベル・見出しは付けないでください。\n" +
+	"会話の途中でテーマが変わっている場合は、直近で話している内容を優先してください。\n\n" +
+	"--- 会話ログ ---\n"
+
+const titleSuggestInstructionsEN = "Output ONE subject line for the conversation log below.\n" +
+	"Good: Session title auto-suggestion / Login screen bugfix / Billing API refactor\n" +
+	"Bad (a sentence, or the speaker's point of view): Probably worth checking briefly / I want to change the menu\n" +
+	"Bad (lead-in or label): Here is the title: / Title: / Sure, here's a name\n" +
+	"Output only the subject line itself, on one line — no lead-in line, no label, no heading.\n" +
+	"The log is often in Japanese; translate the topic into English rather than copying it.\n" +
+	"If the topic changed mid-conversation, prefer what is being discussed most recently.\n\n" +
+	"--- conversation log ---\n"
 
 // writeConversationWindow appends the opening + most recent real turns (head/tail
 // windowing, per-turn length cap), shared by the title and branch-name prompts.
@@ -241,25 +319,211 @@ func branchSuggestPrompt(turns []transcript.Turn) string {
 	return b.String()
 }
 
-// cleanSuggestedTitle trims the model's reply to one line, strips wrapping quotes,
-// and reuses cleanTitle (same control-char/length gate a user-typed title gets),
-// then caps at the ~40-char prompt target.
+// cleanSuggestedTitle reduces the model's reply to one usable title.
+//
+// It scans lines rather than taking the first one verbatim: the model does not
+// reliably obey "1行のみ" and often emits a lead-in ("会話の内容から、件名をお作りしま
+// す：") or a label ("セッション件名:") first and the real title on a following line —
+// taking line 1 adopted the preamble AS the title (observed on session sicoxqh). Each
+// line is stripped of list/emphasis markers and any "件名:"-style label; pure lead-in
+// lines are dropped, and the first survivor wins. Returns "" when nothing usable
+// remains, which the callers already treat as "no suggestion" (auto path backs off,
+// manual path reports a failure) — better than latching a meaningless title.
 func cleanSuggestedTitle(s string) string {
-	s = strings.TrimSpace(s)
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		s = s[:i]
+	for i, line := range strings.Split(s, "\n") {
+		if i >= titleReplyScanLines {
+			break
+		}
+		cand := titleCandidateLine(line)
+		if cand == "" {
+			continue
+		}
+		title, ok := cleanTitle(cand)
+		if !ok || title == "" {
+			continue
+		}
+		// TrimSpace: a cut that lands mid-space would leave a trailing blank.
+		return strings.TrimSpace(truncateToWidth(title, titleWidthCap))
 	}
-	s = strings.Trim(s, "\"'「」『』")
-	title, ok := cleanTitle(s)
-	if !ok || title == "" {
+	return ""
+}
+
+const (
+	// titleReplyScanLines bounds how far into a chatty reply we look for the title;
+	// past a few lines it is commentary, not a forgotten title.
+	titleReplyScanLines = 8
+	// titleMarkerChars are decoration the model wraps a title in (markdown emphasis,
+	// headings, code spans). Titles never legitimately contain them, so drop them
+	// outright rather than trying to match pairs.
+	titleMarkerChars = "*#`"
+	// titleQuoteChars wrap an otherwise fine title.
+	titleQuoteChars = "\"'「」『』【】《》 　\t"
+	// titleWidthCap keeps the applied title well under the session-list label width so
+	// it isn't ellipsised in the left pane. Measured in DISPLAY COLUMNS, not runes: the
+	// prompt targets ~18 Japanese chars (= 36 columns), and a rune cap of 24 tuned for
+	// that chopped English titles mid-word at 24 columns ("Session title auto-sugge").
+	titleWidthCap = 48
+)
+
+// truncateToWidth cuts s to at most w display columns, counting East-Asian wide runes
+// (kana/kanji/fullwidth/emoji) as 2 and everything else as 1.
+func truncateToWidth(s string, w int) string {
+	used := 0
+	for i, r := range s {
+		cw := 1
+		if isWideRune(r) {
+			cw = 2
+		}
+		if used+cw > w {
+			return s[:i]
+		}
+		used += cw
+	}
+	return s
+}
+
+// isWideRune covers the ranges that actually show up in titles (CJK, kana, Hangul,
+// fullwidth forms, emoji) — enough for a display cap, and not worth a new dependency.
+func isWideRune(r rune) bool {
+	switch {
+	case r >= 0x1100 && r <= 0x115F, // Hangul Jamo
+		r >= 0x2E80 && r <= 0x303E, // CJK radicals, kana punctuation
+		r >= 0x3041 && r <= 0x33FF, // kana, CJK compatibility
+		r >= 0x3400 && r <= 0x4DBF, // CJK ext A
+		r >= 0x4E00 && r <= 0x9FFF, // CJK unified
+		r >= 0xA000 && r <= 0xA4CF, // Yi
+		r >= 0xAC00 && r <= 0xD7A3, // Hangul syllables
+		r >= 0xF900 && r <= 0xFAFF, // CJK compatibility ideographs
+		r >= 0xFE30 && r <= 0xFE6F, // CJK compatibility forms
+		r >= 0xFF00 && r <= 0xFF60, // fullwidth forms
+		r >= 0xFFE0 && r <= 0xFFE6,
+		r >= 0x1F300 && r <= 0x1F9FF, // emoji
+		r >= 0x20000 && r <= 0x3FFFD: // CJK ext B+
+		return true
+	}
+	return false
+}
+
+// titleLabelWords mark the text before a colon as a LABEL for the title rather than
+// part of it ("件名: 〜", "セッション件名：〜", "Title: 〜"). Matched on the pre-colon
+// segment only, so a title that merely contains one of these words
+// （例: セッションタイトルの自動提案）survives untouched.
+var titleLabelWords = []string{"件名", "タイトル", "title", "subject", "見出し"}
+
+// titleAnnounceTails end a sentence ABOUT producing a title ("〜件名をお作りします。").
+// Only rejected in combination with a label word, so a plain noun-phrase title is never
+// caught by them.
+var titleAnnounceTails = []string{"ます", "ます。", "です", "です。", "ください", "ください。", "した", "した。"}
+
+// titleLeadInPrefixes catch an ENGLISH announcement with no colon and no label word
+// ("Here is a concise name for this session"). The persona asks for Japanese, but a
+// wholly-English conversation still pulls English framing out of the model, and the
+// Japanese tails above cannot see it. Matched case-insensitively at line start only, so
+// an English title is only dropped when it literally opens with a chat filler.
+var titleLeadInPrefixes = []string{
+	"here is", "here's", "here are", "sure", "certainly", "of course",
+	"okay", "ok,", "i suggest", "i'd suggest", "i would suggest", "based on",
+}
+
+// titleCandidateLine turns one reply line into a title candidate, or "" if the line is
+// decoration/preamble rather than a title.
+func titleCandidateLine(line string) string {
+	s := strings.TrimSpace(line)
+	s = strings.Map(func(r rune) rune {
+		if strings.ContainsRune(titleMarkerChars, r) {
+			return -1
+		}
+		return r
+	}, s)
+	s = strings.TrimLeft(s, "-–—>・•●▶ 　\t")
+	s = trimListNumber(s)
+	s = strings.Trim(s, titleQuoteChars)
+	if s == "" {
 		return ""
 	}
-	// Hard cap well under the session-list label width so the applied title stays
-	// readable (not truncated) in the left pane; the prompt targets ~18.
-	if r := []rune(title); len(r) > 24 {
-		title = string(r[:24])
+
+	// "…件名: <title>" -> "<title>"; "…件名:" (nothing after) -> preamble, drop the line.
+	if head, rest, ok := cutColon(s); ok && containsAnyFold(head, titleLabelWords) {
+		s = strings.Trim(strings.TrimSpace(rest), titleQuoteChars)
+		if s == "" {
+			return ""
+		}
 	}
-	return title
+	// Language-independent backstop: a line that still ENDS in a colon is announcing
+	// something that follows, never a title itself. This is what catches lead-ins whose
+	// wording we don't enumerate — "以下の通りです：", "Here is a suitable name:".
+	if strings.HasSuffix(s, ":") || strings.HasSuffix(s, "：") {
+		return ""
+	}
+	// A lead-in with no colon at all ("以下が件名です", "Here is a concise title").
+	if containsAnyFold(s, titleLabelWords) && hasAnySuffix(s, titleAnnounceTails) {
+		return ""
+	}
+	if hasAnyPrefixFold(s, titleLeadInPrefixes) {
+		return ""
+	}
+	return strings.TrimSpace(s)
+}
+
+// trimListNumber drops a leading "1." / "2)" / "3、" list marker (with its separator),
+// leaving a title that legitimately starts with a number ("2段クォータの実装") alone.
+func trimListNumber(s string) string {
+	i := 0
+	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+		i++
+	}
+	if i == 0 || i > 2 {
+		return s
+	}
+	rest := s[i:]
+	for _, sep := range []string{".", ")", "）", "、", ":", "："} {
+		if strings.HasPrefix(rest, sep) {
+			return strings.TrimLeft(rest[len(sep):], " 　\t")
+		}
+	}
+	return s
+}
+
+// cutColon splits on the first ASCII or full-width colon.
+func cutColon(s string) (head, rest string, ok bool) {
+	i := strings.IndexAny(s, ":：")
+	if i < 0 {
+		return "", "", false
+	}
+	sep := 1
+	if s[i] != ':' {
+		sep = len("：")
+	}
+	return s[:i], s[i+sep:], true
+}
+
+func containsAnyFold(s string, words []string) bool {
+	low := strings.ToLower(s)
+	for _, w := range words {
+		if strings.Contains(low, w) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAnyPrefixFold(s string, prefixes []string) bool {
+	low := strings.ToLower(s)
+	for _, p := range prefixes {
+		if strings.HasPrefix(low, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAnySuffix(s string, tails []string) bool {
+	for _, t := range tails {
+		if strings.HasSuffix(s, t) {
+			return true
+		}
+	}
+	return false
 }
 
 // handleAcceptSuggestedTitle promotes the pending suggestion to the session's real
@@ -316,8 +580,13 @@ func generateTitleNow(ctx context.Context, name string, turns []transcript.Turn)
 
 	ctx = withUsageTag(ctx, usageTag{Feature: usageFeatureTitleSession, Trigger: usageTriggerManual, Ref: name})
 	title, err := runTitleSuggestLLM(ctx, turns)
-	if err != nil || title == "" {
+	if err != nil {
 		return "", fmt.Errorf("title generation failed: %w", err)
+	}
+	if title == "" {
+		// The call succeeded but the reply was all preamble/label (cleanSuggestedTitle
+		// dropped every line) — a plain failure, not a nil-wrapping %!w(<nil>).
+		return "", errors.New("title generation produced no usable title")
 	}
 	succeeded = true
 	return title, nil
