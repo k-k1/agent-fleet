@@ -127,13 +127,25 @@
 
 /* file viewer: info bar + line-numbered, highlighted code */
 .fileinfo {
-  gap: 10px;
+  /* The controls are all fixed-width (保存 / AI提案 / mode segments — docs/44),
+     and the header's right padding only *reserves* room for the pane control
+     cluster overlaid at the top-right: fixed items that outgrow the row would
+     overflow past that padding and slide under the cluster. Wrap them onto a
+     second line instead. */
+  flex-wrap: wrap;
+  gap: 4px 10px;
 }
 .fi-name {
   font-size: 12px;
   color: var(--fg);
-  /* shrink + ellipsis a long filename instead of letting the bar wrap */
-  min-width: 0;
+  /* Grow-from-zero (basis 0) instead of shrink-from-content: the name fills
+     and ellipsizes whatever the fixed controls leave over on its line, so a
+     long filename never forces the controls onto the wrap line by itself.
+     The min-width keeps the ellipsized name readable — with less room than
+     that on the line, trailing controls wrap instead. */
+  flex: 1 1 0;
+  max-width: max-content;
+  min-width: 6em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -156,18 +168,37 @@
 }
 .fi-path {
   flex: 1;
-  min-width: 0;
+  /* Readable-or-wrapped, like .fi-name: squeezed below this the path drops to
+     the next line (right-aligned, usually alongside the download icon) instead
+     of lingering as a few unreadable characters. */
+  min-width: 10em;
   text-align: right;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 11px;
 }
-/* download affordance sits at the end of the info bar; margin-left:auto pins it
-   to the right edge even when the (right-aligned) path is hidden on narrow panes. */
+/* Path + download travel as one flex child (FileView) so a wrap moves them to
+   the next line together; margin-left:auto pins the unit to the right edge even
+   when the path is hidden on narrow panes. Grow-from-zero like .fi-name: the
+   min-width is the room the (ellipsized) path needs to stay on the top line —
+   with less, the unit wraps whole. */
+.fi-end {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1 1 0;
+  min-width: 10em;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+.fi-end .fi-path {
+  /* the unit provides the grow/min-width; the path just shrinks + ellipsizes */
+  flex: 0 1 auto;
+  min-width: 0;
+}
 .fi-dl {
   flex: 0 0 auto;
-  margin-left: auto;
   display: inline-flex;
   align-items: center;
   color: var(--muted);
@@ -182,6 +213,11 @@
 @container filepane (max-width: 520px) {
   .fileinfo .fi-path {
     display: none;
+  }
+  /* Path hidden → the unit is just the download icon; stop reserving path room. */
+  .fileinfo .fi-end {
+    flex: 0 0 auto;
+    min-width: 0;
   }
 }
 @container filepane (max-width: 340px) {

@@ -916,12 +916,16 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
             </button>
           </span>
         )}
-        <span className="fi-path muted" title={filePath}>
-          {filePath}
+        {/* One flex child so path + download wrap (fileinfo flex-wrap) together —
+            never the lone download icon on its own line. */}
+        <span className="fi-end">
+          <span className="fi-path muted" title={filePath}>
+            {filePath}
+          </span>
+          <a className="fi-dl" href={downloadURL(filePath)} download={baseName(filePath)} title={tr("view.download")}>
+            <Icon name="cloud-download" />
+          </a>
         </span>
-        <a className="fi-dl" href={downloadURL(filePath)} download={baseName(filePath)} title={tr("view.download")}>
-          <Icon name="cloud-download" />
-        </a>
       </header>
 
       {canEdit && (
