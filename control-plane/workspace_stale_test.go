@@ -5,8 +5,6 @@ package main
 
 import (
 	"context"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -45,62 +43,7 @@ func TestWorkspacePayloadStale(t *testing.T) {
 	}
 }
 
-func TestAgentVersionStale(t *testing.T) {
-	agentVer := "1.0.0"
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/healthz" {
-			t.Errorf("path = %s", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true,"version":"` + agentVer + `"}`))
-	}))
-	defer srv.Close()
-
-	old := buildVersion
-	defer func() { buildVersion = old }()
-	ctx := context.Background()
-	rt := stubRuntime{endpoint: srv.URL}
-
-	// dev の CP は比較しない（開発中に毎回「要再起動」を出さない）。
-	buildVersion = "dev"
-	freshness = &ttlCache{m: map[string]ttlEntry{}}
-	if agentVersionStale(ctx, rt) {
-		t.Fatal("dev CP: stale, want false")
-	}
-
-	// リリース版同士で食い違う＝コンテナが更新前のまま。
-	buildVersion = "1.1.0"
-	freshness = &ttlCache{m: map[string]ttlEntry{}}
-	if !agentVersionStale(ctx, rt) {
-		t.Fatal("1.1.0 CP vs 1.0.0 agent: not stale, want stale")
-	}
-
-	// 一致していれば当然 false。
-	agentVer = "1.1.0"
-	freshness = &ttlCache{m: map[string]ttlEntry{}}
-	if agentVersionStale(ctx, rt) {
-		t.Fatal("same version: stale, want false")
-	}
-
-	// 版を申告しない旧 Agent は「判らない」→ 誤警告しない。
-	agentVer = ""
-	freshness = &ttlCache{m: map[string]ttlEntry{}}
-	if agentVersionStale(ctx, rt) {
-		t.Fatal("agent without version: stale, want false")
-	}
-}
-
-// 到達不能な Agent（停止直後・起動中）でバッジを出さない。
-func TestAgentVersionStaleUnreachable(t *testing.T) {
-	old := buildVersion
-	buildVersion = "1.1.0"
-	defer func() { buildVersion = old }()
-	freshness = &ttlCache{m: map[string]ttlEntry{}}
-	if agentVersionStale(context.Background(), stubRuntime{endpoint: "http://127.0.0.1:1"}) {
-		t.Fatal("unreachable agent: stale, want false")
-	}
-}
-
+// 素の native（dev: AF_NATIVE_AGENT_BIN）は workspace-agent バイナリ自体が実体。
 func TestNativeStaleBinaryStamp(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "workspace-agent")
@@ -114,19 +57,65 @@ func TestNativeStaleBinaryStamp(t *testing.T) {
 		t.Fatal("no stamp: stale, want false")
 	}
 
-	if err := os.WriteFile(n.binStampPath(), []byte(binStamp(bin)), 0o644); err != nil {
+	if err := os.WriteFile(n.binStampPath(), []byte(n.spawnStamp()), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if n.Stale(context.Background()) {
 		t.Fatal("unchanged binary: stale, want false")
 	}
 
-	// af update がバイナリを差し替えた状態（内容もサイズも変わる）。
+	// 再ビルドでバイナリが差し替わった状態（内容もサイズも変わる）。
 	if err := os.WriteFile(bin, []byte("v2-longer"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if !n.Stale(context.Background()) {
 		t.Fatal("replaced binary: not stale, want stale")
+	}
+}
+
+// パッケージ版 native は rootfs モードで、agentBin は bwrap（リリース間で同一）。
+// 実体は版で切られた rootfs ディレクトリのほう — ここを間違えると、
+//
+//	・bwrap を見る → af update で rootfs が変わっても検出できない
+//	・CP 版と Agent 版を比べる → rootfs 版 <r> は app 版 <v> と分離されている
+//	  （docs/35・build.sh --rootfs-json のイメージ不変リリース）ので恒久誤点灯
+//
+// の両方を踏む。af update との噛み合わせをここで固定する。
+func TestNativeStaleRootfsIdentity(t *testing.T) {
+	dir := t.TempDir()
+	bwrap := filepath.Join(dir, "bwrap") // リリースをまたいでも同じ中身
+	if err := os.WriteFile(bwrap, []byte("bwrap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mkRootfs := func(ver string) string {
+		p := filepath.Join(dir, "rootfs", ver)
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(p, ".ok"), []byte("1"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	old, newer := mkRootfs("0.3.0"), mkRootfs("0.4.0")
+
+	running := &nativeRuntime{agentBin: bwrap, rootfs: old, dataDir: dir}
+	if err := os.WriteFile(running.binStampPath(), []byte(running.spawnStamp()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if running.Stale(context.Background()) {
+		t.Fatal("same rootfs: stale, want false")
+	}
+
+	// af update apply → CP が新しい rootfs 版で再起動。走っている agent は旧 rootfs 由来。
+	if !(&nativeRuntime{agentBin: bwrap, rootfs: newer, dataDir: dir}).Stale(context.Background()) {
+		t.Fatal("moved rootfs: not stale, want stale")
+	}
+
+	// イメージ不変リリース（app 版だけ上がり rootfs ピンは据え置き）＝再起動しても
+	// 走るコードは変わらない → 出してはいけない。
+	if (&nativeRuntime{agentBin: bwrap, rootfs: old, dataDir: dir}).Stale(context.Background()) {
+		t.Fatal("immutable-rootfs release: stale, want false")
 	}
 }
 
