@@ -150,8 +150,8 @@ func TestReportCompensationReopensOnBusyReturn(t *testing.T) {
 	status.Persist(sid, "working") // 報告のあとにセッションが動き出した
 
 	rc.compensate(m.Name, time.Now())
-	if cs.count() != 1 || cs.calls[0] != reportKindReopened+":" {
-		t.Fatalf("訂正が配送されていない: %v", cs.calls)
+	if got := cs.callsSnapshot(); len(got) != 1 || got[0] != reportKindReopened+":" {
+		t.Fatalf("訂正が配送されていない: %v", got)
 	}
 	r := rowByID(t, m.Name, id)
 	if r.State != instrReopened || r.ReopenCount != 1 {
@@ -165,8 +165,8 @@ func TestReportCompensationReopensOnBusyReturn(t *testing.T) {
 	}
 	// 開き直しは1回だけ。行は reopened なので、次の観測ではもう候補にならない。
 	rc.compensate(m.Name, time.Now())
-	if cs.count() != 1 {
-		t.Fatalf("同じ報告を二度訂正した: %v", cs.calls)
+	if got := cs.callsSnapshot(); len(got) != 1 {
+		t.Fatalf("同じ報告を二度訂正した: %v", got)
 	}
 }
 
@@ -182,8 +182,8 @@ func TestReportCompensationSkipsWhenNewInstruction(t *testing.T) {
 	status.Persist(sid, "working")
 
 	rc.compensate(m.Name, time.Now())
-	if cs.count() != 0 {
-		t.Fatalf("新指示で走っているセッションを誤報告扱いにした: %v", cs.calls)
+	if got := cs.callsSnapshot(); len(got) != 0 {
+		t.Fatalf("新指示で走っているセッションを誤報告扱いにした: %v", got)
 	}
 	if r := rowByID(t, m.Name, id); r.State != instrReported {
 		t.Fatalf("行を開き直してしまった: %+v", r)
@@ -206,14 +206,15 @@ func TestReportCompensationStopsAtCap(t *testing.T) {
 		}
 		stillReported(t, m.Name, id, 30*time.Second) // また早計な報告が出た
 	}
-	if cs.count() != instrReopenMax {
-		t.Fatalf("訂正の回数 = %d, want %d: %v", cs.count(), instrReopenMax, cs.calls)
+	if got := cs.callsSnapshot(); len(got) != instrReopenMax {
+		t.Fatalf("訂正の回数 = %d, want %d: %v", len(got), instrReopenMax, got)
 	}
 
 	status.Persist(sid, "working")
 	rc.compensate(m.Name, time.Now())
-	if cs.count() != instrReopenMax+1 || cs.calls[instrReopenMax] != reportKindReopened+":"+reportReasonReopenCapped {
-		t.Fatalf("上限到達が利用者へ報告されていない: %v", cs.calls)
+	got := cs.callsSnapshot()
+	if len(got) != instrReopenMax+1 || got[instrReopenMax] != reportKindReopened+":"+reportReasonReopenCapped {
+		t.Fatalf("上限到達が利用者へ報告されていない: %v", got)
 	}
 	r := rowByID(t, m.Name, id)
 	if r.State != instrReported || r.ReopenCount != instrReopenMax {
@@ -302,6 +303,43 @@ func lastReportCard(t *testing.T, convID string) string {
 
 // --- 自己申告ファストパス -----------------------------------------------------------
 
+// awaitSinkCalls waits until the sink has recorded exactly n deliveries and returns the
+// locked snapshot.
+//
+// **sweep の回数を数えて assert してはいけない**。`swept` は容量1の「1回終わった」通知で
+// しかなく、どの sweep のものかを運ばない — 自己申告は `nudge` で起床を1つ積むので、
+// 直前の起床が残した通知を掴んで、狙った状態を観測する前に読んでしまう窓がある
+// （フレークと、goroutine が書いている最中のスライスを読む -race 検出の両方の原因）。
+// 待ちたいのは sweep ではなく**配送**なので、配送そのものをロック越しに待つ。
+func awaitSinkCalls(t *testing.T, cs *countingSink, n int) []string {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		got := cs.callsSnapshot()
+		if len(got) >= n {
+			return got
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("配送が %d 件に届かなかった: %v", n, got)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// expectSinkQuiet asserts the sink stays at n over a bounded window — 「配送されない
+// こと」は待っても確定しないので、時間を区切って観測するしかない。失敗方向は安全側
+// （本当に配送されたときだけ落ちる）。
+func expectSinkQuiet(t *testing.T, cs *countingSink, n int, why string) {
+	t.Helper()
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if got := cs.callsSnapshot(); len(got) != n {
+			t.Fatalf("%s: 配送 = %v, want %d 件", why, got, n)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // TestSelfReportKickWiresHintSeam: MCP ツールの受信口は既存の kick（POST /chat/report）
 // —— 自己申告はそこに乗る「ヒント＋証拠1つ」であって、独自の配送経路ではない。
 func TestSelfReportKickWiresHintSeam(t *testing.T) {
@@ -331,18 +369,15 @@ func TestSelfReportKickWiresHintSeam(t *testing.T) {
 func TestSelfReportSettlesInOneTick(t *testing.T) {
 	m, sid, _ := armedFixture(t, "slot75")
 	var cs countingSink
-	rc, clock := newFakeReconciler(t, reportTickDefault, cs.sink)
+	rc, _ := newFakeReconciler(t, reportTickDefault, cs.sink)
 
 	status.PersistTurnEnd(sid, "idle")
 	rc.selfReport(m.Name, time.Now()) // ツール呼出 → ヒント起床
-	clock.waitSweep(t, rc)
 
-	if cs.count() != 1 {
-		t.Fatalf("自己申告があっても 1 sweep で配送されない: %v", cs.calls)
-	}
-	if sessionReportPending(m.Name) {
-		t.Fatal("配送に成功したら行は reported になる")
-	}
+	// tick を1つも進めずに配送されること＝2 tick のデバウンスを踏んでいないこと
+	// （TestNoSelfReportStillSettles が同じ土俵で 2 tick かかることを示す）。
+	awaitSinkCalls(t, &cs, 1)
+	awaitReported(t, m.Name) // 台帳が進むのは配送が返ったあと
 }
 
 // TestNoSelfReportStillSettles: 申告が来なくても、リコンサイラが従来どおり settle で
@@ -355,16 +390,10 @@ func TestNoSelfReportStillSettles(t *testing.T) {
 	status.PersistTurnEnd(sid, "idle") // 申告は無い
 
 	clock.advance(t, rc, reportTickDefault)
-	if cs.count() != 0 {
-		t.Fatalf("申告なしで 1 tick 目に配送した（デバウンスが効いていない）: %v", cs.calls)
-	}
+	expectSinkQuiet(t, &cs, 0, "申告なしの 1 tick 目")
 	clock.advance(t, rc, reportTickDefault)
-	if cs.count() != 1 {
-		t.Fatalf("申告が無くても 2 tick で拾うべき: %v", cs.calls)
-	}
-	if sessionReportPending(m.Name) {
-		t.Fatal("行が reported になっていない")
-	}
+	awaitSinkCalls(t, &cs, 1)
+	awaitReported(t, m.Name)
 }
 
 // TestSelfReportTooEarlyIsHeld: 早呼び（まだ走っているのに申告した）は busy 証拠に
@@ -378,23 +407,15 @@ func TestSelfReportTooEarlyIsHeld(t *testing.T) {
 
 	status.Persist(sid, "working") // まだターンの途中
 	rc.selfReport(m.Name, time.Now())
-	clock.waitSweep(t, rc)
-	if cs.count() != 0 {
-		t.Fatalf("早呼びで配送した: %v", cs.calls)
-	}
+	expectSinkQuiet(t, &cs, 0, "早呼び（起床直後）")
 	clock.advance(t, rc, reportTickDefault)
-	if cs.count() != 0 {
-		t.Fatalf("busy のまま配送した: %v", cs.calls)
-	}
+	expectSinkQuiet(t, &cs, 0, "busy のまま 1 tick")
 
 	status.PersistTurnEnd(sid, "idle") // 本当に終わった
 	clock.advance(t, rc, reportTickDefault)
-	if cs.count() != 1 {
-		t.Fatalf("busy が晴れたあと、生きている申告で 1 tick に縮まらなかった: %v", cs.calls)
-	}
-	if sessionReportPending(m.Name) {
-		t.Fatal("行が reported になっていない")
-	}
+	// 申告が生きているので、busy が晴れた最初の tick で配送される（2 tick 待たない）。
+	awaitSinkCalls(t, &cs, 1)
+	awaitReported(t, m.Name)
 }
 
 // TestSelfReportIsIdleEvidenceWithoutMarker: マーカーを持たない kind（TUI ポーリング系）
@@ -402,27 +423,34 @@ func TestSelfReportTooEarlyIsHeld(t *testing.T) {
 // 指示は巻き込まれない。
 func TestSelfReportIsIdleEvidenceWithoutMarker(t *testing.T) {
 	m, _, conv := ledgerFixture(t, "slot78")
-	var cs countingSink
-	rc, clock := newFakeReconciler(t, reportTickDefault, cs.sink)
-
+	// 台帳は**リコンサイラを起こす前に**組む。addInstruction は判定をやり直させる
+	// （forget）ので、間に申告を挟むと申告が捨てられ、起床も指示の数だけ増えて
+	// 「どの sweep を待てばよいか」が決まらなくなる。申告の時刻は引数で作れるので、
+	// 呼び出し順ではなくタイムスタンプで前後関係を組めばよい。
 	id1 := addInstructionAt(m.Name, conv, turnSourceOperator, time.Now().Add(-60*time.Second))
-	rc.selfReport(m.Name, time.Now())
-	id2 := addInstructionAt(m.Name, conv, turnSourceOperator, time.Now().Add(2*time.Second))
-	// addInstruction は判定をやり直させる（forget）ので、申告し直す＝ツールを呼んだ時点は
-	// 指示2より前、という状況を作る。
-	rc.selfReport(m.Name, time.Now())
+	selfAt := time.Now()
+	id2 := addInstructionAt(m.Name, conv, turnSourceOperator, selfAt.Add(2*time.Second))
 
-	clock.waitSweep(t, rc)
-	if cs.count() != 1 {
-		t.Fatalf("マーカーが無くても申告だけで settle するべき: %v", cs.calls)
-	}
+	var cs countingSink
+	rc, _ := newFakeReconciler(t, reportTickDefault, cs.sink)
+	rc.selfReport(m.Name, selfAt) // 起床はこの1回だけ
+
+	awaitSinkCalls(t, &cs, 1) // マーカーが無くても申告だけで settle する
 	if got := cs.rowIDs(0); len(got) != 1 || got[0] != id1 {
 		t.Fatalf("報告が畳んだ行 = %v, want [%s]（申告より後の指示を巻き込んだ）", got, id1)
 	}
-	open := openInstrRows(m.Name)
-	if len(open) != 1 || open[0].ID != id2 {
-		t.Fatalf("後行指示の行が残っていない: %+v", open)
+	// 指示1の行が閉じるまで待ってから、残っているのが指示2だけであることを見る。
+	var open []instrRow
+	for i := 0; i < 150; i++ {
+		if open = openInstrRows(m.Name); len(open) == 1 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
+	if len(open) != 1 || open[0].ID != id2 {
+		t.Fatalf("後行指示の行だけが残るべき: %+v", open)
+	}
+	expectSinkQuiet(t, &cs, 1, "申告より後に投入された指示")
 }
 
 // TestAutoResumeCountsSessionEventsNotConversations: 自動再開のカウンタ（docs/47）は
@@ -445,8 +473,8 @@ func TestAutoResumeCountsSessionEventsNotConversations(t *testing.T) {
 	clock.waitSweep(t, rc) // 静穏 1 回目
 	clock.advance(t, rc, reportTickDefault)
 
-	if cs.count() != 2 {
-		t.Fatalf("会話ごとに1通配るべき: %v", cs.calls)
+	if got := cs.callsSnapshot(); len(got) != 2 {
+		t.Fatalf("会話ごとに1通配るべき: %v", got)
 	}
 	if n := autoResumeAttempts(m.Name); n != 1 {
 		t.Fatalf("自動再開カウンタ = %d, want 1（会話数ぶん加算している）", n)

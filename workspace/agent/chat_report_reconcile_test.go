@@ -300,6 +300,17 @@ func (cs *countingSink) count() int {
 	return len(cs.calls)
 }
 
+// callsSnapshot copies the recorded deliveries under the lock. 素の `cs.calls` は
+// リコンサイラの goroutine が書く共有スライスなので、**失敗メッセージの中でも**
+// 裸で読んではいけない — advance() 経由の読みは swept チャネルで順序が付くが、
+// ポーリングで待つ assert（chat_report_compensate_test.go）にはその辺が無く、
+// -race がそこを掴む。
+func (cs *countingSink) callsSnapshot() []string {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	return append([]string(nil), cs.calls...)
+}
+
 // TestReportReconcilerSettleDebounce: 静穏を1 tick 観測しただけでは配送せず、2 tick
 // 連続（かつ tick 間隔ぶんの時間経過）で初めて配送して arm を消費する。TUI の footer
 // 誤読やヒールの一瞬のマーカー消失を「完了」に化けさせないための時間的裏取り。
