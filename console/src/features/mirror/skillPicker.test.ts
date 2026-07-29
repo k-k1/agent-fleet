@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applySkillToDraft, filterSkills, hasTriggerHead, originKind, slashTokenAt } from "./skillPicker.ts";
+import { applySkillToDraft, filterSkills, hasTriggerHead, originKind, pickerTokenAt, slashTokenAt } from "./skillPicker.ts";
 import type { SessionSkill } from "../../core/api/client.ts";
 
 const sk = (name: string, description = "", type: SessionSkill["type"] = "skill"): SessionSkill => ({
@@ -33,6 +33,26 @@ describe("slashTokenAt", () => {
     expect(slashTokenAt("＄ima", 4, "$")).toEqual({ token: "ima", start: 0, end: 4 });
     expect(hasTriggerHead("／pro", "/")).toBe(true);
     expect(hasTriggerHead("pro", "/")).toBe(false);
+  });
+});
+
+describe("pickerTokenAt", () => {
+  it("allowBare=false は slashTokenAt と同じ（トリガ必須）", () => {
+    expect(pickerTokenAt("pro", 3, "/")).toBeNull();
+    expect(pickerTokenAt("/pro", 4, "/")).toEqual({ token: "pro", start: 0, end: 4 });
+  });
+  it("allowBare=true（ボタン起点）はトリガ無しの先頭トークンも拾う", () => {
+    expect(pickerTokenAt("pro", 3, "/", true)).toEqual({ token: "pro", start: 0, end: 3, bare: true });
+    expect(pickerTokenAt("", 0, "/", true)).toEqual({ token: "", start: 0, end: 0, bare: true });
+    // トリガ無し kind（kiro/copilot/agy — ボタンだけが入口）でも絞り込める
+    expect(pickerTokenAt("dep", 3, "", true)).toEqual({ token: "dep", start: 0, end: 3, bare: true });
+  });
+  it("2 語目以降＝引数を書いている間は null（全件のまま）", () => {
+    expect(pickerTokenAt("メモ 書き", 4, "/", true)).toBeNull();
+    expect(pickerTokenAt("pro arg", 7, "/", true)).toBeNull();
+  });
+  it("トリガ付きの下書きの判断は slashTokenAt に従う（bare で拾い直さない）", () => {
+    expect(pickerTokenAt("/pro arg", 6, "/", true)).toBeNull();
   });
 });
 
@@ -73,6 +93,15 @@ describe("applySkillToDraft", () => {
     expect(applySkillToDraft("メモ書き", 2, "/handoff ")).toEqual({ next: "/handoff メモ書き", caret: 9 });
     // 既にトリガで始まる下書きは重ねない（置き換え）
     expect(applySkillToDraft("/old args", 9, "/handoff ")).toEqual({ next: "/handoff ", caret: 9 });
+  });
+  it("allowBare（ボタン起点で絞り込み中）は、クエリに使った先頭トークンを置換する", () => {
+    // "hand" は候補を絞るために打った文字なので引数に残さない
+    expect(applySkillToDraft("hand", 4, "/handoff ", "/", true)).toEqual({ next: "/handoff ", caret: 9 });
+    // 2 語目以降は引数扱い（絞り込みに使っていない）ので丸ごと残す
+    expect(applySkillToDraft("メモ 書き", 5, "/handoff ", "/", true)).toEqual({
+      next: "/handoff メモ 書き",
+      caret: 9,
+    });
   });
   it("codex の $ メンションでも同じ組み立て", () => {
     expect(applySkillToDraft("$ima", 4, "$imagegen ", "$")).toEqual({ next: "$imagegen ", caret: 10 });
