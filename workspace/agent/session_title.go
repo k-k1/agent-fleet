@@ -274,12 +274,8 @@ func cleanSuggestedTitle(s string) string {
 		if !ok || title == "" {
 			continue
 		}
-		// Hard cap well under the session-list label width so the applied title stays
-		// readable (not truncated) in the left pane; the prompt targets ~18.
-		if r := []rune(title); len(r) > 24 {
-			title = string(r[:24])
-		}
-		return title
+		// TrimSpace: a cut that lands mid-space would leave a trailing blank.
+		return strings.TrimSpace(truncateToWidth(title, titleWidthCap))
 	}
 	return ""
 }
@@ -294,7 +290,51 @@ const (
 	titleMarkerChars = "*#`"
 	// titleQuoteChars wrap an otherwise fine title.
 	titleQuoteChars = "\"'「」『』【】《》 　\t"
+	// titleWidthCap keeps the applied title well under the session-list label width so
+	// it isn't ellipsised in the left pane. Measured in DISPLAY COLUMNS, not runes: the
+	// prompt targets ~18 Japanese chars (= 36 columns), and a rune cap of 24 tuned for
+	// that chopped English titles mid-word at 24 columns ("Session title auto-sugge").
+	titleWidthCap = 48
 )
+
+// truncateToWidth cuts s to at most w display columns, counting East-Asian wide runes
+// (kana/kanji/fullwidth/emoji) as 2 and everything else as 1.
+func truncateToWidth(s string, w int) string {
+	used := 0
+	for i, r := range s {
+		cw := 1
+		if isWideRune(r) {
+			cw = 2
+		}
+		if used+cw > w {
+			return s[:i]
+		}
+		used += cw
+	}
+	return s
+}
+
+// isWideRune covers the ranges that actually show up in titles (CJK, kana, Hangul,
+// fullwidth forms, emoji) — enough for a display cap, and not worth a new dependency.
+func isWideRune(r rune) bool {
+	switch {
+	case r >= 0x1100 && r <= 0x115F, // Hangul Jamo
+		r >= 0x2E80 && r <= 0x303E, // CJK radicals, kana punctuation
+		r >= 0x3041 && r <= 0x33FF, // kana, CJK compatibility
+		r >= 0x3400 && r <= 0x4DBF, // CJK ext A
+		r >= 0x4E00 && r <= 0x9FFF, // CJK unified
+		r >= 0xA000 && r <= 0xA4CF, // Yi
+		r >= 0xAC00 && r <= 0xD7A3, // Hangul syllables
+		r >= 0xF900 && r <= 0xFAFF, // CJK compatibility ideographs
+		r >= 0xFE30 && r <= 0xFE6F, // CJK compatibility forms
+		r >= 0xFF00 && r <= 0xFF60, // fullwidth forms
+		r >= 0xFFE0 && r <= 0xFFE6,
+		r >= 0x1F300 && r <= 0x1F9FF, // emoji
+		r >= 0x20000 && r <= 0x3FFFD: // CJK ext B+
+		return true
+	}
+	return false
+}
 
 // titleLabelWords mark the text before a colon as a LABEL for the title rather than
 // part of it ("件名: 〜", "セッション件名：〜", "Title: 〜"). Matched on the pre-colon
@@ -306,6 +346,16 @@ var titleLabelWords = []string{"件名", "タイトル", "title", "subject", "�
 // Only rejected in combination with a label word, so a plain noun-phrase title is never
 // caught by them.
 var titleAnnounceTails = []string{"ます", "ます。", "です", "です。", "ください", "ください。", "した", "した。"}
+
+// titleLeadInPrefixes catch an ENGLISH announcement with no colon and no label word
+// ("Here is a concise name for this session"). The persona asks for Japanese, but a
+// wholly-English conversation still pulls English framing out of the model, and the
+// Japanese tails above cannot see it. Matched case-insensitively at line start only, so
+// an English title is only dropped when it literally opens with a chat filler.
+var titleLeadInPrefixes = []string{
+	"here is", "here's", "here are", "sure", "certainly", "of course",
+	"okay", "ok,", "i suggest", "i'd suggest", "i would suggest", "based on",
+}
 
 // titleCandidateLine turns one reply line into a title candidate, or "" if the line is
 // decoration/preamble rather than a title.
@@ -331,8 +381,17 @@ func titleCandidateLine(line string) string {
 			return ""
 		}
 	}
-	// A lead-in with no colon at all ("以下が件名です", "件名を考えました").
+	// Language-independent backstop: a line that still ENDS in a colon is announcing
+	// something that follows, never a title itself. This is what catches lead-ins whose
+	// wording we don't enumerate — "以下の通りです：", "Here is a suitable name:".
+	if strings.HasSuffix(s, ":") || strings.HasSuffix(s, "：") {
+		return ""
+	}
+	// A lead-in with no colon at all ("以下が件名です", "Here is a concise title").
 	if containsAnyFold(s, titleLabelWords) && hasAnySuffix(s, titleAnnounceTails) {
+		return ""
+	}
+	if hasAnyPrefixFold(s, titleLeadInPrefixes) {
 		return ""
 	}
 	return strings.TrimSpace(s)
@@ -374,6 +433,16 @@ func containsAnyFold(s string, words []string) bool {
 	low := strings.ToLower(s)
 	for _, w := range words {
 		if strings.Contains(low, w) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAnyPrefixFold(s string, prefixes []string) bool {
+	low := strings.ToLower(s)
+	for _, p := range prefixes {
+		if strings.HasPrefix(low, p) {
 			return true
 		}
 	}
