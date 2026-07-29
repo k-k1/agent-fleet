@@ -10,6 +10,7 @@ export interface SlashToken {
   token: string; // トリガ文字を除いた入力中の断片（"" = トリガ直後）
   start: number; // 常に 0（先頭トリガ）— 差し込み置換の左端
   end: number; // 置換の右端（最初の空白 or 文末）
+  bare?: boolean; // トリガ文字なしの先頭トークン（ボタン起点の絞り込み。pickerTokenAt 参照）
 }
 
 // 全角エイリアス: 日本語 IME では「/」「$」が全角（／・＄）で入るため、トリガとして
@@ -42,6 +43,21 @@ export function slashTokenAt(text: string, caret: number, trigger = "/"): SlashT
   return { token: text.slice(head.length, end), start: 0, end };
 }
 
+// pickerTokenAt: ピッカーが実際に絞り込みへ使うトークン。allowBare（＝「/」ボタン起点で
+// 開いている間）は、トリガ文字が無くても先頭 1 トークンをクエリとして受ける — ボタンで
+// 開いてからそのままタイプして絞り込めるように。確定時は applySkillToDraft が同じ規則で
+// そのトークンごと invoke に置換するので、クエリが引数として残る事故は起きない。
+// 先頭の 2 語目以降にキャレットがある（＝引数を書いている）ときは null＝全件のまま。
+export function pickerTokenAt(text: string, caret: number, trigger = "/", allowBare = false): SlashToken | null {
+  const tok = slashTokenAt(text, caret, trigger);
+  if (tok || !allowBare) return tok;
+  if (triggerHead(text, trigger)) return null; // トリガ付きの判断は slashTokenAt に従う
+  const ws = text.search(/[\s]/);
+  const end = ws < 0 ? text.length : ws;
+  if (caret > end) return null;
+  return { token: text.slice(0, end), start: 0, end, bare: true };
+}
+
 // filterSkills: 前方一致 > 名前部分一致 > 説明部分一致の順で並べる。大文字小文字は
 // 無視。空クエリは全件（API の並び＝name 昇順のまま）。
 export function filterSkills(skills: SessionSkill[], query: string): SessionSkill[] {
@@ -72,14 +88,16 @@ export function originKind(origin: string | undefined): "claude" | "codex" | nul
 // applySkillToDraft: 選択したスキルの起動文字列（invoke — 末尾空白込み。"/name " や
 // "$name "）を draft へ差し込み、新しい draft とキャレット位置を返す。起動は先頭で
 // だけ意味を持つので、常に「invoke ＋既存の本文（引数として残す）」に組み立てる。
-// 入力中のトークンは置換して消える。
+// 入力中のトークンは置換して消える（allowBare のときはトリガ無しの先頭トークンも
+// 「絞り込みに使った文字」なので同じく置換される — pickerTokenAt と対で読むこと）。
 export function applySkillToDraft(
   draft: string,
   caret: number,
   invoke: string,
   trigger = "/",
+  allowBare = false,
 ): { next: string; caret: number } {
-  const tok = slashTokenAt(draft, caret, trigger);
+  const tok = pickerTokenAt(draft, caret, trigger, allowBare);
   // トークンが生きていればその右側（既に書いた引数）を、そうでなければ（ボタン
   // 起点）トリガで始まらない下書き全体を引数位置へ残す。
   const tail = tok
