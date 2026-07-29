@@ -1619,6 +1619,7 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.skills_item_hint": "Click to insert · Ctrl/⌘/Alt-click to send now",
   "mirror.skills_src_user": "user",
   "mirror.skills_src_cli": "CLI",
+  "mirror.skills_src_shared": "shared",
   "mirror.skills_use_foreign": "Read {path} and follow that skill's instructions.",
   "mirror.context_compacted": "Context was compacted",
   "mirror.token_change": "{before} → {after} tokens",

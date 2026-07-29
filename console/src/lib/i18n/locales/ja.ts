@@ -1645,6 +1645,8 @@ export const ja = {
   "mirror.skills_item_hint": "クリックで入力欄へ差し込み・Ctrl/⌘/Alt＋クリックで即送信",
   "mirror.skills_src_user": "ユーザー",
   "mirror.skills_src_cli": "CLI",
+  "mirror.skills_src_shared": "共有", // .agents（エージェント横断の共有規約）由来
+
   // foreign（他規約）スキルの注入プロンプト — エージェントへの指示文そのもの
   "mirror.skills_use_foreign": "{path} を読んで、そのスキルの指示に従って実行して。",
   // CompactBlock
