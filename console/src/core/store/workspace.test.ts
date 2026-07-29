@@ -49,4 +49,37 @@ describe("workspace store applyPush", () => {
     useWorkspaceStore.getState().applyPush({});
     expect(useWorkspaceStore.getState().state).toBe("unknown");
   });
+
+  // stale（バックエンド更新の未反映）は CP だけが判定する状態。押し付けられた値を
+  // そのまま持ち、消えたら消す — クライアント側で覚えておくと、再起動して解消した
+  // あとも「要再起動」が残り続ける。
+  it("adopts and clears the CP-detected stale flag", () => {
+    useWorkspaceStore.getState().applyPush({ state: "running", stale: true });
+    expect(useWorkspaceStore.getState().stale).toBe(true);
+    useWorkspaceStore.getState().applyPush({ state: "running" });
+    expect(useWorkspaceStore.getState().stale).toBe(false);
+  });
+});
+
+// restart() は「停止→起動」だけ。recreate（~/repos を消す）に化けていないことを
+// 呼んだ URL で固定する — 更新の反映で未コミットの作業が消えたら取り返しがつかない。
+describe("workspace store restart", () => {
+  it("posts stop then start, never recreate", async () => {
+    useWorkspaceStore.setState({ state: "running", bootPhase: "", stale: true });
+    const calls: string[] = [];
+    fetchMock.mockImplementation((...args: unknown[]) => {
+      calls.push(String(args[0]));
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: { get: () => "application/json" },
+        json: () => Promise.resolve({ state: "running" }),
+      } as unknown as Response);
+    });
+    await useWorkspaceStore.getState().restart();
+    const posts = calls.filter((u) => u.includes("workspace/"));
+    expect(posts[0]).toContain("api/workspace/stop");
+    expect(posts[1]).toContain("api/workspace/start");
+    expect(calls.some((u) => u.includes("recreate") || u.includes("clean-home"))).toBe(false);
+  });
 });

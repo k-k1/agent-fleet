@@ -21,14 +21,24 @@ interface WorkspaceStore {
    * starting dialog shows it so the user sees the pinned-CLI download instead of
    * a silent multi-minute wait. */
   bootPhase: string;
+  /** The running container/agent predates the deployed backend: a stop→start would
+   * swap in newer code (CP-side detection — control-plane/workspace_stale.go). The
+   * CP only sets it while running, and clears it on its own once the workspace comes
+   * back on the current build, so this is a STATE (WS-bar 要再起動 badge), not an
+   * event. False whenever the CP can't tell — never guessed client-side. */
+  stale: boolean;
   refresh(): Promise<void>;
   /** Apply a pushed workspace payload (api/events). Poll parity: an optimistic
    * "…" transition is never clobbered — while busy only bootPhase updates (the
    * same thing start()'s transient 2s poll does); the settle refresh() after the
    * POST is what clears the busy state. */
-  applyPush(w: { state?: string; bootPhase?: string }): void;
+  applyPush(w: { state?: string; bootPhase?: string; stale?: boolean }): void;
   start(): Promise<void>;
   stop(): Promise<void>;
+  /** Stop then start, keeping everything on disk — how a backend update is applied
+   * (stale). NOT recreate: repos and uncommitted work stay. Sessions stop and are
+   * resumable, so the caller confirms first. */
+  restart(): Promise<void>;
   /** Tear the container down and start fresh from the current image. Logins +
    * connections persist; cloned repos and running sessions are wiped — the caller
    * guards this behind a warning dialog (設定 > 環境) and resets the layout first.
@@ -44,6 +54,7 @@ interface WorkspaceStore {
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   state: "…",
   bootPhase: "",
+  stale: false,
 
   async refresh() {
     const stamp = pushStamp("workspace");
@@ -54,7 +65,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       // next server-side change. The busy settle path is exempt: applyPush never
       // clears an optimistic "…", so the settle refresh must always land.
       if (pushStamp("workspace") !== stamp && !wsBusy(get().state)) return;
-      set({ state: w.state || "unknown", bootPhase: w.bootPhase || "" });
+      set({ state: w.state || "unknown", bootPhase: w.bootPhase || "", stale: !!w.stale });
     } catch {
       set({ state: "unknown" });
     }
@@ -66,7 +77,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       if (cur === "starting…" || cur === "recreating…") set({ bootPhase: w.bootPhase || "" });
       return;
     }
-    set({ state: w.state || "unknown", bootPhase: w.bootPhase || "" });
+    set({ state: w.state || "unknown", bootPhase: w.bootPhase || "", stale: !!w.stale });
   },
 
   async start() {
@@ -107,6 +118,21 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       /* settled by the refresh below */
     }
     await get().refresh();
+  },
+
+  // Reuses the plain stop/start endpoints — there is no "restart" route, and there
+  // must not be a recreate here: recreate wipes ~/repos, which applying a backend
+  // update must never do. The dirty guard runs once, up front, so the user isn't
+  // asked twice mid-restart; start() then owns the optimistic state + boot polling.
+  async restart() {
+    if (!(await confirmDirtyNavigation("workspace_lifecycle"))) return;
+    set({ state: "stopping…" });
+    try {
+      await api("api/workspace/stop", { method: "POST" });
+    } catch {
+      /* settled by start()'s refresh below */
+    }
+    await get().start();
   },
 
   async recreate(skipDirtyGuard = false) {

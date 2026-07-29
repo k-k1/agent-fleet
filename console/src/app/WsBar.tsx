@@ -737,6 +737,8 @@ export function WsBar() {
   const wsState = useWorkspaceStore((s) => s.state);
   const startWs = useWorkspaceStore((s) => s.start);
   const stopWs = useWorkspaceStore((s) => s.stop);
+  const restartWs = useWorkspaceStore((s) => s.restart);
+  const wsStale = useWorkspaceStore((s) => s.stale);
   const tenant = useTenantStore((s) => s.tenant);
   const superAdmin = useTenantStore((s) => s.superAdmin);
   const layout = useLayoutStore((s) => s.layout);
@@ -753,11 +755,13 @@ export function WsBar() {
   const [port, setPort] = useState("");
   const [previewPath, setPreviewPath] = useState("/");
   const [pvOpen, setPvOpen] = useState(false); // desktop port-preview popover
+  const [staleOpen, setStaleOpen] = useState(false); // 要再起動 badge popover
   const [moreOpen, setMoreOpen] = useState(false); // mobile overflow popover
   const [resOpen, setResOpen] = useState(false); // desktop resource-tiles popover
   // Keyboard: Ctrl/⌘+K g r toggles the resource-tiles popover (desktop).
   useOpenSignal("resources", () => setResOpen((o) => !o));
   const pvRef = useRef<HTMLDivElement>(null);
+  const staleRef = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLDivElement>(null);
   const resRef = useRef<HTMLDivElement>(null);
   const running = wsState === "running";
@@ -824,6 +828,31 @@ export function WsBar() {
     if (ok) void stopWs();
   };
 
+  // Backend drift (CP-detected): the running container predates the deployed build,
+  // so a stop→start would pick up the new backend. Shown only while genuinely
+  // running — never mid-transition, where the restart is already happening. It is a
+  // state, not an event: it clears itself once the workspace is back on the current
+  // build, so there is no dismiss.
+  const staleShown = wsStale && running && !busy;
+  useEffect(() => {
+    if (!staleShown) setStaleOpen(false);
+  }, [staleShown]);
+
+  // Apply the backend update: stop→start, keeping repos and everything on disk
+  // (NOT recreate). Sessions stop and are resumable, so name the count up front —
+  // that's the whole cost of the action.
+  const onRestart = async () => {
+    setStaleOpen(false);
+    const live = useSessionsStore.getState().sessions.filter((s) => s.alive).length;
+    const ok = await askConfirm({
+      title: tr("wsbar.confirm.restart.title"),
+      body: live > 0 ? tr("wsbar.confirm.restart.body_live", { n: live }) : tr("wsbar.confirm.restart.body"),
+      confirmLabel: tr("wsbar.confirm.restart.go"),
+      danger: false,
+    });
+    if (ok) void restartWs();
+  };
+
   // Open a service the user started inside the container (e.g. a Spring Boot app
   // on :8080) in a new tab, proxied through the CP /preview/{port}.
   const openPreview = () => {
@@ -845,6 +874,7 @@ export function WsBar() {
 
   // Close each popover on an outside click / Escape.
   useDismiss(pvRef, pvOpen, () => setPvOpen(false));
+  useDismiss(staleRef, staleOpen, () => setStaleOpen(false));
   useDismiss(moreRef, moreOpen, () => setMoreOpen(false));
   useDismiss(resRef, resOpen, () => setResOpen(false));
 
@@ -1014,10 +1044,12 @@ export function WsBar() {
           refresh. Disabled mid-transition (starting…/stopping…), where it shows a
           spinner instead of the glyph. */}
       <button
-        className={"ws-power " + (running ? "on" : "off")}
+        className={"ws-power " + (running ? "on" : "off") + (staleShown ? " stale" : "")}
         onClick={onToggle}
         disabled={busy}
-        title={running ? tr("wsbar.stop_ws") : tr("wsbar.start_ws")}
+        title={
+          (running ? tr("wsbar.stop_ws") : tr("wsbar.start_ws")) + (staleShown ? " — " + tr("wsbar.stale.title") : "")
+        }
         aria-label={running ? tr("wsbar.stop_ws") : tr("wsbar.start_ws")}
       >
         {busy ? (
@@ -1062,6 +1094,36 @@ export function WsBar() {
       >
         {wsLabel(wsState)}
       </span>
+      {/* 要再起動 — the backend moved on while this container kept running. Sits
+          right of the state chip (and dots the power button next to it) because the
+          fix IS the power toggle; the popover explains the cost and offers the
+          stop→start in one click. Label folds away on a phone, tap target stays. */}
+      {staleShown && (
+        <div className="ws-stale" ref={staleRef}>
+          <button
+            className="ws-stale-pill"
+            onClick={() => setStaleOpen((o) => !o)}
+            aria-expanded={staleOpen}
+            title={tr("wsbar.stale.title")}
+          >
+            <Icon name="refresh" />
+            <span className="lbl">{tr("wsbar.stale.badge")}</span>
+          </button>
+          {staleOpen && (
+            <div className="ws-stale-pop">
+              <div className="ws-stale-txt">{tr("wsbar.stale.body")}</div>
+              <div className="ws-stale-actions">
+                <button className="ws-stale-go" onClick={() => void onRestart()}>
+                  {tr("wsbar.stale.restart")}
+                </button>
+                <button className="ghost" onClick={() => setStaleOpen(false)}>
+                  {tr("wsbar.stale.later")}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
       {/* はじめる — the single "start anything" entry (起動導線 Ph2): opens the
           StartModal hub (chat / repo / clone / home / その他). While the workspace
           is stopped it offers to start it and opens the hub when ready (Ph3). */}
