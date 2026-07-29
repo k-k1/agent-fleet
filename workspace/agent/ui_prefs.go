@@ -204,6 +204,18 @@ func chatOutputLanguage() string {
 	}
 }
 
+// uiLocale returns the Console display language the user picked (設定 > 表示言語,
+// ADR 0016). The frontend keeps `locale` server-synced precisely because language is a
+// per-person setting rather than a per-device one, so the Agent can read it for text it
+// generates FOR that person — currently the title suggestion. Unknown/missing ⇒ "ja",
+// matching the frontend's DEFAULT_LOCALE.
+func uiLocale() string {
+	if v, _ := readUIPrefs()["locale"].(string); v == "en" {
+		return "en"
+	}
+	return "ja"
+}
+
 func handleGetUIPrefs(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, readUIPrefs())
 }

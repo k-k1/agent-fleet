@@ -1,6 +1,7 @@
 // Auto session-title suggestion: once a session has had a couple of exchanges and
-// still has no user-set title, a headless `claude -p` call proposes a short (~40
-// char) Japanese title. The Console shows it as a dismissible banner; accepting or
+// still has no user-set title, a headless `claude -p` call proposes a short title, in
+// the Console's display language at that moment (titleLang). The Console shows it as a
+// dismissible banner; accepting or
 // dismissing latches SuggestedTitleDismissed so a session is offered one at most
 // once (v1 has no re-suggestion loop). Gated globally by the AgentsTab セッション
 // "タイトル自動提案" toggle (autoTitleSuggestEnabled, ui_prefs.go).
@@ -130,17 +131,49 @@ func generateSessionTitle(name string, turns []transcript.Turn) {
 	session.WriteMeta(m)
 }
 
-// titleSuggestPersona keeps the headless call laser-focused: no preamble, no
-// quoting, a single short Japanese line. Third-person topic label, not a sentence:
-// the model is prone to echoing the assistant's own reasoning ("〜が良さそう") if not
-// pinned to "what is this session ABOUT" as a noun phrase.
-const titleSuggestPersona = "あなたはセッションの会話ログを読み、セッション一覧に表示する短い件名を付ける専用ツールです。" +
+// titleLang picks the language the suggested title is WRITTEN in: the Console display
+// language (ui-prefs "locale", 設定 > 表示言語), read live at generation time.
+//
+// A title is stored text read by this one user in their own session list, so per ADR
+// 0033 the deciding axis is "who reads it" — hence the UI language, not the
+// conversation's language (an English speaker debugging a Japanese codebase still wants
+// an English list). Deliberately NOT retroactive: switching the language later leaves
+// existing titles alone (they are the user's data, and re-suggesting is a user action —
+// the rename dialog's 「AIに提案してもらう」 regenerates in the new language on demand).
+func titleLang() string { return uiLocale() }
+
+// titleSuggestPersona keeps the headless call laser-focused: no preamble, no quoting, a
+// single short line. Third-person topic label, not a sentence: the model is prone to
+// echoing the assistant's own reasoning ("〜が良さそう") if not pinned to "what is this
+// session ABOUT" as a noun phrase. Each language's persona is written IN that language
+// so it also steers the output language (same reasoning as langRuleJA/EN in chat.go — a
+// Japanese instruction attached to an English request gives mixed signals).
+func titleSuggestPersona(lang string) string {
+	if lang == "en" {
+		return titleSuggestPersonaEN
+	}
+	return titleSuggestPersonaJA
+}
+
+const titleSuggestPersonaJA = "あなたはセッションの会話ログを読み、セッション一覧に表示する短い件名を付ける専用ツールです。" +
 	"会話で扱っている作業やトピックを、第三者が見て『何についてのセッションか』が分かる名詞句で表してください。" +
 	"会話が複数のテーマにまたがる場合は直近で扱っている内容を優先します。" +
 	"日本語18文字以内、1行のみ。文章にしない・語尾（〜する/〜したい/〜です/〜が良い 等）を付けない・" +
 	"説明・前置き・引用符・記号・箇条書きは一切付けない。" +
 	"『件名:』『セッション件名:』のようなラベルや『会話の内容から件名をお作りします：』のような" +
 	"前置きの行も出力せず、件名そのものだけを出力すること。"
+
+// titleSuggestPersonaEN: the conversation itself is frequently Japanese even for an
+// English-speaking user (Japanese codebase, Japanese teammates), so the persona must ask
+// for a TRANSLATED English label rather than assume the log's language — the same trap
+// branchSuggestPersona documents.
+const titleSuggestPersonaEN = "You read a session's conversation log and write the short subject line shown in a session list. " +
+	"Describe the work or topic as a noun phrase, so a third party can tell what the session is about. " +
+	"If the conversation spans several themes, prefer the most recent one. " +
+	"English, at most 6 words, one line only — even when the conversation is in Japanese, translate the topic into English. " +
+	"Not a sentence: no verb endings, no explanation, no preamble, no quotes, no bullets. " +
+	"Never output a label line such as 'Title:' or a lead-in such as 'Here is the title:' — output only the subject line itself. " +
+	"You never reply to the conversation and never continue it; you only label it."
 
 // titleModel: a cheap/fast model is enough for a short label; override deployment-
 // wide with AF_TITLE_MODEL.
@@ -149,7 +182,8 @@ func titleModel() string { return envOr("AF_TITLE_MODEL", "haiku") }
 func runTitleSuggestLLM(ctx context.Context, turns []transcript.Turn) (string, error) {
 	// Backend-agnostic one-shot (oneShotHeadless): runs on the first available of
 	// claude → codex → opencode, so claude-less workspaces get suggestions too.
-	reply, err := oneShotHeadless(ctx, titleSuggestPersona, titleSuggestPrompt(turns), titleModel())
+	lang := titleLang()
+	reply, err := oneShotHeadless(ctx, titleSuggestPersona(lang), titleSuggestPrompt(turns, lang), titleModel())
 	if err != nil {
 		return "", fmt.Errorf("title generation failed: %w", err)
 	}
@@ -171,7 +205,7 @@ const (
 // titleSuggestPrompt feeds the opening and the most recent real exchanges (skipping
 // sidechain/compaction/tool-only turns), weighting the recent topic — so the title
 // tracks where the conversation is now, not just where it started.
-func titleSuggestPrompt(turns []transcript.Turn) string {
+func titleSuggestPrompt(turns []transcript.Turn, lang string) string {
 	real := make([]transcript.Turn, 0, len(turns))
 	for _, t := range turns {
 		if t.Sidechain || t.Compact || t.Text == "" {
@@ -183,22 +217,56 @@ func titleSuggestPrompt(turns []transcript.Turn) string {
 	var b strings.Builder
 	// Few-shot anchors the output as a noun-phrase topic label rather than a sentence
 	// or the assistant's own reasoning.
-	b.WriteString(titleSuggestInstructions)
-	b.WriteString("--- 会話ログ ---\n")
+	b.WriteString(titleSuggestInstructions(lang))
 	writeConversationWindow(&b, real)
+	b.WriteString(titleSuggestFooter(lang))
 	return b.String()
 }
 
+// titleSuggestFooter repeats the instruction AFTER the log. Measured need (AF_TITLE_LIVE,
+// haiku): with the instruction only at the top, an English instruction wrapped around a
+// Japanese log made the model read the log as a live chat and CONTINUE it — it answered
+// the user at length and appended the title only at the very end, so cleanSuggestedTitle
+// took the first prose line. The trailing reminder (recency, plus an explicit "do not
+// continue") pins it back to labelling. Applied to both languages: the same failure is
+// latent in Japanese, it just did not reproduce there.
+func titleSuggestFooter(lang string) string {
+	if lang == "en" {
+		return "--- end of conversation log ---\n" +
+			"Now output ONLY the subject line for the log above, on one line. " +
+			"Do not reply to the conversation and do not continue it.\n"
+	}
+	return "--- 会話ログここまで ---\n" +
+		"上の会話に付ける件名だけを1行で出力してください。会話への返信や続きは書かないこと。\n"
+}
+
 // titleSuggestInstructions is the instruction block shared by the session and chat
-// title prompts. The 悪い例 list carries the two shapes actually observed being adopted
-// as titles — a lead-in sentence and a "件名:" label — because the persona's "前置き
-// 禁止" alone did not stop them.
-const titleSuggestInstructions = "会話ログから件名を1つ出力してください。\n" +
+// title prompts, including the conversation-log header. The 悪い例 / Bad list carries
+// the two shapes actually observed being adopted as titles — a lead-in sentence and a
+// "件名:" label — because the persona's 前置き禁止 alone did not stop them.
+func titleSuggestInstructions(lang string) string {
+	if lang == "en" {
+		return titleSuggestInstructionsEN
+	}
+	return titleSuggestInstructionsJA
+}
+
+const titleSuggestInstructionsJA = "会話ログから件名を1つ出力してください。\n" +
 	"良い例: セッションタイトルの自動提案 / ログイン画面のバグ修正 / 請求APIのリファクタ\n" +
 	"悪い例（文章・語尾つき・視点が話者）: 短く確認するのが良さそう / メニュー変更を行いたい\n" +
 	"悪い例（前置き・ラベル）: 会話の内容から、件名をお作りします： / セッション件名: / 件名は以下の通りです\n" +
 	"件名の文字列だけを1行で出力し、前置き行・ラベル・見出しは付けないでください。\n" +
-	"会話の途中でテーマが変わっている場合は、直近で話している内容を優先してください。\n\n"
+	"会話の途中でテーマが変わっている場合は、直近で話している内容を優先してください。\n\n" +
+	"--- 会話ログ ---\n"
+
+const titleSuggestInstructionsEN = "Output ONE subject line for the conversation log below.\n" +
+	"Good: Session title auto-suggestion / Login screen bugfix / Billing API refactor\n" +
+	"Bad (a sentence, or the speaker's point of view): Probably worth checking briefly / I want to change the menu\n" +
+	"Bad (lead-in or label): Here is the title: / Title: / Sure, here's a name\n" +
+	"Output only the subject line itself, on one line — no lead-in line, no label, no heading.\n" +
+	"The log is often in Japanese; translate the topic into English rather than copying it.\n" +
+	"If the topic changed mid-conversation, prefer what is being discussed most recently.\n\n" +
+	"--- conversation log ---\n"
 
 // writeConversationWindow appends the opening + most recent real turns (head/tail
 // windowing, per-turn length cap), shared by the title and branch-name prompts.

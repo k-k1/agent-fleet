@@ -23,11 +23,11 @@ const (
 
 // chatTitleSuggestPrompt mirrors titleSuggestPrompt (session_title.go): opening + most
 // recent real exchanges, weighting the recent topic.
-func chatTitleSuggestPrompt(msgs []chatMessage) string {
+func chatTitleSuggestPrompt(msgs []chatMessage, lang string) string {
 	var b strings.Builder
-	b.WriteString(titleSuggestInstructions) // session_title.go と共有（前置き・ラベル禁止の 悪い例 込み）
-	b.WriteString("--- 会話ログ ---\n")
+	b.WriteString(titleSuggestInstructions(lang)) // session_title.go と共有（前置き・ラベル禁止の 悪い例 込み）
 	writeChatTitleWindow(&b, msgs)
+	b.WriteString(titleSuggestFooter(lang)) // 会話の続きを書き始めるのを防ぐ後置きも共有
 	return b.String()
 }
 
@@ -67,7 +67,8 @@ func writeChatTitleWindow(b *strings.Builder, msgs []chatMessage) {
 }
 
 func runChatTitleSuggestLLM(ctx context.Context, msgs []chatMessage) (string, error) {
-	reply, err := oneShotHeadless(ctx, titleSuggestPersona, chatTitleSuggestPrompt(msgs), titleModel())
+	lang := titleLang() // セッション件名と同じ規約（表示言語で生成し、後からの切替では作り直さない）
+	reply, err := oneShotHeadless(ctx, titleSuggestPersona(lang), chatTitleSuggestPrompt(msgs, lang), titleModel())
 	if err != nil {
 		return "", fmt.Errorf("chat title generation failed: %w", err)
 	}
