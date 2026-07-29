@@ -1026,9 +1026,15 @@
   border-left: 2px solid color-mix(in srgb, var(--chat-accent) 45%, var(--border));
   padding-left: 6px;
 }
+/* カード側は確認用なので長文は3行で畳む（全文は doc ペインの控えで開ける）。 */
 .mt-plan-comment-body {
   white-space: pre-wrap;
   word-break: break-word;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
 }
 .mt-plan-comment-sent {
   margin-left: auto;

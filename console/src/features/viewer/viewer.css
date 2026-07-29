@@ -1383,6 +1383,10 @@
   display: flex;
   flex-direction: column;
   gap: 5px;
+  /* 5件ぶんで打ち切ってスクロール。行の高さはコメントの長さで変わるので、実際の高さは
+     DocView が6件目の位置から実測して max-height を上書きする。この値はその前の保険。 */
+  max-height: 40vh;
+  overflow-y: auto;
 }
 .doc-comment {
   display: flex;
@@ -1404,11 +1408,21 @@
   font-size: 10px;
   background: color-mix(in srgb, var(--chat-accent, #4c8dff) 30%, transparent);
 }
+/* 行そのものが「全文表示」のトグル。既定は引用1行＋本文2行で畳む。 */
 .doc-comment-main {
   min-width: 0;
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--fg);
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
 }
 .doc-comment-quote {
   opacity: 0.7;
@@ -1420,6 +1434,21 @@
 .doc-comment-body {
   white-space: pre-wrap;
   word-break: break-word;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+.doc-comment.open .doc-comment-quote {
+  white-space: pre-wrap;
+  overflow: visible;
+}
+.doc-comment.open .doc-comment-body {
+  display: block;
+  -webkit-line-clamp: none;
+  line-clamp: none;
+  overflow: visible;
 }
 .doc-comment-sent {
   margin-left: auto;
