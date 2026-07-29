@@ -43,6 +43,69 @@ func TestWorkspacePayloadStale(t *testing.T) {
 	}
 }
 
+// docker は「起動時に控えたタグの Image ID」と「いまのタグの Image ID」を比べる。
+//
+// ★ 走っているコンテナの {{.Image}} は見てはいけない。containerd イメージストアでは
+//
+//	コンテナの {{.Image}}（プラットフォーム config の digest）と image の {{.Id}}
+//	（マニフェスト/インデックスの digest）が別物で、同じイメージから起動していても
+//	一致しない。旧実装はこれを直接比較していたため、dev フリート（Driver=overlayfs）で
+//	何も更新していなくても「要再起動」が恒久点灯した。ここでその二辺比較へ戻るのを防ぐ。
+func TestDockerStaleImageStamp(t *testing.T) {
+	orig := freshness
+	defer func() { freshness = orig }()
+	now := time.Unix(1000, 0)
+	freshness = &ttlCache{m: map[string]ttlEntry{}, now: func() time.Time { return now }}
+
+	const (
+		built    = "sha256:ff2da9ec" // タグが指すイメージ（image inspect {{.Id}}）
+		rebuilt  = "sha256:aaaa1111" // 焼き直し後にタグが指すイメージ
+		ctrLocal = "sha256:02a946de" // 同じイメージから起動したコンテナの {{.Image}}
+	)
+	dir := t.TempDir()
+	tagID := built
+	d := &dockerRuntime{image: "agent-fleet/workspace:dev", name: "af-ws-x", dataDir: dir}
+	d.inspect = func(_ context.Context, typ, _, _ string) string {
+		if typ == "container" {
+			t.Errorf("コンテナの {{.Image}} を参照した — 表現差で恒久誤点灯する二辺比較に戻っている")
+			return ctrLocal
+		}
+		return tagID
+	}
+	ctx := context.Background()
+
+	// 記録が無い（この機能より前に起動したコンテナ／CP 外で起動）＝判らない → false。
+	if d.Stale(ctx) {
+		t.Fatal("no stamp: stale, want false")
+	}
+
+	// Start 相当。以後、同じイメージで走っている限り出してはいけない。
+	d.recordImageStamp(ctx)
+	if d.Stale(ctx) {
+		t.Fatal("same image: stale, want false")
+	}
+
+	// タグが焼き直された（ローカル docker build / 新リリースの pull）→ 出す。
+	tagID = rebuilt
+	now = now.Add(2 * time.Minute) // TTL 越え（4s ポーリングを毎回 inspect しないための帽子）
+	if !d.Stale(ctx) {
+		t.Fatal("moved tag: not stale, want stale")
+	}
+
+	// その状態で再起動 → 新しいイメージを控え直すので、TTL 内でも即座に消えること。
+	d.recordImageStamp(ctx)
+	if d.Stale(ctx) {
+		t.Fatal("restarted onto the new image: stale, want false")
+	}
+
+	// タグが引けない（レジストリのみのタグ・docker 不在）＝判らない → false。
+	tagID = ""
+	now = now.Add(2 * time.Minute)
+	if d.Stale(ctx) {
+		t.Fatal("unreadable image: stale, want false")
+	}
+}
+
 // 素の native（dev: AF_NATIVE_AGENT_BIN）は workspace-agent バイナリ自体が実体。
 func TestNativeStaleBinaryStamp(t *testing.T) {
 	dir := t.TempDir()
