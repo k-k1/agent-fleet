@@ -29,6 +29,8 @@ type dockerRuntime struct {
 	memory     string
 	sessionCmd string
 	extraEnv   []string // KEY=VAL passed to the workspace container (e.g. CLAUDE_INSTALL=0)
+	// inspect overrides `docker inspect` (tests only); nil = the real docker CLI.
+	inspect func(ctx context.Context, typ, ref, format string) string
 }
 
 // dockerFactory is the `local` (compose) RuntimeFactory. It carries the template
@@ -93,27 +95,73 @@ func (d *dockerRuntime) State(ctx context.Context) string {
 	}
 }
 
-// Stale reports whether the RUNNING container was created from a different image
-// than the one Start would use now (workspace_stale.go ①). Start always does a
-// fresh `docker run`, so a moved tag — a `docker compose build` locally, a pull of
-// a new release — means stop→start would swap in new backend code while the live
-// container keeps the old. Comparing IMAGE IDs (not tags) is what makes a rebuild
-// under the same `:latest` tag visible.
+// imageIDStampPath / recordImageStamp — what this container was actually launched
+// FROM, recorded at Start so Stale() can notice the tag moved (workspace_stale.go).
+// Same shape as the native runtime's spawnStamp; the reason it must be a stamp and
+// not a live two-sided comparison is the trap below.
 //
-// Both probes are cached (workspace_stale.go): the tag's ID only moves on a
-// build/pull, the container's only on a restart. Any unreadable value (image not
-// present locally — e.g. a registry-only tag — or no container) → false.
+// ★ Never compare the running container's `docker inspect {{.Image}}` against the
+//
+//	tag's `docker image inspect {{.Id}}`. Under the containerd image store
+//	(`docker info` → Driver=overlayfs, the default on newer engines) those are
+//	digests of DIFFERENT objects — the platform config vs the manifest/index — so
+//	they disagree even for a container started from exactly that image. Measured on
+//	the dev fleet (2026-07-29):
+//
+//	    tag :dev             {{.Id}}    = sha256:ff2da9ec…   (built 22:57:53)
+//	    container started 3 min later   {{.Image}} = sha256:02a946de…
+//
+//	The original two-sided check therefore reported 要再起動 permanently on that
+//	host, whatever was (or was not) updated — the exact "badge nobody believes"
+//	failure this file exists to avoid. Comparing a value we recorded ourselves with
+//	one obtained the SAME way makes the check independent of that representation.
+func (d *dockerRuntime) imageIDStampPath() string { return filepath.Join(d.dataDir, "image.id-stamp") }
+
+// recordImageStamp stores the image ID the tag resolves to right now. Called by
+// Start, straight after `docker run`. Best-effort: an unwritable/unreadable value
+// just means "unknown", and Stale then never nags. An empty result is written on
+// purpose — leaving a previous container's stamp in place would be a lie.
+func (d *dockerRuntime) recordImageStamp(ctx context.Context) {
+	id := d.imageID(ctx)
+	// Prime the TTL cache with the value we just probed: a cached PRE-rebuild ID
+	// would otherwise make this freshly started container look stale for up to a
+	// minute (Start is the one moment we know the truth).
+	freshness.set("img:"+d.image, id)
+	_ = os.WriteFile(d.imageIDStampPath(), []byte(id), 0o644)
+}
+
+func (d *dockerRuntime) imageID(ctx context.Context) string {
+	return d.inspectOne(ctx, "image", d.image, "{{.Id}}")
+}
+
+// Stale reports whether the tag now resolves to a different image than the one this
+// container was started from — i.e. stop→start would swap in new backend code while
+// the live container keeps the old. A moved tag is what a local `docker build` or a
+// pull of a new release produces, so this catches dev rebuilds that carry no version
+// stamp. Unknown (no stamp from a start that predates this, image not present
+// locally — e.g. a registry-only tag) → false: never nag on a guess.
+//
+// The probe is cached (workspace_stale.go) because /api/workspace is polled every 4s
+// per open Console; the tag's ID only moves on a build/pull.
 func (d *dockerRuntime) Stale(ctx context.Context) bool {
-	want := freshness.get("img:"+d.image, 60*time.Second, func() string {
-		return dockerInspectOne(ctx, "image", d.image, "{{.Id}}")
-	})
-	if want == "" {
+	b, err := os.ReadFile(d.imageIDStampPath())
+	if err != nil {
 		return false
 	}
-	got := freshness.get("ctr:"+d.name, 15*time.Second, func() string {
-		return dockerInspectOne(ctx, "container", d.name, "{{.Image}}")
-	})
-	return got != "" && got != want
+	was := strings.TrimSpace(string(b))
+	if was == "" {
+		return false
+	}
+	now := freshness.get("img:"+d.image, 60*time.Second, func() string { return d.imageID(ctx) })
+	return now != "" && now != was
+}
+
+// inspectOne runs a single-field `docker inspect` (overridable in tests).
+func (d *dockerRuntime) inspectOne(ctx context.Context, typ, ref, format string) string {
+	if d.inspect != nil {
+		return d.inspect(ctx, typ, ref, format)
+	}
+	return dockerInspectOne(ctx, typ, ref, format)
 }
 
 // dockerInspectOne runs a single-field `docker inspect`, returning "" on any error
@@ -207,6 +255,9 @@ func (d *dockerRuntime) Start(ctx context.Context) error {
 	if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("docker run: %v: %s", err, out)
 	}
+	// Record which image this container actually came from, so Stale() can later
+	// tell that the tag moved on while it keeps running the old code.
+	d.recordImageStamp(ctx)
 	return waitAgentHealthy(ctx, d.Endpoint(), agentHealthWait(d.startHealthWait()))
 }
 
