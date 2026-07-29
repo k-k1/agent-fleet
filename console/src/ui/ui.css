@@ -278,11 +278,24 @@
   cursor: pointer;
   padding: 0 2px;
 }
-/* "新しいバージョンがあります" update toast: inline 更新 action button. */
+/* "新しいバージョンがあります" update toast: inline 更新 action button, with the
+   headline stacked over a muted sub-line (sessions keep running / a workspace
+   stop→start is needed for the backend part). */
 .update-toast {
   display: inline-flex;
   align-items: center;
   gap: 10px;
+}
+.update-toast-txt {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.update-toast-sub {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
 }
 .update-toast-btn {
   flex: none;

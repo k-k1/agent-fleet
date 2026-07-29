@@ -72,6 +72,14 @@ func (a workspaceAPI) workspacePayload(ctx context.Context, res *resolved) map[s
 			m["bootPhase"] = phase
 		}
 	}
+	// Backend drift: the container is running older code than a fresh start would
+	// use (workspace_stale.go). The Console turns this into the WS-bar 要再起動 badge
+	// and into the extra line of the update toast. Only meaningful while running —
+	// a stopped workspace picks up the new image on its next start anyway — and only
+	// emitted when true, so the payload keeps its usual shape.
+	if m["state"] == "running" && workspaceStale(ctx, rt) {
+		m["stale"] = true
+	}
 	return m
 }
 
