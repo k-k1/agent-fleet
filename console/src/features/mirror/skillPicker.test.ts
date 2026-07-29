@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applySkillToDraft, filterSkills, slashTokenAt } from "./skillPicker.ts";
+import { applySkillToDraft, filterSkills, hasTriggerHead, originKind, slashTokenAt } from "./skillPicker.ts";
 import type { SessionSkill } from "../../core/api/client.ts";
 
 const sk = (name: string, description = "", type: SessionSkill["type"] = "skill"): SessionSkill => ({
@@ -27,6 +27,21 @@ describe("slashTokenAt", () => {
     expect(slashTokenAt("$ima", 4, "$")).toEqual({ token: "ima", start: 0, end: 4 });
     expect(slashTokenAt("/ima", 4, "$")).toBeNull();
     expect(slashTokenAt("$ima", 4, "")).toBeNull(); // トリガ無し kind は開かない
+  });
+  it("全角エイリアス（JP IME の ／・＄）でも開く", () => {
+    expect(slashTokenAt("／pro", 4, "/")).toEqual({ token: "pro", start: 0, end: 4 });
+    expect(slashTokenAt("＄ima", 4, "$")).toEqual({ token: "ima", start: 0, end: 4 });
+    expect(hasTriggerHead("／pro", "/")).toBe(true);
+    expect(hasTriggerHead("pro", "/")).toBe(false);
+  });
+});
+
+describe("originKind", () => {
+  it("出所規約 dir → kind（.agents は共有 = null）", () => {
+    expect(originKind(".claude")).toBe("claude");
+    expect(originKind(".codex")).toBe("codex");
+    expect(originKind(".agents")).toBeNull();
+    expect(originKind(undefined)).toBeNull();
   });
 });
 
@@ -65,5 +80,9 @@ describe("applySkillToDraft", () => {
       next: "$imagegen ロゴを作って",
       caret: 10,
     });
+  });
+  it("全角トリガの入力は正しい半角起動形へ置換される", () => {
+    expect(applySkillToDraft("／pro", 4, "/proofread ")).toEqual({ next: "/proofread ", caret: 11 });
+    expect(applySkillToDraft("＄ima", 4, "$imagegen ", "$")).toEqual({ next: "$imagegen ", caret: 10 });
   });
 });
