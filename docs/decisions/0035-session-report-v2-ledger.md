@@ -1,6 +1,8 @@
 # 0035. セッション報告 v2 — エッジ駆動＋1bit arm を捨て、指示台帳＋レベル駆動リコンサイラへ
 
-- 状態: **採用・設計済み**（2026-07-28・実装前）。設計本文は [51-session-report-v2-ledger.md](../51-session-report-v2-ledger.md)。
+- 状態: **採用・実装済み**（2026-07-28 決定 / 2026-07-29 に Phase 1「判定の一本化」・
+  Phase 2「台帳置換」・Phase 3「補償 reopen ＋自己申告ファストパス」を実装）。
+  設計本文は [51-session-report-v2-ledger.md](../51-session-report-v2-ledger.md)。
 - 関連: [0013 相当 docs/30](../30-session-report.md)（v1 の設計と事故史）/
   [0030](0030-turn-abort-auto-resume.md)（中断分類 — v2 の述語に吸収）/
   [0015](0015-codex-app-server.md)（notify seam — v2 でヒント化）
@@ -18,7 +20,8 @@ consume-then-deliver の配送消失・agent 再起動中の kick 消失）は�
 ## 決定
 
 1. **指示の同一性を台帳の行にする。** arm の1bitを廃止し、指示1件=1行
-   （id・conv・投入時刻・進捗カーソル・状態機械 pending/reported/reopened/cancelled）。
+   （id・conv・投入時刻・進捗カーソル・状態機械 pending/interim_reported/reported/
+   reopened/cancelled）。
    複数指示の重なりは「潰れる」ではなく「settle 時に1通へ明示的に畳む」。
 2. **検出をエッジからレベル（状態収束）にする。** サーバ内の単一リコンサイラが
    tick＋ヒント起床で pending 行を再評価する。settle は「idle 証拠≥1 ∧ busy 証拠=0 を
@@ -29,9 +32,9 @@ consume-then-deliver の配送消失・agent 再起動中の kick 消失）は�
    成功した時だけ台帳を進める。検出側から「1回だけ」責務を外す。
 4. **誤「完了」は補償で回復可能にする。** reported 行を grace 期間監視し、新指示なしの
    busy 復帰で訂正 notice＋reopen（上限2回）。「誤消費＝回復不能」の非対称を崩す。
-5. **自己申告はファストパスに留める。** `af_report_done` MCP ツール（Phase 3・opt-in）は
-   idle 証拠の1つ＋起床ヒントであって backbone ではない。報告本文は従来どおり
-   サーバ生成の事実のみ。
+5. **自己申告はファストパスに留める。** `af_report` MCP ツール（Phase 3）は idle 証拠の
+   1つ＋起床ヒントであって backbone ではない。busy 証拠より強くもしない（早呼びは保留）。
+   報告本文は従来どおりサーバ生成の事実のみ。
 6. **段階移行。** Phase 1=判定一本化（arm bit のまま・waiter/保留特例の撤去）、
    Phase 2=台帳置換、Phase 3=補償＋自己申告。各 Phase 独立にロールバック可能。
    報告本文・interim・自動ターン・disarm 規約という外部契約は不変。
@@ -57,3 +60,13 @@ consume-then-deliver の配送消失・agent 再起動中の kick 消失）は�
 - ヒント喪失時のレイテンシは +1〜2 tick（〜60s）。v1 waiter の 90s 待ちより悪化しない
   ことをテストで固定する。
 - `session-report/*.json`・waiter・世代調停コードは Phase 2 完了時点で撤去される。
+  （2026-07-29 実装: arm ストアは起動時の移行 `migrateReportArms` が読むだけの残骸になり、
+  `consumeReportArm` / `reportArmMu` は消えた。指示の同一性は `instr-ledger/<session>.json` の
+  行IDが持つ。）
+- 誤「完了」は grace 10 分の監視下で `kind=reopened` の**訂正報告**（notice ではなく
+  report ロール — notice はオペレーターの文脈へ再生されない）＋行の開き直しに縮退する。
+  訂正の冪等キーは完了報告と名前空間を分け、訂正が指す「いつの報告か」は台帳ではなく
+  会話メッセージから引く（`reported_at` は reopen で消えるため）。
+- 自己申告は組み込み MCP サーバー `af`（`workspace-agent mcp-stdio --self-report`）が
+  全 kind のセッションへ配られ、指示プロンプトに1行だけ注入される。受け口は既存の
+  `POST /chat/report`（`kind=self-report`）で、新しい配送経路も永続化も増やしていない。

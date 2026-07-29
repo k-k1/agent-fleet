@@ -11,6 +11,12 @@ package main
 // ターンは convLocks / liveTurns（サーバプロセス内）に依存するため、独立プロセスは
 // POST /chat/report で kick するだけにする（AGENT_TOKEN はコンテナ env なので hook
 // からも Agent REST を叩ける）。
+//
+// **消費の判定は chat_report_reconcile.go に一本化されている**（docs/51 Phase 1 /
+// ADR 0035）。このファイルが持つのは報告本文・配送（会話追記＋自動ターン）で、
+// 「いつ消費してよいか」はもう kick 側では決めない — kick は起床ヒント。
+// **指示の同一性は chat_report_ledger.go の指示台帳**（Phase 2）で、arm の1bit は
+// 廃止された（このファイルに残る reportLink は起動時の移行が読むだけの v1 互換）。
 
 import (
 	"context"
@@ -19,23 +25,19 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
-// reportLink is the per-session arm record: which conversation gets the report and
-// whether one is pending. A SEPARATE file from Meta on purpose (same reasoning as
-// ExitInfo): the hook, record-exit and the API handlers all touch session state, and
-// Meta is a single JSON blob they'd clobber.
+// reportLink is the v1 arm record (session-report/<name>.json): 1セッション = 1bit。
+// **Phase 2 で廃止された** — 指示の同一性は instr-ledger の行が持つ。型とストアが残って
+// いるのは、起動時の移行（migrateReportArms）が古いファイルを読んで行へ変換するため
+// だけ。移行が済めばファイルは消えるので、ストアごと削除できる。
 type reportLink struct {
 	Conv  string `json:"conv"`  // conversation id to report to
 	Armed bool   `json:"armed"` // one report pending (docs/30: 指示1件につき報告1回)
@@ -44,38 +46,14 @@ type reportLink struct {
 
 var reportLinks = fstore.JSON[reportLink](paths.AgentConfigDir, "session-report", ".json")
 
-// armSessionReport links a session to a conversation and arms a one-shot report.
-// Called on create_session (report_to) and on each /input carrying report_to —
-// each instruction re-arms exactly one report.
-func armSessionReport(name, convID string) {
-	if !session.ValidName(name) || !validConvID(convID) {
-		return
-	}
-	if _, err := loadConv(convID); err != nil {
-		return // unknown conversation — don't arm against a dangling id
-	}
-	_ = reportLinks.Write(name, reportLink{Conv: convID, Armed: true, At: time.Now().Format(time.RFC3339)})
-}
-
-// reportArmed reports whether a one-shot report is pending for this session — read
-// by the hook/record-exit processes to skip the kick entirely when nothing is armed.
-func reportArmed(name string) bool {
-	l, ok := reportLinks.Read(name)
-	return ok && l.Armed && l.Conv != ""
-}
-
-// disarmSessionReport cancels a pending one-shot report for the session. Called from
+// disarmSessionReport cancels the session's outstanding instructions. Called from
 // handleHaltSession when the stop carries disarm_report (the operator's stop_session):
 // stopping the session cancels the outstanding instruction, so a later user-driven
 // resume + completion must not deliver a stale report to the operator conversation.
-// A Console halt (no flag) keeps the arm — if the user resumes and the session then
-// completes the instruction, that report is still the instruction's completion.
-func disarmSessionReport(name string) {
-	if l, ok := reportLinks.Read(name); ok && l.Armed {
-		l.Armed = false
-		_ = reportLinks.Write(name, l)
-	}
-}
+// A Console halt (no flag) leaves the rows open — if the user resumes and the session
+// then completes the instruction, that report is still the instruction's completion.
+// docs/51 Phase 2: disarm = 行を cancelled にする（規約は v1 のまま）。
+func disarmSessionReport(name string) { cancelInstructions(name) }
 
 // reportKindAnswerReady is the one TERMINAL state-transition report kind (an
 // instruction's completion). Only it (and an abnormal "exit", record_exit.go)
@@ -97,6 +75,25 @@ const reportReasonTurnFailed = "turn-failed"
 // the operator must NOT re-send until the cause is fixed, here re-sending IS the fix,
 // which is what 中断時の自動再開 acts on.
 const reportReasonTurnAborted = "turn-aborted"
+
+// reportKindReopened is the COMPENSATION report (docs/51 §補償 / Phase 3): 先に配った
+// 完了報告が早計だったことの訂正。kind を分けるのは、これが「セッションの状態が変わった」
+// 報告ではなく「**こちらの前の報告が間違っていた**」という訂正だから — オペレーターは
+// 利用者へ伝えた完了を取り消す必要があり、そのために本文が違う。冪等キーの名前空間も
+// 完了報告と分かれる（instrDeliveryKeyFor）。
+const reportKindReopened = "reopened"
+
+// reportReasonReopenCapped qualifies the compensation report that gives up: 行あたりの
+// reopen 上限（instrReopenMax）に達した＝判定が振動している。開き直しを続けても同じ
+// 誤報告と訂正を往復するだけなので、その事実を利用者に上げて打ち切る。
+const reportReasonReopenCapped = "reopen-capped"
+
+// reportKindSelfReport is the SELF-REPORT kick (docs/51 §自己申告ファストパス / Phase 3):
+// セッション自身が af_report MCP ツールで完了を申告した。報告 kind ではない（この kind
+// で会話へ何かが書かれることはない）— リコンサイラへのヒント兼 idle 証拠として運ばれる
+// だけで、報告本文は従来どおりサーバが生成する（fact-only。prompt injection 面を
+// 増やさない — ADR 0035 決定5）。
+const reportKindSelfReport = "self-report"
 
 // maxAutoResumeAttempts caps the CONSECUTIVE auto-resumes for one session. A session
 // that keeps getting cut off is not a transient hiccup any more — past the cap the
@@ -254,6 +251,19 @@ func reportHeadFor(kind, reason string, resumeAttempts int) string {
 			"利用者の意向（承認／修正フィードバック／別セッションでのレビュー）を確認し、" +
 			"承認は respond_session_plan(approve)、修正は respond_session_plan(reject, feedback=修正指示)。" +
 			"Console からも操作できます。これは途中経過の報告で、指示の完了報告は別途届きます。"
+	case reportKindReopened:
+		// 補償（docs/51 §補償）。オペレーターは既に「完了した」と利用者へ伝えている
+		// 可能性が高いので、まず取り消しを求め、次の完了報告を待つよう指示する。
+		if reason == reportReasonReopenCapped {
+			return "先の完了報告は早計でしたが、完了判定が繰り返し揺れています" +
+				"（訂正の上限 " + strconv.Itoa(instrReopenMax) + " 回に達したため、これ以上の自動訂正は行いません）。" +
+				"この指示については自動の完了報告を待たず、get_session_status / get_session_output で現在の状態を確認したうえで、" +
+				"判定が安定しない事実とセッションの現況を利用者に伝えてください。"
+		}
+		return "先の完了報告は早計でした — セッションはその後も作業を続けています。" +
+			"利用者に完了を伝えていた場合は取り消して、まだ作業中であることを伝えてください。" +
+			"追加の指示は送らず、この指示の完了報告が改めて届くのを待ってください" +
+			"（状況を確認したいときは get_session_status / get_session_output を使ってください）。"
 	case "permission-request":
 		return "ツール実行の許可待ちで停止しています。許可は Console から行う必要があります。"
 	case "exit":
@@ -275,9 +285,23 @@ func reportHeadFor(kind, reason string, resumeAttempts int) string {
 // (and displayed as the session-origin card). Fact-only by design — no output
 // excerpt (TUI と managed で統一): the operator confirms details with
 // get_session_output before summarizing to the user.
-func buildReportContent(display, name, kind, reason string) string {
+// resumeAttempts は自動再開のカウンタ（呼び出し側が「この報告を配ったあとの値」を
+// 渡す）。カウンタの永続化は配送が成功してからなので、本文生成には渡し値を使う。
+func buildReportContent(display, name, kind, reason string, resumeAttempts int) string {
 	return "セッション「" + display + "」(" + name + ") からの報告: " +
-		reportHeadFor(kind, reason, autoResumeAttempts(name))
+		reportHeadFor(kind, reason, resumeAttempts)
+}
+
+// reopenTargetNote names WHICH report the compensation corrects. 時刻は会話の報告
+// メッセージから取る（reportedInstrTS）: 台帳の ReportedAt は reopen で消えるので、
+// 訂正が再試行されたときや2回目の補償で参照先が無くなる。会話側は訂正の対象そのものなので
+// 消えようがない。読めなければ黙って省く — 訂正が出ないより時刻が欠ける方が軽い。
+func reopenTargetNote(c *chatConversation, rows []instrRow) string {
+	ts := reportedInstrTS(c, rows)
+	if ts == 0 {
+		return ""
+	}
+	return "（訂正の対象: " + time.UnixMilli(ts).Format("2006-01-02 15:04") + " の完了報告）"
 }
 
 // undeliveredReports returns the report messages not yet fed into the provider's
@@ -371,112 +395,15 @@ func noteAutoTurnPaused(c *chatConversation, limit int) {
 	_ = notice.Put(ev)
 }
 
-// reportArmMu serializes arm consumption: the kick handler and a background waiter
-// can race for the same one-shot arm (the final turn's Stop kick vs the waiter's
-// poll); read-check-disarm must be atomic or both deliver.
-var reportArmMu sync.Mutex
-
-// consumeReportArm atomically claims the pending one-shot report for the session.
-func consumeReportArm(name string) (reportLink, bool) {
-	reportArmMu.Lock()
-	defer reportArmMu.Unlock()
-	l, ok := reportLinks.Read(name)
-	if !ok || !l.Armed || l.Conv == "" {
-		return reportLink{}, false
-	}
-	l.Armed = false
-	_ = reportLinks.Write(name, l)
-	return l, true
-}
-
-// reportWaiterPoll is how often a deferred-report waiter re-checks the session.
-// A var so tests can shrink it.
-var reportWaiterPoll = 15 * time.Second
-
-// reportWaiters holds the sessions with a deferred-report waiter running (one per
-// session — a re-kick while deferred must not stack a second waiter).
-var reportWaiters sync.Map
-
-// deferReportWhileBackgroundBusy decides whether an answer-ready kick is premature.
-// A claude turn can launch run_in_background subagents / Workflow agents and Stop
-// right away（実測 2026-07-24 saga5uc: レビュー4体をBG起動→3分でStop→早期報告が
-// arm を消費→数十分後の本完了は報告されず・利用者の催促で発覚）. Delivering on that
-// Stop consumes the one-shot arm while the instruction's real work is still running,
-// so the true completion could never report. While the session's background agents
-// are live (SubagentBusy: per-agent jsonl freshness), keep the arm and let a waiter
-// deliver once they go quiet and the session is back at idle. The digest turn's own
-// Stop kick usually beats the waiter — whichever consumes the arm first wins.
-func deferReportWhileBackgroundBusy(name string) bool {
-	m, ok := session.ReadMeta(name)
-	if !ok || m.Kind != session.KindClaude {
-		return false // subagent transcripts are a claude signal; other kinds have no BG seam
-	}
-	sid := session.UUID(m.Dir, m.Name)
-	if !claude.SubagentBusy(sid) {
-		return false
-	}
-	if _, running := reportWaiters.LoadOrStore(name, struct{}{}); running {
-		return true // an earlier kick already posted a waiter; it will deliver
-	}
-	go waitReportUntilBackgroundDone(name, sid)
-	return true
-}
-
-// waitReportUntilBackgroundDone delivers the deferred one-shot report once the
-// session's background agents go quiet and it sits at idle. Exits without
-// delivering when the arm is consumed elsewhere (a later kick won the race, the
-// operator's stop_session disarmed, or a new instruction re-armed — its own
-// completion kick reports) or when the session stops (docs/30: a kept arm reports
-// on the post-resume completion instead).
+// handleChatReport (POST /chat/report {name, kind, reason}) receives the report kick
+// from the hook / record-exit / notify-seam process.
 //
-// "Idle" here must be an EXPLICIT, corroborated idle — not the bare LiveState
-// default（実測 2026-07-28 sqmconc: 思考ギャップ中にペイン起点の誤idleヒールが
-// status マーカーを削除 → LiveState は無ファイルを idle と既定 → waiter がターン
-// 途中で arm を消費し、本完了(27分後)の kick は armed=false で棄却・報告消滅）.
-// Unlike the Stop-hook kick, the waiter has no turn-end event to stand on, so it
-// cross-checks every independent liveness signal before spending the one-shot arm:
-// a marker file that SAYS idle (a Stop wrote it — absence proves nothing), a stale
-// main transcript (a thinking gap writes no hooks but the turn's jsonl is recent),
-// and a pane without the interrupt affordance (same evidence the reverse-heal
-// trusts). A wrongly-kept arm self-heals on the next real Stop kick; a
-// wrongly-spent arm is unrecoverable.
-func waitReportUntilBackgroundDone(name, sid string) {
-	defer reportWaiters.Delete(name)
-	for {
-		time.Sleep(reportWaiterPoll)
-		if !reportArmed(name) {
-			return
-		}
-		m, ok := session.ReadMeta(name)
-		if !ok || m.StoppedAt != "" {
-			return
-		}
-		if claude.SubagentBusy(sid) {
-			continue // background agents still writing
-		}
-		if st, ok := status.Read(sid); !ok || st.State != "idle" {
-			continue // no marker, or a digest turn / question / plan / permission wait in flight
-		}
-		if claude.TranscriptBusy(sid) {
-			continue // main turn still appending its transcript (think gaps fire no hooks)
-		}
-		if tmuxx.IsBusy(m.Name) {
-			continue // pane shows the interrupt affordance — plainly mid-turn
-		}
-		link, ok := consumeReportArm(name)
-		if !ok {
-			return
-		}
-		deliverSessionReport(name, link.Conv, reportKindAnswerReady, "")
-		return
-	}
-}
-
-// handleChatReport (POST /chat/report {name, kind, reason}) receives the one-shot
-// report kick from the hook / record-exit process. It validates + disarms
-// synchronously (single writer for the arm store lives here) and does the slow
-// conversation work in a goroutine so the dying hook process isn't held up. An
-// answer-ready kick while background agents run is deferred instead (arm kept).
+// docs/51 Phase 1: 終端イベント（answer-ready / exit）の kick は**もう配送も消費も
+// しない** — リコンサイラを起こす**ヒント**に降格した。エンドポイントを残すのは
+// hook スクリプトと焼き込みイメージを変えないため（フックが全部死んでいても、次の
+// tick が同じ状態をレベルで見て拾う）。
+// interim（question / plan-approval）は従来どおりその場で配送する: arm を消費しない
+// ので「1回だけ」の調停が要らず、レイテンシがそのまま利用者体験になる経路だから。
 func handleChatReport(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name   string `json:"name"`
@@ -490,71 +417,103 @@ func handleChatReport(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_report", "name and kind are required")
 		return
 	}
-	if !reportArmed(body.Name) {
+	open := openInstrRows(body.Name)
+	if len(open) == 0 {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"reported": false})
 		return
 	}
-	if body.Kind == reportKindAnswerReady && deferReportWhileBackgroundBusy(body.Name) {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"reported": false, "deferred": true})
+	// 自己申告（docs/51 §ファストパス）。ヒントと同じ seam に乗せる — 申告は「今すぐ
+	// 見に行け」＋「セッション自身は終わったと言っている」という証拠を1つ足すだけで、
+	// 報告するかどうかはリコンサイラの述語が決める（早呼びは busy 証拠に止められる）。
+	if body.Kind == reportKindSelfReport {
+		reportRec.selfReport(body.Name, time.Now())
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"reported": false, "accepted": true})
 		return
 	}
-	// Interim question / plan-approval reports (docs/30): delivered WITHOUT
-	// consuming the arm — the one-shot still belongs to the instruction's completion
-	// (answer-ready / exit). The operator relays to the user (or, in 自動走行,
-	// answers / drives the review-approve loop itself).
+	// Interim question / plan-approval reports (docs/30): delivered WITHOUT closing the
+	// rows — the one-shot still belongs to the instruction's completion (answer-ready /
+	// exit). The operator relays to the user (or, in 自動走行, answers / drives the
+	// review-approve loop itself). docs/51 Phase 2: 台帳には「既報」として刻むだけで
+	// **抑止はしない** — 1つの指示の中で質問が2回起きるのは普通なので、行あたり1回に
+	// 絞ると2問目にオペレーターが答えられなくなる。
 	if body.Kind == "question" || body.Kind == "plan-approval" {
-		if link, ok := reportLinks.Read(body.Name); ok && link.Conv != "" {
-			go deliverSessionReport(body.Name, link.Conv, body.Kind, body.Reason)
+		for _, conv := range instrConvs(open) {
+			go deliverSessionReport(body.Name, conv, body.Kind, body.Reason)
 		}
+		markInstrInterim(body.Name, body.Kind, time.Now())
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"reported": true, "interim": true})
 		return
 	}
-	link, ok := consumeReportArm(body.Name) // one report per instruction — disarm before the slow work
-	if !ok {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"reported": false})
-		return
-	}
-	go deliverSessionReport(body.Name, link.Conv, body.Kind, body.Reason)
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"reported": true})
+	reportRec.hint(body.Name, body.Kind, body.Reason)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"reported": false, "hinted": true})
 }
 
-// deliverSessionReport appends the report message to the conversation, mirrors it
-// into the notification center, then runs the operator's auto turn when allowed.
+// deliverSessionReport is the interim (non-consuming) delivery: 会話に追記し、通知
+// センターへ流し、許可されていればオペレーターの自動ターンを回す。呼び出し側が
+// 既に goroutine なので自動ターンは同期で回す。行IDは運ばない — interim は「1回だけ」の
+// 契約を持たない（同じ指示の中で何度でも起きる）。
 func deliverSessionReport(name, convID, kind, reason string) {
+	if recordSessionReport(name, convID, kind, reason, nil) != reportSinkOK {
+		return
+	}
+	if chatAutoTurnEnabled() {
+		runReportAutoTurn(convID)
+	}
+}
+
+// recordSessionReport appends the report message to the conversation and mirrors it
+// into the notification center. 戻り値は「台帳の行を進めてよいか」の判定材料になる
+// （docs/51 §配送: 追記に失敗したら台帳を動かさず次 tick で再試行する）。
+//
+// rows は完了報告が畳んだ指示行（interim は nil）。**配送の冪等化はここで行う**
+// （docs/51 §配送: 会話ロック下で「この行IDの報告が既にあるか」を見てから追記）:
+// 「追記成功 → 台帳更新」の間でプロセスが落ちても、次 tick の再送は同じ行IDを見つけて
+// 二重投稿せず、そのまま行を reported に進められる。
+func recordSessionReport(name, convID, kind, reason string, rows []instrRow) reportSinkResult {
 	display, sessKind := name, ""
 	var title string
 	if m, ok := session.ReadMeta(name); ok {
 		display, sessKind = session.Display(m), m.Kind
 	}
 
-	// 自動再開のカウンタは報告を組み立てる前に動かす（docs/47）。中断報告そのものが
-	// オペレーターへの「再開しろ」の指示なので、その配信を 1 回と数える — 上限に達した
-	// 報告は自分で escalation 文言に切り替わる。正常完了はカウンタを畳んで、回復した
-	// セッションが次の中断でまた満額の再試行枠を持てるようにする。
-	if kind == reportKindAnswerReady {
-		switch reason {
-		case reportReasonTurnAborted:
-			bumpAutoResume(name)
-		case "":
-			resetAutoResume(name)
-		}
+	// 自動再開のカウンタ（docs/47）。中断報告そのものがオペレーターへの「再開しろ」の
+	// 指示なので、その配信を 1 回と数える — 上限に達した報告は自分で escalation 文言に
+	// 切り替わる。本文にはこの報告を配ったあとの値を使うが、**永続化はここではやらない**:
+	// 数える単位はセッションの中断イベント1回で、同じ静穏を複数の会話へ配る配送の回数
+	// ではないから（永続化は reportReconciler.evaluate が会話ループの外で1回だけ行う）。
+	attempts := autoResumeAttempts(name)
+	if kind == reportKindAnswerReady && reason == reportReasonTurnAborted {
+		attempts++
 	}
 
 	unlock := lockConv(convID)
 	c, err := loadConv(convID)
 	if err != nil {
 		unlock()
-		return // conversation deleted since arming — drop the report
+		return reportSinkDrop // conversation deleted since the instruction — drop it
+	}
+	fresh := undeliveredInstrRows(c, rows, kind)
+	if len(rows) > 0 && len(fresh) == 0 {
+		unlock()
+		return reportSinkOK // 既に配送済みの行だけ — 二重投稿せず台帳だけ進める
+	}
+	content := buildReportContent(display, name, kind, reason, attempts)
+	if kind == reportKindReopened {
+		// 訂正の対象がどの報告かは、**会話メッセージ**から引く（reportedInstrTS）。
+		content += reopenTargetNote(c, fresh)
+	} else {
+		content += instrFoldNote(fresh)
 	}
 	c.Messages = append(c.Messages, chatMessage{
-		Role: "report", Content: buildReportContent(display, name, kind, reason),
-		Session: name, TS: nowMs(),
+		Role:    "report",
+		Content: content,
+		Session: name, Instr: instrKeysFor(kind, fresh), TS: nowMs(),
 	})
 	c.UpdatedAt = nowMs()
 	if err := saveConv(c); err != nil {
 		log.Printf("chat report: save %s: %v", convID, err)
 		unlock()
-		return
+		return reportSinkRetry
 	}
 	title = c.Title
 	unlock()
@@ -563,10 +522,7 @@ func deliverSessionReport(name, convID, kind, reason string) {
 	ev.Payload["conversation_id"] = convID
 	ev.Payload["conversationTitle"] = title
 	_ = notice.Put(ev)
-
-	if chatAutoTurnEnabled() {
-		runReportAutoTurn(convID)
-	}
+	return reportSinkOK
 }
 
 // runReportAutoTurn runs ONE operator turn over the conversation's undelivered

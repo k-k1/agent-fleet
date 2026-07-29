@@ -51,10 +51,21 @@ func TestMCPServerCreateMasksSecretsOnTheWire(t *testing.T) {
 	}
 	var list mcpListResp
 	mcpDecode(t, w.Body.Bytes(), &list)
-	if len(list.Servers) != 1 {
-		t.Fatalf("servers = %d, want 1", len(list.Servers))
+	// 一覧には登録した 1 件に加えて、常駐の組み込み「af」（自己申告ファストパスの
+	// セッション側サーバー・docs/51 Phase 3）が並ぶ。見たいのは登録した行なので名前で引く。
+	var got *struct {
+		mcpreg.ServerDef
+		Editable bool `json:"editable"`
+		Ready    bool `json:"ready"`
 	}
-	got := list.Servers[0]
+	for i := range list.Servers {
+		if list.Servers[i].Name == "wiki" {
+			got = &list.Servers[i]
+		}
+	}
+	if got == nil {
+		t.Fatalf("登録した定義が一覧に無い: %+v", list.Servers)
+	}
 	if got.Headers["Authorization"] != mcpreg.MaskedValue {
 		t.Fatalf("ヘッダがマスクされていない: %q", got.Headers["Authorization"])
 	}

@@ -57,6 +57,12 @@ type chatMessage struct {
 	// Session names the reporting session for role=="report" (docs/30) — the Console
 	// renders these as a session-origin card, not a user/assistant bubble.
 	Session string `json:"session,omitempty"`
+	// Instr lists the instruction-ledger row ids this completion report covers
+	// (docs/51 Phase 2). It is the DELIVERY IDEMPOTENCY key: a retry after a crash
+	// between「追記成功」and「台帳更新」finds its own ids here and appends nothing.
+	// Empty for interim reports (question / plan-approval), which are non-consuming
+	// and may legitimately repeat within one instruction.
+	Instr []string `json:"instr,omitempty"`
 	// Delivered marks a report that has been fed into the provider's context (either
 	// by its own auto turn or injected into a later prompt). An undelivered report
 	// exists in the stored thread but the LLM hasn't seen it yet.

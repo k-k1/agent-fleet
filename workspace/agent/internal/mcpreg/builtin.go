@@ -16,6 +16,7 @@ import (
 )
 
 const (
+	BuiltinAF         = "af"
 	BuiltinPagerDuty  = "pagerduty"
 	BuiltinGrafana    = "grafana"
 	BuiltinCloudWatch = "cloudwatch"
@@ -27,9 +28,24 @@ type builtinSpec struct {
 	label   string
 	runArgs []string
 	ready   func(*secrets.Data) bool
+	// targets overrides the default (assistant-only) attachment. Zero value means
+	// Targets{Assistant: true}.
+	targets Targets
 }
 
 var builtinSpecs = map[string]builtinSpec{
+	// af は Agent Fleet 自身のセッション向けサーバー（docs/51 Phase 3 §自己申告
+	// ファストパス）。他の builtin と違って接続情報を持たないので常に ready で、
+	// 向き先も逆 — アシスタントではなく**セッション**に配る。ここに置いたのは
+	// 「レジストリは1つのリスト」という ADR0031 決定6 のため: 自前のサーバーだけ
+	// materialize の外に別配線を持つと、利用者からも見えず、名前衝突の調停からも外れる
+	// （"af" は reservedNames で元から押さえてある）。
+	BuiltinAF: {
+		label:   "Agent Fleet",
+		runArgs: []string{"mcp-stdio", "--self-report"},
+		ready:   func(*secrets.Data) bool { return true },
+		targets: Targets{Session: true},
+	},
 	BuiltinPagerDuty: {
 		label:   "PagerDuty",
 		runArgs: []string{"mcp-run", "pagerduty"},
@@ -83,10 +99,14 @@ func BuiltinReady(id string, s *secrets.Data) bool {
 // a behavior change nobody asked for. Session use goes through a user registration.
 func builtinDefs(s *secrets.Data) []ServerDef {
 	var out []ServerDef
-	for _, id := range []string{BuiltinPagerDuty, BuiltinGrafana, BuiltinCloudWatch} {
+	for _, id := range []string{BuiltinAF, BuiltinPagerDuty, BuiltinGrafana, BuiltinCloudWatch} {
 		spec := builtinSpecs[id]
 		if !spec.ready(s) {
 			continue
+		}
+		targets := spec.targets
+		if targets == (Targets{}) {
+			targets = Targets{Assistant: true}
 		}
 		out = append(out, ServerDef{
 			ID:        id,
@@ -97,7 +117,7 @@ func builtinDefs(s *secrets.Data) []ServerDef {
 			Command:   paths.ExePath(),
 			Args:      append([]string(nil), spec.runArgs...),
 			Enabled:   true,
-			Targets:   Targets{Assistant: true},
+			Targets:   targets,
 		})
 	}
 	return out

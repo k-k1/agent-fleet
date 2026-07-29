@@ -21,6 +21,14 @@ import (
 type SessionStatus struct {
 	State string `json:"state"` // "working" | "idle"
 	TS    string `json:"ts"`    // RFC3339
+	// TurnEnd marks an idle that was written by a turn's ACTUAL end (Stop hook /
+	// MarkTurnEnd completed|failed|aborted) — as opposed to an idle written because we
+	// do NOT know what is going on: the SessionStart reset, or a managed driver that
+	// lost its runtime handle mid-turn (TurnUnknown). 状態文字列だけでは「終わった」と
+	// 「分からない」が同じ "idle" になり、レベル判定（docs/51 のリコンサイラ）は不明を
+	// 完了と読んでしまう。証拠側を positive に倒す1bit — フラグの無い idle は不明として
+	// 扱われ、報告は次の本物の終端まで待つ（取りこぼしは遅延、誤りは誤配送）。
+	TurnEnd bool `json:"turnEnd,omitempty"`
 }
 
 // ExitInfo records WHY a session's agent process terminated, so the sessions list can
@@ -119,8 +127,15 @@ func ExitReasonFor(code, sig int, oom bool) string {
 // Persist writes {state, ts} keyed by sid. Errors are logged (not
 // swallowed): a failed write leaves the Console's 進行中/応答あり badge silently
 // stale, so a log line is the only breadcrumb the write ever failed.
-func Persist(sid, state string) {
-	s := SessionStatus{State: state, TS: time.Now().Format(time.RFC3339)}
+func Persist(sid, state string) { persist(sid, SessionStatus{State: state}) }
+
+// PersistTurnEnd is Persist for a write that IS a turn's end (the Stop hook's idle,
+// MarkTurnEnd の completed/failed/aborted)。TurnEnd を立てるのはこの入口だけ — 「今の
+// 状態」を書くだけの Persist と、「ターンが終わった」を主張する書込みを分けておく。
+func PersistTurnEnd(sid, state string) { persist(sid, SessionStatus{State: state, TurnEnd: true}) }
+
+func persist(sid string, s SessionStatus) {
+	s.TS = time.Now().Format(time.RFC3339)
 	if err := statusFiles.Write(sid, s); err != nil {
 		log.Printf("session-status: write %s: %v", statusFiles.Path(sid), err)
 	}
