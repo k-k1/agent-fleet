@@ -22,17 +22,19 @@ test("Console → セッションを開く → 打鍵がコンテナに届く", 
   const term = page.locator(".termview .terminal .xterm").first();
   await expect(term).toBeVisible({ timeout: 30_000 });
   await term.click(); // xterm にフォーカス
-  await page.waitForTimeout(1500); // WS 接続 & PTY attach の猶予
 
-  const nonce = `ui-ok-${Date.now()}`;
-  await page.keyboard.type(`echo ${nonce} > ui-marker.txt`, { delay: 30 });
-  await page.keyboard.press("Enter");
-
+  // WS 接続 & PTY attach の完了は DOM から観測できないため、固定スリープでは
+  // 待たず「打鍵 → コンテナにファイルが生まれる」自体をリトライ単位にする
+  // （attach 前に落ちた打鍵は次の試行で打ち直す。echo の再実行は冪等）。
   // 効果はコンテナ側の事実で判定する（fs API は home 相対）。
+  const marker = `ui-marker-${Date.now()}.txt`; // このテスト自前の一意名（他テストと非共有）
+  const nonce = `ui-ok-${Date.now()}`;
   await expect
     .poll(
       async () => {
-        const res = await request.get(`${base}/api/fs/file?path=ui-marker.txt`);
+        await page.keyboard.type(`echo ${nonce} > ${marker}`, { delay: 30 });
+        await page.keyboard.press("Enter");
+        const res = await request.get(`${base}/api/fs/file?path=${marker}`);
         if (!res.ok()) return "";
         const j: any = await res.json().catch(() => ({}));
         return j.content || "";
@@ -43,15 +45,21 @@ test("Console → セッションを開く → 打鍵がコンテナに届く", 
 });
 
 test("Text編集 → keyboard/ボタン保存 → CAS競合をmine保持で表示", async ({ page, request }) => {
+  // このテスト自前の一意名ファイルを API で実コンテナに用意する（先行テストの
+  // 成果物には依存しない — 単独実行・順序入替でも成立させる）。
+  const marker = `ui-edit-${Date.now()}.txt`;
+  const created = await request.post(`${base}/api/fs/newfile?path=${marker}`);
+  expect(created.ok()).toBeTruthy();
+
   await page.goto(base + "/");
 
-  // home scopeの再帰検索から、先行テストが実コンテナに作成したテキストを開く。
+  // home scopeの再帰検索から、上で作成したテキストを開く。
   const files = page.locator(".ui-section", { has: page.locator(".ui-section-title", { hasText: /ファイル|Files/ }) });
   const toggle = files.locator(".ui-section-toggle");
   if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
-  await files.locator(".files-search-scope button").nth(1).click();
-  await files.locator(".proj-filter input").fill("ui-marker.txt");
-  const row = files.locator('.fsrow[data-path="ui-marker.txt"]');
+  await files.getByRole("button", { name: /home から検索|Search from home/ }).click();
+  await files.locator(".proj-filter input").fill(marker);
+  const row = files.locator(`.fsrow[data-path="${marker}"]`);
   await expect(row).toBeVisible({ timeout: 30_000 });
   await row.click();
 
@@ -70,7 +78,13 @@ test("Text編集 → keyboard/ボタン保存 → CAS競合をmine保持で表�
   await page.keyboard.type(first);
   await page.keyboard.press("Control+S");
   await expect(page.locator(".fileview").getByRole("status")).toContainText(/保存しました|Saved/);
-  await expect.poll(async () => (await (await request.get(`${base}/api/fs/file?path=ui-marker.txt`)).json()).content)
+  await expect
+    .poll(async () => {
+      const res = await request.get(`${base}/api/fs/file?path=${marker}`);
+      if (!res.ok()) return "";
+      const j: any = await res.json().catch(() => ({}));
+      return j.content || "";
+    })
     .toBe(first);
 
   const second = `button-save-${Date.now()}\n`;
@@ -80,7 +94,7 @@ test("Text編集 → keyboard/ボタン保存 → CAS競合をmine保持で表�
   await expect(page.locator(".fileview").getByRole("status")).toContainText(/保存しました|Saved/);
 
   // 外部writerを挟んで旧baseのPUTを409にし、mine/remote差分と解決操作を確認する。
-  const beforeConflict: any = await (await request.get(`${base}/api/fs/file?path=ui-marker.txt`)).json();
+  const beforeConflict: any = await (await request.get(`${base}/api/fs/file?path=${marker}`)).json();
   const mine = `mine-${Date.now()}\n`;
   await cm.click();
   await page.keyboard.press("Control+A");
@@ -89,7 +103,7 @@ test("Text編集 → keyboard/ボタン保存 → CAS競合をmine保持で表�
   const external = await request.put(`${base}/api/fs/file`, {
     headers: { "content-type": "application/json" },
     data: {
-      path: "ui-marker.txt",
+      path: marker,
       content: remote,
       baseDiskRevision: beforeConflict.revision,
     },

@@ -10,7 +10,6 @@ const STATE = path.join(__dirname, ".e2e-state.json");
 export default async function globalTeardown(): Promise<void> {
   if (!fs.existsSync(STATE)) return; // setup が skip した
   const st = JSON.parse(fs.readFileSync(STATE, "utf8"));
-  fs.rmSync(STATE, { force: true });
 
   if (st.pid) {
     try {
@@ -27,16 +26,25 @@ export default async function globalTeardown(): Promise<void> {
   }
   spawnSync("docker", ["rm", "-f", `af-ws-${st.user}`]);
   spawnSync("docker", ["network", "rm", `af-net-${st.user}`]);
+  let cleaned = true;
   try {
     fs.rmSync(st.dataDir, { recursive: true, force: true });
   } catch {
-    spawnSync("docker", [
-      "run", "--rm", "--user", "0",
-      "-v", `${st.dataDir}:/clean`,
-      "--entrypoint", "/bin/sh", st.image,
-      "-c", "rm -rf /clean/* /clean/.[!.]* 2>/dev/null || true",
-    ]);
-    fs.rmSync(st.dataDir, { recursive: true, force: true });
+    try {
+      spawnSync("docker", [
+        "run", "--rm", "--user", "0",
+        "-v", `${st.dataDir}:/clean`,
+        "--entrypoint", "/bin/sh", st.image,
+        "-c", "rm -rf /clean/* /clean/.[!.]* 2>/dev/null || true",
+      ]);
+      fs.rmSync(st.dataDir, { recursive: true, force: true });
+    } catch (err) {
+      cleaned = false;
+      console.log(`[ui-e2e] teardown: dataDir の回収に失敗（state は残す）: ${err}`);
+    }
   }
+  // STATE は全回収が済んでから消す — 途中で失敗しても残骸の手がかりが残り、
+  // コンテナ/ネットワークは固定名なので次回 setup の事前掃除でも回収される。
+  if (cleaned) fs.rmSync(STATE, { force: true });
   console.log(`[ui-e2e] teardown done (CP log: ${st.logPath})`);
 }

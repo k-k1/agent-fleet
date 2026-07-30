@@ -55,6 +55,12 @@ export default async function globalSetup(): Promise<void> {
   if (!fs.existsSync(path.join(dist, "index.html")))
     return prereqMissing("console/dist がありません（npm --prefix console run build）");
 
+  // 前回 run の残骸（teardown まで辿り着けなかったコンテナ / ネットワーク）は
+  // 固定名なので名前衝突になり、workspace/start の 120 秒リトライが空回りする。
+  // best-effort で先に消しておく（無ければ単に失敗するだけ）。
+  spawnSync("docker", ["rm", "-f", `af-ws-${USER}`]);
+  spawnSync("docker", ["network", "rm", `af-net-${USER}`]);
+
   // CP build（e2e/ の buildCP と同じ）。
   const cpBin = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "af-ui-cp-")), "af-cp");
   const build = spawnSync("go", ["build", "-o", cpBin, "."], {
