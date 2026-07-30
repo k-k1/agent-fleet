@@ -31,6 +31,7 @@ vi.mock("../viewer/openFile.ts", () => ({ openFileMode: (...a: unknown[]) => ope
 
 const { FilesChanges } = await import("./FilesChanges.tsx");
 const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
+const { useReposStore } = await import("../repos/store.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -45,6 +46,12 @@ async function render(): Promise<void> {
 }
 
 const rows = () => [...host.querySelectorAll<HTMLLIElement>(".chg-row")];
+/** Each group's band, as [project, branch] — branch "" when it fell back to the folder. */
+const bands = () =>
+  [...host.querySelectorAll<HTMLDivElement>(".chg-repo")].map((b) => [
+    b.querySelector(".wc-project")?.textContent ?? "",
+    b.querySelector(".wc-branch-name")?.textContent ?? "",
+  ]);
 /** The menu is portaled to document.body, not into the rail. */
 const menuItems = () =>
   [...document.querySelectorAll<HTMLButtonElement>(".chg-ctxmenu .ui-menu-item")];
@@ -59,6 +66,7 @@ beforeEach(() => {
   openFileDiff.mockClear();
   openFileMode.mockClear();
   useWorkspaceStore.setState({ state: "running" });
+  useReposStore.setState({ repos: [] });
   served = [{ path: "repos/demo/src/a.ts", repo: "demo", worktree: "M", index: " " }];
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -124,5 +132,62 @@ describe("changed-file row menu", () => {
     await render();
     await fire(rows()[0], "contextmenu");
     expect(menuItems().map((b) => b.disabled)).toEqual([false, true, true]);
+  });
+});
+
+// The band over each group names the working copy as プロジェクト + ブランチ, not
+// as the "<base>@<slug>" folder the API groups by — a wip slug tells a reader
+// nothing about which line of work the changes belong to.
+describe("working-copy group bands", () => {
+  it("titles a worktree group with its base project and branch", async () => {
+    useReposStore.setState({
+      repos: [
+        { name: "agent-fleet", branch: "develop" },
+        { name: "agent-fleet@wip-a", worktree: true, parent: "agent-fleet", branch: "temp/aaa" },
+      ],
+    });
+    served = [{ path: "repos/agent-fleet@wip-a/x.ts", repo: "agent-fleet@wip-a", worktree: "M", index: " " }];
+    await render();
+    expect(bands()).toEqual([["agent-fleet", "temp/aaa"]]);
+    // The folder stays reachable — it is still the identity behind the label.
+    expect(host.querySelector(".chg-repo")?.getAttribute("title")).toBe("agent-fleet@wip-a");
+  });
+
+  it("falls back to the folder when the branch is unknown (SVN copy, or repo not loaded)", async () => {
+    useReposStore.setState({ repos: [{ name: "svn-wc", vcs: "svn", revision: "42" }] });
+    served = [
+      { path: "repos/svn-wc/x.ts", repo: "svn-wc", worktree: "M", index: " " },
+      { path: "repos/unknown/y.ts", repo: "unknown", worktree: "M", index: " " },
+    ];
+    await render();
+    expect(bands()).toEqual([
+      ["svn-wc", ""],
+      ["unknown", ""],
+    ]);
+  });
+
+  it("orders the groups like the rail: base first, then its worktrees oldest-first", async () => {
+    useReposStore.setState({
+      repos: [
+        { name: "zzz", branch: "main" },
+        { name: "af@wip-new", worktree: true, parent: "af", branch: "temp/new", createdAt: "2026-07-02T00:00:00Z" },
+        { name: "af", branch: "develop" },
+        { name: "af@wip-old", worktree: true, parent: "af", branch: "temp/old", createdAt: "2026-07-01T00:00:00Z" },
+      ],
+    });
+    // Served in directory order — the API's order, which scatters the project.
+    served = [
+      { path: "repos/af@wip-new/a.ts", repo: "af@wip-new", worktree: "M", index: " " },
+      { path: "repos/zzz/b.ts", repo: "zzz", worktree: "M", index: " " },
+      { path: "repos/af/c.ts", repo: "af", worktree: "M", index: " " },
+      { path: "repos/af@wip-old/d.ts", repo: "af@wip-old", worktree: "M", index: " " },
+    ];
+    await render();
+    expect(bands()).toEqual([
+      ["af", "develop"],
+      ["af", "temp/old"],
+      ["af", "temp/new"],
+      ["zzz", "main"],
+    ]);
   });
 });

@@ -64,6 +64,22 @@
   color: var(--muted);
   font-size: 11px;
 }
+/* A worktree folder's checked-out branch, appended to its row in the repos tree:
+   supplementary, so it trims before the folder name does (the name owns the
+   space; this shrinks first) and never grows the row. */
+.fs-branch {
+  /* Shrinks far faster than the folder name beside it (which is the row's real
+     identity) and keeps a couple of characters, so a narrow rail trims the
+     branch to "tem…" instead of eating into the folder name. */
+  flex: 0 10 auto;
+  min-width: 2.5em;
+  margin-left: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .fs-chev {
   width: 12px;
   flex: none;
@@ -118,7 +134,14 @@
   margin: 0;
   padding: 0;
 }
+/* The band naming the working copy a group of changes belongs to. It carries
+   プロジェクト + ブランチ (WorkingCopyLabel), so it lays out as a row whose two
+   halves each trim on their own instead of one long string. */
 .chg-repo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   color: var(--muted);
   font-size: 11px;
   font-weight: 600;

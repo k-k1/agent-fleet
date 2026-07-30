@@ -1,6 +1,10 @@
 // FilesChanges — the ファイル section's 変更 view: every working copy's git
 // changes in one list (GET api/fs/changes — cross-repo, each entry carries its
-// repo), grouped by working copy. Clicking a row opens the working diff in the
+// repo), grouped by working copy and headed by プロジェクト + ブランチ
+// (WorkingCopyLabel) rather than the "<base>@<slug>" folder the API groups by:
+// the folder is the identity, the project+branch is what a reader recognises.
+// Groups follow the rail's project order (base, then its worktrees oldest-first)
+// so the two lists read the same way. Clicking a row opens the working diff in the
 // viewer (same as the SCM pane's changes list); untracked/added files without a
 // diff still open it — DiffView falls back sensibly. Revived from the old
 // FilesSection (deleted eeded8a), minus its file-management extras.
@@ -13,6 +17,10 @@ import { Icon } from "../../ui/Icon.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useFilesStore } from "../files/store.ts";
+import { useReposStore } from "../repos/store.ts";
+import { orderedRepos } from "../../lib/project.ts";
+import { compareText } from "../../lib/intl.ts";
+import { WorkingCopyLabel } from "./WorkingCopyLabel.tsx";
 import { openFileDiff } from "../scm/open.ts";
 import { openFileMode } from "../viewer/openFile.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
@@ -63,6 +71,7 @@ export function FilesChanges() {
   const tr = useT();
   const running = useWorkspaceStore((s) => s.state) === "running";
   const filesTick = useFilesStore((s) => s.tick);
+  const repos = useReposStore((s) => s.repos);
   const [changes, setChanges] = useState<FsChange[] | null>(null);
   const [menu, setMenu] = useState<ChangeMenu | null>(null);
   const listRef = useRef<HTMLUListElement>(null);
@@ -115,13 +124,24 @@ export function FilesChanges() {
     (acc[c.repo] = acc[c.repo] || []).push(c);
     return acc;
   }, {});
+  // Group ORDER follows the rail (base clone, then its worktrees oldest-first);
+  // the API answers in ~directory order, which scatters a project's worktrees.
+  // A folder the repos store does not know sorts last, by name — MAX_SAFE_INTEGER
+  // subtracts to 0 between two of them, so the name tie-break decides.
+  const rank = new Map(orderedRepos(repos).map((r, i) => [r.name, i]));
+  const groups = Object.entries(byRepo).sort(
+    ([a], [b]) =>
+      (rank.get(a) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b) ?? Number.MAX_SAFE_INTEGER) || compareText(a, b),
+  );
 
   return (
     <>
       <ul ref={listRef} className="fstree changeslist" role="list" aria-label={tr("pj.changed_files")}>
-        {Object.entries(byRepo).map(([repo, list]) => (
+        {groups.map(([repo, list]) => (
           <li key={repo} className="chg-group">
-            <div className="chg-repo">{repo}</div>
+            <div className="chg-repo" title={repo}>
+              <WorkingCopyLabel folder={repo} />
+            </div>
             <ul>
               {list.map((c) => {
                 const b = changeBadge(c);

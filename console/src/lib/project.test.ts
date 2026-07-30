@@ -1,7 +1,14 @@
 import { describe, it, expect } from "vitest";
 import type { Repo } from "../features/repos/store.ts";
 import type { Session } from "../types/session.ts";
-import { sessionFolder, orderedRepos, groupedRepos, sessionsInFolder, orphanSessions } from "./project.ts";
+import {
+  sessionFolder,
+  orderedRepos,
+  groupedRepos,
+  sessionsInFolder,
+  orphanSessions,
+  workingCopyLabel,
+} from "./project.ts";
 
 const repo = (name: string, extra: Partial<Repo> = {}): Repo => ({ name, ...extra });
 const wt = (name: string, parent: string, extra: Partial<Repo> = {}): Repo => ({
@@ -93,6 +100,25 @@ describe("groupedRepos", () => {
       "af@wip-a",
       "af@wip-b",
     ]);
+  });
+});
+
+describe("workingCopyLabel", () => {
+  it("titles a worktree with its BASE project and its branch, not the folder", () => {
+    const r = wt("agent-fleet@wip-ssvdkv3", "agent-fleet", { branch: "temp/ssvdkv3" });
+    expect(workingCopyLabel(r.name, r)).toEqual({ project: "agent-fleet", branch: "temp/ssvdkv3" });
+  });
+  it("titles a base clone with its own folder and branch", () => {
+    const r = repo("agent-fleet", { branch: "develop" });
+    expect(workingCopyLabel(r.name, r)).toEqual({ project: "agent-fleet", branch: "develop" });
+  });
+  it("falls back to the folder's <base>@ prefix when the parent is gone", () => {
+    const r = wt("agent-fleet@wip-x", "", { branch: "temp/x" });
+    expect(workingCopyLabel(r.name, r).project).toBe("agent-fleet");
+  });
+  it("reports no branch for an SVN copy or an unknown folder — the caller shows the folder", () => {
+    expect(workingCopyLabel("svn-wc", repo("svn-wc", { vcs: "svn", revision: "42" })).branch).toBe("");
+    expect(workingCopyLabel("gone", undefined)).toEqual({ project: "gone", branch: "" });
   });
 });
 
