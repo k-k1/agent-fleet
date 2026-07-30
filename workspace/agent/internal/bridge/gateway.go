@@ -198,7 +198,9 @@ func (g *gateway) connectOnce(ctx context.Context) error {
 	g.setAcked(true)
 	hbCtx, hbCancel := context.WithCancel(ctx)
 	defer hbCancel()
-	go g.heartbeatLoop(hbCtx, time.Duration(hello.HeartbeatInterval)*time.Millisecond)
+	// conn is passed by value: a late-exiting loop from a previous connection must
+	// never read g.conn (already re-assigned) and close the NEW connection.
+	go g.heartbeatLoop(hbCtx, conn, time.Duration(hello.HeartbeatInterval)*time.Millisecond)
 
 	if resuming {
 		if err := g.sendResume(); err != nil {
@@ -222,7 +224,7 @@ func (g *gateway) connectOnce(ctx context.Context) error {
 			g.onDispatch(p)
 		case opHeartbeat:
 			// Server asked for an immediate beat.
-			_ = g.sendHeartbeat()
+			_ = g.sendHeartbeat(conn)
 		case opHeartbeatAck:
 			g.setAcked(true)
 		case opReconnect:
@@ -309,7 +311,7 @@ func (g *gateway) sendResume() error {
 // heartbeatLoop sends op1 at the interval. The first beat is jittered per the protocol
 // (spread load across the fleet). A missing ACK between beats means a zombie connection
 // — close the conn so connectOnce returns and the supervisor reconnects+resumes.
-func (g *gateway) heartbeatLoop(ctx context.Context, interval time.Duration) {
+func (g *gateway) heartbeatLoop(ctx context.Context, conn *websocket.Conn, interval time.Duration) {
 	// Jitter the first beat by a fraction of the interval (deterministic — no rand in
 	// this environment; a fixed 1/2 is within spec).
 	select {
@@ -319,11 +321,11 @@ func (g *gateway) heartbeatLoop(ctx context.Context, interval time.Duration) {
 	}
 	for {
 		if !g.isAcked() {
-			_ = g.conn.Close() // zombie — force a reconnect
+			_ = conn.Close() // zombie — force a reconnect
 			return
 		}
 		g.setAcked(false)
-		if err := g.sendHeartbeat(); err != nil {
+		if err := g.sendHeartbeat(conn); err != nil {
 			return
 		}
 		select {
@@ -334,12 +336,16 @@ func (g *gateway) heartbeatLoop(ctx context.Context, interval time.Duration) {
 	}
 }
 
-func (g *gateway) sendHeartbeat() error {
+// sendHeartbeat takes the connection explicitly (not g.conn) because it is also
+// called from the heartbeat goroutine, which may outlive this connection slightly.
+func (g *gateway) sendHeartbeat(conn *websocket.Conn) error {
 	var d any
 	if g.haveSeq {
 		d = g.seq
 	}
-	return g.writeJSON(map[string]any{"op": opHeartbeat, "d": d})
+	g.wmu.Lock()
+	defer g.wmu.Unlock()
+	return conn.WriteJSON(map[string]any{"op": opHeartbeat, "d": d})
 }
 
 func (g *gateway) readFrame() (gwPayload, error) {

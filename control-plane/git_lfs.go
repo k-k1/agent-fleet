@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -248,7 +249,8 @@ func (a gitServerAPI) lfsUpload(w http.ResponseWriter, r *http.Request) {
 	if err := a.store.PutLFSObject(r.Context(), mv.TenantID, name, oid, written); err != nil {
 		// The object is stored; a ledger miss only under-counts the quota. Log-worthy
 		// but not client-facing.
-		_ = err
+		log.Printf("lfs: ledger record failed tenant=%s repo=%s oid=%s size=%d: %v",
+			mv.TenantID, name, oid, written, err)
 	}
 	w.WriteHeader(http.StatusOK)
 }

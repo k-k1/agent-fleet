@@ -280,12 +280,18 @@ func handlePutSlackConn(w http.ResponseWriter, r *http.Request) {
 	// Fire one synchronous test notification on a FRESH connect only — not on a settings
 	// edit (auto-save per toggle would otherwise spam the channel with tests).
 	if !editing {
-		if ps := bridge.Providers(s, nil, nil); len(ps) > 0 {
-			if err := ps[len(ps)-1].Send(bridge.Message{Kind: "bridge-test"}); err != nil {
+		// Pick the Slack provider by name — positional ps[len-1] would hit Discord when
+		// Slack is excluded (e.g. NotifyOff) and falsely report the test as sent.
+		for _, p := range bridge.Providers(s, nil, nil) {
+			if p.Name() != "slack" {
+				continue
+			}
+			if err := p.Send(bridge.Message{Kind: "bridge-test"}); err != nil {
 				res["testError"] = err.Error()
 			} else {
 				res["test"] = "sent"
 			}
+			break
 		}
 	}
 	if creds.Receive && creds.ChannelID != "" {

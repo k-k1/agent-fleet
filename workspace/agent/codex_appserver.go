@@ -430,13 +430,22 @@ func monitorCodexAppServer(conn *websocket.Conn, addr string) {
 		// The app-server remains authoritative for the TUI even if only AF's
 		// observer socket dropped. Reconnect so later events are not silently
 		// missed; attachments are per connection, so the fresh observer's first
-		// sweep re-attaches every loaded thread.
+		// sweep re-attaches every loaded thread. Exponential backoff（上限 60s）で
+		// 恒久不在時のビジーリトライを避け、無効化されていたら脱出する。
+		backoff := time.Second
 		for {
-			time.Sleep(time.Second)
+			time.Sleep(backoff)
+			if codex.Serve().Disabled() {
+				log.Printf("codex app-server: observer stopped (server disabled)")
+				return
+			}
 			var err error
 			conn, err = connectCodexAppServer(addr)
 			if err == nil {
 				break
+			}
+			if backoff *= 2; backoff > 60*time.Second {
+				backoff = 60 * time.Second
 			}
 		}
 	}

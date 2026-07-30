@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 )
@@ -271,7 +272,7 @@ func (rp *reaper) idleBase(seen bool, lastSeen time.Time, dbLastActive string) t
 
 // haltSession halts one idle claude session (Agent POST /sessions/{name}/halt).
 func (rp *reaper) haltSession(ctx context.Context, rt Runtime, ws Workspace, name string) {
-	req, _ := http.NewRequestWithContext(ctx, "POST", rt.Endpoint()+"/sessions/"+name+"/halt", nil)
+	req, _ := http.NewRequestWithContext(ctx, "POST", rt.Endpoint()+"/sessions/"+url.PathEscape(name)+"/halt", nil)
 	if rt.Token() != "" {
 		req.Header.Set("Authorization", "Bearer "+rt.Token())
 	}

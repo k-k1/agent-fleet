@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log"
 	"net/http"
 )
 
@@ -47,6 +48,8 @@ func (a adminAPI) allSessions(w http.ResponseWriter, r *http.Request) {
 	for _, t := range tenants {
 		members, err := a.mgr.store.ListMembersByTenant(ctx, t.ID)
 		if err != nil {
+			// 部分失敗はログで可視化する(テナントが管理ビューから静かに消えないように)
+			log.Printf("admin sessions: list members tenant=%s: %v", t.Slug, err)
 			continue
 		}
 		byMembership := make(map[string]MemberInfo, len(members))
@@ -55,6 +58,7 @@ func (a adminAPI) allSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		wss, err := a.mgr.store.ListWorkspaces(ctx, t.ID)
 		if err != nil {
+			log.Printf("admin sessions: list workspaces tenant=%s: %v", t.Slug, err)
 			continue
 		}
 		for _, ws := range wss {

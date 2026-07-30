@@ -5,7 +5,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
+
+// trustMu serializes the config.json read-modify-write（同時起動で片方の
+// trustedFolders 追記が失われると trust ダイアログで固まる）。
+var trustMu sync.Mutex
 
 // copilot の config.json（$COPILOT_HOME/config.json）への trustedFolders 事前追記。
 // 実測（v1.0.73）: TUI は未信頼フォルダで "Confirm folder trust" ダイアログを出して
@@ -80,6 +85,8 @@ func EnsureFolderTrusted(dir string) {
 	if dir == "" {
 		return
 	}
+	trustMu.Lock()
+	defer trustMu.Unlock()
 	comments, m := readConfig()
 	list, _ := m["trustedFolders"].([]any)
 	for _, v := range list {
@@ -98,6 +105,8 @@ func ensureFolderTrustedIn(home, dir string) {
 	if dir == "" {
 		return
 	}
+	trustMu.Lock()
+	defer trustMu.Unlock()
 	p := filepath.Join(home, "config.json")
 	comments, m := readConfigAt(p)
 	list, _ := m["trustedFolders"].([]any)

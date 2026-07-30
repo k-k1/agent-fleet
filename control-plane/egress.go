@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -53,6 +54,13 @@ func (d *egressAuditDedup) firstToday(day, host string) bool {
 // bearerToken extracts a "Bearer <tok>" Authorization value.
 func bearerToken(r *http.Request) string {
 	return strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+}
+
+// tokenOK checks the shared AF_EGRESS_TOKEN bearer in constant time (タイミング
+// 攻撃でトークンを推測されないように)。
+func (a egressAPI) tokenOK(r *http.Request) bool {
+	return a.token != "" &&
+		subtle.ConstantTimeCompare([]byte(bearerToken(r)), []byte(a.token)) == 1
 }
 
 // egressStore is the narrow store view the egress feature needs: observation
@@ -110,7 +118,7 @@ func (a egressAPI) effectivePolicy(ctx context.Context) (entries []string, enfor
 // mode to the forward proxy, which polls it so admin edits take effect without a proxy
 // restart. AF_EGRESS_TOKEN bearer (authGate-exempt), same as ingestion.
 func (a egressAPI) policy(w http.ResponseWriter, r *http.Request) {
-	if a.token == "" || bearerToken(r) != a.token {
+	if !a.tokenOK(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -122,7 +130,7 @@ func (a egressAPI) policy(w http.ResponseWriter, r *http.Request) {
 // egress proxy. Deployment-internal: authenticated by the shared AF_EGRESS_TOKEN bearer
 // (not a user session — it is authGate-exempt). Best-effort: a bad row is skipped.
 func (a egressAPI) ingest(w http.ResponseWriter, r *http.Request) {
-	if a.token == "" || bearerToken(r) != a.token {
+	if !a.tokenOK(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -202,9 +210,11 @@ func (a egressAPI) allowlistAdd(w http.ResponseWriter, r *http.Request, ident Id
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "invalid JSON"})
 		return
 	}
-	entry := strings.ToLower(strings.TrimSpace(b.Entry))
-	if entry == "" {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_entry", "entry required"})
+	// メンバー申請経路と同じ正規化・検証を適用する(死にエントリや ".com" 等の
+	// TLD 全開放が管理者経路からも入らないように)。
+	entry, aerr := normalizeEgressEntry(b.Entry)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
 		return
 	}
 	e := AllowlistEntry{

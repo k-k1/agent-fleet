@@ -166,7 +166,7 @@ func installChromium(pin string) error {
 	ok := false
 	for _, url := range urls {
 		fmt.Fprintf(os.Stderr, "[install-chromium] downloading build %s (%s) ...\n", pin, url)
-		if err := runCmd("curl", "-fsSL", "--retry", "3", "--retry-delay", "2", "--retry-connrefused", "-o", zipPath, url); err != nil {
+		if err := runCmd("curl", "-fsSL", "--proto", "=https", "--proto-redir", "=https", "--retry", "3", "--retry-delay", "2", "--retry-connrefused", "-o", zipPath, url); err != nil {
 			lastErr = fmt.Errorf("download %s: %w", url, err)
 			continue
 		}
@@ -220,7 +220,7 @@ func installNotoCJK() {
 	defer os.Remove(tmp)
 	url := fmt.Sprintf(notoCJKURL, pin)
 	fmt.Fprintf(os.Stderr, "[install-chromium] downloading Noto Sans CJK (%s) ...\n", pin)
-	if err := runCmd("curl", "-fsSL", "--retry", "3", "--retry-delay", "2", "--retry-connrefused", "-o", tmp, url); err != nil {
+	if err := runCmd("curl", "-fsSL", "--proto", "=https", "--proto-redir", "=https", "--retry", "3", "--retry-delay", "2", "--retry-connrefused", "-o", tmp, url); err != nil {
 		fmt.Fprintf(os.Stderr, "[install-chromium] WARN: CJK font download failed (CJK pages will lack glyphs): %v\n", err)
 		return
 	}
@@ -309,7 +309,7 @@ func installGo(ver string) error {
 	defer os.Remove(tgz)
 	url := "https://go.dev/dl/" + fname
 	fmt.Fprintf(os.Stderr, "[install-go] downloading %s ...\n", url)
-	if err := runCmd("curl", "-fsSL", "--retry", "3", "--retry-delay", "2", "--retry-connrefused", "-o", tgz, url); err != nil {
+	if err := runCmd("curl", "-fsSL", "--proto", "=https", "--proto-redir", "=https", "--retry", "3", "--retry-delay", "2", "--retry-connrefused", "-o", tgz, url); err != nil {
 		return fmt.Errorf("download: %w", err)
 	}
 	if err := verifySha256(tgz, sum); err != nil {
@@ -427,7 +427,7 @@ func installAWSCLI(ver string) error {
 	zipPath := filepath.Join(staging, "awscliv2.zip")
 	url := fmt.Sprintf("https://awscli.amazonaws.com/awscli-exe-linux-%s-%s.zip", arch, ver)
 	fmt.Fprintf(os.Stderr, "[install-awscli] downloading AWS CLI %s ...\n", ver)
-	if err := runCmd("curl", "-fsSL", "--retry", "3", "--retry-delay", "2", "--retry-connrefused", "-o", zipPath, url); err != nil {
+	if err := runCmd("curl", "-fsSL", "--proto", "=https", "--proto-redir", "=https", "--retry", "3", "--retry-delay", "2", "--retry-connrefused", "-o", zipPath, url); err != nil {
 		return fmt.Errorf("download: %w", err)
 	}
 	if err := runCmd("unzip", "-q", zipPath, "-d", staging); err != nil {
@@ -467,7 +467,7 @@ func installSMP(ver string) error {
 	deb := filepath.Join(staging, "smp.deb")
 	url := fmt.Sprintf("https://s3.amazonaws.com/session-manager-downloads/plugin/%s/ubuntu_%s/session-manager-plugin.deb", ver, smparch)
 	fmt.Fprintf(os.Stderr, "[install-awscli] downloading session-manager-plugin %s ...\n", ver)
-	if err := runCmd("curl", "-fsSL", "--retry", "3", "--retry-delay", "2", "--retry-connrefused", "-o", deb, url); err != nil {
+	if err := runCmd("curl", "-fsSL", "--proto", "=https", "--proto-redir", "=https", "--retry", "3", "--retry-delay", "2", "--retry-connrefused", "-o", deb, url); err != nil {
 		return fmt.Errorf("download: %w", err)
 	}
 	// dpkg-deb -x unpacks the payload without root (no maintainer scripts run —
@@ -512,7 +512,7 @@ func installGrafanaMCP(ver string) (string, error) {
 	tgz := filepath.Join(staging, "mcp-grafana.tgz")
 	url := fmt.Sprintf("https://github.com/grafana/mcp-grafana/releases/download/v%s/mcp-grafana_Linux_%s.tar.gz", ver, mgarch)
 	fmt.Fprintf(os.Stderr, "[mcp-run grafana] downloading mcp-grafana %s ...\n", ver)
-	if err := runCmd("curl", "-fsSL", "--retry", "3", "--retry-delay", "2", "--retry-connrefused", "-o", tgz, url); err != nil {
+	if err := runCmd("curl", "-fsSL", "--proto", "=https", "--proto-redir", "=https", "--retry", "3", "--retry-delay", "2", "--retry-connrefused", "-o", tgz, url); err != nil {
 		return "", fmt.Errorf("download: %w", err)
 	}
 	if err := runCmd("tar", "-C", staging, "-xzf", tgz, "mcp-grafana"); err != nil {

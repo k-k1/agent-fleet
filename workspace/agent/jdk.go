@@ -155,9 +155,10 @@ func runInstallJDK(args []string) {
 
 	url := fmt.Sprintf("https://api.adoptium.net/v3/binary/latest/%s/ga/linux/%s/jdk/hotspot/normal/eclipse", major, aarch)
 	fmt.Fprintf(os.Stderr, "[install-jdk] downloading Temurin %s (%s) ...\n", major, aarch)
-	// curl follows the API redirect to the release tarball. tar --strip-components=1
+	// curl follows the API redirect to the release tarball（--proto-redir =https で
+	// http への降格リダイレクトは拒否）. tar --strip-components=1
 	// drops the jdk-<ver>/ top-level dir so bin/, lib/ land directly under staging.
-	if err := runCmd("curl", "-fsSL", "-o", tgzPath, url); err != nil {
+	if err := runCmd("curl", "-fsSL", "--proto", "=https", "--proto-redir", "=https", "-o", tgzPath, url); err != nil {
 		fmt.Fprintf(os.Stderr, "[install-jdk] download failed: %v\n", err)
 		os.Exit(1)
 	}

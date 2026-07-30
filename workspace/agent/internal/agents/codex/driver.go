@@ -1061,6 +1061,15 @@ func dispatchNotification(msg rpcMsg) {
 			case "interrupted":
 				st = agents.TurnCancelled
 			}
+			// 別 turn の完了で実行中 turn を誤終了させない（遅延配送・多重接続）。
+			// 両方の id が分かっていて食い違う時だけ弾く — turn/started を見ていない
+			// 引き継ぎ turn（h.turnID == ""）は従来どおり終端として扱う。
+			h.mu.Lock()
+			mismatch := h.turnID != "" && p.Turn.ID != "" && h.turnID != p.Turn.ID
+			h.mu.Unlock()
+			if mismatch {
+				return
+			}
 			agents.MarkTurnEnd(h.slotSid, st)
 			h.mu.Lock()
 			end := h.turnEnd

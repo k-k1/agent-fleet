@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -98,17 +100,25 @@ func (a *claudeAuditor) run(ctx context.Context) {
 	}
 }
 
+const claudeAuditCursorPrefix = "claude_audit_cursor:"
+
 func (a *claudeAuditor) sweep(ctx context.Context) {
 	tenants, err := a.mgr.store.ListTenants(ctx)
 	if err != nil {
 		return
 	}
+	liveWS := map[string]bool{}   // 現存する全ワークスペース
+	checked := map[string]bool{}  // セッション一覧まで取得できた running WS
+	liveKey := map[string]bool{}  // 現存 claude セッションのカーソル key
+	complete := true              // 部分失敗があれば掃除は見送る(誤削除防止)
 	for _, tn := range tenants {
 		wss, err := a.mgr.store.ListWorkspaces(ctx, tn.ID)
 		if err != nil {
+			complete = false
 			continue
 		}
 		for _, ws := range wss {
+			liveWS[ws.ID] = true
 			rt := a.mgr.runtimeFor(ws, "")
 			if rt.State(ctx) != "running" {
 				continue
@@ -117,17 +127,45 @@ func (a *claudeAuditor) sweep(ctx context.Context) {
 			if err != nil {
 				continue
 			}
+			checked[ws.ID] = true
 			for _, s := range sessions {
 				if s.Kind == "claude" {
+					liveKey[claudeAuditCursorPrefix+ws.ID+":"+s.Name] = true
 					a.auditSession(ctx, ws, rt, s.Name)
 				}
 			}
 		}
 	}
+	if complete {
+		a.cleanupCursors(ctx, liveWS, checked, liveKey)
+	}
+}
+
+// cleanupCursors drops per-session cursor keys that can no longer fire: the
+// workspace was deleted, or the (successfully enumerated, running) workspace no
+// longer has that session. 停止中WSのセッションは列挙できないため据え置く。
+func (a *claudeAuditor) cleanupCursors(ctx context.Context, liveWS, checked, liveKey map[string]bool) {
+	keys, err := a.mgr.store.ListSettingKeys(ctx, claudeAuditCursorPrefix)
+	if err != nil {
+		return
+	}
+	for _, key := range keys {
+		rest := strings.TrimPrefix(key, claudeAuditCursorPrefix)
+		wsID, _, ok := strings.Cut(rest, ":")
+		if !ok {
+			continue
+		}
+		if liveWS[wsID] && (!checked[wsID] || liveKey[key]) {
+			continue
+		}
+		if err := a.mgr.store.DeleteSetting(ctx, key); err != nil {
+			log.Printf("claude-audit: cursor cleanup failed key=%s: %v", key, err)
+		}
+	}
 }
 
 func (a *claudeAuditor) auditSession(ctx context.Context, ws Workspace, rt Runtime, name string) {
-	key := "claude_audit_cursor:" + ws.ID + ":" + name
+	key := claudeAuditCursorPrefix + ws.ID + ":" + name
 	cur, _ := a.mgr.store.GetSetting(ctx, key)
 	firstTime := cur == ""
 	since := cur
@@ -151,8 +189,15 @@ func (a *claudeAuditor) auditSession(ctx context.Context, ws Workspace, rt Runti
 			if a0.At == "" {
 				a0.At = nowTS()
 			}
-			_ = a.mgr.store.InsertAudit(ctx, a0)
+			if err := a.mgr.store.InsertAudit(ctx, a0); err != nil {
+				// カーソルを進めると監査行がサイレント欠落する。据え置いて次回再試行
+				// (途中まで入った行は重複し得るが、欠落よりは重複を選ぶ)。
+				log.Printf("claude-audit: insert failed ws=%s session=%s: %v", ws.ID, name, err)
+				return
+			}
 		}
 	}
-	_ = a.mgr.store.SetSetting(ctx, key, strconv.Itoa(resp.Cursor))
+	if err := a.mgr.store.SetSetting(ctx, key, strconv.Itoa(resp.Cursor)); err != nil {
+		log.Printf("claude-audit: cursor save failed ws=%s session=%s: %v", ws.ID, name, err)
+	}
 }

@@ -7,12 +7,20 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 )
+
+// createWorkspaceMu serializes port allocation (MaxAgentPort+1) と CreateWorkspace
+// の check-then-act。これが無いと並行 create が同一ポートを二重割当する(TOCTOU)。
+// プロセス内直列化で足りる(CP は単一プロセス)。DB 一意制約による恒久対策は残課題。
+var createWorkspaceMu sync.Mutex
 
 // createWorkspace allocates a new workspace record for a membership. An existing
 // container of the conventional name has its port/AGENT_TOKEN adopted; otherwise
 // a fresh port (DB max+1, floored at portBase) and token are minted.
 func (m *manager) createWorkspace(ctx context.Context, mv MembershipView, userKey string) (Workspace, error) {
+	createWorkspaceMu.Lock()
+	defer createWorkspaceMu.Unlock()
 	name, network, dataDir := m.workspaceNames(mv.TenantSlug, userKey)
 	port := dockerPublishedPort(name)
 	if port == "" {

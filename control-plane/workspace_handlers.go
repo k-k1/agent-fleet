@@ -102,7 +102,14 @@ func (a workspaceAPI) recreate(w http.ResponseWriter, r *http.Request, res *reso
 	// the container up mid-teardown (startResolved re-acquires the lock itself).
 	lock := a.mgr.startLockFor(res.ws.ID)
 	lock.Lock()
-	_ = res.rt.Stop(r.Context()) // best-effort: may not exist yet
+	// Stop は「まだ存在しない」等は許容する(best-effort)が、まだ running のまま
+	// なら中断する — ライブ bind-mount 配下の削除は不整合を起こすため。
+	if err := res.rt.Stop(r.Context()); err != nil && res.rt.State(r.Context()) == "running" {
+		lock.Unlock()
+		log.Printf("recreate: stop failed for ws %s (still running, aborting wipe): %v", res.ws.ID, err)
+		writeAPIErr(w, &apiError{http.StatusInternalServerError, "stop_failed", "could not stop the workspace; recreate aborted"})
+		return
+	}
 	// Clear the working copies while the container is down. Targeted: we keep the
 	// encrypted secrets store and everything else in home.
 	_ = os.RemoveAll(filepath.Join(a.mgr.rootedDataDir(res.ws), "home", "repos"))
@@ -123,7 +130,14 @@ func (a workspaceAPI) recreate(w http.ResponseWriter, r *http.Request, res *reso
 func (a workspaceAPI) cleanHome(w http.ResponseWriter, r *http.Request, res *resolved) {
 	lock := a.mgr.startLockFor(res.ws.ID)
 	lock.Lock()
-	_ = res.rt.Stop(r.Context()) // best-effort: may not exist yet
+	// recreate と同じく、Stop 失敗かつまだ running なら中断(ライブ bind-mount 配下
+	// の削除を避ける)。
+	if err := res.rt.Stop(r.Context()); err != nil && res.rt.State(r.Context()) == "running" {
+		lock.Unlock()
+		log.Printf("clean-home: stop failed for ws %s (still running, aborting wipe): %v", res.ws.ID, err)
+		writeAPIErr(w, &apiError{http.StatusInternalServerError, "stop_failed", "could not stop the workspace; clean-home aborted"})
+		return
+	}
 	// Wipe home (keep-list preserved) while the container is down — deleting under a
 	// live bind-mount risks inconsistency (see cleanHome's contract in runtime_docker.go).
 	_ = cleanHome(a.mgr.rootedDataDir(res.ws))

@@ -4,7 +4,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 )
+
+// settingsMu serializes the settings.json read-modify-write（同時起動で片方の
+// trustedWorkspaces 追記が失われると trust プロンプトで固まる）。
+var settingsMu sync.Mutex
 
 // agy の settings.json（~/.gemini/antigravity-cli/settings.json）への書き込み口。
 // trustedWorkspaces の事前追加と enableTelemetry の固定に使う。agy 自身も同じ
@@ -43,6 +48,8 @@ func EnsureWorkspaceTrusted(dir string) {
 	if dir == "" {
 		return
 	}
+	settingsMu.Lock()
+	defer settingsMu.Unlock()
 	m := readSettings()
 	list, _ := m["trustedWorkspaces"].([]any)
 	for _, v := range list {
@@ -61,6 +68,8 @@ func EnsureWorkspaceTrusted(dir string) {
 // pin doesn't survive the key being flipped or dropped later. No-op when
 // already false.
 func enforceTelemetryOff() {
+	settingsMu.Lock()
+	defer settingsMu.Unlock()
 	m := readSettings()
 	if v, ok := m["enableTelemetry"].(bool); ok && !v {
 		return

@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	_ "embed"
+	"log"
 	"strings"
 	"sync"
 	"unicode"
@@ -30,6 +31,7 @@ func loadCmudict() {
 	cmuMap = make(map[string]string, 140000)
 	zr, err := gzip.NewReader(bytes.NewReader(cmudictGz))
 	if err != nil {
+		log.Printf("enkana: cmudict gzip open failed: %v", err)
 		return
 	}
 	defer zr.Close()
@@ -57,6 +59,10 @@ func loadCmudict() {
 			continue // 最初の異形を採用
 		}
 		cmuMap[w] = strings.Join(fields[1:], " ")
+	}
+	if err := sc.Err(); err != nil {
+		// 部分ロードでも変換自体は動く(未収載語は素通し)ので続行するが、黙らせない
+		log.Printf("enkana: cmudict scan failed (dictionary partially loaded, %d words): %v", len(cmuMap), err)
 	}
 }
 

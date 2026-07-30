@@ -16,6 +16,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"sync"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
@@ -38,6 +39,12 @@ type bridgeAnswerState struct {
 }
 
 var bridgeAnswers = fstore.JSON[bridgeAnswerState](paths.AgentConfigDir, "bridge-answers", ".json")
+
+// bridgeAnswerMu serializes the pick accumulate→submit read-modify-write: two
+// near-simultaneous button clicks would otherwise drop a pick (the form never
+// submits) or double-submit on the final pick. One mutex suffices — clicks are
+// rare and the critical section is short.
+var bridgeAnswerMu sync.Mutex
 
 func clearBridgeAnswer(name string) { bridgeAnswers.Remove(name) }
 
@@ -106,6 +113,8 @@ func answerClaudeQuestion(meta session.Meta, pi bridge.ParsedInteraction, en boo
 	}
 	picked := qs[pi.QI].Options[pi.OI].Label
 
+	bridgeAnswerMu.Lock()
+	defer bridgeAnswerMu.Unlock()
 	st, _ := bridgeAnswers.Read(meta.Name)
 	if st.Fp != pi.Fp || st.Picks == nil {
 		st = bridgeAnswerState{Fp: pi.Fp, Picks: map[int]int{}}
@@ -176,6 +185,8 @@ func applyManagedQuestion(h agents.ThreadHandle, name string, pi bridge.ParsedIn
 	}
 	picked := qs[pi.QI].Options[pi.OI].Label
 
+	bridgeAnswerMu.Lock()
+	defer bridgeAnswerMu.Unlock()
 	st, _ := bridgeAnswers.Read(name)
 	if st.Fp != pi.Fp || st.Picks == nil {
 		st = bridgeAnswerState{Fp: pi.Fp, Picks: map[int]int{}}

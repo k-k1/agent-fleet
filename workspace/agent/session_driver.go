@@ -129,6 +129,8 @@ func handleSessionDriver(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	m.StoppedAt = ""
-	session.WriteMeta(m)
+	// The stop/relaunch above takes seconds — re-merge the on-disk lock so this
+	// write-back can't roll back a lock the user flipped meanwhile (lost update).
+	m = writeSessionMetaKeepingLock(m)
 	httpx.WriteJSON(w, http.StatusOK, wireSession(m, true))
 }
