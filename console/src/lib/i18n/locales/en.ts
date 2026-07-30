@@ -1887,6 +1887,8 @@ export const en: Record<keyof typeof ja, string> = {
   "sched.f_agent": "Agent",
   "sched.f_model": "Model",
   "sched.f_model_ph": "Default",
+  "sched.f_report": "Report to assistant",
+  "sched.f_report_hint": "deliver the completion report to the owning conversation (default: off)",
   "sched.f_prompt": "Prompt",
   "sched.f_session_mode": "Session mode",
   "sched.f_reuse_target": "Reuse target",

@@ -159,7 +159,11 @@ type Schedule struct {
 	NewBranch                  bool
 	Prompt                     string
 	OverlapPolicy              string // skip (default) | queue | restart (reuse only, P6)
-	Enabled                    bool
+	// Report opts a fire into the docs/30 completion report: true passes OwnerConv as the
+	// session's report_to so the result comes back to the operator/assistant conversation.
+	// Default false = fire silently (run history / failure notifications still surface).
+	Report  bool
+	Enabled bool
 	NextRun, LastRun           string
 	LastStatus                 string
 	CreatedAt, UpdatedAt       string
