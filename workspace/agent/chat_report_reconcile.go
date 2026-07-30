@@ -79,6 +79,17 @@ type reportSignals struct {
 	SelfReported bool
 	SelfReportAt string // その申告の RFC3339
 
+	// Abort は転写の末尾が API エラーで切れている＝ターンが中断で終わった証拠
+	// （docs/47）。claude はこのとき Stop hook を鳴らさないので**マーカーは一切
+	// 動かない**。従来これを見ていたのはペースのヒール経路（state != idle かつ
+	// ペインが待機表示）だけで、誤ヒールでマーカーが消えた後は二度と評価されず、
+	// 中断がどこにも報告されないまま指示が宙に浮いた（実測 sp2qemx 2026-07-30）。
+	// レベルで読めば入口が状態に依存しなくなる — 転写の末尾は「今ディスクにある
+	// 状態」そのもので、ユーザーが再開すれば末尾が変わって自然に消える。
+	Abort       bool
+	AbortReason string // turn-aborted（再送で直る）/ turn-failed（原因を直すまで無意味）
+	AbortAt     string // その中断が記録された RFC3339
+
 	HintReason string // 直近のヒントが運んだ qualifier（turn-failed / turn-aborted）
 }
 
@@ -145,6 +156,9 @@ func (s reportSignals) idleEvidence() []string {
 	if s.SelfReported {
 		ev = append(ev, "self-report")
 	}
+	if s.Abort {
+		ev = append(ev, "abort")
+	}
 	return ev
 }
 
@@ -160,6 +174,9 @@ func (s reportSignals) markerIdle() bool {
 func (s reportSignals) evidenceAt() string {
 	if s.markerIdle() {
 		return s.MarkerTS
+	}
+	if s.Abort && s.AbortAt != "" {
+		return s.AbortAt
 	}
 	return s.SelfReportAt
 }
@@ -189,8 +206,14 @@ func evalReportEvidence(s reportSignals) reportVerdict {
 	if len(idle) == 0 {
 		return reportVerdict{Why: "unknown"} // 不明は不明のまま — idle と既定しない
 	}
+	// 中断は「なぜ終わったか」を転写から直接読めるので、ヒント（フック由来・
+	// 中断では鳴らないので普通は空）より優先する。
+	reason := s.HintReason
+	if s.Abort {
+		reason = s.AbortReason
+	}
 	return reportVerdict{
-		Quiet: true, Fast: s.SelfReported, Kind: reportKindAnswerReady, Reason: s.HintReason,
+		Quiet: true, Fast: s.SelfReported, Kind: reportKindAnswerReady, Reason: reason,
 		At: s.evidenceAt(), Why: "idle:" + strings.Join(idle, ","),
 	}
 }
@@ -264,6 +287,7 @@ func collectReportSignals(m session.Meta, since, hintReason, selfAt string) repo
 	if normalizeKind(m.Kind) == session.KindClaude {
 		s.SubagentBusy = claude.SubagentBusy(sid)
 		s.TranscriptBusy = reportTranscriptBusy(sid, markerAt)
+		collectAbortSignal(&s, sid, since)
 	}
 	if e, ok := status.ReadExit(m.Name); ok {
 		switch e.Reason {
@@ -279,6 +303,38 @@ func collectReportSignals(m session.Meta, since, hintReason, selfAt string) repo
 		}
 	}
 	return s
+}
+
+// collectAbortSignal reads the転写末尾 for a turn that died on an API error (docs/47).
+// マーカーを一切見ないのが肝: claude は中断で Stop hook を鳴らさないので、マーカーは
+// 「working のまま」「誤ヒールで消えた」「前のターンの idle が残っている」のどれにも
+// なり得る。中断そのものは転写の末尾という**レベル**に書かれているので、そこだけを見る。
+//
+// since より前の中断は前の指示の話なので捨てる（マーカー・自己申告と同じ下限）。時刻を
+// 持たないレコードは切らずに採る — 中断は「今ディスクにある末尾」なので、時刻が読めなくても
+// 現在の状態を指しているから。
+func collectAbortSignal(s *reportSignals, sid, since string) {
+	a, ok := claude.AbortInfo(sid)
+	if !ok {
+		return
+	}
+	at := ""
+	if !a.At.IsZero() {
+		at = a.At.Format(time.RFC3339)
+	}
+	if at != "" && reportTimeBefore(at, since) {
+		return
+	}
+	s.Abort, s.AbortAt = true, at
+	s.AbortReason = reportReasonTurnFailed
+	if a.Retryable {
+		s.AbortReason = reportReasonTurnAborted
+	}
+	// 中断が末尾にあるなら、転写の「新しさ」はその中断レコード自身のもの — 進行中の
+	// 証拠ではなく、終わり方そのものである。ここで下ろさないと、中断のたびに鮮度の
+	// 窓（90s）が明けるまで報告が足止めされる。ペイン／サブエージェントの busy 証拠は
+	// 別の事実（再開した・BG が動いている）なので残す。
+	s.TranscriptBusy = false
 }
 
 // reportMarkerGrace absorbs the RFC3339 second-truncation of the status marker when
