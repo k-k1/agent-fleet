@@ -134,7 +134,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const [llmSuggestions, setLlmSuggestions] = useState<string[]>([]);
   const [suggesting, setSuggesting] = useState(false);
   const suggestRef = useRef<HTMLDivElement>(null); // チップ行（Tab でここへフォーカスを移す）
-  useDragScroll(suggestRef); // 1行に収めた候補列をマウスドラッグで左右スクロール（スワイプは既定動作）
+  useDragScroll(suggestRef); // 1行に収めた候補列をマウスのドラッグ/縦ホイールで左右スクロール（スワイプは既定動作）
   // 読み上げ中の文（ライブ配信カラオケ・docs/19）と、直近のターンエラー。どちらも
   // 発生元の会話で括り、別チャットへ切り替えた後に相手の吹き出しへ出ないようにする。
   const [karaoke, setKaraoke] = useState<{ key: string; text: string } | null>(null);
