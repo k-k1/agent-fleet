@@ -184,6 +184,50 @@
   font-size: 12px;
 }
 
+/* rtk 効果 card — 台帳とは別系（コンテナ内 rtk の履歴）を末尾に1枚。メーターは WsBar の
+   .wu-* 行（グローバルバンドル）を流用。節約は正の値なので warn/crit のリソース色ではなく
+   Top バーのアクセント（--topbar-accent、未選択時は --accent へフォールバック）で塗る。 */
+.rtk-gain-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+.rtk-gain .spark {
+  color: var(--topbar-accent, var(--accent));
+  flex-shrink: 0;
+}
+.rtk-gain-headline {
+  font-size: 20px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.rtk-gain-headline .muted {
+  font-size: 13px;
+  font-variant-numeric: normal;
+}
+.rtk-gain-meter {
+  margin-bottom: 12px;
+}
+.rtk-gain .wu-bar-fill {
+  background: var(--topbar-accent, var(--accent));
+}
+.rtk-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 28px;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.rtk-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.rtk-gain .rtk-note {
+  margin: 10px 0 0;
+}
+
 /* --- 積み上げ棒（時系列） --------------------------------------------------- */
 
 .usage-chart {

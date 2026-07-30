@@ -30,7 +30,7 @@ import { useT } from "../../lib/i18n/index.ts";
 //      defaults are client-only, so the cards render even while stopped — you can set a
 //      default model before starting; only the connection + runtime toggles wait for the
 //      workspace. Git-hosting agents live in GitTab; the rtk 効果 analytics that used to
-//      sit here moved out (monitoring is not a setting).
+//      sit here lives in the 使用量 tab (features/usage) — monitoring is not a setting.
 export function AgentsTab() {
   const tr = useT();
   const toast = useToast();
