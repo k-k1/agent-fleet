@@ -75,9 +75,11 @@ func (a previewAPI) proxy(w http.ResponseWriter, r *http.Request, res *resolved)
 
 	for k, vals := range resp.Header {
 		for _, v := range vals {
-			// The previewed app must not (re)issue the Console's own cookies on the
-			// Console origin (af_session fixation / tossing); its other cookies pass.
-			if http.CanonicalHeaderKey(k) == "Set-Cookie" && cpOwnedCookie(v) {
+			// The previewed app must not (re)issue a login cookie on the Console
+			// origin — neither the CP's own (af_session fixation / tossing) nor a
+			// front auth gateway's (_oauth2_proxy* / AWSELBAuthSessionCookie*):
+			// the same set the request side strips. Its other cookies pass.
+			if http.CanonicalHeaderKey(k) == "Set-Cookie" && sensitiveBrowserCookie(setCookieName(v)) {
 				continue
 			}
 			w.Header().Add(k, v)
@@ -133,12 +135,10 @@ func sensitiveBrowserCookie(name string) bool {
 		strings.HasPrefix(name, "AWSELBAuthSessionCookie")
 }
 
-// cpOwnedCookie reports whether a Set-Cookie header line names a cookie the CP
-// itself issues (session / OAuth state) — the ones a previewed app must not forge.
-func cpOwnedCookie(setCookie string) bool {
+// setCookieName extracts the cookie name from a Set-Cookie header line.
+func setCookieName(setCookie string) string {
 	name, _, _ := strings.Cut(setCookie, "=")
-	name = strings.TrimSpace(name)
-	return strings.EqualFold(name, sessionCookie) || strings.EqualFold(name, stateCookie)
+	return strings.TrimSpace(name)
 }
 
 // redirect bounces /preview/{port} to /preview/{port}/ so the
