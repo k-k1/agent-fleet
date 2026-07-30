@@ -89,6 +89,14 @@ func TestReportResumedEvidence(t *testing.T) {
 		{"転写が伸びた（マーカーより後の追記）", reportSignals{TranscriptBusy: true}, true},
 		{"ペインに中断アフォーダンス", reportSignals{PaneBusy: true}, true},
 		{"未回答の質問が残っている", reportSignals{PendingQuestion: true}, true},
+		// 完了の遅着（報告の直後に本物のターン終端が書かれる）を「再開」と読むと、
+		// 嘘の訂正＋同内容の再報告になる（2026-07-30 sannme2）。終端の証拠があるときは
+		// 鮮度の証拠を無視する。
+		{"報告後に終端 idle が来た＝完了の遅着（鮮度が残っていても再開ではない）",
+			reportSignals{MarkerState: "idle", MarkerTurnEnd: true, MarkerAfterArm: true,
+				TranscriptBusy: true, PaneBusy: true}, false},
+		{"報告後にそのターンが中断で終わった＝再開ではない",
+			reportSignals{Abort: true, AbortReason: reportReasonTurnAborted, TranscriptBusy: true}, false},
 		{"何も無い", reportSignals{}, false},
 	}
 	for _, tc := range cases {
