@@ -173,6 +173,7 @@ func main() {
 	// workspace start injects a token for it (docs/reference/internal-git-provider).
 	if u, err := url.Parse(publicBaseURL); err == nil {
 		mgr.internalGitHost = u.Hostname()
+		wsAllowedOriginHost = u.Host // WS origin allowlist (checkWSOrigin)
 	}
 	// Full public base (scheme+host) for the in-container memo bridge (AF_CP_BASE_URL).
 	mgr.publicBaseURL = strings.TrimRight(publicBaseURL, "/")

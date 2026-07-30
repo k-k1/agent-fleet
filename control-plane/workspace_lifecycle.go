@@ -206,7 +206,7 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws Workspace) []string 
 	// clone/push authenticate transparently. Deterministic, so re-injection on
 	// every start is idempotent. Skipped when PUBLIC_BASE_URL is unset.
 	if m.internalGitHost != "" && ws.MembershipID != "" {
-		token := mintGitToken(gitSignKey(m.master32), ws.MembershipID)
+		token := mintGitToken(gitSignKey(m.tokenSignMaster()), ws.MembershipID)
 		env = append(env,
 			"AF_INTERNAL_GIT_HOST="+m.internalGitHost,
 			"AF_INTERNAL_GIT_TOKEN="+token)
@@ -218,16 +218,16 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws Workspace) []string 
 	if m.publicBaseURL != "" && ws.MembershipID != "" {
 		env = append(env,
 			"AF_CP_BASE_URL="+m.publicBaseURL,
-			"AF_MEMO_TOKEN="+mintMemoToken(memoSignKey(m.master32), ws.MembershipID),
+			"AF_MEMO_TOKEN="+mintMemoToken(memoSignKey(m.tokenSignMaster()), ws.MembershipID),
 			// Schedule bridge (docs/38 P3): separate per-membership token so the
 			// operator MCP can drive /internal/schedules over the same hairpin. A
 			// distinct credential from the memo token — a leak is scoped to schedules.
-			"AF_SCHEDULE_TOKEN="+mintScheduleToken(scheduleSignKey(m.master32), ws.MembershipID),
+			"AF_SCHEDULE_TOKEN="+mintScheduleToken(scheduleSignKey(m.tokenSignMaster()), ws.MembershipID),
 			// MCP registry bridge (docs/48 P4): the agent polls /internal/mcp-servers for
 			// this tenant's distributed MCP definitions. Its own credential, because the
 			// response can carry tenant secrets (a user_secret=0 server's headers) — a leak
 			// must not also grant memo/schedule access, and vice versa.
-			"AF_MCP_TOKEN="+mintMCPToken(mcpSignKey(m.master32), ws.MembershipID))
+			"AF_MCP_TOKEN="+mintMCPToken(mcpSignKey(m.tokenSignMaster()), ws.MembershipID))
 	}
 	return env
 }

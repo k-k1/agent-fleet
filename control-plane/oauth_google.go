@@ -156,9 +156,14 @@ type oauthState struct {
 }
 
 // sanitizeNext keeps post-login redirects on-site (no open redirect): a single
-// leading slash only.
+// leading slash only. "/\" is rejected too — browsers normalize backslash to
+// slash, so "/\evil.com" would become the scheme-relative "//evil.com". The
+// parse check backstops both against any other absolute-URL form.
 func sanitizeNext(n string) string {
-	if n == "" || !strings.HasPrefix(n, "/") || strings.HasPrefix(n, "//") {
+	if n == "" || !strings.HasPrefix(n, "/") || strings.HasPrefix(n, "//") || strings.HasPrefix(n, "/\\") {
+		return "/"
+	}
+	if u, err := url.Parse(n); err != nil || u.Scheme != "" || u.Host != "" {
 		return "/"
 	}
 	return n
@@ -287,6 +292,18 @@ func (c config) authGate(next http.Handler) http.Handler {
 				http.Redirect(w, r, "/login?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
 			} else {
 				writeAPIErr(w, &apiError{http.StatusUnauthorized, "unauthenticated", "login required"})
+			}
+			return
+		}
+		// Re-check the allowlist on every request, not just at login: removing an
+		// email from the allowlist is the offboarding path, and must take effect
+		// before the session cookie's TTL runs out.
+		if !c.emailAllowed(email) {
+			if wantsHTML(r) {
+				c.setCookie(w, sessionCookie, "", -1)
+				loginRedirect(w, r, "forbidden")
+			} else {
+				writeAPIErr(w, &apiError{http.StatusForbidden, "forbidden", "email not allowed"})
 			}
 			return
 		}

@@ -48,6 +48,10 @@ func (a browserAPI) rest(w http.ResponseWriter, r *http.Request, res *resolved) 
 		a.mgr.conns.touch(res.ws.ID)
 	}
 
+	if unsafeRelayPath(r.URL.Path) {
+		http.Error(w, "bad browser proxy path", http.StatusBadRequest)
+		return
+	}
 	target, err := browserAgentHTTPURL(res.rt.Endpoint(), r)
 	if err != nil {
 		http.Error(w, "bad agent endpoint", http.StatusBadGateway)
@@ -66,7 +70,7 @@ func (a browserAPI) rest(w http.ResponseWriter, r *http.Request, res *resolved) 
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := agentRelayClient.Do(req)
 	if err != nil {
 		http.Error(w, "workspace agent browser unreachable", http.StatusBadGateway)
 		return

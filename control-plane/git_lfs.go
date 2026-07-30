@@ -119,6 +119,9 @@ func (a gitServerAPI) lfsBatch(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			remaining = max - used
+			if remaining < 0 {
+				remaining = 0 // already over quota: nothing more may upload
+			}
 		}
 	}
 
@@ -130,7 +133,7 @@ func (a gitServerAPI) lfsBatch(w http.ResponseWriter, r *http.Request) {
 			out = append(out, obj)
 			continue
 		}
-		exists := fileExists(a.lfsObjectPath(slug, name, o.OID))
+		exists := fileExists(a.lfsObjectPath(mv.TenantSlug, name, o.OID))
 		href := a.lfsHref(slug, name, o.OID)
 		switch {
 		case upload && exists:
@@ -172,7 +175,7 @@ func (a gitServerAPI) lfsUpload(w http.ResponseWriter, r *http.Request) {
 		writeLFSErr(w, http.StatusUnprocessableEntity, "invalid oid")
 		return
 	}
-	dest := a.lfsObjectPath(slug, name, oid)
+	dest := a.lfsObjectPath(mv.TenantSlug, name, oid)
 	if fileExists(dest) {
 		w.WriteHeader(http.StatusOK) // already have it
 		return
@@ -193,6 +196,9 @@ func (a gitServerAPI) lfsUpload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		remaining = max - used
+		if remaining < 0 {
+			remaining = 0 // already over quota: nothing more may upload
+		}
 		if r.ContentLength > 0 && r.ContentLength > remaining {
 			writeLFSErr(w, http.StatusInsufficientStorage, "tenant LFS quota exceeded")
 			return
@@ -251,7 +257,7 @@ func (a gitServerAPI) lfsUpload(w http.ResponseWriter, r *http.Request) {
 // support via http.ServeContent.
 func (a gitServerAPI) lfsDownload(w http.ResponseWriter, r *http.Request) {
 	slug, repoSeg, oid := r.PathValue("slug"), r.PathValue("repo"), r.PathValue("oid")
-	name, _, _, aerr := a.authorizeGitRepo(r, slug, repoSeg)
+	name, mv, _, aerr := a.authorizeGitRepo(r, slug, repoSeg)
 	if aerr != nil {
 		aerr.writeLFS(w)
 		return
@@ -260,7 +266,7 @@ func (a gitServerAPI) lfsDownload(w http.ResponseWriter, r *http.Request) {
 		writeLFSErr(w, http.StatusUnprocessableEntity, "invalid oid")
 		return
 	}
-	f, err := os.Open(a.lfsObjectPath(slug, name, oid))
+	f, err := os.Open(a.lfsObjectPath(mv.TenantSlug, name, oid))
 	if err != nil {
 		writeLFSErr(w, http.StatusNotFound, "object does not exist")
 		return

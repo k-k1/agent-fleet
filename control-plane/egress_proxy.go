@@ -135,10 +135,32 @@ func (p *egressProxy) decide(host string) bool {
 	return allowed || !pol.enforce
 }
 
+// internalEgressDest reports whether the destination resolves to an address no
+// workspace has a legitimate reason to reach THROUGH the proxy: loopback (the
+// proxy host itself), link-local (incl. the 169.254.169.254 cloud metadata
+// service), or unspecified. Denied even in log-only mode — log-only exists to
+// curate the public allowlist, not to expose the proxy host's own services.
+func internalEgressDest(host string) bool {
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return false // unresolvable: let the dial fail on its own
+	}
+	for _, ip := range ips {
+		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+			return true
+		}
+	}
+	return false
+}
+
 // handleConnect tunnels an HTTPS CONNECT after the allow/log decision.
 func (p *egressProxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	if !p.decide(hostOnly(r.Host)) {
 		http.Error(w, "egress blocked by policy", http.StatusForbidden)
+		return
+	}
+	if internalEgressDest(hostOnly(r.Host)) {
+		http.Error(w, "egress to an internal address is not allowed", http.StatusForbidden)
 		return
 	}
 	dst, err := net.DialTimeout("tcp", r.Host, 15*time.Second)
@@ -167,6 +189,10 @@ func (p *egressProxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 func (p *egressProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	if !p.decide(hostOnly(r.Host)) {
 		http.Error(w, "egress blocked by policy", http.StatusForbidden)
+		return
+	}
+	if internalEgressDest(hostOnly(r.Host)) {
+		http.Error(w, "egress to an internal address is not allowed", http.StatusForbidden)
 		return
 	}
 	r.RequestURI = ""
