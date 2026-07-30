@@ -226,6 +226,16 @@ func evalReportEvidence(s reportSignals) reportVerdict {
 // 転写・ペイン）は、報告が出た時点では必ず false だったもの（busy 証拠がゼロでなければ
 // 報告は出ない）なので、いま true なら新しい書込みがあったということ。
 func evalReportResumed(s reportSignals) []string {
+	// 報告のあとに「ターンが**終わった**」証拠が来ているなら、それは作業の再開ではなく、
+	// いま報告した完了そのものの遅着（あるいはそのターンが中断で終わったこと）である。
+	// ここを見分けないと、鮮度の証拠（報告の数秒後に書かれる最後の assistant 行）で
+	// 「先の完了報告は早計でした — まだ作業中です」という**嘘の訂正**を出し、次の tick で
+	// 同じ完了をもう一度報告することになる（実測 2026-07-30 sannme2: 09:59:34 報告 →
+	// 09:59:50 に本物の回答が書かれる → 10:00:08 訂正 → 10:00:34 同内容を再報告）。
+	// 本当に再開していれば最新のマーカーは working / question 側になり、下の列で拾える。
+	if s.markerIdle() || s.Abort {
+		return nil
+	}
 	var ev []string
 	switch s.MarkerState {
 	case "working", "question", "plan", "permission":
