@@ -246,9 +246,13 @@ fi
 # Console is a Vite + React app: build it to console/dist, which the CP serves
 # statically (no-store). Run `npm --prefix console run dev` (vite build --watch) in a
 # separate shell during active UI work; this script does a one-shot production build.
-# mermaid is large; raise the Node heap so the build doesn't OOM on a RAM-constrained host.
-echo "==> build console (vite)"
-(cd "$ROOT/console" && { [ -d node_modules ] || npm ci; } && NODE_OPTIONS="--max-old-space-size=3072" npm run build)
+# mermaid is large and the bundle keeps growing; the build can peak past the 2 GiB
+# cgroup cap that tmux-claude.sh pins on each fleet agent. build_console escapes into a
+# sibling systemd scope when boxed into a small cap, else builds in-process. See
+# console-build.sh.
+# shellcheck disable=SC1091
+. "$ROOT/deploy/local/console-build.sh"
+build_console
 
 echo "==> build control-plane"
 (cd "$ROOT/control-plane" && go build -o /tmp/af-cp .)

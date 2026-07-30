@@ -32,12 +32,14 @@ PORT="${CP_ADDR##*:}"
 
 # --- build -------------------------------------------------------------------
 if [ "${SKIP_CONSOLE:-0}" != "1" ]; then
-  echo "==> build console (vite)"
   export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
   # shellcheck disable=SC1091
   [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" >/dev/null 2>&1 || true
-  ( cd "$ROOT/console" && { [ -d node_modules ] || npm ci; } \
-      && NODE_OPTIONS="--max-old-space-size=3072" npm run build )
+  # Vite build can peak past the 2 GiB cgroup cap on a fleet agent; build_console
+  # escapes into a sibling scope when boxed in. See console-build.sh.
+  # shellcheck disable=SC1091
+  . "$ROOT/deploy/local/console-build.sh"
+  build_console
 fi
 echo "==> build control-plane"
 ( cd "$ROOT/control-plane" && go build -o /tmp/af-cp . )
