@@ -107,10 +107,10 @@ func (a *claudeAuditor) sweep(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	liveWS := map[string]bool{}   // 現存する全ワークスペース
-	checked := map[string]bool{}  // セッション一覧まで取得できた running WS
-	liveKey := map[string]bool{}  // 現存 claude セッションのカーソル key
-	complete := true              // 部分失敗があれば掃除は見送る(誤削除防止)
+	liveWS := map[string]bool{}  // 現存する全ワークスペース
+	checked := map[string]bool{} // セッション一覧まで取得できた running WS
+	liveKey := map[string]bool{} // 現存 claude セッションのカーソル key
+	complete := true             // 部分失敗があれば掃除は見送る(誤削除防止)
 	for _, tn := range tenants {
 		wss, err := a.mgr.store.ListWorkspaces(ctx, tn.ID)
 		if err != nil {
