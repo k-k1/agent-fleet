@@ -388,7 +388,7 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
   useOpenSignal(src.key, () => setOpen((o) => !o));
   // Notify when a constrained limit window resets (5-hour / weekly). Runs whether or
   // not the dropdown is open — the chip stays mounted while the workspace is up.
-  useUsageResetNotify(src, usage, fiveLabel, weekLabel, refresh);
+  useUsageResetNotify(src, usage, refresh);
 
   const win = (w: { pct: number; resetsAt: string }) => ({
     pct: Math.round(w.pct),

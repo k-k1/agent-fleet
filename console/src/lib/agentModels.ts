@@ -117,12 +117,14 @@ export function useEffortOptions(kind: string, model: string): EffortOption[] {
   const noEffort =
     (kind === "claude" && model === "haiku") ||
     (kind === "copilot" && (model === "" || model === "auto"));
+  // カタログ全体の effort 和集合（選択モデルにメタデータが無いときの次善候補）。
+  const catalogEfforts = [...new Set(rows.flatMap((m) => m.efforts))];
   const efforts = noEffort
     ? []
     : selected?.efforts.length
     ? selected.efforts
-    : [...new Set(rows.flatMap((m) => m.efforts))].length
-      ? [...new Set(rows.flatMap((m) => m.efforts))]
+    : catalogEfforts.length
+      ? catalogEfforts
       : FALLBACK_EFFORTS[kind] || [];
   // claude は CLI から per-model の既定 effort を取得できない（catalog を持たない）。
   // 未指定時は Claude Code の CLI 既定（xhigh）に落ちるので、それを注記する。

@@ -29,8 +29,6 @@ interface Win {
 export function useUsageResetNotify(
   src: Src,
   usage: { fiveHour?: Win; sevenDay?: Win } | null,
-  _fiveLabel: string,
-  _weekLabel: string,
   refresh: () => void,
 ) {
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);

@@ -40,7 +40,7 @@ export interface Session {
   backgroundBusyReason?: string;
   createdAt?: string; // ISO timestamp
   model?: string; // claude model
-  context?: unknown; // claude context-window usage (shape owned by the chat view)
+  context?: SessionContextUsage; // claude context-window usage (Agent 側 session.ContextUsage)
   branch?: string; // git branch the working copy was on when the session started
   currentBranch?: string; // working copy's branch now, set only when it differs from `branch`
   branchDrift?: boolean; // true = the working tree was switched off `branch` under the session
@@ -58,6 +58,16 @@ export interface Session {
   locked?: boolean;
 }
 
+// A session's current context fill — the wire shape of the Agent's
+// session.ContextUsage (internal/session/session.go). Field names deliberately match
+// the ContextBar props so the terminal/chat heads can spread it straight in.
+export interface SessionContextUsage {
+  read: number; // cache_read_input_tokens（再利用キャッシュ）
+  create: number; // cache_creation_input_tokens（新規キャッシュ）
+  fresh: number; // input_tokens（非キャッシュ）
+  model?: string;
+}
+
 // isManagedSession: a managed (paneless) session has no tmux pane — the chat
 // mirror is its primary UI, no terminal view exists, and its inputs go through
 // the semantic /turn・/respond ops instead of TUI key driving (docs/27 §10).
@@ -67,7 +77,7 @@ export const isManagedSession = (s?: { driver?: string } | null): boolean =>
 // Provider connection status for one agent, from GET /api/connections.
 export interface ProviderConn {
   connected?: boolean;
-  envs?: unknown[]; // opencode: configured provider API-key envs
+  envs?: string[]; // opencode: configured provider API-key env names (auth.go)
   // agy: host capability (docs/32 Track B — RDRAND ガード)。false = this host
   // cannot run agy ("no_rdrand" / "not_installed"); absent = supported.
   supported?: boolean;
