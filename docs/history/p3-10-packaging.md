@@ -1,6 +1,6 @@
 # 20. P3-10 実装プラン — パッケージング & 配布 & アップグレード（オンプレ compose）
 
-> 📐 **設計プラン（未実装）** — 現状は [HANDOFF](../HANDOFF.md)、方針は [ロードマップ P3-10](../roadmap.md#p3-10-パッケージング--配布--アップグレード提供モデルの核) / [decisions/0001](../decisions/0001-self-host-vs-saas.md)。
+> 🗄 **歴史的記録（初期プラン）— 実装は [docs/35 パッケージング](../35-packaging.md) で実施**。現状は [HANDOFF](../HANDOFF.md)、方針は [ロードマップ P3-10](../roadmap.md#p3-10-パッケージング--配布--アップグレード提供モデルの核) / [decisions/0001](../decisions/0001-self-host-vs-saas.md)。
 
 提供モデル（グループ各社が自社でセルフホスト）の**核**。P3-1〜P3-9 の機能を「他社の情シスがゼロから設置・運用・更新できる形」にする。今回は**オンプレ Docker/compose 一本**に絞る（AWS は P3-7 で後追い）。**完了ゲート = 第2デプロイをクリーン環境にゼロから立てて E2E 通過**。
 
@@ -16,7 +16,7 @@ P3-10 の配布は**戦略と不可分**なので前提として据える（2026
 
 - **TLS/ingress = Caddy 同梱**（compose に Caddy サービス、公開ドメインで Let's Encrypt 自動取得＝ACME、自己署名フォールバック記載）。各社はドメイン+DNS のみ用意。「各社の既存プロキシで前段」は代替として軽く文書化。
 - **認証 = `AUTH=oauth`**（CP ネイティブ Google OAuth）既定。外部 oauth2-proxy は任意。
-- **MetadataStore = SQLite 既定**（小規模＝数十〜百ユーザー、[[p3-1-metadatastore]]）。Postgres は AWS/HA 時に港の裏で後追い。
+- **MetadataStore = SQLite 既定**（小規模＝数十〜百ユーザー、[p3-1-metadatastore](p3-1-metadatastore.md)）。Postgres は AWS/HA 時に港の裏で後追い。
 - **phone-home しない**。各社デプロイは我々の中央基盤に一切依存しない。
 
 ## 20.2 現状のギャップ（コード事実）

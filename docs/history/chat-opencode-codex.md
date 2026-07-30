@@ -36,7 +36,7 @@ codex の session_id は既に捕捉済み（`codexSids`、status フックの s
 
 **JSONL ゆえ claude と同じ行ベースの発想が乗る。低リスク＝段1で採用。**
 
-### opencode — SQLite（段2の対象・未実装）
+### opencode — SQLite（段2の対象・実装済）
 
 `~/.local/share/opencode/opencode.db`（WAL）。ファイル分散でなく **SQLite**。opencode の `ses_…` id は捕捉済み（`opencodeSids`）。
 
@@ -185,7 +185,7 @@ Console のみ（`MirrorView` typing 行＋`.mirror-stop`）。
   オフ（およびコマンドの無い opencode）はモードサイクルキー: claude/codex=Shift+Tab（`BTab`）、opencode=Tab（agent_cycle）。
   `allowedKey` に `BTab` 追加。registry に `planMode` cap＋`planCycleKey`＋`planEnterCmd`。`/plan` はターンでないため
   Agent はスラッシュコマンド（`slashCmdRe`）を `markSessionWorking` しない（codex の進行中固定を防ぐ）。
-- **停止**: 作業中に Escape を送る（[[22.11]] のサブエージェントビュー対応込み）。ツールバーに常設（旧・入力中行の
+- **停止**: 作業中に Escape を送る（§22.11 のサブエージェントビュー対応込み）。ツールバーに常設（旧・入力中行の
   停止は撤去）。
 - **現在モードはペインから取得（`paneMode`）**: モード切替キーでは新モードが transcript に記録されない（ターン実行時
   のみ）ため、DB/rollout 由来だと切替が反映されず、ターミナル側の切替は特に「逆」に見えた。TUI が常時表示する現在
