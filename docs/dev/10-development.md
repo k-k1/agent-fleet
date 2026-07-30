@@ -202,18 +202,33 @@ opencode / copilot / agy / cursor / kiro）で、npm・GitHub Releases・各社 
 `cli-release-watch.yml` は毎日この公開版を前回処理版と比較し、**版が変わった CLI だけ**
 contract を dispatch する。状態は専用 issue `CLI release watcher state` の追記型コメント
 （`cli-release-state tested|seen <cli>=<version>`）に保存する。repository variables は
-`GITHUB_TOKEN` から書けず 403 になるため使わない。claude / codex / opencode は contract
-成功時だけ `tested` を追記するので、失敗時は翌日も再試行する。まだ無人の実認証 contract
-がない copilot / agy / cursor / kiro は `seen` を記録し、フリート上で必要な TUI／ミラー
-probe を追跡 issue に upsert する（「検出済み」と「テスト成功」を混同しない）。
+`GITHUB_TOKEN` から書けず 403 になるため使わない。contract 成功時だけ `tested` を
+追記するので、失敗時は翌日も再試行する。7 CLI 全てに contract ワークフローがあり
+（copilot は GH OAuth token で実ターン、cursor / kiro も実ターン契約、agy はターン無しの
+pane probe）、release edge で無人 dispatch されるのは credential を安定供給できる
+claude / codex / opencode / copilot / agy（secret 未設定なら `seen` に落ちる）。
+cursor / kiro は refresh で回転する対話 credential のため自動 dispatch せず `seen` を
+記録し、secret 更新後に専用ワークフローを手動 dispatch する
+（「検出済み」と「テスト成功」を混同しない）。
 
 **ワークフローはエージェント毎に 1 ファイル**（`claude-tui-contract.yml` /
-`codex-contract.yml` / `opencode-contract.yml`）。パス条件も `workflow_dispatch` の入力も
+`codex-contract.yml` / `opencode-contract.yml` / `copilot-contract.yml` /
+`agy-contract.yml` / `cursor-contract.yml` / `kiro-contract.yml`）。パス条件も `workflow_dispatch` の入力も
 **ワークフロー単位**なので、`e2e.yml` に同居させると (1) 無関係な変更で走り、(2) 入力が
 他エージェントと混ざる（実際 codex の Tier2 と claude の live-smoke が 1 つの `live` 入力を
 共有し、1 回の dispatch で両方の枠が減っていた）。分離すればこの結合が構造的に起きない。
 `cli-drift.yml` と `cli-release-watch.yml` だけは7 CLI横断・毎日実行という性質が違うので
-エージェント別 contract から独立させる。
+エージェント別 contract から独立させる。同じく横断の例外が `mcp-config-contract.yml`
+（認証・課金不要）: MCP レジストリの materialize が書く各 CLI グローバル設定の**形**を、
+CLI 自身の `mcp add` に書かせた設定との構造比較（`mcp add` を持たない cursor と
+ヘッダを表現できない codex は CLI に af の書いたファイルを読み返させる）で検証する——
+検証対象がレジストリ側の 1 契約で複数 CLI に同時に跨がるため 1 本にまとめている（docs/48 §8）。
+
+このほか `release-gate.yml` がパッケージング（docs/35）の検証を担う: 配布物のビルド・
+lean variant の boot-install・既定（全焼き込み）ビルド・native の実 bwrap 起動・
+ECS リリース手順の静的検査・dist の stub publish/install を hosted runner の実イメージ
+ビルドで確認する。dev ホストでの重ビルドはフリートを OOM させ得るため常設トリガを持たず、
+ワークフロー自身を変更する push と `workflow_dispatch` でのみ走る。
 
 共通セットアップ（Go / Node / tmux / 実 CLI 導入）は
 **`.github/actions/setup-agent-cli`**（composite action）に集約。`version: pinned|latest|<版>`

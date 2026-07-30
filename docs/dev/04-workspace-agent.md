@@ -181,15 +181,24 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
 
 ## 4.9 Workspace イメージと entrypoint
 
-`workspace/Dockerfile`（multi-stage golang→node:22-slim、約 2.8G）。**イメージと Agent は
-全デプロイターゲット共通**（移植の肝、[09](09-deploy.md)）。
+`workspace/Dockerfile`（multi-stage golang→node:22-slim。サイズは BAKE ノブで大きく変わる）。
+**イメージと Agent は全デプロイターゲット共通**（移植の肝、[09](09-deploy.md)）。
 
-- **焼き込み**: claude / opencode / codex（global npm、`ARG CLAUDE_CODE_VERSION` /
-  `OPENCODE_VERSION` / `CODEX_VERSION` でピン止め——bump 手順は [10 §10.2.1 の runbook](10-development.md)。
-  ピンの写しを `/usr/local/share/agent-fleet/versions.json` に書き出し、Agent の
+- **エージェント CLI は 2 経路**（`ARG BAKE_AGENT_CLIS`、**既定 0 = lean**。docs/35 §35.4.1）:
+  - **lean（既定）**: claude / opencode / codex / copilot / cursor / agy / rtk を**イメージに焼かない**
+    （プロプライエタリ CLI を再配布しない安全既定）。entrypoint の **boot-install** が初回起動時に
+    `versions.json` のピン版を公式配布元（npm / GitHub Releases 等）から `~/.local` へ導入する
+    （home 永続なので 2 回目以降は無音スキップ。ネット不通は WARN で続行し次回起動時に再試行。
+    self-update opt-in が OFF の起動では進んだ版をピンへ戻す repin あり）。
+    kiro だけは全ユーザー一律の boot-install をせず（展開後 ~855MB）、利用時にオンデマンド導入。
+  - **`BAKE_AGENT_CLIS=1`**: 上記 CLI を焼き込み（初回起動を速くしたい自社デプロイ向けの明示ノブ）。
+- **版ピンはどちらの経路でも同じ `ARG`**（`CLAUDE_CODE_VERSION` / `OPENCODE_VERSION` /
+  `CODEX_VERSION` / `COPILOT_VERSION` / `CURSOR_VERSION` / `AGY_VERSION` / `KIRO_VERSION` /
+  `RTK_VERSION`——bump 手順は [10 §10.2.1 の runbook](10-development.md)）。BAKE ノブに関わらず
+  全ピンを `/usr/local/share/agent-fleet/versions.json` に書き出し、Agent の
   `GET /env/tool-versions`（設定→環境「ツールのバージョン」: 実効 / 焼き込み / ~/.local
-  override / ピン差分の read-only 表示）と e2e-smoke が参照する）、
-  rtk（vendor 静的バイナリ、git 管理外——ビルド時にホストから vendor）、
+  override / ピン差分の read-only 表示）と e2e-smoke と boot-install が参照する。
+- **焼き込み（共通ツール、`BAKE_OPTIONAL_TOOLS`=既定 1 ほか）**:
   Go toolchain（`ARG GO_VERSION`、go.mod と歩調）、
   build-essential + python3（+ `break-system-packages`、pip --user は home 永続）、vim・git-lfs・
   jq 等の定番、tzdata、amd64/arm64共通の固定版Debian Chromium（setuid sandbox helperをbuild時検証）と
