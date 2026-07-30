@@ -103,14 +103,18 @@ body.row-resizing {
   user-select: none;
 }
 
-/* Ordinal palette — ties a rail row, the mini-map, and the pane together. */
+/* Ordinal palette — ties a rail row, the mini-map, and the pane together. Theme-agnostic
+   (one set for dark and light) because every use paints white on the hue: the grip chip,
+   the rail ordinal, the mini-map cell. So the constraint is white-on-hue ≥4.5:1, which
+   the orange/green/pink/teal/gold slots missed (3.3–4.0:1 — the gold one was worst).
+   Darkened to ~5:1 keeping each hue distinguishable from its neighbours. */
 .pane-ord-1 { --ord: #2f74d0; }
-.pane-ord-2 { --ord: #d9631b; }
-.pane-ord-3 { --ord: #1f9d57; }
+.pane-ord-2 { --ord: #b8500f; }
+.pane-ord-3 { --ord: #17803f; }
 .pane-ord-4 { --ord: #8b45d6; }
-.pane-ord-5 { --ord: #d63384; }
-.pane-ord-6 { --ord: #0f8f84; }
-.pane-ord-7 { --ord: #b8860b; }
+.pane-ord-5 { --ord: #c22a6d; }
+.pane-ord-6 { --ord: #0b7a71; }
+.pane-ord-7 { --ord: #8a6508; }
 .pane-ord-8 { --ord: #d53b3b; }
 
 /* Drag grip / ordinal chip (top-left) + control cluster (top-right). */

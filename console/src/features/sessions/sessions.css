@@ -458,9 +458,11 @@
   background: color-mix(in srgb, #17a2a2 12%, transparent);
   border-color: color-mix(in srgb, #17a2a2 38%, transparent);
 }
-/* Light theme: the mid teal dips below AA as small text on white — darken it. */
+/* Light theme: the mid teal dips below AA as small text on white — darken it. One step
+   further than the first pass, because the chip is not on white: it sits on a 12% tint
+   of its own teal, where #15828a still read 3.7:1. */
 [data-theme="light"] .session-state.bg {
-  color: #15828a;
+  color: #0d6a70;
 }
 .session-state.question {
   color: var(--warn);

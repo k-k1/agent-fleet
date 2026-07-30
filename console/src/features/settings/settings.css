@@ -846,7 +846,10 @@
   font-family: var(--mono);
   font-size: 11px;
   font-weight: 700;
-  color: #0c0c0c;
+  /* The monogram sits on a per-connection fill whose lightness is NOT uniform, so the
+     label colour is picked per fill below instead of assumed. The near-black default
+     suits the pale/mid fills; dark fills opt into --pb-fg: #fff. */
+  color: var(--pb-fg, #0c0c0c);
 }
 .p-badge.pb-claude { background: var(--kind-claude); }
 .p-badge.pb-codex { background: var(--kind-codex); }
@@ -861,7 +864,26 @@
 .p-badge.pb-discord { background: #5865f2; }
 .p-badge.pb-slack { background: #4a154b; }
 .p-badge.pb-grafana { background: #f46800; }
-.p-badge.pb-cloudwatch { background: #e7157b; }
+.p-badge.pb-cloudwatch { background: #d1126f; } /* brand pink, one step down: the stock #e7157b left neither a white nor a black monogram at 4.5:1 */
+/* Brand fills that are dark in BOTH themes — Slack aubergine, Discord blurple,
+   CloudWatch pink — carried a near-black monogram at 1.4–4.4:1. */
+.p-badge.pb-slack,
+.p-badge.pb-discord,
+.p-badge.pb-cloudwatch {
+  --pb-fg: #fff;
+}
+/* The agent-kind fills follow --kind-*, which flips with the theme: light hues in the
+   dark theme (near-black label reads), dark hues in the light theme (it did not — the
+   claude/codex/cursor/kiro badges sat at 2.8–3.2:1). */
+[data-theme="light"] .p-badge.pb-claude,
+[data-theme="light"] .p-badge.pb-codex,
+[data-theme="light"] .p-badge.pb-cursor,
+[data-theme="light"] .p-badge.pb-copilot,
+[data-theme="light"] .p-badge.pb-kiro,
+[data-theme="light"] .p-badge.pb-opencode,
+[data-theme="light"] .p-badge.pb-agy {
+  --pb-fg: #fff;
+}
 .p-name {
   font-weight: 600;
   font-size: 14px;
