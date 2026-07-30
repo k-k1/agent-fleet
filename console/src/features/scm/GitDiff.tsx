@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 
@@ -124,6 +124,10 @@ function diffRows(lines: string[]): DiffRow[] {
       text.startsWith("similarity ") || text.startsWith("rename ") || text.startsWith("copy ")
     ) {
       // redundant meta — skip
+    } else if (text.startsWith("\\")) {
+      // "\ No newline at end of file" — a marker, not file content: rendering it as
+      // ctx would bump both line counters and shift every number below by one.
+      rows.push({ type: "meta", text });
     } else if (text.startsWith("+")) {
       rows.push({ type: "add", newLn, text });
       newLn++;
@@ -174,9 +178,15 @@ export function Diff({
 // over a line-numbered patch body. Defaults open; click the header to collapse. A
 // `fold` broadcast (from 全て開く / 全て閉じる) forces open/closed when its nonce changes.
 function FileDiff({ file, fold }: { file: DiffFile; fold?: FoldSignal }) {
+  const tr = useT();
   const [open, setOpen] = useState(true);
+  // ブロードキャストは「イベント」なので nonce が変わったときだけ適用する。マウント時に
+  // 過去の全て閉じるを適用すると、diff 更新で新しく現れたファイルが閉で出てしまう。
+  const seenFold = useRef(fold?.n);
   useEffect(() => {
-    if (fold) setOpen(fold.open);
+    if (!fold || fold.n === seenFold.current) return;
+    seenFold.current = fold.n;
+    setOpen(fold.open);
   }, [fold?.n]); // eslint-disable-line react-hooks/exhaustive-deps
   const rows = useMemo(() => diffRows(file.lines), [file.lines]);
   const adds = rows.reduce((n, r) => n + (r.type === "add" ? 1 : 0), 0);
@@ -185,7 +195,7 @@ function FileDiff({ file, fold }: { file: DiffFile; fold?: FoldSignal }) {
     <section className="filediff">
       <button className="filediff-head" type="button" onClick={() => setOpen((o) => !o)}>
         <Icon name={open ? "chevron-down" : "chevron-right"} />
-        <span className="filediff-path" title={file.path}>{file.path || "(diff)"}</span>
+        <span className="filediff-path" title={file.path}>{file.path || tr("scm.diff_unnamed")}</span>
         <span className="filediff-stat">
           {adds > 0 && <span className="add">+{adds}</span>}
           {dels > 0 && <span className="del">−{dels}</span>}
@@ -219,7 +229,7 @@ export function CommitDetail({ commit, wrap, fold }: { commit: CommitData | null
   return (
     <div className="commit-detail">
       <div className="cd-head">
-        <div className="cd-subject">{commit.subject || "(no message)"}</div>
+        <div className="cd-subject">{commit.subject || tr("scm.no_message")}</div>
         <div className="cd-meta">
           {commit.author} · {(commit.date || "").slice(0, 10)} · <code>{commit.short}</code>
         </div>

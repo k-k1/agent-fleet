@@ -15,6 +15,11 @@ export default defineConfig({
   use: {
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
-    launchOptions: { executablePath: "/usr/bin/chromium" },
+    // UI 言語を日本語に固定する（Console は navigator.language で言語を決める）。
+    // 英語ロケールだと editor.status.saved / clean が同じ "Saved" になり
+    // 「保存直後」の照合が clean 状態と区別できないため（console.spec.ts）。
+    locale: "ja-JP",
+    // 環境変数で上書き可能に（既定はイメージ焼き込みの chromium）。
+    launchOptions: { executablePath: process.env.E2E_CHROMIUM_PATH || "/usr/bin/chromium" },
   },
 });

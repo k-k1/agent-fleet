@@ -419,23 +419,36 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
 
   // Ensure a real conversation exists (approach A): a draft is created + promoted before
   // the first upload or send, so image attachments have a conversation id to post to.
-  const ensureConv = async (): Promise<Conversation | null> => {
-    if (convRef.current) return convRef.current;
-    if (!draftAssistantId) return null;
-    const title = input.trim().slice(0, 40) || t("chat.new_title");
-    const created = await chatCreate(draftAssistantId, title);
-    if (!created || !created.id) return null;
-    // Re-key the persisted composer draft to the real conversation, so the promotion's
-    // key flip (useDraft reloads from storage) doesn't wipe the text mid-composition
-    // (paste path: the user is still typing when this runs).
-    moveDraft(draftKey, chatDraftKey(created.id));
-    applyConv(created);
-    promoteDraft(paneId, created.id);
-    // The pane now shows the created conversation — move the key with it before any
-    // await, so the first turn's callbacks recognise it as the current chat.
-    paneKeyRef.current = created.id;
-    setDraftAsst(null);
-    return created;
+  // 画像ペーストのアップロード中に送信が走るなど、作成中に再入しても会話を二重作成
+  // しないよう、進行中の作成 Promise に相乗りする（成功すれば convRef が埋まり、
+  // 失敗すれば解放されて再試行できる）。
+  const ensureConvInflight = useRef<Promise<Conversation | null> | null>(null);
+  const ensureConv = (): Promise<Conversation | null> => {
+    if (convRef.current) return Promise.resolve(convRef.current);
+    if (!draftAssistantId) return Promise.resolve(null);
+    if (!ensureConvInflight.current) {
+      ensureConvInflight.current = (async () => {
+        try {
+          const title = input.trim().slice(0, 40) || t("chat.new_title");
+          const created = await chatCreate(draftAssistantId, title);
+          if (!created || !created.id) return null;
+          // Re-key the persisted composer draft to the real conversation, so the promotion's
+          // key flip (useDraft reloads from storage) doesn't wipe the text mid-composition
+          // (paste path: the user is still typing when this runs).
+          moveDraft(draftKey, chatDraftKey(created.id));
+          applyConv(created);
+          promoteDraft(paneId, created.id);
+          // The pane now shows the created conversation — move the key with it before any
+          // await, so the first turn's callbacks recognise it as the current chat.
+          paneKeyRef.current = created.id;
+          setDraftAsst(null);
+          return created;
+        } finally {
+          ensureConvInflight.current = null;
+        }
+      })();
+    }
+    return ensureConvInflight.current;
   };
 
   const removeAttachment = (i: number) => {
@@ -845,6 +858,11 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     setSuggesting(true);
     try {
       const j = await chatSuggestReplies(conversationId);
+      // apiJSON はサーバエラーを {error} で解決する — 失敗を「候補なし」トーストに化けさせない。
+      if (j?.error) {
+        toast(errText(j.error) || t("chat.suggest_failed"));
+        return;
+      }
       const list = Array.isArray(j?.suggestions) ? j.suggestions.filter((x): x is string => typeof x === "string") : [];
       setLlmSuggestions(list);
       if (!list.length) toast(t("chat.suggest_none"));

@@ -59,7 +59,7 @@
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--panel);
-  color: var(--text);
+  color: var(--fg);
   box-sizing: border-box;
 }
 .memo-add-row {
@@ -75,7 +75,7 @@
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--panel);
-  color: var(--text);
+  color: var(--fg);
 }
 .memo-flush-bar {
   display: flex;
@@ -92,7 +92,7 @@
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--panel);
-  color: var(--text);
+  color: var(--fg);
 }
 .memo-repo {
   margin-bottom: 8px;
@@ -144,7 +144,7 @@
   font-size: 12px;
 }
 .memo-cat-caret:hover {
-  color: var(--text);
+  color: var(--fg);
 }
 /* Memos sit almost flush under their category header — a hair of left padding keeps the
    rows from touching the pane edge while maximizing usable width; the category bar's
@@ -158,7 +158,7 @@
   gap: 5px;
   font-size: 12px;
   font-weight: 600;
-  color: var(--text);
+  color: var(--fg);
   cursor: pointer;
 }
 .memo-cat-n {
@@ -211,7 +211,7 @@
 }
 .memo-comment,
 .memo-text {
-  color: var(--text);
+  color: var(--fg);
   white-space: pre-wrap;
 }
 .memo-comment {
@@ -241,7 +241,7 @@
 }
 .memo-menu-btn:hover {
   background: var(--btn);
-  color: var(--text);
+  color: var(--fg);
 }
 /* Touch: no hover, so keep the ⋯ button always visible and tappable. */
 @media (hover: none) {
@@ -282,7 +282,7 @@
   word-break: break-word;
 }
 .memo-tidy-after {
-  color: var(--text);
+  color: var(--fg);
   word-break: break-word;
 }
 .memo-cat-tag {
@@ -360,7 +360,7 @@
   white-space: nowrap;
   font-size: 12px;
   font-weight: 600;
-  color: var(--text, var(--fg));
+  color: var(--fg);
   cursor: text;
   border-radius: 4px;
   padding: 1px 3px;
@@ -730,7 +730,7 @@
   line-height: 1;
 }
 .memo-thumb-del:hover {
-  color: var(--text);
+  color: var(--fg);
   border-color: var(--muted);
 }
 .memo-lightbox {

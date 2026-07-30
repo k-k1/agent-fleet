@@ -13,7 +13,14 @@ async function createPage(
   if (!result || typeof result.id !== "string" || !result.id) {
     throw { code: "browser_start_failed", message: "Browser page response did not contain an id" };
   }
-  return result as BrowserPageResult;
+  // 無検証キャストにしない: id 以外のフィールドも型どおりへ正規化して返す
+  // （壊れた応答でも下流の targetFromURL / state 判定が黙って型ずれしないように）。
+  return {
+    id: result.id,
+    port: typeof result.port === "number" ? result.port : 0,
+    url: typeof result.url === "string" ? result.url : "",
+    state: typeof result.state === "string" ? result.state : "",
+  };
 }
 
 async function deletePage(id: string): Promise<void> {

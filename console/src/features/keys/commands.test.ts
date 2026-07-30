@@ -10,6 +10,7 @@
 // import below) lets us exercise the REAL registry rather than a hand-copied sample.
 import { describe, it, expect, beforeAll } from "vitest";
 import type { Command, Group } from "../../lib/keys/registry.ts";
+import { canonical } from "../../lib/keys/chords.ts";
 
 class MemStorage {
   private m = new Map<string, string>();
@@ -40,10 +41,14 @@ g.window ??= globalThis;
 
 let ALL_COMMANDS: Command[];
 let GROUPS: Group[];
+let APP_DEFAULTS: Record<string, string>;
 beforeAll(async () => {
   const mod = await import("./commands.ts");
   ALL_COMMANDS = mod.ALL_COMMANDS;
   GROUPS = mod.GROUPS;
+  // bindings.ts also touches localStorage-backed settings at import time — load it after
+  // the shim, like commands.ts.
+  APP_DEFAULTS = (await import("./bindings.ts")).APP_DEFAULTS;
 });
 
 const dupes = <T>(xs: T[]): T[] => [...new Set(xs.filter((x, i) => xs.indexOf(x) !== i))];
@@ -55,8 +60,20 @@ describe("keyboard command registry invariants", () => {
   });
 
   it("has no duplicate direct-accelerator keys", () => {
-    const keys = ALL_COMMANDS.flatMap((c) => c.keys ?? []);
+    // Canonicalize first: the dispatcher matches canonical chords, so "Mod+B" and
+    // "mod+b" ARE the same binding even though a raw string compare says otherwise.
+    const keys = ALL_COMMANDS.flatMap((c) => c.keys ?? []).map(canonical);
     expect(dupes(keys)).toEqual([]);
+  });
+
+  it("keeps direct keys clear of the reserved app chords (leader / palette / cheat-sheet)", () => {
+    // The three dispatcher-level chords (APP_DEFAULTS) are matched before commands —
+    // a command squatting on one would silently never fire.
+    const reserved = new Set(Object.values(APP_DEFAULTS).map(canonical));
+    const clashes = ALL_COMMANDS.flatMap((c) => c.keys ?? [])
+      .map(canonical)
+      .filter((k) => reserved.has(k));
+    expect(clashes).toEqual([]);
   });
 
   it("keeps group ids and single-key sequences disjoint (a key can't be both a group and an action)", () => {

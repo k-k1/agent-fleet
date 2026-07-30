@@ -53,6 +53,12 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
   // its desktop display mode (Push ⇄ overlay). We debounce the single action so a
   // double-click doesn't also fire it. Mobile keeps the immediate drawer toggle.
   const clickTimer = useRef<number | null>(null);
+  // unmount 時に保留中のシングルクリック遅延を破棄 — アンマウント後の toggleLeft 発火を防ぐ。
+  useEffect(() => {
+    return () => {
+      if (clickTimer.current != null) window.clearTimeout(clickTimer.current);
+    };
+  }, []);
   const onHamburger = () => {
     if (isMobile) {
       toggleNav();

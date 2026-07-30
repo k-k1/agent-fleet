@@ -55,7 +55,9 @@ export function WhichKey() {
       <div className="wk-panel">
         <div className="wk-head">
           <span className="wk-seq">
-            <Kbd chord={boundChord(APP_LEADER) || "mod+k"} />
+            {/* which-key only opens via the leader, so the chord is always bound here —
+                no fallback (an unbound leader can never reach this overlay). */}
+            <Kbd chord={boundChord(APP_LEADER)} />
             {path.map((k, i) => (
               <Kbd key={i} chord={k} />
             ))}

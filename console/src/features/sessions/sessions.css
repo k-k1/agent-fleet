@@ -151,10 +151,12 @@
   padding: 1px 4px;
 }
 /* On hover/active the ⋯ button overlays the row's right edge (see .sess-menu-wrap),
-   so fade the state chip out to hand that spot over instead of stacking two icons. */
-.sess-row:hover .session-state,
-.sess-row.hover .session-state,
-.sess-row.active .session-state {
+   so fade the state chip out to hand that spot over instead of stacking two icons.
+   :has(.sess-menu-wrap) — readOnly 行（履歴レール）は ⋯ を描かないので、チップを
+   消すと何も残らない。⋯ を持つ行に限定する。 */
+.sess-row:has(.sess-menu-wrap):hover .session-state,
+.sess-row:has(.sess-menu-wrap).hover .session-state,
+.sess-row:has(.sess-menu-wrap).active .session-state {
   opacity: 0;
 }
 .sess-drift {

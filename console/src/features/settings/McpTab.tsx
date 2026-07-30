@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from "react";
-import type { ReactNode } from "react";
 import { api, apiJSON, isTransientErr, errText, rawJSON } from "../../core/api/client.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../core/store/workspace.ts";
 import { EmptyState } from "../../ui/EmptyState.tsx";
@@ -24,7 +23,7 @@ import {
   toKV,
 } from "./mcpWire.ts";
 import type { Form, KV, McpServer, ProbeResult, Registry } from "./mcpWire.ts";
-import { Field, KVEditor } from "./mcpForm.tsx";
+import { Field, KVEditor, Meta } from "./mcpForm.tsx";
 // Egress allowlist tie-in (docs/48 §9): a remote server the deployment's proxy will not
 // let the workspace reach is warned about here, where it can still be acted on.
 import { EgressNote, useEgressCheck } from "./EgressNote.tsx";
@@ -80,7 +79,7 @@ export function McpTab() {
       api("api/mcp-servers")
         .then((d) => {
           if (d && !d.error) {
-            setReg({ servers: Array.isArray(d.servers) ? d.servers : [], ...d });
+            setReg({ ...d, servers: Array.isArray(d.servers) ? d.servers : [] });
             return;
           }
           if (left > 0 && isTransientErr(d)) setTimeout(() => attempt(left - 1), 1200);
@@ -154,7 +153,7 @@ export function McpTab() {
         toast(tr("mcp.tenant_refresh_failed", { msg: errText(d.error) }));
         return;
       }
-      setReg({ servers: Array.isArray(d.servers) ? d.servers : [], ...d });
+      setReg({ ...d, servers: Array.isArray(d.servers) ? d.servers : [] });
       // Rows the CP could not decrypt, and rows this agent refused, are both absent from
       // the list. Saying so beats letting the member conclude the admin never added them.
       const unreadable = Number(d.fetch?.unreadable) || 0;
@@ -403,14 +402,7 @@ function targetsText(tg: { assistant: boolean; session: boolean } | undefined, t
   return on.length > 0 ? on.join(" / ") : tr("mcp.target_none");
 }
 
-function Meta({ k, v, mono = true, wide = false }: { k: ReactNode; v?: ReactNode; mono?: boolean; wide?: boolean }) {
-  return (
-    <div className={"ssm-meta-row" + (wide ? " wide" : "")}>
-      <span className="ssm-meta-k">{k}</span>
-      <span className={"ssm-meta-v" + (mono ? " mono" : "")}>{v || "—"}</span>
-    </div>
-  );
-}
+// Meta は mcpForm.tsx の共通プリミティブを使う（SsmTab と同型だったため集約）。
 
 // ProbeView renders one connection-test outcome (docs/48 §10). On failure the server's
 // own stderr / body tail is shown verbatim — a broken command almost always explains

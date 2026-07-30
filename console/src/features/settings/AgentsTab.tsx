@@ -224,7 +224,9 @@ function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "cursor" | "kiro"
           <Choice value={row.effort} options={efforts} onChange={(effort) => update({ effort })} />
         </SettingRow>
       )}
-      {desc.caps.planMode && (
+      {/* planMode（チャットの plan トグル）が無くても tuiStartMode（plan 起動）対応なら
+          既定の開始モードを設定できる（cursor/copilot/kiro — 起動 UI のゲートと同型）。 */}
+      {(desc.caps.planMode || desc.caps.tuiStartMode) && (
         <SettingRow label={tr("agents.start_mode")}>
           <Choice
             value={row.startMode}
@@ -336,8 +338,8 @@ function ClaudeCard({
         <ConnPaused />
       ) : st?.connected ? (
         <div className="p-who">
-          <span className="p-em" title={st.email || "connected"}>
-            {st.email || "connected"}
+          <span className="p-em" title={st.email || tr("conn.connected")}>
+            {st.email || tr("conn.connected")}
           </span>
           {st.plan && <span className="p-pl">{st.plan}</span>}
           <DisconnectButton onClick={disconnect} />
@@ -569,8 +571,8 @@ function AgyCard({
         <div className="p-desc">{tr("agents.agy_unsupported", { reason: st?.reason || "" })}</div>
       ) : st?.connected ? (
         <div className="p-who">
-          <span className="p-em" title={st.email || "connected"}>
-            {st.email || "connected"}
+          <span className="p-em" title={st.email || tr("conn.connected")}>
+            {st.email || tr("conn.connected")}
           </span>
           {st.plan && <span className="p-pl">{st.plan}</span>}
           <DisconnectButton onClick={disconnect} />

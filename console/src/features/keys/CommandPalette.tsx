@@ -26,7 +26,8 @@ import { coarsePointer } from "../../lib/device.ts";
 import { api, fsSearch } from "../../core/api/client.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useKeysStore } from "./store.ts";
-import { useEffectiveCommands, boundChord, APP_LEADER } from "./bindings.ts";
+import { useEffectiveCommands, boundChord, APP_LEADER, APP_PALETTE } from "./bindings.ts";
+import { eventChordString } from "../../lib/keys/chords.ts";
 import { cmdLabel, cmdSearch } from "./labels.ts";
 import { buildContext } from "./dispatcher.ts";
 import { useSessionsStore } from "../sessions/store.ts";
@@ -78,10 +79,12 @@ interface Change {
 // The shortcut a palette row advertises: the command's direct accelerator if it has one
 // (already reflecting the user's rebind — applyOverrides rewrote `keys`), otherwise the
 // leader chord followed by its sequence keys. Mirrors the cheat-sheet's rendering so the
-// two never disagree. `leader` is the live-bound leader ("" only if the user cleared it).
+// two never disagree. `leader` is the live-bound leader ("" only if the user cleared it) —
+// an unbound leader makes every leader sequence unreachable, so advertise no shortcut
+// rather than an unusable one.
 function shortcutChords(c: Command, leader: string): string[] {
   if (c.keys && c.keys.length) return [c.keys[0]];
-  if (c.seq) return leader ? [leader, ...c.seq.split(" ")] : c.seq.split(" ");
+  if (c.seq) return leader ? [leader, ...c.seq.split(" ")] : [];
   return [];
 }
 
@@ -230,7 +233,7 @@ export function CommandPalette() {
     if (!open) return [];
     void locale; // dep: recompute labels/search when the language changes
     const ctx = buildContext();
-    const leader = boundChord(APP_LEADER) || "mod+k";
+    const leader = boundChord(APP_LEADER); // "" = user unbound the leader (no fallback — the chord truly doesn't fire)
     const cmds: Item[] = paletteCommands(commands, ctx).map((c) => ({
       id: c.id,
       title: cmdLabel(c.title),
@@ -256,8 +259,9 @@ export function CommandPalette() {
       };
     });
     // Repos + worktrees: Enter → reveal + focus the working copy in the rail;
-    // Ctrl/⌘+Enter → open its Source Control. A worktree row is tagged so a search
-    // for "wt"/"worktree" surfaces it.
+    // Ctrl/⌘+Enter → open its Source Control in a NEW pane (the split convention every
+    // other row follows). A worktree row is tagged so a search for "wt"/"worktree"
+    // surfaces it.
     const repoItems: Item[] = repos.map((r) => ({
       id: "repo:" + r.name,
       title: r.name,
@@ -268,7 +272,7 @@ export function CommandPalette() {
       keys: [],
       run: (split) =>
         split
-          ? useLayoutStore.getState().openTarget({ content: { kind: "scm", scmRepo: r.name } })
+          ? useLayoutStore.getState().openTargetInNew({ content: { kind: "scm", scmRepo: r.name } })
           : revealRepoInRail(r.name),
     }));
     return [...cmds, ...sess, ...repoItems];
@@ -341,12 +345,14 @@ export function CommandPalette() {
           }}
           onKeyDown={(e) => {
             if (e.nativeEvent.isComposing) return;
-            // Mode cycling: Tab / Shift+Tab, or re-pressing Ctrl/⌘+P (preventDefault also
-            // stops the browser's print dialog on Ctrl+P).
+            // Mode cycling: Tab / Shift+Tab, or re-pressing the palette chord (Ctrl/⌘+P by
+            // default — boundChord so a rebind keeps working; preventDefault also stops the
+            // browser's print dialog on Ctrl+P).
+            const palChord = boundChord(APP_PALETTE);
             if (e.key === "Tab") {
               e.preventDefault();
               cycleMode(e.shiftKey ? -1 : 1);
-            } else if ((e.ctrlKey || e.metaKey) && (e.key === "p" || e.key === "P")) {
+            } else if (palChord && eventChordString(e.nativeEvent) === palChord) {
               e.preventDefault();
               cycleMode(1);
             } else if (e.key === "ArrowDown") {

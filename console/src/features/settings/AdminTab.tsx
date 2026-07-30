@@ -268,7 +268,6 @@ export function AdminTab() {
           member={view.member!}
           isSuper={isSuper}
           onChanged={loadTenants}
-          onBack={() => history.back()}
         />
       )}
       </>
@@ -586,6 +585,8 @@ function EgressView() {
       <section className="admin-panel">
         <div className="usage-toolbar">
           <span>{tr("admin.mode_label")}</span>
+          {/* "log-only" / "enforce" はサーバ側モードの識別子そのもの（説明文の
+              admin.egress_*_note でも同じ語で参照する）なので意図的に訳さない。 */}
           <span className="seg sm">
             <button
               type="button"
@@ -1642,7 +1643,6 @@ function MemberView({
   member: Member;
   isSuper: boolean;
   onChanged: () => void;
-  onBack?: () => void;
 }) {
   const tr = useT();
   const [stats, setStats] = useState<any>(null);
@@ -1786,7 +1786,7 @@ function MemberView({
           <ResTile
             label={tr("admin.res_disk")}
             value={stats?.disk_used != null ? fmtG(stats.disk_used) : "–"}
-            sub={stats?.disk_quota ? `/ ${fmtG(stats.disk_quota)} · ${fmtPct(diskRatio == null ? null : diskRatio * 100)}` : "(home)"}
+            sub={stats?.disk_quota ? `/ ${fmtG(stats.disk_quota)} · ${fmtPct(diskRatio == null ? null : diskRatio * 100)}` : tr("admin.disk_home_sub")}
             ratio={diskRatio}
             warn={0.75}
             crit={0.9}

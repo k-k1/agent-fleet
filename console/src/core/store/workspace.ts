@@ -8,7 +8,7 @@
 // optimistic in-flight transition (the old convention — pollers and buttons
 // treat it as busy and keep their hands off).
 import { create } from "zustand";
-import { api } from "../api/client.ts";
+import { api, isTransientErr } from "../api/client.ts";
 import { pushHealthy, pushStamp } from "../push/events.ts";
 import { t } from "../../lib/i18n/index.ts";
 import { confirmDirtyNavigation } from "../../features/editor/dirtyRegistry.ts";
@@ -65,6 +65,16 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       // next server-side change. The busy settle path is exempt: applyPush never
       // clears an optimistic "…", so the settle refresh must always land.
       if (pushStamp("workspace") !== stamp && !wsBusy(get().state)) return;
+      if (w?.error) {
+        // ゲートウェイ/CP 再起動中の一時的な 5xx（{error:{code:"http_5xx"}} — tenant.init
+        // と同じ isTransientErr 判定）で "unknown"/stale=false に落とすと、running ゲートの
+        // 配下ポーラーまで止まってしまう — 現在値を保持して次のポーリングに任せる。ただし
+        // 楽観 "…" の settle 中に保持すると busy が固着する（4s ポーリングは busy 中スキップ）
+        // ので、その間と terminal エラーは従来どおり unknown へ落とす。
+        if (isTransientErr(w) && !wsBusy(get().state)) return;
+        set({ state: "unknown", bootPhase: "", stale: false });
+        return;
+      }
       set({ state: w.state || "unknown", bootPhase: w.bootPhase || "", stale: !!w.stale });
     } catch {
       set({ state: "unknown" });

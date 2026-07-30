@@ -119,16 +119,21 @@ export function useSessionActions(): SessionActions {
       return;
     // /archive hides but KEEPS the meta/jsonl (restorable); /stop forgets it
     // (shell/ssm delete). Best-effort per session so one failure doesn't abort
-    // the rest — mirrors the per-row アーカイブ / 削除.
-    await Promise.all([
-      ...keepable.map((s) =>
-        raw(`api/sessions/${encodeURIComponent(s.name)}/archive`, { method: "POST" }).catch(() => {}),
-      ),
-      ...ephemeral.map((s) =>
-        raw(`api/sessions/${encodeURIComponent(s.name)}/stop`, { method: "POST" }).catch(() => {}),
-      ),
+    // the rest — mirrors the per-row アーカイブ / 削除. ok を数えて結果をトースト
+    // する（403/409 で全滅しても無反応だと片付いたように見えてしまう）。
+    const call = (s: Session, ep: "archive" | "stop") =>
+      raw(`api/sessions/${encodeURIComponent(s.name)}/${ep}`, { method: "POST" })
+        .then((res) => ({ s, ok: res.ok }))
+        .catch(() => ({ s, ok: false }));
+    const results = await Promise.all([
+      ...keepable.map((s) => call(s, "archive")),
+      ...ephemeral.map((s) => call(s, "stop")),
     ]);
-    for (const s of orphans) closeSessionPanes(s.name);
+    const done = results.filter((r) => r.ok).length;
+    const failed = results.length - done;
+    // 失敗した行は残る — そのペインまで閉じない。
+    for (const r of results) if (r.ok) closeSessionPanes(r.s.name);
+    toast(failed ? t("clean.run_done", { done, failed }) : t("clean.run_done_ok", { done }));
     void refreshSessions();
   };
 
@@ -166,7 +171,7 @@ export function useSessionActions(): SessionActions {
       let msg = t("sess.recreate_failed");
       try {
         const j = await res.json();
-        if (j?.error?.message) msg += "：" + j.error.message;
+        if (j?.error?.message) msg += t("common.detail_sep") + j.error.message;
       } catch {}
       toast(msg);
       void refreshSessions();
@@ -193,7 +198,7 @@ export function useSessionActions(): SessionActions {
         ) : (
           <Trans
             k="sess.switch_tui_body"
-            vars={{ name: displayName(s), cost: tuiMemoryCost ? `（+${tr("common.approx", { v: tuiMemoryCost })}）` : "" }}
+            vars={{ name: displayName(s), cost: tuiMemoryCost ? tr("common.paren", { v: "+" + tr("common.approx", { v: tuiMemoryCost }) }) : "" }}
             components={[<br />]}
           />
         ),

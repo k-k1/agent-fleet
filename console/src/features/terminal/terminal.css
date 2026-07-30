@@ -158,19 +158,8 @@
   user-select: none;
   -webkit-user-drag: none;
 }
-.term-mask {
-  position: absolute;
-  inset: 0;
-  /* Above xterm's internal transparent hit-test layers (.xterm-link-layer z=2,
-     .xterm-helpers z=5) — same reason as .term-empty. Without it the overlay (and
-     the 再開 button inside .term-history-actions) sits UNDER those layers, which
-     swallow every click, so the button can't be pressed. */
-  z-index: 20;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: color-mix(in srgb, #000 45%, transparent);
-}
+/* .term-mask 本体（全面オーバーレイ）は廃止済み — msg だけが
+   .term-history-actions 内で使われている。 */
 .term-mask-msg {
   color: #ddd;
   display: inline-flex;

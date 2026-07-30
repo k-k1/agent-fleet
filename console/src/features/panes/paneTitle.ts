@@ -17,6 +17,8 @@ export const KIND_JA: Partial<Record<PaneKind, MsgKey>> = {
   doc: "pane.kind.doc",
   diff: "pane.kind.diff",
   chat: "pane.kind.chat",
+  read: "pane.kind.read",
+  browser: "pane.kind.browser",
 };
 
 // Resolve a non-session pane kind to its localized label (falls back to the raw kind).

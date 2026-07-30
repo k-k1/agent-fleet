@@ -51,6 +51,8 @@ import { useUpdateCheck } from "../lib/useUpdateCheck.tsx";
 import { consumeSessionDeepLink } from "../lib/sessionDeepLink.ts";
 import { usePopoutMode } from "../lib/popoutMode.ts";
 import { takePendingPopout, takeStalePopoutLink } from "../features/panes/popout.ts";
+import type { PopoutDescriptor } from "../layout/popout.ts";
+import { confirmDirtyNavigation } from "../features/editor/dirtyRegistry.ts";
 import { PopoutTitleBar } from "../features/panes/PopoutTitleBar.tsx";
 import { toast } from "../ui/toast.ts";
 import { t } from "../lib/i18n/index.ts";
@@ -86,6 +88,7 @@ function wireWorkspaceRefresh(): () => void {
 export function App() {
   const tr = useT();
   const tenant = useTenantStore((s) => s.tenant);
+  const identityRev = useTenantStore((s) => s.identityRev);
   // Deployment gate: only show the schedules rail when the CP scheduler is enabled
   // (AF_SCHEDULER_INTERVAL set) — otherwise schedules can never fire, so hide the section.
   const schedulerEnabled = useTenantStore((s) => !!s.whoami?.scheduler_enabled);
@@ -99,6 +102,11 @@ export function App() {
   // Pop-out tab (ペインの別タブ切り離し): "popout" renders minimal chrome below;
   // "full" is a normal console seeded with the popped pane (no branch needed).
   const popout = usePopoutMode();
+  // Pop-out seed descriptor (consumed once at boot) + the identityRev the layout
+  // was last loaded under — bookkeeping for the per-tenant sync effect and the
+  // identity-reload effect below.
+  const popoutSeedRef = useRef<PopoutDescriptor | null>(null);
+  const identityRevDoneRef = useRef(0);
 
   // Detect a newer deployed build and offer a one-tap, cache-busting reload.
   useUpdateCheck();
@@ -145,7 +153,15 @@ export function App() {
   //   - navigating away from an open drawer leaves the guard entry buried, so a later
   //     back reopens the drawer over the previous view (old pushDrawerEntry behavior)
   //   - popstate-driven open/close already sits on the right entry → both no-op
+  const drawerHistSynced = useRef(false);
   useEffect(() => {
+    // 初回マウントはスキップ — ドロワー entry 上でリロードすると history.state.drawer が
+    // 残っており、閉状態の初期実行が history.back() を誤発火して 1 段戻ってしまう。
+    // 同期するのは実際の open/close 遷移だけでよい。
+    if (!drawerHistSynced.current) {
+      drawerHistSynced.current = true;
+      return;
+    }
     const onDrawerEntry = !!(history.state && history.state.drawer);
     const onMobile = window.matchMedia(MOBILE_QUERY).matches;
     if (navOpen && onMobile && !onDrawerEntry) {
@@ -197,8 +213,9 @@ export function App() {
         longPressTimer = null;
       }
     };
+    // ローカル変数は touch — i18n の t（このモジュールで import 済み）を隠さない名前に。
     const onStart = (e: TouchEvent) => {
-      const t = e.touches[0];
+      const touch = e.touches[0];
       cancelGesture();
       const phone = mq.matches;
       // Above the phone breakpoint, only enable the gesture on touch devices
@@ -207,14 +224,14 @@ export function App() {
       drawer = phone;
       // While a modal is up, don't let an edge swipe open the rail behind it.
       const { settingsOpen, adminOpen } = useSettingsUI.getState();
-      if (t && (phone || tablet) && !settingsOpen && !adminOpen) {
+      if (touch && (phone || tablet) && !settingsOpen && !adminOpen) {
         const isOpen = phone ? navOpenRef.current : useLeftRail.getState().open;
         if (isOpen) mode = "close";
-        else if (t.clientX < Math.min(window.innerWidth * 0.33, 160)) mode = "open";
+        else if (touch.clientX < Math.min(window.innerWidth * 0.33, 160)) mode = "open";
       }
-      if (t) {
-        sx = t.clientX;
-        sy = t.clientY;
+      if (touch) {
+        sx = touch.clientX;
+        sy = touch.clientY;
         if (mode) {
           longPressTimer = window.setTimeout(cancelGesture, LONG_PRESS_MS);
         }
@@ -222,10 +239,10 @@ export function App() {
     };
     const onMove = (e: TouchEvent) => {
       if (!mode) return;
-      const t = e.touches[0];
-      if (!t) return;
-      const dx = t.clientX - sx;
-      const dy = t.clientY - sy;
+      const touch = e.touches[0];
+      if (!touch) return;
+      const dx = touch.clientX - sx;
+      const dy = touch.clientY - sy;
       if (Math.abs(dx) <= Math.abs(dy)) return;
       if (mode === "open" && dx > DIST) {
         if (drawer) setNavOpen(true);
@@ -312,20 +329,48 @@ export function App() {
     void useNotificationStore.getState().refresh();
     // Pop-out first boot: seed the layout from the handed-off descriptor
     // instead of restoring the saved split. Handed over exactly once —
-    // reloads and tenant switches fall back to the normal load().
+    // reloads and tenant switches fall back to the normal load(). The descriptor
+    // is kept in a ref so the identity-reload effect below can re-seed the same
+    // pane under the re-scoped layout key.
     const popped = takePendingPopout();
-    if (popped) useLayoutStore.getState().initSinglePane(popped.content, popped.session, popped.wrap);
-    else useLayoutStore.getState().load(tenant);
+    if (popped) {
+      popoutSeedRef.current = popped;
+      useLayoutStore.getState().initSinglePane(popped.content, popped.session, popped.wrap);
+    } else {
+      useLayoutStore.getState().load(tenant);
+    }
+    // This run loaded under the CURRENT identity — mark its rev as handled so the
+    // identity-reload effect doesn't double-load right after boot.
+    identityRevDoneRef.current = useTenantStore.getState().identityRev;
     if (takeStalePopoutLink()) toast(t("popout.stale_link"), { kind: "info" });
     void useWorkspaceStore.getState().refresh();
     void useSessionsStore.getState().refresh();
   }, [booted, tenant]);
 
+  // Layout re-load ONLY — deliberately narrower than the per-tenant sync above.
+  // A DELAYED whoami resolution (CP transient 5xx at boot, a retry landed later)
+  // re-scoped the layout key via setUser, so the layout loaded under the shared
+  // no-user key must be re-read under the user key (otherwise it would be
+  // persisted into it). Everything else in the sync effect must NOT re-run here:
+  // disposeAllBrowsers() would kill live browser pages, restartPush()+reset()
+  // would drop unread notifications, and a pop-out tab (descriptor consumed at
+  // boot) would fall through to load() and lose its detached pane.
+  useEffect(() => {
+    if (!booted || identityRev === identityRevDoneRef.current) return;
+    identityRevDoneRef.current = identityRev;
+    void confirmDirtyNavigation("layout").then((proceed) => {
+      if (!proceed) return; // keep the shared-key layout rather than drop unsaved buffers
+      const popped = popoutSeedRef.current;
+      if (popped) useLayoutStore.getState().initSinglePane(popped.content, popped.session, popped.wrap);
+      else useLayoutStore.getState().load(tenant);
+    });
+  }, [booted, tenant, identityRev]);
+
   // Desktop notifications on claude state arrivals — lives at the shell now that
   // the flat Sessions section no longer owns the rail. A minimal pop-out tab
   // suppresses them: the main console tab already fires the same notifications,
   // so a satellite tab would just duplicate every ping.
-  useSessionNotifications(notificationSource === "unsupported" || popout === "popout");
+  useSessionNotifications(notificationSource === "unsupported" && popout !== "popout");
 
   // Minimal pop-out chrome: title bar + the (1-pane) PaneHost, plus the overlay
   // layer (dialogs the reduced command set can still reach + auth/workspace

@@ -89,12 +89,18 @@ async function connect(): Promise<void> {
   let unsupported = false;
   const startedAt = Date.now();
   try {
+    // 接続確立フェーズにも期限を付ける — 無応答プロキシでヘッダが返らないと、
+    // watchdog（read 毎に再武装）に到達できず永久に再接続しない。確立後は従来
+    // どおり read 側の armWatchdog が引き継ぐので、長寿命ストリームは切れない。
+    armWatchdog();
     const res = await fetch(rel("api/events"), { signal: my.signal });
     const ct = res.headers.get("Content-Type") || "";
     if (!res.ok || !ct.startsWith("text/event-stream") || !res.body) {
       // 旧 CP はこのルートを知らない（404）。エラー表示はしない — ポーラーが
       // そのまま現役なので機能は落ちず、単に従来の通信量に戻るだけ。
       unsupported = res.status === 404 || res.status === 405;
+      // 読まない body は明示的に解放する（接続をぶら下げたままにしない）。
+      void res.body?.cancel().catch(() => {});
       return;
     }
     healthy = true;

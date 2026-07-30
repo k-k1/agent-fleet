@@ -544,8 +544,16 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   // adds little, while hljs's markdown grammar emits many <span>s per line — the
   // dominant cost that made a doc-heavy source view slow to open and freeze on a wide
   // text-selection. Plain escaped text keeps line numbers / wrap / selection, cheaply.
+  // Recomputed only while the read-only CodeView is actually on screen
+  // (surfaces.source — its render branch's condition). While the editor or a
+  // preview is up the hidden shell still renders the CodeView as a child, and
+  // keying on the edit buffer would re-run the full-document hljs pass on every
+  // keystroke; keep the last value instead. Switching back to the source
+  // surface flips the dep, so a fresh highlight replaces the stale one.
+  const htmlRef = useRef("");
   const html = useMemo(() => {
     if (!isText || huge) return "";
+    if (!surfaces.source) return htmlRef.current;
     const lang = langFor(filePath);
     try {
       if (lang && lang !== "markdown" && hljs.getLanguage(lang)) {
@@ -553,7 +561,8 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
       }
     } catch {}
     return escapeHtml(viewContent);
-  }, [isText, huge, viewContent, filePath]);
+  }, [isText, huge, viewContent, filePath, surfaces.source]);
+  htmlRef.current = html;
 
   const onEditorValidationError = (error: BufferValidationError) => {
     const messages: Record<BufferValidationError["code"], string> = {
@@ -1372,7 +1381,8 @@ function MineRemoteDiff({ mine, remote }: { mine: string; remote: string }) {
   ) suffix++;
   const column = (lines: string[], side: "mine" | "remote") => (
     <div className="file-diff-column">
-      <strong>{side}</strong>
+      {/* `side` is the CSS identifier (diff-mine / diff-remote); the heading is a tr() label. */}
+      <strong>{tr(side === "mine" ? "editor.diff.mine" : "editor.diff.remote")}</strong>
       <pre>
         {lines.map((line, index) => {
           const changed = index >= prefix && index < lines.length - suffix;

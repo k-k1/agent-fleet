@@ -61,7 +61,7 @@ export function LayoutMap() {
                   ? kindShort(s.kind)
                   : kindLabel(s.kind)
                 : empty
-                  ? "empty"
+                  ? tr("pane.empty")
                   : shortKind
                     ? KIND_ABBR[p.content.kind] || "–"
                     : jaKind(p.content.kind);

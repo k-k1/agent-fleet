@@ -4,6 +4,7 @@ import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as 
 import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond, sessionPlanRespond, sessionSettings, sessionSkills, downloadURL } from "../../core/api/client.ts";
 import type { InteractionAnswer, ManagedThreadSettings, SessionSkill, TurnResult } from "../../core/api/client.ts";
 import { isManagedSession } from "../../types/session.ts";
+import type { Session } from "../../types/session.ts";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
 import { MEMO_DND_MIME } from "../memo/dnd.ts";
 import { useSettings, setSetting, chatFontStack, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
@@ -250,7 +251,7 @@ export function MirrorView({
 }: {
   paneId: string;
   session: string;
-  sessionMeta?: any;
+  sessionMeta?: Session | null;
   active?: boolean;
   mirror?: boolean;
   onToggleMirror: (v: boolean) => void;
@@ -1412,13 +1413,13 @@ export function MirrorView({
     const prev = statusRef.current;
     statusRef.current = "working";
     setStatus("working");
-    const ok = await sessionRespond(session, id, answers).catch(() => false);
-    if (!ok) {
+    const res = await sessionRespond(session, id, answers).catch((): TurnResult => ({ ok: false }));
+    if (!res.ok) {
       // 却下（id 不明・driver 未実装・通信断）を握りつぶさない: 状態を戻して質問
-      // カードを生かしたまま、理由を示す。次ポーリングが実状態へ再同期する。
+      // カードを生かしたまま、理由（あれば）を示す。次ポーリングが実状態へ再同期する。
       statusRef.current = prev;
       setStatus(prev);
-      toast(tr("mirror.answer_send_failed"));
+      toast(res.message || tr("mirror.answer_send_failed"));
     }
     setSending(false);
     setTimeout(() => tickRef.current?.(), 400);
@@ -1490,7 +1491,9 @@ export function MirrorView({
   // select-and-submit instantly, so stray text is doubly dangerous. Lock the composer for
   // ANY pending question and steer the user to the card — its options key-drive the modal
   // (Down×i, Enter) and its "または自由入力" row uses the still-working "Type something" path.
-  const auqLocksComposer = !!pending;
+  // 空配列（質問なし）ではロックしない — カードは pending.length > 0 でしか出ないので、
+  // !!pending だけだとカード無しのままコンポーザだけ死ぬ。
+  const auqLocksComposer = !!pending?.length;
   // A pending plan approval or permission prompt is a menu decision, NOT a free-text turn:
   // sending would type text + Enter, and that Enter selects the menu's default (= 承認 /
   // 許可), silently confirming it. A mode toggle would likewise mis-key the menu. So lock
@@ -1716,7 +1719,8 @@ export function MirrorView({
     try {
       const j = await apiJSON(`api/sessions/${q(session)}/suggest-replies`, "POST", {});
       const list = Array.isArray(j?.suggestions) ? (j.suggestions as unknown[]).filter((x): x is string => typeof x === "string") : [];
-      setLlmSuggestions(list);
+      // LLM が同文を重複して返すことがある — チップの React key は本文由来なので畳んでおく。
+      setLlmSuggestions([...new Set(list)]);
       // 候補ゼロ = バックエンド不在（claude/codex/opencode いずれも無い）か会話が浅い。無反応だと
       // 壊れて見えるので一言知らせる（Layer A のチップはそのまま残る）。
       if (!list.length) toast(tr("mirror.suggest_none"));
@@ -2455,7 +2459,7 @@ export function MirrorView({
         {pendingPlan && (
           <div className="mirror-turn assistant">
             <div className="mirror-turn-head">
-              <span className="mt-who">Claude</span>
+              <span className="mt-who">{agentName}</span>
               <span className="mt-model muted">{tr("mirror.plan_pending")}</span>
             </div>
             <div className="mirror-turn-body">
@@ -2497,7 +2501,7 @@ export function MirrorView({
           // whose buttons would send keystrokes that mis-answer the question underneath.
           <div className="mirror-turn assistant">
             <div className="mirror-turn-head">
-              <span className="mt-who">Claude</span>
+              <span className="mt-who">{agentName}</span>
               <span className="mt-model muted">{tr("mirror.perm_pending")}</span>
             </div>
             <div className="mirror-turn-body">
@@ -2709,7 +2713,7 @@ export function MirrorView({
                   type="button"
                   className="mirror-suggest-ai"
                   title={tr("mirror.suggest_ai")}
-                  disabled={suggesting || wsDown()}
+                  disabled={suggesting || !running} // wsDown() はトースト副作用があるのでレンダー中は呼ばない
                   onClick={fetchLlmSuggestions}
                   onKeyDown={onSuggestNav} // Enter は既定の click（＝候補取得）に任せる
                 >
@@ -4660,11 +4664,15 @@ function planSummary(md?: string) {
 // CopyButton copies the turn's RAW Markdown (not the rendered HTML) to the clipboard.
 function CopyButton({ text }: { text: string }) {
   const [done, setDone] = useState(false);
+  // ✓表示を戻すタイマー。アンマウント後の setDone を避けるため cleanup で clear する。
+  const timerRef = useRef(0);
+  useEffect(() => () => window.clearTimeout(timerRef.current), []);
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(text);
       setDone(true);
-      setTimeout(() => setDone(false), 1500);
+      window.clearTimeout(timerRef.current);
+      timerRef.current = window.setTimeout(() => setDone(false), 1500);
     } catch {
       /* clipboard blocked (insecure context / permission) — no-op */
     }

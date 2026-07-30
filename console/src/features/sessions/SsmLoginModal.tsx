@@ -74,8 +74,11 @@ export function SsmLoginModal({ name, start = false, force = false, onReady, onC
   }, [name]);
 
   const cancel = async () => {
+    // Fresh create (New Session): /stop removes the just-created session entirely.
+    // Resume (`start`): the session already existed — /halt stops it but KEEPS the
+    // meta/row, so aborting the login doesn't delete the user's session.
     try {
-      await raw(`api/sessions/${encodeURIComponent(name)}/stop`, { method: "POST" });
+      await raw(`api/sessions/${encodeURIComponent(name)}/${start ? "halt" : "stop"}`, { method: "POST" });
     } catch {
       /* best effort */
     }
