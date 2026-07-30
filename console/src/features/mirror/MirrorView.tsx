@@ -1490,7 +1490,9 @@ export function MirrorView({
   // select-and-submit instantly, so stray text is doubly dangerous. Lock the composer for
   // ANY pending question and steer the user to the card — its options key-drive the modal
   // (Down×i, Enter) and its "または自由入力" row uses the still-working "Type something" path.
-  const auqLocksComposer = !!pending;
+  // 空配列（質問なし）ではロックしない — カードは pending.length > 0 でしか出ないので、
+  // !!pending だけだとカード無しのままコンポーザだけ死ぬ。
+  const auqLocksComposer = !!pending?.length;
   // A pending plan approval or permission prompt is a menu decision, NOT a free-text turn:
   // sending would type text + Enter, and that Enter selects the menu's default (= 承認 /
   // 許可), silently confirming it. A mode toggle would likewise mis-key the menu. So lock

@@ -325,7 +325,7 @@ export function App() {
   // the flat Sessions section no longer owns the rail. A minimal pop-out tab
   // suppresses them: the main console tab already fires the same notifications,
   // so a satellite tab would just duplicate every ping.
-  useSessionNotifications(notificationSource === "unsupported" || popout === "popout");
+  useSessionNotifications(notificationSource === "unsupported" && popout !== "popout");
 
   // Minimal pop-out chrome: title bar + the (1-pane) PaneHost, plus the overlay
   // layer (dialogs the reduced command set can still reach + auth/workspace
