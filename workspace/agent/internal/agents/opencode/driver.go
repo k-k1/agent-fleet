@@ -285,7 +285,7 @@ type threadHandle struct {
 	dir   string
 	ocSid string
 
-	mu       sync.Mutex
+	mu sync.Mutex
 	// resumeMu serializes Resume end-to-end (same §32 competition as codex: two
 	// concurrent Resumes would create two native sessions and orphan one).
 	resumeMu sync.Mutex
