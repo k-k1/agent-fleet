@@ -1666,7 +1666,7 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.skills_loading": "Loading skills…",
   "mirror.skills_empty": "No skills/commands for this session",
   "mirror.skills_no_match": "No matching skills/commands",
-  "mirror.skills_item_hint": "Click to insert · Ctrl/⌘/Alt-click to send now",
+  "mirror.skills_item_hint": "Click to insert (does not send)",
   "mirror.skills_src_user": "user",
   "mirror.skills_src_cli": "CLI",
   "mirror.skills_src_shared": "shared",

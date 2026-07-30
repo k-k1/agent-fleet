@@ -76,7 +76,16 @@ import {
 } from "./questionKeys.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { useDismiss } from "../../lib/useDismiss.ts";
-import { applySkillToDraft, filterSkills, hasTriggerHead, originKind, pickerTokenAt, slashTokenAt, type SlashToken } from "./skillPicker.ts";
+import {
+  applySkillToDraft,
+  exactSkills,
+  filterSkills,
+  hasTriggerHead,
+  originKind,
+  pickerTokenAt,
+  slashTokenAt,
+  type SlashToken,
+} from "./skillPicker.ts";
 import { ManagedSettingsModal } from "./ManagedSettingsModal.tsx";
 
 const q = encodeURIComponent;
@@ -1628,13 +1637,21 @@ export function MirrorView({
   // （素の /plan 等の手打ちを覆い隠さない）。ボタン起点は空でも「無い」ことを見せる。
   // 開く条件はトリガのタイプ（bare トークンでは開かない）、絞り込みはどちらの起点でも
   // 同じトークンで効かせる — ボタンで開いてからタイプしても候補が絞れる。
+  // skillArgs（受動表示）: コマンドを打ち終えて引数を書いている間。引数ヒントを見ながら書け
+  // るようにリストは出したままにするが、確定した 1 件だけに絞り、キーボードは横取りしない
+  // （Enter は送信のまま — ここで Enter を奪うと引数入力中に送信できなくなる）。
   const slashOpen = canSkills && !composerLocked && slashTok !== null && !slashTok.bare && skillDismissRef.current !== slashTok.token;
+  const skillArgs = slashOpen && !!slashTok?.args;
   const skillsOpen = canSkills && !composerLocked && (skillBtnOpen || slashOpen);
   const skillQuery = slashTok?.token ?? "";
-  const skillItems = (skills ? filterSkills(skills, skillQuery) : [])
+  const skillItems = (skillArgs ? exactSkills(skills ?? [], skillQuery) : skills ? filterSkills(skills, skillQuery) : [])
     // managed 発火未検証 kind はネイティブ項目だけ落とす（foreign=注入はただのプロンプト）。
     .filter((s) => !!s.path || !managed || agent.caps.slashSkillsManaged);
-  const skillListVisible = skillsOpen && (skillBtnOpen || skills === null || skillItems.length > 0);
+  // 受動表示は「一致した 1 件があるときだけ」— 読み込み中や不一致で "/" 始まりの文章を書いて
+  // いる間にポップが出入りしないように、ボタン起点/タイプ起点の緩い条件は使わない。
+  const skillListVisible = skillsOpen && (skillArgs ? skillItems.length > 0 : skillBtnOpen || skills === null || skillItems.length > 0);
+  // キーボード（↑↓移動・Enter/Tab 確定）を横取りするのは能動表示のときだけ。
+  const skillNavActive = skillListVisible && !skillArgs;
   // ネイティブは invoke をそのまま、foreign は「path を読んで指示に従え」プロンプトに組む
   // （末尾空白 — 続けて引数を打てる）。
   const skillInsertText = (s: SessionSkill): string =>
@@ -1687,7 +1704,9 @@ export function MirrorView({
     setHistIdx(null);
     setSkillBtnOpen(false);
     skillDismissRef.current = null;
-    setSlashTok(slashTokenAt(next, nc, skillTrigger)); // invoke 直後は必ず null → 閉じる
+    // invoke 直後のキャレットは末尾空白の右＝引数位置なので args トークンになる → リストは
+    // 受動表示のまま残り、選んだスキルの引数ヒントを見ながら引数を書ける。
+    setSlashTok(slashTokenAt(next, nc, skillTrigger));
     if (coarsePointer()) {
       inputRef.current?.blur();
       return;
@@ -1965,14 +1984,16 @@ export function MirrorView({
     // スキルピッカーが開いている間は ↑/↓（選択移動）・Enter/Tab（確定）・Esc（閉じる）を
     // ここで横取りする — 下の履歴呼び出し（↑/↓）・チップ Tab・送信 Enter より先。IME の
     // 変換中は触らない。Ctrl/⌘+Enter と Shift+Enter は素通し（そのまま送信/改行できる逃げ道）。
+    // 受動表示（引数入力中 = skillArgs）は横取りしない — 引数ヒントを見せているだけなので、
+    // Enter は送信・↑/↓ はキャレット移動のまま。閉じる Esc だけは受け付ける。
     if (skillListVisible && !e.nativeEvent.isComposing) {
-      if ((e.key === "ArrowDown" || e.key === "ArrowUp") && skillItems.length) {
+      if (skillNavActive && (e.key === "ArrowDown" || e.key === "ArrowUp") && skillItems.length) {
         e.preventDefault();
         const n = skillItems.length;
         setSkillSel((s) => (s + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
         return;
       }
-      if (((e.key === "Enter" && !e.ctrlKey && !e.metaKey && !e.shiftKey) || e.key === "Tab") && skillItems[skillSel]) {
+      if (skillNavActive && ((e.key === "Enter" && !e.ctrlKey && !e.metaKey && !e.shiftKey) || e.key === "Tab") && skillItems[skillSel]) {
         e.preventDefault();
         pickSkill(skillInsertText(skillItems[skillSel]));
         return;
@@ -2781,9 +2802,16 @@ export function MirrorView({
           </div>
           {/* スキルピッカー（docs/50）: コンポーサー上に浮く補完リスト。マウスは onMouseMove で
               選択追従＋クリック確定（mousedown は preventDefault でフォーカスを奪わない —
-              CommandPalette と同型）、タップはそのまま確定、キーボードは onKeyDown が駆動。 */}
+              CommandPalette と同型）、タップはそのまま確定、キーボードは onKeyDown が駆動。
+              引数入力中（skillArgs）は受動表示 — キーボード選択を持たないので sel も付けず、
+              クリックだけ（引数は残したままコマンドを差し替える）が生きる。 */}
           {skillListVisible && (
-            <div className="mirror-skills" ref={skillPopRef} role="listbox" aria-label={tr("mirror.skills_btn")}>
+            <div
+              className={"mirror-skills" + (skillArgs ? " passive" : "")}
+              ref={skillPopRef}
+              role="listbox"
+              aria-label={tr("mirror.skills_btn")}
+            >
               {skills === null ? (
                 <div className="mirror-skills-note">
                   <Icon name="loading" spin /> {tr("mirror.skills_loading")}
@@ -2797,21 +2825,14 @@ export function MirrorView({
                   <button
                     type="button"
                     key={s.type + ":" + s.source + ":" + s.name}
-                    ref={i === skillSel ? skillSelRef : undefined}
-                    className={"mirror-skill-item" + (i === skillSel ? " sel" : "")}
+                    ref={!skillArgs && i === skillSel ? skillSelRef : undefined}
+                    className={"mirror-skill-item" + (!skillArgs && i === skillSel ? " sel" : "")}
                     role="option"
-                    aria-selected={i === skillSel}
+                    aria-selected={!skillArgs && i === skillSel}
                     title={tr("mirror.skills_item_hint")}
                     onMouseMove={() => setSkillSel(i)}
                     onMouseDown={(ev) => ev.preventDefault()}
-                    onClick={(ev) => {
-                      if (ev.ctrlKey || ev.altKey || ev.metaKey) {
-                        closeSkillPicker();
-                        void send(skillInsertText(s).trim());
-                        return;
-                      }
-                      pickSkill(skillInsertText(s));
-                    }}
+                    onClick={() => pickSkill(skillInsertText(s))}
                   >
                     <span className="mirror-skill-name">{s.invoke ? s.invoke.trim() : s.name}</span>
                     {s.argumentHint ? <span className="mirror-skill-hint">{s.argumentHint}</span> : null}
