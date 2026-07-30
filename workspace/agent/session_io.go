@@ -278,6 +278,10 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if !allowViewNavKeys(name, keys) {
+			writeViewNavErr(w)
+			return
+		}
 		if err := sendNamedKeys(pane, keys); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 			return
@@ -299,6 +303,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	if len(body.Seq) > 0 {
 		// Validate up-front so a bad step doesn't half-drive the modal: each step is
 		// either a whitelisted named key or literal text.
+		var seqKeys []string
 		for _, s := range body.Seq {
 			if s.K != "" && !allowedKey(s.K) {
 				httpx.WriteErr(w, http.StatusBadRequest, "bad_key", "unsupported key: "+s.K)
@@ -308,6 +313,11 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 				httpx.WriteErr(w, http.StatusBadRequest, "bad_seq", "each seq step needs k or t")
 				return
 			}
+			seqKeys = append(seqKeys, s.K)
+		}
+		if !allowViewNavKeys(name, seqKeys) {
+			writeViewNavErr(w)
+			return
 		}
 		working := false
 		for i, s := range body.Seq {
@@ -334,6 +344,26 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name})
 		return
+	}
+	// claude のペインの入力欄が**セッション自身の会話以外**に紐づいていると、打った文字は
+	// メイン会話に届かない: レールでエージェントが選ばれていればそのエージェントへの割り込みに
+	// なり、agents ホーム画面なら「新しいセッションを作る」入力欄になる。どちらもペイン上は
+	// 自分の文字が見えるので送信側は成功したと思い込み、メイン転写にもミラーにも残らない
+	// （実測 2026-07-30 sannme2、制御プローブで再現 — internal/tmuxx/testdata/footers）。
+	//
+	// 戻せるなら戻す（復帰手順は実測済み）。戻せなかったときだけ 409 で突き返す — 黙って
+	// 誤配達するより、届かなかったことを呼び出し元に伝える方がよい。
+	if m, ok := session.ReadMeta(name); ok && normalizeKind(m.Kind) == session.KindClaude &&
+		tmuxx.AgentsViewActive(name) {
+		if !tmuxx.LeaveAgentsView(name) {
+			httpx.WriteErr(w, http.StatusConflict, "agents_view",
+				"session pane's input box is bound to a background agent / the agents screen, "+
+					"not the session's conversation; typing there does not reach the session "+
+					"(and could not be returned automatically — a draft may be open in the composer). "+
+					"Return the pane to the main conversation and send again.")
+			return
+		}
+		log.Printf("input: %s のペインがエージェント表示だったのでメイン会話へ戻した", name)
 	}
 	// 配達検証の基線はタイプ前に取る（confirm 時のみ）。meta が読めない session は
 	// 検証不能として従来意味論のまま通す。
@@ -613,7 +643,7 @@ func deliverInitialPrompt(name, prompt string) {
 	// 出なければ自己修復を 1 巡試す。この経路は create 応答から切り離された goroutine
 	// なので HTTP では失敗を返せない — 最終的に未確認ならログに残す（reuse 送信側の
 	// confirm と違い、ここは best-effort のまま）。
-	if metaOK && base != nil {
+	if metaOK && base.logs != nil {
 		if err := confirmPromptDelivery(meta, pane, prompt, base); err != nil {
 			log.Printf("initial prompt delivery UNCONFIRMED for %s: %v", name, err)
 		}
@@ -809,6 +839,42 @@ func markSessionWorking(name string) {
 
 // allowedKey is the whitelist of tmux key names the Console may send to drive a TUI
 // (the AskUserQuestion modal): navigation + confirm, nothing that could run a command.
+// viewNavKeys are the keys claude's TUI reads as VIEW navigation when no dialog is up:
+// ← leaves the conversation for the agents home screen (実測 claude 2.1.220 — the footer
+// advertises it as "← for agents"), whose composer reads "describe a task for a new
+// session" and CREATES A NEW SESSION when submitted. Neither that screen nor the
+// rail-bound agent view delivers to the session, so a stray ← turns every later injection
+// into a misdelivery — the 2026-07-30 shape. Inside a dialog the same key is ordinary
+// navigation, so the guard only refuses when there is no dialog to drive.
+var viewNavKeys = map[string]bool{"Left": true}
+
+// allowViewNavKeys reports whether this key batch may be sent as-is. It only touches tmux
+// when the batch actually contains a view-navigation key, so the common answer path
+// (Down/Space/Enter) costs nothing.
+func allowViewNavKeys(name string, keys []string) bool {
+	nav := false
+	for _, k := range keys {
+		if viewNavKeys[k] {
+			nav = true
+			break
+		}
+	}
+	if !nav {
+		return true
+	}
+	if m, ok := session.ReadMeta(name); !ok || normalizeKind(m.Kind) != session.KindClaude {
+		return true // 他 kind に ← の意味は無い（この罠は claude の TUI 固有）
+	}
+	return tmuxx.ModalActive(name) // ダイアログがあるならナビゲーションとして正当
+}
+
+func writeViewNavErr(w http.ResponseWriter) {
+	httpx.WriteErr(w, http.StatusConflict, "view_nav_key",
+		"a bare Left arrow leaves a claude pane's conversation for its agents screen "+
+			"(footer: ← for agents), where later input creates a new session or steers an agent "+
+			"instead of reaching this one; it is only accepted while a dialog is open")
+}
+
 func allowedKey(k string) bool {
 	switch k {
 	case "Up", "Down", "Left", "Right", "Enter", "Space", "Escape", "Tab", "BTab", "BSpace", "Home", "End":

@@ -1,0 +1,23 @@
+
+❯ Use the Agent tool with run_in_background:true, subagent_type
+  general-purpose, prompt: "run: sleep 150 via Bash, then reply DONE". Just
+  launch it and tell me it is launched. Do nothing else.
+
+● I'll launch that agent in the background.
+
+● Agent(Sleep then reply DONE)
+  ⎿  Backgrounded agent (↓ to manage · ctrl+o to expand)
+
+● Launched — a background general-purpose agent is running sleep 150 and will
+  reply DONE. I'll let you know when the completion notification arrives.
+
+✻ Crunched for 12s
+
+───────────────────────────────────── Launch background agent with sleep task ──
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+
+  ↑/↓ to select · Enter to view
+
+❯ ● main
+  ◯ general-purpose  Sleep then reply DONE                1m 7s · ↓ 16.6k tokens

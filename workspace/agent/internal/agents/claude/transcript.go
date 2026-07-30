@@ -1,7 +1,9 @@
 package claude
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"sort"
 	"strconv"
@@ -68,6 +70,61 @@ func TranscriptRead(sid string) (lines [][]byte, path string, matched []string) 
 		}
 	}
 	return fallback, fallbackPath, matched
+}
+
+// lastLineWhere returns the LAST line of p that ok accepts, scanning backwards. It reads
+// the tail window first and only falls back to the whole file when the window holds no
+// accepted line, so the polled callers (freshness / 中断検知) do not re-read a multi-MB
+// transcript every tick just to look at its end.
+func lastLineWhere(p string, ok func([]byte) bool) ([]byte, bool) {
+	for _, lines := range tailThenWhole(p) {
+		for i := len(lines) - 1; i >= 0; i-- {
+			if ok(lines[i]) {
+				return lines[i], true
+			}
+		}
+	}
+	return nil, false
+}
+
+// tailThenWhole yields the file's lines twice over: the last transcriptTailWindow bytes
+// (with the half-line the window cut off dropped), then — only if the file is bigger —
+// the whole thing.
+func tailThenWhole(p string) [][][]byte {
+	f, err := os.Open(p)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil
+	}
+	windows := []int64{transcriptTailWindow}
+	if fi.Size() > transcriptTailWindow {
+		windows = append(windows, fi.Size())
+	}
+	var out [][][]byte
+	for _, w := range windows {
+		off := fi.Size() - w
+		truncated := off > 0
+		if off < 0 {
+			off = 0
+		}
+		if _, err := f.Seek(off, io.SeekStart); err != nil {
+			return out
+		}
+		buf, err := io.ReadAll(f)
+		if err != nil {
+			return out
+		}
+		lines := bytes.Split(buf, []byte("\n"))
+		if truncated && len(lines) > 0 {
+			lines = lines[1:]
+		}
+		out = append(out, lines)
+	}
+	return out
 }
 
 // readJSONLLines reads a jsonl file into its non-empty raw lines.

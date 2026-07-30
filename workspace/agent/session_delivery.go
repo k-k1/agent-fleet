@@ -43,35 +43,52 @@ const (
 	deliveryPoll        = 500 * time.Millisecond
 )
 
-// deliverySnapshot is the pre-typing evidence baseline. nil = この kind には検証
-// プリミティブが無い（confirmPromptDelivery は no-op で成功扱い）。
-type deliverySnapshot map[string]int64
+// deliverySnapshot is the pre-typing evidence baseline. logs == nil = この kind には
+// 検証プリミティブが無い（confirmPromptDelivery は no-op で成功扱い）。
+type deliverySnapshot struct {
+	logs      map[string]int64 // 会話 jsonl のサイズ（提出の一次記録を差分で見る）
+	subagents map[string]int64 // BG エージェントの転写（誤配達の検出用）
+	paneBusy  bool             // **打つ前から**ペインが動いていたか
+}
 
 // deliveryBaseline snapshots the session's conversation log sizes before typing, so
 // "a user turn was appended" is checkable afterward. claude only for now — the other
 // TUI kinds have no equally cheap submit ground-truth, and today's unattended senders
 // (the CP scheduler reuse send) target claude sessions.
+//
+// paneBusy も基線に含める: スピナーは「自分のプロンプトでターンが始まった」証拠として
+// 使うものなので、打つ前から回っていた（前のターン・BG エージェント）なら証拠にならない。
 func deliveryBaseline(m session.Meta) deliverySnapshot {
-	if m.Kind != session.KindClaude {
-		return nil
+	if normalizeKind(m.Kind) != session.KindClaude {
+		return deliverySnapshot{}
 	}
-	return claude.TranscriptSnapshot(session.UUID(m.Dir, m.Name))
+	sid := session.UUID(m.Dir, m.Name)
+	return deliverySnapshot{
+		logs:      claude.TranscriptSnapshot(sid),
+		subagents: claude.SubagentSnapshot(sid),
+		paneBusy:  tmuxx.IsBusy(m.Name),
+	}
 }
 
-// deliveryEvidenced reports whether the prompt provably became a turn. The jsonl half
-// also catches a turn that already FINISHED between polls (the user line persists);
-// the spinner half covers a slow jsonl flush while the turn visibly runs.
-func deliveryEvidenced(m session.Meta, base deliverySnapshot) bool {
-	if claude.UserTurnAppendedSince(session.UUID(m.Dir, m.Name), base) {
+// deliveryEvidenced reports whether the prompt provably reached the session. The jsonl
+// half also catches a turn that already FINISHED between polls (the user line persists)
+// and the queued case (typed mid-turn: claude holds the prompt and replays it later).
+//
+// スピナーは jsonl のフラッシュ遅れを埋める保険としてだけ残す。**基線で既に動いていた
+// 場合は数えない** — その回転は自分のプロンプトとは無関係で、実測ではペインに映っていた
+// のが BG サブエージェントのスピナーだったせいで、メイン会話に届かなかった指示が
+// 「配達済み」と判定されていた（2026-07-30 sannme2）。
+func deliveryEvidenced(m session.Meta, base deliverySnapshot, prompt string) bool {
+	if claude.PromptAcceptedSince(session.UUID(m.Dir, m.Name), base.logs, prompt) {
 		return true
 	}
-	return tmuxx.IsBusy(m.Name)
+	return !base.paneBusy && tmuxx.IsBusy(m.Name)
 }
 
-func awaitDeliveryEvidence(m session.Meta, base deliverySnapshot, window time.Duration) bool {
+func awaitDeliveryEvidence(m session.Meta, base deliverySnapshot, prompt string, window time.Duration) bool {
 	deadline := time.Now().Add(window)
 	for {
-		if deliveryEvidenced(m, base) {
+		if deliveryEvidenced(m, base, prompt) {
 			return true
 		}
 		if time.Now().After(deadline) {
@@ -84,11 +101,20 @@ func awaitDeliveryEvidence(m session.Meta, base deliverySnapshot, window time.Du
 // confirmPromptDelivery blocks until the just-typed prompt provably started a turn,
 // self-healing once if it did not. nil = confirmed (or unverifiable kind).
 func confirmPromptDelivery(m session.Meta, pane, prompt string, base deliverySnapshot) error {
-	if base == nil {
+	if base.logs == nil {
 		return nil
 	}
-	if awaitDeliveryEvidence(m, base, deliveryConfirmWindow) {
+	if awaitDeliveryEvidence(m, base, prompt, deliveryConfirmWindow) {
 		return nil
+	}
+	// 誤配達の検出: プロンプトが BG エージェントの転写に入っていたら、ペインの入力欄は
+	// メイン会話ではなくそのエージェントに紐づいていた（agents 表示）。ここで自己修復に
+	// 進むと同じ割り込みをもう一度エージェントへ撃ち込むだけなので、再送せずに落とす。
+	// 通常はタイプ前のガード（session_io.go の agents_view）で弾かれるが、レールの表示が
+	// 変わってガードが素通りしたときの最後の砦。
+	if claude.SubagentReceivedSince(session.UUID(m.Dir, m.Name), base.subagents, prompt) {
+		return fmt.Errorf("prompt was delivered to a background agent, not the session " +
+			"(the pane's input box was bound to an agent); return the pane to the main conversation and resend")
 	}
 	// 自己修復: 下書きがまだコンポーザに見えている＝Enter だけ食われた → Enter 再送
 	// （提出済みなら空コンポーザへの Enter は no-op なので安全）。下書きも消えている
@@ -103,7 +129,7 @@ func confirmPromptDelivery(m session.Meta, pane, prompt string, base deliverySna
 			return fmt.Errorf("delivery retry: %v", err)
 		}
 	}
-	if awaitDeliveryEvidence(m, base, deliveryRetryWindow) {
+	if awaitDeliveryEvidence(m, base, prompt, deliveryRetryWindow) {
 		return nil
 	}
 	return fmt.Errorf("prompt did not become a turn (no user turn appended, pane not working)")

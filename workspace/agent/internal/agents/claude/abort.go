@@ -16,6 +16,7 @@ package claude
 import (
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -27,6 +28,14 @@ type abortRecord struct {
 	IsSidechain bool   `json:"isSidechain"`
 	IsAPIError  bool   `json:"isApiErrorMessage"`
 	Status      int    `json:"apiErrorStatus"`
+	Timestamp   string `json:"timestamp"`
+}
+
+// Abort is a detected turn cut-off, with everything a caller needs to report it.
+type Abort struct {
+	Msg       string    // the error text (rides the report / chat bridge as the reason)
+	Retryable bool      // 再送で直る（自動再開の対象）か、原因を直すまで無意味か
+	At        time.Time // 中断が記録された時刻。ゼロ値 = レコードに時刻が無い
 }
 
 // retryableOverrides are texts where claude ITSELF says the error is not the user's
@@ -61,7 +70,11 @@ var retryableMarkers = []string{
 	"overloaded",
 	"timed out",
 	"timeout",
-	"internal server error",
+	// "server error" は "internal server error" を含む広い形。実測 sp2qemx (2026-07-30)
+	// の "API Error: Server error mid-response. The response above may be incomplete."
+	// はこの語しか手掛かりが無い — apiErrorStatus フィールドごと欠けているので下の
+	// 5xx フォールバックにも掛からず、blocked（＝自動再開しない）に倒れていた。
+	"server error",
 	"service unavailable",
 	"bad gateway",
 }
@@ -103,26 +116,68 @@ func classifyAbort(msg string, status int) bool {
 // ユーザーが手で再開した後は末尾が user/assistant に変わるため、この関数は自然に
 // false へ戻る（＝一度中断を報告したセッションが再開後にもう一度報告されることはない）。
 func AbortedTurn(sid string) (msg string, retryable, ok bool) {
-	return abortedTurnFrom(TranscriptLines(sid))
+	a, ok := AbortInfo(sid)
+	return a.Msg, a.Retryable, ok
 }
 
-// abortedTurnFrom is AbortedTurn's pure half (lines in, verdict out).
+// AbortInfo is AbortedTurn plus WHEN the cut-off was recorded — what a level-driven
+// reader needs (docs/51): the report reconciler compares that time against the
+// instruction cursor to decide which instructions this terminal event covers.
+//
+// It reads only the tail of the live transcript (lastLineWhere), because unlike the
+// heal path — which asks once, after the pane is seen at its prompt — the reconciler
+// asks every tick for every armed session.
+func AbortInfo(sid string) (Abort, bool) {
+	for _, p := range jsonlByMtime(sid) {
+		line, found := lastLineWhere(p, func(l []byte) bool { _, ok := terminalRecord(l); return ok })
+		if !found {
+			continue // この転写には終端の判定材料が無い（stub 等）— 次の候補へ
+		}
+		r, _ := terminalRecord(line)
+		return abortFrom(line, r)
+	}
+	return Abort{}, false
+}
+
+// abortedTurnFrom is the pure form used by the corpus / table tests: same rule, applied
+// to a whole set of lines instead of a file's tail.
 func abortedTurnFrom(lines [][]byte) (msg string, retryable, ok bool) {
 	for i := len(lines) - 1; i >= 0; i-- {
-		var r abortRecord
-		if json.Unmarshal(lines[i], &r) != nil {
-			continue
-		}
-		if r.IsSidechain || (r.Type != "user" && r.Type != "assistant") {
+		r, isTerminal := terminalRecord(lines[i])
+		if !isTerminal {
 			continue // 記帳レコード / サブエージェント — 終端の判定材料にしない
 		}
-		if r.Type != "assistant" || !r.IsAPIError {
-			return "", false, false // 直近の実レコードが通常のターン — 中断ではない
-		}
-		msg = strings.TrimSpace(AssistantText(lines[i]))
-		return msg, classifyAbort(msg, r.Status), true
+		a, ok := abortFrom(lines[i], r)
+		return a.Msg, a.Retryable, ok
 	}
 	return "", false, false
+}
+
+// terminalRecord parses a line and reports whether it can END a turn: a real record
+// (user/assistant) that is not a subagent's. 除外リストではなく許可リストで受けるのは
+// 記帳レコードの種類が版ごとに増減するから（docs/47）。
+func terminalRecord(line []byte) (abortRecord, bool) {
+	var r abortRecord
+	if json.Unmarshal(line, &r) != nil {
+		return r, false
+	}
+	if r.IsSidechain || (r.Type != "user" && r.Type != "assistant") {
+		return r, false
+	}
+	return r, true
+}
+
+// abortFrom is the verdict for one terminal record.
+func abortFrom(line []byte, r abortRecord) (Abort, bool) {
+	if r.Type != "assistant" || !r.IsAPIError {
+		return Abort{}, false // 直近の実レコードが通常のターン — 中断ではない
+	}
+	a := Abort{Msg: strings.TrimSpace(AssistantText(line))}
+	a.Retryable = classifyAbort(a.Msg, r.Status)
+	if at, err := time.Parse(time.RFC3339, r.Timestamp); err == nil {
+		a.At = at
+	}
+	return a, true
 }
 
 // HealIdle is what the pane-based self-heal does once it has decided the session is

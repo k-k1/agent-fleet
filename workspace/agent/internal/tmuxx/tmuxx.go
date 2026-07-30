@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -228,6 +229,135 @@ func AtIdlePrompt(name string) bool {
 	return atIdlePrompt(string(out))
 }
 
+// AgentsViewActive reports whether a claude pane's input box is bound to something
+// OTHER than the session's own conversation. Typing there does not reach the session:
+//
+//   - agent selected in the rail — the input becomes a STEERING message for that
+//     background agent, recorded in its own subagents/agent-*.jsonl as "The user sent a
+//     new message while you were working:" and never in the session transcript;
+//   - agents home screen (opened with ←) — the composer reads "describe a task for a new
+//     session" and submitting there CREATES A NEW SESSION.
+//
+// 実測（制御プローブ・claude 2.1.220 / 2026-07-30, testdata/footers/agents_*）: レールで
+// エージェントを選んだ状態でプロンプトを打つと、レール行に "1 queued" が付き、本文は
+// エージェントの転写にだけ入って本体の会話には現れなかった。フリートで起きた誤配達
+// （sannme2）と同じ形。ペイン上は自分の文字が見えるので、送信側からは成功に見える。
+func AgentsViewActive(name string) bool {
+	pane := SessionPaneID(session.TmuxName(name))
+	if pane == "" {
+		return false
+	}
+	out, err := Cmd("capture-pane", "-p", "-t", pane).Output()
+	if err != nil {
+		return false
+	}
+	return agentsViewActive(string(out))
+}
+
+// railMainUnselectedRe matches the background-agent rail's "main" row when it is NOT the
+// selected one. The rail is drawn under the composer as
+//
+//	  ◯ main
+//	❯ ● general-purpose  Sleep then reply DONE   1m 18s · ↓ 16.6k tokens
+//
+// with the FILLED glyph (U+25CF) on the selected row and a hollow one (U+25EF) elsewhere;
+// "❯" marks the cursor while the rail is being navigated. We key on the hollow glyph in
+// front of "main" — hollow variants are enumerated so that ANY unknown glyph reads as "not
+// in the agents view". That direction matters: a drift then costs us the guard (the old
+// behaviour) instead of blocking every legitimate injection.
+var railMainUnselectedRe = regexp.MustCompile(`(?m)^\s*(?:\x{276F} )?[\x{25EF}\x{25CB}\x{25CC}] main\s*$`)
+
+// composerBorderRe matches the full-width rule claude draws under its input box. It is the
+// structural anchor for reading the footer/rail region: everything after the LAST one
+// belongs to the chrome, everything before it is transcript text. Anchoring here rather
+// than on the mode-footer strip matters because that strip is REPLACED while the rail is
+// being navigated ("↑/↓ to select · Enter to view") — the state the incident passed
+// through — and on the agents home screen.
+var composerBorderRe = regexp.MustCompile(`(?m)^\s*\x{2500}{8,}\s*$`)
+
+// agentsViewActive is the pure decision over one captured frame.
+func agentsViewActive(s string) bool {
+	tail := afterLastComposerBorder(s)
+	if tail == "" {
+		return false // 入力欄が描かれていない（ダイアログ・起動中）— ここでの判断対象外
+	}
+	// The agents home screen's footer offers "enter to return" (to the conversation);
+	// its composer creates a NEW session, so it is just as wrong a place to type into.
+	if strings.Contains(tail, "enter to return") {
+		return true
+	}
+	return railMainUnselectedRe.MatchString(tail)
+}
+
+// afterLastComposerBorder returns the chrome region: everything below the input box's
+// bottom rule (footer / hint / agent rail). "" when the box is not drawn.
+func afterLastComposerBorder(s string) string {
+	loc := composerBorderRe.FindAllStringIndex(s, -1)
+	if len(loc) == 0 {
+		return ""
+	}
+	return s[loc[len(loc)-1][1]:]
+}
+
+// LeaveAgentsView tries to put a claude pane's input box back on the session's own
+// conversation, and reports whether it ended up there. Both routes are 実測（制御プローブ・
+// claude 2.1.220 / 2026-07-30）:
+//
+//   - rail に紐づいている: ↓ でレール選択が開き、カーソルは常に先頭行 (main) に立つ →
+//     Enter で main の表示へ戻り → ↑ でレール選択を閉じる（先頭行での ↑ が抜ける操作）。
+//   - agents ホーム画面: Esc で会話へ戻る（画面自身が "esc returns to it" と案内する）。
+//
+// 下書きが残っているときは何もしない: レール選択中の Enter は「選択を開く」であって
+// 送信ではないと確認しているが、表示がドリフトしていた場合に人の書きかけを送信して
+// しまう事故は取り返しがつかない。呼び出し側は false を「戻せなかった」として扱い、
+// 送信を諦めればよい（黙って誤配達するよりは失敗する方がよい）。
+func LeaveAgentsView(name string) bool {
+	pane := SessionPaneID(session.TmuxName(name))
+	if pane == "" {
+		return false
+	}
+	frame := CapturePane(session.TmuxName(name))
+	if !agentsViewActive(frame) {
+		return true
+	}
+	keys := []string{"Down", "Enter", "Up"}
+	if strings.Contains(afterLastComposerBorder(frame), "enter to return") {
+		keys = []string{"Escape"} // agents ホーム画面
+	} else if !composerEmpty(frame) {
+		return false
+	}
+	for _, k := range keys {
+		if err := Cmd("send-keys", "-t", pane, k).Run(); err != nil {
+			return false
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	return !agentsViewActive(CapturePane(session.TmuxName(name)))
+}
+
+// composerRuleRe matches EITHER of the input box's rules. The top one carries the title
+// ("───── Sleep then reply DONE ──"), so it is not a pure run like the bottom one —
+// composerEmpty needs both to bound the region, hence the looser form.
+var composerRuleRe = regexp.MustCompile(`(?m)^\s*\x{2500}{4,}.*$`)
+
+// composerEmpty reports whether the input box holds no draft: the composer region (between
+// its two rules) is just the bare "❯" prompt.
+func composerEmpty(s string) bool {
+	loc := composerRuleRe.FindAllStringIndex(s, -1)
+	if len(loc) < 2 {
+		return false
+	}
+	region := s[loc[len(loc)-2][1]:loc[len(loc)-1][0]]
+	for _, ln := range strings.Split(region, "\n") {
+		t := strings.TrimSpace(ln)
+		if t == "" || t == "\u276f" {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 // modalMarkers are fragments of the dialogs that claude draws OVER the input box
 // (permission prompt, plan approval, folder trust, AskUserQuestion). Matched against a
 // width-wrapped capture, so only fragments that survive wrapping are reliable:
@@ -237,6 +367,31 @@ func AtIdlePrompt(name string) bool {
 var modalMarkers = []string{
 	"Enter to select", "Esc to cancel", "to approve",
 	"Do you want to", "Would you like to proceed", "Ready to submit",
+}
+
+// ModalActive reports whether a claude pane is showing one of its dialogs (permission,
+// plan approval, folder trust, AskUserQuestion). Callers that drive the TUI with named
+// keys use it to tell "there is a modal to navigate" from "the keys will hit the plain
+// input box", where arrows mean something else entirely (← switches to the agents view).
+func ModalActive(name string) bool {
+	pane := SessionPaneID(session.TmuxName(name))
+	if pane == "" {
+		return false
+	}
+	out, err := Cmd("capture-pane", "-p", "-t", pane).Output()
+	if err != nil {
+		return false
+	}
+	return modalActive(string(out))
+}
+
+func modalActive(s string) bool {
+	for _, m := range modalMarkers {
+		if strings.Contains(s, m) {
+			return true
+		}
+	}
+	return false
 }
 
 // atIdlePrompt is the pure decision over one captured frame — split out from AtIdlePrompt

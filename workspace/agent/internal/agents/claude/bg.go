@@ -1,6 +1,8 @@
 package claude
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -282,52 +284,142 @@ const subagentFreshTTL = 90 * time.Second
 // recently-appended log means one is live. Complements BackgroundBusy, which covers
 // the process-tree case it structurally cannot see.
 func SubagentBusy(sid string) bool {
+	cutoff := time.Now().Add(-subagentFreshTTL)
+	for _, p := range SubagentLogs(sid) {
+		if fi, err := os.Stat(p); err == nil && fi.ModTime().After(cutoff) {
+			return true
+		}
+	}
+	return false
+}
+
+// SubagentLogs lists sid's background-agent transcripts. Regular subagents sit directly
+// under subagents/; Workflow agents nest under subagents/workflows/wf_*/.
+func SubagentLogs(sid string) []string {
 	if sid == "" {
-		return false
+		return nil
 	}
 	base := filepath.Join(ConfigDir(), "projects", "*", sid, "subagents")
-	cutoff := time.Now().Add(-subagentFreshTTL)
-	// Regular subagents sit directly under subagents/; Workflow agents nest under
-	// subagents/workflows/wf_*/. Check both, returning on the first fresh log.
+	var out []string
 	for _, pat := range []string{
 		filepath.Join(base, "agent-*.jsonl"),
 		filepath.Join(base, "workflows", "wf_*", "agent-*.jsonl"),
 	} {
 		logs, _ := filepath.Glob(pat)
-		for _, p := range logs {
-			if fi, err := os.Stat(p); err == nil && fi.ModTime().After(cutoff) {
-				return true
-			}
+		out = append(out, logs...)
+	}
+	return out
+}
+
+// SubagentSnapshot is TranscriptSnapshot for the background agents' logs — the baseline
+// SubagentReceivedSince compares against.
+func SubagentSnapshot(sid string) map[string]int64 {
+	snap := map[string]int64{}
+	for _, p := range SubagentLogs(sid) {
+		if fi, err := os.Stat(p); err == nil {
+			snap[p] = fi.Size()
+		}
+	}
+	return snap
+}
+
+// SubagentReceivedSince reports whether the prompt landed in a BACKGROUND AGENT's
+// transcript instead of the session's own — the signature of typing into the pane while
+// its input box is bound to an agent (claude records it there as "The user sent a new
+// message while you were working:"). Matched on the prompt's own text, so an agent that
+// merely kept working since the baseline does not read as a misdelivery.
+//
+// これが立ったときに再タイプ（自己修復）へ進むと、同じ割り込みをサブエージェントへ
+// もう一度撃ち込むことになる。撃つ前に見分けるのが目的（2026-07-30 sannme2）。
+func SubagentReceivedSince(sid string, snap map[string]int64, prompt string) bool {
+	needle := jsonNeedle(prompt)
+	if needle == nil {
+		return false
+	}
+	for _, p := range SubagentLogs(sid) {
+		if bytes.Contains(appendedSince(p, snap[p]), needle) {
+			return true
 		}
 	}
 	return false
 }
 
 // TranscriptBusy reports whether the session's MAIN transcript
-// (ConfigDir()/projects/*/<sid>.jsonl) was appended recently — the turn itself is
-// still running. Same freshness signal and TTL as SubagentBusy, aimed at the main
-// turn instead of its background agents: a mid-turn think gap fires no hooks, so the
-// status marker alone cannot distinguish "quiet because thinking" from "done".
+// (ConfigDir()/projects/*/<sid>.jsonl) grew a real turn record recently — the turn
+// itself is still running. Same freshness signal and TTL as SubagentBusy, aimed at the
+// main turn instead of its background agents: a mid-turn think gap fires no hooks, so
+// the status marker alone cannot distinguish "quiet because thinking" from "done".
 func TranscriptBusy(sid string) bool {
 	at, ok := TranscriptTouched(sid)
-	return ok && at.After(time.Now().Add(-subagentFreshTTL))
+	return ok && TranscriptFresh(at)
 }
 
-// TranscriptTouched returns WHEN the session's main transcript was last appended
-// (the newest of the matching jsonl files). Callers that hold an independent
-// turn-end event（Stop フックが書いたマーカー等）compare against it instead of using
-// the bare freshness window: 「マーカーより後にも転写が伸びている」なら、そのマーカーは
-// ターンの終わりではない。
+// TranscriptFresh applies the freshness window to an already-observed transcript time,
+// so a caller that needs the time anyway (reportTranscriptBusy compares it against the
+// turn-end marker) does not have to read the file twice.
+func TranscriptFresh(at time.Time) bool { return at.After(time.Now().Add(-subagentFreshTTL)) }
+
+// TranscriptTouched returns WHEN the session's main transcript last grew a REAL turn
+// record. Callers that hold an independent turn-end event（Stop フックが書いたマーカー
+// 等）compare against it instead of using the bare freshness window:
+// 「マーカーより後にも転写が伸びている」なら、そのマーカーはターンの終わりではない。
+//
+// 実レコード = type が user / assistant の行。ファイルの mtime ではなく行の timestamp を
+// 見るのが肝で、これは実測で刺さった穴の恒久対策（2026-07-30 s2bl5pv/sannme2/sp2qemx）:
+// claude はターンと無関係な記帳行（system/away_summary・last-prompt・custom-title・
+// agent-name・mode・permission-mode・file-history-*）を後から追記する。mtime だけを見て
+// いた頃はその追記が「まだ働いている」に化け、報告済みの指示が補償リコンサイラに
+// 「作業を再開した」と誤読されて訂正＋重複報告が飛んでいた（sp2qemx は 09:56:56 の完了
+// 以降 40 分間 user/assistant 行ゼロなのに 10:06 に reopen された）。
+//
+// 除外ではなく許可リストで受けるのは AbortedTurn と同じ理由 — 記帳レコードの種類は版ごと
+// に増減するので、知らない type が増えても既定で無視される側に倒す。isSidechain は
+// ここでは**含める**（AbortedTurn は終端判定なので除外する）: 旧版の claude はサブ
+// エージェントのターンをメイン転写へ inline で書いており、それは紛れもなく実行中の証拠。
 func TranscriptTouched(sid string) (time.Time, bool) {
 	if sid == "" {
 		return time.Time{}, false
 	}
 	var newest time.Time
-	logs, _ := filepath.Glob(filepath.Join(ConfigDir(), "projects", "*", sid+".jsonl"))
-	for _, p := range logs {
-		if fi, err := os.Stat(p); err == nil && fi.ModTime().After(newest) {
-			newest = fi.ModTime()
+	for _, p := range jsonlPaths(sid) {
+		if at, ok := lastRealRecordAt(p); ok && at.After(newest) {
+			newest = at
 		}
 	}
 	return newest, !newest.IsZero()
+}
+
+// transcriptTailWindow bounds the tail reads the polled predicates do (lastLineWhere).
+// Transcripts reach several MB and this runs on the reconciler's tick, so we read the end
+// of the file and only widen to the whole thing when the window holds nothing usable (a
+// tail made entirely of bookkeeping, or one enormous record).
+const transcriptTailWindow = 512 << 10
+
+// lastRealRecordAt returns the timestamp of the last user/assistant record in p.
+func lastRealRecordAt(p string) (time.Time, bool) {
+	line, ok := lastLineWhere(p, func(l []byte) bool { _, ok := realRecordAt(l); return ok })
+	if !ok {
+		return time.Time{}, false
+	}
+	return realRecordAt(line)
+}
+
+// realRecordAt parses one transcript line and returns its timestamp when the line is a
+// real turn record (not bookkeeping, not an untimed line).
+func realRecordAt(line []byte) (time.Time, bool) {
+	var r struct {
+		Type      string `json:"type"`
+		Timestamp string `json:"timestamp"`
+	}
+	if json.Unmarshal(line, &r) != nil {
+		return time.Time{}, false
+	}
+	if r.Type != "user" && r.Type != "assistant" {
+		return time.Time{}, false
+	}
+	at, err := time.Parse(time.RFC3339, r.Timestamp)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return at, true
 }
