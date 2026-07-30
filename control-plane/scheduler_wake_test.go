@@ -82,7 +82,7 @@ func TestBuildInjectBody(t *testing.T) {
 	slot := time.Date(2026, 7, 23, 0, 0, 0, 0, time.UTC)
 	sch := Schedule{
 		ID: "sch_1", AgentKind: "codex", Model: "gpt-x", Repo: "/home/dev/repos/x",
-		OwnerConv: "conv1", TZ: "UTC", Prompt: "run at {{time}}",
+		OwnerConv: "conv1", TZ: "UTC", Prompt: "run at {{time}}", Report: true,
 	}
 	var m map[string]any
 	if err := json.Unmarshal(buildInjectBody(sch, slot), &m); err != nil {
@@ -94,6 +94,13 @@ func TestBuildInjectBody(t *testing.T) {
 	if m["report_to"] != "conv1" {
 		t.Errorf("report_to = %v", m["report_to"])
 	}
+	// Without the report opt-in (the default) the owner conv must NOT ride as report_to.
+	sch.Report = false
+	_ = json.Unmarshal(buildInjectBody(sch, slot), &m)
+	if m["report_to"] != "" {
+		t.Errorf("report_to = %v, want empty when report is off (default)", m["report_to"])
+	}
+	sch.Report = true
 	if m["initial_prompt"] != "run at 00:00" {
 		t.Errorf("initial_prompt = %v", m["initial_prompt"])
 	}
@@ -139,7 +146,7 @@ func TestInjectSession(t *testing.T) {
 	defer srv.Close()
 
 	f := &wakeFirer{}
-	sch := Schedule{ID: "sch_1", AgentKind: "claude", OwnerConv: "conv1", Prompt: "hi"}
+	sch := Schedule{ID: "sch_1", AgentKind: "claude", OwnerConv: "conv1", Prompt: "hi", Report: true}
 	body := buildInjectBody(sch, time.Date(2026, 7, 23, 0, 0, 0, 0, time.UTC))
 	name, err := f.injectSession(context.Background(), stubRuntime{endpoint: srv.URL, token: "tok"}, body)
 	if err != nil {

@@ -370,8 +370,8 @@ func reuseCreateTitle(sch Schedule, pinned bool) string {
 	return "定時: " + sch.ID
 }
 
-// reuseSendBody is the /input body for a reuse fire: the expanded prompt plus the
-// operator conversation as report_to so completion rides docs/30 back to the operator.
+// reuseSendBody is the /input body for a reuse fire: the expanded prompt plus report_to
+// (the operator conversation when report=true, else empty = no completion report).
 // confirm (docs/38 配達検証) is the second sbk7oej fix: the first (the readiness gate)
 // still declared "fired" on tmux keystroke success, and a CLI that momentarily could
 // not accept input (cold resume before slash commands register, a swallowed Enter)
@@ -383,7 +383,7 @@ func reuseCreateTitle(sch Schedule, pinned bool) string {
 func reuseSendBody(sch Schedule, slot time.Time) []byte {
 	b, _ := json.Marshal(map[string]any{
 		"prompt":    expandSchedulePrompt(sch, slot),
-		"report_to": sch.OwnerConv,
+		"report_to": scheduleReportTo(sch),
 		"confirm":   true,
 		"source":    scheduleSource(sch), // mirror badge: 定期/手動発火 (docs/38)
 	})
@@ -401,7 +401,7 @@ func buildReuseCreateBody(sch Schedule, slot time.Time, title string) []byte {
 		"model":           sch.Model,
 		"initial_prompt":  expandSchedulePrompt(sch, slot),
 		"driver":          injectDriver(kind),
-		"report_to":       sch.OwnerConv,
+		"report_to":       scheduleReportTo(sch),
 		"idempotency_key": scheduleIdempotencyKey(sch.ID, slot),
 		"source":          scheduleSource(sch), // mirror badge: 定期/手動発火 (docs/38)
 	}

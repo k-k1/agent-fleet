@@ -259,6 +259,17 @@ func scheduleSource(sch Schedule) string {
 	return "schedule"
 }
 
+// scheduleReportTo is the docs/30 report_to target for a fire: the owner conversation
+// when the schedule opted into completion reports (report=true), empty otherwise — an
+// empty report_to disables the report obligation on the Agent side, so the default is
+// a silent fire (the run history / failure notifications still surface it).
+func scheduleReportTo(sch Schedule) string {
+	if sch.Report {
+		return sch.OwnerConv
+	}
+	return ""
+}
+
 // scheduleIdempotencyKey derives a deterministic create key from (schedule, slot) so a
 // CP restart that re-fires the same slot collapses onto the first session via the
 // Agent's create_session ledger (★4). The slot (not now) is the dedupe axis.
@@ -275,7 +286,7 @@ func buildInjectBody(sch Schedule, slot time.Time) []byte {
 		"model":           sch.Model,
 		"initial_prompt":  expandSchedulePrompt(sch, slot),
 		"driver":          injectDriver(kind),
-		"report_to":       sch.OwnerConv,
+		"report_to":       scheduleReportTo(sch),
 		"idempotency_key": scheduleIdempotencyKey(sch.ID, slot),
 		"source":          scheduleSource(sch), // mirror badge: 定期/手動発火 (docs/38)
 	}

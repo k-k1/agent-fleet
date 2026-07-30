@@ -64,6 +64,9 @@ func TestScheduleCreateAndList(t *testing.T) {
 	if !strings.HasSuffix(dto.NextRunLocal, "JST") {
 		t.Errorf("next_run_local not in tz: %q", dto.NextRunLocal)
 	}
+	if dto.Report {
+		t.Error("report should default to false (報告しない)")
+	}
 
 	// List returns it; another member sees nothing.
 	if lr := doJSON(api.list, mv, "GET", "", ""); lr.Code != 200 {
@@ -133,6 +136,28 @@ func TestScheduleUpdatePatch(t *testing.T) {
 	}
 	if !strings.Contains(sch2.NextRun, "T10:30") {
 		t.Errorf("recomputed next_run %q does not reflect new spec 30 10 * * *", sch2.NextRun)
+	}
+
+	// Patch report on/off: round-trips through the store, and an unrelated patch
+	// leaves it alone (nil pointer = unchanged).
+	if up3 := doJSON(api.update, mv, "PATCH", `{"report":true}`, dto.ID); up3.Code != 200 {
+		t.Fatalf("update3 code=%d body=%s", up3.Code, up3.Body.String())
+	}
+	sch3, _, _ := api.store.GetSchedule(ctx, dto.ID)
+	if !sch3.Report {
+		t.Error("report=true patch not persisted")
+	}
+	_ = doJSON(api.update, mv, "PATCH", `{"prompt":"newer"}`, dto.ID)
+	sch4, _, _ := api.store.GetSchedule(ctx, dto.ID)
+	if !sch4.Report {
+		t.Error("unrelated patch reset report")
+	}
+	if up5 := doJSON(api.update, mv, "PATCH", `{"report":false}`, dto.ID); up5.Code != 200 {
+		t.Fatalf("update5 code=%d body=%s", up5.Code, up5.Body.String())
+	}
+	sch5, _, _ := api.store.GetSchedule(ctx, dto.ID)
+	if sch5.Report {
+		t.Error("report=false patch not persisted")
 	}
 }
 

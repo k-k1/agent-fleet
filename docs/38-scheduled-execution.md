@@ -87,6 +87,7 @@
 | `repo` / `worktree` / `new_branch` | 作業ディレクトリの選択 |
 | `prompt` | 投入プロンプト（`{{date}}` 等の**固定メタ変数のみ**置換可・§④''' 参照） |
 | `overlap_policy` | `skip`（既定）/ `queue` / `restart` |
+| `report` | 完了報告 opt-in。`1` のときだけ発火時に `owner_conv` を `report_to` として渡し docs/30 報告が届く。**既定 `0`＝報告しない**（実行履歴・失敗通知は report と無関係に残る）。assistant 発火では無関係（投入自体が会話に届く） |
 | `enabled` | 有効/一時停止 |
 | `next_run` / `last_run` / `last_status` | 発火台帳（二重発火防止・catch-up 判定） |
 
@@ -170,6 +171,7 @@ git/WS 状態など「データ」は一切運ばない。無人実行では確�
 スケジューラは同じ REST（`POST /sessions`）を、以下を仕込んで叩くだけ:
 
 - `report_to = owner_conv`（オペレーター会話）→ 完了が docs/30 報告 seam に乗る。
+  ※後日変更: `report=1`（opt-in）のときだけ。既定は `report_to=""`＝報告しない。
 - `idempotency_key = f(schedule_id, 発火時刻スロット)` → CP 再起動での二重発火を殺す
   （既存 `session_idempotency.go` の決定論キーに直結）。
 - `initial_prompt = テンプレート展開後のプロンプト`、`kind`/`model`/`dir`/`new_branch`。
