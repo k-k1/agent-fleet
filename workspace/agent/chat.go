@@ -179,6 +179,15 @@ type chatConversation struct {
 	// Every provider clears it on entry and sets it only on success, so a failed or
 	// non-answering call can never lend its model to the next appended message.
 	turnModel string
+	// modelOverride swaps the model for the NEXT provider call only (unexported =
+	// never persisted). 自動ターン専用モデル（設定 > アシスタント）が使う: 報告処理の
+	// 定型ターンだけを軽量モデルで回し、利用者ターン・圧縮の要約ターンは会話本来の
+	// モデルのまま。呼び出し側（runReportAutoTurn）が send の直前に立てて直後に
+	// 倒す。claude のみ（chatModel 経由 — codex/opencode は c.Model を直接読む）。
+	// 注意: prompt cache はモデル毎に別なので、上書きターンは会話モデルのキャッシュ
+	// に乗らない — 自動ターンは散発的でどのみち冷えている（実測）ため、単価差の
+	// 利得が支配的という判断。
+	modelOverride string
 }
 
 // startTurn resets the per-turn scratch state. Called at the top of every provider
@@ -375,9 +384,13 @@ func resolveChatModel(agent, model string) string {
 	return recommendedAssistantModel(agent)
 }
 
-// chatModel resolves the --model for a conversation: its own model if set, else the
-// deployment default (AF_CHAT_MODEL or defaultChatModel).
+// chatModel resolves the --model for a conversation: a per-call override first
+// (自動ターン専用モデル — modelOverride のコメント参照), then its own model if set,
+// else the deployment default (AF_CHAT_MODEL or defaultChatModel).
 func chatModel(c *chatConversation) string {
+	if c.modelOverride != "" {
+		return c.modelOverride
+	}
 	if c.Model != "" {
 		return c.Model
 	}

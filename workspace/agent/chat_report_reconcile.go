@@ -447,10 +447,25 @@ type reportSink func(name, convID, kind, reason string, rows []instrRow) reportS
 // かかってもリコンサイラの単一 goroutine を塞がない。
 func deliverReportCard(name, convID, kind, reason string, rows []instrRow) reportSinkResult {
 	res := recordSessionReport(name, convID, kind, reason, rows)
-	if res == reportSinkOK && chatAutoTurnEnabled() {
+	if res == reportSinkOK && chatAutoTurnEnabled() && !quietReport(kind, reason) {
 		reportAutoTurns.schedule(convID)
 	}
 	return res
+}
+
+// quietReport reports whether 静かな完了報告（設定 > アシスタント・既定 OFF）が
+// この報告の自動ターンを抑止するか。対象は**正常な**完了（answer-ready・reason
+// なし）と、その訂正（reopened・reason なし — 静かなモードでは取り消すべき
+// 「完了しました」発言がそもそも無い）だけ。報告カードと通知センターへの配信は
+// 従来どおり即時で、報告は未配信のまま残って次のターン（利用者の発話・別報告の
+// 自動ターン）に相乗りする（injectPendingReports）— 消えるのは LLM の追撃ターン
+// だけ。異常系（中断・失敗・exit）と訂正打ち切り（reopen-capped）はオペレーターの
+// 判断・行動（自動再開・原因説明）が要るので従来どおり回す。
+func quietReport(kind, reason string) bool {
+	if !chatQuietCompletionEnabled() {
+		return false
+	}
+	return reason == "" && (kind == reportKindAnswerReady || kind == reportKindReopened)
 }
 
 // --- リコンサイラ本体 -----------------------------------------------------------
