@@ -275,7 +275,7 @@ func (rp *reaper) haltSession(ctx context.Context, rt Runtime, ws Workspace, nam
 	if rt.Token() != "" {
 		req.Header.Set("Authorization", "Bearer "+rt.Token())
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := agentHTTPClient.Do(req)
 	if err != nil {
 		log.Printf("idle-stop: halt %s/%s: %v", ws.ContainerName, name, err)
 		return

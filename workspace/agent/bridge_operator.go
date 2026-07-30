@@ -50,7 +50,7 @@ func runOperatorTurnAs(conv, text string, tag usageTag) (string, error) {
 	// operator chat (handleChatSend) never arms this, so it is never gated. Self-clears on a
 	// TTL if the process dies before the defer runs.
 	armOperatorTurn(conv)
-	defer disarmOperatorTurn()
+	defer disarmOperatorTurn(conv)
 
 	c, err := loadConv(conv)
 	if err != nil {

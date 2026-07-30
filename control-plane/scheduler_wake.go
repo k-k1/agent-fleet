@@ -189,7 +189,7 @@ func (f *wakeFirer) injectSession(ctx context.Context, rt Runtime, body []byte) 
 	if rt.Token() != "" {
 		req.Header.Set("Authorization", "Bearer "+rt.Token())
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := agentHTTPClient.Do(req)
 	if err != nil {
 		return "", err
 	}

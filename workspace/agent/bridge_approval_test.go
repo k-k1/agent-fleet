@@ -46,13 +46,29 @@ func TestOperatorTurnMarker(t *testing.T) {
 	if operatorTurnArmed("") {
 		t.Fatal("empty conv is never armed")
 	}
-	disarmOperatorTurn()
+	disarmOperatorTurn("c1")
 	if operatorTurnArmed("c1") {
 		t.Fatal("disarmed → not armed")
 	}
 
+	// Two unattended turns in parallel (different convs): each holds its own marker, and
+	// one turn finishing must not disarm the other (the fail-open bug this test pins).
+	armOperatorTurn("c1")
+	armOperatorTurn("c2")
+	if !operatorTurnArmed("c1") || !operatorTurnArmed("c2") {
+		t.Fatal("both parallel turns must be armed")
+	}
+	disarmOperatorTurn("c1")
+	if operatorTurnArmed("c1") {
+		t.Fatal("c1 disarmed → not armed")
+	}
+	if !operatorTurnArmed("c2") {
+		t.Fatal("disarming c1 must not disarm c2")
+	}
+	disarmOperatorTurn("c2")
+
 	// An expired marker (process died without disarming) is treated as not armed.
-	_ = operatorTurnStore.Write(operatorTurnKey, operatorTurnMarker{Conv: "c1", ExpiresAt: nowMs() - 1})
+	_ = operatorTurnStore.Write(operatorTurnKey("c1"), operatorTurnMarker{Conv: "c1", ExpiresAt: nowMs() - 1})
 	if operatorTurnArmed("c1") {
 		t.Fatal("expired marker must not arm")
 	}
