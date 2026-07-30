@@ -766,17 +766,50 @@ export function usageSeries(locale, q) {
 }
 
 // rtk 効果 (GET /api/agents/rtk/gain) — the container-side savings history the usage
-// tab's rtk card reads (schema is rtk's own, passed through by the Agent verbatim).
-// Fictional but plausible: ~46% average compression over a month of daily use, with
-// a weekday-ish hump so the sparkline has a shape.
+// tab's rtk card reads (schema is rtk's own `gain --all` JSON, passed through by the
+// Agent verbatim: daily/weekly/monthly buckets + a lifetime summary, each with
+// commands / in / out / savings% / exec-time). Fictional but plausible: ~46% average
+// compression, a weekday-ish hump plus one spike so every granularity has a shape.
 export function rtkGain() {
+  // One bucket at `frac` (0..1 across the window) with weight w. Derived fields keep
+  // the same arithmetic the card displays (saved = input - output, pct = saved/input).
+  const bucket = (w, pctJitter) => {
+    const saved = Math.round(38_000 * w);
+    const pct = Math.min(96, Math.max(18, 46 + pctJitter));
+    const input = Math.round(saved / (pct / 100));
+    const commands = Math.max(3, Math.round(saved / 520));
+    return {
+      commands,
+      input_tokens: input,
+      output_tokens: input - saved,
+      saved_tokens: saved,
+      savings_pct: pct,
+      total_time_ms: commands * 1400,
+      avg_time_ms: 1400,
+    };
+  };
   const daily = Array.from({ length: 30 }, (_, i) => {
-    const t = new Date(NOW.getTime() - (29 - i) * 86400_000);
     const w = 0.5 + 0.5 * Math.sin((i / 29) * Math.PI) + (i === 21 ? 1.4 : 0);
-    return { date: t.toISOString().slice(0, 10), saved_tokens: Math.round(38_000 * w) };
+    const t = new Date(NOW.getTime() - (29 - i) * 86400_000);
+    return { date: t.toISOString().slice(0, 10), ...bucket(w, Math.round(18 * Math.sin(i * 2.3))) };
   });
-  const saved = daily.reduce((s, d) => s + d.saved_tokens, 0);
+  const weekly = Array.from({ length: 12 }, (_, i) => {
+    const start = new Date(NOW.getTime() - (11 - i) * 7 * 86400_000);
+    const end = new Date(start.getTime() + 6 * 86400_000);
+    return {
+      week_start: start.toISOString().slice(0, 10),
+      week_end: end.toISOString().slice(0, 10),
+      ...bucket(3.5 + 2.4 * Math.abs(Math.sin((i + 1) * 1.3)), Math.round(12 * Math.sin(i * 1.7))),
+    };
+  });
+  const monthly = Array.from({ length: 6 }, (_, i) => {
+    const t = new Date(NOW.getFullYear(), NOW.getMonth() - (5 - i), 1);
+    const m = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}`;
+    return { month: m, ...bucket(9 + 7 * Math.abs(Math.sin((i + 2) * 1.1)), Math.round(8 * Math.sin(i))) };
+  });
+  const saved = monthly.reduce((s, d) => s + d.saved_tokens, 0);
   const input = Math.round(saved / 0.46);
+  const commands = monthly.reduce((s, d) => s + d.commands, 0);
   return {
     available: true,
     summary: {
@@ -784,9 +817,13 @@ export function rtkGain() {
       avg_savings_pct: 46,
       total_input: input,
       total_output: input - saved,
-      total_commands: 1874,
+      total_commands: commands,
+      total_time_ms: commands * 1400,
+      avg_time_ms: 1400,
     },
     daily,
+    weekly,
+    monthly,
   };
 }
 

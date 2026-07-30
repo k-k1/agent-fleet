@@ -2859,8 +2859,15 @@ export const ja = {
   "usage.rtk_avg_pct": "平均節約率",
   "usage.rtk_in_out": "入力 → 出力",
   "usage.rtk_commands": "実行コマンド",
+  "usage.rtk_daily": "日次",
+  "usage.rtk_weekly": "週次",
+  "usage.rtk_monthly": "月次",
+  "usage.rtk_saved": "節約",
+  "usage.rtk_pct": "節約率",
+  "usage.rtk_time": "実行時間",
+  "usage.rtk_time_avg": "{total}（平均 {avg}）",
   "usage.note_rtk_gain":
-    "rtk がコマンド出力を圧縮して節約したトークン量です（グラフは直近 {n} 日、数値は全期間の累積）。上の台帳とは別系のコンテナ内計測で、計上範囲は各エージェントの RTK 設定（設定 > エージェント）により変わります。",
+    "rtk がコマンド出力を圧縮して節約したトークン量です（上部の数値は全期間の累積）。上の台帳とは別系のコンテナ内計測で、計上範囲は各エージェントの RTK 設定（設定 > エージェント）により変わります。",
 
   // === P5 セッション/メモ（BranchRename/SessionTitle/SsmLogin/MemoTidy ほか） ===
   "sx.branch_rename_failed": "ブランチ名の変更に失敗しました（通信エラー）",

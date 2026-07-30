@@ -23,7 +23,7 @@ L1 認証（authGate）通過後に到達。認可は「自分のリソースの
 | connections | `GET /api/connections`・git `PUT/DELETE /api/connections/git/{host}`（+ GitHub Device / Bitbucket OAuth / claude / codex / opencode）| 中継（Bitbucket OAuth 開始と callback のみ CP）| [08](08-integrations.md) |
 | chat / assistants | `/api/chat/conversations*`（stream は SSE、削除ロック `POST …/{id}/lock`）・`POST /api/chat/ask`・`/api/assistants*` | 中継 | [04](04-workspace-agent.md) |
 | env / settings | `GET/PUT /api/env/{toolchains,ui-prefs}`・`GET/PUT /api/env/ws-settings`・`GET/PUT /api/claude/settings`・`GET /api/{claude,codex,copilot}/usage`（各 WsBar 使用量チップ。claude/codex=サブスク枠、copilot=アカウント
-クレジット残量。応答にプランと利用アカウントを含む。agy は `GET /api/connections/agy/usage`）・`GET/PUT /api/agents/rtk`・`GET /api/agents/rtk/gain`（rtk 節約履歴＝WsBar「rtk 効果」チップ、`rtk gain --format json` 素通し）| ws-settings=CP、他は中継 | [04](04-workspace-agent.md) |
+クレジット残量。応答にプランと利用アカウントを含む。agy は `GET /api/connections/agy/usage`）・`GET/PUT /api/agents/rtk`・`GET /api/agents/rtk/gain`（rtk 節約履歴＝使用量タブ「rtk 効果」カード、`rtk gain --all --format json` 素通し）| ws-settings=CP、他は中継 | [04](04-workspace-agent.md) |
 | memo | `GET/POST/PATCH/DELETE /api/memos*`・`POST /api/memos/flush` | CP（flush 時のみ Agent へ）| [03](03-control-plane.md) |
 | notifications | `GET /api/notifications`・`POST /api/notifications/{seen,usage-observations}` | CP（DB）| [03](03-control-plane.md) |
 | schedules | `GET /api/schedules`・`GET …/{id}/runs`・`PATCH/DELETE …/{id}`・`POST …/{id}/{pause,resume,run-now}`（Console は一覧・管理のみ。作成は MCP ツール経由）| CP（DB + scheduler）| [docs/38](../38-scheduled-execution.md) |
