@@ -14,6 +14,9 @@ export function useIsMobile(): boolean {
     const mq = window.matchMedia(MOBILE_QUERY);
     const fn = () => setM(mq.matches);
     mq.addEventListener("change", fn);
+    // 購読開始時に現在値へ再同期 — 初期 render と effect の間に境界を跨いでいた場合、
+    // 次の change イベントまで古い値のままになる穴を塞ぐ。
+    fn();
     return () => mq.removeEventListener("change", fn);
   }, []);
   return m;

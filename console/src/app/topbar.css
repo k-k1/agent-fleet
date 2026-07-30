@@ -66,7 +66,7 @@
 }
 .notification-wrap { position: relative; }
 .notification-btn { position: relative; padding: 4px 7px; }
-.notification-badge { position: absolute; top: -6px; right: -7px; min-width: 16px; height: 16px; padding: 0 3px; border-radius: 9px; background: var(--danger, #d95763); color: white; font-size: 10px; line-height: 16px; text-align: center; }
+.notification-badge { position: absolute; top: -6px; right: -7px; min-width: 16px; height: 16px; padding: 0 3px; border-radius: 9px; background: var(--del); color: white; font-size: 10px; line-height: 16px; text-align: center; }
 .notification-panel { position: absolute; z-index: 70; top: calc(100% + 7px); right: 0; width: min(380px, calc(100vw - 20px)); max-height: min(560px, calc(100vh - 64px)); display: flex; flex-direction: column; background: var(--panel2, var(--panel)); border: 1px solid var(--border2, var(--border)); border-radius: 10px; box-shadow: 0 12px 36px rgba(0,0,0,.45); overflow: hidden; }
 .notification-panel > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
 .notification-titles { display: flex; align-items: baseline; gap: 8px; min-width: 0; }

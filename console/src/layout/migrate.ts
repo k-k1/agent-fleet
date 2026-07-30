@@ -71,8 +71,17 @@ function contentFromFlat(p: any): PaneContent {
     }
     case "diff": {
       const docTitle = str(p.docTitle);
+      // diffEdits も untrusted JSON — 配列でない/要素が壊れている永続値をそのまま
+      // 通すと DiffView（.map / e.old アクセス）が throw する。{old,new} の文字列
+      // だけを残す形へ正規化する。
+      const diffEdits = Array.isArray(p.diffEdits)
+        ? p.diffEdits.map((e: any) => ({
+            ...(typeof e?.old === "string" ? { old: e.old } : {}),
+            ...(typeof e?.new === "string" ? { new: e.new } : {}),
+          }))
+        : [];
       return docTitle
-        ? { kind: "diff", docTitle, diffTool: str(p.diffTool) || "", diffEdits: p.diffEdits }
+        ? { kind: "diff", docTitle, diffTool: str(p.diffTool) || "", diffEdits }
         : { kind: "terminal", chat: false };
     }
     case "chat": {
@@ -150,6 +159,11 @@ export function normalizeStored(raw: unknown): Layout | null {
     colRatios.some((r) => typeof r !== "number" || !(r > 0))
   ) {
     colRatios = equalRatios(cols.length);
+  } else {
+    // 旧クランプの取りこぼし等で合計が 1 からずれた保存値も、復元時に合計 1 へ
+    // 正規化する（全要素 > 0 は上の検査で保証済み）。
+    const sum = colRatios.reduce((n, r) => n + r, 0);
+    colRatios = colRatios.map((r) => r / sum);
   }
   const activeId =
     cols.some((c) => c.panes.some((p) => p.id === l.activeId)) && typeof l.activeId === "string"

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { WheelEvent as RWheelEvent, MouseEvent as RMouseEvent, PointerEvent as RPointerEvent } from "react";
+import type { MouseEvent as RMouseEvent, PointerEvent as RPointerEvent } from "react";
 import { useT } from "../../lib/i18n/index.ts";
 
 // ImageView previews a single image (CodeLeaf-style affordances): the image is
@@ -23,12 +23,20 @@ interface ImageViewProps {
 // A point relative to the box center, derived from an event carrying client coords.
 type ClientPoint = { clientX: number; clientY: number };
 
+// The full transform as one state value so a zoom updates scale+pan atomically
+// (no side-effecting setState inside another setState's updater).
+interface Transform {
+  scale: number;
+  tx: number;
+  ty: number;
+}
+const FIT: Transform = { scale: 1, tx: 0, ty: 0 };
+
 export function ImageView({ src, alt, onLoad }: ImageViewProps) {
   const tr = useT();
   const boxRef = useRef<HTMLDivElement>(null);
-  const [scale, setScale] = useState(1);
-  const [tx, setTx] = useState(0);
-  const [ty, setTy] = useState(0);
+  const [t, setT] = useState<Transform>(FIT);
+  const { scale, tx, ty } = t;
   const [broken, setBroken] = useState(false);
 
   // Active pointers (id -> {x,y}) drive drag (one pointer) and pinch (two).
@@ -37,9 +45,7 @@ export function ImageView({ src, alt, onLoad }: ImageViewProps) {
 
   // Reset transform whenever the image source changes.
   useEffect(() => {
-    setScale(1);
-    setTx(0);
-    setTy(0);
+    setT(FIT);
     setBroken(false);
   }, [src]);
 
@@ -55,40 +61,47 @@ export function ImageView({ src, alt, onLoad }: ImageViewProps) {
 
   // Zoom toward a screen point (relative to the box center) so that point stays
   // put — the standard anchored-zoom math for `translate() scale()`.
-  const zoomTo = useCallback(
-    (nextScale: number, cx: number, cy: number) => {
-      setScale((prev) => {
-        const s = clamp(nextScale, MIN, MAX);
-        const px = (cx - tx) / prev;
-        const py = (cy - ty) / prev;
-        const next = clampPan(s, cx - s * px, cy - s * py);
-        setTx(next.x);
-        setTy(next.y);
-        return s;
-      });
+  const applyZoom = useCallback(
+    (prev: Transform, nextScale: number, cx: number, cy: number): Transform => {
+      const s = clamp(nextScale, MIN, MAX);
+      const px = (cx - prev.tx) / prev.scale;
+      const py = (cy - prev.ty) / prev.scale;
+      const next = clampPan(s, cx - s * px, cy - s * py);
+      return { scale: s, tx: next.x, ty: next.y };
     },
-    [tx, ty, clampPan],
+    [clampPan],
+  );
+  const zoomTo = useCallback(
+    (nextScale: number, cx: number, cy: number) => setT((prev) => applyZoom(prev, nextScale, cx, cy)),
+    [applyZoom],
   );
 
-  const pointFromEvent = (e: ClientPoint) => {
+  const pointFromEvent = useCallback((e: ClientPoint) => {
     const box = boxRef.current;
     if (!box) return { x: 0, y: 0 };
     const r = box.getBoundingClientRect();
     return { x: e.clientX - r.left - r.width / 2, y: e.clientY - r.top - r.height / 2 };
-  };
+  }, []);
 
-  const onWheel = (e: RWheelEvent) => {
-    e.preventDefault();
-    const { x, y } = pointFromEvent(e);
-    zoomTo(scale * Math.exp(-e.deltaY * 0.0015), x, y);
-  };
+  // Wheel zoom must swallow the scroll, but React's onWheel is registered passive
+  // (preventDefault is a no-op) — attach a native non-passive listener instead
+  // (same pattern as ReaderView). Re-attach when the box remounts (`broken` flips).
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const { x, y } = pointFromEvent(e);
+      setT((prev) => applyZoom(prev, prev.scale * Math.exp(-e.deltaY * 0.0015), x, y));
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [broken, applyZoom, pointFromEvent]);
 
   const onDoubleClick = (e: RMouseEvent) => {
     const { x, y } = pointFromEvent(e);
     if (scale > 1) {
-      setScale(1);
-      setTx(0);
-      setTy(0);
+      setT(FIT);
     } else {
       zoomTo(2.5, x, y);
     }
@@ -121,9 +134,12 @@ export function ImageView({ src, alt, onLoad }: ImageViewProps) {
       return;
     }
     if (scale > 1) {
-      const next = clampPan(scale, tx + (cur.x - prev.x), ty + (cur.y - prev.y));
-      setTx(next.x);
-      setTy(next.y);
+      const dx = cur.x - prev.x;
+      const dy = cur.y - prev.y;
+      setT((p) => {
+        const next = clampPan(p.scale, p.tx + dx, p.ty + dy);
+        return { ...p, tx: next.x, ty: next.y };
+      });
     }
   };
 
@@ -132,11 +148,7 @@ export function ImageView({ src, alt, onLoad }: ImageViewProps) {
     if (pointers.current.size < 2) pinch.current = null;
   };
 
-  const reset = () => {
-    setScale(1);
-    setTx(0);
-    setTy(0);
-  };
+  const reset = () => setT(FIT);
 
   if (broken) return <div className="imgview muted">{tr("view.cannot_show_image")}</div>;
 
@@ -144,7 +156,6 @@ export function ImageView({ src, alt, onLoad }: ImageViewProps) {
     <div
       ref={boxRef}
       className={"imgview" + (scale > 1 ? " zoomed" : "")}
-      onWheel={onWheel}
       onDoubleClick={onDoubleClick}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}

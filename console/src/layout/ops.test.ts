@@ -14,6 +14,7 @@ import {
   splitRight,
   splitDown,
   setActive,
+  setColRatios,
   MAX_COLS,
 } from "./ops.ts";
 import { normalizeStored } from "./migrate.ts";
@@ -227,6 +228,15 @@ describe("splitRight / splitDown", () => {
   });
 });
 
+describe("setColRatios", () => {
+  it("normalizes the ratios to sum 1 so an over-1 drag result can't persist", () => {
+    const l = setColRatios(grown(1), [1.0, 0.1]); // 旧クランプが作った合計 1.1 相当
+    expect(l.colRatios.reduce((n, r) => n + r, 0)).toBeCloseTo(1);
+    expect(l.colRatios[0]).toBeCloseTo(1.0 / 1.1);
+    expect(l.colRatios[1]).toBeCloseTo(0.1 / 1.1);
+  });
+});
+
 describe("normalizeStored (migration)", () => {
   it("migrates the old flat format, keeping ids, sessions and hidden terminals", () => {
     const old = {
@@ -295,6 +305,18 @@ describe("normalizeStored (migration)", () => {
       activeId: "p0",
     })!;
     expect(l.cols[0].panes[0].content).toEqual({ kind: "terminal", chat: false });
+  });
+  it("re-normalizes stored colRatios whose sum drifted from 1", () => {
+    const l = normalizeStored({
+      cols: [
+        { id: "c0", panes: [blankPane("p0")] },
+        { id: "c1", panes: [blankPane("p1")] },
+      ],
+      colRatios: [0.9, 0.2], // 旧クランプの取りこぼしで合計 1.1 のまま保存された値
+      activeId: "p0",
+    })!;
+    expect(l.colRatios.reduce((n, r) => n + r, 0)).toBeCloseTo(1);
+    expect(l.colRatios[0]).toBeCloseTo(0.9 / 1.1);
   });
   it("rejects garbage and repairs bad ratios / activeId", () => {
     expect(normalizeStored(null)).toBeNull();

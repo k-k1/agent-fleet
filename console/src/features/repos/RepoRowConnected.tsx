@@ -145,7 +145,12 @@ export function RepoRowConnected({ r, ctx, onToggle, sess }: RepoRowConnectedPro
         // Shared per-kind chain: repo last-used → kind default (repoLast.ts resolveModel).
         const model = hasModel ? resolveModel(kind, r.name, defaults.model) : "";
         const effort = agentOf(kind).caps.effort ? resolveEffort(kind, r.name, defaults.effort) : "";
-        const startMode = agentOf(kind).caps.planMode ? resolveStartMode(kind, r.name, defaults.startMode) : "normal";
+        // plan 起動対応（planMode または tuiStartMode）の kind は保存済み既定を尊重する
+        // — 起動モーダルで選んだ per-repo の開始モードがクイック起動でも効くように。
+        const startMode =
+          agentOf(kind).caps.planMode || agentOf(kind).caps.tuiStartMode
+            ? resolveStartMode(kind, r.name, defaults.startMode)
+            : "normal";
         const body: Record<string, unknown> = { dir: r.path, kind };
         // クイック起動も新規の既定は managed（docs/27 §9.2 — opencode）。CLI が
         // 欲しいときは 作業を始める モーダルのドライバ選択から。

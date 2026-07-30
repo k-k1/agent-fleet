@@ -15,6 +15,7 @@
   display: flex;
   flex: 1;
   min-height: 0;
+  position: relative; /* anchors the overlay rail / backdrop below */
 }
 .app-edge-hotzone {
   display: none;
@@ -53,9 +54,6 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-}
-.app-body {
-  position: relative;
 }
 /* Desktop-only collapse / overlay (hamburger single/double-click). Scoped to
    min-width so the persisted af-left-open="0" (shared with the old console)

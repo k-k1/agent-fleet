@@ -56,13 +56,13 @@ export function InternalRepoBrowser({ name, onClose }: { name: string; onClose: 
       .then((d) => {
         if (!alive) return;
         if (d && d.error) {
-          setTreeErr(d.error.message || tr("tokens.fetch_failed"));
+          setTreeErr(d.error.message || tr("igb.fetch_failed"));
           setEntries([]);
         } else {
           setEntries(d.entries || []);
         }
       })
-      .catch(() => alive && (setTreeErr(tr("tokens.fetch_failed")), setEntries([])));
+      .catch(() => alive && (setTreeErr(tr("igb.fetch_failed")), setEntries([])));
     return () => {
       alive = false;
     };
@@ -142,7 +142,7 @@ export function InternalRepoBrowser({ name, onClose }: { name: string; onClose: 
                   <li key={e.name}>
                     <button
                       type="button"
-                      className={"ig-entry" + (file && file.endsWith("/" + e.name) ? " active" : "")}
+                      className={"ig-entry" + (file === (path ? `${path}/${e.name}` : e.name) ? " active" : "")}
                       onClick={() => openEntry(e)}
                     >
                       <span className="ig-icon">{e.type === "tree" ? "📁" : "📄"}</span>

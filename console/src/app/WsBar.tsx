@@ -38,6 +38,55 @@ interface HostHistPoint {
   mem: number;
 }
 
+// api/workspace/stats・api/admin/host 応答のうち WS バーが表示に使うフィールドだけの
+// 部分型（応答全体の正は Agent/CP 側 — 未知フィールドは素通し）。
+interface WsStats {
+  running?: boolean;
+  mem_used?: number | null;
+  mem_max?: number | null;
+  cpu_pct?: number | null;
+  oom_recent?: boolean;
+  oom_killed?: boolean;
+  exit_code?: number | null;
+}
+interface HostStats {
+  mem_total: number;
+  mem_used: number;
+  load1: number;
+  ncpu?: number;
+}
+
+// 使用量チップ各種（claude/codex/agy/copilot）が共有する reading の部分型。エージェント毎に
+// 使うフィールドは異なる（fiveHour/sevenDay ↔ groups ↔ quotas）が、shape は 1 つの union に
+// せず optional の合併で表す — チップ側は元々フィールドの有無で分岐している。
+interface UsageWindow {
+  pct: number;
+  resetsAt: string;
+}
+interface UsageReading {
+  ok?: boolean;
+  authed?: boolean;
+  ageSec?: number;
+  user?: string;
+  plan?: string;
+  planType?: string;
+  account?: string;
+  fiveHour?: UsageWindow;
+  sevenDay?: UsageWindow;
+  resetCredits?: { availableCount?: number; credits?: { expiresAt?: string }[] };
+  // agy: モデルグループ毎のプール（週次＋有償tierは5時間枠）。remaining ベース。
+  groups?: {
+    label: string;
+    remainingPct: number;
+    resetsAt?: string;
+    fiveHour?: { remainingPct: number; resetsAt?: string };
+  }[];
+  // copilot: プール毎のクォータ＋共通の月次リセット。
+  quotas?: { id: string; remainingPct: number }[];
+  resetsAt?: string;
+  canUpgrade?: boolean;
+}
+
 // useWsResourceChips polls the workspace + host resource stats every 4s. It lives
 // here (not in a global store) on purpose: these values change every tick, so
 // holding them in shared state would re-render the whole app (terminals included)
@@ -45,7 +94,7 @@ interface HostHistPoint {
 // re-renders. Container stats are for everyone; host stats are super_admin-only
 // (the CP gates /api/admin/host server-side too).
 function useWsResourceChips(tenant: string | null, superAdmin: boolean) {
-  const [wsStats, setWsStats] = useState<any>(null);
+  const [wsStats, setWsStats] = useState<WsStats | null>(null);
   const [wsHist, setWsHist] = useState<WsHistPoint[]>([]); // [{cpu, mem}]
   const wsKey = useRef("");
   useEffect(() => {
@@ -106,7 +155,7 @@ function useWsResourceChips(tenant: string | null, superAdmin: boolean) {
     };
   }, [tenant]);
 
-  const [hostStats, setHostStats] = useState<any>(null);
+  const [hostStats, setHostStats] = useState<HostStats | null>(null);
   const [hostHist, setHostHist] = useState<HostHistPoint[]>([]); // [{load, mem}], load normalized to cores
   const hostKey = useRef("");
   useEffect(() => {
@@ -162,7 +211,7 @@ function useWsResourceChips(tenant: string | null, superAdmin: boolean) {
 // on a fast background timer (the claude endpoint is unofficial/rate-limited; codex is
 // a local rollout read). Kept in WsBar so it doesn't re-render the app.
 function useUsage(tenant: string | null, endpoint: string) {
-  const [usage, setUsage] = useState<any>(null);
+  const [usage, setUsage] = useState<UsageReading | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const load = useCallback(
     (force: boolean) => {
@@ -173,7 +222,7 @@ function useUsage(tenant: string | null, endpoint: string) {
         // blank a working chip), whether it was a background poll or a manual refresh —
         // but if we have nothing yet, still adopt the failed payload so its `authed` flag
         // can render the degraded "unavailable" chip instead of hiding entirely.
-        .then((d) => setUsage((u: any) => (d && (d.ok || !u) ? d : u)))
+        .then((d) => setUsage((u) => (d && (d.ok || !u) ? d : u)))
         .catch(() => {})
         .finally(() => force && setRefreshing(false));
     },
@@ -339,7 +388,7 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
   useOpenSignal(src.key, () => setOpen((o) => !o));
   // Notify when a constrained limit window resets (5-hour / weekly). Runs whether or
   // not the dropdown is open — the chip stays mounted while the workspace is up.
-  useUsageResetNotify(src, usage, fiveLabel, weekLabel, refresh);
+  useUsageResetNotify(src, usage, refresh);
 
   const win = (w: { pct: number; resetsAt: string }) => ({
     pct: Math.round(w.pct),
@@ -350,8 +399,8 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
   const uw = usage && usage.sevenDay && win(usage.sevenDay);
   const resetCount = usage?.resetCredits?.availableCount || 0;
   const fullResets = (usage?.resetCredits?.credits || [])
-    .filter((r: any) => r?.expiresAt && !isNaN(new Date(r.expiresAt).getTime()))
-    .sort((a: any, b: any) => new Date(a.expiresAt).getTime() - new Date(b.expiresAt).getTime());
+    .filter((r): r is { expiresAt: string } => !!r?.expiresAt && !isNaN(new Date(r.expiresAt).getTime()))
+    .sort((a, b) => new Date(a.expiresAt).getTime() - new Date(b.expiresAt).getTime());
   // Hide the chip only when the user isn't signed into this agent (nothing to show, and
   // never will be). If they ARE signed in but the (unofficial, rate-limited) reading is
   // momentarily unavailable, keep a degraded chip so it never vanishes on a transient
@@ -416,7 +465,7 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
               codex returns `user`/`planType` — surface whichever is present. */}
           {usage?.user && <div className="wu-note muted">{tr("wsbar.usage.user", { user: usage.user })}</div>}
           {(usage?.planType || usage?.plan) && (
-            <div className="wu-note muted">{tr("wsbar.usage.plan", { plan: usage.planType || usage.plan })}</div>
+            <div className="wu-note muted">{tr("wsbar.usage.plan", { plan: usage?.planType || usage?.plan || "" })}</div>
           )}
           {unavailable ? (
             <div className="wu-note muted">{tr("wsbar.usage.unavailable_note", { name: src.name })}</div>
@@ -427,7 +476,7 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
               {!!resetCount && (
                 <div className="wu-full-resets">
                   <div className="wu-row-head"><span className="wu-label">{tr("wsbar.usage.full_reset_label")}</span><span>{tr("wsbar.usage.count_ken", { count: resetCount })}</span></div>
-                  {fullResets.map((reset: any, i: number) => (
+                  {fullResets.map((reset, i) => (
                     <div className="wu-expiry" key={`${reset.expiresAt}-${i}`}>
                       <span>{tr("wsbar.usage.expires", { date: whenText(reset.expiresAt).split(" ")[0] })}</span>
                       <span className={new Date(reset.expiresAt).getTime() - Date.now() <= 7 * 86400000 ? "warn" : "muted"}>{expiryText(reset.expiresAt)}</span>
@@ -438,7 +487,7 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
             </>
           )}
           <div className="wu-foot">
-            {!unavailable && <span className="wu-ago muted">{tr("wsbar.usage.fetched", { ago: agoText(usage.ageSec) })}</span>}
+            {!unavailable && <span className="wu-ago muted">{tr("wsbar.usage.fetched", { ago: agoText(usage?.ageSec) })}</span>}
             {src.live && (
               <button type="button" className="ghost wu-reload" onClick={refresh} disabled={refreshing}>
                 <Icon name="refresh" spin={refreshing} /> {tr("wsbar.usage.refresh")}
@@ -551,7 +600,7 @@ function AgyUsageChip({ tenant }: { tenant: string | null }) {
               shared with the Antigravity IDE / Jules, so the popover always says so. */}
           <div className="wu-note muted">{tr("agents.agy_exp_label")}</div>
           <div className="wu-foot">
-            {!unavailable && <span className="wu-ago muted">{tr("wsbar.usage.fetched", { ago: agoText(usage.ageSec) })}</span>}
+            {!unavailable && <span className="wu-ago muted">{tr("wsbar.usage.fetched", { ago: agoText(usage?.ageSec) })}</span>}
             <button type="button" className="ghost wu-reload" onClick={refresh} disabled={refreshing}>
               <Icon name="refresh" spin={refreshing} /> {tr("wsbar.usage.refresh")}
             </button>
@@ -649,7 +698,7 @@ function CopilotUsageChip({ tenant }: { tenant: string | null }) {
             ))
           )}
           <div className="wu-foot">
-            {!unavailable && <span className="wu-ago muted">{tr("wsbar.usage.fetched", { ago: agoText(usage.ageSec) })}</span>}
+            {!unavailable && <span className="wu-ago muted">{tr("wsbar.usage.fetched", { ago: agoText(usage?.ageSec) })}</span>}
             <button type="button" className="ghost wu-reload" onClick={refresh} disabled={refreshing}>
               <Icon name="refresh" spin={refreshing} /> {tr("wsbar.usage.refresh")}
             </button>
@@ -725,7 +774,9 @@ function tile({
   title: string;
 }) {
   return (
-    <span className={"ws-graph" + (level === 2 ? " crit" : level === 1 ? " warn" : "")} title={title} key={k + title}>
+    // key は静的な k のみ — title は live 値（mem 使用量など）を含むので混ぜると
+    // 値が変わるたびに remount されてスパークラインがちらつく。
+    <span className={"ws-graph" + (level === 2 ? " crit" : level === 1 ? " warn" : "")} title={title} key={k}>
       <span className="ws-graph-k">{k}</span>
       <Sparkline data={series} max={max} track={track} />
       <span className="ws-graph-v">{value}</span>
@@ -789,11 +840,17 @@ export function WsBar() {
   // harmlessly (startWs is only re-fired from a genuinely stopped state).
   const [startQueued, setStartQueued] = useState(false);
   useEffect(() => {
-    if (startQueued && running) {
+    if (!startQueued) return;
+    if (running) {
       setStartQueued(false);
       openStart();
+    } else if (!busy) {
+      // 起動失敗・外部停止などで stopped/none/unknown に落ち着いた: running には
+      // 二度と遷移しないので、ここで解除しないと はじめる がスピナーのまま固着する。
+      // （クリック直後は start() が同バッチで "starting…" を積むため誤解除しない。）
+      setStartQueued(false);
     }
-  }, [startQueued, running, openStart]);
+  }, [startQueued, running, busy, openStart]);
   const onStart = async () => {
     if (running) {
       openStart();
@@ -883,7 +940,9 @@ export function WsBar() {
 
   // Container (own workspace): memory fill (vs quota) + CPU%. Shown to everyone.
   const hasWs = wsStats && wsStats.running && wsStats.mem_used != null;
-  const memRatio = hasWs && wsStats.mem_max ? wsStats.mem_used / wsStats.mem_max : null;
+  // hasWs が mem_used != null を保証するが、TS のプロパティ narrowing は alias 越しに
+  // 届かないので ?? 0 で明示（到達しないフォールバック）。
+  const memRatio = hasWs && wsStats.mem_max ? (wsStats.mem_used ?? 0) / wsStats.mem_max : null;
   // A process in this container was OOM-killed within the last few minutes (the
   // container itself survived). Flag the memory tile crit so it's noticed even after
   // usage falls back — a build/agent likely just died. (metrics.go oom_recent.)
@@ -895,19 +954,19 @@ export function WsBar() {
         series: wsHist.map((p) => p.mem),
         max: 1,
         track: true,
-        value: memRatio != null ? `${Math.round(memRatio * 100)}%` : `${fg(wsStats.mem_used)}G`,
+        value: memRatio != null ? `${Math.round(memRatio * 100)}%` : `${fg(wsStats.mem_used ?? 0)}G`,
         level: oomRecent ? 2 : lvl(memRatio, 0.75, 0.9),
         title: oomRecent
-          ? tr("wsbar.tile.ws_mem", { mem: `${fg(wsStats.mem_used)}${wsStats.mem_max ? "/" + fg(wsStats.mem_max) : ""}` }) +
+          ? tr("wsbar.tile.ws_mem", { mem: `${fg(wsStats.mem_used ?? 0)}${wsStats.mem_max ? "/" + fg(wsStats.mem_max) : ""}` }) +
             "\n" +
             tr("wsbar.tile.ws_mem_oom_note")
-          : tr("wsbar.tile.ws_mem", { mem: `${fg(wsStats.mem_used)}${wsStats.mem_max ? "/" + fg(wsStats.mem_max) : ""}` }),
+          : tr("wsbar.tile.ws_mem", { mem: `${fg(wsStats.mem_used ?? 0)}${wsStats.mem_max ? "/" + fg(wsStats.mem_max) : ""}` }),
       })}
       {tile({
         k: "cpu",
         series: wsHist.map((p) => p.cpu),
         value: wsStats.cpu_pct != null ? `${Math.round(wsStats.cpu_pct)}%` : "–",
-        level: lvl(wsStats.cpu_pct, 60, 90),
+        level: lvl(wsStats.cpu_pct ?? null, 60, 90),
         title: tr("wsbar.tile.ws_cpu"),
       })}
     </>
@@ -926,7 +985,7 @@ export function WsBar() {
         track: true,
         value: Number(hostStats.load1).toFixed(2),
         level: lvl(loadNorm, 0.7, 1),
-        title: tr("wsbar.tile.host_load", { load: Number(hostStats.load1).toFixed(2), ncpu: hostStats.ncpu }),
+        title: tr("wsbar.tile.host_load", { load: Number(hostStats.load1).toFixed(2), ncpu: hostStats.ncpu ?? "?" }),
       })}
       {tile({
         k: "mem",
@@ -1006,7 +1065,7 @@ export function WsBar() {
             type="number"
             min="1"
             max="65535"
-            placeholder="port"
+            placeholder={tr("wsbar.preview.port_ph")}
             value={port}
             onChange={(e) => setPort(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && openBrowserPane()}
@@ -1025,7 +1084,9 @@ export function WsBar() {
           <button onClick={openBrowserPane} disabled={!running || !browserTarget(Number(port.trim()), previewPath.trim())}>
             {tr("wsbar.preview.open_pane")}
           </button>
-          <button onClick={openPreview} disabled={!running || !port.trim()}>
+          {/* openPreview と同じ browserTarget 検証で無効化 — 範囲外/7700 ポートで
+              「押せるのに無反応」にならないように（ペインで開く ボタンと同型）。 */}
+          <button onClick={openPreview} disabled={!running || !browserTarget(Number(port.trim()), "/")}>
             {tr("wsbar.preview.open_light")}
           </button>
         </div>
@@ -1182,7 +1243,9 @@ export function WsBar() {
           </button>
           {moreOpen && (
             <div className="ws-more-pop">
-              {statsBlock && <div className="ws-more-stats">{statsBlock}</div>}
+              {/* statsBlock は常に truthy な Fragment（チップは各自 null で自己非表示）なので
+                  ここでは判定できない — 空のときの余白は CSS の :empty で畳む（wsbar.css）。 */}
+              <div className="ws-more-stats">{statsBlock}</div>
               {previewPop}
             </div>
           )}

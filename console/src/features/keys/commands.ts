@@ -32,7 +32,7 @@ import { langFor, imageFormat } from "../../lib/filemeta.ts";
 import { focusPaneContent, focusRegion } from "./focus.ts";
 import { api, apiJSON } from "../../core/api/client.ts";
 import { toast } from "../../ui/toast.ts";
-import { t } from "../../lib/i18n/index.ts";
+import { t, getLocale } from "../../lib/i18n/index.ts";
 import { popoutMode } from "../../lib/popoutMode.ts";
 import { canPopout, openPanePopout } from "../panes/popout.ts";
 
@@ -142,6 +142,9 @@ async function toggleChatNotify(kind: "discord" | "slack"): Promise<void> {
     fullText: !!st.fullText,
     mirrorInput: st.mirrorInput !== false,
     mentionUserId: st.mentionUserId || "",
+    // lang は非ポインタ扱いで、省略すると保存値が既定（日本語）へ戻る — 接続カードと
+    // 同じく現ロケールを毎回載せる（通知言語は Console の表示言語に追随する仕様）。
+    lang: getLocale(),
     notifyOff: wasOn, // flip: on → off, off → on
   });
   if (res && res.error) {
@@ -152,6 +155,10 @@ async function toggleChatNotify(kind: "discord" | "slack"): Promise<void> {
   // whether notifications are now on or off.
   toast(t(wasOn ? "keys.toast.notifyOff" : "keys.toast.notifyOn", { name }), { kind: "success" });
 }
+// run から fire-and-forget で呼ぶ入口。api() はネットワーク断で reject するので、ここで
+// catch しないと unhandled rejection のまま何も表示されない — 失敗はトーストで知らせる。
+const runChatNotify = (kind: "discord" | "slack") =>
+  void toggleChatNotify(kind).catch(() => toast(t("err.network")));
 
 // Toggle the per-session voice notification (docs/24) from the keyboard — the same setting
 // as Settings › Notifications' セッションの音声通知. Toasts the resulting on/off state.
@@ -268,8 +275,8 @@ export const ALL_COMMANDS: Command[] = [
   { id: "tts.toggle", title: "keys.cmd.ttsToggle", seq: "n m", run: toggleTtsPlayback },
   { id: "notify.ttsSession", title: "keys.cmd.ttsSessionToggle", seq: "n a", run: toggleTtsSessionNotify },
   { id: "notify.usageReset", title: "keys.cmd.usageResetToggle", seq: "n r", run: toggleUsageResetNotify },
-  { id: "notify.slack", title: "keys.cmd.slackToggle", seq: "n s", run: () => void toggleChatNotify("slack") },
-  { id: "notify.discord", title: "keys.cmd.discordToggle", seq: "n d", run: () => void toggleChatNotify("discord") },
+  { id: "notify.slack", title: "keys.cmd.slackToggle", seq: "n s", run: () => runChatNotify("slack") },
+  { id: "notify.discord", title: "keys.cmd.discordToggle", seq: "n d", run: () => runChatNotify("discord") },
 
   // ---- View / viewer (leader v, + Alt accelerators) — act on the active pane's
   // read-oriented view. Direct keys use Alt (not Ctrl): Ctrl+<letter> are the terminal's

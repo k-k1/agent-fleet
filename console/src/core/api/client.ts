@@ -140,7 +140,8 @@ export const isTransientErr = (d: unknown): boolean => {
 export const errText = (error: ApiError | string | null | undefined): string => {
   if (error && typeof error === "object") {
     const localized = error.code ? tMaybe("err." + error.code) : undefined;
-    return localized ?? error.message ?? String(error ?? "");
+    // message も無いオブジェクトを String() すると "[object Object]" になる — 汎用文言へ。
+    return localized ?? error.message ?? t("err.unknown");
   }
   return String(error ?? "");
 };
@@ -256,6 +257,21 @@ export function downloadURL(path: string): string {
   return u.toString();
 }
 
+// statusJSON — the shared "{status, …json}" fold for multipart uploads and the
+// fs write ops: parse the body as JSON and merge it onto the HTTP status; a
+// non-JSON/empty body yields {status} alone. Callers branch on `status` (409
+// conflicts etc.) — one implementation instead of a copy per endpoint.
+const statusJSON = <T extends { status: number } = FsResult>(
+  path: string,
+  opts: RequestInit,
+): Promise<T> =>
+  fetch(rel(path), opts).then((r) =>
+    r
+      .json()
+      .then((j) => ({ status: r.status, ...j }) as T)
+      .catch(() => ({ status: r.status }) as T),
+  );
+
 // Upload files into a home-relative directory (multipart, field "file"). The
 // global fetch wrapper adds X-AF-Tenant. Don't set Content-Type — the browser
 // sets the multipart boundary. With overwrite=false a name collision returns
@@ -269,12 +285,7 @@ export function uploadFiles(
   for (const f of files) fd.append("file", f, f.name);
   const qs = new URLSearchParams({ path: dir });
   if (overwrite) qs.set("overwrite", "1");
-  return fetch(rel(`api/fs/upload?${qs.toString()}`), { method: "POST", body: fd }).then((r) =>
-    r
-      .json()
-      .then((j) => ({ status: r.status, ...j }))
-      .catch(() => ({ status: r.status })),
-  );
+  return statusJSON(`api/fs/upload?${qs.toString()}`, { method: "POST", body: fd });
 }
 
 // --- semantic session turn ops (docs/27 P1.5) ---
@@ -360,16 +371,18 @@ export interface InteractionAnswer {
 // sessionRespond answers a MANAGED session's pending question by interaction id.
 // TUI sessions keep the keys/seq path — their modal is driven by navigation and
 // has no "answer by id" surface (the Agent answers respond_unsupported for them).
+// 却下理由（id 不明・driver 未実装など）を捨てず TurnResult 形で返す — 呼び出し側が
+// 汎用文言の代わりにトーストできる（sessionTurn と同じ契約）。
 export const sessionRespond = (
   session: string,
   id: string,
   answers: InteractionAnswer[],
-): Promise<boolean> =>
+): Promise<TurnResult> =>
   apiJSON(`api/sessions/${encodeURIComponent(session)}/respond`, "POST", {
     id,
     decision: "answer",
     answers,
-  }).then((r) => !r?.error);
+  }).then((r) => (r?.error ? { ok: false, message: errText(r.error as ApiError) } : { ok: true }));
 
 // sessionSettings updates a MANAGED session's dynamic thread settings（docs/27
 // §9.4-3: 稼働中セッションのモデル / effort / モード変更）。空フィールドは
@@ -425,15 +438,10 @@ export function pasteImage(
 ): Promise<{ status: number; path?: string; name?: string; error?: unknown }> {
   const fd = new FormData();
   fd.append("file", file, file.name || "pasted.png");
-  return fetch(rel(`api/sessions/${encodeURIComponent(session)}/paste-image`), {
+  return statusJSON(`api/sessions/${encodeURIComponent(session)}/paste-image`, {
     method: "POST",
     body: fd,
-  }).then((r) =>
-    r
-      .json()
-      .then((j) => ({ status: r.status, ...j }))
-      .catch(() => ({ status: r.status })),
-  );
+  });
 }
 
 // Upload one pasted image to an assistant chat (multipart, field "file"). Mirrors
@@ -445,26 +453,15 @@ export function chatPasteImage(
 ): Promise<{ status: number; path?: string; name?: string; error?: unknown }> {
   const fd = new FormData();
   fd.append("file", file, file.name || "pasted.png");
-  return fetch(rel(`api/chat/conversations/${encodeURIComponent(convId)}/paste-image`), {
+  return statusJSON(`api/chat/conversations/${encodeURIComponent(convId)}/paste-image`, {
     method: "POST",
     body: fd,
-  }).then((r) =>
-    r
-      .json()
-      .then((j) => ({ status: r.status, ...j }))
-      .catch(() => ({ status: r.status })),
-  );
+  });
 }
 
 // File-management ops (create / rename / delete). Each returns {status, …json}
 // so callers can branch on 409 (exists) etc. The fetch wrapper adds X-AF-Tenant.
-const fsWrite = (path: string, opts: RequestInit): Promise<FsResult> =>
-  fetch(rel(path), opts).then((r) =>
-    r
-      .json()
-      .then((j) => ({ status: r.status, ...j }))
-      .catch(() => ({ status: r.status })),
-  );
+const fsWrite = (path: string, opts: RequestInit): Promise<FsResult> => statusJSON(path, opts);
 const q = encodeURIComponent;
 export const fsMkdir = (path: string) => fsWrite(`api/fs/mkdir?path=${q(path)}`, { method: "POST" });
 export const fsNewFile = (path: string) => fsWrite(`api/fs/newfile?path=${q(path)}`, { method: "POST" });
@@ -716,12 +713,7 @@ export function memoPasteImage(
 ): Promise<{ status: number; path?: string; name?: string; error?: unknown }> {
   const fd = new FormData();
   fd.append("file", file, file.name || "pasted.png");
-  return fetch(rel("api/memos/paste-image"), { method: "POST", body: fd }).then((r) =>
-    r
-      .json()
-      .then((j) => ({ status: r.status, ...j }))
-      .catch(() => ({ status: r.status })),
-  );
+  return statusJSON("api/memos/paste-image", { method: "POST", body: fd });
 }
 
 // Relative URL of a stored memo image by basename. The endpoint requires the tenant

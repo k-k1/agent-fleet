@@ -978,7 +978,7 @@
 }
 
 /* Internal repo read-only browser modal (P3). */
-.modal.ig-browser {
+.ui-modal.ig-browser {
   width: min(920px, 94vw);
   max-width: 94vw;
 }
@@ -2103,6 +2103,7 @@
   align-items: center;
   gap: 7px;
   font-size: 12.5px;
+  cursor: pointer; /* mirror.css の重複定義を畳んだ際にこちらへ引き継いだ */
 }
 .admin-check input {
   flex: none;

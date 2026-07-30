@@ -60,19 +60,27 @@ export function PaneHost() {
     if (!rect) return;
     document.body.classList.add("col-resizing");
     const onMove = (ev: PointerEvent) => {
+      // ドラッグ量そのものを「両隣が 0.1 を割らない範囲」にクランプする。片側だけ
+      // Math.max(0.1, …) で底打ちすると合計が 1 を超え、右端列がはみ出す比率が
+      // そのまま永続化されてしまう（setColRatios / migrate 側の正規化は保険）。
       const d = (ev.clientX - start) / rect.width;
+      const dd = Math.min(Math.max(d, 0.1 - base[i]), base[i + 1] - 0.1);
       const next = base.slice();
-      next[i] = Math.max(0.1, base[i] + d);
-      next[i + 1] = Math.max(0.1, base[i + 1] - d);
+      next[i] = base[i] + dd;
+      next[i + 1] = base[i + 1] - dd;
       setColRatios(next);
     };
     const onUp = () => {
       document.body.classList.remove("col-resizing");
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    // タッチ中断（スクロール横取り等）は pointerup が来ない — リスナと body クラスが
+    // 残留してドラッグ状態が固着しないよう pointercancel でも解除する。
+    window.addEventListener("pointercancel", onUp);
   };
 
   const onRowDown = (colId: string) => (e: RPointerEvent) => {
@@ -85,9 +93,11 @@ export function PaneHost() {
       document.body.classList.remove("row-resizing");
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp); // 同上: タッチ中断でも解除
   };
 
   // A lone, empty terminal is the base state — nothing to close.

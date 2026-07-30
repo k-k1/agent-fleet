@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { api } from "../../core/api/client.ts";
 import { useSettingsUI } from "./store.ts";
+import type { ConnectionsStatus } from "../../types/session.ts";
 
 // useConnections: the shared api/connections loader for the settings tabs. Keeps a
 // local copy (null = loading) and, on reload, notifies global listeners (onboarding
@@ -14,7 +15,7 @@ import { useSettingsUI } from "./store.ts";
 // wrongly-empty, which flipped every card to 未接続 right after a successful connect.
 export function useConnections() {
   const bumpConn = useSettingsUI((s) => s.bumpConn);
-  const [conns, setConns] = useState<any>(null);
+  const [conns, setConns] = useState<ConnectionsStatus | null>(null);
   const seq = useRef(0);
   const reload = useCallback(() => {
     const id = ++seq.current; // a newer reload wins over an older retry chain
@@ -27,12 +28,12 @@ export function useConnections() {
             return;
           }
           if (retriesLeft > 0) setTimeout(() => attempt(retriesLeft - 1), 1200);
-          else setConns((prev: any) => prev ?? {});
+          else setConns((prev) => prev ?? {});
         })
         .catch(() => {
           if (id !== seq.current) return;
           if (retriesLeft > 0) setTimeout(() => attempt(retriesLeft - 1), 1200);
-          else setConns((prev: any) => prev ?? {});
+          else setConns((prev) => prev ?? {});
         });
     };
     attempt(2);

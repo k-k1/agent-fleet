@@ -11,7 +11,7 @@
 
 import { rel } from "../../core/api/client.ts";
 import { getSettings, subscribe as subscribeSettings } from "../../lib/settings.ts";
-import { getLocale } from "../../lib/i18n/index.ts";
+import { getLocale, t } from "../../lib/i18n/index.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import {
@@ -159,7 +159,8 @@ export function activeVoicePool(): ActiveVoice[] {
 export function previewVoice(name: string, voice: string, speed?: number): void {
   const opts = { ...ttsOptsFromSettings(), provider: "auto", voice };
   if (speed) opts.speed = speed;
-  const c = startTts(opts, "試聴・" + name);
+  const c = startTts(opts, t("tts.preview_label", { name }));
+  // 試聴文はキャラ（日本語話者）が読む音声サンプルなので、UI ロケールに依らず日本語のまま。
   c.push("こんにちは。この声で読み上げます。");
   c.flush();
 }
@@ -264,9 +265,9 @@ export function workVoiceOpts(
 // キャラ（activeVoicePool。基準スタイル・キャラ別速度も反映）。
 export function readerVoiceChoices(): [string, string][] {
   return [
-    ["", "設定の話者"],
+    ["", t("tts.voice_default")],
     ...activeVoicePool().map((v): [string, string] => ["vv:" + v.voice, v.name]),
-    ...SESSION_POLLY_VOICES.map((v): [string, string] => ["polly:" + v, "Polly（" + v + "）"]),
+    ...SESSION_POLLY_VOICES.map((v): [string, string] => ["polly:" + v, t("tts.voice_polly", { voice: v })]),
   ];
 }
 
@@ -589,7 +590,7 @@ export function startTts(
       buf = buf.slice(end);
       const nl = /\n/.test(m[0]);
       // 改行で確定 → 一拍（SENTENCE_GAP）、文中の句点 → 短い一拍（SENT_BEAT）。
-      enqueuePiece(piece, /*hard*/ nl || /[。！？!?]/.test(m[0]), nl ? SENTENCE_GAP : SENT_BEAT);
+      enqueuePiece(piece, /*hard*/ nl || /[。．！？!?]/.test(m[0]), nl ? SENTENCE_GAP : SENT_BEAT);
     }
     if (force) {
       // 末尾の未確定分 + 持ち越しをすべて読み上げる。fence 状態は引き回す。

@@ -13,6 +13,29 @@ import { Choice, OnOff, OrderList, Row, Select, Slider } from "./controls.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { useModelOptions } from "../../lib/agentModels.ts";
 
+// kind → 推奨モデル ID の解決。utility（タイトル提案などの軽量用途）と本回答とで別。
+// catalog 依存の分岐（cheap 探索 / ids に居るかの確認）があるため定数表ではなく関数で持つ。
+function recommendedModelId(
+  kind: (typeof ASSISTANT_AGENT_KINDS)[number],
+  utility: boolean,
+  ids: string[],
+  cheap: string | undefined,
+): string {
+  switch (kind) {
+    case "claude":
+      return utility ? "haiku" : "sonnet";
+    case "codex":
+      return utility ? cheap || "" : "gpt-5.6-luna";
+    case "opencode":
+      if (utility) return ids.includes("opencode-go/deepseek-v4-flash") ? "opencode-go/deepseek-v4-flash" : "";
+      return ids.includes("opencode-go/glm-5.2") ? "opencode-go/glm-5.2" : "opencode/nemotron-3-ultra-free";
+    case "agy":
+      return "Gemini 3.5 Flash (Medium)";
+    default:
+      return "";
+  }
+}
+
 function AssistantModelRow({
   kind,
   utility,
@@ -28,27 +51,7 @@ function AssistantModelRow({
   const live = useModelOptions(kind) || [["", tr("ui.default")]];
   const ids = live.map(([id]) => id);
   const cheap = ids.find((id) => ["mini", "flash", "lite", "small", "nano", "haiku"].some((x) => id.toLowerCase().includes(x)));
-  const recommended = utility
-    ? kind === "claude"
-      ? "haiku"
-      : kind === "codex"
-        ? cheap || ""
-        : kind === "opencode" && ids.includes("opencode-go/deepseek-v4-flash")
-          ? "opencode-go/deepseek-v4-flash"
-          : kind === "agy"
-            ? "Gemini 3.5 Flash (Medium)"
-            : ""
-    : kind === "claude"
-      ? "sonnet"
-      : kind === "codex"
-        ? "gpt-5.6-luna"
-        : kind === "opencode"
-          ? ids.includes("opencode-go/glm-5.2")
-            ? "opencode-go/glm-5.2"
-            : "opencode/nemotron-3-ultra-free"
-          : kind === "agy"
-            ? "Gemini 3.5 Flash (Medium)"
-            : "";
+  const recommended = recommendedModelId(kind, utility, ids, cheap);
   const resolvedLabel = live.find(([id]) => id === recommended)?.[1] || recommended || tr("ui.default");
   const recommendedOption: [string, string] = [
     ASSISTANT_RECOMMENDED_MODEL,

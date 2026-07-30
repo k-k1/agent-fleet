@@ -16,7 +16,7 @@ export interface Assistant {
   icon?: string; // codicon name
   description?: string; // user-facing self-intro (greeting card), distinct from persona
   builtin: boolean;
-  agent: SessionKind; // "claude" | "codex"
+  agent: SessionKind; // headless-chat 対応 kind のみ（ASSISTANT_AGENT_KINDS — claude/codex/opencode/cursor/agy）
   model?: string;
   persona?: string;
   tools: ToolGrant;

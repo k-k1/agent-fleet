@@ -6,7 +6,7 @@ import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useConnections } from "./useConnections.ts";
 import { useSettingsUI } from "./store.ts";
 import { OnOff, Row } from "./controls.tsx";
-import { useT } from "../../lib/i18n/index.ts";
+import { getLocale, useT } from "../../lib/i18n/index.ts";
 
 // NotificationsTab — 通知プリファレンス。上段は端末側の音声通知（読み上げから分離した
 // ttsSessionNotify / usageResetNotify）。下段は チャット連携（Discord / Slack）への通知
@@ -35,6 +35,9 @@ export function NotificationsTab() {
       fullText: !!st?.fullText,
       mirrorInput: st?.mirrorInput !== false,
       mentionUserId: st?.mentionUserId || "",
+      // lang は非ポインタ扱いで、省略すると保存値が既定（日本語）へ戻る — 接続カードと
+      // 同じく現ロケールを毎回載せる（通知言語は Console の表示言語に追随する仕様）。
+      lang: getLocale(),
       notifyOff: !on,
     });
     if (res && res.error) {

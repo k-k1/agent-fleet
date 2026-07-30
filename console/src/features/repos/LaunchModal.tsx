@@ -141,7 +141,11 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   const hasModel = agentOf(kind).caps.model;
   const driverManaged = driver === "managed";
   const hasEffort = agentOf(kind).caps.effort && (driverManaged || agentOf(kind).caps.tuiEffort);
-  const hasStartMode = agentOf(kind).caps.planMode && (driverManaged || agentOf(kind).caps.tuiStartMode);
+  // planMode はチャットの plan トグル用 cap — cursor/copilot/kiro は planMode:false でも
+  // tuiStartMode:true（plan 起動対応）なので、起動時モード選択はどちらかの cap で出す。
+  const hasStartMode =
+    (agentOf(kind).caps.planMode || agentOf(kind).caps.tuiStartMode) &&
+    (driverManaged || agentOf(kind).caps.tuiStartMode);
   const canPasteImage = agentOf(kind).caps.imagePaste;
 
   // Revoke every held preview URL when the modal unmounts (avoids leaking object URLs).

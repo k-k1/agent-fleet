@@ -267,7 +267,11 @@ export function setActive(l: Layout, id: string): Layout {
 }
 
 export function setColRatios(l: Layout, ratios: number[]): Layout {
-  return { ...l, colRatios: ratios };
+  // 合計 1 へ正規化してから保存する — ずれた比率をそのまま持つと右端列が
+  // はみ出したまま永続化・復元され続ける。
+  const sum = ratios.reduce((n, r) => n + r, 0);
+  const colRatios = sum > 0 ? ratios.map((r) => r / sum) : equalRatios(ratios.length);
+  return { ...l, colRatios };
 }
 
 export function setRowRatio(l: Layout, colId: string, r: number): Layout {

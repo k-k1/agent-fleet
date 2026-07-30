@@ -7,6 +7,7 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { useSettings, setSetting } from "../../lib/settings.ts";
 import { SSM_HOST_COLORS, hostColorBase, termBackground } from "../../lib/termcolor.ts";
 import { useT, t } from "../../lib/i18n/index.ts";
+import { Field, Meta } from "./mcpForm.tsx";
 
 // SsmTab manages the member's own AWS SSM login config (docs/history/p3-ssm-session.md)
 // in two tiers so the form isn't cluttered:
@@ -41,17 +42,7 @@ async function postJSON(path: string, method: string, body: unknown, toast: (msg
   return true;
 }
 
-// Meta renders one labeled key/value row inside a list card. Empty values show "—".
-// `wide` spans the full grid width (for long values like a start URL).
-function Meta({ k, v, mono = true, wide = false }: { k: ReactNode; v?: ReactNode; mono?: boolean; wide?: boolean }) {
-  return (
-    <div className={"ssm-meta-row" + (wide ? " wide" : "")}>
-      <span className="ssm-meta-k">{k}</span>
-      <span className={"ssm-meta-v" + (mono ? " mono" : "")}>{v || "—"}</span>
-    </div>
-  );
-}
-
+// Meta / Field は mcpForm.tsx の共通プリミティブを使う（完全に同型だったため集約）。
 // FieldGroup / Field build the labeled add-form: a bordered group holding fields that
 // each carry a label, an optional required * marker, and a hint (取得元・形式). Required
 // vs optional is conveyed per-field (the * marker + hint), so one group suffices — no
@@ -66,31 +57,6 @@ function FieldGroup({ title, optional, children }: { title?: ReactNode; optional
         </div>
       )}
       <div className="ssm-fgrid">{children}</div>
-    </div>
-  );
-}
-
-function Field({
-  label,
-  req,
-  hint,
-  wide,
-  children,
-}: {
-  label: ReactNode;
-  req?: boolean;
-  hint?: ReactNode;
-  wide?: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <div className={"ssm-fld" + (wide ? " wide" : "")}>
-      <label>
-        {label}
-        {req && <span className="req">*</span>}
-      </label>
-      {children}
-      {hint && <div className="hint">{hint}</div>}
     </div>
   );
 }

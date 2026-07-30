@@ -67,10 +67,9 @@ export interface AgentDescriptor {
   icon: string; // codicon name
   label: string; // display word — the compact one, used by every chip/header (kindLabel)
   // Full product name for the roomy launch pickers (作業を始める / はじめる) only.
-  // Optional: falls back to `label`, which is already the product name for
-  // claude/codex/opencode. agy is the outlier — "agy" is the CLI's short name and
-  // reads as an opaque abbreviation in a picker, while the tight chips (LayoutMap,
-  // kt-full) have no room for the full "Antigravity".
+  // Optional: falls back to `label` (kindDisplayName), so only kinds whose full name
+  // differs from the compact label set it — claude "Claude Code", copilot "GitHub
+  // Copilot". The tight chips (LayoutMap, kt-full) always show `label`.
   displayName?: string;
   assistantName: string; // how the agent signs its chat turns ("Claude" / "Codex" / …)
   short: string; // 2-char abbrev for tight headers (cc/cx/oc/sh/aw)
@@ -210,7 +209,6 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     id: "cursor",
     icon: "inspect", // codicon pointer/cursor — closest nod to "Cursor"; no brand codicon exists
     label: "Cursor",
-    displayName: "Cursor",
     assistantName: "Cursor",
     short: "cu",
     cssClass: "cursor",
@@ -253,7 +251,6 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     id: "agy",
     icon: "magnet",
     label: "Antigravity",
-    displayName: "Antigravity",
     assistantName: "Antigravity",
     short: "ag",
     cssClass: "agy",
@@ -344,7 +341,6 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     id: "kiro",
     icon: "compass", // codicon — Kiro の spec/guide 志向（kiro_guide モード）に寄せた中立形。既存8種と非衝突
     label: "Kiro",
-  displayName: "Kiro",
     assistantName: "Kiro",
     short: "ki",
     cssClass: "kiro",
@@ -401,7 +397,6 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     id: "opencode",
     icon: "hubot",
     label: "OpenCode",
-    displayName: "OpenCode",
     assistantName: "OpenCode",
     short: "oc",
     cssClass: "opencode",
@@ -504,7 +499,8 @@ export function availableKinds(ctx: AvailCtx): Record<SessionKind, boolean> {
 }
 
 // Kinds offered in a repo row's launch menu, in display order. Every entry must
-// carry the launchableFromRepo cap (asserted below); the order is presentational.
+// carry the launchableFromRepo cap (asserted in availability.test.ts); the order
+// is presentational.
 export const repoLaunchKinds: SessionKind[] = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "shell"];
 
 export type { SsmHost };
