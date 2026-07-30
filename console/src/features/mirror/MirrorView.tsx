@@ -352,7 +352,7 @@ export function MirrorView({
   const [llmSuggestions, setLlmSuggestions] = useState<string[]>([]);
   const [suggesting, setSuggesting] = useState(false);
   const suggestRef = useRef<HTMLDivElement>(null); // チップ行（Tab でここへフォーカスを移す）
-  useDragScroll(suggestRef); // 1行に収めた候補列をマウスドラッグで左右スクロール（スワイプは既定動作）
+  useDragScroll(suggestRef); // 1行に収めた候補列をマウスのドラッグ/縦ホイールで左右スクロール（スワイプは既定動作）
   // スキルピッカー（docs/50 / ADR0034、v2 クロスエージェント＋§8 クロススキル注入）:
   // セッションで呼べるスキル/コマンドの補完リスト。ネイティブ起動（invoke — "/name" や
   // codex "$name"）に加え、他規約の SKILL.md（foreign — path/origin 付き）は「path を
