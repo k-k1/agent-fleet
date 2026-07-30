@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
@@ -976,6 +977,15 @@ func handleSessionOutput(w http.ResponseWriter, r *http.Request) {
 			since = n
 		}
 	}
+	// tail=<bytes>: 出力の**末尾**だけを返す（クリップ時は省略マーカーを前置し
+	// clipped=true）。呼び手は LLM（MCP get_session_output）— ツール結果は会話の
+	// コンテキストに蓄積するので、上限なしの全文は以降の全ターンを高くする。
+	tail := 0
+	if v := r.URL.Query().Get("tail"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			tail = n
+		}
+	}
 	// codex/opencode: their stores aren't claude's jsonl — build the flattened assistant
 	// output from the generic Transcript() turns instead (cursor = turn count), so the
 	// drive tools (MCP get_session_output) work for every transcript-capable kind.
@@ -991,9 +1001,10 @@ func handleSessionOutput(w http.ResponseWriter, r *http.Request) {
 				gb.WriteString(t.Text)
 			}
 		}
+		out, clipped := clipOutputTail(gb.String(), tail)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"name": name, "output": gb.String(), "cursor": len(td.Turns),
-			"status": state, "alive": alive,
+			"name": name, "output": out, "cursor": len(td.Turns),
+			"status": state, "alive": alive, "clipped": clipped,
 		})
 		return
 	}
@@ -1008,15 +1019,37 @@ func handleSessionOutput(w http.ResponseWriter, r *http.Request) {
 			}
 			sb.WriteString(t)
 		}
-		if sb.Len() > 1<<20 { // cap at 1 MiB — the next poll resumes at i+1
+		// tail 指定時はページ分割しない（末尾が欲しいのに 1 MiB 毎の前方ページを
+		// 歩かせては本末転倒）。TranscriptLines が既に全行をメモリに持っているので、
+		// 全量を組み立ててもメモリのオーダーは変わらない。
+		if tail <= 0 && sb.Len() > 1<<20 { // cap at 1 MiB — the next poll resumes at i+1
 			cursor = i + 1
 			break
 		}
 	}
+	out, clipped := clipOutputTail(sb.String(), tail)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"name": name, "output": sb.String(), "cursor": cursor,
-		"status": state, "alive": alive,
+		"name": name, "output": out, "cursor": cursor,
+		"status": state, "alive": alive, "clipped": clipped,
 	})
+}
+
+// sessionOutputClipNote is prepended to a tail-clipped output. 読み手はオペレーター
+// （LLM）なので、切れている事実と全文の在処を本文で伝える。
+const sessionOutputClipNote = "【先頭を省略】出力が長いため末尾のみを表示しています（全文は Console のミラーで確認できます）。\n\n"
+
+// clipOutputTail keeps the LAST max bytes of s (rune-safe: 切断点はルーン境界まで
+// 前進させる), prepending sessionOutputClipNote when it actually clipped.
+// max <= 0 means no clipping.
+func clipOutputTail(s string, max int) (string, bool) {
+	if max <= 0 || len(s) <= max {
+		return s, false
+	}
+	cut := len(s) - max
+	for cut < len(s) && !utf8.RuneStart(s[cut]) {
+		cut++
+	}
+	return sessionOutputClipNote + s[cut:], true
 }
 
 // claude jsonl の読み出し（jsonlByMtime / transcriptRead / jsonlHasConversation /
