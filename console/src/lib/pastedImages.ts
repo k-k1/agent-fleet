@@ -45,11 +45,17 @@ export function splitPastedImages(text: string): { text: string; images: string[
   while ((m = PASTE_PATH_RE.exec(text))) (isImageName(m[1]) ? images : files).push(m[1]);
   if (!images.length && !files.length) return { text, images, files };
   // Trim the instruction (any known wording) plus the trailing paths; fall back to
-  // stripping the paths alone.
-  const idx = ATTACH_PROMPTS.map((p) => text.indexOf(p)).filter((i) => i >= 0)[0] ?? -1;
-  const cleaned = (
-    idx >= 0 ? text.slice(0, idx) : text.replace(CODEX_IMAGE_TAG_RE, "").replace(PASTE_PATH_RE, "")
-  ).trim();
+  // stripping the paths alone. 複数の指示文が見つかったら「本文中で最初に現れる」位置を
+  // 採用する（ATTACH_PROMPTS の配列順に依存すると、後方の指示文で切って手前の指示文が
+  // 本文に残る／本文を余計に削ることがある）。codex の <image …> transport マーカーは
+  // 指示文の有無に関わらず剥がす（指示文より前に混ざることがある）。
+  const found = ATTACH_PROMPTS.map((p) => text.indexOf(p)).filter((i) => i >= 0);
+  const idx = found.length ? Math.min(...found) : -1;
+  // タグ除去はパス除去より先 — PASTE_PATH_RE がタグ内の path="…" を先に食うと
+  // <image …> の残骸が本文に残る。
+  const cleaned = (idx >= 0 ? text.slice(0, idx) : text.replace(CODEX_IMAGE_TAG_RE, "").replace(PASTE_PATH_RE, ""))
+    .replace(CODEX_IMAGE_TAG_RE, "")
+    .trim();
   return { text: cleaned, images, files };
 }
 

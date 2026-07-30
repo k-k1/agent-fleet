@@ -4,6 +4,7 @@ import type { ReactNode, MouseEvent } from "react";
 import { Button } from "./Button.tsx";
 import { useT } from "../lib/i18n/index.ts";
 import { useEscLayer } from "../lib/escLayer.ts";
+import { useBackClose } from "../lib/backClose.ts";
 import { useFocusTrap } from "../lib/focusTrap.ts";
 
 // ConfirmDialog: a small modal for confirming destructive actions (old
@@ -34,6 +35,9 @@ export function ConfirmDialog({
   // Escape cancels (unless the operation is running) — layered, so the dialog
   // this confirm was opened from stays open.
   useEscLayer(onCancel, !busy);
+  // 端末の戻る操作でもこの確認だけ剥がせるように（ConfirmProvider と同じ流儀）。
+  // busy 中は Esc/backdrop 同様に無効。
+  useBackClose(onCancel, !busy);
   // Trap Tab within the confirm; focus lands on キャンセル first (the safe default for
   // a destructive action), and returns to the opener on close.
   const ref = useRef<HTMLDivElement>(null);

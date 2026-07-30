@@ -45,5 +45,6 @@ export function cyclePane(layout: Layout, delta: number): string | undefined {
   if (rows.length === 0) return undefined;
   const idx = rows.findIndex((r) => r.id === layout.activeId);
   const cur = idx < 0 ? 0 : idx;
-  return rows[(cur + delta + rows.length) % rows.length].id;
+  // 二重 mod: |delta| > rows.length の負方向でも負インデックスにならない。
+  return rows[(((cur + delta) % rows.length) + rows.length) % rows.length].id;
 }

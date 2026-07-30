@@ -857,9 +857,15 @@ export async function hydrateUIPrefs(): Promise<void> {
   }
   let changed = false;
   const merged: Settings = { ...state };
+  // オブジェクト/配列値のキーは参照比較だと毎 hydrate 不一致になる（サーバー応答は常に
+  // 新しいオブジェクト）— 値で比較して、実際に変わったときだけ changed にする。
+  const sameValue = (a: unknown, b: unknown): boolean =>
+    a === b ||
+    (typeof a === "object" && a !== null && typeof b === "object" && b !== null &&
+      JSON.stringify(a) === JSON.stringify(b));
   for (const k of Object.keys(DEFAULTS)) {
     if (DEVICE_LOCAL.has(k as keyof Settings)) continue; // 端末ローカルは復元しない
-    if (k in srv && srv[k] !== (merged as any)[k]) {
+    if (k in srv && !sameValue(srv[k], (merged as any)[k])) {
       (merged as any)[k] = srv[k];
       changed = true;
     }
@@ -890,7 +896,8 @@ export async function hydrateUIPrefs(): Promise<void> {
   subs.forEach((fn) => fn());
 }
 
-export function setSetting(key: keyof Settings, value: Settings[keyof Settings]): void {
+// ジェネリック署名でキーと値の対応を型で縛る（"theme" に boolean を渡す類の不整合を防ぐ）。
+export function setSetting<K extends keyof Settings>(key: K, value: Settings[K]): void {
   setSettings({ [key]: value } as Partial<Settings>);
 }
 

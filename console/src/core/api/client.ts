@@ -140,7 +140,8 @@ export const isTransientErr = (d: unknown): boolean => {
 export const errText = (error: ApiError | string | null | undefined): string => {
   if (error && typeof error === "object") {
     const localized = error.code ? tMaybe("err." + error.code) : undefined;
-    return localized ?? error.message ?? String(error ?? "");
+    // message も無いオブジェクトを String() すると "[object Object]" になる — 汎用文言へ。
+    return localized ?? error.message ?? t("err.unknown");
   }
   return String(error ?? "");
 };
@@ -370,16 +371,18 @@ export interface InteractionAnswer {
 // sessionRespond answers a MANAGED session's pending question by interaction id.
 // TUI sessions keep the keys/seq path — their modal is driven by navigation and
 // has no "answer by id" surface (the Agent answers respond_unsupported for them).
+// 却下理由（id 不明・driver 未実装など）を捨てず TurnResult 形で返す — 呼び出し側が
+// 汎用文言の代わりにトーストできる（sessionTurn と同じ契約）。
 export const sessionRespond = (
   session: string,
   id: string,
   answers: InteractionAnswer[],
-): Promise<boolean> =>
+): Promise<TurnResult> =>
   apiJSON(`api/sessions/${encodeURIComponent(session)}/respond`, "POST", {
     id,
     decision: "answer",
     answers,
-  }).then((r) => !r?.error);
+  }).then((r) => (r?.error ? { ok: false, message: errText(r.error as ApiError) } : { ok: true }));
 
 // sessionSettings updates a MANAGED session's dynamic thread settings（docs/27
 // §9.4-3: 稼働中セッションのモデル / effort / モード変更）。空フィールドは

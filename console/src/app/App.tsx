@@ -145,7 +145,15 @@ export function App() {
   //   - navigating away from an open drawer leaves the guard entry buried, so a later
   //     back reopens the drawer over the previous view (old pushDrawerEntry behavior)
   //   - popstate-driven open/close already sits on the right entry → both no-op
+  const drawerHistSynced = useRef(false);
   useEffect(() => {
+    // 初回マウントはスキップ — ドロワー entry 上でリロードすると history.state.drawer が
+    // 残っており、閉状態の初期実行が history.back() を誤発火して 1 段戻ってしまう。
+    // 同期するのは実際の open/close 遷移だけでよい。
+    if (!drawerHistSynced.current) {
+      drawerHistSynced.current = true;
+      return;
+    }
     const onDrawerEntry = !!(history.state && history.state.drawer);
     const onMobile = window.matchMedia(MOBILE_QUERY).matches;
     if (navOpen && onMobile && !onDrawerEntry) {
@@ -197,8 +205,9 @@ export function App() {
         longPressTimer = null;
       }
     };
+    // ローカル変数は touch — i18n の t（このモジュールで import 済み）を隠さない名前に。
     const onStart = (e: TouchEvent) => {
-      const t = e.touches[0];
+      const touch = e.touches[0];
       cancelGesture();
       const phone = mq.matches;
       // Above the phone breakpoint, only enable the gesture on touch devices
@@ -207,14 +216,14 @@ export function App() {
       drawer = phone;
       // While a modal is up, don't let an edge swipe open the rail behind it.
       const { settingsOpen, adminOpen } = useSettingsUI.getState();
-      if (t && (phone || tablet) && !settingsOpen && !adminOpen) {
+      if (touch && (phone || tablet) && !settingsOpen && !adminOpen) {
         const isOpen = phone ? navOpenRef.current : useLeftRail.getState().open;
         if (isOpen) mode = "close";
-        else if (t.clientX < Math.min(window.innerWidth * 0.33, 160)) mode = "open";
+        else if (touch.clientX < Math.min(window.innerWidth * 0.33, 160)) mode = "open";
       }
-      if (t) {
-        sx = t.clientX;
-        sy = t.clientY;
+      if (touch) {
+        sx = touch.clientX;
+        sy = touch.clientY;
         if (mode) {
           longPressTimer = window.setTimeout(cancelGesture, LONG_PRESS_MS);
         }
@@ -222,10 +231,10 @@ export function App() {
     };
     const onMove = (e: TouchEvent) => {
       if (!mode) return;
-      const t = e.touches[0];
-      if (!t) return;
-      const dx = t.clientX - sx;
-      const dy = t.clientY - sy;
+      const touch = e.touches[0];
+      if (!touch) return;
+      const dx = touch.clientX - sx;
+      const dy = touch.clientY - sy;
       if (Math.abs(dx) <= Math.abs(dy)) return;
       if (mode === "open" && dx > DIST) {
         if (drawer) setNavOpen(true);
