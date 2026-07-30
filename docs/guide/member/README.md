@@ -82,7 +82,7 @@ While the workspace is stopped, you can review sessions in **Session history**.
 The wide central area switches its contents depending on what you select in the left pane.
 
 - **Terminal** — the black screen of Terminal (CLI) sessions, shell, and SSM ([03](03-terminal.md)).
-- **Source control** — changes, diffs, commits, history ([04](04-git.md)).
+- **Commit graph** — changes, diffs, commits, history ([04](04-git.md)).
 - **File viewer** — displaying the contents of files ([05](05-files.md)).
 - **Chat** — conversations with running agents, and questions / translations that don't use a repository ([07](07-chat-memo.md)).
 
