@@ -867,13 +867,6 @@ export const en: Record<keyof typeof ja, string> = {
   "agents.note_apply": "Connection changes are immediate; behavior settings take effect from each agent's new sessions.",
   "agents.rtk_unsupported":
     "This workspace's image doesn't support the agent-settings API (rtk). Rebuild the image and “Recreate” to enable it.",
-  "agents.rtk_gain_title": "rtk savings (tokens)",
-  "agents.rtk_cumulative": " saved cumulatively",
-  "agents.rtk_avg_pct": "Average savings",
-  "agents.rtk_in_out": "Input → output",
-  "agents.rtk_commands": "Commands run",
-  "agents.note_rtk_gain":
-    "The tokens rtk saved by compressing command output (trend over the last {n} days). What's counted depends on each agent's rtk setting (below).",
   "agents.default_model": "Default model",
   "agents.default_effort": "Default effort",
   "agents.start_mode": "Start mode",
@@ -2815,6 +2808,15 @@ export const en: Record<keyof typeof ja, string> = {
   "usage.val.origin.schedule": "Created by a schedule",
   "usage.val.origin.handoff": "Handoff",
   "usage.val.origin.unknown": "Unknown (predates measurement)",
+
+  // rtk savings card (separate from the ledger — measured by rtk inside the container)
+  "usage.rtk_gain_title": "rtk savings (tokens)",
+  "usage.rtk_cumulative": " saved cumulatively",
+  "usage.rtk_avg_pct": "Average savings",
+  "usage.rtk_in_out": "Input → output",
+  "usage.rtk_commands": "Commands run",
+  "usage.note_rtk_gain":
+    "Tokens rtk saved by compressing command output (sparkline: last {n} days; numbers: all-time totals). Measured inside the container, separately from the ledger above; what's counted depends on each agent's RTK setting (Settings > Agents).",
 
   // === P5 セッション/メモ（BranchRename/SessionTitle/SsmLogin/MemoTidy ほか） ===
   "sx.branch_rename_failed": "Failed to rename the branch (network error)",
