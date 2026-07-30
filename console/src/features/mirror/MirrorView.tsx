@@ -1413,13 +1413,13 @@ export function MirrorView({
     const prev = statusRef.current;
     statusRef.current = "working";
     setStatus("working");
-    const ok = await sessionRespond(session, id, answers).catch(() => false);
-    if (!ok) {
+    const res = await sessionRespond(session, id, answers).catch((): TurnResult => ({ ok: false }));
+    if (!res.ok) {
       // 却下（id 不明・driver 未実装・通信断）を握りつぶさない: 状態を戻して質問
-      // カードを生かしたまま、理由を示す。次ポーリングが実状態へ再同期する。
+      // カードを生かしたまま、理由（あれば）を示す。次ポーリングが実状態へ再同期する。
       statusRef.current = prev;
       setStatus(prev);
-      toast(tr("mirror.answer_send_failed"));
+      toast(res.message || tr("mirror.answer_send_failed"));
     }
     setSending(false);
     setTimeout(() => tickRef.current?.(), 400);

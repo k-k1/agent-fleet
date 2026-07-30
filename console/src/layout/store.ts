@@ -149,6 +149,10 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
         return;
       }
       void confirmDirtyNavigation("history", destroyed).then((proceed) => {
+        // 確認ダイアログ待ちの間に別の commit が挟まっていたら適用しない — 履歴由来の
+        // 古い layout でその commit を上書き喪失しないため（Cancel 側の復元 push も、
+        // 新しい commit が自分の履歴 entry を積んでいるので不要）。
+        if (get().layout !== cur) return;
         if (proceed) {
           set({ layout: l });
           if (get().hydrated) schedulePersist();

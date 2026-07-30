@@ -119,15 +119,6 @@
 .ws-spacer {
   flex: 1;
 }
-.ws-stat {
-  color: var(--muted);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.ws-stat.warn {
-  color: var(--warn);
-}
 
 /* Resource tiles: label + trend sparkline + current value, tinted by threshold. */
 .ws-graph {
@@ -143,7 +134,7 @@
   color: var(--warn);
 }
 .ws-graph.crit {
-  color: #e5534b;
+  color: var(--del);
 }
 .ws-graph-k {
   text-transform: uppercase;
@@ -503,39 +494,6 @@ button.wu-manage {
   align-self: stretch;
   margin: 1px 0;
 }
-/* rtk 効果 chip: same ghost-chip look as the resource chip (ws-res-btn), but with a
-   sparkline of daily tokens saved. Savings are positive, so the trend is tinted with
-   the ok color rather than the resource warn/crit scale. Popover reuses .ws-usage-pop
-   + the .wu-* rows. */
-.ws-rtk {
-  position: relative;
-  display: inline-flex;
-}
-.ws-rtk-btn .spark {
-  color: var(--ok, #3fb950);
-}
-.ws-rtk-btn .codicon-graph {
-  color: var(--ok, #3fb950);
-}
-.ws-rtk-btn .codicon-chevron-down {
-  font-size: 9px;
-  opacity: 0.7;
-}
-.ws-rtk-stats {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 12px;
-  font-size: 11.5px;
-  font-variant-numeric: tabular-nums;
-}
-.ws-rtk-stat {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 12px;
-}
-
 .ws-preview {
   position: relative;
 }
@@ -582,15 +540,6 @@ button.wu-manage {
   padding-top: 12px;
   border-top: 1px solid var(--border2);
 }
-/* opencode web quick-open row: full-width, label left / ↗ right. */
-.pv-app {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-}
-
 /* Mobile: resource chips + opencode web + port preview fold into one ⋯ popover. */
 .ws-more {
   position: relative;
@@ -615,14 +564,10 @@ button.wu-manage {
   flex-direction: column;
   gap: 4px;
 }
-.ws-more-stats .ws-stat {
-  white-space: normal; /* the host line is long — let it wrap inside the popover */
-}
-
-.body {
-  flex: 1;
-  display: flex;
-  min-height: 0;
+/* チップが全て自己非表示（graphs 無し・未ログイン）だと中身ゼロになる — 空のまま
+   残すと popover 内に余白だけが出るので畳む（WsBar 側では判定できない）。 */
+.ws-more-stats:empty {
+  display: none;
 }
 
 /* ---- left pane ---- */
