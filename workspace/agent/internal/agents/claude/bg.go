@@ -1,6 +1,9 @@
 package claude
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -304,30 +307,113 @@ func SubagentBusy(sid string) bool {
 }
 
 // TranscriptBusy reports whether the session's MAIN transcript
-// (ConfigDir()/projects/*/<sid>.jsonl) was appended recently — the turn itself is
-// still running. Same freshness signal and TTL as SubagentBusy, aimed at the main
-// turn instead of its background agents: a mid-turn think gap fires no hooks, so the
-// status marker alone cannot distinguish "quiet because thinking" from "done".
+// (ConfigDir()/projects/*/<sid>.jsonl) grew a real turn record recently — the turn
+// itself is still running. Same freshness signal and TTL as SubagentBusy, aimed at the
+// main turn instead of its background agents: a mid-turn think gap fires no hooks, so
+// the status marker alone cannot distinguish "quiet because thinking" from "done".
 func TranscriptBusy(sid string) bool {
 	at, ok := TranscriptTouched(sid)
-	return ok && at.After(time.Now().Add(-subagentFreshTTL))
+	return ok && TranscriptFresh(at)
 }
 
-// TranscriptTouched returns WHEN the session's main transcript was last appended
-// (the newest of the matching jsonl files). Callers that hold an independent
-// turn-end event（Stop フックが書いたマーカー等）compare against it instead of using
-// the bare freshness window: 「マーカーより後にも転写が伸びている」なら、そのマーカーは
-// ターンの終わりではない。
+// TranscriptFresh applies the freshness window to an already-observed transcript time,
+// so a caller that needs the time anyway (reportTranscriptBusy compares it against the
+// turn-end marker) does not have to read the file twice.
+func TranscriptFresh(at time.Time) bool { return at.After(time.Now().Add(-subagentFreshTTL)) }
+
+// TranscriptTouched returns WHEN the session's main transcript last grew a REAL turn
+// record. Callers that hold an independent turn-end event（Stop フックが書いたマーカー
+// 等）compare against it instead of using the bare freshness window:
+// 「マーカーより後にも転写が伸びている」なら、そのマーカーはターンの終わりではない。
+//
+// 実レコード = type が user / assistant の行。ファイルの mtime ではなく行の timestamp を
+// 見るのが肝で、これは実測で刺さった穴の恒久対策（2026-07-30 s2bl5pv/sannme2/sp2qemx）:
+// claude はターンと無関係な記帳行（system/away_summary・last-prompt・custom-title・
+// agent-name・mode・permission-mode・file-history-*）を後から追記する。mtime だけを見て
+// いた頃はその追記が「まだ働いている」に化け、報告済みの指示が補償リコンサイラに
+// 「作業を再開した」と誤読されて訂正＋重複報告が飛んでいた（sp2qemx は 09:56:56 の完了
+// 以降 40 分間 user/assistant 行ゼロなのに 10:06 に reopen された）。
+//
+// 除外ではなく許可リストで受けるのは AbortedTurn と同じ理由 — 記帳レコードの種類は版ごと
+// に増減するので、知らない type が増えても既定で無視される側に倒す。isSidechain は
+// ここでは**含める**（AbortedTurn は終端判定なので除外する）: 旧版の claude はサブ
+// エージェントのターンをメイン転写へ inline で書いており、それは紛れもなく実行中の証拠。
 func TranscriptTouched(sid string) (time.Time, bool) {
 	if sid == "" {
 		return time.Time{}, false
 	}
 	var newest time.Time
-	logs, _ := filepath.Glob(filepath.Join(ConfigDir(), "projects", "*", sid+".jsonl"))
-	for _, p := range logs {
-		if fi, err := os.Stat(p); err == nil && fi.ModTime().After(newest) {
-			newest = fi.ModTime()
+	for _, p := range jsonlPaths(sid) {
+		if at, ok := lastRealRecordAt(p); ok && at.After(newest) {
+			newest = at
 		}
 	}
 	return newest, !newest.IsZero()
+}
+
+// transcriptTailWindow bounds the tail read lastRealRecordAt does. Transcripts reach
+// several MB and this runs on the reconciler's tick, so we read the end of the file and
+// only widen to the whole thing when the window holds no real record at all (a tail made
+// entirely of bookkeeping, or one enormous record).
+const transcriptTailWindow = 512 << 10
+
+// lastRealRecordAt returns the timestamp of the last user/assistant record in p.
+func lastRealRecordAt(p string) (time.Time, bool) {
+	f, err := os.Open(p)
+	if err != nil {
+		return time.Time{}, false
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return time.Time{}, false
+	}
+	windows := []int64{transcriptTailWindow}
+	if fi.Size() > transcriptTailWindow {
+		windows = append(windows, fi.Size())
+	}
+	for _, w := range windows {
+		off := fi.Size() - w
+		truncated := off > 0
+		if off < 0 {
+			off = 0
+		}
+		if _, err := f.Seek(off, io.SeekStart); err != nil {
+			return time.Time{}, false
+		}
+		buf, err := io.ReadAll(f)
+		if err != nil {
+			return time.Time{}, false
+		}
+		lines := bytes.Split(buf, []byte("\n"))
+		if truncated && len(lines) > 0 {
+			lines = lines[1:] // the window cut the first line in half
+		}
+		for i := len(lines) - 1; i >= 0; i-- {
+			if at, ok := realRecordAt(lines[i]); ok {
+				return at, true
+			}
+		}
+	}
+	return time.Time{}, false
+}
+
+// realRecordAt parses one transcript line and returns its timestamp when the line is a
+// real turn record (not bookkeeping, not an untimed line).
+func realRecordAt(line []byte) (time.Time, bool) {
+	var r struct {
+		Type      string `json:"type"`
+		Timestamp string `json:"timestamp"`
+	}
+	if json.Unmarshal(line, &r) != nil {
+		return time.Time{}, false
+	}
+	if r.Type != "user" && r.Type != "assistant" {
+		return time.Time{}, false
+	}
+	at, err := time.Parse(time.RFC3339, r.Timestamp)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return at, true
 }
