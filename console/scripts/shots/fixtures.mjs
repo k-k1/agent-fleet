@@ -765,6 +765,31 @@ export function usageSeries(locale, q) {
   return resp;
 }
 
+// rtk 効果 (GET /api/agents/rtk/gain) — the container-side savings history the usage
+// tab's rtk card reads (schema is rtk's own, passed through by the Agent verbatim).
+// Fictional but plausible: ~46% average compression over a month of daily use, with
+// a weekday-ish hump so the sparkline has a shape.
+export function rtkGain() {
+  const daily = Array.from({ length: 30 }, (_, i) => {
+    const t = new Date(NOW.getTime() - (29 - i) * 86400_000);
+    const w = 0.5 + 0.5 * Math.sin((i / 29) * Math.PI) + (i === 21 ? 1.4 : 0);
+    return { date: t.toISOString().slice(0, 10), saved_tokens: Math.round(38_000 * w) };
+  });
+  const saved = daily.reduce((s, d) => s + d.saved_tokens, 0);
+  const input = Math.round(saved / 0.46);
+  return {
+    available: true,
+    summary: {
+      total_saved: saved,
+      avg_savings_pct: 46,
+      total_input: input,
+      total_output: input - saved,
+      total_commands: 1874,
+    },
+    daily,
+  };
+}
+
 // Cleanup survey (GET /sessions/cleanup) — a fleet that has drifted: several merged
 // worktrees of one repo, a live one that must be kept, leftover merged branches, and
 // stopped/archived sessions. Reasons travel as `reason_key` (ADR 0033), so the modal
