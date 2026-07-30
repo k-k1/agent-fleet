@@ -2209,6 +2209,7 @@ export const en: Record<keyof typeof ja, string> = {
   "start.ssm_search_ph": "Search by host name / instance ID…",
   "start.select_host": "— select a host —",
   "start.quick_connect": "Connect to this host",
+  "start.ssm_acct": "acct {id}",
   "start.frequent_hosts": "Frequently used",
   "start.no_matching_hosts": "No matching registered hosts.",
   "start.force_relogin": "Force re-login (aws sso logout → login even if cached)",

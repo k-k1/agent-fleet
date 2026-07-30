@@ -590,7 +590,7 @@ export function startTts(
       buf = buf.slice(end);
       const nl = /\n/.test(m[0]);
       // 改行で確定 → 一拍（SENTENCE_GAP）、文中の句点 → 短い一拍（SENT_BEAT）。
-      enqueuePiece(piece, /*hard*/ nl || /[。！？!?]/.test(m[0]), nl ? SENTENCE_GAP : SENT_BEAT);
+      enqueuePiece(piece, /*hard*/ nl || /[。．！？!?]/.test(m[0]), nl ? SENTENCE_GAP : SENT_BEAT);
     }
     if (force) {
       // 末尾の未確定分 + 持ち越しをすべて読み上げる。fence 状態は引き回す。

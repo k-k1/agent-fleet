@@ -118,6 +118,9 @@ export function MemoTidyModal({ memos, onDone, onClose }: MemoTidyModalProps) {
     setBusy(true);
     try {
       const chosen = rows.filter((r) => pick[r.id]);
+      // apiJSON はサーバエラーを {error} で解決する（例外にならない）— 失敗件数を数えて
+      // 偽の「n 件整理」成功トーストを出さない。
+      let failed = 0;
       for (const row of chosen) {
         const m = byId.get(row.id)!;
         const patch: { body?: string; category?: string } = {};
@@ -126,7 +129,15 @@ export function MemoTidyModal({ memos, onDone, onClose }: MemoTidyModalProps) {
         if (row.cleaned && row.cleaned !== m.body) patch.body = row.cleaned;
         if (row.suggestedCategory && row.suggestedCategory !== m.category)
           patch.category = row.suggestedCategory;
-        if (Object.keys(patch).length > 0) await memoUpdate(row.id, patch);
+        if (Object.keys(patch).length > 0) {
+          const res = await memoUpdate(row.id, patch);
+          if ((res as { error?: unknown }).error) failed++;
+        }
+      }
+      if (failed > 0) {
+        toast(tr("sx.tidy_apply_failed"));
+        if (failed < chosen.length) onDone(); // 一部は適用済み — 再取得して反映する
+        return;
       }
       toast(tr("sx.tidied", { count: chosen.length }), { kind: "success" });
       onDone();

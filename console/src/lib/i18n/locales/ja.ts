@@ -2250,6 +2250,7 @@ export const ja = {
   "start.ssm_search_ph": "ホスト名・インスタンスIDで検索…",
   "start.select_host": "— ホストを選択 —",
   "start.quick_connect": "このホストに接続",
+  "start.ssm_acct": "アカウント {id}",
   "start.frequent_hosts": "よく使うホスト",
   "start.no_matching_hosts": "該当する登録済みホストはありません。",
   "start.force_relogin": "強制的に再ログイン（キャッシュ済みでも aws sso logout → login）",

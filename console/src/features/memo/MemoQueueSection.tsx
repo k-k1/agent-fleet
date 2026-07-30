@@ -13,6 +13,7 @@ import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
+import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { t, useT } from "../../lib/i18n/index.ts";
 import {
   memoList,
@@ -102,8 +103,14 @@ function groupMemos(memos: Memo[], cats: MemoCategory[]): RepoBlock[] {
     return g;
   };
 
-  // Seed uncategorized buckets and table-defined categories first, in order.
-  for (const rb of repos) groupFor(rb.repo, ""); // uncategorized leads (pruned if empty)
+  // Seed uncategorized buckets and table-defined categories first, in order. The repo
+  // set must be settled BEFORE seeding — a repo that only appears on a memo/category
+  // would otherwise be created lazily, leaving its uncategorized bucket AFTER the named
+  // categories instead of leading.
+  const repoSet = new Set<string>([""]);
+  for (const c of cats) repoSet.add(c.repo);
+  for (const m of memos) repoSet.add(m.repo);
+  for (const repo of repoSet) groupFor(repo, ""); // uncategorized leads (pruned if empty)
   for (const c of cats) groupFor(c.repo, c.name, c.id);
 
   // Place memos (creating any legacy category groups after the seeded ones).
@@ -121,6 +128,7 @@ export function MemoQueueSection() {
   const bumpMemos = useMemoStore((s) => s.bump);
   const composeReq = useMemoStore((s) => s.composeReq);
   const toast = useToast();
+  const askConfirm = useConfirm();
   const tr = useT();
 
   const [memos, setMemos] = useState<Memo[]>([]);
@@ -354,16 +362,32 @@ export function MemoQueueSection() {
     const next = name.trim();
     if (!next || next === c.name) return;
     try {
-      await memoCategoryUpdate(c.id, { name: next });
+      const res = await memoCategoryUpdate(c.id, { name: next });
+      // apiJSON はサーバエラーを {error} で解決する（例外にならない）— 失敗を黙って握り潰さない。
+      if ((res as { error?: unknown }).error) {
+        toast(t("common.send_failed"));
+        return;
+      }
       bumpMemos();
     } catch {
       toast(t("common.send_failed"));
     }
   };
   const deleteCategory = async (c: MemoCategory) => {
-    if (!confirm(t("memo.cat_delete_confirm", { name: c.name }))) return;
+    const ok = await askConfirm({
+      title: t("memo.delete_category"),
+      body: t("memo.cat_delete_confirm", { name: c.name }),
+      confirmLabel: t("common.delete"),
+      danger: true,
+    });
+    if (!ok) return;
     try {
-      await memoCategoryDelete(c.id);
+      // raw() は HTTP エラーでも resolve する — res.ok を見ないと偽の成功トーストになる。
+      const res = await memoCategoryDelete(c.id);
+      if (!res.ok) {
+        toast(t("common.delete_failed"));
+        return;
+      }
       bumpMemos();
       toast(t("memo.cat_deleted"));
     } catch {
@@ -402,10 +426,10 @@ export function MemoQueueSection() {
     const [moved] = arr.splice(di, 1);
     const target = arr.find((m) => m.id === targetId)!;
     const changedGroups = [{ repo: moved.repo, category: moved.category }];
-    moved.repo = target.repo;
-    moved.category = target.category;
+    // state 配列内のオブジェクトを直接書き換えない — 新オブジェクトで差し替える。
+    const placed = { ...moved, repo: target.repo, category: target.category };
     const insertAt = arr.findIndex((m) => m.id === targetId);
-    arr.splice(insertAt, 0, moved);
+    arr.splice(insertAt, 0, placed);
     setMemos(arr);
     changedGroups.push({ repo: target.repo, category: target.category });
     void persistGroups(arr, dedupeGroups(changedGroups));
@@ -422,9 +446,9 @@ export function MemoQueueSection() {
       arr.splice(di, 0, moved); // no-op drop onto own group
       return;
     }
-    moved.repo = repo;
-    moved.category = category;
-    arr.push(moved);
+    // state 配列内のオブジェクトを直接書き換えない — 新オブジェクトで差し替える。
+    const placed = { ...moved, repo, category };
+    arr.push(placed);
     setMemos(arr);
     if (category) toast(t("memo.moved", { cat: category }));
     void persistGroups(arr, dedupeGroups([from, { repo, category }]));

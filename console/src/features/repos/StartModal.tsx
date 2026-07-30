@@ -161,7 +161,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
   const SSM_CARD_TOP = 6;
   const ssmProfileLabel = (pid: string) => ssmProfiles?.find((p) => p.id === pid)?.label || "";
   const ssmCardSub = (h: SsmHost) =>
-    [ssmProfileLabel(h.profileId), h.accountId ? `acct ${h.accountId}` : "", h.instanceId].filter(Boolean).join(" · ");
+    [ssmProfileLabel(h.profileId), h.accountId ? tr("start.ssm_acct", { id: h.accountId }) : "", h.instanceId].filter(Boolean).join(" · ");
   const ssmAllAsCards = (ssmHosts?.length || 0) <= SSM_CARD_ALL_MAX;
   const rankedSsmHosts = [...visibleSsmHosts].sort((a, b) => {
     const ua = settings.ssmHostUsage?.[a.id];
@@ -611,7 +611,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                       {visibleSsmHosts.map((h) => (
                         <option key={h.id} value={h.id}>
                           {h.alias} — {h.instanceId}
-                          {h.accountId ? ` (acct ${h.accountId})` : ""}
+                          {h.accountId ? ` (${tr("start.ssm_acct", { id: h.accountId })})` : ""}
                         </option>
                       ))}
                     </select>
@@ -632,7 +632,9 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
             <div className="ui-field">
               <span className="ui-field-label">{tr("start.aws_instances_label")}</span>
               {ssmProfiles && ssmProfiles.length > 1 && (
-                <select value={ssmProfileId} onChange={(e) => setSsmProfileId(e.target.value)}>
+                // 初期値 "" はどの option にも一致しない（placeholder 無し）ので表示が不定になる。
+                // 検索/登録は profiles[0] へフォールバックするため、表示も同じ先頭に揃える。
+                <select value={ssmProfileId || ssmProfiles[0].id} onChange={(e) => setSsmProfileId(e.target.value)}>
                   {ssmProfiles.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
                 </select>
               )}
