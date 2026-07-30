@@ -18,15 +18,25 @@ function prereqMissing(msg: string): void {
   console.log(`[ui-e2e] skip: ${msg}`);
 }
 
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
+// 空きポートを count 本まとめて確保する。逐次 listen(0)→close だと、close した
+// ポートが直後の listen(0) に再割当されて自己衝突しうるため、全 listener を同時に
+// 保持して番号を得てから閉じる。close→CP/Agent が実際に bind するまでの TOCTOU
+// （他プロセスの横取り）は残るが、CP は CP_ADDR 固定 bind で 0 番 bind の実ポート
+// 報告手段が無い。起きた場合は後段の healthz / running 待ちタイムアウトとして
+// 顕在化するので許容する。
+async function freePorts(count: number): Promise<number[]> {
+  const servers: net.Server[] = [];
+  for (let i = 0; i < count; i++) {
     const srv = net.createServer();
-    srv.listen(0, "127.0.0.1", () => {
-      const port = (srv.address() as net.AddressInfo).port;
-      srv.close(() => resolve(port));
+    await new Promise<void>((resolve, reject) => {
+      srv.on("error", reject);
+      srv.listen(0, "127.0.0.1", resolve);
     });
-    srv.on("error", reject);
-  });
+    servers.push(srv);
+  }
+  const ports = servers.map((srv) => (srv.address() as net.AddressInfo).port);
+  await Promise.all(servers.map((srv) => new Promise<void>((r) => srv.close(() => r()))));
+  return ports;
 }
 
 async function waitFor(desc: string, timeoutMs: number, cond: () => Promise<boolean>): Promise<void> {
@@ -61,13 +71,18 @@ export default async function globalSetup(): Promise<void> {
   spawnSync("docker", ["rm", "-f", `af-ws-${USER}`]);
   spawnSync("docker", ["network", "rm", `af-net-${USER}`]);
 
-  // CP build（e2e/ の buildCP と同じ）。
-  const cpBin = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "af-ui-cp-")), "af-cp");
+  // CP build（e2e/ の buildCP と同じ）。置き場の mkdtemp は STATE に記録して
+  // teardown で回収する（従来は未記録・未削除で run ごとに残留していた）。
+  const cpBinDir = fs.mkdtempSync(path.join(os.tmpdir(), "af-ui-cp-"));
+  const cpBin = path.join(cpBinDir, "af-cp");
   const build = spawnSync("go", ["build", "-o", cpBin, "."], {
     cwd: path.join(ROOT, "control-plane"),
     encoding: "utf8",
   });
-  if (build.status !== 0) throw new Error("build control-plane: " + build.stderr);
+  if (build.status !== 0) {
+    fs.rmSync(cpBinDir, { recursive: true, force: true }); // STATE 書込前の失敗はここで回収
+    throw new Error("build control-plane: " + build.stderr);
+  }
 
   // Workspace データ。ランナー uid ≠ コンテナ dev(uid 1000) 対策で mount 先を 0777 で
   // 先に掘る（詳細は e2e/fleet_test.go の同処理コメント）。
@@ -78,8 +93,7 @@ export default async function globalSetup(): Promise<void> {
     fs.chmodSync(p, 0o777);
   }
 
-  const cpPort = await freePort();
-  const agentPort = await freePort();
+  const [cpPort, agentPort] = await freePorts(2);
   const logDir = path.join(__dirname, "test-results");
   fs.mkdirSync(logDir, { recursive: true });
   const logPath = path.join(logDir, "cp.log"); // 失敗時に artifact として回収される置き場
@@ -99,7 +113,7 @@ export default async function globalSetup(): Promise<void> {
     detached: false,
   });
   const base = `http://127.0.0.1:${cpPort}`;
-  fs.writeFileSync(STATE, JSON.stringify({ pid: cp.pid, dataDir, image, user: USER, logPath }));
+  fs.writeFileSync(STATE, JSON.stringify({ pid: cp.pid, dataDir, cpBinDir, image, user: USER, logPath }));
 
   await waitFor("CP /healthz", 15_000, async () => (await fetch(`${base}/healthz`)).ok);
   // workspace/start は Agent healthz 待ち（15s）に間に合わないと 500 を返すが冪等 →
