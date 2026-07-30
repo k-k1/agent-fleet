@@ -28,3 +28,9 @@ export const openFileDiff = (repo: string, path: string, staged: boolean): void 
 
 export const openChanges = (repo: string): void =>
   useLayoutStore.getState().openTarget({ content: { kind: "changes", scmRepo: repo } });
+
+/** Open a working copy's Source Control view. The hand-off target for a branch that
+ * is already checked out somewhere else: the answer to "I can't switch to it here"
+ * is "here is where it lives". */
+export const openRepoScm = (repo: string): void =>
+  useLayoutStore.getState().openTarget({ content: { kind: "scm", scmRepo: repo } });

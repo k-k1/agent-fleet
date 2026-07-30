@@ -27,9 +27,14 @@ const (
 
 	errCodeSessionsRunning       = "sessions_running"
 	errCodeSessionsRunningDelete = "sessions_running_delete"
-	errCodeWorktreeDirty         = "worktree_dirty"
-	errCodeWorktreeRemoveFailed  = "worktree_remove_failed"
-	errCodeHasWorktrees          = "has_worktrees"
+	// A branch git can only hold in one working copy at a time was requested for a
+	// second one (checkout or worktree launch). The payload carries `worktree` — the
+	// occupying copy's folder — so the Console can offer to open it; the localized
+	// err.branch_in_use text is the fallback for callers that only toast errText.
+	errCodeBranchInUse          = "branch_in_use"
+	errCodeWorktreeDirty        = "worktree_dirty"
+	errCodeWorktreeRemoveFailed = "worktree_remove_failed"
+	errCodeHasWorktrees         = "has_worktrees"
 	// 削除ロック（docs/45）: 対象そのものがロックされている / ロックされた
 	// セッションを巻き添えにする削除を拒んだとき。
 	errCodeLocked         = "locked"

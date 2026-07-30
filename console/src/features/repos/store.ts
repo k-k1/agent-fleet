@@ -96,14 +96,19 @@ export const useRepoReveal = create<RepoRevealStore>((set) => ({
  * はじめる both land here; StartHost renders the LaunchModal on it. */
 interface LaunchTargetStore {
   target: Repo | null;
-  open(r: Repo): void;
+  /** Preselect this EXISTING branch in the launch dialog instead of the usual
+   * new-branch flow ("" = new branch). Set by the SCM view's「このブランチで作業を
+   * 始める」, which knows the branch before the dialog exists. */
+  existingBranch: string;
+  open(r: Repo, existingBranch?: string): void;
   clear(): void;
 }
 
 export const useLaunchTarget = create<LaunchTargetStore>((set) => ({
   target: null,
-  open: (r) => set({ target: r }),
-  clear: () => set({ target: null }),
+  existingBranch: "",
+  open: (r, existingBranch = "") => set({ target: r, existingBranch }),
+  clear: () => set({ target: null, existingBranch: "" }),
 }));
 
 /** A first-prompt seed for the next launch (docs/21 UI刷新): the memo send modal's

@@ -1,7 +1,7 @@
 // SourceControlView — the per-repo commit graph (codeleaf lane layout), opened
 // by clicking a repo. Changes+commit box and per-commit detail live in their own
 // panes. Port of views/SourceControlView onto the zustand stores.
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent as RKeyboardEvent } from "react";
 import { api, apiJSON, errText, isTransientErr } from "../../core/api/client.ts";
 import { Icon } from "../../ui/Icon.tsx";
@@ -15,9 +15,11 @@ import { useDismiss } from "../../lib/useDismiss.ts";
 import { useMenuRoving } from "../../lib/useMenuRoving.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { BranchModal } from "../repos/BranchModal.tsx";
+import { wtFolder } from "../repos/BranchList.tsx";
+import type { Branch } from "../repos/BranchList.tsx";
 import { CommitGraph } from "./CommitGraph.tsx";
-import { openCommit, openCommitSplit, openChanges } from "./open.ts";
-import { useReposStore } from "../repos/store.ts";
+import { openCommit, openCommitSplit, openChanges, openRepoScm } from "./open.ts";
+import { useReposStore, useLaunchTarget } from "../repos/store.ts";
 import { useFilesStore } from "../files/store.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import type { GraphCommit } from "../../lib/gitgraph.ts";
@@ -35,6 +37,8 @@ export function SourceControlView({ repo, path = "" }: { repo: string; path?: st
   const askConfirm = useConfirm();
   const toast = useToast();
   const refreshRepos = useReposStore((s) => s.refresh);
+  const repos = useReposStore((s) => s.repos);
+  const openLaunch = useLaunchTarget((s) => s.open);
   const bumpFiles = useFilesStore((s) => s.bump);
   const openTarget = useLayoutStore((s) => s.openTarget);
   const enc = encodeURIComponent(repo || "");
@@ -50,6 +54,10 @@ export function SourceControlView({ repo, path = "" }: { repo: string; path?: st
   const [nbName, setNbName] = useState("");
   const [moreOpen, setMoreOpen] = useState(false); // narrow-pane overflow (⋯)
   const [submodules, setSubmodules] = useState<SubmoduleInfo[]>([]);
+  // branch -> the OTHER working copy holding it. git allows a branch in one worktree
+  // at a time, so an occupied branch is not switchable here; the menu offers that copy
+  // instead of an action git would refuse.
+  const [occupied, setOccupied] = useState<Record<string, string>>({});
   const moreRef = useRef<HTMLDivElement>(null);
   useDismiss(moreRef, moreOpen, () => setMoreOpen(false));
   useMenuRoving(moreRef, moreOpen);
@@ -95,6 +103,24 @@ export function SourceControlView({ repo, path = "" }: { repo: string; path?: st
       }
     } catch {
       ok = false;
+    }
+    // Occupancy for the branch actions. Local-only git calls (for-each-ref + worktree
+    // list), and never fatal to the view: on failure we simply offer no shortcut.
+    // Submodule targets have no worktrees of their own, so skip the call entirely.
+    if (!path) {
+      try {
+        const b = await api(`api/repos/${enc}/branches`);
+        if (!isTransientErr(b)) {
+          const m: Record<string, string> = {};
+          for (const br of (b?.branches || []) as Branch[]) {
+            const folder = wtFolder(br.worktree_path);
+            if (folder) m[br.name] = folder;
+          }
+          setOccupied(m);
+        }
+      } catch {
+        /* keep the last map — a missing shortcut is better than a broken view */
+      }
     }
     if (ok || !keepLoadingOnFail) setLoading(false);
     return ok;
@@ -192,6 +218,17 @@ export function SourceControlView({ repo, path = "" }: { repo: string; path?: st
     void refresh();
     void refreshRepos();
     bumpFiles();
+  };
+
+  // 「このブランチで作業を始める」: a worktree is always spun off the BASE clone (one
+  // can't hang off another worktree), so from a worktree view the launch targets its
+  // parent. Undefined until the repo list has loaded — the menu item hides until then.
+  const me = repos.find((x) => x.name === repo);
+  const launchBase = me?.worktree ? repos.find((x) => x.name === me.parent) : me;
+  const startOnBranch = (name: string) => {
+    setMenu(null);
+    setShowBranch(false);
+    if (launchBase) openLaunch(launchBase, name);
   };
 
   const switchBranch = async (name: string) => {
@@ -336,13 +373,37 @@ export function SourceControlView({ repo, path = "" }: { repo: string; path?: st
           {!path && (menu.commit.refs.filter((rf) => rf.type === "head").length > 0 ? (
             menu.commit.refs
               .filter((rf) => rf.type === "head")
-              .map((rf) => (
-                <li key={rf.name}>
-                  <button type="button" className="ui-menu-item" onClick={() => void switchBranch(rf.name)}>
-                    <Icon name="git-branch" /> {tr("scm.switch_branch_to", { name: rf.name })}
-                  </button>
-                </li>
-              ))
+              .map((rf) => {
+                const holder = occupied[rf.name];
+                // 「作業を始める」creates an isolated worktree; 「切り替え」moves THIS
+                // copy's HEAD. In a worktree (1 copy = 1 task = 1 branch) the isolated
+                // option leads; in the base clone, switching is still the primary act.
+                const items = [
+                  launchBase && !holder ? (
+                    <li key="start">
+                      <button type="button" className="ui-menu-item" onClick={() => startOnBranch(rf.name)}>
+                        <Icon name="play" /> {tr("scm.start_work_on", { name: rf.name })}
+                      </button>
+                    </li>
+                  ) : null,
+                  holder ? (
+                    // git refuses a second checkout of a live branch, so offer the copy
+                    // that has it rather than an action that can only fail.
+                    <li key="open">
+                      <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); openRepoScm(holder); }}>
+                        <Icon name="repo-forked" /> {tr("scm.open_branch_worktree", { name: rf.name, folder: holder })}
+                      </button>
+                    </li>
+                  ) : (
+                    <li key="switch">
+                      <button type="button" className="ui-menu-item" onClick={() => void switchBranch(rf.name)}>
+                        <Icon name="git-branch" /> {tr("scm.switch_branch_to", { name: rf.name })}
+                      </button>
+                    </li>
+                  ),
+                ];
+                return <Fragment key={rf.name}>{me?.worktree ? items : items.reverse()}</Fragment>;
+              })
           ) : (
             <li>
               <button type="button" className="ui-menu-item" onClick={() => void checkoutCommit(menu.commit.sha)}>
@@ -388,6 +449,13 @@ export function SourceControlView({ repo, path = "" }: { repo: string; path?: st
         <BranchModal
           repoName={repo}
           onClose={() => setShowBranch(false)}
+          onOpenWorktree={(folder) => {
+            setShowBranch(false);
+            openRepoScm(folder);
+          }}
+          // In a worktree, switching HEAD in place fights what the worktree is for —
+          // offer a dedicated working copy per branch and let switching be the fallback.
+          onStartWork={me?.worktree && launchBase ? startOnBranch : undefined}
           onChecked={() => {
             setShowBranch(false);
             void refresh();

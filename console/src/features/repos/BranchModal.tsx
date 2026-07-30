@@ -13,9 +13,17 @@ interface BranchModalProps {
   repoName: string;
   onClose?: () => void;
   onChecked: () => void;
+  /** Where a branch that is already checked out in another working copy leads.
+   * Those rows can't be switched to (git holds a branch in one worktree at a time),
+   * so they hand the user off to the copy that has it. */
+  onOpenWorktree?: (folder: string) => void;
+  /** Offers "start work on this branch in its own working copy" beside each row, and
+   * demotes switching to the secondary act. Passed where switching in place is the
+   * risky choice — a worktree, which stands for one task on one branch. */
+  onStartWork?: (branch: string) => void;
 }
 
-export function BranchModal({ repoName, onClose, onChecked }: BranchModalProps) {
+export function BranchModal({ repoName, onClose, onChecked, onOpenWorktree, onStartWork }: BranchModalProps) {
   const toast = useToast();
   const tr = useT();
   const [branches, setBranches] = useState<Branch[] | null>(null);
@@ -67,7 +75,19 @@ export function BranchModal({ repoName, onClose, onChecked }: BranchModalProps) 
         {err ? (
           <p className="pick-muted">{err}</p>
         ) : (
-          <BranchList branches={branches} selected={current} onPick={checkout} busy={busy} disableActive autoFocus />
+          <>
+            {onStartWork && <p className="pick-muted">{tr("rp.branch_switch_worktree_note")}</p>}
+            <BranchList
+              branches={branches}
+              selected={current}
+              onPick={checkout}
+              busy={busy}
+              disableActive
+              autoFocus
+              onOpenWorktree={onOpenWorktree}
+              onStartWork={onStartWork}
+            />
+          </>
         )}
       </div>
     </Modal>
