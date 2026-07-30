@@ -5,7 +5,7 @@ package main
 // af_write アシスタントが create_session / send_to_session で指示したセッションを
 // 会話に紐付け（arm）、最初の「入力待ち/異常終了」イベントで1回だけ報告を会話へ
 // 追記する（disarm）。報告後は自動ターン（既定 ON・ユーザー発話なしの上限は設定制、
-// 既定 10・最大 50）でオペレーターが後続を処理する。
+// 既定 10・最大 30）でオペレーターが後続を処理する。
 //
 // 検出は hook / record-exit の独立プロセスで起きるが、会話ファイルの追記と自動
 // ターンは convLocks / liveTurns（サーバプロセス内）に依存するため、独立プロセスは
@@ -137,9 +137,11 @@ func resetAutoResume(name string) { resumeStates.Remove(name) }
 // (設定 > アシスタント, ui-prefs assistantAutoTurnLimit — chatAutoTurnLimit) but
 // hard-clamped to maxAutoTurnLimit with NO unlimited mode (docs/30): the clamp is
 // the structural stop for a runaway follow-up loop.
+// 2026-07-31: 上限 50 → 30。自動ターンは1回ごとに会話全体を再読する高価な呼び出しで、
+// 50 連続を許す運用実態は無かった（トークン削減の一環・利用者指定）。
 const (
 	defaultAutoTurns = 10
-	maxAutoTurnLimit = 50
+	maxAutoTurnLimit = 30
 )
 
 // bridgeBodyCap bounds the full-text bridge body (docs/37 Fix ③). It is large

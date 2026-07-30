@@ -291,7 +291,7 @@ func TestAutoTurnPausedContent(t *testing.T) {
 }
 
 // TestChatAutoTurnLimit pins the configurable ceiling: default 10 when unset, the
-// stored value inside range, and a hard clamp to [1, 50] — no unlimited mode.
+// stored value inside range, and a hard clamp to [1, 30] — no unlimited mode.
 func TestChatAutoTurnLimit(t *testing.T) {
 	home := withTempHome(t)
 	if err := os.MkdirAll(filepath.Join(home, ".config", "agent-fleet"), 0o700); err != nil {
@@ -301,7 +301,7 @@ func TestChatAutoTurnLimit(t *testing.T) {
 	if got := chatAutoTurnLimit(); got != defaultAutoTurns {
 		t.Fatalf("default = %d, want %d", got, defaultAutoTurns)
 	}
-	for raw, want := range map[string]int{"30": 30, "0": 1, "-5": 1, "999": 50, "50": 50, "1": 1} {
+	for raw, want := range map[string]int{"20": 20, "0": 1, "-5": 1, "999": 30, "30": 30, "50": 30, "1": 1} {
 		if err := os.WriteFile(prefs, []byte(`{"assistantAutoTurnLimit":`+raw+`}`), 0o600); err != nil {
 			t.Fatal(err)
 		}
