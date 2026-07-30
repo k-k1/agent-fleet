@@ -72,7 +72,7 @@ login / テナント選択 / Clone / claude セッションは既存（P3-2 + Ph
 - Agent: traversal 防御（`filepath.Clean`＋repo ルート prefix 検査）、`file`/`diff` はサイズ上限（例 1–2 MiB）、バイナリは内容を返さずメタのみ。browse denylist（17.1）。
 - 監査: write 系（stage/commit/discard）は将来 AuditLog に（P3-9）。
 
-## 17.7 推奨シーケンス（OOM 注意・[[host-oom-fleet-risk]]）
+## 17.7 推奨シーケンス（OOM 注意 — ホストのメモリ枯渇は稼働中フリート全体を巻き込む）
 
 1. **D（機微退避）**: image entrypoint + `secrets.go` の state dir env 化 + 移行。**先に入れて browse を安全に**。
 2. **B（閲覧エンドポイント）** + CP proxy + 単体（traversal/上限）。

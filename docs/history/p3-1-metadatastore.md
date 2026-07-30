@@ -107,7 +107,7 @@ type Store interface {
 - 新 env `AF_DB`（既定 `<WS_DATA>/control-plane.db`）。`openStore` → `migrate` → `backfill` → `mgr.store = store`。
 - 既存 env は全維持。
 
-### S5. 検証（OOM 注意・`free -h` で数 GiB 確保 = [[host-oom-fleet-risk]]）
+### S5. 検証（OOM 注意・`free -h` で数 GiB 確保 — ホストのメモリ枯渇は稼働中フリート全体を巻き込む）
 - 事前に home + 現状を退避。
 - DB 起動 → 既定テナント + 運用者 user/workspace が**同一 port/token で**バックフィル（コンテナ再作成なし）
   → `/api/whoami`・workspace=running・sessions/connections 一覧 OK。

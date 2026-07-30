@@ -89,7 +89,7 @@ CreateTenant(ctx, slug, name string) (Tenant, error)             // super_admin/
 - 所属 1 件なら自動選択・ピッカー非表示（単一テナントは見た目も従来通り）。
 - 409 受信時はピッカーを促す。フル管理 UI は P3-5。
 
-## 14.6 検証（OOM 注意・[[host-oom-fleet-risk]]）
+## 14.6 検証（OOM 注意 — ホストのメモリ枯渇は稼働中フリート全体を巻き込む）
 
 1. **単一テナント回帰**: 運用者（所属1）は `X-AF-Tenant` 無しで従来通り（旧コンテナ・port 維持、sessions/connections OK）。
 2. **多対多 E2E**: super_admin API で 2nd テナント作成 + 運用者を member 追加 → `GET /api/tenants` が 2 件 →

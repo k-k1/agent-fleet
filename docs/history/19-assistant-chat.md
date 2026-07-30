@@ -4,7 +4,8 @@ Agent Fleet 利用者の作業を補助する **LLM チャット/翻訳アシス
 Markdown ドキュメントの翻訳を投げる、チャットセッションを開始する、といった用途を想定。
 既存の tmux コーディングエージェント（claude/codex/opencode/shell/ssm）とは**別物**として追加する。
 
-> ステータス: 設計確定 + Phase A 実装中（`feat/assistant-chat`）。
+> ステータス: 🗄 **実装済（歴史的記録）**。当初「Phase A 実装中（`feat/assistant-chat`）」として書き起こしたが、
+> その後 Phase B/C・アシスタント・テンプレート・書き込みツール opt-in まで実装済み（本文の各節に「実装済」を追記）。
 
 ## 背景と外部依存の実態（深掘りの結論）
 
@@ -133,10 +134,15 @@ CP `mcp.go`（外部/PAT/admin・別モジュール）と Agent `mcp_stdio.go`�
 単一ペルソナでなく、**アシスタントを設定可能なエンティティ**にする（カスタム GPT 的）:
 - **Assistant** = {id, name, icon?, builtin, agent(claude/codex), model?, persona(system prompt),
   tools(af_read / af_write / none), knowledge?(USAGE 等 doc を --add-dir で読ませる)}。
-- **常設ビルトイン**（5種）: ①「Agent Fleet アシスタント」(af_read, 案内役・観測役, USAGE知識)
+- **常設ビルトイン**（5種。※時系列は下記補記参照）: ①「Agent Fleet アシスタント」(af_read, 案内役・観測役, USAGE知識)
   ②「フリート・オペレーター」(af_write, 司令塔＝セッションに send_to_session で指示を出す実行役)
   ③「整合性チェッカー」(tools=none, 添付対象の食い違い/乖離/表記ゆれ/設定矛盾を列挙、dev/docs/小説横断)
   ④「汎用」⑤「翻訳」。①と②の差は read/write のみ＝既定を書き込み化せず分離（af_write は明示 opt-in 原則）。
+  - **時系列補記（5種↔3種の食い違いの整理）**: 初期実装（`777e65e6`, 2026-07-05）はビルトイン**3種**
+    （AF アシスタント/汎用/翻訳）＝下記実装メモの「3種」はこの時点の記録。同日 `9e58b05e` で
+    オペレーター・整合性チェッカーを追加し設計どおり**5種**に。その後 docs/30 ②（`66e32ade`, 2026-07-17）で
+    整合性チェッカー/汎用/翻訳を削除し、現行ビルトインは AF アシスタント/フリート・オペレーター/
+    SRE アシスタント（docs/25 で追加）の3種（`assistants.go` `builtinAssistants()` が正）。
 - **ユーザー定義**: 名前＋persona＋model＋ツール許可を作成/編集（`~/.config/agent-fleet/assistants/<id>.json`、
   ビルトインはコードで注入してマージ）。**書き込みツール(af_write=send_to_session 等)は各アシスタントで
   ユーザーが明示 opt-in** した時だけ `mcp_stdio` に公開/`--allowedTools` 許可。

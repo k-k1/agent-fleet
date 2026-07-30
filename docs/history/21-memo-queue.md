@@ -4,7 +4,8 @@
 アカウント単位・別端末同期のメモキュー。docs/19 の「Files 右クリック『セッションに送る…』」
 （[19-assistant-chat.md](19-assistant-chat.md) の SendSelectionModal）の発展。
 
-> ステータス: **設計確定・未実装**（2026-07-05 設計議論で決定）。
+> ステータス: 🗄 **実装済（歴史的記録）**。2026-07-05 に設計確定・未実装として書き起こし、その後全フェーズ実装済み
+>（CP `memo.go`＋migration は本文の 0014 案でなく実際は `0017_memo.sql`。MCP 連携は下記追記参照）。
 
 ## 背景と狙い
 
@@ -152,7 +153,6 @@ UI は `repo → category` の 2 段でグルーピングして表示する。`r
 - メモは membership 単位で CP に載るが、参照先ファイルはコンテナ内（`~/repos/...`）。コンテナ再作成で
   レポ構成が変われば `ref_path` が解決不能になり得る（パス参照方式は docs/19 と同じ前提）。
 - リアルタイム同期は基盤上不可（プッシュ無し）。別端末反映はポーリング粒度にとどまる。
-```
 
 ## 追記（2026-07-10）: MCP からのメモ読み書き（オペレーター＋PAT）
 
@@ -166,7 +166,7 @@ UI は `repo → category` の 2 段でグルーピングして表示する。`r
   `flush_memos`(write) を追加。メモは CP store に住むので Agent 往復せず**直接** store を叩く（membership は
   PAT 由来の `res.mv`）。flush だけは `res.rt` でワークスペースへ連結メッセージを届ける。
 - **オペレーター（コンテナ内）向けブリッジ**: コンテナは各自専用ネットワークで CP と直結できず、内部 git と
-  同じ**公開ハイピン**でしか CP に届かない。そこで内部 git トークンに倣い、**membership 毎のメモトークン**
+  同じ**公開ヘアピン**でしか CP に届かない。そこで内部 git トークンに倣い、**membership 毎のメモトークン**
   `AF_MEMO_TOKEN`（HMAC・`afm_` 接頭辞、`memo_bridge.go`）と公開ベース URL `AF_CP_BASE_URL` を
   `workspaceExtraEnv` で注入（`PUBLIC_BASE_URL` 設定時のみ）。CP は `/internal/memos*`（session-exempt）で
   Bearer メモトークン→membership を**サーバ側で解決**（クライアント供給の id は信用しない）。ローカル stdio MCP は

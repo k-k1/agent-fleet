@@ -122,13 +122,13 @@ ECS には publish host:port が無い。Runtime `Endpoint()` が差を吸収す
 
 1. **ECS アダプタは CP DB に状態を持たない**（deterministic naming + tag 引き）。Service / TaskDef / EFS AP /
    Secret はすべて Workspace レコードから決まる名前・タグで**create-or-get** する。ゆえに段2は
-   **スキーマ変更ゼロ**（[§20b.7.12](#20b712-スキーマ契約への影響凍結の結論)）。ARN 保管が要る規模になったら
+   **スキーマ変更ゼロ**（[§20b.7.12](#20b712-スキーマ--契約への影響凍結の結論)）。ARN 保管が要る規模になったら
    `ecs_workspace(workspace_id, …)` キャッシュ表が逃げ道だが、段2 では持ち込まない。
 2. **Agent 無改修**。CP が `AGENT_TOKEN` / `AF_SECRET_KEY` を task に届ける契約は local と同一
    （local=`-e`、ECS=SSM Parameter Store SecureString `valueFrom`）。Agent から見た env は両者同じ。
 3. **既定 local を一切壊さない**。`AF_RUNTIME` 未設定/`local` は AWS SDK 経路に一切入らない。
    ECS 経路は `AF_RUNTIME=ecs` の明示 opt-in でのみ到達する。
-4. **secretKey/token は plaintext task env に置かない**（SSM SecureString `valueFrom`、[§20b.7.5](#20b75-シークレット注入ssm-parameter-store-securestring-valuefrom)）。
+4. **secretKey/token は plaintext task env に置かない**（SSM SecureString `valueFrom`、[§20b.7.5](#20b75-シークレット注入--ssm-parameter-store-securestring-valuefrom)）。
 
 ### 20b.7.2 タスクライフサイクル — ECS Service（desiredCount 0/1）
 
@@ -193,15 +193,15 @@ local の 2 マウント（`home` + `claude-config`、runtime.go:179-181）を E
 ### 20b.7.6 TaskDefinition の中身
 
 - `requiresCompatibilities: [FARGATE]`, `networkMode: awsvpc`, `cpu`/`memory` = Fargate task size
-  （`WS_MEMORY` 相当。既定 1vCPU/2GB、[reference/aws §3.5](../reference/aws.md#35-コスト試算20-人-月額--おおよそ)）。
-- `executionRoleArn` / `taskRoleArn` = `ecsConfig`（[§20b.7.9](#20b79-iam-最小権限)）。
+  （`WS_MEMORY` 相当。既定 1vCPU/2GB、[dev/09 §9.8 コスト特性](../dev/09-deploy.md#98-コスト特性ec2-single--ecs)）。
+- `executionRoleArn` / `taskRoleArn` = `ecsConfig`（[§20b.7.9](#20b79-iam最小権限)）。
 - container `agent`:
   - `image` = Workspace イメージ（ECR）。local と**同一物**（[§20b.1](#20b1-ゴールと不変条件)）。
   - `portMappings: [{containerPort:7700, name:agent}]`（SC の port name）。
   - `environment`（**非機微のみ**）: `CLAUDE_CONFIG_DIR=/var/lib/af/claude`、`AGENT_SESSION_CMD`、
     `workspaceExtraEnv`（manager.go:574、例 `AF_AGENT_SELF_UPDATE_ALLOWED=1`）の非機微分。
-  - `secrets`（機微）: `AGENT_TOKEN`、`AF_SECRET_KEY`（SSM SecureString `valueFrom`、[§20b.7.5](#20b75-シークレット注入ssm-parameter-store-securestring-valuefrom)）。
-  - `mountPoints`: EFS AP 2 本（[§20b.7.4](#20b74-永続ストレージ-efs-アクセスポイント-2-本cp-動的払い出し)）。
+  - `secrets`（機微）: `AGENT_TOKEN`、`AF_SECRET_KEY`（SSM SecureString `valueFrom`、[§20b.7.5](#20b75-シークレット注入--ssm-parameter-store-securestring-valuefrom)）。
+  - `mountPoints`: EFS AP 2 本（[§20b.7.4](#20b74-永続ストレージ--efs-アクセスポイント-2-本cp-動的払い出し)）。
   - `logConfiguration: awslogs`（`AF_ECS_LOG_GROUP`）。
 - TaskDef family = `ContainerName`。env に per-workspace 値（secret は ARN 参照ゆえ family は image 変更時のみ
   revision 追加）。存在チェック = DescribeTaskDefinition、無ければ RegisterTaskDefinition。
@@ -269,7 +269,7 @@ local の 2 マウント（`home` + `claude-config`、runtime.go:179-181）を E
   （`/af-ws/*` scope。SecureString 復号は `aws/ssm` 管理鍵ゆえ追加 KMS 権限不要）。
 - **Workspace taskRole**（Agent 実行時）: **原則ゼロ**。Agent は AWS API を叩かない。IMDS ブロック
   （`AWS_EC2_METADATA_DISABLED` 相当 or hop 制限）。egress は SG で git/Anthropic に限定
-  （[§20b.7.15](#20b715-スコープ外)）。
+  （[§20b.7.15](#20b715-スコープ外段2-では触らない)）。
 
 ### 20b.7.10 AWS SDK フットプリント
 
