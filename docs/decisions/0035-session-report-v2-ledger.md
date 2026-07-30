@@ -3,9 +3,9 @@
 - 状態: **採用・実装済み**（2026-07-28 決定 / 2026-07-29 に Phase 1「判定の一本化」・
   Phase 2「台帳置換」・Phase 3「補償 reopen ＋自己申告ファストパス」を実装）。
   設計本文は [51-session-report-v2-ledger.md](../51-session-report-v2-ledger.md)。
-- 関連: [0013 相当 docs/30](../30-session-report.md)（v1 の設計と事故史）/
+- 関連: [docs/30](../30-session-report.md)（v1 の設計と事故史 — 専用 ADR は無い）/
   [0030](0030-turn-abort-auto-resume.md)（中断分類 — v2 の述語に吸収）/
-  [0015](0015-codex-app-server.md)（notify seam — v2 でヒント化）
+  [0015](0015-agent-managed-driver.md)（notify seam — v2 でヒント化）
 
 ## 背景
 
@@ -31,7 +31,8 @@ consume-then-deliver の配送消失・agent 再起動中の kick 消失）は�
 3. **配送をシンク側の冪等化にする。** 会話ロック下で行IDにより重複排除し、追記が
    成功した時だけ台帳を進める。検出側から「1回だけ」責務を外す。
 4. **誤「完了」は補償で回復可能にする。** reported 行を grace 期間監視し、新指示なしの
-   busy 復帰で訂正 notice＋reopen（上限2回）。「誤消費＝回復不能」の非対称を崩す。
+   busy 復帰で訂正報告（report ロール — §影響のとおり notice ではない）＋reopen（上限2回）。
+   「誤消費＝回復不能」の非対称を崩す。
 5. **自己申告はファストパスに留める。** `af_report` MCP ツール（Phase 3）は idle 証拠の
    1つ＋起床ヒントであって backbone ではない。busy 証拠より強くもしない（早呼びは保留）。
    報告本文は従来どおりサーバ生成の事実のみ。

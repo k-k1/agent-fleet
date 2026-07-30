@@ -2,8 +2,8 @@
 
 - 状態: **採択**（2026-07-27。設計 2026-07-23、未決 4 点も既定値のまま決着）。
   実装計画は [docs/39](../39-agent-memory-management.md)。
-- 関連: [0010（内部 git プロバイダ）](0010-internal-git-provider.md)・[docs/32 掃除機能](../32-agy-agent-kind.md)・
-  `workspace/agent/cleanup_archive.go`・`control-plane/runtime_docker.go` / `runtime_ecs.go` / `runtime_native.go`（claude-config マウント）・
+- 関連: [0010（内部 git プロバイダ）](0010-internal-git-provider.md)・
+  `workspace/agent/cleanup_archive.go`（掃除の gz 安全網 — 専用の設計文書は無い）・`control-plane/runtime_docker.go` / `runtime_ecs.go` / `runtime_native.go`（claude-config マウント）・
   `workspace/agent/routes.go` + `control-plane/routes.go`（REST dual allowlist）。
 
 ## 背景

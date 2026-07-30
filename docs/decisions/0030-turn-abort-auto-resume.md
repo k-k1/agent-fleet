@@ -1,7 +1,7 @@
 # 0030. 中断ターン — 自己修復を通知 seam に載せ、再送で直る中断だけ自動再開する
 
 - 状態: **採用・実装済み**。設計は [docs/47](../47-turn-abort-auto-resume.md)。
-- 関連: [0015](0015-codex-app-server.md)（managed driver の turn 状態機械）/
+- 関連: [0015](0015-agent-managed-driver.md)（managed driver の turn 状態機械）/
   docs/30（完了報告とオペレーター）/ docs/37（チャットブリッジ）
 
 ## 背景

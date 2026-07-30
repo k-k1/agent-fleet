@@ -12,7 +12,7 @@ File ペインは次の2層を持つ。
 
 | 層 | 値 | 意味 |
 |---|---|---|
-| File ペイン | `mode: "view" | "edit"` | 読み取り専用表示か、編集バッファか。ペイン種別は `file` のまま。 |
+| File ペイン | `mode: "view" \| "edit"` | 読み取り専用表示か、編集バッファか。ペイン種別は `file` のまま。 |
 | Markdown 表示 | `edit` / `preview` / `split` | edit 時の本文編集、既存 MarkdownView/MarpView によるプレビュー、左右分割。 |
 
 非Markdownのテキストは CodeMirror 6 の編集表示を使う。Markdown の preview は既存の

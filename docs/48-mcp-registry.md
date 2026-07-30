@@ -6,7 +6,7 @@
   **テナントスコープの配布（CP テーブル / 管理 API / ブリッジ / 配布キャッシュ / `user_secret`）**・
   **egress allowlist 連携（§9.1）**）。残りは §14 の未決のみ。
   意思決定は [decisions/0031](decisions/0031-mcp-registry.md)。
-- 関連: docs/19（アシスタント）/ [25](25-ops-monitoring.md)（組み込み ops 連携 = 本設計が一般化する対象）/
+- 関連: [history/19](history/19-assistant-chat.md)（アシスタント）/ [25](25-ops-monitoring.md)（組み込み ops 連携 = 本設計が一般化する対象）/
   [20](20-container-audit-egress.md)（egress allowlist）/ [46](46-usage-accounting.md)（残 P5 = MCP の使用量計上）/
   [27](27-agent-managed-driver.md) §codex thread MCP / [32](32-agy-agent-kind.md) §MCP / [43](43-kiro-agent-kind.md) §2.6
 

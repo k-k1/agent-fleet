@@ -1,6 +1,6 @@
 # 20. コンテナ内操作の監査ログ & 外部通信制御（egress 統制）— 設計検討
 
-status: **検討＋M1 実装済**。roadmap の **P3-9 残項目**（「監査」「egress 統制」）の設計。M2 以降は未着手。
+status: **M1〜M5＋member 面 実装済**（詳細は下の実装状況を参照。残＝M6/M7 ほか）。roadmap の **P3-9 残項目**（「監査」「egress 統制」）の設計。
 確定した契約は `reference/`、採否記録は `decisions/` へ落とす。
 
 **実装状況（このブランチ `design/container-audit-egress`）**:

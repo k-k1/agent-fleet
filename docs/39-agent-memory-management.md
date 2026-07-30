@@ -57,7 +57,7 @@ Antigravity CLI に一本化。Enterprise ライセンス・有償 API キーの
 ### 既存機構に無いもの（gap）
 
 - `deploy/compose/backup.sh` は **DATA_DIR 丸ごと tar**（ops 層・全ユーザー一括・時点は取得タイミングのみ）。
-- `cleanup_archive.go`（docs/32）は削除セッションの tar.gz 安全網であり、継続的な差分履歴ではない。
+- `workspace/agent/cleanup_archive.go`（掃除の gz 安全網 — 専用の設計文書は無い）は削除セッションの tar.gz 安全網であり、継続的な差分履歴ではない。
 - 秘匿接続情報にも export 経路は無く、**個人単位の「履歴・巻き戻し・持ち出し」primitive はゼロ**。
 - 環境間移設は roadmap 上も「home+DB を丸ごとバックフィル」型のみで、メモリ粒度の移送は存在しない。
 
