@@ -335,6 +335,23 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name})
 		return
 	}
+	// claude のバックグラウンド・エージェント表示（フッタの「← for agents」）に入って
+	// いるペインへ打つと、文字はメイン会話ではなく**実行中のサブエージェントへの割り込み
+	// メッセージ**になる。ペイン上は自分の文字が見えるので送信側は成功したと思い込み、
+	// メイン転写にもミラーにも何も残らない（実測 2026-07-30 sannme2）。取り返しのつかない
+	// 誤配達なので、タイプする前に弾いて呼び出し元へ理由を返す。
+	//
+	// 自動でメイン表示へ戻さないのは、復帰キーが実 TUI で未検証だから — 当てずっぽうの
+	// キーは実行中のサブエージェントに何をするか分からない。まず「黙って誤配達しない」
+	// ところまでを確定させる。
+	if m, ok := session.ReadMeta(name); ok && normalizeKind(m.Kind) == session.KindClaude &&
+		tmuxx.AgentsViewActive(name) {
+		httpx.WriteErr(w, http.StatusConflict, "agents_view",
+			"session pane is showing a background agent (footer: ← for agents); "+
+				"typing there steers that agent instead of the session. "+
+				"Return the pane to the main conversation and send again.")
+		return
+	}
 	// 配達検証の基線はタイプ前に取る（confirm 時のみ）。meta が読めない session は
 	// 検証不能として従来意味論のまま通す。
 	var confirmMeta session.Meta

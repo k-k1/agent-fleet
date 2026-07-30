@@ -13,8 +13,9 @@ import (
 // predicates — so the corpus pins BOTH for every frame, which is what catches a change
 // that makes a frame read as neither (or both).
 type verdict struct {
-	busy bool
-	idle bool
+	busy   bool
+	idle   bool
+	agents bool // the pane's input box is bound to a background agent, not the session
 }
 
 var (
@@ -49,6 +50,10 @@ var corpus = map[string]verdict{
 	"idle_post_turn_summary.txt":     idleV,
 	"modal_plan_approval.txt":        modalV,
 	"modal_folder_trust.txt":         modalV,
+	// バックグラウンド・エージェントのレール（2026-07-30 の誤配達事故）。main が選択
+	// されているか否かだけが違い、footer も入力欄も同じに見える点が事故の本体。
+	"agents_rail_main_selected.txt":  idleV,
+	"agents_rail_agent_selected.txt": {busy: true, agents: true},
 }
 
 // TestFooterCorpus replays every recorded pane through the real predicates.
@@ -65,6 +70,11 @@ func TestFooterCorpus(t *testing.T) {
 			}
 			if got := atIdlePrompt(s); got != want.idle {
 				t.Errorf("AtIdlePrompt(%s) = %v, want %v\nfooter line: %s", name, got, want.idle, footerLine(s))
+			}
+			// 誤検知は「送れるはずの注入を弾く」方向なので、レールの無いフレームが
+			// false であることも含めて全フレームで固定する。
+			if got := agentsViewActive(s); got != want.agents {
+				t.Errorf("AgentsViewActive(%s) = %v, want %v", name, got, want.agents)
 			}
 		})
 	}

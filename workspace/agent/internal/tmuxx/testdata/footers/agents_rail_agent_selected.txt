@@ -1,0 +1,15 @@
+● Bash(cd /home/dev/repos/example && git show 0a9bd2bc)
+
+  Read 1 file (ctrl+o to expand)
+
+✽ Hyperspacing… (3m 46s · ↓ 182.3k tokens)
+  ⎿  Tip: Use /btw to ask a quick side question without interrupting
+     Claude's current work
+
+────────────────────────────────────────────────── Re-review mid fixes C ──
+❯
+───────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+
+  ◯ main
+  ● general-purpose  Re-review mid fixes C        24m 18s · ↓ 182.3k tokens
