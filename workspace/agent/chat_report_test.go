@@ -718,11 +718,18 @@ func TestSessionReportIgnoresFalseIdle(t *testing.T) {
 	if err := os.WriteFile(agLog, []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// The main turn's transcript, freshly appended (the turn is still running).
+	// The main turn's transcript. 鮮度はファイルの mtime ではなく **実レコードの
+	// timestamp** で決まるので（記帳行の追記を「実行中」と誤読しないため）、テストも
+	// 時刻を持つ user/assistant 行を書いて動かす。
 	mainLog := filepath.Join(proj, sid+".jsonl")
-	if err := os.WriteFile(mainLog, []byte("{}\n"), 0o600); err != nil {
-		t.Fatal(err)
+	writeMainAt := func(t *testing.T, at time.Time) {
+		t.Helper()
+		line := `{"type":"assistant","timestamp":"` + at.UTC().Format(time.RFC3339Nano) + `"}` + "\n"
+		if err := os.WriteFile(mainLog, []byte(line), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
+	writeMainAt(t, time.Now()) // freshly appended (the turn is still running)
 
 	addInstruction(m.Name, conv.ID, turnSourceOperator)
 	status.Persist(sid, "working")
@@ -763,9 +770,7 @@ func TestSessionReportIgnoresFalseIdle(t *testing.T) {
 
 	// Phase 2 — transcript stale but the marker is still absent: absence alone
 	// (LiveState's idle default) must not be trusted either.
-	if err := os.Chtimes(mainLog, stale, stale); err != nil {
-		t.Fatal(err)
-	}
+	writeMainAt(t, stale)
 	settle()
 	if n := countReports(); n != 0 {
 		t.Fatalf("delivered on a missing marker (n=%d)", n)
@@ -775,10 +780,7 @@ func TestSessionReportIgnoresFalseIdle(t *testing.T) {
 	// (the incident's shape: the marker is not the turn's end — the turn is still
 	// appending during a think gap). No delivery.
 	status.PersistTurnEnd(sid, "idle")
-	after := time.Now().Add(10 * time.Second) // マーカーより後に伸びた転写
-	if err := os.Chtimes(mainLog, after, after); err != nil {
-		t.Fatal(err)
-	}
+	writeMainAt(t, time.Now().Add(10*time.Second)) // マーカーより後に伸びた実レコード
 	settle()
 	if n := countReports(); n != 0 {
 		t.Fatalf("delivered while the transcript grew past the idle marker (n=%d)", n)
@@ -786,9 +788,7 @@ func TestSessionReportIgnoresFalseIdle(t *testing.T) {
 
 	// Phase 4 — explicit idle + a transcript that stopped growing before it: the real
 	// completion. Exactly one report, arm consumed.
-	if err := os.Chtimes(mainLog, stale, stale); err != nil {
-		t.Fatal(err)
-	}
+	writeMainAt(t, stale)
 	deadline := time.Now().Add(3 * time.Second)
 	for countReports() == 0 && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)

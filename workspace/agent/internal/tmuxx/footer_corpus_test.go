@@ -13,8 +13,9 @@ import (
 // predicates — so the corpus pins BOTH for every frame, which is what catches a change
 // that makes a frame read as neither (or both).
 type verdict struct {
-	busy bool
-	idle bool
+	busy   bool
+	idle   bool
+	agents bool // the pane's input box is bound to a background agent, not the session
 }
 
 var (
@@ -49,6 +50,15 @@ var corpus = map[string]verdict{
 	"idle_post_turn_summary.txt":     idleV,
 	"modal_plan_approval.txt":        modalV,
 	"modal_folder_trust.txt":         modalV,
+	// バックグラウンド・エージェント関連（2026-07-30 の誤配達事故を制御プローブで再現）。
+	// main が選択されているか否かだけが違い、footer も入力欄も同じに見える点が事故の本体。
+	// レール操作中はモード表示フッタごと差し替わり、agents ホームは入力欄の意味が
+	// 「新しいセッションを作る」に変わる — どれも本体の会話には届かない。
+	"agents_rail_main_selected.txt":    idleV,
+	"agents_rail_agent_selected.txt":   {busy: true, agents: true},
+	"agents_rail_navigating_main.txt":  {},
+	"agents_rail_navigating_agent.txt": {busy: true, agents: true},
+	"agents_home_screen.txt":           {agents: true},
 }
 
 // TestFooterCorpus replays every recorded pane through the real predicates.
@@ -65,6 +75,11 @@ func TestFooterCorpus(t *testing.T) {
 			}
 			if got := atIdlePrompt(s); got != want.idle {
 				t.Errorf("AtIdlePrompt(%s) = %v, want %v\nfooter line: %s", name, got, want.idle, footerLine(s))
+			}
+			// 誤検知は「送れるはずの注入を弾く」方向なので、レールの無いフレームが
+			// false であることも含めて全フレームで固定する。
+			if got := agentsViewActive(s); got != want.agents {
+				t.Errorf("AgentsViewActive(%s) = %v, want %v", name, got, want.agents)
 			}
 		})
 	}
@@ -118,4 +133,30 @@ func findLine(s string, match func(string) bool) string {
 		}
 	}
 	return "(none in frame)"
+}
+
+// TestComposerEmpty pins the precondition LeaveAgentsView uses before it sends any key:
+// a draft in the input box must block the automatic return to the main conversation.
+// The bare prompt is "❯" followed by a NON-BREAKING space (U+00A0) — a real capture, and
+// the reason the check trims Unicode space rather than ASCII blanks.
+func TestComposerEmpty(t *testing.T) {
+	for _, tc := range []struct {
+		frame string
+		want  bool
+	}{
+		{"agents_rail_agent_selected.txt", true},
+		{"agents_rail_main_selected.txt", true},
+		{"idle_bypass_hint.txt", true},
+	} {
+		if got := composerEmpty(readFrame(t, tc.frame)); got != tc.want {
+			t.Errorf("composerEmpty(%s) = %v, want %v", tc.frame, got, tc.want)
+		}
+	}
+	// A draft makes it false — otherwise the recovery keys could submit a human's
+	// half-written message.
+	drafted := strings.Replace(readFrame(t, "agents_rail_agent_selected.txt"),
+		"❯ ", "❯ DRAFT-NOT-SUBMITTED", 1)
+	if composerEmpty(drafted) {
+		t.Error("composerEmpty = true with a draft in the composer")
+	}
 }

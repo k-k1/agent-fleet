@@ -78,6 +78,20 @@ type reportSignals struct {
 	// これより強く、申告があっても進行中なら settle しない。
 	SelfReported bool
 	SelfReportAt string // その申告の RFC3339
+	// SelfReportAged は申告から selfReportSettleDelay 以上経っているか。申告**だけ**で
+	// 完了と読むにはこれが要る（下の定数のコメント参照）。
+	SelfReportAged bool
+
+	// Abort は転写の末尾が API エラーで切れている＝ターンが中断で終わった証拠
+	// （docs/47）。claude はこのとき Stop hook を鳴らさないので**マーカーは一切
+	// 動かない**。従来これを見ていたのはペースのヒール経路（state != idle かつ
+	// ペインが待機表示）だけで、誤ヒールでマーカーが消えた後は二度と評価されず、
+	// 中断がどこにも報告されないまま指示が宙に浮いた（実測 sp2qemx 2026-07-30）。
+	// レベルで読めば入口が状態に依存しなくなる — 転写の末尾は「今ディスクにある
+	// 状態」そのもので、ユーザーが再開すれば末尾が変わって自然に消える。
+	Abort       bool
+	AbortReason string // turn-aborted（再送で直る）/ turn-failed（原因を直すまで無意味）
+	AbortAt     string // その中断が記録された RFC3339
 
 	HintReason string // 直近のヒントが運んだ qualifier（turn-failed / turn-aborted）
 }
@@ -142,8 +156,11 @@ func (s reportSignals) idleEvidence() []string {
 	if s.markerIdle() {
 		ev = append(ev, "marker-idle")
 	}
-	if s.SelfReported {
+	if s.SelfReported && s.SelfReportAged {
 		ev = append(ev, "self-report")
+	}
+	if s.Abort {
+		ev = append(ev, "abort")
 	}
 	return ev
 }
@@ -161,7 +178,13 @@ func (s reportSignals) evidenceAt() string {
 	if s.markerIdle() {
 		return s.MarkerTS
 	}
-	return s.SelfReportAt
+	if s.Abort && s.AbortAt != "" {
+		return s.AbortAt
+	}
+	if s.SelfReported && s.SelfReportAged {
+		return s.SelfReportAt
+	}
+	return ""
 }
 
 // evalReportEvidence is the settle predicate（docs/51 §settled/progressed 述語）。
@@ -189,8 +212,14 @@ func evalReportEvidence(s reportSignals) reportVerdict {
 	if len(idle) == 0 {
 		return reportVerdict{Why: "unknown"} // 不明は不明のまま — idle と既定しない
 	}
+	// 中断は「なぜ終わったか」を転写から直接読めるので、ヒント（フック由来・
+	// 中断では鳴らないので普通は空）より優先する。
+	reason := s.HintReason
+	if s.Abort {
+		reason = s.AbortReason
+	}
 	return reportVerdict{
-		Quiet: true, Fast: s.SelfReported, Kind: reportKindAnswerReady, Reason: s.HintReason,
+		Quiet: true, Fast: s.SelfReported, Kind: reportKindAnswerReady, Reason: reason,
 		At: s.evidenceAt(), Why: "idle:" + strings.Join(idle, ","),
 	}
 }
@@ -203,6 +232,16 @@ func evalReportEvidence(s reportSignals) reportVerdict {
 // 転写・ペイン）は、報告が出た時点では必ず false だったもの（busy 証拠がゼロでなければ
 // 報告は出ない）なので、いま true なら新しい書込みがあったということ。
 func evalReportResumed(s reportSignals) []string {
+	// 報告のあとに「ターンが**終わった**」証拠が来ているなら、それは作業の再開ではなく、
+	// いま報告した完了そのものの遅着（あるいはそのターンが中断で終わったこと）である。
+	// ここを見分けないと、鮮度の証拠（報告の数秒後に書かれる最後の assistant 行）で
+	// 「先の完了報告は早計でした — まだ作業中です」という**嘘の訂正**を出し、次の tick で
+	// 同じ完了をもう一度報告することになる（実測 2026-07-30 sannme2: 09:59:34 報告 →
+	// 09:59:50 に本物の回答が書かれる → 10:00:08 訂正 → 10:00:34 同内容を再報告）。
+	// 本当に再開していれば最新のマーカーは working / question 側になり、下の列で拾える。
+	if s.markerIdle() || s.Abort {
+		return nil
+	}
 	var ev []string
 	switch s.MarkerState {
 	case "working", "question", "plan", "permission":
@@ -241,6 +280,9 @@ func collectReportSignals(m session.Meta, since, hintReason, selfAt string) repo
 	s := reportSignals{Stopped: m.StoppedAt != "", HintReason: hintReason}
 	if selfAt != "" && !reportTimeBefore(selfAt, since) {
 		s.SelfReported, s.SelfReportAt = true, selfAt
+		if at, err := time.Parse(time.RFC3339, selfAt); err == nil {
+			s.SelfReportAged = time.Since(at) >= selfReportSettleDelay
+		}
 	}
 	var markerAt time.Time
 	if st, ok := status.Read(sid); ok {
@@ -264,6 +306,7 @@ func collectReportSignals(m session.Meta, since, hintReason, selfAt string) repo
 	if normalizeKind(m.Kind) == session.KindClaude {
 		s.SubagentBusy = claude.SubagentBusy(sid)
 		s.TranscriptBusy = reportTranscriptBusy(sid, markerAt)
+		collectAbortSignal(&s, sid, since)
 	}
 	if e, ok := status.ReadExit(m.Name); ok {
 		switch e.Reason {
@@ -281,10 +324,57 @@ func collectReportSignals(m session.Meta, since, hintReason, selfAt string) repo
 	return s
 }
 
+// selfReportSettleDelay is how long a session must stay quiet AFTER calling af_report
+// before that self-report alone may settle the instruction (docs/51 §自己申告).
+//
+// 申告は「意味的完了を直接測る唯一のシグナル」だが、**早呼び**がある: セッションが
+// 「終わった」と申告してから、まだ最終回答を書き続けることがある。実測 2026-07-30
+// sannme2 では申告の 2 分 22 秒後に本物の回答が届いた — その間、転写は 142 秒沈黙して
+// おり（鮮度 TTL 90s を超える）、ペインのスピナーもエージェント表示のせいで読めず、
+// busy 証拠がすべて消えて早すぎる完了報告が出た。
+//
+// 正常系はこの遅延を踏まない: 申告のあとターンが終われば Stop フックが終端マーカーを
+// 書き、そちら（marker-idle）で即座に settle する。この窓が効くのは「マーカーが最後まで
+// 来ない」ケース＝申告が唯一の手掛かりのときだけで、そこでは数分の遅延より誤報告を
+// 避ける方が価値が高い。値は観測された思考ギャップ（142s）に余裕を足したもの。
+const selfReportSettleDelay = 3 * time.Minute
+
+// collectAbortSignal reads the転写末尾 for a turn that died on an API error (docs/47).
+// マーカーを一切見ないのが肝: claude は中断で Stop hook を鳴らさないので、マーカーは
+// 「working のまま」「誤ヒールで消えた」「前のターンの idle が残っている」のどれにも
+// なり得る。中断そのものは転写の末尾という**レベル**に書かれているので、そこだけを見る。
+//
+// since より前の中断は前の指示の話なので捨てる（マーカー・自己申告と同じ下限）。時刻を
+// 持たないレコードは切らずに採る — 中断は「今ディスクにある末尾」なので、時刻が読めなくても
+// 現在の状態を指しているから。
+func collectAbortSignal(s *reportSignals, sid, since string) {
+	a, ok := claude.AbortInfo(sid)
+	if !ok {
+		return
+	}
+	at := ""
+	if !a.At.IsZero() {
+		at = a.At.Format(time.RFC3339)
+	}
+	if at != "" && reportTimeBefore(at, since) {
+		return
+	}
+	s.Abort, s.AbortAt = true, at
+	s.AbortReason = reportReasonTurnFailed
+	if a.Retryable {
+		s.AbortReason = reportReasonTurnAborted
+	}
+	// 中断が末尾にあるなら、転写の「新しさ」はその中断レコード自身のもの — 進行中の
+	// 証拠ではなく、終わり方そのものである。ここで下ろさないと、中断のたびに鮮度の
+	// 窓（90s）が明けるまで報告が足止めされる。ペイン／サブエージェントの busy 証拠は
+	// 別の事実（再開した・BG が動いている）なので残す。
+	s.TranscriptBusy = false
+}
+
 // reportMarkerGrace absorbs the RFC3339 second-truncation of the status marker when
-// comparing it against a file mtime: 「Stop フックのマーカー」と「そのターン最後の
-// 転写書込み」は同じ1秒に収まることがあるので、この余裕より後の追記だけを
-// 「マーカーの後にも伸びた」と読む。
+// comparing it against a transcript record's timestamp: 「Stop フックのマーカー」と
+// 「そのターン最後の転写書込み」は同じ1秒に収まることがあるので、この余裕より後の
+// 追記だけを「マーカーの後にも伸びた」と読む。
 const reportMarkerGrace = 2 * time.Second
 
 // reportTranscriptBusy reports whether the main transcript says the turn is still
@@ -295,15 +385,18 @@ const reportMarkerGrace = 2 * time.Second
 // ターンは続いている（＝そのマーカーは終端ではない・sqmconc の思考ギャップ）。
 // 鮮度も併せて要求するのは安全弁で、転写が静止したら（＝ v1 と同じ 90s が上限）
 // 比較の食い違いで報告が永久に止まることが無いようにするため。
+//
+// TranscriptTouched は「最後の user/assistant 行の時刻」を返す（記帳行では動かない）。
+// 1回だけ読んで鮮度と相対比較の両方に使う — 以前は TranscriptBusy と2回読んでいた。
 func reportTranscriptBusy(sid string, marker time.Time) bool {
-	if !claude.TranscriptBusy(sid) {
+	at, ok := claude.TranscriptTouched(sid)
+	if !ok || !claude.TranscriptFresh(at) {
 		return false // 静止している転写は「実行中」の証拠にならない（上限は v1 と同じ）
 	}
 	if marker.IsZero() {
 		return true // 終端マーカーが無い＝鮮度だけが手がかり（v1 waiter と同じ立場）
 	}
-	at, ok := claude.TranscriptTouched(sid)
-	return ok && at.After(marker.Add(reportMarkerGrace))
+	return at.After(marker.Add(reportMarkerGrace))
 }
 
 // reportPaneBusy checks the pane's interrupt affordance (逆ヒールと同じ根拠)。tmux を

@@ -1,0 +1,23 @@
+│                /tmp/af-probe-agents                │ /release-notes for more │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+
+❯ run: sleep 150 via Bash, then reply DONE
+
+● I'll run the sleep command.
+
+  Running 1 shell command · 1m 10s…
+  ⎿  $ sleep 150 (1m 9s)
+
+· Nucleating… (1m 20s · ↑ 16.6k tokens)
+  ⎿  Tip: Use /btw to ask a quick side question without interrupting Claude's
+     current work
+
+─────────────────────────────────────────────────────── Sleep then reply DONE ──
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+
+  ◯ main
+  ● general-purpose  Sleep then reply DONE                2m 0s · ↓ 16.6k tokens

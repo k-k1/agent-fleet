@@ -4,6 +4,8 @@ package claude
 // （旧 package main session_program.go — docs/23 残① Wave F で移設）。
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -104,25 +106,76 @@ func TranscriptSnapshot(sid string) map[string]int64 {
 // never splits the type token.
 func UserTurnAppendedSince(sid string, snap map[string]int64) bool {
 	for _, p := range jsonlPaths(sid) {
-		off := snap[p] // 0 for a file born after the snapshot: scan it from the start
-		fi, err := os.Stat(p)
-		if err != nil || fi.Size() <= off {
-			continue
-		}
-		f, err := os.Open(p)
-		if err != nil {
-			continue
-		}
-		var appended []byte
-		if _, err := f.Seek(off, io.SeekStart); err == nil {
-			appended, _ = io.ReadAll(io.LimitReader(f, 4<<20))
-		}
-		f.Close()
-		if strings.Contains(string(appended), `"type":"user"`) {
+		if bytes.Contains(appendedSince(p, snap[p]), []byte(`"type":"user"`)) {
 			return true
 		}
 	}
 	return false
+}
+
+// PromptAcceptedSince is UserTurnAppendedSince widened by the one other shape a real
+// submit takes: typed while the previous turn is still running, claude does not start a
+// turn — it QUEUES the prompt (a `queue-operation` line whose content is the prompt) and
+// replays it when the turn ends. That is a delivered prompt, but no user line follows for
+// minutes, so keying delivery on the user line alone would call it unconfirmed and the
+// self-heal would type the whole thing a SECOND time.
+//
+// The queued half is matched by the prompt's own text rather than the record type,
+// because queue-operation also carries claude's internal task-notification enqueues
+// (a background agent finishing) — those must not pass for our prompt.
+func PromptAcceptedSince(sid string, snap map[string]int64, prompt string) bool {
+	needle := jsonNeedle(prompt)
+	for _, p := range jsonlPaths(sid) {
+		appended := appendedSince(p, snap[p])
+		if len(appended) == 0 {
+			continue
+		}
+		if bytes.Contains(appended, []byte(`"type":"user"`)) {
+			return true
+		}
+		if needle != nil && bytes.Contains(appended, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// appendedSince returns the bytes written to p after off (capped). Appends are whole
+// lines, so seeking to the recorded EOF never splits a token.
+func appendedSince(p string, off int64) []byte {
+	fi, err := os.Stat(p)
+	if err != nil || fi.Size() <= off {
+		return nil
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	if _, err := f.Seek(off, io.SeekStart); err != nil {
+		return nil
+	}
+	b, _ := io.ReadAll(io.LimitReader(f, 4<<20))
+	return b
+}
+
+// jsonNeedle renders the head of a prompt the way it appears INSIDE a jsonl record, so a
+// substring search over raw file bytes works: json.Marshal applies the same escaping
+// claude's writer does, and the head is short enough to survive the record wrapping the
+// prompt in a preamble. nil when there is nothing usable to match on.
+func jsonNeedle(prompt string) []byte {
+	head := strings.TrimSpace(strings.SplitN(prompt, "\n", 2)[0])
+	if r := []rune(head); len(r) > 24 {
+		head = string(r[:24])
+	}
+	if len([]rune(head)) < 4 {
+		return nil // too short to be distinctive — do not match on it
+	}
+	b, err := json.Marshal(head)
+	if err != nil || len(b) < 3 {
+		return nil
+	}
+	return b[1 : len(b)-1] // strip the surrounding quotes
 }
 
 // JSONLResumable reports whether sid's log holds an actual conversation (a user or
