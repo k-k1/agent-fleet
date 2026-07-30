@@ -445,7 +445,7 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
                     onClick={() => void runStage1()}
                   >
                     {tr("clean.stage1_run")}
-                    {stage1Targets.length ? `（${stage1Targets.length}）` : ""}
+                    {stage1Targets.length ? tr("common.paren", { v: stage1Targets.length }) : ""}
                   </Button>
                 </div>
                 {repos1.length === 0 ? (
@@ -467,7 +467,7 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
                     onClick={() => void runStage2()}
                   >
                     {tr("clean.stage2_run")}
-                    {stage2Safe.length ? `（${stage2Safe.length}）` : ""}
+                    {stage2Safe.length ? tr("common.paren", { v: stage2Safe.length }) : ""}
                   </Button>
                 </div>
                 {repos2.length === 0 ? (

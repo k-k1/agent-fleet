@@ -4,6 +4,7 @@ import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as 
 import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond, sessionPlanRespond, sessionSettings, sessionSkills, downloadURL } from "../../core/api/client.ts";
 import type { InteractionAnswer, ManagedThreadSettings, SessionSkill, TurnResult } from "../../core/api/client.ts";
 import { isManagedSession } from "../../types/session.ts";
+import type { Session } from "../../types/session.ts";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
 import { MEMO_DND_MIME } from "../memo/dnd.ts";
 import { useSettings, setSetting, chatFontStack, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
@@ -250,7 +251,7 @@ export function MirrorView({
 }: {
   paneId: string;
   session: string;
-  sessionMeta?: any;
+  sessionMeta?: Session | null;
   active?: boolean;
   mirror?: boolean;
   onToggleMirror: (v: boolean) => void;
@@ -1718,7 +1719,8 @@ export function MirrorView({
     try {
       const j = await apiJSON(`api/sessions/${q(session)}/suggest-replies`, "POST", {});
       const list = Array.isArray(j?.suggestions) ? (j.suggestions as unknown[]).filter((x): x is string => typeof x === "string") : [];
-      setLlmSuggestions(list);
+      // LLM が同文を重複して返すことがある — チップの React key は本文由来なので畳んでおく。
+      setLlmSuggestions([...new Set(list)]);
       // 候補ゼロ = バックエンド不在（claude/codex/opencode いずれも無い）か会話が浅い。無反応だと
       // 壊れて見えるので一言知らせる（Layer A のチップはそのまま残る）。
       if (!list.length) toast(tr("mirror.suggest_none"));
@@ -2457,7 +2459,7 @@ export function MirrorView({
         {pendingPlan && (
           <div className="mirror-turn assistant">
             <div className="mirror-turn-head">
-              <span className="mt-who">Claude</span>
+              <span className="mt-who">{agentName}</span>
               <span className="mt-model muted">{tr("mirror.plan_pending")}</span>
             </div>
             <div className="mirror-turn-body">
@@ -2499,7 +2501,7 @@ export function MirrorView({
           // whose buttons would send keystrokes that mis-answer the question underneath.
           <div className="mirror-turn assistant">
             <div className="mirror-turn-head">
-              <span className="mt-who">Claude</span>
+              <span className="mt-who">{agentName}</span>
               <span className="mt-model muted">{tr("mirror.perm_pending")}</span>
             </div>
             <div className="mirror-turn-body">
@@ -2711,7 +2713,7 @@ export function MirrorView({
                   type="button"
                   className="mirror-suggest-ai"
                   title={tr("mirror.suggest_ai")}
-                  disabled={suggesting || wsDown()}
+                  disabled={suggesting || !running} // wsDown() はトースト副作用があるのでレンダー中は呼ばない
                   onClick={fetchLlmSuggestions}
                   onKeyDown={onSuggestNav} // Enter は既定の click（＝候補取得）に任せる
                 >
@@ -4662,11 +4664,15 @@ function planSummary(md?: string) {
 // CopyButton copies the turn's RAW Markdown (not the rendered HTML) to the clipboard.
 function CopyButton({ text }: { text: string }) {
   const [done, setDone] = useState(false);
+  // ✓表示を戻すタイマー。アンマウント後の setDone を避けるため cleanup で clear する。
+  const timerRef = useRef(0);
+  useEffect(() => () => window.clearTimeout(timerRef.current), []);
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(text);
       setDone(true);
-      setTimeout(() => setDone(false), 1500);
+      window.clearTimeout(timerRef.current);
+      timerRef.current = window.setTimeout(() => setDone(false), 1500);
     } catch {
       /* clipboard blocked (insecure context / permission) — no-op */
     }

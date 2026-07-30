@@ -23,7 +23,9 @@ export function BrowserPane({ paneId, port, path }: BrowserPaneProps) {
   const [snapshot, setSnapshot] = useState<BrowserSnapshot>(controller.snapshot);
   const [portDraft, setPortDraft] = useState(String(port));
   const [pathDraft, setPathDraft] = useState(path);
-  const [targetError, setTargetError] = useState(false);
+  // port / path を別々に検証するので赤枠も別々（port の失敗でパス欄だけ赤くなる誤誘導を避ける）。
+  const [portError, setPortError] = useState(false);
+  const [pathError, setPathError] = useState(false);
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [inputAnchor, setInputAnchor] = useState({ x: 0, y: 0 });
   const stageRef = useRef<HTMLDivElement>(null);
@@ -89,12 +91,14 @@ export function BrowserPane({ paneId, port, path }: BrowserPaneProps) {
 
   const submitTarget = (event: FormEvent) => {
     event.preventDefault();
-    const target = browserTarget(Number(portDraft), pathDraft);
-    if (!target) {
-      setTargetError(true);
-      return;
-    }
-    setTargetError(false);
+    const port = Number(portDraft);
+    const portOk = !!browserTarget(port, "/");
+    // パス単独の妥当性は既知の有効ポートで判定する（port が悪くてもパス欄を巻き込まない）。
+    const pathOk = !!browserTarget(portOk ? port : 3000, pathDraft);
+    setPortError(!portOk);
+    setPathError(!pathOk);
+    const target = portOk && pathOk ? browserTarget(port, pathDraft) : null;
+    if (!target) return;
     controller.changeTarget(target);
     setPaneTarget(paneId, { content: { kind: "browser", ...target } });
   };
@@ -158,16 +162,17 @@ export function BrowserPane({ paneId, port, path }: BrowserPaneProps) {
         <IconButton icon="refresh" label={tr("browser.reload")} onClick={() => controller.reload()} />
         <span className="browser-host">127.0.0.1:</span>
         <input
-          className="browser-port"
+          className={"browser-port" + (portError ? " invalid" : "")}
           aria-label={tr("browser.port")}
+          aria-invalid={portError}
           inputMode="numeric"
           value={portDraft}
           onChange={(event) => setPortDraft(event.target.value)}
         />
         <input
-          className={"browser-path" + (targetError ? " invalid" : "")}
+          className={"browser-path" + (pathError ? " invalid" : "")}
           aria-label={tr("browser.path")}
-          aria-invalid={targetError}
+          aria-invalid={pathError}
           value={pathDraft}
           onChange={(event) => setPathDraft(event.target.value)}
         />

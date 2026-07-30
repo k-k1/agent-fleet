@@ -12,7 +12,7 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { api, raw } from "../../core/api/client.ts";
 import { kindIcon, kindLabel, kindClass } from "../../lib/sessionkind.ts";
 import { displayName } from "../../lib/sessionview.ts";
-import { t, useT } from "../../lib/i18n/index.ts";
+import { t, useLocale, useT } from "../../lib/i18n/index.ts";
 import { compareText } from "../../lib/intl.ts";
 import type { Session } from "../../types/session.ts";
 
@@ -44,8 +44,8 @@ const OLD_DAYS = 7;
 // 削除ロック（docs/45）済みは一括削除の対象外 — Agent が 403 で拒むので、件数にも入れない。
 const isOld = (s: ArchivedSession, now: number) => {
   if (!s.createdAt || s.locked) return false;
-  const t = new Date(s.createdAt).getTime();
-  return !isNaN(t) && now - t > OLD_DAYS * 86400_000;
+  const ts = new Date(s.createdAt).getTime(); // ts: i18n の t を隠さない名前に
+  return !isNaN(ts) && now - ts > OLD_DAYS * 86400_000;
 };
 
 export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
@@ -56,6 +56,7 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
   const askConfirm = useConfirm();
   const toast = useToast();
   const tr = useT();
+  const locale = useLocale(); // groupHeading の t() をロケール切替に追従させる
 
   const load = () =>
     api("api/sessions/archived")
@@ -76,6 +77,7 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
 
   // Group by dir. Groups sorted by repo name (asc), rows by createdAt desc.
   const groups = useMemo(() => {
+    void locale; // dep: groupHeading（"arch.other"）をロケール切替で作り直す
     const by = new Map<string, ArchivedSession[]>();
     for (const s of filtered) {
       const key = s.dir || "";
@@ -98,7 +100,7 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
     });
     arr.sort((a, b) => compareText(a.repoKey, b.repoKey) || compareText(b.newest, a.newest));
     return arr;
-  }, [filtered]);
+  }, [filtered, locale]);
 
   const allCollapsed = groups.length > 0 && groups.every((g) => collapsed.has(g.dir));
   const toggleAll = () =>
@@ -250,7 +252,7 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
                 title={oldCount ? tr("arch.delete_old_title", { days: OLD_DAYS, count: oldCount }) : tr("arch.no_old", { days: OLD_DAYS })}
                 onClick={delOld}
               >
-                {tr("arch.delete_old")}{oldCount ? `（${oldCount}）` : ""}
+                {tr("arch.delete_old")}{oldCount ? tr("common.paren", { v: oldCount }) : ""}
               </Button>
             </div>
 
@@ -316,7 +318,7 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
           title={restorable.length ? tr("arch.restore_all_title", { count: restorable.length }) : tr("arch.no_restorable")}
           onClick={restoreAll}
         >
-          {tr("arch.restore_all")}{restorable.length ? `（${restorable.length}）` : ""}
+          {tr("arch.restore_all")}{restorable.length ? tr("common.paren", { v: restorable.length }) : ""}
         </Button>
         <Button variant="ghost" onClick={onClose}>
           {tr("common.close")}

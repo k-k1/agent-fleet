@@ -52,14 +52,15 @@ export function ContextBar({ read, create, fresh, model, window: windowOverride,
   const tr = useT();
   const used = read + create + fresh;
   // Prefer the agent-reported window (exact); fall back to the model-name guess.
-  const window = windowOverride && windowOverride > 0 ? windowOverride : contextWindow(model, used);
-  const pct = Math.min(100, (used / window) * 100);
-  const w = (n: number) => (n / window) * 100 + "%";
+  // （ctxWindow: グローバル window を隠さない名前にしている）
+  const ctxWindow = windowOverride && windowOverride > 0 ? windowOverride : contextWindow(model, used);
+  const pct = Math.min(100, (used / ctxWindow) * 100);
+  const w = (n: number) => (n / ctxWindow) * 100 + "%";
   // As the window fills, claude auto-compacts near the top — surface that the strip
   // is approaching that zone instead of a full bar looking the same as an empty one.
   const level = pct >= 93 ? "full" : pct >= 80 ? "near" : "";
   const title =
-    tr("mirror.ctx_title", { used: fmtNum(used), window: fmtNum(window), pct: pct.toFixed(0) }) +
+    tr("mirror.ctx_title", { used: fmtNum(used), window: fmtNum(ctxWindow), pct: pct.toFixed(0) }) +
     "\n" +
     tr("mirror.ctx_breakdown", { read: fmtNum(read), create: fmtNum(create), fresh: fmtNum(fresh) }) +
     (level ? "\n" + tr("mirror.ctx_near_compact") : "");
@@ -76,7 +77,7 @@ export function ContextBar({ read, create, fresh, model, window: windowOverride,
           <div className="cb-seg cb-fresh" style={{ width: w(fresh) }} />
         </div>
         <span className="cb-label">
-          {level && <Icon name="warning" />} {fmtTok(used)} / {fmtTok(window)}
+          {level && <Icon name="warning" />} {fmtTok(used)} / {fmtTok(ctxWindow)}
           {tr("common.mid_dot")}
           {pct.toFixed(0)}%
         </span>
