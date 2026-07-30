@@ -167,13 +167,15 @@ export function AssistantSection() {
   const startChat = (a: Assistant) => openAssistantDraft(a.id);
 
   const saveAssistant = async (input: AssistantInput) => {
-    try {
-      if (editing) await assistantUpdate(editing.id, input);
-      else await assistantCreate(input);
-      refresh();
-    } catch {
+    // apiJSON はサーバエラーを {error} で解決する（例外にならない）。黙って成功扱いにすると
+    // モーダルが閉じて入力（persona 等）が消えるので、失敗はトーストして throw し、
+    // AssistantModal 側は開いたままにする。
+    const res = await (editing ? assistantUpdate(editing.id, input) : assistantCreate(input)).catch(() => null);
+    if (!res || (res as { error?: unknown }).error) {
       toast(editing ? tr("asst.update_failed") : tr("asst.create_failed"));
+      throw new Error("assistant save failed");
     }
+    refresh();
   };
 
   const deleteAssistant = async (a: Assistant) => {
@@ -185,7 +187,12 @@ export function AssistantSection() {
     });
     if (!ok) return;
     try {
-      await assistantDelete(a.id);
+      // raw() は HTTP エラーでも resolve する — res.ok を見ないと失敗が無通知になる。
+      const res = await assistantDelete(a.id);
+      if (!res.ok) {
+        toast(tr("asst.delete_failed"));
+        return;
+      }
       refresh();
     } catch {
       toast(tr("asst.delete_failed"));
@@ -194,7 +201,11 @@ export function AssistantSection() {
 
   const removeConv = async (id: string) => {
     try {
-      await chatDelete(id);
+      const res = await chatDelete(id);
+      if (!res.ok) {
+        toast(tr("asst.remove_failed"));
+        return;
+      }
       refresh();
     } catch {
       toast(tr("asst.remove_failed"));

@@ -303,7 +303,12 @@ export function MemoQueueSection() {
   const saveEdit = async (m: Memo, body: string, category: string) => {
     setEditing(null);
     try {
-      await memoUpdate(m.id, { body: body.trim(), category: category.trim() });
+      const res = await memoUpdate(m.id, { body: body.trim(), category: category.trim() });
+      // apiJSON はサーバエラーを {error} で解決する（例外にならない）— 偽の成功トーストを出さない。
+      if ((res as { error?: unknown }).error) {
+        toast(t("common.send_failed"));
+        return;
+      }
       if (category.trim() && !catNames.includes(category.trim()))
         await memoCategoryCreate({ repo: m.repo, name: category.trim() }).catch(() => {});
       bumpMemos();
@@ -314,7 +319,13 @@ export function MemoQueueSection() {
   };
   const remove = async (id: string) => {
     try {
-      await memoDelete(id);
+      const res = await memoDelete(id);
+      // 失敗時に下の GC まで走らせない: keep 集合から当該メモの画像が抜けるため、削除に
+      // 失敗して生き残ったメモの画像だけがコンテナから消えてしまう。
+      if (!res.ok) {
+        toast(t("common.delete_failed"));
+        return;
+      }
       setSel((s) => {
         const n = { ...s };
         delete n[id];
@@ -430,7 +441,12 @@ export function MemoQueueSection() {
     repoCats.splice(di, 1);
     const ti = repoCats.findIndex((c) => c.id === targetId);
     repoCats.splice(ti, 0, drag);
-    setCats((prev) => prev.map((c) => c.repo === drag.repo ? repoCats.find((x) => x.id === c.id) || c : c));
+    // 楽観更新: prev をそのまま map すると要素の並びが変わらず no-op（refetch まで反映されない）。
+    // この repo のカテゴリが占めるスロットへ、並べ替え後の repoCats を先頭から順に差し込む。
+    setCats((prev) => {
+      let i = 0;
+      return prev.map((c) => (c.repo === drag.repo ? repoCats[i++] : c));
+    });
     Promise.all(repoCats.map((c, i) => (c.position === i ? null : memoCategoryUpdate(c.id, { position: i }))))
       .catch(() => {})
       .finally(bumpMemos);

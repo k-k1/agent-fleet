@@ -35,6 +35,24 @@ export interface RepoRailContext {
   activeSession: string | null;
 }
 
+// api/connections は各エージェントの認証チェックへシェルアウトする重い呼び出し（~1.5-2s）で、
+// このフックは常駐 3 コンポーネント（ProjectTree / OtherSessionsSection / StartHost）から
+// 同時に呼ばれる。素朴に fetch すると同じ問い合わせが 3 重に飛ぶので、in-flight の Promise を
+// モジュールレベルで共有して同時マウント分を 1 本に相乗りさせる（解決後は捨てる — connTick
+// での再取得や後からのマウントは従来どおり取り直す）。失敗は null に畳む（呼び手の settle 契約）。
+let connsInflight: Promise<ConnectionsStatus | null> | null = null;
+function fetchConns(): Promise<ConnectionsStatus | null> {
+  if (connsInflight) return connsInflight;
+  const p: Promise<ConnectionsStatus | null> = api("api/connections")
+    .then((d) => (d && !d.error ? (d as ConnectionsStatus) : null))
+    .catch(() => null);
+  connsInflight = p;
+  void p.finally(() => {
+    if (connsInflight === p) connsInflight = null;
+  });
+  return p;
+}
+
 export function useRepoRailContext(): RepoRailContext {
   const sessions = useSessionsStore((s) => s.sessions);
   const layout = useLayoutStore((s) => s.layout);
@@ -60,9 +78,7 @@ export function useRepoRailContext(): RepoRailContext {
       setConnsDone(true);
       setCachedConns(d); // warm the shared cache so leaves (HandoffModal) render instantly
     };
-    api("api/connections")
-      .then((d) => settle(d && !d.error ? d : null))
-      .catch(() => settle(null));
+    void fetchConns().then(settle);
     return () => {
       alive = false;
     };

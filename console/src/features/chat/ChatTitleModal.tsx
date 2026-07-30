@@ -8,7 +8,7 @@ import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useT } from "../../lib/i18n/index.ts";
-import { errText } from "../../core/api/client.ts";
+import { errText, type ApiError } from "../../core/api/client.ts";
 import { chatRename, chatSuggestTitle } from "./api.ts";
 
 interface ChatTitleModalProps {
@@ -34,7 +34,13 @@ export function ChatTitleModal({ id, title, onClose, onSaved }: ChatTitleModalPr
     if (!t) return;
     setSaving(true);
     try {
-      await chatRename(id, t);
+      // apiJSON はサーバエラーを {error} で解決する（例外にならない）— 失敗時は開いたまま。
+      const j = await chatRename(id, t);
+      const err = (j as { error?: ApiError }).error;
+      if (err) {
+        toast(errText(err));
+        return;
+      }
       onSaved();
       onClose();
     } catch {
