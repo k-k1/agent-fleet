@@ -120,7 +120,10 @@ export function wireKeys(): () => void {
     const reveal = () => {
       useKeysStore.getState().setWhichKey(true);
       // The overlay is now on screen and the user is scanning it — swap the short stray-press
-      // guard for the longer reading window so the hint doesn't vanish mid-search.
+      // guard for the longer reading window so the hint doesn't vanish mid-search. Clear the
+      // pending short timer first: overwriting the handle would leave it live and it'd still
+      // cancel the leader at the 3s mark, silently shrinking the 15s window.
+      if (leaderTimer != null) window.clearTimeout(leaderTimer);
       leaderTimer = window.setTimeout(cancelLeader, LEADER_TIMEOUT_OPEN);
     };
     if (immediate) {
