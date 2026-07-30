@@ -74,9 +74,13 @@ export function PaneHost() {
       document.body.classList.remove("col-resizing");
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    // タッチ中断（スクロール横取り等）は pointerup が来ない — リスナと body クラスが
+    // 残留してドラッグ状態が固着しないよう pointercancel でも解除する。
+    window.addEventListener("pointercancel", onUp);
   };
 
   const onRowDown = (colId: string) => (e: RPointerEvent) => {
@@ -89,9 +93,11 @@ export function PaneHost() {
       document.body.classList.remove("row-resizing");
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp); // 同上: タッチ中断でも解除
   };
 
   // A lone, empty terminal is the base state — nothing to close.

@@ -330,13 +330,18 @@ export class BrowserController {
     if (this.rendering) return;
     this.rendering = true;
     void (async () => {
-      while (this.latestFrame) {
-        const next = this.latestFrame;
-        this.latestFrame = null;
-        const canvas = this.canvas;
-        if (canvas) await this.deps.drawFrame(canvas, next).catch(() => {});
+      // finally で必ず rendering を戻す — drawFrame が同期 throw した場合でも
+      // フラグが立ちっぱなしになって以後のフレーム描画が止まることのないように。
+      try {
+        while (this.latestFrame) {
+          const next = this.latestFrame;
+          this.latestFrame = null;
+          const canvas = this.canvas;
+          if (canvas) await this.deps.drawFrame(canvas, next).catch(() => {});
+        }
+      } finally {
+        this.rendering = false;
       }
-      this.rendering = false;
     })();
   }
 

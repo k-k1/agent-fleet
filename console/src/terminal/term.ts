@@ -926,7 +926,7 @@ export function attach(paneId: string, session: string) {
     it.dropped = true;
     clearHeartbeat(it); // socket gone → stop pinging
     setSoftKeyboard(it, false); // no live PTY → don't summon the keyboard on focus
-    it.term!.write("\r\n[disconnected]\r\n");
+    it.term!.write("\r\n" + tr("onb.term_disconnected") + "\r\n");
     // The raw WebSocket bypasses the fetch wrapper, so an auth-expiry drop (401 on the
     // upgrade) is indistinguishable from an ordinary network drop here. Probe a cheap
     // API call once: a 401 trips the wrapper's auth-expired latch (→ re-login dialog),

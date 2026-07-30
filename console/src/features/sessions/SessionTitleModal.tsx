@@ -86,7 +86,8 @@ export function SessionTitleModal({ name, kind, title, onClose, onSaved }: Sessi
         </label>
         {canSuggest && (
           <div>
-            <Button icon={suggesting ? "loading" : "lightbulb"} onClick={suggest} disabled={busy}>
+            {/* AI 提案アイコンは BranchRenameModal / ミラーの✨と同じ sparkle に統一 */}
+            <Button icon={suggesting ? "loading" : "sparkle"} onClick={suggest} disabled={busy}>
               {tr("sx.ai_suggest")}
             </Button>
           </div>

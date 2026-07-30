@@ -99,19 +99,8 @@
     display: none;
   }
 }
-/* Checkbox rows: the EnvTab agent-update opt-in and the AdminTab operator gate. */
-.ds-check,
-.admin-check {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  cursor: pointer;
-}
-.ds-check input,
-.admin-check input {
-  flex: 0 0 auto;
-}
+/* （.ds-check は使用箇所なし・.admin-check は settings.css 側に集約済みのため削除。
+   .ds-sub は EnvTab の注記が使う。） */
 .ds-sub {
   margin: 4px 0 0;
   font-size: 12px;

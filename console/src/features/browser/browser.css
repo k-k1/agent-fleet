@@ -39,6 +39,7 @@
 }
 .browser-port { flex: 0 0 54px; }
 .browser-path { flex: 1 1 120px; }
+.browser-port.invalid,
 .browser-path.invalid { border-color: var(--danger); }
 .browser-console-toggle { flex: none; gap: 4px; white-space: nowrap; }
 .browser-log-badge {

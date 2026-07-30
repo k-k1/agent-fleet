@@ -171,7 +171,7 @@ export function useSessionActions(): SessionActions {
       let msg = t("sess.recreate_failed");
       try {
         const j = await res.json();
-        if (j?.error?.message) msg += "：" + j.error.message;
+        if (j?.error?.message) msg += t("common.detail_sep") + j.error.message;
       } catch {}
       toast(msg);
       void refreshSessions();
@@ -198,7 +198,7 @@ export function useSessionActions(): SessionActions {
         ) : (
           <Trans
             k="sess.switch_tui_body"
-            vars={{ name: displayName(s), cost: tuiMemoryCost ? `（+${tr("common.approx", { v: tuiMemoryCost })}）` : "" }}
+            vars={{ name: displayName(s), cost: tuiMemoryCost ? tr("common.paren", { v: "+" + tr("common.approx", { v: tuiMemoryCost }) }) : "" }}
             components={[<br />]}
           />
         ),

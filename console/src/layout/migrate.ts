@@ -71,8 +71,17 @@ function contentFromFlat(p: any): PaneContent {
     }
     case "diff": {
       const docTitle = str(p.docTitle);
+      // diffEdits も untrusted JSON — 配列でない/要素が壊れている永続値をそのまま
+      // 通すと DiffView（.map / e.old アクセス）が throw する。{old,new} の文字列
+      // だけを残す形へ正規化する。
+      const diffEdits = Array.isArray(p.diffEdits)
+        ? p.diffEdits.map((e: any) => ({
+            ...(typeof e?.old === "string" ? { old: e.old } : {}),
+            ...(typeof e?.new === "string" ? { new: e.new } : {}),
+          }))
+        : [];
       return docTitle
-        ? { kind: "diff", docTitle, diffTool: str(p.diffTool) || "", diffEdits: p.diffEdits }
+        ? { kind: "diff", docTitle, diffTool: str(p.diffTool) || "", diffEdits }
         : { kind: "terminal", chat: false };
     }
     case "chat": {

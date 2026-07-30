@@ -1444,7 +1444,7 @@ export const ja = {
   "browser.canvas": "コンテナ内ブラウザ",
   "browser.remote_input": "リモートページへの文字入力",
   "browser.loading": "ページを読み込み中…",
-  "browser.target_unreachable": "対象ポートへ接続できません。サービスの起動後に再読み込みしてください。",
+  "browser.target_unreachable": "対象ポートへ接続できません。サービスの起動後に再接続してください。",
   "browser.crashed": "コンテナ内ブラウザがクラッシュしました。",
   "browser.installing": "ブラウザを準備中です（初回のみ約200MBを取得）…",
   "browser.disconnected": "ブラウザペインの接続が切れました。",
@@ -2424,6 +2424,10 @@ export const ja = {
 
   // === P5 共通 ===
   "common.mid_dot": "・",
+  // 約物はロケール別（keyHint.ts の hintSuffix と同じ流儀）: ja は全角括弧/コロン、
+  // en は半角＋前スペース。件数サフィックスや詳細連結のハードコード全角を置き換える。
+  "common.paren": "（{v}）",
+  "common.detail_sep": "：",
 
   // === P5 実行設定モーダル（ManagedSettingsModal/MirrorToggle） ===
   "mgr.load_failed": "設定を読み込めませんでした",
@@ -2515,6 +2519,8 @@ export const ja = {
   "onb.paste_suffix": " を貼り付けます。",
   "onb.paste_newline_warn": "改行を含むため、シェルではそのまま実行される場合があります。",
   "onb.paste_confirm": "貼り付け",
+  // ターミナルのグリッドへ直接書く切断通知（term.ts）
+  "onb.term_disconnected": "[切断されました]",
 
   // === P5 プロジェクト（ProjectTree/FilesSection/FilesChanges/RepoNode ほか） ===
   "pj.st_untracked": "未追跡",

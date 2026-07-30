@@ -1432,7 +1432,7 @@ export const en: Record<keyof typeof ja, string> = {
   "browser.canvas": "In-container browser",
   "browser.remote_input": "Text input for the remote page",
   "browser.loading": "Loading page…",
-  "browser.target_unreachable": "The target port is unreachable. Start the service, then reload.",
+  "browser.target_unreachable": "The target port is unreachable. Start the service, then reconnect.",
   "browser.crashed": "The browser inside the container crashed.",
   "browser.installing": "Preparing the browser (first use only, ~200MB download)…",
   "browser.disconnected": "The browser pane disconnected.",
@@ -2383,6 +2383,9 @@ export const en: Record<keyof typeof ja, string> = {
 
   // === P5 共通 ===
   "common.mid_dot": "·",
+  // ロケール別約物（keyHint.ts の hintSuffix と同じ流儀）
+  "common.paren": " ({v})",
+  "common.detail_sep": ": ",
 
   // === P5 実行設定モーダル（ManagedSettingsModal/MirrorToggle） ===
   "mgr.load_failed": "Failed to load settings",
@@ -2474,6 +2477,8 @@ export const en: Record<keyof typeof ja, string> = {
   "onb.paste_suffix": " will be pasted.",
   "onb.paste_newline_warn": " It contains newlines, so a shell may execute it directly.",
   "onb.paste_confirm": "Paste",
+  // Disconnect notice written straight into the terminal grid (term.ts)
+  "onb.term_disconnected": "[disconnected]",
 
   // === P5 プロジェクト（ProjectTree/FilesSection/FilesChanges/RepoNode ほか） ===
   "pj.st_untracked": "Untracked",
