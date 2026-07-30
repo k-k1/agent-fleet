@@ -278,6 +278,10 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if !allowViewNavKeys(name, keys) {
+			writeViewNavErr(w)
+			return
+		}
 		if err := sendNamedKeys(pane, keys); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 			return
@@ -299,6 +303,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	if len(body.Seq) > 0 {
 		// Validate up-front so a bad step doesn't half-drive the modal: each step is
 		// either a whitelisted named key or literal text.
+		var seqKeys []string
 		for _, s := range body.Seq {
 			if s.K != "" && !allowedKey(s.K) {
 				httpx.WriteErr(w, http.StatusBadRequest, "bad_key", "unsupported key: "+s.K)
@@ -308,6 +313,11 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 				httpx.WriteErr(w, http.StatusBadRequest, "bad_seq", "each seq step needs k or t")
 				return
 			}
+			seqKeys = append(seqKeys, s.K)
+		}
+		if !allowViewNavKeys(name, seqKeys) {
+			writeViewNavErr(w)
+			return
 		}
 		working := false
 		for i, s := range body.Seq {
@@ -826,6 +836,41 @@ func markSessionWorking(name string) {
 
 // allowedKey is the whitelist of tmux key names the Console may send to drive a TUI
 // (the AskUserQuestion modal): navigation + confirm, nothing that could run a command.
+// viewNavKeys are the keys claude's TUI reads as VIEW navigation when no dialog is up:
+// ← opens the background-agent rail (the footer advertises it as "← for agents"), which
+// rebinds the input box to an agent. Anything typed afterwards steers that agent instead
+// of the session and never reaches the main conversation — the 2026-07-30 misdelivery.
+// Inside a dialog the same key is ordinary navigation, so the guard only refuses when
+// there is no dialog to drive.
+var viewNavKeys = map[string]bool{"Left": true}
+
+// allowViewNavKeys reports whether this key batch may be sent as-is. It only touches tmux
+// when the batch actually contains a view-navigation key, so the common answer path
+// (Down/Space/Enter) costs nothing.
+func allowViewNavKeys(name string, keys []string) bool {
+	nav := false
+	for _, k := range keys {
+		if viewNavKeys[k] {
+			nav = true
+			break
+		}
+	}
+	if !nav {
+		return true
+	}
+	if m, ok := session.ReadMeta(name); !ok || normalizeKind(m.Kind) != session.KindClaude {
+		return true // 他 kind に ← の意味は無い（この罠は claude の TUI 固有）
+	}
+	return tmuxx.ModalActive(name) // ダイアログがあるならナビゲーションとして正当
+}
+
+func writeViewNavErr(w http.ResponseWriter) {
+	httpx.WriteErr(w, http.StatusConflict, "view_nav_key",
+		"a bare Left arrow switches a claude pane to its background-agent view "+
+			"(footer: ← for agents), where later input steers the agent instead of the session; "+
+			"it is only accepted while a dialog is open")
+}
+
 func allowedKey(k string) bool {
 	switch k {
 	case "Up", "Down", "Left", "Right", "Enter", "Space", "Escape", "Tab", "BTab", "BSpace", "Home", "End":

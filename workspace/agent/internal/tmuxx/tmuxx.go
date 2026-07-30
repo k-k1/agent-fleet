@@ -286,6 +286,31 @@ var modalMarkers = []string{
 	"Do you want to", "Would you like to proceed", "Ready to submit",
 }
 
+// ModalActive reports whether a claude pane is showing one of its dialogs (permission,
+// plan approval, folder trust, AskUserQuestion). Callers that drive the TUI with named
+// keys use it to tell "there is a modal to navigate" from "the keys will hit the plain
+// input box", where arrows mean something else entirely (← switches to the agents view).
+func ModalActive(name string) bool {
+	pane := SessionPaneID(session.TmuxName(name))
+	if pane == "" {
+		return false
+	}
+	out, err := Cmd("capture-pane", "-p", "-t", pane).Output()
+	if err != nil {
+		return false
+	}
+	return modalActive(string(out))
+}
+
+func modalActive(s string) bool {
+	for _, m := range modalMarkers {
+		if strings.Contains(s, m) {
+			return true
+		}
+	}
+	return false
+}
+
 // atIdlePrompt is the pure decision over one captured frame — split out from AtIdlePrompt
 // (which supplies the frame) so the real judgement, not a reimplementation of it, can be
 // replayed against the recorded panes in testdata/footers.
