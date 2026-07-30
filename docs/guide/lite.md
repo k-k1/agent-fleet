@@ -188,7 +188,7 @@ on each row (the status badge) tells you at a glance what state it's in. Read th
 |------------|------|--------------------|
 | **Working…** (a spinning mark) | The AI is working right this moment | It's moving. Just wait |
 | **Ready** (a check mark) | Reached a stopping point, awaiting the next instruction | Its hands are free (awaiting input) |
-| **Question / Awaiting approval / Plan ready** | The AI is waiting for a human reply | The developer in charge needs to respond (see the ground rule below) |
+| **Question / Awaiting permission / Plan ready** | The AI is waiting for a human reply | The developer in charge needs to respond (see the ground rule below) |
 | **Stopped** | Not running (can be resumed later) | Just paused for now |
 | **Running** | A shell or the like is up | Active |
 
@@ -199,7 +199,7 @@ watching, it shows "**Viewing history (resume to type)**" — you're essentially
 
 ### An important ground rule
 
-When the AI is **waiting for someone's reply** — as in "Question" or "Awaiting approval" —
+When the AI is **waiting for someone's reply** — as in "Question" or "Awaiting permission" —
 please don't answer in their place just because you happen to be watching. That question is
 addressed to the developer in charge. Stick to **watching** the progress, and if you notice
 something, speak to the person in charge or write it into the memo queue. Replying on your own

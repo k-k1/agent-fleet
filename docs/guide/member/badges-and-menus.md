@@ -16,7 +16,7 @@ shown as text as well, not just an icon.
 | Working… | The agent is processing |
 | Question | Waiting for an answer to a question |
 | Plan ready | Waiting for the plan to be approved or rejected |
-| Awaiting approval | Waiting for permission for a command run, an edit, etc. |
+| Awaiting permission | Waiting for permission for a command run, an edit, etc. |
 | Ready | Ready to take the next instruction |
 | Ready · running in background | Accepts input, but background processing is still running |
 | Running | A shell / ssm with no detailed progress state is running |
