@@ -86,9 +86,9 @@
   平文の保存も復元問題も無い（PAT 表流用は却下 → ADR 0010）。
 - ワークスペース起動時（`manager.go` `workspaceExtraEnv`）に、CP が env
   `AF_INTERNAL_GIT_HOST` / `AF_INTERNAL_GIT_TOKEN`（= `mintGitToken(membershipID)`）を注入。
-  Agent は起動時（`secrets.go` `seedInternalGit`）にこれを暗号ストアへ
+  Agent は起動時（`cred_helper.go` `seedInternalGit`）にこれを暗号ストアへ
   `s.Git[<host>] = { User: "x-access-token", Token: <token> }` として seed する。
-  → 統一 cred helper（`secrets.go` `runCredHelper`）は**任意ホストを既に配信する**ので、
+  → 統一 cred helper（`cred_helper.go` `runCredHelper`）は**任意ホストを既に配信する**ので、
   これだけで clone/push の Basic 認証が透過的に通る。
 - CP の smart-HTTP ハンドラは Basic の **password を token として検証**（tag 照合）→ 埋め込まれた
   membership を**ライブ参照**して (tenant, role) を解決し、以下を**毎リクエスト強制**:
@@ -125,7 +125,7 @@
 | 6 | `control-plane/main.go` | ルート登録（`/api/internal-git/*`、`/git/{slug}/{repo...}`）＋ `/git/` を authGate 免除、`internalGitHost` 設定 |
 | 7 | `control-plane/manager.go`（env 注入） | `workspaceExtraEnv` で `AF_INTERNAL_GIT_HOST` / `AF_INTERNAL_GIT_TOKEN` を注入 |
 | 8 | `control-plane/Dockerfile` | runtime に `git`（`git-http-backend`）を追加 |
-| 9 | `workspace/agent/secrets.go` | `seedInternalGit`（起動時に env→`s.Git[host]` へ seed）＋ `internalGitHost` |
+| 9 | `workspace/agent/cred_helper.go` | `seedInternalGit`（起動時に env→`s.Git[host]` へ seed）＋ `internalGitHost` |
 | 10 | `workspace/agent/connections.go` | `handleConnectionsGet` に `internal` 状態（`internalGitStatus`） |
 | 11 | `workspace/agent/git.go` `gitProviderHost` | 内部ホスト（env で動的一致）を `internal` slug にバッジ |
 | 12 | `console/src/components/RepoPicker.tsx` | `PROVIDERS` に `internal` タブ、internal 時は repo/branch を **`api/internal-git/*`**（CP 直）へ分岐 |

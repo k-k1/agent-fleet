@@ -336,7 +336,7 @@ metadata の正確な shape を再プローブし確定した。
 - **HTTP 経路**（接続カードの「インストール」）も presence 判定 → ピン一致判定へ（`kiroInstallCurrent`）。stale は "done" と答えず再導入に回る。
 
 **検証**: `go build ./...`／`go vet` 緑、workspace/agent test **668 件緑**（新規=ピンドリフト検出／マーカー fast path ／
-unknown 版据え置き／ピン欠落時の縮退／起動ガード文字列）。実 855MB の再 DL 通しは未実施（実フリート再ビルド後の実機目視が残）。
+unknown 版据え置き／ピン欠落時の縮退／起動ガード文字列）。実物での再 DL（zip 554MB・展開後 855MB）通しは未実施（実フリート再ビルド後の実機目視が残）。
 
 **未修正の同型リスク（別件・要判断）**: lean 配布の boot-install（entrypoint）も `cli_present` の presence 判定なので、
 self-update OFF のまま npm4種/rtk/agy/cursor のピンを上げても `~/.local` の boot-install 品は前進しない。

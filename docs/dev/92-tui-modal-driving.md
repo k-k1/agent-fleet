@@ -94,9 +94,11 @@ tmux kill-session -t auqtest
    `{prompt}` によるラベル送信経路を AUQ 回答から排除した。
 2. **随伴** ✅: 「タイプ文字はオプションフィルタ」前提の旧コメント群を §2 の実測に合わせて書き直し。
    楽観エコー残留（§1）はクリック経路の廃止で発生しなくなった。
-3. **堅牢化** ✅: Agent `handleSessionInput` で、セッションが question 状態のとき `{prompt}` を
-   409（エラーコード `question_pending`）で拒否（MCP ドライブ等、他の `{prompt}` 送信元も塞ぐ）。
-   ゲート判定は `questionPending`（ユニットテストあり）。
+3. **堅牢化** ✅: Agent の入力経路で、未決の対話（question / plan 承認 / permission）がある間は
+   `{prompt}` を 409（エラーコード `question_pending` / `plan_pending` / `permission_pending`）で
+   拒否（MCP ドライブ等、他の `{prompt}` 送信元も塞ぐ）。ゲート判定は `promptBlocker`
+   （`session_io.go`。idle / working 以外を全てブロックする whitelist 方式——plan / permission でも
+   Enter がハイライト行を無音確定する同型事故があるため。ユニットテストあり）。
 4. **検証**: キー駆動シーケンス自体は §2/§3 のとおり実 TUI で全パターン検証済み。修正を再適用・
    変更した際は §3 のプレイブックで 単一選択（キー駆動）／自由入力／複数選択（＋自由入力）／
    複数質問 の4パターンを回し、「User answered」の内容が意図と一致することを確認する。

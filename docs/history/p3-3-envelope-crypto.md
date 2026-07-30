@@ -78,7 +78,7 @@ resolve/createWorkspace 時に DEK を確定（runtimeFor の前）:
 ### 移行保全（ライブ運用者）
 運用者 workspace は `secrets.enc` が既存 → 初回 DEK = `HMAC(master, "k1-kami-gmail-com")`（＝今コンテナが使う値）→ wrap して保存 → **同じ値を注入** → secrets.enc はそのまま復号。コンテナ再作成・再暗号化なし。
 
-## 15.6 検証（OOM 注意・[[host-oom-fleet-risk]]）
+## 15.6 検証（OOM 注意 — ホストのメモリ枯渇は稼働中フリート全体を巻き込む）
 
 1. **ライブ回帰**: CP 差し替え後、運用者の `/api/connections` が 3 件 connected のまま（既存 secrets.enc を新経路で復号）。`wrapped_dek` に運用者 workspace の行が 1 件、unwrap→注入値が旧 HMAC と一致。
 2. **新規 workspace**: throwaway identity で workspace 作成→ wrapped_dek 生成→ Start して claude/git 接続を保存→ 再 Start で復号できる（DEK が wrap/unwrap 往復で安定）。teardown。

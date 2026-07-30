@@ -124,7 +124,7 @@ If `ok` does not come back, or the CP does not come up at all, see "CP does not 
 
 Open `https://<PUBLIC_DOMAIN>` in a browser and sign in with an account listed in
 `SUPER_ADMIN_EMAILS`. **That email address becomes `super_admin` on first login.** A
-super_admin sees the gear-icon **Admin panel** in the Console and can manage the entire
+super_admin sees the shield-icon **Admin panel** in the Console and can manage the entire
 deployment.
 
 > If login is always rejected, the allowlist is most likely empty. If all 3 channels

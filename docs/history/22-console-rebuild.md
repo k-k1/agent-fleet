@@ -1,5 +1,11 @@
 # 22. Console リビルド（機能そのまま・React + Vite 続投）
 
+> ℹ️ **文書番号の注記**: 歴史的経緯で history/ の番号は重複している — **#22** は本書のほか
+> [chat-opencode-codex](chat-opencode-codex.md)・[agent-cli-self-update](agent-cli-self-update.md)、
+> **#21** は [21-memo-queue](21-memo-queue.md) と [fork-from-chat](fork-from-chat.md)、
+> **#19** は [19-assistant-chat](19-assistant-chat.md) と [p3-9-idle-stop](p3-9-idle-stop.md)。
+> 他文書から「docs/22」（Console 全面リビルド、ADR0011）として参照されるのは**本書**。
+
 増改築で混沌化した Console（`console/src`, 約 31.5k 行）を、**機能パリティを保ったまま**
 新アーキテクチャ上に作り直す。フレームワークは変更しない（React 19 + Vite + TS）。
 バックエンド（CP / Agent）は一切触らない。

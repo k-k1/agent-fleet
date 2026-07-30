@@ -36,10 +36,11 @@ cd agent-fleet-native-<v>-linux-amd64
 
 - The first `af start` downloads the rootfs pinned in rootfs.json (URL + sha256).
   **Later starts work offline** (the extracted rootfs is reused).
-- The agent CLIs (claude / codex / opencode / cursor / copilot / kiro / agy / rtk) are not baked in.
+- The agent CLIs (claude / codex / opencode / cursor / copilot / agy / rtk) are not baked in.
   On a workspace's first start, the entrypoint auto-installs the versions pinned in
   versions.json (verified-working versions) into the virtual HOME (network is needed
-  only then).
+  only then). kiro (~855MB) is the exception: it is installed on demand the first
+  time a Kiro session starts, not at workspace start.
 - Stop with Ctrl-C (runs in the foreground). For running as a service, see the
   systemd user unit below.
 
@@ -102,11 +103,11 @@ cd agent-fleet-native-<v'>-linux-amd64 && ./af start
 ## Git provider OAuth (GitHub / Bitbucket) — optional
 
 To clone/push private repos, each user connects their own GitHub or Bitbucket
-from the Console (**⚙ Settings → Git**). Pasting a Personal Access Token / app
+from the Console (**⚙ Settings → Git hosting**). Pasting a Personal Access Token / app
 token works with no deployment config. To also enable the one-click **"Connect
 via OAuth"** buttons, set the client credentials in the environment **before
 `af start`** — `af` passes them through to the control plane (same mechanism as
-`AF_VOICEVOX_URL` above):
+`AF_VOICEVOX_URL` in the TTS section below):
 
 | Provider | Variables | Setup |
 |---|---|---|
@@ -129,7 +130,7 @@ easiest path for a single-user native install because it needs no callback.
 
 ## Text-to-speech (TTS / Zundamon) — optional
 
-Reading chat replies aloud (enable it in the Console under Settings > "Speech";
+Reading chat replies aloud (enable it in the Console under Settings > "Read aloud";
 off by default) needs no audio setup on the WSL/Linux side: **playback** happens in
 your browser (on the Windows side under WSL2). All that is required is that the CP
 can reach the **VOICEVOX** synthesis engine over HTTP (default
@@ -248,7 +249,7 @@ systemctl --user list-timers agent-fleet-update.timer     # when it next runs
 main service, which you trigger when convenient:
 
 - **From the Console** — when a newer version is staged, a "restart to apply"
-  control appears (Settings → 環境). It warns how many sessions are running before
+  control appears (Settings → Toolchains). It warns how many sessions are running before
   it restarts, so you can wait until the fleet is idle.
 - **From the shell** — `systemctl --user restart agent-fleet` (or Ctrl-C + `af
   start` for a foreground run).
@@ -271,8 +272,11 @@ and does nothing once you are on it.
 - **The browser pane's chromium is downloaded on first use** (~200MB, pinned
   version). The SUID sandbox is unavailable under bubblewrap, and on some systems
   chromium's namespace sandbox does not work either. In that case start with
-  `AF_CHROMIUM_NO_SANDBOX=1` (a trade-off acceptable for the pane use case, which
-  only connects to localhost; do not use it to browse untrusted sites).
+  `WS_ENV=AF_CHROMIUM_NO_SANDBOX=1 af start` — the variable must be forwarded into
+  the workspace via `WS_ENV` (a comma-separated `KEY=VAL` list); setting it bare on
+  `af start` only reaches the control plane, not the workspace. (A trade-off
+  acceptable for the pane use case, which only connects to localhost; do not use it
+  to browse untrusted sites.)
 
 ## Reset
 

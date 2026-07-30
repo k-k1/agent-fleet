@@ -1,7 +1,8 @@
 # Agent Fleet on a single EC2 VM (CloudFormation)
 
 Spin up one Ubuntu 24.04 EC2 instance (Docker pre-installed via cloud-init), a
-stable Elastic IP, a Route53 A record, and an auto-generated SSH key, then run the
+stable Elastic IP, a Route53 A record, and an imported SSH key pair (generated
+locally), then run the
 **on-prem Compose stack** (`deploy/compose`) on it. This is the environment used
 for the P3-10 stage-5 completion gate ("stand it up from the release bundle on a clean
 host"). It is a single-VM host — **not** the ECS adapter (P3-7).
@@ -49,7 +50,7 @@ real gate: no git clone on the box):
 ```bash
 cd ../../..                                  # repo root
 VERSION=0.1.0 deploy/compose/release.sh --save
-scp -i deploy/aws/ec2-single/agent-fleet-test-key.pem \
+scp -i deploy/aws/ec2-single/agent-fleet-test-key \
     deploy/compose/dist/agent-fleet-images-0.1.0.tar.gz \
     deploy/compose/dist/agent-fleet-0.1.0.tar.gz \
     ubuntu@<public-ip>:~
@@ -58,10 +59,10 @@ scp -i deploy/aws/ec2-single/agent-fleet-test-key.pem \
 ## 3. Bring it up on the VM
 
 ```bash
-ssh -i deploy/aws/ec2-single/agent-fleet-test-key.pem ubuntu@<public-ip>
+ssh -i deploy/aws/ec2-single/agent-fleet-test-key ubuntu@<public-ip>
 # on the VM:
 tar xzf agent-fleet-0.1.0.tar.gz && cd agent-fleet-0.1.0
-../load-images.sh ~/agent-fleet-images-0.1.0.tar.gz   # or: gunzip|docker load
+./load-images.sh ~/agent-fleet-images-0.1.0.tar.gz    # or: gunzip|docker load
 cp .env.example .env
 #   set DATA_DIR=/srv/agent-fleet/data, DOCKER_GID=$(getent group docker|cut -d: -f3),
 #   PUBLIC_DOMAIN / PUBLIC_BASE_URL=https://<Fqdn>, GOOGLE_OAUTH_*, AF_COOKIE_SECRET,

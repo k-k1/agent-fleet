@@ -59,7 +59,8 @@ Workspace Agent (Go, per-user コンテナ内, AGENT_ADDR 既定 :7700)
 共有 runtime または CLI エージェント + git working copy（~/repos）
 ```
 
-- コンテナは `af-ws-<slug>-<key>` 命名、専用ネットワーク `af-net-<user>` で相互到達を遮断。
+- コンテナは `af-ws-<slug>-<key>` 命名、専用ネットワーク `af-net-<slug>-<key>` で相互到達を遮断
+  （**既定テナントのみ slug 無し**の `af-ws-<key>` / `af-net-<key>` — 既存デプロイ互換。`manager.workspaceNames`）。
   Agent ポートはホスト `127.0.0.1` publish 経由で CP からのみ到達（[07 §7.2](07-security.md)）。
 - ブラウザは常に CP とだけ話す。CP は tmux にも git にも直接触れず、必ず Agent 経由。
 - ホーム（`~`）は bind mount（`<WS_DATA>/<user>/home`）で永続。イメージ更新はホームに影響しない。

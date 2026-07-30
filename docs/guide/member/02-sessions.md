@@ -147,8 +147,10 @@ Which operations appear depends on the session's kind and state. For example, AI
 "Archive", while throwaway shell / SSM show "Delete". Log files may remain after deletion, but
 the session cannot be brought back to the list.
 
-To tidy up stopped sessions in bulk, use **"Archive all stopped"** in the **Repositories**
-heading. AI sessions are archived; shell / SSM are deleted.
+To tidy up stopped sessions in bulk, open the cleanup modal from the trash icon
+**"Open cleanup (survey & tidy)"** in the **Repositories** heading. In its stage
+**"① Tidy sessions"**, **"Tidy all"** archives stopped AI sessions and deletes shell / SSM
+(archived ones can be restored from the archive browser).
 "Delete old ones" in the archive list removes items older than 30 days from the list.
 
 ## When you can — and can't — resume
@@ -178,8 +180,9 @@ happened. For parallel work, giving each session its own worktree avoids this co
 
 ## Handing a conversation off (handoff)
 
-From the **⋯** menu of a running claude, codex, cursor, copilot, kiro, agy, or opencode session, you can choose a handoff
-target such as **"Prepare handoff to codex"**. Rather than handing over the whole original
+From the **⋯** menu of a running claude, codex, cursor, copilot, kiro, agy, or opencode session, choose
+**"Hand off to another agent…"** and pick the **target agent** in the handoff modal that
+opens. Rather than handing over the whole original
 conversation as is, the **fleet operator** reads the source session's situation and drafts a
 handoff proposal: the key points, unfinished tasks, changed files, and next steps.
 

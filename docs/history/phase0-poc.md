@@ -6,7 +6,7 @@
 > **状態: 検証完了（2026-06-26 / claude v2.1.193）。** 最大リスク（ヘッドレスでの `/login`）は解消。
 > サブスク認証は `redirect_uri=platform.claude.com/oauth/code/callback` で **localhost コールバック非依存**、
 > ヘッドレス/リモートで無条件に成立する（H1〜H3 達成）。`.credentials.json` は永続ホームで再起動後も有効。
-> 実機の確定事項は [02 §2.6 検証結果](../reference/architecture.md#26-claude-login-フロー) と
+> 実機の確定事項は [02 §2.6 検証結果](../dev/08-integrations.md#85-claude-認証オンボーディングl2-の本丸) と
 > [11 §11.10](../history/phase1-plan.md#1110-実装結果と実運用の知見phase-1-完了)。以下は当初の検証計画（記録として残す）。
 
 ## 10.1 目的と最大リスク
@@ -43,7 +43,7 @@ Phase 0 はこの 1 点を最小コストで潰すことに集中する。コー
 | `data/home/` | 永続ホーム（`.claude` / `.ssh` / `repos` が貯まる。git 無視）。|
 
 > 設計原則の確認: CLI を `/usr/local/bin` に置くことで、ホームを丸ごと永続化しても CLI が
-> shadow されない。これは本番（EFS にホーム永続）と同じ考え方（[03 §3.2](../reference/aws.md#32-永続ストレージ-efs-を主とする)）。
+> shadow されない。これは本番（EFS にホーム永続）と同じ考え方（[03 §3.2（現 dev/09 §9.5 aws ターゲット）](../dev/09-deploy.md)）。
 
 ## 10.5 手順
 
@@ -63,7 +63,7 @@ tmux new -s main            # 本番の「tmux にアタッチ」を手で再現
 ```
 
 ### 3. `claude /login`（H1/H2）
-公式挙動（[02 §2.6](../reference/architecture.md#26-claude-login-フロー)）では、ヘッドレス環境は**自動でコード方式（方式 A）**に切替わる。
+公式挙動（[02 §2.6](../dev/08-integrations.md#85-claude-認証オンボーディングl2-の本丸)）では、ヘッドレス環境は**自動でコード方式（方式 A）**に切替わる。
 ```bash
 claude                      # 初回起動。未ログインなら /login を案内、または明示的に /login
 ```
@@ -112,7 +112,7 @@ claude --session-id "$SID"           # 新規
 # 会話 → Ctrl+b d で tmux デタッチ、または exit
 claude --resume "$SID"               # 復帰
 ```
-- 本番では Agent がこの判定（jsonl 有無で `--resume`/`--session-id`）を担う（[07 §7.4](../reference/api-agent.md#74-セッション制御tmux-claudesh-の継承)）。
+- 本番では Agent がこの判定（jsonl 有無で `--resume`/`--session-id`）を担う（[07 §7.4（現 dev/04 §4.2 セッションモデル）](../dev/04-workspace-agent.md#42-セッションモデル)）。
 
 ## 10.6 記録する観察項目
 
@@ -126,18 +126,18 @@ PoC の成果は「動いた/動かない」ではなく**手順の確定**。�
 
 ## 10.7 完了条件（Exit criteria）
 
-- H1〜H3 が満たされ、`/login` 手順が [02 §2.6](../reference/architecture.md#26-claude-login-フロー) に文書反映される。
+- H1〜H3 が満たされ、`/login` 手順が [02 §2.6](../dev/08-integrations.md#85-claude-認証オンボーディングl2-の本丸) に文書反映される。
 - H4〜H6 を確認し、Phase 1（Agent 化）に必要な操作一覧が確定する。
-- これらで [01 未決 #3](../reference/requirements.md#17-未決事項今後詰める)（`/login` 対話フロー）をクローズ。
+- これらで [01 未決 #3（旧 requirements、現 roadmap に統合）](../roadmap.md)（`/login` 対話フロー）をクローズ。
 
 ## 10.8 既知のリスクと代替
 
 - **uid 不一致**: ホストが uid 1000 でない場合、`Dockerfile` に `ARG UID/GID` を足してビルド引数で合わせるか、
   ホーム配下を `chown` する。
 - **コード貼り戻しが基本**: コールバックが返らないのは想定内。公式にヘッドレスは方式 A（コード方式）に
-  自動切替わる（[02 §2.6](../reference/architecture.md#26-claude-login-フロー)）。本番もこれを主経路にする。
+  自動切替わる（[02 §2.6](../dev/08-integrations.md#85-claude-認証オンボーディングl2-の本丸)）。本番もこれを主経路にする。
 - **remote-control 要件との両立**: `setup-token` 方式は remote-control 不可。E2 を満たすには方式 A が必須。
   H7 で実機確認する。
-- **隔離は最小**: Phase 0 は検証優先で egress 制限等を省く。隔離強化は Phase 2 以降（[04](../reference/security.md) / [09 §9.7](../reference/portability.md#97-パリティと相違点明示しておく差分)）。
+- **隔離は最小**: Phase 0 は検証優先で egress 制限等を省く。隔離強化は Phase 2 以降（[04](../reference/security.md) / [09 §9.7（現 dev/09 §9.6 パリティと相違点）](../dev/09-deploy.md#96-パリティと相違点)）。
 - **claude のインストール方式**: 本 PoC は npm グローバル。ホストは native installer を使用。
   どちらでも可だが、ホーム永続と干渉しない配置（ホーム外）を必須要件とする。

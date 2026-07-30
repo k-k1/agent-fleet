@@ -40,7 +40,7 @@
 - [ ] **アクセシビリティ:** フォーカスリング/キーボード、`useDismiss` の Escape 挙動、`aria`。※**ユーザー確認待ち**。
 - [ ] **機能インベントリ回帰:** §18.2 と現 UI を突き合わせ、消えた導線がないか確認。
 
-## D. 設定 / 管理ダイアログの一貫化 ⏳ 着手中（方向性モック合意済み 2026-07-03）
+## D. 設定 / 管理ダイアログの一貫化 ✅ 完了（方向性モック合意済み 2026-07-03。gitconfig 等の残項目は別作業）
 - [x] **タブ再編（対象＝ドメインで分割）:** 接続タブとエージェントタブを統合再編。エージェントタブ＝Claude/Codex/opencode を「接続＋挙動設定」1カードに、Git タブ＝GitHub/Bitbucket に分離。二重登場を解消。**実装済 `c3233d6`（Git 分離）+ `f3a307a`（エージェント融合・接続撤去）**。タブは エージェント/Git/環境/SSM/MCP/表示 の6枚（要ユーザー目視）。
 - [ ] **gitconfig（今後）:** Git タブに プロバイダ毎の commit identity（user.name / user.email）設定グループを追加。**新しい Agent エンドポイント（workspace/agent git identity + control-plane プロキシ）が必要**＝バックエンド変更を伴うため別途。GitTab.tsx に `TODO(gitconfig)` あり。
 - Settings 各タブ（Connections/Agents/Env/SSM/MCP/表示）の余白・ラベル・見出しの体裁統一。
