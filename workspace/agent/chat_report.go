@@ -450,7 +450,9 @@ func handleChatReport(w http.ResponseWriter, r *http.Request) {
 
 // deliverSessionReport is the interim (non-consuming) delivery: 会話に追記し、通知
 // センターへ流し、許可されていればオペレーターの自動ターンを回す。呼び出し側が
-// 既に goroutine なので自動ターンは同期で回す。行IDは運ばない — interim は「1回だけ」の
+// 既に goroutine なので自動ターンは同期で回す。**束ねない**（完了報告のデバウンサ
+// chat_report_autoturn.go を通さない）: 質問・プラン承認への応答はレイテンシが
+// そのまま利用者体験になる経路だから。行IDは運ばない — interim は「1回だけ」の
 // 契約を持たない（同じ指示の中で何度でも起きる）。
 func deliverSessionReport(name, convID, kind, reason string) {
 	if recordSessionReport(name, convID, kind, reason, nil) != reportSinkOK {

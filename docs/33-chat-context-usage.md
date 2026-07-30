@@ -189,14 +189,22 @@ is_error・メッセージを表面化するよう両経路を修正**（result 
 ### 5.1 発動（maybeAutoCompact）
 
 直近スナップショットの使用率が **90%**（`chatCtxAutoCompactPct`・
-`AF_CHAT_AUTOCOMPACT_PCT` でデプロイ毎に上書き可）以上のまま新しいターンが始まる
-とき、プロンプト構築の**前**に第2段 `compactConversation` を自動実行し、その
-PendingHandoff を同じターンの `injectHandoff` で乗せる。差し込みは
+`AF_CHAT_AUTOCOMPACT_PCT` でデプロイ毎に上書き可）以上、**または**絶対量が
+**150k トークン**（`chatCtxAutoCompactTokens`・`AF_CHAT_AUTOCOMPACT_TOKENS` で
+上書き可）以上のまま新しいターンが始まるとき、プロンプト構築の**前**に第2段
+`compactConversation` を自動実行し、その PendingHandoff を同じターンの
+`injectHandoff` で乗せる。差し込みは
 handleChatSend / handleChatStream（detached ctx 上＝リロードでも中断されない）/
 runReportAutoTurn の3経路。
 
+相対と絶対の2本になっているのは守るものが違うから: 相対 90% はウィンドウ超過
+エラーの防止で、1M ウィンドウのモデルでは 900k まで発火しない。一方 resume 駆動の
+チャットは毎ターン全コンテキストを再読・再キャッシュするので、ターン単価は占有量に
+比例して上がる（実測 2026-07: オペレーター会話が 200〜400k を引きずり、散発ターンで
+prompt cache が冷えるたび書き直しだけで1ターン $1 超）。絶対閾値は**費用**を守る。
+
 段階設計: **80%** で notice（利用者が区切りを選んで手動「圧縮」できる猶予）→
-**90%** で予防的自動圧縮 → それでも超えたら第3段の超過リトライ。
+**90%（または 150k トークン）** で予防的自動圧縮 → それでも超えたら第3段の超過リトライ。
 
 ガード: 設定 OFF・スナップショット無し・PendingHandoff 未配信（直後にリセットされる
 ため二重圧縮しない）・プロバイダセッション無し、では発動しない。圧縮失敗は log して
