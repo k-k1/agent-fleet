@@ -442,12 +442,13 @@ const (
 type reportSink func(name, convID, kind, reason string, rows []instrRow) reportSinkResult
 
 // deliverReportCard is the production sink: 会話への追記は同期（失敗を返せるように）、
-// オペレーターの自動ターンは別 goroutine。自動ターンは provider 呼び出しで分単位
-// かかり得るので、リコンサイラの単一 goroutine を塞がせない。
+// オペレーターの自動ターンはデバウンサへ（chat_report_autoturn.go — 近接する報告を
+// 1ターンに束ねる）。発火はタイマー goroutine 上なので、provider 呼び出しが分単位
+// かかってもリコンサイラの単一 goroutine を塞がない。
 func deliverReportCard(name, convID, kind, reason string, rows []instrRow) reportSinkResult {
 	res := recordSessionReport(name, convID, kind, reason, rows)
 	if res == reportSinkOK && chatAutoTurnEnabled() {
-		go runReportAutoTurn(convID)
+		reportAutoTurns.schedule(convID)
 	}
 	return res
 }
