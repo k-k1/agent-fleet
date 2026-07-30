@@ -225,7 +225,7 @@ function GithubRow({ st, reload }: RowProps) {
         <>
           <div className="p-who">
             <span className="p-em" title={st.email || st.username || ""}>
-              {st.username || "connected"}
+              {st.username || tr("conn.connected")}
             </span>
             {st.email && <span className="p-pl">{st.email}</span>}
             <DisconnectButton onClick={disconnect} />
@@ -242,7 +242,7 @@ function GithubRow({ st, reload }: RowProps) {
             <input
               className="cinput"
               type="password"
-              placeholder="Personal Access Token"
+              placeholder={tr("git.github_token_ph")}
               value={token}
               onChange={(e) => setToken(e.target.value)}
               autoFocus
@@ -365,7 +365,7 @@ function BitbucketRow({ st, reload }: RowProps) {
         <>
           <div className="p-who">
             <span className="p-em" title={st.email || st.username || ""}>
-              {st.username || "connected"}
+              {st.username || tr("conn.connected")}
             </span>
             {st.email && <span className="p-pl">{st.email}</span>}
             <DisconnectButton onClick={disconnect} />
@@ -383,14 +383,14 @@ function BitbucketRow({ st, reload }: RowProps) {
           <div className="flow">
             <input
               className="cinput"
-              placeholder="Atlassian email"
+              placeholder={tr("git.bb_email_ph")}
               value={username}
               onChange={(e) => setUsername(e.target.value)}
             />
             <input
               className="cinput"
               type="password"
-              placeholder="API token"
+              placeholder={tr("git.bb_token_ph")}
               value={token}
               onChange={(e) => setToken(e.target.value)}
             />

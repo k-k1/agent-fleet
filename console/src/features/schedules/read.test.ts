@@ -67,7 +67,8 @@ describe("scheduleTitle", () => {
 describe("specSummary", () => {
   it("renders each kind", () => {
     expect(specSummary({ ...base, spec_kind: "cron", spec: "*/15 * * * *" })).toBe("*/15 * * * *");
-    expect(specSummary({ ...base, spec_kind: "interval", spec: "3600" })).toBe("every 1h");
+    // interval は i18n（既定ロケール ja）で「〜ごと」に整形される。
+    expect(specSummary({ ...base, spec_kind: "interval", spec: "3600" })).toBe("1h ごと");
     expect(specSummary({ ...base, spec_kind: "once", spec: "2026-07-24T09:00:00Z" })).toBe("2026-07-24T09:00:00Z");
   });
 });

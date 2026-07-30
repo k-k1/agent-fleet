@@ -234,7 +234,10 @@ export function MemoryTab() {
       toast(tr("mem.jump_none"));
       return;
     }
-    if (!snaps?.some((s) => s.rev === hit.rev)) setSnaps((cur) => [hit, ...(cur ?? [])]);
+    // 履歴は新しい順なので、先頭へ差し込まず at 降順を保ったまま挿入する
+    // （limit 外の古いスナップショットが一覧の先頭に来て時系列が崩れないように）。
+    if (!snaps?.some((s) => s.rev === hit.rev))
+      setSnaps((cur) => [...(cur ?? []), hit].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)));
     setSel(hit.rev);
   };
 

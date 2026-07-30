@@ -2,7 +2,7 @@
 // the component so the formatting + status classification is unit-testable (the codebase
 // tests pure logic, not React rendering — see notifications/read.test.ts). The section
 // component owns fetch/poll/state; everything here is a plain function over the DTO.
-import type { MsgKey } from "../../lib/i18n/index.ts";
+import { t, type MsgKey } from "../../lib/i18n/index.ts";
 
 // Wire shape returned by GET /api/schedules — mirrors the CP scheduleDTO (schedule.go).
 // The list response already carries every field below; the detail/edit modal (P5.2) reads
@@ -142,7 +142,8 @@ export function specSummary(s: ScheduleDTO): string {
     case "cron":
       return s.spec;
     case "interval":
-      return "every " + formatInterval(s.spec);
+      // 「〜ごと」の言い回しはロケール依存なのでカタログへ（t() は非 React からも呼べる）。
+      return t("sched.every", { interval: formatInterval(s.spec) });
     case "once":
       return s.spec;
     default:

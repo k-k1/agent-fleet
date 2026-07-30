@@ -338,8 +338,8 @@ function ClaudeCard({
         <ConnPaused />
       ) : st?.connected ? (
         <div className="p-who">
-          <span className="p-em" title={st.email || "connected"}>
-            {st.email || "connected"}
+          <span className="p-em" title={st.email || tr("conn.connected")}>
+            {st.email || tr("conn.connected")}
           </span>
           {st.plan && <span className="p-pl">{st.plan}</span>}
           <DisconnectButton onClick={disconnect} />
@@ -571,8 +571,8 @@ function AgyCard({
         <div className="p-desc">{tr("agents.agy_unsupported", { reason: st?.reason || "" })}</div>
       ) : st?.connected ? (
         <div className="p-who">
-          <span className="p-em" title={st.email || "connected"}>
-            {st.email || "connected"}
+          <span className="p-em" title={st.email || tr("conn.connected")}>
+            {st.email || tr("conn.connected")}
           </span>
           {st.plan && <span className="p-pl">{st.plan}</span>}
           <DisconnectButton onClick={disconnect} />
