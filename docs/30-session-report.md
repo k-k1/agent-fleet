@@ -309,13 +309,28 @@ hook / record-exit は独立プロセスなので、会話ファイルへの直�
 - 実行: 未配送の report を定型プリアンブル付きで 1 プロンプトに連結し、通常の provider
   send（`registerLiveTurn` 登録 = 停止ボタン / in_progress 対応）。
 - **束ね（デバウンス・2026-07-31）**: 完了報告（リコンサイラの配送）は自動ターンを
-  即時に回さず、会話ごとに **60 秒**の窓（`chatAutoTurnDelayDefault`・
-  `AF_CHAT_AUTOTURN_DELAY` 秒で上書き、0 で即時）で束ねてから 1 回だけ回す
+  即時に回さず、会話ごとに **60 秒**の窓（`chatAutoTurnDelayDefault`・優先順は
+  設定 > アシスタント「自動応答の束ね時間」→ `AF_CHAT_AUTOTURN_DELAY` 秒 → 既定。
+  0 で即時・上限 10 分）で束ねてから 1 回だけ回す
   （chat_report_autoturn.go）。自動ターンは毎回全コンテキストをプロバイダに
   再読させる高価な呼び出しで、近接完了する複数セッションの報告を 1 ターンに
   畳むのが目的。**報告カード自体と通知センターへの配送は即時のまま**（遅れるのは
   オペレーターの追撃ターンだけ）。interim（question / plan-approval）は束ねの
   対象外 — 回答レイテンシがそのまま利用者体験になる経路のため即時に回す。
+- **自動応答のモデル（2026-07-31）**: 設定 > アシスタント「自動応答のモデル」
+  （ui-prefs `assistantAutoTurnModel`・空 = 会話のモデルのまま）で、自動ターン**だけ**
+  を軽量モデル（haiku 等）で回せる。報告の確認・要約は定型作業で、自動ターンは
+  利用者ターンより回数が多い（実測 121 vs 107/5日）ため単価がそのまま効く。適用は
+  claude の会話のみ（`chatModel` の per-call override 経由 — codex/opencode は
+  `c.Model` 直参照）。利用者ターンと圧縮の要約ターン（引き継ぎ品質）は会話本来の
+  モデルのまま。
+- **静かな完了報告（2026-07-31・既定 OFF）**: 設定 > アシスタント
+  「静かな完了報告」（ui-prefs `assistantQuietCompletion`）ON のとき、**正常な**完了
+  （answer-ready・reason なし）とその訂正（reopened・reason なし）では自動ターンを
+  回さない（`quietReport` — chat_report_reconcile.go）。報告カードと通知センターは
+  従来どおり即時で、報告は未配信のまま次のターンに相乗りする
+  （injectPendingReports）。異常系（中断・失敗・exit）と訂正打ち切り
+  （reopen-capped）、interim（質問・プラン承認）は従来どおり自動対応。
 - **未配送 report の注入**: 自動ターンが OFF / 上限 / 実行中ターンありで走らなかった report は
   `delivered=false` のまま残り、**次のターン（ユーザー送信 or 自動）のプロンプト先頭に注入**して
   から delivered にする。保存された会話とプロバイダ側コンテキストの乖離を防ぐ。

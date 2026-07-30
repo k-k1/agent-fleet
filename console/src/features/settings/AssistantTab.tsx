@@ -70,6 +70,19 @@ function AssistantModelRow({
   );
 }
 
+// AutoTurnModelSelect — 自動応答（セッション報告への自動ターン）専用モデル。対象は
+// claude の会話のみなので catalog も claude 固定。空 = 会話のモデルのまま。
+// AssistantModelRow と同じく、catalog から消えた設定値も選択肢に残して表示が嘘を
+// つかないようにする。
+function AutoTurnModelSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const tr = useT();
+  const live = useModelOptions("claude") || [];
+  const choices: [string, string][] = [["", tr("assistant.auto_turn_model_default")], ...live];
+  const options =
+    value && !choices.some(([id]) => id === value) ? [...choices, [value, value] as [string, string]] : choices;
+  return <Select value={value} options={options} onChange={onChange} />;
+}
+
 // AssistantTab — アシスタント・チャットの設定：挙動（タイトルAI提案 / 回答言語 /
 // エージェント優先順位 / 報告への自動応答 / コンテキスト自動圧縮）と 外観（テーマ /
 // 背景色）。外観は以前 DisplayTab にあったが、アシスタントの挙動と同じタブに置いた方が
@@ -143,6 +156,28 @@ export function AssistantTab() {
           />
         </Row>
         <p className="muted ds-note">{tr("assistant.note_auto_turn_limit")}</p>
+        <Row label={tr("assistant.auto_turn_model")}>
+          <AutoTurnModelSelect
+            value={s.assistantAutoTurnModel}
+            onChange={(v) => setSetting("assistantAutoTurnModel", v)}
+          />
+        </Row>
+        <p className="muted ds-note">{tr("assistant.note_auto_turn_model")}</p>
+        <Row label={tr("assistant.auto_turn_delay")}>
+          <Slider
+            value={s.assistantAutoTurnDelay}
+            min={0}
+            max={300}
+            step={15}
+            format={(v) => (v ? `${v}s` : tr("assistant.auto_turn_delay_off"))}
+            onChange={(v) => setSetting("assistantAutoTurnDelay", v)}
+          />
+        </Row>
+        <p className="muted ds-note">{tr("assistant.note_auto_turn_delay")}</p>
+        <Row label={tr("assistant.quiet_completion")}>
+          <OnOff value={s.assistantQuietCompletion} onChange={(v) => setSetting("assistantQuietCompletion", v)} />
+        </Row>
+        <p className="muted ds-note">{tr("assistant.note_quiet_completion")}</p>
         <Row label={tr("assistant.auto_pilot")}>
           <OnOff value={s.assistantAutoPilot} onChange={(v) => setSetting("assistantAutoPilot", v)} />
         </Row>
@@ -155,6 +190,28 @@ export function AssistantTab() {
           <OnOff value={s.assistantAutoCompact} onChange={(v) => setSetting("assistantAutoCompact", v)} />
         </Row>
         <p className="muted ds-note">{tr("assistant.note_auto_compact")}</p>
+        <Row label={tr("assistant.auto_compact_tokens")}>
+          <Slider
+            value={s.assistantAutoCompactTokens}
+            min={50000}
+            max={500000}
+            step={10000}
+            format={(v) => `${Math.round(v / 1000)}k`}
+            onChange={(v) => setSetting("assistantAutoCompactTokens", v)}
+          />
+        </Row>
+        <p className="muted ds-note">{tr("assistant.note_auto_compact_tokens")}</p>
+        <Row label={tr("assistant.output_tail")}>
+          <Slider
+            value={s.assistantOutputTailKiB}
+            min={8}
+            max={256}
+            step={8}
+            format={(v) => `${v} KiB`}
+            onChange={(v) => setSetting("assistantOutputTailKiB", v)}
+          />
+        </Row>
+        <p className="muted ds-note">{tr("assistant.note_output_tail")}</p>
       </section>
 
       <section className="ds-group">

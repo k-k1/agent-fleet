@@ -91,7 +91,34 @@ func TestAutoTurnSchedulerConcurrentScheduleIsSingleFire(t *testing.T) {
 	}
 }
 
+func TestQuietReport(t *testing.T) {
+	// 既定 OFF: 何も抑止しない。
+	writeUIPrefs(t, `{}`)
+	if quietReport(reportKindAnswerReady, "") {
+		t.Fatal("quiet while the setting is OFF")
+	}
+	// ON: 静かになるのは正常完了とその訂正だけ。異常系・打ち切りは従来どおり回す。
+	writeUIPrefs(t, `{"assistantQuietCompletion":true}`)
+	tests := []struct {
+		kind, reason string
+		quiet        bool
+	}{
+		{reportKindAnswerReady, "", true},
+		{reportKindReopened, "", true},
+		{reportKindAnswerReady, reportReasonTurnAborted, false},
+		{reportKindAnswerReady, reportReasonTurnFailed, false},
+		{reportKindReopened, reportReasonReopenCapped, false},
+		{"exit", "oom", false},
+	}
+	for _, tt := range tests {
+		if got := quietReport(tt.kind, tt.reason); got != tt.quiet {
+			t.Errorf("quietReport(%s, %q) = %v, want %v", tt.kind, tt.reason, got, tt.quiet)
+		}
+	}
+}
+
 func TestChatAutoTurnDelayEnvOverride(t *testing.T) {
+	writeUIPrefs(t, `{}`) // HOME を隔離（実環境の ui-prefs を読ませない）
 	if got := chatAutoTurnDelay(); got != chatAutoTurnDelayDefault {
 		t.Fatalf("default delay = %v", got)
 	}
