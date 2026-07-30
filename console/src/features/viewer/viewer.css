@@ -334,7 +334,9 @@
   left: 0;
   z-index: 1;
   text-align: right;
-  color: #5a5a5a;
+  /* Was a literal #5a5a5a, which only ever suited the light theme (2.7:1 on the dark
+     code surface). Line numbers are read, not decoration — take the theme's tertiary. */
+  color: var(--muted2);
   background: var(--panel2);
   border-right: 1px solid var(--border2);
   padding: 0 8px 0 10px;

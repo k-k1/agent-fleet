@@ -469,9 +469,29 @@
   outline: 2px solid var(--accent);
   outline-offset: 0;
 }
+/* Field hints carry the dialogs' explanatory copy, which in Japanese routinely wraps to
+   two or three lines. At 11px with the inherited 1.5 line-height the block collapsed into
+   a solid slab of kana that readers bounced off ("潰れて読みづらい") — the SSM auth note in
+   はじめる was the worst case. 12px with a 1.75 leading and a little top padding gives the
+   wrapped lines room without changing the field rhythm; consecutive hints are separated so
+   a warning line reads as its own paragraph rather than a fourth wrapped line. */
 .ui-field-hint {
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 1.75;
+  padding-top: 1px;
   color: var(--muted2);
+  text-wrap: pretty; /* avoid a 1-word last line; ignored where unsupported */
+}
+.ui-field-hint + .ui-field-hint {
+  margin-top: 4px;
+}
+/* Inline <code> inside hint copy (e.g. `aws sso login`) — the mono face runs small at
+   the same px, which is what made the note read as a dense strip. */
+.ui-field-hint code {
+  font-size: 0.95em;
+  padding: 0 2px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
 }
 /* Lay short fields (e.g. effort + start mode selects) on one row to save vertical
    space; each grows to full width when it's the only one shown. */
