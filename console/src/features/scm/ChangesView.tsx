@@ -114,7 +114,7 @@ export function ChangesView({ repo }: { repo: string }) {
             <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> {tr("scm.stage_all_tracked")}
           </label>
           <button type="button" className="ui-btn ui-btn-primary" onClick={() => void commitOp()}>
-            Commit
+            {tr("scm.commit")}
           </button>
           <RepoIdentity enc={enc} />
         </div>
@@ -146,11 +146,11 @@ function ChangeRow({
       </span>
       <span className="chg-acts">
         {staged ? (
-          <button type="button" className="ui-btn ui-btn-ghost ui-iconbtn" title="unstage" onClick={() => void onOp("unstage", [c.path])}>
+          <button type="button" className="ui-btn ui-btn-ghost ui-iconbtn" title={tr("scm.unstage")} onClick={() => void onOp("unstage", [c.path])}>
             <Icon name="remove" />
           </button>
         ) : (
-          <button type="button" className="ui-btn ui-btn-ghost ui-iconbtn" title="stage" onClick={() => void onOp("stage", [c.path])}>
+          <button type="button" className="ui-btn ui-btn-ghost ui-iconbtn" title={tr("scm.stage")} onClick={() => void onOp("stage", [c.path])}>
             <Icon name="add" />
           </button>
         )}
