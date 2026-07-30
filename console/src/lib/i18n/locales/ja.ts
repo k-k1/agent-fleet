@@ -731,6 +731,10 @@ export const ja = {
   "tts.char_preview_title": "この声で試聴",
   "tts.char_fallback_note":
     "（VOICEVOX エンジンに接続できないため既定の一覧を表示しています。エンジン起動中は全キャラ・全スタイルから選べます）",
+  // tts.ts（試聴の再生中ラベル・朗読ビュー/アシスタント編集の声セレクト）
+  "tts.preview_label": "試聴・{name}",
+  "tts.voice_default": "設定の話者",
+  "tts.voice_polly": "Polly（{voice}）",
 
   // --- 共通（保存/戻る）---
   "common.save": "保存",

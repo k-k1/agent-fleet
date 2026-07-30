@@ -105,6 +105,8 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
         voice,
       });
       onClose();
+    } catch {
+      // 保存失敗（トーストは onSave 側）— 入力を消さないためモーダルは閉じない
     } finally {
       setBusy(false);
     }

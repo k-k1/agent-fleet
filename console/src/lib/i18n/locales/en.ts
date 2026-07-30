@@ -726,6 +726,10 @@ export const en: Record<keyof typeof ja, string> = {
   "tts.char_preview_title": "Preview in this voice",
   "tts.char_fallback_note":
     "(Showing the default list because the VOICEVOX engine can't be reached. While the engine is running you can choose from all characters and styles.)",
+  // tts.ts (preview now-playing label; voice selects in the reader view / assistant editor)
+  "tts.preview_label": "Preview – {name}",
+  "tts.voice_default": "Configured speaker",
+  "tts.voice_polly": "Polly ({voice})",
 
   // --- common (save/back) ---
   "common.save": "Save",
