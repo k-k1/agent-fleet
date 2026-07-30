@@ -109,7 +109,7 @@ func (a previewAPI) sanitizedHeader(r *http.Request) http.Header {
 	h.Del("Cookie")
 	var kept []string
 	for _, c := range r.Cookies() {
-		if c.Name == sessionCookie || c.Name == stateCookie {
+		if sensitiveBrowserCookie(c.Name) {
 			continue
 		}
 		kept = append(kept, c.Name+"="+c.Value)
@@ -118,6 +118,19 @@ func (a previewAPI) sanitizedHeader(r *http.Request) http.Header {
 		h.Set("Cookie", strings.Join(kept, "; "))
 	}
 	return h
+}
+
+// sensitiveBrowserCookie reports whether a cookie carries a login the previewed
+// app must not see: the CP's own cookies, plus the session cookies a FRONT auth
+// gateway sets on the same host (oauth2-proxy `_oauth2_proxy*` incl. chunked
+// variants, ALB OIDC `AWSELBAuthSessionCookie-*`) — replaying either lets the
+// app act as the signed-in user against the gateway-protected origin.
+func sensitiveBrowserCookie(name string) bool {
+	if name == sessionCookie || name == stateCookie {
+		return true
+	}
+	return strings.HasPrefix(name, "_oauth2_proxy") ||
+		strings.HasPrefix(name, "AWSELBAuthSessionCookie")
 }
 
 // cpOwnedCookie reports whether a Set-Cookie header line names a cookie the CP
