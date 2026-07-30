@@ -402,7 +402,7 @@
 }
 /* Stop button (while a turn streams): same shape as send, danger-tinted. */
 .chat-stop {
-  color: var(--danger, #e05a5a);
+  color: var(--del);
 }
 /* Composer history nav (↑/↓ recall) — for phones, which have no arrow keys. Hidden on
    wider screens (where ArrowUp/ArrowDown drive the same recallPrev/recallNext). Mirrors
