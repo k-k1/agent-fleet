@@ -4,6 +4,9 @@
 本書はそこへ至った**時系列の作業ログ**（1 行サマリ）。詳細・現状は HANDOFF の各テーマ節を見ること。
 訂正が連鎖した項目は HANDOFF 側に最終結論のみ載る（途中経過の誤りは教訓として圧縮）。
 
+> **本ログは 2026-07-15 で打ち切り。** 以降の変遷は git 履歴（develop）と
+> [docs/README.md](README.md) の索引・各設計ドキュメント（docs/NN）を参照。
+
 ## 2026-06-26
 - Phase 1 MVP 完了（commit `dd2330e`）。Workspace Agent + Control Plane + 最小 Console、`/login` フルチェーン検証。
 - Connections（git/claude）実装。Claude OAuth 実承認まで検証。
@@ -48,7 +51,7 @@
 - 続き19: 表示設定のサーバー保存（端末間同期、`ui_prefs.go`）/ 管理設定を別モーダルに分離（`AdminDialog`）。
 - 続き20: スマホ端末対応（監視＋軽操作）。`@media(max-width:760px)` に閉じ込め、左ペインをドロワー化（ハンバーガー/バックドロップ/選択で自動クローズ）・モーダル全画面・タッチターゲット拡大。端末に最小コントロールキー列（Esc/Tab/矢印/Ctrl-C/Enter, `TermKeys.jsx`）+ `visualViewport` refit + 1本指スワイプでスクロールバック。`sendInput` は PTY 直送（Gboard を不要に呼ばない）。
 - 続き21: Workspace image にツールチェーン追加。Go（公式 tarball・`ARG GO_VERSION=1.26.4`・アーキ検出、`~/go` 永続）+ C/C++ 基盤（build-essential/pkg-config/python3-dev=cgo・node-gyp・wheel ソースビルド）+ jq/unzip/zip/wget/gnupg/htop/fd/bat。実ビルド + cgo 検証済。image 約1.0G→2.82GB。git-delta は bookworm 非収録で除外、sudo は隔離維持で非導入。
-- サービスプレビュー（`/preview/<port>` 経路、commit `7649c64`）。CP `handlePreview`（`rtFor` 認証 + `Bearer` 付与 + `X-Forwarded-*`）→ Agent `/proxy/<port>`（ReverseProxy）→ コンテナ内 `127.0.0.1:<port>`。隔離不変。Console は WS バーのポート入力＋新タブ（`?tenant=` fallback）。HTTP のみ（WS/HMR は次段）。詳細 [reference/preview](reference/preview.md)、HANDOFF §6.10.9。
+- サービスプレビュー（`/preview/<port>` 経路、commit `7649c64`）。CP `handlePreview`（`rtFor` 認証 + `Bearer` 付与 + `X-Forwarded-*`）→ Agent `/proxy/<port>`（ReverseProxy）→ コンテナ内 `127.0.0.1:<port>`。隔離不変。Console は WS バーのポート入力＋新タブ（`?tenant=` fallback）。HTTP のみ（WS/HMR は次段）。詳細は現行 [dev/05 §5.3](dev/05-api-contracts.md)（当時参照した reference/preview と HANDOFF §6.10.9 は再編で廃止）。
 ## 2026-06-29
 - 設定→接続で**認証アカウントを表示**。claude（`claude auth status` の email/plan）、codex（`auth.json` の `auth_mode` + id_token claims から email/plan、例 `…@gmail.com · plus`）。
 - 接続を**「エージェント / git ホスティング」にカテゴリ分け**。GitHub/Bitbucket も実アカウント表示（`/user`・`/2.0/user`、store キャッシュ＝polled endpoint で都度 API を叩かない、`gitEntry.Login`/`bitbucketCreds.Account`）。
@@ -68,11 +71,11 @@
 - Dockerfile レイヤ順最適化: 重い go toolchain/npm(claude/opencode/codex) を前段、entrypoint/notes/vendor 等の COPY を `USER dev` 直前へ集約（小修正で重レイヤを再実行しない）。`.dockerignore` に `!workspace-notes.md`（`**/*.md` 除外の例外）。
 - イメージ再ビルド＋運用者コンテナ作り直し済み。`/etc/claude-code/CLAUDE.md`・`~/.codex/AGENTS.md`・`~/.config/opencode/AGENTS.md`・`~/.gradle/gradle.properties` のライブ配置を確認。
 
-## 2026-06-28（続き）
-- codex をエージェント追加（`kind="codex"`、OpenAI Codex CLI `@openai/codex` を image 焼き込み）。認証2経路（API キー=`codex login --with-api-key` stdin / サブスク=`codex login --device-auth` device flow、ともに codex 所有の `~/.codex/auth.json` を書く＝secrets.enc 不要）。状態は claude 同型フックを**起動時 `-c` 注入**（per-slot sid 埋め込み・`--dangerously-bypass-hook-trust`）で working/idle。resume はフック stdin の `session_id` 捕捉 →`codex resume <id>`。`~/.codex` を denylist。`codex_auth.go` 新規。実 CLI 0.142.3 で hooks 形式 / device-auth 出力 / login 経路を実検証（認証完了は要 OpenAI 資格）。詳細 HANDOFF §6.10.4。
+## 2026-06-28（続き・後から追記のため日付が前後）
+- codex をエージェント追加（`kind="codex"`、OpenAI Codex CLI `@openai/codex` を image 焼き込み）。認証2経路（API キー=`codex login --with-api-key` stdin / サブスク=`codex login --device-auth` device flow、ともに codex 所有の `~/.codex/auth.json` を書く＝secrets.enc 不要）。状態は claude 同型フックを**起動時 `-c` 注入**（per-slot sid 埋め込み・`--dangerously-bypass-hook-trust`）で working/idle。resume はフック stdin の `session_id` 捕捉 →`codex resume <id>`。`~/.codex` を denylist。`codex_auth.go` 新規。実 CLI 0.142.3 で hooks 形式 / device-auth 出力 / login 経路を実検証（認証完了は要 OpenAI 資格）。詳細は当時の HANDOFF §6.10.4（現 HANDOFF には無し・dev/ 再編済）。
 
-## 2026-06-29
-- **ファイルビュアーに Marp スライドプレビュー追加**（`MarpView.jsx`＋`@marp-team/marp-core`、`FileView.jsx`/`lib/filemeta.js` の `isMarpDoc()`）。frontmatter `marp: true` の `.md` を本物の Marp スライドとして表示（スライド/プレビュー/ソースの3トグル・既定スライド）。Shadow DOM 隔離・遅延 import・ステッパー＋全画面（Fullscreen API）。**ハマり**: marp-core が `mathjax-full`(~43MB)/`katex` を静的 require → `math:false` でも素では Vite ビルドがミニファイ段でハング（>9分）。`math:false` 時に実行時アクセスなしを trap-proxy で検証し、`vite.config.js` の alias で `marp-math-stub.js` に差し替えバンドル除外（28s 復帰）。詳細 HANDOFF ファイルビュアー節。※**未目視検証**（console は headless 不可）＝要ブラウザ確認。
+## 2026-06-29（続き）
+- **ファイルビュアーに Marp スライドプレビュー追加**（`MarpView.jsx`＋`@marp-team/marp-core`、`FileView.jsx`/`lib/filemeta.js` の `isMarpDoc()`）。frontmatter `marp: true` の `.md` を本物の Marp スライドとして表示（スライド/プレビュー/ソースの3トグル・既定スライド）。Shadow DOM 隔離・遅延 import・ステッパー＋全画面（Fullscreen API）。**ハマり**: marp-core が `mathjax-full`(~43MB)/`katex` を静的 require → `math:false` でも素では Vite ビルドがミニファイ段でハング（>9分）。`math:false` 時に実行時アクセスなしを trap-proxy で検証し、`vite.config.js` の alias で `marp-math-stub.js` に差し替えバンドル除外（28s 復帰）。詳細は当時の HANDOFF ファイルビュアー節（現 HANDOFF には無し・dev/ 再編済）。※**未目視検証**（console は headless 不可）＝要ブラウザ確認。
 
 ## 2026-06-30
 - **セッションクォータを同時稼働数で数えるよう修正**（`control-plane/manager.go countSessions`）。Agent の `/sessions` は停止中（再開可能・TTL 7d）も返すため、稼働中が上限未満でも `session limit reached` で新規作成が弾かれていた。`alive==true` のみカウントへ。

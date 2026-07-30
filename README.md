@@ -13,9 +13,13 @@ layer is separated via ports & adapters ([portability](docs/dev/09-deploy.md)).
 
 **Status: Phase 2 complete, Phase 3 in progress.** Multiple users can work in
 parallel, mutually invisible, on a single on-prem host (per-user Workspace /
-AuthGateway / network isolation / at-rest encryption). Phase 3 productization is done
-through P3-1–P3-5 plus the full Console rebuild (React+Vite). Next up is P3-7 (AWS
-adapter) onwards ([docs/roadmap.md](docs/roadmap.md)).
+AuthGateway / network isolation / at-rest encryption). Phase 3 productization has
+reached the packaging & distribution milestone (P3-10): the full Console rebuild
+(React+Vite), the AWS ECS adapter (P3-7) and the compose / ECS / Docker-less native
+distribution targets are shipped, with 0.x releases published to the
+[distribution repo](https://github.com/k-k1/agent-fleet-dist)
+([docs/history/p3-10-packaging.md](docs/history/p3-10-packaging.md),
+[docs/roadmap.md](docs/roadmap.md)).
 **Current operational details and pitfalls: [docs/HANDOFF.md](docs/HANDOFF.md) (read
 first in a new session).**
 Code: [`workspace/`](workspace/) (Agent + image) / [`control-plane/`](control-plane/) /
@@ -32,6 +36,7 @@ Google OAuth).
 ```bash
 cd deploy/compose
 cp .env.example .env     # generate and fill in secrets (AF_MASTER_KEY etc.)
+docker build -t agent-fleet/workspace:dev ../../workspace   # per-user workspace image
 docker compose up -d --build
 ```
 
@@ -57,7 +62,8 @@ The UI is English or Japanese, switched per user in ⚙ Settings — every view 
 exists in Japanese (`docs/img/*-ja.webp`, e.g.
 [the console](docs/img/console-ja.webp)). Screenshots are captured from the real
 Console bundle against a demo dataset — regenerate them with
-`node console/scripts/shots/capture.mjs` ([how](console/scripts/shots/README.md)).
+`node console/scripts/shots/capture.mjs --locale en` (the default locale is `ja`;
+[how](console/scripts/shots/README.md)).
 
 ## Settled assumptions (v1)
 
@@ -105,7 +111,8 @@ operator / lite).
 > The old `docs/reference/` was reorganized into dev/ (mapping table in
 > [docs/README.md](docs/README.md)).
 
-**decisions/ — decision records (why, and the discarded options)**
+**decisions/ — decision records (why, and the discarded options)** — the table below
+is an excerpt; the full set (0001–0035) is in [docs/decisions/](docs/decisions/)
 | File | Contents |
 |----------|------|
 | [0001-self-host-vs-saas.md](docs/decisions/0001-self-host-vs-saas.md) | delivery model: SaaS abandoned, per-company self-hosting adopted (ToS grounds, residual risk) |
@@ -114,7 +121,8 @@ operator / lite).
 | [0004-vanilla-to-react.md](docs/decisions/0004-vanilla-to-react.md) | Console stack: React + Vite adopted |
 | [0005-envelope-custodian.md](docs/decisions/0005-envelope-custodian.md) | at-rest keys: envelope encryption + custodian abstraction (on-prem limits stated) |
 
-**history/ — finished implementation plans (done, kept for the record)**
+**history/ — finished implementation plans (done, kept for the record)** — the table
+below is an excerpt; the full set is in [docs/history/](docs/history/)
 | File | Contents |
 |----------|------|
 | [phase0-poc.md](docs/history/phase0-poc.md) | Phase 0 PoC procedure (`/login` verification) |
@@ -124,6 +132,7 @@ operator / lite).
 | [p3-3-envelope-crypto.md](docs/history/p3-3-envelope-crypto.md) | P3-3: envelope encryption + custodian abstraction |
 | [p3-4-quota.md](docs/history/p3-4-quota.md) | P3-4: resource budgets / quotas |
 | [p3-5-member-console.md](docs/history/p3-5-member-console.md) | P3-5: member Console UX (git/file visibility) |
+| [p3-10-packaging.md](docs/history/p3-10-packaging.md) | P3-10: packaging & distribution (compose / ECS / native targets, release bundles) |
 | [console-redesign.md](docs/history/console-redesign.md) | Console UI rebuild brief (vanilla→React diagnosis) |
 
 ## Existing prototype assets (reused from)
