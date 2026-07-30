@@ -49,7 +49,7 @@ Slack と Discord は「外向き WSS 1 本で送受信・ボタン応答まで�
    Console はフラグで「このプロバイダは通知のみ」を表示し分ける。
 2. **ブリッジは workspace Agent 側に置く**（CP ではなく）。理由: トークンは per-user の
    `secrets.enc`（`internal/secrets/secrets.go` `Data`）にあり、「秘密は CP を素通り」
-   原則（docs/07 §7.6・dev/08）を維持するため。WSS 接続もユーザー毎に Agent 内
+   原則（dev/07-security.md §7.6・dev/08）を維持するため。WSS 接続もユーザー毎に Agent 内
    goroutine で 1 本（プロバイダ接続中のみ）。
 3. **トークンはユーザー自前登録**（v1）: 中央ホストの共有 App は作らない。
    ユーザーが自分の Slack App（Socket Mode 有効）/ Discord Bot（私設ギルド招待済み）を
@@ -577,7 +577,7 @@ Discord で縦貫した機能一式を、同じ `bridge.Provider` 抽象に **Sl
 - **セットアップの差**: Slack は App マニフェスト（Socket Mode＋scope＋message 購読＋connections:write）を
   作り `/invite` で招待する分だけ Discord より手数が多い（カードの hint に scope 列挙）。bound user は
   email 自動解決＋手入力フォールバック（Copy-Member-ID 不要）。
-- 検証: go **58 テスト緑**（うち Slack 11＝送信/スレッド起票＋resume 冪等/session-report 抑制/ボタン描画/
+- 検証: go **58 テスト緑**（= bridge パッケージ内の累計・当時点。うち Slack 11＝送信/スレッド起票＋resume 冪等/session-report 抑制/ボタン描画/
   入力ミラー opt-out/mention 時間ゲート/mrkdwn＋table/本人限定ルーティング〔bot/subtype/他人/非スレッド/
   他人押下を全 drop〕/エンベロープ parse）＋live 拡張 `slack_live_test.go`（`AF_SLACK_LIVE=1`＋
   `AF_SLACK_BOT_TOKEN`/`AF_SLACK_APP_TOKEN`/`AF_SLACK_CHANNEL`/`AF_SLACK_USER`＋

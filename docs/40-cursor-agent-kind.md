@@ -366,7 +366,7 @@ chatId は別空間）。
 
 | 過去の指摘 | cursor での対応 |
 |---|---|
-| resume ID 取得不能（agy d24c2f0） | `agent create-chat` 事前採番で構造的に回避（copilot `--session-id` と同型） |
+| resume ID 取得不能（agy d24c2f0） | AF 側採番の chat ID を `--resume` に渡して構造的に回避（copilot `--session-id` と同型。当初計画の `create-chat` 事前採番は Track A で自己採番 v4 UUID へ変更 — §Track A の実測反映） |
 | auth URL の OSC-8 汚染（agy 26c875f） | login start/complete フローの URL 抽出で同対策を最初から適用 |
 | tmux kill-server 全滅（agy 84139d2） | probe/E2E は `-L cursor-probe` 専用ソケット隔離 |
 | Turn.Idx 未採番（30c5e21） | transcript.go 単調採番＋単調増加テスト |

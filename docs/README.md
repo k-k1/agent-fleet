@@ -18,7 +18,7 @@
 - [20-container-audit-egress.md](20-container-audit-egress.md) — コンテナ内操作の監査ログ & egress 統制（enforce 未了・進行中）
 - [23-go-refactor.md](23-go-refactor.md) — Go バックエンド内部リファクタ（CP / Agent、機能不変・ワイヤ互換。残=④契約の型化のみ）
 - [24-tts-zundamon.md](24-tts-zundamon.md) — エージェント回答の音声読み上げ（✅ Phase 1〜2 実装済み、実環境検証待ち）
-- [25-ops-monitoring.md](25-ops-monitoring.md) — サービス運用（監視・インシデント対応）向け拡張（📋 構想検討・意思決定前）
+- [25-ops-monitoring.md](25-ops-monitoring.md) — サービス運用（監視・インシデント対応）向け拡張（✅ 3 連携（PagerDuty / Grafana / CloudWatch）実装済み）
 - [26-agent-exit-recording.md](26-agent-exit-recording.md) — エージェントプロセスの終了理由記録（✅ Agent / CP / UI 実装済み、実機目視待ち）
 - [27-agent-managed-driver.md](27-agent-managed-driver.md) — エージェント制御の Managed Driver 化（✅ P1〜P3 実装済み。Codex / OpenCode は managed が既定、CLI ルート常設。プロトコル実測を含む実装記録）
 - [28-i18n.md](28-i18n.md) — Console 全面 i18n（✅ P0〜P5 実装済み、実機目視待ち）
@@ -28,21 +28,24 @@
 - [32-agy-agent-kind.md](32-agy-agent-kind.md) — `kind=agy`（Antigravity CLI）を第4種別として実装する並行トラック計画（✅ 実装済み・実測記録を含む。設計は [decisions/0008](decisions/0008-antigravity-cli-agent-kind.md)）
 - [33-chat-context-usage.md](33-chat-context-usage.md) — アシスタントチャットのコンテキスト肥大対策（✅ 全4段実装済み）
 - [34-native-runtime.md](34-native-runtime.md) — Docker なし WSL 向けコンテナレス Runtime（✅ 実装済み・素の WSL2 実機検証待ち）
-- [35-packaging.md](35-packaging.md) — パッケージング & 配布の4ターゲット設計（native / amd64 Linux / EC2-Single / ECS）（📋 設計・P3-10 残作業の具体化）
+- [35-packaging.md](35-packaging.md) — パッケージング & 配布の4ターゲット設計（native / amd64 Linux / EC2-Single / ECS）（✅ dist publish 運用中（0.1.0〜）。リリースノートは `deploy/release/notes/`）
 - [36-copilot-agent-kind.md](36-copilot-agent-kind.md) — `kind=copilot`（GitHub Copilot CLI）を第5種別として Terminal+Managed 両対応で実装（✅ 実装済み・実 CLI 契約テスト通過。設計判断は [decisions/0019](decisions/0019-copilot-agent-kind.md)）
-- [37-chat-bridge.md](37-chat-bridge.md) — チャットブリッジ（Slack/Discord 連携）: 通知・双方向操縦・AUQ ボタン・承認ゲート（📋 計画・未実装。設計判断は [decisions/0020](decisions/0020-chat-bridge.md)）
-- [38-scheduled-execution.md](38-scheduled-execution.md) — 定時実行（オペレーター cron 型）: CP scheduler・wakeFirer・run 履歴・Console UI（✅ v1 コア実装済み。設計判断は [decisions/0021](decisions/0021-scheduled-execution.md)）
-- [39-agent-memory-management.md](39-agent-memory-management.md) — エージェントメモリ管理（git 差分管理・時点/プロジェクト単位ロールバック・環境間 import/export）（📋 設計中・意思決定前。設計判断は [decisions/0022](decisions/0022-agent-memory-management.md)）
-- [40-cursor-agent-kind.md](40-cursor-agent-kind.md) — `kind=cursor`（Cursor CLI）を第7種別として Terminal+Managed 両対応で実装（📋 計画・実装未着手。実 CLI 実測記録・着工前プローブ一覧を含む。設計判断は [decisions/0023](decisions/0023-cursor-agent-kind.md)）
+- [37-chat-bridge.md](37-chat-bridge.md) — チャットブリッジ（Slack/Discord 連携）: 通知・双方向操縦・AUQ ボタン・承認ゲート（✅ Discord/Slack 実装済み（Slack は Socket Mode 対応）。設計判断は [decisions/0020](decisions/0020-chat-bridge.md)）
+- [38-scheduled-execution.md](38-scheduled-execution.md) — 定時実行（オペレーター cron 型）: CP scheduler・wakeFirer・run 履歴・Console UI（✅ 実装済み（v1 コア〜P5.2・アシスタント発火まで）。設計判断は [decisions/0021](decisions/0021-scheduled-execution.md)）
+- [39-agent-memory-management.md](39-agent-memory-management.md) — エージェントメモリ管理（git 差分管理・時点/プロジェクト単位ロールバック・環境間 import/export）（✅ P1〜P4 実装済み。設計判断は [decisions/0022](decisions/0022-agent-memory-management.md)）
+- [40-cursor-agent-kind.md](40-cursor-agent-kind.md) — `kind=cursor`（Cursor CLI）を第7種別として Terminal+Managed 両対応で実装（✅ Track A/A2/B/C/D-3 実装済み（v1 は login-only）。実 CLI 実測記録を含む。設計判断は [decisions/0023](decisions/0023-cursor-agent-kind.md)）
+- [41-svn-checkout.md](41-svn-checkout.md) — SVN チェックアウト対応: URL＋基本認証のフラット作業コピー・認証/ロックの自己修復・自己署名証明書の opt-in 信頼（✅ 実装済み。設計判断は [decisions/0024](decisions/0024-svn-checkout.md)）
+- [42-native-auto-update.md](42-native-auto-update.md) — ホスト常駐 `af` の自動更新: stage（取得）と apply（再起動）の分離で systemd の罠を回避（✅ 実装済み・実 systemd 通し検証待ち。設計判断は [decisions/0025](decisions/0025-native-auto-update.md)）
 - [43-kiro-agent-kind.md](43-kiro-agent-kind.md) — `kind=kiro`（Kiro、旧 Amazon Q Developer CLI）を第8種別として Terminal+Managed 両対応で実装（✅ Track A/B/C/A2/D 実装済み・実 CLI E2E 通過。設計判断は [decisions/0026](decisions/0026-kiro-agent-kind.md)）
-- [44-markdown-code-editor.md](44-markdown-code-editor.md) — Console の File ペイン編集、Markdown 3モード、`/fs/file` 保存API、revision競合、AI提案フォーマット、外部変更の追従（◐ Phase 3（Markdown編集）まで実装済み。Phase 3.5（外部変更追従）は設計のみ。ADR は [decisions/0027](decisions/0027-markdown-code-editor.md)）
+- [44-markdown-code-editor.md](44-markdown-code-editor.md) — Console の File ペイン編集、Markdown 3モード、`/fs/file` 保存API、revision競合、AI提案フォーマット、外部変更の追従（◐ Phase 0〜4 実装済み。Phase 5（hunk 単位＋複数候補）は設計のみ。ADR は [decisions/0027](decisions/0027-markdown-code-editor.md)）
+- [44-operator-interaction-graph.md](44-operator-interaction-graph.md) — オペレーター↔セッションのやり取りを会話ごとの UML シーケンス図として可視化（番号は 44 重複。◐ Phase 0（契約凍結）実装済み・P1 以降は後続。ADR は [decisions/0027](decisions/0027-operator-interaction-graph.md)）
 - [45-deletion-lock.md](45-deletion-lock.md) — セッション / 作業コピー / アシスタント会話の削除ロック（手動削除も自動 prune も止める。✅ 実装済み・実機目視待ち。設計判断は [decisions/0028](decisions/0028-deletion-lock.md)）
-- [46-usage-accounting.md](46-usage-accounting.md) — 使用量アカウンティング（機能別トークン計測とグラフ化）: 補助 LLM 呼び出し（アシスタント/要約/タイトル/サジェスト）とセッション本体を同じ台帳で測る（◐ P0.5〜P3 実装済み・Console UI は未着手。実測記録を含む。設計判断は [decisions/0029](decisions/0029-usage-accounting.md)）
+- [46-usage-accounting.md](46-usage-accounting.md) — 使用量アカウンティング（機能別トークン計測とグラフ化）: 補助 LLM 呼び出し（アシスタント/要約/タイトル/サジェスト）とセッション本体を同じ台帳で測る（◐ P0.5〜P4（Console UI 含む）実装済み・残 = P5（MCP）。実測記録を含む。設計判断は [decisions/0029](decisions/0029-usage-accounting.md)）
 - [47-turn-abort-auto-resume.md](47-turn-abort-auto-resume.md) — 中断ターンの検知と自動再開: API エラーで切れたターン（Stop フックが鳴らない）を自己修復経路で取りこぼさず通知・報告し、再送で直る中断だけアシスタントが再開させる（✅ 実装済み・実機目視待ち。実測記録を含む。設計判断は [decisions/0030](decisions/0030-turn-abort-auto-resume.md)）
-- [48-mcp-registry.md](48-mcp-registry.md) — ユーザー / テナント独自 MCP サーバーの登録: 固定 3 連携をレジストリへ一般化し、アシスタントには起動単位で、対話セッションには各 CLI のネイティブ設定へ書き出して配る（◐ P0 実装済み・P1 以降未着手。各 CLI の MCP 設定形の実測記録を含む。設計判断は [decisions/0031](decisions/0031-mcp-registry.md)）
+- [48-mcp-registry.md](48-mcp-registry.md) — ユーザー / テナント独自 MCP サーバーの登録: 固定 3 連携をレジストリへ一般化し、アシスタントには起動単位で、対話セッションには各 CLI のネイティブ設定へ書き出して配る（✅ P0〜P5 実装済み。各 CLI の MCP 設定形の実測記録を含む。設計判断は [decisions/0031](decisions/0031-mcp-registry.md)）
 - [49-mcp-2026-07-28.md](49-mcp-2026-07-28.md) — MCP 2026-07-28（ステートレス版）対応: initialize/セッション廃止と per-request `_meta` へ、af の MCP サーバー2本と接続テストを両 era 同時対応にする（◐ 実装済み・認可の OAuth 2.1 整合は範囲外。仕様契約と実測記録を含む。設計判断は [decisions/0032](decisions/0032-mcp-2026-07-28.md)）
 - [50-mirror-skill-picker.md](50-mirror-skill-picker.md) — ミラーのスキルピッカー: セッションで呼べるスキル/コマンドをセッション単位 API で認識し、コンポーザーのトリガ文字補完＋ボタンでキーボード / マウス / タップいずれでも 1〜2 操作で呼ぶ。クロスエージェント対応（claude/codex/opencode/cursor — codex は `$name` メンション・cursor は ACP 広告リスト。各 kind の実測記録 §7 を含む）（✅ 実装済み・実機目視待ち。設計判断は [decisions/0034](decisions/0034-mirror-skill-picker.md)）
-- [51-session-report-v2-ledger.md](51-session-report-v2-ledger.md) — セッション報告 v2: docs/30 の「エッジ駆動＋1bit arm」を指示台帳＋レベル駆動リコンサイラ＋冪等シンクへ置き換える後継設計。既知の穴 A〜G の棚卸し、settled/progressed 証拠テーブル、誤報告の補償 reopen、自己申告ファストパス、3 Phase 移行計画（○ 設計のみ・実装前。設計判断は [decisions/0035](decisions/0035-session-report-v2-ledger.md)）
+- [51-session-report-v2-ledger.md](51-session-report-v2-ledger.md) — セッション報告 v2: docs/30 の「エッジ駆動＋1bit arm」を指示台帳＋レベル駆動リコンサイラ＋冪等シンクへ置き換える後継設計。既知の穴 A〜G の棚卸し、settled/progressed 証拠テーブル、誤報告の補償 reopen、自己申告ファストパス、3 Phase 移行計画（✅ Phase 1〜3 実装済み。設計判断は [decisions/0035](decisions/0035-session-report-v2-ledger.md)）
 
 > 完了後も実装契約や実測リファレンスとしてコードから参照する 24・26〜30 は番号付きのまま残す。
 > 時系列の実装プランとして役目を終えたものは history/ へ移動: [19 assistant-chat](history/19-assistant-chat.md) /
@@ -92,7 +95,7 @@
 
 > 0023〜0032 は対応する設計ドキュメントの行（上記「番号付きの機能設計・実装記録」）に併記。
 
-## history/ — 使い終わった実装プラン（P3-6 は ◐ 段1 完了・admin 残）
+## history/ — 使い終わった実装プラン（P3-6 は ◐ admin read/write まで完了・dangerous 段のみ残）
 
 - [phase0-poc.md](history/phase0-poc.md) — Phase 0 PoC（`/login` 検証）
 - [phase1-plan.md](history/phase1-plan.md) — Phase 1 MVP（§11.10 は今も有効な知見）
@@ -103,7 +106,7 @@
 - [p3-5-member-console.md](history/p3-5-member-console.md) — メンバー Console UX
 - [console-redesign.md](history/console-redesign.md) — Console UI 刷新ブリーフ
 - [console-redesign-backlog.md](history/console-redesign-backlog.md) — Console UX 刷新の残作業バックログ（実装済）
-- [p3-6-mcp.md](history/p3-6-mcp.md) — MCP（管理面+作業面を一体・E 駆動）実装プラン（◐ 段1=member/drive 完了・ライブ / admin ツール残）
+- [p3-6-mcp.md](history/p3-6-mcp.md) — MCP（管理面+作業面を一体・E 駆動）実装プラン（◐ member/drive＋admin read/write 完了・dangerous 段のみ残）
 - [p3-7-aws-adapter.md](history/p3-7-aws-adapter.md) — P3-7: AWS デプロイ先アダプタ（ECS）実装プラン
 - [p3-9-idle-stop.md](history/p3-9-idle-stop.md) — P3-9: アイドル自動停止（scale-to-zero, 二段構え）
 - [p3-9-showback.md](history/p3-9-showback.md) — P3-9: showback（社内使用量の可視化）実装記録

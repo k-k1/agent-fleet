@@ -53,8 +53,10 @@
 
 **Phase 1 MVP 完了（2026-06-26, `dd2330e`）以降、Phase 2 完了・Phase 3 進行中。** オンプレ 1 台で複数ユーザーが
 相互不可視に並行利用でき（per-user Workspace / AuthGateway / ネットワーク分離 / at-rest 暗号化）、Phase 3 の
-プロダクト化は P3-1〜P3-6 + Console 全面刷新（React+Vite）まで完了。**次の起点 = P3-7（AWS アダプタ）以降**
-（[roadmap](roadmap.md)）。フェーズごとの実装記録は [history/](history/)、確定事項の背景は decisions/。
+プロダクト化は P3-1〜P3-7 + Console 全面刷新（React+Vite）まで実装済み（P3-7/P3-10 の実装プランは history/ 入り）。
+**P3-10（パッケージング）は dist 配布の publish 運用中**（[docs/35](35-packaging.md)・リリースノートは
+`deploy/release/notes/`）。残 = P3-8（専用分離）・P3-9 の成熟項目（観測 / egress 統制）・P3-10 の完了ゲート
+（第 2 デプロイ E2E）（[roadmap](roadmap.md)）。フェーズごとの実装記録は [history/](history/)、確定事項の背景は decisions/。
 
 - **仕様を知りたい** → [dev/](dev/README.md): アーキテクチャ(01) / Console(02) / Control Plane(03) / Agent(04) /
   API 契約(05) / データモデル(06) / セキュリティ(07) / 外部連携(08) / デプロイ(09) / 開発作法(10) / コードマップ(90)。
@@ -62,8 +64,8 @@
 - **恒久的に有効な検証知見**: `/login` は localhost 非依存（`redirect_uri=platform.claude.com/oauth/code/callback`）で
   ヘッドレス/リモートに無条件成立、認証と onboarding は別物、`/login` URL 折返し復元 →
   詳細は [dev/08 §8.5](dev/08-integrations.md) と [history/phase1-plan §11.10](history/phase1-plan.md#1110-実装結果と実運用の知見phase-1-完了)。
-- **進行中の設計**: egress 統制（[docs/20](20-container-audit-egress.md)・enforce 未了）、Go 内部リファクタ
-  （別ブランチ `refactor/agent-control-plane-refactor`・[dev/90](dev/90-code-map.md) が衝突面）。
+- **進行中の設計**: egress 統制（[docs/20](20-container-audit-egress.md)・enforce 未了）。Go 内部リファクタ
+  （[docs/23](23-go-refactor.md)）は develop マージ済・残 = ④契約の型化のみ。
 
 ## 5. 動作確認の最短手順
 
@@ -78,14 +80,16 @@ curl -s http://127.0.0.1:8099/api/workspace            # {"state":"running"|"sto
 # 旧来の手動経路: 端末で claude → /login（⧉ sign-in URL でURL取得）も併用可
 ```
 
-利用者視点の詳しい手順は [guide/member/01-first-day.md](guide/member/01-first-day.ja.md)。
+利用者視点の詳しい手順は [guide/member/01-first-day.ja.md](guide/member/01-first-day.ja.md)。
 
 ## 6. コミット規約
 
 **正は [CONTRIBUTING.md](../CONTRIBUTING.md#commits--prs)**（形式・日本語・帰属トレーラ）。
 このホスト固有の要点だけ:
 
-- `main` 直 push で運用。GitHub リモート = `git@github.com:k-k1/agent-fleet.git`。
+- **develop がトランク**（日常開発は develop へ直 push / 随時マージ・「完了」= develop マージ済。
+  `main` は develop→main の PR トレインのみで更新——[CONTRIBUTING](../CONTRIBUTING.md#commits--prs) 参照）。
+  GitHub リモート = `git@github.com:k-k1/agent-fleet.git`。
 - コミットは `<type>(<scope>): 日本語要約` ＋末尾に**実行モデル名**の共同著者を付ける
   （Claude Code は `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>` 等、版に合わせる。
   Codex/opencode は実行モデルで帰属）。旧 `Claude-Session:` 行は廃止。

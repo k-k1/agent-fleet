@@ -64,7 +64,7 @@ SetTenantLimits(ctx, tenantID, limitsJSON string) error
 - `PUT /api/admin/user-limits` `{user_key, tenant_slug, max_sessions, disk_gb}` → membership 解決 → `PutUserLimit`。
 - 取得は `GET /api/tenants` 拡張 or `GET /api/admin/...`（P3-5 で UI 化、ここは最小）。
 
-## 16.6 検証（OOM 注意・[[host-oom-fleet-risk]]）
+## 16.6 検証（OOM 注意 — ホストのメモリ枯渇は稼働中フリート全体を巻き込む）
 
 1. **無制限既定**: 運用者は limits 未設定 → Start / session 作成が従来どおり。state 同期で DB state=running。
 2. **workspace クォータ**: throwaway テナントに `max_workspaces=1` + 2 メンバー → 1人目 Start OK・running 記録、2人目 Start → `429`。

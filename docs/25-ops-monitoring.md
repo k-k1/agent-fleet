@@ -152,18 +152,18 @@ CP には interval ジョブの基盤（reaper / usage サンプラー等）が�
 | Phase | 内容 | 新規実装 | 規模感 |
 |---|---|---|---|
 | **0. PoC（実装ゼロ）** | workspace の対話セッションで `claude mcp add` + トークン手貼りし、PagerDuty/Grafana/CloudWatch MCP で UC1/UC2 を実地検証。guide/ に手順メモ | なし（docs のみ） | 数時間〜。**まずこれで価値を確かめる** |
+| **1. 最小の製品化** | Connections に ops kind 追加 + テナント MCP カタログ + `chatMCPArgs` のカタログ駆動化 + ビルトイン SRE アシスタント + §4.5 の権限明文化 | Agent: connections/chat_providers/assistants、CP: カタログ CRUD、Console: 設定 UI | 中。既存 seam に沿う |
+| **2. 通知と導線** | Slack outbound（CP-native、セッション状態通知含む）+ インシデント起点の会話テンプレ | CP: notify、Console: 導線 | 小〜中 |
+| **3. イベント駆動** | webhook ingress（PagerDuty v3 署名）→ memo キュー + 通知。自動初動は ops ボット identity の ADR 決着後に | CP: /hooks、脅威モデル追記 | 中〜大（身元問題込み） |
+| **4. 発展** | スケジュールレポート / write 系 runbook（承認ゲート付き）/ Teams / hosted MCP 許可制 | — | 需要を見て |
 
-Phase 0 は 2026-07-12 に着手済み。手順は [guide/member/10-ops-mcp-poc.md](guide/member/10-ops-mcp-poc.ja.md)。dev コンテナでの事前検証結果:
+Phase 0 は 2026-07-12 に着手済み。手順は [guide/member/10-ops-mcp-poc.ja.md](guide/member/10-ops-mcp-poc.ja.md)。dev コンテナでの事前検証結果:
 - mcp-grafana v0.17.1（Go 単一バイナリ 49MB）は Grafana 未接続・ダミートークンでも起動し tools/list 応答（遅延接続）。既定 65 ツール、`-disable-write -disable-admin` で 52 ツール・create/update/delete/install 系ゼロを実測。Grafana データソース経由の CloudWatch/Athena クエリツールも同梱（カテゴリ別 disable 可）。
 - PagerDuty 公式 self-host は PyPI `pagerduty-mcp`（`uvx pagerduty-mcp`、env `PAGERDUTY_USER_API_KEY`）で**既定 read-only**、write は `--enable-write-tools` 明示。hosted（mcp.pagerduty.com）は既定で write も出るため PoC では非推奨。
 - awslabs CloudWatch は `uvx awslabs.cloudwatch-mcp-server@latest` + `AWS_PROFILE`（SSO チェーン = 既存 ssm 接続と同じ資格で追加秘密なし）。
 - initMAX zabbix は systemd 常駐のチーム共有型（remote HTTP + config.toml の `read_only = true`）で個人 PoC には重い。stdio の軽量版で雰囲気確認 → 本採用評価時に initMAX。
 - PagerDuty は**実アカウントで疎通済み**（2026-07-12、dev コンテナ）: `uvx pagerduty-mcp` 1.28.1 を `claude mcp add -s user` で登録、read 系 63 ツール、`list_incidents` で実データ（Zabbix 連携サービスのインシデント）取得を確認。認証は env `PAGERDUTY_USER_API_KEY` のみで成立。
 - 残タスク = Grafana / CloudWatch の実環境接続と、実インシデントでの UC1/UC2 壁打ち評価（新規 claude セッションで pagerduty ツールが使える状態になっている）。※PyPI 遮断は一時的だった（uvx はこの dev コンテナでも動作）。
-| **1. 最小の製品化** | Connections に ops kind 追加 + テナント MCP カタログ + `chatMCPArgs` のカタログ駆動化 + ビルトイン SRE アシスタント + §4.5 の権限明文化 | Agent: connections/chat_providers/assistants、CP: カタログ CRUD、Console: 設定 UI | 中。既存 seam に沿う |
-| **2. 通知と導線** | Slack outbound（CP-native、セッション状態通知含む）+ インシデント起点の会話テンプレ | CP: notify、Console: 導線 | 小〜中 |
-| **3. イベント駆動** | webhook ingress（PagerDuty v3 署名）→ memo キュー + 通知。自動初動は ops ボット identity の ADR 決着後に | CP: /hooks、脅威モデル追記 | 中〜大（身元問題込み） |
-| **4. 発展** | スケジュールレポート / write 系 runbook（承認ゲート付き）/ Teams / hosted MCP 許可制 | — | 需要を見て |
 
 Phase 1 の判断材料は Phase 0 の実地検証。**Phase 0 は現行 main のまま今日から実施できる**（唯一の前提は監視系エンドポイントへの outbound が通ること）。
 

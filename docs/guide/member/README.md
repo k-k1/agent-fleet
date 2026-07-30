@@ -95,7 +95,7 @@ The main area can be split into multiple panes arranged side by side
 
 - **Workspace** — your own private work environment. It holds your cloned repositories and your work. Its contents survive a stop (behind the scenes it runs as a dedicated container).
 - **Session** — a unit of conversation, working location, and execution state corresponding to one task. It may or may not have a terminal.
-- **Agent** — a CLI coding AI such as claude / codex / opencode / GitHub Copilot.
+- **Agent** — a CLI coding AI such as claude / codex / opencode / GitHub Copilot / Cursor / Kiro.
 - **Tenant** — a group such as a department. Your workspaces are separated per tenant (the default is a single tenant).
 - **worktree** — a git mechanism that carves out an independent working folder per branch from a single repository. Launching a session creates one by default, so multiple tasks can run in parallel without interfering with each other ([02](02-sessions.md) / [04](04-git.md)).
 

@@ -2,11 +2,11 @@
 
 [English](10-ops-mcp-poc.md) | 日本語
 
-## PagerDuty / Grafana / CloudWatch は「運用」タブから接続できます（推奨）
+## PagerDuty / Grafana / CloudWatch は「運用・監視」タブから接続できます（推奨）
 
 **PagerDuty・Grafana・CloudWatch は製品機能として組み込み済み**です（docs/25 Phase 1、要イメージ再ビルド）。手作業の PoC 手順（後述）より、まずこちらを使ってください。
 
-1. **設定 > 運用** タブを開き、各カードに接続情報を入れて「接続」:
+1. **設定 > 運用・監視** タブを開き、各カードに接続情報を入れて「接続」:
    - **PagerDuty**: API キー。**読み取り専用キー**を推奨します（PagerDuty の Integrations > API Access Keys で「Read-only」を選択）。EU アカウントはトグルをオンにしてください。
    - **Grafana**: インスタンス URL と**サービスアカウントトークン**（Viewer 権限を推奨）。セルフホスト / Grafana Cloud / **Amazon Managed Grafana** のいずれも可（AMG は URL に workspace endpoint を指定。トークンの発行方法と 30 日期限は後述の AMG 節を参照）。
    - **CloudWatch**: プルダウンから **SSM 接続のプロファイルを選ぶ**だけ（リージョンは任意で上書き可）。**秘密の入力はありません** — プロファイルの SSO 設定（非秘密）から専用の設定ファイルを生成し、コンテナ内の AWS 資格をそのまま読みます。SSO ログインがまだ／期限切れの場合はツールがエラーになるので、該当の SSM セッションを一度開くか、ターミナルで `AWS_CONFIG_FILE=~/.aws/af-ops/cloudwatch.config aws sso login --profile プロファイル名` を実行してください。自分で `~/.aws` を管理している人は「手動入力」でプロファイル名を直接指定できます。
@@ -14,13 +14,13 @@
 3. チャットで **「SRE アシスタント」** を選んで新しい会話を開始。「今開いている PagerDuty のインシデントを一覧して経緯をまとめて」「このサービスの直近 1 時間のエラーレートを Grafana で見て」「CloudWatch でこのロググループの ERROR を分析して」のように聞くと、実データを確認しながら状況整理・原因の仮説出し・対外報告の草稿を手伝います（読み取り専用。ack/resolve はしません）。
 4. 接続の変更は**次のチャット送信から反映**されます（ワークスペースの再起動は不要）。
 
-Zabbix など他ツールは、下の PoC 手順で手動接続できます（順次「運用」タブに取り込み予定）。
+Zabbix など他ツールは、下の PoC 手順で手動接続できます（順次「運用・監視」タブに取り込み予定）。
 
 ---
 
 ## （PoC）その他ツールを手動で繋ぐ 🧪
 
-**実験的な手順です**（[docs/25 サービス運用向け拡張](../../25-ops-monitoring.md) の Phase 0）。まだ「運用」タブに無いツール（CloudWatch / Zabbix など）や、チャットではなく**ターミナル（CLI）の claude セッション**に繋ぎたい場合の手作業手順です。
+**実験的な手順です**（[docs/25 サービス運用向け拡張](../../25-ops-monitoring.md) の Phase 0）。まだ「運用・監視」タブに無いツール（CloudWatch / Zabbix など）や、チャットではなく**ターミナル（CLI）の claude セッション**に繋ぎたい場合の手作業手順です。
 
 - 対象: ターミナル（CLI）の claude セッション。**チャット（アシスタント）には現状 MCP を足せません**（Phase 1 で対応予定）。
 - 前提: ワークスペースから各監視ツールのエンドポイントへ outbound が通ること。PyPI 系は `uvx` の初回取得で必要。
@@ -113,7 +113,7 @@ claude mcp add -s user cloudwatch \
   -- ~/.local/bin/uvx awslabs.cloudwatch-mcp-server@latest
 ```
 
-※ チャットの SRE アシスタントで使うだけなら、この手順は不要です（冒頭の「運用」タブから接続してください）。この手順はターミナル（CLI）の claude セッションに繋ぎたい場合用です。
+※ チャットの SRE アシスタントで使うだけなら、この手順は不要です（冒頭の「運用・監視」タブから接続してください）。この手順はターミナル（CLI）の claude セッションに繋ぎたい場合用です。
 
 Athena は (a) まず素の aws CLI（追加設定ゼロ、claude が Bash で叩ける）、(b) 本格的には `uvx awslabs.aws-dataprocessing-mcp-server@latest`。PoC では (a) で十分なことが多い。
 

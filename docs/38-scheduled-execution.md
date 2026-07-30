@@ -1,7 +1,7 @@
 # 38. 定時実行（スケジュール実行）— オペレーターが仕込む cron 型フリート駆動
 
-- 状態: **設計中（本ドキュメントが正本）**。2026-07-22 起票。実装は未着手。
-  採用判断は [decisions/0021](decisions/0021-scheduled-execution.md)。
+- 状態: **実装済（本ドキュメントが正本）**。2026-07-22 起票・設計、以後 v1 コア〜P5 系列まで
+  実装（経緯は §フェーズ）。採用判断は [decisions/0021](decisions/0021-scheduled-execution.md)。
 - ゴール: フリート・オペレーター（`af_write` アシスタント）が「毎朝9時にこのプロンプトで
   claude を回す」「6時間おきに PR をレビューさせる」といった**定時タスクを会話から仕込める**
   ようにする。到来時刻に、必要なら停止中の WS を起こしてセッションを実行し、結果を
@@ -413,7 +413,8 @@ reuse セッションでは driver 切替中 `409 busy_switch` にも遭遇し�
   該当セッションを開く（schedule の agent_kind で chat/terminal を選択）。⑦ **手動 run-now と定時の
   区別**＝`schedule.manual_fire_pending` 列（migrations/0026＋pg/0009）を run-now が立て（`MarkManualFirePending`）、
   fireOne が読んで run 履歴を `trigger_kind`（migrations/0025）に `manual`/`scheduled` で記録し発火時に
-  クリア（`RecordScheduleFire`）。履歴行にトリガーバッジ（手動/定時）を表示。③ の
+  クリア（`RecordScheduleFire`）。履歴行にトリガーバッジ（手動/定時）を表示。⑥ **dist README への
+  追記**＝`deploy/release/dist-repo/README.md`／`README.ja.md` の主要機能に「定時実行」節を追加。③ の
   `sch_98968564…` は状態確認依頼（実フリート DB は当環境から触れないためオペレーター会話で
   `list_schedules` する）。テスト＝CP +2件（manual-fire フラグ set/clear、run session/trigger 往復）
   ＋console read.test +2件（`runStatusLabelKey`/`isManualRun`）。CP 224／console typecheck・vitest 394・

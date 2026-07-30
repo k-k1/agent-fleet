@@ -5,11 +5,11 @@
 ## 22.1 背景と狙い
 
 3 CLI は Workspace イメージに焼かれ（`/usr/local`、root 所有・版固定）、更新はイメージ再ビルドのみ。
-とくに **claude は更新が速く、毎回イメージを出し続けるのは非現実的**（[[agent-fleet-reflect-flow]] の負荷）。
+とくに **claude は更新が速く、毎回イメージを出し続けるのは非現実的**（イメージ再ビルド→再配布→コンテナ再作成という反映フローの負荷）。
 そこで「使う人が自分で最新に保つ」を opt-in で可能にする。ただし版の一貫性は運用者の裁量に置く。
 
 関連: claude 固有の background auto-updater は root 所有ゆえ書けず "auto-update failed" を出していたので、
-別途 `DISABLE_AUTOUPDATER=1` で停止済み（[commit] fix(workspace)）。本機能の更新は**起動時のみ**で mid-session churn を作らない。
+別途 `DISABLE_AUTOUPDATER=1` で停止済み（`319ddd98` fix(workspace): claude の background auto-updater を無効化）。本機能の更新は**起動時のみ**で mid-session churn を作らない。
 
 ## 22.2 採用した仕組み（/usr/local を起動時に in-place 差し替え）
 
