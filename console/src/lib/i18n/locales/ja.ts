@@ -1693,7 +1693,7 @@ export const ja = {
   "mirror.skills_loading": "スキルを読み込み中…",
   "mirror.skills_empty": "このセッションで使えるスキル / コマンドはありません",
   "mirror.skills_no_match": "一致するスキル / コマンドはありません",
-  "mirror.skills_item_hint": "クリックで入力欄へ差し込み・Ctrl/⌘/Alt＋クリックで即送信",
+  "mirror.skills_item_hint": "クリックで入力欄へ差し込み（送信はしない）",
   "mirror.skills_src_user": "ユーザー",
   "mirror.skills_src_cli": "CLI",
   "mirror.skills_src_shared": "共有", // .agents（エージェント横断の共有規約）由来

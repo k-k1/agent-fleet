@@ -2047,6 +2047,11 @@ button.mt-bash-toggle:hover {
 .mirror-skill-item.sel {
   background: color-mix(in srgb, var(--accent) 14%, var(--bg));
 }
+/* 受動表示（引数入力中）: 引数ヒントを見せるだけの一覧。キーボード選択を持たないので
+   選択ハイライトは出ず、代わりにホバーだけがクリック可能さを示す。 */
+.mirror-skills.passive .mirror-skill-item:hover {
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg));
+}
 .mirror-skill-name {
   flex: none;
   font-family: var(--mono, ui-monospace, monospace);
