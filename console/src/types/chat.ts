@@ -3,6 +3,7 @@
 // values (claude/codex) to select the backend provider and its presentation.
 
 import type { SessionKind } from "./session.ts";
+import type { ToolGrant } from "./assistant.ts";
 
 // One "作業過程" item of an assistant turn (docs/19): the narration the model emitted
 // right before it called a tool. Kept alongside the final answer so the UI can show the
@@ -88,10 +89,10 @@ export interface Conversation {
   // A client that reloaded mid-answer uses it to keep the thinking indicator up and
   // poll until the reply lands (the detached turn survives the reload). Never persisted.
   in_progress?: boolean;
-  // Tool grant snapshot ("none" | "af_read" | "af_write"). af_write conversations can
-  // receive server-pushed session reports (docs/30), so ChatView keeps them fresh with
-  // a light poll while the pane is active.
-  tools?: string;
+  // Tool grant snapshot (assistant.ts の ToolGrant と同じ値域; legacy 会話は未設定).
+  // af_write conversations can receive server-pushed session reports (docs/30), so
+  // ChatView keeps them fresh with a light poll while the pane is active.
+  tools?: ToolGrant;
   // Current context fill (chat_usage.go): drives the ContextBar under the chat header.
   context?: ChatContextUsage;
   // Compaction summary waiting to ride the next prompt (docs/33 第2段). Display-only

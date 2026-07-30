@@ -18,11 +18,13 @@ import { t, useLocale } from "../../lib/i18n/index.ts";
 import { coarsePointer } from "../../lib/device.ts";
 
 // The leader + seq keys rendered as a chip sequence, e.g. ⌘K → p → r. `leader` is the
-// live-bound leader chord so a rebind shows through here too.
+// live-bound leader chord so a rebind shows through here too; when the user has unbound
+// it ("") the sequence is unreachable, so a dash stands in for the missing chord (same
+// presentation as basics()).
 function LeaderKeys({ seq, leader }: { seq: string; leader: string }) {
   return (
     <span className="cheat-keys">
-      <Kbd chord={leader} />
+      {leader ? <Kbd chord={leader} /> : <span className="cheat-unbound">—</span>}
       {seq.split(" ").map((k, i) => (
         <Kbd key={i} chord={k} />
       ))}
@@ -69,7 +71,7 @@ export function CheatSheet() {
   const [q, setQ] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
-  const leader = boundChord(APP_LEADER) || "mod+k";
+  const leader = boundChord(APP_LEADER); // "" = user unbound the leader (no fallback — the chord truly doesn't fire)
 
   const close = () => useKeysStore.getState().closeCheat();
   const cancel = () => {

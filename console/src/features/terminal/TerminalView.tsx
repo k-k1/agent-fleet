@@ -206,8 +206,7 @@ export function TerminalView({
   const st = sessionMeta ? stateInfo(sessionMeta) : null;
 
   // Context fill straight off the session (the Agent computes it) — claude only.
-  /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-  const ctxUsage: any = sessionMeta?.context || null;
+  const ctxUsage = sessionMeta?.context || null;
 
   return (
     <div className="termview">
@@ -230,7 +229,7 @@ export function TerminalView({
         )}
         {canMirror && <MirrorToggle mirror={mirror} onToggle={onToggleMirror} running={running} />}
       </header>
-      {ctxUsage && <ContextBar {...(ctxUsage as { read: number; create: number; fresh: number; model?: string; window?: number })} />}
+      {ctxUsage && <ContextBar {...ctxUsage} />}
       <div className="term-body">
         <div className={"terminal" + (disableIme ? " terminal-ime-disabled terminal-shellssm" : "")} ref={ref} />
         {!session && (

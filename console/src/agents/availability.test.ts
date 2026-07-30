@@ -63,6 +63,14 @@ describe("launch gate — per-agent predicates", () => {
   });
 });
 
+describe("repo launch menu", () => {
+  it("offers only kinds that carry the launchableFromRepo cap (registry.ts contract)", () => {
+    // repoLaunchKinds is a hand-ordered list next to the registry — pin the cap so a
+    // future kind can't be added to the menu without actually being repo-launchable.
+    expect(repoLaunchKinds.filter((k) => !AGENTS[k].caps.launchableFromRepo)).toEqual([]);
+  });
+});
+
 describe("display names", () => {
   it("uses the full product name in the launch pickers where it differs from the label", () => {
     expect(kindDisplayName("claude")).toBe("Claude Code");
