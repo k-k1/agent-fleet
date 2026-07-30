@@ -1046,9 +1046,12 @@ func (a mcpAPI) mcpResolveMember(ctx context.Context, tenantID, key string) (Mem
 	if strings.TrimSpace(key) == "" {
 		return Membership{}, Workspace{}, false, fmt.Errorf("user_key required")
 	}
-	ident, err := a.mgr.store.UpsertIdentity(ctx, "", key, "")
+	ident, ok, err := a.mgr.store.GetIdentityByUserKey(ctx, key)
 	if err != nil {
 		return Membership{}, Workspace{}, false, err
+	}
+	if !ok {
+		return Membership{}, Workspace{}, false, fmt.Errorf("%q is not a member of this tenant", key)
 	}
 	mem, ok, err := a.mgr.store.GetMembership(ctx, ident.ID, tenantID)
 	if err != nil {

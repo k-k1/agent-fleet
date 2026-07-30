@@ -312,6 +312,10 @@ type IdentityStore interface {
 	// it never downgrades.
 	UpsertIdentity(ctx context.Context, email, key, roleHint string) (Identity, error)
 	GetIdentityByID(ctx context.Context, id string) (Identity, bool, error)
+	// GetIdentityByUserKey is the READ-ONLY lookup for view paths (admin stats,
+	// admin MCP list tools): unlike UpsertIdentity it neither inserts a row for a
+	// mistyped key nor touches last_login_at.
+	GetIdentityByUserKey(ctx context.Context, key string) (Identity, bool, error)
 }
 
 type MembershipStore interface {

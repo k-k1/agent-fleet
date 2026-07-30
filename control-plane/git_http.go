@@ -2,8 +2,10 @@ package main
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"log"
 	"net/http"
 	"net/http/cgi"
 	"os"
@@ -48,7 +50,7 @@ type gitServerStore interface {
 }
 
 func newGitServerAPI(m *manager, publicBaseURL string) gitServerAPI {
-	return gitServerAPI{memberAuth{m}, m.dataRoot, gitSignKey(m.master32), publicBaseURL, m.store}
+	return gitServerAPI{memberAuth{m}, m.dataRoot, gitSignKey(m.tokenSignMaster()), publicBaseURL, m.store}
 }
 
 // gitBackendPath is the git-http-backend CGI. Debian ships it under git-core;
@@ -68,16 +70,53 @@ func validRepoName(name string) bool {
 	return repoNameRE.MatchString(name) && name != ".git" && !strings.Contains(name, "..")
 }
 
-// gitSignKey derives the token-signing subkey from the deployment master key
-// (same master that seeds AF_SECRET_KEY). In dev (no master) a fixed non-secret
-// key keeps the flow working; the store is plaintext there anyway.
+// gitSignKey derives the token-signing subkey from a deployment master key
+// (same master that seeds AF_SECRET_KEY).
 func gitSignKey(master32 []byte) []byte {
-	if len(master32) == 0 {
-		master32 = []byte("af-dev-git-token-master-not-secret")
-	}
 	mac := hmac.New(sha256.New, master32)
 	mac.Write([]byte("af-git-token-sign/v1"))
 	return mac.Sum(nil)
+}
+
+// tokenSignMaster returns the master the token-signing subkeys (git / memo /
+// schedule / MCP) derive from: the AF_MASTER_KEY digest when configured, else a
+// per-deployment RANDOM dev master — these token faces are authGate-exempt, so
+// the old well-known fixed fallbacks would let anyone who learns a membership id
+// forge a working token.
+func (m *manager) tokenSignMaster() []byte {
+	if len(m.master32) > 0 {
+		return m.master32
+	}
+	return m.devGitTokenMaster()
+}
+
+// devGitTokenMaster loads (or creates once) the random dev-mode signing master at
+// <dataRoot>/git-token-master.key. With no dataRoot (unit tests) or an unwritable
+// one, the key stays in-memory only — dev tokens then rotate across restarts,
+// which is still strictly safer than a fixed public key.
+func (m *manager) devGitTokenMaster() []byte {
+	m.gitDevMasterOnce.Do(func() {
+		path := ""
+		if m.dataRoot != "" {
+			path = filepath.Join(m.dataRoot, "git-token-master.key")
+			if b, err := os.ReadFile(path); err == nil && len(b) >= 32 {
+				m.gitDevMaster = b[:32]
+				return
+			}
+		}
+		b := make([]byte, 32)
+		if _, err := rand.Read(b); err != nil {
+			panic(err) // crypto/rand failure is unrecoverable
+		}
+		if path != "" {
+			_ = os.MkdirAll(m.dataRoot, 0o700)
+			if err := os.WriteFile(path, b, 0o600); err != nil {
+				log.Printf("git: persist dev token master: %v (tokens will rotate on restart)", err)
+			}
+		}
+		m.gitDevMaster = b
+	})
+	return m.gitDevMaster
 }
 
 // mintGitToken returns the deterministic git access token for a membership. The
@@ -212,7 +251,10 @@ func (a gitServerAPI) gitHTTP(w http.ResponseWriter, r *http.Request) {
 	// Path containment: the project root is the tenant's own git tree, so even a
 	// crafted PATH_INFO cannot escape into another tenant (defense in depth over
 	// the slug check). filepath.Join collapses any residual traversal.
-	tenantRoot := filepath.Join(a.dataRoot, "git", filepath.Base(slug))
+	// Use the token tenant's CANONICAL slug for the on-disk tree: the URL slug is
+	// only EqualFold-equal, and a case-variant would address a sibling directory
+	// outside the real repo tree (orphan objects the GC never sees).
+	tenantRoot := filepath.Join(a.dataRoot, "git", filepath.Base(mv.TenantSlug))
 	gitBackendServe(w, r, slug, tenantRoot, membershipID)
 }
 

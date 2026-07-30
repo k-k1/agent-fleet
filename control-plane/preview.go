@@ -37,6 +37,10 @@ func (a previewAPI) proxy(w http.ResponseWriter, r *http.Request, res *resolved)
 	}
 
 	rest := r.PathValue("rest")
+	if unsafeRelayPath(rest) {
+		http.Error(w, "bad preview path", http.StatusBadRequest)
+		return
+	}
 	target := rt.Endpoint() + "/proxy/" + port + "/" + rest
 	if r.URL.RawQuery != "" {
 		target += "?" + r.URL.RawQuery
@@ -62,7 +66,7 @@ func (a previewAPI) proxy(w http.ResponseWriter, r *http.Request, res *resolved)
 		req.Header.Set("X-Forwarded-Proto", forwardedProto(r))
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := agentRelayClient.Do(req)
 	if err != nil {
 		http.Error(w, "workspace agent unreachable (is the workspace running?)", http.StatusBadGateway)
 		return
@@ -71,6 +75,11 @@ func (a previewAPI) proxy(w http.ResponseWriter, r *http.Request, res *resolved)
 
 	for k, vals := range resp.Header {
 		for _, v := range vals {
+			// The previewed app must not (re)issue the Console's own cookies on the
+			// Console origin (af_session fixation / tossing); its other cookies pass.
+			if http.CanonicalHeaderKey(k) == "Set-Cookie" && cpOwnedCookie(v) {
+				continue
+			}
 			w.Header().Add(k, v)
 		}
 	}
@@ -109,6 +118,14 @@ func (a previewAPI) sanitizedHeader(r *http.Request) http.Header {
 		h.Set("Cookie", strings.Join(kept, "; "))
 	}
 	return h
+}
+
+// cpOwnedCookie reports whether a Set-Cookie header line names a cookie the CP
+// itself issues (session / OAuth state) — the ones a previewed app must not forge.
+func cpOwnedCookie(setCookie string) bool {
+	name, _, _ := strings.Cut(setCookie, "=")
+	name = strings.TrimSpace(name)
+	return strings.EqualFold(name, sessionCookie) || strings.EqualFold(name, stateCookie)
 }
 
 // redirect bounces /preview/{port} to /preview/{port}/ so the

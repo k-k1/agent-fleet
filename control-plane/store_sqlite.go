@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"embed"
 	"fmt"
 	"io/fs"
@@ -142,6 +144,9 @@ func (s *sqlStore) migrateMemberships(ctx context.Context) error {
 		aus = append(aus, a)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err // a partial read must not reach the DROP TABLE below
+	}
 
 	type wsRow struct {
 		id, tenant, name, network, dir, port, token, state, created, last, key string
@@ -164,6 +169,9 @@ func (s *sqlStore) migrateMemberships(ctx context.Context) error {
 		wss = append(wss, w)
 	}
 	wrows.Close()
+	if err := wrows.Err(); err != nil {
+		return err // a partial read must not reach the DROP TABLE below
+	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -278,6 +286,10 @@ func (s *sqlStore) getTenant(ctx context.Context, id string) (Tenant, error) {
 }
 
 func (s *sqlStore) UpsertIdentity(ctx context.Context, email, key, roleHint string) (Identity, error) {
+	key, derr := s.disambiguateUserKey(ctx, email, key)
+	if derr != nil {
+		return Identity{}, derr
+	}
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO identity(id, email, user_key, role, status, last_login_at)
 		 VALUES(?, ?, ?, 'user', 'active', ?)
@@ -301,6 +313,48 @@ func (s *sqlStore) UpsertIdentity(ctx context.Context, email, key, roleHint stri
 		Scan(&id.ID, &id.Email, &id.UserKey, &id.Role, &id.Status, &last)
 	id.LastLoginAt = last.String
 	return id, err
+}
+
+// disambiguateUserKey guards against sanitizeUser collisions: user_key is UNIQUE
+// and identity-defining, so two different emails that sanitize to the same key
+// ("a.b@x" vs "a-b@x", or long addresses truncated at 40 chars) would otherwise
+// silently merge into ONE identity — same workspace, same encrypted secrets. When
+// the key's row already belongs to a DIFFERENT email, the newcomer is diverted to
+// a deterministic distinct key (sanitized + short hash of the full email).
+// Existing keys never change, so no data migration is needed.
+func (s *sqlStore) disambiguateUserKey(ctx context.Context, email, key string) (string, error) {
+	if email == "" || key == "" {
+		return key, nil
+	}
+	var existing string
+	err := s.db.QueryRowContext(ctx, `SELECT email FROM identity WHERE user_key=?`, key).Scan(&existing)
+	if err == sql.ErrNoRows {
+		return key, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if existing == "" || strings.EqualFold(existing, email) {
+		return key, nil // same person (or an invite-by-key row being claimed)
+	}
+	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(email))))
+	return key + "-" + hex.EncodeToString(sum[:4]), nil
+}
+
+func (s *sqlStore) GetIdentityByUserKey(ctx context.Context, key string) (Identity, bool, error) {
+	var idn Identity
+	var last sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, email, user_key, role, status, COALESCE(last_login_at,'') FROM identity WHERE user_key=?`, key).
+		Scan(&idn.ID, &idn.Email, &idn.UserKey, &idn.Role, &idn.Status, &last)
+	if err == sql.ErrNoRows {
+		return Identity{}, false, nil
+	}
+	if err != nil {
+		return Identity{}, false, err
+	}
+	idn.LastLoginAt = last.String
+	return idn, true, nil
 }
 
 func (s *sqlStore) GetIdentityByID(ctx context.Context, id string) (Identity, bool, error) {

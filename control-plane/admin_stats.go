@@ -20,9 +20,12 @@ func (a adminAPI) resolveMember(r *http.Request, slug, key string) (mem Membersh
 	if !ok {
 		return Membership{}, Workspace{}, false, &apiError{http.StatusNotFound, "no_tenant", "unknown tenant"}
 	}
-	ident, err := a.mgr.store.UpsertIdentity(ctx, "", key, "")
+	ident, ok, err := a.mgr.store.GetIdentityByUserKey(ctx, key)
 	if err != nil {
 		return Membership{}, Workspace{}, false, internalErr(err)
+	}
+	if !ok {
+		return Membership{}, Workspace{}, false, &apiError{http.StatusNotFound, "no_membership", "not a member"}
 	}
 	mem, ok, err = a.mgr.store.GetMembership(ctx, ident.ID, t.ID)
 	if err != nil {

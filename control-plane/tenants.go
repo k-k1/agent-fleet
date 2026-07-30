@@ -282,7 +282,7 @@ func (a adminAPI) addMembership(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"user_key": key, "tenant": t.Slug, "role": role})
+	writeJSON(w, http.StatusOK, map[string]any{"user_key": ident.UserKey, "tenant": t.Slug, "role": role})
 }
 
 // setTenantLimits (PUT /api/admin/tenants/{slug}/limits) — docs/16 P3-4.
