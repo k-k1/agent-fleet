@@ -40,13 +40,13 @@
 .browser-port { flex: 0 0 54px; }
 .browser-path { flex: 1 1 120px; }
 .browser-port.invalid,
-.browser-path.invalid { border-color: var(--danger); }
+.browser-path.invalid { border-color: var(--del); }
 .browser-console-toggle { flex: none; gap: 4px; white-space: nowrap; }
 .browser-log-badge {
   min-width: 17px;
   padding: 0 4px;
   color: #fff;
-  background: var(--danger);
+  background: var(--del);
   border-radius: 8px;
   font-size: 10px;
   line-height: 16px;
