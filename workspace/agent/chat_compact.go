@@ -132,6 +132,15 @@ func compactNoticeContent(reason, summary string) string {
 // デプロイ毎に上書き可（検証用途含む）。
 const chatCtxAutoCompactPct = 90.0
 
+// chatCtxAutoCompactTokens — 使用率とは独立の**絶対トークン**閾値（超えたら圧縮）。
+// 相対 90% はウィンドウ超過エラーを防ぐゲートで、1M ウィンドウのモデルでは 900k まで
+// 発火しない — が、ターンの単価はコンテキスト量に比例して上がる（resume 駆動の
+// チャットは毎ターン全コンテキストを再読・再キャッシュする。実測 2026-07 の
+// オペレーター会話: 200〜400k を引きずり、cache 書き直しだけで1ターン $1 超）。
+// 品質でなく**費用**を守る閾値なので、ウィンドウ比ではなく絶対量で切る。
+// AF_CHAT_AUTOCOMPACT_TOKENS で上書き可（相対のみに戻したければ大きな値を入れる）。
+const chatCtxAutoCompactTokens = 150_000
+
 // chatAutoCompactThreshold returns the effective auto-compact percentage.
 func chatAutoCompactThreshold() float64 {
 	if v := os.Getenv("AF_CHAT_AUTOCOMPACT_PCT"); v != "" {
@@ -140,6 +149,16 @@ func chatAutoCompactThreshold() float64 {
 		}
 	}
 	return chatCtxAutoCompactPct
+}
+
+// chatAutoCompactTokenThreshold returns the effective absolute-token threshold.
+func chatAutoCompactTokenThreshold() int {
+	if v := os.Getenv("AF_CHAT_AUTOCOMPACT_TOKENS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return chatCtxAutoCompactTokens
 }
 
 // maybeAutoCompact runs the preventive compaction right before a turn when the
@@ -157,7 +176,11 @@ func maybeAutoCompact(ctx context.Context, c *chatConversation, prov chatProvide
 	if !chatAutoCompactEnabled() {
 		return false
 	}
-	if c.Context == nil || c.Context.Pct < chatAutoCompactThreshold() {
+	if c.Context == nil {
+		return false
+	}
+	// 相対（ウィンドウ比 — 超過エラー防止）と絶対（トークン量 — 費用防衛）の OR。
+	if c.Context.Pct < chatAutoCompactThreshold() && c.Context.Tokens < chatAutoCompactTokenThreshold() {
 		return false
 	}
 	if c.PendingHandoff != "" {

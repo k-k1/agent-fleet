@@ -58,6 +58,13 @@ const (
 	mcpErrInvalidParams      = -32602
 )
 
+// mcpSessionOutputTailBytes caps get_session_output at the LAST N bytes of the
+// flattened assistant text (/output?tail= — session_io.go): 約32KiB ≒ 数千〜1万
+// トークン。ツール結果はオペレーター会話のコンテキストに残り続けるため、ここの
+// 上限が以降の全ターンの単価に複利で効く（実測 2026-07: 上限なし時代のオペレーター
+// 会話は 200〜400k トークンを常時引きずった）。
+const mcpSessionOutputTailBytes = 32 << 10
+
 // mcpWriteEnabled gates the write tools. Set once from the `--write` arg before the
 // stdio loop starts; a global is safe because each spawn is a fresh short-lived process
 // serving exactly one chat conversation.
@@ -321,7 +328,7 @@ var mcpStdioTools = []map[string]any{
 	},
 	{
 		"name":        "get_session_output",
-		"description": "指定セッションの端末出力（任意で since バイトオフセット以降のみ）を返す。あるセッションの最近の出力/結果を要約・確認する時に呼ぶ。",
+		"description": "指定セッションの端末出力（任意で since カーソル以降のみ）を返す。あるセッションの最近の出力/結果を要約・確認する時に呼ぶ。長い出力は末尾のみ返す（clipped=true・先頭は省略される — 直近の結果を読むにはそれで足りる。継続的に追う場合は返却された cursor を次回の since に渡す）。",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -1304,9 +1311,12 @@ func mcpStdioCall(req mcpReq) []byte {
 		if a.Name == "" {
 			return mcpToolErr(req.ID, "name（セッション名）が必要です")
 		}
-		path = "/sessions/" + url.PathEscape(a.Name) + "/output"
+		// tail は常時指定（上書き口なし）: ツール結果はオペレーター会話のコンテキスト
+		// に**永続的に**蓄積するので、上限なしの全文を1回返すだけで以降の全ターンが
+		// そのぶん高くつく。直近の結果を読む用途には末尾で足りる（長物は Console で）。
+		path = "/sessions/" + url.PathEscape(a.Name) + "/output?tail=" + strconv.Itoa(mcpSessionOutputTailBytes)
 		if a.Since > 0 {
-			path += fmt.Sprintf("?since=%d", a.Since)
+			path += fmt.Sprintf("&since=%d", a.Since)
 		}
 	case "get_session_usage":
 		path = "/sessions/usage"

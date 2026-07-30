@@ -90,6 +90,36 @@ func TestMCPSendToSessionDoesNotMaskConflictAsSuccess(t *testing.T) {
 	}
 }
 
+func TestMCPGetSessionOutputRequestsTailClip(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.String()
+		_, _ = w.Write([]byte(`{"output":"ok","cursor":3,"clipped":true}`))
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	t.Setenv("AGENT_ADDR", u.Host)
+
+	// tail は常時付く（オペレーターのコンテキスト防衛 — 上書き口なし）。since は併存。
+	args, _ := json.Marshal(map[string]any{"name": "slot01", "since": 7})
+	params, _ := json.Marshal(map[string]any{"name": "get_session_output", "arguments": json.RawMessage(args)})
+	resp := mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params})
+	if want := "/sessions/slot01/output?tail=32768&since=7"; got != want {
+		t.Fatalf("agent path = %q, want %q", got, want)
+	}
+	if !strings.Contains(string(resp), "clipped") {
+		t.Fatalf("MCP response should pass the body through: %s", resp)
+	}
+
+	// since 無しでも tail は付く。
+	args, _ = json.Marshal(map[string]any{"name": "slot01"})
+	params, _ = json.Marshal(map[string]any{"name": "get_session_output", "arguments": json.RawMessage(args)})
+	_ = mcpStdioCall(mcpReq{ID: json.RawMessage(`2`), Params: params})
+	if want := "/sessions/slot01/output?tail=32768"; got != want {
+		t.Fatalf("agent path = %q, want %q", got, want)
+	}
+}
+
 func TestMCPCreateSessionForwardsWorktreeOptions(t *testing.T) {
 	got := make(chan map[string]any, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
