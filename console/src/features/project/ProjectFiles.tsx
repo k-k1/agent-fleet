@@ -24,6 +24,7 @@ import { useFilesStore } from "../files/store.ts";
 import { useReposStore } from "../repos/store.ts";
 import { useFilesFilter } from "./filesFilter.ts";
 import { normQuery } from "./filter.ts";
+import { WorkingCopyLabel } from "./WorkingCopyLabel.tsx";
 import { isContextMenuKey, menuAnchor } from "./contextMenuKey.ts";
 import { stickyAncestors } from "./stickyTree.ts";
 import { chatCreate } from "../chat/api.ts";
@@ -736,6 +737,13 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
           const isSel = r.path === selected;
           const isActiveFile = r.type === "file" && activeFile === r.path;
           const isDir = r.type === "dir";
+          // The working copy this row IS (depth 0 under repos/), if any: it wears
+          // that リポジトリ row's icon, and a worktree also shows its branch —
+          // the folder is "<base>@<slug>" and never says what is checked out.
+          // segPaths[0] survives chain folding (the row name may read "repo/sub").
+          const wc = markRepos && isDir && r.depth === 0
+            ? repos.find((x) => x.name === baseName(r.segPaths[0]))
+            : undefined;
           return (
             <Fragment key={r.path}>
             {searchMode && groupByRepo && (i === 0 || repoOf(displayRows[i - 1].path) !== repoOf(r.path)) && (
@@ -743,6 +751,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
                 <button
                   type="button"
                   className="files-search-group-toggle"
+                  title={repoOf(r.path)}
                   aria-expanded={!collapsedRepos.has(repoOf(r.path))}
                   onMouseDown={(e) => e.stopPropagation()}
                   onClick={() => {
@@ -758,7 +767,10 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
                 >
                   <Icon name={collapsedRepos.has(repoOf(r.path)) ? "chevron-right" : "chevron-down"} />
                   <Icon name="root-folder" />
-                  <span>{repoOf(r.path)}</span>
+                  {/* Same handle as the 変更 view's bands: project + branch. */}
+                  <span className="files-search-group-name">
+                    <WorkingCopyLabel folder={repoOf(r.path)} />
+                  </span>
                   <span className="files-search-group-count">{repoResultCounts.get(repoOf(r.path))}</span>
                 </button>
               </li>
@@ -794,22 +806,21 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
               <span className={isDir ? "fs-dir" : "fs-file" + (isActiveFile ? " active" : "")}>
                 <span className="fs-chev">{isDir ? (isOpen ? "▾" : "▸") : ""}</span>
                 <span className="fs-ic">
-                  {(() => {
-                    if (!isDir) return <FileIcon name={r.name} />;
-                    // Working-copy folders (depth 0 under repos/) wear the same
-                    // icon as their リポジトリ row; segPaths[0] survives chain
-                    // folding (the row name may read "repo/sub").
-                    if (markRepos && r.depth === 0) {
-                      const wc = repos.find((x) => x.name === baseName(r.segPaths[0]));
-                      if (wc) return <Icon name={wc.worktree ? "git-branch" : "root-folder"} className="fi-folder" />;
-                    }
-                    return <DirIcon open={isOpen} />;
-                  })()}
+                  {!isDir ? (
+                    <FileIcon name={r.name} />
+                  ) : wc ? (
+                    <Icon name={wc.worktree ? "git-branch" : "root-folder"} className="fi-folder" />
+                  ) : (
+                    <DirIcon open={isOpen} />
+                  )}
                 </span>
                 <span className="fs-name">
                   {r.name}
                   {r.sub ? <span className="fs-sub"> {r.sub}</span> : null}
                 </span>
+                {/* A worktree's branch, outside .fs-name so the two shrink
+                    independently instead of the name's ellipsis eating it. */}
+                {wc?.worktree && wc.branch ? <span className="fs-branch">{wc.branch}</span> : null}
               </span>
             </li>
             )}

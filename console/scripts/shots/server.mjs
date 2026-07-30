@@ -126,6 +126,7 @@ const re = [
   [/^\/api\/repos\/([^/]+)\/diff$/, (m, q) => fx.diff(LOCALE, q.get("path") || "")],
   [/^\/api\/usage\/series$/, (m, q) => fx.usageSeries(LOCALE, q)],
   [/^\/api\/fs\/list$/, (m, q) => fx.fsList(LOCALE, q.get("path") || "")],
+  [/^\/api\/fs\/tree$/, (m, q) => fx.fsTree(LOCALE, q.get("path") || "")],
   [/^\/api\/fs\/file$/, (m, q) => fx.fsFile(LOCALE, q.get("path") || "")],
   // Egress allowlist verdicts for the MCP tab (docs/48 §9). This deployment HAS the
   // proxy wired and is still log-only, and the corp wiki host is not on the list — the

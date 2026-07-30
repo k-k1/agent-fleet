@@ -255,10 +255,48 @@
 .files-search-group-toggle .codicon {
   font-size: 12px;
 }
+.files-search-group-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
 .files-search-group-count {
   margin-left: auto;
   font-variant-numeric: tabular-nums;
   font-weight: 400;
+}
+
+/* WorkingCopyLabel — プロジェクト + ブランチ, the handle a group of files uses
+   instead of the "<base>@<slug>" folder. Shared by the 変更 view's bands
+   (.chg-repo) and the recursive-search bands above. The project keeps the
+   emphasis; the branch is meta, trims first, and never wraps. */
+.wc-project {
+  flex: 0 1 auto;
+  min-width: 3em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wc-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 1 auto;
+  min-width: 2em;
+  overflow: hidden;
+  font-weight: 400;
+  opacity: 0.85;
+}
+.wc-branch-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wc-branch .codicon {
+  flex: none;
+  font-size: 11px;
 }
 
 /* ツリー/変更 toggle in the ファイル section header. Lives in the left pane, so

@@ -475,6 +475,15 @@ export function fsList(locale, p) {
   return { path: p, entries: [] };
 }
 
+// The ファイル section's tree (GET fs/tree — ProjectFiles). Only "repos" is
+// populated: its depth-0 entries ARE the working copies, which is the level the
+// rail marks with each copy's icon and a worktree's branch. Deeper folders answer
+// empty, enough for a shot of the section itself.
+export function fsTree(locale, p) {
+  if (p !== "repos") return { path: p, entries: [] };
+  return { path: p, entries: repos(locale).map((r) => ({ name: r.name, type: "dir" })) };
+}
+
 export function fsFile(locale, p) {
   return { path: p, content: "" };
 }
