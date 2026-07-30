@@ -261,6 +261,32 @@ func TestHandleSessionInputManagedUnavailable(t *testing.T) {
 
 // opencode's managed driver is registered — /input must reach the ThreadHandle (502
 // runtime_failed when no runtime can start) rather than tmux's not_running.
+func TestClipOutputTail(t *testing.T) {
+	// max<=0 は無効（従来挙動 — クリップしない）。
+	if out, clipped := clipOutputTail("abc", 0); clipped || out != "abc" {
+		t.Fatalf("max=0: (%q, %v)", out, clipped)
+	}
+	// 上限以内はそのまま。
+	if out, clipped := clipOutputTail("abc", 3); clipped || out != "abc" {
+		t.Fatalf("fits: (%q, %v)", out, clipped)
+	}
+	// 超過は末尾 max バイト＋省略マーカー前置。
+	out, clipped := clipOutputTail("0123456789", 4)
+	if !clipped || out != sessionOutputClipNote+"6789" {
+		t.Fatalf("clip: (%q, %v)", out, clipped)
+	}
+	// マルチバイト境界: 「あ」(3バイト) の途中で切れる max はルーン境界まで前進する。
+	out, clipped = clipOutputTail("あいう", 4) // 末尾4バイト = 「う」+「い」の残り1バイト
+	if !clipped || out != sessionOutputClipNote+"う" {
+		t.Fatalf("rune boundary: (%q, %v)", out, clipped)
+	}
+	// 前進の結果すべて落ちても壊れない（マーカーのみ）。
+	out, clipped = clipOutputTail("ああ", 2)
+	if !clipped || out != sessionOutputClipNote {
+		t.Fatalf("all-dropped: (%q, %v)", out, clipped)
+	}
+}
+
 func TestHandleSessionInputManagedOpencodeNeedsRuntime(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))

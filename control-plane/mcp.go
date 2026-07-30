@@ -24,6 +24,12 @@ import (
 // role/scope; tenant is fixed by the token (no client-supplied tenant). Gated by
 // AF_MCP_ENABLED so deployments opt in.
 
+// mcpSessionOutputTailBytes caps get_session_output at the last N bytes
+// (/output?tail= — Agent 側 session_io.go)。値はローカル stdio MCP
+// （workspace/agent/mcp_stdio.go）と同じ 32 KiB: ツール結果は呼び手の LLM 会話に
+// 蓄積するため、上限なしの全文はその会話の以降の全ターンを高くする。
+const mcpSessionOutputTailBytes = 32 << 10
+
 // mcpAPI is the MCP feature handler set (docs/23 残③): the /mcp endpoint plus
 // its tool registry/impls, converted receiver-only from config. Auth is a
 // Bearer PAT (authMCP), never the session gateway; everything it needs hangs
@@ -273,7 +279,7 @@ func memberTools() []mcpTool {
 		},
 		{
 			name: "get_session_output", minScope: scopeRead,
-			desc: "Read the session's assistant output since an optional cursor. Returns {output, cursor, status}; poll until status is idle or question.",
+			desc: "Read the session's assistant output since an optional cursor. Returns {output, cursor, status}; poll until status is idle or question. Long output is clipped to its tail (clipped=true) — pass the returned cursor as since to follow along.",
 			schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -283,9 +289,11 @@ func memberTools() []mcpTool {
 				"required": []string{"name"},
 			},
 			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
-				q := ""
+				// tail: 呼び手は外部 LLM。ツール結果はその会話に蓄積するので、
+				// ローカル stdio MCP と同じ末尾上限を常時指定する（session_io.go）。
+				q := "?tail=" + strconv.Itoa(mcpSessionOutputTailBytes)
 				if s := argStr(args, "since"); s != "" {
-					q = "?since=" + url.QueryEscape(s)
+					q += "&since=" + url.QueryEscape(s)
 				}
 				return agentText(ctx, res.rt, "GET", "/sessions/"+url.PathEscape(argStr(args, "name"))+"/output"+q, nil)
 			},
