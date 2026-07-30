@@ -17,7 +17,8 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { api, rawJSON, raw } from "../../core/api/client.ts";
-import { t, useT } from "../../lib/i18n/index.ts";
+import { t, tMaybe, useT } from "../../lib/i18n/index.ts";
+import { fmtDateTime, DATETIME_FULL } from "../../lib/intl.ts";
 import { cleanupReasonParts } from "./cleanupReason.ts";
 import { groupCandidates, rowLabel, type CleanupCandidate, type CleanupRepoGroup } from "./cleanupGroups.ts";
 import { useSessionUI } from "./ui.ts";
@@ -332,11 +333,13 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
                                 ) : (
                                   <span className="clean-check" aria-hidden="true" />
                                 )}
+                                {/* Agent 由来の動的キーは未知値がありうる — 未検査キャストで生キーを
+                                    出さず、訳が無ければ原文をそのまま見せる。 */}
                                 <span className={"clean-badge clean-badge-" + c.safety}>
-                                  {tr(("clean.safety_" + c.safety) as "clean.safety_safe")}
+                                  {tMaybe("clean.safety_" + c.safety) ?? c.safety}
                                 </span>
                                 <span className={"clean-type clean-type-" + c.type}>
-                                  {tr(("clean.type_" + c.type) as "clean.type_session")}
+                                  {tMaybe("clean.type_" + c.type) ?? c.type}
                                 </span>
                                 {label && (
                                   <span className="clean-target" title={label}>
@@ -344,9 +347,7 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
                                   </span>
                                 )}
                                 <span className="clean-act">
-                                  {c.action
-                                    ? tr(("clean.action_" + c.action) as "clean.action_archive_session")
-                                    : ""}
+                                  {c.action ? (tMaybe("clean.action_" + c.action) ?? c.action) : ""}
                                 </span>
                                 {/* 2行目: 状態バッジ＋補足。1行に押し込んで見切れていた理由列の置き換え。 */}
                                 <span className="clean-reason">
@@ -500,7 +501,9 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
             <ul className="clean-list">
               {archives.map((a) => (
                 <li key={a.id} className="clean-row clean-archive-row">
-                  <span className="clean-arch-when">{(a.at || a.id).replace("T", " ").replace("Z", "")}</span>
+                  {/* at は Agent の RFC3339(UTC) — 生加工では 9 時間ずれるのでロケール日時へ。
+                      at 欠落時の id は日時として不正なので fmtDateTime がそのまま返す。 */}
+                  <span className="clean-arch-when">{fmtDateTime(a.at || a.id, DATETIME_FULL)}</span>
                   <span className="clean-arch-what">
                     {a.reason === "delete_branch"
                       ? tr("clean.archive_reason_delete_branch")

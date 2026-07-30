@@ -56,9 +56,16 @@ export function BrowserPane({ paneId, port, path }: BrowserPaneProps) {
       const rect = stage.getBoundingClientRect();
       controller.setVisible(intersecting && rect.width > 0 && rect.height > 0 && document.visibilityState !== "hidden");
     };
+    // Agent 側は viewport 変更のたびに screencast を stop/start する
+    // （browser_handlers.go の restartScreencastForResize）— ディバイダのドラッグ中に
+    // 毎フレーム送ると再起動連打になるので、サイズが落ち着いてから 1 回だけ送る。
+    let viewportTimer = 0;
     const resize = new ResizeObserver((entries) => {
       const box = entries[0]?.contentRect;
-      if (box && box.width > 0 && box.height > 0) controller.setViewport(box.width, box.height);
+      if (box && box.width > 0 && box.height > 0) {
+        window.clearTimeout(viewportTimer);
+        viewportTimer = window.setTimeout(() => controller.setViewport(box.width, box.height), 100);
+      }
       syncVisibility();
     });
     resize.observe(stage);
@@ -72,6 +79,7 @@ export function BrowserPane({ paneId, port, path }: BrowserPaneProps) {
     if (initialRect.width > 0 && initialRect.height > 0) controller.setViewport(initialRect.width, initialRect.height);
     syncVisibility();
     return () => {
+      window.clearTimeout(viewportTimer);
       resize.disconnect();
       intersection.disconnect();
       document.removeEventListener("visibilitychange", syncVisibility);

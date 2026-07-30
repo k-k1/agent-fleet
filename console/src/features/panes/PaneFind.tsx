@@ -29,6 +29,7 @@ const ignoredSelector = [
   ".pane-grip",
   ".view-head",
   ".minimap",
+  ".cm-gutters", // CodeMirror の行番号ガター — 数字検索で行番号にヒットさせない
   ".cl-gutter",
   ".dv-gutter",
   ".dl-num",
@@ -221,6 +222,9 @@ export function PaneFind({
       const root = rootRef.current;
       const target = event.target;
       if (target instanceof Node && target !== document && target !== document.body && !root?.contains(target)) return;
+      // CodeMirror（編集ペイン）は自前の検索パネル（searchKeymap）を持ち、仮想化で
+      // PaneFind は可視行しか走査できない — エディタ内での Ctrl-F は奪わず素通しする。
+      if (target instanceof Element && target.closest(".cm-editor")) return;
       event.preventDefault();
       event.stopPropagation();
       show();

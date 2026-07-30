@@ -364,7 +364,8 @@
   color: var(--success, #4ec97a);
 }
 .mt-delegation-status.failed {
-  color: var(--danger, #e36d6d);
+  /* --danger は未定義（tokens.css に無い）— 危険色は --del に統一。 */
+  color: var(--del);
 }
 .mt-delegation-meta {
   margin-top: 5px;
@@ -1248,7 +1249,9 @@
 .mirror-mode.on {
   background: var(--accent, #6a7fdb);
   border-color: transparent;
-  color: #fff;
+  /* ダークの --accent は明るいシアン — 白文字ではコントラスト不足になるので
+     アクセント上の文字色トークンを使う。 */
+  color: var(--on-accent);
 }
 /* Keep the chip legible on hover: the global button:hover swaps in a light --btn-h,
    which would leave white .on text unreadable. Pin an accent-tinted hover for each state. */
@@ -1260,7 +1263,7 @@
 .mirror-mode.on:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent, #6a7fdb) 82%, #000);
   border-color: transparent;
-  color: #fff;
+  color: var(--on-accent);
 }
 /* Stop lives in the typing-indicator row now (only while working) — push it to the far
    right of that row. */
@@ -1268,7 +1271,7 @@
   margin-left: auto;
   font-size: 12px;
   padding: 2px 10px;
-  color: var(--danger, #d9534f);
+  color: var(--del);
 }
 .typing-dots {
   display: inline-flex;
@@ -1561,7 +1564,7 @@ button.mt-bash-toggle:hover {
   border-top: 1px solid var(--border);
 }
 .mt-bash-err {
-  color: var(--danger, #e5534b);
+  color: var(--del);
 }
 
 /* A `/`-run slash command / skill invocation (CmdChip): a compact inline chip — the

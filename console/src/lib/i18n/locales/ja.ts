@@ -1788,6 +1788,7 @@ export const ja = {
   "pane.layout": "レイアウト",
   "pane.pane_n": "ペイン{ord}",
   "pane.no_session": "セッション未接続",
+  "pane.empty": "空き",
   "pane.kind.file": "ファイル",
   "pane.kind.scm": "ソース管理",
   "pane.kind.changes": "変更",
@@ -1796,6 +1797,8 @@ export const ja = {
   "pane.kind.doc": "ドキュメント",
   "pane.kind.diff": "差分",
   "pane.kind.chat": "チャット",
+  "pane.kind.read": "朗読ビュー",
+  "pane.kind.browser": "ブラウザ",
 
   // === P2 メモキュー（features/memo/MemoQueueSection.tsx）===
   "memo.common": "共通",

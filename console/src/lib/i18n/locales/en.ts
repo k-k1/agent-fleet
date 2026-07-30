@@ -1749,6 +1749,7 @@ export const en: Record<keyof typeof ja, string> = {
   "pane.layout": "Layout",
   "pane.pane_n": "Pane {ord}",
   "pane.no_session": "No session",
+  "pane.empty": "empty",
   "pane.kind.file": "File",
   "pane.kind.scm": "Source control",
   "pane.kind.changes": "Changes",
@@ -1757,6 +1758,8 @@ export const en: Record<keyof typeof ja, string> = {
   "pane.kind.doc": "Document",
   "pane.kind.diff": "Diff",
   "pane.kind.chat": "Chat",
+  "pane.kind.read": "Reader view",
+  "pane.kind.browser": "Browser",
 
   // === P2 memo queue (features/memo/MemoQueueSection.tsx) ===
   "memo.common": "Common",
