@@ -40,7 +40,7 @@ Finally, click **"Clone"** to fetch it.
 ## The built-in git provider (internal Git)
 
 You can also **host repositories inside the fleet** without using external hosting.
-In **⚙Settings → the "Git hosting" tab**, under "Internal repositories (within the fleet)", just enter
+In **⚙Settings → the "Internal repos" tab**, just enter
 a name and click **"Create"**. No external account is needed, and you can share clone / push with
 members in your tenant (authentication is transparent via an auto-injected token). From the row you
 can copy the clone URL or **"Browse"** the contents (browsing without cloning). Good for

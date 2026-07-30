@@ -110,7 +110,7 @@ curl -s http://127.0.0.1:8099/healthz    # -> ok
 
 ブラウザで `https://<PUBLIC_DOMAIN>` を開き、`SUPER_ADMIN_EMAILS` に列挙したアカウントで
 サインインします。**このメールアドレスが初回ログインで `super_admin`** になります。super_admin は
-Console に歯車の **Admin パネル**が見え、デプロイ全体を管理できます。
+Console に盾アイコンの **Admin パネル**が見え、デプロイ全体を管理できます。
 
 > ログインが常に拒否される場合、許可リストが空の可能性が高いです。3 系統（`AF_OAUTH_ALLOWED_EMAILS`
 > / `_DOMAINS` / `_EMAILS_FILE`）が**すべて空だと全ログインを拒否**します（fail-closed = 安全側に倒す
