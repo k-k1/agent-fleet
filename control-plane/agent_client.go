@@ -6,7 +6,16 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 )
+
+// agentHTTPClient is the CP→Agent client for control-loop calls (scheduler,
+// reaper, session mirror / quota checks). The per-request timeout keeps a
+// stalled Agent from blocking the single scheduler/reaper goroutine forever
+// (those loops run every fire/sweep for ALL users). It is generous enough for
+// the slowest bounded Agent call (an /input confirm wait is ~30s). Streaming
+// endpoints (proxy/preview/browser) must NOT use this client.
+var agentHTTPClient = &http.Client{Timeout: 2 * time.Minute}
 
 // countSessions asks the Agent how many sessions are currently running. The quota
 // caps concurrency, so only live (alive) sessions count — stopped/resumable ones,
@@ -19,7 +28,7 @@ func (m *manager) countSessions(ctx context.Context, rt Runtime) (int, error) {
 	if rt.Token() != "" {
 		req.Header.Set("Authorization", "Bearer "+rt.Token())
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := agentHTTPClient.Do(req)
 	if err != nil {
 		return 0, err
 	}
@@ -55,7 +64,7 @@ func (m *manager) agentSessions(ctx context.Context, rt Runtime) ([]sessionWire,
 	if rt.Token() != "" {
 		req.Header.Set("Authorization", "Bearer "+rt.Token())
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := agentHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
