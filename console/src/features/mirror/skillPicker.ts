@@ -2,7 +2,9 @@
 // MirrorView がトリガ判定・絞り込み・差し込みをここへ委譲する。
 // トリガ文字は kind 依存（claude/opencode/cursor は "/"、codex は "$" メンション —
 // registry の skillTrigger）。起動は「入力の先頭」でだけ成立するとみなし、トリガも
-// 先頭の 1 トークン内にキャレットがある間だけ生きる（空白を打って引数に入ったら閉じる）。
+// 先頭の 1 トークン内にキャレットがある間だけ「補完」として生きる。空白を打って引数へ
+// 進んだ後は args=true の受動トークンになる — リストは引数ヒントの参照用に出したままで、
+// キーボードは横取りしない（MirrorView の skillArgs / skillNavActive を参照）。
 
 import type { SessionSkill } from "../../core/api/client.ts";
 
@@ -11,6 +13,7 @@ export interface SlashToken {
   start: number; // 常に 0（先頭トリガ）— 差し込み置換の左端
   end: number; // 置換の右端（最初の空白 or 文末）
   bare?: boolean; // トリガ文字なしの先頭トークン（ボタン起点の絞り込み。pickerTokenAt 参照）
+  args?: boolean; // キャレットが先頭トークンの右（＝引数を書いている）— 受動表示用
 }
 
 // 全角エイリアス: 日本語 IME では「/」「$」が全角（／・＄）で入るため、トリガとして
@@ -33,21 +36,26 @@ export function hasTriggerHead(text: string, trigger: string): boolean {
 }
 
 // slashTokenAt: draft とキャレット位置から「補完対象のトークン」を返す。
-// 対象外（先頭がトリガでない・キャレットがトークン外）は null。
+// 対象外（先頭がトリガでない・キャレットがトリガより左）は null。キャレットが先頭トークンの
+// 右側（＝引数を書いている）なら args=true を立てて返す — トークン自体（置換範囲）は同じで、
+// 呼び出し側が「補完中」と「引数入力中（ヒント参照だけ）」を区別できるようにするため。
 export function slashTokenAt(text: string, caret: number, trigger = "/"): SlashToken | null {
   const head = triggerHead(text, trigger);
   if (!head) return null;
   const ws = text.search(/[\s]/); // 最初の空白（改行含む）でトークン終了
   const end = ws < 0 ? text.length : ws;
-  if (caret < head.length || caret > end) return null;
-  return { token: text.slice(head.length, end), start: 0, end };
+  if (caret < head.length) return null;
+  const tok: SlashToken = { token: text.slice(head.length, end), start: 0, end };
+  return caret > end ? { ...tok, args: true } : tok;
 }
 
 // pickerTokenAt: ピッカーが実際に絞り込みへ使うトークン。allowBare（＝「/」ボタン起点で
 // 開いている間）は、トリガ文字が無くても先頭 1 トークンをクエリとして受ける — ボタンで
 // 開いてからそのままタイプして絞り込めるように。確定時は applySkillToDraft が同じ規則で
 // そのトークンごと invoke に置換するので、クエリが引数として残る事故は起きない。
-// 先頭の 2 語目以降にキャレットがある（＝引数を書いている）ときは null＝全件のまま。
+// bare（トリガ無し）のときだけ 2 語目以降で null＝全件のまま — トリガが無い下書きの 2 語目
+// 以降は「絞り込みの続き」ではないので、クエリに使わない。トリガ付きは slashTokenAt が
+// args=true の受動トークンを返す（＝引数ヒント表示のためリストは生かす）。
 export function pickerTokenAt(text: string, caret: number, trigger = "/", allowBare = false): SlashToken | null {
   const tok = slashTokenAt(text, caret, trigger);
   if (tok || !allowBare) return tok;
@@ -77,6 +85,16 @@ export function filterSkills(skills: SessionSkill[], query: string): SessionSkil
     .map((x) => x.s);
 }
 
+// exactSkills: 引数入力中（args トークン）の絞り込み。先頭コマンドは打ち終わって確定して
+// いるので、名前が完全一致するネイティブ項目だけを残す — 目的はその 1 件の引数ヒント/説明を
+// 見えたままにすることで、部分一致の別候補まで並べるとただのノイズになる。1 件も一致しない
+// （ただの「/」始まりの文章など）ときは空 = リストを出さない。
+export function exactSkills(skills: SessionSkill[], query: string): SessionSkill[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  return skills.filter((s) => !!s.invoke && s.name.toLowerCase() === q);
+}
+
 // originKind: foreign スキルの出所規約 dir → 表示上の kind。".agents" はエージェント
 // 横断の共有規約でどの kind にも属さない → null（中立の「共有」バッジになる）。
 export function originKind(origin: string | undefined): "claude" | "codex" | null {
@@ -90,6 +108,8 @@ export function originKind(origin: string | undefined): "claude" | "codex" | nul
 // だけ意味を持つので、常に「invoke ＋既存の本文（引数として残す）」に組み立てる。
 // 入力中のトークンは置換して消える（allowBare のときはトリガ無しの先頭トークンも
 // 「絞り込みに使った文字」なので同じく置換される — pickerTokenAt と対で読むこと）。
+// 引数入力中（args トークン）に別のコマンドを選び直した場合も、置換されるのは先頭コマンド
+// だけ — 書いた引数はそのまま右側に残る。
 export function applySkillToDraft(
   draft: string,
   caret: number,
