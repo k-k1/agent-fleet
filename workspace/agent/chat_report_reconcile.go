@@ -78,6 +78,9 @@ type reportSignals struct {
 	// これより強く、申告があっても進行中なら settle しない。
 	SelfReported bool
 	SelfReportAt string // その申告の RFC3339
+	// SelfReportAged は申告から selfReportSettleDelay 以上経っているか。申告**だけ**で
+	// 完了と読むにはこれが要る（下の定数のコメント参照）。
+	SelfReportAged bool
 
 	// Abort は転写の末尾が API エラーで切れている＝ターンが中断で終わった証拠
 	// （docs/47）。claude はこのとき Stop hook を鳴らさないので**マーカーは一切
@@ -153,7 +156,7 @@ func (s reportSignals) idleEvidence() []string {
 	if s.markerIdle() {
 		ev = append(ev, "marker-idle")
 	}
-	if s.SelfReported {
+	if s.SelfReported && s.SelfReportAged {
 		ev = append(ev, "self-report")
 	}
 	if s.Abort {
@@ -178,7 +181,10 @@ func (s reportSignals) evidenceAt() string {
 	if s.Abort && s.AbortAt != "" {
 		return s.AbortAt
 	}
-	return s.SelfReportAt
+	if s.SelfReported && s.SelfReportAged {
+		return s.SelfReportAt
+	}
+	return ""
 }
 
 // evalReportEvidence is the settle predicate（docs/51 §settled/progressed 述語）。
@@ -274,6 +280,9 @@ func collectReportSignals(m session.Meta, since, hintReason, selfAt string) repo
 	s := reportSignals{Stopped: m.StoppedAt != "", HintReason: hintReason}
 	if selfAt != "" && !reportTimeBefore(selfAt, since) {
 		s.SelfReported, s.SelfReportAt = true, selfAt
+		if at, err := time.Parse(time.RFC3339, selfAt); err == nil {
+			s.SelfReportAged = time.Since(at) >= selfReportSettleDelay
+		}
 	}
 	var markerAt time.Time
 	if st, ok := status.Read(sid); ok {
@@ -314,6 +323,21 @@ func collectReportSignals(m session.Meta, since, hintReason, selfAt string) repo
 	}
 	return s
 }
+
+// selfReportSettleDelay is how long a session must stay quiet AFTER calling af_report
+// before that self-report alone may settle the instruction (docs/51 §自己申告).
+//
+// 申告は「意味的完了を直接測る唯一のシグナル」だが、**早呼び**がある: セッションが
+// 「終わった」と申告してから、まだ最終回答を書き続けることがある。実測 2026-07-30
+// sannme2 では申告の 2 分 22 秒後に本物の回答が届いた — その間、転写は 142 秒沈黙して
+// おり（鮮度 TTL 90s を超える）、ペインのスピナーもエージェント表示のせいで読めず、
+// busy 証拠がすべて消えて早すぎる完了報告が出た。
+//
+// 正常系はこの遅延を踏まない: 申告のあとターンが終われば Stop フックが終端マーカーを
+// 書き、そちら（marker-idle）で即座に settle する。この窓が効くのは「マーカーが最後まで
+// 来ない」ケース＝申告が唯一の手掛かりのときだけで、そこでは数分の遅延より誤報告を
+// 避ける方が価値が高い。値は観測された思考ギャップ（142s）に余裕を足したもの。
+const selfReportSettleDelay = 3 * time.Minute
 
 // collectAbortSignal reads the転写末尾 for a turn that died on an API error (docs/47).
 // マーカーを一切見ないのが肝: claude は中断で Stop hook を鳴らさないので、マーカーは
