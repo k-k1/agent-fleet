@@ -224,7 +224,9 @@ function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "cursor" | "kiro"
           <Choice value={row.effort} options={efforts} onChange={(effort) => update({ effort })} />
         </SettingRow>
       )}
-      {desc.caps.planMode && (
+      {/* planMode（チャットの plan トグル）が無くても tuiStartMode（plan 起動）対応なら
+          既定の開始モードを設定できる（cursor/copilot/kiro — 起動 UI のゲートと同型）。 */}
+      {(desc.caps.planMode || desc.caps.tuiStartMode) && (
         <SettingRow label={tr("agents.start_mode")}>
           <Choice
             value={row.startMode}

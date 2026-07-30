@@ -5,13 +5,19 @@ import type { MsgKey } from "./i18n/index.ts";
 // hurting readability. The tint is a mostly-black base with a small amount of a vivid
 // hue mixed in.
 
-// Vivid base color per kind — mirrors the badge colors in styles.css (.kind-tag.kind-*).
-// Keep in sync if the badge palette changes. SSM uses a per-host color instead (its
-// kind base is only the fallback when a session carries no explicit host color).
+// Vivid base color per kind — mirrors tokens.css の --kind-*（dark 側の実値）。端末背景は
+// テーマに関係なく常に暗色（TERM_BASE）なので dark 値へ固定でミックスする。tokens.css の
+// パレットを変えたら必ずここも同期すること（kind-color-css-checklist）。SSM uses a per-host
+// color instead (its kind base is only the fallback when a session carries no explicit
+// host color).
 const KIND_BASE: Record<string, string> = {
   claude: "#e0a45e",
   codex: "#4ec97a",
-  opencode: "#b07cf2",
+  cursor: "#d96ba1",
+  agy: "#4285f4",
+  kiro: "#a371f7",
+  copilot: "#7d8590",
+  opencode: "#aab4be",
   shell: "#46c9d0",
   ssm: "#6d8bf5",
 };

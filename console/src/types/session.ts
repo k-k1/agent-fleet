@@ -4,7 +4,7 @@
 // and capabilities all derive from it via the agent registry (src/agents/registry).
 //
 // NOTE: this session `kind` is a DIFFERENT axis from a *pane's* kind (which VIEW
-// renders — terminal/file/scm/doc/diff, see types/layout PaneKind). Keep distinct.
+// renders — terminal/file/scm/doc/diff, see layout/types PaneContent). Keep distinct.
 
 export type SessionKind = "claude" | "codex" | "cursor" | "copilot" | "kiro" | "opencode" | "agy" | "shell" | "ssm";
 

@@ -32,7 +32,7 @@ import { langFor, imageFormat } from "../../lib/filemeta.ts";
 import { focusPaneContent, focusRegion } from "./focus.ts";
 import { api, apiJSON } from "../../core/api/client.ts";
 import { toast } from "../../ui/toast.ts";
-import { t } from "../../lib/i18n/index.ts";
+import { t, getLocale } from "../../lib/i18n/index.ts";
 import { popoutMode } from "../../lib/popoutMode.ts";
 import { canPopout, openPanePopout } from "../panes/popout.ts";
 
@@ -142,6 +142,9 @@ async function toggleChatNotify(kind: "discord" | "slack"): Promise<void> {
     fullText: !!st.fullText,
     mirrorInput: st.mirrorInput !== false,
     mentionUserId: st.mentionUserId || "",
+    // lang は非ポインタ扱いで、省略すると保存値が既定（日本語）へ戻る — 接続カードと
+    // 同じく現ロケールを毎回載せる（通知言語は Console の表示言語に追随する仕様）。
+    lang: getLocale(),
     notifyOff: wasOn, // flip: on → off, off → on
   });
   if (res && res.error) {

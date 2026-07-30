@@ -789,11 +789,17 @@ export function WsBar() {
   // harmlessly (startWs is only re-fired from a genuinely stopped state).
   const [startQueued, setStartQueued] = useState(false);
   useEffect(() => {
-    if (startQueued && running) {
+    if (!startQueued) return;
+    if (running) {
       setStartQueued(false);
       openStart();
+    } else if (!busy) {
+      // 起動失敗・外部停止などで stopped/none/unknown に落ち着いた: running には
+      // 二度と遷移しないので、ここで解除しないと はじめる がスピナーのまま固着する。
+      // （クリック直後は start() が同バッチで "starting…" を積むため誤解除しない。）
+      setStartQueued(false);
     }
-  }, [startQueued, running, openStart]);
+  }, [startQueued, running, busy, openStart]);
   const onStart = async () => {
     if (running) {
       openStart();
@@ -1025,7 +1031,9 @@ export function WsBar() {
           <button onClick={openBrowserPane} disabled={!running || !browserTarget(Number(port.trim()), previewPath.trim())}>
             {tr("wsbar.preview.open_pane")}
           </button>
-          <button onClick={openPreview} disabled={!running || !port.trim()}>
+          {/* openPreview と同じ browserTarget 検証で無効化 — 範囲外/7700 ポートで
+              「押せるのに無反応」にならないように（ペインで開く ボタンと同型）。 */}
+          <button onClick={openPreview} disabled={!running || !browserTarget(Number(port.trim()), "/")}>
             {tr("wsbar.preview.open_light")}
           </button>
         </div>

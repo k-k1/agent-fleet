@@ -66,13 +66,39 @@ function persist(layout: Layout): void {
   }
 }
 
+// Divider drags commit every pointermove (setColRatios/setRowRatio), which would mean
+// dozens of JSON.stringify + storage writes per second. Debounce the persist on the
+// trailing edge; the timer reads the LATEST store state when it fires (never a stale
+// capture — a tenant switch mid-debounce just re-persists the new tenant's layout,
+// a harmless duplicate). pagehide/beforeunload flush the pending write so closing or
+// reloading the tab right after a drag can't lose the layout.
+let persistTimer: number | null = null;
+function schedulePersist(): void {
+  if (persistTimer != null) window.clearTimeout(persistTimer);
+  persistTimer = window.setTimeout(() => {
+    persistTimer = null;
+    persist(useLayoutStore.getState().layout);
+  }, 250);
+}
+function flushPersist(): void {
+  if (persistTimer == null) return;
+  window.clearTimeout(persistTimer);
+  persistTimer = null;
+  persist(useLayoutStore.getState().layout);
+}
+// bare-node のテスト shim は window≒globalThis で addEventListener を持たないため関数チェック。
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+  window.addEventListener("pagehide", flushPersist);
+  window.addEventListener("beforeunload", flushPersist);
+}
+
 export const useLayoutStore = create<LayoutStore>((set, get) => {
   const commitUnchecked = (next: Layout, push = true): void => {
     const cur = get().layout;
     if (next === cur) return; // ops returned the input — a no-op
     if (push && JSON.stringify(next) === JSON.stringify(cur)) return; // no dup history entry
     set({ layout: next });
-    if (get().hydrated) persist(next);
+    if (get().hydrated) schedulePersist();
     if (push) {
       try {
         history.pushState({ __af: true, layout: next }, "");
@@ -119,13 +145,13 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
       const destroyed = dirtyPanesDestroyedByLayout(cur, l);
       if (destroyed.length === 0) {
         set({ layout: l });
-        if (get().hydrated) persist(l);
+        if (get().hydrated) schedulePersist();
         return;
       }
       void confirmDirtyNavigation("history", destroyed).then((proceed) => {
         if (proceed) {
           set({ layout: l });
-          if (get().hydrated) persist(l);
+          if (get().hydrated) schedulePersist();
         } else {
           // popstate already moved the browser cursor. Restore the current layout as
           // a fresh entry so Cancel also cancels the visible navigation.

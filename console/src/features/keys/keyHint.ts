@@ -3,6 +3,7 @@
 // binding. e.g. keyHint("pane.splitRight") → "⌘K P R" (mac) / "Ctrl+K P R".
 // hintSuffix wraps it in the parenthesized form apps append to a title string.
 import { isMac } from "../../lib/device.ts";
+import { getLocale } from "../../lib/i18n/index.ts";
 import { parseChord } from "../../lib/keys/chords.ts";
 import { effectiveCommands, boundChord, APP_LEADER } from "./bindings.ts";
 
@@ -29,8 +30,11 @@ export function keyHint(id: string): string | null {
   return null; // no direct key and (if it had one) the user unbound it
 }
 
-/** "（<hint>）" for appending to a button title, or "" when the command has no key. */
+/** "（<hint>）" for appending to a button title, or "" when the command has no key.
+ * The parens follow the locale: full-width（）for Japanese, " (…)" for English —
+ * a hardcoded 全角括弧 would leak into English titles like "Toggle…（Ctrl+K W B）". */
 export function hintSuffix(id: string): string {
   const h = keyHint(id);
-  return h ? `（${h}）` : "";
+  if (!h) return "";
+  return getLocale() === "ja" ? `（${h}）` : ` (${h})`;
 }

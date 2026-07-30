@@ -487,7 +487,10 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
             {(() => {
               const a = agentOf(kind);
               const showEffort = a.caps.effort && (a.managedDriver || a.caps.tuiEffort);
-              const showStartMode = a.caps.planMode && (a.managedDriver || a.caps.tuiStartMode);
+              // planMode はチャットの plan トグル（planCycleKey）用の cap。cursor/copilot/kiro は
+              // planMode:false でも tuiStartMode:true（起動コマンド/driver が plan 起動対応 —
+              // 各 program.go / driver.go 実装済み）なので、起動時モード選択はどちらかで出す。
+              const showStartMode = (a.caps.planMode || a.caps.tuiStartMode) && (a.managedDriver || a.caps.tuiStartMode);
               if (!showEffort && !showStartMode) return null;
               return (
                 <div className="ui-field-row">

@@ -19,9 +19,12 @@ export function useRetryLoad(load: (signal: AbortSignal) => Promise<boolean>, de
     let timer = 0;
     let tries = 0;
     let settled = false;
+    let inFlight = false; // a load() is awaiting — onVis must not start a second chain
     const run = () => {
+      inFlight = true;
       load(ac.signal)
         .then((done) => {
+          inFlight = false;
           if (ac.signal.aborted) return;
           if (done) {
             settled = true;
@@ -33,6 +36,7 @@ export function useRetryLoad(load: (signal: AbortSignal) => Promise<boolean>, de
         })
         .catch(() => {
           // load owns its error handling; a stray throw shouldn't wedge the loop — retry.
+          inFlight = false;
           if (ac.signal.aborted) return;
           const delay = Math.min(5000, 700 * 2 ** Math.min(tries, 3));
           tries++;
@@ -40,7 +44,10 @@ export function useRetryLoad(load: (signal: AbortSignal) => Promise<boolean>, de
         });
     };
     const onVis = () => {
-      if (!document.hidden && !ac.signal.aborted && !settled) {
+      // Skip while a load is already in flight: re-entering run() here would fork a
+      // second retry chain (both settle and each schedules its own timer). The
+      // in-flight load schedules the next attempt itself, so nothing is lost.
+      if (!document.hidden && !ac.signal.aborted && !settled && !inFlight) {
         tries = 0;
         window.clearTimeout(timer);
         run();
