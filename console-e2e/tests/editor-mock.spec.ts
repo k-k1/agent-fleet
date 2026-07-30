@@ -91,7 +91,10 @@ test("CodeMirror保存・競合・dirty navigation guard・ARIA", async ({ page 
         json: { path: "mock.txt", size: Buffer.byteLength(disk), revision: revision(disk) },
       });
     }
-    return route.fulfill({ json: {} });
+    // 明示的にモックした path 以外は空 200 で握り潰さない — abort で失敗させ、
+    // モック側/アプリ側の path タイポや API 変更を検知する。未知 API はアプリの
+    // リトライ経路に乗るだけで、このテストが観測する fileview には影響しない。
+    return route.abort();
   });
   await page.addInitScript(() => {
     sessionStorage.setItem("af.layout2..", JSON.stringify({
@@ -167,6 +170,11 @@ test("CodeMirror保存・競合・dirty navigation guard・ARIA", async ({ page 
     delete (window as unknown as { __afUpdating?: boolean }).__afUpdating;
     return { normal, whileUpdating };
   });
+  // __afUpdating（版更新リロードの印）を読むのはターミナルの beforeunload ガード
+  // （TerminalView）だけで、エディタの dirty ガードは更新中でも未保存編集を守り
+  // 続けるのが仕様（reloadForUpdate は markUpdating の前に dirty guard モーダルで
+  // 決着させる）。whileUpdating: true はその「エディタ側は __afUpdating を無視
+  // する」を固定するアサート。
   expect(unloadPrevented).toEqual({ normal: true, whileUpdating: true });
   disk = "remote\n";
   await page.keyboard.press("Control+S");
