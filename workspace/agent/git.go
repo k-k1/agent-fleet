@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -615,6 +616,116 @@ func branchNameStatus(dir, name string) (local, remote bool) {
 	return
 }
 
+// worktreeBranches maps a branch name to the working copy that has it checked out,
+// for every worktree of dir's repository EXCEPT dir itself.
+//
+// git allows a branch to be checked out in only ONE worktree at a time — both
+// `git checkout X` and `git worktree add … X` refuse with
+// "fatal: 'X' is already checked out at <path>" (verified). Only two things get
+// past that: a detached checkout (holds no branch ref, so it never lands in this
+// map) and the explicit --ignore-other-worktrees escape hatch, which we never use
+// because two working copies sharing one branch ref silently revert each other's
+// commits. Knowing the occupancy UP FRONT lets the pickers disable those targets
+// and offer to open the occupying copy, instead of surfacing git's raw fatal after
+// a launch has already started creating directories.
+//
+// Best-effort: an unreadable worktree list yields an empty map, i.e. nothing is
+// blocked and git's own refusal remains the backstop.
+func worktreeBranches(dir string) map[string]string {
+	out, err := gitx.Run(dir, "worktree", "list", "--porcelain")
+	if err != nil {
+		return nil
+	}
+	self := realPath(dir)
+	m := map[string]string{}
+	cur := ""
+	for _, ln := range strings.Split(out, "\n") {
+		ln = strings.TrimSpace(ln)
+		switch {
+		case strings.HasPrefix(ln, "worktree "):
+			cur = strings.TrimSpace(strings.TrimPrefix(ln, "worktree "))
+		case strings.HasPrefix(ln, "branch "):
+			name := strings.TrimPrefix(strings.TrimSpace(strings.TrimPrefix(ln, "branch ")), "refs/heads/")
+			if name == "" || cur == "" || realPath(cur) == self {
+				continue // unnamed, or dir itself — that's "current", not "occupied"
+			}
+			m[name] = cur
+		}
+	}
+	return m
+}
+
+// writeBranchInUse answers a request for a branch that is live in another working
+// copy. Beyond the stable code it carries that copy's FOLDER name, because the only
+// useful next step is "open it" — a bare failure leaves the user guessing which of
+// their worktrees holds the branch.
+func writeBranchInUse(w http.ResponseWriter, branch, path string) {
+	folder := filepath.Base(path)
+	httpx.WriteJSON(w, http.StatusConflict, map[string]any{"error": map[string]string{
+		"code":     errCodeBranchInUse,
+		"message":  fmt.Sprintf("branch %q is already checked out in working copy %q", branch, folder),
+		"worktree": folder,
+	}})
+}
+
+// worktreeSyncTimeout bounds each NETWORK step of an existing-branch worktree launch
+// (the pre-create fetch and the post-create fast-forward). Both are best-effort, so a
+// slow or unreachable remote degrades to "launched, possibly not at the newest tip"
+// instead of wedging the create request past its client deadline.
+const worktreeSyncTimeout = 30 * time.Second
+
+// ensureBranchRef makes base resolvable before `git worktree add` runs. A branch
+// pushed after this copy's last fetch exists on the remote but in NO local ref, and
+// worktree add fails outright with "invalid reference" — the user asked to work on a
+// branch that demonstrably exists, so a failed launch is the wrong answer. One bounded
+// fetch fixes it. Skipped when the name already resolves locally or as a remote-tracking
+// ref (the common case), so an ordinary launch pays no network cost.
+func ensureBranchRef(dir, base string) {
+	if base = strings.TrimSpace(base); base == "" {
+		return
+	}
+	if local, remote := branchNameStatus(dir, base); local || remote {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), worktreeSyncTimeout)
+	defer cancel()
+	_ = gitx.CmdContext(ctx, dir, "fetch", "--prune").Run()
+}
+
+// fastForwardWorktree brings a just-created existing-branch worktree up to its
+// upstream tip (git pull --ff-only). "Start work on branch X" means X as it is NOW,
+// not as of this copy's last fetch — without this the session silently begins on a
+// stale checkout, which is the failure the whole existing-branch flow exists to avoid.
+//
+// Best-effort on purpose: --ff-only fails cleanly, and every way it fails (no upstream
+// on a local-only branch, unpushed local commits, real divergence) is a state the user
+// still wants a session in — resolving it is the session's job. A fast-forward that
+// actually moved HEAD re-syncs submodules, whose pinned commits differ per commit.
+func fastForwardWorktree(dir string) {
+	before, _ := gitx.Run(dir, "rev-parse", "HEAD")
+	ctx, cancel := context.WithTimeout(context.Background(), worktreeSyncTimeout)
+	defer cancel()
+	if out, err := gitx.CmdContext(ctx, dir, "pull", "--ff-only").CombinedOutput(); err != nil {
+		// Not an error path — log it so a "why am I behind?" question is answerable.
+		log.Printf("worktree %s: fast-forward skipped: %v: %s", filepath.Base(dir), err, strings.TrimSpace(string(out)))
+		return
+	}
+	if after, _ := gitx.Run(dir, "rev-parse", "HEAD"); after != before {
+		gitSubmodulesUpdate(dir)
+	}
+}
+
+// realPath canonicalizes a path for identity comparison (git prints resolved,
+// absolute worktree paths; our dirs can arrive with symlinks — /home vs a
+// bind-mounted home — or as ".."-laden relatives). Falls back to a lexical clean
+// when the path does not exist.
+func realPath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return filepath.Clean(r)
+	}
+	return filepath.Clean(p)
+}
+
 // gitSubmodulesUpdate fetches/updates submodules of a working copy (after a clone,
 // reuse, or branch switch — the .gitmodules set/commits differ per branch).
 //
@@ -975,6 +1086,10 @@ type branchInfo struct {
 	Date    string `json:"date"`    // last-commit ISO date (display/tooltip)
 	Subject string `json:"subject"` // last-commit subject
 	Current bool   `json:"current"` // currently checked out
+	// WorktreePath is the OTHER working copy that already has this branch checked
+	// out ("" = free). git permits a branch in one worktree only, so the pickers
+	// disable these rows and offer to open that copy instead (see worktreeBranches).
+	WorktreePath string `json:"worktree_path,omitempty"`
 }
 
 func handleRepoBranches(w http.ResponseWriter, r *http.Request) {
@@ -989,8 +1104,12 @@ func handleRepoBranches(w http.ResponseWriter, r *http.Request) {
 // gitBranchInfos lists local branches plus remote-only branches (those without a
 // local counterpart), each with its last-commit time and subject, sorted newest
 // commit first. Remote-only entries use the short branch name (remote prefix
-// stripped) so `git checkout <name>` creates a tracking branch (DWIM).
+// stripped) so `git checkout <name>` creates a tracking branch (DWIM). Every local
+// entry also carries the other worktree holding it, if any, so pickers can rule out
+// a target git would refuse anyway (remote-only names have no local ref, so they are
+// never occupied).
 func gitBranchInfos(dir, current string) []branchInfo {
+	occupied := worktreeBranches(dir)
 	const sep = "\x1f" // unit separator: absent from ref names, dates, and subjects
 	format := strings.Join([]string{
 		"%(refname:short)", "%(committerdate:unix)", "%(committerdate:iso8601)", "%(contents:subject)",
@@ -1028,7 +1147,7 @@ func gitBranchInfos(dir, current string) []branchInfo {
 			unix, _ := strconv.ParseInt(f[1], 10, 64)
 			infos = append(infos, branchInfo{
 				Name: name, Remote: isRemote, Unix: unix, Date: f[2], Subject: f[3],
-				Current: name == current,
+				Current: name == current, WorktreePath: occupied[name],
 			})
 		}
 	}
@@ -1086,6 +1205,14 @@ func handleRepoCheckout(w http.ResponseWriter, r *http.Request) {
 		}
 		if ref == "" || strings.HasPrefix(ref, "-") {
 			httpx.WriteErr(w, http.StatusBadRequest, "bad_ref", "branch/ref is required and must not start with '-'")
+			return
+		}
+		// git would refuse a branch already live in another worktree with a raw fatal.
+		// Answer with the stable code instead, so the Console can point at the copy that
+		// holds it rather than dead-ending on git's message. A sha (detached checkout)
+		// never matches a branch name here, so that path is unaffected.
+		if occ := worktreeBranches(dir)[ref]; occ != "" {
+			writeBranchInUse(w, ref, occ)
 			return
 		}
 		args = []string{"checkout", ref}
