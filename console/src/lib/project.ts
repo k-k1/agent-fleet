@@ -67,6 +67,24 @@ export function orderedRepos(repos: Repo[]): Repo[] {
   return groupedRepos(repos).flat();
 }
 
+// workingCopyLabel — how a working copy identifies itself where its FOLDER name
+// is not the useful handle: as PROJECT + BRANCH. The folder of a worktree is
+// "<base>@<slug>" (git.go), which says nothing about the branch it has checked
+// out, so a list grouped by folder reads as a pile of slugs; the rail's repo rows
+// already solve this by titling a worktree with its branch.
+//
+// project = the base clone's folder name (a worktree borrows its parent's; an
+// orphan worktree whose base is gone falls back to the "<base>@" prefix of its
+// own folder). branch = whatever the working copy has checked out, "" when it is
+// unknown (SVN copies have none, and a repo the store hasn't loaded yet reports
+// nothing) — a caller with no branch should fall back to showing the folder.
+export function workingCopyLabel(folder: string, repo?: Repo): { project: string; branch: string } {
+  const at = folder.indexOf("@");
+  const fromFolder = at > 0 ? folder.slice(0, at) : folder;
+  const project = repo?.worktree ? repo.parent || fromFolder : repo?.name || fromFolder;
+  return { project, branch: repo?.branch || "" };
+}
+
 // sessionsInFolder returns the sessions running in one working-copy folder, newest
 // first (createdAt desc, matching the old per-dir grouping order).
 export function sessionsInFolder(sessions: Session[], folderName: string): Session[] {
