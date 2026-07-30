@@ -6,7 +6,8 @@
 //
 // 読むもの: GET /api/usage/series（サーバ側で集計済み。生ログは流れてこない）。
 // 1画面で3リクエスト — 選択中の軸の時系列 / 機能×モデル / エージェント×モデル。後ろ2つは
-// matrix なので、内訳（機能別・モデル別・エージェント別）もそこから起こせる。
+// matrix なので、内訳（機能別・モデル別・エージェント別）もそこから起こせる。加えて末尾の
+// rtk 効果カードだけ別系（GET /api/agents/rtk/gain — RtkGainCard 参照）を1回読む。
 //
 // 表示の約束（docs/46 §1-c の非交渉ライン）:
 //   * **「0」と「未計測」を混同させない。** トークンを報告しない CLI は spend 0 になるが、
@@ -25,8 +26,9 @@ import { fmtTok } from "../../lib/fmttok.ts";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
-import { fetchUsageSeries } from "./api.ts";
-import type { UsageAgg, UsageDim, UsageSeries } from "./api.ts";
+import { Sparkline } from "../../ui/Sparkline.tsx";
+import { fetchRtkGain, fetchUsageSeries } from "./api.ts";
+import type { RtkGain, UsageAgg, UsageDim, UsageSeries } from "./api.ts";
 import { OTHER_KEY } from "./colors.ts";
 import {
   breakdownRows,
@@ -346,7 +348,72 @@ export function UsageView() {
           <CoverageBanner notes={notes} unmeasured={series?.unmeasured_calls || 0} />
         </div>
       )}
+
+      <RtkGainCard reloadTick={reloadTick} />
     </div>
+  );
+}
+
+const RTK_HIST_N = 30; // sparkline shows ~the last month of daily savings
+
+// RtkGainCard — rtk 効果（トークン節約）。台帳とは別系のコンテナ内計測（api.ts の
+// fetchRtkGain 参照）で、数値は全期間の累積なので上の期間プリセット／フィルタには
+// 連動しない（再読込ボタンだけ共有）。設定 > エージェントの RTK トグルの「結果」側 —
+// かつて設定タブに居たが、監視は設定ではないのでダッシュボードのここに一枚で置く。
+// rtk 不在・エラー・節約ゼロは丸ごと自己非表示（WsBar チップ時代からの約束）。
+// 節約は正の値なので、メーターはリソースの warn/crit ではなくアクセント色で塗る。
+function RtkGainCard({ reloadTick }: { reloadTick: number }) {
+  const tr = useT();
+  const [gain, setGain] = useState<RtkGain | null>(null);
+  const load = useCallback(async (signal: AbortSignal): Promise<boolean> => {
+    const r = await fetchRtkGain(signal);
+    if (signal.aborted) return true;
+    if (isTransientErr(r)) return false; // WS 起動直後の 502 は retryLoad に回す
+    setGain(r as RtkGain);
+    return true;
+  }, []);
+  useRetryLoad(load, [reloadTick]);
+
+  const s = gain?.summary;
+  const saved = s?.total_saved || 0;
+  if (!s || saved <= 0) return null;
+  const pct = Math.round(s.avg_savings_pct || 0);
+  const daily = (gain?.daily || []).slice(-RTK_HIST_N).map((d) => d.saved_tokens || 0);
+  return (
+    <section className="usage-card rtk-gain">
+      <div className="uc-head">
+        <h4>{tr("usage.rtk_gain_title")}</h4>
+      </div>
+      <div className="rtk-gain-head">
+        <Sparkline data={daily} width={80} height={30} />
+        <div className="rtk-gain-headline">
+          <b>{fmtTok(saved)}</b>
+          <span className="muted">{tr("usage.rtk_cumulative")}</span>
+        </div>
+      </div>
+      <div className="rtk-gain-meter">
+        <div className="wu-row-head">
+          <span className="muted">{tr("usage.rtk_avg_pct")}</span>
+          <span className="wu-pct">{pct}%</span>
+        </div>
+        <div className="wu-bar">
+          <span className="wu-bar-fill" style={{ width: Math.min(100, pct) + "%" }} />
+        </div>
+      </div>
+      <div className="rtk-stats">
+        <div className="rtk-stat">
+          <span className="muted">{tr("usage.rtk_in_out")}</span>
+          <b>
+            {fmtTok(s.total_input || 0)} → {fmtTok(s.total_output || 0)}
+          </b>
+        </div>
+        <div className="rtk-stat">
+          <span className="muted">{tr("usage.rtk_commands")}</span>
+          <b>{fmtNum(s.total_commands || 0)}</b>
+        </div>
+      </div>
+      <p className="muted uc-sub rtk-note">{tr("usage.note_rtk_gain", { n: RTK_HIST_N })}</p>
+    </section>
   );
 }
 

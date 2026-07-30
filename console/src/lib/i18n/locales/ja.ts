@@ -872,13 +872,6 @@ export const ja = {
   "agents.note_apply": "接続の変更は即時、挙動設定は各エージェントの新しいセッションから反映されます。",
   "agents.rtk_unsupported":
     "このワークスペースのイメージはエージェント設定 API（rtk）に未対応です。イメージを再ビルドして「作り直す」と有効になります。",
-  "agents.rtk_gain_title": "rtk 効果（トークン節約）",
-  "agents.rtk_cumulative": " 累計節約",
-  "agents.rtk_avg_pct": "平均節約率",
-  "agents.rtk_in_out": "入力 → 出力",
-  "agents.rtk_commands": "実行コマンド",
-  "agents.note_rtk_gain":
-    "rtk がコマンド出力を圧縮して節約したトークン量です（直近 {n} 日の推移）。計上範囲は各エージェントの rtk 設定（下記）により変わります。",
   "agents.default_model": "既定モデル",
   "agents.default_effort": "既定 effort",
   "agents.start_mode": "開始モード",
@@ -2859,6 +2852,15 @@ export const ja = {
   "usage.val.origin.schedule": "定時実行が作成",
   "usage.val.origin.handoff": "引き継ぎ",
   "usage.val.origin.unknown": "不明（計測前のセッション）",
+
+  // rtk 効果カード（台帳とは別系・コンテナ内 rtk の計測）
+  "usage.rtk_gain_title": "rtk 効果（トークン節約）",
+  "usage.rtk_cumulative": " 累計節約",
+  "usage.rtk_avg_pct": "平均節約率",
+  "usage.rtk_in_out": "入力 → 出力",
+  "usage.rtk_commands": "実行コマンド",
+  "usage.note_rtk_gain":
+    "rtk がコマンド出力を圧縮して節約したトークン量です（グラフは直近 {n} 日、数値は全期間の累積）。上の台帳とは別系のコンテナ内計測で、計上範囲は各エージェントの RTK 設定（設定 > エージェント）により変わります。",
 
   // === P5 セッション/メモ（BranchRename/SessionTitle/SsmLogin/MemoTidy ほか） ===
   "sx.branch_rename_failed": "ブランチ名の変更に失敗しました（通信エラー）",

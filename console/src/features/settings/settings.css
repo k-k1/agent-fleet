@@ -228,44 +228,12 @@
   margin-top: 8px;
 }
 
-/* rtk 効果 panel (agents tab): workspace-level token-savings summary, moved here from
-   the WsBar. Reuses the .wu-* meter + .ws-rtk-stats rows (globally bundled from
-   wsbar.css). Sparkline/meter follow the Top バー（外観）の色（--topbar-accent、未選択時は
-   --accent 既定へフォールバック）— 音量スライダー等の他アクセントと揃える。 */
-.rtk-gain-head {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-bottom: 12px;
-}
-.rtk-gain .spark {
-  color: var(--topbar-accent, var(--accent));
-  flex-shrink: 0;
-}
-.rtk-gain-headline {
-  font-size: 20px;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-}
-.rtk-gain-headline .muted {
-  font-size: 13px;
-  font-variant-numeric: normal;
-}
-.rtk-gain-meter {
-  margin-bottom: 12px;
-}
 /* AgyCard: the always-on 実験枠 label sits right under the card head (the quota
    meters live in the WS bar's Antigravity usage chip). It is a bare ps-note
    directly inside the card — unlike its usual .p-settings home (13px padding) —
    so it needs the card's horizontal inset itself or it hugs the border. */
 .p-card .agy-exp {
   margin: 2px 13px 6px;
-}
-.rtk-gain .wu-bar-fill {
-  background: var(--topbar-accent, var(--accent));
-}
-.rtk-gain .ws-rtk-stats {
-  font-size: 12.5px;
 }
 .ds-title {
   margin: 0 0 10px;

@@ -77,3 +77,28 @@ export function usageSeriesPath(q: UsageQuery): string {
 export function fetchUsageSeries(q: UsageQuery, signal?: AbortSignal): Promise<UsageSeries | { error: unknown }> {
   return api(usageSeriesPath(q), signal ? { signal } : undefined);
 }
+
+// --- rtk 効果（トークン節約） -------------------------------------------------
+// 上の台帳（CP 集計）とは別系。コンテナ内 rtk 自身の履歴 DB を Agent が
+// `rtk gain --daily --format json` で読み、透過で返す（スキーマは rtk のもの —
+// workspace/agent/agent_rtk.go handleAgentRTKGain）。rtk 不在や失敗は
+// available/error 入りの soft ボディで 200 が返る（呼び出し側は黙って隠す）。
+
+export interface RtkGainSummary {
+  total_saved?: number;
+  avg_savings_pct?: number;
+  total_input?: number;
+  total_output?: number;
+  total_commands?: number;
+}
+
+export interface RtkGain {
+  available?: boolean;
+  error?: string;
+  summary?: RtkGainSummary;
+  daily?: { saved_tokens?: number }[];
+}
+
+export function fetchRtkGain(signal?: AbortSignal): Promise<RtkGain | { error: unknown }> {
+  return api("api/agents/rtk/gain", signal ? { signal } : undefined);
+}

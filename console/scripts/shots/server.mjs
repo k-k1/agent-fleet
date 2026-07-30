@@ -74,6 +74,7 @@ const exact = {
   "/api/env/ui-prefs": () => ({}),
   "/api/update/status": () => ({ current: "0.3.0", latest: "0.3.0" }),
   "/api/usage": () => ({ agents: fx.usage(LOCALE) }),
+  "/api/agents/rtk/gain": () => fx.rtkGain(),
   "/api/stats": () => fx.stats(),
   "/api/ssm/hosts": () => ({ hosts: [] }),
   "/api/ssm/profiles": () => ({ profiles: [] }),
