@@ -2999,6 +2999,8 @@ export const en: Record<keyof typeof ja, string> = {
   "editor.unknown.resave_old": "Re-save from original revision",
   "editor.unknown.retry": "Fetch save state",
   "editor.diff_aria": "Diff between mine and remote",
+  "editor.diff.mine": "Mine",
+  "editor.diff.remote": "Remote",
   "editor.popout_dirty": "A file with unsaved changes cannot be popped out. Save or discard it, then retry.",
 
   // === AI edit suggestions (docs/44 Phase 4) ===

@@ -3042,6 +3042,8 @@ export const ja = {
   "editor.unknown.resave_old": "元revisionで再保存",
   "editor.unknown.retry": "状態を再取得",
   "editor.diff_aria": "mineとremoteの差分",
+  "editor.diff.mine": "mine",
+  "editor.diff.remote": "remote",
   "editor.popout_dirty": "未保存のファイルは別タブへ切り離せません。保存または破棄してから再試行してください。",
 
   // === AI変更提案（docs/44 Phase 4） ===

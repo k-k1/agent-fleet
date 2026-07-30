@@ -124,6 +124,10 @@ function diffRows(lines: string[]): DiffRow[] {
       text.startsWith("similarity ") || text.startsWith("rename ") || text.startsWith("copy ")
     ) {
       // redundant meta — skip
+    } else if (text.startsWith("\\")) {
+      // "\ No newline at end of file" — a marker, not file content: rendering it as
+      // ctx would bump both line counters and shift every number below by one.
+      rows.push({ type: "meta", text });
     } else if (text.startsWith("+")) {
       rows.push({ type: "add", newLn, text });
       newLn++;
