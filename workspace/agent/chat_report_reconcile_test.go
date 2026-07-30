@@ -244,6 +244,18 @@ func TestReportEvidenceTable(t *testing.T) {
 		{"自己申告だけでも idle 証拠（マーカーを持たない kind）",
 			reportSignals{SelfReported: true, SelfReportAt: "2026-07-29T12:00:00Z"},
 			true, reportKindAnswerReady, "", false},
+		// 中断（docs/47）はマーカーを一切見ない idle 証拠。claude は中断で Stop hook を
+		// 鳴らさないので、マーカー不在（誤ヒールで消えた実測 sp2qemx）でも報告できること、
+		// 分類がそのまま報告の reason になることを固定する。
+		{"中断はマーカー不在でも idle 証拠",
+			reportSignals{Abort: true, AbortReason: reportReasonTurnAborted, AbortAt: "2026-07-30T00:41:19Z"},
+			true, reportKindAnswerReady, reportReasonTurnAborted, false},
+		{"再送しても直らない中断は turn-failed で報告",
+			reportSignals{Abort: true, AbortReason: reportReasonTurnFailed, AbortAt: "2026-07-30T00:41:19Z"},
+			true, reportKindAnswerReady, reportReasonTurnFailed, false},
+		{"中断でも busy 証拠が残っていれば待つ（再開済みの可能性）",
+			reportSignals{Abort: true, AbortReason: reportReasonTurnAborted, PaneBusy: true},
+			false, "", "", false},
 		{"自己申告の早呼びは busy 証拠に止められる",
 			with(func(s *reportSignals) {
 				s.MarkerState, s.SelfReported = "working", true

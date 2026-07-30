@@ -3,7 +3,6 @@ package claude
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -390,51 +389,19 @@ func TranscriptTouched(sid string) (time.Time, bool) {
 	return newest, !newest.IsZero()
 }
 
-// transcriptTailWindow bounds the tail read lastRealRecordAt does. Transcripts reach
-// several MB and this runs on the reconciler's tick, so we read the end of the file and
-// only widen to the whole thing when the window holds no real record at all (a tail made
-// entirely of bookkeeping, or one enormous record).
+// transcriptTailWindow bounds the tail reads the polled predicates do (lastLineWhere).
+// Transcripts reach several MB and this runs on the reconciler's tick, so we read the end
+// of the file and only widen to the whole thing when the window holds nothing usable (a
+// tail made entirely of bookkeeping, or one enormous record).
 const transcriptTailWindow = 512 << 10
 
 // lastRealRecordAt returns the timestamp of the last user/assistant record in p.
 func lastRealRecordAt(p string) (time.Time, bool) {
-	f, err := os.Open(p)
-	if err != nil {
+	line, ok := lastLineWhere(p, func(l []byte) bool { _, ok := realRecordAt(l); return ok })
+	if !ok {
 		return time.Time{}, false
 	}
-	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil {
-		return time.Time{}, false
-	}
-	windows := []int64{transcriptTailWindow}
-	if fi.Size() > transcriptTailWindow {
-		windows = append(windows, fi.Size())
-	}
-	for _, w := range windows {
-		off := fi.Size() - w
-		truncated := off > 0
-		if off < 0 {
-			off = 0
-		}
-		if _, err := f.Seek(off, io.SeekStart); err != nil {
-			return time.Time{}, false
-		}
-		buf, err := io.ReadAll(f)
-		if err != nil {
-			return time.Time{}, false
-		}
-		lines := bytes.Split(buf, []byte("\n"))
-		if truncated && len(lines) > 0 {
-			lines = lines[1:] // the window cut the first line in half
-		}
-		for i := len(lines) - 1; i >= 0; i-- {
-			if at, ok := realRecordAt(lines[i]); ok {
-				return at, true
-			}
-		}
-	}
-	return time.Time{}, false
+	return realRecordAt(line)
 }
 
 // realRecordAt parses one transcript line and returns its timestamp when the line is a
