@@ -240,6 +240,17 @@ export interface Settings {
   // a message). Backend clamps to [1, 50] — there is no unlimited mode; the clamp is
   // the structural runaway stop (docs/30).
   assistantAutoTurnLimit: number;
+  // 自動応答専用モデル（claude の会話のみ・空 = 会話のモデルのまま）。報告処理は
+  // 定型作業なので、haiku 等の軽量モデルに逃がすとトークン費用を大きく下げられる。
+  // 利用者ターン・圧縮の要約ターンは会話本来のモデルのまま（Agent 側 chatAutoTurnModel）。
+  assistantAutoTurnModel: string;
+  // 自動応答の束ね時間（秒・0 = 即時）。完了報告が届いてもすぐ自動応答せず、この
+  // 窓の間に届いた報告を 1 ターンにまとめて処理する（報告カード・通知は即時のまま）。
+  // Agent 側 chatAutoTurnDelay がクランプ（最大 600 秒）。
+  assistantAutoTurnDelay: number;
+  // 静かな完了報告: 正常な完了報告では自動応答を実行しない（カードと通知のみ。報告は
+  // 次のターンに相乗り）。異常系・質問・プラン承認は従来どおり。既定 OFF。
+  assistantQuietCompletion: boolean;
   // 自動走行 (docs/30): when an instructed session stops at an AskUserQuestion, the
   // operator answers with the session's own recommendation; when it stops at plan
   // approval, the operator has another session review the plan, feeds back findings,
@@ -258,6 +269,14 @@ export interface Settings {
   // the backend threshold (90%) as a new turn starts, summarize-and-hand-off first.
   // Default ON — the 80% notice gives a manual window before this fires.
   assistantAutoCompact: boolean;
+  // 自動圧縮の絶対トークン閾値（相対 90% との OR — docs/33 §5.1）。resume 駆動の
+  // チャットは毎ターン全コンテキストを再読するため、占有量がそのままターン単価になる。
+  // Agent 側 chatAutoCompactTokenThreshold が下限 20k をクランプ。
+  assistantAutoCompactTokens: number;
+  // get_session_output（オペレーターがセッション出力を読むツール）の取得上限（KiB・
+  // 末尾のみ）。ツール結果は会話コンテキストに蓄積するため、上限が以降の全ターンの
+  // 単価に効く。Agent 側 mcpSessionOutputTail が [4, 1024] KiB にクランプ。
+  assistantOutputTailKiB: number;
   // Per-SSM-host terminal color: host id → color id (see lib/termcolor SSM_HOST_COLORS).
   // Applied to a session's terminal background when it's created (sent as its color).
   ssmHostColors: Record<string, string>;
@@ -474,9 +493,14 @@ const DEFAULTS: Settings = {
   },
   assistantAutoTurn: true,
   assistantAutoTurnLimit: 10,
+  assistantAutoTurnModel: "",
+  assistantAutoTurnDelay: 60,
+  assistantQuietCompletion: false,
   assistantAutoPilot: false,
   assistantAutoResume: true,
   assistantAutoCompact: true,
+  assistantAutoCompactTokens: 150000,
+  assistantOutputTailKiB: 32,
   ssmHostColors: {},
   // 音声読み上げの初期値＝おすすめ設定。設定タブの「リセット」ボタンが戻す値（TTS_RESET）と
   // 同じで、新規ユーザー（と未設定の既存ユーザー）はこの状態から始まる。読み上げ本体・音声通知

@@ -844,6 +844,17 @@ export const en: Record<keyof typeof ja, string> = {
   "assistant.auto_turn_limit": "Unattended auto-reply limit",
   "assistant.note_auto_turn_limit":
     "How many auto-replies may run in a row without a message from you (default 10, max 50). At the limit a pause notice arrives, and your next message resumes the loop. Unlimited is not available.",
+  "assistant.auto_turn_model": "Auto-reply model",
+  "assistant.auto_turn_model_default": "Same as the conversation",
+  "assistant.note_auto_turn_model":
+    "Runs only the automatic replies to session reports on a separate model. Checking and summarizing reports is routine work, so switching to a lightweight model such as haiku cuts token spend substantially. Applies to claude conversations only; replies to your own messages and compaction summaries keep the conversation's model.",
+  "assistant.auto_turn_delay": "Auto-reply bundling window",
+  "assistant.auto_turn_delay_off": "Immediate",
+  "assistant.note_auto_turn_delay":
+    "Instead of replying the moment a completion report arrives, reports from other sessions arriving within this window are processed together in one turn (each auto-reply re-reads the whole conversation, so fewer turns means fewer tokens). Report cards and notifications still arrive immediately — only the assistant's follow-up is deferred.",
+  "assistant.quiet_completion": "Quiet completion reports",
+  "assistant.note_quiet_completion":
+    "For successful completion reports, skip the automatic reply and only deliver the report card and a notification. The reports are handed to the assistant together with your next message. Interrupted, failed, and crashed reports — and questions / plan approvals — are still handled automatically.",
   "assistant.auto_pilot": "Auto-pilot (auto-handle questions & plans)",
   "assistant.note_auto_pilot":
     "When ON, if an instructed session stops at a multiple-choice question the operator answers with the session's recommendation automatically, and when it stops at plan approval the operator has another session review the plan, feeds back findings, and approves once clean. Every decision is shared in chat. Unclear questions and choices/plans involving destructive or irreversible operations still come to you first. Default OFF.",
@@ -853,6 +864,12 @@ export const en: Record<keyof typeof ja, string> = {
   "assistant.auto_compact": "Auto-compact chat context",
   "assistant.note_auto_compact":
     "When a chat's context usage is still above 90% as a new exchange starts, the conversation is summarized and handed to a fresh session automatically first (the summary costs one turn of tokens). The notice at 80% lets you compact manually before this fires.",
+  "assistant.auto_compact_tokens": "Auto-compact threshold (tokens)",
+  "assistant.note_auto_compact_tokens":
+    "When a chat's context exceeds this many tokens as a new exchange starts, it is compacted automatically even before reaching 90% usage. A chat re-reads its whole context every turn, so this value effectively caps the per-turn token spend. Lower saves more but compacts (re-summarizes) more often. Default 150k.",
+  "assistant.output_tail": "Session output fetch limit",
+  "assistant.note_output_tail":
+    "How much the operator reads when checking a session's output (get_session_output), taken from the end. What it reads accumulates in the conversation and is re-read on every later turn, so a larger limit costs more tokens. The full output is always available in the mirror. Default 32 KiB.",
   "assistant.appearance": "Appearance",
   "assistant.note_appearance":
     "“Inherit” follows the app theme. Theme and background color are saved on this device only (not synced to others).",
