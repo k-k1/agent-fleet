@@ -925,6 +925,7 @@ func handleSessionOutput(w http.ResponseWriter, r *http.Request) {
 	sid := session.UUID(meta.Dir, name)
 	lines := claude.TranscriptLines(sid)
 	var sb strings.Builder
+	cursor := len(lines)
 	for i := since; i < len(lines); i++ {
 		if t := claude.AssistantText(lines[i]); t != "" {
 			if sb.Len() > 0 {
@@ -932,12 +933,13 @@ func handleSessionOutput(w http.ResponseWriter, r *http.Request) {
 			}
 			sb.WriteString(t)
 		}
-		if sb.Len() > 1<<20 { // cap at 1 MiB
+		if sb.Len() > 1<<20 { // cap at 1 MiB — the next poll resumes at i+1
+			cursor = i + 1
 			break
 		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"name": name, "output": sb.String(), "cursor": len(lines),
+		"name": name, "output": sb.String(), "cursor": cursor,
 		"status": state, "alive": alive,
 	})
 }

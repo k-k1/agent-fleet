@@ -105,6 +105,12 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	}
 	handlesMu.Unlock()
 
+	// spawn を handle 単位で直列化する（kiro A2-4 と同型）: boot の ReconcileManaged と
+	// 直後の /turn が並行に Resume すると check-then-spawn が非直列で二重 spawn し、
+	// 先発の子プロセスが孤児化する。ロック取得後に liveness を再確認する。
+	h.spawnMu.Lock()
+	defer h.spawnMu.Unlock()
+
 	h.mu.Lock()
 	if h.alive && h.cl != nil && !h.cl.dead() {
 		h.mu.Unlock()
@@ -277,6 +283,8 @@ type threadHandle struct {
 	dir     string
 	slotSid string
 
+	spawnMu sync.Mutex // serializes spawns for this handle（並行 Resume の二重 spawn 防止・kiro A2-4 と同型）
+
 	mu       sync.Mutex
 	cmd      *exec.Cmd
 	cl       *acpClient
@@ -338,7 +346,11 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 		return fmt.Errorf("copilot runtime を起動できません: %w", err)
 	}
 	cl := newACPClient(stdin, stdout)
-	cl.onRequest = h.onServerRequest
+	// クロージャで当該 cl を捕捉する: 初回 spawn 中は h.cl が未代入のまま readLoop が
+	// 走り得るので、h.cl 参照だと未知メソッド応答で nil デリファレンス panic になる。
+	cl.onRequest = func(id json.RawMessage, method string, params json.RawMessage) {
+		h.onServerRequest(cl, id, method, params)
+	}
 	go h.watch(cmd, cl)
 
 	if _, err := cl.call("initialize", map[string]any{
@@ -360,8 +372,16 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 			"sessionId": sid, "cwd": h.dir, "mcpServers": []any{},
 		}, 180*time.Second)
 		if err != nil {
-			log.Printf("copilot managed: session/load %s: %v — 新規セッションで再開", h.name, err)
-			sid = ""
+			// session/new へ落ちてよいのは sid のローカルストア（session-state/<sid>）が
+			// 実際に消えている＝会話が削除済みのときだけ（kiro A2-1 と同型）。ストア健在の
+			// 一時失敗で new すると生きた会話を無言で切り離し sid を上書きしてしまう。
+			if _, statErr := os.Stat(sessionStateDir(sid)); statErr != nil {
+				log.Printf("copilot managed: session/load %s: store gone (%v) — 新規セッションで再開", h.name, err)
+				sid = ""
+			} else {
+				stopChild(cmd)
+				return fmt.Errorf("copilot セッションを読み込めませんでした（時間をおいて再開してください）: %w", err)
+			}
 		} else {
 			mode = currentModeOf(res)
 		}
@@ -722,10 +742,10 @@ func (h *threadHandle) Snapshot() (agents.ThreadSnapshot, error) {
 // onServerRequest handles server-initiated requests on the readLoop goroutine —
 // MUST NOT block: record the Interaction and return; the answer goes back later
 // via Respond → cl.respond.
-func (h *threadHandle) onServerRequest(id json.RawMessage, method string, params json.RawMessage) {
+func (h *threadHandle) onServerRequest(cl *acpClient, id json.RawMessage, method string, params json.RawMessage) {
 	if method != "session/request_permission" {
 		// 未知のサーバー発リクエストは応答しないと turn が固まる — エラーで返す。
-		_ = h.cl.write(map[string]any{
+		_ = cl.write(map[string]any{
 			"jsonrpc": "2.0", "id": id,
 			"error": map[string]any{"code": -32601, "message": "unsupported request: " + method},
 		})

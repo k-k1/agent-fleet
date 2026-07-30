@@ -136,10 +136,15 @@ func desiredReceive() (token, boundUser string) {
 // It returns (stops trying) on a fatal config error — the supervisor restarts it when the
 // creds change.
 func runReceiverConn(ctx context.Context, token, boundUser string, deps ReceiverDeps) {
+	// Handling runs OFF the gateway read loop (serialDispatcher): an Answer can
+	// legitimately take seconds (session resume, 429 retries up to 15s), and a
+	// blocked read loop stops processing heartbeat ACKs — the connection then
+	// looks dead and reconnects over and over.
+	dispatch := serialDispatcher(ctx, 64)
 	gw := &gateway{
 		token:      token,
-		onMsg:      func(m gatewayMessage) { routeInbound(m, token, boundUser, deps) },
-		onInteract: func(gi gatewayInteraction) { routeInteraction(gi, token, boundUser, deps) },
+		onMsg:      func(m gatewayMessage) { dispatch(func() { routeInbound(m, token, boundUser, deps) }) },
+		onInteract: func(gi gatewayInteraction) { dispatch(func() { routeInteraction(gi, token, boundUser, deps) }) },
 	}
 	backoff := receiverBackoffMin
 	for {
@@ -168,6 +173,30 @@ func runReceiverConn(ctx context.Context, token, boundUser string, deps Receiver
 		}
 		if backoff *= 2; backoff > receiverBackoffMax {
 			backoff = receiverBackoffMax
+		}
+	}
+}
+
+// serialDispatcher returns an enqueue function backed by ONE worker goroutine.
+// Inbound handling must not run on a WSS read loop (see runReceiverConn /
+// runSlackReceiverConn); a single worker also preserves arrival order, which
+// multi-goroutine dispatch would not.
+func serialDispatcher(ctx context.Context, depth int) func(func()) {
+	work := make(chan func(), depth)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case fn := <-work:
+				fn()
+			}
+		}
+	}()
+	return func(fn func()) {
+		select {
+		case work <- fn:
+		case <-ctx.Done():
 		}
 	}
 }

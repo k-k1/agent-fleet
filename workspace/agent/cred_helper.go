@@ -49,8 +49,13 @@ func runCredHelper(args []string) {
 		if time.Now().Unix() >= c.Expiry-120 { // refresh within 2 min of expiry
 			if nc, rerr := refreshBitbucket(c); rerr == nil {
 				c = nc
-				s.Bitbucket = &c
-				_ = s.Save()
+				// Re-read-modify-write under the store lock: this helper runs as a
+				// SEPARATE process concurrent with agent handlers, and a blind Save
+				// of the stale snapshot would drop their changes.
+				_ = secrets.Update(func(cur *secrets.Data) error {
+					cur.Bitbucket = &c
+					return nil
+				})
 			}
 		}
 		fmt.Printf("username=x-token-auth\npassword=%s\n", c.AccessToken)

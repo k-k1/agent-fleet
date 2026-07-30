@@ -765,6 +765,12 @@ func mcpStdioCall(req mcpReq) []byte {
 		Args json.RawMessage `json:"arguments"`
 	}
 	_ = json.Unmarshal(req.Params, &p)
+	// --self-report advertises ONLY af_report, and the advertised set IS the scope
+	// boundary (see mcpSelfReportOnly) — so refuse every other tool here too, or a
+	// client that guesses names could reach the read tools from any session.
+	if mcpSelfReportOnly && p.Name != "af_report" {
+		return mcpToolErr(req.ID, "このサーバーは af_report のみ提供します: "+p.Name)
+	}
 	var a struct {
 		Name      string `json:"name"`
 		Since     int64  `json:"since"`

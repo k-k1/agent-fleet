@@ -25,6 +25,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"syscall"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
@@ -293,7 +295,64 @@ func Path() string {
 	return filepath.Join(paths.AgentConfigDir(), name)
 }
 
+// storeMu serializes this process's access to the store file; the flock below
+// extends that across processes (the git cred helper is a separate binary).
+var storeMu sync.Mutex
+
+// withFileLock runs fn while holding an exclusive flock on <store>.lock. The
+// lockfile is separate from the store itself so the atomic rename in Save never
+// replaces the locked inode.
+func withFileLock(fn func() error) error {
+	lockPath := Path() + ".lock"
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	defer func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN) }()
+	return fn()
+}
+
+// Update atomically applies fn to the store under the process mutex + file lock:
+// load → fn → save as ONE critical section, so concurrent writers (HTTP handlers,
+// the cred helper process) cannot lose each other's changes. Prefer this over a
+// bare Load→modify→Save for any read-modify-write.
+func Update(fn func(*Data) error) error {
+	storeMu.Lock()
+	defer storeMu.Unlock()
+	return withFileLock(func() error {
+		s, err := load()
+		if err != nil {
+			return err
+		}
+		if err := fn(s); err != nil {
+			return err
+		}
+		return s.save()
+	})
+}
+
 func Load() (*Data, error) {
+	storeMu.Lock()
+	defer storeMu.Unlock()
+	var s *Data
+	err := withFileLock(func() (lerr error) {
+		s, lerr = load()
+		return lerr
+	})
+	if s == nil {
+		s = &Data{Git: map[string]GitEntry{}}
+	}
+	return s, err
+}
+
+func load() (*Data, error) {
 	s := &Data{Git: map[string]GitEntry{}}
 	b, err := os.ReadFile(Path())
 	if err != nil {
@@ -317,6 +376,15 @@ func Load() (*Data, error) {
 }
 
 func (s *Data) Save() error {
+	storeMu.Lock()
+	defer storeMu.Unlock()
+	return withFileLock(s.save)
+}
+
+// save writes the store atomically (tmp + rename): every git token, OAuth,
+// Slack/Discord and MCP secret lives in this ONE file, so a crash mid-write must
+// never leave a torn store behind.
+func (s *Data) save() error {
 	p := Path()
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
@@ -330,7 +398,26 @@ func (s *Data) Save() error {
 			return err
 		}
 	}
-	return os.WriteFile(p, b, 0o600)
+	tmp, err := os.CreateTemp(filepath.Dir(p), ".secrets-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if err := tmp.Chmod(0o600); err == nil {
+		_, err = tmp.Write(b)
+	}
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, p); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
 
 func aesSeal(key, plaintext []byte) ([]byte, error) {

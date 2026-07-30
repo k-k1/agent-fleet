@@ -49,9 +49,12 @@ func EnsureStatusHooks() {
 	// so a pending AskUserQuestion can surface the prose that preceded it.
 	for event, state := range map[string]string{"UserPromptSubmit": "working", "Stop": "idle", "MessageDisplay": "message", "SessionStart": "boot"} {
 		if b, _ := json.Marshal(hooks[event]); !strings.Contains(string(b), "session-status") {
-			hooks[event] = []any{map[string]any{
+			// APPEND to whatever the user already has there — replacing the array
+			// wholesale would silently drop their own hooks for the event.
+			list, _ := hooks[event].([]any)
+			hooks[event] = append(list, map[string]any{
 				"hooks": []any{map[string]any{"type": "command", "command": statusHookCmd(state)}},
-			}}
+			})
 			changed = true
 		}
 	}
@@ -81,19 +84,24 @@ func EnsureStatusHooks() {
 	// AskUserQuestion / approved ExitPlanMode / granted permission all fire their tool's
 	// PostToolUse on resolution, landing back on working. Empty matcher matches all tools.
 	// Migrate older settings that carried the two specific matchers instead.
-	if b, _ := json.Marshal(hooks["PostToolUse"]); !strings.Contains(string(b), `"matcher":""`) {
-		hooks["PostToolUse"] = []any{
-			map[string]any{"matcher": "", "hooks": []any{map[string]any{"type": "command", "command": statusHookCmd("working")}}},
-		}
+	// 判定は「自コマンド入りの matcher 無しエントリの有無」で行う: `"matcher":""`
+	// の有無だけ見ると、ユーザー自身の matcher 無しエントリを自分のものと誤認して
+	// ハートビートが永久に未インストールのままになる（false-idle 対策が黙って欠落）。
+	// インストール時は自コマンド入りの旧エントリ（レガシー個別 matcher 形）だけを
+	// 除去し、ユーザーのエントリは保持する。
+	if !postToolUseHasAF(hooks) {
+		hooks["PostToolUse"] = append(stripSessionStatusEntries(hooks["PostToolUse"]),
+			map[string]any{"matcher": "", "hooks": []any{map[string]any{"type": "command", "command": statusHookCmd("working")}}})
 		changed = true
 	}
 	// Notification → permission: fires when claude is blocked on a tool-permission
 	// prompt (notification_type=permission_prompt). The handler ignores other
 	// notification types, so this matcher-less hook is safe to always set.
 	if b, _ := json.Marshal(hooks["Notification"]); !strings.Contains(string(b), "session-status") {
-		hooks["Notification"] = []any{map[string]any{
+		list, _ := hooks["Notification"].([]any)
+		hooks["Notification"] = append(list, map[string]any{
 			"hooks": []any{map[string]any{"type": "command", "command": statusHookCmd("permission")}},
-		}}
+		})
 		changed = true
 	}
 
@@ -101,4 +109,37 @@ func EnsureStatusHooks() {
 		m["hooks"] = hooks
 		_ = writeSettings(m)
 	}
+}
+
+// postToolUseHasAF reports whether PostToolUse already carries OUR catch-all
+// heartbeat: a matcher-less entry whose command runs session-status.
+func postToolUseHasAF(hooks map[string]any) bool {
+	arr, _ := hooks["PostToolUse"].([]any)
+	for _, e := range arr {
+		em, _ := e.(map[string]any)
+		if em == nil {
+			continue
+		}
+		if matcher, _ := em["matcher"].(string); matcher != "" {
+			continue
+		}
+		if b, _ := json.Marshal(em["hooks"]); strings.Contains(string(b), "session-status") {
+			return true
+		}
+	}
+	return false
+}
+
+// stripSessionStatusEntries removes OUR entries (command contains session-status)
+// from an event's hook array, keeping the user's own.
+func stripSessionStatusEntries(cur any) []any {
+	arr, _ := cur.([]any)
+	var out []any
+	for _, e := range arr {
+		if b, _ := json.Marshal(e); strings.Contains(string(b), "session-status") {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }

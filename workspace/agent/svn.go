@@ -169,7 +169,7 @@ func pickSvnCred(list []secrets.SVNCred, url string) *secrets.SVNCred {
 	var best *secrets.SVNCred
 	for i := range list {
 		c := &list[i]
-		if strings.HasPrefix(url, c.URLPrefix) && (best == nil || len(c.URLPrefix) > len(best.URLPrefix)) {
+		if svnPrefixMatch(url, c.URLPrefix) && (best == nil || len(c.URLPrefix) > len(best.URLPrefix)) {
 			best = c
 		}
 	}
@@ -178,6 +178,18 @@ func pickSvnCred(list []secrets.SVNCred, url string) *secrets.SVNCred {
 	}
 	cp := *best
 	return &cp
+}
+
+// svnPrefixMatch reports whether url falls under prefix at a URL segment
+// boundary. A raw HasPrefix would also match a DIFFERENT host that merely starts
+// with the same bytes ("https://svn.corp.com" vs
+// "https://svn.corp.com.evil.example/…") — and the stored password would be sent
+// there as Basic auth.
+func svnPrefixMatch(url, prefix string) bool {
+	if prefix == "" || !strings.HasPrefix(url, prefix) {
+		return false
+	}
+	return len(url) == len(prefix) || strings.HasSuffix(prefix, "/") || url[len(prefix)] == '/'
 }
 
 // svnCredsFor returns the stored credential matching url (longest prefix), or nil.
