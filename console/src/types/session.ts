@@ -72,6 +72,9 @@ export interface ProviderConn {
   // cannot run agy ("no_rdrand" / "not_installed"); absent = supported.
   supported?: boolean;
   reason?: string;
+  // チャット連携（discord / slack）: 通知マスタの表示形（notifyOff の反転）。
+  // false 明示のときだけ OFF — 未設定（旧接続）は ON 扱い。
+  notify?: boolean;
 }
 
 // The full connections bag. Known agents are named; git providers (github /

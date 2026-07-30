@@ -14,6 +14,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
+import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useDismiss } from "../../lib/useDismiss.ts";
 import { useMenuRoving } from "../../lib/useMenuRoving.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
@@ -249,6 +250,7 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, onToggleRuns, onDetail, onPau
 export function SchedulesSection() {
   const tenant = useTenantStore((s) => s.tenant);
   const toast = useToast();
+  const askConfirm = useConfirm();
   const tr = useT();
 
   const [items, setItems] = useState<ScheduleDTO[]>([]);
@@ -337,7 +339,14 @@ export function SchedulesSection() {
 
   const doDelete = async (s: ScheduleDTO) => {
     if (busy[s.id]) return;
-    if (!confirm(t("sched.delete_confirm", { name: scheduleTitle(s) }))) return;
+    // 他の破壊操作と同じ ConfirmDialog（ブロッキングな native confirm() は使わない）。
+    const ok = await askConfirm({
+      title: t("sched.delete_title"),
+      body: t("sched.delete_confirm", { name: scheduleTitle(s) }),
+      confirmLabel: t("common.delete"),
+      danger: true,
+    });
+    if (!ok) return;
     setRowBusy(s.id, true);
     try {
       const r = await scheduleDelete(s.id);

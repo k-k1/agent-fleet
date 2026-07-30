@@ -4,10 +4,10 @@ import { useT } from "../../lib/i18n/index.ts";
 import { MASKED } from "./mcpWire.ts";
 import type { KV } from "./mcpWire.ts";
 
-// Form primitives shared by the member registry (McpTab) and the tenant distribution
-// form (AdminTab の McpAdminView). The two forms edit almost the same definition, so
-// they render with the same field/label/hint furniture (.ssm-fld / .mcp-checks) —
-// keeping the admin form from drifting into its own ad-hoc layout again.
+// Form primitives shared by the member registry (McpTab), the tenant distribution
+// form (AdminTab の McpAdminView), and the SSM tab (SsmTab). The forms edit almost the
+// same definition, so they render with the same field/label/hint furniture
+// (.ssm-fld / .mcp-checks) — keeping each form from drifting into its own ad-hoc layout.
 
 export function Field({
   label,
@@ -30,6 +30,17 @@ export function Field({
       </label>
       {children}
       {hint && <div className="hint">{hint}</div>}
+    </div>
+  );
+}
+
+// Meta renders one labeled key/value row inside a list card. Empty values show "—".
+// `wide` spans the full grid width (for long values like a start URL).
+export function Meta({ k, v, mono = true, wide = false }: { k: ReactNode; v?: ReactNode; mono?: boolean; wide?: boolean }) {
+  return (
+    <div className={"ssm-meta-row" + (wide ? " wide" : "")}>
+      <span className="ssm-meta-k">{k}</span>
+      <span className={"ssm-meta-v" + (mono ? " mono" : "")}>{v || "—"}</span>
     </div>
   );
 }
