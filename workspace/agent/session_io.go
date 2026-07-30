@@ -630,7 +630,7 @@ func deliverInitialPrompt(name, prompt string) {
 	// 出なければ自己修復を 1 巡試す。この経路は create 応答から切り離された goroutine
 	// なので HTTP では失敗を返せない — 最終的に未確認ならログに残す（reuse 送信側の
 	// confirm と違い、ここは best-effort のまま）。
-	if metaOK && base != nil {
+	if metaOK && base.logs != nil {
 		if err := confirmPromptDelivery(meta, pane, prompt, base); err != nil {
 			log.Printf("initial prompt delivery UNCONFIRMED for %s: %v", name, err)
 		}

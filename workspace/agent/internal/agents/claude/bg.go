@@ -285,22 +285,61 @@ const subagentFreshTTL = 90 * time.Second
 // recently-appended log means one is live. Complements BackgroundBusy, which covers
 // the process-tree case it structurally cannot see.
 func SubagentBusy(sid string) bool {
+	cutoff := time.Now().Add(-subagentFreshTTL)
+	for _, p := range SubagentLogs(sid) {
+		if fi, err := os.Stat(p); err == nil && fi.ModTime().After(cutoff) {
+			return true
+		}
+	}
+	return false
+}
+
+// SubagentLogs lists sid's background-agent transcripts. Regular subagents sit directly
+// under subagents/; Workflow agents nest under subagents/workflows/wf_*/.
+func SubagentLogs(sid string) []string {
 	if sid == "" {
-		return false
+		return nil
 	}
 	base := filepath.Join(ConfigDir(), "projects", "*", sid, "subagents")
-	cutoff := time.Now().Add(-subagentFreshTTL)
-	// Regular subagents sit directly under subagents/; Workflow agents nest under
-	// subagents/workflows/wf_*/. Check both, returning on the first fresh log.
+	var out []string
 	for _, pat := range []string{
 		filepath.Join(base, "agent-*.jsonl"),
 		filepath.Join(base, "workflows", "wf_*", "agent-*.jsonl"),
 	} {
 		logs, _ := filepath.Glob(pat)
-		for _, p := range logs {
-			if fi, err := os.Stat(p); err == nil && fi.ModTime().After(cutoff) {
-				return true
-			}
+		out = append(out, logs...)
+	}
+	return out
+}
+
+// SubagentSnapshot is TranscriptSnapshot for the background agents' logs — the baseline
+// SubagentReceivedSince compares against.
+func SubagentSnapshot(sid string) map[string]int64 {
+	snap := map[string]int64{}
+	for _, p := range SubagentLogs(sid) {
+		if fi, err := os.Stat(p); err == nil {
+			snap[p] = fi.Size()
+		}
+	}
+	return snap
+}
+
+// SubagentReceivedSince reports whether the prompt landed in a BACKGROUND AGENT's
+// transcript instead of the session's own — the signature of typing into the pane while
+// its input box is bound to an agent (claude records it there as "The user sent a new
+// message while you were working:"). Matched on the prompt's own text, so an agent that
+// merely kept working since the baseline does not read as a misdelivery.
+//
+// これが立ったときに再タイプ（自己修復）へ進むと、同じ割り込みをサブエージェントへ
+// もう一度撃ち込むことになる。撃つ前に見分けるのが目的（2026-07-30 sannme2）。
+func SubagentReceivedSince(sid string, snap map[string]int64, prompt string) bool {
+	needle := jsonNeedle(prompt)
+	if needle == nil {
+		return false
+	}
+	for _, p := range SubagentLogs(sid) {
+		if bytes.Contains(appendedSince(p, snap[p]), needle) {
+			return true
 		}
 	}
 	return false
