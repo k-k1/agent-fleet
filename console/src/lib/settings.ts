@@ -237,7 +237,7 @@ export interface Settings {
   // (reset by a user message) regardless of this switch.
   assistantAutoTurn: boolean;
   // Ceiling on unattended auto turns per conversation (reset whenever the user sends
-  // a message). Backend clamps to [1, 30] — there is no unlimited mode; the clamp is
+  // a message). Backend clamps to [1, 50] — there is no unlimited mode; the clamp is
   // the structural runaway stop (docs/30).
   assistantAutoTurnLimit: number;
   // 自動応答専用モデル（claude の会話のみ・空 = 会話のモデルのまま）。報告処理は
