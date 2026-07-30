@@ -105,7 +105,7 @@ exists ([04](04-git.md)). This is a separate path from creating a worktree in "S
 
 In each row of the list, the colored icon at the front shows the agent kind, and the state icon
 at the end shows the current state. Hover over the state icon to see the state name. States that
-need action from you — **Question**, **Plan ready**, **Awaiting approval** — also show text.
+need action from you — **Question**, **Plan ready**, **Awaiting permission** — also show text.
 Active sessions refresh automatically every 4 seconds.
 
 | State display | Meaning |
@@ -113,7 +113,7 @@ Active sessions refresh automatically every 4 seconds.
 | Working… | The agent is working (spinning) |
 | Question | It has asked you something and is waiting for a reply |
 | Plan ready | A proposed plan is waiting for your review |
-| Awaiting approval | It is asking for permission to act |
+| Awaiting permission | It is asking for permission to act |
 | Ready | Idle, waiting for your next instruction |
 | Ready · running in background | Awaiting input, but something is still running behind the scenes |
 | Running | shell and the like (kinds with no working / awaiting-input distinction) |

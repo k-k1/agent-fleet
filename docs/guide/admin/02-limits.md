@@ -17,9 +17,9 @@ At the top of the tenant detail there is a settings section for tenant-wide limi
 auto-stop. However, this section is **shown only to super_admin — as tenant_admin you cannot edit
 it.** Just know what it contains.
 
-- **Max Workspace** — the number of workspaces that can run concurrently in this tenant
+- **Max workspaces** — the number of workspaces that can run concurrently in this tenant
   (`0` = unlimited).
-- **Max Session** — the number of sessions that can run concurrently.
+- **Max sessions** — the number of sessions that can run concurrently.
 - **Max internal repositories / Max LFS size** — the number of repositories that can live in the
   built-in git and the total LFS capacity.
 - **Idle auto-stop** — how long before neglected sessions and workspaces are stopped automatically
