@@ -196,6 +196,59 @@ func TestMaybeAutoCompactDisabledBySetting(t *testing.T) {
 	}
 }
 
+func TestMaybeAutoCompactAbsoluteTokenThreshold(t *testing.T) {
+	withTempHome(t)
+	// 1M ウィンドウで使用率 20% — 相対閾値(90%)には遠いが、絶対量が 150k を超えて
+	// いるので圧縮する（費用防衛の閾値。実測でこの帯のターンは cache 書き直しだけで
+	// $1 級になる）。
+	c := &chatConversation{
+		ID: randUUID(), Agent: "claude", ClaudeSessionID: "old",
+		Context:  &contextUsage{Tokens: 200000, Window: 1000000, Pct: 20},
+		Messages: []chatMessage{},
+	}
+	prov := &stubProvider{reply: "自動要約"}
+	if !maybeAutoCompact(context.Background(), c, prov) {
+		t.Fatal("did not compact at 200k tokens on a 1M window")
+	}
+	if c.PendingHandoff != "自動要約" {
+		t.Fatalf("compaction not applied: %+v", c)
+	}
+
+	// 絶対閾値未満・相対閾値未満 → no-op。
+	c = &chatConversation{
+		ID: randUUID(), Agent: "claude", ClaudeSessionID: "old",
+		Context: &contextUsage{Tokens: 120000, Window: 1000000, Pct: 12},
+	}
+	prov = &stubProvider{reply: "要約"}
+	if maybeAutoCompact(context.Background(), c, prov) || len(prov.prompts) != 0 {
+		t.Fatal("compacted below both thresholds")
+	}
+
+	// 環境変数で絶対閾値を引き上げれば同じ 200k でも発火しない。
+	t.Setenv("AF_CHAT_AUTOCOMPACT_TOKENS", "500000")
+	c = &chatConversation{
+		ID: randUUID(), Agent: "claude", ClaudeSessionID: "old",
+		Context: &contextUsage{Tokens: 200000, Window: 1000000, Pct: 20},
+	}
+	if maybeAutoCompact(context.Background(), c, &stubProvider{reply: "要約"}) {
+		t.Fatal("compacted despite the raised token threshold")
+	}
+}
+
+func TestChatAutoCompactTokenThresholdEnvOverride(t *testing.T) {
+	if got := chatAutoCompactTokenThreshold(); got != chatCtxAutoCompactTokens {
+		t.Fatalf("default token threshold = %v", got)
+	}
+	t.Setenv("AF_CHAT_AUTOCOMPACT_TOKENS", "80000")
+	if got := chatAutoCompactTokenThreshold(); got != 80000 {
+		t.Fatalf("env token threshold = %v", got)
+	}
+	t.Setenv("AF_CHAT_AUTOCOMPACT_TOKENS", "junk")
+	if got := chatAutoCompactTokenThreshold(); got != chatCtxAutoCompactTokens {
+		t.Fatalf("invalid env must fall back: %v", got)
+	}
+}
+
 func TestChatAutoCompactThresholdEnvOverride(t *testing.T) {
 	if got := chatAutoCompactThreshold(); got != chatCtxAutoCompactPct {
 		t.Fatalf("default threshold = %v", got)
