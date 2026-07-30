@@ -39,7 +39,7 @@ resuming, are done after starting it.
 ### Main area and panes
 
 This is where whatever you selected in the left pane is displayed. A session's chat /
-terminal, source control, changes, files, diffs, assistant chat, and more open here. It can
+terminal, commit graph, changes, files, diffs, assistant chat, and more open here. It can
 be split into multiple **panes**; the colored number in the left pane is the number of the
 pane displaying that item.
 
@@ -60,7 +60,7 @@ pane displaying that item.
 | worktree | An independent working copy created via a Git mechanism. Prevents interference during parallel work |
 | Parent | The working copy a worktree was created from. Serves as the comparison target in status displays |
 | Pane | One subdivision of the main area |
-| Source control | The screen that handles the commit graph, branches, fetch, and so on |
+| Commit graph | The screen that handles the commit history graph, branches, fetch, and so on |
 | Memo queue | A feature that stores instructions temporarily and sends them to a session later in a batch |
 | Browser pane | A method that renders a web service started inside the workspace (`127.0.0.1:{port}`) in a Console pane, with display and interaction (clicking, typing, scrolling, etc.). HMR, WebSocket, SSE, cookies, and redirects all work. "Open in pane" in the UI. localhost only — external URLs cannot be opened ([08](08-advanced.md)) |
 | Lightweight preview | A lighter way to check the same web service by opening it in another tab through a simple HTTP proxy. Suited to one-off checks of JSON or simple static pages; HMR / WebSocket / SSE are unavailable ([08](08-advanced.md)) |
