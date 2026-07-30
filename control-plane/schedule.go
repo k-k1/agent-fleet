@@ -52,14 +52,14 @@ type scheduleDTO struct {
 	OwnerConv           string `json:"owner_conv,omitempty"`
 	// Report opts the fire's session into the docs/30 completion report back to the
 	// owner conversation. Default false = 報告しない (the fire runs silently).
-	Report  bool `json:"report"`
-	Enabled bool `json:"enabled"`
-	NextRun             string `json:"next_run,omitempty"`
-	NextRunLocal        string `json:"next_run_local,omitempty"` // next_run rendered in the schedule's tz
-	LastRun             string `json:"last_run,omitempty"`
-	LastStatus          string `json:"last_status,omitempty"`
-	CreatedAt           string `json:"created_at,omitempty"`
-	UpdatedAt           string `json:"updated_at,omitempty"`
+	Report       bool   `json:"report"`
+	Enabled      bool   `json:"enabled"`
+	NextRun      string `json:"next_run,omitempty"`
+	NextRunLocal string `json:"next_run_local,omitempty"` // next_run rendered in the schedule's tz
+	LastRun      string `json:"last_run,omitempty"`
+	LastStatus   string `json:"last_status,omitempty"`
+	CreatedAt    string `json:"created_at,omitempty"`
+	UpdatedAt    string `json:"updated_at,omitempty"`
 	// Warning is set on a create/run_now response when the scheduler goroutine is not
 	// running on this deployment — the schedule is stored but will never fire until an
 	// operator enables it (AF_SCHEDULER_INTERVAL). Empty otherwise. The operator relays it.

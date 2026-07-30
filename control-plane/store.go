@@ -162,11 +162,11 @@ type Schedule struct {
 	// Report opts a fire into the docs/30 completion report: true passes OwnerConv as the
 	// session's report_to so the result comes back to the operator/assistant conversation.
 	// Default false = fire silently (run history / failure notifications still surface).
-	Report  bool
-	Enabled bool
-	NextRun, LastRun           string
-	LastStatus                 string
-	CreatedAt, UpdatedAt       string
+	Report               bool
+	Enabled              bool
+	NextRun, LastRun     string
+	LastStatus           string
+	CreatedAt, UpdatedAt string
 	// Reuse ledger (P6, docs/38): the current long-lived session the scheduler drives in
 	// session_mode=reuse, when it started, and how many fires it has taken since the last
 	// rotation. Rotation is a JSON blob of triggers (every_runs/after/calendar). MissingTargetPolicy
