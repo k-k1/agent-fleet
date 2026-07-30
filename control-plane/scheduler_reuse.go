@@ -280,6 +280,13 @@ func (f *wakeFirer) saveReuse(ctx context.Context, id, session, startedAt string
 // transport error (err != nil) is distinct from an HTTP error status the caller
 // interprets (e.g. 409 to trigger a resume).
 func (f *wakeFirer) agentReq(ctx context.Context, rt Runtime, method, path string, body []byte) ([]byte, int, error) {
+	return f.agentReqClient(ctx, agentHTTPClient, rt, method, path, body)
+}
+
+// agentReqClient is agentReq with an explicit client — the assistant-turn fire
+// passes agentLongCallClient because its 8-minute ctx (not the shared 2-minute
+// client timeout) is the intended bound.
+func (f *wakeFirer) agentReqClient(ctx context.Context, cl *http.Client, rt Runtime, method, path string, body []byte) ([]byte, int, error) {
 	var rdr io.Reader
 	if body != nil {
 		rdr = bytes.NewReader(body)
@@ -294,7 +301,7 @@ func (f *wakeFirer) agentReq(ctx context.Context, rt Runtime, method, path strin
 	if rt.Token() != "" {
 		req.Header.Set("Authorization", "Bearer "+rt.Token())
 	}
-	resp, err := agentHTTPClient.Do(req)
+	resp, err := cl.Do(req)
 	if err != nil {
 		return nil, 0, err
 	}

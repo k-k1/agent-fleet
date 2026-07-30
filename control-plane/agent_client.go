@@ -23,6 +23,21 @@ var agentHTTPClient = &http.Client{
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }
 
+// agentLongCallClient is agentHTTPClient WITHOUT the client timeout, for the few
+// deliberately long synchronous Agent calls whose deadline the CALLER's context
+// carries (POST /assistant-turns: 8 min so the Agent-side operatorTurnTimeout —
+// which may pause 4 min on a bridge approval — always gives up first). The
+// 2-minute shared timeout would fake-fail those turns.
+var agentLongCallClient = &http.Client{
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
+
+// healthzClient bounds the /healthz probes (waitAgentHealthy): the poll loops
+// re-issue every couple of seconds, so one hung request must not stall its
+// caller — a wedged probe inside a scheduler fire would otherwise hold the
+// tick's wg.Wait forever (the same failure mode agentHTTPClient closed).
+var healthzClient = &http.Client{Timeout: 5 * time.Second}
+
 // countSessions asks the Agent how many sessions are currently running. The quota
 // caps concurrency, so only live (alive) sessions count — stopped/resumable ones,
 // which the Agent keeps listed for the stopped-TTL window, do not occupy a slot.

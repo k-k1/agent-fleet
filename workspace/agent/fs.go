@@ -154,8 +154,33 @@ func safeBrowsePath(p string) (full, rel string, ok bool) {
 // the plain path and need this re-check. A not-yet-existing suffix (mkdir /
 // upload / rename targets) is fine as long as every EXISTING component resolves
 // and the resolved base stays in bounds.
-func fsResolvedOK(full string) bool {
-	root, err := filepath.EvalSymlinks(browseRoot())
+func fsResolvedOK(full string) bool { return fsResolvedOKUnder(full, browseRoot(), true) }
+
+// fsQueryResolvedOK is the tree/search variant: a RELATIVE query re-checks
+// against the browse root (+denylist); an ABSOLUTE query (a scratch/docs read
+// root, or an absolute path under home) re-checks against whichever allowed
+// read root admitted it — otherwise a symlink under home could still expose
+// denylisted / out-of-root METADATA (listings, name search) even though the
+// content read itself is openat2-guarded.
+func fsQueryResolvedOK(q, full string) bool {
+	if !filepath.IsAbs(strings.TrimSpace(q)) {
+		return fsResolvedOK(full)
+	}
+	if r, err := filepath.Rel(browseRoot(), full); err == nil &&
+		r != ".." && !strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+		return fsResolvedOKUnder(full, browseRoot(), true)
+	}
+	for _, ar := range []string{scratchRoot(), agentFleetDocsRoot()} {
+		if r, err := filepath.Rel(ar, full); err == nil &&
+			r != ".." && !strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+			return fsResolvedOKUnder(full, ar, false) // read-only roots carry no denylist
+		}
+	}
+	return false
+}
+
+func fsResolvedOKUnder(full, root string, applyDeny bool) bool {
+	rroot, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return false
 	}
@@ -165,11 +190,11 @@ func fsResolvedOK(full string) bool {
 		r, err := filepath.EvalSymlinks(p)
 		if err == nil {
 			resolved := filepath.Join(r, suffix)
-			rel, rerr := filepath.Rel(root, resolved)
+			rel, rerr := filepath.Rel(rroot, resolved)
 			if rerr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 				return false
 			}
-			return rel == "." || !isDenied(filepath.ToSlash(rel))
+			return rel == "." || !applyDeny || !isDenied(filepath.ToSlash(rel))
 		}
 		if !os.IsNotExist(err) {
 			return false
@@ -205,7 +230,7 @@ type fsEntry struct {
 func handleFSTree(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("path")
 	full, rel, ok := safeBrowsePath(q)
-	if !ok || (!filepath.IsAbs(strings.TrimSpace(q)) && !fsResolvedOK(full)) {
+	if !ok || !fsQueryResolvedOK(q, full) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
 	}

@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -40,7 +39,7 @@ func handleFSSearch(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	qPath := r.URL.Query().Get("path")
 	full, rel, ok := safeBrowsePath(qPath)
-	if !ok || (!filepath.IsAbs(strings.TrimSpace(qPath)) && !fsResolvedOK(full)) {
+	if !ok || !fsQueryResolvedOK(qPath, full) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
 	}
