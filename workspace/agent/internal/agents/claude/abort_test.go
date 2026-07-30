@@ -56,6 +56,10 @@ func TestAbortedTurnClassification(t *testing.T) {
 		{"connection closed", "API Error: Connection closed mid-response. The response above may be incomplete.", 0, true},
 		{"rate limited", "API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited", 429, true},
 		{"overloaded 5xx", "API Error: 529 Overloaded", 529, true},
+		// 実測 sp2qemx (2026-07-30): apiErrorStatus フィールドごと無いので、文言でしか
+		// 一過性と判定できない。ここが blocked に倒れると自動再開の対象から外れる。
+		{"server error mid-response", "API Error: Server error mid-response. The response above may be incomplete.", 0, true},
+		{"internal server error", "API Error: 500 Internal server error", 0, true},
 		{"usage limit", "You've reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model", 429, false},
 		{"prompt too long", "Prompt is too long · the request is ~242785 tokens (limit 200000) but this conversation is longer", 400, false},
 		{"unknown wording", "API Error: something nobody has seen before", 0, false}, // 判定不能は blocked 側

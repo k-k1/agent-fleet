@@ -61,7 +61,11 @@ var retryableMarkers = []string{
 	"overloaded",
 	"timed out",
 	"timeout",
-	"internal server error",
+	// "server error" は "internal server error" を含む広い形。実測 sp2qemx (2026-07-30)
+	// の "API Error: Server error mid-response. The response above may be incomplete."
+	// はこの語しか手掛かりが無い — apiErrorStatus フィールドごと欠けているので下の
+	// 5xx フォールバックにも掛からず、blocked（＝自動再開しない）に倒れていた。
+	"server error",
 	"service unavailable",
 	"bad gateway",
 }
