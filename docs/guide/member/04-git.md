@@ -68,7 +68,7 @@ Rows also show status indicators. Learning to read them helps you catch things b
 - Worktree **diverged N↕M** — both the worktree and the parent have unique commits; a merge or rebase is needed.
 - Worktree **n/a** — the relationship cannot be determined, e.g. detached HEAD or a repository with no commits.
 - **↑N** (ahead) — N commits ahead of origin (not pushed).
-- **↓N FF ok** — origin is N commits ahead and can be fast-forwarded cleanly (Fast-Forward in source control).
+- **↓N FF ok** — origin is N commits ahead and can be fast-forwarded cleanly (Fast-Forward in the commit graph).
 - **↑N ↓N needs merge** — diverged from origin. A fast-forward is not possible; a merge or rebase is needed.
 
 Worktree status indicators compare against the current branch in the parent working copy, while
@@ -78,7 +78,7 @@ ancestry, a branch merged on the hosting service may still not show as **merged*
 
 The `●N` at the end of a row is the number of running sessions; a plain number badge is the number
 of stopped sessions. When a repository is collapsed, this includes sessions of its worktrees. A
-colored number is the pane number showing that repository's source control. See
+colored number is the pane number showing that repository's commit graph. See
 [Icons, badges, and menus](badges-and-menus.md) for details.
 
 ### What you can do with right-click
@@ -86,15 +86,15 @@ colored number is the pane number showing that repository's source control. See
 Right-clicking a repository or worktree row shows the following actions. Some items are hidden
 depending on state and location.
 
-- **Open source control** / **Open the folder** / **Commit changes**
+- **Open commit graph** / **Open the folder** / **Commit changes**
 - **Switch branch** / **Copy the branch name** / **Fast-Forward**
 - Per-kind session launch: claude, codex, opencode, shell, and so on
 - **Delete the working copy** (only for working copies that can be deleted)
 
-## Commit in the source control view
+## Commit in the commit graph view
 
 A normal click on a repository row expands / collapses the sessions and worktrees underneath it.
-The **source control** view (commit graph) opens from "Open source control" in the right-click
+The **commit graph** view opens from "Open commit graph" in the right-click
 menu. Ctrl / ⌘+click or middle-click opens it directly in a new pane. The header shows the
 current branch and action buttons, which collapse into **⋯** when space is tight.
 
@@ -126,7 +126,7 @@ Diffs can be folded per file, and you can adjust how they are shown with "Expand
 ## Deleting a working copy
 
 When you no longer need a working copy, use **"Delete the working copy"** from the repository
-row's right-click menu or from the delete action in the source control header. Only the local
+row's right-click menu or from the delete action in the commit graph header. Only the local
 working copy is removed; history and the remote remain. If there are uncommitted / unpushed
 changes, a second confirmation ("Force delete") warns you that they will be lost.
 
@@ -159,7 +159,7 @@ toggle** to select SVN, then enter the **Repository URL** and, if needed, a **su
   If the working copy gets locked (an error prompting `svn cleanup`), e.g. after an interruption,
   checkout / update automatically attempts one recovery. If the lock remains, use
   **"Clean up lock"** from the row menu.
-- The svn row shows the current revision (`r1234`). Branch switch and the source control view
+- The svn row shows the current revision (`r1234`). Branch switch and the commit graph view
   (stage / commit) are git-only, so commit with `svn commit` inside a session. **Saved
   credentials are not passed through to svn commands inside sessions**, so add `--username`
   when needed.
