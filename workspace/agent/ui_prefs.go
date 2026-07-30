@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -154,6 +155,27 @@ func chatAutoTurnLimit() int {
 		return maxAutoTurnLimit
 	}
 	return n
+}
+
+// chatAutoTurnModel is the dedicated model for the operator's automatic turns
+// (設定 > アシスタント「自動応答のモデル」). 空 = 会話のモデルのまま。報告の確認・
+// 要約は定型作業なので軽量モデル（haiku 等）へ逃がせる — 自動ターンはユーザー
+// ターンより回数が多く(実測 121 vs 107/5日)、ここの単価がそのまま費用に効く。
+// 適用は claude の会話のみ（codex/opencode は c.Model 直参照で上書き口が無い —
+// runReportAutoTurn 側でゲート）。
+func chatAutoTurnModel() string {
+	v, _ := readUIPrefs()["assistantAutoTurnModel"].(string)
+	return strings.TrimSpace(v)
+}
+
+// chatQuietCompletionEnabled is the global ON/OFF for 静かな完了報告 (設定 >
+// アシスタント). ON のとき、正常な完了報告では自動ターンを回さず、報告カードと
+// 通知センターへの配信だけにする（報告は未配信のまま残り、次のターンに相乗りする
+// — injectPendingReports）。Missing/invalid key ⇒ FALSE: 完了の追撃・要約は既定の
+// 体験として残し、費用を絞りたい利用者だけが明示的に静かにする。
+func chatQuietCompletionEnabled() bool {
+	v, ok := readUIPrefs()["assistantQuietCompletion"].(bool)
+	return ok && v
 }
 
 // chatAutoPilotEnabled is the global ON/OFF for 自動走行 (docs/30, 設定 >

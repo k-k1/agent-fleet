@@ -190,8 +190,9 @@ is_error・メッセージを表面化するよう両経路を修正**（result 
 
 直近スナップショットの使用率が **90%**（`chatCtxAutoCompactPct`・
 `AF_CHAT_AUTOCOMPACT_PCT` でデプロイ毎に上書き可）以上、**または**絶対量が
-**150k トークン**（`chatCtxAutoCompactTokens`・`AF_CHAT_AUTOCOMPACT_TOKENS` で
-上書き可）以上のまま新しいターンが始まるとき、プロンプト構築の**前**に第2段
+**150k トークン**（`chatCtxAutoCompactTokens`・優先順は 設定 > アシスタント
+「自動圧縮の閾値」→ `AF_CHAT_AUTOCOMPACT_TOKENS` → 既定。下限 20k クランプ）
+以上のまま新しいターンが始まるとき、プロンプト構築の**前**に第2段
 `compactConversation` を自動実行し、その PendingHandoff を同じターンの
 `injectHandoff` で乗せる。差し込みは
 handleChatSend / handleChatStream（detached ctx 上＝リロードでも中断されない）/

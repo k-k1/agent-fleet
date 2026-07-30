@@ -236,6 +236,7 @@ func TestMaybeAutoCompactAbsoluteTokenThreshold(t *testing.T) {
 }
 
 func TestChatAutoCompactTokenThresholdEnvOverride(t *testing.T) {
+	writeUIPrefs(t, `{}`) // HOME を隔離（設定が env より優先のため）
 	if got := chatAutoCompactTokenThreshold(); got != chatCtxAutoCompactTokens {
 		t.Fatalf("default token threshold = %v", got)
 	}
