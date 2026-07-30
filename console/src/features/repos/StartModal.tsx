@@ -621,9 +621,12 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                     <input type="checkbox" checked={ssmForce} onChange={(e) => setSsmForce(e.target.checked)} />
                     {tr("start.force_relogin")}
                   </label>
+                  {/* Two paragraphs, not one <br>-joined block: the warning has to read as
+                      its own line rather than as the tail of the wrapped explanation. */}
                   <span className="ui-field-hint">
                     <Trans k="start.ssm_auth_note" components={[<code />]} />
-                    <br />
+                  </span>
+                  <span className="ui-field-hint warn">
                     <Trans k="start.ssm_auth_warn" components={[<b />]} />
                   </span>
                 </>

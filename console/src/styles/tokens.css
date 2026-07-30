@@ -130,19 +130,29 @@
      (#f4f5f7) those read ~4.4:1 / ~3.3:1 — below WCAG AA for the 12px labels used
      in modals (clone dialog etc.) and the mirror AUQ panels. gray-600 / (old
      --muted) lift these to ~6.9:1 / ~4.4:1 while keeping the fg→muted→muted2
-     hierarchy legible. */
+     hierarchy legible.
+     --muted2 darkened once more (#6b7280 → #5f6672): the light theme stacks
+     secondary text on --panel2 (#eaecef) too — usage table headers, chart axis
+     labels, the ledger's number column — where gray-500 fell to 4.1:1. The pair
+     is now ≥4.8:1 on EVERY light surface (bg / panel / panel2) while keeping the
+     fg → muted → muted2 ladder visible (16.9 / 7.5 / 5.8 on white). */
   --muted: #4b5563;
-  --muted2: #6b7280;
-  --accent: #2563eb;
+  --muted2: #5f6672;
+  /* Semantic colors are one step darker than their "on white" tuning: in light the
+     app paints them on tinted surfaces too — --active-bg (#d7e6fb) rows, --panel2
+     (#eaecef) cards, --btn (#e8eaee) buttons — and 10–13px chips/labels there need
+     4.5:1 against THAT surface, not against white. Each value below clears 4.5:1 on
+     the darkest of them (#d7e6fb). Do not re-lighten one in isolation. */
+  --accent: #1d4ed8; /* blue-700 (was #2563eb: 4.1:1 on --active-bg, 4.3:1 on --panel2) */
   --on-accent: #ffffff; /* light theme: white text on the saturated blue accent */
   --focus-ring: #1d4ed8; /* keyboard focus ring — base.css :focus-visible (keyboard system) */
-  --topbar-accent: #2563eb; /* light-theme default for the admin accent (see :root) */
+  --topbar-accent: #1d4ed8; /* light-theme default for the admin accent (see :root) */
   --btn: #e8eaee;
   --btn-h: #dcdfe5;
   --btn-border: #c6cbd2;
-  --ok: #1a7f37;
-  --warn: #b7791f;
-  --del: #c0392b;
+  --ok: #146c2e; /* was #1a7f37: 4.0:1 on --active-bg (the running-session dot/badge) */
+  --warn: #8a5b00; /* was #b7791f: 2.9:1 on --active-bg, 3.3:1 on --panel — the 質問あり／未コミット chips */
+  --del: #a5281c; /* was #c0392b: 4.4:1 for deleted diff lines on their own red tint */
   --active-bg: #d7e6fb;
   --hover-bg: #eaf1fb;
   /* Light: soft tint + accent-tinted text (a solid fill reads too heavy). Same
@@ -170,16 +180,22 @@
   --hl-add-bg: #dafbe1;
   --hl-del-fg: #82071e;
   --hl-del-bg: #ffebe9;
-  /* Light theme: darker kind hues for legibility (mirrors the old per-file overrides). */
-  --kind-claude: #a85f1c;
-  --kind-codex: #18854a;
-  --kind-cursor: #b0316e; /* rose/magenta (light) */
-  --kind-agy: #1a73e8;
-  --kind-kiro: #8250df; /* purple (light) — inherits copilot's former hue (docs/43 §4-1) */
+  /* Light theme: darker kind hues for legibility (mirrors the old per-file overrides).
+     Darkened a second step (2026-07-30): .kind-tag paints the label on a 20% tint of
+     its OWN hue, so the effective surface is darker than --panel and the 10px bold
+     labels sat at 3.8–4.3:1. Every hue below now clears 4.5:1 on its own tint and on
+     --panel2. Relative ordering is unchanged (copilot stays the darkest neutral,
+     opencode the lighter one), so the per-kind identity documented in docs/43 holds.
+     This block is the single source — grep for a literal hue before adding one. */
+  --kind-claude: #8f4f13;
+  --kind-codex: #126b3b;
+  --kind-cursor: #a02a63; /* rose/magenta (light) */
+  --kind-agy: #0f5ec4;
+  --kind-kiro: #6b3ac9; /* purple (light) — inherits copilot's former hue (docs/43 §4-1) */
   --kind-copilot: #30363d; /* near-black/charcoal (light) — moved off purple (docs/43) */
-  --kind-opencode: #6e7781; /* mid slate grey (light) — lighter than copilot's near-black */
-  --kind-shell: #15828a;
-  --kind-ssm: #3140b8;
+  --kind-opencode: #575e68; /* mid slate grey (light) — lighter than copilot's near-black */
+  --kind-shell: #0f676d;
+  --kind-ssm: #2c39a3;
   /* Data-viz slots, light steps of the SAME eight hues (not an automatic flip —
      selected and validated for the light modal surface --panel #f4f5f7: worst
      adjacent CVD ΔE 9.1, normal-vision ΔE 19.6). Four slots sit below 3:1 on the
