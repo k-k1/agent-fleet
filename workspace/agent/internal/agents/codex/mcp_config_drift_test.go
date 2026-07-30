@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -59,10 +60,22 @@ func TestDriftCodexAppServerRereadsMCPConfig(t *testing.T) {
 	addr := "unix://" + filepath.Join(t.TempDir(), "app.sock")
 	cmd := exec.Command(bin, "app-server", "--listen", addr)
 	cmd.Env = append(os.Environ(), "CODEX_HOME="+home)
+	// `codex` is a Node shim that runs the vendored native binary as a CHILD, so killing
+	// cmd.Process only reaps the shim: the native app-server is reparented to init and
+	// keeps running (~115MB each, still holding its socket). That is the same trap
+	// reapProcessGroup exists for, but this call site has no context to cancel — so put
+	// the pair in its own process group and signal the group. Measured before this fix:
+	// a single `-tags drift` run left two orphaned app-servers behind on the host.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("codex app-server: %v", err)
 	}
-	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	defer func() {
+		if cmd.Process != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		_ = cmd.Wait()
+	}()
 
 	var cl *appClient
 	deadline := time.Now().Add(15 * time.Second)
