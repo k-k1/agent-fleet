@@ -116,6 +116,12 @@ export function MarpView({ source }: { source?: string }) {
         // hides the non-current ones, which would zero out their measurements).
         slides.forEach((el) => fitSection((el.querySelector("section") as HTMLElement) || el));
         slidesRef.current = slides;
+        // Apply the display state here too: if `cur`/`count` happen to be unchanged
+        // (same deck size, already on slide 0) the effect below won't re-run, and the
+        // freshly rebuilt DOM would show every slide at once.
+        slides.forEach((s, i) => {
+          s.style.display = i === 0 ? "" : "none";
+        });
         setCount(slides.length);
       })
       .catch(() => alive && setErr(tr("view.marp_load_failed")));
