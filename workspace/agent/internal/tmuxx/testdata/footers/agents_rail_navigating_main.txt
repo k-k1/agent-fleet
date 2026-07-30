@@ -11,13 +11,13 @@
 ● Launched — a background general-purpose agent is running sleep 150 and will
   reply DONE. I'll let you know when the completion notification arrives.
 
-✻ Waiting for 1 background agent to finish
+✻ Crunched for 12s
 
-────────────────────────────────────────────────────────────────────────────────
+───────────────────────────────────── Launch background agent with sleep task ──
 ❯ 
 ────────────────────────────────────────────────────────────────────────────────
-  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
 
-  ● main
-  ◯ general-purpose  Sleep then reply DONE                                   30s
+  ↑/↓ to select · Enter to view
 
+❯ ● main
+  ◯ general-purpose  Sleep then reply DONE                1m 7s · ↓ 16.6k tokens

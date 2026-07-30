@@ -1,0 +1,23 @@
+
+ ▐▛███▜▌   Claude Code v2.1.220
+▝▜█████▛▘  Opus 5 · /tmp/af-probe-agents
+  ▘▘ ▝▝    1 awaiting input · 0 working · 0 completed
+
+Your conversation moved to the background — enter opens it · esc returns to it ·
+ctrl+c twice quits
+
+Needs input
+ Sessions that have a question or need your decision land here
+✻ Launch background agent with sleep task  Launched — a background general…   2s
+
+Working
+ Sessions Claude is actively working on — they keep running even if you close
+
+ A different way to work with Claude: hand off a bigger task than you would chat
+ through, and Claude organizes it in the sections above so you know when it
+ needs you.
+
+────────────────────────────────────────────────────────────────────────────────
+❯ describe a task for a new session
+────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions · enter to return · space to reply · ctrl+x to delete ·…
