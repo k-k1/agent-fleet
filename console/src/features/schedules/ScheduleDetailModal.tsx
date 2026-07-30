@@ -44,6 +44,7 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
   const [wake, setWake] = useState(s.wake_policy || "wake");
   const [agent, setAgent] = useState(s.agent_kind || "claude");
   const [model, setModel] = useState(s.model || "");
+  const [report, setReport] = useState(!!s.report);
 
   const kinds = useMemo(
     () => (AGENT_KINDS.includes(agent) ? AGENT_KINDS : [agent, ...AGENT_KINDS]),
@@ -61,8 +62,9 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
     if (wake !== (s.wake_policy || "wake")) p.wake_policy = wake;
     if (agent !== (s.agent_kind || "claude")) p.agent_kind = agent;
     if (model !== (s.model || "")) p.model = model;
+    if (report !== !!s.report) p.report = report;
     return p;
-  }, [s, specKind, spec, tz, label, prompt, wake, agent, model]);
+  }, [s, specKind, spec, tz, label, prompt, wake, agent, model, report]);
 
   const dirty = Object.keys(patch).length > 0;
   const canSave = dirty && !busy && prompt.trim().length > 0 && spec.trim().length > 0;
@@ -183,6 +185,18 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
             <input id="sched-model" type="text" value={model} onChange={(e) => setModel(e.target.value)} placeholder={tr("sched.f_model_ph")} spellCheck={false} />
           </div>
         </div>
+
+        {/* Completion-report opt-in (default off). Hidden for session_mode=assistant —
+            there the fire itself lands in the conversation, so a report is meaningless. */}
+        {s.session_mode !== "assistant" && (
+          <label className="ui-field" style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
+            <input type="checkbox" checked={report} onChange={(e) => setReport(e.target.checked)} />
+            <span>
+              {tr("sched.f_report")}
+              <span className="ui-field-hint"> — {tr("sched.f_report_hint")}</span>
+            </span>
+          </label>
+        )}
 
         <div className="ui-field">
           <label className="ui-field-label" htmlFor="sched-prompt">
