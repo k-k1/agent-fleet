@@ -19,6 +19,7 @@ import { agentOf, repoLaunchKinds } from "../../agents/registry.ts";
 import { t, useT } from "../../lib/i18n/index.ts";
 import { ordClass } from "../../layout/badges.ts";
 import { BranchModal } from "./BranchModal.tsx";
+import { openRepoScm } from "../scm/open.ts";
 import { LaunchModal } from "./LaunchModal.tsx";
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
 import type { Repo } from "./store.ts";
@@ -424,6 +425,10 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
         <BranchModal
           repoName={r.name}
           onClose={() => setBranchOpen(false)}
+          onOpenWorktree={(folder) => {
+            setBranchOpen(false);
+            openRepoScm(folder);
+          }}
           onChecked={() => {
             setBranchOpen(false);
             onBranchChanged?.();

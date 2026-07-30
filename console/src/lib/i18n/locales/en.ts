@@ -17,6 +17,8 @@ export const en: Record<keyof typeof ja, string> = {
     "You've reached the limit on concurrently running sessions. Stop one of the running sessions before creating another.",
   "err.sessions_running":
     "This working copy has running sessions. Switching would swap and break the working tree underfoot, so it's blocked here. Open the branch as a separate working copy instead.",
+  "err.branch_in_use":
+    "Another working copy already has this branch checked out. git allows one working copy per branch — open that copy, or pick a different branch.",
   "err.sessions_running_delete":
     "This working copy has running sessions. Deleting would remove the working directory underfoot and break them, so stop those sessions first.",
   "err.worktree_dirty":
@@ -2158,6 +2160,14 @@ export const en: Record<keyof typeof ja, string> = {
   "launch.direct_here": "Directly in this copy",
   "launch.direct_here_sub": "Work in the current {branch}",
   "launch.wc": "working copy",
+  "launch.field.branch": "Branch",
+  "launch.branch_new": "New branch",
+  "launch.branch_new_sub": "Fork from a base branch",
+  "launch.branch_existing": "Existing branch",
+  "launch.branch_existing_sub": "Work on a branch that already exists",
+  "launch.pick_branch": "Branch to use",
+  "launch.branch_pick_note": "The chosen branch is checked out into a new working copy and brought up to date before launch.",
+  "launch.branch_in_use": "Branch <0>{branch}</0> is in use by working copy <1>{folder}</1>. git cannot check one branch out into two working copies.",
   "launch.base_branch": "Base branch",
   "launch.base_default": "default",
   "launch.branch_name": "Branch name (optional)",
@@ -2540,6 +2550,11 @@ export const en: Record<keyof typeof ja, string> = {
   "rp.branches_fetch_failed": "Couldn't fetch branches",
   "rp.checkout_failed": "Branch switch failed: {err}",
   "rp.branch_switch_title": "Switch branch — {repo}",
+  "rp.branch_in_use_chip": "in use by {folder}",
+  "rp.branch_in_use_title": "This branch is checked out in working copy {folder} (git allows one working copy per branch). Click to open it.",
+  "rp.branch_start_work": "Start work on {name} (its own working copy)",
+  "rp.branch_switch_worktree_note":
+    "This working copy stands for one task. For another branch, ▶ gives it a dedicated working copy — switching here drags the current work along.",
   "rp.source_help_picker": "Choose a repository and branch from your connected GitHub / Bitbucket and clone it.",
   "rp.source_help_url": "Enter a clone URL manually (for repositories that aren't connected).",
   "rp.source": "Source",
@@ -2668,6 +2683,8 @@ export const en: Record<keyof typeof ja, string> = {
   "scm.no_commits": "No commits",
   "scm.show_detail": "Show details",
   "scm.switch_branch_to": "Switch branch: {name}",
+  "scm.start_work_on": "Start work on {name}…",
+  "scm.open_branch_worktree": "{name} is in use by {folder} — open it",
   "scm.checkout_detached": "Check out (detached HEAD)",
   "scm.new_branch_from_commit": "New branch from this commit…",
   "scm.new_branch_title": "New branch — from {sha}",

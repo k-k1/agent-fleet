@@ -18,6 +18,8 @@ export const ja = {
     "同時に稼働できるセッション数の上限に達しています。稼働中のセッションをどれか停止してから作成してください。",
   "err.sessions_running":
     "この作業コピーでは稼働中のセッションがあります。切り替えると足元の作業ツリーが入れ替わり壊れるため、ここでは切り替えできません。ブランチは別の作業コピーとして開いてください。",
+  "err.branch_in_use":
+    "このブランチは別の作業コピーが既にチェックアウトしています。git は同じブランチを2つの作業コピーに置けません。そちらの作業コピーを開くか、別のブランチを選んでください。",
   "err.sessions_running_delete":
     "この作業コピーでは稼働中のセッションがあります。削除すると足元の作業ディレクトリが消えて壊れるため、先にそれらのセッションを停止してください。",
   "err.worktree_dirty":
@@ -2199,6 +2201,14 @@ export const ja = {
   "launch.direct_here": "このコピーで直接",
   "launch.direct_here_sub": "現在の {branch} で作業",
   "launch.wc": "作業コピー",
+  "launch.field.branch": "ブランチ",
+  "launch.branch_new": "新規ブランチ",
+  "launch.branch_new_sub": "基点から分岐して始める",
+  "launch.branch_existing": "既存ブランチ",
+  "launch.branch_existing_sub": "あるブランチをそのまま使う",
+  "launch.pick_branch": "使うブランチ",
+  "launch.branch_pick_note": "選んだブランチを新しい作業コピーに取り出し、最新まで進めてから起動します。",
+  "launch.branch_in_use": "ブランチ <0>{branch}</0> は作業コピー <1>{folder}</1> で使用中です。git は同じブランチを2つの作業コピーに置けません。",
   "launch.base_branch": "基点ブランチ",
   "launch.base_default": "既定",
   "launch.branch_name": "ブランチ名（任意）",
@@ -2582,6 +2592,11 @@ export const ja = {
   "rp.branches_fetch_failed": "ブランチを取得できませんでした",
   "rp.checkout_failed": "ブランチ切替に失敗: {err}",
   "rp.branch_switch_title": "ブランチ切替 — {repo}",
+  "rp.branch_in_use_chip": "{folder} で使用中",
+  "rp.branch_in_use_title": "このブランチは作業コピー {folder} が使用中です（git は同じブランチを2つの作業コピーに置けません）。開くにはクリック。",
+  "rp.branch_start_work": "{name} で作業を始める（専用の作業コピー）",
+  "rp.branch_switch_worktree_note":
+    "この作業コピーは1つのタスク用です。別ブランチは ▶ で専用の作業コピーを作る方が安全です（切替は現在の作業を巻き込みます）。",
   "rp.source_help_picker": "接続済みの GitHub / Bitbucket からリポジトリとブランチを選んでクローンします。",
   "rp.source_help_url": "クローンURLを手入力します（接続していないリポジトリ向け）。",
   "rp.source": "取得元",
@@ -2710,6 +2725,8 @@ export const ja = {
   "scm.no_commits": "コミットがありません",
   "scm.show_detail": "詳細を表示",
   "scm.switch_branch_to": "ブランチ切替: {name}",
+  "scm.start_work_on": "{name} で作業を始める…",
+  "scm.open_branch_worktree": "{name} は {folder} で作業中 — 開く",
   "scm.checkout_detached": "チェックアウト（detached HEAD）",
   "scm.new_branch_from_commit": "このコミットから新規ブランチ…",
   "scm.new_branch_title": "新規ブランチ — {sha} から",

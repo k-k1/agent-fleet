@@ -454,8 +454,21 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		folderSeg := strings.TrimSpace(req.Folder) // "" => folder derives from the branch
 		if req.UseExisting {
 			// "Work on the existing branch": check out req.Branch (local or DWIM-tracked
-			// remote) into the worktree — the chosen resolution of a name collision.
-			dir, err = ensureWorktree(parent, req.Branch, "", "")
+			// remote) into the worktree. Reached from the launch dialog's 既存ブランチ mode
+			// and from the SCM branch actions, as well as from a name collision.
+			base := strings.TrimSpace(req.Branch)
+			// git holds a branch in one worktree at a time. Refuse BEFORE any directory or
+			// fetch side effect, naming the copy that has it — worktree add would fail
+			// halfway through otherwise, with a message that doesn't say what to do next.
+			if occ := worktreeBranches(parent)[base]; occ != "" {
+				writeBranchInUse(w, base, occ)
+				return
+			}
+			ensureBranchRef(parent, base) // branch pushed since our last fetch => fetch once
+			dir, err = ensureWorktree(parent, base, "", "")
+			if err == nil {
+				fastForwardWorktree(dir) // start at the branch's current tip, not a stale one
+			}
 		} else {
 			// Branch naming is deferred: unless the client sends an explicit name we
 			// start on a throwaway branch temp/<slug> in a wip-<slug> folder (same
