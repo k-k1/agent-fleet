@@ -1926,6 +1926,8 @@ export const ja = {
   "sched.f_agent": "エージェント",
   "sched.f_model": "モデル",
   "sched.f_model_ph": "既定",
+  "sched.f_report": "アシスタントに報告",
+  "sched.f_report_hint": "完了報告を登録元の会話に届ける（既定: しない）",
   "sched.f_prompt": "プロンプト",
   "sched.f_session_mode": "セッションモード",
   "sched.f_reuse_target": "再利用ターゲット",

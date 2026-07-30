@@ -28,6 +28,9 @@ export interface ScheduleDTO {
   reuse_session?: string;
   reuse_run_count?: number;
   owner_conv?: string;
+  // Completion-report opt-in: true = the fire's session reports back to the owner
+  // (operator/assistant) conversation. Default false = fire silently.
+  report?: boolean;
   enabled: boolean;
   next_run?: string;
   next_run_local?: string;
@@ -54,6 +57,7 @@ export interface ScheduleEditable {
   wake_policy?: string;
   agent_kind?: string;
   model?: string;
+  report?: boolean;
 }
 
 // One row from GET /api/schedules/{id}/runs.
