@@ -41,7 +41,12 @@ func startSessionTmux(m session.Meta, ssmForce bool) error {
 	// never mislabeled as crashes (see record_exit.go). m.Name is a validated slug, so
 	// it needs no shell escaping beyond the single quotes.
 	program += "; __af_ec=$?; workspace-agent record-exit '" + m.Name + "' \"$__af_ec\""
-	args := []string{"new-session", "-d", "-s", session.TmuxName(m.Name), "-c", plan.Cwd, program}
+	args := []string{"new-session", "-d", "-s", session.TmuxName(m.Name), "-c", plan.Cwd}
+	// Secrets ride -e (pane process env), never the command string (plan.Env contract).
+	for _, kv := range plan.Env {
+		args = append(args, "-e", kv)
+	}
+	args = append(args, program)
 	if out, err := tmuxx.Cmd(args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("%v: %s", err, out)
 	}

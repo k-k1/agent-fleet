@@ -431,7 +431,11 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 		return fmt.Errorf("kiro runtime を起動できません: %w", err)
 	}
 	cl := newACPClient(stdin, stdout)
-	cl.onRequest = h.onServerRequest
+	// クロージャで当該 cl を捕捉する: 初回 spawn 中は h.cl が未代入のまま readLoop が
+	// 走り得るので、h.cl 参照だと未知メソッド応答で nil デリファレンス panic になる。
+	cl.onRequest = func(id json.RawMessage, method string, params json.RawMessage) {
+		h.onServerRequest(cl, id, method, params)
+	}
 	cl.onNotify = h.onNotify
 	exited := make(chan struct{})
 	go h.watch(cmd, cl, exited)
@@ -1036,10 +1040,10 @@ func toolOutput(raw json.RawMessage) string {
 // onServerRequest handles server-initiated requests on the readLoop goroutine —
 // MUST NOT block: record the Interaction and return; the answer goes back later via
 // Respond → cl.respond. --trust-all-tools 運転では発生しないが、plan 起動では到達しうる。
-func (h *threadHandle) onServerRequest(id json.RawMessage, method string, params json.RawMessage) {
+func (h *threadHandle) onServerRequest(cl *acpClient, id json.RawMessage, method string, params json.RawMessage) {
 	if method != "session/request_permission" {
 		// 未知のサーバー発リクエストは応答しないと turn が固まる — エラーで返す。
-		_ = h.cl.write(map[string]any{
+		_ = cl.write(map[string]any{
 			"jsonrpc": "2.0", "id": id,
 			"error": map[string]any{"code": -32601, "message": "unsupported request: " + method},
 		})

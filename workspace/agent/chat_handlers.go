@@ -274,6 +274,16 @@ func handleChatDelete(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "invalid id")
 		return
 	}
+	// 実行中ターンと直列化: ロック無しで消すと、ターン末尾の saveConv が削除済み
+	// 会話（と資格情報入りの会話別 MCP config）を再作成してゾンビ化する。実行中は
+	// 数分待たせるより 409 で先に止めてもらう（Stop してから削除）。
+	if turnInFlight(id) {
+		httpx.WriteErr(w, http.StatusConflict, "conversation_busy",
+			"a turn is in progress — stop it before deleting")
+		return
+	}
+	unlock := lockConv(id)
+	defer unlock()
 	// 削除ロック（docs/45）: ロック中の会話は消さない。読めない会話は素通り
 	// （下の os.Remove が not-exist を許容するのと同じで、掃除は続けたい）。
 	if c, err := loadConv(id); err == nil && c.Locked {

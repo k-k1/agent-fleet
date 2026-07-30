@@ -629,6 +629,10 @@ func handleIdempotencyLookup(w http.ResponseWriter, r *http.Request) {
 // first launch (via ForkFrom) materializes the copy, and later launches resume it.
 func handleForkSession(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	if !session.ValidName(name) {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		return
+	}
 	src, ok := session.ReadMeta(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "no_session", "session not found: "+name)

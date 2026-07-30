@@ -62,8 +62,9 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// working/idle state back keyed by OUR deterministic sid (same store claude
 	// uses), so wireSession can surface it. Provider API keys are injected as env
 	// (ANTHROPIC_API_KEY, …) so opencode authenticates without a plaintext file. The
-	// env is prefixed onto the command itself (not tmux -e, which sets only the
-	// session environment and does NOT reach the pane's process).
+	// env rides LaunchPlan.Env → `tmux new-session -e` (reaches the pane process;
+	// verified on tmux 3.3a) so the keys never appear in the command string /
+	// /proc/*/cmdline / pane_start_command.
 	ocSid := session.UUID(m.Dir, m.Name)
 	envs := append([]string{"AF_SESSION_SID=" + ocSid}, env()...)
 	// Resume the slot's OWN opencode conversation (activeSession: the plugin-captured
@@ -90,7 +91,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	if resume == "" && m.ForkFrom != "" {
 		resume, fork = m.ForkFrom, true
 	}
-	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Mode, envs, resume, fork), Cwd: m.Dir}, nil
+	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Mode, resume, fork), Cwd: m.Dir, Env: envs}, nil
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {

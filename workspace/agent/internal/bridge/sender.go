@@ -122,20 +122,20 @@ func rewriteQueued(path string, q queued) {
 // cacheDiscordDM writes a freshly resolved DM channel id back to the store
 // (write-through cache, same pattern as the connections status handlers).
 func cacheDiscordDM(channelID string) {
-	s, err := secrets.Load()
-	if err != nil || s.Discord == nil {
-		return
-	}
-	s.Discord.DMChannelID = channelID
-	_ = s.Save()
+	_ = secrets.Update(func(s *secrets.Data) error {
+		if s.Discord != nil {
+			s.Discord.DMChannelID = channelID
+		}
+		return nil
+	})
 }
 
 // cacheSlackDM is the Slack write-through DM cache (docs/37 Slack 追随).
 func cacheSlackDM(channelID string) {
-	s, err := secrets.Load()
-	if err != nil || s.Slack == nil {
-		return
-	}
-	s.Slack.DMChannelID = channelID
-	_ = s.Save()
+	_ = secrets.Update(func(s *secrets.Data) error {
+		if s.Slack != nil {
+			s.Slack.DMChannelID = channelID
+		}
+		return nil
+	})
 }

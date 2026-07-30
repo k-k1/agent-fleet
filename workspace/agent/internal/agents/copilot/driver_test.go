@@ -100,7 +100,9 @@ func newTestHandle(t *testing.T) (*threadHandle, *fakeACP) {
 		cl: cl, alive: true, state: agents.TurnCompleted,
 		events: make(chan agents.Event, 64),
 	}
-	h.cl.onRequest = h.onServerRequest
+	h.cl.onRequest = func(id json.RawMessage, method string, params json.RawMessage) {
+		h.onServerRequest(h.cl, id, method, params)
+	}
 	return h, f
 }
 

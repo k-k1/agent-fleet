@@ -104,6 +104,12 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	}
 	handlesMu.Unlock()
 
+	// spawn を handle 単位で直列化する（kiro A2-4 と同型）: boot の ReconcileManaged と
+	// 直後の /turn が並行に Resume すると check-then-spawn が非直列で二重 spawn し、
+	// 先発の子プロセスが孤児化する。ロック取得後に liveness を再確認する。
+	h.spawnMu.Lock()
+	defer h.spawnMu.Unlock()
+
 	h.mu.Lock()
 	if h.alive && h.cl != nil && !h.cl.dead() {
 		h.mu.Unlock()
@@ -274,6 +280,8 @@ type threadHandle struct {
 	dir     string
 	slotSid string
 
+	spawnMu sync.Mutex // serializes spawns for this handle（並行 Resume の二重 spawn 防止・kiro A2-4 と同型）
+
 	mu       sync.Mutex
 	cmd      *exec.Cmd
 	cl       *acpClient
@@ -326,7 +334,11 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 		return fmt.Errorf("cursor runtime を起動できません: %w", err)
 	}
 	cl := newACPClient(stdin, stdout)
-	cl.onRequest = h.onServerRequest
+	// クロージャで当該 cl を捕捉する: 初回 spawn 中は h.cl が未代入のまま readLoop が
+	// 走り得るので、h.cl 参照だと未知メソッド応答で nil デリファレンス panic になる。
+	cl.onRequest = func(id json.RawMessage, method string, params json.RawMessage) {
+		h.onServerRequest(cl, id, method, params)
+	}
 	cl.onNotify = h.onNotify
 	go h.watch(cmd, cl)
 
@@ -353,9 +365,13 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 		}, 180*time.Second)
 		h.buf.setLoading(false) // 最後の assistant ターンを flush
 		if err != nil {
-			log.Printf("cursor managed: session/load %s: %v — 新規セッションで再開", h.name, err)
-			sid = ""
+			// kiro A2-1 と同じ理屈: 一時失敗（timeout・lock 競合等）で session/new に
+			// 落ちると、生きた会話を無言で切り離し slot の sid を空の新会話で上書き
+			// してしまう。cursor はローカルストアが無く「会話が本当に消えた」を決定的に
+			// 判定できないため、失敗は再試行可能なエラーとして返し停止中のままにする。
 			h.buf.reset()
+			stopChild(cmd)
+			return fmt.Errorf("cursor セッションを読み込めませんでした（時間をおいて再開してください）: %w", err)
 		} else {
 			mode = currentModeOf(res)
 			modelID = currentModelOf(res)
@@ -846,10 +862,10 @@ func toolOutput(raw json.RawMessage) string {
 // onServerRequest handles server-initiated requests on the readLoop goroutine —
 // MUST NOT block: record the Interaction and return; the answer goes back later via
 // Respond → cl.respond. --force 運転では発生しないが、plan 起動では到達しうる。
-func (h *threadHandle) onServerRequest(id json.RawMessage, method string, params json.RawMessage) {
+func (h *threadHandle) onServerRequest(cl *acpClient, id json.RawMessage, method string, params json.RawMessage) {
 	if method != "session/request_permission" {
 		// 未知のサーバー発リクエストは応答しないと turn が固まる — エラーで返す。
-		_ = h.cl.write(map[string]any{
+		_ = cl.write(map[string]any{
 			"jsonrpc": "2.0", "id": id,
 			"error": map[string]any{"code": -32601, "message": "unsupported request: " + method},
 		})

@@ -147,6 +147,45 @@ func safeBrowsePath(p string) (full, rel string, ok bool) {
 	return full, rel, true
 }
 
+// fsResolvedOK re-validates full AFTER symlink resolution against the browse
+// root + denylist. The lexical checks in safeBrowsePath cannot see a symlink
+// like ~/repos/x → ~/.ssh; the file-READ path is defended separately (openat2
+// RESOLVE_BENEATH|NO_SYMLINKS), but listing and the mutating handlers operate on
+// the plain path and need this re-check. A not-yet-existing suffix (mkdir /
+// upload / rename targets) is fine as long as every EXISTING component resolves
+// and the resolved base stays in bounds.
+func fsResolvedOK(full string) bool {
+	root, err := filepath.EvalSymlinks(browseRoot())
+	if err != nil {
+		return false
+	}
+	p := filepath.Clean(full)
+	suffix := ""
+	for {
+		r, err := filepath.EvalSymlinks(p)
+		if err == nil {
+			resolved := filepath.Join(r, suffix)
+			rel, rerr := filepath.Rel(root, resolved)
+			if rerr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return false
+			}
+			return rel == "." || !isDenied(filepath.ToSlash(rel))
+		}
+		if !os.IsNotExist(err) {
+			return false
+		}
+		if _, lerr := os.Lstat(p); lerr == nil {
+			return false // exists but unresolvable: a dangling or looping symlink
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return false
+		}
+		suffix = filepath.Join(filepath.Base(p), suffix)
+		p = parent
+	}
+}
+
 // safeWritableBrowsePath deliberately keeps mutations inside the user's home.
 // safeBrowsePath also admits read-only roots (scratch and the role-scoped guide),
 // which must never become writable through the file API.
@@ -164,8 +203,9 @@ type fsEntry struct {
 }
 
 func handleFSTree(w http.ResponseWriter, r *http.Request) {
-	full, rel, ok := safeBrowsePath(r.URL.Query().Get("path"))
-	if !ok {
+	q := r.URL.Query().Get("path")
+	full, rel, ok := safeBrowsePath(q)
+	if !ok || (!filepath.IsAbs(strings.TrimSpace(q)) && !fsResolvedOK(full)) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
 	}
@@ -244,6 +284,9 @@ func maxUploadBytes() int64 {
 // temp file + rename so a failed upload never leaves a partial file.
 func handleFSUpload(w http.ResponseWriter, r *http.Request) {
 	dirFull, dirRel, ok := safeWritableBrowsePath(r.URL.Query().Get("path"))
+	if ok {
+		ok = fsResolvedOK(dirFull)
+	}
 	if !ok {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
@@ -321,7 +364,7 @@ func handleFSUpload(w http.ResponseWriter, r *http.Request) {
 // (os.Mkdir, not MkdirAll — no accidental deep create). 409 if it exists.
 func handleFSMkdir(w http.ResponseWriter, r *http.Request) {
 	full, rel, ok := safeWritableBrowsePath(r.URL.Query().Get("path"))
-	if !ok || rel == "" {
+	if !ok || rel == "" || !fsResolvedOK(full) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
 	}
@@ -339,7 +382,7 @@ func handleFSMkdir(w http.ResponseWriter, r *http.Request) {
 // handleFSNewFile creates an empty file at path (O_EXCL => 409 if it exists).
 func handleFSNewFile(w http.ResponseWriter, r *http.Request) {
 	full, rel, ok := safeWritableBrowsePath(r.URL.Query().Get("path"))
-	if !ok || rel == "" {
+	if !ok || rel == "" || !fsResolvedOK(full) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
 	}
@@ -362,7 +405,7 @@ func handleFSRename(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	srcFull, srcRel, ok1 := safeWritableBrowsePath(q.Get("from"))
 	dstFull, dstRel, ok2 := safeWritableBrowsePath(q.Get("to"))
-	if !ok1 || !ok2 || srcRel == "" || dstRel == "" {
+	if !ok1 || !ok2 || srcRel == "" || dstRel == "" || !fsResolvedOK(srcFull) || !fsResolvedOK(dstFull) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
 	}
@@ -385,7 +428,7 @@ func handleFSRename(w http.ResponseWriter, r *http.Request) {
 // root and denylisted paths (safeBrowsePath). The Console confirms first.
 func handleFSDelete(w http.ResponseWriter, r *http.Request) {
 	full, rel, ok := safeWritableBrowsePath(r.URL.Query().Get("path"))
-	if !ok || rel == "" {
+	if !ok || rel == "" || !fsResolvedOK(full) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
 	}

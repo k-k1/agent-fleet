@@ -785,24 +785,20 @@ func handleDeleteGitConn(w http.ResponseWriter, r *http.Request) {
 // upsertGitCredential stores an HTTPS credential for host in the encrypted store
 // and ensures the cred helper is the active git credential source.
 func upsertGitCredential(host, user, token string) error {
-	s, err := secrets.Load()
-	if err != nil {
-		return err
-	}
-	s.Git[host] = secrets.GitEntry{User: user, Token: token}
-	if err := s.Save(); err != nil {
+	if err := secrets.Update(func(s *secrets.Data) error {
+		s.Git[host] = secrets.GitEntry{User: user, Token: token}
+		return nil
+	}); err != nil {
 		return err
 	}
 	return ensureCredHelper()
 }
 
 func removeGitCredential(host string) error {
-	s, err := secrets.Load()
-	if err != nil {
-		return err
-	}
-	delete(s.Git, host)
-	return s.Save()
+	return secrets.Update(func(s *secrets.Data) error {
+		delete(s.Git, host)
+		return nil
+	})
 }
 
 func gitConfigGlobal(key, val string) error {
