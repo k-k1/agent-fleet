@@ -77,7 +77,10 @@ test("Text編集 → keyboard/ボタン保存 → CAS競合をmine保持で表�
   await page.keyboard.press("Control+A");
   await page.keyboard.type(first);
   await page.keyboard.press("Control+S");
-  await expect(page.locator(".fileview").getByRole("status")).toContainText(/保存しました|Saved/);
+  // 英語ロケールでは saved（保存直後）と clean（保存済み）がどちらも "Saved" で
+  // 区別できないため、config で ja-JP に固定した上で日本語文言を先頭アンカーで照合する
+  // （status 要素は外部変更ノートを後置しうるので ^ のみ・$ は付けない）。
+  await expect(page.locator(".fileview").getByRole("status")).toContainText(/^保存しました/);
   await expect
     .poll(async () => {
       const res = await request.get(`${base}/api/fs/file?path=${marker}`);
@@ -90,8 +93,9 @@ test("Text編集 → keyboard/ボタン保存 → CAS競合をmine保持で表�
   const second = `button-save-${Date.now()}\n`;
   await page.keyboard.press("Control+A");
   await page.keyboard.type(second);
-  await page.locator(".fileview").getByRole("button", { name: /保存|Save/, exact: true }).click();
-  await expect(page.locator(".fileview").getByRole("status")).toContainText(/保存しました|Saved/);
+  // RegExp の name に exact は効かない（Playwright 仕様: 文字列 name 専用）→ アンカーで全一致。
+  await page.locator(".fileview").getByRole("button", { name: /^保存$|^Save$/ }).click();
+  await expect(page.locator(".fileview").getByRole("status")).toContainText(/^保存しました/);
 
   // 外部writerを挟んで旧baseのPUTを409にし、mine/remote差分と解決操作を確認する。
   const beforeConflict: any = await (await request.get(`${base}/api/fs/file?path=${marker}`)).json();
@@ -115,6 +119,6 @@ test("Text編集 → keyboard/ボタン保存 → CAS競合をmine保持で表�
   await expect(conflict).toContainText(mine.trim());
   await expect(conflict).toContainText(remote.trim());
   await conflict.getByRole("button", { name: /remoteを採用|Adopt remote/ }).click();
-  await expect(page.locator(".fileview").getByRole("status")).toContainText(/保存済み|Saved/);
+  await expect(page.locator(".fileview").getByRole("status")).toContainText(/^保存済み/);
   await expect(cm).toContainText(remote.trim());
 });
