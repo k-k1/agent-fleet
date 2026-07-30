@@ -228,6 +228,53 @@ func AtIdlePrompt(name string) bool {
 	return atIdlePrompt(string(out))
 }
 
+// AgentsViewActive reports whether a claude pane's input box is bound to a BACKGROUND
+// AGENT instead of the main conversation. claude's footer advertises "← for agents"; in
+// that view the pane renders the selected agent's transcript and anything typed becomes a
+// STEERING message for that agent — recorded in the agent's own
+// projects/*/<sid>/subagents/agent-*.jsonl as "The user sent a new message while you were
+// working:", never in the main transcript.
+//
+// 実測（2026-07-30 sannme2）: この状態でオペレーターの指示を送り込んだところ、指示は
+// 実行中のサブエージェントへ届き、メイン会話は最後まで指示を知らないままだった。
+// ペイン上は自分の文字が見えるので「注入できた」ように見え、ミラーには何も出ない。
+// 送信側から見て取り返しがつかない誤配達なので、注入前にこれで弾く。
+func AgentsViewActive(name string) bool {
+	pane := SessionPaneID(session.TmuxName(name))
+	if pane == "" {
+		return false
+	}
+	out, err := Cmd("capture-pane", "-p", "-t", pane).Output()
+	if err != nil {
+		return false
+	}
+	return agentsViewActive(string(out))
+}
+
+// railMainUnselectedRe matches the background-agent rail's "main" row when it is NOT the
+// selected one. The rail is drawn under the footer strip as
+//
+//	● main
+//	◯ general-purpose  Re-review mid fixes C   24m 18s · ↓ 182.3k tokens
+//
+// with the FILLED glyph on the selected row. We key on the hollow glyph in front of
+// "main" — hollow variants are enumerated so that ANY unknown glyph reads as "not in the
+// agents view". That direction matters: a drift then costs us the guard (today's
+// behaviour) instead of blocking every legitimate injection.
+var railMainUnselectedRe = regexp.MustCompile(`(?m)^\s*[\x{25EF}\x{25CB}\x{25CC}] main\s*$`)
+
+// agentsViewActive is the pure decision over one captured frame.
+func agentsViewActive(s string) bool {
+	// The rail sits BELOW the mode-footer strip. Cutting there is what keeps a session
+	// that is reading/quoting a pane (debugging this very feature) from matching its own
+	// transcript text — the same trap spinnerRe's line anchor guards against.
+	loc := modeFooterRe.FindStringIndex(s)
+	if loc == nil {
+		return false // no footer: a modal is up, or not a claude pane — not our call
+	}
+	return railMainUnselectedRe.MatchString(s[loc[1]:])
+}
+
 // modalMarkers are fragments of the dialogs that claude draws OVER the input box
 // (permission prompt, plan approval, folder trust, AskUserQuestion). Matched against a
 // width-wrapped capture, so only fragments that survive wrapping are reliable:

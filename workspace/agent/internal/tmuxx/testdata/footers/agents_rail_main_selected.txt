@@ -1,0 +1,14 @@
+● 2 background agents launched (↓ to manage)
+   ├ Review area A
+   └ Review area B
+
+✻ Waiting for 2 background agents to finish
+
+──────────────────────────────────────────────────── [AF] レビュー(console) ──
+❯
+────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+
+  ● main
+  ◯ general-purpose  Review area A                     11m 18s · ↓ 272.4k tokens
+  ◯ general-purpose  Review area B                     11m 12s · ↓ 146.3k tokens
