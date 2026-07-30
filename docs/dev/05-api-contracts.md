@@ -4,8 +4,9 @@
 > 主な更新トリガ: API グループの追加・中継経路の変更 / 最終確認: 2026-07
 
 境界は 2 つ: **公開面**（Console ↔ CP、`/api/*` ほか）と**内部面**（CP ↔ Workspace Agent）。
-ルート定義は CP 176 本・Agent 101 本あり全列挙は保守不能なので、本書は「グループ → 代表パス →
-詳細の所在」の**地図**に徹する。**内部リファクタ（docs/23）はワイヤ完全互換（パス・JSON 形・
+ルート定義は CP 約 300 本・Agent 約 200 本あり（増え続けるので概数。実数は
+`grep -c HandleFunc control-plane/routes.go workspace/agent/routes.go` で計測できる）
+全列挙は保守不能なので、本書は「グループ → 代表パス → 詳細の所在」の**地図**に徹する。**内部リファクタ（docs/23）はワイヤ完全互換（パス・JSON 形・
 エラーコード文字列を変えない）がハード制約のため、本書の記述はリファクタで陳腐化しない。**
 
 ## 5.1 公開面の地図（Console ↔ CP）
@@ -24,6 +25,12 @@ L1 認証（authGate）通過後に到達。認可は「自分のリソースの
 | env / settings | `GET/PUT /api/env/{toolchains,ui-prefs}`・`GET/PUT /api/env/ws-settings`・`GET/PUT /api/claude/settings`・`GET /api/{claude,codex,copilot}/usage`（各 WsBar 使用量チップ。claude/codex=サブスク枠、copilot=アカウント
 クレジット残量。応答にプランと利用アカウントを含む。agy は `GET /api/connections/agy/usage`）・`GET/PUT /api/agents/rtk`・`GET /api/agents/rtk/gain`（rtk 節約履歴＝WsBar「rtk 効果」チップ、`rtk gain --format json` 素通し）| ws-settings=CP、他は中継 | [04](04-workspace-agent.md) |
 | memo | `GET/POST/PATCH/DELETE /api/memos*`・`POST /api/memos/flush` | CP（flush 時のみ Agent へ）| [03](03-control-plane.md) |
+| notifications | `GET /api/notifications`・`POST /api/notifications/{seen,usage-observations}` | CP（DB）| [03](03-control-plane.md) |
+| schedules | `GET /api/schedules`・`GET …/{id}/runs`・`PATCH/DELETE …/{id}`・`POST …/{id}/{pause,resume,run-now}`（Console は一覧・管理のみ。作成は MCP ツール経由）| CP（DB + scheduler）| [docs/38](../38-scheduled-execution.md) |
+| cleanup | `GET /api/sessions/{usage,cleanup}`・`DELETE /api/sessions/{name}`・`GET /api/cleanup/archives`・`POST /api/cleanup/archives/{id}/restore`・`DELETE /api/cleanup/archives/{id}` | 中継 | [04](04-workspace-agent.md) |
+| agent memory | `GET /api/agents/memory/{roots,snapshots,diff,tree,export}`・`POST …/{snapshots,restore,import,import/apply}`・`PUT …/settings` | 中継 | [docs/39](../39-agent-memory-management.md) |
+| MCP レジストリ | `GET/POST /api/mcp-servers`・`PUT/DELETE …/{id}`・`POST …/{test,tenant-refresh}`・`POST …/{id}/enabled`・`PUT …/{id}/secrets` | 中継（実体は Agent）| [docs/48](../48-mcp-registry.md) |
+| usage 時系列 | `GET /api/usage/series`（機能別トークン台帳の時系列）| 中継 | [docs/46](../46-usage-accounting.md) |
 | pat | `GET/POST/DELETE /api/pat*` | CP | [07 §7.6](07-security.md) |
 | ssm | `GET/POST/PUT/DELETE /api/ssm/{profiles,hosts}*`・`GET /api/sessions/{name}/ssm-login` | CP（DB）+ Agent（セッション）| [08](08-integrations.md) |
 | internal git | `GET/POST/DELETE /api/internal-git/repos*`（管理）・`/git/{slug}/{repo...}` smart-HTTP・`/git/…/info/lfs/*` | CP（Agent を経由しない）| [91](91-internal-git.md) |

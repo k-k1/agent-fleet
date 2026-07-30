@@ -23,7 +23,18 @@ CP は tmux にも working copy にも直接触れず必ず Agent 経由で操�
 - **内蔵 git プロバイダ** — bare リポジトリ + smart-HTTP + LFS を CP 自身がホスト（Agent 非経由・[91](91-internal-git.md)）。
 - **egress 統制** — forward proxy への policy 配布・観測イベント集約・admin API。§3.8。
 - **memo キュー** — membership 単位のメモ永続と一括送信。コンテナ停止中も使える「CP 完結」機能。§3.6。
+- **定時実行（scheduler）** — スケジュール定義を CP DB に永続し、CP 内 goroutine（`scheduler.go`）が cron 評価・発火
+  （tz は埋め込み IANA DB で DST 込み解決）。作成/編集はオペレーター経由の `/internal/schedules`
+  （`AF_SCHEDULE_TOKEN`）、Console の `/api/schedules` は閲覧・管理のみ（[docs/38](../38-scheduled-execution.md)）。
+- **通知** — Agent の通知 outbox を取得時に CP ストアへ drain し、`/api/notifications` で一覧・既読管理
+  （保持 7 日。`notification.go`）。
+- **MCP サーバレジストリ（テナント配布）** — tenant_admin が全メンバーへ配る MCP サーバ定義を CP DB に保持
+  （`/api/admin/mcp-servers` + Agent が poll する `/internal/mcp-servers`）。メンバー個人の登録
+  （`/api/mcp-servers`）は Agent 側で合成され CP は中継のみ（[docs/48](../48-mcp-registry.md)）。
 - **バックグラウンドジョブ** — reaper / usage サンプラー / git GC / claude-audit sweep。§3.7。
+- なお**掃除**（cleanup: 調査・削除・gz ごみ箱 `/api/sessions/cleanup`・`/api/cleanup/archives*`）と
+  **エージェントメモリ管理**（snapshot/restore/export `/api/agents/memory/*`・[docs/39](../39-agent-memory-management.md)）は
+  **Agent 側の機能**で、CP はそのまま中継する（Agent 中継の一部）。
 
 実装ファイルへの対応は [90-code-map](90-code-map.md)。
 
@@ -47,12 +58,14 @@ CP は tmux にも working copy にも直接触れず必ず Agent 経由で操�
 ## 3.3 manager と Runtime 抽象
 
 - **manager** が per-membership の資材を初回に払い出し DB へ永続する: コンテナ名 `af-ws-<slug>-<key>`・
-  専用ネットワーク `af-net-<user>`・home `<WS_DATA>/…/home`・Agent ポート（`WS_AGENT_PORT` 基点で採番）・
+  専用ネットワーク `af-net-<slug>-<key>`・home `<WS_DATA>/<slug>/<key>/home`
+  （**既定テナントは slug 無し**の `af-ws-<key>` / `af-net-<key>` / `<WS_DATA>/<key>/home` —
+  既存デプロイをそのまま使い続けるための互換分岐。`workspaceNames`）・Agent ポート（`WS_AGENT_PORT` 基点で採番）・
   `AGENT_TOKEN`。CP 再起動では DB の行が正で、既存コンテナは inspect で採用し**再作成しない**（再起動耐性）。
 - **Runtime / RuntimeFactory interface** が実行基盤を抽象化し、全呼び出し点（handler・reaper・admin・MCP）が
   factory 経由で構築する。docker / ecs はプロファイル 1 箇所の切替（`AF_RUNTIME`）。対応表は
   [01 §1.6](01-architecture.md)、デプロイ選定は [09](09-deploy.md)。
-- **Start** = docker run 相当: home と claude-config の 2 マウント、`af-net-<user>` の ensure、
+- **Start** = docker run 相当: home と claude-config の 2 マウント、専用ネットワーク（`af-net-*`）の ensure、
   `AGENT_TOKEN` / `AF_SECRET_KEY` / `CLAUDE_CONFIG_DIR` 等の env 注入、Agent healthy 待ち。
   **Stop** は二段の graceful stop: SIGTERM →猶予（`AF_STOP_GRACE_SEC` 既定 30s。Agent には安全マージンを
   差し引いた `AGENT_STOP_GRACE_SEC` を渡し、pane の Ctrl-C → tmux 終了を先に済ませる）→ SIGKILL。

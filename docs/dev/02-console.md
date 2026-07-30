@@ -26,7 +26,7 @@ React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を�
 | `layout/` | ペインレイアウトの純関数エンジン（types / ops / migrate）+ layout ストア。vitest 対象（§2.4）|
 | `terminal/` | `term.ts`（xterm 実装知識の塊）+ `service.ts`（TermService = xterm への唯一の入口）|
 | `ui/` | プリミティブ: Button / Modal / Section / Icon / FileIcon / Toast / Confirm / EmptyState / Sparkline 等 |
-| `features/*` | 機能 12 個（下表）|
+| `features/*` | 機能 19 個（下表）|
 | `styles/` | `tokens.css`（テーマ変数の唯一の置き場）+ `base.css`（リセット）|
 | `agents/` | `registry.ts` = エージェント kind の単一真実源（§2.4）|
 | `lib/` | 純ロジックと小 hook: gitgraph（レーン DAG）・fileicons/filemeta・termcolor・project グルーピング・settings（ui-prefs 同期）等。テスト可能な関数の置き場 |
@@ -43,10 +43,16 @@ React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を�
 | `files` | ファイルツリーの共有状態と更新シグナル（実 UI は project 側の ProjectFiles）|
 | `scm` | SourceControl / Changes / CommitDetail / WorkingDiff / CommitGraph / GitDiff の各ビュー |
 | `viewer` | File / Code / Markdown（mermaid）/ Marp / Image / Diff / Doc ビューア |
+| `editor` | CodeMirror ベースのファイル編集: dirty 管理（DirtyGuardHost）・外部変更追従・AI 修正候補（suggest）の取得と適用 |
 | `mirror` | MirrorView（セッション transcript のチャットミラー）・ContextBar（コンテキスト残量警告）|
 | `chat` | アシスタントチャット（headless CLI 会話・SSE ストリーミング）と左ペインのセクション |
 | `memo` | メモキュー: セクション・AI 整理モーダル・選択テキスト送信 |
-| `settings` | SettingsDialog（6 タブ、§2.5）・AdminDialog・接続状態ポーリング |
+| `schedules` | 定時実行の左ペインセクション + 詳細モーダル（一覧・有効切替・即時実行・実行履歴。作成/編集はオペレーター会話側）|
+| `keys` | キーボード操作体系: capture-phase dispatcher・コマンドパレット・WhichKey / CheatSheet・キー再割当ストア |
+| `notifications` | 通知センター: 未読/既読管理・トーストログ・音声通知トグル |
+| `usage` | 機能別トークン使用量ダッシュボード（UsageView。設定モーダルの「使用量」タブが薄いラッパとして表示）|
+| `auth` | ログインセッション切れ（401 / 端末ソケット断）検出時の再ログインモーダル（AuthExpiredModal）|
+| `settings` | SettingsDialog（3 グループ左レール × 17 タブ、§2.5）・AdminDialog・接続状態ポーリング |
 
 ## 2.3 状態管理とサーバ同期
 
@@ -85,11 +91,11 @@ React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を�
 - **BrowserRegistry**（`features/browser/service.ts`）もpaneId keyedでPage/socket/canvasを所有する。
   layoutに永続化するのは`{kind:"browser", port, path}`だけで、ephemeralなbrowserIdは保存しない。
   非表示は`visibility=false`、60秒後にPageを破棄し、再表示・reload・Workspace再起動時はport/pathから再生成する。
-- `agents/registry.ts` = kind（claude / codex / copilot / agy / opencode / shell / ssm）の**単一真実源**。
+- `agents/registry.ts` = kind（claude / codex / cursor / agy / copilot / kiro / opencode / shell / ssm の 9 種）の**単一真実源**。
   kind ごとに descriptor（表示・availability 述語・capability set: chat / transcript / model / fork /
   planMode / ephemeral 等）を 1 個持ち、UI は capability を見て分岐する。エージェント追加 = descriptor 追加。
-- **表示名の 3 段体系**（`id`/`cssClass`/`short`/`icon` は内部識別子で不変・小文字）: `short`（2字 cc/cx/ag/cp/oc）＝
-  狭所バッジ / `label`（コンパクト proper 名 Claude・Codex・Copilot・OpenCode・Antigravity）＝pane ヘッダ・セッション行 /
+- **表示名の 3 段体系**（`id`/`cssClass`/`short`/`icon` は内部識別子で不変・小文字）: `short`（2字 cc/cx/cu/ag/cp/ki/oc）＝
+  狭所バッジ / `label`（コンパクト proper 名 Claude・Codex・Cursor・Copilot・Kiro・OpenCode・Antigravity）＝pane ヘッダ・セッション行 /
   `displayName`（フル製品名 **Claude Code**・**GitHub Copilot**・他は label と同値）＝起動カード・設定カード。表示コードは
   `lib/sessionkind.ts` の `kindShort`/`kindLabel`/`kindDisplayName`（=`displayName || label`）経由で書き、生の label 直読み・
   名称ハードコードは避ける（`BADGE_SHORT` も registry の `short` から導出）。
@@ -109,8 +115,11 @@ React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を�
   使えない）。戻る / 進むでレイアウト・設定/管理モーダル・スマホ drawer が復元される。スマホは左ペインを
   オフキャンバス drawer 化し、`{drawer:true}` の履歴エントリで「戻る＝drawer を閉じる/再び開く」を実現
   （端末の beforeunload ガードを誤爆させない）。エッジスワイプで開閉。
-- **設定モーダル**: エージェント（claude/codex/copilot/agy/opencode の接続・RTK 等）/ Git / 環境（toolchains・
-  Workspace 作り直しの危険ゾーン）/ AWS SSM / MCP（PAT 発行・失効）/ 表示 の 6 タブ。
+- **設定モーダル**: 3 グループの左レール × 17 タブ（旧 6 タブの単段バーはスケールせず再編。
+  モバイルはレール→内容の 2 段ドリルダウン）。**個人設定**＝表示 / キー操作 / 読み上げ / 通知 /
+  アシスタント、**接続**＝エージェント（各 kind の接続・RTK 等）/ Gitホスティング / 運用・監視 /
+  チャット連携 / MCP サーバー / MCPトークン（PAT 発行・失効）、**ワークスペース**＝使用量 /
+  エージェントメモリ / ツールチェーン / AWS SSM / 内部リポジトリ / 危険な操作（Workspace 作り直し等）。
   管理機能は SettingsDialog に混ぜず **AdminDialog に分離**（TopBar の shield から、super_admin のみ）。
 
 ## 2.6 表示システム
@@ -120,7 +129,7 @@ React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を�
   `<html data-theme>` と region 変数を書き込み、SURFACE_COLORS は per-theme tint（ライトで暗色バー＝
   文字潰れを回避）。highlight.js は `--hl-*` 変数でテーマ追従。**既知の限界**: xterm はライトテーマ
   未対応（ライト選択時も端末は暗いまま）。
-- **エージェント kind 色**: `tokens.css` の `--kind-*`（claude/codex/agy/copilot/opencode/shell/ssm、`:root`=dark・
+- **エージェント kind 色**: `tokens.css` の `--kind-*`（claude/codex/cursor/agy/copilot/kiro/opencode/shell/ssm、`:root`=dark・
   `[data-theme=light]` で暗色版）が**唯一の hue 源**。使用側（kind-tag・sess-kic・LayoutMap・起動 seg アイコン・
   設定バッジ）は `var(--kind-*)`＋tint は `color-mix(… N%, transparent)` で描画し、各 CSS に色 hex を直書きしない。
   **opencode はスレートグレー（#8b96a5 / light #5a6470）**＝codex 緑・copilot 紫との視認衝突を避けるため。
