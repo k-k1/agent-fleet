@@ -98,10 +98,22 @@ func (a workspaceAPI) start(w http.ResponseWriter, r *http.Request, res *resolve
 // ~/repos are wiped (the user accepts losing them, incl. uncommitted work) and
 // running sessions are lost — so the Console guards this behind a warning dialog.
 func (a workspaceAPI) recreate(w http.ResponseWriter, r *http.Request, res *resolved) {
-	_ = res.rt.Stop(r.Context()) // best-effort: may not exist yet
+	// Stop + wipe under the workspace start lock so a concurrent start cannot bring
+	// the container up mid-teardown (startResolved re-acquires the lock itself).
+	lock := a.mgr.startLockFor(res.ws.ID)
+	lock.Lock()
+	// Stop は「まだ存在しない」等は許容する(best-effort)が、まだ running のまま
+	// なら中断する — ライブ bind-mount 配下の削除は不整合を起こすため。
+	if err := res.rt.Stop(r.Context()); err != nil && res.rt.State(r.Context()) == "running" {
+		lock.Unlock()
+		log.Printf("recreate: stop failed for ws %s (still running, aborting wipe): %v", res.ws.ID, err)
+		writeAPIErr(w, &apiError{http.StatusInternalServerError, "stop_failed", "could not stop the workspace; recreate aborted"})
+		return
+	}
 	// Clear the working copies while the container is down. Targeted: we keep the
 	// encrypted secrets store and everything else in home.
 	_ = os.RemoveAll(filepath.Join(a.mgr.rootedDataDir(res.ws), "home", "repos"))
+	lock.Unlock()
 	a.startResolved(w, r, res)
 }
 
@@ -116,10 +128,20 @@ func (a workspaceAPI) recreate(w http.ResponseWriter, r *http.Request, res *reso
 // "home 掃除" uses the same cleanHome but leaves the container stopped; here we start
 // back up so the member lands in a working, freshly-seeded environment.)
 func (a workspaceAPI) cleanHome(w http.ResponseWriter, r *http.Request, res *resolved) {
-	_ = res.rt.Stop(r.Context()) // best-effort: may not exist yet
+	lock := a.mgr.startLockFor(res.ws.ID)
+	lock.Lock()
+	// recreate と同じく、Stop 失敗かつまだ running なら中断(ライブ bind-mount 配下
+	// の削除を避ける)。
+	if err := res.rt.Stop(r.Context()); err != nil && res.rt.State(r.Context()) == "running" {
+		lock.Unlock()
+		log.Printf("clean-home: stop failed for ws %s (still running, aborting wipe): %v", res.ws.ID, err)
+		writeAPIErr(w, &apiError{http.StatusInternalServerError, "stop_failed", "could not stop the workspace; clean-home aborted"})
+		return
+	}
 	// Wipe home (keep-list preserved) while the container is down — deleting under a
 	// live bind-mount risks inconsistency (see cleanHome's contract in runtime_docker.go).
 	_ = cleanHome(a.mgr.rootedDataDir(res.ws))
+	lock.Unlock()
 	a.startResolved(w, r, res)
 }
 
@@ -147,7 +169,13 @@ func (a workspaceAPI) ensureWorkspaceStartedUnattended(ctx context.Context, res 
 
 // ensureWorkspaceStartedRT is the shared body, parameterized by the runtime that drives
 // this particular start (they differ only in the container env they would apply).
+// Serialized per workspace (startLockFor): the state check and Start form a
+// check-then-act that concurrent callers (explicit start, auto-starts, scheduler
+// wake) must not interleave — the quota TOCTOU collapses under the same lock.
 func (a workspaceAPI) ensureWorkspaceStartedRT(ctx context.Context, res *resolved, rt Runtime) *apiError {
+	lock := a.mgr.startLockFor(res.ws.ID)
+	lock.Lock()
+	defer lock.Unlock()
 	switch rt.State(ctx) {
 	case "running":
 		return nil

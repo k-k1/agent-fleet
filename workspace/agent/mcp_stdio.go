@@ -765,6 +765,12 @@ func mcpStdioCall(req mcpReq) []byte {
 		Args json.RawMessage `json:"arguments"`
 	}
 	_ = json.Unmarshal(req.Params, &p)
+	// --self-report advertises ONLY af_report, and the advertised set IS the scope
+	// boundary (see mcpSelfReportOnly) — so refuse every other tool here too, or a
+	// client that guesses names could reach the read tools from any session.
+	if mcpSelfReportOnly && p.Name != "af_report" {
+		return mcpToolErr(req.ID, "このサーバーは af_report のみ提供します: "+p.Name)
+	}
 	var a struct {
 		Name      string `json:"name"`
 		Since     int64  `json:"since"`
@@ -852,6 +858,11 @@ func mcpStdioCall(req mcpReq) []byte {
 		})
 		return mcpTextResult(req.ID, string(b))
 	case "list_models":
+		// write セットで広告するツールなので呼び出しも同じ境界で断る（広告集合が
+		// スコープの境界・docs/19 Q2）。
+		if !mcpWriteEnabled {
+			return mcpToolErr(req.ID, "このアシスタントはモデル一覧の取得を許可されていません")
+		}
 		if a.Kind != "claude" && a.Kind != "codex" && a.Kind != "opencode" && a.Kind != "agy" && a.Kind != "copilot" && a.Kind != "cursor" && a.Kind != "kiro" {
 			return mcpToolErr(req.ID, "kind には claude / codex / opencode / agy / copilot / cursor / kiro のいずれかを指定してください")
 		}

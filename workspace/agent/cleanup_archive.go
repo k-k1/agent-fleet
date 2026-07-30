@@ -156,6 +156,12 @@ func readCleanupArchive(id string) (cleanupManifest, map[string][]byte, error) {
 		if err != nil {
 			break
 		}
+		// Cap the per-entry allocation: h.Size comes straight from the (possibly
+		// corrupt) tar header, and a huge value would OOM this memory-constrained host.
+		const maxCleanupEntryBytes = 64 << 20
+		if h.Size < 0 || h.Size > maxCleanupEntryBytes {
+			return m, nil, fmt.Errorf("archive %s: entry %s too large (%d bytes)", id, h.Name, h.Size)
+		}
 		data := make([]byte, h.Size)
 		_, _ = io.ReadFull(tr, data)
 		if h.Name == "manifest.json" {

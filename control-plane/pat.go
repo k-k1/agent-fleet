@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -81,6 +82,18 @@ type patAPI struct {
 
 func newPATAPI(m *manager) patAPI { return patAPI{memberAuth{m}, m.store} }
 
+// maxActivePATs caps issuance per identity (未失効トークン数)。使い捨て発行の
+// 積み上げでハッシュ照合対象が際限なく増えるのを防ぐ。
+const maxActivePATs = 20
+
+// auditPAT records a PAT lifecycle event to the audit ledger (best-effort).
+func (a patAPI) auditPAT(ctx context.Context, tenantID, actorID, action, target, detail string) {
+	_ = a.mgr.store.InsertAudit(ctx, AuditLog{
+		ID: newID(), TenantID: tenantID, ActorKind: "user", ActorID: actorID,
+		Action: action, Target: target, Detail: detail, At: nowTS(),
+	})
+}
+
 // list (GET /api/pat) — the caller's tokens (no secrets/hashes).
 func (a patAPI) list(w http.ResponseWriter, r *http.Request, ident Identity) {
 	pats, err := a.store.ListPATsByIdentity(r.Context(), ident.ID)
@@ -127,6 +140,24 @@ func (a patAPI) create(w http.ResponseWriter, r *http.Request, ident Identity) {
 		return
 	}
 
+	// 発行数上限: 未失効トークンが上限に達していたら失効させてから、と促す。
+	existing, err := a.store.ListPATsByIdentity(r.Context(), ident.ID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	active := 0
+	for _, p := range existing {
+		if p.RevokedAt == "" {
+			active++
+		}
+	}
+	if active >= maxActivePATs {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "too_many_tokens",
+			"active token limit reached; revoke unused tokens first"})
+		return
+	}
+
 	scope := clampScope(body.Scope, ceilingScope(ident.Role))
 	expires := ""
 	switch {
@@ -151,6 +182,8 @@ func (a patAPI) create(w http.ResponseWriter, r *http.Request, ident Identity) {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
+	a.auditPAT(r.Context(), mv.TenantID, ident.ID, "pat.create", p.ID,
+		"scope="+scope+" name="+p.Name)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token": token, // shown once
 		"id":    p.ID, "name": p.Name, "scope": scope,
@@ -160,9 +193,11 @@ func (a patAPI) create(w http.ResponseWriter, r *http.Request, ident Identity) {
 
 // revoke (DELETE /api/pat/{id}) revokes one of the caller's tokens.
 func (a patAPI) revoke(w http.ResponseWriter, r *http.Request, ident Identity) {
-	if err := a.store.RevokePAT(r.Context(), r.PathValue("id"), ident.ID); err != nil {
+	id := r.PathValue("id")
+	if err := a.store.RevokePAT(r.Context(), id, ident.ID); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
+	a.auditPAT(r.Context(), "", ident.ID, "pat.revoke", id, "")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

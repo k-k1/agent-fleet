@@ -219,6 +219,15 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "empty_prompt", "prompt, keys or seq is required")
 		return
 	}
+	// Each key/seq step is paced (~90ms gaps for TUI re-render), so an unbounded list
+	// would let one request occupy the handler for minutes — cap it. Real drivers
+	// (question modals, navigation) use a handful of steps.
+	const maxInputSteps = 256
+	if len(body.Keys) > maxInputSteps || len(body.Seq) > maxInputSteps {
+		httpx.WriteErr(w, http.StatusBadRequest, "too_many_steps",
+			fmt.Sprintf("keys/seq must have at most %d elements", maxInputSteps))
+		return
+	}
 	// docs/51 Phase 3 §自己申告ファストパス: 報告義務を負う指示（report_to 付き）にだけ
 	// 「終わったら af_report を呼べ」を1行足す。managed/tui の分岐より前に置くのは、
 	// どちらの経路でも同じ1行が乗るようにするため（分岐の後だと片方で漏れる）。
@@ -925,6 +934,7 @@ func handleSessionOutput(w http.ResponseWriter, r *http.Request) {
 	sid := session.UUID(meta.Dir, name)
 	lines := claude.TranscriptLines(sid)
 	var sb strings.Builder
+	cursor := len(lines)
 	for i := since; i < len(lines); i++ {
 		if t := claude.AssistantText(lines[i]); t != "" {
 			if sb.Len() > 0 {
@@ -932,12 +942,13 @@ func handleSessionOutput(w http.ResponseWriter, r *http.Request) {
 			}
 			sb.WriteString(t)
 		}
-		if sb.Len() > 1<<20 { // cap at 1 MiB
+		if sb.Len() > 1<<20 { // cap at 1 MiB — the next poll resumes at i+1
+			cursor = i + 1
 			break
 		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"name": name, "output": sb.String(), "cursor": len(lines),
+		"name": name, "output": sb.String(), "cursor": cursor,
 		"status": state, "alive": alive,
 	})
 }

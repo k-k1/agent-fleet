@@ -629,6 +629,10 @@ func handleIdempotencyLookup(w http.ResponseWriter, r *http.Request) {
 // first launch (via ForkFrom) materializes the copy, and later launches resume it.
 func handleForkSession(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	if !session.ValidName(name) {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		return
+	}
 	src, ok := session.ReadMeta(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "no_session", "session not found: "+name)
@@ -777,7 +781,9 @@ func handleHaltSession(w http.ResponseWriter, r *http.Request) {
 		dropManagedRuntime(m)
 		status.Remove(session.UUID(m.Dir, name))
 		m.StoppedAt = time.Now().Format(time.RFC3339)
-		session.WriteMeta(m)
+		// Re-merge the on-disk lock: the meta snapshot above is seconds old by now and a
+		// blind WriteMeta would roll back a lock the user flipped meanwhile.
+		m = writeSessionMetaKeepingLock(m)
 		httpx.WriteJSON(w, http.StatusOK, wireSession(m, false))
 		return
 	}
@@ -806,8 +812,10 @@ func handleHaltSession(w http.ResponseWriter, r *http.Request) {
 	status.Remove(session.UUID(m.Dir, name))
 	// Stamp StoppedAt now so the prune TTL starts here (handleListSessions would
 	// otherwise stamp it on the next poll; doing it here keeps the wire consistent).
+	// GracefulStop/kill above can take seconds, so re-merge the on-disk lock instead
+	// of writing back the stale snapshot (lost-update guard, same as list).
 	m.StoppedAt = time.Now().Format(time.RFC3339)
-	session.WriteMeta(m)
+	m = writeSessionMetaKeepingLock(m)
 	httpx.WriteJSON(w, http.StatusOK, wireSession(m, false))
 }
 
@@ -913,13 +921,20 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		newMeta.Label = sessionLabelFor(newMeta.Dir, newMeta.Title)
 	}
 	if newMeta.DriverKind() == session.DriverManaged {
-		if d, ok := driverOf(newMeta); ok {
-			if _, err := startManagedSession(d, newMeta); err != nil {
-				m.Archived = false
-				session.WriteMeta(m)
-				httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
-				return
-			}
+		d, ok := driverOf(newMeta)
+		if !ok {
+			// fork と同じ扱い: driver 不在で起動を黙って飛ばすと alive=true の偽装になる。
+			m.Archived = false
+			session.WriteMeta(m)
+			httpx.WriteErr(w, http.StatusNotImplemented, "driver_unavailable",
+				"managed driver はこの kind ではまだ利用できません")
+			return
+		}
+		if _, err := startManagedSession(d, newMeta); err != nil {
+			m.Archived = false
+			session.WriteMeta(m)
+			httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+			return
 		}
 		session.WriteMeta(newMeta)
 		httpx.WriteJSON(w, http.StatusOK, wireSession(newMeta, true))

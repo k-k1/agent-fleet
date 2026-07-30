@@ -45,7 +45,15 @@ func TestFleet(t *testing.T) {
 	t.Logf("session created: %s (kind=%v)", name, created["kind"])
 
 	waitFor(t, 20*time.Second, "session alive in list", func() (bool, string) {
-		list := getJSON(t, base+"/api/sessions")
+		// poll 条件内は非 fatal な tryGet を使う(一時エラーで即 Fatal だとリトライが死ぬ)
+		code, body := tryGet(base + "/api/sessions")
+		if code != 200 {
+			return false, fmt.Sprintf("%d %s", code, truncate([]byte(body)))
+		}
+		var list map[string]any
+		if err := json.Unmarshal([]byte(body), &list); err != nil {
+			return false, "bad JSON: " + string(truncate([]byte(body)))
+		}
 		sessions, _ := list["sessions"].([]any)
 		for _, s := range sessions {
 			m, _ := s.(map[string]any)
@@ -95,6 +103,9 @@ func startFleet(t *testing.T, user string, extraEnv ...string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// 作成直後に回収を登録: cp.Start 前の Fatal 経路でも /tmp に残さない(#100)。
+	// Cleanup は LIFO なので、後で登録する teardown(CP 停止・コンテナ回収)が先に走る。
+	t.Cleanup(func() { cleanupDataDir(image, dataDir) })
 	// GitHub ランナーなどホスト uid がコンテナの dev(uid 1000) と一致しない環境では、
 	// CP(=このプロセスの uid) が 0755 で作る home / claude-config がコンテナ内から
 	// 書けず、entrypoint（set -e）が落ちて Agent が healthz に到達しない。mount 先を
@@ -118,6 +129,7 @@ func startFleet(t *testing.T, user string, extraEnv ...string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = logFile.Close() }) // どの経路でも fd を閉じる(#100)
 
 	cp := exec.Command(cpBin)
 	cp.Dir = tmp
@@ -134,7 +146,7 @@ func startFleet(t *testing.T, user string, extraEnv ...string) string {
 	if err := cp.Start(); err != nil {
 		t.Fatalf("start CP: %v", err)
 	}
-	t.Cleanup(func() { teardown(t, cp, image, dataDir, logPath, user) })
+	t.Cleanup(func() { teardown(t, cp, logPath, user) })
 
 	base := "http://" + cpAddr
 	waitFor(t, 15*time.Second, "CP /healthz", func() (bool, string) {
@@ -160,7 +172,15 @@ func startFleet(t *testing.T, user string, extraEnv ...string) string {
 		return code == 200, fmt.Sprintf("%d %s", code, body)
 	})
 	waitFor(t, 60*time.Second, "workspace running", func() (bool, string) {
-		ws := getJSON(t, base+"/api/workspace")
+		// poll 条件内は非 fatal な tryGet を使う(#99: getJSON は非200で即 Fatal)
+		code, body := tryGet(base + "/api/workspace")
+		if code != 200 {
+			return false, fmt.Sprintf("%d %s", code, truncate([]byte(body)))
+		}
+		var ws map[string]any
+		if err := json.Unmarshal([]byte(body), &ws); err != nil {
+			return false, "bad JSON: " + string(truncate([]byte(body)))
+		}
 		return ws["state"] == "running", fmt.Sprint(ws["state"])
 	})
 	return base
@@ -301,6 +321,18 @@ func postJSON(t *testing.T, url string, body map[string]any, wantStatus int) map
 	return m
 }
 
+// tryGet は fail せずに (status, body) を返す — リトライループ用。body は全文
+// （JSON parse 用）。観測値表示には truncate を通すこと。
+func tryGet(url string) (int, string) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return 0, err.Error()
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(b)
+}
+
 // tryPost は fail せずに (status, body) を返す — リトライループ用。
 func tryPost(url string, body map[string]any) (int, string) {
 	var rd io.Reader
@@ -324,10 +356,10 @@ func truncate(b []byte) []byte {
 	return b
 }
 
-// teardown はコンテナ・ネットワーク・CP プロセス・一時データを回収する。失敗時は
-// CP ログの末尾を出す。すべて best-effort — 汚れても次回実行や CI の使い捨て環境で
-// 支障が出ない範囲に留める。
-func teardown(t *testing.T, cp *exec.Cmd, image, dataDir, logPath, user string) {
+// teardown はコンテナ・ネットワーク・CP プロセスを回収する。失敗時は CP ログの
+// 末尾を出す。すべて best-effort — 汚れても次回実行や CI の使い捨て環境で支障が
+// 出ない範囲に留める。dataDir の回収は cleanupDataDir（作成直後に登録）が担う。
+func teardown(t *testing.T, cp *exec.Cmd, logPath, user string) {
 	t.Helper()
 	// CP を先に落とす（reaper 等がコンテナを触り直さないように）。
 	if cp.Process != nil {
@@ -342,14 +374,6 @@ func teardown(t *testing.T, cp *exec.Cmd, image, dataDir, logPath, user string) 
 	}
 	_ = exec.Command("docker", "rm", "-f", "af-ws-"+user).Run()
 	_ = exec.Command("docker", "network", "rm", "af-net-"+user).Run()
-	// home はコンテナ内 uid 1000 の所有物を含み、runner の uid では消せないことが
-	// ある → イメージ自身を root で回して中身を rm してから RemoveAll。
-	if err := os.RemoveAll(dataDir); err != nil {
-		_ = exec.Command("docker", "run", "--rm", "--user", "0",
-			"-v", dataDir+":/clean", "--entrypoint", "/bin/sh", image,
-			"-c", "rm -rf /clean/* /clean/.[!.]* 2>/dev/null || true").Run()
-		_ = os.RemoveAll(dataDir)
-	}
 	if t.Failed() {
 		if b, err := os.ReadFile(logPath); err == nil {
 			if len(b) > 8000 {
@@ -357,5 +381,17 @@ func teardown(t *testing.T, cp *exec.Cmd, image, dataDir, logPath, user string) 
 			}
 			t.Logf("--- control-plane log (tail) ---\n%s", b)
 		}
+	}
+}
+
+// cleanupDataDir は Workspace データ dir を best-effort で回収する。home はコンテナ内
+// uid 1000 の所有物を含み、runner の uid では消せないことがある → イメージ自身を
+// root で回して中身を rm してから RemoveAll。
+func cleanupDataDir(image, dataDir string) {
+	if err := os.RemoveAll(dataDir); err != nil {
+		_ = exec.Command("docker", "run", "--rm", "--user", "0",
+			"-v", dataDir+":/clean", "--entrypoint", "/bin/sh", image,
+			"-c", "rm -rf /clean/* /clean/.[!.]* 2>/dev/null || true").Run()
+		_ = os.RemoveAll(dataDir)
 	}
 }

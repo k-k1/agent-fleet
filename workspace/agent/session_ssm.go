@@ -136,10 +136,58 @@ func ssmConfigPath(name string) string {
 	return filepath.Join(homeDir(), ".aws", "af-sessions", name+".config")
 }
 
+// SSM/SSO meta allowlists. These values are written into an INI aws config
+// (writeSSMConfig) and the Profile also names the per-session config FILE: a
+// newline in any value would let a crafted profile append arbitrary keys —
+// `credential_process = <command>` then RUNS on the next aws invocation — and a
+// "../" Profile would escape the af-sessions dir. Validated at the single write
+// choke point so every caller (session launch, instance discovery, CloudWatch
+// ops) is covered.
+var (
+	ssmProfileRe = regexp.MustCompile(`^[A-Za-z0-9._@-]{1,64}$`) // no slash → filename-safe under its prefixes
+	ssmRegionRe  = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)
+	ssmAccountRe = regexp.MustCompile(`^[0-9]{1,20}$`)
+	ssmRoleRe    = regexp.MustCompile(`^[A-Za-z0-9+=,.@_-]{1,64}$`)
+	ssmURLRe     = regexp.MustCompile(`^https://[!-~]+$`) // printable ASCII, no spaces/newlines
+)
+
+// validateSSMMeta rejects meta whose values could not have come from the Console
+// forms (INI/path injection defense — the Agent must not trust its callers).
+func validateSSMMeta(s session.SSMMeta) error {
+	check := func(field, v string, re *regexp.Regexp, required bool) error {
+		if v == "" {
+			if required {
+				return fmt.Errorf("ssm meta: %s is required", field)
+			}
+			return nil
+		}
+		if !re.MatchString(v) {
+			return fmt.Errorf("ssm meta: invalid %s", field)
+		}
+		return nil
+	}
+	for _, e := range []error{
+		check("profile", s.Profile, ssmProfileRe, true),
+		check("sso start url", s.StartURL, ssmURLRe, true),
+		check("sso region", s.SSORegion, ssmRegionRe, false),
+		check("region", s.Region, ssmRegionRe, false),
+		check("account id", s.AccountID, ssmAccountRe, false),
+		check("role name", s.RoleName, ssmRoleRe, false),
+	} {
+		if e != nil {
+			return e
+		}
+	}
+	return nil
+}
+
 // writeSSMConfig writes an isolated aws config (sso-session + profile) from the
 // non-secret SSM meta. Idempotent — rewritten on every (re)launch. Contains no
 // secrets (only the SSO start URL / account / role).
 func writeSSMConfig(path string, s session.SSMMeta) error {
+	if err := validateSSMMeta(s); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}

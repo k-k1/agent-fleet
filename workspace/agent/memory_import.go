@@ -75,6 +75,9 @@ type memoryImportPreview struct {
 	// Secrets は取り込み内容の secret スキャン結果（情報提供。import は本人のデータを
 	// 持ち込む操作なのでブロックはしない — 生値は含まない）。
 	Secrets []memorySecretFinding `json:"secrets"`
+	// SecretScanFailed はスキャン自体の失敗（「検出なし」と区別する。import は
+	// ブロックしない方針なのでエラーにはせず、事実だけ返す）。
+	SecretScanFailed bool `json:"secretScanFailed,omitempty"`
 }
 
 // memoryImportPrepare は受領物を検証して refs/imports/<id>/* に取り込み、preview を返す。
@@ -140,7 +143,10 @@ func memoryImportPrepare(src, name string, now time.Time) (memoryImportPreview, 
 	if pv.Rejected == nil {
 		pv.Rejected = []string{}
 	}
-	if pv.Secrets, err = memoryScanRevTree(head); err != nil || pv.Secrets == nil {
+	if pv.Secrets, err = memoryScanRevTree(head); err != nil {
+		pv.SecretScanFailed = true // 失敗を「検出なし」に見せない
+	}
+	if pv.Secrets == nil {
 		pv.Secrets = []memorySecretFinding{}
 	}
 	memoryPruneImportRefs(memoryImportKeepRefs)

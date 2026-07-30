@@ -111,6 +111,9 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	}
 	handlesMu.Unlock()
 
+	h.resumeMu.Lock()
+	defer h.resumeMu.Unlock()
+
 	h.mu.Lock()
 	if h.alive && h.gen == gen && h.tid != "" {
 		h.mu.Unlock()
@@ -204,6 +207,15 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 			return nil, fmt.Errorf("codex thread の実行設定を反映できませんでした: %w", err)
 		}
 	}
+
+	// daemon 死で pump が終了した後も queue には送信済み入力が残り得る（§31）。
+	// Resume がここで再起動しないと、投入済みプロンプトは滞留したままになる。
+	h.mu.Lock()
+	if len(h.queue) > 0 && !h.pumping && !h.running {
+		h.pumping = true
+		go h.pump()
+	}
+	h.mu.Unlock()
 
 	// exit recording の baseline（opencode driver / tui startSessionTmux と同じ役割）。
 	base, _ := status.OOMKillCount()
@@ -440,6 +452,12 @@ type threadHandle struct {
 	name    string
 	dir     string
 	slotSid string
+
+	// resumeMu serializes Resume end-to-end: its check-then-act (no tid → start a
+	// new native thread + sids.Write) spans network calls, and two concurrent
+	// Resumes (waitDaemon + writerLost reconcile, or a user /start) would mint two
+	// threads and orphan one (§32).
+	resumeMu sync.Mutex
 
 	mu       sync.Mutex
 	client   *appClient
@@ -1042,6 +1060,15 @@ func dispatchNotification(msg rpcMsg) {
 				st = agents.TurnFailed
 			case "interrupted":
 				st = agents.TurnCancelled
+			}
+			// 別 turn の完了で実行中 turn を誤終了させない（遅延配送・多重接続）。
+			// 両方の id が分かっていて食い違う時だけ弾く — turn/started を見ていない
+			// 引き継ぎ turn（h.turnID == ""）は従来どおり終端として扱う。
+			h.mu.Lock()
+			mismatch := h.turnID != "" && p.Turn.ID != "" && h.turnID != p.Turn.ID
+			h.mu.Unlock()
+			if mismatch {
+				return
 			}
 			agents.MarkTurnEnd(h.slotSid, st)
 			h.mu.Lock()

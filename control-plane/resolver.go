@@ -207,6 +207,25 @@ func (m *manager) buildLockFor(membershipID string) *sync.Mutex {
 	return l
 }
 
+// startLockFor returns the per-workspace start mutex (lazily allocated). It
+// serializes concurrent container starts of the SAME workspace (explicit start,
+// the ×4 auto-start paths, scheduler wake, recreate/clean-home): unserialized,
+// a later docker `rm -f` can destroy the container an earlier start just
+// brought up, and on native a pidfile overwrite orphans the running agent.
+func (m *manager) startLockFor(wsID string) *sync.Mutex {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.startLocks == nil {
+		m.startLocks = map[string]*sync.Mutex{}
+	}
+	l, ok := m.startLocks[wsID]
+	if !ok {
+		l = &sync.Mutex{}
+		m.startLocks[wsID] = l
+	}
+	return l
+}
+
 // resolveByMembership resolves a runtime from a PAT's stored identity+membership
 // (the MCP path, which has no gateway headers). The membership must still be an
 // active membership of the identity — so a revoked membership 403s here.

@@ -176,9 +176,12 @@ func splitServeAddr(addr string) (host, port string, err error) {
 func (s *Supervisor) waitDaemon(cmd *exec.Cmd, gen int) {
 	err := cmd.Wait()
 	s.mu.Lock()
-	deliberate := s.stopping || s.gen != gen
-	if s.gen == gen {
+	// `s.cmd != cmd`（codex 同型）: Restart は gen を変えずに stopping を戻すので、
+	// gen 比較だけだと意図的停止を「died unexpectedly」に誤記録しうる。
+	deliberate := s.stopping || s.cmd != cmd
+	if s.cmd == cmd {
 		s.up = false
+		s.cmd = nil
 	}
 	s.mu.Unlock()
 	if deliberate {
@@ -340,22 +343,16 @@ func stopProcess(cmd *exec.Cmd, addr string) {
 		return
 	}
 	_ = cmd.Process.Signal(syscall.SIGTERM)
-	done := make(chan struct{})
-	go func() {
-		// Reap via a poll rather than cmd.Wait(): the waiter goroutine owns Wait.
-		for i := 0; i < 50; i++ {
-			if !healthy(addr) && cmd.ProcessState != nil {
-				break
-			}
-			time.Sleep(100 * time.Millisecond)
+	// Poll health only (codex 同型): cmd.ProcessState は waitDaemon の cmd.Wait() と
+	// データレースになるので触らない。reap は waitDaemon の仕事。
+	deadline := time.Now().Add(6 * time.Second)
+	for time.Now().Before(deadline) {
+		if !healthy(addr) {
+			return
 		}
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(6 * time.Second):
-		_ = cmd.Process.Kill()
+		time.Sleep(100 * time.Millisecond)
 	}
+	_ = cmd.Process.Kill()
 }
 
 // --- SSE event monitor ------------------------------------------------------

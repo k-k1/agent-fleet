@@ -50,17 +50,25 @@ func newPollyProvider() *pollyProvider {
 // 502 として表面化する。
 func (p *pollyProvider) Ready(context.Context) bool { return p.region != "" }
 
-func (p *pollyProvider) api() (pollyAPI, error) {
+func (p *pollyProvider) api(ctx context.Context) (pollyAPI, error) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.client != nil {
+		p.mu.Unlock()
 		return p.client, nil
 	}
-	ac, err := awscfg.LoadDefaultConfig(context.Background(), awscfg.WithRegion(p.region))
+	p.mu.Unlock()
+	// ロック外・呼び出し元 ctx でロード（キャンセル可能、他の Synthesize をブロック
+	// しない）。同時初期化は先着の client を尊重する。
+	ac, err := awscfg.LoadDefaultConfig(ctx, awscfg.WithRegion(p.region))
 	if err != nil {
 		return nil, err
 	}
-	p.client = polly.NewFromConfig(ac)
+	c := polly.NewFromConfig(ac)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.client == nil {
+		p.client = c
+	}
 	return p.client, nil
 }
 
@@ -68,7 +76,7 @@ func (p *pollyProvider) Synthesize(ctx context.Context, text string, o voiceOpts
 	if p.region == "" {
 		return nil, "", &apiError{http.StatusServiceUnavailable, "tts_provider_unavailable", "polly not configured (set AF_POLLY_REGION)"}
 	}
-	api, err := p.api()
+	api, err := p.api(ctx)
 	if err != nil {
 		return nil, "", &apiError{http.StatusBadGateway, "tts_engine_error", "polly config: " + err.Error()}
 	}

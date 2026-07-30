@@ -499,8 +499,14 @@ func (e *ecsRuntime) upsertService(ctx context.Context, taskDefArn string) error
 func httpHealthz(ctx context.Context, endpoint string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
+		// キャンセル済み ctx で最大タイムアウトまでポーリングし続けない
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("agent health wait canceled: %w", err)
+		}
 		req, _ := http.NewRequestWithContext(ctx, "GET", endpoint+"/healthz", nil)
-		if resp, err := http.DefaultClient.Do(req); err == nil {
+		// healthzClient (5s cap): ポーリングは再発行されるので、1 本のハングした probe が
+		// 呼び出し元(scheduler fire の wg.Wait 等)を巻き込んで固まらないようにする。
+		if resp, err := healthzClient.Do(req); err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				return nil

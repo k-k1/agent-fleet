@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
@@ -76,6 +77,7 @@ func PutOnce(key string, e Event) error {
 	if err := os.MkdirAll(markerDir, 0o700); err != nil {
 		return err
 	}
+	pruneMarkers(markerDir)
 	marker := filepath.Join(markerDir, hex.EncodeToString(sum[:])+".seen")
 	if _, err := os.Stat(marker); err == nil {
 		return nil
@@ -84,6 +86,38 @@ func PutOnce(key string, e Event) error {
 		return err
 	}
 	return os.WriteFile(marker, []byte(e.CreatedAt), 0o600)
+}
+
+// Marker pruning: without it the markers grow monotonically (List() prunes only the
+// outbox files). 30 days — well past List()'s 7-day event window — so a marker never
+// dies while its prompt could still be re-enqueued. Throttled: PutOnce runs on every
+// Control Plane poll and a ReadDir each time would be wasteful.
+var (
+	markerPruneMu sync.Mutex
+	markerPruneAt time.Time
+)
+
+func pruneMarkers(markerDir string) {
+	markerPruneMu.Lock()
+	defer markerPruneMu.Unlock()
+	now := time.Now()
+	if now.Sub(markerPruneAt) < time.Hour {
+		return
+	}
+	markerPruneAt = now
+	entries, err := os.ReadDir(markerDir)
+	if err != nil {
+		return
+	}
+	cutoff := now.Add(-30 * 24 * time.Hour)
+	for _, ent := range entries {
+		if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".seen") {
+			continue
+		}
+		if info, err := ent.Info(); err == nil && info.ModTime().Before(cutoff) {
+			_ = os.Remove(filepath.Join(markerDir, ent.Name()))
+		}
+	}
 }
 
 func List() []Event {

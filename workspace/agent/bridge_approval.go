@@ -40,12 +40,25 @@ type operatorTurnMarker struct {
 	ExpiresAt int64  `json:"expiresAt"`
 }
 
-// operatorTurnStore holds the single active-turn marker (key "current"). The daemon writes
-// it around runOperatorTurn; the mcp-stdio subprocess reads it to learn its turn is
-// unattended and must gate destructive actions.
+// operatorTurnStore holds one active-turn marker PER conversation (key = conv). The daemon
+// writes it around runOperatorTurn; the mcp-stdio subprocess reads it to learn its turn is
+// unattended and must gate destructive actions. A single shared key would let two unattended
+// turns (Discord/Slack/scheduled assistant, different convs) overwrite each other's marker —
+// the earlier turn's defer would then erase the later turn's marker and its destructive
+// tools would run ungated (fail-open).
 var operatorTurnStore = fstore.JSON[operatorTurnMarker](paths.AgentConfigDir, "bridge-operator-turn", ".json")
 
-const operatorTurnKey = "current"
+// operatorTurnKey derives the per-conv marker filename key (conv IDs are slug-safe; any
+// other byte is normalized defensively so the key is always a plain filename).
+func operatorTurnKey(conv string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+			return r
+		}
+		return '-'
+	}, conv)
+}
 
 // operatorTurnTimeout bounds a Discord-driven operator turn. It is deliberately longer than
 // chatTimeout (Console chat) because such a turn may pause on a human approval — the window
@@ -53,21 +66,31 @@ const operatorTurnKey = "current"
 var operatorTurnTimeout = 6 * time.Minute
 
 func armOperatorTurn(conv string) {
-	_ = operatorTurnStore.Write(operatorTurnKey, operatorTurnMarker{
+	if conv == "" {
+		return
+	}
+	_ = operatorTurnStore.Write(operatorTurnKey(conv), operatorTurnMarker{
 		Conv: conv, ExpiresAt: nowMs() + operatorTurnTimeout.Milliseconds(),
 	})
 }
 
-func disarmOperatorTurn() { operatorTurnStore.Remove(operatorTurnKey) }
+// disarmOperatorTurn removes only THIS conv's marker, so a finishing turn can never
+// erase the marker of another conversation's still-running unattended turn.
+func disarmOperatorTurn(conv string) {
+	if conv == "" {
+		return
+	}
+	operatorTurnStore.Remove(operatorTurnKey(conv))
+}
 
 // operatorTurnArmed reports whether the current turn is THE Discord-driven operator turn for
-// conv (marker present, matching conv, unexpired). Read by the mcp-stdio subprocess to decide
-// whether a destructive tool must gate.
+// conv (own marker present, matching conv, unexpired). Read by the mcp-stdio subprocess to
+// decide whether a destructive tool must gate.
 func operatorTurnArmed(conv string) bool {
 	if conv == "" {
 		return false
 	}
-	m, ok := operatorTurnStore.Read(operatorTurnKey)
+	m, ok := operatorTurnStore.Read(operatorTurnKey(conv))
 	return ok && m.Conv == conv && nowMs() < m.ExpiresAt
 }
 

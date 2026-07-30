@@ -43,7 +43,9 @@ func (f *wakeFirer) fireAssistant(ctx context.Context, res *resolved, sch Schedu
 	})
 	tctx, cancel := context.WithTimeout(ctx, assistantTurnTimeout)
 	defer cancel()
-	respBody, status, err := f.agentReq(tctx, res.rt, "POST", "/assistant-turns", body)
+	// agentLongCallClient: この同期ターンの上限は tctx の 8 分。共有クライアントの
+	// 2 分タイムアウトに乗ると、承認待ち（最大 4 分）を含むターンが偽エラー記録になる。
+	respBody, status, err := f.agentReqClient(tctx, agentLongCallClient, res.rt, "POST", "/assistant-turns", body)
 	if err != nil {
 		return "", "", fmt.Errorf("assistant turn: %w", err)
 	}

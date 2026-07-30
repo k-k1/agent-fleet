@@ -25,6 +25,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
@@ -63,6 +64,11 @@ func runSvn(dir string, args ...string) (string, error) {
 // it disables cert verification for that server entirely, hence the explicit,
 // per-server opt-in (docs/41).
 const svnTrustFailures = "--trust-server-cert-failures=unknown-ca,cn-mismatch,expired,not-yet-valid,other"
+
+// svnNetTimeout bounds a network op (checkout/update) so a hung/slow server can't
+// occupy the handler indefinitely; generous because a first checkout of a large
+// repo legitimately takes long.
+const svnNetTimeout = 30 * time.Minute
 
 // svnAuthedArgs builds the full argv (after "svn") for a network op: the
 // non-interactive / no-auth-cache flags, an optional cert-trust flag, optional
@@ -169,7 +175,7 @@ func pickSvnCred(list []secrets.SVNCred, url string) *secrets.SVNCred {
 	var best *secrets.SVNCred
 	for i := range list {
 		c := &list[i]
-		if strings.HasPrefix(url, c.URLPrefix) && (best == nil || len(c.URLPrefix) > len(best.URLPrefix)) {
+		if svnPrefixMatch(url, c.URLPrefix) && (best == nil || len(c.URLPrefix) > len(best.URLPrefix)) {
 			best = c
 		}
 	}
@@ -178,6 +184,18 @@ func pickSvnCred(list []secrets.SVNCred, url string) *secrets.SVNCred {
 	}
 	cp := *best
 	return &cp
+}
+
+// svnPrefixMatch reports whether url falls under prefix at a URL segment
+// boundary. A raw HasPrefix would also match a DIFFERENT host that merely starts
+// with the same bytes ("https://svn.corp.com" vs
+// "https://svn.corp.com.evil.example/…") — and the stored password would be sent
+// there as Basic auth.
+func svnPrefixMatch(url, prefix string) bool {
+	if prefix == "" || !strings.HasPrefix(url, prefix) {
+		return false
+	}
+	return len(url) == len(prefix) || strings.HasSuffix(prefix, "/") || url[len(prefix)] == '/'
 }
 
 // svnCredsFor returns the stored credential matching url (longest prefix), or nil.
@@ -336,7 +354,11 @@ func handleSvnCheckout(w http.ResponseWriter, r *http.Request) {
 		}
 		creds.TrustCert = true
 	}
-	out, err := runSvnAuthedHealing(context.Background(), dir, creds, "checkout", full, dir)
+	// Upper-bound only (not r.Context()): a client disconnect must not kill a half-done
+	// checkout, but a hung server must not pin this handler forever either.
+	ctx, cancel := context.WithTimeout(context.Background(), svnNetTimeout)
+	defer cancel()
+	out, err := runSvnAuthedHealing(ctx, dir, creds, "checkout", full, dir)
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		httpx.WriteErr(w, http.StatusBadGateway, "checkout_failed", fmt.Sprintf("%v: %s", err, out))
@@ -387,7 +409,9 @@ func handleSvnUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	_, url := svnInfo(dir)
 	creds := svnCredsFor(url)
-	out, err := runSvnAuthedHealing(context.Background(), dir, creds, "update", dir)
+	ctx, cancel := context.WithTimeout(context.Background(), svnNetTimeout)
+	defer cancel()
+	out, err := runSvnAuthedHealing(ctx, dir, creds, "update", dir)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusBadGateway, "update_failed", fmt.Sprintf("%v: %s", err, out))
 		return

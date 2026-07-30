@@ -104,6 +104,12 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	}
 	handlesMu.Unlock()
 
+	// spawn を handle 単位で直列化する（kiro A2-4 と同型）: boot の ReconcileManaged と
+	// 直後の /turn が並行に Resume すると check-then-spawn が非直列で二重 spawn し、
+	// 先発の子プロセスが孤児化する。ロック取得後に liveness を再確認する。
+	h.spawnMu.Lock()
+	defer h.spawnMu.Unlock()
+
 	h.mu.Lock()
 	if h.alive && h.cl != nil && !h.cl.dead() {
 		h.mu.Unlock()
@@ -264,7 +270,14 @@ func stopChild(cmd *exec.Cmd) {
 	if syscall.Kill(-pid, syscall.SIGTERM) != nil {
 		return // already gone
 	}
-	time.AfterFunc(3*time.Second, func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
+	time.AfterFunc(3*time.Second, func() {
+		// 子が回収済みなら pid（グループ）は再利用され得る — 生の -pid SIGKILL を
+		// 無関係プロセスへ飛ばさないよう本体の生存を確認する（Wait 済みの Process への
+		// Signal は ErrProcessDone を返す・レース安全）。
+		if cmd.Process.Signal(syscall.Signal(0)) == nil {
+			_ = syscall.Kill(-pid, syscall.SIGKILL)
+		}
+	})
 }
 
 // --- thread handle -----------------------------------------------------------
@@ -273,6 +286,8 @@ type threadHandle struct {
 	name    string
 	dir     string
 	slotSid string
+
+	spawnMu sync.Mutex // serializes spawns for this handle（並行 Resume の二重 spawn 防止・kiro A2-4 と同型）
 
 	mu       sync.Mutex
 	cmd      *exec.Cmd
@@ -326,7 +341,11 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 		return fmt.Errorf("cursor runtime を起動できません: %w", err)
 	}
 	cl := newACPClient(stdin, stdout)
-	cl.onRequest = h.onServerRequest
+	// クロージャで当該 cl を捕捉する: 初回 spawn 中は h.cl が未代入のまま readLoop が
+	// 走り得るので、h.cl 参照だと未知メソッド応答で nil デリファレンス panic になる。
+	cl.onRequest = func(id json.RawMessage, method string, params json.RawMessage) {
+		h.onServerRequest(cl, id, method, params)
+	}
 	cl.onNotify = h.onNotify
 	go h.watch(cmd, cl)
 
@@ -353,9 +372,13 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 		}, 180*time.Second)
 		h.buf.setLoading(false) // 最後の assistant ターンを flush
 		if err != nil {
-			log.Printf("cursor managed: session/load %s: %v — 新規セッションで再開", h.name, err)
-			sid = ""
+			// kiro A2-1 と同じ理屈: 一時失敗（timeout・lock 競合等）で session/new に
+			// 落ちると、生きた会話を無言で切り離し slot の sid を空の新会話で上書き
+			// してしまう。cursor はローカルストアが無く「会話が本当に消えた」を決定的に
+			// 判定できないため、失敗は再試行可能なエラーとして返し停止中のままにする。
 			h.buf.reset()
+			stopChild(cmd)
+			return fmt.Errorf("cursor セッションを読み込めませんでした（時間をおいて再開してください）: %w", err)
 		} else {
 			mode = currentModeOf(res)
 			modelID = currentModelOf(res)
@@ -515,10 +538,8 @@ func (h *threadHandle) accept(in agents.TurnInput) error {
 		h.mu.Unlock()
 		return agents.ErrQuestionPending
 	}
-	if ledger.SeenOrRecord(h.name, in.ClientMessageID) {
-		h.mu.Unlock()
-		return nil // 再送 — 台帳（永続、プロセス跨ぎ）が冪等化
-	}
+	// 再送の冪等化（台帳）は pump の実行開始時に行う — キュー投入前に永続記録すると、
+	// クラッシュでキューが失われた後の再送が「既知」として無言破棄される。
 	h.queue = append(h.queue, in)
 	start := !h.pumping
 	if start {
@@ -545,6 +566,10 @@ func (h *threadHandle) pump() {
 		}
 		in := h.queue[0]
 		h.queue = h.queue[1:]
+		if ledger.SeenOrRecord(h.name, in.ClientMessageID) {
+			h.mu.Unlock()
+			continue // 再送 — 台帳（永続、プロセス跨ぎ）が実行開始時に冪等化
+		}
 		h.running = true
 		h.mu.Unlock()
 
@@ -695,11 +720,15 @@ func (h *threadHandle) Respond(reply agents.InteractionReply) error {
 	}
 	h.mu.Lock()
 	h.inter, h.permID, h.permOpts = nil, nil, nil
-	if h.running {
+	running := h.running
+	if running {
 		h.state = agents.TurnRunning
 	}
 	h.mu.Unlock()
-	h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnRunning})
+	if running {
+		// turn が走っていない時に偽の「実行中」を購読側へ流さない。
+		h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnRunning})
+	}
 	return nil
 }
 
@@ -846,10 +875,10 @@ func toolOutput(raw json.RawMessage) string {
 // onServerRequest handles server-initiated requests on the readLoop goroutine —
 // MUST NOT block: record the Interaction and return; the answer goes back later via
 // Respond → cl.respond. --force 運転では発生しないが、plan 起動では到達しうる。
-func (h *threadHandle) onServerRequest(id json.RawMessage, method string, params json.RawMessage) {
+func (h *threadHandle) onServerRequest(cl *acpClient, id json.RawMessage, method string, params json.RawMessage) {
 	if method != "session/request_permission" {
 		// 未知のサーバー発リクエストは応答しないと turn が固まる — エラーで返す。
-		_ = h.cl.write(map[string]any{
+		_ = cl.write(map[string]any{
 			"jsonrpc": "2.0", "id": id,
 			"error": map[string]any{"code": -32601, "message": "unsupported request: " + method},
 		})

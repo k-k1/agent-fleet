@@ -23,8 +23,10 @@ func handlePreview(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_port", "preview port must be 1..65535")
 		return
 	}
-	if port == 7700 { // the agent itself — forwarding here would loop
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_port", "port 7700 is the workspace agent")
+	// Same guard as the browser pane: the default 7700 AND the actual AGENT_ADDR port
+	// (they differ when the agent listens elsewhere) — forwarding here would loop.
+	if reservedBrowserAgentPort(port) {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_port", "this port is the workspace agent")
 		return
 	}
 

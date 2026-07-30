@@ -188,6 +188,10 @@ func servePastedImageFrom(w http.ResponseWriter, dir, file string) {
 // opencode: its own tools — vision is model-dependent there).
 func handlePasteImage(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	if !session.ValidName(name) {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		return
+	}
 	meta, ok := session.ReadMeta(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "no_session", "session not found: "+name)
@@ -203,6 +207,10 @@ func handlePasteImage(w http.ResponseWriter, r *http.Request) {
 // handlePastedImage serves a previously-pasted session image by basename (GET).
 func handlePastedImage(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	if !session.ValidName(name) {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		return
+	}
 	meta, ok := session.ReadMeta(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "no_session", "session not found: "+name)

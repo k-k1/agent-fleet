@@ -37,6 +37,10 @@ func (a previewAPI) proxy(w http.ResponseWriter, r *http.Request, res *resolved)
 	}
 
 	rest := r.PathValue("rest")
+	if unsafeRelayPath(rest) {
+		http.Error(w, "bad preview path", http.StatusBadRequest)
+		return
+	}
 	target := rt.Endpoint() + "/proxy/" + port + "/" + rest
 	if r.URL.RawQuery != "" {
 		target += "?" + r.URL.RawQuery
@@ -47,7 +51,7 @@ func (a previewAPI) proxy(w http.ResponseWriter, r *http.Request, res *resolved)
 		http.Error(w, "bad proxy request", http.StatusBadGateway)
 		return
 	}
-	req.Header = r.Header.Clone()
+	req.Header = a.sanitizedHeader(r)
 	if rt.Token() != "" {
 		req.Header.Set("Authorization", "Bearer "+rt.Token()) // CP↔Agent auth
 	}
@@ -62,7 +66,7 @@ func (a previewAPI) proxy(w http.ResponseWriter, r *http.Request, res *resolved)
 		req.Header.Set("X-Forwarded-Proto", forwardedProto(r))
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := agentRelayClient.Do(req)
 	if err != nil {
 		http.Error(w, "workspace agent unreachable (is the workspace running?)", http.StatusBadGateway)
 		return
@@ -71,11 +75,70 @@ func (a previewAPI) proxy(w http.ResponseWriter, r *http.Request, res *resolved)
 
 	for k, vals := range resp.Header {
 		for _, v := range vals {
+			// The previewed app must not (re)issue a login cookie on the Console
+			// origin — neither the CP's own (af_session fixation / tossing) nor a
+			// front auth gateway's (_oauth2_proxy* / AWSELBAuthSessionCookie*):
+			// the same set the request side strips. Its other cookies pass.
+			if http.CanonicalHeaderKey(k) == "Set-Cookie" && sensitiveBrowserCookie(setCookieName(v)) {
+				continue
+			}
 			w.Header().Add(k, v)
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+}
+
+// sanitizedHeader clones the browser's request headers for the relay WITHOUT the
+// Console's credentials. The previewed app is arbitrary user code (someone's dev
+// server): forwarding the af_session cookie, the gateway identity header, or a
+// browser Authorization header would let that app call the CP API as the signed-in
+// user. CP-owned cookies are filtered out of Cookie (the previewed app's own
+// cookies still pass); the identity headers cover both the configured emailHeader
+// and the common oauth2-proxy set an upstream may attach.
+func (a previewAPI) sanitizedHeader(r *http.Request) http.Header {
+	h := r.Header.Clone()
+	h.Del("Authorization")
+	h.Del("X-Forwarded-Email")
+	h.Del("X-Forwarded-User")
+	h.Del("X-Forwarded-Preferred-Username")
+	h.Del("X-Auth-Request-Email")
+	h.Del("X-Auth-Request-User")
+	h.Del("X-Auth-Request-Access-Token")
+	if eh := a.mgr.emailHeader; eh != "" {
+		h.Del(eh)
+	}
+	h.Del("Cookie")
+	var kept []string
+	for _, c := range r.Cookies() {
+		if sensitiveBrowserCookie(c.Name) {
+			continue
+		}
+		kept = append(kept, c.Name+"="+c.Value)
+	}
+	if len(kept) > 0 {
+		h.Set("Cookie", strings.Join(kept, "; "))
+	}
+	return h
+}
+
+// sensitiveBrowserCookie reports whether a cookie carries a login the previewed
+// app must not see: the CP's own cookies, plus the session cookies a FRONT auth
+// gateway sets on the same host (oauth2-proxy `_oauth2_proxy*` incl. chunked
+// variants, ALB OIDC `AWSELBAuthSessionCookie-*`) — replaying either lets the
+// app act as the signed-in user against the gateway-protected origin.
+func sensitiveBrowserCookie(name string) bool {
+	if name == sessionCookie || name == stateCookie {
+		return true
+	}
+	return strings.HasPrefix(name, "_oauth2_proxy") ||
+		strings.HasPrefix(name, "AWSELBAuthSessionCookie")
+}
+
+// setCookieName extracts the cookie name from a Set-Cookie header line.
+func setCookieName(setCookie string) string {
+	name, _, _ := strings.Cut(setCookie, "=")
+	return strings.TrimSpace(name)
 }
 
 // redirect bounces /preview/{port} to /preview/{port}/ so the

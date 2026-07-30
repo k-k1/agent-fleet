@@ -188,7 +188,10 @@ func HandlePoll(w http.ResponseWriter, r *http.Request) {
 // HandleDisconnect signs kiro out (clears ~/.local/share/kiro-cli auth) via the
 // CLI. DELETE /connections/kiro.
 func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
-	_ = exec.Command(bin(), "logout").Run()
+	// logout はネットワークを叩き得る — タイムアウト無しだとハンドラが無期限に塞がる。
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	_ = exec.CommandContext(ctx, bin(), "logout").Run()
 	invalidateStatus()
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "kiro"})
 }

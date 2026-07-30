@@ -343,11 +343,20 @@ func stopChild(cmd *exec.Cmd, stdin io.Closer) {
 		_ = stdin.Close() // graceful: EOF → exit 0 ＋ .lock 除去
 	}
 	pid := cmd.Process.Pid
-	// 安全網: EOF で落ちなければグループごと（-pid）落とす。既に終了済み pid への Kill は
-	// ESRCH で無害。Setpgid でグループを分けているので子が抱える補助プロセスも掃ける。
+	// 安全網: EOF で落ちなければグループごと（-pid）落とす。Setpgid でグループを分けて
+	// いるので子が抱える補助プロセスも掃ける。子が回収済みなら pid（グループ）は再利用
+	// され得るため、生の -pid シグナルの前に本体の生存を確認する（Wait 済みの Process
+	// への Signal は ErrProcessDone を返す・レース安全）。
 	time.AfterFunc(4*time.Second, func() {
+		if cmd.Process.Signal(syscall.Signal(0)) != nil {
+			return // already reaped — グループへは送らない
+		}
 		if syscall.Kill(-pid, syscall.SIGTERM) == nil {
-			time.AfterFunc(3*time.Second, func() { _ = syscall.Kill(-pid, syscall.SIGKILL) })
+			time.AfterFunc(3*time.Second, func() {
+				if cmd.Process.Signal(syscall.Signal(0)) == nil {
+					_ = syscall.Kill(-pid, syscall.SIGKILL)
+				}
+			})
 		}
 	})
 }
@@ -431,7 +440,11 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 		return fmt.Errorf("kiro runtime を起動できません: %w", err)
 	}
 	cl := newACPClient(stdin, stdout)
-	cl.onRequest = h.onServerRequest
+	// クロージャで当該 cl を捕捉する: 初回 spawn 中は h.cl が未代入のまま readLoop が
+	// 走り得るので、h.cl 参照だと未知メソッド応答で nil デリファレンス panic になる。
+	cl.onRequest = func(id json.RawMessage, method string, params json.RawMessage) {
+		h.onServerRequest(cl, id, method, params)
+	}
 	cl.onNotify = h.onNotify
 	exited := make(chan struct{})
 	go h.watch(cmd, cl, exited)
@@ -479,6 +492,8 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 				sid = ""
 				h.buf.reset()
 			} else {
+				// 部分リプレイを buf に残さない — 残すと完全なファイル転写より優先表示される。
+				h.buf.reset()
 				stopChild(cmd, stdin)
 				return fmt.Errorf("kiro セッションを読み込めませんでした（別プロセスが占有中の可能性・時間をおいて再開してください）: %w", lerr)
 			}
@@ -698,10 +713,8 @@ func (h *threadHandle) accept(in agents.TurnInput) error {
 		h.mu.Unlock()
 		return agents.ErrQuestionPending
 	}
-	if ledger.SeenOrRecord(h.name, in.ClientMessageID) {
-		h.mu.Unlock()
-		return nil // 再送 — 台帳（永続、プロセス跨ぎ）が冪等化
-	}
+	// 再送の冪等化（台帳）は pump の実行開始時に行う — キュー投入前に永続記録すると、
+	// クラッシュでキューが失われた後の再送が「既知」として無言破棄される。
 	h.queue = append(h.queue, in)
 	start := !h.pumping
 	if start {
@@ -728,6 +741,10 @@ func (h *threadHandle) pump() {
 		}
 		in := h.queue[0]
 		h.queue = h.queue[1:]
+		if ledger.SeenOrRecord(h.name, in.ClientMessageID) {
+			h.mu.Unlock()
+			continue // 再送 — 台帳（永続、プロセス跨ぎ）が実行開始時に冪等化
+		}
 		h.running = true
 		h.mu.Unlock()
 
@@ -859,11 +876,15 @@ func (h *threadHandle) Respond(reply agents.InteractionReply) error {
 	}
 	h.mu.Lock()
 	h.inter, h.permID, h.permOpts = nil, nil, nil
-	if h.running {
+	running := h.running
+	if running {
 		h.state = agents.TurnRunning
 	}
 	h.mu.Unlock()
-	h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnRunning})
+	if running {
+		// turn が走っていない時に偽の「実行中」を購読側へ流さない。
+		h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnRunning})
+	}
 	return nil
 }
 
@@ -1036,10 +1057,10 @@ func toolOutput(raw json.RawMessage) string {
 // onServerRequest handles server-initiated requests on the readLoop goroutine —
 // MUST NOT block: record the Interaction and return; the answer goes back later via
 // Respond → cl.respond. --trust-all-tools 運転では発生しないが、plan 起動では到達しうる。
-func (h *threadHandle) onServerRequest(id json.RawMessage, method string, params json.RawMessage) {
+func (h *threadHandle) onServerRequest(cl *acpClient, id json.RawMessage, method string, params json.RawMessage) {
 	if method != "session/request_permission" {
 		// 未知のサーバー発リクエストは応答しないと turn が固まる — エラーで返す。
-		_ = h.cl.write(map[string]any{
+		_ = cl.write(map[string]any{
 			"jsonrpc": "2.0", "id": id,
 			"error": map[string]any{"code": -32601, "message": "unsupported request: " + method},
 		})

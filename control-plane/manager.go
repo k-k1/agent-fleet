@@ -22,6 +22,7 @@ type manager struct {
 	mu         sync.Mutex
 	rts        map[string]cachedRT    // cache keyed by membership id; DB is source of truth
 	buildLocks map[string]*sync.Mutex // per-membership first-resolve serialization
+	startLocks map[string]*sync.Mutex // per-workspace start/recreate serialization
 	store      Store
 	conns      *connRegistry // P3-9: live activity/attachment tracking for idle-stop
 
@@ -68,6 +69,11 @@ type manager struct {
 	// custodian wraps/unwraps per-workspace DEKs; nil in dev (no encryption).
 	master32  []byte
 	custodian KeyCustodian
+
+	// git token signing without AF_MASTER_KEY (dev): a per-deployment random
+	// master persisted under dataRoot, lazily created (git_http.go gitSignKey).
+	gitDevMasterOnce sync.Once
+	gitDevMaster     []byte
 
 	// internalGitHost is the host of PUBLIC_BASE_URL (docs/reference/internal-git-
 	// provider). When set, each workspace gets a deterministic per-membership git

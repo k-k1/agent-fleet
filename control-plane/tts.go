@@ -383,9 +383,14 @@ func voicevoxSynthesize(ctx context.Context, base, text, voice string, speed flo
 		return nil, &apiError{http.StatusBadGateway, "tts_engine_unreachable", "voicevox unreachable: " + err.Error()}
 	}
 	defer sResp.Body.Close()
-	wav, _ := io.ReadAll(sResp.Body)
+	// Bounded read (a wedged engine must not balloon CP memory), and a read error
+	// must not return a truncated WAV as a 200.
+	wav, rerr := io.ReadAll(io.LimitReader(sResp.Body, 64<<20))
 	if sResp.StatusCode != http.StatusOK {
 		return nil, &apiError{http.StatusBadGateway, "tts_engine_error", "voicevox synthesis failed: " + strings.TrimSpace(string(wav))}
+	}
+	if rerr != nil {
+		return nil, &apiError{http.StatusBadGateway, "tts_engine_error", "voicevox synthesis read: " + rerr.Error()}
 	}
 	return wav, nil
 }
