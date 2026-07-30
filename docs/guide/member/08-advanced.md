@@ -143,7 +143,7 @@ If authentication is needed, the `aws sso login` URL appears on a confirmation s
 
 ## Environment settings and recreating the workspace
 
-In **⚙ Settings → the "Workspace" tab** you can adjust the workspace environment. Changes **apply to sessions /
+In **⚙ Settings → the "Toolchains" tab** you can adjust the workspace environment. Changes **apply to sessions /
 shells started afterwards** (running ones and existing processes pick them up after you stop and then start the
 workspace again).
 
@@ -153,7 +153,7 @@ workspace again).
 
 ### Recreating the workspace (danger zone)
 
-At the bottom of the same tab, under **"Danger zone"**, is **"Recreate the workspace"**. It discards the
+In **⚙ Settings → the "Danger zone" tab** is **"Recreate the workspace"**. It discards the
 container and rebuilds it from the latest image; pressing **"Recreate"** shows a confirmation. What stays and
 what goes is as follows.
 
@@ -171,7 +171,7 @@ environment is broken. **Uncommitted changes are lost**, so push / commit before
 
 Since recreating deletes only `~/repos`, it won't fix problems on the home side (a broken claude install in
 `~/.local`, corrupted caches or config files, and so on). In that case use **"Clean home"**, in the same
-"Danger zone". It deletes **your entire home except logins and connections** (`~/repos`, `~/.local`, caches,
+"Danger zone" tab. It deletes **your entire home except logins and connections** (`~/repos`, `~/.local`, caches,
 settings) and rebuilds from the latest image — a deeper reset.
 
 - **What stays** — logins and connections (GitHub / Bitbucket / Claude) **only**.
