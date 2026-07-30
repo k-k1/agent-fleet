@@ -67,6 +67,29 @@
   flex-direction: column;
   gap: 1px;
 }
+/* A row is the branch button plus an optional side shortcut (start work in its own
+   working copy), so the main button no longer owns the full width by itself. */
+.branch-row {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 0;
+}
+.branch-side {
+  flex: none;
+  display: flex;
+  align-items: center;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--muted);
+  padding: 0 6px;
+  cursor: pointer;
+}
+.branch-side:hover {
+  background: var(--btn);
+  color: var(--fg);
+}
 .branch-item {
   display: flex;
   flex-direction: column;
@@ -116,6 +139,18 @@
   border: 1px solid var(--btn-border);
   border-radius: 3px;
   padding: 0 4px;
+}
+/* Held by another working copy: dimmed because it is not a checkout target, but
+   still legible — it carries the folder the user has to go to instead. */
+.branch-item.occupied .bi-name {
+  color: var(--muted);
+}
+.bi-wt {
+  color: var(--muted2);
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .bi-time {
   flex: none;

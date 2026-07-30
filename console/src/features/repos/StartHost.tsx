@@ -17,6 +17,7 @@ export function StartHost() {
   const startTick = useSessionsStore((s) => s.startTick);
   const [show, setShow] = useState(false);
   const launch = useLaunchTarget((s) => s.target);
+  const launchExisting = useLaunchTarget((s) => s.existingBranch);
   const openLaunch = useLaunchTarget((s) => s.open);
   const clearLaunch = useLaunchTarget((s) => s.clear);
   // First-prompt seed (memo send modal → 新規セッションを起動). Read once into the
@@ -68,6 +69,7 @@ export function StartHost() {
           allowWorktree={!launch.worktree && launch.vcs !== "svn"}
           isSvn={launch.vcs === "svn"}
           initialPrompt={seedPrompt || undefined}
+          initialExistingBranch={launchExisting || undefined}
           onClose={() => {
             clearLaunch();
             clearSeed();

@@ -18,6 +18,9 @@ import { agentLaunchDefault, useSettings } from "../../lib/settings.ts";
 import { EffortPicker, ModelPicker } from "../../ui/ModelPicker.tsx";
 import { repoPromptTemplates } from "./api.ts";
 import type { PromptTemplateGroup } from "./api.ts";
+import { api } from "../../core/api/client.ts";
+import { BranchList } from "./BranchList.tsx";
+import type { Branch } from "./BranchList.tsx";
 import { sanitizeSeg } from "../../lib/reponame.ts";
 
 // LaunchOpts: agent + optional first prompt, plus WHERE to run. For a worktree,
@@ -43,9 +46,12 @@ export interface LaunchOpts {
 }
 
 // LaunchResult: close on ok, else stay open and offer a fix for a name collision.
+// "in_use" is not a naming problem but a git one — the branch is checked out in
+// another working copy — so it carries that copy's folder instead of a fix button.
 export interface LaunchResult {
   ok: boolean;
-  conflict?: "local" | "remote";
+  conflict?: "local" | "remote" | "in_use";
+  worktree?: string;
 }
 
 interface LaunchModalProps {
@@ -69,10 +75,13 @@ interface LaunchModalProps {
   /** Seed for the first-prompt field (docs/21 UI刷新): the memo send modal launches a
    * new session with the composed memo text prefilled here. */
   initialPrompt?: string;
+  /** Open straight into 既存ブランチ mode with this branch picked — the SCM view's
+   * "start work on this branch" actions land here. */
+  initialExistingBranch?: string;
   onLaunch: (opts: LaunchOpts) => Promise<LaunchResult>;
 }
 
-export function LaunchModal({ repo, branch, path, kinds, settling = false, allowWorktree = true, isSvn = false, onClose, onBack, initialPrompt, onLaunch }: LaunchModalProps) {
+export function LaunchModal({ repo, branch, path, kinds, settling = false, allowWorktree = true, isSvn = false, onClose, onBack, initialPrompt, initialExistingBranch, onLaunch }: LaunchModalProps) {
   const settings = useSettings();
   const last = readRepoLast(repo);
   // Default to the last agent used in this repo when still available, else the first.
@@ -117,14 +126,39 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   const [worktree, setWorktree] = useState(allowWorktree);
   const [base, setBase] = useState(branch || "");
   const [branchName, setBranchName] = useState(""); // "" => derived from the prompt
-  const [conflict, setConflict] = useState<"local" | "remote" | null>(null);
+  const [conflict, setConflict] = useState<"local" | "remote" | "in_use" | null>(null);
+  const [conflictWt, setConflictWt] = useState(""); // for "in_use": the copy holding it
+  // ブランチ: 新規作成（既定）か、既に存在するブランチをそのまま使うか。後者は
+  // worktree に そのブランチを CO するだけで、新しいブランチは作らない（-b なし）。
+  const [branchMode, setBranchMode] = useState<"new" | "existing">(initialExistingBranch ? "existing" : "new");
+  const [existingBranch, setExistingBranch] = useState(initialExistingBranch || "");
+  const [branches, setBranches] = useState<Branch[] | null>(null);
   // Naming: an explicit entry wins as-is (branch == folder); otherwise the server
   // mints a throwaway temp/<slug> in a wip-<slug> folder. The prompt text never
   // feeds the name — deriving words from it produced odd names on mixed-language
   // prompts, so provisional naming is always the slug.
   const explicit = branchName.trim();
   const newBranch = explicit; // "" → server picks temp/<slug>
-  const folder = worktree && explicit ? `${repo}@${sanitizeSeg(explicit)}` : "";
+  const existingMode = worktree && branchMode === "existing";
+  // The worktree folder is named after whichever branch it will end up on.
+  const folderSeg = existingMode ? existingBranch : explicit;
+  const folder = worktree && folderSeg ? `${repo}@${sanitizeSeg(folderSeg)}` : "";
+
+  // Branch list for 既存ブランチ mode, fetched from the PARENT copy (the worktree is
+  // spun off it). Loaded on first entry into the mode and kept — re-picking is common
+  // while composing a prompt, and the list is small. Rows already checked out in
+  // another worktree arrive flagged (worktree_path) and BranchList disables them:
+  // git allows a branch in one working copy at a time, so they are not valid targets.
+  useEffect(() => {
+    if (!existingMode || branches !== null) return;
+    let alive = true;
+    api(`api/repos/${encodeURIComponent(repo)}/branches`)
+      .then((d) => alive && setBranches(d?.branches || []))
+      .catch(() => alive && setBranches([]));
+    return () => {
+      alive = false;
+    };
+  }, [existingMode, branches, repo]);
 
   // Template sources fetched once for this repo; 履歴 comes from localStorage.
   const [srvGroups, setSrvGroups] = useState<PromptTemplateGroup[]>([]);
@@ -215,12 +249,15 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
     setTimeout(() => textRef.current?.focus(), 0);
   };
 
-  // start fires the launch; a name collision keeps the modal open with a fix
-  // panel. useExisting re-runs the launch to check out the colliding branch.
-  const start = async (useExisting: boolean) => {
+  // start fires the launch. `resolveCollision` is the conflict panel's re-run: the
+  // typed name turned out to exist, so check THAT branch out instead of creating it.
+  // 既存ブランチ mode arrives here already resolved, with a branch picked from the list.
+  const start = async (resolveCollision: boolean) => {
     if (busy) return;
     setBusy(true);
     setConflict(null);
+    const useExisting = existingMode || resolveCollision;
+    const wtBase = existingMode ? existingBranch : resolveCollision ? newBranch : base.trim();
     const r = await onLaunch({
       kind,
       driver: agentOf(kind).managedDriver ? driver : "",
@@ -230,7 +267,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
       prompt: prompt.trim(),
       images: canPasteImage ? images.map((x) => x.file) : [],
       worktree,
-      base: worktree ? (useExisting ? newBranch : base.trim()) : "",
+      base: worktree ? wtBase : "",
       newBranch: worktree && !useExisting ? newBranch : "",
       useExisting,
     });
@@ -240,8 +277,14 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
     }
     setBusy(false);
     setConflict(r?.conflict ?? null);
+    setConflictWt(r?.worktree || "");
+    // The picked branch was taken between listing it and launching — drop the cached
+    // list so a reopen of the picker shows who holds it now.
+    if (r?.conflict === "in_use") setBranches(null);
   };
   const submit = () => void start(false);
+  // 既存ブランチ mode is only launchable once a branch is picked.
+  const canLaunch = !!kinds.length && (!existingMode || !!existingBranch);
 
   // Follow the shared composer send-key setting: Ctrl/⌘+Enter (default), or
   // Enter with Shift+Enter reserved for a newline.
@@ -395,31 +438,87 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
           </div>
           {worktree && (
             <>
-              <label className="ui-field">
-                <span className="ui-field-label">{tr("launch.base_branch")}</span>
-                <input value={base} onChange={(e) => setBase(e.target.value)} placeholder={branch || tr("launch.base_default")} />
-              </label>
-              <label className="ui-field">
-                <span className="ui-field-label">{tr("launch.branch_name")}</span>
-                <input
-                  value={branchName}
-                  onChange={(e) => {
-                    setBranchName(e.target.value);
-                    setConflict(null);
-                  }}
-                  placeholder={tr("launch.branch_ph")}
-                />
-              </label>
+              {/* ブランチ: 新規作成 か、既にあるブランチをそのまま使うか。 */}
+              <div className="ui-field">
+                <span className="ui-field-label">{tr("launch.field.branch")}</span>
+                <div className="ui-seg">
+                  <button
+                    type="button"
+                    className={"seg-btn" + (branchMode === "new" ? " active" : "")}
+                    onClick={() => {
+                      setBranchMode("new");
+                      setConflict(null);
+                    }}
+                  >
+                    <Icon name="git-branch" /> {tr("launch.branch_new")}
+                    <span className="seg-sub">{tr("launch.branch_new_sub")}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={"seg-btn" + (branchMode === "existing" ? " active" : "")}
+                    onClick={() => {
+                      setBranchMode("existing");
+                      setConflict(null);
+                    }}
+                  >
+                    <Icon name="git-commit" /> {tr("launch.branch_existing")}
+                    <span className="seg-sub">{tr("launch.branch_existing_sub")}</span>
+                  </button>
+                </div>
+              </div>
+              {branchMode === "new" ? (
+                <>
+                  <label className="ui-field">
+                    <span className="ui-field-label">{tr("launch.base_branch")}</span>
+                    <input value={base} onChange={(e) => setBase(e.target.value)} placeholder={branch || tr("launch.base_default")} />
+                  </label>
+                  <label className="ui-field">
+                    <span className="ui-field-label">{tr("launch.branch_name")}</span>
+                    <input
+                      value={branchName}
+                      onChange={(e) => {
+                        setBranchName(e.target.value);
+                        setConflict(null);
+                      }}
+                      placeholder={tr("launch.branch_ph")}
+                    />
+                  </label>
+                </>
+              ) : (
+                <div className="ui-field">
+                  <span className="ui-field-label">{tr("launch.pick_branch")}</span>
+                  <BranchList
+                    branches={branches}
+                    selected={existingBranch}
+                    onPick={(name) => {
+                      setExistingBranch(name);
+                      setConflict(null);
+                    }}
+                  />
+                </div>
+              )}
               <span className="ui-field-hint">
                 {folder ? (
                   <Trans k="launch.wc_created_note" vars={{ folder }} components={[<code />]} />
+                ) : existingMode ? (
+                  tr("launch.branch_pick_note")
                 ) : (
                   tr("launch.branch_empty_note")
                 )}
               </span>
               {conflict && (
                 <div className="launch-conflict">
-                  {conflict === "local" ? (
+                  {conflict === "in_use" ? (
+                    // Not a naming clash: git holds a branch in one working copy at a
+                    // time, so the only way forward is that copy (or another branch).
+                    <span>
+                      <Trans
+                        k="launch.branch_in_use"
+                        vars={{ branch: existingMode ? existingBranch : newBranch, folder: conflictWt }}
+                        components={[<code />, <code />]}
+                      />
+                    </span>
+                  ) : conflict === "local" ? (
                     <span>
                       <Trans k="launch.local_branch_exists" vars={{ branch: newBranch }} components={[<code />]} />
                     </span>
@@ -428,7 +527,10 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
                       <Trans k="launch.remote_branch_exists" vars={{ branch: newBranch }} components={[<code />]} />
                     </span>
                   )}
-                  {conflict === "remote" && (
+                  {/* Both collisions resolve the same way — check the existing branch
+                      out instead of forking a divergent one. A LOCAL clash used to
+                      dead-end here even though the worktree path handles it fine. */}
+                  {(conflict === "local" || conflict === "remote") && (
                     <Button small icon="git-branch" disabled={busy} onClick={() => void start(true)}>
                       {tr("launch.work_existing_branch")}
                     </Button>
@@ -541,7 +643,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
         <Button variant="ghost" onClick={onClose} disabled={busy}>
           {tr("common.cancel")}
         </Button>
-        <Button variant="primary" onClick={submit} disabled={busy || !kinds.length}>
+        <Button variant="primary" onClick={submit} disabled={busy || !canLaunch}>
           {busy ? tr("launch.launching") : worktree ? tr("launch.start_worktree") : tr("launch.launch")}
         </Button>
       </footer>

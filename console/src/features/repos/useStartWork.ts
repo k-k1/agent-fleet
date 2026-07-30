@@ -58,6 +58,10 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
       const code = typeof res.error === "object" ? res.error.code : "";
       if (code === "branch_exists") return { ok: false, conflict: "local" as const };
       if (code === "branch_exists_remote") return { ok: false, conflict: "remote" as const };
+      // The branch is checked out in another working copy (git allows only one). The
+      // payload names it so the dialog can say WHERE instead of just failing.
+      if (code === "branch_in_use")
+        return { ok: false, conflict: "in_use" as const, worktree: String(res.error.worktree || "") };
       toast(
         worktree
           ? t("rp.worktree_launch_failed", { err: errText(res.error) })
