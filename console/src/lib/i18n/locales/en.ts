@@ -843,7 +843,7 @@ export const en: Record<keyof typeof ja, string> = {
     "When a session launched or steered by the Fleet Operator (or another assistant with AF write access) reports back, the assistant runs one turn automatically to process it. As a runaway guard, unattended turns per conversation are capped at the limit below (reset whenever you send a message).",
   "assistant.auto_turn_limit": "Unattended auto-reply limit",
   "assistant.note_auto_turn_limit":
-    "How many auto-replies may run in a row without a message from you (default 10, max 50). At the limit a pause notice arrives, and your next message resumes the loop. Unlimited is not available.",
+    "How many auto-replies may run in a row without a message from you (default 10, max 30). At the limit a pause notice arrives, and your next message resumes the loop. Unlimited is not available.",
   "assistant.auto_turn_model": "Auto-reply model",
   "assistant.auto_turn_model_default": "Same as the conversation",
   "assistant.note_auto_turn_model":
