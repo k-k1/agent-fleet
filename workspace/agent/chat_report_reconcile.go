@@ -282,9 +282,9 @@ func collectReportSignals(m session.Meta, since, hintReason, selfAt string) repo
 }
 
 // reportMarkerGrace absorbs the RFC3339 second-truncation of the status marker when
-// comparing it against a file mtime: 「Stop フックのマーカー」と「そのターン最後の
-// 転写書込み」は同じ1秒に収まることがあるので、この余裕より後の追記だけを
-// 「マーカーの後にも伸びた」と読む。
+// comparing it against a transcript record's timestamp: 「Stop フックのマーカー」と
+// 「そのターン最後の転写書込み」は同じ1秒に収まることがあるので、この余裕より後の
+// 追記だけを「マーカーの後にも伸びた」と読む。
 const reportMarkerGrace = 2 * time.Second
 
 // reportTranscriptBusy reports whether the main transcript says the turn is still
@@ -295,15 +295,18 @@ const reportMarkerGrace = 2 * time.Second
 // ターンは続いている（＝そのマーカーは終端ではない・sqmconc の思考ギャップ）。
 // 鮮度も併せて要求するのは安全弁で、転写が静止したら（＝ v1 と同じ 90s が上限）
 // 比較の食い違いで報告が永久に止まることが無いようにするため。
+//
+// TranscriptTouched は「最後の user/assistant 行の時刻」を返す（記帳行では動かない）。
+// 1回だけ読んで鮮度と相対比較の両方に使う — 以前は TranscriptBusy と2回読んでいた。
 func reportTranscriptBusy(sid string, marker time.Time) bool {
-	if !claude.TranscriptBusy(sid) {
+	at, ok := claude.TranscriptTouched(sid)
+	if !ok || !claude.TranscriptFresh(at) {
 		return false // 静止している転写は「実行中」の証拠にならない（上限は v1 と同じ）
 	}
 	if marker.IsZero() {
 		return true // 終端マーカーが無い＝鮮度だけが手がかり（v1 waiter と同じ立場）
 	}
-	at, ok := claude.TranscriptTouched(sid)
-	return ok && at.After(marker.Add(reportMarkerGrace))
+	return at.After(marker.Add(reportMarkerGrace))
 }
 
 // reportPaneBusy checks the pane's interrupt affordance (逆ヒールと同じ根拠)。tmux を
