@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"embed"
+	"errors"
 	"fmt"
 	"io/fs"
 	"sort"
@@ -76,8 +77,12 @@ func (s *sqlStore) migrate(ctx context.Context) error {
 			return fmt.Errorf("migration %q: bad version prefix", name)
 		}
 		var one int
-		if s.db.QueryRowContext(ctx, `SELECT 1 FROM schema_migrations WHERE version=?`, version).Scan(&one) == nil {
+		switch err := s.db.QueryRowContext(ctx, `SELECT 1 FROM schema_migrations WHERE version=?`, version).Scan(&one); {
+		case err == nil:
 			continue // already applied
+		case !errors.Is(err, sql.ErrNoRows):
+			// transient/query errors must not be mistaken for "not applied"
+			return fmt.Errorf("migration %s: check applied: %w", name, err)
 		}
 		body, err := s.mfs.ReadFile(s.mdir + "/" + name)
 		if err != nil {
@@ -87,6 +92,9 @@ func (s *sqlStore) migrate(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		// NOTE: naive `;` split — migration files must not contain `;` inside
+		// string literals or TRIGGER bodies (use one statement per `;`). 改善が
+		// 必要になったら分割器を導入すること。
 		for _, stmt := range strings.Split(string(body), ";") {
 			if strings.TrimSpace(stmt) == "" {
 				continue
@@ -1107,6 +1115,34 @@ func (s *sqlStore) SetSetting(ctx context.Context, key, value string) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO deployment_setting(key, value) VALUES(?, ?)
 		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
+	return err
+}
+
+// ListSettingKeys returns keys starting with prefix. LIKE narrows the scan but
+// `_` in the prefix is a LIKE wildcard, so the literal-prefix check in Go is
+// what actually decides membership.
+func (s *sqlStore) ListSettingKeys(ctx context.Context, prefix string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT key FROM deployment_setting WHERE key LIKE ? ORDER BY key`, prefix+"%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			return nil, err
+		}
+		if strings.HasPrefix(k, prefix) {
+			out = append(out, k)
+		}
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlStore) DeleteSetting(ctx context.Context, key string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM deployment_setting WHERE key=?`, key)
 	return err
 }
 

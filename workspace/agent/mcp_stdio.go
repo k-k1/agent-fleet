@@ -858,6 +858,11 @@ func mcpStdioCall(req mcpReq) []byte {
 		})
 		return mcpTextResult(req.ID, string(b))
 	case "list_models":
+		// write セットで広告するツールなので呼び出しも同じ境界で断る（広告集合が
+		// スコープの境界・docs/19 Q2）。
+		if !mcpWriteEnabled {
+			return mcpToolErr(req.ID, "このアシスタントはモデル一覧の取得を許可されていません")
+		}
 		if a.Kind != "claude" && a.Kind != "codex" && a.Kind != "opencode" && a.Kind != "agy" && a.Kind != "copilot" && a.Kind != "cursor" && a.Kind != "kiro" {
 			return mcpToolErr(req.ID, "kind には claude / codex / opencode / agy / copilot / cursor / kiro のいずれかを指定してください")
 		}

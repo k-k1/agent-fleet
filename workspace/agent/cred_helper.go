@@ -6,8 +6,10 @@ package main
 // seeding and legacy-file migration stay in package main.
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/url"
 	"os"
@@ -78,11 +80,16 @@ func runCredHelper(args []string) {
 }
 
 // credHelperHost reads the credential protocol input (key=value lines until a
-// blank line) and returns the requested host.
-func credHelperHost(r *os.File) string {
-	buf := make([]byte, 4096)
-	n, _ := r.Read(buf)
-	for _, line := range strings.Split(string(buf[:n]), "\n") {
+// blank line) and returns the requested host. Line-oriented (not one fixed-size
+// Read): git may deliver the input in several chunks, and a partial read could
+// miss the host= line and intermittently break fetch/push.
+func credHelperHost(r io.Reader) string {
+	sc := bufio.NewScanner(r)
+	for sc.Scan() {
+		line := sc.Text()
+		if line == "" {
+			break // blank line terminates the request
+		}
 		if strings.HasPrefix(line, "host=") {
 			return strings.TrimSpace(strings.TrimPrefix(line, "host="))
 		}

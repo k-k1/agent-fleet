@@ -239,11 +239,15 @@ func (d *dockerRuntime) Start(ctx context.Context) error {
 	if d.network != "" {
 		args = append(args, "--network", d.network)
 	}
-	if d.token != "" {
-		args = append(args, "-e", "AGENT_TOKEN="+d.token)
-	}
-	if d.secretKey != "" {
-		args = append(args, "-e", "AF_SECRET_KEY="+d.secretKey)
+	// AGENT_TOKEN / AF_SECRET_KEY(DEK) は argv の `-e` だと /proc/<pid>/cmdline から
+	// 可視になるため、0600 の一時 --env-file 経由で渡す(docker run 完了後に削除)。
+	if d.token != "" || d.secretKey != "" {
+		ef, err := d.writeSecretEnvFile()
+		if err != nil {
+			return err
+		}
+		defer os.Remove(ef)
+		args = append(args, "--env-file", ef)
 	}
 	if d.sessionCmd != "" {
 		args = append(args, "-e", "AGENT_SESSION_CMD="+d.sessionCmd)
@@ -259,6 +263,32 @@ func (d *dockerRuntime) Start(ctx context.Context) error {
 	// tell that the tag moved on while it keeps running the old code.
 	d.recordImageStamp(ctx)
 	return waitAgentHealthy(ctx, d.Endpoint(), agentHealthWait(d.startHealthWait()))
+}
+
+// writeSecretEnvFile writes the secret env entries to a 0600 temp file for
+// `docker run --env-file`. The caller removes it once docker run has returned.
+func (d *dockerRuntime) writeSecretEnvFile() (string, error) {
+	f, err := os.CreateTemp("", "af-ws-env-*") // CreateTemp creates with 0600
+	if err != nil {
+		return "", fmt.Errorf("secret env file: %w", err)
+	}
+	var b strings.Builder
+	if d.token != "" {
+		b.WriteString("AGENT_TOKEN=" + d.token + "\n")
+	}
+	if d.secretKey != "" {
+		b.WriteString("AF_SECRET_KEY=" + d.secretKey + "\n")
+	}
+	if _, err := f.WriteString(b.String()); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return "", fmt.Errorf("secret env file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(f.Name())
+		return "", fmt.Errorf("secret env file: %w", err)
+	}
+	return f.Name(), nil
 }
 
 // startHealthWait is how long this container gets to answer /healthz after `docker
@@ -337,13 +367,20 @@ func agentStopGraceSec() int {
 // errors (missing container, wedged daemon) fall back to the old hard remove so
 // Stop still converges.
 func (d *dockerRuntime) Stop(ctx context.Context) error {
-	if out, err := exec.CommandContext(ctx, "docker", "stop", "-t", strconv.Itoa(stopGraceSec()), d.name).CombinedOutput(); err != nil {
-		if out2, err2 := exec.CommandContext(ctx, "docker", "rm", "-f", d.name).CombinedOutput(); err2 != nil {
+	// 「No such container」は冪等成功扱い: 停止済み(=コンテナ無し)WSへの stop API を
+	// 500 にしない。
+	noSuch := func(out []byte) bool {
+		return strings.Contains(strings.ToLower(string(out)), "no such container")
+	}
+	if out, err := exec.CommandContext(ctx, "docker", "stop", "-t", strconv.Itoa(stopGraceSec()), d.name).CombinedOutput(); err != nil && !noSuch(out) {
+		if out2, err2 := exec.CommandContext(ctx, "docker", "rm", "-f", d.name).CombinedOutput(); err2 != nil && !noSuch(out2) {
 			return fmt.Errorf("docker stop: %v: %s; docker rm -f: %v: %s",
 				err, strings.TrimSpace(string(out)), err2, strings.TrimSpace(string(out2)))
 		}
-	} else if out, err := exec.CommandContext(ctx, "docker", "rm", d.name).CombinedOutput(); err != nil {
-		return fmt.Errorf("docker rm: %v: %s", err, out)
+	} else if err == nil {
+		if out, err := exec.CommandContext(ctx, "docker", "rm", d.name).CombinedOutput(); err != nil && !noSuch(out) {
+			return fmt.Errorf("docker rm: %v: %s", err, out)
+		}
 	}
 	// Best-effort: drop the now-empty per-user network (recreated on next start).
 	if d.network != "" {
@@ -439,6 +476,10 @@ func agentHealthWait(def time.Duration) time.Duration {
 func waitAgentHealthy(ctx context.Context, endpoint string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
+		// キャンセル済み ctx で最大タイムアウトまでポーリングし続けない
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("agent health wait canceled: %w", err)
+		}
 		req, _ := http.NewRequestWithContext(ctx, "GET", endpoint+"/healthz", nil)
 		if resp, err := http.DefaultClient.Do(req); err == nil {
 			resp.Body.Close()

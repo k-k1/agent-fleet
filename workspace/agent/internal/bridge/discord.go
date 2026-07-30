@@ -229,16 +229,16 @@ func (d *discordProvider) destChannel() (string, error) {
 // policy unchanged: the notification is never lost to thread bookkeeping — a failed
 // thread creation falls back to flat delivery and the grouping retries next event.
 func (d *discordProvider) sendThreaded(m Message, msgs []outMsg, from int) (int, error) {
-	ts := loadThreads()
-	if ref, ok := ts[m.SessionName]; ok && ref.Channel == d.creds.ChannelID {
+	// Mutations go through updateThreads (ロック下 load→fn→save): writing back the
+	// snapshot read here would roll back a concurrent touch()'s LastPostAt.
+	if ref, ok := loadThreads()[m.SessionName]; ok && ref.Channel == d.creds.ChannelID {
 		delivered, err := d.postRangeToThread(m.SessionName, ref.Thread, msgs, from)
 		if err == nil || !isUnknownChannel(err) {
 			return delivered, err // delivered, or a real failure worth resuming as-is
 		}
 		// Thread deleted by hand — drop the stale mapping and recreate below. Its posts
 		// vanished with it, so resume from the start (nothing to skip).
-		delete(ts, m.SessionName)
-		saveThreads(ts)
+		updateThreads(func(ts threadMap) { delete(ts, m.SessionName) })
 		from = 0
 	}
 	// No (valid) thread: the first message lands flat and seeds the thread; the rest
@@ -260,8 +260,9 @@ func (d *discordProvider) sendThreaded(m Message, msgs []outMsg, from int) (int,
 		}
 		return len(msgs), nil
 	}
-	ts[m.SessionName] = threadRef{Channel: d.creds.ChannelID, Thread: threadID}
-	saveThreads(ts)
+	updateThreads(func(ts threadMap) {
+		ts[m.SessionName] = threadRef{Channel: d.creds.ChannelID, Thread: threadID}
+	})
 	// The seed (msgs[0]) already landed in the channel; post the rest into the thread.
 	return d.postRangeToThread(m.SessionName, threadID, msgs, 1)
 }

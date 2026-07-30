@@ -452,10 +452,14 @@ type EgressStore interface {
 }
 
 // SettingsStore is a small kv for deployment-wide toggles such as the egress
-// mode (docs/20 M3). GetSetting returns "" when unset.
+// mode (docs/20 M3). GetSetting returns "" when unset. ListSettingKeys /
+// DeleteSetting exist for prefix-scoped cursors (claude audit) so stale keys
+// don't accumulate forever.
 type SettingsStore interface {
 	GetSetting(ctx context.Context, key string) (string, error)
 	SetSetting(ctx context.Context, key, value string) error
+	ListSettingKeys(ctx context.Context, prefix string) ([]string, error)
+	DeleteSetting(ctx context.Context, key string) error
 }
 
 // UsageStore is showback usage (docs/roadmap.md P3-9). AddUsage accumulates

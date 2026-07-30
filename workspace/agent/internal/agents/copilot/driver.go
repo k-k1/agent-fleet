@@ -529,10 +529,8 @@ func (h *threadHandle) accept(in agents.TurnInput) error {
 		h.mu.Unlock()
 		return agents.ErrQuestionPending
 	}
-	if ledger.SeenOrRecord(h.name, in.ClientMessageID) {
-		h.mu.Unlock()
-		return nil // 再送 — 台帳（永続、プロセス跨ぎ）が冪等化（§4）
-	}
+	// 再送の冪等化（台帳・§4）は pump の実行開始時に行う — キュー投入前に永続記録すると、
+	// クラッシュでキューが失われた後の再送が「既知」として無言破棄される。
 	h.queue = append(h.queue, in)
 	start := !h.pumping
 	if start {
@@ -559,6 +557,10 @@ func (h *threadHandle) pump() {
 		}
 		in := h.queue[0]
 		h.queue = h.queue[1:]
+		if ledger.SeenOrRecord(h.name, in.ClientMessageID) {
+			h.mu.Unlock()
+			continue // 再送 — 台帳（永続、プロセス跨ぎ）が実行開始時に冪等化（§4）
+		}
 		h.running = true
 		h.mu.Unlock()
 
@@ -708,11 +710,15 @@ func (h *threadHandle) Respond(reply agents.InteractionReply) error {
 	}
 	h.mu.Lock()
 	h.inter, h.permID, h.permOpts = nil, nil, nil
-	if h.running {
+	running := h.running
+	if running {
 		h.state = agents.TurnRunning
 	}
 	h.mu.Unlock()
-	h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnRunning})
+	if running {
+		// turn が走っていない時に偽の「実行中」を購読側へ流さない。
+		h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnRunning})
+	}
 	return nil
 }
 

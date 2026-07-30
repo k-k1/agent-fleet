@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"path"
@@ -583,7 +584,10 @@ func memoFlushFor(ctx context.Context, store MemoStore, rt Runtime, membershipID
 	}
 	sentAt := nowTS()
 	if err := store.MarkMemosSent(ctx, membershipID, sentIDs, sentAt); err != nil {
-		return nil, internalErr(err)
+		// 送信自体は完了している。ここで 500 を返すとクライアントの再試行が同内容の
+		// 二重送信を誘発するので、ログに残して成功として返す(メモは未送信のまま残る)。
+		log.Printf("memo flush: mark sent failed (message already delivered) session=%s ids=%v: %v",
+			sessionName, sentIDs, err)
 	}
 	return map[string]any{"sent": len(sentIDs), "sentAt": sentAt, "ids": sentIDs}, nil
 }

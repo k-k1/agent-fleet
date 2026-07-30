@@ -261,6 +261,11 @@ func probeStdio(ctx context.Context, d ServerDef) ProbeResult {
 	// feeding a channel lets an abandoned wait leave the stream intact.
 	msgs := make(chan rpcMsg, 8)
 	readErr := make(chan error, 1)
+	// done releases the reader once the probe returns: after that nobody drains msgs,
+	// and a chatty server (9+ id-carrying messages) would otherwise block the send
+	// forever — a goroutine leak. done is closed before the kill/Wait defer (LIFO).
+	done := make(chan struct{})
+	defer close(done)
 	go func() {
 		rd := bufio.NewReaderSize(stdout, 1<<20)
 		for {
@@ -269,7 +274,11 @@ func probeStdio(ctx context.Context, d ServerDef) ProbeResult {
 				var m rpcMsg
 				// Non-JSON banner lines and the server's own notifications are skipped.
 				if json.Unmarshal(bytes.TrimSpace(line), &m) == nil && m.ID != nil {
-					msgs <- m
+					select {
+					case msgs <- m:
+					case <-done:
+						return
+					}
 				}
 			}
 			if err != nil {

@@ -374,6 +374,11 @@ func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		next.ServeHTTP(w, r)
-		log.Printf("%s %s %s", r.Method, r.URL.RequestURI(), time.Since(start).Round(time.Millisecond))
+		uri := r.URL.RequestURI()
+		// OAuth 系パスのクエリには認可コード等の機微値が乗るためマスクする
+		if r.URL.RawQuery != "" && strings.Contains(r.URL.Path, "oauth") {
+			uri = r.URL.Path + "?<redacted>"
+		}
+		log.Printf("%s %s %s", r.Method, uri, time.Since(start).Round(time.Millisecond))
 	})
 }

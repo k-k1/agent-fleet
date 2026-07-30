@@ -341,12 +341,18 @@ func handlePutDiscordConn(w http.ResponseWriter, r *http.Request) {
 	// so a test per change would spam the channel). Saved either way; a failed test (e.g.
 	// missing channel permission) is surfaced to the card, not treated as a bad config.
 	if !editing {
-		if ps := bridge.Providers(s, nil, nil); len(ps) > 0 {
-			if err := ps[0].Send(bridge.Message{Kind: "bridge-test"}); err != nil {
+		// Pick the Discord provider by name — positional ps[0] would hit Slack when
+		// Discord is excluded (e.g. NotifyOff) and falsely report the test as sent.
+		for _, p := range bridge.Providers(s, nil, nil) {
+			if p.Name() != "discord" {
+				continue
+			}
+			if err := p.Send(bridge.Message{Kind: "bridge-test"}); err != nil {
 				res["testError"] = err.Error()
 			} else {
 				res["test"] = "sent"
 			}
+			break
 		}
 	}
 	// docs/37 P3先取り: with receive + channel mode, stand up (or reuse) the dedicated

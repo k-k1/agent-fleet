@@ -81,6 +81,18 @@ func (ts *threadStore) writeLocked(m threadMap) {
 	_ = os.WriteFile(ts.path(), b, 0o600)
 }
 
+// update applies fn to the freshly-loaded map and writes it back under the lock.
+// Read-modify-writes must use this rather than load()+save(): a stale snapshot
+// written back would roll back a concurrent touch()'s LastPostAt (lost update →
+// a spurious @mention).
+func (ts *threadStore) update(fn func(threadMap)) {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	m := ts.loadLocked()
+	fn(m)
+	ts.writeLocked(m)
+}
+
 // threadToSession reverse-looks-up which session a thread belongs to — the routing
 // key for P2a inbound (docs/37): a reply in a session's thread is injected into that
 // session. Match on Thread alone: the forward path keeps exactly one thread per
@@ -126,6 +138,7 @@ func (ts *threadStore) reset() {
 
 func loadThreads() threadMap                            { return discordThreads.load() }
 func saveThreads(m threadMap)                           { discordThreads.save(m) }
+func updateThreads(fn func(threadMap))                  { discordThreads.update(fn) }
 func touchThreadPost(sessionName string, now time.Time) { discordThreads.touch(sessionName, now) }
 
 // ThreadToSession is the Discord receive loop's reverse lookup (exported for

@@ -66,6 +66,11 @@ func readToolchains() toolchains {
 // and resolves /usr/share/zoneinfo/<tz>). IANA names: letters, digits, _ + - / .
 var tzNameRe = regexp.MustCompile(`^[A-Za-z0-9_+./-]{1,64}$`)
 
+// toolchainVerRe guards node/java/go the same way: ""/"system" or a dotted numeric
+// version. The values feed shell exports and path/glob lookups (ShellQuote defends
+// today, but one unquoted use would turn a free-form string into injection).
+var toolchainVerRe = regexp.MustCompile(`^(system|[0-9]{1,3}(\.[0-9]{1,4}){0,2})?$`)
+
 // Temurin JDK discovery (installed majors, installable set, JAVA_HOME resolution)
 // lives in jdk.go, which searches both /usr/lib/jvm and the per-user home volume.
 
@@ -210,6 +215,18 @@ func handleToolchainsPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if !tzNameRe.MatchString(req.Timezone) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_timezone", "invalid timezone name")
+		return
+	}
+	if !toolchainVerRe.MatchString(req.Node) {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_node", "invalid node version")
+		return
+	}
+	if !toolchainVerRe.MatchString(req.Java) {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_java", "invalid java version")
+		return
+	}
+	if !toolchainVerRe.MatchString(req.Go) {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_go", "invalid go version")
 		return
 	}
 	p := toolchainsPath()

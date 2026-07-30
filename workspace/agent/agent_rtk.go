@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
@@ -36,6 +37,10 @@ import (
 // "rtk auto-applied to all agents" behavior). The agent OWNS applying that
 // preference to the artifacts — both at startup (reconcileAgentRTK) and live from
 // the Console toggle (PUT /agents/rtk) — so the logic lives in one place.
+
+// agentRTKMu serializes the rtk.json read-modify-write (PUT is per-field merge, so
+// two concurrent PUTs would otherwise lose one side's toggle).
+var agentRTKMu sync.Mutex
 
 // agentRTKPrefs is the durable per-agent rtk toggle state. Pointers distinguish
 // "unset" (⇒ default on) from an explicit false.
@@ -120,6 +125,8 @@ func handleAgentRTKPut(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
+	agentRTKMu.Lock()
+	defer agentRTKMu.Unlock()
 	p := readAgentRTKPrefs()
 	if req.CodexRTK != nil {
 		p.Codex = req.CodexRTK

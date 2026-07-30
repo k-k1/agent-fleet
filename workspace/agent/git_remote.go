@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -129,7 +131,7 @@ func handleListRemoteRepos(w http.ResponseWriter, r *http.Request) {
 func handleListRemoteBranches(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
 	repo := strings.TrimSpace(r.URL.Query().Get("repo"))
-	if repo == "" || !strings.Contains(repo, "/") {
+	if !validRemoteRepo(repo) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_repo", "repo=owner/name is required")
 		return
 	}
@@ -180,6 +182,31 @@ func splitRepo(repo string) (owner, name string, ok bool) {
 		return "", "", false
 	}
 	return repo[:i], repo[i+1:], true
+}
+
+// remoteRepoRe constrains the repo=owner/name query: exactly one '/', segments of
+// safe repo-name characters. The value is concatenated into the Bitbucket API path,
+// so anything path- or query-shaped (`../`, `?`, `#`, extra `/`) must be rejected.
+var remoteRepoRe = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
+
+func validRemoteRepo(repo string) bool {
+	if !remoteRepoRe.MatchString(repo) {
+		return false
+	}
+	// "." / ".." segments pass the char class but are path traversal after URL
+	// normalization — reject them explicitly.
+	owner, name, _ := splitRepo(repo)
+	return owner != "." && owner != ".." && name != "." && name != ".."
+}
+
+// escapeRepoPath percent-encodes each segment for embedding in an API URL path
+// (belt-and-braces on top of validRemoteRepo at the handler).
+func escapeRepoPath(repo string) string {
+	owner, name, ok := splitRepo(repo)
+	if !ok {
+		return url.PathEscape(repo)
+	}
+	return url.PathEscape(owner) + "/" + url.PathEscape(name)
 }
 
 // githubListBranches lists branches of owner/repo with each branch's last-commit
@@ -651,7 +678,7 @@ func bitbucketListBranchesRich(auth, repo string) ([]remoteBranch, string, error
 	client := &http.Client{Timeout: 15 * time.Second}
 	def := bitbucketDefaultBranch(client, auth, repo) // best-effort
 
-	next := "https://api.bitbucket.org/2.0/repositories/" + repo +
+	next := "https://api.bitbucket.org/2.0/repositories/" + escapeRepoPath(repo) +
 		"/refs/branches?pagelen=100&sort=-target.date&fields=values.name,values.target.date,values.target.message,next"
 	out := []remoteBranch{}
 	for page := 0; page < 10 && next != ""; page++ {
@@ -684,7 +711,7 @@ func bitbucketListBranchesRich(auth, repo string) ([]remoteBranch, string, error
 }
 
 func bitbucketDefaultBranch(client *http.Client, auth, repo string) string {
-	body, err := bitbucketGet(client, auth, "https://api.bitbucket.org/2.0/repositories/"+repo)
+	body, err := bitbucketGet(client, auth, "https://api.bitbucket.org/2.0/repositories/"+escapeRepoPath(repo))
 	if err != nil {
 		return ""
 	}

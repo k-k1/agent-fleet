@@ -219,7 +219,10 @@ func (sc *scheduler) fireOne(ctx context.Context, sch Schedule, now time.Time) {
 	enabled := sch.Enabled && keep
 	nowRFC := now.UTC().Format(time.RFC3339)
 	if err := sc.store.RecordScheduleFire(ctx, sch.ID, nowRFC, status, next, enabled, nowRFC); err != nil {
-		log.Printf("scheduler: record fire %s: %v", sch.ID, err)
+		// 台帳が前進しないと次 tick で同じ slot を再発火する。reuse/assistant 経路には
+		// slot 単位の冪等機構が無く、プロンプトの二重配達になり得るので目立たせる。
+		log.Printf("scheduler: WARNING record fire %s failed — ledger did not advance; "+
+			"next tick may re-fire this slot (possible duplicate prompt delivery): %v", sch.ID, err)
 	}
 	// Append to the run history (docs/38 P3). Best-effort: a failed history write must
 	// not affect the ledger advance above. Session links the run to what it drove; trigger
