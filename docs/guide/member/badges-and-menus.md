@@ -65,9 +65,9 @@ a new one in the same place. When there is no working folder, resume, handoff, a
 
 ### Repositories / worktrees
 
-You can open source control, open the folder, commit changes, switch branches, copy the branch name,
+You can open the commit graph, open the folder, commit changes, switch branches, copy the branch name,
 Fast-Forward, launch a session by kind, and delete the working copy. A normal click expands / collapses the row.
-Ctrl / ⌘+click or middle-click opens source control in a new pane.
+Ctrl / ⌘+click or middle-click opens the commit graph in a new pane.
 
 ### Files / folders
 
