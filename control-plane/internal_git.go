@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -250,6 +251,12 @@ func (a gitServerAPI) branches(w http.ResponseWriter, r *http.Request, _ Identit
 	dir := filepath.Join(a.dataRoot, "git", mv.TenantSlug, name+".git")
 	out, err := exec.CommandContext(r.Context(), "git", "--git-dir", dir,
 		"for-each-ref", "--format=%(refname:short)", "refs/heads").Output()
+	if err != nil {
+		// bare 破損等を空配列 200 で隠さない
+		log.Printf("internal-git: for-each-ref failed repo=%s/%s: %v", mv.TenantSlug, name, err)
+		writeAPIErr(w, internalErr(err))
+		return
+	}
 	branches := []string{}
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		if b := strings.TrimSpace(line); b != "" {

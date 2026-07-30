@@ -35,7 +35,10 @@ func buildProgram(sid, model, effort, mode, label, forkFrom string) string {
 		// --dangerously-skip-permissions forces bypass mode and conflicts with a
 		// Plan start. Keep bypass available to the in-session mode cycle, but start
 		// deterministically in Plan through Claude's native permission-mode flag.
-		flags = strings.ReplaceAll(flags, "--dangerously-skip-permissions", "--allow-dangerously-skip-permissions")
+		// フラグ（空白区切りトークン）単位で置換する — 素の部分文字列置換だと既存の
+		// --allow-… が --allow-allow-… に壊れる。
+		flags = strings.TrimSpace(strings.ReplaceAll(" "+flags+" ",
+			" --dangerously-skip-permissions ", " --allow-dangerously-skip-permissions "))
 		flags += " --permission-mode plan"
 	}
 	if model != "" {
@@ -47,20 +50,22 @@ func buildProgram(sid, model, effort, mode, label, forkFrom string) string {
 	if label != "" {
 		flags += " --name " + session.ShellQuote(label)
 	}
+	// sid / forkFrom もシェルに埋めるので他のフラグ値と同様に quote する。
 	if SessionJSONLExists(sid) {
 		// Already materialized (normal session, or a fork after its first launch):
 		// resume our own jsonl. ForkFrom is intentionally ignored here so a restart
 		// never re-copies the source.
-		return fmt.Sprintf("claude --resume %s %s", sid, flags)
+		return fmt.Sprintf("claude --resume %s %s", session.ShellQuote(sid), flags)
 	}
 	if forkFrom != "" {
 		// First launch of a fork: copy the source conversation into OUR sid via the
 		// official --fork-session, pinning the new id with --session-id so it lands
 		// exactly on our deterministic jsonl (verified: --session-id sets the fork's
 		// id). The source jsonl is left untouched.
-		return fmt.Sprintf("claude --resume %s --fork-session --session-id %s %s", forkFrom, sid, flags)
+		return fmt.Sprintf("claude --resume %s --fork-session --session-id %s %s",
+			session.ShellQuote(forkFrom), session.ShellQuote(sid), flags)
 	}
-	return fmt.Sprintf("claude --session-id %s %s", sid, flags)
+	return fmt.Sprintf("claude --session-id %s %s", session.ShellQuote(sid), flags)
 }
 
 // jsonlPaths returns the conversation log file(s) for sid. claude stores them

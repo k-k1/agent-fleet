@@ -106,6 +106,9 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	}
 	handlesMu.Unlock()
 
+	h.resumeMu.Lock()
+	defer h.resumeMu.Unlock()
+
 	h.mu.Lock()
 	if h.alive && h.gen == gen && h.ses != "" {
 		h.mu.Unlock()
@@ -146,6 +149,12 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 
 	h.mu.Lock()
 	h.addr, h.gen, h.ses, h.alive = addr, gen, ses, true
+	// daemon 死で pump が終了した後の残 queue を復活させる（§31 — opencode は
+	// これが無いと恒久滞留）。
+	if len(h.queue) > 0 && !h.pumping {
+		h.pumping = true
+		go h.pump()
+	}
 	h.mu.Unlock()
 
 	h.reconcile()
@@ -277,6 +286,10 @@ type threadHandle struct {
 	ocSid string
 
 	mu       sync.Mutex
+	// resumeMu serializes Resume end-to-end (same §32 competition as codex: two
+	// concurrent Resumes would create two native sessions and orphan one).
+	resumeMu sync.Mutex
+
 	addr     string
 	gen      int
 	ses      string

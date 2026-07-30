@@ -22,18 +22,10 @@ func envOr(key, def string) string {
 // continue). Auth is the user's own `opencode auth login` (persisted in home), so
 // there's no token to inject. Caveat: multiple opencode slots in the SAME dir share
 // --continue's "most recent" target.
-func buildProgram(model, mode string, envs []string, ocid string, fork bool) string {
-	// Prefix env assignments onto the command so the opencode process actually
-	// receives them (NAME='value' … opencode). Values are shell-quoted; names are
-	// trusted (our sid + validated ALL_CAPS provider env names).
-	prefix := ""
-	for _, kv := range envs {
-		i := strings.IndexByte(kv, '=')
-		if i <= 0 {
-			continue
-		}
-		prefix += kv[:i] + "=" + session.ShellQuote(kv[i+1:]) + " "
-	}
+func buildProgram(model, mode string, ocid string, fork bool) string {
+	// Env (AF_SESSION_SID + provider API keys) is carried on LaunchPlan.Env and
+	// injected by tmux `new-session -e`: prefixing NAME='value' onto the command
+	// put the keys into /proc/*/cmdline and pane_start_command in plaintext.
 	parts := []string{"opencode"}
 	// Run unattended like claude (--dangerously-skip-permissions) and codex
 	// (--dangerously-bypass-…): the container IS the sandbox, so auto-approve every
@@ -68,5 +60,5 @@ func buildProgram(model, mode string, envs []string, ocid string, fork bool) str
 		}
 		parts = append(parts, "--agent", agent)
 	}
-	return prefix + strings.Join(parts, " ")
+	return strings.Join(parts, " ")
 }

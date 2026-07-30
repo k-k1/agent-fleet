@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -96,6 +97,11 @@ func ensureFolderTrusted(dir string) {
 	}
 }
 
+// settingsMu serializes read-modify-write cycles on settings.json inside this
+// process（同時 PUT で片方の変更が消えるのを防ぐ）。claude 自身の書き込みとの競合は
+// writeSettings の tmp+rename が壊れた JSON を防ぐ。
+var settingsMu sync.Mutex
+
 func readSettings() map[string]any {
 	m := map[string]any{}
 	if b, err := os.ReadFile(settingsPath()); err == nil {
@@ -113,7 +119,12 @@ func writeSettings(m map[string]any) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(p, append(b, '\n'), 0o600)
+	// tmp+rename（ensureFolderTrusted と同じ作法）— 途中で落ちても半端な JSON を残さない。
+	tmp := p + ".af-tmp"
+	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, p)
 }
 
 func settingBool(m map[string]any, key string) bool {
@@ -232,6 +243,8 @@ func HandleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
+	settingsMu.Lock()
+	defer settingsMu.Unlock()
 	m := readSettings()
 	if req.RemoteControlAtStartup != nil {
 		m["remoteControlAtStartup"] = *req.RemoteControlAtStartup

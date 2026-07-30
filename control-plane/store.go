@@ -312,6 +312,10 @@ type IdentityStore interface {
 	// it never downgrades.
 	UpsertIdentity(ctx context.Context, email, key, roleHint string) (Identity, error)
 	GetIdentityByID(ctx context.Context, id string) (Identity, bool, error)
+	// GetIdentityByUserKey is the READ-ONLY lookup for view paths (admin stats,
+	// admin MCP list tools): unlike UpsertIdentity it neither inserts a row for a
+	// mistyped key nor touches last_login_at.
+	GetIdentityByUserKey(ctx context.Context, key string) (Identity, bool, error)
 }
 
 type MembershipStore interface {
@@ -448,10 +452,14 @@ type EgressStore interface {
 }
 
 // SettingsStore is a small kv for deployment-wide toggles such as the egress
-// mode (docs/20 M3). GetSetting returns "" when unset.
+// mode (docs/20 M3). GetSetting returns "" when unset. ListSettingKeys /
+// DeleteSetting exist for prefix-scoped cursors (claude audit) so stale keys
+// don't accumulate forever.
 type SettingsStore interface {
 	GetSetting(ctx context.Context, key string) (string, error)
 	SetSetting(ctx context.Context, key, value string) error
+	ListSettingKeys(ctx context.Context, prefix string) ([]string, error)
+	DeleteSetting(ctx context.Context, key string) error
 }
 
 // UsageStore is showback usage (docs/roadmap.md P3-9). AddUsage accumulates

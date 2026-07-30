@@ -11,7 +11,11 @@ import (
 )
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
+	// 呼び出し側が JSON 系の専用 Content-Type（LFS の application/vnd.git-lfs+json 等）
+	// を先に設定していたら尊重する。未設定時のみ既定を付ける。
+	if w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", "application/json")
+	}
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }

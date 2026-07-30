@@ -390,22 +390,24 @@ func (sp *slackProvider) destChannel() (string, error) {
 // first notification when needed (the seed's ts IS the thread root — Slack threads have no
 // separate object), returning the cumulative delivered count so a partial failure resumes.
 func (sp *slackProvider) sendThreaded(m Message, msgs []slackMsg, from int) (int, error) {
-	ts := slackThreads.load()
-	if ref, ok := ts[m.SessionName]; ok && ref.Channel == sp.creds.ChannelID {
+	// Mutations go through update (ロック下 load→fn→save): writing back the snapshot
+	// read here would roll back a concurrent touch()'s LastPostAt (same as Discord).
+	if ref, ok := slackThreads.load()[m.SessionName]; ok && ref.Channel == sp.creds.ChannelID {
 		delivered, err := sp.postRangeToThread(m.SessionName, ref.Channel, ref.Thread, msgs, from)
 		if err == nil || !isSlackUnknownThread(err) {
 			return delivered, err
 		}
-		delete(ts, m.SessionName) // root deleted — drop the stale mapping and reseed
-		slackThreads.save(ts)
+		// root deleted — drop the stale mapping and reseed
+		slackThreads.update(func(ts threadMap) { delete(ts, m.SessionName) })
 		from = 0
 	}
 	rootTS, err := slackPostMessage(sp.creds.BotToken, sp.creds.ChannelID, "", msgs[0].text, msgs[0].blocks)
 	if err != nil {
 		return 0, err
 	}
-	ts[m.SessionName] = threadRef{Channel: sp.creds.ChannelID, Thread: rootTS}
-	slackThreads.save(ts)
+	slackThreads.update(func(ts threadMap) {
+		ts[m.SessionName] = threadRef{Channel: sp.creds.ChannelID, Thread: rootTS}
+	})
 	return sp.postRangeToThread(m.SessionName, sp.creds.ChannelID, rootTS, msgs, 1)
 }
 

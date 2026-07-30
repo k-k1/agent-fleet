@@ -8,6 +8,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	// Embed the IANA tz database so cron evaluation resolves zones (and DST) even on
 	// a minimal image with no /usr/share/zoneinfo. Without this, scheduleLocation
@@ -148,13 +149,24 @@ func (sc *scheduler) run(ctx context.Context) {
 // tick fires every schedule that is due as of now, advancing each one's ledger.
 func (sc *scheduler) tick(ctx context.Context) { sc.tickAt(ctx, time.Now().UTC()) }
 
+// schedulerMaxConcurrentFires bounds how many due schedules fire in parallel per
+// tick: enough that one cold wake (up to ~5 min) or assistant turn (up to ~8 min)
+// no longer delays every other schedule until it finishes, small enough not to
+// stampede the host with simultaneous container wakes.
+const schedulerMaxConcurrentFires = 4
+
 // tickAt is tick with an injected clock so the jitter gate is unit-testable.
+// Due schedules fire CONCURRENTLY (capped); the tick still waits for them all, so
+// a schedule can never double-fire — the next tick only lists rows whose ledger
+// this one has already advanced.
 func (sc *scheduler) tickAt(ctx context.Context, now time.Time) {
 	due, err := sc.store.ListDueSchedules(ctx, now.Format(time.RFC3339))
 	if err != nil {
 		log.Printf("scheduler: list due: %v", err)
 		return
 	}
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, schedulerMaxConcurrentFires)
 	for _, sch := range due {
 		// Jitter gate (★2): next_run is the nominal slot, but a cron fire is held back
 		// by its deterministic per-id offset so aligned schedules (everyone at 09:00) do
@@ -167,8 +179,14 @@ func (sc *scheduler) tickAt(ctx context.Context, now time.Time) {
 				continue
 			}
 		}
-		sc.fireOne(ctx, sch, now)
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(sch Schedule) {
+			defer func() { <-sem; wg.Done() }()
+			sc.fireOne(ctx, sch, now)
+		}(sch)
 	}
+	wg.Wait()
 }
 
 // fireOne runs the firer for one due schedule then advances its ledger: last_run/
@@ -201,7 +219,10 @@ func (sc *scheduler) fireOne(ctx context.Context, sch Schedule, now time.Time) {
 	enabled := sch.Enabled && keep
 	nowRFC := now.UTC().Format(time.RFC3339)
 	if err := sc.store.RecordScheduleFire(ctx, sch.ID, nowRFC, status, next, enabled, nowRFC); err != nil {
-		log.Printf("scheduler: record fire %s: %v", sch.ID, err)
+		// 台帳が前進しないと次 tick で同じ slot を再発火する。reuse/assistant 経路には
+		// slot 単位の冪等機構が無く、プロンプトの二重配達になり得るので目立たせる。
+		log.Printf("scheduler: WARNING record fire %s failed — ledger did not advance; "+
+			"next tick may re-fire this slot (possible duplicate prompt delivery): %v", sch.ID, err)
 	}
 	// Append to the run history (docs/38 P3). Best-effort: a failed history write must
 	// not affect the ledger advance above. Session links the run to what it drove; trigger

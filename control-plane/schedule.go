@@ -245,8 +245,14 @@ func (a scheduleAPI) update(w http.ResponseWriter, r *http.Request, mv Membershi
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
 		return
 	}
+	oldReuseTarget, oldSessionMode := sch.ReuseTarget, sch.SessionMode
 	specChanged := p.apply(&sch)
 	applyScheduleDefaults(&sch)
+	// Re-pin (P6): an edited reuse_target / session_mode must actually take effect.
+	// The adopted-session ledger otherwise keeps pointing at the old session for as
+	// long as it lives, and fires never move to the new target.
+	reuseChanged := (p.ReuseTarget != nil && sch.ReuseTarget != oldReuseTarget) ||
+		(p.SessionMode != nil && sch.SessionMode != oldSessionMode)
 	if aerr := validateScheduleFields(sch); aerr != nil {
 		writeAPIErr(w, aerr)
 		return
@@ -269,6 +275,13 @@ func (a scheduleAPI) update(w http.ResponseWriter, r *http.Request, mv Membershi
 	if err := a.store.UpdateSchedule(r.Context(), sch); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
+	}
+	if reuseChanged {
+		if err := a.store.SetScheduleReuse(r.Context(), sch.ID, "", "", 0, sch.UpdatedAt); err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
+		sch.ReuseSession, sch.ReuseStartedAt, sch.ReuseRunCount = "", "", 0
 	}
 	writeJSON(w, http.StatusOK, scheduleToDTO(sch))
 }

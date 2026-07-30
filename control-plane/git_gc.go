@@ -200,6 +200,14 @@ func referencedLFSOIDs(ctx context.Context, bareDir string) (map[string]bool, er
 	if err := batch.Start(); err != nil {
 		return nil, err
 	}
+	// 途中の break でも子を確実に回収する: stdout/stdin を閉じて cat-file の書き込みを
+	// EPIPE で解かないと、パイプ詰まりで子が生き続け Wait() が永久ブロック→以後の
+	// GC が全停止する。
+	defer func() {
+		stdin.Close()
+		stdout.Close()
+		_ = batch.Wait()
+	}()
 	go func() {
 		defer stdin.Close()
 		w := bufio.NewWriter(stdin)
@@ -233,6 +241,5 @@ func referencedLFSOIDs(ctx context.Context, bareDir string) (map[string]bool, er
 			referenced[string(m[1])] = true
 		}
 	}
-	_ = batch.Wait()
 	return referenced, nil
 }

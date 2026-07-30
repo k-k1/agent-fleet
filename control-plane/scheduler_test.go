@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -206,13 +207,16 @@ func TestInitialNextRunCron(t *testing.T) {
 
 // fakeFirer records the schedules it was asked to fire.
 type fakeFirer struct {
+	mu     sync.Mutex // tickAt fires due schedules concurrently
 	fired  []string
 	status string
 	err    error
 }
 
 func (f *fakeFirer) fire(_ context.Context, sch Schedule, _ time.Time) (string, string, error) {
+	f.mu.Lock()
 	f.fired = append(f.fired, sch.ID)
+	f.mu.Unlock()
 	if f.status == "" {
 		return "fired", "", f.err
 	}

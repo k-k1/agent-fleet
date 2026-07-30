@@ -18,9 +18,6 @@ import (
 )
 
 func scheduleSignKey(master32 []byte) []byte {
-	if len(master32) == 0 {
-		master32 = []byte("af-dev-schedule-token-master-not-secret")
-	}
 	mac := hmac.New(sha256.New, master32)
 	mac.Write([]byte("af-schedule-token-sign/v1"))
 	return mac.Sum(nil)
@@ -66,7 +63,7 @@ func verifyScheduleToken(signKey []byte, token string) (membershipID string, ok 
 // Tenant/role come from the live store, never the token.
 func (a scheduleAPI) scheduleTokenMembership(r *http.Request) (MembershipView, *apiError) {
 	tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-	mid, ok := verifyScheduleToken(scheduleSignKey(a.mgr.master32), tok)
+	mid, ok := verifyScheduleToken(scheduleSignKey(a.mgr.tokenSignMaster()), tok)
 	if !ok {
 		return MembershipView{}, &apiError{http.StatusUnauthorized, "unauthenticated", "invalid schedule token"}
 	}

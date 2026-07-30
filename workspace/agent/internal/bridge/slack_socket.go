@@ -48,6 +48,33 @@ type slackSocket struct {
 	onEvent    func(slackInboundMsg)
 	onInteract func(slackInboundInteraction)
 	conn       *websocket.Conn
+
+	// seenTS dedupes deliveries by channel/ts: Slack redelivers an event it
+	// considers unACKed (e.g. across a reconnect), and an injected prompt must
+	// not run twice. Small FIFO window; touched only from the read loop.
+	seenTS map[string]bool
+	seenQ  []string
+}
+
+// dedupTS reports whether the channel/ts pair was already delivered, recording it.
+func (ss *slackSocket) dedupTS(channel, ts string) bool {
+	if ts == "" {
+		return false
+	}
+	key := channel + "/" + ts
+	if ss.seenTS[key] {
+		return true
+	}
+	if ss.seenTS == nil {
+		ss.seenTS = map[string]bool{}
+	}
+	ss.seenTS[key] = true
+	ss.seenQ = append(ss.seenQ, key)
+	if len(ss.seenQ) > 512 {
+		delete(ss.seenTS, ss.seenQ[0])
+		ss.seenQ = ss.seenQ[1:]
+	}
+	return false
 }
 
 // slackEnvelope is one Socket Mode frame (server → client).
@@ -73,6 +100,20 @@ func (ss *slackSocket) connectOnce(ctx context.Context) error {
 	}
 	ss.conn = conn
 	defer conn.Close()
+
+	// Close the conn when ctx is cancelled so the blocking ReadMessage below
+	// returns (same watchdog as gateway.go) — otherwise a stopped/re-credentialed
+	// receiver keeps routing as the OLD bound user until the read timeout.
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-stop:
+		}
+	}()
+
 	conn.SetReadLimit(1 << 20)
 	_ = conn.SetReadDeadline(time.Now().Add(slackReadTimeout))
 	conn.SetPingHandler(func(appData string) error {
@@ -144,6 +185,9 @@ func (ss *slackSocket) handleEvent(payload json.RawMessage) {
 	}
 	if p.Event.Type != "message" {
 		return // app_mention etc. — replies route via the plain message event
+	}
+	if ss.dedupTS(p.Event.Channel, p.Event.TS) {
+		return // redelivery of an already-handled message
 	}
 	ss.onEvent(slackInboundMsg{
 		User: p.Event.User, Text: p.Event.Text, Channel: p.Event.Channel,
@@ -255,10 +299,14 @@ func desiredSlackReceive() (bot, app, boundUser, botUserID string) {
 // runSlackReceiverConn is the reconnect/backoff loop around one identity's socket. It stops on
 // a fatal auth error (bad token) — the supervisor revives it when the creds change.
 func runSlackReceiverConn(ctx context.Context, creds slackReceiveCreds, appToken string, deps ReceiverDeps) {
+	// Same off-read-loop dispatch as the Discord receiver: routing can block for
+	// seconds, and the read loop must keep consuming frames to ACK within Slack's
+	// 3s window (an unACKed event is redelivered → double injection).
+	dispatch := serialDispatcher(ctx, 64)
 	ss := &slackSocket{
 		appToken:   appToken,
-		onEvent:    func(m slackInboundMsg) { routeSlackInbound(m, creds, deps) },
-		onInteract: func(gi slackInboundInteraction) { routeSlackInteraction(gi, creds, deps) },
+		onEvent:    func(m slackInboundMsg) { dispatch(func() { routeSlackInbound(m, creds, deps) }) },
+		onInteract: func(gi slackInboundInteraction) { dispatch(func() { routeSlackInteraction(gi, creds, deps) }) },
 	}
 	backoff := receiverBackoffMin
 	for {

@@ -116,12 +116,37 @@ func codexAuthed() bool {
 	return ok
 }
 
+// resetCreditsCache throttles the chatgpt.com backend-api call: the WS-bar chip
+// polls every few seconds, and hammering the unofficial endpoint with the user's
+// token invites a rate limit (the claude chip died to exactly this 429 pattern) —
+// besides adding up to 8s of latency to every poll. One fetch per TTL; a failed
+// refresh serves the last good value.
+var resetCreditsCache struct {
+	sync.Mutex
+	val     resetCredits
+	ok      bool
+	fetched time.Time
+}
+
+const resetCreditsTTL = 5 * time.Minute
+
 func fetchResetCredits(ctx context.Context) (resetCredits, bool) {
 	auth, ok := readCodexAuth()
 	if !ok {
 		return resetCredits{}, false
 	}
-	return getResetCredits(ctx, http.DefaultClient, resetCreditsURL, auth.Tokens.AccessToken, auth.Tokens.AccountID)
+	c := &resetCreditsCache
+	c.Lock() // also single-flights concurrent polls
+	defer c.Unlock()
+	if !c.fetched.IsZero() && time.Since(c.fetched) < resetCreditsTTL {
+		return c.val, c.ok
+	}
+	val, got := getResetCredits(ctx, http.DefaultClient, resetCreditsURL, auth.Tokens.AccessToken, auth.Tokens.AccountID)
+	if got {
+		c.val, c.ok = val, true
+	}
+	c.fetched = time.Now()
+	return c.val, c.ok
 }
 
 func getResetCredits(ctx context.Context, client *http.Client, url, token, accountID string) (resetCredits, bool) {

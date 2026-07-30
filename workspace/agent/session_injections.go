@@ -14,6 +14,7 @@ package main
 import (
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -64,6 +65,10 @@ type injectedPrompt struct {
 // shape and is treated as empty, which only drops badges on in-flight sessions at upgrade.)
 var injectionStore = fstore.JSON[[]injectedPrompt](paths.AgentConfigDir, "session-injections", ".json")
 
+// injectionMu serializes recordInjection's read-modify-write — concurrent injections
+// (operator + scheduler) would otherwise drop each other's record (= a missing badge).
+var injectionMu sync.Mutex
+
 // recordInjection remembers a prompt injected into a session, tagged with its origin, so the
 // transcript can attribute the matching user turn. Deduped by text (a resend needn't
 // duplicate; a re-injection from a different source updates the origin) and capped (newest
@@ -73,6 +78,8 @@ func recordInjection(name, text, source string) {
 	if !session.ValidName(name) || text == "" {
 		return
 	}
+	injectionMu.Lock()
+	defer injectionMu.Unlock()
 	list, _ := injectionStore.Read(name)
 	for i, e := range list {
 		if e.Text == text {

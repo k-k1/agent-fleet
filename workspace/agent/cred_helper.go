@@ -6,8 +6,10 @@ package main
 // seeding and legacy-file migration stay in package main.
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/url"
 	"os"
@@ -49,8 +51,13 @@ func runCredHelper(args []string) {
 		if time.Now().Unix() >= c.Expiry-120 { // refresh within 2 min of expiry
 			if nc, rerr := refreshBitbucket(c); rerr == nil {
 				c = nc
-				s.Bitbucket = &c
-				_ = s.Save()
+				// Re-read-modify-write under the store lock: this helper runs as a
+				// SEPARATE process concurrent with agent handlers, and a blind Save
+				// of the stale snapshot would drop their changes.
+				_ = secrets.Update(func(cur *secrets.Data) error {
+					cur.Bitbucket = &c
+					return nil
+				})
 			}
 		}
 		fmt.Printf("username=x-token-auth\npassword=%s\n", c.AccessToken)
@@ -73,11 +80,16 @@ func runCredHelper(args []string) {
 }
 
 // credHelperHost reads the credential protocol input (key=value lines until a
-// blank line) and returns the requested host.
-func credHelperHost(r *os.File) string {
-	buf := make([]byte, 4096)
-	n, _ := r.Read(buf)
-	for _, line := range strings.Split(string(buf[:n]), "\n") {
+// blank line) and returns the requested host. Line-oriented (not one fixed-size
+// Read): git may deliver the input in several chunks, and a partial read could
+// miss the host= line and intermittently break fetch/push.
+func credHelperHost(r io.Reader) string {
+	sc := bufio.NewScanner(r)
+	for sc.Scan() {
+		line := sc.Text()
+		if line == "" {
+			break // blank line terminates the request
+		}
 		if strings.HasPrefix(line, "host=") {
 			return strings.TrimSpace(strings.TrimPrefix(line, "host="))
 		}

@@ -22,9 +22,6 @@ import (
 )
 
 func mcpSignKey(master32 []byte) []byte {
-	if len(master32) == 0 {
-		master32 = []byte("af-dev-mcp-token-master-not-secret")
-	}
 	mac := hmac.New(sha256.New, master32)
 	mac.Write([]byte("af-mcp-token-sign/v1"))
 	return mac.Sum(nil)
@@ -71,7 +68,7 @@ func verifyMCPToken(signKey []byte, token string) (membershipID string, ok bool)
 // from the live store, never from the request.
 func (a mcpServerAPI) mcpTokenMembership(r *http.Request) (MembershipView, *apiError) {
 	tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-	mid, ok := verifyMCPToken(mcpSignKey(a.mgr.master32), tok)
+	mid, ok := verifyMCPToken(mcpSignKey(a.mgr.tokenSignMaster()), tok)
 	if !ok {
 		return MembershipView{}, &apiError{http.StatusUnauthorized, "unauthenticated", "invalid mcp token"}
 	}

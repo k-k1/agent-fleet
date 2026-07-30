@@ -93,7 +93,11 @@ func handlePTY(w http.ResponseWriter, r *http.Request) {
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		return // upgrader already wrote the error
+		// upgrader already wrote the error. Reap the freshly started child here —
+		// closing the pty alone doesn't wait on it, so it would linger as a zombie.
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+		return
 	}
 	defer conn.Close()
 

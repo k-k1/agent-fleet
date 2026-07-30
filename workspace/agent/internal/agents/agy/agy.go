@@ -9,6 +9,7 @@ package agy
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -129,10 +130,34 @@ func captureConversation(m session.Meta) {
 		return
 	}
 	if snap, ok := brainSnapshot(slotSid); ok {
+		// brain/ はグローバルで cwd 情報を持たないため、「未採用のまま起動中」の
+		// スロットが他にもあるときは brain-diff で採用しない: fresh dir が 1 個でも
+		// それが別ディレクトリのスロットの初回プロンプト分かもしれず、誤採用すると
+		// 以後このスロットのミラー/resume が他会話に恒久接続される。その場合は
+		// exit 時の cwd マップ（cwd キーで曖昧さゼロ）に委ねる。
+		if pendingBrainSnapshots() > 1 {
+			return
+		}
 		if fresh := diffStrings(listBrainDirs(), snap); len(fresh) == 1 {
 			adopt(fresh[0])
 		}
 	}
+}
+
+// pendingBrainSnapshots counts slots that launched fresh and have not adopted a
+// conversation yet (their brain snapshot file still exists — adopt removes it).
+func pendingBrainSnapshots() int {
+	ents, err := os.ReadDir(filepath.Dir(brainPrelaunch.Path("probe")))
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range ents {
+		if !e.IsDir() {
+			n++
+		}
+	}
+	return n
 }
 
 // brainSnapshot returns the launch-time brain-dir set for the slot. ok=false

@@ -176,7 +176,16 @@ func (a mcpAPI) authMCP(r *http.Request) (*mcpPrincipal, *apiError) {
 }
 
 func (a mcpAPI) dispatchMCP(ctx context.Context, prin *mcpPrincipal, req rpcRequest) *rpcResponse {
-	isNotification := len(req.ID) == 0
+	resp := a.dispatchMCPMethod(ctx, prin, req)
+	if len(req.ID) == 0 {
+		// JSON-RPC: notification には応答を返さない。既知メソッドが notification で
+		// 届いた場合も処理だけ行い、"id":null 付き応答は作らない。
+		return nil
+	}
+	return resp
+}
+
+func (a mcpAPI) dispatchMCPMethod(ctx context.Context, prin *mcpPrincipal, req rpcRequest) *rpcResponse {
 	switch req.Method {
 	case "server/discover":
 		// 2026-07-28: servers MUST implement this. It replaces initialize as the way a
@@ -219,9 +228,6 @@ func (a mcpAPI) dispatchMCP(ctx context.Context, prin *mcpPrincipal, req rpcRequ
 	case "tools/call":
 		return a.mcpToolCall(ctx, prin, req)
 	default:
-		if isNotification {
-			return nil
-		}
 		return rpcErr(req.ID, rpcMethodNotFound, "method not found: "+req.Method)
 	}
 }
@@ -1046,9 +1052,12 @@ func (a mcpAPI) mcpResolveMember(ctx context.Context, tenantID, key string) (Mem
 	if strings.TrimSpace(key) == "" {
 		return Membership{}, Workspace{}, false, fmt.Errorf("user_key required")
 	}
-	ident, err := a.mgr.store.UpsertIdentity(ctx, "", key, "")
+	ident, ok, err := a.mgr.store.GetIdentityByUserKey(ctx, key)
 	if err != nil {
 		return Membership{}, Workspace{}, false, err
+	}
+	if !ok {
+		return Membership{}, Workspace{}, false, fmt.Errorf("%q is not a member of this tenant", key)
 	}
 	mem, ok, err := a.mgr.store.GetMembership(ctx, ident.ID, tenantID)
 	if err != nil {

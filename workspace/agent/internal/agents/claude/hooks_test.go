@@ -103,3 +103,37 @@ func readHooks(t *testing.T, dir string) map[string]any {
 	}
 	return h
 }
+
+// TestEnsureStatusHooksPreservesUserHooks: a user's own hooks on the same events
+// (incl. a matcher-less PostToolUse entry) must survive installation, and the AF
+// heartbeat must still be installed alongside them.
+func TestEnsureStatusHooksPreservesUserHooks(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	seed := map[string]any{"hooks": map[string]any{
+		"Stop": []any{
+			map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "/home/u/notify.sh"}}},
+		},
+		"PostToolUse": []any{
+			map[string]any{"matcher": "", "hooks": []any{map[string]any{"type": "command", "command": "/home/u/log-tools.sh"}}},
+		},
+	}}
+	b, _ := json.MarshalIndent(seed, "", "  ")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	EnsureStatusHooks()
+	h := readHooks(t, dir)
+	stop, _ := json.Marshal(h["Stop"])
+	if !strings.Contains(string(stop), "notify.sh") || !strings.Contains(string(stop), "session-status") {
+		t.Errorf("Stop must keep the user hook AND add ours: %s", stop)
+	}
+	post, _ := json.Marshal(h["PostToolUse"])
+	if !strings.Contains(string(post), "log-tools.sh") || !strings.Contains(string(post), "session-status") {
+		t.Errorf("PostToolUse must keep the user matcher-less entry AND install the heartbeat: %s", post)
+	}
+}

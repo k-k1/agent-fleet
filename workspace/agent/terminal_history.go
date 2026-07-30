@@ -112,7 +112,13 @@ func recordTerminal(name string, src io.Reader) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	// f is swapped by compaction (which closes the old descriptor), so close via the
+	// variable, not the original handle.
+	defer func() {
+		if f != nil {
+			_ = f.Close()
+		}
+	}()
 
 	buf := make([]byte, 32*1024)
 	for {
@@ -122,50 +128,52 @@ func recordTerminal(name string, src io.Reader) error {
 				return err
 			}
 			if st, err := f.Stat(); err == nil && st.Size() > terminalHistoryMaxBytes+(256<<10) {
-				if err := compactTerminalHistory(f, path, terminalHistoryMaxBytes); err != nil {
-					return err
+				var cerr error
+				if f, cerr = compactTerminalHistory(f, path, terminalHistoryMaxBytes); cerr != nil {
+					return cerr
 				}
 			}
 		}
 		if rerr != nil {
 			if rerr == io.EOF {
-				return compactTerminalHistory(f, path, terminalHistoryMaxBytes)
+				var cerr error
+				f, cerr = compactTerminalHistory(f, path, terminalHistoryMaxBytes)
+				return cerr
 			}
 			return rerr
 		}
 	}
 }
 
-func compactTerminalHistory(f *os.File, path string, max int64) error {
+// compactTerminalHistory trims the file to its last `max` bytes and returns the
+// handle to keep appending to: f itself when no compaction was needed, else a fresh
+// descriptor (f is closed). On error the returned handle may be nil.
+func compactTerminalHistory(f *os.File, path string, max int64) (*os.File, error) {
 	st, err := f.Stat()
 	if err != nil || st.Size() <= max {
-		return err
+		return f, err
 	}
 	if err := f.Close(); err != nil {
-		return err
+		return nil, err
 	}
 	in, err := os.Open(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	_, err = in.Seek(st.Size()-max, io.SeekStart)
 	if err != nil {
 		in.Close()
-		return err
+		return nil, err
 	}
 	tail, err := io.ReadAll(in)
 	in.Close()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := os.WriteFile(path, tail, 0o600); err != nil {
-		return err
+		return nil, err
 	}
-	// Re-open the caller's descriptor in place for subsequent pipe input.
-	nf, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
-	if err != nil {
-		return err
-	}
-	*f = *nf
-	return nil
+	// Re-open for subsequent pipe input (returned instead of overwriting *f, which
+	// depended on os.File's private layout).
+	return os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
 }

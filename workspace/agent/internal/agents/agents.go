@@ -50,6 +50,12 @@ type LaunchOpts struct {
 type LaunchPlan struct {
 	Program string
 	Cwd     string
+	// Env is KEY=VALUE pairs injected into the pane process via `tmux new-session
+	// -e` (verified to reach the pane process on the image's tmux 3.3a). Secrets
+	// belong here, NOT prefixed onto Program — a command-string prefix lands in
+	// /proc/*/cmdline and tmux's pane_start_command, readable by anything in the
+	// container.
+	Env []string
 }
 
 // LiveInfo is the slice of a wire Session whose values depend on the kind and live

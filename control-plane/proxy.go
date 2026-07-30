@@ -102,6 +102,32 @@ type agentProxyAPI struct{ memberAuth }
 
 func newAgentProxyAPI(m *manager) agentProxyAPI { return agentProxyAPI{memberAuth{m}} }
 
+// agentRelayClient relays browser↔Agent traffic WITHOUT following redirects: a 3xx
+// from the Agent (e.g. its mux's clean-path redirect) must be returned to the browser,
+// not re-followed by the CP with the bearer attached — following would let an encoded
+// `..` reach Agent endpoints outside the CP's explicit route allowlist (and skip the
+// route-level audit classification).
+var agentRelayClient = &http.Client{
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
+
+// unsafeRelayPath reports whether a decoded request path (or path suffix) contains a
+// dot-dot / dot / interior-empty segment. The Agent target URL is built by string
+// concatenation, and the mux does not normalize %2e%2e%2f, so such a segment would be
+// re-interpreted on the Agent side and escape the CP's route allowlist.
+func unsafeRelayPath(path string) bool {
+	segs := strings.Split(path, "/")
+	for i, seg := range segs {
+		if seg == ".." || seg == "." {
+			return true
+		}
+		if seg == "" && i > 0 && i < len(segs)-1 {
+			return true // interior empty segment ("//")
+		}
+	}
+	return false
+}
+
 // rest forwards /api/sessions* to the Workspace Agent's /sessions*.
 // The Control Plane never talks to tmux directly; it delegates to the Agent.
 func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolved) {
@@ -116,6 +142,10 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 	// real presence is instead signalled by an attached terminal or a busy session.
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		a.mgr.conns.touch(res.ws.ID)
+	}
+	if unsafeRelayPath(r.URL.Path) {
+		http.Error(w, "bad proxy path", http.StatusBadRequest)
+		return
 	}
 	target := rt.Endpoint() + strings.TrimPrefix(r.URL.Path, "/api")
 	if r.URL.RawQuery != "" {
@@ -132,7 +162,7 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 		req.Header.Set("Authorization", "Bearer "+rt.Token()) // CP↔Agent auth
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := agentRelayClient.Do(req)
 	if err != nil {
 		http.Error(w, "workspace agent unreachable (is the workspace running?)", http.StatusBadGateway)
 		return
@@ -192,6 +222,10 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 func (a agentProxyAPI) stream(w http.ResponseWriter, r *http.Request, res *resolved) {
 	rt := res.rt
 	a.mgr.conns.touch(res.ws.ID) // a chat turn is real activity (POST)
+	if unsafeRelayPath(r.URL.Path) {
+		http.Error(w, "bad proxy path", http.StatusBadRequest)
+		return
+	}
 	target := rt.Endpoint() + strings.TrimPrefix(r.URL.Path, "/api")
 	if r.URL.RawQuery != "" {
 		target += "?" + r.URL.RawQuery
@@ -205,7 +239,7 @@ func (a agentProxyAPI) stream(w http.ResponseWriter, r *http.Request, res *resol
 	if rt.Token() != "" {
 		req.Header.Set("Authorization", "Bearer "+rt.Token())
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := agentRelayClient.Do(req)
 	if err != nil {
 		http.Error(w, "workspace agent unreachable (is the workspace running?)", http.StatusBadGateway)
 		return
@@ -238,8 +272,29 @@ func (a agentProxyAPI) stream(w http.ResponseWriter, r *http.Request, res *resol
 // EnableCompression: permessage-deflate に対応するブラウザとだけネゴする（モバイル
 // 回線での PTY 出力・スクリーンキャストの帯域削減）。非対応クライアントは従来通り。
 var upgrader = websocket.Upgrader{
-	CheckOrigin:       func(r *http.Request) bool { return true },
+	CheckOrigin:       checkWSOrigin,
 	EnableCompression: true,
+}
+
+// wsAllowedOriginHost is the PUBLIC_BASE_URL host (set at startup in main), an
+// extra allowed browser origin besides the request's own Host.
+var wsAllowedOriginHost string
+
+// checkWSOrigin allows same-host browser origins, the deployment's public host,
+// and clients that send no Origin (non-browser tools). /ws/terminal and
+// /ws/browser authenticate by cookie, so an unconditional true would let any
+// cross-site page hijack a PTY over the visitor's cookies (CSWSH).
+func checkWSOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(u.Host, r.Host) ||
+		(wsAllowedOriginHost != "" && strings.EqualFold(u.Host, wsAllowedOriginHost))
 }
 
 // terminal bridges the browser terminal WS to the Agent's /ws/pty,
