@@ -120,6 +120,39 @@ claude の TUI セッションで API エラーがターンを切ると **Stop �
 | `chat_report_test.go` | ON/OFF/上限超過の文面（言語指示・破壊的操作ガードを含む）、再開カウンタの加算・リセット・セッション独立 |
 | Console | 設定既定値・typecheck・i18n 裸和文 lint |
 
+## 4-2. 追補（2026-07-30 / sp2qemx）— 検知の入口をレベルへ
+
+実測で 2 つ穴が出た。
+
+**(a) 検知の入口がマーカーに依存していた。** §3-2 の自己修復 seam は
+`WireLive` / `liveStateOf` のヒール分岐の中にあり、その分岐は「マーカーが非 idle」かつ
+「ペインが待機表示」で守られている。マーカーは誤ヒール（`HealIdle` の
+`status.Remove`）で消えることがあり、消えると `LiveState` が既定の idle を返すので
+ゲートは二度と開かない。sp2qemx は転写の末尾に
+`API Error: Server error mid-response.` を持ちながら、通知も報告も自動再開も発火せず、
+指示 1 件が pending のまま宙に浮いた（docs/51 のリコンサイラは「無マーカーは不明」で
+正しく待ち続けるので、ここは救われない）。
+
+対処: 中断そのものは**転写の末尾というレベル**に書かれているので、リコンサイラが毎
+tick それを直接読む（`claude.AbortInfo` → `reportSignals.Abort`）。マーカーの状態には
+一切依存しない。分類はそのまま報告の reason になり、既存の報告文・自動再開カウンタが
+そのまま効く。ヒール経路（`HealIdle`）は残る — 先に気付いた方が報告し、配送は台帳の
+行が 1 回に畳む。
+
+- 判定規則は `terminalRecord` / `abortFrom` に括り出して純関数版（`abortedTurnFrom`）と
+  共有。実装が 2 つに割れると片方だけ版差で腐る。
+- 読むのは末尾だけ（`lastLineWhere` = 末尾 512KiB → 見つからなければ全文）。毎 tick 数 MB
+  を読み直さないため。
+- 中断が末尾にあるときは**転写の鮮度を busy 証拠から下ろす**。その「新しさ」は中断
+  レコード自身のもので、進行中の証拠ではない（下ろさないと報告が毎回 90 秒足止めされる）。
+  ペイン／サブエージェントの busy は別の事実なので残す＝再開済みなら報告しない。
+
+**(b) `API Error: Server error mid-response.` が blocked に倒れていた。** retryable
+コーパスに `internal server error` しか無く、この合成レコードは `apiErrorStatus`
+フィールドごと欠けているので 5xx フォールバックにも掛からなかった。`server error` へ
+広げた（`blockedMarkers` を先に見る順序は不変なので、利用上限や認証はここで
+retryable に化けない）。
+
 ## 5. 積み残し
 
 - 対象は claude TUI のみ（`isApiErrorMessage` は claude 固有）。他 TUI 種別は別シグナルが要る。
