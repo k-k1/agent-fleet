@@ -38,17 +38,19 @@ export interface RepoRailContext {
 // api/connections は各エージェントの認証チェックへシェルアウトする重い呼び出し（~1.5-2s）で、
 // このフックは常駐 3 コンポーネント（ProjectTree / OtherSessionsSection / StartHost）から
 // 同時に呼ばれる。素朴に fetch すると同じ問い合わせが 3 重に飛ぶので、in-flight の Promise を
-// モジュールレベルで共有して同時マウント分を 1 本に相乗りさせる（解決後は捨てる — connTick
-// での再取得や後からのマウントは従来どおり取り直す）。失敗は null に畳む（呼び手の settle 契約）。
-let connsInflight: Promise<ConnectionsStatus | null> | null = null;
-function fetchConns(): Promise<ConnectionsStatus | null> {
-  if (connsInflight) return connsInflight;
+// モジュールレベルで共有して同時マウント分を 1 本に相乗りさせる（解決後は捨てる — 後からの
+// マウントは従来どおり取り直す）。相乗りは同一 connTick に限る: bump（設定での接続/解除）が
+// 直前開始の in-flight に相乗りすると、変更前のスナップショットで確定して解除済みエージェント
+// が起動メニューに残り続ける。失敗は null に畳む（呼び手の settle 契約）。
+let connsInflight: { tick: number; p: Promise<ConnectionsStatus | null> } | null = null;
+function fetchConns(tick: number): Promise<ConnectionsStatus | null> {
+  if (connsInflight && connsInflight.tick === tick) return connsInflight.p;
   const p: Promise<ConnectionsStatus | null> = api("api/connections")
     .then((d) => (d && !d.error ? (d as ConnectionsStatus) : null))
     .catch(() => null);
-  connsInflight = p;
+  connsInflight = { tick, p };
   void p.finally(() => {
-    if (connsInflight === p) connsInflight = null;
+    if (connsInflight?.p === p) connsInflight = null;
   });
   return p;
 }
@@ -78,7 +80,7 @@ export function useRepoRailContext(): RepoRailContext {
       setConnsDone(true);
       setCachedConns(d); // warm the shared cache so leaves (HandoffModal) render instantly
     };
-    void fetchConns().then(settle);
+    void fetchConns(connTick).then(settle);
     return () => {
       alive = false;
     };
