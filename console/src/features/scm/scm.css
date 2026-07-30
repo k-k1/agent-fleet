@@ -137,9 +137,24 @@
 }
 /* Off-branch commits fade only their message column. The graph keeps full opacity —
    a lane's colour is its identity, and dimming it mid-lane breaks the line's continuity
-   for every commit below. The hollow node already marks the commit as off-branch. */
-.cgraph-row.dim .cgraph-msg {
-  opacity: 0.55;
+   for every commit below. The hollow node already marks the commit as off-branch.
+   The fade is a colour STEP, not `opacity`: opacity blends toward the surface, which in
+   the light theme dropped the subject to 3.6:1 and the author·date·sha line to 2.5:1 —
+   unreadable, and worst exactly where the row matters (未マージのコミット). Stepping each
+   line one rung down the fg → muted → muted2 ladder reads as "recessive" just as well
+   and keeps every rung ≥4.5:1 in both themes. */
+.cgraph-row.dim .cgraph-subj {
+  color: var(--muted);
+}
+.cgraph-row.dim .cgraph-line2 {
+  color: var(--muted2);
+}
+/* Ref chips carry their own colour, so they need the step applied to the chip itself
+   rather than inherited: keep the label readable and let the flatter background do
+   the de-emphasis. */
+.cgraph-row.dim .cgraph-ref {
+  background: transparent;
+  color: var(--muted);
 }
 .cgraph-svg {
   flex: none;
@@ -194,9 +209,11 @@
   color: var(--on-accent);
   font-weight: 600;
 }
+/* Tag chips ride the theme's warn hue. The old literal #d6a13a was a dark-theme amber
+   and read 1.9:1 on the light button surface. */
 .cgraph-ref.ref-tag {
-  color: #d6a13a;
-  border-color: #d6a13a66;
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
 }
 .cgraph-ref.ref-remote {
   color: var(--muted);
