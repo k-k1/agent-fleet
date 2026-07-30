@@ -15,7 +15,7 @@ This directory is the whole deployment surface:
 
 | File | Purpose |
 |------|---------|
-| `docker-compose.yml` | `control-plane` (CP) + `caddy` (auto-TLS) services |
+| `docker-compose.yml` | `cp` (control-plane) + `caddy` (auto-TLS) services |
 | `Caddyfile` | reverse proxy + Let's Encrypt (ACME); self-signed fallback |
 | `.env.example` | all configuration (copy to `.env`) |
 | `backup.sh` / `restore.sh` | data backup & disaster recovery |
@@ -57,8 +57,12 @@ getent group docker | cut -d: -f3  # -> DOCKER_GID
 #    AF_OAUTH_ALLOWED_DOMAINS / SUPER_ADMIN_EMAILS / DATA_DIR in .env
 mkdir -p "$(grep -E '^DATA_DIR=' .env | cut -d= -f2)"
 
+# 4) build the per-user workspace image (compose builds only the CP; the CP
+#    launches workspaces from WS_IMAGE, agent-fleet/workspace:dev by default):
+docker build -t agent-fleet/workspace:dev ../../workspace
+
 docker compose up -d --build     # or plain `up -d` if pulling prebuilt images
-docker compose logs -f control-plane
+docker compose logs -f cp
 ```
 
 Then open `https://<PUBLIC_DOMAIN>`, sign in with a `SUPER_ADMIN_EMAILS` account,
@@ -102,7 +106,7 @@ in `.env` (users can always paste a token instead, without these):
 Back up regularly (cron the script):
 
 ```bash
-deploy/compose/backup.sh              # -> ./backups/agent-fleet-<ts>.tar.gz
+deploy/compose/backup.sh              # -> deploy/compose/backups/agent-fleet-<ts>.tar.gz
 OUT_DIR=/mnt/backups KEEP=14 deploy/compose/backup.sh
 ```
 
@@ -132,8 +136,11 @@ re-roots each workspace onto the current `DATA_DIR` at start. Keep the `DATA_DIR
 ## Upgrade
 
 ```bash
-# edit .env: VERSION=<new tag>
+# edit .env: VERSION=<new tag>, and point WS_IMAGE at the matching workspace tag
+# (WS_IMAGE is an independent variable — it is not derived from VERSION)
 docker compose pull            # or rebuild: docker compose build
+# the workspace image is not a compose service — pull/rebuild it separately:
+docker pull <WS_IMAGE>         # or rebuild: docker build -t <WS_IMAGE> ../../workspace
 docker compose up -d
 ```
 
@@ -157,9 +164,11 @@ deploy/compose/load-images.sh agent-fleet-images-<version>.tar.gz
 docker compose up -d
 ```
 
-The workspace image installs Claude at container start by default (always latest).
-For fully offline hosts set `CLAUDE_INSTALL=0` (via `WS_ENV`) and use an image
-with Claude baked in.
+The default workspace image is the lean variant (`BAKE_AGENT_CLIS=0`): it ships
+without the agent CLIs and installs them at container start, **pinned via the
+image's `versions.json`** (later starts keep the pin; following latest is the
+self-update opt-in's job). For fully offline hosts use an image built with the
+CLIs baked in (`BAKE_AGENT_CLIS=1`) and set `CLAUDE_INSTALL=0` (via `WS_ENV`).
 
 ## DooD: the three constraints (read if "it starts but silently doesn't work")
 
@@ -182,7 +191,7 @@ encodes them, but if you customize it, keep them:
 
 | Symptom | Check |
 |---------|-------|
-| CP won't start | `docker compose logs control-plane`; `curl -s http://127.0.0.1:8099/healthz` should print `ok` |
+| CP won't start | `docker compose logs cp`; `curl -s http://127.0.0.1:8099/healthz` should print `ok` |
 | "permission denied" on docker.sock | `DOCKER_GID` matches `getent group docker`? |
 | Workspace starts but home is empty | DooD (B): `DATA_DIR` identical inside/outside; same path on restore |
 | Can't reach a started workspace | DooD (A): CP + Caddy both `network_mode: host` |

@@ -17,7 +17,7 @@ name/tag and created on demand):
 
 | Layer | Owner | Resources |
 |-------|-------|-----------|
-| **static substrate** | **CloudFormation** (this dir) | VPC/subnets/NAT, SGs, EFS **filesystem**, RDS, ECR, ECS **cluster**, Service Connect **namespace**, IAM **roles**, ALB(ACM/OIDC), **CP+Console service** |
+| **static substrate** | **CloudFormation** (this dir) | VPC/subnets/NAT, SGs, EFS **filesystem**, RDS, ECR, ECS **cluster**, Service Connect **namespace**, IAM **roles**, ALB(ACM, TLS-termination only), **CP+Console service** |
 | **per-workspace** | **Control Plane at runtime** (`runtime_ecs.go`, stage 2) | ECS **Service**, **TaskDefinition**, EFS **access point**, **SSM SecureString** params |
 
 So CFN is deployed **once** per environment; workspaces appear/disappear afterwards
@@ -38,12 +38,11 @@ platform changes:
 > `00`/`10`/`20` are proven end-to-end (deploy→verify→`delete-stack`, no orphans).
 > `30-ingress` is authored and template-validated; standing it up needs a domain +
 > Google OAuth client + the CP image in ECR (see stand-up below). Each stack imports
-> the earlier ones' exports, so deploy in order `00 → 20 → 30` (10-data is only
-> needed once the store moves to RDS / workspaces mount EFS).
+> the earlier ones' exports, so deploy in order `00 → 10 → 20 → 30`.
 
 ### Prerequisites (once per account)
 
-- **ECS service-linked role.** A fresh account has no `AWSServiceRoleFor ECS`, and
+- **ECS service-linked role.** A fresh account has no `AWSServiceRoleForECS`, and
   creating a cluster with a Service Connect default namespace fails with
   *"ECS Service Linked Role is not ready"*. Create it once (idempotent — ignore the
   "has been taken" error on re-run):
@@ -60,7 +59,8 @@ platform changes:
 ### 30-ingress stand-up (milestone: CP boots + Google login)
 
 Auth is **CP-native Google OAuth** (`AUTH=oauth`); the ALB only terminates TLS.
-SQLite is ephemeral in this milestone (no EFS/RDS). Prerequisites:
+The CP stores its state in RDS Postgres and workspaces mount EFS — both wired
+from `10-data`'s exports, so that stack must already be up. Prerequisites:
 
 1. **Push the CP image to ECR** (image already built locally — no rebuild):
    ```bash
@@ -108,8 +108,8 @@ RDS) lives in AWS, so this host's build/OOM limits don't gate it.
   namespace/IAM); confirm and tear down. **proven.**
 - **S2** — with ECR up (from `20`), push the CP + Workspace images (§ECR push below).
   ECS can't pull until they're in ECR.
-- **S3** — deploy `30-ingress.yaml`; the CP/Console service boots, ALB OIDC login
-  works, RDS reachable.
+- **S3** — deploy `30-ingress.yaml`; the CP/Console service boots, CP-native
+  Google OAuth login works, RDS reachable.
 - **S4** — with `runtime_ecs.go` (stage 2) implemented, the CP **dynamically provisions a
   workspace** (exercises the real adapter) → the E2E gate below.
 
@@ -117,7 +117,7 @@ CFN authoring (S1–S3) and the stage-2 Go code are **parallel tracks**; they me
 
 ## E2E completion gate (frozen spec §20b.7.14)
 
-1. login (ALB OIDC) → tenant → workspace Start (Service desired 1, RUNNING, healthz).
+1. login (CP-native Google OAuth) → tenant → workspace Start (Service desired 1, RUNNING, healthz).
 2. session create → terminal attach (CP→Service Connect→Agent) → I/O.
 3. Stop (desired 0) → re-Start resumes home/claude state (EFS persists).
 4. P3-9 reaper: idle → stage-1 halt → stage-2 desired 0; no fire while attached.
@@ -232,6 +232,7 @@ and keep stacks short-lived.
 ## Teardown
 
 ```bash
+aws cloudformation delete-stack --stack-name af-ecs-ingress
 aws cloudformation delete-stack --stack-name af-ecs-platform
 aws cloudformation delete-stack --stack-name af-ecs-data
 aws cloudformation delete-stack --stack-name af-ecs-network   # last (others depend on it)
@@ -247,7 +248,7 @@ deleting `af-ecs-network`.
 - Deploying principal (sandbox): broad create rights for VPC/ECS/EFS/RDS/ALB/**IAM**/
   ECR/SSM are fine in a throwaway account; for least privilege see
   §Minimal IAM above.
-- The Google OAuth client used for ALB OIDC is throwaway — delete it after testing.
+- The Google OAuth client used for the CP-native OAuth login is throwaway — delete it after testing.
 - **`AuthMode=dev`** (30-ingress parameter) skips login entirely for sandbox/E2E
   gates. Before deploying with it, restrict the ALB SG (80/443) to your own IP —
   dev auth hands an authenticated session to anyone who reaches the ALB.
