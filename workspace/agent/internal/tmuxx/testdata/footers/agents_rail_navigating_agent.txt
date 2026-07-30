@@ -6,10 +6,10 @@
 
 ● I'll run the sleep command.
 
-  Running 1 shell command · 1m 10s…
-  ⎿  $ sleep 150 (1m 9s)
+● Running 1 shell command · 27s…
+  ⎿  $ sleep 150 (27s)
 
-· Nucleating… (1m 20s · ↑ 16.6k tokens)
+✢ Nucleating… (38s · ↑ 16.6k tokens)
   ⎿  Tip: Use /btw to ask a quick side question without interrupting Claude's
      current work
 
@@ -17,7 +17,7 @@
 ❯ 
 ────────────────────────────────────────────────────────────────────────────────
 
-  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+  Enter to view · x to stop
 
   ◯ main
-  ● general-purpose  Sleep then reply DONE                2m 0s · ↓ 16.6k tokens
+❯ ● general-purpose  Sleep then reply DONE               1m 18s · ↓ 16.6k tokens

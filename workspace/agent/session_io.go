@@ -345,22 +345,25 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name})
 		return
 	}
-	// claude のバックグラウンド・エージェント表示（フッタの「← for agents」）に入って
-	// いるペインへ打つと、文字はメイン会話ではなく**実行中のサブエージェントへの割り込み
-	// メッセージ**になる。ペイン上は自分の文字が見えるので送信側は成功したと思い込み、
-	// メイン転写にもミラーにも何も残らない（実測 2026-07-30 sannme2）。取り返しのつかない
-	// 誤配達なので、タイプする前に弾いて呼び出し元へ理由を返す。
+	// claude のペインの入力欄が**セッション自身の会話以外**に紐づいていると、打った文字は
+	// メイン会話に届かない: レールでエージェントが選ばれていればそのエージェントへの割り込みに
+	// なり、agents ホーム画面なら「新しいセッションを作る」入力欄になる。どちらもペイン上は
+	// 自分の文字が見えるので送信側は成功したと思い込み、メイン転写にもミラーにも残らない
+	// （実測 2026-07-30 sannme2、制御プローブで再現 — internal/tmuxx/testdata/footers）。
 	//
-	// 自動でメイン表示へ戻さないのは、復帰キーが実 TUI で未検証だから — 当てずっぽうの
-	// キーは実行中のサブエージェントに何をするか分からない。まず「黙って誤配達しない」
-	// ところまでを確定させる。
+	// 戻せるなら戻す（復帰手順は実測済み）。戻せなかったときだけ 409 で突き返す — 黙って
+	// 誤配達するより、届かなかったことを呼び出し元に伝える方がよい。
 	if m, ok := session.ReadMeta(name); ok && normalizeKind(m.Kind) == session.KindClaude &&
 		tmuxx.AgentsViewActive(name) {
-		httpx.WriteErr(w, http.StatusConflict, "agents_view",
-			"session pane is showing a background agent (footer: ← for agents); "+
-				"typing there steers that agent instead of the session. "+
-				"Return the pane to the main conversation and send again.")
-		return
+		if !tmuxx.LeaveAgentsView(name) {
+			httpx.WriteErr(w, http.StatusConflict, "agents_view",
+				"session pane's input box is bound to a background agent / the agents screen, "+
+					"not the session's conversation; typing there does not reach the session "+
+					"(and could not be returned automatically — a draft may be open in the composer). "+
+					"Return the pane to the main conversation and send again.")
+			return
+		}
+		log.Printf("input: %s のペインがエージェント表示だったのでメイン会話へ戻した", name)
 	}
 	// 配達検証の基線はタイプ前に取る（confirm 時のみ）。meta が読めない session は
 	// 検証不能として従来意味論のまま通す。
@@ -837,11 +840,12 @@ func markSessionWorking(name string) {
 // allowedKey is the whitelist of tmux key names the Console may send to drive a TUI
 // (the AskUserQuestion modal): navigation + confirm, nothing that could run a command.
 // viewNavKeys are the keys claude's TUI reads as VIEW navigation when no dialog is up:
-// ← opens the background-agent rail (the footer advertises it as "← for agents"), which
-// rebinds the input box to an agent. Anything typed afterwards steers that agent instead
-// of the session and never reaches the main conversation — the 2026-07-30 misdelivery.
-// Inside a dialog the same key is ordinary navigation, so the guard only refuses when
-// there is no dialog to drive.
+// ← leaves the conversation for the agents home screen (実測 claude 2.1.220 — the footer
+// advertises it as "← for agents"), whose composer reads "describe a task for a new
+// session" and CREATES A NEW SESSION when submitted. Neither that screen nor the
+// rail-bound agent view delivers to the session, so a stray ← turns every later injection
+// into a misdelivery — the 2026-07-30 shape. Inside a dialog the same key is ordinary
+// navigation, so the guard only refuses when there is no dialog to drive.
 var viewNavKeys = map[string]bool{"Left": true}
 
 // allowViewNavKeys reports whether this key batch may be sent as-is. It only touches tmux
@@ -866,9 +870,9 @@ func allowViewNavKeys(name string, keys []string) bool {
 
 func writeViewNavErr(w http.ResponseWriter) {
 	httpx.WriteErr(w, http.StatusConflict, "view_nav_key",
-		"a bare Left arrow switches a claude pane to its background-agent view "+
-			"(footer: ← for agents), where later input steers the agent instead of the session; "+
-			"it is only accepted while a dialog is open")
+		"a bare Left arrow leaves a claude pane's conversation for its agents screen "+
+			"(footer: ← for agents), where later input creates a new session or steers an agent "+
+			"instead of reaching this one; it is only accepted while a dialog is open")
 }
 
 func allowedKey(k string) bool {
