@@ -60,6 +60,25 @@ func opencodeVer(t *testing.T) string {
 	return strings.TrimSpace(string(out))
 }
 
+// isolatedHomeEnv returns the env assignments that pin opencode's config and state roots
+// inside home. Overriding HOME alone is NOT enough: opencode resolves its global config
+// through XDG_CONFIG_HOME (paths.go OpencodeConfigDir), and a GitHub Actions runner
+// **exports XDG_CONFIG_HOME=/home/runner/.config**. With only HOME replaced, the runner's
+// real (empty) config root wins, the "global" source of a precedence test silently
+// contributes nothing, and the test reports upstream drift that does not exist — exactly
+// how TestContractOpencodeConfigPrecedence went red on CI while passing on every
+// workstation (verified: setting XDG_CONFIG_HOME elsewhere reproduces it on 1.18.9).
+// The data/cache roots get the same treatment so the isolation the tests claim is real.
+func isolatedHomeEnv(home string) []string {
+	return []string{
+		"HOME=" + home,
+		"XDG_CONFIG_HOME=" + filepath.Join(home, ".config"),
+		"XDG_DATA_HOME=" + filepath.Join(home, ".local", "share"),
+		"XDG_CACHE_HOME=" + filepath.Join(home, ".cache"),
+		"XDG_STATE_HOME=" + filepath.Join(home, ".local", "state"),
+	}
+}
+
 // TestContractOpencodeTUIPaneMode boots a real opencode TUI the way the fleet does and
 // asserts paneMode still reads the composer status line — both that it resolves at all
 // (the launch-seed readiness signal) and that it tracks the live agent (the mode chip).
@@ -67,9 +86,9 @@ func TestContractOpencodeTUIPaneMode(t *testing.T) {
 	requireBins(t, "opencode", "tmux")
 	home, dir := t.TempDir(), t.TempDir()
 	name := "af-contract-opencode"
-	// Prefix HOME onto the command itself: tmux -e sets the session environment, which
+	// Prefix the env onto the command itself: tmux -e sets the session environment, which
 	// does NOT reach the pane's process (the same reason buildProgram prefixes env).
-	tmuxSession(t, name, dir, "HOME="+home+" opencode --auto")
+	tmuxSession(t, name, dir, strings.Join(isolatedHomeEnv(home), " ")+" opencode --auto")
 
 	ver := opencodeVer(t)
 	// Boot is slow (splash → composer, ~30s cold); paneMode is exactly the readiness
@@ -140,7 +159,7 @@ func TestContractOpencodeEnvConfig(t *testing.T) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "opencode", "mcp", "list")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "HOME="+home, "OPENCODE_CONFIG="+cfg)
+	cmd.Env = append(os.Environ(), append(isolatedHomeEnv(home), "OPENCODE_CONFIG="+cfg)...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("opencode mcp list: %v\n%s", err, out)
@@ -198,7 +217,7 @@ func TestContractOpencodeConfigPrecedence(t *testing.T) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "opencode", "debug", "config")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "HOME="+home, "OPENCODE_CONFIG="+cfg)
+	cmd.Env = append(os.Environ(), append(isolatedHomeEnv(home), "OPENCODE_CONFIG="+cfg)...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("opencode debug config: %v\n%s", err, out)
