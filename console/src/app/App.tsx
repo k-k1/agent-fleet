@@ -86,6 +86,7 @@ function wireWorkspaceRefresh(): () => void {
 export function App() {
   const tr = useT();
   const tenant = useTenantStore((s) => s.tenant);
+  const identityRev = useTenantStore((s) => s.identityRev);
   // Deployment gate: only show the schedules rail when the CP scheduler is enabled
   // (AF_SCHEDULER_INTERVAL set) — otherwise schedules can never fire, so hide the section.
   const schedulerEnabled = useTenantStore((s) => !!s.whoami?.scheduler_enabled);
@@ -328,7 +329,10 @@ export function App() {
     if (takeStalePopoutLink()) toast(t("popout.stale_link"), { kind: "info" });
     void useWorkspaceStore.getState().refresh();
     void useSessionsStore.getState().refresh();
-  }, [booted, tenant]);
+    // identityRev: a DELAYED whoami resolution (CP was down at boot) re-scopes the
+    // layout key via setUser — re-run load() under the user key so the shared-key
+    // layout is not persisted into it.
+  }, [booted, tenant, identityRev]);
 
   // Desktop notifications on claude state arrivals — lives at the shell now that
   // the flat Sessions section no longer owns the rail. A minimal pop-out tab

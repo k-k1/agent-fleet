@@ -6,7 +6,7 @@
 // still valid, else the first membership. The chosen slug is persisted via
 // core/api setTenant() so the global fetch wrapper stamps X-AF-Tenant.
 import { create } from "zustand";
-import { api, getTenant, isTransientErr, setTenant, setUser } from "../api/client.ts";
+import { api, getTenant, getUser, isTransientErr, setTenant, setUser } from "../api/client.ts";
 import type { Whoami, Tenant } from "../../types/app.ts";
 import { confirmDirtyNavigation } from "../../features/editor/dirtyRegistry.ts";
 
@@ -18,6 +18,12 @@ interface TenantStore {
   /** Show the picker in the top bar (only when the user has ≥2 memberships). */
   showPicker: boolean;
   superAdmin: boolean;
+  /** Bumped whenever the layout-scoping identity (setUser) changes — including a
+   *  DELAYED whoami resolution after a transient boot failure. App keys its
+   *  per-tenant sync effect on this so load() re-runs under the user-scoped key
+   *  (otherwise the layout loaded under the shared no-user key would be persisted
+   *  back into the user's key once setUser lands). */
+  identityRev: number;
   /** Resolve identity + memberships once at boot. */
   init(): Promise<void>;
   /** Switch the active tenant (picker). Callers re-sync their own data. */
@@ -30,6 +36,7 @@ export const useTenantStore = create<TenantStore>((set) => ({
   tenant: getTenant(),
   showPicker: false,
   superAdmin: false,
+  identityRev: 0,
 
   async init() {
     // One resolution attempt. Returns true on a terminal result (success or a
@@ -53,10 +60,17 @@ export const useTenantStore = create<TenantStore>((set) => ({
       } else {
         set({ whoami: who });
         // Scope the persisted layout to this identity (email preferred, user as
-        // fallback) so the next account on this browser gets a clean layout. Resolved
-        // before load() runs (init awaits here → App sets booted → load), so the key
-        // is user-scoped from the first read/write.
-        setUser(who?.email || who?.user || "");
+        // fallback) so the next account on this browser gets a clean layout. Fast
+        // path: resolved before load() runs (init awaits the first attempt → App
+        // sets booted → load). Slow path (CP was down at boot, a retry resolved
+        // this late): load() already ran under the shared no-user key — bump
+        // identityRev so App re-runs load() under the user key instead of
+        // persisting the shared-key layout into it.
+        const uid = who?.email || who?.user || "";
+        if (uid !== getUser()) {
+          setUser(uid);
+          set((s) => ({ identityRev: s.identityRev + 1 }));
+        }
       }
       let data;
       try {
