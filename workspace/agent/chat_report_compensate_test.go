@@ -435,8 +435,10 @@ func TestSelfReportIsIdleEvidenceWithoutMarker(t *testing.T) {
 	// （forget）ので、間に申告を挟むと申告が捨てられ、起床も指示の数だけ増えて
 	// 「どの sweep を待てばよいか」が決まらなくなる。申告の時刻は引数で作れるので、
 	// 呼び出し順ではなくタイムスタンプで前後関係を組めばよい。
-	id1 := addInstructionAt(m.Name, conv, turnSourceOperator, time.Now().Add(-60*time.Second))
-	selfAt := time.Now()
+	// 申告**だけ**で settle するには「申告から selfReportSettleDelay 以上経っている」
+	// ことが要る（早呼び対策）。ここは申告が唯一の証拠になる筋なので、十分に古い申告で組む。
+	selfAt := time.Now().Add(-selfReportSettleDelay - time.Minute)
+	id1 := addInstructionAt(m.Name, conv, turnSourceOperator, selfAt.Add(-60*time.Second))
 	id2 := addInstructionAt(m.Name, conv, turnSourceOperator, selfAt.Add(2*time.Second))
 
 	var cs countingSink

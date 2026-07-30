@@ -242,8 +242,14 @@ func TestReportEvidenceTable(t *testing.T) {
 		// 自己申告（docs/51 Phase 3 §ファストパス）はマーカーと同格の idle 証拠。
 		// 「busy 証拠より強くはしない」ことがファストパスを backbone にしない判断の実体。
 		{"自己申告だけでも idle 証拠（マーカーを持たない kind）",
-			reportSignals{SelfReported: true, SelfReportAt: "2026-07-29T12:00:00Z"},
+			reportSignals{SelfReported: true, SelfReportAt: "2026-07-29T12:00:00Z", SelfReportAged: true},
 			true, reportKindAnswerReady, "", false},
+		// 早呼び（申告してから最終回答を書き続ける）は静穏窓が明けるまで待つ。実測
+		// sannme2 では申告の 2 分 22 秒後に本物の回答が届き、その間 busy 証拠が全部
+		// 消えていた（思考ギャップ 142s > 鮮度 TTL 90s）。
+		{"申告直後は申告だけで完了にしない（早呼び）",
+			reportSignals{SelfReported: true, SelfReportAt: "2026-07-29T12:00:00Z"},
+			false, "", "", false},
 		// 中断（docs/47）はマーカーを一切見ない idle 証拠。claude は中断で Stop hook を
 		// 鳴らさないので、マーカー不在（誤ヒールで消えた実測 sp2qemx）でも報告できること、
 		// 分類がそのまま報告の reason になることを固定する。
