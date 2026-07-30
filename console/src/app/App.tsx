@@ -51,6 +51,8 @@ import { useUpdateCheck } from "../lib/useUpdateCheck.tsx";
 import { consumeSessionDeepLink } from "../lib/sessionDeepLink.ts";
 import { usePopoutMode } from "../lib/popoutMode.ts";
 import { takePendingPopout, takeStalePopoutLink } from "../features/panes/popout.ts";
+import type { PopoutDescriptor } from "../layout/popout.ts";
+import { confirmDirtyNavigation } from "../features/editor/dirtyRegistry.ts";
 import { PopoutTitleBar } from "../features/panes/PopoutTitleBar.tsx";
 import { toast } from "../ui/toast.ts";
 import { t } from "../lib/i18n/index.ts";
@@ -100,6 +102,11 @@ export function App() {
   // Pop-out tab (ペインの別タブ切り離し): "popout" renders minimal chrome below;
   // "full" is a normal console seeded with the popped pane (no branch needed).
   const popout = usePopoutMode();
+  // Pop-out seed descriptor (consumed once at boot) + the identityRev the layout
+  // was last loaded under — bookkeeping for the per-tenant sync effect and the
+  // identity-reload effect below.
+  const popoutSeedRef = useRef<PopoutDescriptor | null>(null);
+  const identityRevDoneRef = useRef(0);
 
   // Detect a newer deployed build and offer a one-tap, cache-busting reload.
   useUpdateCheck();
@@ -322,16 +329,41 @@ export function App() {
     void useNotificationStore.getState().refresh();
     // Pop-out first boot: seed the layout from the handed-off descriptor
     // instead of restoring the saved split. Handed over exactly once —
-    // reloads and tenant switches fall back to the normal load().
+    // reloads and tenant switches fall back to the normal load(). The descriptor
+    // is kept in a ref so the identity-reload effect below can re-seed the same
+    // pane under the re-scoped layout key.
     const popped = takePendingPopout();
-    if (popped) useLayoutStore.getState().initSinglePane(popped.content, popped.session, popped.wrap);
-    else useLayoutStore.getState().load(tenant);
+    if (popped) {
+      popoutSeedRef.current = popped;
+      useLayoutStore.getState().initSinglePane(popped.content, popped.session, popped.wrap);
+    } else {
+      useLayoutStore.getState().load(tenant);
+    }
+    // This run loaded under the CURRENT identity — mark its rev as handled so the
+    // identity-reload effect doesn't double-load right after boot.
+    identityRevDoneRef.current = useTenantStore.getState().identityRev;
     if (takeStalePopoutLink()) toast(t("popout.stale_link"), { kind: "info" });
     void useWorkspaceStore.getState().refresh();
     void useSessionsStore.getState().refresh();
-    // identityRev: a DELAYED whoami resolution (CP was down at boot) re-scopes the
-    // layout key via setUser — re-run load() under the user key so the shared-key
-    // layout is not persisted into it.
+  }, [booted, tenant]);
+
+  // Layout re-load ONLY — deliberately narrower than the per-tenant sync above.
+  // A DELAYED whoami resolution (CP transient 5xx at boot, a retry landed later)
+  // re-scoped the layout key via setUser, so the layout loaded under the shared
+  // no-user key must be re-read under the user key (otherwise it would be
+  // persisted into it). Everything else in the sync effect must NOT re-run here:
+  // disposeAllBrowsers() would kill live browser pages, restartPush()+reset()
+  // would drop unread notifications, and a pop-out tab (descriptor consumed at
+  // boot) would fall through to load() and lose its detached pane.
+  useEffect(() => {
+    if (!booted || identityRev === identityRevDoneRef.current) return;
+    identityRevDoneRef.current = identityRev;
+    void confirmDirtyNavigation("layout").then((proceed) => {
+      if (!proceed) return; // keep the shared-key layout rather than drop unsaved buffers
+      const popped = popoutSeedRef.current;
+      if (popped) useLayoutStore.getState().initSinglePane(popped.content, popped.session, popped.wrap);
+      else useLayoutStore.getState().load(tenant);
+    });
   }, [booted, tenant, identityRev]);
 
   // Desktop notifications on claude state arrivals — lives at the shell now that
