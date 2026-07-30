@@ -2815,8 +2815,15 @@ export const en: Record<keyof typeof ja, string> = {
   "usage.rtk_avg_pct": "Average savings",
   "usage.rtk_in_out": "Input → output",
   "usage.rtk_commands": "Commands run",
+  "usage.rtk_daily": "Daily",
+  "usage.rtk_weekly": "Weekly",
+  "usage.rtk_monthly": "Monthly",
+  "usage.rtk_saved": "Saved",
+  "usage.rtk_pct": "Savings %",
+  "usage.rtk_time": "Exec time",
+  "usage.rtk_time_avg": "{total} (avg {avg})",
   "usage.note_rtk_gain":
-    "Tokens rtk saved by compressing command output (sparkline: last {n} days; numbers: all-time totals). Measured inside the container, separately from the ledger above; what's counted depends on each agent's RTK setting (Settings > Agents).",
+    "Tokens rtk saved by compressing command output (headline numbers are all-time totals). Measured inside the container, separately from the ledger above; what's counted depends on each agent's RTK setting (Settings > Agents).",
 
   // === P5 セッション/メモ（BranchRename/SessionTitle/SsmLogin/MemoTidy ほか） ===
   "sx.branch_rename_failed": "Failed to rename the branch (network error)",

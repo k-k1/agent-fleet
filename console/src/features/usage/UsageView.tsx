@@ -26,9 +26,8 @@ import { fmtTok } from "../../lib/fmttok.ts";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
-import { Sparkline } from "../../ui/Sparkline.tsx";
 import { fetchRtkGain, fetchUsageSeries } from "./api.ts";
-import type { RtkGain, UsageAgg, UsageDim, UsageSeries } from "./api.ts";
+import type { RtkGain, RtkGainBucket, UsageAgg, UsageDim, UsageSeries } from "./api.ts";
 import { OTHER_KEY } from "./colors.ts";
 import {
   breakdownRows,
@@ -354,17 +353,52 @@ export function UsageView() {
   );
 }
 
-const RTK_HIST_N = 30; // sparkline shows ~the last month of daily savings
+// 粒度ごとの表示バケット数（rtk は全履歴を返すので末尾だけ描く）。
+const RTK_MODES = [
+  { mode: "daily", n: 30, key: "usage.rtk_daily" },
+  { mode: "weekly", n: 26, key: "usage.rtk_weekly" },
+  { mode: "monthly", n: 24, key: "usage.rtk_monthly" },
+] as const;
+type RtkMode = (typeof RTK_MODES)[number]["mode"];
+
+// rtk の日付は素の "YYYY-MM-DD" / "YYYY-MM"（タイムゾーン無し）。Date に文字列のまま
+// 渡すと UTC 深夜扱いになり、負オフセットのロケールで前日／前月にずれるので、ローカル
+// 日付として手で組む。
+const rtkDate = (s: string): Date => {
+  const [y, m, d] = s.split("-").map(Number);
+  return new Date(y || 1970, (m || 1) - 1, d || 1);
+};
+
+/** バケットの軸ラベル。long はツールチップ／表の行見出し用（月次は年も出す）。 */
+const rtkBucketLabel = (b: RtkGainBucket, mode: RtkMode, long = false): string => {
+  if (mode === "monthly")
+    return fmtDateTime(rtkDate(b.month || ""), long ? { year: "numeric", month: "short" } : { month: "short" });
+  const t = rtkDate((mode === "weekly" ? b.week_start : b.date) || "");
+  return fmtDateTime(t, { month: "numeric", day: "numeric" });
+};
+
+/** 実行時間の短い表示（ms→s→m→h）。トークンではないので fmtTok は使わない。 */
+const fmtDur = (ms: number): string => {
+  if (!isFinite(ms) || ms <= 0) return "—";
+  if (ms < 1000) return Math.round(ms) + "ms";
+  if (ms < 60_000) return (ms / 1000).toFixed(1) + "s";
+  if (ms < 3_600_000) return Math.round(ms / 60_000) + "m";
+  return (ms / 3_600_000).toFixed(1) + "h";
+};
 
 // RtkGainCard — rtk 効果（トークン節約）。台帳とは別系のコンテナ内計測（api.ts の
-// fetchRtkGain 参照）で、数値は全期間の累積なので上の期間プリセット／フィルタには
-// 連動しない（再読込ボタンだけ共有）。設定 > エージェントの RTK トグルの「結果」側 —
-// かつて設定タブに居たが、監視は設定ではないのでダッシュボードのここに一枚で置く。
+// fetchRtkGain 参照）で、ヘッドライン数値は全期間の累積。上の期間プリセット／フィルタ
+// には連動せず、代わりに rtk が持つ粒度（日次/週次/月次）を自前のセグメントで切り替える
+// （再読込ボタンだけ共有）。設定 > エージェントの RTK トグルの「結果」側 — かつて設定
+// タブに居たが、監視は設定ではないのでダッシュボードのここに一枚で置く。
 // rtk 不在・エラー・節約ゼロは丸ごと自己非表示（WsBar チップ時代からの約束）。
-// 節約は正の値なので、メーターはリソースの warn/crit ではなくアクセント色で塗る。
+// 節約は正の値・単一系列なので、リソースの warn/crit ではなくアクセント1色で塗り、
+// 凡例は置かない（タイトルが系列名）。値はツールチップと表ビューの両方で読める。
 function RtkGainCard({ reloadTick }: { reloadTick: number }) {
   const tr = useT();
   const [gain, setGain] = useState<RtkGain | null>(null);
+  const [mode, setMode] = useState<RtkMode>("daily");
+  const [tableView, setTableView] = useState(false);
   const load = useCallback(async (signal: AbortSignal): Promise<boolean> => {
     const r = await fetchRtkGain(signal);
     if (signal.aborted) return true;
@@ -378,28 +412,58 @@ function RtkGainCard({ reloadTick }: { reloadTick: number }) {
   const saved = s?.total_saved || 0;
   if (!s || saved <= 0) return null;
   const pct = Math.round(s.avg_savings_pct || 0);
-  const daily = (gain?.daily || []).slice(-RTK_HIST_N).map((d) => d.saved_tokens || 0);
+  // 古い Agent は daily しか返さない — 実際にデータのある粒度だけセグメントに出す。
+  const modes = RTK_MODES.filter((m) => (gain?.[m.mode] || []).length > 0);
+  const cur = modes.some((m) => m.mode === mode) ? mode : "daily";
+  const curN = RTK_MODES.find((m) => m.mode === cur)?.n || 30;
+  const buckets = (gain?.[cur] || []).slice(-curN);
+
   return (
     <section className="usage-card rtk-gain">
       <div className="uc-head">
         <h4>{tr("usage.rtk_gain_title")}</h4>
+        <div className="uc-head-actions">
+          {modes.length > 1 && (
+            <div className="uc-group" role="group" aria-label={tr("usage.rtk_gain_title")}>
+              {modes.map((m) => (
+                <button
+                  key={m.mode}
+                  type="button"
+                  className={"uc-seg" + (cur === m.mode ? " active" : "")}
+                  aria-pressed={cur === m.mode}
+                  onClick={() => setMode(m.mode)}
+                >
+                  {tr(m.key)}
+                </button>
+              ))}
+            </div>
+          )}
+          <button
+            type="button"
+            className={"uc-seg" + (tableView ? " active" : "")}
+            aria-pressed={tableView}
+            onClick={() => setTableView((v) => !v)}
+          >
+            <Icon name="table" /> {tr("usage.table_view")}
+          </button>
+        </div>
       </div>
       <div className="rtk-gain-head">
-        <Sparkline data={daily} width={80} height={30} />
         <div className="rtk-gain-headline">
           <b>{fmtTok(saved)}</b>
           <span className="muted">{tr("usage.rtk_cumulative")}</span>
         </div>
-      </div>
-      <div className="rtk-gain-meter">
-        <div className="wu-row-head">
-          <span className="muted">{tr("usage.rtk_avg_pct")}</span>
-          <span className="wu-pct">{pct}%</span>
+        <div className="rtk-gain-meter">
+          <div className="wu-row-head">
+            <span className="muted">{tr("usage.rtk_avg_pct")}</span>
+            <span className="wu-pct">{pct}%</span>
+          </div>
+          <div className="wu-bar">
+            <span className="wu-bar-fill" style={{ width: Math.min(100, pct) + "%" }} />
+          </div>
         </div>
-        <div className="wu-bar">
-          <span className="wu-bar-fill" style={{ width: Math.min(100, pct) + "%" }} />
-        </div>
       </div>
+      {tableView ? <RtkTable buckets={buckets} mode={cur} /> : <RtkChart buckets={buckets} mode={cur} />}
       <div className="rtk-stats">
         <div className="rtk-stat">
           <span className="muted">{tr("usage.rtk_in_out")}</span>
@@ -411,9 +475,131 @@ function RtkGainCard({ reloadTick }: { reloadTick: number }) {
           <span className="muted">{tr("usage.rtk_commands")}</span>
           <b>{fmtNum(s.total_commands || 0)}</b>
         </div>
+        <div className="rtk-stat">
+          <span className="muted">{tr("usage.rtk_time")}</span>
+          <b>{tr("usage.rtk_time_avg", { total: fmtDur(s.total_time_ms || 0), avg: fmtDur(s.avg_time_ms || 0) })}</b>
+        </div>
       </div>
-      <p className="muted uc-sub rtk-note">{tr("usage.note_rtk_gain", { n: RTK_HIST_N })}</p>
+      <p className="muted uc-sub rtk-note">{tr("usage.note_rtk_gain")}</p>
     </section>
+  );
+}
+
+// StackChart と同じ .ux-* の絵柄・ホバー・ラベル間引きを、単一系列（節約トークン）用に
+// 薄く焼き直したもの。共有部品化しないのは、あちらのツールチップが「系列の内訳」で
+// こちらは「同一バケットの別指標（節約率・コマンド数）」だから — 形が違う。
+function RtkChart({ buckets, mode }: { buckets: RtkGainBucket[]; mode: RtkMode }) {
+  const tr = useT();
+  const [hover, setHover] = useState<number | null>(null);
+  const top = niceMax(Math.max(...buckets.map((b) => b.saved_tokens || 0), 0));
+  const accent = "var(--topbar-accent, var(--accent))";
+
+  const plotRef = useRef<HTMLDivElement>(null);
+  const [plotW, setPlotW] = useState(0);
+  useEffect(() => {
+    const el = plotRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((entries) => setPlotW(entries[0].contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const fitLabels = Math.max(1, Math.floor((plotW || 620) / (mode === "monthly" ? 52 : 40)));
+  const stride = Math.max(1, Math.ceil(buckets.length / fitLabels));
+
+  return (
+    <div className="usage-chart">
+      <div className="ux-yaxis" aria-hidden="true">
+        <span>{fmtTok(top)}</span>
+        <span>{fmtTok(top / 2)}</span>
+        <span>0</span>
+      </div>
+      <div className="ux-plot" ref={plotRef}>
+        <div className="ux-grid" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </div>
+        <div className="ux-cols">
+          {buckets.map((b, i) => (
+            <button
+              key={(b.date || b.week_start || b.month || "") + i}
+              type="button"
+              className={"ux-col" + (hover === i ? " on" : "")}
+              onMouseEnter={() => setHover(i)}
+              onMouseLeave={() => setHover((h) => (h === i ? null : h))}
+              onFocus={() => setHover(i)}
+              onBlur={() => setHover((h) => (h === i ? null : h))}
+              aria-label={`${rtkBucketLabel(b, mode, true)} ${fmtTok(b.saved_tokens || 0)}`}
+            >
+              <span className="ux-stack">
+                <span
+                  className="ux-seg topmost"
+                  style={{
+                    height: `calc(${(((b.saved_tokens || 0) / top) * 100).toFixed(3)}% - 2px)`,
+                    background: accent,
+                  }}
+                />
+              </span>
+              <span className="ux-tick muted">{i % stride === 0 ? rtkBucketLabel(b, mode) : " "}</span>
+            </button>
+          ))}
+        </div>
+        {hover != null && buckets[hover] && (
+          <div
+            className={"ux-tip" + (hover > buckets.length / 2 ? " right" : "")}
+            style={{ left: `${((hover + 0.5) / Math.max(1, buckets.length)) * 100}%` }}
+            role="status"
+          >
+            <div className="uxt-head">{rtkBucketLabel(buckets[hover], mode, true)}</div>
+            <div className="uxt-row">
+              <span className="uxt-key" style={{ background: accent }} />
+              <span className="uxt-val">{fmtTok(buckets[hover].saved_tokens || 0)}</span>
+              <span className="uxt-name muted">{tr("usage.rtk_saved")}</span>
+            </div>
+            <div className="uxt-row">
+              <span className="uxt-key empty" />
+              <span className="uxt-val">{Math.round(buckets[hover].savings_pct || 0)}%</span>
+              <span className="uxt-name muted">{tr("usage.rtk_pct")}</span>
+            </div>
+            <div className="uxt-row">
+              <span className="uxt-key empty" />
+              <span className="uxt-val">{fmtNum(buckets[hover].commands || 0)}</span>
+              <span className="uxt-name muted">{tr("usage.rtk_commands")}</span>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function RtkTable({ buckets, mode }: { buckets: RtkGainBucket[]; mode: RtkMode }) {
+  const tr = useT();
+  return (
+    <div className="usage-table-wrap">
+      <table className="usage-table">
+        <thead>
+          <tr>
+            <th>{tr("usage.col_bucket")}</th>
+            <th>{tr("usage.rtk_saved")}</th>
+            <th>{tr("usage.rtk_pct")}</th>
+            <th>{tr("usage.rtk_commands")}</th>
+            <th>{tr("usage.rtk_time")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {buckets.map((b, i) => (
+            <tr key={(b.date || b.week_start || b.month || "") + i}>
+              <th scope="row">{rtkBucketLabel(b, mode, true)}</th>
+              <td className="num strong">{fmtTok(b.saved_tokens || 0)}</td>
+              <td className="num">{Math.round(b.savings_pct || 0)}%</td>
+              <td className="num">{fmtNum(b.commands || 0)}</td>
+              <td className="num">{fmtDur(b.total_time_ms || 0)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
