@@ -83,6 +83,25 @@ func (p modelChatProv) send(_ context.Context, c *chatConversation, _ string) (s
 
 // TestTurnModelRecordedPerMessage: the assistant message keeps the model of the turn
 // that produced it, so a later model/backend change cannot rewrite history.
+// TestChatModelOverride pins the per-call override (自動ターン専用モデル): 立って
+// いる間だけ会話のモデルより優先され、倒せば元に戻る。unexported なので永続化されない
+// ことは型が保証する（JSON タグ無しの小文字フィールド）。
+func TestChatModelOverride(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	c := &chatConversation{Model: "sonnet"}
+	if got := chatModel(c); got != "sonnet" {
+		t.Fatalf("base model = %q", got)
+	}
+	c.modelOverride = "haiku"
+	if got := chatModel(c); got != "haiku" {
+		t.Fatalf("override = %q", got)
+	}
+	c.modelOverride = ""
+	if got := chatModel(c); got != "sonnet" {
+		t.Fatalf("cleared override = %q", got)
+	}
+}
+
 func TestTurnModelRecordedPerMessage(t *testing.T) {
 	withTempHome(t)
 	stubChatProvider(t, session.KindClaude, modelChatProv{reply: "了解", model: "claude-sonnet-5-20260501"})

@@ -151,8 +151,20 @@ func chatAutoCompactThreshold() float64 {
 	return chatCtxAutoCompactPct
 }
 
+// chatCtxAutoCompactTokensMin is the floor for the user-configurable absolute
+// threshold: これ未満だと要約ターン自体のコストと圧縮の頻発で本末転倒になる。
+const chatCtxAutoCompactTokensMin = 20_000
+
 // chatAutoCompactTokenThreshold returns the effective absolute-token threshold.
+// 優先順: 設定（設定 > アシスタント「自動圧縮の閾値」・ui-prefs
+// assistantAutoCompactTokens）→ 環境変数（デプロイ/E2E 用）→ 既定。
 func chatAutoCompactTokenThreshold() int {
+	if v, ok := readUIPrefs()["assistantAutoCompactTokens"].(float64); ok && v > 0 {
+		if n := int(v); n >= chatCtxAutoCompactTokensMin {
+			return n
+		}
+		return chatCtxAutoCompactTokensMin
+	}
 	if v := os.Getenv("AF_CHAT_AUTOCOMPACT_TOKENS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			return n

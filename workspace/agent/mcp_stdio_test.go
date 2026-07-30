@@ -111,12 +111,75 @@ func TestMCPGetSessionOutputRequestsTailClip(t *testing.T) {
 		t.Fatalf("MCP response should pass the body through: %s", resp)
 	}
 
-	// since 無しでも tail は付く。
+	// since 無しでも tail は付く（会話ID無し = カーソル記憶は効かない）。
 	args, _ = json.Marshal(map[string]any{"name": "slot01"})
 	params, _ = json.Marshal(map[string]any{"name": "get_session_output", "arguments": json.RawMessage(args)})
 	_ = mcpStdioCall(mcpReq{ID: json.RawMessage(`2`), Params: params})
 	if want := "/sessions/slot01/output?tail=32768"; got != want {
 		t.Fatalf("agent path = %q, want %q", got, want)
+	}
+}
+
+// TestMCPGetSessionOutputCursorMemory pins the since 既定化: 会話別に前回 cursor を
+// 記憶し、省略時はその続きから読む。明示 since（0 含む）が最優先。続き読みで新規
+// 出力ゼロのときは、その意味を本文で伝える。
+func TestMCPGetSessionOutputCursorMemory(t *testing.T) {
+	withTempHome(t)
+	var got string
+	next := `{"output":"最初の出力","cursor":5,"clipped":false}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.String()
+		_, _ = w.Write([]byte(next))
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	t.Setenv("AGENT_ADDR", u.Host)
+	oldConv := mcpConvID
+	mcpConvID = "conv-cursor-test"
+	t.Cleanup(func() { mcpConvID = oldConv })
+
+	call := func(id string, args map[string]any) string {
+		t.Helper()
+		raw, _ := json.Marshal(args)
+		params, _ := json.Marshal(map[string]any{"name": "get_session_output", "arguments": json.RawMessage(raw)})
+		return string(mcpStdioCall(mcpReq{ID: json.RawMessage(id), Params: params}))
+	}
+
+	// 1回目: 記憶なし → since は付かない。返却 cursor=5 が記憶される。
+	call(`1`, map[string]any{"name": "slot01"})
+	if want := "/sessions/slot01/output?tail=32768"; got != want {
+		t.Fatalf("first call path = %q, want %q", got, want)
+	}
+
+	// 2回目: since 省略 → 記憶した 5 の続きから。新規出力ゼロは説明文に差し替わる。
+	next = `{"output":"","cursor":5,"clipped":false}`
+	resp := call(`2`, map[string]any{"name": "slot01"})
+	if want := "/sessions/slot01/output?tail=32768&since=5"; got != want {
+		t.Fatalf("second call path = %q, want %q", got, want)
+	}
+	if !strings.Contains(resp, "新しい出力はありません") || !strings.Contains(resp, "since=0") {
+		t.Fatalf("empty-diff response should explain itself: %s", resp)
+	}
+
+	// 3回目: since=0 の明示は記憶より優先（先頭から読み直し）。
+	next = `{"output":"全文","cursor":6,"clipped":false}`
+	resp = call(`3`, map[string]any{"name": "slot01", "since": 0})
+	if want := "/sessions/slot01/output?tail=32768&since=0"; got != want {
+		t.Fatalf("explicit since path = %q, want %q", got, want)
+	}
+	if strings.Contains(resp, "新しい出力はありません") {
+		t.Fatalf("explicit since must not be rewritten: %s", resp)
+	}
+
+	// 4回目: 3回目の cursor=6 が新しい既定になっている。別セッション名は独立。
+	next = `{"output":"x","cursor":9,"clipped":false}`
+	call(`4`, map[string]any{"name": "slot01"})
+	if want := "/sessions/slot01/output?tail=32768&since=6"; got != want {
+		t.Fatalf("fourth call path = %q, want %q", got, want)
+	}
+	call(`5`, map[string]any{"name": "slot02"})
+	if want := "/sessions/slot02/output?tail=32768"; got != want {
+		t.Fatalf("other session path = %q, want %q", got, want)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func writeUIPrefs(t *testing.T, body string) {
@@ -49,6 +50,73 @@ func TestAssistantAgentOrderPref(t *testing.T) {
 				t.Errorf("order = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestAssistantTokenSavingPrefs pins the token-saving knobs (設定 > アシスタント):
+// 既定値・設定値・クランプ・「設定が env より優先」。
+func TestAssistantTokenSavingPrefs(t *testing.T) {
+	// 未設定 → 既定。
+	writeUIPrefs(t, `{}`)
+	if got := chatAutoTurnModel(); got != "" {
+		t.Fatalf("auto-turn model default = %q", got)
+	}
+	if chatQuietCompletionEnabled() {
+		t.Fatal("quiet completion must default OFF")
+	}
+	if got := chatAutoCompactTokenThreshold(); got != chatCtxAutoCompactTokens {
+		t.Fatalf("compact tokens default = %d", got)
+	}
+	if got := chatAutoTurnDelay(); got != chatAutoTurnDelayDefault {
+		t.Fatalf("auto-turn delay default = %v", got)
+	}
+	if got := mcpSessionOutputTail(); got != mcpSessionOutputTailBytes {
+		t.Fatalf("output tail default = %d", got)
+	}
+
+	// 設定値が効く（モデルは trim される）。
+	writeUIPrefs(t, `{"assistantAutoTurnModel":" haiku ","assistantQuietCompletion":true,
+		"assistantAutoCompactTokens":80000,"assistantAutoTurnDelay":120,"assistantOutputTailKiB":64}`)
+	if got := chatAutoTurnModel(); got != "haiku" {
+		t.Fatalf("auto-turn model = %q", got)
+	}
+	if !chatQuietCompletionEnabled() {
+		t.Fatal("quiet completion should be ON")
+	}
+	if got := chatAutoCompactTokenThreshold(); got != 80000 {
+		t.Fatalf("compact tokens = %d", got)
+	}
+	if got := chatAutoTurnDelay(); got != 120*time.Second {
+		t.Fatalf("auto-turn delay = %v", got)
+	}
+	if got := mcpSessionOutputTail(); got != 64<<10 {
+		t.Fatalf("output tail = %d", got)
+	}
+
+	// 設定は env（デプロイ/E2E 用）より優先。
+	t.Setenv("AF_CHAT_AUTOCOMPACT_TOKENS", "999999")
+	t.Setenv("AF_CHAT_AUTOTURN_DELAY", "1")
+	if got := chatAutoCompactTokenThreshold(); got != 80000 {
+		t.Fatalf("pref should beat env: %d", got)
+	}
+	if got := chatAutoTurnDelay(); got != 120*time.Second {
+		t.Fatalf("pref should beat env: %v", got)
+	}
+
+	// クランプ: 圧縮閾値の下限・束ね時間の上限・出力上限の上下限。
+	writeUIPrefs(t, `{"assistantAutoCompactTokens":5000,"assistantAutoTurnDelay":100000,"assistantOutputTailKiB":100000}`)
+	if got := chatAutoCompactTokenThreshold(); got != chatCtxAutoCompactTokensMin {
+		t.Fatalf("compact tokens floor = %d", got)
+	}
+	if got := chatAutoTurnDelay(); got != chatAutoTurnDelayMax {
+		t.Fatalf("auto-turn delay cap = %v", got)
+	}
+	if got := mcpSessionOutputTail(); got != 1<<20 {
+		t.Fatalf("output tail cap = %d", got)
+	}
+	writeUIPrefs(t, `{"assistantOutputTailKiB":1}`)
+	if got := mcpSessionOutputTail(); got != 4<<10 {
+		t.Fatalf("output tail floor = %d", got)
 	}
 }
 

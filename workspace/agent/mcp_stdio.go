@@ -27,8 +27,11 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -62,7 +65,8 @@ const (
 // flattened assistant text (/output?tail= — session_io.go): 約32KiB ≒ 数千〜1万
 // トークン。ツール結果はオペレーター会話のコンテキストに残り続けるため、ここの
 // 上限が以降の全ターンの単価に複利で効く（実測 2026-07: 上限なし時代のオペレーター
-// 会話は 200〜400k トークンを常時引きずった）。
+// 会話は 200〜400k トークンを常時引きずった）。設定（設定 > アシスタント）で変更可
+// — 実効値は mcpSessionOutputTail()。
 const mcpSessionOutputTailBytes = 32 << 10
 
 // mcpWriteEnabled gates the write tools. Set once from the `--write` arg before the
@@ -328,7 +332,7 @@ var mcpStdioTools = []map[string]any{
 	},
 	{
 		"name":        "get_session_output",
-		"description": "指定セッションの端末出力（任意で since カーソル以降のみ）を返す。あるセッションの最近の出力/結果を要約・確認する時に呼ぶ。長い出力は末尾のみ返す（clipped=true・先頭は省略される — 直近の結果を読むにはそれで足りる。継続的に追う場合は返却された cursor を次回の since に渡す）。",
+		"description": "指定セッションの端末出力を返す。あるセッションの最近の出力/結果を要約・確認する時に呼ぶ。長い出力は末尾のみ返す（clipped=true・先頭は省略される — 直近の結果を読むにはそれで足りる）。since を省略すると、この会話で前回取得した続き（差分）から返す（同じ内容を二度読まない）。過去の出力を読み直したい時だけ since を明示する（例: since=0 で先頭から）。",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -781,8 +785,10 @@ func mcpStdioCall(req mcpReq) []byte {
 		return mcpToolErr(req.ID, "このサーバーは af_report のみ提供します: "+p.Name)
 	}
 	var a struct {
-		Name      string `json:"name"`
-		Since     int64  `json:"since"`
+		Name string `json:"name"`
+		// Since はポインタ: 「since:0 の明示（先頭から読み直す）」と「省略（前回
+		// カーソルの続きから — mcpSessionOutput）」を区別する必要がある。
+		Since *int64 `json:"since"`
 		Prompt    string `json:"prompt"`
 		Assistant string `json:"assistant"`
 		// create_session args
@@ -1311,13 +1317,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		if a.Name == "" {
 			return mcpToolErr(req.ID, "name（セッション名）が必要です")
 		}
-		// tail は常時指定（上書き口なし）: ツール結果はオペレーター会話のコンテキスト
-		// に**永続的に**蓄積するので、上限なしの全文を1回返すだけで以降の全ターンが
-		// そのぶん高くつく。直近の結果を読む用途には末尾で足りる（長物は Console で）。
-		path = "/sessions/" + url.PathEscape(a.Name) + "/output?tail=" + strconv.Itoa(mcpSessionOutputTailBytes)
-		if a.Since > 0 {
-			path += fmt.Sprintf("&since=%d", a.Since)
-		}
+		return mcpSessionOutput(req.ID, a.Name, a.Since)
 	case "get_session_usage":
 		path = "/sessions/usage"
 		if a.Name != "" {
@@ -1342,6 +1342,81 @@ func mcpStdioCall(req mcpReq) []byte {
 		return mcpToolErr(req.ID, "Agent への問い合わせに失敗しました: "+err.Error())
 	}
 	return mcpResult(req.ID, map[string]any{
+		"content": []any{map[string]any{"type": "text", "text": body}},
+	})
+}
+
+// outputCursors remembers, per conversation, the last /output cursor returned for
+// each session（ファイル名 = 会話ID・中身 = セッション名→cursor）。since 省略時の
+// 既定にする: オペレーターは同じセッションを報告のたびに読み直すので、毎回 32KiB の
+// 末尾を取り直すとその全部がコンテキストに積み直される — 差分だけ返せば以降の
+// ターンが軽くなる。mcp-stdio はターン毎の短命プロセスなのでメモリではなくファイル
+// （会話削除時に chat.go が消す）。
+var outputCursors = fstore.JSON[map[string]int64](paths.AgentConfigDir, "mcp-output-cursor", ".json")
+
+// mcpSessionOutputTail is the effective get_session_output tail cap（設定 >
+// アシスタント「セッション出力の取得上限」・ui-prefs assistantOutputTailKiB → 既定
+// mcpSessionOutputTailBytes）。
+func mcpSessionOutputTail() int {
+	if v, ok := readUIPrefs()["assistantOutputTailKiB"].(float64); ok && v > 0 {
+		n := int(v) << 10
+		if n < 4<<10 {
+			n = 4 << 10
+		}
+		if n > 1<<20 {
+			n = 1 << 20
+		}
+		return n
+	}
+	return mcpSessionOutputTailBytes
+}
+
+// mcpSessionOutput handles get_session_output: tail 上限を常時指定し、since 省略時は
+// 会話別に記憶した前回カーソルの続きから返す（明示 since — 0 を含む — が最優先）。
+func mcpSessionOutput(id json.RawMessage, name string, since *int64) []byte {
+	eff := int64(-1)
+	fromStore := false
+	if since != nil {
+		eff = *since
+	} else if mcpConvID != "" {
+		if cur, ok := outputCursors.Read(mcpConvID); ok {
+			if v, ok2 := cur[name]; ok2 {
+				eff, fromStore = v, true
+			}
+		}
+	}
+	path := "/sessions/" + url.PathEscape(name) + "/output?tail=" + strconv.Itoa(mcpSessionOutputTail())
+	if eff >= 0 {
+		path += fmt.Sprintf("&since=%d", eff)
+	}
+	body, err := agentGET(path)
+	if err != nil {
+		return mcpToolErr(id, "Agent への問い合わせに失敗しました: "+err.Error())
+	}
+	var resp map[string]any
+	if json.Unmarshal([]byte(body), &resp) == nil {
+		// 返ってきた cursor を次回の既定 since として会話別に記憶する。
+		if cursor, ok := resp["cursor"].(float64); ok && mcpConvID != "" {
+			cur, _ := outputCursors.Read(mcpConvID)
+			if cur == nil {
+				cur = map[string]int64{}
+			}
+			if cur[name] != int64(cursor) {
+				cur[name] = int64(cursor)
+				_ = outputCursors.Write(mcpConvID, cur)
+			}
+		}
+		// 既定の続き読みで新規出力ゼロ — 空文字のまま返すと「何も出力していない
+		// セッション」と誤読されるので、意味を本文で伝える。
+		if s, _ := resp["output"].(string); fromStore && strings.TrimSpace(s) == "" {
+			resp["output"] = fmt.Sprintf(
+				"（前回取得（since=%d）以降の新しい出力はありません。過去の出力を読み直す場合は since を明示してください（例: since=0）。）", eff)
+			if b, err := json.Marshal(resp); err == nil {
+				body = string(b)
+			}
+		}
+	}
+	return mcpResult(id, map[string]any{
 		"content": []any{map[string]any{"type": "text", "text": body}},
 	})
 }

@@ -29,12 +29,24 @@ import (
 
 // chatAutoTurnDelayDefault is the bundling window. リコンサイラの settle は
 // tick(15s)×2 のデバウンスを持つため、並行セッションの完了は数十秒の幅に散って
-// 届く — 窓はそれを1ターンに畳める長さにする。AF_CHAT_AUTOTURN_DELAY（秒）で
-// 上書き可、0 で即時（従来挙動）。
+// 届く — 窓はそれを1ターンに畳める長さにする。設定（設定 > アシスタント「自動応答の
+// 束ね時間」・ui-prefs assistantAutoTurnDelay 秒）または AF_CHAT_AUTOTURN_DELAY（秒）
+// で上書き可、0 で即時（従来挙動）。
 const chatAutoTurnDelayDefault = 60 * time.Second
 
-// chatAutoTurnDelay returns the effective bundling window.
+// chatAutoTurnDelayMax caps the configurable window: これ以上遅らせても束ね効果は
+// 頭打ちで、報告への追撃だけが遅くなる。
+const chatAutoTurnDelayMax = 10 * time.Minute
+
+// chatAutoTurnDelay returns the effective bundling window（設定 → env → 既定）。
 func chatAutoTurnDelay() time.Duration {
+	if v, ok := readUIPrefs()["assistantAutoTurnDelay"].(float64); ok && v >= 0 {
+		d := time.Duration(v) * time.Second
+		if d > chatAutoTurnDelayMax {
+			return chatAutoTurnDelayMax
+		}
+		return d
+	}
 	if v := os.Getenv("AF_CHAT_AUTOTURN_DELAY"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			return time.Duration(n) * time.Second

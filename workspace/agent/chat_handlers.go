@@ -306,6 +306,8 @@ func handleChatDelete(w http.ResponseWriter, r *http.Request) {
 	// the attached servers' credentials, so it goes with the thread rather than
 	// lingering until the next container rebuild.
 	removeChatMCPConfig(id)
+	// get_session_output の会話別カーソル（mcp_stdio.go outputCursors）も一緒に落とす。
+	outputCursors.Remove(id)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
