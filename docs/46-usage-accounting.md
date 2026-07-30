@@ -48,7 +48,7 @@ $ claude -p --no-session-persistence --output-format json --dangerously-skip-per
 | `branch.suggest` | manual | `session_title.go:417` | ブランチ名提案 |
 | `suggest.session` | manual | `session_suggest_reply.go:113` | ミラーの ✨ 返信候補 |
 | `suggest.chat` | manual | `chat_suggest_reply.go:45` | チャットの ✨ 返信候補 |
-| `suggest.edit` | manual | `fs_suggest_edit.go` | エディタの ✨ AI変更提案（docs/44 Phase 4） |
+| `suggest.edit` | manual | `fs_suggest_edit.go` | エディタの ✨ AI変更提案（docs/44 = [44-markdown-code-editor.md](44-markdown-code-editor.md) Phase 4） |
 
 `assistant.chat` は `SeedVerb`（`translate` / `summarize`）を **サブ次元** として持つ（Files 由来の
 翻訳/要約チャットを独立カテゴリとして見たいので、feature を増やさず verb で割る）。
@@ -152,6 +152,7 @@ title=「使用量グラフの台帳設計」/ branch=`usage-graph` / 返信候�
   "ref": "s7in3bh",               // セッション名 or 会話 id（無ければ空）
   "verb": "",                     // assistant.chat のサブ次元（translate|summarize）
   "sidechain": false,             // feature=session のサブ次元
+  "idx": 12,                      // feature=session の論理ターン通し番号（1始まり）。(ref, idx) が冪等キー（§7-4）
   "in": 9, "out": 533, "cread": 6002, "ccreate": 10015,
   "spend": 10557,                 // = in + ccreate + out（session_usage.go の既存定義を踏襲）
   "cost_usd": 0.0233,             // 実測が取れた時だけ（claude）。無ければ省略
@@ -222,8 +223,10 @@ user でもない、を守る）。recreate は元の出自を引き継ぎ、han
 
 **遡及（best-effort）**: 既存セッションでも、オペレーター注入台帳（`session_injections.go` の
 `operatorInjections`）に最初のユーザーターンと一致する記録があれば `operator` と推定できる。
-推定値は `origin_src:"inferred"` を立てて実測と区別する。docs/44（オペレーター↔セッションの
-ディスパッチ台帳）が入れば、そちらが一次ソースになる。
+推定値は `origin_src:"inferred"` を立てて実測と区別する。docs/44
+（[44-operator-interaction-graph.md](44-operator-interaction-graph.md) — オペレーター↔セッションの
+ディスパッチ台帳。番号 44 は [44-markdown-code-editor.md](44-markdown-code-editor.md) と重複）が入れば、
+そちらが一次ソースになる。
 
 **補助呼び出しにも伝播させる**: あるセッションのタイトル提案・返信サジェストは、そのセッションの
 `origin` を引き継いで記録する（`ref` から解決して**行に焼き込む**。セッション削除後も集計が壊れない
@@ -604,7 +607,7 @@ watermark（`state.json`）は別ファイルで、原子的には書けない**
 **表示の誤読（P2/P3）**
 
 - **色スロットの無い feature を見えなくしない**（`colors.ts` / `UsageView.tsx`）。enum 13 個
-  （凍結12＋docs/44 Phase 4 の `suggest.edit`）に対しスロットは8つで、`assistant.ask` /
+  （凍結12＋docs/44 = [44-markdown-code-editor.md](44-markdown-code-editor.md) Phase 4 の `suggest.edit`）に対しスロットは8つで、`assistant.ask` /
   `title.chat` / `branch.suggest` / `suggest.chat` / `suggest.edit` は必ず
   グレーの「その他」へ入る（9色目を作らない規約）。**畳みが1つでもあれば凡例を必ず出す**
   （系列が1本でも）／ツールチップに畳まれた実キーを並べる／**「その他」クリックで畳まれた

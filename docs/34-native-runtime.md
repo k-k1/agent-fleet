@@ -75,7 +75,7 @@ opencode plugin seed、toolchains 適用など）は**行われない**。ホス
 |---|---|---|
 | WSL ユーザーの実 `~` | `/home/<user>` | CP プロセス自身。ワークスペースは書き込まない（実ホームのドットファイルは荒れない）。ただしデータ置き場自体は既定でこの下（`WS_DATA=~/.local/share/agent-fleet`） |
 | ワークスペースの**仮想 HOME** | `~/.local/share/agent-fleet/<key>/home`（default テナント・単一ユーザーなら `<key>`=`dev`） | workspace-agent と全セッション（claude/git/tmux/npm…）が `HOME=` ここで動く。`~/repos`・`~/.gitconfig`・`~/.ssh`・`~/.config/agent-fleet`（接続情報）・claude の `~/.local/bin` 自前インストールが全部この下に閉じる。docker 版が `/home/dev` へ bind-mount するのと同一レイアウト＝docker⇄native でデータ互換 |
-| Claude 状態の別置き | `~/.local/share/agent-fleet/<key>/claude-config`（`CLAUDE_CONFIG_DIR`） | 仮想 HOME の**外**に置く理由はコンテナ版と同じ（docs/17 P3-5 段2）: Console ファイルブラウザ（browse root=仮想 HOME）から平文 Claude 状態を見せない |
+| Claude 状態の別置き | `~/.local/share/agent-fleet/<key>/claude-config`（`CLAUDE_CONFIG_DIR`） | 仮想 HOME の**外**に置く理由はコンテナ版と同じ（[history/p3-5-member-console.md](history/p3-5-member-console.md) 段2）: Console ファイルブラウザ（browse root=仮想 HOME）から平文 Claude 状態を見せない |
 
 **Windows の Explorer から参照できる**。WSL2 のファイルシステムは
 `\\wsl.localhost\<ディストロ名>\`（旧 `\\wsl$\`）で公開されているので、

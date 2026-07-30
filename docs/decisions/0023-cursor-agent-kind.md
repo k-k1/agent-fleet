@@ -31,9 +31,16 @@ Cursor CLI（`cursor-agent`/`agent`、Anysphere）は `agent acp`（ACP = JSON-R
 3. **read 正本は公式契約面のみ**: hooks（stop/beforeSubmitPrompt → status seam）と
    JSONL 転写（`transcript_path`）。セッション実体 `~/.cursor/chats/**/store.db`
    （SQLite blob・非公開形式）は**読まない** — opencode ストア契約変更で false-idle を
-   踏んだ教訓を適用。TUI 文字列にも依存しない。
+   踏んだ教訓を適用。TUI 文字列にも依存しない。**Track A で変更**: hooks.json 配線は
+   v1 では**張らず**、TUI 状態は JSONL 転写末尾の分類のみで取る（グローバル
+   `~/.cursor/hooks.json` の chatId→slot-sid キー付け問題を構造的に回避 —
+   docs/40 §Track A の実測反映）。
 4. **chat ID は `agent create-chat` で AF 側から事前採番**し sid-store に保存
    （copilot `--session-id` と同型 — agy の resume ID 捕獲問題を構造的に回避）。
+   **Track A で変更（`create-chat` 事前採番は不採用）**: 実測で未知の valid v4 UUID を
+   `--resume` に渡すとその ID で新規チャットが作られるため、**AF 自己採番の v4 UUID を
+   `--resume` に渡す**方式に変更（copilot `--session-id` と完全同型・起動時の追加 exec が
+   消える — docs/40 §Track A の実測反映）。
 5. **認証は専用フロー型**: `NO_OPEN_BROWSER=1 agent login`（URL 抽出）。資格情報の保存先は
    `~/.config/cursor/auth.json`（プローブで特定）で `fs.go` denylist（`.config/cursor`＋
    `.cursor`）保護。**Track C で v1 は login-only に確定**（当初併設予定だった
