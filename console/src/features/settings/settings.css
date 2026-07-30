@@ -978,7 +978,7 @@
 }
 
 /* Internal repo read-only browser modal (P3). */
-.modal.ig-browser {
+.ui-modal.ig-browser {
   width: min(920px, 94vw);
   max-width: 94vw;
 }

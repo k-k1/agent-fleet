@@ -53,13 +53,13 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
   // Build the patch of only-changed fields (undefined = unchanged → omitted from the body).
   const patch = useMemo<ScheduleEditable>(() => {
     const p: ScheduleEditable = {};
-    if (specKind !== (s.spec_kind || "")) p.spec_kind = specKind;
+    if (specKind !== (s.spec_kind || "cron")) p.spec_kind = specKind;
     if (spec !== (s.spec || "")) p.spec = spec;
     if (tz !== (s.tz || "")) p.tz = tz;
     if (label !== (s.spec_label || "")) p.spec_label = label;
     if (prompt !== (s.prompt || "")) p.prompt = prompt;
-    if (wake !== (s.wake_policy || "")) p.wake_policy = wake;
-    if (agent !== (s.agent_kind || "")) p.agent_kind = agent;
+    if (wake !== (s.wake_policy || "wake")) p.wake_policy = wake;
+    if (agent !== (s.agent_kind || "claude")) p.agent_kind = agent;
     if (model !== (s.model || "")) p.model = model;
     return p;
   }, [s, specKind, spec, tz, label, prompt, wake, agent, model]);

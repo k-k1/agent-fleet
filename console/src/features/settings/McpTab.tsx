@@ -80,7 +80,7 @@ export function McpTab() {
       api("api/mcp-servers")
         .then((d) => {
           if (d && !d.error) {
-            setReg({ servers: Array.isArray(d.servers) ? d.servers : [], ...d });
+            setReg({ ...d, servers: Array.isArray(d.servers) ? d.servers : [] });
             return;
           }
           if (left > 0 && isTransientErr(d)) setTimeout(() => attempt(left - 1), 1200);
@@ -154,7 +154,7 @@ export function McpTab() {
         toast(tr("mcp.tenant_refresh_failed", { msg: errText(d.error) }));
         return;
       }
-      setReg({ servers: Array.isArray(d.servers) ? d.servers : [], ...d });
+      setReg({ ...d, servers: Array.isArray(d.servers) ? d.servers : [] });
       // Rows the CP could not decrypt, and rows this agent refused, are both absent from
       // the list. Saying so beats letting the member conclude the admin never added them.
       const unreadable = Number(d.fetch?.unreadable) || 0;
