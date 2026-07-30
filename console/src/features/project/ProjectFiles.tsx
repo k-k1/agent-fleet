@@ -66,6 +66,12 @@ const soleChildDir = (entries: Entry[] | undefined): Entry | null =>
 const fsList = (path: string) =>
   api(`api/fs/tree?path=${encodeURIComponent(path)}`).catch(() => ({ entries: [] }));
 
+// Shared empty row list. It must be ONE stable reference, not a fresh literal per
+// render: displayRows below falls back to it while a search is in flight, and it
+// feeds the deps of the sticky-lineage layout effect. A new [] each render made
+// those deps change every render — see the comment at that effect.
+const NO_ROWS: Row[] = [];
+
 interface ProjectFilesProps {
   /** The tree's home-relative root folder ("" = home itself, the rail default). */
   root: string;
@@ -293,7 +299,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
 
   // The rows actually shown / navigated: flat search hits in search mode, else
   // the (tree-)filtered rows.
-  const displayRows = searchMode ? searchRows ?? [] : filteredRows;
+  const displayRows = searchMode ? searchRows ?? NO_ROWS : filteredRows;
   const navigationRows = useMemo(
     () => (searchMode && groupByRepo ? displayRows.filter((r) => !collapsedRepos.has(repoOf(r.path))) : displayRows),
     [searchMode, groupByRepo, displayRows, collapsedRepos],
@@ -317,7 +323,14 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
     const tree = treeRef.current;
     const scroller = wrap?.closest<HTMLElement>(".app-rail-scroll");
     if (!wrap || !tree || !scroller || searchMode) {
-      setSticky({ rows: [], top: 0 });
+      // Bail out when already cleared, like the two setSticky calls below. An
+      // unconditional `setSticky({rows:[],top:0})` stores a NEW object every run,
+      // so it re-renders even when nothing changed — and entering search mode
+      // re-ran this effect on every one of those renders (displayRows was a fresh
+      // [] while the debounced search was in flight). That loop hit React's
+      // "maximum update depth" (error #185), which unmounts the whole root: the
+      // Console went blank the moment a query was typed into the ファイル filter.
+      setSticky((old) => (old.rows.length || old.top ? { rows: [], top: 0 } : old));
       return;
     }
     let frame = 0;

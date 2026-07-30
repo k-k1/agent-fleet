@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -58,10 +59,23 @@ func opencodeVersion(t *testing.T) string {
 
 // envWithHome replaces HOME so a contract run never reads or writes the user's real
 // opencode store (~/.local/share/opencode) — the tests must be isolated and repeatable.
+//
+// The XDG_* roots have to go with it, or the isolation is only nominal: opencode resolves
+// its config/state through XDG_CONFIG_HOME / XDG_DATA_HOME when those are set, and a
+// GitHub Actions runner exports them pointing at the real /home/runner. Replacing HOME
+// alone therefore leaves the run reading someone else's roots on CI while looking
+// hermetic on a workstation (that gap is what made the precedence contract in
+// ../../opencode_contract_test.go red on CI only).
 func envWithHome(home string) []string {
-	out := []string{"HOME=" + home}
+	out := []string{
+		"HOME=" + home,
+		"XDG_CONFIG_HOME=" + filepath.Join(home, ".config"),
+		"XDG_DATA_HOME=" + filepath.Join(home, ".local", "share"),
+		"XDG_CACHE_HOME=" + filepath.Join(home, ".cache"),
+		"XDG_STATE_HOME=" + filepath.Join(home, ".local", "state"),
+	}
 	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "HOME=") {
+		if !strings.HasPrefix(kv, "HOME=") && !strings.HasPrefix(kv, "XDG_") {
 			out = append(out, kv)
 		}
 	}
