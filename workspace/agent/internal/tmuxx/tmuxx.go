@@ -461,6 +461,45 @@ func atRateLimitModal(s string) bool {
 	return strings.Contains(s, "Enter to confirm") && rateLimitOptionRe.MatchString(s)
 }
 
+// rateLimitDefaultRe matches the menu's FIRST option while it is the marked one
+// ("❯ 1. Stop and wait for limit to reset"). DismissRateLimitModal requires it: Enter
+// confirms whatever the cursor stands on, so pressing it blind would pick option 2
+// ("Ask your admin for more usage" — a billing request) if a human had already moved
+// down. 既定の位置に立っているときだけ押す。
+var rateLimitDefaultRe = regexp.MustCompile(`(?m)^\s*\x{276F} 1\.\s+Stop and wait for limit`)
+
+// DismissRateLimitModal confirms the usage-limit menu's DEFAULT option ("1. Stop and
+// wait for limit to reset") and reports whether the menu is gone afterwards.
+//
+// なぜ自動で押してよいか: 選択肢は「リセットを待つ」か「管理者に上限引き上げを依頼する」
+// で、課金判断を伴うのは後者だけ。前者は待つ＝何も買わない側で、しかもメニューを人が
+// 消すまでセッションは何もできない（実測 約16時間の貼り付き・docs/47 §4-3）。よって
+// 既定の 1 を選ぶ操作は「回復」であって「判断の代行」ではない。2 を選ばせたい利用者は
+// メニューが出ている間に自分で選べる（この自動解除は 1 が選択された状態のときだけ動く）。
+//
+// LeaveAgentsView と同じ形: ペインを読んで前提を確かめ、キーを送り、結果をもう一度
+// ペインから確かめる。送っただけで成功と見なさないのは、send-keys が 0 を返しても TUI が
+// 受け取ったとは限らないため。
+func DismissRateLimitModal(name string) bool {
+	tn := session.TmuxName(name)
+	pane := SessionPaneID(tn)
+	if pane == "" {
+		return false
+	}
+	frame := CapturePane(tn)
+	if !atRateLimitModal(frame) {
+		return true // もうメニューは出ていない
+	}
+	if !rateLimitDefaultRe.MatchString(frame) {
+		return false // 選択が 1 から動いている — 人が選びかけているので触らない
+	}
+	if err := Cmd("send-keys", "-t", pane, "Enter").Run(); err != nil {
+		return false
+	}
+	time.Sleep(400 * time.Millisecond) // 再描画を待つ（LeaveAgentsView と同じ間合い）
+	return !atRateLimitModal(CapturePane(tn))
+}
+
 // PaneRead is one capture classified by every predicate the live-state code needs. The
 // sessions list polls every few seconds for EVERY session, so asking each predicate
 // separately would spend one capture-pane per predicate per session per tick; the pane is
