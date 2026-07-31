@@ -153,9 +153,62 @@ tick それを直接読む（`claude.AbortInfo` → `reportSignals.Abort`）。�
 広げた（`blockedMarkers` を先に見る順序は不変なので、利用上限や認証はここで
 retryable に化けない）。
 
+## 4-3. 追補（2026-07-31 / s5jjqv4）— 利用上限モーダルが回復経路を塞ぐ
+
+**症状。** 別ユーザーのセッションが約 16 時間「進行中」に貼り付いた。実測は
+claude 2.1.220 / model fable、status マーカーは
+`{"state":"working","ts":"2026-07-30T18:08:47+09:00"}` のまま一度も書き換わらず、
+転写の最終レコードは同 18:08:48 の合成 assistant（`isApiErrorMessage:true` /
+`"You've hit your session limit · resets 7:50pm (Asia/Tokyo)"`）で止まっていた。
+claude プロセスは `Sl+` / CPU 1.1% で生存（クラッシュでも OOM でもない）。
+
+**真因は §1 と §4-2 の合わせ技ではなく、その回復経路が塞がれること。** 上限でターンが
+切れると Stop hook は鳴らない（§1）。それを直すのが「ペインが待機表示なら `HealIdle`」
+だが、claude は上限に当たると `/rate-limit-options` のメニューを出して**キー入力待ちで
+停止**する。このメニューは `Esc to cancel`（`modalMarkers`）を必ず含み、入力欄のモード
+表示フッタごと画面を置き換えるので、`AtIdlePrompt` は**恒久的に** false を返す。
+上限リセット時刻（前夜 19:50）が来ても、メニューは人が消すまで消えないので何も進まない。
+偶発ではなく、上限に当たれば必ず再現する。
+
+波及は表示だけではない。通知も docs/30 の完了報告も出ず（arm 未消費）、§3-4 の自動再開も
+発火せず、`reaper.go` が `working` を busy と数えるため tier1・tier2 とも効かず**コンテナが
+起きっぱなしになる**。管理 API（`/api/admin/*`）にはペイン取得も個別 halt も無いので、
+運用側から観測も回復もできなかった。
+
+**対処。**
+
+- `tmuxx.AtRateLimitModal` — メニューの**番号付き選択肢行**（`rateLimitOptionRe`）と
+  `Enter to confirm` の 2 点一致で判定する。バナー（`You've hit your session limit …`）は
+  転写テキストで、メニューを消した後も画面に残るので判定材料にしない（`isCodexUpdateMenu`
+  と同じ罠）。行頭アンカーなのは `resumeMenuRe` と同じ理由 — repo 自身の散文に一致させない。
+- `WireLive` / `driveState` はこれを `AtIdlePrompt` より**先に**見る。非 idle のときだけ
+  `HealIdle` を呼び（メニューは出たままなので、このガードが無いと毎 poll 通知と報告を
+  撃ち続ける）、ライブ状態として `agents.StateBlocked` を返す。
+- `StateBlocked`（`"blocked"`）は**ライブのワイヤ状態**で、status ストアには書かない。
+  `idle` に寄せるとミラー／オペレーター／定時実行が送ったプロンプトが**メニューの選択操作に
+  化ける**（`AgentsViewActive` と同じ誤配達クラス）ので、`session_io.go` は
+  `rate_limit_modal` で 409 を返して弾く。どちらの選択肢を選ぶかは課金と待ち時間の判断
+  なので自動復帰は試みない。
+- `reaper.go` は `blocked` を busy に数えない。`question` と違い人が気づくまで何日でも
+  続きうる停止で、ターンは既に終わっているため tier2 に停止させても失う作業は無い。
+- `blockedMarkers` に `session limit` を追加。`hit your` なので `reached your` に当たらず、
+  `session limit` なので `usage limit` にも当たらず、既定の「判定不能は blocked」に落ちて
+  **偶然だけ正解していた**。結論が同じでも意図した分類にしておく。
+
+**テスト。** `testdata/footers/modal_rate_limit.txt`（実キャプチャの会話本文をスクラブ
+したもの。他セッションの実作業をコーパスに入れない規約は維持）をゴールデンコーパスへ追加し、
+`verdict` に `rateLimit` を足して**全フレーム**で固定した — 誤検知すると走っているターンを
+「上限で停止」と読むので、false 側の固定が本体。`TestRateLimitModalDismissed` は
+「メニューを消したらバナーが残っていても検出は外れ、idle に戻る」を押さえる。
+
 ## 5. 積み残し
 
 - 対象は claude TUI のみ（`isApiErrorMessage` は claude 固有）。他 TUI 種別は別シグナルが要る。
 - 会話に紐付いていない（Console 起動の）セッションは自動再開の対象外。通知と Console
   表示は出るので可視化の穴は無い。
 - 再開プロンプトの言語はオペレーター判断。セッション毎の言語を持てば決定的にできる。
+- 上限モーダルは「時刻が来れば解ける中断」だが、分類は retryable / blocked の 2 値しか
+  無いので blocked に倒している。エラー文の `resets <時刻>` を読んでリセット後に自動再開
+  する第 3 クラスは未実装（§4-3）。
+- 上限で停止したセッションを Console から復帰させる導線が無い（ペインで選ぶしかない）。
+  選択肢は課金判断を含むので、出すならワンクリック実行ではなく明示的な確認付きで。

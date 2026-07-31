@@ -1335,6 +1335,7 @@ export const ja = {
   "state.question": "質問あり",
   "state.plan": "プランあり",
   "state.permission": "許可待ち",
+  "state.blocked": "上限で停止 — 操作が必要",
   "state.idle_bg": "入力待ち · BG実行中",
   "state.idle": "入力待ち",
 

@@ -141,18 +141,36 @@ func driveState(m session.Meta, alive, heal bool) string {
 	}
 	sid := session.UUID(m.Dir, m.Name)
 	state := status.LiveState(sid)
-	if heal && state != "idle" && tmuxx.AtIdlePrompt(m.Name) {
+	isClaude := normalizeKind(m.Kind) == session.KindClaude
+	// ペインを読むのは 1 回だけ（tmuxx.ReadPane）。heal=false（/output）は従来どおり
+	// ペインを見ないが、claude の上限モーダルだけは heal に関係なく報告する必要がある
+	// ので、その 2 つのどちらかが要るときにキャプチャする。
+	var pane tmuxx.PaneRead
+	if heal || isClaude {
+		pane = tmuxx.ReadPane(m.Name)
+	}
+	// claude が利用上限メニューでペインを人間待ちに固定している状態（agents.StateBlocked
+	// のコメント参照）。WireLive と同じ判定をここでも行うのは、チャット/ミラーが見るのは
+	// この関数だからで、片側だけ直すと一覧と本文でチップが食い違う。状態の書き換え
+	// （HealIdle）は heal 側にだけ寄せる。
+	if isClaude && pane.RateLimitMenu {
+		if heal && state != "idle" {
+			claude.HealIdle(sid)
+		}
+		return agents.StateBlocked
+	}
+	if heal && state != "idle" && pane.Idle {
 		state = "idle"
 		// claude は「API エラーでターンが落ちた」を transcript 末尾から見分けられるので、
 		// その 1 ケースだけ黙って消さず終端イベントとして通知する（docs/47）。判別材料が
 		// claude の jsonl 形式に固有なので、他 kind は従来どおりマーカー削除のみ。
 		// normalizeKind: 空 kind の旧セッションも claude なので、生の比較では取り逃がす。
-		if normalizeKind(m.Kind) == session.KindClaude {
+		if isClaude {
 			claude.HealIdle(sid)
 		} else {
 			status.Remove(sid)
 		}
-	} else if heal && state == "idle" && tmuxx.IsBusy(m.Name) {
+	} else if heal && state == "idle" && pane.Busy {
 		// Reverse-heal: the hook state reads idle (its "working" file was never written,
 		// or the self-heal above removed it during a transient prompt frame) but the pane
 		// is plainly mid-turn (interrupt affordance shown). Trust the live TUI and persist
