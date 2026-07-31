@@ -141,7 +141,10 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const [llmSuggestions, setLlmSuggestions] = useState<string[]>([]);
   const [suggesting, setSuggesting] = useState(false);
   const suggestRef = useRef<HTMLDivElement>(null); // チップ行（Tab でここへフォーカスを移す）
-  useDragScroll(suggestRef); // 1行に収めた候補列をマウスのドラッグ/縦ホイールで左右スクロール（スワイプは既定動作）
+  // 1行に収めた候補列をマウスのドラッグ/縦ホイールで左右スクロール（スワイプは既定動作）。
+  // チップ行はストリーミング中に消えて戻るので、返り値のコールバック ref で付け替える
+  // （ref オブジェクト任せだと戻ってきた要素にリスナーが付かない — dragScroll.ts の注記）。
+  const attachSuggestRow = useDragScroll(suggestRef);
   // 読み上げ中の文（ライブ配信カラオケ・docs/19）と、直近のターンエラー。どちらも
   // 発生元の会話で括り、別チャットへ切り替えた後に相手の吹き出しへ出ないようにする。
   const [karaoke, setKaraoke] = useState<{ key: string; text: string } | null>(null);
@@ -1288,7 +1291,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
         {/* 返信サジェスト: 常用短文＋直近回答に沿った候補（Layer A）＋✨の LLM 候補（v2）。
             クリックで差し込み・⌥で即送信。 */}
         {(conv || isDraft) && !showStreaming && (suggestChips.length > 0 || (settings.replySuggestEnabled && conversationId)) && (
-          <div className="chat-suggest" ref={suggestRef}>
+          <div className="chat-suggest" ref={attachSuggestRow}>
             {settings.replySuggestEnabled && conversationId && (
               <button
                 type="button"

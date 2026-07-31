@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { RefObject } from "react";
 
 // 横1行の列（返信サジェストのチップ行など）を掴んで左右にスクロールできるようにする。
@@ -29,9 +29,27 @@ export function wheelScrollDelta(e: WheelLike, el: ScrollBox): number {
   return Math.abs(clamped) < 1 ? 0 : clamped;
 }
 
-export function useDragScroll(ref: RefObject<HTMLElement | null>): void {
+// 返す関数を対象要素の `ref` に渡す（`<div ref={useDragScroll(rowRef)}>`）。
+//
+// ★ref オブジェクトを見るだけの effect にしてはいけない。この行は条件付きレンダーで、
+// ストリーミング中（チャット）や AUQ/plan のロック中（ミラー）は DOM から消えてまた戻る。
+// ref への代入は再レンダーも effect も起こさないので、effect は「最初に見えた要素」に
+// リスナーを付けたきりになり、初回にその要素が無ければ二度と付かず、戻ってきた新しい
+// 要素にも付かない（＝ホイール横スクロールが黙って死ぬ）。要素を state で持ち、
+// コールバック ref で出入りを検知して付け替える。
+// 呼び出し側が同じ要素を querySelector 等で使えるよう、渡された ref にも実体を書く。
+export function useDragScroll<T extends HTMLElement>(ref?: RefObject<T | null>): (el: T | null) => void {
+  const [node, setNode] = useState<T | null>(null);
+  const attach = useCallback(
+    (el: T | null) => {
+      if (ref) ref.current = el;
+      setNode(el);
+    },
+    [ref],
+  );
+
   useEffect(() => {
-    const el = ref.current;
+    const el = node;
     if (!el) return;
     let startX = 0;
     let startLeft = 0;
@@ -86,5 +104,7 @@ export function useDragScroll(ref: RefObject<HTMLElement | null>): void {
       el.removeEventListener("click", onClick, true);
       el.removeEventListener("wheel", onWheel);
     };
-  }, [ref]);
+  }, [node]);
+
+  return attach;
 }
