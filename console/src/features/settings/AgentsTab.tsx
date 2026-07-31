@@ -364,6 +364,7 @@ function ClaudeCard({
   updateClaude: (patch: unknown) => void;
 }) {
   const tr = useT();
+  const s = useSettings();
   const toast = useToast();
   const [flow, setFlow] = useState<any>(null); // { url, flow_id }
   const [code, setCode] = useState("");
@@ -478,6 +479,10 @@ function ClaudeCard({
       )}
       <CardSettings>
         <LaunchDefaults kind="claude" />
+        <SettingRow label={tr("agents.claude_rate_limit_resume")}>
+          <OnOff value={s.rateLimitAutoResume} onChange={(v) => setSetting("rateLimitAutoResume", v)} />
+        </SettingRow>
+        <p className="ps-note">{tr("agents.note_claude_rate_limit_resume")}</p>
         {/* Remote Control / 通知 / RTK are workspace-level files (independent of Claude
             auth) — pre-settable, but need the api/claude/settings endpoint loaded. */}
         {claude && (

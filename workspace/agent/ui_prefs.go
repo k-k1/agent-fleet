@@ -216,10 +216,10 @@ func chatAutoResumeEnabled() bool {
 }
 
 // rateLimitAutoResumeEnabled is the ON/OFF for 利用上限リセット後の自動再開 (docs/47
-// §4-4, 設定 > アシスタント): when a claude session is cut off by its usage limit, book a
-// one-shot schedule at the reset instant that tells the session to continue. Missing/
-// invalid key ⇒ TRUE, like chatAutoResumeEnabled and for the same reason — the nudge
-// re-runs work the user already asked for and carries no decision of theirs.
+// §4-4, 設定 > エージェント > Claude > 動作設定): when a claude session is cut off by
+// its usage limit, book a one-shot schedule at the reset instant that tells the session
+// to continue. Missing/invalid key ⇒ TRUE, like chatAutoResumeEnabled and for the same
+// reason — the nudge re-runs work the user already asked for and carries no decision of theirs.
 //
 // このトグルが左右するのは**再開の予約だけ**。上限メニューの自動解除（キー入力待ちで
 // 止まったペインを既定の「リセットまで待つ」で待機プロンプトへ戻す）は OFF でも行う:

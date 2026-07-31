@@ -788,7 +788,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		Name string `json:"name"`
 		// Since はポインタ: 「since:0 の明示（先頭から読み直す）」と「省略（前回
 		// カーソルの続きから — mcpSessionOutput）」を区別する必要がある。
-		Since *int64 `json:"since"`
+		Since     *int64 `json:"since"`
 		Prompt    string `json:"prompt"`
 		Assistant string `json:"assistant"`
 		// create_session args

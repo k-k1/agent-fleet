@@ -102,7 +102,10 @@ func startRateLimitWatch() {
 }
 
 // rateLimitTick is one sweep: every claude session is classified as "on the menu now"
-// (recover) or "has an open episode" (follow up / clean up).
+// (recover) or "has an open episode" (follow up / clean up). ListMetas is deliberately
+// the only population gate: origin=operator / owner conversation / instruction-ledger
+// presence are irrelevant, so a standalone session launched directly from Console is
+// recovered exactly like one launched or steered by an assistant.
 func rateLimitTick(now time.Time) {
 	for _, m := range session.ListMetas() {
 		if normalizeKind(m.Kind) != session.KindClaude {
