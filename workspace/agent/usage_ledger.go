@@ -29,6 +29,7 @@ const (
 	usageFeatureAssistantAutoTur = "assistant.autoturn" // セッション完了報告への自動ターン
 	usageFeatureAssistantBridge  = "assistant.bridge"   // Discord/Slack からのオペレーター応答
 	usageFeatureCompact          = "compact"            // 要約引き継ぎ（docs/33）
+	usageFeaturePlanUpdate       = "plan.update"        // 作業計画の明示更新（docs/33 第5段）
 	usageFeatureTitleSession     = "title.session"      // セッション件名の提案
 	usageFeatureTitleChat        = "title.chat"         // 会話タイトルの提案
 	usageFeatureBranchSuggest    = "branch.suggest"     // ブランチ名の提案

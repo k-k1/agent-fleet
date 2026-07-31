@@ -98,4 +98,9 @@ export interface Conversation {
   // Compaction summary waiting to ride the next prompt (docs/33 第2段). Display-only
   // here (the notice message already shows it); cleared server-side after it carries.
   pending_handoff?: string;
+  // Standing work plan (docs/33 第5段): carried into every fresh provider session
+  // verbatim — never summarized, never consumed. Edited from the 計画 panel, refreshed
+  // from the recent conversation, and diff-updated by compaction.
+  plan?: string;
+  plan_updated_at?: number;
 }

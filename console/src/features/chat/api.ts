@@ -14,6 +14,8 @@ export {
   chatStream,
   chatStop,
   chatCompact,
+  chatSetPlan,
+  chatRefreshPlan,
   chatPasteImage,
   assistantList,
   assistantGet,
