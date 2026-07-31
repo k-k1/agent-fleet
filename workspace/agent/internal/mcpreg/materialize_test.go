@@ -240,6 +240,28 @@ func TestMaterializeCodexRoundTrip(t *testing.T) {
 	}
 }
 
+// Codex gives stdio MCP children a default-deny environment. The built-in af
+// server needs these names forwarded or af_report reaches /chat/report without the
+// Agent bearer token and gets 401.
+func TestMaterializeCodexBuiltinAFForwardsAgentAuth(t *testing.T) {
+	withTempCLIHomes(t)
+	defs := []ServerDef{sessionDef(ServerDef{
+		ID: BuiltinAF, Name: BuiltinAF, Origin: OriginBuiltin,
+		Transport: TransportStdio, Command: "/usr/bin/workspace-agent",
+		Args: []string{"mcp-stdio", "--self-report"},
+	})}
+	if _, _, _, err := materializeCodex(defs, nil); err != nil {
+		t.Fatal(err)
+	}
+	got := readFile(t, codexConfigPath())
+	if want := `env_vars = ["AGENT_ADDR","AGENT_TOKEN"]`; !strings.Contains(got, want) {
+		t.Fatalf("af の Agent 認証環境が Codex MCP 子プロセスへ転送されない:\n%s", got)
+	}
+	if strings.Contains(got, "AF_SECRET_KEY") {
+		t.Fatalf("af self-report に不要な秘密ストア鍵を転送している:\n%s", got)
+	}
+}
+
 // TestMaterializeCodexReplacesSameName は、同名の既存テーブルを必ず 1 つに畳むこと。
 // TOML は重複テーブルをエラーにするので、ここを外すと config.toml 全体が読めなくなる
 // （MCP が 1 本増えないどころか、codex が起動しなくなる）。
