@@ -18,6 +18,7 @@ import {
   overrides,
 } from "../../features/keys/bindings.ts";
 import { cmdLabel } from "../../features/keys/labels.ts";
+import { forgetQuickReply, hideQuickReply } from "../../lib/quickReplies.ts";
 
 // Records the next chord the user presses. The settings modal is an open overlay, so the
 // global dispatcher is inert while it's up (hasOpenOverlay() guards it); this capture-phase
@@ -41,6 +42,64 @@ function KeyCapture({ onCapture, onCancel }: { onCapture: (chord: string) => voi
     <span className="kb-capture">
       {t("keys.kt.capture")} <span className="muted">{t("keys.kt.captureHint")}</span>
     </span>
+  );
+}
+
+// 学習済みクイック返信の管理（返信サジェスト Layer A）。チップの×はポインタ環境限定なので、
+// タッチ端末はここが唯一の削除導線になる。並びは実際のランキングと同じ「使用回数 → 最近」。
+// 「すべて消去」は学習と隠しの両方を落として初期状態（シードだけ）へ戻す。
+function LearnedQuickReplies() {
+  const s = useSettings();
+  const learned = s.quickReplies || {};
+  const hidden = s.quickRepliesHidden || [];
+  const rows = Object.entries(learned)
+    .map(([key, v]) => ({ key, ...v }))
+    .sort((a, b) => b.count - a.count || b.at - a.at);
+  if (!rows.length && !hidden.length) return null;
+  return (
+    <div className="qr-learned">
+      <div className="kb-head">
+        <h5 className="kb-sec-title">{t("keys.kt.qrLearnedTitle", { n: rows.length })}</h5>
+        <button
+          type="button"
+          className="btn-ghost"
+          onClick={() => {
+            setSetting("quickReplies", {});
+            setSetting("quickRepliesHidden", []);
+          }}
+        >
+          {t("keys.kt.qrClearAll")}
+        </button>
+      </div>
+      <div className="qr-list">
+        {rows.map((r) => (
+          <span className="qr-item" key={r.key}>
+            <span className="qr-text">{r.text}</span>
+            <span className="muted qr-count">{r.count}</span>
+            <button
+              type="button"
+              className="qr-del"
+              title={t("mirror.suggest_forget")}
+              aria-label={t("mirror.suggest_forget")}
+              onClick={() => {
+                setSetting("quickReplies", forgetQuickReply(learned, r.text));
+                setSetting("quickRepliesHidden", hideQuickReply(hidden, r.text));
+              }}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+      </div>
+      {hidden.length > 0 && (
+        <p className="muted ds-note">
+          {t("keys.kt.qrHiddenNote", { n: hidden.length })}{" "}
+          <button type="button" className="btn-ghost" onClick={() => setSetting("quickRepliesHidden", [])}>
+            {t("keys.kt.qrUnhideAll")}
+          </button>
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -84,6 +143,7 @@ export function KeysTab() {
           <OnOff value={s.quickRepliesEnabled} onChange={(v) => setSetting("quickRepliesEnabled", v)} />
         </div>
         <p className="muted ds-note">{t("keys.kt.quickRepliesNote")}</p>
+        {s.quickRepliesEnabled && <LearnedQuickReplies />}
 
         <div className="ds-row">
           <span className="ds-label">{t("keys.kt.replySuggestLabel")}</span>

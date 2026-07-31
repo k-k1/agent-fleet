@@ -1887,6 +1887,15 @@ button.mt-bash-toggle:hover {
 .mirror-suggest::-webkit-scrollbar {
   display: none;
 }
+/* チップ本体＋×（削除）の入れ物。× は絶対配置で重ねるので、ホバーで幅が動いて隣の候補が
+   ずれることはない（ポインタ環境だけチップ右に×の分の余白を常時確保する）。 */
+.mirror-suggest-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+}
 .mirror-suggest-chip {
   flex: 0 0 auto; /* 1行スクロールなので縮ませない */
   max-width: 100%;
@@ -1910,6 +1919,40 @@ button.mt-bash-toggle:hover {
 .mirror-suggest-chip.llm {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
   background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+}
+/* 候補の×（この候補をもう出さない）。タッチ端末では誤タップ防止のため出さず、設定側の
+   一覧から消してもらう。ポインタ環境ではホバー / キーボードフォーカス時だけ現れる。 */
+.mirror-suggest-del {
+  display: none;
+  position: absolute;
+  right: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 0 3px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+@media (hover: hover) {
+  .mirror-suggest-wrap .mirror-suggest-chip {
+    padding-right: 20px; /* × の分を常時確保（ホバーで横幅を動かさない） */
+  }
+  .mirror-suggest-del {
+    display: block;
+  }
+  .mirror-suggest-wrap:hover .mirror-suggest-del,
+  .mirror-suggest-del:focus-visible {
+    opacity: 1;
+  }
+  .mirror-suggest-del:hover {
+    color: var(--fg);
+  }
 }
 /* v2: ✨ トリガーボタン（on-demand で LLM 候補を取得）。 */
 .mirror-suggest-ai {

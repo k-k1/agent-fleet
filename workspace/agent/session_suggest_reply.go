@@ -24,10 +24,16 @@ var replyMarkerRe = regexp.MustCompile(`^\s*(?:[-*・>]\s*|[0-9]+[.)]\s+)`)
 // フロントの頻度学習（Layer A）とは独立し、返ってきた候補をチップ列にマージして出す。
 
 const (
-	replySuggestTimeout   = 60 * time.Second
-	replySuggestCount     = 3  // 返す候補の最大数
-	replySuggestMaxRunes  = 20 // 1 候補の長さ上限（超える行はプロンプト扱いで捨てる・ペルソナの20字と一致）
-	replySuggestTailTurns = 8  // 直近何ターンを文脈に入れるか（返信は「今」の文脈が全て）
+	replySuggestTimeout  = 60 * time.Second
+	replySuggestCount    = 3  // 返す候補の最大数
+	replySuggestMaxRunes = 20 // 1 候補の長さ上限（超える行はプロンプト扱いで捨てる・ペルソナの20字と一致）
+	// 直近何ターンを文脈に入れるか。返信の手がかりは「直前に何を言われたか」がほぼ全てなので、
+	// 直前の回答＋その前のユーザー発話（何を頼んだか）の 2 ターンだけでよい。件名提案（会話全体の
+	// 主題が要る）と違い、窓を広げても候補は良くならず入力トークンだけ増える。
+	replySuggestTailTurns = 2
+	// 1 ターンで残す長さ。★頭ではなく末尾を残す — 質問文・選択肢の識別子（1/2/A/B）は発言の
+	// 末尾に集中するので、件名提案と同じ「先頭 N 文字」で切ると肝心の部分が落ちる。
+	replySuggestTailRunes = 600
 )
 
 // replySuggestPersona: 会話の言語に合わせ、前置き・番号・引用符なしで 1 行 1 候補を出させる。
@@ -55,6 +61,19 @@ func replySuggestEnabled() bool {
 	return !ok || v
 }
 
+// replyTailText は返信サジェスト用に 1 発言を切り詰める。件名提案の writeConversationWindow が
+// 先頭を残す（冒頭に主題がある）のに対し、こちらは末尾を残す — 返信の手がかり（問いかけ・
+// 選択肢の識別子・「どうする?」の一文）は発言の終わりに集中しており、先頭を残す切り方だと
+// 長い回答ほど肝心の部分が落ちて、候補が文脈と噛み合わなくなる。
+func replyTailText(s string) string {
+	t := strings.TrimSpace(s)
+	r := []rune(t)
+	if len(r) <= replySuggestTailRunes {
+		return t
+	}
+	return "…" + string(r[len(r)-replySuggestTailRunes:])
+}
+
 // replySuggestPrompt は直近の実ターン（sidechain/compaction/tool-only を除く）を文脈に渡す。
 // タイトルと違い開始ターンは不要 — 返信は「直前に何を言われたか」が全てなので末尾窓だけでよい。
 func replySuggestPrompt(turns []transcript.Turn) string {
@@ -74,7 +93,9 @@ func replySuggestPrompt(turns []transcript.Turn) string {
 	b.WriteString("数字/英字で選択肢が提示されていればその識別子だけ（1・2・A・P1 等）。\n")
 	b.WriteString("例（すべて常体で簡潔に・承認/続行/回答/中断/選択）: 進めて / OK / 修正して / 待って / 1 / A\n\n")
 	b.WriteString("--- 会話ログ ---\n")
-	writeConversationWindow(&b, real) // タイトル側と共有（末尾窓・1ターン長キャップ）
+	for _, t := range real {
+		fmt.Fprintf(&b, "%s: %s\n", t.Role, replyTailText(t.Text))
+	}
 	return b.String()
 }
 

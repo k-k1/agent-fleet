@@ -6,6 +6,8 @@
 //
 // 保存は settings.quickReplies（ssmHostUsage と同型 = サーバミラーで複数デバイス同期）。
 // キーは正規化 + 小文字化（"OK"/"ok" を同一視）、表示テキストは最後に送った綴りを保持。
+// ユーザーが消した候補は settings.quickRepliesHidden（キーの配列）に積んで恒久的に隠す
+// （シードも隠せる）。同じ文をもう一度自分で送ったら、その意思表示として隠しを解除する。
 
 export type QuickReplyUse = { text: string; count: number; at: number };
 export type QuickReplyMap = Record<string, QuickReplyUse>;
@@ -56,6 +58,32 @@ export function recordQuickReply(map: QuickReplyMap, text: string, now: number):
   return next;
 }
 
+// 学習エントリを1件消す（純関数）。表示から消すだけでは次の送信で復活するので、呼び出し側は
+// hideQuickReply と対で使う（シードは学習マップに無いので、隠しリスト側だけが効く）。
+export function forgetQuickReply(map: QuickReplyMap, text: string): QuickReplyMap {
+  const k = keyOf(text);
+  if (!(k in map)) return map;
+  const next = { ...map };
+  delete next[k];
+  return next;
+}
+
+// 隠しリストにキーを積む。上限は学習エントリと同じ（際限なく増やさない・古いものから落とす）。
+export function hideQuickReply(hidden: string[], text: string): string[] {
+  const k = keyOf(text);
+  if (!k || hidden.includes(k)) return hidden;
+  const next = [...hidden, k];
+  return next.length > MAX_ENTRIES ? next.slice(next.length - MAX_ENTRIES) : next;
+}
+
+// 隠しを解除する。自分でその文を送り直したときに呼ぶ（＝もう一度使う意思表示）。
+// 変化が無ければ同じ配列参照を返すので、呼び出し側は差分だけ保存できる。
+export function unhideQuickReply(hidden: string[], text: string): string[] {
+  const k = keyOf(text);
+  if (!hidden.includes(k)) return hidden;
+  return hidden.filter((h) => h !== k);
+}
+
 // i18n-exempt-start: 以下はサジェストの seed 語と突合用の辞書データ（翻訳対象の UI 文言ではなく、
 // locale キーで ja/en を出し分ける“中身”。fontStack の生値や VOICEVOX 名と同じ扱い）。
 // 初期シード（学習が空でも ok/進めて/commit が並ぶよう種まき）。count 0 なので実利用が即上回る。
@@ -69,6 +97,11 @@ const AFFIRM = new Set(["ok", "はい", "yes", "y", "進めて", "続けて", "g
 const NEGATE = new Set(["no", "いいえ", "n", "やめて", "待って", "stop", "cancel", "キャンセル"]);
 
 // 直近回答（lastReply）から加点する（B-1）。lastReply は小文字化済みを渡す想定はせず内部で処理。
+//
+// ★加点は「合算」ではなく「最大値」を採る。合算にすると、たまたま複数のキーワードを含む欲張った
+// 一文（例「OK,順に進めよう。都度コミットしてね」= コミット + 進め）が +180 を得て、単語ひとつの
+// 素直な候補（「コミット」+100 /「進めて」+80）を構造的に永久に上回り、どの文脈でも先頭に貼り付く。
+// 文脈適合は「どれか1つ当たったか」で十分で、当たった数は関連度ではない。
 function contextBoost(entryText: string, lastReply: string): number {
   if (!lastReply) return 0;
   const lr = lastReply.toLowerCase();
@@ -76,13 +109,13 @@ function contextBoost(entryText: string, lastReply: string): number {
   let boost = 0;
   // 質問（末尾「?」/「？」）→ 肯定・否定の短答を押し上げる。
   if (/[?？]\s*$/.test(lastReply)) {
-    if (AFFIRM.has(et) || NEGATE.has(et)) boost += 120;
+    if (AFFIRM.has(et) || NEGATE.has(et)) boost = Math.max(boost, 120);
   }
   // 「commit / コミット」の話題 → commit 系を押し上げる。
   if ((lr.includes("commit") || lr.includes("コミット")) && (et.includes("commit") || et.includes("コミット")))
-    boost += 100;
+    boost = Math.max(boost, 100);
   // 「続ける/進める/proceed/continue」の話題 → 続行系を押し上げる。
-  if (/続け|進め|proceed|continue/.test(lr) && /続け|進め|proceed|continue|ok/.test(et)) boost += 80;
+  if (/続け|進め|proceed|continue/.test(lr) && /続け|進め|proceed|continue|ok/.test(et)) boost = Math.max(boost, 80);
   return boost;
 }
 // i18n-exempt-end
@@ -91,22 +124,27 @@ export type RankArgs = {
   draft: string; // 現在のコンポーサー入力（前方一致フィルタに使う）
   lastReply: string; // 直近エージェント回答の最終テキスト（B-1）
   locale: string; // "ja" | "en"（シード言語の選択）
+  hidden?: string[]; // ユーザーが×で消したキー（settings.quickRepliesHidden）
   limit?: number; // 返す候補数（既定 6）
 };
 
 // 候補を算出して並べて返す（表示テキストの配列）。
 export function rankQuickReplies(map: QuickReplyMap, args: RankArgs): string[] {
-  const { draft, lastReply, locale, limit = 6 } = args;
+  const { draft, lastReply, locale, hidden, limit = 6 } = args;
   const seeds = SEEDS[locale] ?? SEEDS.ja;
+  const hide = new Set(hidden ?? []);
   // 学習エントリ + 未学習シードを統合（キー重複はシードを捨てる）。閾値を下げたとき過去に
-  // 学習済みの長いエントリを遡って隠すため、ここでも MAX_LEN 超は取り込まない。
+  // 学習済みの長いエントリを遡って隠すため、ここでも MAX_LEN 超は取り込まない。消された
+  // キーはシード側でも復活させない（隠しは学習の有無に関わらず効く）。
   const byKey = new Map<string, { text: string; count: number; at: number }>();
   for (const e of Object.values(map)) {
     if (normalize(e.text).length > MAX_LEN) continue;
+    if (hide.has(keyOf(e.text))) continue;
     byKey.set(keyOf(e.text), { ...e });
   }
   for (const s of seeds) {
     const k = keyOf(s);
+    if (hide.has(k)) continue;
     if (!byKey.has(k)) byKey.set(k, { text: normalize(s), count: 0, at: 0 });
   }
 
@@ -120,8 +158,9 @@ export function rankQuickReplies(map: QuickReplyMap, args: RankArgs): string[] {
       return true;
     })
     .map((e) => ({ text: e.text, score: e.count + contextBoost(e.text, lastReply), at: e.at }))
-    // スコア降順 → 同点は最近度 → なお同点は使用回数の代替として at。
-    .sort((a, b) => b.score - a.score || b.at - a.at);
+    // スコア降順 → 同点は最近度 → なお同点なら短い方を先に（チップは短いほど押しやすく、
+    // 並びが Object のキー順という説明できない順序に落ちるのも防ぐ）。
+    .sort((a, b) => b.score - a.score || b.at - a.at || a.text.length - b.text.length);
 
   return scored.slice(0, limit).map((e) => e.text);
 }

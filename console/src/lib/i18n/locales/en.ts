@@ -1282,6 +1282,10 @@ export const en: Record<keyof typeof ja, string> = {
   "keys.kt.quickRepliesLabel": "Show reply suggestions (candidate chips above the composer)",
   "keys.kt.quickRepliesNote":
     "When on, chips above the composer suggest your frequent short replies (OK, proceed, commit, …) plus candidates tuned to the latest reply. Click to drop one into the input, or Ctrl/⌘/Alt-click to send immediately. Keyboard-only works too: from an empty input press Tab to reach the chips; Tab/Shift+Tab cycle input → chips → input (the ✨ button is part of the ring), while ←/→ cycle among the chips only. Enter inserts, Ctrl(⌘)+Enter sends (the two swap if you send with plain Enter), Enter on ✨ generates candidates, and Escape returns to the input. Suggestions are learned from the short messages you send. Default on.",
+  "keys.kt.qrLearnedTitle": "Learned suggestions ({n})",
+  "keys.kt.qrClearAll": "Clear all learned",
+  "keys.kt.qrHiddenNote": "{n} suggestion(s) dismissed with ×.",
+  "keys.kt.qrUnhideAll": "Restore dismissed",
   "keys.kt.replySuggestLabel": "Show the ✨ AI reply-suggestion button",
   "keys.kt.replySuggestNote":
     "When on, a ✨ button sits left of the reply suggestions. Pressing it sends the recent conversation to an AI and adds context-aware reply candidates to the chips. Tokens are only spent when you press it. The AI backend is auto-picked in order claude→codex→opencode→cursor, so it still works when Claude is unavailable as long as another is. Default on.",
@@ -1661,6 +1665,7 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.resuming": "Resuming… you can type once it's ready",
   "mirror.suggest_hint": "Click to insert · Ctrl/⌘/Alt-click to send now (Tab from an empty input to reach the chips · ←/→ to pick)",
   "mirror.suggest_ai": "Suggest replies with AI (from the recent conversation)",
+  "mirror.suggest_forget": "Stop suggesting this (send the same text yourself to bring it back)",
   "mirror.suggest_none": "Couldn't suggest replies (too little conversation, or no AI backend available)",
   "mirror.suggest_failed": "Failed to generate reply suggestions",
   "mirror.prev_input": "Previous input",
