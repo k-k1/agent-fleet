@@ -81,6 +81,12 @@ export const stateInfo = (s: Session): StateInfo => {
       return { cls: "question", icon: "checklist", text: t("state.plan") };
     case "permission":
       return { cls: "question", icon: "shield", text: t("state.permission") };
+    // The CLI parked the pane on a menu only a human keypress clears (claude's usage-limit
+    // menu). Grouped with the question colours because it is an attention state: the turn
+    // is over and nothing moves until someone acts in the pane. Deliberately NOT "idle" —
+    // the backend refuses prompt injection here, since typed text would land on the menu.
+    case "blocked":
+      return { cls: "question", icon: "debug-disconnect", text: t("state.blocked") };
     default:
       // Idle by hook, but a run_in_background task is still running under the pane:
       // show it's not actually done (spinner + "BG実行中" alongside 入力待ち).

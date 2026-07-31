@@ -1,0 +1,26 @@
+  1. 調査フェーズ（ページごと1エージェント） —
+  各ページの定義と実装を突き合わせ、差分のみを返
+  します
+
+  完了通知が届き次第、検証を行い、結果を報告しま
+  す。進捗は /workflows でも確認できます。
+
+✻ Waiting for 1 dynamic workflow to finish
+
+● Dynamic workflow "<スクラブ済み>" completed ·
+  19m 9s
+  ⎿  You've hit your session limit · resets
+     7:50pm (Asia/Tokyo)
+
+✻ Crunched for 23m 4s
+
+❯ /rate-limit-options
+
+─────────────────────────────────────────────────
+  What do you want to do?
+
+  ❯ 1. Stop and wait for limit to reset
+    2. Ask your admin for more usage
+
+  Enter to confirm · Esc to cancel
+────────────── [AF] example-repo @0730-1106 ──
