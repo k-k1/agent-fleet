@@ -15,6 +15,8 @@ const labelKeys: Record<string, MsgKey> = {
   "session-report": "noti.kind_session_report", "chat-auto-paused": "noti.kind_chat_auto_paused",
   "chat-context-pressure": "noti.kind_chat_context_pressure",
   "chat-context-overflow": "noti.kind_chat_context_overflow",
+  "rate-limit-reached": "noti.kind_rate_limit_reached",
+  "rate-limit-resumed": "noti.kind_rate_limit_resumed",
 };
 // 通知の相対時刻。共通実装（lib/intl）へ委譲する。
 const relative = (at: string): string => relTime(at);
@@ -134,7 +136,7 @@ function FleetRow({ n, onActivate }: { n: FleetNotification; onActivate: (n: Fle
       onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onActivate(n, e.ctrlKey || e.metaKey); } }}
       onMouseDown={(e) => e.button === 1 && e.preventDefault()}
       onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onActivate(n, true); } }}>
-      <Icon name={n.kind === "answer-ready" ? "check" : n.kind === "usage-reset" ? "pulse" : "comment-discussion"} />
+      <Icon name={n.kind === "answer-ready" ? "check" : ["usage-reset", "rate-limit-reached", "rate-limit-resumed"].includes(n.kind) ? "pulse" : "comment-discussion"} />
       <span><b>{labelKeys[n.kind] ? tr(labelKeys[n.kind]) : n.kind}</b><small>{n.displayName} · {relative(n.createdAt)}</small></span>
     </button>
     <button className="notification-replay" title={tr("noti.replay")} aria-label={tr("noti.replay")} onClick={() => replayNotification(n)}><Icon name="unmute" /></button>

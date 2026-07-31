@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
@@ -135,6 +136,47 @@ func TestRateLimitRecoverDoesNotDependOnSessionOrigin(t *testing.T) {
 					m.Origin, m.OriginConv, f.scheduled, f.dismissed)
 			}
 		})
+	}
+}
+
+// TestRateLimitNotificationsAreOnceAndDeliveryBased: 上限到達はエピソードの初回だけ、
+// 再開は once 予約の時刻ではなく内部プロンプトの配達確認後だけ通知する。watcher の
+// 再走査や CP の再送で未読通知を増殖させないことも同時に固定する。
+func TestRateLimitNotificationsAreOnceAndDeliveryBased(t *testing.T) {
+	f := newRateLimitFixture(t)
+	now := time.Now()
+	f.resetAt = now.Add(time.Hour)
+	m := rlMeta()
+	m.Title = "API 整理"
+	session.WriteMeta(m)
+
+	rateLimitRecover(m, stateOf(t, m.Name), now)
+	got := notice.List()
+	if len(got) != 1 || got[0].Kind != rateLimitNoticeReached || got[0].DisplayName != m.Title {
+		t.Fatalf("初回通知 = %+v, want reached 1件", got)
+	}
+	// 同じメニューを watcher がもう一度見ても到達通知は増えない。
+	rateLimitRecover(m, stateOf(t, m.Name), now.Add(rateLimitWatchInterval))
+	if got = notice.List(); len(got) != 1 {
+		t.Fatalf("再走査後の通知 = %+v, want 1件のまま", got)
+	}
+
+	// 予約しただけ、別プロンプト、手動発火では「再開した」と言わない。
+	notifyRateLimitResumeDelivered(m.Name, rateLimitResumePromptFor("en"), turnSourceScheduleManual, now)
+	notifyRateLimitResumeDelivered(m.Name, "unrelated scheduled prompt", turnSourceSchedule, now)
+	if got = notice.List(); len(got) != 1 {
+		t.Fatalf("未配達の再開通知が出た: %+v", got)
+	}
+
+	deliveredAt := f.resetAt.Add(time.Minute)
+	notifyRateLimitResumeDelivered(m.Name, rateLimitResumePromptFor("en"), turnSourceSchedule, deliveredAt)
+	notifyRateLimitResumeDelivered(m.Name, rateLimitResumePromptFor("en"), turnSourceSchedule, deliveredAt.Add(time.Second))
+	got = notice.List()
+	if len(got) != 2 || got[1].Kind != rateLimitNoticeResumed {
+		t.Fatalf("配達後の通知 = %+v, want reached + resumed", got)
+	}
+	if got[1].Payload["resumeAt"] != stateOf(t, m.Name).ResumeAt {
+		t.Errorf("resumeAt payload = %v, want %q", got[1].Payload["resumeAt"], stateOf(t, m.Name).ResumeAt)
 	}
 }
 

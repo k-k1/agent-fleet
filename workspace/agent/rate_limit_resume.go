@@ -34,12 +34,15 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 const (
+	rateLimitNoticeReached = "rate-limit-reached"
+	rateLimitNoticeResumed = "rate-limit-resumed"
 	// rateLimitWatchInterval is the sweep cadence. 1 分で十分 — 相手は数時間単位の待ちで、
 	// この間隔がそのまま「メニューが出てから解除するまでの最大遅延」になる。
 	rateLimitWatchInterval = time.Minute
@@ -132,6 +135,7 @@ func rateLimitRecover(m session.Meta, st rateLimitState, now time.Time) {
 		log.Printf("rate-limit: %s が利用上限メニューで停止している", m.Name)
 	}
 	st = scheduleRateLimitResume(m, st, now)
+	notifyRateLimitReached(m, st)
 
 	if !st.Dismissed && st.DismissTries < maxRateLimitDismissTries && !triedRecently(st, now) {
 		st.DismissTries++
@@ -147,6 +151,47 @@ func rateLimitRecover(m session.Meta, st rateLimitState, now time.Time) {
 		}
 	}
 	_ = rateLimitStates.Write(m.Name, st)
+}
+
+// notifyRateLimitReached records the attention event once per episode. PutOnce's marker
+// survives the CP draining the outbox, so a menu that remains visible across many watcher
+// ticks cannot keep reappearing as unread. This event intentionally says only that the
+// limit was reached: scheduling may be disabled or may still succeed on a later retry.
+func notifyRateLimitReached(m session.Meta, st rateLimitState) {
+	if st.At == "" {
+		return
+	}
+	ev := notice.New(rateLimitNoticeReached, m.Name, m.Kind, session.Display(m))
+	if at, err := time.Parse(time.RFC3339, st.At); err == nil {
+		ev.CreatedAt = at.UTC().Format(time.RFC3339)
+	}
+	if err := notice.PutOnce("rate-limit-reached:"+m.Name+":"+st.At, ev); err != nil {
+		log.Printf("rate-limit: %s の利用上限通知を保存できなかった: %v", m.Name, err)
+	}
+}
+
+// notifyRateLimitResumeDelivered records a resume only after /input's delivery
+// confirmation succeeded. The schedule instant alone is insufficient: overlap/target
+// guards may skip it, and delivery may fail. The open episode + exact internal prompt +
+// scheduler source keep an ordinary scheduled or Console prompt from impersonating it.
+func notifyRateLimitResumeDelivered(name, prompt, source string, now time.Time) {
+	if injectionSource(source) != turnSourceSchedule || !isRateLimitResumePrompt(prompt) {
+		return
+	}
+	st, ok := rateLimitStates.Read(name)
+	if !ok || st.ScheduleID == "" {
+		return
+	}
+	m, ok := session.ReadMeta(name)
+	if !ok || normalizeKind(m.Kind) != session.KindClaude {
+		return
+	}
+	ev := notice.New(rateLimitNoticeResumed, m.Name, m.Kind, session.Display(m))
+	ev.CreatedAt = now.UTC().Format(time.RFC3339)
+	ev.Payload["resumeAt"] = st.ResumeAt
+	if err := notice.PutOnce("rate-limit-resumed:"+st.ScheduleID, ev); err != nil {
+		log.Printf("rate-limit: %s の自動再開通知を保存できなかった: %v", m.Name, err)
+	}
 }
 
 // rateLimitFollowUp runs for a session with an open episode whose menu is already gone:
@@ -288,7 +333,11 @@ func deleteRateLimitSchedule(id string) {
 // （docs/47 §3-4 の再開文と同じ方針）。言語は表示言語に合わせる — 会話ごとの言語を
 // 持たない以上、その利用者が読み書きしている言語が最良の推定。
 func rateLimitResumePrompt() string {
-	if uiLocale() == "en" {
+	return rateLimitResumePromptFor(uiLocale())
+}
+
+func rateLimitResumePromptFor(locale string) string {
+	if locale == "en" {
 		return "The usage limit has reset. Continue the work that was cut off, from where it stopped. " +
 			"This is an automatic resume — there is no new instruction. " +
 			"If you cannot tell where it stopped, say so instead of starting something new."
@@ -296,6 +345,12 @@ func rateLimitResumePrompt() string {
 	return "利用上限がリセットされました。上限で中断した作業を、止まったところから続けてください。" +
 		"これは自動再開なので新しい指示はありません。" +
 		"どこで止まったか分からない場合は、新しい作業を始めずにその旨を伝えてください。"
+}
+
+func isRateLimitResumePrompt(prompt string) bool {
+	prompt = strings.TrimSpace(prompt)
+	return prompt == strings.TrimSpace(rateLimitResumePromptFor("ja")) ||
+		prompt == strings.TrimSpace(rateLimitResumePromptFor("en"))
 }
 
 func rateLimitScheduleLabel(name string) string {
