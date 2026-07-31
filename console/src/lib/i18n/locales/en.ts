@@ -1571,6 +1571,24 @@ export const en: Record<keyof typeof ja, string> = {
     "Compacted to recover automatically from a context-overflow error. Only the summary below is carried into a fresh session, and the conversation continues on top of it (the history in this view stays as it is).\n\n---\n\n{summary}",
   "chat.notice.agent_switched":
     "This conversation switched to “{agent}”. From here on {agent} answers. The history so far is handed over with your next message, so that first turn costs extra tokens. The model was re-resolved from the {agent} row in Settings > Assistant.",
+  "chat.notice.plan_updated":
+    "Work plan updated. It is carried into every new session verbatim — never summarized.\n\n---\n\n{plan}",
+  "chat.plan.title": "Work plan",
+  "chat.plan.toggle_tip": "Open the work plan (carried into new sessions verbatim, never summarized by compaction)",
+  "chat.plan.edit": "Edit",
+  "chat.plan.refresh": "Refresh",
+  "chat.plan.refreshing": "Refreshing…",
+  "chat.plan.refresh_tip": "Re-derive the plan from the recent conversation (press right after the plan changed in discussion)",
+  "chat.plan.clear": "Clear",
+  "chat.plan.clear_confirm_title": "Clear the work plan?",
+  "chat.plan.clear_confirm_body":
+    "Empties this conversation's work plan, so nothing is carried into new sessions any more (the message history and the handoff summary stay as they are).",
+  "chat.plan.placeholder": "## Constraints\n## Given\n## Next up",
+  "chat.plan.empty": "No plan yet. Use Refresh to derive one from the recent conversation, or Edit to write it yourself.",
+  "chat.plan.note":
+    "The plan is carried into every new session verbatim, never summarized. Compaction keeps it up to date with the recent conversation.",
+  "chat.plan.failed": "Failed to update the work plan",
+  "usage.val.feature.plan.update": "Work-plan update",
   "chat.working": "Working…",
   "chat.thinking": "Thinking…",
   "chat.suggest_ai": "Suggest replies with AI (from the recent conversation)",

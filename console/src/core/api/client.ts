@@ -538,6 +538,14 @@ export const chatStop = (id: string): Promise<Response> =>
 // session on the next turn. Returns the updated conversation (or {error}).
 export const chatCompact = (id: string): Promise<Conversation & { error?: ApiError }> =>
   apiJSON(`api/chat/conversations/${encodeURIComponent(id)}/compact`, "POST");
+// 作業計画（docs/33 第5段）: 圧縮を跨いで原文のまま運ばれる枠。set は手編集（空文字で
+// クリア）、refresh は直近の会話から計画を引き直す一発ヘッドレス（会話のプロバイダ
+// セッションは使わないので、更新のためにコンテキストは増えない）。どちらも更新済みの
+// 会話を返す。
+export const chatSetPlan = (id: string, plan: string): Promise<Conversation & { error?: ApiError }> =>
+  apiJSON(`api/chat/conversations/${encodeURIComponent(id)}/plan`, "PUT", { plan });
+export const chatRefreshPlan = (id: string): Promise<Conversation & { error?: ApiError }> =>
+  apiJSON(`api/chat/conversations/${encodeURIComponent(id)}/plan/refresh`, "POST");
 // Send returns the assistant message + the updated conversation, or {error} on failure.
 export const chatSend = (
   id: string,

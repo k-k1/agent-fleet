@@ -80,6 +80,30 @@ func providerHasResume(c *chatConversation, agent string) bool {
 	return false
 }
 
+// providerResumeKinds は resume ハンドルを持つ全バックエンド。ハンドルの一括操作
+// （anyProviderResume / clearProviderSessions）をこの1本の列挙から回すのは、種別を
+// 足すたびに「4つ書いてある条件式」の写し漏れが起きるため。実際 cursor（docs/40）は
+// providerHasResume には入ったが圧縮側の並び（4項目の代入と判定）から漏れており、
+// cursor 会話は圧縮してもハンドルが残っていた。
+var providerResumeKinds = []string{"claude", "codex", "opencode", "agy", "cursor"}
+
+// anyProviderResume reports whether ANY backend still holds a native session to summarize.
+func anyProviderResume(c *chatConversation) bool {
+	for _, k := range providerResumeKinds {
+		if providerHasResume(c, k) {
+			return true
+		}
+	}
+	return false
+}
+
+// clearProviderSessions drops every backend's resume handle, so the next prompt opens a
+// fresh native session on whichever backend runs it (compaction — chat_compact.go).
+func clearProviderSessions(c *chatConversation) {
+	c.ClaudeSessionID, c.CodexSessionID, c.OpencodeSessionID = "", "", ""
+	c.AgyConversationID, c.CursorSessionID = "", ""
+}
+
 func markProviderSynced(c *chatConversation, agent string, cursor int) {
 	switch agent {
 	case "claude":

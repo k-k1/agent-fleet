@@ -592,7 +592,7 @@ func runReportAutoTurn(convID string) {
 	maybeAutoCompact(ctx, c, prov)
 	// docs/33: 圧縮直後の自動ターンも引き継ぎ要約を先頭に載せる（新セッションは
 	// 過去の指示・文脈を何も知らない）。
-	prompt, handoff := injectHandoff(c, reportsPrompt(pending))
+	prompt, handoff := injectCarryover(c, actualAgent, reportsPrompt(pending))
 	prompt = syncProviderPrompt(c, actualAgent, prompt, len(c.Messages))
 	// 自動ターン専用モデル（設定 > アシスタント）。send の間だけ立てる: 圧縮
 	// （maybeAutoCompact / recoverForRetry の要約ターン）には適用しない — 引き継ぎ
@@ -607,7 +607,7 @@ func runReportAutoTurn(convID string) {
 	if err != nil && recoverForRetry(ctx, c, prov, err) {
 		// docs/33 第3段: 超過を検知 → 現行セッションを要約して畳み、新セッションで
 		// リトライ（reports は未配信なので再注入され要約も前置される）。
-		prompt, handoff = injectHandoff(c, reportsPrompt(pending))
+		prompt, handoff = injectCarryover(c, actualAgent, reportsPrompt(pending))
 		prompt = syncProviderPrompt(c, actualAgent, prompt, len(c.Messages))
 		c.modelOverride = override
 		reply, err = prov.send(ctx, c, prompt)
