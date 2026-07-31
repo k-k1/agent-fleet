@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { isQuickReplyCandidate, recordQuickReply, rankQuickReplies, type QuickReplyMap } from "./quickReplies.ts";
+import {
+  isQuickReplyCandidate,
+  recordQuickReply,
+  rankQuickReplies,
+  forgetQuickReply,
+  hideQuickReply,
+  unhideQuickReply,
+  type QuickReplyMap,
+} from "./quickReplies.ts";
 
 describe("isQuickReplyCandidate", () => {
   it("accepts short single-line text", () => {
@@ -95,5 +103,55 @@ describe("rankQuickReplies", () => {
     // frequent-but-unrelated reply.
     const out = rankQuickReplies(m, { draft: "", lastReply: "キャンセルしますか？", locale: "ja" });
     expect(out[0]).toBe("やめて");
+  });
+
+  it("takes the strongest boost, not the sum (a multi-keyword entry can't stack)", () => {
+    // 「コミット」＋「進め」を1文に詰め込んだ欲張りエントリ。合算加点だと +180 を得て、単語
+    // ひとつの素直な候補（同じ使用回数）を構造的に永久に上回り、どの文脈でも先頭に貼り付いた。
+    const m: QuickReplyMap = {
+      greedy: { text: "OK,順に進めよう。都度コミットしてね", count: 3, at: 100 },
+      "コミット": { text: "コミット", count: 3, at: 100 },
+    };
+    const out = rankQuickReplies(m, { draft: "", lastReply: "続けてコミットしておきます", locale: "ja" });
+    // 両者とも +100 で並び、同点は短い方が先（欲張りが加点だけで勝つことはない）。
+    expect(out.indexOf("コミット")).toBeLessThan(out.indexOf("OK,順に進めよう。都度コミットしてね"));
+  });
+
+  it("drops hidden keys, seeds included", () => {
+    const m: QuickReplyMap = { "進めて": { text: "進めて", count: 5, at: 100 } };
+    const out = rankQuickReplies(m, { draft: "", lastReply: "", locale: "ja", hidden: ["進めて", "ok"] });
+    expect(out).not.toContain("進めて"); // 学習済みでも消える
+    expect(out).not.toContain("OK"); // シードでも復活しない
+    expect(out).toContain("続けて"); // 他のシードはそのまま
+  });
+});
+
+describe("forget / hide / unhide", () => {
+  it("forgets one learned entry (case-insensitive) and leaves the rest", () => {
+    const m: QuickReplyMap = {
+      ok: { text: "OK", count: 2, at: 10 },
+      "進めて": { text: "進めて", count: 1, at: 20 },
+    };
+    const next = forgetQuickReply(m, "ok");
+    expect(next.ok).toBeUndefined();
+    expect(next["進めて"]).toBeTruthy();
+    expect(forgetQuickReply(m, "未学習")).toBe(m); // 無変化なら同じ参照
+  });
+
+  it("hides by normalized key, ignores duplicates, caps the list", () => {
+    expect(hideQuickReply([], "  OK  ")).toEqual(["ok"]);
+    const once = hideQuickReply([], "OK");
+    expect(hideQuickReply(once, "ok")).toBe(once); // 二重登録しない（同じ参照）
+    let hidden: string[] = [];
+    for (let i = 0; i < 70; i++) hidden = hideQuickReply(hidden, "reply" + i);
+    expect(hidden).toHaveLength(60);
+    expect(hidden).toContain("reply69");
+    expect(hidden).not.toContain("reply0"); // 古いものから落ちる
+  });
+
+  it("unhides when the user sends the same text again", () => {
+    const hidden = ["ok", "進めて"];
+    expect(unhideQuickReply(hidden, "OK")).toEqual(["進めて"]);
+    expect(unhideQuickReply(hidden, "未登録")).toBe(hidden); // 無変化なら同じ参照
   });
 });

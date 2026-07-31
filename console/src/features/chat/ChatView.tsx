@@ -19,7 +19,14 @@ import { prettyModel } from "../../lib/modelName.ts";
 import { t, tCount, useT } from "../../lib/i18n/index.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { useSettings, setSetting, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
-import { rankQuickReplies, recordQuickReply, isQuickReplyCandidate } from "../../lib/quickReplies.ts";
+import {
+  rankQuickReplies,
+  recordQuickReply,
+  isQuickReplyCandidate,
+  forgetQuickReply,
+  hideQuickReply,
+  unhideQuickReply,
+} from "../../lib/quickReplies.ts";
 import {
   startTts,
   stopTtsForReplacement,
@@ -556,9 +563,13 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     const text = (override ?? input).trim();
     const paths = attachments.map((a) => a.path);
     if (!text && !paths.length) return;
-    // 返信サジェスト（lib/quickReplies）の学習: 短い純テキストのみ取り込む。
+    // 返信サジェスト（lib/quickReplies）の学習: 短い純テキストのみ取り込む。一度×で消した文でも、
+    // 自分で送り直したなら「また使う」意思表示なので隠しを解除する（MirrorView と同挙動）。
     if (text && isQuickReplyCandidate(text, paths.length > 0)) {
       setSetting("quickReplies", recordQuickReply(settings.quickReplies || {}, text, Date.now()));
+      const hidden = settings.quickRepliesHidden || [];
+      const unhidden = unhideQuickReply(hidden, text);
+      if (unhidden !== hidden) setSetting("quickRepliesHidden", unhidden);
     }
     // A draft is keyed by its assistant until the conversation exists (see paneKey).
     const startKey = paneKey;
@@ -815,6 +826,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
         draft: input,
         lastReply: chatLastReply,
         locale: settings.locale,
+        hidden: settings.quickRepliesHidden || [],
         limit: 6,
       })
     : [];
@@ -850,6 +862,16 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
         el.setSelectionRange(el.value.length, el.value.length);
       }
     });
+  };
+  // 学習候補の×: 学習を消し、かつ隠しリストへ積む（消すだけではシード/再学習で戻る）。
+  // LLM 候補（✨）は学習物ではないので、その場の候補列から外すだけ。
+  const forgetSuggestion = (text: string, llm: boolean) => {
+    if (llm) {
+      setLlmSuggestions((prev) => prev.filter((s) => s !== text));
+      return;
+    }
+    setSetting("quickReplies", forgetQuickReply(settings.quickReplies || {}, text));
+    setSetting("quickRepliesHidden", hideQuickReply(settings.quickRepliesHidden || [], text));
   };
   // v2: ✨ボタン — 会話ログを一発ヘッドレス LLM に渡し、文脈に沿った返信候補をチップ列にマージ
   // （chat_suggest_reply.go）。会話が確定していない（下書き）ときは押せない。
@@ -896,8 +918,9 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   };
 
   // 返信サジェストのフォーカスリング = ✨ボタン＋候補チップ（DOM 順）。MirrorView と同挙動。
+  // ×（削除）はリングから除く — 巡回のたびに削除ボタンを踏ませない。
   const suggestRing = (): HTMLButtonElement[] =>
-    Array.from(suggestRef.current?.querySelectorAll<HTMLButtonElement>("button") ?? []);
+    Array.from(suggestRef.current?.querySelectorAll<HTMLButtonElement>("button:not(.chat-suggest-del)") ?? []);
 
   // チップ行は1行スクロールなので、キー移動のフォーカス先が隠れないよう横だけ最小限追従させる
   // （focus 既定のスクロールは縦にも効いて本文が飛ぶため preventScroll で殺す）。
@@ -1279,16 +1302,27 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
               </button>
             )}
             {suggestChips.map((sg) => (
-              <button
-                key={(sg.llm ? "l:" : "a:") + sg.text}
-                type="button"
-                className={"chat-suggest-chip" + (sg.llm ? " llm" : "")}
-                title={tr("mirror.suggest_hint")}
-                onClick={(e) => applySuggestion(sg.text, e.ctrlKey || e.altKey || e.metaKey)}
-                onKeyDown={(e) => onSuggestKeyDown(e, sg.text)}
-              >
-                {sg.text}
-              </button>
+              // チップ本体＋×（ホバー/フォーカス時だけ・タッチ端末では出さない）。MirrorView と同形。
+              <span className="chat-suggest-wrap" key={(sg.llm ? "l:" : "a:") + sg.text}>
+                <button
+                  type="button"
+                  className={"chat-suggest-chip" + (sg.llm ? " llm" : "")}
+                  title={tr("mirror.suggest_hint")}
+                  onClick={(e) => applySuggestion(sg.text, e.ctrlKey || e.altKey || e.metaKey)}
+                  onKeyDown={(e) => onSuggestKeyDown(e, sg.text)}
+                >
+                  {sg.text}
+                </button>
+                <button
+                  type="button"
+                  className="chat-suggest-del"
+                  title={tr("mirror.suggest_forget")}
+                  aria-label={tr("mirror.suggest_forget")}
+                  onClick={() => forgetSuggestion(sg.text, sg.llm)}
+                >
+                  ×
+                </button>
+              </span>
             ))}
           </div>
         )}

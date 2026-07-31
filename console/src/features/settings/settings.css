@@ -2828,6 +2828,50 @@
 .kb-sec {
   margin-top: 14px;
 }
+/* 学習済みクイック返信の一覧（返信サジェスト Layer A の管理）。チップと同じ見た目の丸に、
+   使用回数と×（この候補をもう出さない）を並べる。タッチ端末ではここが唯一の削除導線。 */
+.qr-learned {
+  margin: 8px 0 4px;
+}
+.qr-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.qr-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 6px 3px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+.qr-text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.qr-count {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.qr-del {
+  padding: 0 3px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.qr-del:hover {
+  color: var(--fg);
+}
 .kb-sec-title {
   margin: 0 0 4px;
   font-size: 12px;

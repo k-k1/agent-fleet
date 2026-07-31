@@ -8,7 +8,14 @@ import type { Session } from "../../types/session.ts";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
 import { MEMO_DND_MIME } from "../memo/dnd.ts";
 import { useSettings, setSetting, chatFontStack, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
-import { rankQuickReplies, recordQuickReply, isQuickReplyCandidate } from "../../lib/quickReplies.ts";
+import {
+  rankQuickReplies,
+  recordQuickReply,
+  isQuickReplyCandidate,
+  forgetQuickReply,
+  hideQuickReply,
+  unhideQuickReply,
+} from "../../lib/quickReplies.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
@@ -1583,8 +1590,12 @@ export function MirrorView({
     const text = (override ?? draft).trim();
     if (!text && !attachments.length) return;
     // 短い純テキストは返信サジェストの学習に取り込む（send 経由のみ＝AUQ/plan 応答は自然に除外）。
+    // 一度×で消した文でも、自分で送り直したなら「また使う」意思表示なので隠しを解除する。
     if (text && isQuickReplyCandidate(text, attachments.length > 0)) {
       setSetting("quickReplies", recordQuickReply(settings.quickReplies || {}, text, Date.now()));
+      const hidden = settings.quickRepliesHidden || [];
+      const unhidden = unhideQuickReply(hidden, text);
+      if (unhidden !== hidden) setSetting("quickRepliesHidden", unhidden);
     }
     // このセッションを読み上げている最中にコンポーサーから送信したら、その読み上げを止める。
     // 割り込み・追撃の意思なので、今さら古い回答（カラオケ・要約アナウンス）を聞かされても
@@ -1629,6 +1640,17 @@ export function MirrorView({
         el.setSelectionRange(el.value.length, el.value.length);
       }
     });
+  };
+
+  // 学習候補の×: 学習を消し、かつ隠しリストへ積む（消すだけではシード/再学習で戻ってくる）。
+  // LLM 候補（✨）は学習物ではないので、その場の候補列から外すだけでよい。
+  const forgetSuggestion = (text: string, llm: boolean) => {
+    if (llm) {
+      setLlmSuggestions((prev) => prev.filter((s) => s !== text));
+      return;
+    }
+    setSetting("quickReplies", forgetQuickReply(settings.quickReplies || {}, text));
+    setSetting("quickRepliesHidden", hideQuickReply(settings.quickRepliesHidden || [], text));
   };
 
   // --- スキルピッカー（docs/50） ---
@@ -1929,8 +1951,9 @@ export function MirrorView({
 
   // 返信サジェストのフォーカスリング = ✨ボタン＋候補チップ（DOM 順）。✨も候補の一員として
   // 巡回に含める（Enter はボタン既定の click ＝ LLM 候補取得がそのまま走る）。
+  // ×（削除）はリングから除く — 巡回のたびに削除ボタンを踏ませない。
   const suggestRing = (): HTMLButtonElement[] =>
-    Array.from(suggestRef.current?.querySelectorAll<HTMLButtonElement>("button") ?? []);
+    Array.from(suggestRef.current?.querySelectorAll<HTMLButtonElement>("button:not(.mirror-suggest-del)") ?? []);
 
   // チップ行は1行スクロール（はみ出した候補は画面外）。キー移動のフォーカス先が隠れないよう
   // 横だけ最小限スクロールして追従させる。focus 既定のスクロールは縦にも効いて本文が飛ぶので
@@ -2101,6 +2124,7 @@ export function MirrorView({
         draft,
         lastReply: lastReplyText,
         locale: settings.locale,
+        hidden: settings.quickRepliesHidden || [],
         limit: 6,
       })
     : [];
@@ -2742,16 +2766,28 @@ export function MirrorView({
                 </button>
               )}
               {suggestChips.map((sg) => (
-                <button
-                  key={(sg.llm ? "l:" : "a:") + sg.text}
-                  type="button"
-                  className={"mirror-suggest-chip" + (sg.llm ? " llm" : "")}
-                  title={tr("mirror.suggest_hint")}
-                  onClick={(e) => applySuggestion(sg.text, e.ctrlKey || e.altKey || e.metaKey)}
-                  onKeyDown={(e) => onSuggestKeyDown(e, sg.text)}
-                >
-                  {sg.text}
-                </button>
+                // チップ本体＋× を1つの丸に見せる（× はホバー/フォーカス時だけ出す。タッチ端末は
+                // 誤タップを避けて出さず、設定の学習済み一覧から消してもらう）。
+                <span className="mirror-suggest-wrap" key={(sg.llm ? "l:" : "a:") + sg.text}>
+                  <button
+                    type="button"
+                    className={"mirror-suggest-chip" + (sg.llm ? " llm" : "")}
+                    title={tr("mirror.suggest_hint")}
+                    onClick={(e) => applySuggestion(sg.text, e.ctrlKey || e.altKey || e.metaKey)}
+                    onKeyDown={(e) => onSuggestKeyDown(e, sg.text)}
+                  >
+                    {sg.text}
+                  </button>
+                  <button
+                    type="button"
+                    className="mirror-suggest-del"
+                    title={tr("mirror.suggest_forget")}
+                    aria-label={tr("mirror.suggest_forget")}
+                    onClick={() => forgetSuggestion(sg.text, sg.llm)}
+                  >
+                    ×
+                  </button>
+                </span>
               ))}
             </div>
           )}
