@@ -368,7 +368,10 @@ export function MirrorView({
   const [llmSuggestions, setLlmSuggestions] = useState<string[]>([]);
   const [suggesting, setSuggesting] = useState(false);
   const suggestRef = useRef<HTMLDivElement>(null); // チップ行（Tab でここへフォーカスを移す）
-  useDragScroll(suggestRef); // 1行に収めた候補列をマウスのドラッグ/縦ホイールで左右スクロール（スワイプは既定動作）
+  // 1行に収めた候補列をマウスのドラッグ/縦ホイールで左右スクロール（スワイプは既定動作）。
+  // 返り値をチップ行の ref に渡す — この行は条件付きレンダーで出入りするので、ref オブジェクト
+  // 任せだと戻ってきた要素にリスナーが付かない（dragScroll.ts の注記）。
+  const attachSuggestRow = useDragScroll(suggestRef);
   // スキルピッカー（docs/50 / ADR0034、v2 クロスエージェント＋§8 クロススキル注入）:
   // セッションで呼べるスキル/コマンドの補完リスト。ネイティブ起動（invoke — "/name" や
   // codex "$name"）に加え、他規約の SKILL.md（foreign — path/origin 付き）は「path を
@@ -2752,7 +2755,7 @@ export function MirrorView({
           {/* 返信サジェスト: 常用短文＋直近回答に沿った候補（Layer A）＋✨で取得する LLM 候補（v2）。
               クリックで差し込み、⌥で即送信。flex 全幅 (.mirror-suggest) で入力行の上に載る。 */}
           {!composerLocked && (suggestChips.length > 0 || settings.replySuggestEnabled) && (
-            <div className="mirror-suggest" ref={suggestRef}>
+            <div className="mirror-suggest" ref={attachSuggestRow}>
               {settings.replySuggestEnabled && (
                 <button
                   type="button"
