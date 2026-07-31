@@ -460,6 +460,31 @@ var mcpStdioWriteTools = []map[string]any{
 		},
 	},
 	{
+		"name": "get_chat_plan",
+		"description": "この会話に固定されている作業計画（docs/33 第5段）を返す。作業計画は要約を通さず**原文のまま**新しいセッションへ毎回引き継がれる枠で、" +
+			"コンテキスト圧縮で会話の記憶が畳まれても消えない。利用者が Console 側で計画を書き換えていることがあるので、" +
+			"長い作業の再開時や、計画に沿っているか確かめたいときに読むこと（会話履歴を読み直すより安い）。",
+		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+	},
+	{
+		"name": "set_chat_plan",
+		"description": "この会話の作業計画（docs/33 第5段）を書き換える。**全文置換**なので、まず get_chat_plan で現在の計画を読み、それを土台に変更点だけを反映した全文を渡すこと。" +
+			"ここに書いた内容は要約されず、原文のまま以降の新しいセッションへ毎回引き継がれる — つまり『圧縮されても絶対に忘れない場所』。" +
+			"利用者と壁打ちして段取り・担当・順序が決まった直後や、レーンが1つ終わって次の波に進んだときに更新する。" +
+			"書き方は次の3見出しで、**完了した作業を網羅列挙しないこと**（git や課題管理システムを見れば分かることは書かない）:\n" +
+			"## 制約（環境・禁止事項・運用ルールなど、この先ずっと効く前提）\n" +
+			"## 前提（次の一手に必要な既成事実だけ。ID・ブランチ名・意図的な例外など）\n" +
+			"## これからやること（順序・依存・分岐条件）\n" +
+			"判断基準は「完了したか」ではなく『これが無いと次の一手を間違えるか』。計画を空にはできない（不要になったら利用者が Console の作業計画パネルから消す）。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"plan": map[string]any{"type": "string", "description": "置き換え後の作業計画の全文（Markdown）。"},
+			},
+			"required": []string{"plan"},
+		},
+	},
+	{
 		"name":        "add_memo",
 		"description": "メモキューに1件追加する。kind=text は body（メモ本文）、kind=file は refPath（~/repos/... パス）が必須で body は任意コメント。repo（''=共通/未分類）と category（サブプロジェクトの自由ラベル）で仕分ける。チャット中に出た TODO・依頼・後で渡したい対象を溜めておく時に呼ぶ。",
 		"inputSchema": map[string]any{
@@ -805,6 +830,8 @@ func mcpStdioCall(req mcpReq) []byte {
 		// respond_session_plan args
 		Decision string `json:"decision"`
 		Feedback string `json:"feedback"`
+		// set_chat_plan args（docs/33 第5段 案D）: 会話に固定する作業計画の全文。
+		Plan string `json:"plan"`
 		// memo args (id in the path; the rest are forwarded verbatim via p.Args).
 		// ID doubles as the cleanup-archive id (restore/purge). Repo names the branch's repo.
 		ID   string `json:"id"`
@@ -1001,6 +1028,40 @@ func mcpStdioCall(req mcpReq) []byte {
 
 	// Write/orchestrate tools — only when this server was started with --write.
 	switch p.Name {
+	case "get_chat_plan", "set_chat_plan":
+		// 作業計画（docs/33 第5段 案D）。対象は**常に自分の会話**（mcpConvID）で、
+		// 会話 id を引数に取らない — create_schedule の owner_conv 上書きと同じ作法で、
+		// 「オペレーターは自分にしか書かない」を配線側の性質にしておく。
+		//
+		// 読み取りも --write ゲート下に置く: この2本は write ツールとしてしか広告して
+		// いないので、広告集合＝スコープの境界という既存の作法（af_report・docs/19 Q2）
+		// に合わせる。
+		if !mcpWriteEnabled {
+			return mcpToolErr(req.ID, "このアシスタントは書き込みツールを許可されていません")
+		}
+		if mcpConvID == "" {
+			return mcpToolErr(req.ID, "この経路には会話が結び付いていないため、作業計画は扱えません")
+		}
+		path := "/chat/conversations/" + url.PathEscape(mcpConvID) + "/plan"
+		if p.Name == "get_chat_plan" {
+			out, err := agentGET(path)
+			if err != nil {
+				return mcpToolErr(req.ID, "作業計画の取得に失敗しました: "+err.Error())
+			}
+			return mcpTextResult(req.ID, out)
+		}
+		// 空で消させない: 計画の破棄は利用者の判断（Console の作業計画パネル）。モデルの
+		// 空文字・空白だけの全文置換は事故（要約の失敗・出力の切れ）であることが多い。
+		if strings.TrimSpace(a.Plan) == "" {
+			return mcpToolErr(req.ID, "plan（作業計画の全文）が空です。計画を消したい場合は利用者に Console の作業計画パネルから操作してもらってください")
+		}
+		// notice=true: 利用者が見ていない間に計画が動く唯一の経路なので、会話へカードを残す。
+		body, _ := json.Marshal(map[string]any{"plan": a.Plan, "notice": true})
+		if _, err := agentDo(http.MethodPut, path, body); err != nil {
+			return mcpToolErr(req.ID, "作業計画の更新に失敗しました: "+err.Error())
+		}
+		// 会話まるごとを返さない（返すと計画を書くたびに会話全文がモデルへ戻る）。
+		return mcpTextResult(req.ID, "作業計画を更新しました（以降の新しいセッションへ原文のまま引き継がれます）。")
 	case "create_session":
 		if !mcpWriteEnabled {
 			return mcpToolErr(req.ID, "このアシスタントはセッションの作成を許可されていません")
