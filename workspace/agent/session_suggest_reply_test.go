@@ -24,6 +24,11 @@ func TestCleanSuggestedReplies(t *testing.T) {
 		{"drops blanks", "\n進めて\n\n\nOK\n", []string{"進めて", "OK"}},
 		{"caps at three", "a\nb\nc\nd\ne", []string{"a", "b", "c"}},
 		{"drops overlong lines", strings.Repeat("x", 60) + "\nOK", []string{"OK"}},
+		// モデルは禁止しても前置きを付ける。見出し行が候補枠を1つ食い、そのままチップに出ていた。
+		{"drops a header line", "ユーザーが次に送る返信の候補：\n1で案内して\n2で頼む", []string{"1で案内して", "2で頼む"}},
+		{"drops an ascii header line", "Suggestions:\nOK\nWait", []string{"OK", "Wait"}},
+		{"strips a label but keeps its content", "候補: 進めて\n返信：OK", []string{"進めて", "OK"}},
+		{"keeps identifier answers with a colon-looking neighbor", "A\nB:", []string{"A"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

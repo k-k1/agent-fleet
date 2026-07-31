@@ -18,6 +18,11 @@ import (
 // 識別子そのもの（"1" "A" "P1"）を答えとして出したときに丸ごと消してしまわない。
 var replyMarkerRe = regexp.MustCompile(`^\s*(?:[-*・>]\s*|[0-9]+[.)]\s+)`)
 
+// replyLabelRe は「候補: 進めて」のような行頭ラベルを剥がす。ラベルだけで本文が無い行
+// （＝見出し「返信の候補：」）は剥がした結果が空になり、そのまま落ちる。選択肢の識別子を
+// 潰さないよう、ラベル語は既知のものだけに限る（"A: 進めて" のような行は触らない）。
+var replyLabelRe = regexp.MustCompile(`(?i)^\s*(?:候補|返信候補|返信|回答|答え|出力|suggestions?|candidates?|replies|answers?)\s*[:：]\s*`)
+
 // 返信サジェスト v2（LLM 文脈生成）。直近の会話ログを一発ヘッドレス（oneShotHeadless・
 // タイトル/ブランチ提案と同じ backend-agnostic 経路）に渡し、ユーザーが次に送りそうな短い
 // 返信の候補を数件返す。On-demand（Console の✨ボタン）専用でトークンは押した時だけ消費する。
@@ -49,7 +54,8 @@ const replySuggestPersona = "あなたはチャットの会話ログを読み、
 	"エージェントが選択肢を数字や英字（1・2・A・B・P1 等）で提示している場合は、言葉を足さずその識別子だけを候補にする" +
 	"（例: 『1番でお願い』『1番で』ではなく『1』、『Aにして』ではなく『A』）。" +
 	"承認・却下・続行の指示、質問への短い回答、次の依頼などを、会話と同じ言語で、1 候補 1 行・最大3件・各20文字以内で。" +
-	"番号・箇条書き・引用符・説明は一切付けず、候補そのものだけを改行区切りで出力してください。"
+	"番号・箇条書き・引用符・説明は一切付けず、候補そのものだけを改行区切りで出力してください。" +
+	"見出し・前置き（『返信の候補：』『以下の通りです』等）も禁止 — 1行目から候補そのものを書くこと。"
 
 // replySuggestModel: 短い候補生成には安価/高速なモデルで十分。deployment 単位で上書き可。
 func replySuggestModel() string { return envOr("AF_SUGGEST_MODEL", "haiku") }
@@ -100,7 +106,8 @@ func replySuggestPrompt(turns []transcript.Turn) string {
 }
 
 // cleanSuggestedReplies は LLM の生出力を候補配列へ整形する。行分割し、箇条書き記号/番号/
-// 引用符を剥がし、空行・長すぎる行を落とし、重複（大小無視）を畳んで最大 replySuggestCount 件。
+// 引用符を剥がし、空行・見出し行・長すぎる行を落とし、重複（大小無視）を畳んで最大
+// replySuggestCount 件。
 func cleanSuggestedReplies(s string) []string {
 	out := make([]string, 0, replySuggestCount)
 	seen := map[string]bool{}
@@ -109,9 +116,16 @@ func cleanSuggestedReplies(s string) []string {
 		// 先頭の箇条書き/番号マーカー（"1. 進めて" "- OK" "・待って" 等）だけを剥がす。裸の
 		// 選択肢識別子（"1" "A" "P1"）は答えそのものなので replyMarkerRe では消えない。
 		c = replyMarkerRe.ReplaceAllString(c, "")
+		// "候補: 進めて" のようなラベル付きは中身だけ残す（ラベルだけの行は次の見出し判定で落ちる）。
+		c = replyLabelRe.ReplaceAllString(c, "")
 		c = strings.Trim(c, "\"'「」『』`")
 		c = strings.TrimSpace(c)
 		if c == "" {
+			continue
+		}
+		// 「ユーザーが次に送る返信の候補：」のような見出し/前置きを落とす。コロンで終わる返信は
+		// 実在しない（禁止したつもりでもモデルは前置きを付けるので、出力側でも殺す）。
+		if strings.HasSuffix(c, ":") || strings.HasSuffix(c, "：") {
 			continue
 		}
 		if len([]rune(c)) > replySuggestMaxRunes {
