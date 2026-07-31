@@ -347,10 +347,13 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 利用上限メニュー（/rate-limit-options）が出ているペインは、打った文字がそのまま
-	// **メニューの選択操作**になる。上のエージェント表示と同じ誤配達クラスだが、そちらと
-	// 違って自動復帰は試みない: 選択肢のどちらを選ぶかは課金と待ち時間の判断で、こちらが
-	// 勝手に決めてよいものではない（1=リセットまで待つ / 2=管理者に上限引き上げを依頼）。
-	// 弾いた上で、何をすれば直るかを呼び出し元（ミラー・オペレーター・定時実行）へ返す。
+	// **メニューの選択操作**になる。上のエージェント表示と同じ誤配達クラスなので、ここでは
+	// 弾く。ここで（LeaveAgentsView のように）その場で復帰させないのは、解除の可否が
+	// 画面の状態に依るから: 既定が 1（リセットまで待つ）に立っているときだけ押してよく、
+	// 人がカーソルを 2（管理者へ増枠を依頼）に動かしていたら触ってはいけない。復帰は
+	// 専用ループ（rate_limit_resume.go・docs/47 §4-4）がその判定込みで受け持ち、リセット
+	// 時刻の自動再開まで面倒を見る。この送信は「今は届かない」ことを呼び出し元
+	// （ミラー・オペレーター・定時実行）へ返して終わる。
 	if m, ok := session.ReadMeta(name); ok && normalizeKind(m.Kind) == session.KindClaude &&
 		tmuxx.AtRateLimitModal(name) {
 		httpx.WriteErr(w, http.StatusConflict, "rate_limit_modal",

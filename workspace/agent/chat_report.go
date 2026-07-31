@@ -289,7 +289,29 @@ func reportHeadFor(kind, reason string, resumeAttempts int) string {
 // 渡す）。カウンタの永続化は配送が成功してからなので、本文生成には渡し値を使う。
 func buildReportContent(display, name, kind, reason string, resumeAttempts int) string {
 	return "セッション「" + display + "」(" + name + ") からの報告: " +
-		reportHeadFor(kind, reason, resumeAttempts)
+		reportHeadFor(kind, reason, resumeAttempts) + rateLimitResumeNote(name, reason)
+}
+
+// rateLimitResumeNote appends the booked resume to a 失敗 report when the failure is the
+// usage limit (docs/47 §4-4). 上限は turn-failed（原因が解消するまで再送しても同じ）と
+// して報告されるので、その指示のままだとオペレーターは「対処を相談」で止まり、利用者は
+// あとから勝手に再開したように見える。予約済みの事実をここで足す — Agent の裏送信を
+// 利用者から見えるようにする 2 つ目の窓（1 つ目は定時実行の一覧）。
+func rateLimitResumeNote(name, reason string) string {
+	if reason != reportReasonTurnFailed {
+		return ""
+	}
+	st, ok := rateLimitStates.Read(name)
+	if !ok || st.ScheduleID == "" || st.ResumeAt == "" {
+		return ""
+	}
+	at, err := time.Parse(time.RFC3339, st.ResumeAt)
+	if err != nil {
+		return ""
+	}
+	return "【利用上限による停止です】" + at.Local().Format("1月2日 15:04") +
+		"（上限が解ける時刻）に、このセッションへ続行を送る自動再開の予約が入っています。" +
+		"再開を促す送信はせず、上限で止まったことと再開予定時刻を利用者に伝えてください。"
 }
 
 // reopenTargetNote names WHICH report the compensation corrects. 時刻は会話の報告

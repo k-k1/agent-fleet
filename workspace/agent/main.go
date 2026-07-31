@@ -187,6 +187,12 @@ func main() {
 	// 変更が静穏かつ対象セッションが非稼働のときだけ積む。AF_MEMORY_SNAPSHOT=off で無効。
 	startMemorySnapshotLoop()
 
+	// 利用上限で止まった claude セッションの自動復帰（docs/47 §4-4）: メニューを既定の
+	// 「リセットまで待つ」で解除し、上限が解ける時刻に「続けて」を送る一回限りの
+	// スケジュールを CP へ預ける。誰も画面を見ていないときに効く必要があるので、
+	// 一覧ポーリングではなく専用のループで回す。
+	startRateLimitWatch()
+
 	// Chat-bridge delivery loop (docs/37 P1): drains the on-disk queue that
 	// notice.Put / record-exit enqueue into (possibly from hook subprocesses)
 	// and pushes to the configured chat providers (Discord first).

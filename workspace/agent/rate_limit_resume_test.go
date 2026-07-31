@@ -1,0 +1,302 @@
+package main
+
+// 利用上限エピソードの状態機械（docs/47 §4-4）。ペイン判定は internal/tmuxx の
+// ゴールデンコーパス、リセット時刻の決め方は internal/agents/claude が押さえているので、
+// ここで見るのは配線の側: 何回キーを送るか・いつ予約するか・設定が何を左右するか・
+// エピソードをいつ畳むか。tmux も CP も持たないので副作用は差し替える。
+
+import (
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
+)
+
+// rateLimitFixture isolates the state store (HOME 直下) and replaces the two side
+// effects, returning counters for what the code tried to do.
+type rateLimitFixture struct {
+	dismissed   int
+	scheduled   int
+	deleted     []string
+	dismissOK   bool
+	scheduleAt  time.Time
+	scheduleErr error
+	resetAt     time.Time
+	resetOK     bool
+}
+
+func newRateLimitFixture(t *testing.T) *rateLimitFixture {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
+	f := &rateLimitFixture{dismissOK: true, resetOK: true}
+	origDismiss, origPut := dismissRateLimitModal, putRateLimitSchedule
+	origDrop, origReset := dropRateLimitSchedule, rateLimitResetAt
+	dismissRateLimitModal = func(string) bool { f.dismissed++; return f.dismissOK }
+	putRateLimitSchedule = func(_ session.Meta, at time.Time) (string, error) {
+		f.scheduled++
+		f.scheduleAt = at
+		if f.scheduleErr != nil {
+			return "", f.scheduleErr
+		}
+		return "sch_test", nil
+	}
+	dropRateLimitSchedule = func(id string) { f.deleted = append(f.deleted, id) }
+	rateLimitResetAt = func(string, time.Time) (time.Time, string, bool) {
+		return f.resetAt, "banner", f.resetOK
+	}
+	t.Cleanup(func() {
+		dismissRateLimitModal, putRateLimitSchedule = origDismiss, origPut
+		dropRateLimitSchedule, rateLimitResetAt = origDrop, origReset
+	})
+	return f
+}
+
+func setRateLimitPref(t *testing.T, on bool) {
+	t.Helper()
+	p := uiPrefsPath()
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(map[string]any{"rateLimitAutoResume": on})
+	if err := os.WriteFile(p, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func rlMeta() session.Meta {
+	return session.Meta{Name: "rl1", Dir: "/tmp/rl1", Kind: session.KindClaude}
+}
+
+func stateOf(t *testing.T, name string) rateLimitState {
+	t.Helper()
+	st, _ := rateLimitStates.Read(name)
+	return st
+}
+
+// TestRateLimitRecoverBooksThenDismisses: 1 回の検知で「予約 → 解除」まで進み、同じ
+// エピソードで二度目の予約もキー送信もしないこと。解除でメニューが消えるとこの検知
+// 経路は二度と開かないので、予約が先に済んでいることが要点。
+func TestRateLimitRecoverBooksThenDismisses(t *testing.T) {
+	f := newRateLimitFixture(t)
+	now := time.Now()
+	f.resetAt = now.Add(3 * time.Hour)
+	m := rlMeta()
+
+	rateLimitRecover(m, stateOf(t, m.Name), now)
+	st := stateOf(t, m.Name)
+	if f.scheduled != 1 || st.ScheduleID != "sch_test" {
+		t.Fatalf("予約 = %d 回 / id=%q, want 1 回 / sch_test", f.scheduled, st.ScheduleID)
+	}
+	if !f.scheduleAt.Equal(f.resetAt) {
+		t.Errorf("予約時刻 = %v, want %v", f.scheduleAt, f.resetAt)
+	}
+	if f.dismissed != 1 || !st.Dismissed {
+		t.Fatalf("解除 = %d 回 / dismissed=%v, want 1 回 / true", f.dismissed, st.Dismissed)
+	}
+	// メニューがまだ見えている（解除の反映前）状態でもう一度回っても撃ち直さない。
+	rateLimitRecover(m, stateOf(t, m.Name), now.Add(rateLimitWatchInterval))
+	if f.scheduled != 1 || f.dismissed != 1 {
+		t.Errorf("2 回目の tick で 予約=%d 解除=%d — エピソード内で撃ち直している", f.scheduled, f.dismissed)
+	}
+}
+
+// TestRateLimitDismissRetriesAreBounded: 解除できないときは間隔を空けて数回だけ試し、
+// 上限に達したら諦めること（選択が動いている・TUI の形が変わった、のどちらでも叩き
+// 続けて直るものではない）。
+func TestRateLimitDismissRetriesAreBounded(t *testing.T) {
+	f := newRateLimitFixture(t)
+	f.dismissOK = false
+	now := time.Now()
+	f.resetAt = now.Add(time.Hour)
+	m := rlMeta()
+
+	for i := 0; i < maxRateLimitDismissTries+3; i++ {
+		rateLimitRecover(m, stateOf(t, m.Name), now.Add(time.Duration(i)*rateLimitWatchInterval))
+	}
+	if f.dismissed != maxRateLimitDismissTries {
+		t.Fatalf("解除試行 = %d 回, want %d 回で打ち止め", f.dismissed, maxRateLimitDismissTries)
+	}
+	if st := stateOf(t, m.Name); st.Dismissed {
+		t.Error("解除できていないのに dismissed = true")
+	}
+	// 予約は 1 回のまま — 解除に失敗しても再開の予約を撃ち直さない。
+	if f.scheduled != 1 {
+		t.Errorf("予約 = %d 回, want 1 回", f.scheduled)
+	}
+}
+
+// TestRateLimitDismissRunsWithSettingOff: 設定が左右するのは再開の予約だけで、メニュー
+// の解除は OFF でも必ず行う（人が触るまでセッションは何も受け付けられないため）。
+func TestRateLimitDismissRunsWithSettingOff(t *testing.T) {
+	f := newRateLimitFixture(t)
+	setRateLimitPref(t, false)
+	now := time.Now()
+	f.resetAt = now.Add(time.Hour)
+	m := rlMeta()
+
+	rateLimitRecover(m, stateOf(t, m.Name), now)
+	if f.dismissed != 1 {
+		t.Errorf("解除 = %d 回, want 1 回（設定 OFF でも解除はする）", f.dismissed)
+	}
+	if f.scheduled != 0 {
+		t.Errorf("予約 = %d 回, want 0 回（設定 OFF）", f.scheduled)
+	}
+	if st := stateOf(t, m.Name); st.ResumeAt != "" {
+		t.Errorf("ResumeAt = %q, want 空", st.ResumeAt)
+	}
+}
+
+// TestRateLimitPastResetResumesSoon: 放置されて既にリセット時刻を過ぎたメニューは、
+// 過去の時刻ではなく直近（now + lead）で予約する。
+func TestRateLimitPastResetResumesSoon(t *testing.T) {
+	f := newRateLimitFixture(t)
+	now := time.Now()
+	f.resetAt = now.Add(-16 * time.Hour)
+	m := rlMeta()
+
+	rateLimitRecover(m, stateOf(t, m.Name), now)
+	if f.scheduled != 1 {
+		t.Fatalf("予約 = %d 回, want 1 回", f.scheduled)
+	}
+	if want := now.Add(rateLimitResumeLead); !f.scheduleAt.Equal(want) {
+		t.Errorf("予約時刻 = %v, want %v（過ぎたリセットは最短で回す）", f.scheduleAt, want)
+	}
+}
+
+// TestRateLimitNoResetTimeNoSchedule: 時刻を決められないときは何も仕込まない。当てずっぽう
+// で起こしても、また上限に当たって同じメニューが出るだけ。解除だけはする。
+func TestRateLimitNoResetTimeNoSchedule(t *testing.T) {
+	f := newRateLimitFixture(t)
+	f.resetOK = false
+	m := rlMeta()
+
+	rateLimitRecover(m, stateOf(t, m.Name), time.Now())
+	if f.scheduled != 0 {
+		t.Errorf("予約 = %d 回, want 0 回", f.scheduled)
+	}
+	if f.dismissed != 1 {
+		t.Errorf("解除 = %d 回, want 1 回", f.dismissed)
+	}
+}
+
+// TestRateLimitFollowUpRetriesRegistration: メニューを消したあとは検知経路が開かないので、
+// 登録に失敗したエピソードは状態ファイルを見て後続の tick がリトライする（回数は有界）。
+func TestRateLimitFollowUpRetriesRegistration(t *testing.T) {
+	f := newRateLimitFixture(t)
+	f.scheduleErr = errTest{}
+	now := time.Now()
+	f.resetAt = now.Add(2 * time.Hour)
+	m := rlMeta()
+
+	rateLimitRecover(m, stateOf(t, m.Name), now)
+	if f.scheduled != 1 || stateOf(t, m.Name).ScheduleID != "" {
+		t.Fatalf("前提が崩れている: 予約=%d id=%q", f.scheduled, stateOf(t, m.Name).ScheduleID)
+	}
+	f.scheduleErr = nil
+	rateLimitFollowUp(m, stateOf(t, m.Name), now.Add(rateLimitWatchInterval))
+	if f.scheduled != 2 || stateOf(t, m.Name).ScheduleID != "sch_test" {
+		t.Fatalf("リトライされていない: 予約=%d id=%q", f.scheduled, stateOf(t, m.Name).ScheduleID)
+	}
+	// 失敗し続けても無限には試さない。
+	f.scheduleErr = errTest{}
+	rateLimitStates.Write(m.Name, rateLimitState{At: now.Format(time.RFC3339), ScheduleTries: maxRateLimitScheduleTries})
+	rateLimitFollowUp(m, stateOf(t, m.Name), now.Add(2*rateLimitWatchInterval))
+	if f.scheduled != 2 {
+		t.Errorf("試行上限を超えて登録を試みている（予約 = %d 回）", f.scheduled)
+	}
+}
+
+// TestRateLimitEpisodeRetired: 予約時刻を過ぎたエピソードは、使い切った once スケジュール
+// を消して畳む — 残すと Console の一覧に無効な行が溜まり、状態ファイルが次のエピソードの
+// 検知（新しい上限）を抑止してしまう。
+func TestRateLimitEpisodeRetired(t *testing.T) {
+	f := newRateLimitFixture(t)
+	now := time.Now()
+	f.resetAt = now.Add(time.Hour)
+	m := rlMeta()
+	rateLimitRecover(m, stateOf(t, m.Name), now)
+
+	after := now.Add(time.Hour + rateLimitCleanupGrace + time.Minute)
+	rateLimitFollowUp(m, stateOf(t, m.Name), after)
+	if len(f.deleted) != 1 || f.deleted[0] != "sch_test" {
+		t.Errorf("使い終わったスケジュールの削除 = %v, want [sch_test]", f.deleted)
+	}
+	if _, ok := rateLimitStates.Read(m.Name); ok {
+		t.Error("エピソードの状態ファイルが残っている — 次の上限で予約されなくなる")
+	}
+	// 次の上限は新しいエピソードとして扱われる。
+	f.resetAt = after.Add(2 * time.Hour)
+	rateLimitRecover(m, stateOf(t, m.Name), after)
+	if f.scheduled != 2 {
+		t.Errorf("予約 = %d 回, want 2 回（新しいエピソード）", f.scheduled)
+	}
+}
+
+// TestRateLimitResumeNoteOnFailedReport: 上限で止まったターンは turn-failed（＝再送しても
+// 同じ）として報告されるので、そのままだと「対処を相談」で止まり、利用者にはあとから
+// 勝手に再開したように見える。予約済みの事実が報告本文に乗ること。
+func TestRateLimitResumeNoteOnFailedReport(t *testing.T) {
+	f := newRateLimitFixture(t)
+	now := time.Now()
+	f.resetAt = now.Add(90 * time.Minute)
+	m := rlMeta()
+	rateLimitRecover(m, stateOf(t, m.Name), now)
+
+	body := buildReportContent("表示名", m.Name, reportKindAnswerReady, reportReasonTurnFailed, 0)
+	if !strings.Contains(body, "利用上限による停止です") ||
+		!strings.Contains(body, f.resetAt.Local().Format("1月2日 15:04")) {
+		t.Errorf("報告本文に自動再開の予約が出ていない:\n%s", body)
+	}
+	// 予約が無いセッション（普通の失敗）には足さない。
+	if other := buildReportContent("表示名", "rl-none", reportKindAnswerReady, reportReasonTurnFailed, 0); strings.Contains(other, "利用上限による停止です") {
+		t.Errorf("予約の無いセッションの失敗報告に上限の注記が出ている:\n%s", other)
+	}
+	// 完了報告には足さない。
+	if done := buildReportContent("表示名", m.Name, reportKindAnswerReady, "", 0); strings.Contains(done, "利用上限による停止です") {
+		t.Errorf("完了報告に上限の注記が出ている:\n%s", done)
+	}
+}
+
+// TestDismissRateLimitModalLive drives the real key path against a real tmux pane:
+// メニューのフレームを描いて 1 行入力を待つプログラムを立て、Enter が届いたら待機
+// フレームへ切り替える。押した／読み直したの往復が本当に成立するかは、ここでしか
+// 確かめられない（純関数側の判定はゴールデンコーパスが持っている）。
+func TestDismissRateLimitModalLive(t *testing.T) {
+	isolateAgentState(t)
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	name := "ratelimit-live"
+	tn := session.TmuxName(name)
+	// Enter を受け取ったら画面を消して待機フレームに差し替える（claude がメニューを
+	// 閉じたときと同じ「確認フッタが消える」変化）。
+	script := `cat internal/tmuxx/testdata/footers/modal_rate_limit.txt; read x; ` +
+		`printf '\033[2J\033[H'; cat internal/tmuxx/testdata/footers/idle_bypass_hint.txt; sleep 60`
+	if out, err := tmuxx.Cmd("new-session", "-d", "-s", tn, "-x", "200", "-y", "50", "sh", "-c", script).CombinedOutput(); err != nil {
+		t.Fatalf("new-session: %v\n%s", err, out)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && !tmuxx.AtRateLimitModal(name) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !tmuxx.AtRateLimitModal(name) {
+		t.Fatal("メニューのフレームが描けていない（前提が崩れている）")
+	}
+	if !tmuxx.DismissRateLimitModal(name) {
+		t.Fatal("DismissRateLimitModal = false — Enter が届いていないか、消えたことを確認できていない")
+	}
+	if tmuxx.AtRateLimitModal(name) {
+		t.Error("解除後もメニュー判定が真のまま")
+	}
+}
+
+type errTest struct{}
+
+func (errTest) Error() string { return "CP 到達不能（テスト）" }

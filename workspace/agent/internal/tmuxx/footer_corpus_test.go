@@ -169,6 +169,26 @@ func TestRateLimitModalDismissed(t *testing.T) {
 	}
 }
 
+// TestRateLimitDefaultSelected pins the precondition DismissRateLimitModal checks before
+// it presses Enter. Enter confirms whatever the cursor stands on, so the guard is the
+// only thing keeping the automatic dismissal from choosing option 2 ("Ask your admin for
+// more usage" — a request the user did not make) when a human already moved the cursor.
+func TestRateLimitDefaultSelected(t *testing.T) {
+	frame := readFrame(t, "modal_rate_limit.txt")
+	if !rateLimitDefaultRe.MatchString(frame) {
+		t.Fatal("the recorded menu stands on option 1 — the guard must recognise it, or the dismissal never fires")
+	}
+	// 人がカーソルを 2 へ動かした形（❯ が 2 行目に移り、1 行目からは消える）。
+	moved := strings.Replace(frame, "❯ 1. Stop and wait", "  1. Stop and wait", 1)
+	moved = strings.Replace(moved, "  2. Ask your admin", "❯ 2. Ask your admin", 1)
+	if rateLimitDefaultRe.MatchString(moved) {
+		t.Error("選択が 2 に動いたフレームで既定ガードが真 — 自動解除が管理者への増枠依頼を選んでしまう")
+	}
+	if !atRateLimitModal(moved) {
+		t.Error("カーソルを動かしてもメニューはメニューのまま（検出が外れると blocked ですらなくなる）")
+	}
+}
+
 // TestComposerEmpty pins the precondition LeaveAgentsView uses before it sends any key:
 // a draft in the input box must block the automatic return to the main conversation.
 // The bare prompt is "❯" followed by a NON-BREAKING space (U+00A0) — a real capture, and
