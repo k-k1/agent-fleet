@@ -890,6 +890,11 @@ export const en: Record<keyof typeof ja, string> = {
   "agents.mode_normal": "Normal",
   "agents.note_launch_defaults":
     "The initial values for new sessions. If a repository has settings you last used, those win. Options the driver doesn't support aren't applied at launch.",
+  "agents.hidden_models": "Models to exclude",
+  "agents.hidden_models_sub":
+    "Removed from the pickers, and launches naming them are refused (they also disappear from the list an assistant picks from). Use it to avoid accidentally picking a model your plan bills extra for.",
+  "agents.hidden_models_add": "+ Add a model",
+  "agents.hidden_models_remove": "Stop excluding {model}",
   "agents.rtk_row": "RTK (token savings)",
   "agents.rtk_unavailable": "This workspace has no rtk.",
   "agents.settings": "Settings",

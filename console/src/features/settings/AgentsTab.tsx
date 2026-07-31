@@ -9,8 +9,12 @@ import {
   useSettings,
   setSetting,
   setSettings,
+  ASSISTANT_RECOMMENDED_MODEL,
+  CLAUDE_MODELS,
 } from "../../lib/settings.ts";
 import { useEffortOptions, useModelOptions } from "../../lib/agentModels.ts";
+import { modelMatchesHidden } from "../../lib/modelDeny.ts";
+import { forgetHiddenRepoModels } from "../../lib/repoLast.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { useConnections } from "./useConnections.ts";
 import { useSettingsUI } from "./store.ts";
@@ -224,6 +228,7 @@ function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "cursor" | "kiro"
           <Choice value={row.effort} options={efforts} onChange={(effort) => update({ effort })} />
         </SettingRow>
       )}
+      <HiddenModelsRow kind={kind} />
       {/* planMode（チャットの plan トグル）が無くても tuiStartMode（plan 起動）対応なら
           既定の開始モードを設定できる（cursor/copilot/kiro — 起動 UI のゲートと同型）。 */}
       {(desc.caps.planMode || desc.caps.tuiStartMode) && (
@@ -237,6 +242,86 @@ function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "cursor" | "kiro"
       )}
       <p className="ps-note">{tr("agents.note_launch_defaults")}</p>
     </>
+  );
+}
+
+// HiddenModelsRow:「使わないモデル」— kind ごとの除外リスト（settings.hiddenModels）。
+// 動機は課金事故の予防で、Claude の Team プランでは Fable が API クレジット扱いになる。
+// 除外すると（Agent が同じ ui-prefs を読むので）Console のピッカーからも MCP の
+// list_models からも消え、除外モデルを指定した起動は Agent 側で断られる。
+//
+// 編集 UI は「現在の除外＝チップ（×で解除）」＋「追加＝残っている候補の select」。
+// 追加側の候補が既に絞り込み済みなので、生カタログを別途持たなくても往復できる。
+function HiddenModelsRow({ kind }: { kind: string }) {
+  const tr = useT();
+  const s = useSettings();
+  const visible = (useModelOptions(kind) || []).filter(([id]) => id); // 「既定」は id ではない
+  const hidden = s.hiddenModels?.[kind] || [];
+  // claude は固定4ティアで「既定」の選択肢が無い＝全部隠すと起動できるモデルが消える。
+  // 最後の1つは隠させない（Agent 側にも同じフェイルセーフがあるが、行き止まりの状態を
+  // 作らせない方が親切）。
+  const canAdd = visible.length > (kind === "claude" ? 1 : 0);
+
+  const apply = (next: string[]) => {
+    const patch: Parameters<typeof setSettings>[0] = {
+      hiddenModels: { ...s.hiddenModels, [kind]: next },
+    };
+    const isHidden = (m: string) => !!m && next.some((h) => modelMatchesHidden(m, h));
+    // 保存済みの選択値を掃く。放置すると「設定画面には除外と出ているのに起動導線は
+    // 除外モデルを既定に持っている」状態になり、起動のたびに Agent 側ガードで弾かれる。
+    const row = agentLaunchDefault(s, kind);
+    if (isHidden(row.model)) {
+      const fallback = kind === "claude" ? CLAUDE_MODELS.find(([id]) => !isHidden(id))?.[0] || "" : "";
+      patch.agentLaunchDefaults = { ...s.agentLaunchDefaults, [kind]: { ...row, model: fallback, effort: "" } };
+      if (kind === "claude") patch.defaultModel = fallback;
+    }
+    if (isHidden(s.assistantModels?.[kind] || "")) {
+      patch.assistantModels = { ...s.assistantModels, [kind]: ASSISTANT_RECOMMENDED_MODEL };
+    }
+    if (isHidden(s.assistantUtilityModels?.[kind] || "")) {
+      patch.assistantUtilityModels = { ...s.assistantUtilityModels, [kind]: ASSISTANT_RECOMMENDED_MODEL };
+    }
+    if (kind === "claude" && isHidden(s.assistantAutoTurnModel)) patch.assistantAutoTurnModel = "";
+    setSettings(patch);
+    forgetHiddenRepoModels(kind, next); // リポジトリごとの「前回使ったモデル」も掃く
+  };
+
+  return (
+    <SettingRow label={tr("agents.hidden_models")} sub={tr("agents.hidden_models_sub")}>
+      <div className="hidden-models">
+        {hidden.length > 0 && (
+          <div className="hm-chips">
+            {hidden.map((id) => (
+              <span key={id} className="hm-chip">
+                {id}
+                <button
+                  type="button"
+                  className="hm-chip-x"
+                  aria-label={tr("agents.hidden_models_remove", { model: id })}
+                  onClick={() => apply(hidden.filter((h) => h !== id))}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <select
+          className="ds-select"
+          value=""
+          disabled={!canAdd}
+          aria-label={tr("agents.hidden_models_add")}
+          onChange={(e) => e.target.value && apply([...hidden, e.target.value])}
+        >
+          <option value="">{tr("agents.hidden_models_add")}</option>
+          {visible.map(([id, label]) => (
+            <option key={id} value={id}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </div>
+    </SettingRow>
   );
 }
 
