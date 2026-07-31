@@ -195,6 +195,12 @@ export interface Settings {
   // Per-agent launch defaults. defaultModel remains as a migration mirror for older
   // Console/server prefs; new code reads this map for all three agent kinds.
   agentLaunchDefaults: AgentLaunchDefaults;
+  // 使わないモデル（AgentsTab > 各カード > 動作設定）: kind → 除外するモデル id。
+  // 課金事故の予防が動機（Claude Team プランの Fable は API クレジット扱い）で、モデル
+  // id の名前空間が kind ごとに別なので除外リストも kind スコープ。Agent がこのキーを
+  // ui-prefs から読み、ピッカーと MCP list_models の両方を絞ったうえで、除外モデルを
+  // 指定した起動そのものを断る（workspace/agent/model_deny.go）。
+  hiddenModels: Record<string, string[]>;
   // Global ON/OFF for the auto session-title-suggestion feature (AgentsTab セッション).
   // Sessions only — the assistant-chat side split off into assistantTitleSuggest.
   // Default true so existing users get it without an explicit opt-in.
@@ -475,6 +481,7 @@ const DEFAULTS: Settings = {
   mirrorSend: "mod-enter",
   defaultModel: DEFAULT_MODEL, // concrete tier (avoids claude's release-varying own pick)
   agentLaunchDefaults: DEFAULT_AGENT_LAUNCH,
+  hiddenModels: {},
   autoTitleSuggest: true,
   opencodeCatalog: "go-first",
   assistantTitleSuggest: true,

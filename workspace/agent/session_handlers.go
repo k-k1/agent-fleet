@@ -402,22 +402,33 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_driver", "unknown driver: "+req.Driver)
 		return
 	}
+	// 使わないモデル（ui-prefs hiddenModels — model_deny.go）は kind を問わず、副作用
+	// （clone / worktree）より前に断る。ここを通る経路は Console の起動導線だけでなく、
+	// 定時実行（CP scheduler → この create）と MCP create_session も含む — カタログを
+	// 絞るだけでは明示指定が素通りするので、このガードが本体。
+	if kind := normalizeKind(req.Kind); modelHidden(kind, req.Model) {
+		httpx.WriteErr(w, http.StatusBadRequest, "model_hidden", hiddenModelError(strings.TrimSpace(req.Model)))
+		return
+	}
+	// ライブカタログの kind は候補集合からも除外しておく。resolveLiveModel は略称を
+	// 一意なら完全 id へ広げるので、絞らないと "fab" のような略称が除外モデルへ
+	// 解決してしまう。
 	if normalizeKind(req.Kind) == session.KindCodex && strings.TrimSpace(req.Model) != "" {
-		model, err := resolveLiveModel(req.Model, codex.Models())
+		model, err := resolveLiveModel(req.Model, filterVisibleModels(session.KindCodex, codex.Models()))
 		if err != nil {
 			httpx.WriteErr(w, http.StatusBadRequest, "bad_model", err.Error())
 			return
 		}
 		req.Model = model
 	} else if normalizeKind(req.Kind) == session.KindCopilot && strings.TrimSpace(req.Model) != "" {
-		model, err := resolveLiveModel(req.Model, copilot.Models())
+		model, err := resolveLiveModel(req.Model, filterVisibleModels(session.KindCopilot, copilot.Models()))
 		if err != nil {
 			httpx.WriteErr(w, http.StatusBadRequest, "bad_model", err.Error())
 			return
 		}
 		req.Model = model
 	} else if normalizeKind(req.Kind) == session.KindOpencode && strings.TrimSpace(req.Model) != "" {
-		ids := opencode.Models()
+		ids := visibleModelIDs(session.KindOpencode, opencode.Models())
 		choices := make([]agents.ModelChoice, 0, len(ids))
 		for _, id := range ids {
 			choices = append(choices, agents.ModelChoice{ID: id, Label: id})

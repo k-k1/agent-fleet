@@ -3,7 +3,9 @@
 // derived from the sessions list) so it renders instantly with no fetch, and survives
 // session archival. Written through on EVERY launch path — modal, quick dropdown, and
 // the right-click menu — so the default tracks real usage, not just modal launches.
-import { DEFAULT_MODEL } from "./settings.ts";
+import { CLAUDE_MODELS, DEFAULT_MODEL, getSettings } from "./settings.ts";
+import { isModelHidden, modelMatchesHidden } from "./modelDeny.ts";
+import { repoLaunchKinds } from "../agents/registry.ts";
 
 const KIND_KEY = (repo: string) => "af.repo-lastkind." + repo;
 // The model memory is per (kind, repo): a codex model id must never leak into a
@@ -53,11 +55,57 @@ function readRemembered(key: string): { found: boolean; value: string } {
 // The caller's own explicit pick (modal selection) and fork/relaunch inheritance sit
 // ABOVE this — they overwrite whatever this returns — so this only computes the initial
 // default. Only meaningful for kinds with caps.model.
+// 「使わないモデル」（settings.hiddenModels）に入っている値は、どの段でも採用しない。
+// 設定を変えた端末では AgentsTab が保存値を掃くが、prefs はユーザー単位で同期されるので
+// 別端末には掃除前の localStorage が残る — その端末だけ除外モデルを既定に持ち、起動の
+// たびに Agent 側ガードで弾かれることになる。ここで最後の一枚を挟んでおく。
+function visibleOr(kind: string, model: string, fallback: () => string): string {
+  const claudeIds = kind === "claude" ? CLAUDE_MODELS.map(([id]) => id) : undefined;
+  return isModelHidden(getSettings().hiddenModels, kind, model, claudeIds) ? fallback() : model;
+}
+
 export function resolveModel(kind: string, repo: string, defaultModel: string): string {
+  const claudeFallback = () => {
+    const hidden = getSettings().hiddenModels;
+    const ids = CLAUDE_MODELS.map(([id]) => id);
+    return ids.find((id) => !isModelHidden(hidden, "claude", id, ids)) || DEFAULT_MODEL;
+  };
   const last = repo ? readRemembered(MODEL_KEY(repo, kind)) : { found: false, value: "" };
-  if (last.found) return last.value;
-  if (kind === "claude") return defaultModel || DEFAULT_MODEL;
-  return defaultModel;
+  if (last.found) {
+    // 除外されていた場合だけ、記憶が無かったときと同じ道（既定）へ落とす。
+    const kept = visibleOr(kind, last.value, () => "");
+    if (kept || !last.value) return kept;
+  }
+  if (kind === "claude") return visibleOr("claude", defaultModel || DEFAULT_MODEL, claudeFallback);
+  return visibleOr(kind, defaultModel, () => ""); // 動的 kind は「既定」＝CLI 任せへ
+}
+
+// forgetHiddenRepoModels は「使わないモデル」に入った id を、リポジトリごとの
+// last-used メモリ（この localStorage）からも消す。設定側の掃除（AgentsTab）だけでは
+// ここが残り、そのリポジトリの起動導線だけ除外モデルを既定に持ち続けてしまう。
+// 消した後の resolveModel は kind の既定へ落ちる。
+const OTHER_KIND_PREFIXES = repoLaunchKinds
+  .filter((k) => k !== "claude")
+  .map((k) => `af.repo-model.${k}.`);
+
+export function forgetHiddenRepoModels(kind: string, hidden: string[]): void {
+  if (!kind || !hidden.length) return;
+  const prefix = kind === "claude" ? "af.repo-model." : `af.repo-model.${kind}.`;
+  try {
+    const drop: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(prefix)) continue;
+      // claude の履歴キーは kind 無し（歴史的経緯）なので、他 kind のキーの前方一致に
+      // なる。claude を掃くときだけ、kind 付きキーを巻き添えにしないよう弾く。
+      if (kind === "claude" && OTHER_KIND_PREFIXES.some((p) => key.startsWith(p))) continue;
+      const value = localStorage.getItem(key) || "";
+      if (value && value !== DEFAULT_VALUE && hidden.some((h) => modelMatchesHidden(value, h))) drop.push(key);
+    }
+    drop.forEach((key) => localStorage.removeItem(key));
+  } catch {
+    /* private mode — 実害は「この端末の前回値が残る」だけ（起動は Agent 側が断る） */
+  }
 }
 
 export function resolveEffort(kind: string, repo: string, defaultEffort = ""): string {

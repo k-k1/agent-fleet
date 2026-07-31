@@ -11,6 +11,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../core/api/client.ts";
 import { CLAUDE_MODELS, useSettings } from "./settings.ts";
+import { hiddenModelsFor, isModelHidden, modelMatchesHidden } from "./modelDeny.ts";
 import { t } from "./i18n/index.ts";
 
 export type ModelOption = [string, string]; // [value sent as `model`, display label]
@@ -146,7 +147,8 @@ export function useModelOptions(kind: string): ModelOption[] | null {
   // The opencode catalog is SHAPED server-side by this preference (Go first / hide the
   // metered twins), so a change has to refetch — otherwise the picker keeps showing the
   // old list until the Console is reloaded.
-  const catalogPref = useSettings().opencodeCatalog;
+  const s = useSettings();
+  const catalogPref = s.opencodeCatalog;
   const pref = kind === "opencode" ? catalogPref : "";
   useEffect(() => {
     if (!isDynamic(kind)) return;
@@ -157,7 +159,32 @@ export function useModelOptions(kind: string): ModelOption[] | null {
       alive = false;
     };
   }, [kind, pref]);
-  if (kind === "claude") return CLAUDE_MODELS;
-  if (isDynamic(kind)) return opts;
+  // 使わないモデル（settings.hiddenModels）を落とす。Agent 側は同じ設定で
+  // /agents/{kind}/models を絞っているが、claude だけは固定リストを Console が
+  // 直接持っていてフェッチを通らない（CLAUDE_MODELS）ので、ここでも掛ける。動的 kind
+  // にも掛けるのは、フェッチ済みキャッシュが設定変更より古いことがあるための保険。
+  if (kind === "claude") return visibleModelOptions(s.hiddenModels, kind, CLAUDE_MODELS);
+  if (isDynamic(kind)) return visibleModelOptions(s.hiddenModels, kind, opts);
   return null;
+}
+
+// visibleModelOptions は選択肢から除外モデルを落とす。"" （既定）は id ではないので常に残す。
+function visibleModelOptions(
+  hiddenModels: Record<string, string[]> | undefined,
+  kind: string,
+  options: ModelOption[],
+): ModelOption[] {
+  const ids = options.map(([id]) => id).filter(Boolean);
+  const hidden = hiddenModelsFor(hiddenModels, kind, kind === "claude" ? ids : undefined);
+  if (!hidden.length) return options;
+  return options.filter(([id]) => !id || !hidden.some((h) => modelMatchesHidden(id, h)));
+}
+
+// useHiddenModel は「保存済みの選択値が除外されているか」を問う。カタログから消えた
+// 値を選択肢に足し戻す既存の救済（ModelPicker / AssistantTab）を、除外モデルにだけは
+// 適用しないために使う — 足し戻すと隠したはずのモデルが復活する。
+export function useHiddenModel(kind: string, model: string): boolean {
+  const hiddenModels = useSettings().hiddenModels;
+  const catalog = kind === "claude" ? CLAUDE_MODELS.map(([id]) => id) : undefined;
+  return isModelHidden(hiddenModels, kind, model, catalog);
 }

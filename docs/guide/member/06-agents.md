@@ -110,6 +110,7 @@ connected, the email and plan (e.g. `…@gmail.com · pro`) are shown.
 Claude's behavior can be adjusted on the same screen.
 
 - **Default model** — the model initially selected when launching a claude session. "Default" leaves it up to claude (varies by release); pick Opus / Sonnet / Haiku if you want to pin it.
+- **Models to exclude** — take a model out of circulation. An excluded model disappears from the launch dialog, from settings, and from the list an assistant picks from (MCP `list_models`), and any launch that names it explicitly — including a scheduled run's model field or one an assistant starts — is refused. Use it to avoid accidentally picking a model your plan bills extra for (Fable on a Claude Team plan draws on API credit, for example). It is per agent, and excluding a model also clears it from your default model and from any repository's last-used value. It cannot stop the CLI's own controls, such as typing `/model` inside the terminal — this prevents accidental selection, it is not a hard billing guard.
 - **Remote control** — turns on / off the ability to remotely drive running sessions from your local Claude app and the like. Off by default in new workspaces (turn it on here if you need it).
 - **Notifications** — whether to notify you of session state changes.
 - **RTK (token savings)** — see below.
