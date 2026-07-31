@@ -279,6 +279,10 @@ wake_policy=wake / overlap_policy=skip / missing_target_policy=fail / report=fal
   損ねた場合だけ、状態ファイルを見て後続の tick がリトライする（上限 5 回）。
 - 予約時刻＋30 分を過ぎたら、使い切った once スケジュールを削除して状態を畳む
   （残すと Console の一覧に無効な行が溜まり、次の上限で予約されなくなる）。
+- 初回検知時に `rate-limit-reached`、再開プロンプトの配達確認が成功した時点に
+  `rate-limit-resumed` を Agent の永続 outbox へ各1回だけ書き、通知センターへ届ける。
+  予約時刻だけでは「再開」としない（重複発火・対象消失・overlap・配達失敗を誤通知しない）。
+  どちらも対象セッションへのリンクを持ち、外部チャット連携の通知グループには含めない。
 
 ### 4-4-5. 設定
 
@@ -294,7 +298,7 @@ wake_policy=wake / overlap_policy=skip / missing_target_policy=fail / report=fal
 |---|---|
 | `internal/tmuxx/footer_corpus_test.go` | 既定選択ガード: 実キャプチャで真、`❯` を 2 行目へ動かしたフレームで偽（＝増枠依頼を選ばない） |
 | `internal/agents/claude/ratelimit_test.go` | バナー解析（12am/12pm 境界・分なし・日付つき・TZ 無し・am/pm 無しは読まない）、窓の選択、放置メニューが翌日に化けないこと、材料無しは決めないこと |
-| `rate_limit_resume_test.go` | 予約→解除の順序と冪等、解除リトライの上限、設定 OFF でも解除はすること、独立起動／アシスタント起点のどちらにも同じ処理が走ること、過去のリセットは最短で回すこと、登録失敗のリトライと打ち切り、エピソードの畳み方 |
+| `rate_limit_resume_test.go` | 予約→解除の順序と冪等、解除リトライの上限、設定 OFF でも解除はすること、独立起動／アシスタント起点のどちらにも同じ処理が走ること、検知／配達確認後の通知が各1回だけ出ること、過去のリセットは最短で回すこと、登録失敗のリトライと打ち切り、エピソードの畳み方 |
 
 ## 5. 積み残し
 
