@@ -411,6 +411,83 @@ func atIdlePrompt(s string) bool {
 	return atPromptFooter(s)
 }
 
+// rateLimitOptionRe matches the 利用上限メニュー's numbered option lines. claude draws it
+// when a turn is cut off by a usage limit:
+//
+//	  What do you want to do?
+//	❯ 1. Stop and wait for limit to reset
+//	  2. Ask your admin for more usage
+//	  Enter to confirm · Esc to cancel
+//
+// Keyed on the numbered option line (like resumeMenuRe), NOT on the banner
+// "You've hit your session limit …" — that banner is transcript text and STAYS on screen
+// after the menu is dismissed, so it would keep reporting a menu that is long gone (the
+// trap isCodexUpdateMenu documents). Either option is accepted so a reworded first choice
+// does not lose the whole detection, and each is truncated well short of the full sentence
+// because the menu wraps in a narrow pane.
+//
+// 幅依存の脆さは modalMarkers と同じで、行頭アンカーにしているのは repo 自身の散文
+// （このコメントを含む）が一致しないようにするため。
+var rateLimitOptionRe = regexp.MustCompile(`(?m)^\s*(?:\x{276F} )?\d+\.\s+(?:Stop and wait for limit|Ask your admin for more usage)`)
+
+// AtRateLimitModal reports whether a claude pane is parked on that menu.
+//
+// なぜ専用の検出が要るか: 上限でターンが切れると claude は Stop hook を鳴らさないので
+// status は "working" のまま残る（docs/47）。それを直す唯一の経路は「ペインが待機プロンプト
+// に戻っていたら HealIdle」だが、このメニューは "Esc to cancel"（modalMarkers）を必ず含み、
+// 入力欄のモード表示フッタごと置き換わるので AtIdlePrompt は恒久的に false を返す。結果、
+// セッションが永久に 進行中 に貼り付く（実測 2026-07-31・約16時間・claude 2.1.220）。
+//
+// Best-effort な TUI 読みなのは他の検出と同じ。取りこぼしたときの損害は「元の貼り付きに
+// 戻る」だけで、誤検知しても HealIdle は転写末尾を見てから判断するので、実際には終わって
+// いないターンを完了扱いにはしない。
+func AtRateLimitModal(name string) bool {
+	pane := SessionPaneID(session.TmuxName(name))
+	if pane == "" {
+		return false
+	}
+	out, err := Cmd("capture-pane", "-p", "-t", pane).Output()
+	if err != nil {
+		return false
+	}
+	return atRateLimitModal(string(out))
+}
+
+// atRateLimitModal is the pure decision over one captured frame. Both markers are
+// required: the option lines say WHICH menu, and the confirm footer says it is still up
+// (claude echoes the chosen option into the transcript, so the option text alone can
+// linger after the menu is gone — the same reason isCodexUpdateMenu needs two markers).
+func atRateLimitModal(s string) bool {
+	return strings.Contains(s, "Enter to confirm") && rateLimitOptionRe.MatchString(s)
+}
+
+// PaneRead is one capture classified by every predicate the live-state code needs. The
+// sessions list polls every few seconds for EVERY session, so asking each predicate
+// separately would spend one capture-pane per predicate per session per tick; the pane is
+// a single frame, so read it once and judge it three ways. OK=false means the pane could
+// not be read (no session / capture failed) — every verdict is then false, which is what
+// each individual predicate returns in that case too.
+type PaneRead struct {
+	Busy          bool // a turn is in flight (IsBusy)
+	Idle          bool // sitting at the ready input box (AtIdlePrompt)
+	RateLimitMenu bool // parked on the usage-limit menu (AtRateLimitModal)
+	OK            bool
+}
+
+// ReadPane captures a session's pane once and returns all pane-derived verdicts.
+func ReadPane(name string) PaneRead {
+	pane := SessionPaneID(session.TmuxName(name))
+	if pane == "" {
+		return PaneRead{}
+	}
+	out, err := Cmd("capture-pane", "-p", "-t", pane).Output()
+	if err != nil {
+		return PaneRead{}
+	}
+	s := string(out)
+	return PaneRead{Busy: spinnerActive(s), Idle: atIdlePrompt(s), RateLimitMenu: atRateLimitModal(s), OK: true}
+}
+
 // IsBusy reports whether a claude pane is actively running a turn — its transcript shows
 // the live spinner header (see spinnerActive), which ticks only while a turn is in flight
 // (thinking or a running tool) and is replaced by a past-tense summary the moment the turn

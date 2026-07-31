@@ -1331,6 +1331,7 @@ export const en: Record<keyof typeof ja, string> = {
   "state.question": "Question",
   "state.plan": "Plan ready",
   "state.permission": "Awaiting permission",
+  "state.blocked": "Limit reached — action needed",
   "state.idle_bg": "Ready · running in background",
   "state.idle": "Ready",
 

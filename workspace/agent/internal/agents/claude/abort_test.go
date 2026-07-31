@@ -61,6 +61,11 @@ func TestAbortedTurnClassification(t *testing.T) {
 		{"server error mid-response", "API Error: Server error mid-response. The response above may be incomplete.", 0, true},
 		{"internal server error", "API Error: 500 Internal server error", 0, true},
 		{"usage limit", "You've reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model", 429, false},
+		// 実測 s5jjqv4 (2026-07-31, claude 2.1.220)。"hit your" なので "reached your" に
+		// 当たらず、"session limit" なので "usage limit" にも当たらない — マーカーを足す
+		// までは「判定不能なので blocked」に落ちて偶然だけ正解していた。結論が同じでも
+		// 意図した分類にしておかないと、次に既定側を変えたときに黙って壊れる。
+		{"session limit", "You've hit your session limit · resets 7:50pm (Asia/Tokyo)", 0, false},
 		{"prompt too long", "Prompt is too long · the request is ~242785 tokens (limit 200000) but this conversation is longer", 400, false},
 		{"unknown wording", "API Error: something nobody has seen before", 0, false}, // 判定不能は blocked 側
 	}

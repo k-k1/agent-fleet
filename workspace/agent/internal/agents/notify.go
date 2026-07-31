@@ -91,6 +91,23 @@ const StateFailed = "failed"
 // continue — which is what makes 中断時の自動再開 safe (docs/47).
 const StateAborted = "aborted"
 
+// StateBlocked is a LIVE WIRE state — unlike StateFailed / StateAborted above it is not a
+// notifier label, and unlike "working" / "idle" it is never persisted to the status store.
+// It means: the turn is over, but the CLI has parked the pane on a menu that only a human
+// keypress clears (今のところ claude の 利用上限メニュー — tmuxx.AtRateLimitModal)。
+//
+// 「終わった (idle)」でも「走っている (working)」でもない第3の状態を作るのは、その2つの
+// どちらに寄せても実害が出るから:
+//   - working に寄せる = 元のバグ。自己修復が効かず永久に 進行中、通知も完了報告も出ず、
+//     reaper が busy と見なしてコンテナが起きっぱなしになる（実測 約16時間）。
+//   - idle に寄せる = より悪い。入力待ちに見えるのでミラー／オペレーター／定時実行が
+//     プロンプトを送り、その文字がそのまま**メニューの選択操作に化ける**
+//     （AgentsViewActive と同じ誤配達クラス）。
+//
+// 毎 poll ペインから導出するので status ストアには書かない: メニューは人が消すもので、
+// 消えた瞬間に次の poll が普通の idle を返せばよく、消えたことを知る別経路が要らない。
+const StateBlocked = "blocked"
+
 // MarkTurnEndErr is MarkTurnEnd carrying the reason a turn failed. failure is the
 // one-line summary the driver built (empty for a clean turn); it rides the notifier's
 // excerpt so the operator report can say the turn errored and the chat bridge can post

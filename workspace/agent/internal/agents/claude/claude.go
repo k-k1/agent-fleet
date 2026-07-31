@@ -76,13 +76,31 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		// Default a live claude with no recorded event yet to idle (it sits at the
 		// prompt waiting for input). Hook events refine it.
 		li.State = status.LiveState(sid)
+		// ペイン由来の判定は 1 フレームを 1 回だけ読んでまとめて下す（tmuxx.ReadPane）。
+		// 述語ごとに capture-pane を叩くと、セッション数 × ポーリング間隔でそのまま効く。
+		pane := tmuxx.ReadPane(m.Name)
+		// 利用上限メニューで人間待ちに固定されている（tmuxx.AtRateLimitModal）。ターンは
+		// もう終わっているのに、そのメニューは "Esc to cancel" を含みモード表示フッタごと
+		// 入力欄を置き換えるので、下の AtIdlePrompt 経由の自己修復は恒久的に空振りする。
+		// ここで先に拾わないと 進行中 に永久に貼り付く（実測 2026-07-31・約16時間）。
+		//
+		// HealIdle は非 idle のときだけ呼ぶ — 下の自己修復と同じガードで、MarkTurnEndErr が
+		// idle を永続化するので 2 回目以降の poll では走らない（メニューは人が消すまで出た
+		// ままなので、これが無いと毎 poll 通知と完了報告を撃ち続ける）。
+		if pane.RateLimitMenu {
+			if li.State != "idle" {
+				HealIdle(sid)
+			}
+			li.State = agents.StateBlocked
+			return li
+		}
 		// Self-heal a stale cache: a non-idle state that no longer matches the terminal
 		// (killed+resumed, rejected permission, abandoned question) — if the pane is
 		// back at the ready prompt, it's idle. HealIdle additionally recognises the one
 		// case that IS a real turn end — an API error cut the turn off, so no Stop hook
 		// ever fired — and routes it through the notifier instead of silently dropping
 		// the completion (docs/47).
-		if li.State != "idle" && tmuxx.AtIdlePrompt(m.Name) {
+		if li.State != "idle" && pane.Idle {
 			li.State = "idle"
 			HealIdle(sid)
 		}
@@ -92,7 +110,7 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		// busy session would wrongly read idle. IsBusy trusts the live TUI (interrupt
 		// affordance shown) and persists working — self-limiting to one capture per turn,
 		// since the next poll then reads "working" from the file.
-		if li.State == "idle" && tmuxx.IsBusy(m.Name) {
+		if li.State == "idle" && pane.Busy {
 			li.State = "working"
 			status.Persist(sid, "working")
 		}

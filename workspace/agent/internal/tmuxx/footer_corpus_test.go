@@ -13,9 +13,10 @@ import (
 // predicates — so the corpus pins BOTH for every frame, which is what catches a change
 // that makes a frame read as neither (or both).
 type verdict struct {
-	busy   bool
-	idle   bool
-	agents bool // the pane's input box is bound to a background agent, not the session
+	busy      bool
+	idle      bool
+	agents    bool // the pane's input box is bound to a background agent, not the session
+	rateLimit bool // parked on the 利用上限メニュー (/rate-limit-options)
 }
 
 var (
@@ -59,6 +60,11 @@ var corpus = map[string]verdict{
 	"agents_rail_navigating_main.txt":  {},
 	"agents_rail_navigating_agent.txt": {busy: true, agents: true},
 	"agents_home_screen.txt":           {agents: true},
+	// 利用上限でターンが切れたあとの /rate-limit-options メニュー。idle でも busy でも
+	// ないのは modal_* と同じだが、その「どちらでもない」が永久に続くのがこの状態の
+	// 特徴 — 上限モーダルは自分では消えず、AtIdlePrompt が恒久的に false を返すので
+	// 自己修復が効かず 進行中 に貼り付く（2026-07-31 実測・約16時間）。
+	"modal_rate_limit.txt": {rateLimit: true},
 }
 
 // TestFooterCorpus replays every recorded pane through the real predicates.
@@ -80,6 +86,13 @@ func TestFooterCorpus(t *testing.T) {
 			// false であることも含めて全フレームで固定する。
 			if got := agentsViewActive(s); got != want.agents {
 				t.Errorf("AgentsViewActive(%s) = %v, want %v", name, got, want.agents)
+			}
+			// 上限メニュー判定も全フレームで固定する。false 側が大事: 誤検知すると
+			// 走っているターンを「上限で停止」と読んで HealIdle を呼びに行くので、
+			// スピナー中のフレームやプラン承認ダイアログが引っかからないことを
+			// コーパス全体で押さえておく。
+			if got := atRateLimitModal(s); got != want.rateLimit {
+				t.Errorf("AtRateLimitModal(%s) = %v, want %v", name, got, want.rateLimit)
 			}
 		})
 	}
@@ -133,6 +146,27 @@ func findLine(s string, match func(string) bool) string {
 		}
 	}
 	return "(none in frame)"
+}
+
+// TestRateLimitModalDismissed pins the reason atRateLimitModal needs TWO markers. The
+// banner ("You've hit your session limit …") is transcript text and stays on screen after
+// the menu is answered, and claude echoes the chosen option into the transcript too — so
+// keying on either alone would report a menu that is long gone, and the session would be
+// badged 上限で停止 forever instead of returning to 入力待ち. Only the confirm footer
+// disappears with the menu.
+func TestRateLimitModalDismissed(t *testing.T) {
+	frame := readFrame(t, "modal_rate_limit.txt")
+	if !atRateLimitModal(frame) {
+		t.Fatal("the recorded menu frame must read as the rate-limit modal")
+	}
+	// The menu is answered: its footer goes away, the banner and the echoed option stay.
+	dismissed := strings.Replace(frame, "  Enter to confirm · Esc to cancel", "⏵⏵ bypass permissions on", 1)
+	if atRateLimitModal(dismissed) {
+		t.Error("atRateLimitModal = true after the menu was dismissed (banner/option text lingering in the transcript)")
+	}
+	if !atIdlePrompt(dismissed) {
+		t.Error("a dismissed menu must read as the ready prompt again, or the session stays stuck")
+	}
 }
 
 // TestComposerEmpty pins the precondition LeaveAgentsView uses before it sends any key:
