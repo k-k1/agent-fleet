@@ -33,12 +33,9 @@ func chatReplySuggestPrompt(msgs []chatMessage) string {
 	b.WriteString("数字/英字で選択肢が提示されていればその識別子だけ（1・2・A・P1 等）。\n")
 	b.WriteString("例（すべて常体で簡潔に・承認/続行/回答/中断/選択）: 進めて / OK / 修正して / 待って / 1 / A\n\n")
 	b.WriteString("--- 会話ログ ---\n")
+	// セッション側と同じく末尾を残して切る（問いかけ・選択肢は発言の終わりにある）。
 	for _, m := range real {
-		text := strings.TrimSpace(m.Content)
-		if r := []rune(text); len(r) > chatTitlePerMsgRunes {
-			text = string(r[:chatTitlePerMsgRunes]) + "…"
-		}
-		fmt.Fprintf(&b, "%s: %s\n", m.Role, text)
+		fmt.Fprintf(&b, "%s: %s\n", m.Role, replyTailText(m.Content))
 	}
 	return b.String()
 }
