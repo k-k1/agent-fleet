@@ -246,6 +246,14 @@
 .chat-suggest::-webkit-scrollbar {
   display: none;
 }
+/* チップ本体＋×（削除）の入れ物。mirror 側 .mirror-suggest-wrap と同形。 */
+.chat-suggest-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+}
 .chat-suggest-chip {
   flex: 0 0 auto; /* 1行スクロールなので縮ませない */
   max-width: 100%;
@@ -269,6 +277,39 @@
 .chat-suggest-chip.llm {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
   background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+}
+/* 候補の×（この候補をもう出さない）。タッチ端末では出さない（設定の一覧から消す）。 */
+.chat-suggest-del {
+  display: none;
+  position: absolute;
+  right: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 0 3px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+@media (hover: hover) {
+  .chat-suggest-wrap .chat-suggest-chip {
+    padding-right: 20px; /* × の分を常時確保（ホバーで横幅を動かさない） */
+  }
+  .chat-suggest-del {
+    display: block;
+  }
+  .chat-suggest-wrap:hover .chat-suggest-del,
+  .chat-suggest-del:focus-visible {
+    opacity: 1;
+  }
+  .chat-suggest-del:hover {
+    color: var(--fg);
+  }
 }
 /* v2: ✨ トリガーボタン（on-demand で LLM 候補を取得）。 */
 .chat-suggest-ai {

@@ -46,8 +46,8 @@ $ claude -p --no-session-persistence --output-format json --dangerously-skip-per
 | `title.session` | auto / manual | `session_title.go:149` | セッション件名の自動提案 |
 | `title.chat` | auto / manual | `chat_title.go:71` | 会話タイトル提案 |
 | `branch.suggest` | manual | `session_title.go:417` | ブランチ名提案 |
-| `suggest.session` | manual | `session_suggest_reply.go:113` | ミラーの ✨ 返信候補 |
-| `suggest.chat` | manual | `chat_suggest_reply.go:45` | チャットの ✨ 返信候補 |
+| `suggest.session` | manual | `session_suggest_reply.go:133` | ミラーの ✨ 返信候補 |
+| `suggest.chat` | manual | `chat_suggest_reply.go:43` | チャットの ✨ 返信候補 |
 | `suggest.edit` | manual | `fs_suggest_edit.go` | エディタの ✨ AI変更提案（docs/44 = [44-markdown-code-editor.md](44-markdown-code-editor.md) Phase 4） |
 
 `assistant.chat` は `SeedVerb`（`translate` / `summarize`）を **サブ次元** として持つ（Files 由来の
