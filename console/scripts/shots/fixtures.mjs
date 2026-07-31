@@ -517,6 +517,35 @@ export function conversations(locale) {
   ];
 }
 
+// One conversation with its message bodies (GET /api/chat/conversations/{id}) — what a
+// chat pane renders. Unknown ids fall back to the first thread so a stray pane in a
+// seeded layout still shows a chat instead of "not found".
+export function conversation(locale, id) {
+  const ja = locale === "ja";
+  const meta = conversations(locale).find((c) => c.id === id) || conversations(locale)[0];
+  const ms = (min) => NOW.getTime() - min * 60_000;
+  return {
+    ...meta,
+    tools: "af_write",
+    messages: [
+      {
+        role: "user",
+        content: ja ? "今動いているセッションを教えて。" : "Which sessions are running right now?",
+        ts: ms(20),
+      },
+      {
+        role: "assistant",
+        agent: meta.agent,
+        model: meta.model,
+        content: ja
+          ? "3 件が稼働中です。うち 1 件（`webshop` のテスト修正）は入力待ちで止まっています。"
+          : "Three are running. One of them (test fixes on `webshop`) is waiting for your input.",
+        ts: ms(19),
+      },
+    ],
+  };
+}
+
 export function assistants(locale) {
   const ja = locale === "ja";
   return [

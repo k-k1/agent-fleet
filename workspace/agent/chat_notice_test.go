@@ -85,6 +85,7 @@ func TestNoticeKeysExistInConsoleCatalogs(t *testing.T) {
 	keys := []string{
 		noticeKeyCtxPressure, noticeKeyCtxOverflow,
 		noticeKeyCompactManual, noticeKeyCompactAuto, noticeKeyCompactRecovery,
+		noticeKeyAgentSwitched,
 	}
 	// auto_paused は 3 断片（見出し・保留件数・締め）を Console 側で組み立てる。
 	autoPaused := []string{

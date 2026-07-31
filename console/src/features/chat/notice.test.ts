@@ -70,6 +70,30 @@ describe("noticeText (ADR 0033)", () => {
     expect(many).toContain("3 session reports are still unprocessed");
   });
 
+  // エージェント切替の notice は kind（"codex"）を運ぶ。カードは他の画面と同じ製品名で出す。
+  it("renders the agent-switch notice with the agent's display name", () => {
+    const text = noticeText({
+      content: "",
+      notice_key: "chat.notice.agent_switched",
+      notice_args: { agent: "codex" },
+    });
+    expect(text).toContain("Codex");
+    expect(text).not.toContain("{agent}");
+    expect(text).not.toContain("「codex」"); // 生の kind を出さない
+  });
+
+  // Console が知らない kind は生値のまま（agentOf() の既定は Claude なので、名前を
+  // 借りると「別のエージェントに切り替えた」と嘘をつくカードになる）。
+  it("keeps an unknown agent kind verbatim", () => {
+    const text = noticeText({
+      content: "",
+      notice_key: "chat.notice.agent_switched",
+      notice_args: { agent: "future-cli" },
+    });
+    expect(text).toContain("future-cli");
+    expect(text).not.toContain("Claude");
+  });
+
   // 旧レコード（キー無し）と、Console が知らないキーは content へ落ちる。空カードにしない。
   it("falls back to the stored content for legacy and unknown notices", () => {
     expect(noticeText({ content: "旧 notice の本文" })).toBe("旧 notice の本文");
