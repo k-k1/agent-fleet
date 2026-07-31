@@ -512,6 +512,13 @@ export const chatGet = (id: string): Promise<Conversation> =>
 // Rename a conversation's display title (docs/19).
 export const chatRename = (id: string, title: string): Promise<Conversation> =>
   apiJSON(`api/chat/conversations/${encodeURIComponent(id)}`, "PATCH", { title });
+// Switch the backend CLI of an existing conversation (docs/19). The agent-priority setting
+// only applies to NEW conversations, so this is the way to move a thread in progress: the
+// backend re-pins the conversation, re-resolves the model from that CLI's row in settings,
+// and replays the history the new backend hasn't seen with the next message. 409
+// (conversation_busy) while a turn is running — stop it first.
+export const chatSetAgent = (id: string, agent: string): Promise<Conversation & { error?: ApiError }> =>
+  apiJSON(`api/chat/conversations/${encodeURIComponent(id)}`, "PATCH", { agent });
 // Preview-only AI title suggestion (mirrors the session /title/suggest endpoint): never
 // writes the conversation's title, just returns a candidate for the rename dialog.
 export const chatSuggestTitle = (id: string): Promise<{ suggestedTitle?: string; error?: ApiError }> =>

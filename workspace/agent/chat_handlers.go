@@ -235,22 +235,53 @@ func handleChatStop(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"stopped": stopped})
 }
 
-type chatRenameReq struct {
-	Title string `json:"title"`
+// chatPatchReq carries the mutable conversation settings. Pointers distinguish "absent"
+// from "empty": a client that only renames must not clear the agent, and vice versa.
+type chatPatchReq struct {
+	Title *string `json:"title,omitempty"`
+	Agent *string `json:"agent,omitempty"`
 }
 
-// handleChatRename changes a conversation's display title (docs/19): the auto-title from
-// the first message is often not what the user wants once the thread has a topic.
-func handleChatRename(w http.ResponseWriter, r *http.Request) {
+// handleChatPatch updates a conversation in place (docs/19):
+//   - title: the auto-title from the first message is often not what the user wants once
+//     the thread has a topic.
+//   - agent: switch the backend CLI mid-thread. 設定 > アシスタントの「エージェント優先順位」は
+//     新規会話と one-shot にしか効かない（会話は作成時にエージェントをスナップショットする）
+//     ので、進行中の会話を別 CLI へ移す明示的な入口がここ。切替そのものは会話ファイルの
+//     ピン留めを差し替えるだけで、次の送信で syncProviderPrompt が「新バックエンドがまだ
+//     知らない履歴」を再生する（認証フォールバックと同じ経路 — chat_provider_context.go）。
+func handleChatPatch(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	var req chatRenameReq
+	var req chatPatchReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	title, ok := cleanTitle(req.Title) // same control-char/length gate as a session rename
-	if !ok || title == "" {
-		httpx.WriteErr(w, http.StatusBadRequest, errCodeChatTitleEmpty, "display name is empty")
+	if req.Title == nil && req.Agent == nil {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "nothing to update")
 		return
+	}
+	var title string
+	if req.Title != nil {
+		var ok bool
+		title, ok = cleanTitle(*req.Title) // same control-char/length gate as a session rename
+		if !ok || title == "" {
+			httpx.WriteErr(w, http.StatusBadRequest, errCodeChatTitleEmpty, "display name is empty")
+			return
+		}
+	}
+	if req.Agent != nil {
+		if _, ok := chatProviders[*req.Agent]; !ok {
+			httpx.WriteErr(w, http.StatusBadRequest, errCodeChatAgentUnsupported, "unsupported agent")
+			return
+		}
+		// 実行中のターンは切替の対象外（handleChatDelete と同じ作法）。ストリームは会話
+		// ロックをターン全体で握るので、待たせると数分ブロックしたうえ、走っている
+		// プロバイダと保存されるピン留めが食い違ったまま終わる。
+		if turnInFlight(id) {
+			httpx.WriteErr(w, http.StatusConflict, "conversation_busy",
+				"a turn is in progress — stop it before switching the agent")
+			return
+		}
 	}
 	unlock := lockConv(id) // serialize with an in-flight turn's load-modify-save
 	defer unlock()
@@ -259,13 +290,38 @@ func handleChatRename(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, errCodeChatConversationNotFnd, "conversation not found")
 		return
 	}
-	c.Title = title
+	if req.Title != nil {
+		c.Title = title
+	}
+	if req.Agent != nil {
+		switchChatAgent(c, *req.Agent)
+	}
 	c.UpdatedAt = nowMs()
 	if err := saveConv(c); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "chat_save", err.Error())
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, c)
+}
+
+// switchChatAgent re-pins a conversation to another backend. Idempotent: re-selecting the
+// current agent changes nothing (no notice, no model churn).
+//
+// Model は作成時エージェント基準の1本しか持たないので、切替時に新しい CLI の設定
+// （設定 > アシスタント「アシスタントのモデル」）から解決し直す — 持ち越すと別 CLI に他社の
+// モデル id を渡すことになる。resume ハンドルとバックエンド毎のメッセージカーソルは残す:
+// 元のエージェントへ戻したときに、そのエージェントの native セッションを続きから使え、
+// 空いた分だけが再生される。ActiveAgent も更新して、次のターンを待たずにヘッダが
+// 切替後のエージェントを映すようにする（明示的な選択は最後のターンより新しい事実）。
+func switchChatAgent(c *chatConversation, kind string) {
+	if c.Agent == kind {
+		return
+	}
+	c.Agent = kind
+	c.ActiveAgent = kind
+	c.Model = resolveChatModel(kind, "")
+	c.Messages = append(c.Messages, newNotice(noticeKeyAgentSwitched, map[string]string{"agent": kind},
+		"エージェントを "+kind+" に切り替えました。これまでの会話はそのまま引き継がれます。"))
 }
 
 func handleChatDelete(w http.ResponseWriter, r *http.Request) {

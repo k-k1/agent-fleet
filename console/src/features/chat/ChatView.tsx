@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import type { CSSProperties, KeyboardEvent, ClipboardEvent } from "react";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -8,7 +9,7 @@ import { openChatSplit } from "./open.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useChatStore } from "./store.ts";
-import { chatGet, chatStream, chatStop, chatCreate, chatCompact, assistantGet, chatPasteImage, chatSuggestReplies } from "./api.ts";
+import { chatGet, chatStream, chatStop, chatCreate, chatCompact, chatSetAgent, assistantGet, chatPasteImage, chatSuggestReplies } from "./api.ts";
 import { errText, raw, isTransientErr } from "../../core/api/client.ts";
 import { takeChatSeed } from "../../lib/chatSeed.ts";
 import { useDraft, moveDraft, clearDraft } from "../../lib/draft.ts";
@@ -42,7 +43,11 @@ import { ContextBar } from "../mirror/ContextBar.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
-import { agentOf } from "../../agents/registry.ts";
+import { agentOf, AGENTS } from "../../agents/registry.ts";
+import { useDismiss } from "../../lib/useDismiss.ts";
+import { placeFixed } from "../../lib/placeFixed.ts";
+import { SESSION_KINDS } from "../../types/session.ts";
+import { getCachedConns, subscribeConns } from "../repos/connsCache.ts";
 import { assistantName, assistantDesc } from "./assistantI18n.ts";
 import { noticeText } from "./notice.ts";
 import { kindClass } from "../../lib/sessionkind.ts";
@@ -64,6 +69,10 @@ interface ChatViewProps {
   paneId: string;
   active?: boolean;
 }
+
+// Backends a conversation can run on, straight off the registry cap — the same source as
+// the assistant form's picker and the Agent's chatProviders map.
+const CHAT_KINDS: SessionKind[] = SESSION_KINDS.filter((k) => AGENTS[k].caps.headlessChat);
 
 const chatDraftKey = (conversationId: string) => "af.chat-draft." + conversationId;
 
@@ -131,6 +140,15 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const sending = !!paneKey && !!sendingKeys[paneKey];
   const [compactKey, setCompactKey] = useState<string | null>(null); // 要約引き継ぎ実行中の会話（docs/33）
   const compacting = !!paneKey && compactKey === paneKey;
+  // エージェント切替（docs/19）: 実行中の会話と、ピッカーの開閉。
+  const [switchKey, setSwitchKey] = useState<string | null>(null);
+  const switching = !!paneKey && switchKey === paneKey;
+  const [agentPickerOpen, setAgentPickerOpen] = useState(false);
+  const agentTagRef = useRef<HTMLButtonElement | null>(null);
+  const agentMenuRef = useRef<HTMLDivElement | null>(null);
+  // 接続状況は常設のリポジトリレールが温めた共有キャッシュから読む（HandoffModal と同じ
+  // 作法）。冷えていれば null＝「不明」で、ピッカーは何も塞がない。
+  const chatConns = useSyncExternalStore(subscribeConns, getCachedConns, getCachedConns);
   // a reloaded turn is still running on the backend; polling for the reply
   const [reattachKey, setReattachKey] = useState<string | null>(null);
   const reattaching = !!conversationId && reattachKey === conversationId;
@@ -182,6 +200,22 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const applyConvIfCurrent = (c: Conversation) => {
     if (paneKeyRef.current === c.id) applyConv(c);
   };
+
+  // エージェント切替ピッカー: 外側クリック/Esc で閉じ、チップの真下にビューポート内で配置
+  // （AssistantSection の ＋ ピッカーと同じ作法）。会話を切り替えたら開いたままにしない。
+  useDismiss([agentTagRef, agentMenuRef], agentPickerOpen, () => setAgentPickerOpen(false));
+  useLayoutEffect(() => {
+    const el = agentMenuRef.current;
+    const anchor = agentTagRef.current;
+    if (!agentPickerOpen || !el || !anchor) return;
+    el.style.position = "fixed";
+    el.style.right = "auto";
+    const a = anchor.getBoundingClientRect();
+    placeFixed(el, a.left, a.bottom + 4);
+  }, [agentPickerOpen]);
+  useEffect(() => {
+    setAgentPickerOpen(false);
+  }, [conversationId]);
 
   // アシスタントの声（docs/24）: 明示指定（assistant.voice、作成/編集で設定）を読み上げの
   // 上書きに使う。draft はロード済みの draftAsst から、既存会話は assistant_id で 1 回引く。
@@ -555,6 +589,31 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     } finally {
       markChatBusy(key, false);
       setCompactKey((k) => (k === key ? null : k));
+    }
+  };
+
+  // 途中でバックエンド（CLI）を切り替える（docs/19）。設定「エージェント優先順位」は新規
+  // 会話にしか効かないので、進行中の会話を動かす導線はここだけ。バックエンドはピン留めと
+  // モデルを差し替え、新エージェントがまだ知らない履歴は次の送信でまとめて再生される。
+  const doSwitchAgent = async (kind: SessionKind) => {
+    if (!conversationId || kind === (conv?.agent as SessionKind | undefined) || showStreaming || compacting) return;
+    const key = conversationId;
+    setAgentPickerOpen(false);
+    setErrorFor(key, "");
+    setSwitchKey(key);
+    try {
+      const c2 = await chatSetAgent(key, kind);
+      if (c2 && c2.id) {
+        applyConvIfCurrent(c2);
+        publishSnapshot(c2); // 他ペイン/一覧にも新しい会話状態を届ける
+        bumpChatList();
+      } else {
+        setErrorFor(key, c2?.error ? errText(c2.error) : tr("chat.switch_agent_failed"));
+      }
+    } catch {
+      setErrorFor(key, tr("chat.switch_agent_failed"));
+    } finally {
+      setSwitchKey((k) => (k === key ? null : k));
     }
   };
 
@@ -1070,12 +1129,64 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
         <span className="fi-name">
           <Icon name={draftAsst?.icon || "comment-discussion"} /> {title}
         </span>
-        {agent && (
+        {/* エージェントのチップ。既存会話ではそのまま切替ピッカーのボタンを兼ねる
+            （draft はまだ会話が無いので表示のみ）。 */}
+        {agent && conversationId && (
+          <button
+            type="button"
+            ref={agentTagRef}
+            className={"kind-tag kind-" + kindClass(agentKind!) + " chat-agent-pick"}
+            title={tr("chat.switch_agent_tip")}
+            aria-haspopup="menu"
+            aria-expanded={agentPickerOpen}
+            disabled={switching || showStreaming || compacting || !wsRunning}
+            onClick={() => setAgentPickerOpen((o) => !o)}
+          >
+            <Icon name={switching ? "loading" : agent.icon} spin={switching} />
+            {agent.assistantName}
+            <Icon name="chevron-down" className="chat-agent-caret" />
+          </button>
+        )}
+        {agent && !conversationId && (
           <span className={"kind-tag kind-" + kindClass(agentKind!)}>
             <Icon name={agent.icon} />
             {agent.assistantName}
           </span>
         )}
+        {agentPickerOpen &&
+          createPortal(
+            <div className="ui-menu chat-agent-menu" ref={agentMenuRef} role="menu" onMouseDown={(e) => e.stopPropagation()}>
+              <div className="assistant-picker-label">{tr("chat.switch_agent")}</div>
+              {CHAT_KINDS.map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  className="ui-menu-item"
+                  role="menuitemradio"
+                  aria-checked={k === conv?.agent}
+                  // 未接続の CLI にピン留めしても、送信時に接続済みのバックエンドへ退避する
+                  // だけ（chatProviderFor）＝選ばせても効かない。接続状況が分からないとき
+                  // （キャッシュが冷えている）は塞がない。
+                  disabled={!!chatConns && !agentOf(k).available({ conns: chatConns })}
+                  title={
+                    chatConns && !agentOf(k).available({ conns: chatConns })
+                      ? tr("chat.switch_agent_offline")
+                      : undefined
+                  }
+                  onClick={() => void doSwitchAgent(k)}
+                >
+                  <Icon name={k === conv?.agent ? "check" : "blank"} />
+                  {/* kind の色は tokens.css の --kind-* が1ソース（agent-display-naming）。 */}
+                  <span className="chat-agent-ic" style={{ color: `var(--kind-${kindClass(k)})` }}>
+                    <Icon name={agentOf(k).icon} />
+                  </span>
+                  {agentOf(k).assistantName}
+                </button>
+              ))}
+              <div className="chat-agent-note muted">{tr("chat.switch_agent_note")}</div>
+            </div>,
+            document.body,
+          )}
         {(conv || showStreaming || !wsRunning) && (
           <span className={"session-state " + stateChip.cls}>
             <Icon name={stateChip.icon} spin={stateChip.spin} /> {stateChip.text}
