@@ -130,7 +130,8 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
   `agent` frame を返し、Console の live bubble/header も Claude→Codex 等へ即時追従する。
 - **コンテナ内 stdio MCP**: チャットの claude には `workspace-agent mcp-stdio` を `--mcp-config` で
   付与（PAT 不要・egress 不要・身元=自コンテナ）。既定 read-only、`--write` 時のみ
-  `create_session`・`send_to_session`・`list_assistants`・`ask_assistant` を**広告**する（権限プロンプトでなく
+  `create_session`・`send_to_session`・`list_assistants`・`ask_assistant`・
+  `get_chat_plan`／`set_chat_plan`（作業計画 — [33](../33-chat-context-usage.md) 第5段）を**広告**する（権限プロンプトでなく
   「見えるツール集合」がゲート）。CP の `/mcp` とは**別実装・別スコープ**（意図的な二重管理、
   [03](03-control-plane.md)）。
 - **Codex の無人承認**: headless chat は承認 UI を持たないため `-a never` に加え、明示的に

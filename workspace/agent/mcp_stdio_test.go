@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -605,4 +606,119 @@ func TestMCPGetMemorySnapshotJoinsTreeAndDiff(t *testing.T) {
 			t.Fatalf("response is missing %q: %s", want, resp)
 		}
 	}
+}
+
+// --- 作業計画（docs/33 第5段 案D）---------------------------------------------
+
+// set_chat_plan は会話 id を引数に取らず、常に自分の会話（mcpConvID）へ書く。
+// notice:true を必ず立てる — 利用者が見ていない間に計画が動く唯一の経路なので、
+// 会話にカードが残らないと誤上書きに誰も気づけない。
+func TestMCPSetChatPlanWritesOwnConversationWithNotice(t *testing.T) {
+	var gotPath, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotPath, gotBody = r.Method+" "+r.URL.Path, string(b)
+		_, _ = w.Write([]byte(`{"id":"conv-1","messages":[{"role":"user","content":"…"}]}`))
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	t.Setenv("AGENT_ADDR", u.Host)
+	withMCPWriteConv(t, "conv-1")
+
+	resp := mcpCall(t, "set_chat_plan", map[string]any{"plan": "## これからやること\n- Lane A"})
+	if want := "PUT /chat/conversations/conv-1/plan"; gotPath != want {
+		t.Fatalf("path = %q, want %q", gotPath, want)
+	}
+	if !strings.Contains(gotBody, `"notice":true`) || !strings.Contains(gotBody, "Lane A") {
+		t.Fatalf("body = %s", gotBody)
+	}
+	// 会話まるごとを返さない（返すと計画を書くたびに会話全文がモデルへ戻る）。
+	if strings.Contains(resp, "role") {
+		t.Fatalf("conversation leaked into the tool result: %s", resp)
+	}
+}
+
+// 空の全文置換で計画を消させない（破棄は利用者の判断）。Agent も叩かない。
+func TestMCPSetChatPlanRefusesEmpty(t *testing.T) {
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	t.Setenv("AGENT_ADDR", u.Host)
+	withMCPWriteConv(t, "conv-1")
+
+	for _, plan := range []string{"", "   \n "} {
+		resp := mcpCall(t, "set_chat_plan", map[string]any{"plan": plan})
+		if !mcpIsError(t, resp) {
+			t.Fatalf("plan=%q: want isError, got %s", plan, resp)
+		}
+	}
+	if called {
+		t.Fatal("empty plan must not reach the Agent")
+	}
+}
+
+// 広告集合がスコープの境界（docs/19 Q2 と同じ作法）: read/write とも --write 下でのみ。
+func TestMCPChatPlanToolsDeniedWithoutWrite(t *testing.T) {
+	withMCPWriteConv(t, "conv-1")
+	mcpWriteEnabled = false
+	for _, name := range []string{"get_chat_plan", "set_chat_plan"} {
+		if !mcpIsError(t, mcpCall(t, name, map[string]any{"plan": "x"})) {
+			t.Fatalf("%s: want denial without --write", name)
+		}
+	}
+}
+
+// 会話に結び付いていない経路（--conv なし）では扱えない。
+func TestMCPChatPlanToolsRequireConv(t *testing.T) {
+	withMCPWriteConv(t, "")
+	if !mcpIsError(t, mcpCall(t, "get_chat_plan", map[string]any{})) {
+		t.Fatal("want error without a conversation")
+	}
+}
+
+func TestMCPGetChatPlanReturnsPlanOnly(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/chat/conversations/conv-1/plan" {
+			t.Errorf("unexpected call: %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"plan":"## これからやること\n- Lane A","plan_updated_at":1}`))
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	t.Setenv("AGENT_ADDR", u.Host)
+	withMCPWriteConv(t, "conv-1")
+	if !strings.Contains(mcpCall(t, "get_chat_plan", map[string]any{}), "Lane A") {
+		t.Fatal("plan not returned")
+	}
+}
+
+// 計画ツールは write 集合にだけ広告する（read 専用アシスタントのツール表を太らせない）。
+func TestMCPChatPlanToolsAdvertisedOnlyUnderWrite(t *testing.T) {
+	has := func(tools []map[string]any, name string) bool {
+		for _, tl := range tools {
+			if tl["name"] == name {
+				return true
+			}
+		}
+		return false
+	}
+	for _, name := range []string{"get_chat_plan", "set_chat_plan"} {
+		if !has(mcpStdioWriteTools, name) {
+			t.Fatalf("%s missing from the write tool set", name)
+		}
+		if has(mcpStdioTools, name) {
+			t.Fatalf("%s must not be advertised to read-only assistants", name)
+		}
+	}
+}
+
+func withMCPWriteConv(t *testing.T, conv string) {
+	t.Helper()
+	oldWrite, oldConv := mcpWriteEnabled, mcpConvID
+	mcpWriteEnabled, mcpConvID = true, conv
+	t.Cleanup(func() { mcpWriteEnabled, mcpConvID = oldWrite, oldConv })
 }

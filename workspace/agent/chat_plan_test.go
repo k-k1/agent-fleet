@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -250,4 +253,89 @@ func noticeKeys(c *chatConversation) []string {
 		}
 	}
 	return out
+}
+
+// --- HTTP（手編集 / MCP 経由）--------------------------------------------------
+
+func planMux() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /chat/conversations/{id}/plan", handleChatPlanGet)
+	mux.HandleFunc("PUT /chat/conversations/{id}/plan", handleChatPlanSet)
+	return mux
+}
+
+func TestHandleChatPlanGetSetRoundTrip(t *testing.T) {
+	withTempHome(t)
+	mux := planMux()
+	c := &chatConversation{ID: randUUID(), Agent: "claude", Messages: []chatMessage{}}
+	if err := saveConv(c); err != nil {
+		t.Fatal(err)
+	}
+
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, httptest.NewRequest("GET", "/chat/conversations/"+randUUID()+"/plan", nil))
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("unknown conv: code = %d", rr.Code)
+	}
+
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, httptest.NewRequest("PUT", "/chat/conversations/"+c.ID+"/plan",
+		strings.NewReader(`{"plan":"## これからやること\n- Lane A"}`)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("put: code = %d body = %s", rr.Code, rr.Body.String())
+	}
+
+	// GET は計画だけを返す（会話全文を返すと MCP 経由でモデルへ会話が丸ごと戻る）。
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, httptest.NewRequest("GET", "/chat/conversations/"+c.ID+"/plan", nil))
+	var got struct {
+		Plan      string `json:"plan"`
+		UpdatedAt int64  `json:"plan_updated_at"`
+		Messages  []any  `json:"messages"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got.Plan, "Lane A") || got.UpdatedAt == 0 || got.Messages != nil {
+		t.Fatalf("get = %s", rr.Body.String())
+	}
+}
+
+// 手編集（Console）は notice を積まない／MCP 経由（notice:true）は必ず積む。
+// 利用者が見ていない間に計画が動く唯一の経路なので、そこだけ痕跡を残す。
+func TestHandleChatPlanSetNoticeOnlyWhenAsked(t *testing.T) {
+	withTempHome(t)
+	mux := planMux()
+	for name, tc := range map[string]struct {
+		body   string
+		notice bool
+	}{
+		"hand edit": {`{"plan":"## これからやること\n- A"}`, false},
+		"via mcp":   {`{"plan":"## これからやること\n- A","notice":true}`, true},
+		"unchanged": {`{"plan":"## これからやること\n- A"}`, false},
+	} {
+		c := &chatConversation{ID: randUUID(), Agent: "claude", Messages: []chatMessage{}}
+		if name == "unchanged" {
+			c.Plan = "## これからやること\n- A"
+		}
+		if err := saveConv(c); err != nil {
+			t.Fatal(err)
+		}
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, httptest.NewRequest("PUT", "/chat/conversations/"+c.ID+"/plan", strings.NewReader(tc.body)))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s: code = %d", name, rr.Code)
+		}
+		saved, err := loadConv(c.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		has := false
+		for _, k := range noticeKeys(saved) {
+			has = has || k == noticeKeyPlanUpdated
+		}
+		if has != tc.notice {
+			t.Fatalf("%s: plan notice = %v, want %v", name, has, tc.notice)
+		}
+	}
 }
