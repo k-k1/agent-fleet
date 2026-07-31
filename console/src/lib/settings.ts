@@ -271,12 +271,12 @@ export interface Settings {
   // they already asked for; failures whose cause won't clear (usage limit, prompt too
   // long) are classified out and never auto-resumed.
   assistantAutoResume: boolean;
-  // 利用上限リセット後の自動再開 (docs/47 §4-4): a claude session cut off by its usage
-  // limit gets a one-shot schedule at the reset instant that tells it to carry on (the
-  // agent books it with the CP scheduler, so a workspace stopped in the meantime is
-  // woken for it). Default ON. Note this toggle governs the RESUME only — dismissing
-  // the limit menu itself ("stop and wait", the no-charge option) happens either way,
-  // because while it is up the session accepts nothing at all.
+  // 利用上限リセット後の自動再開 (docs/47 §4-4, Agent settings > Claude): a claude
+  // session cut off by its usage limit gets a one-shot schedule at the reset instant
+  // that tells it to carry on (the agent books it with the CP scheduler, so a workspace
+  // stopped in the meantime is woken for it). Default ON. Note this toggle governs the
+  // RESUME only — dismissing the limit menu itself ("stop and wait", the no-charge
+  // option) happens either way, because while it is up the session accepts nothing at all.
   rateLimitAutoResume: boolean;
   // Preventive auto-compaction (docs/33 第4段): when a chat's context is still at/above
   // the backend threshold (90%) as a new turn starts, summarize-and-hand-off first.

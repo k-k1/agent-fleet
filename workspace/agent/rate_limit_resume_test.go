@@ -107,6 +107,37 @@ func TestRateLimitRecoverBooksThenDismisses(t *testing.T) {
 	}
 }
 
+// TestRateLimitRecoverDoesNotDependOnSessionOrigin: 利用上限の監視はセッションの
+// 出自やオペレーター会話への紐付けを条件にしない。Console から直接起動した独立
+// セッション（origin=user / originConv 空）にも、アシスタント起点のセッションと
+// 同じ予約・解除が走ることを固定する。
+func TestRateLimitRecoverDoesNotDependOnSessionOrigin(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		origin     string
+		originConv string
+	}{
+		{"Console から直接起動", session.OriginUser, ""},
+		{"アシスタント起点", session.OriginOperator, "a1b2c3d"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newRateLimitFixture(t)
+			now := time.Now()
+			f.resetAt = now.Add(time.Hour)
+			m := rlMeta()
+			m.Name = "rl-" + tc.origin
+			m.Origin = tc.origin
+			m.OriginConv = tc.originConv
+
+			rateLimitRecover(m, stateOf(t, m.Name), now)
+			if f.scheduled != 1 || f.dismissed != 1 {
+				t.Fatalf("origin=%q originConv=%q: 予約=%d 解除=%d, want 1 / 1",
+					m.Origin, m.OriginConv, f.scheduled, f.dismissed)
+			}
+		})
+	}
+}
+
 // TestRateLimitDismissRetriesAreBounded: 解除できないときは間隔を空けて数回だけ試し、
 // 上限に達したら諦めること（選択が動いている・TUI の形が変わった、のどちらでも叩き
 // 続けて直るものではない）。

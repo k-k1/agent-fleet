@@ -194,10 +194,6 @@ export function AssistantTab() {
           <OnOff value={s.assistantAutoResume} onChange={(v) => setSetting("assistantAutoResume", v)} />
         </Row>
         <p className="muted ds-note">{tr("assistant.note_auto_resume")}</p>
-        <Row label={tr("assistant.rate_limit_resume")}>
-          <OnOff value={s.rateLimitAutoResume} onChange={(v) => setSetting("rateLimitAutoResume", v)} />
-        </Row>
-        <p className="muted ds-note">{tr("assistant.note_rate_limit_resume")}</p>
         <Row label={tr("assistant.auto_compact")}>
           <OnOff value={s.assistantAutoCompact} onChange={(v) => setSetting("assistantAutoCompact", v)} />
         </Row>
