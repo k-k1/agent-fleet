@@ -6,7 +6,7 @@
 // changes (resolveModel), so this only renders and reports picks.
 import { useEffect, useMemo, useState } from "react";
 import { useT } from "../lib/i18n/index.ts";
-import { useModelOptions } from "../lib/agentModels.ts";
+import { useModelOptions, useHiddenModel } from "../lib/agentModels.ts";
 import { useEffortOptions } from "../lib/agentModels.ts";
 import type { ModelOption } from "../lib/agentModels.ts";
 import { filterModelOptions } from "../lib/modelFilter.ts";
@@ -23,13 +23,17 @@ export function ModelPicker({ kind, model, onChange }: ModelPickerProps) {
   const [query, setQuery] = useState("");
   useEffect(() => setQuery(""), [kind]);
 
+  const hidden = useHiddenModel(kind, model);
   const dynamicOptions = useMemo(() => {
     if (!options || kind === "claude") return options;
     // A stored last-used model can be missing from the fetched list (deprecated /
     // provider since disconnected, or the list hasn't loaded yet): keep it in the
-    // full catalog rather than showing 既定 while actually sending it.
+    // full catalog rather than showing 既定 while actually sending it. EXCEPT when the
+    // user excluded it in settings — 消えた と 隠した は別物で、足し戻すと隠したはずの
+    // モデルが復活する（起動は Agent 側ガードで断られるので、選べても嘘になる）。
+    if (hidden) return options;
     return options.some(([v]) => v === model) ? options : [...options, [model, model] as ModelOption];
-  }, [kind, model, options]);
+  }, [kind, model, options, hidden]);
   const filtered = useMemo(
     () => (dynamicOptions ? filterModelOptions(dynamicOptions, query) : []),
     [dynamicOptions, query],

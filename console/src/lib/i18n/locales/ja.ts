@@ -895,6 +895,11 @@ export const ja = {
   "agents.mode_normal": "通常",
   "agents.note_launch_defaults":
     "新しいセッションの初期値です。リポジトリで前回使った設定があれば、そちらを優先します。ドライバが対応しない項目は起動時に適用されません。",
+  "agents.hidden_models": "使わないモデル",
+  "agents.hidden_models_sub":
+    "選択肢から外し、指定した起動も断ります（アシスタントが選ぶ一覧にも出ません）。プランで追加課金になるモデルの誤選択を防ぐための設定です。",
+  "agents.hidden_models_add": "＋ モデルを追加",
+  "agents.hidden_models_remove": "{model} の除外を解除",
   "agents.rtk_row": "RTK（トークン節約）",
   "agents.rtk_unavailable": "このワークスペースに rtk がありません",
   "agents.settings": "設定",

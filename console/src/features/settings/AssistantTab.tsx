@@ -11,7 +11,7 @@ import { agentOf } from "../../agents/registry.ts";
 import { SwatchGrid } from "../../ui/SwatchGrid.tsx";
 import { Choice, OnOff, OrderList, Row, Select, Slider } from "./controls.tsx";
 import { useT } from "../../lib/i18n/index.ts";
-import { useModelOptions } from "../../lib/agentModels.ts";
+import { useHiddenModel, useModelOptions } from "../../lib/agentModels.ts";
 
 // kind → 推奨モデル ID の解決。utility（タイトル提案などの軽量用途）と本回答とで別。
 // catalog 依存の分岐（cheap 探索 / ids に居るかの確認）があるため定数表ではなく関数で持つ。
@@ -61,8 +61,13 @@ function AssistantModelRow({
   // Preserve a configured model that temporarily disappeared from a live catalog
   // (workspace stopped, provider disconnected, upstream rename). Dropping it from
   // the select would make the visible value lie about the persisted setting.
+  // 設定で除外したモデルはこの救済から外す（消えた ≠ 隠した）— Agent 側は除外値を
+  // 未設定として扱い推奨へ退避するので、足し戻すと表示のほうが嘘になる。
+  const hidden = useHiddenModel(kind, value);
   const options =
-    value && !choices.some(([id]) => id === value) ? [...choices, [value, value] as [string, string]] : choices;
+    value && !hidden && !choices.some(([id]) => id === value)
+      ? [...choices, [value, value] as [string, string]]
+      : choices;
   return (
     <Row label={agentOf(kind).assistantName}>
       <Select value={value} options={options} onChange={onChange} />
@@ -77,9 +82,12 @@ function AssistantModelRow({
 function AutoTurnModelSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const tr = useT();
   const live = useModelOptions("claude") || [];
+  const hidden = useHiddenModel("claude", value);
   const choices: [string, string][] = [["", tr("assistant.auto_turn_model_default")], ...live];
   const options =
-    value && !choices.some(([id]) => id === value) ? [...choices, [value, value] as [string, string]] : choices;
+    value && !hidden && !choices.some(([id]) => id === value)
+      ? [...choices, [value, value] as [string, string]]
+      : choices;
   return <Select value={value} options={options} onChange={onChange} />;
 }
 

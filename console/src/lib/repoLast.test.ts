@@ -5,6 +5,11 @@ vi.stubGlobal("localStorage", {
   getItem: (key: string) => values.get(key) ?? null,
   setItem: (key: string, value: string) => values.set(key, value),
   removeItem: (key: string) => values.delete(key),
+  // forgetHiddenRepoModels は「af.repo-model.* を総なめ」なので列挙 API も要る。
+  get length() {
+    return values.size;
+  },
+  key: (i: number) => [...values.keys()][i] ?? null,
 });
 vi.stubGlobal("window", { fetch: vi.fn(async () => new Response()) });
 
@@ -42,5 +47,38 @@ describe("repo launch settings", () => {
     expect(resolveEffort("claude", "repo", "low")).toBe("max");
     expect(resolveStartMode("claude", "repo", "normal")).toBe("plan");
     expect(resolveModel("opencode", "repo", "")).toBe("openai/gpt");
+  });
+
+  // 「使わないモデル」に入れたら、リポジトリごとの前回値からも消える。ここが残ると
+  // そのリポジトリの起動導線だけ除外モデルを既定に持ち続け、毎回 Agent 側で弾かれる。
+  it("forgets remembered models that were just excluded", () => {
+    const { forgetHiddenRepoModels, resolveModel, writeRepoLast } = repoLast;
+    writeRepoLast("repo-a", "claude", "fable");
+    writeRepoLast("repo-b", "claude", "sonnet");
+    writeRepoLast("repo-a", "codex", "gpt-5.6-terra");
+
+    forgetHiddenRepoModels("claude", ["fable"]);
+
+    expect(resolveModel("claude", "repo-a", "sonnet")).toBe("sonnet"); // 忘れて既定へ
+    expect(resolveModel("claude", "repo-b", "opus")).toBe("sonnet"); // 無関係な値は残る
+    // claude のキーは kind 無し（歴史的経緯）なので、他 kind を巻き添えにしないこと。
+    expect(resolveModel("codex", "repo-a", "")).toBe("gpt-5.6-terra");
+  });
+
+  // 別端末で除外された場合、この端末の localStorage は掃除前のまま。resolveModel 側でも
+  // 除外値を採用しない（採用すると起動のたびに Agent 側ガードで弾かれる）。
+  it("never resolves to a model excluded in settings", async () => {
+    const { resolveModel, writeRepoLast } = repoLast;
+    const { setSettings } = await import("./settings.ts");
+    setSettings({ hiddenModels: { claude: ["fable"], codex: ["gpt-5.6-terra"] } });
+    try {
+      writeRepoLast("repo-x", "claude", "fable");
+      writeRepoLast("repo-x", "codex", "gpt-5.6-terra");
+      expect(resolveModel("claude", "repo-x", "sonnet")).toBe("sonnet"); // 記憶を捨てて既定へ
+      expect(resolveModel("claude", "repo-y", "fable")).not.toBe("fable"); // 既定自体が除外
+      expect(resolveModel("codex", "repo-x", "")).toBe(""); // 動的 kind は CLI 任せへ
+    } finally {
+      setSettings({ hiddenModels: {} });
+    }
   });
 });

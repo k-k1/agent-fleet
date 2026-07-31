@@ -1351,16 +1351,17 @@ func modelChoiceIDs(list []agents.ModelChoice) []string {
 // proves it is available; otherwise an empty result deliberately delegates to the
 // CLI default rather than risking a metered/unentitled Zen model.
 func recommendedUtilityModel(kind string) string {
+	// 「使わないモデル」（model_deny.go）で除外された候補は自動選択もしない。
 	switch kind {
 	case session.KindClaude:
-		return "haiku"
+		return visibleModel(kind, "haiku")
 	case session.KindCodex:
-		return cheapOneShotModel(modelChoiceIDs(codex.Models()))
+		return cheapOneShotModel(visibleModelIDs(kind, modelChoiceIDs(codex.Models())))
 	case session.KindOpencode:
 		const goModel = "opencode-go/deepseek-v4-flash"
-		return recommendedCatalogModel(opencode.Models(), goModel, "")
+		return recommendedCatalogModel(visibleModelIDs(kind, opencode.Models()), goModel, "")
 	case session.KindAgy:
-		return defaultAgyChatModel
+		return visibleModel(kind, defaultAgyChatModel)
 	}
 	return ""
 }
@@ -1387,7 +1388,7 @@ func codexOneShotArgsFor(selected string) (args []string, autoPicked bool) {
 		args = append(args, "-m", selected)
 	} else if m := os.Getenv("AF_TITLE_MODEL_CODEX"); m != "" {
 		args = append(args, "-m", m) // explicit user choice: never second-guess it
-	} else if m := cheapOneShotModel(modelChoiceIDs(codex.Models())); m != "" {
+	} else if m := cheapOneShotModel(visibleModelIDs(session.KindCodex, modelChoiceIDs(codex.Models()))); m != "" {
 		args, autoPicked = append(args, "-m", m), true
 	}
 	return append(args, "-c", `model_reasoning_effort="low"`, "-"), autoPicked
@@ -1595,7 +1596,7 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		if !configured {
 			m = envOr("AF_TITLE_MODEL_AGY", defaultAgyChatModel)
 		}
-		if m := agyChatModel(m, agy.Models()); m != "" {
+		if m := agyChatModel(m, filterVisibleModels(session.KindAgy, agy.Models())); m != "" {
 			args = append(args, "--model", m)
 			call.ModelReq = m
 		}
