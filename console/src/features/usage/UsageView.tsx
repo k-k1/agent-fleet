@@ -540,7 +540,9 @@ function RtkChart({ buckets, mode }: { buckets: RtkGainBucket[]; mode: RtkMode }
                   }}
                 />
               </span>
-              <span className="ux-tick muted">{i % stride === 0 ? rtkBucketLabel(b, mode) : " "}</span>
+              {/* 間引いた目盛りは NBSP(" ")。普通の空白だと潰れて tick が高さ 0 になり、
+                  .ux-cols の align-items:flex-end で列ごと基線より下に沈む（実バグ）。 */}
+              <span className="ux-tick muted">{i % stride === 0 ? rtkBucketLabel(b, mode) : "\u00A0"}</span>
             </button>
           ))}
         </div>
@@ -745,7 +747,7 @@ function StackChart({ stack, by, metric, bucket }: ChartProps) {
                   />
                 ))}
               </span>
-              <span className="ux-tick muted">{i % stride === 0 ? bucketLabel(row.t, bucket) : " "}</span>
+              <span className="ux-tick muted">{i % stride === 0 ? bucketLabel(row.t, bucket) : "\u00A0"}</span>
             </button>
           ))}
         </div>
