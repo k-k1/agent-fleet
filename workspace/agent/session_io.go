@@ -346,6 +346,19 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name})
 		return
 	}
+	// 利用上限メニュー（/rate-limit-options）が出ているペインは、打った文字がそのまま
+	// **メニューの選択操作**になる。上のエージェント表示と同じ誤配達クラスだが、そちらと
+	// 違って自動復帰は試みない: 選択肢のどちらを選ぶかは課金と待ち時間の判断で、こちらが
+	// 勝手に決めてよいものではない（1=リセットまで待つ / 2=管理者に上限引き上げを依頼）。
+	// 弾いた上で、何をすれば直るかを呼び出し元（ミラー・オペレーター・定時実行）へ返す。
+	if m, ok := session.ReadMeta(name); ok && normalizeKind(m.Kind) == session.KindClaude &&
+		tmuxx.AtRateLimitModal(name) {
+		httpx.WriteErr(w, http.StatusConflict, "rate_limit_modal",
+			"session is parked on claude's usage-limit menu; typed text would become a menu "+
+				"selection instead of a prompt. Choose an option in the pane (wait for the reset, "+
+				"or ask for more usage) and send again.")
+		return
+	}
 	// claude のペインの入力欄が**セッション自身の会話以外**に紐づいていると、打った文字は
 	// メイン会話に届かない: レールでエージェントが選ばれていればそのエージェントへの割り込みに
 	// なり、agents ホーム画面なら「新しいセッションを作る」入力欄になる。どちらもペイン上は

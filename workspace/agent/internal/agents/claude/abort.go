@@ -54,6 +54,7 @@ var retryableOverrides = []string{
 var blockedMarkers = []string{
 	"reached your",       // "You've reached your <model> limit. Run /usage-credits …"
 	"usage limit",        // 別表現の上限（overrides で「上限ではない」旨を先に除外済み）
+	"session limit",      // "You've hit your session limit · resets 7:50pm (Asia/Tokyo)"
 	"prompt is too long", // 会話が長すぎる — /compact なしの再送は無意味
 	"credit balance",
 	"invalid api key",
