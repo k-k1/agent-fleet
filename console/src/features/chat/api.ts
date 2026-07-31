@@ -5,6 +5,7 @@ export {
   chatCreate,
   chatGet,
   chatRename,
+  chatSetAgent,
   chatSuggestTitle,
   chatSuggestReplies,
   chatDelete,

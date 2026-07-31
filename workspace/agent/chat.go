@@ -400,5 +400,25 @@ func chatModel(c *chatConversation) string {
 	return envOr("AF_CHAT_MODEL", defaultChatModel)
 }
 
+// chatModelFor resolves the --model for the backend that is ACTUALLY driving this turn.
+// 会話が持つ Model はピン留めされたエージェント基準の1本しかないので、認証フォールバック
+// （chatProviderFor）や利用者による途中切替で別バックエンドが回すターンにそのまま渡すと、
+// その CLI に他 CLI のモデル id を食わせることになる（codex に "sonnet" 等）。別バックエンドの
+// ターンでは設定「アシスタントのモデル」の当該 CLI 行から解決し直す — 設定画面の説明
+// （「優先順位で別の CLI に切り替わった場合も、その CLI の行で選んだモデルを使います」）が
+// 実装上の契約。プロバイダは自分の kind を渡すだけでよい。
+func chatModelFor(c *chatConversation, kind string) string {
+	if c.modelOverride != "" {
+		return c.modelOverride // 自動ターン専用モデル（呼び出し側が claude ターンだけに立てる）
+	}
+	if c.Agent != "" && kind != c.Agent {
+		return resolveChatModel(kind, "")
+	}
+	if kind == session.KindClaude {
+		return chatModel(c) // 旧来の AF_CHAT_MODEL 既定を保つ
+	}
+	return c.Model // 空 = その CLI 自身の既定に委ねる（--model を渡さない）
+}
+
 // chatTimeout bounds a single CLI turn so a hung process can't wedge the request.
 const chatTimeout = 240 * time.Second

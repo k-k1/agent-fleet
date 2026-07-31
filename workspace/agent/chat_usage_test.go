@@ -97,7 +97,7 @@ func TestParseCodexExecEventsUsage(t *testing.T) {
 	}
 	// input は cached を含む → fresh は差分、合計は input のまま。
 	c := &chatConversation{Agent: "codex", Model: "gpt-5.6-luna"}
-	setChatContext(c, usage.InputTokens-usage.CachedInputTokens, usage.CachedInputTokens, 0, 0, chatCtxModelFor(c))
+	setChatContext(c, usage.InputTokens-usage.CachedInputTokens, usage.CachedInputTokens, 0, 0, chatCtxModelFor(c, "codex"))
 	if c.Context.Tokens != 14502 || c.Context.Read != 8960 || c.Context.Fresh != 14502-8960 {
 		t.Fatalf("context = %+v", c.Context)
 	}

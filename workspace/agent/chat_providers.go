@@ -173,11 +173,11 @@ func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) 
 	c.startTurn()
 	// 使用量台帳（ADR 0029 §3）: 呼び出しの開始時点で記録を defer に積む。成功・エラー
 	// result・exec 失敗・パース失敗のどの経路を通っても必ず1回だけ行が残る。
-	call := usageCall{Kind: session.KindClaude, ModelReq: chatModel(c)}
+	call := usageCall{Kind: session.KindClaude, ModelReq: chatModelFor(c, session.KindClaude)}
 	defer recordUsageCall(ctx, &call, time.Now())
 	args := []string{"-p", "--output-format", "json", "--dangerously-skip-permissions",
 		"--append-system-prompt", c.personaOf()}
-	args = append(args, "--model", chatModel(c))
+	args = append(args, "--model", chatModelFor(c, session.KindClaude))
 	args = append(args, chatToolLimits()...) // no subagents (OOM) / no file+shell tools
 	if c.ClaudeSessionID != "" {
 		args = append(args, "--resume", c.ClaudeSessionID)
@@ -216,7 +216,7 @@ func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) 
 		return "", fmt.Errorf("claude execution failed: %s", cliErr(err))
 	}
 	call.OK = true
-	t := claudeCtx{model: chatModel(c)}
+	t := claudeCtx{model: chatModelFor(c, session.KindClaude)}
 	t.observeResult(r.Usage, r.ModelUsage)
 	t.apply(c) // context-fill snapshot (chat_usage.go)
 	return strings.TrimRight(r.Result, "\n"), nil
@@ -275,13 +275,13 @@ type streamLine struct {
 func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt string, emit func(chatStreamEvent)) (string, []chatStep, error) {
 	c.startTurn()
 	// 使用量台帳（ADR 0029 §3）— send と同じく全経路で1回記録する。
-	call := usageCall{Kind: session.KindClaude, ModelReq: chatModel(c)}
+	call := usageCall{Kind: session.KindClaude, ModelReq: chatModelFor(c, session.KindClaude)}
 	defer recordUsageCall(ctx, &call, time.Now())
 	// stream-json requires --verbose with -p; --include-partial-messages adds the
 	// per-token text_delta events we forward for live display.
 	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
 		"--dangerously-skip-permissions", "--append-system-prompt", c.personaOf()}
-	args = append(args, "--model", chatModel(c))
+	args = append(args, "--model", chatModelFor(c, session.KindClaude))
 	args = append(args, chatToolLimits()...) // no subagents (OOM) / no file+shell tools
 	if c.ClaudeSessionID != "" {
 		args = append(args, "--resume", c.ClaudeSessionID)
@@ -314,7 +314,7 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 	var steps []chatStep    // completed working steps
 	var result string       // authoritative final text (fallback / error text)
 	var resultErr bool
-	ctxTrack := claudeCtx{model: chatModel(c)} // context-fill tracker (chat_usage.go)
+	ctxTrack := claudeCtx{model: chatModelFor(c, session.KindClaude)} // context-fill tracker (chat_usage.go)
 	reader := bufio.NewReaderSize(stdout, 1<<20)
 	for {
 		line, rerr := reader.ReadBytes('\n')
@@ -418,7 +418,8 @@ func (codexChat) send(ctx context.Context, c *chatConversation, prompt string) (
 	c.startTurn()
 	// 使用量台帳（ADR 0029 §3）。codex はどのイベントにもモデルを載せない（実測）ので、
 	// -m を渡した時だけ requested、未指定なら default_unknown に縮退する。
-	call := usageCall{Kind: session.KindCodex, ModelReq: c.Model}
+	model := chatModelFor(c, session.KindCodex) // ピン留めが別 kind ならこの CLI の設定から解決
+	call := usageCall{Kind: session.KindCodex, ModelReq: model}
 	defer recordUsageCall(ctx, &call, time.Now())
 	// The default read-only sandbox is exactly the chat contract (no file writes, no
 	// state mutation) — the claude side enforces the same via --disallowedTools. Global
@@ -428,8 +429,8 @@ func (codexChat) send(ctx context.Context, c *chatConversation, prompt string) (
 	// shell commands in the read-only sandbox: MCP calls (including af_write) can run,
 	// but the model still cannot mutate the workspace through shell/file tools.
 	args := codexChatBaseArgs()
-	if c.Model != "" {
-		args = append(args, "-m", c.Model)
+	if model != "" {
+		args = append(args, "-m", model)
 	}
 	mcpArgs, mcpEnv := codexMCPArgs(c)
 	args = append(args, mcpArgs...)
@@ -458,10 +459,10 @@ func (codexChat) send(ctx context.Context, c *chatConversation, prompt string) (
 	call.OK = true
 	// codex はモデルを名乗らないので、記録できるのは -m で渡した値だけ（未指定なら
 	// codex 自身の既定＝こちらからは不明なので空のまま）。
-	c.noteTurnModel(c.Model)
+	c.noteTurnModel(model)
 	// codex の input_tokens は cached を含む（chat_usage.go）: fresh = input - cached。
 	setChatContext(c, usage.InputTokens-usage.CachedInputTokens, usage.CachedInputTokens,
-		0, 0, chatCtxModelFor(c))
+		0, 0, chatCtxModelFor(c, session.KindCodex))
 	return reply, nil
 }
 
@@ -609,15 +610,16 @@ type opencodeChat struct{}
 
 func (opencodeChat) send(ctx context.Context, c *chatConversation, prompt string) (string, error) {
 	c.startTurn()
-	call := usageCall{Kind: session.KindOpencode, ModelReq: c.Model} // 使用量台帳（ADR 0029 §3）
+	pinned := chatModelFor(c, session.KindOpencode)                 // ピン留めが別 kind ならこの CLI の設定から解決
+	call := usageCall{Kind: session.KindOpencode, ModelReq: pinned} // 使用量台帳（ADR 0029 §3）
 	defer recordUsageCall(ctx, &call, time.Now())
 	dir := opencodeChatDir(c)
 	args := []string{"run", "--format", "json", "--dir", dir}
 	if c.OpencodeSessionID != "" {
 		args = append(args, "--session", c.OpencodeSessionID)
 	}
-	if c.Model != "" {
-		args = append(args, "--model", c.Model)
+	if pinned != "" {
+		args = append(args, "--model", pinned)
 	}
 	args = append(args, headlessPrompt(c.personaOf(), c.knowledgeDirs(), prompt))
 	cmd := exec.CommandContext(ctx, "opencode", args...)
@@ -658,9 +660,9 @@ func (opencodeChat) send(ctx context.Context, c *chatConversation, prompt string
 	if model != "" {
 		c.noteTurnModel(model)
 	} else {
-		c.noteTurnModel(c.Model)
+		c.noteTurnModel(pinned)
 	}
-	setChatContext(c, usage.Input, usage.Cache.Read, usage.Cache.Write, 0, chatCtxModelFor(c))
+	setChatContext(c, usage.Input, usage.Cache.Read, usage.Cache.Write, 0, chatCtxModelFor(c, session.KindOpencode))
 	return reply, nil
 }
 
@@ -967,7 +969,7 @@ func (agyChat) send(ctx context.Context, c *chatConversation, prompt string) (st
 	c.startTurn()
 	// 使用量台帳（ADR 0029 §3）: agy は素のテキストしか返さないので measured=none —
 	// トークンは 0 ではなく「未計測」として、回数だけを数える。
-	call := usageCall{Kind: session.KindAgy, ModelReq: c.Model, Measured: usageMeasuredNone}
+	call := usageCall{Kind: session.KindAgy, ModelReq: chatModelFor(c, session.KindAgy), Measured: usageMeasuredNone}
 	defer recordUsageCall(ctx, &call, time.Now())
 	home, wd, err := chatAgyHome(c)
 	if err != nil {
@@ -1010,8 +1012,8 @@ func (agyChat) send(ctx context.Context, c *chatConversation, prompt string) (st
 func agyChatArgs(c *chatConversation, prompt string) ([]string, string) {
 	var args []string
 	var model string
-	if c.Model != "" { // fetch the catalog only when there is a pin to validate
-		if m := agyChatModel(c.Model, agy.Models()); m != "" {
+	if pinned := chatModelFor(c, session.KindAgy); pinned != "" { // fetch the catalog only when there is a pin to validate
+		if m := agyChatModel(pinned, agy.Models()); m != "" {
 			args = append(args, "--model", m)
 			model = m
 		}
@@ -1183,12 +1185,13 @@ func (cursorChat) send(ctx context.Context, c *chatConversation, prompt string) 
 	// 使用量台帳（ADR 0029 §3）。cursor は result にモデルを載せない（実測）ので requested
 	// 止まり。"auto" は --model を渡さない＝解決後のモデル不明なので default_unknown。
 	call := usageCall{Kind: session.KindCursor}
-	if c.Model != "" && c.Model != "auto" {
-		call.ModelReq = c.Model
+	pinned := chatModelFor(c, session.KindCursor) // ピン留めが別 kind ならこの CLI の設定から解決
+	if pinned != "" && pinned != "auto" {
+		call.ModelReq = pinned
 	}
 	defer recordUsageCall(ctx, &call, time.Now())
 	args := cursorChatBaseArgs()
-	if m := c.Model; m != "" && m != "auto" { // "auto" = cursor's default = no --model
+	if m := pinned; m != "" && m != "auto" { // "auto" = cursor's default = no --model
 		args = append(args, "--model", m)
 	}
 	if c.CursorSessionID == "" {
@@ -1221,7 +1224,8 @@ func (cursorChat) send(ctx context.Context, c *chatConversation, prompt string) 
 	// 台帳の ModelReq と同じ基準: --model を渡した時だけ記録し、auto/未指定は空
 	// （cursor 側で解決されたモデルは result に出ないので推測しない）。
 	c.noteTurnModel(call.ModelReq)
-	setChatContext(c, r.Usage.InputTokens, r.Usage.CacheReadTokens, r.Usage.CacheWriteTokens, 0, chatCtxModelFor(c))
+	setChatContext(c, r.Usage.InputTokens, r.Usage.CacheReadTokens, r.Usage.CacheWriteTokens, 0,
+		chatCtxModelFor(c, session.KindCursor))
 	return reply, nil
 }
 

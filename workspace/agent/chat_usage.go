@@ -222,14 +222,15 @@ func setChatContext(c *chatConversation, fresh, read, create, window int, model 
 	c.Context = u
 }
 
-// chatCtxModelFor はウィンドウ推定に使うモデル名: 会話に固定があればそれ、なければ
-// バックエンド毎の既定（codex/opencode は作成時に snapshot されるので、空は主に
-// 旧 claude 会話）。
-func chatCtxModelFor(c *chatConversation) string {
-	if c.Model != "" {
-		return c.Model
+// chatCtxModelFor はウィンドウ推定に使うモデル名: そのターンを実際に回したバックエンド
+// 基準で解決した固定値があればそれ（chatModelFor — 認証フォールバックや途中切替では会話の
+// ピン留めと別 CLI が回るので、kind を渡さないと他 CLI のモデル名でウィンドウを推定して
+// しまう）、なければバックエンド毎の既定。
+func chatCtxModelFor(c *chatConversation, kind string) string {
+	if m := chatModelFor(c, kind); m != "" {
+		return m
 	}
-	switch c.Agent {
+	switch kind {
 	case session.KindCodex:
 		return defaultCodexChatModel
 	case session.KindOpencode:
