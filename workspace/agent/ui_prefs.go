@@ -10,6 +10,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // Per-user UI preferences (theme / icon set / fonts / viewer options). The Console
@@ -118,7 +119,16 @@ func assistantModelPref(key, kind string) (string, bool) {
 		return "", false
 	}
 	v, ok := raw[kind].(string)
-	return v, ok
+	if !ok {
+		return "", false
+	}
+	// 「使わないモデル」で除外された値が設定に残っていても採用しない（model_deny.go）。
+	// 未設定扱いに落とすことで、呼び出し側は推奨／CLI 既定へ退避する。
+	// "recommended" は実モデル id ではない番兵なのでそのまま通す。
+	if v != assistantRecommendedModel && modelHidden(kind, v) {
+		return "", false
+	}
+	return v, true
 }
 
 func assistantChatModelPref(kind string) (string, bool) {
@@ -165,7 +175,9 @@ func chatAutoTurnLimit() int {
 // runReportAutoTurn 側でゲート）。
 func chatAutoTurnModel() string {
 	v, _ := readUIPrefs()["assistantAutoTurnModel"].(string)
-	return strings.TrimSpace(v)
+	// claude 専用の設定なので claude の除外リストで判定する。除外されていれば空＝
+	// 会話のモデルのまま（model_deny.go）。
+	return visibleModel(session.KindClaude, strings.TrimSpace(v))
 }
 
 // chatQuietCompletionEnabled is the global ON/OFF for 静かな完了報告 (設定 >

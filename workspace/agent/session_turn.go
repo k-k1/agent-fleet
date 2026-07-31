@@ -313,6 +313,13 @@ func handleSessionSettings(w http.ResponseWriter, r *http.Request) {
 			"tui セッションの設定はターミナル（/input のキー操作）で切り替えます")
 		return
 	}
+	// 稼働中セッションのモデル変更も起動と同じ扱いで断る（model_deny.go）。既に走って
+	// いるセッションの現行モデルは触らない — 除外設定は「これから選ぶ」を止めるもので、
+	// 進行中の作業を巻き戻すものではない。
+	if modelHidden(meta.Kind, req.Model) {
+		httpx.WriteErr(w, http.StatusBadRequest, "model_hidden", hiddenModelError(strings.TrimSpace(req.Model)))
+		return
+	}
 	d, ok := driverOf(meta)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotImplemented, "driver_unavailable",

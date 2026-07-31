@@ -353,17 +353,20 @@ func recommendedCatalogModel(ids []string, target, fallback string) string {
 // recommendedAssistantModel resolves the safe product recommendation against the
 // live catalog. OpenCode Go ids are selected only when this account actually lists
 // them; a non-Go account keeps the universally available Nemotron fallback.
+// 「使わないモデル」（model_deny.go）で除外された候補は推奨としても選ばない — 空を
+// 返して CLI 自身の既定へ委ねる。カタログ由来の候補は絞ったカタログから選び直す。
 func recommendedAssistantModel(agent string) string {
 	switch agent {
 	case session.KindClaude:
-		return "sonnet"
+		return visibleModel(agent, "sonnet")
 	case session.KindCodex:
-		return defaultCodexChatModel
+		return visibleModel(agent, defaultCodexChatModel)
 	case session.KindOpencode:
 		const goModel = "opencode-go/glm-5.2"
-		return recommendedCatalogModel(opencode.Models(), goModel, defaultOpencodeChatModel)
+		return recommendedCatalogModel(visibleModelIDs(agent, opencode.Models()), goModel,
+			visibleModel(agent, defaultOpencodeChatModel))
 	case session.KindAgy:
-		return defaultAgyChatModel
+		return visibleModel(agent, defaultAgyChatModel)
 	}
 	return "" // cursor: Auto is the only entitlement-safe recommendation
 }
