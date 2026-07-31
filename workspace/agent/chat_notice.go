@@ -20,6 +20,7 @@ const (
 	noticeKeyCompactManual   = "chat.notice.compact_manual"
 	noticeKeyCompactAuto     = "chat.notice.compact_auto"
 	noticeKeyCompactRecovery = "chat.notice.compact_recovery"
+	noticeKeyAgentSwitched   = "chat.notice.agent_switched"
 )
 
 // newNotice builds a notice message from its catalog key, arguments and source-language

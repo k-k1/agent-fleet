@@ -1538,6 +1538,12 @@ export const en: Record<keyof typeof ja, string> = {
     "The conversation is summarized and only that summary is handed to a fresh session. The history in this view is kept as is, but only the summary carries over. Producing the summary costs one turn of tokens.",
   "chat.compacting": "Compacting…",
   "chat.compact_failed": "Failed to compact the context.",
+  "chat.switch_agent": "Switch agent",
+  "chat.switch_agent_tip": "Switch the agent (CLI) that runs this conversation",
+  "chat.switch_agent_note":
+    "The history so far is handed over with your next message (that one turn costs extra tokens). The model is re-resolved from each CLI's row in Settings > Assistant.",
+  "chat.switch_agent_failed": "Failed to switch the agent.",
+  "chat.switch_agent_offline": "This CLI is not connected (sign in under Settings > Connections to select it).",
   "chat.state_idle": "Idle",
   "chat.assistant_fallback": "Assistant",
   "chat.greeting_empty": "Send a message to start the conversation.",
@@ -1560,6 +1566,8 @@ export const en: Record<keyof typeof ja, string> = {
     "Context usage crossed the threshold, so it was compacted automatically. Only the summary below is carried into a fresh session, and the conversation continues on top of it (the history in this view stays as it is).\n\n---\n\n{summary}",
   "chat.notice.compact_recovery":
     "Compacted to recover automatically from a context-overflow error. Only the summary below is carried into a fresh session, and the conversation continues on top of it (the history in this view stays as it is).\n\n---\n\n{summary}",
+  "chat.notice.agent_switched":
+    "This conversation switched to “{agent}”. From here on {agent} answers. The history so far is handed over with your next message, so that first turn costs extra tokens. The model was re-resolved from the {agent} row in Settings > Assistant.",
   "chat.working": "Working…",
   "chat.thinking": "Thinking…",
   "chat.suggest_ai": "Suggest replies with AI (from the recent conversation)",

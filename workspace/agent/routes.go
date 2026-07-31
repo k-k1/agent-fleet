@@ -105,7 +105,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /chat/conversations", handleChatList)
 	mux.HandleFunc("POST /chat/conversations", handleChatCreate)
 	mux.HandleFunc("GET /chat/conversations/{id}", handleChatGet)
-	mux.HandleFunc("PATCH /chat/conversations/{id}", handleChatRename)
+	mux.HandleFunc("PATCH /chat/conversations/{id}", handleChatPatch) // 改名 / エージェント切替
 	mux.HandleFunc("POST /chat/conversations/{id}/title/suggest", handleChatSuggestTitle)
 	mux.HandleFunc("POST /chat/conversations/{id}/suggest-replies", handleChatSuggestReplies) // LLM 返信サジェスト v2（preview 専用）
 	mux.HandleFunc("DELETE /chat/conversations/{id}", handleChatDelete)

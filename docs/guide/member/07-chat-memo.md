@@ -59,6 +59,22 @@ For example, for a translation assistant you might put "You are a technical-docu
 translator. Return only the translated text." in the persona, and "Send me text and I'll
 translate between Japanese and English." in the greeting.
 
+### Switching the agent mid-conversation
+
+The **agent priority** list on ⚙Settings → the "Assistant" tab applies to conversations you
+start from now on (and to short one-off calls such as title suggestions). To move a
+conversation that is **already under way** to a different CLI, click the agent chip in the
+chat header (e.g. `Claude ▾`) and pick another one.
+
+- Nothing is lost. The history so far is handed to the new agent with your **next message**,
+  so that one turn costs extra tokens.
+- The model is re-resolved from the **row of the CLI you switched to** on ⚙Settings → the
+  "Assistant" tab (a model you had pinned for the previous agent is not carried over).
+- CLIs you have not connected can't be selected (sign in under Settings → Connections and
+  they appear). You also can't switch while a reply is being generated — stop it first.
+- You can switch back. That agent resumes from where it last answered and only receives the
+  part of the conversation it missed.
+
 The chat's **reply language** is set with "Reply language" on ⚙Settings → the
 "Assistant" tab. "Match input" replies in the language of the text you hand over, while
 choosing 日本語 / English answers in that language even for text in other languages
