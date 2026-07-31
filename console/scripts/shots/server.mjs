@@ -67,6 +67,9 @@ const exact = {
   "/api/notifications-shaped": () => ({ items: [], maxSeq: 0, unseenCount: 0, sourceState: "ready" }),
   "/api/notifications": () => ({ items: [], maxSeq: 0, unseenCount: 0, sourceState: "ready" }),
   "/api/chat/conversations": () => ({ conversations: fx.conversations(LOCALE) }),
+  // ChatView 本体（1会話の GET）。これが無いとチャットペインは「読み込み中」で固まり、
+  // ヘッダー・作業計画パネル（docs/33 第5段）まで到達できない。
+  "/api/chat/conversations/c-ops-1": () => fx.conversation(LOCALE),
   "/api/assistants": () => fx.assistants(LOCALE),
   "/api/memos": () => fx.memos(LOCALE),
   "/api/memo-categories": () => fx.memoCategories(LOCALE),

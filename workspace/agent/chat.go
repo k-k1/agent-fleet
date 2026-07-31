@@ -172,6 +172,12 @@ type chatConversation struct {
 	// next prompt as a preamble — the new provider session's seed context. Cleared
 	// only after that turn succeeds (injectHandoff / chat_compact.go).
 	PendingHandoff string `json:"pending_handoff,omitempty"`
+	// Plan is the conversation's standing work plan (docs/33 第5段), carried into every
+	// fresh provider session **verbatim** — unlike PendingHandoff it is never summarized
+	// and never consumed, so repeated compaction cannot erode it. Written by compaction
+	// (差分更新), the 計画を更新 button and hand editing; see chat_plan.go.
+	Plan          string `json:"plan,omitempty"`
+	PlanUpdatedAt int64  `json:"plan_updated_at,omitempty"`
 	// turnModel carries the model of the turn currently running, from the provider
 	// (which alone knows what it passed / what the CLI reported) to the caller that
 	// appends the assistant message. Unexported = never persisted and never sent to the

@@ -39,6 +39,7 @@ import {
 } from "./tts.ts";
 import { readTurn, collectBlocks, blockIndexAt, type TurnReadHandle } from "../mirror/turnTts.ts";
 import { ContextBar } from "../mirror/ContextBar.tsx";
+import { ChatPlan } from "./ChatPlan.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
@@ -131,6 +132,8 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const sending = !!paneKey && !!sendingKeys[paneKey];
   const [compactKey, setCompactKey] = useState<string | null>(null); // 要約引き継ぎ実行中の会話（docs/33）
   const compacting = !!paneKey && compactKey === paneKey;
+  // 作業計画パネル（docs/33 第5段）の開閉。ペイン跨ぎで持ち回らない純粋な表示状態。
+  const [planOpen, setPlanOpen] = useState(false);
   // a reloaded turn is still running on the backend; polling for the reply
   const [reattachKey, setReattachKey] = useState<string | null>(null);
   const reattaching = !!conversationId && reattachKey === conversationId;
@@ -1081,7 +1084,34 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
             <Icon name={stateChip.icon} spin={stateChip.spin} /> {stateChip.text}
           </span>
         )}
+        {/* 作業計画（docs/33 第5段）: 圧縮を跨いで原文のまま運ばれる枠の開閉。計画が
+            入っている会話は塗って示す — 「アシスタントが絶対に忘れない内容」がどれかを
+            一目で分かるようにするのがこのバッジの役目。 */}
+        {conversationId && (
+          <button
+            type="button"
+            className={"chat-plan-toggle" + (conv?.plan ? " has-plan" : "") + (planOpen ? " open" : "")}
+            title={tr("chat.plan.toggle_tip")}
+            aria-expanded={planOpen}
+            onClick={() => setPlanOpen((v) => !v)}
+          >
+            <Icon name="checklist" /> {tr("chat.plan.title")}
+          </button>
+        )}
       </header>
+      {planOpen && conversationId && (
+        <ChatPlan
+          conversationId={conversationId}
+          plan={conv?.plan || ""}
+          updatedAt={conv?.plan_updated_at}
+          disabled={compacting || showStreaming || storeBusy || !wsRunning}
+          onUpdated={(c2) => {
+            applyConvIfCurrent(c2);
+            publishSnapshot(c2); // 他ペイン/一覧にも新しい会話状態を届ける（圧縮と同じ流儀）
+          }}
+          onClose={() => setPlanOpen(false)}
+        />
+      )}
       {/* Context fill (docs/33): the same gauge the mirror shows, fed from the
           conversation's per-turn usage snapshot (chat_usage.go). Hidden until the
           first turn reports usage. The trailing 圧縮 button runs the summary

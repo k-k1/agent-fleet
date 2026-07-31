@@ -77,14 +77,14 @@ func runOperatorTurnAs(conv, text string, tag usageTag) (string, error) {
 	// docs/30: undelivered session reports ride this prompt; docs/33: a compaction
 	// summary rides the new session's first prompt, outermost.
 	prompt, pendingReports := injectPendingReports(c, text)
-	prompt, handoff := injectHandoff(c, prompt)
+	prompt, handoff := injectCarryover(c, actualAgent, prompt)
 	prompt = syncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
 
 	reply, err := prov.send(ctx, c, prompt)
 	if err != nil && recoverForRetry(ctx, c, prov, err) {
 		// docs/33 第3段: 超過検知 → 要約して畳み新セッションでリトライ。
 		prompt, pendingReports = injectPendingReports(c, text)
-		prompt, handoff = injectHandoff(c, prompt)
+		prompt, handoff = injectCarryover(c, actualAgent, prompt)
 		prompt = syncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
 		reply, err = prov.send(ctx, c, prompt)
 	}
