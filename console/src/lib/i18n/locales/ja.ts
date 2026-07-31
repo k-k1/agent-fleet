@@ -1577,6 +1577,24 @@ export const ja = {
     "コンテキスト使用量が閾値を超えたため、自動で圧縮しました。次の要約だけを新しいセッションへ引き継ぎ、続きはその上で応答します（この画面の会話履歴はそのまま残ります）。\n\n---\n\n{summary}",
   "chat.notice.compact_recovery":
     "コンテキスト超過エラーからの自動復旧のため、圧縮しました。次の要約だけを新しいセッションへ引き継ぎ、続きはその上で応答します（この画面の会話履歴はそのまま残ります）。\n\n---\n\n{summary}",
+  "chat.notice.plan_updated":
+    "作業計画を更新しました。以降の新しいセッションには、この計画を要約せず原文のまま引き継ぎます。\n\n---\n\n{plan}",
+  "chat.plan.title": "作業計画",
+  "chat.plan.toggle_tip": "作業計画を開く（圧縮しても要約されず、原文のまま新しいセッションへ引き継がれます）",
+  "chat.plan.edit": "編集",
+  "chat.plan.refresh": "更新",
+  "chat.plan.refreshing": "更新中…",
+  "chat.plan.refresh_tip": "直近の会話から計画を引き直します（壁打ちで計画が変わった直後に押してください）",
+  "chat.plan.clear": "クリア",
+  "chat.plan.clear_confirm_title": "作業計画をクリアしますか?",
+  "chat.plan.clear_confirm_body":
+    "この会話の作業計画を空にします。以降の新しいセッションへは計画が引き継がれなくなります（会話履歴と引き継ぎ要約はそのまま残ります）。",
+  "chat.plan.placeholder": "## 制約\n## 前提\n## これからやること",
+  "chat.plan.empty": "まだ計画がありません。「更新」で直近の会話から起こすか、「編集」で直接書けます。",
+  "chat.plan.note":
+    "計画は要約されず、原文のまま新しいセッションへ毎回引き継がれます。圧縮時には直近の会話に合わせて自動更新されます。",
+  "chat.plan.failed": "作業計画の更新に失敗しました",
+  "usage.val.feature.plan.update": "作業計画の更新",
   "chat.working": "作業中…",
   "chat.thinking": "考え中…",
   "chat.suggest_ai": "AIに返信候補を出してもらう（直近の会話から）",

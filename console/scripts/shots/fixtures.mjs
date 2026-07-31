@@ -517,6 +517,42 @@ export function conversations(locale) {
   ];
 }
 
+// 1 会話の全文（ChatView）。作業計画（docs/33 第5段）が入った運用会話を用意する —
+// 計画のある会話とない会話でヘッダーの見え方が変わるので、ある側を既定にしておく。
+export function conversation(locale) {
+  const ja = locale === "ja";
+  const ms = (min) => NOW.getTime() - min * 60_000;
+  return {
+    id: "c-ops-1",
+    slug: "a3k9m2t",
+    agent: "claude",
+    active_agent: "claude",
+    assistant_id: "operator",
+    tools: "af_write",
+    title: ja ? "フリート運用の相談" : "Fleet operations",
+    model: "claude-sonnet-5",
+    created_at: ms(600),
+    updated_at: ms(14),
+    plan_updated_at: ms(14),
+    plan: ja
+      ? "## 制約\n- gradle 同時実行は最大2本（5GiB/8core の共有コンテナ）\n- 各レーンは push まで。統合ブランチへのマージは統括セッションが行う\n\n## 前提\n- 統合ブランチ = `feature/G3-1175`（develop 起点）\n- シード済みテスト29件のうち2件は未実装のため意図的に fail\n\n## これからやること\n- Wave 1: Lane A を起こす\n- Wave 2: Lane 1 / Lane 2 を並列（Lane A マージ後）"
+      : "## Constraints\n- At most 2 concurrent gradle runs (shared 5GiB/8-core container)\n- Lanes stop at push; the integration merge is done by this session\n\n## Given\n- Integration branch = `feature/G3-1175` (cut from develop)\n- 2 of the 29 seeded tests fail on purpose (feature not implemented yet)\n\n## Next up\n- Wave 1: start Lane A\n- Wave 2: Lane 1 / Lane 2 in parallel (after Lane A merges)",
+    context: { tokens: 96000, read: 74000, create: 15000, fresh: 7000, window: 200000, pct: 48, model: "claude-sonnet-5" },
+    messages: [
+      { role: "user", content: ja ? "Wave 2 は Lane 2 から回して" : "Run Wave 2 starting with Lane 2", ts: ms(20) },
+      {
+        role: "assistant",
+        agent: "claude",
+        model: "claude-sonnet-5",
+        content: ja
+          ? "了解。Lane 2 を先に回すよう順序を入れ替えました。計画にも反映しています。"
+          : "Got it — reordered so Lane 2 goes first. The plan reflects it now.",
+        ts: ms(14),
+      },
+    ],
+  };
+}
+
 export function assistants(locale) {
   const ja = locale === "ja";
   return [

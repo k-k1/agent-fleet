@@ -111,9 +111,11 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /chat/conversations/{id}", handleChatDelete)
 	mux.HandleFunc("POST /chat/conversations/{id}/lock", handleChatLock) // 削除ロック（docs/45）
 	mux.HandleFunc("POST /chat/conversations/{id}/messages", handleChatSend)
-	mux.HandleFunc("POST /chat/conversations/{id}/stream", handleChatStream)   // SSE (Phase B)
-	mux.HandleFunc("POST /chat/conversations/{id}/stop", handleChatStop)       // cancel a detached in-flight turn
-	mux.HandleFunc("POST /chat/conversations/{id}/compact", handleChatCompact) // 要約引き継ぎ（docs/33 第2段）
+	mux.HandleFunc("POST /chat/conversations/{id}/stream", handleChatStream)            // SSE (Phase B)
+	mux.HandleFunc("POST /chat/conversations/{id}/stop", handleChatStop)                // cancel a detached in-flight turn
+	mux.HandleFunc("POST /chat/conversations/{id}/compact", handleChatCompact)          // 要約引き継ぎ（docs/33 第2段）
+	mux.HandleFunc("PUT /chat/conversations/{id}/plan", handleChatPlanSet)              // 作業計画の手編集（docs/33 第5段）
+	mux.HandleFunc("POST /chat/conversations/{id}/plan/refresh", handleChatPlanRefresh) // 作業計画の明示更新（同）
 	mux.HandleFunc("POST /chat/conversations/{id}/paste-image", handleChatPasteImage)
 	mux.HandleFunc("GET /chat/conversations/{id}/pasted/{file}", handleChatPastedImage)
 	// Assistant-to-assistant consult (docs/19): af_write orchestrators' ask_assistant tool

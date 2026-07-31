@@ -7,12 +7,16 @@ package main
 // ため、全文履歴を自分で持っている強みを使ってアプリ層で引き継ぐ:
 //
 //	1. 現行プロバイダセッション（全文脈を持つ）に要約ターンを 1 回流す
-//	2. resume ハンドル 3 種を全部クリア（次ターンは新プロバイダセッション）
+//	2. resume ハンドルを全部クリア（次ターンは新プロバイダセッション）
 //	3. 要約を PendingHandoff として保存し、新セッションの最初のプロンプトに
-//	   プリアンブルとして注入する（injectHandoff — 配信済みマークは成功時のみ、
+//	   プリアンブルとして注入する（injectCarryover — 配信済みマークは成功時のみ、
 //	   docs/30 の報告注入と同じ流儀）
 //
-// 4 プロバイダ共通に効き、ストアの会話履歴（Messages）はそのまま残るので表示・
+// docs/33 第5段: 要約ターンの出力は「計画」と「要約」の2ブロックになり、計画は要約を
+// 通さない原文枠（chatConversation.Plan・chat_plan.go）へ分離した。要約は1回きりで
+// 消費されるが計画は毎セッション原文のまま運ばれるので、圧縮を重ねても劣化しない。
+//
+// 全プロバイダ共通に効き、ストアの会話履歴（Messages）はそのまま残るので表示・
 // 監査は失われない。発動は3系統: Console の手動ボタン（ContextBar 横）、超過エラー
 // からの自動復旧（第3段 chat_recover.go）、閾値の予防的自動発動（第4段
 // maybeAutoCompact — ターン開始前に挟み、既定 ON・設定で OFF 可）。
@@ -29,17 +33,21 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
-// compactSummaryPrompt は現行セッションへ流す要約指示。後任アシスタントが読む前提の
+// compactSummaryPrompt は現行セッションへ流す引き継ぎ指示。後任アシスタントが読む前提の
 // 引き継ぎ書を作らせる。言語は会話の主要言語に合わせる（英語スレッドを日本語要約に
 // してしまうと引き継ぎ先の応答言語まで引きずられる）。
-const compactSummaryPrompt = "【引き継ぎ要約の作成】この会話はコンテキストが大きくなったため、" +
-	"ここまでの内容を要約して新しいセッションへ引き継ぎます。この会話を知らない後任アシスタントが" +
-	"読む前提で、以下を漏れなく簡潔にまとめてください（目安1000字以内・この会話で主に使われている言語で）:\n" +
-	"- 会話の目的と背景\n" +
-	"- 確定した事実・決定事項・重要な数値や名前\n" +
-	"- 進行中の作業とその状態\n" +
-	"- 未解決の課題・次にやること\n" +
-	"要約本文のみを出力してください（前置き・後書き不要）。"
+//
+// docs/33 第5段: 出力は**計画ブロックと要約ブロックの2本立て**。計画は原文で運ぶ枠
+// （chat_plan.go）へ入れて以後は要約を通さない、要約は背景説明に専念する、という分業。
+// 要約の目安を1000→600字に絞れるのは、行動を決める部分を計画側が持つようになったため。
+const compactSummaryPrompt = "【引き継ぎの作成】この会話はコンテキストが大きくなったため、" +
+	"ここまでの内容を引き継いで新しいセッションを始めます。この会話を知らない後任アシスタントが" +
+	"読む前提で、次の2ブロックを**この順・この区切り記号のまま**出力してください" +
+	"（前置き・後書き・コードフェンス不要／この会話で主に使われている言語で）。\n\n" +
+	planMarker + "\n" + planShape + "\n\n" +
+	summaryMarker + "\n" +
+	"（会話の目的と背景、および未解決の論点。目安600字以内。" +
+	planMarker + " に書いたことは繰り返さない）"
 
 // handoffPreamble は新セッション最初のプロンプトに乗せる枠書き。要約はデータであり
 // 指示ではない、の一文は報告注入（reportPreamble）と同じ発想の境界ガード。
@@ -81,16 +89,19 @@ func compactConversation(ctx context.Context, c *chatConversation, prov chatProv
 	ctx = withUsageTag(ctx, usageTag{
 		Feature: usageFeatureCompact, Trigger: compactTrigger(reason), Ref: c.ID,
 	})
-	prompt := syncProviderPrompt(c, agent, compactSummaryPrompt, len(c.Messages))
-	summary, err := prov.send(ctx, c, prompt)
+	prompt := syncProviderPrompt(c, agent, compactPrompt(c), len(c.Messages))
+	out, err := prov.send(ctx, c, prompt)
 	if err != nil {
 		return err
 	}
-	summary = strings.TrimSpace(summary)
+	// docs/33 第5段: 計画ブロックは原文のまま Plan 枠へ（要約を通さない）。区切りが
+	// 守られなかった場合 plan は空で返るので、運用中の計画はそのまま残る。
+	plan, summary := parseCompactOutput(out)
 	if summary == "" {
 		return errors.New("empty summary from provider")
 	}
-	c.ClaudeSessionID, c.CodexSessionID, c.OpencodeSessionID, c.AgyConversationID = "", "", "", ""
+	planChanged := plan != "" && setPlan(c, plan)
+	clearProviderSessions(c)
 	resetProviderCursors(c)
 	c.PendingHandoff = summary
 	// 旧セッションの占有スナップショットはもう実体を指さない。バーは次ターン
@@ -98,6 +109,11 @@ func compactConversation(ctx context.Context, c *chatConversation, prov chatProv
 	c.Context, c.CtxWarned = nil, false
 	c.Messages = append(c.Messages, newNotice(compactNoticeKey(reason),
 		map[string]string{"summary": summary}, compactNoticeContent(reason, summary)))
+	// 計画が動いたときだけ本文を見せる（毎回出すと、本当に計画が変わった1枚が埋もれる）。
+	// 原文キャリーフォワードの誤上書きに人が気づける唯一の場所（chat_plan.go 冒頭）。
+	if planChanged {
+		notePlanUpdated(c)
+	}
 	return nil
 }
 
@@ -198,7 +214,7 @@ func maybeAutoCompact(ctx context.Context, c *chatConversation, prov chatProvide
 	if c.PendingHandoff != "" {
 		return false
 	}
-	if c.ClaudeSessionID == "" && c.CodexSessionID == "" && c.OpencodeSessionID == "" && c.AgyConversationID == "" {
+	if !anyProviderResume(c) {
 		return false
 	}
 	cctx, cancel := context.WithTimeout(ctx, chatTimeout)
@@ -235,7 +251,7 @@ func handleChatCompact(w http.ResponseWriter, r *http.Request) {
 	}
 	// まだプロバイダセッションが無い（=積み上がったコンテキストが無い）会話に
 	// 要約ターンを流しても空回りするだけ — 明示エラーで返す。
-	if c.ClaudeSessionID == "" && c.CodexSessionID == "" && c.OpencodeSessionID == "" && c.AgyConversationID == "" {
+	if !anyProviderResume(c) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeChatNothingToCompact, "no provider session to compact")
 		return
 	}
