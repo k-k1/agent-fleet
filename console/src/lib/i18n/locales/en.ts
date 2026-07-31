@@ -861,9 +861,6 @@ export const en: Record<keyof typeof ja, string> = {
   "assistant.auto_resume": "Auto-resume interrupted turns",
   "assistant.note_auto_resume":
     "When an instructed session's turn is cut off part-way by a dropped connection or a temporary rate limit, the operator sends a plain \"please continue\" to resume it (matching the language the session is working in). Every resume is shared in chat. Interruptions whose cause won't clear on its own (usage limit, exhausted credit, prompt too long) would fail the same way on a re-send, so they are not auto-resumed — you get a note about fixing the cause instead. Resumes up to twice in a row; if it keeps getting cut off, it reports to you. Default ON.",
-  "assistant.rate_limit_resume": "Auto-resume after a usage limit resets",
-  "assistant.note_rate_limit_resume":
-    "When a claude session's turn is cut off by its usage limit, a \"please carry on\" is sent automatically at the moment the limit resets so the work continues. The wait is booked as a scheduled run (it shows up in Settings > Scheduled runs), so even if the workspace is stopped meanwhile it is woken up and delivered on time. If you are already driving that session at that moment, the resume is skipped. Default ON.\nEven when OFF, the limit menu (\"1. Stop and wait for limit to reset / 2. Ask your admin for more usage\") is still confirmed automatically — while it is up the session accepts no input, notifications or reports, and the option chosen for you is only the waiting one, which costs nothing. To pick 2, choose it yourself while the menu is on screen.",
   "assistant.auto_compact": "Auto-compact chat context",
   "assistant.note_auto_compact":
     "When a chat's context usage is still above 90% as a new exchange starts, the conversation is summarized and handed to a fresh session automatically first (the summary costs one turn of tokens). The notice at 80% lets you compact manually before this fires.",
@@ -882,9 +879,12 @@ export const en: Record<keyof typeof ja, string> = {
   "agents.auto_title": "Auto-suggest title",
   "agents.note_auto_title":
     "After a few exchanges in a session with no title, AI shows a short title suggestion at the top of the session chat. The assistant-side title suggestion is configured on the Assistant tab.",
+  "agents.claude_rate_limit_resume": "Auto-resume after a usage limit resets",
+  "agents.note_claude_rate_limit_resume":
+    "When a Claude session is interrupted by its usage limit, a one-time resume is booked to send \"please carry on\" to that session when the limit resets. The booking is deleted after use and never repeats. If the workspace stops while waiting, it is started at the booked time for delivery. The resume is skipped if you are already driving the session then. Sessions launched directly from Console are included. Default ON.\nEven when OFF, the limit menu (\"1. Stop and wait for limit to reset / 2. Ask your admin for more usage\") is still confirmed automatically. While the menu is open, the session accepts no input, notifications, or reports, and only the no-cost waiting option is chosen automatically. To pick 2, choose it yourself while the menu is on screen.",
   "agents.ws_required_title": "Settings run inside the workspace",
   "agents.ws_required_hint": "Connections and agent settings go through the agent / CLI inside the container, so the workspace has to be running.",
-  "agents.note_apply": "Connection changes are immediate; behavior settings take effect from each agent's new sessions.",
+  "agents.note_apply": "Connection changes are immediate. See each behavior setting for when it takes effect.",
   "agents.rtk_unsupported":
     "This workspace's image doesn't support the agent-settings API (rtk). Rebuild the image and “Recreate” to enable it.",
   "agents.default_model": "Default model",

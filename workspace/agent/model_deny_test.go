@@ -19,14 +19,14 @@ func TestModelMatchesHiddenTokenBoundary(t *testing.T) {
 		want              bool
 	}{
 		{"fable", "fable", true},
-		{"Fable", "fable", true},              // 大小無視
-		{"claude-fable-5", "fable", true},     // 別名の除外は完全 id にも効く
+		{"Fable", "fable", true},          // 大小無視
+		{"claude-fable-5", "fable", true}, // 別名の除外は完全 id にも効く
 		{"claude-fable-5-20260101", "fable", true},
 		{"opus", "fable", false},
 		{"claude-opus-5", "fable", false},
-		{"fablet", "fable", false},            // トークン境界（部分文字列では当てない）
+		{"fablet", "fable", false}, // トークン境界（部分文字列では当てない）
 		{"unfable", "fable", false},
-		{"", "fable", false},                  // 未指定＝CLI 既定に委ねる
+		{"", "fable", false}, // 未指定＝CLI 既定に委ねる
 		{"fable", "", false},
 		// opencode: Zen を除外しても Go サブスクの同名は残る
 		{"opencode-go/glm-5.2", "opencode/glm-5.2", false},

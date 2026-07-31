@@ -282,8 +282,11 @@ wake_policy=wake / overlap_policy=skip / missing_target_policy=fail / report=fal
 
 ### 4-4-5. 設定
 
-設定 > アシスタント「利用上限リセット後の自動再開」（`rateLimitAutoResume`、**既定 ON**）。
-このトグルが左右するのは**②③の予約だけ**で、①の解除は OFF でも行う（上記の理由）。
+設定 > エージェント > Claude > 動作設定「利用上限リセット後の自動再開」
+（`rateLimitAutoResume`、**既定 ON**）。アシスタント会話に属する設定ではなく、Console
+から直接起動した独立セッションを含む全 Claude TUI セッションに適用するため、この配置とする。
+このトグルが左右するのは**②③の一回限りの再開予約だけ**で、①の解除は OFF でも行う
+（上記の理由）。予約は `spec_kind=once` で繰り返さず、使用後に削除する。
 
 ### 4-4-6. テスト
 
@@ -291,7 +294,7 @@ wake_policy=wake / overlap_policy=skip / missing_target_policy=fail / report=fal
 |---|---|
 | `internal/tmuxx/footer_corpus_test.go` | 既定選択ガード: 実キャプチャで真、`❯` を 2 行目へ動かしたフレームで偽（＝増枠依頼を選ばない） |
 | `internal/agents/claude/ratelimit_test.go` | バナー解析（12am/12pm 境界・分なし・日付つき・TZ 無し・am/pm 無しは読まない）、窓の選択、放置メニューが翌日に化けないこと、材料無しは決めないこと |
-| `rate_limit_resume_test.go` | 予約→解除の順序と冪等、解除リトライの上限、設定 OFF でも解除はすること、過去のリセットは最短で回すこと、登録失敗のリトライと打ち切り、エピソードの畳み方 |
+| `rate_limit_resume_test.go` | 予約→解除の順序と冪等、解除リトライの上限、設定 OFF でも解除はすること、独立起動／アシスタント起点のどちらにも同じ処理が走ること、過去のリセットは最短で回すこと、登録失敗のリトライと打ち切り、エピソードの畳み方 |
 
 ## 5. 積み残し
 
