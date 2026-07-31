@@ -29,6 +29,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -157,6 +158,15 @@ func codexServerBlocks(defs []ServerDef) []string {
 		if d.TimeoutMS > 0 {
 			// codex takes seconds as a float; a definition carries milliseconds.
 			fmt.Fprintf(&b, "startup_timeout_sec = %.1f\n", float64(d.TimeoutMS)/1000)
+		}
+		if d.Transport == TransportStdio {
+			// Codex does not inherit arbitrary variables into stdio MCP children.
+			// Builtins name the host variables their wrapper/server needs; values
+			// stay in the parent environment and never enter config.toml.
+			if forward := extraEnvVars(d); len(forward) > 0 {
+				sort.Strings(forward)
+				fmt.Fprintf(&b, "env_vars = %s\n", tomlStrArray(forward))
+			}
 		}
 		if d.Transport == TransportHTTP && len(d.Headers) > 0 {
 			fmt.Fprintf(&b, "\n[mcp_servers.%s.http_headers]\n", d.Name)
