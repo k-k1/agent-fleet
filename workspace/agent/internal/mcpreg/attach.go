@@ -201,6 +201,12 @@ func extraEnvVars(d ServerDef) []string {
 	if d.Origin != OriginBuiltin {
 		return nil
 	}
+	if d.ID == BuiltinAF {
+		// The session-side af server calls the local Agent REST directly. Codex
+		// starts stdio MCP children with a default-deny environment, so both the
+		// bearer token and a non-default listen address must be forwarded.
+		return []string{"AGENT_TOKEN", "AGENT_ADDR"}
+	}
 	return []string{"AF_SECRET_KEY"}
 }
 
