@@ -640,7 +640,14 @@ func registerBrowserRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/browser/pages", rest)
 	mux.HandleFunc("GET /api/browser/pages/{id}", rest)
 	mux.HandleFunc("DELETE /api/browser/pages/{id}", rest)
+	mux.HandleFunc("GET /api/browser/attach-targets", rest)
+	mux.HandleFunc("POST /api/browser/attachments", rest)
+	mux.HandleFunc("GET /api/browser/attachments/{id}", rest)
+	mux.HandleFunc("DELETE /api/browser/attachments/{id}", rest)
+	mux.HandleFunc("POST /api/browser/attachments/{id}/handoff", rest)
+	mux.HandleFunc("POST /api/browser/attachments/{id}/handoff-result", rest)
 	mux.HandleFunc("GET /ws/browser", browser.withResolved(browser.socket))
+	mux.HandleFunc("GET /ws/browser-attachments", browser.withResolved(browser.attachmentSocket))
 }
 
 // Terminal PTY (proxied WebSocket) + preview proxy to a service the user started

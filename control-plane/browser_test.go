@@ -457,3 +457,75 @@ func TestBrowserAgentWebSocketURLUsesOnlyBrowserID(t *testing.T) {
 		t.Fatalf("Agent WebSocket URL = %q, want %q", got, want.String())
 	}
 }
+
+func TestBrowserAttachmentRoutesUseDedicatedAgentNamespace(t *testing.T) {
+	type seenRequest struct{ method, path, query string }
+	seen := make(chan seenRequest, 8)
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen <- seenRequest{method: r.Method, path: r.URL.Path, query: r.URL.RawQuery}
+		if r.URL.Path == "/ws/browser-attachments" {
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+			_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"ready","version":1}`))
+			_, _, _ = conn.ReadMessage()
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer agent.Close()
+	env := newBrowserTestEnv(t, browserTestRuntime{endpoint: agent.URL, token: "agent-secret", state: "running"})
+
+	for _, raw := range []string{
+		"/api/browser/attach-targets?tenant=default&port=9222",
+		"/api/browser/attachments/ba_0123456789abcdef0123456789abcdef?tenant=default",
+	} {
+		w := httptest.NewRecorder()
+		env.mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, raw, nil))
+		if w.Code != http.StatusOK || w.Body.String() != `{"ok":true}` {
+			t.Fatalf("attachment REST relay %s = %d %q", raw, w.Code, w.Body.String())
+		}
+	}
+	got := <-seen
+	if got.path != "/browser/attach-targets" || got.query != "port=9222" {
+		t.Fatalf("Agent discovery target = %+v", got)
+	}
+	got = <-seen
+	if got.path != "/browser/attachments/ba_0123456789abcdef0123456789abcdef" || got.query != "" {
+		t.Fatalf("Agent status target = %+v", got)
+	}
+
+	cp := httptest.NewServer(env.mux)
+	defer cp.Close()
+	wsURL := "ws" + cp.URL[len("http"):] + "/ws/browser-attachments?id=ba_0123456789abcdef0123456789abcdef&tenant=default"
+	client, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		if resp != nil {
+			t.Fatalf("attachment CP dial: %v status=%d", err, resp.StatusCode)
+		}
+		t.Fatal(err)
+	}
+	defer client.Close()
+	_, data, err := client.ReadMessage()
+	if err != nil || string(data) != `{"type":"ready","version":1}` {
+		t.Fatalf("attachment ready relay = %q err=%v", data, err)
+	}
+	got = <-seen
+	if got.path != "/ws/browser-attachments" || got.query != "id=ba_0123456789abcdef0123456789abcdef" {
+		t.Fatalf("Agent attachment socket target = %+v", got)
+	}
+}
+
+func TestBrowserAgentAttachmentWebSocketURLUsesOpaqueIDOnly(t *testing.T) {
+	got, err := browserAgentAttachmentWebSocketURL("https://agent.internal:7700/base?secret=old", "ba_id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := url.URL{Scheme: "wss", Host: "agent.internal:7700", Path: "/ws/browser-attachments", RawQuery: "id=ba_id"}
+	if got != want.String() {
+		t.Fatalf("Agent attachment WebSocket URL = %q, want %q", got, want.String())
+	}
+}

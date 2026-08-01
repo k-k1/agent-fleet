@@ -175,7 +175,7 @@ func TestAuthExemptRegistry(t *testing.T) {
 			t.Errorf("%s must be exempt", p)
 		}
 	}
-	gated := []string{"/", "/api/tenants", "/api/sessions", "/ws/terminal", "/ws/browser", "/gitx", "/mcpx", "/loginx"}
+	gated := []string{"/", "/api/tenants", "/api/sessions", "/ws/terminal", "/ws/browser", "/ws/browser-attachments", "/gitx", "/mcpx", "/loginx"}
 	for _, p := range gated {
 		if isAuthExempt(p) {
 			t.Errorf("%s must NOT be exempt", p)

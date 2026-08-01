@@ -19,11 +19,12 @@ import (
 )
 
 var (
-	errBrowserPageLimit = errors.New("browser page limit reached")
-	errBrowserNotFound  = errors.New("browser page not found")
-	errBrowserAttached  = errors.New("browser page already attached")
-	errBrowserStart     = errors.New("browser start failed")
-	errBrowserNavigate  = errors.New("browser navigation failed")
+	errBrowserPageLimit   = errors.New("browser page limit reached")
+	errBrowserNotFound    = errors.New("browser page not found")
+	errBrowserAttached    = errors.New("browser page already attached")
+	errBrowserViewerLimit = errors.New("browser viewer limit reached")
+	errBrowserStart       = errors.New("browser start failed")
+	errBrowserNavigate    = errors.New("browser navigation failed")
 )
 
 type browserManagerConfig struct {
@@ -341,6 +342,7 @@ func (m *browserManager) Delete(id string) {
 		m.idleTimer = time.AfterFunc(m.config.ChromiumIdle, func() { m.closeIdle(cdp) })
 	}
 	m.mu.Unlock()
+	workspaceBrowserViewerLeases.release(browserPageViewerLease(p.id))
 
 	p.mu.Lock()
 	if p.expiry != nil {
@@ -419,6 +421,9 @@ func (m *browserManager) reserve(id string) (*browserPage, error) {
 	if p.reserved || p.viewer != nil {
 		return nil, errBrowserAttached
 	}
+	if !workspaceBrowserViewerLeases.acquire(browserPageViewerLease(p.id)) {
+		return nil, errBrowserViewerLimit
+	}
 	p.reserved = true
 	if p.expiry != nil {
 		p.expiry.Stop()
@@ -435,6 +440,7 @@ func (m *browserManager) attach(p *browserPage, v *browserViewer) bool {
 	defer p.mu.Unlock()
 	if !owned || !p.reserved || p.viewer != nil {
 		p.reserved = false
+		workspaceBrowserViewerLeases.release(browserPageViewerLease(p.id))
 		return false
 	}
 	p.reserved = false
@@ -447,6 +453,7 @@ func (m *browserManager) releaseReservation(p *browserPage) {
 	p.mu.Lock()
 	p.reserved = false
 	p.mu.Unlock()
+	workspaceBrowserViewerLeases.release(browserPageViewerLease(p.id))
 	m.scheduleExpiry(p)
 }
 
@@ -459,6 +466,7 @@ func (m *browserManager) detach(p *browserPage, v *browserViewer) {
 	p.viewer = nil
 	p.visible = false
 	p.mu.Unlock()
+	workspaceBrowserViewerLeases.release(browserPageViewerLease(p.id))
 	p.stopScreencast()
 	m.scheduleExpiry(p)
 }
@@ -792,6 +800,7 @@ func (p *browserPage) notifyFatalState(state, reason string) {
 	v := p.viewer
 	p.viewer, p.reserved, p.visible = nil, false, false
 	p.mu.Unlock()
+	workspaceBrowserViewerLeases.release(browserPageViewerLease(p.id))
 	if v != nil {
 		b, _ := json.Marshal(map[string]any{"type": "state", "state": state})
 		v.enqueueTextAndClose(b, websocketCloseGoingAway, reason)

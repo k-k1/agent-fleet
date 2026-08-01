@@ -140,7 +140,7 @@ func handleBrowserWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := manager.reserve(id)
 	if err != nil {
-		if errors.Is(err, errBrowserAttached) {
+		if errors.Is(err, errBrowserAttached) || errors.Is(err, errBrowserViewerLimit) {
 			httpx.WriteErr(w, http.StatusConflict, "browser_already_attached", "browser page already has a viewer")
 		} else {
 			httpx.WriteErr(w, http.StatusNotFound, "browser_not_found", "browser page does not exist")
