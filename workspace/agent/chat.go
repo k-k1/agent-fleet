@@ -290,11 +290,12 @@ func (c *chatConversation) languageRule() string {
 // (or the generic chat persona), followed by the global output rule and, when the user
 // pinned an output language, a language directive.
 func (c *chatConversation) personaOf() string {
-	base := chatPersona
+	lang := uiLocale()
+	base := chatPersonaFor(lang)
 	if strings.TrimSpace(c.Persona) != "" {
 		base = c.Persona
 	}
-	s := base + "\n\n" + chatOutputRuleFor(uiLocale())
+	s := base + "\n\n" + chatOutputRuleFor(lang)
 	if rule := c.languageRule(); rule != "" {
 		s += "\n\n" + rule
 	}
@@ -346,9 +347,18 @@ type chatMeta struct {
 
 // chatPersona keeps the headless agent in plain conversational mode (translate,
 // summarize, answer) rather than reaching for file edits or bash on its own.
-const chatPersona = "あなたは Agent Fleet 利用者の作業を補助するアシスタントです。" +
-	"Markdown 文書の翻訳や要約、質問への回答など、頼まれた作業に簡潔に応じてください。" +
-	"特に指示がない限り、ファイルの作成・編集やコマンド実行はせず、チャットで直接回答してください。"
+// docs/28 P6: 表示言語で書く（アシスタントを選ばない会話の唯一のペルソナなので、ここが
+// 日本語のままだと英語 Console でも回答が日本語に倒れる）。
+func chatPersonaFor(lang string) string {
+	if lang == "en" {
+		return "You assist an Agent Fleet user with their work. " +
+			"Handle what you are asked — translating or summarizing Markdown documents, answering questions — concisely. " +
+			"Unless you are told otherwise, do not create or edit files and do not run commands; answer directly in the chat."
+	}
+	return "あなたは Agent Fleet 利用者の作業を補助するアシスタントです。" +
+		"Markdown 文書の翻訳や要約、質問への回答など、頼まれた作業に簡潔に応じてください。" +
+		"特に指示がない限り、ファイルの作成・編集やコマンド実行はせず、チャットで直接回答してください。"
+}
 
 // defaultChatModel is the model the assistant chat's claude runs on when the assistant
 // (or conversation) doesn't pin one — Sonnet keeps assistant chats fast/cheap. Override
