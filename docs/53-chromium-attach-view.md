@@ -211,9 +211,20 @@ Content-Type: application/json
 ```http
 GET    /api/browser/attachments/{id}
 DELETE /api/browser/attachments/{id}
+POST   /api/browser/attachments/{id}/control-mode
 POST   /api/browser/attachments/{id}/handoff
 POST   /api/browser/attachments/{id}/handoff-result
 ```
+
+control mode変更:
+
+```json
+{"controlMode":"view-only"}
+```
+
+これは現在のattachmentのmodeだけを変更する。既存handoffのmessage/result/controlMode、expiry、viewer leaseは変更せず、
+handoffを`pending`へ戻さない。`locked`への変更はscreencastを停止し、visible viewerで`view-only`または
+`user-control`へ変更するとscreencastを再開する。
 
 handoff作成:
 
@@ -240,9 +251,14 @@ ownerまたはエージェントは必要なら遷移先URLや業務側状態を
 | status | code | 意味 |
 |--------|------|------|
 | 400 | `bad_cdp_port` | port不正、Agent port、またはloopback以外 |
+| 400 | `bad_browser_attachment` | attach requestのtargetIdまたはviewportが不正 |
+| 400 | `bad_browser_handoff` | handoff messageまたはcompletionLabelが不正 |
+| 400 | `bad_control_mode` | controlModeが定義外 |
+| 400 | `bad_handoff_result` | handoff resultが`completed/cancelled`以外 |
 | 404 | `cdp_target_not_found` | targetが存在しない |
 | 404 | `browser_attachment_not_found` | attachment不存在、期限切れ、Agent再起動 |
 | 409 | `browser_already_attached` | viewer上限または同一targetの競合 |
+| 409 | `browser_handoff_not_pending` | handoff作成前に結果を確定しようとした |
 | 422 | `cdp_endpoint_invalid` | Chromium CDPとして応答しない |
 | 502 | `cdp_unreachable` | endpointへ接続不能 |
 | 502 | `cdp_disconnected` | owner終了等で切断 |
@@ -251,6 +267,87 @@ ownerまたはエージェントは必要なら遷移先URLや業務側状態を
 `GET /ws/browser-attachments?id=<attachmentId>`を使う。CPの認証・membership検査とlatest-frame relay coreは既存browser
 relayから再利用する。Agent handlerを分け、attachmentの許可message集合に`navigate`を定義しない。これにより現行
 `/ws/browser?id=<browserId>`の所有権、lookup、wire v1を変更しない。
+
+### P1 Lane A 確定API契約
+
+2026-08-02のLane A実装で、Console/MCPが依存する公開形を次に固定した。CP公開pathの`/api`を除いた同形の
+`/browser/attach-targets`、`/browser/attachments...`がAgent内部pathであり、CPはbodyを解釈・永続化せず中継する。
+
+- `attachmentId`: `ba_` + 暗号学的乱数16 byteのlowercase hex 32文字。例:
+  `ba_0123456789abcdef0123456789abcdef`。IDは認証の代わりではない。
+- action URL: 常に相対path `/open/browser-attachment/{attachmentId}`。port、targetId、CDP URL、外部URLを含めない。
+- viewport: `{width,height,deviceScaleFactor}`。上限`1600x1200`、scaleは`1`だけを許可する。attachでviewport全体を
+  省略した場合は`1280x900@1`を使う。
+- timestamp: JSONではUTC RFC 3339。viewer lease中のようにexpiry timerが停止中なら`expiresAt`を省略する。
+
+REST response型は次である。discovery以外の成功responseはattach/status/handoff/handoff-resultで同じ
+`BrowserAttachment`型を返す。DELETEだけはbody無しの`204`で、未知IDにも同じく`204`を返す。
+
+```ts
+type BrowserAttachTarget = {
+  targetId: string
+  type: "page"
+  title: string
+  url: string
+}
+type BrowserAttachTargetsResponse = { targets: BrowserAttachTarget[] }
+
+type BrowserAttachmentState =
+  | "attached"               // viewer無し、再接続可能
+  | "viewer-open"            // viewer lease有り
+  | "unsupported-target-url" // file/chrome/devtools等のため描画停止
+  | "target-closed"           // target/session消滅
+  | "disconnected"            // browser WebSocket/owner消滅
+
+type BrowserAttachmentControlMode = "view-only" | "user-control" | "locked"
+type BrowserAttachmentHandoffResult = "pending" | "completed" | "cancelled"
+type BrowserAttachmentHandoff = {
+  message: string
+  completionLabel: string
+  allowCancel: boolean
+  controlMode: BrowserAttachmentControlMode
+  result: BrowserAttachmentHandoffResult
+}
+type BrowserAttachment = {
+  id: string
+  state: BrowserAttachmentState
+  title?: string
+  url?: string
+  openUrl: string
+  expiresAt?: string
+  viewer: boolean
+  controlMode: BrowserAttachmentControlMode
+  handoff?: BrowserAttachmentHandoff
+}
+```
+
+request型とHTTP statusは次に固定する。
+
+| method / path | request | success |
+|---------------|---------|---------|
+| `GET /api/browser/attach-targets?port={1..65535}` | なし | `200 BrowserAttachTargetsResponse` |
+| `POST /api/browser/attachments` | `{port,targetId,viewport?}` | `201 BrowserAttachment` |
+| `GET /api/browser/attachments/{id}` | なし | `200 BrowserAttachment` |
+| `DELETE /api/browser/attachments/{id}` | なし | `204` |
+| `POST /api/browser/attachments/{id}/control-mode` | `{controlMode:"view-only"\|"user-control"\|"locked"}` | `200 BrowserAttachment` |
+| `POST /api/browser/attachments/{id}/handoff` | `{message,completionLabel?,allowCancel?,controlMode?}` | `200 BrowserAttachment` |
+| `POST /api/browser/attachments/{id}/handoff-result` | `{result:"completed"\|"cancelled"}` | `200 BrowserAttachment` |
+
+handoffの省略値は`completionLabel="操作完了"`、`allowCancel=false`、`controlMode="user-control"`である。
+`user-control`を要求するcallerは、そのrequestより前にowner側の対象Pageへの自動操作を停止しなければならない。
+AFは停止済みかを検知できず、未停止時の入力結果は未定義である。`completed/cancelled`確定後は`locked`へ移る。
+
+専用WebSocketのwire versionは`1`である。接続直後のtext `ready`は
+`{type:"ready",version:1,state,url,title,width,height,controlMode,handoff}`、frameはbinary JPEGとする。
+`viewport`と`visibility`は全modeで受理する。`mouse`、`wheel`、`key`、`text`、`reload`、`history`は
+`user-control`だけで受理し、他modeではtext
+`{type:"protocol-error",code:"input_not_allowed",message}`を返す。`navigate`はこのnamespaceのmessage型に存在せず、
+`unknown_type`となる。Agentからの他のtext eventは既存wireと同じ`state`、`navigation`、`console`、`page-error`に加え、
+`{type:"handoff",handoff,controlMode}`と`{type:"control-mode",controlMode}`を使う。
+
+terminal state (`target-closed` / `disconnected`) は短い再確認猶予中だけstatusで取得でき、その後は
+`browser_attachment_not_found`になる。いずれのdetach/expiry/terminal経路も
+`Target.closeTarget`、`Target.disposeBrowserContext`、`Browser.close`を外部ownerへ送らない。
 
 ## 53.7 Console とワンクリック導線
 
