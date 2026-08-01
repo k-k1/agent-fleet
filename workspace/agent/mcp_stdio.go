@@ -1856,12 +1856,8 @@ func mcpStructuredResult(id json.RawMessage, value map[string]any) []byte {
 func mcpChromiumToolErr(id json.RawMessage, action string, err error) []byte {
 	var httpErr *agentHTTPError
 	if errors.As(err, &httpErr) {
-		var body struct {
-			Code string `json:"code"`
-		}
-		_ = json.Unmarshal([]byte(httpErr.Body), &body)
-		if body.Code != "" {
-			return mcpToolErr(id, fmt.Sprintf("%sに失敗しました（Agent API %d, code=%s）", action, httpErr.StatusCode, body.Code))
+		if code := httpErr.code(); code != "" {
+			return mcpToolErr(id, fmt.Sprintf("%sに失敗しました（Agent API %d, code=%s）", action, httpErr.StatusCode, code))
 		}
 		return mcpToolErr(id, fmt.Sprintf("%sに失敗しました（Agent API %d）", action, httpErr.StatusCode))
 	}
@@ -2180,11 +2176,24 @@ func (e *agentHTTPError) Error() string {
 	return fmt.Sprintf("Agent API エラー (%d): %s", e.StatusCode, e.Body)
 }
 
-func (e *agentHTTPError) hasCode(code string) bool {
+func (e *agentHTTPError) code() string {
 	var body struct {
-		Code string `json:"code"`
+		Code  string `json:"code"`
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
 	}
-	return json.Unmarshal([]byte(e.Body), &body) == nil && body.Code == code
+	if json.Unmarshal([]byte(e.Body), &body) != nil {
+		return ""
+	}
+	if body.Error.Code != "" {
+		return body.Error.Code
+	}
+	return body.Code
+}
+
+func (e *agentHTTPError) hasCode(code string) bool {
+	return e.code() == code
 }
 
 // agentSendToSession makes the orchestration contract atomic from the model's point
