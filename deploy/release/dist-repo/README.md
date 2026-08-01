@@ -176,7 +176,7 @@ af start
   `systemctl --user restart agent-fleet` or the Console's "restart to apply"
   button, so live agent sessions are never dropped. Opt out with
   `AF_NO_AUTOUPDATE=1 bash install.sh`.
-- To pin a version: `AF_VERSION=0.1.0 bash install.sh` (also stops auto-updates
+- To pin a version: `AF_VERSION=0.5.1 bash install.sh` (also stops auto-updates
   advancing past it when set in the unit `Environment=`)
 - For details (host requirements, air-gap installs, running as a service,
   optional text-to-speech with VOICEVOX / Zundamon, limitations) see the

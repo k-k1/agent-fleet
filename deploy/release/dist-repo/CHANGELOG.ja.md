@@ -3,6 +3,12 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.5.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.5.1) — 2026-08-01
+
+Console のバンドルに焼き込まれていた内部文字列を除去した再ビルドと、再発を止める
+ゲートの追加です。**0.1.0〜0.5.0 のダウンロードは撤回しました。本リリースをご利用
+ください。**
+
 ## [0.5.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.5.0) — 2026-08-01
 
 作業グループで Console の左ペインを案件ごとに分けられるようになり、独自の MCP
