@@ -129,6 +129,50 @@
 .browser-log-warn,
 .browser-log-warning { color: #ffd479; }
 
+/* External-owner Chromium attachment. The URL query is never rendered: only
+   title + parsed origin are present in the Console chrome. */
+.browser-attach-toolbar { gap: 5px; }
+.browser-attach-location {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: baseline;
+  gap: 7px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.browser-attach-location strong,
+.browser-attach-location span { overflow: hidden; text-overflow: ellipsis; }
+.browser-attach-location strong { flex: 0 1 auto; font-size: 12px; }
+.browser-attach-location span { flex: 1 1 auto; color: var(--muted); font: 11px var(--mono); }
+.browser-attach-mode {
+  flex: none;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.browser-attach-mode-user-control { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
+.browser-attach-mode-locked { color: var(--muted); }
+.browser-attach-handoff {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+  min-height: 42px;
+  padding: 6px calc(var(--pane-ctl-w, 64px) + 6px) 6px 9px;
+  border-bottom: 1px solid var(--border2);
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+}
+.browser-attach-message { flex: 1; min-width: 0; font-size: 12px; line-height: 1.35; }
+.browser-attach-message small { display: block; margin-top: 2px; color: var(--warn, #c98b28); }
+.browser-attach-actions { display: flex; flex: none; gap: 6px; }
+.browser-attach-result { flex: none; font-size: 12px; font-weight: 600; }
+.browser-attach-result-completed { color: var(--ok, #3ba776); }
+.browser-attach-result-cancelled { color: var(--muted); }
+.browser-attach-detach { flex: none; white-space: nowrap; }
+
 /* Narrow PANE (4-column split or a phone): drop the host label and collapse the
    console toggle to its icon so the toolbar's fixed items never spill under the
    control cluster. Container query (pane width), not @media — a desktop pane in
@@ -139,6 +183,13 @@
   .browser-console-toggle { font-size: 0; }
   .browser-console-toggle .codicon,
   .browser-console-toggle .browser-log-badge { font-size: 12px; }
+  .browser-attach-mode { font-size: 0; width: 9px; height: 9px; padding: 0; border: 0; background: var(--muted); }
+  .browser-attach-mode-user-control { background: var(--accent); }
+  .browser-attach-location span { display: none; }
+  .browser-attach-detach { font-size: 0; padding-inline: 6px; }
+  .browser-attach-detach .codicon { font-size: 12px; }
+  .browser-attach-handoff { align-items: stretch; flex-direction: column; gap: 5px; padding-right: 8px; }
+  .browser-attach-actions { justify-content: flex-end; }
 }
 /* Tighter tiers for a really narrow pane (e.g. a 4-column split): drop the
    back/forward pair, then the console toggle, and let the inputs shrink —
