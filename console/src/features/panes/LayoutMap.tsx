@@ -27,6 +27,8 @@ const KIND_ABBR: Partial<Record<PaneKind, string>> = {
   doc: "doc",
   diff: "diff",
   chat: "chat",
+  browser: "web",
+  browserAttach: "web",
 };
 
 export function LayoutMap() {

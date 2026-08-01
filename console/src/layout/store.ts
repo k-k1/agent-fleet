@@ -24,6 +24,8 @@ interface LayoutStore {
    * render can't clobber a saved layout before it's been read. */
   hydrated: boolean;
   commit(next: Layout, push?: boolean): void;
+  /** Action-route commit whose caller must know whether dirty navigation won. */
+  commitAction(next: Layout, push?: boolean): Promise<boolean>;
   /** Restore the tenant's saved split (or reset). Called at boot + tenant switch. */
   load(slug: string): void;
   /** Seed a 1-pane layout from a pop-out descriptor (instead of load()) on the
@@ -121,6 +123,17 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
     hydrated: false,
 
     commit,
+
+    async commitAction(next: Layout, push = true) {
+      const cur = get().layout;
+      const destroyed = dirtyPanesDestroyedByLayout(cur, next);
+      if (destroyed.length > 0 && !(await confirmDirtyNavigation("layout", destroyed))) return false;
+      // A dialog may have stayed open while another action changed the layout.
+      // Never apply an action plan calculated from a stale snapshot.
+      if (get().layout !== cur) return false;
+      commitUnchecked(next, push);
+      return true;
+    },
 
     load(slug: string) {
       const l = loadStoredLayout(getUser(), slug) || ops.freshLayout();
