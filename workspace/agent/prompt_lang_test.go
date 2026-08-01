@@ -80,6 +80,14 @@ func enPrompts() []langPrompt {
 		{"planRefreshInstructions/新規", func(l string) string { return planRefreshInstructions("", l) }},
 		{"planRefreshInstructions/差分更新", func(l string) string { return planRefreshInstructions("plan body", l) }},
 		{"planContextHeader", planContextHeader},
+		{"chatPersonaFor", chatPersonaFor},
+		{"verbPersona/translate", func(l string) string { return verbPersona("translate", l) }},
+		{"verbPersona/summarize", func(l string) string { return verbPersona("summarize", l) }},
+		{"seedFor/translate", func(l string) string { return seedFor("translate", "/w/a.md", false, l) }},
+		{"seedFor/summarize", func(l string) string { return seedFor("summarize", "/w/a.md", false, l) }},
+		{"seedFor/ask", func(l string) string { return seedFor("", "/w/a.md", false, l) }},
+		{"seedFor/dir", func(l string) string { return seedFor("", "/w", true, l) }},
+		{"chatDefaultTitle", chatDefaultTitle},
 	}
 }
 
