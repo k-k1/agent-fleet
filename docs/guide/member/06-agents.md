@@ -130,6 +130,10 @@ Claude's behavior can be adjusted on the same screen.
 The connection flow is the same 3 steps as GitHub (copy the code → open the link and
 paste it → wait for approval).
 
+**Behavior** also covers how codex's thinking (chain-of-thought) is shown.
+
+- **Show thinking expanded** — the session view's "Thinking" block starts expanded. Off by default (collapsed; click the heading to read it). Display only — it doesn't change how the agent works. It's per agent, and opencode has the same setting.
+
 ## OpenCode
 
 **opencode** saves the **API key of the LLM provider you want to use as an env**.
@@ -139,6 +143,10 @@ Picking a preset fills in the env name automatically.
 
 Paste the key and press **"Connect"** to save it; it's injected when opencode launches. You
 can register multiple keys, and choose from the connected providers' models at launch.
+
+**Behavior** also lets you choose how opencode's thinking (chain-of-thought) is shown.
+
+- **Show thinking expanded** — the session view's "Thinking" block starts expanded. Off by default (collapsed; click the heading to read it). Display only — it doesn't change how the agent works (independent of the same setting on codex).
 
 ## GitHub Copilot
 
