@@ -41,7 +41,13 @@ export type PaneContent =
   | { kind: "diff"; docTitle: string; diffTool: string; diffEdits: unknown }
   | { kind: "chat"; conversationId: string | null; draftAssistantId: string | null }
   /** browserId is deliberately absent: Agent Page ids are runtime-only. */
-  | { kind: "browser"; port: number; path: string };
+  | { kind: "browser"; port: number; path: string }
+  /**
+   * External-owner Chromium view. The short-lived attachment id is the only
+   * value persisted in layout state; CDP port/target/URL/credentials stay on
+   * the Agent side and are resolved again through the authenticated API.
+   */
+  | { kind: "browserAttach"; attachmentId: string };
 
 export type PaneKind = PaneContent["kind"];
 

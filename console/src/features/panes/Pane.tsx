@@ -31,6 +31,7 @@ import { isManagedSession } from "../../types/session.ts";
 import type { Session } from "../../types/session.ts";
 import { PaneFind } from "./PaneFind.tsx";
 import { BrowserPane } from "../browser/BrowserPane.tsx";
+import { BrowserAttachPane } from "../browser/BrowserAttachPane.tsx";
 import { canPopout, openPanePopout } from "./popout.ts";
 import { usePopoutMode } from "../../lib/popoutMode.ts";
 
@@ -368,6 +369,9 @@ export function Pane({
       )}
       {pane.content.kind === "browser" && (
         <BrowserPane paneId={pane.id} port={pane.content.port} path={pane.content.path} />
+      )}
+      {pane.content.kind === "browserAttach" && (
+        <BrowserAttachPane paneId={pane.id} attachmentId={pane.content.attachmentId} />
       )}
     </div>
   );

@@ -7,7 +7,12 @@
       // trailing slash so relative asset/API/WS URLs resolve under the mount.
       (function () {
         var p = location.pathname;
-        if (!p.endsWith("/") && !/\.[a-z0-9]+$/i.test(p.split("/").pop())) {
+        // Action URLs render the same Console shell. Point relative assets/API
+        // back at the Workspace root, not beneath the opaque attachment path.
+        var action = p.match(/^(.*\/)open\/browser-attachment\/[^/]+\/?$/);
+        if (action) {
+          document.write('<base href="' + action[1] + '">');
+        } else if (!p.endsWith("/") && !/\.[a-z0-9]+$/i.test(p.split("/").pop())) {
           document.write('<base href="' + p + '/">');
         }
       })();
