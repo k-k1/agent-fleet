@@ -118,10 +118,18 @@ func browserRuntimeReady(w http.ResponseWriter, r *http.Request, rt Runtime) boo
 // JPEG frames use a capacity-one latest slot, so a slow Console cannot build an
 // unbounded frame backlog or stall unrelated Agent browser work.
 func (a browserAPI) socket(w http.ResponseWriter, r *http.Request, res *resolved) {
+	a.socketToAgent(w, r, res, "/ws/browser")
+}
+
+func (a browserAPI) attachmentSocket(w http.ResponseWriter, r *http.Request, res *resolved) {
+	a.socketToAgent(w, r, res, "/ws/browser-attachments")
+}
+
+func (a browserAPI) socketToAgent(w http.ResponseWriter, r *http.Request, res *resolved, agentPath string) {
 	if !browserRuntimeReady(w, r, res.rt) {
 		return
 	}
-	agentURL, err := browserAgentWebSocketURL(res.rt.Endpoint(), r.URL.Query().Get("id"))
+	agentURL, err := browserAgentWebSocketURLForPath(res.rt.Endpoint(), agentPath, r.URL.Query().Get("id"))
 	if err != nil {
 		http.Error(w, "bad agent endpoint", http.StatusBadGateway)
 		return
@@ -162,6 +170,14 @@ func (a browserAPI) socket(w http.ResponseWriter, r *http.Request, res *resolved
 }
 
 func browserAgentWebSocketURL(endpoint, browserID string) (string, error) {
+	return browserAgentWebSocketURLForPath(endpoint, "/ws/browser", browserID)
+}
+
+func browserAgentAttachmentWebSocketURL(endpoint, attachmentID string) (string, error) {
+	return browserAgentWebSocketURLForPath(endpoint, "/ws/browser-attachments", attachmentID)
+}
+
+func browserAgentWebSocketURLForPath(endpoint, socketPath, browserID string) (string, error) {
 	target, err := url.Parse(endpoint)
 	if err != nil {
 		return "", err
@@ -175,7 +191,7 @@ func browserAgentWebSocketURL(endpoint, browserID string) (string, error) {
 	default:
 		return "", errors.New("unsupported agent endpoint scheme")
 	}
-	target.Path = "/ws/browser"
+	target.Path = socketPath
 	target.RawQuery = url.Values{"id": []string{browserID}}.Encode()
 	target.Fragment = ""
 	return target.String(), nil
