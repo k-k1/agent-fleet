@@ -35,8 +35,16 @@ export interface ChatMessage {
   // so the text follows settings.locale instead of the language it was stored in.
   // Absent on notices written before the change — those fall back to `content`, which
   // still holds the same sentence in the source language. See features/chat/notice.ts.
+  // role==="notice" and, since docs/28 P6, role==="report": the catalog key +
+  // arguments the card is rendered from (see features/chat/report.ts).
   notice_key?: string;
   notice_args?: Record<string, string>;
+  // role==="report" (docs/28 P6): the event the card stands for. The Agent keeps the
+  // operator's marching orders OUT of the stored body and re-renders them when it
+  // builds the prompt, so the card can follow the display language; report_reason
+  // qualifies the kind (turn-failed / turn-aborted / oom …) and names the exit label.
+  report_kind?: string;
+  report_reason?: string;
 }
 
 // Current context-window fill, captured server-side from the provider's usage events

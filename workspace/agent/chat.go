@@ -67,11 +67,22 @@ type chatMessage struct {
 	// by its own auto turn or injected into a later prompt). An undelivered report
 	// exists in the stored thread but the LLM hasn't seen it yet.
 	Delivered bool `json:"delivered,omitempty"`
-	// NoticeKey / NoticeArgs localize role=="notice" bodies (ADR 0033): the Console
-	// renders the catalog entry for the user's locale and only falls back to Content
-	// (source language) for notices written before the key existed. See chat_notice.go.
+	// NoticeKey / NoticeArgs localize the bodies WE generate — role=="notice" (ADR 0033)
+	// and, since docs/28 P6, role=="report" as well: the Console renders the catalog
+	// entry for the user's locale and only falls back to Content (source language) for
+	// records written before the key existed. See chat_notice.go / chat_report_text.go.
 	NoticeKey  string            `json:"notice_key,omitempty"`
 	NoticeArgs map[string]string `json:"notice_args,omitempty"`
+	// ReportKind / ReportReason are the EVENT a role=="report" card stands for
+	// (answer-ready / question / plan-approval / exit …, qualified by turn-failed,
+	// turn-aborted, oom …). docs/28 P6 separated the two readers of a report: the card
+	// the user reads comes from NoticeKey (display), and the operator's marching orders
+	// are re-rendered from these fields at injection time (reportPromptFor) in the
+	// display language — storing the instruction text would freeze its language and
+	// make translating the card change what the operator is told to do.
+	// Empty on reports written before P6: those fall back to Content on both sides.
+	ReportKind   string `json:"report_kind,omitempty"`
+	ReportReason string `json:"report_reason,omitempty"`
 }
 
 // chatConversation is the persisted record (one JSON file per conversation).

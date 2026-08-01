@@ -91,6 +91,16 @@ func enPrompts() []langPrompt {
 	}
 }
 
+// reportBodyForTest はセッション報告 1 通の**プロンプト本文**（見出し＋事実＋指示＋付記）を、
+// 実際の配送（recordSessionReport）と同じ材料の組み方で作る。日本語側の文言を見る既存の
+// テストが使う。
+func reportBodyForTest(display, name, kind, reason string) string {
+	args := reportArgs(display, name, kind, reason, 0)
+	return reportPromptFor(chatMessage{
+		Role: "report", ReportKind: kind, ReportReason: reason, NoticeArgs: args,
+	}, "ja")
+}
+
 // promptFrame drops everything after the conversation-log header: the log is the user's
 // own text, passed through verbatim (translating it is the model's job, not ours).
 func promptFrame(prompt, header string) string {

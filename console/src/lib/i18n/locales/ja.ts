@@ -1578,6 +1578,32 @@ export const ja = {
     "メッセージを送って会話を始めましょう。Markdown 文書の翻訳や要約、質問への回答などを依頼できます。",
   "chat.you": "あなた",
   "chat.report_role": "セッション報告",
+  // セッション報告カード（docs/28 P6）。カードは**事実だけ**で、オペレーターへの行動指示は
+  // 含まない（指示は Agent がプロンプトを組む瞬間に生成する）。{display}/{name} は報告元の
+  // セッション、それ以外は Agent が渡す引数。features/chat/report.ts が組み立てる。
+  "chat.report.headline": "セッション「{display}」({name}) からの報告: ",
+  "chat.report.answer_ready": "応答が完了し、入力待ちになりました。",
+  "chat.report.turn_failed":
+    "ターンがモデル／プロバイダ側のエラーで終了し、入力待ちに戻りました（応答は生成されていません）。",
+  "chat.report.turn_aborted":
+    "ターンが中断して入力待ちに戻りました（接続断や一時的なレート制限など、時間をおけば解消する原因で、回答は完成していません）。再送すれば続きから走れる中断です。",
+  "chat.report.turn_aborted_capped":
+    "ターンが中断して入力待ちに戻りました（接続断や一時的なレート制限など、時間をおけば解消する原因で、回答は完成していません）。再送すれば続きから走れる中断です。【自動再開の上限（{max}回）に達しています】",
+  "chat.report.question": "質問（選択肢）を提示して停止しています。",
+  "chat.report.plan_approval": "プランを提示して承認待ちで停止しています。",
+  "chat.report.permission_request": "ツール実行の許可待ちで停止しています。許可は Console から行う必要があります。",
+  "chat.report.reopened": "先の完了報告は早計でした — セッションはその後も作業を続けています。",
+  "chat.report.reopen_capped":
+    "先の完了報告は早計でしたが、完了判定が繰り返し揺れています（訂正の上限 {max} 回に達したため、これ以上の自動訂正は行いません）。",
+  "chat.report.exit": "エージェントプロセスが異常終了しました: {label}。",
+  "chat.report.unknown": "状態が変化しました（{kind}）。",
+  "chat.report.exit_reason.oom": "OOM（メモリ不足で強制終了）",
+  "chat.report.exit_reason.crashed": "クラッシュ",
+  "chat.report.exit_reason.killed": "強制終了（SIGKILL）",
+  "chat.report.note.rate_limit_resume":
+    "【利用上限による停止です】{at}（上限が解ける時刻）に、このセッションへ続行を送る自動再開の予約が入っています。",
+  "chat.report.note.fold": "（この報告は指示 {count} 件ぶんの完了です。投入: {ats}）",
+  "chat.report.note.reopen_target": "（訂正の対象: {at} の完了報告）",
   // role==="notice" のカード本文（ADR 0033）。バックエンドはキーと引数だけを刻み、
   // 表示文はここが持つ — 保存済みの会話でも Lang の切替に追従する。キーは
   // workspace/agent/chat_notice.go と対（Go 側テストが欠落を検出する）。
