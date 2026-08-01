@@ -239,6 +239,30 @@ ECS リリース手順の静的検査・dist の stub publish/install を hosted
 > claude=`tui_contract` と 3 流儀。揃えるならテスト側の tag と `-run` の対応も動くため、
 > ワークフロー整理とは別で扱う。
 
+### 公開リポジトリでの CI の前提（秘密情報の扱い）
+
+このリポジトリは公開を前提にしている。**secrets そのものはリポジトリ本体に存在せず**
+（リポジトリ設定に暗号化保管）、公開しても露出しない。加えて次を満たすように保つ:
+
+- **fork PR には secrets を渡さない。** `pull_request` トリガは fork からの実行に
+  secrets を渡さない仕様なので、これに依存する。**`pull_request_target` と
+  `workflow_run` は使わない** — どちらも「fork 側が書いたコードに secrets 付きで
+  実行権を与える」典型的な穴。self-hosted runner も使わない。
+- **実認証を使うジョブは `workflow_dispatch`（＋`inputs.live`）限定にする。**
+  `codex-contract` の `live-drift`、`e2e` の `live-smoke`、各 `*-contract` がこれ。
+  PR では起動しないので、fork PR が secrets 不在で赤くなることもない。
+- **`run:` に `${{ github.event.* }}` を展開しない**（PR タイトル等からのシェル注入）。
+- **秘密はファイルへ書くだけにし、標準出力へ出さない。** 例: kiro の認証 DB は
+  8 分割 base64 を `printf | base64 --decode > <file>` で復元する（出力しない）。
+- **artifact と run ログは公開物として扱う。** 公開リポジトリでは誰でも
+  ダウンロードできる。ログ中の secrets は完全一致でマスクされるが、**そこから
+  派生した値はマスクされない** — `claude-tui-contract` の観測フレームは
+  ログイン済み TUI の画面なので、アップロード前にアカウント名とメールを伏字化する
+  ステップを挟んでいる（同種の値は [tmuxx のゴールデン](../../workspace/agent/internal/tmuxx/testdata/footers/)
+  でも伏字化済み）。
+- **`permissions:` は全ワークフローで明示する**（既定は read だが、既定が変わっても
+  最小権限が残るように）。
+
 ## 10.5 コミット規約・ブランチ運用
 
 [CONTRIBUTING](../../CONTRIBUTING.md#commits--prs) が正（形式・帰属トレーラの詳細はそちら）。要点:

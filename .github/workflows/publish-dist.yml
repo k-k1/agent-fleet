@@ -10,6 +10,12 @@
 # Releases that keep <r> unchanged (build.sh --rootfs-json) are done locally (§35.8.2).
 name: publish-dist
 
+# Least privilege for GITHUB_TOKEN. The repo default is already read-only, but this
+# stays explicit so the job keeps it if the org/repo default ever changes (public
+# repo: workflow runs and their logs are world-readable).
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
     inputs:
