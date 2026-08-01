@@ -17,7 +17,17 @@ describe("hidden model matching", () => {
   it("keeps the opencode billing routes apart", () => {
     expect(modelMatchesHidden("opencode-go/glm-5.2", "opencode/glm-5.2")).toBe(false);
     expect(modelMatchesHidden("opencode/glm-5.2", "opencode/glm-5.2")).toBe(true);
-    expect(modelMatchesHidden("opencode-go/glm-5.2", "glm-5.2")).toBe(true);
+    // 素の名前も複数トークンなので族一致はしない。両経路を隠すなら両方の id を除外する。
+    expect(modelMatchesHidden("opencode-go/glm-5.2", "glm-5.2")).toBe(false);
+  });
+
+  // 具体 id（複数トークン）を隠しても、それを接頭辞に持つ別モデルは巻き添えにしない。
+  // GPT-5.4 を隠したら mini まで消えた不具合の回帰。
+  it("does not take out longer ids that merely start with an excluded id", () => {
+    expect(modelMatchesHidden("gpt-5.4-mini", "gpt-5.4")).toBe(false);
+    expect(modelMatchesHidden("gpt-5.4", "gpt-5.4")).toBe(true);
+    expect(modelMatchesHidden("gpt-5.4-mini", "gpt-5.4-mini")).toBe(true);
+    expect(modelMatchesHidden("claude-fable-5-20260101", "claude-fable-5")).toBe(false);
   });
 
   it("treats an empty model as 'not chosen' rather than hidden", () => {
