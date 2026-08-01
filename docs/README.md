@@ -21,7 +21,7 @@
 - [25-ops-monitoring.md](25-ops-monitoring.md) — サービス運用（監視・インシデント対応）向け拡張（✅ 3 連携（PagerDuty / Grafana / CloudWatch）実装済み）
 - [26-agent-exit-recording.md](26-agent-exit-recording.md) — エージェントプロセスの終了理由記録（✅ Agent / CP / UI 実装済み、実機目視待ち）
 - [27-agent-managed-driver.md](27-agent-managed-driver.md) — エージェント制御の Managed Driver 化（✅ P1〜P3 実装済み。Codex / OpenCode は managed が既定、CLI ルート常設。プロトコル実測を含む実装記録）
-- [28-i18n.md](28-i18n.md) — Console 全面 i18n（✅ P0〜P5 実装済み、実機目視待ち）
+- [28-i18n.md](28-i18n.md) — Console 全面 i18n（✅ P0〜P6 実装済み＝エージェント出力言語まで、実機目視待ち）
 - [29-keyboard-system.md](29-keyboard-system.md) — Console キーボード操作体系（capture-phase 単一ディスパッチャ＋Leader/パレット＋再割当/端末入力優先）（✅ P0〜P5 実装済み・残＝実機目視）
 - [30-session-report.md](30-session-report.md) — フリート・オペレーターへセッション完了・質問・異常終了を自動報告（✅ 実装済み）
 - [31-container-browser-pane.md](31-container-browser-pane.md) — Workspace 内 Chromium で localhost を開き描画・入力を Console ペインへ中継（✅ 実装済み・実コンテナで V1 サインオフ完了、[利用契約](31-container-browser-pane-ux-contract.md)）
