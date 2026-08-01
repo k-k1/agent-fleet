@@ -113,7 +113,9 @@ func run(ledgerPath, allowPath string, add bool, id string, verbose bool, paths 
 		len(entries), w.Files, humanBytes(w.Bytes), el.Round(time.Millisecond),
 		humanBytes(int64(float64(w.Bytes)/el.Seconds())))
 	for _, s := range w.Skipped {
-		fmt.Printf("scan: NOT EXPANDED: %s\n", s)
+		// Loud but not fatal — see Walker.member. Read these: a member we could
+		// not open is a member we did not really check.
+		fmt.Printf("::warning::scan: not expanded: %s\n", s)
 	}
 	if len(w.Hits) > 0 {
 		for _, h := range w.Hits {
