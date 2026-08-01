@@ -22,9 +22,17 @@
 #     --ledger /dev/null --add --id <id> >> deploy/release/forbidden.sha256
 #
 # ids: corp-* employer, name-* person, host-* internal host, repo-* internal repo
+#
+# A person goes in as the FULL name, one entry per word order — never the given
+# name or the surname on its own. Measured on the real shipping set: a bare
+# common Japanese name matched upstream credits in four unrelated places (vim's
+# changelog, the git-lfs binary, yarn's bundled cli.js, a Debian copyright file).
+# Exempting those by path would be a standing maintenance tax, since every base
+# image bump can add another. Full names carry the signal without the noise; the
+# cost is that a lone surname would not be caught, which is a fair trade.
 bf47d02c52d3c25647e5b80aef5dce2de713466952be11715c7e0bbebdd72dd9  7  375ecff6258df8c9  corp-1
-3e08f136ce4cf1f8355823c775b785693a4c0ef392deedef2191ff3f7719f2ea  8  b2dd68a121102f5a  name-1
-848b5b8961d82b7e8c8a4edfd0bd8ea4d012cae88bbd86abd2a96b820a0699e6  7  60805d7a44b3287a  name-2
+29b00bdecfe7d5a023e60307542f16a09532eada0b860c75740a84adb5784fe3  16  42dfd558a28eb088  name-1
+4c8997e6ca8d4baa39081f707e8ea815f5258ee8089ef48ae31f3bc0617e6bba  16  9b95ff3828f9a274  name-2
 4e836e7b3cf0837d568988a4b3608f1f7228d05a06e634e0826b612e924c8e68  10  7d88818a1314c144  host-1
 ada4b71d52532a2a8eb08eb8a711bfa093e0c639ae1350006e9a697718b52393  7  a1b3500160c941cb  repo-1
 509cc43d9f9e7ad4cd607da571da63481a668ef9392a590be0f957a6a53cd569  7  2c368d01af37c016  repo-2

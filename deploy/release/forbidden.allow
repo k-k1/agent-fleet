@@ -14,11 +14,10 @@
 #
 # The CMU Pronouncing Dictionary (control-plane/assets/cmudict.dict.gz, BSD-2,
 # upstream cmusphinx/cmudict, used by enkana.go for English→katakana) is a word
-# list, and two ledger terms are ordinary entries in it: an English verb and a
-# common Japanese given name. Verified by reading the two lines it matches.
+# list, and one ledger term is an ordinary English verb in it. Verified by
+# reading the line it matches.
 #
 # This only fires when the source tree is scanned. In a release artifact the
 # dictionary is go:embed'ed into af-cp still gzip-compressed, so its words are
 # not in the byte stream the gate reads.
 corp-1  *cmudict.dict.gz*
-name-2  *cmudict.dict.gz*
