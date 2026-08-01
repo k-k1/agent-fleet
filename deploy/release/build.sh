@@ -38,7 +38,11 @@ DIST_URL_BASE_META="${AF_DIST_URL_BASE:-https://github.com/$DIST_REPO_META/relea
 
 usage() { echo "usage: VERSION=<v> $0 [--compose] [--native] [--all] [--bundle-rootfs] [--rootfs-json <path>]" >&2; }
 
-DO_COMPOSE=0; DO_NATIVE=0; BUNDLE_ROOTFS=0; ROOTFS_JSON=""
+# Registry the released images are published to and that the bundled .env.example
+# points at (ADR 0037). Overridable for mirrors and for local builds.
+DEFAULT_REGISTRY="${AF_REGISTRY:-ghcr.io/k-k1/agent-fleet}"
+
+DO_COMPOSE=0; DO_NATIVE=0; BUNDLE_ROOTFS=0; ROOTFS_JSON=""; DO_PUSH=0; DO_IMAGES_TAR=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --compose) DO_COMPOSE=1 ;;
@@ -46,7 +50,9 @@ while [ $# -gt 0 ]; do
     --all)     DO_COMPOSE=1; DO_NATIVE=1 ;;
     --bundle-rootfs) BUNDLE_ROOTFS=1 ;;
     --rootfs-json) ROOTFS_JSON="${2:?--rootfs-json needs a path}"; shift ;;
-    --save)    : ;; # B is part of the --compose default (compat no-op)
+    --push)    DO_PUSH=1 ;;        # publish images to the registry (ADR 0037)
+    --images-tar) DO_IMAGES_TAR=1 ;; # local docker-save tar (not a released asset)
+    --save)    : ;; # compat no-op (B used to be part of --compose)
     *) echo "unknown arg: $1" >&2; usage; exit 2 ;;
   esac
   shift
@@ -59,9 +65,14 @@ fi
 mkdir -p "$DIST"
 
 if [ "$DO_COMPOSE" = 1 ]; then
-  echo "==> [build.sh] compose artifacts (A+B) -> $DIST"
-  DIST_DIR="$DIST" VERSION="$VERSION" REGISTRY="${REGISTRY:-agent-fleet}" \
-    bash "$ROOT/deploy/compose/release.sh" --save
+  # ADR 0037: A only. Images go to the registry (--push), not into a released
+  # tar; --images-tar still produces one locally for hand-off.
+  echo "==> [build.sh] compose artifacts (A) -> $DIST"
+  extra=()
+  [ "$DO_PUSH" = 1 ] && extra+=(--push)
+  [ "$DO_IMAGES_TAR" = 1 ] && extra+=(--save)
+  DIST_DIR="$DIST" VERSION="$VERSION" REGISTRY="${REGISTRY:-$DEFAULT_REGISTRY}" \
+    bash "$ROOT/deploy/compose/release.sh" "${extra[@]+"${extra[@]}"}"
 fi
 
 if [ "$DO_NATIVE" = 1 ]; then
