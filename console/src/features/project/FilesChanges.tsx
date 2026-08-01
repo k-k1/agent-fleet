@@ -7,7 +7,7 @@
 // so the two lists read the same way. Clicking a row opens the working diff in the
 // viewer (same as the SCM pane's changes list); untracked/added files without a
 // diff still open it — DiffView falls back sensibly. Revived from the old
-// FilesSection (deleted 6df6896), minus its file-management extras.
+// FilesSection (deleted 52582b9), minus its file-management extras.
 import { useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, isTransientErr } from "../../core/api/client.ts";

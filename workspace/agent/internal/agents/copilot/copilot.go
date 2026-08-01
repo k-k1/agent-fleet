@@ -5,7 +5,7 @@
 //
 // セッション同一性は AF 側で外部採番した UUID（`--session-id <uuid v4>`、TUI と
 // ACP の session/load で共通）— agy の「resume UUID が取れない」問題（docs/32
-// 280945c）は構造的に発生しない。read 正本は $COPILOT_HOME/session-state/<sid>/
+// 46271bb）は構造的に発生しない。read 正本は $COPILOT_HOME/session-state/<sid>/
 // events.jsonl（TUI・-p・ACP 全経路で同一形式・ライブ追記 — docs/36 実測記録）。
 // 認証は GitHub 連携相乗り（gh 透過認証の OAuth トークン。Copilot CLI は
 // COPILOT_GITHUB_TOKEN > GH_TOKEN > GITHUB_TOKEN と gh CLI アプリのトークンを
@@ -45,7 +45,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	}
 	// Pre-trust the launch dir so the TUI doesn't stall on its "Confirm folder
 	// trust" dialog (実測: config.json trustedFolders への事前追記でスキップ)。
-	// 起動毎に再固定する（agy 5ec911a の教訓 — 一回きりの固定は後で剥がれる）。
+	// 起動毎に再固定する（agy 5a19080 の教訓 — 一回きりの固定は後で剥がれる）。
 	EnsureFolderTrusted(m.Dir)
 	sid := SessionID(m)
 	if sid == "" {
