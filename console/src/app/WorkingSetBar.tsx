@@ -198,12 +198,23 @@ function WorkingSetRow({ w }: { w: WorkingSet }) {
       />
       <span
         className="wset-counts"
-        title={tr("wset.row_counts", { repos: w.repos.length, convs: w.convs.length, sessions: w.sessions.length })}
+        title={tr("wset.row_counts", {
+          repos: w.repos.length,
+          convs: w.convs.length,
+          sessions: w.sessions.length,
+          schedules: w.schedules.length,
+        })}
       >
         <Icon name="repo" />
         {w.repos.length}
         <Icon name="comment-discussion" />
         {w.convs.length}
+        {w.schedules.length > 0 && (
+          <>
+            <Icon name="watch" />
+            {w.schedules.length}
+          </>
+        )}
         {w.sessions.length > 0 && (
           <>
             <Icon name="terminal" />

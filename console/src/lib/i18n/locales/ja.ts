@@ -2652,8 +2652,10 @@ export const ja = {
   "wset.empty_hint": "作業グループはまだありません。作成すると、リポジトリ・会話・セッションを案件ごとに割り当てて、左ペインの表示を切り替えられます。",
   "wset.no_repos": "このグループのリポジトリはありません（行の右クリックで追加）",
   "wset.name_aria": "グループ名",
-  "wset.row_counts": "リポジトリ {repos} / 会話 {convs} / セッション {sessions}",
+  "wset.row_counts": "リポジトリ {repos} / 会話 {convs} / セッション {sessions} / スケジュール {schedules}",
   "wset.none_hint": "作業グループはまだありません（左ペイン上部から作成）",
+  "wset.no_schedules": "このグループのスケジュールはありません",
+  "wset.derived_hint": "リポジトリ・会話の所属から自動的にこのグループに含まれています",
 
   // === P5 リポジトリ（RepoPicker/NewRepoModal/CloneForm/DirPicker/Branch* ほか） ===
   "rp.clone_failed": "クローンに失敗: {err}",

@@ -31,9 +31,12 @@ export interface WorkingSet {
   convs: string[];
   /** Session names ("s…") — repo-less sessions only; others inherit via repos. */
   sessions: string[];
+  /** CP schedule ids — direct assignment only; most schedules DERIVE membership
+   * from their repo / owner conversation / reuse target (scheduleInSet). */
+  schedules: string[];
 }
 
-export type WorkingSetField = "repos" | "convs" | "sessions";
+export type WorkingSetField = "repos" | "convs" | "sessions" | "schedules";
 
 const strings = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
@@ -47,7 +50,14 @@ export function normalizeWorkingSets(v: unknown): WorkingSet[] {
     if (!e || typeof e !== "object") continue;
     const o = e as Record<string, unknown>;
     if (typeof o.id !== "string" || !o.id || typeof o.name !== "string") continue;
-    out.push({ id: o.id, name: o.name, repos: strings(o.repos), convs: strings(o.convs), sessions: strings(o.sessions) });
+    out.push({
+      id: o.id,
+      name: o.name,
+      repos: strings(o.repos),
+      convs: strings(o.convs),
+      sessions: strings(o.sessions),
+      schedules: strings(o.schedules),
+    });
   }
   return out;
 }
@@ -92,4 +102,56 @@ export function sessionInSet(set: WorkingSet, s: Session): boolean {
 
 export function convInSet(set: WorkingSet, convId: string): boolean {
   return set.convs.includes(convId);
+}
+
+// --- Schedules (docs/52 — CP-persisted, so membership is derived where the
+// schedule's own fields give it an unambiguous home, with direct assignment by
+// schedule id as the fallback for the rest). The DTO fields involved:
+// repo/worktree = the working copy a session_mode=new fire launches in;
+// owner_conv = the operator conversation that created it (UUID);
+// reuse_target = a conversation ("a…" slug or UUID, assistant fires) or a
+// session name (session_mode=reuse).
+
+/** The schedule fields membership derivation reads (subset of ScheduleDTO). */
+export interface ScheduleLike {
+  id: string;
+  repo?: string;
+  worktree?: string;
+  owner_conv?: string;
+  reuse_target?: string;
+}
+
+/** Lookups only the caller's stores can answer; both optional — a missing
+ * resolver just skips that derivation path (fail-safe, never throws). */
+export interface ScheduleSetContext {
+  /** Conversation slug ("a…") → conversation id (UUID). */
+  convIdBySlug?: (slug: string) => string | undefined;
+  /** Session name → its working-copy folder (sessionFolder), "" / undefined = none. */
+  folderOfSession?: (name: string) => string | undefined;
+}
+
+const CONV_SLUG_RE = /^a[a-z2-7]{6}$/;
+
+export function scheduleInSet(set: WorkingSet, s: ScheduleLike, ctx: ScheduleSetContext = {}): boolean {
+  if (set.schedules.includes(s.id)) return true;
+  // Launch target: the worktree folder when set, else the base repo folder.
+  const folder = s.worktree || s.repo || "";
+  if (folder && set.repos.includes(folderBase(folder))) return true;
+  // The conversation that authored it — a schedule created from a group's
+  // operator chat follows that chat (the schedules' analog of auto-add: there is
+  // no Console creation seam to hook, the operator creates them via MCP).
+  if (s.owner_conv && set.convs.includes(s.owner_conv)) return true;
+  const tgt = (s.reuse_target || "").trim();
+  if (tgt) {
+    if (CONV_SLUG_RE.test(tgt)) {
+      const id = ctx.convIdBySlug?.(tgt);
+      if (id && set.convs.includes(id)) return true;
+    } else if (set.convs.includes(tgt)) {
+      return true; // assistant fires may carry the conversation UUID directly
+    }
+    if (set.sessions.includes(tgt)) return true;
+    const f = ctx.folderOfSession?.(tgt);
+    if (f && set.repos.includes(folderBase(f))) return true;
+  }
+  return false;
 }
