@@ -10,6 +10,7 @@ import { buildImagePrompt } from "../../lib/pastedImages.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { agentOf } from "../../agents/registry.ts";
 import { writeRepoLast } from "../../lib/repoLast.ts";
+import { autoAddToActiveWorkingSet } from "../../lib/workingSetsStore.ts";
 import { pushPromptHistory } from "../../lib/promptHistory.ts";
 import { setLaunchSeed } from "../../lib/launchSeed.ts";
 import { useReposStore } from "./store.ts";
@@ -70,6 +71,9 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
       return { ok: false };
     }
     if (repo) writeRepoLast(repo, kind, hasModel ? model : undefined, effort, startMode);
+    // repo なし（home）セッションはグループ継承が効かないので、選択中グループへ
+    // 直接自動所属させる（docs/52 §1）。repo 内launchは repo 側の所属を継承する。
+    if (!dir) autoAddToActiveWorkingSet("sessions", res.name);
     const chat = agentOf(kind).caps.chat;
     // Now that the session exists, upload any pasted images to it and fold their
     // saved paths into the first prompt (claude opens them with its Read tool).

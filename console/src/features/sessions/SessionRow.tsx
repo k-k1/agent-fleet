@@ -17,6 +17,10 @@ import { copyText } from "../../lib/clipboard.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { usePaneHover } from "../../lib/panehover.tsx";
 import { kindIcon, kindLabel, kindClass } from "../../lib/sessionkind.ts";
+import { sessionFolder } from "../../lib/project.ts";
+import { useSettings } from "../../lib/settings.ts";
+import { workingSetList, toggleWorkingSetMember } from "../../lib/workingSetsStore.ts";
+import { useReposStore } from "../repos/store.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { displayName, stateInfo, exitLabel } from "../../lib/sessionview.ts";
 import { agentOf } from "../../agents/registry.ts";
@@ -101,6 +105,12 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
   // このセッションの回答を音声読み上げ中か（ミラー朗読・要約・セッション通知いずれも
   // 発生元セッション名を tts ストアへ載せている）。合成待ち（preparing）も含めて示す。
   const speaking = useTtsStore((t) => t.sessionName === s.name && (t.speaking || t.preparing));
+  // 作業グループ (docs/52): direct assignment is for repo-less sessions only —
+  // a session living in a working copy inherits that repo's membership instead.
+  const wsets = workingSetList(useSettings());
+  const repos = useReposStore((st) => st.repos);
+  const folder = sessionFolder(s);
+  const repoLess = !folder || !repos.some((r) => r.name === folder);
 
   return (
     <li
@@ -355,6 +365,25 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
                   >
                     <Icon name="git-branch" /> {tr("srow.handoff")}
                   </button>
+                )}
+                {/* 作業グループ (docs/52): membership toggles — repo-less rows only. */}
+                {repoLess && wsets.length > 0 && (
+                  <>
+                    <div className="ui-menu-caption">{tr("wset.menu_caption")}</div>
+                    {wsets.map((w) => (
+                      <button
+                        key={w.id}
+                        type="button"
+                        className="ui-menu-item"
+                        onClick={() => {
+                          setMenuOpen(false);
+                          toggleWorkingSetMember(w.id, "sessions", s.name);
+                        }}
+                      >
+                        <Icon name="check" className={w.sessions.includes(s.name) ? "wset-check" : "wset-check off"} /> {w.name}
+                      </button>
+                    ))}
+                  </>
                 )}
                 {/* 削除ロック（docs/45）: この行を削除保護に固定/解除する。保護の実体は
                     Agent 側（403）なので、ここは切替と見た目の抑止だけを担う。 */}

@@ -15,6 +15,8 @@ import { useMenuRoving } from "../../lib/useMenuRoving.ts";
 import { copyText } from "../../lib/clipboard.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { kindIcon, kindLabel } from "../../lib/sessionkind.ts";
+import { useSettings } from "../../lib/settings.ts";
+import { workingSetList, toggleWorkingSetMember } from "../../lib/workingSetsStore.ts";
 import { agentOf, repoLaunchKinds } from "../../agents/registry.ts";
 import { t, useT } from "../../lib/i18n/index.ts";
 import { ordClass } from "../../layout/badges.ts";
@@ -108,6 +110,9 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
   const menuRef = useRef<HTMLUListElement>(null);
   const toast = useToast();
   const tr = useT();
+  // 作業グループ (docs/52): base clones toggle membership from the context menu.
+  // Worktrees follow their base (no per-worktree assignment), so they get no block.
+  const wsets = workingSetList(useSettings());
   const copyBranch = () => {
     const b = r.branch || "";
     void copyText(b).then((ok) =>
@@ -397,6 +402,27 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                 </button>
               </li>
             ))}
+            {/* 作業グループ (docs/52): membership toggles — base rows only. */}
+            {!r.worktree && wsets.length > 0 && (
+              <>
+                <li className="ui-menu-sep" role="separator" />
+                <li className="ui-menu-caption">{tr("wset.menu_caption")}</li>
+                {wsets.map((w) => (
+                  <li key={w.id}>
+                    <button
+                      type="button"
+                      className="ui-menu-item"
+                      onClick={() => {
+                        setMenu(null);
+                        toggleWorkingSetMember(w.id, "repos", r.name);
+                      }}
+                    >
+                      <Icon name="check" className={w.repos.includes(r.name) ? "wset-check" : "wset-check off"} /> {w.name}
+                    </button>
+                  </li>
+                ))}
+              </>
+            )}
             {(onDelete || onToggleLock) && <li className="ui-menu-sep" role="separator" />}
             {onToggleLock && (
               <li>
