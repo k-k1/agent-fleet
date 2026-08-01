@@ -3,6 +3,12 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.5.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.5.0) — 2026-08-01
+
+作業グループで Console の左ペインを案件ごとに分けられるようになり、独自の MCP
+サーバーを登録でき、エージェントのメモリはバージョン管理されて持ち運べるように
+なりました。エディタは AI の変更案を差分でレビューしてから取り込めます。
+
 ## [0.4.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.4.0) — 2026-07-27
 
 機能別のトークン使用量が見えるようになり、Console の File ペインで本文を編集でき、
