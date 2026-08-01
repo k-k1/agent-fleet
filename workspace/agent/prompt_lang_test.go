@@ -70,6 +70,16 @@ func enPrompts() []langPrompt {
 		{"chatReplySuggestPrompt/frame", func(l string) string {
 			return promptFrame(chatReplySuggestPrompt(msgs, l), replySuggestLogHeader(l))
 		}},
+		{"compactSummaryPromptFor", compactSummaryPromptFor},
+		{"handoffPreambleFor", handoffPreambleFor},
+		{"planShapeFor", planShapeFor},
+		{"planUpdateInstructionFor", planUpdateInstructionFor},
+		{"planPreambleFor", planPreambleFor},
+		{"planTruncatedNote", planTruncatedNote},
+		{"planRefreshPersonaFor", planRefreshPersonaFor},
+		{"planRefreshInstructions/新規", func(l string) string { return planRefreshInstructions("", l) }},
+		{"planRefreshInstructions/差分更新", func(l string) string { return planRefreshInstructions("plan body", l) }},
+		{"planContextHeader", planContextHeader},
 	}
 }
 
@@ -80,6 +90,30 @@ func promptFrame(prompt, header string) string {
 		return prompt[:i+len(header)]
 	}
 	return prompt
+}
+
+// 分岐した prompt が実際に ui-prefs の locale で選ばれること（関数を英語化しても呼び出し側が
+// 日本語固定のままなら意味がない — P6 で実際に起きうる取りこぼし）。
+func TestCarryoverPromptsFollowUILocale(t *testing.T) {
+	writeUIPrefs(t, `{"locale":"en"}`)
+	c := &chatConversation{Plan: "## What comes next\n- lane A", PendingHandoff: "previous summary"}
+
+	if got := compactPrompt(c); hasJapanese(promptFrame(got, "## What comes next")) {
+		t.Fatalf("英語ロケールの圧縮プロンプトに日本語が混ざる:\n%s", got)
+	}
+	p, _ := injectPlan(c, "claude", "go on")
+	if hasJapanese(p) {
+		t.Fatalf("英語ロケールの計画前置きに日本語が混ざる:\n%s", p)
+	}
+	h, _ := injectHandoff(c, "go on")
+	if hasJapanese(h) {
+		t.Fatalf("英語ロケールの引き継ぎ前置きに日本語が混ざる:\n%s", h)
+	}
+
+	writeUIPrefs(t, `{"locale":"ja"}`)
+	if got := compactPrompt(c); !strings.Contains(got, "引き継ぎの作成") {
+		t.Fatalf("日本語ロケールで従来の圧縮プロンプトが出ない:\n%s", got)
+	}
 }
 
 func TestEnglishPromptsHaveNoJapanese(t *testing.T) {
