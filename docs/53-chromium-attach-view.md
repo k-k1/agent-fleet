@@ -1,7 +1,8 @@
 # 53. Chromium Attach View — 外部所有 Chromium の表示・人間操作
 
-> 状態: **設計確定・未実装**（2026-08-01）
+> 状態: **P0実測・実装契約確定、P1以降は未実装**（2026-08-02）
 > 意思決定: [decisions/0037](decisions/0037-chromium-attach-view.md)
+> P0実測: [53-chromium-attach-view-p0-verification.md](53-chromium-attach-view-p0-verification.md)
 > 関連: [31-container-browser-pane.md](31-container-browser-pane.md) / [49-mcp-2026-07-28.md](49-mcp-2026-07-28.md)
 > 対象: Console / Control Plane / Workspace Agent / ローカル stdio MCP / Workspace 利用契約
 
@@ -67,7 +68,7 @@ Workspace Agent AttachmentManager
   │ Target discovery / attachToTarget / startScreencast / Input.*
   │ attachmentIdごとの状態・viewer lease・handoff結果
   ▼
-Control Plane browser relay
+Control Plane browser-attachment relay
   │ membership検証、REST/WS中継。CDPを解釈しない
   ▼
 Console BrowserAttachPane
@@ -118,6 +119,12 @@ AFはremote-debugging port無しの既存process、CDP pipe、Unix socketを探�
 - attachmentは暗号学的乱数の`attachmentId`で参照し、memory上だけに保持する。
 - Agent再起動時はattachmentを復元しない。ownerとtargetには影響しない。
 
+P0でtransportの分割点を確定した。現行`browserCDP`の`Call / Events / Done / Close`をmanager境界として維持し、
+request ID/pending応答とbounded event queueを共通coreにする。pipeのNUL framingとWebSocket framingはtransport adapterへ分け、
+process/profile所有はpipe adapterだけに残す。`browserCDPEvent.queue *pipeCDP`は共通queue参照またはrelease callbackへ変える。
+discovery、loopback URL再構成、target filterは上位の`AttachmentManager`に置き、transportへ入れない。詳細は
+[P0実測 §3.1](53-chromium-attach-view-p0-verification.md#31-cdp-transportの分割点)による。
+
 ### navigation policy
 
 AF所有Pageのloopback限定は維持する。attachmentでは既にownerが外部URLを開いているため、外部top-level URLを理由に
@@ -143,6 +150,8 @@ detach/TTL/target消滅 ──▶ CDP sessionとviewerだけ解放
 - detachは冪等で、存在しないIDにも`204`を返す。
 - target消滅、CDP切断、owner終了はそれぞれ`target-closed`、`disconnected`状態にする。ownerを再起動しない。
 - v1は1 attachmentにつきviewer 1本。二重viewerは`409 browser_already_attached`とする。
+- Chromium自体は複数CDP sessionを許すが、v1のAFは同じtargetへactive attachmentを1つだけ許す。ownerが既に持つ
+  Playwright/CDP sessionはこの上限に数えない。
 
 ## 53.6 Agent / CP API
 
@@ -238,8 +247,10 @@ ownerまたはエージェントは必要なら遷移先URLや業務側状態を
 | 502 | `cdp_unreachable` | endpointへ接続不能 |
 | 502 | `cdp_disconnected` | owner終了等で切断 |
 
-描画・入力WebSocketは既存`GET /ws/browser?id=`を共用できる。ただし内部ID lookupはAF所有Pageとattachmentを型付きで
-分岐し、attachmentへ`navigate path` messageを許可しない。
+描画・入力WebSocketは既存namespaceへ混在させず、Console→CP、CP→Agentとも
+`GET /ws/browser-attachments?id=<attachmentId>`を使う。CPの認証・membership検査とlatest-frame relay coreは既存browser
+relayから再利用する。Agent handlerを分け、attachmentの許可message集合に`navigate`を定義しない。これにより現行
+`/ws/browser?id=<browserId>`の所有権、lookup、wire v1を変更しない。
 
 ## 53.7 Console とワンクリック導線
 
@@ -254,10 +265,12 @@ ownerまたはエージェントは必要なら遷移先URLや業務側状態を
 クリック時にConsoleは:
 
 1. routeのattachmentをGETし、認証・membership・有効期限を確認する。
-2. 空きペインがあれば新しいペインを作る。
-3. 上限時は「現在のペインで開く / キャンセル」をユーザーに選ばせる。
-4. layout storeの正規の`commit()`経路で`{kind:"browserAttach", attachmentId}`を設定する。
-5. action routeをhistoryから正規Workspace URLへ置換し、再実行を防ぐ。
+2. 同じattachmentを表示中ならそのpaneをactiveにする。次にactiveなblank、layout順のblankを使う。
+3. blankがなく上限未満なら、desktopは右列→下split、mobileは下splitの順で新しいslotを作る。
+4. desktop 8 pane / mobile 2 paneの上限時だけ「現在のペインで開く / キャンセル」を表示し、既定focusを
+   「キャンセル」にする。黙って別paneを上書きしない。
+5. layout storeの正規の`commit()`経路で`{kind:"browserAttach", attachmentId}`を1回だけ設定する。
+6. 成功後だけaction routeをhistoryから正規Workspace URLへ置換し、再実行を防ぐ。
 
 サーバーpushやMCP呼び出しだけで利用者のlayoutを勝手に変更しない。layoutはブラウザ端末ごとのlocal stateであり、
 ユーザークリックが「この端末で表示する」という明示的な意思になる。
@@ -312,9 +325,11 @@ ownerまたはエージェントは必要なら遷移先URLや業務側状態を
 `attach_chromium`は認証済みPageの描画を別surfaceへ出し、入力経路も作るためread-onlyではない。現行MCPと同じく
 `--write`時だけツールを広告し、名前を推測したcallも拒否する。detachも共有状態を変えるため同じgateに置く。
 
-MCP結果はv1ではtext content内のJSONに加えて`structuredContent`を返せる実装へ寄せる。少なくとも
-`attachment_id/open_url/expires_at`を機械可読にする。CLIがstructured resultをモデルへ渡さない場合に備え、textにも
-短い同内容を残す。
+MCP結果はtoolごとの`outputSchema`を定義し、text content内の短いJSONと`structuredContent`へ同一値を必ず返す。
+`attach_chromium`は少なくとも`attachment_id/open_url/expires_at`を両方へ含め、field名は`snake_case`に固定する。
+P0ではClaude/Codex/Copilotがstructured値をモデルへ渡し、opencode/Cursor/Kiroはtextだけを渡した。未計測CLIを含めて
+text fallbackを正とし、client別分岐は作らない。resultの確定形と実測matrixは
+[P0実測 §3.4](53-chromium-attach-view-p0-verification.md#34-mcp-structured-result)による。
 
 ### 完了通知
 
@@ -335,10 +350,11 @@ Workspace共通の案内には次の短い契約を載せる。プロジェク�
 1. Chromiumを`--remote-debugging-address=127.0.0.1`と
    `--remote-debugging-port=<port>`付きで起動する。0.0.0.0へ公開しない。
 2. AF MCPの`list_chromium_targets`で対象Pageを確認する。
-3. `attach_chromium`で接続し、必要なら`request_browser_action`で操作内容を設定する。
-4. MCPが返した`open_url`を変更せず、「ブラウザを開いて操作する」というMarkdownリンクでユーザーへ提示する。
-5. 最終確定操作は代行せず、ユーザーへ具体的に指示する。
-6. 完了または中止を確認したら`detach_chromium`を呼ぶ。detachはPageやChromiumを終了しない。
+3. `user-control`へ移す前に、owner側の対象Pageへの自動操作を停止する。
+4. `attach_chromium`で接続し、必要なら`request_browser_action`で操作内容を設定する。
+5. MCPが返した`open_url`を変更せず、「ブラウザを開いて操作する」というMarkdownリンクでユーザーへ提示する。
+6. 最終確定操作は代行せず、ユーザーへ具体的に指示する。
+7. 完了または中止を確認したら`detach_chromium`を呼ぶ。detachはPageやChromiumを終了しない。
 
 CDP endpoint、cookie、password、tokenを回答・log・commitへ出力しない。
 ```
@@ -353,8 +369,8 @@ MCP tool descriptionにも同じ重要規則を持たせる。案内ファイル
 3. **Console認可**: attachment IDは認証の代わりにしない。CPは毎回membershipとWorkspaceを解決する。
 4. **秘密の非永続化**: frame、console log、title、外部URL、CDP discovery応答をDB・audit log・notificationへ保存しない。
 5. **画面上の秘密**: Consoleは対象Pageをそのユーザー本人へだけ表示する。スクリーンショット取得・共有機能はv1に含めない。
-6. **入力競合**: user-control開始前にownerが操作を停止する協調が望ましい。AFは警告とcontrol modeを提供するが、
-   非協調ownerを強制停止しない。
+6. **入力競合**: user-control開始前にownerが対象Pageへの自動操作を停止することを利用契約上の必須条件とする。AFは停止を
+   検知・強制できないため、警告とcontrol modeを提供し、非協調ownerとの競合結果は未定義とする。
 7. **外部navigation**: attachモードだけが既存外部Pageを表示する。通常BrowserManagerのloopback境界を共有フラグで緩めない。
 8. **resource cap**: attachmentも既存Pageと合算してWorkspace当たり表示中2、最大1600x1200、12fps、JPEG quality 70を既定にする。
 
@@ -368,7 +384,7 @@ v1のcontrol mode:
 | `user-control` | 許可済みinputをtargetへ転送 |
 | `locked` | frameと入力を停止。handoff準備中または終了後 |
 
-AFがownerをpauseする標準手段はv1に含めない。推奨ownerフローは:
+AFがownerをpauseする標準手段はv1に含めない。`user-control`に対する必須ownerフローは:
 
 ```text
 自動操作停止
@@ -405,9 +421,10 @@ AFがownerをpauseする標準手段はv1に含めない。推奨ownerフロー�
 
 ### P0 — CDP attach spike
 
-- system Chromium + Playwrightの同一endpointへAgent相当の第2CDP clientが接続できることを確認する。
-- screencast、mouse、keyboard、IME、navigation、target closeを実測する。
-- Playwright操作中と停止中の競合挙動を記録する。
+- **完了（2026-08-02）**。system Chromium + Playwrightの同一endpointへ独立した2 clientを接続した。
+- screencast、mouse、wheel、keyboard、IME、navigation、detach、target closeを実測した。
+- owner操作中/停止中の競合と、対応CLIのMCP structured resultを記録した。
+- 未決5項目を[P0実測](53-chromium-attach-view-p0-verification.md)と§53.15で契約化した。
 
 ### P1 — Agent/API
 
@@ -443,12 +460,14 @@ AFがownerをpauseする標準手段はv1に含めない。推奨ownerフロー�
 - lifecycle: owner終了、target close、Agent restart、viewer reload、detach後もowner Pageが生存すること。
 - MCP: af_readにwrite toolが出ない、推測call拒否、`open_url`がそのままリンク化される説明、二重attach/detach retry。
 
-## 53.15 未決事項
+## 53.15 P0確定事項
 
-実装前P0で次だけを確定する。機能境界は本書で固定し、結果によって広げない。
+実装前の未決5項目は2026-08-02の[P0実測](53-chromium-attach-view-p0-verification.md)で閉じた。
 
-1. 既存pipe CDP clientをWebSocket transportへ抽象化する最小分割点。
-2. Chromium/Playwrightの対応版で複数CDP clientが同時に`Page.startScreencast`した際の実挙動。
-3. attachmentを既存`/ws/browser?id=` namespaceへ混在させるか、`/ws/browser-attachments?id=`へ分離するか。
-4. `structuredContent`を各対応CLIがモデルへ渡す実測。text fallbackは必須とする。
-5. action routeを同一ペイン、新規ペイン、空きペインのどれに既定配置するか。空きがあれば新規を第一候補とする。
+1. `browserCDP` coreからpipe/WebSocket framingとprocess所有だけをtransport adapterへ分ける。
+2. 複数target sessionのscreencastは独立して動作した。AFは自分のsessionだけをstart/stop/ACK/detachする。
+3. attachmentは専用`/ws/browser-attachments?id=` namespaceへ分離する。
+4. MCP resultはtool `outputSchema`、同一値のJSON text、`structuredContent`の3点を持つ。text fallbackを全CLIの正とする。
+5. Consoleは既存attachment focus→blank→新規slotの順に配置し、上限時だけactive pane置換の確認を出す。
+
+機能境界はP0結果によって拡張していない。P1以降はこの5点を再選択せず、実装・security/lifecycle testへ進む。

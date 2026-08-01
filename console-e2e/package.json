@@ -3,7 +3,8 @@
   "private": true,
   "description": "Console UI E2E (L3) — Playwright でブラウザ→CP→実コンテナの縦串を検証",
   "scripts": {
-    "test": "playwright test"
+    "test": "playwright test",
+    "probe:chromium-attach": "node scripts/chromium-attach-p0.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.53.0"
