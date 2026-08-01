@@ -3,6 +3,12 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.5.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.5.0) — 2026-08-01
+
+Working sets split the Console's left pane by project, you can register your own
+MCP servers for the assistant and for sessions, an agent's memory is versioned and
+portable, and the editor can propose a change you review as a diff.
+
 ## [0.4.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.4.0) — 2026-07-27
 
 Token usage is broken down by feature, files open for edit in the Console, and
