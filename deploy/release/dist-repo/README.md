@@ -229,11 +229,11 @@ service fails to bind port 8099.
 
 ## Installing the Docker Compose edition (team, on-prem)
 
-The images are **not** published to a registry, so the bundle
-(`agent-fleet-<version>.tar.gz`) and the images tar
-(`agent-fleet-images-<version>.tar.gz`) ship on
-[Releases](https://github.com/k-k1/agent-fleet-dist/releases). A helper fetches
-and verifies both, extracts the bundle and `docker load`s the images:
+The compose bundle (`agent-fleet-<version>.tar.gz`) ships on
+[Releases](https://github.com/k-k1/agent-fleet-dist/releases); the container
+images come from **GHCR** (`ghcr.io/k-k1/agent-fleet/{control-plane,workspace}`),
+which the bundled `.env.example` already points at. A helper fetches and verifies
+the bundle, extracts it and pulls the images:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/k-k1/agent-fleet-dist/main/install-compose.sh | bash
@@ -245,9 +245,13 @@ docker compose up -d
 Unlike the native edition this is **not** a full one-liner: you must edit `.env`
 (secrets, `PUBLIC_DOMAIN`, Google OAuth, optionally the git-provider OAuth vars
 below) before `docker compose up`. To pin a version, prefix
-`AF_VERSION=<version>`; `AF_SKIP_IMAGES=1` skips the large images download when
-you hand it off separately. Prefer the manual path? Download the two tars, then
-`sha256sum -c --ignore-missing SHA256SUMS`, `tar xzf`, `./load-images.sh`.
+`AF_VERSION=<version>`; `AF_SKIP_PULL=1` skips the pull (`docker compose up`
+pulls anyway). Prefer the manual path? Download the bundle, then
+`sha256sum -c --ignore-missing SHA256SUMS` and `tar xzf`.
+
+Hosts that cannot reach a registry at all can build the images from source and
+`docker load` them — see `load-images.sh` in the bundle and
+`deploy/compose/release.sh --save` in the source repository.
 
 The bundled `README.md` is the full runbook: prerequisites, key generation,
 TLS/domain setup, git-provider OAuth (`GITHUB_OAUTH_CLIENT_ID` /
@@ -284,7 +288,7 @@ rm -rf ~/.local/opt/agent-fleet
 
 | tag | assets | purpose |
 |---|---|---|
-| `v<version>` | `agent-fleet-<version>.tar.gz` (compose bundle) / `agent-fleet-images-<version>.tar.gz` (air-gap images) / `agent-fleet-native-<version>-linux-amd64.tar.gz` (native) / `SHA256SUMS` | the application release |
+| `v<version>` | `agent-fleet-<version>.tar.gz` (compose bundle) / `agent-fleet-native-<version>-linux-amd64.tar.gz` (native) / `SHA256SUMS` | the application release. Container images are on GHCR, not here |
 | `rootfs-<r>` | `agent-fleet-rootfs-<r>-linux-amd64.tar.zst` | workspace rootfs the native edition downloads on first start. **Not for standalone use** (`rootfs.json` inside the native tar pins its version and sha256) |
 
 `<r>` is a content hash: when the app version bumps but the rootfs is unchanged,

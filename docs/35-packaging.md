@@ -32,7 +32,7 @@
 | # | アーティファクト | 中身 | 対象ターゲット |
 |---|---|---|---|
 | A | `agent-fleet-<v>.tar.gz` | compose deploy surface（compose.yml / Caddyfile / .env.example / backup / restore / load-images / README）**+ `aws/`（ec2-single cfn.yaml・ecs cfn/・release-ecr.sh・README）** | amd64 Linux・EC2-Single・ECS |
-| B | `agent-fleet-images-<v>.tar.gz` | `docker save`（CP + Workspace イメージ、air-gap 用）。Workspace は**配布 variant（lean・CLI 抜き）** — §35.4.1 | amd64 Linux・EC2-Single（・ECS も可） |
+| ~~B~~ | ~~`agent-fleet-images-<v>.tar.gz`~~ | **廃止（[ADR 0037](decisions/0037-registry-policy.md)・2026-08-02）**。イメージは GHCR（`ghcr.io/k-k1/agent-fleet/{control-plane,workspace}`）で配る。レジストリに到達できないホスト向けに `release.sh --save` で手元生成する自助手順は残す（配布物ではない） | — |
 | C | `agent-fleet-native-<v>-linux-amd64.tar.gz`（**数十 MB**） | `af` ランチャ・`bin/af-cp`・`bin/bwrap`・`bin/git`（いずれも静的）・`rootfs.json`（R の URL + sha256 + rootfs 版のピン manifest — **rootfs 本体は同梱せず初回起動時に DL**）・`console/`（Vite dist）・`docs/`（ステージング源）・README。`--bundle-rootfs` で R 同梱の self-contained 版（air-gap/ファイル渡し用）も生成可 | native（WSL / 任意の Linux 単一ユーザー）**ホスト追加インストール ゼロ**（§35.3.1） |
 | R | `agent-fleet-rootfs-<r>-linux-amd64.tar.zst`（zstd 200MB 台目安） | **lean rootfs** = workspace イメージの配布 variant（OSS ユーザーランドのみ。エージェント CLI は起動時ピン版インストール、chromium＋CJK フォント・Go・AWS CLI+SSM plugin・ops MCP 群など利用者限定ツールはオンデマンドピン版インストール — §35.3.1・§35.4.1）。**公開の置き場**（§35.9-2）に置き、`af` が rootfs.json のピンで取得・検証。**版 `<r>` は app 版 `<v>` から分離** — イメージ不変のリリースでは再 DL なし | native（C から参照される） |
 | D | `SHA256SUMS` | A〜C のチェックサム | 全部 |
@@ -309,9 +309,9 @@ reset で掃除）。データ（`WS_DATA`）は外にあるので触れない�
    ECS まで立てられる」一つの箱になる。release.sh の cp 対象に `deploy/aws/` を足すだけ。
 2. **SHA256SUMS 生成**を release.sh に追加。
 3. **版刻印**（§35.6.1）を CP/agent のビルドに配線。
-4. **レジストリ方針の決定**（§35.9 未決）: 既定は air-gap tar（現状の流儀・グループ会社配布に
-   十分）。push 先を持つなら release.sh に `--push`（`REGISTRY=ghcr.io/... docker push`）を
-   足すだけの構造には既になっている。
+4. ~~**レジストリ方針の決定**（§35.9 未決）~~ → **決着（2026-08-02・[ADR 0037](decisions/0037-registry-policy.md)）**:
+   **イメージは GHCR で配り、B は廃止**。予見どおり `release.sh --push` を足すだけで済んだ
+   （`REGISTRY` の間接参照が既にあったため）。
 5. **multi-arch イメージは今はやらない**。Dockerfile は arch 対応済みだが、buildx の
    マルチアーチビルドはこのホストのメモリ制約（QEMU エミュレーション込みのビルド）に対して
    重すぎる。イメージは amd64 のみ、native tar だけ両 arch（§35.3.1）という割り切りを明記する。

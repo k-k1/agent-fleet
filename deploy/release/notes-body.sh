@@ -17,6 +17,8 @@ VERSION="${VERSION:?set VERSION=<semver> (e.g. VERSION=0.3.0)}"
 ROOTFS="${ROOTFS:?set ROOTFS=<rootfs content hash> (e.g. ROOTFS=0acd1112b7b0)}"
 REPO="${REPO:-k-k1/agent-fleet-dist}"
 ARCH="${ARCH:-amd64}"
+# Registry the compose edition pulls from (ADR 0037).
+IMAGE_BASE="${IMAGE_BASE:-ghcr.io/k-k1/agent-fleet}"
 # NOTES_DIR is overridable so the stub test can point at a fixture instead of
 # needing a notes file checked in for its fake version.
 NOTES_DIR="${NOTES_DIR:-$HERE/notes}"
@@ -39,7 +41,9 @@ cat <<EOF
 
 **Install (native)** — \`curl -fsSL https://raw.githubusercontent.com/$REPO/main/install.sh | bash\` then \`af start\`
 
-**Assets** — \`agent-fleet-$VERSION.tar.gz\` (Compose bundle) · \`agent-fleet-images-$VERSION.tar.gz\` (air-gap images) · \`agent-fleet-native-$VERSION-linux-$ARCH.tar.gz\` (native) · \`SHA256SUMS\`
+**Assets** — \`agent-fleet-$VERSION.tar.gz\` (Compose bundle) · \`agent-fleet-native-$VERSION-linux-$ARCH.tar.gz\` (native) · \`SHA256SUMS\`
+
+**Container images** — \`$IMAGE_BASE/control-plane:$VERSION\` and \`$IMAGE_BASE/workspace:$VERSION\` (pulled by \`docker compose\`; the bundle's \`.env.example\` already points at them)
 
 **Workspace rootfs** — [\`rootfs-$ROOTFS\`](https://github.com/$REPO/releases/tag/rootfs-$ROOTFS), fetched on first start and verified against the \`rootfs.json\` sha256 inside the native tar. Verify every download against \`SHA256SUMS\`.
 EOF
