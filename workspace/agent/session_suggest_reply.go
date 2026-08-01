@@ -41,12 +41,26 @@ const (
 	replySuggestTailRunes = 600
 )
 
-// replySuggestPersona: 会話の言語に合わせ、前置き・番号・引用符なしで 1 行 1 候補を出させる。
+// replySuggestPersona は指示文の言語（＝ペルソナ/プロンプトを書く言語）を Console の表示言語で
+// 選ぶ（docs/28 P6）。titleSuggestPersona(lang) と同じ形。
+//
+// ★候補そのものの言語は表示言語ではなく**会話の言語**（両言語の指示文がそう書いてある）。
+// 候補はユーザーがそのままセッションへ送る文であり、日本語で作業中のセッションへ英語を送ると
+// 以降の出力言語まで反転してしまう（chat_report.go の中断再開文と同じ理由）。分岐するのは
+// 「モデルへの指示文が表示言語と割れないようにする」ためで、生成物の言語軸ではない。
+func replySuggestPersona(lang string) string {
+	if lang == "en" {
+		return replySuggestPersonaEN
+	}
+	return replySuggestPersonaJA
+}
+
+// replySuggestPersonaJA: 会話の言語に合わせ、前置き・番号・引用符なしで 1 行 1 候補を出させる。
 // 件名提案（第三者視点の名詞句）と違い、視点は「ユーザー本人が送る返信」であることを明示する。
 // ★スタイル: ユーザーは開発者でエージェントに手短に指示する。丁寧語・敬語を付けると（"修正して"
 // でよいところ "修正をお願いします" になり）そのまま無駄トークンとして送られるので、常体・命令形で
 // 簡潔に。「です／ます／してください／お願いします」や「なるほど／では」等の前置きは禁止。
-const replySuggestPersona = "あなたはチャットの会話ログを読み、ユーザーが次にエージェントへ送る短い返信の候補を作る専用ツールです。" +
+const replySuggestPersonaJA = "あなたはチャットの会話ログを読み、ユーザーが次にエージェントへ送る短い返信の候補を作る専用ツールです。" +
 	"直前のエージェントの発言（質問・確認・提案）に対して、ユーザーが実際に打ちそうな返信を考えます。" +
 	"ユーザーは開発者で、エージェントに手短に指示します。文体は常体・命令形で簡潔に。" +
 	"敬語・丁寧語（です／ます／してください／お願いします 等）や前置き（なるほど／では 等）は一切付けない。" +
@@ -56,6 +70,20 @@ const replySuggestPersona = "あなたはチャットの会話ログを読み、
 	"承認・却下・続行の指示、質問への短い回答、次の依頼などを、会話と同じ言語で、1 候補 1 行・最大3件・各20文字以内で。" +
 	"番号・箇条書き・引用符・説明は一切付けず、候補そのものだけを改行区切りで出力してください。" +
 	"見出し・前置き（『返信の候補：』『以下の通りです』等）も禁止 — 1行目から候補そのものを書くこと。"
+
+// replySuggestPersonaEN: 日本語版と同じ契約を英語で書いたもの。★「候補は会話ログの言語で」を
+// 例より先に置く — 例が英語なので、順序を逆にすると日本語スレッドでも英語の候補を出しはじめる。
+const replySuggestPersonaEN = "You read a chat conversation log and write short replies the USER might send next to the agent. " +
+	"Respond to what the agent just said (a question, a confirmation, a proposal) with what this user would realistically type. " +
+	"Write every candidate in the SAME LANGUAGE as the conversation log — the examples below are English, but a Japanese log gets Japanese candidates. " +
+	"The user is a developer who instructs the agent tersely: imperative and short, no polite padding " +
+	"(no 'Could you please …', no 'Sure, let's …' lead-ins). " +
+	"Example: 'fix it', not 'Could you please fix it'; 'go ahead', not 'Please proceed with that'. " +
+	"When the agent offers numbered or lettered choices (1, 2, A, B, P1 ...), make the identifier ALONE the candidate " +
+	"(just '1', not 'let's go with 1'; just 'A', not 'pick A'). " +
+	"Approvals, rejections, go-aheads, short answers to a question, the next request — one candidate per line, at most 3, at most 20 characters each. " +
+	"No numbering, no bullets, no quotes, no explanation — output the candidates themselves, newline-separated. " +
+	"No heading or preamble ('Here are some replies:' …) — the first line is already a candidate."
 
 // replySuggestModel: 短い候補生成には安価/高速なモデルで十分。deployment 単位で上書き可。
 func replySuggestModel() string { return envOr("AF_SUGGEST_MODEL", "haiku") }
@@ -82,7 +110,7 @@ func replyTailText(s string) string {
 
 // replySuggestPrompt は直近の実ターン（sidechain/compaction/tool-only を除く）を文脈に渡す。
 // タイトルと違い開始ターンは不要 — 返信は「直前に何を言われたか」が全てなので末尾窓だけでよい。
-func replySuggestPrompt(turns []transcript.Turn) string {
+func replySuggestPrompt(turns []transcript.Turn, lang string) string {
 	real := make([]transcript.Turn, 0, len(turns))
 	for _, t := range turns {
 		if t.Sidechain || t.Compact || t.Text == "" {
@@ -94,15 +122,51 @@ func replySuggestPrompt(turns []transcript.Turn) string {
 		real = real[len(real)-replySuggestTailTurns:]
 	}
 	var b strings.Builder
-	b.WriteString("会話ログの続きとして、ユーザーが次に送る返信の候補を最大3件、改行区切りで出力してください。\n")
-	b.WriteString("直前のエージェントの発言に噛み合う短文にすること。丁寧語にせず、常体・命令形で簡潔に。\n")
-	b.WriteString("数字/英字で選択肢が提示されていればその識別子だけ（1・2・A・P1 等）。\n")
-	b.WriteString("例（すべて常体で簡潔に・承認/続行/回答/中断/選択）: 進めて / OK / 修正して / 待って / 1 / A\n\n")
-	b.WriteString("--- 会話ログ ---\n")
+	b.WriteString(replySuggestInstructions(lang, replyCounterpartSession))
+	b.WriteString(replySuggestLogHeader(lang))
 	for _, t := range real {
 		fmt.Fprintf(&b, "%s: %s\n", t.Role, replyTailText(t.Text))
 	}
 	return b.String()
+}
+
+// 返信先の呼び分け（セッション＝エージェント／チャット＝アシスタント）。指示文の他の部分は
+// 共通なので、この 1 語だけを差し替えて両方から使う。
+const (
+	replyCounterpartSession = iota
+	replyCounterpartChat
+)
+
+// replySuggestInstructions / replySuggestLogHeader: 会話ログ本文は原文のまま渡し、その前後の
+// 枠だけを表示言語で書く（件名提案の titleSuggestInstructions と同じ分け方）。
+func replySuggestInstructions(lang string, counterpart int) string {
+	if lang == "en" {
+		who := "agent"
+		if counterpart == replyCounterpartChat {
+			who = "assistant"
+		}
+		return "Continue the conversation log below: output at most 3 replies the user would send next, newline-separated.\n" +
+			"Each must fit what the " + who + " just said. Terse and imperative, no polite padding.\n" +
+			"If numbered/lettered choices were offered, output the identifier alone (1, 2, A, P1 ...).\n" +
+			"Write them in the conversation log's own language.\n" +
+			"Examples (approve / continue / answer / halt / choose): go ahead / OK / fix it / hold on / 1 / A\n\n"
+	}
+	who := "エージェント"
+	if counterpart == replyCounterpartChat {
+		who = "アシスタント"
+	}
+	return "会話ログの続きとして、ユーザーが次に送る返信の候補を最大3件、改行区切りで出力してください。\n" +
+		"直前の" + who + "の発言に噛み合う短文にすること。丁寧語にせず、常体・命令形で簡潔に。\n" +
+		"数字/英字で選択肢が提示されていればその識別子だけ（1・2・A・P1 等）。\n" +
+		"候補は会話ログで使われている言語で書くこと。\n" +
+		"例（すべて常体で簡潔に・承認/続行/回答/中断/選択）: 進めて / OK / 修正して / 待って / 1 / A\n\n"
+}
+
+func replySuggestLogHeader(lang string) string {
+	if lang == "en" {
+		return "--- conversation log ---\n"
+	}
+	return "--- 会話ログ ---\n"
 }
 
 // cleanSuggestedReplies は LLM の生出力を候補配列へ整形する。行分割し、箇条書き記号/番号/
@@ -145,7 +209,8 @@ func cleanSuggestedReplies(s string) []string {
 }
 
 func runReplySuggestLLM(ctx context.Context, turns []transcript.Turn) ([]string, error) {
-	reply, err := oneShotHeadless(ctx, replySuggestPersona, replySuggestPrompt(turns), replySuggestModel())
+	lang := uiLocale() // 指示文の言語だけ（候補そのものは会話の言語 — replySuggestPersona 参照）
+	reply, err := oneShotHeadless(ctx, replySuggestPersona(lang), replySuggestPrompt(turns, lang), replySuggestModel())
 	if err != nil {
 		return nil, fmt.Errorf("reply suggestion failed: %w", err)
 	}

@@ -16,7 +16,7 @@ import (
 // chatReplySuggestPrompt は直近メッセージ（末尾窓）を文脈に、返信候補の生成を指示する。
 // report と notice は会話の話題ではない（notice 本文は表示用カタログの正本言語
 // フォールバックにすぎない — ADR 0033）ので窓から外す。
-func chatReplySuggestPrompt(msgs []chatMessage) string {
+func chatReplySuggestPrompt(msgs []chatMessage, lang string) string {
 	real := make([]chatMessage, 0, len(msgs))
 	for _, m := range msgs {
 		if m.Role == "report" || m.Role == "notice" || strings.TrimSpace(m.Content) == "" {
@@ -28,11 +28,8 @@ func chatReplySuggestPrompt(msgs []chatMessage) string {
 		real = real[len(real)-replySuggestTailTurns:]
 	}
 	var b strings.Builder
-	b.WriteString("会話ログの続きとして、ユーザーが次に送る返信の候補を最大3件、改行区切りで出力してください。\n")
-	b.WriteString("直前のアシスタントの発言に噛み合う短文にすること。丁寧語にせず、常体・命令形で簡潔に。\n")
-	b.WriteString("数字/英字で選択肢が提示されていればその識別子だけ（1・2・A・P1 等）。\n")
-	b.WriteString("例（すべて常体で簡潔に・承認/続行/回答/中断/選択）: 進めて / OK / 修正して / 待って / 1 / A\n\n")
-	b.WriteString("--- 会話ログ ---\n")
+	b.WriteString(replySuggestInstructions(lang, replyCounterpartChat))
+	b.WriteString(replySuggestLogHeader(lang))
 	// セッション側と同じく末尾を残して切る（問いかけ・選択肢は発言の終わりにある）。
 	for _, m := range real {
 		fmt.Fprintf(&b, "%s: %s\n", m.Role, replyTailText(m.Content))
@@ -41,7 +38,8 @@ func chatReplySuggestPrompt(msgs []chatMessage) string {
 }
 
 func runChatReplySuggestLLM(ctx context.Context, msgs []chatMessage) ([]string, error) {
-	reply, err := oneShotHeadless(ctx, replySuggestPersona, chatReplySuggestPrompt(msgs), replySuggestModel())
+	lang := uiLocale()
+	reply, err := oneShotHeadless(ctx, replySuggestPersona(lang), chatReplySuggestPrompt(msgs, lang), replySuggestModel())
 	if err != nil {
 		return nil, fmt.Errorf("chat reply suggestion failed: %w", err)
 	}
