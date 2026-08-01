@@ -459,10 +459,11 @@ func TestBrowserAgentWebSocketURLUsesOnlyBrowserID(t *testing.T) {
 }
 
 func TestBrowserAttachmentRoutesUseDedicatedAgentNamespace(t *testing.T) {
-	type seenRequest struct{ method, path, query string }
+	type seenRequest struct{ method, path, query, body string }
 	seen := make(chan seenRequest, 8)
 	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen <- seenRequest{method: r.Method, path: r.URL.Path, query: r.URL.RawQuery}
+		body, _ := io.ReadAll(r.Body)
+		seen <- seenRequest{method: r.Method, path: r.URL.Path, query: r.URL.RawQuery, body: string(body)}
 		if r.URL.Path == "/ws/browser-attachments" {
 			conn, err := upgrader.Upgrade(w, r, nil)
 			if err != nil {
@@ -496,6 +497,21 @@ func TestBrowserAttachmentRoutesUseDedicatedAgentNamespace(t *testing.T) {
 	got = <-seen
 	if got.path != "/browser/attachments/ba_0123456789abcdef0123456789abcdef" || got.query != "" {
 		t.Fatalf("Agent status target = %+v", got)
+	}
+	controlBody := `{"controlMode":"locked"}`
+	controlReq := httptest.NewRequest(http.MethodPost,
+		"/api/browser/attachments/ba_0123456789abcdef0123456789abcdef/control-mode?tenant=default",
+		bytes.NewBufferString(controlBody))
+	controlReq.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	env.mux.ServeHTTP(w, controlReq)
+	if w.Code != http.StatusOK || w.Body.String() != `{"ok":true}` {
+		t.Fatalf("control mode relay = %d %q", w.Code, w.Body.String())
+	}
+	got = <-seen
+	if got.method != http.MethodPost || got.path != "/browser/attachments/ba_0123456789abcdef0123456789abcdef/control-mode" ||
+		got.query != "" || got.body != controlBody {
+		t.Fatalf("Agent control mode target = %+v", got)
 	}
 
 	cp := httptest.NewServer(env.mux)

@@ -113,6 +113,108 @@ func TestBrowserAttachmentControlModesAndNoNavigateMessage(t *testing.T) {
 	m.Delete(resp.ID)
 }
 
+func TestBrowserAttachmentSetControlModeHasNoHandoffOrTTLSideEffects(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	m := fakeAttachmentManager(cdp, 0)
+	created := createFakeAttachment(t, m)
+	before, err := m.UpdateHandoff(created.ID, browserAttachmentHandoffRequest{
+		Message: "操作してください", CompletionLabel: "完了", AllowCancel: true,
+		ControlMode: attachmentControlUser,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.ExpiresAt == nil || before.Handoff == nil {
+		t.Fatalf("handoff response = %+v", before)
+	}
+
+	locked, err := m.SetControlMode(created.ID, attachmentControlLocked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if locked.ID != created.ID || locked.OpenURL != created.OpenURL || locked.ControlMode != attachmentControlLocked {
+		t.Fatalf("complete attachment response = %+v", locked)
+	}
+	if locked.ExpiresAt == nil || !locked.ExpiresAt.Equal(*before.ExpiresAt) {
+		t.Fatalf("control mode changed expiry: before=%v after=%v", before.ExpiresAt, locked.ExpiresAt)
+	}
+	if locked.Handoff == nil || locked.Handoff.Result != "pending" ||
+		locked.Handoff.ControlMode != attachmentControlUser || locked.Handoff.Message != before.Handoff.Message {
+		t.Fatalf("control mode mutated handoff: before=%+v after=%+v", before.Handoff, locked.Handoff)
+	}
+	if _, err := m.SetControlMode(created.ID, "invalid"); asAttachmentAPIError(err).Code != "bad_control_mode" {
+		t.Fatalf("invalid control mode error = %v", err)
+	}
+
+	a, err := m.lookupActive(created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := &browserAttachmentViewer{attachment: a, control: make(chan browserOutbound, 4), done: make(chan struct{})}
+	a.mu.Lock()
+	a.viewer, a.visible = v, true
+	a.mu.Unlock()
+	if _, err := m.SetControlMode(created.ID, attachmentControlViewOnly); err != nil {
+		t.Fatal(err)
+	}
+	if !containsBrowserMethod(cdp.methods(), "Page.startScreencast") {
+		t.Fatal("unlocking a visible attachment did not resume screencast")
+	}
+	if _, err := m.SetControlMode(created.ID, attachmentControlLocked); err != nil {
+		t.Fatal(err)
+	}
+	if !containsBrowserMethod(cdp.methods(), "Page.stopScreencast") {
+		t.Fatal("locking a visible attachment did not stop screencast")
+	}
+	var event struct {
+		Type        string `json:"type"`
+		ControlMode string `json:"controlMode"`
+	}
+	for i, want := range []string{attachmentControlViewOnly, attachmentControlLocked} {
+		out := <-v.control
+		if err := json.Unmarshal(out.data, &event); err != nil || event.Type != "control-mode" || event.ControlMode != want {
+			t.Fatalf("control mode event %d = %s (%+v, %v)", i, out.data, event, err)
+		}
+	}
+	m.Delete(created.ID)
+}
+
+func TestBrowserAttachmentControlModeHTTPContract(t *testing.T) {
+	m := fakeAttachmentManager(newFakeBrowserCDP(), 0)
+	created := createFakeAttachment(t, m)
+	previous := workspaceBrowserAttachmentManager
+	workspaceBrowserAttachmentManager = m
+	t.Cleanup(func() {
+		m.Delete(created.ID)
+		workspaceBrowserAttachmentManager = previous
+	})
+	path := "/browser/attachments/" + created.ID + "/control-mode"
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"controlMode":"user-control"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	buildMux().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("control mode HTTP status = %d body=%s", w.Code, w.Body.String())
+	}
+	var got browserAttachmentResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got.ID != created.ID ||
+		got.OpenURL != created.OpenURL || got.ControlMode != attachmentControlUser || got.ExpiresAt == nil {
+		t.Fatalf("control mode HTTP response = %+v err=%v", got, err)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"controlMode":"owner-control"}`))
+	w = httptest.NewRecorder()
+	buildMux().ServeHTTP(w, req)
+	var failure struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &failure); err != nil || w.Code != http.StatusBadRequest || failure.Error.Code != "bad_control_mode" {
+		t.Fatalf("invalid control mode HTTP response = %d %s err=%v", w.Code, w.Body.String(), err)
+	}
+}
+
 func TestBrowserAttachmentTargetCloseAndTTL(t *testing.T) {
 	cdp := newFakeBrowserCDP()
 	m := fakeAttachmentManager(cdp, 30*time.Millisecond)

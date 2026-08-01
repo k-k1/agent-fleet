@@ -105,6 +105,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /browser/attachments", handleBrowserAttachmentCreate)
 	mux.HandleFunc("GET /browser/attachments/{id}", handleBrowserAttachmentGet)
 	mux.HandleFunc("DELETE /browser/attachments/{id}", handleBrowserAttachmentDelete)
+	mux.HandleFunc("POST /browser/attachments/{id}/control-mode", handleBrowserAttachmentControlMode)
 	mux.HandleFunc("POST /browser/attachments/{id}/handoff", handleBrowserAttachmentHandoff)
 	mux.HandleFunc("POST /browser/attachments/{id}/handoff-result", handleBrowserAttachmentHandoffResult)
 	mux.HandleFunc("GET /ws/browser-attachments", handleBrowserAttachmentWebSocket)

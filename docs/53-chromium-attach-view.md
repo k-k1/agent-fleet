@@ -211,9 +211,20 @@ Content-Type: application/json
 ```http
 GET    /api/browser/attachments/{id}
 DELETE /api/browser/attachments/{id}
+POST   /api/browser/attachments/{id}/control-mode
 POST   /api/browser/attachments/{id}/handoff
 POST   /api/browser/attachments/{id}/handoff-result
 ```
+
+control mode変更:
+
+```json
+{"controlMode":"view-only"}
+```
+
+これは現在のattachmentのmodeだけを変更する。既存handoffのmessage/result/controlMode、expiry、viewer leaseは変更せず、
+handoffを`pending`へ戻さない。`locked`への変更はscreencastを停止し、visible viewerで`view-only`または
+`user-control`へ変更するとscreencastを再開する。
 
 handoff作成:
 
@@ -318,6 +329,7 @@ request型とHTTP statusは次に固定する。
 | `POST /api/browser/attachments` | `{port,targetId,viewport?}` | `201 BrowserAttachment` |
 | `GET /api/browser/attachments/{id}` | なし | `200 BrowserAttachment` |
 | `DELETE /api/browser/attachments/{id}` | なし | `204` |
+| `POST /api/browser/attachments/{id}/control-mode` | `{controlMode:"view-only"\|"user-control"\|"locked"}` | `200 BrowserAttachment` |
 | `POST /api/browser/attachments/{id}/handoff` | `{message,completionLabel?,allowCancel?,controlMode?}` | `200 BrowserAttachment` |
 | `POST /api/browser/attachments/{id}/handoff-result` | `{result:"completed"\|"cancelled"}` | `200 BrowserAttachment` |
 
@@ -331,7 +343,7 @@ AFは停止済みかを検知できず、未停止時の入力結果は未定義
 `user-control`だけで受理し、他modeではtext
 `{type:"protocol-error",code:"input_not_allowed",message}`を返す。`navigate`はこのnamespaceのmessage型に存在せず、
 `unknown_type`となる。Agentからの他のtext eventは既存wireと同じ`state`、`navigation`、`console`、`page-error`に加え、
-`{type:"handoff",handoff,controlMode}`を使う。
+`{type:"handoff",handoff,controlMode}`と`{type:"control-mode",controlMode}`を使う。
 
 terminal state (`target-closed` / `disconnected`) は短い再確認猶予中だけstatusで取得でき、その後は
 `browser_attachment_not_found`になる。いずれのdetach/expiry/terminal経路も
