@@ -477,6 +477,7 @@ func (m *browserAttachmentManager) updateNavigation(a *browserAttachment, rawURL
 		a.mu.Unlock()
 		return
 	}
+	wasUnsupported := a.state == attachmentStateUnsupportedURL
 	a.url = truncateBrowserText(rawURL, browserAttachmentMaxURL)
 	if !supportedAttachmentURL(rawURL) {
 		a.state = attachmentStateUnsupportedURL
@@ -486,9 +487,12 @@ func (m *browserAttachmentManager) updateNavigation(a *browserAttachment, rawURL
 		a.state = attachmentStateAttached
 	}
 	state, title, urlNow := a.state, a.title, a.url
+	visible := a.visible && a.viewer != nil
 	a.mu.Unlock()
 	if state == attachmentStateUnsupportedURL {
 		a.stopScreencast()
+	} else if wasUnsupported && visible {
+		_ = a.startScreencast()
 	}
 	a.notifyJSON(map[string]any{"type": "navigation", "url": urlNow, "title": title})
 	a.notifyJSON(map[string]any{"type": "state", "state": state})

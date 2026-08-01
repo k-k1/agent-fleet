@@ -216,6 +216,44 @@ func TestBrowserAttachmentHiddenPendingHandoffKeepsHandoffTTL(t *testing.T) {
 	m.Delete(created.ID)
 }
 
+func TestBrowserAttachmentResumesScreencastAfterUnsupportedURL(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	m := fakeAttachmentManager(cdp, 0)
+	created := createFakeAttachment(t, m)
+	a, err := m.lookupActive(created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.mu.Lock()
+	a.viewer = &browserAttachmentViewer{attachment: a, control: make(chan browserOutbound, 8), done: make(chan struct{})}
+	a.visible = true
+	a.mu.Unlock()
+	if err := a.startScreencast(); err != nil {
+		t.Fatal(err)
+	}
+
+	m.updateNavigation(a, "chrome://settings/")
+	m.updateNavigation(a, "https://example.invalid/review")
+	methods := cdp.methods()
+	startCount, stopCount := 0, 0
+	for _, method := range methods {
+		if method == "Page.startScreencast" {
+			startCount++
+		}
+		if method == "Page.stopScreencast" {
+			stopCount++
+		}
+	}
+	if startCount != 2 || stopCount != 1 {
+		t.Fatalf("screencast calls after unsupported URL recovery: starts=%d stops=%d methods=%v", startCount, stopCount, methods)
+	}
+	status, err := m.Get(created.ID)
+	if err != nil || status.State != attachmentStateViewerOpen {
+		t.Fatalf("recovered attachment status = %+v err=%v", status, err)
+	}
+	m.Delete(created.ID)
+}
+
 func TestBrowserAttachmentControlModeHTTPContract(t *testing.T) {
 	m := fakeAttachmentManager(newFakeBrowserCDP(), 0)
 	created := createFakeAttachment(t, m)
