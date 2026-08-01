@@ -272,6 +272,24 @@ func refreshPlan(ctx context.Context, c *chatConversation) (bool, error) {
 
 type chatPlanReq struct {
 	Plan string `json:"plan"`
+	// Notice asks for the「作業計画を更新しました」カードを会話へ積むこと。Console の
+	// 手編集は false（自分で書いた本人に見せ返しても意味がない）、MCP 経由＝オペレーター
+	// が自分で書き換えたときは true — 利用者が見ていない間に計画が動く唯一の経路なので、
+	// そこだけは必ず会話に痕跡を残す（docs/33 第5段 案D）。
+	Notice bool `json:"notice,omitempty"`
+}
+
+// handleChatPlanGet (GET /chat/conversations/{id}/plan) returns just the plan.
+// 会話まるごとの GET と分けてあるのは MCP（オペレーター自身が自分の計画を読む口・
+// docs/33 第5段 案D）のため: 全メッセージを返すと、計画を1行読むためにモデルへ会話
+// 全文を流し込むことになる。
+func handleChatPlanGet(w http.ResponseWriter, r *http.Request) {
+	c, err := loadConv(r.PathValue("id"))
+	if err != nil {
+		httpx.WriteErr(w, http.StatusNotFound, errCodeChatConversationNotFnd, "conversation not found")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"plan": c.Plan, "plan_updated_at": c.PlanUpdatedAt})
 }
 
 // handleChatPlanSet (PUT /chat/conversations/{id}/plan) stores a hand-edited plan.
@@ -291,6 +309,9 @@ func handleChatPlanSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if setPlan(c, req.Plan) {
+		if req.Notice {
+			notePlanUpdated(c)
+		}
 		c.UpdatedAt = nowMs()
 		if err := saveConv(c); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "chat_save", err.Error())

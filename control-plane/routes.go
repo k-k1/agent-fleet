@@ -268,6 +268,7 @@ func registerChatRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/chat/conversations/{id}/stream", proxy.withResolved(proxy.stream)) // SSE (Phase B)
 	mux.HandleFunc("POST /api/chat/conversations/{id}/stop", rest)                               // cancel a detached in-flight turn
 	mux.HandleFunc("POST /api/chat/conversations/{id}/compact", rest)                            // 要約引き継ぎ（docs/33 第2段）
+	mux.HandleFunc("GET /api/chat/conversations/{id}/plan", rest)                                // 作業計画の取得（docs/33 第5段）
 	mux.HandleFunc("PUT /api/chat/conversations/{id}/plan", rest)                                // 作業計画の手編集（docs/33 第5段）
 	mux.HandleFunc("POST /api/chat/conversations/{id}/plan/refresh", rest)                       // 作業計画の明示更新（同）
 	mux.HandleFunc("POST /api/chat/conversations/{id}/paste-image", rest)
