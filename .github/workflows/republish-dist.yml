@@ -1,0 +1,94 @@
+# Restore the assets of an already published release (docs/35 §35.7.6).
+#
+# The assets of 0.1.0–0.5.0 were deleted because they carried a string that
+# should never have been published. This rebuilds a chosen version from its own
+# tag — whose sources are already scrubbed, because the history rewrite covered
+# every commit — and re-attaches the artifacts to the existing release.
+#
+# The sources come from the tag, but the *gate* comes from this branch: an old
+# tag predates the forbidden-token scan, so checking out only the tag would
+# rebuild without the one check that makes this safe. Hence two checkouts.
+#
+# The workspace rootfs is not rebuilt; the rootfs release for `<r>` was never
+# withdrawn, so its manifest is reconstructed and reused (build.sh --rootfs-json).
+name: republish-dist
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to restore (must already exist, with no assets)'
+        required: true
+      rootfs:
+        description: 'rootfs content hash the version pins (e.g. 5daf889e009a)'
+        required: true
+
+# Shared with publish-dist: the two must never touch the dist repo at once.
+concurrency:
+  group: publish-dist
+  cancel-in-progress: false
+
+jobs:
+  republish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      VERSION: ${{ inputs.version }}
+      ROOTFS: ${{ inputs.rootfs }}
+      GH_TOKEN: ${{ secrets.DIST_PUBLISH_TOKEN }}
+    steps:
+      - name: preflight (secret + input format)
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::secret DIST_PUBLISH_TOKEN is not set (docs/35 §35.8.2)."
+            exit 1
+          fi
+          echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$' \
+            || { echo "::error::version is not semver: $VERSION"; exit 1; }
+          echo "$ROOTFS" | grep -Eq '^[0-9a-f]{12}$' \
+            || { echo "::error::rootfs is not a 12-hex content hash: $ROOTFS"; exit 1; }
+
+      # sources of the version being restored
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ inputs.version }}
+          path: src
+
+      # current tooling: the forbidden-token gate and republish-dist.sh
+      - uses: actions/checkout@v4
+        with:
+          path: gate
+
+      - name: stub self-check (republish call sequence)
+        run: gate/deploy/local/republish-stub-test.sh
+
+      - name: reconstruct the rootfs manifest from the surviving rootfs release
+        run: |
+          set -eux
+          AF_REPUBLISH_STAGE=manifest AF_MANIFEST_OUT="$PWD/rootfs.json" \
+            gate/deploy/release/republish-dist.sh
+          cat "$PWD/rootfs.json"
+
+      - name: build A+B+C+D from the tag (rootfs reused, not rebuilt)
+        working-directory: src
+        run: VERSION=$VERSION deploy/release/build.sh --all --rootfs-json "$GITHUB_WORKSPACE/rootfs.json"
+
+      # The whole point of the exercise: the rebuilt artifacts must be clean.
+      # The scanner is the current one, not whatever the tag had.
+      - name: forbidden-token scan (blocks the upload)
+        run: gate/deploy/release/scan-forbidden.sh src/deploy/release/dist
+
+      - name: re-attach assets and rewrite the notice
+        run: gate/deploy/release/republish-dist.sh --dist-dir "$PWD/src/deploy/release/dist"
+
+      - name: summary
+        run: |
+          {
+            echo "## republish-dist $VERSION"
+            echo "- https://github.com/k-k1/agent-fleet-dist/releases/tag/v$VERSION"
+            echo "- rootfs reused: \`rootfs-$ROOTFS\` (not rebuilt)"
+            echo "- rebuilt bytes differ from the original publish; checksums are regenerated"
+          } >> "$GITHUB_STEP_SUMMARY"
