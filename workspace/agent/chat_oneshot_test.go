@@ -123,16 +123,9 @@ func TestTitleSuggestLive(t *testing.T) {
 	}
 }
 
-// hasJapanese は仮名・漢字を1文字でも含むか。ロケール判定の実測用（英語件名に固有名詞
-// としての ASCII が混ざるのは正常なので、判定は「日本語文字の有無」で行う）。
-func hasJapanese(s string) bool {
-	for _, r := range s {
-		if (r >= 0x3040 && r <= 0x30FF) || (r >= 0x4E00 && r <= 0x9FFF) {
-			return true
-		}
-	}
-	return false
-}
+// hasJapanese（仮名・漢字を1文字でも含むか）は prompt_lang_test.go のものを共用する。
+// ロケール判定の実測用: 英語件名に固有名詞としての ASCII が混ざるのは正常なので、判定は
+// 「日本語文字の有無」で行う。
 
 // TestUsageLedgerLive は実 claude を1回撃ち、台帳に「実測の1行」が実際に落ちることを
 // 見る opt-in テスト（docs/46 P1 完了条件）。単体テストは組み立てた usageCall しか通らない
@@ -219,7 +212,7 @@ func TestReplySuggestLive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	reply, err := oneShotHeadless(ctx, replySuggestPersona, replySuggestPrompt(oneShotLiveTurns()), replySuggestModel())
+	reply, err := oneShotHeadless(ctx, replySuggestPersona("ja"), replySuggestPrompt(oneShotLiveTurns(), "ja"), replySuggestModel())
 	if err != nil {
 		t.Fatalf("oneShotHeadless: %v", err)
 	}
