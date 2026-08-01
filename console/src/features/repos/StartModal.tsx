@@ -16,6 +16,7 @@ import { agentOf } from "../../agents/registry.ts";
 import { kindDisplayName } from "../../lib/sessionkind.ts";
 import { resolveEffort, resolveModel, resolveStartMode } from "../../lib/repoLast.ts";
 import { agentLaunchDefault, useSettings, setSetting } from "../../lib/settings.ts";
+import { autoAddToActiveWorkingSet } from "../../lib/workingSetsStore.ts";
 import { EffortPicker, ModelPicker } from "../../ui/ModelPicker.tsx";
 import { groupedRepos } from "../../lib/project.ts";
 import { hostColorBase } from "../../lib/termcolor.ts";
@@ -232,6 +233,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
     // Tally usage so the quick-connect cards rank by frequency (recency breaks ties).
     const prev = settings.ssmHostUsage?.[id];
     setSetting("ssmHostUsage", { ...(settings.ssmHostUsage || {}), [id]: { count: (prev?.count || 0) + 1, at: Date.now() } });
+    if (res?.name) autoAddToActiveWorkingSet("sessions", res.name); // docs/52 §1: repo なしセッション
     setSsmLogin((res && res.name) || "");
   };
 

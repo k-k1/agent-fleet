@@ -10,6 +10,7 @@ import { SessionRow } from "../sessions/SessionRow.tsx";
 import { useReposStore } from "../repos/store.ts";
 import { useRepoRailContext } from "../repos/useRepoRail.ts";
 import { orphanSessions } from "../../lib/project.ts";
+import { useActiveWorkingSet, sessionInSet } from "../../lib/workingSetsStore.ts";
 import { useProjectFilter, normQuery, sessionMatches } from "./filter.ts";
 import { useRailRoving } from "./useRailRoving.ts";
 import { useT } from "../../lib/i18n/index.ts";
@@ -22,8 +23,13 @@ export function OtherSessionsSection() {
   const actions = useSessionActions();
   const nq = normQuery(useProjectFilter((f) => f.q));
   const rail = useRailRoving();
-  // The rail filter (the ProjectTree search box) narrows this list too.
-  const orphans = orphanSessions(sessions, repos).filter((s) => sessionMatches(s, nq));
+  // 作業グループ (docs/52) narrows this list — direct assignment (set.sessions) or
+  // folder-name inheritance (covers a session whose repo was deleted) — then the
+  // rail filter (the ProjectTree search box) narrows it further.
+  const wset = useActiveWorkingSet();
+  const orphans = orphanSessions(sessions, repos)
+    .filter((s) => !wset || sessionInSet(wset, s))
+    .filter((s) => sessionMatches(s, nq));
 
   // Nothing loose → no section at all (keeps the rail's foot clean).
   if (orphans.length === 0) return null;

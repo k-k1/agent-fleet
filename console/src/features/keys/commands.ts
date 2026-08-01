@@ -24,6 +24,7 @@ import { useSessionsStore } from "../sessions/store.ts";
 import { useMemoStore } from "../memo/store.ts";
 import { useSettingsUI } from "../settings/store.ts";
 import { getSettings, setSetting } from "../../lib/settings.ts";
+import { cycleActiveWorkingSet, workingSetList } from "../../lib/workingSetsStore.ts";
 import { useKeysStore } from "./store.ts";
 import { useUiOpen } from "../../core/store/uiOpen.ts";
 import { toggleTtsPlayback } from "../../core/store/tts.ts";
@@ -118,6 +119,17 @@ function toggleFullscreen(): void {
 }
 function toggleTheme(): void {
   setSetting("theme", getSettings().theme === "light" ? "dark" : "light");
+}
+
+// 作業グループ (docs/52): すべて → 各グループ → すべて を巡回。レールが畳まれて
+// いても効くよう、切替先をトーストで知らせる。グループ未作成時はその旨だけ伝える。
+function cycleWorkingSet(): void {
+  if (workingSetList(getSettings()).length === 0) {
+    toast(t("wset.none_hint"), { kind: "info" });
+    return;
+  }
+  const next = cycleActiveWorkingSet();
+  toast(t("keys.toast.wset", { name: next ? next.name : t("wset.all") }), { kind: "success" });
 }
 
 // Toggle a chat-bridge service's notification master (Discord/Slack) from the keyboard —
@@ -245,6 +257,7 @@ export const ALL_COMMANDS: Command[] = [
   { id: "workspace.railMode", title: "keys.cmd.railMode", seq: "w m", when: notMinimalPopout, run: () => useLeftRail.getState().toggleMode() },
   { id: "workspace.fullscreen", title: "keys.cmd.fullscreen", seq: "w f", run: toggleFullscreen },
   { id: "workspace.theme", title: "keys.cmd.theme", seq: "w t", run: toggleTheme },
+  { id: "workspace.workingSet", title: "keys.cmd.wsetCycle", seq: "w w", when: notMinimalPopout, run: cycleWorkingSet },
 
   // ---- Top-level leader actions ----
   { id: "settings.open", title: "keys.cmd.settingsOpen", seq: ",", run: () => useSettingsUI.getState().openSettings() },

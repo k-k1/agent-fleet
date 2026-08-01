@@ -19,6 +19,7 @@ import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useFilesStore } from "../files/store.ts";
 import { useReposStore } from "../repos/store.ts";
 import { orderedRepos } from "../../lib/project.ts";
+import { useActiveWorkingSet, folderBase } from "../../lib/workingSetsStore.ts";
 import { compareText } from "../../lib/intl.ts";
 import { WorkingCopyLabel } from "./WorkingCopyLabel.tsx";
 import { openFileDiff } from "../scm/open.ts";
@@ -72,6 +73,7 @@ export function FilesChanges() {
   const running = useWorkspaceStore((s) => s.state) === "running";
   const filesTick = useFilesStore((s) => s.tick);
   const repos = useReposStore((s) => s.repos);
+  const wset = useActiveWorkingSet();
   const [changes, setChanges] = useState<FsChange[] | null>(null);
   const [menu, setMenu] = useState<ChangeMenu | null>(null);
   const listRef = useRef<HTMLUListElement>(null);
@@ -118,9 +120,12 @@ export function FilesChanges() {
 
   if (!running) return <EmptyState icon="debug-disconnect" title={tr("pj.ws_stopped")} />;
   if (changes === null) return <EmptyState icon="loading" title={tr("pj.loading")} />;
-  if (changes.length === 0) return <EmptyState icon="check" title={tr("pj.no_changes")} />;
+  // 作業グループ (docs/52): keep only changes in the group's working copies —
+  // a worktree folder ("<base>@<slug>") resolves via its base prefix.
+  const scoped = wset ? changes.filter((c) => wset.repos.includes(folderBase(c.repo))) : changes;
+  if (scoped.length === 0) return <EmptyState icon="check" title={tr("pj.no_changes")} />;
 
-  const byRepo = changes.reduce((acc: Record<string, FsChange[]>, c) => {
+  const byRepo = scoped.reduce((acc: Record<string, FsChange[]>, c) => {
     (acc[c.repo] = acc[c.repo] || []).push(c);
     return acc;
   }, {});

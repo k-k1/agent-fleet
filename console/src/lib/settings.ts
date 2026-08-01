@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import { api, apiJSON } from "../core/api/client.ts";
 import { setLocale } from "./i18n/index.ts";
 import type { MsgKey } from "./i18n/index.ts";
+import type { WorkingSet } from "./workingSets.ts";
 
 // Display settings (theme / fonts / file-viewer options / icon set). Persisted in
 // localStorage for instant load + offline, AND mirrored to the server per-user
@@ -423,6 +424,14 @@ export interface Settings {
   // ショートカットを抑止して端末へ素通しする（Ctrl 系を端末に渡す）。唯一 Leader（既定 Ctrl/⌘+K・
   // 再割当可）だけは残し、そこから which-key／パレットで全コマンドに到達できる。既定 OFF（capture 優先）。
   terminalPriority: boolean;
+  // 作業グループ（docs/52 + ADR 0036）の定義。名前付きの { 作業コピー, 会話, repo なし
+  // セッション } の集合で、左ペインの表示を案件ごとに絞り込む。定義はクロスデバイス同期
+  // （サーバ ui-prefs）、いま「どのグループを見ているか」は workingSetActive（端末ローカル）。
+  // 壊れた値・消えた実体への参照は lib/workingSets.ts の normalize / 述語が無害化する。
+  workingSets: WorkingSet[];
+  // 表示中の作業グループ id（"" = すべて）。theme と同じ端末ローカル（DEVICE_LOCAL）—
+  // PC では案件X・タブレットでは案件Y を見る、が端末ごとに成立する。
+  workingSetActive: string;
   // shell/SSM 端末へのキー素通し（docs/29）。ON のとき、shell・ssm 端末にフォーカスがある間は
   // terminalPriority と違い Leader（Ctrl/⌘+K）とパレット（Ctrl/⌘+P）も含めて全アプリショートカットを
   // 抑止し、Ctrl+K（kill-line）／Ctrl+P（履歴前へ）などをそのまま xterm/PTY へ渡す＝純ターミナル。
@@ -569,6 +578,8 @@ const DEFAULTS: Settings = {
   quickReplies: {},
   quickRepliesHidden: [],
   quickRepliesPinned: [],
+  workingSets: [],
+  workingSetActive: "",
 };
 
 // VOICEVOX ずんだもんのスタイル（speaker 番号 → ラベル）。設定 UI の話者選択に使う。
@@ -866,6 +877,7 @@ const DEVICE_LOCAL = new Set<keyof Settings>([
   "viewerColor",
   "chatColor",
   "assistantColor",
+  "workingSetActive", // 表示中の作業グループ（docs/52 — 端末ごとに別案件を見る）
 ]);
 
 // serverPrefs は端末ローカルキーを除いた、サーバへ保存してよい設定だけの浅いコピー。

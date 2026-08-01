@@ -23,6 +23,8 @@ import { openChat, openAssistantDraft, convTarget, draftTarget } from "./open.ts
 import { AssistantModal } from "./AssistantModal.tsx";
 import { ChatTitleModal } from "./ChatTitleModal.tsx";
 import { assistantName, assistantDesc } from "./assistantI18n.ts";
+import { useSettings } from "../../lib/settings.ts";
+import { useActiveWorkingSet, convInSet, workingSetList, toggleWorkingSetMember } from "../../lib/workingSetsStore.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import {
   chatList,
@@ -156,7 +158,13 @@ export function AssistantSection() {
   };
 
   // Only started threads are listed — a draft is never persisted (docs/19).
-  const startedConvs = useMemo(() => convs.filter((c) => c.message_count > 0), [convs]);
+  // 作業グループ (docs/52): scope the list to the active group's conversations.
+  const wsets = workingSetList(useSettings());
+  const wset = useActiveWorkingSet();
+  const startedConvs = useMemo(
+    () => convs.filter((c) => c.message_count > 0 && (!wset || convInSet(wset, c.id))),
+    [convs, wset],
+  );
 
   const byId = useMemo(() => {
     const m: Record<string, Assistant> = {};
@@ -440,6 +448,24 @@ export function AssistantSection() {
                   <Icon name="edit" /> {tr("asst.rename")}
                 </button>
               </li>
+              {/* 作業グループ (docs/52): toggle this conversation's membership. */}
+              {wsets.length > 0 && (
+                <>
+                  <li className="ui-menu-sep" aria-hidden="true" />
+                  <li className="ui-menu-caption">{tr("wset.menu_caption")}</li>
+                  {wsets.map((w) => (
+                    <li key={w.id}>
+                      <button
+                        type="button"
+                        className="ui-menu-item"
+                        onClick={() => runConvMenu(() => toggleWorkingSetMember(w.id, "convs", convMenu.c.id))}
+                      >
+                        <Icon name="check" className={convInSet(w, convMenu.c.id) ? "wset-check" : "wset-check off"} /> {w.name}
+                      </button>
+                    </li>
+                  ))}
+                </>
+              )}
               <li className="ui-menu-sep" aria-hidden="true" />
               <li>
                 <button type="button" className="ui-menu-item" onClick={() => runConvMenu(() => void toggleConvLock(convMenu.c))}>

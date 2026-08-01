@@ -20,6 +20,7 @@ import { prettyModel } from "../../lib/modelName.ts";
 import { t, tCount, useT } from "../../lib/i18n/index.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { useSettings, setSetting, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
+import { autoAddToActiveWorkingSet } from "../../lib/workingSetsStore.ts";
 import {
   rankQuickReplies,
   recordQuickReply,
@@ -485,6 +486,8 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
           const title = input.trim().slice(0, 40) || t("chat.new_title");
           const created = await chatCreate(draftAssistantId, title);
           if (!created || !created.id) return null;
+          // グループ選択中に始めた会話はそのグループへ自動所属（docs/52 §1）。
+          autoAddToActiveWorkingSet("convs", created.id);
           // Re-key the persisted composer draft to the real conversation, so the promotion's
           // key flip (useDraft reloads from storage) doesn't wipe the text mid-composition
           // (paste path: the user is still typing when this runs).
