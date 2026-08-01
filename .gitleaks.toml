@@ -1,0 +1,30 @@
+# gitleaks 設定（docs/dev/10 §10.4「公開リポジトリでの CI の前提」）。
+#
+# 公開リポジトリなので、資格情報の混入は「入った時点で公開」＝取り返しがつかない。
+# ci.yml の secret-scan ジョブが全履歴を毎回走査する（1995 commit / 18MB で約 3 秒）。
+#
+# 許可リストの原則: **パスまるごとの除外はしない**（そのファイルに本物が入っても
+# 気づけなくなる）。実在しないと確認できた「その値そのもの」だけを正規表現で外す。
+
+title = "agent-fleet"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "伏字化機能のテストが使う偽の資格情報。実在しない固定値で、伏字化されることを検査するために必要。"
+regexes = [
+  # workspace/agent/memory_secrets_test.go・memory_export_test.go（メモリ書き出しの伏字化）
+  '''AKIAQWERTYUIOPASDFGH''',
+  # AWS 公式ドキュメントの例示キー（docs/手順書に出てくる形の検査）
+  '''AKIAIOSFODNN7EXAMPLE''',
+  # internal/bridge/*_test.go（Discord/Slack へ流す本文の伏字化）
+  '''xoxb-123456789012-[A-Za-z]+''',
+  '''ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789''',
+]
+
+[[allowlists]]
+description = "エラーコード定数。discord-client-secret ルール（32 文字の識別子）と形が同じだけで秘密ではない。"
+condition = "AND"
+paths = ['''workspace/agent/errcodes\.go''']
+regexes = ['''conn_discord_destination_invalid''']
