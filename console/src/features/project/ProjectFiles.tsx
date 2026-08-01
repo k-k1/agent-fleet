@@ -24,6 +24,7 @@ import { useFilesStore } from "../files/store.ts";
 import { useReposStore } from "../repos/store.ts";
 import { useFilesFilter } from "./filesFilter.ts";
 import { normQuery } from "./filter.ts";
+import { useActiveWorkingSet, folderBase, autoAddToActiveWorkingSet } from "../../lib/workingSetsStore.ts";
 import { WorkingCopyLabel } from "./WorkingCopyLabel.tsx";
 import { isContextMenuKey, menuAnchor } from "./contextMenuKey.ts";
 import { stickyAncestors } from "./stickyTree.ts";
@@ -98,6 +99,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
   const filesTick = useFilesStore((s) => s.tick);
   const q = useFilesFilter((s) => s.q);
   const nq = normQuery(q);
+  const wset = useActiveWorkingSet(); // 作業グループ (docs/52) — repos ツリーの絞り込み
   const focusInput = useFilesFilter((s) => s.focusInput);
   const focusTreeN = useFilesFilter((s) => s.focusTreeN);
   const askConfirm = useConfirm();
@@ -141,8 +143,10 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
             ? t("proj.verb_title.translate", { name: baseName(filePath) })
             : t("proj.verb_title.summarize", { name: baseName(filePath) });
         const c = await chatCreate("", title, { attachPath: filePath, seedVerb: verb });
-        if (c && c.id) openChat(c.id, c.seed);
-        else toast(t("send.chat_create_failed"));
+        if (c && c.id) {
+          autoAddToActiveWorkingSet("convs", c.id); // docs/52 §1
+          openChat(c.id, c.seed);
+        } else toast(t("send.chat_create_failed"));
       } catch {
         toast(t("send.chat_create_failed"));
       }
@@ -298,8 +302,17 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
   }, [searchMode, q, root, filesTick]);
 
   // The rows actually shown / navigated: flat search hits in search mode, else
-  // the (tree-)filtered rows.
-  const displayRows = searchMode ? searchRows ?? NO_ROWS : filteredRows;
+  // the (tree-)filtered rows — both scoped to the active 作業グループ (docs/52)
+  // for the repos-rooted tree: a row is kept when its top-level working copy
+  // belongs to the group (worktree folders resolve via their "<base>@" prefix).
+  const allRows = searchMode ? searchRows ?? NO_ROWS : filteredRows;
+  const displayRows = useMemo(() => {
+    if (!wset || root !== "repos") return allRows;
+    return allRows.filter((r) => {
+      const top = repoOf(r.path);
+      return !top || wset.repos.includes(folderBase(top));
+    });
+  }, [allRows, wset, root]);
   const navigationRows = useMemo(
     () => (searchMode && groupByRepo ? displayRows.filter((r) => !collapsedRepos.has(repoOf(r.path))) : displayRows),
     [searchMode, groupByRepo, displayRows, collapsedRepos],

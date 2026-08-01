@@ -8,6 +8,7 @@ import { activePane } from "../../layout/ops.ts";
 import { paneCount, sessionPanes } from "../../layout/badges.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { SessionRow } from "../sessions/SessionRow.tsx";
+import { useActiveWorkingSet, sessionInSet } from "../../lib/workingSetsStore.ts";
 import { useT } from "../../lib/i18n/index.ts";
 
 export function StoppedSessionsSection() {
@@ -17,13 +18,17 @@ export function StoppedSessionsSection() {
   const multi = paneCount(layout) > 1;
   const panes = multi ? sessionPanes(layout) : null;
   const selected = activePane(layout)?.session ?? null;
+  // 作業グループ (docs/52): membership resolves from the folder name alone, so the
+  // scope keeps working here even though the repo list needs the (stopped) agent.
+  const wset = useActiveWorkingSet();
+  const shown = wset ? sessions.filter((s) => sessionInSet(wset, s)) : sessions;
 
-  if (sessions.length === 0) return null;
+  if (shown.length === 0) return null;
 
   return (
-    <Section id="stopped-sessions" title={tr("pj.session_history")} icon="history" count={sessions.length}>
+    <Section id="stopped-sessions" title={tr("pj.session_history")} icon="history" count={shown.length}>
       <ul className="sess-list">
-        {sessions.map((s) => (
+        {shown.map((s) => (
           <SessionRow
             key={s.name}
             s={s}

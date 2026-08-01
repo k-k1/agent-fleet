@@ -28,6 +28,7 @@ import { hydrateUIPrefs } from "../lib/settings.ts";
 import { MOBILE_QUERY, coarsePointer } from "../lib/device.ts";
 import { PaneHost } from "../features/panes/PaneHost.tsx";
 import { LayoutMap } from "../features/panes/LayoutMap.tsx";
+import { WorkingSetBar } from "./WorkingSetBar.tsx";
 import { AssistantSection } from "../features/chat/AssistantSection.tsx";
 import { MemoQueueSection } from "../features/memo/MemoQueueSection.tsx";
 import { SchedulesSection } from "../features/schedules/SchedulesSection.tsx";
@@ -420,6 +421,10 @@ export function App() {
         />
         <nav className="app-rail">
           <LayoutMap />
+          {/* 作業グループ (docs/52): pinned OUTSIDE the scroll area so the active
+              scope stays visible however far the rail scrolls — rendered for the
+              stopped rail too (the switcher works without the agent). */}
+          <WorkingSetBar />
           {/* Project-first IA: Assistant + Memo pinned on top (global tools), then
               the repo tree (each base node nests its sessions + worktrees), then
               the repo-less session catch-all, and the global file browser at the

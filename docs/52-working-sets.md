@@ -66,8 +66,10 @@
 
 ## 4. フィルタ適用点（各セクション 1 箇所に AND するだけ）
 
-状態は既存パターンどおり zustand 単独ストア（`core/store/workingSet.ts`）に置き、
-述語は `lib/project.ts` 流の純関数にする。
+実装は 2 モジュール: 述語・normalize は純関数の `lib/workingSets.ts`（node vitest で
+テスト可能）、settings 連携（定義の読み書き・選択・自動所属・巡回）は
+`lib/workingSetsStore.ts`。専用 zustand ストアは設けない — 定義も選択も settings が
+真実源なので、`useSettings` 由来の `useActiveWorkingSet()` で足りる。
 
 | セクション | 合流点 | 述語 |
 |-----------|--------|------|

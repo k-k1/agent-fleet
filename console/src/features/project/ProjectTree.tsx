@@ -21,6 +21,7 @@ import { useSessionsStore } from "../sessions/store.ts";
 import { useSessionUI } from "../sessions/ui.ts";
 import { useSessionActions } from "../sessions/useSessionActions.tsx";
 import { groupedRepos, sessionsInFolder } from "../../lib/project.ts";
+import { useActiveWorkingSet, repoInSet, autoAddToActiveWorkingSet } from "../../lib/workingSetsStore.ts";
 import { useProjectFilter, normQuery, repoMatches, sessionMatches } from "./filter.ts";
 import { RepoNode } from "./RepoNode.tsx";
 import { useRailRoving } from "./useRailRoving.ts";
@@ -71,12 +72,16 @@ export function ProjectTree() {
     [refreshRepos, clearRepos, running],
   );
 
+  // 作業グループ (docs/52): scope to the active group first — a whole project
+  // (base + its worktrees) is in or out by the base's membership.
+  const wset = useActiveWorkingSet();
+  const scoped = groupedRepos(repos).filter((g) => !wset || repoInSet(wset, g[0]));
   // Filtering: a working copy is visible when it matches itself or hosts a
   // matching session; a base also stays as the anchor of a matching worktree.
   // While filtering, only the visible worktrees are passed down as children.
   const visible = (r: (typeof repos)[number]) =>
     repoMatches(r, nq) || sessionsInFolder(sessions, r.name).some((s) => sessionMatches(s, nq));
-  const groups = groupedRepos(repos)
+  const groups = scoped
     .filter((g) => !nq || g.some(visible))
     .map((g) => (nq ? [g[0], ...g.slice(1).filter(visible)] : g));
 
@@ -84,6 +89,9 @@ export function ProjectTree() {
     setCloning({ name: req.name || guessRepoName(req.remote_url) });
     try {
       const res = await cloneRepo(req, toast); // proxy-timeout re-check + reveal live in clone.ts
+      // グループ選択中の clone はそのグループへ自動所属（docs/52 §1 — さもないと
+      // 作った直後に絞り込みで見えなくなる）。
+      if (res.ok && res.name) autoAddToActiveWorkingSet("repos", res.name);
       // clone-only path: bridge straight into 作業を始める (起動導線 Ph3) so
       // "clone してから起動" doesn't require hunting for the row's 起動 button.
       const repo = res.ok && res.name ? useReposStore.getState().repos.find((r) => r.name === res.name) : undefined;
@@ -107,6 +115,7 @@ export function ProjectTree() {
     setCloning({ name: req.name || guessRepoName(req.url) });
     try {
       const res = await svnCheckout(req, toast); // proxy-timeout re-check + reveal live in clone.ts
+      if (res.ok && res.name) autoAddToActiveWorkingSet("repos", res.name); // docs/52 §1
       const repo = res.ok && res.name ? useReposStore.getState().repos.find((r) => r.name === res.name) : undefined;
       if (repo) {
         toast(
@@ -129,7 +138,7 @@ export function ProjectTree() {
       id="repos"
       title={tr("pj.repos")}
       icon="repo"
-      count={repos.length}
+      count={wset ? scoped.reduce((n, g) => n + g.length, 0) : repos.length}
       actions={
         <>
           <Button
@@ -184,6 +193,10 @@ export function ProjectTree() {
         {groups.length === 0 && !cloning && (
           nq ? (
             <li className="proj-sub-empty">{tr("pj.no_match", { q: q.trim() })}</li>
+          ) : wset && repos.length > 0 ? (
+            // グループで絞った結果の空（リポジトリ自体はある）— 行メニューから
+            // 割り当てられることを示す。真の空（clone 前）とは区別する。
+            <li className="proj-sub-empty">{tr("wset.no_repos")}</li>
           ) : (
             <EmptyState icon="repo" title={tr("pj.no_repos")} hint={tr("pj.no_repos_hint")}>
               {running && (
