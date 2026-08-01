@@ -23,7 +23,6 @@ export interface BrowserAttachmentHandoff {
   result: BrowserAttachmentResult;
 }
 
-/** Temporary Console-side contract until Lane A's API structs are merged. */
 export interface BrowserAttachmentStatus {
   id: string;
   state: string;
@@ -40,7 +39,7 @@ const normalizedControlMode = (value: unknown): BrowserAttachmentControlMode =>
 const normalizedResult = (value: unknown): BrowserAttachmentResult =>
   value === "completed" || value === "cancelled" ? value : "pending";
 
-/** Normalize the provisional Lane A wire shape at one typed boundary. */
+/** Decode the camelCase Agent/Control Plane attachment response. */
 export function normalizeBrowserAttachmentStatus(raw: unknown): BrowserAttachmentStatus {
   const value = raw as Record<string, unknown> | null;
   if (!value || typeof value.id !== "string" || !value.id) {
@@ -49,28 +48,27 @@ export function normalizeBrowserAttachmentStatus(raw: unknown): BrowserAttachmen
   const handoffRaw = value.handoff && typeof value.handoff === "object"
     ? value.handoff as Record<string, unknown>
     : null;
-  const mode = normalizedControlMode(
-    value.controlMode ?? value.control_mode ?? handoffRaw?.controlMode ?? handoffRaw?.control_mode,
-  );
+  const mode = normalizedControlMode(value.controlMode);
   let handoff: BrowserAttachmentHandoff | null = null;
   if (handoffRaw) {
-    const completionLabel = handoffRaw.completionLabel ?? handoffRaw.completion_label;
     handoff = {
       message: typeof handoffRaw.message === "string" ? handoffRaw.message : "",
-      completionLabel: typeof completionLabel === "string" ? completionLabel : "",
-      allowCancel: (handoffRaw.allowCancel ?? handoffRaw.allow_cancel) === true,
-      controlMode: normalizedControlMode(handoffRaw.controlMode ?? handoffRaw.control_mode ?? mode),
+      completionLabel: typeof handoffRaw.completionLabel === "string" ? handoffRaw.completionLabel : "",
+      allowCancel: handoffRaw.allowCancel === true,
+      controlMode: normalizedControlMode(handoffRaw.controlMode),
       result: normalizedResult(handoffRaw.result),
     };
   }
-  const expiresAt = value.expiresAt ?? value.expires_at;
   return {
     id: value.id,
     state: typeof value.state === "string" ? value.state : "attached",
     title: typeof value.title === "string" ? value.title : "",
     url: typeof value.url === "string" ? value.url : "",
-    expiresAt: typeof expiresAt === "string" ? expiresAt : "",
-    controlMode: handoff?.controlMode ?? mode,
+    expiresAt: typeof value.expiresAt === "string" ? value.expiresAt : "",
+    // controlMode is the current enforcement state. The handoff copy records
+    // the originally requested mode and intentionally stays unchanged when
+    // Lane A's dedicated control-mode endpoint updates the attachment.
+    controlMode: mode,
     handoff,
   };
 }
@@ -327,7 +325,7 @@ export class BrowserAttachmentController {
         return;
       }
       case "control-mode": {
-        const mode = message.controlMode ?? message.control_mode;
+        const mode = message.controlMode;
         if (mode === "view-only" || mode === "user-control" || mode === "locked") {
           this.update({ controlMode: mode });
         }

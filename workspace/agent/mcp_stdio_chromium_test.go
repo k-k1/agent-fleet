@@ -86,13 +86,13 @@ func TestMCPChromiumToolsRelayAndStructuredFallback(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/browser/attachments":
 			_, _ = w.Write([]byte(`{"id":"ba_random_7f3","openUrl":"/open/browser-attachment/ba_random_7f3","expiresAt":"2026-08-02T00:30:00Z","port":9222,"targetId":"opaque-target","webSocketDebuggerUrl":"ws://secret"}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/browser/attachments/ba_random_7f3":
-			_, _ = w.Write([]byte(`{"id":"ba_random_7f3","state":"attached","viewerConnected":true,"controlMode":"user-control","handoff":{"result":"completed"},"expiresAt":"2026-08-02T00:30:00Z","title":"秘密の画面","url":"https://example.invalid/?token=secret","targetId":"opaque-target","port":9222}`))
+			_, _ = w.Write([]byte(`{"id":"ba_random_7f3","state":"attached","viewer":true,"controlMode":"user-control","handoff":{"message":"確認","completionLabel":"操作完了","allowCancel":true,"controlMode":"user-control","result":"completed"},"expiresAt":"2026-08-02T00:30:00Z","title":"秘密の画面","url":"https://example.invalid/?token=secret","targetId":"opaque-target","port":9222}`))
 		case r.Method == http.MethodDelete && r.URL.Path == "/browser/attachments/ba_random_7f3":
 			w.WriteHeader(http.StatusNoContent)
 		case r.Method == http.MethodPost && r.URL.Path == "/browser/attachments/ba_random_7f3/handoff":
-			_, _ = w.Write([]byte(`{"ok":true}`))
+			_, _ = w.Write([]byte(`{"id":"ba_random_7f3","state":"attached","openUrl":"/open/browser-attachment/ba_random_7f3","viewer":false,"controlMode":"user-control","handoff":{"message":"内容を確認してください","completionLabel":"操作完了","allowCancel":false,"controlMode":"user-control","result":"pending"}}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/browser/attachments/ba_random_7f3/control-mode":
-			_, _ = w.Write([]byte(`{"ok":true}`))
+			_, _ = w.Write([]byte(`{"id":"ba_random_7f3","state":"attached","openUrl":"/open/browser-attachment/ba_random_7f3","viewer":false,"controlMode":"locked"}`))
 		default:
 			http.Error(w, `{"code":"unexpected"}`, http.StatusNotFound)
 		}
@@ -132,6 +132,7 @@ func TestMCPChromiumToolsRelayAndStructuredFallback(t *testing.T) {
 	wantAttach := map[string]any{
 		"attachment_id": "ba_random_7f3",
 		"open_url":      "/open/browser-attachment/ba_random_7f3",
+		"expires_at":    "2026-08-02T00:30:00Z",
 	}
 	if !reflect.DeepEqual(attach, wantAttach) {
 		t.Fatalf("attach result = %#v, want only %#v", attach, wantAttach)

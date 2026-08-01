@@ -356,8 +356,9 @@ func chromiumAttachOutputSchema() map[string]any {
 		"properties": map[string]any{
 			"attachment_id": map[string]any{"type": "string"},
 			"open_url":      map[string]any{"type": "string"},
+			"expires_at":    map[string]any{"type": "string"},
 		},
-		"required": []string{"attachment_id", "open_url"},
+		"required": []string{"attachment_id", "open_url", "expires_at"},
 	}
 }
 
@@ -1639,29 +1640,20 @@ func mcpListChromiumTargets(id json.RawMessage, port int) []byte {
 	if err != nil {
 		return mcpChromiumToolErr(id, "Chromium target一覧の取得", err)
 	}
-	root, err := decodeJSONObject(body)
-	if err != nil {
+	var response browserAttachTargetsResponse
+	if err := json.Unmarshal([]byte(body), &response); err != nil {
 		return mcpToolErr(id, "Agentが不正なChromium target一覧を返しました")
 	}
-	targets := make([]any, 0)
-	if rawTargets, ok := root["targets"].([]any); ok {
-		for _, raw := range rawTargets {
-			t, ok := raw.(map[string]any)
-			if !ok {
-				continue
-			}
-			targetID, _ := jsonStringField(t, "targetId", "target_id")
-			if targetID == "" {
-				continue
-			}
-			title, _ := jsonStringField(t, "title")
-			targetURL, _ := jsonStringField(t, "url")
-			targets = append(targets, map[string]any{
-				"target_id": targetID,
-				"title":     title,
-				"url":       targetURL,
-			})
+	targets := make([]any, 0, len(response.Targets))
+	for _, target := range response.Targets {
+		if target.TargetID == "" {
+			continue
 		}
+		targets = append(targets, map[string]any{
+			"target_id": target.TargetID,
+			"title":     target.Title,
+			"url":       target.URL,
+		})
 	}
 	return mcpStructuredResult(id, map[string]any{"targets": targets})
 }
@@ -1694,22 +1686,21 @@ func mcpAttachChromium(id json.RawMessage, port int, targetID, _ string) []byte 
 	if err != nil {
 		return mcpChromiumToolErr(id, "Chromium attachmentの作成", err)
 	}
-	root, err := decodeJSONObject(body)
-	if err != nil {
+	var response browserAttachmentResponse
+	if err := json.Unmarshal([]byte(body), &response); err != nil {
 		return mcpToolErr(id, "Agentが不正なChromium attachment結果を返しました")
 	}
-	attachmentID, _ := jsonStringField(root, "id", "attachmentId", "attachment_id")
-	openURL, _ := jsonStringField(root, "openUrl", "open_url")
-	if attachmentID == "" || openURL == "" {
-		return mcpToolErr(id, "AgentのChromium attachment結果にattachment IDまたはopen URLがありません")
+	if response.ID == "" || response.OpenURL == "" || response.ExpiresAt == nil {
+		return mcpToolErr(id, "AgentのChromium attachment結果にattachment ID、open URL、またはexpiryがありません")
 	}
-	if !validChromiumOpenURL(openURL, attachmentID) {
+	if !validChromiumOpenURL(response.OpenURL, response.ID) {
 		return mcpToolErr(id, "Agentが不正なChromium attachment open URLを返しました")
 	}
 	// Agent応答にtitle/url/port/target/CDP情報が増えてもMCPへは通さない。
 	return mcpStructuredResult(id, map[string]any{
-		"attachment_id": attachmentID,
-		"open_url":      openURL,
+		"attachment_id": response.ID,
+		"open_url":      response.OpenURL,
+		"expires_at":    response.ExpiresAt.Format(time.RFC3339Nano),
 	})
 }
 
@@ -1744,8 +1735,14 @@ func mcpRequestBrowserAction(id json.RawMessage, attachmentID, message, completi
 		req["controlMode"] = controlMode
 	}
 	reqBody, _ := json.Marshal(req)
-	if _, err := agentPOST("/browser/attachments/"+url.PathEscape(attachmentID)+"/handoff", reqBody); err != nil {
+	body, err := agentPOST("/browser/attachments/"+url.PathEscape(attachmentID)+"/handoff", reqBody)
+	if err != nil {
 		return mcpChromiumToolErr(id, "ブラウザ操作依頼の作成", err)
+	}
+	var response browserAttachmentResponse
+	if json.Unmarshal([]byte(body), &response) != nil || response.ID != attachmentID ||
+		response.Handoff == nil || response.Handoff.Result != "pending" {
+		return mcpToolErr(id, "Agentが不正なブラウザ操作依頼結果を返しました")
 	}
 	result := map[string]any{"attachment_id": attachmentID, "result": "pending"}
 	if controlMode != "" {
@@ -1762,11 +1759,14 @@ func mcpGetBrowserActionResult(id json.RawMessage, attachmentID string) []byte {
 	if err != nil {
 		return mcpChromiumToolErr(id, "ブラウザ操作結果の取得", err)
 	}
-	root, err := decodeJSONObject(body)
-	if err != nil {
+	var response browserAttachmentResponse
+	if json.Unmarshal([]byte(body), &response) != nil || response.ID != attachmentID {
 		return mcpToolErr(id, "Agentが不正なブラウザ操作結果を返しました")
 	}
-	result := chromiumActionResult(root)
+	result := ""
+	if response.Handoff != nil {
+		result = response.Handoff.Result
+	}
 	if result == "" {
 		result = "pending"
 	} else if !validChromiumActionResult(result) {
@@ -1786,8 +1786,13 @@ func mcpSetChromiumControlMode(id json.RawMessage, attachmentID, controlMode str
 		return mcpToolErr(id, "control_modeはview-only、user-control、lockedのいずれかです")
 	}
 	reqBody, _ := json.Marshal(map[string]string{"controlMode": controlMode})
-	if _, err := agentPOST("/browser/attachments/"+url.PathEscape(attachmentID)+"/control-mode", reqBody); err != nil {
+	body, err := agentPOST("/browser/attachments/"+url.PathEscape(attachmentID)+"/control-mode", reqBody)
+	if err != nil {
 		return mcpChromiumToolErr(id, "Chromium control modeの変更", err)
+	}
+	var response browserAttachmentResponse
+	if json.Unmarshal([]byte(body), &response) != nil || response.ID != attachmentID || response.ControlMode != controlMode {
+		return mcpToolErr(id, "Agentが不正なChromium control mode結果を返しました")
 	}
 	return mcpStructuredResult(id, map[string]any{
 		"attachment_id": attachmentID,
@@ -1812,73 +1817,26 @@ func validChromiumOpenURL(openURL, attachmentID string) bool {
 }
 
 func chromiumAttachmentStatus(body, fallbackID string) (map[string]any, error) {
-	root, err := decodeJSONObject(body)
-	if err != nil {
+	var response browserAttachmentResponse
+	if err := json.Unmarshal([]byte(body), &response); err != nil {
 		return nil, err
 	}
-	attachmentID, _ := jsonStringField(root, "id", "attachmentId", "attachment_id")
-	if attachmentID == "" {
-		attachmentID = fallbackID
-	}
-	state, _ := jsonStringField(root, "state")
-	if state == "" {
+	if response.ID == "" || response.ID != fallbackID || response.State == "" || !validChromiumControlMode(response.ControlMode) {
 		return nil, errors.New("missing state")
 	}
-	result := map[string]any{"attachment_id": attachmentID, "state": state}
-	if viewer, ok := jsonBoolField(root, "viewerConnected", "viewer_connected", "hasViewer", "viewer"); ok {
-		result["viewer_connected"] = viewer
+	result := map[string]any{
+		"attachment_id":    response.ID,
+		"state":            response.State,
+		"viewer_connected": response.Viewer,
+		"control_mode":     response.ControlMode,
 	}
-	if mode, ok := jsonStringField(root, "controlMode", "control_mode"); ok && validChromiumControlMode(mode) {
-		result["control_mode"] = mode
+	if response.Handoff != nil && validChromiumActionResult(response.Handoff.Result) {
+		result["action_result"] = response.Handoff.Result
 	}
-	if actionResult := chromiumActionResult(root); validChromiumActionResult(actionResult) {
-		result["action_result"] = actionResult
-	}
-	if expiresAt, ok := jsonStringField(root, "expiresAt", "expires_at"); ok {
-		result["expires_at"] = expiresAt
+	if response.ExpiresAt != nil {
+		result["expires_at"] = response.ExpiresAt.Format(time.RFC3339Nano)
 	}
 	return result, nil
-}
-
-func chromiumActionResult(root map[string]any) string {
-	if result, ok := jsonStringField(root, "actionResult", "action_result", "handoffResult", "handoff_result", "result"); ok {
-		return result
-	}
-	for _, key := range []string{"handoff", "action"} {
-		if nested, ok := root[key].(map[string]any); ok {
-			if result, ok := jsonStringField(nested, "result"); ok {
-				return result
-			}
-		}
-	}
-	return ""
-}
-
-func decodeJSONObject(body string) (map[string]any, error) {
-	var value map[string]any
-	err := json.Unmarshal([]byte(body), &value)
-	if err != nil || value == nil {
-		return nil, errors.New("not a JSON object")
-	}
-	return value, nil
-}
-
-func jsonStringField(value map[string]any, keys ...string) (string, bool) {
-	for _, key := range keys {
-		if field, ok := value[key].(string); ok {
-			return field, true
-		}
-	}
-	return "", false
-}
-
-func jsonBoolField(value map[string]any, keys ...string) (bool, bool) {
-	for _, key := range keys {
-		if field, ok := value[key].(bool); ok {
-			return field, true
-		}
-	}
-	return false, false
 }
 
 // mcpStructuredResult deliberately duplicates the same JSON object in text and
