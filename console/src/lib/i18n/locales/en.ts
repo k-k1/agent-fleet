@@ -2616,8 +2616,10 @@ export const en: Record<keyof typeof ja, string> = {
   "wset.empty_hint": "No working sets yet. Create one to assign repos, chats and sessions per project and switch what the left pane shows.",
   "wset.no_repos": "No repositories in this group (assign from a row's right-click menu)",
   "wset.name_aria": "Group name",
-  "wset.row_counts": "Repos {repos} / chats {convs} / sessions {sessions}",
+  "wset.row_counts": "Repos {repos} / chats {convs} / sessions {sessions} / schedules {schedules}",
   "wset.none_hint": "No working sets yet (create one at the top of the left pane)",
+  "wset.no_schedules": "No schedules in this group",
+  "wset.derived_hint": "Included automatically via its repo / conversation membership",
 
   // === P5 リポジトリ（RepoPicker/NewRepoModal/CloneForm/DirPicker/Branch* ほか） ===
   "rp.clone_failed": "Clone failed: {err}",
