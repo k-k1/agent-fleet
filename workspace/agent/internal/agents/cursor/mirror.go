@@ -12,7 +12,7 @@ package cursor
 //   - replay: setLoading(true) 中は user_message_chunk が新しい user ターンを開き、続く
 //     agent_* が assistant ターンを作る。setLoading(false) で最後を flush。
 //
-// Turn.Idx は単調増加（Console の pendingEcho/MirrorView は idx 単調前提 — agy 30c5e21 の
+// Turn.Idx は単調増加（Console の pendingEcho/MirrorView は idx 単調前提 — agy aa341b4 の
 // 教訓）。tool_result（rawOutput）はツール Part の Output に載せる（TUI JSONL には無い分の
 // 追加情報 — ACP の利点）。
 

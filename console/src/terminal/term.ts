@@ -532,7 +532,7 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
       // repaint when the grid SHAPE changes (fit() is a no-op otherwise), so focusing an
       // unchanged-shape black pane used to do nothing — leaving reload as the only cure. Force
       // an unconditional clear+repaint here so one click reliably restores any black pane. Runs
-      // only on genuine focus-in (not the 4s poll churn), so it can't cause the flicker f67bfd4
+      // only on genuine focus-in (not the 4s poll churn), so it can't cause the flicker e589344
       // guarded against, and forceFit no-ops on a hidden pane (zero client rects).
       forceFit(inst(paneId));
       // First focus opens the keyboard (the visualViewport resize will place the
@@ -813,11 +813,11 @@ function startHeartbeat(paneId: string, ws: WebSocket) {
     // pane; an idle session pane they are merely watching repaints on nothing and
     // stays corrupted indefinitely (confirmed live: clicking the pane fixed it).
     // refresh() redraws every cell from the buffer OVER the canvas without
-    // clear(), so there is no blank frame on either renderer (the 85ba3bf DOM
+    // clear(), so there is no blank frame on either renderer (the 16afb1b DOM
     // lesson: clear()+deferred-repaint is the hazard, refresh alone is safe) —
     // at the 15s heartbeat cadence this is imperceptible. Hidden panes are
     // skipped (zero client rects); dead sockets have no heartbeat and read-only
-    // history panes are one-shot by design (84ac551), so live panes only.
+    // history panes are one-shot by design (27f21ad), so live panes only.
     try {
       const el = it.term?.element;
       if (el && el.isConnected && el.getClientRects().length > 0) {
@@ -833,7 +833,7 @@ function startHeartbeat(paneId: string, ws: WebSocket) {
           // what the refresh-only watchdog could not). Rebuild the atlas before
           // repainting; unlike _renderService.clear() this never blanks the
           // canvas, so the tick stays flicker-free. The DOM renderer has no
-          // atlas — refresh alone remains the whole repaint there (85ba3bf).
+          // atlas — refresh alone remains the whole repaint there (16afb1b).
           /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
           if (it.webgl) (it.term as any).clearTextureAtlas?.();
           it.term!.refresh(0, it.term!.rows - 1);
