@@ -110,6 +110,13 @@ jobs:
             -c 'timeout 10 workspace-agent 2>&1 || true')"
           echo "$out" | grep -F "workspace-agent $VERSION listening"
 
+      # Gate (l): nothing we ship carries a string this project removed from its
+      # history (docs/35 §35.7.5). Runs before the tars are dropped, and expands
+      # the image layers inside B — where the escape that motivated this gate
+      # actually shipped.
+      - name: forbidden-token scan (A+B+D)
+        run: deploy/release/scan-forbidden.sh
+
       - name: free disk (drop dist tars)
         run: rm -rf deploy/release/dist
 
@@ -186,6 +193,11 @@ jobs:
           # the image-env manifest is injected into the rootfs (CP rootfs mode
           # depends on it)
           tar -I zstd -tf "$R" | grep -q '^usr/local/share/agent-fleet/image-env.json$'
+
+      # Gate (l) for the native side: C carries the same Console bundle the CP
+      # image does, so it needs the same scan (docs/35 §35.7.5).
+      - name: forbidden-token scan (C+R+D)
+        run: deploy/release/scan-forbidden.sh
 
       - name: install.sh flow against built C (file:// — gate i)
         run: |
@@ -315,12 +327,14 @@ jobs:
           for f in deploy/release/publish-dist.sh deploy/release/dist-repo/install.sh \
                    deploy/release/dist-repo/install-compose.sh \
                    deploy/release/notes-body.sh deploy/release/gen-changelog.sh \
+                   deploy/release/scan-forbidden.sh \
                    deploy/local/dist-stub-test.sh; do
             bash -n "$f"
           done
           shellcheck deploy/release/publish-dist.sh deploy/release/dist-repo/install.sh \
             deploy/release/dist-repo/install-compose.sh \
             deploy/release/notes-body.sh deploy/release/gen-changelog.sh \
+            deploy/release/scan-forbidden.sh \
             deploy/local/dist-stub-test.sh
 
       - name: publish/install stub run (call-sequence + file:// flow)

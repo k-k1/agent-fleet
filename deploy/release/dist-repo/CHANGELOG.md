@@ -3,6 +3,12 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.5.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.5.1) — 2026-08-01
+
+A rebuild that removes an internal string the Console bundle had been carrying,
+plus the gate that will keep it from happening again. **The downloads for 0.1.0
+through 0.5.0 have been withdrawn — please use this release instead.**
+
 ## [0.5.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.5.0) — 2026-08-01
 
 Working sets split the Console's left pane by project, you can register your own

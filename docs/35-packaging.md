@@ -867,6 +867,62 @@ run 29850262365 success）= 入力全断修正（67c9ef7・workspace image に `
 手順 1〜7（手順 7 = systemd 常駐化の任意項目含む）全クリア。詳細と填まりどころは
 §35.8.1 の「最終結果」を参照。全ゲート (a)〜(k) 消化済み。
 
+### 35.7.5 出荷物の禁止語ゲート（ゲート l・2026-08-01）
+
+**動機（実害が出た）**: public 化準備で全履歴から除去した社名が、**0.1.0〜0.5.0 の
+出荷物すべてに入ったまま公開されていた**。経路は Console の Marp テーマ:
+`MarpView.tsx` がテーマ CSS を `import.meta.glob(..., { query: "?raw" })` で読むため、
+CSS が**コメントごと文字列リテラルとして**バンドルに焼き込まれる。**minify は文字列
+リテラルの中身を触らない**ので、コメントはそのまま残る。焼き込まれた Console は
+CP イメージ（`control-plane/Dockerfile` の `COPY --from=console`）にも native tar の
+`console/` にも入るので、`agent-fleet-images-*.tar.gz` と
+`agent-fleet-native-*.tar.gz` の両方が汚染された（A バンドルと rootfs は清白）。
+
+**教訓は「ソースを見ても分からない」こと。** 履歴書き換え（filter-repo）はソースを
+綺麗にしたが、**それより前にビルドされて公開済みの成果物には効かない**し、ソース側の
+grep はビルドが生成・埋め込みする物を原理的に見られない。**成果物そのものを見る**
+ゲートが要る。
+
+**実装**:
+
+| # | 対象 | 内容 |
+|---|---|---|
+| 1 | `deploy/release/forbidden.sha256`（新設） | 禁止語の台帳。**語そのものは書かない**（本リポジトリは public。平文で置けば「消したい物を自分で公開する」）。1 行 = `sha256(正規形)  正規形の rune 長  Rabin-Karp 値  id`。追加は `printf '%s' '語' \| go run ./deploy/release/scan --ledger /dev/null --add --id <id>`（語がファイルにもプロセス一覧にも残らない） |
+| 2 | `deploy/release/scan/`（新設・独立 Go モジュール） | 走査器。**正規形** = 英数字を小文字化・それ以外の連続を空白 1 個へ畳む・両端 trim。成果物の全バイトを同じ規則で畳んだ rune 列に対し、台帳の各長さの窓を滑らせる。→ 表記ゆれ（`Foo Inc.` / `foo-inc` / `FooInc` / `foo\n * Inc`）も**長い語の内部**（`acme` in `acmed`）も**ファイル名**も捕まる。判定は 2 段: 64bit Rabin-Karp をローリング更新 → 65536bit ビットマップで篩う → 生き残りだけ sha256 で確定（1 rune あたり定数回の乗加算で済むので GiB 級でも回る） |
+| 3 | 同上（アーカイブ展開） | **拡張子ではなく中身で判別**する。`docker save` は OCI レイアウトを吐くのでレイヤは `blobs/sha256/<digest>`＝**拡張子なし**であり、名前で分岐する走査器はここで素通りする。gzip/zstd/xz/bzip2/tar/zip をマジックバイトで見て再帰展開（深さ 8 まで）。展開できない形式は**握り潰さず error** にする（未展開は「清白」に見えてしまう） |
+| 4 | `deploy/release/forbidden.allow`（新設） | 誤検知の除外。パスは秘密でないので平文 `<id> <path-glob>`。現状 2 行 = cmudict（CMU 発音辞書・BSD-2 の上流ファイル）に台帳語と同綴りの英単語と人名が単語として載っているだけ、と中身を読んで確認したもの。**自前ビルド物は絶対に除外しない**（自前の出力ならソースを直すのが答え） |
+| 5 | `deploy/release/scan-forbidden.sh`（新設） | 呼び出し口。既定で `deploy/release/dist` を走査 |
+| 6 | `.github/workflows/publish-dist.yml` | **build と publish の間**に挿入。ここが本丸＝公開が不可逆になる直前の最後の一線 |
+| 7 | `.github/workflows/release-gate.yml` | compose-gate（A+B+D・tar を捨てる前）と native-gate（C+R+D）に追加＝**ゲート (l)**。dist-gate の shellcheck 対象にも追加 |
+| 8 | `.github/workflows/ci.yml` | `release-scan` job 新設。**仕組みの検証**（gofmt/vet/`go test`）と**ソースの走査**（`git archive` 経由）を毎回。ユニットテストは**架空の語**（`zarquon`）で「検出する／しない」の両方を通すので、**台帳の中身を知らなくてもゲートが空振りでないと言える** |
+
+**設計上の決めどころ**:
+
+- **台帳をハッシュにする代償は「部分一致が原理的にできないこと」** — のはずだが、
+  正規形に畳んだ rune 列へ**窓を滑らせて**その窓を毎回ハッシュすれば部分一致になる。
+  素朴にやると GiB 級で破綻するので、Rabin-Karp のローリング更新で 1 rune 定数時間に
+  落とし、ビットマップで篩ってから sha256 で確定する 2 段にした。
+- **語長を台帳に載せる必要がある**（窓幅が要るため）。総当たりの手がかりを少し与える
+  が、そもそも辞書語なので隠蔽としては元々弱い。**目的は「grep や検索エンジンで
+  引っかからないこと」**であって秘匿ではない。
+- **窓はファイルをまたがない**（leaf ごとに状態を reset）。またぐと隣接ファイルの
+  末尾と先頭が偶然つながって**偽の一致を作る**。
+- **短すぎる語は登録できない**（5 rune 未満は error）。汎用語を入れるとイメージ内の
+  第三者コンテンツで恒常的に落ちる。
+- **既知の限界**: 圧縮ストリームは**丸ごと 1 本の場合だけ**展開する。大きなファイルの
+  **内部**に埋まった圧縮 blob（`go:embed` した `.gz` 等）の中身は見えない。自前の
+  Console / Go バイナリがユーザーに見せる物はディスク上で非圧縮なので実害はない。
+
+**ゲート (l) の一次検証（2026-08-01）**: 公開済みの
+`agent-fleet-native-0.5.0-linux-amd64.tar.gz` を実際に走査し、
+`console/assets/index-Bm5SUH-b.js` の offset 1737506 を**語を出力せずに**指して
+exit 1 することを確認（同 0.1.0 も同様）。A バンドルと現ソースは clean。
+
+**出荷済み 0.1.0〜0.5.0 の撤回**: 全 10 リリースの資産（A/B/C/SHA256SUMS）を削除し、
+リリース本文に撤回注記を追加。タグとリリースノートは公開記録として残す（リポジトリ内
+CHANGELOG と版→commit 台帳が参照しているため）。`rootfs-*` リリースは Console を
+含まないので清白＝存置。スクラブ後のソースから **0.5.1** を再ビルドして再公開した。
+
 ## 35.8 検証ゲート（P3-10 完了判定への接続）
 
 | ターゲット | ゲート | 状態 |
@@ -876,6 +932,7 @@ run 29850262365 success）= 入力全断修正（67c9ef7・workspace image に `
 | native | **素の WSL2**（Docker なし・**追加インストールなし**）で tar から起動 → 初回 boot-install（ピン版）→ clone → claude セッション E2E → 再起動してオフライン起動（2回目は DL なし）。userns 無特権実行が WSL2 標準カーネルで通ることの確認を含む（§35.3.1 の仮説） | △ CI 分は済（§35.7.2 ゲート d/e 全緑 = hosted runner で af start→bwrap 起動→boot-install ピン実証。install.sh 実 tar 導入 step 含む）。素の WSL2 実機は未 = **ユーザー実施**（§35.8.1 チェックリスト。docs/34 §34.6 と同時に消化する） |
 | ECS | E2E ゲート（p3-7 凍結仕様 §20b.7.14）+ タグ更新の一巡 | ✅ タグ更新一巡実証（2026-07-21・§35.7.3 ゲート h: push→deploy→WS起動→ImageTag更新→次回Start新イメージ→撤収）。p3-7 E2E の attach/reaper 項は段階実証のまま |
 | 配布チャネル（dist repo） | publish 一巡（§35.7.4 ゲート j: repo 新設 → publish → install ワンライナー → rootfs 実 URL DL 起動）+ chromium CDN 実 DL（ゲート i） | ✅ ゲート i（フル run 29813287446 全緑 = stub/CDN 実 DL/install.sh 実 tar）+ ゲート j（2026-07-21 実 publish 一巡 = v0.1.0/rootfs-fc943ac06dfa 公開 → 実 URL install → rootfs 実 URL DL/検証/展開。起動段のみコンテナ環境制約で bwrap 案内終了 = 実機起動はゲート k で確認。詳細 §35.7.4） |
+| 出荷物の禁止語 | 全成果物（A/B/C/R）を再帰展開して禁止語を走査（§35.7.5 ゲート l）。publish-dist の build と publish の間に挿入＝**通らなければ公開されない** | ✅ 実装済（2026-08-01）。公開済み 0.5.0 native tar で検出を実証・現ソースは clean |
 | 総合 | 第 2 デプロイをゼロから立てて E2E（decisions/0001） | ✗ 未 |
 
 ### 35.8.1 native 実機ゲート チェックリスト（ゲート k・ユーザー実施）
