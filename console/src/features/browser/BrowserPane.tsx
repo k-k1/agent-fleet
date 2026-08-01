@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent, KeyboardEvent as RKeyboardEvent, PointerEvent as RPointerEvent, WheelEvent as RWheelEvent } from "react";
+import { useEffect, useState } from "react";
+import type { FormEvent } from "react";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { Button, IconButton } from "../../ui/Button.tsx";
 import type { BrowserSnapshot } from "./protocol.ts";
-import { BrowserInputBridge, modifiersOf, mouseButton, remotePoint } from "./protocol.ts";
 import { ensureBrowser } from "./service.ts";
 import { browserTarget, targetFromURL } from "./target.ts";
+import { BrowserConsoleDrawer, BrowserSurface } from "./BrowserSurface.tsx";
 
 interface BrowserPaneProps {
   paneId: string;
@@ -27,11 +27,6 @@ export function BrowserPane({ paneId, port, path }: BrowserPaneProps) {
   const [portError, setPortError] = useState(false);
   const [pathError, setPathError] = useState(false);
   const [consoleOpen, setConsoleOpen] = useState(false);
-  const [inputAnchor, setInputAnchor] = useState({ x: 0, y: 0 });
-  const stageRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const imeRef = useRef<HTMLInputElement>(null);
-  const inputBridge = useMemo(() => new BrowserInputBridge((message) => controller.sendInput(message)), [controller]);
 
   useEffect(() => {
     const target = browserTarget(port, path);
@@ -48,47 +43,6 @@ export function BrowserPane({ paneId, port, path }: BrowserPaneProps) {
     setPaneTarget(paneId, { content: { kind: "browser", ...target } });
   }), [controller, paneId, setPaneTarget]);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const stage = stageRef.current;
-    if (!canvas || !stage) return;
-    controller.mount(canvas);
-    let intersecting = true;
-    const syncVisibility = () => {
-      const rect = stage.getBoundingClientRect();
-      controller.setVisible(intersecting && rect.width > 0 && rect.height > 0 && document.visibilityState !== "hidden");
-    };
-    // Agent 側は viewport 変更のたびに screencast を stop/start する
-    // （browser_handlers.go の restartScreencastForResize）— ディバイダのドラッグ中に
-    // 毎フレーム送ると再起動連打になるので、サイズが落ち着いてから 1 回だけ送る。
-    let viewportTimer = 0;
-    const resize = new ResizeObserver((entries) => {
-      const box = entries[0]?.contentRect;
-      if (box && box.width > 0 && box.height > 0) {
-        window.clearTimeout(viewportTimer);
-        viewportTimer = window.setTimeout(() => controller.setViewport(box.width, box.height), 100);
-      }
-      syncVisibility();
-    });
-    resize.observe(stage);
-    const intersection = new IntersectionObserver((entries) => {
-      intersecting = entries[0]?.isIntersecting ?? false;
-      syncVisibility();
-    });
-    intersection.observe(stage);
-    document.addEventListener("visibilitychange", syncVisibility);
-    const initialRect = stage.getBoundingClientRect();
-    if (initialRect.width > 0 && initialRect.height > 0) controller.setViewport(initialRect.width, initialRect.height);
-    syncVisibility();
-    return () => {
-      window.clearTimeout(viewportTimer);
-      resize.disconnect();
-      intersection.disconnect();
-      document.removeEventListener("visibilitychange", syncVisibility);
-      controller.unmount(canvas);
-    };
-  }, [controller]);
-
   const submitTarget = (event: FormEvent) => {
     event.preventDefault();
     const port = Number(portDraft);
@@ -103,56 +57,7 @@ export function BrowserPane({ paneId, port, path }: BrowserPaneProps) {
     setPaneTarget(paneId, { content: { kind: "browser", ...target } });
   };
 
-  const point = (event: { clientX: number; clientY: number; altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => {
-    const rect = canvasRef.current?.getBoundingClientRect();
-    return rect ? remotePoint(event, rect, snapshot.width, snapshot.height) : { x: 0, y: 0 };
-  };
-
-  const onPointer = (event: RPointerEvent<HTMLCanvasElement>, kind: "move" | "down" | "up") => {
-    if (event.pointerType === "touch") event.preventDefault();
-    const p = point(event);
-    if (kind === "down") {
-      // The canvas is not focusable, so a mousedown on it makes the browser clear
-      // focus to <body> — which would blur the hidden IME input we focus just
-      // below, swallowing every subsequent keystroke (plain ASCII typing never
-      // reaches onKeyDown). Suppressing the pointerdown default keeps that focus.
-      event.preventDefault();
-      event.currentTarget.setPointerCapture(event.pointerId);
-      setInputAnchor({ x: event.nativeEvent.offsetX, y: event.nativeEvent.offsetY });
-      imeRef.current?.focus({ preventScroll: true });
-    } else if (kind === "up" && event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    controller.sendInput({
-      type: "mouse",
-      event: kind,
-      ...p,
-      button: kind === "move" ? "none" : mouseButton(event.button),
-      buttons: event.buttons,
-      modifiers: modifiersOf(event),
-      clickCount: kind === "move" ? 0 : Math.max(1, event.detail),
-    });
-  };
-
-  const onWheel = (event: RWheelEvent<HTMLCanvasElement>) => {
-    event.preventDefault();
-    controller.sendInput({
-      type: "wheel",
-      ...point(event),
-      deltaX: event.deltaX,
-      deltaY: event.deltaY,
-      modifiers: modifiersOf(event),
-    });
-  };
-
-  const onKeyDown = (event: RKeyboardEvent<HTMLInputElement>) => {
-    inputBridge.keyDown(event.nativeEvent);
-    if (!event.nativeEvent.isComposing) event.preventDefault();
-  };
-  const onKeyUp = (event: RKeyboardEvent<HTMLInputElement>) => inputBridge.keyUp(event.nativeEvent);
-
   const status = browserStatus(snapshot, tr);
-  const importantLogs = [...snapshot.console].sort((a, b) => logRank(b.level) - logRank(a.level));
 
   return (
     <div className="browser-pane">
@@ -181,40 +86,12 @@ export function BrowserPane({ paneId, port, path }: BrowserPaneProps) {
         </Button>
         <IconButton icon="debug-restart" label={tr("browser.reconnect")} onClick={() => void controller.reconnect()} />
       </form>
-      <div className="browser-stage" ref={stageRef}>
-        <canvas
-          ref={canvasRef}
-          className="browser-canvas"
-          aria-label={snapshot.title || tr("browser.canvas")}
-          onPointerMove={(event) => onPointer(event, "move")}
-          onPointerDown={(event) => onPointer(event, "down")}
-          onPointerUp={(event) => onPointer(event, "up")}
-          onPointerCancel={(event) => onPointer(event, "up")}
-          onWheel={onWheel}
-          onContextMenu={(event) => event.preventDefault()}
-        />
-        <input
-          ref={imeRef}
-          className="browser-ime"
-          style={{ left: inputAnchor.x, top: inputAnchor.y }}
-          aria-label={tr("browser.remote_input")}
-          autoCapitalize="off"
-          autoCorrect="off"
-          spellCheck={false}
-          onKeyDown={onKeyDown}
-          onKeyUp={onKeyUp}
-          onCompositionStart={() => inputBridge.compositionStart()}
-          onCompositionEnd={(event) => {
-            inputBridge.compositionEnd(event.data);
-            event.currentTarget.value = "";
-          }}
-          onInput={(event) => {
-            if (event.nativeEvent.isComposing) return;
-            const text = event.currentTarget.value;
-            inputBridge.input(text);
-            event.currentTarget.value = "";
-          }}
-        />
+      <BrowserSurface
+        controller={controller}
+        snapshot={snapshot}
+        canvasLabel={tr("browser.canvas")}
+        inputLabel={tr("browser.remote_input")}
+      >
         {status && (
           <div className={"browser-state browser-state-" + snapshot.state}>
             <span>{status}</span>
@@ -223,36 +100,17 @@ export function BrowserPane({ paneId, port, path }: BrowserPaneProps) {
             )}
           </div>
         )}
-        {consoleOpen && (
-          <aside className="browser-console">
-            <div className="browser-console-head">
-              <strong>{tr("browser.console")}</strong>
-              <span>
-                <IconButton
-                  icon="copy"
-                  label={tr("browser.copy_console")}
-                  disabled={snapshot.console.length === 0}
-                  onClick={() => void navigator.clipboard?.writeText(snapshot.console.map((entry) => `[${entry.level}] ${entry.text}`).join("\n"))}
-                />
-                <IconButton icon="close" label={tr("common.close")} onClick={() => setConsoleOpen(false)} />
-              </span>
-            </div>
-            <div className="browser-console-body">
-              {importantLogs.length === 0 ? <div className="browser-console-empty">{tr("browser.console_empty")}</div> : importantLogs.map((entry, index) => (
-                <div className={"browser-log browser-log-" + entry.level} key={`${entry.ts}-${index}`}>
-                  <span>{entry.level}</span><pre>{entry.text}</pre>
-                </div>
-              ))}
-            </div>
-          </aside>
-        )}
-      </div>
+        {consoleOpen && <BrowserConsoleDrawer
+          entries={snapshot.console}
+          emptyLabel={tr("browser.console_empty")}
+          copyLabel={tr("browser.copy_console")}
+          closeLabel={tr("common.close")}
+          title={tr("browser.console")}
+          onClose={() => setConsoleOpen(false)}
+        />}
+      </BrowserSurface>
     </div>
   );
-}
-
-function logRank(level: string): number {
-  return level === "error" ? 3 : level === "warn" || level === "warning" ? 2 : 1;
 }
 
 function browserStatus(snapshot: BrowserSnapshot, tr: ReturnType<typeof useT>): string {
