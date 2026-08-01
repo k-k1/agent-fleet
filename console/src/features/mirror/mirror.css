@@ -1880,25 +1880,25 @@ button.mt-bash-toggle:hover {
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-x: contain; /* 端まで来ても親ペイン/ページを動かさない */
-  user-select: none; /* ドラッグでテキスト選択にならないように */
+  /* ドラッグでテキスト選択にならないように。長タップがメニュー（SuggestChipMenu）に届くよう、
+     iOS の callout もここで抑える（app-rail の行と同じ作法）。 */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
   scrollbar-width: none; /* Firefox */
   -ms-overflow-style: none;
 }
 .mirror-suggest::-webkit-scrollbar {
   display: none;
 }
-/* チップ本体＋×（削除）の入れ物。× は絶対配置で重ねるので、ホバーで幅が動いて隣の候補が
-   ずれることはない（ポインタ環境だけチップ右に×の分の余白を常時確保する）。 */
-.mirror-suggest-wrap {
-  position: relative;
-  flex: 0 0 auto;
-  display: inline-flex;
-  max-width: 100%;
-  min-width: 0;
-}
+/* 候補チップ。削除とピン留めは右クリック / 長タップ / Menu キーのメニュー（SuggestChipMenu）へ
+   集約したので、以前あったチップ内の×とその入れ物・常時確保していた右余白は無い。 */
 .mirror-suggest-chip {
   flex: 0 0 auto; /* 1行スクロールなので縮ませない */
   max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 3px 10px;
   font-size: 12px;
   line-height: 1.4;
@@ -1920,39 +1920,14 @@ button.mt-bash-toggle:hover {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
   background: color-mix(in srgb, var(--accent) 8%, var(--bg));
 }
-/* 候補の×（この候補をもう出さない）。タッチ端末では誤タップ防止のため出さず、設定側の
-   一覧から消してもらう。ポインタ環境ではホバー / キーボードフォーカス時だけ現れる。 */
-.mirror-suggest-del {
-  display: none;
-  position: absolute;
-  right: 3px;
-  top: 50%;
-  transform: translateY(-50%);
-  padding: 0 3px;
-  font-size: 12px;
-  line-height: 1;
-  color: var(--muted);
-  background: transparent;
-  border: 0;
-  border-radius: 999px;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.12s;
+/* ピン留め（常に表示）した候補。ランキングに関係なく先頭に固定で並ぶ列なので、📌 と
+   実線寄りの枠で「自分で固定した側」だと分かるようにする。 */
+.mirror-suggest-chip.pinned {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
 }
-@media (hover: hover) {
-  .mirror-suggest-wrap .mirror-suggest-chip {
-    padding-right: 20px; /* × の分を常時確保（ホバーで横幅を動かさない） */
-  }
-  .mirror-suggest-del {
-    display: block;
-  }
-  .mirror-suggest-wrap:hover .mirror-suggest-del,
-  .mirror-suggest-del:focus-visible {
-    opacity: 1;
-  }
-  .mirror-suggest-del:hover {
-    color: var(--fg);
-  }
+.mirror-suggest-pin {
+  font-size: 11px;
+  color: var(--accent);
 }
 /* v2: ✨ トリガーボタン（on-demand で LLM 候補を取得）。 */
 .mirror-suggest-ai {

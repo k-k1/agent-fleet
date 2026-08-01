@@ -6,6 +6,9 @@ import {
   forgetQuickReply,
   hideQuickReply,
   unhideQuickReply,
+  pinQuickReply,
+  unpinQuickReply,
+  isQuickReplyPinned,
   type QuickReplyMap,
 } from "./quickReplies.ts";
 
@@ -117,6 +120,38 @@ describe("rankQuickReplies", () => {
     expect(out.indexOf("コミット")).toBeLessThan(out.indexOf("OK,順に進めよう。都度コミットしてね"));
   });
 
+  it("puts pinned entries first, in pin order, whatever the ranking says", () => {
+    const m: QuickReplyMap = { "進めて": { text: "進めて", count: 99, at: 999 } };
+    const out = rankQuickReplies(m, {
+      draft: "",
+      lastReply: "続けてコミットしますか？",
+      locale: "ja",
+      pinned: ["親レポにマージしてプッシュ", "デプロイして"],
+    });
+    expect(out[0]).toBe("親レポにマージしてプッシュ");
+    expect(out[1]).toBe("デプロイして");
+    expect(out.filter((s) => s === "親レポにマージしてプッシュ")).toHaveLength(1); // 学習側と二重に出さない
+  });
+
+  it("keeps pinned entries even when the limit is full of ranked/boosted candidates", () => {
+    // limit=2 だが、ピンは limit に負けない（＝「使っているのに消える」を起こさない）。
+    const m: QuickReplyMap = {
+      a: { text: "aaa", count: 9, at: 100 },
+      b: { text: "bbb", count: 8, at: 90 },
+      c: { text: "ccc", count: 7, at: 80 },
+    };
+    const out = rankQuickReplies(m, { draft: "", lastReply: "", locale: "ja", pinned: ["固定"], limit: 2 });
+    expect(out[0]).toBe("固定");
+    expect(out).toHaveLength(2);
+  });
+
+  it("shows a pinned entry that was hidden or never learned, and still honors the draft prefix", () => {
+    const out = rankQuickReplies({}, { draft: "", lastReply: "", locale: "ja", hidden: ["固定"], pinned: ["固定"] });
+    expect(out[0]).toBe("固定"); // ピンは隠しより強い
+    const typing = rankQuickReplies({}, { draft: "こ", lastReply: "", locale: "ja", pinned: ["固定", "commit"] });
+    expect(typing).not.toContain("commit"); // 入力中の前方一致だけはピンにも効く
+  });
+
   it("drops hidden keys, seeds included", () => {
     const m: QuickReplyMap = { "進めて": { text: "進めて", count: 5, at: 100 } };
     const out = rankQuickReplies(m, { draft: "", lastReply: "", locale: "ja", hidden: ["進めて", "ok"] });
@@ -153,5 +188,32 @@ describe("forget / hide / unhide", () => {
     const hidden = ["ok", "進めて"];
     expect(unhideQuickReply(hidden, "OK")).toEqual(["進めて"]);
     expect(unhideQuickReply(hidden, "未登録")).toBe(hidden); // 無変化なら同じ参照
+  });
+});
+
+describe("pin / unpin", () => {
+  it("keeps the spelling and pin order, ignores case-only duplicates", () => {
+    let p = pinQuickReply([], "  親レポにマージしてプッシュ ");
+    expect(p).toEqual(["親レポにマージしてプッシュ"]); // 正規化した表示綴りで持つ
+    p = pinQuickReply(p, "OK");
+    expect(p).toEqual(["親レポにマージしてプッシュ", "OK"]); // ピンした順
+    expect(pinQuickReply(p, "ok")).toBe(p); // 大小違いは同じピン（無変化なら同じ参照）
+  });
+
+  it("caps the list at 12, dropping the oldest pin", () => {
+    let p: string[] = [];
+    for (let i = 0; i < 15; i++) p = pinQuickReply(p, "pin" + i);
+    expect(p).toHaveLength(12);
+    expect(p[0]).toBe("pin3");
+    expect(p).toContain("pin14");
+  });
+
+  it("unpins case-insensitively and reports pinned state", () => {
+    const p = ["OK", "進めて"];
+    expect(isQuickReplyPinned(p, " ok ")).toBe(true);
+    expect(isQuickReplyPinned(p, "やめて")).toBe(false);
+    expect(isQuickReplyPinned(undefined, "OK")).toBe(false);
+    expect(unpinQuickReply(p, "ok")).toEqual(["進めて"]);
+    expect(unpinQuickReply(p, "未登録")).toBe(p); // 無変化なら同じ参照
   });
 });

@@ -18,7 +18,15 @@ import {
   overrides,
 } from "../../features/keys/bindings.ts";
 import { cmdLabel } from "../../features/keys/labels.ts";
-import { forgetQuickReply, hideQuickReply } from "../../lib/quickReplies.ts";
+import {
+  forgetQuickReply,
+  hideQuickReply,
+  unhideQuickReply,
+  pinQuickReply,
+  unpinQuickReply,
+  isQuickReplyPinned,
+} from "../../lib/quickReplies.ts";
+import { Icon } from "../../ui/Icon.tsx";
 
 // Records the next chord the user presses. The settings modal is an open overlay, so the
 // global dispatcher is inert while it's up (hasOpenOverlay() guards it); this capture-phase
@@ -45,16 +53,24 @@ function KeyCapture({ onCapture, onCancel }: { onCapture: (chord: string) => voi
   );
 }
 
-// 学習済みクイック返信の管理（返信サジェスト Layer A）。チップの×はポインタ環境限定なので、
-// タッチ端末はここが唯一の削除導線になる。並びは実際のランキングと同じ「使用回数 → 最近」。
-// 「すべて消去」は学習と隠しの両方を落として初期状態（シードだけ）へ戻す。
+// 学習済みクイック返信の管理（返信サジェスト Layer A）。チップ側の削除・ピン留めは右クリック /
+// 長タップのメニューに集約したが、まとめて見直すのはここ。並びは実際のランキングと同じ
+// 「ピン留め（ピンした順）→ 使用回数 → 最近」。「すべて消去」は学習と隠しを落として初期状態
+// （シードだけ）へ戻す — ピンは明示的な指定なので、外すのは別のボタンにする。
 function LearnedQuickReplies() {
   const s = useSettings();
   const learned = s.quickReplies || {};
   const hidden = s.quickRepliesHidden || [];
-  const rows = Object.entries(learned)
+  const pinned = s.quickRepliesPinned || [];
+  const learnedRows = Object.entries(learned)
     .map(([key, v]) => ({ key, ...v }))
     .sort((a, b) => b.count - a.count || b.at - a.at);
+  // ピンは学習に無い文（シードや✨候補）でも留められるので、行が無ければここで足す。
+  const pinnedRows = pinned.map((text) => {
+    const hit = learnedRows.find((r) => isQuickReplyPinned([text], r.text));
+    return hit ?? { key: "pin:" + text, text, count: 0, at: 0 };
+  });
+  const rows = [...pinnedRows, ...learnedRows.filter((r) => !isQuickReplyPinned(pinned, r.text))];
   if (!rows.length && !hidden.length) return null;
   return (
     <div className="qr-learned">
@@ -72,25 +88,54 @@ function LearnedQuickReplies() {
         </button>
       </div>
       <div className="qr-list">
-        {rows.map((r) => (
-          <span className="qr-item" key={r.key}>
-            <span className="qr-text">{r.text}</span>
-            <span className="muted qr-count">{r.count}</span>
-            <button
-              type="button"
-              className="qr-del"
-              title={t("mirror.suggest_forget")}
-              aria-label={t("mirror.suggest_forget")}
-              onClick={() => {
-                setSetting("quickReplies", forgetQuickReply(learned, r.text));
-                setSetting("quickRepliesHidden", hideQuickReply(hidden, r.text));
-              }}
-            >
-              ×
-            </button>
-          </span>
-        ))}
+        {rows.map((r) => {
+          const pin = isQuickReplyPinned(pinned, r.text);
+          return (
+            <span className={"qr-item" + (pin ? " pinned" : "")} key={r.key}>
+              <span className="qr-text">{r.text}</span>
+              <span className="muted qr-count">{r.count}</span>
+              <button
+                type="button"
+                className="qr-pin"
+                title={pin ? t("mirror.suggest_unpin") : t("mirror.suggest_pin")}
+                aria-label={pin ? t("mirror.suggest_unpin") : t("mirror.suggest_pin")}
+                aria-pressed={pin}
+                onClick={() => {
+                  if (pin) {
+                    setSetting("quickRepliesPinned", unpinQuickReply(pinned, r.text));
+                    return;
+                  }
+                  setSetting("quickRepliesPinned", pinQuickReply(pinned, r.text));
+                  setSetting("quickRepliesHidden", unhideQuickReply(hidden, r.text));
+                }}
+              >
+                <Icon name={pin ? "pinned" : "pin"} />
+              </button>
+              <button
+                type="button"
+                className="qr-del"
+                title={t("mirror.suggest_forget")}
+                aria-label={t("mirror.suggest_forget")}
+                onClick={() => {
+                  setSetting("quickReplies", forgetQuickReply(learned, r.text));
+                  setSetting("quickRepliesHidden", hideQuickReply(hidden, r.text));
+                  setSetting("quickRepliesPinned", unpinQuickReply(pinned, r.text));
+                }}
+              >
+                ×
+              </button>
+            </span>
+          );
+        })}
       </div>
+      {pinned.length > 0 && (
+        <p className="muted ds-note">
+          {t("keys.kt.qrPinnedNote", { n: pinned.length })}{" "}
+          <button type="button" className="btn-ghost" onClick={() => setSetting("quickRepliesPinned", [])}>
+            {t("keys.kt.qrUnpinAll")}
+          </button>
+        </p>
+      )}
       {hidden.length > 0 && (
         <p className="muted ds-note">
           {t("keys.kt.qrHiddenNote", { n: hidden.length })}{" "}
