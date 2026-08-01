@@ -39,26 +39,26 @@ const normalizedControlMode = (value: unknown): BrowserAttachmentControlMode =>
 const normalizedResult = (value: unknown): BrowserAttachmentResult =>
   value === "completed" || value === "cancelled" ? value : "pending";
 
+const browserAttachmentHandoff = (value: unknown): BrowserAttachmentHandoff | null => {
+  if (!value || typeof value !== "object") return null;
+  const handoff = value as Record<string, unknown>;
+  return {
+    message: typeof handoff.message === "string" ? handoff.message : "",
+    completionLabel: typeof handoff.completionLabel === "string" ? handoff.completionLabel : "",
+    allowCancel: handoff.allowCancel === true,
+    controlMode: normalizedControlMode(handoff.controlMode),
+    result: normalizedResult(handoff.result),
+  };
+};
+
 /** Decode the camelCase Agent/Control Plane attachment response. */
 export function normalizeBrowserAttachmentStatus(raw: unknown): BrowserAttachmentStatus {
   const value = raw as Record<string, unknown> | null;
   if (!value || typeof value.id !== "string" || !value.id) {
     throw { code: "browser_attachment_invalid", message: "Browser attachment response did not contain an id" };
   }
-  const handoffRaw = value.handoff && typeof value.handoff === "object"
-    ? value.handoff as Record<string, unknown>
-    : null;
   const mode = normalizedControlMode(value.controlMode);
-  let handoff: BrowserAttachmentHandoff | null = null;
-  if (handoffRaw) {
-    handoff = {
-      message: typeof handoffRaw.message === "string" ? handoffRaw.message : "",
-      completionLabel: typeof handoffRaw.completionLabel === "string" ? handoffRaw.completionLabel : "",
-      allowCancel: handoffRaw.allowCancel === true,
-      controlMode: normalizedControlMode(handoffRaw.controlMode),
-      result: normalizedResult(handoffRaw.result),
-    };
-  }
+  const handoff = browserAttachmentHandoff(value.handoff);
   return {
     id: value.id,
     state: typeof value.state === "string" ? value.state : "attached",
@@ -131,6 +131,9 @@ const terminalViewState = (state: string): BrowserAttachmentViewState | null => 
   if (state === "expired" || state === "detached") return state;
   return null;
 };
+
+const attachmentStopsSocket = (state: string): boolean =>
+  state === "target-closed" || state === "disconnected" || state === "expired" || state === "detached";
 
 export class BrowserAttachmentController {
   private snapshotValue = initialSnapshot();
@@ -239,7 +242,10 @@ export class BrowserAttachmentController {
         const status = await this.deps.getStatus(this.attachmentId);
         if (this.disposed || generation !== this.generation) return;
         this.applyStatus(status);
-        if (terminalViewState(status.state) || status.controlMode === "locked" || !this.visible) return;
+        // locked and unsupported-target-url stop frames/input, not the wire.
+        // The wire must remain live so a later handoff/control-mode/navigation
+        // event can make this pane operable without a manual reconnect.
+        if (attachmentStopsSocket(status.state) || !this.visible) return;
         this.connect(generation);
       } catch (error) {
         if (this.disposed || generation !== this.generation) return;
@@ -298,15 +304,25 @@ export class BrowserAttachmentController {
           this.closeSocket();
           return;
         }
+        const attachmentState = typeof message.state === "string" ? message.state : this.snapshotValue.attachmentState;
+        const terminal = terminalViewState(attachmentState);
+        const mode = message.controlMode;
+        const controlMode = mode === "view-only" || mode === "user-control" || mode === "locked"
+          ? mode
+          : this.snapshotValue.controlMode;
         this.update({
           state: "ready",
+          attachmentState,
           url: typeof message.url === "string" ? message.url : this.snapshotValue.url,
           title: typeof message.title === "string" ? message.title : this.snapshotValue.title,
+          controlMode: attachmentStopsSocket(attachmentState) ? "locked" : controlMode,
+          handoff: message.handoff === undefined ? this.snapshotValue.handoff : browserAttachmentHandoff(message.handoff),
           ...clampViewport(
             typeof message.width === "number" ? message.width : this.snapshotValue.width,
             typeof message.height === "number" ? message.height : this.snapshotValue.height,
           ),
         });
+        if (terminal) this.update({ state: terminal });
         return;
       }
       case "navigation":
@@ -320,7 +336,11 @@ export class BrowserAttachmentController {
       case "state": {
         const state = String(message.state ?? "");
         const terminal = terminalViewState(state);
-        if (terminal) this.update({ state: terminal, attachmentState: state, controlMode: "locked" });
+        if (terminal) this.update({
+          state: terminal,
+          attachmentState: state,
+          ...(attachmentStopsSocket(state) ? { controlMode: "locked" as const } : {}),
+        });
         else if (state === "loading" || state === "ready") this.update({ state, attachmentState: state });
         return;
       }
@@ -329,6 +349,15 @@ export class BrowserAttachmentController {
         if (mode === "view-only" || mode === "user-control" || mode === "locked") {
           this.update({ controlMode: mode });
         }
+        return;
+      }
+      case "handoff": {
+        const handoff = browserAttachmentHandoff(message.handoff);
+        const mode = message.controlMode;
+        this.update({
+          handoff,
+          ...(mode === "view-only" || mode === "user-control" || mode === "locked" ? { controlMode: mode } : {}),
+        });
         return;
       }
       case "console":
