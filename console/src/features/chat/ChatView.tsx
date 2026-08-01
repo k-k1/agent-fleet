@@ -56,6 +56,7 @@ import { SESSION_KINDS } from "../../types/session.ts";
 import { getCachedConns, subscribeConns } from "../repos/connsCache.ts";
 import { assistantName, assistantDesc } from "./assistantI18n.ts";
 import { noticeText } from "./notice.ts";
+import { reportText } from "./report.ts";
 import { kindClass } from "../../lib/sessionkind.ts";
 import type { Conversation, ChatMessage, ChatStep } from "../../types/chat.ts";
 import type { Assistant } from "../../types/assistant.ts";
@@ -1321,7 +1322,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
                   {m.session && <span className="chat-report-session">{m.session}</span>}
                 </div>
                 <div className="chat-body">
-                  <ChatMarkdown source={m.content} breaks />
+                  <ChatMarkdown source={reportText(m)} breaks />
                 </div>
                 <div className="chat-msg-foot">
                   {m.ts > 0 && <span className="cm-time">{formatMsgTS(m.ts)}</span>}

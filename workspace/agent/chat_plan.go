@@ -52,12 +52,15 @@ const (
 // は完了作業だが、落とすと後任が「壊れている」と誤認して直しに行く＝運ぶ側）。
 func planShapeFor(lang string) string {
 	if lang == "en" {
+		// 見出しは Console の入力プレースホルダ（chat.plan.placeholder の en）と同じ綴りに
+		// そろえる — 手編集の枠と生成される計画の見出しが食い違うと、差分更新のたびに
+		// 見出しが入れ替わる。
 		return "## Constraints\n" +
 			"(Environment, prohibitions, operating rules — premises that keep applying. Be concrete: commands, concurrency limits, …)\n" +
-			"## Premises\n" +
+			"## Given\n" +
 			"(**Only** the established facts the next step needs: ids, branch names, deliberate exceptions. " +
 			"Do not enumerate completed work; do not write what git history or the issue tracker already tells you)\n" +
-			"## What comes next\n" +
+			"## Next up\n" +
 			"(Order, dependencies, branch conditions. Add entry conditions and owners where they exist)"
 	}
 	return "## 制約\n" +

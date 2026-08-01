@@ -322,17 +322,17 @@ func TestRateLimitResumeNoteOnFailedReport(t *testing.T) {
 	m := rlMeta()
 	rateLimitRecover(m, stateOf(t, m.Name), now)
 
-	body := buildReportContent("表示名", m.Name, reportKindAnswerReady, reportReasonTurnFailed, 0)
+	body := reportBodyForTest("表示名", m.Name, reportKindAnswerReady, reportReasonTurnFailed)
 	if !strings.Contains(body, "利用上限による停止です") ||
 		!strings.Contains(body, f.resetAt.Local().Format("1月2日 15:04")) {
 		t.Errorf("報告本文に自動再開の予約が出ていない:\n%s", body)
 	}
 	// 予約が無いセッション（普通の失敗）には足さない。
-	if other := buildReportContent("表示名", "rl-none", reportKindAnswerReady, reportReasonTurnFailed, 0); strings.Contains(other, "利用上限による停止です") {
+	if other := reportBodyForTest("表示名", "rl-none", reportKindAnswerReady, reportReasonTurnFailed); strings.Contains(other, "利用上限による停止です") {
 		t.Errorf("予約の無いセッションの失敗報告に上限の注記が出ている:\n%s", other)
 	}
 	// 完了報告には足さない。
-	if done := buildReportContent("表示名", m.Name, reportKindAnswerReady, "", 0); strings.Contains(done, "利用上限による停止です") {
+	if done := reportBodyForTest("表示名", m.Name, reportKindAnswerReady, ""); strings.Contains(done, "利用上限による停止です") {
 		t.Errorf("完了報告に上限の注記が出ている:\n%s", done)
 	}
 }
