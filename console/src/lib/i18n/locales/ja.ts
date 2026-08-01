@@ -1299,11 +1299,13 @@ export const ja = {
     "オンにすると、shell・SSM 端末にフォーカスがある間は純ターミナルになります。上の項目と違い、リーダー（Ctrl/⌘+K）とパレット（Ctrl/⌘+P）も渡すので、Ctrl+K（行末まで削除）や Ctrl+P（履歴を前へ）などがシェルに届きます。対象は shell/SSM 端末のみで、エージェント端末は従来どおりです。アプリのショートカットに戻すには別のペインにフォーカスしてください。既定はオフ。",
   "keys.kt.quickRepliesLabel": "返信サジェストを表示（コンポーザー上に候補チップ）",
   "keys.kt.quickRepliesNote":
-    "オンにすると、コンポーザーの上によく使う短い返信（OK・進めて・commit など）と直近の回答に沿った候補をチップで表示します。クリックで入力欄に差し込み、Ctrl・⌘・Alt のいずれかを押しながらクリックで即送信。キーボードだけでも使えます: 入力欄が空のとき Tab で候補へ移り、Tab／Shift+Tab は「入力欄→候補→入力欄」と一巡（✨ボタンも候補の一員として含みます）、←／→ は候補内だけを循環。Enter で差し込み、Ctrl（⌘）+Enter で送信（Enter 送信の設定なら役割が入れ替わります）、✨上の Enter は候補生成、Escape で入力欄へ戻ります。候補はあなたが送った短文から学習します。既定はオン。",
+    "オンにすると、コンポーザーの上によく使う短い返信（OK・進めて・commit など）と直近の回答に沿った候補をチップで表示します。クリックで入力欄に差し込み、Ctrl・⌘・Alt のいずれかを押しながらクリックで即送信。キーボードだけでも使えます: 入力欄が空のとき Tab で候補へ移り、Tab／Shift+Tab は「入力欄→候補→入力欄」と一巡（✨ボタンも候補の一員として含みます）、←／→ は候補内だけを循環。Enter で差し込み、Ctrl（⌘）+Enter で送信（Enter 送信の設定なら役割が入れ替わります）、✨上の Enter は候補生成、Escape で入力欄へ戻ります。候補はあなたが送った短文から学習します。チップを右クリック（タッチは長タップ、キーボードは Menu キー）するとメニューが開き、ピン留め（常に表示）と削除ができます。ピン留めした候補はランキングに関係なく常に先頭に並びます。既定はオン。",
   "keys.kt.qrLearnedTitle": "学習済みの候補（{n}件）",
   "keys.kt.qrClearAll": "学習をすべて消去",
-  "keys.kt.qrHiddenNote": "×で消した候補が {n} 件あります。",
+  "keys.kt.qrHiddenNote": "消した候補が {n} 件あります。",
   "keys.kt.qrUnhideAll": "消した候補を戻す",
+  "keys.kt.qrPinnedNote": "ピン留め（常に表示）が {n} 件あります。",
+  "keys.kt.qrUnpinAll": "ピンをすべて外す",
   "keys.kt.replySuggestLabel": "AI返信候補の✨ボタンを表示",
   "keys.kt.replySuggestNote":
     "オンにすると、返信サジェストの左に✨ボタンが出ます。押すと直近の会話をAIに渡し、文脈に沿った返信候補を生成してチップに追加します。トークンを使うのは押した時だけ。利用できるAIは claude→codex→opencode→cursor の順に自動選択するので、Claude が使えなくても他があれば動きます。既定はオン。",
@@ -1730,9 +1732,13 @@ export const ja = {
   "mirror.update_choice_hint": "アップデート確認の選択待ち",
   "mirror.resuming": "再開中… 準備ができると入力できます",
   // コンポーザ
-  "mirror.suggest_hint": "クリックで入力欄へ・Ctrl/⌘/Alt＋クリックで即送信（入力欄が空なら Tab で候補へ・←/→ で候補選択）",
+  "mirror.suggest_hint":
+    "クリックで入力欄へ・Ctrl/⌘/Alt＋クリックで即送信（入力欄が空なら Tab で候補へ・←/→ で候補選択／右クリック・長タップでピン留めと削除）",
   "mirror.suggest_ai": "AIに返信候補を出してもらう（直近の会話から）",
   "mirror.suggest_forget": "この候補をもう出さない（同じ文を自分で送れば戻ります）",
+  "mirror.suggest_pin": "常に表示（ピン留め）",
+  "mirror.suggest_unpin": "ピン留めを解除",
+  "mirror.suggest_forget_item": "この候補を消す",
   "mirror.suggest_none": "返信候補を作れませんでした（会話が浅いか、利用できるAIがありません）",
   "mirror.suggest_failed": "返信候補の生成に失敗しました",
   "mirror.prev_input": "前の入力",

@@ -15,7 +15,11 @@ import {
   forgetQuickReply,
   hideQuickReply,
   unhideQuickReply,
+  pinQuickReply,
+  unpinQuickReply,
+  isQuickReplyPinned,
 } from "../../lib/quickReplies.ts";
+import { useChipMenu, SuggestChipMenu } from "./SuggestChipMenu.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
@@ -372,6 +376,8 @@ export function MirrorView({
   // 返り値をチップ行の ref に渡す — この行は条件付きレンダーで出入りするので、ref オブジェクト
   // 任せだと戻ってきた要素にリスナーが付かない（dragScroll.ts の注記）。
   const attachSuggestRow = useDragScroll(suggestRef);
+  // チップの右クリック / 長タップ / Menu キーで開くメニュー（ピン留め・削除）。
+  const chipMenu = useChipMenu();
   // スキルピッカー（docs/50 / ADR0034、v2 クロスエージェント＋§8 クロススキル注入）:
   // セッションで呼べるスキル/コマンドの補完リスト。ネイティブ起動（invoke — "/name" や
   // codex "$name"）に加え、他規約の SKILL.md（foreign — path/origin 付き）は「path を
@@ -1593,7 +1599,7 @@ export function MirrorView({
     const text = (override ?? draft).trim();
     if (!text && !attachments.length) return;
     // 短い純テキストは返信サジェストの学習に取り込む（send 経由のみ＝AUQ/plan 応答は自然に除外）。
-    // 一度×で消した文でも、自分で送り直したなら「また使う」意思表示なので隠しを解除する。
+    // 一度メニューから消した文でも、自分で送り直したなら「また使う」意思表示なので隠しを解除する。
     if (text && isQuickReplyCandidate(text, attachments.length > 0)) {
       setSetting("quickReplies", recordQuickReply(settings.quickReplies || {}, text, Date.now()));
       const hidden = settings.quickRepliesHidden || [];
@@ -1645,8 +1651,9 @@ export function MirrorView({
     });
   };
 
-  // 学習候補の×: 学習を消し、かつ隠しリストへ積む（消すだけではシード/再学習で戻ってくる）。
-  // LLM 候補（✨）は学習物ではないので、その場の候補列から外すだけでよい。
+  // メニューの「この候補を消す」: 学習を消し、かつ隠しリストへ積む（消すだけではシード/再学習で
+  // 戻ってくる）。ピン留めしていたなら当然そのピンも外す。LLM 候補（✨）は学習物ではないので、
+  // その場の候補列から外すだけでよい。
   const forgetSuggestion = (text: string, llm: boolean) => {
     if (llm) {
       setLlmSuggestions((prev) => prev.filter((s) => s !== text));
@@ -1654,6 +1661,20 @@ export function MirrorView({
     }
     setSetting("quickReplies", forgetQuickReply(settings.quickReplies || {}, text));
     setSetting("quickRepliesHidden", hideQuickReply(settings.quickRepliesHidden || [], text));
+    setSetting("quickRepliesPinned", unpinQuickReply(settings.quickRepliesPinned || [], text));
+  };
+
+  // メニューの「常に表示（ピン留め）」/「ピン留めを解除」。ピンは隠しより強い意思表示なので、
+  // ピンするときは隠しも外す（以前に消した文をピンし直せる）。✨の候補もそのままピンできる
+  // ——「この一文はこれから常用する」と決めた時点で、学習を待つ理由がない。
+  const togglePin = (text: string) => {
+    const pinned = settings.quickRepliesPinned || [];
+    if (isQuickReplyPinned(pinned, text)) {
+      setSetting("quickRepliesPinned", unpinQuickReply(pinned, text));
+      return;
+    }
+    setSetting("quickRepliesPinned", pinQuickReply(pinned, text));
+    setSetting("quickRepliesHidden", unhideQuickReply(settings.quickRepliesHidden || [], text));
   };
 
   // --- スキルピッカー（docs/50） ---
@@ -1954,9 +1975,8 @@ export function MirrorView({
 
   // 返信サジェストのフォーカスリング = ✨ボタン＋候補チップ（DOM 順）。✨も候補の一員として
   // 巡回に含める（Enter はボタン既定の click ＝ LLM 候補取得がそのまま走る）。
-  // ×（削除）はリングから除く — 巡回のたびに削除ボタンを踏ませない。
   const suggestRing = (): HTMLButtonElement[] =>
-    Array.from(suggestRef.current?.querySelectorAll<HTMLButtonElement>("button:not(.mirror-suggest-del)") ?? []);
+    Array.from(suggestRef.current?.querySelectorAll<HTMLButtonElement>("button") ?? []);
 
   // チップ行は1行スクロール（はみ出した候補は画面外）。キー移動のフォーカス先が隠れないよう
   // 横だけ最小限スクロールして追従させる。focus 既定のスクロールは縦にも効いて本文が飛ぶので
@@ -1998,8 +2018,9 @@ export function MirrorView({
   // チップ上のキー操作。移動系は onSuggestNav に委ね、Enter/Ctrl(⌘)+Enter の役割はコンポーサーの
   // 送信キー設定に合わせる: modSend（Ctrl+Enter で送信）なら mod+Enter=送信・素の Enter=差し込み、
   // enter モード（Enter で送信）なら逆。
-  const onSuggestKeyDown = (e: RKeyboardEvent<HTMLButtonElement>, text: string) => {
+  const onSuggestKeyDown = (e: RKeyboardEvent<HTMLButtonElement>, text: string, llm: boolean) => {
     if (onSuggestNav(e)) return;
+    if (chipMenu.onKeyDown(e, text, llm)) return; // Menu キー / Shift+F10 → ピン留め・削除メニュー
     if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
     const mod = e.ctrlKey || e.metaKey;
     e.preventDefault(); // ボタン既定の click（＝差し込み）と二重発火させない
@@ -2128,6 +2149,7 @@ export function MirrorView({
         lastReply: lastReplyText,
         locale: settings.locale,
         hidden: settings.quickRepliesHidden || [],
+        pinned: settings.quickRepliesPinned || [],
         limit: 6,
       })
     : [];
@@ -2769,30 +2791,40 @@ export function MirrorView({
                 </button>
               )}
               {suggestChips.map((sg) => (
-                // チップ本体＋× を1つの丸に見せる（× はホバー/フォーカス時だけ出す。タッチ端末は
-                // 誤タップを避けて出さず、設定の学習済み一覧から消してもらう）。
-                <span className="mirror-suggest-wrap" key={(sg.llm ? "l:" : "a:") + sg.text}>
-                  <button
-                    type="button"
-                    className={"mirror-suggest-chip" + (sg.llm ? " llm" : "")}
-                    title={tr("mirror.suggest_hint")}
-                    onClick={(e) => applySuggestion(sg.text, e.ctrlKey || e.altKey || e.metaKey)}
-                    onKeyDown={(e) => onSuggestKeyDown(e, sg.text)}
-                  >
-                    {sg.text}
-                  </button>
-                  <button
-                    type="button"
-                    className="mirror-suggest-del"
-                    title={tr("mirror.suggest_forget")}
-                    aria-label={tr("mirror.suggest_forget")}
-                    onClick={() => forgetSuggestion(sg.text, sg.llm)}
-                  >
-                    ×
-                  </button>
-                </span>
+                // ピン留めした候補は先頭に固定で並び、📌 を付けて「消えない側」だと分かるようにする。
+                // 削除・ピン留めは右クリック / 長タップ / Menu キーのメニュー（SuggestChipMenu）。
+                <button
+                  key={(sg.llm ? "l:" : "a:") + sg.text}
+                  type="button"
+                  className={
+                    "mirror-suggest-chip" +
+                    (sg.llm ? " llm" : "") +
+                    (isQuickReplyPinned(settings.quickRepliesPinned, sg.text) ? " pinned" : "")
+                  }
+                  title={tr("mirror.suggest_hint")}
+                  onClick={(e) => {
+                    if (chipMenu.clickSwallowed()) return; // 長タップでメニューを出した指離し
+                    applySuggestion(sg.text, e.ctrlKey || e.altKey || e.metaKey);
+                  }}
+                  onKeyDown={(e) => onSuggestKeyDown(e, sg.text, sg.llm)}
+                  {...chipMenu.chipProps(sg.text, sg.llm)}
+                >
+                  {isQuickReplyPinned(settings.quickRepliesPinned, sg.text) && (
+                    <Icon name="pinned" className="mirror-suggest-pin" />
+                  )}
+                  {sg.text}
+                </button>
               ))}
             </div>
+          )}
+          {chipMenu.menu && (
+            <SuggestChipMenu
+              menu={chipMenu.menu}
+              pinned={isQuickReplyPinned(settings.quickRepliesPinned, chipMenu.menu.text)}
+              onClose={chipMenu.close}
+              onTogglePin={togglePin}
+              onForget={forgetSuggestion}
+            />
           )}
           {(attachments.length > 0 || pasting) && (
             <div className="mirror-attach">
