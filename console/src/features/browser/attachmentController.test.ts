@@ -110,24 +110,25 @@ describe("BrowserAttachmentController", () => {
 });
 
 describe("attachment API normalization", () => {
-  it("accepts the documented camelCase shape and provisional snake_case aliases", () => {
+  it("uses Lane A's camelCase shape and keeps current control mode independent from handoff", () => {
     expect(normalizeBrowserAttachmentStatus({
       id: "ba_test",
       state: "attached",
       title: "Editor",
       url: "https://example.invalid/edit",
-      expires_at: "2099-01-01T00:00:00Z",
+      expiresAt: "2099-01-01T00:00:00Z",
+      controlMode: "locked",
       handoff: {
         message: "Check",
-        completion_label: "Finish",
-        allow_cancel: true,
-        control_mode: "user-control",
+        completionLabel: "Finish",
+        allowCancel: true,
+        controlMode: "user-control",
         result: "pending",
       },
     })).toMatchObject({
       expiresAt: "2099-01-01T00:00:00Z",
-      controlMode: "user-control",
-      handoff: { completionLabel: "Finish", allowCancel: true },
+      controlMode: "locked",
+      handoff: { completionLabel: "Finish", allowCancel: true, controlMode: "user-control" },
     });
   });
 
