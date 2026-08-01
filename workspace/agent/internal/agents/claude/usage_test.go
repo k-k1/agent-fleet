@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -133,6 +134,78 @@ func TestEnsureStatusLine(t *testing.T) {
 	EnsureStatusLine()
 	if got2 := statusLineCommand(t, dir); got2 != got {
 		t.Errorf("re-wrap changed command: %q", got2)
+	}
+}
+
+// An install from a DIFFERENT binary path (dev build, e2e binary, scratchpad copy) is
+// still ours: it must be peeled and re-pointed at this exe, never wrapped — wrapping
+// re-quotes the whole command each round and grows it exponentially until exec(2)
+// rejects it (E2BIG) and capture dies.
+func TestEnsureStatusLineRepointsForeignPathInstall(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	ours := statuslineCmd()
+
+	for _, prior := range []string{
+		"/tmp/wa statusline",                                  // legacy capture-only, other path
+		"/tmp/wa statusline " + captureFlag,                   // flagged, other path
+		"/tmp/wa statusline --delegate '/tmp/wa2 statusline'", // nested, both ours
+	} {
+		writeSettings(map[string]any{"statusLine": map[string]any{"type": "command", "command": prior}})
+		EnsureStatusLine()
+		if got := statusLineCommand(t, dir); got != ours {
+			t.Errorf("prior %q: got %q want %q", prior, got, ours)
+		}
+	}
+
+	// A user command buried under our layers survives the peel exactly once.
+	nested := "/tmp/wa statusline --delegate " + shellQuote(ours+" --delegate "+shellQuote("my.sh --x"))
+	writeSettings(map[string]any{"statusLine": map[string]any{"type": "command", "command": nested}})
+	EnsureStatusLine()
+	if want := ours + " --delegate 'my.sh --x'"; statusLineCommand(t, dir) != want {
+		t.Errorf("nested foreign: got %q want %q", statusLineCommand(t, dir), want)
+	}
+
+	// The pathological chain this fixes: repeated wrapping never grows the command.
+	writeSettings(map[string]any{"statusLine": map[string]any{"type": "command", "command": ours}})
+	for i := range 20 {
+		t.Setenv("AF_TEST_ROUND", strconv.Itoa(i)) // rounds differ only in that they re-run
+		EnsureStatusLine()
+	}
+	if got := statusLineCommand(t, dir); got != ours {
+		t.Errorf("20 rounds: len=%d got %q", len(got), got)
+	}
+}
+
+// A delegate that would push the command past the exec limit is dropped: capture-only
+// beats a command that can't run at all.
+func TestEnsureStatusLineDropsOversizeDelegate(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	huge := "my.sh " + strings.Repeat("x", maxStatusLineCmd)
+	writeSettings(map[string]any{"statusLine": map[string]any{"type": "command", "command": huge}})
+	EnsureStatusLine()
+	if got := statusLineCommand(t, dir); got != statuslineCmd() {
+		t.Errorf("oversize: got %d bytes, want capture-only", len(got))
+	}
+}
+
+func TestUnwrapOurs(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"", ""},
+		{"/usr/local/bin/workspace-agent statusline", ""},
+		{"/usr/local/bin/workspace-agent statusline " + captureFlag, ""},
+		{"my.sh --x", "my.sh --x"},                                             // foreign → untouched
+		{"/x/wa statusline --delegate 'my.sh --x'", "my.sh --x"},               // one layer
+		{"/x/wa statusline --delegate '/y/wa statusline'", ""},                 // ours all the way down
+		{"/x/wa statusline --delegate 'a'\\''b'", "a'b"},                       // shellQuote's escape round-trips
+		{"/x/wa statusline --unknown-flag", "/x/wa statusline --unknown-flag"}, // unrecognised shape → left alone
+		{"/x/wa statusline --delegate 'unterminated", "/x/wa statusline --delegate 'unterminated"},
+	}
+	for _, c := range cases {
+		if got := unwrapOurs(c.in); got != c.want {
+			t.Errorf("unwrapOurs(%q) = %q want %q", c.in, got, c.want)
+		}
 	}
 }
 
