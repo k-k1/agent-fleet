@@ -49,6 +49,37 @@ jobs:
       - name: scan full history
         run: /tmp/gitleaks --version && /tmp/gitleaks git --log-opts="--all --full-history -m" --redact --verbose
 
+  # 出荷物の禁止語ゲート（docs/35 §35.7.5）の本体検証。実際に成果物を走査するのは
+  # release-gate と publish-dist（ビルドが要る）で、ここでは **仕組みが動くこと** と
+  # **ソースが清白なこと** を毎回確かめる。ユニットテストは架空の語で「検出する／
+  # しない」を両方通すので、台帳の中身を知らなくてもゲートが空振りでないと言える。
+  release-scan:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: deploy/release/scan
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: deploy/release/scan/go.mod
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test ./...
+      - name: scan the source tree
+        working-directory: .
+        run: |
+          set -euo pipefail
+          # git archive（追跡ファイルのみ）を走査する。作業ディレクトリを直接見ると
+          # .git の pack に残る**書き換え前の到達不能オブジェクト**を拾って誤検知する。
+          git archive --format=tar HEAD > /tmp/src.tar
+          deploy/release/scan-forbidden.sh /tmp/src.tar
+
   control-plane:
     runs-on: ubuntu-latest
     defaults:

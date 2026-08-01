@@ -166,7 +166,7 @@ af start
   `~/.local/opt/agent-fleet/<版>/` へ展開し、`~/.local/bin/af` に symlink します。
 - 更新も同じコマンドです（データは `~/.local/share/agent-fleet` にあり、触りません）。`af update` でその場更新も可能です。
 - **自動更新:** インストーラは日次の systemd user timer を有効化し、`af update` で最新版を *stage*（sha256 検証）します。走行中サービスは再起動しません — 適用は都合の良いときに `systemctl --user restart agent-fleet` か Console の「再起動して適用」で行い、実行中セッションを不意に切りません。無効化は `AF_NO_AUTOUPDATE=1 bash install.sh`。
-- 版を指定する場合: `AF_VERSION=0.1.0 bash install.sh`（unit の `Environment=` に置けば自動更新もその版で停止）
+- 版を指定する場合: `AF_VERSION=0.5.1 bash install.sh`（unit の `Environment=` に置けば自動更新もその版で停止）
 - 詳細（ホスト要件・air-gap 導入・常駐化・VOICEVOX / ずんだもんによる読み上げ
   （任意）・制約）は tar 同梱の `README.md` を参照してください。
 
