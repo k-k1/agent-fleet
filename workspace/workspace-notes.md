@@ -119,6 +119,33 @@ browser download is required. Committed E2E belongs in `console-e2e/`
 - Run headless and short-lived; close the browser when done (memory-constrained host).
   Screenshots and WebGL (SwiftShader) work; there is no display for headful runs.
 
+## Handing an owner-controlled Chromium page to the user
+When automation inside the container needs a human to inspect or operate its existing
+Chromium Page:
+
+1. Start Chromium with `--remote-debugging-address=127.0.0.1`, an explicit
+   `--remote-debugging-port=<port>`, and a non-default `--user-data-dir`. Never expose
+   remote debugging on `0.0.0.0`.
+2. Call the Agent Fleet MCP tool `list_chromium_targets` with that port and choose the
+   intended Page from its returned `target_id`; do not guess a target.
+3. Before switching to `user-control`, stop the owner's automation against that Page.
+   Chromium does not arbitrate competing owner and human input.
+4. Call `attach_chromium`, then use `request_browser_action` when the user needs
+   explicit instructions or completion/cancel controls.
+5. Present the returned `open_url` unchanged as a Markdown link labelled
+   "Open the browser and operate it". An MCP call alone must not change the user's
+   Console layout; opening the link is the user's explicit action.
+6. Never perform a final publish, send, consent, or confirmation click for the user.
+   An attachment or a user-reported completion is not proof that the external site's
+   operation succeeded.
+7. Check `get_browser_action_result` only when needed; do not poll it indefinitely.
+   Once the user completes or cancels, use `set_chromium_control_mode` to lock the
+   attachment if appropriate and call `detach_chromium`.
+
+`detach_chromium` ends only Agent Fleet's connection and screencast. It must not close
+the owner Page, BrowserContext, profile, or Chromium process. Never put a raw CDP
+endpoint, cookie, password, or token in an answer, log, or commit.
+
 ## Browser pane (how the USER views a web app you run)
 The Console has a **browser pane** that renders a web app running inside this
 Workspace. It is a **user-facing Console feature** — the human opens it and looks at
