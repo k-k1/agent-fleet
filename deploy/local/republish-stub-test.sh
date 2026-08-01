@@ -187,4 +187,16 @@ if VERSION=$V ROOTFS=$R \
 fi
 grep -q "still has 4 asset" "$WORK/out6.log" || fail "wrong error for a populated release"
 
+# --- 7. the notice stage refreshes the body of a release that HAS assets ------
+# (the assets-must-be-gone guard applies to uploading, not to rewording)
+export STUB_MISSING="" STUB_ASSETS=4
+: > "$NEW"
+AF_REPUBLISH_STAGE=notice VERSION=$V ROOTFS=$R \
+  "$REPUBLISH" --dist-dir "$DIST" --repo "$REPO" > "$WORK/out7.log" 2>&1 \
+  || { cat "$WORK/out7.log"; fail "notice stage failed on a populated release"; }
+[ -s "$NEW" ] || fail "notice stage did not rewrite the body"
+grep -q 'do not receive security updates' "$NEW" \
+  || fail "the support policy is missing from the notice"
+grep -q -- "--clobber" "$WORK/out7.log" && fail "notice stage must not upload assets"
+
 echo "republish-stub-test: OK"
