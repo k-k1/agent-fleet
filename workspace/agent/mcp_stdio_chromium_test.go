@@ -161,6 +161,14 @@ func TestMCPChromiumToolsRelayAndStructuredFallback(t *testing.T) {
 		t.Fatalf("handoff REST body = %#v", handoffHit.body)
 	}
 
+	_ = structuredMCPValue(t, callChromiumMCP(t, "request_browser_action", map[string]any{
+		"attachment_id": "ba_random_7f3", "message": "省略値を確認してください",
+	}))
+	omittedHandoffHit := hits[len(hits)-1]
+	if omittedHandoffHit.body["allowCancel"] != false {
+		t.Fatalf("omitted allow_cancel REST body = %#v", omittedHandoffHit.body)
+	}
+
 	result := structuredMCPValue(t, callChromiumMCP(t, "get_browser_action_result", map[string]any{"attachment_id": "ba_random_7f3"}))
 	if result["result"] != "completed" {
 		t.Fatalf("browser action result = %#v", result)

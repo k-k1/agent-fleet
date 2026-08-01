@@ -568,7 +568,7 @@ var mcpStdioWriteTools = []map[string]any{
 				"attachment_id":    map[string]any{"type": "string", "minLength": 1},
 				"message":          map[string]any{"type": "string", "minLength": 1, "description": "ユーザーに依頼する具体的な確認・操作"},
 				"completion_label": map[string]any{"type": "string", "description": "完了ボタンの任意ラベル"},
-				"allow_cancel":     map[string]any{"type": "boolean", "description": "中止を許可するか（省略時true）"},
+				"allow_cancel":     map[string]any{"type": "boolean", "description": "中止を許可するか（省略時false）"},
 				"control_mode":     chromiumControlModeSchema(),
 			},
 			"required": []string{"attachment_id", "message"},
@@ -1724,7 +1724,7 @@ func mcpRequestBrowserAction(id json.RawMessage, attachmentID, message, completi
 	if controlMode != "" && !validChromiumControlMode(controlMode) {
 		return mcpToolErr(id, "control_modeはview-only、user-control、lockedのいずれかです")
 	}
-	req := map[string]any{"message": message, "allowCancel": true}
+	req := map[string]any{"message": message, "allowCancel": false}
 	if completionLabel != "" {
 		req["completionLabel"] = completionLabel
 	}
