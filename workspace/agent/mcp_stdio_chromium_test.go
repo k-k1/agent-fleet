@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -72,6 +73,7 @@ func TestMCPChromiumToolsRelayAndStructuredFallback(t *testing.T) {
 		path   string
 		query  string
 		body   map[string]any
+		label  string
 	}
 	var hits []hit
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -79,7 +81,8 @@ func TestMCPChromiumToolsRelayAndStructuredFallback(t *testing.T) {
 		if r.Body != nil {
 			_ = json.NewDecoder(r.Body).Decode(&body)
 		}
-		hits = append(hits, hit{method: r.Method, path: r.URL.Path, query: r.URL.RawQuery, body: body})
+		label, _ := base64.RawURLEncoding.DecodeString(r.Header.Get(browserAttachmentLabelHeader))
+		hits = append(hits, hit{method: r.Method, path: r.URL.Path, query: r.URL.RawQuery, body: body, label: string(label)})
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/browser/attach-targets":
 			_, _ = w.Write([]byte(`{"targets":[{"targetId":"opaque-target","type":"page","title":"編集","url":"https://example.invalid/edit"}],"webSocketDebuggerUrl":"ws://127.0.0.1:9222/devtools/browser/secret"}`))
@@ -143,6 +146,9 @@ func TestMCPChromiumToolsRelayAndStructuredFallback(t *testing.T) {
 	}
 	if _, ok := attachHit.body["label"]; ok {
 		t.Fatalf("attach REST body sent an unsupported label field: %#v", attachHit.body)
+	}
+	if attachHit.label != "確認画面" {
+		t.Fatalf("attach internal label = %q", attachHit.label)
 	}
 	if _, ok := attachHit.body["target_id"]; ok {
 		t.Fatalf("attach REST body retained MCP snake_case: %#v", attachHit.body)

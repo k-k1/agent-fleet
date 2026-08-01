@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -74,6 +75,44 @@ func TestBrowserAttachmentLifecycleDoesNotCloseExternalTarget(t *testing.T) {
 	if _, err := m.Get(resp.ID); asAttachmentAPIError(err).Code != "browser_attachment_not_found" {
 		t.Fatalf("status after detach = %v", err)
 	}
+}
+
+func TestBrowserAttachmentLabelOverridesPageTitle(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	m := fakeAttachmentManager(cdp, 0)
+	previous := workspaceBrowserAttachmentManager
+	workspaceBrowserAttachmentManager = m
+	t.Cleanup(func() { workspaceBrowserAttachmentManager = previous })
+	req := httptest.NewRequest(http.MethodPost, "/browser/attachments", strings.NewReader(
+		`{"port":9222,"targetId":"target-1","viewport":{"width":1280,"height":900,"deviceScaleFactor":1}}`,
+	))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(browserAttachmentLabelHeader, base64.RawURLEncoding.EncodeToString([]byte("確認画面")))
+	w := httptest.NewRecorder()
+	buildMux().ServeHTTP(w, req)
+	var resp browserAttachmentResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil || w.Code != http.StatusCreated {
+		t.Fatalf("create labeled attachment: status=%d body=%s err=%v", w.Code, w.Body.String(), err)
+	}
+	if resp.Title != "確認画面" {
+		t.Fatalf("attachment title = %q", resp.Title)
+	}
+	a, err := m.lookupActive(resp.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ready struct {
+		Title string `json:"title"`
+	}
+	if err := json.Unmarshal(a.readyMessage(), &ready); err != nil || ready.Title != "確認画面" {
+		t.Fatalf("ready title = %q err=%v", ready.Title, err)
+	}
+	m.updateNavigation(a, "https://example.invalid/next")
+	status, err := m.Get(resp.ID)
+	if err != nil || status.Title != "確認画面" {
+		t.Fatalf("navigation replaced label: status=%+v err=%v", status, err)
+	}
+	m.Delete(resp.ID)
 }
 
 func TestBrowserAttachmentControlModesAndNoNavigateMessage(t *testing.T) {
