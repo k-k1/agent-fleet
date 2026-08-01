@@ -200,6 +200,50 @@ func TestNestedArchiveExpansion(t *testing.T) {
 	}
 }
 
+// A member that is a deliberately broken archive must not abort the scan. This
+// is not hypothetical: the workspace image ships Go's source tree, whose
+// archive/tar/testdata holds tarballs designed to make a tar reader fail, and
+// the first real run of this gate died on one of them.
+func TestBrokenMemberDoesNotStopTheScan(t *testing.T) {
+	entries := testEntries(t, canary)
+	var b bytes.Buffer
+	tw := tar.NewWriter(&b)
+	// A member that sniffs as a tar (the ustar magic is at 257) but whose header
+	// is nonsense past that point.
+	broken := make([]byte, 1024)
+	copy(broken[257:], []byte("ustar\x0000"))
+	tw.WriteHeader(&tar.Header{Name: "testdata/broken.tar", Mode: 0o644, Size: int64(len(broken)), Typeflag: tar.TypeReg})
+	tw.Write(broken)
+	// A perfectly good member *after* it, holding the term. If the broken member
+	// aborts the walk, this one is never reached and the release looks clean.
+	good := []byte("const x=`/* Zarquon Ltd */`;")
+	tw.WriteHeader(&tar.Header{Name: "app/console/assets/index.js", Mode: 0o644, Size: int64(len(good)), Typeflag: tar.TypeReg})
+	tw.Write(good)
+	tw.Close()
+
+	w := NewWalker(entries, &AllowList{}, false)
+	if err := w.stream("images.tar", bytes.NewReader(b.Bytes()), 0); err != nil {
+		t.Fatalf("a broken member must not fail the walk: %v", err)
+	}
+	if len(w.Hits) != 1 {
+		t.Fatalf("the member after the broken one must still be scanned: %d hits", len(w.Hits))
+	}
+	if len(w.Skipped) != 1 {
+		t.Fatalf("the broken member must be reported, got %d entries: %v", len(w.Skipped), w.Skipped)
+	}
+}
+
+// The artifact itself is different: if we cannot read what we are about to ship,
+// that is a failure, not a warning.
+func TestBrokenTopLevelArtifactIsAnError(t *testing.T) {
+	entries := testEntries(t, canary)
+	w := NewWalker(entries, &AllowList{}, false)
+	bad := append([]byte{0x1f, 0x8b, 0x08}, bytes.Repeat([]byte{0x00}, 64)...) // gzip magic, garbage body
+	if err := w.stream("artifact.tar.gz", bytes.NewReader(bad), 0); err == nil {
+		t.Fatal("an unreadable artifact must be an error")
+	}
+}
+
 func TestPathIsScannedToo(t *testing.T) {
 	entries := testEntries(t, canary)
 	var b bytes.Buffer
