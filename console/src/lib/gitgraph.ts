@@ -20,6 +20,60 @@ export interface GraphCommit {
   inBranch: boolean;
 }
 
+// RefChip is one ref badge as DRAWN, which is not one-to-one with the refs git reports:
+// a local branch and the remote-tracking refs of the same name sitting on the same commit
+// are the normal case (nothing to push/pull) and collapse into a single chip carrying a
+// remote marker, instead of eating two chips' width with "develop" + "origin/develop".
+// A remote that has drifted decorates a DIFFERENT commit, so it keeps its own chip there —
+// which is exactly the state worth seeing.
+export interface RefChip {
+  type: "head" | "remote" | "tag";
+  name: string; // display label: branch short name / tag name / "origin/x" for remote-only
+  remotes: string[]; // remotes in sync with this local branch here ([] when none / not a head)
+  refs: GraphRef[]; // the raw refs this chip stands for (tooltips, actions)
+}
+
+// groupRefs collapses a commit's refs into display chips (see RefChip). Order follows the
+// refs as given, each chip taking the position of its first member.
+export function groupRefs(refs: GraphRef[]): RefChip[] {
+  const heads = new Set(refs.filter((r) => r.type === "head").map((r) => r.name));
+  const chips: RefChip[] = [];
+  const byBranch = new Map<string, RefChip>();
+  const chipFor = (branch: string): RefChip => {
+    let chip = byBranch.get(branch);
+    if (!chip) {
+      chip = { type: "head", name: branch, remotes: [], refs: [] };
+      byBranch.set(branch, chip);
+      chips.push(chip);
+    }
+    return chip;
+  };
+  for (const rf of refs) {
+    if (rf.type === "head") {
+      chipFor(rf.name).refs.push(rf);
+      continue;
+    }
+    if (rf.type !== "remote") {
+      chips.push({ type: rf.type, name: rf.name, remotes: [], refs: [rf] });
+      continue;
+    }
+    // The backend emits remote refs as "<remote>/<branch>" (from refs/remotes/…), so the
+    // first path element is the remote name and the rest is the branch — which is why the
+    // split is on the FIRST slash: "origin/feat/x" is remote "origin", branch "feat/x".
+    const slash = rf.name.indexOf("/");
+    const remote = slash > 0 ? rf.name.slice(0, slash) : "";
+    const branch = rf.name.slice(slash + 1);
+    if (!remote || !heads.has(branch)) {
+      chips.push({ type: "remote", name: rf.name, remotes: [], refs: [rf] });
+      continue;
+    }
+    const chip = chipFor(branch);
+    chip.remotes.push(remote);
+    chip.refs.push(rf);
+  }
+  return chips;
+}
+
 export interface GraphRow {
   commit: GraphCommit;
   nodeLane: number; // column the commit's dot sits in

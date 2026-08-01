@@ -1,7 +1,9 @@
 import { useMemo } from "react";
-import { laneColor, laneCount, layoutGraph } from "../../lib/gitgraph.ts";
-import type { GraphCommit, GraphRow } from "../../lib/gitgraph.ts";
+import { groupRefs, laneColor, laneCount, layoutGraph } from "../../lib/gitgraph.ts";
+import type { GraphCommit, GraphRow, RefChip } from "../../lib/gitgraph.ts";
 import { relTime } from "../../lib/intl.ts";
+import { useT } from "../../lib/i18n/index.ts";
+import { Icon } from "../../ui/Icon.tsx";
 
 // CommitGraph renders the lane-layout DAG (codeleaf CommitGraphScreen port). Each row is
 // a fixed-height flex line: an SVG graph cell (lanes + edges + node) beside a message
@@ -147,13 +149,8 @@ function CommitRow({
       </svg>
       <div className="cgraph-msg">
         <div className="cgraph-line1">
-          {commit.refs.map((rf, i) => (
-            <span
-              key={i}
-              className={"cgraph-ref ref-" + rf.type + (rf.type === "head" && rf.name === current ? " current" : "")}
-            >
-              {rf.name}
-            </span>
+          {groupRefs(commit.refs).map((chip, i) => (
+            <RefBadge key={i} chip={chip} current={current} />
           ))}
           <span className="cgraph-subj">{commit.subject}</span>
         </div>
@@ -162,5 +159,40 @@ function CommitRow({
         </div>
       </div>
     </li>
+  );
+}
+
+// RefBadge draws one grouped chip (lib/gitgraph groupRefs). The kind is carried by a
+// leading icon rather than spelled into the label — a tag reads "🏷 v0.5.0", not
+// "refs/tags/v0.5.0" — and a local branch whose remotes sit on this same commit gets a
+// cloud marker instead of a second "origin/…" chip beside it.
+function RefBadge({ chip, current }: { chip: RefChip; current?: string }) {
+  const tr = useT();
+  const isCurrent = chip.type === "head" && chip.name === current;
+  const icon = chip.type === "tag" ? "tag" : chip.type === "remote" ? "cloud" : "git-branch";
+  // The marker stays short so the BRANCH NAME keeps the chip's width: "origin" is the
+  // near-universal remote and the cloud alone says it; a single other remote is worth
+  // naming; several collapse to a count, with the tooltip carrying the full list.
+  const named =
+    chip.remotes.length > 1 ? `×${chip.remotes.length}` : chip.remotes[0] === "origin" ? "" : (chip.remotes[0] ?? "");
+  const title =
+    chip.type === "tag"
+      ? tr("scm.ref_tag", { name: chip.name })
+      : chip.type === "remote"
+        ? tr("scm.ref_remote", { name: chip.name })
+        : chip.remotes.length > 0
+          ? tr("scm.ref_synced", { name: chip.name, remotes: chip.remotes.map((r) => `${r}/${chip.name}`).join(", ") })
+          : tr("scm.ref_local", { name: chip.name });
+  return (
+    <span className={"cgraph-ref ref-" + chip.type + (isCurrent ? " current" : "")} title={title}>
+      <Icon name={icon} className="cgraph-ref-ic" />
+      <span className="cgraph-ref-name">{chip.name}</span>
+      {chip.remotes.length > 0 && (
+        <span className="cgraph-ref-sync">
+          <Icon name="cloud" />
+          {named}
+        </span>
+      )}
+    </span>
   );
 }

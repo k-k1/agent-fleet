@@ -189,8 +189,14 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Chip = kind icon + name (+ a remote marker when local and remote agree). The icon
+   replaces the old spelled-out kind ("refs/tags/v1" → 🏷 v1), so the width goes to the
+   name; the flex row is what lets only the NAME ellipsize while the markers stay. */
 .cgraph-ref {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   font-family: var(--mono);
   font-size: 10px;
   padding: 1px 5px;
@@ -198,16 +204,39 @@
   background: var(--btn);
   border: 1px solid var(--btn-border);
   color: var(--fg);
-  max-width: 160px;
+  max-width: 180px;
+  white-space: nowrap;
+}
+.cgraph-ref-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+}
+.cgraph-ref .codicon {
+  font-size: 10px;
+  line-height: 1;
+  flex: none;
+}
+/* The "local and its remote(s) sit here" marker. Muted against the chip's own colour so
+   it reads as an annotation on the branch, not a second ref. */
+.cgraph-ref-sync {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  opacity: 0.75;
+  border-left: 1px solid var(--btn-border);
+  margin-left: 1px;
+  padding-left: 4px;
 }
 .cgraph-ref.ref-head.current {
   background: var(--accent);
   border-color: transparent;
   color: var(--on-accent);
   font-weight: 600;
+}
+.cgraph-ref.ref-head.current .cgraph-ref-sync {
+  border-left-color: color-mix(in srgb, var(--on-accent) 40%, transparent);
 }
 /* Tag chips ride the theme's warn hue. The old literal #d6a13a was a dark-theme amber
    and read 1.9:1 on the light button surface. */
