@@ -228,9 +228,24 @@ func (c *chatConversation) afWriteEnabled() bool { return c.Tools == toolsAFWrit
 // disallowed (chatToolLimits), so a write attempt just fails — this steers the model away
 // from even trying (it otherwise tends to "save the result to a file" at the end of a big
 // task, then fail) and to always return the full result as chat text.
+//
+// Locale-branched like the other prompts that steer the reply language (docs/28 §4):
+// this rule sits in EVERY system prompt, so a Japanese-only version quietly biases every
+// answer toward Japanese even for a user whose Console is English.
 const chatOutputRule = "【出力ルール（厳守）】ファイルの作成・編集・保存やコマンド実行はできません（ツールは無効化されています）。" +
 	"翻訳・要約・回答などの成果物は、長い場合でも省略・分割保存をせず、必ずこの返信の本文にテキストとして全文出力してください。" +
 	"ファイルへ保存しようとしないでください。"
+
+const chatOutputRuleEN = "[Output rules (strict)] You cannot create, edit or save files, or run commands (the tools are disabled). " +
+	"Always return the whole result — translation, summary, answer — as text in the body of this reply, " +
+	"however long it is; never abbreviate it or split it into saved files. Do not try to write to a file."
+
+func chatOutputRuleFor(locale string) string {
+	if locale == "en" {
+		return chatOutputRuleEN
+	}
+	return chatOutputRule
+}
 
 // langRuleJA / langRuleEN force the reply language when the user pins one in ui-prefs
 // (DisplayTab). Each is written in its own target language so it also steers the model
@@ -246,6 +261,15 @@ const (
 // auto-detecting direction (JA↔EN), which a forced language would break. That is now the
 // ad-hoc "translate" verb (docs/30 ②); the AssistantID check keeps threads created by the
 // old 翻訳 builtin exempt too.
+//
+// "auto" is not actually neutral for an English user: the builtin personas are written in
+// Japanese, so with no rule at all the model follows the persona and answers in Japanese
+// even though the person reading it chose an English Console. ADR 0033's axis is "who
+// reads the string", so auto falls back to the display language — but only for "en", and
+// deliberately asymmetrically: for a Japanese Console, auto keeps its documented meaning
+// (follow the input, so writing in English gets an English answer) because the prompts
+// around it are already Japanese and need no correction. Revisit once the personas
+// themselves are localized.
 func (c *chatConversation) languageRule() string {
 	if c.SeedVerb == "translate" || c.AssistantID == "translate" {
 		return ""
@@ -254,6 +278,9 @@ func (c *chatConversation) languageRule() string {
 	case "ja":
 		return langRuleJA
 	case "en":
+		return langRuleEN
+	}
+	if uiLocale() == "en" {
 		return langRuleEN
 	}
 	return ""
@@ -267,7 +294,7 @@ func (c *chatConversation) personaOf() string {
 	if strings.TrimSpace(c.Persona) != "" {
 		base = c.Persona
 	}
-	s := base + "\n\n" + chatOutputRule
+	s := base + "\n\n" + chatOutputRuleFor(uiLocale())
 	if rule := c.languageRule(); rule != "" {
 		s += "\n\n" + rule
 	}
