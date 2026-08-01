@@ -1,0 +1,33 @@
+# Forbidden-token ledger for release artifacts (docs/35 §35.7.5).
+#
+# Every line names one string that must never appear in anything we ship:
+# a former employer's name, a real person's name, an internal repository or
+# host. They were removed from this repository's whole history on 2026-08-01,
+# and this ledger is what keeps them from coming back through a build.
+#
+# The strings themselves are deliberately absent. This repository is public, so
+# writing them here would publish exactly what the gate exists to keep out.
+# What is stored is enough to recognise a string and nothing else:
+#
+#   <sha256 of the canonical form>  <length in runes>  <Rabin-Karp value>  <id>
+#
+# Canonical form = letters/digits lowercased, every run of anything else
+# collapsed to one space, ends trimmed. deploy/release/scan slides a window of
+# each length over the same folding of every artifact byte, so a term is caught
+# however it is spelled ("Foo Inc.", "foo-inc", "FooInc", "foo\n * Inc") and
+# wherever it sits, including inside a longer word or a file name.
+#
+# To add a term (the term never touches a file or the process list):
+#   printf '%s' 'the term' | go run ./deploy/release/scan \
+#     --ledger /dev/null --add --id <id> >> deploy/release/forbidden.sha256
+#
+# ids: corp-* employer, name-* person, host-* internal host, repo-* internal repo
+bf47d02c52d3c25647e5b80aef5dce2de713466952be11715c7e0bbebdd72dd9  7  375ecff6258df8c9  corp-1
+3e08f136ce4cf1f8355823c775b785693a4c0ef392deedef2191ff3f7719f2ea  8  b2dd68a121102f5a  name-1
+848b5b8961d82b7e8c8a4edfd0bd8ea4d012cae88bbd86abd2a96b820a0699e6  7  60805d7a44b3287a  name-2
+4e836e7b3cf0837d568988a4b3608f1f7228d05a06e634e0826b612e924c8e68  10  7d88818a1314c144  host-1
+ada4b71d52532a2a8eb08eb8a711bfa093e0c639ae1350006e9a697718b52393  7  a1b3500160c941cb  repo-1
+509cc43d9f9e7ad4cd607da571da63481a668ef9392a590be0f957a6a53cd569  7  2c368d01af37c016  repo-2
+3227bbcb9b92e705e9d1d81fd3e9fb9bf1f3d8be3e1308e9d5f6a1d31f53f740  9  0bcbeba4ed79659a  repo-3
+ca4467f7d03e2069bc11316de87fff7c23685b2fad8a3d1fd86d4cf23cdf22f2  6  100b1cc235fac9b0  repo-4
+c94f2214e01c27ba83b3db5fa5848e7ba4865d8837d64fdd78e90441d2456bd9  7  aa5cbc0165b12707  repo-5

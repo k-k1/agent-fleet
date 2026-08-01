@@ -531,8 +531,8 @@ export function conversation(locale, id) {
     // 既定のスレッドには計画を入れておく（チップが塗られた状態＋パネルの本文が見える）。
     plan_updated_at: ms(14),
     plan: ja
-      ? "## 制約\n- gradle 同時実行は最大2本（5GiB/8core の共有コンテナ）\n- 各レーンは push まで。統合ブランチへのマージは統括セッションが行う\n\n## 前提\n- 統合ブランチ = `feature/G3-1175`（develop 起点）\n- シード済みテスト29件のうち2件は未実装のため意図的に fail\n\n## これからやること\n- Wave 1: Lane A を起こす\n- Wave 2: Lane 1 / Lane 2 を並列（Lane A マージ後）"
-      : "## Constraints\n- At most 2 concurrent gradle runs (shared 5GiB/8-core container)\n- Lanes stop at push; the integration merge is done by this session\n\n## Given\n- Integration branch = `feature/G3-1175` (cut from develop)\n- 2 of the 29 seeded tests fail on purpose (feature not implemented yet)\n\n## Next up\n- Wave 1: start Lane A\n- Wave 2: Lane 1 / Lane 2 in parallel (after Lane A merges)",
+      ? "## 制約\n- gradle 同時実行は最大2本（5GiB/8core の共有コンテナ）\n- 各レーンは push まで。統合ブランチへのマージは統括セッションが行う\n\n## 前提\n- 統合ブランチ = `feature/APP-1175`（develop 起点）\n- シード済みテスト29件のうち2件は未実装のため意図的に fail\n\n## これからやること\n- Wave 1: Lane A を起こす\n- Wave 2: Lane 1 / Lane 2 を並列（Lane A マージ後）"
+      : "## Constraints\n- At most 2 concurrent gradle runs (shared 5GiB/8-core container)\n- Lanes stop at push; the integration merge is done by this session\n\n## Given\n- Integration branch = `feature/APP-1175` (cut from develop)\n- 2 of the 29 seeded tests fail on purpose (feature not implemented yet)\n\n## Next up\n- Wave 1: start Lane A\n- Wave 2: Lane 1 / Lane 2 in parallel (after Lane A merges)",
     messages: [
       {
         role: "user",
