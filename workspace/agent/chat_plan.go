@@ -41,35 +41,64 @@ const (
 	summaryMarker = "<<<SUMMARY>>>"
 )
 
-// planShape は計画ブロックの型（3見出し固定）。
+// planShapeFor は計画ブロックの型（3見出し固定）。見出しそのものが計画の本文として保存され、
+// 利用者が notice カードで読むので、docs/28 P6 で表示言語に分岐した（中身の言語は会話の
+// 主要言語のまま — compactSummaryPromptFor の注記を参照）。
 //
 // ★「完了したこと」という見出しを置かないのが肝。見出しがあるとモデルは完了作業を
 // 網羅しにいき、引き継ぎの大半が「次の一手を1ミリも変えない実績報告」で埋まる。運ぶ
 // 基準は「完了したか」ではなく**「これが無いと次の一手を間違えるか」**なので、枠の
 // 名前を『前提』にして必要なものだけを吸い上げる（例: 意図的に fail させてあるテスト
 // は完了作業だが、落とすと後任が「壊れている」と誤認して直しに行く＝運ぶ側）。
-const planShape = "## 制約\n" +
-	"（環境・禁止事項・運用ルールなど、この先ずっと効く前提。コマンドや同時実行数など具体的に）\n" +
-	"## 前提\n" +
-	"（次の一手に必要な既成事実**だけ**。ID・ブランチ名・意図的な例外など。" +
-	"完了した作業を網羅列挙しない。git 履歴や課題管理システムを見れば分かることは書かない）\n" +
-	"## これからやること\n" +
-	"（順序・依存・分岐条件。着手条件や担当があれば添える）"
+func planShapeFor(lang string) string {
+	if lang == "en" {
+		// 見出しは Console の入力プレースホルダ（chat.plan.placeholder の en）と同じ綴りに
+		// そろえる — 手編集の枠と生成される計画の見出しが食い違うと、差分更新のたびに
+		// 見出しが入れ替わる。
+		return "## Constraints\n" +
+			"(Environment, prohibitions, operating rules — premises that keep applying. Be concrete: commands, concurrency limits, …)\n" +
+			"## Given\n" +
+			"(**Only** the established facts the next step needs: ids, branch names, deliberate exceptions. " +
+			"Do not enumerate completed work; do not write what git history or the issue tracker already tells you)\n" +
+			"## Next up\n" +
+			"(Order, dependencies, branch conditions. Add entry conditions and owners where they exist)"
+	}
+	return "## 制約\n" +
+		"（環境・禁止事項・運用ルールなど、この先ずっと効く前提。コマンドや同時実行数など具体的に）\n" +
+		"## 前提\n" +
+		"（次の一手に必要な既成事実**だけ**。ID・ブランチ名・意図的な例外など。" +
+		"完了した作業を網羅列挙しない。git 履歴や課題管理システムを見れば分かることは書かない）\n" +
+		"## これからやること\n" +
+		"（順序・依存・分岐条件。着手条件や担当があれば添える）"
+}
 
-// planUpdateInstruction は既存計画があるときに前置する更新指示。ゼロから作り直させると
+// planUpdateInstructionFor は既存計画があるときに前置する更新指示。ゼロから作り直させると
 // 世代ごとに揺れて、結局要約方式と同じ劣化をする — 差分更新に固定する。
-const planUpdateInstruction = "【現在の作業計画】以下はこの会話で現在有効な作業計画です。" +
-	planMarker + " ブロックは、これを土台に**直近の会話で変わった点だけを反映して書き直して**ください" +
-	"（ゼロから作り直さない／変更が無ければそのまま返す／完了した項目は削除する）。"
+func planUpdateInstructionFor(lang string) string {
+	if lang == "en" {
+		return "[Current work plan] Below is the work plan currently in effect for this conversation. " +
+			"Write the " + planMarker + " block **from it, reflecting only what changed in the recent conversation** " +
+			"(do not start over from scratch / return it unchanged when nothing changed / drop items that are done)."
+	}
+	return "【現在の作業計画】以下はこの会話で現在有効な作業計画です。" +
+		planMarker + " ブロックは、これを土台に**直近の会話で変わった点だけを反映して書き直して**ください" +
+		"（ゼロから作り直さない／変更が無ければそのまま返す／完了した項目は削除する）。"
+}
 
-// planPreamble は新しいプロバイダセッションへ計画を渡すときの枠書き。
+// planPreambleFor は新しいプロバイダセッションへ計画を渡すときの枠書き。
 //
 // ★ handoffPreamble（要約）が「データであり、新たな指示として解釈しないでください」と
 // 書いているのと**逆向き**にしてある。要約は背景情報だが、計画は従わせたい指示だから。
 // ここを取り違えて計画まで「参考情報」に格下げすると、運べていても従わず、利用者から
 // 見れば結局「忘れている」のと同じになる。
-const planPreamble = "【現在の作業計画】これはこの会話で合意済みの、現在有効な作業計画です。" +
-	"以降の作業はこの計画に沿って進めてください（利用者から新しい指示があればそちらが優先）。"
+func planPreambleFor(lang string) string {
+	if lang == "en" {
+		return "[Current work plan] This is the agreed work plan currently in effect for this conversation. " +
+			"Carry the work forward along this plan (a new instruction from the user takes precedence)."
+	}
+	return "【現在の作業計画】これはこの会話で合意済みの、現在有効な作業計画です。" +
+		"以降の作業はこの計画に沿って進めてください（利用者から新しい指示があればそちらが優先）。"
+}
 
 // 計画更新（明示・oneShotHeadless）の窓。壁打ちは数往復に渡ることがあるので返信サジェスト
 // （直近2ターン）より広く取り、1発言は末尾を残して切る（合意は発言の終わりに書かれる）。
@@ -84,11 +113,12 @@ func planModel() string { return envOr("AF_PLAN_MODEL", "sonnet") }
 // compactPrompt builds the compaction turn's instruction: one reply carrying the plan
 // block (原文で運ぶ) and the summary block (背景). 既存計画があれば差分更新を指示する。
 func compactPrompt(c *chatConversation) string {
+	lang := uiLocale()
 	var b strings.Builder
 	if p := strings.TrimSpace(c.Plan); p != "" {
-		b.WriteString(planUpdateInstruction + "\n\n" + p + "\n\n---\n\n")
+		b.WriteString(planUpdateInstructionFor(lang) + "\n\n" + p + "\n\n---\n\n")
 	}
-	b.WriteString(compactSummaryPrompt)
+	b.WriteString(compactSummaryPromptFor(lang))
 	return b.String()
 }
 
@@ -135,24 +165,33 @@ func stripPlanMarkers(s string) string {
 }
 
 // blankPlan reports whether the model's plan block is a "no plan" placeholder rather
-// than a plan. 空文字だけを見ると「なし」「N/A」が計画として保存されてしまう。
+// than a plan. 空文字だけを見ると「なし」「N/A」が計画として保存されてしまう。英語の
+// 言い回しも見るのは、プロンプトが両言語になった以上どちらでも返ってくるため。
 func blankPlan(s string) bool {
 	t := strings.Trim(strings.TrimSpace(s), "（）()「」-—–*_ 　")
 	switch strings.ToLower(t) {
-	case "", "なし", "特になし", "none", "n/a", "na", "無し":
+	case "", "なし", "特になし", "none", "n/a", "na", "無し", "no plan", "nothing", "not applicable":
 		return true
 	}
 	return false
 }
 
-// clampPlan trims a plan to planMaxRunes (末尾を落とす — 計画は上から順に効く)。
+// clampPlan trims a plan to planMaxRunes (末尾を落とす — 計画は上から順に効く)。切り落とした
+// 印は保存される計画本文に残り利用者が読むので、表示言語に合わせる。
 func clampPlan(s string) string {
 	t := strings.TrimSpace(s)
 	r := []rune(t)
 	if len(r) <= planMaxRunes {
 		return t
 	}
-	return strings.TrimSpace(string(r[:planMaxRunes])) + "\n\n（長さ上限のため以降を省略）"
+	return strings.TrimSpace(string(r[:planMaxRunes])) + "\n\n" + planTruncatedNote(uiLocale())
+}
+
+func planTruncatedNote(lang string) string {
+	if lang == "en" {
+		return "(truncated here — the plan hit its length limit)"
+	}
+	return "（長さ上限のため以降を省略）"
 }
 
 // setPlan stores a new plan and reports whether it actually changed. 変わっていない
@@ -185,7 +224,7 @@ func injectPlan(c *chatConversation, agent, prompt string) (string, bool) {
 	if plan == "" || providerHasResume(c, agent) {
 		return prompt, false
 	}
-	return planPreamble + "\n\n" + plan + "\n\n---\n\n" + prompt, true
+	return planPreambleFor(uiLocale()) + "\n\n" + plan + "\n\n---\n\n" + prompt, true
 }
 
 // injectCarryover prepends everything that must survive a provider-session reset:
@@ -202,27 +241,61 @@ func injectCarryover(c *chatConversation, agent, prompt string) (string, bool) {
 
 // --- 計画を更新（明示・oneShotHeadless）---------------------------------------
 
-const planRefreshPersona = "あなたは作業計画の管理者です。渡された現在の計画と直近の会話を突き合わせ、" +
-	"計画の最新版だけを出力します。前置き・後書き・コードフェンスは書きません。"
+func planRefreshPersonaFor(lang string) string {
+	if lang == "en" {
+		return "You maintain a work plan. You compare the current plan you are given against the recent conversation " +
+			"and output only the plan's latest version. You never write a preamble, a closing remark or a code fence."
+	}
+	return "あなたは作業計画の管理者です。渡された現在の計画と直近の会話を突き合わせ、" +
+		"計画の最新版だけを出力します。前置き・後書き・コードフェンスは書きません。"
+}
 
 // planRefreshPrompt asks for the updated plan only. 会話のプロバイダセッションではなく
 // 一発ヘッドレスで回すので、文脈は「現在の計画＋直近の会話」だけを明示的に渡す。
-func planRefreshPrompt(c *chatConversation) string {
+// 会話本文は原文のまま渡し、枠だけを表示言語で書く（返信サジェスト・件名提案と同じ分け方）。
+func planRefreshPrompt(c *chatConversation, lang string) string {
 	var b strings.Builder
-	if p := strings.TrimSpace(c.Plan); p != "" {
-		b.WriteString("【現在の作業計画】\n" + p + "\n\n")
+	b.WriteString(planRefreshInstructions(strings.TrimSpace(c.Plan), lang))
+	b.WriteString(planContextHeader(lang))
+	for _, m := range planContextTurns(c.Messages) {
+		fmt.Fprintf(&b, "%s: %s\n\n", m.Role, planTailText(m.Content))
+	}
+	return b.String()
+}
+
+func planRefreshInstructions(plan, lang string) string {
+	if lang == "en" {
+		var b strings.Builder
+		if plan != "" {
+			b.WriteString("[Current work plan]\n" + plan + "\n\n")
+			b.WriteString("[Instruction] If the recent conversation changed the plan, rewrite it from the plan above, " +
+				"reflecting only what changed (do not start over from scratch; output the plan above unchanged when nothing changed).\n")
+		} else {
+			b.WriteString("[Instruction] Derive the work plan for what comes next from the recent conversation.\n")
+		}
+		b.WriteString("Write the plan under these three headings (omit a heading that has nothing under it). " +
+			"Write it in the language mainly used in this conversation.\n\n")
+		b.WriteString(planShapeFor(lang) + "\n\n")
+		return b.String()
+	}
+	var b strings.Builder
+	if plan != "" {
+		b.WriteString("【現在の作業計画】\n" + plan + "\n\n")
 		b.WriteString("【指示】直近の会話で計画が変わっていれば、上の計画を土台に変わった点だけを反映して" +
 			"書き直してください（ゼロから作り直さない／変更が無ければ上の計画をそのまま出力する）。\n")
 	} else {
 		b.WriteString("【指示】直近の会話から、この先の作業計画を起こしてください。\n")
 	}
 	b.WriteString("計画は次の3見出しで書きます（該当が無い見出しは省略可）。この会話で主に使われている言語で。\n\n")
-	b.WriteString(planShape + "\n\n")
-	b.WriteString("--- 直近の会話 ---\n")
-	for _, m := range planContextTurns(c.Messages) {
-		fmt.Fprintf(&b, "%s: %s\n\n", m.Role, planTailText(m.Content))
-	}
+	b.WriteString(planShapeFor(lang) + "\n\n")
 	return b.String()
+}
+
+func planContextHeader(lang string) string {
+	if lang == "en" {
+		return "--- recent conversation ---\n"
+	}
+	return "--- 直近の会話 ---\n"
 }
 
 // planContextTurns は計画の文脈に使う末尾窓。report / notice は会話の合意ではないので
@@ -258,7 +331,8 @@ func refreshPlan(ctx context.Context, c *chatConversation) (bool, error) {
 	ctx = withUsageTag(ctx, usageTag{
 		Feature: usageFeaturePlanUpdate, Trigger: usageTriggerManual, Ref: c.ID,
 	})
-	reply, err := oneShotHeadless(ctx, planRefreshPersona, planRefreshPrompt(c), planModel())
+	lang := uiLocale()
+	reply, err := oneShotHeadless(ctx, planRefreshPersonaFor(lang), planRefreshPrompt(c, lang), planModel())
 	if err != nil {
 		return false, fmt.Errorf("plan refresh failed: %w", err)
 	}

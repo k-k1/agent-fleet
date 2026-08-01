@@ -93,7 +93,7 @@ func TestClampPlanCaps(t *testing.T) {
 func TestInjectPlanOnlyOnFreshSession(t *testing.T) {
 	c := &chatConversation{Plan: "## これからやること\n- Lane A"}
 	p, carried := injectPlan(c, "claude", "続けて")
-	if !carried || !strings.HasPrefix(p, planPreamble) || !strings.HasSuffix(p, "続けて") {
+	if !carried || !strings.HasPrefix(p, planPreambleFor("ja")) || !strings.HasSuffix(p, "続けて") {
 		t.Fatalf("fresh session: (%q, %v)", p, carried)
 	}
 	c.ClaudeSessionID = "live"
@@ -131,15 +131,15 @@ func TestInjectCarryoverOrder(t *testing.T) {
 
 func TestCompactPromptCarriesExistingPlanForDiffUpdate(t *testing.T) {
 	c := &chatConversation{}
-	if strings.Contains(compactPrompt(c), planUpdateInstruction) {
+	if strings.Contains(compactPrompt(c), planUpdateInstructionFor("ja")) {
 		t.Fatal("no plan yet: must not ask for a diff update")
 	}
 	c.Plan = "## これからやること\n- Lane A"
 	p := compactPrompt(c)
-	if !strings.Contains(p, planUpdateInstruction) || !strings.Contains(p, "Lane A") {
+	if !strings.Contains(p, planUpdateInstructionFor("ja")) || !strings.Contains(p, "Lane A") {
 		t.Fatalf("existing plan not offered for diff update: %q", p)
 	}
-	if !strings.Contains(p, compactSummaryPrompt) {
+	if !strings.Contains(p, compactSummaryPromptFor("ja")) {
 		t.Fatal("summary instruction lost")
 	}
 }
@@ -216,18 +216,18 @@ func TestPlanRefreshPromptShape(t *testing.T) {
 		{Role: "report", Content: "セッション完了"},
 		{Role: "assistant", Content: "了解。順序を入れ替える"},
 	}}
-	p := planRefreshPrompt(c)
+	p := planRefreshPrompt(c, "ja")
 	if !strings.Contains(p, "Wave 2 は Lane 2 を先に回して") || !strings.Contains(p, "順序を入れ替える") {
 		t.Fatalf("recent turns missing: %q", p)
 	}
 	if strings.Contains(p, "コンテキストを圧縮しました") || strings.Contains(p, "セッション完了") {
 		t.Fatal("notice/report must stay out of the plan context window")
 	}
-	if !strings.Contains(p, planShape) {
+	if !strings.Contains(p, planShapeFor("ja")) {
 		t.Fatal("plan shape missing")
 	}
 	c.Plan = "## これからやること\n- 旧順序"
-	if !strings.Contains(planRefreshPrompt(c), "旧順序") {
+	if !strings.Contains(planRefreshPrompt(c, "ja"), "旧順序") {
 		t.Fatal("existing plan must be offered as the base for a diff update")
 	}
 }

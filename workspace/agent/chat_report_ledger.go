@@ -516,19 +516,15 @@ func instrReopenCandidates(rows []instrRow, now time.Time, grace time.Duration) 
 	return out
 }
 
-// instrFoldNote renders the「指示N件ぶん」suffix for a folded report (docs/51 §データ
-// モデル): 複数の指示が同じ静穏で完了したときは1通に**明示的に束ねる**（v1 のように
-// 潰さない）。1件のときは空文字 — 通常の報告本文は v1 と1文字も変わらない。
-func instrFoldNote(rows []instrRow) string {
-	if len(rows) < 2 {
-		return ""
-	}
+// instrFoldAts joins the dispatch times of the rows a folded report covers (docs/51
+// §データモデル): 複数の指示が同じ静穏で完了したときは1通に**明示的に束ねる**（v1 のように
+// 潰さない）。「指示N件ぶん」の文言そのものは chat_report_text.go（表示言語で組む）。
+func instrFoldAts(rows []instrRow) string {
 	ats := make([]string, 0, len(rows))
 	for _, r := range rows {
 		ats = append(ats, r.DeliveredAt)
 	}
-	return "（この報告は指示 " + strconv.Itoa(len(rows)) + " 件ぶんの完了です。投入: " +
-		strings.Join(ats, " / ") + "）"
+	return strings.Join(ats, " / ")
 }
 
 // --- v1 arm からの移行 ------------------------------------------------------------

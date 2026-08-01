@@ -67,11 +67,22 @@ type chatMessage struct {
 	// by its own auto turn or injected into a later prompt). An undelivered report
 	// exists in the stored thread but the LLM hasn't seen it yet.
 	Delivered bool `json:"delivered,omitempty"`
-	// NoticeKey / NoticeArgs localize role=="notice" bodies (ADR 0033): the Console
-	// renders the catalog entry for the user's locale and only falls back to Content
-	// (source language) for notices written before the key existed. See chat_notice.go.
+	// NoticeKey / NoticeArgs localize the bodies WE generate — role=="notice" (ADR 0033)
+	// and, since docs/28 P6, role=="report" as well: the Console renders the catalog
+	// entry for the user's locale and only falls back to Content (source language) for
+	// records written before the key existed. See chat_notice.go / chat_report_text.go.
 	NoticeKey  string            `json:"notice_key,omitempty"`
 	NoticeArgs map[string]string `json:"notice_args,omitempty"`
+	// ReportKind / ReportReason are the EVENT a role=="report" card stands for
+	// (answer-ready / question / plan-approval / exit …, qualified by turn-failed,
+	// turn-aborted, oom …). docs/28 P6 separated the two readers of a report: the card
+	// the user reads comes from NoticeKey (display), and the operator's marching orders
+	// are re-rendered from these fields at injection time (reportPromptFor) in the
+	// display language — storing the instruction text would freeze its language and
+	// make translating the card change what the operator is told to do.
+	// Empty on reports written before P6: those fall back to Content on both sides.
+	ReportKind   string `json:"report_kind,omitempty"`
+	ReportReason string `json:"report_reason,omitempty"`
 }
 
 // chatConversation is the persisted record (one JSON file per conversation).
@@ -262,14 +273,17 @@ const (
 // ad-hoc "translate" verb (docs/30 ②); the AssistantID check keeps threads created by the
 // old 翻訳 builtin exempt too.
 //
-// "auto" is not actually neutral for an English user: the builtin personas are written in
-// Japanese, so with no rule at all the model follows the persona and answers in Japanese
-// even though the person reading it chose an English Console. ADR 0033's axis is "who
-// reads the string", so auto falls back to the display language — but only for "en", and
-// deliberately asymmetrically: for a Japanese Console, auto keeps its documented meaning
-// (follow the input, so writing in English gets an English answer) because the prompts
-// around it are already Japanese and need no correction. Revisit once the personas
-// themselves are localized.
+// "auto" is symmetric again (docs/28 P6). It used to fall back to the display language
+// for "en" only: the personas and the output rule were written in Japanese, so with no
+// rule at all an English Console still got Japanese answers, and that one-sided patch
+// corrected it. P6 localized the actual prompts — persona (builtin and ad-hoc), output
+// rule, carry-over preambles — so a display language now steers the reply on its own and
+// auto can go back to meaning the same thing in both locales: follow the input.
+//
+// That is also the better behaviour for the case the patch got wrong: on an English
+// Console, "translate this into Japanese" or "summarize this Japanese article in
+// Japanese" no longer fights a forced-English directive. Whoever wants the reply pinned
+// regardless of input still has 設定 > 回答言語 (ja / en), which wins over everything here.
 func (c *chatConversation) languageRule() string {
 	if c.SeedVerb == "translate" || c.AssistantID == "translate" {
 		return ""
@@ -280,9 +294,6 @@ func (c *chatConversation) languageRule() string {
 	case "en":
 		return langRuleEN
 	}
-	if uiLocale() == "en" {
-		return langRuleEN
-	}
 	return ""
 }
 
@@ -290,11 +301,12 @@ func (c *chatConversation) languageRule() string {
 // (or the generic chat persona), followed by the global output rule and, when the user
 // pinned an output language, a language directive.
 func (c *chatConversation) personaOf() string {
-	base := chatPersona
+	lang := uiLocale()
+	base := chatPersonaFor(lang)
 	if strings.TrimSpace(c.Persona) != "" {
 		base = c.Persona
 	}
-	s := base + "\n\n" + chatOutputRuleFor(uiLocale())
+	s := base + "\n\n" + chatOutputRuleFor(lang)
 	if rule := c.languageRule(); rule != "" {
 		s += "\n\n" + rule
 	}
@@ -346,9 +358,18 @@ type chatMeta struct {
 
 // chatPersona keeps the headless agent in plain conversational mode (translate,
 // summarize, answer) rather than reaching for file edits or bash on its own.
-const chatPersona = "あなたは Agent Fleet 利用者の作業を補助するアシスタントです。" +
-	"Markdown 文書の翻訳や要約、質問への回答など、頼まれた作業に簡潔に応じてください。" +
-	"特に指示がない限り、ファイルの作成・編集やコマンド実行はせず、チャットで直接回答してください。"
+// docs/28 P6: 表示言語で書く（アシスタントを選ばない会話の唯一のペルソナなので、ここが
+// 日本語のままだと英語 Console でも回答が日本語に倒れる）。
+func chatPersonaFor(lang string) string {
+	if lang == "en" {
+		return "You assist an Agent Fleet user with their work. " +
+			"Handle what you are asked — translating or summarizing Markdown documents, answering questions — concisely. " +
+			"Unless you are told otherwise, do not create or edit files and do not run commands; answer directly in the chat."
+	}
+	return "あなたは Agent Fleet 利用者の作業を補助するアシスタントです。" +
+		"Markdown 文書の翻訳や要約、質問への回答など、頼まれた作業に簡潔に応じてください。" +
+		"特に指示がない限り、ファイルの作成・編集やコマンド実行はせず、チャットで直接回答してください。"
+}
 
 // defaultChatModel is the model the assistant chat's claude runs on when the assistant
 // (or conversation) doesn't pin one — Sonnet keeps assistant chats fast/cheap. Override
