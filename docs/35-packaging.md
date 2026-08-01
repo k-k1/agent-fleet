@@ -759,7 +759,7 @@ P3 = ECS 配布のリリース作法（§35.3.4）。CFN・アダプタ本体（
   パイプ両側が並行でログ順序が非決定 → 集合一致＋依存順序 assert へ（5 連続実行で安定）。
   ※副産物の教訓: ジョブスキップマーカー文字列をコミットメッセージ本文に書くと
   head_commit.message 一致で誤発火する（説明文にも書かない）。
-  ゲート h での `AuthMode` 追加後（d3ab486）にも最終フル run 29810696327 で
+  ゲート h での `AuthMode` 追加後（7a32e4a）にも最終フル run 29810696327 で
   4 job 全緑を再実証。
 - (h) ✅ **sandbox 実走一巡完了**（account 722507597273・ap-northeast-1・
   `af-h.lazmix.jp`）。この Workspace に docker が無いため、イメージは sandbox 内の
@@ -814,7 +814,7 @@ PRSS が 400」を再確認して CI を実測地点にしたが、ゲート初�
 - (k) 素の WSL2 実機 E2E（**ユーザー実施** — §35.8.1 チェックリスト）: 通し E2E +
   chromium sandbox 実測 + オフライン再起動。
 
-**P4 実装状況・ゲート結果（2026-07-21・feat/packaging 〜b3fb24e）**: 表の 6 項目
+**P4 実装状況・ゲート結果（2026-07-21・feat/packaging 〜2c2025c）**: 表の 6 項目
 すべて実装済み。ゲート (i) ✅ = **最終フル run 29813287446 で 5 job 全緑**
 （dist-gate 新設 + native-gate の install.sh 実 tar step を含み、既存 compose/native/
 default/ecs ゲートも無変更通過）。実走で得た確定事項:
@@ -842,7 +842,7 @@ default/ecs ゲートも無変更通過）。実走で得た確定事項:
   secret はユーザーがブラウザで実施）。
 - **runbook に無かった前提を実測で発見**: `workflow_dispatch` は**ワークフローファイル
   が default branch に存在しないと 404**（実行 ref に在っても不可）。feat/packaging を
-  develop へマージ（361deca・コンフリクトなし・合流後 build/test 緑）して解消。
+  develop へマージ（7ea5dcd・コンフリクトなし・合流後 build/test 緑）して解消。
 - publish: `gh workflow run publish-dist.yml -f version=0.1.0` → run 29818785407 全緑
   （preflight → stub self-check → build A+B+C+R+D → publish → summary）。成果物:
   Releases `v0.1.0`（app 35KB / images 1.04GB / native 27MB / SHA256SUMS）+
@@ -855,7 +855,7 @@ default/ecs ゲートも無変更通過）。実走で得た確定事項:
   実証済み。実機起動はゲート k の領分）。
 
 **publish 履歴**: v0.1.0 → v0.1.1（英語化・アシスタントタブ等）→ **v0.1.2（2026-07-22・
-run 29850262365 success）= 入力全断修正（f5158b1・workspace image に `GIT_TERMINAL_PROMPT=0`）
+run 29850262365 success）= 入力全断修正（91e8042・workspace image に `GIT_TERMINAL_PROMPT=0`）
 反映リリース**。workspace image 変更で **rootfs は `4677f9f5a67d` → `1aadff3b24b7` に更新**
 （＝修正が配布 rootfs に載った証跡）。CI 経路 `gh workflow run publish-dist.yml --ref develop
 -f version=0.1.2` で発火。install 検証（この開発 WS・scratchpad 隔離・AF_VERSION=0.1.2）:
@@ -927,7 +927,7 @@ c="$(ls -d ~/.local/share/agent-fleet/chromium/*/chrome-linux*/chrome | head -1)
   E2E → 再起動オフライン起動まで通し確認。**この過程で Console から起動した claude セッションの
   入力全断バグを発見・修正**（`gh pr view` → `git credential fill` が pty を占有し claude の
   入力を横取り。GitHub 未接続＝Bitbucket 専用環境で常時踏む。修正 = `GIT_TERMINAL_PROMPT=0` を
-  image ENV に追加。commit `f5158b1`・§35.9-10 参照）。
+  image ENV に追加。commit `91e8042`・§35.9-10 参照）。
 - **手順 7（任意・systemd user unit 常駐化）✓**（2026-07-22）。`systemctl --user status
   agent-fleet` = **`Active: active (running); enabled`**、Main PID は
   `~/.local/opt/agent-fleet/0.1.1/bin/af-cp`。
@@ -1169,7 +1169,7 @@ git tag -a v0.3.0 <build commit> -m "agent-fleet 0.3.0" && git push origin v0.3.
       image-env.json に手動追記→`af start` やり直し→Console 新規 claude で `hi` 一往復成功を実機確認**
       （2026-07-22）。次の rootfs 再ビルド/publish で恒久反映。
     - **⚠️ 訂正**: 当初「起動時の非必須ネットワーク呼び出しのハング＝env 無効化で解決」と誤結論し、
-      commit **b1c1c41** で `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`/`DISABLE_TELEMETRY`/
+      commit **14e6d6d** で `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`/`DISABLE_TELEMETRY`/
       `DISABLE_ERROR_REPORTING` を追加した（本節の旧版もその記述だった）。env は claude に届いていたが
       入力 LOST のまま＝**入力の真因でない**（`gh pr view` はテレメトリでないので DISABLE 系では止まらない）。
       当該3キーは制限ネット向け無害ハードニングとして**残置**（コメントを訂正）。真の修正は上記
@@ -1182,7 +1182,7 @@ git tag -a v0.3.0 <build commit> -m "agent-fleet 0.3.0" && git push origin v0.3.
 
 ## 35.10 v0.1.1 公開後の機能差分（次リリースの README／リリースノート素材・2026-07-23 整理）
 
-範囲: **v0.1.1（merge `790f756`・2026-07-21 publish）→ develop `d3b37a5`（2026-07-23）**。
+範囲: **v0.1.1（merge `df34057`・2026-07-21 publish）→ develop `a75039f`（2026-07-23）**。
 この間に **v0.1.2 を publish 済み**（2026-07-22・rootfs `1aadff3b24b7`・下記「修正」の
 claude 入力全断/curl --retry を反映した hotfix）。ただし **dist repo の README seed は
 0.1.1 時点のまま**（公開 README に「Scheduled execution」「Automatic updates」等は未掲載

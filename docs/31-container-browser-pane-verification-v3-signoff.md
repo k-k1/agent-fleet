@@ -1,23 +1,23 @@
-# コンテナ内ブラウザペイン V1 サインオフ実測レポート v3（`5690b15` 焼き込みイメージ再走）
+# コンテナ内ブラウザペイン V1 サインオフ実測レポート v3（`59f16a2` 焼き込みイメージ再走）
 
 > 実施日: 2026-07-19
 > 対象設計: [31-container-browser-pane.md](31-container-browser-pane.md)
 > 対象ADR: [decisions/0018-container-browser-pane.md](decisions/0018-container-browser-pane.md)
 > 前回（修正前・不合格）: `feature/browser-pane-v1-container-verify:docs/31-container-browser-pane-verification.md`
-> 前回（backpressure 修正後・条件付き合格）: [31-container-browser-pane-verification-v2.md](31-container-browser-pane-verification-v2.md)（`verify/browser-pane-v1-recheck:37b46a8`）
-> 対象イメージ: `5690b15`（＝`382dfe7` backpressure 修正 ＋ `37b46a8` 初回 attach レース修正を統合）を焼き込んだ完成イメージ
+> 前回（backpressure 修正後・条件付き合格）: [31-container-browser-pane-verification-v2.md](31-container-browser-pane-verification-v2.md)（`verify/browser-pane-v1-recheck:5b37cfe`）
+> 対象イメージ: `59f16a2`（＝`be6abef` backpressure 修正 ＋ `5b37cfe` 初回 attach レース修正を統合）を焼き込んだ完成イメージ
 > 最終判定: **合格 — V1 サインオフ完了**
 
 ## 1. 結論
 
-v2 の唯一の残ブロッカー（§5 の初回 attach `Page.startScreencast` レース）を修正した `5690b15` を
+v2 の唯一の残ブロッカー（§5 の初回 attach `Page.startScreencast` レース）を修正した `59f16a2` を
 **焼き込み直した完成イメージ**（container `91cd25172070`、`workspace-agent` build 2026-07-19 09:15:53）で
 V1 マトリクスと即時 attach ストレスを再走した。結果、**新規バグはなく、v2 で条件付きだった項目がすべて
 PASS に転じた**。V1 をサインオフ可能と判定する。
 
 - **焼き込みバイナリが対象修正を含むことを高い確度で確認**した。baked `workspace-agent` の
   `main.(*browserPage).startScreencast` は、リトライ用エラー文字列 `Not attached to an active page` を
-  持ち、本ワークツリー（HEAD `5690b15`）から `go build` した同関数と**ニーモニック列（293 命令）と
+  持ち、本ワークツリー（HEAD `59f16a2`）から `go build` した同関数と**ニーモニック列（293 命令）と
   CALL 数（28）が一致**、build 時刻 09:15:53 も commit 時刻 07:44:12 より後。これらの静的一致に加え、
   即時 attach 30/30 の実挙動（§4.1）と合わせて修正の焼き込みを確認した。なお**ニーモニック比較は
   オペランド・即値・分岐先・定数を照合しないため、image digest の代替となる完全な同一性証明ではない**（§2.2）。
@@ -78,9 +78,9 @@ image digest が取れないため、焼き込みバイナリが対象修正（`
 
 | 確認 | 結果 |
 |---|---|
-| build 時刻 vs commit 時刻 | build `09:15:53` > commit `5690b15`=`07:44:12`（＝マージ後ビルド） |
+| build 時刻 vs commit 時刻 | build `09:15:53` > commit `59f16a2`=`07:44:12`（＝マージ後ビルド） |
 | `startScreencast` リトライ用エラー文字列 | baked に `Not attached to an active page` 在中 |
-| `startScreencast` ニーモニック構造（baked vs `5690b15` から `go build`） | 293 命令すべて一致 |
+| `startScreencast` ニーモニック構造（baked vs `59f16a2` から `go build`） | 293 命令すべて一致 |
 | `startScreencast` の CALL 命令数 | baked 28 / from-src 28（一致） |
 
 `go tool objdump -s 'main\.\(\*browserPage\)\.startScreencast$'` の出力からアドレスを除いたニーモニック列が
@@ -186,7 +186,7 @@ v2 の完成イメージ（修正前）は `predelay=0` で crash・0 frame、�
 | Stop→Start port/path 復元 | 未実施 | 一部(環境) | **一部（環境制約）** | 実 Stop→Start は不可。idle 回収で無状態＝再作成可を確認・Console 復元経路はコード確認 |
 
 **最終判定: 合格（V1 サインオフ完了）**。v2 で唯一残っていた描画系ブロッカー（初回 attach `startScreencast`
-レース）は、`5690b15` を焼き込んだ完成イメージで**即時 attach 30/30 crash 0・predelay 掃引全点 OK**として
+レース）は、`59f16a2` を焼き込んだ完成イメージで**即時 attach 30/30 crash 0・predelay 掃引全点 OK**として
 消失を実測した。backpressure crash も継続解消。sandbox smoke・機能シナリオ・長時間計測いずれも回帰なし。
 **新規バグは発見されなかった。** 焼き込みバイナリが対象修正を含むことは、静的一致（§2.2）と即時 attach 30/30 の
 実挙動（§4.1）から高確度で確認した（image digest による完全な同一性固定は環境制約で未充足・§7-1）。
