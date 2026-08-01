@@ -345,9 +345,9 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # `app.disableAutoupdates` で止める設定型なので、封殺は runtime（entrypoint 起動毎再固定
 # ＋ 縦割りの ensureSettings）に寄せる（copilot の COPILOT_AUTO_UPDATE とは違い build ENV
 # では止められない）。
-ARG KIRO_VERSION=2.14.2
-ARG KIRO_SHA256_X64=b144d4b1f8ca0083967fe13a5c35db18bd9543ecede6f1eec166f3b0a04f876a
-ARG KIRO_SHA256_ARM64=b7deac65336778a4edd656cc6fc4b5518372937d8e439df284f136a814c09b57
+ARG KIRO_VERSION=2.16.0
+ARG KIRO_SHA256_X64=a7b9b3b2d159dfcf596c4400fcd9c9b13c457e9bae0c77ef3e48db931d261b60
+ARG KIRO_SHA256_ARM64=b6df9059018d34eb726a6a20c3ab1607fff5c103dbb5ce45c2c69562afb63c8c
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
