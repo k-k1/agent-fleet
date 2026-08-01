@@ -569,7 +569,11 @@ func (v *browserAttachmentViewer) setVisible(visible bool) {
 		}
 	}
 	if !visible && !a.terminal {
-		a.armExpiryLocked(a.manager.config.ViewerGrace)
+		ttl := a.manager.config.ViewerGrace
+		if a.handoff != nil && a.handoff.Result == "pending" {
+			ttl = a.manager.config.HandoffTTL
+		}
+		a.armExpiryLocked(ttl)
 	}
 	a.mu.Unlock()
 	if visible && mode != attachmentControlLocked {

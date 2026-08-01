@@ -179,6 +179,43 @@ func TestBrowserAttachmentSetControlModeHasNoHandoffOrTTLSideEffects(t *testing.
 	m.Delete(created.ID)
 }
 
+func TestBrowserAttachmentHiddenPendingHandoffKeepsHandoffTTL(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	m := fakeAttachmentManager(cdp, 0)
+	m.config.ViewerGrace = time.Minute
+	m.config.HandoffTTL = 30 * time.Minute
+	created := createFakeAttachment(t, m)
+	a, err := m.lookupActive(created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := &browserAttachmentViewer{attachment: a, control: make(chan browserOutbound, 4), done: make(chan struct{})}
+	a.mu.Lock()
+	a.viewer, a.visible = v, true
+	if a.expiry != nil {
+		a.expiry.Stop()
+		a.expiry = nil
+		a.expiresAt = time.Time{}
+	}
+	a.mu.Unlock()
+	if _, err := m.UpdateHandoff(created.ID, browserAttachmentHandoffRequest{
+		Message: "操作してください", ControlMode: attachmentControlUser,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	v.setVisible(false)
+	status, err := m.Get(created.ID)
+	if err != nil || status.ExpiresAt == nil {
+		t.Fatalf("hidden handoff status = %+v err=%v", status, err)
+	}
+	remaining := time.Until(*status.ExpiresAt)
+	if remaining < 29*time.Minute || remaining > 30*time.Minute {
+		t.Fatalf("hidden pending handoff expiry = %v, want about 30m", remaining)
+	}
+	m.Delete(created.ID)
+}
+
 func TestBrowserAttachmentControlModeHTTPContract(t *testing.T) {
 	m := fakeAttachmentManager(newFakeBrowserCDP(), 0)
 	created := createFakeAttachment(t, m)
