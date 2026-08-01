@@ -213,6 +213,11 @@ export interface Settings {
   // leaves the catalog as reported. The Agent reads this from ui-prefs, so it shapes
   // the MCP list_models an assistant picks from as well as this picker.
   opencodeCatalog: "go-first" | "hide-zen" | "all";
+  // ミラーの「思考」ブロックを最初から展開して表示するか（kind スコープ／設定 > エージェント >
+  // 各カード > 動作設定）。既定は全 kind オフ＝従来どおり畳んだ状態で出す（クリックで開く）。
+  // 思考の量は kind とモデルで大きく違い、常時展開が読みやすいかは backend ごとに割れるので、
+  // hiddenModels と同じく kind をキーにした Record にしてある（未設定 kind は false）。
+  expandThinking: Record<string, boolean>;
   // ON/OFF for the assistant-chat title AI suggestion (AssistantTab; the rename
   // dialog's 「AIに提案してもらう」 button). Split out of autoTitleSuggest so sessions
   // and chats gate independently; load()/hydrateUIPrefs migrate an explicit legacy
@@ -503,6 +508,7 @@ const DEFAULTS: Settings = {
   hiddenModels: {},
   autoTitleSuggest: true,
   opencodeCatalog: "go-first",
+  expandThinking: {},
   assistantTitleSuggest: true,
   outputLanguage: "auto",
   assistantAgentOrder: [...ASSISTANT_AGENT_KINDS],
@@ -776,6 +782,13 @@ function normalizeAgentLaunchDefaults(rows: unknown, legacyClaudeModel = DEFAULT
 
 export function agentLaunchDefault(s: Settings, kind: string): AgentLaunchDefault {
   return s.agentLaunchDefaults[kind] || { model: "", effort: "", startMode: "normal" };
+}
+
+// expandThinking は kind の「思考を最初から展開する」設定。未設定・不明 kind・壊れた
+// 保存値（サーバー ui-prefs は他バージョンの Console も書く）は false＝畳んで表示。
+export function expandThinking(s: Settings, kind?: string | null): boolean {
+  if (!kind) return false;
+  return s.expandThinking?.[kind] === true;
 }
 
 let state = load();

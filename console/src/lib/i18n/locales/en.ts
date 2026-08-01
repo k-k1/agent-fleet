@@ -904,6 +904,9 @@ export const en: Record<keyof typeof ja, string> = {
     "Removed from the pickers, and launches naming them are refused (they also disappear from the list an assistant picks from). Use it to avoid accidentally picking a model your plan bills extra for.",
   "agents.hidden_models_add": "+ Add a model",
   "agents.hidden_models_remove": "Stop excluding {model}",
+  "agents.expand_thinking": "Show thinking expanded",
+  "agents.expand_thinking_note":
+    "When on, the mirror's “Thinking” block starts expanded. When off (the default) it stays collapsed — click the heading to read it. Display only; the agent's behavior is unchanged.",
   "agents.rtk_row": "RTK (token savings)",
   "agents.rtk_unavailable": "This workspace has no rtk.",
   "agents.settings": "Settings",

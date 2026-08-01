@@ -909,6 +909,9 @@ export const ja = {
     "選択肢から外し、指定した起動も断ります（アシスタントが選ぶ一覧にも出ません）。プランで追加課金になるモデルの誤選択を防ぐための設定です。",
   "agents.hidden_models_add": "＋ モデルを追加",
   "agents.hidden_models_remove": "{model} の除外を解除",
+  "agents.expand_thinking": "思考を展開して表示",
+  "agents.expand_thinking_note":
+    "オンにすると、ミラーの「思考」を最初から開いた状態で表示します。オフ（既定）では畳んだまま出るので、見出しをクリックすると読めます。表示だけの設定で、エージェントの動作は変わりません。",
   "agents.rtk_row": "RTK（トークン節約）",
   "agents.rtk_unavailable": "このワークスペースに rtk がありません",
   "agents.settings": "設定",

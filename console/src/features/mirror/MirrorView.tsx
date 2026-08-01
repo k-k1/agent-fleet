@@ -7,7 +7,15 @@ import { isManagedSession } from "../../types/session.ts";
 import type { Session } from "../../types/session.ts";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
 import { MEMO_DND_MIME } from "../memo/dnd.ts";
-import { useSettings, setSetting, chatFontStack, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
+import {
+  useSettings,
+  setSetting,
+  chatFontStack,
+  surfaceBg,
+  surfaceAccent,
+  effectiveTheme,
+  expandThinking,
+} from "../../lib/settings.ts";
 import {
   rankQuickReplies,
   recordQuickReply,
@@ -2523,6 +2531,7 @@ export function MirrorView({
             ttsWiring,
             status === "working",
             atBottomRef.current,
+            expandThinking(settings, sessionMeta?.kind),
             (p) => rejectedPlansRef.current.has(p.trim()),
           )
         )}
@@ -3330,6 +3339,9 @@ function renderGroups(
   tts: TurnTtsWiring,
   working: boolean,
   autoCollapseWork: boolean,
+  // このセッションの kind で「思考を展開して表示」が入っているか（設定 > エージェント >
+  // 各カード > 動作設定・既定オフ）。kind 単位なので codex と opencode は独立に効く。
+  expandThinking: boolean,
   isRejectedPlan: (plan: string) => boolean,
 ) {
   const els = [];
@@ -3381,6 +3393,7 @@ function renderGroups(
           // scrolled up (atBottom=false) — must default CLOSED, or it mounts expanded with
           // no click and the reflow jumps the scroll.
           defaultWorkOpen={!autoCollapseWork && i > lastUser}
+          expandThinking={expandThinking}
           isRejectedPlan={isRejectedPlan}
         />
       ),
@@ -3554,22 +3567,35 @@ function CompactBlock({
 }
 
 // ThinkingBlock renders an agent's chain-of-thought (codex/opencode reasoning) as a
-// collapsed disclosure — "思考" — so it's available without crowding the answer. Closed
-// by default (native <details>); expand to read the reasoning.
+// disclosure — "思考" — so it's available without crowding the answer. Collapsed unless
+// defaultOpen: the per-kind 設定 > エージェント >（各カード）動作設定「思考を展開して表示」
+// （既定オフ＝従来どおり畳む）。WorkDisclosure と同じく開閉状態はローカルに持つので、
+// クリックで畳んだ／開いた結果は再描画で巻き戻らない。設定を切り替えたときだけ、開いて
+// いるミラーにも即座に反映されるよう defaultOpen へ再同期する。
 function ThinkingBlock({
   text,
+  defaultOpen,
   baseDir,
   repo,
   onOpenFile,
 }: {
   text?: string;
+  defaultOpen: boolean;
   baseDir?: string;
   repo?: string | null;
   onOpenFile?: (path: string, line?: number, column?: number) => void;
 }) {
+  const [open, setOpen] = useState(defaultOpen);
+  useEffect(() => {
+    setOpen(defaultOpen);
+  }, [defaultOpen]);
   if (!text) return null;
   return (
-    <details className="mirror-thinking">
+    <details
+      className="mirror-thinking"
+      open={open}
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
       <summary className="mirror-thinking-head">
         <Icon name="lightbulb" />
         <span className="mth-title">{tr("mirror.thinking_label")}</span>
@@ -3725,6 +3751,7 @@ function Turn({
   tts,
   foldWork,
   defaultWorkOpen,
+  expandThinking,
   isRejectedPlan,
 }: {
   turn: Group;
@@ -3742,6 +3769,7 @@ function Turn({
   tts: TurnTtsWiring;
   foldWork: boolean;
   defaultWorkOpen: boolean;
+  expandThinking: boolean;
   isRejectedPlan: (plan: string) => boolean;
 }) {
   const isUser = turn.role === "user";
@@ -3779,8 +3807,15 @@ function Turn({
         <UserFileBlock key={item.i} files={item.p.files} caption={item.p.caption} onOpen={onOpenFile} />
       ) : item.p.kind === "thinking" ? (
         // The agent's chain-of-thought (codex reasoning / opencode reasoning),
-        // collapsed by default so it doesn't crowd the answer.
-        <ThinkingBlock key={item.i} text={item.p.text} baseDir={turn.cwd} repo={repo} onOpenFile={onOpenFile} />
+        // collapsed unless this agent's 動作設定 asks for it expanded.
+        <ThinkingBlock
+          key={item.i}
+          text={item.p.text}
+          defaultOpen={expandThinking}
+          baseDir={turn.cwd}
+          repo={repo}
+          onOpenFile={onOpenFile}
+        />
       ) : item.p.kind === "delegation" ? (
         <DelegationCard key={item.i} p={item.p} agentName={agentName} />
       ) : item.p.kind === "error" ? (
