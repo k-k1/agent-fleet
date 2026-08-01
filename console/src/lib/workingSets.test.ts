@@ -8,6 +8,7 @@ import {
   repoInSet,
   sessionInSet,
   convInSet,
+  scheduleInSet,
 } from "./workingSets.ts";
 import type { WorkingSet } from "./workingSets.ts";
 import type { Session } from "../types/session.ts";
@@ -18,6 +19,7 @@ const set = (over: Partial<WorkingSet> = {}): WorkingSet => ({
   repos: [],
   convs: [],
   sessions: [],
+  schedules: [],
   ...over,
 });
 
@@ -36,7 +38,7 @@ describe("normalizeWorkingSets", () => {
         { id: "", name: "empty id" },
         { id: "wabcdef", name: "ok" },
       ]),
-    ).toEqual([{ id: "wabcdef", name: "ok", repos: [], convs: [], sessions: [] }]);
+    ).toEqual([{ id: "wabcdef", name: "ok", repos: [], convs: [], sessions: [], schedules: [] }]);
   });
 
   it("keeps only string members inside the id arrays", () => {
@@ -96,5 +98,44 @@ describe("convInSet", () => {
     const w = set({ convs: ["c-1"] });
     expect(convInSet(w, "c-1")).toBe(true);
     expect(convInSet(w, "c-2")).toBe(false);
+  });
+});
+
+describe("scheduleInSet", () => {
+  const w = set({
+    repos: ["app"],
+    convs: ["conv-uuid-1"],
+    sessions: ["sdirect"],
+    schedules: ["sch_direct"],
+  });
+
+  it("matches direct assignment by schedule id", () => {
+    expect(scheduleInSet(w, { id: "sch_direct" })).toBe(true);
+    expect(scheduleInSet(w, { id: "sch_other" })).toBe(false);
+  });
+
+  it("derives from the launch repo / worktree folder", () => {
+    expect(scheduleInSet(w, { id: "x", repo: "app" })).toBe(true);
+    expect(scheduleInSet(w, { id: "x", repo: "other", worktree: "app@t1" })).toBe(true);
+    expect(scheduleInSet(w, { id: "x", repo: "other" })).toBe(false);
+  });
+
+  it("derives from the owner conversation (UUID)", () => {
+    expect(scheduleInSet(w, { id: "x", owner_conv: "conv-uuid-1" })).toBe(true);
+    expect(scheduleInSet(w, { id: "x", owner_conv: "conv-uuid-9" })).toBe(false);
+  });
+
+  it("derives from reuse_target: conv slug via resolver, conv UUID directly", () => {
+    const ctx = { convIdBySlug: (slug: string) => (slug === "a3k7f2q" ? "conv-uuid-1" : undefined) };
+    expect(scheduleInSet(w, { id: "x", reuse_target: "a3k7f2q" }, ctx)).toBe(true);
+    expect(scheduleInSet(w, { id: "x", reuse_target: "a3k7f2q" })).toBe(false); // no resolver → skip, fail-safe
+    expect(scheduleInSet(w, { id: "x", reuse_target: "conv-uuid-1" })).toBe(true);
+  });
+
+  it("derives from reuse_target as a session: direct name or its folder", () => {
+    expect(scheduleInSet(w, { id: "x", reuse_target: "sdirect" })).toBe(true);
+    const ctx = { folderOfSession: (name: string) => (name === "s777777" ? "app@t1" : undefined) };
+    expect(scheduleInSet(w, { id: "x", reuse_target: "s777777" }, ctx)).toBe(true);
+    expect(scheduleInSet(w, { id: "x", reuse_target: "s888888" }, ctx)).toBe(false);
   });
 });

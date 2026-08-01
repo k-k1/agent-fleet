@@ -22,8 +22,19 @@ import { t, useT } from "../../lib/i18n/index.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { openSessionChat, openSessionTerminal } from "../sessions/open.ts";
+import { useSessionsStore } from "../sessions/store.ts";
 import { openChat } from "../chat/open.ts";
 import { chatList } from "../chat/api.ts";
+import { useChatStore, ensureConvs } from "../chat/store.ts";
+import { sessionFolder } from "../../lib/project.ts";
+import { useSettings } from "../../lib/settings.ts";
+import {
+  useActiveWorkingSet,
+  workingSetList,
+  toggleWorkingSetMember,
+  scheduleInSet,
+} from "../../lib/workingSetsStore.ts";
+import type { WorkingSet, ScheduleSetContext } from "../../lib/workingSetsStore.ts";
 import {
   scheduleList,
   scheduleRuns,
@@ -79,6 +90,10 @@ interface ScheduleRowProps {
   rowBusy: boolean;
   runsOpen: boolean;
   runs: ScheduleRun[] | undefined;
+  /** 作業グループ (docs/52): the defined sets + the derivation context, for the
+   * ⋯ menu's membership toggles. */
+  wsets: WorkingSet[];
+  wctx: ScheduleSetContext;
   onToggleRuns: (s: ScheduleDTO) => void;
   onDetail: (s: ScheduleDTO) => void;
   onPause: (s: ScheduleDTO) => void;
@@ -86,7 +101,7 @@ interface ScheduleRowProps {
   onDelete: (s: ScheduleDTO) => void;
 }
 
-function ScheduleRow({ s, rowBusy, runsOpen, runs, onToggleRuns, onDetail, onPause, onRunNow, onDelete }: ScheduleRowProps) {
+function ScheduleRow({ s, rowBusy, runsOpen, runs, wsets, wctx, onToggleRuns, onDetail, onPause, onRunNow, onDelete }: ScheduleRowProps) {
   const tr = useT();
   const paused = !s.enabled;
   const tone = statusTone(s.last_status);
@@ -186,6 +201,36 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, onToggleRuns, onDetail, onPau
                 >
                   <Icon name="play" /> {tr("sched.run_now")}
                 </button>
+                {/* 作業グループ (docs/52): direct-assignment toggles. A membership
+                    DERIVED from the schedule's repo / owner conversation / reuse
+                    target shows checked-but-disabled — it moves with that entity,
+                    not with this toggle. */}
+                {wsets.length > 0 && (
+                  <>
+                    <div className="ui-menu-sep" role="separator" />
+                    <div className="ui-menu-caption">{tr("wset.menu_caption")}</div>
+                    {wsets.map((w) => {
+                      const direct = w.schedules.includes(s.id);
+                      const derived = !direct && scheduleInSet(w, s, wctx);
+                      return (
+                        <button
+                          key={w.id}
+                          type="button"
+                          className="ui-menu-item"
+                          disabled={derived}
+                          title={derived ? tr("wset.derived_hint") : undefined}
+                          onClick={() => {
+                            setMenuOpen(false);
+                            toggleWorkingSetMember(w.id, "schedules", s.id);
+                          }}
+                        >
+                          <Icon name="check" className={direct || derived ? "wset-check" : "wset-check off"} /> {w.name}
+                        </button>
+                      );
+                    })}
+                    <div className="ui-menu-sep" role="separator" />
+                  </>
+                )}
                 <button type="button" className="ui-menu-item danger" disabled={rowBusy} onClick={() => runAction(onDelete)}>
                   <Icon name="trash" /> {tr("common.delete")}
                 </button>
@@ -260,6 +305,28 @@ export function SchedulesSection() {
   const [runs, setRuns] = useState<Record<string, ScheduleRun[]>>({});
   const [detail, setDetail] = useState<ScheduleDTO | null>(null);
   const serRef = useRef("");
+  // 作業グループ (docs/52): CP 永続のスケジュールは所属を導出する — repo /
+  // owner_conv(作成元会話) / reuse_target(会話 slug・セッション名)。導出できない
+  // ものは行メニューの直接割当（set.schedules）で。
+  const wset = useActiveWorkingSet();
+  const wsets = workingSetList(useSettings());
+  const sessions = useSessionsStore((s) => s.sessions);
+  const convs = useChatStore((s) => s.convs);
+  // slug→id 解決（assistant 発火の reuse_target）に会話一覧が要る。AssistantSection が
+  // 未マウントでも一度だけ読み込む。グループ未定義なら不要。
+  useEffect(() => {
+    if (wsets.length) void ensureConvs();
+  }, [wsets.length]);
+  const wctx = useMemo<ScheduleSetContext>(
+    () => ({
+      convIdBySlug: (slug) => (convs ?? []).find((c) => c.slug === slug)?.id,
+      folderOfSession: (name) => {
+        const x = sessions.find((ss) => ss.name === name);
+        return x ? sessionFolder(x) : undefined;
+      },
+    }),
+    [convs, sessions],
+  );
 
   // Refetch on mount / tenant switch, and poll while mounted (CP is pull-only — no push).
   useEffect(() => {
@@ -286,7 +353,8 @@ export function SchedulesSection() {
   }, [tenant]);
 
   const sorted = useMemo(() => sortSchedules(items), [items]);
-  const activeCount = useMemo(() => items.filter((s) => s.enabled).length, [items]);
+  const scoped = useMemo(() => (wset ? sorted.filter((s) => scheduleInSet(wset, s, wctx)) : sorted), [sorted, wset, wctx]);
+  const activeCount = useMemo(() => scoped.filter((s) => s.enabled).length, [scoped]);
 
   const setRowBusy = (id: string, v: boolean) => setBusy((b) => ({ ...b, [id]: v }));
 
@@ -383,15 +451,20 @@ export function SchedulesSection() {
     <Section id="schedules" title={tr("sched.title")} icon="watch" count={activeCount}>
       {loaded && items.length === 0 ? (
         <div className="pane-empty">{tr("sched.empty")}</div>
+      ) : loaded && scoped.length === 0 ? (
+        // グループで絞った結果の空（スケジュール自体はある）— 真の空とは区別する。
+        <div className="pane-empty">{tr("wset.no_schedules")}</div>
       ) : (
         <div className="sched-list">
-          {sorted.map((s) => (
+          {scoped.map((s) => (
             <ScheduleRow
               key={s.id}
               s={s}
               rowBusy={!!busy[s.id]}
               runsOpen={openRuns === s.id}
               runs={openRuns === s.id ? runs[s.id] : undefined}
+              wsets={wsets}
+              wctx={wctx}
               onToggleRuns={(x) => void toggleRuns(x)}
               onDetail={(x) => setDetail(x)}
               onPause={(x) => void doToggle(x)}

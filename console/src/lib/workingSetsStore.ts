@@ -38,7 +38,7 @@ export function createWorkingSet(name: string): string {
   const id = newWorkingSetId();
   setSetting("workingSets", [
     ...workingSetList(getSettings()),
-    { id, name, repos: [], convs: [], sessions: [] },
+    { id, name, repos: [], convs: [], sessions: [], schedules: [] },
   ]);
   return id;
 }
