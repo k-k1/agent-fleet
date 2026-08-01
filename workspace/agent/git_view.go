@@ -275,13 +275,19 @@ func parseDecorate(d string) ([]graphRef, string) {
 			current = strings.TrimPrefix(strings.TrimPrefix(rest, "refs/heads/"), "heads/")
 			tok = rest
 		}
+		// git marks tags with a "tag: " prefix in BOTH decoration forms, so
+		// --decorate=full emits "tag: refs/tags/v1.0". The marker has to come off before
+		// the refname is classified — otherwise the token matched neither the full-form
+		// nor the short-form tag case cleanly and the chip showed the raw "refs/tags/…".
+		isTag := false
+		if rest, ok := strings.CutPrefix(tok, "tag: "); ok {
+			isTag, tok = true, rest
+		}
 		switch {
 		case tok == "" || tok == "HEAD" || strings.HasSuffix(tok, "/HEAD"):
 			// bare HEAD (detached) or a remote's symbolic HEAD (refs/remotes/origin/HEAD) — noise
-		case strings.HasPrefix(tok, "refs/tags/"):
+		case isTag || strings.HasPrefix(tok, "refs/tags/"):
 			refs = append(refs, graphRef{Name: strings.TrimPrefix(tok, "refs/tags/"), Type: "tag"})
-		case strings.HasPrefix(tok, "tag: "): // short-form fallback
-			refs = append(refs, graphRef{Name: strings.TrimPrefix(tok, "tag: "), Type: "tag"})
 		case strings.HasPrefix(tok, "refs/remotes/"):
 			refs = append(refs, graphRef{Name: strings.TrimPrefix(tok, "refs/remotes/"), Type: "remote"})
 		case strings.HasPrefix(tok, "refs/heads/"):

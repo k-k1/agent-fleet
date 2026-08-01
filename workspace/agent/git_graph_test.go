@@ -33,6 +33,14 @@ func TestParseDecorate(t *testing.T) {
 		t.Fatalf("refs = %+v, want %+v", refs, want)
 	}
 
+	// What git ACTUALLY emits under --decorate=full: the "tag: " marker rides on top of
+	// the full refname. The chip used to show the raw "refs/tags/v0.5.0".
+	refs, _ = parseDecorate("tag: refs/tags/v0.5.0")
+	want = []graphRef{{Name: "v0.5.0", Type: "tag"}}
+	if !reflect.DeepEqual(refs, want) {
+		t.Fatalf("refs = %+v, want %+v", refs, want)
+	}
+
 	// Short-form fallback still classifies sanely (plain name → head, a/b → remote, tag:).
 	refs, cur = parseDecorate("HEAD -> main, origin/main, tag: v1.0")
 	if cur != "main" {
