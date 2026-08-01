@@ -1,59 +1,65 @@
 # Agent instructions
 
-## コミット
+## Commits
 
-コミットを作成するときは、`CONTRIBUTING.md` の「Commits & PRs」を必ず確認し、
-記載されたコミットメッセージ形式と帰属規約に従うこと。
+Before creating a commit, read the "Commits & PRs" section of `CONTRIBUTING.md` and
+follow the message format and attribution rules described there.
 
-特に以下を必須とする。
+These in particular are mandatory.
 
-- タイトルは `<type>(<scope>): <日本語の要約>` の形式にする。
-- タイトルの要約と本文は日本語で書く。
-- バグ修正や挙動変更の本文には、真因、修正方法、検証結果を記載する。
-- エージェントが作成または実質的に関与したコミットには、メッセージ末尾に空行を
-  挟んで `Co-Authored-By` トレーラを付ける。
-- `Co-Authored-By` には CLI 名ではなく、実際に作業を実行したモデル名を記載する。
-- メールアドレスには、モデル提供元の `noreply@<提供元ドメイン>` を使用する。
-- `Claude-Session:` トレーラは追加しない。ただし、Claude Code が Remote Control
-  接続時に自動追加する場合は許容する。
-- コミットを実行する直前に、完成したコミットメッセージ全体が規約を満たしている
-  ことを再確認する。
+- The subject line takes the form `<type>(<scope>): <summary>`.
+- **Write the subject summary and the body in Japanese.** (This is the maintainer's
+  working convention for the repository's own history; outside contributors may use
+  English — see CONTRIBUTING.)
+- For a bug fix or a behaviour change, the body states the root cause, the fix, and
+  how it was verified.
+- A commit an agent authored or materially contributed to carries a
+  `Co-Authored-By` trailer at the end, separated by a blank line.
+- `Co-Authored-By` names the model that actually did the work, not the CLI.
+- The address is the model vendor's `noreply@<vendor domain>`.
+- Do not add a `Claude-Session:` trailer. It is tolerated when Claude Code adds one
+  itself over a Remote Control connection.
+- Immediately before committing, re-read the finished message and confirm it meets
+  the convention.
 
-## Console のテストを走らせるとき
+## Running the Console tests
 
-**必ず `console/` をカレントディレクトリにして実行する。** リポジトリルートから
-`npx vitest` を叩くと、ルートには `package.json` も `node_modules` も無いため npx が
-別の vitest をダウンロードし、`console/vite.config.js` を読まないまま起動する。設定が
-効かないので environment は node になり、DOM テストは `document is not defined` で落ち、
-`--project` は「プロジェクトが見つからない」になる。設定の不具合と紛らわしいので注意する。
+**Always run them with `console/` as the working directory.** Invoking `npx vitest`
+from the repository root makes npx download a different vitest — the root has neither
+a `package.json` nor `node_modules` — and start it without reading
+`console/vite.config.js`. With the config inert the environment falls back to node, so
+DOM tests fail with `document is not defined` and `--project` reports "project not
+found". That looks like a broken config, so watch out for it.
 
 ```
 cd console
-npm test                       # 全プロジェクト
-npx vitest run --project=node  # 純ロジック（既定）
-npx vitest run --project=dom   # レンダーテスト（jsdom）
-npx vitest run src/features/viewer/FileView.dom.test.tsx   # ファイル指定でも可
+npm test                       # every project
+npx vitest run --project=node  # pure logic (the default)
+npx vitest run --project=dom   # render tests (jsdom)
+npx vitest run src/features/viewer/FileView.dom.test.tsx   # a single file also works
 ```
 
-テストは2プロジェクトに分かれている（`console/vite.config.js`）。jsdom 環境の構築は
-テストファイル1本あたり約1.3秒かかるため、既定は node のままとし、実際にコンポーネントを
-マウントするテストだけ `*.dom.test.tsx` で opt-in する。
+The tests are split into two projects (`console/vite.config.js`). Standing up the
+jsdom environment costs about 1.3 s per test file, so node stays the default and only
+tests that actually mount components opt in via `*.dom.test.tsx`.
 
-## このリポジトリの UI を利用者に見てもらうとき
+## Showing this repository's UI to the user
 
-Console（`console/`）の変更を利用者に確認してもらう場合は、開発サーバーを
-`127.0.0.1:<port>` で listen させ、**ポートとパスを明示**して
-「プレビュー → ペインで開く」を案内する。
+To have the user look at a change in the Console (`console/`), serve the dev server on
+`127.0.0.1:<port>` and tell them **the exact port and path**, pointing them at
+"Preview → open in pane".
 
-- HMR を伴う Vite dev サーバーや WebSocket を使う画面はブラウザペイン（ペインで開く）を
-  優先する。単純な HTTP 表示なら軽量プレビューでよい。
-- ブラウザペインは利用者向けの Console 表示機能であり、**エージェントに開閉・閲覧用の
-  ツールは無い**。ペインに何が映っているかは推測しない。
-- 自分で「確認した」と言えるのは、headless Chromium（`/usr/bin/chromium`）で自ら描画を
-  検証したときだけ。利用者のペイン表示と、エージェント自身の headless 検証は区別する。
-- 確認が終わったら開発サーバーは止め、常駐させない（共有ホストはメモリ制約が厳しい）。
-- API キー・cookie・Console ログに現れた秘密をログや文書へ転記しない。
+- Prefer the browser pane (open in pane) for a Vite dev server with HMR or any screen
+  that uses WebSockets. The lightweight preview is enough for plain HTTP pages.
+- The browser pane is a Console feature for the user; **agents have no tool to open or
+  view it**. Never guess what it is showing.
+- You may claim you "verified" something only when you rendered and checked it
+  yourself with headless Chromium (`/usr/bin/chromium`). Keep the user's pane and your
+  own headless verification separate.
+- Stop the dev server when you are done; don't leave it resident (the shared host is
+  memory constrained).
+- Never copy secrets that surface in API keys, cookies or Console logs into logs or
+  documents.
 
-操作上の正（用語・推奨フロー・状態・制約）は `docs/31-container-browser-pane-ux-contract.md`
-を参照する。
-
+The authority on usage (terminology, recommended flow, states, constraints) is
+`docs/31-container-browser-pane-ux-contract.md`.
