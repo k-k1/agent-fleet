@@ -52,8 +52,14 @@ func TestBrowserAttachmentLifecycleDoesNotCloseExternalTarget(t *testing.T) {
 		t.Fatalf("attachment response = %+v", resp)
 	}
 	wire, _ := json.Marshal(resp)
-	if strings.Contains(string(wire), "9222") || strings.Contains(string(wire), "target-1") || strings.Contains(string(wire), "devtools/browser") {
-		t.Fatalf("raw CDP coordinates leaked in response: %s", wire)
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(wire, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"port", "targetId", "webSocketDebuggerUrl"} {
+		if _, exists := fields[forbidden]; exists {
+			t.Fatalf("raw CDP coordinate %q leaked in response: %s", forbidden, wire)
+		}
 	}
 	if _, err := m.Create(browserAttachmentCreateRequest{
 		Port: 9222, TargetID: "target-1",
