@@ -2,12 +2,12 @@ package main
 
 // チャットのシステムプロンプトが表示言語に従うことを固定する。
 //
-// 論点は「outputLanguage=auto（既定）のとき何が起きるか」。プロンプト側（persona と
-// 出力ルール）が日本語で書かれている以上 auto は中立ではなく、英語 Console の利用者にも
-// 日本語で返ってしまう。ADR 0033 の軸は「誰が読む文字列か」なので、auto は表示言語へ
-// フォールバックする。ただし日本語 Console では auto の従来の意味（入力言語に従う＝
-// 英語で書けば英語で返る）を保つ非対称にしてある — 周りのプロンプトが既に日本語で、
-// 補正が要らないため。
+// 論点は「outputLanguage=auto（既定）のとき何が起きるか」。以前は persona と出力ルールが
+// 日本語で書かれていたので auto は中立でなく、英語 Console の利用者にも日本語で返って
+// しまい、「en のときだけ表示言語を強制する」非対称なフォールバックで補正していた。
+// docs/28 P6 で prompt 側（persona・出力ルール・引き継ぎ前置き）を両言語化したので、
+// 表示言語だけで回答言語が決まるようになり、auto は両ロケールで同じ意味（入力言語に従う）に
+// 戻した。強制したい利用者には 設定 > 回答言語（ja/en）があり、そちらが常に優先される。
 
 import (
 	"strings"
@@ -42,15 +42,17 @@ func TestChatOutputRuleFollowsUILocale(t *testing.T) {
 	}
 }
 
-func TestLanguageRuleAutoFallsBackToUILocale(t *testing.T) {
+func TestLanguageRuleAutoFollowsInput(t *testing.T) {
 	cases := []struct {
 		name  string
 		prefs string
 		conv  chatConversation
 		want  string
 	}{
-		{"auto × 英語 Console → 英語を強制", `{"locale":"en"}`, chatConversation{}, langRuleEN},
-		{"auto × 日本語 Console → 入力言語に従う（従来どおり）", `{"locale":"ja"}`, chatConversation{}, ""},
+		// P6: persona/出力ルールが表示言語で書かれるようになったので、auto は両ロケールとも
+		// 「入力言語に従う」— 言語を固定したい利用者は明示 ja/en を選ぶ。
+		{"auto × 英語 Console → 入力言語に従う", `{"locale":"en"}`, chatConversation{}, ""},
+		{"auto × 日本語 Console → 入力言語に従う", `{"locale":"ja"}`, chatConversation{}, ""},
 		{"auto × 未設定 → 入力言語に従う", `{}`, chatConversation{}, ""},
 		{"明示 ja は英語 Console でも優先", `{"locale":"en","outputLanguage":"ja"}`, chatConversation{}, langRuleJA},
 		{"明示 en は日本語 Console でも優先", `{"locale":"ja","outputLanguage":"en"}`, chatConversation{}, langRuleEN},
