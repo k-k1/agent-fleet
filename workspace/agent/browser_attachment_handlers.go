@@ -76,6 +76,23 @@ func handleBrowserAttachmentHandoff(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
+func handleBrowserAttachmentControlMode(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
+	var req browserAttachmentControlModeRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_control_mode", "invalid browser control mode request")
+		return
+	}
+	resp, err := workspaceBrowserAttachmentManager.SetControlMode(r.PathValue("id"), req.ControlMode)
+	if err != nil {
+		writeBrowserAttachmentError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
+}
+
 func handleBrowserAttachmentHandoffResult(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
 	var req browserAttachmentHandoffResultRequest

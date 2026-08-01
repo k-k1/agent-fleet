@@ -317,6 +317,31 @@ func (m *browserAttachmentManager) UpdateHandoff(id string, req browserAttachmen
 	return resp, nil
 }
 
+// SetControlMode changes only the attachment's current input/rendering mode.
+// Handoff metadata/result and expiry are deliberately left untouched: callers
+// use UpdateHandoff when they intend to create or reset a handoff workflow.
+func (m *browserAttachmentManager) SetControlMode(id, mode string) (browserAttachmentResponse, error) {
+	if !validAttachmentControlMode(mode) {
+		return browserAttachmentResponse{}, attachmentError(http.StatusBadRequest, "bad_control_mode", "controlMode must be view-only, user-control, or locked", nil)
+	}
+	a, err := m.lookupActive(id)
+	if err != nil {
+		return browserAttachmentResponse{}, err
+	}
+	a.mu.Lock()
+	a.controlMode = mode
+	visible := a.visible && a.viewer != nil
+	resp := a.responseLocked()
+	a.mu.Unlock()
+	if mode == attachmentControlLocked {
+		a.stopScreencast()
+	} else if visible {
+		_ = a.startScreencast()
+	}
+	a.notifyJSON(map[string]any{"type": "control-mode", "controlMode": mode})
+	return resp, nil
+}
+
 func (m *browserAttachmentManager) SetHandoffResult(id, result string) (browserAttachmentResponse, error) {
 	if result != "completed" && result != "cancelled" {
 		return browserAttachmentResponse{}, attachmentError(http.StatusBadRequest, "bad_handoff_result", "result must be completed or cancelled", nil)

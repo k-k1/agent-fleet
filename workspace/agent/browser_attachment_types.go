@@ -66,6 +66,10 @@ type browserAttachmentHandoffResultRequest struct {
 	Result string `json:"result"`
 }
 
+type browserAttachmentControlModeRequest struct {
+	ControlMode string `json:"controlMode"`
+}
+
 type browserAttachmentHandoffResponse struct {
 	Message         string `json:"message"`
 	CompletionLabel string `json:"completionLabel"`
@@ -261,10 +265,14 @@ func validateHandoffRequest(req browserAttachmentHandoffRequest) error {
 	if len(req.CompletionLabel) > browserAttachmentMaxLabel || !utf8.ValidString(req.CompletionLabel) {
 		return attachmentError(http.StatusBadRequest, "bad_browser_handoff", "completionLabel is invalid", nil)
 	}
-	if req.ControlMode != attachmentControlViewOnly && req.ControlMode != attachmentControlUser && req.ControlMode != attachmentControlLocked {
+	if !validAttachmentControlMode(req.ControlMode) {
 		return attachmentError(http.StatusBadRequest, "bad_control_mode", "controlMode must be view-only, user-control, or locked", nil)
 	}
 	return nil
+}
+
+func validAttachmentControlMode(mode string) bool {
+	return mode == attachmentControlViewOnly || mode == attachmentControlUser || mode == attachmentControlLocked
 }
 
 func asAttachmentAPIError(err error) *browserAttachmentAPIError {
