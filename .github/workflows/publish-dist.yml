@@ -53,6 +53,14 @@ jobs:
       - name: build all artifacts (A+B+C+R+D)
         run: VERSION=$VERSION deploy/release/build.sh --all
 
+      # Last line before anything becomes public and permanent: expand every
+      # artifact (including the layers inside the images tar) and fail if a
+      # string this project removed from its history is in any of them
+      # (docs/35 §35.7.5). 0.1.0–0.5.0 shipped one and had to be withdrawn;
+      # nothing gets published again without passing through here.
+      - name: forbidden-token scan (blocks publish)
+        run: deploy/release/scan-forbidden.sh
+
       - name: publish to dist repo
         run: VERSION=$VERSION deploy/release/publish-dist.sh --seed
 

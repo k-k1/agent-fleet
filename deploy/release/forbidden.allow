@@ -1,0 +1,24 @@
+# Exemptions for the forbidden-token gate (deploy/release/scan-forbidden.sh).
+#
+#   <term-id | *>   <path-glob>
+#
+# `*` matches any run of characters, including `/` and the `!` that separates
+# archive levels. Paths are not secret, so this file is plain text.
+#
+# There is one legitimate reason to add a line: a ledger term that is also an
+# ordinary word turning up in third-party content baked into the images (a
+# dependency's docs, a font's copyright block). Exempt the narrowest path that
+# works, and record in a comment what you actually opened and read. Never exempt
+# anything we build ourselves — for our own output the answer is to fix the
+# source, not to look away.
+#
+# The CMU Pronouncing Dictionary (control-plane/assets/cmudict.dict.gz, BSD-2,
+# upstream cmusphinx/cmudict, used by enkana.go for English→katakana) is a word
+# list, and two ledger terms are ordinary entries in it: an English verb and a
+# common Japanese given name. Verified by reading the two lines it matches.
+#
+# This only fires when the source tree is scanned. In a release artifact the
+# dictionary is go:embed'ed into af-cp still gzip-compressed, so its words are
+# not in the byte stream the gate reads.
+corp-1  *cmudict.dict.gz*
+name-2  *cmudict.dict.gz*
