@@ -12,6 +12,7 @@ import { useSessionsStore } from "./store.ts";
 import { openSessionChat, openSessionTerminal } from "./open.ts";
 import { chatCreate } from "../chat/api.ts";
 import { openChat } from "../chat/open.ts";
+import { autoAddToActiveWorkingSet } from "../../lib/workingSetsStore.ts";
 import { t, useT, getLocale } from "../../lib/i18n/index.ts";
 import { Trans } from "../../lib/i18n/Trans.tsx";
 import type { Session } from "../../types/session.ts";
@@ -259,6 +260,7 @@ export function useSessionActions(): SessionActions {
       // gate before create_session lives in the prompt above.
       const conv = await chatCreate("operator", tr("srow.handoff_title", { name }));
       if (!conv?.id) throw new Error("conversation was not created");
+      autoAddToActiveWorkingSet("convs", conv.id); // docs/52 §1: 選択中グループへ自動所属
       openChat(conv.id, prompt, true);
     } catch {
       toast(t("sess.handoff_failed"));

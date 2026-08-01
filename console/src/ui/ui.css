@@ -440,6 +440,18 @@
   background: var(--border2);
   margin: 4px 2px;
 }
+/* Non-interactive caption row heading a menu block (e.g. 作業グループ toggles). */
+.ui-menu-caption {
+  padding: 3px 10px 2px;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: default;
+}
+/* 作業グループ toggle rows: the off state keeps the check column's width so
+   labels align whether or not the row is a member. */
+.ui-menu .wset-check.off {
+  visibility: hidden;
+}
 
 /* ---- Form fields (labeled vertical) ---- */
 .ui-field {

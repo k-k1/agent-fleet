@@ -55,6 +55,96 @@
   overflow-y: auto;
   overflow-x: hidden;
 }
+/* 作業グループ switcher (docs/52) — pinned between the layout map and the
+   scroll area. The scoped state tints the whole bar with the accent so an
+   active filter is unmissable (the "where did my session go" guard). */
+.wset-bar {
+  flex: none;
+  border-bottom: 1px solid var(--border);
+}
+.wset-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 10px;
+  background: none;
+  border: 0;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.wset-btn:hover {
+  background: var(--hover-bg);
+  color: var(--fg);
+}
+.wset-btn.scoped {
+  color: var(--lp-accent, var(--accent));
+  background: var(--active-bg);
+  font-weight: 600;
+}
+.wset-btn .wset-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wset-btn .wset-caret {
+  font-size: 12px;
+  opacity: 0.7;
+}
+/* Manage modal */
+.wset-manage {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 320px;
+}
+.wset-empty-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.wset-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.wset-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.wset-row > input {
+  flex: 1;
+  min-width: 0;
+}
+.wset-counts {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.wset-counts .codicon {
+  font-size: 12px;
+  margin-left: 5px;
+}
+.wset-new {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.wset-new > input {
+  flex: 1;
+  min-width: 0;
+}
 /* Desktop-only collapse / overlay (hamburger single/double-click). Scoped to
    min-width so the persisted af-left-open="0" (shared with the old console)
    can't display:none the MOBILE drawer — there navOpen is the only signal. */

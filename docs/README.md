@@ -46,7 +46,7 @@
 - [49-mcp-2026-07-28.md](49-mcp-2026-07-28.md) — MCP 2026-07-28（ステートレス版）対応: initialize/セッション廃止と per-request `_meta` へ、af の MCP サーバー2本と接続テストを両 era 同時対応にする（◐ 実装済み・認可の OAuth 2.1 整合は範囲外。仕様契約と実測記録を含む。設計判断は [decisions/0032](decisions/0032-mcp-2026-07-28.md)）
 - [50-mirror-skill-picker.md](50-mirror-skill-picker.md) — ミラーのスキルピッカー: セッションで呼べるスキル/コマンドをセッション単位 API で認識し、コンポーザーのトリガ文字補完＋ボタンでキーボード / マウス / タップいずれでも 1〜2 操作で呼ぶ。クロスエージェント対応（claude/codex/opencode/cursor — codex は `$name` メンション・cursor は ACP 広告リスト。各 kind の実測記録 §7 を含む）（✅ 実装済み・実機目視待ち。設計判断は [decisions/0034](decisions/0034-mirror-skill-picker.md)）
 - [51-session-report-v2-ledger.md](51-session-report-v2-ledger.md) — セッション報告 v2: docs/30 の「エッジ駆動＋1bit arm」を指示台帳＋レベル駆動リコンサイラ＋冪等シンクへ置き換える後継設計。既知の穴 A〜G の棚卸し、settled/progressed 証拠テーブル、誤報告の補償 reopen、自己申告ファストパス、3 Phase 移行計画（✅ Phase 1〜3 実装済み。設計判断は [decisions/0035](decisions/0035-session-report-v2-ledger.md)）
-- [52-working-sets.md](52-working-sets.md) — 作業グループ（working set）: 名前付きの { 作業コピー, 会話, repo なしセッション } の集合で左ペインの表示を案件ごとに分離。定義は ui-prefs 同期・選択中は端末ローカル・サーバ変更ゼロのフロント完結（📝 設計のみ・実装前。設計判断は [decisions/0036](decisions/0036-working-sets.md)）
+- [52-working-sets.md](52-working-sets.md) — 作業グループ（working set）: 名前付きの { 作業コピー, 会話, repo なしセッション } の集合で左ペインの表示を案件ごとに分離。定義は ui-prefs 同期・選択中は端末ローカル・サーバ変更ゼロのフロント完結（✅ 実装済み・実機目視待ち。設計判断は [decisions/0036](decisions/0036-working-sets.md)）
 
 > 完了後も実装契約や実測リファレンスとしてコードから参照する 24・26〜30 は番号付きのまま残す。
 > 時系列の実装プランとして役目を終えたものは history/ へ移動: [19 assistant-chat](history/19-assistant-chat.md) /
