@@ -24,6 +24,10 @@ import (
 const (
 	tuiContractReadyWait = 120 * time.Second
 	tuiContractTurnWait  = 3 * time.Minute
+	// How long to wait for one Enter to be taken up before pressing it again, and
+	// how many presses to make in total (see submitPrompt).
+	tuiContractSubmitWait  = 15 * time.Second
+	tuiContractSubmitTries = 3
 )
 
 type tuiMirrorContractSpec struct {
@@ -98,7 +102,7 @@ func runTUIMirrorContract(t *testing.T, spec tuiMirrorContractSpec) {
 	// single render tick (observed with copilot): typing is accepted but that first
 	// Enter is dropped. The fleet's launch seed already waits/polls before injecting;
 	// retain one tick here so this contract validates the real prompt route, not that
-	// transient UI race.
+	// transient UI race. submitPrompt covers the case where one tick is not enough.
 	time.Sleep(500 * time.Millisecond)
 
 	marker := "AF_" + strings.ToUpper(spec.kind) + "_TUI_MIRROR_OK"
@@ -106,14 +110,11 @@ func runTUIMirrorContract(t *testing.T, spec tuiMirrorContractSpec) {
 	if out, err := tmuxx.Cmd("send-keys", "-t", tn, "-l", prompt).CombinedOutput(); err != nil {
 		t.Fatalf("send prompt: %v: %s", err, out)
 	}
-	if out, err := tmuxx.Cmd("send-keys", "-t", tn, "Enter").CombinedOutput(); err != nil {
-		t.Fatalf("submit prompt: %v: %s", err, out)
-	}
+	seenWorking := submitPrompt(t, spec, meta, tn, marker)
 
 	// 毎回 production の Transcript/WireLive を読む。これは /messages と sessions
 	// poll が使う経路なので、TUI に返答が見えるだけの false green を避けられる。
 	deadline = time.Now().Add(tuiContractTurnWait)
-	seenWorking := false
 	for time.Now().Before(deadline) {
 		live := spec.agent.WireLive(meta, true)
 		if live.State == "working" {
@@ -129,6 +130,50 @@ func runTUIMirrorContract(t *testing.T, spec tuiMirrorContractSpec) {
 	td, _ := spec.agent.Transcript(meta)
 	t.Fatalf("mirror did not show the completed user/assistant turn and idle recovery within %s; live=%q turns=%+v\npane:\n%s",
 		tuiContractTurnWait, spec.agent.WireLive(meta, true).State, td.Turns, tmuxx.CapturePane(tn))
+}
+
+// submitPrompt presses Enter and CONFIRMS the turn actually started, pressing again
+// when it did not. It reports whether the "working" state was observed while waiting,
+// so a turn that finishes before the caller's loop starts is not miscounted.
+//
+// A TUI can attach its input handler a render tick after the composer footer first
+// becomes readable (observed with copilot): the typed text lands but that Enter is
+// swallowed, leaving the prompt sitting in the composer forever. A single unverified
+// Enter then burns the whole turn window and reports a contract failure that is really
+// one lost keystroke — how copilot-contract failed in CI (runs 30584244520 /
+// 30667091055: pane still showed the prompt in the composer and "0 AIC used") while the
+// same CLI version passed on a warm local machine.
+//
+// Confirmation goes through the production reads (WireLive / Transcript) rather than
+// pane text, so it stays agent-agnostic: the turn is under way as soon as the state
+// turns "working" or the user turn reaches the mirror. Pressing Enter again after the
+// prompt did submit is a no-op — the composer is empty by then.
+func submitPrompt(t *testing.T, spec tuiMirrorContractSpec, meta session.Meta, tn, marker string) bool {
+	t.Helper()
+	for attempt := 1; ; attempt++ {
+		if out, err := tmuxx.Cmd("send-keys", "-t", tn, "Enter").CombinedOutput(); err != nil {
+			t.Fatalf("submit prompt: %v: %s", err, out)
+		}
+		deadline := time.Now().Add(tuiContractSubmitWait)
+		for time.Now().Before(deadline) {
+			if spec.agent.WireLive(meta, true).State == "working" {
+				return true
+			}
+			if td, ok := spec.agent.Transcript(meta); ok && mirrorHasTurn(td.Turns, "user", marker) {
+				return false
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+		if attempt >= tuiContractSubmitTries {
+			// Fall through rather than fail here: the turn wait below produces the
+			// richer diagnostic, and a mirror that is merely slow still passes there.
+			t.Logf("prompt submission unconfirmed after %d Enter(s); continuing to the turn wait\npane:\n%s",
+				attempt, tmuxx.CapturePane(tn))
+			return false
+		}
+		t.Logf("prompt submission unconfirmed within %s (Enter %d likely dropped); pressing Enter again",
+			tuiContractSubmitWait, attempt)
+	}
 }
 
 func mirrorHasTurn(turns []transcript.Turn, role, marker string) bool {
