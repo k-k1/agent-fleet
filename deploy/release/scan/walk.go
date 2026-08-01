@@ -227,7 +227,8 @@ func (w *Walker) walkZip(name string, r io.Reader, depth int) error {
 }
 
 // leaf folds one file's bytes. File names are folded as well — a forbidden
-// token in a path (an `acme.css` that survived a rename) must not slip by.
+// token in a path (a stylesheet still named after the thing, missed by a rename)
+// must not slip by.
 func (w *Walker) leaf(name string, r io.Reader) error {
 	w.foldString(name+" (path)", name)
 	m := w.matcher(name)
