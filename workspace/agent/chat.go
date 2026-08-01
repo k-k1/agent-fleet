@@ -262,14 +262,17 @@ const (
 // ad-hoc "translate" verb (docs/30 ②); the AssistantID check keeps threads created by the
 // old 翻訳 builtin exempt too.
 //
-// "auto" is not actually neutral for an English user: the builtin personas are written in
-// Japanese, so with no rule at all the model follows the persona and answers in Japanese
-// even though the person reading it chose an English Console. ADR 0033's axis is "who
-// reads the string", so auto falls back to the display language — but only for "en", and
-// deliberately asymmetrically: for a Japanese Console, auto keeps its documented meaning
-// (follow the input, so writing in English gets an English answer) because the prompts
-// around it are already Japanese and need no correction. Revisit once the personas
-// themselves are localized.
+// "auto" is symmetric again (docs/28 P6). It used to fall back to the display language
+// for "en" only: the personas and the output rule were written in Japanese, so with no
+// rule at all an English Console still got Japanese answers, and that one-sided patch
+// corrected it. P6 localized the actual prompts — persona (builtin and ad-hoc), output
+// rule, carry-over preambles — so a display language now steers the reply on its own and
+// auto can go back to meaning the same thing in both locales: follow the input.
+//
+// That is also the better behaviour for the case the patch got wrong: on an English
+// Console, "translate this into Japanese" or "summarize this Japanese article in
+// Japanese" no longer fights a forced-English directive. Whoever wants the reply pinned
+// regardless of input still has 設定 > 回答言語 (ja / en), which wins over everything here.
 func (c *chatConversation) languageRule() string {
 	if c.SeedVerb == "translate" || c.AssistantID == "translate" {
 		return ""
@@ -278,9 +281,6 @@ func (c *chatConversation) languageRule() string {
 	case "ja":
 		return langRuleJA
 	case "en":
-		return langRuleEN
-	}
-	if uiLocale() == "en" {
 		return langRuleEN
 	}
 	return ""
