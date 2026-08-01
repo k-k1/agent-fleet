@@ -84,6 +84,49 @@ describe("BrowserAttachmentController", () => {
     expect(fake.socket.json().some((message) => (message as { type?: string }).type === "navigate")).toBe(false);
   });
 
+  it("keeps the wire connected while locked and applies ready and handoff transitions", async () => {
+    const fake = fakeDeps("locked");
+    const controller = new BrowserAttachmentController("p1", "ba_test", fake.deps);
+    controller.setVisible(true);
+    await settle();
+    fake.socket.open();
+    fake.socket.message(JSON.stringify({
+      type: "ready",
+      version: 1,
+      state: "viewer-open",
+      url: "https://example.invalid/review",
+      title: "Review",
+      width: 1280,
+      height: 900,
+      controlMode: "locked",
+      handoff: null,
+    }));
+    expect(controller.snapshot).toMatchObject({
+      state: "ready",
+      attachmentState: "viewer-open",
+      controlMode: "locked",
+      handoff: null,
+    });
+
+    fake.socket.message(JSON.stringify({
+      type: "handoff",
+      controlMode: "user-control",
+      handoff: {
+        message: "Confirm the change",
+        completionLabel: "Approve",
+        allowCancel: true,
+        controlMode: "user-control",
+        result: "pending",
+      },
+    }));
+    controller.sendInput({ type: "text", text: "approved" });
+    expect(controller.snapshot).toMatchObject({
+      controlMode: "user-control",
+      handoff: { message: "Confirm the change", completionLabel: "Approve", result: "pending" },
+    });
+    expect(fake.socket.json()).toContainEqual({ type: "text", text: "approved" });
+  });
+
   it("records completion/cancellation as locked without detaching the owner", async () => {
     const fake = fakeDeps("user-control");
     const controller = new BrowserAttachmentController("p1", "ba_test", fake.deps);
