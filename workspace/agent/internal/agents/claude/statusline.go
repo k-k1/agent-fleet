@@ -136,15 +136,26 @@ func delegateArg(args []string) string {
 	return ""
 }
 
+// captureFlag marks a statusLine command as ours. It carries no behaviour (the
+// `statusline` subcommand always captures) — it exists so EnsureStatusLine can
+// recognise an install made by a DIFFERENT binary path as ours and peel it instead of
+// wrapping it again. See unwrapOurs.
+const captureFlag = "--af-capture"
+
+// maxStatusLineCmd bounds what we're willing to write. A single argv entry over
+// ~128KiB is rejected by exec(2) (E2BIG) — a statusLine that long doesn't just look
+// bad, it never runs, and capture stops dead. Well under that.
+const maxStatusLineCmd = 8192
+
 // statuslineCmd is the command we point claude's statusLine at (absolute exe so it
 // resolves in claude's spawn context regardless of PATH).
-func statuslineCmd() string { return paths.ExePath() + " statusline" }
+func statuslineCmd() string { return paths.ExePath() + " statusline " + captureFlag }
 
 // EnsureStatusLine wires claude's statusLine to statuslineCmd so we capture rate_limits.
 // Idempotent, called at startup. If the user already configured their OWN statusLine we
 // don't clobber it — we WRAP it: our command captures, then delegates to theirs (via
-// --delegate) so their status line keeps rendering. A statusLine that's already ours (or
-// already wrapped) is left untouched.
+// --delegate) so their status line keeps rendering. A statusLine that's already ours is
+// re-pointed at this binary (never wrapped again), keeping any delegate it carried.
 func EnsureStatusLine() {
 	m := readSettings()
 	ours := statuslineCmd()
@@ -152,8 +163,24 @@ func EnsureStatusLine() {
 	cur, _ := m["statusLine"].(map[string]any)
 	curCmd, _ := cur["command"].(string)
 
-	// Already ours (capture-only or a wrapper we installed) → nothing to do.
-	if strings.HasPrefix(curCmd, ours) {
+	// Peel EVERY layer of our own capture command first. An install made by a different
+	// binary path (a dev build in /tmp, the e2e binary, a scratchpad copy) is still ours;
+	// matching on the current exe path alone made each one look foreign and wrap the
+	// whole command again — and since each wrap shell-quotes the previous one, the
+	// escaping doubles per layer. Observed in the wild: 13 layers, a 798KB command that
+	// exec(2) refused with E2BIG, so claude captured nothing and the Console's usage chip
+	// froze at its last value. What survives the peel is the user's own statusLine (or "").
+	foreign := strings.TrimSpace(unwrapOurs(curCmd))
+
+	want := ours
+	if foreign != "" {
+		if w := ours + " --delegate " + shellQuote(foreign); len(w) <= maxStatusLineCmd {
+			want = w
+		}
+		// Over the bound → capture-only. Losing a delegate beats writing a command that
+		// can't be exec'd (which would lose the capture too).
+	}
+	if want == curCmd {
 		return
 	}
 
@@ -162,14 +189,97 @@ func EnsureStatusLine() {
 		next[k] = v
 	}
 	next["type"] = "command"
-	if strings.TrimSpace(curCmd) != "" {
-		// Foreign statusLine — wrap it so it still renders after we capture.
-		next["command"] = ours + " --delegate " + shellQuote(curCmd)
-	} else {
-		next["command"] = ours
-	}
+	next["command"] = want
 	m["statusLine"] = next
 	_ = writeSettings(m)
+}
+
+// unwrapOurs strips our own capture layers from an installed statusLine command and
+// returns whatever they wrapped — the user's own command, or "" when the innermost
+// layer is a capture-only install of ours. A command that isn't ours comes back
+// unchanged, so a foreign statusLine is never mistaken for a layer to discard.
+func unwrapOurs(cmd string) string {
+	for range 64 { // depth cap: a pathological chain must terminate, not spin
+		inner, ok := peelOurs(cmd)
+		if !ok {
+			return cmd
+		}
+		cmd = inner
+	}
+	return ""
+}
+
+// peelOurs recognises one layer of our capture command and returns what it delegates
+// to. Ours is `<exe> statusline [--af-capture] [--delegate '<cmd>']`: the flag marks
+// installs from this version, and the bare 2-token / `--delegate` forms cover the ones
+// written before the flag existed (all of which we wrote, from whatever path).
+func peelOurs(cmd string) (string, bool) {
+	toks := shellSplit(cmd)
+	if len(toks) < 2 || toks[1] != "statusline" {
+		return "", false
+	}
+	rest := toks[2:]
+	if len(rest) > 0 && rest[0] == captureFlag {
+		rest = rest[1:]
+	}
+	switch {
+	case len(rest) == 0:
+		return "", true // capture-only leaf
+	case len(rest) == 2 && rest[0] == "--delegate":
+		return rest[1], true
+	}
+	return "", false
+}
+
+// shellSplit tokenizes the way sh would for the forms we write and are likely to be
+// handed: plain words, single-quoted args (as produced by shellQuote, including its
+// '\” escape), double quotes, and backslash escapes. Anything it can't tokenize
+// (unterminated quote) yields nil, which peelOurs reads as "not ours" — leave it be.
+func shellSplit(s string) []string {
+	var out []string
+	var cur strings.Builder
+	inWord := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == ' ' || c == '\t' || c == '\n':
+			if inWord {
+				out = append(out, cur.String())
+				cur.Reset()
+				inWord = false
+			}
+		case c == '\'':
+			inWord = true
+			j := strings.IndexByte(s[i+1:], '\'')
+			if j < 0 {
+				return nil // unterminated
+			}
+			cur.WriteString(s[i+1 : i+1+j])
+			i += j + 1
+		case c == '"':
+			inWord = true
+			for i++; i < len(s) && s[i] != '"'; i++ {
+				if s[i] == '\\' && i+1 < len(s) {
+					i++
+				}
+				cur.WriteByte(s[i])
+			}
+			if i >= len(s) {
+				return nil // unterminated
+			}
+		case c == '\\' && i+1 < len(s):
+			inWord = true
+			i++
+			cur.WriteByte(s[i])
+		default:
+			inWord = true
+			cur.WriteByte(c)
+		}
+	}
+	if inWord {
+		out = append(out, cur.String())
+	}
+	return out
 }
 
 // shellQuote wraps s so a shell passes it through as a single literal argument.
