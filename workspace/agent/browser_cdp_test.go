@@ -1,9 +1,81 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"sync"
 	"testing"
+	"time"
 )
+
+type channelCDPTransport struct {
+	reads     chan []byte
+	writes    chan []byte
+	closed    chan struct{}
+	closeOnce sync.Once
+}
+
+func newChannelCDPTransport() *channelCDPTransport {
+	return &channelCDPTransport{reads: make(chan []byte, 4), writes: make(chan []byte, 4), closed: make(chan struct{})}
+}
+
+func (t *channelCDPTransport) ReadMessage() ([]byte, error) {
+	select {
+	case data := <-t.reads:
+		return data, nil
+	case <-t.closed:
+		return nil, io.EOF
+	}
+}
+
+func (t *channelCDPTransport) WriteMessage(data []byte) error {
+	select {
+	case t.writes <- append([]byte(nil), data...):
+		return nil
+	case <-t.closed:
+		return io.ErrClosedPipe
+	}
+}
+
+func (t *channelCDPTransport) Close() error {
+	t.closeOnce.Do(func() { close(t.closed) })
+	return nil
+}
+
+func TestBrowserCDPCoreUsesFramingAgnosticMessageTransport(t *testing.T) {
+	transport := newChannelCDPTransport()
+	core := newBrowserCDPCore(transport)
+	defer core.Close()
+	type result struct {
+		Value string `json:"value"`
+	}
+	got := result{}
+	done := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		done <- core.Call(ctx, "Runtime.evaluate", map[string]any{"expression": "1"}, "session-1", &got)
+	}()
+	request := <-transport.writes
+	if len(request) == 0 || request[len(request)-1] == 0 {
+		t.Fatalf("common core wrote transport framing bytes: %q", request)
+	}
+	var envelope struct {
+		ID        int64  `json:"id"`
+		Method    string `json:"method"`
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal(request, &envelope); err != nil || envelope.Method != "Runtime.evaluate" || envelope.SessionID != "session-1" {
+		t.Fatalf("core request = %+v err=%v", envelope, err)
+	}
+	transport.reads <- []byte(fmt.Sprintf(`{"id":%d,"result":{"value":"ok"}}`, envelope.ID))
+	if err := <-done; err != nil || got.Value != "ok" {
+		t.Fatalf("core response = %+v err=%v", got, err)
+	}
+}
 
 func TestChromiumLaunchArgsKeepSandboxAndAvoidDevShm(t *testing.T) {
 	args := chromiumLaunchArgs("/tmp/profile", true)
@@ -19,8 +91,8 @@ func TestChromiumLaunchArgsKeepSandboxAndAvoidDevShm(t *testing.T) {
 	}
 }
 
-func TestPipeCDPEventQueueFailsClosedWithoutWaiterGoroutines(t *testing.T) {
-	p := &pipeCDP{events: make(chan browserCDPEvent, 1)}
+func TestBrowserCDPCoreEventQueueFailsClosedWithoutWaiterGoroutines(t *testing.T) {
+	p := &browserCDPCore{events: make(chan browserCDPEvent, 1)}
 	if err := p.dispatch([]byte(`{"method":"Runtime.consoleAPICalled","sessionId":"s","params":{}}`)); err != nil {
 		t.Fatal(err)
 	}
@@ -54,8 +126,8 @@ func TestPipeCDPEventQueueFailsClosedWithoutWaiterGoroutines(t *testing.T) {
 	}
 }
 
-func TestPipeCDPEventQueueHasFixedByteBudget(t *testing.T) {
-	p := &pipeCDP{events: make(chan browserCDPEvent, browserCDPEventQueueSize)}
+func TestBrowserCDPCoreEventQueueHasFixedByteBudget(t *testing.T) {
+	p := &browserCDPCore{events: make(chan browserCDPEvent, browserCDPEventQueueSize)}
 	p.eventBytes.Store(browserCDPEventQueueBytes - 1)
 	if err := p.dispatch([]byte(`{"method":"Runtime.consoleAPICalled","params":{}}`)); err != nil {
 		t.Fatalf("droppable event over byte budget = %v", err)
