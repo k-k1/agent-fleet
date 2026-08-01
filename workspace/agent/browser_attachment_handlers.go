@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"math"
 	"net/http"
@@ -36,6 +37,16 @@ func handleBrowserAttachmentCreate(w http.ResponseWriter, r *http.Request) {
 	if err := dec.Decode(&req); err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_browser_attachment", "invalid browser attachment request")
 		return
+	}
+	// label is MCP-only metadata. Keep it out of the fixed public REST body;
+	// base64 also keeps arbitrary UTF-8 out of the internal HTTP header value.
+	if encoded := r.Header.Get(browserAttachmentLabelHeader); encoded != "" {
+		label, err := base64.RawURLEncoding.DecodeString(encoded)
+		if err != nil {
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_browser_attachment", "invalid browser attachment label")
+			return
+		}
+		req.Label = string(label)
 	}
 	resp, err := workspaceBrowserAttachmentManager.Create(req)
 	if err != nil {
@@ -277,7 +288,7 @@ func (a *browserAttachment) readyMessage() []byte {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return mustBrowserJSON(map[string]any{
-		"type": "ready", "version": 1, "state": a.state, "url": a.url, "title": a.title,
+		"type": "ready", "version": 1, "state": a.state, "url": a.url, "title": a.displayTitleLocked(),
 		"width": a.viewport.Width, "height": a.viewport.Height,
 		"controlMode": a.controlMode, "handoff": a.handoff,
 	})

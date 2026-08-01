@@ -16,6 +16,7 @@ import (
 
 const (
 	browserAttachmentIDPrefix      = "ba_"
+	browserAttachmentLabelHeader   = "X-AF-Browser-Attachment-Label"
 	browserAttachmentMaxTargetID   = 1024
 	browserAttachmentMaxTitle      = 1024
 	browserAttachmentMaxURL        = 16 * 1024
@@ -53,6 +54,7 @@ type browserAttachmentCreateRequest struct {
 	Port     int                    `json:"port"`
 	TargetID string                 `json:"targetId"`
 	Viewport browserViewportRequest `json:"viewport"`
+	Label    string                 `json:"-"`
 }
 
 type browserAttachmentHandoffRequest struct {

@@ -17,6 +17,7 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -29,6 +30,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -1673,16 +1675,25 @@ func mcpGetChromiumAttachment(id json.RawMessage, attachmentID string) []byte {
 	return mcpStructuredResult(id, status)
 }
 
-func mcpAttachChromium(id json.RawMessage, port int, targetID, _ string) []byte {
+func mcpAttachChromium(id json.RawMessage, port int, targetID, label string) []byte {
 	if port < 1 || port > 65535 {
 		return mcpToolErr(id, "portには1〜65535のChromium remote-debugging portが必要です")
 	}
 	if targetID == "" {
 		return mcpToolErr(id, "target_idが必要です。先にlist_chromium_targetsで確認してください")
 	}
+	if len(label) > browserAttachmentMaxLabel || !utf8.ValidString(label) {
+		return mcpToolErr(id, "labelは256 byte以内のUTF-8文字列にしてください")
+	}
 	req := map[string]any{"port": port, "targetId": targetID}
 	reqBody, _ := json.Marshal(req)
-	body, err := agentPOST("/browser/attachments", reqBody)
+	// The P1 REST request body is fixed to port/targetId/viewport. Carry the
+	// MCP-only display label over the authenticated loopback hop separately.
+	headers := map[string]string{}
+	if label != "" {
+		headers[browserAttachmentLabelHeader] = base64.RawURLEncoding.EncodeToString([]byte(label))
+	}
+	body, err := agentPOSTHeaders("/browser/attachments", reqBody, headers)
 	if err != nil {
 		return mcpChromiumToolErr(id, "Chromium attachmentの作成", err)
 	}
@@ -2048,11 +2059,19 @@ func agentPOST(path string, body []byte) (string, error) {
 	return agentDo(http.MethodPost, path, body)
 }
 
+func agentPOSTHeaders(path string, body []byte, headers map[string]string) (string, error) {
+	return agentDoTimeoutHeaders(http.MethodPost, path, body, 15*time.Second, headers)
+}
+
 func agentDo(method, path string, body []byte) (string, error) {
 	return agentDoTimeout(method, path, body, 15*time.Second)
 }
 
 func agentDoTimeout(method, path string, body []byte, timeout time.Duration) (string, error) {
+	return agentDoTimeoutHeaders(method, path, body, timeout, nil)
+}
+
+func agentDoTimeoutHeaders(method, path string, body []byte, timeout time.Duration, headers map[string]string) (string, error) {
 	var rdr io.Reader
 	if body != nil {
 		rdr = bytes.NewReader(body)
@@ -2066,6 +2085,9 @@ func agentDoTimeout(method, path string, body []byte, timeout time.Duration) (st
 	}
 	if tok := os.Getenv("AGENT_TOKEN"); tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	for name, value := range headers {
+		req.Header.Set(name, value)
 	}
 	resp, err := (&http.Client{Timeout: timeout}).Do(req)
 	if err != nil {

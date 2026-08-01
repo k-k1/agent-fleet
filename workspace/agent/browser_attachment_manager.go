@@ -48,6 +48,7 @@ type browserAttachment struct {
 	mu          sync.Mutex
 	state       string
 	title       string
+	label       string
 	url         string
 	controlMode string
 	handoff     *browserAttachmentHandoffResponse
@@ -133,6 +134,9 @@ func (m *browserAttachmentManager) Create(req browserAttachmentCreateRequest) (b
 	if req.TargetID == "" || len(req.TargetID) > browserAttachmentMaxTargetID || !utf8.ValidString(req.TargetID) {
 		return browserAttachmentResponse{}, attachmentError(http.StatusBadRequest, "bad_browser_attachment", "targetId is invalid", nil)
 	}
+	if len(req.Label) > browserAttachmentMaxLabel || !utf8.ValidString(req.Label) {
+		return browserAttachmentResponse{}, attachmentError(http.StatusBadRequest, "bad_browser_attachment", "label is invalid", nil)
+	}
 	viewport, err := normalizeAttachmentViewport(req.Viewport)
 	if err != nil {
 		return browserAttachmentResponse{}, err
@@ -213,7 +217,7 @@ func (m *browserAttachmentManager) Create(req browserAttachmentCreateRequest) (b
 	a := &browserAttachment{
 		manager: m, id: newBrowserAttachmentID(), targetKey: targetKey, targetID: req.TargetID,
 		sessionID: attached.SessionID, cdp: cdp, viewport: viewport,
-		state: state, title: target.Title, url: target.URL, controlMode: attachmentControlViewOnly,
+		state: state, title: target.Title, label: req.Label, url: target.URL, controlMode: attachmentControlViewOnly,
 		latestFrame: make(chan []byte, 1), frameEvents: make(chan browserScreencastFrame, 1), frameStop: make(chan struct{}),
 	}
 	m.mu.Lock()
@@ -486,7 +490,7 @@ func (m *browserAttachmentManager) updateNavigation(a *browserAttachment, rawURL
 	} else {
 		a.state = attachmentStateAttached
 	}
-	state, title, urlNow := a.state, a.title, a.url
+	state, title, urlNow := a.state, a.displayTitleLocked(), a.url
 	visible := a.visible && a.viewer != nil
 	a.mu.Unlock()
 	if state == attachmentStateUnsupportedURL {
@@ -562,10 +566,17 @@ func (a *browserAttachment) responseLocked() browserAttachmentResponse {
 		expiresAt = &copy
 	}
 	return browserAttachmentResponse{
-		ID: a.id, State: a.state, Title: a.title, URL: a.url,
+		ID: a.id, State: a.state, Title: a.displayTitleLocked(), URL: a.url,
 		OpenURL: "/open/browser-attachment/" + a.id, ExpiresAt: expiresAt,
 		Viewer: a.viewer != nil, ControlMode: a.controlMode, Handoff: handoff,
 	}
+}
+
+func (a *browserAttachment) displayTitleLocked() string {
+	if a.label != "" {
+		return a.label
+	}
+	return a.title
 }
 
 func (a *browserAttachment) armExpiryLocked(ttl time.Duration) {
@@ -707,7 +718,7 @@ func (a *browserAttachment) refreshNavigation() {
 	a.mu.Lock()
 	a.url = truncateBrowserText(entry.URL, browserAttachmentMaxURL)
 	a.title = truncateBrowserText(entry.Title, browserAttachmentMaxTitle)
-	urlNow, title := a.url, a.title
+	urlNow, title := a.url, a.displayTitleLocked()
 	a.mu.Unlock()
 	a.notifyJSON(map[string]any{
 		"type": "navigation", "url": urlNow, "title": title,
