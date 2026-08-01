@@ -65,7 +65,9 @@
   ヘッドレス/リモートに無条件成立、認証と onboarding は別物、`/login` URL 折返し復元 →
   詳細は [dev/08 §8.5](dev/08-integrations.md) と [history/phase1-plan §11.10](history/phase1-plan.md#1110-実装結果と実運用の知見phase-1-完了)。
 - **進行中の設計**: egress 統制（[docs/20](20-container-audit-egress.md)・enforce 未了）。Go 内部リファクタ
-  （[docs/23](23-go-refactor.md)）は develop マージ済・残 = ④契約の型化のみ。
+  （[docs/23](23-go-refactor.md)）は develop マージ済・残 = ④契約の型化のみ。i18n（[docs/28](28-i18n.md)）は
+  Console 側 P0〜P5 完了・**残 = P6 エージェント出力言語**（別セッションで着手予定。作業手順と
+  地雷は [§6.6](28-i18n.md#66-p6-エージェント出力言語別セッション向けの引き継ぎ)）。
 
 ## 5. 動作確認の最短手順
 
