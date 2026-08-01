@@ -54,14 +54,18 @@ gh release view "$R_TAG" -R "$REPO" >/dev/null 2>&1 \
   || die "$R_TAG does not exist on $REPO — the rootfs this version pins is gone,
   so its native tar cannot be made to work without publishing a new rootfs."
 
-# The release must be one whose assets were taken away. A healthy release still
-# holding its original bytes must never be quietly replaced by a rebuild: that is
-# exactly the immutability publish-dist.sh protects, and the whole justification
-# for this script is that the assets here are already gone.
-have="$(gh release view "$TAG" -R "$REPO" --json assets -q '.assets|length' 2>/dev/null || true)"
-[ "${have:-0}" = 0 ] || die "$TAG still has ${have} asset(s).
+assets_must_be_gone() {
+  # A healthy release still holding its original bytes must never be quietly
+  # replaced by a rebuild: that is exactly the immutability publish-dist.sh
+  # protects, and the whole justification for this script is that the assets here
+  # are already gone. Only the upload path is subject to this — rewriting the
+  # notice on a release that does have assets is the normal case.
+  local have
+  have="$(gh release view "$TAG" -R "$REPO" --json assets -q '.assets|length' 2>/dev/null || true)"
+  [ "${have:-0}" = 0 ] || die "$TAG still has ${have} asset(s).
   This script only restores a release whose assets were deleted. If you really
   mean to replace published bytes, delete them deliberately first."
+}
 
 # --- 2. reconstruct rootfs.json from the surviving rootfs release -------------
 # The manifest lived only inside the native tar we deleted, but every field is
@@ -121,8 +125,13 @@ notice() {
 > `SHA256SUMS` differ from the ones this release first shipped with. The
 > workspace rootfs is untouched and is still the original one this version
 > pinned. No credentials and no user data were ever involved.
-> **0.5.1 or later is the recommended version**; this one is restored so the
-> release history is not hollow.
+>
+> **Past releases do not receive security updates.** The workspace image bakes a
+> browser and system packages, and those age; this build will not be rebuilt when
+> they do — in fact it stops being rebuildable at all once its pinned versions
+> leave the distribution's package index. **Use the latest release.** This one is
+> restored so the release history is not hollow, not because it is a good thing
+> to run.
 >
 > **本リリースのダウンロードは 2026-08-01 に再ビルドしたものです。** 当初公開した
 > バイナリは、公開すべきでない文字列を含むソースコメントを含んでいたため削除しま
@@ -132,8 +141,14 @@ notice() {
 > **当初公開されたバイト列とは同一ではありません。** ベースイメージ・システム
 > パッケージ・取得モジュールがいずれも更新されているため、`SHA256SUMS` の値は
 > 初回公開時のものと異なります。ワークスペースの rootfs は当時のまま変更していま
-> せん。資格情報や利用者データは一切関係しません。**推奨版は 0.5.1 以降**で、
-> 本版はリリース履歴を空洞にしないために復旧したものです。
+> せん。資格情報や利用者データは一切関係しません。
+>
+> **過去版にセキュリティ更新は提供しません。** ワークスペースイメージはブラウザと
+> システムパッケージを焼き込んでおり、それらは時間とともに古くなりますが、本ビルドが
+> 作り直されることはありません。実際、pin した版がディストリビューションのパッケージ
+> 索引から外れた時点で、再ビルドすること自体ができなくなります。**最新版をご利用
+> ください。** 本版は、動かすのに適しているからではなく、リリース履歴を空洞にしない
+> ために復旧したものです。
 
 ---
 
@@ -167,7 +182,12 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 case "${AF_REPUBLISH_STAGE:-all}" in
   manifest) manifest "$TMP" ;;
+  # Refresh the notice on a release that already has its assets back — used when
+  # the wording changes (e.g. the support policy was added after 0.5.0 was
+  # restored). Touches nothing but the body.
+  notice) rewrite_body "$TMP" ;;
   *)
+    assets_must_be_gone
     verify_c
     [ -f "$DIST/SHA256SUMS" ] || die "$DIST/SHA256SUMS not found (build.sh generates it)"
     assets=()
