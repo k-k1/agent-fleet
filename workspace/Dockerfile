@@ -98,7 +98,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # recommendation (suppressed by --no-install-recommends). Bump the ARG after Debian
 # publishes the same security build for both architectures. Fonts and fontconfig are
 # explicit so Japanese pages render without depending on a transient recommendation.
-ARG CHROMIUM_VERSION=150.0.7871.181-1~deb12u1
+ARG CHROMIUM_VERSION=151.0.7922.71-1~deb12u1
 # BAKE_OPTIONAL_TOOLS=0（native lean rootfs）は chromium 本体・CJK フォントを焼かず
 # オンデマンド DL（P2 の install-chromium、CHROMIUM_DL_VERSION ピン）に回すが、
 # その DL 版が動くための実行時ライブラリと fontconfig/DejaVu はここで明示導入する
@@ -234,9 +234,9 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
 ARG CLAUDE_CODE_VERSION=2.1.220
-ARG OPENCODE_VERSION=1.18.9
+ARG OPENCODE_VERSION=1.18.10
 ARG CODEX_VERSION=0.146.0
-ARG COPILOT_VERSION=1.0.76
+ARG COPILOT_VERSION=1.0.77
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
         "opencode-ai@${OPENCODE_VERSION}" \
@@ -260,10 +260,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # 注意: agy は Go BoringCrypto(FIPS) ビルドで、x86 では RDRAND 命令が無いホストだと
 # 起動即 SIGABRT する（0008 PoC: Ryzen Embedded R2514）。RDRAND 非提示のビルドホスト
 # でもイメージは焼けるよう、起動を伴う --version 検証は rdrand 提示時だけ行う。
-ARG AGY_VERSION=1.1.7
-ARG AGY_RELEASE_BUILD=5951805767680000
-ARG AGY_SHA256_X64=946cd06258d0ede72d0311550c914315798821f6a397f53ac760919826a19af4
-ARG AGY_SHA256_ARM64=0d6d488851745e80e69b8935d063e742945811b47111994b1a6dbd27df3010d5
+ARG AGY_VERSION=1.1.9
+ARG AGY_RELEASE_BUILD=6572839516635136
+ARG AGY_SHA256_X64=467809635ef00660497607111547e80a0a863c6e8fce43b507cd1ba6bf6ddd66
+ARG AGY_SHA256_ARM64=deeb815d07a656074482b2e428ffd9794a2fffbf5df2056e9bf75936b85ebb49
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -345,9 +345,9 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # `app.disableAutoupdates` で止める設定型なので、封殺は runtime（entrypoint 起動毎再固定
 # ＋ 縦割りの ensureSettings）に寄せる（copilot の COPILOT_AUTO_UPDATE とは違い build ENV
 # では止められない）。
-ARG KIRO_VERSION=2.14.2
-ARG KIRO_SHA256_X64=b144d4b1f8ca0083967fe13a5c35db18bd9543ecede6f1eec166f3b0a04f876a
-ARG KIRO_SHA256_ARM64=b7deac65336778a4edd656cc6fc4b5518372937d8e439df284f136a814c09b57
+ARG KIRO_VERSION=2.16.0
+ARG KIRO_SHA256_X64=a7b9b3b2d159dfcf596c4400fcd9c9b13c457e9bae0c77ef3e48db931d261b60
+ARG KIRO_SHA256_ARM64=b6df9059018d34eb726a6a20c3ab1607fff5c103dbb5ce45c2c69562afb63c8c
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
