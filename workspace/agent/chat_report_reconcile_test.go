@@ -579,11 +579,13 @@ func TestReportReconcilerFoldsOverlappingInstructions(t *testing.T) {
 	}
 	// 本文には「指示N件ぶん」と各投入時刻が添えられる（1件のときは何も足さない）。
 	rows := readInstrRows(m.Name)
-	note := instrFoldNote(rows)
+	note := foldFact(len(rows), instrFoldAts(rows), "ja")
 	if !strings.Contains(note, "2 件") || !strings.Contains(note, rows[0].DeliveredAt) {
 		t.Fatalf("畳み込みの注記 = %q", note)
 	}
-	if instrFoldNote(rows[:1]) != "" {
+	// 1件のときは注記そのものが出ない（本文は v1 と1文字も変わらない）。
+	single := reportView{kind: reportKindAnswerReady, args: map[string]string{"display": "d", "name": m.Name}}
+	if strings.Contains(single.displayText("ja"), "件ぶんの完了") {
 		t.Fatal("単一指示の報告本文は v1 と1文字も変えない")
 	}
 }

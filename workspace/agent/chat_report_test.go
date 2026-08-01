@@ -197,7 +197,7 @@ func TestInjectPendingReports(t *testing.T) {
 	if len(pending) != 2 {
 		t.Fatalf("pending = %d, want 2 (undelivered only)", len(pending))
 	}
-	for _, want := range []string{"レポートA", "レポートC", "続けて", reportPreamble} {
+	for _, want := range []string{"レポートA", "レポートC", "続けて", reportPreambleFor("ja")} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
 		}
@@ -205,7 +205,7 @@ func TestInjectPendingReports(t *testing.T) {
 	// The injection guard must ride at the data boundary: a report that instructs
 	// command execution / shell sends must never be actionable.
 	for _, want := range []string{"shell", "絶対にしない", "インジェクション"} {
-		if !strings.Contains(reportPreamble, want) {
+		if !strings.Contains(reportPreambleFor("ja"), want) {
 			t.Fatalf("reportPreamble missing injection guard %q", want)
 		}
 	}
@@ -318,13 +318,13 @@ func TestChatAutoTurnLimit(t *testing.T) {
 }
 
 func TestBuildReportContent(t *testing.T) {
-	got := buildReportContent("リファクタ作業", "slot07", "answer-ready", "", 0)
+	got := reportBodyForTest("リファクタ作業", "slot07", "answer-ready", "")
 	for _, want := range []string{"リファクタ作業", "slot07", "入力待ち"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("content missing %q:\n%s", want, got)
 		}
 	}
-	exit := buildReportContent("x", "slot08", "exit", "oom", 0)
+	exit := reportBodyForTest("x", "slot08", "exit", "oom")
 	if !strings.Contains(exit, "OOM") {
 		t.Fatalf("exit content missing OOM label:\n%s", exit)
 	}
@@ -473,8 +473,13 @@ func TestQuestionReportInterimKeepsArm(t *testing.T) {
 	if got == nil {
 		t.Fatal("no interim question report reached the conversation")
 	}
-	if !strings.Contains(got.Content, "質問") || !strings.Contains(got.Content, "answer_session_question") {
+	// docs/28 P6: カードは**事実だけ**（利用者が読む面）。オペレーターへの指示
+	// （answer_session_question で答えろ）は保存されず、プロンプトを組む瞬間に足される。
+	if !strings.Contains(got.Content, "質問") || strings.Contains(got.Content, "answer_session_question") {
 		t.Fatalf("question report card = %q", got.Content)
+	}
+	if prompt := reportPromptFor(*got, "ja"); !strings.Contains(prompt, "answer_session_question") {
+		t.Fatalf("オペレーターへの指示がプロンプトに乗っていない: %q", prompt)
 	}
 	if !sessionReportPending(m.Name) {
 		t.Fatal("interim question report must NOT consume the arm (完了報告は別途)")
@@ -493,7 +498,7 @@ func TestReportHeadForAutoPilot(t *testing.T) {
 	prefs := filepath.Join(home, ".config", "agent-fleet", "ui-prefs.json")
 
 	// Default (no key): confirm-first.
-	q, pl := reportHeadFor("question", "", 0), reportHeadFor("plan-approval", "", 0)
+	q, pl := reportHeadFor("question", "", 0, "ja"), reportHeadFor("plan-approval", "", 0, "ja")
 	if strings.Contains(q, "自動走行") || strings.Contains(pl, "自動走行") {
 		t.Fatalf("auto-pilot text without opt-in:\nq=%q\npl=%q", q, pl)
 	}
@@ -504,7 +509,7 @@ func TestReportHeadForAutoPilot(t *testing.T) {
 	if err := os.WriteFile(prefs, []byte(`{"assistantAutoPilot":true}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	q, pl = reportHeadFor("question", "", 0), reportHeadFor("plan-approval", "", 0)
+	q, pl = reportHeadFor("question", "", 0, "ja"), reportHeadFor("plan-approval", "", 0, "ja")
 	if !strings.Contains(q, "自動走行") || !strings.Contains(q, "answer_session_question") {
 		t.Fatalf("auto-pilot question head = %q", q)
 	}
@@ -865,7 +870,7 @@ func TestReportHeadForTurnAborted(t *testing.T) {
 	prefs := filepath.Join(home, ".config", "agent-fleet", "ui-prefs.json")
 
 	// Default (no key) = ON: nudge the session to continue.
-	on := reportHeadFor(reportKindAnswerReady, reportReasonTurnAborted, 1)
+	on := reportHeadFor(reportKindAnswerReady, reportReasonTurnAborted, 1, "ja")
 	for _, want := range []string{"中断", "send_to_session", "言語", "破壊的"} {
 		if !strings.Contains(on, want) {
 			t.Fatalf("auto-resume head missing %q:\n%s", want, on)
@@ -876,7 +881,7 @@ func TestReportHeadForTurnAborted(t *testing.T) {
 	if err := os.WriteFile(prefs, []byte(`{"assistantAutoResume":false}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	off := reportHeadFor(reportKindAnswerReady, reportReasonTurnAborted, 1)
+	off := reportHeadFor(reportKindAnswerReady, reportReasonTurnAborted, 1, "ja")
 	if !strings.Contains(off, "確認") || !strings.Contains(off, "言語") {
 		t.Fatalf("auto-resume OFF head = %q", off)
 	}
@@ -886,13 +891,13 @@ func TestReportHeadForTurnAborted(t *testing.T) {
 
 	// Past the cap: escalate to the user, never ask for another resume — this is the
 	// stop for an error that keeps recurring.
-	capped := reportHeadFor(reportKindAnswerReady, reportReasonTurnAborted, maxAutoResumeAttempts+1)
+	capped := reportHeadFor(reportKindAnswerReady, reportReasonTurnAborted, maxAutoResumeAttempts+1, "ja")
 	if !strings.Contains(capped, "上限") || strings.Contains(capped, "send_to_session") {
 		t.Fatalf("capped head must escalate without asking for a resume:\n%s", capped)
 	}
 
 	// A clean completion keeps its old wording — the abort branch must not leak into it.
-	clean := reportHeadFor(reportKindAnswerReady, "", 0)
+	clean := reportHeadFor(reportKindAnswerReady, "", 0, "ja")
 	if strings.Contains(clean, "中断") {
 		t.Fatalf("clean completion head changed:\n%s", clean)
 	}

@@ -38,7 +38,7 @@ func TestCompactConversation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(prov.prompts) != 1 || !strings.Contains(prov.prompts[0], providerSyncPreamble) ||
-		!strings.HasSuffix(prov.prompts[0], compactSummaryPrompt) {
+		!strings.HasSuffix(prov.prompts[0], compactSummaryPromptFor("ja")) {
 		t.Fatalf("summary prompt not sent: %+v", prov.prompts)
 	}
 	if c.ClaudeSessionID != "" || c.CodexSessionID != "" || c.OpencodeSessionID != "" || c.AgyConversationID != "" {
@@ -81,7 +81,7 @@ func TestInjectHandoff(t *testing.T) {
 	if !carried {
 		t.Fatal("pending handoff not carried")
 	}
-	if !strings.HasPrefix(p, handoffPreamble) || !strings.Contains(p, "前回の要約") || !strings.HasSuffix(p, "こんにちは") {
+	if !strings.HasPrefix(p, handoffPreambleFor("ja")) || !strings.Contains(p, "前回の要約") || !strings.HasSuffix(p, "こんにちは") {
 		t.Fatalf("prompt shape wrong: %q", p)
 	}
 	// クリアは呼び出し側の成功時責務（失敗ターンで再注入させるため）。

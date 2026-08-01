@@ -44,13 +44,28 @@ type chatCreateReq struct {
 // A translate/summarize chat opened from Files carries its own persona instead of pointing
 // at a standing 翻訳/汎用 assistant, so those builtins could be removed with no loss. Any
 // other verb ("") falls through to the generic chatPersona.
-func verbPersona(verb string) string {
+//
+// docs/28 P6: 生成物（訳文・要約）を読むのは利用者なので、persona は表示言語で書く。翻訳の
+// 言語ペアは表示言語と無関係に日本語↔英語のままにしてある — 「訳す方向」は入力から決まる話で、
+// Console の表示言語で決めるものではない（languageRule も translate だけ除外している）。
+func verbPersona(verb, lang string) string {
+	en := lang == "en"
 	switch verb {
 	case "translate":
+		if en {
+			return "You are a translation assistant. " +
+				"Translate the text you are given naturally, auto-detecting the direction between Japanese and English unless told otherwise. " +
+				"Return the translation only — no preamble, no commentary. Preserve the Markdown formatting."
+		}
 		return "あなたは翻訳アシスタントです。" +
 			"渡された文章を、指定がなければ日本語↔英語を自動判定して自然に翻訳してください。" +
 			"訳文のみを返し、余計な前置きや解説は付けないでください。Markdown の書式は保持します。"
 	case "summarize":
+		if en {
+			return "You are a summarization assistant. " +
+				"Summarize the key points of the text you are given concisely, in the language of the original. " +
+				"Put the important items in bullets, and add no preamble."
+		}
 		return "あなたは要約アシスタントです。" +
 			"渡された文章の要点を、原文の言語に合わせて簡潔にまとめてください。" +
 			"重要な項目は箇条書きにし、余計な前置きは付けないでください。"
@@ -61,7 +76,22 @@ func verbPersona(verb string) string {
 
 // seedFor composes the first-turn prompt for an attached file/dir. The absolute path is
 // used verbatim so the assistant's Read (scoped by --add-dir) resolves it directly.
-func seedFor(verb, abs string, isDir bool) string {
+// 会話の 1 通目としてそのまま表示される（利用者が自分で打ったように見える）ので、persona と
+// 同じく表示言語で書く。
+func seedFor(verb, abs string, isDir bool, lang string) string {
+	if lang == "en" {
+		switch verb {
+		case "translate":
+			return "Translate this file:\n" + abs
+		case "summarize":
+			return "Summarize this file:\n" + abs
+		default:
+			if isDir {
+				return "Tell me about this directory:\n" + abs
+			}
+			return "Tell me about this file:\n" + abs
+		}
+	}
 	switch verb {
 	case "translate":
 		return "次のファイルを翻訳してください：\n" + abs
@@ -73,6 +103,16 @@ func seedFor(verb, abs string, isDir bool) string {
 		}
 		return "次のファイルについて教えてください：\n" + abs
 	}
+}
+
+// chatDefaultTitle is the fallback name for a conversation created without one. The
+// Console sends its own (catalog "chat.new_title"), so this covers the other creators —
+// MCP / schedules / the bridge — and follows the display language for the same reason.
+func chatDefaultTitle(lang string) string {
+	if lang == "en" {
+		return "New chat"
+	}
+	return "新しいチャット"
 }
 
 func appendUniqueStr(ss []string, v string) []string {
@@ -89,9 +129,10 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
+	lang := uiLocale()
 	title := strings.TrimSpace(req.Title)
 	if title == "" {
-		title = "新しいチャット"
+		title = chatDefaultTitle(lang)
 	}
 	now := nowMs()
 	c := &chatConversation{
@@ -114,14 +155,14 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 		c.Tools = a.Tools
 		c.Knowledge = a.Knowledge
 		c.Integrations = a.Integrations
-	case verbPersona(req.SeedVerb) != "":
+	case verbPersona(req.SeedVerb, lang) != "":
 		// Ad-hoc persona-embedded verb (docs/30 ②): a Files 翻訳/要約 opens a standalone chat
 		// carrying the verb persona directly — no standing 翻訳/汎用 assistant to point at.
 		// Read-only (the attached file arrives via knowledge --add-dir below); SeedVerb is
 		// persisted so languageRule() keeps a translate thread language-agnostic.
 		c.Agent = preferredHeadlessAgent()
 		c.Model = resolveChatModel(c.Agent, "")
-		c.Persona = verbPersona(req.SeedVerb)
+		c.Persona = verbPersona(req.SeedVerb, lang)
 		c.Tools = toolsNone
 		c.SeedVerb = req.SeedVerb
 	default:
@@ -151,7 +192,7 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 					dir = filepath.Dir(full)
 				}
 				c.Knowledge = appendUniqueStr(c.Knowledge, dir)
-				seed = seedFor(req.SeedVerb, full, fi.IsDir())
+				seed = seedFor(req.SeedVerb, full, fi.IsDir(), lang)
 			}
 		}
 	}

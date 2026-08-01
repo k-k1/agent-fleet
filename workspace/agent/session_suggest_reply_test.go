@@ -68,7 +68,7 @@ func TestReplySuggestPromptWindow(t *testing.T) {
 		{Role: "user", Text: "直前の依頼"},
 		{Role: "assistant", Text: "直前の回答。どうする?"},
 	}
-	got := replySuggestPrompt(turns)
+	got := replySuggestPrompt(turns, "ja")
 	for _, want := range []string{"user: 直前の依頼", "assistant: 直前の回答。どうする?"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, got)
