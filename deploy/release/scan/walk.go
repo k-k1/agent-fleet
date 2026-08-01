@@ -95,7 +95,15 @@ func (w *Walker) stream(name string, r io.Reader, depth int) error {
 		return nil
 	}
 	br := bufio.NewReaderSize(r, 1<<16)
-	head, _ := br.Peek(512)
+	// A decompressor reports a corrupt body here, on the first read — not when
+	// it was constructed. Swallowing this error would turn an artifact we cannot
+	// actually read into a silent pass, which is the one outcome a gate must
+	// never produce. io.EOF just means the stream is shorter than the sniff
+	// window (or empty), which is fine.
+	head, err := br.Peek(512)
+	if err != nil && err != io.EOF {
+		return fmt.Errorf("%s: %w", name, err)
+	}
 	if len(head) == 0 {
 		return nil
 	}
@@ -164,10 +172,24 @@ func (w *Walker) walkTar(name string, r io.Reader, depth int) error {
 			}
 			continue
 		}
-		if err := w.stream(joinPath(name, h.Name), tr, depth+1); err != nil {
+		if err := w.member(joinPath(name, h.Name), tr, depth+1); err != nil {
 			return err
 		}
 	}
+}
+
+// member expands one entry of an archive. Unlike the artifact itself, an entry
+// that cannot be parsed does not stop the scan: the images carry third-party
+// trees that include archives which are malformed *on purpose* (Go's own
+// archive/tar testdata, for one), and failing the release over someone else's
+// test fixture would make the gate unusable. The entry is recorded and printed
+// instead — its bytes stay compressed, which is not somewhere our own text can
+// hide. An unreadable artifact at the top level is still a hard error.
+func (w *Walker) member(name string, r io.Reader, depth int) error {
+	if err := w.stream(name, r, depth); err != nil {
+		w.Skipped = append(w.Skipped, fmt.Sprintf("%s: %v", name, err))
+	}
+	return nil
 }
 
 // walkZip needs random access, so the member is spilled to a temp file first.
@@ -192,9 +214,10 @@ func (w *Walker) walkZip(name string, r io.Reader, depth int) error {
 		}
 		rc, err := f.Open()
 		if err != nil {
-			return fmt.Errorf("%s: zip: %w", name, err)
+			w.Skipped = append(w.Skipped, fmt.Sprintf("%s: zip: %v", joinPath(name, f.Name), err))
+			continue
 		}
-		serr := w.stream(joinPath(name, f.Name), rc, depth+1)
+		serr := w.member(joinPath(name, f.Name), rc, depth+1)
 		rc.Close()
 		if serr != nil {
 			return serr
