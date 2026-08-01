@@ -13,7 +13,7 @@ package copilot
 //
 // 権限（session/request_permission）は --allow-all 運転では発生しないが、plan
 // モード起動では allow-all を外すため到達しうる。「UI に出ないから発生しない」を
-// 信用せず（agy 1af1be9 の教訓）、常に Interaction(question) へ写像して Console の
+// 信用せず（agy 538bbeb の教訓）、常に Interaction(question) へ写像して Console の
 // 質問カード（/respond）で答えさせる。
 
 import (
@@ -574,7 +574,7 @@ func (h *threadHandle) pump() {
 
 // runTurn executes ONE blocking session/prompt and lands the terminal state.
 // turn 境界の MarkTurnStart/End が status ストアと docs/30 の完了報告を駆動する
-// （notify seam — 5facc6e/dffd84c の教訓）。
+// （notify seam — b156557/330aa47 の教訓）。
 func (h *threadHandle) runTurn(in agents.TurnInput) {
 	agents.MarkTurnStart(h.slotSid)
 	defer func() { agents.MarkTurnEnd(h.slotSid, h.currentState()) }()
