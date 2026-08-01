@@ -38,14 +38,17 @@ func normModelToken(s string) string {
 	return strings.Trim(s, "-")
 }
 
-// modelMatchesHidden は要求モデルが除外エントリに当たるかを判定する。完全一致に加えて
-// 「トークン列としての部分一致」を見るのが要点で、claude は --model に別名（fable）でも
-// 完全 id（claude-fable-5）でも渡せるため、別名だけを除外しても完全 id で抜けられては
-// 意味がない。逆に境界を無視した単純な部分一致は取り過ぎる — opencode の課金経路違い
-// （opencode/glm-5.2 と opencode-go/glm-5.2）を巻き添えにしないために境界を要求する。
+// modelMatchesHidden は要求モデルが除外エントリに当たるかを判定する。
 //
-// 副作用として、除外に「族」を書けば族ごと落ちる（codex の gpt-5.6 で gpt-5.6-luna も
-// 除外）。UI はカタログの具体 id しか書かせないので通常は起きないが、意図した挙動。
+// 基本は完全一致。加えて「別名を隠したら、その別名を含む完全 id も隠す」を見る必要が
+// ある — claude は --model に別名（fable）でも完全 id（claude-fable-5）でも渡せるので、
+// 別名だけ除外しても完全 id で抜けられては意味がない。
+//
+// ただしこの含意一致は「除外エントリが単一トークンのとき」に限る。具体的なカタログ id
+// （gpt-5-4 のように複数トークン）にまで広げると、それを接頭辞に持つ別モデル
+// （gpt-5-4-mini）を巻き添えにする — 実際に GPT-5.4 を隠すと mini まで消えた。
+// 単一トークンは「族の名前」（fable / opus / sonnet / haiku）、複数トークンは
+// 「1つの具体的なモデル」という区別。
 func modelMatchesHidden(requested, hidden string) bool {
 	r, h := normModelToken(requested), normModelToken(hidden)
 	if r == "" || h == "" {
@@ -53,6 +56,9 @@ func modelMatchesHidden(requested, hidden string) bool {
 	}
 	if r == h {
 		return true
+	}
+	if strings.Contains(h, "-") {
+		return false // 具体 id を隠しただけ — 前方一致する別モデルは別物
 	}
 	return strings.Contains("-"+r+"-", "-"+h+"-")
 }

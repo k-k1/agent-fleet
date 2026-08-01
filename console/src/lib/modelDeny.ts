@@ -2,8 +2,10 @@
 // 判定規則は Agent 側 workspace/agent/model_deny.go と対で、必ず両方を同時に直すこと —
 // ここがズレると「ピッカーには出るのに起動が 400 で断られる」という最悪の食い違いになる。
 //
-// 規則: 区切り（/ . _ 空白 :）をハイフンへ寄せて小文字化し、トークン境界つきの部分一致を見る。
+// 規則: 区切り（/ . _ 空白 :）をハイフンへ寄せて小文字化し、完全一致＋「単一トークンの
+// 別名を隠したときだけ」トークン境界つきの含意一致を見る。
 //   - "fable" は "claude-fable-5" にも当たる（claude は別名でも完全 id でも --model に渡せる）
+//   - "gpt-5.4"（複数トークン＝具体 id）は "gpt-5.4-mini" には当たらない
 //   - "opencode/glm-5.2" は "opencode-go/glm-5.2" には当たらない（課金経路違いを巻き添えにしない）
 //   - "fablet" のような単なる部分文字列には当たらない
 
@@ -18,6 +20,7 @@ export function modelMatchesHidden(requested: string, hidden: string): boolean {
   const h = normModelToken(hidden);
   if (!r || !h) return false;
   if (r === h) return true;
+  if (h.includes("-")) return false; // 具体 id を隠しただけ — 前方一致する別モデルは別物
   return `-${r}-`.includes(`-${h}-`);
 }
 

@@ -28,10 +28,18 @@ func TestModelMatchesHiddenTokenBoundary(t *testing.T) {
 		{"unfable", "fable", false},
 		{"", "fable", false},                  // 未指定＝CLI 既定に委ねる
 		{"fable", "", false},
+		// 具体 id（複数トークン）を隠しても、それを接頭辞に持つ別モデルは巻き添えに
+		// しない。GPT-5.4 を隠したら mini まで消えた不具合の回帰。
+		{"gpt-5.4-mini", "gpt-5.4", false},
+		{"gpt-5.4", "gpt-5.4", true},
+		{"gpt-5.4-mini", "gpt-5.4-mini", true},
+		{"claude-fable-5-20260101", "claude-fable-5", false}, // 同上（別名でなく具体 id）
 		// opencode: Zen を除外しても Go サブスクの同名は残る
 		{"opencode-go/glm-5.2", "opencode/glm-5.2", false},
 		{"opencode/glm-5.2", "opencode/glm-5.2", true},
-		{"opencode/glm-5.2", "glm-5.2", true}, // 素の名前で除外すれば両経路とも落ちる
+		// 素の名前（glm-5.2）も複数トークンなので、もう族一致はしない。両経路を隠したい
+		// なら両方の id を除外する（UI はどちらも一覧に出す）。取り過ぎない側に倒した。
+		{"opencode/glm-5.2", "glm-5.2", false},
 	}
 	for _, tt := range tests {
 		if got := modelMatchesHidden(tt.requested, tt.hidden); got != tt.want {
