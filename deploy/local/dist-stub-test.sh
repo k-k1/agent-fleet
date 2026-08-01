@@ -113,7 +113,6 @@ make_dist() { # make_dist <url-base>  (base baked into rootfs.json's url)
 EOF
   tar -czf "$DISTD/$CN.tar.gz" -C "$WORK/c" "$CN"
   echo compose-bundle > "$DISTD/agent-fleet-$V.tar.gz"
-  echo images-tar > "$DISTD/agent-fleet-images-$V.tar.gz"
   (cd "$DISTD" && sha256sum -- * > SHA256SUMS)
 }
 
@@ -126,7 +125,7 @@ cat > "$WORK/want1" <<EOF
 gh release view rootfs-$RV -R $REPO
 gh release create rootfs-$RV -R $REPO --title rootfs $RV (linux-amd64) --notes workspace rootfs (content hash $RV). Referenced by the app release's native tar; not for standalone use. $DISTD/$RN
 gh release view v$V -R $REPO
-gh release create v$V -R $REPO --title agent-fleet $V --notes-file $DISTD/RELEASE_NOTES-$V.md $DISTD/agent-fleet-$V.tar.gz $DISTD/agent-fleet-images-$V.tar.gz $DISTD/$CN.tar.gz $DISTD/SHA256SUMS
+gh release create v$V -R $REPO --title agent-fleet $V --notes-file $DISTD/RELEASE_NOTES-$V.md $DISTD/agent-fleet-$V.tar.gz $DISTD/$CN.tar.gz $DISTD/SHA256SUMS
 EOF
 expect_set "$WORK/want1"
 expect_order "gh release view rootfs-$RV" "gh release create rootfs-$RV"
@@ -184,12 +183,15 @@ grep -q "repo create" "$LOG" && fail "created repo although it exists"
 echo "ok"
 
 echo "== case 7: assets over 2GiB are skipped with a warning =="
-truncate -s 3G "$DISTD/agent-fleet-images-$V.tar.gz"   # sparse — no real disk use
+# No released asset is that large since ADR 0037 dropped the images tar, but the
+# guard stays: the native tar could grow, and silently attaching something the
+# API will reject is worse than skipping it loudly.
+truncate -s 3G "$DISTD/$CN.tar.gz"   # sparse — no real disk use
 : > "$LOG"
 VERSION=$V "$PUBLISH" --repo "$REPO" --dist-dir "$DISTD" > /dev/null 2> "$WORK/err7.txt"
 grep -q "over the 2GiB" "$WORK/err7.txt" || fail "no over-limit warning"
-grep -q "agent-fleet-images-$V.tar.gz" <(grep "release create v$V" "$LOG") \
-  && fail "attached the oversized B"
+grep -q -- "$CN.tar.gz" <(grep "release create v$V" "$LOG") \
+  && fail "attached the oversized asset"
 make_dist "https://github.com/$REPO/releases/download"
 echo "ok"
 
