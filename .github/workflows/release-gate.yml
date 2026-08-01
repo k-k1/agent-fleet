@@ -328,17 +328,24 @@ jobs:
                    deploy/release/dist-repo/install-compose.sh \
                    deploy/release/notes-body.sh deploy/release/gen-changelog.sh \
                    deploy/release/scan-forbidden.sh \
-                   deploy/local/dist-stub-test.sh; do
+                   deploy/release/republish-dist.sh \
+                   deploy/local/dist-stub-test.sh deploy/local/republish-stub-test.sh; do
             bash -n "$f"
           done
           shellcheck deploy/release/publish-dist.sh deploy/release/dist-repo/install.sh \
             deploy/release/dist-repo/install-compose.sh \
             deploy/release/notes-body.sh deploy/release/gen-changelog.sh \
             deploy/release/scan-forbidden.sh \
-            deploy/local/dist-stub-test.sh
+            deploy/release/republish-dist.sh \
+            deploy/local/dist-stub-test.sh deploy/local/republish-stub-test.sh
 
       - name: publish/install stub run (call-sequence + file:// flow)
         run: deploy/local/dist-stub-test.sh
+
+      # republish-dist.sh rewrites a published release body in place; the stub
+      # pins that it replaces the notice without eating the notes underneath.
+      - name: republish stub run (notice rewrite + refusal paths)
+        run: deploy/local/republish-stub-test.sh
 
       # The seeded CHANGELOGs are generated from notes/index.tsv + the notes files;
       # this catches a ledger row or notes edit that was not regenerated.
