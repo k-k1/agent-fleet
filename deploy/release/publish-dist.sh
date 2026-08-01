@@ -8,7 +8,8 @@
 #   - rootfs release `rootfs-<r>` … attaches R. If the tag exists, do nothing
 #     (<r> is a content hash = identical bits; image-immutable releases avoid
 #     re-downloads for users).
-#   - app release `v<v>`          … attaches A / B / C (+ -bundle) / SHA256SUMS.
+#   - app release `v<v>`          … attaches A / C (+ -bundle) / SHA256SUMS.
+#                                     Images go to the registry, not here (ADR 0037).
 #     An existing tag fails (releases are immutable — redo by bumping the version).
 #     The body is rendered from deploy/release/notes/<v>.md (+ .ja.md) by
 #     notes-body.sh; a missing notes file is a hard error.
@@ -154,14 +155,15 @@ if gh release view "v$VERSION" -R "$REPO" >/dev/null 2>&1; then
   die "v$VERSION already exists (releases are immutable — bump the version and retry)"
 fi
 assets=()
-for f in "agent-fleet-$VERSION.tar.gz" "agent-fleet-images-$VERSION.tar.gz" \
+# ADR 0037: the images tar is no longer published — images go to the registry.
+for f in "agent-fleet-$VERSION.tar.gz" \
          "$C_NAME.tar.gz" "$C_NAME-bundle.tar.gz"; do
   p="$DIST/$f"
   [ -f "$p" ] || continue
   size="$(stat -c%s "$p")"
   if [ "$size" -ge "$GH_MAX_ASSET" ]; then
     echo "WARN: $f is ${size} bytes, over the 2GiB GitHub Releases asset limit — skipping" >&2
-    echo "      (distribute the air-gap tar via file hand-off — docs/35 §35.2)" >&2
+    echo "      (hand the file over out of band — docs/35 §35.2)" >&2
     continue
   fi
   assets+=("$p")

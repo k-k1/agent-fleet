@@ -17,7 +17,10 @@
 #     applied.
 #
 #   VERSION=1.0.0 deploy/compose/release.sh            # build images + bundle (A+D)
-#   VERSION=1.0.0 deploy/compose/release.sh --save     # + docker save tar (B, air-gap)
+#   VERSION=1.0.0 deploy/compose/release.sh --push     # + push images to $REGISTRY (ADR 0037)
+#   VERSION=1.0.0 deploy/compose/release.sh --save     # + local docker save tar (self-help
+#                                                      #   for hosts that cannot reach a
+#                                                      #   registry; not a released artifact)
 #   VERSION=1.0.0 deploy/compose/release.sh --no-build # bundle only (images exist)
 #   BAKE_AGENT_CLIS=1 VERSION=... deploy/compose/release.sh   # fully baked (internal use)
 #
@@ -36,11 +39,12 @@ WS_IMAGE="$REGISTRY/workspace:$VERSION"
 # fully-baked build.
 BAKE_AGENT_CLIS="${BAKE_AGENT_CLIS:-0}"
 
-DO_BUILD=1; DO_SAVE=0
+DO_BUILD=1; DO_SAVE=0; DO_PUSH=0
 for a in "$@"; do
   case "$a" in
     --no-build) DO_BUILD=0 ;;
     --save)     DO_SAVE=1 ;;
+    --push)     DO_PUSH=1 ;;
     *) echo "unknown arg: $a" >&2; exit 2 ;;
   esac
 done
@@ -90,8 +94,20 @@ rm -f "$OUT"/aws/ec2-single/*-key "$OUT"/aws/ec2-single/*-key.pub "$OUT"/aws/ec2
 # default (operators still override REGISTRY/VERSION in their .env).
 sed -i "s/^VERSION=.*/VERSION=$VERSION/; s#^REGISTRY=.*#REGISTRY=$REGISTRY#; s#^WS_IMAGE=.*#WS_IMAGE=$WS_IMAGE#" "$OUT/.env.example"
 
+# ADR 0037: images are distributed through a registry. The save tar stays as a
+# self-help path for hosts that cannot reach one — it is no longer published.
+if [ "$DO_PUSH" = 1 ]; then
+  echo "==> docker push $CP_IMAGE + $WS_IMAGE"
+  case "$REGISTRY" in
+    */*) ;;
+    *) echo "ERROR: --push needs REGISTRY to be a real registry path (got '$REGISTRY')" >&2; exit 1 ;;
+  esac
+  docker push "$CP_IMAGE"
+  docker push "$WS_IMAGE"
+fi
+
 if [ "$DO_SAVE" = 1 ]; then
-  echo "==> docker save (air-gap) $CP_IMAGE + $WS_IMAGE"
+  echo "==> docker save (local hand-off) $CP_IMAGE + $WS_IMAGE"
   docker save "$CP_IMAGE" "$WS_IMAGE" | gzip > "$DIST/agent-fleet-images-$VERSION.tar.gz"
 fi
 

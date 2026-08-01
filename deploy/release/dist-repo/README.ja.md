@@ -216,10 +216,11 @@ loginctl enable-linger "$USER"               # WSL セッションを閉じて�
 
 ## Docker Compose 版の導入（チーム・オンプレ）
 
-イメージはレジストリに**公開していません**。そのためバンドル
-（`agent-fleet-<版>.tar.gz`）とイメージ tar（`agent-fleet-images-<版>.tar.gz`）を
+compose バンドル（`agent-fleet-<版>.tar.gz`）は
 [Releases](https://github.com/k-k1/agent-fleet-dist/releases) に添付しています。
-ヘルパーが両方を取得・検証し、バンドルを展開してイメージを `docker load` します:
+コンテナイメージは **GHCR**（`ghcr.io/k-k1/agent-fleet/{control-plane,workspace}`）
+から取得します（バンドル同梱の `.env.example` が既にそこを指しています）。
+ヘルパーがバンドルを取得・検証して展開し、イメージを pull します:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/k-k1/agent-fleet-dist/main/install-compose.sh | bash
@@ -230,9 +231,13 @@ docker compose up -d
 
 native 版と違い**完全なワンライナーにはなりません**: `docker compose up` の前に
 `.env`（秘密・`PUBLIC_DOMAIN`・Google OAuth・任意で下記の git プロバイダ OAuth 変数）を
-編集する必要があります。版を固定するなら `AF_VERSION=<版>` を前置し、`AF_SKIP_IMAGES=1`
-で大きいイメージ tar の DL を省けます（別途ファイル受け渡しする場合）。手動が良ければ
-2 つの tar を DL 後、`sha256sum -c --ignore-missing SHA256SUMS`・`tar xzf`・`./load-images.sh`。
+編集する必要があります。版を固定するなら `AF_VERSION=<版>` を前置し、`AF_SKIP_PULL=1`
+で pull を省けます（`docker compose up` がどのみち pull します）。手動が良ければ
+バンドルを DL 後、`sha256sum -c --ignore-missing SHA256SUMS`・`tar xzf`。
+
+レジストリに到達できないホストは、ソースからイメージをビルドして `docker load` して
+ください（バンドル同梱の `load-images.sh` と、ソースリポジトリの
+`deploy/compose/release.sh --save`）。
 
 同梱の `README.md` が完全な runbook です: 前提条件・鍵生成・TLS / ドメイン設定・
 git プロバイダ OAuth（`.env` の `GITHUB_OAUTH_CLIENT_ID` / `BITBUCKET_OAUTH_KEY` /
@@ -270,7 +275,7 @@ rm -rf ~/.local/opt/agent-fleet
 
 | tag | 添付 | 用途 |
 |---|---|---|
-| `v<版>` | `agent-fleet-<版>.tar.gz`（compose バンドル）/ `agent-fleet-images-<版>.tar.gz`（air-gap 用イメージ）/ `agent-fleet-native-<版>-linux-amd64.tar.gz`（native）/ `SHA256SUMS` | アプリ本体のリリース |
+| `v<版>` | `agent-fleet-<版>.tar.gz`（compose バンドル）/ `agent-fleet-native-<版>-linux-amd64.tar.gz`（native）/ `SHA256SUMS` | アプリ本体のリリース。コンテナイメージはここではなく GHCR |
 | `rootfs-<r>` | `agent-fleet-rootfs-<r>-linux-amd64.tar.zst` | native 版が初回起動時に取得する workspace rootfs。**単体では使いません**（native tar 内の `rootfs.json` が版・sha256 を指定） |
 
 `<r>` は内容ハッシュです。アプリの版が上がっても rootfs が不変なら同じ tag を参照し、

@@ -6,8 +6,8 @@
 # The Compose edition cannot be a full one-liner (you must edit .env — secrets,
 # domain, Google OAuth — before `docker compose up`). This script automates the
 # toil up to that point: it downloads the latest (or AF_VERSION-pinned) compose
-# bundle + air-gap images tar, verifies both against the release's SHA256SUMS,
-# extracts the bundle into ./agent-fleet-<v>/ and `docker load`s the images.
+# bundle, verifies it against the release's SHA256SUMS, extracts it into
+# ./agent-fleet-<v>/ and pulls the images from the registry (ADR 0037).
 # Then it prints the remaining manual steps (cp .env.example .env → edit → up).
 #
 # env:
@@ -16,9 +16,8 @@
 #   AF_DIST_REPO      distribution repo (default k-k1/agent-fleet-dist)
 #   AF_DIST_URL_BASE  override the download URL base (for testing/mirrors;
 #                     requires AF_VERSION)
-#   AF_SKIP_IMAGES=1  skip the (large) images tar — provide it out of band
-#                     (file hand-off) and run load-images.sh yourself
-#   AF_LOAD_IMAGES=0  download+verify the images tar but do not `docker load` it
+#   AF_SKIP_PULL=1    do not `docker compose pull` after extracting (images are
+#                     pulled by `docker compose up` anyway)
 set -euo pipefail
 
 REPO="${AF_DIST_REPO:-k-k1/agent-fleet-dist}"
@@ -26,8 +25,7 @@ DEFAULT_BASE="https://github.com/$REPO/releases/download"
 BASE="${AF_DIST_URL_BASE:-$DEFAULT_BASE}"
 DEST="${AF_DEST:-$PWD}"
 VER="${AF_VERSION:-}"
-SKIP_IMAGES="${AF_SKIP_IMAGES:-0}"
-LOAD_IMAGES="${AF_LOAD_IMAGES:-1}"
+PULL_IMAGES="${AF_SKIP_PULL:+0}"; PULL_IMAGES="${PULL_IMAGES:-1}"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -65,26 +63,12 @@ if [ -z "$VER" ]; then
 fi
 
 BUNDLE="agent-fleet-$VER.tar.gz"
-IMAGES="agent-fleet-images-$VER.tar.gz"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 echo "==> downloading agent-fleet $VER (compose bundle): $BASE/v$VER/$BUNDLE"
 fetch "$BASE/v$VER/$BUNDLE" "$TMP/$BUNDLE"
 fetch "$BASE/v$VER/SHA256SUMS" "$TMP/SHA256SUMS"
-
-have_images=0
-if [ "$SKIP_IMAGES" != 1 ]; then
-  echo "==> downloading images tar (air-gap): $BASE/v$VER/$IMAGES"
-  # The images tar can exceed the 2GiB GitHub Releases attachment limit and be
-  # distributed by file hand-off instead — tolerate its absence.
-  if fetch "$BASE/v$VER/$IMAGES" "$TMP/$IMAGES"; then
-    have_images=1
-  else
-    echo "    note: $IMAGES not on the release — provide it out of band, then run" >&2
-    echo "          ./agent-fleet-$VER/load-images.sh <images.tar.gz>" >&2
-  fi
-fi
 
 echo "==> verifying (sha256)"
 ( cd "$TMP" && sha256sum -c --ignore-missing SHA256SUMS >/dev/null ) \
@@ -105,12 +89,17 @@ else
   mv "$TMP/x/agent-fleet-$VER" "$TARGET"
 fi
 
-if [ "$have_images" = 1 ] && [ "$LOAD_IMAGES" = 1 ]; then
-  echo "==> loading images (docker load)"
-  "$TARGET/load-images.sh" "$TMP/$IMAGES"
-elif [ "$have_images" = 1 ]; then
-  cp "$TMP/$IMAGES" "$DEST/$IMAGES"
-  echo "==> images tar saved to $DEST/$IMAGES (AF_LOAD_IMAGES=0 — load it later with load-images.sh)"
+# ADR 0037: images come from the registry the bundle's .env.example points at.
+# Pulling here is a convenience and a connectivity check; `docker compose up`
+# would pull anyway. A failure is not fatal — the operator still has to edit .env
+# before bringing anything up, and may be pointing at a mirror.
+if [ "$PULL_IMAGES" = 1 ]; then
+  echo "==> pulling images (docker compose pull)"
+  if ! ( cd "$TARGET" && docker compose --env-file .env.example pull ); then
+    echo "    note: pull failed — check registry access, or set REGISTRY in .env to a" >&2
+    echo "          mirror. Hosts that cannot reach any registry can build the images" >&2
+    echo "          from source (deploy/compose/release.sh --save) and docker load them." >&2
+  fi
 fi
 
 cat <<EOF

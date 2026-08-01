@@ -32,9 +32,12 @@ concurrency:
 
 env:
   VERSION: 0.0.0-ci
+  # The gate builds but never pushes, so keep the local image names it asserts on
+  # (ADR 0037 made the release default a real registry path).
+  AF_REGISTRY: agent-fleet
 
 jobs:
-  # Gates (a)+(b): build A+B+D via the release path, verify the lean B
+  # Gates (a)+(b): build A+D via the release path, verify the lean B
   # (BAKE_AGENT_CLIS=0) contents (e2e-smoke lean mode) and live-run boot-install.
   # The full "sessions actually work" check (real CP + real auth) stays a host-side
   # fleet concern.
@@ -49,7 +52,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: build release artifacts (A+B+D)
+      - name: build release artifacts (A+D)
         run: VERSION=$VERSION deploy/release/build.sh --compose
 
       - name: assert artifacts + bundle contents
@@ -57,8 +60,9 @@ jobs:
           set -eux
           cd deploy/release/dist
           test -f "agent-fleet-$VERSION.tar.gz"          # A
-          test -f "agent-fleet-images-$VERSION.tar.gz"   # B
           test -f SHA256SUMS                             # D
+          # ADR 0037: no images tar is produced or published any more
+          ! ls agent-fleet-images-*.tar.gz 2>/dev/null
           sha256sum -c SHA256SUMS
           # A bundles the aws/ tree, LICENSE and NOTICE, and .env.example is pinned to VERSION
           tar tzf "agent-fleet-$VERSION.tar.gz" | grep -q "^agent-fleet-$VERSION/aws/ecs/cfn/30-ingress.yaml$"
@@ -114,7 +118,7 @@ jobs:
       # history (docs/35 §35.7.5). Runs before the tars are dropped, and expands
       # the image layers inside B — where the escape that motivated this gate
       # actually shipped.
-      - name: forbidden-token scan (A+B+D)
+      - name: forbidden-token scan (A+D)
         run: deploy/release/scan-forbidden.sh
 
       - name: free disk (drop dist tars)
