@@ -17,6 +17,12 @@
 # path is gone).
 name: e2e
 
+# Least privilege for GITHUB_TOKEN. The repo default is already read-only, but this
+# stays explicit so the job keeps it if the org/repo default ever changes (public
+# repo: workflow runs and their logs are world-readable).
+permissions:
+  contents: read
+
 on:
   pull_request:
     branches: [main]

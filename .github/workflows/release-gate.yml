@@ -14,6 +14,12 @@
 # network is the authoritative place to measure the CDN.
 name: release-gate
 
+# Least privilege for GITHUB_TOKEN. The repo default is already read-only, but this
+# stays explicit so the job keeps it if the org/repo default ever changes (public
+# repo: workflow runs and their logs are world-readable).
+permissions:
+  contents: read
+
 on:
   push:
     branches: [feat/packaging]
