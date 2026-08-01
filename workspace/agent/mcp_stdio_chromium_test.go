@@ -206,7 +206,7 @@ func TestMCPChromiumToolsRelayAndStructuredFallback(t *testing.T) {
 func TestMCPChromiumErrorsDoNotExposeAgentDetails(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
-		_, _ = w.Write([]byte(`{"code":"cdp_unreachable","message":"dial ws://127.0.0.1:9222/devtools/browser/secret-target"}`))
+		_, _ = w.Write([]byte(`{"error":{"code":"cdp_unreachable","message":"dial ws://127.0.0.1:9222/devtools/browser/secret-target"}}`))
 	}))
 	defer srv.Close()
 	u, _ := url.Parse(srv.URL)
