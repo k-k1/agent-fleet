@@ -90,13 +90,29 @@ jobs:
             -run TestClaudeTUIContractLive -v -timeout 20m \
             2>&1 | tee /tmp/contract.log
 
+      # The captured frames come from a *signed-in* TUI, so they carry the CI account's
+      # identity (the "Welcome back <name>!" banner and the "<email>'s Organization"
+      # line). Artifacts of a public repo are world-downloadable, so redact those before
+      # uploading — the artifact only exists to show wording drift, which survives it.
+      # (The credentials themselves are env-only and never printed; GitHub also masks
+      # exact secret values in logs. This step covers what masking cannot: values
+      # *derived* from the account.)
+      - name: redact account identity from the frame log
+        if: always()
+        run: |
+          [ -f /tmp/contract.log ] || exit 0
+          sed -E \
+            -e 's/[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}/<redacted-email>/g' \
+            -e 's/(Welcome back )[^!]*!/\1<redacted-account>!/g' \
+            /tmp/contract.log > /tmp/contract-public.log
+
       # Make wording drift visible even on green (the observed spinner/footer lines are printed).
       - name: upload observed frames
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: claude-tui-contract-log
-          path: /tmp/contract.log
+          path: /tmp/contract-public.log
           if-no-files-found: ignore
 
       - name: remember successfully tested latest

@@ -42,60 +42,75 @@ neither on the host — only Docker.
 
 ## Commits & PRs
 
-**develop がトランク（default branch）**。日常の開発は develop への直 push /
-随時マージで運用し（単独メンテナ・レビュー gate なし）、**「完了」の定義は
-develop マージ済**。自分からブランチを切らない — worktree セッションは Console が
-専用ブランチで払い出す。GitHub リモートは `git@github.com:k-k1/agent-fleet.git`。
+**`develop` is the trunk** (and the default branch). Day-to-day work is pushed
+straight to `develop` and merged as it lands (single maintainer, no review gate);
+**"done" means merged into `develop`**. Don't create branches on your own — the
+Console hands each worktree session its own branch. Remote:
+`git@github.com:k-k1/agent-fleet.git`.
 
-**main は常時 CI 緑の安定ブランチ**で、develop→main の PR（リリーストレイン、
-週 1〜2 回 or フェーズ完了時）でのみ更新する。hosted CI（ci.yml / e2e.yml /
-contract 系）はこの PR と main push・毎晩の cron（develop）に集約し、develop への
-push では回さない — per-commit の検証は各セッションのローカル実行
-（gofmt/vet/test/build、下記）が担う。課金の背景と2層 CI 運用の全体像は
-docs/35-packaging.md を参照。緊急修正は main から分岐 → PR → main、develop へ
-back-merge する。リリースタグ・リリースビルド・公開配布はすべて main から切る。
+**`main` is the always-green stable branch** and is updated only through
+`develop` → `main` pull requests (a release train, once or twice a week or at the
+end of a phase). Hosted CI (`ci.yml`, `e2e.yml`, the contract workflows) is
+concentrated on that PR, on pushes to `main`, and on the nightly cron over
+`develop`; it does not run on pushes to `develop` — per-commit verification is
+each session's local run (gofmt / vet / test / build, above). See
+`docs/35-packaging.md` for the billing rationale behind this two-tier CI. Hotfixes
+branch from `main` → PR → `main`, then back-merge into `develop`. Release tags,
+release builds and public distribution are all cut from `main`.
 
-小さく焦点の合ったコミットを心がけ、下記の形式に従う。
+Keep commits small and focused, and follow the format below.
 
-### コミットメッセージの形式
+### Commit message format
 
-Conventional Commits に**日本語の subject** を組み合わせる。**subject も body も日本語で
-書く**（このリポジトリは日本語で統一している。英語で書き始めたら書き直す）。
+Conventional Commits with a **Japanese subject**. **Both the subject and the body
+are written in Japanese** — that is this repository's convention, and its commit
+history doubles as the design record, so it stays in one language.
+
+> Contributing from outside and don't write Japanese? **English is fine** — send
+> the PR in English and the maintainer will not ask you to rewrite it. The rule
+> above is the maintainer's own working convention, not a barrier to entry.
 
 ```
-<type>(<scope>): <日本語の要約>     ← 1 行目。句点なし・要約/命令形・50 字目安
+<type>(<scope>): <summary>      ← first line, no trailing period, imperative, ~50 chars
 
-<本文>                              ← 空行を 1 つ挟む。何を・なぜ変えたか。挙動変更は
-                                       真因→直し方→検証まで。折返し ~72 字。
+<body>                          ← after one blank line. What changed and why. For a
+                                   behaviour change: root cause → fix → verification.
+                                   Wrap at ~72 columns.
 
-Co-Authored-By: <実行モデル名> <noreply@<提供元>>   ← 末尾トレーラ（空行で分離）
+Co-Authored-By: <model name> <noreply@<vendor>>   ← trailer, separated by a blank line
 ```
 
-- **type**: `feat` / `fix` / `docs` / `style`（整形のみ・挙動不変）/ `refactor` / `perf` /
-  `test` / `build`（焼き込み CLI・依存の版上げ等）/ `chore` / `ci`。
-- **scope**: 変更の主対象。実例 = `console` `chat` `cp`（= control-plane）`agent` `mirror`
-  `tts` `workspace` `deploy`、ドキュメントは `docs(NN)`（章番号）。付けられるなら付ける。
-- **body**: バグ修正・挙動変更は「真因 → 直し方 → 検証（どう確かめたか）」まで書き残す
-  — このプロジェクトは実フリートで検証する前提で、コミット履歴が唯一の設計記録になる。
-- **migration**: スキーマ変更（`control-plane/migrations/`）は前方互換を確認し body に明記
-  （埋め込み migrator が CP 起動時に自動適用・ダウングレード非対応）。
+- **type**: `feat` / `fix` / `docs` / `style` (formatting only, no behaviour change) /
+  `refactor` / `perf` / `test` / `build` (baked-in CLI or dependency version bumps) /
+  `chore` / `ci`.
+- **scope**: the main subject of the change. Real examples: `console`, `chat`,
+  `cp` (= control-plane), `agent`, `mirror`, `tts`, `workspace`, `deploy`; docs use
+  `docs(NN)` with the chapter number. Add one whenever you can.
+- **body**: for bug fixes and behaviour changes, record **root cause → fix →
+  verification (how you actually checked)**. This project is verified against a live
+  fleet, and the commit history is the only design record of that.
+- **migration**: schema changes (`control-plane/migrations/`) must be forward
+  compatible, and say so in the body — the embedded migrator applies them
+  automatically at Control Plane startup and there is no downgrade path.
 
-### 帰属（Co-Authored-By トレーラ）
+### Attribution (the Co-Authored-By trailer)
 
-このプロジェクトは Claude Code / Codex / opencode を併用する。エージェントが書いた
-コミットは末尾に空行を挟み、**実際に生成したモデル名**で共同著者を記す（CLI 名ではなく
-モデルで帰属する）。
+This project is built with Claude Code, Codex and opencode side by side. A commit an
+agent wrote carries a co-author trailer after a blank line, naming **the model that
+actually generated it** — attribution is by model, not by CLI.
 
-| 実行環境 | Co-Authored-By 例 |
-|----------|-------------------|
-| Claude Code | `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`（版により `Claude Fable 5` 等） |
+| Environment | Example trailer |
+|-------------|-----------------|
+| Claude Code | `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>` (or `Claude Fable 5` etc., matching the running version) |
 | Codex | `Co-Authored-By: GPT-5.6 <noreply@openai.com>` |
-| opencode | 実行モデルで帰属（Claude 系 → `@anthropic.com` / GPT 系 → `@openai.com`） |
+| opencode | Attributed to the running model (Claude family → `@anthropic.com`, GPT family → `@openai.com`) |
 
-- メール部は提供元ドメインの `noreply@`（Anthropic = anthropic.com / OpenAI = openai.com /
-  その他はモデル提供元のドメイン）。モデル名は実行版に合わせる（固定しない）。
-- **session URL 行は付けない**（旧 `Claude-Session:` トレーラは廃止）。ただし Claude Code は
-  Remote Control 接続時に `Claude-Session:` 行を CLI が自動付与する — これは無害なので許容
-  （抑止は agent-fleet 側でなく Claude Code の設定で行う）。
-- **`Co-Authored-By:` は必ず付ける**（エージェントが関与したコミットは 1 行以上を必須と
-  する）。複数のモデル／人が関与したら複数行並べる。純粋に人間だけのコミットのときだけ省略可。
+- The address is the vendor's `noreply@` domain (Anthropic = anthropic.com,
+  OpenAI = openai.com, otherwise the model vendor's domain). Name the model version
+  actually running — don't hardcode one.
+- **No session URL line.** The old `Claude-Session:` trailer is retired. Claude Code
+  adds one by itself when driven over Remote Control; that is harmless and accepted
+  (suppress it in Claude Code's own settings, not here).
+- **Always add `Co-Authored-By:`** when an agent was involved — at least one line, and
+  several lines when several models or people were. It may be omitted only for a
+  commit written purely by a human.
