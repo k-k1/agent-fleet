@@ -8,6 +8,12 @@
 // キーは正規化 + 小文字化（"OK"/"ok" を同一視）、表示テキストは最後に送った綴りを保持。
 // ユーザーが消した候補は settings.quickRepliesHidden（キーの配列）に積んで恒久的に隠す
 // （シードも隠せる）。同じ文をもう一度自分で送ったら、その意思表示として隠しを解除する。
+//
+// ピン留め（settings.quickRepliesPinned）= ランキングの上書き。学習の頻度も B-1 の文脈加点も
+// 「そのとき何が有用か」の推測でしかなく、加点（80〜120）は現実的な使用回数より桁が大きいので、
+// 文脈語に当たった候補が常に左を占め、実際によく使う長めの一文が limit の外へ押し出される
+// （＝「使っているのに消えることがある」）。ピンは推測を外して固定するための唯一の確定手段なので、
+// 隠し・長さ上限・limit・間引きのどれにも負けず、必ず先頭にこの順で出す。
 
 export type QuickReplyUse = { text: string; count: number; at: number };
 export type QuickReplyMap = Record<string, QuickReplyUse>;
@@ -18,6 +24,9 @@ export type QuickReplyMap = Record<string, QuickReplyUse>;
 const MAX_LEN = 20;
 // 保存する最大エントリ数。超えたら最弱（count→at 昇順）から間引く。
 const MAX_ENTRIES = 60;
+// ピン留めできる最大件数。ピンは必ず表示するので、際限なく増やすとチップ行がピンで埋まる。
+// 超えたら最も古いピンから落とす（新しい意思表示を優先）。
+const MAX_PINNED = 12;
 
 // 空白畳み・トリム。表示・突合の両方に使う。
 function normalize(text: string): string {
@@ -84,6 +93,30 @@ export function unhideQuickReply(hidden: string[], text: string): string[] {
   return hidden.filter((h) => h !== k);
 }
 
+// ピン留め（常に表示）。隠しと違いキーではなく表示綴りをそのまま積む — 学習エントリが間引かれても、
+// シードに無い文でも、ピンだけで表示テキストを復元できるようにするため（ピンが「消えない」ことは
+// この機能の要件そのもの）。並びはピンした順＝ユーザーが決めた並びで、ランキングでは動かさない。
+export function pinQuickReply(pinned: string[], text: string): string[] {
+  const norm = normalize(text);
+  const k = keyOf(norm);
+  if (!k || pinned.some((p) => keyOf(p) === k)) return pinned;
+  const next = [...pinned, norm];
+  return next.length > MAX_PINNED ? next.slice(next.length - MAX_PINNED) : next;
+}
+
+// ピンを外す。変化が無ければ同じ配列参照を返す。
+export function unpinQuickReply(pinned: string[], text: string): string[] {
+  const k = keyOf(text);
+  if (!pinned.some((p) => keyOf(p) === k)) return pinned;
+  return pinned.filter((p) => keyOf(p) !== k);
+}
+
+// この文がピン留めされているか（大小・空白の違いは無視）。
+export function isQuickReplyPinned(pinned: string[] | undefined, text: string): boolean {
+  const k = keyOf(text);
+  return (pinned ?? []).some((p) => keyOf(p) === k);
+}
+
 // i18n-exempt-start: 以下はサジェストの seed 語と突合用の辞書データ（翻訳対象の UI 文言ではなく、
 // locale キーで ja/en を出し分ける“中身”。fontStack の生値や VOICEVOX 名と同じ扱い）。
 // 初期シード（学習が空でも ok/進めて/commit が並ぶよう種まき）。count 0 なので実利用が即上回る。
@@ -124,15 +157,18 @@ export type RankArgs = {
   draft: string; // 現在のコンポーサー入力（前方一致フィルタに使う）
   lastReply: string; // 直近エージェント回答の最終テキスト（B-1）
   locale: string; // "ja" | "en"（シード言語の選択）
-  hidden?: string[]; // ユーザーが×で消したキー（settings.quickRepliesHidden）
-  limit?: number; // 返す候補数（既定 6）
+  hidden?: string[]; // ユーザーがメニューから消したキー（settings.quickRepliesHidden）
+  pinned?: string[]; // ピン留め＝常に先頭に出す文（settings.quickRepliesPinned・ピンした順）
+  limit?: number; // 返す候補数（既定 6・ピンは limit を超えても落とさない）
 };
 
-// 候補を算出して並べて返す（表示テキストの配列）。
+// 候補を算出して並べて返す（表示テキストの配列）。先頭はピン留め（ピンした順）、続いてランキング。
 export function rankQuickReplies(map: QuickReplyMap, args: RankArgs): string[] {
-  const { draft, lastReply, locale, hidden, limit = 6 } = args;
+  const { draft, lastReply, locale, hidden, pinned, limit = 6 } = args;
   const seeds = SEEDS[locale] ?? SEEDS.ja;
   const hide = new Set(hidden ?? []);
+  const pins = (pinned ?? []).map((p) => normalize(p)).filter((p) => p);
+  const pinKeys = new Set(pins.map(keyOf));
   // 学習エントリ + 未学習シードを統合（キー重複はシードを捨てる）。閾値を下げたとき過去に
   // 学習済みの長いエントリを遡って隠すため、ここでも MAX_LEN 超は取り込まない。消された
   // キーはシード側でも復活させない（隠しは学習の有無に関わらず効く）。
@@ -140,11 +176,12 @@ export function rankQuickReplies(map: QuickReplyMap, args: RankArgs): string[] {
   for (const e of Object.values(map)) {
     if (normalize(e.text).length > MAX_LEN) continue;
     if (hide.has(keyOf(e.text))) continue;
+    if (pinKeys.has(keyOf(e.text))) continue; // ピンは別枠で先に出す（二重に並べない）
     byKey.set(keyOf(e.text), { ...e });
   }
   for (const s of seeds) {
     const k = keyOf(s);
-    if (hide.has(k)) continue;
+    if (hide.has(k) || pinKeys.has(k)) continue;
     if (!byKey.has(k)) byKey.set(k, { text: normalize(s), count: 0, at: 0 });
   }
 
@@ -162,5 +199,11 @@ export function rankQuickReplies(map: QuickReplyMap, args: RankArgs): string[] {
     // 並びが Object のキー順という説明できない順序に落ちるのも防ぐ）。
     .sort((a, b) => b.score - a.score || b.at - a.at || a.text.length - b.text.length);
 
-  return scored.slice(0, limit).map((e) => e.text);
+  // ピンは入力中の前方一致（オートコンプリート）にだけ従う。長さ上限・隠し・スコアには従わない。
+  const head = pins.filter((p) => {
+    const pt = p.toLowerCase();
+    return !draftNorm || (pt.startsWith(draftNorm) && pt !== draftNorm);
+  });
+  // 残り枠にランキング上位を詰める。ピンが limit を埋めるなら、埋まるのが正しい（ユーザーの指定）。
+  return [...head, ...scored.slice(0, Math.max(0, limit - head.length)).map((e) => e.text)];
 }

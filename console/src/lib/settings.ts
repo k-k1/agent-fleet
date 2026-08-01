@@ -305,9 +305,12 @@ export interface Settings {
   // 返信サジェストの学習データ: 正規化キー → { text=表示綴り, count=送信回数, at=最終送信 epoch ms }。
   // send() 成功時に更新（ssmHostUsage と同型でサーバミラー＝複数デバイス同期）。
   quickReplies: Record<string, { text: string; count: number; at: number }>;
-  // 返信サジェストでユーザーが×で消した候補（正規化キーの配列）。学習の削除だけでは
+  // 返信サジェストでユーザーがメニューから消した候補（正規化キーの配列）。学習の削除だけでは
   // シードや再学習で復活するので、隠し指定として別に持つ。同じ文を自分で送り直すと解除。
   quickRepliesHidden: string[];
+  // ピン留め（常に表示）した候補。キーではなく表示綴りをピンした順で持つ — 学習が間引かれても
+  // ピンだけで復元でき、並びもユーザーが決めた順のまま出せる（lib/quickReplies）。
+  quickRepliesPinned: string[];
   // 音声読み上げ（TTS, docs/24 + ADR0013）。エージェント回答を VOICEVOX（ずんだもん）で
   // 読み上げる。CP-native な /api/tts/synthesize を句点区切りで逐次呼ぶ（features/chat/tts.ts）。
   ttsEnabled: boolean;
@@ -565,6 +568,7 @@ const DEFAULTS: Settings = {
   replySuggestEnabled: true,
   quickReplies: {},
   quickRepliesHidden: [],
+  quickRepliesPinned: [],
 };
 
 // VOICEVOX ずんだもんのスタイル（speaker 番号 → ラベル）。設定 UI の話者選択に使う。

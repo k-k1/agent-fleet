@@ -27,7 +27,11 @@ import {
   forgetQuickReply,
   hideQuickReply,
   unhideQuickReply,
+  pinQuickReply,
+  unpinQuickReply,
+  isQuickReplyPinned,
 } from "../../lib/quickReplies.ts";
+import { useChipMenu, SuggestChipMenu } from "../mirror/SuggestChipMenu.tsx";
 import {
   startTts,
   stopTtsForReplacement,
@@ -166,6 +170,8 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   // チップ行はストリーミング中に消えて戻るので、返り値のコールバック ref で付け替える
   // （ref オブジェクト任せだと戻ってきた要素にリスナーが付かない — dragScroll.ts の注記）。
   const attachSuggestRow = useDragScroll(suggestRef);
+  // チップの右クリック / 長タップ / Menu キーで開くメニュー（ピン留め・削除）。MirrorView と共有。
+  const chipMenu = useChipMenu();
   // 読み上げ中の文（ライブ配信カラオケ・docs/19）と、直近のターンエラー。どちらも
   // 発生元の会話で括り、別チャットへ切り替えた後に相手の吹き出しへ出ないようにする。
   const [karaoke, setKaraoke] = useState<{ key: string; text: string } | null>(null);
@@ -628,7 +634,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     const text = (override ?? input).trim();
     const paths = attachments.map((a) => a.path);
     if (!text && !paths.length) return;
-    // 返信サジェスト（lib/quickReplies）の学習: 短い純テキストのみ取り込む。一度×で消した文でも、
+    // 返信サジェスト（lib/quickReplies）の学習: 短い純テキストのみ取り込む。一度メニューから消した文でも、
     // 自分で送り直したなら「また使う」意思表示なので隠しを解除する（MirrorView と同挙動）。
     if (text && isQuickReplyCandidate(text, paths.length > 0)) {
       setSetting("quickReplies", recordQuickReply(settings.quickReplies || {}, text, Date.now()));
@@ -892,6 +898,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
         lastReply: chatLastReply,
         locale: settings.locale,
         hidden: settings.quickRepliesHidden || [],
+        pinned: settings.quickRepliesPinned || [],
         limit: 6,
       })
     : [];
@@ -928,8 +935,8 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
       }
     });
   };
-  // 学習候補の×: 学習を消し、かつ隠しリストへ積む（消すだけではシード/再学習で戻る）。
-  // LLM 候補（✨）は学習物ではないので、その場の候補列から外すだけ。
+  // メニューの「この候補を消す」: 学習を消し、隠しリストへ積み、ピンも外す（消すだけではシード/
+  // 再学習で戻る）。LLM 候補（✨）は学習物ではないので、その場の候補列から外すだけ。
   const forgetSuggestion = (text: string, llm: boolean) => {
     if (llm) {
       setLlmSuggestions((prev) => prev.filter((s) => s !== text));
@@ -937,6 +944,18 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     }
     setSetting("quickReplies", forgetQuickReply(settings.quickReplies || {}, text));
     setSetting("quickRepliesHidden", hideQuickReply(settings.quickRepliesHidden || [], text));
+    setSetting("quickRepliesPinned", unpinQuickReply(settings.quickRepliesPinned || [], text));
+  };
+  // メニューの「常に表示（ピン留め）」/「ピン留めを解除」。MirrorView と同じ扱い（ピンは隠しより
+  // 強い意思表示なので、ピンするときは隠しを解除する）。
+  const togglePin = (text: string) => {
+    const pinned = settings.quickRepliesPinned || [];
+    if (isQuickReplyPinned(pinned, text)) {
+      setSetting("quickRepliesPinned", unpinQuickReply(pinned, text));
+      return;
+    }
+    setSetting("quickRepliesPinned", pinQuickReply(pinned, text));
+    setSetting("quickRepliesHidden", unhideQuickReply(settings.quickRepliesHidden || [], text));
   };
   // v2: ✨ボタン — 会話ログを一発ヘッドレス LLM に渡し、文脈に沿った返信候補をチップ列にマージ
   // （chat_suggest_reply.go）。会話が確定していない（下書き）ときは押せない。
@@ -983,9 +1002,8 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   };
 
   // 返信サジェストのフォーカスリング = ✨ボタン＋候補チップ（DOM 順）。MirrorView と同挙動。
-  // ×（削除）はリングから除く — 巡回のたびに削除ボタンを踏ませない。
   const suggestRing = (): HTMLButtonElement[] =>
-    Array.from(suggestRef.current?.querySelectorAll<HTMLButtonElement>("button:not(.chat-suggest-del)") ?? []);
+    Array.from(suggestRef.current?.querySelectorAll<HTMLButtonElement>("button") ?? []);
 
   // チップ行は1行スクロールなので、キー移動のフォーカス先が隠れないよう横だけ最小限追従させる
   // （focus 既定のスクロールは縦にも効いて本文が飛ぶため preventScroll で殺す）。
@@ -1024,8 +1042,9 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
 
   // チップ上のキー操作。移動系は onSuggestNav に委ね、Enter/Ctrl(⌘)+Enter の役割はコンポーサーの
   // 送信キー設定に合わせる: modSend なら mod+Enter=送信・素の Enter=差し込み、enter モードなら逆。
-  const onSuggestKeyDown = (e: KeyboardEvent<HTMLButtonElement>, text: string) => {
+  const onSuggestKeyDown = (e: KeyboardEvent<HTMLButtonElement>, text: string, llm: boolean) => {
     if (onSuggestNav(e)) return;
+    if (chipMenu.onKeyDown(e, text, llm)) return; // Menu キー / Shift+F10 → ピン留め・削除メニュー
     if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
     const mod = e.ctrlKey || e.metaKey;
     e.preventDefault(); // ボタン既定の click（＝差し込み）と二重発火させない
@@ -1446,29 +1465,39 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
               </button>
             )}
             {suggestChips.map((sg) => (
-              // チップ本体＋×（ホバー/フォーカス時だけ・タッチ端末では出さない）。MirrorView と同形。
-              <span className="chat-suggest-wrap" key={(sg.llm ? "l:" : "a:") + sg.text}>
-                <button
-                  type="button"
-                  className={"chat-suggest-chip" + (sg.llm ? " llm" : "")}
-                  title={tr("mirror.suggest_hint")}
-                  onClick={(e) => applySuggestion(sg.text, e.ctrlKey || e.altKey || e.metaKey)}
-                  onKeyDown={(e) => onSuggestKeyDown(e, sg.text)}
-                >
-                  {sg.text}
-                </button>
-                <button
-                  type="button"
-                  className="chat-suggest-del"
-                  title={tr("mirror.suggest_forget")}
-                  aria-label={tr("mirror.suggest_forget")}
-                  onClick={() => forgetSuggestion(sg.text, sg.llm)}
-                >
-                  ×
-                </button>
-              </span>
+              // ピン留めは先頭固定＋📌。削除/ピンは右クリック・長タップ・Menu キーのメニューから。
+              <button
+                key={(sg.llm ? "l:" : "a:") + sg.text}
+                type="button"
+                className={
+                  "chat-suggest-chip" +
+                  (sg.llm ? " llm" : "") +
+                  (isQuickReplyPinned(settings.quickRepliesPinned, sg.text) ? " pinned" : "")
+                }
+                title={tr("mirror.suggest_hint")}
+                onClick={(e) => {
+                  if (chipMenu.clickSwallowed()) return; // 長タップでメニューを出した指離し
+                  applySuggestion(sg.text, e.ctrlKey || e.altKey || e.metaKey);
+                }}
+                onKeyDown={(e) => onSuggestKeyDown(e, sg.text, sg.llm)}
+                {...chipMenu.chipProps(sg.text, sg.llm)}
+              >
+                {isQuickReplyPinned(settings.quickRepliesPinned, sg.text) && (
+                  <Icon name="pinned" className="chat-suggest-pin" />
+                )}
+                {sg.text}
+              </button>
             ))}
           </div>
+        )}
+        {chipMenu.menu && (
+          <SuggestChipMenu
+            menu={chipMenu.menu}
+            pinned={isQuickReplyPinned(settings.quickRepliesPinned, chipMenu.menu.text)}
+            onClose={chipMenu.close}
+            onTogglePin={togglePin}
+            onForget={forgetSuggestion}
+          />
         )}
         <div className="chat-composer-row">
           {/* History nav for phones (no arrow keys); hidden on wider screens via CSS. */}
