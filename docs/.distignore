@@ -7,7 +7,6 @@
 # docs/35 §35.4.3 の表を参照）。設計文書（番号付き・dev/・guide/・decisions/）はクリーン。
 HANDOFF.md
 CHANGELOG-handoff.md
-talk
 history
 # README スクリーンショット（docs/img/*.webp）。参照するのは公開リポジトリの README
 # だけで、配布物内の docs からは誰も参照しない ＝ tar/イメージに入れる意味がない。
