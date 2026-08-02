@@ -127,6 +127,29 @@ describe("BrowserAttachmentController", () => {
     expect(fake.socket.json()).toContainEqual({ type: "text", text: "approved" });
   });
 
+  it("clears unsupported state when the attachment returns to attached or viewer-open", async () => {
+    const fake = fakeDeps("view-only");
+    const controller = new BrowserAttachmentController("p1", "ba_test", fake.deps);
+    controller.setVisible(true);
+    await settle();
+    fake.socket.open();
+
+    for (const recoveredState of ["attached", "viewer-open"]) {
+      fake.socket.message(JSON.stringify({ type: "state", state: "unsupported-target-url" }));
+      expect(controller.snapshot).toMatchObject({
+        state: "unsupported-target-url",
+        attachmentState: "unsupported-target-url",
+      });
+      fake.socket.message(JSON.stringify({ type: "state", state: recoveredState }));
+      expect(controller.snapshot).toMatchObject({
+        state: "ready",
+        attachmentState: recoveredState,
+        errorCode: "",
+        errorMessage: "",
+      });
+    }
+  });
+
   it("records completion/cancellation as locked without detaching the owner", async () => {
     const fake = fakeDeps("user-control");
     const controller = new BrowserAttachmentController("p1", "ba_test", fake.deps);
