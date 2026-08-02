@@ -36,6 +36,9 @@ TARGETS=(
   "agy|AGY_VERSION|agy|https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json"
   "cursor|CURSOR_VERSION|cursor|https://cursor.com/install"
   "kiro|KIRO_VERSION|kiro|https://prod.download.cli.kiro.dev/stable/latest/manifest.json"
+  # rtk is not an agent CLI but is baked/self-updated the same way (ARG pin +
+  # entrypoint shadow), so its drift is just as invisible without this row.
+  "rtk|RTK_VERSION|github|rtk-ai/rtk"
 )
 
 arg_pin() {
@@ -74,7 +77,7 @@ for t in "${TARGETS[@]}"; do
     github)
       latest="$(curl -fsSL --max-time 20 \
         "https://api.github.com/repos/${locator}/releases/latest" 2>/dev/null |
-        jq -r '.tag_name // empty' 2>/dev/null)" ;;
+        jq -r '.tag_name // empty | sub("^v";"")' 2>/dev/null)" ;;
     agy)
       latest="$(curl -fsSL --max-time 20 "$locator" 2>/dev/null |
         jq -r '.version // empty' 2>/dev/null)" ;;
