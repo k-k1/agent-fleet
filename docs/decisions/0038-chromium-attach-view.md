@@ -1,8 +1,9 @@
 # 0038. 外部所有 Chromium はloopback CDPへattachし、ユーザークリックでConsoleペインへ開く
 
-- 状態: 採用・P0実測で実装契約確定（P1まで実装済み・developマージ済み・動作確認済み、2026-08-02）
+- 状態: 採用・P0実測で実装契約確定（P1〜P3実装済み。対話セッション直接経路を2026-08-02に補正）
 - 関連: [53-chromium-attach-view.md](../53-chromium-attach-view.md) /
-  [53 P0実測](../53-chromium-attach-view-p0-verification.md) / [0018-container-browser-pane.md](0018-container-browser-pane.md)
+  [53 P0実測](../53-chromium-attach-view-p0-verification.md) / [0018-container-browser-pane.md](0018-container-browser-pane.md) /
+  [0035-session-report-v2-ledger.md](0035-session-report-v2-ledger.md)
 
 ## 背景
 
@@ -26,8 +27,10 @@ Consoleへ中継する必要がある。エージェントはCLAUDE.md / AGENTS.
    閉じない。
 5. 通常ブラウザペインのloopback限定は変更しない。attachmentはownerが開いたHTTP(S)外部Pageを表示できるが、
    Consoleから任意URLを入力する汎用ブラウザにはしない。
-6. ローカルAF MCPへtarget列挙、attach、handoff要求、状態取得、detachを追加する。target列挙と状態取得はread、
-   表示・入力経路を作るattach/handoff/detachは`af_write`だけに広告する。
+6. ローカルAF MCPへtarget列挙、attach、handoff要求、状態取得、detachを追加する。アシスタントチャット面では
+   target列挙と状態取得をread、表示・入力経路を作るattach/handoff/detachを`af_write`だけに広告する。
+   対話セッション面ではmcpregのbuiltin `af`を`--self-report --chromium-attach`で起動し、`af_report`と
+   Chromium 7種だけを広告する。フリート全体のread/write権限は渡さない。
 7. attach結果は短命なopaque attachment IDとConsole action URLを返す。エージェントはURLを変更せずMarkdownリンクで
    ユーザーへ提示する。
 8. MCPやサーバーpushだけでConsole layoutを変更しない。ユーザーがaction URLを1回クリックした時に、そのConsole端末の
@@ -44,6 +47,12 @@ Consoleへ中継する必要がある。エージェントはCLAUDE.md / AGENTS.
     CLIが実在するため、text fallbackを全CLIで必須の正とし、client別分岐は作らない。
 15. action linkの配置は既存attachment focus、blank pane、新規slotの順とする。pane上限時は別paneを黙って上書きせず、
     active pane置換またはcancelをユーザーに選ばせ、cancelを既定focusにする。
+16. 対話セッション面でも広告集合をcall側の認可境界にする。`--self-report`単独は`af_report` 1本の後方互換を保ち、
+    `--chromium-attach`は`--self-report`との組合せでだけ有効にする。Chromium change toolを許可しても、
+    `list_my_sessions`、`send_to_session`等の推測callは拒否する。
+17. 対話セッションは既に同じWorkspace内でshell/Playwright/loopback CDPを扱える主体で、attachmentの表示には
+    membership認証とaction linkのユーザークリックが必要なため、追加のConsole opt-inは設けない。headlessで
+    広いフリート操作を行うアシスタントの`af_write` opt-inは従来どおり維持する。
 
 ## 採らなかった案
 
@@ -77,6 +86,16 @@ layoutはユーザー、テナント、ブラウザ端末ごとのlocal stateで
 AFがサイト固有selector、credential、規約、投稿状態を所有することになる。AFは汎用の人間操作surfaceとhandoffだけを
 提供し、業務処理は各プロジェクトに残す。
 
+### 対話セッション用に別の`af-browser` MCPサーバーを作る
+
+同じAgent認証・同じChromium handlerを使う一方で、予約名、materialize台帳、各CLI設定、利用者に見えるサーバーが
+増える。既存builtin `af`の起動flagと厳密な広告/call集合で同じ権限分離ができるため、別serverには分けない。
+
+### `--self-report`を無条件にChromium対応へ広げる
+
+自己申告1本という既存flagの意味と後方互換を壊す。独立した`--chromium-attach`を追加し、両flagの組合せだけを
+現行の対話セッションbuiltinにmaterializeする。
+
 ## 帰結
 
 - BrowserManagerのrequest/response multiplex、bounded event queue、screencast/input部分を再利用し、pipe/WebSocket framingと
@@ -88,4 +107,6 @@ AFがサイト固有selector、credential、規約、投稿状態を所有する
   `view-only/user-control/locked`を表示・強制するが停止自体は検知・強制しない。
 - MCPはtext fallbackとstructured resultを重複して返す。Claude/Codex/Copilotはstructured値を利用できる一方、
   opencode/Cursor/KiroはP0時点でtextだけをモデルへ渡す。
+- 対話セッションのbuiltin `af`は`af_report`専用ではなくなるが、Chromium 7種以外のフリートtoolは引き続き
+  広告・callとも拒否する。「広告集合がscope境界」というADR0035の性質は維持される。
 - 将来の完了自動報告は可能だが、MVPは状態取得で成立させ、永続handoff ledgerは後続段階とする。

@@ -69,5 +69,9 @@ consume-then-deliver の配送消失・agent 再起動中の kick 消失）は�
   訂正の冪等キーは完了報告と名前空間を分け、訂正が指す「いつの報告か」は台帳ではなく
   会話メッセージから引く（`reported_at` は reopen で消えるため）。
 - 自己申告は組み込み MCP サーバー `af`（`workspace-agent mcp-stdio --self-report`）が
-  全 kind のセッションへ配られ、指示プロンプトに1行だけ注入される。受け口は既存の
+  CLIを持つ全 kind のセッションへ配られ、指示プロンプトに1行だけ注入される。受け口は既存の
   `POST /chat/report`（`kind=self-report`）で、新しい配送経路も永続化も増やしていない。
+- 2026-08-02のChromium Attach View補正後、現行builtinは
+  `workspace-agent mcp-stdio --self-report --chromium-attach`で起動し、`af_report`に加えて
+  Chromium 7種だけを対話セッションへ広告する。`af_report`の意味・受け口は不変で、他のフリートtoolを
+  推測callできない「広告集合がscope境界」という決定も維持する。`--self-report`単独は従来どおり1本限定である。

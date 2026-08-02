@@ -202,7 +202,8 @@ func extraEnvVars(d ServerDef) []string {
 		return nil
 	}
 	if d.ID == BuiltinAF {
-		// The session-side af server calls the local Agent REST directly. Codex
+		// The session-side af server (self-report + Chromium Attach View) calls the
+		// local Agent REST directly. Codex
 		// starts stdio MCP children with a default-deny environment, so both the
 		// bearer token and a non-default listen address must be forwarded.
 		return []string{"AGENT_TOKEN", "AGENT_ADDR"}
