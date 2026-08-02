@@ -96,3 +96,11 @@ func TestFSFilePutRouteRegistered(t *testing.T) {
 		t.Fatalf("route pattern=%q", pattern)
 	}
 }
+
+func TestBrowserAttachmentControlModeRouteRegistered(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/browser/attachments/ba_0123456789abcdef0123456789abcdef/control-mode", nil)
+	_, pattern := buildMux().Handler(req)
+	if pattern != "POST /browser/attachments/{id}/control-mode" {
+		t.Fatalf("route pattern=%q", pattern)
+	}
+}

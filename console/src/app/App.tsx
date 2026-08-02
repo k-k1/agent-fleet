@@ -16,6 +16,11 @@ import { wireKeys } from "../features/keys/dispatcher.ts";
 import { useLeftRail } from "../core/store/leftRail.ts";
 import { wireTerminalReconcile } from "../terminal/service.ts";
 import { disposeAllBrowsers, resetBrowserRuntime, wireBrowserReconcile } from "../features/browser/service.ts";
+import {
+  disposeAllBrowserAttachments,
+  getBrowserAttachment,
+  wireBrowserAttachmentReconcile,
+} from "../features/browser/attachmentService.ts";
 import { useSessionsStore, startSessionsPolling } from "../features/sessions/store.ts";
 import { SessionModals } from "../features/sessions/SessionModals.tsx";
 import { AuthExpiredModal } from "../features/auth/AuthExpiredModal.tsx";
@@ -25,7 +30,7 @@ import { useReposStore, startReposPolling } from "../features/repos/store.ts";
 import { useFilesStore } from "../features/files/store.ts";
 import { useChatStore, startChatPolling } from "../features/chat/store.ts";
 import { hydrateUIPrefs } from "../lib/settings.ts";
-import { MOBILE_QUERY, coarsePointer } from "../lib/device.ts";
+import { MOBILE_QUERY, coarsePointer, mobileMatches } from "../lib/device.ts";
 import { PaneHost } from "../features/panes/PaneHost.tsx";
 import { LayoutMap } from "../features/panes/LayoutMap.tsx";
 import { WorkingSetBar } from "./WorkingSetBar.tsx";
@@ -58,6 +63,13 @@ import { PopoutTitleBar } from "../features/panes/PopoutTitleBar.tsx";
 import { toast } from "../ui/toast.ts";
 import { t } from "../lib/i18n/index.ts";
 import { DirtyGuardHost } from "../features/editor/DirtyGuardHost.tsx";
+import { useConfirm } from "../ui/ConfirmProvider.tsx";
+import {
+  browserAttachmentIdFromPath,
+  canonicalWorkspaceURL,
+  runBrowserAttachmentAction,
+} from "../layout/browserAttachmentAction.ts";
+import { errText } from "../core/api/client.ts";
 
 // Refresh FILES (and repos/sessions/chat list on start) whenever the workspace
 // actually flips running↔stopped — including external changes the 4s sync catches
@@ -88,6 +100,7 @@ function wireWorkspaceRefresh(): () => void {
 
 export function App() {
   const tr = useT();
+  const askConfirm = useConfirm();
   const tenant = useTenantStore((s) => s.tenant);
   const identityRev = useTenantStore((s) => s.identityRev);
   // Deployment gate: only show the schedules rail when the CP scheduler is enabled
@@ -108,6 +121,7 @@ export function App() {
   // identity-reload effect below.
   const popoutSeedRef = useRef<PopoutDescriptor | null>(null);
   const identityRevDoneRef = useRef(0);
+  const browserAttachmentActionHandledRef = useRef(false);
 
   // Detect a newer deployed build and offer a one-tap, cache-busting reload.
   useUpdateCheck();
@@ -277,6 +291,7 @@ export function App() {
     const unKeys = wireKeys();
     const unReconcile = wireTerminalReconcile();
     const unBrowserReconcile = wireBrowserReconcile();
+    const unBrowserAttachmentReconcile = wireBrowserAttachmentReconcile();
     const unWsRefresh = wireWorkspaceRefresh();
     // 統合 push チャネル（通信量削減 P3）: 配線を先に登録してから接続 — 初回
     // スナップショットのフレームを取りこぼさない。ポーラーはフォールバックで
@@ -303,6 +318,7 @@ export function App() {
       unKeys();
       unReconcile();
       unBrowserReconcile();
+      unBrowserAttachmentReconcile();
       unWsRefresh();
       unPushApply();
       stopPush();
@@ -323,6 +339,7 @@ export function App() {
     // pane ids are tab-local, not tenant-global. Never carry an ephemeral Page
     // owned by the previous membership into a same-named pane in the next tenant.
     disposeAllBrowsers();
+    disposeAllBrowserAttachments();
     // 旧テナントの push ストリームを先に落としてから通知ストアを reset する —
     // 逆順だと reset 後に旧テナントのフレームが 1 個滑り込みうる。
     restartPush();
@@ -347,6 +364,42 @@ export function App() {
     void useWorkspaceStore.getState().refresh();
     void useSessionsStore.getState().refresh();
   }, [booted, tenant]);
+
+  // A Chromium attachment changes layout only after the user has followed its
+  // action URL. MCP/server activity alone never reaches this effect. It runs
+  // after the tenant layout load above, then verifies membership/expiry before
+  // calculating one commit from the current layout.
+  useEffect(() => {
+    if (!booted || browserAttachmentActionHandledRef.current) return;
+    const attachmentId = browserAttachmentIdFromPath(location.pathname);
+    if (!attachmentId) return;
+    browserAttachmentActionHandledRef.current = true;
+    void (async () => {
+      try {
+        const mobile = mobileMatches();
+        await runBrowserAttachmentAction({
+          attachmentId,
+          mobile,
+          getStatus: getBrowserAttachment,
+          getLayout: () => useLayoutStore.getState().layout,
+          commit: (layout) => useLayoutStore.getState().commitAction(layout),
+          confirmReplace: () => askConfirm({
+            title: tr("browser.attach.cap_title"),
+            body: tr("browser.attach.cap_body"),
+            confirmLabel: tr("browser.attach.replace_current"),
+            danger: false,
+          }),
+          replaceURL: () => history.replaceState(history.state, "", canonicalWorkspaceURL()),
+        });
+      } catch (error) {
+        const e = error as { code?: string; message?: string };
+        const message = e.code === "browser_attachment_not_found"
+          ? tr("browser.attach.expired")
+          : errText(e) || tr("browser.attach.open_failed");
+        toast(message, { kind: "error" });
+      }
+    })();
+  }, [askConfirm, booted, tenant, tr]);
 
   // Layout re-load ONLY — deliberately narrower than the per-tenant sync above.
   // A DELAYED whoami resolution (CP transient 5xx at boot, a retry landed later)

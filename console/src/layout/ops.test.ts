@@ -298,6 +298,30 @@ describe("normalizeStored (migration)", () => {
     expect(l.cols[0].panes[0].content).toEqual({ kind: "browser", port: 5173, path: "/app?q=1" });
     expect(JSON.stringify(l)).not.toContain("browserId");
   });
+  it("persists only the opaque attachment id for a Chromium operation view", () => {
+    const l = normalizeStored({
+      cols: [{
+        id: "c0",
+        panes: [{
+          id: "p0",
+          content: {
+            kind: "browserAttach",
+            attachmentId: "ba_safe_123",
+            port: 9222,
+            targetId: "target-secret",
+            url: "https://example.invalid/?token=secret",
+            webSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/page/secret",
+          },
+        }],
+      }],
+      colRatios: [1],
+      activeId: "p0",
+    })!;
+    expect(l.cols[0].panes[0].content).toEqual({ kind: "browserAttach", attachmentId: "ba_safe_123" });
+    expect(JSON.stringify(l)).not.toContain("9222");
+    expect(JSON.stringify(l)).not.toContain("target-secret");
+    expect(JSON.stringify(l)).not.toContain("token=secret");
+  });
   it("falls back to a blank terminal for invalid browser targets", () => {
     const l = normalizeStored({
       cols: [{ id: "c0", panes: [{ id: "p0", content: { kind: "browser", port: 7700, path: "//outside" } }] }],

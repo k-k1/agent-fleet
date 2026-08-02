@@ -100,6 +100,15 @@ function contentFromFlat(p: any): PaneContent {
         ? { kind: "browser", port, path }
         : { kind: "terminal", chat: false };
     }
+    case "browserAttach": {
+      // Opaque ids are deliberately the attachment's only persistent field.
+      // Keep the alphabet narrow so a corrupted layout can never become an API
+      // path injection when the pane resolves its status after reload.
+      const attachmentId = str(p.attachmentId);
+      return attachmentId && /^[A-Za-z0-9_-]{1,256}$/.test(attachmentId)
+        ? { kind: "browserAttach", attachmentId }
+        : { kind: "terminal", chat: false };
+    }
     default:
       return { kind: "terminal", chat: false };
   }

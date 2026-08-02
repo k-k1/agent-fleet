@@ -17,6 +17,7 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -29,6 +30,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -311,9 +313,109 @@ var mcpStdioSelfReportTools = []map[string]any{
 	},
 }
 
+func chromiumAttachmentIDInputSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"attachment_id": map[string]any{"type": "string", "minLength": 1},
+		},
+		"required": []string{"attachment_id"},
+	}
+}
+
+func chromiumControlModeSchema() map[string]any {
+	return map[string]any{"type": "string", "enum": []string{"view-only", "user-control", "locked"}}
+}
+
+func chromiumTargetsOutputSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"targets": map[string]any{
+				"type": "array",
+				"items": map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"target_id": map[string]any{"type": "string"},
+						"title":     map[string]any{"type": "string"},
+						"url":       map[string]any{"type": "string"},
+					},
+					"required": []string{"target_id", "title", "url"},
+				},
+			},
+		},
+		"required": []string{"targets"},
+	}
+}
+
+func chromiumAttachOutputSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"attachment_id": map[string]any{"type": "string"},
+			"open_url":      map[string]any{"type": "string"},
+			"expires_at":    map[string]any{"type": "string"},
+		},
+		"required": []string{"attachment_id", "open_url", "expires_at"},
+	}
+}
+
+func chromiumAttachmentOutputSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"attachment_id":    map[string]any{"type": "string"},
+			"state":            map[string]any{"type": "string"},
+			"viewer_connected": map[string]any{"type": "boolean"},
+			"control_mode":     chromiumControlModeSchema(),
+			"action_result":    map[string]any{"type": "string", "enum": []string{"pending", "completed", "cancelled"}},
+			"expires_at":       map[string]any{"type": "string"},
+		},
+		"required": []string{"attachment_id", "state"},
+	}
+}
+
+func chromiumActionRequestOutputSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"attachment_id": map[string]any{"type": "string"},
+			"result":        map[string]any{"type": "string", "enum": []string{"pending", "completed", "cancelled"}},
+			"control_mode":  chromiumControlModeSchema(),
+		},
+		"required": []string{"attachment_id", "result"},
+	}
+}
+
 // mcpStdioTools — read-only Agent Fleet tools (names are prefixed mcp__af__<name> by
 // claude). Descriptions are prescriptive about WHEN to call (better trigger rate).
 var mcpStdioTools = []map[string]any{
+	{
+		"name": "list_chromium_targets",
+		"description": "loopbackだけに公開されたChromium CDP portから、既存のPage targetを列挙する。attach_chromiumの前に必ず呼び、返ったtarget_idから対象Pageを選ぶ。" +
+			"CDP endpoint、cookie、password、tokenを回答・log・commitへ出力しないこと。",
+		"inputSchema": map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"port": map[string]any{"type": "integer", "minimum": 1, "maximum": 65535, "description": "127.0.0.1でlistenしているChromium remote-debugging port"},
+			},
+			"required": []string{"port"},
+		},
+		"outputSchema": chromiumTargetsOutputSchema(),
+	},
+	{
+		"name":         "get_chromium_attachment",
+		"description":  "Chromium attachmentの状態、viewer接続、control mode、操作結果、有効期限を確認する。短周期で無限pollingせず、ユーザーの操作後など必要な時だけ呼ぶ。",
+		"inputSchema":  chromiumAttachmentIDInputSchema(),
+		"outputSchema": chromiumAttachmentOutputSchema(),
+	},
 	{
 		"name":        "list_my_sessions",
 		"description": "利用者自身のワークスペースで稼働中のセッション一覧（名前・種別・状態・作業ディレクトリ）を返す。「今どのセッションが動いている?」等に答える時に呼ぶ。",
@@ -426,6 +528,91 @@ var mcpStdioTools = []map[string]any{
 // assistants (list_assistants / ask_assistant). Consults are advisory-only by construction
 // (the sub-turn runs with no tools), so they can't loop or escalate.
 var mcpStdioWriteTools = []map[string]any{
+	{
+		"name": "attach_chromium",
+		"description": "list_chromium_targetsで確認済みの既存PageへAgent Fleetの表示・入力経路を接続する。" +
+			"戻ったopen_urlを改変せず「ブラウザを開いて操作する」というMarkdownリンクでユーザーへ提示すること。" +
+			"最終確定操作をエージェント自身でクリックせず、attach成功を外部サイト上の処理成功と言い換えないこと。",
+		"inputSchema": map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"port":      map[string]any{"type": "integer", "minimum": 1, "maximum": 65535, "description": "list_chromium_targetsに渡したChromium remote-debugging port"},
+				"target_id": map[string]any{"type": "string", "minLength": 1, "description": "list_chromium_targetsが返したtarget_id"},
+				"label":     map[string]any{"type": "string", "description": "Consoleに表示する任意の短いラベル"},
+			},
+			"required": []string{"port", "target_id"},
+		},
+		"outputSchema": chromiumAttachOutputSchema(),
+	},
+	{
+		"name":        "detach_chromium",
+		"description": "Agent Fleet側のChromium接続とscreencastだけを終了する。ownerのPage、BrowserContext、profile、Chromium processは閉じない。完了または中止を確認した後に呼ぶ。",
+		"inputSchema": chromiumAttachmentIDInputSchema(),
+		"outputSchema": map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"attachment_id": map[string]any{"type": "string"},
+				"detached":      map[string]any{"type": "boolean"},
+			},
+			"required": []string{"attachment_id", "detached"},
+		},
+	},
+	{
+		"name": "request_browser_action",
+		"description": "Chromium attachmentをユーザーへ引き渡す操作案内を作成・更新する。user-controlへ移す前にowner側の対象Pageへの自動操作を停止すること。" +
+			"最終確定操作は代行せず、完了/中止はユーザーの自己申告であって外部サイト上の成功証明ではない。",
+		"inputSchema": map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"attachment_id":    map[string]any{"type": "string", "minLength": 1},
+				"message":          map[string]any{"type": "string", "minLength": 1, "description": "ユーザーに依頼する具体的な確認・操作"},
+				"completion_label": map[string]any{"type": "string", "description": "完了ボタンの任意ラベル"},
+				"allow_cancel":     map[string]any{"type": "boolean", "description": "中止を許可するか（省略時false）"},
+				"control_mode":     chromiumControlModeSchema(),
+			},
+			"required": []string{"attachment_id", "message"},
+		},
+		"outputSchema": chromiumActionRequestOutputSchema(),
+	},
+	{
+		"name":        "get_browser_action_result",
+		"description": "ユーザーへ依頼したブラウザ操作の自己申告結果（pending/completed/cancelled）を確認する。短周期で無限pollingせず、結果は外部サイト上の処理成功の証明として扱わない。",
+		"inputSchema": chromiumAttachmentIDInputSchema(),
+		"outputSchema": map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"attachment_id": map[string]any{"type": "string"},
+				"result":        map[string]any{"type": "string", "enum": []string{"pending", "completed", "cancelled"}},
+			},
+			"required": []string{"attachment_id", "result"},
+		},
+	},
+	{
+		"name":        "set_chromium_control_mode",
+		"description": "Chromium attachmentの入力可否をview-only/user-control/lockedへ変更する。user-controlへ移す前にowner側の対象Pageへの自動操作を停止すること。",
+		"inputSchema": map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"attachment_id": map[string]any{"type": "string", "minLength": 1},
+				"control_mode":  chromiumControlModeSchema(),
+			},
+			"required": []string{"attachment_id", "control_mode"},
+		},
+		"outputSchema": map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"attachment_id": map[string]any{"type": "string"},
+				"control_mode":  chromiumControlModeSchema(),
+			},
+			"required": []string{"attachment_id", "control_mode"},
+		},
+	},
 	{
 		"name":        "list_models",
 		"description": "指定エージェントで現在選べるモデル一覧を返す。model 指定で create_session する前には必ず呼び、返った id を使うこと（一覧は利用者が「使わないモデル」で除外したものを除いてある — 記憶や過去の会話にあるモデル名を推測で渡さないこと。除外モデルを渡した create_session は拒否される）。claude は固定のティア別名、codex／opencode／agy／copilot／cursor／kiro は接続状態を反映したライブカタログ（copilot はプラン反映 — Free は Auto のみで空になる。cursor は effort をモデル id に畳んだアカウント連動カタログ。kiro は Free でも named 指定可・既定は auto。未指定は auto ルーティング）。利用者が terra のような略称で指定した場合も、一覧から対応する完全な id（例: gpt-5.6-terra）を選ぶ。opencode は同じモデルが 2 つの課金経路で並ぶことがある（opencode-go/… = Go サブスクの範囲内、opencode/… = Zen の従量課金）。同名が両方にある場合は先に並んでいる opencode-go/… を選ぶこと（一覧の並びは利用者の設定で整形済み）。利用者が Zen を明示した場合だけ opencode/… を使う。",
@@ -848,14 +1035,44 @@ func mcpStdioCall(req mcpReq) []byte {
 		All      bool     `json:"all"`
 		Kinds    []string `json:"kinds"`
 		Projects []string `json:"projects"`
+		// Chromium Attach View（docs/53）。MCPはsnake_case、Agent RESTはcamelCase
+		// なので、この境界で明示的に変換する。hostやCDP WebSocket URLは入力に持たない。
+		Port            int    `json:"port"`
+		TargetID        string `json:"target_id"`
+		AttachmentID    string `json:"attachment_id"`
+		Label           string `json:"label"`
+		Message         string `json:"message"`
+		CompletionLabel string `json:"completion_label"`
+		AllowCancel     *bool  `json:"allow_cancel"`
+		ControlMode     string `json:"control_mode"`
 	}
 	_ = json.Unmarshal(p.Args, &a)
+
+	// Chromium attachmentの変更系は広告だけでなくcall側でも拒否する。read-only
+	// clientが名前を推測してtools/callしてもAgent RESTへ到達させない。
+	if !mcpWriteEnabled && isChromiumWriteTool(p.Name) {
+		return mcpToolErr(req.ID, "このアシスタントはChromium attachmentの変更を許可されていません")
+	}
 
 	// Memo-queue tools relay to the CP's /internal/memos bridge (the queue lives in the
 	// CP store, not the Agent), authenticated by AF_MEMO_TOKEN. list_memos is read-only
 	// (available to af_read too); the mutating ones require --write. The tool args match
 	// the CP wire shape, so p.Args is forwarded as the request body verbatim.
 	switch p.Name {
+	case "list_chromium_targets":
+		return mcpListChromiumTargets(req.ID, a.Port)
+	case "get_chromium_attachment":
+		return mcpGetChromiumAttachment(req.ID, a.AttachmentID)
+	case "attach_chromium":
+		return mcpAttachChromium(req.ID, a.Port, a.TargetID, a.Label)
+	case "detach_chromium":
+		return mcpDetachChromium(req.ID, a.AttachmentID)
+	case "request_browser_action":
+		return mcpRequestBrowserAction(req.ID, a.AttachmentID, a.Message, a.CompletionLabel, a.AllowCancel, a.ControlMode)
+	case "get_browser_action_result":
+		return mcpGetBrowserActionResult(req.ID, a.AttachmentID)
+	case "set_chromium_control_mode":
+		return mcpSetChromiumControlMode(req.ID, a.AttachmentID, a.ControlMode)
 	case "af_report":
 		// 自己申告ファストパス（docs/51 Phase 3）。--self-report で起動したセッション側の
 		// サーバー専用 — アシスタントの af_read/af_write はこのツールを広告しないので、
@@ -1407,6 +1624,257 @@ func mcpStdioCall(req mcpReq) []byte {
 	})
 }
 
+func isChromiumWriteTool(name string) bool {
+	switch name {
+	case "attach_chromium", "detach_chromium", "request_browser_action",
+		"get_browser_action_result", "set_chromium_control_mode":
+		return true
+	default:
+		return false
+	}
+}
+
+func mcpListChromiumTargets(id json.RawMessage, port int) []byte {
+	if port < 1 || port > 65535 {
+		return mcpToolErr(id, "portには1〜65535のChromium remote-debugging portが必要です")
+	}
+	body, err := agentGET("/browser/attach-targets?port=" + strconv.Itoa(port))
+	if err != nil {
+		return mcpChromiumToolErr(id, "Chromium target一覧の取得", err)
+	}
+	var response browserAttachTargetsResponse
+	if err := json.Unmarshal([]byte(body), &response); err != nil {
+		return mcpToolErr(id, "Agentが不正なChromium target一覧を返しました")
+	}
+	targets := make([]any, 0, len(response.Targets))
+	for _, target := range response.Targets {
+		if target.TargetID == "" {
+			continue
+		}
+		targets = append(targets, map[string]any{
+			"target_id": target.TargetID,
+			"title":     target.Title,
+			"url":       target.URL,
+		})
+	}
+	return mcpStructuredResult(id, map[string]any{"targets": targets})
+}
+
+func mcpGetChromiumAttachment(id json.RawMessage, attachmentID string) []byte {
+	if attachmentID == "" {
+		return mcpToolErr(id, "attachment_idが必要です")
+	}
+	body, err := agentGET("/browser/attachments/" + url.PathEscape(attachmentID))
+	if err != nil {
+		return mcpChromiumToolErr(id, "Chromium attachment状態の取得", err)
+	}
+	status, err := chromiumAttachmentStatus(body, attachmentID)
+	if err != nil {
+		return mcpToolErr(id, "Agentが不正なChromium attachment状態を返しました")
+	}
+	return mcpStructuredResult(id, status)
+}
+
+func mcpAttachChromium(id json.RawMessage, port int, targetID, label string) []byte {
+	if port < 1 || port > 65535 {
+		return mcpToolErr(id, "portには1〜65535のChromium remote-debugging portが必要です")
+	}
+	if targetID == "" {
+		return mcpToolErr(id, "target_idが必要です。先にlist_chromium_targetsで確認してください")
+	}
+	if len(label) > browserAttachmentMaxLabel || !utf8.ValidString(label) {
+		return mcpToolErr(id, "labelは256 byte以内のUTF-8文字列にしてください")
+	}
+	req := map[string]any{"port": port, "targetId": targetID}
+	reqBody, _ := json.Marshal(req)
+	// The P1 REST request body is fixed to port/targetId/viewport. Carry the
+	// MCP-only display label over the authenticated loopback hop separately.
+	headers := map[string]string{}
+	if label != "" {
+		headers[browserAttachmentLabelHeader] = base64.RawURLEncoding.EncodeToString([]byte(label))
+	}
+	body, err := agentPOSTHeaders("/browser/attachments", reqBody, headers)
+	if err != nil {
+		return mcpChromiumToolErr(id, "Chromium attachmentの作成", err)
+	}
+	var response browserAttachmentResponse
+	if err := json.Unmarshal([]byte(body), &response); err != nil {
+		return mcpToolErr(id, "Agentが不正なChromium attachment結果を返しました")
+	}
+	if response.ID == "" || response.OpenURL == "" || response.ExpiresAt == nil {
+		return mcpToolErr(id, "AgentのChromium attachment結果にattachment ID、open URL、またはexpiryがありません")
+	}
+	if !validChromiumOpenURL(response.OpenURL, response.ID) {
+		return mcpToolErr(id, "Agentが不正なChromium attachment open URLを返しました")
+	}
+	// Agent応答にtitle/url/port/target/CDP情報が増えてもMCPへは通さない。
+	return mcpStructuredResult(id, map[string]any{
+		"attachment_id": response.ID,
+		"open_url":      response.OpenURL,
+		"expires_at":    response.ExpiresAt.Format(time.RFC3339Nano),
+	})
+}
+
+func mcpDetachChromium(id json.RawMessage, attachmentID string) []byte {
+	if attachmentID == "" {
+		return mcpToolErr(id, "attachment_idが必要です")
+	}
+	if _, err := agentDo(http.MethodDelete, "/browser/attachments/"+url.PathEscape(attachmentID), nil); err != nil {
+		return mcpChromiumToolErr(id, "Chromium attachmentの切断", err)
+	}
+	return mcpStructuredResult(id, map[string]any{
+		"attachment_id": attachmentID,
+		"detached":      true,
+	})
+}
+
+func mcpRequestBrowserAction(id json.RawMessage, attachmentID, message, completionLabel string, allowCancel *bool, controlMode string) []byte {
+	if attachmentID == "" || strings.TrimSpace(message) == "" {
+		return mcpToolErr(id, "attachment_idとmessageが必要です")
+	}
+	if controlMode != "" && !validChromiumControlMode(controlMode) {
+		return mcpToolErr(id, "control_modeはview-only、user-control、lockedのいずれかです")
+	}
+	req := map[string]any{"message": message, "allowCancel": false}
+	if completionLabel != "" {
+		req["completionLabel"] = completionLabel
+	}
+	if allowCancel != nil {
+		req["allowCancel"] = *allowCancel
+	}
+	if controlMode != "" {
+		req["controlMode"] = controlMode
+	}
+	reqBody, _ := json.Marshal(req)
+	body, err := agentPOST("/browser/attachments/"+url.PathEscape(attachmentID)+"/handoff", reqBody)
+	if err != nil {
+		return mcpChromiumToolErr(id, "ブラウザ操作依頼の作成", err)
+	}
+	var response browserAttachmentResponse
+	if json.Unmarshal([]byte(body), &response) != nil || response.ID != attachmentID ||
+		response.Handoff == nil || response.Handoff.Result != "pending" {
+		return mcpToolErr(id, "Agentが不正なブラウザ操作依頼結果を返しました")
+	}
+	result := map[string]any{"attachment_id": attachmentID, "result": "pending"}
+	if controlMode != "" {
+		result["control_mode"] = controlMode
+	}
+	return mcpStructuredResult(id, result)
+}
+
+func mcpGetBrowserActionResult(id json.RawMessage, attachmentID string) []byte {
+	if attachmentID == "" {
+		return mcpToolErr(id, "attachment_idが必要です")
+	}
+	body, err := agentGET("/browser/attachments/" + url.PathEscape(attachmentID))
+	if err != nil {
+		return mcpChromiumToolErr(id, "ブラウザ操作結果の取得", err)
+	}
+	var response browserAttachmentResponse
+	if json.Unmarshal([]byte(body), &response) != nil || response.ID != attachmentID {
+		return mcpToolErr(id, "Agentが不正なブラウザ操作結果を返しました")
+	}
+	result := ""
+	if response.Handoff != nil {
+		result = response.Handoff.Result
+	}
+	if result == "" {
+		result = "pending"
+	} else if !validChromiumActionResult(result) {
+		return mcpToolErr(id, "Agentが不正なブラウザ操作結果を返しました")
+	}
+	return mcpStructuredResult(id, map[string]any{
+		"attachment_id": attachmentID,
+		"result":        result,
+	})
+}
+
+func mcpSetChromiumControlMode(id json.RawMessage, attachmentID, controlMode string) []byte {
+	if attachmentID == "" {
+		return mcpToolErr(id, "attachment_idが必要です")
+	}
+	if !validChromiumControlMode(controlMode) {
+		return mcpToolErr(id, "control_modeはview-only、user-control、lockedのいずれかです")
+	}
+	reqBody, _ := json.Marshal(map[string]string{"controlMode": controlMode})
+	body, err := agentPOST("/browser/attachments/"+url.PathEscape(attachmentID)+"/control-mode", reqBody)
+	if err != nil {
+		return mcpChromiumToolErr(id, "Chromium control modeの変更", err)
+	}
+	var response browserAttachmentResponse
+	if json.Unmarshal([]byte(body), &response) != nil || response.ID != attachmentID || response.ControlMode != controlMode {
+		return mcpToolErr(id, "Agentが不正なChromium control mode結果を返しました")
+	}
+	return mcpStructuredResult(id, map[string]any{
+		"attachment_id": attachmentID,
+		"control_mode":  controlMode,
+	})
+}
+
+func validChromiumControlMode(mode string) bool {
+	return mode == "view-only" || mode == "user-control" || mode == "locked"
+}
+
+func validChromiumActionResult(result string) bool {
+	return result == "pending" || result == "completed" || result == "cancelled"
+}
+
+func validChromiumOpenURL(openURL, attachmentID string) bool {
+	parsed, err := url.Parse(openURL)
+	if err != nil || parsed.Scheme != "" || parsed.Host != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+	return parsed.Path == "/open/browser-attachment/"+url.PathEscape(attachmentID)
+}
+
+func chromiumAttachmentStatus(body, fallbackID string) (map[string]any, error) {
+	var response browserAttachmentResponse
+	if err := json.Unmarshal([]byte(body), &response); err != nil {
+		return nil, err
+	}
+	if response.ID == "" || response.ID != fallbackID || response.State == "" || !validChromiumControlMode(response.ControlMode) {
+		return nil, errors.New("missing state")
+	}
+	result := map[string]any{
+		"attachment_id":    response.ID,
+		"state":            response.State,
+		"viewer_connected": response.Viewer,
+		"control_mode":     response.ControlMode,
+	}
+	if response.Handoff != nil && validChromiumActionResult(response.Handoff.Result) {
+		result["action_result"] = response.Handoff.Result
+	}
+	if response.ExpiresAt != nil {
+		result["expires_at"] = response.ExpiresAt.Format(time.RFC3339Nano)
+	}
+	return result, nil
+}
+
+// mcpStructuredResult deliberately duplicates the same JSON object in text and
+// structuredContent. P0でstructuredContentをモデルへ渡さないCLIを実測したため、
+// textは説明文ではなく全CLI共通で読める短いJSON fallbackを必ず保持する。
+func mcpStructuredResult(id json.RawMessage, value map[string]any) []byte {
+	text, _ := json.Marshal(value)
+	return mcpResult(id, map[string]any{
+		"resultType":        "complete",
+		"content":           []any{map[string]any{"type": "text", "text": string(text)}},
+		"structuredContent": value,
+	})
+}
+
+// mcpChromiumToolErr keeps raw Agent/CDP details out of the model-visible result.
+// Stable Agent error codes remain useful, while endpoint URLs, ports and target IDs do not.
+func mcpChromiumToolErr(id json.RawMessage, action string, err error) []byte {
+	var httpErr *agentHTTPError
+	if errors.As(err, &httpErr) {
+		if code := httpErr.code(); code != "" {
+			return mcpToolErr(id, fmt.Sprintf("%sに失敗しました（Agent API %d, code=%s）", action, httpErr.StatusCode, code))
+		}
+		return mcpToolErr(id, fmt.Sprintf("%sに失敗しました（Agent API %d）", action, httpErr.StatusCode))
+	}
+	return mcpToolErr(id, action+"に失敗しました（Workspace Agentへ接続できません）")
+}
+
 // outputCursors remembers, per conversation, the last /output cursor returned for
 // each session（ファイル名 = 会話ID・中身 = セッション名→cursor）。since 省略時の
 // 既定にする: オペレーターは同じセッションを報告のたびに読み直すので、毎回 32KiB の
@@ -1591,11 +2059,19 @@ func agentPOST(path string, body []byte) (string, error) {
 	return agentDo(http.MethodPost, path, body)
 }
 
+func agentPOSTHeaders(path string, body []byte, headers map[string]string) (string, error) {
+	return agentDoTimeoutHeaders(http.MethodPost, path, body, 15*time.Second, headers)
+}
+
 func agentDo(method, path string, body []byte) (string, error) {
 	return agentDoTimeout(method, path, body, 15*time.Second)
 }
 
 func agentDoTimeout(method, path string, body []byte, timeout time.Duration) (string, error) {
+	return agentDoTimeoutHeaders(method, path, body, timeout, nil)
+}
+
+func agentDoTimeoutHeaders(method, path string, body []byte, timeout time.Duration, headers map[string]string) (string, error) {
 	var rdr io.Reader
 	if body != nil {
 		rdr = bytes.NewReader(body)
@@ -1609,6 +2085,9 @@ func agentDoTimeout(method, path string, body []byte, timeout time.Duration) (st
 	}
 	if tok := os.Getenv("AGENT_TOKEN"); tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	for name, value := range headers {
+		req.Header.Set(name, value)
 	}
 	resp, err := (&http.Client{Timeout: timeout}).Do(req)
 	if err != nil {
@@ -1719,11 +2198,24 @@ func (e *agentHTTPError) Error() string {
 	return fmt.Sprintf("Agent API エラー (%d): %s", e.StatusCode, e.Body)
 }
 
-func (e *agentHTTPError) hasCode(code string) bool {
+func (e *agentHTTPError) code() string {
 	var body struct {
-		Code string `json:"code"`
+		Code  string `json:"code"`
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
 	}
-	return json.Unmarshal([]byte(e.Body), &body) == nil && body.Code == code
+	if json.Unmarshal([]byte(e.Body), &body) != nil {
+		return ""
+	}
+	if body.Error.Code != "" {
+		return body.Error.Code
+	}
+	return body.Code
+}
+
+func (e *agentHTTPError) hasCode(code string) bool {
+	return e.code() == code
 }
 
 // agentSendToSession makes the orchestration contract atomic from the model's point
