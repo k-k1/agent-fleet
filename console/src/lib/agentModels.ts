@@ -163,7 +163,10 @@ export function useModelOptions(kind: string): ModelOption[] | null {
   // /agents/{kind}/models を絞っているが、claude だけは固定リストを Console が
   // 直接持っていてフェッチを通らない（CLAUDE_MODELS）ので、ここでも掛ける。動的 kind
   // にも掛けるのは、フェッチ済みキャッシュが設定変更より古いことがあるための保険。
-  if (kind === "claude") return visibleModelOptions(s.hiddenModels, kind, CLAUDE_MODELS);
+  if (kind === "claude") {
+    const custom = s.claudeCustomModels.map((id): ModelOption => [id, id]);
+    return visibleModelOptions(s.hiddenModels, kind, [...CLAUDE_MODELS, ...custom]);
+  }
   if (isDynamic(kind)) return visibleModelOptions(s.hiddenModels, kind, opts);
   return null;
 }

@@ -533,7 +533,8 @@
   gap: 6px;
   min-width: 0;
 }
-.model-picker-claude > input {
+.model-picker-claude > input,
+.model-picker-claude > select {
   width: 100%;
   min-width: 0;
 }

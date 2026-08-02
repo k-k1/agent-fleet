@@ -244,6 +244,7 @@ function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "cursor" | "kiro"
           <Choice value={row.model} options={models} onChange={(model) => update({ model, effort: "" })} />
         )}
       </SettingRow>
+      {kind === "claude" && <ClaudeCustomModelsRow />}
       {/* agy は effort 相当がモデル名に織り込まれている（(Medium) 等）ため行ごと出さない。 */}
       {desc.caps.effort && (
         <SettingRow label={tr("agents.default_effort")}>
@@ -264,6 +265,55 @@ function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "cursor" | "kiro"
       )}
       <p className="ps-note">{tr("agents.note_launch_defaults")}</p>
     </>
+  );
+}
+
+// Claude Code exposes no account-aware model catalog. These user-owned full ids are
+// therefore the durable catalog shared by launch pickers and MCP list_models.
+function ClaudeCustomModelsRow() {
+  const s = useSettings();
+  const tr = useT();
+  const [value, setValue] = useState("");
+  const id = value.trim();
+  const duplicate = s.claudeCustomModels.some((m) => m.toLowerCase() === id.toLowerCase());
+  const valid = /^claude-[a-z0-9][a-z0-9._-]*$/i.test(id) && !duplicate;
+  const add = () => {
+    if (!valid) return;
+    setSettings({ claudeCustomModels: [...s.claudeCustomModels, id] });
+    setValue("");
+  };
+  return (
+    <SettingRow label={tr("agents.claude_custom_models")} sub={tr("agents.claude_custom_models_sub")}>
+      <div className="hidden-models">
+        {s.claudeCustomModels.length > 0 && (
+          <div className="hm-chips">
+            {s.claudeCustomModels.map((model) => (
+              <span key={model} className="hm-chip">
+                {model}
+                <button
+                  type="button"
+                  className="hm-chip-x"
+                  aria-label={tr("agents.claude_custom_models_remove", { model })}
+                  onClick={() => setSettings({ claudeCustomModels: s.claudeCustomModels.filter((m) => m !== model) })}
+                >×</button>
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="ui-field-row">
+          <input
+            className="ds-select"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }}
+            placeholder="claude-opus-4-8"
+            aria-label={tr("agents.claude_custom_models_input")}
+            spellCheck={false}
+          />
+          <Button small icon="add" disabled={!valid} onClick={add}>{tr("agents.claude_custom_models_add")}</Button>
+        </div>
+      </div>
+    </SettingRow>
   );
 }
 
