@@ -73,18 +73,50 @@ export function ModelPicker({ kind, model, onChange }: ModelPickerProps) {
       </div>
     );
   }
+  // Claude Code has no account-aware model catalog to query. Keep the stable tier
+  // aliases as the fast path, but also accept its documented full model names so a
+  // user can pin an older release (for example claude-opus-4-8). The provider remains
+  // the authority on whether that release is still available to this account.
+  const aliases = options.filter(([v]) => ["fable", "opus", "sonnet", "haiku"].includes(v));
+  const registered = options.filter(([v]) => !["fable", "opus", "sonnet", "haiku"].includes(v));
+  const registeredSelected = registered.some(([v]) => v === model);
+  const listed = options.some(([v]) => v === model);
   return (
-    <div className="ui-seg">
-      {options.map(([v, label]) => (
-        <button
-          key={v || "default"}
-          type="button"
-          className={"seg-btn" + (model === v ? " active" : "")}
-          onClick={() => onChange(v)}
+    <div className="model-picker-claude">
+      <div className="ui-seg">
+        {aliases.map(([v, label]) => (
+          <button
+            key={v || "default"}
+            type="button"
+            className={"seg-btn" + (model === v ? " active" : "")}
+            onClick={() => onChange(v)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {registered.length > 0 && (
+        <select
+          value={registeredSelected ? model : ""}
+          onChange={(e) => e.target.value && onChange(e.target.value)}
+          aria-label={tr("ui.claude_registered_model")}
         >
-          {label}
-        </button>
-      ))}
+          <option value="">{tr("ui.claude_registered_model")}</option>
+          {registered.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+        </select>
+      )}
+      <input
+        type="text"
+        value={listed ? "" : model}
+        onChange={(e) => onChange(e.target.value.trimStart())}
+        onBlur={(e) => onChange(e.target.value.trim())}
+        placeholder={tr("ui.claude_full_model_placeholder")}
+        aria-label={tr("ui.claude_full_model")}
+        spellCheck={false}
+        autoCapitalize="none"
+        autoCorrect="off"
+      />
+      <span className="ui-field-hint">{tr("ui.claude_full_model_hint")}</span>
     </div>
   );
 }

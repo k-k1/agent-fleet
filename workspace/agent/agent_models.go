@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
@@ -33,6 +34,16 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	switch r.PathValue("kind") {
 	case "claude":
 		list = claude.Models()
+		seen := make(map[string]bool, len(list))
+		for _, model := range list {
+			seen[strings.ToLower(model.ID)] = true
+		}
+		for _, id := range claudeCustomModelsPref() {
+			if key := strings.ToLower(id); !seen[key] {
+				list = append(list, agents.ModelChoice{ID: id, Label: id})
+				seen[key] = true
+			}
+		}
 	case "codex":
 		list = codex.Models()
 	case "cursor":
