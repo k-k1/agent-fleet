@@ -17,6 +17,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-X main.buildVersion=$
 
 # --- runtime ---
 FROM node:22-bookworm-slim
+# Links the GHCR package to this repository — see control-plane/Dockerfile for why.
+LABEL org.opencontainers.image.source="https://github.com/k-k1/agent-fleet" \
+      org.opencontainers.image.description="Agent Fleet per-user workspace — isolated container running the agent CLIs" \
+      org.opencontainers.image.licenses="Apache-2.0"
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git git-lfs subversion tmux vim openssh-client ca-certificates gnupg curl wget less procps htop strace tzdata \
       ripgrep fd-find bat jq unzip zip \

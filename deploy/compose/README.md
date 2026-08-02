@@ -19,8 +19,14 @@ This directory is the whole deployment surface:
 | `Caddyfile` | reverse proxy + Let's Encrypt (ACME); self-signed fallback |
 | `.env.example` | all configuration (copy to `.env`) |
 | `backup.sh` / `restore.sh` | data backup & disaster recovery |
-| `load-images.sh` | air-gapped image import (`docker save`/`load`) |
+| `load-images.sh` | import images from a local tar — only for hosts that cannot reach a registry |
 | `release.sh` | build a versioned release bundle (maintainers) |
+
+Released images are published to **GHCR** as
+`ghcr.io/k-k1/agent-fleet/control-plane:<version>` and
+`ghcr.io/k-k1/agent-fleet/workspace:<version>`; `.env` resolves them through
+`REGISTRY` + `VERSION`. The packages are published public, so pulling them needs
+no registry login. Point `REGISTRY` at your own mirror to pull from elsewhere.
 
 ## Prerequisites
 
@@ -42,7 +48,7 @@ This directory is the whole deployment surface:
 
 > Starting from a published release? The `install-compose.sh` helper in the
 > [distribution repo](https://github.com/k-k1/agent-fleet-dist) fetches + verifies
-> the bundle and images tar and `docker load`s them, leaving you at the `cp
+> the bundle, extracts it and pulls the images from GHCR, leaving you at the `cp
 > .env.example .env` step below. This runbook is the manual/from-source path.
 
 ```bash
@@ -61,9 +67,24 @@ mkdir -p "$(grep -E '^DATA_DIR=' .env | cut -d= -f2)"
 #    launches workspaces from WS_IMAGE, agent-fleet/workspace:dev by default):
 docker build -t agent-fleet/workspace:dev ../../workspace
 
-docker compose up -d --build     # or plain `up -d` if pulling prebuilt images
+docker compose up -d --build     # from source
 docker compose logs -f cp
 ```
+
+Running a published release instead of building? Leave `REGISTRY`/`VERSION`/
+`WS_IMAGE` at the values the release bundle ships with and pull rather than build
+— skipping step 4:
+
+```bash
+docker compose pull                                  # cp + caddy
+docker pull "$(grep -E '^WS_IMAGE=' .env | cut -d= -f2)"   # workspace (see below)
+docker compose up -d
+```
+
+The workspace image is **not a compose service** — the CP launches it per user
+with `docker run` — so `docker compose pull` does not fetch it. Pulling it up
+front is optional (the first workspace start would pull it on demand) but avoids
+a multi-minute wait for whoever presses Start first.
 
 Then open `https://<PUBLIC_DOMAIN>`, sign in with a `SUPER_ADMIN_EMAILS` account,
 and launch a workspace.
@@ -150,25 +171,36 @@ before upgrading. Read the release notes for any breaking changes.
 
 ## Air-gapped install
 
-On a networked machine, build/pull the images and export them:
+No image tarball is published any more — images are distributed through GHCR
+([ADR 0037](../../docs/decisions/0037-registry-policy.md)). A host that cannot
+reach a registry has two options: mirror `ghcr.io/k-k1/agent-fleet/*` into an
+internal registry and point `REGISTRY` at it, or carry the images in by hand.
+
+For the hand-carry path, build and export them on a networked machine:
 
 ```bash
-docker save agent-fleet/control-plane:$VERSION agent-fleet/workspace:$VERSION \
-  | gzip > agent-fleet-images-$VERSION.tar.gz
+VERSION=<version> deploy/compose/release.sh --save
+#   -> deploy/compose/dist/agent-fleet-images-<version>.tar.gz  (docker save, gzip)
 ```
 
-On the target host:
+Copy that tar plus the bundle to the target host and import it there:
 
 ```bash
 deploy/compose/load-images.sh agent-fleet-images-<version>.tar.gz
 docker compose up -d
 ```
 
-The default workspace image is the lean variant (`BAKE_AGENT_CLIS=0`): it ships
+`release.sh --save` tags the images `agent-fleet/{control-plane,workspace}:<version>`
+(override with `REGISTRY=`), so set `REGISTRY=agent-fleet` in the target's `.env`
+to match what was loaded.
+
+Note that a fleet is not usable offline just because the images are local. The
+default workspace image is the lean variant (`BAKE_AGENT_CLIS=0`): it ships
 without the agent CLIs and installs them at container start, **pinned via the
 image's `versions.json`** (later starts keep the pin; following latest is the
-self-update opt-in's job). For fully offline hosts use an image built with the
-CLIs baked in (`BAKE_AGENT_CLIS=1`) and set `CLAUDE_INSTALL=0` (via `WS_ENV`).
+self-update opt-in's job). For fully offline hosts build an image with the CLIs
+baked in (`BAKE_AGENT_CLIS=1`) and set `CLAUDE_INSTALL=0` (via `WS_ENV`) — and
+the agents still need to reach their model endpoints to do anything.
 
 ## DooD: the three constraints (read if "it starts but silently doesn't work")
 

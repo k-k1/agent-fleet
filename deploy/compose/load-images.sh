@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Air-gap distribution: load images from a tar produced by `docker save` (P3-10 §20.4).
-# On a networked host just use compose's `image:` (registry pull); this script is
-# not needed there.
+# Load images from a tar produced by `docker save`, for hosts that cannot reach a
+# registry. Releases do not ship such a tar — images go to GHCR (ADR 0037) — so the
+# producer side below is a self-help step you run yourself. On a networked host just
+# use compose's `image:` (registry pull); this script is not needed there.
 #
 #   # Producer side (built on a networked machine):
-#   docker save agent-fleet/control-plane:"$VERSION" agent-fleet/workspace:"$VERSION" \
-#     | gzip > agent-fleet-images-"$VERSION".tar.gz
+#   VERSION=<version> deploy/compose/release.sh --save
+#     -> deploy/compose/dist/agent-fleet-images-<version>.tar.gz
 #
-#   # Target side (air-gapped):
+#   # Target side (no registry access):
 #   deploy/compose/load-images.sh agent-fleet-images-<version>.tar.gz
 set -euo pipefail
 TAR="${1:-}"

@@ -96,8 +96,11 @@ A. ほぼ DooD 制約 (B)。`DATA_DIR` が CP の内外で同一絶対パスか�
 いるかを確認します（本書の DooD 診断）。
 
 **Q. 閉域網（インターネット非接続）に入れられる？**
-A. 入れられます。image を `docker save`/`load` で持ち込み、TLS は `tls internal`、Claude は
-`CLAUDE_INSTALL=0` で焼き込み image を使います（[02](02-operations.ja.md) の air-gap）。
+A. 入れられますが、条件があります。リリースに image tar は添付しなくなったので、GHCR の image を
+社内レジストリへミラーして `REGISTRY` をそこへ向けるか、`release.sh --save` ＋ `load-images.sh` で
+持ち込みます。TLS は `tls internal`、Claude は `CLAUDE_INSTALL=0` で焼き込み image を使います
+（[02](02-operations.ja.md) の air-gap）。なお、フリートは起動できてもエージェント自身は
+モデルのエンドポイントに到達できなければ動きません。
 
 **Q. ダウングレードしたい。**
 A. 非対応です。migration は前方互換で自動適用され、古い CP は新スキーマを理解できません。後退は
