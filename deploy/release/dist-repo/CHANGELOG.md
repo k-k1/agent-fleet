@@ -3,6 +3,13 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.6.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.6.0) — 2026-08-02
+
+An agent can now hand you the browser page it is driving, so you take over for the
+final click; the Console speaks English end to end instead of falling back to
+Japanese. **Docker Compose installs change in this release: the container images
+are pulled from GHCR instead of being loaded from an image tarball.**
+
 ## [0.5.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.5.1) — 2026-08-01
 
 A rebuild that removes an internal string the Console bundle had been carrying,

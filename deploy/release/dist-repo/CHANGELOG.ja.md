@@ -3,6 +3,13 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.6.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.6.0) — 2026-08-02
+
+エージェントが操作中のブラウザページを人へ引き渡せるようになり、最後のクリックだけを
+自分で行えます。Console は日本語に倒れることなく表示言語で一貫して応答します。
+**本リリースで Docker Compose の導入手順が変わります: コンテナイメージは image tar の
+読み込みではなく GHCR からの pull で取得します。**
+
 ## [0.5.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.5.1) — 2026-08-01
 
 Console のバンドルに焼き込まれていた内部文字列を除去した再ビルドと、再発を止める
