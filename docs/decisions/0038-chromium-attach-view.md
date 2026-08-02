@@ -1,6 +1,6 @@
 # 0038. 外部所有 Chromium はloopback CDPへattachし、ユーザークリックでConsoleペインへ開く
 
-- 状態: 採用・P0実測で実装契約確定（P1以降は未実装、2026-08-02）
+- 状態: 採用・P0実測で実装契約確定（P1まで実装済み・developマージ済み・動作確認済み、2026-08-02）
 - 関連: [53-chromium-attach-view.md](../53-chromium-attach-view.md) /
   [53 P0実測](../53-chromium-attach-view-p0-verification.md) / [0018-container-browser-pane.md](0018-container-browser-pane.md)
 
