@@ -29,7 +29,7 @@ import { useSessionNotifications } from "../features/sessions/useSessionNotifica
 import { useReposStore, startReposPolling } from "../features/repos/store.ts";
 import { useFilesStore } from "../features/files/store.ts";
 import { useChatStore, startChatPolling } from "../features/chat/store.ts";
-import { hydrateUIPrefs } from "../lib/settings.ts";
+import { hydrateUIPrefs, refreshUIPrefs } from "../lib/settings.ts";
 import { MOBILE_QUERY, coarsePointer, mobileMatches } from "../lib/device.ts";
 import { PaneHost } from "../features/panes/PaneHost.tsx";
 import { LayoutMap } from "../features/panes/LayoutMap.tsx";
@@ -286,6 +286,22 @@ export function App() {
   // One-time wiring: history (back/forward → layout), terminal reconciliation,
   // pollers. All return cleanups, so StrictMode's double-invoke is safe.
   useEffect(() => {
+    let alive = true;
+    let prefsReady = false;
+    let prefsRefreshing = false;
+    // ui-prefs are server-backed, but a phone/PWA can keep this App instance alive for
+    // days. Rehydrate when it returns to the foreground so changes made on another
+    // device (for example Claude's registered models) appear without a hard reload.
+    const refreshPrefs = () => {
+      if (!alive || !prefsReady || prefsRefreshing) return;
+      prefsRefreshing = true;
+      void refreshUIPrefs().finally(() => { prefsRefreshing = false; });
+    };
+    const onPrefsVisible = () => {
+      if (document.visibilityState === "visible") refreshPrefs();
+    };
+    document.addEventListener("visibilitychange", onPrefsVisible);
+    window.addEventListener("focus", refreshPrefs);
     const unHistory = wireLayoutHistory();
     const unModalHistory = wireSettingsHistory();
     const unKeys = wireKeys();
@@ -306,13 +322,18 @@ export function App() {
     const unNotificationRead = wireNotificationReadOnActiveSession();
     void (async () => {
       await useTenantStore.getState().init();
-      void hydrateUIPrefs();
+      await hydrateUIPrefs();
+      if (!alive) return;
+      prefsReady = true;
       setBooted(true);
     })();
     // Chat-bridge notification links (?session=<name>) open that session's pane.
     // Idempotent across StrictMode's double-invoke: the first call strips the param.
     consumeSessionDeepLink();
     return () => {
+      alive = false;
+      document.removeEventListener("visibilitychange", onPrefsVisible);
+      window.removeEventListener("focus", refreshPrefs);
       unHistory();
       unModalHistory();
       unKeys();
