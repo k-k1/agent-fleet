@@ -68,6 +68,34 @@ jobs:
       - name: forbidden-token scan (blocks publish)
         run: deploy/release/scan-forbidden.sh
 
+      # A private GHCR package breaks the whole compose install path (ADR 0037),
+      # and the failure is invisible from here — the push succeeds either way.
+      # This cannot be a hard failure: on the very first push the package does not
+      # exist until we create it, so it is private by definition and the visibility
+      # flip can only happen afterwards (docs/35 §35.8.2). So: warn loudly.
+      - name: check GHCR packages are anonymously pullable
+        run: |
+          private=0
+          for pkg in k-k1/agent-fleet/control-plane k-k1/agent-fleet/workspace; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' \
+              "https://ghcr.io/token?scope=repository:$pkg:pull&service=ghcr.io")
+            if [ "$code" = 200 ]; then
+              echo "public: $pkg"
+            else
+              private=1
+              echo "::warning title=GHCR package is not public::$pkg returned $code to an anonymous pull. Compose users cannot pull it until you flip it to public."
+            fi
+          done
+          if [ "$private" = 1 ]; then
+            {
+              echo "### ⚠️ GHCR packages are not anonymously pullable"
+              echo "\`docker compose pull\` will fail for everyone until this is fixed:"
+              echo "1. open the package settings (Danger Zone → Change visibility → Public)"
+              echo "2. enable *Inherit access from repository*"
+              echo "3. re-run the check in docs/35 §35.8.2"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: publish to dist repo
         run: VERSION=$VERSION deploy/release/publish-dist.sh --seed
 

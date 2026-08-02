@@ -110,9 +110,11 @@ and outside the CP, and that the basename matched at restore time (the DooD diag
 document).
 
 **Q. Can it be installed into an air-gapped network (no internet)?**
-A. Yes. Carry the images in with `docker save`/`load`, use `tls internal` for TLS, and use a
-baked-in image with `CLAUDE_INSTALL=0` for Claude (the air-gap section of
-[02](02-operations.md)).
+A. Yes, with caveats. Releases no longer ship an image tar, so either mirror the GHCR images
+into an internal registry and point `REGISTRY` at it, or carry them in with
+`release.sh --save` + `load-images.sh`. Use `tls internal` for TLS, and a baked-in image with
+`CLAUDE_INSTALL=0` for Claude (the air-gap section of [02](02-operations.md)). Note that the
+fleet will start but the agents cannot work without reaching their model endpoints.
 
 **Q. I want to downgrade.**
 A. Not supported. Migrations are forward-compatible and applied automatically, and an older CP

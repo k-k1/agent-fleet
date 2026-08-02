@@ -83,6 +83,10 @@ the Console". Three key points.
 Just change `VERSION` in `.env` to the new tag, pull (or build) the images, and run `up -d`.
 The commands are in the runbook's "Upgrade" section.
 
+- **Images come from GHCR** (`ghcr.io/k-k1/agent-fleet/*`, resolved through `REGISTRY` +
+  `VERSION`); pulling them needs no registry login. Remember that the **workspace image is
+  not a compose service**, so `docker compose pull` does not fetch it — `docker pull` it
+  separately, or let the first Start pull it on demand.
 - **Schema migrations are embedded in the CP and applied automatically at startup**
   (**forward-compatible**). No manual migration runs are needed.
 - **Downgrades are not supported.** An older CP cannot understand migrations applied by a newer
@@ -92,18 +96,30 @@ The commands are in the runbook's "Upgrade" section.
 
 ## Installing into an air-gapped network
 
-You can install onto a host with no external network access. On a machine with internet
-connectivity, `docker save` the images and carry them over; on the target host, run
-`load-images.sh` and then `up -d`. The commands are in the runbook's "Air-gapped install"
-section.
+You can install onto a host with no external network access. Since
+[ADR 0037](../../decisions/0037-registry-policy.md) the images are distributed through GHCR
+and **no image tarball ships with a release**, so a host that cannot reach a registry either
+mirrors `ghcr.io/k-k1/agent-fleet/*` internally and points `REGISTRY` at that mirror, or has
+the images carried in by hand: build and `docker save` them on a networked machine with
+`release.sh --save`, then `load-images.sh` on the target host. The commands are in the
+runbook's "Air-gapped install" section.
 
-There are two decision points.
+There are three decision points.
 
+- **Where the images come from**: an internal registry mirror keeps `docker compose pull`
+  working as normal and is the lower-maintenance option. The hand-carried tar means repeating
+  the build/copy/load cycle for every upgrade, and its image names must match `REGISTRY` in
+  `.env`.
 - **TLS**: Let's Encrypt is unusable in an air-gapped network, so either switch to
   `tls internal` (self-signed) per [01 §4](01-install.md), or use an internal CA.
 - **Installing Claude**: the Workspace image by default fetches the latest Claude at container
   startup. On a fully offline host, set `CLAUDE_INSTALL=0` (via `WS_ENV`) and use an image with
   Claude baked in.
+
+Be clear-eyed about what "air-gapped" buys you: local images let the fleet **start**, but the
+agents themselves cannot do any work without reaching their model endpoints. The offline
+install path is for hosts on a restricted internal network, not for a genuinely disconnected
+one.
 
 ## Idle stop and force-stop
 
