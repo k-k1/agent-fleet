@@ -64,7 +64,7 @@ func opencodeCatalogPref() string {
 }
 
 // claudeCustomModelsPref is the user's durable extension to Claude's fixed tier
-// aliases. Claude Code has no account-aware catalog endpoint, so only explicitly
+// aliases. Claude Code OAuth has no account-aware catalog endpoint, so only explicitly
 // registered full ids are advertised by Console and MCP; malformed/duplicate values
 // from older or corrupt prefs are ignored.
 func claudeCustomModelsPref() []string {
