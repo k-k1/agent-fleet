@@ -69,6 +69,10 @@ air-gapped の各手順）は [deploy/compose/README.md](../../../deploy/compose
 `.env` の `VERSION` を新しいタグに変え、image を pull（またはビルド）して `up -d` するだけです。
 コマンドは runbook の "Upgrade" 節。
 
+- **image は GHCR から取得します**（`ghcr.io/k-k1/agent-fleet/*`。`REGISTRY` + `VERSION` で解決）。
+  pull にレジストリログインは不要です。**Workspace image は compose のサービスではない**ので
+  `docker compose pull` では取得されません。別途 `docker pull` するか、最初の「起動」で
+  オンデマンドに取得させてください。
 - **スキーマ migration は CP に埋め込まれ、起動時に自動適用**されます（**前方互換**）。手動の
   migration 実行は不要です。
 - **ダウングレードは非対応**です。新バージョンで適用された migration を古い CP は理解できません。
@@ -78,17 +82,28 @@ air-gapped の各手順）は [deploy/compose/README.md](../../../deploy/compose
 
 ## 閉域網（air-gap）へのインストール
 
-外部ネットワークに出られないホストにも入れられます。ネット接続のあるマシンで image を
-`docker save` して持ち込み、対象ホストで `load-images.sh` して `up -d` します。コマンドは runbook の
-"Air-gapped install" 節。
+外部ネットワークに出られないホストにも入れられます。ただし
+[ADR 0037](../../decisions/0037-registry-policy.md) 以降、image は GHCR で配布し
+**リリースに image tar は添付しません**。レジストリに到達できないホストは、
+`ghcr.io/k-k1/agent-fleet/*` を社内レジストリにミラーして `REGISTRY` をそこへ向けるか、
+image を手で持ち込みます（ネット接続のあるマシンで `release.sh --save` してビルド＆
+`docker save` → 対象ホストで `load-images.sh`）。コマンドは runbook の "Air-gapped install" 節。
 
-判断ポイントが 2 つあります。
+判断ポイントが 3 つあります。
 
+- **image の取得元**: 社内レジストリのミラーなら `docker compose pull` がそのまま使え、
+  保守も軽くなります。手持ち込みの tar は、アップグレードのたびにビルド／コピー／load を
+  繰り返すことになり、image 名を `.env` の `REGISTRY` と一致させる必要があります。
 - **TLS**: 閉域では Let's Encrypt が使えないので、[01 §4](01-install.ja.md) の `tls internal`（自己署名）
   へ切り替えるか、社内 CA を使います。
 - **Claude のインストール**: Workspace image は既定でコンテナ起動時に最新の Claude を取得します。
   完全オフラインのホストでは `CLAUDE_INSTALL=0`（`WS_ENV` 経由）にし、Claude を焼き込んだ image を
   使ってください。
+
+「閉域で動く」の意味を取り違えないでください。image がローカルにあればフリートは**起動**
+できますが、エージェント自身はモデルのエンドポイントに到達できなければ何もできません。この
+オフライン導入経路は、制限された社内ネットワーク上のホスト向けであって、本当に切り離された
+ネットワーク向けではありません。
 
 ## アイドル停止と force-stop
 

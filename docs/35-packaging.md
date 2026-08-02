@@ -1021,13 +1021,21 @@ pool もいずれ掃除されるので延命にしかならない）。
 
 ### 35.7.7 「そもそも焼き込むべきか」への回答
 
-上記から自然に出る問い。**答え: 主配布チャネルは既に焼き込んでいない。焼いているのは
-エアギャップ用の B だけで、それは仕様である。**
+上記から自然に出る問い。**答え: 主配布チャネル（native）は既に焼き込んでいない。焼いて
+いるのは compose のイメージだけで、それは仕様である。**
 
 | 経路 | `BAKE_OPTIONAL_TOOLS` | chromium |
 |---|---|---|
 | native（C+R・ワンライナー導入の本線） | `build.sh` が明示的に **0** | 焼かない。初回起動の boot-install が `versions.json` のピンで取得 |
-| compose の images（B・エアギャップ） | 未指定 → Dockerfile 既定の **1** | 焼く |
+| compose のイメージ（GHCR で配布） | `release.sh` は未指定 → Dockerfile 既定の **1** | 焼く |
+
+★**[ADR 0037](decisions/0037-registry-policy.md)（B の廃止）はこの行を消していない。**
+B は「`docker save` で tar 化して配る」経路が無くなっただけで、**イメージ自体は同じものを
+GHCR へ push する**。したがって **compose のイメージは今も chromium を apt の厳密版 pin で
+焼いており、`ARG CHROMIUM_VERSION` が Debian の security 更新で腐ると publish のビルド段が
+exit 100 で落ちる**（0.4.0 が再ビルド不能だった原因そのもの）。**publish 前の chromium ピン
+確認は ADR 0037 後も必須**（§35.8.2 の手順・[cli-version-pin-e2e] の再発警告）。B の廃止で
+消えたのは「配布物としての 960MB」であって、この脆さではない。
 
 ★**ただし「焼かなければ再現性が保てた」わけではない。** lean 経路も
 `CHROMIUM_CFT_VERSION` / `CHROMIUM_DL_VERSION` で**CDN 上のビルドをピン**しており、
@@ -1042,8 +1050,10 @@ pool もいずれ掃除されるので延命にしかならない）。
 - **セキュリティの陳腐化**は、凍結されたリリースに対しては**どうやっても解けない**。
   解けるのは「新しい版を出す」ことだけ。だから答えはアーキテクチャ変更ではなく
   上記のサポート方針になる。
-- B が焼くのは**ネットワーク無しで動くことが B の存在理由**だから。ここを外すと
-  エアギャップ配布が成立しない。
+- compose のイメージが焼くのは、**レジストリから 1 つ pull すれば即使えることが
+  compose 版の価値**だから。ここを外すと起動のたびに各ワークスペースが chromium を
+  取りに行くことになり、docker の SUID `chrome-sandbox` も失う（§35.4.1・ADR 0037 の
+  「採らなかった案」）。
 
 ## 35.8 検証ゲート（P3-10 完了判定への接続）
 
@@ -1131,6 +1141,47 @@ gh repo create k-k1/agent-fleet-dist --public \
 gh secret set DIST_PUBLISH_TOKEN   # プロンプトに PAT を貼る
 ```
 
+**GHCR の初回 push だけの追加手順（[ADR 0037](decisions/0037-registry-policy.md)）**:
+コンテナパッケージは**初回 publish 時に private で作られる**（GitHub の仕様。repo が
+public でも自動では public にならない）。private のままだと利用者の
+`docker compose pull` が `unauthorized` で落ちる＝**compose 版の導入手順が丸ごと
+機能しない**ので、初回 push の直後に 2 パッケージとも public へ切り替える:
+
+1. `https://github.com/users/k-k1/packages/container/agent-fleet%2Fcontrol-plane/settings`
+   （`…%2Fworkspace` も同様）を開く。パッケージ一覧は repo の Packages からも辿れる。
+2. Danger Zone → **Change visibility** → Public（パッケージ名の入力で確認）。
+3. 併せて **Inherit access from repository** を有効にしておく（repo の権限を引き継ぐ）。
+
+注意点:
+- **public → private へは戻せない**（GitHub の警告どおり）。逆に public パッケージは
+  ストレージ・転送とも無料なので、public repo ではこれが既定の姿。
+- 切り替えは**パッケージごとに 1 回だけ**。以降の版 push は可視性を引き継ぐので、
+  この手順が要るのは初回だけ。
+- パッケージと repo の紐付けは両 Dockerfile の
+  `org.opencontainers.image.source` ラベルが担う（無いと repo に紐付かない孤児パッケージに
+  なり、Packages 一覧にも README にも出ない）。
+- **repo が private のうちに push すると、パッケージも private で作られる。**
+  public 化より先に publish しないこと（順序については §35.9-12）。
+
+**可視性の実測（docker 不要・2026-08-02 に挙動確認済み）**: GHCR の匿名トークン
+エンドポイントは、**public パッケージなら 200＋`token`**、private / 不存在なら
+**401 または 403** を返す。既知の public パッケージ（`actions/actions-runner`・
+`astral-sh/uv`）で 200 を、まだ push していない自分のパッケージで 403 を確認済み。
+
+```bash
+pkg=k-k1/agent-fleet/control-plane   # …/workspace も同様
+curl -sS -o /dev/null -w '%{http_code}\n' \
+  "https://ghcr.io/token?scope=repository:$pkg:pull&service=ghcr.io"
+# 200 = 匿名 pull 可（= public 化できている） / 401・403 = private か未 push
+```
+
+docker のあるホストなら実 pull で確かめるほうが確実:
+
+```bash
+docker logout ghcr.io
+docker manifest inspect ghcr.io/k-k1/agent-fleet/control-plane:<v> >/dev/null && echo public
+```
+
 リリース（毎回）:
 
 ```bash
@@ -1191,6 +1242,19 @@ git tag -a v0.3.0 <build commit> -m "agent-fleet 0.3.0" && git push origin v0.3.
     露出しない**。配布物は不変（compose バンドルの `aws/` 一式・`aws/ecs/README.md` は
     同梱のまま、§35.2 / §35.3 のマトリクス・設計も変更なし）＝**公開面の導線を出さない
     だけ**で、バンドルを手にした利用者は従来どおり `aws/` から辿れる。
+
+**決定（2026-08-02）— public 化 → GHCR 初回 push → publish の順を守る**:
+
+12. ADR 0037 で compose 版の導入は GHCR からの pull になったが、**GHCR パッケージは
+    初回 push 時に private で作られる**（§35.8.2）。したがって順序に依存関係がある:
+    - **① repo を public にする** → ② publish-dist を実走して GHCR へ初回 push →
+      ③ 2 パッケージを public へ切り替え → ④ 匿名 pull を実測 → ⑤ リリース公開。
+    - private repo のまま publish すると、リリースは出るのに `docker compose pull` が
+      `unauthorized` で落ちる＝**0.6.0 の導入手順が全滅する**。1 つ前の版に images tar
+      という逃げ道があった 0.5.1 と違い、0.6.0 には代替経路が無い。
+    - public 化の前に publish したい場合は、**この版に限り `release.sh --save` の
+      images tar を手動でリリースに添付する**のが唯一の回避策になる（ADR 0037 の廃止
+      判断を 1 版だけ差し戻すことになるので、素直に順序を守るほうがよい）。
 
 **残る確認事項（実装フェーズ内で消化）**:
 

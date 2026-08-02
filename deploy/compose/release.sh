@@ -129,5 +129,10 @@ echo "   bundle tar: $DIST/agent-fleet-$VERSION.tar.gz  ($(du -h "$DIST/agent-fl
 [ "$DO_SAVE" = 1 ] && echo "   images tar: $DIST/agent-fleet-images-$VERSION.tar.gz  ($(du -h "$DIST/agent-fleet-images-$VERSION.tar.gz" | cut -f1))"
 echo "   checksums:  $DIST/SHA256SUMS"
 echo
-echo "next: push images to \$REGISTRY (docker push $CP_IMAGE; $WS_IMAGE),"
-echo "      or ship the images tar for air-gap (load-images.sh)."
+if [ "$DO_PUSH" = 1 ]; then
+  echo "next: images are in \$REGISTRY — publish the bundle, and make sure the"
+  echo "      packages are public (a first push creates them private)."
+else
+  echo "next: re-run with --push to publish the images to \$REGISTRY ($REGISTRY),"
+  echo "      or hand off an images tar with --save (load-images.sh on the target)."
+fi

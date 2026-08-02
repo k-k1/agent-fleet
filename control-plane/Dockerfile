@@ -35,6 +35,13 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X main.buildVer
 
 # --- 3. runtime --------------------------------------------------------------
 FROM debian:bookworm-slim
+# Links the GHCR package to this repository (ADR 0037): the container registry
+# resolves org.opencontainers.image.source to decide which repo a package belongs
+# to, which is what puts the README on the package page and lets the package
+# inherit the repository's access. Without it the package is orphaned.
+LABEL org.opencontainers.image.source="https://github.com/k-k1/agent-fleet" \
+      org.opencontainers.image.description="Agent Fleet control plane — web console for running AI coding agents as a managed fleet" \
+      org.opencontainers.image.licenses="Apache-2.0"
 # git provides git-http-backend (/usr/lib/git-core/git-http-backend), which the
 # CP wraps to self-host tenant repos over smart-HTTP (docs/reference/internal-git-provider).
 RUN apt-get update \
