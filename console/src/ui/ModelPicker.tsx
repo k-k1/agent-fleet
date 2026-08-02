@@ -77,11 +77,14 @@ export function ModelPicker({ kind, model, onChange }: ModelPickerProps) {
   // aliases as the fast path, but also accept its documented full model names so a
   // user can pin an older release (for example claude-opus-4-8). The provider remains
   // the authority on whether that release is still available to this account.
-  const aliasSelected = options.some(([v]) => v === model);
+  const aliases = options.filter(([v]) => ["fable", "opus", "sonnet", "haiku"].includes(v));
+  const registered = options.filter(([v]) => !["fable", "opus", "sonnet", "haiku"].includes(v));
+  const registeredSelected = registered.some(([v]) => v === model);
+  const listed = options.some(([v]) => v === model);
   return (
     <div className="model-picker-claude">
       <div className="ui-seg">
-        {options.map(([v, label]) => (
+        {aliases.map(([v, label]) => (
           <button
             key={v || "default"}
             type="button"
@@ -92,9 +95,19 @@ export function ModelPicker({ kind, model, onChange }: ModelPickerProps) {
           </button>
         ))}
       </div>
+      {registered.length > 0 && (
+        <select
+          value={registeredSelected ? model : ""}
+          onChange={(e) => e.target.value && onChange(e.target.value)}
+          aria-label={tr("ui.claude_registered_model")}
+        >
+          <option value="">{tr("ui.claude_registered_model")}</option>
+          {registered.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+        </select>
+      )}
       <input
         type="text"
-        value={aliasSelected ? "" : model}
+        value={listed ? "" : model}
         onChange={(e) => onChange(e.target.value.trimStart())}
         onBlur={(e) => onChange(e.target.value.trim())}
         placeholder={tr("ui.claude_full_model_placeholder")}

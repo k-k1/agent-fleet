@@ -189,9 +189,8 @@ export interface Settings {
   chatColor: string;
   assistantColor: string;
   mirrorSend: string;
-  // Default claude model for new sessions (launch dialog + repo 起動). Always a concrete
-  // tier alias (opus/sonnet/haiku) — the alias tracks the newest model in that tier, but
-  // the tier itself is pinned, so cost/behavior never shift under you between releases.
+  // Default claude model for new sessions (launch dialog + repo 起動). Usually a tier
+  // alias (opus/sonnet/haiku), but may be a user-registered full id to pin a release.
   defaultModel: string;
   // Per-agent launch defaults. defaultModel remains as a migration mirror for older
   // Console/server prefs; new code reads this map for all three agent kinds.
@@ -202,6 +201,9 @@ export interface Settings {
   // ui-prefs から読み、ピッカーと MCP list_models の両方を絞ったうえで、除外モデルを
   // 指定した起動そのものを断る（workspace/agent/model_deny.go）。
   hiddenModels: Record<string, string[]>;
+  // Claude Code has no account-aware catalog endpoint. Full model ids registered by
+  // the user become durable choices in the Console picker and MCP list_models.
+  claudeCustomModels: string[];
   // Global ON/OFF for the auto session-title-suggestion feature (AgentsTab セッション).
   // Sessions only — the assistant-chat side split off into assistantTitleSuggest.
   // Default true so existing users get it without an explicit opt-in.
@@ -506,6 +508,7 @@ const DEFAULTS: Settings = {
   defaultModel: DEFAULT_MODEL, // concrete tier (avoids claude's release-varying own pick)
   agentLaunchDefaults: DEFAULT_AGENT_LAUNCH,
   hiddenModels: {},
+  claudeCustomModels: [],
   autoTitleSuggest: true,
   opencodeCatalog: "go-first",
   expandThinking: {},
@@ -754,11 +757,28 @@ function load(): Settings {
     return {
       ...DEFAULTS,
       ...saved,
+      claudeCustomModels: normalizeClaudeCustomModels(saved.claudeCustomModels),
       agentLaunchDefaults: normalizeAgentLaunchDefaults(rows, legacyClaudeModel),
     };
   } catch {
     return { ...DEFAULTS };
   }
+}
+
+export function normalizeClaudeCustomModels(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of value) {
+    if (typeof raw !== "string") continue;
+    const id = raw.trim();
+    const key = id.toLowerCase();
+    if (!/^claude-[a-z0-9][a-z0-9._-]*$/i.test(id) || seen.has(key) ||
+        CLAUDE_MODELS.some(([alias]) => alias.toLowerCase() === key)) continue;
+    seen.add(key);
+    out.push(id);
+  }
+  return out;
 }
 
 function normalizeAgentLaunchDefaults(rows: unknown, legacyClaudeModel = DEFAULT_MODEL): AgentLaunchDefaults {
@@ -956,6 +976,11 @@ export async function hydrateUIPrefs(): Promise<void> {
   const normalized = normalizeAgentLaunchDefaults(rows, legacyClaudeModel);
   if (JSON.stringify(normalized) !== JSON.stringify(merged.agentLaunchDefaults)) {
     merged.agentLaunchDefaults = normalized;
+    changed = true;
+  }
+  const customClaude = normalizeClaudeCustomModels(merged.claudeCustomModels);
+  if (JSON.stringify(customClaude) !== JSON.stringify(merged.claudeCustomModels)) {
+    merged.claudeCustomModels = customClaude;
     changed = true;
   }
   if (!changed) return;
