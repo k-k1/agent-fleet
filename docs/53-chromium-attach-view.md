@@ -1,6 +1,6 @@
 # 53. Chromium Attach View — 外部所有 Chromium の表示・人間操作
 
-> 状態: **P0実測・実装契約確定、P1まで実装済み・developマージ済み・動作確認済み**（2026-08-02）
+> 状態: **P0実測・実装契約確定、P1〜P3実装済み**（2026-08-02。P3の対話セッション直接経路を同日補正）
 > 意思決定: [decisions/0038](decisions/0038-chromium-attach-view.md)
 > P0実測: [53-chromium-attach-view-p0-verification.md](53-chromium-attach-view-p0-verification.md)
 > 関連: [31-container-browser-pane.md](31-container-browser-pane.md) / [49-mcp-2026-07-28.md](49-mcp-2026-07-28.md)
@@ -387,10 +387,21 @@ terminal state (`target-closed` / `disconnected`) は短い再確認猶予中だ
 
 ## 53.8 ローカル stdio MCP
 
-コンテナ内アシスタントが利用する`workspace-agent mcp-stdio`へ次を追加する。CPの対外MCPへ同時公開する必要はなく、
-最初はown Workspaceのlocal stdio MCPだけを対象とする。
+`workspace-agent mcp-stdio`には、認可前提が異なる次の2つの利用面がある。Chromium Attach Viewは両面へ出すが、
+引数と広告集合を混ぜない。CPの対外MCPへは同時公開せず、own Workspaceのlocal stdio MCPだけを対象とする。
 
-### read tools
+| 利用面 | 起動引数 | 広告集合 |
+|---|---|---|
+| アシスタントチャット | `mcp-stdio` / `mcp-stdio --write --conv <id>` | read 2種。`af_write`時だけprivileged 5種も追加 |
+| 対話セッション builtin `af` | `mcp-stdio --self-report --chromium-attach` | `af_report`とChromium 7種だけ。他のフリートread/writeは出さない |
+
+`--self-report`単独は後方互換として`af_report` 1本だけを広告する。`--chromium-attach`は`--self-report`との
+組合せでだけ有効であり、単独指定やアシスタント面の権限を拡張しない。セッション面では`tools/list`だけでなく
+`tools/call`側も同じ許可集合で検査し、`list_my_sessions`や`send_to_session`等を名前推測してもAgent RESTへ
+到達させない。「advertised set IS the scope boundary」というdocs/51の境界を維持したまま、その内側へ
+Chromium Attach Viewだけを明示的に加える。
+
+### Chromium read tools
 
 #### `list_chromium_targets`
 
@@ -400,7 +411,7 @@ terminal state (`target-closed` / `disconnected`) は短い再確認猶予中だ
 
 入力: `{attachment_id}`。state、viewer有無、handoff結果、期限を返す。URL全文は必要な場合だけ返す。
 
-### af_write tools
+### Chromium privileged tools（アシスタント面では`af_write`）
 
 #### `attach_chromium`
 
@@ -415,12 +426,30 @@ terminal state (`target-closed` / `disconnected`) は短い再確認猶予中だ
 
 入力: `{attachment_id, message, completion_label?, allow_cancel?, control_mode?}`。handoffを作成・更新する。
 
+#### `get_browser_action_result`
+
+入力: `{attachment_id}`。handoffの自己申告結果を返す。読み取りだが、handoffを作成できるscopeだけに見せるため
+アシスタント面では`af_write`集合に置く。
+
+#### `set_chromium_control_mode`
+
+入力: `{attachment_id, control_mode}`。`view-only` / `user-control` / `locked`を変更する。
+
 #### `detach_chromium`
 
 入力: `{attachment_id}`。AFの接続だけを終了する。ownerのPage/processを閉じない。
 
 `attach_chromium`は認証済みPageの描画を別surfaceへ出し、入力経路も作るためread-onlyではない。現行MCPと同じく
-`--write`時だけツールを広告し、名前を推測したcallも拒否する。detachも共有状態を変えるため同じgateに置く。
+アシスタント面では`--write`時だけツールを広告し、名前を推測したcallも拒否する。detachも共有状態を変えるため
+同じgateに置く。対話セッション面ではフリート全体の`--write`を立てず、`--chromium-attach` capabilityだけで
+この5種を許可する。
+
+アシスタントチャットの`af_write`は承認UIなしのheadless turnへフリート操作を渡すため、利用者の明示opt-inを
+必要とする。一方、対話セッションは既に同じWorkspaceでshell、Playwright、loopback CDPを扱う主体であり、
+Chromium change toolは外部サイトの確定操作を代行せず、一時的なattachment/handoff状態だけを変更する。
+Console表示にもmembership認証とaction URLのユーザークリックが残る。そのためセッション側に追加の設定opt-inは
+設けず、常設builtinの狭いcapability flagを認可境界とする。各CLIのnative MCP設定・承認挙動は変えず、
+アシスタントチャットにだけ必要なheadless pre-approvalをセッション面へ追加しない。
 
 MCP結果はtoolごとの`outputSchema`を定義し、text content内の短いJSONと`structuredContent`へ同一値を必ず返す。
 `attach_chromium`は少なくとも`attachment_id/open_url/expires_at`を両方へ含め、field名は`snake_case`に固定する。
@@ -437,7 +466,8 @@ attachment自体はmemory上でよいが、通知を保証する段階ではhand
 ## 53.9 CLAUDE.md / AGENTS.md 利用契約
 
 Workspace共通の案内には次の短い契約を載せる。プロジェクト固有の「どの操作を人間へ残すか」は各repoの
-`CLAUDE.md` / `AGENTS.md`へ置く。
+`CLAUDE.md` / `AGENTS.md`へ置く。この案内を実行できるよう、CLIを持つ対話セッションにはmcpregのbuiltin `af`が
+前節の狭いツール集合をmaterializeする。
 
 ```markdown
 ## ヘッドレスChromiumをユーザーへ引き渡す
@@ -537,9 +567,11 @@ AFがownerをpauseする標準手段はv1に含めない。`user-control`に対�
 
 ### P3 — local MCP / agent guidance
 
-- read/write tool分離、structured result、open link提示契約。
-- Workspace共通CLAUDE.md/AGENTS.md案内。
-- MCP→リンク→ペイン→完了→detachの通し検証。
+- **完了（2026-08-02。対話セッション直接経路を同日補正）**。
+- アシスタント面のread/`af_write`分離と、対話セッション面の`af_report`＋Chromium限定集合を実装した。
+- structured result、open link提示契約、Workspace共通CLAUDE.md/AGENTS.md案内を実装した。
+- Chromium handlerのrelay契約とmode別tool集合を自動テストし、既存のMCP→リンク→ペイン→完了→detach検証を
+  対話セッションから実行可能な配線へ直した。
 
 ### P4 — durable handoff report（任意）
 
@@ -555,7 +587,11 @@ AFがownerをpauseする標準手段はv1に含めない。`user-control`に対�
 - Console DOM: action route、layout上限、expired overlay、view-only入力拒否、日本語IME。
 - Console E2E: Playwright(owner) → Chromium → Agent attach → Console Playwright(viewer)の二層を明示して実施する。
 - lifecycle: owner終了、target close、Agent restart、viewer reload、detach後もowner Pageが生存すること。
-- MCP: af_readにwrite toolが出ない、推測call拒否、`open_url`がそのままリンク化される説明、二重attach/detach retry。
+- MCP（アシスタント）: af_readにchange toolが出ない、推測call拒否、`open_url`がそのままリンク化される説明、
+  二重attach/detach retry。
+- MCP（対話セッション）: `--self-report --chromium-attach`が`af_report`＋Chromium 7種だけを広告し、
+  Chromium change callは通す一方、他のフリートread/writeの推測callを拒否する。`--self-report`単独は
+  `af_report` 1本の後方互換を保ち、`--chromium-attach`単独では権限を広げない。
 
 ## 53.15 P0確定事項
 

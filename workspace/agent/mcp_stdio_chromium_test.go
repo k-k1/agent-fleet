@@ -26,10 +26,10 @@ var chromiumWriteToolNames = []string{
 }
 
 func TestMCPChromiumToolsReadWriteGateAndSchemas(t *testing.T) {
-	oldWrite, oldSelfReport := mcpWriteEnabled, mcpSelfReportOnly
-	mcpWriteEnabled, mcpSelfReportOnly = false, false
+	oldWrite, oldSelfReport, oldSessionChromium := mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled
+	mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled = false, false, false
 	t.Cleanup(func() {
-		mcpWriteEnabled, mcpSelfReportOnly = oldWrite, oldSelfReport
+		mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled = oldWrite, oldSelfReport, oldSessionChromium
 	})
 
 	assertToolSet := func(wantWrite bool) {
@@ -65,6 +65,54 @@ func TestMCPChromiumToolsReadWriteGateAndSchemas(t *testing.T) {
 
 	mcpWriteEnabled = true
 	assertToolSet(true)
+}
+
+func TestMCPChromiumSessionScopeIsExact(t *testing.T) {
+	oldWrite, oldSelfReport, oldSessionChromium := mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled
+	t.Cleanup(func() {
+		mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled = oldWrite, oldSelfReport, oldSessionChromium
+	})
+
+	toolNames := func() map[string]map[string]any {
+		t.Helper()
+		found := map[string]map[string]any{}
+		for _, tool := range mcpStdioToolList() {
+			found[tool["name"].(string)] = tool
+		}
+		return found
+	}
+
+	// Backward compatibility: --self-report without the additive capability remains
+	// the historical one-tool server.
+	mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled = false, true, false
+	legacy := toolNames()
+	if len(legacy) != 1 || legacy["af_report"] == nil {
+		t.Fatalf("legacy self-report tools = %v, want [af_report]", sortedChromiumToolMapKeys(legacy))
+	}
+	if resp := callChromiumMCP(t, "list_chromium_targets", map[string]any{"port": 9222}); !mcpCallIsError(t, resp) || !strings.Contains(string(resp), "許可されていない") {
+		t.Fatalf("legacy self-report guessed Chromium call was not gated: %s", resp)
+	}
+
+	// The current session builtin adds exactly Chromium Attach View. It does not
+	// inherit the assistant's fleet read/write grants.
+	mcpSessionChromiumEnabled = true
+	found := toolNames()
+	wantNames := append([]string{"af_report"}, chromiumReadToolNames...)
+	wantNames = append(wantNames, chromiumWriteToolNames...)
+	if got, want := sortedChromiumToolMapKeys(found), append([]string(nil), wantNames...); !sameSortedStrings(got, want) {
+		t.Fatalf("session tools = %v, want exactly %v", got, sortedStringsCopy(want))
+	}
+	for _, name := range append(append([]string{}, chromiumReadToolNames...), chromiumWriteToolNames...) {
+		if found[name]["outputSchema"] == nil {
+			t.Errorf("session Chromium tool %s has no outputSchema", name)
+		}
+	}
+	for _, name := range []string{"list_my_sessions", "send_to_session", "restore_memory_snapshot"} {
+		resp := callChromiumMCP(t, name, map[string]any{})
+		if !mcpCallIsError(t, resp) || !strings.Contains(string(resp), "許可されていない") {
+			t.Errorf("session guessed fleet call %s was not gated: %s", name, resp)
+		}
+	}
 }
 
 func TestMCPChromiumToolsRelayAndStructuredFallback(t *testing.T) {
@@ -104,10 +152,10 @@ func TestMCPChromiumToolsRelayAndStructuredFallback(t *testing.T) {
 	u, _ := url.Parse(srv.URL)
 	t.Setenv("AGENT_ADDR", u.Host)
 
-	oldWrite, oldSelfReport := mcpWriteEnabled, mcpSelfReportOnly
-	mcpWriteEnabled, mcpSelfReportOnly = false, false
+	oldWrite, oldSelfReport, oldSessionChromium := mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled
+	mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled = false, true, true
 	t.Cleanup(func() {
-		mcpWriteEnabled, mcpSelfReportOnly = oldWrite, oldSelfReport
+		mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled = oldWrite, oldSelfReport, oldSessionChromium
 	})
 
 	list := structuredMCPValue(t, callChromiumMCP(t, "list_chromium_targets", map[string]any{"port": 9222}))
@@ -128,7 +176,6 @@ func TestMCPChromiumToolsRelayAndStructuredFallback(t *testing.T) {
 		}
 	}
 
-	mcpWriteEnabled = true
 	attach := structuredMCPValue(t, callChromiumMCP(t, "attach_chromium", map[string]any{
 		"port": 9222, "target_id": "opaque-target", "label": "確認画面",
 	}))
@@ -286,4 +333,23 @@ func containsChromiumRoute(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func sortedChromiumToolMapKeys(values map[string]map[string]any) []string {
+	out := make([]string, 0, len(values))
+	for name := range values {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sortedStringsCopy(values []string) []string {
+	out := append([]string(nil), values...)
+	sort.Strings(out)
+	return out
+}
+
+func sameSortedStrings(got, want []string) bool {
+	return reflect.DeepEqual(got, sortedStringsCopy(want))
 }

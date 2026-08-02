@@ -84,8 +84,8 @@ func main() {
 		runRecordTerminal(os.Args[2:])
 		return
 	}
-	// Local stdio MCP server for the assistant chat (docs/19 Q1): read-only Agent
-	// Fleet tools over JSON-RPC on stdio, spawned by claude's --mcp-config.
+	// Local stdio MCP server: assistant chat tools (docs/19 Q1) or the narrowly scoped
+	// interactive-session builtin (docs/51 Phase 3 + docs/53 §53.8), selected by args.
 	if len(os.Args) > 1 && os.Args[1] == "mcp-stdio" {
 		runMCPStdio(os.Args[2:])
 		return

@@ -35,14 +35,14 @@ type builtinSpec struct {
 
 var builtinSpecs = map[string]builtinSpec{
 	// af は Agent Fleet 自身のセッション向けサーバー（docs/51 Phase 3 §自己申告
-	// ファストパス）。他の builtin と違って接続情報を持たないので常に ready で、
+	// ファストパス＋docs/53 §53.8 Chromium Attach View）。他の builtin と違って接続情報を持たないので常に ready で、
 	// 向き先も逆 — アシスタントではなく**セッション**に配る。ここに置いたのは
 	// 「レジストリは1つのリスト」という ADR0031 決定6 のため: 自前のサーバーだけ
 	// materialize の外に別配線を持つと、利用者からも見えず、名前衝突の調停からも外れる
 	// （"af" は reservedNames で元から押さえてある）。
 	BuiltinAF: {
 		label:   "Agent Fleet",
-		runArgs: []string{"mcp-stdio", "--self-report"},
+		runArgs: []string{"mcp-stdio", "--self-report", "--chromium-attach"},
 		ready:   func(*secrets.Data) bool { return true },
 		targets: Targets{Session: true},
 	},
