@@ -10,6 +10,7 @@ import { useModelOptions, useHiddenModel } from "../lib/agentModels.ts";
 import { useEffortOptions } from "../lib/agentModels.ts";
 import type { ModelOption } from "../lib/agentModels.ts";
 import { filterModelOptions } from "../lib/modelFilter.ts";
+import { refreshUIPrefs } from "../lib/settings.ts";
 
 interface ModelPickerProps {
   kind: string;
@@ -22,6 +23,12 @@ export function ModelPicker({ kind, model, onChange }: ModelPickerProps) {
   const options = useModelOptions(kind);
   const [query, setQuery] = useState("");
   useEffect(() => setQuery(""), [kind]);
+  // A long-lived phone tab may have been foregrounded the whole time another device
+  // edited this server-backed catalog. Refresh when a Claude picker actually opens as
+  // well as on App foreground, so both Settings and launch modals see the latest ids.
+  useEffect(() => {
+    if (kind === "claude") void refreshUIPrefs();
+  }, [kind]);
 
   const hidden = useHiddenModel(kind, model);
   const dynamicOptions = useMemo(() => {

@@ -885,12 +885,24 @@ export function getSettings(): Settings {
 // Debounced mirror of the full settings object to the per-user server store. Best
 // effort: if the workspace is stopped / agent unreachable, localStorage still holds it.
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let saveInFlight: Promise<void> | null = null;
 function scheduleServerSave(): void {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
+    saveTimer = null;
     // 端末ローカルキーはサーバへ送らない（この端末の外へ出さない）。
-    apiJSON("api/env/ui-prefs", "PUT", serverPrefs(state)).catch(() => {});
+    saveInFlight = apiJSON("api/env/ui-prefs", "PUT", serverPrefs(state))
+      .then(() => {})
+      .catch(() => {})
+      .finally(() => { saveInFlight = null; });
   }, 600);
+}
+
+// Pull changes made on another device. Never race a local debounced/in-flight save:
+// an older server snapshot must not overwrite the value this tab is currently writing.
+export async function refreshUIPrefs(): Promise<void> {
+  if (saveTimer || saveInFlight) return;
+  await hydrateUIPrefs();
 }
 
 // 端末ローカル設定 — localStorage にだけ持ち、サーバへは送らず・サーバからも復元しない。
