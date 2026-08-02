@@ -13,6 +13,7 @@ import (
 // the fixed tier aliases (no live catalog — launch takes --model <alias>), served so
 // the MCP list_models resolves claude ids like the other kinds.
 func TestAgentModelsClaudeFixedAliases(t *testing.T) {
+	writeUIPrefs(t, `{}`)
 	req := httptest.NewRequest(http.MethodGet, "/agents/claude/models", nil)
 	req.SetPathValue("kind", "claude")
 	rec := httptest.NewRecorder()
@@ -43,5 +44,28 @@ func TestAgentModelsClaudeFixedAliases(t *testing.T) {
 	handleAgentModels(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown kind status = %d, want 404", rec.Code)
+	}
+}
+
+func TestAgentModelsClaudeIncludesRegisteredModels(t *testing.T) {
+	writeUIPrefs(t, `{"claudeCustomModels":["claude-opus-4-8"," claude-opus-4-7 ","CLAUDE-OPUS-4-8",42,"opus","bad model"]}`)
+	req := httptest.NewRequest(http.MethodGet, "/agents/claude/models", nil)
+	req.SetPathValue("kind", "claude")
+	rec := httptest.NewRecorder()
+	handleAgentModels(rec, req)
+	var got struct {
+		Models []agents.ModelChoice `json:"models"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"fable", "opus", "sonnet", "haiku", "claude-opus-4-8", "claude-opus-4-7"}
+	if len(got.Models) != len(want) {
+		t.Fatalf("models = %+v, want ids %v", got.Models, want)
+	}
+	for i, id := range want {
+		if got.Models[i].ID != id {
+			t.Fatalf("models[%d].id = %q, want %q", i, got.Models[i].ID, id)
+		}
 	}
 }

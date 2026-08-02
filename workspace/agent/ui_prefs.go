@@ -63,6 +63,44 @@ func opencodeCatalogPref() string {
 	return opencode.CatalogPref(v)
 }
 
+// claudeCustomModelsPref is the user's durable extension to Claude's fixed tier
+// aliases. Claude Code has no account-aware catalog endpoint, so only explicitly
+// registered full ids are advertised by Console and MCP; malformed/duplicate values
+// from older or corrupt prefs are ignored.
+func claudeCustomModelsPref() []string {
+	raw, ok := readUIPrefs()["claudeCustomModels"].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	seen := map[string]bool{}
+	for _, value := range raw {
+		id, ok := value.(string)
+		id = strings.TrimSpace(id)
+		key := strings.ToLower(id)
+		if !ok || !validClaudeCustomModel(id) || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, id)
+	}
+	return out
+}
+
+func validClaudeCustomModel(id string) bool {
+	id = strings.TrimSpace(id)
+	if !strings.HasPrefix(strings.ToLower(id), "claude-") || len(id) == len("claude-") {
+		return false
+	}
+	for _, r := range id {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 // assistantTitleSuggestEnabled is the ON/OFF for the assistant-chat title suggestion
 // (the rename dialog's AI-suggest button, chat_title.go; Console AssistantTab). Split
 // out of autoTitleSuggest so sessions and chats gate independently — prefs written
