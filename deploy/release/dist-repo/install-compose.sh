@@ -94,9 +94,19 @@ fi
 # would pull anyway. A failure is not fatal — the operator still has to edit .env
 # before bringing anything up, and may be pointing at a mirror.
 if [ "$PULL_IMAGES" = 1 ]; then
+  ok=1
   echo "==> pulling images (docker compose pull)"
-  if ! ( cd "$TARGET" && docker compose --env-file .env.example pull ); then
-    echo "    note: pull failed — check registry access, or set REGISTRY in .env to a" >&2
+  ( cd "$TARGET" && docker compose --env-file .env.example pull ) || ok=0
+  # The workspace image is not a compose service (the CP launches it per user with
+  # `docker run`), so `compose pull` skips it. Fetch it here too, otherwise the
+  # first person to press Start pays for the whole download.
+  ws="$(sed -n 's/^WS_IMAGE=//p' "$TARGET/.env.example" | head -1)"
+  if [ -n "$ws" ]; then
+    echo "==> pulling the workspace image ($ws)"
+    docker pull "$ws" || ok=0
+  fi
+  if [ "$ok" = 0 ]; then
+    echo "    note: a pull failed — check registry access, or set REGISTRY in .env to a" >&2
     echo "          mirror. Hosts that cannot reach any registry can build the images" >&2
     echo "          from source (deploy/compose/release.sh --save) and docker load them." >&2
   fi
