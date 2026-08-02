@@ -203,7 +203,7 @@ RUN set -eux; \
 # BAKE_AGENT_CLIS=0（lean 配布 variant）は rtk も焼かない — entrypoint の boot-install
 # が versions.json の rtk ピンで ~/.local/bin へ導入する（docs/35 §35.4.1）。
 ARG BAKE_RTK=1
-ARG RTK_VERSION=0.44.1
+ARG RTK_VERSION=0.44.2
 RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -234,7 +234,7 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
 ARG CLAUDE_CODE_VERSION=2.1.220
-ARG OPENCODE_VERSION=1.18.10
+ARG OPENCODE_VERSION=1.18.11
 ARG CODEX_VERSION=0.146.0
 ARG COPILOT_VERSION=1.0.77
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
