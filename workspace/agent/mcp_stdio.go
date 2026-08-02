@@ -615,7 +615,7 @@ var mcpStdioWriteTools = []map[string]any{
 	},
 	{
 		"name":        "list_models",
-		"description": "指定エージェントで現在選べるモデル一覧を返す。model 指定で create_session する前には必ず呼び、返った id を使うこと（一覧は利用者が「使わないモデル」で除外したものを除いてある — 記憶や過去の会話にあるモデル名を推測で渡さないこと。除外モデルを渡した create_session は拒否される）。claude は固定のティア別名、codex／opencode／agy／copilot／cursor／kiro は接続状態を反映したライブカタログ（copilot はプラン反映 — Free は Auto のみで空になる。cursor は effort をモデル id に畳んだアカウント連動カタログ。kiro は Free でも named 指定可・既定は auto。未指定は auto ルーティング）。利用者が terra のような略称で指定した場合も、一覧から対応する完全な id（例: gpt-5.6-terra）を選ぶ。opencode は同じモデルが 2 つの課金経路で並ぶことがある（opencode-go/… = Go サブスクの範囲内、opencode/… = Zen の従量課金）。同名が両方にある場合は先に並んでいる opencode-go/… を選ぶこと（一覧の並びは利用者の設定で整形済み）。利用者が Zen を明示した場合だけ opencode/… を使う。",
+		"description": "指定エージェントで現在選べるモデル一覧を返す。model 指定で create_session する前には必ず呼び、返った id を使うこと（一覧は利用者が「使わないモデル」で除外したものを除いてある — 記憶や過去の会話にあるモデル名を推測で渡さないこと。除外モデルを渡した create_session は拒否される）。claude は固定の最新ティア別名だけを返す。Claude Code にはアカウント連動カタログがないため、利用者が完全モデル ID を明示した場合に限り（例: claude-opus-4-8）、一覧になくてもその値を create_session に渡して旧版を固定してよい。可否は Claude Code が起動時に判定する。codex／opencode／agy／copilot／cursor／kiro は接続状態を反映したライブカタログ（copilot はプラン反映 — Free は Auto のみで空になる。cursor は effort をモデル id に畳んだアカウント連動カタログ。kiro は Free でも named 指定可・既定は auto。未指定は auto ルーティング）。利用者が terra のような略称で指定した場合も、一覧から対応する完全な id（例: gpt-5.6-terra）を選ぶ。opencode は同じモデルが 2 つの課金経路で並ぶことがある（opencode-go/… = Go サブスクの範囲内、opencode/… = Zen の従量課金）。同名が両方にある場合は先に並んでいる opencode-go/… を選ぶこと（一覧の並びは利用者の設定で整形済み）。利用者が Zen を明示した場合だけ opencode/… を使う。",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{

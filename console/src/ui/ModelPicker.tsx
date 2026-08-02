@@ -73,18 +73,37 @@ export function ModelPicker({ kind, model, onChange }: ModelPickerProps) {
       </div>
     );
   }
+  // Claude Code has no account-aware model catalog to query. Keep the stable tier
+  // aliases as the fast path, but also accept its documented full model names so a
+  // user can pin an older release (for example claude-opus-4-8). The provider remains
+  // the authority on whether that release is still available to this account.
+  const aliasSelected = options.some(([v]) => v === model);
   return (
-    <div className="ui-seg">
-      {options.map(([v, label]) => (
-        <button
-          key={v || "default"}
-          type="button"
-          className={"seg-btn" + (model === v ? " active" : "")}
-          onClick={() => onChange(v)}
-        >
-          {label}
-        </button>
-      ))}
+    <div className="model-picker-claude">
+      <div className="ui-seg">
+        {options.map(([v, label]) => (
+          <button
+            key={v || "default"}
+            type="button"
+            className={"seg-btn" + (model === v ? " active" : "")}
+            onClick={() => onChange(v)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <input
+        type="text"
+        value={aliasSelected ? "" : model}
+        onChange={(e) => onChange(e.target.value.trimStart())}
+        onBlur={(e) => onChange(e.target.value.trim())}
+        placeholder={tr("ui.claude_full_model_placeholder")}
+        aria-label={tr("ui.claude_full_model")}
+        spellCheck={false}
+        autoCapitalize="none"
+        autoCorrect="off"
+      />
+      <span className="ui-field-hint">{tr("ui.claude_full_model_hint")}</span>
     </div>
   );
 }

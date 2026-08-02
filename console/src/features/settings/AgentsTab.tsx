@@ -3,6 +3,7 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import type { ReactNode } from "react";
 import { api, apiJSON, raw } from "../../core/api/client.ts";
 import { Button } from "../../ui/Button.tsx";
+import { ModelPicker } from "../../ui/ModelPicker.tsx";
 import { Choice, OnOff, Row, Select } from "./controls.tsx";
 import {
   agentLaunchDefault,
@@ -235,7 +236,9 @@ function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "cursor" | "kiro"
     <>
       <SettingRow label={tr("agents.default_model")}>
         {/* opencode は候補が数十個になりセグメントだと敷き詰まるため、長いリストは Select に。 */}
-        {models.length > 8 ? (
+        {kind === "claude" ? (
+          <ModelPicker kind={kind} model={row.model} onChange={(model) => update({ model, effort: "" })} />
+        ) : models.length > 8 ? (
           <Select value={row.model} options={models} onChange={(model) => update({ model, effort: "" })} />
         ) : (
           <Choice value={row.model} options={models} onChange={(model) => update({ model, effort: "" })} />
