@@ -209,6 +209,10 @@ af_read の会話には書き込みツールが**そもそも見えない**こ�
 - **スタンドアロン検証済**: `--write` 無=tools/list に send_to_session 出ない/呼ぶと isError、
   `--write` 有=出る/prompt 未指定で検証エラー。**実 Agent 越しの送信はコンテナ内で要目視**。
 
+この`af_read` / `af_write`は**アシスタントチャット面**のgrantである。対話セッションへmcpreg builtin `af`として
+materializeする面は別の起動scopeで、docs/51の`af_report`とdocs/53のChromium Attach Viewだけを広告する。
+対話セッションへ`af_write`のフリート操作一式を渡す意味ではない。
+
 ### アシスタント間連携 ask_assistant（**実装済**）
 各アシスタントから他の専門アシスタントに相談できる「アシスタント＝道具」プリミティブ。
 用語を割る: **指示出し（実行）＝ワーカー＝tmux セッション（send_to_session）**、

@@ -117,7 +117,8 @@ Agent が PTY 駆動で authorize URL を抽出 → Console が表示 → ユー
 | 面 | 入口 | 認証 | スコープ |
 |----|------|------|----------|
 | CP `/mcp`（Streamable HTTP）| 外部の Claude Code / Desktop | Bearer PAT（authGate 除外パス・Google セッション非依存）| member ツール（自分の遠隔セッション駆動）+ admin read/write（role を呼び出し時に live 再解決）|
-| Agent `mcp-stdio` | コンテナ内チャットの claude | 不要（自コンテナ・localhost）| read-only 既定・`--write` で送信/相談ツールを広告 |
+| Agent `mcp-stdio`（アシスタント面）| コンテナ内アシスタントチャット | 不要（自コンテナ・localhost）| read-only 既定・`--write` で送信/相談を含むフリート操作を広告 |
+| Agent `mcp-stdio`（対話セッション面）| mcpreg builtin `af`をmaterializeできる各CLI | 不要（自コンテナ・localhost、Agent tokenを子processへ転送）| `af_report`＋Chromium Attach View 7種だけ。その他のフリートtoolは広告・callとも拒否 |
 
 クライアント設定は `{"type":"http","url":"<PUBLIC_BASE_URL>/mcp","headers":{"Authorization":"Bearer <PAT>"}}`。
 `AF_MCP_ENABLED=true` のときだけ `/mcp` が有効。設計判断は [decisions/0006](../decisions/0006-mcp-unified.md)。

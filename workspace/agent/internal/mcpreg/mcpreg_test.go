@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -219,7 +220,7 @@ func TestComposeBuiltinNeedsConnection(t *testing.T) {
 	}
 }
 
-// TestComposeAlwaysHasSelfReport: af（自己申告ファストパスのセッション側サーバー）は
+// TestComposeAlwaysHasSelfReport: af（自己申告＋Chromium Attach Viewのセッション側サーバー）は
 // 接続不要で常に居り、**セッションにだけ**配られる。ここが assistant に倒れると、
 // オペレーター会話が自分自身へ完了申告できてしまう。
 func TestComposeAlwaysHasSelfReport(t *testing.T) {
@@ -238,6 +239,9 @@ func TestComposeAlwaysHasSelfReport(t *testing.T) {
 	}
 	if !Ready(*af) || af.Origin != OriginBuiltin {
 		t.Fatalf("af = %+v", *af)
+	}
+	if got, want := af.Args, []string{"mcp-stdio", "--self-report", "--chromium-attach"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("af args = %v, want %v", got, want)
 	}
 }
 
