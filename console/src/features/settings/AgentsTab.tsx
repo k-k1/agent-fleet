@@ -187,6 +187,25 @@ function CardSettings({ children }: { children?: ReactNode }) {
   );
 }
 
+// ThinkingRow: 「思考を展開して表示」（kind スコープ・既定オフ）。ミラーの「思考」ブロックは
+// 既定で畳んだまま出るので、思考を常に読みたい人だけがここで開いた状態を既定にできる。
+// 思考を出す backend（codex / opencode）のカードにだけ置き、kind ごとに独立して効く。
+function ThinkingRow({ kind }: { kind: string }) {
+  const s = useSettings();
+  const tr = useT();
+  return (
+    <>
+      <SettingRow label={tr("agents.expand_thinking")}>
+        <OnOff
+          value={s.expandThinking[kind] === true}
+          onChange={(v) => setSettings({ expandThinking: { ...s.expandThinking, [kind]: v } })}
+        />
+      </SettingRow>
+      <p className="ps-note">{tr("agents.expand_thinking_note")}</p>
+    </>
+  );
+}
+
 // The connection body shown while the workspace is stopped: launch defaults below stay
 // reachable, but the auth flow (Agent-proxied) waits for start.
 function ConnPaused() {
@@ -901,6 +920,7 @@ function CodexCard({
       {/* RTK is a workspace-level flag (independent of Codex auth) — pre-settable. */}
       <CardSettings>
         <LaunchDefaults kind="codex" />
+        <ThinkingRow kind="codex" />
         {codex && (
           <>
             <SettingRow label={tr("agents.codex_nudge")}>
@@ -1408,6 +1428,7 @@ function OpencodeCard({
       <CardSettings>
         <OpencodeCatalogRow />
         <LaunchDefaults kind="opencode" />
+        <ThinkingRow kind="opencode" />
         {agents && agents !== false && (
           <RtkRow
             available={agents.rtk_available}
