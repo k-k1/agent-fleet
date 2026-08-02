@@ -241,14 +241,14 @@ func TestMaterializeCodexRoundTrip(t *testing.T) {
 }
 
 // Codex gives stdio MCP children a default-deny environment. The built-in af
-// server needs these names forwarded or af_report reaches /chat/report without the
-// Agent bearer token and gets 401.
+// server needs these names forwarded or af_report/Chromium calls reach the Agent REST
+// without the bearer token and get 401.
 func TestMaterializeCodexBuiltinAFForwardsAgentAuth(t *testing.T) {
 	withTempCLIHomes(t)
 	defs := []ServerDef{sessionDef(ServerDef{
 		ID: BuiltinAF, Name: BuiltinAF, Origin: OriginBuiltin,
 		Transport: TransportStdio, Command: "/usr/bin/workspace-agent",
-		Args: []string{"mcp-stdio", "--self-report"},
+		Args: []string{"mcp-stdio", "--self-report", "--chromium-attach"},
 	})}
 	if _, _, _, err := materializeCodex(defs, nil); err != nil {
 		t.Fatal(err)
@@ -258,7 +258,7 @@ func TestMaterializeCodexBuiltinAFForwardsAgentAuth(t *testing.T) {
 		t.Fatalf("af の Agent 認証環境が Codex MCP 子プロセスへ転送されない:\n%s", got)
 	}
 	if strings.Contains(got, "AF_SECRET_KEY") {
-		t.Fatalf("af self-report に不要な秘密ストア鍵を転送している:\n%s", got)
+		t.Fatalf("af session tools に不要な秘密ストア鍵を転送している:\n%s", got)
 	}
 }
 

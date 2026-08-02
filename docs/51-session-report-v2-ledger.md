@@ -175,10 +175,11 @@ reopen は行あたり2回まで。上限到達時は「判定が振動してい
 ## 自己申告ファストパス（Phase 3）
 
 指示プロンプトに「完了したら `af_report` を呼ぶ」を注入し（mcp-registry の組み込み
-サーバー `af` として全 kind のセッションへ配る）、呼ばれたらヒント起床＋idle 証拠の1つと
+サーバー `af` としてCLIを持つ全 kind のセッションへ配る）、呼ばれたらヒント起床＋idle 証拠の1つと
 して数える（2 tick 要求を 1 tick に短縮）。**意味的完了を直接測る唯一の手段**だが、呼び忘れ・早呼びがあるため
 単独では backbone にしない — リコンサイラが安全網。申告はタイミング信号のみで、報告
-本文は従来どおりサーバ生成（fact-only — prompt injection 面を増やさない）。
+本文は従来どおりサーバ生成（fact-only — prompt injection 面を増やさない）。builtin `af`は後にChromium Attach Viewの
+対話セッション直接経路も担うが、`af_report`の入力・判定・配送契約は変えない（[docs/53 §53.8](53-chromium-attach-view.md)）。
 
 ## v1 からの移行
 
@@ -294,8 +295,11 @@ reopen は行あたり2回まで。上限到達時は「判定が振動してい
   保持はプロセス内メモリのみ: agent が落ちて失うのは「2 tick が 1 tick になる」高速化
   だけで、報告の有無はディスク上の台帳が持っている。
 - **ツールの配り方は mcpreg の組み込み `af`**（`Targets{Session: true}`・接続情報を持た
-  ないので常に ready）。`workspace-agent mcp-stdio --self-report` が `af_report` 1本だけを
-  広告する。専用の別配線にしなかったのは ADR0031 決定6（レジストリは1つのリスト）の
+  ないので常に ready）。Phase 3時点の`workspace-agent mcp-stdio --self-report`は`af_report` 1本だけを
+  広告した。2026-08-02にdocs/53の直接handoff契約を満たすため、現行builtinは
+  `--self-report --chromium-attach`で起動し、`af_report`＋Chromium Attach View 7種だけを広告する。
+  `--self-report`単独の1本限定は後方互換として残り、他のフリートread/writeは広告・推測callとも拒否する。
+  専用の別配線にしなかったのは ADR0031 決定6（レジストリは1つのリスト）の
   ため — 自前サーバーだけ materialize の外に置くと、利用者から見えず名前衝突の調停からも
   外れる（`af` は元から予約名）。CLI を持たない kind（shell / ssm）には配られないので、
   プロンプトへの注入もその kind では行わない。

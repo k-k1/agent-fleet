@@ -333,8 +333,10 @@ func TestBuildReportContent(t *testing.T) {
 // TestChatReportKickStoresLink exercises the mcp --conv plumbing shape: runMCPStdio's
 // arg parsing must accept --write --conv <id> in any order.
 func TestMCPConvArgParsing(t *testing.T) {
-	mcpWriteEnabled, mcpConvID = false, ""
-	t.Cleanup(func() { mcpWriteEnabled, mcpConvID = false, "" })
+	mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled, mcpConvID = false, false, false, ""
+	t.Cleanup(func() {
+		mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled, mcpConvID = false, false, false, ""
+	})
 	// Parse only — feed EOF stdin so the loop exits immediately.
 	r, w, _ := os.Pipe()
 	_ = w.Close()
@@ -344,6 +346,17 @@ func TestMCPConvArgParsing(t *testing.T) {
 	runMCPStdio([]string{"--write", "--conv", "abc-123"})
 	if !mcpWriteEnabled || mcpConvID != "abc-123" {
 		t.Fatalf("write=%v conv=%q", mcpWriteEnabled, mcpConvID)
+	}
+
+	// --chromium-attach is additive only to --self-report. Alone it must not widen
+	// the assistant server; together it selects the session's narrow browser scope.
+	runMCPStdio([]string{"--chromium-attach"})
+	if mcpSelfReportOnly || mcpSessionChromiumEnabled {
+		t.Fatalf("standalone chromium flag widened scope: self=%v chromium=%v", mcpSelfReportOnly, mcpSessionChromiumEnabled)
+	}
+	runMCPStdio([]string{"--chromium-attach", "--self-report"})
+	if !mcpSelfReportOnly || !mcpSessionChromiumEnabled || mcpWriteEnabled {
+		t.Fatalf("session flags: self=%v chromium=%v write=%v", mcpSelfReportOnly, mcpSessionChromiumEnabled, mcpWriteEnabled)
 	}
 }
 

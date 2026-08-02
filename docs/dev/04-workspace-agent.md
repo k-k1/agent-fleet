@@ -134,6 +134,10 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
   `get_chat_plan`／`set_chat_plan`（作業計画 — [33](../33-chat-context-usage.md) 第5段）を**広告**する（権限プロンプトでなく
   「見えるツール集合」がゲート）。CP の `/mcp` とは**別実装・別スコープ**（意図的な二重管理、
   [03](03-control-plane.md)）。
+- **対話セッション用 stdio MCP**: mcpreg builtin `af`を各CLIのnative設定へmaterializeし、
+  `workspace-agent mcp-stdio --self-report --chromium-attach`で起動する。広告・callを
+  `af_report`＋Chromium Attach View 7種だけに固定し、アシスタント用のフリートread/writeは渡さない。
+  `--self-report`単独は後方互換として`af_report` 1本、`--chromium-attach`単独はscopeを拡張しない。
 - **Codex の無人承認**: headless chat は承認 UI を持たないため `-a never` に加え、明示的に
   grant した AF MCP server を `default_tools_approval_mode="approve"` にする（未指定だと
   `user cancelled MCP tool call`）。一方 `-s read-only` は維持し、MCP は実行できても

@@ -83,23 +83,37 @@ var mcpWriteEnabled bool
 var mcpConvID string
 
 // mcpSelfReportOnly serves the SESSION-side server (docs/51 Phase 3 §自己申告
-// ファストパス): the same stdio loop, but advertising exactly one tool — af_report.
-// このモードは builtin「af」として全 kind のセッション設定へ materialize される
+// ファストパス): the same stdio loop, with af_report as its base tool.
+// このモードは builtin「af」としてCLIを持つ全 kind のセッション設定へ materialize される
 // （mcpreg/builtin.go）ので、広告するツール集合そのものがスコープの境界になる。
-// 観測・操縦のツールは1つも出さない: セッションは自分の完了を申告するだけでよく、
-// フリートを読ませる理由が無い。
+// フリートの観測・操縦ツールは1つも出さない: セッションは自分の完了を申告するだけで
+// よく、他セッションを読ませる理由が無い。Chromium Attach Viewだけは、下の独立した
+// capability flagが同時に立ったときに限り、この狭いsession scopeへ追加する。
 var mcpSelfReportOnly bool
+
+// mcpSessionChromiumEnabled adds ONLY Chromium Attach View's seven tools to the
+// session-side server. It is enabled by the explicit combination
+// `--self-report --chromium-attach`; `--self-report` alone deliberately keeps its
+// historical one-tool contract. This is separate from mcpWriteEnabled because the
+// interactive session must not inherit the assistant chat's fleet-wide write grant.
+var mcpSessionChromiumEnabled bool
 
 // runMCPStdio is the `workspace-agent mcp-stdio` subcommand: a blocking stdio loop.
 // Pass --write to additionally expose the write tools (docs/19 Q2 af_write opt-in),
-// or --self-report for the session-side single-tool server (docs/51 Phase 3).
+// or --self-report for the session-side server (docs/51 Phase 3). Combining
+// --self-report with --chromium-attach adds the narrowly scoped Chromium Attach View
+// tools without granting any other read/write tool (docs/53 §53.8).
 func runMCPStdio(args []string) {
+	mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled, mcpConvID = false, false, false, ""
+	chromiumAttachRequested := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--write":
 			mcpWriteEnabled = true
 		case "--self-report":
 			mcpSelfReportOnly = true
+		case "--chromium-attach":
+			chromiumAttachRequested = true
 		case "--conv":
 			if i+1 < len(args) {
 				i++
@@ -107,6 +121,10 @@ func runMCPStdio(args []string) {
 			}
 		}
 	}
+	// The additive capability is valid only on the session-side server. Keeping the
+	// conjunction here means a guessed/accidental --chromium-attach on an assistant
+	// invocation cannot widen that assistant's scope.
+	mcpSessionChromiumEnabled = mcpSelfReportOnly && chromiumAttachRequested
 	r := bufio.NewReaderSize(os.Stdin, 1<<20)
 	w := bufio.NewWriter(os.Stdout)
 	for {
@@ -272,20 +290,55 @@ func mcpStdioDiscoverResult() map[string]any {
 		"capabilities":      map[string]any{"tools": map[string]any{}},
 		"serverInfo":        info,
 		"_meta":             map[string]any{mcpMetaServerInfo: info},
-		"instructions":      "Agent Fleet のローカル MCP。自分の Workspace のセッションを観測し、--write のときは操縦もする。",
+		"instructions":      mcpStdioInstructions(),
 	}
 }
 
-// mcpStdioToolList is the advertised tool set: the read-only tools always, plus the
-// write tools when the server was started with --write (docs/19 Q2 af_write opt-in).
+func mcpStdioInstructions() string {
+	if mcpSelfReportOnly {
+		if mcpSessionChromiumEnabled {
+			return "Agent Fleet の対話セッション用ローカル MCP。自分の完了申告と Chromium Attach View の引き渡しだけを提供する。"
+		}
+		return "Agent Fleet の対話セッション用ローカル MCP。自分の完了申告だけを提供する。"
+	}
+	return "Agent Fleet のアシスタント用ローカル MCP。自分の Workspace のセッションを観測し、--write のときは操縦もする。"
+}
+
+// mcpStdioToolList is the advertised tool set. The assistant surface gets read-only
+// tools plus write tools under --write (docs/19 Q2); the session surface gets its
+// explicit narrow set (docs/51 + docs/53).
 func mcpStdioToolList() []map[string]any {
 	if mcpSelfReportOnly {
-		return mcpStdioSelfReportTools
+		tools := append([]map[string]any{}, mcpStdioSelfReportTools...)
+		if mcpSessionChromiumEnabled {
+			tools = appendMatchingMCPTools(tools, mcpStdioTools, isChromiumReadTool)
+			tools = appendMatchingMCPTools(tools, mcpStdioWriteTools, isChromiumWriteTool)
+		}
+		return tools
 	}
 	if mcpWriteEnabled {
 		return append(append([]map[string]any{}, mcpStdioTools...), mcpStdioWriteTools...)
 	}
 	return mcpStdioTools
+}
+
+func appendMatchingMCPTools(dst, src []map[string]any, keep func(string) bool) []map[string]any {
+	for _, tool := range src {
+		name, _ := tool["name"].(string)
+		if keep(name) {
+			dst = append(dst, tool)
+		}
+	}
+	return dst
+}
+
+func mcpStdioToolAdvertised(name string) bool {
+	for _, tool := range mcpStdioToolList() {
+		if tool["name"] == name {
+			return true
+		}
+	}
+	return false
 }
 
 // mcpStdioSelfReportTools — the SESSION-side tool set (docs/51 Phase 3): 自分が受けた
@@ -990,11 +1043,12 @@ func mcpStdioCall(req mcpReq) []byte {
 		Args json.RawMessage `json:"arguments"`
 	}
 	_ = json.Unmarshal(req.Params, &p)
-	// --self-report advertises ONLY af_report, and the advertised set IS the scope
-	// boundary (see mcpSelfReportOnly) — so refuse every other tool here too, or a
-	// client that guesses names could reach the read tools from any session.
-	if mcpSelfReportOnly && p.Name != "af_report" {
-		return mcpToolErr(req.ID, "このサーバーは af_report のみ提供します: "+p.Name)
+	// The session-side advertised set IS the scope boundary (see
+	// mcpSelfReportOnly/mcpSessionChromiumEnabled). Refuse every unadvertised name here
+	// too, or a client that guesses names could reach fleet read/write handlers from any
+	// interactive session.
+	if mcpSelfReportOnly && !mcpStdioToolAdvertised(p.Name) {
+		return mcpToolErr(req.ID, "この対話セッション用サーバーでは許可されていないツールです: "+p.Name)
 	}
 	var a struct {
 		Name string `json:"name"`
@@ -1050,7 +1104,7 @@ func mcpStdioCall(req mcpReq) []byte {
 
 	// Chromium attachmentの変更系は広告だけでなくcall側でも拒否する。read-only
 	// clientが名前を推測してtools/callしてもAgent RESTへ到達させない。
-	if !mcpWriteEnabled && isChromiumWriteTool(p.Name) {
+	if !mcpChromiumWriteEnabled() && isChromiumWriteTool(p.Name) {
 		return mcpToolErr(req.ID, "このアシスタントはChromium attachmentの変更を許可されていません")
 	}
 
@@ -1632,6 +1686,19 @@ func isChromiumWriteTool(name string) bool {
 	default:
 		return false
 	}
+}
+
+func isChromiumReadTool(name string) bool {
+	switch name {
+	case "list_chromium_targets", "get_chromium_attachment":
+		return true
+	default:
+		return false
+	}
+}
+
+func mcpChromiumWriteEnabled() bool {
+	return mcpWriteEnabled || (mcpSelfReportOnly && mcpSessionChromiumEnabled)
 }
 
 func mcpListChromiumTargets(id json.RawMessage, port int) []byte {

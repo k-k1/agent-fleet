@@ -51,7 +51,7 @@ func TestMCPServerCreateMasksSecretsOnTheWire(t *testing.T) {
 	}
 	var list mcpListResp
 	mcpDecode(t, w.Body.Bytes(), &list)
-	// 一覧には登録した 1 件に加えて、常駐の組み込み「af」（自己申告ファストパスの
+	// 一覧には登録した 1 件に加えて、常駐の組み込み「af」（自己申告＋Chromium Attach Viewの
 	// セッション側サーバー・docs/51 Phase 3）が並ぶ。見たいのは登録した行なので名前で引く。
 	var got *struct {
 		mcpreg.ServerDef
