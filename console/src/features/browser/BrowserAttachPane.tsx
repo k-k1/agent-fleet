@@ -124,7 +124,6 @@ export function BrowserAttachPane({ paneId, attachmentId }: BrowserAttachPanePro
         canvasLabel={tr("browser.attach.canvas")}
         inputLabel={tr("browser.remote_input")}
         inputEnabled={userControl}
-        streamEnabled={!locked}
       >
         {status && (
           <div className={`browser-state browser-state-${snapshot.state}`}>

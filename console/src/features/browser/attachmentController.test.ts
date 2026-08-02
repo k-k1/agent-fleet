@@ -132,10 +132,15 @@ describe("BrowserAttachmentController", () => {
     const controller = new BrowserAttachmentController("p1", "ba_test", fake.deps);
     controller.setVisible(true);
     await settle();
+    fake.socket.open();
+    const visibilityBeforeFinish = fake.socket.json().filter((message) =>
+      (message as { type?: string }).type === "visibility");
     await controller.finish("completed");
     expect(fake.submitted).toEqual(["completed"]);
     expect(controller.snapshot.controlMode).toBe("locked");
     expect(controller.snapshot.handoff?.result).toBe("completed");
+    expect(fake.socket.json().filter((message) =>
+      (message as { type?: string }).type === "visibility")).toEqual(visibilityBeforeFinish);
     expect(fake.detached).toEqual([]);
     await controller.detach();
     expect(fake.detached).toEqual(["ba_test"]);
