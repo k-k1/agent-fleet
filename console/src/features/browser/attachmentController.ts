@@ -215,7 +215,6 @@ export class BrowserAttachmentController {
       controlMode: "locked",
       handoff: { ...(this.snapshotValue.handoff ?? status?.handoff ?? { message: "", completionLabel: "", allowCancel: false }), result, controlMode: "locked" },
     });
-    this.send({ type: "visibility", visible: false });
   }
 
   async detach(): Promise<void> {

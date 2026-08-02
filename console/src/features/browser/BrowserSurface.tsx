@@ -23,7 +23,6 @@ interface BrowserSurfaceProps {
   canvasLabel: string;
   inputLabel: string;
   inputEnabled?: boolean;
-  streamEnabled?: boolean;
   children?: ReactNode;
 }
 
@@ -34,7 +33,6 @@ export function BrowserSurface({
   canvasLabel,
   inputLabel,
   inputEnabled = true,
-  streamEnabled = true,
   children,
 }: BrowserSurfaceProps) {
   const [inputAnchor, setInputAnchor] = useState({ x: 0, y: 0 });
@@ -55,7 +53,7 @@ export function BrowserSurface({
     const syncVisibility = () => {
       const rect = stage.getBoundingClientRect();
       controller.setVisible(
-        streamEnabled && intersecting && rect.width > 0 && rect.height > 0 && document.visibilityState !== "hidden",
+        intersecting && rect.width > 0 && rect.height > 0 && document.visibilityState !== "hidden",
       );
     };
     // Agent restarts screencast after a viewport change. Debounce divider drags
@@ -88,7 +86,7 @@ export function BrowserSurface({
       document.removeEventListener("visibilitychange", syncVisibility);
       controller.unmount(canvas);
     };
-  }, [controller, streamEnabled]);
+  }, [controller]);
 
   const point = (event: {
     clientX: number;
