@@ -312,6 +312,8 @@ export class BrowserAttachmentController {
         this.update({
           state: "ready",
           attachmentState,
+          errorCode: "",
+          errorMessage: "",
           url: typeof message.url === "string" ? message.url : this.snapshotValue.url,
           title: typeof message.title === "string" ? message.title : this.snapshotValue.title,
           controlMode: attachmentStopsSocket(attachmentState) ? "locked" : controlMode,
@@ -340,7 +342,14 @@ export class BrowserAttachmentController {
           attachmentState: state,
           ...(attachmentStopsSocket(state) ? { controlMode: "locked" as const } : {}),
         });
-        else if (state === "loading" || state === "ready") this.update({ state, attachmentState: state });
+        else if (state === "loading" || state === "ready" || state === "attached" || state === "viewer-open") {
+          this.update({
+            state: state === "loading" ? "loading" : "ready",
+            attachmentState: state,
+            errorCode: "",
+            errorMessage: "",
+          });
+        }
         return;
       }
       case "control-mode": {
