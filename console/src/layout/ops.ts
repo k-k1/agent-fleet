@@ -95,6 +95,8 @@ export function sameTarget(pane: Pane, target: OpenTarget): boolean {
       return false;
     case "browser":
       return c.kind === "browser" && c.port === t.port && c.path === t.path;
+    case "browserAttach":
+      return c.kind === "browserAttach" && c.attachmentId === t.attachmentId;
   }
 }
 

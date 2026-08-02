@@ -19,6 +19,7 @@ export const KIND_JA: Partial<Record<PaneKind, MsgKey>> = {
   chat: "pane.kind.chat",
   read: "pane.kind.read",
   browser: "pane.kind.browser",
+  browserAttach: "pane.kind.browser_attach",
 };
 
 // Resolve a non-session pane kind to its localized label (falls back to the raw kind).
@@ -54,5 +55,7 @@ export function paneTitle(pane: Pane, session: Session | null): string {
       return jaKind("chat");
     case "browser":
       return `127.0.0.1:${c.port}${c.path === "/" ? "" : c.path}`;
+    case "browserAttach":
+      return jaKind("browserAttach");
   }
 }

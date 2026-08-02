@@ -22,7 +22,7 @@ type browserCDPEvent struct {
 	SessionID string
 	Params    json.RawMessage
 	queueSize int64
-	queue     *pipeCDP
+	release   func(int64)
 }
 
 type browserCDP interface {
@@ -42,11 +42,17 @@ const (
 
 var errBrowserCDPEventOverflow = errors.New("CDP event queue overflow")
 
-type pipeCDP struct {
-	cmd        *exec.Cmd
-	profile    string
-	in         *os.File
-	out        *os.File
+// browserCDPTransport owns only message framing and its underlying resource.
+// Request multiplexing and bounded event delivery live in browserCDPCore so
+// pipe-owned Chromium and externally-owned WebSocket CDP share one protocol core.
+type browserCDPTransport interface {
+	ReadMessage() ([]byte, error)
+	WriteMessage([]byte) error
+	Close() error
+}
+
+type browserCDPCore struct {
+	transport  browserCDPTransport
 	writeMu    sync.Mutex
 	pendingMu  sync.Mutex
 	pending    map[int64]chan cdpResponse
@@ -55,6 +61,20 @@ type pipeCDP struct {
 	done       chan error
 	nextID     atomic.Int64
 	closeOnce  sync.Once
+}
+
+type pipeCDP struct {
+	*browserCDPCore
+	transport *pipeCDPTransport
+}
+
+type pipeCDPTransport struct {
+	cmd       *exec.Cmd
+	profile   string
+	in        *os.File
+	out       *os.File
+	reader    *bufio.Reader
+	closeOnce sync.Once
 }
 
 type cdpResponse struct {
@@ -116,16 +136,28 @@ func launchPipeCDPWithSandbox(ctx context.Context, sandbox bool) (browserCDP, er
 	}
 	_ = toChromeR.Close()
 	_ = fromChromeW.Close()
-	p := &pipeCDP{
+	transport := &pipeCDPTransport{
 		cmd: cmd, profile: profile, in: toChromeW, out: fromChromeR,
-		pending: make(map[int64]chan cdpResponse), events: make(chan browserCDPEvent, browserCDPEventQueueSize), done: make(chan error, 1),
+		reader: bufio.NewReaderSize(fromChromeR, browserCDPMaxMessageBytes+1),
 	}
-	go p.readLoop()
+	core := newBrowserCDPCore(transport)
+	p := &pipeCDP{browserCDPCore: core, transport: transport}
 	go func() {
 		err := cmd.Wait()
-		p.finish(err)
+		core.finish(err)
 	}()
 	return p, nil
+}
+
+func newBrowserCDPCore(transport browserCDPTransport) *browserCDPCore {
+	c := &browserCDPCore{
+		transport: transport,
+		pending:   make(map[int64]chan cdpResponse),
+		events:    make(chan browserCDPEvent, browserCDPEventQueueSize),
+		done:      make(chan error, 1),
+	}
+	go c.readLoop()
+	return c
 }
 
 func chromiumLaunchArgs(profile string, sandbox bool) []string {
@@ -186,7 +218,7 @@ func findChromiumBinary() (string, error) {
 	return "", errors.New("Chromium executable not found (set AF_CHROMIUM_BIN or install chromium)")
 }
 
-func (p *pipeCDP) Call(ctx context.Context, method string, params any, sessionID string, result any) error {
+func (p *browserCDPCore) Call(ctx context.Context, method string, params any, sessionID string, result any) error {
 	id := p.nextID.Add(1)
 	msg := map[string]any{"id": id, "method": method}
 	if params != nil {
@@ -209,7 +241,7 @@ func (p *pipeCDP) Call(ctx context.Context, method string, params any, sessionID
 		p.pendingMu.Unlock()
 	}()
 	p.writeMu.Lock()
-	_, err = p.in.Write(append(b, 0))
+	err = p.transport.WriteMessage(b)
 	p.writeMu.Unlock()
 	if err != nil {
 		return fmt.Errorf("write CDP %s: %w", method, err)
@@ -235,46 +267,33 @@ func (p *pipeCDP) Call(ctx context.Context, method string, params any, sessionID
 	}
 }
 
-func (p *pipeCDP) readLoop() {
-	// ReadSlice with a fixed 8 MiB buffer bounds a single CDP message as well as
-	// queue depth. It matches the CP browser relay's maximum Agent frame size and
-	// is ample for a 1600x1200 quality-70 JPEG after base64 expansion.
-	r := bufio.NewReaderSize(p.out, browserCDPMaxMessageBytes)
+func (p *browserCDPCore) readLoop() {
 	for {
-		b, err := r.ReadSlice(0)
-		if errors.Is(err, bufio.ErrBufferFull) {
+		b, err := p.transport.ReadMessage()
+		if len(b) > browserCDPMaxMessageBytes {
 			overflow := fmt.Errorf("CDP message exceeds %d bytes", browserCDPMaxMessageBytes)
 			p.finish(overflow)
-			if p.cmd.Process != nil {
-				_ = syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
-			}
 			return
 		}
-		if len(b) > 1 {
-			if dispatchErr := p.dispatch(b[:len(b)-1]); dispatchErr != nil {
+		if len(b) > 0 {
+			if dispatchErr := p.dispatch(b); dispatchErr != nil {
 				// A saturated queue means the manager can no longer enforce a
 				// navigation or lifecycle decision in bounded memory. Fail the single
 				// Chromium process and let BrowserManager invalidate every Page instead
 				// of spawning an unbounded waiter per non-droppable event. Lossy
 				// screencast frames never reach here; they are dropped in dispatch.
 				p.finish(dispatchErr)
-				if p.cmd.Process != nil {
-					_ = syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
-				}
 				return
 			}
 		}
 		if err != nil {
-			if p.cmd.Process != nil {
-				_ = syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
-			}
 			p.finish(err)
 			return
 		}
 	}
 }
 
-func (p *pipeCDP) dispatch(b []byte) error {
+func (p *browserCDPCore) dispatch(b []byte) error {
 	var envelope struct {
 		ID        int64           `json:"id"`
 		Method    string          `json:"method"`
@@ -308,7 +327,7 @@ func (p *pipeCDP) dispatch(b []byte) error {
 		}
 		ev := browserCDPEvent{
 			Method: envelope.Method, SessionID: envelope.SessionID, Params: envelope.Params,
-			queueSize: eventSize, queue: p,
+			queueSize: eventSize, release: func(size int64) { p.eventBytes.Add(-size) },
 		}
 		select {
 		case p.events <- ev:
@@ -322,7 +341,7 @@ func (p *pipeCDP) dispatch(b []byte) error {
 	return nil
 }
 
-func (p *pipeCDP) reserveEventBytes(size int64) bool {
+func (p *browserCDPCore) reserveEventBytes(size int64) bool {
 	for {
 		used := p.eventBytes.Load()
 		if size < 0 || used > browserCDPEventQueueBytes-size {
@@ -335,9 +354,9 @@ func (p *pipeCDP) reserveEventBytes(size int64) bool {
 }
 
 func (ev *browserCDPEvent) releaseQueueBytes() {
-	if ev.queue != nil && ev.queueSize > 0 {
-		ev.queue.eventBytes.Add(-ev.queueSize)
-		ev.queue, ev.queueSize = nil, 0
+	if ev.release != nil && ev.queueSize > 0 {
+		ev.release(ev.queueSize)
+		ev.release, ev.queueSize = nil, 0
 	}
 }
 
@@ -350,28 +369,31 @@ func (ev *browserCDPEvent) releaseQueueBytes() {
 func browserCDPEventMustDeliver(method string) bool {
 	switch method {
 	case "Fetch.requestPaused", "Page.fileChooserOpened", "Page.frameRequestedNavigation",
-		"Page.frameStartedNavigating", "Target.targetCreated",
-		"Target.targetDestroyed", "Target.targetCrashed", "Inspector.targetCrashed":
+		"Page.frameStartedNavigating", "Page.frameNavigated", "Target.targetCreated",
+		"Target.targetDestroyed", "Target.targetCrashed", "Target.detachedFromTarget", "Inspector.targetCrashed":
 		return true
 	default:
 		return false
 	}
 }
 
-func (p *pipeCDP) Events() <-chan browserCDPEvent { return p.events }
-func (p *pipeCDP) Done() <-chan error             { return p.done }
+func (p *browserCDPCore) Events() <-chan browserCDPEvent { return p.events }
+func (p *browserCDPCore) Done() <-chan error             { return p.done }
 
-func (p *pipeCDP) finish(err error) {
+func (p *browserCDPCore) finish(err error) {
 	p.closeOnce.Do(func() {
-		_ = p.in.Close()
-		_ = p.out.Close()
-		_ = os.RemoveAll(p.profile)
+		_ = p.transport.Close()
 		select {
 		case p.done <- err:
 		default:
 		}
 		close(p.done)
 	})
+}
+
+func (p *browserCDPCore) Close() error {
+	p.finish(nil)
+	return nil
 }
 
 func (p *pipeCDP) Close() error {
@@ -382,9 +404,37 @@ func (p *pipeCDP) Close() error {
 	case <-p.done:
 		return nil
 	case <-time.After(2 * time.Second):
-		if p.cmd.Process != nil {
-			_ = syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
-		}
+		_ = p.browserCDPCore.Close()
 		return nil
 	}
+}
+
+func (p *pipeCDPTransport) ReadMessage() ([]byte, error) {
+	// A fixed buffer bounds one NUL-framed pipe message before the common core
+	// applies its independent queue byte budget.
+	b, err := p.reader.ReadSlice(0)
+	if errors.Is(err, bufio.ErrBufferFull) {
+		return b, fmt.Errorf("CDP pipe message exceeds %d bytes", browserCDPMaxMessageBytes)
+	}
+	if len(b) > 0 && b[len(b)-1] == 0 {
+		b = b[:len(b)-1]
+	}
+	return b, err
+}
+
+func (p *pipeCDPTransport) WriteMessage(b []byte) error {
+	_, err := p.in.Write(append(b, 0))
+	return err
+}
+
+func (p *pipeCDPTransport) Close() error {
+	p.closeOnce.Do(func() {
+		_ = p.in.Close()
+		_ = p.out.Close()
+		if p.cmd != nil && p.cmd.Process != nil {
+			_ = syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
+		}
+		_ = os.RemoveAll(p.profile)
+	})
+	return nil
 }
