@@ -201,7 +201,7 @@ export interface Settings {
   // ui-prefs から読み、ピッカーと MCP list_models の両方を絞ったうえで、除外モデルを
   // 指定した起動そのものを断る（workspace/agent/model_deny.go）。
   hiddenModels: Record<string, string[]>;
-  // Claude Code has no account-aware catalog endpoint. Full model ids registered by
+  // Claude Code OAuth has no account-aware catalog endpoint. Full model ids registered by
   // the user become durable choices in the Console picker and MCP list_models.
   claudeCustomModels: string[];
   // Global ON/OFF for the auto session-title-suggestion feature (AgentsTab セッション).

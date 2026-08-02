@@ -268,7 +268,7 @@ function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "cursor" | "kiro"
   );
 }
 
-// Claude Code exposes no account-aware model catalog. These user-owned full ids are
+// Claude Code OAuth exposes no account-aware model catalog. These user-owned full ids are
 // therefore the durable catalog shared by launch pickers and MCP list_models.
 function ClaudeCustomModelsRow() {
   const s = useSettings();
