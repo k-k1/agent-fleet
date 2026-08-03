@@ -128,3 +128,22 @@ describe("session-slug linkify (existing behavior guarded)", () => {
     expect(opened).toEqual([{ kind: "session", ref: "sukbq4s" }]);
   });
 });
+
+describe("fenced-code controls", () => {
+  it("toggles line wrapping for only the selected code block", async () => {
+    useChatStore.getState().setConvs([]);
+    await render("```ts\nconst veryLongLine = 'value';\n```");
+
+    const pre = host.querySelector("pre");
+    const button = host.querySelector<HTMLButtonElement>(".md-code-wrap-toggle");
+    expect(pre?.classList.contains("md-code-wrap")).toBe(false);
+    expect(button?.getAttribute("aria-pressed")).toBe("false");
+
+    await act(async () => button?.click());
+    expect(pre?.classList.contains("md-code-wrap")).toBe(true);
+    expect(button?.getAttribute("aria-pressed")).toBe("true");
+
+    await act(async () => button?.click());
+    expect(pre?.classList.contains("md-code-wrap")).toBe(false);
+  });
+});

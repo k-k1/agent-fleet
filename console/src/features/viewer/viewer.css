@@ -812,15 +812,19 @@
   padding: 12px 14px;
   overflow: auto;
 }
-/* Per-code-block copy button, pinned to the visible bottom-right of the block. The
-   wrapper (non-scrolling) holds it so it doesn't scroll away with wide code. */
+/* Per-code-block actions, pinned to the visible bottom-right of the block. The
+   wrapper (non-scrolling) holds them so they don't scroll away with wide code. */
 .md-pre-wrap {
   position: relative;
 }
-.md-copy {
+.md-code-actions {
   position: absolute;
   right: 8px;
   bottom: 8px;
+  display: flex;
+  gap: 4px;
+}
+.md-code-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -835,17 +839,24 @@
   opacity: 0.55;
   transition: opacity 0.12s, color 0.12s, background 0.12s;
 }
-.md-pre-wrap:hover .md-copy,
-.md-copy:focus-visible {
+.md-pre-wrap:hover .md-code-action,
+.md-code-action:focus-visible {
   opacity: 1;
 }
-.md-copy:hover {
+.md-code-action:hover {
   color: var(--fg);
   background: var(--panel2);
 }
 .md-copy.copied {
   color: var(--ok, #4ec97a);
   opacity: 1;
+}
+/* The toggle only changes this code block. pre-wrap preserves indentation and
+   newlines, while overflow-wrap handles unbroken URLs and generated minified code. */
+.markdown pre.md-code-wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-x: hidden;
 }
 /* Blinking caret at the tail of a streaming render (MarkdownView streaming mode). */
 .markdown .md-stream-caret {
