@@ -185,14 +185,9 @@
     width: 100%;
     max-height: calc(100dvh - 24px);
   }
-  /* The agent picker can contain every connected provider. Keep cards large
-     enough to tap, and make the remaining choices reachable by a direct
-     horizontal swipe instead of shrinking their labels into illegibility. */
+  /* Hide the scrollbar on touch devices; the desktop picker keeps it available
+     as an additional affordance alongside wheel scrolling. */
   .ui-seg.big {
-    justify-content: flex-start;
-    overflow-x: auto;
-    overscroll-behavior-x: contain;
-    scroll-snap-type: x proximity;
     scrollbar-width: none;
     -webkit-overflow-scrolling: touch;
   }
@@ -591,9 +586,21 @@
   opacity: 0.9;
 }
 .ui-seg.big .seg-btn {
-  min-width: 88px;
+  /* A small set fills the row; a long provider list stays readable and scrolls
+     horizontally instead of compressing every card. */
+  flex: 1 0 128px;
+  min-width: 128px;
   padding: 8px 10px;
   font-size: 13px;
+}
+.ui-seg.big {
+  justify-content: flex-start;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+}
+.ui-seg.big .seg-btn {
+  scroll-snap-align: start;
 }
 /* Inactive only — the active button keeps its --sel-fg (else this equal-specificity rule,
    ordered later, overrode the selected color and put light text on the fill). */
