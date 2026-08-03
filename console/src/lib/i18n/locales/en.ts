@@ -3088,6 +3088,7 @@ export const en: Record<keyof typeof ja, string> = {
   "view.prev_slide": "Previous slide",
   "view.next_slide": "Next slide",
   "view.copy_this_code": "Copy this code",
+  "view.copy_this_quote": "Copy this quote",
   "view.cannot_check_file": "Cannot check file: {path}",
   "view.file_not_found": "File not found: {path}",
   "view.cannot_open_from_here": "Cannot open file from this view: {path}",
