@@ -27,6 +27,12 @@ import {
   unpinQuickReply,
   isQuickReplyPinned,
 } from "../../lib/quickReplies.ts";
+import {
+  stepSuggestCycle,
+  suggestFilterDraft,
+  cycledSuggestion,
+  type SuggestCycle,
+} from "../../lib/suggestCycle.ts";
 import { useChipMenu, SuggestChipMenu } from "./SuggestChipMenu.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
@@ -379,6 +385,8 @@ export function MirrorView({
   // 返信サジェスト v2: ✨ボタンで取得した LLM 文脈候補（Layer A のチップ列にマージ）と取得中フラグ。
   const [llmSuggestions, setLlmSuggestions] = useState<string[]>([]);
   const [suggesting, setSuggesting] = useState(false);
+  // 入力途中の Tab 補完サイクル（lib/suggestCycle）。null = サイクル中でない。
+  const [cycle, setCycle] = useState<SuggestCycle | null>(null);
   const suggestRef = useRef<HTMLDivElement>(null); // チップ行（Tab でここへフォーカスを移す）
   // 1行に収めた候補列をマウスのドラッグ/縦ホイールで左右スクロール（スワイプは既定動作）。
   // 返り値をチップ行の ref に渡す — この行は条件付きレンダーで出入りするので、ref オブジェクト
@@ -2073,6 +2081,24 @@ export function MirrorView({
         return;
       }
     }
+    // 入力途中の Tab は候補の補完サイクル（シェル流）。打った文字に前方一致する候補＝チップ行に
+    // 見えているものを順に入力欄へ入れ、一周したら自分が打った文字へ戻る。Shift+Tab は逆回り。
+    // 補完できる候補が無ければ何もせず、従来どおりの Tab（フォーカス移動）に落とす。
+    if (e.key === "Tab" && !e.nativeEvent.isComposing && draft !== "" && !composerLocked) {
+      const next = stepSuggestCycle(cycle, draft, suggestChips.map((c) => c.text), e.shiftKey);
+      if (next) {
+        e.preventDefault();
+        setCycle(next);
+        setDraft(next.text);
+        setHistIdx(null);
+        // 値の差し替えでキャレットが動く（先頭に残る）ブラウザがあるので末尾に置き直す。
+        requestAnimationFrame(() => {
+          const el = inputRef.current;
+          if (el) el.setSelectionRange(el.value.length, el.value.length);
+        });
+        return;
+      }
+    }
     // Scroll the transcript without leaving the composer: Shift+↑/↓ nudges, Ctrl/⌘+↑/↓
     // and Ctrl/⌘+[ / ] page. Checked before history recall so the modified arrows don't
     // get swallowed by the ↑/↓ recall path below.
@@ -2151,9 +2177,13 @@ export function MirrorView({
   const lastUserGi = latestWorkPromptIndex(groups);
   const replyGroup = lastUserGi >= 0 ? groups[lastUserGi + 1] : undefined;
   const lastReplyText = replyGroup && replyGroup.role === "assistant" ? textOfParts(replyGroup.parts) : "";
+  // Tab 補完サイクル中は、絞り込みキーを「ユーザーが打った文字」に凍結する（入力欄は補完で
+  // 候補そのものに変わっているので、そのまま渡すとチップ列が1件に痩せてサイクルが崩れる）。
+  const suggestDraft = suggestFilterDraft(cycle, draft);
+  const cycledText = cycledSuggestion(cycle, draft); // いま入力欄に入っている候補（強調用）
   const learned = settings.quickRepliesEnabled
     ? rankQuickReplies(settings.quickReplies || {}, {
-        draft,
+        draft: suggestDraft,
         lastReply: lastReplyText,
         locale: settings.locale,
         hidden: settings.quickRepliesHidden || [],
@@ -2167,6 +2197,17 @@ export function MirrorView({
     ...llmSuggestions.map((text) => ({ text, llm: true })),
     ...learned.filter((s) => !llmSet.has(s.toLowerCase())).map((text) => ({ text, llm: false })),
   ];
+  // Tab 補完でたどっている候補が、1行スクロールのチップ行からはみ出していたら見える位置へ。
+  // 入力欄のフォーカスは動かさないので scrollIntoView だけ（横方向の最小限）。
+  useEffect(() => {
+    if (!cycledText) return;
+    const el = suggestRef.current?.querySelector<HTMLElement>(".mirror-suggest-chip.cycling");
+    // scrollIntoView は Chrome 150 で Promise を返す — 暗黙 return にすると effect の
+    // クリーンアップ扱いで落ちるので、必ずブロック本体で捨てる（effect-implicit-return）。
+    if (el) {
+      el.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+  }, [cycledText]);
   // 会話が進む（新しい回答が来る）と古い LLM 候補は文脈遅れになるので、直近回答の変化とセッション
   // 切替で捨てる。lastReplyText 確定後に置くことで依存の TDZ を避ける。
   useEffect(() => {
@@ -2808,8 +2849,10 @@ export function MirrorView({
                   className={
                     "mirror-suggest-chip" +
                     (sg.llm ? " llm" : "") +
-                    (isQuickReplyPinned(settings.quickRepliesPinned, sg.text) ? " pinned" : "")
+                    (isQuickReplyPinned(settings.quickRepliesPinned, sg.text) ? " pinned" : "") +
+                    (sg.text === cycledText ? " cycling" : "") // Tab でいま入力欄に入れている候補
                   }
+                  aria-current={sg.text === cycledText ? "true" : undefined}
                   title={tr("mirror.suggest_hint")}
                   onClick={(e) => {
                     if (chipMenu.clickSwallowed()) return; // 長タップでメニューを出した指離し
