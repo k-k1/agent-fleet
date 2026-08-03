@@ -147,3 +147,15 @@ describe("fenced-code controls", () => {
     expect(pre?.classList.contains("md-code-wrap")).toBe(false);
   });
 });
+
+describe("quote controls", () => {
+  it("adds a copy control to a rendered quote", async () => {
+    useChatStore.getState().setConvs([]);
+    await render("> 引用本文");
+
+    const quote = host.querySelector("blockquote");
+    const button = host.querySelector<HTMLButtonElement>(".md-quote-copy-button");
+    expect(quote?.classList.contains("md-quote-copy")).toBe(true);
+    expect(button?.getAttribute("aria-label")).toBeTruthy();
+  });
+});
