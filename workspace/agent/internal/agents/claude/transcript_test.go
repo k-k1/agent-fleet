@@ -1,6 +1,8 @@
 package claude
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
@@ -285,4 +287,45 @@ func TestHasConversation(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestReadJSONLLinesPartialTail pins the cursor-safety rule: a line that is still being
+// written must not be counted. claude appends in 4 KiB chunks, so a poll can read a log
+// mid-line; counting the fragment would advance /messages' cursor (= line count) past a
+// line the parser can't read, and the client — which only ever asks for lines AFTER its
+// cursor — would never receive that turn (the bug that lost a session's first prompt and
+// left its optimistic echo stuck at 「反映待ち」).
+func TestReadJSONLLinesPartialTail(t *testing.T) {
+	write := func(t *testing.T, body string) string {
+		t.Helper()
+		p := filepath.Join(t.TempDir(), "x.jsonl")
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	user := `{"type":"user","message":{"content":"hi"}}`
+	asst := `{"type":"assistant","message":{"content":[{"type":"text","text":"yo"}]}}`
+
+	t.Run("complete file keeps every line", func(t *testing.T) {
+		got := readJSONLLines(write(t, user+"\n"+asst+"\n"))
+		if len(got) != 2 {
+			t.Fatalf("len=%d want 2 (%q)", len(got), got)
+		}
+	})
+	t.Run("half-written last line is not a line yet", func(t *testing.T) {
+		// The mid-write state: two whole events, then the first 4 KiB chunk of a third.
+		got := readJSONLLines(write(t, user+"\n"+asst+"\n"+user[:20]))
+		if len(got) != 2 {
+			t.Fatalf("len=%d want 2 — the fragment must not advance the cursor (%q)", len(got), got)
+		}
+		if string(got[0]) != user || string(got[1]) != asst {
+			t.Fatalf("kept lines = %q, want the two complete events", got)
+		}
+	})
+	t.Run("nothing but a fragment reads as empty", func(t *testing.T) {
+		if got := readJSONLLines(write(t, user[:20])); len(got) != 0 {
+			t.Fatalf("len=%d want 0 (%q)", len(got), got)
+		}
+	})
 }

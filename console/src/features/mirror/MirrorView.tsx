@@ -81,7 +81,7 @@ import { agentOf } from "../../agents/registry.ts";
 import { hasLaunchSeed, takeLaunchSeed } from "../../lib/launchSeed.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
 import { awaitingReply, confirmedWorkEnd, latestWorkPromptIndex, textOfParts, workSplit } from "./mirrorParts.ts";
-import { echoLanded, type PendingEcho } from "./pendingEcho.ts";
+import { echoLanded, echoNeedsResync, type PendingEcho } from "./pendingEcho.ts";
 import { PLAN_APPROVE_KEYS, planOutcome } from "./planDecision.ts";
 import {
   formatPlanFeedback,
@@ -327,10 +327,14 @@ export function MirrorView({
   const [pendingSends, setPendingSends] = useState<SendEcho[]>(() => echoStore.get(session) ?? []);
   // Every echo update goes through here so the module stash stays in sync (write-through)
   // and a remounted view can restore the un-landed ones.
+  // …and the poll loop (a [session]-only effect) reads them through a ref, so its
+  // stuck-echo self-heal never works off a stale closure.
+  const pendingSendsRef = useRef<SendEcho[]>(echoStore.get(session) ?? []);
   const applyEchoes = (fn: (prev: SendEcho[]) => SendEcho[]) =>
     setPendingSends((prev) => {
       const next = fn(prev);
       echoStore.set(session, next);
+      pendingSendsRef.current = next;
       return next;
     });
   const [loaded, setLoaded] = useState(false); // false until the first transcript fetch returns
@@ -770,6 +774,7 @@ export function MirrorView({
     statusRef.current = "";
     setTurns([]);
     setPendingSends(echoStore.get(session) ?? []); // restore this session's un-landed echoes
+    pendingSendsRef.current = echoStore.get(session) ?? [];
     rejectedPlansRef.current = new Set(); // optimistic 却下 marks belong to the old session
     setLoaded(false);
     setTermState("");
@@ -950,6 +955,25 @@ export function MirrorView({
           );
           setSuggestedTitle(typeof d.suggestedTitle === "string" ? d.suggestedTitle : "");
           setLoaded(true); // first (and every) successful fetch: drop the loading spinner
+          // Self-heal a 反映待ち echo that can no longer reconcile because the turn it
+          // should match never reached us (a cursor handed out past a turn we then never
+          // asked for again). Only while the session is at rest — a pending echo is
+          // normal and expected mid-turn — and once per echo: rewind the cursor so the
+          // next tick re-reads the tail window from scratch, which fills the hole and lets
+          // the echo land. If the prompt genuinely never arrived, nothing changes and the
+          // badge keeps telling the truth.
+          const stuck = pendingSendsRef.current[0];
+          if (
+            stuck &&
+            statusRef.current !== "working" &&
+            !bgBusyRef.current &&
+            !finalizingRef.current &&
+            echoNeedsResync(stuck, Date.now())
+          ) {
+            cursorRef.current = 0;
+            const stampedAt = Date.now();
+            applyEchoes((p) => p.map((e) => (e.id === stuck.id ? { ...e, resyncedAt: stampedAt } : e)));
+          }
         }
       } catch {
         /* transient; retry on the next tick */
@@ -1311,7 +1335,7 @@ export function MirrorView({
     // Show the message immediately (optimistic echo) so it never looks lost while claude
     // is busy — reconciled away once its real user turn appears in the transcript.
     const echoId = ++echoSeqCounter;
-    applyEchoes((p) => [...p, { id: echoId, text: t, sinceIdx: newestIdx(), attachmentPaths: attachments }]);
+    applyEchoes((p) => [...p, { id: echoId, text: t, sinceIdx: newestIdx(), attachmentPaths: attachments, at: Date.now() }]);
     const res = await postInput(t, op, attachments);
     if (!res.ok) {
       // 送信は受理されていない: echo を残すと「送れたように見える」ので消し、理由を
@@ -1339,7 +1363,7 @@ export function MirrorView({
     statusRef.current = "working";
     setStatus("working");
     const echoId = ++echoSeqCounter; // optimistic echo, reconciled when the real turn lands
-    applyEchoes((p) => [...p, { id: echoId, text: t, sinceIdx: newestIdx() }]);
+    applyEchoes((p) => [...p, { id: echoId, text: t, sinceIdx: newestIdx(), at: Date.now() }]);
     try {
       await apiJSON(`api/sessions/${q(session)}/input`, "POST", { seq: [{ t }] });
     } catch {
@@ -1931,7 +1955,7 @@ export function MirrorView({
     }
     markPlanCommentsSent(key, ids);
     const echoId = ++echoSeqCounter; // 実ターンが載るまでの楽観エコー（sendPrompt と同じ）
-    applyEchoes((p) => [...p, { id: echoId, text: feedback, sinceIdx: newestIdx() }]);
+    applyEchoes((p) => [...p, { id: echoId, text: feedback, sinceIdx: newestIdx(), at: Date.now() }]);
     setTimeout(() => tickRef.current?.(), 400);
   };
 
