@@ -4,7 +4,7 @@
 // temp/<slug> in a wip-<slug> folder) or in-place on the current checkout.
 // Port of the old components/LaunchModal.
 import { useEffect, useRef, useState } from "react";
-import type { KeyboardEvent, ClipboardEvent } from "react";
+import type { KeyboardEvent, ClipboardEvent, WheelEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -298,6 +298,20 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
     }
   };
 
+  // A mouse wheel normally targets the modal's vertical scroller. When the agent
+  // cards overflow, make that familiar PC gesture reveal the remaining cards. At
+  // either horizontal edge leave the event alone, so the surrounding modal can
+  // continue scrolling vertically.
+  const scrollAgentsWithWheel = (e: WheelEvent<HTMLDivElement>) => {
+    if (!e.deltaY || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    const el = e.currentTarget;
+    const max = el.scrollWidth - el.clientWidth;
+    const next = Math.max(0, Math.min(max, el.scrollLeft + e.deltaY));
+    if (next === el.scrollLeft) return;
+    e.preventDefault();
+    el.scrollLeft = next;
+  };
+
   return (
     <Modal
       title={
@@ -319,7 +333,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
               {tr(settling ? "launch.agents_checking" : "launch.agents_none")}
             </div>
           )}
-          <div className="ui-seg big">
+          <div className="ui-seg big" onWheel={scrollAgentsWithWheel}>
             {kinds.map((k) => {
               const a = agentOf(k);
               return (

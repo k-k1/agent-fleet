@@ -39,10 +39,10 @@ const byText = (t: string) => buttons().find((b) => b.textContent?.includes(t))!
 const branchRows = () => [...document.querySelectorAll<HTMLButtonElement>(".branch-item")];
 const rowFor = (name: string) => branchRows().find((b) => b.textContent?.includes(name))!;
 
-async function render(): Promise<void> {
+async function render(kinds = ["claude"]): Promise<void> {
   await act(async () => {
     root!.render(
-      <LaunchModal repo="app" branch="main" kinds={["claude"]} onClose={() => {}} onLaunch={onLaunch} />,
+      <LaunchModal repo="app" branch="main" kinds={kinds} onClose={() => {}} onLaunch={onLaunch} />,
     );
   });
   await act(async () => {
@@ -81,6 +81,21 @@ afterEach(() => {
 });
 
 describe("LaunchModal branch mode", () => {
+  it("scrolls an overflowing agent list horizontally with a vertical mouse wheel", async () => {
+    await render(["claude", "codex", "cursor", "copilot", "kiro", "opencode"]);
+    const picker = document.querySelector<HTMLDivElement>(".ui-seg.big")!;
+    Object.defineProperties(picker, {
+      clientWidth: { value: 400 },
+      scrollWidth: { value: 768 },
+    });
+
+    await act(async () => {
+      picker.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 80 }));
+    });
+
+    expect(picker.scrollLeft).toBe(80);
+  });
+
   it("defaults to forking a new branch and never sets use_existing", async () => {
     await render();
     await click(byText("Start in a worktree"));
