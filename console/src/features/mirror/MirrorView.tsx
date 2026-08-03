@@ -754,8 +754,12 @@ export function MirrorView({
   }, []);
 
   // Reset accumulated turns when the session changes (cursor is a line index into
-  // that session's jsonl, meaningless across sessions).
-  useEffect(() => {
+  // that session's jsonl, meaningless across sessions).  This MUST be a layout
+  // effect: a pane can keep MirrorView mounted while its session prop changes. A
+  // passive effect then leaves the old transcript and its scrolled-up `atBottom`
+  // state in place for one paint, so the incoming session can inherit an arbitrary
+  // middle position instead of taking its normal initial-bottom path.
+  useLayoutEffect(() => {
     cursorRef.current = 0;
     firstLineRef.current = 0;
     loadingOlderRef.current = false;
@@ -793,6 +797,10 @@ export function MirrorView({
       return [];
     });
     atBottomRef.current = true; // a freshly opened session starts pinned to the bottom
+    // The old scroller can be reused for another session (pane D&D / opening a row
+    // in the current mirror). Clear its physical offset in the same pre-paint phase;
+    // the first transcript layout effect below then pins the new content to its end.
+    if (bodyRef.current) bodyRef.current.scrollTop = 0;
     setShowJump(false); // …so no jump-to-latest affordance until they scroll up
     settleUntilRef.current = 0; // the open-settle window belongs to the new session's first settle
     anchoredIdxRef.current = undefined; // no reply anchored yet in the new session
