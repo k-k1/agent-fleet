@@ -32,6 +32,12 @@ import {
   unpinQuickReply,
   isQuickReplyPinned,
 } from "../../lib/quickReplies.ts";
+import {
+  stepSuggestCycle,
+  suggestFilterDraft,
+  cycledSuggestion,
+  type SuggestCycle,
+} from "../../lib/suggestCycle.ts";
 import { useChipMenu, SuggestChipMenu } from "../mirror/SuggestChipMenu.tsx";
 import {
   startTts,
@@ -167,6 +173,8 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   // 返信サジェスト v2: ✨ボタンで取得した LLM 候補（Layer A のチップ列にマージ）と取得中フラグ。
   const [llmSuggestions, setLlmSuggestions] = useState<string[]>([]);
   const [suggesting, setSuggesting] = useState(false);
+  // 入力途中の Tab 補完サイクル（lib/suggestCycle）。null = サイクル中でない。
+  const [cycle, setCycle] = useState<SuggestCycle | null>(null);
   const suggestRef = useRef<HTMLDivElement>(null); // チップ行（Tab でここへフォーカスを移す）
   // 1行に収めた候補列をマウスのドラッグ/縦ホイールで左右スクロール（スワイプは既定動作）。
   // チップ行はストリーミング中に消えて戻るので、返り値のコールバック ref で付け替える
@@ -896,9 +904,13 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
       break;
     }
   }
+  // Tab 補完サイクル中は、絞り込みキーを「ユーザーが打った文字」に凍結する（入力欄は補完で
+  // 候補そのものに変わっているので、そのまま渡すとチップ列が痩せてサイクルが崩れる）。
+  const suggestDraft = suggestFilterDraft(cycle, input);
+  const cycledText = cycledSuggestion(cycle, input); // いま入力欄に入っている候補（強調用）
   const learned = settings.quickRepliesEnabled
     ? rankQuickReplies(settings.quickReplies || {}, {
-        draft: input,
+        draft: suggestDraft,
         lastReply: chatLastReply,
         locale: settings.locale,
         hidden: settings.quickRepliesHidden || [],
@@ -916,6 +928,16 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   useEffect(() => {
     setLlmSuggestions([]);
   }, [conversationId, chatLastReply]);
+  // Tab 補完でたどっている候補が、1行スクロールのチップ行からはみ出していたら見える位置へ。
+  useEffect(() => {
+    if (!cycledText) return;
+    const el = suggestRef.current?.querySelector<HTMLElement>(".chat-suggest-chip.cycling");
+    // scrollIntoView は Chrome 150 で Promise を返す — 暗黙 return にすると effect の
+    // クリーンアップ扱いで落ちるので、必ずブロック本体で捨てる（effect-implicit-return）。
+    if (el) {
+      el.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+  }, [cycledText]);
   // サジェストのチップ: 通常クリックはコンポーサーへ差し込み、⌥/Alt で即送信（MirrorView と同挙動）。
   const applySuggestion = (text: string, immediate: boolean) => {
     if (showStreaming) return;
@@ -1067,6 +1089,24 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
       if (target) {
         e.preventDefault();
         focusRingItem(target);
+        return;
+      }
+    }
+    // 入力途中の Tab は候補の補完サイクル（シェル流）。打った文字に前方一致する候補＝チップ行に
+    // 見えているものを順に入力欄へ入れ、一周したら自分が打った文字へ戻る。Shift+Tab は逆回り。
+    // 補完できる候補が無ければ何もせず、従来どおりの Tab（フォーカス移動）に落とす。
+    if (e.key === "Tab" && !e.nativeEvent.isComposing && input !== "" && !showStreaming) {
+      const next = stepSuggestCycle(cycle, input, suggestChips.map((c) => c.text), e.shiftKey);
+      if (next) {
+        e.preventDefault();
+        setCycle(next);
+        setInput(next.text);
+        setHistIdx(null);
+        // 値の差し替えでキャレットが動く（先頭に残る）ブラウザがあるので末尾に置き直す。
+        requestAnimationFrame(() => {
+          const el = inputRef.current;
+          if (el) el.setSelectionRange(el.value.length, el.value.length);
+        });
         return;
       }
     }
@@ -1476,8 +1516,10 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
                 className={
                   "chat-suggest-chip" +
                   (sg.llm ? " llm" : "") +
-                  (isQuickReplyPinned(settings.quickRepliesPinned, sg.text) ? " pinned" : "")
+                  (isQuickReplyPinned(settings.quickRepliesPinned, sg.text) ? " pinned" : "") +
+                  (sg.text === cycledText ? " cycling" : "") // Tab でいま入力欄に入れている候補
                 }
+                aria-current={sg.text === cycledText ? "true" : undefined}
                 title={tr("mirror.suggest_hint")}
                 onClick={(e) => {
                   if (chipMenu.clickSwallowed()) return; // 長タップでメニューを出した指離し

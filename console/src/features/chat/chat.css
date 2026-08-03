@@ -281,6 +281,11 @@
 .chat-suggest-chip.pinned {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
 }
+/* Tab 補完でいま入力欄に入っている候補（mirror 側と同じ扱い・入力欄のフォーカスは動かさない）。 */
+.chat-suggest-chip.cycling {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg));
+}
 .chat-suggest-pin {
   font-size: 11px;
   color: var(--accent);
