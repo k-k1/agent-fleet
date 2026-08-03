@@ -1925,6 +1925,12 @@ button.mt-bash-toggle:hover {
 .mirror-suggest-chip.pinned {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
 }
+/* Tab 補完でいま入力欄に入っている候補。フォーカスは入力欄に残したまま「どれを見ているか」を
+   示す必要があるので、フォーカスリング（:focus-visible）とは別に塗りで強調する。 */
+.mirror-suggest-chip.cycling {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg));
+}
 .mirror-suggest-pin {
   font-size: 11px;
   color: var(--accent);
