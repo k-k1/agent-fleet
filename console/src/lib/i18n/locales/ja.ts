@@ -3130,6 +3130,7 @@ export const ja = {
   "view.prev_slide": "前のスライド",
   "view.next_slide": "次のスライド",
   "view.copy_this_code": "このコードをコピー",
+  "view.copy_this_quote": "この引用をコピー",
   "view.cannot_check_file": "ファイルを確認できません: {path}",
   "view.file_not_found": "ファイルが見つかりません: {path}",
   "view.cannot_open_from_here": "この画面からファイルを開けません: {path}",
