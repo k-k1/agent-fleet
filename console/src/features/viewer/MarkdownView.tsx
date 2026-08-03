@@ -172,6 +172,7 @@ export function MarkdownView({
       } catch {}
       addCopyButton(code);
     });
+    el.querySelectorAll<HTMLElement>("blockquote").forEach(addQuoteCopyButton);
 
     // Render mermaid diagrams, replacing their <pre> with the produced SVG.
     const blocks = [...el.querySelectorAll<HTMLElement>("pre > code.language-mermaid")];
@@ -613,6 +614,35 @@ function addCopyButton(code: HTMLElement) {
   });
   actions.append(wrapBtn, copyBtn);
   wrap.appendChild(actions);
+}
+
+// addQuoteCopyButton adds a copy action directly to a rendered quote. Unlike code
+// blocks, quotes do not scroll, so the action can be positioned inside the quote's
+// top-right corner without an extra wrapper.
+function addQuoteCopyButton(quote: HTMLElement) {
+  if (quote.classList.contains("md-quote-copy")) return;
+  quote.classList.add("md-quote-copy");
+  const btn = document.createElement("button");
+  const label = t("view.copy_this_quote");
+  btn.type = "button";
+  btn.className = "md-code-action md-copy md-quote-copy-button";
+  btn.title = label;
+  btn.setAttribute("aria-label", label);
+  btn.innerHTML = '<i class="codicon codicon-copy"></i>';
+  btn.addEventListener("click", () => {
+    const done = () => {
+      btn.classList.add("copied");
+      btn.innerHTML = '<i class="codicon codicon-check"></i>';
+      setTimeout(() => {
+        btn.classList.remove("copied");
+        btn.innerHTML = '<i class="codicon codicon-copy"></i>';
+      }, 1200);
+    };
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(quote.textContent || "").then(done).catch(() => {});
+    }
+  });
+  quote.appendChild(btn);
 }
 
 // resolveRelPath turns a repo-relative Markdown href/src into a home-relative fs path.
