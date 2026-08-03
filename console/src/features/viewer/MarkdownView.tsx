@@ -164,7 +164,7 @@ export function MarkdownView({
     if (scroller) stickyCleanup = setupStickyHeadings(el, scroller);
 
     // Syntax-highlight every fenced code block except mermaid (handled below), and
-    // give each one a copy button (bottom-right) that copies just that block.
+    // give each one copy and line-wrap controls at its bottom-right.
     el.querySelectorAll<HTMLElement>("pre > code").forEach((code) => {
       if (code.classList.contains("language-mermaid")) return;
       try {
@@ -560,9 +560,9 @@ function setupStickyHeadings(md: HTMLElement, scroller: HTMLElement): () => void
   };
 }
 
-// addCopyButton pins a copy control at the bottom-right of a fenced code block that
-// copies exactly that block's text (not the whole message). Imperative because the
-// markdown is rendered as sanitized innerHTML, not React nodes.
+// addCopyButton pins code actions at the bottom-right of a fenced code block: copy
+// copies exactly that block, while wrap toggles its own line wrapping. Imperative
+// because the markdown is rendered as sanitized innerHTML, not React nodes.
 function addCopyButton(code: HTMLElement) {
   const pre = code.parentElement;
   if (!pre) return;
@@ -573,26 +573,46 @@ function addCopyButton(code: HTMLElement) {
   wrap.className = "md-pre-wrap";
   pre.replaceWith(wrap);
   wrap.appendChild(pre);
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "md-copy";
-  btn.title = t("view.copy_this_code");
-  btn.innerHTML = '<i class="codicon codicon-copy"></i>';
-  btn.addEventListener("click", () => {
+  const actions = document.createElement("div");
+  actions.className = "md-code-actions";
+
+  const wrapBtn = document.createElement("button");
+  wrapBtn.type = "button";
+  wrapBtn.className = "md-code-action md-code-wrap-toggle";
+  const updateWrapLabel = (enabled: boolean) => {
+    const label = t(enabled ? "ui.unwrap_lines" : "ui.wrap_lines");
+    wrapBtn.title = label;
+    wrapBtn.setAttribute("aria-label", label);
+    wrapBtn.setAttribute("aria-pressed", String(enabled));
+  };
+  wrapBtn.innerHTML = '<i class="codicon codicon-word-wrap"></i>';
+  updateWrapLabel(false);
+  wrapBtn.addEventListener("click", () => {
+    updateWrapLabel(pre.classList.toggle("md-code-wrap"));
+  });
+
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.className = "md-code-action md-copy";
+  copyBtn.title = t("view.copy_this_code");
+  copyBtn.setAttribute("aria-label", t("view.copy_this_code"));
+  copyBtn.innerHTML = '<i class="codicon codicon-copy"></i>';
+  copyBtn.addEventListener("click", () => {
     const text = code.textContent || "";
     const done = () => {
-      btn.classList.add("copied");
-      btn.innerHTML = '<i class="codicon codicon-check"></i>';
+      copyBtn.classList.add("copied");
+      copyBtn.innerHTML = '<i class="codicon codicon-check"></i>';
       setTimeout(() => {
-        btn.classList.remove("copied");
-        btn.innerHTML = '<i class="codicon codicon-copy"></i>';
+        copyBtn.classList.remove("copied");
+        copyBtn.innerHTML = '<i class="codicon codicon-copy"></i>';
       }, 1200);
     };
     if (navigator.clipboard?.writeText) {
       navigator.clipboard.writeText(text).then(done).catch(() => {});
     }
   });
-  wrap.appendChild(btn);
+  actions.append(wrapBtn, copyBtn);
+  wrap.appendChild(actions);
 }
 
 // resolveRelPath turns a repo-relative Markdown href/src into a home-relative fs path.
