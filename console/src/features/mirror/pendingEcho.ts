@@ -7,6 +7,28 @@ export interface PendingEcho {
   // not contain their paths. The Codex rollout does contain the paths in its image
   // marker, which gives us a more reliable reconciliation key than a line index.
   attachmentPaths?: string[];
+  /** Send time (ms) — the clock echoNeedsResync measures the stuck window against. */
+  at?: number;
+  /** When a stuck echo already forced a full transcript re-read (ms); one shot. */
+  resyncedAt?: number;
+}
+
+// How long an echo may sit at 「反映待ち」 on an IDLE session before we suspect our own
+// copy of the transcript is incomplete rather than the send being slow.
+export const ECHO_RESYNC_MS = 20000;
+
+// echoNeedsResync reports whether a still-pending echo should trigger one full re-read
+// of the transcript (cursor → 0, i.e. the initial tail window again).
+//
+// Reconciliation matches an echo against the turns the Console HOLDS, so a turn that
+// never reached us can strand its echo forever — as when the Agent handed out a cursor
+// past a half-written transcript line (see readJSONLLines) and the client, which only
+// ever asks for lines after its cursor, could not ask for that turn again. A re-read is
+// cheap (one windowed fetch), fixes the hole, and then the echo lands on its own; the
+// one-shot flag keeps a genuinely undelivered prompt from re-reading every poll.
+export function echoNeedsResync(e: PendingEcho, nowMs: number): boolean {
+  if (!e.at || e.resyncedAt) return false;
+  return nowMs - e.at >= ECHO_RESYNC_MS;
 }
 
 interface TranscriptTurn {
