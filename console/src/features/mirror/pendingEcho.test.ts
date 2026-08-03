@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { echoLanded } from "./pendingEcho.ts";
+import { echoLanded, echoNeedsResync, ECHO_RESYNC_MS } from "./pendingEcho.ts";
 
 const notNoise = () => false;
 
@@ -86,5 +86,28 @@ describe("echoLanded", () => {
   it("先頭が '/' でも実 command ターンが無ければ通常のテキスト一致に委ねる", () => {
     // "/" 始まりの素のテキスト（コマンドではない）は誤って隠さない。
     expect(echoLanded({ text: "/etc/hosts を見て", sinceIdx: 10 }, [], notNoise)).toBe(false);
+  });
+});
+
+describe("echoNeedsResync", () => {
+  // 実ターンがクライアントに届かないまま（Agent が書きかけの行を1行と数えて cursor を
+  // その行の先へ進めた等）だと、テキスト一致のしようがなく「反映待ち」が永久に残る。
+  // 一定時間で1回だけ全体読み直しを促し、穴を埋めてから解消させる。
+  const now = 1_000_000;
+
+  it("送信直後は読み直さない", () => {
+    expect(echoNeedsResync({ text: "x", sinceIdx: 0, at: now - 1000 }, now)).toBe(false);
+  });
+
+  it("一定時間解消しなければ読み直す", () => {
+    expect(echoNeedsResync({ text: "x", sinceIdx: 0, at: now - ECHO_RESYNC_MS }, now)).toBe(true);
+  });
+
+  it("読み直しは1回だけ（毎ポール読み直さない）", () => {
+    expect(echoNeedsResync({ text: "x", sinceIdx: 0, at: now - 60000, resyncedAt: now - 30000 }, now)).toBe(false);
+  });
+
+  it("送信時刻を持たない旧エコーは対象外", () => {
+    expect(echoNeedsResync({ text: "x", sinceIdx: 0 }, now)).toBe(false);
   });
 });

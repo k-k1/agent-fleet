@@ -127,14 +127,28 @@ func tailThenWhole(p string) [][][]byte {
 	return out
 }
 
-// readJSONLLines reads a jsonl file into its non-empty raw lines.
+// readJSONLLines reads a jsonl file into its non-empty raw lines, dropping a trailing
+// line that is still being written.
+//
+// claude appends the transcript in 4 KiB chunks (measured 2026-08-03: a live log's size
+// advanced 4096 bytes at a time), so a read can land INSIDE a line longer than that and
+// see it half-written. Counting that fragment as a line is not a cosmetic parse failure:
+// /messages hands the client `len(lines)` as its cursor, the parser drops the unreadable
+// fragment, and every later window starts AFTER it — so that turn is never delivered
+// again and silently vanishes from the mirror (a lost user prompt then also leaves its
+// optimistic echo stuck at 「反映待ち」 forever). A complete line always ends in "\n", so
+// cut anything past the last one and let the next poll read the line once it's whole.
 func readJSONLLines(p string) [][]byte {
 	b, err := os.ReadFile(p)
 	if err != nil {
 		return nil
 	}
+	i := bytes.LastIndexByte(b, '\n')
+	if i < 0 {
+		return nil // nothing but a partially-written first line
+	}
 	var out [][]byte
-	for _, ln := range strings.Split(string(b), "\n") {
+	for _, ln := range strings.Split(string(b[:i+1]), "\n") {
 		if strings.TrimSpace(ln) != "" {
 			out = append(out, []byte(ln))
 		}
