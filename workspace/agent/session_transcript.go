@@ -297,6 +297,15 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	if lo < hi {
 		turns = capTurnsNewest(all[lo:hi])
 	}
+	// OpenCode (and other store-backed agents) can add parts to an existing
+	// assistant message: reasoning/tool parts arrive before the final text, but
+	// the message count — our cursor — does not change. Re-send the mutable tail
+	// when the client is already caught up so it can replace its prior version.
+	// Without this, a pane that stays open keeps the reasoning trace forever and
+	// only sees the final answer after reopening (which starts again at since=0).
+	if update := genericMutableTail(all, since); update != nil {
+		turns = update
+	}
 	// userfile parts exist here too (codex imagegen's generated file) — map their
 	// paths browse-root-relative so the Console's 共有ファイル panel can open them.
 	resolveUserFiles(turns)
@@ -384,6 +393,15 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
+}
+
+// genericMutableTail returns the last assistant turn when a client has consumed
+// every turn. The turn's stable index identifies it as a replacement, not an append.
+func genericMutableTail(all []transcript.Turn, since int) []transcript.Turn {
+	if since != len(all) || len(all) == 0 || all[len(all)-1].Role != "assistant" {
+		return nil
+	}
+	return []transcript.Turn{all[len(all)-1]}
 }
 
 // capTurnsNewest bounds a returned window to ~1 MiB of text, keeping the NEWEST turns

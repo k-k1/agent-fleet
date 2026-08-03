@@ -866,17 +866,28 @@ export function MirrorView({
             ttsWorkQueueRef.current.length = 0;
             ttsWorkDoneRef.current.clear();
           } else if (Array.isArray(d.messages) && d.messages.length) {
-            // Idempotent append: keep only turns past the newest `idx` (jsonl line) we
-            // already hold. A quick re-poll (after sending) racing the in-flight poll can
-            // read the same cursor, so the server re-sends the same lines to both — this
-            // drops the overlap instead of duplicating turns in the view.
+            // Idempotent merge: normally a poll only appends turns. Store-backed agents
+            // (notably OpenCode) also update the parts of their current assistant turn
+            // while its stable idx stays the same, so replace that overlapping turn.
+            // A quick re-poll after sending can likewise overlap safely.
             setTurns((t) => {
-              let lastIdx = -1;
-              for (let i = t.length - 1; i >= 0; i--) {
-                if (t[i].idx !== undefined) { lastIdx = t[i].idx as number; break; }
+              const byIdx = new Map<number, number>();
+              for (let i = 0; i < t.length; i++) {
+                if (t[i].idx !== undefined) byIdx.set(t[i].idx as number, i);
               }
-              const fresh = (d.messages as Turn[]).filter((m) => m.idx === undefined || m.idx > lastIdx);
-              return patchAnswers(fresh.length ? [...t, ...fresh] : t, answers);
+              let next = t;
+              for (const incoming of d.messages as Turn[]) {
+                const at = incoming.idx === undefined ? undefined : byIdx.get(incoming.idx);
+                if (at === undefined) {
+                  if (next === t) next = [...t];
+                  next.push(incoming);
+                  if (incoming.idx !== undefined) byIdx.set(incoming.idx, next.length - 1);
+                } else if (JSON.stringify(next[at]) !== JSON.stringify(incoming)) {
+                  if (next === t) next = [...t];
+                  next[at] = incoming;
+                }
+              }
+              return patchAnswers(next, answers);
             });
           } else if (answers) {
             // No new turns this poll, but an answer may have just landed for a question/plan/
