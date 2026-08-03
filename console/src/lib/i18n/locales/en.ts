@@ -1768,7 +1768,7 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.update_choice_hint": "Waiting to choose on the update prompt",
   "mirror.resuming": "Resuming… you can type once it's ready",
   "mirror.suggest_hint":
-    "Click to insert · Ctrl/⌘/Alt-click to send now (Tab from an empty input to reach the chips · ←/→ to pick · right-click or long-press to pin/remove)",
+    "Click to insert · Ctrl/⌘/Alt-click to send now (Tab while typing cycles the matching suggestions · Tab from an empty input reaches the chips · ←/→ to pick · right-click or long-press to pin/remove)",
   "mirror.suggest_ai": "Suggest replies with AI (from the recent conversation)",
   "mirror.suggest_forget": "Stop suggesting this (send the same text yourself to bring it back)",
   "mirror.suggest_pin": "Always show (pin)",
