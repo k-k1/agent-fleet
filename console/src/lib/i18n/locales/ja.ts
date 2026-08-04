@@ -1669,6 +1669,8 @@ export const ja = {
     "この会話の作業計画を空にします。以降の新しいセッションへは計画が引き継がれなくなります（会話履歴と引き継ぎ要約はそのまま残ります）。",
   "chat.plan.placeholder": "## 制約\n## 前提\n## これからやること",
   "mirror.handoff_title": "次のセッションへの引き継ぎ",
+  "mirror.handoff_title_ph": "新規セッションの表示名（任意）",
+  "mirror.handoff_title_auto": "表示名は自動で決めます",
   "mirror.handoff_intro": "このセッションのエージェントが提案した初回プロンプトです。内容を確認・編集してから、次のエージェントとモデルを選んで起動します。",
   "mirror.handoff_launch": "新規セッションを起動",
   "mirror.handoff_discard": "破棄",
@@ -2298,6 +2300,8 @@ export const ja = {
 
   // === P2 起動フォーム 共通（StartModal / LaunchModal）===
   "launch.field.agent": "エージェント",
+  "launch.field.title": "セッション名",
+  "launch.title_ph": "任意。空欄なら自動で決まります",
   "launch.field.model": "モデル",
   "launch.field.effort": "推論 effort",
   "launch.field.effort_hint": "未指定はモデル既定値。",

@@ -353,6 +353,7 @@ var mcpStdioSelfReportTools = []map[string]any{
 			"properties": map[string]any{
 				"session": map[string]any{"type": "string", "description": "自分のセッション名"},
 				"prompt":  map[string]any{"type": "string", "minLength": 1, "description": "次セッションの最初のユーザー指示として渡す引き継ぎ本文"},
+				"title":   map[string]any{"type": "string", "description": "新規セッションの表示名の提案（任意）。利用者は起動前に編集できる"},
 			},
 			"required": []string{"session", "prompt"},
 		},
@@ -1135,7 +1136,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		if strings.TrimSpace(a.Prompt) == "" {
 			return mcpToolErr(req.ID, "prompt（次セッションへの引き継ぎ本文）が必要です")
 		}
-		body, _ := json.Marshal(map[string]string{"prompt": a.Prompt})
+		body, _ := json.Marshal(map[string]string{"prompt": a.Prompt, "title": a.Title})
 		if _, err := agentDo(http.MethodPost, "/sessions/"+url.PathEscape(a.Session)+"/handoff-proposal", body); err != nil {
 			return mcpToolErr(req.ID, "引き継ぎ提案の保存に失敗しました: "+err.Error())
 		}

@@ -31,13 +31,14 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
   const refreshRepos = useReposStore((s) => s.refresh);
   const refreshSessions = useSessionsStore((s) => s.refresh);
 
-  return async ({ dir, repo }, { kind, driver, model, effort, startMode, prompt, images, worktree, base, newBranch, useExisting }) => {
+  return async ({ dir, repo }, { kind, driver, model, effort, startMode, prompt, title, images, worktree, base, newBranch, useExisting }) => {
     const hasModel = agentOf(kind).caps.model;
     const body: Record<string, unknown> = { dir, kind };
     if (driver) body.driver = driver;
     if (hasModel && model) body.model = model;
     if (effort) body.effort = effort;
     if (startMode) body.mode = startMode;
+		if (title) body.title = title;
     if (worktree) {
       body.worktree = true;
       body.branch = base;

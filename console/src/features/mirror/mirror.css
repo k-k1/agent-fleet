@@ -2410,5 +2410,7 @@ button.mt-bash-toggle:hover {
   padding: 9px; border: 1px solid var(--border); border-radius: 5px;
   background: var(--input); color: var(--fg); font: inherit; white-space: pre-wrap;
 }
+.mirror-handoff-title, .mirror-handoff-session-title { display: block; width: 100%; margin: 8px 0; }
+.mirror-handoff-title { box-sizing: border-box; padding: 7px 9px; border: 1px solid var(--border); border-radius: 5px; background: var(--input); color: var(--fg); }
 .mirror-handoff-edit { min-height: 140px; resize: vertical; }
 .mirror-handoff-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }

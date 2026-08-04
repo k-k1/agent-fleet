@@ -9,13 +9,14 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { useLaunchSeed, useLaunchTarget, type Repo } from "../repos/store.ts";
 import type { Session } from "../../types/session.ts";
 
-interface Proposal { prompt: string; created_at: number }
+interface Proposal { prompt: string; title?: string; created_at: number }
 
 export function HandoffProposal({ session, sessionMeta }: { session: string; sessionMeta?: Session | null }) {
   const tr = useT();
   const toast = useToast();
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [draft, setDraft] = useState("");
+  const [title, setTitle] = useState("");
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -28,7 +29,7 @@ export function HandoffProposal({ session, sessionMeta }: { session: string; ses
         const p = d?.proposal && typeof d.proposal.prompt === "string" ? d.proposal as Proposal : null;
         if (!alive) return;
         setProposal(p);
-        if (!editing) setDraft(p?.prompt || "");
+        if (!editing) { setDraft(p?.prompt || ""); setTitle(p?.title || ""); }
       } catch { /* transient polling failure: keep the last visible proposal */ }
     };
     void load();
@@ -40,7 +41,7 @@ export function HandoffProposal({ session, sessionMeta }: { session: string; ses
   const save = async () => {
     if (!draft.trim() || busy) return;
     setBusy(true);
-    const d = await apiJSON(`api/sessions/${encodeURIComponent(session)}/handoff-proposal`, "POST", { prompt: draft });
+    const d = await apiJSON(`api/sessions/${encodeURIComponent(session)}/handoff-proposal`, "POST", { prompt: draft, title });
     setBusy(false);
     if (d?.error) { toast(tr("mirror.handoff_save_failed", { msg: errText(d.error) })); return; }
     setProposal(d.proposal as Proposal);
@@ -63,18 +64,21 @@ export function HandoffProposal({ session, sessionMeta }: { session: string; ses
       branch: sessionMeta?.currentBranch || sessionMeta?.branch,
       worktree: sessionMeta?.worktree,
     };
-    useLaunchSeed.getState().set(proposal.prompt);
+    useLaunchSeed.getState().set(proposal.prompt, proposal.title);
     useLaunchTarget.getState().open(repo);
   };
   return (
     <section className="mirror-handoff" aria-label={tr("mirror.handoff_title")}>
       <header className="mirror-handoff-head"><span><Icon name="git-branch" /> {tr("mirror.handoff_title")}</span></header>
       <p className="muted">{tr("mirror.handoff_intro")}</p>
-      {editing ? <textarea className="mirror-handoff-edit" value={draft} onChange={(e) => setDraft(e.target.value)} spellCheck={false} /> : <pre className="mirror-handoff-prompt">{proposal.prompt}</pre>}
+      {editing ? <>
+        <input className="mirror-handoff-title" value={title} maxLength={512} placeholder={tr("mirror.handoff_title_ph")} onChange={(e) => setTitle(e.target.value)} />
+        <textarea className="mirror-handoff-edit" value={draft} onChange={(e) => setDraft(e.target.value)} spellCheck={false} />
+      </> : <><strong className="mirror-handoff-session-title">{proposal.title || tr("mirror.handoff_title_auto")}</strong><pre className="mirror-handoff-prompt">{proposal.prompt}</pre></>}
       <div className="mirror-handoff-actions">
         {editing ? <>
           <button type="button" className="ghost xs" disabled={busy || !draft.trim()} onClick={() => void save()}>{tr("common.save")}</button>
-          <button type="button" className="ghost xs" disabled={busy} onClick={() => { setDraft(proposal.prompt); setEditing(false); }}>{tr("common.cancel")}</button>
+          <button type="button" className="ghost xs" disabled={busy} onClick={() => { setDraft(proposal.prompt); setTitle(proposal.title || ""); setEditing(false); }}>{tr("common.cancel")}</button>
         </> : <button type="button" className="ghost xs" disabled={busy} onClick={() => setEditing(true)}><Icon name="edit" /> {tr("chat.plan.edit")}</button>}
         <button type="button" className="ghost xs" disabled={busy} onClick={() => void discard()}><Icon name="trash" /> {tr("mirror.handoff_discard")}</button>
         <button type="button" className="primary xs" disabled={busy} onClick={launch}><Icon name="run" /> {tr("mirror.handoff_launch")}</button>
