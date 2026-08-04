@@ -79,11 +79,21 @@ network namespace. Anything outside your own working directory belongs to someon
   silently moves 5173 → 5174, and then your "open 5173" instruction is wrong). `ss`, `lsof` and
   `netstat` are **not installed**; probe with
   `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:<port>/`.
-- **Other worktrees are other sessions' desks.** A session normally gets its own
-  `~/repos/<repo>@wip-<slug>`; the parent clone `~/repos/<repo>` and the other worktrees are in
-  use right now. Never `git checkout`/`switch`/`stash` there, never `git worktree remove` or
-  `prune` them, never delete them — worktree lifecycle (including cleanup and the shelf) is the
-  Console's job.
+- **Other working copies may be other sessions' desks — including the parent clone.** A session
+  usually gets its own `~/repos/<repo>@wip-<slug>`, but one can just as well be launched
+  directly in `~/repos/<repo>`. Don't assume either way: `git worktree list` and
+  `git -C ~/repos/<repo> status --porcelain` tell you. In a copy that is not yours, what is
+  forbidden is changing **what it is** — `checkout`/`switch`/`branch -f`/`stash`, any merge that
+  could conflict or add a merge commit, `git worktree remove`/`prune`, deleting it (worktree
+  lifecycle, cleanup and the shelf are the Console's job).
+- **Keeping the parent's current branch fresh is a different thing, and someone has to do it.**
+  A new worktree is created in the parent with `git worktree add -b <new> <dir> <base>`, and
+  `<base>` resolves against the parent's **local** refs — that path never fetches (only an
+  existing-branch launch fetches and fast-forwards). A stale parent therefore forks every later
+  session off an old base, silently. So once the base branch has moved, refresh it:
+  `git -C ~/repos/<repo> pull --ff-only`, on a clean tree that already sits on that branch —
+  the same thing the Console's Fast-Forward on the repo row does. Dirty, or on another branch?
+  Stop there and tell the user; don't "fix" it by checking anything out.
 - Worktrees share one object store, so `git fetch`, `git gc`, tag and branch writes are visible
   to everyone, and **a branch can be checked out in only one worktree at a time**. Which
   branches are taken is not fixed: the parent clone sits on whatever it was last left on, which
