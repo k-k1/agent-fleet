@@ -55,6 +55,8 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 			return "git.fetch", name, true
 		case name != "" && strings.HasSuffix(p, "/ff"):
 			return "git.ff", name, true
+		case name != "" && strings.HasSuffix(p, "/parent-ff"):
+			return "git.parent_ff", name, true
 		case p == "/api/agents/memory/snapshots":
 			// エージェントメモリの手動 snapshot（docs/39）。
 			return "memory.snapshot", "", true

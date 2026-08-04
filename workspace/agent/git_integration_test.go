@@ -68,3 +68,33 @@ func TestGitWorktreeIntegrationRelations(t *testing.T) {
 		t.Fatalf("missing parent relation = %q, want unknown", unknown.Relation)
 	}
 }
+
+func TestFastForwardWorktreeFromParent(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	parent := t.TempDir()
+	gitInit(t, parent)
+	worktree, err := ensureWorktree(parent, "main", "feature-parent-ff", "")
+	if err != nil {
+		t.Fatalf("ensureWorktree: %v", err)
+	}
+	commitIntegrationFile(t, parent, "parent-change")
+	want, err := gitx.Run(parent, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fastForwardWorktreeFromParent(parent, worktree); err != nil {
+		t.Fatalf("fast-forward from parent: %v", err)
+	}
+	got, err := gitx.Run(worktree, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("worktree HEAD = %s, want parent HEAD %s", got, want)
+	}
+	if err := fastForwardWorktreeFromParent(parent, worktree); err == nil {
+		t.Fatal("same worktree unexpectedly accepted for parent fast-forward")
+	}
+}

@@ -425,6 +425,7 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/repos/{name}/checkout", rest)
 	mux.HandleFunc("POST /api/repos/{name}/fetch", rest)
 	mux.HandleFunc("POST /api/repos/{name}/ff", rest)
+	mux.HandleFunc("POST /api/repos/{name}/parent-ff", rest)
 	// Subversion (docs/41) — checkout / update / cleanup, proxied to the Agent.
 	mux.HandleFunc("POST /api/repos/svn", rest)
 	mux.HandleFunc("POST /api/repos/{name}/svn-update", rest)

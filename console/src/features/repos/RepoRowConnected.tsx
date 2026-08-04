@@ -70,6 +70,15 @@ export function RepoRowConnected({ r, ctx, onToggle, sess }: RepoRowConnectedPro
         void refreshRepos();
         toast(tr("rp.ff_success", { name: r.name }), { kind: "success" });
       }}
+      onParentFF={r.worktree && r.integration?.relation === "contained" ? async () => {
+        const res = await apiJSON(`api/repos/${encodeURIComponent(r.name)}/parent-ff`, "POST", {});
+        if (res && res.error) {
+          toast(tr("rp.parent_ff_failed", { err: errText(res.error) }));
+          return;
+        }
+        void refreshRepos();
+        toast(tr("rp.parent_ff_success", { name: r.name }), { kind: "success" });
+      } : undefined}
       // SVN (docs/41): update to the latest revision (auto-heals a wedged lock server-side).
       onUpdate={r.vcs === "svn" ? async () => {
         const res = await apiJSON(`api/repos/${encodeURIComponent(r.name)}/svn-update`, "POST", {});
