@@ -43,6 +43,9 @@ Both vitest projects and `npm run build` resolve through the link (measured).
 - `npm install <pkg>` replaces the link with a real tree. That is fine — it is just no longer
   shared, so don't be surprised by the disk.
 
+The same question for the other ecosystems (what a worktree already shares, what it duplicates,
+and the measurements) is `docs/dev/93-worktree-dependencies.md`.
+
 ## Running the Go tests
 
 The two Go modules are separate; run each from its own directory. Both suites build and run
