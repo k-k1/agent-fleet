@@ -22,6 +22,42 @@ These in particular are mandatory.
 - Immediately before committing, re-read the finished message and confirm it meets
   the convention.
 
+## `console/node_modules` in a worktree
+
+Installing it is ~350 MB per worktree, and sessions usually get one worktree each. When this
+worktree's lockfile matches the parent clone's, share the parent's tree instead:
+
+```
+cd console
+cmp -s package-lock.json ~/repos/agent-fleet/console/package-lock.json \
+  && ln -s ~/repos/agent-fleet/console/node_modules node_modules
+```
+
+Both vitest projects and `npm run build` resolve through the link (measured).
+
+- **Remove the link before any `npm ci` / `npm install`**: `rm -rf node_modules` — *without* a
+  trailing slash. `npm ci` through the link empties the parent's `node_modules` and breaks
+  every other session that shares it, and `rm -rf node_modules/` deletes through the link the
+  same way.
+- If the lockfiles differ, don't link: `npm ci --prefer-offline` (the `~/.npm` cache is warm).
+- `npm install <pkg>` replaces the link with a real tree. That is fine — it is just no longer
+  shared, so don't be surprised by the disk.
+
+## Running the Go tests
+
+The two Go modules are separate; run each from its own directory. Both suites build and run
+packages in parallel, which is the usual way to exhaust memory on this host — cap it when the
+container is busy.
+
+```
+(cd control-plane   && go test ./...)      # add -p 2 when memory is tight
+(cd workspace/agent && go test ./...)
+```
+
+Postgres-backed tests skip themselves unless `AF_TEST_DATABASE_URL` is set; there is no local
+database (and no Docker) in the workspace, so leave them skipped. The full build/reflect matrix
+is `docs/dev/10-development.md`.
+
 ## Running the Console tests
 
 **Always run them with `console/` as the working directory.** Invoking `npx vitest`
