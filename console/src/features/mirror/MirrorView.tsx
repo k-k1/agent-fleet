@@ -443,6 +443,7 @@ export function MirrorView({
   const statusRef = useRef("");
   const bgBusyRef = useRef(false); // mirrors bgBusy for the poll-cadence closure (fast-poll while BG runs)
   const tickRef = useRef<(() => void) | null>(null); // lets send() trigger an immediate refresh
+  const mirrorRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const scrollBoxRef = useRef<HTMLDivElement>(null); // inner content wrapper — its height tracks the transcript
   const settleUntilRef = useRef(0); // re-pin the bottom on late layout only until this ms (open window)
@@ -1117,6 +1118,17 @@ export function MirrorView({
   // TRUE bottom instead of a stale pre-layout position, and keeps streaming glued to the
   // tail. atBottomRef is authoritative (the follow effect sets it synchronously right after
   // it scrolls), so a completion-anchored view that was scrolled up is left alone.
+  useEffect(() => {
+    const el = mirrorRef.current;
+    if (!el) return;
+    const syncHeight = () => el.style.setProperty("--mirror-todo-max-height", el.clientHeight * 0.2 + "px");
+    syncHeight();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(syncHeight);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   useEffect(() => {
     const el = bodyRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
@@ -2426,6 +2438,7 @@ export function MirrorView({
 
   return (
     <div
+      ref={mirrorRef}
       className={"mirrorview" + (dragging ? " dragging" : "")}
       data-theme={settings.mirrorTheme !== "inherit" ? settings.mirrorTheme : undefined}
       style={{
@@ -3513,6 +3526,19 @@ function writeLS(key: string, value: string): void {
   }
 }
 
+// Keep disclosure content mounted while it is closed so CSS can animate both directions.
+// `inert` preserves the native <details> behaviour: hidden controls and links cannot receive
+// focus (or be exposed to assistive technology) until the disclosure is opened again.
+function DisclosureContent({ open, className, children }: { open: boolean; className: string; children: ReactNode }) {
+  return (
+    <div className="mirror-disclosure-panel" aria-hidden={!open}>
+      <div className="mirror-disclosure-inner" inert={!open}>
+        <div className={className}>{children}</div>
+      </div>
+    </div>
+  );
+}
+
 // TaskChecklist renders the current ToDo list (reconstructed from Task tool calls) as a
 // collapsed disclosure: a done/total count, the active task on the summary, and the full
 // list on expand. The open/closed choice is remembered per session (localStorage), so it
@@ -3542,54 +3568,60 @@ function TaskChecklist({ tasks, session }: { tasks: TaskItem[]; session: string 
   if (dismissedSig === sig) return null; // this exact list was dismissed
 
   return (
-    <details
-      className="mirror-tasks"
-      open={open}
-      onToggle={(e) => {
-        const next = (e.currentTarget as HTMLDetailsElement).open;
-        setOpen(next);
-        writeLS(openKey, next ? "1" : "0");
-      }}
-    >
-      <summary className="mirror-tasks-head">
-        <Icon name="checklist" />
-        <span className="mtk-title">ToDo</span>
-        <span className="mtk-count muted">
-          {done}/{total}
-        </span>
-        {active && (
-          <span className="mtk-active muted">
-            {/* Spinner rides the summary so the running task's ぐるぐる is visible even
-                while the list is collapsed. */}
-            <Icon name="loading" spin className="mtk-active-mark" />
-            {active.activeForm || active.subject}
+    <section className={"mirror-tasks mirror-disclosure" + (open ? " open" : "")}>
+      <div className="mirror-tasks-head">
+        <button
+          type="button"
+          className="mirror-tasks-toggle"
+          aria-expanded={open}
+          onClick={() => {
+            const next = !open;
+            setOpen(next);
+            writeLS(openKey, next ? "1" : "0");
+          }}
+        >
+          <Icon name="checklist" />
+          <span className="mtk-title">ToDo</span>
+          <span className="mtk-count muted">
+            {done}/{total}
           </span>
-        )}
+          {active && (
+            <span className="mtk-active muted">
+              {/* Spinner rides the summary so the ぐるぐる stays visible even
+                  while the list is collapsed. */}
+              <Icon name="loading" spin className="mtk-active-mark" />
+              {active.activeForm || active.subject}
+            </span>
+          )}
+        </button>
         <button
           type="button"
           className="mtk-dismiss"
           title={tr("mirror.todo_dismiss")}
-          onClick={(e) => {
-            e.preventDefault(); // don't toggle the <summary>
-            e.stopPropagation();
+          onClick={() => {
             setDismissedSig(sig);
             writeLS(dismissKey, sig);
           }}
         >
           <Icon name="close" />
         </button>
-      </summary>
-      <ol className="mirror-tasks-list">
-        {tasks.map((t) => (
-          <li key={t.id} className={"mtk-item mtk-" + t.status}>
-            <Icon name={taskIcon(t.status)} spin={t.status === "in_progress"} className="mtk-mark" />
-            <span className="mtk-text">
-              {t.status === "in_progress" && t.activeForm ? t.activeForm : t.subject}
-            </span>
-          </li>
-        ))}
-      </ol>
-    </details>
+      </div>
+      <DisclosureContent open={open} className="mirror-tasks-list-wrap">
+        <ol className="mirror-tasks-list">
+          {tasks.map((t) => {
+            const label = t.status === "in_progress" && t.activeForm ? t.activeForm : t.subject;
+            return (
+              <li key={t.id} className={"mtk-item mtk-" + t.status}>
+                <Icon name={taskIcon(t.status)} spin={t.status === "in_progress"} className="mtk-mark" />
+                <span className="mtk-text" title={label}>
+                  {label}
+                </span>
+              </li>
+            );
+          })}
+        </ol>
+      </DisclosureContent>
+    </section>
   );
 }
 
@@ -3677,19 +3709,15 @@ function ThinkingBlock({
   }, [defaultOpen]);
   if (!text) return null;
   return (
-    <details
-      className="mirror-thinking"
-      open={open}
-      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
-    >
-      <summary className="mirror-thinking-head">
+    <section className={"mirror-thinking mirror-disclosure" + (open ? " open" : "")}>
+      <button type="button" className="mirror-thinking-head" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
         <Icon name="lightbulb" />
         <span className="mth-title">{tr("mirror.thinking_label")}</span>
-      </summary>
-      <div className="mirror-thinking-body">
+      </button>
+      <DisclosureContent open={open} className="mirror-thinking-body">
         <MarkdownView source={text} baseDir={baseDir} repo={repo} onOpenFile={onOpenFile} />
-      </div>
-    </details>
+      </DisclosureContent>
+    </section>
   );
 }
 
@@ -3800,21 +3828,17 @@ function WorkDisclosure({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <details
-      className="mt-work"
-      open={open}
-      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
-    >
-      <summary className="mt-work-head">
+    <section className={"mt-work mirror-disclosure" + (open ? " open" : "")}>
+      <button type="button" className="mt-work-head" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
         <Icon name={open ? "chevron-down" : "chevron-right"} />
         <span className="mt-work-title">{tr("chat.work_process")}</span>
         <span className="mt-work-count muted">
           {tCount("chat.tool_count", tools)}
           {responses > 0 ? tCount("chat.interim_count", responses) : ""}
         </span>
-      </summary>
-      <div className="mt-work-body">{children}</div>
-    </details>
+      </button>
+      <DisclosureContent open={open} className="mt-work-body">{children}</DisclosureContent>
+    </section>
   );
 }
 
