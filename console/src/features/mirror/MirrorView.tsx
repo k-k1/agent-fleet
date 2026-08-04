@@ -145,11 +145,11 @@ const FINALIZE_GRACE_MS = 8000;
 // ~40–60px height swing between polls) never nudges us out of "at bottom" and drops follow.
 const NEAR_BOTTOM_PX = 160;
 
-// How long after a session first settles we keep auto-re-pinning to the bottom as late
-// content lays out (images / code highlighting / math). Bounded so that LATER content
-// growth from the user's own action — expanding a 作業過程 disclosure while idle — is NOT
-// yanked back to the bottom; only streaming (active) and this open window re-pin.
-const OPEN_SETTLE_MS = 2000;
+// After an interaction inside the transcript, hold off the bottom re-pin for this long, so
+// content the READER grew (expanding a 作業過程 disclosure, switching code wrapping) keeps
+// their position instead of snapping past it. Only needs to outlive the reflow the click
+// causes — everything else that grows the transcript is content, and is followed.
+const INTERACT_HOLD_MS = 600;
 
 // One option in an AskUserQuestion, and one such question.
 interface QuestionOption {
@@ -447,15 +447,17 @@ export function MirrorView({
   const mirrorRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const scrollBoxRef = useRef<HTMLDivElement>(null); // inner content wrapper — its height tracks the transcript
-  const settleUntilRef = useRef(0); // re-pin the bottom on late layout only until this ms (open window)
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  // Is the user stuck to the bottom (auto-follow on)? Updated HONESTLY on every scroll —
-  // user drags AND our own programmatic scrolls both flow through onBodyScroll, so the
-  // flag always matches where the viewport actually is. (Appending content grows
-  // scrollHeight without firing a scroll event, so a follow that keeps us pinned leaves
-  // this true; scrolling up to read flips it false and we stop following.) This replaces
-  // the old scroll-event-suppression dance, which drifted out of sync with reality.
+  // Is auto-follow on (keep the end of the transcript in view)? This tracks the user's
+  // INTENT, not raw geometry: it goes false when they actually move the viewport up, and
+  // true again when they come back to the end (or send, or press 最新へ). Content growing
+  // under a pinned viewport is not a reason to drop it — see onBodyScroll.
   const atBottomRef = useRef(true);
+  // The scrollTop WE last wrote. onBodyScroll compares against it to tell "content grew
+  // under our own pin" (not user intent) from "the user scrolled up" — see there.
+  const selfTopRef = useRef(0);
+  // Until this ms, a geometry change is attributed to the reader's own click, not to content.
+  const interactUntilRef = useRef(0);
   // The idx of the assistant block whose TOP we last brought to the viewport top. A fresh
   // reply is anchored there once (so the user reads it from its first line) and then left
   // alone as it streams; this remembers which reply we've already anchored.
@@ -807,9 +809,8 @@ export function MirrorView({
     // The old scroller can be reused for another session (pane D&D / opening a row
     // in the current mirror). Clear its physical offset in the same pre-paint phase;
     // the first transcript layout effect below then pins the new content to its end.
-    if (bodyRef.current) bodyRef.current.scrollTop = 0;
+    if (bodyRef.current) { bodyRef.current.scrollTop = 0; selfTopRef.current = 0; }
     setShowJump(false); // …so no jump-to-latest affordance until they scroll up
-    settleUntilRef.current = 0; // the open-settle window belongs to the new session's first settle
     anchoredIdxRef.current = undefined; // no reply anchored yet in the new session
     answerAnchoredRef.current = undefined; // …nor its final answer
     didInitRef.current = false; // re-run the "land at bottom on open" settle for this session
@@ -1033,6 +1034,7 @@ export function MirrorView({
     if (!el) return;
     const toBottom = () => {
       el.scrollTop = el.scrollHeight;
+      selfTopRef.current = el.scrollTop;
       atBottomRef.current = true; // authoritative now (don't wait for the async scroll event)
     };
 
@@ -1061,7 +1063,6 @@ export function MirrorView({
         didInitRef.current = true;
         anchoredIdxRef.current = replyIdx;
         answerAnchoredRef.current = replyIdx; // a reply already present at open isn't re-anchored
-        settleUntilRef.current = Date.now() + OPEN_SETTLE_MS; // keep re-pinning as this content lays out
       }
       toBottom();
       return;
@@ -1095,6 +1096,7 @@ export function MirrorView({
           answerAnchoredRef.current = replyIdx;
           const top = el.scrollTop + (answer.getBoundingClientRect().top - el.getBoundingClientRect().top) - 12;
           el.scrollTop = Math.max(0, top);
+          selfTopRef.current = el.scrollTop;
           atBottomRef.current = false; // parked at the answer top — leave the user here (and stop the RO re-pin)
         } else if (body && !work) {
           answerAnchoredRef.current = replyIdx; // nothing folded — top already is the answer
@@ -1130,59 +1132,74 @@ export function MirrorView({
     return () => ro.disconnect();
   }, []);
 
+  // Re-pin whenever the geometry changes while follow is on: the body's own box resizing
+  // (ToDo / 消費推移 / コンテキスト panels above it, the composer auto-growing, a pane/window
+  // resize) AND — via the inner wrapper — the transcript's content height changing as late
+  // content lays out or streams in.
+  //
+  // There is deliberately NO list of late-layout sources here and no time window. The
+  // transcript's body is rendered by MarkdownView into innerHTML from a PASSIVE effect, so
+  // at the moment the follow effect pins the bottom the turns are still empty: essentially
+  // ALL of a transcript's height arrives late, in several steps (parse → highlight → math →
+  // mermaid → image decode → web fonts). Enumerating those sources is what the previous
+  // rounds of this fix tried; each new source (and each slow machine) reopened the bug. The
+  // rule is simply "while following, keep the end in view".
+  //
+  // The one growth we must NOT chase is the one the user caused themselves — expanding a
+  // 作業過程 disclosure while parked at the bottom must keep their position, not snap them
+  // past what they just opened. That is decided by cause, not by timing: interactUntilRef
+  // is armed by an interaction inside the transcript (see the handlers on .mirror-scroll).
   useEffect(() => {
     const el = bodyRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => {
-      // Only chase late-arriving height while actively streaming (follow the tail) or during
-      // the brief open-settle window (images/highlighting laying out). NOT on arbitrary idle
-      // growth — expanding a 作業過程 disclosure must keep the reader's position, not snap them
-      // to the bottom. (Box resizes like the composer growing still re-pin via `active`/window.)
-      const active = statusRef.current === "working" || bgBusyRef.current || finalizingRef.current;
-      const settling = Date.now() < settleUntilRef.current;
-      if (atBottomRef.current && (active || settling) && el.scrollHeight - el.scrollTop - el.clientHeight >= 1) {
-        el.scrollTop = el.scrollHeight;
-      }
+      if (!atBottomRef.current) return; // scrolled up, or parked at a completion anchor
+      if (Date.now() < interactUntilRef.current) return; // the reader's own click grew it
+      if (el.scrollHeight - el.scrollTop - el.clientHeight < 1) return;
+      el.scrollTop = el.scrollHeight;
+      selfTopRef.current = el.scrollTop;
     });
     ro.observe(el);
     if (scrollBoxRef.current) ro.observe(scrollBoxRef.current);
     return () => ro.disconnect();
   }, []);
 
-  // Late-decoding transcript images are the one late-layout source that routinely finishes
-  // AFTER the open-settle window closes: a big screenshot on a session opened from the left
-  // pane can decode well past OPEN_SETTLE_MS, growing the content once the ResizeObserver above
-  // has stopped chasing (idle + settle expired) — which strands the view above the true bottom
-  // (the "opened-from-left-pane lands off" symptom). An <img> finishing load is unambiguously
-  // content-driven, NOT a user expanding a 作業過程 disclosure: those images already decoded while
-  // the <details> was collapsed (they stay in the DOM), so this never fires on that expand and
-  // can't reintroduce the snap-to-bottom regression. Re-pin on load, but ONLY while still stuck
-  // to the bottom (atBottomRef) — a reader who scrolled up, or parked at a completion anchor, is
-  // left where they are.
-  useEffect(() => {
-    const box = scrollBoxRef.current;
-    const el = bodyRef.current;
-    if (!box || !el) return;
-    const onLoad = (e: Event) => {
-      const t = e.target as HTMLElement | null;
-      if (t?.tagName !== "IMG") return; // load also fires for <link>/<script> etc.
-      if (atBottomRef.current) el.scrollTop = el.scrollHeight;
-    };
-    box.addEventListener("load", onLoad, true); // capture: <img> load does not bubble
-    return () => box.removeEventListener("load", onLoad, true);
-  }, []);
+  // Arm the "the reader caused this reflow" window. A pointer or keyboard interaction inside
+  // the transcript can toggle a disclosure (作業過程 / thinking / tool run), switch code
+  // wrapping, or open a plan comment box — all of which grow the content under a reader who
+  // is sitting at the bottom. Both are captured on .mirror-scroll, so the pointer path and
+  // the keyboard path (Enter/Space on a <summary>) arm it before the reflow lands. A fold
+  // that WE change (foldWork on completion) is content, not interaction, and is followed.
+  const noteInteraction = () => {
+    interactUntilRef.current = Date.now() + INTERACT_HOLD_MS;
+  };
 
-  // Track whether the user is stuck to the bottom, from the ACTUAL viewport position, on
-  // every scroll — user drags and our own follow/anchor scrolls alike. Content appends grow
-  // scrollHeight without a scroll event, so a poll that keeps us pinned leaves this true;
-  // scrolling up flips it false (and reveals the jump-to-latest button). Because our upward
-  // completion-anchor also flows through here, "leave the user alone after anchoring" falls
-  // out for free — no scroll-event suppression needed.
+  // Follow state, from user INTENT rather than from raw geometry.
+  //
+  // The trap this replaces: a scroll EVENT is dispatched asynchronously, so by the time the
+  // handler runs the content may have grown past the offset we ourselves just pinned.
+  // Measuring "distance to the bottom" at that point reads our own pin as "the user scrolled
+  // up", drops follow, and thereby disarms every re-pin path above — the view then stays
+  // wherever the last late layout left it (measured: 754→1246px above the end when opening
+  // a long transcript). Only an actual UPWARD move relative to the offset we last wrote is
+  // the user. Comparing positions is not the old "suppress the next event" dance: nothing is
+  // skipped, so the flag cannot drift out of sync with a scroll we never hear about.
   const onBodyScroll = () => {
     const el = bodyRef.current;
     if (!el) return;
+    const movedUp = el.scrollTop < selfTopRef.current - 1;
+    if (atBottomRef.current && !movedUp) {
+      // Following, and the viewport did not move up — the gap (if any) is content that grew
+      // after our pin, and the ResizeObserver above closes it. Stay armed.
+      selfTopRef.current = el.scrollTop;
+      setShowJump((s) => (s === false ? s : false));
+      return;
+    }
+    // Either the user moved up (drop follow), or they are scrolling back down (re-arm once
+    // they are within NEAR_BOTTOM_PX of the end).
     const stuck = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
     atBottomRef.current = stuck;
+    if (stuck) selfTopRef.current = el.scrollTop;
     setShowJump((s) => (s === !stuck ? s : !stuck));
   };
 
@@ -1191,6 +1208,7 @@ export function MirrorView({
     const el = bodyRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
+    selfTopRef.current = el.scrollTop;
     atBottomRef.current = true;
     setShowJump(false);
   };
@@ -1228,6 +1246,7 @@ export function MirrorView({
     const el = bodyRef.current;
     if (el && prependAdjustRef.current != null) {
       el.scrollTop += el.scrollHeight - prependAdjustRef.current;
+      selfTopRef.current = el.scrollTop;
       prependAdjustRef.current = null;
     }
   }, [turns]);
@@ -2567,11 +2586,17 @@ export function MirrorView({
 
       <div className="mirror-body" ref={bodyRef} onScroll={onBodyScroll} onMouseUp={captureTtsSel}>
         {/* Wrapper whose height == the transcript's total height, so a ResizeObserver can
-            re-pin a bottom-stuck view to the true bottom as late content lays out (images,
-            code highlighting, math) — that's what makes opening a session land at the
-            bottom, and keeps streaming glued to the tail. The jump-to-latest button stays
-            OUTSIDE it (a direct child of the scroll container) so it sticks to the viewport. */}
-        <div className="mirror-scroll" ref={scrollBoxRef}>
+            re-pin a bottom-stuck view to the true bottom as late content lays out — that's
+            what makes opening a session land at the bottom, and keeps streaming glued to the
+            tail. The jump-to-latest button stays OUTSIDE it (a direct child of the scroll
+            container) so it sticks to the viewport. The interaction handlers tell that
+            observer which reflows the READER caused (noteInteraction). */}
+        <div
+          className="mirror-scroll"
+          ref={scrollBoxRef}
+          onPointerDownCapture={noteInteraction}
+          onKeyDownCapture={noteInteraction}
+        >
         {loaded && hasMore && (
           <div className="mirror-loadmore" ref={topSentinelRef}>
             <button
