@@ -79,6 +79,11 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /sessions/{name}/start", handleStartSession)
 	// Structured transcript (role + text + timestamp) for the Console chat view.
 	mux.HandleFunc("GET /sessions/{name}/messages", handleSessionMessages)
+	// Session-side MCP may propose the prompt for a follow-up session. Creation itself
+	// remains a user action in the Console launch dialog.
+	mux.HandleFunc("GET /sessions/{name}/handoff-proposal", handleSessionHandoffProposal)
+	mux.HandleFunc("POST /sessions/{name}/handoff-proposal", handleSessionHandoffProposal)
+	mux.HandleFunc("DELETE /sessions/{name}/handoff-proposal", handleSessionHandoffProposal)
 	// Auto session-title suggestion (session_title.go): accept promotes it to Title,
 	// dismiss discards it — either way it's never offered again for this session.
 	mux.HandleFunc("POST /sessions/{name}/title/accept", handleAcceptSuggestedTitle)
