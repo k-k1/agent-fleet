@@ -2271,7 +2271,9 @@ export const en: Record<keyof typeof ja, string> = {
   "launch.field.start_mode": "Start mode",
   "launch.mode_normal": "Normal",
   "launch.field.location": "Location",
-  "launch.change_location": "Change location",
+  // Back to the Start hub. Named after where it goes, so it is not mistaken for the
+  // Location section's own Change control.
+  "launch.back_to_hub": "Back to Start",
   "launch.field.subdir": "Working folder",
   "launch.subdir_ph": "repository root (e.g. console)",
   "launch.subdir_browse": "Browse",
@@ -2326,6 +2328,23 @@ export const en: Record<keyof typeof ja, string> = {
   "launch.image_paste_note": "Paste images here, or attach with the ＋ button (on a phone, use ＋).",
   "launch.attach_image": "Attach an image",
   "launch.start_worktree": "Start in a worktree",
+  // Collapsed sections (Location / More) and the summary shown while folded. The
+  // summary exists so the launch is readable without expanding: Location always
+  // spells out what git will do, More lists only what differs from the defaults.
+  "launch.field.advanced": "More",
+  "launch.sec_edit": "Change",
+  "launch.sec_done": "Close",
+  "launch.sum.direct": "In this copy · {branch}",
+  "launch.sum.wt_auto": "New worktree · new branch off {base}",
+  "launch.sum.wt_named": "New worktree · {branch} off {base}",
+  "launch.sum.wt_existing": "New worktree · existing branch {branch}",
+  "launch.sum.wt_existing_none": "New worktree · no branch picked",
+  "launch.sum.driver_managed": "Managed",
+  "launch.sum.driver_terminal": "Terminal (CLI)",
+  "launch.sum.effort": "effort {v}",
+  "launch.sum.subdir": "folder {path}",
+  "launch.sum.title": "name “{name}”",
+  "launch.sum.defaults": "Defaults",
 
   // === P2 start modal (features/repos/StartModal.tsx) ===
   "start.aws_search_failed": "AWS search failed: {msg}",

@@ -44,10 +44,10 @@ export function StartHost() {
   // The per-repo stage STACKS on the hub instead of replacing it: swapping
   // modals in one commit trips useBackClose — the outgoing modal's cleanup
   // history.back() lands AFTER the incoming modal pushed its guard entry and
-  // immediately closes it. Stacked, dismissing the top stage (場所を変更 / Esc /
+  // immediately closes it. Stacked, dismissing the top stage (はじめる に戻る / Esc /
   // ✕ / browser back) peels back to the hub; only a successful launch closes
   // the whole stack. Via the clone-toast (hub closed) there is nothing to peel
-  // to, so 場所を変更 is offered only while the hub is open.
+  // to, so はじめる に戻る is offered only while the hub is open.
   return (
     <>
       {show && (

@@ -45,6 +45,15 @@ let onLaunch: Mock<Launch>;
 
 const buttons = () => [...document.querySelectorAll<HTMLButtonElement>("button")];
 const byText = (t: string) => buttons().find((b) => b.textContent?.includes(t))!;
+// 場所 / 詳細 are collapsed sections (LaunchSection): their controls only exist in the
+// DOM once the header is expanded. The header also carries the summary line, so match
+// on the label span rather than the whole row.
+const secHead = (label: string) =>
+  buttons().find(
+    (b) => b.classList.contains("launch-sec-head") && b.querySelector(".launch-sec-label")?.textContent === label,
+  )!;
+const summaryOf = (label: string) => secHead(label).querySelector(".launch-sec-sum")!.textContent || "";
+const expand = (label: string) => click(secHead(label));
 const branchRows = () => [...document.querySelectorAll<HTMLButtonElement>(".branch-item")];
 const rowFor = (name: string) => branchRows().find((b) => b.textContent?.includes(name))!;
 
@@ -92,19 +101,25 @@ afterEach(() => {
 });
 
 describe("LaunchModal branch mode", () => {
-  it("scrolls an overflowing agent list horizontally with a vertical mouse wheel", async () => {
-    await render(["claude", "codex", "cursor", "copilot", "kiro", "opencode"]);
-    const picker = document.querySelector<HTMLDivElement>(".ui-seg.big")!;
-    Object.defineProperties(picker, {
-      clientWidth: { value: 400 },
-      scrollWidth: { value: 768 },
-    });
+  // The picker is a wrapping grid, not a scroller: every connected kind must be in the
+  // DOM (the old horizontal scroller clipped the 4th card and hid the rest).
+  it("renders every available agent as a card", async () => {
+    const kinds = ["claude", "codex", "cursor", "copilot", "kiro", "opencode"];
+    await render(kinds);
+    expect(document.querySelectorAll(".ui-seg.big .seg-btn")).toHaveLength(kinds.length);
+  });
 
-    await act(async () => {
-      picker.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 80 }));
-    });
+  // 場所 is collapsed by default, so the summary line is the ONLY thing telling the user
+  // what git is about to do. It has to describe the pending launch, not a stale default.
+  it("summarises the pending location while the section is collapsed", async () => {
+    await render();
+    expect(summaryOf("Location")).toContain("New worktree");
+    expect(summaryOf("Location")).toContain("main"); // the base branch it will fork from
 
-    expect(picker.scrollLeft).toBe(80);
+    await expand("Location");
+    await click(byText("Directly in this copy"));
+    await expand("Location"); // collapse again
+    expect(summaryOf("Location")).toContain("In this copy"); // launch.sum.direct
   });
 
   it("defaults to forking a new branch and never sets use_existing", async () => {
@@ -119,6 +134,7 @@ describe("LaunchModal branch mode", () => {
 
   it("checks an existing branch out instead of forking one", async () => {
     await render();
+    await expand("Location");
     await click(byText("Existing branch"));
     await click(rowFor("develop"));
     await click(byText("Start in a worktree"));
@@ -130,6 +146,7 @@ describe("LaunchModal branch mode", () => {
 
   it("blocks the launch until a branch is picked", async () => {
     await render();
+    await expand("Location");
     await click(byText("Existing branch"));
     expect(byText("Start in a worktree").disabled).toBe(true);
     await click(rowFor("develop"));
@@ -138,6 +155,7 @@ describe("LaunchModal branch mode", () => {
 
   it("refuses to target a branch another working copy holds", async () => {
     await render();
+    await expand("Location");
     await click(byText("Existing branch"));
     expect(rowFor("busy").disabled).toBe(true);
     expect(rowFor("busy").textContent).toContain("app@busy");
@@ -150,6 +168,7 @@ describe("LaunchModal branch mode", () => {
   // which looks like a working launch until it edits the wrong files.
   it("launches in the folder picked from the tree", async () => {
     await render();
+    await expand("More");
     await click(byText("Browse"));
     await click([...document.querySelectorAll(".dirpick-row")].find((b) => b.textContent?.includes("console"))!);
     await click([...document.querySelectorAll(".dirpick-row")].find((b) => b.textContent?.includes("src"))!);
@@ -166,6 +185,7 @@ describe("LaunchModal branch mode", () => {
     localStorage.setItem("af.repo-subdir.app", "console");
     root = createRoot(host);
     await render();
+    await expand("More");
     expect(document.querySelector<HTMLInputElement>(".subdirpick-input")!.value).toBe("console");
   });
 
@@ -175,6 +195,7 @@ describe("LaunchModal branch mode", () => {
       .mockResolvedValueOnce({ ok: false, conflict: "local" })
       .mockResolvedValueOnce({ ok: true });
     await render();
+    await expand("Location");
     const input = document.querySelector<HTMLInputElement>('input[placeholder*="temporary name"]')!;
     await act(async () => {
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;

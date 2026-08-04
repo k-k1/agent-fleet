@@ -434,7 +434,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
           </div>
           <footer className="ui-modal-foot">
             <Button variant="ghost" className="launch-back" icon="arrow-left" onClick={() => setStage("place")} disabled={busy}>
-              {tr("launch.change_location")}
+              {tr("launch.back_to_hub")}
             </Button>
             <Button variant="ghost" onClick={onClose} disabled={busy}>
               {tr("common.cancel")}
@@ -458,6 +458,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                     <button
                       key={k}
                       type="button"
+                      title={tr(a.launchHintKey)}
                       className={"seg-btn kind-" + a.cssClass + (kind === k ? " active" : "")}
                       onClick={() => {
                         const defaults = agentLaunchDefault(settings, k);
@@ -469,7 +470,6 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                     >
                       <Icon name={a.icon} className="seg-ic" />
                       {kindDisplayName(k)}
-                      <span className="seg-sub">{tr(a.launchHintKey)}</span>
                     </button>
                   );
                 })}
@@ -547,7 +547,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
           </div>
           <footer className="ui-modal-foot">
             <Button variant="ghost" className="launch-back" icon="arrow-left" onClick={() => setStage("place")} disabled={busy}>
-              {tr("launch.change_location")}
+              {tr("launch.back_to_hub")}
             </Button>
             <Button variant="ghost" onClick={onClose} disabled={busy}>
               {tr("common.cancel")}
@@ -682,7 +682,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
           </div>
           <footer className="ui-modal-foot">
             <Button variant="ghost" className="launch-back" icon="arrow-left" onClick={() => setStage("place")} disabled={busy}>
-              {tr("launch.change_location")}
+              {tr("launch.back_to_hub")}
             </Button>
             <Button variant="ghost" onClick={onClose} disabled={busy}>
               {tr("common.cancel")}
