@@ -58,7 +58,7 @@ func TestOpencodeReadSession(t *testing.T) {
 	insPart(t, db, "p1", "m1", ses, 1, `{"type":"text","text":"hello opencode"}`)
 
 	// m2: assistant with framing (dropped), a tool trace, and final text.
-	insMsg(t, db, "m2", ses, 2000, `{"role":"assistant","modelID":"deepseek-v4-pro","variant":"max","tokens":{"input":100,"output":20,"cache":{"read":80,"write":5}},"time":{"created":2000}}`)
+	insMsg(t, db, "m2", ses, 2000, `{"role":"assistant","modelID":"deepseek-v4-pro","variant":"max","tokens":{"input":100,"output":20,"cache":{"read":80,"write":5}},"time":{"created":2000,"completed":9000}}`)
 	insPart(t, db, "p2a", "m2", ses, 1, `{"type":"step-start"}`)
 	insPart(t, db, "p2b", "m2", ses, 2, `{"type":"reasoning","text":"thinking..."}`)
 	insPart(t, db, "p2c", "m2", ses, 3, `{"type":"tool","tool":"bash","state":{"input":{"command":"ls -la"},"output":"a\nb"}}`)
@@ -93,6 +93,15 @@ func TestOpencodeReadSession(t *testing.T) {
 	if a.Effort != "max" {
 		t.Fatalf("turn1 effort = %q, want max (variant)", a.Effort)
 	}
+	// One opencode message is a whole turn, so created is its START. The mirror footer
+	// wants the end — without EndTS a 7s tool-running turn is stamped 7s early (and a
+	// long one, hours early).
+	if want := time.UnixMilli(2000).UTC().Format(time.RFC3339); a.TS != want {
+		t.Fatalf("turn1 TS = %q, want %q (time.created)", a.TS, want)
+	}
+	if want := time.UnixMilli(9000).UTC().Format(time.RFC3339); a.EndTS != want {
+		t.Fatalf("turn1 EndTS = %q, want %q (time.completed)", a.EndTS, want)
+	}
 	if a.InTok != 100 || a.OutTok != 20 || a.CacheRead != 80 || a.CacheCreate != 5 {
 		t.Fatalf("turn1 usage = %d/%d/%d/%d, want 100/20/80/5", a.InTok, a.OutTok, a.CacheRead, a.CacheCreate)
 	}
@@ -116,6 +125,27 @@ func TestOpencodeReadSession(t *testing.T) {
 	// m3 dropped but consumed a message ordinal — the assistant turn keeps ordinal 1.
 	if a.Idx != 1 {
 		t.Fatalf("turn1 idx = %d, want 1", a.Idx)
+	}
+}
+
+// A turn still running has no time.completed. EndTS must stay empty rather than take
+// some stand-in, so the Console can fall back to the start instead of showing a time
+// the turn has not reached yet.
+func TestOpencodeEndTSOmittedWhileRunning(t *testing.T) {
+	db := newOpencodeTestDB(t)
+	ses := "ses_run"
+	insMsg(t, db, "m1", ses, 1000, `{"role":"assistant","modelID":"m","time":{"created":1000}}`)
+	insPart(t, db, "p1", "m1", ses, 1, `{"type":"text","text":"working"}`)
+
+	turns := readSession(db, ses)
+	if len(turns) != 1 {
+		t.Fatalf("want 1 turn, got %d", len(turns))
+	}
+	if turns[0].TS == "" {
+		t.Fatalf("TS empty, want time.created")
+	}
+	if turns[0].EndTS != "" {
+		t.Fatalf("EndTS = %q, want empty while the turn runs", turns[0].EndTS)
 	}
 }
 

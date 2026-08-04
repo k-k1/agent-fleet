@@ -1862,6 +1862,7 @@ export const ja = {
   "mirror.from_chat_title": "チャット（{provider} など）から返信で送られた入力です。コンソールで入力したものではありません。",
   "mirror.effort_hint": "推論の努力度（codex reasoning_effort / opencode variant）",
   "mirror.token_hint": "入力(文脈)↑ / 出力↓ トークン",
+  "mirror.time_span_hint": "開始 {start} — 完了 {end}",
   // DelegationCard
   "mirror.task.requested": "依頼済み",
   "mirror.task.running": "進行中",

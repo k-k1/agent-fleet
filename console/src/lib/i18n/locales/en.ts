@@ -1832,6 +1832,7 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.from_chat_title": "Sent as a reply from chat ({provider}) — not typed at the console.",
   "mirror.effort_hint": "Reasoning effort (codex reasoning_effort / opencode variant)",
   "mirror.token_hint": "Input (context) ↑ / output ↓ tokens",
+  "mirror.time_span_hint": "Started {start} — finished {end}",
   "mirror.task.requested": "Requested",
   "mirror.task.running": "Running",
   "mirror.task.completed": "Completed",
