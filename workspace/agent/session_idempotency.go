@@ -116,7 +116,7 @@ func createIdempotencyKey(r *createReq) string {
 	}
 	h := sha256.New()
 	for _, f := range []string{
-		r.ReportTo, r.Dir, r.Kind, r.Model, r.Effort, r.Mode, r.Driver,
+		r.ReportTo, r.Dir, r.Subdir, r.Kind, r.Model, r.Effort, r.Mode, r.Driver,
 		r.InitialPrompt, r.Branch, r.NewBranch, r.RemoteURL, r.RepoName, r.Folder, r.Title,
 		strconv.FormatBool(r.Worktree), strconv.FormatBool(r.UseExisting),
 	} {

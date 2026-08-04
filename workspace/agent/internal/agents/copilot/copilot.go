@@ -55,7 +55,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 		}
 		sids.Write(session.UUID(m.Dir, m.Name), sid)
 	}
-	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Effort, m.Mode, sid), Cwd: m.Dir}, nil
+	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Effort, m.Mode, sid), Cwd: m.CWD()}, nil
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {

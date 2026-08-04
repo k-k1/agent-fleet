@@ -147,7 +147,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
               : !s.alive
                 ? (ex ? ex.hint + "\n" : "") +
                   tr("srow.stopped_hint")
-                : (s.dir || "") + tr("srow.open_pane_suffix")) +
+                : (s.dir || "") + (s.subdir ? "/" + s.subdir : "") + tr("srow.open_pane_suffix")) +
           `\n${kindLabel(s.kind)} · ${st.text}\nID: ${s.name}`
         }
         aria-disabled={inert || undefined}

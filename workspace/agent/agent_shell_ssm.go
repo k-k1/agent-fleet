@@ -16,7 +16,7 @@ func (shellAgent) Caps() agents.Caps { return agents.Caps{} }
 
 func (shellAgent) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.LaunchPlan, error) {
 	// A shell falls back to home if its recorded dir is gone.
-	cwd := m.Dir
+	cwd := m.CWD()
 	if !session.DirExists(cwd) {
 		cwd = homeDir()
 	}

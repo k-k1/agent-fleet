@@ -253,6 +253,10 @@ type sessionWire struct {
 	// 再開後の次ポーリングで正しい driver に戻る。
 	Driver string `json:"driver,omitempty"`
 	Dir    string `json:"dir"`
+	// Subdir: the folder BENEATH Dir the agent actually runs in ("" = Dir itself).
+	// Same relay caveat as the fields around it — absent here, the Console never sees
+	// which folder a session was launched in. DB ミラーには列が無いので停止中は載らない。
+	Subdir string `json:"subdir,omitempty"`
 	Repo   string `json:"repo"`
 	// Title: the user-supplied display title. Console の displayName は title を最優先
 	// で見るが、この struct に無かった頃は中継で silently drop されていた（claude 系は

@@ -92,13 +92,14 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	if err != nil {
 		return nil, err
 	}
-	ocSid := session.UUID(m.Dir, m.Name)
+	ocSid := session.UUID(m.Dir, m.Name) // identity: the working copy, never the subdir
+	cwd := m.CWD()                       // where the session runs (Dir, or a chosen subdir)
 	handlesMu.Lock()
 	h := handles[m.Name]
 	if h == nil {
 		h = &threadHandle{
 			name:   m.Name,
-			dir:    m.Dir,
+			dir:    cwd,
 			ocSid:  ocSid,
 			events: make(chan agents.Event, 64),
 		}
@@ -130,14 +131,14 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	if ses == "" {
 		ses = sids.Read(ocSid)
 	}
-	if ses != "" && !serveSessionExists(addr, ses, m.Dir) {
+	if ses != "" && !serveSessionExists(addr, ses, cwd) {
 		ses = "" // pruned/imported-away conversation — start fresh
 	}
 	if ses == "" {
 		if m.ForkFrom != "" {
-			ses, err = serveForkSession(addr, m.ForkFrom, m.Dir)
+			ses, err = serveForkSession(addr, m.ForkFrom, cwd)
 		} else {
-			ses, err = serveCreateSession(addr, m.Dir, session.Display(m))
+			ses, err = serveCreateSession(addr, cwd, session.Display(m))
 		}
 		if err != nil {
 			return nil, err
