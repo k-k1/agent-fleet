@@ -85,7 +85,19 @@ network namespace. Anything outside your own working directory belongs to someon
   `prune` them, never delete them — worktree lifecycle (including cleanup and the shelf) is the
   Console's job.
 - Worktrees share one object store, so `git fetch`, `git gc`, tag and branch writes are visible
-  to everyone, and a branch can be checked out in only one worktree at a time.
+  to everyone, and **a branch can be checked out in only one worktree at a time** — the base
+  branch (`main` / `develop`) is normally held by the parent clone, so you cannot check it out
+  here. That is a guardrail, not an obstacle to route around.
+- **Integrate in the right direction**: bring the base *into* your worktree with
+  `git fetch origin && git merge origin/<base>` (the Console's worktree row has a Fast-Forward
+  item that does parent → worktree). Every way of moving the base branch from here is refused
+  by git anyway — `checkout`, `branch -f`, `push . HEAD:<base>`, `fetch origin <base>:<base>`
+  all fail with "checked out at <path>" (measured). **Never use `--ignore-other-worktrees`**:
+  it is the one thing that succeeds, and then two working copies share one branch ref and
+  silently revert each other's commits.
+- **To land your work, push your branch** and let the user merge it (PR, or from the Console).
+  Merging into the parent clone locally means editing another session's checkout, and a merge
+  conflict there leaves that session sitting in a broken tree it never asked for.
 - **Your directory name is not your session name** — a worktree keeps the slug of whichever
   session created it. Use `$AF_SESSION_NAME`.
 
