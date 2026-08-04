@@ -713,6 +713,7 @@ var mcpStdioWriteTools = []map[string]any{
 				"worktree":       map[string]any{"type": "boolean", "description": "dir から新しい独立 worktree を作成して起動する（任意、既定 false）。"},
 				"branch":         map[string]any{"type": "string", "description": "worktree の基点ブランチ（任意、省略時は現在の HEAD）。"},
 				"new_branch":     map[string]any{"type": "string", "description": "worktree に作る新規ブランチ名（任意、省略時は仮ブランチを自動生成）。"},
+				"subdir":         map[string]any{"type": "string", "description": "作業ディレクトリ内の相対パス（任意）。エージェントをその配下で起動する（例: console／apps/web）。worktree=true のときは新しく作られた worktree 内の相対パスとして解釈される。存在しないパスは拒否される。"},
 			},
 		},
 	},
@@ -1083,6 +1084,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		Worktree      bool   `json:"worktree"`
 		Branch        string `json:"branch"`
 		NewBranch     string `json:"new_branch"`
+		Subdir        string `json:"subdir"`
 		// answer_session_question args: 質問順の 1-based 選択肢番号。
 		Choices []int `json:"choices"`
 		// respond_session_plan args
@@ -1387,9 +1389,10 @@ func mcpStdioCall(req mcpReq) []byte {
 		// Deterministic idempotency key (conversation + launch intent): an LLM re-issuing
 		// the same create_session reproduces it, so a timed-out-then-retried create
 		// collapses onto the first session instead of spawning a duplicate.
-		idemKey := createSessionKey(mcpConvID, a.Dir, a.Kind, a.Model, a.InitialPrompt, a.Worktree, a.Branch, a.NewBranch)
+		idemKey := createSessionKey(mcpConvID, a.Dir, a.Subdir, a.Kind, a.Model, a.InitialPrompt, a.Worktree, a.Branch, a.NewBranch)
 		reqBody, _ := json.Marshal(map[string]any{
 			"dir":             a.Dir,
+			"subdir":          a.Subdir,
 			"title":           a.Title,
 			"kind":            a.Kind,
 			"model":           a.Model,
@@ -2232,9 +2235,9 @@ func agentDoTimeoutHeaders(method, path string, body []byte, timeout time.Durati
 // re-issuing create_session with the same arguments reproduces it — that is what lets a
 // timed-out-then-retried create collapse onto the first session (see session_idempotency.go).
 // Scoped by the conversation id so unrelated conversations never collide.
-func createSessionKey(conv, dir, kind, model, prompt string, worktree bool, branch, newBranch string) string {
+func createSessionKey(conv, dir, subdir, kind, model, prompt string, worktree bool, branch, newBranch string) string {
 	h := sha256.New()
-	for _, f := range []string{conv, dir, kind, model, prompt, strconv.FormatBool(worktree), branch, newBranch} {
+	for _, f := range []string{conv, dir, subdir, kind, model, prompt, strconv.FormatBool(worktree), branch, newBranch} {
 		h.Write([]byte(f))
 		h.Write([]byte{0})
 	}

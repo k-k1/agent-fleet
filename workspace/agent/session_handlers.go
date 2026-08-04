@@ -183,6 +183,12 @@ type createReq struct {
 	Title string `json:"title"`
 	Color string `json:"color"` // terminal background hue (hex); SSM host color, else empty
 	Dir   string `json:"dir"`
+	// Subdir starts the agent in a folder BENEATH the resolved working copy
+	// (slash-relative, e.g. "console/src"). Applied last, so it composes with every
+	// way Dir gets resolved — plain dir, clone-then-start, worktree-then-start (where
+	// it points inside the FRESH worktree). The session's Dir keeps recording the
+	// working copy itself; only the launched process starts deeper (Meta.CWD).
+	Subdir string `json:"subdir"`
 	// IdempotencyKey dedupes a retried/concurrent create so a client that times out
 	// (but whose request the backend actually completed) can't spawn a duplicate on
 	// retry. The stdio MCP create_session tool derives it deterministically from the
@@ -531,6 +537,20 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_dir", "dir does not exist: "+req.Dir)
 		return
 	}
+	// Subdir (optional): the CWD narrows to a folder beneath the resolved working copy.
+	// Validated AFTER Dir so a worktree launch checks the path inside the fresh worktree
+	// — the parent may well have a folder the new branch doesn't (or vice versa).
+	subdir, subdirOK := session.CleanSubdir(req.Subdir)
+	if !subdirOK {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_subdir",
+			"subdir must be a relative path inside the working copy: "+req.Subdir)
+		return
+	}
+	if subdir != "" && !session.DirExists(filepath.Join(req.Dir, filepath.FromSlash(subdir))) {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_subdir",
+			"subdir does not exist: "+filepath.Join(req.Dir, filepath.FromSlash(subdir)))
+		return
+	}
 
 	// Identity is a freshly allocated random slug — NOT the client's name. It (and the
 	// sid it derives) can't collide with an archived/pruned session's jsonl, so a new
@@ -564,7 +584,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	origin, originConv := createOrigin(&req)
 	meta := session.Meta{
-		Name: name, Dir: req.Dir, Model: req.Model, Effort: req.Effort, Mode: req.Mode, Kind: kind, Driver: driver, Title: title, Color: req.Color, Label: label,
+		Name: name, Dir: req.Dir, Subdir: subdir, Model: req.Model, Effort: req.Effort, Mode: req.Mode, Kind: kind, Driver: driver, Title: title, Color: req.Color, Label: label,
 		Repo: filepath.Base(req.Dir), Branch: gitCurrentBranch(req.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: ssm,
 		Origin: origin, OriginConv: originConv,
@@ -682,7 +702,7 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 	// Driver は継承する — managed セッションの分岐は managed のまま（runtime の
 	// fork API で複製、docs/27 P2）。tui は従来の CLI fork 起動。
 	meta := session.Meta{
-		Name: forkName, Dir: src.Dir, Model: src.Model, Effort: src.Effort, Mode: src.Mode,
+		Name: forkName, Dir: src.Dir, Subdir: src.Subdir, Model: src.Model, Effort: src.Effort, Mode: src.Mode,
 		Kind: src.Kind, Driver: src.Driver, Title: title,
 		Repo:      filepath.Base(src.Dir),
 		Branch:    gitCurrentBranch(src.Dir),
@@ -934,7 +954,7 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	// "re-copy the fork source". Driver は引き継ぐ（managed で作った枠は managed の
 	// まま作り直す — docs/27 P2）。
 	newMeta := session.Meta{
-		Name: allocSessionName(m.Dir), Dir: m.Dir, Model: m.Model, Effort: m.Effort, Mode: m.Mode,
+		Name: allocSessionName(m.Dir), Dir: m.Dir, Subdir: m.Subdir, Model: m.Model, Effort: m.Effort, Mode: m.Mode,
 		Kind: m.Kind, Driver: m.Driver,
 		Title: m.Title, Color: m.Color, Repo: m.Repo, Branch: gitCurrentBranch(m.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: m.SSM,

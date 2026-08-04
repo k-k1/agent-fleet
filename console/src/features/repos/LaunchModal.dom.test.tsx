@@ -16,10 +16,19 @@ interface Branch {
 }
 
 let served: Branch[] = [];
-const apiMock = vi.fn(async () => ({ branches: served }));
+// Folder listing for the 作業ディレクトリ picker (api/fs/tree). Keyed by the browsed
+// home-relative path so a click into a folder can serve that folder's children.
+let tree: Record<string, string[]> = {};
+const apiMock = vi.fn(async (url: string) => {
+  if (url.includes("fs/tree")) {
+    const path = decodeURIComponent(new URLSearchParams(url.split("?")[1]).get("path") || "");
+    return { entries: (tree[path] || []).map((name) => ({ name, type: "dir" })) };
+  }
+  return { branches: served };
+});
 
 vi.mock("../../core/api/client.ts", () => ({
-  api: (...a: unknown[]) => apiMock(...(a as [])),
+  api: (...a: unknown[]) => apiMock(...(a as [string])),
   repoPromptTemplates: async () => ({ groups: [] }),
   errText: (e: { message?: string }) => e?.message ?? "",
   isTransientErr: () => false,
@@ -62,6 +71,8 @@ async function click(el: Element): Promise<void> {
 const launchedWith = (): LaunchOpts => onLaunch.mock.calls[0][0] as LaunchOpts;
 
 beforeEach(() => {
+  localStorage.clear();
+  tree = { "repos/app": ["console", "workspace"], "repos/app/console": ["src"] };
   served = [
     { name: "main", unix: 3, current: true },
     { name: "develop", unix: 2 },
@@ -132,6 +143,30 @@ describe("LaunchModal branch mode", () => {
     expect(rowFor("busy").textContent).toContain("app@busy");
     await click(rowFor("busy"));
     expect(byText("Start in a worktree").disabled).toBe(true); // nothing got picked
+  });
+
+  // 作業ディレクトリ（Meta.Subdir）: which folder INSIDE the working copy the agent
+  // starts in. Getting it wrong means the agent runs in the wrong package of a monorepo,
+  // which looks like a working launch until it edits the wrong files.
+  it("launches in the folder picked from the tree", async () => {
+    await render();
+    await click(byText("Browse"));
+    await click([...document.querySelectorAll(".dirpick-row")].find((b) => b.textContent?.includes("console"))!);
+    await click([...document.querySelectorAll(".dirpick-row")].find((b) => b.textContent?.includes("src"))!);
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().subdir).toBe("console/src");
+  });
+
+  it("defaults to the working copy root and remembers the last folder per repo", async () => {
+    await render();
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().subdir).toBe(""); // untouched => the repo root
+
+    act(() => root?.unmount());
+    localStorage.setItem("af.repo-subdir.app", "console");
+    root = createRoot(host);
+    await render();
+    expect(document.querySelector<HTMLInputElement>(".subdirpick-input")!.value).toBe("console");
   });
 
   it("offers to use the colliding branch when a LOCAL name is taken", async () => {

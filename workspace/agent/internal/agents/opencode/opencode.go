@@ -91,7 +91,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	if resume == "" && m.ForkFrom != "" {
 		resume, fork = m.ForkFrom, true
 	}
-	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Mode, resume, fork), Cwd: m.Dir, Env: envs}, nil
+	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Mode, resume, fork), Cwd: m.CWD(), Env: envs}, nil
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
