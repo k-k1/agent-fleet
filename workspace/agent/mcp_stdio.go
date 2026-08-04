@@ -82,6 +82,11 @@ var mcpWriteEnabled bool
 // link is tool-side plumbing, never something the model has to remember.
 var mcpConvID string
 
+// mcpSourceSession is the Agent Fleet slot that owns a session-side MCP process.
+// It is deliberately not a tool argument: native conversation ids such as
+// CLAUDE_CODE_SESSION_ID are provider-specific and must never decide AF ownership.
+var mcpSourceSession string
+
 // mcpSelfReportOnly serves the SESSION-side server (docs/51 Phase 3 §自己申告
 // ファストパス): the same stdio loop, with af_report as its base tool.
 // このモードは builtin「af」としてCLIを持つ全 kind のセッション設定へ materialize される
@@ -104,7 +109,7 @@ var mcpSessionChromiumEnabled bool
 // --self-report with --chromium-attach adds the narrowly scoped Chromium Attach View
 // tools without granting any other read/write tool (docs/53 §53.8).
 func runMCPStdio(args []string) {
-	mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled, mcpConvID = false, false, false, ""
+	mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled, mcpConvID, mcpSourceSession = false, false, false, "", os.Getenv("AF_SESSION_NAME")
 	chromiumAttachRequested := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -351,11 +356,10 @@ var mcpStdioSelfReportTools = []map[string]any{
 		"inputSchema": map[string]any{
 			"type": "object", "additionalProperties": false,
 			"properties": map[string]any{
-				"session": map[string]any{"type": "string", "description": "自分のセッション名"},
-				"prompt":  map[string]any{"type": "string", "minLength": 1, "description": "次セッションの最初のユーザー指示として渡す引き継ぎ本文"},
-				"title":   map[string]any{"type": "string", "description": "新規セッションの表示名の提案（任意）。利用者は起動前に編集できる"},
+				"prompt": map[string]any{"type": "string", "minLength": 1, "description": "次セッションの最初のユーザー指示として渡す引き継ぎ本文"},
+				"title":  map[string]any{"type": "string", "minLength": 1, "description": "新規セッションの表示名。利用者は起動前に編集できる"},
 			},
-			"required": []string{"session", "prompt"},
+			"required": []string{"title", "prompt"},
 		},
 	},
 	{
@@ -1130,14 +1134,18 @@ func mcpStdioCall(req mcpReq) []byte {
 		if !mcpSelfReportOnly {
 			return mcpToolErr(req.ID, "propose_session_handoff はセッション側の Agent Fleet サーバー専用です")
 		}
-		if !session.ValidName(a.Session) {
-			return mcpToolErr(req.ID, "session（自分のセッション名）が必要です")
-		}
 		if strings.TrimSpace(a.Prompt) == "" {
 			return mcpToolErr(req.ID, "prompt（次セッションへの引き継ぎ本文）が必要です")
 		}
+		if strings.TrimSpace(a.Title) == "" {
+			return mcpToolErr(req.ID, "title（新規セッションの表示名）が必要です")
+		}
+		name, err := mcpOwningSession()
+		if err != nil {
+			return mcpToolErr(req.ID, err.Error())
+		}
 		body, _ := json.Marshal(map[string]string{"prompt": a.Prompt, "title": a.Title})
-		if _, err := agentDo(http.MethodPost, "/sessions/"+url.PathEscape(a.Session)+"/handoff-proposal", body); err != nil {
+		if _, err := agentDo(http.MethodPost, "/sessions/"+url.PathEscape(name)+"/handoff-proposal", body); err != nil {
 			return mcpToolErr(req.ID, "引き継ぎ提案の保存に失敗しました: "+err.Error())
 		}
 		return mcpTextResult(req.ID, "引き継ぎ案を利用者へ提示しました。利用者が内容、次のエージェント、モデルを確認してから新規セッションを起動します。")
@@ -1704,6 +1712,30 @@ func mcpStdioCall(req mcpReq) []byte {
 	return mcpResult(req.ID, map[string]any{
 		"content": []any{map[string]any{"type": "text", "text": body}},
 	})
+}
+
+func mcpOwningSession() (string, error) {
+	if session.ValidName(mcpSourceSession) {
+		return mcpSourceSession, nil
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("引き継ぎ元セッションを特定できません: 作業ディレクトリを取得できません")
+	}
+	var found string
+	for _, m := range session.ListMetas() {
+		if m.Archived || m.Dir != cwd {
+			continue
+		}
+		if found != "" {
+			return "", fmt.Errorf("引き継ぎ元セッションを特定できません: 同じ作業フォルダに複数のセッションがあります")
+		}
+		found = m.Name
+	}
+	if !session.ValidName(found) {
+		return "", fmt.Errorf("引き継ぎ元セッションを特定できません: AF_SESSION_NAME がありません")
+	}
+	return found, nil
 }
 
 func isChromiumWriteTool(name string) bool {

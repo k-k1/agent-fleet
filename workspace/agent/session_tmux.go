@@ -30,6 +30,9 @@ func startSessionTmux(m session.Meta, ssmForce bool) error {
 	if err != nil {
 		return err
 	}
+	// Session-side MCP tools need a provider-neutral owner identity. Native IDs differ
+	// across CLIs, while this slug is stable for every Agent Fleet session.
+	plan.Env = append(plan.Env, "AF_SESSION_NAME="+m.Name)
 	// Inject the current toolchain selection (JAVA_HOME / node / TZ) so a Console
 	// change applies to this freshly-launched session without a Stop→Start. tmux
 	// runs the pane command via /bin/sh -c, so the export prefix takes effect.

@@ -39,7 +39,7 @@ export function HandoffProposal({ session, sessionMeta }: { session: string; ses
 
   if (!proposal) return null;
   const save = async () => {
-    if (!draft.trim() || busy) return;
+    if (!draft.trim() || !title.trim() || busy) return;
     setBusy(true);
     const d = await apiJSON(`api/sessions/${encodeURIComponent(session)}/handoff-proposal`, "POST", { prompt: draft, title });
     setBusy(false);
@@ -77,7 +77,7 @@ export function HandoffProposal({ session, sessionMeta }: { session: string; ses
       </> : <><strong className="mirror-handoff-session-title">{proposal.title || tr("mirror.handoff_title_auto")}</strong><pre className="mirror-handoff-prompt">{proposal.prompt}</pre></>}
       <div className="mirror-handoff-actions">
         {editing ? <>
-          <button type="button" className="ghost xs" disabled={busy || !draft.trim()} onClick={() => void save()}>{tr("common.save")}</button>
+          <button type="button" className="ghost xs" disabled={busy || !draft.trim() || !title.trim()} onClick={() => void save()}>{tr("common.save")}</button>
           <button type="button" className="ghost xs" disabled={busy} onClick={() => { setDraft(proposal.prompt); setTitle(proposal.title || ""); setEditing(false); }}>{tr("common.cancel")}</button>
         </> : <button type="button" className="ghost xs" disabled={busy} onClick={() => setEditing(true)}><Icon name="edit" /> {tr("chat.plan.edit")}</button>}
         <button type="button" className="ghost xs" disabled={busy} onClick={() => void discard()}><Icon name="trash" /> {tr("mirror.handoff_discard")}</button>
