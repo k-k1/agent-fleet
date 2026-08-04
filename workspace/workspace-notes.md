@@ -19,10 +19,13 @@ from the latest image. The rule is simple:
   `claude` install, nvm node, `pip --user`), `~/.config` (`~/.config/agent-fleet`
   encrypted connections, `~/.config/opencode`), `~/.claude`/`~/.codex`/`~/.local/share/opencode`
   (agent auth/state), `~/.ssh`/`~/.git-credentials`/`~/.gitconfig`, `~/.cache/ms-playwright`,
-  `~/.gradle`, and anything you put in `~` outside `~/repos`. Login and connections stay intact.
-- **The container filesystem outside home is ephemeral** — `apt install`ed packages and
-  anything written under `/`, `/usr`, `/opt`, `/tmp` etc. revert to the image on recreate.
-  Persist tools in your home (e.g. under `~/.local`) if you want them to survive.
+  `~/.gradle`, the package caches (`~/.npm`, `~/go/pkg/mod`, `~/.cache/go-build`, `~/.cache/uv`,
+  `~/.m2`, `~/.cargo`), and anything you put in `~` outside `~/repos`. Login and connections
+  stay intact — and a *re-install* after a recreate is cheap because the caches are still warm.
+- **The container filesystem outside home is ephemeral** — anything written under `/`, `/usr`,
+  `/opt`, `/tmp` etc. reverts to the image on recreate. Persist tools in your home (e.g. under
+  `~/.local`) if you want them to survive. (You cannot `apt install` in the first place — no
+  root; see "What is not available".)
 - So the only data loss risk from a recreate is `~/repos`: **commit / push before recreating.**
 
 **Claude's memory / config persists too, and nothing deletes it.** Claude state
@@ -64,6 +67,27 @@ Stay on whatever branch the session started on. Commit directly to it.
   on that current branch; there's no need to create another.
 - Isolation between parallel sessions is the Console's job (worktrees), not something
   you should improvise with ad-hoc branches.
+
+## You share one container with your other sessions
+Every session you run lives in the **same** container: one filesystem, one process table, one
+network namespace. Anything outside your own working directory belongs to someone else.
+- **Never kill by pattern.** `pkill -f node`, `pkill -f claude`, `killall java` take down other
+  sessions' agents and CLIs. Kill only PIDs you started yourself (`ps -o pid,ppid,args -p <pid>`
+  to confirm before you do).
+- **Ports are shared.** A port already in use is usually another session's server, not a stale
+  process of yours — pick a different one. Read back the port the server actually printed (Vite
+  silently moves 5173 → 5174, and then your "open 5173" instruction is wrong). `ss`, `lsof` and
+  `netstat` are **not installed**; probe with
+  `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:<port>/`.
+- **Other worktrees are other sessions' desks.** A session normally gets its own
+  `~/repos/<repo>@wip-<slug>`; the parent clone `~/repos/<repo>` and the other worktrees are in
+  use right now. Never `git checkout`/`switch`/`stash` there, never `git worktree remove` or
+  `prune` them, never delete them — worktree lifecycle (including cleanup and the shelf) is the
+  Console's job.
+- Worktrees share one object store, so `git fetch`, `git gc`, tag and branch writes are visible
+  to everyone, and a branch can be checked out in only one worktree at a time.
+- **Your directory name is not your session name** — a worktree keeps the slug of whichever
+  session created it. Use `$AF_SESSION_NAME`.
 
 ## Your container's resources (memory / CPU) — how to check
 Your memory and CPU are per-workspace limits (set by the deployment/tenant), not a
@@ -110,6 +134,54 @@ The shared host is memory-constrained; build tools are the main cause of OOM tro
   - Run one heavy build at a time; do not build several projects in parallel.
 - For long-running servers, open the port from the workspace action bar's "Preview" control instead of leaving ad-hoc processes up.
 
+## Dependencies in a worktree (the per-language rules that actually differ)
+`~/repos` is wiped on recreate but the package caches in `$HOME` survive, so *re-installing* is
+cheap while *duplicating* an install is not: N worktrees of one repo means N copies of every
+per-project dependency tree, unless the ecosystem already shares one.
+- **Check the disk before a big install** — `df -h ~`. The volume is shared with everything
+  else you do, and caches grow without bound (`~/.npm` and `~/.cache` reach tens of GB). Prune
+  deliberately: `npm cache clean --force`, `uv cache prune`, `go clean -cache -modcache`
+  (⚠️ shared — not while another session is building).
+- **Node — the expensive one.** A `node_modules` is easily 300 MB+ per worktree. When this
+  worktree's lockfile is identical to the parent clone's, share the parent's tree:
+  `cmp -s package-lock.json ~/repos/<repo>/<pkg>/package-lock.json && ln -s ~/repos/<repo>/<pkg>/node_modules node_modules`.
+  Tests and bundlers resolve through the link (measured with vitest and a Vite build). Two
+  traps, both measured:
+  - **`npm ci` with the link in place empties the parent's `node_modules`** and breaks every
+    other session using it. Remove the link *first*: `rm -rf node_modules` — **no trailing
+    slash**, because `rm -rf node_modules/` deletes through the link too.
+  - `npm install <pkg>` silently replaces the link with a real 300 MB tree (harmless, but no
+    longer shared). If the lockfiles differ, don't link — `npm ci --prefer-offline` is fast
+    against the warm cache.
+- **Go — nothing to do.** `~/go/pkg/mod` and `~/.cache/go-build` are global, so worktrees share
+  them automatically. Memory is the constraint instead: `go test ./...` compiles and runs
+  packages in parallel — use `go test -p 2 ./...` when memory is tight. `GOTOOLCHAIN=auto`
+  downloads whatever toolchain a `go.mod` pins, into the persisted `~/go`.
+- **Python.** The system interpreter is PEP 668 externally-managed, so a bare `pip install`
+  quietly becomes a `--user` install into `~/.local` — persisted, and shared by every project,
+  which is rarely what you want. Prefer a per-worktree venv with the baked `uv`
+  (`uv venv && uv pip install -r requirements.txt`); its cache hardlinks into the venv, so the
+  second worktree costs almost nothing. **Never copy or symlink a `.venv`** between directories
+  — it hardcodes absolute paths.
+- **JVM.** `~/.gradle` and `~/.m2` are already shared across worktrees. Note that
+  `./gradlew --stop` stops daemons container-wide, including one another session is using — do
+  it when you finish, not while someone else builds. Heap rules are in "Build memory" above.
+- **Rust and anything else not baked in.** `rustup` installs into `~/.cargo` (persists) and the
+  registry cache is then shared for free. Keep `target/` per worktree and `cargo clean` when
+  done: a shared `CARGO_TARGET_DIR` makes parallel sessions block on cargo's build lock.
+
+## What is not available (check before you plan around it)
+- **No root, no `sudo`** — you are `dev` (uid 1000). `apt install` is simply not possible.
+  Install into your home instead (`~/.local`, `pip install --user`, `uv tool install`, `npm i -g`
+  through the home-volume node); those persist. Anything that genuinely must be in the image is
+  a request to the operator, not something you can work around.
+- **No Docker / Podman**, and no database servers (`psql`, `sqlite3`, `redis-cli` are absent).
+  Testcontainers, `docker compose` fixtures and "just start a Postgres" do not work here. Run
+  such tests against a service the user provides, or skip them — and say plainly that you did.
+- Present and usable: `gcc`/`g++`/`make`/`pkg-config` (so cgo, node-gyp and source-built wheels
+  compile), `git`, `gh` (already authenticated — see below), `go`, `python3` + `uv`, node via
+  nvm, `chromium`, `rg`, `fd`, `jq`.
+
 ## Headless browser (UI verification / screenshots)
 The fixed-version `chromium` binary, its runtime libraries, and fonts (DejaVu + Noto
 CJK — Japanese renders correctly) are baked into the image. Use `chromium --headless`
@@ -118,6 +190,12 @@ browser download is required. Committed E2E belongs in `console-e2e/`
 (`@playwright/test`), not `console/`.
 - Run headless and short-lived; close the browser when done (memory-constrained host).
   Screenshots and WebGL (SwiftShader) work; there is no display for headful runs.
+- **Headless reports a coarse pointer**: `(hover: hover)` and `(pointer: fine)` are false by
+  default, so desktop hover styles never apply and you can "verify" the touch layout by
+  accident. Force desktop input when that matters:
+  `--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4`
+- dbus / GPU errors on stderr are normal noise. Judge success by the exit status and the file
+  that was written, not by a clean stderr.
 
 ## Handing an owner-controlled Chromium page to the user
 When automation inside the container needs a human to inspect or operate its existing
@@ -193,6 +271,48 @@ Verification honesty:
 - A managed session can continue the same conversation after Agent/runtime restart
   through reconciliation, and Codex/OpenCode can switch execution method while idle.
   Do not infer that a missing terminal means the session stopped or lost its history.
+
+## Talking to Agent Fleet from inside a session (the af MCP tools)
+Your own session name is in `$AF_SESSION_NAME` — the same value an injected instruction carries
+in its `[agent-fleet]` note. Don't infer it from a directory name.
+- **`af_report(session=…)`** — call it once, when an instruction that carried the
+  `[agent-fleet]` note is fully done and nothing is left. Not when you stop to ask a question,
+  not when work continues. Forgetting it is harmless (completion is detected anyway); reporting
+  early is not, so when in doubt don't call it.
+- **`propose_session_handoff(title, prompt)`** — when your context is nearly spent, or the work
+  splits cleanly, hand the next session a prompt it can execute as-is: what is unfinished, what
+  you changed, the exact next steps. It **starts nothing** — the user reviews and edits it in
+  the Console and picks the agent and model. You cannot create, stop or message other sessions;
+  this proposal is the handoff channel. Commit and push before proposing one: the next session
+  may run in a different worktree.
+- **Chromium attach tools** — see the section above.
+- **Adding an MCP server is a Console action** (Settings → MCP), not a config edit. Agent Fleet
+  owns its entries in `~/.claude.json`, `~/.codex/config.toml`, opencode's config and so on, and
+  rewrites them; servers you hand-add there get wiped. The same goes for the policy files it
+  seeds — `~/.codex/AGENTS.md` and `~/.config/opencode/AGENTS.md` are re-copied from the image
+  at every container start. Durable project instructions belong in the repository's own
+  `AGENTS.md` / `CLAUDE.md`; durable *environment* instructions are this file, which lives in
+  the agent-fleet repo at `workspace/workspace-notes.md`.
+
+## Command-environment quirks that have burned sessions
+- **Don't assume the shell keeps its directory.** Agent harnesses reset the working directory
+  between tool calls, so `cd ../other-worktree && …` in one call followed by `git commit` in the
+  next commits to the wrong branch. Use absolute paths and `git -C <dir> …`.
+- **`GIT_EDITOR=true` and `GIT_TERMINAL_PROMPT=0` are set for you.** Always pass `-m`/`-F` (an
+  editor-driven commit would silently take an empty message), and expect credential failures to
+  fail fast rather than hang. Genuinely interactive commands (`gh auth login`, `rebase -i`) must
+  be run by the user in their own shell session.
+- **`gh` is pre-authenticated** through a wrapper that injects the token from the user's saved
+  connection on every call — use `gh` freely (CI runs, PRs, issues) and never run `gh auth
+  login`. Some other commands are shims too; when output looks impossible, check with
+  `type <cmd>` / `command -v <cmd>` and re-run the real binary.
+- **Never run `workspace-agent` bare "to see the usage"** — with no subcommand it *starts a
+  second Agent process* and touches live state. Only documented subcommands (`install-jdk`, …).
+- **`env` contains live secrets** (`AF_*` tokens and keys). Never paste its output into a
+  commit, a log, an issue, or an answer.
+- Long builds outrun tool-call timeouts. Run them in the background and poll, instead of
+  re-running a ten-minute build that looked "hung".
+- The clock is the workspace's local timezone (`date`), not UTC.
 
 ## Answering questions about this Workspace / environment
 The agent-fleet docs you are allowed to see are mounted **read-only** at
