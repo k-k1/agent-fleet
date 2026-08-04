@@ -24,6 +24,7 @@ import { BranchModal } from "./BranchModal.tsx";
 import { openRepoScm } from "../scm/open.ts";
 import { LaunchModal } from "./LaunchModal.tsx";
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
+import { parentSyncLabel } from "./parentSync.ts";
 import type { Repo } from "./store.ts";
 
 // Provider display: known SaaS hosts get a friendly label; unknown slugs show as-is.
@@ -35,16 +36,6 @@ const PROVIDER_LABEL: Record<string, string> = {
 const providerLabel = (p: string) => PROVIDER_LABEL[p] || p;
 
 type Integration = NonNullable<Repo["integration"]>;
-
-function integrationLabel(i: Integration): string {
-  switch (i.relation) {
-    case "same": return t("repo.sync.same");
-    case "contained": return t("repo.sync.contained");
-    case "unmerged": return t("repo.sync.unmerged", { n: i.worktreeUnique });
-    case "diverged": return t("repo.sync.diverged", { a: i.worktreeUnique, b: i.targetUnique });
-    case "unknown": return t("repo.sync.unknown");
-  }
-}
 
 function integrationTitle(i: Integration): string {
   const target = i.targetBranch || t("repo.parent_head");
@@ -215,7 +206,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                   className={`repo-chip integration ${r.integration.relation}`}
                   title={integrationTitle(r.integration)}
                 >
-                  {integrationLabel(r.integration)}
+                  {parentSyncLabel(r.integration)}
                 </span>
               )}
               {/* origin との差分: behind のみ = クリーンに FF 可能 / 両方 = 分岐して
