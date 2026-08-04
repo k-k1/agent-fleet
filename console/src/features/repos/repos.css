@@ -555,6 +555,70 @@
    instead of dropping below the viewport. */
 
 /* Launch modal bits. */
+
+/* 折りたたみセクション（LaunchSection）— 場所 / 詳細。畳んでいる間は「見出し ＋
+   要約 ＋ 変更」の 1 行だけ。要約は必ず実際に起動される値なので、灰色でも省略記号で
+   切れてはいけない情報が入る（幅が足りないときは末尾を … で切る）。 */
+.launch-sec {
+  border: 1px solid var(--border2, var(--border));
+  border-radius: 6px;
+}
+.launch-sec-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.launch-sec-head:hover {
+  background: var(--btn-h);
+}
+.launch-sec.open .launch-sec-head {
+  border-radius: 6px 6px 0 0;
+  border-bottom: 1px solid var(--border2, var(--border));
+}
+.launch-sec-chev {
+  flex: none;
+  font-size: 12px;
+  opacity: 0.8;
+}
+.launch-sec-label {
+  flex: none;
+  font-size: 12px;
+  font-weight: 600;
+}
+.launch-sec-sum {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--dialog-muted, var(--muted));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 「既存ブランチ・未選択」など、そのままでは起動できない状態。 */
+.launch-sec-sum.warn {
+  color: var(--warn);
+}
+.launch-sec-edit {
+  flex: none;
+  font-size: 11px;
+  color: var(--dialog-muted, var(--muted));
+}
+.launch-sec-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+}
+
 .launch-conflict {
   display: flex;
   flex-direction: column;
@@ -706,7 +770,7 @@
   font-size: 12px;
   line-height: 1.5;
 }
-/* 場所を変更 — pinned left in the modal footer (hub back-navigation). */
+/* はじめる に戻る — pinned left in the modal footer (hub back-navigation). */
 .launch-back {
   margin-right: auto;
 }
