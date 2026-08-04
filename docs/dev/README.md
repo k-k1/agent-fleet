@@ -28,6 +28,7 @@ agent-fleet の**開発者向け**体系ドキュメント。読者は「新規�
 | [90-code-map.md](90-code-map.md) | コードマップ（**ファイルパス列挙を許す唯一のファイル**・陳腐化前提）|
 | [91-internal-git.md](91-internal-git.md) | 内部 git プロバイダ（bare + smart-HTTP + LFS）|
 | [92-tui-modal-driving.md](92-tui-modal-driving.md) | TUI モーダル駆動（AUQ ほか）の実測検証プレイブックと挙動記録 |
+| [93-worktree-dependencies.md](93-worktree-dependencies.md) | worktree の依存・ビルドキャッシュの言語別作法（実測。運用ガイドの根拠）|
 
 ## 執筆規範（dev/ 全ファイル共通）
 
