@@ -185,19 +185,9 @@
     width: 100%;
     max-height: calc(100dvh - 24px);
   }
-  /* Hide the scrollbar on touch devices; the desktop picker keeps it available
-     as an additional affordance alongside wheel scrolling. */
+  /* Phone: two columns of readable cards rather than four cramped ones. */
   .ui-seg.big {
-    scrollbar-width: none;
-    -webkit-overflow-scrolling: touch;
-  }
-  .ui-seg.big::-webkit-scrollbar {
-    display: none;
-  }
-  .ui-seg.big .seg-btn {
-    flex: 0 0 128px;
-    min-width: 128px;
-    scroll-snap-align: start;
+    grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
   }
 }
 
@@ -585,22 +575,29 @@
 [data-theme="light"] .ui-seg .seg-btn.active .seg-sub {
   opacity: 0.9;
 }
-.ui-seg.big .seg-btn {
-  /* A small set fills the row; a long provider list stays readable and scrolls
-     horizontally instead of compressing every card. */
-  flex: 1 0 128px;
-  min-width: 128px;
-  padding: 8px 10px;
-  font-size: 13px;
-}
+/* Agent picker (作業を始める / はじめる / 引き継ぎ). It used to be a horizontal
+   scroller: with 7 kinds registered the 4th card was clipped mid-dialog and the
+   rest were invisible unless you found the scrollbar (hence the wheel-to-scroll
+   hack that used to live in LaunchModal). A wrapping grid shows every kind at
+   once and needs no gesture. Separators are drawn per cell (inset shadow), NOT as
+   a 1px gap over a border-colored background: 7 kinds in a 4-column grid leave an
+   empty cell, and a colored container background would paint it as a solid block.
+   .ui-seg's overflow:hidden + radius clip the outermost lines. */
 .ui-seg.big {
-  justify-content: flex-start;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scroll-snap-type: x proximity;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
 }
 .ui-seg.big .seg-btn {
-  scroll-snap-align: start;
+  box-shadow: inset -1px 0 0 var(--btn-border), inset 0 -1px 0 var(--btn-border);
+  min-width: 0;
+  min-height: 56px;
+  padding: 8px 6px;
+  font-size: 12px;
+  line-height: 1.3;
+  /* Product names wrap ("GitHub Copilot") instead of overflowing a narrow cell. */
+  white-space: normal;
+  text-align: center;
+  overflow-wrap: anywhere;
 }
 /* Inactive only — the active button keeps its --sel-fg (else this equal-specificity rule,
    ordered later, overrode the selected color and put light text on the fill). */

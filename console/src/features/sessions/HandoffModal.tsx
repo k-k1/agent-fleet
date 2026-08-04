@@ -123,12 +123,12 @@ export function HandoffModal({ session, actions, onClose }: HandoffModalProps) {
                 <button
                   key={k}
                   type="button"
+                  title={tr(a.launchHintKey)}
                   className={"seg-btn kind-" + a.cssClass + (target === k ? " active" : "")}
                   onClick={() => setTarget(k)}
                 >
                   <Icon name={a.icon} className="seg-ic" />
                   {kindDisplayName(k)}
-                  <span className="seg-sub">{tr(a.launchHintKey)}</span>
                 </button>
               );
             })}

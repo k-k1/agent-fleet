@@ -3,8 +3,16 @@
 // a new isolated worktree (default; unnamed = a server-minted provisional branch
 // temp/<slug> in a wip-<slug> folder) or in-place on the current checkout.
 // Port of the old components/LaunchModal.
+//
+// レイアウト（2026-08 整理）: 11 個のフィールドが同格に並んでいたのをやめ、
+//   ①今回決めること（最初のプロンプト → エージェント → モデル）を常時表示
+//   ②場所（worktree / ブランチ / 基点）と ③詳細（実行方式・effort・開始モード・
+//     作業ディレクトリ・セッション名）は「要約 1 行 ＋ 展開」
+// の 3 層にしてある。既定値は repoLast がリポジトリ毎に覚えていて大半は正しいので、
+// 畳んだ側は "確認できれば十分" が成り立つ。要約は必ず**実際に起動される値**を出す
+// こと（畳んだせいで見えない設定で起動された、が起きないように）。
 import { useEffect, useRef, useState } from "react";
-import type { KeyboardEvent, ClipboardEvent, WheelEvent } from "react";
+import type { KeyboardEvent, ClipboardEvent, ReactNode } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -15,7 +23,10 @@ import { kindDisplayName } from "../../lib/sessionkind.ts";
 import { readRepoLast, resolveEffort, resolveModel, resolveStartMode, resolveSubdir } from "../../lib/repoLast.ts";
 import { readPromptHistory } from "../../lib/promptHistory.ts";
 import { agentLaunchDefault, useSettings } from "../../lib/settings.ts";
+import { useEffortOptions } from "../../lib/agentModels.ts";
 import { EffortPicker, ModelPicker } from "../../ui/ModelPicker.tsx";
+import { readLaunchOpen, writeLaunchOpen } from "./launchPrefs.ts";
+import type { LaunchSectionKey } from "./launchPrefs.ts";
 import { repoPromptTemplates } from "./api.ts";
 import type { PromptTemplateGroup } from "./api.ts";
 import { api } from "../../core/api/client.ts";
@@ -77,7 +88,7 @@ interface LaunchModalProps {
    * the in-place location note drops the worktree wording. */
   isSvn?: boolean;
   onClose: () => void;
-  /** Present when opened from the はじめる hub: 場所を変更 returns to it. */
+  /** Present when opened from the はじめる hub: はじめる に戻る returns to it. */
   onBack?: () => void;
   /** Seed for the first-prompt field (docs/21 UI刷新): the memo send modal launches a
    * new session with the composed memo text prefilled here. */
@@ -88,6 +99,35 @@ interface LaunchModalProps {
    * "start work on this branch" actions land here. */
   initialExistingBranch?: string;
   onLaunch: (opts: LaunchOpts) => Promise<LaunchResult>;
+}
+
+interface LaunchSectionProps {
+  label: string;
+  /** What this section will actually do, shown while it is collapsed. */
+  summary: string;
+  /** The summary reports something the launch can't proceed with (no branch picked). */
+  warn?: boolean;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}
+
+// A collapsed settings block: header row (label + resolved summary + 変更) and, when
+// open, the real controls. Body is unmounted while collapsed — every piece of state
+// it edits lives in LaunchModal, so nothing is lost by folding it away.
+function LaunchSection({ label, summary, warn = false, open, onToggle, children }: LaunchSectionProps) {
+  const tr = useT();
+  return (
+    <section className={"launch-sec" + (open ? " open" : "")}>
+      <button type="button" className="launch-sec-head" aria-expanded={open} onClick={onToggle}>
+        <Icon name={open ? "chevron-down" : "chevron-right"} className="launch-sec-chev" />
+        <span className="launch-sec-label">{label}</span>
+        <span className={"launch-sec-sum" + (warn ? " warn" : "")}>{open ? "" : summary}</span>
+        <span className="launch-sec-edit">{tr(open ? "launch.sec_done" : "launch.sec_edit")}</span>
+      </button>
+      {open && <div className="launch-sec-body">{children}</div>}
+    </section>
+  );
 }
 
 export function LaunchModal({ repo, branch, path, kinds, settling = false, allowWorktree = true, isSvn = false, onClose, onBack, initialPrompt, initialTitle, initialExistingBranch, onLaunch }: LaunchModalProps) {
@@ -154,6 +194,15 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   const explicit = branchName.trim();
   const newBranch = explicit; // "" → server picks temp/<slug>
   const existingMode = worktree && branchMode === "existing";
+  // 折りたたみ（launchPrefs）: 前回この端末で開いていたら開いた状態で出す。SCM の
+  // 「このブランチで作業」から来たときは、選ばれたブランチが見えていないと不安なので
+  // 場所は必ず開く。
+  const [placeOpen, setPlaceOpen] = useState(() => !!initialExistingBranch || readLaunchOpen("place"));
+  const [advOpen, setAdvOpen] = useState(() => readLaunchOpen("adv"));
+  const toggleSection = (key: LaunchSectionKey, open: boolean, set: (v: boolean) => void) => {
+    set(!open);
+    writeLaunchOpen(key, !open);
+  };
   // The worktree folder is named after whichever branch it will end up on.
   const folderSeg = existingMode ? existingBranch : explicit;
   const folder = worktree && folderSeg ? `${repo}@${sanitizeSeg(folderSeg)}` : "";
@@ -195,6 +244,31 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
     (agentOf(kind).caps.planMode || agentOf(kind).caps.tuiStartMode) &&
     (driverManaged || agentOf(kind).caps.tuiStartMode);
   const canPasteImage = agentOf(kind).caps.imagePaste;
+  const effortOptions = useEffortOptions(kind, model);
+
+  // 畳んだセクションの要約 — 開かなくても「何が起きるか」が読み取れる一行。場所は
+  // git が実際にやること（新しい作業コピーを作るのか、今のコピーで動かすのか）なので
+  // 既定のままでも必ず文章で出す。
+  const baseName = base.trim() || branch || "";
+  const placeSummary = !worktree
+    ? tr("launch.sum.direct", { branch: branch || tr("launch.wc") })
+    : existingMode
+      ? existingBranch
+        ? tr("launch.sum.wt_existing", { branch: existingBranch })
+        : tr("launch.sum.wt_existing_none")
+      : explicit
+        ? tr("launch.sum.wt_named", { branch: explicit, base: baseName || tr("launch.base_default") })
+        : tr("launch.sum.wt_auto", { base: baseName || tr("launch.base_default") });
+  // 詳細は逆に「既定から動いている項目だけ」を並べる。全部既定なら一言で済ませる —
+  // 常に 5 項目書くと、それ自体がまた読まれない灰色の帯になる。
+  const advParts = [
+    agentOf(kind).managedDriver ? tr(driverManaged ? "launch.sum.driver_managed" : "launch.sum.driver_terminal") : "",
+    hasEffort && effort ? tr("launch.sum.effort", { v: effortOptions.find(([v]) => v === effort)?.[1] || effort }) : "",
+    hasStartMode && startMode === "plan" ? "Plan" : "",
+    subdir ? tr("launch.sum.subdir", { path: subdir }) : "",
+    title.trim() ? tr("launch.sum.title", { name: title.trim() }) : "",
+  ].filter(Boolean);
+  const advSummary = advParts.length ? advParts.join(" · ") : tr("launch.sum.defaults");
 
   // Revoke every held preview URL when the modal unmounts (avoids leaking object URLs).
   useEffect(() => () => imagesRef.current.forEach((x) => URL.revokeObjectURL(x.url)), []);
@@ -294,6 +368,9 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
     setBusy(false);
     setConflict(r?.conflict ?? null);
     setConflictWt(r?.worktree || "");
+    // The conflict panel and its fix button live inside 場所 — a collapsed section
+    // would swallow the only explanation for why the launch didn't happen.
+    if (r?.conflict) setPlaceOpen(true);
     // The picked branch was taken between listing it and launching — drop the cached
     // list so a reopen of the picker shows who holds it now.
     if (r?.conflict === "in_use") setBranches(null);
@@ -314,20 +391,6 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
     }
   };
 
-  // A mouse wheel normally targets the modal's vertical scroller. When the agent
-  // cards overflow, make that familiar PC gesture reveal the remaining cards. At
-  // either horizontal edge leave the event alone, so the surrounding modal can
-  // continue scrolling vertically.
-  const scrollAgentsWithWheel = (e: WheelEvent<HTMLDivElement>) => {
-    if (!e.deltaY || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
-    const el = e.currentTarget;
-    const max = el.scrollWidth - el.clientWidth;
-    const next = Math.max(0, Math.min(max, el.scrollLeft + e.deltaY));
-    if (next === el.scrollLeft) return;
-    e.preventDefault();
-    el.scrollLeft = next;
-  };
-
   return (
     <Modal
       title={
@@ -339,255 +402,9 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
       lockClose={busy}
     >
       <div className="ui-modal-body">
-        <div className="ui-field">
-          <span className="ui-field-label">{tr("launch.field.agent")}</span>
-          {!kinds.length && (
-            // Empty means one of two very different things: still checking, or the
-            // connection check failed / nothing is authenticated. Say which — a bare
-            // empty picker reads as a broken modal.
-            <div className="muted launch-noagents">
-              {tr(settling ? "launch.agents_checking" : "launch.agents_none")}
-            </div>
-          )}
-          <div className="ui-seg big" onWheel={scrollAgentsWithWheel}>
-            {kinds.map((k) => {
-              const a = agentOf(k);
-              return (
-                <button
-                  key={k}
-                  type="button"
-                  className={"seg-btn kind-" + a.cssClass + (kind === k ? " active" : "")}
-                  onClick={() => {
-                    const defaults = agentLaunchDefault(settings, k);
-                    setKind(k);
-                    setModel(resolveModel(k, repo, defaults.model));
-                    setEffort(resolveEffort(k, repo, defaults.effort));
-                    setStartMode(resolveStartMode(k, repo, defaults.startMode));
-                    setDriver(a.managedDriver ? "managed" : "");
-                  }}
-                >
-                  <Icon name={a.icon} className="seg-ic" />
-                  {kindDisplayName(k)}
-                  <span className="seg-sub">{tr(a.launchHintKey)}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {hasModel && (
-          <div className="ui-field">
-            <span className="ui-field-label">{tr("launch.field.model")}</span>
-            <ModelPicker
-              kind={kind}
-              model={model}
-              onChange={(next) => {
-                setModel(next);
-                setEffort("");
-              }}
-            />
-          </div>
-        )}
-
-        {(hasEffort || hasStartMode) && (
-          <div className="ui-field-row">
-            {hasEffort && (
-              <div className="ui-field">
-                <span className="ui-field-label">{tr("launch.field.effort")}</span>
-                <EffortPicker kind={kind} model={model} effort={effort} onChange={setEffort} />
-                <span className="ui-field-hint">{tr("launch.field.effort_hint")}</span>
-              </div>
-            )}
-            {hasStartMode && (
-              <div className="ui-field">
-                <span className="ui-field-label">{tr("launch.field.start_mode")}</span>
-                <select value={startMode} onChange={(e) => setStartMode(e.target.value === "plan" ? "plan" : "normal")}>
-                  <option value="normal">{agentOf(kind).defaultModeLabel || tr("launch.mode_normal")}</option>
-                  <option value="plan">Plan</option>
-                </select>
-                <span className="ui-field-hint">{tr("launch.plan_hint")}</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ドライバ（docs/27 P2/P3）: managed 対応 kind だけに出す。既定は
-            managed（共有 runtime・paneless・省メモリ）。CLI(TUI) はターミナル操作が
-            必要な人向けの明示的なメモリトレードオフ（セッション毎に TUI プロセス分）。 */}
-        {agentOf(kind).managedDriver && (
-          <div className="ui-field">
-            <span className="ui-field-label">{tr("launch.field.driver")}</span>
-            <div className="ui-seg">
-              <button
-                type="button"
-                className={"seg-btn" + (driver === "managed" ? " active" : "")}
-                onClick={() => setDriver("managed")}
-              >
-                <Icon name="server-process" /> {tr("launch.driver_managed")}
-                <span className="seg-sub">{tr("launch.driver_managed_sub")}</span>
-              </button>
-              <button
-                type="button"
-                className={"seg-btn" + (driver !== "managed" ? " active" : "")}
-                onClick={() => setDriver("")}
-              >
-                <Icon name="terminal" /> {tr("launch.driver_terminal")}
-                <span className="seg-sub">
-                  {tr("launch.tui_note", { cost: tr("common.approx", { v: agentOf(kind).tuiMemoryCost }) })}
-                </span>
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* 場所: worktree（隔離・既定）か このコピーで直接か。worktree 行では選択肢
-            なし（この worktree 内で直接起動）。 */}
-        {!allowWorktree ? (
-          <div className="ui-field">
-            <span className="ui-field-label">{tr("launch.field.location")}</span>
-            <span className="ui-field-hint">
-              {isSvn ? (
-                tr("launch.svn_direct_note")
-              ) : (
-                <Trans k="launch.worktree_direct_note" vars={{ branch: branch || tr("launch.current_wc") }} components={[<code />]} />
-              )}
-            </span>
-          </div>
-        ) : (
-        <div className="ui-field">
-          <span className="ui-field-label">{tr("launch.field.location")}</span>
-          <div className="ui-seg">
-            <button type="button" className={"seg-btn" + (worktree ? " active" : "")} onClick={() => setWorktree(true)}>
-              <Icon name="repo-forked" /> {tr("launch.new_worktree")}
-              <span className="seg-sub">{tr("launch.new_worktree_sub")}</span>
-            </button>
-            <button type="button" className={"seg-btn" + (!worktree ? " active" : "")} onClick={() => setWorktree(false)}>
-              <Icon name="repo" /> {tr("launch.direct_here")}
-              <span className="seg-sub">{tr("launch.direct_here_sub", { branch: branch || tr("launch.wc") })}</span>
-            </button>
-          </div>
-          {worktree && (
-            <>
-              {/* ブランチ: 新規作成 か、既にあるブランチをそのまま使うか。 */}
-              <div className="ui-field">
-                <span className="ui-field-label">{tr("launch.field.branch")}</span>
-                <div className="ui-seg">
-                  <button
-                    type="button"
-                    className={"seg-btn" + (branchMode === "new" ? " active" : "")}
-                    onClick={() => {
-                      setBranchMode("new");
-                      setConflict(null);
-                    }}
-                  >
-                    <Icon name="git-branch" /> {tr("launch.branch_new")}
-                    <span className="seg-sub">{tr("launch.branch_new_sub")}</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={"seg-btn" + (branchMode === "existing" ? " active" : "")}
-                    onClick={() => {
-                      setBranchMode("existing");
-                      setConflict(null);
-                    }}
-                  >
-                    <Icon name="git-commit" /> {tr("launch.branch_existing")}
-                    <span className="seg-sub">{tr("launch.branch_existing_sub")}</span>
-                  </button>
-                </div>
-              </div>
-              {branchMode === "new" ? (
-                <>
-                  <label className="ui-field">
-                    <span className="ui-field-label">{tr("launch.base_branch")}</span>
-                    <input value={base} onChange={(e) => setBase(e.target.value)} placeholder={branch || tr("launch.base_default")} />
-                  </label>
-                  <label className="ui-field">
-                    <span className="ui-field-label">{tr("launch.branch_name")}</span>
-                    <input
-                      value={branchName}
-                      onChange={(e) => {
-                        setBranchName(e.target.value);
-                        setConflict(null);
-                      }}
-                      placeholder={tr("launch.branch_ph")}
-                    />
-                  </label>
-                </>
-              ) : (
-                <div className="ui-field">
-                  <span className="ui-field-label">{tr("launch.pick_branch")}</span>
-                  <BranchList
-                    branches={branches}
-                    selected={existingBranch}
-                    onPick={(name) => {
-                      setExistingBranch(name);
-                      setConflict(null);
-                    }}
-                  />
-                </div>
-              )}
-              <span className="ui-field-hint">
-                {folder ? (
-                  <Trans k="launch.wc_created_note" vars={{ folder }} components={[<code />]} />
-                ) : existingMode ? (
-                  tr("launch.branch_pick_note")
-                ) : (
-                  tr("launch.branch_empty_note")
-                )}
-              </span>
-              {conflict && (
-                <div className="launch-conflict">
-                  {conflict === "in_use" ? (
-                    // Not a naming clash: git holds a branch in one working copy at a
-                    // time, so the only way forward is that copy (or another branch).
-                    <span>
-                      <Trans
-                        k="launch.branch_in_use"
-                        vars={{ branch: existingMode ? existingBranch : newBranch, folder: conflictWt }}
-                        components={[<code />, <code />]}
-                      />
-                    </span>
-                  ) : conflict === "local" ? (
-                    <span>
-                      <Trans k="launch.local_branch_exists" vars={{ branch: newBranch }} components={[<code />]} />
-                    </span>
-                  ) : (
-                    <span>
-                      <Trans k="launch.remote_branch_exists" vars={{ branch: newBranch }} components={[<code />]} />
-                    </span>
-                  )}
-                  {/* Both collisions resolve the same way — check the existing branch
-                      out instead of forking a divergent one. A LOCAL clash used to
-                      dead-end here even though the worktree path handles it fine. */}
-                  {(conflict === "local" || conflict === "remote") && (
-                    <Button small icon="git-branch" disabled={busy} onClick={() => void start(true)}>
-                      {tr("launch.work_existing_branch")}
-                    </Button>
-                  )}
-                </div>
-              )}
-            </>
-          )}
-        </div>
-        )}
-
-        {/* 作業ディレクトリ: 起動先をリポジトリ配下のフォルダへ絞る（既定は直下）。
-            worktree 起動では、新しく作られた worktree 内の同じ相対パスになる。 */}
-        <div className="ui-field">
-          <span className="ui-field-label">{tr("launch.field.subdir")}</span>
-          <SubdirPicker repo={repo} value={subdir} onChange={setSubdir} />
-          <span className="ui-field-hint">
-            {worktree ? tr("launch.subdir_wt_hint") : tr("launch.subdir_hint")}
-          </span>
-        </div>
-
-        <div className="ui-field">
-          <span className="ui-field-label">{tr("launch.field.title")}</span>
-          <input value={title} maxLength={512} onChange={(e) => setTitle(e.target.value)} placeholder={tr("launch.title_ph")} />
-        </div>
-
-        {/* 最初のプロンプト（任意） */}
+        {/* 最初のプロンプト（任意）— 先頭に置く。ユーザーが自分で持ち込む唯一の入力で、
+            autoFocus もここに当たる。最下部にあった頃は、モーダルを開いた瞬間に
+            autoFocus のスクロールで最下部まで飛び、エージェント選択が画面外へ消えていた。 */}
         <div className="ui-field">
           <span className="ui-field-label launch-prompt-label">
             <span>{tr("launch.first_prompt")}</span>
@@ -674,15 +491,282 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
           />
           <span className="ui-field-hint">
             {tr("launch.first_prompt_note")}
-            {canPasteImage && tr("launch.image_paste_note")}
+            {canPasteImage && " " + tr("launch.image_paste_note")}
           </span>
         </div>
+
+        <div className="ui-field">
+          <span className="ui-field-label">{tr("launch.field.agent")}</span>
+          {!kinds.length && (
+            // Empty means one of two very different things: still checking, or the
+            // connection check failed / nothing is authenticated. Say which — a bare
+            // empty picker reads as a broken modal.
+            <div className="muted launch-noagents">
+              {tr(settling ? "launch.agents_checking" : "launch.agents_none")}
+            </div>
+          )}
+          {/* 折り返しグリッド（ui.css .ui-seg.big）。以前は横スクロールで 4 枚目以降が
+              切れており、7 種類あることも気づけなかった。サブラベル（「◯◯ を起動」）は
+              カード名の言い換えで情報が無いので title に落とし、1 行ぶん詰めてある。 */}
+          <div className="ui-seg big">
+            {kinds.map((k) => {
+              const a = agentOf(k);
+              return (
+                <button
+                  key={k}
+                  type="button"
+                  title={tr(a.launchHintKey)}
+                  className={"seg-btn kind-" + a.cssClass + (kind === k ? " active" : "")}
+                  onClick={() => {
+                    const defaults = agentLaunchDefault(settings, k);
+                    setKind(k);
+                    setModel(resolveModel(k, repo, defaults.model));
+                    setEffort(resolveEffort(k, repo, defaults.effort));
+                    setStartMode(resolveStartMode(k, repo, defaults.startMode));
+                    setDriver(a.managedDriver ? "managed" : "");
+                  }}
+                >
+                  <Icon name={a.icon} className="seg-ic" />
+                  {kindDisplayName(k)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {hasModel && (
+          <div className="ui-field">
+            <span className="ui-field-label">{tr("launch.field.model")}</span>
+            <ModelPicker
+              kind={kind}
+              model={model}
+              onChange={(next) => {
+                setModel(next);
+                setEffort("");
+              }}
+            />
+          </div>
+        )}
+
+        {/* 場所: worktree（隔離・既定）か このコピーで直接か。worktree 行では選択肢
+            なし（この worktree 内で直接起動）ので、折りたたまず 1 行の注記で出す。 */}
+        {!allowWorktree ? (
+          <div className="ui-field">
+            <span className="ui-field-label">{tr("launch.field.location")}</span>
+            <span className="ui-field-hint">
+              {isSvn ? (
+                tr("launch.svn_direct_note")
+              ) : (
+                <Trans k="launch.worktree_direct_note" vars={{ branch: branch || tr("launch.current_wc") }} components={[<code />]} />
+              )}
+            </span>
+          </div>
+        ) : (
+        <LaunchSection
+          label={tr("launch.field.location")}
+          summary={placeSummary}
+          warn={existingMode && !existingBranch}
+          open={placeOpen}
+          onToggle={() => toggleSection("place", placeOpen, setPlaceOpen)}
+        >
+            <div className="ui-field">
+            <div className="ui-seg">
+              <button type="button" className={"seg-btn" + (worktree ? " active" : "")} onClick={() => setWorktree(true)}>
+                <Icon name="repo-forked" /> {tr("launch.new_worktree")}
+                <span className="seg-sub">{tr("launch.new_worktree_sub")}</span>
+              </button>
+              <button type="button" className={"seg-btn" + (!worktree ? " active" : "")} onClick={() => setWorktree(false)}>
+                <Icon name="repo" /> {tr("launch.direct_here")}
+                <span className="seg-sub">{tr("launch.direct_here_sub", { branch: branch || tr("launch.wc") })}</span>
+              </button>
+            </div>
+            {worktree && (
+              <>
+                {/* ブランチ: 新規作成 か、既にあるブランチをそのまま使うか。 */}
+                <div className="ui-field">
+                  <span className="ui-field-label">{tr("launch.field.branch")}</span>
+                  <div className="ui-seg">
+                    <button
+                      type="button"
+                      className={"seg-btn" + (branchMode === "new" ? " active" : "")}
+                      onClick={() => {
+                        setBranchMode("new");
+                        setConflict(null);
+                      }}
+                    >
+                      <Icon name="git-branch" /> {tr("launch.branch_new")}
+                      <span className="seg-sub">{tr("launch.branch_new_sub")}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={"seg-btn" + (branchMode === "existing" ? " active" : "")}
+                      onClick={() => {
+                        setBranchMode("existing");
+                        setConflict(null);
+                      }}
+                    >
+                      <Icon name="git-commit" /> {tr("launch.branch_existing")}
+                      <span className="seg-sub">{tr("launch.branch_existing_sub")}</span>
+                    </button>
+                  </div>
+                </div>
+                {branchMode === "new" ? (
+                  <>
+                    <label className="ui-field">
+                      <span className="ui-field-label">{tr("launch.base_branch")}</span>
+                      <input value={base} onChange={(e) => setBase(e.target.value)} placeholder={branch || tr("launch.base_default")} />
+                    </label>
+                    <label className="ui-field">
+                      <span className="ui-field-label">{tr("launch.branch_name")}</span>
+                      <input
+                        value={branchName}
+                        onChange={(e) => {
+                          setBranchName(e.target.value);
+                          setConflict(null);
+                        }}
+                        placeholder={tr("launch.branch_ph")}
+                      />
+                    </label>
+                  </>
+                ) : (
+                  <div className="ui-field">
+                    <span className="ui-field-label">{tr("launch.pick_branch")}</span>
+                    <BranchList
+                      branches={branches}
+                      selected={existingBranch}
+                      onPick={(name) => {
+                        setExistingBranch(name);
+                        setConflict(null);
+                      }}
+                    />
+                  </div>
+                )}
+                <span className="ui-field-hint">
+                  {folder ? (
+                    <Trans k="launch.wc_created_note" vars={{ folder }} components={[<code />]} />
+                  ) : existingMode ? (
+                    tr("launch.branch_pick_note")
+                  ) : (
+                    tr("launch.branch_empty_note")
+                  )}
+                </span>
+                {conflict && (
+                  <div className="launch-conflict">
+                    {conflict === "in_use" ? (
+                      // Not a naming clash: git holds a branch in one working copy at a
+                      // time, so the only way forward is that copy (or another branch).
+                      <span>
+                        <Trans
+                          k="launch.branch_in_use"
+                          vars={{ branch: existingMode ? existingBranch : newBranch, folder: conflictWt }}
+                          components={[<code />, <code />]}
+                        />
+                      </span>
+                    ) : conflict === "local" ? (
+                      <span>
+                        <Trans k="launch.local_branch_exists" vars={{ branch: newBranch }} components={[<code />]} />
+                      </span>
+                    ) : (
+                      <span>
+                        <Trans k="launch.remote_branch_exists" vars={{ branch: newBranch }} components={[<code />]} />
+                      </span>
+                    )}
+                    {/* Both collisions resolve the same way — check the existing branch
+                        out instead of forking a divergent one. A LOCAL clash used to
+                        dead-end here even though the worktree path handles it fine. */}
+                    {(conflict === "local" || conflict === "remote") && (
+                      <Button small icon="git-branch" disabled={busy} onClick={() => void start(true)}>
+                        {tr("launch.work_existing_branch")}
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+            </div>
+        </LaunchSection>
+        )}
+
+        {/* 詳細: 一度決めたらしばらく変えない設定（実行方式・effort・開始モード・
+            作業ディレクトリ・セッション名）。既定から動いている項目だけが要約行に出る。 */}
+        <LaunchSection
+          label={tr("launch.field.advanced")}
+          summary={advSummary}
+          open={advOpen}
+          onToggle={() => toggleSection("adv", advOpen, setAdvOpen)}
+        >
+          {/* ドライバ（docs/27 P2/P3）: managed 対応 kind だけに出す。既定は
+              managed（共有 runtime・paneless・省メモリ）。CLI(TUI) はターミナル操作が
+              必要な人向けの明示的なメモリトレードオフ（セッション毎に TUI プロセス分）。 */}
+          {agentOf(kind).managedDriver && (
+            <div className="ui-field">
+              <span className="ui-field-label">{tr("launch.field.driver")}</span>
+              <div className="ui-seg">
+                <button
+                  type="button"
+                  className={"seg-btn" + (driver === "managed" ? " active" : "")}
+                  onClick={() => setDriver("managed")}
+                >
+                  <Icon name="server-process" /> {tr("launch.driver_managed")}
+                  <span className="seg-sub">{tr("launch.driver_managed_sub")}</span>
+                </button>
+                <button
+                  type="button"
+                  className={"seg-btn" + (driver !== "managed" ? " active" : "")}
+                  onClick={() => setDriver("")}
+                >
+                  <Icon name="terminal" /> {tr("launch.driver_terminal")}
+                  <span className="seg-sub">
+                    {tr("launch.tui_note", { cost: tr("common.approx", { v: agentOf(kind).tuiMemoryCost }) })}
+                  </span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {(hasEffort || hasStartMode) && (
+            <div className="ui-field-row">
+              {hasEffort && (
+                <div className="ui-field">
+                  <span className="ui-field-label">{tr("launch.field.effort")}</span>
+                  <EffortPicker kind={kind} model={model} effort={effort} onChange={setEffort} />
+                  <span className="ui-field-hint">{tr("launch.field.effort_hint")}</span>
+                </div>
+              )}
+              {hasStartMode && (
+                <div className="ui-field">
+                  <span className="ui-field-label">{tr("launch.field.start_mode")}</span>
+                  <select value={startMode} onChange={(e) => setStartMode(e.target.value === "plan" ? "plan" : "normal")}>
+                    <option value="normal">{agentOf(kind).defaultModeLabel || tr("launch.mode_normal")}</option>
+                    <option value="plan">Plan</option>
+                  </select>
+                  <span className="ui-field-hint">{tr("launch.plan_hint")}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 作業ディレクトリ: 起動先をリポジトリ配下のフォルダへ絞る（既定は直下）。
+              worktree 起動では、新しく作られた worktree 内の同じ相対パスになる。 */}
+          <div className="ui-field">
+            <span className="ui-field-label">{tr("launch.field.subdir")}</span>
+            <SubdirPicker repo={repo} value={subdir} onChange={setSubdir} />
+            <span className="ui-field-hint">
+              {worktree ? tr("launch.subdir_wt_hint") : tr("launch.subdir_hint")}
+            </span>
+          </div>
+
+          <div className="ui-field">
+            <span className="ui-field-label">{tr("launch.field.title")}</span>
+            <input value={title} maxLength={512} onChange={(e) => setTitle(e.target.value)} placeholder={tr("launch.title_ph")} />
+          </div>
+        </LaunchSection>
       </div>
 
       <footer className="ui-modal-foot">
         {onBack && (
           <Button variant="ghost" className="launch-back" icon="arrow-left" onClick={onBack} disabled={busy}>
-            {tr("launch.change_location")}
+            {tr("launch.back_to_hub")}
           </Button>
         )}
         <Button variant="ghost" onClick={onClose} disabled={busy}>
