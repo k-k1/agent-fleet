@@ -254,7 +254,7 @@ func TestMaterializeCodexBuiltinAFForwardsAgentAuth(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := readFile(t, codexConfigPath())
-	if want := `env_vars = ["AGENT_ADDR","AGENT_TOKEN"]`; !strings.Contains(got, want) {
+	if want := `env_vars = ["AF_SESSION_NAME","AGENT_ADDR","AGENT_TOKEN"]`; !strings.Contains(got, want) {
 		t.Fatalf("af の Agent 認証環境が Codex MCP 子プロセスへ転送されない:\n%s", got)
 	}
 	if strings.Contains(got, "AF_SECRET_KEY") {

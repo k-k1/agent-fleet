@@ -101,6 +101,10 @@ func handleSessionHandoffProposal(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		title := strings.TrimSpace(body.Title)
+		if title == "" {
+			httpx.WriteErr(w, http.StatusBadRequest, "handoff_title_empty", "title is empty")
+			return
+		}
 		if len(title) > handoffProposalTitleMaxBytes {
 			httpx.WriteErr(w, http.StatusBadRequest, "handoff_title_too_large", "title is too large")
 			return

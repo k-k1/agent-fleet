@@ -86,8 +86,8 @@ func TestMCPChromiumSessionScopeIsExact(t *testing.T) {
 	// the historical one-tool server.
 	mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled = false, true, false
 	legacy := toolNames()
-	if len(legacy) != 1 || legacy["af_report"] == nil {
-		t.Fatalf("legacy self-report tools = %v, want [af_report]", sortedChromiumToolMapKeys(legacy))
+	if len(legacy) != 2 || legacy["af_report"] == nil || legacy["propose_session_handoff"] == nil {
+		t.Fatalf("legacy self-report tools = %v, want [af_report propose_session_handoff]", sortedChromiumToolMapKeys(legacy))
 	}
 	if resp := callChromiumMCP(t, "list_chromium_targets", map[string]any{"port": 9222}); !mcpCallIsError(t, resp) || !strings.Contains(string(resp), "許可されていない") {
 		t.Fatalf("legacy self-report guessed Chromium call was not gated: %s", resp)
@@ -97,7 +97,7 @@ func TestMCPChromiumSessionScopeIsExact(t *testing.T) {
 	// inherit the assistant's fleet read/write grants.
 	mcpSessionChromiumEnabled = true
 	found := toolNames()
-	wantNames := append([]string{"af_report"}, chromiumReadToolNames...)
+	wantNames := append([]string{"af_report", "propose_session_handoff"}, chromiumReadToolNames...)
 	wantNames = append(wantNames, chromiumWriteToolNames...)
 	if got, want := sortedChromiumToolMapKeys(found), append([]string(nil), wantNames...); !sameSortedStrings(got, want) {
 		t.Fatalf("session tools = %v, want exactly %v", got, sortedStringsCopy(want))
