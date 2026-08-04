@@ -505,16 +505,18 @@
   display: flex;
   align-items: center;
   gap: 5px;
+  width: 100%;
   padding: 5px 7px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
   cursor: pointer;
-  list-style: none;
+  font: inherit;
+  text-align: left;
   color: var(--muted);
 }
-.mt-work-head::-webkit-details-marker {
-  display: none;
-}
 .mt-work-head:hover,
-.mt-work[open] .mt-work-head {
+.mt-work.open .mt-work-head {
   color: var(--fg);
 }
 .mt-work-head .codicon {
@@ -759,15 +761,22 @@
 .mirror-tasks-head {
   display: flex;
   align-items: center;
+  padding: 0;
+}
+.mirror-tasks-toggle {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
   gap: 6px;
   padding: 6px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
   cursor: pointer;
   font-size: 12px;
-  color: var(--muted);
-  list-style: none;
-}
-.mirror-tasks-head::-webkit-details-marker {
-  display: none;
+  text-align: left;
 }
 .mirror-tasks-head .mtk-title {
   color: var(--fg);
@@ -813,8 +822,11 @@
 .mtk-dismiss .codicon {
   font-size: 13px;
 }
-.mirror-tasks[open] .mirror-tasks-head {
+.mirror-tasks.open .mirror-tasks-head {
   border-bottom: 1px solid var(--border);
+}
+.mirror-tasks-list-wrap {
+  min-width: 0;
 }
 .mirror-tasks-list {
   margin: 0;
@@ -822,7 +834,10 @@
   list-style: none;
   /* A long ToDo list would otherwise push the whole conversation down; cap the
      height and scroll the list itself. */
-  max-height: min(280px, 40vh);
+  /* Six ordinary task rows, and never more than a fifth of this mirror pane. The
+     pane height is supplied by MirrorView's ResizeObserver, not viewport units: a
+     narrow split pane therefore gets the same proportion as a full-height pane. */
+  max-height: min(calc(6lh + 48px), var(--mirror-todo-max-height, 20dvh));
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -832,12 +847,19 @@
   gap: 8px;
   padding: 3px 0;
   font-size: 12px;
+  line-height: 1.4;
   color: var(--fg);
 }
 .mtk-item .mtk-mark {
   flex: none;
   position: relative;
   top: 1px;
+}
+.mtk-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .mtk-completed {
   color: var(--muted);
@@ -1413,15 +1435,17 @@ button.mt-tool-outhead {
   display: flex;
   align-items: center;
   gap: 5px;
+  width: 100%;
   padding: 2px 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
   cursor: pointer;
+  font: inherit;
+  text-align: left;
   opacity: 0.6;
-  list-style: none;
 }
-.mirror-thinking-head::-webkit-details-marker {
-  display: none;
-}
-.mirror-thinking[open] .mirror-thinking-head {
+.mirror-thinking.open .mirror-thinking-head {
   opacity: 0.8;
 }
 .mth-title {
@@ -1430,6 +1454,29 @@ button.mt-tool-outhead {
 .mirror-thinking-body {
   padding: 2px 8px 4px 20px;
   opacity: 0.8;
+}
+
+/* Native <details> removes closed content immediately, which precludes a closing
+   transition. The three interactive disclosures keep their body mounted and animate
+   the grid track instead. Opacity makes the first/last few pixels feel less abrupt. */
+.mirror-disclosure-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 140ms ease-out, opacity 100ms ease-out;
+}
+.mirror-disclosure.open > .mirror-disclosure-panel {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+.mirror-disclosure-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mirror-disclosure-panel {
+    transition: none;
+  }
 }
 /* A turn that failed instead of answering (part kind "error"): the agent recorded a
    provider-side error — expired auth, exhausted balance, rate limit — and produced no
