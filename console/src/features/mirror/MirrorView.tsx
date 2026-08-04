@@ -112,7 +112,8 @@ import {
   type SlashToken,
 } from "./skillPicker.ts";
 import { ManagedSettingsModal } from "./ManagedSettingsModal.tsx";
-import { HandoffProposal } from "./HandoffProposal.tsx";
+import { HandoffProposal, useHandoffProposal } from "./HandoffProposal.tsx";
+import { chronoInsertIndex } from "./handoffPlacement.ts";
 
 const q = encodeURIComponent;
 
@@ -339,6 +340,9 @@ export function MirrorView({
       return next;
     });
   const [loaded, setLoaded] = useState(false); // false until the first transcript fetch returns
+  // This session's outstanding handoff proposal. Owned here (not inside the card) because
+  // the card is placed at its created_at inside the transcript, not pinned to the bottom.
+  const [handoff, setHandoff] = useHandoffProposal(session);
   const [termState, setTermState] = useState(""); // terminal-only state: "resume" | "compacting" | "update" | ""
   // Compaction progress (parsed from the pane) so the 圧縮中 block shows a bar, not just a spinner.
   const [compactProg, setCompactProg] = useState<{ pct: number; elapsed?: string } | null>(null);
@@ -2631,7 +2635,9 @@ export function MirrorView({
               {tr("mirror.ws_stopped_history")}
             </div>
           )
-        ) : groups.length === 0 && !pending && !pendingPlan && !pendingPerm ? (
+        ) : groups.length === 0 && !pending && !pendingPlan && !pendingPerm && !handoff ? (
+          // !handoff: with an empty transcript the proposal is the only thing to show,
+          // and it now lives inside renderGroups (which the empty branch would skip).
           <div className="mirror-empty muted">
             {readOnly
               ? tr("mirror.no_history")
@@ -2656,6 +2662,20 @@ export function MirrorView({
             atBottomRef.current,
             expandThinking(settings, sessionMeta?.kind),
             (p) => rejectedPlansRef.current.has(p.trim()),
+            handoff
+              ? {
+                  at: handoff.created_at,
+                  node: (
+                    <HandoffProposal
+                      key="handoff"
+                      session={session}
+                      sessionMeta={sessionMeta}
+                      proposal={handoff}
+                      onChange={setHandoff}
+                    />
+                  ),
+                }
+              : undefined,
           )
         )}
         {pendingPlan && (
@@ -2696,7 +2716,6 @@ export function MirrorView({
             </div>
           </div>
         )}
-        <HandoffProposal session={session} sessionMeta={sessionMeta} />
         {pendingPerm && !pending && !pendingPlan && (
           // Defense-in-depth: a question/plan always wins over a generic permission
           // dialog (the server already suppresses the permission in that case). This
@@ -3469,9 +3488,14 @@ function renderGroups(
   // 各カード > 動作設定・既定オフ）。kind 単位なので codex と opencode は独立に効く。
   expandThinking: boolean,
   isRejectedPlan: (plan: string) => boolean,
+  // A durable card to place at its own moment in the conversation (the handoff
+  // proposal). Appended last only while nothing newer exists — never pinned there,
+  // which is what used to hide every later message (see handoffPlacement).
+  inlineCard?: { at: number; node: ReactNode },
 ) {
   const els = [];
   let prevCtx = "";
+  const cardAt = inlineCard ? chronoInsertIndex(groups.map((g) => g.ts), inlineCard.at) : -1;
   // The current work boundary — INCLUDING a just-sent optimistic echo (pending). If we
   // skipped pending here, sending a new prompt would leave lastUser on the PREVIOUS user
   // turn, so the previous (already-finished) reply counts as "the live exchange" below and
@@ -3479,6 +3503,7 @@ function renderGroups(
   // the boundary (but not un-run queued prompts), which keeps the old reply folded.
   const lastUser = latestWorkPromptIndex(groups);
   for (let i = 0; i < groups.length; i++) {
+    if (i === cardAt) els.push(inlineCard!.node);
     const g = groups[i];
     const ctx = g.branch || g.cwd ? (g.branch || "") + "\x1f" + (g.cwd || "") : "";
     if (ctx && ctx !== prevCtx) {
@@ -3525,6 +3550,9 @@ function renderGroups(
       ),
     );
   }
+  // Nothing in the transcript is newer than the card (the normal case right after a
+  // session proposes its handoff): it goes last — until the next turn arrives.
+  if (cardAt >= groups.length) els.push(inlineCard!.node);
   return els;
 }
 
