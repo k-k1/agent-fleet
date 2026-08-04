@@ -479,7 +479,7 @@ type threadHandle struct {
 	interCl  *appClient
 	events   chan agents.Event
 	lastErr  *codexError // 直近ターンの失敗詳細（errors.go）。次ターン開始で clearLastError
-	                      // されるまで managedEnrich が末尾へ合成 error ターンとして出す。
+	// されるまで managedEnrich が末尾へ合成 error ターンとして出す。
 }
 
 // setLastError / clearLastError / turnError manage the failure detail managedEnrich
