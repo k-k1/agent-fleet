@@ -33,6 +33,19 @@ type rpcMsg struct {
 	Error  json.RawMessage `json:"error,omitempty"`
 }
 
+// rpcError is a decoded JSONRPCErrorError ({code, message, data}) — a rejected turn/start
+// (e.g. a usage-limit rejection that never creates a Turn to fail) reports this way
+// instead of a turn/completed notification. Kept as a typed error (rather than folded
+// into a bare string) so callers can recover the message/data via errors.As without
+// re-parsing call()'s flattened text (errors.go's codexErrorFromRPC).
+type rpcError struct {
+	Code    int             `json:"code"`
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data,omitempty"`
+}
+
+func (e *rpcError) Error() string { return e.Message }
+
 type appClient struct {
 	conn *websocket.Conn
 	wmu  sync.Mutex // serializes writes
@@ -191,6 +204,10 @@ func (c *appClient) call(method string, params any, timeout time.Duration) (json
 			return nil, errors.New("writer connection lost")
 		}
 		if len(m.Error) > 0 && string(m.Error) != "null" {
+			var re rpcError
+			if json.Unmarshal(m.Error, &re) == nil && re.Message != "" {
+				return nil, &re
+			}
 			return nil, fmt.Errorf("%s: %s", method, m.Error)
 		}
 		return m.Result, nil

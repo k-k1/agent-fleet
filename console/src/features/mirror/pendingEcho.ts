@@ -35,6 +35,13 @@ interface TranscriptTurn {
   role: string;
   text?: string;
   idx?: number;
+  parts?: { kind: string }[];
+}
+
+// hasErrorPart reports whether a turn carries a kind="error" part (opencode's provider
+// failure, or codex's synthetic turn-rejection turn — see errors.go / managedEnrich).
+function hasErrorPart(t: TranscriptTurn): boolean {
+  return !!t.parts?.some((p) => p.kind === "error");
 }
 
 // A `/`-run slash command / skill invocation is never logged as the raw "/foo …" the
@@ -71,7 +78,15 @@ function commandTurnName(text: string): string | null {
 export function echoLanded(e: PendingEcho, turns: TranscriptTurn[], isNoise: (t: TranscriptTurn) => boolean): boolean {
   const echoCmd = slashName(e.text);
   return turns.some((t) => {
-    if (t.role !== "user") return false;
+    if (t.role !== "user") {
+      // A turn rejected before codex ever creates one (e.g. a usage-limit-exhausted
+      // send) never gets its own echoed user turn — not even the prompt is recorded —
+      // so the text/attachment match below can never fire and the echo would sit at
+      // 反映待ち forever. Any error turn landing after the send explains what happened
+      // to it, so treat it as the resolution too (driver.go's managedEnrich / opencode's
+      // errors.go both emit kind="error" for exactly this).
+      return t.idx !== undefined && t.idx > e.sinceIdx && hasErrorPart(t);
+    }
     // Slash-command / skill echo: reconcile against the parsed <command-name> turn
     // logged after the send. isNoise hides that turn and its text never equals the typed
     // "/foo", so the text match below can never catch it.
