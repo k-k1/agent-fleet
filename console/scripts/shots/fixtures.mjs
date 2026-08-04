@@ -479,9 +479,21 @@ export function fsList(locale, p) {
 // populated: its depth-0 entries ARE the working copies, which is the level the
 // rail marks with each copy's icon and a worktree's branch. Deeper folders answer
 // empty, enough for a shot of the section itself.
+// A repo's folder layout, served for any path under repos/<repo>. The launch dialog's
+// 作業ディレクトリ picker browses this, so an empty answer here would make the field look
+// broken in a shot / a harness run rather than merely unpopulated.
+const REPO_TREE = {
+  "": ["console", "docs", "server"],
+  console: ["public", "src"],
+  "console/src": ["features", "lib", "ui"],
+  server: ["cmd", "internal"],
+};
+
 export function fsTree(locale, p) {
-  if (p !== "repos") return { path: p, entries: [] };
-  return { path: p, entries: repos(locale).map((r) => ({ name: r.name, type: "dir" })) };
+  if (p === "repos") return { path: p, entries: repos(locale).map((r) => ({ name: r.name, type: "dir" })) };
+  const m = /^repos\/[^/]+\/?(.*)$/.exec(p);
+  const names = m ? REPO_TREE[m[1]] || [] : [];
+  return { path: p, entries: names.map((name) => ({ name, type: "dir" })) };
 }
 
 export function fsFile(locale, p) {

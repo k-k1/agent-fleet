@@ -64,7 +64,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// No env token is injected: the interactive TUI authenticates from claude's own
 	// .credentials.json, written by `claude auth login` via the Connections flow
 	// (auth.go). CLAUDE_CODE_OAUTH_TOKEN is headless-only.
-	return agents.LaunchPlan{Program: buildProgram(sid, m.Model, m.Effort, m.Mode, m.Label, m.ForkFrom), Cwd: m.Dir}, nil
+	return agents.LaunchPlan{Program: buildProgram(sid, m.Model, m.Effort, m.Mode, m.Label, m.ForkFrom), Cwd: m.CWD()}, nil
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {

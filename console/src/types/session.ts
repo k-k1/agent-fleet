@@ -32,6 +32,10 @@ export interface Session {
   repo?: string | null; // working-copy folder the (agent) session runs in
   path?: string; // absolute working dir
   dir?: string; // working dir shown in the row tooltip
+  // Folder BENEATH dir the agent actually runs in, slash-relative ("" / absent = dir
+  // itself). Sessions stay grouped by `dir` (the working copy) — this is only the
+  // extra "where inside it" detail.
+  subdir?: string;
   remoteUrl?: string; // clone URL (agent sessions with a repo)
   state?: SessionState | string; // live hook/plugin state ("" = idle)
   alive?: boolean; // tmux session is running

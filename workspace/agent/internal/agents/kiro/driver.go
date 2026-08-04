@@ -102,13 +102,13 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 		return nil, agents.DirGoneErr(m.Dir)
 	}
 	ensureSettings() // 冪等: autoupdate off ＋ --trust-all の危険モード確認ダイアログ抑止
-	slotSid := session.UUID(m.Dir, m.Name)
+	slotSid := session.UUID(m.Dir, m.Name) // identity: the working copy, never the subdir
 	handlesMu.Lock()
 	h := handles[m.Name]
 	if h == nil {
 		h = &threadHandle{
 			name:      m.Name,
-			dir:       m.Dir,
+			dir:       m.CWD(), // Dir, or the subdir chosen at launch
 			slotSid:   slotSid,
 			createdAt: slotCreatedAt(m), // discoverSid のフェンス（read 層 resolveSid と同じ）
 			events:    make(chan agents.Event, 64),

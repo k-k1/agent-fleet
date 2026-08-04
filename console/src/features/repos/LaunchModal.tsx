@@ -12,7 +12,7 @@ import { useT } from "../../lib/i18n/index.ts";
 import { Trans } from "../../lib/i18n/Trans.tsx";
 import { agentOf } from "../../agents/registry.ts";
 import { kindDisplayName } from "../../lib/sessionkind.ts";
-import { readRepoLast, resolveEffort, resolveModel, resolveStartMode } from "../../lib/repoLast.ts";
+import { readRepoLast, resolveEffort, resolveModel, resolveStartMode, resolveSubdir } from "../../lib/repoLast.ts";
 import { readPromptHistory } from "../../lib/promptHistory.ts";
 import { agentLaunchDefault, useSettings } from "../../lib/settings.ts";
 import { EffortPicker, ModelPicker } from "../../ui/ModelPicker.tsx";
@@ -20,6 +20,7 @@ import { repoPromptTemplates } from "./api.ts";
 import type { PromptTemplateGroup } from "./api.ts";
 import { api } from "../../core/api/client.ts";
 import { BranchList } from "./BranchList.tsx";
+import { SubdirPicker } from "./SubdirPicker.tsx";
 import type { Branch } from "./BranchList.tsx";
 import { sanitizeSeg } from "../../lib/reponame.ts";
 
@@ -42,6 +43,10 @@ export interface LaunchOpts {
   // minted and embeds the saved paths into the first prompt (claude Read-tool flow).
   images: File[];
   worktree: boolean;
+  /** Folder INSIDE the working copy to start the agent in, slash-relative
+   * ("" = the working copy root). For a worktree launch it is resolved inside the
+   * freshly created worktree, not the parent. */
+  subdir: string;
   base: string;
   newBranch: string;
   useExisting?: boolean; // check out the existing branch instead of creating one
@@ -129,6 +134,10 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   // sessions when each task has its own dir. From a worktree row (allowWorktree
   // false) there's no worktree choice: launch in place.
   const [worktree, setWorktree] = useState(allowWorktree);
+  // 作業ディレクトリ: "" = the working copy root (the usual case). Seeded from what
+  // this repo was last launched in, since a monorepo user keeps returning to the same
+  // package — the field shows the value, so a remembered folder is never silent.
+  const [subdir, setSubdir] = useState(() => resolveSubdir(repo));
   const [base, setBase] = useState(branch || "");
   const [branchName, setBranchName] = useState(""); // "" => derived from the prompt
   const [conflict, setConflict] = useState<"local" | "remote" | "in_use" | null>(null);
@@ -273,6 +282,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
       title: title.trim(),
       images: canPasteImage ? images.map((x) => x.file) : [],
       worktree,
+      subdir,
       base: worktree ? wtBase : "",
       newBranch: worktree && !useExisting ? newBranch : "",
       useExisting,
@@ -561,6 +571,16 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
           )}
         </div>
         )}
+
+        {/* 作業ディレクトリ: 起動先をリポジトリ配下のフォルダへ絞る（既定は直下）。
+            worktree 起動では、新しく作られた worktree 内の同じ相対パスになる。 */}
+        <div className="ui-field">
+          <span className="ui-field-label">{tr("launch.field.subdir")}</span>
+          <SubdirPicker repo={repo} value={subdir} onChange={setSubdir} />
+          <span className="ui-field-hint">
+            {worktree ? tr("launch.subdir_wt_hint") : tr("launch.subdir_hint")}
+          </span>
+        </div>
 
         <div className="ui-field">
           <span className="ui-field-label">{tr("launch.field.title")}</span>
