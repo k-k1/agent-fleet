@@ -106,7 +106,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
   const startShell = async () => {
     if (busy) return;
     setBusy(true);
-    const r = await startWork({ dir: "", repo: "" }, { kind: "shell", driver: "", model: "", effort: "", startMode: "normal", prompt: "", images: [], worktree: false, base: "", newBranch: "" });
+    const r = await startWork({ dir: "", repo: "" }, { kind: "shell", driver: "", model: "", effort: "", startMode: "normal", prompt: "", title: "", images: [], worktree: false, base: "", newBranch: "" });
     setBusy(false);
     if (r.ok) onClose();
   };
@@ -271,6 +271,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
         effort: agentOf(kind).managedDriver || agentOf(kind).caps.tuiEffort ? effort : "",
         startMode: agentOf(kind).managedDriver || agentOf(kind).caps.tuiStartMode ? startMode : "normal",
         prompt: prompt.trim(),
+        title: "",
         images: [],
         worktree: false,
         base: "",

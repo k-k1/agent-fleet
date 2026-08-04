@@ -23,6 +23,7 @@ export function StartHost() {
   // First-prompt seed (memo send modal → 新規セッションを起動). Read once into the
   // LaunchModal below; cleared when the whole launch stack closes.
   const seedPrompt = useLaunchSeed((s) => s.prompt);
+  const seedTitle = useLaunchSeed((s) => s.title);
   const clearSeed = useLaunchSeed((s) => s.clear);
   // Open the hub whenever the global tick changes (skip the mount value).
   const lastTickRef = useRef(startTick);
@@ -69,6 +70,7 @@ export function StartHost() {
           allowWorktree={!launch.worktree && launch.vcs !== "svn"}
           isSvn={launch.vcs === "svn"}
           initialPrompt={seedPrompt || undefined}
+          initialTitle={seedTitle || undefined}
           initialExistingBranch={launchExisting || undefined}
           onClose={() => {
             clearLaunch();

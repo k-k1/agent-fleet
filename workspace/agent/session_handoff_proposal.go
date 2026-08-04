@@ -17,9 +17,11 @@ import (
 )
 
 const handoffProposalMaxBytes = 64 << 10
+const handoffProposalTitleMaxBytes = 512
 
 type sessionHandoffProposal struct {
 	Prompt    string `json:"prompt"`
+	Title     string `json:"title,omitempty"`
 	CreatedAt int64  `json:"created_at"`
 }
 
@@ -45,8 +47,8 @@ func readHandoffProposal(name string) (*sessionHandoffProposal, error) {
 	return &p, nil
 }
 
-func writeHandoffProposal(name, prompt string) (*sessionHandoffProposal, error) {
-	p := &sessionHandoffProposal{Prompt: prompt, CreatedAt: time.Now().UnixMilli()}
+func writeHandoffProposal(name, prompt, title string) (*sessionHandoffProposal, error) {
+	p := &sessionHandoffProposal{Prompt: prompt, Title: title, CreatedAt: time.Now().UnixMilli()}
 	if err := os.MkdirAll(filepath.Dir(handoffProposalPath(name)), 0o700); err != nil {
 		return nil, err
 	}
@@ -84,6 +86,7 @@ func handleSessionHandoffProposal(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		var body struct {
 			Prompt string `json:"prompt"`
+			Title  string `json:"title"`
 		}
 		if !httpx.DecodeJSON(w, r, &body) {
 			return
@@ -97,7 +100,12 @@ func handleSessionHandoffProposal(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusBadRequest, "handoff_prompt_too_large", "prompt is too large")
 			return
 		}
-		p, err := writeHandoffProposal(name, prompt)
+		title := strings.TrimSpace(body.Title)
+		if len(title) > handoffProposalTitleMaxBytes {
+			httpx.WriteErr(w, http.StatusBadRequest, "handoff_title_too_large", "title is too large")
+			return
+		}
+		p, err := writeHandoffProposal(name, prompt, title)
 		if err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "handoff_write", err.Error())
 			return

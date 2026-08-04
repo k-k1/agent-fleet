@@ -20,11 +20,11 @@ func TestSessionHandoffProposalRoundTrip(t *testing.T) {
 		handleSessionHandoffProposal(w, r)
 		return w
 	}
-	if got := call(http.MethodPost, `{"prompt":"  Continue with task B.  "}`); got.Code != http.StatusOK {
+	if got := call(http.MethodPost, `{"prompt":"  Continue with task B.  ","title":"Continue task B"}`); got.Code != http.StatusOK {
 		t.Fatalf("POST status=%d body=%s", got.Code, got.Body.String())
 	}
 	got := call(http.MethodGet, "")
-	if got.Code != http.StatusOK || !strings.Contains(got.Body.String(), "Continue with task B.") {
+	if got.Code != http.StatusOK || !strings.Contains(got.Body.String(), "Continue with task B.") || !strings.Contains(got.Body.String(), "Continue task B") {
 		t.Fatalf("GET status=%d body=%s", got.Code, got.Body.String())
 	}
 	if got := call(http.MethodDelete, ""); got.Code != http.StatusNoContent {

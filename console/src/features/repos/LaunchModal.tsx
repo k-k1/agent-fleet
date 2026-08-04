@@ -35,6 +35,8 @@ export interface LaunchOpts {
   effort: string;
   startMode: "normal" | "plan";
   prompt: string;
+	/** Optional user-visible session name, supplied by a handoff proposal or edited here. */
+  title: string;
   // Pasted images awaiting upload. Held as raw Files (not yet uploaded) because no
   // session exists at compose time — the caller uploads them once the session is
   // minted and embeds the saved paths into the first prompt (claude Read-tool flow).
@@ -75,13 +77,15 @@ interface LaunchModalProps {
   /** Seed for the first-prompt field (docs/21 UI刷新): the memo send modal launches a
    * new session with the composed memo text prefilled here. */
   initialPrompt?: string;
+	/** Optional initial session title, e.g. proposed by a predecessor session. */
+  initialTitle?: string;
   /** Open straight into 既存ブランチ mode with this branch picked — the SCM view's
    * "start work on this branch" actions land here. */
   initialExistingBranch?: string;
   onLaunch: (opts: LaunchOpts) => Promise<LaunchResult>;
 }
 
-export function LaunchModal({ repo, branch, path, kinds, settling = false, allowWorktree = true, isSvn = false, onClose, onBack, initialPrompt, initialExistingBranch, onLaunch }: LaunchModalProps) {
+export function LaunchModal({ repo, branch, path, kinds, settling = false, allowWorktree = true, isSvn = false, onClose, onBack, initialPrompt, initialTitle, initialExistingBranch, onLaunch }: LaunchModalProps) {
   const settings = useSettings();
   const last = readRepoLast(repo);
   // Default to the last agent used in this repo when still available, else the first.
@@ -111,6 +115,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   // CLI(TUI) はユーザーの明示的な選択 — セッション毎に TUI プロセス分のメモリを払う。
   const [driver, setDriver] = useState(agentOf(initialKind).managedDriver ? "managed" : "");
   const [prompt, setPrompt] = useState(initialPrompt ?? "");
+  const [title, setTitle] = useState(initialTitle ?? "");
   // Pasted images awaiting the launch: raw File + an object URL for the chip preview.
   // Uploaded only after the session is minted (in onStartWork), then referenced in the
   // first prompt. Agents without the imagePaste cap (shell/ssm) make paste a no-op.
@@ -265,6 +270,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
       effort: hasEffort ? effort : "",
       startMode: hasStartMode ? startMode : "normal",
       prompt: prompt.trim(),
+      title: title.trim(),
       images: canPasteImage ? images.map((x) => x.file) : [],
       worktree,
       base: worktree ? wtBase : "",
@@ -555,6 +561,11 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
           )}
         </div>
         )}
+
+        <div className="ui-field">
+          <span className="ui-field-label">{tr("launch.field.title")}</span>
+          <input value={title} maxLength={512} onChange={(e) => setTitle(e.target.value)} placeholder={tr("launch.title_ph")} />
+        </div>
 
         {/* 最初のプロンプト（任意） */}
         <div className="ui-field">

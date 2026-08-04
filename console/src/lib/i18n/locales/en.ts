@@ -1654,6 +1654,8 @@ export const en: Record<keyof typeof ja, string> = {
     "Empties this conversation's work plan, so nothing is carried into new sessions any more (the message history and the handoff summary stay as they are).",
   "chat.plan.placeholder": "## Constraints\n## Given\n## Next up",
   "mirror.handoff_title": "Handoff to a new session",
+  "mirror.handoff_title_ph": "New session name (optional)",
+  "mirror.handoff_title_auto": "The display name will be chosen automatically",
   "mirror.handoff_intro": "The current agent proposed this first prompt. Review or edit it, then choose the next agent and model before launching.",
   "mirror.handoff_launch": "Start new session",
   "mirror.handoff_discard": "Discard",
@@ -2261,6 +2263,8 @@ export const en: Record<keyof typeof ja, string> = {
 
   // === P2 launch form shared (StartModal / LaunchModal) ===
   "launch.field.agent": "Agent",
+  "launch.field.title": "Session name",
+  "launch.title_ph": "Optional; leave empty to choose automatically",
   "launch.field.model": "Model",
   "launch.field.effort": "Reasoning effort",
   "launch.field.effort_hint": "Unset uses the model default.",
