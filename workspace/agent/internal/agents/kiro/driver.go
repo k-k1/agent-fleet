@@ -101,7 +101,7 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	if !session.DirExists(m.Dir) {
 		return nil, agents.DirGoneErr(m.Dir)
 	}
-	ensureSettings() // 冪等: autoupdate off ＋ --trust-all の危険モード確認ダイアログ抑止
+	ensureSettings()                       // 冪等: autoupdate off ＋ --trust-all の危険モード確認ダイアログ抑止
 	slotSid := session.UUID(m.Dir, m.Name) // identity: the working copy, never the subdir
 	handlesMu.Lock()
 	h := handles[m.Name]
