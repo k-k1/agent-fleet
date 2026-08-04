@@ -12,6 +12,7 @@ import { useStartWork } from "./useStartWork.ts";
 import { StartModal } from "./StartModal.tsx";
 import { LaunchModal } from "./LaunchModal.tsx";
 import { useLaunchTarget, useLaunchSeed } from "./store.ts";
+import { markHandoffLaunched } from "../mirror/HandoffProposal.tsx";
 
 export function StartHost() {
   const startTick = useSessionsStore((s) => s.startTick);
@@ -24,6 +25,7 @@ export function StartHost() {
   // LaunchModal below; cleared when the whole launch stack closes.
   const seedPrompt = useLaunchSeed((s) => s.prompt);
   const seedTitle = useLaunchSeed((s) => s.title);
+  const seedHandoff = useLaunchSeed((s) => s.handoffSession);
   const clearSeed = useLaunchSeed((s) => s.clear);
   // Open the hub whenever the global tick changes (skip the mount value).
   const lastTickRef = useRef(startTick);
@@ -80,6 +82,9 @@ export function StartHost() {
           onLaunch={async (o) => {
             const r = await startWork({ dir: launch.path || "", repo: launch.name }, o);
             if (r.ok) {
+              // Seeded by a handoff proposal: badge it 起動済み now that a session
+              // really exists. The proposal itself stays — discarding is the user's call.
+              if (seedHandoff) void markHandoffLaunched(seedHandoff);
               setShow(false); // launched — drop the hub underneath too
               clearSeed();
             }

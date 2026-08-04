@@ -34,6 +34,9 @@ const TURNS = Number(arg("turns", 200));
 const IMAGES = Number(arg("images", 3)); // trailing turns that carry a shared-file image
 const IMG_DELAY = Number(arg("imgdelay", 3000)); // ms before those image bytes are served
 const MERMAID = Number(arg("mermaid", 0)); // trailing turns that carry a mermaid diagram
+// Outstanding handoff proposal: "" none | "mid" proposed a few turns back | "new" just
+// proposed (nothing newer yet) | "launched" already used to start a session.
+const HANDOFF = arg("handoff", "");
 
 const MIME = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
@@ -64,11 +67,17 @@ const diagram = (i) =>
     `  C${i} -->|はい| D${i}[決済へ]`, `  C${i} -->|いいえ| E${i}[エラー表示]`, `  D${i} --> F${i}[完了]`,
     `  E${i} --> F${i}`, "```"].join("\n");
 
+// Turn timestamps are RFC3339 strings, exactly as internal/transcript emits them — the
+// mirror places the handoff card by comparing these against the proposal's created_at,
+// so a stub that faked them as numbers would silently skip that comparison.
+const T0 = Date.parse("2026-08-04T10:00:00.000Z");
+const turnTS = (i) => new Date(T0 + i * 60_000).toISOString();
+
 function buildTurns(n) {
   const t = [];
   for (let i = 0; i < n; i++) {
     const q = `質問 ${i}: 合計 0 円で決済に進めてしまう件を調べて`;
-    t.push({ role: "user", idx: i * 2, ts: 1753600000 + i, text: q, parts: [{ kind: "text", text: q }] });
+    t.push({ role: "user", idx: i * 2, ts: turnTS(i), text: q, parts: [{ kind: "text", text: q }] });
     const parts = [
       { kind: "text", text: `調べます（${i}）。` },
       { kind: "tool", tool: "Grep", info: "validateCart · src/", output: "src/checkout/validate.ts:4\nsrc/checkout/index.ts:22" },
@@ -77,7 +86,7 @@ function buildTurns(n) {
     ];
     if (IMAGES && i >= n - IMAGES) parts.push({ kind: "userfile", files: [`shot-${i}.png`], caption: "スクリーンショット" });
     if (MERMAID && i >= n - MERMAID) parts.push({ kind: "text", text: diagram(i) });
-    t.push({ role: "assistant", idx: i * 2 + 1, ts: 1753600000 + i, model: "claude-opus-5", inTok: 1000, outTok: 100, text: "", parts });
+    t.push({ role: "assistant", idx: i * 2 + 1, ts: turnTS(i), model: "claude-opus-5", inTok: 1000, outTok: 100, text: "", parts });
   }
   return t;
 }
@@ -115,7 +124,26 @@ const exact = {
   "/api/browser/pages": () => ({ pages: [] }),
   "/api/tts/speakers": () => ({ speakers: [] }),
 };
-const re = [[/^\/api\/sessions\/([^/]+)\/messages$/, (m, q) => messages(decodeURIComponent(m[1]), q)]];
+// The outstanding handoff proposal (docs: the card the mirror places by created_at).
+// "mid" stamps it 3 turns before the end, so turns exist BELOW it — the shape that used
+// to be impossible, because the card was always the scroller's last child.
+function handoffProposal() {
+  if (!HANDOFF) return { proposal: null };
+  const at = HANDOFF === "new" ? T0 + (TURNS + 5) * 60_000 : T0 + (TURNS - 3) * 60_000 + 1;
+  return {
+    proposal: {
+      prompt: "次のセッションでやること:\n- 決済経路の回帰テストを追加\n- 合計 0 円のガードを検証",
+      title: "決済バリデーションの続き",
+      created_at: at,
+      ...(HANDOFF === "launched" ? { launched_at: at + 60_000 } : {}),
+    },
+  };
+}
+
+const re = [
+  [/^\/api\/sessions\/([^/]+)\/messages$/, (m, q) => messages(decodeURIComponent(m[1]), q)],
+  [/^\/api\/sessions\/([^/]+)\/handoff-proposal$/, () => handoffProposal()],
+];
 
 function apiBody(p, q) {
   if (exact[p]) return exact[p](q);

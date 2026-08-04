@@ -117,15 +117,20 @@ export const useLaunchTarget = create<LaunchTargetStore>((set) => ({
 interface LaunchSeedStore {
 	prompt: string;
 	title: string;
-	set(p: string, title?: string): void;
+	/** Session whose handoff proposal seeded this launch ("" = not a handoff). The
+	 *  dialog's success path badges that proposal 起動済み; a cancelled dialog leaves it
+	 *  untouched, which is why the mark can't happen when the seed is set. */
+	handoffSession: string;
+	set(p: string, title?: string, handoffSession?: string): void;
   clear(): void;
 }
 
 export const useLaunchSeed = create<LaunchSeedStore>((set) => ({
 	prompt: "",
 	title: "",
-	set: (prompt, title = "") => set({ prompt, title }),
-	clear: () => set({ prompt: "", title: "" }),
+	handoffSession: "",
+	set: (prompt, title = "", handoffSession = "") => set({ prompt, title, handoffSession }),
+	clear: () => set({ prompt: "", title: "", handoffSession: "" }),
 }));
 
 /** Poll every 60s while the tab is visible AND the workspace is running, so the

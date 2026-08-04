@@ -12,7 +12,8 @@
     "test": "vitest run",
     "i18n:lint": "node scripts/i18n-lint.mjs",
     "shots": "node scripts/shots/capture.mjs",
-    "mirror:scroll": "node scripts/mirror-scroll/check.mjs"
+    "mirror:scroll": "node scripts/mirror-scroll/check.mjs",
+    "mirror:handoff": "node scripts/mirror-handoff/check.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.4",
