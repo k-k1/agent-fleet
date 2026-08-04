@@ -87,6 +87,31 @@ describe("echoLanded", () => {
     // "/" 始まりの素のテキスト（コマンドではない）は誤って隠さない。
     expect(echoLanded({ text: "/etc/hosts を見て", sinceIdx: 10 }, [], notNoise)).toBe(false);
   });
+
+  // codex managed が turn/start をエラーで拒否した場合（利用上限を使い切った実測）、
+  // turn すら作られずユーザー発言も rollout に一切書かれない。合成された error ターン
+  // （driver.go managedEnrich）が assistant 側でも解消の対象になる。
+  it("送信後の error ターン（assistant）でも解消する（turn/start 拒否で user ターンが無い場合）", () => {
+    expect(
+      echoLanded(
+        { text: "続けて", sinceIdx: 10 },
+        [{ role: "assistant", idx: 11, parts: [{ kind: "error" }] }],
+        notNoise,
+      ),
+    ).toBe(true);
+  });
+
+  it("送信より前の error ターンでは解消しない", () => {
+    expect(
+      echoLanded({ text: "続けて", sinceIdx: 20 }, [{ role: "assistant", idx: 11, parts: [{ kind: "error" }] }], notNoise),
+    ).toBe(false);
+  });
+
+  it("error 以外の kind の assistant ターンでは解消しない", () => {
+    expect(
+      echoLanded({ text: "続けて", sinceIdx: 10 }, [{ role: "assistant", idx: 11, parts: [{ kind: "text" }] }], notNoise),
+    ).toBe(false);
+  });
 });
 
 describe("echoNeedsResync", () => {

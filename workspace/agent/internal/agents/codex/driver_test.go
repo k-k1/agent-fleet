@@ -6,6 +6,7 @@ package codex
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -39,6 +40,7 @@ type mockCodexServer struct {
 	nextTurn       int
 	autoComplete   bool
 	failNextSteer  bool
+	failNextStart  json.RawMessage // when set, turn/start answers with this JSON-RPC error instead of starting a turn
 	experimental   bool
 	clientResponse chan rpcMsg
 }
@@ -99,6 +101,14 @@ func (m *mockCodexServer) serve(conn *websocket.Conn) {
 		m.mu.Unlock()
 		switch msg.Method {
 		case "turn/start":
+			m.mu.Lock()
+			failErr := m.failNextStart
+			m.failNextStart = nil
+			m.mu.Unlock()
+			if failErr != nil {
+				m.write(map[string]any{"id": json.RawMessage(msg.ID), "error": json.RawMessage(failErr)})
+				continue
+			}
 			var p struct {
 				Input []struct {
 					Type string `json:"type"`
@@ -261,6 +271,32 @@ func TestAppClientEnablesExperimentalAPI(t *testing.T) {
 	defer m.mu.Unlock()
 	if !m.experimental {
 		t.Fatal("initialize must advertise capabilities.experimentalApi=true")
+	}
+}
+
+// TestCallReturnsStructuredRPCError pins appclient.go's call() contract that errors.go's
+// codexErrorFromRPC depends on: a decodable JSON-RPC error ({code,message,data}) must
+// come back as an *rpcError (via errors.As), not just a flattened string, so the message
+// and any structured data survive instead of being baked into opaque text.
+func TestCallReturnsStructuredRPCError(t *testing.T) {
+	m, cl := newMockCodexServer(t)
+	m.failNextStart, _ = json.Marshal(map[string]any{
+		"code": -32000, "message": "usage limit exceeded",
+		"data": map[string]any{"message": "inner", "codexErrorInfo": "usageLimitExceeded"},
+	})
+	_, err := cl.call("turn/start", map[string]any{"threadId": "thr_test", "input": []any{}}, 3*time.Second)
+	if err == nil {
+		t.Fatal("call() = nil error, want the mocked rejection")
+	}
+	var re *rpcError
+	if !errors.As(err, &re) {
+		t.Fatalf("call() error = %T (%v), want *rpcError", err, err)
+	}
+	if re.Code != -32000 || re.Message != "usage limit exceeded" {
+		t.Fatalf("decoded = %+v", re)
+	}
+	if !strings.Contains(string(re.Data), "usageLimitExceeded") {
+		t.Fatalf("Data = %s, want it to carry codexErrorInfo", re.Data)
 	}
 }
 
@@ -576,6 +612,133 @@ func TestManagedTurnNotifiesCompletion(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("turn completed without notifying the state seam — 報告が飛ばない")
+	}
+}
+
+// TestManagedTurnFailedSurfacesReason pins the fix for the codex-specific 反映待ち bug:
+// a turn/completed(status:"failed") carries turn.error (TurnError{message,
+// codexErrorInfo}), which the driver used to discard entirely — MarkTurnEnd (no reason)
+// meant the operator report/chat bridge got a bare "failed" with nothing to explain it,
+// and the Console had no error turn to show. It must now reach both the notifier's
+// excerpt and h.turnError() (managedEnrich's source for the synthetic error turn).
+func TestManagedTurnFailedSurfacesReason(t *testing.T) {
+	m, cl := newMockCodexServer(t)
+	h := newCodexTestHandle(t, cl, "codex-turn-failed")
+	registerCodexTestHandle(t, h)
+
+	got := make(chan [4]string, 8)
+	agents.SetStateNotifier(func(sid, previous, state, excerpt string) {
+		got <- [4]string{sid, previous, state, excerpt}
+	})
+	t.Cleanup(func() { agents.SetStateNotifier(nil) })
+
+	if err := h.Send(agents.TurnInput{Prompt: "hello", ClientMessageID: "af_turnfail"}); err != nil {
+		t.Fatal(err)
+	}
+	// Wait for turn/start to land, then answer with a failed completion carrying error detail.
+	deadline := time.Now().Add(3 * time.Second)
+	for m.callCount("turn/start") == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	m.mu.Lock()
+	turnID := m.activeTurn
+	m.mu.Unlock()
+	m.notify("turn/completed", map[string]any{
+		"threadId": "thr_test",
+		"turn": map[string]any{
+			"id": turnID, "status": "failed",
+			"error": map[string]any{"message": "You've hit your usage limit.", "codexErrorInfo": "usageLimitExceeded"},
+		},
+	})
+	waitCodexState(t, h, agents.TurnFailed)
+
+	select {
+	case tr := <-got:
+		if tr[0] != h.slotSid || tr[2] != agents.StateFailed {
+			t.Fatalf("transition = %v, want %s …→%s", tr, h.slotSid, agents.StateFailed)
+		}
+		if !strings.Contains(tr[3], "usageLimitExceeded") || !strings.Contains(tr[3], "usage limit") {
+			t.Fatalf("excerpt = %q, want it to carry the codexErrorInfo label and message", tr[3])
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("turn failed without notifying the state seam with a reason")
+	}
+
+	ce := h.turnError()
+	if ce == nil || ce.label != "usageLimitExceeded" || ce.message != "You've hit your usage limit." {
+		t.Fatalf("h.turnError() = %+v, want the decoded TurnError", ce)
+	}
+}
+
+// TestTurnStartRejectionSurfacesReason covers the OTHER failure shape: codex rejects
+// turn/start itself with a JSON-RPC error before ever creating a Turn (the field case —
+// a usage-limit-exhausted session — where nothing, not even the user's prompt, reaches
+// the rollout). The driver must still surface a reason and set h.turnError() so
+// managedEnrich can synthesize something for the mirror to show.
+func TestTurnStartRejectionSurfacesReason(t *testing.T) {
+	m, cl := newMockCodexServer(t)
+	m.failNextStart, _ = json.Marshal(map[string]any{"code": -32000, "message": "usage limit exceeded"})
+	h := newCodexTestHandle(t, cl, "codex-start-rejected")
+	registerCodexTestHandle(t, h)
+
+	got := make(chan [4]string, 8)
+	agents.SetStateNotifier(func(sid, previous, state, excerpt string) {
+		got <- [4]string{sid, previous, state, excerpt}
+	})
+	t.Cleanup(func() { agents.SetStateNotifier(nil) })
+
+	if err := h.Send(agents.TurnInput{Prompt: "hello", ClientMessageID: "af_startrej"}); err != nil {
+		t.Fatal(err)
+	}
+	waitCodexState(t, h, agents.TurnFailed)
+
+	select {
+	case tr := <-got:
+		if tr[0] != h.slotSid || tr[2] != agents.StateFailed {
+			t.Fatalf("transition = %v, want %s …→%s", tr, h.slotSid, agents.StateFailed)
+		}
+		if !strings.Contains(tr[3], "usage limit exceeded") {
+			t.Fatalf("excerpt = %q, want the rejected turn/start's message", tr[3])
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("rejected turn/start did not notify the state seam with a reason")
+	}
+
+	if ce := h.turnError(); ce == nil || ce.message != "usage limit exceeded" {
+		t.Fatalf("h.turnError() = %+v, want the rejected call's message", ce)
+	}
+}
+
+// TestManagedEnrichAppendsErrorTurn pins the mirror-visibility half of the fix:
+// managedEnrich must append the pending turn error as a trailing synthetic turn (so the
+// Console's ErrorBlock has something to render and the pending-echo reconciliation has a
+// post-cutoff turn to land against), and the NEXT turn starting must clear it so it never
+// lingers past a successful retry.
+func TestManagedEnrichAppendsErrorTurn(t *testing.T) {
+	_, cl := newMockCodexServer(t)
+	h := newCodexTestHandle(t, cl, "codex-enrich-error")
+	registerCodexTestHandle(t, h)
+	h.setLastError(codexError{message: "You've hit your usage limit.", label: "usageLimitExceeded"})
+
+	m := session.Meta{Name: h.name, Dir: h.dir, Kind: session.KindCodex, Driver: session.DriverManaged}
+	td := agents.TranscriptData{Turns: []transcript.Turn{{Role: "user", Idx: 5}, {Role: "assistant", Idx: 6}}}
+	managedEnrich(m, &td)
+	if len(td.Turns) != 3 {
+		t.Fatalf("Turns = %+v, want 3 (2 real + 1 synthetic error)", td.Turns)
+	}
+	tail := td.Turns[2]
+	if tail.Idx != 7 || tail.Role != "assistant" || len(tail.Parts) != 1 || tail.Parts[0].Kind != "error" {
+		t.Fatalf("synthetic turn = %+v, want idx=7 role=assistant kind=error", tail)
+	}
+	if tail.Parts[0].Text != "You've hit your usage limit." {
+		t.Fatalf("Parts[0].Text = %q", tail.Parts[0].Text)
+	}
+
+	h.clearLastError()
+	td2 := agents.TranscriptData{Turns: []transcript.Turn{{Role: "user", Idx: 5}}}
+	managedEnrich(m, &td2)
+	if len(td2.Turns) != 1 {
+		t.Fatalf("Turns = %+v, want the synthetic turn cleared", td2.Turns)
 	}
 }
 

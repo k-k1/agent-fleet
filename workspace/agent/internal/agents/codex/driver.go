@@ -477,6 +477,31 @@ type threadHandle struct {
 	interReq json.RawMessage     // server request の JSON-RPC id（interClient 接続スコープ）
 	interCl  *appClient
 	events   chan agents.Event
+	lastErr  *codexError // 直近ターンの失敗詳細（errors.go）。次ターン開始で clearLastError
+	                      // されるまで managedEnrich が末尾へ合成 error ターンとして出す。
+}
+
+// setLastError / clearLastError / turnError manage the failure detail managedEnrich
+// injects as a synthetic transcript turn (§10.2-5). In-memory only — matches h.inter's
+// lifetime, since neither survives a process restart and both are re-derived by
+// reconciliation instead of persisted.
+func (h *threadHandle) setLastError(e codexError) {
+	h.mu.Lock()
+	ce := e
+	h.lastErr = &ce
+	h.mu.Unlock()
+}
+
+func (h *threadHandle) clearLastError() {
+	h.mu.Lock()
+	h.lastErr = nil
+	h.mu.Unlock()
+}
+
+func (h *threadHandle) turnError() *codexError {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.lastErr
 }
 
 // emit pushes an event without ever blocking a state transition (drop on overflow —
@@ -635,6 +660,7 @@ func (h *threadHandle) pump() {
 // ここでは楽観の working だけ先に刻む。
 func (h *threadHandle) runTurn(in agents.TurnInput, gen int) {
 	agents.MarkTurnStart(h.slotSid)
+	h.clearLastError() // 新しいターンが始まる＝前ターンの合成 error は役目を終える
 	h.setState(agents.TurnStarting)
 	h.mu.Lock()
 	cl, tid := h.client, h.tid
@@ -659,11 +685,24 @@ func (h *threadHandle) runTurn(in agents.TurnInput, gen int) {
 			return // reconciliation が新世代の snapshot を既に置いた
 		}
 		st := agents.TurnUnknown // 切断 — §6 に委ねる（報告はしない）
+		failure := ""
 		if alive {
 			log.Printf("codex managed: turn/start %s: %v", h.name, err)
 			st = agents.TurnFailed
+			// turn/start が JSON-RPC エラーで即拒否されるケース(実測: 利用上限を使い切った
+			// 状態での送信)は turn すら作られず rollout に何も書かれない — ユーザーの発言
+			// すら記録されない。理由を拾えないと通知/報告は空文字のまま「失敗しました」
+			// としか言えず、ミラーの反映待ちechoも一致対象が永遠に現れず消えない
+			// （pendingEcho.echoLanded）。ここで合成した error ターンが managedEnrich 経由で
+			// その代わりを果たす。
+			if ce, ok := codexErrorFromRPC(err); ok {
+				failure = ce.summary()
+				h.setLastError(ce)
+			} else {
+				failure = "[error] " + err.Error()
+			}
 		}
-		agents.MarkTurnEnd(h.slotSid, st)
+		agents.MarkTurnEndErr(h.slotSid, st, failure)
 		h.setState(st)
 		return
 	}
@@ -937,6 +976,24 @@ func managedEnrich(m session.Meta, td *agents.TranscriptData) {
 	if modeSet != "" {
 		td.Mode = modeSet // 切替直後の rollout はまだ古い — driver 設定が次 turn の真実
 	}
+	// A turn rejected at turn/start (errors.go — usage limit exhausted, in the field) never
+	// creates a Turn, so nothing — not even the user's own prompt — reaches the rollout.
+	// Without this, the mirror's optimistic echo has no real turn to reconcile against and
+	// sits at 反映待ち forever (pendingEcho.echoLanded requires a landed turn). Appending a
+	// synthetic trailing turn gives both the echo (any post-cutoff error turn resolves it,
+	// console/src/features/mirror/pendingEcho.ts) and the Console (ErrorBlock, same Kind
+	// opencode's errors.go targets) something to show. Cleared by clearLastError the moment
+	// the next turn starts (runTurn), so it never lingers past a successful retry.
+	if ce := h.turnError(); ce != nil {
+		idx := 0
+		if n := len(td.Turns); n > 0 {
+			idx = td.Turns[n-1].Idx + 1
+		}
+		td.Turns = append(td.Turns, transcript.Turn{
+			Role: "assistant", Parts: []transcript.Part{ce.part()}, Text: ce.summary(),
+			Idx: idx, TS: time.Now().Format(time.RFC3339),
+		})
+	}
 }
 
 // buildInput assembles the turn/start・turn/steer input items: prompt text +
@@ -1046,8 +1103,9 @@ func dispatchNotification(msg rpcMsg) {
 		var p struct {
 			ThreadID string `json:"threadId"`
 			Turn     struct {
-				ID     string `json:"id"`
-				Status string `json:"status"`
+				ID     string          `json:"id"`
+				Status string          `json:"status"`
+				Error  json.RawMessage `json:"error"` // TurnError; populated only when Status=="failed"
 			} `json:"turn"`
 		}
 		if json.Unmarshal(msg.Params, &p) != nil {
@@ -1055,9 +1113,14 @@ func dispatchNotification(msg rpcMsg) {
 		}
 		if h := handleByTid(p.ThreadID); h != nil {
 			st := agents.TurnCompleted
+			failure := ""
 			switch p.Turn.Status {
 			case "failed":
 				st = agents.TurnFailed
+				if ce, ok := decodeCodexError(p.Turn.Error); ok {
+					failure = ce.summary()
+					h.setLastError(ce)
+				}
 			case "interrupted":
 				st = agents.TurnCancelled
 			}
@@ -1070,7 +1133,7 @@ func dispatchNotification(msg rpcMsg) {
 			if mismatch {
 				return
 			}
-			agents.MarkTurnEnd(h.slotSid, st)
+			agents.MarkTurnEndErr(h.slotSid, st, failure)
 			h.mu.Lock()
 			end := h.turnEnd
 			if h.turnID == p.Turn.ID {
