@@ -75,6 +75,16 @@ type Turn struct {
 	CacheCreate int    `json:"cacheCreate,omitempty"`
 	TS          string `json:"ts"`  // RFC3339 from the transcript line, "" if absent
 	Idx         int    `json:"idx"` // transcript line index — a stable render key
+	// EndTS is when an assistant turn FINISHED (RFC3339). The Console shows a block's
+	// end time in its footer, not its start: a turn that runs tools for minutes would
+	// otherwise be stamped with the moment the model began (its first thinking/tool
+	// event), which reads as the wrong date entirely on a long turn.
+	// Agents that write one turn as MANY rows (claude, codex) leave this empty — the
+	// Console folds those rows into one block and the last row's TS already is the end.
+	// It is for agents that record a whole turn as a SINGLE row (opencode's message,
+	// copilot's turn_start…turn_end span), where TS alone can only be the start.
+	// "" = unknown; the Console falls back to TS.
+	EndTS string `json:"endTs,omitempty"`
 	// Compact: this "turn" is claude's auto-compaction summary (jsonl isCompactSummary),
 	// written as a user message. The Console shows it as a collapsible "圧縮されました"
 	// block instead of a normal user prompt.

@@ -122,6 +122,14 @@ func TestParseEvents(t *testing.T) {
 	if a.Parts[1].Kind != "text" || a.Parts[1].Text != "done" || a.Text != "done" {
 		t.Errorf("text part wrong: %+v", a)
 	}
+	// 1 ターン = turn_start…turn_end の span を 1 Turn に畳むので TS だけでは「開始」に
+	// しかならない。ミラーのフッターが出すのは着地時刻なので EndTS が要る。
+	if a.TS != "2026-07-21T01:00:03Z" {
+		t.Errorf("assistant TS = %q, want the turn_start time", a.TS)
+	}
+	if a.EndTS != "2026-07-21T01:00:07Z" {
+		t.Errorf("assistant EndTS = %q, want the turn_end time", a.EndTS)
+	}
 	// Idx は単調増加（Console の pendingEcho/MirrorView 契約 — 必須）。
 	last := -1
 	for i, tn := range turns {

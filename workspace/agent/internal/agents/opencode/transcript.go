@@ -521,7 +521,8 @@ func parseMessage(db *sql.DB, msgID string, data []byte, idx int) (transcript.Tu
 			} `json:"cache"`
 		} `json:"tokens"`
 		Time struct {
-			Created int64 `json:"created"`
+			Created   int64 `json:"created"`
+			Completed int64 `json:"completed"` // assistant only; absent while the turn runs
 		} `json:"time"`
 		Path struct {
 			Cwd string `json:"cwd"`
@@ -559,6 +560,13 @@ func parseMessage(db *sql.DB, msgID string, data []byte, idx int) (transcript.Tu
 		t.TS = time.UnixMilli(md.Time.Created).UTC().Format(time.RFC3339)
 	}
 	if md.Role == "assistant" {
+		// One opencode message IS one whole turn (text + every tool part), so created is
+		// the turn's START. completed lands when the turn ends — that is what the mirror's
+		// footer wants. Still running (completed == 0): leave EndTS empty and let the
+		// Console fall back to created.
+		if md.Time.Completed > 0 {
+			t.EndTS = time.UnixMilli(md.Time.Completed).UTC().Format(time.RFC3339)
+		}
 		t.Model = md.ModelID
 		t.Effort = md.Variant
 		t.InTok, t.OutTok = md.Tokens.Input, md.Tokens.Output

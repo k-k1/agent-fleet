@@ -114,6 +114,7 @@ import {
 import { ManagedSettingsModal } from "./ManagedSettingsModal.tsx";
 import { HandoffProposal, useHandoffProposal } from "./HandoffProposal.tsx";
 import { chronoInsertIndex } from "./handoffPlacement.ts";
+import { carryEnd, endOf, footTime } from "./turnTime.ts";
 
 const q = encodeURIComponent;
 
@@ -197,6 +198,11 @@ interface Turn {
   role: string;
   text?: string;
   ts?: string;
+  // endTs: when an assistant turn finished, sent only by agents that record a whole turn
+  // as ONE row (opencode, copilot) — for them ts alone is the turn's START. Agents that
+  // write a turn as many rows (claude, codex) omit it; groupTurns derives the end from the
+  // last row it folds in. See workspace/agent/internal/transcript/transcript.go.
+  endTs?: string;
   idx?: number;
   pending?: boolean; // optimistic local echo of a just-sent prompt, not yet in the jsonl
   queued?: boolean; // sitting in claude's mid-run queue (enqueued, awaiting injection)
@@ -233,7 +239,8 @@ interface Group {
   outTok: number;
   cacheRead: number;
   cacheCreate: number;
-  ts?: string;
+  ts?: string; // the block's START (first folded turn) — ordering key, see chronoInsertIndex
+  endTs?: string; // the block's END (last folded turn) — what the footer shows
   idx?: number;
   pending?: boolean; // holds an optimistic local echo awaiting its real transcript turn
   queued?: boolean; // holds a prompt claude reports queued for the running turn
@@ -3353,6 +3360,10 @@ function partsOf(t: Turn): Part[] {
 // OR sidechain change so a subagent's turns stay separate from the main thread. It
 // keeps the FIRST turn's idx/timestamp/branch/cwd, and for tokens sums output while
 // taking the last event's input/cache as the context size.
+// Timestamps are kept at BOTH ends: ts (first) orders the block, endTs (last) is what
+// the footer shows. claude/codex write one turn as many rows — thinking, each tool call,
+// then the answer — so the first row is the moment the model started, minutes or a day
+// before the text being read. The footer must not claim that as the reply's time.
 function groupTurns(turns: Turn[]): Group[] {
   const out: Group[] = [];
   for (const t of turns) {
@@ -3380,6 +3391,7 @@ function groupTurns(turns: Turn[]): Group[] {
       !t.cmd
     ) {
       last.parts.push(...parts);
+      carryEnd(last, t); // the block's end follows the last row folded in
       if (t.pending) last.pending = true;
       if (t.queued) last.queued = true;
       if (t.source) last.source = t.source; // operator origin survives a same-role merge
@@ -3412,6 +3424,7 @@ function groupTurns(turns: Turn[]): Group[] {
         cacheRead: t.cacheRead || 0,
         cacheCreate: t.cacheCreate || 0,
         ts: t.ts,
+        endTs: endOf(t) || undefined,
         idx: t.idx,
         pending: !!t.pending,
         queued: !!t.queued,
@@ -4116,7 +4129,20 @@ function Turn({
         )}
       </div>
       <div className="mirror-turn-foot">
-        {turn.ts && <span className="mt-time muted">{formatTS(turn.ts)}</span>}
+        {/* The block's END: when this reply landed, not when the agent started working on
+            it (turnTime.ts). The start stays reachable as a tooltip on a spanning turn. */}
+        {footTime(turn) && (
+          <span
+            className="mt-time muted"
+            title={
+              turn.ts && turn.endTs && turn.endTs !== turn.ts
+                ? tr("mirror.time_span_hint", { start: formatTS(turn.ts), end: formatTS(turn.endTs) })
+                : undefined
+            }
+          >
+            {formatTS(footTime(turn))}
+          </span>
+        )}
         {turn.outTok > 0 && (
           <span className="mt-tok muted" title={tr("mirror.token_hint")}>
             ↑{fmtTok(ctxTok)} ↓{fmtTok(turn.outTok)}

@@ -80,9 +80,18 @@ func parseEvents(path string) []transcript.Turn {
 		cur = nil
 		toolIdx = map[string]int{}
 	}
+	// ensureCur opens the assistant turn when needed and advances its end time. copilot
+	// records a turn as a SPAN (assistant.turn_start … assistant.turn_end) that is folded
+	// into one Turn here, so TS can only ever be the turn's start — on a long tool-running
+	// turn that is minutes (and possibly a day) before the answer the user is reading.
+	// Every later event of the same turn pushes EndTS forward, so the footer is right even
+	// when turn_end never arrives (turn still running, or the CLI died mid-turn).
 	ensureCur := func(idx int, ts, model string) {
 		if cur == nil {
 			cur = &transcript.Turn{Role: "assistant", TS: ts, Idx: idx, Model: model}
+		}
+		if ts != "" {
+			cur.EndTS = ts
 		}
 	}
 
@@ -169,6 +178,9 @@ func parseEvents(path string) []transcript.Turn {
 			if json.Unmarshal(ev.Data, &d) != nil || cur == nil {
 				continue
 			}
+			if ev.TS != "" {
+				cur.EndTS = ev.TS
+			}
 			i, ok := toolIdx[d.ToolCallID]
 			if !ok || i >= len(cur.Parts) {
 				continue
@@ -179,6 +191,9 @@ func parseEvents(path string) []transcript.Turn {
 			}
 			cur.Parts[i].Output = clip(out)
 		case "assistant.turn_end":
+			if cur != nil && ev.TS != "" {
+				cur.EndTS = ev.TS // the authoritative end of the span
+			}
 			flush()
 		}
 	}
