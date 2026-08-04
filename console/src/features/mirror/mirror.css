@@ -2392,3 +2392,23 @@ button.mt-bash-toggle:hover {
   color: var(--del);
   background: color-mix(in srgb, var(--del) 8%, transparent);
 }
+
+/* Session MCP handoff proposal. Kept visually adjacent to plan approval, but it is
+ * not an in-band agent interaction: only its launch button opens the normal user
+ * controlled session launcher. */
+.mirror-handoff {
+  margin: 12px 14px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg));
+}
+.mirror-handoff-head { display: flex; align-items: center; gap: 6px; font-weight: 650; }
+.mirror-handoff-head span { display: inline-flex; align-items: center; gap: 6px; }
+.mirror-handoff-prompt, .mirror-handoff-edit {
+  box-sizing: border-box; width: 100%; max-height: 240px; overflow: auto;
+  padding: 9px; border: 1px solid var(--border); border-radius: 5px;
+  background: var(--input); color: var(--fg); font: inherit; white-space: pre-wrap;
+}
+.mirror-handoff-edit { min-height: 140px; resize: vertical; }
+.mirror-handoff-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }

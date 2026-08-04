@@ -346,6 +346,18 @@ func mcpStdioToolAdvertised(name string) bool {
 // 「どのセッションか」だけ（ADR 0035 決定5: 申告はタイミング信号のみ）。
 var mcpStdioSelfReportTools = []map[string]any{
 	{
+		"name":        "propose_session_handoff",
+		"description": "Agent Fleet: 次の新規セッションへ渡す初回プロンプトを利用者へ提案する。セッションは起動しない。作業の区切りで、未完了事項・変更点・次の手順を次のエージェントがそのまま実行できるプロンプトにまとめて渡す。利用者が Console で内容を確認・編集し、エージェントとモデルを選んでから起動する。",
+		"inputSchema": map[string]any{
+			"type": "object", "additionalProperties": false,
+			"properties": map[string]any{
+				"session": map[string]any{"type": "string", "description": "自分のセッション名"},
+				"prompt":  map[string]any{"type": "string", "minLength": 1, "description": "次セッションの最初のユーザー指示として渡す引き継ぎ本文"},
+			},
+			"required": []string{"session", "prompt"},
+		},
+	},
+	{
 		"name": "af_report",
 		"description": "Agent Fleet: 依頼された指示をやり切ったことを1回だけ申告する。" +
 			"プロンプトに [agent-fleet] の注記が付いた指示を完了し、これ以上やることが残っていない時点で呼ぶ。" +
@@ -1113,6 +1125,21 @@ func mcpStdioCall(req mcpReq) []byte {
 	// (available to af_read too); the mutating ones require --write. The tool args match
 	// the CP wire shape, so p.Args is forwarded as the request body verbatim.
 	switch p.Name {
+	case "propose_session_handoff":
+		if !mcpSelfReportOnly {
+			return mcpToolErr(req.ID, "propose_session_handoff はセッション側の Agent Fleet サーバー専用です")
+		}
+		if !session.ValidName(a.Session) {
+			return mcpToolErr(req.ID, "session（自分のセッション名）が必要です")
+		}
+		if strings.TrimSpace(a.Prompt) == "" {
+			return mcpToolErr(req.ID, "prompt（次セッションへの引き継ぎ本文）が必要です")
+		}
+		body, _ := json.Marshal(map[string]string{"prompt": a.Prompt})
+		if _, err := agentDo(http.MethodPost, "/sessions/"+url.PathEscape(a.Session)+"/handoff-proposal", body); err != nil {
+			return mcpToolErr(req.ID, "引き継ぎ提案の保存に失敗しました: "+err.Error())
+		}
+		return mcpTextResult(req.ID, "引き継ぎ案を利用者へ提示しました。利用者が内容、次のエージェント、モデルを確認してから新規セッションを起動します。")
 	case "list_chromium_targets":
 		return mcpListChromiumTargets(req.ID, a.Port)
 	case "get_chromium_attachment":

@@ -1668,6 +1668,13 @@ export const ja = {
   "chat.plan.clear_confirm_body":
     "この会話の作業計画を空にします。以降の新しいセッションへは計画が引き継がれなくなります（会話履歴と引き継ぎ要約はそのまま残ります）。",
   "chat.plan.placeholder": "## 制約\n## 前提\n## これからやること",
+  "mirror.handoff_title": "次のセッションへの引き継ぎ",
+  "mirror.handoff_intro": "このセッションのエージェントが提案した初回プロンプトです。内容を確認・編集してから、次のエージェントとモデルを選んで起動します。",
+  "mirror.handoff_launch": "新規セッションを起動",
+  "mirror.handoff_discard": "破棄",
+  "mirror.handoff_no_dir": "このセッションの作業フォルダが分からないため、引き継ぎ先を起動できません。",
+  "mirror.handoff_save_failed": "引き継ぎ案を保存できませんでした: {msg}",
+  "mirror.handoff_discard_failed": "引き継ぎ案を破棄できませんでした: {msg}",
   "chat.plan.empty": "まだ計画がありません。「更新」で直近の会話から起こすか、「編集」で直接書けます。",
   "chat.plan.note":
     "計画は要約されず、原文のまま新しいセッションへ毎回引き継がれます。圧縮時には直近の会話に合わせて自動更新されます。",

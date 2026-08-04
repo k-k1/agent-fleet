@@ -112,6 +112,7 @@ import {
   type SlashToken,
 } from "./skillPicker.ts";
 import { ManagedSettingsModal } from "./ManagedSettingsModal.tsx";
+import { HandoffProposal } from "./HandoffProposal.tsx";
 
 const q = encodeURIComponent;
 
@@ -2670,6 +2671,7 @@ export function MirrorView({
             </div>
           </div>
         )}
+        <HandoffProposal session={session} sessionMeta={sessionMeta} />
         {pendingPerm && !pending && !pendingPlan && (
           // Defense-in-depth: a question/plan always wins over a generic permission
           // dialog (the server already suppresses the permission in that case). This

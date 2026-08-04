@@ -240,6 +240,9 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/ssm/instances", ws.withResolved(ws.ssmInstances))
 	// Structured transcript for the Console chat view (case-A).
 	mux.HandleFunc("GET /api/sessions/{name}/messages", rest)
+	mux.HandleFunc("GET /api/sessions/{name}/handoff-proposal", rest)
+	mux.HandleFunc("POST /api/sessions/{name}/handoff-proposal", rest)
+	mux.HandleFunc("DELETE /api/sessions/{name}/handoff-proposal", rest)
 	// Auto session-title suggestion accept/dismiss (session_title.go, Agent-side).
 	mux.HandleFunc("POST /api/sessions/{name}/title/accept", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/title/dismiss", rest)

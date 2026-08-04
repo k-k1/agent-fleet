@@ -1653,6 +1653,13 @@ export const en: Record<keyof typeof ja, string> = {
   "chat.plan.clear_confirm_body":
     "Empties this conversation's work plan, so nothing is carried into new sessions any more (the message history and the handoff summary stay as they are).",
   "chat.plan.placeholder": "## Constraints\n## Given\n## Next up",
+  "mirror.handoff_title": "Handoff to a new session",
+  "mirror.handoff_intro": "The current agent proposed this first prompt. Review or edit it, then choose the next agent and model before launching.",
+  "mirror.handoff_launch": "Start new session",
+  "mirror.handoff_discard": "Discard",
+  "mirror.handoff_no_dir": "This session's working folder is unknown, so its handoff cannot be launched.",
+  "mirror.handoff_save_failed": "Couldn't save the handoff proposal: {msg}",
+  "mirror.handoff_discard_failed": "Couldn't discard the handoff proposal: {msg}",
   "chat.plan.empty": "No plan yet. Use Refresh to derive one from the recent conversation, or Edit to write it yourself.",
   "chat.plan.note":
     "The plan is carried into every new session verbatim, never summarized. Compaction keeps it up to date with the recent conversation.",
