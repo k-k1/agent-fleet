@@ -97,13 +97,14 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	if err != nil {
 		return nil, err
 	}
-	slotSid := session.UUID(m.Dir, m.Name)
+	slotSid := session.UUID(m.Dir, m.Name) // identity: the working copy, never the subdir
+	cwd := m.CWD()                         // where the thread runs (Dir, or a chosen subdir)
 	handlesMu.Lock()
 	h := handles[m.Name]
 	if h == nil {
 		h = &threadHandle{
 			name:    m.Name,
-			dir:     m.Dir,
+			dir:     cwd,
 			slotSid: slotSid,
 			events:  make(chan agents.Event, 64),
 		}
@@ -136,7 +137,7 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	}
 	var st threadSnapshotWire
 	if tid != "" {
-		st, err = threadResume(cl, tid, m.Dir)
+		st, err = threadResume(cl, tid, cwd)
 		if err != nil {
 			// 初回 turn 前に daemon が再起動したスレッドは rollout が無く resume
 			// できない（§12.1-5）— 会話はまだ空なので新規 start で置き直す。それ以外
@@ -150,9 +151,9 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	}
 	if tid == "" {
 		if m.ForkFrom != "" {
-			st, err = threadFork(cl, m.ForkFrom, m.Dir)
+			st, err = threadFork(cl, m.ForkFrom, cwd)
 		} else {
-			st, err = threadStart(cl, m.Dir, firstNonEmpty(h.settings.Model, m.Model))
+			st, err = threadStart(cl, cwd, firstNonEmpty(h.settings.Model, m.Model))
 		}
 		if err != nil {
 			return nil, err

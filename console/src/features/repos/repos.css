@@ -264,6 +264,43 @@
   color: var(--muted);
 }
 
+/* SubdirPicker (LaunchModal 作業ディレクトリ) — one line collapsed, the DirPicker
+   tree below it when expanded. */
+.subdirpick {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.subdirpick-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.subdirpick-root {
+  flex: none;
+  color: var(--muted);
+  font-size: 13px;
+  max-width: 12em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.subdirpick-input {
+  flex: 1;
+  min-width: 0;
+}
+.subdirpick-toggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
 /* ---- Repos section rows ---- */
 .repo-cloning {
   display: flex;

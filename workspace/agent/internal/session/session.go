@@ -6,6 +6,8 @@ package session
 
 import (
 	"os"
+	"path"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -86,7 +88,11 @@ type Session struct {
 	// Driver mirrors Meta.Driver on the wire（"" = tui）。managed のセッションは
 	// tmux pane を持たないので、Console はこれを見てターミナルビューを出さず
 	// ミラー（チャット）を主 UI として描画する（docs/27 §10）。
-	Driver    string `json:"driver,omitempty"`
+	Driver string `json:"driver,omitempty"`
+	// Subdir mirrors Meta.Subdir: the folder beneath Dir the agent actually runs in
+	// ("" = Dir itself). Dir stays the working copy, so the Console keeps grouping
+	// sessions by copy and only shows this as extra "where inside it" detail.
+	Subdir    string `json:"subdir,omitempty"`
 	Repo      string `json:"repo"`      // working dir basename (display)
 	Title     string `json:"title"`     // user-supplied display title (optional, any kind)
 	Display   string `json:"display"`   // human-readable name (title → claude label → repo@time); never the slug alone
@@ -163,9 +169,15 @@ func ExactTarget(tn string) string { return "=" + tn }
 // persisted). The dir is denylisted in the file browser. "作り直す"(recreate)
 // wipes home, intentionally clearing sessions too.
 type Meta struct {
-	Name  string `json:"name"`
-	Dir   string `json:"dir"`
-	Model string `json:"model"`
+	Name string `json:"name"`
+	Dir  string `json:"dir"`
+	// Subdir narrows the agent's CWD to a folder BENEATH Dir (slash-relative, e.g.
+	// "console/src"), chosen at launch. Dir stays the working copy root so everything
+	// that reasons about the copy — worktree pruning, the checkout guard, cleanup
+	// grouping, the Console's per-repo grouping — keeps working unchanged; only the
+	// launched process starts deeper (see CWD). "" = start at Dir, the default.
+	Subdir string `json:"subdir,omitempty"`
+	Model  string `json:"model"`
 	// Effort / Mode are the desired managed-thread settings. They live beside Model
 	// so a successful dynamic change survives Agent/workspace restarts and is inherited
 	// by fork/recreate. TUI sessions leave both empty.
@@ -290,4 +302,44 @@ func Display(m Meta) string {
 func DirExists(p string) bool {
 	fi, err := os.Stat(p)
 	return err == nil && fi.IsDir()
+}
+
+// CWD is the directory the session's agent process actually starts in: Dir, or the
+// Subdir beneath it when one was chosen at launch. A Subdir that no longer exists
+// (deleted, or a branch switch that removed the folder) falls back to Dir rather than
+// failing the launch — a session must stay startable, and the working copy root is
+// always a defensible place to land.
+func (m Meta) CWD() string {
+	if m.Subdir == "" {
+		return m.Dir
+	}
+	p := filepath.Join(m.Dir, filepath.FromSlash(m.Subdir))
+	if !DirExists(p) {
+		return m.Dir
+	}
+	return p
+}
+
+// CleanSubdir normalizes a launch-time subdir into the slash-relative form Meta
+// stores, and reports whether it is acceptable at all. Absolute paths and any ".."
+// escape are rejected outright: the field means "beneath the working copy", and a
+// caller that wants another copy passes a different dir.
+func CleanSubdir(s string) (string, bool) {
+	s = strings.TrimSpace(strings.ReplaceAll(s, "\\", "/"))
+	if s == "" {
+		return "", true
+	}
+	// Rejected BEFORE the slashes are trimmed: "/x" is almost always someone pasting an
+	// absolute path, and quietly reading it as repo-relative would land them elsewhere.
+	if strings.HasPrefix(s, "/") || filepath.IsAbs(s) || strings.HasPrefix(s, "~") {
+		return "", false
+	}
+	if s = strings.Trim(s, "/"); s == "" {
+		return "", true
+	}
+	c := path.Clean(s)
+	if c == "." || c == ".." || strings.HasPrefix(c, "../") {
+		return "", false
+	}
+	return c, true
 }

@@ -53,7 +53,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// grab an unrelated newest session in the same cwd, so we read the cache directly
 	// (discovery is post-launch only — see resolveSid).
 	resumeID := sids.Read(session.UUID(m.Dir, m.Name))
-	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Effort, m.Mode, resumeID), Cwd: m.Dir}, nil
+	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Effort, m.Mode, resumeID), Cwd: m.CWD()}, nil
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {

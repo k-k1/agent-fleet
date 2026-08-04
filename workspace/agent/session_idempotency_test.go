@@ -73,13 +73,18 @@ func TestCreateIdempotencyKey(t *testing.T) {
 // TestCreateSessionKeyStable pins the tool-side key: deterministic across identical args
 // (so an LLM retry reproduces it) and sensitive to a changed arg.
 func TestCreateSessionKeyStable(t *testing.T) {
-	k1 := createSessionKey("conv", "/d", "claude", "opus", "task", true, "main", "feat")
-	k2 := createSessionKey("conv", "/d", "claude", "opus", "task", true, "main", "feat")
+	k1 := createSessionKey("conv", "/d", "", "claude", "opus", "task", true, "main", "feat")
+	k2 := createSessionKey("conv", "/d", "", "claude", "opus", "task", true, "main", "feat")
 	if k1 == "" || k1 != k2 {
 		t.Fatalf("key not stable: %q vs %q", k1, k2)
 	}
-	if createSessionKey("conv", "/d", "claude", "opus", "task2", true, "main", "feat") == k1 {
+	if createSessionKey("conv", "/d", "", "claude", "opus", "task2", true, "main", "feat") == k1 {
 		t.Fatal("changed prompt must change the key")
+	}
+	// A different subdir is a different launch intent — two sessions in the same repo
+	// but different folders must not collapse onto one another.
+	if createSessionKey("conv", "/d", "console", "claude", "opus", "task", true, "main", "feat") == k1 {
+		t.Fatal("changed subdir must change the key")
 	}
 }
 

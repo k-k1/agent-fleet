@@ -15,6 +15,10 @@ const MODEL_KEY = (repo: string, kind: string) =>
   kind === "claude" ? "af.repo-model." + repo : `af.repo-model.${kind}.` + repo;
 const EFFORT_KEY = (repo: string, kind: string) => `af.repo-effort.${kind}.` + repo;
 const MODE_KEY = (repo: string, kind: string) => `af.repo-startmode.${kind}.` + repo;
+// The working folder inside the repo (Meta.Subdir) is a property of the repo's layout,
+// not of the agent, so it is remembered per repo and shared across kinds: someone who
+// always works in `console/` wants that folder whichever agent they pick next.
+const SUBDIR_KEY = (repo: string) => "af.repo-subdir." + repo;
 // Empty string is a real selection (CLI/model default or standard effort). Keep a
 // sentinel so it remains distinguishable from "this repo has no remembered value".
 const DEFAULT_VALUE = "@af:default";
@@ -122,6 +126,29 @@ export function resolveStartMode(kind: string, repo: string, defaultMode: string
     return defaultMode === "plan" ? "plan" : "normal";
   } catch {
     return defaultMode === "plan" ? "plan" : "normal";
+  }
+}
+
+// resolveSubdir returns the folder inside `repo` the last launch used ("" = the repo
+// root). Only a hint for the launch dialog — the Agent validates the path at create,
+// so a folder that has since been deleted or renamed just fails there and the user
+// picks another (the field is visible and pre-filled, never applied silently).
+export function resolveSubdir(repo: string): string {
+  if (!repo) return "";
+  try {
+    return localStorage.getItem(SUBDIR_KEY(repo)) || "";
+  } catch {
+    return "";
+  }
+}
+
+export function writeRepoSubdir(repo: string, subdir: string): void {
+  if (!repo) return;
+  try {
+    if (subdir) localStorage.setItem(SUBDIR_KEY(repo), subdir);
+    else localStorage.removeItem(SUBDIR_KEY(repo));
+  } catch {
+    /* private mode / quota — the next launch just starts at the repo root */
   }
 }
 

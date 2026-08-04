@@ -487,6 +487,7 @@ func memberTools() []mcpTool {
 					"worktree":       map[string]any{"type": "boolean", "description": "create a new isolated worktree from dir before launch (optional; default false)"},
 					"branch":         map[string]any{"type": "string", "description": "base branch for the new worktree (optional; default current HEAD)"},
 					"new_branch":     map[string]any{"type": "string", "description": "branch to create in the new worktree (optional; omitted = temporary branch)"},
+					"subdir":         map[string]any{"type": "string", "description": "relative path INSIDE the working copy to start the agent in, e.g. \"console\" or \"apps/web\" (optional; default = the working copy root). With worktree=true it is resolved inside the newly created worktree. A path that does not exist is rejected."},
 				},
 			},
 			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
@@ -497,6 +498,7 @@ func memberTools() []mcpTool {
 				}
 				body, _ := json.Marshal(map[string]any{
 					"dir":            argStr(args, "dir"),
+					"subdir":         argStr(args, "subdir"),
 					"title":          argStr(args, "title"),
 					"kind":           kind,
 					"model":          argStr(args, "model"),

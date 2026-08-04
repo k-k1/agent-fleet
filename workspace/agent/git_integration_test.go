@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 )
 
 func runIntegrationGit(t *testing.T, dir string, args ...string) {
@@ -73,7 +75,13 @@ func TestFastForwardWorktreeFromParent(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
-	parent := t.TempDir()
+	// Isolate HOME for the same reason TestGitWorktreeIntegrationRelations does:
+	// ensureWorktree materializes under ~/repos, so an unisolated run leaves a worktree
+	// in the REAL home whose temp parent is gone — and every later run then reuses that
+	// dangling copy (relation=unknown) instead of creating a fresh one.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	parent := filepath.Join(home, "repos", "app")
 	gitInit(t, parent)
 	worktree, err := ensureWorktree(parent, "main", "feature-parent-ff", "")
 	if err != nil {

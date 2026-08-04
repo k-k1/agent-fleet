@@ -9,7 +9,7 @@ import { t } from "../../lib/i18n/index.ts";
 import { buildImagePrompt } from "../../lib/pastedImages.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { agentOf } from "../../agents/registry.ts";
-import { writeRepoLast } from "../../lib/repoLast.ts";
+import { writeRepoLast, writeRepoSubdir } from "../../lib/repoLast.ts";
 import { autoAddToActiveWorkingSet } from "../../lib/workingSetsStore.ts";
 import { pushPromptHistory } from "../../lib/promptHistory.ts";
 import { setLaunchSeed } from "../../lib/launchSeed.ts";
@@ -31,7 +31,7 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
   const refreshRepos = useReposStore((s) => s.refresh);
   const refreshSessions = useSessionsStore((s) => s.refresh);
 
-  return async ({ dir, repo }, { kind, driver, model, effort, startMode, prompt, title, images, worktree, base, newBranch, useExisting }) => {
+  return async ({ dir, repo }, { kind, driver, model, effort, startMode, prompt, title, images, worktree, subdir, base, newBranch, useExisting }) => {
     const hasModel = agentOf(kind).caps.model;
     const body: Record<string, unknown> = { dir, kind };
     if (driver) body.driver = driver;
@@ -39,6 +39,10 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
     if (effort) body.effort = effort;
     if (startMode) body.mode = startMode;
 		if (title) body.title = title;
+    // 作業ディレクトリ（Meta.Subdir）: the Agent resolves it INSIDE whatever working
+    // copy the launch lands in — including a worktree it creates in this same call —
+    // and rejects a path that isn't there, so no client-side existence check.
+    if (subdir) body.subdir = subdir;
     if (worktree) {
       body.worktree = true;
       body.branch = base;
@@ -71,7 +75,10 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
       );
       return { ok: false };
     }
-    if (repo) writeRepoLast(repo, kind, hasModel ? model : undefined, effort, startMode);
+    if (repo) {
+      writeRepoLast(repo, kind, hasModel ? model : undefined, effort, startMode);
+      writeRepoSubdir(repo, subdir || "");
+    }
     // repo なし（home）セッションはグループ継承が効かないので、選択中グループへ
     // 直接自動所属させる（docs/52 §1）。repo 内launchは repo 側の所属を継承する。
     if (!dir) autoAddToActiveWorkingSet("sessions", res.name);

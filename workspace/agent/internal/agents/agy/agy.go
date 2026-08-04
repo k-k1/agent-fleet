@@ -75,7 +75,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 		prelaunch.Write(slotSid, LastConversationFor(m.Dir))
 		brainPrelaunch.Write(slotSid, strings.Join(listBrainDirs(), "\n"))
 	}
-	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Mode, resumeID), Cwd: m.Dir}, nil
+	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Mode, resumeID), Cwd: m.CWD()}, nil
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {

@@ -97,6 +97,20 @@ out an independent working copy (worktree) per session.
 - Launching from an existing worktree row launches directly in that worktree. Create new
   worktrees from the base repository.
 
+### Working folder — starting inside a subfolder
+
+**"Working folder"** in "Start working" narrows where the agent starts: leave it empty to start
+at the working copy root (the default), or pick a folder beneath it — useful in a monorepo where
+a task only concerns `console/` or `apps/web`. Type the path or press **"Browse"** to walk the
+repository's folders.
+
+- With "New worktree" the same relative path is resolved **inside the newly created worktree**,
+  not in the base repository. If that branch does not have the folder, the launch is refused and
+  nothing is created.
+- The session still belongs to the working copy: it stays grouped under the same repository, and
+  branch switching, cleanup and worktree deletion behave exactly as before.
+- The last folder you launched in is remembered per repository and pre-filled next time.
+
 The standalone "Clone" under **Repositories** in the left pane also lets you specify a different
 folder name when you specify a new branch or when a working copy with the same name already
 exists ([04](04-git.md)). This is a separate path from creating a worktree in "Start working".
