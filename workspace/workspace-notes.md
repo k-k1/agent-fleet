@@ -134,41 +134,19 @@ The shared host is memory-constrained; build tools are the main cause of OOM tro
   - Run one heavy build at a time; do not build several projects in parallel.
 - For long-running servers, open the port from the workspace action bar's "Preview" control instead of leaving ad-hoc processes up.
 
-## Dependencies in a worktree (the per-language rules that actually differ)
-`~/repos` is wiped on recreate but the package caches in `$HOME` survive, so *re-installing* is
-cheap while *duplicating* an install is not: N worktrees of one repo means N copies of every
-per-project dependency tree, unless the ecosystem already shares one.
+## Dependencies in a worktree (disk, not just memory)
+N worktrees of one repo means N copies of every per-project dependency tree, unless the
+ecosystem already shares one (Go, Gradle/Maven and Cargo do; **npm does not**).
 - **Check the disk before a big install** — `df -h ~`. The volume is shared with everything
-  else you do, and caches grow without bound (`~/.npm` and `~/.cache` reach tens of GB). Prune
-  deliberately: `npm cache clean --force`, `uv cache prune`, `go clean -cache -modcache`
-  (⚠️ shared — not while another session is building).
-- **Node — the expensive one.** A `node_modules` is easily 300 MB+ per worktree. When this
-  worktree's lockfile is identical to the parent clone's, share the parent's tree:
-  `cmp -s package-lock.json ~/repos/<repo>/<pkg>/package-lock.json && ln -s ~/repos/<repo>/<pkg>/node_modules node_modules`.
-  Tests and bundlers resolve through the link (measured with vitest and a Vite build). Two
-  traps, both measured:
-  - **`npm ci` with the link in place empties the parent's `node_modules`** and breaks every
-    other session using it. Remove the link *first*: `rm -rf node_modules` — **no trailing
-    slash**, because `rm -rf node_modules/` deletes through the link too.
-  - `npm install <pkg>` silently replaces the link with a real 300 MB tree (harmless, but no
-    longer shared). If the lockfiles differ, don't link — `npm ci --prefer-offline` is fast
-    against the warm cache.
-- **Go — nothing to do.** `~/go/pkg/mod` and `~/.cache/go-build` are global, so worktrees share
-  them automatically. Memory is the constraint instead: `go test ./...` compiles and runs
-  packages in parallel — use `go test -p 2 ./...` when memory is tight. `GOTOOLCHAIN=auto`
-  downloads whatever toolchain a `go.mod` pins, into the persisted `~/go`.
-- **Python.** The system interpreter is PEP 668 externally-managed, so a bare `pip install`
-  quietly becomes a `--user` install into `~/.local` — persisted, and shared by every project,
-  which is rarely what you want. Prefer a per-worktree venv with the baked `uv`
-  (`uv venv && uv pip install -r requirements.txt`); its cache hardlinks into the venv, so the
-  second worktree costs almost nothing. **Never copy or symlink a `.venv`** between directories
-  — it hardcodes absolute paths.
-- **JVM.** `~/.gradle` and `~/.m2` are already shared across worktrees. Note that
-  `./gradlew --stop` stops daemons container-wide, including one another session is using — do
-  it when you finish, not while someone else builds. Heap rules are in "Build memory" above.
-- **Rust and anything else not baked in.** `rustup` installs into `~/.cargo` (persists) and the
-  registry cache is then shared for free. Keep `target/` per worktree and `cargo clean` when
-  done: a shared `CARGO_TARGET_DIR` makes parallel sessions block on cargo's build lock.
+  else you do, and caches grow without bound (`~/.npm` and `~/.cache` reach tens of GB).
+- **Node — the expensive one** (a `node_modules` is easily 300 MB+ per worktree). You may share
+  the parent clone's tree by symlink when the lockfiles are identical, but **`npm ci` through
+  that link empties the parent's `node_modules`** and breaks every other session using it, and
+  `rm -rf node_modules/` (trailing slash) deletes through the link the same way. Remove the link
+  with `rm -rf node_modules` — no trailing slash — before any install.
+- Per-language rules (what is already shared, what to do per worktree, and the measurements
+  behind them) are in `dev/93-worktree-dependencies.md` under the read-only docs mount — see
+  "Answering questions about this Workspace / environment" below for the path.
 
 ## What is not available (check before you plan around it)
 - **No root, no `sudo`** — you are `dev` (uid 1000). `apt install` is simply not possible.
