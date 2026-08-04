@@ -24,7 +24,7 @@ import { BranchModal } from "./BranchModal.tsx";
 import { openRepoScm } from "../scm/open.ts";
 import { LaunchModal } from "./LaunchModal.tsx";
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
-import { parentSyncLabel } from "./parentSync.ts";
+import { canFastForwardFromParent, parentSyncLabel } from "./parentSync.ts";
 import type { Repo } from "./store.ts";
 
 // Provider display: known SaaS hosts get a friendly label; unknown slugs show as-is.
@@ -70,6 +70,8 @@ export interface RepoRowProps {
   onOpenFolder?: () => void;
   onOpenChanges?: () => void;
   onFF?: () => void;
+  /** Advances this WT to the parent working copy's HEAD when it is a strict FF. */
+  onParentFF?: () => void;
   onDelete?: () => void;
   /** 削除ロック（docs/45）の切替。ロック中は削除メニューが無効になり、空になった
    * worktree の自動 prune も止まる（保護の実体は Agent 側の 403）。 */
@@ -84,7 +86,7 @@ export interface RepoRowProps {
   onFocusPane?: (id: string) => void;
 }
 
-export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, sess, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onDelete, onToggleLock, onUpdate, onCleanup, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane }: RepoRowProps) {
+export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, sess, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onParentFF, onDelete, onToggleLock, onUpdate, onCleanup, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane }: RepoRowProps) {
   // SVN working copies (docs/41) are flat: no branch/SCM view/worktree, so the card
   // never opens Source Control and the menu shows svn actions (update/cleanup) instead
   // of git ones (branch switch / FF / commit).
@@ -363,10 +365,17 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                 </button>
               </li>
             )}
-            {!isSvn && onFF && (
+            {!isSvn && onFF && !canFastForwardFromParent(r) && (
               <li>
                 <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onFF(); }}>
                   <Icon name="arrow-down" /> Fast-Forward
+                </button>
+              </li>
+            )}
+            {!isSvn && onParentFF && canFastForwardFromParent(r) && (
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onParentFF(); }}>
+                  <Icon name="arrow-up" /> {tr("repo.ff_parent")}
                 </button>
               </li>
             )}

@@ -1249,6 +1249,49 @@ func handleRepoFF(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, st)
 }
 
+// fastForwardWorktreeFromParent brings a linked worktree up to its parent's HEAD.
+// It accepts only a strict ancestor relationship, so it can never create a merge
+// commit or resolve a divergence implicitly.
+func fastForwardWorktreeFromParent(parent, dir string) error {
+	if integration := gitWorktreeIntegration(parent, dir, ""); integration.Relation != "contained" {
+		return fmt.Errorf("the worktree is not strictly behind its parent")
+	}
+	parentHead, err := gitx.Run(parent, "rev-parse", "--verify", "HEAD")
+	if err != nil {
+		return err
+	}
+	if out, err := gitx.Combined(dir, "merge", "--ff-only", strings.TrimSpace(parentHead)); err != nil {
+		return fmt.Errorf("%v: %s", err, out)
+	}
+	gitSubmodulesUpdate(dir)
+	return nil
+}
+
+// handleRepoParentFF is the local-only counterpart to handleRepoFF: it brings a
+// linked worktree up to its parent, without fetching or consulting origin. The
+// relationship is re-checked server-side so an old Console row stays safe.
+func handleRepoParentFF(w http.ResponseWriter, r *http.Request) {
+	dir, ok := repoDirFromPath(w, r)
+	if !ok {
+		return
+	}
+	if !isLinkedWorktree(dir) {
+		httpx.WriteErr(w, http.StatusBadRequest, "not_worktree", "parent fast-forward is only available for linked worktrees")
+		return
+	}
+	parent := worktreeParent(dir)
+	if parent == "" || !isGitRepo(parent) {
+		httpx.WriteErr(w, http.StatusNotFound, "parent_not_found", "cannot resolve the parent working copy")
+		return
+	}
+	if err := fastForwardWorktreeFromParent(parent, dir); err != nil {
+		httpx.WriteErr(w, http.StatusConflict, "parent_ff_not_possible", err.Error())
+		return
+	}
+	st, _ := gitStatus(dir)
+	httpx.WriteJSON(w, http.StatusOK, st)
+}
+
 type fetchReq struct {
 	Prune bool `json:"prune"`
 }

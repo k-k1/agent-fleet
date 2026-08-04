@@ -28,6 +28,7 @@ func TestAuditActionTarget(t *testing.T) {
 		{"POST", "/api/repos/foo/checkout", "foo", "git.checkout", "foo", true},
 		{"POST", "/api/repos/foo/fetch", "foo", "git.fetch", "foo", true},
 		{"POST", "/api/repos/foo/ff", "foo", "git.ff", "foo", true},
+		{"POST", "/api/repos/foo/parent-ff", "foo", "git.parent_ff", "foo", true},
 		{"POST", "/api/sessions", "", "session.create", "", true},
 		{"POST", "/api/sessions/s1/fork", "s1", "session.fork", "s1", true},
 		{"POST", "/api/sessions/s1/stop", "s1", "session.stop", "s1", true},

@@ -163,6 +163,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /repos/{name}/checkout", handleRepoCheckout)
 	mux.HandleFunc("POST /repos/{name}/fetch", handleRepoFetch)
 	mux.HandleFunc("POST /repos/{name}/ff", handleRepoFF)
+	mux.HandleFunc("POST /repos/{name}/parent-ff", handleRepoParentFF)
 	// Subversion (docs/41): checkout a URL (URL + basic auth), update to the latest
 	// revision, and cleanup a wedged working-copy lock. Delete reuses DELETE /repos/{name}.
 	mux.HandleFunc("POST /repos/svn", handleSvnCheckout)
