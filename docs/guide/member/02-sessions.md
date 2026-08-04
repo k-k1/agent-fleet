@@ -75,7 +75,7 @@ never need to operate that keep-alive mechanism yourself.
 - **SSM — log in to another host** — shown when SSM is configured; pick the host to log in to
   and connect.
 
-**"Change location"** at the bottom left of each step (or the browser back button) takes you one
+**"Back to Start"** at the bottom left of each step (or the browser back button) takes you one
 step back. Sessions are named automatically (repository name + timestamp) and can be renamed
 later (see below).
 
@@ -89,8 +89,9 @@ When you want to advance multiple tasks in the same repository at the same time,
 working folder makes them trample each other. By default, Agent Fleet prevents this by carving
 out an independent working copy (worktree) per session.
 
-- In **"Start working"** — opened from "Start" or from "Launch" on the base repository —
-  you can choose between **"New worktree"** (default) and **"Directly in this copy"**.
+- In **"Start working"** — opened from "Start" or from "Launch" on the base repository — the
+  **"Location"** row states in one line where the session will run. Open it with **"Change"**
+  to choose between **"New worktree"** (default) and **"Directly in this copy"**.
 - With "New worktree" you specify the base branch and an optional branch name. If the branch
   name is empty you get a provisional name `temp/…`; if you enter one, the worktree folder
   name is generated automatically from the branch name.
@@ -99,7 +100,7 @@ out an independent working copy (worktree) per session.
 
 ### Working folder — starting inside a subfolder
 
-**"Working folder"** in "Start working" narrows where the agent starts: leave it empty to start
+**"Working folder"**, under **"More"** in "Start working", narrows where the agent starts: leave it empty to start
 at the working copy root (the default), or pick a folder beneath it — useful in a monorepo where
 a task only concerns `console/` or `apps/web`. Type the path or press **"Browse"** to walk the
 repository's folders.

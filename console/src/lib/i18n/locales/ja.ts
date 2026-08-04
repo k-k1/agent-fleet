@@ -2308,7 +2308,8 @@ export const ja = {
   "launch.field.start_mode": "開始モード",
   "launch.mode_normal": "通常",
   "launch.field.location": "場所",
-  "launch.change_location": "場所を変更",
+  // はじめる ハブへ戻る足。場所セクションの「変更」と紛れないよう、行き先を名乗る。
+  "launch.back_to_hub": "はじめる に戻る",
   "launch.field.subdir": "作業ディレクトリ",
   "launch.subdir_ph": "リポジトリ直下（例: console）",
   "launch.subdir_browse": "参照",
@@ -2365,6 +2366,23 @@ export const ja = {
   "launch.image_paste_note": "画像はここに貼り付け、または＋ボタンで添付できます（スマホは＋から）。",
   "launch.attach_image": "画像を添付",
   "launch.start_worktree": "worktree で始める",
+  // 折りたたみセクション（場所 / 詳細）の見出しと、畳んでいる間に出す要約。要約は
+  // 「開かなくても実際に何が起きるか読み取れる」ことが役目なので、既定のままでも
+  // 場所は必ず文章で出し、詳細は既定から動いた項目だけを並べる。
+  "launch.field.advanced": "詳細",
+  "launch.sec_edit": "変更",
+  "launch.sec_done": "閉じる",
+  "launch.sum.direct": "このコピーで直接 · {branch}",
+  "launch.sum.wt_auto": "新しい worktree · {base} から新規ブランチ",
+  "launch.sum.wt_named": "新しい worktree · {base} から {branch}",
+  "launch.sum.wt_existing": "新しい worktree · 既存ブランチ {branch}",
+  "launch.sum.wt_existing_none": "新しい worktree · ブランチ未選択",
+  "launch.sum.driver_managed": "マネージド",
+  "launch.sum.driver_terminal": "ターミナル（CLI）",
+  "launch.sum.effort": "effort {v}",
+  "launch.sum.subdir": "作業ディレクトリ {path}",
+  "launch.sum.title": "名前「{name}」",
+  "launch.sum.defaults": "既定のまま",
 
   // === P2 スタートモーダル（features/repos/StartModal.tsx）===
   "start.aws_search_failed": "AWSの検索に失敗: {msg}",
