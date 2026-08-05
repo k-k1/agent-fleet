@@ -139,8 +139,25 @@ active 数）:
 `deprecated` と `enabled:false` を落として CLI と同じ形の id 列にする。daemon が無いときだけ
 従来の CLI にフォールバックする（一覧の更新のために daemon を起こしはしない）。
 
-## 54.5 未確定
+## 54.5 切断は credential ID を消す（`/auth/{providerID}` では消えない）
 
-- `DELETE /auth/opencode` が daemon 内のカタログ再読込まで誘発するか（`ConnectionUpdated`
-  を publish するのは v2 側の経路）。切断後にモデル一覧が古いままなら、切断時のみ
-  Supervisor 再起動へ格上げする。
+当初は v1 の `DELETE /auth/opencode` を切断に使っていたが、**あれは何も消さない**。
+v1 は `~/.local/share/opencode/auth.json` を書き換える経路で、Console アカウントの
+資格情報は **SQLite 側の credential テーブル**に載っている。症状はこうだった:
+
+- `opencode auth list` は「0 credentials」と言うのに、`GET /api/integration/opencode` の
+  `connections[]` には `{type:"credential", label:"Personal"}` が居る。
+- `DELETE /auth/opencode` は 200 を返すが、**新しく起こしたプロセスからも接続が見え続ける**
+  （＝ストアから消えていない）。
+
+正しい口は `DELETE /api/credential/{credentialID}`（`v2.credential.remove`）で、
+id は `connections[]` の `id`（`cred_…`）。実測で 204 が返り、**共有 daemon の
+`connections[]` はその場で credential を落とした**（再起動不要）。別プロセスを新しく
+起こしても接続は無く、モデルは zero-auth の 8 件に戻る。
+
+環境変数由来の接続（`OPENCODE_API_KEY`）は別経路なので巻き添えにしない — 削除対象は
+`type:"credential"` の1件だけで、無ければ何も消さずに冪等成功として返す。
+
+カタログの縮小そのもの（61 → 8）は、APIキーがある環境では鍵が覆い隠すため単独では
+観測できない。削除経路も `ConnectionUpdated` を publish するので、ログインと同じく
+プラグインの購読で catalog.reload() まで走るはず、というのが現時点の根拠。

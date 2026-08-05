@@ -316,14 +316,35 @@ func TestOAuthCancelDeletesAttempt(t *testing.T) {
 	}
 }
 
+// 切断先は credential ID 指定の削除。v1 の `DELETE /auth/opencode` では消えない
+// （あれは auth.json 側で、Console アカウントの資格情報は SQLite に載っている —
+// 実機で叩いても新規プロセスから接続が見え続けた）。
 func TestOAuthDisconnectRemovesCredential(t *testing.T) {
 	d := newFakeDaemon(t)
+	d.setConns([]map[string]any{
+		{"type": "env", "name": "OPENCODE_API_KEY"},
+		{"type": "credential", "id": "cred_1", "label": "Personal"},
+	})
 	code, out := doJSON(t, HandleOAuthDisconnect, "DELETE", "/connections/opencode/oauth", "")
 	if code != http.StatusOK || out["disconnected"] != "opencode" {
 		t.Fatalf("status=%d out=%v", code, out)
 	}
-	if got := d.deletes(); len(got) != 1 || got[0] != "/auth/opencode" {
+	if got := d.deletes(); len(got) != 1 || got[0] != "/api/credential/cred_1" {
 		t.Errorf("資格情報の削除先が違う: %v", got)
+	}
+}
+
+// 接続が無いのに押された場合（表示のズレ・二重クリック）は冪等に成功で返し、
+// env 側の APIキー接続を巻き添えで消しにいかないこと。
+func TestOAuthDisconnectIdempotentWithoutCredential(t *testing.T) {
+	d := newFakeDaemon(t)
+	d.setConns([]map[string]any{{"type": "env", "name": "OPENCODE_API_KEY"}})
+	code, out := doJSON(t, HandleOAuthDisconnect, "DELETE", "/connections/opencode/oauth", "")
+	if code != http.StatusOK || out["disconnected"] != "opencode" {
+		t.Fatalf("status=%d out=%v", code, out)
+	}
+	if got := d.deletes(); len(got) != 0 {
+		t.Errorf("消すものが無いのに DELETE した: %v", got)
 	}
 }
 
