@@ -17,6 +17,7 @@ const labelKeys: Record<string, MsgKey> = {
   "chat-context-overflow": "noti.kind_chat_context_overflow",
   "rate-limit-reached": "noti.kind_rate_limit_reached",
   "rate-limit-resumed": "noti.kind_rate_limit_resumed",
+  "submodule-sync": "noti.kind_submodule_sync",
 };
 // 通知の相対時刻。共通実装（lib/intl）へ委譲する。
 const relative = (at: string): string => relTime(at);

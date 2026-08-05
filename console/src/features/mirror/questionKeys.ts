@@ -105,6 +105,28 @@ export function buildClaudeSeq(qs: QKQuestion[], sel: string[][], freeText: stri
   return seq;
 }
 
+// What the card actually sends for claude when the submit button is pressed: named keys
+// for the one form that has a shorter verified contract, otherwise the full modal walk.
+//
+// A single-select single question answered with an OPTION is that form. It is the
+// sequence the card used to send on the click itself (Down×i, Enter — that Enter selects
+// AND submits, there is no review page left to confirm), and deferring the send to a
+// button must change only WHEN the keys go out, not which. Routing it through
+// buildClaudeSeq instead would append the review page's trailing Enter, which on this
+// form lands after the modal is already gone — i.e. in the composer.
+export function buildClaudeSubmit(
+  qs: QKQuestion[],
+  sel: string[][],
+  freeText: string[],
+): { keys?: string[]; seq?: KeyStep[] } {
+  const only = qs.length === 1 && !qs[0]?.multiSelect ? qs[0] : null;
+  if (only && !trimAt(freeText, 0)) {
+    const idx = pickedIdx(only.options || [], sel[0]);
+    if (idx.length) return { keys: buildSinglePickKeys(idx[0]) };
+  }
+  return { seq: buildClaudeSeq(qs, sel, freeText) };
+}
+
 // The simple option menu (codex / opencode / agy): one choice per page, answered by
 // Down×i + Enter — which submits the page, advances to the next question and resets
 // the cursor to the top, so pages simply concatenate. The trailing Enter completes

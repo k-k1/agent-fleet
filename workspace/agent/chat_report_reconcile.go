@@ -93,6 +93,27 @@ type reportSignals struct {
 	AbortReason string // turn-aborted（再送で直る）/ turn-failed（原因を直すまで無意味）
 	AbortAt     string // その中断が記録された RFC3339
 
+	// TailAborted は「転写の末尾が中断である」という**時刻を問わない**事実。Abort との
+	// 違いは since（＝この指示の下限 / 補償では報告時刻）で切らないこと。
+	//
+	// 完了判定（settle）は Abort を使う — 前の指示の中断で今の指示を閉じないため、時刻の
+	// 下限が要る。**補償（reopen）は逆で、下限があると誤訂正になる**: 報告より古い中断は
+	// 落とされ、代わりに転写の鮮度が「報告のあとに働き出した」証拠に見えてしまう。中断
+	// レコード自身の新しさなのに。v1 は中断と同時に報告していたので時刻が並び偶然守られて
+	// いたが、§4-6 で報告が数分遅れるようになって表面化した（自分の回帰テストが捕捉）。
+	TailAborted bool
+
+	// AbortHeld は「中断を見つけたが、Agent 自身の自動再開が引き受けている」状態
+	// （docs/47 §4-6）。報告を**遅らせる**だけで握り潰さない: 再開が成功すれば、その
+	// ターンの完了が指示を閉じる（報告は2回でなく1回になる）。再送しても中断が続いて
+	// 打ち切られたら、そこで抑止が外れて中断報告が出る。
+	//
+	// 抑止は Abort だけでなく**マーカー由来の idle 証拠にも効かなければならない**:
+	// 中断でも Stop が鳴る形（利用上限の 429 — docs/47 §4-5）があり、その形では
+	// マーカーが先に idle+turnEnd になるので、Abort を落とすだけだと「素の完了」として
+	// 報告してしまう。よって evalReportEvidence の入口で見る。
+	AbortHeld bool
+
 	HintReason string // 直近のヒントが運んだ qualifier（turn-failed / turn-aborted）
 }
 
@@ -205,6 +226,11 @@ func evalReportEvidence(s reportSignals) reportVerdict {
 		// 温存し、再開後の完了で報告する（docs/30 の規約）。
 		return reportVerdict{Why: "stopped"}
 	}
+	if s.AbortHeld {
+		// 中断は自動再開が引き受けている（docs/47 §4-6）。まだ「終わった」と言わない —
+		// 異常終了（上）だけは先に見る: プロセスが死んでいるなら再開する相手が居ない。
+		return reportVerdict{Why: "abort-held"}
+	}
 	if busy := s.busyEvidence(); len(busy) > 0 {
 		return reportVerdict{Why: "busy:" + strings.Join(busy, ",")}
 	}
@@ -239,7 +265,7 @@ func evalReportResumed(s reportSignals) []string {
 	// 同じ完了をもう一度報告することになる（実測 2026-07-30 sannme2: 09:59:34 報告 →
 	// 09:59:50 に本物の回答が書かれる → 10:00:08 訂正 → 10:00:34 同内容を再報告）。
 	// 本当に再開していれば最新のマーカーは working / question 側になり、下の列で拾える。
-	if s.markerIdle() || s.Abort {
+	if s.markerIdle() || s.TailAborted {
 		return nil
 	}
 	var ev []string
@@ -306,7 +332,7 @@ func collectReportSignals(m session.Meta, since, hintReason, selfAt string) repo
 	if normalizeKind(m.Kind) == session.KindClaude {
 		s.SubagentBusy = claude.SubagentBusy(sid)
 		s.TranscriptBusy = reportTranscriptBusy(sid, markerAt)
-		collectAbortSignal(&s, sid, since)
+		collectAbortSignal(&s, m.Name, sid, since)
 	}
 	if e, ok := status.ReadExit(m.Name); ok {
 		switch e.Reason {
@@ -347,16 +373,24 @@ const selfReportSettleDelay = 3 * time.Minute
 // since より前の中断は前の指示の話なので捨てる（マーカー・自己申告と同じ下限）。時刻を
 // 持たないレコードは切らずに採る — 中断は「今ディスクにある末尾」なので、時刻が読めなくても
 // 現在の状態を指しているから。
-func collectAbortSignal(s *reportSignals, sid, since string) {
+func collectAbortSignal(s *reportSignals, name, sid, since string) {
 	a, ok := claude.AbortInfo(sid)
 	if !ok {
 		return
 	}
+	s.TailAborted = true // 時刻で切らない事実（補償が読む — 上のコメント参照）
 	at := ""
 	if !a.At.IsZero() {
 		at = a.At.Format(time.RFC3339)
 	}
 	if at != "" && reportTimeBefore(at, since) {
+		return
+	}
+	// 再送で直る中断は、まず Agent 自身が再開させる（docs/47 §4-6）。その間は報告を
+	// 出さない — 出すとアシスタントのターンが1つ走り、しかもその内容（「再開させろ」）は
+	// もう実行済みになる。打ち切られたら holds が false になり、通常経路へ落ちる。
+	if abortResumeHolds(name, a, time.Now()) {
+		s.AbortHeld = true
 		return
 	}
 	s.Abort, s.AbortAt = true, at

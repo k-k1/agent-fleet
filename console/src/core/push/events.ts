@@ -34,6 +34,20 @@ let healthy = false;
 /** True while the push stream is live — pollers skip their tick then. */
 export const pushHealthy = (): boolean => healthy;
 
+// ストリーム確立ハンドラ。フレームでは運ばれず「起動時に 1 回だけ読む」類の
+// 状態（whoami のデプロイ capability など）を、CP 再起動＝再接続の後に読み直す
+// ためのフック。ここでもストアは import しない（配線は wire.ts の責務）。
+const connectHandlers = new Set<() => void>();
+
+/** Register a callback fired each time the stream (re)connects. Returns the
+ * unsubscriber. */
+export function onPushConnect(h: () => void): () => void {
+  connectHandlers.add(h);
+  return () => {
+    connectHandlers.delete(h);
+  };
+}
+
 // stream 毎の受信カウンタ。ポーラーは fetch 前後で比較し、fetch 中に push
 // フレームが適用されていたら自分の（より古いかもしれない）結果を捨てる —
 // 遅いモバイル回線で数秒遅れて届いたポーリング応答が push を上書きして
@@ -104,6 +118,13 @@ async function connect(): Promise<void> {
       return;
     }
     healthy = true;
+    for (const h of connectHandlers) {
+      try {
+        h();
+      } catch {
+        /* 1 個のハンドラ例外でストリームを殺さない（dispatch と同じ方針） */
+      }
+    }
     armWatchdog();
     const reader = res.body.getReader();
     const dec = new TextDecoder();

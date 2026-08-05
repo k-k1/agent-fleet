@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   type ScheduleDTO,
+  readScheduleList,
   statusTone,
   statusIcon,
   runStatusLabelKey,
@@ -100,5 +101,27 @@ describe("sortSchedules", () => {
     const arr = [base];
     const out = sortSchedules(arr);
     expect(out).not.toBe(arr);
+  });
+});
+
+// GET /api/schedules の応答の読み方。api() は CP のエラーを throw せず {error} で
+// 解決するので、「配列でない＝空」と読むと 401/5xx が「まだありません」に化ける。
+describe("readScheduleList", () => {
+  it("adopts an array payload (including a genuinely empty list)", () => {
+    expect(readScheduleList([base])).toEqual({ items: [base], error: null });
+    expect(readScheduleList([])).toEqual({ items: [], error: null });
+  });
+
+  it("never reads an {error} payload as an empty list", () => {
+    const err = { code: "unauthenticated", message: "no gateway identity" };
+    const r = readScheduleList({ error: err });
+    expect(r.items).toBeNull(); // 直前の行を残す＝消えたように見せない
+    expect(r.error).toEqual(err); // 理由は呼び出し側が errText で出す
+  });
+
+  it("still fails (items=null) for a shape that is neither (old CP / proxy page)", () => {
+    for (const res of [null, undefined, {}, "boom", 0]) {
+      expect(readScheduleList(res).items).toBeNull();
+    }
   });
 });

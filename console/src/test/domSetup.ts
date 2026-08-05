@@ -23,3 +23,14 @@ if (typeof Range !== "undefined") {
 if (typeof Element !== "undefined" && !Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = () => {};
 }
+
+// jsdom にも ResizeObserver は無い。Section など「自分の高さを CSS 変数に公開する」
+// 部品が mount 時に必ず生成するので、観測しないだけの器を置く（0x0 のままなので
+// 実寸に依存する検証は上記のとおり本物のブラウザが要る）。
+if (typeof globalThis.ResizeObserver === "undefined") {
+  globalThis.ResizeObserver = class {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  } as unknown as typeof ResizeObserver;
+}

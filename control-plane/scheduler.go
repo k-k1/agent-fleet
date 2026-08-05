@@ -69,6 +69,12 @@ type scheduleStore interface {
 // scheduleRunKeep bounds the per-schedule run history (docs/38 P3 get_schedule_runs).
 const scheduleRunKeep = 50
 
+// statusMembershipInactive is the outcome the firer reports when the schedule's owner
+// membership is no longer active (revoked / tenant access removed). It is durable, not a
+// blip — the lookup succeeded and found no active membership — so fireOne disables the
+// row on it rather than letting it no-op forever where nobody can see it.
+const statusMembershipInactive = "skipped_membership_inactive"
+
 // scheduleJitterMax caps the deterministic per-schedule fire jitter (★2 thundering-herd
 // → host-OOM mitigation). Set once at startup from AF_SCHEDULE_JITTER; 0 disables. A
 // package global (not a param) so both initialNextRun and advanceNextRun apply it
@@ -216,6 +222,21 @@ func (sc *scheduler) fireOne(ctx context.Context, sch Schedule, now time.Time) {
 			status = "error:" + truncStatus(cerr.Error())
 		}
 	}
+	// The owner membership is gone (suspended, or the row deleted — `schedule` has no FK
+	// to membership, so its rows outlive it). Everything about this schedule is reachable
+	// ONLY through that membership: the Console lists by membership, its run history is
+	// scoped the same way, and the unattended-failure notification below either lands in a
+	// mailbox nobody can open or fails outright on notification's membership FK. Left
+	// enabled it would no-op on every slot forever, appending run rows no one will ever
+	// read — an invisible schedule that quietly keeps ticking. Disable it instead: the
+	// membership id is stable per (identity, tenant) (EnsureMembership upserts on that
+	// pair), so restoring access brings the row back as a PAUSED schedule whose owner can
+	// read the reason in the ledger and resume it.
+	if status == statusMembershipInactive {
+		log.Printf("scheduler: schedule %s owner membership %s is inactive — disabling "+
+			"(nothing can run and nobody can see it; resume it after restoring access)", sch.ID, sch.MembershipID)
+		next, keep = "", false
+	}
 	enabled := sch.Enabled && keep
 	nowRFC := now.UTC().Format(time.RFC3339)
 	if err := sc.store.RecordScheduleFire(ctx, sch.ID, nowRFC, status, next, enabled, nowRFC); err != nil {
@@ -257,7 +278,7 @@ func scheduleNotifyStatus(status string) bool {
 		return true
 	}
 	switch status {
-	case "skipped_quota", "skipped_rate_limited", "skipped_membership_inactive",
+	case "skipped_quota", "skipped_rate_limited", statusMembershipInactive,
 		"skipped_target_missing", "skipped_overlap":
 		return true
 	}

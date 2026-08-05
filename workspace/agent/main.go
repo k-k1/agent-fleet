@@ -193,6 +193,12 @@ func main() {
 	// 一覧ポーリングではなく専用のループで回す。
 	startRateLimitWatch()
 
+	// 再送で直る中断（接続断・一時的なレート制限・ストリームの番犬）からの自動再開
+	// （docs/47 §4-6）: 転写の末尾が retryable な中断で終わっている claude セッションへ
+	// Agent 自身が「続けて」を送る。アシスタント会話を持たないセッションでも効き、
+	// 打ち切ったときだけ報告としてアシスタント／利用者へ上がる。
+	startAbortResumeWatch()
+
 	// Chat-bridge delivery loop (docs/37 P1): drains the on-disk queue that
 	// notice.Put / record-exit enqueue into (possibly from hook subprocesses)
 	// and pushes to the configured chat providers (Discord first).
