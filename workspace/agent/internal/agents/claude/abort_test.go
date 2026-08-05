@@ -2,6 +2,7 @@ package claude
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -257,4 +258,47 @@ func TestHealIdleRoutesAbortToNotifier(t *testing.T) {
 			t.Errorf("status = %q, want the marker removed as before", st.State)
 		}
 	})
+}
+
+// TestUsageLimitAbortIsTheLimitSubset: 上限エピソードの入口は blockedMarkers 全体では
+// なく「待てば解ける上限」だけ、という切り分けを固定する。プロンプト超過や認証エラーで
+// 「利用上限に達しました」と通知したら、利用者は来ないリセットを待つことになる。
+// retryable 側（"(not your usage limit)" と自称する 429）も落ちることが要点。
+func TestUsageLimitAbortIsTheLimitSubset(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	dir := filepath.Join(home, ".claude", "projects", "-proj")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name string
+		tail string
+		want bool
+	}{
+		{"モデル別上限", apiErr("You've reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model.", 429), true},
+		{"アカウントの窓", apiErr("You've hit your session limit · resets 7:50pm (Asia/Tokyo)", 0), true},
+		{"一時的なレート制限は上限ではない", apiErr("API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited", 429), false},
+		{"プロンプト超過は待っても解けない", apiErr("Prompt is too long · the request is ~242785 tokens (limit 200000)", 400), false},
+		{"認証エラーは待っても解けない", apiErr("API Error (HTTP 401): authentication failed", 401), false},
+		{"接続断", apiErr("API Error: Connection closed mid-response.", 0), false},
+		{"通常の完了", asstLine("done"), false},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sid := fmt.Sprintf("11111111-2222-5333-8444-%012d", i)
+			body := userLine("go") + "\n" + tc.tail + "\n"
+			if err := os.WriteFile(filepath.Join(dir, sid+".jsonl"), []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			a, ok := UsageLimitAbort(sid)
+			if ok != tc.want {
+				t.Fatalf("UsageLimitAbort = %v, want %v", ok, tc.want)
+			}
+			if ok && a.Msg == "" {
+				t.Error("上限と判定したのに理由の文言が空")
+			}
+		})
+	}
 }

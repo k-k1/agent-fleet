@@ -2,10 +2,12 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -219,5 +221,92 @@ func TestAbortedStateOnlyFiresFromWorkingOrEmpty(t *testing.T) {
 	recordSessionNotification(sid, "question", agents.StateAborted, "boom")
 	if events := notice.List(); len(events) != 0 {
 		t.Errorf("aborted from %q queued %d notification(s), want 0: %+v", "question", len(events), events)
+	}
+}
+
+// TestTurnEndLabelRefinesStopHookIdle: Stop フックの idle を「どう終わったか」に精緻化する
+// 判定そのもの。転写に中断が無ければ素通し（＝ターンの本文がブリッジに乗る）、中断が
+// あればラベルと理由に差し替わる。理由を excerpt に載せるのは managed の MarkTurnEndErr と
+// 同じ契約で、報告と全文ブリッジはそこから失敗の原因を読む。
+func TestTurnEndLabelRefinesStopHookIdle(t *testing.T) {
+	orig := claudeAbortInfo
+	t.Cleanup(func() { claudeAbortInfo = orig })
+
+	for _, tc := range []struct {
+		name      string
+		state     string
+		abort     claude.Abort
+		ok        bool
+		wantState string
+		wantText  string
+	}{
+		{"中断なし", "idle", claude.Abort{}, false, "idle", "ターンの本文"},
+		{"上限（再送しても同じ）", "idle",
+			claude.Abort{Msg: "You've reached your Fable 5 limit."}, true,
+			agents.StateFailed, "You've reached your Fable 5 limit."},
+		{"接続断（再送で直る）", "idle",
+			claude.Abort{Msg: "API Error: Connection closed mid-response.", Retryable: true}, true,
+			agents.StateAborted, "API Error: Connection closed mid-response."},
+		// idle 以外は終端ではないので、転写に中断が残っていても触らない。
+		{"working は素通し", "working",
+			claude.Abort{Msg: "You've reached your Fable 5 limit."}, true, "working", "ターンの本文"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			claudeAbortInfo = func(string) (claude.Abort, bool) { return tc.abort, tc.ok }
+			gotState, gotText := turnEndLabel("sid", tc.state, "ターンの本文")
+			if gotState != tc.wantState || gotText != tc.wantText {
+				t.Errorf("turnEndLabel = (%q, %q), want (%q, %q)",
+					gotState, gotText, tc.wantState, tc.wantText)
+			}
+		})
+	}
+}
+
+// TestStopHookOnUsageLimitReportsFailure is the wiring test for the hole measured on
+// 2026-08-05 (s6no6jv): 利用上限の 429 では claude はターンを完了として畳んで **Stop を
+// 鳴らす**ので、マーカーが先に idle になり、ペイン由来の自己修復（HealIdle）は
+// `state != "idle"` ガードで素通りする。その結果、上限で落ちたターンが「応答が完了」として
+// 通知され、失敗の理由がどこにも出なかった。実物の転写を植えて hook 経路をそのまま走らせ、
+// 理由がブリッジ本文に乗ることを固定する。
+func TestStopHookOnUsageLimitReportsFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	m := session.Meta{Name: "s-limit", Dir: t.TempDir(), Kind: session.KindClaude, Title: "Project"}
+	session.WriteMeta(m)
+	sid := session.UUID(m.Dir, m.Name)
+
+	dir := filepath.Join(home, ".claude", "projects", "-proj")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// 実測の並び（s6no6jv）: 合成 assistant レコードのあとに turn_duration が続き、Stop が鳴る。
+	body := `{"type":"user","message":{"content":"go"}}` + "\n" +
+		`{"type":"assistant","isApiErrorMessage":true,"apiErrorStatus":429,"error":"rate_limit",` +
+		`"message":{"content":[{"type":"text","text":"You've reached your Fable 5 limit. ` +
+		`Run /usage-credits to continue or switch models with /model."}]}}` + "\n" +
+		`{"type":"system","subtype":"turn_duration","durationMs":1136000}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, sid+".jsonl"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	status.Persist(sid, "working")
+	status.AppendPendingText(sid, "上限に当たる前まで書いていた回答")
+	runSessionStatusHook([]string{"idle", sid})
+
+	events := notice.List()
+	if len(events) != 1 || events[0].Kind != reportKindAnswerReady {
+		t.Fatalf("通知 = %+v, want answer-ready 1件", events)
+	}
+	got, _ := events[0].Payload["body"].(string)
+	if !strings.Contains(got, "Fable 5 limit") {
+		t.Errorf("ブリッジ本文に失敗の理由が出ていない: %q", got)
+	}
+	if strings.Contains(got, "上限に当たる前まで") {
+		t.Errorf("失敗の理由ではなくターンの本文が乗っている: %q", got)
+	}
+	// マーカーは従来どおり idle（セッションは本当に入力待ちに戻っている）。
+	if st, _ := status.Read(sid); st.State != "idle" {
+		t.Errorf("status = %q, want idle", st.State)
 	}
 }
