@@ -13,6 +13,7 @@ import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useSettingsUI } from "../settings/store.ts";
 import { setCachedConns } from "./connsCache.ts";
+import { fetchConnsWithRetry } from "./connsRetry.ts";
 import type { ConnectionsStatus } from "../../types/session.ts";
 
 export interface RepoRailContext {
@@ -39,16 +40,32 @@ export interface RepoRailContext {
 // このフックは常駐 3 コンポーネント（ProjectTree / OtherSessionsSection / StartHost）から
 // 同時に呼ばれる。素朴に fetch すると同じ問い合わせが 3 重に飛ぶので、in-flight の Promise を
 // モジュールレベルで共有して同時マウント分を 1 本に相乗りさせる（解決後は捨てる — 後からの
-// マウントは従来どおり取り直す）。相乗りは同一 connTick に限る: bump（設定での接続/解除）が
-// 直前開始の in-flight に相乗りすると、変更前のスナップショットで確定して解除済みエージェント
-// が起動メニューに残り続ける。失敗は null に畳む（呼び手の settle 契約）。
-let connsInflight: { tick: number; p: Promise<ConnectionsStatus | null> } | null = null;
-function fetchConns(tick: number): Promise<ConnectionsStatus | null> {
-  if (connsInflight && connsInflight.tick === tick) return connsInflight.p;
-  const p: Promise<ConnectionsStatus | null> = api("api/connections")
+// マウントは従来どおり取り直す）。相乗りは同一キーに限る: キーは connTick（設定での接続/解除）
+// と WS の running を含むので、変更前のスナップショットで確定して解除済みエージェントが起動
+// メニューに残り続けることはない。失敗は null に畳む（呼び手の settle 契約）。
+let connsInflight: { key: string; p: Promise<ConnectionsStatus | null> } | null = null;
+// 系列の世代。新しいキーで走り出したら古い系列の取り直しは用済み（間隔待ちが明けた時点で降りる）。
+let connsSeries = 0;
+
+function connsOnce(): Promise<ConnectionsStatus | null> {
+  return api("api/connections")
     .then((d) => (d && !d.error ? (d as ConnectionsStatus) : null))
     .catch(() => null);
-  connsInflight = { tick, p };
+}
+
+// WS が居ないと分かっているなら粘らない — Agent が応答しないのは当然で、running へ戻った
+// ときに下の effect が新しいキーで取り直す。まだ分からない状態（"…" / "unknown" / "starting"）
+// は粘る側に倒す（起動途中の 502 こそが取り直したいケース）。
+function wsGone(): boolean {
+  const st = useWorkspaceStore.getState().state;
+  return st === "stopped" || st === "none";
+}
+
+function fetchConns(key: string): Promise<ConnectionsStatus | null> {
+  if (connsInflight && connsInflight.key === key) return connsInflight.p;
+  const mine = ++connsSeries;
+  const p = fetchConnsWithRetry({ once: connsOnce, abort: () => mine !== connsSeries || wsGone() });
+  connsInflight = { key, p };
   void p.finally(() => {
     if (connsInflight?.p === p) connsInflight = null;
   });
@@ -71,6 +88,9 @@ export function useRepoRailContext(): RepoRailContext {
   // connTick bumps after a connect/disconnect in Settings; refetch so a newly
   // authenticated agent lights up in the 起動 menu without a full reload.
   const connTick = useSettingsUI((s) => s.connTick);
+  // running も取得のキーに入れる: WS が上がった瞬間に取り直す。起動直後は Agent がまだ
+  // listen しておらず 502 になるので（connsRetry が数回粘るが、boot-install の長い起動は
+  // それでも足りない）、running への遷移そのものを「今なら答えが返る」合図として使う。
   useEffect(() => {
     let alive = true;
     setConnsDone(false); // a refetch re-opens the unknown window
@@ -80,11 +100,11 @@ export function useRepoRailContext(): RepoRailContext {
       setConnsDone(true);
       setCachedConns(d); // warm the shared cache so leaves (HandoffModal) render instantly
     };
-    void fetchConns(connTick).then(settle);
+    void fetchConns(`${connTick}:${running ? 1 : 0}`).then(settle);
     return () => {
       alive = false;
     };
-  }, [connTick]);
+  }, [connTick, running]);
   // Gate on a KNOWN-available answer: until the fetch settles, and if it failed (conns
   // null — we cannot prove any agent is usable), the launch pickers stay empty rather
   // than offering agents that would fail on launch. connsSettling lets the pickers say
