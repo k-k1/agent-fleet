@@ -28,6 +28,23 @@ describe("parseQuestionAnswers", () => {
     expect(parseQuestionAnswers(raw, ["Use (a|b)?"])).toEqual(['he said "yes"']);
   });
 
+  it("drops the option preview appended after the last answer", () => {
+    // Verbatim shape from a real transcript: an option with a `preview` gets
+    // `" selected preview:\n<mockup>` glued on after the closing quote. The mockup's own
+    // quotes used to end up in the answer, so the picked option matched nothing.
+    const raw =
+      'Your questions have been answered: "`branch = develop/3.0.x` はどうする？"="branch も release/3.0.3 に" selected preview:\n' +
+      '# .gitmodules\n[submodule "example-core"]\n\tbranch = release/3.0.3. You can now continue with these answers in mind.';
+    expect(parseQuestionAnswers(raw, ["`branch = develop/3.0.x` はどうする？"])).toEqual(["branch も release/3.0.3 に"]);
+  });
+
+  it("drops a preview on a middle answer without eating the next one", () => {
+    const raw =
+      'Your questions have been answered: "様式は？"="左レール（推奨）" selected preview:\n┌───┬───┐\n│ a │ b │\n└───┴───┘, ' +
+      '"色は？"="青". You can now continue with these answers in mind.';
+    expect(parseQuestionAnswers(raw, ["様式は？", "色は？"])).toEqual(["左レール（推奨）", "青"]);
+  });
+
   it("falls back to pair matching when the prompt is not in the result", () => {
     const raw = 'Your questions have been answered: "old wording"="青". You can now continue.';
     expect(parseQuestionAnswers(raw, ["new wording"])).toEqual(["青"]);
