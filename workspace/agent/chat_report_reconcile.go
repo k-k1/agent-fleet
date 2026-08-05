@@ -93,6 +93,16 @@ type reportSignals struct {
 	AbortReason string // turn-aborted（再送で直る）/ turn-failed（原因を直すまで無意味）
 	AbortAt     string // その中断が記録された RFC3339
 
+	// TailAborted は「転写の末尾が中断である」という**時刻を問わない**事実。Abort との
+	// 違いは since（＝この指示の下限 / 補償では報告時刻）で切らないこと。
+	//
+	// 完了判定（settle）は Abort を使う — 前の指示の中断で今の指示を閉じないため、時刻の
+	// 下限が要る。**補償（reopen）は逆で、下限があると誤訂正になる**: 報告より古い中断は
+	// 落とされ、代わりに転写の鮮度が「報告のあとに働き出した」証拠に見えてしまう。中断
+	// レコード自身の新しさなのに。v1 は中断と同時に報告していたので時刻が並び偶然守られて
+	// いたが、§4-6 で報告が数分遅れるようになって表面化した（自分の回帰テストが捕捉）。
+	TailAborted bool
+
 	// AbortHeld は「中断を見つけたが、Agent 自身の自動再開が引き受けている」状態
 	// （docs/47 §4-6）。報告を**遅らせる**だけで握り潰さない: 再開が成功すれば、その
 	// ターンの完了が指示を閉じる（報告は2回でなく1回になる）。再送しても中断が続いて
@@ -255,7 +265,7 @@ func evalReportResumed(s reportSignals) []string {
 	// 同じ完了をもう一度報告することになる（実測 2026-07-30 sannme2: 09:59:34 報告 →
 	// 09:59:50 に本物の回答が書かれる → 10:00:08 訂正 → 10:00:34 同内容を再報告）。
 	// 本当に再開していれば最新のマーカーは working / question 側になり、下の列で拾える。
-	if s.markerIdle() || s.Abort {
+	if s.markerIdle() || s.TailAborted {
 		return nil
 	}
 	var ev []string
@@ -368,6 +378,7 @@ func collectAbortSignal(s *reportSignals, name, sid, since string) {
 	if !ok {
 		return
 	}
+	s.TailAborted = true // 時刻で切らない事実（補償が読む — 上のコメント参照）
 	at := ""
 	if !a.At.IsZero() {
 		at = a.At.Format(time.RFC3339)
