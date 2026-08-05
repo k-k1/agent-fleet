@@ -80,6 +80,15 @@ export function folderBase(folder: string): string {
   return at > 0 ? folder.slice(0, at) : folder;
 }
 
+/** The folder name of a working copy given either a bare folder name or an
+ * ABSOLUTE workspace path ("/home/dev/repos/<folder>"). A set stores folder
+ * names, but the CP stores a schedule's launch target as the agent path it was
+ * given, so the two only meet after this reduction — the same tail-segment step
+ * sessionFolder does for a session's dir. */
+export function folderNameOf(pathOrName: string): string {
+  return pathOrName.split("/").filter(Boolean).pop() || "";
+}
+
 /** The folder name a working copy belongs to a set by: a base clone by its own
  * name, a worktree by its parent's (falling back to its folder's "<base>@" prefix
  * when the parent record is gone). */
@@ -107,7 +116,13 @@ export function convInSet(set: WorkingSet, convId: string): boolean {
 // --- Schedules (docs/52 — CP-persisted, so membership is derived where the
 // schedule's own fields give it an unambiguous home, with direct assignment by
 // schedule id as the fallback for the rest). The DTO fields involved:
-// repo/worktree = the working copy a session_mode=new fire launches in;
+// repo = the working copy a session_mode=new fire launches in, held as the
+//   ABSOLUTE agent path (docs/38 P2 passes it to create_session as "dir"
+//   verbatim, and the operator sources it from list_repos' path) — NOT a folder
+//   name, so it needs folderNameOf before it can meet a set's repos;
+// worktree = the same thing as a folder name, but no writer sets it today (the
+//   operator's create/update tools have no such argument), so repo carries the
+//   worktree case too — as its own absolute path;
 // owner_conv = the operator conversation that created it (UUID);
 // reuse_target = a conversation ("a…" slug or UUID, assistant fires) or a
 // session name (session_mode=reuse).
@@ -134,8 +149,12 @@ const CONV_SLUG_RE = /^a[a-z2-7]{6}$/;
 
 export function scheduleInSet(set: WorkingSet, s: ScheduleLike, ctx: ScheduleSetContext = {}): boolean {
   if (set.schedules.includes(s.id)) return true;
-  // Launch target: the worktree folder when set, else the base repo folder.
-  const folder = s.worktree || s.repo || "";
+  // Launch target: the worktree folder when set, else the repo the fire launches
+  // in — which the CP holds as an absolute path, so reduce to the folder name
+  // first and then to its base clone. A worktree target ("<base>@<slug>", the
+  // usual case since the operator picks a worktree's own list_repos path) thus
+  // inherits its base repo's membership, exactly as sessionInSet does.
+  const folder = folderNameOf(s.worktree || s.repo || "");
   if (folder && set.repos.includes(folderBase(folder))) return true;
   // The conversation that authored it — a schedule created from a group's
   // operator chat follows that chat (the schedules' analog of auto-add: there is
