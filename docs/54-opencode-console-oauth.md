@@ -139,7 +139,33 @@ active 数）:
 `deprecated` と `enabled:false` を落として CLI と同じ形の id 列にする。daemon が無いときだけ
 従来の CLI にフォールバックする（一覧の更新のために daemon を起こしはしない）。
 
-## 54.5 切断は credential ID を消す（`/auth/{providerID}` では消えない）
+## 54.5 使う枠の3択（無料枠 / Go / Zen）
+
+opencode.ai は 3 つの課金経路を持ち、実測でそれぞれ独立していた（§54.4）。どれを使うかは
+運用の判断なので、設定 > エージェント > opencode の**「使う枠」**で選ばせる。
+旧「モデル一覧」設定（`go-first` / `hide-zen` / `all`）の置き換えで、ui-prefs のキーは
+`opencodeCatalog` のまま値だけ変わる（`hide-zen`→`go`、それ以外→`zen`。Agent 側
+`CatalogPref` と Console 側 `migrateOpencodeCatalog` が同じ規則を持つ）。
+
+| 枠 | 一覧に出すもの | 必要な認証 | 起動ゲート |
+| --- | --- | --- | --- |
+| 無料枠 | コスト 0 のモデルだけ | 不要 | **認証ゼロでも起動可**（実測: 未接続で free モデルが応答） |
+| Go | `opencode-go/…` だけ | API キー（アカウントは任意） | キーがあれば |
+| Zen | `opencode/…`（Go 契約があれば Go も） | アカウント か API キー | どちらかがあれば |
+
+- どの枠でも**直結プロバイダ（`anthropic/…` 等）は落とさない**。利用者自身の課金であって、
+  opencode.ai の枠の選択とは無関係だから。
+- **無料枠では `OPENCODE_API_KEY` を注入しない**（`env()`）。「無料枠で使う」と決めた
+  ワークスペースが、鍵が保存されたままというだけで課金経路に乗らないように。他プロバイダの
+  鍵は触らない。枠の切替は注入内容を変えるので、鍵の変更と同じく serve を作り直す。
+- 無料判定は opencode 自身の規則を借りる（プラグインは `cost.some(c => c.input > 0)` を
+  「有料」として無認証時に無効化する）。`GET /api/model` の cost から拾うので、モデル id を
+  ハードコードしない。CLI 由来で価格が無いときは素通し — 無料枠では鍵を注入しないので、
+  その CLI が返す opencode.ai の一覧はもともと無料枠のものだけになる。
+- 起動ゲート（`registry.ts` の `available`）は `supported !== false` かつ
+  「キーあり / アカウントあり / 無料枠」。バイナリ不在（旧イメージ）は従来どおり隠す。
+
+## 54.6 切断は credential ID を消す（`/auth/{providerID}` では消えない）
 
 当初は v1 の `DELETE /auth/opencode` を切断に使っていたが、**あれは何も消さない**。
 v1 は `~/.local/share/opencode/auth.json` を書き換える経路で、Console アカウントの

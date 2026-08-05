@@ -29,18 +29,22 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 )
 
-// Catalog preferences (ui-prefs opencodeCatalog). Absent/unknown ⇒ CatalogGoFirst.
+// Usage preferences (ui-prefs opencodeCatalog) — WHICH opencode.ai billing route this
+// workspace means to use. It shapes the launch menu, and 無料枠 additionally decides
+// that opencode is usable at all without any credential（auth.go の env・Status）。
+// 直接つないだ他プロバイダ（anthropic/…, openrouter/… — 利用者自身の課金）はどの値でも
+// 落とさない。opencode.ai の枠を選ぶ設定であって、他社の鍵を取り上げる設定ではない。
 const (
-	// CatalogGoFirst lists the Go models first, then everything else. A no-op for an
-	// account without the Go plan (no opencode-go/… ids in its catalog), so it is safe
-	// as the default.
-	CatalogGoFirst = "go-first"
-	// CatalogHideZen drops the pay-per-request opencode/… ids. Go plus any DIRECT
-	// provider the user connected (anthropic/…, openrouter/…) stay — the point is to
-	// hide the metered twins, not to cut the user off from their own keys.
-	CatalogHideZen = "hide-zen"
-	// CatalogAll keeps the catalog exactly as opencode reports it.
-	CatalogAll = "all"
+	// UsageFree keeps only the zero-auth free models. 認証ゼロで動く枠（実測 8 件・
+	// cost.input が 0）で、混雑（503）と無料枠上限に左右される。
+	UsageFree = "free"
+	// UsageGo keeps the subscription route only: opencode-go/… 。Go は API キーに
+	// 紐づく（実測: アカウントログインだけでは生えない）。
+	UsageGo = "go"
+	// UsageZen keeps the pay-per-request route (opencode/…) and, when the account also
+	// has the Go plan, its ids too — 実測どおり両方使える状態をそのまま見せる。並びは
+	// Go を先にする（サブスクで賄える方を上に）。
+	UsageZen = "zen"
 )
 
 const (
@@ -48,42 +52,61 @@ const (
 	zenPrefix = "opencode/"
 )
 
-// Catalog shapes the live `opencode models` ids into launch choices by applying the
-// user's preference. ids is the raw catalog (Models()); pref is one of the Catalog*
+// Catalog shapes the live catalog ids into launch choices by applying the user's
+// usage preference. ids is the raw catalog (Models()); pref is one of the Usage*
 // constants. The label stays the id: the Console localizes the Go/Zen marker itself
 // (agentModels.ts) and the MCP list_models an assistant reads wants the raw id anyway.
 func Catalog(ids []string, pref string) []agents.ModelChoice {
 	out := make([]agents.ModelChoice, 0, len(ids))
 	for _, id := range ids {
-		if pref == CatalogHideZen && strings.HasPrefix(id, zenPrefix) {
+		if !keepForUsage(id, pref) {
 			continue
 		}
 		out = append(out, agents.ModelChoice{ID: id, Label: id})
 	}
 	// Emptying the picker would be worse than ignoring the preference: an account
-	// without the Go plan that flips 隠す must still be able to launch. Guard on the
+	// without the Go plan that picks Go のみ must still be able to launch. Guard on the
 	// INPUT being non-empty — an already-empty catalog (CLI absent / offline) is not a
 	// preference problem and must not bounce back into this function.
 	if len(out) == 0 && len(ids) > 0 {
-		return Catalog(ids, CatalogAll)
+		return Catalog(ids, UsageZen)
 	}
-	// Both preferences hoist Go (hiding the metered twins implies preferring the
-	// covered ones); only CatalogAll leaves the catalog exactly as reported. The sort
-	// is STABLE so the catalog's own order still reads through inside each group.
-	if pref != CatalogAll {
-		sort.SliceStable(out, func(i, j int) bool {
-			return strings.HasPrefix(out[i].ID, goPrefix) && !strings.HasPrefix(out[j].ID, goPrefix)
-		})
-	}
+	// Go first everywhere: whichever route is selected, a subscription-covered id is
+	// the one to reach for first. STABLE so the catalog's own order reads through
+	// inside each group.
+	sort.SliceStable(out, func(i, j int) bool {
+		return strings.HasPrefix(out[i].ID, goPrefix) && !strings.HasPrefix(out[j].ID, goPrefix)
+	})
 	return out
 }
 
-// CatalogPref normalizes a stored preference value; anything unknown or absent falls
-// back to CatalogGoFirst (a no-op without the Go plan).
+// keepForUsage decides whether one id belongs in the menu under pref. opencode.ai の
+// 2 経路だけを判定し、他プロバイダ（利用者自身の鍵）は素通しする。
+func keepForUsage(id, pref string) bool {
+	isGo := strings.HasPrefix(id, goPrefix)
+	isZen := strings.HasPrefix(id, zenPrefix) && !isGo
+	if !isGo && !isZen {
+		return true // anthropic/…, openrouter/… — 別課金なので枠の選択とは無関係
+	}
+	switch pref {
+	case UsageFree:
+		return isFreeModel(id)
+	case UsageGo:
+		return isGo
+	default: // UsageZen: 課金経路を絞らない（Go を併用していれば両方出る）
+		return true
+	}
+}
+
+// CatalogPref normalizes a stored preference value, including the values this setting
+// used to hold（"hide-zen" は Go だけを見たいという意思なので UsageGo、"go-first"/"all"
+// は両方見たいので UsageZen）。未設定/不明は UsageZen ＝ 従来の見え方。
 func CatalogPref(v string) string {
 	switch v {
-	case CatalogHideZen, CatalogAll:
+	case UsageFree, UsageGo, UsageZen:
 		return v
+	case "hide-zen":
+		return UsageGo
 	}
-	return CatalogGoFirst
+	return UsageZen
 }

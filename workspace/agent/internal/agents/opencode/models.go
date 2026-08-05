@@ -68,11 +68,33 @@ type daemonModel struct {
 	ProviderID string `json:"providerID"`
 	Status     string `json:"status"`  // "active" | "deprecated"
 	Enabled    *bool  `json:"enabled"` // ポインタ: 欠落と false を区別する
+	// Cost is the per-tier price table. 無料判定は opencode 自身と同じ規則を借りる
+	// （プラグインは `cost.some(c => c.input > 0)` を「有料」として無認証時に無効化する）。
+	Cost []struct {
+		Input float64 `json:"input"`
+	} `json:"cost"`
+}
+
+// freeIDs is the set of zero-cost model ids from the last daemon read — the 無料枠
+// （UsageFree）の判定材料。CLI 由来の一覧には価格が無いので空のままになる。
+var freeIDs map[string]bool
+
+// isFreeModel reports whether id is billed at zero. 価格を知らないとき（daemon から
+// 読めていない＝CLI 由来）は true: 無料枠では OPENCODE_API_KEY を注入しないので、
+// その CLI が返す opencode.ai の一覧はそもそも無料枠のものだけになる（実測）。
+// ここで false を返すと無料枠のメニューが空になり、ガードで全表示に落ちてしまう。
+func isFreeModel(id string) bool {
+	modelsMu.Lock()
+	defer modelsMu.Unlock()
+	if len(freeIDs) == 0 {
+		return true
+	}
+	return freeIDs[id]
 }
 
 // modelsFromDaemon reads the catalog from a serve that is ALREADY running (starting one
 // for a picker refresh would be a surprise). Returns nil when there is no daemon, so the
-// caller falls back to the CLI.
+// caller falls back to the CLI. Called with modelsMu held (it refreshes freeIDs).
 func modelsFromDaemon() []string {
 	addr, up := oauthProbe()
 	if !up {
@@ -82,7 +104,29 @@ func modelsFromDaemon() []string {
 	if err := daemonJSON("GET", addr, "/api/model", nil, &env); err != nil {
 		return nil
 	}
-	return filterDaemonModels(env.Data)
+	ids := filterDaemonModels(env.Data)
+	// Refresh the zero-cost set from the same read, so 無料枠 の判定と一覧が同じ
+	// スナップショットに揃う。
+	free := make(map[string]bool, len(ids))
+	for _, m := range env.Data {
+		if freeCost(m.Cost) {
+			free[m.ProviderID+"/"+m.ID] = true
+		}
+	}
+	freeIDs = free // caller (Models) already holds modelsMu — 二重ロックしない
+	return ids
+}
+
+// freeCost mirrors opencode's own rule: 入力単価が 1 つでも 0 より大きければ有料。
+func freeCost(tiers []struct {
+	Input float64 `json:"input"`
+}) bool {
+	for _, t := range tiers {
+		if t.Input > 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // filterDaemonModels shapes the daemon's raw list into the same "provider/model" ids the

@@ -63,6 +63,11 @@ func opencodeCatalogPref() string {
 	return opencode.CatalogPref(v)
 }
 
+// The opencode package needs the same preference to decide whether to inject
+// OPENCODE_API_KEY at all（無料枠は注入しない）and what to report to /connections.
+// It lives under internal/agents, which must not read main's config files itself.
+func init() { opencode.UsagePref = opencodeCatalogPref }
+
 // claudeCustomModelsPref is the user's durable extension to Claude's fixed tier
 // aliases. Claude Code OAuth has no account-aware catalog endpoint, so only explicitly
 // registered full ids are advertised by Console and MCP; malformed/duplicate values
@@ -343,9 +348,15 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "mkdir_failed", err.Error())
 		return
 	}
+	before := opencodeCatalogPref()
 	if err := os.WriteFile(uiPrefsPath(), body, 0o600); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 		return
+	}
+	// 枠の切替は注入する env を変える（無料枠は OPENCODE_API_KEY を落とす）。鍵の
+	// 変更と同じ扱いで、動いている serve を作り直さないと古い環境のまま残る。
+	if after := opencodeCatalogPref(); after != before {
+		opencode.ApplyUsageChange(before + " → " + after)
 	}
 	httpx.WriteJSON(w, http.StatusOK, obj)
 }
