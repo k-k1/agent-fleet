@@ -4,6 +4,8 @@
 // claude reports the answer as one prose tool_result, with nothing escaped:
 //   The user answered: "<q1>"="<a1>", "<q2>"="<a2>". Read the answers carefully — …
 //   Your questions have been answered: "<q1>"="<a1>". You can now continue …   (older)
+// and, when the picked option carried a `preview`, that artifact rides along too:
+//   … "<q1>"="<a1>" selected preview:\n<mockup>, "<q2>"="<a2>". …
 //
 // So a `"` the user typed inside a free-text answer is indistinguishable from the quote
 // that closes it, and the obvious /"[^"]*"\s*=\s*"([^"]*)"/ stops at the first typed
@@ -19,6 +21,17 @@
 // pair regex → the raw string.
 
 const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// An option that carried a `preview` (an ASCII mockup, a code snippet) is reported as
+//   "<q>"="<label>" selected preview:\n<preview text>
+// — the OPTION's own artifact, appended after the closing quote, not anything the user
+// wrote. Left in, the answer matched no label at all: every radio drew unpicked and the
+// mockup's own quotes truncated it mid-preview, so a picked option read as free text.
+// Cut there and the answer is the bare label again.
+const cutPreview = (s: string): string | null => {
+  const m = /"[ \t]*selected preview:/.exec(s);
+  return m ? s.slice(0, m.index).trim() : null;
+};
 
 // Strip the quote that closes an answer plus the `, ` before the next pair.
 const cutSep = (s: string) => s.replace(/"[\s,、，]*$/, "").trim();
@@ -46,7 +59,13 @@ function byAnchors(text: string, prompts: string[]): string[] | null {
     from = anchor + m[0].length;
     at.push({ start: from, anchor });
   }
-  return at.map((cur, i) => (i + 1 < at.length ? cutSep(text.slice(cur.start, at[i + 1].anchor)) : cutTail(text.slice(cur.start))));
+  return at.map((cur, i) => {
+    const last = i + 1 >= at.length;
+    const chunk = last ? text.slice(cur.start) : text.slice(cur.start, at[i + 1].anchor);
+    // The preview cut, when it applies, already ends the answer at its closing quote —
+    // running cutSep/cutTail after it would only chew into the label.
+    return cutPreview(chunk) ?? (last ? cutTail(chunk) : cutSep(chunk));
+  });
 }
 
 // Parse the tool_result into one answer per question, in order. Returns [] when the text
