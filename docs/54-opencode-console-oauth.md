@@ -111,12 +111,36 @@ oauth_disabled … マネージド opencode が無効（AF_OPENCODE_SERVE_DISABL
 - `oauth_disabled` のときはサインイン導線を出さない。この状態でも端末セッションから
   `opencode auth login` は従来どおり可能。
 
-## 54.4 未確定（実アカウントでの確認待ち）
+## 54.4 実アカウントで測った「何が使えるようになるか」
 
-- Console ログインだけで（APIキー無しで）どのモデル集合が生えるか。有料モデルのゲートは
-  `OPENCODE_API_KEY || Console接続あり || 明示apiKey` の OR なので**ゲート自体は開く**が、
-  実際の顔ぶれは org の `/api/config` 次第。受け入れ確認は
-  **ログイン前後の `opencode models` の差分**を見る。
+実測（1.18.13、Personal org でサインイン済み。いずれも `status:"deprecated"` を除いた
+active 数）:
+
+| 認証 | active モデル | 内訳 |
+| --- | --- | --- |
+| 無し（zero-auth） | 8 | `opencode/*-free` ＋ big-pickle |
+| **Console ログインのみ**（`OPENCODE_API_KEY` 無し） | **61** | すべて `opencode/`（Zen） |
+| ログイン＋APIキー | 79 | Zen 61 ＋ `opencode-go/` 18 |
+
+- **Console ログインだけで Zen の有料モデルは開く**（8 → 61）。ゲート
+  （`OPENCODE_API_KEY || Console接続 || 明示apiKey` の OR）の実挙動どおり。
+- **Go サブスクのモデル（`opencode-go/`）はログインでは生えない**。あれは
+  `OPENCODE_API_KEY` に紐づくので、Go を使うなら従来どおりキーが要る。両方あれば両方出る。
+- 接続ラベルは org 名（この環境では `Personal`）。`/experimental/console/orgs` は
+  ログイン後も空のままで、こちらは別系統（`wrk_` はここからは取れない）。
+
+### `opencode models`（CLI）はログインを見ない — カタログは daemon から読む
+
+同じ資格情報でも、**一発起動の `opencode models` は 8 件**しか出さないのに、同じストアを
+読む serve は 86 件（active 61）を返す。CLI 側はプラグインが Console org の
+`/api/config` を取り終える前に出力しているとみられる。`Models()` が CLI に依存したままだと
+**OAuth だけのユーザーの起動一覧が free 8 件に見える**（managed セッションは実際には 61 件
+使えるのに）。そこで `Models()` は**稼働中の daemon があれば `GET /api/model`** を正とし、
+`deprecated` と `enabled:false` を落として CLI と同じ形の id 列にする。daemon が無いときだけ
+従来の CLI にフォールバックする（一覧の更新のために daemon を起こしはしない）。
+
+## 54.5 未確定
+
 - `DELETE /auth/opencode` が daemon 内のカタログ再読込まで誘発するか（`ConnectionUpdated`
   を publish するのは v2 側の経路）。切断後にモデル一覧が古いままなら、切断時のみ
   Supervisor 再起動へ格上げする。

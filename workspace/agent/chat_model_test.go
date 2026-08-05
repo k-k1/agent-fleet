@@ -9,6 +9,12 @@ import (
 
 func TestResolveChatModel(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	// opencode の推奨は「カタログに Go モデルがあればそれ、無ければ無料の既定」。
+	// HOME 隔離で鍵は消えるが、カタログはもう一つ外の世界＝稼働中の
+	// `opencode serve` からも読む（docs/54）。開発機ではそれが鍵付きで動いている
+	// ため、潰さないと期待値が Go モデルに変わる。届かないアドレスを指して、
+	// この検査を「認証なし」の世界に固定する。
+	t.Setenv("AF_OPENCODE_SERVE_ADDR", "http://127.0.0.1:1")
 	tests := []struct {
 		agent string
 		model string
