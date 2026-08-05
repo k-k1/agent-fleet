@@ -16,7 +16,7 @@ package opencode
 //	DELETE /api/integration/attempt/{attemptID}      … 中断
 //	GET  /api/integration/opencode
 //	  → {data:{connections:[{type:"credential",id,label} | {type:"env",name}]}}
-//	DELETE /auth/opencode                            … 切断（資格情報の削除）
+//	DELETE /api/credential/{credentialID}            … 切断（id は connections[] が持つ）
 //
 // device の mode は "auto"（opencode 側が自前でトークンをポーリングする）なので、
 // Console からコードを貼らせる必要はない — cursor と同じ「URL を出して poll」型。
@@ -35,7 +35,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os/exec"
 	"regexp"
 	"sync"
 	"time"
@@ -362,20 +361,31 @@ func HandleOAuthCancel(w http.ResponseWriter, r *http.Request) {
 
 // HandleOAuthDisconnect removes the stored Console credential. APIキー（env 注入）は
 // 別経路なのでこの操作では消えない。DELETE /connections/opencode/oauth.
+//
+// 消す先は `DELETE /api/credential/{credentialID}` で、id は integration の
+// connections[] が持つ。v1 の `DELETE /auth/{providerID}` では消えない — あれは
+// auth.json を書き換える経路で、v2 の資格情報は SQLite 側に載っている（実測:
+// `opencode auth list` は 0 件と言うのに connections には credential が居る）。
+// 実際、/auth/opencode を叩いても新規プロセスから接続が見え続けた。
 func HandleOAuthDisconnect(w http.ResponseWriter, r *http.Request) {
 	addr, up := oauthProbe()
 	if !up {
-		// daemon が居ないなら CLI で消す（同じ auth.json を見る）。
-		if err := oauthLogoutCLI(); err != nil {
-			httpx.WriteErr(w, http.StatusServiceUnavailable, "serve_unavailable", "opencode serve が停止しており切断できませんでした")
-			return
-		}
+		httpx.WriteErr(w, http.StatusServiceUnavailable, "serve_unavailable",
+			"opencode serve が停止しているため切断できませんでした（ワークスペース稼働中に実行してください）")
+		return
+	}
+	id, err := credentialID(addr)
+	if err != nil {
+		httpx.WriteErr(w, http.StatusBadGateway, "oauth_disconnect_failed", err.Error())
+		return
+	}
+	if id == "" {
+		// すでに接続が無い: 冪等に成功として扱う（表示のズレで二重に押しても事故らない）。
 		invalidateOAuthStatus()
-		InvalidateModels()
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "opencode"})
 		return
 	}
-	if err := daemonJSON[struct{}]("DELETE", addr, "/auth/"+oauthIntegrationID, nil, nil); err != nil {
+	if err := daemonJSON[struct{}]("DELETE", addr, "/api/credential/"+url.PathEscape(id), nil, nil); err != nil {
 		httpx.WriteErr(w, http.StatusBadGateway, "oauth_disconnect_failed", err.Error())
 		return
 	}
@@ -384,10 +394,17 @@ func HandleOAuthDisconnect(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "opencode"})
 }
 
-// oauthLogoutCLI is the daemon-less fallback for disconnect.
-var oauthLogoutCLI = func() error {
-	if !Available() {
-		return errors.New("opencode not installed")
+// credentialID returns the id of the Console-account credential, or "" when there is
+// none. env 接続（OPENCODE_API_KEY）は別経路なので触らない。
+func credentialID(addr string) (string, error) {
+	var env envelope[integrationInfo]
+	if err := daemonJSON("GET", addr, "/api/integration/"+oauthIntegrationID, nil, &env); err != nil {
+		return "", err
 	}
-	return exec.Command("opencode", "auth", "logout", oauthIntegrationID).Run()
+	for _, c := range env.Data.Connections {
+		if c.Type == "credential" {
+			return c.ID, nil
+		}
+	}
+	return "", nil
 }
