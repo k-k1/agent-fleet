@@ -93,8 +93,12 @@ type attemptStatus struct {
 
 // integrationInfo is the `data` of GET /api/integration/{id}（実測 OpenAPI）。
 type integrationInfo struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Methods []struct {
+		ID   string `json:"id"`   // oauth メソッドのみ持つ
+		Type string `json:"type"` // "oauth" | "key" | "env"
+	} `json:"methods"`
 	Connections []struct {
 		Type  string `json:"type"` // "credential"（key/oauth 由来）| "env"
 		ID    string `json:"id"`
@@ -183,6 +187,12 @@ func oauthStatus() oauthState {
 	if err := daemonJSON("GET", addr, "/api/integration/"+oauthIntegrationID, nil, &env); err != nil {
 		return oauthCache
 	}
+	if env.Data.ID == "" {
+		// 起動直後は integration がまだ登録されておらず data:null が返る。ここで
+		// 「未接続」を確定させると、ログイン済みのユーザーに一時的に未接続と
+		// 見せてしまう（起動レースは start 側と同じ — waitOAuthMethod 参照）。
+		return oauthCache
+	}
 	st := oauthState{known: true}
 	for _, c := range env.Data.Connections {
 		// env 由来（OPENCODE_API_KEY）は APIキー方式の表示であって Console 接続ではない。
@@ -195,6 +205,42 @@ func oauthStatus() oauthState {
 	oauthCache = st
 	oauthAt = time.Now()
 	return st
+}
+
+// oauthReadyTimeout bounds the wait for the plugin-registered device method. 起動
+// 直後の click でも間に合う程度に長く、居ないまま待ち続けない程度に短く。
+// oauthReadyPoll とともに var なのはテストが実時間を待たないため。
+var (
+	oauthReadyTimeout = 20 * time.Second
+	oauthReadyPoll    = 300 * time.Millisecond
+)
+
+// deviceMethodReady reports whether the daemon is already publishing the device method.
+func deviceMethodReady(addr string) bool {
+	var env envelope[integrationInfo]
+	if err := daemonJSON("GET", addr, "/api/integration/"+oauthIntegrationID, nil, &env); err != nil {
+		return false
+	}
+	for _, m := range env.Data.Methods {
+		if m.Type == "oauth" && m.ID == oauthMethodID {
+			return true
+		}
+	}
+	return false
+}
+
+// waitOAuthMethod blocks until the device method shows up (plugin load finished).
+func waitOAuthMethod(addr string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		if deviceMethodReady(addr) {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return errors.New("opencode serve の初期化が終わらず、アカウントのサインインを開始できませんでした（少し待って再試行してください）")
+		}
+		time.Sleep(oauthReadyPoll)
+	}
 }
 
 // --- ハンドラ ---------------------------------------------------------------
@@ -211,6 +257,14 @@ func HandleOAuthStart(w http.ResponseWriter, r *http.Request) {
 		// managed opencode を切っている場合ここに来る。CLI 対話ログイン
 		// （`opencode auth login`）は端末セッションからなら従来どおり可能。
 		httpx.WriteErr(w, http.StatusServiceUnavailable, "serve_unavailable", "opencode serve を起動できませんでした: "+err.Error())
+		return
+	}
+	// health だけでは足りない: /global/health は起動直後から 200 を返すが、device
+	// メソッドを登録するのは opencode のプラグインで、その load は後から終わる。
+	// 実測（起動 85ms 後の click）: この窓で叩くと daemon は 500
+	// `OAuth method not found: opencode/device` を返す。メソッドが見えるまで待つ。
+	if err := waitOAuthMethod(addr, oauthReadyTimeout); err != nil {
+		httpx.WriteErr(w, http.StatusServiceUnavailable, "serve_not_ready", err.Error())
 		return
 	}
 	var env envelope[attemptInfo]

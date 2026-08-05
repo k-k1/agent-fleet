@@ -18,11 +18,17 @@ import (
 
 // fakeDaemon wires oauthDaemon/oauthProbe to a test server for the duration of a test.
 type fakeDaemon struct {
-	mu       sync.Mutex
-	status   string // attempt status to report
-	conns    []map[string]any
-	deleted  []string // paths of DELETE calls
-	startErr int      // non-zero => connect/oauth replies with this status
+	mu      sync.Mutex
+	status  string // attempt status to report
+	conns   []map[string]any
+	deleted []string // paths of DELETE calls
+	// notReady counts down the GETs that answer like a daemon whose plugin has not
+	// finished loading: health is up, but the integration (and its device method)
+	// is not published yet — the real 500 `OAuth method not found` window.
+	notReady int
+	// nullData makes the integration GET answer data:null（起動直後の実挙動）。
+	nullData bool
+	startErr int // non-zero => connect/oauth replies with this status
 }
 
 func newFakeDaemon(t *testing.T) *fakeDaemon {
@@ -57,8 +63,18 @@ func newFakeDaemon(t *testing.T) *fakeDaemon {
 			}
 			_, _ = w.Write([]byte(`{"location":{},"data":{"status":"` + d.status + `","time":{"created":1,"expires":2}` + msg + `}}`))
 		case r.Method == "GET" && r.URL.Path == "/api/integration/opencode":
+			if d.nullData {
+				_, _ = w.Write([]byte(`{"location":{},"data":null}`))
+				return
+			}
+			methods := []map[string]any{{"type": "key"}, {"type": "env", "names": []string{"OPENCODE_API_KEY"}}}
+			if d.notReady > 0 {
+				d.notReady-- // プラグイン読み込み中: device メソッドがまだ生えていない
+			} else {
+				methods = append(methods, map[string]any{"id": "device", "type": "oauth", "label": "OpenCode Console account"})
+			}
 			b, _ := json.Marshal(map[string]any{"location": map[string]any{}, "data": map[string]any{
-				"id": "opencode", "name": "OpenCode", "connections": d.conns,
+				"id": "opencode", "name": "OpenCode", "methods": methods, "connections": d.conns,
 			}})
 			_, _ = w.Write(b)
 		case r.Method == "DELETE":
@@ -167,6 +183,69 @@ func TestUserCodeExtraction(t *testing.T) {
 		if got := userCode(tc.url, tc.instructions); got != tc.want {
 			t.Errorf("%s: userCode = %q, want %q", tc.name, got, tc.want)
 		}
+	}
+}
+
+// 実機の再現（ref=err_91d98832）: 起動 85ms 後の click。/global/health は 200 でも
+// device メソッドはまだ登録されておらず、素直に POST すると daemon が 500
+// `OAuth method not found: opencode/device` を返す。メソッドが生えるまで待つこと。
+func TestOAuthStartWaitsForPluginLoad(t *testing.T) {
+	if !Available() {
+		t.Skip("opencode CLI がこの環境に無い")
+	}
+	d := newFakeDaemon(t)
+	d.mu.Lock()
+	d.notReady = 3 // 3 回ぶん「まだ読み込み中」を返す
+	d.mu.Unlock()
+	orig := oauthReadyPoll
+	oauthReadyPoll = time.Millisecond
+	defer func() { oauthReadyPoll = orig }()
+
+	code, out := doJSON(t, HandleOAuthStart, "POST", "/connections/opencode/oauth/start", "")
+	if code != http.StatusOK {
+		t.Fatalf("読み込み待ちの後に成功すべき: status=%d out=%v", code, out)
+	}
+	if out["flow_id"] != "att_1" {
+		t.Errorf("flow_id = %v", out["flow_id"])
+	}
+}
+
+// いつまでもメソッドが生えないとき（古い CLI 等）は、待ち続けず理由を返す。
+func TestOAuthStartGivesUpWhenMethodNeverAppears(t *testing.T) {
+	if !Available() {
+		t.Skip("opencode CLI がこの環境に無い")
+	}
+	d := newFakeDaemon(t)
+	d.mu.Lock()
+	d.notReady = 1 << 30
+	d.mu.Unlock()
+	orig, origTO := oauthReadyPoll, oauthReadyTimeout
+	oauthReadyPoll = time.Millisecond
+	oauthReadyTimeout = 20 * time.Millisecond
+	defer func() { oauthReadyPoll, oauthReadyTimeout = orig, origTO }()
+
+	code, out := doJSON(t, HandleOAuthStart, "POST", "/connections/opencode/oauth/start", "")
+	if code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d out=%v", code, out)
+	}
+	if msg, _ := out["error"].(map[string]any); msg == nil || msg["code"] != "serve_not_ready" {
+		t.Errorf("理由が伝わっていない: %v", out)
+	}
+}
+
+// 起動直後は integration そのものが data:null。ここで「未接続」を確定させない。
+func TestOAuthStatusIgnoresNullIntegration(t *testing.T) {
+	d := newFakeDaemon(t)
+	d.setConns([]map[string]any{{"type": "credential", "id": "con_1", "label": "acme-inc"}})
+	if st := oauthStatus(); !st.connected {
+		t.Fatal("前提: 接続済みを読めていない")
+	}
+	invalidateOAuthStatus()
+	d.mu.Lock()
+	d.nullData = true
+	d.mu.Unlock()
+	if st := oauthStatus(); !st.connected || st.label != "acme-inc" {
+		t.Errorf("起動レース中に接続表示が消えた: %+v", st)
 	}
 }
 

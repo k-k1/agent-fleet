@@ -35,6 +35,26 @@ opencode はそれが不要で、共有 `opencode serve` daemon（docs/27 の Ru
   `~/.local/share/opencode/auth.json` なので v1 の `DELETE /auth/{providerID}` を使う。
   daemon が居ないときは `opencode auth logout opencode` にフォールバックする。
 
+### 起動レース: health ではなく「メソッド」を待つ
+
+`Supervisor.Ensure()` は `/global/health` が 200 になった時点で成功を返すが、**device
+メソッドを登録するのは opencode のプラグインで、その load は health より後に終わる**。
+この窓で `connect/oauth` を叩くと daemon は 500 を返す:
+
+```
+level=ERROR ref=err_91d98832 error="OAuth method not found: opencode/device"
+```
+
+実機の再現（Console のボタン初回クリック）は、その daemon 世代の最初のログ行から
+**85ms 後**の失敗だった。したがって start は health ではなく
+`GET /api/integration/opencode` の `methods[]` に `{type:"oauth", id:"device"}` が
+現れるまで待つ（`waitOAuthMethod`、最大 20 秒）。現れないまま切れた場合は
+`serve_not_ready` として理由を返す（古い CLI ならメソッド自体が無い）。
+
+同じ窓では integration 自体が未登録で `GET /api/integration/opencode` が `data:null` を
+返す。状態表示側（`oauthStatus`）はこれを「未接続」と確定させず、直前の値を保つ —
+ログイン済みのユーザーに一瞬「未接続」と見せないため。
+
 ### 対応範囲を Console アカウントに絞った理由
 
 opencode の OAuth は提供 API によって顔ぶれが違う（実測 1.18.13）:
