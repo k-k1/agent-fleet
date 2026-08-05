@@ -265,7 +265,6 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
     agentOf(kind).managedDriver ? tr(driverManaged ? "launch.sum.driver_managed" : "launch.sum.driver_terminal") : "",
     hasEffort && effort ? tr("launch.sum.effort", { v: effortOptions.find(([v]) => v === effort)?.[1] || effort }) : "",
     hasStartMode && startMode === "plan" ? "Plan" : "",
-    subdir ? tr("launch.sum.subdir", { path: subdir }) : "",
     title.trim() ? tr("launch.sum.title", { name: title.trim() }) : "",
   ].filter(Boolean);
   const advSummary = advParts.length ? advParts.join(" · ") : tr("launch.sum.defaults");
@@ -551,16 +550,24 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
         {/* 場所: worktree（隔離・既定）か このコピーで直接か。worktree 行では選択肢
             なし（この worktree 内で直接起動）ので、折りたたまず 1 行の注記で出す。 */}
         {!allowWorktree ? (
-          <div className="ui-field">
-            <span className="ui-field-label">{tr("launch.field.location")}</span>
-            <span className="ui-field-hint">
-              {isSvn ? (
-                tr("launch.svn_direct_note")
-              ) : (
-                <Trans k="launch.worktree_direct_note" vars={{ branch: branch || tr("launch.current_wc") }} components={[<code />]} />
-              )}
-            </span>
-          </div>
+          <>
+            <div className="ui-field">
+              <span className="ui-field-label">{tr("launch.field.location")}</span>
+              <span className="ui-field-hint">
+                {isSvn ? (
+                  tr("launch.svn_direct_note")
+                ) : (
+                  <Trans k="launch.worktree_direct_note" vars={{ branch: branch || tr("launch.current_wc") }} components={[<code />]} />
+                )}
+              </span>
+            </div>
+            {/* 作業ディレクトリ: 起動先をリポジトリ配下のフォルダへ絞る（既定は直下）。 */}
+            <div className="ui-field">
+              <span className="ui-field-label">{tr("launch.field.subdir")}</span>
+              <SubdirPicker repo={repo} value={subdir} onChange={setSubdir} />
+              <span className="ui-field-hint">{tr("launch.subdir_hint")}</span>
+            </div>
+          </>
         ) : (
         <LaunchSection
           label={tr("launch.field.location")}
@@ -579,6 +586,15 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
                 <Icon name="repo" /> {tr("launch.direct_here")}
                 <span className="seg-sub">{tr("launch.direct_here_sub", { branch: branch || tr("launch.wc") })}</span>
               </button>
+            </div>
+            {/* 作業ディレクトリ: 起動先をリポジトリ配下のフォルダへ絞る（既定は直下）。
+                worktree 起動では、新しく作られた worktree 内の同じ相対パスになる。 */}
+            <div className="ui-field">
+              <span className="ui-field-label">{tr("launch.field.subdir")}</span>
+              <SubdirPicker repo={repo} value={subdir} onChange={setSubdir} />
+              <span className="ui-field-hint">
+                {worktree ? tr("launch.subdir_wt_hint") : tr("launch.subdir_hint")}
+              </span>
             </div>
             {worktree && (
               <>
@@ -688,7 +704,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
         )}
 
         {/* 詳細: 一度決めたらしばらく変えない設定（実行方式・effort・開始モード・
-            作業ディレクトリ・セッション名）。既定から動いている項目だけが要約行に出る。 */}
+            セッション名）。既定から動いている項目だけが要約行に出る。 */}
         <LaunchSection
           label={tr("launch.field.advanced")}
           summary={advSummary}
@@ -745,16 +761,6 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
               )}
             </div>
           )}
-
-          {/* 作業ディレクトリ: 起動先をリポジトリ配下のフォルダへ絞る（既定は直下）。
-              worktree 起動では、新しく作られた worktree 内の同じ相対パスになる。 */}
-          <div className="ui-field">
-            <span className="ui-field-label">{tr("launch.field.subdir")}</span>
-            <SubdirPicker repo={repo} value={subdir} onChange={setSubdir} />
-            <span className="ui-field-hint">
-              {worktree ? tr("launch.subdir_wt_hint") : tr("launch.subdir_hint")}
-            </span>
-          </div>
 
           <div className="ui-field">
             <span className="ui-field-label">{tr("launch.field.title")}</span>

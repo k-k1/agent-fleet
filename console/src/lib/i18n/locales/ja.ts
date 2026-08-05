@@ -2384,7 +2384,6 @@ export const ja = {
   "launch.sum.driver_managed": "マネージド",
   "launch.sum.driver_terminal": "ターミナル（CLI）",
   "launch.sum.effort": "effort {v}",
-  "launch.sum.subdir": "作業ディレクトリ {path}",
   "launch.sum.title": "名前「{name}」",
   "launch.sum.defaults": "既定のまま",
 
