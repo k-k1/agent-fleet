@@ -39,8 +39,13 @@ import (
 // workspaceIDRe matches the ULID-shaped id（Crockford base32・実測 26 文字）。
 var workspaceIDRe = regexp.MustCompile(`\bwrk_[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}\b`)
 
-// ValidWorkspaceID reports whether s looks like an opencode workspace id.
-func ValidWorkspaceID(s string) bool { return workspaceIDRe.MatchString(strings.TrimSpace(s)) }
+// NormalizeWorkspaceID extracts the id out of whatever the user pasted. 利用枠ページの
+// URL をそのまま貼るのが自然な操作なので（実機でそうなった）、`wrk_…` だけを取り出す。
+// 見つからなければ空 — 呼び出し側が入力エラーとして扱う。
+func NormalizeWorkspaceID(s string) string { return workspaceIDRe.FindString(strings.TrimSpace(s)) }
+
+// ValidWorkspaceID reports whether s CONTAINS an opencode workspace id（URL 可）。
+func ValidWorkspaceID(s string) bool { return NormalizeWorkspaceID(s) != "" }
 
 type workspaceState struct {
 	ID string `json:"id"`
@@ -75,7 +80,11 @@ func loadWorkspaceIDLocked() workspaceState {
 	if b, err := os.ReadFile(workspaceIDPath()); err == nil {
 		_ = json.Unmarshal(b, &st)
 	}
-	if !ValidWorkspaceID(st.ID) {
+	// 正規化前に書かれたファイル（URL 丸ごと）はここで直す — 読むたびに正しい id へ。
+	if id := NormalizeWorkspaceID(st.ID); id != st.ID {
+		st.ID = id
+	}
+	if st.ID == "" {
 		st = workspaceState{}
 	}
 	wsIDCache = &st
@@ -106,7 +115,7 @@ func SetWorkspaceID(id string) error {
 		wsIDCache = &workspaceState{}
 		return os.Remove(workspaceIDPath())
 	}
-	return saveWorkspaceIDLocked(workspaceState{ID: id, Source: "manual", At: nowRFC3339()})
+	return saveWorkspaceIDLocked(workspaceState{ID: NormalizeWorkspaceID(id), Source: "manual", At: nowRFC3339()})
 }
 
 // learnWorkspaceID records an id seen in a failure. 手入力は上書きしない — 利用者が
@@ -117,6 +126,7 @@ func learnWorkspaceID(id string) {
 	}
 	wsIDMu.Lock()
 	defer wsIDMu.Unlock()
+	id = NormalizeWorkspaceID(id)
 	st := loadWorkspaceIDLocked()
 	if st.Source == "manual" || st.ID == id {
 		return
@@ -210,13 +220,14 @@ func resetAt(retryAfter string) string {
 
 // WorkspaceURL builds the deep link for the Go plan page（利用枠の画面）。空 id では空。
 func WorkspaceURL(id, page string) string {
-	if !ValidWorkspaceID(id) {
+	norm := NormalizeWorkspaceID(id)
+	if norm == "" {
 		return ""
 	}
 	if page == "" {
 		page = "go"
 	}
-	return "https://opencode.ai/workspace/" + strings.TrimSpace(id) + "/" + page
+	return "https://opencode.ai/workspace/" + norm + "/" + page
 }
 
 // --- HTTP ---------------------------------------------------------------------
@@ -244,5 +255,6 @@ func HandlePutWorkspace(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
+	id = NormalizeWorkspaceID(id)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"workspace_id": id, "workspace_url": WorkspaceURL(id, "go")})
 }

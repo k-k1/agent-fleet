@@ -1029,8 +1029,8 @@ export const ja = {
   "agents.oc_hint": " でサインイン → 課金設定 → API キーを発行して貼り付け（同じキーで Zen も利用可）。",
   "agents.oc_ws_open": "Go の利用状況を開く ↗",
   "agents.oc_ws_desc":
-    "利用枠ページの URL に含まれる workspace ID（wrk_…）を登録すると、このカードから利用状況を開けます。利用率の数値は opencode.ai 側に API が無いため取り込めません（ページはブラウザのログインが必要です）。上限に当たったときは、その内容をここに表示します。",
-  "agents.oc_ws_placeholder": "wrk_… （利用枠ページの URL から）",
+    "利用枠ページの URL（または wrk_… の ID）を貼ると、このカードから利用状況を開けます。利用率の数値は opencode.ai 側に API が無いため取り込めません（ページはブラウザのログインが必要です）。上限に当たったときは、その内容をここに表示します。",
+  "agents.oc_ws_placeholder": "利用枠ページの URL、または wrk_…",
   "agents.oc_ws_edit": "変更",
   "agents.oc_ws_limit": "直近の上限: {name}（{at} にリセット）",
   "agents.oc_ws_limit_unknown": "枠不明",
