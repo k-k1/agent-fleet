@@ -34,7 +34,9 @@ Finally, click **"Clone"** to fetch it.
 
 ### Submodules and Git LFS
 
-- **Submodules** — fetched on a best-effort basis after the clone. Submodules registered over SSH are automatically rewritten to HTTPS and fetched (even if this fails, the parent clone succeeds).
+- **Submodules** — fetched on a best-effort basis after a clone and after a working copy (worktree) is created. Submodules registered over SSH are automatically rewritten to HTTPS and fetched (even if this fails, the parent clone succeeds).
+  - Each working copy clones the submodules again, so **a large submodule may not finish fetching within the launch**. You can still start working (the fetch continues in the background). When work starts on an incomplete checkout, the notification center shows "Started work with submodules not checked out", followed by "Submodules are now checked out" once the fetch lands. Clicking the notification opens that working copy's Source Control view, which lists the submodules and their fetched state.
+  - A submodule whose fetch was cut off is repaired automatically on the next launch. If you are in a hurry, enter the working copy in a terminal and run `git submodule update --init --recursive`.
 - **Git LFS** — actual content is fetched automatically on clone / checkout (smudge). In an existing working copy, files that are still pointers show an "LFS pointer" badge in the viewer. In that case, enter the repository in a terminal and run `git lfs pull` to fetch the content.
 
 ## The built-in git provider (internal Git)

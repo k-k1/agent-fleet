@@ -29,6 +29,13 @@ working folder is missing ([02](02-sessions.md)).
 - Double-check the spelling of the URL and branch name.
 - Submodules are fetched best-effort after the clone; even if they fail, the parent clone itself succeeds ([04](04-git.md)).
 
+### A session says the submodules are missing / broken
+
+- A large submodule may not finish fetching inside the launch. The fetch keeps going in the
+  background, and the notification center tells you when it lands ([04](04-git.md)).
+- A submodule left half-fetched is repaired the next time a session launches in that working
+  copy. To fix it right away, run `git submodule update --init --recursive` there in a terminal.
+
 ### Authentication errors on a private repository
 
 In ⚙ Settings → the "Git hosting" tab, check that the provider in question is **"Connected"**.

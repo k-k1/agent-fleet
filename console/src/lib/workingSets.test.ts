@@ -114,7 +114,22 @@ describe("scheduleInSet", () => {
     expect(scheduleInSet(w, { id: "sch_other" })).toBe(false);
   });
 
-  it("derives from the launch repo / worktree folder", () => {
+  // repo arrives as the ABSOLUTE agent path (docs/38 P2 "dir" passthrough / the
+  // operator copies list_repos' path), never as a folder name — asserting the
+  // bare-name form here is what let the mismatch ship.
+  it("derives from the launch repo, which the CP holds as an absolute path", () => {
+    expect(scheduleInSet(w, { id: "x", repo: "/home/dev/repos/app" })).toBe(true);
+    expect(scheduleInSet(w, { id: "x", repo: "/home/dev/repos/app/" })).toBe(true);
+    expect(scheduleInSet(w, { id: "x", repo: "/home/dev/repos/other" })).toBe(false);
+    expect(scheduleInSet(w, { id: "x", repo: "/home/dev/repos/appendix" })).toBe(false);
+  });
+
+  it("derives a worktree target from its base clone (the repos hold base names)", () => {
+    expect(scheduleInSet(w, { id: "x", repo: "/home/dev/repos/app@wip-t1" })).toBe(true);
+    expect(scheduleInSet(w, { id: "x", repo: "/home/dev/repos/other@wip-t1" })).toBe(false);
+  });
+
+  it("still derives from a bare folder name / the worktree field", () => {
     expect(scheduleInSet(w, { id: "x", repo: "app" })).toBe(true);
     expect(scheduleInSet(w, { id: "x", repo: "other", worktree: "app@t1" })).toBe(true);
     expect(scheduleInSet(w, { id: "x", repo: "other" })).toBe(false);

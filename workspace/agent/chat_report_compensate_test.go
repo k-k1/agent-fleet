@@ -96,7 +96,13 @@ func TestReportResumedEvidence(t *testing.T) {
 			reportSignals{MarkerState: "idle", MarkerTurnEnd: true, MarkerAfterArm: true,
 				TranscriptBusy: true, PaneBusy: true}, false},
 		{"報告後にそのターンが中断で終わった＝再開ではない",
-			reportSignals{Abort: true, AbortReason: reportReasonTurnAborted, TranscriptBusy: true}, false},
+			reportSignals{Abort: true, TailAborted: true, AbortReason: reportReasonTurnAborted,
+				TranscriptBusy: true}, false},
+		// 報告が中断より**後**に出るのは自動再開（docs/47 §4-6）の普通の姿: 再送を 2 回
+		// 試してから打ち切って報告するので、中断レコードは報告時刻より古い。時刻の下限で
+		// 落として鮮度だけを見ると「報告のあとに働き出した」と読み、嘘の訂正を配ってしまう。
+		{"報告より古い中断でも再開ではない（自動再開ののちの打ち切り報告）",
+			reportSignals{TailAborted: true, TranscriptBusy: true}, false},
 		{"何も無い", reportSignals{}, false},
 	}
 	for _, tc := range cases {

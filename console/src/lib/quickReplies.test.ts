@@ -133,8 +133,8 @@ describe("rankQuickReplies", () => {
     expect(out.filter((s) => s === "親レポにマージしてプッシュ")).toHaveLength(1); // 学習側と二重に出さない
   });
 
-  it("keeps pinned entries even when the limit is full of ranked/boosted candidates", () => {
-    // limit=2 だが、ピンは limit に負けない（＝「使っているのに消える」を起こさない）。
+  it("keeps pinned entries on top of the ranked limit, not squeezed out of it", () => {
+    // limit=2 は学習側だけの上限。ピンは別枠なので、合計はピン件数 + limit まで出る。
     const m: QuickReplyMap = {
       a: { text: "aaa", count: 9, at: 100 },
       b: { text: "bbb", count: 8, at: 90 },
@@ -142,7 +142,7 @@ describe("rankQuickReplies", () => {
     };
     const out = rankQuickReplies(m, { draft: "", lastReply: "", locale: "ja", pinned: ["固定"], limit: 2 });
     expect(out[0]).toBe("固定");
-    expect(out).toHaveLength(2);
+    expect(out).toHaveLength(3); // ピン1件 + 学習上位2件（limit を圧迫しない）
   });
 
   it("shows a pinned entry that was hidden or never learned, and still honors the draft prefix", () => {

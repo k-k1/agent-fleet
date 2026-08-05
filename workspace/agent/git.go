@@ -377,7 +377,7 @@ func gitClone(dir, remoteURL, branch, newBranch string) error {
 			return err
 		}
 	}
-	gitSubmodulesUpdate(dir)
+	gitSubmodulesEnsure(dir) // clone-then-start lands a session here too
 	return nil
 }
 
@@ -726,40 +726,6 @@ func realPath(p string) string {
 	return filepath.Clean(p)
 }
 
-// gitSubmodulesUpdate fetches/updates submodules of a working copy (after a clone,
-// reuse, or branch switch — the .gitmodules set/commits differ per branch).
-//
-// The workspace has no SSH key, so a submodule pinned to an SSH URL (git@host: /
-// ssh://) would fail "Host key verification failed". Following CodeLeaf's JGit
-// client, we `submodule init` (expanding .gitmodules into .git/config), rewrite any
-// SSH-form submodule URL to HTTPS so the unified credential helper (workspace-agent
-// cred) can authenticate it, then `submodule update`. Best-effort throughout: no
-// submodules is a no-op, and an unreachable submodule is non-fatal so the parent
-// operation still succeeds.
-func gitSubmodulesUpdate(dir string) {
-	run := func(args ...string) {
-		_ = gitx.Cmd(dir, args...).Run()
-	}
-	run("submodule", "init") // local: reads .gitmodules, no network
-	rewriteSubmoduleSSHURLs(dir)
-	// rewriteSubmoduleSSHURLs only reaches dir's TOP-LEVEL .git/config; a nested submodule
-	// (e.g. lib-svc/lib-core) is materialized during --recursive with its own SSH URL and
-	// would fail with "Permission denied (publickey)" in a workspace that authenticates over
-	// HTTPS+token (no SSH keys). Pass url.insteadOf rewrites derived from the repo's hosts:
-	// git exports -c config to the child processes that clone nested submodules (via
-	// GIT_CONFIG_PARAMETERS), so SSH→HTTPS applies at every nesting level.
-	insteadOf := submoduleInsteadOfArgs(dir)
-	// `submodule update` is the only step that fetches over the network, and gitx has no
-	// default timeout — a slow/unreachable submodule remote would otherwise hang the
-	// synchronous create request past its client deadline (the worktree-launch double-start
-	// root cause). Bound it: best-effort, so on timeout the worktree still launches with
-	// whatever was fetched and the user can finish the checkout manually.
-	ctx, cancel := context.WithTimeout(context.Background(), submoduleUpdateTimeout)
-	defer cancel()
-	args := append(insteadOf, "submodule", "update", "--recursive")
-	_ = gitx.CmdContext(ctx, dir, args...).Run()
-}
-
 // submoduleInsteadOfArgs builds `-c url.<https>.insteadOf=<ssh>` flags for every distinct
 // host referenced by dir's top-level .gitmodules, so a recursive submodule fetch rewrites
 // SSH URLs to HTTPS at ALL nesting levels (nested submodules are almost always on the same
@@ -804,12 +770,6 @@ func sshURLHost(url string) (string, bool) {
 	}
 	return "", false
 }
-
-// submoduleUpdateTimeout caps the submodule network fetch during a worktree launch. Kept
-// under the create tool's reconcile budget (POST 40s + poll 45s) so a normal-but-slow
-// fetch still resolves as a successful create, while a pathological hang degrades to a
-// worktree with partial submodules instead of a wedged request.
-const submoduleUpdateTimeout = 60 * time.Second
 
 // rewriteSubmoduleSSHURLs replaces SSH-form submodule URLs in .git/config with their
 // HTTPS equivalents (so the token credential helper applies). Operates on the URLs
@@ -975,6 +935,13 @@ func ensureWorktree(parentDir, base, newBranch, folderSeg string) (string, error
 	// the same name is a conflict the caller must resolve with a different branch.
 	if _, err := os.Stat(dir); err == nil {
 		if isGitRepo(dir) {
+			// A previous launch may have left submodules unfetched or wedged (the sync is
+			// time-boxed, and a killed clone does not resume by itself — git_submodule.go).
+			// Nothing else on the relaunch path ever retries, so the session would keep
+			// landing in the same broken checkout; retry here instead.
+			if len(submoduleGaps(dir)) > 0 {
+				gitSubmodulesEnsure(dir)
+			}
 			return dir, nil
 		}
 		return "", fmt.Errorf("path already exists and is not a worktree: %s", name)
@@ -993,7 +960,7 @@ func ensureWorktree(parentDir, base, newBranch, folderSeg string) (string, error
 		return "", fmt.Errorf("worktree add: %v: %s", err, out)
 	}
 	applyGitIdentity(dir)    // commit identity for the worktree (config is shared, but explicit)
-	gitSubmodulesUpdate(dir) // per-worktree submodule checkout; parent untouched (verified)
+	gitSubmodulesEnsure(dir) // per-worktree submodule checkout; parent untouched (verified)
 	return dir, nil
 }
 

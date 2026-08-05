@@ -49,6 +49,13 @@ type Question struct {
 type Option struct {
 	Label       string `json:"label"`
 	Description string `json:"description,omitempty"`
+	// Preview is the mockup / code snippet the agent attached to this option (claude's
+	// AskUserQuestion `preview`) so the choices can be COMPARED before one is picked —
+	// the material the question is about, not decoration. Dropping it here left the
+	// mirror showing two labels whose difference was only visible in the CLI. Whitespace
+	// is load-bearing (ASCII box drawings), so it travels verbatim. Optional: the other
+	// agents' question tools have no equivalent and simply omit it.
+	Preview string `json:"preview,omitempty"`
 }
 
 // Turn is one displayable conversation turn.

@@ -167,6 +167,18 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
   status（porcelain=v2 解析）/ branches / checkout / fetch / ff / delete。
   clone 後 submodule は best-effort（SSH URL を HTTPS へ書換えて update。親 clone には
   `--recurse-submodules` を付けない——SSH 登録 submodule で親ごと失敗するため）。
+- **submodule 同期（`git_submodule.go`）**: worktree/clone 起動は submodule を per-worktree の
+  gitdir（`.git/worktrees/<wt>/modules/…`）へ取得する＝**親とは別に丸ごとクローンし直す**。
+  実測（git 2.39）**取得中の `submodule update` を kill すると submodule は wedge する**——
+  gitdir だけ残り HEAD が未生成、作業ツリーは空、以後の `submodule update` は
+  "Unable to find current revision" で恒久的に失敗、しかも `git status` はクリーンで
+  `git submodule status` も健全な空白プレフィクスを出すため誰も気づかない。1.4GB 級の
+  submodule はこれを毎起動で踏む。よって同期は
+  (1) 起動予算（60 秒）を過ぎても**待つのをやめるだけで kill しない**（背番で継続、
+  完了/失敗はログと通知）、(2) 未取得のまま起動したらログ＋通知（kind `submodule-sync`）、
+  (3) 既に wedge した submodule は実測の唯一効くレシピ——`fetch` で転送を完了させ、親が記録する
+  sha を `checkout --detach --force`——で修復する。作業ツリーが空のものだけが対象なので
+  ローカル変更を壊さない。worktree 再利用（再起動）時も未取得なら再同期する。
 - **SCM（read/write git）**: changes / diff / log / graph / show / stage / unstage / discard / commit。
   sha は hex 検証、応答はサイズ上限でキャップ。
 - **fs**: home ルートのツリー/ファイル/アップロード/リネーム等。traversal 防御・サイズ上限・

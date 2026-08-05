@@ -26,9 +26,20 @@ interface TenantStore {
   identityRev: number;
   /** Resolve identity + memberships once at boot. */
   init(): Promise<void>;
+  /** Re-read whoami after a CP reconnect (see refreshWhoami). */
+  refreshWhoami(): Promise<void>;
   /** Switch the active tenant (picker). Callers re-sync their own data. */
   select(slug: string): Promise<void>;
 }
+
+// whoami は本来ブート時の 1 回きりだった。そこにはアイデンティティだけでなく
+// デプロイの capability（scheduler_enabled）も乗っているため、CP が設定変更を
+// 伴って再起動しても、ブラウザをリロードするまで古い値のままだった（定時実行を
+// 有効化したのに左ペインにスケジュールが出ない、の一因）。push ストリームの
+// 再接続を CP 再起動の合図として読み直す — ただしタブの表示/非表示でも再接続
+// するので、最短間隔で間引く。
+const WHOAMI_MIN_INTERVAL_MS = 30000;
+let lastWhoamiAt = 0;
 
 export const useTenantStore = create<TenantStore>((set) => ({
   whoami: null,
@@ -52,6 +63,7 @@ export const useTenantStore = create<TenantStore>((set) => ({
       } catch {
         return false; // network drop — retry
       }
+      lastWhoamiAt = Date.now();
       if (who?.error) {
         if (isTransientErr(who)) return false;
         /* terminal whoami error: identity stays unresolved (display-only) — keep
@@ -109,6 +121,28 @@ export const useTenantStore = create<TenantStore>((set) => ({
       setTimeout(() => void loop(), delay);
     };
     await loop();
+  },
+
+  async refreshWhoami() {
+    if (Date.now() - lastWhoamiAt < WHOAMI_MIN_INTERVAL_MS) return;
+    lastWhoamiAt = Date.now();
+    let who;
+    try {
+      who = await api("api/whoami");
+    } catch {
+      return; // network drop — the next reconnect tries again
+    }
+    // Never clobber a resolved identity with an error payload (same rule as the
+    // boot path): a 5xx during a CP restart must not blank the account chip.
+    if (!who || who.error) return;
+    set({ whoami: who });
+    // Identity can legitimately change here (re-login as another account in the
+    // same tab) — keep the layout scoping key in step, exactly as init() does.
+    const uid = who.email || who.user || "";
+    if (uid !== getUser()) {
+      setUser(uid);
+      set((s) => ({ identityRev: s.identityRev + 1 }));
+    }
   },
 
   async select(slug: string) {

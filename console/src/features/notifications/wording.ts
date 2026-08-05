@@ -37,6 +37,21 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
     const title = String(n.payload.conversationTitle || name);
     return { title: t("notif.chat_ctx_overflow.title"), body: title, speech: t("notif.chat_ctx_overflow.speech") };
   }
+  if (n.kind === "submodule-sync") {
+    // A working copy was launched with submodules that are not checked out — the fetch is
+    // still running, or it failed (git_submodule.go). Naming the paths matters: the session
+    // sees empty directories and git reports nothing wrong.
+    const repo = String(n.payload.repo || name);
+    if (n.payload.state === "ready") {
+      return { title: t("notif.submodules_ready.title"), body: repo, speech: t("notif.submodules_ready.speech", { repo }) };
+    }
+    const paths = Array.isArray(n.payload.paths) ? n.payload.paths.map(String).join(", ") : "";
+    return {
+      title: t("notif.submodules_incomplete.title"),
+      body: t("notif.submodules_incomplete.body", { repo, paths }),
+      speech: t("notif.submodules_incomplete.speech", { repo }),
+    };
+  }
   if (n.kind === "rate-limit-reached") {
     return {
       title: t("notif.rate_limit_reached.title"),
