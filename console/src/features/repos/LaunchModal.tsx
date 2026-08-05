@@ -34,6 +34,7 @@ import { BranchList } from "./BranchList.tsx";
 import { SubdirPicker } from "./SubdirPicker.tsx";
 import type { Branch } from "./BranchList.tsx";
 import { sanitizeSeg } from "../../lib/reponame.ts";
+import { coarsePointer } from "../../lib/device.ts";
 
 // LaunchOpts: agent + optional first prompt, plus WHERE to run. For a worktree,
 // base is the start point and newBranch the branch to create ("" => the server
@@ -269,11 +270,13 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   ].filter(Boolean);
   const advSummary = advParts.length ? advParts.join(" · ") : tr("launch.sum.defaults");
 
-  // 初期フォーカスは最初のプロンプト欄。autoFocus 属性だと、ブラウザが対象を可視域へ
-  // スクロールさせ、上に積んだエージェント選択が開いた瞬間に画面外へ流れる。
-  // preventScroll で「先頭が見えたまま、すぐ打てる」を両立させる。
+  // 初期フォーカスは最初のプロンプト欄 — ただしタッチ端末では当てない（フォーカス＝
+  // ソフトキーボードが開き、モーダルの大半が隠れる。この抑制は Console 共通の作法で、
+  // lib/device.ts coarsePointer を見る）。autoFocus 属性を使わないのも同じ理由で、
+  // あちらはブラウザが対象を可視域へスクロールさせ、上に積んだエージェント選択が
+  // 開いた瞬間に画面外へ流れる。preventScroll で「先頭が見えたまま、すぐ打てる」。
   useEffect(() => {
-    textRef.current?.focus({ preventScroll: true });
+    if (!coarsePointer()) textRef.current?.focus({ preventScroll: true });
   }, []);
 
   // Revoke every held preview URL when the modal unmounts (avoids leaking object URLs).
@@ -461,10 +464,9 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
           </div>
         )}
 
-        {/* 最初のプロンプト（任意）— エージェント／モデルの下。入力欄なのでフォーカスは
-            ここに当てるが、autoFocus 属性は使わない（ブラウザが要素を可視域へスクロール
-            させ、モーダルを開いた瞬間に上のエージェント選択が画面外へ消える）。
-            preventScroll で「先頭が見えたまま入力できる」を両立させている。 */}
+        {/* 最初のプロンプト（任意）— エージェント／モデルの下。初期フォーカスは上の
+            useEffect が当てる（autoFocus 属性ではなく preventScroll 付き、かつ
+            タッチ端末では当てない）。 */}
         <div className="ui-field">
           <span className="ui-field-label launch-prompt-label">
             <span>{tr("launch.first_prompt")}</span>
