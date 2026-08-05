@@ -193,6 +193,28 @@ func TestCollectInteractionAnswers(t *testing.T) {
 	}
 }
 
+// TestQuestionOptionPreview pins the option `preview` — the mockup an agent attaches so
+// the choices can be compared — surviving into the question part. It used to be dropped
+// by transcript.Option, leaving the mirror with two labels whose difference was visible
+// only in the CLI. Whitespace is the content here, so it must arrive byte-for-byte.
+func TestQuestionOptionPreview(t *testing.T) {
+	line := []byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"q1","name":"AskUserQuestion",` +
+		`"input":{"questions":[{"header":"様式","question":"どれ","options":[` +
+		`{"label":"左レール","description":"縦に並べる","preview":"┌───┬───┐\n│ a │ b │\n└───┴───┘"},` +
+		`{"label":"タブのまま"}]}]}}]}}`)
+	turn, ok := parseTurn(line, 0)
+	if !ok || len(turn.Parts) == 0 || turn.Parts[0].Kind != "question" {
+		t.Fatalf("question turn = %+v", turn)
+	}
+	opts := turn.Parts[0].Questions[0].Options
+	if want := "┌───┬───┐\n│ a │ b │\n└───┴───┘"; opts[0].Preview != want {
+		t.Errorf("preview = %q, want %q", opts[0].Preview, want)
+	}
+	if opts[1].Preview != "" {
+		t.Errorf("option without a preview must stay empty, got %q", opts[1].Preview)
+	}
+}
+
 // TestQueuedCommandTurn checks that a mid-run steering prompt — logged only as an
 // attachment/queued_command event, never as a user line (claude ≥2.1.207) — parses
 // into a plain user turn, and that non-human / non-queued attachments stay invisible.
