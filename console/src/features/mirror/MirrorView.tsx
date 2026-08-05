@@ -4013,6 +4013,10 @@ function Turn({
   // turns are never mistaken for typed or operator input, and 定期/手動 read apart.
   const fromSchedule = isUser && (turn.source === "schedule" || turn.source === "schedule-manual");
   const scheduleManual = isUser && turn.source === "schedule-manual";
+  // Automatic resume (docs/47 §4-6): the agent itself re-sent 「続けて」 after the turn was
+  // cut off. Nobody typed it and no operator sent it, so it needs its own badge — an
+  // unattributed "続けて" in the transcript is the most confusing kind of injected turn.
+  const fromAutoResume = isUser && turn.source === "auto-resume";
   // Chat-bridge origin (docs/37 P2a): a reply the user sent from Discord/Slack, injected
   // into the session — badged distinctly from self-typed input, like operator turns.
   const chatProvider = isUser
@@ -4030,6 +4034,7 @@ function Turn({
         (turn.sidechain ? " sidechain" : "") +
         (fromOperator ? " from-operator" : "") +
         (fromSchedule ? " from-schedule" : "") +
+        (fromAutoResume ? " from-schedule" : "") +
         (chatProvider ? " from-chat" : "")
       }
       data-turn-idx={turn.idx}
@@ -4051,6 +4056,12 @@ function Turn({
           >
             <Icon name={scheduleManual ? "play" : "clock"} />{" "}
             {tr(scheduleManual ? "mirror.from_schedule_manual" : "mirror.from_schedule")}
+          </span>
+        )}
+        {fromAutoResume && (
+          // Re-sent by the agent after a cut-off (docs/47 §4-6) — self-repair, not an instruction.
+          <span className="mt-op mt-sched" title={tr("mirror.from_auto_resume_title")}>
+            <Icon name="sync" /> {tr("mirror.from_auto_resume")}
           </span>
         )}
         {chatProvider && (

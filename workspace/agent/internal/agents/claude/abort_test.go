@@ -36,6 +36,16 @@ func apiErr(text string, status int) string {
 	return string(b)
 }
 
+// apiErrKind is apiErr plus claude's own machine-readable cause (`error`), the field
+// that survives an English-wording change (docs/47 §4-6 / B).
+func apiErrKind(text string, status int, kind string) string {
+	var rec map[string]any
+	_ = json.Unmarshal([]byte(apiErr(text, status)), &rec)
+	rec["error"] = kind
+	b, _ := json.Marshal(rec)
+	return string(b)
+}
+
 func asstLine(text string) string {
 	return `{"type":"assistant","message":{"content":[{"type":"text","text":"` + text + `"}]}}`
 }
@@ -68,6 +78,11 @@ func TestAbortedTurnClassification(t *testing.T) {
 		// 意図した分類にしておかないと、次に既定側を変えたときに黙って壊れる。
 		{"session limit", "You've hit your session limit · resets 7:50pm (Asia/Tokyo)", 0, false},
 		{"prompt too long", "Prompt is too long · the request is ~242785 tokens (limit 200000) but this conversation is longer", 400, false},
+		// 実測 2026-08-05（別ワークスペースの g3-manage セッション）。claude 2.1.x の
+		// ストリーム番犬が内部リトライを使い切った形で、コーパスには無かった新しい文言。
+		// 自動再開の対象でなければ、15 分走ったターンがそのまま捨てられる。
+		{"stream idle timeout", "API Error: Stream idle timeout - no chunks received", 0, true},
+		{"stream idle timeout (partial)", "API Error: Stream idle timeout - partial response received", 0, true},
 		{"unknown wording", "API Error: something nobody has seen before", 0, false}, // 判定不能は blocked 側
 	}
 	for _, tc := range cases {
@@ -78,6 +93,43 @@ func TestAbortedTurnClassification(t *testing.T) {
 			}
 			if msg != tc.text {
 				t.Errorf("msg = %q, want %q", msg, tc.text)
+			}
+			if retryable != tc.retryable {
+				t.Errorf("retryable = %v, want %v", retryable, tc.retryable)
+			}
+		})
+	}
+}
+
+// TestAbortedTurnErrorKind pins the `error` field as the FALLBACK classifier (docs/47
+// §4-6): 英文言は版ごとに変わるが、この値は claude 自身の分類なので変わりにくい。
+// 順序が要点 — 文言が主で、`error` はそれが何も言わなかったときだけ効く。文言の方が
+// 「上限ではない」といった否定を表現できるからで、逆順にすると 429 の retryable と
+// blocked が混ざる。
+func TestAbortedTurnErrorKind(t *testing.T) {
+	cases := []struct {
+		name      string
+		text      string
+		status    int
+		kind      string
+		retryable bool
+	}{
+		// 文言に手掛かりが無い形。ここが `error` の出番。
+		{"未知の文言 + server_error", "API Error: something nobody has seen before", 0, "server_error", true},
+		{"未知の文言 + invalid_request", "API Error: something nobody has seen before", 0, "invalid_request", false},
+		// rate_limit は 429 の両義（利用上限 / 一時的なレート制限）なので何も決めない
+		// → 既定の blocked に倒れる。ここを retryable にすると上限を再送し続ける。
+		{"未知の文言 + rate_limit", "API Error: something nobody has seen before", 429, "rate_limit", false},
+		{"未知の値は決めない", "API Error: something nobody has seen before", 0, "brand_new_kind", false},
+		// 文言が主: server_error を名乗っていても利用上限の文言なら blocked のまま。
+		{"上限の文言は error より強い", "You've reached your Fable 5 limit.", 429, "server_error", false},
+		{"一過性の文言は error より強い", "API Error: Connection closed mid-response.", 0, "invalid_request", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, retryable, ok := abortedTurnFrom(toLines(userLine("go"), apiErrKind(tc.text, tc.status, tc.kind)))
+			if !ok {
+				t.Fatalf("ok=false, want an aborted turn")
 			}
 			if retryable != tc.retryable {
 				t.Errorf("retryable = %v, want %v", retryable, tc.retryable)

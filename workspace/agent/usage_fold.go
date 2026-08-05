@@ -177,6 +177,8 @@ func usageTriggerFromTurnSource(src string) string {
 		return usageTriggerBridge
 	case turnSourceSchedule, turnSourceScheduleManual:
 		return usageTriggerSchedule
+	case turnSourceAutoResume:
+		return usageTriggerRecovery // 中断からの自動再開（docs/47 §4-6）は自己修復の消費
 	}
 	return usageTriggerUser
 }

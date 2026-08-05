@@ -551,6 +551,13 @@ function ClaudeCard({
       )}
       <CardSettings>
         <LaunchDefaults kind="claude" />
+        <SettingRow label={tr("agents.claude_abort_resume")}>
+          <OnOff
+            value={s.claudeAbortAutoResume}
+            onChange={(v) => setSetting("claudeAbortAutoResume", v)}
+          />
+        </SettingRow>
+        <p className="ps-note">{tr("agents.note_claude_abort_resume")}</p>
         <SettingRow label={tr("agents.claude_rate_limit_resume")}>
           <OnOff value={s.rateLimitAutoResume} onChange={(v) => setSetting("rateLimitAutoResume", v)} />
         </SettingRow>
