@@ -1353,25 +1353,23 @@ const OC_PRESETS = [
 // same preference from ui-prefs, which is what makes it apply to the MCP list_models an
 // assistant picks from — the path that actually caused a launch on the wrong route.
 // It only shapes the MENU: an explicitly requested model id is still honored verbatim.
-function OpencodeCatalogRow() {
+function OpencodeUsageRow() {
   const s = useSettings();
   const tr = useT();
   return (
     <>
-      <SettingRow label={tr("agents.oc_catalog")}>
+      <SettingRow label={tr("agents.oc_usage")}>
         <Choice
           value={s.opencodeCatalog}
           options={[
-            ["go-first", tr("agents.oc_catalog_go_first")],
-            ["hide-zen", tr("agents.oc_catalog_hide_zen")],
-            ["all", tr("agents.oc_catalog_all")],
+            ["free", tr("agents.oc_usage_free")],
+            ["go", tr("agents.oc_usage_go")],
+            ["zen", tr("agents.oc_usage_zen")],
           ]}
-          onChange={(v) =>
-            setSettings({ opencodeCatalog: v === "hide-zen" || v === "all" ? v : "go-first" })
-          }
+          onChange={(v) => setSettings({ opencodeCatalog: v === "free" || v === "go" ? v : "zen" })}
         />
       </SettingRow>
-      <p className="ps-note">{tr("agents.oc_catalog_note")}</p>
+      <p className="ps-note">{tr(`agents.oc_usage_note_${s.opencodeCatalog}`)}</p>
     </>
   );
 }
@@ -1392,6 +1390,7 @@ function OpencodeCard({
   const tr = useT();
   const toast = useToast();
   const poll = usePolling();
+  const s = useSettings();
   const [preset, setPreset] = useState("go");
   const [customEnv, setCustomEnv] = useState("");
   const [key, setKey] = useState("");
@@ -1481,7 +1480,9 @@ function OpencodeCard({
     reload();
   };
 
+  const usage = s.opencodeCatalog; // free | go | zen（課金経路の選択・docs/54）
   const pill = [
+    usage === "free" ? tr("agents.oc_usage_free") : "",
     envs.length > 0 ? tr("agents.oc_key_count", { count: envs.length }) : "",
     account ? tr("agents.oc_account_only") : "",
   ]
@@ -1494,7 +1495,9 @@ function OpencodeCard({
       name={kindDisplayName("opencode")}
       status={
         running ? (
-          <StatusPill on={envs.length > 0 || account}>{pill || tr("conn.disconnected")}</StatusPill>
+          <StatusPill on={usage === "free" || envs.length > 0 || account}>
+            {pill || tr("conn.disconnected")}
+          </StatusPill>
         ) : undefined
       }
     >
@@ -1502,7 +1505,14 @@ function OpencodeCard({
         <ConnPaused />
       ) : (
         <>
-          <div className="p-desc">{tr("agents.oc_account_desc")}</div>
+          <div className="p-body">
+            <OpencodeUsageRow />
+          </div>
+          {usage === "free" ? (
+            <div className="p-desc">{tr("agents.oc_free_desc")}</div>
+          ) : (
+            <div className="p-desc">{tr("agents.oc_account_desc")}</div>
+          )}
           <div className="p-body">
             {accountOff ? (
               <div className="p-desc">{tr("agents.oc_account_disabled")}</div>
@@ -1592,7 +1602,6 @@ function OpencodeCard({
         </>
       )}
       <CardSettings>
-        <OpencodeCatalogRow />
         <LaunchDefaults kind="opencode" />
         <ThinkingRow kind="opencode" />
         {agents && agents !== false && (

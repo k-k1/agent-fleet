@@ -22,15 +22,31 @@ import (
 // arbitrary value can't be smuggled into the container environment.
 var envNameRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]{1,63}$`)
 
+// opencodeKeyEnv is the one env var that pays opencode.ai（Zen も Go もこれ一本）。
+const opencodeKeyEnv = "OPENCODE_API_KEY"
+
+// UsagePref reports the selected billing route（ui-prefs opencodeCatalog）。Agent 本体が
+// ui-prefs を読むので、その読み手を注入してもらう（internal パッケージから main の
+// 設定ファイルを触らないため）。未設定なら UsageZen＝従来の見え方。
+var UsagePref = func() string { return UsageZen }
+
 // env loads the stored provider keys as "NAME=value" entries for the
 // session launcher to pass via `docker`/tmux `-e`. Order is stable (sorted).
+//
+// 無料枠（UsageFree）では OPENCODE_API_KEY を落とす — 「無料枠で使う」と決めた
+// ワークスペースが、鍵が残っているというだけで課金経路に乗ってしまわないように。
+// 他プロバイダの鍵（ANTHROPIC_API_KEY など）は利用者自身の課金なので触らない。
 func env() []string {
 	s, err := secrets.Load()
 	if err != nil || len(s.Opencode) == 0 {
 		return nil
 	}
+	free := UsagePref() == UsageFree
 	names := make([]string, 0, len(s.Opencode))
 	for k := range s.Opencode {
+		if free && k == opencodeKeyEnv {
+			continue
+		}
 		names = append(names, k)
 	}
 	sort.Strings(names)
@@ -68,9 +84,15 @@ func Status(s *secrets.Data) map[string]any {
 	}
 	sort.Strings(names)
 	oa := oauthStatus()
+	usage := UsagePref()
 	m := map[string]any{
-		"connected":      len(names) > 0 || oa.connected,
+		// connected は「この kind を起動できるか」の判定材料（registry.ts）。無料枠は
+		// 認証ゼロで実際に動く（実測: 未接続のまま free モデルが応答）ので、枠として
+		// 選ばれていれば接続扱いにする。
+		"connected":      usage == UsageFree || len(names) > 0 || oa.connected,
 		"envs":           names,
+		"usage":          usage,
+		"supported":      Available(), // バイナリ不在（旧イメージ）なら無料枠でも起動できない
 		"oauth":          oa.connected,
 		"oauth_known":    oa.known, // false = daemon 未起動で未確認（未接続とは限らない）
 		"oauth_disabled": Serve().Disabled(),
@@ -135,6 +157,10 @@ func applyKeyChange(reason string) {
 
 // restartServe is the seam tests replace (a real Restart drains live turns).
 var restartServe = func(reason string) { Serve().Restart(reason) }
+
+// ApplyUsageChange is applyKeyChange for a billing-route switch: 無料枠に入る/出ると
+// 注入する OPENCODE_API_KEY の有無が変わるので、鍵の変更と同じ反映が要る。
+func ApplyUsageChange(reason string) { applyKeyChange("usage changed: " + reason) }
 
 // HandleDeleteConn removes a stored provider key
 // (DELETE /connections/opencode/{env}).

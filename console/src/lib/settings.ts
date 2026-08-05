@@ -211,10 +211,15 @@ export interface Settings {
   // How the opencode launch-model list is shaped (AgentsTab > opencode). One
   // OPENCODE_API_KEY opens both opencode.ai billing routes, so the same model shows up
   // twice: opencode/… (Zen, pay-per-request) and opencode-go/… (the Go subscription).
-  // "go-first" (default) hoists Go, "hide-zen" also drops the metered twins, "all"
-  // leaves the catalog as reported. The Agent reads this from ui-prefs, so it shapes
-  // the MCP list_models an assistant picks from as well as this picker.
-  opencodeCatalog: "go-first" | "hide-zen" | "all";
+  // Which opencode.ai billing route this workspace means to use:
+  //   "free" — the zero-auth free models only. Also makes opencode launchable with no
+  //            credential at all, and the Agent stops injecting OPENCODE_API_KEY.
+  //   "go"   — the subscription route (opencode-go/…). Needs an API key (measured: an
+  //            account login alone does not grow the Go ids).
+  //   "zen"  — pay-per-request (opencode/…), plus the Go ids when the account has both.
+  // The Agent reads this from ui-prefs, so it shapes the MCP list_models an assistant
+  // picks from as well as this picker. Legacy values migrate in normalizeSettings.
+  opencodeCatalog: "free" | "go" | "zen";
   // ミラーの「思考」ブロックを最初から展開して表示するか（kind スコープ／設定 > エージェント >
   // 各カード > 動作設定）。既定は全 kind オフ＝従来どおり畳んだ状態で出す（クリックで開く）。
   // 思考の量は kind とモデルで大きく違い、常時展開が読みやすいかは backend ごとに割れるので、
@@ -518,7 +523,7 @@ const DEFAULTS: Settings = {
   hiddenModels: {},
   claudeCustomModels: [],
   autoTitleSuggest: true,
-  opencodeCatalog: "go-first",
+  opencodeCatalog: "zen",
   expandThinking: {},
   assistantTitleSuggest: true,
   outputLanguage: "auto",
@@ -768,6 +773,8 @@ function load(): Settings {
       ...saved,
       claudeCustomModels: normalizeClaudeCustomModels(saved.claudeCustomModels),
       agentLaunchDefaults: normalizeAgentLaunchDefaults(rows, legacyClaudeModel),
+      // 旧「モデル一覧」の値（go-first / hide-zen / all）を課金経路の3択へ寄せる。
+      opencodeCatalog: migrateOpencodeCatalog(saved.opencodeCatalog),
     };
   } catch {
     return { ...DEFAULTS };
@@ -947,6 +954,15 @@ function serverPrefs(s: Settings): Partial<Settings> {
 // over the local state, so a fresh browser inherits the user's settings. Called once
 // at boot after the tenant is resolved (state.jsx). Server wins over localStorage —
 // EXCEPT DEVICE_LOCAL keys, which stay whatever this browser's localStorage holds.
+// migrateOpencodeCatalog maps the legacy menu-shaping values onto the billing-route
+// choice. Kept exported for the load() path and the tests — the Agent applies the same
+// rule server-side (opencode.CatalogPref), so the two never disagree.
+export function migrateOpencodeCatalog(v: unknown): "free" | "go" | "zen" {
+  if (v === "free" || v === "go" || v === "zen") return v;
+  if (v === "hide-zen") return "go"; // Zen を隠す = Go だけ使う意思
+  return "zen"; // go-first / all / 未設定 / 不明 = 従来の見え方
+}
+
 export async function hydrateUIPrefs(): Promise<void> {
   let srv: any;
   try {
@@ -968,6 +984,12 @@ export async function hydrateUIPrefs(): Promise<void> {
   if (!("assistantTitleSuggest" in srv) && typeof srv.autoTitleSuggest === "boolean") {
     srv.assistantTitleSuggest = srv.autoTitleSuggest;
   }
+  // opencode の設定は「一覧の整形」から「どの課金経路を使うか」へ変わった。旧値のうち
+  // 「Zen を隠す」は Go だけを使う意思なので go、「Go 優先」「すべて表示」は両方見たい
+  // ので zen（＝従来の見え方）へ寄せる。Agent 側 CatalogPref と同じ規則。
+  // サーバに値がある場合だけ触る。無いキーに既定を書き込むと、下のマージで
+  // ローカルの選択を上書きしてしまう（保存前の選択が毎回 zen に戻る）。
+  if ("opencodeCatalog" in srv) srv.opencodeCatalog = migrateOpencodeCatalog(srv.opencodeCatalog);
   let changed = false;
   const merged: Settings = { ...state };
   // オブジェクト/配列値のキーは参照比較だと毎 hydrate 不一致になる（サーバー応答は常に

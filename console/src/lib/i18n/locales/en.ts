@@ -1013,12 +1013,18 @@ export const en: Record<keyof typeof ja, string> = {
   "agents.oc_account_disabled": "Managed opencode is off in this workspace, so account sign-in isn't available.",
   "agents.oc_desc": "Save API keys for multiple providers and inject them as env when opencode launches.",
   "agents.oc_hint": " to sign in → billing → issue an API key and paste it (the same key works for Zen too).",
-  "agents.oc_catalog": "Model list",
-  "agents.oc_catalog_go_first": "Go first",
-  "agents.oc_catalog_hide_zen": "Hide Zen",
-  "agents.oc_catalog_all": "Show all",
-  "agents.oc_catalog_note":
-    "One key serves both Go (subscription) and Zen (pay-per-request), so the same model appears under both. This only changes the order and what the list shows (including the list_models an assistant picks from); an explicitly requested model id is always used as given.",
+  "agents.oc_usage": "Route",
+  "agents.oc_usage_free": "Free tier",
+  "agents.oc_usage_go": "Go",
+  "agents.oc_usage_zen": "Zen",
+  "agents.oc_usage_note_free":
+    "Lists only the models that work with no credentials (the API key isn't injected). opencode can be launched without any connection, but the free tier is subject to congestion and usage caps.",
+  "agents.oc_usage_note_go":
+    "Lists only the subscription ids (opencode-go/…). Go models are tied to an API key, so one must be stored; signing in to the account is optional.",
+  "agents.oc_usage_note_zen":
+    "Lists the pay-per-request ids (opencode/…), plus the Go ids when the account has both. Needs either an account sign-in or an API key.",
+  "agents.oc_free_desc":
+    "Using the free tier — no credentials needed. To use paid models, switch the route and connect an account or an API key.",
   "agents.oc_model_go": "{model} (Go)",
   "agents.oc_model_zen": "{model} (Zen metered)",
   "agents.oc_env_placeholder": "ENV name (e.g. GROQ_API_KEY)",

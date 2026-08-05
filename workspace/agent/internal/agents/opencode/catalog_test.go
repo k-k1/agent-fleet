@@ -1,15 +1,15 @@
 package opencode
 
-// カタログ整形（catalog.go）。実測の並び（`opencode models` は Zen 59 件のあとに Go
-// 16 件を返し、うち 10 件は同名）を縮めた固定入力で、並び順・絞り込み・退避条件を固定する。
+// カタログ整形（catalog.go）。実測の並び（Zen 61 件のあとに Go 18 件が続き、うち何件かは
+// 同名）を縮めた固定入力で、枠ごとの絞り込み・並び順・退避条件を固定する。
 
 import (
 	"strings"
 	"testing"
 )
 
-// live は実測カタログの縮小版: Zen 側に free と同名 twin と Go に無いモデル、Go 側に
-// twin と Go 専用、加えてユーザーが直結した別プロバイダ。
+// live は実測カタログの縮小版: Zen 側に無料モデルと Go と同名の twin と Go に無いモデル、
+// Go 側に twin と Go 専用、加えてユーザーが直結した別プロバイダ。
 var live = []string{
 	"opencode/deepseek-v4-flash-free",
 	"opencode/claude-opus-5",
@@ -33,66 +33,107 @@ func ids(t *testing.T, pref string) []string {
 	return out
 }
 
-func TestCatalogAllKeepsEverythingInOrder(t *testing.T) {
-	got := ids(t, CatalogAll)
-	if strings.Join(got, ",") != strings.Join(live, ",") {
-		t.Errorf("all = %v", got)
+// withFreeIDs pins the zero-cost set the way a daemon read would leave it.
+func withFreeIDs(t *testing.T, free ...string) {
+	t.Helper()
+	m := map[string]bool{}
+	for _, id := range free {
+		m[id] = true
 	}
+	modelsMu.Lock()
+	prev := freeIDs
+	freeIDs = m
+	modelsMu.Unlock()
+	t.Cleanup(func() {
+		modelsMu.Lock()
+		freeIDs = prev
+		modelsMu.Unlock()
+	})
 }
 
-// go-first: Go を先頭へ寄せるが、捨てない。Go 内・非 Go 内の相対順は保つ（安定ソート）
-// ので、カタログの並びがそのまま読める。
-func TestCatalogGoFirstHoistsGoAndKeepsRest(t *testing.T) {
-	got := ids(t, CatalogGoFirst)
+// Zen: opencode.ai 側は絞らない（Go を併用していれば両方出る）。Go を先頭へ寄せるが
+// 捨てず、群の中の相対順は保つ（安定ソート）ので、カタログの並びがそのまま読める。
+func TestCatalogZenKeepsBothRoutesGoFirst(t *testing.T) {
+	got := ids(t, UsageZen)
 	want := []string{
 		"opencode-go/deepseek-v4-pro", "opencode-go/glm-5.2", "opencode-go/kimi-k3",
 		"opencode/deepseek-v4-flash-free", "opencode/claude-opus-5", "opencode/deepseek-v4-pro",
 		"opencode/glm-5.2", "anthropic/claude-opus-5",
 	}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Errorf("go-first = %v", got)
+		t.Errorf("zen = %v", got)
 	}
 }
 
-// hide-zen が落とすのは従量の opencode/… だけ。ユーザーが自分で繋いだ直結プロバイダ
+// Go のみ: 落とすのは従量の opencode/… だけ。ユーザーが自分で繋いだ直結プロバイダ
 // （anthropic/… 等）まで消すと、自分の鍵が使えなくなる。
-func TestCatalogHideZenDropsOnlyMeteredIDs(t *testing.T) {
-	got := ids(t, CatalogHideZen)
+func TestCatalogGoDropsOnlyMeteredIDs(t *testing.T) {
+	got := ids(t, UsageGo)
 	want := []string{
 		"opencode-go/deepseek-v4-pro", "opencode-go/glm-5.2", "opencode-go/kimi-k3",
 		"anthropic/claude-opus-5",
 	}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Errorf("hide-zen = %v", got)
+		t.Errorf("go = %v", got)
 	}
 }
 
-// Go 契約が無いアカウント（opencode-go/… が 1 件も無い）で 隠す を選んでも、ピッカーを
-// 空にはしない — 起動不能になるくらいなら設定を無視する。
-func TestCatalogHideZenFallsBackWhenItWouldEmptyThePicker(t *testing.T) {
+// 無料枠: opencode.ai 側は無料モデルだけ。ここでも直結プロバイダは別課金なので残す。
+func TestCatalogFreeKeepsZeroCostAndDirectProviders(t *testing.T) {
+	withFreeIDs(t, "opencode/deepseek-v4-flash-free")
+	got := ids(t, UsageFree)
+	want := []string{"opencode/deepseek-v4-flash-free", "anthropic/claude-opus-5"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("free = %v", got)
+	}
+}
+
+// 価格を知らない（CLI 由来で freeIDs が空）ときは素通し。無料枠では
+// OPENCODE_API_KEY を注入しないので、その CLI が返す opencode.ai の一覧は
+// もともと無料枠のものだけになる（実測）。ここで全部落とすと空になってしまう。
+func TestCatalogFreeWithoutCostDataPassesThrough(t *testing.T) {
+	withFreeIDs(t) // 空 = 未知
+	if got := ids(t, UsageFree); len(got) != len(live) {
+		t.Errorf("free(価格不明) = %v, want すべて素通し", got)
+	}
+}
+
+// Go 契約が無いアカウント（opencode-go/… が 1 件も無い）で Go のみ を選んでも、
+// ピッカーを空にはしない — 起動不能になるくらいなら設定を無視する。
+func TestCatalogFallsBackWhenItWouldEmptyThePicker(t *testing.T) {
 	zenOnly := []string{"opencode/deepseek-v4-pro", "opencode/glm-5.2"}
-	got := Catalog(zenOnly, CatalogHideZen)
-	if len(got) != 2 {
+	if got := Catalog(zenOnly, UsageGo); len(got) != 2 {
 		t.Fatalf("got %+v, want the full list back", got)
 	}
+	withFreeIDs(t, "opencode/nothing-here")
+	if got := Catalog(zenOnly, UsageFree); len(got) != 2 {
+		t.Fatalf("free: got %+v, want the full list back", got)
+	}
 }
 
-func TestCatalogPrefNormalizesUnknownToGoFirst(t *testing.T) {
-	for _, v := range []string{"", "nonsense", "GO-FIRST"} {
-		if got := CatalogPref(v); got != CatalogGoFirst {
-			t.Errorf("CatalogPref(%q) = %q", v, got)
-		}
-	}
-	for _, v := range []string{CatalogHideZen, CatalogAll} {
-		if got := CatalogPref(v); got != v {
-			t.Errorf("CatalogPref(%q) = %q", v, got)
+// 旧値からの移行: 「Zen を隠す」は Go だけ見たいという意思、「Go 優先」「すべて表示」は
+// 両方見たいという意思。未設定/不明は従来の見え方（Zen）に倒す。
+func TestCatalogPrefMigratesLegacyValues(t *testing.T) {
+	for v, want := range map[string]string{
+		"hide-zen": UsageGo,
+		"go-first": UsageZen,
+		"all":      UsageZen,
+		"":         UsageZen,
+		"nonsense": UsageZen,
+		"FREE":     UsageZen,
+		UsageFree:  UsageFree,
+		UsageGo:    UsageGo,
+		UsageZen:   UsageZen,
+	} {
+		if got := CatalogPref(v); got != want {
+			t.Errorf("CatalogPref(%q) = %q, want %q", v, got, want)
 		}
 	}
 }
 
 // 空カタログ（CLI 不在 / オフライン）は空のまま返す — 呼び出し側は「既定のみ」を出す。
 func TestCatalogEmptyStaysEmpty(t *testing.T) {
-	if got := Catalog(nil, CatalogHideZen); len(got) != 0 {
+	if got := Catalog(nil, UsageGo); len(got) != 0 {
 		t.Errorf("got %+v", got)
 	}
 }

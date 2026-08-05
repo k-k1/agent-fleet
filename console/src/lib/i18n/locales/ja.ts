@@ -1018,12 +1018,18 @@ export const ja = {
   "agents.oc_account_disabled": "この Workspace ではマネージドの opencode が無効なため、アカウントのサインインは使えません。",
   "agents.oc_desc": "複数プロバイダの API キーを保存し、opencode 起動時に env として注入します。",
   "agents.oc_hint": " でサインイン → 課金設定 → API キーを発行して貼り付け（同じキーで Zen も利用可）。",
-  "agents.oc_catalog": "モデル一覧",
-  "agents.oc_catalog_go_first": "Go を優先",
-  "agents.oc_catalog_hide_zen": "Zen を隠す",
-  "agents.oc_catalog_all": "すべて表示",
-  "agents.oc_catalog_note":
-    "1 本のキーで Go（サブスク）と Zen（従量課金）の両方が使えるため、同じモデルが両方に並びます。この設定は一覧の並び順と表示範囲だけを変えます（アシスタントが選ぶ list_models にも反映）。モデルを明示指定した場合はそのまま使われます。",
+  "agents.oc_usage": "使う枠",
+  "agents.oc_usage_free": "無料枠",
+  "agents.oc_usage_go": "Go",
+  "agents.oc_usage_zen": "Zen",
+  "agents.oc_usage_note_free":
+    "認証なしで使える無料モデルだけを一覧に出します（API キーは注入しません）。接続が無くても opencode を起動できますが、混雑や無料枠の上限に左右されます。",
+  "agents.oc_usage_note_go":
+    "サブスクの opencode-go/… だけを一覧に出します。Go のモデルは API キーに紐づくため、キーの登録が必要です（アカウントのサインインは任意）。",
+  "agents.oc_usage_note_zen":
+    "従量課金の opencode/… を一覧に出します（Go 契約もあれば両方）。アカウントのサインインか API キーのどちらかが必要です。",
+  "agents.oc_free_desc":
+    "無料枠で使います。認証は不要です。有料のモデルを使うときは枠を切り替えて、アカウントか API キーを登録してください。",
   "agents.oc_model_go": "{model}（Go）",
   "agents.oc_model_zen": "{model}（Zen 従量）",
   "agents.oc_env_placeholder": "ENV 名 (例 GROQ_API_KEY)",

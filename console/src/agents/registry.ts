@@ -434,10 +434,16 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       runsInDir: true,
       launchableFromRepo: true,
     }),
-    // opencode is ready once it has at least one provider API key env (or the
-    // connection reports connected). Unifies the two prior call-site checks.
+    // opencode is ready with any of the three billing routes: a stored provider key,
+    // an account connection, or 無料枠 — the zero-auth free tier really does answer
+    // without credentials (measured), so a workspace that chose it must be able to
+    // launch. supported === false (binary missing / old image) still hides the kind,
+    // the same guard cursor and agy use.
     available: (c) =>
-      (c.conns?.opencode?.envs?.length ?? 0) > 0 || !!c.conns?.opencode?.connected,
+      c.conns?.opencode?.supported !== false &&
+      ((c.conns?.opencode?.envs?.length ?? 0) > 0 ||
+        !!c.conns?.opencode?.connected ||
+        c.conns?.opencode?.usage === "free"),
   },
   shell: {
     id: "shell",
