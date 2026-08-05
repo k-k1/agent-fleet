@@ -425,6 +425,45 @@ func TestSchedulerTickAdvances(t *testing.T) {
 	}
 }
 
+// TestSchedulerTickMembershipInactiveDisables: a schedule whose owner membership is gone
+// is unreachable from every surface (the Console lists by membership, so does the run
+// history, and so does the failure notification). Left enabled it would no-op on every
+// slot forever where nobody can see it — so the first such outcome disables the row, and
+// the ledger keeps the reason for whoever restores access.
+func TestSchedulerTickMembershipInactiveDisables(t *testing.T) {
+	st, ctx := newSchedTestStore(t)
+	sc := Schedule{
+		ID: "sch_orphan", MembershipID: "m_gone", TenantID: "default",
+		SpecKind: "cron", Spec: "*/5 * * * *", TZ: "UTC", Enabled: true,
+		NextRun: "2000-01-01T00:00:00Z", CreatedAt: nowTS(), UpdatedAt: nowTS(),
+	}
+	if err := st.CreateSchedule(ctx, sc); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	ff := &fakeFirer{status: statusMembershipInactive}
+	sched := newScheduler(st, ff, time.Minute)
+	sched.tick(ctx)
+
+	got, _, _ := st.GetSchedule(ctx, "sch_orphan")
+	if got.Enabled || got.NextRun != "" {
+		t.Fatalf("orphan not disabled: enabled=%v next_run=%q", got.Enabled, got.NextRun)
+	}
+	if got.LastStatus != statusMembershipInactive {
+		t.Fatalf("last_status = %q, want %q", got.LastStatus, statusMembershipInactive)
+	}
+	// The reason survives in the history for whoever restores access.
+	runs, err := st.ListScheduleRuns(ctx, "sch_orphan", "m_gone", 10)
+	if err != nil || len(runs) != 1 || runs[0].Status != statusMembershipInactive {
+		t.Fatalf("run history = %+v (err %v), want one %s row", runs, err, statusMembershipInactive)
+	}
+	// No further ticking: the invisible row stops consuming slots (and stops appending
+	// run/notification rows nobody can read).
+	sched.tick(ctx)
+	if len(ff.fired) != 1 {
+		t.Fatalf("orphan re-fired: %v", ff.fired)
+	}
+}
+
 // TestSchedulerTickOnceDisables: a once schedule fires and then disables itself.
 func TestSchedulerTickOnceDisables(t *testing.T) {
 	st, ctx := newSchedTestStore(t)
