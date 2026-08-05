@@ -93,12 +93,7 @@ import {
   usePlanComments,
 } from "./planComments.ts";
 import { patchAnswers } from "./interactionAnswers.ts";
-import {
-  buildClaudeSeq,
-  buildMenuSeq,
-  buildRespondAnswers,
-  buildSinglePickKeys,
-} from "./questionKeys.ts";
+import { buildClaudeSubmit, buildMenuSeq, buildRespondAnswers } from "./questionKeys.ts";
 import { previewBody } from "./optionPreview.ts";
 import { parseQuestionAnswers, resolveAnswer } from "./questionAnswers.ts";
 import { coarsePointer } from "../../lib/device.ts";
@@ -4475,10 +4470,14 @@ function OptionBody({ o }: { o: QuestionOption }) {
 const hasPreview = (qs: Question[]) => qs.some((q) => (q.options || []).some((o) => previewBody(o.preview) !== ""));
 
 // PendingQuestions is the interactive form for the currently-awaiting AskUserQuestion.
-// One question with a single choice → click answers immediately via named keys
-// (Down×i, Enter). Multi-select or multiple questions → build a selection, then
-// submit: answers are sent one page at a time (multi-select choices joined) so the
-// terminal modal advances through each question and doesn't close after the first pick.
+// EVERY form works the same way: clicking an option only SELECTS it, and the answer
+// leaves the card when the submit button is pressed. A single-question card used to
+// send on the click itself, which made a misclick unrecoverable — there was no state
+// between "reading the options" and "answered", so a slip of the finger committed an
+// answer the user never got to look at, and the preview of the option they were
+// comparing against was already gone.
+// Answers are sent one page at a time (multi-select choices joined) so the terminal
+// modal advances through each question and doesn't close after the first pick.
 // Every path is key-driven; NEVER send an option label as text — the modal ignores
 // typed text on option rows and the Enter confirms the highlighted first option
 // (v2.1.204 実測, docs/dev/92-tui-modal-driving.md).
@@ -4592,7 +4591,11 @@ function PendingQuestions({
 
   const submit = () => {
     if (semantic) return submitRespond();
-    onSubmitSeq(buildClaudeSeq(qs, sel, freeText));
+    // Which keys a built selection becomes is the modal's contract, so it lives in
+    // questionKeys (and is pinned by its tests); the card only routes the result.
+    const out = buildClaudeSubmit(qs, sel, freeText);
+    if (out.keys) return onSubmitKeys(out.keys);
+    onSubmitSeq(out.seq!);
   };
 
   const wide = hasPreview(qs);
@@ -4614,14 +4617,11 @@ function PendingQuestions({
           <div className={"mq-options" + (wide ? " wide" : "")}>
             {(qn.options || []).map((o, oi) => {
               const checked = (sel[qi] || []).includes(o.label);
-              // Single-select single question (claude and menu alike): key-drive the
-              // modal — Down to this option's index, then Enter (selects + submits).
-              // Managed answers by option index instead (no modal to navigate).
-              const pick = single
-                ? semantic
-                  ? () => onRespond!([{ options: [oi] }])
-                  : () => onSubmitKeys(buildSinglePickKeys(oi))
-                : () => toggle(qi, o.label, qn.multiSelect);
+              // Selecting is all a click does — on every form, including the single
+              // question that used to answer on the spot. Clicking the picked option
+              // again clears it (toggle), so a misclick is undone in the card instead of
+              // needing the turn interrupted.
+              const pick = () => toggle(qi, o.label, qn.multiSelect);
               return (
                 <button
                   type="button"
@@ -4631,9 +4631,9 @@ function PendingQuestions({
                   onClick={pick}
                   title={o.description || o.label}
                 >
-                  {!single && (
-                    <span className="mq-mark">{qn.multiSelect ? (checked ? "☑" : "☐") : checked ? "◉" : "○"}</span>
-                  )}
+                  {/* The marker is shown on every form now: with the send deferred, what
+                      is currently picked is state the user has to be able to SEE. */}
+                  <span className="mq-mark">{qn.multiSelect ? (checked ? "☑" : "☐") : checked ? "◉" : "○"}</span>
                   <OptionBody o={o} />
                 </button>
               );
@@ -4645,7 +4645,7 @@ function PendingQuestions({
             // composer can't answer an AUQ (typed text is ignored and Enter confirms
             // option 1), so this in-card row, driven via submit()'s reliable
             // Down-to-the-row-then-type sequence, is the only working free-text path.
-            // Options above key-drive (Down×i, Enter) for single.
+            // Typing here clears a single-select pick — the two are mutually exclusive.
             <textarea
               className="mq-freetext"
               rows={2}
@@ -4674,8 +4674,8 @@ function PendingQuestions({
           </button>
         )}
         {!menu && (
-          // For a single question the options click-to-send, so canSubmit is only true once
-          // free text is typed — the button then submits that via submit()'s free-text path.
+          // The only way an answer leaves the card: enabled once every question has a pick
+          // or free text (canSubmit), which for a single question means one option chosen.
           <button
             type="button"
             className="btn primary mq-submit"
@@ -4685,11 +4685,10 @@ function PendingQuestions({
             {tr("mirror.submit_answer")}
           </button>
         )}
-        {menu && menuDrivable && (!single || writeIn) && (
-          // A paged multi-question menu (codex): pick an option per question above, then
-          // submit all pages' key sequences at once. For a single question the options
-          // click-to-send, so this button exists only to carry a write-in answer (agy) —
-          // canSubmit is false until free text is typed, which is the intended gating.
+        {menu && menuDrivable && (
+          // The menus (codex/opencode/agy) submit the same way: pick per question above,
+          // then send every page's key sequence at once. A single-question menu now needs
+          // this button too — its options no longer send on click.
           <button
             type="button"
             className="btn primary mq-submit"

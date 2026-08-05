@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildClaudeSeq,
+  buildClaudeSubmit,
   buildMenuSeq,
   buildRespondAnswers,
   buildSinglePickKeys,
@@ -29,7 +30,39 @@ describe("buildSinglePickKeys (single-select single question — every agent)", 
   });
 });
 
+describe("buildClaudeSubmit (what the submit button sends)", () => {
+  // The card no longer answers on the click; the keys it sends must not have changed
+  // with it. A single-select single question keeps the click-verified sequence — routing
+  // it through the full modal walk would append the review page's Enter, which on this
+  // form lands in the composer after the modal has already closed.
+  it("keeps the click-verified keys for a single-select single question", () => {
+    expect(buildClaudeSubmit([q3], [["緑"]], [""])).toEqual({ keys: buildSinglePickKeys(2) });
+  });
+
+  it("takes the full modal walk when that question is answered with free text", () => {
+    const out = buildClaudeSubmit([q3], [[]], ["紫がいい"]);
+    expect(out.keys).toBeUndefined();
+    expect(show(out.seq!)).toBe(show(buildClaudeSeq([q3], [[]], ["紫がいい"])));
+  });
+
+  it("takes the full modal walk for multi-select and for multiple questions", () => {
+    expect(buildClaudeSubmit([{ ...q3, multiSelect: true }], [["緑"]], [""]).keys).toBeUndefined();
+    expect(buildClaudeSubmit([q3, opts("A", "B")], [["緑"], ["B"]], ["", ""]).keys).toBeUndefined();
+  });
+
+  it("falls back to the walk when the pick is stale or missing (no keys invented)", () => {
+    expect(buildClaudeSubmit([q3], [["黄"]], [""]).keys).toBeUndefined();
+    expect(buildClaudeSubmit([q3], [[]], [""]).keys).toBeUndefined();
+  });
+});
+
 describe("buildMenuSeq — agy write-in row", () => {
+  it("a single-question menu submits exactly what the click used to send", () => {
+    // Same invariant as buildClaudeSubmit above, for the menus: deferring the send to
+    // the button must not reshape the sequence (here it already coincides).
+    expect(show(buildMenuSeq([q3], [["緑"]], [""]))).toBe(buildSinglePickKeys(2).join(" "));
+  });
+
   // agy 1.1.4 実測: the "Write-in..." row sits just after the options and must be
   // ENTERED first (Enter opens "Your answer:"), then the text, then Enter submits.
   it("enters the write-in row before typing, and submits with a trailing Enter", () => {
