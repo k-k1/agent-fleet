@@ -29,6 +29,10 @@ type abortRecord struct {
 	IsAPIError  bool   `json:"isApiErrorMessage"`
 	Status      int    `json:"apiErrorStatus"`
 	Timestamp   string `json:"timestamp"`
+	// Error is claude's own MACHINE-READABLE cause ("server_error" / "rate_limit" /
+	// "invalid_request" — 実測 2026-08-05). 英文言と違ってこれは版ごとに書き換わらない
+	// ので、文言に無い形が来たときの最後の手掛かりになる（docs/47 §5「次の一手」）。
+	Error string `json:"error"`
 }
 
 // Abort is a detected turn cut-off, with everything a caller needs to report it.
@@ -93,13 +97,41 @@ var retryableMarkers = []string{
 	"server error",
 	"service unavailable",
 	"bad gateway",
+	// ストリームの番犬（claude 2.1.x の内部リトライを使い切った形）。実測 2026-08-05:
+	// "API Error: Stream idle timeout - no chunks received"。上の "timed out"/"timeout"
+	// でも当たるが、既知の形として明示しておく — 文言が「no chunks received」側へ
+	// 寄っても拾えるように、語幹（stream idle）で持つ。
+	"stream idle",
+}
+
+// retryableErrorKinds maps claude's own `error` field onto 再送で直る側。文言に無い形が
+// 来たときの受け皿で、**文言判定のあと**に見る（文言は「上限ではない」といった否定を
+// 表現できるが、このフィールドは分類までしか言わない）。
+//
+// ここに "rate_limit" は入れない: 429 は利用上限（blocked）と一時的なレート制限
+// （retryable）が同居する軸で、どちらかは文言でしか分からないから（docs/47 §2）。
+// 実測で見えた値だけを載せる — 未知の値は既定どおり blocked に倒れる（判定不能は
+// 自動再開しない方が安全側）ので、憶測の項目を足して穴を広げない。
+var retryableErrorKinds = map[string]bool{
+	"server_error": true, // 実測: 529 Overloaded / Connection closed / Server error mid-response
+}
+
+// blockedErrorKinds are the `error` values whose cause never clears by re-sending
+// (プロンプト超過・不正なリクエスト・認証). 既定が blocked なので分類結果は同じだが、
+// 意図した判定として明示しておく（"偶然だけ正解している" 状態を残さない）。
+var blockedErrorKinds = map[string]bool{
+	"invalid_request": true, // 実測: Prompt is too long
 }
 
 // classifyAbort splits an API error message into 再送で直る (true) か 原因を直すまで
 // 無意味 (false) か。判定不能は false に倒す — 自動再開はしない方が安全側。
 // blocked を先に見るのは、利用上限も 429 で届くため（"You've reached your … limit"）
 // ステータスコードだけでは一時的なレート制限と区別できないから。
-func classifyAbort(msg string, status int) bool {
+//
+// 順序は 文言 → `error` → ステータス。文言が主なのは、それだけが「上限ではない」と
+// いった否定を表現できるから（retryableOverrides）。`error` を status より先に見るのは、
+// 合成レコードでは apiErrorStatus ごと欠けることがある一方、`error` は残っているため。
+func classifyAbort(msg string, status int, errKind string) bool {
 	low := strings.ToLower(msg)
 	for _, m := range retryableOverrides {
 		if strings.Contains(low, m) {
@@ -115,6 +147,12 @@ func classifyAbort(msg string, status int) bool {
 		if strings.Contains(low, m) {
 			return true
 		}
+	}
+	switch k := strings.ToLower(strings.TrimSpace(errKind)); {
+	case retryableErrorKinds[k]:
+		return true
+	case blockedErrorKinds[k]:
+		return false
 	}
 	return status >= 500 && status <= 599
 }
@@ -189,7 +227,7 @@ func abortFrom(line []byte, r abortRecord) (Abort, bool) {
 		return Abort{}, false // 直近の実レコードが通常のターン — 中断ではない
 	}
 	a := Abort{Msg: strings.TrimSpace(AssistantText(line))}
-	a.Retryable = classifyAbort(a.Msg, r.Status)
+	a.Retryable = classifyAbort(a.Msg, r.Status, r.Error)
 	if at, err := time.Parse(time.RFC3339, r.Timestamp); err == nil {
 		a.At = at
 	}

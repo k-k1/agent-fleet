@@ -132,6 +132,14 @@ func bumpAutoResume(name string) int {
 // is healthy again, so the next abort gets the full retry budget.
 func resetAutoResume(name string) { resumeStates.Remove(name) }
 
+// setAutoResumeAttempts forces the counter to n. Used when the Agent's own automatic
+// resume gives up (docs/47 §4-6): the retries it already spent are what the escalation
+// has to count, so the report that finally goes out renders the「上限に達した」wording
+// instead of asking the operator for yet another resume.
+func setAutoResumeAttempts(name string, n int) {
+	_ = resumeStates.Write(name, resumeState{Count: n, At: time.Now().Format(time.RFC3339)})
+}
+
 // defaultAutoTurns / maxAutoTurnLimit bound the operator turns run WITHOUT a user
 // message in between (reset on every user send). The ceiling is user-configurable
 // (設定 > アシスタント, ui-prefs assistantAutoTurnLimit — chatAutoTurnLimit) but
