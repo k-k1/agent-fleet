@@ -287,6 +287,9 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /connections/opencode/oauth/poll", opencode.HandleOAuthPoll)
 	mux.HandleFunc("POST /connections/opencode/oauth/cancel", opencode.HandleOAuthCancel)
 	mux.HandleFunc("DELETE /connections/opencode/oauth", opencode.HandleOAuthDisconnect)
+	// 利用枠ページ（opencode.ai/workspace/{id}/go）への導線用の ID。手入力と、上限/残高
+	// エラーからの自動学習の両方で埋まる（docs/54 §54.7）。
+	mux.HandleFunc("PUT /connections/opencode/workspace", opencode.HandlePutWorkspace)
 	// SVN saved basic-auth creds (docs/41): saved at checkout time; forget them here.
 	mux.HandleFunc("DELETE /connections/svn", handleDeleteSvnConn)
 	// agy quota gauge for the Console's AgyCard (docs/32 Track C — the Starter

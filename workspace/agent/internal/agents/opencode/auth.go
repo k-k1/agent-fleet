@@ -100,6 +100,16 @@ func Status(s *secrets.Data) map[string]any {
 	if oa.label != "" {
 		m["oauth_label"] = oa.label // Console org 名（実測の label 解決）
 	}
+	// 利用枠の導線（docs/54 §54.7）: 数値は取り込めないので、ID とページ URL、および
+	// 上限に当たったときに観測できた枠情報だけを返す。
+	if id, src := WorkspaceID(); id != "" {
+		m["workspace_id"] = id
+		m["workspace_id_source"] = src
+		m["workspace_url"] = WorkspaceURL(id, "go")
+	}
+	if l := LastLimit(); l.Name != "" || l.ResetAt != "" {
+		m["last_limit"] = l
+	}
 	return m
 }
 

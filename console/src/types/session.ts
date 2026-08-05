@@ -97,6 +97,12 @@ export interface ProviderConn {
   oauth_label?: string; // 接続先の組織名（opencode が返すラベル）
   oauth_known?: boolean; // false = serve daemon 未起動で未確認（未接続とは限らない）
   oauth_disabled?: boolean; // マネージド opencode が無効でサインイン導線を出せない
+  // opencode: 利用枠ページ（opencode.ai/workspace/{id}/go）への導線。数値は API が無く
+  // 取り込めないので、ID と URL、上限に当たったときに観測できた枠情報だけを持つ。
+  workspace_id?: string;
+  workspace_id_source?: "manual" | "learned";
+  workspace_url?: string;
+  last_limit?: { name?: string; reset_at?: string };
 }
 
 // The full connections bag. Known agents are named; git providers (github /
