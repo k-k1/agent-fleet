@@ -217,6 +217,72 @@ awslabs cloudwatch-mcp-server の裏取り（2026-07-14, 公式 docs）: **全�
 - SSO トークンキャッシュ（`~/.aws/sso/cache`）は隔離されておらず共有なので、SSM セッションでのログインがそのまま効く。未ログイン時は該当 SSM セッションを開くか `AWS_CONFIG_FILE=~/.aws/af-ops/cloudwatch.config aws sso login --profile <名前>`。
 - 検証: SSO メタ→config 生成→`AWS_CONFIG_FILE`→19 ツールの通し、接続時の config 即時生成・sanitize・ssoRegion 欠落 400（httptest）、build/vet/test/tsc。副産物: `TestGitWorktreeIntegrationRelations` が実 HOME の `~/repos` に worktree を残し /tmp 掃除後に dangling で落ちるテスト衛生バグを発見・修正（HOME 隔離）。
 
+#### Agent Toolkit for AWS（AWS MCP Server）連携 — 2026-08-06 実装
+
+**実装済み**。CloudWatch に続く 4 つ目の組み込み連携（id = `aws`）。CloudWatch が「監視データを読む」
+のに対し、こちらは **AWS そのものを触る道具**（ドキュメント検索・スキル取得・AWS API 呼び出し）。
+
+**裏取り（2026-08-06、実機実測）**:
+
+- 実体は **AWS が運用するリモート MCP サーバー**（`https://aws-mcp.<region>.api.aws/mcp`、
+  Streamable HTTP + **SigV4**）。公開リージョンは `us-east-1` / `eu-central-1` の 2 つ。
+- クライアントは公式 stdio プロキシ **`mcp-proxy-for-aws`**（PyPI、実測 v1.6.4 が最新）。
+  レジストリのリモート transport は静的ヘッダしか運べない（docs/48 §3.1）ので SigV4 は表現できず、
+  **stdio プロキシ経由が唯一の道**。結果として「秘密が MCP 設定に落ちない」という他の builtin の
+  性質はタダで手に入る（そもそも書き留める秘密が無い）。
+- ツールは **9 個**: `call_aws`（AWS API 約 15,000 アクション）/ `run_script` / `get_presigned_url` /
+  `read_documentation` / `search_documentation` / `retrieve_skill` / `list_regions` /
+  `get_regional_availability` / `get_tasks`。**`--read-only` を付けると前 3 つが消えて 6 個**になる。
+- 認証は CloudWatch と同じ AWS 資格チェーン。**秘密の保存はゼロ**。
+
+**設計判断**:
+
+- **既定は `--read-only`**。コンテナ内は untrusted 前提（reference/security.md §4.1-4.3）なので、
+  「接続したら AWS を作り変えられるようになっていた」にはしない。書き込みは接続カードの
+  **`書き込みツール` トグルで明示 opt-in**（`AWSConn.Write`）。
+- **セッションにも配る**（builtin で唯一）。中身が「AWS 上に作る」ための道具なので、相談チャット
+  よりコードを書くセッションで効く。docs/48 §3.1 参照。
+- **リージョンが 2 つある**のが罠。`Endpoint`（= MCP サービスが動くリージョン。URL と **SigV4 署名
+  リージョン**の両方に効く）と `AWSProfileRef.Region`（= 利用者のリソースがあるリージョン。
+  `--metadata AWS_REGION=` で送る）は**別物**で、混同すると「MCP サーバーが繋がらない」としか
+  見えない。Endpoint は自由入力にせず 2 択に固定し、未知値は既定へ丸める。
+- **`--retries 3`**。初回接続が transport read error で 1 回だけ落ち、再実行で通る事象を実測した。
+  CLI の中からは「MCP サーバーが壊れている」にしか見えないので、人間ではなくプロキシに再試行させる。
+- **egress**: エンドポイントは `.api.aws` — **`.amazonaws.com` とは別 apex**。製品既定 allowlist
+  （`control-plane/egress_policy.go`）に `.api.aws` を追加した。入れ忘れると log-only の間は動き、
+  **enforce に切り替えた日に誰も何もしていないのに壊れる**（docs/48 §9.1 の壊れ方そのもの）。
+- プロファイル指定は CloudWatch と完全に同型なので、SSM プロファイルピッカー・SSO メタからの
+  ops config 生成（`~/.aws/af-ops/aws.config`）・手動入力フォールバックを共通化した
+  （Go: `secrets.AWSProfileRef` / `writeOpsAWSConfig(id, ref)`、Console: `useAWSProfile`）。
+
+**実装差分**: `secrets.go` に `AWSProfileRef`（CloudWatchConn から括り出し・JSON 互換）と `AWSConn`、
+`mcpreg/builtin.go` に `BuiltinAWS`（targets = assistant + session）、`mcp_run.go` に `runAWSMCP` /
+`awsMCPArgs`、`connections.go` に `/connections/aws`（agent + **CP proxy の両方**に登録）、
+`egress_policy.go` に `.api.aws`、Dockerfile に `uv tool install mcp-proxy-for-aws==1.6.4`（ARG ピン、
+versions.json `aws_mcp_proxy`、e2e-smoke のピン照合）、Console 運用タブに「クラウド（構築・運用）」
+カテゴリと AWS カード、SRE アシスタントの integrations に `aws` を追加。
+
+**ツールのバージョン表（2026-08-06 追加）**: 設定→環境の版一覧（`env_tool_versions.go`）は
+エージェント CLI しか並べていなかったので、**AWS / ops MCP 系 4 つ**（`awscli` / `mcp-grafana` /
+`cloudwatch-mcp` / `aws-mcp`）を追加した。ピンずれと home shadow が起きる条件は CLI と同じ
+（`install-awscli` は `~/.local/bin` へ入れる、grafana の fallback も `~/.local/bin` を見る）で、
+lean variant では焼き込みが無く versions.json のピンだけが手掛かりになるのに、Console からは
+何も見えなかった。Python 製の 2 つは**実行して版を訊けない**（cloudwatch は `--version` で
+**サーバーが起動**してメトリクスメタデータ 1179 件をロードする、AWS MCP プロキシは `--version`
+自体が無く argparse に弾かれて exit 2・stdout 空、版は `--help` の 13 行目にしかない）ので、
+`toolSpec.PyDist` を足して **exec せず** uv の venv の dist-info 名（PEP 427 正規化で `-`→`_`：
+`mcp_proxy_for_aws-1.6.4.dist-info`）から読む。焼き込み（`/usr/local/share/uv/tools`）と
+ユーザー導入（`~/.local/share/uv/tools`）の root は実体が home 配下かで選び分ける
+（3 列の意味と一致するので、パスを遡らない ＝ shim がコピーの uv 版でも壊れない）。
+コンテナ実測: `awscli 2.36.4` / `mcp-grafana 0.17.1` / `cloudwatch-mcp 0.1.4` が実効・焼き込み
+とも表示（`aws-mcp` は現行イメージに未焼き込みのため、再ビルド後に同様に出る）。
+
+**検証（2026-08-06）**: `workspace/agent` をビルドして隔離 HOME + 実プロファイルで
+`workspace-agent mcp-run aws` を JSON-RPC で通し、**既定 = 6 ツール / `write=true` = 9 ツール /
+未接続 = exit 1 とエラー行**を実測。ユニットテストは `awsMCPArgs`（既定 read-only・metadata・
+write opt-in）と `awsMCPEndpoint`（未知値の丸め）、`compose` の builtin 出現と targets。
+build / vet / test / tsc / i18n-lint 通過。
+
 ### Amazon Managed Grafana（AMG）接続の検討 — 2026-07-12 Web 裏取り済み
 
 Phase 0 で検証した mcp-grafana は汎用 Grafana API（URL + トークン）前提のため、「AMG は認証方式が違うのでは（IAM Identity Center / SigV4 / 独自キー発行）」を AWS 公式ドキュメントで裏取りした。

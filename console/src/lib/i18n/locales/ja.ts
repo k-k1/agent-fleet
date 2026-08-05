@@ -316,9 +316,10 @@ export const ja = {
   "ops.ws_required_hint": "API キーはコンテナ内の Agent が暗号化保存するため、ワークスペースの起動が必要です。",
   "ops.start_ws": "ワークスペースを起動",
   "ops.intro":
-    "インシデント対応・監視運用の連携です。接続すると「SRE アシスタント」がこれらを読み取り専用で参照して壁打ちに使います。接続の変更は次のチャット送信から反映されます（ワークスペースの再起動は不要）。",
+    "インシデント対応・監視運用・クラウド構築の連携です。接続すると「SRE アシスタント」がこれらを読み取り専用で参照して壁打ちに使います（AWS は対話セッションからも使えます）。接続の変更は次のチャット送信・次のセッション起動から反映されます（ワークスペースの再起動は不要）。",
   "ops.cat_incident": "インシデント管理",
   "ops.cat_monitoring": "監視 / メトリクス",
+  "ops.cat_cloud": "クラウド（構築・運用）",
   "ops.pd_api_key_set": "API キー設定済み",
   "ops.pd_api_key_placeholder": "PagerDuty API キー",
   "ops.pd_eu_region": "EU リージョン",
@@ -338,6 +339,14 @@ export const ja = {
   "ops.cw_region_placeholder": "リージョン（任意）",
   "ops.cw_hint":
     "秘密は保存しません。SSM 接続のプロファイルを選ぶと、その SSO 設定（非秘密）から専用の設定ファイルを生成して使います。ログの検索・アラーム履歴・メトリクス分析など読み取り専用ツールのみです。SSO ログインがまだ（または期限切れ）の場合は、該当の SSM セッションを一度開くか、ターミナルで `AWS_CONFIG_FILE=~/.aws/af-ops/cloudwatch.config aws sso login --profile プロファイル名` を実行してください。",
+  "ops.aws_endpoint_option": "MCP エンドポイント: {region}",
+  "ops.aws_write": "書き込みツール",
+  "ops.aws_write_sub":
+    "オンにすると AWS API の呼び出し（call_aws）とスクリプト実行（run_script）が使えるようになります。実際に AWS のリソースを作成・変更・削除できるため、既定はオフ（読み取り専用）です。",
+  "ops.aws_mode_read": "読み取り専用",
+  "ops.aws_mode_write": "書き込み可",
+  "ops.aws_hint":
+    "AWS が提供する MCP サーバー（Agent Toolkit for AWS）に、公式プロキシ経由で接続します。秘密は保存せず、選んだプロファイルの AWS 認証情報でリクエストに署名します。AWS ドキュメント検索・スキル取得・AWS API 参照などが使えます。CloudWatch と違い、アシスタントだけでなく対話セッションにも接続されます。エンドポイントは MCP サーバー自体が動くリージョン、上のリージョン欄は自分のリソースがあるリージョンです。SSO ログインがまだ（または期限切れ）の場合は、該当の SSM セッションを一度開くか、ターミナルで `AWS_CONFIG_FILE=~/.aws/af-ops/aws.config aws sso login --profile プロファイル名` を実行してください。",
   "ops.cat_chat": "チャット通知（ブリッジ）",
   "ops.dc_token_placeholder": "Discord Bot トークン",
   "ops.dc_verify": "トークンを検証",

@@ -28,7 +28,7 @@ to look up colored marks and right-click actions, see [Icons, badges, and menus]
 7. [Chat and memos](07-chat-memo.md) — Questions and translations without a repository, collecting memos
 8. [Going further](08-advanced.md) — Browser pane / lightweight preview, Discord / Slack integration, other hosts, environment settings
 9. [Troubleshooting](09-troubleshooting.md) — Fixes by symptom, plus an FAQ
-10. [Ops tooling PoC](10-ops-mcp-poc.md) 🧪 — Wiring up PagerDuty / Grafana / CloudWatch over MCP to talk through incidents (experimental)
+10. [Ops tooling PoC](10-ops-mcp-poc.md) 🧪 — Wiring up PagerDuty / Grafana / CloudWatch / AWS over MCP to talk through incidents (experimental)
 11. [Fleet operator](11-fleet-operator.md) — Directing multiple sessions from chat, handover, parallel work, scheduled runs
 
 For the "how to do it", this guide is canonical. When you get curious about the internal

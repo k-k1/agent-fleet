@@ -37,7 +37,7 @@ import { fmtDateTime, DATETIME_FULL } from "../../lib/intl.ts";
 //   user    … full CRUD
 //   tenant  … read-only, but locally disableable (the member's escape hatch when a
 //             distributed server breaks their session launches)
-//   builtin … the ops integrations (PagerDuty / Grafana / CloudWatch), configured on
+//   builtin … the ops integrations (PagerDuty / Grafana / CloudWatch / AWS), configured on
 //             the 運用・監視 tab — shown so the list isn't lying by omission.
 //
 // Secrets (env / header VALUES) never come back from the agent: they arrive as "***"

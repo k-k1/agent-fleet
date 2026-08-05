@@ -20,6 +20,7 @@ const (
 	BuiltinPagerDuty  = "pagerduty"
 	BuiltinGrafana    = "grafana"
 	BuiltinCloudWatch = "cloudwatch"
+	BuiltinAWS        = "aws"
 )
 
 // builtinSpec is the code half of a builtin: the mcp-run subcommand and the check
@@ -63,6 +64,16 @@ var builtinSpecs = map[string]builtinSpec{
 		runArgs: []string{"mcp-run", "cloudwatch"},
 		ready:   func(s *secrets.Data) bool { return s.CloudWatch != nil && s.CloudWatch.Profile != "" },
 	},
+	// aws = Agent Toolkit for AWS の AWS MCP Server（docs/25 §AWS MCP）。他の builtin と
+	// 違い、対話セッションにも配る: 中身が「AWS 上に作る」ための道具（ドキュメント検索・
+	// スキル取得・API 呼び出し）で、使いたいのは相談チャットよりコードを書くセッションだから。
+	// 危険側（書き込みツール）は接続設定の Write opt-in で閉じてある。
+	BuiltinAWS: {
+		label:   "AWS",
+		runArgs: []string{"mcp-run", "aws"},
+		ready:   func(s *secrets.Data) bool { return s.AWS != nil && s.AWS.Profile != "" },
+		targets: Targets{Assistant: true, Session: true},
+	},
 }
 
 // IsBuiltin reports whether id names a builtin integration.
@@ -94,12 +105,15 @@ func BuiltinReady(id string, s *secrets.Data) bool {
 }
 
 // builtinDefs returns the builtins the user has actually connected, as ServerDefs.
-// Targets is Assistant-only on purpose: these were assistant integrations before the
-// registry existed, and quietly attaching them to every interactive session would be
-// a behavior change nobody asked for. Session use goes through a user registration.
+// The default Targets is Assistant-only on purpose: the ops three were assistant
+// integrations before the registry existed, and quietly attaching them to every
+// interactive session would be a behavior change nobody asked for. Session use goes
+// through a user registration — or through a spec that opts in explicitly (af, aws),
+// which is safe for those two because neither existed before the registry, so nobody
+// has a session whose behavior changes underneath them.
 func builtinDefs(s *secrets.Data) []ServerDef {
 	var out []ServerDef
-	for _, id := range []string{BuiltinAF, BuiltinPagerDuty, BuiltinGrafana, BuiltinCloudWatch} {
+	for _, id := range []string{BuiltinAF, BuiltinPagerDuty, BuiltinGrafana, BuiltinCloudWatch, BuiltinAWS} {
 		spec := builtinSpecs[id]
 		if !spec.ready(s) {
 			continue

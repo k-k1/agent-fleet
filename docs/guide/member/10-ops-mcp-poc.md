@@ -2,17 +2,22 @@
 
 English | [日本語](10-ops-mcp-poc.ja.md)
 
-## PagerDuty / Grafana / CloudWatch connect from the "Ops & monitoring" tab (recommended)
+## PagerDuty / Grafana / CloudWatch / AWS connect from the "Ops & monitoring" tab (recommended)
 
-**PagerDuty, Grafana, and CloudWatch are already built into the product** (docs/25 Phase 1; requires an image rebuild). Use that first, rather than the manual PoC steps described later.
+**PagerDuty, Grafana, CloudWatch and AWS are already built into the product** (docs/25 Phase 1; requires an image rebuild). Use that first, rather than the manual PoC steps described later.
 
 1. Open the **Settings > Ops & monitoring** tab, enter the connection details on each card, and hit "Connect":
    - **PagerDuty**: an API key. A **read-only key** is recommended (choose "Read-only" under Integrations > API Access Keys in PagerDuty). For EU accounts, turn the toggle on.
    - **Grafana**: the instance URL and a **service account token** (Viewer permission recommended). Self-hosted / Grafana Cloud / **Amazon Managed Grafana** all work (for AMG, use the workspace endpoint as the URL; for how to issue a token and the 30-day expiry, see the AMG section below).
    - **CloudWatch**: just **pick an SSM connection's profile** from the dropdown (the region can optionally be overridden). **No secrets are entered** — a dedicated config file is generated from the profile's SSO settings (non-secret), and the AWS credentials inside the container are read as-is. If SSO login hasn't been done yet / has expired, the tools will error out, so open the relevant SSM session once, or run `AWS_CONFIG_FILE=~/.aws/af-ops/cloudwatch.config aws sso login --profile <profile-name>` in a terminal. If you manage `~/.aws` yourself, you can specify the profile name directly via "Manual entry".
-2. Credentials are stored encrypted inside the workspace and are handed over only when the MCP server starts (they don't end up in config files or plaintext). Grafana starts with write and admin tools disabled; the CloudWatch server itself has read-only tools only.
+   - **AWS** (Agent Toolkit for AWS): connects to the MCP server AWS operates. The profile works exactly like CloudWatch (pick an SSM connection's profile; no secrets entered). Two extra settings:
+     - **MCP endpoint**: the region the MCP server itself runs in (`us-east-1` / `eu-central-1`). This is **not** where your resources live — that goes in the "Region" field above.
+     - **Write tools**: off by default (read-only). Turning it on enables AWS API calls (`call_aws`) and script execution (`run_script`), which **can create, change and delete real AWS resources**. Turn it on only when you need it.
+     - AWS is the only one that also works **from interactive sessions** (the other three are chat-only), so AWS documentation search, skill retrieval and AWS API lookups are available right where you write code.
+     - If SSO login hasn't been done yet / has expired, open the relevant SSM session once, or run `AWS_CONFIG_FILE=~/.aws/af-ops/aws.config aws sso login --profile <profile-name>` in a terminal.
+2. Credentials are stored encrypted inside the workspace and are handed over only when the MCP server starts (they don't end up in config files or plaintext). Grafana starts with write and admin tools disabled; the CloudWatch server itself has read-only tools only; AWS starts with `--read-only` by default.
 3. In chat, pick the **"SRE Assistant"** and start a new conversation. Ask things like "List the PagerDuty incidents currently open and summarize what happened", "Check this service's error rate for the last hour in Grafana", or "Analyze the ERROR entries in this log group with CloudWatch" — it will help you organize the situation, form hypotheses about the cause, and draft external reports while checking the real data (read-only; it does not ack/resolve).
-4. Connection changes take effect **from the next chat message** (no workspace restart needed).
+4. Connection changes take effect **from the next chat message** (and, for AWS in a session, **from the next session launch**). No workspace restart needed.
 
 Other tools such as Zabbix can be connected manually with the PoC steps below (they will be folded into the "Ops & monitoring" tab over time).
 

@@ -245,6 +245,35 @@ func TestComposeAlwaysHasSelfReport(t *testing.T) {
 	}
 }
 
+// TestComposeAWSBuiltin: AWS MCP（Agent Toolkit for AWS — docs/25 §AWS MCP）は
+// 接続してはじめて現れ、アシスタントと**セッションの両方**へ配られる。他の ops 連携と
+// 違ってセッションにも出るのが要点なので、ここが assistant だけに倒れると
+// 「接続したのにセッションから AWS ツールが見えない」に静かに戻る。
+func TestComposeAWSBuiltin(t *testing.T) {
+	reg := compose(&secrets.Data{AWS: &secrets.AWSConn{
+		AWSProfileRef: secrets.AWSProfileRef{Profile: "ops"},
+	}}, tenantCache{}, map[string]bool{})
+	var aws *ServerDef
+	for i := range reg.Servers {
+		if reg.Servers[i].ID == BuiltinAWS {
+			aws = &reg.Servers[i]
+		}
+	}
+	if aws == nil {
+		t.Fatal("aws 組み込みが出ていない")
+	}
+	if !aws.Targets.Session || !aws.Targets.Assistant {
+		t.Fatalf("aws の配り先 = %+v, want session+assistant", aws.Targets)
+	}
+	if got, want := aws.Args, []string{"mcp-run", "aws"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("aws args = %v, want %v", got, want)
+	}
+	// プロファイル未設定＝資格情報の当てが無い接続は ready ではない（署名できない）。
+	if BuiltinReady(BuiltinAWS, &secrets.Data{AWS: &secrets.AWSConn{}}) {
+		t.Fatal("プロファイル空の aws 接続が ready になっている")
+	}
+}
+
 func TestComposeTenantOptOut(t *testing.T) {
 	tc := tenantCache{Servers: []ServerDef{{ID: "t1", Name: "tickets", Enabled: true}}}
 	reg := compose(&secrets.Data{}, tc, map[string]bool{"t1": true})

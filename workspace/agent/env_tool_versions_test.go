@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 // 実ツールの --version 出力（実測）から版番号が抜けることを固定する。
 func TestExtractVer(t *testing.T) {
@@ -28,6 +32,42 @@ func TestExtractVer(t *testing.T) {
 func TestProbeVersionMissing(t *testing.T) {
 	if got := probeVersion("/no/such/binary", nil); got != nil {
 		t.Errorf("probeVersion(missing) = %+v, want nil", got)
+	}
+}
+
+// uvToolVersion: `uv tool install` した Python MCP サーバーの版を **exec せずに**
+// dist-info 名から読む（cloudwatch MCP は --version でサーバーが起動してしまい、
+// AWS MCP プロキシは --version 自体を持たない — toolSpec.PyDist のコメント参照）。
+// 焼き込み（/usr/local 側）とユーザー導入（home 側）で venv の root が違うので、
+// home 配下かどうかで root を選び分けているところまで見る。
+func TestUVToolVersion(t *testing.T) {
+	home := t.TempDir()
+	// ユーザー導入の uv tool を模す: <home>/.local/share/uv/tools/<tool>/…
+	tool := filepath.Join(home, ".local", "share", "uv", "tools", "mcp-proxy-for-aws")
+	sp := filepath.Join(tool, "lib", "python3.11", "site-packages")
+	if err := os.MkdirAll(filepath.Join(sp, "mcp_proxy_for_aws-1.6.4.dist-info"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	exe := filepath.Join(home, ".local", "bin", "mcp-proxy-for-aws")
+	if err := os.MkdirAll(filepath.Dir(exe), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := uvToolVersion(exe, "mcp-proxy-for-aws", home)
+	if got == nil || got.Version != "1.6.4" {
+		t.Fatalf("uvToolVersion = %+v, want 1.6.4", got)
+	}
+	// 実体が無ければ nil（UI は「—」＝未導入）。
+	if got := uvToolVersion(filepath.Join(home, ".local", "bin", "nope"), "mcp-proxy-for-aws", home); got != nil {
+		t.Errorf("uvToolVersion(missing) = %+v, want nil", got)
+	}
+	// 実体はあるのに venv が別 root（= 焼き込み側を見に行く）→「未導入」に化けさせず
+	// 版不明として実体を見せる。home="" で home 判定を外すと /usr/local 側を引く。
+	if got := uvToolVersion(exe, "mcp-proxy-for-aws", ""); got == nil || got.Version != "" {
+		t.Errorf("uvToolVersion(root 不一致) = %+v, want 版不明", got)
 	}
 }
 

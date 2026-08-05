@@ -109,6 +109,11 @@ type Targets struct {
 - `Origin=builtin` は既存 3 種（pagerduty / grafana / cloudwatch）を同じ型に正規化したもの。
   レジストリの中では読み取り専用の行として現れ、`Enabled` だけ利用者が触れる。
   こうすることで `mcpConfigArgs` の分岐が「組み込み or 登録」ではなく **1 本のリスト処理**になる。
+  この正規化のおかげで、後から足した **`aws`（Agent Toolkit for AWS — docs/25）** は
+  `builtinSpecs` に 1 行と `mcp-run aws` だけで済み、materialize / 名前衝突 / UI は無改修だった。
+  `aws` は builtin で唯一 **Targets を assistant + session の両方**に開いている（af はセッション専用、
+  ops 3 種はアシスタント専用）。既定の assistant 限定は「レジストリ以前からある連携の挙動を
+  勝手に変えない」ための配慮なので、レジストリ以降に生まれた連携には掛からない。
 
 ### 3.2 保存先
 

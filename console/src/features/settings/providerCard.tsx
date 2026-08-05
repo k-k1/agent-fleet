@@ -21,6 +21,7 @@ export const BADGE_SHORT: Record<string, string> = {
   slack: "sl",
   grafana: "gf",
   cloudwatch: "cw",
+  aws: "aw",
 };
 
 // CopyCode renders a one-time auth code that copies to the clipboard on click. The
