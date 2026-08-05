@@ -268,6 +268,22 @@ func rateLimitAutoResumeEnabled() bool {
 	return !ok || v
 }
 
+// abortAutoResumeEnabled is the ON/OFF for 中断からの自動再開 (docs/47 §4-6, 設定 >
+// エージェント > Claude > 動作設定): when a claude turn is cut off by something that
+// clears on its own (接続断・一時的なレート制限・ストリームの番犬), the Agent itself
+// re-sends「続けて」instead of routing the resume through the operator assistant.
+// Missing/invalid key ⇒ TRUE, for the same reason as the two toggles above — 再開は
+// 利用者が既に頼んだ作業を走らせ直すだけで、新しい判断を含まない。
+//
+// 置き場所が chatAutoResumeEnabled（設定 > アシスタント）と違うのは、効く範囲が違うから:
+// こちらはアシスタント会話の有無に関わらず**すべての claude TUI セッション**に適用される
+// （rateLimitAutoResume と同じ立場）。OFF にすると中断は従来どおり即座に報告され、会話を
+// 持つセッションだけがオペレーター主導で再開される（docs/47 §3-4）。
+func abortAutoResumeEnabled() bool {
+	v, ok := readUIPrefs()["claudeAbortAutoResume"].(bool)
+	return !ok || v
+}
+
 // chatAutoCompactEnabled is the global ON/OFF for the assistant chat's preventive
 // auto-compaction at the context threshold (docs/33 第4段, 設定 > アシスタント
 // 「コンテキストの自動圧縮」). Missing/invalid key ⇒ true, matching the frontend

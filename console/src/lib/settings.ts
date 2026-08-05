@@ -286,6 +286,14 @@ export interface Settings {
   // RESUME only — dismissing the limit menu itself ("stop and wait", the no-charge
   // option) happens either way, because while it is up the session accepts nothing at all.
   rateLimitAutoResume: boolean;
+  // Auto-resume a cut-off turn (docs/47 §4-6): when a claude turn dies on something that
+  // clears on its own (dropped connection, temporary rate limit, stream idle timeout),
+  // the agent itself re-sends 「続けて」 after a short backoff, up to maxAutoResumeAttempts.
+  // Default ON. Unlike assistantAutoResume this needs no assistant conversation — it
+  // applies to every claude TUI session — and the assistant only hears about the cut-off
+  // once the retries are exhausted (which is what makes it cheaper in tokens, not just
+  // in latency).
+  claudeAbortAutoResume: boolean;
   // Preventive auto-compaction (docs/33 第4段): when a chat's context is still at/above
   // the backend threshold (90%) as a new turn starts, summarize-and-hand-off first.
   // Default ON — the 80% notice gives a manual window before this fires.
@@ -537,6 +545,7 @@ const DEFAULTS: Settings = {
   assistantAutoPilot: false,
   assistantAutoResume: true,
   rateLimitAutoResume: true,
+  claudeAbortAutoResume: true,
   assistantAutoCompact: true,
   assistantAutoCompactTokens: 150000,
   assistantOutputTailKiB: 32,
