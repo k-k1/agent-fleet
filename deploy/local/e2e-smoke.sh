@@ -107,7 +107,8 @@ if [ "${1:-}" = "--inner" ]; then
                 "chromium_cft=$EXPECT_CHROMIUM_CFT" \
                 "chromium_dl=$EXPECT_CHROMIUM_DL" "noto_cjk=$EXPECT_NOTO_CJK" \
                 "mcp_grafana=$EXPECT_MCP_GRAFANA" \
-                "cloudwatch_mcp=$EXPECT_CLOUDWATCH_MCP" "awscli=$EXPECT_AWSCLI" \
+                "cloudwatch_mcp=$EXPECT_CLOUDWATCH_MCP" "aws_mcp_proxy=$EXPECT_AWS_MCP_PROXY" \
+                "awscli=$EXPECT_AWSCLI" \
                 "session_manager_plugin=$EXPECT_SMP"; do
       k="${pair%%=*}"; want="${pair#*=}"
       got="$(jq -r ".$k" "$VJ" 2>/dev/null)"
@@ -275,6 +276,7 @@ EXPECT_CHROMIUM_DL="$(arg_pin CHROMIUM_DL_VERSION)"
 EXPECT_NOTO_CJK="$(arg_pin NOTO_CJK_VERSION)"
 EXPECT_MCP_GRAFANA="$(arg_pin MCP_GRAFANA_VERSION)"
 EXPECT_CLOUDWATCH_MCP="$(arg_pin CLOUDWATCH_MCP_VERSION)"
+EXPECT_AWS_MCP_PROXY="$(arg_pin AWS_MCP_PROXY_VERSION)"
 EXPECT_AWSCLI="$(arg_pin AWSCLI_VERSION)"
 EXPECT_SMP="$(arg_pin SESSION_MANAGER_PLUGIN_VERSION)"
 EXPECT_RTK="${EXPECT_RTK:-1}" # default = always baked in; pass 0 only to verify a BAKE_RTK=0 build
@@ -308,6 +310,7 @@ exec docker run --rm -i --init --network none --memory "$SMOKE_MEMORY" --cap-add
   -e EXPECT_NOTO_CJK="$EXPECT_NOTO_CJK" \
   -e EXPECT_MCP_GRAFANA="$EXPECT_MCP_GRAFANA" \
   -e EXPECT_CLOUDWATCH_MCP="$EXPECT_CLOUDWATCH_MCP" \
+  -e EXPECT_AWS_MCP_PROXY="$EXPECT_AWS_MCP_PROXY" \
   -e EXPECT_AWSCLI="$EXPECT_AWSCLI" \
   -e EXPECT_SMP="$EXPECT_SMP" \
   -e EXPECT_RTK="$EXPECT_RTK" \
