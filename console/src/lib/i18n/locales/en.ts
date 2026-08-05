@@ -2346,7 +2346,6 @@ export const en: Record<keyof typeof ja, string> = {
   "launch.sum.driver_managed": "Managed",
   "launch.sum.driver_terminal": "Terminal (CLI)",
   "launch.sum.effort": "effort {v}",
-  "launch.sum.subdir": "folder {path}",
   "launch.sum.title": "name “{name}”",
   "launch.sum.defaults": "Defaults",
 
