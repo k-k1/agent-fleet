@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +37,14 @@ type toolSpec struct {
 	Baked string   // イメージ焼き込みの実体パス
 	Args  []string // 版取得の引数（既定 --version）
 	Pin   string   // versions.json のキー（無ピンのツールは空）
+	// PyDist は「`uv tool install` で入れた Python 製 MCP サーバー」の PyPI 配布名。
+	// これらは **実行して版を訊けない**（実測 2026-08-06）:
+	//   - cloudwatch MCP: `--version` が版を出さず、代わりに**サーバーが起動する**
+	//     （メトリクスメタデータ 1179 件をロードする）。版取得のたびに起動させるのは論外。
+	//   - AWS MCP プロキシ: `--version` は argparse に弾かれて exit 2・stdout 空。
+	//     版は `--help` の 13 行目にしか出ず、先頭 1 行しか見ない probeVersion では拾えない。
+	// なので exec せず、uv の venv にある dist-info ディレクトリ名から読む（uvToolVersion）。
+	PyDist string
 }
 
 var toolSpecs = []toolSpec{
@@ -63,6 +72,16 @@ var toolSpecs = []toolSpec{
 	{Name: "go", Cmd: "go", Baked: "/usr/local/go/bin/go", Args: []string{"version"}, Pin: "go"},
 	{Name: "node", Cmd: "node", Baked: "/usr/local/bin/node"},
 	{Name: "python", Cmd: "python3", Baked: "/usr/bin/python3"},
+	// AWS / ops MCP 系（docs/25）。CLI ほど目立たないが、ピンずれと home shadow が起きる
+	// 条件は同じ（`install-awscli` は ~/.local/bin へ、grafana の fallback も ~/.local/bin を
+	// 見る）うえ、lean variant では焼き込みが無く versions.json のピンだけが手掛かりになる。
+	// ここに出ていないと「MCP サーバーが古い/入っていない」を Console から確かめる術が無い。
+	{Name: "awscli", Cmd: "aws", Baked: "/usr/local/bin/aws", Pin: "awscli"},
+	{Name: "mcp-grafana", Cmd: "mcp-grafana", Baked: "/usr/local/bin/mcp-grafana", Pin: "mcp_grafana"},
+	{Name: "cloudwatch-mcp", Cmd: "awslabs.cloudwatch-mcp-server", Baked: "/usr/local/bin/awslabs.cloudwatch-mcp-server",
+		Pin: "cloudwatch_mcp", PyDist: "awslabs-cloudwatch-mcp-server"},
+	{Name: "aws-mcp", Cmd: "mcp-proxy-for-aws", Baked: "/usr/local/bin/mcp-proxy-for-aws",
+		Pin: "aws_mcp_proxy", PyDist: "mcp-proxy-for-aws"},
 }
 
 type toolBin struct {
@@ -119,6 +138,55 @@ func probeVersion(path string, args []string) *toolBin {
 	return &toolBin{Path: path, Version: extractVer(raw), Raw: raw}
 }
 
+// uvToolRoot は path の uv tool ルート。`uv tool install` は
+// <root>/<tool>/bin/<exe> に実体を置き、<root>/<tool>/lib/pythonX.Y/site-packages に
+// venv を作る。root は「イメージ焼き込み（/usr/local/share/uv/tools — Dockerfile の
+// UV_TOOL_DIR）」と「ユーザー導入（~/.local/share/uv/tools — uv の既定）」の 2 つで、
+// どちらかは exe が home 配下にあるかで決まる。3 列（実効／焼き込み／~/.local）の
+// 意味とちょうど一致するので、パスを遡らずこの判定で選ぶ（shim が symlink でなく
+// コピーの uv 版でも壊れない）。
+func uvToolRoot(exePath, home string) string {
+	if home != "" && strings.HasPrefix(exePath, home+string(os.PathSeparator)) {
+		return filepath.Join(home, ".local", "share", "uv", "tools")
+	}
+	return "/usr/local/share/uv/tools"
+}
+
+// uvToolVersion は uv tool の venv にある dist-info ディレクトリ名から版を読む。
+// **実体を exec しない**のが要点（理由は toolSpec.PyDist のコメント）。
+// dist-info の名前は PEP 427 の正規化を受けるので、配布名の "-" は "_" になる
+// （awslabs-cloudwatch-mcp-server → awslabs_cloudwatch_mcp_server-0.1.4.dist-info）。
+func uvToolVersion(exePath, dist, home string) *toolBin {
+	if fi, err := os.Stat(exePath); err != nil || fi.IsDir() {
+		return nil
+	}
+	norm := strings.ReplaceAll(dist, "-", "_")
+	pattern := filepath.Join(uvToolRoot(exePath, home), "*", "lib", "python*", "site-packages", norm+"-*.dist-info")
+	for _, m := range globSorted(pattern) {
+		base := strings.TrimSuffix(filepath.Base(m), ".dist-info")
+		if v := strings.TrimPrefix(base, norm+"-"); v != base && v != "" {
+			return &toolBin{Path: exePath, Version: extractVer(v), Raw: dist + " " + v}
+		}
+	}
+	// 実体はあるのに venv が見つからない（uvx 実行だけで PATH に置いた等）。版が
+	// 分からないことを「未導入（—）」に化けさせない — 出所不明の実体こそ見せたい。
+	return &toolBin{Path: exePath, Raw: "(版不明)"}
+}
+
+func globSorted(pattern string) []string {
+	m, _ := filepath.Glob(pattern)
+	sort.Strings(m)
+	return m
+}
+
+// probeTool は 1 実体分の版取得。uv tool の Python サーバーだけ exec を避ける。
+func probeTool(spec toolSpec, path, home string) *toolBin {
+	if spec.PyDist != "" {
+		return uvToolVersion(path, spec.PyDist, home)
+	}
+	return probeVersion(path, spec.Args)
+}
+
 func extractVer(raw string) string {
 	if m := verNumRe.FindString(raw); m != "" {
 		return m
@@ -151,9 +219,9 @@ func collectToolVersions() []toolReport {
 				if abs, err := filepath.EvalSymlinks(p); err == nil {
 					effPath = abs
 				}
-				r.Effective = probeVersion(p, spec.Args)
+				r.Effective = probeTool(spec, p, home)
 			}
-			r.Baked = probeVersion(spec.Baked, spec.Args)
+			r.Baked = probeTool(spec, spec.Baked, home)
 			// go: a lean rootfs bakes no /usr/local/go — surface the on-demand
 			// toolchain (install-go, docs/35 §35.7.2-5) in the image column instead.
 			if r.Baked == nil && spec.Name == "go" {
@@ -171,7 +239,7 @@ func collectToolVersions() []toolReport {
 				}
 				r.Overridden = strings.HasPrefix(effPath, home+string(os.PathSeparator)) && effPath != bakedPath
 			}
-			r.UserLocal = probeVersion(filepath.Join(home, ".local", "bin", spec.Cmd), spec.Args)
+			r.UserLocal = probeTool(spec, filepath.Join(home, ".local", "bin", spec.Cmd), home)
 			out[i] = r
 		}(i, spec)
 	}

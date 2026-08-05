@@ -224,6 +224,11 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
   全ピンを `/usr/local/share/agent-fleet/versions.json` に書き出し、Agent の
   `GET /env/tool-versions`（設定→環境「ツールのバージョン」: 実効 / 焼き込み / ~/.local
   override / ピン差分の read-only 表示）と e2e-smoke と boot-install が参照する。
+  この表にはエージェント CLI に加えて **AWS / ops MCP 系**（`awscli` / `mcp-grafana` /
+  `cloudwatch-mcp` / `aws-mcp`）も並ぶ。後 2 つは `uv tool install` の Python サーバーで、
+  **exec で版を訊けない**（cloudwatch は `--version` でサーバーが起動し、AWS MCP プロキシは
+  `--version` を持たない）ため、`toolSpec.PyDist` を付けて venv の dist-info 名から読む
+  （`uvToolVersion`）。新しい Python MCP サーバーを足すときは同じ扱いにすること。
 - **焼き込み（共通ツール、`BAKE_OPTIONAL_TOOLS`=既定 1 ほか）**:
   Go toolchain（`ARG GO_VERSION`、go.mod と歩調）、
   build-essential + python3（+ `break-system-packages`、pip --user は home 永続）、vim・git-lfs・
