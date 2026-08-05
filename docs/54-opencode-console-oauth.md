@@ -20,7 +20,7 @@ opencode はそれが不要で、共有 `opencode serve` daemon（docs/27 の Ru
 | 進捗 | `GET /api/integration/attempt/{attemptID}` | `{status: pending｜complete｜failed｜expired, message?}` |
 | 中断 | `DELETE /api/integration/attempt/{attemptID}` | — |
 | 状態 | `GET /api/integration/opencode` | `{methods, connections:[{type:"credential",id,label} ｜ {type:"env",name}]}` |
-| 切断 | `DELETE /auth/opencode` | — |
+| 切断 | `DELETE /api/credential/{credentialID}` | — （id は `connections[]` が持つ・§54.5） |
 
 いずれも `{location, data}` の包みで返る。実測は 1.18.13。
 
@@ -37,9 +37,9 @@ opencode はそれが不要で、共有 `opencode serve` daemon（docs/27 の Ru
 - **状態の出どころは `connections[]`**。`type:"credential"` が Console アカウント接続、
   `type:"env"` は `OPENCODE_API_KEY` の存在を示すだけで別経路。`label` は接続先の
   org 名（opencode 側の label 解決が `metadata.orgName` を返す）。
-- **切断だけ v2 に口がない**。connection 削除の HTTP ルートは存在せず、資格情報は
-  `~/.local/share/opencode/auth.json` なので v1 の `DELETE /auth/{providerID}` を使う。
-  daemon が居ないときは `opencode auth logout opencode` にフォールバックする。
+- **切断は credential ID 指定**。v1 の `DELETE /auth/{providerID}` は auth.json 側の経路で、
+  Console アカウントの資格情報には効かない（§54.5 に症状と根拠）。daemon が停止している
+  ときは消せないので、その旨を返す。
 
 ### 起動レース: health ではなく「メソッド」を待つ
 
@@ -157,6 +157,18 @@ id は `connections[]` の `id`（`cred_…`）。実測で 204 が返り、**�
 
 環境変数由来の接続（`OPENCODE_API_KEY`）は別経路なので巻き添えにしない — 削除対象は
 `type:"credential"` の1件だけで、無ければ何も消さずに冪等成功として返す。
+
+### APIキー側は「保存しただけ」では daemon に効かない
+
+鍵は起動時に env として注入される（docs/27 §7）。したがって Console でキーを保存/削除
+しても、**動いている serve daemon は自分の環境に古い鍵を持ったまま**になる。実測: キーを
+消した後も daemon は `connections[]` に `{type:"env"}` を出し続け、モデルも 79 件のまま
+（＝消したはずの鍵で課金され得る）。Agent を再起動しても `Ensure` は生きている daemon を
+adopt するので直らない。反映パスは generation++ ＋ drain ＝ `Supervisor.Restart` なので、
+鍵の保存/削除で明示的に呼ぶ（drain は最大60秒なのでハンドラは待たない）。
+
+`Models()` が daemon 由来になったことで、この穴は起動一覧にも出るようになった
+（以前は CLI をその場の env で走らせていたので、鍵を消せば一覧も即縮んだ）。
 
 カタログの縮小そのもの（61 → 8）は、APIキーがある環境では鍵が覆い隠すため単独では
 観測できない。削除経路も `ConnectionUpdated` を publish するので、ログインと同じく
