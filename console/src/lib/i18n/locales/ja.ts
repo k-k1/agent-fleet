@@ -2051,6 +2051,8 @@ export const ja = {
   "sched.run_now": "今すぐ発火",
   "sched.history": "実行履歴",
   "sched.loading": "読み込み中…",
+  "sched.load_failed": "スケジュールを読み込めませんでした",
+  "sched.retry": "再試行",
   "sched.no_runs": "実行履歴はまだありません。",
   "sched.paused": "スケジュールを一時停止しました",
   "sched.resumed": "スケジュールを再開しました",
