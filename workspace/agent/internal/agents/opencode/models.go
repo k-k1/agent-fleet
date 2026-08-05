@@ -36,6 +36,18 @@ func Models() []string {
 	if modelsList != nil && modelsEnvKey == envKey && time.Since(modelsAt) < time.Minute {
 		return modelsList
 	}
+	// Prefer the running daemon: `opencode models` is a one-shot process that does NOT
+	// see a Console-account login — measured with a Console credential and no
+	// OPENCODE_API_KEY, the CLI printed the 8 zero-auth models while a serve reading the
+	// same store offered 86（docs/54）. So an OAuth-only user would get a free-tier-only
+	// launch picker while their managed sessions could use the full catalog. The daemon
+	// is started with the same injected env, so its list also covers the API-key case.
+	if ids := modelsFromDaemon(); len(ids) > 0 {
+		modelsList = ids
+		modelsAt = time.Now()
+		modelsEnvKey = envKey
+		return modelsList
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "opencode", "models")
@@ -48,6 +60,46 @@ func Models() []string {
 	modelsAt = time.Now()
 	modelsEnvKey = envKey
 	return modelsList
+}
+
+// daemonModel is one entry of GET /api/model（実測 OpenAPI）。
+type daemonModel struct {
+	ID         string `json:"id"`
+	ProviderID string `json:"providerID"`
+	Status     string `json:"status"`  // "active" | "deprecated"
+	Enabled    *bool  `json:"enabled"` // ポインタ: 欠落と false を区別する
+}
+
+// modelsFromDaemon reads the catalog from a serve that is ALREADY running (starting one
+// for a picker refresh would be a surprise). Returns nil when there is no daemon, so the
+// caller falls back to the CLI.
+func modelsFromDaemon() []string {
+	addr, up := oauthProbe()
+	if !up {
+		return nil
+	}
+	var env envelope[[]daemonModel]
+	if err := daemonJSON("GET", addr, "/api/model", nil, &env); err != nil {
+		return nil
+	}
+	return filterDaemonModels(env.Data)
+}
+
+// filterDaemonModels shapes the daemon's raw list into the same "provider/model" ids the
+// CLI prints. 非推奨は落とす: daemon の一覧はそれも含み（実測 110 件中 31 件）、
+// CLI の出力（79 件）と揃えないと起動一覧に廃止済みモデルが並ぶ。
+func filterDaemonModels(ms []daemonModel) []string {
+	out := make([]string, 0, len(ms))
+	for _, m := range ms {
+		if m.ID == "" || m.ProviderID == "" || m.Status == "deprecated" {
+			continue
+		}
+		if m.Enabled != nil && !*m.Enabled {
+			continue
+		}
+		out = append(out, m.ProviderID+"/"+m.ID)
+	}
+	return out
 }
 
 // InvalidateModels drops the cached catalog so the next read re-runs

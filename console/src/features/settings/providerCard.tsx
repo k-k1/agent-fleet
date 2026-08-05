@@ -131,15 +131,30 @@ export function IssueLink({ url }: { url: string }) {
   );
 }
 
-// DeviceSteps renders a device-code flow (Codex / GitHub OAuth) as numbered steps —
-// ①copy the code ②open the link ③wait for approval — instead of a single wrapping
-// row, so the order is legible.
-export function DeviceSteps({ code, url, status }: { code?: string; url: string; status: string }) {
+// DeviceSteps renders a device-code flow as numbered steps instead of one wrapping
+// row, so the order is legible. Two shapes, because providers differ in what the user
+// actually does with the code:
+//   default (Codex / GitHub) — ①copy the code ②open the link and PASTE it ③wait.
+//   confirm (opencode)       — the verification URL already carries the code and the
+//                              approval page shows it, so nothing is pasted: ①open the
+//                              link ②check the shown code matches, approve ③wait.
+// Getting this wrong sends the user hunting for an input field that isn't there.
+export function DeviceSteps({
+  code,
+  url,
+  status,
+  confirm,
+}: {
+  code?: string;
+  url: string;
+  status: string;
+  confirm?: boolean;
+}) {
   const tr = useT();
   let n = 0;
   return (
     <div className="p-steps">
-      {code && (
+      {code && !confirm && (
         <div className="p-step">
           <span className="p-step-k">{++n}</span>
           <div className="p-step-c">
@@ -151,12 +166,21 @@ export function DeviceSteps({ code, url, status }: { code?: string; url: string;
       <div className="p-step">
         <span className="p-step-k">{++n}</span>
         <div className="p-step-c">
-          <div className="p-step-lbl">{tr("provider.step_open_link")}</div>
+          <div className="p-step-lbl">{tr(confirm ? "provider.step_open_link_only" : "provider.step_open_link")}</div>
           <a href={url} target="_blank" rel="noopener" className="flow-link">
             {tr("provider.open_url", { url })}
           </a>
         </div>
       </div>
+      {code && confirm && (
+        <div className="p-step">
+          <span className="p-step-k">{++n}</span>
+          <div className="p-step-c">
+            <div className="p-step-lbl">{tr("provider.step_confirm_code")}</div>
+            <CopyCode>{code}</CopyCode>
+          </div>
+        </div>
+      )}
       <div className="p-step">
         <span className="p-step-k">{++n}</span>
         <div className="p-step-c">

@@ -16,7 +16,7 @@ package opencode
 //	DELETE /api/integration/attempt/{attemptID}      … 中断
 //	GET  /api/integration/opencode
 //	  → {data:{connections:[{type:"credential",id,label} | {type:"env",name}]}}
-//	DELETE /auth/opencode                            … 切断（資格情報の削除）
+//	DELETE /api/credential/{credentialID}            … 切断（id は connections[] が持つ）
 //
 // device の mode は "auto"（opencode 側が自前でトークンをポーリングする）なので、
 // Console からコードを貼らせる必要はない — cursor と同じ「URL を出して poll」型。
@@ -35,7 +35,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os/exec"
 	"regexp"
 	"sync"
 	"time"
@@ -93,8 +92,12 @@ type attemptStatus struct {
 
 // integrationInfo is the `data` of GET /api/integration/{id}（実測 OpenAPI）。
 type integrationInfo struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Methods []struct {
+		ID   string `json:"id"`   // oauth メソッドのみ持つ
+		Type string `json:"type"` // "oauth" | "key" | "env"
+	} `json:"methods"`
 	Connections []struct {
 		Type  string `json:"type"` // "credential"（key/oauth 由来）| "env"
 		ID    string `json:"id"`
@@ -183,6 +186,12 @@ func oauthStatus() oauthState {
 	if err := daemonJSON("GET", addr, "/api/integration/"+oauthIntegrationID, nil, &env); err != nil {
 		return oauthCache
 	}
+	if env.Data.ID == "" {
+		// 起動直後は integration がまだ登録されておらず data:null が返る。ここで
+		// 「未接続」を確定させると、ログイン済みのユーザーに一時的に未接続と
+		// 見せてしまう（起動レースは start 側と同じ — waitOAuthMethod 参照）。
+		return oauthCache
+	}
 	st := oauthState{known: true}
 	for _, c := range env.Data.Connections {
 		// env 由来（OPENCODE_API_KEY）は APIキー方式の表示であって Console 接続ではない。
@@ -195,6 +204,42 @@ func oauthStatus() oauthState {
 	oauthCache = st
 	oauthAt = time.Now()
 	return st
+}
+
+// oauthReadyTimeout bounds the wait for the plugin-registered device method. 起動
+// 直後の click でも間に合う程度に長く、居ないまま待ち続けない程度に短く。
+// oauthReadyPoll とともに var なのはテストが実時間を待たないため。
+var (
+	oauthReadyTimeout = 20 * time.Second
+	oauthReadyPoll    = 300 * time.Millisecond
+)
+
+// deviceMethodReady reports whether the daemon is already publishing the device method.
+func deviceMethodReady(addr string) bool {
+	var env envelope[integrationInfo]
+	if err := daemonJSON("GET", addr, "/api/integration/"+oauthIntegrationID, nil, &env); err != nil {
+		return false
+	}
+	for _, m := range env.Data.Methods {
+		if m.Type == "oauth" && m.ID == oauthMethodID {
+			return true
+		}
+	}
+	return false
+}
+
+// waitOAuthMethod blocks until the device method shows up (plugin load finished).
+func waitOAuthMethod(addr string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		if deviceMethodReady(addr) {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return errors.New("opencode serve の初期化が終わらず、アカウントのサインインを開始できませんでした（少し待って再試行してください）")
+		}
+		time.Sleep(oauthReadyPoll)
+	}
 }
 
 // --- ハンドラ ---------------------------------------------------------------
@@ -211,6 +256,14 @@ func HandleOAuthStart(w http.ResponseWriter, r *http.Request) {
 		// managed opencode を切っている場合ここに来る。CLI 対話ログイン
 		// （`opencode auth login`）は端末セッションからなら従来どおり可能。
 		httpx.WriteErr(w, http.StatusServiceUnavailable, "serve_unavailable", "opencode serve を起動できませんでした: "+err.Error())
+		return
+	}
+	// health だけでは足りない: /global/health は起動直後から 200 を返すが、device
+	// メソッドを登録するのは opencode のプラグインで、その load は後から終わる。
+	// 実測（起動 85ms 後の click）: この窓で叩くと daemon は 500
+	// `OAuth method not found: opencode/device` を返す。メソッドが見えるまで待つ。
+	if err := waitOAuthMethod(addr, oauthReadyTimeout); err != nil {
+		httpx.WriteErr(w, http.StatusServiceUnavailable, "serve_not_ready", err.Error())
 		return
 	}
 	var env envelope[attemptInfo]
@@ -308,20 +361,31 @@ func HandleOAuthCancel(w http.ResponseWriter, r *http.Request) {
 
 // HandleOAuthDisconnect removes the stored Console credential. APIキー（env 注入）は
 // 別経路なのでこの操作では消えない。DELETE /connections/opencode/oauth.
+//
+// 消す先は `DELETE /api/credential/{credentialID}` で、id は integration の
+// connections[] が持つ。v1 の `DELETE /auth/{providerID}` では消えない — あれは
+// auth.json を書き換える経路で、v2 の資格情報は SQLite 側に載っている（実測:
+// `opencode auth list` は 0 件と言うのに connections には credential が居る）。
+// 実際、/auth/opencode を叩いても新規プロセスから接続が見え続けた。
 func HandleOAuthDisconnect(w http.ResponseWriter, r *http.Request) {
 	addr, up := oauthProbe()
 	if !up {
-		// daemon が居ないなら CLI で消す（同じ auth.json を見る）。
-		if err := oauthLogoutCLI(); err != nil {
-			httpx.WriteErr(w, http.StatusServiceUnavailable, "serve_unavailable", "opencode serve が停止しており切断できませんでした")
-			return
-		}
+		httpx.WriteErr(w, http.StatusServiceUnavailable, "serve_unavailable",
+			"opencode serve が停止しているため切断できませんでした（ワークスペース稼働中に実行してください）")
+		return
+	}
+	id, err := credentialID(addr)
+	if err != nil {
+		httpx.WriteErr(w, http.StatusBadGateway, "oauth_disconnect_failed", err.Error())
+		return
+	}
+	if id == "" {
+		// すでに接続が無い: 冪等に成功として扱う（表示のズレで二重に押しても事故らない）。
 		invalidateOAuthStatus()
-		InvalidateModels()
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "opencode"})
 		return
 	}
-	if err := daemonJSON[struct{}]("DELETE", addr, "/auth/"+oauthIntegrationID, nil, nil); err != nil {
+	if err := daemonJSON[struct{}]("DELETE", addr, "/api/credential/"+url.PathEscape(id), nil, nil); err != nil {
 		httpx.WriteErr(w, http.StatusBadGateway, "oauth_disconnect_failed", err.Error())
 		return
 	}
@@ -330,10 +394,17 @@ func HandleOAuthDisconnect(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "opencode"})
 }
 
-// oauthLogoutCLI is the daemon-less fallback for disconnect.
-var oauthLogoutCLI = func() error {
-	if !Available() {
-		return errors.New("opencode not installed")
+// credentialID returns the id of the Console-account credential, or "" when there is
+// none. env 接続（OPENCODE_API_KEY）は別経路なので触らない。
+func credentialID(addr string) (string, error) {
+	var env envelope[integrationInfo]
+	if err := daemonJSON("GET", addr, "/api/integration/"+oauthIntegrationID, nil, &env); err != nil {
+		return "", err
 	}
-	return exec.Command("opencode", "auth", "logout", oauthIntegrationID).Run()
+	for _, c := range env.Data.Connections {
+		if c.Type == "credential" {
+			return c.ID, nil
+		}
+	}
+	return "", nil
 }
