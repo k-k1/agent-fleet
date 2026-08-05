@@ -99,6 +99,7 @@ import {
   buildRespondAnswers,
   buildSinglePickKeys,
 } from "./questionKeys.ts";
+import { parseQuestionAnswers, resolveAnswer } from "./questionAnswers.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { useDismiss } from "../../lib/useDismiss.ts";
 import {
@@ -4699,39 +4700,24 @@ function QuestionBlock({
   answer?: string;
 }) {
   const norm = (answer || "").trim();
-  // AskUserQuestion's tool_result reads:
-  //   Your questions have been answered: "<q1>"="<a1>", "<q2>"="<a2>". …
-  // Pull the per-question answers so each card shows its OWN reply — a free-text
-  // "Type something" answer then lands under the right question instead of dumping the
-  // whole raw string. Falls back to the raw text if the format ever changes.
-  const pairs = [...norm.matchAll(/"[^"]*"\s*=\s*"([^"]*)"/g)].map((m) => m[1].trim());
+  // Per-question answers, so each card shows its OWN reply instead of the whole raw
+  // tool_result. Parsing (including the quotes a user may type inside a free-text
+  // answer) and the pick/free-text split live in questionAnswers.ts.
+  const qs = questions || [];
+  const pairs = parseQuestionAnswers(norm, qs.map((q) => q.question));
   const answerAt = (qi: number) => (pairs.length ? pairs[qi] || "" : norm);
-  // The answer value is a list of picked option labels and/or a free-text ("Type
-  // something") entry, joined by ", " (localized "、"). Split on that list separator
-  // ONLY and match labels by EXACT segment equality — never tokenize on whitespace/"/"
-  // (which would shred a label like "バッファ上限/メモリ保護"), and never fall back to
-  // substring containment: a free-text reply that merely CONTAINS an option label as a
-  // substring ("AWSは使わない" vs option "AWS") must not count as picking it, or the
-  // wrong option gets checked and the typed text vanishes from the card.
-  const segmentsOf = (a: string) => a.split(/\s*[,、，]\s*/).map((s) => s.trim()).filter(Boolean);
-  const chosenFor = (a: string, opts: QuestionOption[]) => {
-    if (!answered || !a) return new Set<QuestionOption>();
-    const segs = segmentsOf(a);
-    return new Set(opts.filter((o) => segs.includes(o.label)));
-  };
   return (
     <div className={"mt-question" + (answered ? " answered" : "")}>
-      {(questions || []).map((qn, qi) => {
+      {qs.map((qn, qi) => {
         const opts = qn.options || [];
         const a = answerAt(qi);
-        const chosenSet = chosenFor(a, opts);
-        // Any segment that isn't a listed option is a custom "Type something" entry
-        // (multi-select can COMBINE checked options with a custom one). Show it even when
-        // an option also matched — otherwise the custom text silently vanishes from the
-        // answered card. Same segment split as chosenFor; a segment is free text iff it
-        // exactly equals no option label.
-        const optLabels = opts.map((o) => o.label);
-        const extras = !answered ? [] : segmentsOf(a).filter((t) => !optLabels.includes(t));
+        // extras is the custom "Type something" entry, which multi-select can COMBINE
+        // with checked options — show it even when an option also matched, or the typed
+        // text silently vanishes from the answered card.
+        const { chosen, extras } = answered
+          ? resolveAnswer(a, opts.map((o) => o.label))
+          : { chosen: [] as string[], extras: [] as string[] };
+        const chosenSet = new Set(chosen);
         return (
           <div className="mq" key={qi}>
             <div className="mq-head">
@@ -4743,7 +4729,7 @@ function QuestionBlock({
             {qn.question && <div className="mq-text">{qn.question}</div>}
             <div className="mq-options">
               {opts.map((o, oi) => {
-                const sel = chosenSet.has(o);
+                const sel = chosenSet.has(o.label);
                 return (
                   <button
                     type="button"
