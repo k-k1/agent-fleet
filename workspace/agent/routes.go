@@ -321,6 +321,8 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /connections/grafana", handleDeleteGrafanaConn)
 	mux.HandleFunc("PUT /connections/cloudwatch", handlePutCloudWatchConn)
 	mux.HandleFunc("DELETE /connections/cloudwatch", handleDeleteCloudWatchConn)
+	mux.HandleFunc("PUT /connections/aws", handlePutAWSMCPConn)
+	mux.HandleFunc("DELETE /connections/aws", handleDeleteAWSMCPConn)
 	// チャットブリッジ（docs/37 P1）: Discord bot トークン＋宛先。inspect/guilds は
 	// カードのセットアップウィザード（招待リンク生成→チャンネルピッカー）用。
 	mux.HandleFunc("PUT /connections/discord", handlePutDiscordConn)

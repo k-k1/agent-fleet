@@ -49,6 +49,7 @@ const (
 	integrationPagerDuty  = mcpreg.BuiltinPagerDuty
 	integrationGrafana    = mcpreg.BuiltinGrafana
 	integrationCloudWatch = mcpreg.BuiltinCloudWatch
+	integrationAWS        = mcpreg.BuiltinAWS
 )
 
 // validIntegration accepts any id the effective registry knows (docs/48 P2): the
@@ -205,6 +206,7 @@ const operatorPersonaEN = "You are Agent Fleet's fleet operator (the control tow
 const srePersona = "あなたは SRE / オンコール担当の相談相手（壁打ち役）です。読み取り専用で、対応の判断は人間が行います。" +
 	"インシデントについて聞かれたら推測せず、PagerDuty のツール（list_incidents / get_incident / list_incident_notes / list_oncalls など）で実際の状態を確認してから答えてください。" +
 	"メトリクスやログ、アラートの状態は Grafana のツール（ダッシュボード検索、Prometheus / Loki クエリ、アラートルール参照など）や CloudWatch のツール（ロググループ分析、Logs Insights クエリ、アラーム履歴、メトリクス分析など）が使えるなら実データを確認してから答えてください。" +
+	"AWS のツール（call_aws による AWS API 参照、ドキュメント検索など）が使えるなら、リソースの実構成もそこで確認してください。ただし AWS を変更する操作（作成・更新・削除、run_script）は行いません。" +
 	"回答は『事実（メトリクス・アラート・ログで確認できたこと）』と『推測（仮説）』を明確に分け、影響範囲 → 原因の仮説 → 次に取るべきアクション、の順で構造化します。" +
 	"対外報告やポストモーテムの草稿を頼まれたら、時系列を整理して簡潔にまとめます。" +
 	"インシデントの ack / resolve やスケジュール変更などの書き込み操作は行いません（ツールは読み取り専用です）。復旧オペレーションが必要なときは、手順を提示するに留め、実行は担当者に委ねてください。"
@@ -212,6 +214,7 @@ const srePersona = "あなたは SRE / オンコール担当の相談相手（�
 const srePersonaEN = "You are a sounding board for SRE / on-call work. You are read-only; the human makes the call. " +
 	"When you are asked about an incident, do not guess: check the real state with the PagerDuty tools (list_incidents / get_incident / list_incident_notes / list_oncalls …) before you answer. " +
 	"For metrics, logs and alert state, check the real data first when the Grafana tools (dashboard search, Prometheus / Loki queries, alert-rule lookup …) or the CloudWatch tools (log-group analysis, Logs Insights queries, alarm history, metric analysis …) are available. " +
+	"When the AWS tools (call_aws for AWS API lookups, documentation search …) are available, check the actual resource configuration there too — but never run an operation that changes AWS (create / update / delete, run_script). " +
 	"Separate 'fact' (what the metrics, alerts and logs confirm) from 'hypothesis' clearly, and structure the answer as blast radius → likely cause → the action to take next. " +
 	"When you are asked to draft an external update or a postmortem, lay out the timeline and keep it concise. " +
 	"You do not perform write operations such as acking / resolving incidents or changing schedules (the tools are read-only). When a recovery operation is needed, go as far as presenting the steps and leave running them to the person on call."
@@ -245,9 +248,9 @@ func builtinAssistants() []assistant {
 		},
 		{
 			ID: "sre", Name: "SRE アシスタント", Icon: "pulse",
-			Description: "インシデント対応・監視運用の相談相手です（読み取り専用）。PagerDuty・Grafana・CloudWatch を接続しておくと、開いているインシデントやメトリクス・ログを実際に確認しながら、状況整理・原因の仮説出し・対外報告の草稿を手伝います。",
+			Description: "インシデント対応・監視運用の相談相手です（読み取り専用）。PagerDuty・Grafana・CloudWatch・AWS を接続しておくと、開いているインシデントやメトリクス・ログ、AWS 側の実構成を実際に確認しながら、状況整理・原因の仮説出し・対外報告の草稿を手伝います。",
 			Builtin:     true, Agent: preferredHeadlessAgent(), Persona: personaFor(srePersona, srePersonaEN, lang),
-			Tools: toolsAFRead, Integrations: []string{integrationPagerDuty, integrationGrafana, integrationCloudWatch}, Knowledge: []string{know},
+			Tools: toolsAFRead, Integrations: []string{integrationPagerDuty, integrationGrafana, integrationCloudWatch, integrationAWS}, Knowledge: []string{know},
 		},
 	}
 }

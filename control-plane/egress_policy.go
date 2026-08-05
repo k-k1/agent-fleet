@@ -26,8 +26,10 @@ var defaultEgressAllowlist = []string{
 	"pypi.org", "files.pythonhosted.org", ".pythonhosted.org",
 	"proxy.golang.org", "sum.golang.org", ".golang.org", "go.dev",
 	".debian.org", ".ubuntu.com",
-	// aws cli / tooling.
-	".amazonaws.com",
+	// aws cli / tooling. `.api.aws` is a SEPARATE apex from `.amazonaws.com` and is
+	// where the AWS MCP Server lives (aws-mcp.<region>.api.aws — docs/25 §AWS MCP);
+	// without it that builtin integration dies the day a deployment flips to enforce.
+	".amazonaws.com", ".api.aws",
 }
 
 // newEgressPolicy builds a policy from a list of entries (blank lines and "#"

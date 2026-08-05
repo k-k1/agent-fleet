@@ -313,9 +313,10 @@ export const en: Record<keyof typeof ja, string> = {
   "ops.ws_required_hint": "The API keys are stored encrypted by the agent inside the container, so the workspace has to be running.",
   "ops.start_ws": "Start workspace",
   "ops.intro":
-    "Connections for incident response and monitoring. Once connected, the “SRE assistant” reads them read-only to help you think out loud. Connection changes take effect from the next chat message (no workspace restart needed).",
+    "Connections for incident response, monitoring and building on the cloud. Once connected, the “SRE assistant” reads them read-only to help you think out loud (AWS is available from interactive sessions too). Connection changes take effect from the next chat message and the next session launch (no workspace restart needed).",
   "ops.cat_incident": "Incident management",
   "ops.cat_monitoring": "Monitoring / metrics",
+  "ops.cat_cloud": "Cloud (build / operate)",
   "ops.pd_api_key_set": "API key set",
   "ops.pd_api_key_placeholder": "PagerDuty API key",
   "ops.pd_eu_region": "EU region",
@@ -335,6 +336,14 @@ export const en: Record<keyof typeof ja, string> = {
   "ops.cw_region_placeholder": "Region (optional)",
   "ops.cw_hint":
     "No secret is stored. Pick an SSM connection profile and it generates a dedicated config file from that SSO setup (non-secret) and uses it. Read-only tools only — log search, alarm history, metric analysis, etc. If you haven't logged in to SSO (or it's expired), open the matching SSM session once, or run `AWS_CONFIG_FILE=~/.aws/af-ops/cloudwatch.config aws sso login --profile <profile>` in a terminal.",
+  "ops.aws_endpoint_option": "MCP endpoint: {region}",
+  "ops.aws_write": "Write tools",
+  "ops.aws_write_sub":
+    "Turning this on enables AWS API calls (call_aws) and script execution (run_script). They can create, change and delete real AWS resources, so the default is off (read-only).",
+  "ops.aws_mode_read": "Read-only",
+  "ops.aws_mode_write": "Writes enabled",
+  "ops.aws_hint":
+    "Connects to the AWS-operated MCP Server (Agent Toolkit for AWS) through the official proxy. No secret is stored — requests are signed with the credentials of the profile you pick. Gives you AWS documentation search, skill retrieval, AWS API lookups and more. Unlike CloudWatch it attaches to interactive sessions as well as the assistant. The endpoint is the region the MCP server itself runs in; the region field above is where your own resources live. If you haven't logged in to SSO (or it's expired), open the matching SSM session once, or run `AWS_CONFIG_FILE=~/.aws/af-ops/aws.config aws sso login --profile <profile>` in a terminal.",
   "ops.cat_chat": "Chat notifications (bridge)",
   "ops.dc_token_placeholder": "Discord bot token",
   "ops.dc_verify": "Verify token",

@@ -35,6 +35,8 @@ func runMCPRun(args []string) {
 		runGrafanaMCP(extra)
 	case "cloudwatch":
 		runCloudWatchMCP(extra)
+	case "aws":
+		runAWSMCP(extra)
 	default:
 		fmt.Fprintf(os.Stderr, "mcp-run: unknown provider %q\n", provider)
 		os.Exit(2)
@@ -128,11 +130,11 @@ func runCloudWatchMCP(extra []string) {
 	// (session_ssm.go), so regenerate a durable ops config from the stored SSO
 	// meta and point boto3 at it. Idempotent per spawn — survives clean-home.
 	if s.CloudWatch.StartURL != "" {
-		if err := writeCloudWatchOpsConfig(s.CloudWatch); err != nil {
+		if err := writeOpsAWSConfig("cloudwatch", s.CloudWatch.AWSProfileRef); err != nil {
 			fmt.Fprintf(os.Stderr, "mcp-run cloudwatch: write aws config: %v\n", err)
 			os.Exit(1)
 		}
-		env = append(env, "AWS_CONFIG_FILE="+opsAWSConfigPath())
+		env = append(env, "AWS_CONFIG_FILE="+opsAWSConfigPath("cloudwatch"))
 	}
 	if os.Getenv("FASTMCP_LOG_LEVEL") == "" {
 		env = append(env, "FASTMCP_LOG_LEVEL=ERROR")
@@ -165,27 +167,124 @@ func runCloudWatchMCP(extra []string) {
 	}
 }
 
-// opsAWSConfigPath is the durable aws config generated for the CloudWatch ops
-// integration — a sibling of the per-session ~/.aws/af-sessions/*.config files,
-// but persistent and session-independent. The SSO token cache stays in the
-// shared ~/.aws/sso/cache, so a login done in an SSM session (or via
-// `AWS_CONFIG_FILE=<this> aws sso login`) is reused here.
-func opsAWSConfigPath() string {
-	return filepath.Join(homeDir(), ".aws", "af-ops", "cloudwatch.config")
+// opsAWSConfigPath is the durable aws config generated for an ops integration that
+// rides an SSO profile (id = the integration id: "cloudwatch" / "aws") — a sibling
+// of the per-session ~/.aws/af-sessions/*.config files, but persistent and
+// session-independent. The SSO token cache stays in the shared ~/.aws/sso/cache, so
+// a login done in an SSM session (or via `AWS_CONFIG_FILE=<this> aws sso login`) is
+// reused here, and by the other integrations too.
+func opsAWSConfigPath(id string) string {
+	return filepath.Join(homeDir(), ".aws", "af-ops", id+".config")
 }
 
-// writeCloudWatchOpsConfig (re)generates the durable ops aws config from the
-// stored SSO meta. Idempotent; called at connect time (connections.go) and at
-// every mcp-run spawn so it self-heals after a clean-home.
-func writeCloudWatchOpsConfig(c *secrets.CloudWatchConn) error {
-	return writeSSMConfig(opsAWSConfigPath(), session.SSMMeta{
-		Profile:   c.Profile,
-		StartURL:  c.StartURL,
-		SSORegion: c.SSORegion,
-		AccountID: c.AccountID,
-		RoleName:  c.RoleName,
-		Region:    c.Region,
+// writeOpsAWSConfig (re)generates the durable ops aws config from the stored SSO
+// meta. Idempotent; called at connect time (connections.go) and at every mcp-run
+// spawn so it self-heals after a clean-home.
+func writeOpsAWSConfig(id string, p secrets.AWSProfileRef) error {
+	return writeSSMConfig(opsAWSConfigPath(id), session.SSMMeta{
+		Profile:   p.Profile,
+		StartURL:  p.StartURL,
+		SSORegion: p.SSORegion,
+		AccountID: p.AccountID,
+		RoleName:  p.RoleName,
+		Region:    p.Region,
 	})
+}
+
+// AWS MCP (Agent Toolkit for AWS) — the server is AWS-operated and remote, reached
+// over Streamable HTTP with SigV4 auth. The registry's own remote transport can't
+// express that (it only carries static headers, docs/48 §3.1), so the integration is
+// the official stdio proxy: mcp-proxy-for-aws signs each call with the local
+// credential chain. That also keeps the "credential never lands in an MCP config"
+// property of the other builtins for free — there is no credential to write down.
+const (
+	awsMCPPackage         = "mcp-proxy-for-aws"
+	awsMCPDefaultEndpoint = "us-east-1" // the other published region is eu-central-1
+)
+
+// awsMCPEndpointURL builds the SigV4 MCP endpoint for a service region. Endpoint
+// region ≠ resource region: this is where the MCP service itself runs.
+func awsMCPEndpointURL(region string) string {
+	if region == "" {
+		region = awsMCPDefaultEndpoint
+	}
+	return "https://aws-mcp." + region + ".api.aws/mcp"
+}
+
+// awsMCPArgs builds the proxy's argv tail from the stored connection.
+//
+//   - --read-only unless the member opted into writes. Without it the server offers
+//     call_aws (any of ~15,000 AWS API actions) and run_script (arbitrary code), and
+//     the container is untrusted by design (reference/security.md §4.1-4.3).
+//   - --retries: the first connect to the endpoint has been seen to fail once with a
+//     transport read error and then succeed. From inside a CLI that reads as "the MCP
+//     server is broken", so let the proxy retry rather than the human.
+//   - --metadata AWS_REGION: the member's RESOURCE region, which the server uses to
+//     scope calls. Distinct from the signing region (env, = the endpoint region).
+func awsMCPArgs(c *secrets.AWSConn, extra []string) []string {
+	args := []string{awsMCPEndpointURL(c.Endpoint), "--retries", "3"}
+	if !c.Write {
+		args = append(args, "--read-only")
+	}
+	if c.Region != "" {
+		args = append(args, "--metadata", "AWS_REGION="+c.Region)
+	}
+	return append(args, extra...)
+}
+
+// runAWSMCP execs the AWS MCP proxy against the stored profile. Same no-secret story
+// as CloudWatch: SigV4 comes off the credential chain, so an expired SSO login
+// surfaces as per-tool errors and the fix is `aws sso login`. The flags are in
+// awsMCPArgs above.
+func runAWSMCP(extra []string) {
+	s, err := secrets.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mcp-run aws: load secrets: %v\n", err)
+		os.Exit(1)
+	}
+	if s.AWS == nil || s.AWS.Profile == "" {
+		fmt.Fprintln(os.Stderr, "mcp-run aws: no AWS connection configured")
+		os.Exit(1)
+	}
+	env := append(os.Environ(), "AWS_PROFILE="+s.AWS.Profile)
+	// AWS_REGION here is the SIGNING region and must match the endpoint, not the
+	// member's resource region — that one rides along as request metadata below.
+	endpoint := s.AWS.Endpoint
+	if endpoint == "" {
+		endpoint = awsMCPDefaultEndpoint
+	}
+	env = append(env, "AWS_REGION="+endpoint, "AWS_DEFAULT_REGION="+endpoint)
+	if s.AWS.StartURL != "" {
+		if err := writeOpsAWSConfig("aws", s.AWS.AWSProfileRef); err != nil {
+			fmt.Fprintf(os.Stderr, "mcp-run aws: write aws config: %v\n", err)
+			os.Exit(1)
+		}
+		env = append(env, "AWS_CONFIG_FILE="+opsAWSConfigPath("aws"))
+	}
+	args := awsMCPArgs(s.AWS, extra)
+	// Baked entrypoint first (uv tool install in the image); uvx as the dev / lean
+	// rootfs fallback, pinned to the verified version (docs/35 §35.7.2-6).
+	if p, err := exec.LookPath(awsMCPPackage); err == nil {
+		argv := append([]string{p}, args...)
+		if err := syscall.Exec(p, argv, env); err != nil {
+			fmt.Fprintf(os.Stderr, "mcp-run aws: exec %s: %v\n", p, err)
+			os.Exit(1)
+		}
+	}
+	uvx, err := uvxPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mcp-run aws: %v\n", err)
+		os.Exit(1)
+	}
+	pkg := awsMCPPackage
+	if pin := readBuildPins()["aws_mcp_proxy"]; pin != "" {
+		pkg += "==" + pin
+	}
+	argv := append([]string{uvx, pkg}, args...)
+	if err := syscall.Exec(uvx, argv, env); err != nil {
+		fmt.Fprintf(os.Stderr, "mcp-run aws: exec %s: %v\n", uvx, err)
+		os.Exit(1)
+	}
 }
 
 // grafanaMCPPath resolves the mcp-grafana binary: PATH (the image bakes it into
