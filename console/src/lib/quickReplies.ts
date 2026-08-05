@@ -159,7 +159,8 @@ export type RankArgs = {
   locale: string; // "ja" | "en"（シード言語の選択）
   hidden?: string[]; // ユーザーがメニューから消したキー（settings.quickRepliesHidden）
   pinned?: string[]; // ピン留め＝常に先頭に出す文（settings.quickRepliesPinned・ピンした順）
-  limit?: number; // 返す候補数（既定 6・ピンは limit を超えても落とさない）
+  limit?: number; // 学習側（ランキング）の返す候補数上限（既定 6）。ピンはこの上限とは別枠で、
+  // 何件ピンしていても学習側の枠を圧迫しない（＝合計はピン件数 + limit まで出うる）。
 };
 
 // 候補を算出して並べて返す（表示テキストの配列）。先頭はピン留め（ピンした順）、続いてランキング。
@@ -204,6 +205,6 @@ export function rankQuickReplies(map: QuickReplyMap, args: RankArgs): string[] {
     const pt = p.toLowerCase();
     return !draftNorm || (pt.startsWith(draftNorm) && pt !== draftNorm);
   });
-  // 残り枠にランキング上位を詰める。ピンが limit を埋めるなら、埋まるのが正しい（ユーザーの指定）。
-  return [...head, ...scored.slice(0, Math.max(0, limit - head.length)).map((e) => e.text)];
+  // ピンは別枠（何件ピンしていても学習側の limit を圧迫しない）。学習側はランキング上位を limit 件まで。
+  return [...head, ...scored.slice(0, limit).map((e) => e.text)];
 }
