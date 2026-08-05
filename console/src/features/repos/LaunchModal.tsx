@@ -5,7 +5,7 @@
 // Port of the old components/LaunchModal.
 //
 // レイアウト（2026-08 整理）: 11 個のフィールドが同格に並んでいたのをやめ、
-//   ①今回決めること（最初のプロンプト → エージェント → モデル）を常時表示
+//   ①今回決めること（エージェント → モデル → 最初のプロンプト）を常時表示
 //   ②場所（worktree / ブランチ / 基点）と ③詳細（実行方式・effort・開始モード・
 //     作業ディレクトリ・セッション名）は「要約 1 行 ＋ 展開」
 // の 3 層にしてある。既定値は repoLast がリポジトリ毎に覚えていて大半は正しいので、
@@ -269,6 +269,13 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   ].filter(Boolean);
   const advSummary = advParts.length ? advParts.join(" · ") : tr("launch.sum.defaults");
 
+  // 初期フォーカスは最初のプロンプト欄。autoFocus 属性だと、ブラウザが対象を可視域へ
+  // スクロールさせ、上に積んだエージェント選択が開いた瞬間に画面外へ流れる。
+  // preventScroll で「先頭が見えたまま、すぐ打てる」を両立させる。
+  useEffect(() => {
+    textRef.current?.focus({ preventScroll: true });
+  }, []);
+
   // Revoke every held preview URL when the modal unmounts (avoids leaking object URLs).
   useEffect(() => () => imagesRef.current.forEach((x) => URL.revokeObjectURL(x.url)), []);
 
@@ -401,9 +408,63 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
       lockClose={busy}
     >
       <div className="ui-modal-body">
-        {/* 最初のプロンプト（任意）— 先頭に置く。ユーザーが自分で持ち込む唯一の入力で、
-            autoFocus もここに当たる。最下部にあった頃は、モーダルを開いた瞬間に
-            autoFocus のスクロールで最下部まで飛び、エージェント選択が画面外へ消えていた。 */}
+        <div className="ui-field">
+          <span className="ui-field-label">{tr("launch.field.agent")}</span>
+          {!kinds.length && (
+            // Empty means one of two very different things: still checking, or the
+            // connection check failed / nothing is authenticated. Say which — a bare
+            // empty picker reads as a broken modal.
+            <div className="muted launch-noagents">
+              {tr(settling ? "launch.agents_checking" : "launch.agents_none")}
+            </div>
+          )}
+          {/* 折り返しグリッド（ui.css .ui-seg.big）。以前は横スクロールで 4 枚目以降が
+              切れており、7 種類あることも気づけなかった。サブラベル（「◯◯ を起動」）は
+              カード名の言い換えで情報が無いので title に落とし、1 行ぶん詰めてある。 */}
+          <div className="ui-seg big">
+            {kinds.map((k) => {
+              const a = agentOf(k);
+              return (
+                <button
+                  key={k}
+                  type="button"
+                  title={tr(a.launchHintKey)}
+                  className={"seg-btn kind-" + a.cssClass + (kind === k ? " active" : "")}
+                  onClick={() => {
+                    const defaults = agentLaunchDefault(settings, k);
+                    setKind(k);
+                    setModel(resolveModel(k, repo, defaults.model));
+                    setEffort(resolveEffort(k, repo, defaults.effort));
+                    setStartMode(resolveStartMode(k, repo, defaults.startMode));
+                    setDriver(a.managedDriver ? "managed" : "");
+                  }}
+                >
+                  <Icon name={a.icon} className="seg-ic" />
+                  {kindDisplayName(k)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {hasModel && (
+          <div className="ui-field">
+            <span className="ui-field-label">{tr("launch.field.model")}</span>
+            <ModelPicker
+              kind={kind}
+              model={model}
+              onChange={(next) => {
+                setModel(next);
+                setEffort("");
+              }}
+            />
+          </div>
+        )}
+
+        {/* 最初のプロンプト（任意）— エージェント／モデルの下。入力欄なのでフォーカスは
+            ここに当てるが、autoFocus 属性は使わない（ブラウザが要素を可視域へスクロール
+            させ、モーダルを開いた瞬間に上のエージェント選択が画面外へ消える）。
+            preventScroll で「先頭が見えたまま入力できる」を両立させている。 */}
         <div className="ui-field">
           <span className="ui-field-label launch-prompt-label">
             <span>{tr("launch.first_prompt")}</span>
@@ -485,7 +546,6 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
             onKeyDown={onKey}
             onPaste={onPaste}
             rows={4}
-            autoFocus
             placeholder={tr("launch.first_prompt_ph")}
           />
           <span className="ui-field-hint">
@@ -493,59 +553,6 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
             {canPasteImage && " " + tr("launch.image_paste_note")}
           </span>
         </div>
-
-        <div className="ui-field">
-          <span className="ui-field-label">{tr("launch.field.agent")}</span>
-          {!kinds.length && (
-            // Empty means one of two very different things: still checking, or the
-            // connection check failed / nothing is authenticated. Say which — a bare
-            // empty picker reads as a broken modal.
-            <div className="muted launch-noagents">
-              {tr(settling ? "launch.agents_checking" : "launch.agents_none")}
-            </div>
-          )}
-          {/* 折り返しグリッド（ui.css .ui-seg.big）。以前は横スクロールで 4 枚目以降が
-              切れており、7 種類あることも気づけなかった。サブラベル（「◯◯ を起動」）は
-              カード名の言い換えで情報が無いので title に落とし、1 行ぶん詰めてある。 */}
-          <div className="ui-seg big">
-            {kinds.map((k) => {
-              const a = agentOf(k);
-              return (
-                <button
-                  key={k}
-                  type="button"
-                  title={tr(a.launchHintKey)}
-                  className={"seg-btn kind-" + a.cssClass + (kind === k ? " active" : "")}
-                  onClick={() => {
-                    const defaults = agentLaunchDefault(settings, k);
-                    setKind(k);
-                    setModel(resolveModel(k, repo, defaults.model));
-                    setEffort(resolveEffort(k, repo, defaults.effort));
-                    setStartMode(resolveStartMode(k, repo, defaults.startMode));
-                    setDriver(a.managedDriver ? "managed" : "");
-                  }}
-                >
-                  <Icon name={a.icon} className="seg-ic" />
-                  {kindDisplayName(k)}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {hasModel && (
-          <div className="ui-field">
-            <span className="ui-field-label">{tr("launch.field.model")}</span>
-            <ModelPicker
-              kind={kind}
-              model={model}
-              onChange={(next) => {
-                setModel(next);
-                setEffort("");
-              }}
-            />
-          </div>
-        )}
 
         {/* 場所: worktree（隔離・既定）か このコピーで直接か。worktree 行では選択肢
             なし（この worktree 内で直接起動）ので、折りたたまず 1 行の注記で出す。 */}
