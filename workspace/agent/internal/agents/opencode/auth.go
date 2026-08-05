@@ -116,8 +116,25 @@ func HandlePutConn(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
+	applyKeyChange("provider key stored: " + env)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "env": env})
 }
+
+// applyKeyChange propagates a stored-key change to the places that cached it.
+//
+// 鍵は起動時に env として注入されるので（docs/27 §7）、**保存しただけでは動いている
+// serve daemon には効かない**。実測: Console でキーを消しても daemon は自分の環境に
+// 持ったままで、connections[] に env 接続を出し続け、そのキーで課金され得るモデルも
+// 一覧に残る（Agent を再起動しても Ensure は生きている daemon を adopt するので直らない）。
+// 反映パスは generation++ ＋ drain ＝ Supervisor.Restart。drain は最大60秒かかるので
+// ハンドラは待たず、別ゴルーチンに委ねる。
+func applyKeyChange(reason string) {
+	InvalidateModels()
+	go restartServe("opencode " + reason)
+}
+
+// restartServe is the seam tests replace (a real Restart drains live turns).
+var restartServe = func(reason string) { Serve().Restart(reason) }
 
 // HandleDeleteConn removes a stored provider key
 // (DELETE /connections/opencode/{env}).
@@ -137,5 +154,6 @@ func HandleDeleteConn(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
+	applyKeyChange("provider key removed: " + env)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": env})
 }
