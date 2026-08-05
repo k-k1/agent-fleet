@@ -63,12 +63,12 @@ func (f *wakeFirer) fire(ctx context.Context, sch Schedule, slot time.Time) (str
 	if !ok {
 		// Soft outcome: the membership was revoked. Record it (not an error) so the
 		// ledger advances and the operator can see why nothing ran.
-		return "skipped_membership_inactive", "", nil
+		return statusMembershipInactive, "", nil
 	}
 	res, aerr := f.mgr.resolveByMembership(ctx, identityID, sch.MembershipID)
 	if aerr != nil {
 		if aerr.code == "forbidden_tenant" {
-			return "skipped_membership_inactive", "", nil
+			return statusMembershipInactive, "", nil
 		}
 		return "", "", fmt.Errorf("resolve membership: %s", aerr.message)
 	}

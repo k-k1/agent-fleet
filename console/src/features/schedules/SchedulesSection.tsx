@@ -19,6 +19,7 @@ import { useDismiss } from "../../lib/useDismiss.ts";
 import { useMenuRoving } from "../../lib/useMenuRoving.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { t, useT } from "../../lib/i18n/index.ts";
+import { errText } from "../../core/api/client.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { openSessionChat, openSessionTerminal } from "../sessions/open.ts";
@@ -47,6 +48,7 @@ import { ScheduleDetailModal } from "./ScheduleDetailModal.tsx";
 import {
   type ScheduleDTO,
   type ScheduleRun,
+  readScheduleList,
   scheduleTitle,
   specSummary,
   statusTone,
@@ -300,6 +302,10 @@ export function SchedulesSection() {
 
   const [items, setItems] = useState<ScheduleDTO[]>([]);
   const [loaded, setLoaded] = useState(false);
+  // 取得失敗の理由（"" = 成功）。空一覧と失敗を同じ見た目にしないための state。
+  const [loadErr, setLoadErr] = useState("");
+  // 「再試行」で load を走らせ直すための世代カウンタ（effect の dep）。
+  const [reloadTick, setReloadTick] = useState(0);
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [openRuns, setOpenRuns] = useState<string | null>(null);
   const [runs, setRuns] = useState<Record<string, ScheduleRun[]>>({});
@@ -328,14 +334,21 @@ export function SchedulesSection() {
     [convs, sessions],
   );
 
-  // Refetch on mount / tenant switch, and poll while mounted (CP is pull-only — no push).
+  // Refetch on mount / tenant switch / retry, and poll while mounted (CP is pull-only —
+  // no push). A failed fetch keeps the rows already on screen and surfaces the reason: it
+  // must never read as "there are no schedules" (readScheduleList).
   useEffect(() => {
     let alive = true;
     const load = () =>
       scheduleList()
         .then((res) => {
           if (!alive) return;
-          const arr = Array.isArray(res) ? (res as ScheduleDTO[]) : [];
+          const { items: arr, error } = readScheduleList(res);
+          if (!arr) {
+            setLoadErr(errText(error) || t("sched.load_failed"));
+            return;
+          }
+          setLoadErr("");
           const ser = JSON.stringify(arr);
           if (ser !== serRef.current) {
             serRef.current = ser;
@@ -343,14 +356,17 @@ export function SchedulesSection() {
           }
           setLoaded(true);
         })
-        .catch(() => {});
+        .catch(() => {
+          // Thrown = the network dropped (api() resolves CP errors instead).
+          if (alive) setLoadErr(t("sched.load_failed"));
+        });
     load();
     const id = setInterval(load, POLL_MS);
     return () => {
       alive = false;
       clearInterval(id);
     };
-  }, [tenant]);
+  }, [tenant, reloadTick]);
 
   const sorted = useMemo(() => sortSchedules(items), [items]);
   const scoped = useMemo(() => (wset ? sorted.filter((s) => scheduleInSet(wset, s, wctx)) : sorted), [sorted, wset, wctx]);
@@ -449,9 +465,19 @@ export function SchedulesSection() {
 
   return (
     <Section id="schedules" title={tr("sched.title")} icon="watch" count={activeCount}>
-      {loaded && items.length === 0 ? (
+      {/* 取得失敗は「空」と別物として出す（直前まで表示していた行は残す）。 */}
+      {loadErr && (
+        <div className="sched-load-err" role="status" title={loadErr}>
+          <Icon name="warning" />
+          <span className="sched-load-err-msg">{tr("sched.load_failed")}</span>
+          <button type="button" className="sched-retry" onClick={() => setReloadTick((n) => n + 1)}>
+            {tr("sched.retry")}
+          </button>
+        </div>
+      )}
+      {!loadErr && loaded && items.length === 0 ? (
         <div className="pane-empty">{tr("sched.empty")}</div>
-      ) : loaded && scoped.length === 0 ? (
+      ) : !loadErr && loaded && scoped.length === 0 ? (
         // グループで絞った結果の空（スケジュール自体はある）— 真の空とは区別する。
         <div className="pane-empty">{tr("wset.no_schedules")}</div>
       ) : (
