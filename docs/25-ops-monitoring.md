@@ -262,6 +262,21 @@ awslabs cloudwatch-mcp-server の裏取り（2026-07-14, 公式 docs）: **全�
 versions.json `aws_mcp_proxy`、e2e-smoke のピン照合）、Console 運用タブに「クラウド（構築・運用）」
 カテゴリと AWS カード、SRE アシスタントの integrations に `aws` を追加。
 
+**ツールのバージョン表（2026-08-06 追加）**: 設定→環境の版一覧（`env_tool_versions.go`）は
+エージェント CLI しか並べていなかったので、**AWS / ops MCP 系 4 つ**（`awscli` / `mcp-grafana` /
+`cloudwatch-mcp` / `aws-mcp`）を追加した。ピンずれと home shadow が起きる条件は CLI と同じ
+（`install-awscli` は `~/.local/bin` へ入れる、grafana の fallback も `~/.local/bin` を見る）で、
+lean variant では焼き込みが無く versions.json のピンだけが手掛かりになるのに、Console からは
+何も見えなかった。Python 製の 2 つは**実行して版を訊けない**（cloudwatch は `--version` で
+**サーバーが起動**してメトリクスメタデータ 1179 件をロードする、AWS MCP プロキシは `--version`
+自体が無く argparse に弾かれて exit 2・stdout 空、版は `--help` の 13 行目にしかない）ので、
+`toolSpec.PyDist` を足して **exec せず** uv の venv の dist-info 名（PEP 427 正規化で `-`→`_`：
+`mcp_proxy_for_aws-1.6.4.dist-info`）から読む。焼き込み（`/usr/local/share/uv/tools`）と
+ユーザー導入（`~/.local/share/uv/tools`）の root は実体が home 配下かで選び分ける
+（3 列の意味と一致するので、パスを遡らない ＝ shim がコピーの uv 版でも壊れない）。
+コンテナ実測: `awscli 2.36.4` / `mcp-grafana 0.17.1` / `cloudwatch-mcp 0.1.4` が実効・焼き込み
+とも表示（`aws-mcp` は現行イメージに未焼き込みのため、再ビルド後に同様に出る）。
+
 **検証（2026-08-06）**: `workspace/agent` をビルドして隔離 HOME + 実プロファイルで
 `workspace-agent mcp-run aws` を JSON-RPC で通し、**既定 = 6 ツール / `write=true` = 9 ツール /
 未接続 = exit 1 とエラー行**を実測。ユニットテストは `awsMCPArgs`（既定 read-only・metadata・
