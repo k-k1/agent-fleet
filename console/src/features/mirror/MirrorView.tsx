@@ -99,6 +99,7 @@ import {
   buildRespondAnswers,
   buildSinglePickKeys,
 } from "./questionKeys.ts";
+import { previewBody } from "./optionPreview.ts";
 import { parseQuestionAnswers, resolveAnswer } from "./questionAnswers.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { useDismiss } from "../../lib/useDismiss.ts";
@@ -158,6 +159,9 @@ const INTERACT_HOLD_MS = 600;
 interface QuestionOption {
   label: string;
   description?: string;
+  // A mockup / snippet attached to this option so the choices can be compared before one
+  // is picked (claude's AskUserQuestion `preview`). Rendered verbatim — see optionPreview.
+  preview?: string;
 }
 interface Question {
   id?: string; // managed: 応答先 Interaction の id（docs/27 §5）。tui 由来は空
@@ -4451,6 +4455,25 @@ function ToolRun({ tools, onOpenDiff }: { tools: { p: Part; i: number }[]; onOpe
   );
 }
 
+// One option's body — label, description, and (when the agent attached one) its preview.
+// Shared by the pending form and the answered card so a preview can never show up in one
+// and not the other. Everything is a <span>: the body lives inside a <button>, which may
+// only contain phrasing content, so a <pre> here would be invalid markup.
+function OptionBody({ o }: { o: QuestionOption }) {
+  const preview = previewBody(o.preview);
+  return (
+    <span className="mq-opt-body">
+      <span className="mq-opt-label">{o.label}</span>
+      {o.description && <span className="mq-opt-desc">{o.description}</span>}
+      {preview && <span className="mq-opt-preview">{preview}</span>}
+    </span>
+  );
+}
+
+// Does any option carry a preview? Mockups need the card's full width, so the options
+// then stack in ONE column instead of the usual ~220px auto-fit grid.
+const hasPreview = (qs: Question[]) => qs.some((q) => (q.options || []).some((o) => previewBody(o.preview) !== ""));
+
 // PendingQuestions is the interactive form for the currently-awaiting AskUserQuestion.
 // One question with a single choice → click answers immediately via named keys
 // (Down×i, Enter). Multi-select or multiple questions → build a selection, then
@@ -4572,6 +4595,7 @@ function PendingQuestions({
     onSubmitSeq(buildClaudeSeq(qs, sel, freeText));
   };
 
+  const wide = hasPreview(qs);
   return (
     <div className="mt-question">
       {qs.map((qn, qi) => (
@@ -4587,7 +4611,7 @@ function PendingQuestions({
             {qn.multiSelect && <span className="mq-multi muted">{tr("mirror.multi_select")}</span>}
           </div>
           {qn.question && <div className="mq-text">{qn.question}</div>}
-          <div className="mq-options">
+          <div className={"mq-options" + (wide ? " wide" : "")}>
             {(qn.options || []).map((o, oi) => {
               const checked = (sel[qi] || []).includes(o.label);
               // Single-select single question (claude and menu alike): key-drive the
@@ -4610,10 +4634,7 @@ function PendingQuestions({
                   {!single && (
                     <span className="mq-mark">{qn.multiSelect ? (checked ? "☑" : "☐") : checked ? "◉" : "○"}</span>
                   )}
-                  <span className="mq-opt-body">
-                    <span className="mq-opt-label">{o.label}</span>
-                    {o.description && <span className="mq-opt-desc">{o.description}</span>}
-                  </span>
+                  <OptionBody o={o} />
                 </button>
               );
             })}
@@ -4706,6 +4727,7 @@ function QuestionBlock({
   const qs = questions || [];
   const pairs = parseQuestionAnswers(norm, qs.map((q) => q.question));
   const answerAt = (qi: number) => (pairs.length ? pairs[qi] || "" : norm);
+  const wide = hasPreview(qs);
   return (
     <div className={"mt-question" + (answered ? " answered" : "")}>
       {qs.map((qn, qi) => {
@@ -4727,7 +4749,7 @@ function QuestionBlock({
               {answered && <span className="mq-done muted">{tr("mirror.answered")}</span>}
             </div>
             {qn.question && <div className="mq-text">{qn.question}</div>}
-            <div className="mq-options">
+            <div className={"mq-options" + (wide ? " wide" : "")}>
               {opts.map((o, oi) => {
                 const sel = chosenSet.has(o.label);
                 return (
@@ -4739,10 +4761,7 @@ function QuestionBlock({
                     title={o.description || o.label}
                   >
                     <span className="mq-mark">{qn.multiSelect ? (sel ? "☑" : "☐") : sel ? "◉" : "○"}</span>
-                    <span className="mq-opt-body">
-                      <span className="mq-opt-label">{o.label}</span>
-                      {o.description && <span className="mq-opt-desc">{o.description}</span>}
-                    </span>
+                    <OptionBody o={o} />
                   </button>
                 );
               })}
