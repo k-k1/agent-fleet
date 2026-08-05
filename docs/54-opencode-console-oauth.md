@@ -199,3 +199,40 @@ adopt するので直らない。反映パスは generation++ ＋ drain ＝ `Sup
 カタログの縮小そのもの（61 → 8）は、APIキーがある環境では鍵が覆い隠すため単独では
 観測できない。削除経路も `ConnectionUpdated` を publish するので、ログインと同じく
 プラグインの購読で catalog.reload() まで走るはず、というのが現時点の根拠。
+
+## 54.7 利用枠（Go）の導線 — 数値は取り込めない
+
+利用枠の画面（`https://opencode.ai/workspace/{wrk}/go`。ローリング/週間/月間の利用率と
+リセットまでの時間が出る）を Console から扱いたい、という要求に対する到達点。**実測の
+結論は「ID は持てる／数値は取り込めない」**:
+
+| 試したこと | 結果 |
+| --- | --- |
+| `GET https://opencode.ai/workspace/{wrk}/go` を素で取得 | **302 → `/auth/authorize`**（ブラウザセッション前提） |
+| `https://opencode.ai/api/…`（workspace/usage 系を数種） | すべて **404**（この画面向けの JSON API は無い） |
+| `GET https://console.opencode.ai/api/orgs` / `/api/user` | **401 `{"_tag":"Unauthorized"}`** — 経路は存在し Bearer を受ける（CLI がここで `orgID` を取る） |
+| `GET https://console.opencode.ai/api/usage` | **404**（利用枠の API は無い） |
+
+つまり `wrk_…` は「アクセストークンがあれば `/api/orgs` から引ける」が、そのトークンは
+opencode 自身の資格情報ストア（SQLite）にあり読み出す口が無い（`/api/credential/{id}` は
+PATCH と DELETE だけ）。数値に至っては API 自体が存在しない。
+
+そこで実装したのは 2 つだけ:
+
+1. **workspace ID を持つ** — 手入力（利用枠ページの URL から）と、失敗からの自動学習。
+   保存先は Agent のデータディレクトリ（`opencode-workspace.json`）。ID は秘密ではなく
+   URL のパス片なので、封印ストアには置かない。学習が手入力を上書きすることはない。
+2. **上限に当たったときの枠情報を見せる** — 失敗の decode 地点（`errorEnvelope.pick`）で
+   `scanFailure` が拾う。材料は opencode 本体が読むのと同じ場所:
+   - 文面の billing/go URL（残高切れは `…/workspace/wrk_x/billing` を含む — 実測）
+   - `data.metadata.workspace` / `limitName`
+   - `data.responseBody` を JSON として読み直した `metadata`（本体と同じ読み方）
+   - `data.responseHeaders["retry-after"]` → リセット時刻（秒数と HTTP-date の両方）
+   どれも optional で、載っていない版・載っていない失敗では静かに空になる。
+
+Console は ID があれば「Go の利用状況を開く」リンクと、観測できた直近の上限
+（枠名＋リセット時刻）をカードに出す。**利用率の % は出さない** — 取得手段が無いものを
+それらしく見せない。
+
+（残る選択肢としては、Chromium アタッチで利用者自身のブラウザセッションを使って開く／
+上流に API を要望する、の 2 つ。どちらも自動取得ではない。）

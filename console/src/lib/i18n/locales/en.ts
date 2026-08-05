@@ -1022,6 +1022,13 @@ export const en: Record<keyof typeof ja, string> = {
   "agents.oc_account_disabled": "Managed opencode is off in this workspace, so account sign-in isn't available.",
   "agents.oc_desc": "Save API keys for multiple providers and inject them as env when opencode launches.",
   "agents.oc_hint": " to sign in → billing → issue an API key and paste it (the same key works for Zen too).",
+  "agents.oc_ws_open": "Open Go usage ↗",
+  "agents.oc_ws_desc":
+    "Register the workspace ID (wrk_…) from the usage page URL to open it straight from this card. The usage percentages can't be pulled in — opencode.ai has no API for them and the page needs a browser login. When a limit is hit, what it reported shows up here.",
+  "agents.oc_ws_placeholder": "wrk_… (from the usage page URL)",
+  "agents.oc_ws_edit": "Change",
+  "agents.oc_ws_limit": "Last limit: {name} (resets {at})",
+  "agents.oc_ws_limit_unknown": "unknown window",
   "agents.oc_usage": "Route",
   "agents.oc_usage_free": "Free tier",
   "agents.oc_usage_go": "Go",

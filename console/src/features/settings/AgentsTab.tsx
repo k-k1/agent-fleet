@@ -1374,6 +1374,77 @@ function OpencodeUsageRow() {
   );
 }
 
+// 利用枠の導線（docs/54 §54.7）。opencode.ai の利用枠ページはブラウザセッション前提で、
+// 数値を取り込む API が無い（実測: ページは /auth/authorize へ 302、console 側 API に
+// usage は無い）。だから Console が持てるのは workspace ID と、そこへのリンクと、上限に
+// 当たったときにエラーが運んできた枠情報だけ。ID は手入力でも、失敗から自動で学習しても
+// 埋まる（学習が手入力を上書きすることはない）。
+function OpencodeWorkspaceRow({ st, reload }: { st: any; reload: () => void }) {
+  const tr = useT();
+  const toast = useToast();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const id = st?.workspace_id || "";
+  const url = st?.workspace_url || "";
+  const limit = st?.last_limit;
+
+  const save = async (value: string) => {
+    const res = await apiJSON("api/connections/opencode/workspace", "PUT", { id: value });
+    if (res && res.error) {
+      toast(tr("common.save_failed_msg", { msg: String(res.error.message || res.error) }));
+      return;
+    }
+    setEditing(false);
+    setDraft("");
+    reload();
+  };
+
+  return (
+    <div className="p-body">
+      {id && url ? (
+        <>
+          <div className="p-who">
+            <a href={url} target="_blank" rel="noopener" className="flow-link">
+              {tr("agents.oc_ws_open")}
+            </a>
+            <button className="ghost" onClick={() => { setDraft(id); setEditing(true); }}>
+              {tr("agents.oc_ws_edit")}
+            </button>
+          </div>
+          {limit && (limit.name || limit.reset_at) && (
+            <Hint>
+              {tr("agents.oc_ws_limit", {
+                name: limit.name || tr("agents.oc_ws_limit_unknown"),
+                at: limit.reset_at ? new Date(limit.reset_at).toLocaleString() : "-",
+              })}
+            </Hint>
+          )}
+        </>
+      ) : (
+        <div className="p-desc">{tr("agents.oc_ws_desc")}</div>
+      )}
+      {(editing || !id) && (
+        <div className="flow">
+          <input
+            className="cinput"
+            placeholder={tr("agents.oc_ws_placeholder")}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          <button disabled={!draft.trim()} onClick={() => void save(draft.trim())}>
+            {tr("common.save")}
+          </button>
+          {id && (
+            <button className="ghost" onClick={() => { setEditing(false); setDraft(""); }}>
+              {tr("common.cancel")}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function OpencodeCard({
   running,
   st,
@@ -1548,6 +1619,7 @@ function OpencodeCard({
             )}
             <p className="ps-note">{tr("agents.oc_account_note")}</p>
           </div>
+          {usage !== "free" && <OpencodeWorkspaceRow st={st} reload={reload} />}
           <div className="p-desc">{tr("agents.oc_desc")}</div>
           <div className="p-body">
             {preset === "go" && (

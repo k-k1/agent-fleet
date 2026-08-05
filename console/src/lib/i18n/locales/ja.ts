@@ -1027,6 +1027,13 @@ export const ja = {
   "agents.oc_account_disabled": "この Workspace ではマネージドの opencode が無効なため、アカウントのサインインは使えません。",
   "agents.oc_desc": "複数プロバイダの API キーを保存し、opencode 起動時に env として注入します。",
   "agents.oc_hint": " でサインイン → 課金設定 → API キーを発行して貼り付け（同じキーで Zen も利用可）。",
+  "agents.oc_ws_open": "Go の利用状況を開く ↗",
+  "agents.oc_ws_desc":
+    "利用枠ページの URL に含まれる workspace ID（wrk_…）を登録すると、このカードから利用状況を開けます。利用率の数値は opencode.ai 側に API が無いため取り込めません（ページはブラウザのログインが必要です）。上限に当たったときは、その内容をここに表示します。",
+  "agents.oc_ws_placeholder": "wrk_… （利用枠ページの URL から）",
+  "agents.oc_ws_edit": "変更",
+  "agents.oc_ws_limit": "直近の上限: {name}（{at} にリセット）",
+  "agents.oc_ws_limit_unknown": "枠不明",
   "agents.oc_usage": "使う枠",
   "agents.oc_usage_free": "無料枠",
   "agents.oc_usage_go": "Go",

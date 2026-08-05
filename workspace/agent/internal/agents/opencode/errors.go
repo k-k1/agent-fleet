@@ -39,12 +39,22 @@ import (
 const abortedErrorName = "MessageAbortedError"
 
 // messageError is the wire shape of an assistant message's `error` field.
+//
+// responseBody / responseHeaders / metadata は上限や残高の失敗にだけ現れる付随情報
+// （workspaceid.go）。opencode 本体も同じ場所を読んで「どの枠が・いつ戻るか」を出して
+// いる。載っていない版・載っていない失敗では素直に空になる（全部 optional）。
 type messageError struct {
 	Name string `json:"name"`
 	Data struct {
-		Message    string `json:"message"`
-		StatusCode int    `json:"statusCode"`
-		ProviderID string `json:"providerID"`
+		Message         string            `json:"message"`
+		StatusCode      int               `json:"statusCode"`
+		ProviderID      string            `json:"providerID"`
+		ResponseBody    string            `json:"responseBody"`
+		ResponseHeaders map[string]string `json:"responseHeaders"`
+		Metadata        struct {
+			Workspace string `json:"workspace"`
+			LimitName string `json:"limitName"`
+		} `json:"metadata"`
 	} `json:"data"`
 }
 
@@ -112,6 +122,9 @@ func (w errorEnvelope) pick() (messageError, bool) {
 	if e == nil || !e.ok() {
 		return messageError{}, false
 	}
+	// 失敗はここに必ず集まるので、workspace id と枠情報の採取もここに置く
+	// （workspaceid.go）。採れなければ何もしない。
+	scanFailure(*e)
 	return *e, true
 }
 
