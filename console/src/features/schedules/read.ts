@@ -72,6 +72,28 @@ export interface ScheduleRun {
   trigger?: string;
 }
 
+// --- List payload classification -------------------------------------------------
+// api() RESOLVES a CP error as { error } instead of throwing, so "not an array" is the
+// normal shape of a 401 / 5xx here. Reading that as an empty list is how a failed fetch
+// turned into 「定時実行はまだありません」 — the one message that makes a user believe the
+// schedule they just created is gone. Callers keep the rows they already have and show
+// the failure instead.
+export interface ScheduleListResult {
+  /** Rows to adopt, or null when nothing could be read (keep the previous ones). */
+  items: ScheduleDTO[] | null;
+  /** The CP's error payload when there is one, for the caller to run through errText.
+   * null when the payload was neither a list nor an {error} (an old CP / a proxy page)
+   * — still a failure, just without a reason to quote. Rendering stays the caller's job
+   * so this module keeps its no-DOM, no-api-client contract. */
+  error: { code?: string; message?: string } | string | null;
+}
+
+export function readScheduleList(res: unknown): ScheduleListResult {
+  if (Array.isArray(res)) return { items: res as ScheduleDTO[], error: null };
+  const err = (res as { error?: { code?: string; message?: string } | string } | null | undefined)?.error;
+  return { items: null, error: err ?? null };
+}
+
 // A run/last_status token maps to one of four tones so the dot + label read consistently
 // with the rest of the console (--ok / --warn / --danger / --muted). The scheduler emits:
 // "fired"/"fired_noop" (success), "skipped_*" (a soft skip), "error:*" (a hard failure),

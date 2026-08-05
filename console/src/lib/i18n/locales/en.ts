@@ -2014,6 +2014,8 @@ export const en: Record<keyof typeof ja, string> = {
   "sched.run_now": "Run now",
   "sched.history": "Run history",
   "sched.loading": "Loading…",
+  "sched.load_failed": "Couldn't load schedules",
+  "sched.retry": "Retry",
   "sched.no_runs": "No runs yet.",
   "sched.paused": "Schedule paused",
   "sched.resumed": "Schedule resumed",

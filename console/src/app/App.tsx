@@ -105,7 +105,12 @@ export function App() {
   const identityRev = useTenantStore((s) => s.identityRev);
   // Deployment gate: only show the schedules rail when the CP scheduler is enabled
   // (AF_SCHEDULER_INTERVAL set) — otherwise schedules can never fire, so hide the section.
-  const schedulerEnabled = useTenantStore((s) => !!s.whoami?.scheduler_enabled);
+  // An UNRESOLVED identity (whoami errored / the CP was down at boot) fails OPEN: hiding a
+  // whole feature because a capability flag could not be read reads as "my schedules are
+  // gone", which is worse than showing a section the deployment may not drive. Only an
+  // answered whoami can hide it — and that answer is re-read on push reconnect (wire.ts),
+  // so enabling the scheduler no longer needs a browser reload.
+  const schedulerEnabled = useTenantStore((s) => (s.whoami ? !!s.whoami.scheduler_enabled : true));
   const layout = useLayoutStore((s) => s.layout);
   const settingsOpen = useSettingsUI((s) => s.settingsOpen);
   const adminOpen = useSettingsUI((s) => s.adminOpen);

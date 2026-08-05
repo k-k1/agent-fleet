@@ -111,6 +111,53 @@ describe("push events hub", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1); // 即リトライの嵐にしない（5 分後に再確認）
   });
 
+  // 再接続フック: ブート時しか読まない状態（whoami のデプロイ capability）を
+  // CP 再起動後に読み直すための入口。接続の度に呼ばれ、切断では呼ばれない。
+  it("fires connect handlers on every (re)connection, not on disconnect", async () => {
+    const sse1 = sseResponse();
+    fetchMock.mockResolvedValue(sse1.res);
+    let connects = 0;
+    const un = push.onPushConnect(() => connects++);
+
+    cleanup = push.startPushChannel();
+    await settle();
+    expect(connects).toBe(1);
+
+    sse1.close(); // 切断そのものでは増えない
+    await settle();
+    expect(connects).toBe(1);
+
+    const sse2 = sseResponse();
+    fetchMock.mockResolvedValue(sse2.res);
+    push.restartPush();
+    await settle();
+    expect(connects).toBe(2);
+
+    un();
+    const sse3 = sseResponse();
+    fetchMock.mockResolvedValue(sse3.res);
+    push.restartPush();
+    await settle();
+    expect(connects).toBe(2); // 解除後は呼ばれない
+  });
+
+  it("isolates a throwing connect handler from the stream", async () => {
+    const sse = sseResponse();
+    fetchMock.mockResolvedValue(sse.res);
+    const un1 = push.onPushConnect(() => {
+      throw new Error("boom");
+    });
+    let ok = 0;
+    const un2 = push.onPushConnect(() => ok++);
+
+    cleanup = push.startPushChannel();
+    await settle();
+    expect(ok).toBe(1);
+    expect(push.pushHealthy()).toBe(true);
+    un1();
+    un2();
+  });
+
   it("isolates a throwing handler from the rest", async () => {
     const sse = sseResponse();
     fetchMock.mockResolvedValue(sse.res);
