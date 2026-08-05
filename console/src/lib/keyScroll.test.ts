@@ -23,27 +23,27 @@ const key = (k: string, mods: Partial<{ shift: boolean; ctrl: boolean; meta: boo
 };
 
 describe("scrollComposerViewport", () => {
-  it("Shift+↓/↑ nudges by a line step and consumes the event", () => {
+  it("Ctrl/⌘+↓/↑ nudges by a line step and consumes the event", () => {
     const el = makeEl(400);
-    const down = key("ArrowDown", { shift: true });
+    const down = key("ArrowDown", { ctrl: true });
     expect(scrollComposerViewport(down.ev, el)).toBe(true);
     expect(el.scrollTop).toBe(448);
     expect(down.wasPrevented()).toBe(true);
 
-    const up = key("ArrowUp", { shift: true });
+    const up = key("ArrowUp", { meta: true });
     expect(scrollComposerViewport(up.ev, el)).toBe(true);
     expect(el.scrollTop).toBe(400);
   });
 
-  it("Ctrl/⌘+↑/↓ pages by ~viewport height", () => {
+  it("PageUp/PageDown page by ~viewport height", () => {
     const el = makeEl(400);
-    expect(scrollComposerViewport(key("ArrowDown", { ctrl: true }).ev, el)).toBe(true);
+    expect(scrollComposerViewport(key("PageDown").ev, el)).toBe(true);
     expect(el.scrollTop).toBe(552); // 400 + (200 - 48)
-    expect(scrollComposerViewport(key("ArrowUp", { meta: true }).ev, el)).toBe(true);
+    expect(scrollComposerViewport(key("PageUp").ev, el)).toBe(true);
     expect(el.scrollTop).toBe(400);
   });
 
-  it("Ctrl/⌘+[ / ] page just like the arrows", () => {
+  it("Ctrl/⌘+[ / ] page just like PageUp/PageDown", () => {
     const el = makeEl(400);
     expect(scrollComposerViewport(key("]", { ctrl: true }).ev, el)).toBe(true);
     expect(el.scrollTop).toBe(552);
@@ -51,29 +51,48 @@ describe("scrollComposerViewport", () => {
     expect(el.scrollTop).toBe(400);
   });
 
+  it("Ctrl/⌘+End goes to the bottom, or hands off to onBottom", () => {
+    const el = makeEl(400);
+    const end = key("End", { ctrl: true });
+    expect(scrollComposerViewport(end.ev, el)).toBe(true);
+    expect(el.scrollTop).toBe(800); // scrollHeight - clientHeight
+    expect(end.wasPrevented()).toBe(true);
+
+    const owned = makeEl(400);
+    let jumped = 0;
+    expect(scrollComposerViewport(key("End", { meta: true }).ev, owned, () => jumped++)).toBe(true);
+    expect(jumped).toBe(1);
+    expect(owned.scrollTop).toBe(400); // the caller owns the move
+  });
+
   it("clamps at the edges but still consumes the key", () => {
     const top = makeEl(0);
-    const u = key("ArrowUp", { shift: true });
+    const u = key("ArrowUp", { ctrl: true });
     expect(scrollComposerViewport(u.ev, top)).toBe(true);
     expect(top.scrollTop).toBe(0);
     expect(u.wasPrevented()).toBe(true); // consumed so it can't fall through to history recall
 
     const bottom = makeEl(800);
-    expect(scrollComposerViewport(key("ArrowDown", { ctrl: true }).ev, bottom)).toBe(true);
+    expect(scrollComposerViewport(key("PageDown").ev, bottom)).toBe(true);
     expect(bottom.scrollTop).toBe(800);
   });
 
-  it("ignores plain / unmodified arrows and other keys", () => {
+  it("leaves Shift and plain arrows to the textarea (selection / caret / history)", () => {
     const el = makeEl(400);
+    expect(scrollComposerViewport(key("ArrowUp", { shift: true }).ev, el)).toBe(false);
+    expect(scrollComposerViewport(key("ArrowDown", { shift: true }).ev, el)).toBe(false);
+    expect(scrollComposerViewport(key("PageUp", { shift: true }).ev, el)).toBe(false);
+    expect(scrollComposerViewport(key("End", { ctrl: true, shift: true }).ev, el)).toBe(false);
     expect(scrollComposerViewport(key("ArrowUp").ev, el)).toBe(false);
     expect(scrollComposerViewport(key("ArrowDown").ev, el)).toBe(false);
+    expect(scrollComposerViewport(key("End").ev, el)).toBe(false); // plain End = end of line
     expect(scrollComposerViewport(key("[", { shift: true }).ev, el)).toBe(false);
     expect(scrollComposerViewport(key("a", { ctrl: true }).ev, el)).toBe(false);
     expect(el.scrollTop).toBe(400); // untouched
   });
 
   it("no-ops on a null element", () => {
-    expect(scrollComposerViewport(key("ArrowDown", { shift: true }).ev, null)).toBe(false);
+    expect(scrollComposerViewport(key("ArrowDown", { ctrl: true }).ev, null)).toBe(false);
   });
 });
 
