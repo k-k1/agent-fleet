@@ -1024,8 +1024,8 @@ export const en: Record<keyof typeof ja, string> = {
   "agents.oc_hint": " to sign in → billing → issue an API key and paste it (the same key works for Zen too).",
   "agents.oc_ws_open": "Open Go usage ↗",
   "agents.oc_ws_desc":
-    "Register the workspace ID (wrk_…) from the usage page URL to open it straight from this card. The usage percentages can't be pulled in — opencode.ai has no API for them and the page needs a browser login. When a limit is hit, what it reported shows up here.",
-  "agents.oc_ws_placeholder": "wrk_… (from the usage page URL)",
+    "Paste the usage page URL (or just the wrk_… id) to open it straight from this card. The usage percentages can't be pulled in — opencode.ai has no API for them and the page needs a browser login. When a limit is hit, what it reported shows up here.",
+  "agents.oc_ws_placeholder": "The usage page URL, or wrk_…",
   "agents.oc_ws_edit": "Change",
   "agents.oc_ws_limit": "Last limit: {name} (resets {at})",
   "agents.oc_ws_limit_unknown": "unknown window",

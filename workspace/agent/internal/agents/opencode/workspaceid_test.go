@@ -168,3 +168,44 @@ func TestWorkspaceIDPersists(t *testing.T) {
 		t.Errorf("再読込 = %q/%q", id, src)
 	}
 }
+
+// 実機で踏んだ: 利用枠ページの URL をそのまま貼るのが自然な操作なのに、検証が
+// 「どこかに wrk_ があればOK」だったので URL が丸ごと保存され、リンクが
+// …/workspace/https://…/go/go に化けた。貼られた文字列からは id だけを取り出す。
+func TestPastedURLIsNormalizedToID(t *testing.T) {
+	isolate(t)
+	url := "https://opencode.ai/workspace/" + sampleWorkspace + "/go"
+	if err := SetWorkspaceID(url); err != nil {
+		t.Fatal(err)
+	}
+	id, _ := WorkspaceID()
+	if id != sampleWorkspace {
+		t.Fatalf("WorkspaceID = %q, want %q", id, sampleWorkspace)
+	}
+	if got := WorkspaceURL(id, "go"); got != url {
+		t.Errorf("WorkspaceURL = %q, want %q", got, url)
+	}
+	if got := NormalizeWorkspaceID("  " + sampleWorkspace + "  "); got != sampleWorkspace {
+		t.Errorf("素の id も通ること: %q", got)
+	}
+	if got := NormalizeWorkspaceID("wrk_short"); got != "" {
+		t.Errorf("形式外は空: %q", got)
+	}
+}
+
+// 正規化前に書かれたファイル（URL 丸ごと）は、読むだけで直ること。
+func TestLegacyURLValueHealsOnRead(t *testing.T) {
+	isolate(t)
+	url := "https://opencode.ai/workspace/" + sampleWorkspace + "/go"
+	wsIDMu.Lock()
+	if err := saveWorkspaceIDLocked(workspaceState{ID: url, Source: "manual", At: nowRFC3339()}); err != nil {
+		wsIDMu.Unlock()
+		t.Fatal(err)
+	}
+	wsIDCache = nil // 次の読み出しでファイルから読み直す
+	wsIDMu.Unlock()
+
+	if id, src := WorkspaceID(); id != sampleWorkspace || src != "manual" {
+		t.Errorf("読み出しで直っていない: %q/%q", id, src)
+	}
+}
