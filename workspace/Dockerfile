@@ -237,10 +237,10 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 換えて再ビルド → 各 Workspace を Stop→Start。latest の確認は `npm view <pkg> version`。
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
-ARG CLAUDE_CODE_VERSION=2.1.220
-ARG OPENCODE_VERSION=1.18.11
+ARG CLAUDE_CODE_VERSION=2.1.222
+ARG OPENCODE_VERSION=1.18.13
 ARG CODEX_VERSION=0.146.0
-ARG COPILOT_VERSION=1.0.77
+ARG COPILOT_VERSION=1.0.78
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
         "opencode-ai@${OPENCODE_VERSION}" \
@@ -264,10 +264,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # 注意: agy は Go BoringCrypto(FIPS) ビルドで、x86 では RDRAND 命令が無いホストだと
 # 起動即 SIGABRT する（0008 PoC: Ryzen Embedded R2514）。RDRAND 非提示のビルドホスト
 # でもイメージは焼けるよう、起動を伴う --version 検証は rdrand 提示時だけ行う。
-ARG AGY_VERSION=1.1.9
-ARG AGY_RELEASE_BUILD=6572839516635136
-ARG AGY_SHA256_X64=467809635ef00660497607111547e80a0a863c6e8fce43b507cd1ba6bf6ddd66
-ARG AGY_SHA256_ARM64=deeb815d07a656074482b2e428ffd9794a2fffbf5df2056e9bf75936b85ebb49
+ARG AGY_VERSION=1.1.10
+ARG AGY_RELEASE_BUILD=6423386432339968
+ARG AGY_SHA256_X64=9e94cfffa869ee2bf9ab32e05eff3baa4661b66d5e00a2fd40a8c5dc6f9bd450
+ARG AGY_SHA256_ARM64=4308f85b1dd4f6b5654ea5f7a0962a482f33acf8169b2e6ac4aecdb209d13411
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -349,9 +349,9 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # `app.disableAutoupdates` で止める設定型なので、封殺は runtime（entrypoint 起動毎再固定
 # ＋ 縦割りの ensureSettings）に寄せる（copilot の COPILOT_AUTO_UPDATE とは違い build ENV
 # では止められない）。
-ARG KIRO_VERSION=2.16.0
-ARG KIRO_SHA256_X64=a7b9b3b2d159dfcf596c4400fcd9c9b13c457e9bae0c77ef3e48db931d261b60
-ARG KIRO_SHA256_ARM64=b6df9059018d34eb726a6a20c3ab1607fff5c103dbb5ce45c2c69562afb63c8c
+ARG KIRO_VERSION=2.16.1
+ARG KIRO_SHA256_X64=a799286f193c81872d4fad78abcab74104dbe0059f1ebcae3af18c4fb6d2d68c
+ARG KIRO_SHA256_ARM64=18e2f9af55e0e634fb1ea864f4f63feb1bdeb42419b157c4586c89efa8e6d3ba
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
