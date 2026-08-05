@@ -2185,13 +2185,16 @@ export function MirrorView({
         return;
       }
     }
-    // Scroll the transcript without leaving the composer: Shift+↑/↓ nudges, Ctrl/⌘+↑/↓
-    // and Ctrl/⌘+[ / ] page. Checked before history recall so the modified arrows don't
-    // get swallowed by the ↑/↓ recall path below.
-    if (!e.nativeEvent.isComposing && scrollComposerViewport(e, bodyRef.current)) return;
+    // Scroll the transcript without leaving the composer: Ctrl/⌘+↑/↓ nudges, PageUp/PageDown
+    // (and Ctrl/⌘+[ / ]) page, Ctrl/⌘+End snaps to the newest turn and re-arms auto-follow.
+    // Checked before history recall so the modified arrows don't get swallowed by the ↑/↓
+    // recall path below.
+    if (!e.nativeEvent.isComposing && scrollComposerViewport(e, bodyRef.current, jumpToBottom)) return;
     // Shell-style history: ↑/↓ recall past prompts when the field is empty (or once
-    // recall is underway). With text present, arrows move the caret as usual.
-    if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.nativeEvent.isComposing) {
+    // recall is underway). With text present, arrows move the caret as usual. Only the BARE
+    // arrows recall — Shift+↑/↓ must stay the textarea's select-by-line (it no longer scrolls
+    // the transcript, so without this guard it would fall through to recall here).
+    if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.nativeEvent.isComposing && !e.shiftKey && !e.altKey) {
       if (e.key === "ArrowUp" && (draft === "" || histIdx !== null) && history.length) {
         e.preventDefault();
         recallPrev();
