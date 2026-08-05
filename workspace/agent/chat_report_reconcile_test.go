@@ -262,6 +262,19 @@ func TestReportEvidenceTable(t *testing.T) {
 		{"中断でも busy 証拠が残っていれば待つ（再開済みの可能性）",
 			reportSignals{Abort: true, AbortReason: reportReasonTurnAborted, PaneBusy: true},
 			false, "", "", false},
+		// docs/47 §4-6: 再送で直る中断は Agent 自身が先に再開させる。その間の報告は
+		// 「もう実行済みの依頼」をアシスタントのターンで送るだけなので出さない。
+		{"自動再開が引き受けている中断は報告しない",
+			reportSignals{AbortHeld: true}, false, "", "", false},
+		// 抑止は**マーカー由来の idle 証拠にも**効かなければならない。中断でも Stop が
+		// 鳴る形（利用上限の 429 — docs/47 §4-5）ではマーカーが先に idle+turnEnd になる
+		// ので、Abort を落とすだけだと「素の完了」として誤報告する。
+		{"抑止中はマーカー idle でも完了にしない",
+			with(func(s *reportSignals) { s.AbortHeld = true }), false, "", "", false},
+		// ただしプロセスが死んでいるなら再開する相手が居ない — 異常終了は抑止より強い。
+		{"異常終了は抑止より強い",
+			with(func(s *reportSignals) { s.AbortHeld = true; s.Exit = "oom" }),
+			true, "exit", "oom", true},
 		{"自己申告の早呼びは busy 証拠に止められる",
 			with(func(s *reportSignals) {
 				s.MarkerState, s.SelfReported = "working", true

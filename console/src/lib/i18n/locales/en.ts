@@ -893,6 +893,9 @@ export const en: Record<keyof typeof ja, string> = {
   "agents.claude_rate_limit_resume": "Auto-resume after a usage limit resets",
   "agents.note_claude_rate_limit_resume":
     "When a Claude session is interrupted by its usage limit, a one-time resume is booked to send \"please carry on\" to that session when the limit resets. The booking is deleted after use and never repeats. If the workspace stops while waiting, it is started at the booked time for delivery. The resume is skipped if you are already driving the session then. Reaching the limit and a successful automatic resume are also shown in the notification center. Sessions launched directly from Console are included. Default ON.\nEven when OFF, the limit menu (\"1. Stop and wait for limit to reset / 2. Ask your admin for more usage\") is still confirmed automatically. While the menu is open, the session accepts no input, notifications, or reports, and only the no-cost waiting option is chosen automatically. To pick 2, choose it yourself while the menu is on screen.",
+  "agents.claude_abort_resume": "Auto-resume a cut-off turn",
+  "agents.note_claude_abort_resume":
+    "When a Claude turn is cut off by something that clears on its own (a dropped connection, a temporary rate limit, a stream that timed out with no response), the agent waits a moment and sends \"continue (auto-resume)\" to that session so it picks up where it stopped. The prompt is shown in the mirror as an automatic resume. It re-sends up to twice; if the turn keeps getting cut off it stops and reports to the assistant conversation if there is one (otherwise the notification center keeps it). Cut-offs that re-sending cannot fix — usage limits, an empty balance, a too-long prompt, auth errors — are excluded and reported immediately as before. Sessions launched directly from Console are included. Default ON.\nWhen OFF, a cut-off is reported immediately as before and only sessions with an assistant conversation are resumed via the operator (Settings > Assistant, \"Auto-resume on a cut-off\").",
   "agents.ws_required_title": "Settings run inside the workspace",
   "agents.ws_required_hint": "Connections and agent settings go through the agent / CLI inside the container, so the workspace has to be running.",
   "agents.note_apply": "Connection changes are immediate. See each behavior setting for when it takes effect.",
@@ -1845,6 +1848,9 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.from_schedule_title": "Injected by a scheduled execution (timed fire) — not typed by you.",
   "mirror.from_schedule_manual": "Manual fire",
   "mirror.from_schedule_manual_title": "Injected by a schedule's run-now (manual fire).",
+  "mirror.from_auto_resume": "Auto-resume",
+  "mirror.from_auto_resume_title":
+    "Sent by the agent to carry on after the turn was cut off (dropped connection, temporary rate limit, …) — typed neither by you nor by the assistant.",
   "mirror.from_chat": "From {provider}",
   "mirror.from_chat_title": "Sent as a reply from chat ({provider}) — not typed at the console.",
   "mirror.effort_hint": "Reasoning effort (codex reasoning_effort / opencode variant)",

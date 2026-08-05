@@ -31,6 +31,11 @@ const (
 	// turnSourceScheduleManual is a schedule fired by run-now（手動発火）— same pipeline as
 	// "schedule" but user-initiated, so the mirror can badge 定期/手動 distinctly (docs/38).
 	turnSourceScheduleManual = "schedule-manual"
+	// turnSourceAutoResume is the Agent's own nudge after a retryable cut-off (docs/47
+	// §4-6). バッジを分けるのは、これが「誰かの指示」ではなく**中断からの自己修復**
+	// だから — 利用者がミラーを見たとき、自分もオペレーターも送っていない「続けて」が
+	// 誰の仕業か分からないのが一番困る。
+	turnSourceAutoResume = "auto-resume"
 )
 
 // injectionSource maps a caller-supplied source onto the recordable vocabulary. The
