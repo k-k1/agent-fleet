@@ -74,7 +74,7 @@ ARG MCP_GRAFANA_VERSION=0.17.1
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64) mgarch=x86_64 ;; arm64) mgarch=arm64 ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
-    curl -fsSL "https://github.com/grafana/mcp-grafana/releases/download/v${MCP_GRAFANA_VERSION}/mcp-grafana_Linux_${mgarch}.tar.gz" -o /tmp/mcp-grafana.tgz; \
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "https://github.com/grafana/mcp-grafana/releases/download/v${MCP_GRAFANA_VERSION}/mcp-grafana_Linux_${mgarch}.tar.gz" -o /tmp/mcp-grafana.tgz; \
     tar -C /tmp -xzf /tmp/mcp-grafana.tgz mcp-grafana; \
     install -m 0755 /tmp/mcp-grafana /usr/local/bin/mcp-grafana; \
     rm -f /tmp/mcp-grafana.tgz /tmp/mcp-grafana; \
@@ -160,7 +160,7 @@ ARG GO_VERSION=1.26.4
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64) goarch=amd64 ;; arm64) goarch=arm64 ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
-    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${goarch}.tar.gz" -o /tmp/go.tgz; \
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "https://go.dev/dl/go${GO_VERSION}.linux-${goarch}.tar.gz" -o /tmp/go.tgz; \
     tar -C /usr/local -xzf /tmp/go.tgz; \
     rm /tmp/go.tgz; \
     /usr/local/go/bin/go version; \
@@ -182,10 +182,10 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
       arm64) awsarch=aarch64; smparch=arm64 ;; \
       *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${awsarch}-${AWSCLI_VERSION}.zip" -o /tmp/awscliv2.zip; \
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "https://awscli.amazonaws.com/awscli-exe-linux-${awsarch}-${AWSCLI_VERSION}.zip" -o /tmp/awscliv2.zip; \
     unzip -q /tmp/awscliv2.zip -d /tmp; \
     /tmp/aws/install; \
-    curl -fsSL "https://s3.amazonaws.com/session-manager-downloads/plugin/${SESSION_MANAGER_PLUGIN_VERSION}/ubuntu_${smparch}/session-manager-plugin.deb" -o /tmp/smp.deb; \
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "https://s3.amazonaws.com/session-manager-downloads/plugin/${SESSION_MANAGER_PLUGIN_VERSION}/ubuntu_${smparch}/session-manager-plugin.deb" -o /tmp/smp.deb; \
     dpkg -i /tmp/smp.deb; \
     rm -rf /tmp/awscliv2.zip /tmp/aws /tmp/smp.deb; \
     aws --version && session-manager-plugin --version; \
@@ -202,7 +202,7 @@ ARG GH_VERSION=2.96.0
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64|arm64) gharch="$arch" ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
-    curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${gharch}.tar.gz" -o /tmp/gh.tgz; \
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${gharch}.tar.gz" -o /tmp/gh.tgz; \
     tar -C /tmp -xzf /tmp/gh.tgz; \
     install -D -m 0755 "/tmp/gh_${GH_VERSION}_linux_${gharch}/bin/gh" /usr/local/libexec/gh; \
     rm -rf /tmp/gh.tgz "/tmp/gh_${GH_VERSION}_linux_${gharch}"; \
@@ -230,8 +230,8 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
       esac; \
       base="https://github.com/rtk-ai/rtk/releases/download/v${RTK_VERSION}"; \
       cd /tmp; \
-      curl -fsSL "${base}/${asset}" -o "${asset}"; \
-      curl -fsSL "${base}/checksums.txt" -o checksums.txt; \
+      curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "${base}/${asset}" -o "${asset}"; \
+      curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "${base}/checksums.txt" -o checksums.txt; \
       grep " ${asset}\$" checksums.txt | sha256sum -c -; \
       tar xzf "${asset}"; \
       install -m 0755 rtk /usr/local/bin/rtk; \
@@ -288,7 +288,7 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
         arm64) asset="linux-arm/cli_linux_arm64.tar.gz"; sha="${AGY_SHA256_ARM64}" ;; \
         *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
       esac; \
-      curl -fsSL "https://storage.googleapis.com/antigravity-public/antigravity-cli/${AGY_VERSION}-${AGY_RELEASE_BUILD}/${asset}" -o /tmp/agy.tgz; \
+      curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "https://storage.googleapis.com/antigravity-public/antigravity-cli/${AGY_VERSION}-${AGY_RELEASE_BUILD}/${asset}" -o /tmp/agy.tgz; \
       echo "${sha}  /tmp/agy.tgz" | sha256sum -c -; \
       tar -C /tmp -xzf /tmp/agy.tgz antigravity; \
       install -m 0755 /tmp/antigravity /usr/local/bin/agy; \
@@ -335,7 +335,7 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       esac; \
       dir="/usr/local/share/cursor-agent/versions/${CURSOR_VERSION}"; \
       mkdir -p "$dir"; \
-      curl -fsSL "https://downloads.cursor.com/lab/${CURSOR_VERSION}/linux/${casset}/agent-cli-package.tar.gz" -o /tmp/cursor.tgz; \
+      curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "https://downloads.cursor.com/lab/${CURSOR_VERSION}/linux/${casset}/agent-cli-package.tar.gz" -o /tmp/cursor.tgz; \
       echo "${sha}  /tmp/cursor.tgz" | sha256sum -c -; \
       tar --strip-components=1 -xzf /tmp/cursor.tgz -C "$dir"; \
       rm -f /tmp/cursor.tgz; \
@@ -372,7 +372,7 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
         arm64) kasset="kirocli-aarch64-linux-musl.zip"; sha="${KIRO_SHA256_ARM64}" ;; \
         *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
       esac; \
-      curl -fsSL "https://prod.download.cli.kiro.dev/stable/${KIRO_VERSION}/${kasset}" -o /tmp/kiro.zip; \
+      curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "https://prod.download.cli.kiro.dev/stable/${KIRO_VERSION}/${kasset}" -o /tmp/kiro.zip; \
       echo "${sha}  /tmp/kiro.zip" | sha256sum -c -; \
       unzip -q /tmp/kiro.zip -d /tmp/kiro; \
       Q_INSTALL_GLOBAL=1 Q_SKIP_SETUP=1 sh /tmp/kiro/kirocli/install.sh; \
