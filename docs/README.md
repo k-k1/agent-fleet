@@ -18,7 +18,7 @@
 - [20-container-audit-egress.md](20-container-audit-egress.md) — コンテナ内操作の監査ログ & egress 統制（enforce 未了・進行中）
 - [23-go-refactor.md](23-go-refactor.md) — Go バックエンド内部リファクタ（CP / Agent、機能不変・ワイヤ互換。残=④契約の型化のみ）
 - [24-tts-zundamon.md](24-tts-zundamon.md) — エージェント回答の音声読み上げ（✅ Phase 1〜2 実装済み、実環境検証待ち）
-- [25-ops-monitoring.md](25-ops-monitoring.md) — サービス運用（監視・インシデント対応）向け拡張（✅ 3 連携（PagerDuty / Grafana / CloudWatch）実装済み）
+- [25-ops-monitoring.md](25-ops-monitoring.md) — サービス運用（監視・インシデント対応）向け拡張（✅ 4 連携（PagerDuty / Grafana / CloudWatch / AWS）実装済み）
 - [26-agent-exit-recording.md](26-agent-exit-recording.md) — エージェントプロセスの終了理由記録（✅ Agent / CP / UI 実装済み、実機目視待ち）
 - [27-agent-managed-driver.md](27-agent-managed-driver.md) — エージェント制御の Managed Driver 化（✅ P1〜P3 実装済み。Codex / OpenCode は managed が既定、CLI ルート常設。プロトコル実測を含む実装記録）
 - [28-i18n.md](28-i18n.md) — Console 全面 i18n（✅ P0〜P6 実装済み＝エージェント出力言語まで、実機目視待ち）

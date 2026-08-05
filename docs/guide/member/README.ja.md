@@ -27,7 +27,7 @@
 7. [チャットとメモ](07-chat-memo.ja.md) — リポジトリを使わない質問・翻訳・メモ溜め
 8. [一歩進んだ使い方](08-advanced.ja.md) — ブラウザペイン／軽量プレビュー・Discord / Slack 連携・別ホスト・環境設定
 9. [困ったとき](09-troubleshooting.ja.md) — 症状別の対処と FAQ
-10. [運用ツール連携 PoC](10-ops-mcp-poc.ja.md) 🧪 — PagerDuty / Grafana / CloudWatch を MCP で繋いでインシデント壁打ち（実験的）
+10. [運用ツール連携 PoC](10-ops-mcp-poc.ja.md) 🧪 — PagerDuty / Grafana / CloudWatch / AWS を MCP で繋いでインシデント壁打ち（実験的）
 11. [フリート・オペレーター](11-fleet-operator.ja.md) — 複数セッションをチャットで指揮・引き継ぎ・並列作業・定時実行
 
 操作の「やり方」はこのガイドが正です。内部の「仕組み」を知りたくなったら、各章末の

@@ -78,25 +78,54 @@ type GrafanaCreds struct {
 	Token string `json:"token"`
 }
 
-// CloudWatchConn is the user's CloudWatch connection settings (docs/25). Unlike
-// the other ops integrations it holds NO secret: auth is the AWS credential
-// chain already in the container (the user's SSO login, same as ssm sessions).
-// Profile selects the profile; Region optionally overrides its region.
+// AWSProfileRef points an ops integration at an AWS profile. It holds NO secret:
+// auth is the AWS credential chain already in the container (the user's SSO login,
+// same as ssm sessions). Profile selects the profile; Region optionally overrides
+// its region.
 //
-// The SSO fields mirror session.SSMMeta: SSM profiles live in per-session
-// isolated config files (~/.aws/af-sessions/*.config), NOT in ~/.aws/config, so
-// a bare AWS_PROFILE is invisible to boto3. When StartURL is set, mcp-run
-// regenerates a durable ops config (~/.aws/af-ops/cloudwatch.config) from these
-// fields at every spawn (idempotent; self-heals after clean-home) and points
-// AWS_CONFIG_FILE at it. When StartURL is empty the profile is assumed to exist
-// in the member's own ~/.aws (manual setups).
-type CloudWatchConn struct {
+// The SSO fields mirror session.SSMMeta: SSM profiles live in per-session isolated
+// config files (~/.aws/af-sessions/*.config), NOT in ~/.aws/config, so a bare
+// AWS_PROFILE is invisible to boto3/botocore. When StartURL is set, mcp-run
+// regenerates a durable ops config (~/.aws/af-ops/<id>.config) from these fields at
+// every spawn (idempotent; self-heals after clean-home) and points AWS_CONFIG_FILE
+// at it. When StartURL is empty the profile is assumed to exist in the member's own
+// ~/.aws (manual setups).
+//
+// Embedded (not copied) into the connections that need it so both speak the same
+// wire shape — the JSON stays flat, so stores written before the split load as-is.
+type AWSProfileRef struct {
 	Profile   string `json:"profile"`
 	Region    string `json:"region,omitempty"`
 	StartURL  string `json:"startUrl,omitempty"`  // SSO access-portal start URL
 	SSORegion string `json:"ssoRegion,omitempty"` // SSO region
 	AccountID string `json:"accountId,omitempty"` // SSO account id
 	RoleName  string `json:"roleName,omitempty"`  // SSO permission-set role name
+}
+
+// CloudWatchConn is the user's CloudWatch connection settings (docs/25).
+type CloudWatchConn struct {
+	AWSProfileRef
+}
+
+// AWSConn is the user's Agent Toolkit for AWS connection (docs/25 §AWS MCP): the
+// AWS-operated MCP Server reached through the `mcp-proxy-for-aws` stdio proxy,
+// which SigV4-signs every call with the profile below. Like CloudWatch it stores no
+// secret.
+//
+// Endpoint is the region the MCP *service* runs in (us-east-1 / eu-central-1) and is
+// what SigV4 signs against; AWSProfileRef.Region is where the member's own resources
+// live and rides along as request metadata. They are frequently different, which is
+// why both exist.
+//
+// Write opts INTO the mutating tools. Default off = the proxy runs with --read-only,
+// which drops call_aws / run_script / get_presigned_url and leaves the documentation
+// and inventory tools. The container is untrusted by design (reference/security.md
+// §4.1-4.3), so "an agent can call 15,000+ AWS API actions" is a deliberate,
+// per-member opt-in rather than a side effect of connecting.
+type AWSConn struct {
+	AWSProfileRef
+	Endpoint string `json:"endpoint,omitempty"` // MCP service region; "" = awsMCPDefaultEndpoint
+	Write    bool   `json:"write,omitempty"`    // opt in to the mutating tools
 }
 
 // DiscordCreds is the user's Discord chat-bridge connection (docs/37 P1). Token
@@ -260,6 +289,7 @@ type Data struct {
 	PagerDuty   *PagerDutyCreds        `json:"pagerduty,omitempty"`   // ops MCP credential (docs/25)
 	Grafana     *GrafanaCreds          `json:"grafana,omitempty"`     // ops MCP credential (docs/25)
 	CloudWatch  *CloudWatchConn        `json:"cloudwatch,omitempty"`  // ops MCP settings (docs/25; no secret — AWS cred chain)
+	AWS         *AWSConn               `json:"aws,omitempty"`         // Agent Toolkit for AWS MCP settings (docs/25; no secret — AWS cred chain)
 	Discord     *DiscordCreds          `json:"discord,omitempty"`     // chat-bridge connection (docs/37)
 	Slack       *SlackCreds            `json:"slack,omitempty"`       // chat-bridge connection (docs/37 Slack 追随)
 	SVN         []SVNCred              `json:"svn,omitempty"`         // SVN basic-auth creds by URL prefix (docs/41)

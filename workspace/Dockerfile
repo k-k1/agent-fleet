@@ -95,6 +95,19 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     test -x /usr/local/bin/awslabs.cloudwatch-mcp-server; \
     fi
 
+# AWS MCP proxy (Agent Toolkit for AWS — docs/25 §AWS MCP) baked the same way:
+# `workspace-agent mcp-run aws` execs it to reach the AWS-operated MCP Server over
+# SigV4. Worth baking rather than leaving to uvx: the dependency tree is botocore +
+# awscrt (~20MB of wheels), so a cold fetch is the difference between an MCP server
+# that starts and one the CLI gives up on.
+ARG AWS_MCP_PROXY_VERSION=1.6.4
+RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
+    UV_TOOL_DIR=/usr/local/share/uv/tools UV_TOOL_BIN_DIR=/usr/local/bin \
+    UV_PYTHON_DOWNLOADS=never UV_NO_CACHE=1 \
+    uv tool install --python /usr/bin/python3 "mcp-proxy-for-aws==${AWS_MCP_PROXY_VERSION}"; \
+    test -x /usr/local/bin/mcp-proxy-for-aws; \
+    fi
+
 # Chromium for the in-container browser pane and headless UI verification. Debian's
 # package supplies the same /usr/bin/chromium entrypoint on amd64 and arm64 and pulls
 # its runtime libraries as dependencies. Pin all three Chromium packages together:
@@ -392,9 +405,9 @@ RUN set -eux; mkdir -p /usr/local/share/agent-fleet; \
       arm64) agy_sha="${AGY_SHA256_ARM64}"; cursor_sha="${CURSOR_SHA256_ARM64}"; kiro_sha="${KIRO_SHA256_ARM64}" ;; \
       *) agy_sha=""; cursor_sha=""; kiro_sha="" ;; \
     esac; \
-    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_build":"%s","agy_sha256":"%s","copilot":"%s","cursor":"%s","cursor_sha256":"%s","kiro":"%s","kiro_sha256":"%s","rtk":"%s","go":"%s","gh":"%s","chromium":"%s","chromium_cft":"%s","chromium_dl":"%s","noto_cjk":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","awscli":"%s","session_manager_plugin":"%s"}\n' \
+    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_build":"%s","agy_sha256":"%s","copilot":"%s","cursor":"%s","cursor_sha256":"%s","kiro":"%s","kiro_sha256":"%s","rtk":"%s","go":"%s","gh":"%s","chromium":"%s","chromium_cft":"%s","chromium_dl":"%s","noto_cjk":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","aws_mcp_proxy":"%s","awscli":"%s","session_manager_plugin":"%s"}\n' \
       "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$AGY_VERSION" "$AGY_RELEASE_BUILD" "$agy_sha" "$COPILOT_VERSION" "$CURSOR_VERSION" "$cursor_sha" "$KIRO_VERSION" "$kiro_sha" "$RTK_VERSION" "$GO_VERSION" "$GH_VERSION" "$CHROMIUM_VERSION" \
-      "$CHROMIUM_CFT_VERSION" "$CHROMIUM_DL_VERSION" "$NOTO_CJK_VERSION" "$MCP_GRAFANA_VERSION" "$CLOUDWATCH_MCP_VERSION" "$AWSCLI_VERSION" "$SESSION_MANAGER_PLUGIN_VERSION" \
+      "$CHROMIUM_CFT_VERSION" "$CHROMIUM_DL_VERSION" "$NOTO_CJK_VERSION" "$MCP_GRAFANA_VERSION" "$CLOUDWATCH_MCP_VERSION" "$AWS_MCP_PROXY_VERSION" "$AWSCLI_VERSION" "$SESSION_MANAGER_PLUGIN_VERSION" \
       > /usr/local/share/agent-fleet/versions.json
 
 # The baked claude is a root-owned npm-global install run as the non-root `dev`

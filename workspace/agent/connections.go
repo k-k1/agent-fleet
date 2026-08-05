@@ -60,6 +60,7 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		"pagerduty":  pagerdutyStatus(s),
 		"grafana":    grafanaStatus(s),
 		"cloudwatch": cloudwatchStatus(s),
+		"aws":        awsMCPStatus(s),
 		"discord":    discordStatus(s),
 		"slack":      slackStatus(s),
 		"svn":        svnConnStatus(s), // saved SVN servers (urlPrefix + username; docs/41)
@@ -502,25 +503,19 @@ func handleDeleteGrafanaConn(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "grafana"})
 }
 
-// cloudwatchStatus reports the stored CloudWatch settings. Nothing here is
-// secret (profile/region select the AWS credential chain, they don't hold it),
-// so the status can echo both for the UI. sso=true marks an SSM-linked profile
-// (the ops aws config is generated from the stored SSO meta).
+// cloudwatchStatus reports the stored CloudWatch settings (all non-secret — see
+// awsProfileStatus).
 func cloudwatchStatus(s *secrets.Data) map[string]any {
 	if s.CloudWatch == nil || s.CloudWatch.Profile == "" {
 		return map[string]any{"connected": false}
 	}
-	m := map[string]any{"connected": true, "profile": s.CloudWatch.Profile}
-	if s.CloudWatch.Region != "" {
-		m["region"] = s.CloudWatch.Region
-	}
-	if s.CloudWatch.StartURL != "" {
-		m["sso"] = true
-	}
-	return m
+	return awsProfileStatus(s.CloudWatch.AWSProfileRef)
 }
 
-type cloudwatchConnReq struct {
+// awsProfileConnReq is the wire shape shared by the AWS-profile-backed ops
+// integrations (CloudWatch / AWS MCP): the Console's SSM profile picker sends the
+// picked profile's non-secret SSO meta, or just a profile name for a manual entry.
+type awsProfileConnReq struct {
 	Profile   string `json:"profile"`
 	Region    string `json:"region"`
 	StartURL  string `json:"startUrl"`
@@ -529,11 +524,51 @@ type cloudwatchConnReq struct {
 	RoleName  string `json:"roleName"`
 }
 
-// cloudwatchProfileRe strips characters unsafe for an ~/.aws/config profile
+// awsProfileRef validates and normalizes the request into the stored form. It
+// writes the error response itself and reports ok=false, so a handler is just
+// "decode → this → store". Two rejections, both of which would otherwise fail much
+// later and much less legibly: an empty profile, and SSO meta without its region
+// (the generated aws config would be unusable).
+func (req awsProfileConnReq) awsProfileRef(w http.ResponseWriter) (secrets.AWSProfileRef, bool) {
+	profile := awsProfileRe.ReplaceAllString(strings.TrimSpace(req.Profile), "-")
+	if profile == "" || profile == "-" {
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnAWSProfileRequired, "specify an AWS profile")
+		return secrets.AWSProfileRef{}, false
+	}
+	startURL := strings.TrimSpace(req.StartURL)
+	if startURL != "" && strings.TrimSpace(req.SSORegion) == "" {
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnSSORegionMissing, "no SSO region (check the SSM profile configuration)")
+		return secrets.AWSProfileRef{}, false
+	}
+	return secrets.AWSProfileRef{
+		Profile:   profile,
+		Region:    strings.TrimSpace(req.Region),
+		StartURL:  startURL,
+		SSORegion: strings.TrimSpace(req.SSORegion),
+		AccountID: strings.TrimSpace(req.AccountID),
+		RoleName:  strings.TrimSpace(req.RoleName),
+	}, true
+}
+
+// awsProfileStatus is the non-secret echo shared by those cards: profile / region
+// (they select the credential chain, they don't hold it) and sso=true for an
+// SSM-linked profile (the ops aws config is generated from the stored SSO meta).
+func awsProfileStatus(p secrets.AWSProfileRef) map[string]any {
+	m := map[string]any{"connected": true, "profile": p.Profile}
+	if p.Region != "" {
+		m["region"] = p.Region
+	}
+	if p.StartURL != "" {
+		m["sso"] = true
+	}
+	return m
+}
+
+// awsProfileRe strips characters unsafe for an ~/.aws/config profile
 // header — the same sanitization as the CP's ssmProfileName (control-plane/
 // ssm.go), so an SSM profile label yields the same profile name here as in an
 // SSM session's config.
-var cloudwatchProfileRe = regexp.MustCompile(`[^A-Za-z0-9._@-]+`)
+var awsProfileRe = regexp.MustCompile(`[^A-Za-z0-9._@-]+`)
 
 // handlePutCloudWatchConn stores the AWS profile the CloudWatch MCP should use
 // (docs/25). No secret is stored: auth is the AWS credential chain (the user's
@@ -544,18 +579,12 @@ var cloudwatchProfileRe = regexp.MustCompile(`[^A-Za-z0-9._@-]+`)
 //     connect time and again at every mcp-run spawn.
 //   - Profile name only: assumed to exist in the member's own ~/.aws.
 func handlePutCloudWatchConn(w http.ResponseWriter, r *http.Request) {
-	var req cloudwatchConnReq
+	var req awsProfileConnReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	profile := cloudwatchProfileRe.ReplaceAllString(strings.TrimSpace(req.Profile), "-")
-	if profile == "" || profile == "-" {
-		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnAWSProfileRequired, "specify an AWS profile")
-		return
-	}
-	startURL := strings.TrimSpace(req.StartURL)
-	if startURL != "" && strings.TrimSpace(req.SSORegion) == "" {
-		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnSSORegionMissing, "no SSO region (check the SSM profile configuration)")
+	ref, ok := req.awsProfileRef(w)
+	if !ok {
 		return
 	}
 	s, err := secrets.Load()
@@ -563,18 +592,11 @@ func handlePutCloudWatchConn(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
-	s.CloudWatch = &secrets.CloudWatchConn{
-		Profile:   profile,
-		Region:    strings.TrimSpace(req.Region),
-		StartURL:  startURL,
-		SSORegion: strings.TrimSpace(req.SSORegion),
-		AccountID: strings.TrimSpace(req.AccountID),
-		RoleName:  strings.TrimSpace(req.RoleName),
-	}
+	s.CloudWatch = &secrets.CloudWatchConn{AWSProfileRef: ref}
 	// Materialize the ops config now (mcp-run also regenerates it per spawn) so
 	// the user can `aws sso login` against it before the first chat turn.
-	if startURL != "" {
-		if err := writeCloudWatchOpsConfig(s.CloudWatch); err != nil {
+	if ref.StartURL != "" {
+		if err := writeOpsAWSConfig("cloudwatch", ref); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "config_failed", err.Error())
 			return
 		}
@@ -598,6 +620,92 @@ func handleDeleteCloudWatchConn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "cloudwatch"})
+}
+
+// awsMCPStatus reports the stored Agent Toolkit for AWS settings. Same non-secret
+// echo as CloudWatch plus the two knobs the card renders: the MCP service endpoint
+// region and whether the mutating tools were opted into.
+func awsMCPStatus(s *secrets.Data) map[string]any {
+	if s.AWS == nil || s.AWS.Profile == "" {
+		return map[string]any{"connected": false}
+	}
+	m := awsProfileStatus(s.AWS.AWSProfileRef)
+	m["endpoint"] = awsMCPEndpoint(s.AWS.Endpoint)
+	m["write"] = s.AWS.Write
+	return m
+}
+
+type awsMCPConnReq struct {
+	awsProfileConnReq
+	Endpoint string `json:"endpoint"`
+	Write    bool   `json:"write"`
+}
+
+// awsMCPEndpoints are the regions AWS publishes the MCP Server in. Constrained to a
+// list rather than free text: the value goes into a hostname AND into the SigV4
+// signing region, so a typo would fail as a connection error with no hint of why.
+var awsMCPEndpoints = []string{"us-east-1", "eu-central-1"}
+
+// awsMCPEndpoint normalizes a requested endpoint region, falling back to the default
+// for empty or unknown input.
+func awsMCPEndpoint(region string) string {
+	for _, r := range awsMCPEndpoints {
+		if strings.TrimSpace(region) == r {
+			return r
+		}
+	}
+	return awsMCPDefaultEndpoint
+}
+
+// handlePutAWSMCPConn stores the AWS profile + endpoint the AWS MCP proxy should use
+// (docs/25 §AWS MCP). Profile handling is identical to CloudWatch — no secret, SSO
+// meta materialized into a durable ops config. `write` is the one addition: it opts
+// into the mutating tools (call_aws / run_script), so it is stored explicitly and
+// echoed back for the card to show.
+func handlePutAWSMCPConn(w http.ResponseWriter, r *http.Request) {
+	var req awsMCPConnReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	ref, ok := req.awsProfileRef(w)
+	if !ok {
+		return
+	}
+	s, err := secrets.Load()
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	s.AWS = &secrets.AWSConn{
+		AWSProfileRef: ref,
+		Endpoint:      awsMCPEndpoint(req.Endpoint),
+		Write:         req.Write,
+	}
+	if ref.StartURL != "" {
+		if err := writeOpsAWSConfig("aws", ref); err != nil {
+			httpx.WriteErr(w, http.StatusInternalServerError, "config_failed", err.Error())
+			return
+		}
+	}
+	if err := s.Save(); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, awsMCPStatus(s))
+}
+
+func handleDeleteAWSMCPConn(w http.ResponseWriter, r *http.Request) {
+	s, err := secrets.Load()
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	s.AWS = nil
+	if err := s.Save(); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "aws"})
 }
 
 // internalGitStatus reports the tenant's self-hosted git provider (docs/reference/
