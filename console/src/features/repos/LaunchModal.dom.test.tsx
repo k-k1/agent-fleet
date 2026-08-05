@@ -43,19 +43,32 @@ let root: Root | null = null;
 let host: HTMLDivElement;
 let onLaunch: Mock<Launch>;
 
+// A missing element means the UI moved (a control changed section / label), which is the
+// thing these tests exist to catch — say so, instead of failing later on `undefined.click`.
+function must<T>(el: T | undefined | null, what: string): T {
+  if (!el) throw new Error(`not in the DOM: ${what}`);
+  return el;
+}
+
 const buttons = () => [...document.querySelectorAll<HTMLButtonElement>("button")];
-const byText = (t: string) => buttons().find((b) => b.textContent?.includes(t))!;
+const byText = (t: string) => must(buttons().find((b) => b.textContent?.includes(t)), `button "${t}"`);
 // 場所 / 詳細 are collapsed sections (LaunchSection): their controls only exist in the
 // DOM once the header is expanded. The header also carries the summary line, so match
 // on the label span rather than the whole row.
 const secHead = (label: string) =>
-  buttons().find(
-    (b) => b.classList.contains("launch-sec-head") && b.querySelector(".launch-sec-label")?.textContent === label,
-  )!;
+  must(
+    buttons().find(
+      (b) => b.classList.contains("launch-sec-head") && b.querySelector(".launch-sec-label")?.textContent === label,
+    ),
+    `section "${label}"`,
+  );
 const summaryOf = (label: string) => secHead(label).querySelector(".launch-sec-sum")!.textContent || "";
 const expand = (label: string) => click(secHead(label));
 const branchRows = () => [...document.querySelectorAll<HTMLButtonElement>(".branch-item")];
-const rowFor = (name: string) => branchRows().find((b) => b.textContent?.includes(name))!;
+const rowFor = (name: string) => must(branchRows().find((b) => b.textContent?.includes(name)), `branch row "${name}"`);
+// A folder row inside the 作業ディレクトリ browser.
+const dirRow = (name: string) =>
+  must([...document.querySelectorAll(".dirpick-row")].find((b) => b.textContent?.includes(name)), `folder row "${name}"`);
 
 async function render(kinds = ["claude"]): Promise<void> {
   await act(async () => {
@@ -165,13 +178,14 @@ describe("LaunchModal branch mode", () => {
 
   // 作業ディレクトリ（Meta.Subdir）: which folder INSIDE the working copy the agent
   // starts in. Getting it wrong means the agent runs in the wrong package of a monorepo,
-  // which looks like a working launch until it edits the wrong files.
+  // which looks like a working launch until it edits the wrong files. It lives in 場所
+  // (Location) — where the launch happens — not in 詳細.
   it("launches in the folder picked from the tree", async () => {
     await render();
-    await expand("More");
+    await expand("Location");
     await click(byText("Browse"));
-    await click([...document.querySelectorAll(".dirpick-row")].find((b) => b.textContent?.includes("console"))!);
-    await click([...document.querySelectorAll(".dirpick-row")].find((b) => b.textContent?.includes("src"))!);
+    await click(dirRow("console"));
+    await click(dirRow("src"));
     await click(byText("Start in a worktree"));
     expect(launchedWith().subdir).toBe("console/src");
   });
@@ -185,8 +199,9 @@ describe("LaunchModal branch mode", () => {
     localStorage.setItem("af.repo-subdir.app", "console");
     root = createRoot(host);
     await render();
-    await expand("More");
-    expect(document.querySelector<HTMLInputElement>(".subdirpick-input")!.value).toBe("console");
+    await expand("Location");
+    const input = must(document.querySelector<HTMLInputElement>(".subdirpick-input"), "作業ディレクトリ input");
+    expect(input.value).toBe("console");
   });
 
   it("offers to use the colliding branch when a LOCAL name is taken", async () => {
