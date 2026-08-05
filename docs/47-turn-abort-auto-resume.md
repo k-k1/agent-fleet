@@ -7,6 +7,9 @@
 claude の TUI セッションで API エラーがターンを切ると **Stop フックが鳴らない**。
 その結果 `working → idle` の遷移が記録されず、ペインだけが待機プロンプトに戻る。
 
+> この前提はエラーの種類による。利用上限の 429 では claude はターンを完了として畳み、
+> Stop も鳴らす — そこには別の穴があった。§4-5 を参照。
+
 後始末をしていたペインベースの自己修復（`driveState` / `WireLive`）は、
 `state != "idle"` かつペインが待機プロンプトなら `status.Remove(sid)` を呼ぶだけで、
 `recordSessionNotification` を通らなかった。よって:
@@ -300,6 +303,79 @@ wake_policy=wake / overlap_policy=skip / missing_target_policy=fail / report=fal
 | `internal/agents/claude/ratelimit_test.go` | バナー解析（12am/12pm 境界・分なし・日付つき・TZ 無し・am/pm 無しは読まない）、窓の選択、放置メニューが翌日に化けないこと、材料無しは決めないこと |
 | `rate_limit_resume_test.go` | 予約→解除の順序と冪等、解除リトライの上限、設定 OFF でも解除はすること、独立起動／アシスタント起点のどちらにも同じ処理が走ること、検知／配達確認後の通知が各1回だけ出ること、過去のリセットは最短で回すこと、登録失敗のリトライと打ち切り、エピソードの畳み方 |
 
+## 4-5. 追補（2026-08-05 / s6no6jv）— 上限には**メニューを出さない形**がある
+
+§4-3 / §4-4 が相手にしていたのはアカウントの窓（`/rate-limit-options` メニュー）だけだった。
+**モデル別の上限は形が違う**: claude はメニューを出さず、1 行の合成レコードを書いて
+ターンを**完了として畳み**、普通の入力欄へ戻る。
+
+```
+⎿  You've reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model.
+✻ Brewed for 18m 56s
+```
+
+転写のレコード（実測）— `error` が構造化されているのが重要で、英文言に依存しない材料はここにしかない:
+
+```json
+{"type":"assistant","isSidechain":false,"isApiErrorMessage":true,"apiErrorStatus":429,
+ "error":"rate_limit","errorDetails":"429 {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\", …}}",
+ "message":{"content":[{"text":"You've reached your Fable 5 limit. Run /usage-credits …"}]}}
+```
+
+### 4-5-1. なぜ全部すり抜けたか
+
+3 つのゲートが順に閉じていた。
+
+| # | 場所 | 条件 | 実際 |
+|---|---|---|---|
+| 1 | `rateLimitTick` | `ReadPane().RateLimitMenu` | メニューが無い → エピソードが開かない |
+| 2 | `WireLive` / `driveState` の `HealIdle` | `state != "idle"` | Stop が先に idle を書く → 素通り |
+| 3 | Stop フック経路（`runSessionStatusHook`） | `AbortInfo` を見ない | 素の `idle` ＝ 応答が完了 として通知 |
+
+②の前提「API エラーでターンが落ちると Stop は鳴らない」（§1）は**この 429 では成立しない**。
+claude は `turn_duration` を書き、`Brewed for …` を出し、Stop も鳴らす。実測 `s6no6jv`:
+中断レコード 14:57:54.99 → ステータス `{"state":"idle","turnEnd":true,"ts":"14:57:56"}`。
+Stop が鳴った証拠は pending-text が消えていること（削除するのは `applyPendingPayloads` ＝
+フック経路の 1 箇所だけ）。
+
+docs/51 のリコンサイラ（`collectAbortSignal`）だけは転写末尾をレベルで見るので拾えるが、
+**arm 済みセッション限定**。Console から利用者が直接起動したセッションには何も出ない。
+
+### 4-5-2. 直し方
+
+**A. Stop の idle を「どう終わったか」に精緻化する** — `turnEndLabel`（`session_status.go`）。
+`state=="idle"` のとき `claude.AbortInfo` を見て、中断なら `StateFailed` / `StateAborted` を
+`recordSessionNotification` に渡す。理由は excerpt に載せる（managed の `MarkTurnEndErr` と
+同じ契約）。他 kind では `AbortInfo` が claude の `ConfigDir` を見るので自然に素通しになる。
+
+**B. エピソードの入口を 2 経路にする** — `rateLimitTick` はペインでメニューを探し、無ければ
+転写末尾を `claude.UsageLimitAbort` で見る。`limitMarkers` は `blockedMarkers` の部分集合
+（`reached your` / `usage limit` / `session limit`）＝**待てば解ける上限だけ**。プロンプト超過や
+認証エラーで「上限に達した」と通知すると、利用者は来ないリセットを待つことになる。
+メニューが無い形では `DismissRateLimitModal` は呼ばない（メニューが無いのに Enter を撃つと、
+それはそのまま利用者のプロンプト送信になる）。
+
+**C. モデル別上限では捕捉フォールバックを使わない** — `scheduleRateLimitResume` は
+`st.Menu == false` のとき `source` がバナー由来でなければ「時刻を決められなかった」と扱う。
+§4-4-2 のフォールバック（statusline 捕捉）が答えるのは**アカウントの 5時間 / 週次の窓**で、
+モデル別上限は別の窓だから。実測 s6no6jv では上限に当たった時点で 5時間窓 23% / 週次 75%、
+フォールバックはその日の 19:30（5時間窓のリセット）を返す — そこで再開しても同じ上限に当たる。
+
+### 4-5-3. statusline からの事前検知はできない
+
+claude 本体が statusLine へ詰める `rate_limits` は `five_hour` と `seven_day` **だけ**（バイナリ内の
+構築コードで確認）。スキーマ自体には `seven_day_opus` / `seven_day_sonnet` と
+`model_scoped: [{display_name, utilization, resets_at}]`（"Per-model weekly windows"）が存在するが、
+statusline 面には出てこない。よって「上限に近づいている」の予告は現状の捕捉からは作れない。
+
+### 4-5-4. テスト
+
+| 対象 | 内容 |
+|---|---|
+| `internal/agents/claude/abort_test.go` | `UsageLimitAbort` が上限だけを拾う（一時的なレート制限・プロンプト超過・認証・接続断・通常完了は偽） |
+| `session_status_test.go` | `turnEndLabel` の 4 ケース、および実物の転写を植えた hook 経路で失敗の理由がブリッジ本文に乗ること（修正を外すと落ちることを確認済み） |
+| `rate_limit_resume_test.go` | メニュー無しでもエピソードが開き通知が 1 回だけ出ること・キーを送らないこと、時刻の材料（banner / capture）× 形（メニュー有無）の 4 組 |
+
 ## 5. 積み残し
 
 - 対象は claude TUI のみ（`isApiErrorMessage` は claude 固有）。他 TUI 種別は別シグナルが要る。
@@ -311,3 +387,8 @@ wake_policy=wake / overlap_policy=skip / missing_target_policy=fail / report=fal
   ペインで選ぶ）。増枠依頼（選択肢 2）は課金判断を含むので、出すならワンクリック実行では
   なく明示的な確認付きで。
 - 予約した再開時刻を Console のセッション行に出していない（定時実行の一覧には出る）。
+- モデル別上限（§4-5）は**自動再開しない** — リセット時刻を決める材料が無い（バナーが無く、
+  statusline 捕捉は別の窓）。復旧はモデル切替か `/usage-credits` で、どちらも課金・選択の
+  判断を含むので自動化しない。通知（`rate-limit-reached`）と失敗理由つきの完了報告までが範囲。
+- `error:"rate_limit"` は文言非依存の材料だが、まだ分類には使っていない（`abortRecord` は
+  `apiErrorStatus` までしか読まない）。英文言のドリフトに備えるならここが次の一手。

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -105,7 +106,43 @@ func runSessionStatusHook(args []string) {
 		status.Persist(sid, state)
 	}
 	applyPendingPayloads(sid, state, h)
-	recordSessionNotification(sid, previous.State, state, turnText)
+	notifyState, notifyText := turnEndLabel(sid, state, turnText)
+	recordSessionNotification(sid, previous.State, notifyState, notifyText)
+}
+
+// claudeAbortInfo is the transcript-tail verdict (docs/47), replaceable in tests.
+var claudeAbortInfo = claude.AbortInfo
+
+// turnEndLabel refines the Stop hook's "idle" into what actually ENDED the turn.
+//
+// Stop の idle は「ターンが終わった」としか言わない。**どう**終わったかは転写の末尾に
+// あり、docs/47 はそれを読む実装（claude.HealIdle）を既に持っている — が、呼ばれるのは
+// ペイン由来の自己修復経路、つまり「Stop が鳴らなかったとき」だけだった。前提は「API
+// エラーでターンが落ちると claude は Stop を鳴らさない」で、接続断ではそのとおりだった。
+//
+// ところが利用上限の 429 では claude はターンを**完了として畳む**（turn_duration を書き、
+// Brewed for … を出し、Stop も鳴らす）。実測 2026-08-05 s6no6jv（モデル別上限）。すると
+// マーカーは先に idle になり、自己修復の `state != "idle"` ガードで HealIdle は素通り、
+// 上限で落ちたターンが「応答が完了」として通知される。agents.StateFailed を作った理由
+// （残高切れが完了と見分けられなかった）と同じ穴が、TUI 経路にだけ残っていた。
+//
+// 他 kind では素通しになる: 判別材料は claude の jsonl 形式に固有で、AbortInfo は
+// claude の ConfigDir 配下から sid.jsonl を探すので、opencode / codex の sid では何も
+// 見つからず ok=false を返す。
+func turnEndLabel(sid, state, turnText string) (string, string) {
+	if state != "idle" {
+		return state, turnText
+	}
+	a, ok := claudeAbortInfo(sid)
+	if !ok {
+		return state, turnText
+	}
+	// 理由を excerpt に載せるのは managed の MarkTurnEndErr と同じ契約 — 報告（reason）と
+	// 全文ブリッジ（body）はここから失敗の理由を読む。ターンの本文ではなく理由を渡す。
+	if a.Retryable {
+		return agents.StateAborted, a.Msg
+	}
+	return agents.StateFailed, a.Msg
 }
 
 func recordSessionNotification(sid, previous, state, turnText string) {

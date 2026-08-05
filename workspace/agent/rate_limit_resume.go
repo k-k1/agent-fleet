@@ -70,6 +70,7 @@ const (
 // resumeState と同じ理由 — 複数の書き手が居る Meta に相乗りしない。
 type rateLimitState struct {
 	At            string `json:"at"`                      // エピソード検知時刻（RFC3339）
+	Menu          bool   `json:"menu,omitempty"`          // メニューを伴う上限（＝アカウントの窓）
 	DismissTries  int    `json:"dismissTries,omitempty"`  // Enter を送った回数
 	Dismissed     bool   `json:"dismissed,omitempty"`     // メニューが消えたことを確認済み
 	LastTry       string `json:"lastTry,omitempty"`       // 直近の解除試行
@@ -87,6 +88,7 @@ var (
 	putRateLimitSchedule  = createRateLimitSchedule
 	dropRateLimitSchedule = deleteRateLimitSchedule
 	rateLimitResetAt      = claude.ResetAt
+	claudeUsageLimitAbort = claude.UsageLimitAbort
 )
 
 // startRateLimitWatch runs the sweep for the life of the agent.
@@ -104,20 +106,31 @@ func startRateLimitWatch() {
 	}()
 }
 
-// rateLimitTick is one sweep: every claude session is classified as "on the menu now"
-// (recover) or "has an open episode" (follow up / clean up). ListMetas is deliberately
+// rateLimitTick is one sweep: every claude session is classified as "at its usage limit
+// now" (recover) or "has an open episode" (follow up / clean up). ListMetas is deliberately
 // the only population gate: origin=operator / owner conversation / instruction-ledger
 // presence are irrelevant, so a standalone session launched directly from Console is
 // recovered exactly like one launched or steered by an assistant.
+//
+// 検知は 2 経路ある。上限の形がひとつではないため（claude.UsageLimitAbort のコメント）:
+// アカウントの窓はメニューでペインを人間待ちに固定し、モデル別の上限は 1 行のエラーを
+// 出して普通の入力欄へ戻る。後者はペインからは見分けられないので転写の末尾で拾う。
+// ペインを先に見るのは、メニューが出ている＝今まさに固まっている方が緊急だから。
 func rateLimitTick(now time.Time) {
 	for _, m := range session.ListMetas() {
 		if normalizeKind(m.Kind) != session.KindClaude {
 			continue
 		}
 		st, has := rateLimitStates.Read(m.Name)
-		if sessionAlive(m) && tmuxx.ReadPane(m.Name).RateLimitMenu {
-			rateLimitRecover(m, st, now)
-			continue
+		if sessionAlive(m) {
+			if tmuxx.ReadPane(m.Name).RateLimitMenu {
+				rateLimitRecover(m, st, now, true)
+				continue
+			}
+			if _, atLimit := claudeUsageLimitAbort(session.UUID(m.Dir, m.Name)); atLimit {
+				rateLimitRecover(m, st, now, false)
+				continue
+			}
 		}
 		if has {
 			rateLimitFollowUp(m, st, now)
@@ -125,19 +138,30 @@ func rateLimitTick(now time.Time) {
 	}
 }
 
-// rateLimitRecover handles a session sitting on the usage-limit menu.
-func rateLimitRecover(m session.Meta, st rateLimitState, now time.Time) {
+// rateLimitRecover handles a session stopped by its usage limit. onMenu says which form it
+// is: true = ペインが /rate-limit-options メニューで固定されている、false = 転写の末尾が
+// 上限で切れたターン（メニューは無く、セッションは入力を受け付けられる）。
+func rateLimitRecover(m session.Meta, st rateLimitState, now time.Time, onMenu bool) {
 	if episodeStale(st, now) {
 		st = rateLimitState{} // 前のエピソードは終わっている — 新しい上限として扱う
 	}
 	if st.At == "" {
 		st.At = now.Format(time.RFC3339)
-		log.Printf("rate-limit: %s が利用上限メニューで停止している", m.Name)
+		if onMenu {
+			log.Printf("rate-limit: %s が利用上限メニューで停止している", m.Name)
+		} else {
+			log.Printf("rate-limit: %s のターンが利用上限で打ち切られている", m.Name)
+		}
+	}
+	// 単調に上げるだけ（下げない）: 同じエピソードの途中でメニューが出たら、それ以降は
+	// メニューのあるエピソードとして扱ってよい。逆に消えたのは解除できた印なので戻さない。
+	if onMenu {
+		st.Menu = true
 	}
 	st = scheduleRateLimitResume(m, st, now)
 	notifyRateLimitReached(m, st)
 
-	if !st.Dismissed && st.DismissTries < maxRateLimitDismissTries && !triedRecently(st, now) {
+	if onMenu && !st.Dismissed && st.DismissTries < maxRateLimitDismissTries && !triedRecently(st, now) {
 		st.DismissTries++
 		st.LastTry = now.Format(time.RFC3339)
 		// 送る前に記録する: 途中で落ちても回数が巻き戻らないようにして、キーを撃ち続けない。
@@ -218,8 +242,17 @@ func scheduleRateLimitResume(m session.Meta, st rateLimitState, now time.Time) r
 		return st
 	}
 	at, source, ok := rateLimitResetAt(session.UUID(m.Dir, m.Name), now)
+	// メニューを伴わない上限では、時刻はバナー（そのセッションが実際に受け取った文言）
+	// からしか信用しない。resolveResetAt のフォールバックは statusline 捕捉＝アカウントの
+	// 5時間 / 週次の窓だが、モデル別の上限はそれとは**別の窓**で、statusline には出て
+	// こない（claude が statusLine へ詰めるのは five_hour と seven_day だけ）。実測
+	// 2026-08-05 s6no6jv では上限に当たった時点で 5時間窓 23% / 週次 75%、フォールバックは
+	// その日の 19:30（5時間窓のリセット）を返す — そこで再開しても同じ上限に当たるだけ。
+	if ok && !st.Menu && !strings.HasPrefix(source, "banner") {
+		ok = false
+	}
 	if !ok {
-		// 時刻が決められない（バナーが読めず捕捉も無い）。当てずっぽうで起こしても
+		// 時刻が決められない（バナーが読めず捕捉も使えない）。当てずっぽうで起こしても
 		// また上限に当たるだけなので仕込まない。試行回数は消費する。
 		st.ScheduleTries++
 		log.Printf("rate-limit: %s のリセット時刻が読めなかったので自動再開は仕込まない", m.Name)

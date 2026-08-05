@@ -62,6 +62,21 @@ var blockedMarkers = []string{
 	"unauthorized",
 }
 
+// limitMarkers are the blockedMarkers that specifically mean A USAGE LIMIT — a quota that
+// lifts on its own schedule — as opposed to the other blocked causes (長すぎるプロンプト・
+// 残高・認証) which never lift by waiting. 上限エピソード（rate_limit_resume.go）は
+// blockedMarkers 全体ではなくこの部分集合だけを入口にする: プロンプト超過や認証エラーで
+// 「利用上限に達しました」と通知したら、利用者は来ないリセットを待つことになる。
+var limitMarkers = []string{
+	// モデル別の上限。メニューを出さず 1 行のエラーでターンを畳む形（実測 2026-08-05
+	// s6no6jv / claude 2.1.x）— "You've reached your Fable 5 limit. Run /usage-credits …"
+	"reached your",
+	"usage limit",
+	// アカウントの窓。/rate-limit-options メニューを伴う形（実測 2026-07-31 s5jjqv4）—
+	// "You've hit your session limit · resets 7:50pm (Asia/Tokyo)"
+	"session limit",
+}
+
 // retryableMarkers are error texts that clear by themselves: the turn was cut off by a
 // transport / capacity hiccup and simply re-running it continues the work.
 var retryableMarkers = []string{
@@ -179,6 +194,33 @@ func abortFrom(line []byte, r abortRecord) (Abort, bool) {
 		a.At = at
 	}
 	return a, true
+}
+
+// UsageLimitAbort is AbortInfo narrowed to「利用上限で終わったターン」。ok=true のときだけ
+// 上限エピソード（rate_limit_resume.go）を開いてよい。
+//
+// なぜ転写側にもこの判定が要るか: 上限の形はひとつではない。アカウントの窓に当たると
+// claude は /rate-limit-options メニューを出してキー入力待ちで止まる（ペインから読める）が、
+// モデル別の上限は**メニューを出さず**、1 行のエラーを書いてターンを完了として畳み、普通の
+// 入力欄へ戻る。後者はペインに手掛かりが残らない（画面のエラー行は転写テキストなので、
+// その後もずっと残る＝いつの話か言えない — isCodexUpdateMenu の罠と同じ）ので、
+// 「今どうなっているか」を答えられるのは転写の末尾だけになる。
+//
+// retryable な中断（接続断・一時的なレート制限）は上限ではないので落とす。retryableOverrides
+// が classifyAbort で先に効くため、"(not your usage limit)" と自称するレコードがここの
+// "usage limit" に当たることはない。
+func UsageLimitAbort(sid string) (Abort, bool) {
+	a, ok := AbortInfo(sid)
+	if !ok || a.Retryable {
+		return Abort{}, false
+	}
+	low := strings.ToLower(a.Msg)
+	for _, m := range limitMarkers {
+		if strings.Contains(low, m) {
+			return a, true
+		}
+	}
+	return Abort{}, false
 }
 
 // HealIdle is what the pane-based self-heal does once it has decided the session is
