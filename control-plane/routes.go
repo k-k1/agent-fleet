@@ -572,6 +572,10 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/connections/kiro/install", rest)
 	mux.HandleFunc("PUT /api/connections/opencode", rest)
 	mux.HandleFunc("DELETE /api/connections/opencode/{env}", rest)
+	mux.HandleFunc("POST /api/connections/opencode/oauth/start", rest)
+	mux.HandleFunc("POST /api/connections/opencode/oauth/poll", rest)
+	mux.HandleFunc("POST /api/connections/opencode/oauth/cancel", rest)
+	mux.HandleFunc("DELETE /api/connections/opencode/oauth", rest)
 	// SVN saved basic-auth creds (docs/41) — forget a stored server credential.
 	mux.HandleFunc("DELETE /api/connections/svn", rest)
 	// Codex auth — proxied to the Agent (codex owns auth.json; no public callback,

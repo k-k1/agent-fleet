@@ -57,14 +57,28 @@ func Available() bool {
 }
 
 // Status reports which provider env vars are configured (names only,
-// never the keys) for the Console Connections panel (GET /connections).
+// never the keys) for the Console Connections panel (GET /connections), plus the
+// state of the second, independent path: the opencode Console account
+// （OAuth device flow — oauth.go）。connected は「opencode を認証済みで使えるか」
+// なので、どちらの経路でも真になる（registry.ts の kind ゲートがこれを見る）。
 func Status(s *secrets.Data) map[string]any {
 	names := []string{}
 	for k := range s.Opencode {
 		names = append(names, k)
 	}
 	sort.Strings(names)
-	return map[string]any{"connected": len(names) > 0, "envs": names}
+	oa := oauthStatus()
+	m := map[string]any{
+		"connected":      len(names) > 0 || oa.connected,
+		"envs":           names,
+		"oauth":          oa.connected,
+		"oauth_known":    oa.known, // false = daemon 未起動で未確認（未接続とは限らない）
+		"oauth_disabled": Serve().Disabled(),
+	}
+	if oa.label != "" {
+		m["oauth_label"] = oa.label // Console org 名（実測の label 解決）
+	}
+	return m
 }
 
 type connReq struct {

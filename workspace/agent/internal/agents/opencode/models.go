@@ -50,6 +50,17 @@ func Models() []string {
 	return modelsList
 }
 
+// InvalidateModels drops the cached catalog so the next read re-runs
+// `opencode models`. The cache key is the injected provider env (auth.go), which a
+// Console OAuth login does NOT change — the credential lands in opencode's own auth
+// store — so an authentication change has to say so explicitly or the launch picker
+// keeps the pre-login catalog for up to a minute（docs/54 の反映タイミング）.
+func InvalidateModels() {
+	modelsMu.Lock()
+	modelsAt = time.Time{}
+	modelsMu.Unlock()
+}
+
 // mergeCommandEnv applies stored connection values over the Agent's inherited
 // environment without leaving duplicate names. The stored value must win if an
 // image/operator environment happens to define the same provider variable.

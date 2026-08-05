@@ -994,6 +994,18 @@ export const ja = {
     "codex はコマンド書換フックを持たないため指示ベース（ベストエフォート）。AGENTS.md で rtk 利用を促すだけで、強制ではありません。",
   "agents.oc_custom": "カスタム…",
   "agents.oc_key_count": "{count} キー",
+  "agents.oc_account": "opencode アカウント",
+  "agents.oc_account_desc":
+    "opencode.ai のアカウントでサインインします。承認はブラウザで完結し、Console に入力し直すものはありません。API キーと併用でき、どちらか一方だけでも使えます。",
+  "agents.oc_account_connect": "opencode にサインイン",
+  "agents.oc_account_connect_note": "認可リンクを開きます。ブラウザで承認してください。",
+  "agents.oc_account_connected": "アカウント接続済み",
+  "agents.oc_account_only": "アカウント",
+  "agents.oc_account_failed": "サインインを開始できませんでした{msg}",
+  "agents.oc_account_denied": "承認されませんでした{msg}",
+  "agents.oc_account_note":
+    "サインインすると、その組織で使えるモデルが起動時の一覧に反映されます（稼働中のセッションは次のターンから／ターミナル（CLI）のセッションは再起動後）。",
+  "agents.oc_account_disabled": "この Workspace ではマネージドの opencode が無効なため、アカウントのサインインは使えません。",
   "agents.oc_desc": "複数プロバイダの API キーを保存し、opencode 起動時に env として注入します。",
   "agents.oc_hint": " でサインイン → 課金設定 → API キーを発行して貼り付け（同じキーで Zen も利用可）。",
   "agents.oc_catalog": "モデル一覧",

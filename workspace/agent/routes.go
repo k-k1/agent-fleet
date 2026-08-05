@@ -282,6 +282,11 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /connections/claude", claude.HandleDisconnect)
 	mux.HandleFunc("PUT /connections/opencode", opencode.HandlePutConn)
 	mux.HandleFunc("DELETE /connections/opencode/{env}", opencode.HandleDeleteConn)
+	// opencode Console アカウント（device flow・docs/54）。APIキー方式と併存する。
+	mux.HandleFunc("POST /connections/opencode/oauth/start", opencode.HandleOAuthStart)
+	mux.HandleFunc("POST /connections/opencode/oauth/poll", opencode.HandleOAuthPoll)
+	mux.HandleFunc("POST /connections/opencode/oauth/cancel", opencode.HandleOAuthCancel)
+	mux.HandleFunc("DELETE /connections/opencode/oauth", opencode.HandleOAuthDisconnect)
 	// SVN saved basic-auth creds (docs/41): saved at checkout time; forget them here.
 	mux.HandleFunc("DELETE /connections/svn", handleDeleteSvnConn)
 	// agy quota gauge for the Console's AgyCard (docs/32 Track C — the Starter

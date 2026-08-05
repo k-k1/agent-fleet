@@ -72,7 +72,9 @@ function useGuideState(): GuideState {
     agentOk: !!(
       conns?.claude?.connected ||
       conns?.codex?.connected ||
-      (conns?.opencode?.envs?.length ?? 0) > 0
+      // opencode は APIキー（env）と opencode アカウント（OAuth）のどちらでも成立する。
+      (conns?.opencode?.envs?.length ?? 0) > 0 ||
+      !!conns?.opencode?.oauth
     ),
     conns,
     startWs,

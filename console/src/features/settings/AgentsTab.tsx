@@ -1321,8 +1321,13 @@ function KiroCard({ running, st, reload }: { running: boolean; st: any; reload: 
   );
 }
 
-// opencode: provider API keys (stored, injected as env at launch), plus the RTK and
-// Web UI toggles. "Connected" = at least one key saved.
+// opencode: two independent auth paths that coexist (docs/54) —
+//   ① opencode アカウント: OAuth device flow through `opencode serve`'s integration
+//      API. Approval happens entirely in the browser (mode="auto", opencode polls the
+//      token itself), so like Cursor there is no code to paste; we show the URL and
+//      poll api/connections/opencode/oauth/poll.
+//   ② provider API keys: stored and injected as env at launch (unchanged).
+// "Connected" = either path is set up. Plus the RTK and Web UI toggles.
 // [presetId, label, envVar, issueUrl]. issueUrl is the provider's fixed API-key page
 // (empty = none / handled elsewhere — "go" keeps its own opencode.ai/auth hint below).
 const OC_PRESETS = [
@@ -1379,11 +1384,16 @@ function OpencodeCard({
 }) {
   const tr = useT();
   const toast = useToast();
+  const poll = usePolling();
   const [preset, setPreset] = useState("go");
   const [customEnv, setCustomEnv] = useState("");
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
+  const [flow, setFlow] = useState<any>(null); // { url, flow_id, instructions, status } while a sign-in is in flight
+  const [oauthBusy, setOauthBusy] = useState(false);
   const envs = st?.envs || [];
+  const account = !!st?.oauth;
+  const accountOff = !!st?.oauth_disabled;
   const envName =
     preset === "custom" ? customEnv.trim().toUpperCase() : OC_PRESETS.find((p) => p[0] === preset)?.[2] || "";
   const issueUrl = OC_PRESETS.find((p) => p[0] === preset)?.[3] || "";
@@ -1409,15 +1419,75 @@ function OpencodeCard({
     reload();
   };
 
+  const startAccountLogin = async () => {
+    setOauthBusy(true);
+    try {
+      const res = await api("api/connections/opencode/oauth/start", { method: "POST" });
+      if (!res || res.error || !res.url) {
+        toast(tr("agents.oc_account_failed", { msg: res?.error?.message ? `: ${res.error.message}` : "" }));
+        return;
+      }
+      setFlow({
+        url: res.url,
+        flow_id: res.flow_id,
+        code: res.user_code || "",
+        instructions: res.instructions || "",
+        status: tr("git.oauth_waiting"),
+      });
+      poll({
+        deadlineMs: 10 * 60 * 1000,
+        firstDelayMs: 3000,
+        onExpire: () => setFlow((f: any) => (f ? { ...f, status: tr("git.oauth_expired") } : f)),
+        step: async () => {
+          let p;
+          try {
+            p = await apiJSON("api/connections/opencode/oauth/poll", "POST", { flow_id: res.flow_id });
+          } catch {
+            p = null;
+          }
+          if (p && p.connected) {
+            setFlow(null);
+            reload();
+            return { stop: true };
+          }
+          // failed / expired は opencode 側で確定した終状態 — 待ち続けても変わらない。
+          if (p && (p.status === "failed" || p.status === "expired")) {
+            setFlow(null);
+            toast(tr("agents.oc_account_denied", { msg: p.message ? `: ${p.message}` : "" }));
+            return { stop: true };
+          }
+          return { stop: false, nextMs: 2500 };
+        },
+      });
+    } finally {
+      setOauthBusy(false);
+    }
+  };
+  const cancelAccountLogin = async () => {
+    const id = flow?.flow_id;
+    setFlow(null);
+    if (id) await apiJSON("api/connections/opencode/oauth/cancel", "POST", { flow_id: id }).catch(() => {});
+  };
+  const disconnectAccount = async () => {
+    await raw("api/connections/opencode/oauth", { method: "DELETE" });
+    setFlow(null);
+    reload();
+  };
+
+  const pill = [
+    envs.length > 0 ? tr("agents.oc_key_count", { count: envs.length }) : "",
+    account ? tr("agents.oc_account_only") : "",
+  ]
+    .filter(Boolean)
+    .join(" / ");
+
   return (
     <ProviderCard
       id="opencode"
       name={kindDisplayName("opencode")}
       status={
         running ? (
-          <StatusPill on={envs.length > 0}>
-            {envs.length > 0 ? tr("agents.oc_key_count", { count: envs.length }) : tr("conn.disconnected")}
-          </StatusPill>
+          <StatusPill on={envs.length > 0 || account}>{pill || tr("conn.disconnected")}</StatusPill>
         ) : undefined
       }
     >
@@ -1425,6 +1495,41 @@ function OpencodeCard({
         <ConnPaused />
       ) : (
         <>
+          <div className="p-desc">{tr("agents.oc_account_desc")}</div>
+          <div className="p-body">
+            {accountOff ? (
+              <div className="p-desc">{tr("agents.oc_account_disabled")}</div>
+            ) : account ? (
+              <div className="p-who">
+                <span className="p-em" title={st?.oauth_label || ""}>
+                  {st?.oauth_label || tr("agents.oc_account_connected")}
+                </span>
+                <DisconnectButton onClick={disconnectAccount} />
+              </div>
+            ) : flow ? (
+              <>
+                {/* opencode polls the token itself (mode="auto"), so there is nothing to
+                    submit back here. The code is shown because the approval page asks the
+                    user to confirm it — the URL already carries it, so it's a convenience,
+                    and when it can't be extracted the steps fall back to just the link. */}
+                <DeviceSteps code={flow.code || undefined} url={flow.url} status={flow.status} />
+                {!flow.code && flow.instructions && <Hint>{flow.instructions}</Hint>}
+                <div className="flow">
+                  <button type="button" onClick={cancelAccountLogin}>
+                    {tr("common.cancel")}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="p-opts">
+                <button type="button" className="p-opt" disabled={oauthBusy} onClick={startAccountLogin}>
+                  <span className="p-opt-t">{tr("agents.oc_account_connect")}</span>
+                  <span className="p-opt-s">{tr("agents.oc_account_connect_note")}</span>
+                </button>
+              </div>
+            )}
+            <p className="ps-note">{tr("agents.oc_account_note")}</p>
+          </div>
           <div className="p-desc">{tr("agents.oc_desc")}</div>
           <div className="p-body">
             {preset === "go" && (
