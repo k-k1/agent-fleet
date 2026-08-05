@@ -28,12 +28,38 @@ opencode はそれが不要で、共有 `opencode serve` daemon（docs/27 の Ru
   コードを貼らせる必要はない（cursor と同じ「URL を出して poll」型）。`url` は
   `verification_uri_complete`（ユーザーコード入り）で、`instructions` に
   `Enter code: …` が入る。
+- **承認ページはコードが入力済み**（実測）。`?user_code=` を持ったまま開くので、
+  ユーザーは「表示されたコードが手元と一致するか」を確認して Authorize を押すだけで、
+  どこにも貼り付けない（AWS SSO の device flow と同じ）。Console の手順表示は
+  `DeviceSteps` の confirm 形（①リンクを開く ②コードの一致を確認して承認 ③承認を待つ）。
+  既定形（①コードをコピー ②リンクを開いて貼り付け）のままだと、存在しない入力欄を
+  探させることになる。
 - **状態の出どころは `connections[]`**。`type:"credential"` が Console アカウント接続、
   `type:"env"` は `OPENCODE_API_KEY` の存在を示すだけで別経路。`label` は接続先の
   org 名（opencode 側の label 解決が `metadata.orgName` を返す）。
 - **切断だけ v2 に口がない**。connection 削除の HTTP ルートは存在せず、資格情報は
   `~/.local/share/opencode/auth.json` なので v1 の `DELETE /auth/{providerID}` を使う。
   daemon が居ないときは `opencode auth logout opencode` にフォールバックする。
+
+### 起動レース: health ではなく「メソッド」を待つ
+
+`Supervisor.Ensure()` は `/global/health` が 200 になった時点で成功を返すが、**device
+メソッドを登録するのは opencode のプラグインで、その load は health より後に終わる**。
+この窓で `connect/oauth` を叩くと daemon は 500 を返す:
+
+```
+level=ERROR ref=err_91d98832 error="OAuth method not found: opencode/device"
+```
+
+実機の再現（Console のボタン初回クリック）は、その daemon 世代の最初のログ行から
+**85ms 後**の失敗だった。したがって start は health ではなく
+`GET /api/integration/opencode` の `methods[]` に `{type:"oauth", id:"device"}` が
+現れるまで待つ（`waitOAuthMethod`、最大 20 秒）。現れないまま切れた場合は
+`serve_not_ready` として理由を返す（古い CLI ならメソッド自体が無い）。
+
+同じ窓では integration 自体が未登録で `GET /api/integration/opencode` が `data:null` を
+返す。状態表示側（`oauthStatus`）はこれを「未接続」と確定させず、直前の値を保つ —
+ログイン済みのユーザーに一瞬「未接続」と見せないため。
 
 ### 対応範囲を Console アカウントに絞った理由
 
@@ -85,12 +111,53 @@ oauth_disabled … マネージド opencode が無効（AF_OPENCODE_SERVE_DISABL
 - `oauth_disabled` のときはサインイン導線を出さない。この状態でも端末セッションから
   `opencode auth login` は従来どおり可能。
 
-## 54.4 未確定（実アカウントでの確認待ち）
+## 54.4 実アカウントで測った「何が使えるようになるか」
 
-- Console ログインだけで（APIキー無しで）どのモデル集合が生えるか。有料モデルのゲートは
-  `OPENCODE_API_KEY || Console接続あり || 明示apiKey` の OR なので**ゲート自体は開く**が、
-  実際の顔ぶれは org の `/api/config` 次第。受け入れ確認は
-  **ログイン前後の `opencode models` の差分**を見る。
-- `DELETE /auth/opencode` が daemon 内のカタログ再読込まで誘発するか（`ConnectionUpdated`
-  を publish するのは v2 側の経路）。切断後にモデル一覧が古いままなら、切断時のみ
-  Supervisor 再起動へ格上げする。
+実測（1.18.13、Personal org でサインイン済み。いずれも `status:"deprecated"` を除いた
+active 数）:
+
+| 認証 | active モデル | 内訳 |
+| --- | --- | --- |
+| 無し（zero-auth） | 8 | `opencode/*-free` ＋ big-pickle |
+| **Console ログインのみ**（`OPENCODE_API_KEY` 無し） | **61** | すべて `opencode/`（Zen） |
+| ログイン＋APIキー | 79 | Zen 61 ＋ `opencode-go/` 18 |
+
+- **Console ログインだけで Zen の有料モデルは開く**（8 → 61）。ゲート
+  （`OPENCODE_API_KEY || Console接続 || 明示apiKey` の OR）の実挙動どおり。
+- **Go サブスクのモデル（`opencode-go/`）はログインでは生えない**。あれは
+  `OPENCODE_API_KEY` に紐づくので、Go を使うなら従来どおりキーが要る。両方あれば両方出る。
+- 接続ラベルは org 名（この環境では `Personal`）。`/experimental/console/orgs` は
+  ログイン後も空のままで、こちらは別系統（`wrk_` はここからは取れない）。
+
+### `opencode models`（CLI）はログインを見ない — カタログは daemon から読む
+
+同じ資格情報でも、**一発起動の `opencode models` は 8 件**しか出さないのに、同じストアを
+読む serve は 86 件（active 61）を返す。CLI 側はプラグインが Console org の
+`/api/config` を取り終える前に出力しているとみられる。`Models()` が CLI に依存したままだと
+**OAuth だけのユーザーの起動一覧が free 8 件に見える**（managed セッションは実際には 61 件
+使えるのに）。そこで `Models()` は**稼働中の daemon があれば `GET /api/model`** を正とし、
+`deprecated` と `enabled:false` を落として CLI と同じ形の id 列にする。daemon が無いときだけ
+従来の CLI にフォールバックする（一覧の更新のために daemon を起こしはしない）。
+
+## 54.5 切断は credential ID を消す（`/auth/{providerID}` では消えない）
+
+当初は v1 の `DELETE /auth/opencode` を切断に使っていたが、**あれは何も消さない**。
+v1 は `~/.local/share/opencode/auth.json` を書き換える経路で、Console アカウントの
+資格情報は **SQLite 側の credential テーブル**に載っている。症状はこうだった:
+
+- `opencode auth list` は「0 credentials」と言うのに、`GET /api/integration/opencode` の
+  `connections[]` には `{type:"credential", label:"Personal"}` が居る。
+- `DELETE /auth/opencode` は 200 を返すが、**新しく起こしたプロセスからも接続が見え続ける**
+  （＝ストアから消えていない）。
+
+正しい口は `DELETE /api/credential/{credentialID}`（`v2.credential.remove`）で、
+id は `connections[]` の `id`（`cred_…`）。実測で 204 が返り、**共有 daemon の
+`connections[]` はその場で credential を落とした**（再起動不要）。別プロセスを新しく
+起こしても接続は無く、モデルは zero-auth の 8 件に戻る。
+
+環境変数由来の接続（`OPENCODE_API_KEY`）は別経路なので巻き添えにしない — 削除対象は
+`type:"credential"` の1件だけで、無ければ何も消さずに冪等成功として返す。
+
+カタログの縮小そのもの（61 → 8）は、APIキーがある環境では鍵が覆い隠すため単独では
+観測できない。削除経路も `ConnectionUpdated` を publish するので、ログインと同じく
+プラグインの購読で catalog.reload() まで走るはず、というのが現時点の根拠。

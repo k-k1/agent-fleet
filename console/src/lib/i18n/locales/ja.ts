@@ -305,6 +305,8 @@ export const ja = {
   "provider.disconnect_confirm_body": "保存された認証情報はワークスペースから削除されます。再接続はいつでも可能です。",
   "provider.step_copy_code": "コードをコピー",
   "provider.step_open_link": "リンクを開いて貼り付け",
+  "provider.step_open_link_only": "リンクを開く",
+  "provider.step_confirm_code": "表示されたコードが一致することを確認して承認",
   "provider.open_url": "{url} を開く ↗",
   "provider.issue_link": "トークン発行ページを開く",
   "provider.step_wait_approval": "承認を待つ",

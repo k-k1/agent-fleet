@@ -304,6 +304,8 @@ export const en: Record<keyof typeof ja, string> = {
   "provider.disconnect_confirm_body": "The stored credentials are removed from the workspace. You can reconnect anytime.",
   "provider.step_copy_code": "Copy the code",
   "provider.step_open_link": "Open the link and paste",
+  "provider.step_open_link_only": "Open the link",
+  "provider.step_confirm_code": "Check the code shown matches, then approve",
   "provider.open_url": "Open {url} ↗",
   "provider.issue_link": "Open the token page",
   "provider.step_wait_approval": "Wait for approval",

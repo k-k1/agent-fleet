@@ -11,6 +11,7 @@ package opencode
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -112,4 +113,55 @@ func TestContractLiveTurnPayloads(t *testing.T) {
 		t.Errorf("message.data.time.completed absent on a finished turn in opencode %s — "+
 			"LiveState's idle test depends on it (its absence means in-flight)", ver)
 	}
+}
+
+// TestContractLiveOAuthReadyWindow pins the startup race behind the 500 we hit in the
+// wild（ref=err_91d98832, `OAuth method not found: opencode/device`, 起動 85ms 後の
+// click）: /global/health answers before the plugin that registers the device method has
+// loaded, so the auth call must wait for the METHOD, not for health. Starts a private
+// serve on its own port so the workspace's shared daemon is untouched.
+//
+//	OPENCODE_CONTRACT_LIVE=1 go test -tags clicontract -run TestContractLiveOAuthReadyWindow ./internal/agents/opencode/
+func TestContractLiveOAuthReadyWindow(t *testing.T) {
+	requireLive(t)
+	const addr = "http://127.0.0.1:7803"
+	cmd := exec.Command("opencode", "serve", "--hostname", "127.0.0.1", "--port", "7803")
+	cmd.Env = os.Environ()
+	if err := cmd.Start(); err != nil {
+		t.Skipf("opencode serve を起動できない: %v", err)
+	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	}()
+
+	// Wait exactly as Supervisor.Ensure does — health only.
+	deadline := time.Now().Add(30 * time.Second)
+	for !healthy(addr) {
+		if time.Now().After(deadline) {
+			t.Fatal("serve が起動しなかった")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	healthAt := time.Now()
+	ready := deviceMethodReady(addr)
+
+	if err := waitOAuthMethod(addr, 30*time.Second); err != nil {
+		t.Fatalf("device メソッドが現れない: %v", err)
+	}
+	t.Logf("health 到達時点で device メソッドあり=%v / メソッド確認まで health から %s", ready, time.Since(healthAt).Round(time.Millisecond))
+
+	// そして実際に開始できること（attempt は作るだけ・承認しないので資格情報は変わらない）。
+	var env envelope[attemptInfo]
+	body := map[string]any{"methodID": oauthMethodID, "inputs": map[string]string{}}
+	if err := daemonJSON("POST", addr, "/api/integration/"+oauthIntegrationID+"/connect/oauth", body, &env); err != nil {
+		t.Fatalf("connect/oauth: %v", err)
+	}
+	if env.Data.AttemptID == "" || env.Data.URL == "" || env.Data.Mode != "auto" {
+		t.Fatalf("attempt の形が変わった: %+v", env.Data)
+	}
+	if code := userCode(env.Data.URL, env.Data.Instructions); code == "" {
+		t.Errorf("ユーザーコードを取り出せない: url=%q instructions=%q", env.Data.URL, env.Data.Instructions)
+	}
+	_ = daemonJSON[struct{}]("DELETE", addr, "/api/integration/attempt/"+env.Data.AttemptID, nil, nil)
 }

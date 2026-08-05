@@ -1515,11 +1515,12 @@ function OpencodeCard({
               </div>
             ) : flow ? (
               <>
-                {/* opencode polls the token itself (mode="auto"), so there is nothing to
-                    submit back here. The code is shown because the approval page asks the
-                    user to confirm it — the URL already carries it, so it's a convenience,
-                    and when it can't be extracted the steps fall back to just the link. */}
-                <DeviceSteps code={flow.code || undefined} url={flow.url} status={flow.status} />
+                {/* opencode polls the token itself (mode="auto") and the verification URL
+                    already carries the code, so the approval page shows it pre-filled
+                    (実測) — the user compares it and approves, pasting nothing. Hence the
+                    confirm shape; when the code can't be extracted the steps degrade to
+                    just the link. */}
+                <DeviceSteps confirm code={flow.code || undefined} url={flow.url} status={flow.status} />
                 {!flow.code && flow.instructions && <Hint>{flow.instructions}</Hint>}
                 <div className="flow">
                   <button type="button" onClick={cancelAccountLogin}>
