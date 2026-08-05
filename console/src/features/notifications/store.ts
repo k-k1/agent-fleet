@@ -9,6 +9,7 @@ import { useSessionsStore } from "../sessions/store.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { openSessionChat, openSessionChatSplit, openSessionTerminal, openSessionTerminalSplit } from "../sessions/open.ts";
 import { openChat } from "../chat/open.ts";
+import { openRepoScm } from "../scm/open.ts";
 import { unseenSessionEventIDs } from "./read.ts";
 import { notificationWording } from "./wording.ts";
 
@@ -80,6 +81,13 @@ export async function openNotificationTarget(n: FleetNotification, split: boolea
   // session (docs/30) — the conversation id rides the payload.
   if ((n.kind === "session-report" || n.kind === "chat-auto-paused" || n.kind === "chat-context-pressure" || n.kind === "chat-context-overflow") && typeof n.payload.conversation_id === "string" && n.payload.conversation_id) {
     openChat(n.payload.conversation_id);
+    return true;
+  }
+  // A submodule notice belongs to a working copy, not a session (it is filed before any
+  // session exists). Its answer to "what now?" is the Source Control view, which lists the
+  // submodules and whether they are fetched.
+  if (n.kind === "submodule-sync" && typeof n.payload.repo === "string" && n.payload.repo) {
+    openRepoScm(n.payload.repo);
     return true;
   }
   if (n.target.type !== "session" || !n.target.id) return false;
