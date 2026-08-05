@@ -89,6 +89,11 @@ export interface ProviderConn {
   // チャット連携（discord / slack）: 通知マスタの表示形（notifyOff の反転）。
   // false 明示のときだけ OFF — 未設定（旧接続）は ON 扱い。
   notify?: boolean;
+  // opencode: APIキー（envs）と併存する opencode アカウント接続（docs/54）。
+  oauth?: boolean; // Console アカウントで接続済みか
+  oauth_label?: string; // 接続先の組織名（opencode が返すラベル）
+  oauth_known?: boolean; // false = serve daemon 未起動で未確認（未接続とは限らない）
+  oauth_disabled?: boolean; // マネージド opencode が無効でサインイン導線を出せない
 }
 
 // The full connections bag. Known agents are named; git providers (github /

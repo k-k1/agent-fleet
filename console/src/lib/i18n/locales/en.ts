@@ -989,6 +989,18 @@ export const en: Record<keyof typeof ja, string> = {
     "codex has no command-rewrite hook, so it's instruction-based (best effort). AGENTS.md just encourages rtk use; it isn't enforced.",
   "agents.oc_custom": "Custom…",
   "agents.oc_key_count": "{count} keys",
+  "agents.oc_account": "opencode account",
+  "agents.oc_account_desc":
+    "Sign in with your opencode.ai account. Approval finishes in the browser — nothing to type back into the Console. It works alongside API keys, and either one alone is enough.",
+  "agents.oc_account_connect": "Sign in to opencode",
+  "agents.oc_account_connect_note": "Opens an authorize link; approve it in your browser.",
+  "agents.oc_account_connected": "Account connected",
+  "agents.oc_account_only": "Account",
+  "agents.oc_account_failed": "Couldn't start the sign-in{msg}",
+  "agents.oc_account_denied": "The sign-in wasn't approved{msg}",
+  "agents.oc_account_note":
+    "After signing in, the models available to that organization show up in the launch list (running sessions pick them up on their next turn; Terminal (CLI) sessions after a restart).",
+  "agents.oc_account_disabled": "Managed opencode is off in this workspace, so account sign-in isn't available.",
   "agents.oc_desc": "Save API keys for multiple providers and inject them as env when opencode launches.",
   "agents.oc_hint": " to sign in → billing → issue an API key and paste it (the same key works for Zen too).",
   "agents.oc_catalog": "Model list",
