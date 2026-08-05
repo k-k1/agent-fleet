@@ -28,6 +28,12 @@ opencode はそれが不要で、共有 `opencode serve` daemon（docs/27 の Ru
   コードを貼らせる必要はない（cursor と同じ「URL を出して poll」型）。`url` は
   `verification_uri_complete`（ユーザーコード入り）で、`instructions` に
   `Enter code: …` が入る。
+- **承認ページはコードが入力済み**（実測）。`?user_code=` を持ったまま開くので、
+  ユーザーは「表示されたコードが手元と一致するか」を確認して Authorize を押すだけで、
+  どこにも貼り付けない（AWS SSO の device flow と同じ）。Console の手順表示は
+  `DeviceSteps` の confirm 形（①リンクを開く ②コードの一致を確認して承認 ③承認を待つ）。
+  既定形（①コードをコピー ②リンクを開いて貼り付け）のままだと、存在しない入力欄を
+  探させることになる。
 - **状態の出どころは `connections[]`**。`type:"credential"` が Console アカウント接続、
   `type:"env"` は `OPENCODE_API_KEY` の存在を示すだけで別経路。`label` は接続先の
   org 名（opencode 側の label 解決が `metadata.orgName` を返す）。
