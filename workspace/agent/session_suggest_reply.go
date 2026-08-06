@@ -32,13 +32,15 @@ const (
 	replySuggestTimeout  = 60 * time.Second
 	replySuggestCount    = 3  // 返す候補の最大数
 	replySuggestMaxRunes = 20 // 1 候補の長さ上限（超える行はプロンプト扱いで捨てる・ペルソナの20字と一致）
-	// 直近何ターンを文脈に入れるか。返信の手がかりは「直前に何を言われたか」がほぼ全てなので、
-	// 直前の回答＋その前のユーザー発話（何を頼んだか）の 2 ターンだけでよい。件名提案（会話全体の
-	// 主題が要る）と違い、窓を広げても候補は良くならず入力トークンだけ増える。
-	replySuggestTailTurns = 2
-	// 1 ターンで残す長さ。★頭ではなく末尾を残す — 質問文・選択肢の識別子（1/2/A/B）は発言の
-	// 末尾に集中するので、件名提案と同じ「先頭 N 文字」で切ると肝心の部分が落ちる。
-	replySuggestTailRunes = 600
+	// 窓は「ターン数」ではなく「文字予算」で決める。★転写の 1 ターン＝1 コンテンツブロックなので、
+	// ツールを使う普通の回答は「2点をトリムします。」級の途中報告が何本も並ぶ（実測で最大 8 本）。
+	// ターン数固定の窓（旧 2 ターン）だと、その途中報告だけで窓が埋まり、肝心の回答も依頼も一切
+	// 渡らない（実測 11 転写中 7 件が assistant+assistant で、渡っていたのは 22 文字だけ）。
+	// 予算窓なら「1」「進めて」のような短い返事はほぼコストゼロで通過し、その手前にある実質的な
+	// 回答（提案・選択肢・問いかけ）まで自然に遡れる。
+	replySuggestBudgetRunes = 1200 // 会話ログ全体の目安（最後の 1 発言だけは超過を許す）
+	replySuggestMaxMsgs     = 6    // 遡る発言数の上限（畳んだ後の数）
+	replySuggestPerMsgRunes = 700  // 1 発言で残す長さ
 )
 
 // replySuggestPersona は指示文の言語（＝ペルソナ/プロンプトを書く言語）を Console の表示言語で
@@ -95,38 +97,91 @@ func replySuggestEnabled() bool {
 	return !ok || v
 }
 
-// replyTailText は返信サジェスト用に 1 発言を切り詰める。件名提案の writeConversationWindow が
+// replyMsg は窓を組むための「1 発言」。転写のターン（＝1 行＝1 コンテンツブロック）でも
+// チャットの chatMessage でもなく、畳んだ後の論理的な発言を表す。
+type replyMsg struct {
+	role string
+	text string
+}
+
+// replyTailLines は返信サジェスト用に 1 発言を切り詰める。件名提案の writeConversationWindow が
 // 先頭を残す（冒頭に主題がある）のに対し、こちらは末尾を残す — 返信の手がかり（問いかけ・
 // 選択肢の識別子・「どうする?」の一文）は発言の終わりに集中しており、先頭を残す切り方だと
 // 長い回答ほど肝心の部分が落ちて、候補が文脈と噛み合わなくなる。
-func replyTailText(s string) string {
+// ★切るのは行（＝段落・箇条書き・見出しの境界）単位。文字数で機械的に切ると「1. L19：…」の
+// ような選択肢行が頭から欠けて、識別子だけを答える指示が効かなくなる。空行は落として詰める。
+func replyTailLines(s string, max int) string {
 	t := strings.TrimSpace(s)
-	r := []rune(t)
-	if len(r) <= replySuggestTailRunes {
+	if len([]rune(t)) <= max {
 		return t
 	}
-	return "…" + string(r[len(r)-replySuggestTailRunes:])
+	lines := strings.Split(t, "\n")
+	keep := make([]string, 0, len(lines))
+	n := 0
+	for i := len(lines) - 1; i >= 0; i-- {
+		ln := strings.TrimSpace(lines[i])
+		if ln == "" {
+			continue
+		}
+		r := []rune(ln)
+		if n+len(r) > max {
+			// 末尾の 1 行だけで予算を超えるときは、その行を字数で切る（何も残さないよりよい）。
+			if len(keep) == 0 {
+				keep = append(keep, "…"+string(r[len(r)-max:]))
+			}
+			break
+		}
+		keep = append([]string{ln}, keep...)
+		n += len(r)
+	}
+	return "…\n" + strings.Join(keep, "\n")
+}
+
+// replyFoldWindow は発言列を「同一 role の連続を 1 発言に畳む → 新しい方から文字予算を
+// 満たすまで遡る」で窓に切り出す。畳みが本体: これが無いと途中報告 1 本 1 本が 1 ターンとして
+// 数えられ、窓が実質的な回答に届かない（定数のコメント参照）。
+func replyFoldWindow(msgs []replyMsg) []replyMsg {
+	folded := make([]replyMsg, 0, len(msgs))
+	for _, m := range msgs {
+		if n := len(folded); n > 0 && folded[n-1].role == m.role {
+			folded[n-1].text += "\n" + m.text
+			continue
+		}
+		folded = append(folded, m)
+	}
+	out := make([]replyMsg, 0, replySuggestMaxMsgs)
+	used := 0
+	for i := len(folded) - 1; i >= 0 && len(out) < replySuggestMaxMsgs; i-- {
+		txt := replyTailLines(folded[i].text, replySuggestPerMsgRunes)
+		out = append([]replyMsg{{folded[i].role, txt}}, out...)
+		if used += len([]rune(txt)); used >= replySuggestBudgetRunes {
+			break
+		}
+	}
+	return out
+}
+
+// replySuggestWindow は窓の本文（"role: text" の並び）を書く。セッション版とチャット版で共通。
+func replySuggestWindow(b *strings.Builder, msgs []replyMsg) {
+	for _, m := range replyFoldWindow(msgs) {
+		fmt.Fprintf(b, "%s: %s\n", m.role, m.text)
+	}
 }
 
 // replySuggestPrompt は直近の実ターン（sidechain/compaction/tool-only を除く）を文脈に渡す。
 // タイトルと違い開始ターンは不要 — 返信は「直前に何を言われたか」が全てなので末尾窓だけでよい。
 func replySuggestPrompt(turns []transcript.Turn, lang string) string {
-	real := make([]transcript.Turn, 0, len(turns))
+	real := make([]replyMsg, 0, len(turns))
 	for _, t := range turns {
 		if t.Sidechain || t.Compact || t.Text == "" {
 			continue
 		}
-		real = append(real, t)
-	}
-	if len(real) > replySuggestTailTurns {
-		real = real[len(real)-replySuggestTailTurns:]
+		real = append(real, replyMsg{t.Role, t.Text})
 	}
 	var b strings.Builder
 	b.WriteString(replySuggestInstructions(lang, replyCounterpartSession))
 	b.WriteString(replySuggestLogHeader(lang))
-	for _, t := range real {
-		fmt.Fprintf(&b, "%s: %s\n", t.Role, replyTailText(t.Text))
-	}
+	replySuggestWindow(&b, real)
 	return b.String()
 }
 

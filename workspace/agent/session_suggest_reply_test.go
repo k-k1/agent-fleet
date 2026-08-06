@@ -41,42 +41,86 @@ func TestCleanSuggestedReplies(t *testing.T) {
 }
 
 // 長い回答は「末尾」を残す。返信の手がかり（問いかけ・選択肢の識別子）は発言の終わりにあり、
-// 件名提案と同じ先頭切りをすると、まさにそこが落ちる。
-func TestReplyTailTextKeepsTail(t *testing.T) {
-	long := strings.Repeat("あ", replySuggestTailRunes+50) + "どうする? A か B。"
-	got := replyTailText(long)
-	if !strings.HasSuffix(got, "どうする? A か B。") {
-		t.Fatalf("tail lost: %q", got[max(0, len([]rune(got))-40):])
+// 件名提案と同じ先頭切りをすると、まさにそこが落ちる。切るのは行境界。
+func TestReplyTailLinesKeepsTail(t *testing.T) {
+	long := strings.Repeat("あ", 300) + "\n1. Aでいく\n2. Bでいく\nどうする?"
+	got := replyTailLines(long, 40)
+	for _, want := range []string{"1. Aでいく", "2. Bでいく", "どうする?"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("tail lost %q:\n%s", want, got)
+		}
 	}
-	if r := []rune(got); len(r) != replySuggestTailRunes+1 { // 先頭の省略記号込み
-		t.Fatalf("len = %d runes, want %d", len(r), replySuggestTailRunes+1)
+	// 予算を食い尽くす先頭行は丸ごと落ちる（行の途中から始まる断片を渡さない）。
+	if strings.Contains(got, "あ") {
+		t.Fatalf("over-budget head line should be dropped whole:\n%s", got)
 	}
 	if !strings.HasPrefix(got, "…") {
-		t.Fatalf("want a leading ellipsis marking the cut, got %q", string([]rune(got)[:1]))
+		t.Fatalf("want a leading ellipsis marking the cut, got %q", got)
 	}
-	if short := replyTailText("  OK?  "); short != "OK?" {
+	// 末尾の1行だけで予算を超えるときは、その行を字数で切ってでも残す。
+	if one := replyTailLines(strings.Repeat("あ", 100)+"どうする?", 20); !strings.HasSuffix(one, "どうする?") {
+		t.Fatalf("a single over-budget line must still keep its tail, got %q", one)
+	}
+	if short := replyTailLines("  OK?  ", 40); short != "OK?" {
 		t.Fatalf("short text should pass through trimmed, got %q", short)
 	}
 }
 
-// 窓は直近2ターン（直前の回答＋その前のユーザー発話）。それより前は入れない。
-func TestReplySuggestPromptWindow(t *testing.T) {
+// ★本命の回帰: 転写の 1 ターン＝1 コンテンツブロックなので、ツールを使う回答は「次に X します。」
+// 級の途中報告が何本も並ぶ。畳まずにターン数で窓を切ると、その途中報告だけで窓が埋まり、
+// 実質的な回答も依頼も 1 文字も渡らない（実測: 会話ログが 22 文字になり候補が「進めて」だけ）。
+func TestReplySuggestPromptFoldsFragments(t *testing.T) {
 	turns := []transcript.Turn{
 		{Role: "user", Text: "古い依頼"},
 		{Role: "assistant", Text: "古い回答"},
+		{Role: "user", Text: "L19 と L37 を直したい"},
+		{Role: "assistant", Text: "調べる。"},
 		{Role: "assistant", Text: "サイドチェーン", Sidechain: true},
-		{Role: "user", Text: "直前の依頼"},
-		{Role: "assistant", Text: "直前の回答。どうする?"},
+		{Role: "assistant", Text: "1. L19 を削る\n2. L37 を削る\nこれで進めてよいですか。"},
+		{Role: "user", Text: "1"},
+		{Role: "assistant", Text: "2点をトリムします。"},
+		{Role: "assistant", Text: "txt を再生成します。"},
 	}
 	got := replySuggestPrompt(turns, "ja")
-	for _, want := range []string{"user: 直前の依頼", "assistant: 直前の回答。どうする?"} {
+	// 途中報告は畳まれて 1 発言になり、その手前の「選択肢つきの回答」と「短い返事」まで届く。
+	for _, want := range []string{
+		"assistant: 2点をトリムします。\ntxt を再生成します。",
+		"user: 1",
+		"1. L19 を削る",
+		"これで進めてよいですか。",
+		"user: L19 と L37 を直したい",
+	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, got)
 		}
 	}
-	for _, unwanted := range []string{"古い依頼", "古い回答", "サイドチェーン"} {
-		if strings.Contains(got, unwanted) {
-			t.Fatalf("prompt should not carry %q:\n%s", unwanted, got)
-		}
+	if strings.Contains(got, "サイドチェーン") {
+		t.Fatalf("sidechain turns must stay out:\n%s", got)
+	}
+}
+
+// 予算窓: 長い発言が続けば早く打ち切られ、短い返事はほぼコストゼロで通過する。
+func TestReplyFoldWindowBudget(t *testing.T) {
+	long := func(n int) string { return strings.Repeat("あ", n) }
+	msgs := []replyMsg{
+		{"user", "最初の依頼"},
+		{"assistant", long(800)},
+		{"user", "つぎ"},
+		{"assistant", long(800)},
+	}
+	got := replyFoldWindow(msgs)
+	if len(got) != 3 { // 800(切詰) + "つぎ" + 800(切詰) で予算超過 → そこで停止
+		t.Fatalf("window = %d msgs, want 3: %+v", len(got), got)
+	}
+	if got[0].role != "assistant" || got[len(got)-1].role != "assistant" {
+		t.Fatalf("window should end at the newest message: %+v", got)
+	}
+	// 発言数の上限も効く（短い発言ばかりでも遡りすぎない）。
+	many := make([]replyMsg, 0, 20)
+	for i := 0; i < 20; i++ {
+		many = append(many, replyMsg{"user", "あ"}, replyMsg{"assistant", "い"})
+	}
+	if n := len(replyFoldWindow(many)); n != replySuggestMaxMsgs {
+		t.Fatalf("window = %d msgs, want the %d cap", n, replySuggestMaxMsgs)
 	}
 }
