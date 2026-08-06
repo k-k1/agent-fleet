@@ -159,6 +159,12 @@ func driveState(m session.Meta, alive, heal bool) string {
 		}
 		return agents.StateBlocked
 	}
+	// codex managed: a turn rejected/failed with usageLimitExceeded leaves the
+	// session sitting at idle, but re-sending will hit the same limit. Surface it
+	// with the same "blocked" badge as Claude's usage-limit menu.
+	if m.DriverKind() == session.DriverManaged && normalizeKind(m.Kind) == session.KindCodex && state == "idle" && codex.IsRateLimited(m.Name) {
+		return agents.StateBlocked
+	}
 	if heal && state != "idle" && pane.Idle {
 		state = "idle"
 		// claude は「API エラーでターンが落ちた」を transcript 末尾から見分けられるので、

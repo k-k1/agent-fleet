@@ -213,8 +213,8 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, sessTO time.
 	}
 	// busy = any session working/question => workspace is active.
 	//
-	// "blocked" (claude が利用上限メニューでペインを人間待ちに固定している状態) は意図的に
-	// 除外する。question と違い、これは「すぐ答えが返ってくる対話」ではなく人が気づくまで
+	// "blocked" (claude の利用上限メニュー、または codex managed の usageLimitExceeded) は
+	// 意図的に除外する。question と違い、これは「すぐ答えが返ってくる対話」ではなく人が気づくまで
 	// 何日でも続きうる停止で、それでコンテナを起こし続けるのが元のバグの実害そのものだった
 	// （進行中 に貼り付いた1セッションが busy を立て続け、tier1・tier2 とも効かないまま
 	// 約16時間コンテナが占有された — 2026-07-31 実測）。ターンは既に終わっているので、
