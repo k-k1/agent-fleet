@@ -206,6 +206,11 @@ export const ja = {
   "surface_color.green": "グリーン",
   "surface_color.purple": "パープル",
   "surface_color.warm": "ウォーム",
+  "surface_color.teal": "ティール",
+  "surface_color.rose": "ローズ",
+  "surface_color.pink": "ピンク",
+  "surface_color.indigo": "インディゴ",
+  "surface_color.mono": "グラファイト",
 
   // --- サーフェス対象（lib/settings.ts SURFACE_TARGETS。short=外観ポップ, long=設定行）---
   "surface.topbar.short": "上部バー",

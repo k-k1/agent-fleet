@@ -206,6 +206,11 @@ export const en: Record<keyof typeof ja, string> = {
   "surface_color.green": "Green",
   "surface_color.purple": "Purple",
   "surface_color.warm": "Warm",
+  "surface_color.teal": "Teal",
+  "surface_color.rose": "Rose",
+  "surface_color.pink": "Pink",
+  "surface_color.indigo": "Indigo",
+  "surface_color.mono": "Graphite",
 
   // --- surface targets (short = 外観 popover, long = settings row) ---
   "surface.topbar.short": "Top bar",
