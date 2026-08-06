@@ -106,7 +106,12 @@ export function repairFullwidthTables(source: string): TableRepair | null {
     const content = lines.slice(i, end).filter((_, offset) => !(hasDelimiter && offset === 1));
     if (content.some(isFullwidthRow) && !lines.slice(i, end).some(mixesPipeWidths)) {
       for (let k = i; k < end; k++) {
-        if (isFullwidthRow(lines[k])) lines[k] = lines[k].replace(PIPES, "|").replace(/[－ー―‐]/g, "-");
+        if (!isFullwidthRow(lines[k])) continue;
+        lines[k] = lines[k].replace(PIPES, "|");
+        // Fullwidth dashes are only ever dashes on the delimiter row, whose cells match
+        // DELIMITER_CELL and so hold nothing else. In a content cell ー is a prolonged
+        // sound mark, and rewriting it turns コード into コ-ド.
+        if (hasDelimiter && k === i + 1) lines[k] = lines[k].replace(/[－ー―‐]/g, "-");
       }
       if (synthesize) {
         lines.splice(i + 1, 0, `|${Array(header.length).fill("---").join("|")}|`);

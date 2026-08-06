@@ -40,6 +40,25 @@ describe("repairFullwidthTables", () => {
     );
   });
 
+  it("leaves cell text alone — ー is a prolonged sound mark, not a dash", () => {
+    expect(repairFullwidthTables("｜章コード｜点｜\n｜---｜---｜\n｜A1｜ノートとスマートロック｜")?.body).toBe(
+      "|章コード|点|\n|---|---|\n|A1|ノートとスマートロック|",
+    );
+  });
+
+  it("normalizes fullwidth dashes on the delimiter row, where they can only be dashes", () => {
+    expect(repairFullwidthTables("｜章コード｜点｜\n｜ーーー｜ーーー｜\n｜A1｜6｜")?.body).toBe(
+      "|章コード|点|\n|---|---|\n|A1|6|",
+    );
+  });
+
+  it("changes nothing but pipes outside the delimiter row", () => {
+    const source = "｜章コード｜評価｜\n｜---｜---｜\n｜A1｜データ〜ノート・メール｜\n｜A2｜ロングテール｜";
+    const body = repairFullwidthTables(source)!.body;
+    const withoutPipes = (text: string) => text.replace(/[|｜￨]/g, "");
+    expect(withoutPipes(body)).toBe(withoutPipes(source));
+  });
+
   it("supplies a missing delimiter row once enough rows agree on a column count", () => {
     expect(repairFullwidthTables("｜章｜点｜\n｜A1｜6｜\n｜A2｜7｜\n｜A3｜8｜")?.body).toBe(
       "|章|点|\n|---|---|\n|A1|6|\n|A2|7|\n|A3|8|",
