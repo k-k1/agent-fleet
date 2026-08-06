@@ -12,6 +12,107 @@ export interface YamlFrontMatter {
 // Only a complete, mapping-shaped block at byte zero is recognized. This leaves
 // thematic breaks, invalid YAML, and incomplete front matter (while a chat
 // message is streaming) as ordinary Markdown.
+export interface TableRepair {
+  body: string;
+  // Indexes, in document order among all table blocks found, of the tables that were
+  // repaired — so a caller can point at the rendered <table> that needed it.
+  repaired: number[];
+  // How many table blocks were found in all. A caller compares this against the number
+  // of <table> elements the renderer produced before trusting the indexes above.
+  total: number;
+}
+
+// A pipe as GFM wants it, plus the two lookalikes a Japanese IME hands you: a table
+// typed alongside Japanese cell text comes out with U+FF5C ｜ throughout, looks aligned
+// in the editor, and renders as one run-on paragraph. Documents written that way also
+// tend to drop the delimiter row entirely.
+const PIPE = /[|｜￨]/;
+const PIPES = /[|｜￨]/g;
+// GFM needs one dash or more; the fullwidth dashes travel with the fullwidth pipes.
+const DELIMITER_CELL = /^\s*:?[-－ー―‐]+:?\s*$/;
+// Without a delimiter row, pipe-framed lines are only believed to be a table once this
+// many agree on a column count — below that a line of prose could qualify by accident.
+const MIN_ROWS_WITHOUT_DELIMITER = 3;
+
+// Split a pipe-framed line into its cells, or null if it is not shaped like a table row.
+// Escaped \| inside a cell would be split too, but a block only reaches the repair path
+// when it holds no ASCII pipe at all, so it cannot contain one.
+function tableRow(line: string | undefined): string[] | null {
+  if (line === undefined || !/^ {0,3}\S/.test(line)) return null; // 4 spaces in = code
+  const text = line.trim();
+  if (text.length < 3 || !PIPE.test(text[0]) || !PIPE.test(text[text.length - 1])) return null;
+  return text.slice(1, -1).split(PIPES);
+}
+
+const isDelimiterRow = (cells: string[]) => cells.every((cell) => DELIMITER_CELL.test(cell));
+// The mark of a mistyped row: fullwidth pipes and not one ASCII pipe to be found.
+const isFullwidthRow = (line: string) => /[｜￨]/.test(line) && !line.includes("|");
+
+// Repair tables written with fullwidth pipes, and supply a delimiter row where one is
+// missing, before the Markdown reaches the renderer. Returns null when nothing needed
+// repairing — the overwhelmingly common case, decided by a single scan of the source.
+//
+// The rules stay narrow because a *valid* table may hold a fullwidth ｜ inside a cell on
+// purpose: it is the only way to put a vertical bar in a cell without splitting it, and
+// docs/54-opencode-console-oauth.md does exactly that. So a row is only rewritten when it
+// contains no ASCII pipe at all, and only when every content row of its block is in that
+// state. Anything mixed is read as deliberate and left alone. The delimiter row is exempt
+// from that test: it carries no text, so an ASCII one proves nothing about intent.
+export function repairFullwidthTables(source: string): TableRepair | null {
+  if (!/[｜￨]/.test(source)) return null;
+  const lines = source.split("\n");
+  const repaired: number[] = [];
+  let total = 0;
+  let fence = "";
+
+  for (let i = 0; i < lines.length; i++) {
+    const marker = lines[i].match(/^ {0,3}(`{3,}|~{3,})/);
+    if (marker) {
+      if (!fence) fence = marker[1][0];
+      else if (marker[1][0] === fence) fence = "";
+      continue;
+    }
+    if (fence) continue;
+
+    const header = tableRow(lines[i]);
+    if (!header) continue;
+    const next = tableRow(lines[i + 1]);
+    const hasDelimiter = !!next && isDelimiterRow(next) && next.length === header.length;
+
+    let end = hasDelimiter ? i + 2 : i + 1;
+    while (end < lines.length) {
+      const row = tableRow(lines[end]);
+      // With no delimiter yet, the column count is the only evidence the block is a
+      // table, and a delimiter-shaped line further down starts a different one.
+      if (!row || (!hasDelimiter && (row.length !== header.length || isDelimiterRow(row)))) break;
+      end++;
+    }
+    // A block with no delimiter row that is too short to be worth supplying one with
+    // stays prose however its pipes are typed — rewriting it would change nothing a
+    // reader can see, and counting it would put `total` out of step with the tables the
+    // renderer actually produces.
+    const synthesize = !hasDelimiter && end - i - 1 >= MIN_ROWS_WITHOUT_DELIMITER;
+    if (!hasDelimiter && !synthesize) {
+      i = end - 1;
+      continue;
+    }
+    total++;
+
+    const content = lines.slice(i, end).filter((_, offset) => !(hasDelimiter && offset === 1));
+    if (content.every(isFullwidthRow)) {
+      for (let k = i; k < end; k++) lines[k] = lines[k].replace(PIPES, "|").replace(/[－ー―‐]/g, "-");
+      if (synthesize) {
+        lines.splice(i + 1, 0, `|${Array(header.length).fill("---").join("|")}|`);
+        end++;
+      }
+      repaired.push(total - 1);
+    }
+    i = end - 1;
+  }
+
+  return repaired.length ? { body: lines.join("\n"), repaired, total } : null;
+}
+
 export function splitYamlFrontMatter(source: string): YamlFrontMatter | null {
   const match = source.match(/^\uFEFF?---[\t ]*\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)[\t ]*(?:\r?\n|$)/);
   if (!match) return null;

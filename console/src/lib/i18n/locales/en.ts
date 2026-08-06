@@ -3230,6 +3230,8 @@ export const en: Record<keyof typeof ja, string> = {
   "view.open_session": "Open session {name}",
   "view.open_conversation": "Open chat {slug}",
   "view.conversation_not_found": "Conversation not found: {slug}",
+  "view.table_repaired":
+    "This table is written with the fullwidth ｜ instead of |, so it is shown repaired here. Other Markdown viewers will still render it as plain text.",
 
 
   // === P5 ログイン切れモーダル（AuthExpiredModal） ===

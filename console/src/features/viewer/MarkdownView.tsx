@@ -3,7 +3,7 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import hljs from "highlight.js/lib/common";
 import { dirName, baseName, isExternalUrl, resolveMarkdownFileTarget, slug } from "../../lib/filemeta.ts";
-import { splitYamlFrontMatter } from "../../lib/markdown.ts";
+import { repairFullwidthTables, splitYamlFrontMatter, type TableRepair } from "../../lib/markdown.ts";
 import { api, downloadURL } from "../../core/api/client.ts";
 import { useSettings } from "../../lib/settings.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -85,7 +85,11 @@ export function MarkdownView({
     let alive = true;
 
     const frontMatter = splitYamlFrontMatter(source ?? "");
-    const rawHtml = marked.parse(frontMatter?.body ?? source ?? "", { gfm: true, breaks }) as string;
+    const body = frontMatter?.body ?? source ?? "";
+    // Tables typed with a fullwidth ｜ parse as one run-on paragraph; repair them so the
+    // document is at least readable here, and mark what was repaired below.
+    const repair = repairFullwidthTables(body);
+    const rawHtml = marked.parse(repair?.body ?? body, { gfm: true, breaks }) as string;
     el.innerHTML = DOMPurify.sanitize(rawHtml);
     if (frontMatter) renderFrontMatter(el, frontMatter.attributes);
 
@@ -104,6 +108,8 @@ export function MarkdownView({
       (el.lastElementChild ?? el).appendChild(caret);
       return;
     }
+
+    if (repair) markRepairedTables(el, repair);
 
     // Give headings slug ids so in-page #anchors can resolve.
     el.querySelectorAll("h1,h2,h3,h4,h5,h6").forEach((h) => {
@@ -213,6 +219,28 @@ export function MarkdownView({
 // Front matter belongs above the document as a compact property list. It is
 // created through DOM APIs (rather than injected HTML) so YAML scalar strings
 // are always rendered as text.
+// Flag each table the repair had to fix. The preview reads correctly either way, so
+// without this the reader never learns the file is still broken everywhere else — on
+// GitHub, in an editor, in any other Markdown viewer.
+//
+// Tables are matched by document order. If the renderer disagreed about how many tables
+// the source holds (one nested in a blockquote, which the scanner does not look inside),
+// say it once at the top rather than point at the wrong table.
+function markRepairedTables(root: HTMLElement, repair: TableRepair) {
+  const notice = () => {
+    const el = document.createElement("p");
+    el.className = "md-table-repaired";
+    el.textContent = t("view.table_repaired");
+    return el;
+  };
+  const tables = root.querySelectorAll("table");
+  if (tables.length !== repair.total) {
+    root.prepend(notice());
+    return;
+  }
+  for (const index of repair.repaired) tables[index]?.before(notice());
+}
+
 function renderFrontMatter(root: HTMLElement, attributes: Record<string, unknown>) {
   const panel = document.createElement("dl");
   panel.className = "md-frontmatter";
