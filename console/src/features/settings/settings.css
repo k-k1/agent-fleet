@@ -914,8 +914,14 @@
   font-family: var(--mono);
   flex: none;
 }
+/* アカウント行のアクションは右端へ寄せる。auto マージンを持つのは行内で最初の
+   ボタンだけ — 両方に付けると 再認証 と 切断 が行の左右へ離れてしまう。 */
+.p-who .conn-reauth,
 .p-who .conn-disconnect {
   margin-left: auto;
+}
+.p-who .conn-reauth ~ .conn-disconnect {
+  margin-left: 0;
 }
 /* Internal git provider: the repo list inside its provider card (P2). */
 .internal-repo-list {
@@ -1789,6 +1795,10 @@
 }
 /* "切断" — the live-connection sever action; danger-red on hover (via .danger). */
 .conn-disconnect {
+  font-size: 12px;
+}
+/* "再認証" — sign in again without losing the card's connected framing (providerCard). */
+.conn-reauth {
   font-size: 12px;
 }
 

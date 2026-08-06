@@ -21,7 +21,7 @@ import { useConnections } from "./useConnections.ts";
 import { useSettingsUI } from "./store.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../core/store/workspace.ts";
 import { usePolling } from "./usePolling.ts";
-import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton, IssueLink } from "./providerCard.tsx";
+import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton, ReauthButton, IssueLink } from "./providerCard.tsx";
 import { kindDisplayName } from "../../lib/sessionkind.ts";
 import { useT } from "../../lib/i18n/index.ts";
 
@@ -481,6 +481,16 @@ function ClaudeCard({
     await raw("api/connections/claude", { method: "DELETE" });
     reload();
   };
+  // 再認証。claude は自分の .credentials.json を所有していて「更新だけ」のコマンドを
+  // 持たないので、一度サインアウトしてから同じ OAuth フローを開き直す（＝これまで
+  // 利用者が手で踏んでいた 切断→接続 を 1 アクションにしたもの）。サーバ側でトークンが
+  // 失効しても `claude auth status` は手元の資格情報を見て loggedIn を返すため、カードは
+  // 接続済みのまま — この導線が無いと、認証切れは「切断してみる」以外に直しようがない。
+  const reauth = async () => {
+    await raw("api/connections/claude", { method: "DELETE" });
+    reload(); // 状態ピルを 未接続 へ戻す（フロー表示自体は下の分岐が先に効く）
+    await start();
+  };
 
   return (
     <ProviderCard
@@ -494,15 +504,10 @@ function ClaudeCard({
     >
       {!running ? (
         <ConnPaused />
-      ) : st?.connected ? (
-        <div className="p-who">
-          <span className="p-em" title={st.email || tr("conn.connected")}>
-            {st.email || tr("conn.connected")}
-          </span>
-          {st.plan && <span className="p-pl">{st.plan}</span>}
-          <DisconnectButton onClick={disconnect} />
-        </div>
-      ) : flow ? (
+      ) : /* フローを接続状態より先に見る: 再認証はサインアウト→フロー開始の順で走り、
+            api/connections の再取得はそれより遅れて届く。接続済みを先に見ていると、
+            開いたばかりのコード貼り付け欄がその一瞬だけ隠れてしまう。 */
+      flow ? (
         <>
           <div className="p-desc">{tr("agents.claude_desc_flow")}</div>
           <div className="p-body">
@@ -539,6 +544,15 @@ function ClaudeCard({
             </div>
           </div>
         </>
+      ) : st?.connected ? (
+        <div className="p-who">
+          <span className="p-em" title={st.email || tr("conn.connected")}>
+            {st.email || tr("conn.connected")}
+          </span>
+          {st.plan && <span className="p-pl">{st.plan}</span>}
+          <ReauthButton onClick={() => void reauth()} />
+          <DisconnectButton onClick={disconnect} />
+        </div>
       ) : (
         <>
           <div className="p-desc">{tr("agents.claude_desc")}</div>

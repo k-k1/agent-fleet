@@ -35,6 +35,8 @@ import {
 } from "../../lib/suggestCycle.ts";
 import { useChipMenu, SuggestChipMenu } from "./SuggestChipMenu.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
+// 失敗ブロックの再認証導線が 設定 > エージェント を開くのに使う（ErrorBlock）。
+import { useSettingsUI } from "../settings/store.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { Icon } from "../../ui/Icon.tsx";
@@ -178,6 +180,10 @@ interface Part {
   text?: string;
   tool?: string;
   info?: string;
+  // kind=error: なぜ失敗したかの機械可読な軸（"auth" = 再認証で直る、空 = 導線なし）。
+  // info はエージェント自身のエラー名で版ごとに変わるため、文言一致で導線を出しては
+  // いけない — 分類はエージェント側（各 errors.go）が持ち、ここはその印だけを見る。
+  cause?: string;
   output?: string;
   prompt?: string; // kind=delegation: full instruction sent to the child
   agentType?: string; // kind=delegation: Explore/general-purpose/task name
@@ -3797,7 +3803,12 @@ function ThinkingBlock({
 // balance, a rate limit — and produced no output. Always expanded and visually distinct:
 // this used to be invisible, so the session just went quiet and read 入力待ち again.
 // The message is provider text, not Markdown, so it renders verbatim.
-function ErrorBlock({ info, text }: { info?: string; text?: string }) {
+//
+// When the agent classified the failure as「サインインし直せば直る」(cause="auth") the
+// raw text alone is a dead end: それは CLI 向けの文面（"Please run /login"）で、Console
+// から見ている利用者に効く操作ではない。原文は証拠として残したまま、何が起きたのかと
+// どこで直すのかを添える。
+function ErrorBlock({ info, text, cause, agentName }: { info?: string; text?: string; cause?: string; agentName: string }) {
   if (!text && !info) return null;
   return (
     <div className="mirror-error" role="alert">
@@ -3806,6 +3817,19 @@ function ErrorBlock({ info, text }: { info?: string; text?: string }) {
         <span className="mte-title">{tr("mirror.error_label")}</span>
         {info && <span className="mte-code">{info}</span>}
       </div>
+      {cause === "auth" && (
+        <div className="mirror-error-fix">
+          <p className="mef-msg">{tr("mirror.error_auth_hint", { agent: agentName })}</p>
+          <button
+            type="button"
+            className="mef-action"
+            onClick={() => useSettingsUI.getState().openSettings("agents")}
+          >
+            <Icon name="plug" />
+            {tr("mirror.error_auth_action")}
+          </button>
+        </div>
+      )}
       {text && <div className="mirror-error-body">{text}</div>}
     </div>
   );
@@ -4000,9 +4024,9 @@ function Turn({
       ) : item.p.kind === "delegation" ? (
         <DelegationCard key={item.i} p={item.p} agentName={agentName} />
       ) : item.p.kind === "error" ? (
-        // The turn failed instead of answering (managed driver: the agent's own
-        // error record, e.g. auth/quota/rate-limit) — never fold it away.
-        <ErrorBlock key={item.i} info={item.p.info} text={item.p.text} />
+        // The turn failed instead of answering (the agent's own error record, e.g.
+        // auth/quota/rate-limit) — never fold it away.
+        <ErrorBlock key={item.i} info={item.p.info} text={item.p.text} cause={item.p.cause} agentName={agentName} />
       ) : (
         <MarkdownView key={item.i} source={item.p.text} baseDir={turn.cwd} repo={repo} onOpenFile={onOpenFile} />
       ),

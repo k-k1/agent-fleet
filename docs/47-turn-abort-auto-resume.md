@@ -486,9 +486,71 @@ ADR0030 §3 が Agent 直送を避けた第一の理由「誰が何を送った�
 | `chat_report_abort_test.go` | 抑止中は 0 通、打ち切りを書いた瞬間に同じ転写のまま 1 通配られること（片道切符でないこと）。既存の中断報告テストは機能 OFF の経路として残す |
 | `internal/agents/claude/abort_test.go` | `stream idle timeout` の 2 形、`error` フィールドの分類（未知文言＋server_error / invalid_request / rate_limit / 未知の値、文言が `error` より強いこと） |
 
+## 4-7. 追補（2026-08-07）— 認証切れの見え方（ミラーの失敗ブロック）
+
+中断そのものではなく、**中断が画面でどう見えるか**の穴。実測（2026-08-06 22:12 UTC・
+転写コーパス）:
+
+```jsonc
+{"type":"assistant","isApiErrorMessage":true,"apiErrorStatus":401,
+ "error":"authentication_failed",
+ "message":{"model":"<synthetic>","content":[{"type":"text",
+   "text":"Please run /login · API Error: 401 OAuth access token has expired. Re-authenticate to continue."}]}}
+```
+
+### 4-7-1. 何が起きていたか
+
+1. **ミラーでは失敗が回答に化けていた。** claude パーサ（`internal/agents/claude/transcript.go`）は
+   合成レコードの text ブロックを**普通の text part** として出していたので、Console は
+   これを通常の回答と同じ吹き出しで描いていた。codex / opencode は同じ失敗を
+   `kind:"error"` の part にしており（各 `errors.go`）、Console の `ErrorBlock`
+   （`.mirror-error`）が常時展開の赤ブロックで描く — claude だけがこの語彙に乗って
+   いなかった。
+2. **本文が Console の利用者に効かない。** 「Please run /login」は CLI 向けの指示で、
+   Console から見ている利用者の操作ではない。しかも再認証の UI が無く、設定 >
+   エージェント の Claude カードは**接続済みのまま**（`claude auth status` は手元の
+   資格情報を見るだけで、サーバ側の失効を知らない）。結果、直し方は「切断してみる」
+   しか無かった。
+3. **`blockedMarkers` が偶然だけ正解していた。** 本文にあるのは "Re-authenticate" で
+   "authentication" には当たらない。401 が既定の blocked に落ちて結論は正しかったが、
+   意図した分類ではなかった（§4-5 の "session limit" と同じ形の落とし穴）。
+
+### 4-7-2. 直し方
+
+- `internal/agents/claude/errors.go`（新規）— 合成レコードを label / detail / cause に
+  正規化し、`kind:"error"` の part と `[error] …` の平坦形を出す。codex / opencode の
+  `errors.go` と同じ形。
+- `transcript.Part.Cause`（新規・任意）— **なぜ失敗したかの機械可読な軸**。現状の値は
+  `"auth"`（＝サインインし直せば直る）だけ。`Info` はエージェント自身のエラー名で版ごと
+  に変わるので、Console が文言一致で導線を出さないための軸を分ける。判定は
+  `error`（`authentication_failed`）→ 401 → 文言（`run /login` / `re-authenticate` …）の
+  順。403 や 400 は入れない — 再認証しても直らない失敗で「再認証しろ」と出すのは、
+  来ないリセットを待たせるのと同じ実害。
+- Console `ErrorBlock` — `cause="auth"` のときだけ、何が起きたか（表示言語）と
+  **設定 > エージェント を開く「再認証する」ボタン**を、原文の上に挟む。原文は証拠と
+  してそのまま残す。
+- 設定 > エージェント の Claude カード — 接続済み行に **再認証** を追加。claude は
+  自分の `.credentials.json` を所有していて「更新だけ」のコマンドを持たないので、
+  中身は logout → 同じ OAuth フローの開き直し（＝これまで手で踏んでいた 切断→接続 を
+  1 アクションに）。フロー表示を接続状態より先に見るようにしないと、開いたばかりの
+  コード貼り付け欄が `api/connections` の再取得までの一瞬だけ隠れる。
+- `blockedMarkers` に `re-authenticate` / `run /login`、`blockedErrorKinds` に
+  `authentication_failed` を明示。分類の結論は変わらない（blocked のまま＝自動再開
+  しない。再ログインするまで再送は無意味）。
+
+### 4-7-3. テスト
+
+| 対象 | 内容 |
+|---|---|
+| `internal/agents/claude/errors_test.go` | 実測レコードの label/detail/cause/summary/part、認証判定の3入口（`error`・401・文言）、上限/超過/5xx/403 で `cause` が立たないこと、`parseTurn` が text part ではなく error part を出すこと |
+| `internal/agents/claude/abort_test.go` | 認証切れ文言と `authentication_failed` が blocked に落ちること（意図した分類として固定） |
+
 ## 5. 積み残し
 
 - 対象は claude TUI のみ（`isApiErrorMessage` は claude 固有）。他 TUI 種別は別シグナルが要る。
+- `Cause`（§4-7）を出しているのは claude だけ。codex / opencode の失敗（401・
+  `ProviderAuthError` 等）にも同じ導線を出せるが、両者の実測レコードを持っていないので
+  憶測で広げていない。印が無ければ従来どおり原文だけが出る。
 - ~~会話に紐付いていない（Console 起動の）セッションは §3-4 の自動再開の対象外~~ →
   §4-6 で解消（Agent 自身が再開させるので会話の有無に依らない）。
 - 再開プロンプトの言語は表示言語 `uiLocale`（§4-4 / §4-6）。セッション毎の言語を持てば

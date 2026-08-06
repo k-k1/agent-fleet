@@ -267,7 +267,13 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 		IsCompactSummary bool   `json:"isCompactSummary"`
 		GitBranch        string `json:"gitBranch"`
 		Cwd              string `json:"cwd"`
-		Attachment       struct {
+		// 合成 API エラーレコードの3点（errors.go）。abort.go が中断判定に使うのと
+		// 同じフィールドだが、あちらは「ターンが落ちて終わったか」、ここは「画面に
+		// どう出すか」— 用途が違うので読み手も別で持つ。
+		IsAPIError     bool   `json:"isApiErrorMessage"`
+		APIErrorStatus int    `json:"apiErrorStatus"`
+		Error          string `json:"error"`
+		Attachment     struct {
 			Type   string `json:"type"`
 			Prompt string `json:"prompt"`
 			Origin struct {
@@ -312,7 +318,14 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 	}
 	var parts []transcript.Part
 	var text string
-	if ev.Type == "assistant" {
+	if ev.Type == "assistant" && ev.IsAPIError {
+		// 失敗したターンは回答ではない。text part にすると普通の回答と同じ吹き出しで
+		// 出てしまうので、専用の error part にする（errors.go）。Text は他エージェント
+		// と同じ `[error] …` の平坦形 — コピー・get_session_output・チャットブリッジは
+		// これを読む。
+		e := apiError{msg: contentText(ev.Message.Content), kind: ev.Error, status: ev.APIErrorStatus}
+		parts, text = []transcript.Part{e.part()}, e.summary()
+	} else if ev.Type == "assistant" {
 		parts, text = assistantParts(ev.Message.Content)
 	} else if t := contentText(ev.Message.Content); t != "" {
 		parts, text = []transcript.Part{{Kind: "text", Text: t}}, t

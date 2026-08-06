@@ -302,6 +302,11 @@ export const en: Record<keyof typeof ja, string> = {
   "provider.disconnect": "Disconnect",
   "provider.disconnect_confirm_title": "Disconnect this connection?",
   "provider.disconnect_confirm_body": "The stored credentials are removed from the workspace. You can reconnect anytime.",
+  "provider.reauth": "Re-authenticate",
+  "provider.reauth_title": "Sign in again (expired or revoked token)",
+  "provider.reauth_confirm_title": "Re-authenticate?",
+  "provider.reauth_confirm_body":
+    "This signs out first, then reopens the sign-in page. Running sessions are not stopped.",
   "provider.step_copy_code": "Copy the code",
   "provider.step_open_link": "Open the link and paste",
   "provider.step_open_link_only": "Open the link",
@@ -1858,6 +1863,9 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.after_compact": "After",
   "mirror.thinking_label": "Thinking",
   "mirror.error_label": "Failed",
+  "mirror.error_auth_hint":
+    "The {agent} sign-in has expired. Re-authenticate and this session picks up where it left off.",
+  "mirror.error_auth_action": "Re-authenticate",
   "mirror.collapse_output": "Collapse output",
   "mirror.show_output": "Show output",
   "mirror.output_lines": "Output ({lines} lines)",

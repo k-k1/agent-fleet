@@ -303,6 +303,11 @@ export const ja = {
   "provider.disconnect": "切断",
   "provider.disconnect_confirm_title": "接続を切断しますか？",
   "provider.disconnect_confirm_body": "保存された認証情報はワークスペースから削除されます。再接続はいつでも可能です。",
+  "provider.reauth": "再認証",
+  "provider.reauth_title": "サインインし直す（トークンの期限切れ・失効時）",
+  "provider.reauth_confirm_title": "再認証しますか？",
+  "provider.reauth_confirm_body":
+    "一度サインアウトしてから、サインイン画面を開き直します。稼働中のセッションは終了しません。",
   "provider.step_copy_code": "コードをコピー",
   "provider.step_open_link": "リンクを開いて貼り付け",
   "provider.step_open_link_only": "リンクを開く",
@@ -1887,6 +1892,11 @@ export const ja = {
   // ThinkingBlock / BashBlock
   "mirror.thinking_label": "思考",
   "mirror.error_label": "エラーで終了",
+  // ErrorBlock の回復導線（cause="auth"）。原文は CLI 向けの "Please run /login" なので、
+  // Console の利用者に効く操作＝設定 > エージェント での再認証を案内する。
+  "mirror.error_auth_hint":
+    "{agent} のログインが切れています。再認証すると、このセッションはそのまま続きから再開できます。",
+  "mirror.error_auth_action": "再認証する",
   "mirror.collapse_output": "出力をたたむ",
   "mirror.show_output": "出力を表示",
   "mirror.output_lines": "出力 ({lines} 行)",
