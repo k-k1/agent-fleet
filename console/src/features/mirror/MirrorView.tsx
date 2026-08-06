@@ -26,6 +26,7 @@ import {
   pinQuickReply,
   unpinQuickReply,
   isQuickReplyPinned,
+  quickReplyKey,
 } from "../../lib/quickReplies.ts";
 import {
   stepSuggestCycle,
@@ -2287,10 +2288,11 @@ export function MirrorView({
       })
     : [];
   // v2 の LLM 候補を先頭に、Layer A の学習候補を後ろにマージ（重複は畳む）。llm フラグで見た目を分ける。
-  const llmSet = new Set(llmSuggestions.map((s) => s.toLowerCase()));
+  // 重複判定は学習キーと同じ畳み方（大小・空白に加えて全角半角）で行う。
+  const llmSet = new Set(llmSuggestions.map((s) => quickReplyKey(s)));
   const suggestChips: { text: string; llm: boolean }[] = [
     ...llmSuggestions.map((text) => ({ text, llm: true })),
-    ...learned.filter((s) => !llmSet.has(s.toLowerCase())).map((text) => ({ text, llm: false })),
+    ...learned.filter((s) => !llmSet.has(quickReplyKey(s))).map((text) => ({ text, llm: false })),
   ];
   // Tab 補完でたどっている候補が、1行スクロールのチップ行からはみ出していたら見える位置へ。
   // 入力欄のフォーカスは動かさないので scrollIntoView だけ（横方向の最小限）。

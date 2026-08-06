@@ -31,6 +31,7 @@ import {
   pinQuickReply,
   unpinQuickReply,
   isQuickReplyPinned,
+  quickReplyKey,
 } from "../../lib/quickReplies.ts";
 import {
   stepSuggestCycle,
@@ -919,10 +920,11 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
       })
     : [];
   // v2 の LLM 候補を先頭に、Layer A の学習候補を後ろにマージ（重複は畳む）。llm フラグで見た目を分ける。
-  const llmSet = new Set(llmSuggestions.map((s) => s.toLowerCase()));
+  // 重複判定は学習キーと同じ畳み方（大小・空白に加えて全角半角）で行う。
+  const llmSet = new Set(llmSuggestions.map((s) => quickReplyKey(s)));
   const suggestChips: { text: string; llm: boolean }[] = [
     ...llmSuggestions.map((text) => ({ text, llm: true })),
-    ...learned.filter((s) => !llmSet.has(s.toLowerCase())).map((text) => ({ text, llm: false })),
+    ...learned.filter((s) => !llmSet.has(quickReplyKey(s))).map((text) => ({ text, llm: false })),
   ];
   // 会話が進む（新しい回答が来る）と古い LLM 候補は文脈遅れ。直近回答と会話切替で捨てる。
   useEffect(() => {
