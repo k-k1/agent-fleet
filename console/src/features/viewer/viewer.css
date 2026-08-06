@@ -682,6 +682,18 @@
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
+/* Sits above a table the viewer had to repair (fullwidth ｜ instead of |). Quiet on
+   purpose — the table is readable, it is the source file that still needs fixing. */
+.md-table-repaired {
+  margin: 1.4em 0 0.4em;
+  padding: 5px 9px;
+  border-left: 3px solid var(--warn);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  color: var(--muted);
+  font-size: 0.85em;
+  line-height: 1.5;
+}
 .markdown h1,
 .markdown h2,
 .markdown h3,

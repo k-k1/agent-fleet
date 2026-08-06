@@ -3271,6 +3271,8 @@ export const ja = {
   "view.open_session": "セッション {name} を開く",
   "view.open_conversation": "チャット {slug} を開く",
   "view.conversation_not_found": "会話が見つかりません: {slug}",
+  "view.table_repaired":
+    "このテーブルは半角 | ではなく全角 ｜ で書かれているため、補正して表示しています。他の Markdown ビューアでは崩れたまま表示されます。",
 
 
   // === P5 ログイン切れモーダル（AuthExpiredModal） ===

@@ -148,6 +148,26 @@ describe("fenced-code controls", () => {
   });
 });
 
+describe("fullwidth-pipe table repair", () => {
+  it("renders a fullwidth-pipe table as a table and marks it as repaired", async () => {
+    useChatStore.getState().setConvs([]);
+    await render("｜章｜点｜\n｜---｜---｜\n｜A1C01｜6.5｜");
+
+    expect(host.querySelectorAll("table")).toHaveLength(1);
+    expect(host.querySelectorAll("tbody tr")).toHaveLength(1);
+    const notice = host.querySelector(".md-table-repaired");
+    expect(notice?.nextElementSibling?.tagName).toBe("TABLE");
+  });
+
+  it("leaves a well-formed table unmarked", async () => {
+    useChatStore.getState().setConvs([]);
+    await render("| 章 | 点 |\n|---|---|\n| A1C01 | 6.5 |");
+
+    expect(host.querySelectorAll("table")).toHaveLength(1);
+    expect(host.querySelector(".md-table-repaired")).toBeNull();
+  });
+});
+
 describe("quote controls", () => {
   it("adds a copy control to a rendered quote", async () => {
     useChatStore.getState().setConvs([]);
