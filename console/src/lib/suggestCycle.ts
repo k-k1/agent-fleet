@@ -13,6 +13,11 @@
 // 入力欄が空のときの Tab は従来どおりチップへのフォーカス移動（MirrorView / ChatView 側）。
 // ここは「何か打ってから絞り込まれた候補をたどる」ためだけの経路。
 
+// 空白畳み・全角半角の畳み込み・小文字化は rankQuickReplies の前方一致フィルタと同じものを使う
+// （lib/quickReplies の quickReplyKey）。「チップ行に見えている候補」と「Tab でたどれる候補」を
+// 必ず一致させるため、突合の基準はここで独自に持たない。
+import { quickReplyKey as norm } from "./quickReplies.ts";
+
 export type SuggestCycle = {
   /** ユーザーが自分で打った文字（リングの原点＝チップ行の絞り込みキー）。 */
   base: string;
@@ -23,12 +28,6 @@ export type SuggestCycle = {
   /** いま入力欄へ入れた文字。draft と一致しなくなったら手入力で崩れた合図（＝サイクル終了）。 */
   text: string;
 };
-
-// 空白畳み・小文字化。rankQuickReplies の前方一致フィルタと同じ正規化にして、
-// 「チップ行に見えている候補」と「Tab でたどれる候補」を必ず一致させる。
-function norm(s: string): string {
-  return s.trim().replace(/\s+/g, " ").toLowerCase();
-}
 
 /** base に前方一致する候補（表示綴りのまま・重複は畳む・base そのものは除く）。 */
 export function suggestMatches(base: string, chips: string[]): string[] {
