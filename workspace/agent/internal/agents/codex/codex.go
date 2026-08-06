@@ -134,6 +134,12 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 			if h := handleFor(m.Name); h != nil && h.hasQuestion() {
 				li.State = "question"
 			}
+			// 利用上限で turn が失敗した managed セッションは「入力待ち」に見えるが、
+			// 再送しても同じ結果なので blocked バッジを表示する（Claude の上限メニューと
+			// 同じ扱い）。turnError は次の turn 開始時にクリアされるので永遠に貼り付かない。
+			if li.State == "idle" && IsRateLimited(m.Name) {
+				li.State = agents.StateBlocked
+			}
 		} else if li.State == "working" && HasPendingQuestion(m) {
 			// The hooks report only working/idle — a request_user_input dialog keeps
 			// the turn "working" forever. Probe the rollout tail so the sessions list
@@ -148,3 +154,15 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 }
 
 func (agentImpl) ClearResume(sid string) { sids.Remove(sid) }
+
+// IsRateLimited reports whether a managed codex session's last turn failed with a
+// usage-limit error. The shared live-state helper in package main uses this to
+// surface "blocked" in the sessions list.
+func IsRateLimited(name string) bool {
+	h := handleFor(name)
+	if h == nil {
+		return false
+	}
+	ce := h.turnError()
+	return ce != nil && ce.label == "usageLimitExceeded"
+}

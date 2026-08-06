@@ -742,6 +742,51 @@ func TestManagedEnrichAppendsErrorTurn(t *testing.T) {
 	}
 }
 
+// TestManagedUsageLimitBlockedBadge verifies that WireLive reports StateBlocked
+// when the last managed turn failed with usageLimitExceeded, so the Console shows
+// the same "上限で停止" badge as Claude's usage-limit menu.
+func TestManagedUsageLimitBlockedBadge(t *testing.T) {
+	m, cl := newMockCodexServer(t)
+	h := newCodexTestHandle(t, cl, "codex-limit-badge")
+	registerCodexTestHandle(t, h)
+
+	if err := h.Send(agents.TurnInput{Prompt: "hello", ClientMessageID: "af_limitbadge"}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for m.callCount("turn/start") == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	m.mu.Lock()
+	turnID := m.activeTurn
+	m.mu.Unlock()
+	m.notify("turn/completed", map[string]any{
+		"threadId": "thr_test",
+		"turn": map[string]any{
+			"id": turnID, "status": "failed",
+			"error": map[string]any{"message": "You've hit your usage limit.", "codexErrorInfo": "usageLimitExceeded"},
+		},
+	})
+	waitCodexState(t, h, agents.TurnFailed)
+
+	impl := agentImpl{}
+	meta := session.Meta{Name: h.name, Dir: h.dir, Kind: session.KindCodex, Driver: session.DriverManaged}
+	li := impl.WireLive(meta, true)
+	if li.State != agents.StateBlocked {
+		t.Fatalf("WireLive state = %q, want %q", li.State, agents.StateBlocked)
+	}
+
+	// A non-usage-limit error must NOT become blocked.
+	h2 := newCodexTestHandle(t, cl, "codex-auth-badge")
+	registerCodexTestHandle(t, h2)
+	h2.setLastError(codexError{message: "auth failed", label: "authError"})
+	meta2 := session.Meta{Name: h2.name, Dir: h2.dir, Kind: session.KindCodex, Driver: session.DriverManaged}
+	li2 := impl.WireLive(meta2, true)
+	if li2.State != "idle" {
+		t.Fatalf("WireLive state for auth error = %q, want idle", li2.State)
+	}
+}
+
 // TestPendingInteraction pins the send-side contract for managed button rendering
 // (docs/37): the peek reads the live handle's questions without resuming, and its
 // bytes are exactly json.Marshal(inter.Questions) — the same shape bridge_answer
