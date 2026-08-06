@@ -16,24 +16,20 @@ import (
 // chatReplySuggestPrompt は直近メッセージ（末尾窓）を文脈に、返信候補の生成を指示する。
 // report と notice は会話の話題ではない（notice 本文は表示用カタログの正本言語
 // フォールバックにすぎない — ADR 0033）ので窓から外す。
+// 窓の切り出し（畳み込み・文字予算・行単位の末尾）はセッション版と完全に共通。チャットは
+// 1 メッセージが最初から 1 発言なので畳み込みは基本 no-op だが、予算窓の効き方は同じ。
 func chatReplySuggestPrompt(msgs []chatMessage, lang string) string {
-	real := make([]chatMessage, 0, len(msgs))
+	real := make([]replyMsg, 0, len(msgs))
 	for _, m := range msgs {
 		if m.Role == "report" || m.Role == "notice" || strings.TrimSpace(m.Content) == "" {
 			continue
 		}
-		real = append(real, m)
-	}
-	if len(real) > replySuggestTailTurns {
-		real = real[len(real)-replySuggestTailTurns:]
+		real = append(real, replyMsg{m.Role, m.Content})
 	}
 	var b strings.Builder
 	b.WriteString(replySuggestInstructions(lang, replyCounterpartChat))
 	b.WriteString(replySuggestLogHeader(lang))
-	// セッション側と同じく末尾を残して切る（問いかけ・選択肢は発言の終わりにある）。
-	for _, m := range real {
-		fmt.Fprintf(&b, "%s: %s\n", m.Role, replyTailText(m.Content))
-	}
+	replySuggestWindow(&b, real)
 	return b.String()
 }
 
