@@ -47,17 +47,20 @@ function tableRow(line: string | undefined): string[] | null {
 const isDelimiterRow = (cells: string[]) => cells.every((cell) => DELIMITER_CELL.test(cell));
 // The mark of a mistyped row: fullwidth pipes and not one ASCII pipe to be found.
 const isFullwidthRow = (line: string) => /[｜￨]/.test(line) && !line.includes("|");
+// Both widths on one row: the ASCII ones are the separators and the fullwidth one is
+// cell content, deliberately — the only way to put a vertical bar in a cell without
+// splitting it. docs/54-opencode-console-oauth.md does exactly that.
+const mixesPipeWidths = (line: string) => /[｜￨]/.test(line) && line.includes("|");
 
 // Repair tables written with fullwidth pipes, and supply a delimiter row where one is
 // missing, before the Markdown reaches the renderer. Returns null when nothing needed
 // repairing — the overwhelmingly common case, decided by a single scan of the source.
 //
-// The rules stay narrow because a *valid* table may hold a fullwidth ｜ inside a cell on
-// purpose: it is the only way to put a vertical bar in a cell without splitting it, and
-// docs/54-opencode-console-oauth.md does exactly that. So a row is only rewritten when it
-// contains no ASCII pipe at all, and only when every content row of its block is in that
-// state. Anything mixed is read as deliberate and left alone. The delimiter row is exempt
-// from that test: it carries no text, so an ASCII one proves nothing about intent.
+// A block is repaired when no row of it mixes the two widths and at least one row is
+// purely fullwidth; only those purely fullwidth rows are rewritten. That covers a table
+// typed wholly in fullwidth, and the half-converted ones where an editor fixed the
+// delimiter row, or every row but the header, and stopped. A row that mixes widths is
+// read as deliberate and stops the whole block from being touched.
 export function repairFullwidthTables(source: string): TableRepair | null {
   if (!/[｜￨]/.test(source)) return null;
   const lines = source.split("\n");
@@ -98,9 +101,13 @@ export function repairFullwidthTables(source: string): TableRepair | null {
     }
     total++;
 
+    // The delimiter row is left out of the "is anything wrong here" question: it carries
+    // no text, so an ASCII one proves nothing about how the rest was typed.
     const content = lines.slice(i, end).filter((_, offset) => !(hasDelimiter && offset === 1));
-    if (content.every(isFullwidthRow)) {
-      for (let k = i; k < end; k++) lines[k] = lines[k].replace(PIPES, "|").replace(/[－ー―‐]/g, "-");
+    if (content.some(isFullwidthRow) && !lines.slice(i, end).some(mixesPipeWidths)) {
+      for (let k = i; k < end; k++) {
+        if (isFullwidthRow(lines[k])) lines[k] = lines[k].replace(PIPES, "|").replace(/[－ー―‐]/g, "-");
+      }
       if (synthesize) {
         lines.splice(i + 1, 0, `|${Array(header.length).fill("---").join("|")}|`);
         end++;

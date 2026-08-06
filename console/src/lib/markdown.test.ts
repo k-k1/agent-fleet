@@ -34,6 +34,12 @@ describe("repairFullwidthTables", () => {
     expect(repairFullwidthTables("｜章｜点｜\n|---|---|\n｜A1｜6.5｜")?.body).toBe("|章|点|\n|---|---|\n|A1|6.5|");
   });
 
+  it("repairs a half-converted table where only the header row was left fullwidth", () => {
+    expect(repairFullwidthTables("｜章｜点｜\n|---|---|\n| A1 | 6.5 |\n| A2 | 7 |")?.body).toBe(
+      "|章|点|\n|---|---|\n| A1 | 6.5 |\n| A2 | 7 |",
+    );
+  });
+
   it("supplies a missing delimiter row once enough rows agree on a column count", () => {
     expect(repairFullwidthTables("｜章｜点｜\n｜A1｜6｜\n｜A2｜7｜\n｜A3｜8｜")?.body).toBe(
       "|章|点|\n|---|---|\n|A1|6|\n|A2|7|\n|A3|8|",
