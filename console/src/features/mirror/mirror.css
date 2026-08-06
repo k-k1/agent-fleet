@@ -1510,6 +1510,43 @@ button.mt-tool-outhead {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* Recovery row for a failure the agent said is fixable (cause="auth"): what happened,
+   in the user's language, plus the one action that clears it. It sits ABOVE the raw
+   provider text — the English "Please run /login" is evidence, not an instruction the
+   Console user can follow. */
+.mirror-error-fix {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 8px 6px 26px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--del) 10%, transparent);
+}
+.mef-msg {
+  flex: 1 1 220px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.mef-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  padding: 3px 10px;
+  border: 1px solid color-mix(in srgb, var(--del) 55%, transparent);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--del);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.mef-action:hover {
+  background: color-mix(in srgb, var(--del) 14%, var(--bg));
+}
 /* Edit-family traces are clickable — they open a diff pane. Reset the button and
    lift the opacity so they read as interactive, not just a faint trace. */
 button.mt-tool-diff {

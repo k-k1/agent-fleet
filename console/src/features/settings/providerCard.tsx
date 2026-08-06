@@ -69,6 +69,34 @@ export function DisconnectButton({ onClick }: { onClick: () => void }) {
   );
 }
 
+// ReauthButton: the per-provider「再認証」action shown NEXT TO 切断 while a connection is
+// live. Signing in again used to have no UI at all — the card offers 切断 and 接続, so a
+// token that expired server-side (the local credentials still look valid, so the card
+// still reads 接続済み) forced the user to guess that 切断→接続 was the fix.
+//
+// It really does sign out first (the CLI owns its credentials; there is no refresh
+// command), so it asks first like 切断 does — but it is not framed as destructive: the
+// OAuth flow opens immediately afterwards, and abandoning it leaves the card in its
+// ordinary 未接続 state with 接続 available.
+export function ReauthButton({ onClick }: { onClick: () => void }) {
+  const tr = useT();
+  const askConfirm = useConfirm();
+  const handle = async () => {
+    const ok = await askConfirm({
+      title: tr("provider.reauth_confirm_title"),
+      body: tr("provider.reauth_confirm_body"),
+      confirmLabel: tr("provider.reauth"),
+      danger: false, // 既定は danger — これは復旧操作なので通常ボタンで出す
+    });
+    if (ok) onClick();
+  };
+  return (
+    <button className="ghost conn-reauth" title={tr("provider.reauth_title")} onClick={handle}>
+      {tr("provider.reauth")}
+    </button>
+  );
+}
+
 // ProviderCard is the shared shell: a colored badge + name + status pill, then the
 // provider's own description / connect / flow UI (and, for agents, a settings group)
 // as children. Replaces the old flat .conn-row so every provider reads the same way.

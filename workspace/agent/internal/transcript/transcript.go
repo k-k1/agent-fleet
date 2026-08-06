@@ -6,10 +6,16 @@ package transcript
 // subagent delegation, an AskUserQuestion the user can answer inline, an
 // ExitPlanMode plan, or a turn-level failure the agent recorded instead of an answer.
 type Part struct {
-	Kind      string     `json:"kind"`                // "text" | "thinking" | "tool" | "delegation" | "question" | "plan" | "userfile" | "error"
-	Text      string     `json:"text,omitempty"`      // kind=text/thinking: Markdown / kind=error: the provider's message
-	Tool      string     `json:"tool,omitempty"`      // kind=tool/delegation/question/plan/userfile: tool name
-	Info      string     `json:"info,omitempty"`      // kind=tool/delegation: short human-facing label / kind=error: error name + HTTP status
+	Kind string `json:"kind"`           // "text" | "thinking" | "tool" | "delegation" | "question" | "plan" | "userfile" | "error"
+	Text string `json:"text,omitempty"` // kind=text/thinking: Markdown / kind=error: the provider's message
+	Tool string `json:"tool,omitempty"` // kind=tool/delegation/question/plan/userfile: tool name
+	Info string `json:"info,omitempty"` // kind=tool/delegation: short human-facing label / kind=error: error name + HTTP status
+	// Cause is kind=error only: the machine-readable reason the Console keys its
+	// recovery guidance off ("auth" = signing in again clears it; "" = no guidance).
+	// The label above is the provider's own name and changes between versions, so the
+	// Console must not pattern-match it; this field is the stable axis. Optional —
+	// an agent that cannot classify its failures simply omits it.
+	Cause     string     `json:"cause,omitempty"`
 	Output    string     `json:"output,omitempty"`    // kind=tool/delegation: output/final result, truncated
 	Prompt    string     `json:"prompt,omitempty"`    // kind=delegation: full instruction sent to the child
 	AgentType string     `json:"agentType,omitempty"` // kind=delegation: Explore/general-purpose/task name

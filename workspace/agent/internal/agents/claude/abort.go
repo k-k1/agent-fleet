@@ -64,6 +64,13 @@ var blockedMarkers = []string{
 	"invalid api key",
 	"authentication",
 	"unauthorized",
+	// 実測の認証切れ（2026-08-06 / apiErrorStatus 401 / error:"authentication_failed"）:
+	// "Please run /login · API Error: 401 OAuth access token has expired. Re-authenticate
+	// to continue." — 上の "authentication" には**当たらない**（本文にあるのは
+	// "Re-authenticate"）。401 なので既定の blocked に落ちて結果は正しかったが、
+	// 偶然そうなっていただけなので語幹で明示する。
+	"re-authenticate",
+	"run /login",
 }
 
 // limitMarkers are the blockedMarkers that specifically mean A USAGE LIMIT — a quota that
@@ -120,7 +127,8 @@ var retryableErrorKinds = map[string]bool{
 // (プロンプト超過・不正なリクエスト・認証). 既定が blocked なので分類結果は同じだが、
 // 意図した判定として明示しておく（"偶然だけ正解している" 状態を残さない）。
 var blockedErrorKinds = map[string]bool{
-	"invalid_request": true, // 実測: Prompt is too long
+	"invalid_request":       true, // 実測: Prompt is too long
+	"authentication_failed": true, // 実測: 401 OAuth access token has expired（再ログインするまで同じ）
 }
 
 // classifyAbort splits an API error message into 再送で直る (true) か 原因を直すまで

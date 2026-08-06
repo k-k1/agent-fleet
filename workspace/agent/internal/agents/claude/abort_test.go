@@ -83,6 +83,10 @@ func TestAbortedTurnClassification(t *testing.T) {
 		// 自動再開の対象でなければ、15 分走ったターンがそのまま捨てられる。
 		{"stream idle timeout", "API Error: Stream idle timeout - no chunks received", 0, true},
 		{"stream idle timeout (partial)", "API Error: Stream idle timeout - partial response received", 0, true},
+		// 実測 2026-08-06（認証切れ）。本文にあるのは "Re-authenticate" なので、以前の
+		// "authentication" マーカーには当たらず 401 が既定へ落ちて偶然 blocked だった。
+		// 再送しても再ログインするまで同じ失敗なので、意図した分類として固定する。
+		{"auth expired", "Please run /login · API Error: 401 OAuth access token has expired. Re-authenticate to continue.", 401, false},
 		{"unknown wording", "API Error: something nobody has seen before", 0, false}, // 判定不能は blocked 側
 	}
 	for _, tc := range cases {
@@ -121,6 +125,7 @@ func TestAbortedTurnErrorKind(t *testing.T) {
 		// → 既定の blocked に倒れる。ここを retryable にすると上限を再送し続ける。
 		{"未知の文言 + rate_limit", "API Error: something nobody has seen before", 429, "rate_limit", false},
 		{"未知の値は決めない", "API Error: something nobody has seen before", 0, "brand_new_kind", false},
+		{"未知の文言 + authentication_failed", "API Error: something nobody has seen before", 0, "authentication_failed", false},
 		// 文言が主: server_error を名乗っていても利用上限の文言なら blocked のまま。
 		{"上限の文言は error より強い", "You've reached your Fable 5 limit.", 429, "server_error", false},
 		{"一過性の文言は error より強い", "API Error: Connection closed mid-response.", 0, "invalid_request", true},
