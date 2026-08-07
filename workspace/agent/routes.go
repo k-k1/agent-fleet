@@ -108,6 +108,7 @@ func buildMux() *http.ServeMux {
 	// detach releases only AF's CDP session and never closes the target/process.
 	mux.HandleFunc("GET /browser/attach-targets", handleBrowserAttachTargets)
 	mux.HandleFunc("POST /browser/attachments", handleBrowserAttachmentCreate)
+	mux.HandleFunc("GET /browser/attachments", handleBrowserAttachmentList)
 	mux.HandleFunc("GET /browser/attachments/{id}", handleBrowserAttachmentGet)
 	mux.HandleFunc("DELETE /browser/attachments/{id}", handleBrowserAttachmentDelete)
 	mux.HandleFunc("POST /browser/attachments/{id}/control-mode", handleBrowserAttachmentControlMode)

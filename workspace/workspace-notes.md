@@ -205,18 +205,30 @@ browser download is required. Committed E2E belongs in `console-e2e/`
 When automation inside the container needs a human to inspect or operate its existing
 Chromium Page:
 
-1. Start Chromium with `--remote-debugging-address=127.0.0.1`, an explicit
-   `--remote-debugging-port=<port>`, and a non-default `--user-data-dir`. Never expose
-   remote debugging on `0.0.0.0`.
-2. Call the Agent Fleet MCP tool `list_chromium_targets` with that port and choose the
-   intended Page from its returned `target_id`; do not guess a target.
+1. Start Chromium with `--remote-debugging-address=127.0.0.1`,
+   **`--remote-debugging-port=0`** (never a fixed port — see below) and a non-default
+   `--user-data-dir`. Never expose remote debugging on `0.0.0.0`. Then read
+   `<user-data-dir>/DevToolsActivePort`: line 1 is the port Chromium actually took,
+   line 2 is `/devtools/browser/<GUID>` — the identity of *your* browser.
+   **Why not a fixed port:** your sessions share one container and one loopback. If
+   another session already holds that port, your Chromium does **not** fail — it
+   silently binds the IPv6 loopback and keeps running, while `127.0.0.1:<port>` stays
+   the *other* session's browser. You would then list and attach to someone else's
+   possibly logged-in page. (Measured; other users' containers stay unreachable.)
+2. Call the Agent Fleet MCP tool `list_chromium_targets` with the port from
+   `DevToolsActivePort` and choose the intended Page from its returned `target_id`; do
+   not guess a target. Check the returned `browser_id` equals line 2's GUID; pass that
+   GUID as `expected_browser_id` on attach so a collision is refused rather than
+   silently mis-attached.
 3. Before switching to `user-control`, stop the owner's automation against that Page.
    Chromium does not arbitrate competing owner and human input.
 4. Call `attach_chromium`, then use `request_browser_action` when the user needs
    explicit instructions or completion/cancel controls.
 5. Present the returned `open_url` unchanged as a Markdown link labelled
    "Open the browser and operate it". An MCP call alone must not change the user's
-   Console layout; opening the link is the user's explicit action.
+   Console layout; opening the link is the user's explicit action. The link opens the
+   page as a **pane in the user's current tab**, not a new tab — say so rather than
+   telling them to look for a new window.
 6. Never perform a final publish, send, consent, or confirmation click for the user.
    An attachment or a user-reported completion is not proof that the external site's
    operation succeeded.

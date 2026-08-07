@@ -1519,6 +1519,7 @@ export const en: Record<keyof typeof ja, string> = {
   "wsbar.preview.path_hint": "A path beginning with / (e.g. /users/1)",
   "wsbar.preview.open_pane": "Open in pane",
   "wsbar.preview.open_light": "Lightweight preview",
+  "wsbar.preview.attachments_label": "Attached browsers (existing Chromium an agent connected)",
   "wsbar.preview.hint": "Pane view uses Chromium inside the container. Lightweight preview opens the existing proxy in a new tab.",
   // In-container browser pane
   "browser.back": "Back",
@@ -1564,6 +1565,7 @@ export const en: Record<keyof typeof ja, string> = {
   "browser.attach.cap_body": "The pane limit has been reached. Opening it will replace the current pane.",
   "browser.attach.replace_current": "Open in current pane",
   "browser.attach.open_failed": "The Chromium operation view could not be opened.",
+  "browser.attach.open_link": "Open the browser and operate it (opens as a pane in this tab)",
   "wsbar.tile.ws_mem": "Workspace memory: {mem}G",
   "wsbar.tile.ws_mem_oom_note":
     "⚠ A process in the container was OOM-killed within the last few minutes (memory limit reached; a build/agent may have been killed)",
