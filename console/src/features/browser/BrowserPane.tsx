@@ -7,6 +7,7 @@ import type { BrowserSnapshot } from "./protocol.ts";
 import { ensureBrowser } from "./service.ts";
 import { browserTarget, targetFromURL } from "./target.ts";
 import { BrowserConsoleDrawer, BrowserSurface } from "./BrowserSurface.tsx";
+import { toast } from "../../ui/toast.ts";
 
 interface BrowserPaneProps {
   paneId: string;
@@ -27,6 +28,11 @@ export function BrowserPane({ paneId, port, path }: BrowserPaneProps) {
   const [portError, setPortError] = useState(false);
   const [pathError, setPathError] = useState(false);
   const [consoleOpen, setConsoleOpen] = useState(false);
+
+  const copySelection = async () => {
+    if (await controller.copySelection()) toast(tr("browser.copied_selection"), { kind: "success" });
+    else toast(tr("browser.copy_selection_empty"), { kind: "info" });
+  };
 
   useEffect(() => {
     const target = browserTarget(port, path);
@@ -81,6 +87,7 @@ export function BrowserPane({ paneId, port, path }: BrowserPaneProps) {
           value={pathDraft}
           onChange={(event) => setPathDraft(event.target.value)}
         />
+        <IconButton icon="copy" label={tr("browser.copy_selection")} onClick={() => void copySelection()} />
         <Button small variant="ghost" icon="terminal" className="browser-console-toggle" onClick={() => setConsoleOpen((open) => !open)}>
           {tr("browser.console")}{snapshot.console.length > 0 && <span className="browser-log-badge">{snapshot.console.length}</span>}
         </Button>

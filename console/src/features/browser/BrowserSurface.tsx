@@ -7,7 +7,7 @@ import type {
 } from "react";
 import { IconButton } from "../../ui/Button.tsx";
 import type { BrowserOutbound, BrowserSnapshot } from "./protocol.ts";
-import { BrowserInputBridge, modifiersOf, mouseButton, remotePoint } from "./protocol.ts";
+import { BrowserInputBridge, clipboardShortcut, heldButton, modifiersOf, mouseButton, remotePoint } from "./protocol.ts";
 
 export interface BrowserSurfaceController {
   mount(canvas: HTMLCanvasElement): void;
@@ -15,6 +15,8 @@ export interface BrowserSurfaceController {
   setVisible(visible: boolean): void;
   setViewport(width: number, height: number): void;
   sendInput(message: BrowserOutbound): void;
+  /** Copy the remote page's current selection to the user's clipboard. */
+  copySelection?(): Promise<boolean>;
 }
 
 interface BrowserSurfaceProps {
@@ -116,7 +118,9 @@ export function BrowserSurface({
       type: "mouse",
       event: kind,
       ...p,
-      button: kind === "move" ? "none" : mouseButton(event.button),
+      // A move during a drag must carry the button that is DOWN; "none" reads as
+      // a hover and Blink drops the drag (scrollbar thumb, selection, sliders).
+      button: kind === "move" ? heldButton(event.buttons) : mouseButton(event.button),
       buttons: event.buttons,
       modifiers: modifiersOf(event),
       clickCount: kind === "move" ? 0 : Math.max(1, event.detail),
@@ -136,6 +140,18 @@ export function BrowserSurface({
   };
 
   const onKeyDown = (event: RKeyboardEvent<HTMLInputElement>) => {
+    // Clipboard shortcuts are handled HERE, never forwarded: the remote Chromium
+    // runs in the container, so its clipboard is not the user's. Ctrl/Cmd+C asks
+    // the page for its selection and writes it to the user's clipboard; Ctrl+V
+    // must fall through un-prevented so the hidden input receives the native
+    // paste, which onPaste then forwards as text.
+    const shortcut = clipboardShortcut(event.nativeEvent);
+    if (shortcut === "paste") return;
+    if (shortcut === "copy" && controller.copySelection) {
+      event.preventDefault();
+      void controller.copySelection();
+      return;
+    }
     if (!inputEnabled) return;
     inputBridge.keyDown(event.nativeEvent);
     if (!event.nativeEvent.isComposing) event.preventDefault();
@@ -165,7 +181,16 @@ export function BrowserSurface({
         autoCorrect="off"
         spellCheck={false}
         onKeyDown={onKeyDown}
-        onKeyUp={(event) => inputEnabled && inputBridge.keyUp(event.nativeEvent)}
+        onKeyUp={(event) => {
+          if (clipboardShortcut(event.nativeEvent)) return;
+          if (inputEnabled) inputBridge.keyUp(event.nativeEvent);
+        }}
+        onPaste={(event) => {
+          event.preventDefault();
+          if (!inputEnabled) return;
+          const text = event.clipboardData.getData("text/plain");
+          if (text) controller.sendInput({ type: "text", text });
+        }}
         onCompositionStart={() => inputEnabled && inputBridge.compositionStart()}
         onCompositionEnd={(event) => {
           if (inputEnabled) inputBridge.compositionEnd(event.data);

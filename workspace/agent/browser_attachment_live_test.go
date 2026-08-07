@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"image/jpeg"
 	"io"
 	"net"
 	"net/http"
@@ -210,6 +212,106 @@ func TestBrowserAttachmentLivePortCollision(t *testing.T) {
 	}
 }
 
+// TestBrowserAttachmentLiveZoomToFit proves the zoom-out against a real
+// Chromium: the fake CDP cannot tell us whether setDeviceMetricsOverride's
+// `scale` really keeps the screencast at pane size while the page lays out
+// wider. A min-width desktop page in a narrow pane is the case the user hits.
+func TestBrowserAttachmentLiveZoomToFit(t *testing.T) {
+	if os.Getenv("AF_CHROMIUM_ATTACH_LIVE") != "1" {
+		t.Skip("set AF_CHROMIUM_ATTACH_LIVE=1 to run the real zoom-to-fit test")
+	}
+	bin, err := findChromiumBinary()
+	if err != nil {
+		t.Skipf("Chromium unavailable: %v", err)
+	}
+	fixture := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `<!doctype html><meta charset="utf-8"><title>Wide fixture</title>`+
+			`<body style="margin:0"><div style="min-width:1240px;height:1500px">wide</div>`)
+	}))
+	defer fixture.Close()
+
+	profile := t.TempDir()
+	startLiveChromium(t, bin, "0", "--user-data-dir="+profile, fixture.URL)
+	port, _ := liveDevToolsPort(t, profile)
+	discovery, err := discoverCDPTargets(port, 3*time.Second)
+	if err != nil || len(discovery.Targets) == 0 {
+		t.Fatalf("discover: %v targets=%d", err, len(discovery.Targets))
+	}
+	m := newBrowserAttachmentManager(defaultBrowserAttachmentManagerConfig())
+	defer m.Close()
+	resp, err := m.Create(browserAttachmentCreateRequest{
+		Port: port, TargetID: discovery.Targets[0].TargetID,
+		Viewport: browserViewportRequest{Width: 660, Height: 800, DeviceScaleFactor: 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := m.lookupActive(resp.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.mu.Lock()
+	a.viewer = &browserAttachmentViewer{attachment: a, control: make(chan browserOutbound, 8), done: make(chan struct{})}
+	a.visible = true
+	a.state = attachmentStateViewerOpen
+	viewer := a.viewer
+	a.mu.Unlock()
+	if err := a.startScreencast(); err != nil {
+		t.Fatal(err)
+	}
+
+	viewer.handleControl([]byte(`{"type":"viewport","width":660,"height":800,"fit":true}`))
+
+	// The page must now be laid out at the content width, not clipped to 660.
+	var evaluated struct {
+		Result struct {
+			Value float64 `json:"value"`
+		} `json:"result"`
+	}
+	if err := m.call(a.cdp, a.sessionID, "Runtime.evaluate",
+		map[string]any{"expression": "innerWidth", "returnByValue": true}, &evaluated); err != nil {
+		t.Fatal(err)
+	}
+	if evaluated.Result.Value < 1200 {
+		t.Fatalf("innerWidth=%v — the page was not zoomed out to fit", evaluated.Result.Value)
+	}
+
+	// ...while the frames stay pane-sized, which is the whole point of `scale`.
+	select {
+	case frame := <-a.latestFrame:
+		cfg, err := jpeg.DecodeConfig(bytes.NewReader(frame))
+		if err != nil {
+			t.Fatalf("decode screencast frame: %v", err)
+		}
+		if cfg.Width > 700 || cfg.Height > 840 {
+			t.Fatalf("frame %dx%d is not pane-sized — zoom cost bandwidth", cfg.Width, cfg.Height)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatal("no screencast frame after the zoom")
+	}
+	m.Delete(resp.ID)
+}
+
+// liveDevToolsPort reads the port and browser GUID Chromium publishes for a
+// --remote-debugging-port=0 launch.
+func liveDevToolsPort(t *testing.T, profile string) (int, string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		raw, err := os.ReadFile(filepath.Join(profile, "DevToolsActivePort"))
+		lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+		if err == nil && len(lines) == 2 {
+			port, convErr := strconv.Atoi(strings.TrimSpace(lines[0]))
+			if convErr == nil && port > 0 {
+				return port, normalizeCDPBrowserID(strings.TrimSpace(lines[1]))
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("Chromium never published DevToolsActivePort")
+	return 0, ""
+}
+
 // startLiveChromium launches a headless Chromium on the given remote-debugging
 // port ("0" = let it pick) and kills the process group at test end.
 func startLiveChromium(t *testing.T, bin, port string, extra ...string) *exec.Cmd {
@@ -222,7 +324,10 @@ func startLiveChromium(t *testing.T, bin, port string, extra ...string) *exec.Cm
 	if !strings.Contains(strings.Join(extra, " "), "--user-data-dir=") {
 		args = append(args, "--user-data-dir="+t.TempDir())
 	}
-	args = append(args, "about:blank")
+	// The caller may pass a URL as the last extra arg; otherwise open a blank page.
+	if len(extra) == 0 || !strings.HasPrefix(extra[len(extra)-1], "http") {
+		args = append(args, "about:blank")
+	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
