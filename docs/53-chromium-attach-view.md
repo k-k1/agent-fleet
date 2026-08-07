@@ -660,6 +660,15 @@ AFがownerをpauseする標準手段はv1に含めない。`user-control`に対�
 - CP route: `GET /open/browser-attachment/{id}`がConsole shellを返し、auth exemptにならないこと。
 - port衝突: 実Chromium 2本で後発が生存すること（前提の再確認）と`cdp_port_ambiguous`、`--remote-debugging-port=0`の
   `DevToolsActivePort`契約、live endpointに対する`cdp_browser_mismatch`（`AF_CHROMIUM_ATTACH_LIVE=1`）。
+- **既定経路（2026-08-08 追加）**: `Create`直後の control mode が`view-only`であること、その状態でwheelとkeyが
+  転送されず**viewerへ`input_not_allowed`が届く**こと、`user-control`後に転送されることを1本で押さえる
+  （`TestBrowserAttachmentDefaultsToViewOnlyAndReportsRefusedInput`）。
+  既存の入力系テストは**全て自分で`SetControlMode(user-control)`を呼んでから**送っていたため、
+  「attachしてリンクを渡すだけ」という現場の既定経路だけが無検証で、§53.17の不具合として利用者へ届いた。
+  入力の検証を足すときは「誰がuser-controlにしたか」を必ず確認する。
+- Console DOM（入力の前提）: wheelが**canvasの非passive listener**でcancelされること（Reactの`onWheel`は
+  root側でpassive登録されるため`preventDefault`が無効）、canvasへのfocusだけで—クリック無しで—キーが
+  隠しinputへ届くこと。
 - Console E2E: Playwright(owner) → Chromium → Agent attach → Console Playwright(viewer)の二層を明示して実施する。
 - lifecycle: owner終了、target close、Agent restart、viewer reload、detach後もowner Pageが生存すること。
 - MCP（アシスタント）: af_readにchange toolが出ない、推測call拒否、`open_url`がそのままリンク化される説明、
@@ -709,3 +718,125 @@ Chrome 151で実測した。**同じ`--remote-debugging-port`で2つ目のChromi
    「不明」として通す（正当なattachを止めないため）。1と2が本体で、3は保険。
 
 Chromium側を「listenに失敗させる」ことはこちらから制御できない（別family へ逃げる）ため、失敗させるのはattach側の役目とする。
+
+## 53.17 「スクロールもキーも効かない」の真因（2026-08-08 実測）
+
+利用者から「ペインは見えているのにスクロールとキー操作が効かない」という報告が続いた。Agent単体の
+liveテスト（`AF_CHROMIUM_ATTACH_LIVE=1`）は4本ともPASSしており、実装は「動いている」ように見えていた。
+
+真因は入力の実装ではなく **control mode の既定値と、そこへ誰も触れない導線** だった。
+
+### 実測
+
+自前Chromium（`--remote-debugging-port=0`）を立て、Agentの実RESTで attachment を作り、実WS
+（`/ws/browser-attachments?id=`）へ Console と同じメッセージを流して`window.scrollY`を読んだ。
+
+| control mode | wheel `deltaY=400` 後の `scrollY` | viewerへ届くもの |
+|---|---|---|
+| `view-only`（**attach直後の既定**） | `0` | `protocol-error` / `input_not_allowed` |
+| `user-control` | `400` | — |
+
+`Create`は`controlMode: attachmentControlViewOnly`で attachment を作る（`browser_attachment_manager.go`）。
+`view-only`では`copy`と`viewport`/`visibility`以外の全入力が`handleControl`で弾かれる。つまり
+**スクロールもキーもポインタも、仕様どおり全部拒否されていた**。
+
+### なぜ誰も気付かなかったか
+
+- **テスト**: 入力を検証するテストは`SetControlMode(user-control)`や`UpdateHandoff(user-control)`を
+  自分で呼んでから送っていた。現場の既定経路＝「attachしてリンクを渡すだけ」だけが無検証だった（§53.14）。
+- **ツール説明**: `attach_chromium`の説明は「`open_url`をリンクで提示せよ」で終わっており、
+  `view-only`で始まることも、引き渡しに`request_browser_action`が要ることも書いていなかった。
+  `workspace-notes.md`も「ユーザーに説明が要るときは`request_browser_action`」と*条件付き*に読める書き方だった。
+  説明どおりに動くエージェントほど、入力の死んだペインを渡してしまう。
+- **Console**: `view-only`のときチップに「閲覧のみ」と出るだけで、`attachmentStatus()`は空文字を返し、
+  Agentが送る`protocol-error`は`handleText`のswitchに case が無く捨てられていた。
+  **利用者から見て、動くペインと入力が全部捨てられているペインが完全に同じ見た目だった。**
+
+### 対応（§53.11 の owner フローは変更しない）
+
+所有権と必須フロー（自動操作停止 → handoff → 完了 → locked/detach）は正しいので、契約は据え置く。
+壊れていたのは「その状態が読めないこと」と「エージェントへの指示」なので、そこだけ直す。
+
+1. **Console**: `view-only`のとき「入力は無効。スクロールもキーも送られない」と明示する
+   （`browser.attach.view_only_notice`）。
+2. **Console**: `protocol-error`をconsole drawerへ出す。以後、版ずれやmodeの競合が黙って消えない。
+3. **ツール契約**: `attach_chromium`の説明と`workspace-notes.md`に、既定が`view-only`であること、
+   操作させるなら`request_browser_action`／`set_chromium_control_mode`が必須であることを明記する。
+4. **テスト**: 既定経路の回帰テストを追加（§53.14）。
+
+利用者が自分で操作権を取るボタンは**入れない**。owner の自動操作が動いたまま人間の入力が混ざる状態は
+§53.10-6 で「競合結果は未定義」としており、AFはownerの停止を検知も強制もできないため。
+
+### 併せて直したConsole側の2件
+
+どちらも`view-only`を解除した後に残る、入力系の実装漏れ。
+
+- **wheelがcancelされない**: Reactは`wheel`をroot containerへ`{passive: true}`で登録する（react-dom 19で実測）。
+  そのため`onWheel`内の`preventDefault()`は無効で、リモートページと**Console自身のスクロール容器**が同時に動いた。
+  canvasへ`{passive: false}`のnative listenerとして登録する。
+- **クリックするまでキーが効かない**: キーは隠し`<input class="browser-ime">`が受けるが、focusは
+  canvasの`pointerdown`でしか移らなかった。canvasを`tabIndex`で focusable にし、focus受領時にimeへ渡す。
+
+## 53.18 RDP / VNC 転送の検討（2026-08-08 実測）
+
+「Chromiumへ RDP 等で接続できないか。ペイン内でRDPクライアントを動かすのはどうか」という要望を受けて再検討した。
+狙いは、CDPの screencast + `Input.*` 合成という現行方式をやめ、**OSレベルの入力処理をそのまま使う転送**へ
+置き換えること。§53.17のスクロール/キーの不具合が入力合成まわりに集中していたので、動機自体は妥当である。
+
+結論: **採らない。** ADR0038の「採らなかった案」を維持する。理由は下の3層で、**1が決定打**。
+コストや導入可否（2・3）は、仮に解決しても1を覆さない。
+
+### 1. 所有権が合わない（設計上の理由）
+
+§53.2の前提は「ownerがChromiumを起動し所有する。AFは既存Pageへ一時的なCDP sessionを足すだけ」である。
+VNC/RDPが転送するのはPageではなく**X displayという別レイヤ**なので、この機能に適用するには
+ownerが自分のChromiumを**AFの用意した仮想ディスプレイ上でheadful起動している**必要がある。
+つまりAFがowner側の起動方法（§53.4の起動契約）を指定することになり、
+「AFはChromiumを起動しない・再起動しない」という受入条件5と真正面から衝突する。
+
+既に走っているheadless Chromiumのpageへ後付けで適用する方法は無い。VNCは
+「AFが自分でブラウザを立てて見せる」用途の道具であって、他人が所有するPageを覗く道具ではない。
+
+### 2. このコンテナでは root 無しに完結しない（実測）
+
+| 項目 | 結果 |
+|---|---|
+| `Xvfb` / `x11vnc` / `xrdp` / `vncserver` / `websockify` / `noVNC` / `xpra` / `Xephyr` / `weston` / `wayvnc` | いずれも未インストール、`DISPLAY`未設定 |
+| X ランタイムlib（`libX11.so.6` / `libxcb.so.1` / `libXtst.so.6`） | 存在する |
+| Chromium 151 の headful X | **可能**。`--ozone-platform=x11`は`Missing X server or $DISPLAY`だけで落ちる＝X11 backendは焼き込み済み |
+| 外向き通信（SourceForge / PyPI / GitHub） | 到達する（tigervnc `200`、pypi `200`、github `302`） |
+| TigerVNC 1.14.1 バイナリtarball | root無しで展開できる。`Xvnc`の不足lib`libxcvt.so.0`もDebian debを`dpkg-deb -x`で解決できた |
+| **`Xvnc`の起動** | **失敗**。`/usr/bin/xkbcomp`を**絶対パスで**exec し、`PATH`を見ない。`XKB_BINDIR`相当のenv override も binary に無い。`Failed to activate virtual core keyboard`でfatal |
+| user namespace による回避（`unshare -Urm`でbind mount） | **不可**。`cannot change root filesystem propagation: Permission denied` |
+
+つまりセッション内でどうにかする道は無く、**イメージへの焼き込み＝operator案件**になる。
+`~/.local`に手組みしたX userlandは、絶対パス依存が残る以上イメージ再ビルドで壊れる類のものでもある。
+
+### 3. コストが現行方式より明確に重い
+
+ペイン内でnoVNCを出す案は「Console側に新機能を作らずに評価できる」点は良いが、構造は
+**ペイン内Chromium（noVNCを描く）→ X上のもう1つのChromium**という二重になる。
+常駐物はX server + headful Chromium + Xvnc + websockify に増え、現行（headless Chromium + JPEG screencast）
+より数倍のメモリを恒常的に使う。共有ホストのメモリ制約（本コンテナは 10 GiB / 8 core）に対して割に合わない。
+
+RDPそのものは更に不利で、`xrdp`はsesman/PAM前提でroot無し導入が重く、Web клиアント（Guacamole等）は別サーバを要する。
+仮にこの路線を採るなら**VNC一択**である。
+
+### 4. そもそも今回の不具合はCDPの限界ではなかった
+
+§53.17のとおり、真因はcontrol modeの既定値と導線であり、残りも実装漏れ（仮想キーコード、dragのbutton、
+`setDeviceMetricsOverride`の`scale`誤用、Reactのpassive wheel）だった。いずれもCDPで正しく表現できるものを
+表現し損ねていただけで、OSレベル入力に置き換える理由にはならない。
+
+### 再検討の条件
+
+次のいずれかが成立したら見直す価値がある。
+
+- **AF自身がブラウザを起動して見せる**用途が主になったとき（ownerの所有権制約が外れるため、1の理由が消える）。
+- Chromium以外のGUIアプリをペインに出す要件が出たとき。
+- CDPの`Input.*`で**原理的に**表現できない入力が必要になったとき（OSレベルのD&D、ネイティブファイル選択ダイアログ、
+  プラグインや`<select>`のOS popup等）。現時点でこれらは要件に無い。
+
+この場合も前提として、workspaceイメージへ`tigervnc`（`Xvnc`）・`xkbcomp`＋xkeyboard-config・`websockify`・`noVNC`を
+焼き込むこと、およびVNCをloopback限定＋認証必須で運用し、CP経由の中継経路（現行の`/ws/browser-attachments`相当）を
+設計することが必要になる。

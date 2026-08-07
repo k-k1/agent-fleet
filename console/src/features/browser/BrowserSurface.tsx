@@ -3,7 +3,6 @@ import type {
   KeyboardEvent as RKeyboardEvent,
   PointerEvent as RPointerEvent,
   ReactNode,
-  WheelEvent as RWheelEvent,
 } from "react";
 import { IconButton } from "../../ui/Button.tsx";
 import type { BrowserOutbound, BrowserSnapshot } from "./protocol.ts";
@@ -46,11 +45,35 @@ export function BrowserSurface({
     [controller],
   );
 
+  // React registers `wheel` on the ROOT container with {passive: true} (measured
+  // in react-dom 19), so preventDefault() inside an onWheel prop is a silent
+  // no-op: the wheel reached the remote page AND scrolled the Console's own
+  // container out from under the pane. The listener has to be a native one on
+  // the canvas with {passive: false}. Kept in a ref so the listener registered
+  // by the mount effect never has to be torn down and re-added on every render.
+  const wheelRef = useRef<(event: WheelEvent) => void>(() => {});
+  useEffect(() => {
+    wheelRef.current = (event: WheelEvent) => {
+      if (!inputEnabled) return;
+      event.preventDefault();
+      const rect = canvasRef.current?.getBoundingClientRect();
+      const p = rect ? remotePoint(event, rect, snapshot.width, snapshot.height) : { x: 0, y: 0 };
+      controller.sendInput({
+        type: "wheel",
+        ...p,
+        ...wheelPixels(event.deltaX, event.deltaY, event.deltaMode, snapshot.height),
+        modifiers: modifiersOf(event),
+      });
+    };
+  });
+
   useEffect(() => {
     const canvas = canvasRef.current;
     const stage = stageRef.current;
     if (!canvas || !stage) return;
     controller.mount(canvas);
+    const onWheel = (event: WheelEvent) => wheelRef.current(event);
+    canvas.addEventListener("wheel", onWheel, { passive: false });
     let intersecting = true;
     const syncVisibility = () => {
       const rect = stage.getBoundingClientRect();
@@ -83,6 +106,7 @@ export function BrowserSurface({
     syncVisibility();
     return () => {
       window.clearTimeout(viewportTimer);
+      canvas.removeEventListener("wheel", onWheel);
       resize.disconnect();
       intersection.disconnect();
       document.removeEventListener("visibilitychange", syncVisibility);
@@ -127,17 +151,6 @@ export function BrowserSurface({
     });
   };
 
-  const onWheel = (event: RWheelEvent<HTMLCanvasElement>) => {
-    if (!inputEnabled) return;
-    event.preventDefault();
-    controller.sendInput({
-      type: "wheel",
-      ...point(event),
-      ...wheelPixels(event.deltaX, event.deltaY, event.deltaMode, snapshot.height),
-      modifiers: modifiersOf(event),
-    });
-  };
-
   const onKeyDown = (event: RKeyboardEvent<HTMLInputElement>) => {
     // Clipboard shortcuts are handled HERE, never forwarded: the remote Chromium
     // runs in the container, so its clipboard is not the user's. Ctrl/Cmd+C asks
@@ -163,11 +176,16 @@ export function BrowserSurface({
         className="browser-canvas"
         aria-label={snapshot.title || canvasLabel}
         aria-disabled={!inputEnabled}
+        // Keys are delivered by the hidden IME input, and focus used to reach it
+        // ONLY through a canvas pointerdown — so a user who opened the pane and
+        // just started typing got nothing until they happened to click first.
+        // The canvas is focusable and hands focus straight on.
+        tabIndex={inputEnabled ? 0 : -1}
+        onFocus={() => imeRef.current?.focus({ preventScroll: true })}
         onPointerMove={(event) => onPointer(event, "move")}
         onPointerDown={(event) => onPointer(event, "down")}
         onPointerUp={(event) => onPointer(event, "up")}
         onPointerCancel={(event) => onPointer(event, "up")}
-        onWheel={onWheel}
         onContextMenu={(event) => event.preventDefault()}
       />
       <input

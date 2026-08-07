@@ -130,6 +130,32 @@ describe("BrowserSurface drag and clipboard", () => {
     expect(sent().filter((m) => m.type === "mouse" && m.event === "move").at(-1)).toMatchObject({ button: "none" });
   });
 
+  // React registers `wheel` on the root with {passive: true}, so an onWheel prop
+  // cannot preventDefault and the Console's own container scrolled along with
+  // the page. The listener has to be a native, non-passive one on the canvas.
+  it("cancels the wheel so only the remote page scrolls", async () => {
+    const wheel = new WheelEvent("wheel", {
+      bubbles: true, cancelable: true, clientX: 400, clientY: 300, deltaX: 0, deltaY: 3, deltaMode: 1,
+    });
+    await act(async () => { canvas().dispatchEvent(wheel); });
+    expect(wheel.defaultPrevented).toBe(true);
+    // deltaMode 1 is LINES; forwarding it raw scrolls the page by 3 pixels.
+    expect(sent().at(-1)).toMatchObject({ type: "wheel", deltaY: 48 });
+  });
+
+  // Keys are delivered by the hidden IME input, and focus used to reach it only
+  // via a canvas pointerdown — so typing did nothing until the user happened to
+  // click the page first.
+  it("moves focus to the input when the canvas is focused without a click", async () => {
+    expect(canvas().tabIndex).toBe(0);
+    await act(async () => { canvas().focus(); });
+    expect(document.activeElement).toBe(ime());
+
+    const key = new KeyboardEvent("keydown", { key: "ArrowDown", code: "ArrowDown", bubbles: true, cancelable: true });
+    await act(async () => { ime().dispatchEvent(key); });
+    expect(sent().at(-1)).toMatchObject({ type: "key", event: "down", key: "ArrowDown" });
+  });
+
   // The remote Chromium's clipboard lives in the container. Ctrl+C must ask the
   // page for its selection; Ctrl+V must reach the hidden input natively so the
   // browser's own paste event carries the USER's clipboard.
