@@ -25,6 +25,7 @@ import {
   pinQuickReply,
   unpinQuickReply,
   isQuickReplyPinned,
+  quickReplyKey,
 } from "../../lib/quickReplies.ts";
 import { Icon } from "../../ui/Icon.tsx";
 
@@ -62,9 +63,21 @@ function LearnedQuickReplies() {
   const learned = s.quickReplies || {};
   const hidden = s.quickRepliesHidden || [];
   const pinned = s.quickRepliesPinned || [];
-  const learnedRows = Object.entries(learned)
-    .map(([key, v]) => ({ key, ...v }))
-    .sort((a, b) => b.count - a.count || b.at - a.at);
+  // 保存キーではなく綴りから引き直したキーでまとめる。全角/半角の同一視を入れる前に別キーで
+  // 学習された同じ文（「ＯＫ」と「OK」）が2行に見えないように、チップ行と同じ畳み方で1件にする
+  // （回数は合算・綴りは新しい方。保存の実体はその文を次に送るか消したときに畳まれる）。
+  const merged = new Map<string, { key: string; text: string; count: number; at: number }>();
+  for (const v of Object.values(learned)) {
+    const key = quickReplyKey(v.text);
+    const prev = merged.get(key);
+    merged.set(key, {
+      key,
+      text: !prev || v.at >= prev.at ? v.text : prev.text,
+      count: (prev?.count ?? 0) + v.count,
+      at: Math.max(prev?.at ?? 0, v.at),
+    });
+  }
+  const learnedRows = [...merged.values()].sort((a, b) => b.count - a.count || b.at - a.at);
   // ピンは学習に無い文（シードや✨候補）でも留められるので、行が無ければここで足す。
   const pinnedRows = pinned.map((text) => {
     const hit = learnedRows.find((r) => isQuickReplyPinned([text], r.text));

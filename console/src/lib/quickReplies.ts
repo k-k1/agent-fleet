@@ -5,7 +5,8 @@
 // Layer B-1: 直近のエージェント回答の内容で並びを押し上げる（トークン0のヒューリスティック）。
 //
 // 保存は settings.quickReplies（ssmHostUsage と同型 = サーバミラーで複数デバイス同期）。
-// キーは正規化 + 小文字化（"OK"/"ok" を同一視）、表示テキストは最後に送った綴りを保持。
+// キーは正規化 + 全角半角の畳み込み + 小文字化（"OK"/"ok"、"１"/"1"、"ｂ"/"b" を同一視）、
+// 表示テキストは最後に送った綴りを保持。
 // ユーザーが消した候補は settings.quickRepliesHidden（キーの配列）に積んで恒久的に隠す
 // （シードも隠せる）。同じ文をもう一度自分で送ったら、その意思表示として隠しを解除する。
 //
@@ -32,8 +33,29 @@ const MAX_PINNED = 12;
 function normalize(text: string): string {
   return text.trim().replace(/\s+/g, " ");
 }
+
+// 全角・半角の差を吸収する（突合キー専用）。日本語入力の ON/OFF ひとつで「１」「ｂ」「ＯＫ」と
+// 「1」「b」「OK」が別物になり、同じ返信が別エントリとして学習される（＝チップが重複し、回数も
+// 割れる）ため、キーだけ NFKC で正規形へ寄せる。NFKC は互換文字の標準の正規化で、全角英数字→
+// 半角、半角カナ→全角（濁点の合成 ｺﾐｯﾄ/ｶﾞ も含む）をまとめて正しく畳める（コード点を自分で
+// ずらす実装だと濁点付き半角カナで崩れる）。大文字・小文字は従来どおり keyOf の小文字化で同一視。
+// 表示テキストには掛けない — ユーザーが打った綴りのまま見せる。
+function foldWidth(text: string): string {
+  return text.normalize("NFKC");
+}
+
+// 学習・隠し・ピンの突合キー。正規化 → 全角半角の畳み込み → 小文字化。
+// キー正規化を変えると保存済みエントリのキーは古いままになるので、突合は必ず「保存キー」ではなく
+// 「保存された表示テキストを keyOf したもの」で行い、record/forget/rank 側で新旧を1件に畳む。
 function keyOf(text: string): string {
-  return normalize(text).toLowerCase();
+  return foldWidth(normalize(text)).toLowerCase();
+}
+
+// 同じ畳み方を外でも使うための公開版（Tab 補完のリング＝lib/suggestCycle、✨候補と学習チップの
+// 重複判定＝MirrorView / ChatView）。突合の基準がここと食い違うと、チップ行に見えているものと
+// 選べるもの・重複扱いになるものがズレる。
+export function quickReplyKey(text: string): string {
+  return keyOf(text);
 }
 
 // この送信テキストを学習対象にするか。1行・短い・添付なし・スラッシュ/パス類でないこと。
@@ -51,11 +73,16 @@ export function isQuickReplyCandidate(text: string, hasAttachments: boolean): bo
 export function recordQuickReply(map: QuickReplyMap, text: string, now: number): QuickReplyMap {
   const norm = normalize(text);
   const k = keyOf(norm);
-  const prev = map[k];
-  const next: QuickReplyMap = {
-    ...map,
-    [k]: { text: norm, count: (prev?.count ?? 0) + 1, at: now },
-  };
+  // 同じキーに畳まれる既存エントリ（自分自身と、キー正規化の変更前に全角/半角違いで別キーへ
+  // 学習されていたもの）の回数を引き継ぎ、古いキーは落とす。表示綴りは最後に送ったもの。
+  const next: QuickReplyMap = { ...map };
+  let count = 0;
+  for (const [k2, e] of Object.entries(map)) {
+    if (k2 !== k && keyOf(e.text) !== k) continue;
+    count += e.count;
+    delete next[k2];
+  }
+  next[k] = { text: norm, count: count + 1, at: now };
   const keys = Object.keys(next);
   if (keys.length > MAX_ENTRIES) {
     // 最弱（使用回数→最近度）から落とす。今書いたキーは新しいので残る。
@@ -71,16 +98,20 @@ export function recordQuickReply(map: QuickReplyMap, text: string, now: number):
 // hideQuickReply と対で使う（シードは学習マップに無いので、隠しリスト側だけが効く）。
 export function forgetQuickReply(map: QuickReplyMap, text: string): QuickReplyMap {
   const k = keyOf(text);
-  if (!(k in map)) return map;
+  // 全角/半角違いで別キーに残っている同じ文（旧キー）も一緒に消す — 1つ消したのに
+  // 見た目が同じチップが残る、を避ける。
+  const dead = Object.keys(map).filter((k2) => k2 === k || keyOf(map[k2].text) === k);
+  if (!dead.length) return map;
   const next = { ...map };
-  delete next[k];
+  dead.forEach((d) => delete next[d]);
   return next;
 }
 
 // 隠しリストにキーを積む。上限は学習エントリと同じ（際限なく増やさない・古いものから落とす）。
 export function hideQuickReply(hidden: string[], text: string): string[] {
   const k = keyOf(text);
-  if (!k || hidden.includes(k)) return hidden;
+  // 突合は keyOf 済み同士で（全角/半角違いで積まれた旧キーも同じものとして扱う）。
+  if (!k || hidden.some((h) => keyOf(h) === k)) return hidden;
   const next = [...hidden, k];
   return next.length > MAX_ENTRIES ? next.slice(next.length - MAX_ENTRIES) : next;
 }
@@ -89,8 +120,8 @@ export function hideQuickReply(hidden: string[], text: string): string[] {
 // 変化が無ければ同じ配列参照を返すので、呼び出し側は差分だけ保存できる。
 export function unhideQuickReply(hidden: string[], text: string): string[] {
   const k = keyOf(text);
-  if (!hidden.includes(k)) return hidden;
-  return hidden.filter((h) => h !== k);
+  if (!hidden.some((h) => keyOf(h) === k)) return hidden;
+  return hidden.filter((h) => keyOf(h) !== k);
 }
 
 // ピン留め（常に表示）。隠しと違いキーではなく表示綴りをそのまま積む — 学習エントリが間引かれても、
@@ -135,10 +166,12 @@ const NEGATE = new Set(["no", "いいえ", "n", "やめて", "待って", "stop"
 // 一文（例「OK,順に進めよう。都度コミットしてね」= コミット + 進め）が +180 を得て、単語ひとつの
 // 素直な候補（「コミット」+100 /「進めて」+80）を構造的に永久に上回り、どの文脈でも先頭に貼り付く。
 // 文脈適合は「どれか1つ当たったか」で十分で、当たった数は関連度ではない。
-function contextBoost(entryText: string, lastReply: string): number {
+// lr は keyOf 済みの直近回答（全角半角・大小を畳んだもの）。回答は長いので畳み込みは
+// 呼び出し側で1回だけ行い、候補ごとに掛け直さない。
+function contextBoost(entryText: string, lastReply: string, lr: string): number {
   if (!lastReply) return 0;
-  const lr = lastReply.toLowerCase();
-  const et = entryText.toLowerCase();
+  // 候補側も同じ畳み方で突合する（「ｃｏｍｍｉｔ」と打って学習した候補でも当たる）。
+  const et = keyOf(entryText);
   let boost = 0;
   // 質問（末尾「?」/「？」）→ 肯定・否定の短答を押し上げる。
   if (/[?？]\s*$/.test(lastReply)) {
@@ -167,18 +200,29 @@ export type RankArgs = {
 export function rankQuickReplies(map: QuickReplyMap, args: RankArgs): string[] {
   const { draft, lastReply, locale, hidden, pinned, limit = 6 } = args;
   const seeds = SEEDS[locale] ?? SEEDS.ja;
-  const hide = new Set(hidden ?? []);
+  // 隠しリストは保存済みの値をそのまま信用せず keyOf を掛け直す（キー正規化を変える前に
+  // 全角/半角のまま積まれたキーも効かせる。keyOf は冪等なので新しいキーは素通り）。
+  const hide = new Set((hidden ?? []).map((h) => keyOf(h)));
   const pins = (pinned ?? []).map((p) => normalize(p)).filter((p) => p);
-  const pinKeys = new Set(pins.map(keyOf));
+  const pinKeys = new Set(pins.map((p) => keyOf(p)));
   // 学習エントリ + 未学習シードを統合（キー重複はシードを捨てる）。閾値を下げたとき過去に
   // 学習済みの長いエントリを遡って隠すため、ここでも MAX_LEN 超は取り込まない。消された
   // キーはシード側でも復活させない（隠しは学習の有無に関わらず効く）。
   const byKey = new Map<string, { text: string; count: number; at: number }>();
   for (const e of Object.values(map)) {
     if (normalize(e.text).length > MAX_LEN) continue;
-    if (hide.has(keyOf(e.text))) continue;
-    if (pinKeys.has(keyOf(e.text))) continue; // ピンは別枠で先に出す（二重に並べない）
-    byKey.set(keyOf(e.text), { ...e });
+    const k = keyOf(e.text);
+    if (hide.has(k)) continue;
+    if (pinKeys.has(k)) continue; // ピンは別枠で先に出す（二重に並べない）
+    const prev = byKey.get(k);
+    // 全角/半角違いで別キーに分かれていた同じ文は1件に畳む（回数は合算・綴りは新しい方）。
+    // record 側でも畳むが、こちらは保存を書き換えないまま表示だけ先に直す経路。
+    byKey.set(
+      k,
+      prev
+        ? { text: e.at >= prev.at ? e.text : prev.text, count: prev.count + e.count, at: Math.max(prev.at, e.at) }
+        : { ...e },
+    );
   }
   for (const s of seeds) {
     const k = keyOf(s);
@@ -186,23 +230,25 @@ export function rankQuickReplies(map: QuickReplyMap, args: RankArgs): string[] {
     if (!byKey.has(k)) byKey.set(k, { text: normalize(s), count: 0, at: 0 });
   }
 
-  const draftNorm = normalize(draft).toLowerCase();
+  // 前方一致も keyOf で突合する＝IME を切り替えて「ｃｏ」と打っても "commit" が出る（逆も同じ）。
+  const draftNorm = keyOf(draft);
+  const lastReplyKey = keyOf(lastReply);
   const scored = [...byKey.values()]
     // draft 入力中は前方一致で絞り、draft そのものと一致する候補は除く（無意味なので）。
     .filter((e) => {
-      const et = e.text.toLowerCase();
+      const et = keyOf(e.text);
       if (draftNorm && !et.startsWith(draftNorm)) return false;
       if (draftNorm && et === draftNorm) return false;
       return true;
     })
-    .map((e) => ({ text: e.text, score: e.count + contextBoost(e.text, lastReply), at: e.at }))
+    .map((e) => ({ text: e.text, score: e.count + contextBoost(e.text, lastReply, lastReplyKey), at: e.at }))
     // スコア降順 → 同点は最近度 → なお同点なら短い方を先に（チップは短いほど押しやすく、
     // 並びが Object のキー順という説明できない順序に落ちるのも防ぐ）。
     .sort((a, b) => b.score - a.score || b.at - a.at || a.text.length - b.text.length);
 
   // ピンは入力中の前方一致（オートコンプリート）にだけ従う。長さ上限・隠し・スコアには従わない。
   const head = pins.filter((p) => {
-    const pt = p.toLowerCase();
+    const pt = keyOf(p);
     return !draftNorm || (pt.startsWith(draftNorm) && pt !== draftNorm);
   });
   // ピンは別枠（何件ピンしていても学習側の limit を圧迫しない）。学習側はランキング上位を limit 件まで。
