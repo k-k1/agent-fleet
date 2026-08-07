@@ -1563,6 +1563,7 @@ export const ja = {
   "browser.attach.mode.view-only": "閲覧のみ",
   "browser.attach.mode.user-control": "ユーザー操作",
   "browser.attach.mode.locked": "ロック中",
+  "browser.attach.view_only_notice": "閲覧のみのため入力は無効です。スクロールもキー操作も送られません。エージェントが操作を引き渡すと入力できるようになります。",
   "browser.attach.request": "ブラウザ操作の依頼",
   "browser.attach.default_message": "内容を確認し、依頼された操作を完了してください。",
   "browser.attach.owner_paused_warning": "owner側がこのページの自動操作を停止した後にだけ操作してください。",

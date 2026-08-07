@@ -222,8 +222,12 @@ Chromium Page:
    silently mis-attached.
 3. Before switching to `user-control`, stop the owner's automation against that Page.
    Chromium does not arbitrate competing owner and human input.
-4. Call `attach_chromium`, then use `request_browser_action` when the user needs
-   explicit instructions or completion/cancel controls.
+4. Call `attach_chromium`. **The attachment starts in `view-only`, and in that mode the
+   agent rejects every pointer, wheel and key message the pane sends** — the user sees a
+   live picture in which nothing they do has any effect, with no error. So if the user is
+   meant to *operate* the page (not just read it), you must also move it to `user-control`
+   — `request_browser_action` when they need instructions or completion/cancel controls,
+   otherwise `set_chromium_control_mode`. Handing over only the link leaves them stuck.
 5. Present the returned `open_url` unchanged as a Markdown link labelled
    "Open the browser and operate it". An MCP call alone must not change the user's
    Console layout; opening the link is the user's explicit action. The link opens the

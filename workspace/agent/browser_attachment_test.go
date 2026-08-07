@@ -158,6 +158,66 @@ func TestBrowserAttachmentControlModesAndNoNavigateMessage(t *testing.T) {
 	m.Delete(resp.ID)
 }
 
+// A fresh attachment is view-only, so scroll and keys are refused until the
+// owner hands over. Every other live/unit test sets user-control first, so the
+// path the field actually takes — attach, hand the user the link, never call
+// request_browser_action — was the one path nothing covered, and it reached
+// users as "the pane renders but scrolling and typing do nothing".
+func TestBrowserAttachmentDefaultsToViewOnlyAndReportsRefusedInput(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	m := fakeAttachmentManager(cdp, 0)
+	resp := createFakeAttachment(t, m)
+	if resp.ControlMode != attachmentControlViewOnly {
+		t.Fatalf("fresh attachment control mode = %q, want %q", resp.ControlMode, attachmentControlViewOnly)
+	}
+	a, err := m.lookupActive(resp.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := &browserAttachmentViewer{attachment: a, control: make(chan browserOutbound, 8), done: make(chan struct{})}
+
+	for _, message := range []string{
+		`{"type":"wheel","x":1,"y":1,"deltaX":0,"deltaY":400,"modifiers":0}`,
+		`{"type":"key","event":"down","key":"PageDown","code":"PageDown","modifiers":0,"repeat":false}`,
+	} {
+		v.handleControl([]byte(message))
+	}
+	for _, method := range []string{"Input.dispatchMouseEvent", "Input.dispatchKeyEvent"} {
+		if containsBrowserMethod(cdp.methods(), method) {
+			t.Fatalf("view-only forwarded %s", method)
+		}
+	}
+	// Refusing silently is what made this invisible: the Console had nothing to
+	// show and looked exactly like a working pane.
+	var refusals int
+	for done := false; !done; {
+		select {
+		case out := <-v.control:
+			var msg struct {
+				Type string `json:"type"`
+				Code string `json:"code"`
+			}
+			if json.Unmarshal(out.data, &msg) == nil && msg.Type == "protocol-error" && msg.Code == "input_not_allowed" {
+				refusals++
+			}
+		default:
+			done = true
+		}
+	}
+	if refusals != 2 {
+		t.Fatalf("input_not_allowed reported %d times, want 2", refusals)
+	}
+
+	if _, err := m.SetControlMode(resp.ID, attachmentControlUser); err != nil {
+		t.Fatal(err)
+	}
+	v.handleControl([]byte(`{"type":"wheel","x":1,"y":1,"deltaX":0,"deltaY":400,"modifiers":0}`))
+	if !containsBrowserMethod(cdp.methods(), "Input.dispatchMouseEvent") {
+		t.Fatal("user-control did not forward the wheel")
+	}
+	m.Delete(resp.ID)
+}
+
 func TestBrowserAttachmentSetControlModeHasNoHandoffOrTTLSideEffects(t *testing.T) {
 	cdp := newFakeBrowserCDP()
 	m := fakeAttachmentManager(cdp, 0)
