@@ -48,6 +48,8 @@
 - [51-session-report-v2-ledger.md](51-session-report-v2-ledger.md) — セッション報告 v2: docs/30 の「エッジ駆動＋1bit arm」を指示台帳＋レベル駆動リコンサイラ＋冪等シンクへ置き換える後継設計。既知の穴 A〜G の棚卸し、settled/progressed 証拠テーブル、誤報告の補償 reopen、自己申告ファストパス、3 Phase 移行計画（✅ Phase 1〜3 実装済み。設計判断は [decisions/0035](decisions/0035-session-report-v2-ledger.md)）
 - [52-working-sets.md](52-working-sets.md) — 作業グループ（working set）: 名前付きの { 作業コピー, 会話, repo なしセッション } の集合で左ペインの表示を案件ごとに分離。定義は ui-prefs 同期・選択中は端末ローカル・サーバ変更ゼロのフロント完結（✅ 実装済み・実機目視待ち。設計判断は [decisions/0036](decisions/0036-working-sets.md)）
 - [53-chromium-attach-view.md](53-chromium-attach-view.md) — 外部プロセスが所有するheadless Chromiumへloopback CDPでattachし、描画・限定入力をConsoleへ中継。ローカルAF MCPが引き渡しを準備し、ユーザーはaction linkを1回クリックして操作ペインを開く（設計確定・未実装。設計判断は [decisions/0038](decisions/0038-chromium-attach-view.md)）
+- [54-opencode-console-oauth.md](54-opencode-console-oauth.md) — opencode に API キー以外の認証経路を足す: 共有 `opencode serve` の device flow API（`mode:"auto"`）を Console の接続カードから叩き、opencode.ai アカウントでサインインする（✅ 実装済み。API 実測記録を含む）
+- [55-fork-at-message.md](55-fork-at-message.md) — 発言時点からの会話分岐: ミラーの過去のユーザー発言を選び、そこまでの文脈を持つ新セッションを起こす。アンカーは kind 固有の不透明 ID（claude=uuid / codex=turn id / opencode=message id）で、codex・opencode は公式パラメータ、claude だけ jsonl 手術（各 CLI の実測記録を含む。設計確定・未実装。設計判断は [decisions/0039](decisions/0039-fork-at-message.md)）
 
 > 完了後も実装契約や実測リファレンスとしてコードから参照する 24・26〜30 は番号付きのまま残す。
 > 時系列の実装プランとして役目を終えたものは history/ へ移動: [19 assistant-chat](history/19-assistant-chat.md) /
@@ -95,6 +97,7 @@
 - [0022-agent-memory-management.md](decisions/0022-agent-memory-management.md) — エージェントメモリは agent 側 git bare repo で版管理し bundle で環境間移送（設計 [39](39-agent-memory-management.md)）
 - [0033-stored-text-locale.md](decisions/0033-stored-text-locale.md) — 「保存データは JA 統一」を撤回：利用者が読む自前生成文（chat の notice）はキー＋引数で保存し Console のカタログで訳す。モデルが読む/書く文字列は据え置き（[0016](decisions/0016-i18n.md) §7 を一部上書き・設計 [28 §2.5/§4](28-i18n.md)）
 - [0038-chromium-attach-view.md](decisions/0038-chromium-attach-view.md) — 外部所有Chromiumはloopback CDPへattachし、MCPが返すaction linkをユーザーがクリックしてConsoleペインへ開く（設計 [53](53-chromium-attach-view.md)）
+- [0039-fork-at-message.md](decisions/0039-fork-at-message.md) — 会話の分岐点は kind 固有の不透明アンカーで指し（`idx` は使わない）、codex/opencode は公式パラメータ、claude だけ `sessionId` のみ書き換える jsonl 手術を許す（設計 [55](55-fork-at-message.md)・旧判断 [history/fork-from-chat](history/fork-from-chat.md) を差し替え）
 
 > 0023〜0032 は対応する設計ドキュメントの行（上記「番号付きの機能設計・実装記録」）に併記。
 
