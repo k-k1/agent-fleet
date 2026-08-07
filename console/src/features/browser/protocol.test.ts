@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BrowserOutbound, RemoteKeyLike } from "./protocol.ts";
-import { BrowserInputBridge, clipboardShortcut, heldButton, modifiersOf, remotePoint } from "./protocol.ts";
+import { BrowserInputBridge, clipboardShortcut, heldButton, modifiersOf, remotePoint, wheelPixels } from "./protocol.ts";
 
 const key = (overrides: Partial<RemoteKeyLike> = {}): RemoteKeyLike => ({
   key: "a",
@@ -59,5 +59,14 @@ describe("drag and clipboard classification", () => {
     expect(clipboardShortcut(key({ key: "c" }))).toBeNull();
     expect(clipboardShortcut(key({ key: "c", ctrlKey: true, altKey: true }))).toBeNull();
     expect(clipboardShortcut(key({ key: "a", ctrlKey: true }))).toBeNull();
+  });
+});
+
+describe("wheel delta units", () => {
+  it("converts line and page deltas to pixels, leaving pixel deltas alone", () => {
+    expect(wheelPixels(0, 100, 0, 800)).toEqual({ deltaX: 0, deltaY: 100 });
+    // 3 lines is one wheel notch on several platforms — forwarded raw it is 3px.
+    expect(wheelPixels(0, 3, 1, 800)).toEqual({ deltaX: 0, deltaY: 48 });
+    expect(wheelPixels(-1, 1, 2, 800)).toEqual({ deltaX: -800, deltaY: 800 });
   });
 });

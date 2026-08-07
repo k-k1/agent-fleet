@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"sync"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
@@ -463,18 +462,8 @@ func (v *browserViewer) handleKey(data []byte) {
 		v.protocolError("bad_key", "invalid key event")
 		return
 	}
-	params := map[string]any{
-		"type": map[bool]string{true: "keyDown", false: "keyUp"}[msg.Event == "down"],
-		"key":  msg.Key, "code": msg.Code, "modifiers": msg.Modifiers, "autoRepeat": msg.Repeat,
-	}
-	if msg.Event == "down" && msg.Modifiers&7 == 0 && utf8.RuneCountInString(msg.Key) == 1 {
-		r, _ := utf8.DecodeRuneInString(msg.Key)
-		if !unicode.IsControl(r) {
-			params["text"] = msg.Key
-			params["unmodifiedText"] = msg.Key
-		}
-	}
-	v.call("Input.dispatchKeyEvent", params, nil)
+	v.call("Input.dispatchKeyEvent",
+		browserKeyEventParams(msg.Event == "down", msg.Key, msg.Code, msg.Modifiers, msg.Repeat), nil)
 }
 
 func (v *browserViewer) handleHistory(data []byte) {
