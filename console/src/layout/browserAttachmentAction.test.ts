@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { allPanes, closePane, freshLayout, openActive, openInNew, setActive } from "./ops.ts";
 import type { Layout, OpenTarget } from "./types.ts";
 import {
+  browserAttachmentIdFromLink,
   browserAttachmentIdFromPath,
   canonicalWorkspaceURL,
   planBrowserAttachmentOpen,
@@ -24,6 +25,19 @@ describe("Chromium attachment action route", () => {
     expect(browserAttachmentIdFromPath("/open/browser-attachment/%2Fetc")).toBeNull();
     expect(browserAttachmentIdFromPath("/open/browser-attachment/")).toBeNull();
     expect(canonicalWorkspaceURL("https://fleet.invalid/agent-fleet/")).toBe("/agent-fleet/");
+  });
+
+  // The same link arrives as a Markdown href in the mirror, where anything not
+  // recognised here is resolved as a repository file path instead.
+  it("recognises the action link relative or absolute, and only on our origin", () => {
+    const base = "https://fleet.invalid/agent-fleet/";
+    expect(browserAttachmentIdFromLink("/open/browser-attachment/ba_x", base)).toBe("ba_x");
+    expect(browserAttachmentIdFromLink("open/browser-attachment/ba_x", base)).toBe("ba_x");
+    expect(browserAttachmentIdFromLink("https://fleet.invalid/open/browser-attachment/ba_x", base)).toBe("ba_x");
+    expect(browserAttachmentIdFromLink("https://evil.invalid/open/browser-attachment/ba_x", base)).toBeNull();
+    expect(browserAttachmentIdFromLink("javascript:alert(1)//open/browser-attachment/ba_x", base)).toBeNull();
+    expect(browserAttachmentIdFromLink("/docs/53.md", base)).toBeNull();
+    expect(browserAttachmentIdFromLink("", base)).toBeNull();
   });
 
   it("focuses a duplicate, then reuses a blank without growing", () => {

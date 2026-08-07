@@ -21,6 +21,25 @@ export function browserAttachmentIdFromPath(pathname: string): string | null {
   }
 }
 
+/**
+ * Same question as browserAttachmentIdFromPath, asked of a Markdown link href.
+ * The agent is told to paste `open_url` verbatim (a path), but a full same-origin
+ * URL is the obvious variation, and both must open the pane rather than being
+ * mistaken for a repository file path. A foreign origin is never ours to open.
+ */
+export function browserAttachmentIdFromLink(href: string, baseURI = document.baseURI): string | null {
+  if (!href) return null;
+  let url: URL;
+  try {
+    url = new URL(href, baseURI);
+    if (url.origin !== new URL(baseURI).origin) return null;
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  return browserAttachmentIdFromPath(url.pathname);
+}
+
 export const browserAttachmentTarget = (attachmentId: string): OpenTarget => ({
   content: { kind: "browserAttach", attachmentId },
 });

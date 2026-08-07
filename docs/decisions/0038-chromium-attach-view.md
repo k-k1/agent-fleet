@@ -1,6 +1,7 @@
 # 0038. 外部所有 Chromium はloopback CDPへattachし、ユーザークリックでConsoleペインへ開く
 
-- 状態: 採用・P0実測で実装契約確定（P1〜P3実装済み。対話セッション直接経路を2026-08-02に補正）
+- 状態: 採用・P0実測で実装契約確定（P1〜P3実装済み。対話セッション直接経路を2026-08-02に補正。
+  導線の断線とport衝突を2026-08-08に補正 = 決定18〜20）
 - 関連: [53-chromium-attach-view.md](../53-chromium-attach-view.md) /
   [53 P0実測](../53-chromium-attach-view-p0-verification.md) / [0018-container-browser-pane.md](0018-container-browser-pane.md) /
   [0035-session-report-v2-ledger.md](0035-session-report-v2-ledger.md)
@@ -53,6 +54,17 @@ Consoleへ中継する必要がある。エージェントはCLAUDE.md / AGENTS.
 17. 対話セッションは既に同じWorkspace内でshell/Playwright/loopback CDPを扱える主体で、attachmentの表示には
     membership認証とaction linkのユーザークリックが必要なため、追加のConsole opt-inは設けない。headlessで
     広いフリート操作を行うアシスタントの`af_write` opt-inは従来どおり維持する。
+
+18. action linkは「Console routeへの遷移」だけを前提にしない。ミラーのMarkdownリンクとしてクリックされる経路が
+    実際の主経路であり、そこではファイルリンク解決より先にaction linkとして判定し、遷移せずその場でペインを
+    開く。両経路は同じ関数を通し、二重実装にしない。CP側はaction pathでConsole shellを返す（静的catch-allの
+    404がリンク導線を全滅させたため）。
+19. Chromiumのremote-debugging portは固定しない。`--remote-debugging-port=0`＋`DevToolsActivePort`を起動契約とし、
+    attachは`browserId`で個体を照合する。同一portを複数プロセスがlistenしている場合はdiscoveryを
+    `cdp_port_ambiguous`で失敗させる。Chromiumは衝突時に失敗せず別loopback familyへ逃げるため、
+    「listenを失敗させる」ことに依存しない（§53.16）。この検査はadvisoryで、procfsで判定できない場合は通す。
+20. attachmentの一覧取得（`GET /api/browser/attachments`）はConsoleの復旧用入口だけに使う。action linkに代わる
+    第二の配布経路にはせず、pushもpollingもしない。
 
 ## 採らなかった案
 

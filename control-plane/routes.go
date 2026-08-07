@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -653,6 +654,7 @@ func registerBrowserRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("DELETE /api/browser/pages/{id}", rest)
 	mux.HandleFunc("GET /api/browser/attach-targets", rest)
 	mux.HandleFunc("POST /api/browser/attachments", rest)
+	mux.HandleFunc("GET /api/browser/attachments", rest)
 	mux.HandleFunc("GET /api/browser/attachments/{id}", rest)
 	mux.HandleFunc("DELETE /api/browser/attachments/{id}", rest)
 	mux.HandleFunc("POST /api/browser/attachments/{id}/control-mode", rest)
@@ -702,6 +704,19 @@ func registerLegacyRedirect(mux *http.ServeMux) {
 // unhashed entry points (index.html, version.json, sw.js) stay no-store so a
 // reload / the deploy check always sees the latest build.
 func registerStatic(mux *http.ServeMux, cfg config) {
+	// Console action route (docs/53 §53.7). The Console is a static SPA, so no
+	// file exists at this path — under the catch-all FileServer alone the very
+	// link attach_chromium tells the agent to hand the user 404s. Serve the same
+	// shell: index.html re-points its dynamic <base> at the Workspace root and
+	// App.tsx turns the id into a pane. It stays session-gated like "/", so a
+	// logged-out deep link round-trips through /login?next=… and lands here.
+	shell := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		http.ServeFile(w, r, filepath.Join(cfg.consoleDir, "index.html"))
+	}
+	mux.HandleFunc("GET /open/browser-attachment/{id}", shell)
+	mux.HandleFunc("GET /open/browser-attachment/{id}/{$}", shell)
+
 	fs := http.FileServer(http.Dir(cfg.consoleDir))
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/assets/") {

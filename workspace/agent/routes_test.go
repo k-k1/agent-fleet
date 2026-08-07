@@ -97,6 +97,16 @@ func TestFSFilePutRouteRegistered(t *testing.T) {
 	}
 }
 
+// The collection route must not be swallowed by the {id} route — the Console's
+// recovery list is the only entry left when the action link is lost (docs/53 §53.7).
+func TestBrowserAttachmentListRouteRegistered(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/browser/attachments", nil)
+	_, pattern := buildMux().Handler(req)
+	if pattern != "GET /browser/attachments" {
+		t.Fatalf("route pattern=%q", pattern)
+	}
+}
+
 func TestBrowserAttachmentControlModeRouteRegistered(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/browser/attachments/ba_0123456789abcdef0123456789abcdef/control-mode", nil)
 	_, pattern := buildMux().Handler(req)
