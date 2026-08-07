@@ -416,6 +416,7 @@ func chromiumTargetsOutputSchema() map[string]any {
 					"required": []string{"target_id", "title", "url"},
 				},
 			},
+			"browser_id": map[string]any{"type": "string"},
 		},
 		"required": []string{"targets"},
 	}
@@ -469,12 +470,15 @@ var mcpStdioTools = []map[string]any{
 	{
 		"name": "list_chromium_targets",
 		"description": "loopbackだけに公開されたChromium CDP portから、既存のPage targetを列挙する。attach_chromiumの前に必ず呼び、返ったtarget_idから対象Pageを選ぶ。" +
+			"Chromiumは固定portで起動しないこと（同じportを別セッションが先に握っていても失敗せず、後発は黙って別のloopback系へbindするため、" +
+			"ここで列挙されるのが他人のブラウザになる）。--remote-debugging-port=0で起動し、<user-data-dir>/DevToolsActivePortの" +
+			"1行目のportをこのツールへ渡す。返るbrowser_idは同ファイル2行目のGUIDと一致するはずで、一致しなければ別個体なのでattachしない。" +
 			"CDP endpoint、cookie、password、tokenを回答・log・commitへ出力しないこと。",
 		"inputSchema": map[string]any{
 			"type":                 "object",
 			"additionalProperties": false,
 			"properties": map[string]any{
-				"port": map[string]any{"type": "integer", "minimum": 1, "maximum": 65535, "description": "127.0.0.1でlistenしているChromium remote-debugging port"},
+				"port": map[string]any{"type": "integer", "minimum": 1, "maximum": 65535, "description": "127.0.0.1でlistenしているChromium remote-debugging port（--remote-debugging-port=0で起動しDevToolsActivePortの1行目を渡す）"},
 			},
 			"required": []string{"port"},
 		},
@@ -601,15 +605,17 @@ var mcpStdioWriteTools = []map[string]any{
 	{
 		"name": "attach_chromium",
 		"description": "list_chromium_targetsで確認済みの既存PageへAgent Fleetの表示・入力経路を接続する。" +
-			"戻ったopen_urlを改変せず「ブラウザを開いて操作する」というMarkdownリンクでユーザーへ提示すること。" +
+			"自分が起動したChromiumに繋ぐなら、DevToolsActivePort2行目のGUIDをexpected_browser_idへ必ず渡すこと（port衝突時に他セッションのブラウザへ繋ぐ事故を防ぐ）。" +
+			"戻ったopen_urlを改変せず「ブラウザを開いて操作する」というMarkdownリンクでユーザーへ提示すること。リンクはConsoleのペインで開く（別タブではない）。" +
 			"最終確定操作をエージェント自身でクリックせず、attach成功を外部サイト上の処理成功と言い換えないこと。",
 		"inputSchema": map[string]any{
 			"type":                 "object",
 			"additionalProperties": false,
 			"properties": map[string]any{
-				"port":      map[string]any{"type": "integer", "minimum": 1, "maximum": 65535, "description": "list_chromium_targetsに渡したChromium remote-debugging port"},
-				"target_id": map[string]any{"type": "string", "minLength": 1, "description": "list_chromium_targetsが返したtarget_id"},
-				"label":     map[string]any{"type": "string", "description": "Consoleに表示する任意の短いラベル"},
+				"port":                map[string]any{"type": "integer", "minimum": 1, "maximum": 65535, "description": "list_chromium_targetsに渡したChromium remote-debugging port"},
+				"target_id":           map[string]any{"type": "string", "minLength": 1, "description": "list_chromium_targetsが返したtarget_id"},
+				"expected_browser_id": map[string]any{"type": "string", "description": "接続先として期待するChromium個体（DevToolsActivePortの2行目 /devtools/browser/<GUID> かそのGUID）。不一致ならattachを拒否する"},
+				"label":               map[string]any{"type": "string", "description": "Consoleに表示する任意の短いラベル"},
 			},
 			"required": []string{"port", "target_id"},
 		},
@@ -1110,14 +1116,15 @@ func mcpStdioCall(req mcpReq) []byte {
 		Projects []string `json:"projects"`
 		// Chromium Attach View（docs/53）。MCPはsnake_case、Agent RESTはcamelCase
 		// なので、この境界で明示的に変換する。hostやCDP WebSocket URLは入力に持たない。
-		Port            int    `json:"port"`
-		TargetID        string `json:"target_id"`
-		AttachmentID    string `json:"attachment_id"`
-		Label           string `json:"label"`
-		Message         string `json:"message"`
-		CompletionLabel string `json:"completion_label"`
-		AllowCancel     *bool  `json:"allow_cancel"`
-		ControlMode     string `json:"control_mode"`
+		Port              int    `json:"port"`
+		TargetID          string `json:"target_id"`
+		ExpectedBrowserID string `json:"expected_browser_id"`
+		AttachmentID      string `json:"attachment_id"`
+		Label             string `json:"label"`
+		Message           string `json:"message"`
+		CompletionLabel   string `json:"completion_label"`
+		AllowCancel       *bool  `json:"allow_cancel"`
+		ControlMode       string `json:"control_mode"`
 	}
 	_ = json.Unmarshal(p.Args, &a)
 
@@ -1156,7 +1163,7 @@ func mcpStdioCall(req mcpReq) []byte {
 	case "get_chromium_attachment":
 		return mcpGetChromiumAttachment(req.ID, a.AttachmentID)
 	case "attach_chromium":
-		return mcpAttachChromium(req.ID, a.Port, a.TargetID, a.Label)
+		return mcpAttachChromium(req.ID, a.Port, a.TargetID, a.ExpectedBrowserID, a.Label)
 	case "detach_chromium":
 		return mcpDetachChromium(req.ID, a.AttachmentID)
 	case "request_browser_action":
@@ -1787,7 +1794,13 @@ func mcpListChromiumTargets(id json.RawMessage, port int) []byte {
 			"url":       target.URL,
 		})
 	}
-	return mcpStructuredResult(id, map[string]any{"targets": targets})
+	result := map[string]any{"targets": targets}
+	// browser_id は「このportに居るChromiumは本当に自分が起動した個体か」を
+	// 呼び出し側が突き合わせるための識別子。CDP endpointでもcredentialでもない。
+	if response.BrowserID != "" {
+		result["browser_id"] = response.BrowserID
+	}
+	return mcpStructuredResult(id, result)
 }
 
 func mcpGetChromiumAttachment(id json.RawMessage, attachmentID string) []byte {
@@ -1805,7 +1818,7 @@ func mcpGetChromiumAttachment(id json.RawMessage, attachmentID string) []byte {
 	return mcpStructuredResult(id, status)
 }
 
-func mcpAttachChromium(id json.RawMessage, port int, targetID, label string) []byte {
+func mcpAttachChromium(id json.RawMessage, port int, targetID, expectedBrowserID, label string) []byte {
 	if port < 1 || port > 65535 {
 		return mcpToolErr(id, "portには1〜65535のChromium remote-debugging portが必要です")
 	}
@@ -1816,6 +1829,13 @@ func mcpAttachChromium(id json.RawMessage, port int, targetID, label string) []b
 		return mcpToolErr(id, "labelは256 byte以内のUTF-8文字列にしてください")
 	}
 	req := map[string]any{"port": port, "targetId": targetID}
+	if expectedBrowserID != "" {
+		browserID := normalizeCDPBrowserID(expectedBrowserID)
+		if browserID == "" {
+			return mcpToolErr(id, "expected_browser_idはDevToolsActivePortの2行目（/devtools/browser/<GUID>）かそのGUIDを渡してください")
+		}
+		req["browserId"] = browserID
+	}
 	reqBody, _ := json.Marshal(req)
 	// The P1 REST request body is fixed to port/targetId/viewport. Carry the
 	// MCP-only display label over the authenticated loopback hop separately.
@@ -1994,10 +2014,22 @@ func mcpStructuredResult(id json.RawMessage, value map[string]any) []byte {
 
 // mcpChromiumToolErr keeps raw Agent/CDP details out of the model-visible result.
 // Stable Agent error codes remain useful, while endpoint URLs, ports and target IDs do not.
+// chromiumToolErrHints — 対処が一意に決まるcodeだけ、次の一手を添える。port衝突は
+// 「他セッションのChromiumへ繋ぎかけた」状態なので、リトライではなく起動側を直す。
+var chromiumToolErrHints = map[string]string{
+	"cdp_port_ambiguous": "そのportは複数プロセスがlistenしています。別セッションのChromiumへ繋がる恐れがあるため中断しました。" +
+		"自分のChromiumを--remote-debugging-port=0で起動し直し、<user-data-dir>/DevToolsActivePortの1行目のportを使ってください。",
+	"cdp_browser_mismatch": "そのportに居るChromiumはexpected_browser_idの個体ではありません。portが他プロセスに取られています。" +
+		"--remote-debugging-port=0で起動し直し、DevToolsActivePortのport/GUIDを使ってください。",
+}
+
 func mcpChromiumToolErr(id json.RawMessage, action string, err error) []byte {
 	var httpErr *agentHTTPError
 	if errors.As(err, &httpErr) {
 		if code := httpErr.code(); code != "" {
+			if hint := chromiumToolErrHints[code]; hint != "" {
+				return mcpToolErr(id, fmt.Sprintf("%sに失敗しました（Agent API %d, code=%s）。%s", action, httpErr.StatusCode, code, hint))
+			}
 			return mcpToolErr(id, fmt.Sprintf("%sに失敗しました（Agent API %d, code=%s）", action, httpErr.StatusCode, code))
 		}
 		return mcpToolErr(id, fmt.Sprintf("%sに失敗しました（Agent API %d）", action, httpErr.StatusCode))

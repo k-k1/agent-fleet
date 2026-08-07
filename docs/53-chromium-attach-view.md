@@ -82,16 +82,23 @@ navigation policyが異なるため、Agent内部ではAF所有Pageとattachment
 
 ## 53.4 Chromium 側の起動契約
 
-外部プロセスはremote debuggingをloopbackだけに公開する。
+外部プロセスはremote debuggingをloopbackだけに公開する。**portは固定せず`0`で起動し、Chromiumが選んだ実portを
+`<user-data-dir>/DevToolsActivePort`から読む**（理由は§53.16。固定portは他セッションと衝突しても失敗せず、
+黙って別のブラウザへattachする事故になる）。
 
 ```sh
 chromium \
   --headless=new \
   --remote-debugging-address=127.0.0.1 \
-  --remote-debugging-port=9222 \
+  --remote-debugging-port=0 \
   --user-data-dir=/explicit/profile/path
+
+# 1行目 = 実port、2行目 = /devtools/browser/<GUID>（= browser_id）
+cat /explicit/profile/path/DevToolsActivePort
 ```
 
+- 1行目のportを`list_chromium_targets`へ渡し、2行目のGUIDを`attach_chromium`の`expected_browser_id`へ渡す。
+  後者が一致しないattachは`cdp_browser_mismatch`で拒否される。
 - portは`1..65535`で、Agent自身のportを使わない。
 - `--remote-debugging-address=0.0.0.0`を利用契約で禁止する。
 - Chromiumの新しいremote-debugging制約に備え、明示した非デフォルト`user-data-dir`を使う。
@@ -188,9 +195,15 @@ Content-Type: application/json
 {
   "port": 9222,
   "targetId": "opaque-cdp-target-id",
+  "browserId": "c162d83f-b0a3-41d3-9db6-e9f6012c1491",
   "viewport": {"width": 1280, "height": 900, "deviceScaleFactor": 1}
 }
 ```
+
+`browserId`は任意（後方互換）だが、自分で起動したChromiumへ繋ぐなら必ず渡す。`DevToolsActivePort`2行目のGUID、
+`/devtools/browser/<GUID>`、advertised WebSocket URLのいずれの形でも受ける。endpointが別個体なら
+`cdp_browser_mismatch`で拒否する。discovery (`GET /api/browser/attach-targets`) は同じ識別子を
+`browserId`として返すので、attach前に突き合わせられる。
 
 ```json
 {
@@ -209,6 +222,7 @@ Content-Type: application/json
 ### status / detach / handoff
 
 ```http
+GET    /api/browser/attachments
 GET    /api/browser/attachments/{id}
 DELETE /api/browser/attachments/{id}
 POST   /api/browser/attachments/{id}/control-mode
@@ -256,6 +270,8 @@ ownerまたはエージェントは必要なら遷移先URLや業務側状態を
 | 400 | `bad_control_mode` | controlModeが定義外 |
 | 400 | `bad_handoff_result` | handoff resultが`completed/cancelled`以外 |
 | 404 | `cdp_target_not_found` | targetが存在しない |
+| 409 | `cdp_port_ambiguous` | 同じportを2つ以上のプロセスがlistenしている（§53.16） |
+| 409 | `cdp_browser_mismatch` | portに居るChromiumが`browserId`の個体ではない |
 | 404 | `browser_attachment_not_found` | attachment不存在、期限切れ、Agent再起動 |
 | 409 | `browser_already_attached` | viewer上限または同一targetの競合 |
 | 409 | `browser_handoff_not_pending` | handoff作成前に結果を確定しようとした |
@@ -290,7 +306,7 @@ type BrowserAttachTarget = {
   title: string
   url: string
 }
-type BrowserAttachTargetsResponse = { targets: BrowserAttachTarget[] }
+type BrowserAttachTargetsResponse = { targets: BrowserAttachTarget[]; browserId?: string }
 
 type BrowserAttachmentState =
   | "attached"               // viewer無し、再接続可能
@@ -359,6 +375,17 @@ terminal state (`target-closed` / `disconnected`) は短い再確認猶予中だ
 [ブラウザを開いて操作する](/open/browser-attachment/ba_7f3...)
 ```
 
+このリンクは**別タブではなくこのタブのペイン**で開く。到達経路は2つあり、どちらも同じ`openBrowserAttachment()`
+（`console/src/features/browser/attachmentAction.ts`）を通す:
+
+- **ミラー内のクリック**: MarkdownViewが`(^|/)open/browser-attachment/<id>`を判定し、`preventDefault()`して
+  その場でペインを開く（ページ遷移しない）。同一originの絶対URL形も受ける。この判定は**repo相対ファイルリンクの
+  分岐より前**に置く。leading `/`のpathはファイル解決側が「repoルート相対」として食べてしまい、クリックが
+  「`repos/<repo>/open/browser-attachment/<id>` が見つかりません」で終わるため（2026-08-08に発生した実障害）。
+- **action routeへの遷移**: 別タブ・URL直打ち・リロード。CPは`GET /open/browser-attachment/{id}`（と末尾`/`）へ
+  Console shell (`index.html`) を返す。静的catch-allだけでは404になり、リンク導線が全滅する。session gateは
+  他のConsole面と同じで、未ログインなら`/login?next=…`を経由して戻る。
+
 クリック時にConsoleは:
 
 1. routeのattachmentをGETし、認証・membership・有効期限を確認する。
@@ -368,6 +395,10 @@ terminal state (`target-closed` / `disconnected`) は短い再確認猶予中だ
    「キャンセル」にする。黙って別paneを上書きしない。
 5. layout storeの正規の`commit()`経路で`{kind:"browserAttach", attachmentId}`を1回だけ設定する。
 6. 成功後だけaction routeをhistoryから正規Workspace URLへ置換し、再実行を防ぐ。
+
+`GET /api/browser/attachments`は生存中のattachmentを新しい順に返す（`{"attachments": BrowserAttachment[]}`）。
+Consoleの「接続中のブラウザ」（WSバーのプレビュー）だけが読む復旧用の入口で、リンクを見失った後やペインを
+閉じた後に戻れるようにする。open_urlを配る第二の経路ではなく、pushもpollingもしない。
 
 サーバーpushやMCP呼び出しだけで利用者のlayoutを勝手に変更しない。layoutはブラウザ端末ごとのlocal stateであり、
 ユーザークリックが「この端末で表示する」という明示的な意思になる。
@@ -564,6 +595,10 @@ AFがownerをpauseする標準手段はv1に含めない。`user-control`に対�
 - `BrowserAttachPane`とaction route。
 - layout commit、期限切れ、上限時選択、完了/中止UI。
 - headless Chromiumを使ったConsole E2E。
+- **2026-08-08 補修**: 導線が両端で切れていた。(a) CPにaction routeが無く、リンク遷移が静的catch-allの404、
+  (b) ミラーのMarkdownリンクがrepo相対ファイルとして解決され、クリックが「ファイルが見つかりません」で終了。
+  CPのshell routeとMarkdownView側の判定を入れ、両者を`openBrowserAttachment()`へ集約した（§53.7）。
+  併せてport衝突対策を入れた（§53.16）。Console E2E（実リンククリック→ペイン）は未実施のまま残る。
 
 ### P3 — local MCP / agent guidance
 
@@ -584,7 +619,11 @@ AFがownerをpauseする標準手段はv1に含めない。`user-control`に対�
 - unit: port/host/WS URL再構成、target filter、typed ownership、TTL、detach冪等性、control mode。
 - Agent integration: fake CDPではなく短命な`/usr/bin/chromium`を用い、外部HTTPS相当はローカルfixture originで検証する。
 - security: `0.0.0.0`入力不可、redirect型SSRF不可、Agent/CP/metadata endpoint拒否、raw CDP非露出。
-- Console DOM: action route、layout上限、expired overlay、view-only入力拒否、日本語IME。
+- Console DOM: action route、**ミラーのaction linkがファイル解決へ落ちないこと**、layout上限、expired overlay、
+  view-only入力拒否、日本語IME。
+- CP route: `GET /open/browser-attachment/{id}`がConsole shellを返し、auth exemptにならないこと。
+- port衝突: 実Chromium 2本で後発が生存すること（前提の再確認）と`cdp_port_ambiguous`、`--remote-debugging-port=0`の
+  `DevToolsActivePort`契約、live endpointに対する`cdp_browser_mismatch`（`AF_CHROMIUM_ATTACH_LIVE=1`）。
 - Console E2E: Playwright(owner) → Chromium → Agent attach → Console Playwright(viewer)の二層を明示して実施する。
 - lifecycle: owner終了、target close、Agent restart、viewer reload、detach後もowner Pageが生存すること。
 - MCP（アシスタント）: af_readにchange toolが出ない、推測call拒否、`open_url`がそのままリンク化される説明、
@@ -604,3 +643,33 @@ AFがownerをpauseする標準手段はv1に含めない。`user-control`に対�
 5. Consoleは既存attachment focus→blank→新規slotの順に配置し、上限時だけactive pane置換の確認を出す。
 
 機能境界はP0結果によって拡張していない。P1以降はこの5点を再選択せず、実装・security/lifecycle testへ進む。
+
+## 53.16 port衝突（2026-08-08 実測）
+
+Chrome 151で実測した。**同じ`--remote-debugging-port`で2つ目のChromiumを起動しても失敗しない。**
+
+| | listen |
+|---|---|
+| 先着 | `127.0.0.1:P`（IPv4） |
+| 後発 | `[::1]:P`（IPv6） |
+
+`--remote-debugging-address=127.0.0.1`を両方に付けても、後発はIPv4のbindに失敗した後IPv6 loopbackを掴んで
+通常どおり起動し続け、警告もログも出さない。Agentのdiscoveryは`http://127.0.0.1:<port>`固定なので、
+**後発を起動したセッションが自分のportを指定したつもりで、先着＝別セッションのChromiumのtargetを受け取り、
+そのままattachできてしまう**。実際に9333を隣のセッションのPlaywrightプロファイルが握っている状態を観測した。
+
+境界の整理:
+
+- **コンテナは越えない。** loopbackはnetwork namespace毎で、attach APIはhostを受け取らず、advertisedな
+  authorityも常に`127.0.0.1:<port>`へ再構成する（`reconstructCDPWebSocketURL`）。他ユーザーのWorkspaceへは届かない。
+- **同一コンテナ内のセッション同士は素通しだった。** ここが実害。相手はログイン済みPageかもしれない。
+
+対策は3層で、上から順に効く:
+
+1. **起動契約**（§53.4）: `--remote-debugging-port=0` + `DevToolsActivePort`。衝突が原理的に起きない。
+2. **個体照合**: `attach_chromium`の`expected_browser_id` → REST `browserId` → `cdp_browser_mismatch`。
+3. **曖昧なら失敗**: discoveryが`/proc/net/tcp{,6}`のLISTEN inodeを`/proc/<pid>/fd`で引き、2プロセス以上なら
+   `cdp_port_ambiguous`。**advisoryである**: procfsが読めない、socketの持ち主を特定できない場合は
+   「不明」として通す（正当なattachを止めないため）。1と2が本体で、3は保険。
+
+Chromium側を「listenに失敗させる」ことはこちらから制御できない（別family へ逃げる）ため、失敗させるのはattach側の役目とする。

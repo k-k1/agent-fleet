@@ -511,6 +511,104 @@ func TestBrowserAttachmentUsesWebSocketCDPAdapter(t *testing.T) {
 	}
 }
 
+// browserId is the caller's "this must be the Chromium I launched" assertion.
+// A port collision is silent on the Chromium side, so an attach that skips this
+// check can land on another session's browser (docs/53 §53.16).
+func TestBrowserAttachmentRejectsForeignBrowserInstance(t *testing.T) {
+	const guid = "c162d83f-b0a3-41d3-9db6-e9f6012c1491"
+	cdp := newFakeBrowserCDP()
+	m := fakeAttachmentManager(cdp, 0)
+	m.config.Discover = func(int, time.Duration) (cdpDiscovery, error) {
+		return cdpDiscovery{
+			DebuggerURL: "ws://127.0.0.1:9222/devtools/browser/" + guid,
+			BrowserID:   guid,
+			Targets:     []browserAttachTarget{{TargetID: "target-1", Type: "page", Title: "External", URL: "https://example.invalid/edit"}},
+		}, nil
+	}
+	defer m.Close()
+
+	_, err := m.Create(browserAttachmentCreateRequest{
+		Port: 9222, TargetID: "target-1", BrowserID: "11111111-2222-3333-4444-555555555555",
+		Viewport: browserViewportRequest{Width: 1280, Height: 900, DeviceScaleFactor: 1},
+	})
+	if apiErr := asAttachmentAPIError(err); apiErr.Code != "cdp_browser_mismatch" || apiErr.Status != http.StatusConflict {
+		t.Fatalf("foreign browser error = %+v", apiErr)
+	}
+	if _, err := m.Create(browserAttachmentCreateRequest{
+		Port: 9222, TargetID: "target-1", BrowserID: "not a browser id/../",
+		Viewport: browserViewportRequest{Width: 1280, Height: 900, DeviceScaleFactor: 1},
+	}); asAttachmentAPIError(err).Code != "bad_browser_attachment" {
+		t.Fatalf("malformed browserId error = %v", err)
+	}
+	// The matching instance still attaches — accepted in the DevToolsActivePort
+	// form the caller reads off disk, not just as a bare GUID.
+	resp, err := m.Create(browserAttachmentCreateRequest{
+		Port: 9222, TargetID: "target-1", BrowserID: "/devtools/browser/" + guid,
+		Viewport: browserViewportRequest{Width: 1280, Height: 900, DeviceScaleFactor: 1},
+	})
+	if err != nil {
+		t.Fatalf("matching browserId must attach: %v", err)
+	}
+	if resp.State != attachmentStateAttached {
+		t.Fatalf("state=%q", resp.State)
+	}
+}
+
+// The Console's way back to a live attachment when the action link is gone.
+func TestBrowserAttachmentListIsNewestFirstAndDropsDeleted(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	m := fakeAttachmentManager(cdp, 0)
+	defer m.Close()
+	targets := []string{"target-1", "target-2"}
+	m.config.Discover = func(int, time.Duration) (cdpDiscovery, error) {
+		list := make([]browserAttachTarget, 0, len(targets))
+		for _, id := range targets {
+			list = append(list, browserAttachTarget{TargetID: id, Type: "page", Title: id, URL: "https://example.invalid/" + id})
+		}
+		return cdpDiscovery{DebuggerURL: "ws://127.0.0.1:9222/devtools/browser/x", Targets: list}, nil
+	}
+	if got := m.List().Attachments; len(got) != 0 {
+		t.Fatalf("empty manager listed %d", len(got))
+	}
+	first, err := m.Create(browserAttachmentCreateRequest{Port: 9222, TargetID: "target-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * time.Millisecond) // distinct creation instants
+	second, err := m.Create(browserAttachmentCreateRequest{Port: 9222, TargetID: "target-2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := m.List().Attachments
+	if len(listed) != 2 || listed[0].ID != second.ID || listed[1].ID != first.ID {
+		t.Fatalf("list must be newest first: %+v", listed)
+	}
+	// Detaching is the user closing the view; it must leave the list, not linger.
+	m.Delete(second.ID)
+	listed = m.List().Attachments
+	if len(listed) != 1 || listed[0].ID != first.ID {
+		t.Fatalf("deleted attachment still listed: %+v", listed)
+	}
+}
+
+// Discovery hands the browser id back so the caller can compare it with line 2
+// of its own DevToolsActivePort before it ever attaches.
+func TestBrowserAttachDiscoveryExposesBrowserID(t *testing.T) {
+	const guid = "c162d83f-b0a3-41d3-9db6-e9f6012c1491"
+	m := fakeAttachmentManager(newFakeBrowserCDP(), 0)
+	m.config.Discover = func(int, time.Duration) (cdpDiscovery, error) {
+		return cdpDiscovery{DebuggerURL: "ws://127.0.0.1:9222/devtools/browser/" + guid, BrowserID: guid}, nil
+	}
+	defer m.Close()
+	resp, err := m.Discover(9222)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.BrowserID != guid {
+		t.Fatalf("browserId=%q want %q", resp.BrowserID, guid)
+	}
+}
+
 func containsBrowserMethod(methods []string, want string) bool {
 	for _, method := range methods {
 		if method == want {
