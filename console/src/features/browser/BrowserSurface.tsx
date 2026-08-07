@@ -7,7 +7,7 @@ import type {
 } from "react";
 import { IconButton } from "../../ui/Button.tsx";
 import type { BrowserOutbound, BrowserSnapshot } from "./protocol.ts";
-import { BrowserInputBridge, clipboardShortcut, heldButton, modifiersOf, mouseButton, remotePoint } from "./protocol.ts";
+import { BrowserInputBridge, clipboardShortcut, heldButton, modifiersOf, mouseButton, remotePoint, wheelPixels } from "./protocol.ts";
 
 export interface BrowserSurfaceController {
   mount(canvas: HTMLCanvasElement): void;
@@ -133,8 +133,7 @@ export function BrowserSurface({
     controller.sendInput({
       type: "wheel",
       ...point(event),
-      deltaX: event.deltaX,
-      deltaY: event.deltaY,
+      ...wheelPixels(event.deltaX, event.deltaY, event.deltaMode, snapshot.height),
       modifiers: modifiersOf(event),
     });
   };
