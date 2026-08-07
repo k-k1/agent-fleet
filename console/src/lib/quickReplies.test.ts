@@ -68,10 +68,10 @@ describe("recordQuickReply", () => {
   });
   it("prunes weakest entries past the cap", () => {
     let m: QuickReplyMap = {};
-    for (let i = 0; i < 70; i++) m = recordQuickReply(m, "reply" + i, i);
-    expect(Object.keys(m).length).toBeLessThanOrEqual(60);
+    for (let i = 0; i < 110; i++) m = recordQuickReply(m, "reply" + i, i);
+    expect(Object.keys(m).length).toBeLessThanOrEqual(100);
     // the most recent survivor is kept; the oldest single-use ones are gone
-    expect(m["reply69"]).toBeTruthy();
+    expect(m["reply109"]).toBeTruthy();
     expect(m["reply0"]).toBeFalsy();
   });
 });
@@ -234,9 +234,9 @@ describe("forget / hide / unhide", () => {
     const once = hideQuickReply([], "OK");
     expect(hideQuickReply(once, "ok")).toBe(once); // 二重登録しない（同じ参照）
     let hidden: string[] = [];
-    for (let i = 0; i < 70; i++) hidden = hideQuickReply(hidden, "reply" + i);
-    expect(hidden).toHaveLength(60);
-    expect(hidden).toContain("reply69");
+    for (let i = 0; i < 110; i++) hidden = hideQuickReply(hidden, "reply" + i);
+    expect(hidden).toHaveLength(100);
+    expect(hidden).toContain("reply109");
     expect(hidden).not.toContain("reply0"); // 古いものから落ちる
   });
 
