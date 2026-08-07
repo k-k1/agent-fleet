@@ -916,7 +916,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
         locale: settings.locale,
         hidden: settings.quickRepliesHidden || [],
         pinned: settings.quickRepliesPinned || [],
-        limit: 12,
+        limit: 20, // チップ行は横スクロールなので、画面幅に収まらない分は流して見せる（ピンは別枠）
       })
     : [];
   // v2 の LLM 候補を先頭に、Layer A の学習候補を後ろにマージ（重複は畳む）。llm フラグで見た目を分ける。
