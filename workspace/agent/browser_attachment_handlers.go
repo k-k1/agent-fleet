@@ -405,6 +405,13 @@ func (v *browserAttachmentViewer) handleControl(data []byte) bool {
 		v.handleViewport(data)
 		return true
 	}
+	// Copying what the user can already read is not "operating the page", so it
+	// is allowed in view-only — the whole point of the pane is that they can read
+	// it. Only a locked attachment (screencast stopped) refuses.
+	if envelope.Type == "copy" {
+		v.handleCopySelection()
+		return true
+	}
 	v.attachment.mu.Lock()
 	mode := v.attachment.controlMode
 	state := v.attachment.state
@@ -451,26 +458,118 @@ func (v *browserAttachmentViewer) handleViewport(data []byte) {
 	var msg struct {
 		Width  float64 `json:"width"`
 		Height float64 `json:"height"`
+		Fit    bool    `json:"fit"`
 	}
 	if json.Unmarshal(data, &msg) != nil {
 		v.protocolError("bad_viewport", "invalid viewport")
 		return
 	}
-	vp, err := normalizeBrowserViewport(browserViewportRequest{Width: msg.Width, Height: msg.Height, DeviceScaleFactor: 1})
+	pane, err := normalizeBrowserViewport(browserViewportRequest{Width: msg.Width, Height: msg.Height, DeviceScaleFactor: 1})
 	if err != nil {
 		v.protocolError("bad_viewport", err.Error())
 		return
 	}
 	v.attachment.mu.Lock()
-	unchanged := v.attachment.viewport == vp
-	v.attachment.viewport = vp
+	unchanged := v.attachment.viewport == pane && v.attachment.pane == pane && v.attachment.fit == msg.Fit
+	v.attachment.pane = pane
+	v.attachment.fit = msg.Fit
+	v.attachment.viewport = pane
 	v.attachment.mu.Unlock()
 	if unchanged {
 		return
 	}
-	if v.call("Emulation.setDeviceMetricsOverride", map[string]any{"width": vp.Width, "height": vp.Height, "deviceScaleFactor": 1, "mobile": false}, nil) {
-		v.attachment.restartScreencast()
+	if !v.applyMetrics(pane, 1) {
+		return
 	}
+	if msg.Fit {
+		v.fitToPane(pane)
+	}
+	v.attachment.restartScreencast()
+}
+
+// applyMetrics emulates a layout viewport of the given size and scales the
+// produced image by scale (1 = same size). Chromium lays the page out at
+// width×height CSS px while the screencast stays at the pane's pixel size, so
+// zooming out costs layout, not bandwidth.
+func (v *browserAttachmentViewer) applyMetrics(vp browserViewport, scale float64) bool {
+	params := map[string]any{"width": vp.Width, "height": vp.Height, "deviceScaleFactor": 1, "mobile": false}
+	if scale != 1 {
+		params["scale"] = scale
+	}
+	return v.call("Emulation.setDeviceMetricsOverride", params, nil)
+}
+
+// fitToPane widens the layout viewport until the page's own content fits, then
+// scales the image back down to the pane. A desktop site with a min-width
+// otherwise renders clipped with its own horizontal scrollbar inside a pane
+// that is simply narrower than the site was designed for.
+//
+// The aspect ratio is kept EXACTLY equal to the pane's, so the canvas (which
+// stretches the frame to fill the pane) never distorts and pointer coordinates
+// stay a plain linear map. One pass only: re-measuring after a reflow could
+// oscillate, and the second guess is not better than the first.
+func (v *browserAttachmentViewer) fitToPane(pane browserViewport) {
+	var metrics struct {
+		CSSContentSize struct {
+			Width float64 `json:"width"`
+		} `json:"cssContentSize"`
+		ContentSize struct {
+			Width float64 `json:"width"`
+		} `json:"contentSize"`
+	}
+	if !v.call("Page.getLayoutMetrics", nil, &metrics) {
+		return
+	}
+	content := metrics.CSSContentSize.Width
+	if content <= 0 {
+		content = metrics.ContentSize.Width
+	}
+	layout, scale, ok := fitLayoutViewport(pane, content)
+	if !ok {
+		return
+	}
+	if !v.applyMetrics(layout, scale) {
+		// Leave the pane-sized metrics from the caller in place rather than a
+		// half-applied zoom.
+		return
+	}
+	v.attachment.mu.Lock()
+	v.attachment.viewport = layout
+	v.attachment.mu.Unlock()
+	// Pointer coordinates are in layout space, so the viewer has to be told the
+	// size it must map into — it only ever asked for the pane's size.
+	v.enqueueText(mustBrowserJSON(map[string]any{"type": "viewport", "width": layout.Width, "height": layout.Height}))
+}
+
+// handleCopySelection hands the page's current selection back to the viewer so
+// the Console can put it on the USER's clipboard. Ctrl+C inside the pane cannot
+// do it: the keystroke would copy into the container's clipboard, which nobody
+// can reach. The expression is fixed and read-only, and the text is never
+// logged or persisted — same rule as the page title and URL (docs/53 §53.10).
+func (v *browserAttachmentViewer) handleCopySelection() {
+	v.attachment.mu.Lock()
+	locked := v.attachment.controlMode == attachmentControlLocked
+	unsupported := v.attachment.state == attachmentStateUnsupportedURL
+	v.attachment.mu.Unlock()
+	if locked || unsupported {
+		v.protocolError("input_not_allowed", "browser attachment is locked")
+		return
+	}
+	var result struct {
+		Result struct {
+			Value string `json:"value"`
+		} `json:"result"`
+	}
+	if !v.call("Runtime.evaluate", map[string]any{
+		"expression":    browserSelectionExpression,
+		"returnByValue": true,
+	}, &result) {
+		return
+	}
+	v.enqueueText(mustBrowserJSON(map[string]any{
+		"type": "clipboard",
+		"text": truncateBrowserText(result.Result.Value, browserMaxSelectionBytes),
+	}))
 }
 
 func (v *browserAttachmentViewer) handleMouse(data []byte) {

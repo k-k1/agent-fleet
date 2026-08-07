@@ -20,6 +20,14 @@ export function BrowserAttachPane({ paneId, attachmentId }: BrowserAttachPanePro
   const [snapshot, setSnapshot] = useState<BrowserAttachmentSnapshot>(controller.snapshot);
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Zoom-to-fit defaults ON for an ATTACHED page: it is somebody's desktop site,
+  // not a responsive app being previewed, so a pane-narrow viewport just clips it.
+  const [fit, setFit] = useState(controller.fit);
+
+  const copySelection = async () => {
+    if (await controller.copySelection()) toast(tr("browser.copied_selection"), { kind: "success" });
+    else toast(tr("browser.copy_selection_empty"), { kind: "info" });
+  };
 
   useEffect(() => controller.subscribe(setSnapshot), [controller]);
 
@@ -76,6 +84,16 @@ export function BrowserAttachPane({ paneId, attachmentId }: BrowserAttachPanePro
           <strong>{snapshot.title || tr("pane.kind.browser_attach")}</strong>
           {origin && <span>{origin}</span>}
         </span>
+        <IconButton icon="copy" label={tr("browser.copy_selection")} onClick={() => void copySelection()} />
+        <IconButton
+          icon={fit ? "zoom-out" : "screen-full"}
+          label={fit ? tr("browser.zoom_fit_on") : tr("browser.zoom_fit_off")}
+          onClick={() => {
+            const next = !fit;
+            setFit(next);
+            controller.setFit(next);
+          }}
+        />
         <Button small variant="ghost" icon="terminal" className="browser-console-toggle" onClick={() => setConsoleOpen((open) => !open)}>
           {tr("browser.console")}{snapshot.console.length > 0 && <span className="browser-log-badge">{snapshot.console.length}</span>}
         </Button>

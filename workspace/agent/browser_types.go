@@ -19,6 +19,15 @@ const (
 	browserMaxPathBytes   = 4096
 	browserMaxTextBytes   = 16 * 1024
 	browserMaxConsoleText = 8 * 1024
+	// Zoom-to-fit bounds the LAYOUT viewport, not the image (see
+	// fitLayoutViewport). 4000 CSS px covers desktop sites without letting a
+	// pathological page ask Chromium to lay out an unbounded canvas.
+	browserMaxLayoutWidth  = 4000
+	browserMaxLayoutHeight = 4000
+	browserFitSlack        = 8
+	// A selection copied out of the page. The user can already read it on
+	// screen; the cap only keeps one Ctrl+C from shipping a whole document.
+	browserMaxSelectionBytes = 128 * 1024
 )
 
 type browserViewportRequest struct {
@@ -62,6 +71,57 @@ func normalizeBrowserViewport(v browserViewportRequest) (browserViewport, error)
 }
 
 func finitePositive(v float64) bool { return v > 0 && !math.IsNaN(v) && !math.IsInf(v, 0) }
+
+// browserSelectionExpression reads the page's current selection. A focused
+// input/textarea keeps its own selection that document.getSelection() reports as
+// empty, so it is asked first — otherwise "copy what I highlighted in this
+// field" silently returns nothing. Read-only, and capped in the page so a huge
+// document cannot be shipped over the wire in one message.
+const browserSelectionExpression = `(() => {
+  const el = document.activeElement;
+  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') &&
+      typeof el.selectionStart === 'number' && el.selectionStart !== el.selectionEnd) {
+    return String(el.value).slice(el.selectionStart, el.selectionEnd).slice(0, 131072);
+  }
+  const s = document.getSelection();
+  return s ? s.toString().slice(0, 131072) : '';
+})()`
+
+// fitLayoutViewport answers "how wide a page can this pane show at once?".
+//
+// The 1600x1200 viewport ceiling bounds the SCREENCAST, which is what costs
+// memory and bandwidth. A zoomed-out layout viewport does not: Chromium lays
+// out wider and scales the image back down to the pane, so the frames stay
+// pane-sized. That is why the layout bound is separate and larger.
+//
+// The returned viewport keeps the pane's aspect ratio exactly (the canvas fills
+// the pane, so any other ratio would stretch the page), and scale is the factor
+// that brings it back to pane size. ok=false means "already fits, change
+// nothing" — including the degenerate inputs.
+func fitLayoutViewport(pane browserViewport, contentWidth float64) (browserViewport, float64, bool) {
+	if pane.Width < 1 || pane.Height < 1 || !finitePositive(contentWidth) {
+		return browserViewport{}, 1, false
+	}
+	// A hair over the pane is not worth a zoom: rounding and scrollbar widths
+	// would make the view flip in and out of "fit" on every resize.
+	if contentWidth <= float64(pane.Width)+browserFitSlack {
+		return browserViewport{}, 1, false
+	}
+	width := int(math.Ceil(contentWidth))
+	if width > browserMaxLayoutWidth {
+		width = browserMaxLayoutWidth
+	}
+	height := int(math.Round(float64(width) * float64(pane.Height) / float64(pane.Width)))
+	if height > browserMaxLayoutHeight {
+		height = browserMaxLayoutHeight
+		width = int(math.Round(float64(height) * float64(pane.Width) / float64(pane.Height)))
+	}
+	if width <= pane.Width || height < 1 {
+		return browserViewport{}, 1, false
+	}
+	return browserViewport{Width: width, Height: height, DeviceScaleFactor: 1},
+		float64(pane.Width) / float64(width), true
+}
 
 func browserTargetURL(port int, path string) (string, error) {
 	if port < 1 || port > 65535 || reservedBrowserAgentPort(port) {

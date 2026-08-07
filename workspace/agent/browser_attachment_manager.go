@@ -47,7 +47,11 @@ type browserAttachment struct {
 	targetID  string
 	sessionID string
 	cdp       browserCDP
-	viewport  browserViewport
+	// viewport is the LAYOUT viewport pointer coordinates are expressed in; with
+	// zoom-to-fit it is wider than pane, which is what the viewer actually shows.
+	viewport browserViewport
+	pane     browserViewport
+	fit      bool
 
 	mu          sync.Mutex
 	state       string
@@ -233,7 +237,7 @@ func (m *browserAttachmentManager) Create(req browserAttachmentCreateRequest) (b
 	}
 	a := &browserAttachment{
 		manager: m, id: newBrowserAttachmentID(), createdAt: time.Now(), targetKey: targetKey, targetID: req.TargetID,
-		sessionID: attached.SessionID, cdp: cdp, viewport: viewport,
+		sessionID: attached.SessionID, cdp: cdp, viewport: viewport, pane: viewport,
 		state: state, title: target.Title, label: req.Label, url: target.URL, controlMode: attachmentControlViewOnly,
 		latestFrame: make(chan []byte, 1), frameEvents: make(chan browserScreencastFrame, 1), frameStop: make(chan struct{}),
 	}
@@ -699,14 +703,19 @@ func (a *browserAttachment) startScreencast() error {
 	}
 	a.mu.Lock()
 	blocked := a.terminal || a.state == attachmentStateUnsupportedURL || a.controlMode == attachmentControlLocked
-	viewport := a.viewport
+	// Cap the IMAGE at the pane, not the layout viewport: zoom-to-fit lays the
+	// page out wider on purpose, and the frame is scaled back down anyway.
+	image := a.pane
+	if image.Width < 1 || image.Height < 1 {
+		image = a.viewport
+	}
 	a.mu.Unlock()
 	if blocked {
 		return nil
 	}
 	err := a.manager.call(a.cdp, a.sessionID, "Page.startScreencast", map[string]any{
 		"format": "jpeg", "quality": a.manager.config.JPEGQuality,
-		"maxWidth": viewport.Width, "maxHeight": viewport.Height,
+		"maxWidth": image.Width, "maxHeight": image.Height,
 	}, nil)
 	if err == nil {
 		a.casting = true
