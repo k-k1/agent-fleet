@@ -355,11 +355,28 @@ AFは停止済みかを検知できず、未停止時の入力結果は未定義
 
 専用WebSocketのwire versionは`1`である。接続直後のtext `ready`は
 `{type:"ready",version:1,state,url,title,width,height,controlMode,handoff}`、frameはbinary JPEGとする。
-`viewport`と`visibility`は全modeで受理する。`mouse`、`wheel`、`key`、`text`、`reload`、`history`は
+`viewport`（`{width,height,fit?}`）、`visibility`、`copy`は全modeで受理する（`locked`と
+`unsupported-target-url`では`copy`だけ`input_not_allowed`）。`mouse`、`wheel`、`key`、`text`、`reload`、`history`は
 `user-control`だけで受理し、他modeではtext
 `{type:"protocol-error",code:"input_not_allowed",message}`を返す。`navigate`はこのnamespaceのmessage型に存在せず、
 `unknown_type`となる。Agentからの他のtext eventは既存wireと同じ`state`、`navigation`、`console`、`page-error`に加え、
-`{type:"handoff",handoff,controlMode}`と`{type:"control-mode",controlMode}`を使う。
+`{type:"handoff",handoff,controlMode}`、`{type:"control-mode",controlMode}`、
+`{type:"viewport",width,height}`（zoom時のlayout viewport通知）、`{type:"clipboard",text}`を使う。
+
+**mouseのdrag（2026-08-08 修正）**: `mouse`の`move`は押下中のbuttonを載せる。`button:"none"`のmoveはBlinkでは
+単なるhoverなので、スクロールバーのつまみ・テキスト選択・スライダーなど**あらゆるdragが無反応**だった
+（実測: `none`でscrollX 0のまま、押下buttonを載せると448へ）。
+
+**zoom-to-fit**: `viewport`に`fit:true`が付くと、Agentは`Page.getLayoutMetrics`でページ自身の内容幅を測り、
+内容がpaneより広い場合だけ**layout viewportをその幅まで広げ、`Emulation.setDeviceMetricsOverride`の`scale`で
+画像をpaneサイズへ戻す**。frameはpane相当のままなので帯域は増えない。layout viewportはpaneと同じ縦横比を保つ
+（canvasがpaneいっぱいに引き伸ばすため、比が変わると歪む）。上限はscreencastの1600x1200とは別で、
+layout側は4000x4000。pointer座標はlayout空間なので、Agentは新しいサイズを`viewport` textでviewerへ返す。
+
+**clipboard**: コンテナ内Chromiumのclipboardはユーザーの手が届かないので、`copy`で選択文字列をwireで返し、
+Consoleが利用者のclipboardへ書く。Agentが評価するのは固定の読み取り専用式（`document.getSelection()`、
+focus中のinput/textareaがあればその選択範囲）だけで、結果はlogにも永続化にも出さない（§53.10）。
+ペーストは逆に**転送しない**: Ctrl+Vは隠しinputのnative pasteへ通し、`paste`イベントの文字列を`text`として送る。
 
 terminal state (`target-closed` / `disconnected`) は短い再確認猶予中だけstatusで取得でき、その後は
 `browser_attachment_not_found`になる。いずれのdetach/expiry/terminal経路も
@@ -411,6 +428,9 @@ Consoleの「接続中のブラウザ」（WSバーのプレビュー）だけ�
 既存BrowserPaneのcanvas、IME、pointer/wheel/key変換、resize debounce、console drawerを共用する。差分は:
 
 - toolbarにhost/path入力を出さない。
+- 「幅に合わせる」トグル（attachmentは既定ON）と「選択をコピー」を出す。既定ONなのは、attachの相手は
+  responsive前提の自前アプリではなく他人のデスクトップサイトで、pane幅そのままだと右が切れるため。
+  コンテナ内ブラウザペイン（自前アプリのプレビュー）は従来どおり等倍のまま。
 - titleとoriginだけを表示し、URL全文のqueryは既定で隠す。
 - `view-only | user-control | locked`を明示する。
 - handoff messageと「操作完了」「中止」をPage外のConsole chromeに表示する。
@@ -620,7 +640,9 @@ AFがownerをpauseする標準手段はv1に含めない。`user-control`に対�
 - Agent integration: fake CDPではなく短命な`/usr/bin/chromium`を用い、外部HTTPS相当はローカルfixture originで検証する。
 - security: `0.0.0.0`入力不可、redirect型SSRF不可、Agent/CP/metadata endpoint拒否、raw CDP非露出。
 - Console DOM: action route、**ミラーのaction linkがファイル解決へ落ちないこと**、layout上限、expired overlay、
-  view-only入力拒否、日本語IME。
+  view-only入力拒否、日本語IME、**dragのmoveが押下buttonを載せること**、Ctrl+C/Ctrl+Vの扱い。
+- zoom-to-fit: 縦横比とlayout上限（unit）、実ChromiumでinnerWidthが広がりframeはpane相当のまま
+  （`AF_CHROMIUM_ATTACH_LIVE=1`）。
 - CP route: `GET /open/browser-attachment/{id}`がConsole shellを返し、auth exemptにならないこと。
 - port衝突: 実Chromium 2本で後発が生存すること（前提の再確認）と`cdp_port_ambiguous`、`--remote-debugging-port=0`の
   `DevToolsActivePort`契約、live endpointに対する`cdp_browser_mismatch`（`AF_CHROMIUM_ATTACH_LIVE=1`）。

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math"
 	"net"
 	"os"
 	"strings"
@@ -99,5 +100,55 @@ func TestCDPBrowserIDNormalization(t *testing.T) {
 		if got := normalizeCDPBrowserID(raw); got != "" {
 			t.Fatalf("normalizeCDPBrowserID(%q)=%q want empty", raw, got)
 		}
+	}
+}
+
+// fitLayoutViewport decides how far to zoom out. The aspect ratio must stay the
+// pane's: the canvas stretches the frame to fill the pane, so any other ratio
+// would render the page distorted rather than merely small.
+func TestFitLayoutViewport(t *testing.T) {
+	pane := browserViewport{Width: 660, Height: 800, DeviceScaleFactor: 1}
+
+	if _, _, ok := fitLayoutViewport(pane, 640); ok {
+		t.Fatal("content that already fits must not zoom")
+	}
+	if _, _, ok := fitLayoutViewport(pane, 664); ok {
+		t.Fatal("a few px over the pane is rounding, not overflow")
+	}
+	vp, scale, ok := fitLayoutViewport(pane, 1240)
+	if !ok || vp.Width != 1240 || vp.Height != 1503 {
+		t.Fatalf("layout = %+v ok=%v", vp, ok)
+	}
+	if math.Abs(scale-660.0/1240.0) > 1e-9 {
+		t.Fatalf("scale = %v", scale)
+	}
+	if ratio := float64(vp.Width) / float64(vp.Height); math.Abs(ratio-660.0/800.0) > 0.001 {
+		t.Fatalf("aspect drifted: %v", ratio)
+	}
+
+	// A pathological page is capped, and whichever bound binds, the ratio and
+	// both caps survive it. A portrait pane hits the HEIGHT cap first.
+	capped, _, ok := fitLayoutViewport(pane, 99999)
+	if !ok || capped.Height != browserMaxLayoutHeight || capped.Width != 3300 {
+		t.Fatalf("portrait cap = %+v", capped)
+	}
+	if ratio := float64(capped.Width) / float64(capped.Height); math.Abs(ratio-660.0/800.0) > 0.001 {
+		t.Fatalf("aspect drifted at the cap: %v", ratio)
+	}
+	// A landscape pane hits the WIDTH cap first.
+	landscape := browserViewport{Width: 1200, Height: 400, DeviceScaleFactor: 1}
+	wide, _, ok := fitLayoutViewport(landscape, 99999)
+	if !ok || wide.Width != browserMaxLayoutWidth || wide.Height > browserMaxLayoutHeight {
+		t.Fatalf("landscape cap = %+v", wide)
+	}
+
+	// A very tall, narrow pane hits the HEIGHT cap first; width is pulled back.
+	tall := browserViewport{Width: 400, Height: 2000, DeviceScaleFactor: 1}
+	got, _, ok := fitLayoutViewport(tall, 3000)
+	if !ok || got.Height != browserMaxLayoutHeight || got.Width != 800 {
+		t.Fatalf("height-capped layout = %+v ok=%v", got, ok)
+	}
+	if _, _, ok := fitLayoutViewport(browserViewport{}, 1240); ok {
+		t.Fatal("a degenerate pane must be a no-op")
 	}
 }

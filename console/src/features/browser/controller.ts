@@ -122,6 +122,43 @@ export class BrowserController {
     this.send({ type: "viewport", ...next });
   }
 
+  /**
+   * Ask the page for its selection and put it on the USER's clipboard — the
+   * container Chromium's own clipboard is unreachable from the browser tab.
+   */
+  copySelection(): Promise<boolean> {
+    if (!this.socket) return Promise.resolve(false);
+    return new Promise<string | null>((resolve) => {
+      const timer = window.setTimeout(() => {
+        this.clipboardWaiters.delete(resolve);
+        resolve(null);
+      }, 5000);
+      this.clipboardTimers.set(resolve, timer);
+      this.clipboardWaiters.add(resolve);
+      this.send({ type: "copy" });
+    }).then(async (text) => {
+      if (!text) return false;
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  }
+
+  private readonly clipboardWaiters = new Set<(text: string | null) => void>();
+  private readonly clipboardTimers = new Map<(text: string | null) => void, number>();
+
+  private resolveClipboard(text: string): void {
+    for (const resolve of [...this.clipboardWaiters]) {
+      window.clearTimeout(this.clipboardTimers.get(resolve));
+      this.clipboardTimers.delete(resolve);
+      this.clipboardWaiters.delete(resolve);
+      resolve(text);
+    }
+  }
+
   /** Adopt a navigation reported by the Page without constructing a new Page. */
   adoptTarget(target: BrowserTarget): void {
     this.targetValue = target;
@@ -283,6 +320,9 @@ export class BrowserController {
         });
         return;
       }
+      case "clipboard":
+        this.resolveClipboard(typeof message.text === "string" ? message.text : "");
+        return;
       case "navigation":
         this.update({
           url: typeof message.url === "string" ? message.url : this.snapshotValue.url,
