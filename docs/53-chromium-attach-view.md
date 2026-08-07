@@ -368,10 +368,22 @@ AFは停止済みかを検知できず、未停止時の入力結果は未定義
 （実測: `none`でscrollX 0のまま、押下buttonを載せると448へ）。
 
 **zoom-to-fit**: `viewport`に`fit:true`が付くと、Agentは`Page.getLayoutMetrics`でページ自身の内容幅を測り、
-内容がpaneより広い場合だけ**layout viewportをその幅まで広げ、`Emulation.setDeviceMetricsOverride`の`scale`で
-画像をpaneサイズへ戻す**。frameはpane相当のままなので帯域は増えない。layout viewportはpaneと同じ縦横比を保つ
-（canvasがpaneいっぱいに引き伸ばすため、比が変わると歪む）。上限はscreencastの1600x1200とは別で、
+内容がpaneより広い場合だけ**layout viewportをその幅まで広げる**。縮小は`Page.startScreencast`の
+`maxWidth/maxHeight`（= pane）が行うのでframeはpane相当のままで、帯域は増えない。layout viewportはpaneと
+同じ縦横比を保つ（canvasがpaneいっぱいに引き伸ばすため、比が変わると歪む）。上限はscreencastの1600x1200とは別で、
 layout側は4000x4000。pointer座標はlayout空間なので、Agentは新しいサイズを`viewport` textでviewerへ返す。
+
+`Emulation.setDeviceMetricsOverride`の**`scale`は使わない**。Chrome 151で実測したところ、これは出力画像を
+縮めるのではなく**同じ大きさの面の中でページだけを縮めて描く**（ページが左上に小さく描かれ、右と下が空白になる）。
+さらにpointer座標はlayout空間のままなので、見えている位置と入力位置が`scale`分ずれ、スクロールバーを掴めない・
+ホイールが効かないという形で現れる。frame寸法だけを見る検証はこれを通してしまうため、テストは
+**frameの画素**（ページの左端・右端の色）で確認する。
+
+**キーイベント**: `Input.dispatchKeyEvent`には`windowsVirtualKeyCode`/`nativeVirtualKeyCode`を必ず載せる。
+これが無いとページはkey eventを受け取れてもBlinkが既定動作を行わず、**矢印・PgUp/PgDn・Home/End・spaceで
+スクロールせず、textarea内のキャレットも動かない**（文字入力は`text`で届くので無事に見え、原因が分かりにくい）。
+textを持たないdownは`rawKeyDown`とする。ホイールはConsole側で`deltaMode`をpixelへ正規化してから送る
+（lines/pagesのまま転送すると数px しか動かない）。
 
 **clipboard**: コンテナ内Chromiumのclipboardはユーザーの手が届かないので、`copy`で選択文字列をwireで返し、
 Consoleが利用者のclipboardへ書く。Agentが評価するのは固定の読み取り専用式（`document.getSelection()`、
@@ -641,8 +653,10 @@ AFがownerをpauseする標準手段はv1に含めない。`user-control`に対�
 - security: `0.0.0.0`入力不可、redirect型SSRF不可、Agent/CP/metadata endpoint拒否、raw CDP非露出。
 - Console DOM: action route、**ミラーのaction linkがファイル解決へ落ちないこと**、layout上限、expired overlay、
   view-only入力拒否、日本語IME、**dragのmoveが押下buttonを載せること**、Ctrl+C/Ctrl+Vの扱い。
-- zoom-to-fit: 縦横比とlayout上限（unit）、実ChromiumでinnerWidthが広がりframeはpane相当のまま
-  （`AF_CHROMIUM_ATTACH_LIVE=1`）。
+- zoom-to-fit: 縦横比とlayout上限（unit）、実Chromiumで**frameの画素**がページの左端・右端で埋まること
+  （寸法だけでは`scale`の不具合を見逃す）。
+- 操作系: 実Chromiumでホイール・PgDn・ArrowDownがスクロールし、ArrowLeftがtextareaのキャレットを動かし、
+  横スクロールバーのdragが効くこと（`AF_CHROMIUM_ATTACH_LIVE=1`）。
 - CP route: `GET /open/browser-attachment/{id}`がConsole shellを返し、auth exemptにならないこと。
 - port衝突: 実Chromium 2本で後発が生存すること（前提の再確認）と`cdp_port_ambiguous`、`--remote-debugging-port=0`の
   `DevToolsActivePort`契約、live endpointに対する`cdp_browser_mismatch`（`AF_CHROMIUM_ATTACH_LIVE=1`）。

@@ -578,9 +578,11 @@ func TestBrowserAttachmentZoomToFitWidensLayoutAndScalesImage(t *testing.T) {
 	if metrics.Params["width"] != float64(1240) || metrics.Params["height"] != float64(1503) {
 		t.Fatalf("layout viewport = %v x %v", metrics.Params["width"], metrics.Params["height"])
 	}
-	scale, _ := metrics.Params["scale"].(float64)
-	if scale <= 0.5 || scale >= 0.55 {
-		t.Fatalf("scale = %v, want ~660/1240", metrics.Params["scale"])
+	// setDeviceMetricsOverride's `scale` must NOT be used: measured on Chrome 151
+	// it shrinks the page inside an unchanged surface (page in the top-left
+	// corner, rest blank) instead of shrinking the image.
+	if _, hasScale := metrics.Params["scale"]; hasScale {
+		t.Fatalf("zoom must not go through metrics scale: %+v", metrics.Params)
 	}
 	// The frames must stay pane-sized — zooming out costs layout, not bandwidth.
 	if err := a.startScreencast(); err != nil {

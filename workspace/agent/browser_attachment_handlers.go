@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"sync"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
@@ -478,7 +477,7 @@ func (v *browserAttachmentViewer) handleViewport(data []byte) {
 	if unchanged {
 		return
 	}
-	if !v.applyMetrics(pane, 1) {
+	if !v.applyMetrics(pane) {
 		return
 	}
 	if msg.Fit {
@@ -487,16 +486,17 @@ func (v *browserAttachmentViewer) handleViewport(data []byte) {
 	v.attachment.restartScreencast()
 }
 
-// applyMetrics emulates a layout viewport of the given size and scales the
-// produced image by scale (1 = same size). Chromium lays the page out at
-// width×height CSS px while the screencast stays at the pane's pixel size, so
-// zooming out costs layout, not bandwidth.
-func (v *browserAttachmentViewer) applyMetrics(vp browserViewport, scale float64) bool {
-	params := map[string]any{"width": vp.Width, "height": vp.Height, "deviceScaleFactor": 1, "mobile": false}
-	if scale != 1 {
-		params["scale"] = scale
-	}
-	return v.call("Emulation.setDeviceMetricsOverride", params, nil)
+// applyMetrics emulates a layout viewport of the given size.
+//
+// Deliberately WITHOUT setDeviceMetricsOverride's `scale`: measured on Chrome
+// 151, that parameter shrinks the page INSIDE an unchanged surface — the page
+// ends up drawn small in the top-left corner with the rest blank — rather than
+// shrinking the produced image. The screencast's own maxWidth/maxHeight already
+// scales the frame down to the pane (a 1240x1503 layout arrives as a 660x800
+// frame), which is the scaling we actually want.
+func (v *browserAttachmentViewer) applyMetrics(vp browserViewport) bool {
+	return v.call("Emulation.setDeviceMetricsOverride",
+		map[string]any{"width": vp.Width, "height": vp.Height, "deviceScaleFactor": 1, "mobile": false}, nil)
 }
 
 // fitToPane widens the layout viewport until the page's own content fits, then
@@ -524,11 +524,11 @@ func (v *browserAttachmentViewer) fitToPane(pane browserViewport) {
 	if content <= 0 {
 		content = metrics.ContentSize.Width
 	}
-	layout, scale, ok := fitLayoutViewport(pane, content)
+	layout, ok := fitLayoutViewport(pane, content)
 	if !ok {
 		return
 	}
-	if !v.applyMetrics(layout, scale) {
+	if !v.applyMetrics(layout) {
 		// Leave the pane-sized metrics from the caller in place rather than a
 		// half-applied zoom.
 		return
@@ -622,15 +622,8 @@ func (v *browserAttachmentViewer) handleKey(data []byte) {
 		v.protocolError("bad_key", "invalid key event")
 		return
 	}
-	params := map[string]any{"type": map[bool]string{true: "keyDown", false: "keyUp"}[msg.Event == "down"], "key": msg.Key, "code": msg.Code, "modifiers": msg.Modifiers, "autoRepeat": msg.Repeat}
-	if msg.Event == "down" && msg.Modifiers&7 == 0 && utf8.RuneCountInString(msg.Key) == 1 {
-		r, _ := utf8.DecodeRuneInString(msg.Key)
-		if !unicode.IsControl(r) {
-			params["text"] = msg.Key
-			params["unmodifiedText"] = msg.Key
-		}
-	}
-	v.call("Input.dispatchKeyEvent", params, nil)
+	v.call("Input.dispatchKeyEvent",
+		browserKeyEventParams(msg.Event == "down", msg.Key, msg.Code, msg.Modifiers, msg.Repeat), nil)
 }
 
 func (v *browserAttachmentViewer) handleHistory(data []byte) {
