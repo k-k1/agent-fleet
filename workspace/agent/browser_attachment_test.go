@@ -554,6 +554,118 @@ func TestBrowserAttachmentRejectsForeignBrowserInstance(t *testing.T) {
 	}
 }
 
+// Zoom-to-fit: a pane narrower than the site must widen the LAYOUT viewport and
+// scale the image back down, not clip the page (which is what the user sees as
+// "half the page is missing and the scrollbar is stuck").
+func TestBrowserAttachmentZoomToFitWidensLayoutAndScalesImage(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	m := fakeAttachmentManager(cdp, 0)
+	resp := createFakeAttachment(t, m)
+	a, err := m.lookupActive(resp.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Delete(resp.ID)
+	v := &browserAttachmentViewer{attachment: a, control: make(chan browserOutbound, 8), done: make(chan struct{})}
+
+	v.handleControl([]byte(`{"type":"viewport","width":660,"height":800,"fit":true}`))
+
+	metrics, ok := cdp.last("Emulation.setDeviceMetricsOverride")
+	if !ok {
+		t.Fatal("no device metrics applied")
+	}
+	// 1240 CSS px of content, pane aspect preserved exactly (660:800).
+	if metrics.Params["width"] != float64(1240) || metrics.Params["height"] != float64(1503) {
+		t.Fatalf("layout viewport = %v x %v", metrics.Params["width"], metrics.Params["height"])
+	}
+	scale, _ := metrics.Params["scale"].(float64)
+	if scale <= 0.5 || scale >= 0.55 {
+		t.Fatalf("scale = %v, want ~660/1240", metrics.Params["scale"])
+	}
+	// The frames must stay pane-sized — zooming out costs layout, not bandwidth.
+	if err := a.startScreencast(); err != nil {
+		t.Fatal(err)
+	}
+	cast, ok := cdp.last("Page.startScreencast")
+	if !ok || cast.Params["maxWidth"] != float64(660) || cast.Params["maxHeight"] != float64(800) {
+		t.Fatalf("screencast bounds = %+v", cast.Params)
+	}
+	// Pointer coordinates live in layout space, so the viewer has to be told.
+	if got := drainViewerText(t, v, "viewport"); got["width"] != float64(1240) || got["height"] != float64(1503) {
+		t.Fatalf("viewport message = %+v", got)
+	}
+	a.mu.Lock()
+	layout := a.viewport
+	a.mu.Unlock()
+	if layout.Width != 1240 || !v.validPoint(1200, 1400) {
+		t.Fatalf("layout viewport not adopted for input mapping: %+v", layout)
+	}
+}
+
+// Without fit the page keeps 1:1 with the pane — the responsive-preview case.
+func TestBrowserAttachmentWithoutFitKeepsPaneSizedViewport(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	m := fakeAttachmentManager(cdp, 0)
+	resp := createFakeAttachment(t, m)
+	a, _ := m.lookupActive(resp.ID)
+	defer m.Delete(resp.ID)
+	v := &browserAttachmentViewer{attachment: a, control: make(chan browserOutbound, 8), done: make(chan struct{})}
+
+	v.handleControl([]byte(`{"type":"viewport","width":660,"height":800}`))
+	metrics, _ := cdp.last("Emulation.setDeviceMetricsOverride")
+	if metrics.Params["width"] != float64(660) || metrics.Params["height"] != float64(800) {
+		t.Fatalf("viewport = %+v", metrics.Params)
+	}
+	if _, hasScale := metrics.Params["scale"]; hasScale {
+		t.Fatalf("1:1 must not carry a scale: %+v", metrics.Params)
+	}
+	if containsBrowserMethod(cdp.methods(), "Page.getLayoutMetrics") {
+		t.Fatal("measured the page even though fit was off")
+	}
+}
+
+// Copy: the container's clipboard is unreachable for the user, so the selection
+// has to come back over the wire. Allowed in view-only — reading is the point.
+func TestBrowserAttachmentCopySelectionWorksInViewOnly(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	m := fakeAttachmentManager(cdp, 0)
+	resp := createFakeAttachment(t, m)
+	a, _ := m.lookupActive(resp.ID)
+	defer m.Delete(resp.ID)
+	v := &browserAttachmentViewer{attachment: a, control: make(chan browserOutbound, 8), done: make(chan struct{})}
+
+	v.handleControl([]byte(`{"type":"copy"}`))
+	if got := drainViewerText(t, v, "clipboard"); got["text"] != "コピー対象のテキスト" {
+		t.Fatalf("clipboard message = %+v", got)
+	}
+
+	// Locked stops the screencast, so there is nothing on screen to copy either.
+	if _, err := m.SetControlMode(resp.ID, attachmentControlLocked); err != nil {
+		t.Fatal(err)
+	}
+	v.handleControl([]byte(`{"type":"copy"}`))
+	if got := drainViewerText(t, v, "protocol-error"); got["code"] != "input_not_allowed" {
+		t.Fatalf("locked copy = %+v", got)
+	}
+}
+
+// drainViewerText returns the first queued viewer message of the wanted type.
+func drainViewerText(t *testing.T, v *browserAttachmentViewer, want string) map[string]any {
+	t.Helper()
+	for {
+		select {
+		case out := <-v.control:
+			var msg map[string]any
+			if json.Unmarshal(out.data, &msg) == nil && msg["type"] == want {
+				return msg
+			}
+		default:
+			t.Fatalf("no %q message was sent to the viewer", want)
+			return nil
+		}
+	}
+}
+
 // The Console's way back to a live attachment when the action link is gone.
 func TestBrowserAttachmentListIsNewestFirstAndDropsDeleted(t *testing.T) {
 	cdp := newFakeBrowserCDP()

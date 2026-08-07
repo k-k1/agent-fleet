@@ -345,6 +345,20 @@ func (v *browserViewer) handleControl(data []byte) bool {
 			return true
 		}
 		v.call("Input.insertText", map[string]any{"text": msg.Text}, nil)
+	case "copy":
+		// The page runs in the container, so its clipboard is unreachable for the
+		// user; hand the selection back over the wire instead (docs/53 §53.7).
+		var result struct {
+			Result struct {
+				Value string `json:"value"`
+			} `json:"result"`
+		}
+		if v.call("Runtime.evaluate", map[string]any{"expression": browserSelectionExpression, "returnByValue": true}, &result) {
+			v.enqueueText(mustBrowserJSON(map[string]any{
+				"type": "clipboard",
+				"text": truncateBrowserText(result.Result.Value, browserMaxSelectionBytes),
+			}))
+		}
 	case "navigate":
 		var msg struct {
 			Path string `json:"path"`

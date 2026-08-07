@@ -72,6 +72,12 @@ func (f *fakeBrowserCDP) Call(_ context.Context, method string, params any, sess
 		response = map[string]any{"sessionId": "session-1"}
 	case "Page.getFrameTree":
 		response = map[string]any{"frameTree": map[string]any{"frame": map[string]any{"id": "frame-1"}}}
+	case "Page.getLayoutMetrics":
+		// A desktop page that does not fit a narrow pane: content is wider than
+		// whatever viewport it was laid out in.
+		response = map[string]any{"cssContentSize": map[string]any{"width": 1240, "height": 2000}}
+	case "Runtime.evaluate":
+		response = map[string]any{"result": map[string]any{"value": "コピー対象のテキスト"}}
 	case "Page.getNavigationHistory":
 		response = map[string]any{"currentIndex": 0, "entries": []map[string]any{{"id": 7, "url": "http://127.0.0.1:3000/", "title": "App"}}}
 	}

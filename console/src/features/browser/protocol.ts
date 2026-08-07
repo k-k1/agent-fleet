@@ -8,11 +8,12 @@ export interface BrowserConsoleEntry {
 }
 
 export type BrowserOutbound =
-  | { type: "viewport"; width: number; height: number }
+  | { type: "viewport"; width: number; height: number; fit?: boolean }
   | { type: "mouse"; event: "move" | "down" | "up"; x: number; y: number; button: BrowserMouseButton; buttons: number; modifiers: number; clickCount: number }
   | { type: "wheel"; x: number; y: number; deltaX: number; deltaY: number; modifiers: number }
   | { type: "key"; event: "down" | "up"; key: string; code: string; modifiers: number; repeat: boolean }
   | { type: "text"; text: string }
+  | { type: "copy" }
   | { type: "navigate"; path: string }
   | { type: "reload"; ignoreCache: boolean }
   | { type: "history"; direction: "back" | "forward" }
@@ -66,6 +67,30 @@ export function remotePoint(e: PointLike, rect: RectLike, width: number, height:
 
 export function mouseButton(button: number): BrowserMouseButton {
   return button === 0 ? "left" : button === 1 ? "middle" : button === 2 ? "right" : "none";
+}
+
+/**
+ * The button currently held down, from a PointerEvent's `buttons` bitmask
+ * (1=left, 2=right, 4=middle). A move sent as button "none" is a plain hover as
+ * far as Blink is concerned, so every drag — scrollbar thumb, text selection,
+ * slider, drag & drop — silently did nothing. Measured against a real Chromium:
+ * with "none" scrollX stayed 0, with the held button it scrolled.
+ */
+export function heldButton(buttons: number): BrowserMouseButton {
+  if (buttons & 1) return "left";
+  if (buttons & 2) return "right";
+  if (buttons & 4) return "middle";
+  return "none";
+}
+
+/** True for the clipboard shortcuts we must NOT swallow as remote key events. */
+export function clipboardShortcut(e: RemoteKeyLike): "copy" | "paste" | "cut" | null {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return null;
+  const key = e.key.toLowerCase();
+  if (key === "c") return "copy";
+  if (key === "v") return "paste";
+  if (key === "x") return "cut";
+  return null;
 }
 
 export interface RemoteKeyLike extends ModifierLike {
