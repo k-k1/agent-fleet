@@ -335,6 +335,16 @@ button.wu-manage {
 .pv-actions {
   justify-content: flex-end;
 }
+/* An attachment is listed by its page title, which is arbitrary length — let the
+   row give it the full width and ellipsize instead of widening the popover. */
+.pv-attachment {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
 .preview-port:disabled {
   opacity: 0.5;
 }

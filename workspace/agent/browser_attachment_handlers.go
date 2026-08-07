@@ -56,6 +56,10 @@ func handleBrowserAttachmentCreate(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, resp)
 }
 
+func handleBrowserAttachmentList(w http.ResponseWriter, _ *http.Request) {
+	httpx.WriteJSON(w, http.StatusOK, workspaceBrowserAttachmentManager.List())
+}
+
 func handleBrowserAttachmentGet(w http.ResponseWriter, r *http.Request) {
 	resp, err := workspaceBrowserAttachmentManager.Get(r.PathValue("id"))
 	if err != nil {

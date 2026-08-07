@@ -13,6 +13,8 @@ import { openSessionChat, openSessionChatSplit } from "../sessions/open.ts";
 import { useChatStore, ensureConvs } from "../chat/store.ts";
 import { openChat, openChatSplit } from "../chat/open.ts";
 import { openCommit } from "../scm/open.ts";
+import { browserAttachmentIdFromLink } from "../../layout/browserAttachmentAction.ts";
+import { openBrowserAttachment } from "../browser/attachmentAction.ts";
 
 // MarkdownView renders Markdown to sanitized HTML, highlights fenced code blocks,
 // turns ```mermaid blocks into rendered diagrams (lazy-loaded), and wires links:
@@ -743,6 +745,23 @@ function wireLinks(
           t = el.querySelector("#" + CSS.escape(id));
         } catch {}
         t?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+      return;
+    }
+
+    // The Chromium attachment action link (docs/53 §53.7). It has to be claimed
+    // BEFORE the repo-file branch below: `/open/browser-attachment/<id>` carries
+    // no scheme, so the file resolver would happily read it as a repo-root path
+    // and answer the click with "file not found" — which is exactly how this
+    // link died in the mirror. Opening the pane here also spares the user a full
+    // page navigation; the action ROUTE stays for new tabs and reloads.
+    const attachmentId = browserAttachmentIdFromLink(href);
+    if (attachmentId) {
+      a.classList.add("action-link");
+      a.title = t("browser.attach.open_link");
+      a.addEventListener("click", (e) => {
+        e.preventDefault();
+        void openBrowserAttachment(attachmentId);
       });
       return;
     }

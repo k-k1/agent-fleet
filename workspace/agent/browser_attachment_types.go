@@ -48,13 +48,21 @@ type browserAttachTarget struct {
 
 type browserAttachTargetsResponse struct {
 	Targets []browserAttachTarget `json:"targets"`
+	// BrowserID identifies the Chromium instance answering on this port (the GUID
+	// Chromium writes as line 2 of <user-data-dir>/DevToolsActivePort). A caller
+	// that launched its own Chromium passes it back as browserId on attach so a
+	// port collision cannot silently hand it a different browser.
+	BrowserID string `json:"browserId,omitempty"`
 }
 
 type browserAttachmentCreateRequest struct {
 	Port     int                    `json:"port"`
 	TargetID string                 `json:"targetId"`
 	Viewport browserViewportRequest `json:"viewport"`
-	Label    string                 `json:"-"`
+	// BrowserID is optional; when set the attach fails unless the endpoint really
+	// is that Chromium instance.
+	BrowserID string `json:"browserId,omitempty"`
+	Label     string `json:"-"`
 }
 
 type browserAttachmentHandoffRequest struct {
@@ -90,6 +98,13 @@ type browserAttachmentResponse struct {
 	Viewer      bool                              `json:"viewer"`
 	ControlMode string                            `json:"controlMode"`
 	Handoff     *browserAttachmentHandoffResponse `json:"handoff,omitempty"`
+}
+
+// browserAttachmentListResponse backs the Console's "which Chromium pages am I
+// still attached to?" entry — the way back in when the action link has scrolled
+// out of the mirror or the pane was closed.
+type browserAttachmentListResponse struct {
+	Attachments []browserAttachmentResponse `json:"attachments"`
 }
 
 type browserAttachmentAPIError struct {
@@ -152,11 +167,15 @@ func normalizeAttachmentViewport(v browserViewportRequest) (browserViewport, err
 
 type cdpDiscovery struct {
 	DebuggerURL string
+	BrowserID   string
 	Targets     []browserAttachTarget
 }
 
 func discoverCDPTargets(port int, timeout time.Duration) (cdpDiscovery, error) {
 	if err := validateCDPPort(port); err != nil {
+		return cdpDiscovery{}, err
+	}
+	if err := ensureUnambiguousCDPPort(port); err != nil {
 		return cdpDiscovery{}, err
 	}
 	if timeout <= 0 {
@@ -213,7 +232,57 @@ func discoverCDPTargets(port int, timeout time.Duration) (cdpDiscovery, error) {
 			URL:      truncateBrowserText(target.URL, browserAttachmentMaxURL),
 		})
 	}
-	return cdpDiscovery{DebuggerURL: version.WebSocketDebuggerURL, Targets: targets}, nil
+	return cdpDiscovery{
+		DebuggerURL: version.WebSocketDebuggerURL,
+		BrowserID:   cdpBrowserID(version.WebSocketDebuggerURL),
+		Targets:     targets,
+	}, nil
+}
+
+// ensureUnambiguousCDPPort refuses a port that more than one process is
+// listening on. Chromium does not fail that launch — the loser quietly takes the
+// other loopback family — so without this check the caller would attach to
+// whoever won 127.0.0.1, which in a shared container is another session's
+// browser. The check is advisory: when /proc cannot answer (no procfs, sockets
+// we may not attribute) it stays silent rather than blocking a valid attach.
+func ensureUnambiguousCDPPort(port int) error {
+	listeners, ok := lookupCDPPortListeners(port)
+	if !ok || len(listeners) < 2 {
+		return nil
+	}
+	return attachmentError(http.StatusConflict, "cdp_port_ambiguous",
+		"port "+strconv.Itoa(port)+" has more than one listening process ("+describeCDPPortListeners(listeners)+
+			"); launch Chromium with --remote-debugging-port=0 and use the port from <user-data-dir>/DevToolsActivePort", nil)
+}
+
+// cdpBrowserID extracts the instance GUID from ws://…/devtools/browser/<guid>.
+func cdpBrowserID(debuggerURL string) string {
+	u, err := url.Parse(debuggerURL)
+	if err != nil {
+		return ""
+	}
+	_, id, found := strings.Cut(u.Path, "/devtools/browser/")
+	if !found {
+		return ""
+	}
+	return truncateBrowserText(id, browserAttachmentMaxTargetID)
+}
+
+// normalizeCDPBrowserID accepts what a caller can actually copy: the bare GUID,
+// the "/devtools/browser/<guid>" second line of DevToolsActivePort, or the full
+// webSocketDebuggerUrl.
+func normalizeCDPBrowserID(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if strings.Contains(raw, "/devtools/browser/") {
+		return cdpBrowserID(raw)
+	}
+	if strings.ContainsAny(raw, "/:") || len(raw) > browserAttachmentMaxTargetID || !utf8.ValidString(raw) {
+		return ""
+	}
+	return raw
 }
 
 func getCDPDiscovery(client *http.Client, endpoint string) ([]byte, error) {

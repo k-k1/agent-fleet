@@ -1531,6 +1531,7 @@ export const ja = {
   "wsbar.preview.path_hint": "/ で始まるパス（例: /users/1）",
   "wsbar.preview.open_pane": "ペインで開く",
   "wsbar.preview.open_light": "軽量プレビュー",
+  "wsbar.preview.attachments_label": "接続中のブラウザ（エージェントが接続した既存 Chromium）",
   "wsbar.preview.hint": "ペイン表示はコンテナ内Chromiumを使います。軽量プレビューは従来どおり新しいタブで開きます。",
   // コンテナ内ブラウザペイン
   "browser.back": "戻る",
@@ -1576,6 +1577,7 @@ export const ja = {
   "browser.attach.cap_body": "ペイン数の上限に達しています。開くと現在のペインを置き換えます。",
   "browser.attach.replace_current": "現在のペインで開く",
   "browser.attach.open_failed": "Chromium操作画面を開けませんでした。",
+  "browser.attach.open_link": "ブラウザを開いて操作する（このタブのペインで開きます）",
   // リソースタイル（tile のツールチップ）
   "wsbar.tile.ws_mem": "ワークスペースのメモリ: {mem}G",
   "wsbar.tile.ws_mem_oom_note":

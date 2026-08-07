@@ -276,6 +276,84 @@ func TestMCPChromiumErrorsDoNotExposeAgentDetails(t *testing.T) {
 	}
 }
 
+// The instance check is only worth anything if the MCP boundary carries it:
+// list must hand back the browser id, and attach must forward the caller's
+// expectation as camelCase browserId (docs/53 §53.16).
+func TestMCPChromiumCarriesBrowserIdentity(t *testing.T) {
+	const guid = "c162d83f-b0a3-41d3-9db6-e9f6012c1491"
+	var attachBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/browser/attach-targets":
+			_, _ = w.Write([]byte(`{"targets":[{"targetId":"opaque-target","type":"page","title":"編集","url":"https://example.invalid/edit"}],"browserId":"` + guid + `"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/browser/attachments":
+			_ = json.NewDecoder(r.Body).Decode(&attachBody)
+			_, _ = w.Write([]byte(`{"id":"ba_random_7f3","openUrl":"/open/browser-attachment/ba_random_7f3","expiresAt":"2026-08-02T00:30:00Z"}`))
+		default:
+			http.Error(w, `{"code":"unexpected"}`, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	t.Setenv("AGENT_ADDR", u.Host)
+
+	oldWrite, oldSelfReport, oldSessionChromium := mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled
+	mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled = false, true, true
+	t.Cleanup(func() {
+		mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled = oldWrite, oldSelfReport, oldSessionChromium
+	})
+
+	list := structuredMCPValue(t, callChromiumMCP(t, "list_chromium_targets", map[string]any{"port": 9222}))
+	if list["browser_id"] != guid {
+		t.Fatalf("list result = %#v", list)
+	}
+
+	// DevToolsActivePort's second line is what a caller actually has on disk.
+	_ = structuredMCPValue(t, callChromiumMCP(t, "attach_chromium", map[string]any{
+		"port": 9222, "target_id": "opaque-target", "expected_browser_id": "/devtools/browser/" + guid,
+	}))
+	if attachBody["browserId"] != guid {
+		t.Fatalf("attach REST body = %#v", attachBody)
+	}
+	if _, ok := attachBody["expected_browser_id"]; ok {
+		t.Fatalf("attach REST body retained MCP snake_case: %#v", attachBody)
+	}
+
+	resp := callChromiumMCP(t, "attach_chromium", map[string]any{
+		"port": 9222, "target_id": "opaque-target", "expected_browser_id": "http://evil.invalid/x",
+	})
+	if !mcpCallIsError(t, resp) {
+		t.Fatalf("a malformed expected_browser_id must not reach the Agent: %s", resp)
+	}
+}
+
+// A port collision is not a retryable failure — the agent must be told to
+// relaunch its own Chromium, not to poke the same port again.
+func TestMCPChromiumPortCollisionExplainsTheFix(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":{"code":"cdp_port_ambiguous","message":"port 9222 has more than one listening process (IPv4 pid=1 user-data-dir=/home/dev/secret-profile)"}}`))
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	t.Setenv("AGENT_ADDR", u.Host)
+
+	resp := callChromiumMCP(t, "list_chromium_targets", map[string]any{"port": 9222})
+	if !mcpCallIsError(t, resp) {
+		t.Fatalf("collision must be an error: %s", resp)
+	}
+	for _, want := range []string{"cdp_port_ambiguous", "--remote-debugging-port=0", "DevToolsActivePort"} {
+		if !strings.Contains(string(resp), want) {
+			t.Errorf("collision error must mention %q: %s", want, resp)
+		}
+	}
+	// The rival's profile path is another session's business; the hint must not
+	// relay whatever the Agent said about it.
+	if strings.Contains(string(resp), "secret-profile") {
+		t.Errorf("collision error leaked the other session's profile: %s", resp)
+	}
+}
+
 func callChromiumMCP(t *testing.T, name string, args map[string]any) []byte {
 	t.Helper()
 	params, err := json.Marshal(map[string]any{"name": name, "arguments": args})
