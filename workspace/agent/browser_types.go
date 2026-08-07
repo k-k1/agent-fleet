@@ -94,18 +94,18 @@ const browserSelectionExpression = `(() => {
 // out wider and scales the image back down to the pane, so the frames stay
 // pane-sized. That is why the layout bound is separate and larger.
 //
-// The returned viewport keeps the pane's aspect ratio exactly (the canvas fills
-// the pane, so any other ratio would stretch the page), and scale is the factor
-// that brings it back to pane size. ok=false means "already fits, change
+// The returned viewport keeps the pane's aspect ratio exactly: the screencast
+// scales the frame down to fit the pane and the canvas then fills the pane, so
+// any other ratio would stretch the page. ok=false means "already fits, change
 // nothing" — including the degenerate inputs.
-func fitLayoutViewport(pane browserViewport, contentWidth float64) (browserViewport, float64, bool) {
+func fitLayoutViewport(pane browserViewport, contentWidth float64) (browserViewport, bool) {
 	if pane.Width < 1 || pane.Height < 1 || !finitePositive(contentWidth) {
-		return browserViewport{}, 1, false
+		return browserViewport{}, false
 	}
 	// A hair over the pane is not worth a zoom: rounding and scrollbar widths
 	// would make the view flip in and out of "fit" on every resize.
 	if contentWidth <= float64(pane.Width)+browserFitSlack {
-		return browserViewport{}, 1, false
+		return browserViewport{}, false
 	}
 	width := int(math.Ceil(contentWidth))
 	if width > browserMaxLayoutWidth {
@@ -117,10 +117,9 @@ func fitLayoutViewport(pane browserViewport, contentWidth float64) (browserViewp
 		width = int(math.Round(float64(height) * float64(pane.Width) / float64(pane.Height)))
 	}
 	if width <= pane.Width || height < 1 {
-		return browserViewport{}, 1, false
+		return browserViewport{}, false
 	}
-	return browserViewport{Width: width, Height: height, DeviceScaleFactor: 1},
-		float64(pane.Width) / float64(width), true
+	return browserViewport{Width: width, Height: height, DeviceScaleFactor: 1}, true
 }
 
 func browserTargetURL(port int, path string) (string, error) {
@@ -268,4 +267,76 @@ func truncateBrowserText(s string, max int) string {
 		return s
 	}
 	return strings.ToValidUTF8(s[:max], "")
+}
+
+// browserVirtualKeyCodes maps the DOM key names that have a DEFAULT ACTION in
+// Blink to their Windows virtual-key codes.
+//
+// Without windowsVirtualKeyCode, Input.dispatchKeyEvent delivers a key event the
+// page can observe but Blink performs no default action — so ArrowDown, PageUp,
+// Home, space and friends never scrolled the pane, and Enter/Tab never moved a
+// form on. Printable characters are unaffected (they arrive as `text`), which is
+// why typing worked while every navigation key silently did nothing.
+var browserVirtualKeyCodes = map[string]int{
+	"Backspace": 8, "Tab": 9, "Enter": 13, "Escape": 27, " ": 32,
+	"PageUp": 33, "PageDown": 34, "End": 35, "Home": 36,
+	"ArrowLeft": 37, "ArrowUp": 38, "ArrowRight": 39, "ArrowDown": 40,
+	"Insert": 45, "Delete": 46,
+	"Shift": 16, "Control": 17, "Alt": 18, "CapsLock": 20, "Meta": 91,
+	"F1": 112, "F2": 113, "F3": 114, "F4": 115, "F5": 116, "F6": 117,
+	"F7": 118, "F8": 119, "F9": 120, "F10": 121, "F11": 122, "F12": 123,
+}
+
+// browserKeyEventParams builds the Input.dispatchKeyEvent payload for one key.
+// Down events that carry no text use rawKeyDown, which is what Blink expects for
+// a key whose effect is a command (scroll, caret move) rather than insertion.
+func browserKeyEventParams(down bool, key, code string, modifiers int, repeat bool) map[string]any {
+	params := map[string]any{
+		"type": "keyUp", "key": key, "code": code, "modifiers": modifiers, "autoRepeat": repeat,
+	}
+	if text, ok := browserKeyText(key, modifiers); ok && down {
+		params["type"] = "keyDown"
+		params["text"] = text
+		params["unmodifiedText"] = text
+	} else if down {
+		params["type"] = "rawKeyDown"
+	}
+	if vk, ok := browserVirtualKeyCode(key, code); ok {
+		params["windowsVirtualKeyCode"] = vk
+		params["nativeVirtualKeyCode"] = vk
+	}
+	return params
+}
+
+// browserKeyText returns the character a key inserts, if any. Modified keys
+// (Ctrl/Alt/Meta) are commands, not text.
+func browserKeyText(key string, modifiers int) (string, bool) {
+	if modifiers&7 != 0 || utf8.RuneCountInString(key) != 1 {
+		return "", false
+	}
+	r, _ := utf8.DecodeRuneInString(key)
+	if r < 0x20 || r == 0x7f {
+		return "", false
+	}
+	return key, true
+}
+
+func browserVirtualKeyCode(key, code string) (int, bool) {
+	if vk, ok := browserVirtualKeyCodes[key]; ok {
+		return vk, true
+	}
+	if utf8.RuneCountInString(key) == 1 {
+		r, _ := utf8.DecodeRuneInString(key)
+		switch {
+		case r >= 'a' && r <= 'z':
+			return int(r - 'a' + 'A'), true
+		case (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9'):
+			return int(r), true
+		}
+	}
+	// Digits typed on the main row report their code even for symbol layouts.
+	if len(code) == 6 && strings.HasPrefix(code, "Digit") {
+		return int(code[5]), true
+	}
+	return 0, false
 }

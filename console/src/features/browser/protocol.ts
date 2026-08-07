@@ -83,6 +83,17 @@ export function heldButton(buttons: number): BrowserMouseButton {
   return "none";
 }
 
+/**
+ * Wheel deltas in CSS pixels. A WheelEvent may report lines (deltaMode 1) or
+ * pages (2) — a mouse wheel on Windows/Firefox commonly reports 3 LINES, and
+ * forwarding that raw makes the remote page scroll 3 pixels, which reads as
+ * "the wheel does nothing".
+ */
+export function wheelPixels(deltaX: number, deltaY: number, deltaMode: number, viewportHeight: number): { deltaX: number; deltaY: number } {
+  const factor = deltaMode === 1 ? 16 : deltaMode === 2 ? Math.max(1, viewportHeight) : 1;
+  return { deltaX: deltaX * factor, deltaY: deltaY * factor };
+}
+
 /** True for the clipboard shortcuts we must NOT swallow as remote key events. */
 export function clipboardShortcut(e: RemoteKeyLike): "copy" | "paste" | "cut" | null {
   if (!(e.ctrlKey || e.metaKey) || e.altKey) return null;
