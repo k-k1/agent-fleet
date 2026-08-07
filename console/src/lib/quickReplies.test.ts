@@ -9,6 +9,7 @@ import {
   pinQuickReply,
   unpinQuickReply,
   isQuickReplyPinned,
+  quickReplyKey,
   type QuickReplyMap,
 } from "./quickReplies.ts";
 
@@ -35,6 +36,32 @@ describe("recordQuickReply", () => {
     expect(Object.keys(m)).toHaveLength(1);
     expect(m["ok"]).toEqual({ text: "ok", count: 2, at: 2 });
   });
+  it("folds full-width to half-width (IME の ON/OFF で別エントリにしない)", () => {
+    let m: QuickReplyMap = {};
+    m = recordQuickReply(m, "１", 1);
+    m = recordQuickReply(m, "1", 2);
+    expect(Object.keys(m)).toEqual(["1"]);
+    expect(m["1"]).toEqual({ text: "1", count: 2, at: 2 }); // 綴りは最後に送ったもの
+    let n: QuickReplyMap = {};
+    n = recordQuickReply(n, "ｂ", 1);
+    n = recordQuickReply(n, "b", 2);
+    expect(n["b"].count).toBe(2);
+    // 半角カナ（濁点の合成込み）も同じ候補として畳む
+    let k: QuickReplyMap = {};
+    k = recordQuickReply(k, "ｺﾐｯﾄして", 1);
+    k = recordQuickReply(k, "コミットして", 2);
+    expect(Object.keys(k)).toHaveLength(1);
+    expect(k["コミットして"].count).toBe(2);
+  });
+
+  it("merges legacy entries that were learned under a full-width key", () => {
+    // キー正規化を変える前に貯まったエントリ（キーも綴りも全角）。次に半角で送ったら1件に畳む。
+    const m: QuickReplyMap = { "ＯＫ": { text: "ＯＫ", count: 4, at: 10 } };
+    const next = recordQuickReply(m, "OK", 20);
+    expect(Object.keys(next)).toEqual(["ok"]);
+    expect(next["ok"]).toEqual({ text: "OK", count: 5, at: 20 }); // 回数を引き継ぐ
+  });
+
   it("normalizes whitespace", () => {
     const m = recordQuickReply({}, "  commit   して ", 5);
     expect(m["commit して"].text).toBe("commit して");
@@ -152,6 +179,35 @@ describe("rankQuickReplies", () => {
     expect(typing).not.toContain("commit"); // 入力中の前方一致だけはピンにも効く
   });
 
+  it("merges full-width variants into one chip and matches a full-width draft", () => {
+    // 旧キーのまま残っている全角エントリと半角エントリ。表示は1件（回数は合算）。
+    const m: QuickReplyMap = {
+      "ｃｏｍｍｉｔ": { text: "ｃｏｍｍｉｔ", count: 2, at: 50 },
+      commit: { text: "commit", count: 1, at: 90 },
+    };
+    const out = rankQuickReplies(m, { draft: "", lastReply: "", locale: "ja" });
+    expect(out.filter((s) => quickReplyKey(s) === "commit")).toEqual(["commit"]); // 新しい綴りで1件だけ
+    // count は 2+1=3。シード「commit して」(count 0) より当然上。
+    expect(out[0]).toBe("commit");
+    // 全角で打ちかけても前方一致する（IME を切り替えずに絞り込める）。
+    expect(rankQuickReplies(m, { draft: "ｃｏ", lastReply: "", locale: "ja" })).toContain("commit");
+    expect(rankQuickReplies({ ...m, commit: m.commit }, { draft: "co", lastReply: "", locale: "ja" })).toContain(
+      "commit",
+    );
+  });
+
+  it("hides / pins / boosts across the width difference", () => {
+    const m: QuickReplyMap = { "ｏｋ": { text: "ＯＫ", count: 5, at: 100 } };
+    expect(rankQuickReplies(m, { draft: "", lastReply: "", locale: "ja", hidden: ["ok"] })).not.toContain("ＯＫ");
+    expect(rankQuickReplies(m, { draft: "", lastReply: "", locale: "ja", pinned: ["OK"] })[0]).toBe("OK");
+    // 全角で書かれた回答でも B-1 の話題判定に当たる。
+    const c: QuickReplyMap = {
+      "進めて": { text: "進めて", count: 9, at: 100 },
+      commit: { text: "commit", count: 1, at: 50 },
+    };
+    expect(rankQuickReplies(c, { draft: "", lastReply: "ここで ｃｏｍｍｉｔ します", locale: "ja" })[0]).toBe("commit");
+  });
+
   it("drops hidden keys, seeds included", () => {
     const m: QuickReplyMap = { "進めて": { text: "進めて", count: 5, at: 100 } };
     const out = rankQuickReplies(m, { draft: "", lastReply: "", locale: "ja", hidden: ["進めて", "ok"] });
@@ -188,6 +244,17 @@ describe("forget / hide / unhide", () => {
     const hidden = ["ok", "進めて"];
     expect(unhideQuickReply(hidden, "OK")).toEqual(["進めて"]);
     expect(unhideQuickReply(hidden, "未登録")).toBe(hidden); // 無変化なら同じ参照
+  });
+
+  it("treats full-width and half-width as the same entry", () => {
+    // 学習側は旧キー（全角）でも、半角で消せば消える。
+    const m: QuickReplyMap = { "ｏｋ": { text: "ＯＫ", count: 2, at: 10 } };
+    expect(forgetQuickReply(m, "ok")).toEqual({});
+    expect(hideQuickReply(["ok"], "ＯＫ")).toEqual(["ok"]); // 二重登録しない
+    expect(unhideQuickReply(["ｏｋ"], "OK")).toEqual([]); // 旧キーの隠しも解除できる
+    expect(isQuickReplyPinned(["ＯＫ"], "ok")).toBe(true);
+    expect(unpinQuickReply(["ＯＫ", "進めて"], "ok")).toEqual(["進めて"]);
+    expect(pinQuickReply(["OK"], "ＯＫ")).toEqual(["OK"]); // 同じピンは増やさない
   });
 });
 
