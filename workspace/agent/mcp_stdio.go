@@ -606,6 +606,9 @@ var mcpStdioWriteTools = []map[string]any{
 		"name": "attach_chromium",
 		"description": "list_chromium_targetsで確認済みの既存PageへAgent Fleetの表示・入力経路を接続する。" +
 			"自分が起動したChromiumに繋ぐなら、DevToolsActivePort2行目のGUIDをexpected_browser_idへ必ず渡すこと（port衝突時に他セッションのブラウザへ繋ぐ事故を防ぐ）。" +
+			"**attach直後のcontrol modeはview-onlyで、ユーザーのスクロールもキー操作も全て拒否される。** " +
+			"ユーザーに操作させるなら、対象Pageへの自分の自動操作を止めた上でrequest_browser_action（またはset_chromium_control_mode）でuser-controlへ移すこと。" +
+			"これを呼ばずにリンクだけ渡すと、ユーザーには「見えるが何も動かないペイン」が届く。" +
 			"戻ったopen_urlを改変せず「ブラウザを開いて操作する」というMarkdownリンクでユーザーへ提示すること。リンクはConsoleのペインで開く（別タブではない）。" +
 			"最終確定操作をエージェント自身でクリックせず、attach成功を外部サイト上の処理成功と言い換えないこと。",
 		"inputSchema": map[string]any{

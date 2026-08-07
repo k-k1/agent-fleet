@@ -155,6 +155,16 @@
 }
 .browser-attach-mode-user-control { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
 .browser-attach-mode-locked { color: var(--muted); }
+.browser-attach-readonly {
+  flex: none;
+  margin: 0;
+  padding: 5px calc(var(--pane-ctl-w, 64px) + 6px) 5px 9px;
+  border-bottom: 1px solid var(--border2);
+  color: var(--muted);
+  background: var(--panel);
+  font-size: 11px;
+  line-height: 1.35;
+}
 .browser-attach-handoff {
   display: flex;
   flex: none;
