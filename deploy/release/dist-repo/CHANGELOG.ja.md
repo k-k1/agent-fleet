@@ -3,6 +3,12 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.7.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.7.0) — 2026-08-07
+
+opencode.ai のアカウントで Console からサインインできるようになり、セッションが使う枠も
+選べます。中断した Claude のターンはアシスタントを介さずエージェント自身が再開し、
+AWS の Agent Toolkit が組み込み MCP 連携に加わりました。
+
 ## [0.6.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.6.0) — 2026-08-02
 
 エージェントが操作中のブラウザページを人へ引き渡せるようになり、最後のクリックだけを

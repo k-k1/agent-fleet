@@ -3,6 +3,13 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.7.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.7.0) — 2026-08-07
+
+OpenCode now signs in with your opencode.ai account from the Console and lets you
+choose which plan its sessions run on, interrupted Claude turns pick themselves
+back up without an assistant in the loop, and AWS's Agent Toolkit joins the
+built-in MCP integrations.
+
 ## [0.6.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.6.0) — 2026-08-02
 
 An agent can now hand you the browser page it is driving, so you take over for the
