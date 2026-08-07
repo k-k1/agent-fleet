@@ -111,6 +111,14 @@ export function BrowserAttachPane({ paneId, attachmentId }: BrowserAttachPanePro
         </Button>
       </div>
 
+      {/* A fresh attachment is view-only by contract (docs/53 §53.11): the agent
+          must stop its own automation and hand over before input is accepted.
+          Until this notice existed the pane looked fully interactive and every
+          scroll and keystroke was dropped in silence. */}
+      {snapshot.controlMode === "view-only" && (
+        <p className="browser-attach-readonly">{tr("browser.attach.view_only_notice")}</p>
+      )}
+
       {handoff && (
         <section className="browser-attach-handoff" aria-label={tr("browser.attach.request")}>
           <div className="browser-attach-message">

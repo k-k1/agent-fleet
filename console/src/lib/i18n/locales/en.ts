@@ -1551,6 +1551,7 @@ export const en: Record<keyof typeof ja, string> = {
   "browser.attach.mode.view-only": "View only",
   "browser.attach.mode.user-control": "User control",
   "browser.attach.mode.locked": "Locked",
+  "browser.attach.view_only_notice": "View-only: input is disabled, so scrolling and keystrokes are not sent. You can operate the page once the agent hands control over.",
   "browser.attach.request": "Requested browser action",
   "browser.attach.default_message": "Review this page and complete the requested action.",
   "browser.attach.owner_paused_warning": "Only operate after the owner has stopped automating this page.",

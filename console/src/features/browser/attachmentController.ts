@@ -459,6 +459,18 @@ export class BrowserAttachmentController {
           ts: typeof message.ts === "string" ? message.ts : "",
         });
         return;
+      // The agent refuses input while the attachment is not in user-control and
+      // says so — but nothing used to read it, so a pane whose input was being
+      // dropped looked identical to a working one. Surfacing it in the console
+      // drawer makes a stale Console bundle or a control-mode race diagnosable
+      // instead of silent.
+      case "protocol-error":
+        this.appendConsole({
+          level: "error",
+          text: `[agent] ${String(message.code ?? "protocol_error")}: ${String(message.message ?? "")}`.slice(0, 16_384),
+          ts: typeof message.ts === "string" ? message.ts : "",
+        });
+        return;
       case "page-error":
         this.appendConsole({
           level: "error",

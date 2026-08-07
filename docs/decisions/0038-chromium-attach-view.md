@@ -83,6 +83,11 @@ Agentで高水準wireへ縮退する。
 Chromium以外も表示できるが、追加daemon、画面全体の転送、認可、解像度、clipboard、process ownershipが増える。
 CDP screencast基盤が既にあるAFには過剰である。
 
+2026-08-08に「CDP合成入力をやめてOSの入力処理をそのまま使えないか」という観点で再検討し、実地計測の上で
+**この判断を維持する**と決めた。決め手はコストではなく所有権で、VNCはownerが自分のChromiumをAFの仮想
+ディスプレイ上でheadful起動する前提を要求するが、§53.2でChromiumを起動するのはownerでありAFではない。
+計測と検討の詳細は[docs/53 §53.18](../53-chromium-attach-view.md#5318-rdp--vnc-転送の検討2026-08-08-実測)。
+
 ### Playwright protocolへ接続する
 
 Playwrightの`launch_server` protocolはCDPではなく、言語・版への結合が強い。Chromium標準のloopback CDPをownerとの
