@@ -37,10 +37,12 @@ export interface BrowserTouchHost {
   enabled(): boolean;
   send(message: BrowserOutbound): void;
   /**
-   * A tap landed at this client point: focus the hidden IME input so typing (and
-   * the on-screen keyboard) reaches the page.
+   * A tap landed at this client point. It moves the hidden IME input there (that
+   * is where an on-screen keyboard puts its composition popup) but deliberately
+   * does NOT focus it: focusing is what pops the keyboard up, and a tap is
+   * usually aimed at a link or a button, not a text field.
    */
-  focus(clientX: number, clientY: number): void;
+  anchor(clientX: number, clientY: number): void;
   /**
    * Live pinch feedback while the fingers are still down, as a scale factor and
    * its origin in CLIENT coordinates. The committed zoom is a round trip to the
@@ -67,7 +69,16 @@ export const TOUCH_DOUBLE_TAP_MS = 350;
 export const TOUCH_FLICK_MIN_SPEED = 0.12;
 const TOUCH_FLICK_STOP_SPEED = 0.02;
 const TOUCH_FLICK_DECAY = 0.95;
-const TOUCH_FLICK_FRAME_MS = 16;
+/**
+ * Momentum ticks at half the rate the decay is expressed in: the screencast the
+ * user is watching runs at ~12 fps, so a finer tick would only put more messages
+ * on the wire for a picture that cannot show them. The decay stays referenced to
+ * 16 ms so the fling travels the same distance either way.
+ */
+const TOUCH_FLICK_TICK_MS = 32;
+const TOUCH_FLICK_DECAY_REF_MS = 16;
+/** Scroll deltas are summed into one wheel per frame. */
+const TOUCH_PAN_FRAME_MS = 16;
 /** Two fingers closer than this cannot give a stable pinch ratio. */
 const TOUCH_PINCH_MIN_SPAN = 24;
 /** Ratio change below this is a resting hand, not a pinch. */
@@ -99,6 +110,9 @@ export class BrowserTouchGestures {
   private flickAt = 0;
   private flickV = { x: 0, y: 0 };
   private flickPoint = { x: 0, y: 0 };
+  private panWindow = 0;
+  private panDelta = { dx: 0, dy: 0 };
+  private panPoint = { x: 0, y: 0 };
   private pinchSpan = 0;
   private pinchFactor = 1;
   private lastTapAt = -Infinity;
@@ -210,21 +224,58 @@ export class BrowserTouchGestures {
   dispose(): void {
     this.cancelLongPress();
     this.stopFlick();
+    this.stopPan();
     this.fingers.clear();
     this.mode = "idle";
   }
 
+  /**
+   * Scroll by a finger delta, at most once per frame.
+   *
+   * A finger reports 60-120 moves a second, and every message crosses the
+   * Console, the Control Plane and the Agent before reaching Chromium. Sending
+   * one wheel per move buys nothing — the screencast itself runs at ~12 fps — so
+   * the deltas in a frame are summed into one wheel. The first move of a gesture
+   * still goes out immediately; only the ones behind it are batched, which keeps
+   * the scroll from feeling delayed at the start of a swipe.
+   */
   private pan(dx: number, dy: number, clientX: number, clientY: number): void {
     if (!this.host.enabled()) return;
+    this.panPoint = { x: clientX, y: clientY };
+    if (this.panWindow) {
+      this.panDelta.dx += dx;
+      this.panDelta.dy += dy;
+      return;
+    }
+    this.sendPan(dx, dy);
+    this.panWindow = this.host.after(TOUCH_PAN_FRAME_MS, this.flushPan);
+  }
+
+  private readonly flushPan = (): void => {
+    this.panWindow = 0;
+    const { dx, dy } = this.panDelta;
+    if (dx === 0 && dy === 0) return;
+    this.panDelta = { dx: 0, dy: 0 };
+    this.sendPan(dx, dy);
+    this.panWindow = this.host.after(TOUCH_PAN_FRAME_MS, this.flushPan);
+  };
+
+  private sendPan(dx: number, dy: number): void {
     const scale = this.host.scale();
     // Dragging the CONTENT up means scrolling DOWN, hence the sign flip.
     this.host.send({
       type: "wheel",
-      ...this.host.remote(clientX, clientY),
+      ...this.host.remote(this.panPoint.x, this.panPoint.y),
       deltaX: -dx * scale,
       deltaY: -dy * scale,
       modifiers: 0,
     });
+  }
+
+  private stopPan(): void {
+    if (this.panWindow) this.host.clear(this.panWindow);
+    this.panWindow = 0;
+    this.panDelta = { dx: 0, dy: 0 };
   }
 
   private tap(finger: Finger): void {
@@ -251,7 +302,7 @@ export class BrowserTouchGestures {
     this.sendMouse("move", point, "none", 0, 0);
     this.sendMouse("down", point, "left", 1, 1);
     this.sendMouse("up", point, "left", 0, 1);
-    this.host.focus(point.x, point.y);
+    this.host.anchor(point.x, point.y);
   }
 
   private startDrag(): void {
@@ -298,13 +349,13 @@ export class BrowserTouchGestures {
     const dt = Math.min(64, Math.max(1, now - this.flickAt));
     this.flickAt = now;
     this.pan(this.flickV.x * dt, this.flickV.y * dt, this.flickPoint.x, this.flickPoint.y);
-    const decay = TOUCH_FLICK_DECAY ** (dt / TOUCH_FLICK_FRAME_MS);
+    const decay = TOUCH_FLICK_DECAY ** (dt / TOUCH_FLICK_DECAY_REF_MS);
     this.flickV = { x: this.flickV.x * decay, y: this.flickV.y * decay };
     if (Math.hypot(this.flickV.x, this.flickV.y) < TOUCH_FLICK_STOP_SPEED) {
       this.flick = 0;
       return;
     }
-    this.flick = this.host.after(TOUCH_FLICK_FRAME_MS, this.tickFlick);
+    this.flick = this.host.after(TOUCH_FLICK_TICK_MS, this.tickFlick);
   };
 
   private stopFlick(): void {

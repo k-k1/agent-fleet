@@ -88,6 +88,13 @@ func (f *fakeBrowserCDP) Call(_ context.Context, method string, params any, sess
 	return nil
 }
 
+// Send records exactly like Call so the existing assertions cover input either
+// way; the real difference — not waiting for Chromium's reply — is invisible here
+// and is measured by the live tests.
+func (f *fakeBrowserCDP) Send(method string, params any, session string) error {
+	return f.Call(context.Background(), method, params, session, nil)
+}
+
 func (f *fakeBrowserCDP) Events() <-chan browserCDPEvent { return f.events }
 func (f *fakeBrowserCDP) Done() <-chan error             { return f.done }
 func (f *fakeBrowserCDP) Close() error {

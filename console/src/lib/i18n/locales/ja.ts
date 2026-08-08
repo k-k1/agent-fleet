@@ -1543,6 +1543,7 @@ export const ja = {
   "browser.reconnect": "再接続",
   "browser.canvas": "コンテナ内ブラウザ",
   "browser.remote_input": "リモートページへの文字入力",
+  "browser.keyboard_toggle": "キーボードの表示/非表示",
   "browser.loading": "ページを読み込み中…",
   "browser.target_unreachable": "対象ポートへ接続できません。サービスの起動後に再接続してください。",
   "browser.crashed": "コンテナ内ブラウザがクラッシュしました。",
