@@ -151,7 +151,7 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	}
 	if tid == "" {
 		if m.ForkFrom != "" {
-			st, err = threadFork(cl, m.ForkFrom, cwd)
+			st, err = threadFork(cl, m.ForkFrom, cwd, m.ForkAt)
 		} else {
 			st, err = threadStart(cl, cwd, firstNonEmpty(h.settings.Model, m.Model))
 		}
@@ -303,10 +303,22 @@ func threadResume(cl *appClient, tid, cwd string) (threadSnapshotWire, error) {
 	return parseThreadResult(res)
 }
 
-func threadFork(cl *appClient, src, cwd string) (threadSnapshotWire, error) {
+// threadFork copies src into a NEW thread. lastTurnId, when non-empty, is the last turn
+// the fork keeps — **inclusive**: codex omits every turn after it (docs/55 §55.2). The
+// translation from the Console's exclusive anchor happened in ResolveForkAt; by the time
+// it reaches here it is already "the turn to fork through". Empty = the whole thread.
+func threadFork(cl *appClient, src, cwd, lastTurnID string) (threadSnapshotWire, error) {
 	params := mergeMaps(map[string]any{"threadId": src, "cwd": cwd, "config": threadFeatures}, bypassPolicies())
+	if lastTurnID != "" {
+		params["lastTurnId"] = lastTurnID
+	}
 	res, err := cl.call("thread/fork", params, 30*time.Second)
 	if err != nil {
+		if lastTurnID != "" {
+			// codex refuses a turn that is still in progress; that is about the anchor we
+			// sent, not about the daemon, so don't report it as a generic fork failure.
+			return threadSnapshotWire{}, fmt.Errorf("codex が分岐点を受け付けませんでした: %w", err)
+		}
 		return threadSnapshotWire{}, fmt.Errorf("codex thread の分岐に失敗しました: %w", err)
 	}
 	return parseThreadResult(res)
