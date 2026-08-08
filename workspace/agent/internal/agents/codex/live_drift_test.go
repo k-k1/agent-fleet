@@ -574,6 +574,158 @@ checked:
 	t.Log("ok: turn/completed -> status idle + TurnCompleted event")
 }
 
+// ---- 5: 発言時点からの分岐（docs/55）— lastTurnId が包含であること ------------------
+
+// TestLiveDriftCodexForkAtLastTurn is the one claim about codex that only a real run can
+// settle: `thread/fork`'s lastTurnId is **inclusive**, so branching "before the user's Nth
+// prompt" means sending the (N-1)th turn id. ResolveForkAt does that translation, and an
+// off-by-one there is invisible in the mirror — the branch just quietly carries the very
+// prompt the user wanted to retake.
+//
+// The mock in fork_at_test.go can only prove we SENT lastTurnId; the schema's word
+// "inclusive" is documentation, not behaviour. This drives two real turns, branches at the
+// second, and counts what the fork actually got.
+//
+// Cost: 2 turns (see this file's header for the measured range).
+func TestLiveDriftCodexForkAtLastTurn(t *testing.T) {
+	liveCodexBin(t)
+	liveHome(t)
+
+	addr := fmt.Sprintf("ws://127.0.0.1:%d", freePort(t))
+	t.Setenv(appServerAddrEnv, addr)
+	defer Serve().Shutdown()
+
+	work := t.TempDir()
+	m := session.Meta{Name: "live-drift-forkat", Dir: work, Kind: session.KindCodex, Driver: session.DriverManaged}
+	slot := session.UUID(m.Dir, m.Name)
+
+	h, err := NewDriver().(interface {
+		Resume(session.Meta) (agents.ThreadHandle, error)
+	}).Resume(m)
+	if err != nil {
+		failAuthAware(t, "managed Resume (thread/start)", err, err.Error())
+	}
+	liveDriftTurn(t, h, "reply with exactly: ALPHA")
+	liveDriftTurn(t, h, "reply with exactly: BETA")
+
+	srcTid := sids.Read(slot)
+	if srcTid == "" {
+		t.Fatal("no codex thread id recorded for the slot")
+	}
+	logTurnCost(t, "fork-at source", srcTid)
+
+	// The anchor the Console would send: the SECOND user turn's AnchorID, straight off the
+	// real rollout (so a change in how codex records turn ids fails here too).
+	td, _ := readTranscript(m)
+	var userAnchors []string
+	for _, tn := range td.Turns {
+		if tn.Role == "user" && tn.AnchorID != "" {
+			userAnchors = append(userAnchors, tn.AnchorID)
+		}
+	}
+	if len(userAnchors) < 2 {
+		t.Fatalf("transcript has %d anchored user turns after 2 turns — turn ids are no longer "+
+			"recoverable from the rollout, so the mirror can't offer 「ここから分岐」", len(userAnchors))
+	}
+	first, second := userAnchors[0], userAnchors[len(userAnchors)-1]
+	if first == second {
+		t.Fatalf("both user turns share turn id %s — task_started no longer delimits turns", first)
+	}
+	resolved, err := (agentImpl{}).ResolveForkAt(m, second)
+	if err != nil {
+		t.Fatalf("ResolveForkAt(%s): %v", second, err)
+	}
+	if resolved != first {
+		t.Fatalf("ResolveForkAt returned %s, want the PREVIOUS turn %s", resolved, first)
+	}
+
+	cl, err := newAppClient(addr)
+	if err != nil {
+		t.Fatalf("app client: %v", err)
+	}
+	defer cl.close()
+	go cl.readLoop()
+
+	st, err := threadFork(cl, srcTid, work, resolved)
+	if err != nil {
+		t.Fatalf("threadFork(lastTurnId=%s): %v", resolved, err)
+	}
+	if st.threadID == "" {
+		t.Fatal("fork returned no thread id")
+	}
+
+	// What the fork actually carries. thread/read populates turns on demand, so this needs
+	// no further model spend.
+	got := liveThreadTurnIDs(t, cl, st.threadID)
+	src := liveThreadTurnIDs(t, cl, srcTid)
+	if len(src) != 2 {
+		t.Fatalf("source thread has %d turns, want 2 (setup did not produce what this test assumes)", len(src))
+	}
+	if len(got) != 1 {
+		t.Fatalf("fork carries %d turns, want 1: lastTurnId is not inclusive-through-that-turn anymore. "+
+			"ResolveForkAt's -1 translation (docs/55 §55.3) is now wrong in the other direction — "+
+			"branches would carry the prompt the user meant to retake. src=%v fork=%v", len(got), src, got)
+	}
+	if got[0] != resolved {
+		t.Errorf("fork kept turn %s, want %s (the turn we forked through)", got[0], resolved)
+	}
+
+	// §55.10-1: does a fork get a rollout before its first turn? Only informational — the
+	// managed route never needs it, but the TUI route (`codex resume <fork>`) would.
+	if p := rolloutPath(st.threadID); p == "" {
+		t.Log("note: the fork has no rollout before its first turn — a TUI resume of a fresh fork " +
+			"cannot work (docs/55 §55.10-1); managed is unaffected")
+	} else {
+		t.Log("note: the fork's rollout exists immediately (docs/55 §55.10-1)")
+	}
+}
+
+// liveDriftTurn sends one prompt and waits for the driver's completion event.
+func liveDriftTurn(t *testing.T, h agents.ThreadHandle, prompt string) {
+	t.Helper()
+	if err := h.Send(agents.TurnInput{Prompt: prompt}); err != nil {
+		failAuthAware(t, "managed Send (turn/start)", err, err.Error())
+	}
+	deadline := time.After(180 * time.Second)
+	for {
+		select {
+		case ev := <-h.Events():
+			switch ev.TurnState {
+			case agents.TurnCompleted:
+				return
+			case agents.TurnFailed:
+				t.Fatalf("turn failed for prompt %q", prompt)
+			}
+		case <-deadline:
+			t.Fatalf("no completion for prompt %q", prompt)
+		}
+	}
+}
+
+// liveThreadTurnIDs reads a thread's turn ids via thread/read (includeTurns).
+func liveThreadTurnIDs(t *testing.T, cl *appClient, tid string) []string {
+	t.Helper()
+	res, err := cl.call("thread/read", map[string]any{"threadId": tid, "includeTurns": true}, 30*time.Second)
+	if err != nil {
+		t.Fatalf("thread/read %s: %v", tid, err)
+	}
+	var out struct {
+		Thread struct {
+			Turns []struct {
+				ID string `json:"id"`
+			} `json:"turns"`
+		} `json:"thread"`
+	}
+	if err := json.Unmarshal(res, &out); err != nil {
+		t.Fatalf("thread/read %s payload: %v", tid, err)
+	}
+	ids := make([]string, 0, len(out.Thread.Turns))
+	for _, tn := range out.Thread.Turns {
+		ids = append(ids, tn.ID)
+	}
+	return ids
+}
+
 func freePort(t *testing.T) int {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")

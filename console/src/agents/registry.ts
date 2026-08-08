@@ -188,6 +188,8 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // gauge works — codex logs token counts too. Plan mode + inline request_user_input
     // questions are supported. headlessChat via `codex exec --json` (assistant chat /
     // title suggestion backend); fork via `codex fork <id>` (server ForkSource).
+    // forkAt: 発言時点からの分岐（docs/55）は app-server の `thread/fork` の lastTurnId
+    // （inclusive）。managed のときだけ導線が出る（CLI ルートに分岐点を渡す口が無い）。
     // model: launch-time only, live catalog (api/agents/codex/models = `codex debug
     // models` under codex's own subscription auth) → `codex -m`.
     // imagePaste: upload + path-in-prompt (claude's flow); codex's view_image fires on
@@ -206,6 +208,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       slashSkills: true, // $CODEX_HOME/skills + .codex/skills — "$name" mention (docs/50 §7)
       slashSkillsManaged: true, // a text mention works on any channel
       planMode: true,
+      forkAt: true,
       runsInDir: true,
       launchableFromRepo: true,
     }),
