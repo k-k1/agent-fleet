@@ -10,6 +10,7 @@ class Harness {
   readonly sent: BrowserOutbound[] = [];
   readonly previews: Array<{ factor: number; x: number; y: number }> = [];
   readonly zooms: number[] = [];
+  toggles = 0;
   readonly focused: Array<{ x: number; y: number }> = [];
   enabled = true;
   scale = 2; // 2 remote px per CSS px
@@ -27,6 +28,7 @@ class Harness {
       focus: (x, y) => this.focused.push({ x, y }),
       preview: (factor, x, y) => this.previews.push({ factor, x, y }),
       zoom: (factor) => this.zooms.push(factor),
+      toggleZoom: () => { this.toggles++; },
       now: () => this.clock,
       after: (ms, run) => {
         const id = ++this.handle;
@@ -125,15 +127,42 @@ describe("touch gestures", () => {
     expect(h.focused).toEqual([{ x: 62, y: 71 }]);
   });
 
-  it("sends a double click for a quick second tap", () => {
+  // Double tap is the mobile idiom for "fit <-> life size". It sends no second
+  // click: delaying the first one to find out whether a second is coming is the
+  // 300 ms tap lag the platform spent years removing.
+  it("toggles the zoom on a double tap without clicking twice", () => {
     const h = new Harness();
+    const tap = (x: number) => { h.down(1, x, 70); h.up(1, x, 70); };
+    tap(60);
+    h.tick(120);
+    tap(61);
+
+    expect(h.toggles).toBe(1);
+    expect(h.mouse().filter((m) => m.event === "down")).toHaveLength(1);
+
+    // A third tap in the same burst must not toggle straight back.
+    h.tick(120);
+    tap(61);
+    expect(h.toggles).toBe(1);
+
+    // Two slow taps are two ordinary clicks.
+    h.tick(2000);
+    tap(61);
+    expect(h.toggles).toBe(1);
+    expect(h.mouse().filter((m) => m.event === "down")).toHaveLength(3);
+  });
+
+  it("toggles the zoom on a double tap even while page input is refused", () => {
+    const h = new Harness();
+    h.enabled = false;
     h.down(1, 60, 70);
     h.up(1, 60, 70);
     h.tick(120);
     h.down(1, 61, 70);
     h.up(1, 61, 70);
 
-    expect(h.mouse().filter((m) => m.event === "down").map((m) => m.clickCount)).toEqual([1, 2]);
+    expect(h.toggles).toBe(1);
+    expect(h.sent).toEqual([]);
   });
 
   // Text selection, sliders and drag & drop are unreachable on touch unless the

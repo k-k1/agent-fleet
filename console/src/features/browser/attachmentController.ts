@@ -239,6 +239,25 @@ export class BrowserAttachmentController {
     this.sendViewport();
   }
 
+  /**
+   * Double tap: jump between the base view (fitted, or the pane) and life size,
+   * where one layout pixel is one pane pixel and nothing is scaled at all.
+   *
+   * The base is not tracked here — the Agent owns it, because only it can
+   * measure the page for zoom-to-fit. It is recovered instead from the layout
+   * the Agent last reported: `layout x zoom` is the base, so the zoom that lands
+   * the layout on the pane is `base / pane`. With fit off the base IS the pane,
+   * so there is no 1:1 to jump to and a plain 2x is the useful answer.
+   */
+  toggleZoom(): void {
+    if (this.pane.width < 1) return;
+    const lifeSize = (this.snapshotValue.width * this.zoomValue) / this.pane.width;
+    const next = clampZoom(this.zoomValue > 1 ? 1 : Math.max(lifeSize, 2));
+    if (next === this.zoomValue) return;
+    this.zoomValue = next;
+    this.sendViewport();
+  }
+
   private sendViewport(): void {
     this.send({ type: "viewport", ...this.pane, fit: this.fitValue, zoom: this.zoomValue });
   }

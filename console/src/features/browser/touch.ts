@@ -50,6 +50,8 @@ export interface BrowserTouchHost {
   preview(factor: number, originX: number, originY: number): void;
   /** Commit a pinch: multiply the current zoom by this factor. */
   zoom(factor: number): void;
+  /** Double tap: jump between the fitted view and life size. */
+  toggleZoom(): void;
   now(): number;
   after(ms: number, callback: () => void): number;
   clear(handle: number): void;
@@ -59,7 +61,7 @@ export interface BrowserTouchHost {
 export const TOUCH_TAP_SLOP = 10;
 /** Holding still this long turns the touch into a button-down drag. */
 export const TOUCH_LONG_PRESS_MS = 500;
-/** A second tap inside this window (and TOUCH_TAP_SLOP*3 px) is a double click. */
+/** A second tap inside this window (and TOUCH_TAP_SLOP*3 px) is a double tap. */
 export const TOUCH_DOUBLE_TAP_MS = 350;
 /** Below this release speed (CSS px/ms) a swipe just stops — no momentum. */
 export const TOUCH_FLICK_MIN_SPEED = 0.12;
@@ -226,18 +228,29 @@ export class BrowserTouchGestures {
   }
 
   private tap(finger: Finger): void {
-    if (!this.host.enabled()) return;
     const now = this.host.now();
     const double = now - this.lastTapAt < TOUCH_DOUBLE_TAP_MS &&
       Math.hypot(finger.x - this.lastTap.x, finger.y - this.lastTap.y) <= TOUCH_TAP_SLOP * 3;
-    this.lastTapAt = now;
     this.lastTap = { x: finger.x, y: finger.y };
+    if (double) {
+      // Double tap toggles the zoom, the way every mobile browser does — and it
+      // sends NO second click: the first tap already clicked, and delaying that
+      // one to find out whether a second is coming is the 300 ms tap lag the
+      // whole platform spent years removing. Like the pinch it is a view
+      // concern, so it works while the page refuses input. Forgetting the tap
+      // keeps a third one from toggling straight back.
+      this.lastTapAt = -Infinity;
+      this.host.toggleZoom();
+      return;
+    }
+    this.lastTapAt = now;
+    if (!this.host.enabled()) return;
     const point = { x: finger.x, y: finger.y };
     // Hover first: a menu that opens on mouseover is otherwise clicked before it
     // has anything to click.
     this.sendMouse("move", point, "none", 0, 0);
-    this.sendMouse("down", point, "left", 1, double ? 2 : 1);
-    this.sendMouse("up", point, "left", 0, double ? 2 : 1);
+    this.sendMouse("down", point, "left", 1, 1);
+    this.sendMouse("up", point, "left", 0, 1);
     this.host.focus(point.x, point.y);
   }
 

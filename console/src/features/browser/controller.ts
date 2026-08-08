@@ -156,6 +156,19 @@ export class BrowserController {
   }
 
   /**
+   * Double tap: back to the pane's own layout, or in to 2x. This pane has no
+   * zoom-to-fit — it previews the user's OWN app at its real viewport — so
+   * unzoomed already IS life size and there is no third state to visit.
+   */
+  toggleZoom(): void {
+    if (this.pane.width < 1) return;
+    const next = this.zoomValue > 1 ? 1 : 2;
+    if (next === this.zoomValue) return;
+    this.zoomValue = next;
+    this.send({ type: "viewport", ...this.pane, zoom: next });
+  }
+
+  /**
    * Ask the page for its selection and put it on the USER's clipboard — the
    * container Chromium's own clipboard is unreachable from the browser tab.
    */
