@@ -455,6 +455,103 @@ func TestBrowserAttachmentLivePinchZoom(t *testing.T) {
 	t.Fatalf("no frame showed the zoomed page: left=%v right=%v (frame %v)", left, right, size)
 }
 
+// TestBrowserAttachmentLiveInputDoesNotBlockOnAcks guards the throughput of the
+// input path, which is what a swipe on a phone actually stresses.
+//
+// Chromium answers an Input.dispatch* command only after it has processed the
+// event, and that is frame-paced: waiting for each reply cost ~16 ms per event
+// (measured), while a finger produces 60-120 events a second. The viewer handles
+// control messages on its read loop, so the whole swipe queued up behind those
+// acks and the page kept scrolling long after the finger stopped. Pointer-rate
+// events are therefore dispatched without waiting.
+//
+// Keystrokes and clicks deliberately still wait: they are one event per user
+// action, and TestBrowserPlainASCIIKeyTypingLandsInForm reads the DOM right after
+// typing — that ordering is only guaranteed by the reply.
+func TestBrowserAttachmentLiveInputDoesNotBlockOnAcks(t *testing.T) {
+	if os.Getenv("AF_CHROMIUM_ATTACH_LIVE") != "1" {
+		t.Skip("set AF_CHROMIUM_ATTACH_LIVE=1 to run the real input throughput test")
+	}
+	bin, err := findChromiumBinary()
+	if err != nil {
+		t.Skipf("Chromium unavailable: %v", err)
+	}
+	fixture := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `<!doctype html><meta charset="utf-8"><title>Tall fixture</title>`+
+			`<body style="margin:0"><div style="height:20000px;background:linear-gradient(#fff,#000)"></div>`)
+	}))
+	defer fixture.Close()
+
+	profile := t.TempDir()
+	startLiveChromium(t, bin, "0", "--user-data-dir="+profile, fixture.URL)
+	port, _ := liveDevToolsPort(t, profile)
+	discovery, err := discoverCDPTargets(port, 3*time.Second)
+	if err != nil || len(discovery.Targets) == 0 {
+		t.Fatalf("discover: %v targets=%d", err, len(discovery.Targets))
+	}
+	m := newBrowserAttachmentManager(defaultBrowserAttachmentManagerConfig())
+	defer m.Close()
+	resp, err := m.Create(browserAttachmentCreateRequest{
+		Port: port, TargetID: discovery.Targets[0].TargetID,
+		Viewport: browserViewportRequest{Width: 390, Height: 800, DeviceScaleFactor: 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := m.lookupActive(resp.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Delete(resp.ID)
+	a.mu.Lock()
+	a.viewer = &browserAttachmentViewer{attachment: a, control: make(chan browserOutbound, 64), done: make(chan struct{})}
+	a.visible = true
+	a.state = attachmentStateViewerOpen
+	a.controlMode = attachmentControlUser
+	viewer := a.viewer
+	a.mu.Unlock()
+	waitForLiveContentWidth(t, m, a, 390)
+
+	// 40 wheel events is about a third of a second of finger movement.
+	const events = 40
+	start := time.Now()
+	for i := 0; i < events; i++ {
+		viewer.handleControl([]byte(`{"type":"wheel","x":195,"y":400,"deltaX":0,"deltaY":40,"modifiers":0}`))
+	}
+	wheelSpent := time.Since(start)
+	start = time.Now()
+	for i := 0; i < events; i++ {
+		viewer.handleControl([]byte(`{"type":"mouse","event":"move","x":195,"y":400,"button":"none","buttons":0,"modifiers":0,"clickCount":0}`))
+	}
+	moveSpent := time.Since(start)
+	// Measured: ~4 ms for either burst, against ~625 ms when each event waited for
+	// its ack. The bound is deliberately loose — it only has to fail if the wait
+	// comes back.
+	if wheelSpent > 150*time.Millisecond || moveSpent > 150*time.Millisecond {
+		t.Fatalf("input is waiting for Chromium again: %d wheels took %v, %d moves took %v", events, wheelSpent, events, moveSpent)
+	}
+
+	// ...and the events really arrived: 40 x 40 px of scrolling.
+	var scrolled float64
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		var out struct {
+			Result struct {
+				Value float64 `json:"value"`
+			} `json:"result"`
+		}
+		if err := m.call(a.cdp, a.sessionID, "Runtime.evaluate",
+			map[string]any{"expression": "scrollY", "returnByValue": true}, &out); err != nil {
+			t.Fatal(err)
+		}
+		scrolled = out.Result.Value
+		if scrolled >= events*40 {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("scrollY reached only %v of %d px — fire-and-forget lost input", scrolled, events*40)
+}
+
 func isGreenish(c color.Color) bool {
 	r, g, b, _ := c.RGBA()
 	return g > 0x8000 && r < 0x8000 && b < 0x8000

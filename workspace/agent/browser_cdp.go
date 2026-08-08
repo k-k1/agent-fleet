@@ -27,6 +27,7 @@ type browserCDPEvent struct {
 
 type browserCDP interface {
 	Call(context.Context, string, any, string, any) error
+	Send(string, any, string) error
 	Events() <-chan browserCDPEvent
 	Done() <-chan error
 	Close() error
@@ -265,6 +266,42 @@ func (p *browserCDPCore) Call(ctx context.Context, method string, params any, se
 		}
 		return fmt.Errorf("Chromium stopped during %s: %w", method, err)
 	}
+}
+
+// Send writes a command and does NOT wait for its reply.
+//
+// This is for INPUT. Chromium answers an Input.dispatch* command only once it has
+// processed the event, which is frame-paced: measured on Chromium 151, 20 wheel
+// events dispatched with Call took 312 ms (~16 ms each) while the scroll itself
+// landed in under 100 ms. The viewer handles control messages on its read loop,
+// so a 60-120 Hz finger produces events faster than that and the whole swipe
+// queues up behind Chromium's acks — the page keeps scrolling after the finger
+// stops, which is exactly the "sluggish scrolling" the user reported.
+//
+// Dropping the wait is safe for input specifically: there is no result to read,
+// and one CDP connection processes messages in the order they were written, so
+// the event order the user produced is the order Blink sees. Only the write
+// error is reported; a failed input event is not worth a round trip per finger
+// movement.
+func (p *browserCDPCore) Send(method string, params any, sessionID string) error {
+	msg := map[string]any{"id": p.nextID.Add(1), "method": method}
+	if params != nil {
+		msg["params"] = params
+	}
+	if sessionID != "" {
+		msg["sessionId"] = sessionID
+	}
+	b, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+	p.writeMu.Lock()
+	err = p.transport.WriteMessage(b)
+	p.writeMu.Unlock()
+	if err != nil {
+		return fmt.Errorf("write CDP %s: %w", method, err)
+	}
+	return nil
 }
 
 func (p *browserCDPCore) readLoop() {

@@ -1531,6 +1531,7 @@ export const en: Record<keyof typeof ja, string> = {
   "browser.reconnect": "Reconnect",
   "browser.canvas": "In-container browser",
   "browser.remote_input": "Text input for the remote page",
+  "browser.keyboard_toggle": "Show or hide the keyboard",
   "browser.loading": "Loading page…",
   "browser.target_unreachable": "The target port is unreachable. Start the service, then reconnect.",
   "browser.crashed": "The browser inside the container crashed.",

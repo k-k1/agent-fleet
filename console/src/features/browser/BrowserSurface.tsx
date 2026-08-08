@@ -4,6 +4,7 @@ import type {
   PointerEvent as RPointerEvent,
   ReactNode,
 } from "react";
+import { coarsePointer } from "../../lib/device.ts";
 import { IconButton } from "../../ui/Button.tsx";
 import type { BrowserOutbound, BrowserSnapshot } from "./protocol.ts";
 import { BrowserInputBridge, clipboardShortcut, heldButton, modifiersOf, mouseButton, remotePoint, wheelPixels } from "./protocol.ts";
@@ -28,6 +29,8 @@ interface BrowserSurfaceProps {
   snapshot: Pick<BrowserSnapshot, "title" | "width" | "height">;
   canvasLabel: string;
   inputLabel: string;
+  /** Label for the touch keyboard toggle; without it the toggle is not offered. */
+  keyboardLabel?: string;
   inputEnabled?: boolean;
   children?: ReactNode;
 }
@@ -38,10 +41,16 @@ export function BrowserSurface({
   snapshot,
   canvasLabel,
   inputLabel,
+  keyboardLabel,
   inputEnabled = true,
   children,
 }: BrowserSurfaceProps) {
   const [inputAnchor, setInputAnchor] = useState({ x: 0, y: 0 });
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  // Touch input has no other way to raise the on-screen keyboard, since a tap
+  // must not do it. A fine pointer has a real keyboard and the mouse path
+  // focuses on click, so the toggle would only be clutter there.
+  const [touchInput] = useState(coarsePointer);
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imeRef = useRef<HTMLInputElement>(null);
@@ -72,12 +81,15 @@ export function BrowserSurface({
     },
     enabled: () => latest.current.inputEnabled,
     send: (message) => latest.current.controller.sendInput(message),
-    // Anchor the hidden IME input where the tap landed, like the mouse path
-    // does: it is where the on-screen keyboard's composition popup appears.
-    focus: (clientX, clientY) => {
+    // Move the hidden IME input to the tap, but do NOT focus it. Focusing is
+    // what raises the on-screen keyboard, and a tap is usually aimed at a link
+    // or a button — on a phone that meant GBoard appearing over the page on
+    // almost every tap. The keyboard is opened deliberately, with the pane's
+    // keyboard button, and stays open across taps because touch events are
+    // cancelled and therefore never move focus away from it.
+    anchor: (clientX, clientY) => {
       const rect = stageRef.current?.getBoundingClientRect();
       if (rect) setInputAnchor({ x: clientX - rect.left, y: clientY - rect.top });
-      imeRef.current?.focus({ preventScroll: true });
     },
     // Scaling the canvas is only a hint while the fingers are down; the real
     // zoom is a relayout in the container that lands when they lift.
@@ -288,6 +300,8 @@ export function BrowserSurface({
         autoCorrect="off"
         spellCheck={false}
         onKeyDown={onKeyDown}
+        onFocus={() => setKeyboardOpen(true)}
+        onBlur={() => setKeyboardOpen(false)}
         onKeyUp={(event) => {
           if (clipboardShortcut(event.nativeEvent)) return;
           if (inputEnabled) inputBridge.keyUp(event.nativeEvent);
@@ -309,6 +323,20 @@ export function BrowserSurface({
           event.currentTarget.value = "";
         }}
       />
+      {keyboardLabel && touchInput && inputEnabled && (
+        <IconButton
+          icon="keyboard"
+          label={keyboardLabel}
+          className={`browser-keyboard${keyboardOpen ? " browser-keyboard-on" : ""}`}
+          aria-pressed={keyboardOpen}
+          // Down would move focus before the click decides what to do with it.
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={() => {
+            if (keyboardOpen) imeRef.current?.blur();
+            else imeRef.current?.focus({ preventScroll: true });
+          }}
+        />
+      )}
       {children}
     </div>
   );

@@ -435,10 +435,18 @@ func (v *browserViewer) handleMouse(data []byte) {
 		v.protocolError("bad_mouse", "unsupported mouse event or button")
 		return
 	}
-	v.call("Input.dispatchMouseEvent", map[string]any{
+	params := map[string]any{
 		"type": eventType, "x": msg.X, "y": msg.Y, "button": msg.Button,
 		"buttons": msg.Buttons, "modifiers": msg.Modifiers, "clickCount": msg.ClickCount,
-	}, nil)
+	}
+	// Only the pointer-rate events skip the reply (see post): a press, a release
+	// or a keystroke is one event per user action and can afford the round trip,
+	// which keeps anything read straight afterwards consistent with it.
+	if eventType == "mouseMoved" {
+		v.post("Input.dispatchMouseEvent", params)
+		return
+	}
+	v.call("Input.dispatchMouseEvent", params, nil)
 }
 
 func (v *browserViewer) handleWheel(data []byte) {
@@ -453,9 +461,9 @@ func (v *browserViewer) handleWheel(data []byte) {
 		v.protocolError("bad_wheel", "invalid wheel event")
 		return
 	}
-	v.call("Input.dispatchMouseEvent", map[string]any{
+	v.post("Input.dispatchMouseEvent", map[string]any{
 		"type": "mouseWheel", "x": raw.X, "y": raw.Y, "deltaX": raw.DeltaX, "deltaY": raw.DeltaY, "modifiers": raw.Modifiers,
-	}, nil)
+	})
 }
 
 func (v *browserViewer) handleKey(data []byte) {
@@ -536,6 +544,20 @@ func (v *browserViewer) call(method string, params, result any) bool {
 		return false
 	}
 	return true
+}
+
+// post dispatches an INPUT command without waiting for Chromium's reply (see
+// browserCDPCore.Send). Control messages are handled on the viewer's read loop,
+// so waiting per finger movement is what made a swipe queue up behind Chromium's
+// frame-paced acks. A page that has gone away still refuses input.
+func (v *browserViewer) post(method string, params any) {
+	v.page.manager.mu.Lock()
+	cdp := v.page.manager.cdp
+	owned := v.page.manager.pages[v.page.id] == v.page
+	v.page.manager.mu.Unlock()
+	if cdp == nil || !owned || cdp.Send(method, params, v.page.sessionID) != nil {
+		v.protocolError("browser_command_failed", "browser command failed")
+	}
 }
 
 func (v *browserViewer) protocolError(code, message string) {
