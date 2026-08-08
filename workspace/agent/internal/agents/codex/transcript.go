@@ -100,6 +100,12 @@ func parseRolloutFull(lines [][]byte) ([]transcript.Turn, []transcript.Task, []t
 	var turns []transcript.Turn
 	var tasks []transcript.Task
 	var cwd, branch, model, effort, mode string
+	// The rollout turn currently open (task_started … task_complete). Every displayable
+	// turn inside it carries this id as its fork anchor (docs/55): `thread/fork`'s
+	// lastTurnId speaks in these, not in line numbers. Empty until the first
+	// task_started — the preamble (injected instructions) belongs to no turn and must
+	// not be branchable.
+	curTurn := ""
 	lastAssistant := -1           // index of the most recent assistant turn (for usage)
 	callTurn := map[string]int{}  // function_call call_id -> its tool/question turn index
 	answered := map[string]bool{} // call_ids whose function_call_output arrived
@@ -117,6 +123,13 @@ func parseRolloutFull(lines [][]byte) ([]transcript.Turn, []transcript.Task, []t
 		case "session_meta":
 			cwd, branch = metaContext(ev.Payload)
 		case "turn_context":
+			// turn_context also carries turn_id, and it can appear WITHOUT a task_started
+			// (settings applied between turns), so it is the fallback anchor source — but
+			// never the primary: it repeats more often than turns do (実測: 19 turn_context
+			// vs 15 task_started in one rollout).
+			if id := payloadTurnID(ev.Payload); id != "" && curTurn == "" {
+				curTurn = id
+			}
 			// Precedes each turn; carries the model (e.g. "gpt-5.5") and reasoning effort
 			// in effect. effort is often null (default) — kept only when codex records one.
 			if m, e := turnModel(ev.Payload); m != "" {
@@ -141,6 +154,7 @@ func parseRolloutFull(lines [][]byte) ([]transcript.Turn, []transcript.Task, []t
 					t.Model = model
 					t.Effort = effort
 				}
+				t.AnchorID = curTurn
 				turns = append(turns, t)
 				if t.Role == "assistant" {
 					lastAssistant = len(turns) - 1
@@ -176,6 +190,12 @@ func parseRolloutFull(lines [][]byte) ([]transcript.Turn, []transcript.Task, []t
 				}
 			}
 		case "event_msg":
+			// task_started opens the turn every following item belongs to (実測: it
+			// precedes the user prompt's response_item), so the anchor is set here and
+			// stays until the next one.
+			if id := taskStartedTurnID(ev.Payload); id != "" {
+				curTurn = id
+			}
 			if in, out, read, win, ok := tokenUsage(ev.Payload); ok && lastAssistant >= 0 {
 				turns[lastAssistant].InTok = in
 				turns[lastAssistant].OutTok = out
@@ -930,6 +950,78 @@ func compactedText(payload json.RawMessage) string {
 	return transcript.CapOutput(sb.String())
 }
 
+// rolloutLines reads a rollout and returns its non-blank lines — the input every parser
+// here takes. Shared by readTranscript and ResolveForkAt so the two never disagree about
+// which lines exist.
+func rolloutLines(path string) ([][]byte, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var lines [][]byte
+	for _, ln := range strings.Split(string(b), "\n") {
+		if strings.TrimSpace(ln) != "" {
+			lines = append(lines, []byte(ln))
+		}
+	}
+	return lines, nil
+}
+
+// taskStartedTurnID returns the turn id an event_msg/task_started payload opens, or ""
+// for any other event. This id is codex's own unit of "one exchange" and the currency of
+// `thread/fork`'s lastTurnId (docs/55 §55.2).
+func taskStartedTurnID(payload json.RawMessage) string {
+	var p struct {
+		Type   string `json:"type"`
+		TurnID string `json:"turn_id"`
+	}
+	if json.Unmarshal(payload, &p) != nil || p.Type != "task_started" {
+		return ""
+	}
+	return p.TurnID
+}
+
+// payloadTurnID pulls turn_id off any payload that carries one (turn_context).
+func payloadTurnID(payload json.RawMessage) string {
+	var p struct {
+		TurnID string `json:"turn_id"`
+	}
+	if json.Unmarshal(payload, &p) != nil {
+		return ""
+	}
+	return p.TurnID
+}
+
+// rolloutTurnIDs lists the rollout's turn ids in order, de-duplicated. ResolveForkAt
+// walks it to translate an anchor ("branch before THIS turn") into codex's inclusive
+// lastTurnId ("keep through THAT turn") — the previous entry.
+func rolloutTurnIDs(lines [][]byte) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, ln := range lines {
+		var ev struct {
+			Type    string          `json:"type"`
+			Payload json.RawMessage `json:"payload"`
+		}
+		if json.Unmarshal(ln, &ev) != nil {
+			continue
+		}
+		var id string
+		switch ev.Type {
+		case "event_msg":
+			id = taskStartedTurnID(ev.Payload)
+		case "turn_context":
+			id = payloadTurnID(ev.Payload)
+		}
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
+}
+
 // isContextCompacted reports an event_msg payload of type context_compacted
 // ("Conversation history was compacted", auto or manual).
 func isContextCompacted(payload json.RawMessage) bool {
@@ -1040,17 +1132,11 @@ func readTranscript(m session.Meta) (agents.TranscriptData, bool) {
 		managedEnrich(m, &td)
 		return td, true
 	}
-	b, err := os.ReadFile(path)
+	lines, err := rolloutLines(path)
 	if err != nil {
 		td := agents.TranscriptData{Path: path, Compacting: compacting}
 		managedEnrich(m, &td)
 		return td, true
-	}
-	var lines [][]byte
-	for _, ln := range strings.Split(string(b), "\n") {
-		if strings.TrimSpace(ln) != "" {
-			lines = append(lines, []byte(ln))
-		}
 	}
 	turns, tasks, pending, mode := parseRolloutFull(lines)
 	td := agents.TranscriptData{Turns: turns, Path: path, Tasks: tasks, Pending: pending, Mode: mode, Compacting: compacting}
