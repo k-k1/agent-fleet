@@ -114,7 +114,7 @@ import {
 import { ManagedSettingsModal } from "./ManagedSettingsModal.tsx";
 import { ForkAtModal } from "./ForkAtModal.tsx";
 import type { ForkAtTarget } from "./ForkAtModal.tsx";
-import { canBranchFrom, carriedUserTurns } from "./forkAt.ts";
+import { canBranchFrom, canBranchInSession, carriedUserTurns } from "./forkAt.ts";
 import { HandoffProposal, useHandoffProposal } from "./HandoffProposal.tsx";
 import { chronoInsertIndex } from "./handoffPlacement.ts";
 import { carryEnd, endOf, footTime } from "./turnTime.ts";
@@ -2280,10 +2280,9 @@ export function MirrorView({
   // waiting for the reply even if the session already reads idle.
   const replyPending = awaitingReply(groups);
 
-  // 「ここから分岐」（docs/55）。3 条件そろって初めて導線を出す: kind が分岐点を持てること、
-  // managed であること（分岐点を渡せる口が runtime API にしか無い）、そして読み取り専用で
-  // ないこと。ここで絞らないと、押せるのに必ず 400 で返るボタンを出すことになる。
-  const canForkAt = agent.caps.forkAt && managed && !readOnly;
+  // 「ここから分岐」（docs/55）。条件は kind ごとに違う（canBranchInSession）— ここで絞らないと、
+  // 押せるのに必ず 400 で返るボタンを出すか、逆に claude で永久に出ないかのどちらかになる。
+  const canForkAt = canBranchInSession(agent.caps, { managed, readOnly });
   const openForkAt = (turn: Group) => {
     if (!canBranchFrom(turn)) return;
     setForkAtTarget({

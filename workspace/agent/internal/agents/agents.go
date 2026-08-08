@@ -176,6 +176,17 @@ type ForkAtResolver interface {
 	ResolveForkAt(m session.Meta, anchor string) (string, error)
 }
 
+// ErrForkAtRoute is what a ForkAtResolver returns (wrapped, so the message can say which
+// kind and why) when the session's LAUNCH ROUTE cannot carry a fork point at all — not
+// when the anchor is bad. The two need separating because the user's next move differs:
+// a route problem means "this session can never do it" (switch to managed, or don't offer
+// the affordance), a bad anchor means "try again / reload the mirror".
+//
+// The rule is per-kind, not global: opencode and codex can only fork at a point through
+// their runtime APIs, so their CLI-route sessions refuse; claude has no managed driver at
+// all and does the cut on its own transcript, so a TUI session is the only route it has.
+var ErrForkAtRoute = errors.New("this session's launch route cannot fork at a past message")
+
 // NoGenericTranscript is the Transcript() default for agents that either have no
 // readable transcript (shell/ssm) or use their own path (claude). Embedding it keeps
 // the interface satisfied without a per-agent stub.

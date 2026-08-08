@@ -9,6 +9,7 @@ package opencode
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -43,7 +44,8 @@ func forkAtStore(t *testing.T) session.Meta {
 			t.Fatal(err)
 		}
 	}
-	return session.Meta{Dir: dir, Name: "n", Kind: session.KindOpencode}
+	// 分岐点を渡せるのは serve API 経由＝managed だけ（ResolveForkAt が経路も見る）。
+	return session.Meta{Dir: dir, Name: "n", Kind: session.KindOpencode, Driver: session.DriverManaged}
 }
 
 func TestResolveForkAtPassesAnchorThrough(t *testing.T) {
@@ -74,6 +76,21 @@ func TestResolveForkAtRejectsUnusableAnchors(t *testing.T) {
 				t.Fatalf("ResolveForkAt(%q) = %q, nil; want an error", tc.anchor, got)
 			}
 		})
+	}
+}
+
+// CLI(TUI) ルートは分岐点を渡す口が無い。これは「アンカーが悪い」ではなく「この経路では
+// できない」なので、ハンドラが fork_at_unsupported を返せるよう ErrForkAtRoute で答える。
+func TestResolveForkAtRefusesCLIRoute(t *testing.T) {
+	m := forkAtStore(t)
+	m.Driver = session.DriverTUI
+	_, err := (agentImpl{}).ResolveForkAt(m, "msg_1")
+	if err == nil {
+		t.Fatal("ResolveForkAt on the CLI route = nil error; want a refusal")
+	}
+	if !errors.Is(err, agents.ErrForkAtRoute) {
+		t.Fatalf("error = %v; want it to wrap ErrForkAtRoute so the handler can say "+
+			"「この経路ではできない」 instead of 「この分岐点は使えない」", err)
 	}
 }
 

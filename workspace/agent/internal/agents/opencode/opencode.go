@@ -6,6 +6,8 @@ package opencode
 
 import (
 	"errors"
+	"fmt"
+
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -61,6 +63,11 @@ func (agentImpl) ForkSource(m session.Meta) (string, error) {
 func (agentImpl) ResolveForkAt(m session.Meta, anchor string) (string, error) {
 	if anchor == "" {
 		return "", errors.New("分岐点が指定されていません")
+	}
+	// 分岐点を渡せる口は serve の API 側にしかない（`--session <src> --fork` には無い）。
+	if m.DriverKind() != session.DriverManaged {
+		return "", fmt.Errorf("%w: opencode の発言時点からの分岐は managed のセッションでのみ利用できます",
+			agents.ErrForkAtRoute)
 	}
 	db, ok := openRO()
 	if !ok {
