@@ -12,11 +12,13 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
 func requireLive(t *testing.T) {
@@ -112,6 +114,153 @@ func TestContractLiveTurnPayloads(t *testing.T) {
 	if md.Time.Completed == 0 {
 		t.Errorf("message.data.time.completed absent on a finished turn in opencode %s — "+
 			"LiveState's idle test depends on it (its absence means in-flight)", ver)
+	}
+}
+
+// liveTurn drives one real free-model turn and waits for it to LAND IN THE STORE.
+//
+// Waiting on h.state alone is not enough for a second turn: the handle is still sitting on
+// the previous turn's TurnCompleted when Send returns, so the wait falls through instantly
+// and the assertions run against a conversation that is one turn short. Poll the store —
+// the thing the assertions actually read — for the assistant reply.
+func liveTurn(t *testing.T, h *threadHandle, ses, prompt, id string, wantMsgs int) {
+	t.Helper()
+	if err := h.Send(agents.TurnInput{Prompt: prompt, ClientMessageID: id}); err != nil {
+		t.Fatalf("Send(%s): %v", id, err)
+	}
+	deadline := time.Now().Add(150 * time.Second)
+	for time.Now().Before(deadline) {
+		db, ok := openRO()
+		if !ok {
+			t.Fatal("openRO: store unreadable")
+		}
+		n := len(readSession(db, ses))
+		db.Close()
+		if n >= wantMsgs {
+			return
+		}
+		h.mu.Lock()
+		st := h.state
+		h.mu.Unlock()
+		if st == agents.TurnFailed {
+			t.Fatalf("turn %s failed (store has %d/%d messages)", id, n, wantMsgs)
+		}
+		time.Sleep(400 * time.Millisecond)
+	}
+	t.Fatalf("turn %s never landed in the store", id)
+}
+
+// TestContractLiveForkAtMessage is the end-to-end proof for docs/55 §55.3: a fork pinned to
+// a past user message carries the history up to — but NOT including — that message.
+//
+// Everything below this line in the stack is already covered by mocks (fork_at_test.go
+// pins the request body against an httptest serve). What only a real run can tell us is
+// whether opencode's fork endpoint actually MEANS what we think `messageID` means. The
+// inclusivity is the whole feature: off by one turn and the branch silently carries the
+// prompt the user wanted to retake, which reads as "it worked" in the mirror.
+//
+//	OPENCODE_CONTRACT_LIVE=1 go test -tags clicontract -run TestContractLiveForkAtMessage ./internal/agents/opencode/
+func TestContractLiveForkAtMessage(t *testing.T) {
+	requireLive(t)
+	addr, home := startServe(t)
+	t.Setenv("HOME", home)
+	dir := t.TempDir()
+	ver := opencodeVersion(t)
+
+	ses, err := serveCreateSession(addr, dir, "fork-at-live")
+	if err != nil {
+		t.Fatalf("serveCreateSession: %v", err)
+	}
+	h := &threadHandle{
+		name: "forkat", dir: dir, ocSid: "forkat-sid",
+		addr: addr, ses: ses, alive: true, gen: 1,
+		events: make(chan agents.Event, 64),
+	}
+	// 2 messages per turn (the prompt and the reply), so the store target doubles.
+	liveTurn(t, h, ses, "Reply with exactly: ALPHA", "forkat_1", 2)
+	liveTurn(t, h, ses, "Reply with exactly: BETA", "forkat_2", 4)
+
+	db, ok := openRO()
+	if !ok {
+		t.Fatal("openRO: store unreadable")
+	}
+	defer db.Close()
+	turns := readSession(db, ses)
+	users := []transcript.Turn{}
+	for _, tn := range turns {
+		if tn.Role == "user" {
+			users = append(users, tn)
+		}
+	}
+	if len(users) != 2 {
+		t.Fatalf("source has %d user turns, want 2 (opencode %s)", len(users), ver)
+	}
+	// The anchor the mirror hands out is this field — if the transcript stopped carrying
+	// it, the Console would quietly hide the affordance instead of failing.
+	anchor := users[1].AnchorID
+	if anchor == "" {
+		t.Fatalf("user turn carries no AnchorID on opencode %s — message ids moved", ver)
+	}
+
+	// The production resolver runs over the real store (it refuses unknown / sidechain
+	// ids), so map the slot to this conversation the way the sid store does.
+	m := session.Meta{Dir: dir, Name: "forkat", Kind: session.KindOpencode}
+	sids.Write(session.UUID(dir, "forkat"), ses)
+	resolved, err := (agentImpl{}).ResolveForkAt(m, anchor)
+	if err != nil {
+		t.Fatalf("ResolveForkAt(%s): %v", anchor, err)
+	}
+
+	forked, err := serveForkSession(addr, ses, dir, resolved)
+	if err != nil {
+		t.Fatalf("serveForkSession(at=%s): %v", resolved, err)
+	}
+	fdb, ok := openRO()
+	if !ok {
+		t.Fatal("openRO (fork): store unreadable")
+	}
+	defer fdb.Close()
+	fturns := readSession(fdb, forked)
+
+	var fUsers int
+	for _, tn := range fturns {
+		if tn.Role == "user" {
+			fUsers++
+		}
+		if strings.Contains(tn.Text, "BETA") {
+			t.Fatalf("the branch carried the anchored turn (%q) on opencode %s — messageID is "+
+				"NOT exclusive anymore; docs/55 §55.3 and the anchor translation need revisiting", tn.Text, ver)
+		}
+	}
+	if fUsers != 1 {
+		t.Errorf("branch has %d user turns, want 1 (everything before the anchor) on opencode %s", fUsers, ver)
+	}
+	if len(fturns) == 0 {
+		t.Errorf("branch carried no history at all on opencode %s", ver)
+	}
+	var sawAlpha bool
+	for _, tn := range fturns {
+		if strings.Contains(tn.Text, "ALPHA") {
+			sawAlpha = true
+		}
+	}
+	if !sawAlpha {
+		t.Errorf("branch is missing the turn BEFORE the anchor on opencode %s — the cut is too early", ver)
+	}
+
+	// Baseline: no anchor still copies everything, so the pre-docs/55 behaviour is intact.
+	whole, err := serveForkSession(addr, ses, dir, "")
+	if err != nil {
+		t.Fatalf("serveForkSession (whole): %v", err)
+	}
+	var wUsers int
+	for _, tn := range readSession(fdb, whole) {
+		if tn.Role == "user" {
+			wUsers++
+		}
+	}
+	if wUsers != 2 {
+		t.Errorf("whole-conversation fork has %d user turns, want 2 on opencode %s", wUsers, ver)
 	}
 }
 

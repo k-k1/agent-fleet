@@ -1,7 +1,8 @@
 # 55. 発言時点からの会話分岐（fork at message）
 
-> ◐ MVP（P1＋P1.5 ＝ 契約 ＋ opencode ＋ Console 導線）実装済み・実セッションでの通し確認待ち。
-> 残り = codex（P2）／claude（P3）。設計判断は [decisions/0039](decisions/0039-fork-at-message.md)。
+> ◐ MVP（P1＋P1.5 ＝ 契約 ＋ opencode ＋ Console 導線）実装済み。サーバ側は実 CLI で通し確認済み、
+> Console からの通しはデプロイ待ち。残り = codex（P2）／claude（P3）。
+> 設計判断は [decisions/0039](decisions/0039-fork-at-message.md)。
 > 旧判断（会話まるごと分岐のみ・地点分岐は非サポートにつき却下）は
 > [history/fork-from-chat.md](history/fork-from-chat.md)。本書はそれを差し替える。
 
@@ -125,6 +126,9 @@ for (let p of messages) {
 
 で、**指定した messageID そのものは含まれない**。ID は昇順採番なので `>=` の打ち切りが成立する。
 compaction パートの `tail_start_id` も新 ID へ張り替えている。
+
+この排他性は**実物でも確認済み**（1.18.15・§55.8 Tier B）。2 往復の会話で 2 番目のユーザー発言を
+指すと、分岐先は 1 往復だけになり、指した発言は入らない。
 
 同じ session 内で巻き戻す `POST /api/session/{id}/revert/stage`・`revert/commit`（`RevertState`
 は `{messageID, partID, snapshot}`）も別に存在するが、本機能は**元を残す**ので使わない。
@@ -325,6 +329,15 @@ SQLite。いずれも未検証で、`CanForkAt` は false のままにする。
 - **Console 単体**: ✅ `features/mirror/forkAt.test.ts`（導線を出す条件と「引き継ぐ発言数」の
   数え方）。この 2 つは**出しすぎれば必ず 400 になり、数え違えれば確認ダイアログが嘘をつく**
   ので、MirrorView から純関数に切り出してテストしている。
+  ✅ `features/mirror/ForkAtModal.dom.test.tsx`（`at` 付きで叩く／成功時にセッション名を返す／
+  **失敗時は閉じずに理由を出す**／name の無い 200 を成功と扱わない）。
+- **実 CLI（Tier B・live）**: ✅ `TestContractLiveForkAtMessage`。実 `opencode serve`＋実モデルで
+  2 往復して、2 番目のユーザー発言を指して分岐し、**分岐先が 1 往復だけ（ALPHA あり・BETA なし）**
+  であることと、分岐点なしなら 2 往復まるごと来ることを確かめる。ここが本命で、モックが
+  確かめられるのは「messageID を送ったこと」まで、**opencode がその messageID をどう解釈するか**
+  は実物にしか聞けない。1 往復ずれても、ミラー上は「分岐できた」に見えてしまう。
+  既存の live tier と同じ `-run TestContractLive` 一括起動に自動で乗る
+  （`.github/workflows/opencode-contract.yml`）。
 - **実 CLI 契約テスト（ドリフト検知）**: `cli-version-pin-e2e` の層に足す。
   - claude: **手で切り詰めた jsonl が resume でき、切り詰め後の履歴だけを見ている**こと。
     ここが claude 更新で壊れる唯一の場所なので、ピン更新のたびに回す。
@@ -352,9 +365,10 @@ opencode を先にやるのは、**公式 API で最も改修が小さく、契�
 
 ## 55.10 未検証（各 Phase に着手する前に潰す）
 
-MVP（P1＋P1.5）自体にも**実セッションでの通し確認が残っている**: 実際に managed の opencode
-セッションを立て、ミラーの過去発言から分岐して、分岐先の履歴がその発言の手前で終わっていること
-を目で見る。ここまでは合成テスト（httptest のモック serve と一時 SQLite ストア）で担保している。
+MVP（P1＋P1.5）のサーバ側は**実 CLI で通し確認済み**（§55.8 の Tier B — 実 serve・実モデルで
+2 往復して分岐し、分岐先が分岐点の手前で終わることを確認。opencode 1.18.15）。残っているのは
+**Console からの通し**で、これは Workspace イメージ再ビルド＋コンテナ recreate（Agent の Go 変更）
+と Console バンドルのビルド＋CP 再起動が要るので、デプロイの都合に従う。
 
 
 1. **codex `thread/fork` は rollout をいつ書くか。** 初回 turn 前に書かないなら TUI codex の
