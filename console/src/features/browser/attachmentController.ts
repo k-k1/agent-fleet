@@ -5,6 +5,7 @@ import type {
   BrowserPageState,
   BrowserSnapshot,
 } from "./protocol.ts";
+import { clampZoom } from "./protocol.ts";
 
 export type BrowserAttachmentControlMode = "view-only" | "user-control" | "locked";
 export type BrowserAttachmentResult = "pending" | "completed" | "cancelled";
@@ -126,6 +127,16 @@ const clampViewport = (width: number, height: number): { width: number; height: 
   height: Math.max(1, Math.min(1200, Math.round(height))),
 });
 
+/**
+ * A zoomed-out LAYOUT viewport, which is deliberately allowed past the
+ * screencast's 1600x1200 ceiling: the frames stay pane-sized (the Agent scales
+ * them), only the coordinate space grows. Mirrors browserMaxLayout* in the Agent.
+ */
+const clampLayout = (width: number, height: number): { width: number; height: number } => ({
+  width: Math.max(1, Math.min(4000, Math.round(width))),
+  height: Math.max(1, Math.min(4000, Math.round(height))),
+});
+
 const terminalViewState = (state: string): BrowserAttachmentViewState | null => {
   if (state === "target-closed" || state === "unsupported-target-url" || state === "disconnected") return state;
   if (state === "expired" || state === "detached") return state;
@@ -179,11 +190,115 @@ export class BrowserAttachmentController {
     else void this.start();
   }
 
+  /**
+   * The pane's own size. It is tracked separately from snapshot.width/height
+   * because with zoom-to-fit the Agent answers with a WIDER layout viewport —
+   * the space pointer coordinates live in — and comparing against that would
+   * re-send a viewport on every frame of a resize.
+   */
+  private pane = { width: 0, height: 0 };
+  private fitValue = true;
+  private zoomValue = 1;
+
   setViewport(width: number, height: number): void {
     const next = clampViewport(width, height);
-    if (next.width === this.snapshotValue.width && next.height === this.snapshotValue.height) return;
+    if (next.width === this.pane.width && next.height === this.pane.height) return;
+    this.pane = next;
     this.update(next);
-    this.send({ type: "viewport", ...next });
+    this.sendViewport();
+  }
+
+  get fit(): boolean {
+    return this.fitValue;
+  }
+
+  /**
+   * Zoom the page out until its content fits the pane (or back to 1:1). It also
+   * drops the pinch zoom: the toolbar's fit button is the one control that
+   * restores a known view, and leaving a 4x pinch applied on top of it would
+   * make "fit" not fit.
+   */
+  setFit(fit: boolean): void {
+    if (this.fitValue === fit && this.zoomValue === 1) return;
+    this.fitValue = fit;
+    this.zoomValue = 1;
+    if (this.pane.width < 1) return;
+    this.update(this.pane);
+    this.sendViewport();
+  }
+
+  get zoom(): number {
+    return this.zoomValue;
+  }
+
+  /** Pinch zoom, applied on top of the pane (and of fit) by the Agent. */
+  zoomBy(factor: number): void {
+    const next = clampZoom(this.zoomValue * factor);
+    if (next === this.zoomValue || this.pane.width < 1) return;
+    this.zoomValue = next;
+    this.sendViewport();
+  }
+
+  /**
+   * Double tap: jump between the base view (fitted, or the pane) and life size,
+   * where one layout pixel is one pane pixel and nothing is scaled at all.
+   *
+   * The base is not tracked here — the Agent owns it, because only it can
+   * measure the page for zoom-to-fit. It is recovered instead from the layout
+   * the Agent last reported: `layout x zoom` is the base, so the zoom that lands
+   * the layout on the pane is `base / pane`. With fit off the base IS the pane,
+   * so there is no 1:1 to jump to and a plain 2x is the useful answer.
+   */
+  toggleZoom(): void {
+    if (this.pane.width < 1) return;
+    const lifeSize = (this.snapshotValue.width * this.zoomValue) / this.pane.width;
+    const next = clampZoom(this.zoomValue > 1 ? 1 : Math.max(lifeSize, 2));
+    if (next === this.zoomValue) return;
+    this.zoomValue = next;
+    this.sendViewport();
+  }
+
+  private sendViewport(): void {
+    this.send({ type: "viewport", ...this.pane, fit: this.fitValue, zoom: this.zoomValue });
+  }
+
+  /**
+   * Ask the page for its selection and put it on the user's clipboard. The
+   * remote Chromium's own clipboard lives in the container, so a forwarded
+   * Ctrl+C would copy into a void.
+   */
+  copySelection(): Promise<boolean> {
+    if (!this.socket || this.snapshotValue.controlMode === "locked") return Promise.resolve(false);
+    const pending = this.clipboardWaiters;
+    return new Promise<string | null>((resolve) => {
+      const timer = window.setTimeout(() => {
+        pending.delete(resolve);
+        resolve(null);
+      }, 5000);
+      this.clipboardTimers.set(resolve, timer);
+      pending.add(resolve);
+      this.send({ type: "copy" });
+    }).then(async (text) => {
+      if (!text) return false;
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  }
+
+  private readonly clipboardWaiters = new Set<(text: string | null) => void>();
+  private readonly clipboardTimers = new Map<(text: string | null) => void, number>();
+
+  private resolveClipboard(text: string): void {
+    for (const resolve of [...this.clipboardWaiters]) {
+      window.clearTimeout(this.clipboardTimers.get(resolve));
+      this.clipboardTimers.delete(resolve);
+      this.clipboardWaiters.delete(resolve);
+      resolve(text);
+    }
   }
 
   sendInput(message: BrowserOutbound): void {
@@ -271,7 +386,8 @@ export class BrowserAttachmentController {
     socket.binaryType = "arraybuffer";
     socket.onopen = () => {
       if (socket !== this.socket || generation !== this.generation) return;
-      this.send({ type: "viewport", width: this.snapshotValue.width, height: this.snapshotValue.height });
+      const pane = this.pane.width > 0 ? this.pane : { width: this.snapshotValue.width, height: this.snapshotValue.height };
+      this.send({ type: "viewport", ...pane, fit: this.fitValue, zoom: this.zoomValue });
       this.send({ type: "visibility", visible: this.visible });
     };
     socket.onmessage = (event) => {
@@ -352,6 +468,17 @@ export class BrowserAttachmentController {
         }
         return;
       }
+      case "viewport":
+        // Zoom-to-fit: the Agent laid the page out wider than the pane, so the
+        // canvas must map pointer coordinates into THAT space.
+        this.update(clampLayout(
+          typeof message.width === "number" ? message.width : this.snapshotValue.width,
+          typeof message.height === "number" ? message.height : this.snapshotValue.height,
+        ));
+        return;
+      case "clipboard":
+        this.resolveClipboard(typeof message.text === "string" ? message.text : "");
+        return;
       case "control-mode": {
         const mode = message.controlMode;
         if (mode === "view-only" || mode === "user-control" || mode === "locked") {
@@ -372,6 +499,18 @@ export class BrowserAttachmentController {
         this.appendConsole({
           level: typeof message.level === "string" ? message.level.slice(0, 20) : "log",
           text: typeof message.text === "string" ? message.text.slice(0, 16_384) : "",
+          ts: typeof message.ts === "string" ? message.ts : "",
+        });
+        return;
+      // The agent refuses input while the attachment is not in user-control and
+      // says so — but nothing used to read it, so a pane whose input was being
+      // dropped looked identical to a working one. Surfacing it in the console
+      // drawer makes a stale Console bundle or a control-mode race diagnosable
+      // instead of silent.
+      case "protocol-error":
+        this.appendConsole({
+          level: "error",
+          text: `[agent] ${String(message.code ?? "protocol_error")}: ${String(message.message ?? "")}`.slice(0, 16_384),
           ts: typeof message.ts === "string" ? message.ts : "",
         });
         return;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BrowserOutbound, RemoteKeyLike } from "./protocol.ts";
-import { BrowserInputBridge, modifiersOf, remotePoint } from "./protocol.ts";
+import { BrowserInputBridge, clipboardShortcut, heldButton, modifiersOf, remotePoint, wheelPixels } from "./protocol.ts";
 
 const key = (overrides: Partial<RemoteKeyLike> = {}): RemoteKeyLike => ({
   key: "a",
@@ -40,5 +40,33 @@ describe("browser input protocol", () => {
       { type: "key", event: "down", key: "a", code: "KeyA", modifiers: 2, repeat: false },
       { type: "key", event: "up", key: "a", code: "KeyA", modifiers: 2, repeat: false },
     ]);
+  });
+});
+
+describe("drag and clipboard classification", () => {
+  it("reads the held button out of the buttons bitmask", () => {
+    expect(heldButton(0)).toBe("none");
+    expect(heldButton(1)).toBe("left");
+    expect(heldButton(2)).toBe("right");
+    expect(heldButton(4)).toBe("middle");
+    expect(heldButton(3)).toBe("left"); // left wins when several are down
+  });
+
+  it("recognises only the clipboard shortcuts, and not Alt-modified ones", () => {
+    expect(clipboardShortcut(key({ key: "c", ctrlKey: true }))).toBe("copy");
+    expect(clipboardShortcut(key({ key: "V", metaKey: true }))).toBe("paste");
+    expect(clipboardShortcut(key({ key: "x", ctrlKey: true }))).toBe("cut");
+    expect(clipboardShortcut(key({ key: "c" }))).toBeNull();
+    expect(clipboardShortcut(key({ key: "c", ctrlKey: true, altKey: true }))).toBeNull();
+    expect(clipboardShortcut(key({ key: "a", ctrlKey: true }))).toBeNull();
+  });
+});
+
+describe("wheel delta units", () => {
+  it("converts line and page deltas to pixels, leaving pixel deltas alone", () => {
+    expect(wheelPixels(0, 100, 0, 800)).toEqual({ deltaX: 0, deltaY: 100 });
+    // 3 lines is one wheel notch on several platforms — forwarded raw it is 3px.
+    expect(wheelPixels(0, 3, 1, 800)).toEqual({ deltaX: 0, deltaY: 48 });
+    expect(wheelPixels(-1, 1, 2, 800)).toEqual({ deltaX: -800, deltaY: 800 });
   });
 });

@@ -72,6 +72,12 @@ func (f *fakeBrowserCDP) Call(_ context.Context, method string, params any, sess
 		response = map[string]any{"sessionId": "session-1"}
 	case "Page.getFrameTree":
 		response = map[string]any{"frameTree": map[string]any{"frame": map[string]any{"id": "frame-1"}}}
+	case "Page.getLayoutMetrics":
+		// A desktop page that does not fit a narrow pane: content is wider than
+		// whatever viewport it was laid out in.
+		response = map[string]any{"cssContentSize": map[string]any{"width": 1240, "height": 2000}}
+	case "Runtime.evaluate":
+		response = map[string]any{"result": map[string]any{"value": "コピー対象のテキスト"}}
 	case "Page.getNavigationHistory":
 		response = map[string]any{"currentIndex": 0, "entries": []map[string]any{{"id": 7, "url": "http://127.0.0.1:3000/", "title": "App"}}}
 	}
@@ -80,6 +86,13 @@ func (f *fakeBrowserCDP) Call(_ context.Context, method string, params any, sess
 		_ = json.Unmarshal(b, result)
 	}
 	return nil
+}
+
+// Send records exactly like Call so the existing assertions cover input either
+// way; the real difference — not waiting for Chromium's reply — is invisible here
+// and is measured by the live tests.
+func (f *fakeBrowserCDP) Send(method string, params any, session string) error {
+	return f.Call(context.Background(), method, params, session, nil)
 }
 
 func (f *fakeBrowserCDP) Events() <-chan browserCDPEvent { return f.events }
@@ -463,6 +476,63 @@ func TestBrowserViewportSkipsRedundantRestart(t *testing.T) {
 	v.handleControl([]byte(`{"type":"viewport","width":1000,"height":700}`))
 	if !waitFor(time.Second, func() bool { return countStops() > before }) {
 		t.Fatal("a real viewport resize did not restart the screencast")
+	}
+}
+
+// A pinch in the pane lays the page out smaller — that is what makes the text
+// bigger AND keeps it sharp — so the viewer has to be told the new coordinate
+// space, and the frame must stay pane-sized rather than grow with the zoom.
+func TestBrowserViewportPinchZoomShrinksLayout(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	m := fakeBrowserManager(cdp)
+	t.Cleanup(m.Close)
+	created, err := m.Create(browserCreateRequest{Port: 3000, Path: "/", Viewport: browserViewportRequest{Width: 900, Height: 600, DeviceScaleFactor: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	p := m.pages[created.ID]
+	m.mu.Unlock()
+	v := &browserViewer{page: p, control: make(chan browserOutbound, 8), done: make(chan struct{})}
+	p.mu.Lock()
+	p.viewer, p.visible = v, true
+	p.mu.Unlock()
+
+	v.handleControl([]byte(`{"type":"viewport","width":900,"height":600,"zoom":3}`))
+	metrics, ok := cdp.last("Emulation.setDeviceMetricsOverride")
+	if !ok || metrics.Params["width"] != float64(300) || metrics.Params["height"] != float64(200) {
+		t.Fatalf("zoomed layout = %+v", metrics.Params)
+	}
+	// The emulated pixel ratio stays 1 — the screencast ignores it (measured; see
+	// zoomedLayout), so raising it would render pixels no frame ever carries.
+	if metrics.Params["deviceScaleFactor"] != float64(1) {
+		t.Fatalf("deviceScaleFactor = %v", metrics.Params["deviceScaleFactor"])
+	}
+	var told map[string]any
+	for done := false; !done; {
+		select {
+		case out := <-v.control:
+			var msg map[string]any
+			if json.Unmarshal(out.data, &msg) == nil && msg["type"] == "viewport" {
+				told = msg
+			}
+		default:
+			done = true
+		}
+	}
+	if told == nil || told["width"] != float64(300) || told["height"] != float64(200) {
+		t.Fatalf("viewer was not told the zoomed mapping space: %+v", told)
+	}
+	// Pointer coordinates now live in the zoomed layout, not the pane.
+	if !v.validPoint(299, 199) || v.validPoint(700, 100) {
+		t.Fatal("pointer mapping did not follow the zoom")
+	}
+	if err := p.startScreencast(); err != nil {
+		t.Fatal(err)
+	}
+	cast, _ := cdp.last("Page.startScreencast")
+	if cast.Params["maxWidth"] != float64(900) || cast.Params["maxHeight"] != float64(600) {
+		t.Fatalf("zooming in must not grow the frame: %+v", cast.Params)
 	}
 }
 

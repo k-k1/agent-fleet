@@ -25,6 +25,33 @@ export async function getBrowserAttachment(id: string): Promise<BrowserAttachmen
   return status;
 }
 
+/**
+ * The live attachments, newest first. The action link is the primary way in
+ * (docs/53 §53.7); this is the way BACK in once that link has scrolled out of
+ * the mirror or its pane was closed while the hand-off is still pending.
+ * Expired-but-not-yet-reaped entries are dropped here, as getBrowserAttachment
+ * does, so the list never offers a pane that cannot open.
+ */
+export async function listBrowserAttachments(): Promise<BrowserAttachmentStatus[]> {
+  const data = await api("api/browser/attachments");
+  throwAPIError(data);
+  const raw = (data as { attachments?: unknown })?.attachments;
+  if (!Array.isArray(raw)) return [];
+  const now = Date.now();
+  const live: BrowserAttachmentStatus[] = [];
+  for (const entry of raw) {
+    try {
+      const status = normalizeBrowserAttachmentStatus(entry);
+      const expires = Date.parse(status.expiresAt);
+      if (Number.isFinite(expires) && expires <= now) continue;
+      live.push(status);
+    } catch {
+      // One malformed entry must not hide the rest of the list.
+    }
+  }
+  return live;
+}
+
 async function detachBrowserAttachment(id: string): Promise<void> {
   const data = await api(`api/browser/attachments/${encodeURIComponent(id)}`, { method: "DELETE" });
   throwAPIError(data);

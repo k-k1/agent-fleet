@@ -1,6 +1,7 @@
 import type { BrowserTarget } from "./target.ts";
 import { browserTarget } from "./target.ts";
 import type { BrowserOutbound, BrowserPageState, BrowserSnapshot } from "./protocol.ts";
+import { clampZoom } from "./protocol.ts";
 
 export interface BrowserPageResult {
   id: string;
@@ -51,6 +52,17 @@ const initialSnapshot = (): BrowserSnapshot => ({
 const clampViewport = (width: number, height: number): { width: number; height: number } => ({
   width: Math.max(1, Math.min(1600, Math.round(width))),
   height: Math.max(1, Math.min(1200, Math.round(height))),
+});
+
+/**
+ * The LAYOUT viewport the Agent answers with once a pinch zoom is applied. It is
+ * smaller than the pane (the page is laid out in fewer CSS pixels and rendered at
+ * a matching device pixel ratio), and it is the space pointer coordinates live
+ * in — so it is tracked separately from the pane's own size.
+ */
+const clampLayout = (width: number, height: number): { width: number; height: number } => ({
+  width: Math.max(1, Math.min(4000, Math.round(width))),
+  height: Math.max(1, Math.min(4000, Math.round(height))),
 });
 
 export class BrowserController {
@@ -115,11 +127,82 @@ export class BrowserController {
     }
   }
 
+  /**
+   * The pane's own size, tracked apart from snapshot.width/height: with a pinch
+   * zoom applied the Agent lays the page out smaller and answers with THAT size,
+   * and comparing a resize against it would re-send a viewport forever.
+   */
+  private pane = { width: 0, height: 0 };
+  private zoomValue = 1;
+
   setViewport(width: number, height: number): void {
     const next = clampViewport(width, height);
-    if (next.width === this.snapshotValue.width && next.height === this.snapshotValue.height) return;
+    if (next.width === this.pane.width && next.height === this.pane.height) return;
+    this.pane = next;
     this.update({ width: next.width, height: next.height });
-    this.send({ type: "viewport", ...next });
+    this.send({ type: "viewport", ...next, zoom: this.zoomValue });
+  }
+
+  get zoom(): number {
+    return this.zoomValue;
+  }
+
+  /** Pinch zoom: the Agent lays the page out this much smaller (see protocol.ts). */
+  zoomBy(factor: number): void {
+    const next = clampZoom(this.zoomValue * factor);
+    if (next === this.zoomValue || this.pane.width < 1) return;
+    this.zoomValue = next;
+    this.send({ type: "viewport", ...this.pane, zoom: next });
+  }
+
+  /**
+   * Double tap: back to the pane's own layout, or in to 2x. This pane has no
+   * zoom-to-fit — it previews the user's OWN app at its real viewport — so
+   * unzoomed already IS life size and there is no third state to visit.
+   */
+  toggleZoom(): void {
+    if (this.pane.width < 1) return;
+    const next = this.zoomValue > 1 ? 1 : 2;
+    if (next === this.zoomValue) return;
+    this.zoomValue = next;
+    this.send({ type: "viewport", ...this.pane, zoom: next });
+  }
+
+  /**
+   * Ask the page for its selection and put it on the USER's clipboard — the
+   * container Chromium's own clipboard is unreachable from the browser tab.
+   */
+  copySelection(): Promise<boolean> {
+    if (!this.socket) return Promise.resolve(false);
+    return new Promise<string | null>((resolve) => {
+      const timer = window.setTimeout(() => {
+        this.clipboardWaiters.delete(resolve);
+        resolve(null);
+      }, 5000);
+      this.clipboardTimers.set(resolve, timer);
+      this.clipboardWaiters.add(resolve);
+      this.send({ type: "copy" });
+    }).then(async (text) => {
+      if (!text) return false;
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  }
+
+  private readonly clipboardWaiters = new Set<(text: string | null) => void>();
+  private readonly clipboardTimers = new Map<(text: string | null) => void, number>();
+
+  private resolveClipboard(text: string): void {
+    for (const resolve of [...this.clipboardWaiters]) {
+      window.clearTimeout(this.clipboardTimers.get(resolve));
+      this.clipboardTimers.delete(resolve);
+      this.clipboardWaiters.delete(resolve);
+      resolve(text);
+    }
   }
 
   /** Adopt a navigation reported by the Page without constructing a new Page. */
@@ -236,7 +319,8 @@ export class BrowserController {
     socket.binaryType = "arraybuffer";
     socket.onopen = () => {
       if (socket !== this.socket || generation !== this.generation) return;
-      this.send({ type: "viewport", width: this.snapshotValue.width, height: this.snapshotValue.height });
+      const pane = this.pane.width > 0 ? this.pane : { width: this.snapshotValue.width, height: this.snapshotValue.height };
+      this.send({ type: "viewport", ...pane, zoom: this.zoomValue });
       this.send({ type: "visibility", visible: this.visible });
       if (this.pendingPath) {
         const path = this.pendingPath;
@@ -283,6 +367,17 @@ export class BrowserController {
         });
         return;
       }
+      case "viewport":
+        // A pinch zoom laid the page out smaller than the pane, so the canvas
+        // must map pointer coordinates into THAT space.
+        this.update(clampLayout(
+          typeof message.width === "number" ? message.width : this.snapshotValue.width,
+          typeof message.height === "number" ? message.height : this.snapshotValue.height,
+        ));
+        return;
+      case "clipboard":
+        this.resolveClipboard(typeof message.text === "string" ? message.text : "");
+        return;
       case "navigation":
         this.update({
           url: typeof message.url === "string" ? message.url : this.snapshotValue.url,

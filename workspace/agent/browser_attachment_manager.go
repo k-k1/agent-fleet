@@ -9,6 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -39,11 +42,20 @@ type browserAttachmentManager struct {
 type browserAttachment struct {
 	manager   *browserAttachmentManager
 	id        string
+	createdAt time.Time
 	targetKey string
 	targetID  string
 	sessionID string
 	cdp       browserCDP
-	viewport  browserViewport
+	// viewport is the LAYOUT viewport pointer coordinates are expressed in; with
+	// zoom-to-fit it is wider than pane, and with a pinch zoom it is narrower.
+	// pane is what the viewer actually shows; base is the layout before the pinch
+	// zoom, kept so a pinch does not re-measure an already zoomed page.
+	viewport browserViewport
+	pane     browserViewport
+	base     browserViewport
+	fit      bool
+	zoom     float64
 
 	mu          sync.Mutex
 	state       string
@@ -124,7 +136,7 @@ func (m *browserAttachmentManager) Discover(port int) (browserAttachTargetsRespo
 	if err != nil {
 		return browserAttachTargetsResponse{}, err
 	}
-	return browserAttachTargetsResponse{Targets: discovery.Targets}, nil
+	return browserAttachTargetsResponse{Targets: discovery.Targets, BrowserID: discovery.BrowserID}, nil
 }
 
 func (m *browserAttachmentManager) Create(req browserAttachmentCreateRequest) (browserAttachmentResponse, error) {
@@ -136,6 +148,12 @@ func (m *browserAttachmentManager) Create(req browserAttachmentCreateRequest) (b
 	}
 	if len(req.Label) > browserAttachmentMaxLabel || !utf8.ValidString(req.Label) {
 		return browserAttachmentResponse{}, attachmentError(http.StatusBadRequest, "bad_browser_attachment", "label is invalid", nil)
+	}
+	wantBrowser := ""
+	if req.BrowserID != "" {
+		if wantBrowser = normalizeCDPBrowserID(req.BrowserID); wantBrowser == "" {
+			return browserAttachmentResponse{}, attachmentError(http.StatusBadRequest, "bad_browser_attachment", "browserId is invalid", nil)
+		}
 	}
 	viewport, err := normalizeAttachmentViewport(req.Viewport)
 	if err != nil {
@@ -159,6 +177,13 @@ func (m *browserAttachmentManager) Create(req browserAttachmentCreateRequest) (b
 	discovery, err := m.config.Discover(req.Port, m.config.DiscoveryTimeout)
 	if err != nil {
 		return browserAttachmentResponse{}, err
+	}
+	// The caller told us which Chromium instance it means. A port collision is
+	// silent on the Chromium side (the loser binds the other loopback family), so
+	// this is the check that keeps an attach off another session's browser.
+	if wantBrowser != "" && !strings.EqualFold(wantBrowser, discovery.BrowserID) {
+		return browserAttachmentResponse{}, attachmentError(http.StatusConflict, "cdp_browser_mismatch",
+			"port "+strconv.Itoa(req.Port)+" is served by a different Chromium instance than browserId", nil)
 	}
 	var target *browserAttachTarget
 	for i := range discovery.Targets {
@@ -215,8 +240,8 @@ func (m *browserAttachmentManager) Create(req browserAttachmentCreateRequest) (b
 		state = attachmentStateUnsupportedURL
 	}
 	a := &browserAttachment{
-		manager: m, id: newBrowserAttachmentID(), targetKey: targetKey, targetID: req.TargetID,
-		sessionID: attached.SessionID, cdp: cdp, viewport: viewport,
+		manager: m, id: newBrowserAttachmentID(), createdAt: time.Now(), targetKey: targetKey, targetID: req.TargetID,
+		sessionID: attached.SessionID, cdp: cdp, viewport: viewport, pane: viewport, base: viewport, zoom: 1,
 		state: state, title: target.Title, label: req.Label, url: target.URL, controlMode: attachmentControlViewOnly,
 		latestFrame: make(chan []byte, 1), frameEvents: make(chan browserScreencastFrame, 1), frameStop: make(chan struct{}),
 	}
@@ -250,6 +275,24 @@ func (m *browserAttachmentManager) Get(id string) (browserAttachmentResponse, er
 		return browserAttachmentResponse{}, attachmentError(http.StatusNotFound, "browser_attachment_not_found", "browser attachment does not exist", nil)
 	}
 	return a.response(), nil
+}
+
+// List returns the live attachments, newest first, so the Console can offer a
+// way back to one whose action link has scrolled out of the mirror (docs/53
+// §53.7). It exposes no more than the pane already shows for a single id.
+func (m *browserAttachmentManager) List() browserAttachmentListResponse {
+	m.mu.Lock()
+	live := make([]*browserAttachment, 0, len(m.attachments))
+	for _, a := range m.attachments {
+		live = append(live, a)
+	}
+	m.mu.Unlock()
+	sort.Slice(live, func(i, j int) bool { return live[i].createdAt.After(live[j].createdAt) })
+	items := make([]browserAttachmentResponse, 0, len(live))
+	for _, a := range live {
+		items = append(items, a.response())
+	}
+	return browserAttachmentListResponse{Attachments: items}
 }
 
 // Delete is intentionally idempotent and never closes the external Page or
@@ -664,14 +707,19 @@ func (a *browserAttachment) startScreencast() error {
 	}
 	a.mu.Lock()
 	blocked := a.terminal || a.state == attachmentStateUnsupportedURL || a.controlMode == attachmentControlLocked
-	viewport := a.viewport
+	// Cap the IMAGE at the pane, not the layout viewport: zoom-to-fit lays the
+	// page out wider on purpose, and the frame is scaled back down anyway.
+	image := a.pane
+	if image.Width < 1 || image.Height < 1 {
+		image = a.viewport
+	}
 	a.mu.Unlock()
 	if blocked {
 		return nil
 	}
 	err := a.manager.call(a.cdp, a.sessionID, "Page.startScreencast", map[string]any{
 		"format": "jpeg", "quality": a.manager.config.JPEGQuality,
-		"maxWidth": viewport.Width, "maxHeight": viewport.Height,
+		"maxWidth": image.Width, "maxHeight": image.Height,
 	}, nil)
 	if err == nil {
 		a.casting = true
