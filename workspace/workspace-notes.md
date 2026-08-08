@@ -305,6 +305,10 @@ in its `[agent-fleet]` note. Don't infer it from a directory name.
   the Console and picks the agent and model. You cannot create, stop or message other sessions;
   this proposal is the handoff channel. Commit and push before proposing one: the next session
   may run in a different worktree.
+  **If the user directly asks you to hand off / continue elsewhere — "引き継いで", "hand this
+  off", "continue in a new session" — that request itself is the trigger: call this tool right
+  away.** There is no other way for you to start a handoff; do not substitute a plain-text
+  summary or a to-do list in chat for the actual tool call.
 - **Chromium attach tools** — see the section above.
 - **Adding an MCP server is a Console action** (Settings → MCP), not a config edit. Agent Fleet
   owns its entries in `~/.claude.json`, `~/.codex/config.toml`, opencode's config and so on, and
