@@ -149,6 +149,7 @@ export function BrowserAttachPane({ paneId, attachmentId }: BrowserAttachPanePro
         snapshot={snapshot}
         canvasLabel={tr("browser.attach.canvas")}
         inputLabel={tr("browser.remote_input")}
+        keyboardLabel={tr("browser.keyboard_toggle")}
         inputEnabled={userControl}
       >
         {status && (

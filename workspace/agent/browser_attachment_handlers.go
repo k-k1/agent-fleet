@@ -612,7 +612,16 @@ func (v *browserAttachmentViewer) handleMouse(data []byte) {
 		v.protocolError("bad_mouse", "unsupported mouse event or button")
 		return
 	}
-	v.call("Input.dispatchMouseEvent", map[string]any{"type": eventType, "x": msg.X, "y": msg.Y, "button": msg.Button, "buttons": msg.Buttons, "modifiers": msg.Modifiers, "clickCount": msg.ClickCount}, nil)
+	params := map[string]any{"type": eventType, "x": msg.X, "y": msg.Y, "button": msg.Button,
+		"buttons": msg.Buttons, "modifiers": msg.Modifiers, "clickCount": msg.ClickCount}
+	// Only the pointer-rate events skip the reply (see post): a press, a release
+	// or a keystroke is one event per user action and can afford the round trip,
+	// which keeps anything read straight afterwards consistent with it.
+	if eventType == "mouseMoved" {
+		v.post("Input.dispatchMouseEvent", params)
+		return
+	}
+	v.call("Input.dispatchMouseEvent", params, nil)
 }
 
 func (v *browserAttachmentViewer) handleWheel(data []byte) {
@@ -627,7 +636,7 @@ func (v *browserAttachmentViewer) handleWheel(data []byte) {
 		v.protocolError("bad_wheel", "invalid wheel event")
 		return
 	}
-	v.call("Input.dispatchMouseEvent", map[string]any{"type": "mouseWheel", "x": msg.X, "y": msg.Y, "deltaX": msg.DeltaX, "deltaY": msg.DeltaY, "modifiers": msg.Modifiers}, nil)
+	v.post("Input.dispatchMouseEvent", map[string]any{"type": "mouseWheel", "x": msg.X, "y": msg.Y, "deltaX": msg.DeltaX, "deltaY": msg.DeltaY, "modifiers": msg.Modifiers})
 }
 
 func (v *browserAttachmentViewer) handleKey(data []byte) {
@@ -723,6 +732,23 @@ func (v *browserAttachmentViewer) call(method string, params, result any) bool {
 		return false
 	}
 	return true
+}
+
+// post dispatches an INPUT command without waiting for Chromium's reply (see
+// browserCDPCore.Send). Control messages are handled on the viewer's read loop,
+// so waiting per finger movement is what made a swipe queue up behind Chromium's
+// frame-paced acks. A dead attachment still refuses input.
+func (v *browserAttachmentViewer) post(method string, params any) {
+	a := v.attachment
+	a.mu.Lock()
+	terminal := a.terminal
+	a.mu.Unlock()
+	if terminal || a.cdp.Send(method, params, a.sessionID) != nil {
+		v.protocolError("browser_command_failed", "browser attachment command failed")
+		if !terminal {
+			go a.manager.markTerminal(a, attachmentStateDisconnected, "Chromium disconnected")
+		}
+	}
 }
 
 func (v *browserAttachmentViewer) protocolError(code, message string) {

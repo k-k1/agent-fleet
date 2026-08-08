@@ -80,6 +80,29 @@
   caret-color: transparent;
   pointer-events: none;
 }
+/* Touch keyboard toggle. A tap must not raise the on-screen keyboard (it would
+   appear on every link and button), so this is the deliberate way to open it.
+   Bottom LEFT: the console drawer takes the bottom right, the pane control
+   cluster the top right. */
+.browser-keyboard {
+  position: absolute;
+  z-index: 4;
+  bottom: 10px;
+  left: 10px;
+  width: 38px;
+  height: 38px;
+  color: #e9edf2;
+  background: rgba(20, 22, 26, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 10px;
+}
+.browser-keyboard .codicon { font-size: 17px; }
+.browser-keyboard-on {
+  color: var(--accent);
+  background: rgba(20, 22, 26, 0.9);
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
 .browser-state {
   position: absolute;
   inset: 0;

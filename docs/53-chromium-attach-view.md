@@ -858,12 +858,15 @@ RDPそのものは更に不利で、`xrdp`はsesman/PAM前提でroot無し導入
 | 操作 | 送るもの |
 |------|----------|
 | スワイプ | `wheel`（移動量の符号反転）。離した後は慣性を減衰させながら継続 |
-| タップ | hoverの`mouse move` → `down` → `up`＋IME inputへfocus |
+| タップ | hoverの`mouse move` → `down` → `up`（IME inputへfocusは**しない**） |
 | ダブルタップ | fit（またはpane）と等倍の切り替え。2度目のクリックは送らない |
 | 長押し（500ms） | `mouse down`のままdragへ昇格。テキスト選択・スライダー・drag&dropはこれ以外に手段がない |
 | 2本指ピンチ | `viewport`の`zoom`。指が触れている間はcanvasのCSS transformで即時プレビューし、離した時に確定する |
 
 - タップ判定は10px/長押し500ms。スワイプに切り替わった時点で長押しは取り消す。
+- スワイプの`wheel`は**1フレームに1本へまとめる**（指は毎秒60〜120回動き、1本ごとに
+  Console→CP→Agent を渡る。画面は約12fpsなので細かく送っても映らない）。最初の1本は即送り、
+  後続だけをまとめるので出だしが遅れない。慣性のtickも32ms間隔。
 - touch defaultはcanvasの**非passive native listener**で潰す（`touchstart`/`touchmove`）。wheelと同じ罠で、
   Reactのtouch propは passive 登録される。`touch-action: none`が主だが、これが無いと2つ目以降のtouchmoveが
   非cancelableで届く（＝ブラウザが自前スクロールを確定済み・Chromium 151で実測）。iOS Safariのページ側
@@ -897,4 +900,35 @@ RDPそのものは更に不利で、`xrdp`はsesman/PAM前提でroot無し導入
 - Console側の配線は実装時にheadless Chromium＋`Input.dispatchTouchEvent`で実測した（スワイプ＝wheel列と慣性、
   タップ＝move/down/upとIMEへのfocus、長押し＝button downのままdrag、ピンチ＝保持中のtransformと離した時の
   1回のzoom）。jsdomはpointer captureもtouch defaultも持たないので、ここは実ブラウザでしか確かめられない。
+
+## 53.20 スマホ実機で出た2件（2026-08-08 実測）
+
+### スクロールがもたつく — 入力1件ごとにCDPの応答を待っていた
+
+`Input.dispatch*`の応答はChromiumが**そのイベントを処理してから**返る＝フレーム同期で、
+実測で1件あたり約16ms（wheel 20件のdispatchに312ms。スクロール自体は100ms以内に終わっている）。
+viewerは制御メッセージを**読み取りループ上で**処理するので、毎秒60〜120件を生む指はこれを追い抜き、
+スワイプ全体がackの後ろに詰まる。「指を止めた後もスクロールし続ける」の正体。
+
+- `browserCDP.Send`（応答を待たない書き込み）を追加し、**pointer相当のイベントだけ**そこへ回す
+  （`mouseMoved`と`mouseWheel`）。同一CDP接続はメッセージを書いた順に処理するので、順序は保たれる。
+  実測: wheel 40件のdispatchが 4ms（従来換算 約625ms）。
+- **クリック・キー・`insertText`は今も応答を待つ**。1操作1件で頻度が低く、待つことで
+  「直後に読んだDOMがその入力を反映している」保証が続く。実際
+  `TestBrowserPlainASCIIKeyTypingLandsInForm`（keyの直後に`value`を読む）が、全部を非同期化した
+  最初の版で落ちてこれを教えてくれた。
+- `TestBrowserAttachmentLiveInputDoesNotBlockOnAcks`が閾値150msで再発を止める。
+- 表示の滑らかさ自体は screencast の約12fps（`AF_BROWSER_MAX_FPS`）が上限で、これは別の話。
+
+### text/textarea 以外のタップでGBoardが開く
+
+タップで隠しIME inputへ**focusしていた**のが原因。focusがキーボードを呼ぶので、リンクやボタンを
+押しただけでもGBoardが出る。ページ側のフォーカスが編集可能かはAgentに聞けば分かるが、往復の後の
+`focus()`はユーザージェスチャ外なので**キーボードは開かない**（各ブラウザの仕様）。したがって
+「タップしてから判定して開く」は成立しない。
+
+- タップではfocusせず、隠しinputの**位置だけ**タップ地点へ移す（IMEの変換候補がそこに出る）。
+- 代わりにペイン内（左下）に**キーボードトグル**を置く。coarse pointerのときだけ出す。
+  ページのフィールドをタップ → トグルで開く → 入力、という手順になる。
+- touch defaultを潰しているのでcanvasをタップしてもfocusは移らず、**開いたキーボードは閉じない**。
 

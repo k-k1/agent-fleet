@@ -11,7 +11,7 @@ class Harness {
   readonly previews: Array<{ factor: number; x: number; y: number }> = [];
   readonly zooms: number[] = [];
   toggles = 0;
-  readonly focused: Array<{ x: number; y: number }> = [];
+  readonly anchored: Array<{ x: number; y: number }> = [];
   enabled = true;
   scale = 2; // 2 remote px per CSS px
   private clock = 1000;
@@ -25,7 +25,7 @@ class Harness {
       scale: () => this.scale,
       enabled: () => this.enabled,
       send: (message) => this.sent.push(message),
-      focus: (x, y) => this.focused.push({ x, y }),
+      anchor: (x, y) => this.anchored.push({ x, y }),
       preview: (factor, x, y) => this.previews.push({ factor, x, y }),
       zoom: (factor) => this.zooms.push(factor),
       toggleZoom: () => { this.toggles++; },
@@ -93,6 +93,25 @@ describe("touch gestures", () => {
     expect(h.wheels().every((w) => w.deltaX === 0)).toBe(true);
   });
 
+  // A finger reports 60-120 moves a second and every one of them would cross the
+  // Console, the Control Plane and the Agent. The screencast runs at ~12 fps, so
+  // the deltas within a frame are summed into one wheel instead.
+  it("sums the moves inside one frame into a single wheel", () => {
+    const h = new Harness();
+    h.down(1, 100, 400);
+    h.move(1, 100, 380, 4); // leading edge: goes out at once
+    h.move(1, 100, 370, 4);
+    h.move(1, 100, 360, 4);
+    expect(h.wheels().map((w) => w.deltaY)).toEqual([40]);
+
+    h.tick(16); // the frame closes and the batched remainder follows
+    expect(h.wheels().map((w) => w.deltaY)).toEqual([40, 40]);
+
+    // Nothing pending: an idle finger must not keep a timer alive.
+    h.tick(200);
+    expect(h.wheels()).toHaveLength(2);
+  });
+
   it("keeps scrolling with momentum after a flick, then stops", () => {
     const h = new Harness();
     h.down(1, 100, 500);
@@ -113,7 +132,10 @@ describe("touch gestures", () => {
 
   // A tap has to arrive as a real click; the leading hover move is what makes
   // menus that open on mouseover reachable without a mouse.
-  it("clicks on a tap and focuses the input for the on-screen keyboard", () => {
+  // The hidden input follows the tap (that is where a composition popup shows)
+  // but is NOT focused: focusing raises the on-screen keyboard, and a tap is
+  // usually aimed at a link, not a text field.
+  it("clicks on a tap and moves the input anchor there", () => {
     const h = new Harness();
     h.down(1, 60, 70);
     h.move(1, 62, 71);
@@ -124,7 +146,7 @@ describe("touch gestures", () => {
       { event: "down", button: "left", clickCount: 1, x: 124, y: 142 },
       { event: "up", button: "left", clickCount: 1, x: 124, y: 142 },
     ]);
-    expect(h.focused).toEqual([{ x: 62, y: 71 }]);
+    expect(h.anchored).toEqual([{ x: 62, y: 71 }]);
   });
 
   // Double tap is the mobile idiom for "fit <-> life size". It sends no second
@@ -241,6 +263,6 @@ describe("touch gestures", () => {
     h.gestures.cancel({ pointerId: 1, clientX: 60, clientY: 70 });
     h.tick(2000);
     expect(h.sent).toEqual([]);
-    expect(h.focused).toEqual([]);
+    expect(h.anchored).toEqual([]);
   });
 });
