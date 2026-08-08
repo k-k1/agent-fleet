@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"image"
 	"image/color"
 	"image/jpeg"
 	"io"
@@ -322,6 +323,136 @@ func TestBrowserAttachmentLiveZoomToFit(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// TestBrowserAttachmentLivePinchZoom measures what pinch zoom rests on, which no
+// recorded CDP call can prove: pinching in from zoom-to-fit really RE-LAYS OUT
+// the page (innerWidth divides by the zoom) and the frame is captured from that
+// new layout, filling it edge to edge. That is the difference between this and
+// magnifying the image — the fitted frame has already lost the pixels a
+// magnifier would have to invent.
+//
+// It also pins the sharpness ceiling: at the zoom that lands the layout on the
+// pane the frame is pane-sized, i.e. 1:1. (Zooming further is allowed and is
+// then a plain upscale — the screencast ignores the emulated device pixel ratio,
+// measured on Chromium 151 and noted in zoomedLayout.)
+func TestBrowserAttachmentLivePinchZoom(t *testing.T) {
+	if os.Getenv("AF_CHROMIUM_ATTACH_LIVE") != "1" {
+		t.Skip("set AF_CHROMIUM_ATTACH_LIVE=1 to run the real pinch zoom test")
+	}
+	bin, err := findChromiumBinary()
+	if err != nil {
+		t.Skipf("Chromium unavailable: %v", err)
+	}
+	// A wide site, so the pane starts zoomed OUT to fit — the state a phone user
+	// actually pinches out of. Edge markers again: the page must FILL the zoomed
+	// frame, not sit small in a corner of it.
+	fixture := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `<!doctype html><meta charset="utf-8"><title>Zoom fixture</title>`+
+			`<body style="margin:0;background:#fff">`+
+			`<div style="min-width:1240px;height:3000px;display:flex">`+
+			`<div style="width:20%;background:#00ff00"></div>`+
+			`<div style="flex:1;background:#ffffff"></div>`+
+			`<div style="width:20%;background:#ff0000"></div>`+
+			`</div>`)
+	}))
+	defer fixture.Close()
+
+	profile := t.TempDir()
+	startLiveChromium(t, bin, "0", "--user-data-dir="+profile, fixture.URL)
+	port, _ := liveDevToolsPort(t, profile)
+	discovery, err := discoverCDPTargets(port, 3*time.Second)
+	if err != nil || len(discovery.Targets) == 0 {
+		t.Fatalf("discover: %v targets=%d", err, len(discovery.Targets))
+	}
+	m := newBrowserAttachmentManager(defaultBrowserAttachmentManagerConfig())
+	defer m.Close()
+	resp, err := m.Create(browserAttachmentCreateRequest{
+		Port: port, TargetID: discovery.Targets[0].TargetID,
+		Viewport: browserViewportRequest{Width: 660, Height: 800, DeviceScaleFactor: 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := m.lookupActive(resp.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Delete(resp.ID)
+	a.mu.Lock()
+	a.viewer = &browserAttachmentViewer{attachment: a, control: make(chan browserOutbound, 8), done: make(chan struct{})}
+	a.visible = true
+	a.state = attachmentStateViewerOpen
+	viewer := a.viewer
+	a.mu.Unlock()
+	if err := a.startScreencast(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Attach models a page the user is ALREADY looking at: let the fixture lay out
+	// before pinching. Restarting the screencast inside the initial navigation's
+	// commit window is rejected by Chromium and the cast would simply stay dead.
+	waitForLiveContentWidth(t, m, a, 1240)
+
+	// Fit puts 1240 CSS px in the 660 px pane (a third of life size on a phone);
+	// pinching 2x lays it out at 620 — one CSS pixel per pane pixel.
+	viewer.handleControl([]byte(`{"type":"viewport","width":660,"height":800,"fit":true,"zoom":2}`))
+
+	// Polled: measured here, Blink still reports the PREVIOUS innerWidth for a few
+	// tens of milliseconds after setDeviceMetricsOverride returns, so a single read
+	// right after the call sees the old layout and would fail a working zoom.
+	var layout string
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		var evaluated struct {
+			Result struct {
+				Value string `json:"value"`
+			} `json:"result"`
+		}
+		if err := m.call(a.cdp, a.sessionID, "Runtime.evaluate",
+			map[string]any{"expression": "innerWidth + 'x' + innerHeight", "returnByValue": true}, &evaluated); err != nil {
+			t.Fatal(err)
+		}
+		layout = evaluated.Result.Value
+		if layout == "620x752" {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if layout != "620x752" {
+		t.Fatalf("zoomed layout = %q, want 620x752 (1240x1503 fitted, pinched 2x)", layout)
+	}
+
+	// The fixture is a rigid 1240 px site, so the marker bands are the giveaway:
+	// fitted, the frame carries the WHOLE page and ends in the red band; zoomed to
+	// life size it carries the left half, so the right sample is the page's own
+	// white middle. Frames only flow on a visual change, so a retry re-arms the
+	// cast rather than waiting for a repaint that will never come.
+	var size image.Point
+	var left, right color.Color
+	for deadline := time.Now().Add(8 * time.Second); time.Now().Before(deadline); {
+		select {
+		case frame := <-a.latestFrame:
+			img, err := jpeg.Decode(bytes.NewReader(frame))
+			if err != nil {
+				t.Fatalf("decode screencast frame: %v", err)
+			}
+			size = img.Bounds().Size()
+			left = img.At(size.X/40, size.Y/2)
+			// Sampled inside the content, not in the scrollbar gutter at the edge.
+			right = img.At(size.X-1-size.X/12, size.Y/2)
+			if isGreenish(left) && !isReddish(right) {
+				// Captured FROM the 620 px layout — life size for a 660 px pane. A
+				// magnified fitted frame would still be a 660 px capture of 1240 px.
+				if size.X < 590 || size.X > 660 {
+					t.Fatalf("zoomed frame is %dx%d — not captured from the zoomed layout", size.X, size.Y)
+				}
+				return
+			}
+		case <-time.After(time.Second):
+			a.restartScreencast()
+		}
+	}
+	t.Fatalf("no frame showed the zoomed page: left=%v right=%v (frame %v)", left, right, size)
 }
 
 func isGreenish(c color.Color) bool {

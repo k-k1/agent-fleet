@@ -8,7 +8,10 @@ export interface BrowserConsoleEntry {
 }
 
 export type BrowserOutbound =
-  | { type: "viewport"; width: number; height: number; fit?: boolean }
+  // zoom is the pinch zoom applied ON TOP of the pane (and of `fit`): the Agent
+  // lays the page out that much smaller and renders at a matching device pixel
+  // ratio, so the pane shows fewer CSS pixels at full sharpness. 1 = unzoomed.
+  | { type: "viewport"; width: number; height: number; fit?: boolean; zoom?: number }
   | { type: "mouse"; event: "move" | "down" | "up"; x: number; y: number; button: BrowserMouseButton; buttons: number; modifiers: number; clickCount: number }
   | { type: "wheel"; x: number; y: number; deltaX: number; deltaY: number; modifiers: number }
   | { type: "key"; event: "down" | "up"; key: string; code: string; modifiers: number; repeat: boolean }
@@ -30,6 +33,21 @@ export interface BrowserSnapshot {
   errorCode: string;
   errorMessage: string;
   console: readonly BrowserConsoleEntry[];
+}
+
+/**
+ * Pinch zoom bounds. 1 is the pane's own layout (or the fitted one) and zooming
+ * OUT past it is deliberately not offered: pinching back to 1 is then the reset
+ * gesture, so a zoomed pane can never be left in a state with no way back.
+ * Mirrors browserMaxZoom in the Agent, which clamps again.
+ */
+export const BROWSER_MAX_ZOOM = 4;
+
+export function clampZoom(zoom: number): number {
+  if (!Number.isFinite(zoom)) return 1;
+  // Two decimals: a pinch produces a continuous ratio, and sending every
+  // hundredth of it would relayout the remote page for nothing.
+  return Math.min(BROWSER_MAX_ZOOM, Math.max(1, Math.round(zoom * 100) / 100));
 }
 
 export interface ModifierLike {
