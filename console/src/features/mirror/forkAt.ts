@@ -11,6 +11,18 @@ export interface BranchableTurn {
   queued?: boolean;
 }
 
+// canBranchInSession: このセッションで分岐という操作を出してよいか（ブロック単位の判定は
+// canBranchFrom）。**kind ごとに条件が違う**のがここの肝で、opencode/codex は分岐点を渡せる
+// 口が runtime API にしかないので managed 必須、claude は managed driver 自体が無く自分の
+// 転写を切るので TUI で使える。一律に managed を要求すると claude の導線が永久に出ない。
+export function canBranchInSession(
+  caps: { forkAt: boolean; forkAtManagedOnly: boolean },
+  opts: { managed: boolean; readOnly: boolean },
+): boolean {
+  if (!caps.forkAt || opts.readOnly) return false;
+  return !caps.forkAtManagedOnly || opts.managed;
+}
+
 // canBranchFrom: このブロックから分岐できるか。
 // - ユーザーの発言であること（エージェントの回答から分岐しても意味が変わる。v1 は打ち直し用）
 // - アンカーがあること（無いブロックを指すと会話まるごと分岐に化ける）

@@ -9,6 +9,7 @@ package claude
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 
@@ -26,8 +27,11 @@ type agentImpl struct{ agents.NoGenericTranscript }
 
 func (agentImpl) Kind() string { return session.KindClaude }
 
+// CanForkAt: 発言時点からの分岐（docs/55）。claude だけは公式の口が無く、転写 jsonl を
+// 切り詰めて分岐先を作る（forkat.go）。TUI 起動しか無いので、他の kind と違って managed の
+// 条件は付かない — 経路の可否は ResolveForkAt が kind ごとに答える。
 func (agentImpl) Caps() agents.Caps {
-	return agents.Caps{CanFork: true, CanTranscript: true, UsesLabel: true}
+	return agents.Caps{CanFork: true, CanForkAt: true, CanTranscript: true, UsesLabel: true}
 }
 
 // ForkSource resolves this session's conversation id (its deterministic sid) as the
@@ -39,6 +43,28 @@ func (agentImpl) ForkSource(m session.Meta) (string, error) {
 		return "", errors.New("分岐できる会話がまだありません")
 	}
 	return sid, nil
+}
+
+// ResolveForkAt validates the anchor against this session's own transcript. The value
+// travels unchanged: unlike codex, claude's cut is expressed as "the line to stop before",
+// which is exactly what the mirror handed out. The work here is refusing the anchors that
+// would produce a transcript claude launches but cannot answer in (a tool_use whose
+// tool_result fell on the other side of the cut) — see forkat.go for why that matters.
+//
+// Validating here, at request time, rather than only at launch is deliberate: a refusal
+// must reach the user as "この分岐点は使えません", not as a session that starts and dies.
+func (agentImpl) ResolveForkAt(m session.Meta, anchor string) (string, error) {
+	sid := session.UUID(m.Dir, m.Name)
+	lines, path, _ := TranscriptRead(sid)
+	if len(lines) == 0 || path == "" {
+		return "", errors.New("分岐できる会話がまだありません")
+	}
+	// Dry run of the real surgery (destination sid is irrelevant to the checks), so the
+	// answer here and the behaviour at launch can never disagree.
+	if _, err := buildForkLines(lines, anchor, sid); err != nil {
+		return "", err
+	}
+	return anchor, nil
 }
 
 func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.LaunchPlan, error) {
@@ -59,6 +85,16 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	if !JSONLResumable(sid) {
 		for _, p := range jsonlPaths(sid) {
 			_ = os.Remove(p)
+		}
+	}
+	// First launch of a POINT fork (docs/55): write our own truncated transcript before
+	// the pane starts. buildProgram then finds a jsonl for sid and resumes it — the fork
+	// is invisible from there on, exactly like the whole-conversation fork becomes a
+	// plain resume after its first launch. A failure must not fall through to
+	// `--fork-session`, which would copy the WHOLE conversation the user asked to cut.
+	if m.ForkAt != "" && m.ForkFrom != "" && !SessionJSONLExists(sid) {
+		if err := MaterializeForkAt(m.ForkFrom, sid, m.ForkAt); err != nil {
+			return agents.LaunchPlan{}, fmt.Errorf("発言時点からの分岐を作成できませんでした: %w", err)
 		}
 	}
 	// No env token is injected: the interactive TUI authenticates from claude's own

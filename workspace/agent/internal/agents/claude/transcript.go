@@ -260,8 +260,13 @@ func CollectTurns(lines [][]byte, lo, hi int) []transcript.Turn {
 // Control bridge-session line, and meta entries (isMeta).
 func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 	var ev struct {
-		Type             string `json:"type"`
-		Timestamp        string `json:"timestamp"`
+		Type      string `json:"type"`
+		Timestamp string `json:"timestamp"`
+		// UUID is the line's own id in claude's uuid/parentUuid DAG. It is the fork
+		// anchor (docs/55): claude's own --fork-session rewrites only sessionId and
+		// leaves uuid/parentUuid untouched (実測), so a message keeps the same uuid
+		// across branches — it is a durable handle, unlike the line index.
+		UUID             string `json:"uuid"`
 		IsMeta           bool   `json:"isMeta"`
 		IsSidechain      bool   `json:"isSidechain"`
 		IsCompactSummary bool   `json:"isCompactSummary"`
@@ -311,6 +316,7 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 		return transcript.Turn{
 			Role: "user", Parts: []transcript.Part{{Kind: "text", Text: txt}}, Text: txt,
 			Idx: idx, TS: ev.Timestamp, Sidechain: ev.IsSidechain, Branch: ev.GitBranch, Cwd: ev.Cwd,
+			AnchorID: ev.UUID,
 		}, true
 	}
 	if ev.Type != "user" && ev.Type != "assistant" {
@@ -336,7 +342,7 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 	t := transcript.Turn{
 		Role: ev.Type, Parts: parts, Text: text, Idx: idx, TS: ev.Timestamp,
 		Sidechain: ev.IsSidechain, Branch: ev.GitBranch, Cwd: ev.Cwd,
-		Compact: ev.IsCompactSummary,
+		Compact: ev.IsCompactSummary, AnchorID: ev.UUID,
 	}
 	if ev.Type == "assistant" {
 		u := ev.Message.Usage

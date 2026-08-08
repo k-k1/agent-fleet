@@ -6,6 +6,7 @@ package codex
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -92,6 +93,11 @@ func (agentImpl) ForkSource(m session.Meta) (string, error) {
 func (agentImpl) ResolveForkAt(m session.Meta, anchor string) (string, error) {
 	if anchor == "" {
 		return "", errors.New("分岐点が指定されていません")
+	}
+	// 分岐点を渡せる口は app-server 側にしかない（`codex fork <id>` には無い）。
+	if m.DriverKind() != session.DriverManaged {
+		return "", fmt.Errorf("%w: codex の発言時点からの分岐は managed のセッションでのみ利用できます",
+			agents.ErrForkAtRoute)
 	}
 	id := sids.Read(session.UUID(m.Dir, m.Name))
 	path := rolloutPath(id)

@@ -1,6 +1,6 @@
 # 0039. 会話の分岐点は kind 固有の不透明アンカーで指し、claude だけ jsonl 手術を許す
 
-- 状態: 採用・P1〜P2 実装済み（契約＋opencode＋codex＋Console 導線。claude は後続）
+- 状態: 採用・P1〜P3 実装済み（契約＋opencode＋codex＋claude＋Console 導線。3 種とも実 CLI 検証済み）
 - 関連: [55-fork-at-message.md](../55-fork-at-message.md) /
   [history/fork-from-chat.md](../history/fork-from-chat.md)（本 ADR が差し替える旧判断） /
   [27-agent-managed-driver.md](../27-agent-managed-driver.md) /
@@ -49,7 +49,15 @@ jsonl 改変は壊れやすい」を理由に一度却下されている。
    `type:"user"` で載るため候補から除外し、切断後に `tool_result` を欠く `tool_use` が残らない
    ことを確認する。落ちたときは会話まるごと分岐を提案し、**黙って全体を分岐させない**。
 9. **claude の手術は CLI ピン更新のドリフト検知に載せる。** 「切り詰めた jsonl が resume でき、
-   切り詰め後の履歴だけを見ている」ことを実 CLI テストで毎版確認する（`cli-version-pin-e2e` の層）。
+   切り詰め後の履歴だけを見ている」ことを実 CLI テストで毎版確認する。
+   *実装*: `TestContractLiveClaudeForkAt`（`clicontract` タグ・`claude-tui-contract.yml` に相乗り）。
+10. **起動方式の可否は kind が答える（グローバルな managed 条件は置かない）。**
+   分岐点を渡せる口は opencode/codex では runtime API にしかないので managed 必須だが、
+   claude は managed driver 自体を持たず自分の転写を切るので TUI が唯一の経路。ハンドラで
+   一律に managed を要求すると claude が永久に弾かれるため、resolver が `ErrForkAtRoute` を
+   返す形にし、Console も `caps.forkAtManagedOnly` で同じ差を持つ。
+   *順序*: 分岐点の解決は `ForkSource` より**前**に行う。経路が違うセッションに
+   「分岐できる会話がまだありません」と返しても、ユーザーは会話を増やそうとするだけで直らない。
 10. **v1 の対象は claude / codex / opencode の 3 種。** cursor / copilot は手術が効く見込みが
     あるが未検証、kiro は CLI 側が ID を採番、agy は SQLite ストアのため対象外とし、
     `Caps.CanForkAt` は false に保つ。

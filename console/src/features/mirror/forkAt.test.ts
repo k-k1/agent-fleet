@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { canBranchFrom, carriedUserTurns } from "./forkAt.ts";
+import { canBranchFrom, canBranchInSession, carriedUserTurns } from "./forkAt.ts";
 import type { BranchableTurn } from "./forkAt.ts";
+import { agentOf } from "../../agents/registry.ts";
 
 const user = (anchorId?: string, extra: Partial<BranchableTurn> = {}): BranchableTurn => ({
   role: "user",
@@ -33,6 +34,40 @@ describe("canBranchFrom", () => {
 
   it("refuses a compaction summary", () => {
     expect(canBranchFrom(user("msg_1", { compact: true }))).toBe(false);
+  });
+});
+
+describe("canBranchInSession", () => {
+  const managedOnly = { forkAt: true, forkAtManagedOnly: true };
+  const anyRoute = { forkAt: true, forkAtManagedOnly: false };
+
+  it("hides the affordance for a kind that can't fork at a point", () => {
+    expect(
+      canBranchInSession({ forkAt: false, forkAtManagedOnly: true }, { managed: true, readOnly: false }),
+    ).toBe(false);
+  });
+
+  it("hides it in read-only history", () => {
+    expect(canBranchInSession(anyRoute, { managed: true, readOnly: true })).toBe(false);
+  });
+
+  it("requires managed only for the kinds whose fork point lives in the runtime API", () => {
+    expect(canBranchInSession(managedOnly, { managed: true, readOnly: false })).toBe(true);
+    // CLI ルートには分岐点を渡す引数が無いので、押せば必ず 400 になる。
+    expect(canBranchInSession(managedOnly, { managed: false, readOnly: false })).toBe(false);
+  });
+
+  it("allows a TUI session for a kind that cuts its own transcript", () => {
+    // claude は managed driver を持たない。ここを managed 必須にすると導線が永久に出ない。
+    expect(canBranchInSession(anyRoute, { managed: false, readOnly: false })).toBe(true);
+  });
+
+  it("matches the registry: claude branches on the TUI route, opencode/codex do not", () => {
+    expect(canBranchInSession(agentOf("claude").caps, { managed: false, readOnly: false })).toBe(true);
+    expect(canBranchInSession(agentOf("opencode").caps, { managed: false, readOnly: false })).toBe(false);
+    expect(canBranchInSession(agentOf("codex").caps, { managed: false, readOnly: false })).toBe(false);
+    expect(canBranchInSession(agentOf("opencode").caps, { managed: true, readOnly: false })).toBe(true);
+    expect(canBranchInSession(agentOf("codex").caps, { managed: true, readOnly: false })).toBe(true);
   });
 });
 
