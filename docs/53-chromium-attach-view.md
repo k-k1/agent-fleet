@@ -858,7 +858,8 @@ RDPそのものは更に不利で、`xrdp`はsesman/PAM前提でroot無し導入
 | 操作 | 送るもの |
 |------|----------|
 | スワイプ | `wheel`（移動量の符号反転）。離した後は慣性を減衰させながら継続 |
-| タップ | hoverの`mouse move` → `down` → `up`（連続タップは`clickCount:2`）＋IME inputへfocus |
+| タップ | hoverの`mouse move` → `down` → `up`＋IME inputへfocus |
+| ダブルタップ | fit（またはpane）と等倍の切り替え。2度目のクリックは送らない |
 | 長押し（500ms） | `mouse down`のままdragへ昇格。テキスト選択・スライダー・drag&dropはこれ以外に手段がない |
 | 2本指ピンチ | `viewport`の`zoom`。指が触れている間はcanvasのCSS transformで即時プレビューし、離した時に確定する |
 
@@ -870,6 +871,11 @@ RDPそのものは更に不利で、`xrdp`はsesman/PAM前提でroot無し導入
 - pinchは**ページ入力ではない**ので、view-only（attach直後の既定）でも効く。逆にスワイプ・タップ・長押しは
   従来どおり`user-control`でだけ効く。
 - pinchの確定は指を離した時の1回だけ。押している間に送るとlayout変更とscreencast再起動が毎フレーム走る。
+- ダブルタップの等倍は Console 側で逆算する。baseを持っているのはAgent（fitのために実測できるのはAgentだけ）
+  なので、直近の`viewport` textが示すlayoutから`layout × zoom = base`、`base / pane`が等倍の倍率になる。
+  fitが無ければbase == paneで等倍に行き先が無いので2倍にする。2度目のクリックは**送らない** —
+  1度目を遅らせて「2度目が来るか」を待つのは、各ブラウザが何年もかけて消した300msのタップ遅延そのもの。
+  3度目で戻ってしまわないよう、切り替えた時点で直前タップの記憶を捨てる。
 - 1に戻すまで縮小方向は出さない。「ピンチで戻せば必ず元に戻る」ことが、リセットUIを増やさない代わりの保証になる。
 
 ### なぜ画像の拡大ではなくlayoutを縮めるのか（実測）

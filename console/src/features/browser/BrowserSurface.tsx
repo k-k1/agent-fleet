@@ -19,6 +19,8 @@ export interface BrowserSurfaceController {
   copySelection?(): Promise<boolean>;
   /** Multiply the pinch zoom. Absent on a surface that cannot zoom. */
   zoomBy?(factor: number): void;
+  /** Double tap: jump between the fitted view and life size. */
+  toggleZoom?(): void;
 }
 
 interface BrowserSurfaceProps {
@@ -91,6 +93,7 @@ export function BrowserSurface({
       canvas.style.transform = `scale(${factor})`;
     },
     zoom: (factor) => latest.current.controller.zoomBy?.(factor),
+    toggleZoom: () => latest.current.controller.toggleZoom?.(),
     now: () => performance.now(),
     after: (ms, callback) => window.setTimeout(callback, ms),
     clear: (handle) => window.clearTimeout(handle),

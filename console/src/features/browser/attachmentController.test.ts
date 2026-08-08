@@ -84,6 +84,44 @@ describe("BrowserAttachmentController", () => {
     expect(fake.socket.json().some((message) => (message as { type?: string }).type === "navigate")).toBe(false);
   });
 
+  // Double tap has to reach LIFE SIZE, and only the Agent knows how far that is:
+  // it measured the page for zoom-to-fit. The controller recovers the base from
+  // the layout the Agent reported (layout x zoom) rather than tracking its own.
+  it("toggles between the fitted view and life size on a double tap", async () => {
+    const fake = fakeDeps("view-only");
+    const controller = new BrowserAttachmentController("p1", "ba_test", fake.deps);
+    controller.setVisible(true);
+    await settle();
+    fake.socket.open();
+    controller.setViewport(390, 800);
+    // Zoom-to-fit: the Agent laid a 1240 px site out wide and said so.
+    fake.socket.message(JSON.stringify({ type: "viewport", width: 1240, height: 2544 }));
+
+    controller.toggleZoom();
+    // 1240 / 390 = one layout pixel per pane pixel.
+    expect(controller.zoom).toBeCloseTo(3.18, 2);
+    expect(fake.socket.json().at(-1)).toMatchObject({ type: "viewport", width: 390, height: 800, zoom: controller.zoom });
+
+    // The Agent answers with the zoomed layout; tapping again returns to the fit.
+    fake.socket.message(JSON.stringify({ type: "viewport", width: 390, height: 800 }));
+    controller.toggleZoom();
+    expect(controller.zoom).toBe(1);
+    expect(fake.socket.json().at(-1)).toMatchObject({ type: "viewport", zoom: 1 });
+  });
+
+  // Without fit the base IS the pane, so there is no 1:1 to jump to.
+  it("double taps to 2x when the pane is already life size", async () => {
+    const fake = fakeDeps("view-only");
+    const controller = new BrowserAttachmentController("p1", "ba_test", fake.deps);
+    controller.setVisible(true);
+    await settle();
+    fake.socket.open();
+    controller.setViewport(390, 800);
+
+    controller.toggleZoom();
+    expect(controller.zoom).toBe(2);
+  });
+
   it("keeps the wire connected while locked and applies ready and handoff transitions", async () => {
     const fake = fakeDeps("locked");
     const controller = new BrowserAttachmentController("p1", "ba_test", fake.deps);

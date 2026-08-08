@@ -31,7 +31,8 @@ settle for "just looking at an HTTP response once".
 On a touch screen such as a tablet, **swipe to scroll** (a flick keeps coasting after you lift your finger),
 **tap to click**, **press and hold to drag** (text selection, sliders), and **pinch with two fingers to zoom**.
 A pinch re-lays the page out at a narrower width rather than stretching the picture, so text stays legible at
-its own size, and pinching back returns you to the original view.
+its own size, and pinching back returns you to the original view. **Double-tap** jumps between the fit-to-width
+view and life size.
 
 ### How to use it
 
