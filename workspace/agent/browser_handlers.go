@@ -304,19 +304,24 @@ func (v *browserViewer) handleControl(data []byte) bool {
 			Type   string  `json:"type"`
 			Width  float64 `json:"width"`
 			Height float64 `json:"height"`
+			Zoom   float64 `json:"zoom"`
 		}
 		if json.Unmarshal(data, &msg) != nil {
 			v.protocolError("bad_viewport", "invalid viewport")
 			return true
 		}
-		vp, err := normalizeBrowserViewport(browserViewportRequest{Width: msg.Width, Height: msg.Height, DeviceScaleFactor: 1})
+		pane, err := normalizeBrowserViewport(browserViewportRequest{Width: msg.Width, Height: msg.Height, DeviceScaleFactor: 1})
 		if err != nil {
 			v.protocolError("bad_viewport", err.Error())
 			return true
 		}
+		zoom := normalizeBrowserZoom(msg.Zoom)
+		layout := zoomedLayout(pane, zoom)
 		v.page.mu.Lock()
-		unchanged := v.page.viewport.Width == vp.Width && v.page.viewport.Height == vp.Height
-		v.page.viewport = vp
+		unchanged := v.page.pane == pane && v.page.zoom == zoom
+		v.page.pane = pane
+		v.page.zoom = zoom
+		v.page.viewport = layout
 		v.page.mu.Unlock()
 		if unchanged {
 			// Console re-sends its current size right after attaching. Restarting the
@@ -325,9 +330,12 @@ func (v *browserViewer) handleControl(data []byte) bool {
 			// stop/start round-trip entirely.
 			return true
 		}
-		if !v.call("Emulation.setDeviceMetricsOverride", map[string]any{"width": vp.Width, "height": vp.Height, "deviceScaleFactor": 1, "mobile": false}, nil) {
+		if !v.call("Emulation.setDeviceMetricsOverride", map[string]any{"width": layout.Width, "height": layout.Height, "deviceScaleFactor": 1, "mobile": false}, nil) {
 			return true
 		}
+		// A pinch zoom lays the page out smaller than the pane, so pointer
+		// coordinates no longer live in the space the viewer asked for.
+		v.enqueueText(mustBrowserJSON(map[string]any{"type": "viewport", "width": layout.Width, "height": layout.Height}))
 		v.page.restartScreencastForResize()
 	case "mouse":
 		v.handleMouse(data)

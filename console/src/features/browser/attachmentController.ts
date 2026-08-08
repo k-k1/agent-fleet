@@ -5,6 +5,7 @@ import type {
   BrowserPageState,
   BrowserSnapshot,
 } from "./protocol.ts";
+import { clampZoom } from "./protocol.ts";
 
 export type BrowserAttachmentControlMode = "view-only" | "user-control" | "locked";
 export type BrowserAttachmentResult = "pending" | "completed" | "cancelled";
@@ -197,26 +198,49 @@ export class BrowserAttachmentController {
    */
   private pane = { width: 0, height: 0 };
   private fitValue = true;
+  private zoomValue = 1;
 
   setViewport(width: number, height: number): void {
     const next = clampViewport(width, height);
     if (next.width === this.pane.width && next.height === this.pane.height) return;
     this.pane = next;
     this.update(next);
-    this.send({ type: "viewport", ...next, fit: this.fitValue });
+    this.sendViewport();
   }
 
   get fit(): boolean {
     return this.fitValue;
   }
 
-  /** Zoom the page out until its content fits the pane (or back to 1:1). */
+  /**
+   * Zoom the page out until its content fits the pane (or back to 1:1). It also
+   * drops the pinch zoom: the toolbar's fit button is the one control that
+   * restores a known view, and leaving a 4x pinch applied on top of it would
+   * make "fit" not fit.
+   */
   setFit(fit: boolean): void {
-    if (this.fitValue === fit) return;
+    if (this.fitValue === fit && this.zoomValue === 1) return;
     this.fitValue = fit;
+    this.zoomValue = 1;
     if (this.pane.width < 1) return;
     this.update(this.pane);
-    this.send({ type: "viewport", ...this.pane, fit });
+    this.sendViewport();
+  }
+
+  get zoom(): number {
+    return this.zoomValue;
+  }
+
+  /** Pinch zoom, applied on top of the pane (and of fit) by the Agent. */
+  zoomBy(factor: number): void {
+    const next = clampZoom(this.zoomValue * factor);
+    if (next === this.zoomValue || this.pane.width < 1) return;
+    this.zoomValue = next;
+    this.sendViewport();
+  }
+
+  private sendViewport(): void {
+    this.send({ type: "viewport", ...this.pane, fit: this.fitValue, zoom: this.zoomValue });
   }
 
   /**
@@ -344,7 +368,7 @@ export class BrowserAttachmentController {
     socket.onopen = () => {
       if (socket !== this.socket || generation !== this.generation) return;
       const pane = this.pane.width > 0 ? this.pane : { width: this.snapshotValue.width, height: this.snapshotValue.height };
-      this.send({ type: "viewport", ...pane, fit: this.fitValue });
+      this.send({ type: "viewport", ...pane, fit: this.fitValue, zoom: this.zoomValue });
       this.send({ type: "visibility", visible: this.visible });
     };
     socket.onmessage = (event) => {

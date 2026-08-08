@@ -149,3 +149,37 @@ func TestFitLayoutViewport(t *testing.T) {
 		t.Fatal("a degenerate pane must be a no-op")
 	}
 }
+
+// A pinch zoom lays the page out SMALLER: the frame is then captured from a
+// layout with fewer CSS pixels, so text is re-rendered bigger rather than
+// interpolated. The aspect ratio must survive it — the canvas stretches the
+// frame to fill the pane, so any drift renders the page distorted.
+func TestZoomedLayout(t *testing.T) {
+	base := browserViewport{Width: 1240, Height: 2480, DeviceScaleFactor: 1}
+
+	for _, zoom := range []float64{0, 1, -3, math.NaN(), math.Inf(1)} {
+		if got := zoomedLayout(base, zoom); got != base {
+			t.Fatalf("zoom %v must be a no-op: %+v", zoom, got)
+		}
+	}
+
+	got := zoomedLayout(base, 2)
+	if got.Width != 620 || got.Height != 1240 {
+		t.Fatalf("2x = %+v", got)
+	}
+	if ratio := float64(got.Width) / float64(got.Height); math.Abs(ratio-1240.0/2480.0) > 0.001 {
+		t.Fatalf("aspect drifted: %v", ratio)
+	}
+	// Beyond the cap the zoom stops; it never becomes an unbounded magnifier.
+	if capped, want := zoomedLayout(base, 99), zoomedLayout(base, browserMaxZoom); capped != want {
+		t.Fatalf("zoom cap = %+v want %+v", capped, want)
+	}
+	// A small base cannot be zoomed into a layout no site can render.
+	narrow := browserViewport{Width: 320, Height: 480, DeviceScaleFactor: 1}
+	if got := zoomedLayout(narrow, browserMaxZoom); got.Width < browserMinLayoutSide || got.Height < browserMinLayoutSide {
+		t.Fatalf("layout below the readable floor: %+v", got)
+	}
+	if got := zoomedLayout(browserViewport{}, 2); got.Width != 0 {
+		t.Fatal("a degenerate base must be a no-op")
+	}
+}

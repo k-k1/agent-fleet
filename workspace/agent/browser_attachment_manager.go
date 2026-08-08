@@ -48,10 +48,14 @@ type browserAttachment struct {
 	sessionID string
 	cdp       browserCDP
 	// viewport is the LAYOUT viewport pointer coordinates are expressed in; with
-	// zoom-to-fit it is wider than pane, which is what the viewer actually shows.
+	// zoom-to-fit it is wider than pane, and with a pinch zoom it is narrower.
+	// pane is what the viewer actually shows; base is the layout before the pinch
+	// zoom, kept so a pinch does not re-measure an already zoomed page.
 	viewport browserViewport
 	pane     browserViewport
+	base     browserViewport
 	fit      bool
+	zoom     float64
 
 	mu          sync.Mutex
 	state       string
@@ -237,7 +241,7 @@ func (m *browserAttachmentManager) Create(req browserAttachmentCreateRequest) (b
 	}
 	a := &browserAttachment{
 		manager: m, id: newBrowserAttachmentID(), createdAt: time.Now(), targetKey: targetKey, targetID: req.TargetID,
-		sessionID: attached.SessionID, cdp: cdp, viewport: viewport, pane: viewport,
+		sessionID: attached.SessionID, cdp: cdp, viewport: viewport, pane: viewport, base: viewport, zoom: 1,
 		state: state, title: target.Title, label: req.Label, url: target.URL, controlMode: attachmentControlViewOnly,
 		latestFrame: make(chan []byte, 1), frameEvents: make(chan browserScreencastFrame, 1), frameStop: make(chan struct{}),
 	}

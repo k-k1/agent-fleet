@@ -28,6 +28,11 @@ Enter a port number in the **port input field** on the right of the workspace ac
 **When in doubt, use "Open in pane".** The lightweight preview is a resource-saving exception for when you can
 settle for "just looking at an HTTP response once".
 
+On a touch screen such as a tablet, **swipe to scroll** (a flick keeps coasting after you lift your finger),
+**tap to click**, **press and hold to drag** (text selection, sliders), and **pinch with two fingers to zoom**.
+A pinch re-lays the page out at a narrower width rather than stretching the picture, so text stays legible at
+its own size, and pinching back returns you to the original view.
+
 ### How to use it
 
 1. Have a shell or an agent start the dev server. Make the server listen on `127.0.0.1` inside the workspace

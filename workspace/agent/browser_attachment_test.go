@@ -686,6 +686,121 @@ func TestBrowserAttachmentWithoutFitKeepsPaneSizedViewport(t *testing.T) {
 	}
 }
 
+// Pinch zoom on a phone: the page is laid out SMALLER on top of whatever fit
+// already decided, so the frame is captured from a layout with fewer CSS pixels
+// and the text is re-rendered bigger instead of being interpolated.
+func TestBrowserAttachmentPinchZoomShrinksLayout(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	m := fakeAttachmentManager(cdp, 0)
+	resp := createFakeAttachment(t, m)
+	a, _ := m.lookupActive(resp.ID)
+	defer m.Delete(resp.ID)
+	v := &browserAttachmentViewer{attachment: a, control: make(chan browserOutbound, 16), done: make(chan struct{})}
+
+	v.handleControl([]byte(`{"type":"viewport","width":660,"height":800,"fit":true,"zoom":1}`))
+	measured := countBrowserMethod(cdp.methods(), "Page.getLayoutMetrics")
+	if measured != 1 {
+		t.Fatalf("fit measured the page %d times", measured)
+	}
+
+	v.handleControl([]byte(`{"type":"viewport","width":660,"height":800,"fit":true,"zoom":2}`))
+	metrics, ok := cdp.last("Emulation.setDeviceMetricsOverride")
+	if !ok || metrics.Params["width"] != float64(620) || metrics.Params["height"] != float64(752) {
+		t.Fatalf("zoomed layout = %+v", metrics.Params)
+	}
+	// Re-measuring an already zoomed page folds each zoom into the next one, so
+	// the fit is measured once per pane/fit change and never per pinch.
+	if got := countBrowserMethod(cdp.methods(), "Page.getLayoutMetrics"); got != measured {
+		t.Fatalf("a pinch re-measured the page (%d -> %d)", measured, got)
+	}
+	// The emulated pixel ratio stays 1: measured on Chromium 151 the screencast
+	// emits CSS-pixel-sized frames and ignores it, so raising it would only make
+	// the compositor render pixels no frame carries.
+	if metrics.Params["deviceScaleFactor"] != float64(1) {
+		t.Fatalf("deviceScaleFactor = %v", metrics.Params["deviceScaleFactor"])
+	}
+	if got := lastViewerText(t, v, "viewport"); got["width"] != float64(620) || got["height"] != float64(752) {
+		t.Fatalf("viewer was not told the zoomed mapping space: %+v", got)
+	}
+	a.mu.Lock()
+	layout := a.viewport
+	a.mu.Unlock()
+	if layout.Width != 620 || v.validPoint(700, 100) {
+		t.Fatalf("pointer mapping not narrowed to the zoomed layout: %+v", layout)
+	}
+
+	v.handleControl([]byte(`{"type":"viewport","width":660,"height":800,"fit":true,"zoom":4}`))
+	metrics, _ = cdp.last("Emulation.setDeviceMetricsOverride")
+	if metrics.Params["width"] != float64(310) {
+		t.Fatalf("4x layout = %+v", metrics.Params)
+	}
+	// The image cap stays the pane's: zooming changes the layout, never the
+	// bytes on the wire.
+	if err := a.startScreencast(); err != nil {
+		t.Fatal(err)
+	}
+	cast, _ := cdp.last("Page.startScreencast")
+	if cast.Params["maxWidth"] != float64(660) || cast.Params["maxHeight"] != float64(800) {
+		t.Fatalf("zooming in must not grow the frame: %+v", cast.Params)
+	}
+}
+
+// Zoom is the viewer's own layout viewport, not page input: a view-only
+// attachment must still be able to zoom, exactly as it can already scroll-free
+// read and copy. (Input stays refused — that is asserted separately.)
+func TestBrowserAttachmentPinchZoomAllowedInViewOnly(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	m := fakeAttachmentManager(cdp, 0)
+	resp := createFakeAttachment(t, m)
+	a, _ := m.lookupActive(resp.ID)
+	defer m.Delete(resp.ID)
+	a.mu.Lock()
+	mode := a.controlMode
+	a.mu.Unlock()
+	if mode != attachmentControlViewOnly {
+		t.Fatalf("a fresh attachment must be view-only, got %q", mode)
+	}
+	v := &browserAttachmentViewer{attachment: a, control: make(chan browserOutbound, 16), done: make(chan struct{})}
+
+	v.handleControl([]byte(`{"type":"viewport","width":660,"height":800,"zoom":2}`))
+	metrics, ok := cdp.last("Emulation.setDeviceMetricsOverride")
+	if !ok || metrics.Params["width"] != float64(330) {
+		t.Fatalf("view-only zoom was refused: %+v", metrics.Params)
+	}
+}
+
+// lastViewerText returns the LAST queued message of the wanted type, draining
+// the queue: a run of viewport changes queues one message each, and only the
+// newest describes the space the viewer must map pointers into.
+func lastViewerText(t *testing.T, v *browserAttachmentViewer, want string) map[string]any {
+	t.Helper()
+	var found map[string]any
+	for {
+		select {
+		case out := <-v.control:
+			var msg map[string]any
+			if json.Unmarshal(out.data, &msg) == nil && msg["type"] == want {
+				found = msg
+			}
+		default:
+			if found == nil {
+				t.Fatalf("no %q message was sent to the viewer", want)
+			}
+			return found
+		}
+	}
+}
+
+func countBrowserMethod(methods []string, want string) int {
+	n := 0
+	for _, method := range methods {
+		if method == want {
+			n++
+		}
+	}
+	return n
+}
+
 // Copy: the container's clipboard is unreachable for the user, so the selection
 // has to come back over the wire. Allowed in view-only — reading is the point.
 func TestBrowserAttachmentCopySelectionWorksInViewOnly(t *testing.T) {

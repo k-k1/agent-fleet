@@ -186,7 +186,7 @@ Console log は token/cookie を含む可能性があるのでDBへ永続化・�
 ### Console → Agent
 
 ```json
-{"type":"viewport","width":900,"height":600}
+{"type":"viewport","width":900,"height":600,"zoom":2}
 {"type":"mouse","event":"move|down|up","x":10,"y":20,"button":"left","buttons":1,"modifiers":0,"clickCount":1}
 {"type":"wheel","x":10,"y":20,"deltaX":0,"deltaY":120,"modifiers":0}
 {"type":"key","event":"down|up","key":"a","code":"KeyA","modifiers":0,"repeat":false}
@@ -197,6 +197,10 @@ Console log は token/cookie を含む可能性があるのでDBへ永続化・�
 {"type":"visibility","visible":false}
 ```
 
+- `viewport.zoom`（省略時 1、上限 4）はピンチズーム。Agentは layout viewport を `base / zoom` に縮めて
+  そこからフレームを撮るので、文字は拡大**描画**され、画像を後から引き伸ばすのとは違う。適用後の layout は
+  text `viewport` で返し、pointer座標はその空間で解釈する。`deviceScaleFactor` は上げない
+  （screencast は CSS pixel サイズのフレームしか出さず emulate した DPR を無視する＝実測。詳細は 53.x）。
 - path navigation は `/` 始まりだけを許し、Agentが同じ scheme/host/portのURLへ組み立てる。
 - IME composition 中の個別 key は送らず、確定文字列を `text` で送る。
 - pointer coordinate はCanvasのCSS pixelをviewportへ換算して送る。

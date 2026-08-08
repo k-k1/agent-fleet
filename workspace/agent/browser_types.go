@@ -25,6 +25,13 @@ const (
 	browserMaxLayoutWidth  = 4000
 	browserMaxLayoutHeight = 4000
 	browserFitSlack        = 8
+	// Pinch zoom (docs/31 §wire protocol). 1 is the pane's own layout — or the
+	// fitted one — and zooming out past it is not offered, so pinching back to 1
+	// is always the way out. Mirrors BROWSER_MAX_ZOOM in the Console.
+	browserMaxZoom = 4
+	// Never lay out narrower than this: below a phone-sized viewport sites
+	// collapse into their smallest breakpoint, which is not "bigger text".
+	browserMinLayoutSide = 120
 	// A selection copied out of the page. The user can already read it on
 	// screen; the cap only keeps one Ctrl+C from shipping a whole document.
 	browserMaxSelectionBytes = 128 * 1024
@@ -120,6 +127,57 @@ func fitLayoutViewport(pane browserViewport, contentWidth float64) (browserViewp
 		return browserViewport{}, false
 	}
 	return browserViewport{Width: width, Height: height, DeviceScaleFactor: 1}, true
+}
+
+// normalizeBrowserZoom accepts the viewer's pinch zoom. Absent (0) is 1; a
+// hostile or garbage value is clamped rather than rejected, because a viewport
+// message that fails takes the whole resize with it.
+func normalizeBrowserZoom(zoom float64) float64 {
+	if !finitePositive(zoom) || zoom < 1 {
+		return 1
+	}
+	if zoom > browserMaxZoom {
+		return browserMaxZoom
+	}
+	return zoom
+}
+
+// zoomedLayout applies a pinch zoom to a base layout viewport.
+//
+// The zoom is a LAYOUT zoom, not a magnified picture: the page is laid out in
+// `base / zoom` CSS pixels and the frame is captured from that layout, so text
+// is RE-RENDERED bigger instead of being interpolated. That is the whole point
+// on a phone, where the interesting case is zooming in from zoom-to-fit: a
+// 1240 px site shown in a 390 px pane arrives at roughly a third of its size, so
+// every glyph is already below the pane's own pixel grid and magnifying the
+// image can only enlarge mush. Laying out at 620 instead puts real pixels back.
+//
+// The sharpness ceiling is 1:1 (layout == pane). Past it — layout narrower than
+// the pane — the frame is smaller than the canvas and the browser upscales it,
+// which is exactly as soft as a picture zoom; it is still allowed because
+// "make this control big enough to tap" is a real thing to want.
+//
+// Deliberately NO deviceScaleFactor compensation: measured against Chromium 151,
+// Page.startScreencast emits frames sized in CSS pixels and ignores the emulated
+// ratio entirely (220x267 layout -> 220x267 frame at ratio 1, 2 and 3 alike),
+// while Page.captureScreenshot does honour it (660x801). Raising the ratio would
+// therefore buy nothing and make the compositor render 9x the pixels.
+func zoomedLayout(base browserViewport, zoom float64) browserViewport {
+	if base.Width < 1 || base.Height < 1 {
+		return base
+	}
+	zoom = normalizeBrowserZoom(zoom)
+	if side := math.Min(float64(base.Width), float64(base.Height)) / browserMinLayoutSide; side < zoom {
+		zoom = side
+	}
+	if zoom <= 1 {
+		return base
+	}
+	return browserViewport{
+		Width:             max(1, int(math.Round(float64(base.Width)/zoom))),
+		Height:            max(1, int(math.Round(float64(base.Height)/zoom))),
+		DeviceScaleFactor: 1,
+	}
 }
 
 func browserTargetURL(port int, path string) (string, error) {
