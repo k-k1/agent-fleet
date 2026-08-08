@@ -1,7 +1,7 @@
 # 55. 発言時点からの会話分岐（fork at message）
 
-> ◐ P1〜P2 実装済み（契約 ＋ opencode ＋ codex ＋ Console 導線）。両 kind ともサーバ側は
-> **実 CLI で通し確認済み**、Console からの通しはデプロイ待ち。残り = claude（P3）。
+> ◐ P1〜P3 実装済み（契約 ＋ opencode ＋ codex ＋ claude ＋ Console 導線）。**3 種とも
+> サーバ側は実 CLI で通し確認済み**、Console からの通しはデプロイ待ち。残り = P4（v1.1）。
 > 設計判断は [decisions/0039](decisions/0039-fork-at-message.md)。
 > 旧判断（会話まるごと分岐のみ・地点分岐は非サポートにつき却下）は
 > [history/fork-from-chat.md](history/fork-from-chat.md)。本書はそれを差し替える。
@@ -262,7 +262,7 @@ CLI(TUI) ルートは `--session <src> --fork` に分岐点を渡す引数が無
 CLI 経路（`codex fork <id>`）には分岐点の引数が無いので、ハンドラの managed ゲートに加えて
 `BuildLaunch` でも拒否する。
 
-### claude（手術）
+### claude（手術・✅ 実装済み）
 
 TUI しか無いので、**Agent が `<新 sid>.jsonl` を直接書いてから** `claude --resume <新 sid>` で
 起動する。既存の `buildProgram` は `SessionJSONLExists(sid)` が真なら resume を選ぶので、
@@ -288,6 +288,17 @@ TUI しか無いので、**Agent が `<新 sid>.jsonl` を直接書いてから*
   `/rewind` が元セッション由来のチェックポイントを指す点は既知の割り切り。
 
 **縮退**: 検査に落ちたら会話まるごと分岐（既存経路）を提案する。黙って全体を分岐させない。
+検査は `ResolveForkAt`（要求時）と `MaterializeForkAt`（初回起動時）が**同じ関数**
+（`buildForkLines`）を通るので、「要求は通ったのに起動で失敗する」がそもそも起こらない。
+
+**materialize の位置**: 分岐先の jsonl は claude の `BuildLaunch` が初回起動の直前に書く。
+`buildProgram` は自分の jsonl があれば普通に `--resume` するので、そこから先は分岐だったことを
+誰も知らなくてよい（会話まるごと分岐が初回起動後はただの resume になるのと同じ形）。書き込みは
+同ディレクトリの一時ファイル＋rename で、途中まで書けた転写が resume されることを防ぐ。
+
+**claude だけ managed を要求しない**。claude に managed driver は存在しないので、他の kind と
+同じ「managed 必須」を当てると導線が永久に出ない。この差は kind 側（`ResolveForkAt` が
+`agents.ErrForkAtRoute` を返すか）と Console 側（`caps.forkAtManagedOnly`）の両方に置いてある。
 
 **代替ルート（採らないが残す）**: 分岐時に「最初の指示」を必須入力にすれば
 `claude -p --resume <src> --resume-session-at <uuid> --fork-session --session-id <new> "<指示>"`
@@ -348,6 +359,12 @@ SQLite。いずれも未検証で、`CanForkAt` は false のままにする。
   は実物にしか聞けない。1 往復ずれても、ミラー上は「分岐できた」に見えてしまう。
   既存の live tier と同じ `-run TestContractLive` 一括起動に自動で乗る
   （`.github/workflows/opencode-contract.yml`）。
+- **実 CLI（claude・`clicontract` タグ）**: ✅ `TestContractLiveClaudeForkAt`。実 claude で 2 ターン
+  会話を作り、`MaterializeForkAt` で 2 番目の発言の手前を切って `--resume` し、**切り落とした
+  発言を覚えていないこと**（ALPHA と答え BETA と答えない）を確かめる。**この一本が claude の
+  唯一のドリフト検知**で、転写スキーマや resume の解釈が動けばここだけが赤くなる（合成テストは
+  何が起きても緑のままになる）。`claude-tui-contract.yml` に相乗りさせた。コストは haiku 3 ターン、
+  実行後は scratch 会話の転写を自分で消す。実測 2026-08-09（claude 2.1.223）: PASS / 14.1s。
 - **実 CLI（codex driftlive）**: ✅ `TestLiveDriftCodexForkAtLastTurn`。実 app-server で 2 ターン
   回し、2 番目の発言を指して分岐して、**分岐先の turn が 1 つだけ**であることを `thread/read`
   （`includeTurns`）で数える。スキーマの "inclusive" は仕様書の言葉であって挙動ではないので、
@@ -370,12 +387,12 @@ SQLite。いずれも未検証で、`CanForkAt` は false のままにする。
 | P1 | `Turn.AnchorID` / `Meta.ForkAt` / API `at` / `ForkAtResolver` / `CanForkAt` の骨組み＋ opencode 実装 | ✅ |
 | P1.5 | Console の分岐導線（ユーザー発言の「ここから分岐」・確認モーダル・下書き投入） | ✅ |
 | P2 | codex（`lastTurnId`＋アンカー変換） | ✅ |
-| P3 | claude（jsonl 手術＋切断点検査＋縮退）＋ ドリフト検知テスト | — |
+| P3 | claude（jsonl 手術＋切断点検査＋縮退）＋ ドリフト検知テスト | ✅ |
 | P4 | v1.1: 「この発言と回答を含めて分岐」オプション、cursor / copilot の実験 | — |
 
-**使える範囲は「managed の opencode / codex セッション」**。導線は
-`caps.forkAt && managed && !readOnly` の 3 条件で出しており、条件を満たさない種別・起動方式では
-そもそもボタンが出ない。サーバ側も同じ判断を独立に持っている（導線だけの防御にしない）。
+**使える範囲は claude（TUI）／ managed の opencode・codex**。導線を出す条件は kind ごとに
+違うので `canBranchInSession`（`caps.forkAt` × `caps.forkAtManagedOnly` × managed × readOnly）に
+まとめてある。サーバ側も同じ判断を独立に持っている（導線だけの防御にしない）。
 
 opencode を先にやるのは、**公式 API で最も改修が小さく、契約（アンカー・API・cap）の形を
 実際に動かして確かめられる**ため。claude を最後に置くのは、唯一非公式な書き込みを伴い、
@@ -395,9 +412,12 @@ MVP（P1＋P1.5）のサーバ側は**実 CLI で通し確認済み**（§55.8 �
    したがって **TUI codex の地点分岐は原理的には可能**——`thread/fork` で分岐を作ってから
    `codex resume <新 thread>` で起動すればよい。v1 は managed 限定のままにするが、
    塞がっているからではなく、CLI ルートに口を増やすほどの需要がまだ無いため。
-2. **claude の compaction 済み会話での手術。** サマリ行をまたぐ切断の実挙動。
-3. **claude の sidechain（Task サブエージェント）を含む区間の切断。** 親 turn だけを切って
-   sidechain 行が孤立した場合の resume 挙動。
+2. **claude の compaction 済み会話での手術。** サマリ行をまたぐ切断の実挙動。圧縮サマリ**から**の
+   分岐は拒否済みだが、サマリより手前を指した分岐（要約の素になった生の履歴が既に無い場合）は
+   未実測。
+3. **claude の sidechain（Task サブエージェント）を含む区間の切断。** サブエージェントの発言を
+   アンカーにすることは拒否済み。未実測なのは、親のターンだけを切って sidechain 行が
+   宙に浮いた prefix が残る場合の resume 挙動。
 4. **opencode の `messageID` に assistant メッセージ ID を渡したときの挙動**（コード上は同じ
    `>=` 比較で成立するはずだが、v1.1 の「含める」で使うので実測しておく）。
 5. cursor / copilot の転写手術（P4）。

@@ -28,22 +28,22 @@ func forkReq(t *testing.T, name, body string) *httptest.ResponseRecorder {
 	return rec
 }
 
-// 地点分岐に対応しない kind（claude は会話まるごとの分岐だけ）で at を渡したら、
-// 会話まるごと分岐へ倒さずに断る。
-func TestForkAtUnsupportedKind(t *testing.T) {
+// 分岐そのものに対応しない kind は、at の有無より先に断る。
+func TestForkUnsupportedKind(t *testing.T) {
 	withTempHome(t)
-	session.WriteMeta(session.Meta{Name: "cl1", Dir: t.TempDir(), Kind: session.KindClaude})
-	rec := forkReq(t, "cl1", `{"at":"some-uuid"}`)
+	session.WriteMeta(session.Meta{Name: "cur1", Dir: t.TempDir(), Kind: session.KindCursor})
+	rec := forkReq(t, "cur1", `{"at":"some-uuid"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d; want 400", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "fork_at_unsupported") {
-		t.Fatalf("body = %s; want fork_at_unsupported", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "fork_unsupported_kind") {
+		t.Fatalf("body = %s; want fork_unsupported_kind", rec.Body.String())
 	}
 }
 
-// 対応 kind でも CLI(TUI) ルートには分岐点を渡す口が無い。導線側でも隠しているが、
-// 直叩きされたときにここで止まること。
+// 対応 kind でも CLI(TUI) ルートには分岐点を渡す口が無い（opencode/codex）。導線側でも
+// 隠しているが、直叩きされたときにここで止まること。**「会話がまだ無い」より先に**この
+// 理由が出ることも込みで押さえる: 経路が違うセッションに「会話を増やせ」と言っても直らない。
 func TestForkAtRefusedOnCLIRoute(t *testing.T) {
 	withTempHome(t)
 	session.WriteMeta(session.Meta{
@@ -55,6 +55,20 @@ func TestForkAtRefusedOnCLIRoute(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "fork_at_unsupported") {
 		t.Fatalf("body = %s; want fork_at_unsupported", rec.Body.String())
+	}
+}
+
+// claude は managed driver を持たない。一律に managed を要求していた頃はここで永久に
+// 弾かれていたので、TUI の claude が経路を理由に断られないことを固定する
+// （会話が無いので別の理由では落ちる — それが fork_at_unsupported でないことを見る）。
+func TestForkAtClaudeTUINotRefusedByRoute(t *testing.T) {
+	withTempHome(t)
+	session.WriteMeta(session.Meta{
+		Name: "cl1", Dir: t.TempDir(), Kind: session.KindClaude, Driver: session.DriverTUI,
+	})
+	rec := forkReq(t, "cl1", `{"at":"some-uuid"}`)
+	if strings.Contains(rec.Body.String(), "fork_at_unsupported") {
+		t.Fatalf("body = %s; claude は TUI しか無いので経路を理由に断ってはいけない", rec.Body.String())
 	}
 }
 
