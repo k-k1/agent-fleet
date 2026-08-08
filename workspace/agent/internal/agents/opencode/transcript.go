@@ -554,6 +554,10 @@ func parseMessage(db *sql.DB, msgID string, data []byte, idx int) (transcript.Tu
 	t := transcript.Turn{
 		Role: md.Role, Parts: parts, Text: text, Idx: idx,
 		Cwd: md.Path.Cwd,
+		// opencode's own message id IS the fork anchor: POST /session/{id}/fork takes a
+		// messageID and its copy loop stops at the first message whose id sorts >= that
+		// value (docs/55 §55.2), so the anchor travels to the server untranslated.
+		AnchorID: msgID,
 	}
 	if md.Time.Created > 0 {
 		// opencode stores epoch milliseconds.

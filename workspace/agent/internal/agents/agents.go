@@ -37,6 +37,10 @@ type Caps struct {
 	CanFork       bool // POST /fork — copy the conversation into a new session (claude)
 	CanTranscript bool // GET /output & /messages — read the jsonl transcript (claude)
 	UsesLabel     bool // set a claude --name display label at create/recreate (claude)
+	// CanForkAt narrows CanFork: POST /fork {"at": …} can branch at a PAST turn instead
+	// of copying the whole conversation (docs/55). Implies the kind also implements
+	// ForkAtResolver and fills transcript.Turn.AnchorID. Never true without CanFork.
+	CanForkAt bool
 }
 
 // LaunchOpts carries the per-launch inputs that aren't in session.Meta.
@@ -154,6 +158,22 @@ type ContextReporter interface {
 // launch (each kind's BuildLaunch turns ForkFrom into its CLI's fork invocation).
 type Forker interface {
 	ForkSource(m session.Meta) (string, error)
+}
+
+// ForkAtResolver is the optional "fork at a point" capability behind Caps().CanForkAt
+// (docs/55). It is DELIBERATELY separate from Forker: adding a method there would break
+// the kinds that only do whole-conversation forks.
+//
+// ResolveForkAt validates an anchor (transcript.Turn.AnchorID, echoed back by the
+// Console) against this session's own conversation and returns the value the kind's fork
+// path needs — which is NOT always the anchor itself, because the engines disagree on
+// inclusivity: opencode's messageID is exclusive and passes straight through, codex's
+// lastTurnId is inclusive so the PREVIOUS turn's id comes back. Every kind resolves to
+// the same user-facing meaning: keep the history up to, but not including, the anchored
+// turn. An unknown / unusable anchor is an error — never a silent fall back to a
+// whole-conversation fork, which would look like it worked.
+type ForkAtResolver interface {
+	ResolveForkAt(m session.Meta, anchor string) (string, error)
 }
 
 // NoGenericTranscript is the Transcript() default for agents that either have no
