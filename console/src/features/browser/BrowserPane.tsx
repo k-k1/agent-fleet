@@ -98,6 +98,7 @@ export function BrowserPane({ paneId, port, path }: BrowserPaneProps) {
         snapshot={snapshot}
         canvasLabel={tr("browser.canvas")}
         inputLabel={tr("browser.remote_input")}
+        keyboardLabel={tr("browser.keyboard_toggle")}
       >
         {status && (
           <div className={"browser-state browser-state-" + snapshot.state}>

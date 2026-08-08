@@ -198,6 +198,7 @@ describe("BrowserSurface touch", () => {
         snapshot={{ title: "Review", width: 800, height: 600 }}
         canvasLabel="Browser"
         inputLabel="Input"
+        keyboardLabel="Keyboard"
         inputEnabled={inputEnabled}
       />,
     ));
@@ -206,6 +207,8 @@ describe("BrowserSurface touch", () => {
   beforeEach(() => {
     vi.stubGlobal("ResizeObserver", FakeResizeObserver);
     vi.stubGlobal("IntersectionObserver", FakeIntersectionObserver);
+    // A touch device, so the keyboard toggle (which only touch input needs) renders.
+    vi.stubGlobal("ontouchstart", null);
     rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
       x: 0, y: 0, width: 800, height: 600, top: 0, right: 800, bottom: 600, left: 0,
       toJSON: () => ({}),
@@ -239,17 +242,36 @@ describe("BrowserSurface touch", () => {
     await touch("pointermove", { pointerId: 1, clientX: 400, clientY: 430 });
 
     expect(sent().some((m) => m.type === "mouse")).toBe(false);
+    // The first move goes out at once; the ones behind it in the same frame are
+    // summed into the next wheel rather than each crossing the wire.
+    expect(sent()).toHaveLength(1);
     expect(sent()[0]).toMatchObject({ type: "wheel", deltaY: 40 });
-    expect(sent()[1]).toMatchObject({ type: "wheel", deltaY: 30 });
   });
 
-  it("clicks on a tap and hands focus to the input", async () => {
+  // A tap must NOT focus the hidden input: on a phone that raised GBoard over the
+  // page on every tap, including taps on links and buttons. The keyboard is
+  // opened deliberately with the pane's toggle instead.
+  it("clicks on a tap and leaves the keyboard closed", async () => {
     await render(true);
     await touch("pointerdown", { pointerId: 1, clientX: 120, clientY: 90 });
     await touch("pointerup", { pointerId: 1, clientX: 121, clientY: 90 });
 
     expect(sent().map((m) => (m.type === "mouse" ? m.event : m.type))).toEqual(["move", "down", "up"]);
-    expect(document.activeElement).toBe(host.querySelector("input"));
+    expect(document.activeElement).not.toBe(host.querySelector("input"));
+  });
+
+  it("opens and closes the keyboard from the toggle", async () => {
+    await render(true);
+    const toggle = host.querySelector(".browser-keyboard") as HTMLButtonElement;
+    const ime = host.querySelector("input") as HTMLInputElement;
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+
+    await act(async () => toggle.click());
+    expect(document.activeElement).toBe(ime);
+    expect(host.querySelector(".browser-keyboard")?.getAttribute("aria-pressed")).toBe("true");
+
+    await act(async () => (host.querySelector(".browser-keyboard") as HTMLButtonElement).click());
+    expect(document.activeElement).not.toBe(ime);
   });
 
   // Zoom is the viewer's own layout viewport, not page input, so it must survive

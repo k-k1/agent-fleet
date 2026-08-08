@@ -34,6 +34,10 @@ A pinch re-lays the page out at a narrower width rather than stretching the pict
 its own size, and pinching back returns you to the original view. **Double-tap** jumps between the fit-to-width
 view and life size.
 
+A tap does **not** raise the keyboard — it would appear every time you pressed a link or a button. To type
+into a field on the page, tap the field and then open the keyboard with the **keyboard button** at the bottom
+left of the pane; it stays open while you keep tapping the page.
+
 ### How to use it
 
 1. Have a shell or an agent start the dev server. Make the server listen on `127.0.0.1` inside the workspace
