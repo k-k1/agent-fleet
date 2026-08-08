@@ -178,3 +178,90 @@ describe("BrowserSurface drag and clipboard", () => {
     expect(sent().at(-1)).toEqual({ type: "text", text: "貼り付けたい文字" });
   });
 });
+
+describe("BrowserSurface touch", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+  let rect: ReturnType<typeof vi.spyOn>;
+  let controller: BrowserSurfaceController;
+
+  const sent = () => vi.mocked(controller.sendInput).mock.calls.map((call) => call[0]);
+  const canvas = () => host.querySelector("canvas") as HTMLCanvasElement;
+  const touch = (type: string, init: PointerEventInit) => act(async () => {
+    canvas().dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerType: "touch", ...init }));
+  });
+
+  const render = async (inputEnabled: boolean) => {
+    await act(async () => root.render(
+      <BrowserSurface
+        controller={controller}
+        snapshot={{ title: "Review", width: 800, height: 600 }}
+        canvasLabel="Browser"
+        inputLabel="Input"
+        inputEnabled={inputEnabled}
+      />,
+    ));
+  };
+
+  beforeEach(() => {
+    vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+    vi.stubGlobal("IntersectionObserver", FakeIntersectionObserver);
+    rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      x: 0, y: 0, width: 800, height: 600, top: 0, right: 800, bottom: 600, left: 0,
+      toJSON: () => ({}),
+    });
+    Object.assign(HTMLCanvasElement.prototype, {
+      setPointerCapture() {}, releasePointerCapture() {}, hasPointerCapture: () => true,
+    });
+    controller = {
+      mount: vi.fn(), unmount: vi.fn(), setVisible: vi.fn(), setViewport: vi.fn(),
+      sendInput: vi.fn(), zoomBy: vi.fn(),
+    };
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    host.remove();
+    rect.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  // Forwarding a finger as a mouse turned every swipe into a button-down drag:
+  // the page selected text instead of scrolling, which is what made the pane
+  // unusable on a phone.
+  it("scrolls on a swipe instead of dragging the page", async () => {
+    await render(true);
+    await touch("pointerdown", { pointerId: 1, clientX: 400, clientY: 500 });
+    await touch("pointermove", { pointerId: 1, clientX: 400, clientY: 460 });
+    await touch("pointermove", { pointerId: 1, clientX: 400, clientY: 430 });
+
+    expect(sent().some((m) => m.type === "mouse")).toBe(false);
+    expect(sent()[0]).toMatchObject({ type: "wheel", deltaY: 40 });
+    expect(sent()[1]).toMatchObject({ type: "wheel", deltaY: 30 });
+  });
+
+  it("clicks on a tap and hands focus to the input", async () => {
+    await render(true);
+    await touch("pointerdown", { pointerId: 1, clientX: 120, clientY: 90 });
+    await touch("pointerup", { pointerId: 1, clientX: 121, clientY: 90 });
+
+    expect(sent().map((m) => (m.type === "mouse" ? m.event : m.type))).toEqual(["move", "down", "up"]);
+    expect(document.activeElement).toBe(host.querySelector("input"));
+  });
+
+  // Zoom is the viewer's own layout viewport, not page input, so it must survive
+  // the view-only default — the state a fresh attachment actually starts in.
+  it("still pinches to zoom while the page refuses input", async () => {
+    await render(false);
+    await touch("pointerdown", { pointerId: 1, clientX: 300, clientY: 300 });
+    await touch("pointerdown", { pointerId: 2, clientX: 400, clientY: 300 });
+    await touch("pointermove", { pointerId: 2, clientX: 500, clientY: 300 });
+    await touch("pointerup", { pointerId: 2, clientX: 500, clientY: 300 });
+
+    expect(controller.zoomBy).toHaveBeenCalledWith(2);
+    expect(sent()).toEqual([]);
+  });
+});

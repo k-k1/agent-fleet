@@ -458,6 +458,7 @@ func (v *browserAttachmentViewer) handleViewport(data []byte) {
 		Width  float64 `json:"width"`
 		Height float64 `json:"height"`
 		Fit    bool    `json:"fit"`
+		Zoom   float64 `json:"zoom"`
 	}
 	if json.Unmarshal(data, &msg) != nil {
 		v.protocolError("bad_viewport", "invalid viewport")
@@ -468,21 +469,49 @@ func (v *browserAttachmentViewer) handleViewport(data []byte) {
 		v.protocolError("bad_viewport", err.Error())
 		return
 	}
+	zoom := normalizeBrowserZoom(msg.Zoom)
 	v.attachment.mu.Lock()
-	unchanged := v.attachment.viewport == pane && v.attachment.pane == pane && v.attachment.fit == msg.Fit
+	// base is the layout BEFORE the pinch zoom (the pane, or the fitted width).
+	// Keeping it lets a pinch skip the re-measure below: measuring the content of
+	// an already zoomed page would fold each zoom into the next one and the view
+	// would drift with every gesture.
+	sameShape := v.attachment.pane == pane && v.attachment.fit == msg.Fit && v.attachment.base.Width > 0
+	unchanged := sameShape && v.attachment.zoom == zoom
+	base := v.attachment.base
 	v.attachment.pane = pane
 	v.attachment.fit = msg.Fit
-	v.attachment.viewport = pane
+	v.attachment.zoom = zoom
 	v.attachment.mu.Unlock()
 	if unchanged {
 		return
 	}
-	if !v.applyMetrics(pane) {
+	if !sameShape {
+		if !v.applyMetrics(pane) {
+			return
+		}
+		base = pane
+		if msg.Fit {
+			if fitted, ok := v.measureFit(pane); ok {
+				base = fitted
+			}
+		}
+		v.attachment.mu.Lock()
+		v.attachment.base = base
+		v.attachment.viewport = pane
+		v.attachment.mu.Unlock()
+	}
+	layout := zoomedLayout(base, zoom)
+	if !v.applyMetrics(layout) {
+		// Leave the metrics that did apply in place rather than a half-applied
+		// zoom; viewport already names the layout those metrics describe.
 		return
 	}
-	if msg.Fit {
-		v.fitToPane(pane)
-	}
+	v.attachment.mu.Lock()
+	v.attachment.viewport = layout
+	v.attachment.mu.Unlock()
+	// Pointer coordinates are in layout space, so the viewer has to be told the
+	// size it must map into — it only ever asked for the pane's size.
+	v.enqueueText(mustBrowserJSON(map[string]any{"type": "viewport", "width": layout.Width, "height": layout.Height}))
 	v.attachment.restartScreencast()
 }
 
@@ -494,21 +523,26 @@ func (v *browserAttachmentViewer) handleViewport(data []byte) {
 // shrinking the produced image. The screencast's own maxWidth/maxHeight already
 // scales the frame down to the pane (a 1240x1503 layout arrives as a 660x800
 // frame), which is the scaling we actually want.
+//
+// deviceScaleFactor stays 1 for the same kind of reason: the screencast ignores
+// it (measured — see zoomedLayout), so raising it for a zoomed layout would only
+// make the compositor render pixels no frame ever carries.
 func (v *browserAttachmentViewer) applyMetrics(vp browserViewport) bool {
 	return v.call("Emulation.setDeviceMetricsOverride",
 		map[string]any{"width": vp.Width, "height": vp.Height, "deviceScaleFactor": 1, "mobile": false}, nil)
 }
 
-// fitToPane widens the layout viewport until the page's own content fits, then
-// scales the image back down to the pane. A desktop site with a min-width
-// otherwise renders clipped with its own horizontal scrollbar inside a pane
-// that is simply narrower than the site was designed for.
+// measureFit answers the layout viewport that makes the page's own content fit
+// the pane, so the image can be scaled back down to it. A desktop site with a
+// min-width otherwise renders clipped with its own horizontal scrollbar inside a
+// pane that is simply narrower than the site was designed for.
 //
 // The aspect ratio is kept EXACTLY equal to the pane's, so the canvas (which
 // stretches the frame to fill the pane) never distorts and pointer coordinates
 // stay a plain linear map. One pass only: re-measuring after a reflow could
-// oscillate, and the second guess is not better than the first.
-func (v *browserAttachmentViewer) fitToPane(pane browserViewport) {
+// oscillate, and the second guess is not better than the first. The caller must
+// have the pane's own metrics applied — that is the layout being measured.
+func (v *browserAttachmentViewer) measureFit(pane browserViewport) (browserViewport, bool) {
 	var metrics struct {
 		CSSContentSize struct {
 			Width float64 `json:"width"`
@@ -518,27 +552,13 @@ func (v *browserAttachmentViewer) fitToPane(pane browserViewport) {
 		} `json:"contentSize"`
 	}
 	if !v.call("Page.getLayoutMetrics", nil, &metrics) {
-		return
+		return browserViewport{}, false
 	}
 	content := metrics.CSSContentSize.Width
 	if content <= 0 {
 		content = metrics.ContentSize.Width
 	}
-	layout, ok := fitLayoutViewport(pane, content)
-	if !ok {
-		return
-	}
-	if !v.applyMetrics(layout) {
-		// Leave the pane-sized metrics from the caller in place rather than a
-		// half-applied zoom.
-		return
-	}
-	v.attachment.mu.Lock()
-	v.attachment.viewport = layout
-	v.attachment.mu.Unlock()
-	// Pointer coordinates are in layout space, so the viewer has to be told the
-	// size it must map into — it only ever asked for the pane's size.
-	v.enqueueText(mustBrowserJSON(map[string]any{"type": "viewport", "width": layout.Width, "height": layout.Height}))
+	return fitLayoutViewport(pane, content)
 }
 
 // handleCopySelection hands the page's current selection back to the viewer so

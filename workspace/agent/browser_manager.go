@@ -63,7 +63,12 @@ type browserPage struct {
 	targetID    string
 	sessionID   string
 	mainFrameID string
-	viewport    browserViewport
+	// viewport is the LAYOUT viewport pointer coordinates live in; a pinch zoom
+	// makes it smaller than pane, which stays the size the viewer shows (and the
+	// size the screencast image is capped at).
+	viewport browserViewport
+	pane     browserViewport
+	zoom     float64
 
 	mu            sync.Mutex
 	url           string
@@ -158,7 +163,7 @@ func (m *browserManager) Create(req browserCreateRequest) (browserPageResponse, 
 		return browserPageResponse{}, fmt.Errorf("%w: %v", errBrowserStart, err)
 	}
 	p := &browserPage{
-		manager: m, id: newBrowserID(), port: req.Port, viewport: viewport,
+		manager: m, id: newBrowserID(), port: req.Port, viewport: viewport, pane: viewport, zoom: 1,
 		url: target, state: "starting", visible: false,
 		latestFrame: make(chan []byte, 1), frameEvents: make(chan browserScreencastFrame, 1), frameStop: make(chan struct{}),
 	}
@@ -937,10 +942,16 @@ func (p *browserPage) startScreencast() error {
 			return errBrowserNotFound
 		}
 		p.mu.Lock()
-		viewport := p.viewport
+		// Cap the IMAGE at the pane, not the layout viewport: a pinch zoom lays the
+		// page out smaller on purpose and renders it at a higher device pixel ratio,
+		// and capping at the layout would throw exactly those pixels away.
+		image := p.pane
+		if image.Width < 1 || image.Height < 1 {
+			image = p.viewport
+		}
 		p.mu.Unlock()
 		err = p.manager.call(cdp, p.sessionID, "Page.startScreencast", map[string]any{
-			"format": "jpeg", "quality": p.manager.config.JPEGQuality, "maxWidth": viewport.Width, "maxHeight": viewport.Height,
+			"format": "jpeg", "quality": p.manager.config.JPEGQuality, "maxWidth": image.Width, "maxHeight": image.Height,
 		}, nil)
 		if err == nil {
 			p.casting = true

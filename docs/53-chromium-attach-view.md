@@ -355,7 +355,7 @@ AFは停止済みかを検知できず、未停止時の入力結果は未定義
 
 専用WebSocketのwire versionは`1`である。接続直後のtext `ready`は
 `{type:"ready",version:1,state,url,title,width,height,controlMode,handoff}`、frameはbinary JPEGとする。
-`viewport`（`{width,height,fit?}`）、`visibility`、`copy`は全modeで受理する（`locked`と
+`viewport`（`{width,height,fit?,zoom?}`）、`visibility`、`copy`は全modeで受理する（`locked`と
 `unsupported-target-url`では`copy`だけ`input_not_allowed`）。`mouse`、`wheel`、`key`、`text`、`reload`、`history`は
 `user-control`だけで受理し、他modeではtext
 `{type:"protocol-error",code:"input_not_allowed",message}`を返す。`navigate`はこのnamespaceのmessage型に存在せず、
@@ -372,6 +372,9 @@ AFは停止済みかを検知できず、未停止時の入力結果は未定義
 `maxWidth/maxHeight`（= pane）が行うのでframeはpane相当のままで、帯域は増えない。layout viewportはpaneと
 同じ縦横比を保つ（canvasがpaneいっぱいに引き伸ばすため、比が変わると歪む）。上限はscreencastの1600x1200とは別で、
 layout側は4000x4000。pointer座標はlayout空間なので、Agentは新しいサイズを`viewport` textでviewerへ返す。
+
+**pinch zoom（§53.19）**: `viewport`の`zoom`（省略時1、上限4）は上のbase — `fit`後のlayout、fitなしならpane —
+をさらに`base / zoom`へ縮める。`fit`と直交し、view-onlyでも受理する（見えているものの見え方はページ入力ではない）。
 
 `Emulation.setDeviceMetricsOverride`の**`scale`は使わない**。Chrome 151で実測したところ、これは出力画像を
 縮めるのではなく**同じ大きさの面の中でページだけを縮めて描く**（ページが左上に小さく描かれ、右と下が空白になる）。
@@ -443,6 +446,7 @@ Consoleの「接続中のブラウザ」（WSバーのプレビュー）だけ�
 - 「幅に合わせる」トグル（attachmentは既定ON）と「選択をコピー」を出す。既定ONなのは、attachの相手は
   responsive前提の自前アプリではなく他人のデスクトップサイトで、pane幅そのままだと右が切れるため。
   コンテナ内ブラウザペイン（自前アプリのプレビュー）は従来どおり等倍のまま。
+  このトグルはpinch zoomのリセットも兼ねる（§53.19）。
 - titleとoriginだけを表示し、URL全文のqueryは既定で隠す。
 - `view-only | user-control | locked`を明示する。
 - handoff messageと「操作完了」「中止」をPage外のConsole chromeに表示する。
@@ -840,3 +844,57 @@ RDPそのものは更に不利で、`xrdp`はsesman/PAM前提でroot無し導入
 この場合も前提として、workspaceイメージへ`tigervnc`（`Xvnc`）・`xkbcomp`＋xkeyboard-config・`websockify`・`noVNC`を
 焼き込むこと、およびVNCをloopback限定＋認証必須で運用し、CP経由の中継経路（現行の`/ws/browser-attachments`相当）を
 設計することが必要になる。
+
+## 53.19 タッチ操作（2026-08-08 実測）
+
+スマホでattach viewを触ると**スクロールがまともにできない**。指のpointer eventをそのままmouseへ転送していたため、
+スワイプが常に「左ボタンを押したままのdrag」になり、ページはスクロールせずテキスト選択だけが走っていた。
+拡大手段も無く、fit済みのデスクトップサイトは文字が1/3の大きさのまま読めない。
+
+### ジェスチャ（Console側・`console/src/features/browser/touch.ts`）
+
+`pointerType === "touch"`のときだけ、mouseへ転送する前に意図を判定する。マウス/ペンの経路は従来のまま。
+
+| 操作 | 送るもの |
+|------|----------|
+| スワイプ | `wheel`（移動量の符号反転）。離した後は慣性を減衰させながら継続 |
+| タップ | hoverの`mouse move` → `down` → `up`＋IME inputへfocus |
+| ダブルタップ | fit（またはpane）と等倍の切り替え。2度目のクリックは送らない |
+| 長押し（500ms） | `mouse down`のままdragへ昇格。テキスト選択・スライダー・drag&dropはこれ以外に手段がない |
+| 2本指ピンチ | `viewport`の`zoom`。指が触れている間はcanvasのCSS transformで即時プレビューし、離した時に確定する |
+
+- タップ判定は10px/長押し500ms。スワイプに切り替わった時点で長押しは取り消す。
+- touch defaultはcanvasの**非passive native listener**で潰す（`touchstart`/`touchmove`）。wheelと同じ罠で、
+  Reactのtouch propは passive 登録される。`touch-action: none`が主だが、これが無いと2つ目以降のtouchmoveが
+  非cancelableで届く（＝ブラウザが自前スクロールを確定済み・Chromium 151で実測）。iOS Safariのページ側
+  ピンチズームは`gesturestart/change/end`のpreventDefaultでしか止まらないので併せて潰す。
+- pinchは**ページ入力ではない**ので、view-only（attach直後の既定）でも効く。逆にスワイプ・タップ・長押しは
+  従来どおり`user-control`でだけ効く。
+- pinchの確定は指を離した時の1回だけ。押している間に送るとlayout変更とscreencast再起動が毎フレーム走る。
+- ダブルタップの等倍は Console 側で逆算する。baseを持っているのはAgent（fitのために実測できるのはAgentだけ）
+  なので、直近の`viewport` textが示すlayoutから`layout × zoom = base`、`base / pane`が等倍の倍率になる。
+  fitが無ければbase == paneで等倍に行き先が無いので2倍にする。2度目のクリックは**送らない** —
+  1度目を遅らせて「2度目が来るか」を待つのは、各ブラウザが何年もかけて消した300msのタップ遅延そのもの。
+  3度目で戻ってしまわないよう、切り替えた時点で直前タップの記憶を捨てる。
+- 1に戻すまで縮小方向は出さない。「ピンチで戻せば必ず元に戻る」ことが、リセットUIを増やさない代わりの保証になる。
+
+### なぜ画像の拡大ではなくlayoutを縮めるのか（実測）
+
+- `Page.startScreencast`のframeは**CSS pixel寸法で、emulateしたdeviceScaleFactorを無視する**
+  （220x267 layoutはDPR 1/2/3のいずれでも220x267のframe。同じ状態で`Page.captureScreenshot`は660x801を返す。
+  Chromium 151で実測）。したがって「DPRを上げてframeの画素を増やす」は効かない。
+- 一方、fitで1240 CSS pxを660のpaneに詰めた状態は**すでに情報が失われている**ので、そのframeを拡大しても
+  ぼやけた文字が大きくなるだけ。layoutを620へ縮めれば文字は原寸で描き直され、実際に読める。
+  live testはこの差を色帯で判定する（fitならframe右端は赤帯＝ページ全体、2倍pinch後は白＝左半分を原寸で表示）。
+- 等倍（layout == pane）が鮮明さの上限で、それ以上は素直な拡大になる。小さいUIを押せる大きさにする用途で
+  必要なので許可し、layoutの下限だけ120pxで止める。
+
+### テスト
+
+- `zoomedLayout` 単体、attachment/ownedそれぞれのviewport handler、Console側は`touch.test.ts`（判定）と
+  `BrowserSurface.dom.test.tsx`（配線・view-onlyでのpinch）。
+- `AF_CHROMIUM_ATTACH_LIVE=1`の`TestBrowserAttachmentLivePinchZoom`が実Chromiumで再layoutとframe寸法を見る。
+- Console側の配線は実装時にheadless Chromium＋`Input.dispatchTouchEvent`で実測した（スワイプ＝wheel列と慣性、
+  タップ＝move/down/upとIMEへのfocus、長押し＝button downのままdrag、ピンチ＝保持中のtransformと離した時の
+  1回のzoom）。jsdomはpointer captureもtouch defaultも持たないので、ここは実ブラウザでしか確かめられない。
+
