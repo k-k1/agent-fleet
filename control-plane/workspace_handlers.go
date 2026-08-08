@@ -387,10 +387,11 @@ func (a workspaceAPI) sessionCreate(w http.ResponseWriter, r *http.Request, res 
 	a.proxy.rest(w, r, res)
 }
 
-// sessionFork forks a claude session into a new one (POST
+// sessionFork forks a session's conversation into a new one (POST
 // /api/sessions/{name}/fork). Like create, it auto-starts a cold workspace and
 // enforces the per-user session quota (a fork adds a session), then proxies to the
-// Agent's fork endpoint.
+// Agent's fork endpoint. The optional body (`{"at": …}` — a point fork, docs/55) is
+// relayed verbatim by proxy.rest; the Agent owns validating the anchor.
 func (a workspaceAPI) sessionFork(w http.ResponseWriter, r *http.Request, res *resolved) {
 	ctx := r.Context()
 	if a.autostart {

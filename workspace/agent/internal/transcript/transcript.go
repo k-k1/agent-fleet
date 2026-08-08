@@ -88,6 +88,14 @@ type Turn struct {
 	CacheCreate int    `json:"cacheCreate,omitempty"`
 	TS          string `json:"ts"`  // RFC3339 from the transcript line, "" if absent
 	Idx         int    `json:"idx"` // transcript line index — a stable render key
+	// AnchorID is the AGENT's own stable identifier for this turn, opaque to the Console:
+	// claude = message uuid, codex = turn id, opencode = message id ("msg_…"). It is the
+	// handle "branch from this message" (docs/55) passes back to POST /fork {"at": …}.
+	// Idx cannot serve: it is a line/message ordinal that moves under compaction, and a
+	// branch taken from a silently shifted point looks entirely plausible to the user.
+	// Empty = this kind has no such id (or the row predates it) — the Console then hides
+	// the affordance for that turn instead of guessing.
+	AnchorID string `json:"anchorId,omitempty"`
 	// EndTS is when an assistant turn FINISHED (RFC3339). The Console shows a block's
 	// end time in its footer, not its start: a turn that runs tools for minutes would
 	// otherwise be stamped with the moment the model began (its first thinking/tool

@@ -40,6 +40,11 @@ export interface AgentCaps {
   // codex "$skill" is a plain text mention, channel-agnostic by construction.
   slashSkillsManaged: boolean;
   planMode: boolean; // chat offers a plan-mode toggle (drives the TUI's mode-cycle key)
+  // the mirror offers 「ここから分岐」 on a past user turn — a new session carrying the
+  // history up to just before it (docs/55). Needs the kind to send transcript anchors
+  // (Turn.anchorId) AND a managed session, since only the runtime APIs take a fork point;
+  // the mirror checks both, so this cap alone never shows the affordance.
+  forkAt: boolean;
   ephemeral: boolean; // archiving deletes it (no keep) — shell / ssm
   runsInDir: boolean; // launches in a working dir (clone / dir source) — the agents
   launchableFromRepo: boolean; // offered in a repo row's 起動 menu (ssm is not)
@@ -120,6 +125,7 @@ function caps(overrides: Partial<AgentCaps>): AgentCaps {
     slashSkills: false,
     slashSkillsManaged: false,
     planMode: false,
+    forkAt: false,
     ephemeral: false,
     runsInDir: false,
     launchableFromRepo: false,
@@ -431,6 +437,9 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       // slashSkillsManaged stays false: /command は TUI 機能で、server API 経由の
       // 発火は未検証（未検証の caps を立てない — 1854d の教訓）。
       planMode: true,
+      // 発言時点からの分岐（docs/55）: serve の `POST /session/{id}/fork` が messageID を
+      // 取り、指定メッセージの手前で履歴のコピーを打ち切る（実測 1.18.14）。
+      forkAt: true,
       runsInDir: true,
       launchableFromRepo: true,
     }),

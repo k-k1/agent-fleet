@@ -5,7 +5,9 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -671,12 +673,31 @@ func handleIdempotencyLookup(w http.ResponseWriter, r *http.Request) {
 // leaving the source running/intact (claude --fork-session / opencode --session
 // --fork / codex fork). The per-kind source id comes from agents.Forker; the fork's
 // first launch (via ForkFrom) materializes the copy, and later launches resume it.
+//
+// An optional body `{"at": "<anchorId>"}` narrows it to a POINT fork (docs/55): the new
+// session gets the history up to — but not including — that turn, so the user can retake
+// it. The anchor is a transcript.Turn.AnchorID the mirror handed out; the kind's
+// ForkAtResolver validates it and translates it into that engine's inclusivity. No body
+// (or no `at`) keeps the original whole-conversation behaviour, so old clients are
+// unaffected.
 func handleForkSession(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !session.ValidName(name) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
+	// The body is optional: an empty one (the pre-docs/55 clients, and the "fork the
+	// whole thing" path) decodes to EOF, which is not an error here. Anything else that
+	// fails to parse IS one — silently forking the whole conversation because a typo'd
+	// body was ignored is exactly the outcome §55 refuses to produce.
+	var req struct {
+		At string `json:"at"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "invalid fork request body")
+		return
+	}
+	req.At = strings.TrimSpace(req.At)
 	src, ok := session.ReadMeta(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "no_session", "session not found: "+name)
@@ -688,6 +709,25 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeForkUnsupportedKind, "this session type does not support forking")
 		return
 	}
+	// 「そもそも地点分岐という機能があるか」は要求だけで決まるので、会話の状態を見る前に
+	// 答える。ここを後ろに置くと、対応していない kind へ at を投げたとき「会話がまだ無い」
+	// のような無関係な理由が返り、導線の設計ミスが状態の問題に見えてしまう。
+	resolver, hasResolver := ag.(agents.ForkAtResolver)
+	if req.At != "" {
+		if !hasResolver || !ag.Caps().CanForkAt {
+			httpx.WriteErr(w, http.StatusBadRequest, errCodeForkAtUnsupported,
+				"this session type cannot fork at a past message")
+			return
+		}
+		// 地点分岐の口は各 runtime の API 側にしか無い（opencode の serve fork /
+		// codex の thread/fork）。CLI ルートの起動コマンドには分岐点を渡す引数が無いので、
+		// managed 以外は受けない。
+		if src.DriverKind() != session.DriverManaged {
+			httpx.WriteErr(w, http.StatusBadRequest, errCodeForkAtUnsupported,
+				"forking at a past message requires a managed session")
+			return
+		}
+	}
 	if !session.DirExists(src.Dir) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeForkMissingDir, "cannot fork: the working folder does not exist")
 		return
@@ -696,6 +736,16 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "not_resumable", err.Error())
 		return
+	}
+	// 分岐点そのものの解決は会話ストアを読むので、ForkSource が「分岐できる会話がある」と
+	// 言ったあと。ここで失敗したら止める — 「地点を指したのに会話まるごと分岐された」は、
+	// それらしい履歴が付いてくるぶんユーザーが気づけない壊れ方になる。
+	var forkAt string
+	if req.At != "" {
+		if forkAt, err = resolver.ResolveForkAt(src, req.At); err != nil {
+			httpx.WriteErr(w, http.StatusBadRequest, errCodeForkBadAnchor, err.Error())
+			return
+		}
 	}
 	forkName := allocSessionName(src.Dir)
 	title, _ := cleanTitle(forkTitle(src))
@@ -706,7 +756,7 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 		Kind: src.Kind, Driver: src.Driver, Title: title,
 		Repo:      filepath.Base(src.Dir),
 		Branch:    gitCurrentBranch(src.Dir),
-		CreatedAt: time.Now().Format(time.RFC3339), ForkFrom: forkFrom,
+		CreatedAt: time.Now().Format(time.RFC3339), ForkFrom: forkFrom, ForkAt: forkAt,
 		// 引き継ぎで生えたセッションは出自 handoff（ADR 0029 §6）。元の出自を継ぐと
 		// 「人が開いた数」に紛れ、引き継ぎで増えた消費が見えなくなる。作成元の会話は
 		// 親から引き継ぐ（オペレーター発のセッションからの引き継ぎも同じ系列で追える）。

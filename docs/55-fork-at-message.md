@@ -1,6 +1,7 @@
 # 55. 発言時点からの会話分岐（fork at message）
 
-> 設計確定・未実装。設計判断は [decisions/0039](decisions/0039-fork-at-message.md)。
+> ◐ MVP（P1＋P1.5 ＝ 契約 ＋ opencode ＋ Console 導線）実装済み・実セッションでの通し確認待ち。
+> 残り = codex（P2）／claude（P3）。設計判断は [decisions/0039](decisions/0039-fork-at-message.md)。
 > 旧判断（会話まるごと分岐のみ・地点分岐は非サポートにつき却下）は
 > [history/fork-from-chat.md](history/fork-from-chat.md)。本書はそれを差し替える。
 
@@ -188,14 +189,22 @@ ForkAt string `json:"forkAt,omitempty"`
 取らない。**任意ボディ**を受けるよう広げる。
 
 ```json
-{ "at": "<anchorId>", "draft": true }
+{ "at": "<anchorId>" }
 ```
 
-- `at` 省略＝従来どおり会話まるごと分岐（後方互換）。
-- `at` を解決できない（そんな anchor が無い／進行中 turn／切断不可地点）ときは
-  `400 fork_bad_anchor`。既存の `fork_unsupported_kind` / `fork_missing_dir` と同じ体系。
-- `draft` は Console 用のヒント。true なら応答に**分岐点の元発言テキスト**を含め、Console が
-  コンポーザーの下書きに入れる。Agent 側は転写から取れるので追加の状態は要らない。
+- `at` 省略＝従来どおり会話まるごと分岐（後方互換）。ボディ無し（旧クライアント）も同じ。
+  ただし**壊れた JSON は 400**にする — 読めないボディを黙って捨てると、地点指定のつもりの
+  要求が会話まるごと分岐に化ける。
+- エラーは意味で 2 つに割る。`400 fork_at_unsupported` ＝この種別／起動方式には地点分岐という
+  機能が無い（導線を出すべきでなかった）。`400 fork_bad_anchor` ＝機能はあるが、この分岐点が
+  使えない（会話に無い・サブエージェント発言・ミラーが古い）。既存の `fork_unsupported_kind` /
+  `fork_missing_dir` と同じ体系。
+- 判定の順番も意味で決める。**機能の有無（`fork_at_unsupported`）は会話ストアを見る前**に答え、
+  分岐点の解決（`fork_bad_anchor`）は「分岐できる会話がある」と分かったあとに行う。逆にすると、
+  非対応の kind へ `at` を投げたとき「分岐できる会話がまだありません」のような無関係な理由が
+  返り、導線の設計ミスが会話の状態の問題に見える。
+- **下書きは API に載せない。** 分岐点の発言テキストは Console が既に描画に使っているので、
+  サーバから返す意味がない（初版の設計では `draft` フラグを置いていたが実装時に落とした）。
 
 `agents.Forker` は分岐点解決を持たないので、**別インターフェイスで足す**（実装しない kind の
 コンパイルを壊さない）。
@@ -216,11 +225,20 @@ type ForkAtResolver interface {
 
 ## 55.5 kind 別の実装
 
-### opencode（最初にやる）
+### opencode（最初にやる — ✅ 実装済み）
 
 `workspace/agent/internal/agents/opencode/driver.go` の `serveForkSession` は今 `{}` を
 POST している。`{"messageID": …}` を送るだけ。`ResolveForkAt` は**アンカーをそのまま返す**
-（exclusive なので変換不要）。
+（exclusive なので変換不要）が、次の 2 つは弾く。
+
+- 会話に存在しないメッセージ id。
+- **子（サブエージェント）会話のメッセージ id。** 親の id 並びに属さないので、それで親を
+  分岐すると無関係な地点で切れる。ミラーは sidechain を畳んでいるので導線からは選べないが、
+  アンカーはクライアント由来なのでサーバ側でも確かめる。
+
+CLI(TUI) ルートは `--session <src> --fork` に分岐点を渡す引数が無い。ハンドラが managed 以外を
+断るが、`BuildLaunch` にも**同じ拒否を置いてある**（防御の二重化）— ここを素通りさせると
+「地点を指したのに会話まるごと分岐」が起動時に静かに成立してしまう。
 
 ### codex
 
@@ -275,8 +293,10 @@ SQLite。いずれも未検証で、`CanForkAt` は false のままにする。
 ## 55.6 Console
 
 - ミラー（`console/src/features/mirror/MirrorView.tsx`）の**ユーザー発言ブロック**に
-  「ここから分岐」を出す。出す条件は `caps.canForkAt && turn.anchorId`。ホバー／フォーカスで
-  現れる控えめな affordance にし、既存のターンフッターの並びに入れる。
+  「ここから分岐」を出す。出す条件は `caps.forkAt && managed && !readOnly`（セッション単位）
+  × `canBranchFrom(turn)`（ブロック単位 — ユーザー発言・アンカーあり・echo/キュー/圧縮でない）。
+  ターンフッターのコピーの隣に置く。**ホバーでだけ出す形にはしない**: 粗いポインタでは
+  ホバーが無く、機能の存在自体に気づけないため、常時表示で色だけ落とす。
 - 押すと確認モーダル。表示するのは「分岐点の発言（先頭数行）」「引き継がれる往復数」
   「元は残ること」。エージェント種別とモデルは元セッションを継ぐ（`handleForkSession` の
   現在の挙動どおり）。
@@ -297,7 +317,14 @@ SQLite。いずれも未検証で、`CanForkAt` は false のままにする。
 
 - **単体**: 切断点判定（ツール結果行の除外・`tool_use` 孤児検出・compaction）、
   各 kind の `ResolveForkAt` の包含変換（codex の「1 つ前の turn」・opencode の素通し）。
+  ✅ opencode 分は `internal/agents/opencode/fork_at_test.go`（素通し・未知/サブエージェント
+  アンカーの拒否・`messageID` を載せる/載せない・400 の文言・CLI ルートの起動拒否）。
 - **Agent HTTP**: `at` 有無での分岐、`fork_bad_anchor` の各条件、後方互換（`at` 省略）。
+  ✅ `session_fork_at_test.go`（非対応 kind・CLI ルート・壊れたボディ・ボディ無しで
+  新ゲートを踏まないこと）。
+- **Console 単体**: ✅ `features/mirror/forkAt.test.ts`（導線を出す条件と「引き継ぐ発言数」の
+  数え方）。この 2 つは**出しすぎれば必ず 400 になり、数え違えれば確認ダイアログが嘘をつく**
+  ので、MirrorView から純関数に切り出してテストしている。
 - **実 CLI 契約テスト（ドリフト検知）**: `cli-version-pin-e2e` の層に足す。
   - claude: **手で切り詰めた jsonl が resume でき、切り詰め後の履歴だけを見ている**こと。
     ここが claude 更新で壊れる唯一の場所なので、ピン更新のたびに回す。
@@ -307,19 +334,28 @@ SQLite。いずれも未検証で、`CanForkAt` は false のままにする。
 
 ## 55.9 フェーズ
 
-| Phase | 内容 |
-| --- | --- |
-| P0 | 未検証項目（§55.10）の実測。特に codex の rollout 生成タイミング |
-| P1 | `Turn.AnchorID` / `Meta.ForkAt` / API `at` / `ForkAtResolver` / `CanForkAt` の骨組み＋ opencode 実装 |
-| P2 | codex（`lastTurnId`）＋ Console UI（分岐 affordance・確認モーダル・下書き投入） |
-| P3 | claude（jsonl 手術＋切断点検査＋縮退）＋ ドリフト検知テスト |
-| P4 | v1.1: 「この発言と回答を含めて分岐」オプション、cursor / copilot の実験 |
+| Phase | 内容 | 状態 |
+| --- | --- | --- |
+| P1 | `Turn.AnchorID` / `Meta.ForkAt` / API `at` / `ForkAtResolver` / `CanForkAt` の骨組み＋ opencode 実装 | ✅ |
+| P1.5 | Console の分岐導線（ユーザー発言の「ここから分岐」・確認モーダル・下書き投入） | ✅ |
+| P2 | codex（`lastTurnId`）。先に §55.10-1 の実測が要る | — |
+| P3 | claude（jsonl 手術＋切断点検査＋縮退）＋ ドリフト検知テスト | — |
+| P4 | v1.1: 「この発言と回答を含めて分岐」オプション、cursor / copilot の実験 | — |
+
+**MVP（P1＋P1.5）で実際に使える範囲は「managed の opencode セッション」だけ**。導線は
+`caps.forkAt && managed && !readOnly` の 3 条件で出しており、条件を満たさない種別・起動方式では
+そもそもボタンが出ない。サーバ側も同じ判断を独立に持っている（導線だけの防御にしない）。
 
 opencode を先にやるのは、**公式 API で最も改修が小さく、契約（アンカー・API・cap）の形を
 実際に動かして確かめられる**ため。claude を最後に置くのは、唯一非公式な書き込みを伴い、
 先に契約が固まっているほど手術範囲を小さく保てるため。
 
-## 55.10 未検証（実装前に潰す）
+## 55.10 未検証（各 Phase に着手する前に潰す）
+
+MVP（P1＋P1.5）自体にも**実セッションでの通し確認が残っている**: 実際に managed の opencode
+セッションを立て、ミラーの過去発言から分岐して、分岐先の履歴がその発言の手前で終わっていること
+を目で見る。ここまでは合成テスト（httptest のモック serve と一時 SQLite ストア）で担保している。
+
 
 1. **codex `thread/fork` は rollout をいつ書くか。** 初回 turn 前に書かないなら TUI codex の
    分岐は成立しない（managed のみ対応になる）。
