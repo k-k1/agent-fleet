@@ -1,7 +1,7 @@
 # 55. 発言時点からの会話分岐（fork at message）
 
-> ◐ MVP（P1＋P1.5 ＝ 契約 ＋ opencode ＋ Console 導線）実装済み。サーバ側は実 CLI で通し確認済み、
-> Console からの通しはデプロイ待ち。残り = codex（P2）／claude（P3）。
+> ◐ P1〜P2 実装済み（契約 ＋ opencode ＋ codex ＋ Console 導線）。両 kind ともサーバ側は
+> **実 CLI で通し確認済み**、Console からの通しはデプロイ待ち。残り = claude（P3）。
 > 設計判断は [decisions/0039](decisions/0039-fork-at-message.md)。
 > 旧判断（会話まるごと分岐のみ・地点分岐は非サポートにつき却下）は
 > [history/fork-from-chat.md](history/fork-from-chat.md)。本書はそれを差し替える。
@@ -348,13 +348,14 @@ SQLite。いずれも未検証で、`CanForkAt` は false のままにする。
   は実物にしか聞けない。1 往復ずれても、ミラー上は「分岐できた」に見えてしまう。
   既存の live tier と同じ `-run TestContractLive` 一括起動に自動で乗る
   （`.github/workflows/opencode-contract.yml`）。
-- **実 CLI（codex driftlive）**: `TestLiveDriftCodexForkAtLastTurn`。実 app-server で 2 ターン
+- **実 CLI（codex driftlive）**: ✅ `TestLiveDriftCodexForkAtLastTurn`。実 app-server で 2 ターン
   回し、2 番目の発言を指して分岐して、**分岐先の turn が 1 つだけ**であることを `thread/read`
   （`includeTurns`）で数える。スキーマの "inclusive" は仕様書の言葉であって挙動ではないので、
   ここでしか確かめられない。分岐先の turn 数は追加のターン消費なしに読める。
-  コストは実ターン 2 回（このファイルの冒頭に実測レンジ）。codex の live tier は
+  コストは実ターン 2 回（実測 2026-08-09: 合計 19,364 tokens ＝ fresh_in 158 / cached_read
+  19,200 / out 6。ほぼ全部がキャッシュ読みで、正味の新規入力はごく僅か）。codex の live tier は
   ユーザーのサブスク枠を使い、`E2E_CODEX_LOCAL_AUTH=1` の手元実行では実 `~/.codex` に
-  rollout と `[projects]` 追記が残る点に注意（ヘッダに既述）。
+  rollout が残る点に注意（ヘッダに既述）。
 - **実 CLI 契約テスト（ドリフト検知）**: `cli-version-pin-e2e` の層に足す。
   - claude: **手で切り詰めた jsonl が resume でき、切り詰め後の履歴だけを見ている**こと。
     ここが claude 更新で壊れる唯一の場所なので、ピン更新のたびに回す。
@@ -388,9 +389,12 @@ MVP（P1＋P1.5）のサーバ側は**実 CLI で通し確認済み**（§55.8 �
 と Console バンドルのビルド＋CP 再起動が要るので、デプロイの都合に従う。
 
 
-1. **codex `thread/fork` は rollout をいつ書くか。** 初回 turn 前に書かないなら TUI codex の
-   分岐は成立しない（managed のみ対応になる）。**MVP は managed のみなので実装はブロック
-   しない**——`TestLiveDriftCodexForkAtLastTurn` が実行時にどちらかを `t.Log` で記録する。
+1. ~~**codex `thread/fork` は rollout をいつ書くか。**~~ **解決（実測）**: fork 直後、初回 turn を
+   投げる前に rollout が存在する（`TestLiveDriftCodexForkAtLastTurn` が記録）。driver の
+   「初回 turn 前のスレッドは rollout が無い」は `thread/start` の話で、fork には当てはまらない。
+   したがって **TUI codex の地点分岐は原理的には可能**——`thread/fork` で分岐を作ってから
+   `codex resume <新 thread>` で起動すればよい。v1 は managed 限定のままにするが、
+   塞がっているからではなく、CLI ルートに口を増やすほどの需要がまだ無いため。
 2. **claude の compaction 済み会話での手術。** サマリ行をまたぐ切断の実挙動。
 3. **claude の sidechain（Task サブエージェント）を含む区間の切断。** 親 turn だけを切って
    sidechain 行が孤立した場合の resume 挙動。
