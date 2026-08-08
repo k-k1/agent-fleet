@@ -1,6 +1,6 @@
 # 0039. 会話の分岐点は kind 固有の不透明アンカーで指し、claude だけ jsonl 手術を許す
 
-- 状態: 採用・MVP 実装済み（契約＋opencode＋Console 導線。codex / claude は後続）
+- 状態: 採用・P1〜P2 実装済み（契約＋opencode＋codex＋Console 導線。claude は後続）
 - 関連: [55-fork-at-message.md](../55-fork-at-message.md) /
   [history/fork-from-chat.md](../history/fork-from-chat.md)（本 ADR が差し替える旧判断） /
   [27-agent-managed-driver.md](../27-agent-managed-driver.md) /

@@ -62,8 +62,12 @@ func (agentImpl) Kind() string { return session.KindCodex }
 // CanTranscript lights up the Console chat mirror for codex; its turns come from the
 // rollout JSONL via Transcript() (readTranscript), windowed by the generic /messages
 // handler. CanFork: the conversation forks via `codex fork <id>` (ForkSource /
-// BuildLaunch). No label (codex has no --name).
-func (agentImpl) Caps() agents.Caps { return agents.Caps{CanTranscript: true, CanFork: true} }
+// BuildLaunch). No label (codex has no --name). CanForkAt: the fork can also be pinned to
+// a past turn via `thread/fork`'s lastTurnId (docs/55) — app-server only, so the handler
+// refuses a point fork for a CLI-route session (`codex fork <id>` has no such argument).
+func (agentImpl) Caps() agents.Caps {
+	return agents.Caps{CanTranscript: true, CanFork: true, CanForkAt: true}
+}
 
 // ForkSource resolves this session's codex conversation id as the fork source —
 // the hook-captured per-slot id, provided its rollout actually exists on disk.
@@ -73,6 +77,42 @@ func (agentImpl) ForkSource(m session.Meta) (string, error) {
 		return "", errors.New("分岐できる会話がまだありません")
 	}
 	return id, nil
+}
+
+// ResolveForkAt translates a mirror anchor into codex's lastTurnId.
+//
+// This is the one kind where the anchor is NOT what gets sent. The Console's meaning is
+// exclusive ("branch before this turn"); `thread/fork`'s lastTurnId is **inclusive**
+// ("fork through this turn"), so the answer is the turn BEFORE the anchor. Passing the
+// anchor itself would carry the very prompt the user wanted to retake — and the branch
+// would look correct in the mirror, just one exchange too long.
+//
+// Branching before the FIRST turn has no representable lastTurnId: an empty value means
+// "the whole conversation" to codex, which is the opposite. Refuse instead of sending it.
+func (agentImpl) ResolveForkAt(m session.Meta, anchor string) (string, error) {
+	if anchor == "" {
+		return "", errors.New("分岐点が指定されていません")
+	}
+	id := sids.Read(session.UUID(m.Dir, m.Name))
+	path := rolloutPath(id)
+	if id == "" || path == "" {
+		return "", errors.New("分岐できる会話がまだありません")
+	}
+	lines, err := rolloutLines(path)
+	if err != nil {
+		return "", errors.New("codex の会話ログを読めません")
+	}
+	ids := rolloutTurnIDs(lines)
+	for i, tid := range ids {
+		if tid != anchor {
+			continue
+		}
+		if i == 0 {
+			return "", errors.New("最初のやり取りからは分岐できません（新しいセッションを作ってください）")
+		}
+		return ids[i-1], nil
+	}
+	return "", errors.New("指定された分岐点がこの会話に見つかりません")
 }
 
 func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
@@ -98,6 +138,13 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	forkFrom := ""
 	if sids.Read(cxSid) == "" {
 		forkFrom = m.ForkFrom
+	}
+	// `codex fork <id>` takes no fork point — only the app-server's thread/fork does
+	// (docs/55 §55.5). Refuse rather than launch a CLI fork that would quietly copy the
+	// WHOLE conversation when the user asked for a point. The handler gates on managed
+	// first; this is the second line.
+	if forkFrom != "" && m.ForkAt != "" {
+		return agents.LaunchPlan{}, errors.New("発言時点からの分岐は managed のセッションでのみ利用できます")
 	}
 	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Effort, cxSid, sids.Read(cxSid), forkFrom), Cwd: m.CWD()}, nil
 }

@@ -1,7 +1,7 @@
 # 55. 発言時点からの会話分岐（fork at message）
 
-> ◐ MVP（P1＋P1.5 ＝ 契約 ＋ opencode ＋ Console 導線）実装済み。サーバ側は実 CLI で通し確認済み、
-> Console からの通しはデプロイ待ち。残り = codex（P2）／claude（P3）。
+> ◐ P1〜P2 実装済み（契約 ＋ opencode ＋ codex ＋ Console 導線）。両 kind ともサーバ側は
+> **実 CLI で通し確認済み**、Console からの通しはデプロイ待ち。残り = claude（P3）。
 > 設計判断は [decisions/0039](decisions/0039-fork-at-message.md)。
 > 旧判断（会話まるごと分岐のみ・地点分岐は非サポートにつき却下）は
 > [history/fork-from-chat.md](history/fork-from-chat.md)。本書はそれを差し替える。
@@ -244,16 +244,23 @@ CLI(TUI) ルートは `--session <src> --fork` に分岐点を渡す引数が無
 断るが、`BuildLaunch` にも**同じ拒否を置いてある**（防御の二重化）— ここを素通りさせると
 「地点を指したのに会話まるごと分岐」が起動時に静かに成立してしまう。
 
-### codex
+### codex（✅ 実装済み）
 
-`workspace/agent/internal/agents/codex/driver.go` の `threadFork` に `lastTurnId` を追加。
-`ResolveForkAt` は**選んだ発言の turn の 1 つ前の turn id** を rollout から引く（inclusive の
-ため）。進行中 turn は `thread/fork` が拒否するので、その手前で `fork_bad_anchor` にする。
+`driver.go` の `threadFork` に `lastTurnId` を追加。**アンカーをそのまま送らない唯一の kind**で、
+`ResolveForkAt` が「選んだ発言の turn の 1 つ前の turn id」を返す（`lastTurnId` は inclusive）。
 
-TUI 経路（`codex resume`）は、fork が rollout をいつ書くかに依存する。driver に
-「初回 turn 前のスレッドは rollout が無く resume できない」実測コメントがあるため、
-**fork 直後に rollout が存在するかは §55.9 の未検証項目**。存在しないなら TUI codex は
-v1 対象外（managed が既定なので実害は小さい）。
+アンカーの出どころは rollout の `event_msg/task_started` の `turn_id`。これがその turn の
+開始を示し、ユーザープロンプトの `response_item` より**前**に来る（実測）ので、転写を舐めながら
+「いま開いている turn」を持ち回り、各ターンの `AnchorID` に入れる。`turn_context` も `turn_id` を
+持つが、turn より頻繁に現れる（実測: 1 つの rollout で turn_context 19 / task_started 15）ため
+補助にとどめる。最初の `task_started` より前（注入された指示文）はアンカー空＝分岐不可。
+
+**最初のやり取りからは分岐できない。** `lastTurnId` を空にすると codex には「会話まるごと」を
+意味し、意図と正反対になる。表現できないので送らずに断る（opencode は最初のメッセージ id を
+渡せば空の分岐先になるので、ここだけ挙動が割れる）。
+
+CLI 経路（`codex fork <id>`）には分岐点の引数が無いので、ハンドラの managed ゲートに加えて
+`BuildLaunch` でも拒否する。
 
 ### claude（手術）
 
@@ -323,6 +330,9 @@ SQLite。いずれも未検証で、`CanForkAt` は false のままにする。
   各 kind の `ResolveForkAt` の包含変換（codex の「1 つ前の turn」・opencode の素通し）。
   ✅ opencode 分は `internal/agents/opencode/fork_at_test.go`（素通し・未知/サブエージェント
   アンカーの拒否・`messageID` を載せる/載せない・400 の文言・CLI ルートの起動拒否）。
+  ✅ codex 分は `internal/agents/codex/fork_at_test.go`（転写が turn id をアンカーに持つこと・
+  **1 つ前の turn へ変換すること**・最初の turn の拒否・未知アンカーの拒否・`thread/fork` の
+  params に `lastTurnId` を載せる/載せない・CLI ルートの起動拒否）。
 - **Agent HTTP**: `at` 有無での分岐、`fork_bad_anchor` の各条件、後方互換（`at` 省略）。
   ✅ `session_fork_at_test.go`（非対応 kind・CLI ルート・壊れたボディ・ボディ無しで
   新ゲートを踏まないこと）。
@@ -338,6 +348,14 @@ SQLite。いずれも未検証で、`CanForkAt` は false のままにする。
   は実物にしか聞けない。1 往復ずれても、ミラー上は「分岐できた」に見えてしまう。
   既存の live tier と同じ `-run TestContractLive` 一括起動に自動で乗る
   （`.github/workflows/opencode-contract.yml`）。
+- **実 CLI（codex driftlive）**: ✅ `TestLiveDriftCodexForkAtLastTurn`。実 app-server で 2 ターン
+  回し、2 番目の発言を指して分岐して、**分岐先の turn が 1 つだけ**であることを `thread/read`
+  （`includeTurns`）で数える。スキーマの "inclusive" は仕様書の言葉であって挙動ではないので、
+  ここでしか確かめられない。分岐先の turn 数は追加のターン消費なしに読める。
+  コストは実ターン 2 回（実測 2026-08-09: 合計 19,364 tokens ＝ fresh_in 158 / cached_read
+  19,200 / out 6。ほぼ全部がキャッシュ読みで、正味の新規入力はごく僅か）。codex の live tier は
+  ユーザーのサブスク枠を使い、`E2E_CODEX_LOCAL_AUTH=1` の手元実行では実 `~/.codex` に
+  rollout が残る点に注意（ヘッダに既述）。
 - **実 CLI 契約テスト（ドリフト検知）**: `cli-version-pin-e2e` の層に足す。
   - claude: **手で切り詰めた jsonl が resume でき、切り詰め後の履歴だけを見ている**こと。
     ここが claude 更新で壊れる唯一の場所なので、ピン更新のたびに回す。
@@ -351,11 +369,11 @@ SQLite。いずれも未検証で、`CanForkAt` は false のままにする。
 | --- | --- | --- |
 | P1 | `Turn.AnchorID` / `Meta.ForkAt` / API `at` / `ForkAtResolver` / `CanForkAt` の骨組み＋ opencode 実装 | ✅ |
 | P1.5 | Console の分岐導線（ユーザー発言の「ここから分岐」・確認モーダル・下書き投入） | ✅ |
-| P2 | codex（`lastTurnId`）。先に §55.10-1 の実測が要る | — |
+| P2 | codex（`lastTurnId`＋アンカー変換） | ✅ |
 | P3 | claude（jsonl 手術＋切断点検査＋縮退）＋ ドリフト検知テスト | — |
 | P4 | v1.1: 「この発言と回答を含めて分岐」オプション、cursor / copilot の実験 | — |
 
-**MVP（P1＋P1.5）で実際に使える範囲は「managed の opencode セッション」だけ**。導線は
+**使える範囲は「managed の opencode / codex セッション」**。導線は
 `caps.forkAt && managed && !readOnly` の 3 条件で出しており、条件を満たさない種別・起動方式では
 そもそもボタンが出ない。サーバ側も同じ判断を独立に持っている（導線だけの防御にしない）。
 
@@ -371,8 +389,12 @@ MVP（P1＋P1.5）のサーバ側は**実 CLI で通し確認済み**（§55.8 �
 と Console バンドルのビルド＋CP 再起動が要るので、デプロイの都合に従う。
 
 
-1. **codex `thread/fork` は rollout をいつ書くか。** 初回 turn 前に書かないなら TUI codex の
-   分岐は成立しない（managed のみ対応になる）。
+1. ~~**codex `thread/fork` は rollout をいつ書くか。**~~ **解決（実測）**: fork 直後、初回 turn を
+   投げる前に rollout が存在する（`TestLiveDriftCodexForkAtLastTurn` が記録）。driver の
+   「初回 turn 前のスレッドは rollout が無い」は `thread/start` の話で、fork には当てはまらない。
+   したがって **TUI codex の地点分岐は原理的には可能**——`thread/fork` で分岐を作ってから
+   `codex resume <新 thread>` で起動すればよい。v1 は managed 限定のままにするが、
+   塞がっているからではなく、CLI ルートに口を増やすほどの需要がまだ無いため。
 2. **claude の compaction 済み会話での手術。** サマリ行をまたぐ切断の実挙動。
 3. **claude の sidechain（Task サブエージェント）を含む区間の切断。** 親 turn だけを切って
    sidechain 行が孤立した場合の resume 挙動。
