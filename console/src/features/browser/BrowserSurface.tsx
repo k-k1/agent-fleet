@@ -3,11 +3,12 @@ import type {
   KeyboardEvent as RKeyboardEvent,
   PointerEvent as RPointerEvent,
   ReactNode,
-  WheelEvent as RWheelEvent,
 } from "react";
+import { coarsePointer } from "../../lib/device.ts";
 import { IconButton } from "../../ui/Button.tsx";
 import type { BrowserOutbound, BrowserSnapshot } from "./protocol.ts";
-import { BrowserInputBridge, modifiersOf, mouseButton, remotePoint } from "./protocol.ts";
+import { BrowserInputBridge, clipboardShortcut, heldButton, modifiersOf, mouseButton, remotePoint, wheelPixels } from "./protocol.ts";
+import { BrowserTouchGestures } from "./touch.ts";
 
 export interface BrowserSurfaceController {
   mount(canvas: HTMLCanvasElement): void;
@@ -15,6 +16,12 @@ export interface BrowserSurfaceController {
   setVisible(visible: boolean): void;
   setViewport(width: number, height: number): void;
   sendInput(message: BrowserOutbound): void;
+  /** Copy the remote page's current selection to the user's clipboard. */
+  copySelection?(): Promise<boolean>;
+  /** Multiply the pinch zoom. Absent on a surface that cannot zoom. */
+  zoomBy?(factor: number): void;
+  /** Double tap: jump between the fitted view and life size. */
+  toggleZoom?(): void;
 }
 
 interface BrowserSurfaceProps {
@@ -22,6 +29,8 @@ interface BrowserSurfaceProps {
   snapshot: Pick<BrowserSnapshot, "title" | "width" | "height">;
   canvasLabel: string;
   inputLabel: string;
+  /** Label for the touch keyboard toggle; without it the toggle is not offered. */
+  keyboardLabel?: string;
   inputEnabled?: boolean;
   children?: ReactNode;
 }
@@ -32,10 +41,16 @@ export function BrowserSurface({
   snapshot,
   canvasLabel,
   inputLabel,
+  keyboardLabel,
   inputEnabled = true,
   children,
 }: BrowserSurfaceProps) {
   const [inputAnchor, setInputAnchor] = useState({ x: 0, y: 0 });
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  // Touch input has no other way to raise the on-screen keyboard, since a tap
+  // must not do it. A fine pointer has a real keyboard and the mouse path
+  // focuses on click, so the toggle would only be clutter there.
+  const [touchInput] = useState(coarsePointer);
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imeRef = useRef<HTMLInputElement>(null);
@@ -44,11 +59,103 @@ export function BrowserSurface({
     [controller],
   );
 
+  // The touch recognizer outlives every render (one gesture spans many), so it
+  // reads the current props through a ref instead of being rebuilt. It measures
+  // against the STAGE, not the canvas: a pinch scales the canvas for live
+  // feedback, which would make its own client rect move under the gesture.
+  const latest = useRef({ controller, snapshot, inputEnabled });
+  useEffect(() => {
+    latest.current = { controller, snapshot, inputEnabled };
+  });
+  const gestures = useMemo(() => new BrowserTouchGestures({
+    remote: (clientX, clientY) => {
+      const rect = stageRef.current?.getBoundingClientRect();
+      const { width, height } = latest.current.snapshot;
+      return rect
+        ? remotePoint({ clientX, clientY, altKey: false, ctrlKey: false, metaKey: false, shiftKey: false }, rect, width, height)
+        : { x: 0, y: 0 };
+    },
+    scale: () => {
+      const rect = stageRef.current?.getBoundingClientRect();
+      return rect && rect.width > 0 ? latest.current.snapshot.width / rect.width : 1;
+    },
+    enabled: () => latest.current.inputEnabled,
+    send: (message) => latest.current.controller.sendInput(message),
+    // Move the hidden IME input to the tap, but do NOT focus it. Focusing is
+    // what raises the on-screen keyboard, and a tap is usually aimed at a link
+    // or a button — on a phone that meant GBoard appearing over the page on
+    // almost every tap. The keyboard is opened deliberately, with the pane's
+    // keyboard button, and stays open across taps because touch events are
+    // cancelled and therefore never move focus away from it.
+    anchor: (clientX, clientY) => {
+      const rect = stageRef.current?.getBoundingClientRect();
+      if (rect) setInputAnchor({ x: clientX - rect.left, y: clientY - rect.top });
+    },
+    // Scaling the canvas is only a hint while the fingers are down; the real
+    // zoom is a relayout in the container that lands when they lift.
+    preview: (factor, originX, originY) => {
+      const canvas = canvasRef.current;
+      const rect = stageRef.current?.getBoundingClientRect();
+      if (!canvas) return;
+      if (factor === 1 || !rect) {
+        canvas.style.transform = "";
+        return;
+      }
+      canvas.style.transformOrigin = `${originX - rect.left}px ${originY - rect.top}px`;
+      canvas.style.transform = `scale(${factor})`;
+    },
+    zoom: (factor) => latest.current.controller.zoomBy?.(factor),
+    toggleZoom: () => latest.current.controller.toggleZoom?.(),
+    now: () => performance.now(),
+    after: (ms, callback) => window.setTimeout(callback, ms),
+    clear: (handle) => window.clearTimeout(handle),
+  }), []);
+  useEffect(() => () => gestures.dispose(), [gestures]);
+
+  // React registers `wheel` on the ROOT container with {passive: true} (measured
+  // in react-dom 19), so preventDefault() inside an onWheel prop is a silent
+  // no-op: the wheel reached the remote page AND scrolled the Console's own
+  // container out from under the pane. The listener has to be a native one on
+  // the canvas with {passive: false}. Kept in a ref so the listener registered
+  // by the mount effect never has to be torn down and re-added on every render.
+  const wheelRef = useRef<(event: WheelEvent) => void>(() => {});
+  useEffect(() => {
+    wheelRef.current = (event: WheelEvent) => {
+      if (!inputEnabled) return;
+      event.preventDefault();
+      const rect = canvasRef.current?.getBoundingClientRect();
+      const p = rect ? remotePoint(event, rect, snapshot.width, snapshot.height) : { x: 0, y: 0 };
+      controller.sendInput({
+        type: "wheel",
+        ...p,
+        ...wheelPixels(event.deltaX, event.deltaY, event.deltaMode, snapshot.height),
+        modifiers: modifiersOf(event),
+      });
+    };
+  });
+
   useEffect(() => {
     const canvas = canvasRef.current;
     const stage = stageRef.current;
     if (!canvas || !stage) return;
     controller.mount(canvas);
+    const onWheel = (event: WheelEvent) => wheelRef.current(event);
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    // Touch defaults are cancelled on the TOUCH events, natively and
+    // non-passively — the same trap as the wheel above, since React registers
+    // its touch props passively too.
+    //
+    // `touch-action: none` is the primary guard, but it is not the whole story:
+    // measured with synthesized touch on Chromium 151, without this the second
+    // and later touchmove events arrive NON-cancelable (the browser has already
+    // committed the stream to its own scrolling), and iOS Safari zooms the whole
+    // PAGE on a two-finger pinch, which only the non-standard `gesture*` events
+    // stop. They are unknown elsewhere, so those listeners are simply inert.
+    const swallowTouch = (event: Event) => event.preventDefault();
+    const touchDefaults = ["touchstart", "touchmove", "gesturestart", "gesturechange", "gestureend"];
+    for (const name of touchDefaults) {
+      canvas.addEventListener(name, swallowTouch, { passive: false });
+    }
     let intersecting = true;
     const syncVisibility = () => {
       const rect = stage.getBoundingClientRect();
@@ -81,6 +188,10 @@ export function BrowserSurface({
     syncVisibility();
     return () => {
       window.clearTimeout(viewportTimer);
+      canvas.removeEventListener("wheel", onWheel);
+      for (const name of touchDefaults) {
+        canvas.removeEventListener(name, swallowTouch);
+      }
       resize.disconnect();
       intersection.disconnect();
       document.removeEventListener("visibilitychange", syncVisibility);
@@ -100,42 +211,61 @@ export function BrowserSurface({
     return rect ? remotePoint(event, rect, snapshot.width, snapshot.height) : { x: 0, y: 0 };
   };
 
-  const onPointer = (event: RPointerEvent<HTMLCanvasElement>, kind: "move" | "down" | "up") => {
+  const onPointer = (event: RPointerEvent<HTMLCanvasElement>, kind: "move" | "down" | "up" | "cancel") => {
+    // Touch is recognised (swipe = scroll, tap = click, long press = drag, two
+    // fingers = zoom) rather than forwarded as a mouse — see touch.ts. It runs
+    // BEFORE the inputEnabled gate because pinch zoom is the viewer's own
+    // layout viewport, which a view-only attachment is still allowed to change.
+    if (event.pointerType === "touch") {
+      event.preventDefault();
+      if (kind === "down") event.currentTarget.setPointerCapture(event.pointerId);
+      else if (kind !== "move" && event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      const touch = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY };
+      if (kind === "down") gestures.down(touch);
+      else if (kind === "move") gestures.move(touch);
+      else if (kind === "up") gestures.up(touch);
+      else gestures.cancel(touch);
+      return;
+    }
     if (!inputEnabled) return;
-    if (event.pointerType === "touch") event.preventDefault();
+    const mouse = kind === "cancel" ? "up" : kind;
     const p = point(event);
     if (kind === "down") {
       event.preventDefault();
       event.currentTarget.setPointerCapture(event.pointerId);
       setInputAnchor({ x: event.nativeEvent.offsetX, y: event.nativeEvent.offsetY });
       imeRef.current?.focus({ preventScroll: true });
-    } else if (kind === "up" && event.currentTarget.hasPointerCapture(event.pointerId)) {
+    } else if (mouse === "up" && event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
     controller.sendInput({
       type: "mouse",
-      event: kind,
+      event: mouse,
       ...p,
-      button: kind === "move" ? "none" : mouseButton(event.button),
+      // A move during a drag must carry the button that is DOWN; "none" reads as
+      // a hover and Blink drops the drag (scrollbar thumb, selection, sliders).
+      button: mouse === "move" ? heldButton(event.buttons) : mouseButton(event.button),
       buttons: event.buttons,
       modifiers: modifiersOf(event),
-      clickCount: kind === "move" ? 0 : Math.max(1, event.detail),
-    });
-  };
-
-  const onWheel = (event: RWheelEvent<HTMLCanvasElement>) => {
-    if (!inputEnabled) return;
-    event.preventDefault();
-    controller.sendInput({
-      type: "wheel",
-      ...point(event),
-      deltaX: event.deltaX,
-      deltaY: event.deltaY,
-      modifiers: modifiersOf(event),
+      clickCount: mouse === "move" ? 0 : Math.max(1, event.detail),
     });
   };
 
   const onKeyDown = (event: RKeyboardEvent<HTMLInputElement>) => {
+    // Clipboard shortcuts are handled HERE, never forwarded: the remote Chromium
+    // runs in the container, so its clipboard is not the user's. Ctrl/Cmd+C asks
+    // the page for its selection and writes it to the user's clipboard; Ctrl+V
+    // must fall through un-prevented so the hidden input receives the native
+    // paste, which onPaste then forwards as text.
+    const shortcut = clipboardShortcut(event.nativeEvent);
+    if (shortcut === "paste") return;
+    if (shortcut === "copy" && controller.copySelection) {
+      event.preventDefault();
+      void controller.copySelection();
+      return;
+    }
     if (!inputEnabled) return;
     inputBridge.keyDown(event.nativeEvent);
     if (!event.nativeEvent.isComposing) event.preventDefault();
@@ -148,11 +278,16 @@ export function BrowserSurface({
         className="browser-canvas"
         aria-label={snapshot.title || canvasLabel}
         aria-disabled={!inputEnabled}
+        // Keys are delivered by the hidden IME input, and focus used to reach it
+        // ONLY through a canvas pointerdown — so a user who opened the pane and
+        // just started typing got nothing until they happened to click first.
+        // The canvas is focusable and hands focus straight on.
+        tabIndex={inputEnabled ? 0 : -1}
+        onFocus={() => imeRef.current?.focus({ preventScroll: true })}
         onPointerMove={(event) => onPointer(event, "move")}
         onPointerDown={(event) => onPointer(event, "down")}
         onPointerUp={(event) => onPointer(event, "up")}
-        onPointerCancel={(event) => onPointer(event, "up")}
-        onWheel={onWheel}
+        onPointerCancel={(event) => onPointer(event, "cancel")}
         onContextMenu={(event) => event.preventDefault()}
       />
       <input
@@ -165,7 +300,18 @@ export function BrowserSurface({
         autoCorrect="off"
         spellCheck={false}
         onKeyDown={onKeyDown}
-        onKeyUp={(event) => inputEnabled && inputBridge.keyUp(event.nativeEvent)}
+        onFocus={() => setKeyboardOpen(true)}
+        onBlur={() => setKeyboardOpen(false)}
+        onKeyUp={(event) => {
+          if (clipboardShortcut(event.nativeEvent)) return;
+          if (inputEnabled) inputBridge.keyUp(event.nativeEvent);
+        }}
+        onPaste={(event) => {
+          event.preventDefault();
+          if (!inputEnabled) return;
+          const text = event.clipboardData.getData("text/plain");
+          if (text) controller.sendInput({ type: "text", text });
+        }}
         onCompositionStart={() => inputEnabled && inputBridge.compositionStart()}
         onCompositionEnd={(event) => {
           if (inputEnabled) inputBridge.compositionEnd(event.data);
@@ -177,6 +323,20 @@ export function BrowserSurface({
           event.currentTarget.value = "";
         }}
       />
+      {keyboardLabel && touchInput && inputEnabled && (
+        <IconButton
+          icon="keyboard"
+          label={keyboardLabel}
+          className={`browser-keyboard${keyboardOpen ? " browser-keyboard-on" : ""}`}
+          aria-pressed={keyboardOpen}
+          // Down would move focus before the click decides what to do with it.
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={() => {
+            if (keyboardOpen) imeRef.current?.blur();
+            else imeRef.current?.focus({ preventScroll: true });
+          }}
+        />
+      )}
       {children}
     </div>
   );

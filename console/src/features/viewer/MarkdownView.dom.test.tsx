@@ -29,6 +29,15 @@ vi.mock("../scm/open.ts", () => ({
   openCommit: (repo: string, sha: string) => opened.push({ kind: "commit", ref: `${repo}:${sha}` }),
 }));
 
+// The Chromium attachment opener is a spy: the pane commit has its own suite.
+const attachOpened: string[] = [];
+vi.mock("../browser/attachmentAction.ts", () => ({
+  openBrowserAttachment: async (id: string) => {
+    attachOpened.push(id);
+    return true;
+  },
+}));
+
 // chatList feeds ensureConvs (the "list not loaded yet" path).
 let listedConvs: ConversationMeta[] = [];
 vi.mock("../chat/api.ts", () => ({
@@ -56,6 +65,7 @@ const links = (cls: string) => [...host.querySelectorAll<HTMLAnchorElement>(`a.$
 beforeEach(() => {
   toasts.length = 0;
   opened.length = 0;
+  attachOpened.length = 0;
   listedConvs = [];
   useChatStore.setState({ convs: null });
   useSessionsStore.setState({ sessions: [] });
@@ -126,6 +136,68 @@ describe("session-slug linkify (existing behavior guarded)", () => {
     expect(a?.textContent).toBe("sukbq4s");
     await act(async () => a.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })));
     expect(opened).toEqual([{ kind: "session", ref: "sukbq4s" }]);
+  });
+});
+
+// The link attach_chromium tells the agent to post. It looks like a repo-root
+// path, and the file resolver used to swallow it: the click answered
+// "repos/<repo>/open/browser-attachment/ba_… not found" instead of opening the
+// pane, which killed the whole hand-off (docs/53 §53.7).
+describe("Chromium attachment action link", () => {
+  const openFiles: string[] = [];
+  const renderLink = async (source: string) => {
+    await act(async () => {
+      root.render(
+        <MarkdownView
+          source={source}
+          baseDir="/home/dev/repos/novel-idea@wip-sv57pon/02-noir"
+          onOpenFile={(path: string) => openFiles.push(path)}
+        />,
+      );
+    });
+  };
+
+  beforeEach(() => {
+    openFiles.length = 0;
+    useChatStore.setState({ convs: [] });
+  });
+
+  it("opens the attachment pane instead of resolving a repo file", async () => {
+    const id = "ba_2463e5bc214dda83010f9c232a78a88e";
+    await renderLink(`[ブラウザを開いて操作する](/open/browser-attachment/${id})`);
+
+    const [a] = links("action-link");
+    expect(a).toBeTruthy();
+    expect(a.classList.contains("repo-link")).toBe(false);
+    await act(async () => a.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })));
+
+    expect(attachOpened).toEqual([id]);
+    expect(openFiles).toHaveLength(0);
+    expect(toasts).toHaveLength(0);
+  });
+
+  it("accepts the same link written as an absolute same-origin URL", async () => {
+    const id = "ba_2463e5bc214dda83010f9c232a78a88e";
+    await renderLink(`[開く](${location.origin}/open/browser-attachment/${id})`);
+    const [a] = links("action-link");
+    await act(async () => a.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })));
+    expect(attachOpened).toEqual([id]);
+  });
+
+  it("leaves a foreign origin as an ordinary external link", async () => {
+    await renderLink("[罠](https://evil.invalid/open/browser-attachment/ba_x)");
+    expect(links("action-link")).toHaveLength(0);
+    expect(links("ext-link")).toHaveLength(1);
+    expect(attachOpened).toHaveLength(0);
+  });
+
+  it("still classifies an ordinary repo path as a file link", async () => {
+    await renderLink("[docs](/docs/53-chromium-attach-view.md)");
+    expect(links("action-link")).toHaveLength(0);
+    const [a] = links("repo-link");
+    expect(a?.title).toContain("repos/novel-idea@wip-sv57pon/docs/53-chromium-attach-view.md");
+    await act(async () => a.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })));
+    expect(attachOpened).toHaveLength(0);
   });
 });
 

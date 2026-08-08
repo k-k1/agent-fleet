@@ -18,7 +18,6 @@ import { wireTerminalReconcile } from "../terminal/service.ts";
 import { disposeAllBrowsers, resetBrowserRuntime, wireBrowserReconcile } from "../features/browser/service.ts";
 import {
   disposeAllBrowserAttachments,
-  getBrowserAttachment,
   wireBrowserAttachmentReconcile,
 } from "../features/browser/attachmentService.ts";
 import { useSessionsStore, startSessionsPolling } from "../features/sessions/store.ts";
@@ -30,7 +29,7 @@ import { useReposStore, startReposPolling } from "../features/repos/store.ts";
 import { useFilesStore } from "../features/files/store.ts";
 import { useChatStore, startChatPolling } from "../features/chat/store.ts";
 import { hydrateUIPrefs, refreshUIPrefs } from "../lib/settings.ts";
-import { MOBILE_QUERY, coarsePointer, mobileMatches } from "../lib/device.ts";
+import { MOBILE_QUERY, coarsePointer } from "../lib/device.ts";
 import { PaneHost } from "../features/panes/PaneHost.tsx";
 import { LayoutMap } from "../features/panes/LayoutMap.tsx";
 import { WorkingSetBar } from "./WorkingSetBar.tsx";
@@ -63,13 +62,8 @@ import { PopoutTitleBar } from "../features/panes/PopoutTitleBar.tsx";
 import { toast } from "../ui/toast.ts";
 import { t } from "../lib/i18n/index.ts";
 import { DirtyGuardHost } from "../features/editor/DirtyGuardHost.tsx";
-import { useConfirm } from "../ui/ConfirmProvider.tsx";
-import {
-  browserAttachmentIdFromPath,
-  canonicalWorkspaceURL,
-  runBrowserAttachmentAction,
-} from "../layout/browserAttachmentAction.ts";
-import { errText } from "../core/api/client.ts";
+import { browserAttachmentIdFromPath } from "../layout/browserAttachmentAction.ts";
+import { openBrowserAttachment } from "../features/browser/attachmentAction.ts";
 
 // Refresh FILES (and repos/sessions/chat list on start) whenever the workspace
 // actually flips running↔stopped — including external changes the 4s sync catches
@@ -100,7 +94,6 @@ function wireWorkspaceRefresh(): () => void {
 
 export function App() {
   const tr = useT();
-  const askConfirm = useConfirm();
   const tenant = useTenantStore((s) => s.tenant);
   const identityRev = useTenantStore((s) => s.identityRev);
   // Deployment gate: only show the schedules rail when the CP scheduler is enabled
@@ -400,32 +393,8 @@ export function App() {
     const attachmentId = browserAttachmentIdFromPath(location.pathname);
     if (!attachmentId) return;
     browserAttachmentActionHandledRef.current = true;
-    void (async () => {
-      try {
-        const mobile = mobileMatches();
-        await runBrowserAttachmentAction({
-          attachmentId,
-          mobile,
-          getStatus: getBrowserAttachment,
-          getLayout: () => useLayoutStore.getState().layout,
-          commit: (layout) => useLayoutStore.getState().commitAction(layout),
-          confirmReplace: () => askConfirm({
-            title: tr("browser.attach.cap_title"),
-            body: tr("browser.attach.cap_body"),
-            confirmLabel: tr("browser.attach.replace_current"),
-            danger: false,
-          }),
-          replaceURL: () => history.replaceState(history.state, "", canonicalWorkspaceURL()),
-        });
-      } catch (error) {
-        const e = error as { code?: string; message?: string };
-        const message = e.code === "browser_attachment_not_found"
-          ? tr("browser.attach.expired")
-          : errText(e) || tr("browser.attach.open_failed");
-        toast(message, { kind: "error" });
-      }
-    })();
-  }, [askConfirm, booted, tenant, tr]);
+    void openBrowserAttachment(attachmentId, { fromActionURL: true });
+  }, [booted, tenant]);
 
   // Layout re-load ONLY — deliberately narrower than the per-tenant sync above.
   // A DELAYED whoami resolution (CP transient 5xx at boot, a retry landed later)

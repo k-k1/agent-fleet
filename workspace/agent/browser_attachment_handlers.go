@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"sync"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
@@ -54,6 +53,10 @@ func handleBrowserAttachmentCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, resp)
+}
+
+func handleBrowserAttachmentList(w http.ResponseWriter, _ *http.Request) {
+	httpx.WriteJSON(w, http.StatusOK, workspaceBrowserAttachmentManager.List())
 }
 
 func handleBrowserAttachmentGet(w http.ResponseWriter, r *http.Request) {
@@ -401,6 +404,13 @@ func (v *browserAttachmentViewer) handleControl(data []byte) bool {
 		v.handleViewport(data)
 		return true
 	}
+	// Copying what the user can already read is not "operating the page", so it
+	// is allowed in view-only — the whole point of the pane is that they can read
+	// it. Only a locked attachment (screencast stopped) refuses.
+	if envelope.Type == "copy" {
+		v.handleCopySelection()
+		return true
+	}
 	v.attachment.mu.Lock()
 	mode := v.attachment.controlMode
 	state := v.attachment.state
@@ -447,26 +457,139 @@ func (v *browserAttachmentViewer) handleViewport(data []byte) {
 	var msg struct {
 		Width  float64 `json:"width"`
 		Height float64 `json:"height"`
+		Fit    bool    `json:"fit"`
+		Zoom   float64 `json:"zoom"`
 	}
 	if json.Unmarshal(data, &msg) != nil {
 		v.protocolError("bad_viewport", "invalid viewport")
 		return
 	}
-	vp, err := normalizeBrowserViewport(browserViewportRequest{Width: msg.Width, Height: msg.Height, DeviceScaleFactor: 1})
+	pane, err := normalizeBrowserViewport(browserViewportRequest{Width: msg.Width, Height: msg.Height, DeviceScaleFactor: 1})
 	if err != nil {
 		v.protocolError("bad_viewport", err.Error())
 		return
 	}
+	zoom := normalizeBrowserZoom(msg.Zoom)
 	v.attachment.mu.Lock()
-	unchanged := v.attachment.viewport == vp
-	v.attachment.viewport = vp
+	// base is the layout BEFORE the pinch zoom (the pane, or the fitted width).
+	// Keeping it lets a pinch skip the re-measure below: measuring the content of
+	// an already zoomed page would fold each zoom into the next one and the view
+	// would drift with every gesture.
+	sameShape := v.attachment.pane == pane && v.attachment.fit == msg.Fit && v.attachment.base.Width > 0
+	unchanged := sameShape && v.attachment.zoom == zoom
+	base := v.attachment.base
+	v.attachment.pane = pane
+	v.attachment.fit = msg.Fit
+	v.attachment.zoom = zoom
 	v.attachment.mu.Unlock()
 	if unchanged {
 		return
 	}
-	if v.call("Emulation.setDeviceMetricsOverride", map[string]any{"width": vp.Width, "height": vp.Height, "deviceScaleFactor": 1, "mobile": false}, nil) {
-		v.attachment.restartScreencast()
+	if !sameShape {
+		if !v.applyMetrics(pane) {
+			return
+		}
+		base = pane
+		if msg.Fit {
+			if fitted, ok := v.measureFit(pane); ok {
+				base = fitted
+			}
+		}
+		v.attachment.mu.Lock()
+		v.attachment.base = base
+		v.attachment.viewport = pane
+		v.attachment.mu.Unlock()
 	}
+	layout := zoomedLayout(base, zoom)
+	if !v.applyMetrics(layout) {
+		// Leave the metrics that did apply in place rather than a half-applied
+		// zoom; viewport already names the layout those metrics describe.
+		return
+	}
+	v.attachment.mu.Lock()
+	v.attachment.viewport = layout
+	v.attachment.mu.Unlock()
+	// Pointer coordinates are in layout space, so the viewer has to be told the
+	// size it must map into — it only ever asked for the pane's size.
+	v.enqueueText(mustBrowserJSON(map[string]any{"type": "viewport", "width": layout.Width, "height": layout.Height}))
+	v.attachment.restartScreencast()
+}
+
+// applyMetrics emulates a layout viewport of the given size.
+//
+// Deliberately WITHOUT setDeviceMetricsOverride's `scale`: measured on Chrome
+// 151, that parameter shrinks the page INSIDE an unchanged surface — the page
+// ends up drawn small in the top-left corner with the rest blank — rather than
+// shrinking the produced image. The screencast's own maxWidth/maxHeight already
+// scales the frame down to the pane (a 1240x1503 layout arrives as a 660x800
+// frame), which is the scaling we actually want.
+//
+// deviceScaleFactor stays 1 for the same kind of reason: the screencast ignores
+// it (measured — see zoomedLayout), so raising it for a zoomed layout would only
+// make the compositor render pixels no frame ever carries.
+func (v *browserAttachmentViewer) applyMetrics(vp browserViewport) bool {
+	return v.call("Emulation.setDeviceMetricsOverride",
+		map[string]any{"width": vp.Width, "height": vp.Height, "deviceScaleFactor": 1, "mobile": false}, nil)
+}
+
+// measureFit answers the layout viewport that makes the page's own content fit
+// the pane, so the image can be scaled back down to it. A desktop site with a
+// min-width otherwise renders clipped with its own horizontal scrollbar inside a
+// pane that is simply narrower than the site was designed for.
+//
+// The aspect ratio is kept EXACTLY equal to the pane's, so the canvas (which
+// stretches the frame to fill the pane) never distorts and pointer coordinates
+// stay a plain linear map. One pass only: re-measuring after a reflow could
+// oscillate, and the second guess is not better than the first. The caller must
+// have the pane's own metrics applied — that is the layout being measured.
+func (v *browserAttachmentViewer) measureFit(pane browserViewport) (browserViewport, bool) {
+	var metrics struct {
+		CSSContentSize struct {
+			Width float64 `json:"width"`
+		} `json:"cssContentSize"`
+		ContentSize struct {
+			Width float64 `json:"width"`
+		} `json:"contentSize"`
+	}
+	if !v.call("Page.getLayoutMetrics", nil, &metrics) {
+		return browserViewport{}, false
+	}
+	content := metrics.CSSContentSize.Width
+	if content <= 0 {
+		content = metrics.ContentSize.Width
+	}
+	return fitLayoutViewport(pane, content)
+}
+
+// handleCopySelection hands the page's current selection back to the viewer so
+// the Console can put it on the USER's clipboard. Ctrl+C inside the pane cannot
+// do it: the keystroke would copy into the container's clipboard, which nobody
+// can reach. The expression is fixed and read-only, and the text is never
+// logged or persisted — same rule as the page title and URL (docs/53 §53.10).
+func (v *browserAttachmentViewer) handleCopySelection() {
+	v.attachment.mu.Lock()
+	locked := v.attachment.controlMode == attachmentControlLocked
+	unsupported := v.attachment.state == attachmentStateUnsupportedURL
+	v.attachment.mu.Unlock()
+	if locked || unsupported {
+		v.protocolError("input_not_allowed", "browser attachment is locked")
+		return
+	}
+	var result struct {
+		Result struct {
+			Value string `json:"value"`
+		} `json:"result"`
+	}
+	if !v.call("Runtime.evaluate", map[string]any{
+		"expression":    browserSelectionExpression,
+		"returnByValue": true,
+	}, &result) {
+		return
+	}
+	v.enqueueText(mustBrowserJSON(map[string]any{
+		"type": "clipboard",
+		"text": truncateBrowserText(result.Result.Value, browserMaxSelectionBytes),
+	}))
 }
 
 func (v *browserAttachmentViewer) handleMouse(data []byte) {
@@ -489,7 +612,16 @@ func (v *browserAttachmentViewer) handleMouse(data []byte) {
 		v.protocolError("bad_mouse", "unsupported mouse event or button")
 		return
 	}
-	v.call("Input.dispatchMouseEvent", map[string]any{"type": eventType, "x": msg.X, "y": msg.Y, "button": msg.Button, "buttons": msg.Buttons, "modifiers": msg.Modifiers, "clickCount": msg.ClickCount}, nil)
+	params := map[string]any{"type": eventType, "x": msg.X, "y": msg.Y, "button": msg.Button,
+		"buttons": msg.Buttons, "modifiers": msg.Modifiers, "clickCount": msg.ClickCount}
+	// Only the pointer-rate events skip the reply (see post): a press, a release
+	// or a keystroke is one event per user action and can afford the round trip,
+	// which keeps anything read straight afterwards consistent with it.
+	if eventType == "mouseMoved" {
+		v.post("Input.dispatchMouseEvent", params)
+		return
+	}
+	v.call("Input.dispatchMouseEvent", params, nil)
 }
 
 func (v *browserAttachmentViewer) handleWheel(data []byte) {
@@ -504,7 +636,7 @@ func (v *browserAttachmentViewer) handleWheel(data []byte) {
 		v.protocolError("bad_wheel", "invalid wheel event")
 		return
 	}
-	v.call("Input.dispatchMouseEvent", map[string]any{"type": "mouseWheel", "x": msg.X, "y": msg.Y, "deltaX": msg.DeltaX, "deltaY": msg.DeltaY, "modifiers": msg.Modifiers}, nil)
+	v.post("Input.dispatchMouseEvent", map[string]any{"type": "mouseWheel", "x": msg.X, "y": msg.Y, "deltaX": msg.DeltaX, "deltaY": msg.DeltaY, "modifiers": msg.Modifiers})
 }
 
 func (v *browserAttachmentViewer) handleKey(data []byte) {
@@ -519,15 +651,8 @@ func (v *browserAttachmentViewer) handleKey(data []byte) {
 		v.protocolError("bad_key", "invalid key event")
 		return
 	}
-	params := map[string]any{"type": map[bool]string{true: "keyDown", false: "keyUp"}[msg.Event == "down"], "key": msg.Key, "code": msg.Code, "modifiers": msg.Modifiers, "autoRepeat": msg.Repeat}
-	if msg.Event == "down" && msg.Modifiers&7 == 0 && utf8.RuneCountInString(msg.Key) == 1 {
-		r, _ := utf8.DecodeRuneInString(msg.Key)
-		if !unicode.IsControl(r) {
-			params["text"] = msg.Key
-			params["unmodifiedText"] = msg.Key
-		}
-	}
-	v.call("Input.dispatchKeyEvent", params, nil)
+	v.call("Input.dispatchKeyEvent",
+		browserKeyEventParams(msg.Event == "down", msg.Key, msg.Code, msg.Modifiers, msg.Repeat), nil)
 }
 
 func (v *browserAttachmentViewer) handleHistory(data []byte) {
@@ -607,6 +732,23 @@ func (v *browserAttachmentViewer) call(method string, params, result any) bool {
 		return false
 	}
 	return true
+}
+
+// post dispatches an INPUT command without waiting for Chromium's reply (see
+// browserCDPCore.Send). Control messages are handled on the viewer's read loop,
+// so waiting per finger movement is what made a swipe queue up behind Chromium's
+// frame-paced acks. A dead attachment still refuses input.
+func (v *browserAttachmentViewer) post(method string, params any) {
+	a := v.attachment
+	a.mu.Lock()
+	terminal := a.terminal
+	a.mu.Unlock()
+	if terminal || a.cdp.Send(method, params, a.sessionID) != nil {
+		v.protocolError("browser_command_failed", "browser attachment command failed")
+		if !terminal {
+			go a.manager.markTerminal(a, attachmentStateDisconnected, "Chromium disconnected")
+		}
+	}
 }
 
 func (v *browserAttachmentViewer) protocolError(code, message string) {

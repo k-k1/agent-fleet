@@ -158,6 +158,66 @@ func TestBrowserAttachmentControlModesAndNoNavigateMessage(t *testing.T) {
 	m.Delete(resp.ID)
 }
 
+// A fresh attachment is view-only, so scroll and keys are refused until the
+// owner hands over. Every other live/unit test sets user-control first, so the
+// path the field actually takes — attach, hand the user the link, never call
+// request_browser_action — was the one path nothing covered, and it reached
+// users as "the pane renders but scrolling and typing do nothing".
+func TestBrowserAttachmentDefaultsToViewOnlyAndReportsRefusedInput(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	m := fakeAttachmentManager(cdp, 0)
+	resp := createFakeAttachment(t, m)
+	if resp.ControlMode != attachmentControlViewOnly {
+		t.Fatalf("fresh attachment control mode = %q, want %q", resp.ControlMode, attachmentControlViewOnly)
+	}
+	a, err := m.lookupActive(resp.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := &browserAttachmentViewer{attachment: a, control: make(chan browserOutbound, 8), done: make(chan struct{})}
+
+	for _, message := range []string{
+		`{"type":"wheel","x":1,"y":1,"deltaX":0,"deltaY":400,"modifiers":0}`,
+		`{"type":"key","event":"down","key":"PageDown","code":"PageDown","modifiers":0,"repeat":false}`,
+	} {
+		v.handleControl([]byte(message))
+	}
+	for _, method := range []string{"Input.dispatchMouseEvent", "Input.dispatchKeyEvent"} {
+		if containsBrowserMethod(cdp.methods(), method) {
+			t.Fatalf("view-only forwarded %s", method)
+		}
+	}
+	// Refusing silently is what made this invisible: the Console had nothing to
+	// show and looked exactly like a working pane.
+	var refusals int
+	for done := false; !done; {
+		select {
+		case out := <-v.control:
+			var msg struct {
+				Type string `json:"type"`
+				Code string `json:"code"`
+			}
+			if json.Unmarshal(out.data, &msg) == nil && msg.Type == "protocol-error" && msg.Code == "input_not_allowed" {
+				refusals++
+			}
+		default:
+			done = true
+		}
+	}
+	if refusals != 2 {
+		t.Fatalf("input_not_allowed reported %d times, want 2", refusals)
+	}
+
+	if _, err := m.SetControlMode(resp.ID, attachmentControlUser); err != nil {
+		t.Fatal(err)
+	}
+	v.handleControl([]byte(`{"type":"wheel","x":1,"y":1,"deltaX":0,"deltaY":400,"modifiers":0}`))
+	if !containsBrowserMethod(cdp.methods(), "Input.dispatchMouseEvent") {
+		t.Fatal("user-control did not forward the wheel")
+	}
+	m.Delete(resp.ID)
+}
+
 func TestBrowserAttachmentSetControlModeHasNoHandoffOrTTLSideEffects(t *testing.T) {
 	cdp := newFakeBrowserCDP()
 	m := fakeAttachmentManager(cdp, 0)
@@ -508,6 +568,333 @@ func TestBrowserAttachmentUsesWebSocketCDPAdapter(t *testing.T) {
 		if containsBrowserMethod(got, forbidden) {
 			t.Fatalf("external owner command %s sent over WebSocket: %v", forbidden, got)
 		}
+	}
+}
+
+// browserId is the caller's "this must be the Chromium I launched" assertion.
+// A port collision is silent on the Chromium side, so an attach that skips this
+// check can land on another session's browser (docs/53 §53.16).
+func TestBrowserAttachmentRejectsForeignBrowserInstance(t *testing.T) {
+	const guid = "c162d83f-b0a3-41d3-9db6-e9f6012c1491"
+	cdp := newFakeBrowserCDP()
+	m := fakeAttachmentManager(cdp, 0)
+	m.config.Discover = func(int, time.Duration) (cdpDiscovery, error) {
+		return cdpDiscovery{
+			DebuggerURL: "ws://127.0.0.1:9222/devtools/browser/" + guid,
+			BrowserID:   guid,
+			Targets:     []browserAttachTarget{{TargetID: "target-1", Type: "page", Title: "External", URL: "https://example.invalid/edit"}},
+		}, nil
+	}
+	defer m.Close()
+
+	_, err := m.Create(browserAttachmentCreateRequest{
+		Port: 9222, TargetID: "target-1", BrowserID: "11111111-2222-3333-4444-555555555555",
+		Viewport: browserViewportRequest{Width: 1280, Height: 900, DeviceScaleFactor: 1},
+	})
+	if apiErr := asAttachmentAPIError(err); apiErr.Code != "cdp_browser_mismatch" || apiErr.Status != http.StatusConflict {
+		t.Fatalf("foreign browser error = %+v", apiErr)
+	}
+	if _, err := m.Create(browserAttachmentCreateRequest{
+		Port: 9222, TargetID: "target-1", BrowserID: "not a browser id/../",
+		Viewport: browserViewportRequest{Width: 1280, Height: 900, DeviceScaleFactor: 1},
+	}); asAttachmentAPIError(err).Code != "bad_browser_attachment" {
+		t.Fatalf("malformed browserId error = %v", err)
+	}
+	// The matching instance still attaches — accepted in the DevToolsActivePort
+	// form the caller reads off disk, not just as a bare GUID.
+	resp, err := m.Create(browserAttachmentCreateRequest{
+		Port: 9222, TargetID: "target-1", BrowserID: "/devtools/browser/" + guid,
+		Viewport: browserViewportRequest{Width: 1280, Height: 900, DeviceScaleFactor: 1},
+	})
+	if err != nil {
+		t.Fatalf("matching browserId must attach: %v", err)
+	}
+	if resp.State != attachmentStateAttached {
+		t.Fatalf("state=%q", resp.State)
+	}
+}
+
+// Zoom-to-fit: a pane narrower than the site must widen the LAYOUT viewport and
+// scale the image back down, not clip the page (which is what the user sees as
+// "half the page is missing and the scrollbar is stuck").
+func TestBrowserAttachmentZoomToFitWidensLayoutAndScalesImage(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	m := fakeAttachmentManager(cdp, 0)
+	resp := createFakeAttachment(t, m)
+	a, err := m.lookupActive(resp.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Delete(resp.ID)
+	v := &browserAttachmentViewer{attachment: a, control: make(chan browserOutbound, 8), done: make(chan struct{})}
+
+	v.handleControl([]byte(`{"type":"viewport","width":660,"height":800,"fit":true}`))
+
+	metrics, ok := cdp.last("Emulation.setDeviceMetricsOverride")
+	if !ok {
+		t.Fatal("no device metrics applied")
+	}
+	// 1240 CSS px of content, pane aspect preserved exactly (660:800).
+	if metrics.Params["width"] != float64(1240) || metrics.Params["height"] != float64(1503) {
+		t.Fatalf("layout viewport = %v x %v", metrics.Params["width"], metrics.Params["height"])
+	}
+	// setDeviceMetricsOverride's `scale` must NOT be used: measured on Chrome 151
+	// it shrinks the page inside an unchanged surface (page in the top-left
+	// corner, rest blank) instead of shrinking the image.
+	if _, hasScale := metrics.Params["scale"]; hasScale {
+		t.Fatalf("zoom must not go through metrics scale: %+v", metrics.Params)
+	}
+	// The frames must stay pane-sized — zooming out costs layout, not bandwidth.
+	if err := a.startScreencast(); err != nil {
+		t.Fatal(err)
+	}
+	cast, ok := cdp.last("Page.startScreencast")
+	if !ok || cast.Params["maxWidth"] != float64(660) || cast.Params["maxHeight"] != float64(800) {
+		t.Fatalf("screencast bounds = %+v", cast.Params)
+	}
+	// Pointer coordinates live in layout space, so the viewer has to be told.
+	if got := drainViewerText(t, v, "viewport"); got["width"] != float64(1240) || got["height"] != float64(1503) {
+		t.Fatalf("viewport message = %+v", got)
+	}
+	a.mu.Lock()
+	layout := a.viewport
+	a.mu.Unlock()
+	if layout.Width != 1240 || !v.validPoint(1200, 1400) {
+		t.Fatalf("layout viewport not adopted for input mapping: %+v", layout)
+	}
+}
+
+// Without fit the page keeps 1:1 with the pane — the responsive-preview case.
+func TestBrowserAttachmentWithoutFitKeepsPaneSizedViewport(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	m := fakeAttachmentManager(cdp, 0)
+	resp := createFakeAttachment(t, m)
+	a, _ := m.lookupActive(resp.ID)
+	defer m.Delete(resp.ID)
+	v := &browserAttachmentViewer{attachment: a, control: make(chan browserOutbound, 8), done: make(chan struct{})}
+
+	v.handleControl([]byte(`{"type":"viewport","width":660,"height":800}`))
+	metrics, _ := cdp.last("Emulation.setDeviceMetricsOverride")
+	if metrics.Params["width"] != float64(660) || metrics.Params["height"] != float64(800) {
+		t.Fatalf("viewport = %+v", metrics.Params)
+	}
+	if _, hasScale := metrics.Params["scale"]; hasScale {
+		t.Fatalf("1:1 must not carry a scale: %+v", metrics.Params)
+	}
+	if containsBrowserMethod(cdp.methods(), "Page.getLayoutMetrics") {
+		t.Fatal("measured the page even though fit was off")
+	}
+}
+
+// Pinch zoom on a phone: the page is laid out SMALLER on top of whatever fit
+// already decided, so the frame is captured from a layout with fewer CSS pixels
+// and the text is re-rendered bigger instead of being interpolated.
+func TestBrowserAttachmentPinchZoomShrinksLayout(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	m := fakeAttachmentManager(cdp, 0)
+	resp := createFakeAttachment(t, m)
+	a, _ := m.lookupActive(resp.ID)
+	defer m.Delete(resp.ID)
+	v := &browserAttachmentViewer{attachment: a, control: make(chan browserOutbound, 16), done: make(chan struct{})}
+
+	v.handleControl([]byte(`{"type":"viewport","width":660,"height":800,"fit":true,"zoom":1}`))
+	measured := countBrowserMethod(cdp.methods(), "Page.getLayoutMetrics")
+	if measured != 1 {
+		t.Fatalf("fit measured the page %d times", measured)
+	}
+
+	v.handleControl([]byte(`{"type":"viewport","width":660,"height":800,"fit":true,"zoom":2}`))
+	metrics, ok := cdp.last("Emulation.setDeviceMetricsOverride")
+	if !ok || metrics.Params["width"] != float64(620) || metrics.Params["height"] != float64(752) {
+		t.Fatalf("zoomed layout = %+v", metrics.Params)
+	}
+	// Re-measuring an already zoomed page folds each zoom into the next one, so
+	// the fit is measured once per pane/fit change and never per pinch.
+	if got := countBrowserMethod(cdp.methods(), "Page.getLayoutMetrics"); got != measured {
+		t.Fatalf("a pinch re-measured the page (%d -> %d)", measured, got)
+	}
+	// The emulated pixel ratio stays 1: measured on Chromium 151 the screencast
+	// emits CSS-pixel-sized frames and ignores it, so raising it would only make
+	// the compositor render pixels no frame carries.
+	if metrics.Params["deviceScaleFactor"] != float64(1) {
+		t.Fatalf("deviceScaleFactor = %v", metrics.Params["deviceScaleFactor"])
+	}
+	if got := lastViewerText(t, v, "viewport"); got["width"] != float64(620) || got["height"] != float64(752) {
+		t.Fatalf("viewer was not told the zoomed mapping space: %+v", got)
+	}
+	a.mu.Lock()
+	layout := a.viewport
+	a.mu.Unlock()
+	if layout.Width != 620 || v.validPoint(700, 100) {
+		t.Fatalf("pointer mapping not narrowed to the zoomed layout: %+v", layout)
+	}
+
+	v.handleControl([]byte(`{"type":"viewport","width":660,"height":800,"fit":true,"zoom":4}`))
+	metrics, _ = cdp.last("Emulation.setDeviceMetricsOverride")
+	if metrics.Params["width"] != float64(310) {
+		t.Fatalf("4x layout = %+v", metrics.Params)
+	}
+	// The image cap stays the pane's: zooming changes the layout, never the
+	// bytes on the wire.
+	if err := a.startScreencast(); err != nil {
+		t.Fatal(err)
+	}
+	cast, _ := cdp.last("Page.startScreencast")
+	if cast.Params["maxWidth"] != float64(660) || cast.Params["maxHeight"] != float64(800) {
+		t.Fatalf("zooming in must not grow the frame: %+v", cast.Params)
+	}
+}
+
+// Zoom is the viewer's own layout viewport, not page input: a view-only
+// attachment must still be able to zoom, exactly as it can already scroll-free
+// read and copy. (Input stays refused — that is asserted separately.)
+func TestBrowserAttachmentPinchZoomAllowedInViewOnly(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	m := fakeAttachmentManager(cdp, 0)
+	resp := createFakeAttachment(t, m)
+	a, _ := m.lookupActive(resp.ID)
+	defer m.Delete(resp.ID)
+	a.mu.Lock()
+	mode := a.controlMode
+	a.mu.Unlock()
+	if mode != attachmentControlViewOnly {
+		t.Fatalf("a fresh attachment must be view-only, got %q", mode)
+	}
+	v := &browserAttachmentViewer{attachment: a, control: make(chan browserOutbound, 16), done: make(chan struct{})}
+
+	v.handleControl([]byte(`{"type":"viewport","width":660,"height":800,"zoom":2}`))
+	metrics, ok := cdp.last("Emulation.setDeviceMetricsOverride")
+	if !ok || metrics.Params["width"] != float64(330) {
+		t.Fatalf("view-only zoom was refused: %+v", metrics.Params)
+	}
+}
+
+// lastViewerText returns the LAST queued message of the wanted type, draining
+// the queue: a run of viewport changes queues one message each, and only the
+// newest describes the space the viewer must map pointers into.
+func lastViewerText(t *testing.T, v *browserAttachmentViewer, want string) map[string]any {
+	t.Helper()
+	var found map[string]any
+	for {
+		select {
+		case out := <-v.control:
+			var msg map[string]any
+			if json.Unmarshal(out.data, &msg) == nil && msg["type"] == want {
+				found = msg
+			}
+		default:
+			if found == nil {
+				t.Fatalf("no %q message was sent to the viewer", want)
+			}
+			return found
+		}
+	}
+}
+
+func countBrowserMethod(methods []string, want string) int {
+	n := 0
+	for _, method := range methods {
+		if method == want {
+			n++
+		}
+	}
+	return n
+}
+
+// Copy: the container's clipboard is unreachable for the user, so the selection
+// has to come back over the wire. Allowed in view-only — reading is the point.
+func TestBrowserAttachmentCopySelectionWorksInViewOnly(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	m := fakeAttachmentManager(cdp, 0)
+	resp := createFakeAttachment(t, m)
+	a, _ := m.lookupActive(resp.ID)
+	defer m.Delete(resp.ID)
+	v := &browserAttachmentViewer{attachment: a, control: make(chan browserOutbound, 8), done: make(chan struct{})}
+
+	v.handleControl([]byte(`{"type":"copy"}`))
+	if got := drainViewerText(t, v, "clipboard"); got["text"] != "コピー対象のテキスト" {
+		t.Fatalf("clipboard message = %+v", got)
+	}
+
+	// Locked stops the screencast, so there is nothing on screen to copy either.
+	if _, err := m.SetControlMode(resp.ID, attachmentControlLocked); err != nil {
+		t.Fatal(err)
+	}
+	v.handleControl([]byte(`{"type":"copy"}`))
+	if got := drainViewerText(t, v, "protocol-error"); got["code"] != "input_not_allowed" {
+		t.Fatalf("locked copy = %+v", got)
+	}
+}
+
+// drainViewerText returns the first queued viewer message of the wanted type.
+func drainViewerText(t *testing.T, v *browserAttachmentViewer, want string) map[string]any {
+	t.Helper()
+	for {
+		select {
+		case out := <-v.control:
+			var msg map[string]any
+			if json.Unmarshal(out.data, &msg) == nil && msg["type"] == want {
+				return msg
+			}
+		default:
+			t.Fatalf("no %q message was sent to the viewer", want)
+			return nil
+		}
+	}
+}
+
+// The Console's way back to a live attachment when the action link is gone.
+func TestBrowserAttachmentListIsNewestFirstAndDropsDeleted(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	m := fakeAttachmentManager(cdp, 0)
+	defer m.Close()
+	targets := []string{"target-1", "target-2"}
+	m.config.Discover = func(int, time.Duration) (cdpDiscovery, error) {
+		list := make([]browserAttachTarget, 0, len(targets))
+		for _, id := range targets {
+			list = append(list, browserAttachTarget{TargetID: id, Type: "page", Title: id, URL: "https://example.invalid/" + id})
+		}
+		return cdpDiscovery{DebuggerURL: "ws://127.0.0.1:9222/devtools/browser/x", Targets: list}, nil
+	}
+	if got := m.List().Attachments; len(got) != 0 {
+		t.Fatalf("empty manager listed %d", len(got))
+	}
+	first, err := m.Create(browserAttachmentCreateRequest{Port: 9222, TargetID: "target-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * time.Millisecond) // distinct creation instants
+	second, err := m.Create(browserAttachmentCreateRequest{Port: 9222, TargetID: "target-2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := m.List().Attachments
+	if len(listed) != 2 || listed[0].ID != second.ID || listed[1].ID != first.ID {
+		t.Fatalf("list must be newest first: %+v", listed)
+	}
+	// Detaching is the user closing the view; it must leave the list, not linger.
+	m.Delete(second.ID)
+	listed = m.List().Attachments
+	if len(listed) != 1 || listed[0].ID != first.ID {
+		t.Fatalf("deleted attachment still listed: %+v", listed)
+	}
+}
+
+// Discovery hands the browser id back so the caller can compare it with line 2
+// of its own DevToolsActivePort before it ever attaches.
+func TestBrowserAttachDiscoveryExposesBrowserID(t *testing.T) {
+	const guid = "c162d83f-b0a3-41d3-9db6-e9f6012c1491"
+	m := fakeAttachmentManager(newFakeBrowserCDP(), 0)
+	m.config.Discover = func(int, time.Duration) (cdpDiscovery, error) {
+		return cdpDiscovery{DebuggerURL: "ws://127.0.0.1:9222/devtools/browser/" + guid, BrowserID: guid}, nil
+	}
+	defer m.Close()
+	resp, err := m.Discover(9222)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.BrowserID != guid {
+		t.Fatalf("browserId=%q want %q", resp.BrowserID, guid)
 	}
 }
 

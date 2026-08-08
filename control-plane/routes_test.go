@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -160,6 +162,35 @@ func TestSmokeStaticCatchAll(t *testing.T) {
 	}
 }
 
+// The Chromium attachment action link (docs/53 §53.7) is a Console route with no
+// file behind it. It regressed to the catch-all's 404 once — the whole one-click
+// hand-off is dead when this 404s, and no unit test above the parser noticed.
+func TestBrowserAttachmentActionServesConsoleShell(t *testing.T) {
+	cfg, mux := smokeEnv(t)
+	shell := []byte("<!doctype html><title>console</title>")
+	if err := os.WriteFile(filepath.Join(cfg.consoleDir, "index.html"), shell, 0o644); err != nil {
+		t.Fatalf("seed console shell: %v", err)
+	}
+	id := "ba_0123456789abcdef0123456789abcdef"
+	for _, path := range []string{"/open/browser-attachment/" + id, "/open/browser-attachment/" + id + "/"} {
+		w := smokeGet(t, mux, "GET", path)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: want 200 got %d", path, w.Code)
+		}
+		if !bytes.Equal(w.Body.Bytes(), shell) {
+			t.Fatalf("%s: want the console shell, got %q", path, w.Body.String())
+		}
+		if got := w.Header().Get("Cache-Control"); got != "no-store" {
+			t.Fatalf("%s: Cache-Control=%q", path, got)
+		}
+	}
+	// The action route must stay session-gated — it is a Console surface, and the
+	// id is not an authorization token (docs/53 §53.6).
+	if isAuthExempt("/open/browser-attachment/" + id) {
+		t.Fatal("the action route must NOT be auth exempt")
+	}
+}
+
 // The registry-based isAuthExempt must reproduce the historical hardcoded set
 // (oauth_google.go pre-P2-W1) exactly — a drifted exemption either locks out an
 // internal caller or exposes a session-gated path.
@@ -180,6 +211,16 @@ func TestAuthExemptRegistry(t *testing.T) {
 		if isAuthExempt(p) {
 			t.Errorf("%s must NOT be exempt", p)
 		}
+	}
+}
+
+// CP は明示許可リストなので、Agent 側に増えた収集ルートの登録漏れを回帰検知する。
+func TestBrowserAttachmentListProxyRouteRegistered(t *testing.T) {
+	_, mux := smokeEnv(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/browser/attachments", nil)
+	_, pattern := mux.Handler(req)
+	if pattern != "GET /api/browser/attachments" {
+		t.Fatalf("route pattern=%q", pattern)
 	}
 }
 

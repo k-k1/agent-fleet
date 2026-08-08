@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"sync"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
@@ -305,19 +304,24 @@ func (v *browserViewer) handleControl(data []byte) bool {
 			Type   string  `json:"type"`
 			Width  float64 `json:"width"`
 			Height float64 `json:"height"`
+			Zoom   float64 `json:"zoom"`
 		}
 		if json.Unmarshal(data, &msg) != nil {
 			v.protocolError("bad_viewport", "invalid viewport")
 			return true
 		}
-		vp, err := normalizeBrowserViewport(browserViewportRequest{Width: msg.Width, Height: msg.Height, DeviceScaleFactor: 1})
+		pane, err := normalizeBrowserViewport(browserViewportRequest{Width: msg.Width, Height: msg.Height, DeviceScaleFactor: 1})
 		if err != nil {
 			v.protocolError("bad_viewport", err.Error())
 			return true
 		}
+		zoom := normalizeBrowserZoom(msg.Zoom)
+		layout := zoomedLayout(pane, zoom)
 		v.page.mu.Lock()
-		unchanged := v.page.viewport.Width == vp.Width && v.page.viewport.Height == vp.Height
-		v.page.viewport = vp
+		unchanged := v.page.pane == pane && v.page.zoom == zoom
+		v.page.pane = pane
+		v.page.zoom = zoom
+		v.page.viewport = layout
 		v.page.mu.Unlock()
 		if unchanged {
 			// Console re-sends its current size right after attaching. Restarting the
@@ -326,9 +330,12 @@ func (v *browserViewer) handleControl(data []byte) bool {
 			// stop/start round-trip entirely.
 			return true
 		}
-		if !v.call("Emulation.setDeviceMetricsOverride", map[string]any{"width": vp.Width, "height": vp.Height, "deviceScaleFactor": 1, "mobile": false}, nil) {
+		if !v.call("Emulation.setDeviceMetricsOverride", map[string]any{"width": layout.Width, "height": layout.Height, "deviceScaleFactor": 1, "mobile": false}, nil) {
 			return true
 		}
+		// A pinch zoom lays the page out smaller than the pane, so pointer
+		// coordinates no longer live in the space the viewer asked for.
+		v.enqueueText(mustBrowserJSON(map[string]any{"type": "viewport", "width": layout.Width, "height": layout.Height}))
 		v.page.restartScreencastForResize()
 	case "mouse":
 		v.handleMouse(data)
@@ -345,6 +352,20 @@ func (v *browserViewer) handleControl(data []byte) bool {
 			return true
 		}
 		v.call("Input.insertText", map[string]any{"text": msg.Text}, nil)
+	case "copy":
+		// The page runs in the container, so its clipboard is unreachable for the
+		// user; hand the selection back over the wire instead (docs/53 §53.7).
+		var result struct {
+			Result struct {
+				Value string `json:"value"`
+			} `json:"result"`
+		}
+		if v.call("Runtime.evaluate", map[string]any{"expression": browserSelectionExpression, "returnByValue": true}, &result) {
+			v.enqueueText(mustBrowserJSON(map[string]any{
+				"type": "clipboard",
+				"text": truncateBrowserText(result.Result.Value, browserMaxSelectionBytes),
+			}))
+		}
 	case "navigate":
 		var msg struct {
 			Path string `json:"path"`
@@ -414,10 +435,18 @@ func (v *browserViewer) handleMouse(data []byte) {
 		v.protocolError("bad_mouse", "unsupported mouse event or button")
 		return
 	}
-	v.call("Input.dispatchMouseEvent", map[string]any{
+	params := map[string]any{
 		"type": eventType, "x": msg.X, "y": msg.Y, "button": msg.Button,
 		"buttons": msg.Buttons, "modifiers": msg.Modifiers, "clickCount": msg.ClickCount,
-	}, nil)
+	}
+	// Only the pointer-rate events skip the reply (see post): a press, a release
+	// or a keystroke is one event per user action and can afford the round trip,
+	// which keeps anything read straight afterwards consistent with it.
+	if eventType == "mouseMoved" {
+		v.post("Input.dispatchMouseEvent", params)
+		return
+	}
+	v.call("Input.dispatchMouseEvent", params, nil)
 }
 
 func (v *browserViewer) handleWheel(data []byte) {
@@ -432,9 +461,9 @@ func (v *browserViewer) handleWheel(data []byte) {
 		v.protocolError("bad_wheel", "invalid wheel event")
 		return
 	}
-	v.call("Input.dispatchMouseEvent", map[string]any{
+	v.post("Input.dispatchMouseEvent", map[string]any{
 		"type": "mouseWheel", "x": raw.X, "y": raw.Y, "deltaX": raw.DeltaX, "deltaY": raw.DeltaY, "modifiers": raw.Modifiers,
-	}, nil)
+	})
 }
 
 func (v *browserViewer) handleKey(data []byte) {
@@ -449,18 +478,8 @@ func (v *browserViewer) handleKey(data []byte) {
 		v.protocolError("bad_key", "invalid key event")
 		return
 	}
-	params := map[string]any{
-		"type": map[bool]string{true: "keyDown", false: "keyUp"}[msg.Event == "down"],
-		"key":  msg.Key, "code": msg.Code, "modifiers": msg.Modifiers, "autoRepeat": msg.Repeat,
-	}
-	if msg.Event == "down" && msg.Modifiers&7 == 0 && utf8.RuneCountInString(msg.Key) == 1 {
-		r, _ := utf8.DecodeRuneInString(msg.Key)
-		if !unicode.IsControl(r) {
-			params["text"] = msg.Key
-			params["unmodifiedText"] = msg.Key
-		}
-	}
-	v.call("Input.dispatchKeyEvent", params, nil)
+	v.call("Input.dispatchKeyEvent",
+		browserKeyEventParams(msg.Event == "down", msg.Key, msg.Code, msg.Modifiers, msg.Repeat), nil)
 }
 
 func (v *browserViewer) handleHistory(data []byte) {
@@ -525,6 +544,20 @@ func (v *browserViewer) call(method string, params, result any) bool {
 		return false
 	}
 	return true
+}
+
+// post dispatches an INPUT command without waiting for Chromium's reply (see
+// browserCDPCore.Send). Control messages are handled on the viewer's read loop,
+// so waiting per finger movement is what made a swipe queue up behind Chromium's
+// frame-paced acks. A page that has gone away still refuses input.
+func (v *browserViewer) post(method string, params any) {
+	v.page.manager.mu.Lock()
+	cdp := v.page.manager.cdp
+	owned := v.page.manager.pages[v.page.id] == v.page
+	v.page.manager.mu.Unlock()
+	if cdp == nil || !owned || cdp.Send(method, params, v.page.sessionID) != nil {
+		v.protocolError("browser_command_failed", "browser command failed")
+	}
 }
 
 func (v *browserViewer) protocolError(code, message string) {

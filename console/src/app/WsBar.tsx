@@ -18,6 +18,9 @@ import { Sparkline } from "../ui/Sparkline.tsx";
 import { useConfirm } from "../ui/ConfirmProvider.tsx";
 import { useIsMobile } from "../lib/device.ts";
 import { useDismiss } from "../lib/useDismiss.ts";
+import { listBrowserAttachments } from "../features/browser/attachmentService.ts";
+import { openBrowserAttachment } from "../features/browser/attachmentAction.ts";
+import type { BrowserAttachmentStatus } from "../features/browser/attachmentController.ts";
 import { useOpenSignal, type OpenTarget } from "../core/store/uiOpen.ts";
 import { fmtDateTime, TIME_HM } from "../lib/intl.ts";
 import { t, tCount, useT } from "../lib/i18n/index.ts";
@@ -806,6 +809,9 @@ export function WsBar() {
   const [port, setPort] = useState("");
   const [previewPath, setPreviewPath] = useState("/");
   const [pvOpen, setPvOpen] = useState(false); // desktop port-preview popover
+  // Live Chromium attachments, read when the popover opens (no polling: this is
+  // a recovery entry, and the authoritative state is the pane's own socket).
+  const [attachments, setAttachments] = useState<BrowserAttachmentStatus[]>([]);
   const [staleOpen, setStaleOpen] = useState(false); // 要再起動 badge popover
   const [moreOpen, setMoreOpen] = useState(false); // mobile overflow popover
   const [resOpen, setResOpen] = useState(false); // desktop resource-tiles popover
@@ -928,6 +934,25 @@ export function WsBar() {
     setPvOpen(false);
     setMoreOpen(false);
   };
+
+  // Read the live Chromium attachments when a popover that shows them opens.
+  // Deliberately not polled: the pane's own socket is the authoritative state,
+  // and this list only has to be right at the moment the user looks at it.
+  useEffect(() => {
+    if (!pvOpen && !moreOpen) return;
+    if (!running) {
+      setAttachments((prev) => (prev.length ? [] : prev));
+      return;
+    }
+    let cancelled = false;
+    void listBrowserAttachments().then(
+      (list) => !cancelled && setAttachments(list),
+      () => !cancelled && setAttachments((prev) => (prev.length ? [] : prev)),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [pvOpen, moreOpen, running]);
 
   // Close each popover on an outside click / Escape.
   useDismiss(pvRef, pvOpen, () => setPvOpen(false));
@@ -1092,6 +1117,29 @@ export function WsBar() {
         </div>
         <div className="pv-hint">{tr("wsbar.preview.hint")}</div>
       </div>
+      {/* エージェントが attach した既存 Chromium への戻り道（docs/53 §53.7）。
+          本来の入口はミラーの action リンクだが、会話が流れてリンクを見失ったり
+          ペインを閉じた後でも、生きている接続へ戻れるようにする。 */}
+      {attachments.length > 0 && (
+        <div className="pv-section">
+          <label className="pv-label">{tr("wsbar.preview.attachments_label")}</label>
+          {attachments.map((a) => (
+            <div className="pv-row pv-actions" key={a.id}>
+              <button
+                className="pv-attachment"
+                onClick={() => {
+                  setPvOpen(false);
+                  setMoreOpen(false);
+                  void openBrowserAttachment(a.id);
+                }}
+                title={a.url || a.title}
+              >
+                {a.title || tr("browser.attach.canvas")}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </>
   );
 
