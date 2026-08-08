@@ -42,9 +42,14 @@ export interface AgentCaps {
   planMode: boolean; // chat offers a plan-mode toggle (drives the TUI's mode-cycle key)
   // the mirror offers 「ここから分岐」 on a past user turn — a new session carrying the
   // history up to just before it (docs/55). Needs the kind to send transcript anchors
-  // (Turn.anchorId) AND a managed session, since only the runtime APIs take a fork point;
-  // the mirror checks both, so this cap alone never shows the affordance.
+  // (Turn.anchorId); the mirror also checks the turn itself (canBranchFrom).
   forkAt: boolean;
+  // …and whether that needs a MANAGED session. True for the kinds whose only fork-point
+  // API is the runtime's (opencode's serve fork, codex's thread/fork) — their CLI launch
+  // command has no argument for it. False for claude, which has no managed driver at all
+  // and cuts its own transcript instead: gating it on managed would hide the affordance
+  // forever. The server enforces the same per-kind rule (agents.ErrForkAtRoute).
+  forkAtManagedOnly: boolean;
   ephemeral: boolean; // archiving deletes it (no keep) — shell / ssm
   runsInDir: boolean; // launches in a working dir (clone / dir source) — the agents
   launchableFromRepo: boolean; // offered in a repo row's 起動 menu (ssm is not)
@@ -126,6 +131,7 @@ function caps(overrides: Partial<AgentCaps>): AgentCaps {
     slashSkillsManaged: false,
     planMode: false,
     forkAt: false,
+    forkAtManagedOnly: true,
     ephemeral: false,
     runsInDir: false,
     launchableFromRepo: false,
@@ -165,6 +171,11 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       slashSkills: true,
       slashSkillsManaged: true,
       planMode: true,
+      // 発言時点からの分岐（docs/55）: claude だけは公式の分岐点 API を使えない
+      // （`--resume-session-at` は print モード限定）ので、Agent が転写 jsonl を切り詰めて
+      // 分岐先を作る。managed driver が無い kind なので managedOnly は false。
+      forkAt: true,
+      forkAtManagedOnly: false,
       runsInDir: true,
       launchableFromRepo: true,
     }),

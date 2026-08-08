@@ -9,6 +9,7 @@ package codex
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,9 +52,24 @@ func rollout3Turns(t *testing.T) (session.Meta, []string) {
 	if err := os.WriteFile(p, []byte(b.String()), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	m := session.Meta{Dir: dir, Name: "cx", Kind: session.KindCodex}
+	// 分岐点を渡せるのは app-server 経由＝managed だけ（ResolveForkAt が経路も見る）。
+	m := session.Meta{Dir: dir, Name: "cx", Kind: session.KindCodex, Driver: session.DriverManaged}
 	sids.Write(session.UUID(dir, "cx"), cxid)
 	return m, ids
+}
+
+// CLI(TUI) ルートは分岐点を渡す口が無い。「アンカーが悪い」ではなく「この経路ではできない」
+// なので、ハンドラが区別できるよう ErrForkAtRoute で答える。
+func TestResolveForkAtRefusesCLIRoute(t *testing.T) {
+	m, ids := rollout3Turns(t)
+	m.Driver = session.DriverTUI
+	_, err := (agentImpl{}).ResolveForkAt(m, ids[1])
+	if err == nil {
+		t.Fatal("ResolveForkAt on the CLI route = nil error; want a refusal")
+	}
+	if !errors.Is(err, agents.ErrForkAtRoute) {
+		t.Fatalf("error = %v; want it to wrap ErrForkAtRoute", err)
+	}
 }
 
 // 転写の各ターンが、自分が属する rollout の turn id をアンカーとして持つこと。

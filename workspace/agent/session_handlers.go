@@ -712,40 +712,42 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 	// 「そもそも地点分岐という機能があるか」は要求だけで決まるので、会話の状態を見る前に
 	// 答える。ここを後ろに置くと、対応していない kind へ at を投げたとき「会話がまだ無い」
 	// のような無関係な理由が返り、導線の設計ミスが状態の問題に見えてしまう。
+	// 起動方式（managed か CLI か）まで見るのは kind の仕事 — 条件が kind ごとに違う
+	// （opencode/codex は runtime API 必須、claude は TUI しか無い）ので、ここで一律に
+	// managed を要求すると claude が永久に弾かれる。resolver が ErrForkAtRoute で答える。
 	resolver, hasResolver := ag.(agents.ForkAtResolver)
-	if req.At != "" {
-		if !hasResolver || !ag.Caps().CanForkAt {
-			httpx.WriteErr(w, http.StatusBadRequest, errCodeForkAtUnsupported,
-				"this session type cannot fork at a past message")
-			return
-		}
-		// 地点分岐の口は各 runtime の API 側にしか無い（opencode の serve fork /
-		// codex の thread/fork）。CLI ルートの起動コマンドには分岐点を渡す引数が無いので、
-		// managed 以外は受けない。
-		if src.DriverKind() != session.DriverManaged {
-			httpx.WriteErr(w, http.StatusBadRequest, errCodeForkAtUnsupported,
-				"forking at a past message requires a managed session")
-			return
-		}
+	if req.At != "" && (!hasResolver || !ag.Caps().CanForkAt) {
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeForkAtUnsupported,
+			"this session type cannot fork at a past message")
+		return
 	}
 	if !session.DirExists(src.Dir) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeForkMissingDir, "cannot fork: the working folder does not exist")
 		return
 	}
+	// 分岐点の解決は ForkSource より前。どの resolver も ForkSource の結果には依存せず
+	// 自分で会話を引くので順番は自由で、**先に答えたほうが理由が具体的になる**: 起動方式が
+	// 合っていない TUI セッションに対して「分岐できる会話がまだありません」と返しても、
+	// ユーザーは会話を増やそうとするだけで永久に直らない。
+	// ここで失敗したら止める — 「地点を指したのに会話まるごと分岐された」は、それらしい
+	// 履歴が付いてくるぶんユーザーが気づけない壊れ方になる。
+	var forkAt string
+	if req.At != "" {
+		at, err := resolver.ResolveForkAt(src, req.At)
+		if err != nil {
+			code := errCodeForkBadAnchor
+			if errors.Is(err, agents.ErrForkAtRoute) {
+				code = errCodeForkAtUnsupported // 分岐点ではなく起動方式の問題
+			}
+			httpx.WriteErr(w, http.StatusBadRequest, code, err.Error())
+			return
+		}
+		forkAt = at
+	}
 	forkFrom, err := forker.ForkSource(src)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "not_resumable", err.Error())
 		return
-	}
-	// 分岐点そのものの解決は会話ストアを読むので、ForkSource が「分岐できる会話がある」と
-	// 言ったあと。ここで失敗したら止める — 「地点を指したのに会話まるごと分岐された」は、
-	// それらしい履歴が付いてくるぶんユーザーが気づけない壊れ方になる。
-	var forkAt string
-	if req.At != "" {
-		if forkAt, err = resolver.ResolveForkAt(src, req.At); err != nil {
-			httpx.WriteErr(w, http.StatusBadRequest, errCodeForkBadAnchor, err.Error())
-			return
-		}
 	}
 	forkName := allocSessionName(src.Dir)
 	title, _ := cleanTitle(forkTitle(src))

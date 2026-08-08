@@ -49,7 +49,7 @@
 - [52-working-sets.md](52-working-sets.md) — 作業グループ（working set）: 名前付きの { 作業コピー, 会話, repo なしセッション } の集合で左ペインの表示を案件ごとに分離。定義は ui-prefs 同期・選択中は端末ローカル・サーバ変更ゼロのフロント完結（✅ 実装済み・実機目視待ち。設計判断は [decisions/0036](decisions/0036-working-sets.md)）
 - [53-chromium-attach-view.md](53-chromium-attach-view.md) — 外部プロセスが所有するheadless Chromiumへloopback CDPでattachし、描画・限定入力をConsoleへ中継。ローカルAF MCPが引き渡しを準備し、ユーザーはaction linkを1回クリックして操作ペインを開く（設計確定・未実装。設計判断は [decisions/0038](decisions/0038-chromium-attach-view.md)）
 - [54-opencode-console-oauth.md](54-opencode-console-oauth.md) — opencode に API キー以外の認証経路を足す: 共有 `opencode serve` の device flow API（`mode:"auto"`）を Console の接続カードから叩き、opencode.ai アカウントでサインインする（✅ 実装済み。API 実測記録を含む）
-- [55-fork-at-message.md](55-fork-at-message.md) — 発言時点からの会話分岐: ミラーの過去のユーザー発言を選び、そこまでの文脈を持つ新セッションを起こす。アンカーは kind 固有の不透明 ID（claude=uuid / codex=turn id / opencode=message id）で、codex・opencode は公式パラメータ、claude だけ jsonl 手術（各 CLI の実測記録を含む。◐ P1〜P2＝契約＋opencode＋codex＋Console 導線まで実装済み・両 kind とも実 CLI で通し確認済み。残＝claude（jsonl 手術）。設計判断は [decisions/0039](decisions/0039-fork-at-message.md)）
+- [55-fork-at-message.md](55-fork-at-message.md) — 発言時点からの会話分岐: ミラーの過去のユーザー発言を選び、そこまでの文脈を持つ新セッションを起こす。アンカーは kind 固有の不透明 ID（claude=uuid / codex=turn id / opencode=message id）で、codex・opencode は公式パラメータ、claude だけ jsonl 手術（各 CLI の実測記録を含む。◐ P1〜P3＝契約＋opencode＋codex＋claude＋Console 導線まで実装済み・3 種とも実 CLI で通し確認済み。残＝P4（含める分岐 / cursor・copilot）。設計判断は [decisions/0039](decisions/0039-fork-at-message.md)）
 
 > 完了後も実装契約や実測リファレンスとしてコードから参照する 24・26〜30 は番号付きのまま残す。
 > 時系列の実装プランとして役目を終えたものは history/ へ移動: [19 assistant-chat](history/19-assistant-chat.md) /
