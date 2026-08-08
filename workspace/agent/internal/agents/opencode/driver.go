@@ -136,7 +136,7 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	}
 	if ses == "" {
 		if m.ForkFrom != "" {
-			ses, err = serveForkSession(addr, m.ForkFrom, cwd)
+			ses, err = serveForkSession(addr, m.ForkFrom, cwd, m.ForkAt)
 		} else {
 			ses, err = serveCreateSession(addr, cwd, session.Display(m))
 		}
@@ -740,12 +740,33 @@ func serveCreateSession(addr, dir, title string) (string, error) {
 	return s.ID, nil
 }
 
-func serveForkSession(addr, src, dir string) (string, error) {
-	res, err := serveClient.Post(dirQ(addr+"/session/"+url.PathEscape(src)+"/fork", dir), "application/json", strings.NewReader("{}"))
+// serveForkSession copies src into a NEW opencode session. at, when non-empty, is the
+// message the copy stops BEFORE: opencode's fork loop breaks at the first message whose
+// id sorts >= it, so the anchored turn and everything after it stay out of the fork
+// (実測 1.18.14 — docs/55 §55.2). Empty at = the whole conversation, as before.
+func serveForkSession(addr, src, dir, at string) (string, error) {
+	body := "{}"
+	if at != "" {
+		b, err := json.Marshal(map[string]string{"messageID": at})
+		if err != nil {
+			return "", fmt.Errorf("opencode session の分岐点を組み立てられません: %w", err)
+		}
+		body = string(b)
+	}
+	res, err := serveClient.Post(dirQ(addr+"/session/"+url.PathEscape(src)+"/fork", dir), "application/json", strings.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("opencode session の分岐に失敗しました: %w", err)
 	}
 	defer res.Body.Close()
+	// The anchor is client-supplied, so this is the one serve call that can be rejected
+	// for what we asked rather than for how the daemon is doing. Say so instead of
+	// letting it fall through to "応答を解釈できません".
+	if res.StatusCode >= 400 {
+		if at != "" {
+			return "", fmt.Errorf("opencode が分岐点を受け付けませんでした (HTTP %d)", res.StatusCode)
+		}
+		return "", fmt.Errorf("opencode session の分岐に失敗しました (HTTP %d)", res.StatusCode)
+	}
 	var s struct {
 		ID string `json:"id"`
 	}

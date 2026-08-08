@@ -43,7 +43,7 @@ import { useSessionsStore } from "../sessions/store.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { baseName, imageFormat } from "../../lib/filemeta.ts";
-import { useDraft } from "../../lib/draft.ts";
+import { useDraft, writeDraft } from "../../lib/draft.ts";
 import { useDragScroll } from "../../lib/dragScroll.ts";
 import { scrollComposerViewport } from "../../lib/keyScroll.ts";
 import { useBackClose } from "../../lib/backClose.ts";
@@ -112,6 +112,9 @@ import {
   type SlashToken,
 } from "./skillPicker.ts";
 import { ManagedSettingsModal } from "./ManagedSettingsModal.tsx";
+import { ForkAtModal } from "./ForkAtModal.tsx";
+import type { ForkAtTarget } from "./ForkAtModal.tsx";
+import { canBranchFrom, carriedUserTurns } from "./forkAt.ts";
 import { HandoffProposal, useHandoffProposal } from "./HandoffProposal.tsx";
 import { chronoInsertIndex } from "./handoffPlacement.ts";
 import { carryEnd, endOf, footTime } from "./turnTime.ts";
@@ -211,6 +214,10 @@ interface Turn {
   // last row it folds in. See workspace/agent/internal/transcript/transcript.go.
   endTs?: string;
   idx?: number;
+  // anchorId: the AGENT's own id for this turn (claude uuid / codex turn id / opencode
+  // msg_…), opaque here — it is handed straight back to POST /fork {"at"} to branch from
+  // this point (docs/55). Absent for kinds that don't emit one, and for local echoes.
+  anchorId?: string;
   pending?: boolean; // optimistic local echo of a just-sent prompt, not yet in the jsonl
   queued?: boolean; // sitting in claude's mid-run queue (enqueued, awaiting injection)
   source?: string; // user turn origin: "operator" = fleet-operator injected (docs/30 ②), else own input
@@ -249,6 +256,9 @@ interface Group {
   ts?: string; // the block's START (first folded turn) — ordering key, see chronoInsertIndex
   endTs?: string; // the block's END (last folded turn) — what the footer shows
   idx?: number;
+  // The FIRST folded turn's anchor — branching "from this block" means branching before
+  // everything it shows, so a merged block must not adopt a later turn's anchor.
+  anchorId?: string;
   pending?: boolean; // holds an optimistic local echo awaiting its real transcript turn
   queued?: boolean; // holds a prompt claude reports queued for the running turn
   source?: string; // user group origin: "operator" = fleet-operator injected (docs/30 ②)
@@ -400,6 +410,8 @@ export function MirrorView({
   const [titleActing, setTitleActing] = useState(false); // accept/dismiss request in flight
   const [managedSettingsOpen, setManagedSettingsOpen] = useState(false);
   const [managedSettings, setManagedSettings] = useState<ManagedThreadSettings | null>(null);
+  // 「ここから分岐」の確認待ち（docs/55）。null = 閉じている。
+  const [forkAtTarget, setForkAtTarget] = useState<ForkAtTarget | null>(null);
   // Composer draft, persisted per session so switching ターミナル⇄チャット (which
   // unmounts this view) — or a reload — keeps what you were typing. Key by session.
   const draftKey = session ? "af.mirror-draft." + session : null;
@@ -2268,6 +2280,19 @@ export function MirrorView({
   // waiting for the reply even if the session already reads idle.
   const replyPending = awaitingReply(groups);
 
+  // 「ここから分岐」（docs/55）。3 条件そろって初めて導線を出す: kind が分岐点を持てること、
+  // managed であること（分岐点を渡せる口が runtime API にしか無い）、そして読み取り専用で
+  // ないこと。ここで絞らないと、押せるのに必ず 400 で返るボタンを出すことになる。
+  const canForkAt = agent.caps.forkAt && managed && !readOnly;
+  const openForkAt = (turn: Group) => {
+    if (!canBranchFrom(turn)) return;
+    setForkAtTarget({
+      anchorId: turn.anchorId!,
+      text: turn.text || "",
+      carried: carriedUserTurns(groups, turn),
+    });
+  };
+
   // 返信サジェスト（lib/quickReplies）。直近ユーザー発話の次グループ = 最新の回答。その最終
   // テキストを B-1 ヒューリスティックの文脈に、頻度学習（settings.quickReplies）と合わせて候補化。
   const lastUserGi = latestWorkPromptIndex(groups);
@@ -2694,6 +2719,7 @@ export function MirrorView({
                   ),
                 }
               : undefined,
+            canForkAt ? openForkAt : undefined,
           )
         )}
         {pendingPlan && (
@@ -3237,6 +3263,21 @@ export function MirrorView({
           onClose={() => setManagedSettingsOpen(false)}
         />
       )}
+      {forkAtTarget && (
+        <ForkAtModal
+          session={session}
+          target={forkAtTarget}
+          onDone={(name) => {
+            // 分岐点の発言を新セッションの下書きに置いてから開く。開いた瞬間に打ち直せる
+            // ことがこの機能の要点で、ユーザーに元発言を探して貼り直させたら意味がない。
+            writeDraft("af.mirror-draft." + name, forkAtTarget.text);
+            bumpSessions();
+            openTargetInNew({ content: { kind: "terminal", chat: true }, session: name });
+            toast(tr("mirror.fork_at_done"));
+          }}
+          onClose={() => setForkAtTarget(null)}
+        />
+      )}
       {ttsPill &&
         createPortal(
           <div className="sel-pill-group" style={{ left: ttsPill.x, top: Math.max(4, ttsPill.y) }}>
@@ -3437,6 +3478,7 @@ function groupTurns(turns: Turn[]): Group[] {
         ts: t.ts,
         endTs: endOf(t) || undefined,
         idx: t.idx,
+        anchorId: t.anchorId,
         pending: !!t.pending,
         queued: !!t.queued,
         source: t.source,
@@ -3516,6 +3558,9 @@ function renderGroups(
   // proposal). Appended last only while nothing newer exists — never pinned there,
   // which is what used to hide every later message (see handoffPlacement).
   inlineCard?: { at: number; node: ReactNode },
+  // Branch from a past user turn (docs/55); undefined = this session can't, so no turn
+  // shows the affordance.
+  onForkAt?: (turn: Group) => void,
 ) {
   const els = [];
   let prevCtx = "";
@@ -3570,6 +3615,7 @@ function renderGroups(
           defaultWorkOpen={!autoCollapseWork && i > lastUser}
           expandThinking={expandThinking}
           isRejectedPlan={isRejectedPlan}
+          onForkAt={onForkAt}
         />
       ),
     );
@@ -3960,6 +4006,7 @@ function Turn({
   defaultWorkOpen,
   expandThinking,
   isRejectedPlan,
+  onForkAt,
 }: {
   turn: Group;
   maxSpend: number;
@@ -3978,6 +4025,9 @@ function Turn({
   defaultWorkOpen: boolean;
   expandThinking: boolean;
   isRejectedPlan: (plan: string) => boolean;
+  // Branch from this turn (docs/55) — undefined when this session can't (kind without
+  // anchors, CLI-route session, read-only history).
+  onForkAt?: (turn: Group) => void;
 }) {
   const isUser = turn.role === "user";
   const who = isUser ? tr("chat.you") : turn.sidechain ? tr("mirror.subagent") : agentName;
@@ -4192,6 +4242,19 @@ function Turn({
           <TurnSpendBar fresh={turn.inTok} create={turn.cacheCreate} out={turn.outTok} max={maxSpend} />
         )}
         {!isUser && <TurnTtsButtons turn={turn} tts={tts} body={bodyEl} />}
+        {/* Branch from this prompt (docs/55). canBranchFrom holds the rule (landed user
+            turn with an anchor): a block without one can't be pointed at, and offering it
+            would fork the whole conversation instead of the point the user clicked. */}
+        {onForkAt && canBranchFrom(turn) && (
+          <button
+            type="button"
+            className="ghost xs mt-fork"
+            title={tr("mirror.fork_at_title")}
+            onClick={() => onForkAt(turn)}
+          >
+            <Icon name="repo-forked" /> {tr("mirror.fork_at")}
+          </button>
+        )}
         <CopyButton text={copyText} />
       </div>
     </div>

@@ -27,8 +27,13 @@ func (agentImpl) Kind() string { return session.KindOpencode }
 // CanTranscript lights up the Console chat mirror for opencode; its turns come from the
 // SQLite store via Transcript() (readTranscript), windowed by the generic /messages
 // handler. CanFork: the conversation forks via `opencode --session <src> --fork`
-// (ForkSource / BuildLaunch), aligning the fork affordance with claude.
-func (agentImpl) Caps() agents.Caps { return agents.Caps{CanTranscript: true, CanFork: true} }
+// (ForkSource / BuildLaunch), aligning the fork affordance with claude. CanForkAt: the
+// fork can also be pinned to a past turn — the serve API's `POST /session/{id}/fork`
+// takes a messageID (docs/55). That route only exists on the managed driver, so the
+// handler refuses a point fork for a CLI-route session rather than silently widening it.
+func (agentImpl) Caps() agents.Caps {
+	return agents.Caps{CanTranscript: true, CanFork: true, CanForkAt: true}
+}
 
 // ForkSource resolves this session's current opencode conversation as the fork
 // source. An interrupted conversation is refused: opencode re-runs the incomplete
@@ -47,6 +52,37 @@ func (agentImpl) ForkSource(m session.Meta) (string, error) {
 		return "", errors.New("中断中の会話は分岐できません（一度セッションを再開してから分岐してください）")
 	}
 	return ses, nil
+}
+
+// ResolveForkAt validates a mirror anchor against this session's OWN conversation.
+// opencode's fork endpoint takes the messageID as-is and stops copying at the first
+// message that sorts >= it (docs/55 §55.2), so the anchor needs no translation — the work
+// here is refusing the anchors that would branch something other than what was pointed at.
+func (agentImpl) ResolveForkAt(m session.Meta, anchor string) (string, error) {
+	if anchor == "" {
+		return "", errors.New("分岐点が指定されていません")
+	}
+	db, ok := openRO()
+	if !ok {
+		return "", errors.New("opencode の会話ストアを読めません")
+	}
+	defer db.Close()
+	ses := activeSession(db, m)
+	if ses == "" {
+		return "", errors.New("分岐できる会話がまだありません")
+	}
+	var owner string
+	if err := db.QueryRow(`SELECT session_id FROM message WHERE id = ?`, anchor).Scan(&owner); err != nil {
+		return "", errors.New("指定された分岐点がこの会話に見つかりません")
+	}
+	// A sidechain (subagent) turn lives in a CHILD session, so its id is not part of the
+	// parent's ordering at all: forking the parent "at" it would cut at an unrelated
+	// place. The mirror only offers the affordance on the user's own turns, but the
+	// anchor arrives from the client and has to be checked here too.
+	if owner != ses {
+		return "", errors.New("サブエージェントの発言からは分岐できません")
+	}
+	return anchor, nil
 }
 
 func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
@@ -89,6 +125,13 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// resume the fork normally (ForkFrom is then ignored, like claude's).
 	fork := false
 	if resume == "" && m.ForkFrom != "" {
+		// `--session <src> --fork` has no "fork up to here" argument — only the serve API
+		// does (docs/55 §55.5). Refuse rather than launch a CLI fork that would quietly
+		// copy the WHOLE conversation when the user asked for a point.
+		if m.ForkAt != "" {
+			return agents.LaunchPlan{}, errors.New(
+				"発言時点からの分岐は managed のセッションでのみ利用できます")
+		}
 		resume, fork = m.ForkFrom, true
 	}
 	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Mode, resume, fork), Cwd: m.CWD(), Env: envs}, nil

@@ -25,6 +25,20 @@ export function clearDraft(key: string | null): void {
   }
 }
 
+// writeDraft seeds a draft for a session the user is not looking at yet — the branch
+// flow (docs/55) puts the branched-from prompt into the NEW session's composer, so the
+// pane opens with it already typed and the user can edit or resend in one move. It never
+// clobbers an existing draft: a session that already has unsent text keeps it.
+export function writeDraft(key: string | null, text: string): void {
+  if (!key || !text) return;
+  try {
+    if (localStorage.getItem(key)) return;
+    localStorage.setItem(key, text);
+  } catch {
+    /* ignore */
+  }
+}
+
 // moveDraft re-keys a stored draft (e.g. an assistant-chat draft pane promoted to its
 // real conversation id) so a key change under a mounted useDraft doesn't lose the text.
 export function moveDraft(from: string | null, to: string | null): void {

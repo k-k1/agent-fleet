@@ -89,6 +89,12 @@ const (
 	// セッション分岐（session_handlers.go）
 	errCodeForkUnsupportedKind = "fork_unsupported_kind"
 	errCodeForkMissingDir      = "fork_missing_dir"
+	// 発言時点からの分岐（docs/55）。会話まるごとの分岐へ黙って倒さないための境界で、
+	// 2 つに割ってあるのは意味が違うため: unsupported は「この種別/起動方式では地点分岐
+	// という機能が無い」（＝導線を出すべきでなかった）、bad_anchor は「機能はあるが、
+	// この分岐点が使えない」（会話に無い・サブエージェント発言・ミラーが古い）。
+	errCodeForkAtUnsupported = "fork_at_unsupported"
+	errCodeForkBadAnchor     = "fork_bad_anchor"
 
 	// AI タイトル提案（session_title.go）
 	// generation_failed は detail（CLI/auth の理由）を保持するため意図的にカタログ化せず、

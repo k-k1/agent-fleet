@@ -225,6 +225,14 @@ type Meta struct {
 	// conversation. Once that exists, later launches resume normally and ForkFrom
 	// is ignored — a restart never re-forks. Empty for non-forked sessions.
 	ForkFrom string `json:"forkFrom,omitempty"`
+	// ForkAt narrows ForkFrom to a POINT in the source conversation: this session
+	// carries the source's history up to — but NOT including — the anchored turn
+	// (docs/55 §55.3). The value is whatever the kind's ForkAtResolver produced from the
+	// Console's anchor, already translated into that engine's inclusivity (opencode =
+	// the exclusive messageID, codex = the inclusive lastTurnId of the PREVIOUS turn).
+	// Empty = whole-conversation fork, the pre-existing behaviour. Like ForkFrom it only
+	// affects the FIRST launch; afterwards the session resumes its own conversation.
+	ForkAt string `json:"forkAt,omitempty"`
 	// Origin / OriginConv はこのセッションの出自（Origin* 定数・ADR 0029 §6）。使用量
 	// 集計で「人が始めた消費」と「オペレーター/定時が無人で回した消費」を分ける軸。
 	// 未設定＝この機能より前のセッションで、OriginOf が unknown に読み替える（既定値の

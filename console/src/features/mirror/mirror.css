@@ -590,6 +590,42 @@
   color: var(--fg);
   background: var(--hover-bg);
 }
+/* 「ここから分岐」（docs/55）— コピーと同じフッターの控えめな操作。ホバー/フォーカスまで
+   隠すと、そんな機能があること自体に気づけないので、常に出しておいて色だけ落とす。
+   coarse pointer にはホバーが無いという理由でもある（headless の実測メモ参照）。 */
+.mt-fork {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  font-size: 12px;
+  border-radius: 6px;
+  color: var(--muted);
+}
+.mt-fork:hover,
+.mt-fork:focus-visible {
+  color: var(--fg);
+  background: var(--hover-bg);
+}
+/* 分岐確認ダイアログ: 分岐点のプレビューと、起こることの箇条書き。 */
+.mirror-fork-preview {
+  margin: 0;
+  padding: 9px 11px;
+  max-height: 180px;
+  overflow: auto;
+  border-left: 3px solid var(--chat-accent);
+  border-radius: 0 5px 5px 0;
+  background: var(--input);
+  color: var(--fg);
+  white-space: pre-wrap;
+}
+.mirror-fork-facts {
+  margin: 12px 0 0;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
 /* Plan-mode banner + ExitPlanMode plan block. */
 .mirror-planmode {
   display: flex;
