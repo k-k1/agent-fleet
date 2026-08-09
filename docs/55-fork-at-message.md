@@ -48,8 +48,8 @@
 | claude | ① `--resume-session-at <uuid>` ② jsonl 手術 | ① 隠しフラグ・**print モード限定** ② 非公式 | TUI 起動のみなので ① は不可。② を採る |
 | codex | `thread/fork` の `lastTurnId` | **公式**（app-server スキーマに明記） | ✅ managed が既定 |
 | opencode | `POST /session/{id}/fork` の `messageID` | **公式**（OpenAPI に定義） | ✅ managed が既定 |
-| cursor | 無し（`/fork` は TUI 内コマンド） | — | 転写手術なら理屈上可（未検証） |
-| copilot | 無し | — | 同上（未検証） |
+| cursor | 無し（`/fork` は TUI 内コマンド） | — | **不可**（転写に ID が無い・§55.5） |
+| copilot | 無し | — | 手術なら可能性あり（イベントに id/parentId・§55.5） |
 | kiro | 無し。ID を CLI 側が採番 | — | 現実的でない |
 | agy | 無し。SQLite ストア | — | 対象外 |
 
@@ -326,12 +326,43 @@ TUI しか無いので、**Agent が `<新 sid>.jsonl` を直接書いてから*
 という公式フラグ経由で材料化できる（実測 1）。手術を避けられる代わりに、そのターンが
 headless で丸ごと走る（ツール実行・長時間化）ため v1 では採らない。判断は ADR 0039。
 
-### cursor / copilot / kiro / agy
+### cursor — 不可（P4b の調査結果・2026-08-09 実測）
 
-v1 対象外。cursor は Claude Code 互換 JSONL、copilot は `session-state/<sid>/events.jsonl` で、
-どちらも **AF 側が session id を採番する**方式（`registry` の実測コメント）なので claude と
-同型の手術が効く見込みはある。kiro は CLI が ID を採番するため事前採番ができず、agy は
-SQLite。いずれも未検証で、`CanForkAt` は false のままにする。
+当初は「Claude Code 互換 JSONL だから claude と同型の手術が効くはず」と見ていたが、**実物を
+見ると効かない**。転写（`<projects>/<cwdSlug>/agent-transcripts/<chatId>/<chatId>.jsonl`）の行は
+
+```json
+{"role":"user","message":{"content":[…]}}
+{"type":"turn_ended","status":…}
+```
+
+で、**`uuid` も `parentUuid` も `sessionId` も無い**。`cursor/transcript.go` のパーサも
+`role` / `type` / `message.content` しか読んでいない（＝「Claude Code 互換」は *形が似ている*
+という意味で、識別子まで同じという意味ではなかった）。
+
+したがって分岐点に使える恒久 ID が存在しない。行番号で代用するのは ADR 0039 決定 1 が
+明示的に却下した道で、ずれても誰も気づけない。加えて cursor の会話の実体は非公開 SQLite
+（`~/.cursor/chats/**/store.db` — 存在を確認）側にあり、AF が書ける転写 JSONL は表示用の
+写しである可能性が高い。**その場合、切り詰めても resume は元の履歴を復元し、「ミラーでは
+切れているのにエージェントは全部覚えている」という最悪の食い違いになる。**
+
+→ cursor は対象外のままにする。上流が `/fork` を非対話で開けるか、転写に ID を載せるまで動かない。
+
+### copilot — 可能性あり（要実験）
+
+`~/.copilot/session-state/<sid>/events.jsonl` は 1 行 1 イベントで、**全イベントが
+`{id, parentId, timestamp, type, data}` を持つ**（実測）。`user.message` の `id` がそのまま
+アンカーになり、claude と同型の「prefix を取って書き直す」手術が成立する形をしている。
+AF 側が sid を採番する方式なのも claude と同じ。
+
+**残る唯一の未知は、ACP `session/load` が events.jsonl から再構成するのか、隣にある
+`session.db` から復元するのか**。後者なら cursor と同じ食い違いになるので、ここを確かめる
+までは `CanForkAt` を立てない。実験は「2 ターン会話 → events.jsonl を切り詰め → 別 sid で
+`session/load` → 切り落とした内容を覚えているか訊く」の 1 本で決着する。
+
+### kiro / agy
+
+対象外。kiro は CLI が ID を採番するため事前採番ができず、agy は SQLite ストア。
 
 ## 55.6 Console
 
@@ -415,7 +446,7 @@ SQLite。いずれも未検証で、`CanForkAt` は false のままにする。
 | P2 | codex（`lastTurnId`＋アンカー変換） | ✅ |
 | P3 | claude（jsonl 手術＋切断点検査＋縮退）＋ ドリフト検知テスト | ✅ |
 | P4a | v1.1「この発言の続きから」（3 kind ＋ Console のモード選択） | ✅ |
-| P4b | cursor / copilot の転写手術が効くかの実験 | — |
+| P4b | cursor / copilot の転写手術が効くかの調査 | ◐ cursor=不可と判明・copilot は実験 1 本待ち |
 
 **使える範囲は claude（TUI）／ managed の opencode・codex**。導線を出す条件は kind ごとに
 違うので `canBranchInSession`（`caps.forkAt` × `caps.forkAtManagedOnly` × managed × readOnly）に
@@ -448,7 +479,9 @@ MVP（P1＋P1.5）のサーバ側は**実 CLI で通し確認済み**（§55.8 �
 4. ~~**opencode の `messageID` に assistant メッセージ ID を渡したときの挙動**~~ **不要になった**:
    「続きから」は *次のユーザー発言の id* を渡す設計にしたので、assistant の id を分岐点に
    することが無い（`>=` の打ち切りは同じだが、指す対象がユーザー発言だけで済む）。
-5. cursor / copilot の転写手術（P4b）。
+5. ~~cursor の転写手術~~ **調査完了・不可**（§55.5 — 転写に ID が無く、実体は非公開 SQLite）。
+6. **copilot の `session/load` が events.jsonl と session.db のどちらから復元するか**（§55.5）。
+   ここだけが copilot 対応の可否を決める。実ターンを 3 回使う実験 1 本で決着する。
 
 ## 55.11 実測の再現手順
 
