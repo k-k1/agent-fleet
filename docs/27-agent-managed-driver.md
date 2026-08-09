@@ -300,18 +300,26 @@ Capabilities の `EphemeralThread` として予約。
 credential-free drift test（`TestDriftCodexThreadMCPConfigIsScoped`）では、異なる MCP を持つ 2 本の
 ephemeral thread 間で MCP が混入しないことを実 app-server で確認した。
 
-**thread 単位 config はグローバル設定を「マージ」ではなく「置換」する**（2026-07-20 実測・
+**thread 単位 config は `-c` 由来のサーバを「マージ」ではなく「置換」する**（2026-07-20 実測・
 `TestDriftCodexThreadMCPConfigReplacesGlobalServers`）。実 app-server での測定は次のとおり:
 
 | thread に渡す `config.mcp_servers` | `mcpServerStatus/list` に見える MCP |
 | --- | --- |
-| 渡さない（未指定） | グローバル設定を継承 |
-| 空マップ `{}` | **0 件（グローバルは全て遮断される）** |
-| 自前サーバのみ指定 | 自前のみ（グローバルは現れない） |
+| 渡さない（未指定） | `-c` 設定を継承 |
+| 空マップ `{}` | **0 件（`-c` のものは全て遮断される）** |
+| 自前サーバのみ指定 | 自前のみ（`-c` のものは現れない） |
 
 1 行目が成立することが重要で、これは「グローバル `-c` 設定自体が効いていないから 0 件に見えた」という
 偽陽性を否定する。すなわち thread config は追加・thread 間分離の口であると同時に **allowlist / replace
 の口でもあり、空マップ `{}` は deny 機構として機能する**。
+
+> **⚠️ 適用範囲（2026-08-09 追記・0.147.0 実測）: この表は `-c` オプションで渡したサーバにしか
+> 当てはまらない。** 上記テストは app-server を `-c mcp_servers.…` 付きで起動しており、測っていたのは
+> その層だけだった。**ファイル由来の層（`$CODEX_HOME/config.toml` と、trust 済みプロジェクトの
+> `.codex/config.toml`）は thread config を渡してもマージされて残る** — ephemeral / persistent ×
+> 空マップ / 非空マップの 4 通り全てで継承された（`TestDriftCodexThreadConfigMergeMatrix`）。
+> 従って **空マップはファイル由来のサーバに対する deny にはならない**。将来 thread 単位 config で
+> 権限境界（`none` / `af_read` / `af_write`）を作る場合、この前提で設計してはいけない。
 
 **この節は当初「遮断はできない（グローバル MCP は空マップを渡しても `mcpServerStatus/list` に残る）」と
 記述していたが、これは誤りだった。** 当該アサーションを固定していたテストは、同一パッケージ内の先行
@@ -328,6 +336,102 @@ thread 単位 replace/deny API を待つ必要はない。ただし本節冒頭�
 2026-07-17 の利用者判断で、アシスタントチャットに対するグローバル MCP の透過は許容する方針へ変更した。
 従って上記は権限隔離を要求するデプロイでは維持すべき制約だが、このワークスペースでの Codex managed
 チャット統合を妨げる条件ではない。会話固有の AF MCP は追加設定として thread ごとに分離する。
+
+#### 9.3.1 thread 単位 config は MCP 子プロセスへ「値」も届く（managed のセッション同定）
+
+上記は thread ごとに MCP の**在庫**を分離できるという測定で、**値の受け渡し**までは示していなかった。
+managed セッションの同定にはこちらが要る。
+
+背景: セッション側 MCP サーバは `AF_SESSION_NAME` で自分の持ち主を知る。TUI ルートは tmux 起動 env
+（`session_tmux.go`）でこれが届くが、**managed ルートには届かない** — MCP の子は AF が起動した共有
+daemon 1本（`codex app-server` / `opencode serve`）から spawn されるので、プロセス env に per-session の
+名前を載せる場所が無い。2026-08-09 実測でも app-server と opencode serve の子は `AF_SESSION_NAME` を
+持たず、claude(tmux) の子だけが持っていた。結果、`propose_session_handoff` は cwd 推定へ落ちて、
+同じワークツリーを複数セッションが共有していると同定に失敗する（実障害）。
+
+**実測（codex-cli 0.147.0、`drift_mcp_identity_test.go`）:**
+
+| thread config に書いたもの | MCP 子プロセスが観測した値 |
+| --- | --- |
+| `mcp_servers.<name>.env = {AF_SESSION_NAME: "slot_aaa"}` | `slot_aaa`（**届く**） |
+| 同じサーバ名で別 thread に `"slot_bbb"` | `slot_bbb`（thread 間で混ざらない） |
+| `env` を書かない（対照） | 未設定（プローブが値を別経路から拾っていないことの担保） |
+| `mcp_servers.<name>.env_vars = ["X"]` | daemon 自身の env の `X`（**thread scope でも転送は生きている**） |
+
+プローブは `command="/bin/sh"` + `args` で env をファイルへ落とすだけのもので、MCP ハンドシェイクは
+失敗する。既存 2 本と同じく「spawn されること」だけを測っており、モデルも課金も伴わない。
+既存 2 本（scoped / replaces）も 0.147.0 で同一結果 — 0.144.5・0.144.6 からのドリフト無し。
+
+従って **managed セッションの MCP 子へ per-session の識別子を注入することは可能**で、LLM に自分の
+セッション名を言わせる必要はない（そもそも managed の LLM は shell からも `$AF_SESSION_NAME` を
+読めないので、引数方式は `[agent-fleet]` 注記付きの指示でしか成立しない）。
+
+#### 設定層の重なり方（当初の想定を実測で覆した点）
+
+当初この節は「thread config は置換だから、af は**効いている全サーバを毎回出す**必要がある」と書いて
+実装していた。前節の ⚠️ のとおり**それは誤りで、ファイル由来の層はマージされる**。0.147.0 で測り直した
+結果は次のとおり:
+
+| 層 | thread config を送ったとき |
+| --- | --- |
+| `-c` で渡したサーバ | 置換される（消える） |
+| `$CODEX_HOME/config.toml` | **マージされて残る** |
+| trust 済みプロジェクトの `.codex/config.toml` | **マージされて残る**（`TestDriftCodexTrustedProjectConfigContributesMCPServers` / `…ThreadConfigKeepsProjectServers`） |
+| 同名サーバが両方にある場合 | **thread 側が勝つ**（`TestDriftCodexThreadConfigOverridesSameNamedFileServer`）。上書きは**エントリ丸ごと**で、フィールド単位のマージではない |
+
+なお **codex は trust 済みプロジェクトの `.codex/config.toml` から MCP を読む**。`codex mcp list` は
+user レベルしか表示しないため（openai/codex#13025）、これを probe に使うと「プロジェクトローカル設定は
+無い」という誤った結論に達する — ランタイムの `mcpServerStatus/list` で測ること。
+
+**実装済み**（`mcpreg.CodexThreadServers` ＋ codex driver の `threadConfig`）。設計上の要点:
+
+1. **送るのは af のエントリ 1 個だけ。** マージされる以上、他を書き写す理由が無い。書き写せばユーザーの
+   env / ヘッダ**値**を RPC ペイロードへ載せることになり、しかも af が管理していないサーバ（手で足した行、
+   `codex mcp add`、trust 済みプロジェクト設定）はどのみち再現できない。継承させれば全部そのまま効く。
+2. **af のエントリは丸ごと書き切る。** 同名の上書きはエントリ単位なので、env だけ送ると command を
+   失ったサーバになる。`codexServerBlocks`（config.toml 側）と同じ command / args / `env_vars` /
+   `startup_timeout_sec` を出す。
+3. **何も上書きするものが無ければ键ごと省く**（完全継承）。レジストリを読めない・af が codex セッションに
+   配られていない・slot 名が無い、のいずれでも `mcp_servers` を送らない。セッション名を失って cwd 推定へ
+   縮退するだけで、他は何も変わらない。
+4. **秘密は今日と同じ経路のまま。** `AGENT_TOKEN` / `AF_SECRET_KEY` は `env_vars` 転送（上表 4 行目）で、
+   値は RPC ペイロードに載らない。
+5. 注入点は `threadStart` / `threadResume` / `threadFork` の 3 箇所。af 以外にセッション名は渡さない。
+6. ⚠️ **`thread/resume` は `config.mcp_servers` を適用しない**（実測 0.147.0・Tier 2
+   `TestLiveDriftCodexThreadMCPConfigAppliesOnResume`。rollout はターンが始まって初めて生まれ、
+   無認証のターンは rollout を残さないので Tier 1 では測れず、実ターン 1 回＝約 19k tokens を
+   使って測った）。**thread はスタートした時の MCP 設定を持ち続ける。**
+
+   従って識別子が生き残るかは「その thread を誰がスタートしたか」で決まる:
+
+   | 復旧の形 | af エントリのセッション名 |
+   | --- | --- |
+   | Agent 再起動・daemon は生存（adopt） | **保つ**（thread は start 時の設定のまま） |
+   | daemon 自体が入れ替わる（クラッシュ・Restart） | **失う** → cwd＋生存の推定へ縮退 |
+   | 新規セッション（thread/start） | 保つ |
+
+   修復口も探したが無い: `thread/settings/update` は `mcp_servers` を**受け取るが何も変わらない**
+   （同テストで測定）。bypass ポリシーの再表明と同じ手は使えない。
+
+   縮退先は「同じ作業フォルダで生きているセッションが 1 つなら当てられる」ので、実害が残るのは
+   **daemon 入れ替え × 同一ワークツリーに生存セッションが複数**の場合だけ。そこは取り違えずに
+   拒否する（`mcpOwningSession`）。
+
+**opencode managed には同等の口が無い**（実測 1.18.15、`contract_mcp_identity_test.go`）:
+
+- `POST /session` の body は `parentID` / `title` / `agent` / `model` / `metadata` /
+  `permission` / `workspaceID` のみで、MCP・config を渡す口が無い。`/mcp` 面（`/mcp`・
+  `/mcp/{name}/connect` 等）のスコープは `directory` と `workspace` だけで session を取らない。
+  MCP 設定はグローバルの `~/.config/opencode/opencode.jsonc` 一箇所（`McpLocalConfig` に
+  `environment` はあるが、その値は daemon 全体で一つ）。
+- **spawn の粒度はプロジェクトディレクトリ**。2 ディレクトリに 3 セッション（うち 2 つは同一
+  ディレクトリ）を作ると MCP の子プロセスは **2 個**で、いずれも同じグローバル値を渡されていた。
+  つまり **同じワークツリーを共有するセッション同士は MCP 子を共有する** — これは今回の障害
+  そのものの形で、per-session の識別子を置く場所が無い。
+
+従って opencode の managed セッションは当面 cwd + 生存の推定に頼るしかない。上記 2 本は
+「口が生えたら落ちる」向きに書いてあり（`POST /session` に config 系プロパティが増える／
+`/mcp` が session スコープを取る／spawn がセッション数に比例する）、解禁の検知はテスト側に任せる。
 
 ### 9.4 config
 

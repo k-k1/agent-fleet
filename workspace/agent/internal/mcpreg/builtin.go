@@ -122,9 +122,15 @@ func builtinDefs(s *secrets.Data) []ServerDef {
 		if targets == (Targets{}) {
 			targets = Targets{Assistant: true}
 		}
+		name := id
+		if id == BuiltinAF {
+			// af's own server is the one a repository can shadow (docs/48 §8.4), so it
+			// is the one that gets a per-boot name. Every other builtin keeps its id.
+			name = AFServerName()
+		}
 		out = append(out, ServerDef{
 			ID:        id,
-			Name:      id,
+			Name:      name,
 			Label:     spec.label,
 			Origin:    OriginBuiltin,
 			Transport: TransportStdio,

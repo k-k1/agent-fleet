@@ -72,8 +72,22 @@ func (c jsonConfig) materialize(defs []ServerDef, prev []string) (written, remov
 		servers = map[string]any{}
 	}
 
+	keep := map[string]bool{}
+	for _, d := range defs {
+		keep[d.Name] = true
+	}
 	for _, name := range goneFrom(prev, defs) {
 		if _, ok := servers[name]; ok {
+			delete(servers, name)
+			removed = append(removed, name)
+			changed = true
+		}
+	}
+	// af's own name rotates every boot, so last boot's entry has to go even when the
+	// ownership ledger no longer names it — otherwise every boot leaves another live
+	// server behind (see StaleAFServerName).
+	for name := range servers {
+		if StaleAFServerName(name, keep) {
 			delete(servers, name)
 			removed = append(removed, name)
 			changed = true

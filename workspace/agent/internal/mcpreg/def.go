@@ -115,7 +115,10 @@ func Validate(d ServerDef) error {
 	if !nameRe.MatchString(d.Name) {
 		return invalid(CodeNameInvalid, "name must be 1-48 chars of [a-zA-Z0-9_-] starting alphanumeric: %q", d.Name)
 	}
-	if reservedNames[strings.ToLower(d.Name)] {
+	// The generated shape is reserved as well: af's own server rotates through it
+	// (af_server_name.go), and a user row wearing that shape would either shadow af or
+	// be swept as one of af's leftovers.
+	if reservedNames[strings.ToLower(d.Name)] || afNameRE.MatchString(strings.ToLower(d.Name)) {
 		return invalid(CodeNameReserved, "%q is a name reserved by Agent Fleet", d.Name)
 	}
 	switch d.Transport {

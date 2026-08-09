@@ -16,6 +16,12 @@
 //
 // 認証不要: MCP サーバーの spawn は thread/start の内部で起き、モデル呼び出しの前に
 // 完結する（thread/start 自体が認証エラーで返っても spawn は観測できる）。
+//
+// 補足（docs/27 §9.3.1）: managed セッションは thread 単位 config で af のエントリ
+// **だけ**を上書きし、他は config.toml から継承する。つまりこのリロード契約は managed
+// でも依然として効いており、レジストリに登録した MCP が新規 thread に現れるかどうかは
+// ここが守っている。slot 空（`threadStart(cl, home, "", "")`）で呼ぶのは、af の上書きを
+// 挟まない素の継承経路を測るため。
 
 package codex
 
@@ -92,7 +98,7 @@ func TestDriftCodexAppServerRereadsMCPConfig(t *testing.T) {
 	go cl.readLoop()
 
 	// 1st thread: the server present when the daemon started.
-	if _, err := threadStart(cl, home, ""); err != nil {
+	if _, err := threadStart(cl, home, "", ""); err != nil {
 		t.Logf("thread/start 1 (認証なしの想定内エラー): %v", err)
 	}
 	if !waitFile(marker("first-spawned"), 15*time.Second) {
@@ -101,7 +107,7 @@ func TestDriftCodexAppServerRereadsMCPConfig(t *testing.T) {
 
 	// Now do what materialize does to a LIVE daemon: add a server to config.toml.
 	writeConfig(serverBlock("first", marker("first-spawned")) + serverBlock("second", marker("second-spawned")))
-	if _, err := threadStart(cl, home, ""); err != nil {
+	if _, err := threadStart(cl, home, "", ""); err != nil {
 		t.Logf("thread/start 2 (認証なしの想定内エラー): %v", err)
 	}
 	if !waitFile(marker("second-spawned"), 15*time.Second) {
