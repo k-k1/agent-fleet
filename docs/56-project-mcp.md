@@ -1,6 +1,9 @@
 # 56. プロジェクトスコープ MCP の管理（エージェント間の反映）— 設計
 
 - 状態: **設計確定・未実装**。意思決定は [decisions/0040](decisions/0040-project-mcp.md)。
+- **本設計は [57](57-project-tools.md)（プロジェクト単位ツールの共通土台）の 1 号機**。
+  §3 / §6 / §9 / §10 で決めた規約のうち対象に依存しないものは docs/57 §2 の憲章へ引き上げてある。
+  2 号機以降は同じ入口・同じ REST 規約・同じ整形保存エディタに乗る。
 - 関連: [48](48-mcp-registry.md)（MCP レジストリ＝ user/global スコープの配布。本設計はその**別軸**） /
   [49](49-mcp-2026-07-28.md)（MCP 新版・本設計に影響なし） / [45](45-deletion-lock.md)（作業コピーの扱い） /
   [41](41-svn-checkout.md)（SVN 作業コピー） / [29](29-keyboard-system.md) / [28](28-i18n.md)
@@ -377,6 +380,8 @@ AF は承認・`mcp enable`・trust の**いずれも代行しない**。trust �
 ### 9.1 入口はレポの右クリックメニュー
 
 **レポ行（`RepoRow.tsx`）の右クリックメニュー → モーダル**を採る。
+このモーダルは**プロジェクト単位ツールの共通の入口**（docs/57 §3）で、
+本機能はその中の「MCP」セクション。2 号機以降は左レールに項目が増える形で生える。
 
 - 対象が「1 つの作業コピー」であり、設定モーダルは workspace 全体（user スコープ）の場所。
   混ぜると**どちらのスコープを触っているかが画面から消える** — §3 の 2 軸分離を UI でも守る。
@@ -473,8 +478,8 @@ AF は承認・`mcp enable`・trust の**いずれも代行しない**。trust �
 
 | P | 内容 | 主な触り所 |
 |---|------|-----------|
-| **P0** | 読み取り: パーサ（kind 別）・スナップショット・警告判定（方言 / 秘密 / ゲート / 名前）・`GET /repos/{name}/mcp`。モーダルは**読み取り専用**の一覧。**これだけで「二重登録が腐っている」が見える** | `internal/mcpproj/`（新設）、`mcpreg` の kind テーブル export、`routes.go`（agent + CP）、`ProjectMcpModal.tsx`（新設）、i18n |
-| **P1** | 反映: `plan` / `apply`・**整形を壊さないテキスト編集**・方言変換・楽観ロック（`planHash`）・ゲート表示・SCM 導線 | `mcpproj/edit_*.go`、`ProjectMcpModal.tsx`、`McpTab.tsx`（注記 1 行） |
+| **P0** | 読み取り: パーサ（kind 別）・スナップショット・警告判定（方言 / 秘密 / ゲート / 名前）・`GET /repos/{name}/mcp`。モーダルは**読み取り専用**の一覧。**これだけで「二重登録が腐っている」が見える** | `internal/projcfg/`＋`internal/mcpproj/`（新設・docs/57 §5）、`mcpreg` の kind テーブル export、`routes.go`（agent + CP）、`ProjectModal.tsx`（新設）、i18n |
+| **P1** | 反映: `plan` / `apply`・**整形を壊さないテキスト編集**・方言変換・楽観ロック（`planHash`）・ゲート表示・SCM 導線 | `projcfg/editjson.go`・`edittoml.go`、`mcpproj/`、`ProjectModal.tsx`、`McpTab.tsx`（注記 1 行） |
 | **P2** | CRUD: プロジェクトエントリの追加 / 編集 / 削除、コピー時の衝突解決（上書き / スキップ / 別名） | 同上 |
 | **P3** | 穴埋め: copilot の方言を実ターンで実測、kiro のプロジェクトスコープ（要ログイン）、`.github/mcp.json` の併存挙動 | drift テスト、docs/48 §8.4 の表更新 |
 
