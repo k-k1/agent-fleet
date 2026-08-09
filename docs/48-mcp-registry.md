@@ -431,6 +431,43 @@ map のキー・エントリの綴り方）に分けてある。codex だけが 
   drain する重い操作）は要らない。この前提はドリフトテストで固定してある
   （`codex/mcp_config_drift_test.go` — 崩れたら「登録したのに managed だけ効かない」になる）。
 
+### 8.4 プロジェクトローカルスコープとの住み分け（実測 2026-08-09）
+
+af が書くのは **user / global スコープ 1 箇所だけ**で、リポジトリ側のプロジェクトスコープは
+利用者のものとして触らない。この住み分けが成立するには「両者がマージされること」と
+「同名衝突の勝者が分かっていること」の 2 つが要る。実 CLI で測った結果:
+
+| kind | af が書く場所（user/global） | プロジェクトスコープ | ゲート | マージ | 同名衝突の勝者 |
+| --- | --- | --- | --- | --- | --- |
+| claude | `$CLAUDE_CONFIG_DIR/.claude.json` | `.mcp.json` | 承認（⏸ Pending approval） | ✔ | **user**（＋「Conflicting scopes」警告） |
+| codex | `$CODEX_HOME/config.toml` | `.codex/config.toml` | **trust**（`[projects."<dir>"] trust_level="trusted"`） | ✔ | **project** |
+| opencode | `~/.config/opencode/opencode.jsonc` | `opencode.json`（リポジトリ直下） | 無し | ✔ | **project** |
+| cursor | `~/.cursor/mcp.json` | `.cursor/mcp.json` | 承認（`cursor-agent mcp enable`） | ✔ | **project** |
+| copilot | `$COPILOT_HOME/mcp-config.json` | `.mcp.json` / `.github/mcp.json` | 無し（実測） | ✔ | **project** |
+| kiro | `~/.kiro/settings/mcp.json` | `.kiro/settings/mcp.json` | 未検証（`mcp` 系が全部ログイン必須） | 未検証 | 未検証 |
+| agy | `~/.gemini/config/mcp_config.json` | **無し**（global 専用） | — | — | — |
+
+版: claude 2.1.226 / codex-cli 0.147.0 / opencode 1.18.15 / cursor-agent 2026.08.04 /
+Copilot CLI 1.0.78。固定しているテストは `mcpreg/materialize_scope_drift_test.go` と
+`codex/drift_same_key_test.go`（codex は app-server が要るので別置き）。
+
+読み取れること:
+
+- **マージは全 kind で成立する。** プロジェクト設定を持つリポジトリでも af のサーバは消えない。
+- **`.mcp.json` は claude と copilot が共有する。** 1 つのファイルが 2 kind に効く。
+- ⚠️ **claude 以外は、リポジトリのプロジェクト設定が `af` という名前を定義すると af 自身の
+  サーバを乗っ取れる。** そうなるとそのリポジトリのセッションで自己申告・引き継ぎ提案・
+  Chromium attach が黙って死ぬ（cursor では承認待ちで完全に使用不能、codex/opencode/copilot では
+  別のサーバが `af` として起動する）。§9 の `reservedNames` は **AF レジストリ側でしか効かない** ——
+  他人のリポジトリのファイルは止められない。今のところ利用者に注意を促す以上の対処はしていない。
+- codex のプロジェクトスコープは **trust が gate**。`codex mcp list` は user レベルしか表示しない
+  （openai/codex#13025）ので、これを調査に使うと「プロジェクトスコープは無い」と誤診する。
+  ランタイム側（app-server の `mcpServerStatus/list`）で見ること。
+- managed codex が thread 単位 config で送る af エントリは、上表の**さらに上**に乗る。
+  優先順位は **thread > project > user**（`TestDriftCodexThreadConfigOverridesProjectConfig`）。
+  従って **managed codex セッションだけは乗っ取りに強い** — プロジェクト設定が `af` を定義しても
+  thread 設定が勝つ。docs/27 §9.3.1 の副次的効果で、狙って作ったものではない。
+
 ---
 
 ## 9. 安全弁
