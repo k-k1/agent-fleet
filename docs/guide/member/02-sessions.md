@@ -206,6 +206,12 @@ created only after you explicitly agree. The original session stays as it is. In
 conversation, this lets you hand off to another agent or try a different direction without
 using up the new conversation's context.
 
+**When you want the conversation itself rather than a summary, branch instead of handing
+off.** In the chat view, **"Branch here"** on one of your past messages
+([07 Chat](07-chat-memo.md#branch-from-a-past-message)) opens a new session with the
+conversation up to that point copied as-is, on the same agent. The exact wording and the
+fine details survive, which is what you want for "redo it from that instruction".
+
 ## Changing the title and branch name
 
 - **Rename** — changes the identifying name in the list. Saving it empty reverts to the automatic name (repository name + timestamp). **"Ask AI to suggest"** has a name proposed from the conversation contents; adopt it with "Use this".
