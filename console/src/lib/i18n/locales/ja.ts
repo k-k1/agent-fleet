@@ -2802,6 +2802,7 @@ export const ja = {
   "pj.no_changes": "変更はありません",
   "pj.changed_files": "変更ファイル",
   "pj.click_open_diff": "（クリックで作業差分／右クリックでメニュー）",
+  "pj.click_open_file": "（未追跡のためクリックでファイル表示／右クリックでメニュー）",
   "pj.row_menu": "メニュー",
   "pj.deleted_no_open": "削除されたファイルのため差分のみ開けます",
   "pj.files": "ファイル",

@@ -2761,6 +2761,7 @@ export const en: Record<keyof typeof ja, string> = {
   "pj.no_changes": "No changes",
   "pj.changed_files": "Changed files",
   "pj.click_open_diff": " (click to open working diff; right-click for the menu)",
+  "pj.click_open_file": " (untracked — click to open the file; right-click for the menu)",
   "pj.row_menu": "Menu",
   "pj.deleted_no_open": "The file is deleted — only the diff can be opened",
   "pj.files": "Files",
