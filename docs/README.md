@@ -50,6 +50,7 @@
 - [53-chromium-attach-view.md](53-chromium-attach-view.md) — 外部プロセスが所有するheadless Chromiumへloopback CDPでattachし、描画・限定入力をConsoleへ中継。ローカルAF MCPが引き渡しを準備し、ユーザーはaction linkを1回クリックして操作ペインを開く（設計確定・未実装。設計判断は [decisions/0038](decisions/0038-chromium-attach-view.md)）
 - [54-opencode-console-oauth.md](54-opencode-console-oauth.md) — opencode に API キー以外の認証経路を足す: 共有 `opencode serve` の device flow API（`mode:"auto"`）を Console の接続カードから叩き、opencode.ai アカウントでサインインする（✅ 実装済み。API 実測記録を含む）
 - [55-fork-at-message.md](55-fork-at-message.md) — 発言時点からの会話分岐: ミラーの過去のユーザー発言を選び、そこまでの文脈を持つ新セッションを起こす。アンカーは kind 固有の不透明 ID（claude=uuid / codex=turn id / opencode=message id）で、codex・opencode は公式パラメータ、claude だけ jsonl 手術（各 CLI の実測記録を含む。◐ P1〜P3＝契約＋opencode＋codex＋claude＋Console 導線まで実装済み・3 種とも実 CLI で通し確認済み。残＝P4（含める分岐 / cursor・copilot）。設計判断は [decisions/0039](decisions/0039-fork-at-message.md)）
+- [56-project-mcp.md](56-project-mcp.md) — プロジェクトスコープ MCP の管理: 1 つの作業コピーの `.mcp.json` / `opencode.json` / `.codex/config.toml` … を横断で 1 枚に見せ、利用者の明示操作でエージェント間へ反映する（ワンショット・継続同期なし）。プレースホルダ方言（claude=`${VAR}` / opencode=`{env:VAR}` / codex=展開なし）とプロジェクトスコープのゲートの実測記録を含む（設計確定・未実装。設計判断は [decisions/0040](decisions/0040-project-mcp.md)）
 
 > 完了後も実装契約や実測リファレンスとしてコードから参照する 24・26〜30 は番号付きのまま残す。
 > 時系列の実装プランとして役目を終えたものは history/ へ移動: [19 assistant-chat](history/19-assistant-chat.md) /
@@ -98,6 +99,7 @@
 - [0033-stored-text-locale.md](decisions/0033-stored-text-locale.md) — 「保存データは JA 統一」を撤回：利用者が読む自前生成文（chat の notice）はキー＋引数で保存し Console のカタログで訳す。モデルが読む/書く文字列は据え置き（[0016](decisions/0016-i18n.md) §7 を一部上書き・設計 [28 §2.5/§4](28-i18n.md)）
 - [0038-chromium-attach-view.md](decisions/0038-chromium-attach-view.md) — 外部所有Chromiumはloopback CDPへattachし、MCPが返すaction linkをユーザーがクリックしてConsoleペインへ開く（設計 [53](53-chromium-attach-view.md)）
 - [0039-fork-at-message.md](decisions/0039-fork-at-message.md) — 会話の分岐点は kind 固有の不透明アンカーで指し（`idx` は使わない）、codex/opencode は公式パラメータ、claude だけ `sessionId` のみ書き換える jsonl 手術を許す（設計 [55](55-fork-at-message.md)・旧判断 [history/fork-from-chat](history/fork-from-chat.md) を差し替え）
+- [0040-project-mcp.md](decisions/0040-project-mcp.md) — プロジェクトスコープ MCP は af が所有せず「利用者の代理編集」として明示操作のときだけ書く（自動同期・所有マーカーなし・監査は git／ゲートは代行しない）（設計 [56](56-project-mcp.md)・[0031](decisions/0031-mcp-registry.md) の別軸）
 
 > 0023〜0032 は対応する設計ドキュメントの行（上記「番号付きの機能設計・実装記録」）に併記。
 
