@@ -5,6 +5,8 @@
 // wiring that is easy to break: the ⋯ button must NOT also trigger the row's
 // diff, 表示 / 編集 open the file itself (the home-relative path, not the
 // repo-relative one the diff takes), and a deleted file offers the diff only.
+// Plus the one exception to diff-on-click — an untracked file, which has no
+// working diff to show and so opens the file view instead.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -113,7 +115,7 @@ describe("changed-file row menu", () => {
     expect(openFileMode).toHaveBeenCalledWith("repos/demo/src/a.ts", "edit");
   });
 
-  it("still opens the diff of a staged change, and of an untracked file", async () => {
+  it("still opens the diff of a staged change, and offers every entry for an untracked file", async () => {
     served = [
       { path: "repos/demo/staged.ts", repo: "demo", index: "M", worktree: " " },
       { path: "repos/demo/new.ts", repo: "demo", untracked: true },
@@ -125,6 +127,34 @@ describe("changed-file row menu", () => {
 
     await fire(rows()[1], "contextmenu");
     expect(menuItems().every((b) => !b.disabled)).toBe(true);
+  });
+
+  // git has no working diff for an untracked file, so the row click that opens
+  // one everywhere else would land the reader on an empty diff pane. It opens
+  // the file itself instead — by the home-relative path the file view takes.
+  it("opens the file view, not the diff, on a click on an untracked row", async () => {
+    served = [
+      { path: "repos/demo/new.ts", repo: "demo", untracked: true },
+      { path: "repos/demo/src/a.ts", repo: "demo", worktree: "M", index: " " },
+    ];
+    await render();
+    await fire(rows()[0], "click");
+    expect(openFileMode).toHaveBeenCalledWith("repos/demo/new.ts", "view");
+    expect(openFileDiff).not.toHaveBeenCalled();
+
+    // The tracked neighbour keeps the diff-on-click behavior.
+    await fire(rows()[1], "click");
+    expect(openFileDiff).toHaveBeenCalledWith("demo", "src/a.ts", false);
+  });
+
+  // The 差分 entry stays reachable from the menu for an untracked file — the row
+  // click changed, the menu did not.
+  it("still opens the diff of an untracked file from the menu", async () => {
+    served = [{ path: "repos/demo/new.ts", repo: "demo", untracked: true }];
+    await render();
+    await fire(rows()[0], "contextmenu");
+    await fire(menuItems()[0], "click");
+    expect(openFileDiff).toHaveBeenCalledWith("demo", "new.ts", false);
   });
 
   it("offers the diff only for a deleted file", async () => {
