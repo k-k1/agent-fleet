@@ -96,8 +96,14 @@ func freePort(t *testing.T) string {
 // plus that HOME. The store it writes is the one dbPath() resolves once HOME is set.
 func startServe(t *testing.T) (addr, home string) {
 	t.Helper()
+	return startServeIn(t, t.TempDir())
+}
+
+// startServeIn is startServe against a HOME the caller prepared, for tests that must
+// seed config (e.g. an `mcp` entry) BEFORE the daemon reads it at boot.
+func startServeIn(t *testing.T, home string) (addr, _ string) {
+	t.Helper()
 	requireOpencode(t)
-	home = t.TempDir()
 	port := freePort(t)
 	addr = "http://127.0.0.1:" + port
 	cmd := exec.Command("opencode", "serve", "--hostname", "127.0.0.1", "--port", port)

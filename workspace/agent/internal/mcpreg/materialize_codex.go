@@ -59,11 +59,17 @@ func materializeCodex(defs []ServerDef, prev []string) (written, removed []strin
 	for _, n := range removed {
 		drop[n] = true
 	}
+	keep := map[string]bool{}
 	for _, d := range defs {
 		drop[d.Name] = true
+		keep[d.Name] = true
 	}
 
-	out := appendTOMLBlocks(stripCodexServers(src, drop), codexServerBlocks(defs))
+	// af's own name rotates every boot; last boot's table has to go even when the
+	// ownership ledger no longer names it (see StaleAFServerName).
+	out := appendTOMLBlocks(stripCodexServers(src, func(name string) bool {
+		return drop[name] || StaleAFServerName(name, keep)
+	}), codexServerBlocks(defs))
 	written = defNames(defs)
 	if out == src {
 		return written, removed, false, nil
@@ -99,15 +105,15 @@ func mcpServerTableName(header string) string {
 // stripCodexServers removes every `[mcp_servers.<name>]` table (and its sub-tables)
 // whose name is in drop, together with the blank lines that separated it — so a
 // write followed by a remove gives back the original file byte for byte.
-func stripCodexServers(src string, drop map[string]bool) string {
-	if src == "" || len(drop) == 0 {
+func stripCodexServers(src string, drop func(name string) bool) string {
+	if src == "" {
 		return src
 	}
 	var out []string
 	skipping := false
 	for _, line := range strings.Split(src, "\n") {
 		if m := tomlHeaderRE.FindStringSubmatch(line); m != nil {
-			skipping = drop[mcpServerTableName(m[1])]
+			skipping = drop(mcpServerTableName(m[1]))
 			if skipping {
 				for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
 					out = out[:len(out)-1]

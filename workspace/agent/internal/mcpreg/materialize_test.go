@@ -298,7 +298,7 @@ func TestMaterializeCodexQuotesOddHeaderKey(t *testing.T) {
 
 func TestStripCodexServersLeavesOtherTables(t *testing.T) {
 	src := "[mcp_servers.a]\ncommand = \"a\"\n\n[[profiles]]\nname = \"p\"\n\n[mcp_servers.b]\ncommand = \"b\"\n"
-	got := stripCodexServers(src, map[string]bool{"a": true})
+	got := stripCodexServers(src, func(n string) bool { return n == "a" })
 	if strings.Contains(got, "[mcp_servers.a]") {
 		t.Fatalf("a が消えていない:\n%s", got)
 	}
