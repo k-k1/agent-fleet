@@ -41,6 +41,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
@@ -74,7 +75,48 @@ func (managedDriver) Capabilities() agents.Capabilities {
 // this mode"）。**TUI が自前で有効化するという当初の前提は誤りだった**（実測 0.144.3 /
 // 0.144.5: TUI も Default mode では同じく拒否する — Plan mode だけが自動で有効）。CLI
 // ルートは buildProgram が同じ feature を -c で渡して対称にしている。
-var threadFeatures = map[string]any{"features": map[string]any{"default_mode_request_user_input": true}}
+var threadFeatures = map[string]any{"default_mode_request_user_input": true}
+
+// threadConfig is the per-thread config: the features above, plus the MCP servers
+// scoped to THIS session（docs/27 §9.3.1）。
+//
+// A managed session's MCP child is spawned by the one shared app-server, so the
+// process environment cannot carry a per-session AF_SESSION_NAME the way tmux does
+// for the TUI route. The thread config is the only channel that varies per session,
+// and it was measured to reach the spawned child — so the session name is stamped
+// there and `propose_session_handoff` stops guessing from cwd.
+//
+// Since a thread-local map REPLACES the global config rather than merging with it,
+// mcpreg emits the WHOLE effective set. When it has nothing to say — registry
+// unreadable, or no servers for codex — the key is omitted entirely so the thread
+// inherits config.toml. Omitting is the safe failure: sending `{}` would deny every
+// server, and losing the user's MCP servers is a far worse outcome than losing the
+// session name (which degrades to the cwd fallback that shipped before this).
+func threadConfig(slot string) map[string]any {
+	cfg := map[string]any{"features": threadFeatures}
+	if servers, ok := threadMCPServers(slot); ok {
+		cfg["mcp_servers"] = servers
+	}
+	return cfg
+}
+
+// sessionMCPDefs is a seam: the real registry reads the user's encrypted store, which
+// a unit test must not touch.
+var sessionMCPDefs = func() ([]mcpreg.ServerDef, error) { return mcpreg.ForSession(session.KindCodex) }
+
+func threadMCPServers(slot string) (map[string]any, bool) {
+	if slot == "" {
+		return nil, false
+	}
+	defs, err := sessionMCPDefs()
+	if err != nil {
+		// Inherit config.toml rather than fail the thread: an unreadable registry
+		// must not stop a session from starting.
+		log.Printf("codex managed: MCP レジストリを読めないため thread 単位設定を省略します (%s): %v", slot, err)
+		return nil, false
+	}
+	return mcpreg.CodexThreadServers(defs, mcpreg.CodexThreadOpts{SessionName: slot})
+}
 
 // bypassPolicies は AF の無人運転ポリシー（TUI ルートの --dangerously-bypass-… と
 // 同じ意味、コンテナがサンドボックス）。
@@ -137,7 +179,7 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	}
 	var st threadSnapshotWire
 	if tid != "" {
-		st, err = threadResume(cl, tid, cwd)
+		st, err = threadResume(cl, tid, cwd, m.Name)
 		if err != nil {
 			// 初回 turn 前に daemon が再起動したスレッドは rollout が無く resume
 			// できない（§12.1-5）— 会話はまだ空なので新規 start で置き直す。それ以外
@@ -151,9 +193,9 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	}
 	if tid == "" {
 		if m.ForkFrom != "" {
-			st, err = threadFork(cl, m.ForkFrom, cwd, m.ForkAt)
+			st, err = threadFork(cl, m.ForkFrom, cwd, m.ForkAt, m.Name)
 		} else {
-			st, err = threadStart(cl, cwd, firstNonEmpty(h.settings.Model, m.Model))
+			st, err = threadStart(cl, cwd, firstNonEmpty(h.settings.Model, m.Model), m.Name)
 		}
 		if err != nil {
 			return nil, err
@@ -282,8 +324,8 @@ func parseThreadResult(res json.RawMessage) (threadSnapshotWire, error) {
 	return st, nil
 }
 
-func threadStart(cl *appClient, cwd, model string) (threadSnapshotWire, error) {
-	params := mergeMaps(map[string]any{"cwd": cwd, "config": threadFeatures}, bypassPolicies())
+func threadStart(cl *appClient, cwd, model, slot string) (threadSnapshotWire, error) {
+	params := mergeMaps(map[string]any{"cwd": cwd, "config": threadConfig(slot)}, bypassPolicies())
 	if model != "" {
 		params["model"] = model
 	}
@@ -294,8 +336,8 @@ func threadStart(cl *appClient, cwd, model string) (threadSnapshotWire, error) {
 	return parseThreadResult(res)
 }
 
-func threadResume(cl *appClient, tid, cwd string) (threadSnapshotWire, error) {
-	params := map[string]any{"threadId": tid, "cwd": cwd, "config": threadFeatures}
+func threadResume(cl *appClient, tid, cwd, slot string) (threadSnapshotWire, error) {
+	params := map[string]any{"threadId": tid, "cwd": cwd, "config": threadConfig(slot)}
 	res, err := cl.call("thread/resume", params, 30*time.Second)
 	if err != nil {
 		return threadSnapshotWire{}, err
@@ -307,8 +349,8 @@ func threadResume(cl *appClient, tid, cwd string) (threadSnapshotWire, error) {
 // the fork keeps — **inclusive**: codex omits every turn after it (docs/55 §55.2). The
 // translation from the Console's exclusive anchor happened in ResolveForkAt; by the time
 // it reaches here it is already "the turn to fork through". Empty = the whole thread.
-func threadFork(cl *appClient, src, cwd, lastTurnID string) (threadSnapshotWire, error) {
-	params := mergeMaps(map[string]any{"threadId": src, "cwd": cwd, "config": threadFeatures}, bypassPolicies())
+func threadFork(cl *appClient, src, cwd, lastTurnID, slot string) (threadSnapshotWire, error) {
+	params := mergeMaps(map[string]any{"threadId": src, "cwd": cwd, "config": threadConfig(slot)}, bypassPolicies())
 	if lastTurnID != "" {
 		params["lastTurnId"] = lastTurnID
 	}
