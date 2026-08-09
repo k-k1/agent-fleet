@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1727,6 +1728,21 @@ func mcpStdioCall(req mcpReq) []byte {
 	})
 }
 
+// mcpOwningSession names the session this MCP process serves.
+//
+// AF_SESSION_NAME is the contract, but it only reaches here for TERMINAL sessions:
+// session_tmux.go puts it in the tmux launch env, so codex forwards it (mcpreg's
+// extraEnvVars) and claude inherits it. MANAGED sessions have no such env — their MCP
+// child is spawned by the ONE shared daemon (`codex app-server` / `opencode serve`)
+// the Agent started, which cannot carry a per-session name. So managed callers always
+// land in the cwd fallback below (2026-08-09 実測: app-server と serve の子は
+// AF_SESSION_NAME 0 件、claude(tmux) の子は有り).
+//
+// The fallback matches the working folder, which is not unique — several sessions
+// routinely share one worktree. Narrowing by liveness resolves the common shape (the
+// caller is running; the others in that folder are stopped) and is only ever allowed
+// to REMOVE an ambiguity: unless it lands on exactly one session, the original
+// candidate set stands and the caller gets the ambiguity error.
 func mcpOwningSession() (string, error) {
 	if session.ValidName(mcpSourceSession) {
 		return mcpSourceSession, nil
@@ -1735,20 +1751,44 @@ func mcpOwningSession() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("引き継ぎ元セッションを特定できません: 作業ディレクトリを取得できません")
 	}
-	var found string
+	var found []string
 	for _, m := range session.ListMetas() {
-		if m.Archived || m.Dir != cwd {
+		if m.Archived || m.Dir != cwd || !session.ValidName(m.Name) {
 			continue
 		}
-		if found != "" {
-			return "", fmt.Errorf("引き継ぎ元セッションを特定できません: 同じ作業フォルダに複数のセッションがあります")
+		found = append(found, m.Name)
+	}
+	if len(found) > 1 {
+		if alive, ok := mcpAliveSessions(found); ok && len(alive) == 1 {
+			found = alive
 		}
-		found = m.Name
 	}
-	if !session.ValidName(found) {
-		return "", fmt.Errorf("引き継ぎ元セッションを特定できません: AF_SESSION_NAME がありません")
+	switch {
+	case len(found) == 1:
+		return found[0], nil
+	case len(found) > 1:
+		sort.Strings(found)
+		return "", fmt.Errorf("引き継ぎ元セッションを特定できません: 同じ作業フォルダに複数のセッションがあります（%s）",
+			strings.Join(found, ", "))
 	}
-	return found, nil
+	return "", fmt.Errorf("引き継ぎ元セッションを特定できません: AF_SESSION_NAME がありません")
+}
+
+// mcpAliveSessions keeps the names the Agent reports as alive. ok is false when any
+// probe failed — a partial answer must not narrow anything, since the missing one
+// could be the caller itself and dropping it would attribute the handoff to somebody
+// else's session.
+func mcpAliveSessions(names []string) (alive []string, ok bool) {
+	for _, n := range names {
+		st, err := agentSessionStatus(n)
+		if err != nil {
+			return nil, false
+		}
+		if st.Alive {
+			alive = append(alive, n)
+		}
+	}
+	return alive, true
 }
 
 func isChromiumWriteTool(name string) bool {
