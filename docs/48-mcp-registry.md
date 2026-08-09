@@ -406,6 +406,11 @@ map のキー・エントリの綴り方）に分けてある。codex だけが 
 - codex の TOML は `internal/agents/codex/settings.go` と同じ**行ベース編集**にする。パースして
   再出力するとコメントと project trust セクションが黙って再整形される。af は自分が所有する
   テーブル（とその下位テーブル）だけを行ごと抜き、末尾に新しいテーブルを足す。
+- ⚠️ **この規約は「af が*自動で*書くのは user/global だけ」と読む**（[56](56-project-mcp.md) /
+  [ADR0040](decisions/0040-project-mcp.md)）。プロジェクトスコープを**利用者の明示操作のときだけ**
+  代理編集する別軸のツールを docs/56 で設計しており、そちらは所有台帳もマーカーも持たない
+  （監査証跡は git の差分）。`Materialize` / `MaterializeAll` がプロジェクトスコープへ触れないことは
+  変わらず、テストで固定する。
 - opencode は本ホストで `.jsonc`。`entrypoint.sh:414` の既存作法（**素の JSON として読めなければ触らない**）を
   踏襲する。P5 の実装では **JSON 設定型の全 kind で同じ規約**にした（`materialize_json.go`）: 読めない
   設定は上書きせずエラーで戻り、`mcp materialize <kind>: … is not plain JSON, leaving it alone` を
@@ -483,6 +488,11 @@ Copilot CLI 1.0.78。固定しているテストは `mcpreg/materialize_scope_dr
 - codex のプロジェクトスコープは **trust が gate**。`codex mcp list` は user レベルしか表示しない
   （openai/codex#13025）ので、これを調査に使うと「プロジェクトスコープは無い」と誤診する。
   ランタイム側（app-server の `mcpServerStatus/list`）で見ること。
+- **プロジェクトスコープ側の追加実測は [56](56-project-mcp.md) §2 にある**（2026-08-09）:
+  プレースホルダの方言（claude=`${VAR}` / opencode=`{env:VAR}` / cursor=両方 / **codex=展開なし** /
+  copilot=未測）と、プロジェクトに書いた直後のゲート（claude・cursor は**承認前に起動すらしない**）。
+  上表の「マージ / 勝者」に加えて、**同じ値をそのままコピーしても kind が違えば同じ意味にならない**
+  ことがこちらで分かる。
 - managed codex が thread 単位 config で送る af エントリは、上表の**さらに上**に乗る。
   優先順位は **thread > project > user**（`TestDriftCodexThreadConfigOverridesProjectConfig`）。
   従って **managed codex セッションだけは乗っ取りに強い** — プロジェクト設定が `af` を定義しても
