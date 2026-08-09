@@ -204,9 +204,10 @@ func TestContractLiveForkAtMessage(t *testing.T) {
 
 	// The production resolver runs over the real store (it refuses unknown / sidechain
 	// ids), so map the slot to this conversation the way the sid store does.
-	m := session.Meta{Dir: dir, Name: "forkat", Kind: session.KindOpencode}
+	// Driver=managed: 分岐点を渡せる口は serve API 側だけなので、resolver が経路も見る。
+	m := session.Meta{Dir: dir, Name: "forkat", Kind: session.KindOpencode, Driver: session.DriverManaged}
 	sids.Write(session.UUID(dir, "forkat"), ses)
-	resolved, err := (agentImpl{}).ResolveForkAt(m, anchor)
+	resolved, err := (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: anchor})
 	if err != nil {
 		t.Fatalf("ResolveForkAt(%s): %v", anchor, err)
 	}
@@ -246,6 +247,45 @@ func TestContractLiveForkAtMessage(t *testing.T) {
 	}
 	if !sawAlpha {
 		t.Errorf("branch is missing the turn BEFORE the anchor on opencode %s — the cut is too early", ver)
+	}
+
+	// 「この発言の続きから」（Include）を実物で確かめる。追加のターン消費は無い。
+	// (a) 1 番目の発言を「続きから」= 2 番目の発言の手前まで ⇒ 上の排他分岐と同じ形になる。
+	//     翻訳（次のプロンプトを探す）が実ストアの id 並びで成立することの確認。
+	incAt, err := (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: users[0].AnchorID, Include: true})
+	if err != nil {
+		t.Fatalf("ResolveForkAt(first, include): %v", err)
+	}
+	if incAt != anchor {
+		t.Fatalf("include on the first exchange resolved to %q, want the next prompt %q — "+
+			"「続きから」と「次をやり直す」は同じ地点でなければならない", incAt, anchor)
+	}
+	incFork, err := serveForkSession(addr, ses, dir, incAt)
+	if err != nil {
+		t.Fatalf("serveForkSession(include): %v", err)
+	}
+	incTurns := readSession(fdb, incFork)
+	var incUsers int
+	var sawIncAlpha bool
+	for _, tn := range incTurns {
+		if tn.Role == "user" {
+			incUsers++
+		}
+		if strings.Contains(tn.Text, "ALPHA") {
+			sawIncAlpha = true
+		}
+	}
+	if incUsers != 1 || !sawIncAlpha {
+		t.Errorf("「続きから」の分岐が %d user turns / ALPHA=%v（1 / true を期待）on opencode %s",
+			incUsers, sawIncAlpha, ver)
+	}
+	// (b) 最後のやり取りを「続きから」= 全部残す ⇒ 表現は "" （会話まるごと）。
+	lastInc, err := (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: anchor, Include: true})
+	if err != nil {
+		t.Fatalf("ResolveForkAt(last, include): %v", err)
+	}
+	if lastInc != "" {
+		t.Errorf("include on the LAST exchange resolved to %q, want \"\" (= keep everything)", lastInc)
 	}
 
 	// Baseline: no anchor still copies everything, so the pre-docs/55 behaviour is intact.

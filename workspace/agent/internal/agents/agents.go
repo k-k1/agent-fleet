@@ -173,7 +173,23 @@ type Forker interface {
 // turn. An unknown / unusable anchor is an error — never a silent fall back to a
 // whole-conversation fork, which would look like it worked.
 type ForkAtResolver interface {
-	ResolveForkAt(m session.Meta, anchor string) (string, error)
+	ResolveForkAt(m session.Meta, at ForkPoint) (string, error)
+}
+
+// ForkPoint is what the user pointed at, before any per-engine translation.
+type ForkPoint struct {
+	// Anchor is the transcript.Turn.AnchorID of the USER turn the user clicked.
+	Anchor string
+	// Include keeps that turn and the reply it got, branching from just AFTER them
+	// ("この発言の続きから") instead of just before them ("この発言をやり直す").
+	//
+	// Both are the same operation one exchange apart, which is why they share a resolver:
+	// each kind converts (anchor, include) into its own "keep up to here" value, and
+	// everything downstream — session.Meta.ForkAt, the launch paths — stays unchanged.
+	// A kind resolves Include on the LAST exchange to "" (= the whole conversation),
+	// which is the correct answer there: keeping everything through the final turn IS
+	// the whole conversation.
+	Include bool
 }
 
 // ErrForkAtRoute is what a ForkAtResolver returns (wrapped, so the message can say which
