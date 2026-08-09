@@ -65,9 +65,15 @@ jsonl 改変は壊れやすい」を理由に一度却下されている。
    返す形にし、Console も `caps.forkAtManagedOnly` で同じ差を持つ。
    *順序*: 分岐点の解決は `ForkSource` より**前**に行う。経路が違うセッションに
    「分岐できる会話がまだありません」と返しても、ユーザーは会話を増やそうとするだけで直らない。
-11. **v1 の対象は claude / codex / opencode の 3 種。** cursor / copilot は手術が効く見込みが
-    あるが未検証、kiro は CLI 側が ID を採番、agy は SQLite ストアのため対象外とし、
-    `Caps.CanForkAt` は false に保つ。
+11. **v1 の対象は claude / codex / opencode の 3 種。** kiro は CLI 側が ID を採番、agy は
+    SQLite ストアのため対象外とし、`Caps.CanForkAt` は false に保つ。
+    *P4b 調査（2026-08-09）*: **cursor は不可**と確定した — 転写の行が `{role, message.content}`
+    だけで `uuid`/`parentUuid`/`sessionId` を持たず（パーサも読んでいない）、分岐点に使える
+    恒久 ID が無い。「Claude Code 互換 JSONL」は形が似ているという意味で、識別子まで同じでは
+    なかった。行番号での代用は決定 1 が却下済み。**copilot は可能性あり** — events.jsonl の
+    全イベントが `{id, parentId}` を持つ。ただし `session/load` が events.jsonl と `session.db`
+    のどちらから復元するかが未確定で、後者なら「ミラーでは切れているのにエージェントは全部
+    覚えている」になるため、確かめるまで `CanForkAt` を立てない。
 12. **分岐で生えたセッションの出自は既存 fork と同じ `handoff` を継ぐ。** 「人が開いた数」に
     混ぜない（ADR 0029 §6）。
 13. **分岐と引き継ぎは別機能として併存させる。** 引き継ぎ＝要約して別エージェントへ渡す、
