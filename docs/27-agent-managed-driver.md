@@ -367,8 +367,21 @@ daemon 1本（`codex app-server` / `opencode serve`）から spawn されるの�
 3. `thread/start` と `thread/resume` の両方が `config` を受けるので、注入点は `threadStart` /
    `threadResume` / `threadFork` の 3 箇所（現状は共有の `threadFeatures` を渡すだけ）。
 
-opencode managed は driver 側に MCP 配線が無く、共有 `opencode serve` のグローバル設定由来。
-同等の口があるかは**未調査**。
+**opencode managed には同等の口が無い**（実測 1.18.15、`contract_mcp_identity_test.go`）:
+
+- `POST /session` の body は `parentID` / `title` / `agent` / `model` / `metadata` /
+  `permission` / `workspaceID` のみで、MCP・config を渡す口が無い。`/mcp` 面（`/mcp`・
+  `/mcp/{name}/connect` 等）のスコープは `directory` と `workspace` だけで session を取らない。
+  MCP 設定はグローバルの `~/.config/opencode/opencode.jsonc` 一箇所（`McpLocalConfig` に
+  `environment` はあるが、その値は daemon 全体で一つ）。
+- **spawn の粒度はプロジェクトディレクトリ**。2 ディレクトリに 3 セッション（うち 2 つは同一
+  ディレクトリ）を作ると MCP の子プロセスは **2 個**で、いずれも同じグローバル値を渡されていた。
+  つまり **同じワークツリーを共有するセッション同士は MCP 子を共有する** — これは今回の障害
+  そのものの形で、per-session の識別子を置く場所が無い。
+
+従って opencode の managed セッションは当面 cwd + 生存の推定に頼るしかない。上記 2 本は
+「口が生えたら落ちる」向きに書いてあり（`POST /session` に config 系プロパティが増える／
+`/mcp` が session スコープを取る／spawn がセッション数に比例する）、解禁の検知はテスト側に任せる。
 
 ### 9.4 config
 
