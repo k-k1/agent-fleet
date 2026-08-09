@@ -3266,10 +3266,11 @@ export function MirrorView({
         <ForkAtModal
           session={session}
           target={forkAtTarget}
-          onDone={(name) => {
-            // 分岐点の発言を新セッションの下書きに置いてから開く。開いた瞬間に打ち直せる
-            // ことがこの機能の要点で、ユーザーに元発言を探して貼り直させたら意味がない。
-            writeDraft("af.mirror-draft." + name, forkAtTarget.text);
+          onDone={(name, { draft }) => {
+            // 「打ち直す」分岐では、分岐点の発言を新セッションの下書きに置いてから開く。
+            // 開いた瞬間に打ち直せることが要点で、元発言を探して貼り直させたら意味がない。
+            // 「続きから」では発言が分岐先に残っているので draft は空で来る。
+            writeDraft("af.mirror-draft." + name, draft);
             bumpSessions();
             openTargetInNew({ content: { kind: "terminal", chat: true }, session: name });
             toast(tr("mirror.fork_at_done"));

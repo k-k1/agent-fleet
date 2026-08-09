@@ -71,6 +71,30 @@ func cutIndex(lines [][]byte, anchor string) (int, error) {
 	return 0, errors.New("指定された分岐点がこの会話に見つかりません")
 }
 
+// nextPromptUUID returns the uuid of the first real user prompt AFTER anchor — the cut
+// point for "branch from just after this exchange". "" (no error) when the anchor is the
+// last exchange, i.e. the branch keeps everything.
+//
+// The anchor itself is validated the same way as a normal cut, so「続きから」can't be used
+// to sneak a branch off a tool result or a subagent line.
+func nextPromptUUID(lines [][]byte, anchor string) (string, error) {
+	at, err := cutIndex(lines, anchor)
+	if err != nil {
+		return "", err
+	}
+	for _, ln := range lines[at+1:] {
+		var fl forkLine
+		if json.Unmarshal(ln, &fl) != nil {
+			continue
+		}
+		if fl.Type == "user" && !fl.IsMeta && !fl.IsSidechain && !fl.IsCompactSummary &&
+			isUserPrompt(fl.Message.Content) && fl.UUID != "" {
+			return fl.UUID, nil
+		}
+	}
+	return "", nil
+}
+
 // isUserPrompt reports whether a user line's content is something the human typed, as
 // opposed to a tool_result the CLI recorded under the same "user" type. A bare string is
 // always a prompt; an array is one only if it has no tool_result block.

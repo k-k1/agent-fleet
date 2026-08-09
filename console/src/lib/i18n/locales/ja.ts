@@ -1927,7 +1927,13 @@ export const ja = {
   "mirror.fork_at_intro":
     "ここまでの会話をそのまま引き継いだ新しいセッションを作ります。この発言と、それ以降のやり取りは引き継ぎません（要約ではなく複製です）。",
   "mirror.fork_at_point": "分岐点",
+  "mirror.fork_at_mode": "どこから始めるか",
+  "mirror.fork_at_mode_redo": "この発言をやり直す",
+  "mirror.fork_at_mode_redo_hint": "この発言は引き継がない",
+  "mirror.fork_at_mode_continue": "この発言の続きから",
+  "mirror.fork_at_mode_continue_hint": "この発言と回答まで引き継ぐ",
   "mirror.fork_at_carried": "この発言より前のやり取り（あなたの発言 {count} 件）を引き継ぎます",
+  "mirror.fork_at_carried_incl": "この発言とその回答までのやり取り（あなたの発言 {count} 件）を引き継ぎます",
   "mirror.fork_at_keeps_source": "いまのセッションはそのまま残ります",
   "mirror.fork_at_draft": "この発言は新しいセッションの入力欄に下書きとして入ります（送信はしません）",
   "mirror.fork_at_go": "分岐する",
