@@ -1735,7 +1735,9 @@ func mcpStdioCall(req mcpReq) []byte {
 // extraEnvVars) and claude inherits. MANAGED codex sessions get it from the THREAD
 // config instead (mcpreg.CodexThreadServers, docs/27 §9.3.1) — their MCP child is
 // spawned by the ONE shared daemon the Agent started, whose process env cannot carry
-// anything per-session.
+// anything per-session. That config is applied by thread/START only: a thread resumed
+// into a REPLACED daemon comes back without it (measured, docs/27 §9.3.1) and lands in
+// the fallback below.
 //
 // MANAGED OPENCODE has neither: its MCP config is global and the child is spawned per
 // project directory, so sessions sharing a worktree share one child (measured 1.18.15,

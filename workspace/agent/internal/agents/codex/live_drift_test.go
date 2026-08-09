@@ -769,8 +769,12 @@ func TestLiveDriftCodexThreadMCPConfigAppliesOnResume(t *testing.T) {
 		return []mcpreg.ServerDef{{
 			ID: mcpreg.BuiltinAF, Name: mcpreg.BuiltinAF, Origin: mcpreg.OriginBuiltin,
 			Transport: mcpreg.TransportStdio, Command: "/bin/sh",
+			// Records and EXITS. A probe that lingers would leave a live MCP child
+			// across the resume, and "no new spawn" would then be ambiguous: config
+			// ignored, or connection reused? With no child alive at resume time, a
+			// missing marker can only mean the config was not applied.
 			Args: []string{"-c",
-				`printf '%s' "${AF_SESSION_NAME-<unset>}" > "` + probes + `/$AF_SESSION_NAME"; exec sleep 120`},
+				`printf '%s' "${AF_SESSION_NAME-<unset>}" > "` + probes + `/$AF_SESSION_NAME"`},
 			Enabled: true,
 		}}, nil
 	}
@@ -802,16 +806,83 @@ func TestLiveDriftCodexThreadMCPConfigAppliesOnResume(t *testing.T) {
 	defer cl.close()
 	go cl.readLoop()
 
+	// Resume with a DIFFERENTLY NAMED server. The name is what makes the answer
+	// unambiguous: the inventory reported for the thread says whether resume applied
+	// the map at all, independently of whether it spawns the child eagerly.
 	const resumed = "live-drift-mcpid-2"
+	const resumeServer = "af_resume_probe"
+	sessionMCPDefs = func() ([]mcpreg.ServerDef, error) {
+		return []mcpreg.ServerDef{{
+			ID: mcpreg.BuiltinAF, Name: resumeServer, Origin: mcpreg.OriginBuiltin,
+			Transport: mcpreg.TransportStdio, Command: "/bin/sh",
+			Args: []string{"-c",
+				`printf '%s' "${AF_SESSION_NAME-<unset>}" > "` + probes + `/$AF_SESSION_NAME"`},
+			Enabled: true,
+		}}, nil
+	}
 	if _, err := threadResume(cl, tid, work, resumed); err != nil {
 		t.Fatalf("threadResume(%s): %v", tid, err)
 	}
-	if got := liveWaitProbe(t, filepath.Join(probes, resumed)); got != resumed {
-		t.Fatalf("resume probe read %q, want %q: thread/resume no longer applies "+
-			"config.mcp_servers, so a managed session recovered after an Agent restart loses "+
-			"its AF_SESSION_NAME and the handoff tool silently goes back to guessing from cwd",
-			got, resumed)
+
+	// MEASURED 2026-08-09, codex-cli 0.147.0: resume does NOT apply it. thread/start
+	// is the only place config.mcp_servers takes effect, so this asserts the
+	// LIMITATION — if codex ever starts honouring it, this fails and the degradation
+	// note in docs/27 §9.3.1 can be deleted.
+	for i := 0; i < 40; i++ {
+		if liveThreadMCPNames(t, cl, tid)[resumeServer] {
+			t.Fatalf("thread/resume now APPLIES config.mcp_servers (%q appeared for %s). "+
+				"Good news: a managed session recovered after a daemon restart would keep its "+
+				"AF_SESSION_NAME instead of degrading to the cwd fallback. Remove the "+
+				"degradation note in docs/27 §9.3.1 and flip this assertion.", resumeServer, tid)
+		}
+		time.Sleep(250 * time.Millisecond)
 	}
+	if _, err := os.Stat(filepath.Join(probes, resumed)); err == nil {
+		t.Fatalf("a child was spawned for the resumed thread after all — the inventory and the " +
+			"spawn disagree, so this measurement is not reading what it thinks it is")
+	}
+	t.Logf("resume ignores config.mcp_servers (0.147.0): a thread keeps the MCP configuration it " +
+		"was STARTED with, so identity survives an Agent restart that adopts the daemon, and is " +
+		"lost only when the daemon itself is replaced")
+
+	// Free follow-up while a resumed thread is in hand: can the settings channel carry
+	// what resume drops? Informational — a failure here is not a contract break, it is
+	// the answer to "is there a fix".
+	_, err = cl.call("thread/settings/update", map[string]any{
+		"threadId": tid,
+		"config":   map[string]any{"mcp_servers": map[string]any{resumeServer: map[string]any{"command": "/bin/true"}}},
+	}, 10*time.Second)
+	switch {
+	case err != nil:
+		t.Logf("thread/settings/update rejects mcp_servers (%v) — no repair channel there", err)
+	case liveThreadMCPNames(t, cl, tid)[resumeServer]:
+		t.Logf("FIX AVAILABLE: thread/settings/update DOES apply mcp_servers — the driver can " +
+			"re-assert the af entry after resume, the same way it re-asserts the bypass policies")
+	default:
+		t.Logf("thread/settings/update accepted mcp_servers but nothing changed — no repair channel")
+	}
+}
+
+// liveThreadMCPNames reports the MCP inventory codex attributes to a thread.
+func liveThreadMCPNames(t *testing.T, cl *appClient, tid string) map[string]bool {
+	t.Helper()
+	res, err := cl.call("mcpServerStatus/list", map[string]any{"threadId": tid}, 10*time.Second)
+	if err != nil {
+		return map[string]bool{}
+	}
+	var body struct {
+		Data []struct {
+			Name string `json:"name"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(res, &body) != nil {
+		return map[string]bool{}
+	}
+	out := map[string]bool{}
+	for _, s := range body.Data {
+		out[s.Name] = true
+	}
+	return out
 }
 
 func liveWaitProbe(t *testing.T, path string) string {
