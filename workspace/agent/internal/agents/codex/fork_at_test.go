@@ -63,7 +63,7 @@ func rollout3Turns(t *testing.T) (session.Meta, []string) {
 func TestResolveForkAtRefusesCLIRoute(t *testing.T) {
 	m, ids := rollout3Turns(t)
 	m.Driver = session.DriverTUI
-	_, err := (agentImpl{}).ResolveForkAt(m, ids[1])
+	_, err := (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: ids[1]})
 	if err == nil {
 		t.Fatal("ResolveForkAt on the CLI route = nil error; want a refusal")
 	}
@@ -99,15 +99,34 @@ func TestTranscriptCarriesTurnAnchor(t *testing.T) {
 // 本丸: アンカーは 1 つ前の turn id に変換される（lastTurnId は包含）。
 func TestResolveForkAtReturnsPreviousTurn(t *testing.T) {
 	m, ids := rollout3Turns(t)
-	got, err := (agentImpl{}).ResolveForkAt(m, ids[2])
+	got, err := (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: ids[2]})
 	if err != nil {
 		t.Fatalf("ResolveForkAt: %v", err)
 	}
 	if got != ids[1] {
 		t.Fatalf("ResolveForkAt(turn3) = %q; want turn2 (%q) — lastTurnId は inclusive", got, ids[1])
 	}
-	if got, err := (agentImpl{}).ResolveForkAt(m, ids[1]); err != nil || got != ids[0] {
+	if got, err := (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: ids[1]}); err != nil || got != ids[0] {
 		t.Fatalf("ResolveForkAt(turn2) = %q, %v; want turn1 (%q)", got, err, ids[0])
+	}
+}
+
+// 「この発言の続きから」（Include）: codex は lastTurnId が包含なので、そのターン自身を
+// 渡せばよい。ずらしが要るのは排他側だけ。
+func TestResolveForkAtIncludeKeepsAnchorTurn(t *testing.T) {
+	m, ids := rollout3Turns(t)
+	for i, id := range ids {
+		got, err := (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: id, Include: true})
+		if err != nil {
+			t.Fatalf("ResolveForkAt(turn%d, include): %v", i+1, err)
+		}
+		if got != id {
+			t.Errorf("ResolveForkAt(turn%d, include) = %q; want the turn itself (%q)", i+1, got, id)
+		}
+	}
+	// 最初のやり取りも「続きから」なら成立する（排他のときだけ表現できない）。
+	if _, err := (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: ids[0], Include: true}); err != nil {
+		t.Errorf("include on the first turn should be representable: %v", err)
 	}
 }
 
@@ -115,7 +134,7 @@ func TestResolveForkAtReturnsPreviousTurn(t *testing.T) {
 // 意味してしまう（正反対）。送らずに断る。
 func TestResolveForkAtRefusesFirstTurn(t *testing.T) {
 	m, ids := rollout3Turns(t)
-	got, err := (agentImpl{}).ResolveForkAt(m, ids[0])
+	got, err := (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: ids[0]})
 	if err == nil {
 		t.Fatalf("ResolveForkAt(first turn) = %q, nil; want a refusal (empty lastTurnId = 会話まるごと)", got)
 	}
@@ -127,7 +146,7 @@ func TestResolveForkAtRefusesFirstTurn(t *testing.T) {
 func TestResolveForkAtRejectsUnknownAnchor(t *testing.T) {
 	m, _ := rollout3Turns(t)
 	for _, anchor := range []string{"", "019f9830-9999-7b43-a606-f61767644999"} {
-		if _, err := (agentImpl{}).ResolveForkAt(m, anchor); err == nil {
+		if _, err := (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: anchor}); err == nil {
 			t.Errorf("ResolveForkAt(%q) = nil error; want one", anchor)
 		}
 	}

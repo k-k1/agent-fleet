@@ -5,6 +5,8 @@
 package opencode
 
 import (
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -60,7 +62,8 @@ func (agentImpl) ForkSource(m session.Meta) (string, error) {
 // opencode's fork endpoint takes the messageID as-is and stops copying at the first
 // message that sorts >= it (docs/55 §55.2), so the anchor needs no translation — the work
 // here is refusing the anchors that would branch something other than what was pointed at.
-func (agentImpl) ResolveForkAt(m session.Meta, anchor string) (string, error) {
+func (agentImpl) ResolveForkAt(m session.Meta, at agents.ForkPoint) (string, error) {
+	anchor := at.Anchor
 	if anchor == "" {
 		return "", errors.New("分岐点が指定されていません")
 	}
@@ -89,7 +92,38 @@ func (agentImpl) ResolveForkAt(m session.Meta, anchor string) (string, error) {
 	if owner != ses {
 		return "", errors.New("サブエージェントの発言からは分岐できません")
 	}
-	return anchor, nil
+	if !at.Include {
+		return anchor, nil
+	}
+	// 「この発言の続きから」= 次のユーザー発言の手前まで。間に挟まる assistant
+	// メッセージ（回答・ツール往復）はすべて引き継がれる。次が無い＝最後のやり取りなら
+	// 会話まるごと（""）が正解 — 最後まで残すとはそういうこと。
+	return nextUserMessageID(db, ses, anchor)
+}
+
+// nextUserMessageID returns the id of the first user message that sorts after anchor in
+// ses. "" (with no error) when the anchor is the last exchange.
+func nextUserMessageID(db *sql.DB, ses, anchor string) (string, error) {
+	rows, err := db.Query(
+		`SELECT id, data FROM message WHERE session_id = ? AND id > ? ORDER BY time_created, id`, ses, anchor)
+	if err != nil {
+		return "", errors.New("opencode の会話ストアを読めません")
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var data []byte
+		if rows.Scan(&id, &data) != nil {
+			continue
+		}
+		var md struct {
+			Role string `json:"role"`
+		}
+		if json.Unmarshal(data, &md) == nil && md.Role == "user" {
+			return id, nil
+		}
+	}
+	return "", nil
 }
 
 func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {

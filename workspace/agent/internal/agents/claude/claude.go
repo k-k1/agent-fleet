@@ -53,11 +53,26 @@ func (agentImpl) ForkSource(m session.Meta) (string, error) {
 //
 // Validating here, at request time, rather than only at launch is deliberate: a refusal
 // must reach the user as "この分岐点は使えません", not as a session that starts and dies.
-func (agentImpl) ResolveForkAt(m session.Meta, anchor string) (string, error) {
+func (agentImpl) ResolveForkAt(m session.Meta, at agents.ForkPoint) (string, error) {
 	sid := session.UUID(m.Dir, m.Name)
 	lines, path, _ := TranscriptRead(sid)
 	if len(lines) == 0 || path == "" {
 		return "", errors.New("分岐できる会話がまだありません")
+	}
+	anchor := at.Anchor
+	if at.Include {
+		// 「この発言の続きから」= 次のユーザープロンプトの手前で切る。ForkAt の意味
+		// （この uuid の手前まで残す）は変えないので、材料化も起動もそのまま通る。
+		next, err := nextPromptUUID(lines, anchor)
+		if err != nil {
+			return "", err
+		}
+		if next == "" {
+			// 最後のやり取り = 全部残す。ForkAt を空にすると会話まるごと分岐の経路
+			// （--fork-session）に落ちるが、結果は同じ「全部入り」なので正しい。
+			return "", nil
+		}
+		anchor = next
 	}
 	// Dry run of the real surgery (destination sid is irrelevant to the checks), so the
 	// answer here and the behaviour at launch can never disagree.

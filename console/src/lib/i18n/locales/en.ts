@@ -1895,7 +1895,13 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.fork_at_intro":
     "Creates a new session carrying the conversation up to this point. This message — and everything after it — is left out. It's a copy, not a summary.",
   "mirror.fork_at_point": "Branch point",
+  "mirror.fork_at_mode": "Where to start",
+  "mirror.fork_at_mode_redo": "Redo this message",
+  "mirror.fork_at_mode_redo_hint": "leaves this message out",
+  "mirror.fork_at_mode_continue": "Continue after it",
+  "mirror.fork_at_mode_continue_hint": "keeps this message and its reply",
   "mirror.fork_at_carried": "Carries everything before this message ({count} of your messages)",
+  "mirror.fork_at_carried_incl": "Carries everything through this message and its reply ({count} of your messages)",
   "mirror.fork_at_keeps_source": "This session stays as it is",
   "mirror.fork_at_draft": "This message lands in the new session's composer as a draft (not sent)",
   "mirror.fork_at_go": "Branch",

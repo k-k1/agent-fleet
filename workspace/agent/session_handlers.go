@@ -692,6 +692,9 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 	// body was ignored is exactly the outcome §55 refuses to produce.
 	var req struct {
 		At string `json:"at"`
+		// include=true は「この発言と、それが得た回答まで引き継ぐ」（続きから）。
+		// 既定（false）は「この発言の直前まで」＝その発言を打ち直せる形。
+		Include bool `json:"include"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "invalid fork request body")
@@ -733,7 +736,7 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 	// 履歴が付いてくるぶんユーザーが気づけない壊れ方になる。
 	var forkAt string
 	if req.At != "" {
-		at, err := resolver.ResolveForkAt(src, req.At)
+		at, err := resolver.ResolveForkAt(src, agents.ForkPoint{Anchor: req.At, Include: req.Include})
 		if err != nil {
 			code := errCodeForkBadAnchor
 			if errors.Is(err, agents.ErrForkAtRoute) {
