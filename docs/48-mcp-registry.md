@@ -489,8 +489,9 @@ Copilot CLI 1.0.78。固定しているテストは `mcpreg/materialize_scope_dr
   （openai/codex#13025）ので、これを調査に使うと「プロジェクトスコープは無い」と誤診する。
   ランタイム側（app-server の `mcpServerStatus/list`）で見ること。
 - **プロジェクトスコープ側の追加実測は [56](56-project-mcp.md) §2 にある**（2026-08-09）:
-  プレースホルダの方言（claude=`${VAR}` / opencode=`{env:VAR}` / cursor=両方 / **codex=展開なし** /
-  copilot=未測）と、プロジェクトに書いた直後のゲート（claude・cursor は**承認前に起動すらしない**）。
+  プレースホルダの方言（claude・**copilot**=`${VAR}` / opencode=`{env:VAR}` / cursor=両方 /
+  **codex=展開なし**）と、プロジェクトに書いた直後のゲート（claude・cursor は**承認前に起動すらしない**）。
+  `.mcp.json` を共有する claude と copilot は同じ方言なので、あのファイルだけは 2 kind で一貫する。
   上表の「マージ / 勝者」に加えて、**同じ値をそのままコピーしても kind が違えば同じ意味にならない**
   ことがこちらで分かる。
 - managed codex が thread 単位 config で送る af エントリは、上表の**さらに上**に乗る。
