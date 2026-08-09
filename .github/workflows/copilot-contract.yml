@@ -43,6 +43,18 @@ jobs:
           E2E_REQUIRE: "1"
           GH_TOKEN: ${{ secrets.E2E_COPILOT_GITHUB_TOKEN }}
         run: go test -tags tui_contract -run '^TestCopilotTUIMirrorContract$' -count=1 -v -timeout 12m .
+
+      # 発言時点からの分岐（docs/55）のドリフト検知。copilot には公式の分岐口が無く、
+      # session-state をコピーして events.jsonl を切り詰めている。この手術が成立するのは
+      # **復元元が events.jsonl だから**で、隣の session.db が正になった瞬間に「ミラーでは
+      # 切れているのにエージェントは全部覚えている」へ静かに変わる。合成テストはどちらでも
+      # 緑のままなので、ここが唯一の警報。実ターン 3 回。
+      - name: fork-at events contract (docs/55)
+        working-directory: workspace/agent
+        env:
+          COPILOT_CONTRACT_LIVE: "1"
+          GH_TOKEN: ${{ secrets.E2E_COPILOT_GITHUB_TOKEN }}
+        run: go test -tags clicontract -run '^TestContractLiveCopilotForkAt$' -count=1 -v -timeout 12m ./internal/agents/copilot/
       - name: remember successfully tested latest
         if: success() && inputs.cli_version == 'latest'
         env:
