@@ -1,7 +1,7 @@
 # 55. 発言時点からの会話分岐（fork at message）
 
-> ◐ P1〜P4a 実装済み（契約 ＋ 3 kind ＋ Console 導線 ＋「続きから」）。**3 種とも
-> サーバ側は実 CLI で通し確認済み**、Console からの通しはデプロイ待ち。残り = P4b（cursor / copilot）。
+> ◐ P1〜P5 実装済み（契約 ＋ **4 kind**（claude/codex/opencode/copilot）＋ Console 導線 ＋「続きから」）。**4 種とも
+> サーバ側は実 CLI で通し確認済み**、Console からの通しはデプロイ待ち。cursor / kiro / agy は対象外（§55.5）。
 > 設計判断は [decisions/0039](decisions/0039-fork-at-message.md)。
 > 旧判断（会話まるごと分岐のみ・地点分岐は非サポートにつき却下）は
 > [history/fork-from-chat.md](history/fork-from-chat.md)。本書はそれを差し替える。
@@ -49,7 +49,7 @@
 | codex | `thread/fork` の `lastTurnId` | **公式**（app-server スキーマに明記） | ✅ managed が既定 |
 | opencode | `POST /session/{id}/fork` の `messageID` | **公式**（OpenAPI に定義） | ✅ managed が既定 |
 | cursor | 無し（`/fork` は TUI 内コマンド） | — | **不可**（転写に ID が無い・§55.5） |
-| copilot | 無し | — | **手術は効くと実測**（events.jsonl が復元元・§55.5）。未実装 |
+| copilot | 無し | — | ✅ **手術で実装済み**（events.jsonl が復元元・§55.5） |
 | kiro | 無し。ID を CLI 側が採番 | — | 現実的でない |
 | agy | 無し。SQLite ストア | — | 対象外 |
 
@@ -143,13 +143,14 @@ compaction パートの `tail_start_id` も新 ID へ張り替えている。
 ない。分岐先は「その発言を打つ直前の状態」で開き、コンポーザーには元の発言文を**下書きとして
 入れておく**（送信はしない）。書き直すのも、そのまま送るのも 1 操作で済む。
 
-この意味論は 3 種すべてに素直に落ちる。
+この意味論は 4 種すべてに素直に落ちる。
 
 | kind | 渡す値 | 包含 |
 | --- | --- | --- |
 | claude | 選んだユーザー行の**直前の行**の uuid（＝`--resume-session-at`）／手術では選んだ行の手前で切る | 直前まで |
 | codex | 選んだ発言が属する turn の**1 つ前**の turn id（`lastTurnId` は inclusive） | 直前まで |
 | opencode | 選んだ発言の `messageID` そのもの（exclusive） | 直前まで |
+| copilot | 選んだ `user.message` イベントの `id`（手術では選んだ行の手前で切る） | 直前まで |
 
 ### もう 1 つのモード「この発言の続きから」（v1.1・✅ 実装済み）
 
@@ -164,6 +165,7 @@ compaction パートの `tail_start_id` も新 ID へ張り替えている。
 | claude | 選んだ行の手前で切る | **次のユーザープロンプト**の手前で切る |
 | codex | 1 つ前の turn id | **その turn 自身**（`lastTurnId` が包含なので素直） |
 | opencode | 選んだ `messageID` | **次のユーザー発言の `messageID`** |
+| copilot | 選んだ `user.message` の `id` | **次の `user.message` の `id`** |
 
 **最後のやり取りを「続きから」= 会話まるごと**。全部残すとはそういうことなので、resolver は
 空文字（＝分岐点なし）を返し、既存の会話まるごと分岐の経路に落ちる。逆に**最初のやり取りを
@@ -348,7 +350,7 @@ headless で丸ごと走る（ツール実行・長時間化）ため v1 では�
 
 → cursor は対象外のままにする。上流が `/fork` を非対話で開けるか、転写に ID を載せるまで動かない。
 
-### copilot — 手術は効く（実験済み・2026-08-09）
+### copilot — 手術で実装済み（2026-08-09）
 
 `~/.copilot/session-state/<sid>/events.jsonl` は 1 行 1 イベントで、**全イベントが
 `{id, parentId, timestamp, type, data}` を持つ**（実測）。`user.message` の `id` がそのまま
@@ -369,11 +371,23 @@ events.jsonl が正**。実験（隔離した `COPILOT_HOME` で実施・実 `~/
 文脈を決めている**＝ claude と同型の手術が成立する。分岐先の events.jsonl にも
 ALPHA ターン → 新しい質問 → ALPHA だけが並び、BETA は現れない。
 
-**実装前に潰す残件が 1 つ**: この実行で `session-state/` に**渡した `<S2>` とは別の
-新しい id のディレクトリも生えた**（中身は分岐後の会話と同じ）。copilot が resume 時に
-セッションを別 id へ写している可能性があり、そうだとすると AF のスロット→sid 対応が
-初回起動後にずれて、ミラーが古いディレクトリを読み続ける。kiro と同じ「CLI が採番し直す」
-型の問題なので、対処も同型（起動後に実 id を発見して sidstore を更新）になる見込み。
+**索引を我々が書く必要は無い**。`$COPILOT_HOME/session-store.db` に `sessions(id, cwd, …)`
+という索引があるが、**未登録の `session-state/<id>/` を resume しても copilot は普通に読み、
+自分で索引へ登録する**（実測）。他プロダクトの SQLite スキーマを owns せずに済む。
+
+> 一度「渡した id とは別のディレクトリが生えた」と記録したが、**誤読だった**（生えたと思った
+> ディレクトリが分岐先そのものだった）。追試では未登録コピーを resume しても余分な
+> ディレクトリは生まれず、索引に自動登録されただけだった。
+
+実装は claude と同型で、単位だけが違う（claude=1 ファイル / copilot=ディレクトリ一式）。
+**`session.db` はコピーして触らない** — 復元元が events.jsonl だと分かっている以上、意味を
+知らないファイルを書き換え始めた瞬間に、この手術は「読めるものを同じ形で書き直す」から
+「他プロダクトの内部状態を owns する」に変わる。書き換えるのは `events.jsonl` の切り詰めと、
+`events.jsonl` / `workspace.yaml` に載っている session id の張り替えだけ。
+
+TUI（`BuildLaunch`）と managed（driver の `Resume`）の**両方**で材料化する。managed 側を
+忘れると、分岐スロットには sid が無いので `session/new` へ落ち、分岐先が空の会話として
+開いてしまう（＝履歴を静かに失う）。
 
 ### kiro / agy
 
@@ -431,6 +445,12 @@ ALPHA ターン → 新しい質問 → ALPHA だけが並び、BETA は現れ�
   なること、最後を「続きから」＝ `""` になること）。モデル呼び出しの追加は無い。
   既存の live tier と同じ `-run TestContractLive` 一括起動に自動で乗る
   （`.github/workflows/opencode-contract.yml`）。
+- **実 CLI（copilot・`clicontract` タグ）**: ✅ `TestContractLiveCopilotForkAt`。実 copilot で 2 ターン
+  会話を作り、転写のアンカー → `ResolveForkAt` → `MaterializeForkAt` → `--session-id <分岐先>`
+  で resume して、**切り落とした発言を覚えていないこと**を確かめる。`session.db` は無改変で
+  コピーされているので、これは「events.jsonl が復元元であり続けている」ことの検査そのもの。
+  `copilot-contract.yml` に相乗り。`COPILOT_HOME` を隔離するので実 `~/.copilot` は不使用
+  （**HOME は差し替えない** — 認証がそこから来るため）。実測 2026-08-09: PASS / 36.7s。
 - **実 CLI（claude・`clicontract` タグ）**: ✅ `TestContractLiveClaudeForkAt`。実 claude で 2 ターン
   会話を作り、`MaterializeForkAt` で 2 番目の発言の手前を切って `--resume` し、**切り落とした
   発言を覚えていないこと**（ALPHA と答え BETA と答えない）を確かめる。**この一本が claude の
@@ -461,8 +481,8 @@ ALPHA ターン → 新しい質問 → ALPHA だけが並び、BETA は現れ�
 | P2 | codex（`lastTurnId`＋アンカー変換） | ✅ |
 | P3 | claude（jsonl 手術＋切断点検査＋縮退）＋ ドリフト検知テスト | ✅ |
 | P4a | v1.1「この発言の続きから」（3 kind ＋ Console のモード選択） | ✅ |
-| P4b | cursor / copilot の転写手術が効くかの調査 | ✅ 結論: **cursor=不可 / copilot=効く**（実装は未着手） |
-| P5 | copilot 対応（アンカー＋手術＋sid ずれ対策） | — |
+| P4b | cursor / copilot の転写手術が効くかの調査 | ✅ 結論: **cursor=不可 / copilot=効く** |
+| P5 | copilot 対応（アンカー＋手術＋TUI/managed 両経路） | ✅ |
 
 **使える範囲は claude（TUI）／ managed の opencode・codex**。導線を出す条件は kind ごとに
 違うので `canBranchInSession`（`caps.forkAt` × `caps.forkAtManagedOnly` × managed × readOnly）に
@@ -496,9 +516,8 @@ MVP（P1＋P1.5）のサーバ側は**実 CLI で通し確認済み**（§55.8 �
    「続きから」は *次のユーザー発言の id* を渡す設計にしたので、assistant の id を分岐点に
    することが無い（`>=` の打ち切りは同じだが、指す対象がユーザー発言だけで済む）。
 5. ~~cursor の転写手術~~ **調査完了・不可**（§55.5 — 転写に ID が無く、実体は非公開 SQLite）。
-6. ~~**copilot の復元元**~~ **解決: events.jsonl が正**（§55.5・実験済み）。手術は成立する。
-   残るのは **resume が別 id のディレクトリを生やす件**——スロット→sid 対応が初回起動後に
-   ずれないか。copilot 実装に着手するならここが最初の一手。
+6. ~~**copilot の復元元**~~ **解決: events.jsonl が正**（§55.5）。実装済み。「別 id の
+   ディレクトリが生える」という当初の記録は誤読で、追試で否定された（§55.5）。
 
 ## 55.11 実測の再現手順
 

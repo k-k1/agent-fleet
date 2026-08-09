@@ -350,6 +350,12 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       tuiStartMode: true, // --mode plan
       slashSkills: true, // foreign（注入）エントリのみ — docs/50 §8
       slashSkillsManaged: true,
+      // 発言時点からの分岐（docs/55）: copilot にも公式の分岐口が無いので、session-state
+      // ディレクトリをコピーして events.jsonl を切り詰める（復元元が events.jsonl である
+      // ことは実測）。TUI / managed どちらの経路でも Agent 側が材料化するので managedOnly
+      // は false。
+      forkAt: true,
+      forkAtManagedOnly: false,
       runsInDir: true,
       launchableFromRepo: true,
     }),
