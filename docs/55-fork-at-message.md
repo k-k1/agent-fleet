@@ -49,7 +49,7 @@
 | codex | `thread/fork` の `lastTurnId` | **公式**（app-server スキーマに明記） | ✅ managed が既定 |
 | opencode | `POST /session/{id}/fork` の `messageID` | **公式**（OpenAPI に定義） | ✅ managed が既定 |
 | cursor | 無し（`/fork` は TUI 内コマンド） | — | **不可**（転写に ID が無い・§55.5） |
-| copilot | 無し | — | 手術なら可能性あり（イベントに id/parentId・§55.5） |
+| copilot | 無し | — | **手術は効くと実測**（events.jsonl が復元元・§55.5）。未実装 |
 | kiro | 無し。ID を CLI 側が採番 | — | 現実的でない |
 | agy | 無し。SQLite ストア | — | 対象外 |
 
@@ -348,17 +348,32 @@ headless で丸ごと走る（ツール実行・長時間化）ため v1 では�
 
 → cursor は対象外のままにする。上流が `/fork` を非対話で開けるか、転写に ID を載せるまで動かない。
 
-### copilot — 可能性あり（要実験）
+### copilot — 手術は効く（実験済み・2026-08-09）
 
 `~/.copilot/session-state/<sid>/events.jsonl` は 1 行 1 イベントで、**全イベントが
 `{id, parentId, timestamp, type, data}` を持つ**（実測）。`user.message` の `id` がそのまま
 アンカーになり、claude と同型の「prefix を取って書き直す」手術が成立する形をしている。
 AF 側が sid を採番する方式なのも claude と同じ。
 
-**残る唯一の未知は、ACP `session/load` が events.jsonl から再構成するのか、隣にある
-`session.db` から復元するのか**。後者なら cursor と同じ食い違いになるので、ここを確かめる
-までは `CanForkAt` を立てない。実験は「2 ターン会話 → events.jsonl を切り詰め → 別 sid で
-`session/load` → 切り落とした内容を覚えているか訊く」の 1 本で決着する。
+**未知だった「events.jsonl と `session.db` のどちらから復元するか」は実験で決着した ——
+events.jsonl が正**。実験（隔離した `COPILOT_HOME` で実施・実 `~/.copilot` は不使用）:
+
+1. `copilot --session-id <S1> -p` で 2 ターン（ALPHA → BETA と codeword を上書き）。
+2. `session-state/<S1>/` を `<S2>/` へ**ディレクトリごとコピー**（`session.db` は**無改変**の
+   まま = 両ターンが入ったもの）。`events.jsonl` だけを 2 番目の `user.message` が属する
+   `session.resume` ブロックの手前で切り、`events.jsonl` と `workspace.yaml` の中の旧 sid を
+   新 sid へ置換。
+3. `copilot --session-id <S2> -p "What is the codeword?"` → **ALPHA**。
+
+`session.db` には BETA が残っているのに ALPHA と答えた。**切り詰めた events.jsonl が
+文脈を決めている**＝ claude と同型の手術が成立する。分岐先の events.jsonl にも
+ALPHA ターン → 新しい質問 → ALPHA だけが並び、BETA は現れない。
+
+**実装前に潰す残件が 1 つ**: この実行で `session-state/` に**渡した `<S2>` とは別の
+新しい id のディレクトリも生えた**（中身は分岐後の会話と同じ）。copilot が resume 時に
+セッションを別 id へ写している可能性があり、そうだとすると AF のスロット→sid 対応が
+初回起動後にずれて、ミラーが古いディレクトリを読み続ける。kiro と同じ「CLI が採番し直す」
+型の問題なので、対処も同型（起動後に実 id を発見して sidstore を更新）になる見込み。
 
 ### kiro / agy
 
@@ -446,7 +461,8 @@ AF 側が sid を採番する方式なのも claude と同じ。
 | P2 | codex（`lastTurnId`＋アンカー変換） | ✅ |
 | P3 | claude（jsonl 手術＋切断点検査＋縮退）＋ ドリフト検知テスト | ✅ |
 | P4a | v1.1「この発言の続きから」（3 kind ＋ Console のモード選択） | ✅ |
-| P4b | cursor / copilot の転写手術が効くかの調査 | ◐ cursor=不可と判明・copilot は実験 1 本待ち |
+| P4b | cursor / copilot の転写手術が効くかの調査 | ✅ 結論: **cursor=不可 / copilot=効く**（実装は未着手） |
+| P5 | copilot 対応（アンカー＋手術＋sid ずれ対策） | — |
 
 **使える範囲は claude（TUI）／ managed の opencode・codex**。導線を出す条件は kind ごとに
 違うので `canBranchInSession`（`caps.forkAt` × `caps.forkAtManagedOnly` × managed × readOnly）に
@@ -480,8 +496,9 @@ MVP（P1＋P1.5）のサーバ側は**実 CLI で通し確認済み**（§55.8 �
    「続きから」は *次のユーザー発言の id* を渡す設計にしたので、assistant の id を分岐点に
    することが無い（`>=` の打ち切りは同じだが、指す対象がユーザー発言だけで済む）。
 5. ~~cursor の転写手術~~ **調査完了・不可**（§55.5 — 転写に ID が無く、実体は非公開 SQLite）。
-6. **copilot の `session/load` が events.jsonl と session.db のどちらから復元するか**（§55.5）。
-   ここだけが copilot 対応の可否を決める。実ターンを 3 回使う実験 1 本で決着する。
+6. ~~**copilot の復元元**~~ **解決: events.jsonl が正**（§55.5・実験済み）。手術は成立する。
+   残るのは **resume が別 id のディレクトリを生やす件**——スロット→sid 対応が初回起動後に
+   ずれないか。copilot 実装に着手するならここが最初の一手。
 
 ## 55.11 実測の再現手順
 
