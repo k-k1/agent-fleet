@@ -45,10 +45,9 @@ func TestThreadConfigCarriesSessionNameToTheMCPChild(t *testing.T) {
 	}
 }
 
-// The failure mode that matters: a thread-local map REPLACES config.toml, so anything
-// short of a complete answer must send NO map at all. Sending one built from an error
-// or an empty registry would strip the user's MCP servers from every managed session.
-func TestThreadConfigOmitsServersRatherThanSendingAPartialSet(t *testing.T) {
+// Nothing to override must mean "send no key at all", so the thread inherits every
+// file layer exactly as a TUI session would.
+func TestThreadConfigOmitsServersWhenThereIsNothingToOverride(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		defs []mcpreg.ServerDef
@@ -63,8 +62,8 @@ func TestThreadConfigOmitsServersRatherThanSendingAPartialSet(t *testing.T) {
 			stubSessionMCPDefs(t, tc.defs, tc.err)
 			cfg := threadConfig(tc.slot)
 			if _, present := cfg["mcp_servers"]; present {
-				t.Fatalf("mcp_servers = %v, want the key absent so the thread inherits config.toml",
-					cfg["mcp_servers"])
+				t.Fatalf("mcp_servers = %v, want the key absent so the thread inherits config.toml "+
+					"and any trusted project config unchanged", cfg["mcp_servers"])
 			}
 			if cfg["features"] == nil {
 				t.Fatal("features dropped along with the servers")

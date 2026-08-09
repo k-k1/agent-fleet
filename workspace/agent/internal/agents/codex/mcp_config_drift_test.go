@@ -17,12 +17,11 @@
 // 認証不要: MCP サーバーの spawn は thread/start の内部で起き、モデル呼び出しの前に
 // 完結する（thread/start 自体が認証エラーで返っても spawn は観測できる）。
 //
-// 補足（docs/27 §9.3.1 以降）: 本番の managed セッションは thread 単位 config で
-// mcp_servers を毎回明示するようになったので、**この config.toml リロード契約には
-// もう依存していない**（レジストリを thread/start ごとに読み直すため、より直接的に
-// 「新規セッションから有効」が成立する）。ここが守っているのは、thread 単位 config を
-// 送らない経路 — slot 名が無い場合や、レジストリを読めず継承へ倒れた場合の縮退動作。
-// だから `threadStart(cl, home, "", "")` と slot 空で呼んでいる。
+// 補足（docs/27 §9.3.1）: managed セッションは thread 単位 config で af のエントリ
+// **だけ**を上書きし、他は config.toml から継承する。つまりこのリロード契約は managed
+// でも依然として効いており、レジストリに登録した MCP が新規 thread に現れるかどうかは
+// ここが守っている。slot 空（`threadStart(cl, home, "", "")`）で呼ぶのは、af の上書きを
+// 挟まない素の継承経路を測るため。
 
 package codex
 

@@ -300,18 +300,26 @@ Capabilities の `EphemeralThread` として予約。
 credential-free drift test（`TestDriftCodexThreadMCPConfigIsScoped`）では、異なる MCP を持つ 2 本の
 ephemeral thread 間で MCP が混入しないことを実 app-server で確認した。
 
-**thread 単位 config はグローバル設定を「マージ」ではなく「置換」する**（2026-07-20 実測・
+**thread 単位 config は `-c` 由来のサーバを「マージ」ではなく「置換」する**（2026-07-20 実測・
 `TestDriftCodexThreadMCPConfigReplacesGlobalServers`）。実 app-server での測定は次のとおり:
 
 | thread に渡す `config.mcp_servers` | `mcpServerStatus/list` に見える MCP |
 | --- | --- |
-| 渡さない（未指定） | グローバル設定を継承 |
-| 空マップ `{}` | **0 件（グローバルは全て遮断される）** |
-| 自前サーバのみ指定 | 自前のみ（グローバルは現れない） |
+| 渡さない（未指定） | `-c` 設定を継承 |
+| 空マップ `{}` | **0 件（`-c` のものは全て遮断される）** |
+| 自前サーバのみ指定 | 自前のみ（`-c` のものは現れない） |
 
 1 行目が成立することが重要で、これは「グローバル `-c` 設定自体が効いていないから 0 件に見えた」という
 偽陽性を否定する。すなわち thread config は追加・thread 間分離の口であると同時に **allowlist / replace
 の口でもあり、空マップ `{}` は deny 機構として機能する**。
+
+> **⚠️ 適用範囲（2026-08-09 追記・0.147.0 実測）: この表は `-c` オプションで渡したサーバにしか
+> 当てはまらない。** 上記テストは app-server を `-c mcp_servers.…` 付きで起動しており、測っていたのは
+> その層だけだった。**ファイル由来の層（`$CODEX_HOME/config.toml` と、trust 済みプロジェクトの
+> `.codex/config.toml`）は thread config を渡してもマージされて残る** — ephemeral / persistent ×
+> 空マップ / 非空マップの 4 通り全てで継承された（`TestDriftCodexThreadConfigMergeMatrix`）。
+> 従って **空マップはファイル由来のサーバに対する deny にはならない**。将来 thread 単位 config で
+> 権限境界（`none` / `af_read` / `af_write`）を作る場合、この前提で設計してはいけない。
 
 **この節は当初「遮断はできない（グローバル MCP は空マップを渡しても `mcpServerStatus/list` に残る）」と
 記述していたが、これは誤りだった。** 当該アサーションを固定していたテストは、同一パッケージ内の先行
@@ -358,28 +366,40 @@ daemon 1本（`codex app-server` / `opencode serve`）から spawn されるの�
 セッション名を言わせる必要はない（そもそも managed の LLM は shell からも `$AF_SESSION_NAME` を
 読めないので、引数方式は `[agent-fleet]` 注記付きの指示でしか成立しない）。
 
+#### 設定層の重なり方（当初の想定を実測で覆した点）
+
+当初この節は「thread config は置換だから、af は**効いている全サーバを毎回出す**必要がある」と書いて
+実装していた。前節の ⚠️ のとおり**それは誤りで、ファイル由来の層はマージされる**。0.147.0 で測り直した
+結果は次のとおり:
+
+| 層 | thread config を送ったとき |
+| --- | --- |
+| `-c` で渡したサーバ | 置換される（消える） |
+| `$CODEX_HOME/config.toml` | **マージされて残る** |
+| trust 済みプロジェクトの `.codex/config.toml` | **マージされて残る**（`TestDriftCodexTrustedProjectConfigContributesMCPServers` / `…ThreadConfigKeepsProjectServers`） |
+| 同名サーバが両方にある場合 | **thread 側が勝つ**（`TestDriftCodexThreadConfigOverridesSameNamedFileServer`）。上書きは**エントリ丸ごと**で、フィールド単位のマージではない |
+
+なお **codex は trust 済みプロジェクトの `.codex/config.toml` から MCP を読む**。`codex mcp list` は
+user レベルしか表示しないため（openai/codex#13025）、これを probe に使うと「プロジェクトローカル設定は
+無い」という誤った結論に達する — ランタイムの `mcpServerStatus/list` で測ること。
+
 **実装済み**（`mcpreg.CodexThreadServers` ＋ codex driver の `threadConfig`）。設計上の要点:
 
-1. **thread config はグローバルを置換する**（前節）ので、`mcpreg.CodexThreadServers` は af だけでなく
-   **効いている全サーバ**を毎回出す。`codexServerBlocks`（config.toml 側）の JSON 双子で、値の literal /
-   `env_vars` 転送の切り分けまで同じ — 「managed と TUI で見えるサーバが同じ」を構造で保証するため。
-   両者がずれたら `TestCodexThreadServersMatchConfigTOMLBlocks` が落ちる。
-2. **何も言えないときは键ごと省く**（継承）。空マップは deny なので、レジストリを読めない・codex 向けの
-   サーバが無い・slot 名が無い、のいずれでも `mcp_servers` を送らずに config.toml を継承させる。
-   セッション名を失う（cwd 推定へ縮退）方が、ユーザーの MCP を全部失うよりましという判断。
-3. **秘密は今日と同じ経路のまま。** `AGENT_TOKEN` / `AF_SECRET_KEY` は `env_vars` 転送（上表 4 行目）。
-   ユーザー登録サーバの env / ヘッダ値は config.toml が既に 0600 で literal に持っているものと同じ値を
-   同じ形で載せる（新しい信頼境界を跨がない）。
-4. 注入点は `threadStart` / `threadResume` / `threadFork` の 3 箇所。**af 以外のサーバにセッション名は
-   渡さない** — 自セッションについて Agent に話し返す契約を持つのは af だけで、他へ渡すのは
-   fleet のトポロジを無関係なプロセスへ漏らすだけ。
-5. `thread/resume` が config を再適用するか（＝Agent 再起動後に復旧したセッションが識別子を保つか）は
+1. **送るのは af のエントリ 1 個だけ。** マージされる以上、他を書き写す理由が無い。書き写せばユーザーの
+   env / ヘッダ**値**を RPC ペイロードへ載せることになり、しかも af が管理していないサーバ（手で足した行、
+   `codex mcp add`、trust 済みプロジェクト設定）はどのみち再現できない。継承させれば全部そのまま効く。
+2. **af のエントリは丸ごと書き切る。** 同名の上書きはエントリ単位なので、env だけ送ると command を
+   失ったサーバになる。`codexServerBlocks`（config.toml 側）と同じ command / args / `env_vars` /
+   `startup_timeout_sec` を出す。
+3. **何も上書きするものが無ければ键ごと省く**（完全継承）。レジストリを読めない・af が codex セッションに
+   配られていない・slot 名が無い、のいずれでも `mcp_servers` を送らない。セッション名を失って cwd 推定へ
+   縮退するだけで、他は何も変わらない。
+4. **秘密は今日と同じ経路のまま。** `AGENT_TOKEN` / `AF_SECRET_KEY` は `env_vars` 転送（上表 4 行目）で、
+   値は RPC ペイロードに載らない。
+5. 注入点は `threadStart` / `threadResume` / `threadFork` の 3 箇所。af 以外にセッション名は渡さない。
+6. `thread/resume` が config を再適用するか（＝Agent 再起動後に復旧したセッションが識別子を保つか）は
    **Tier 1 では測れない**: rollout はターンが始まって初めて生まれ、無認証のターンは rollout を残さない
    （実測）。`TestLiveDriftCodexThreadMCPConfigAppliesOnResume` として Tier 2（`driftlive`）に置いた。
-
-副次的な効果として、managed セッションは `$CODEX_HOME/config.toml` のリロード契約
-（`mcp_config_drift_test.go`）に**もう依存しない** — thread/start ごとにレジストリを読み直すため。
-あの drift テストが今守っているのは、thread 単位 config を送らない縮退経路の方。
 
 **opencode managed には同等の口が無い**（実測 1.18.15、`contract_mcp_identity_test.go`）:
 

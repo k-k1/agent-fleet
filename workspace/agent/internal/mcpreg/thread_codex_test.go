@@ -15,19 +15,62 @@ func threadAFDef() ServerDef {
 	}
 }
 
-func TestCodexThreadServersStampsSessionNameOnAFOnly(t *testing.T) {
+func TestCodexThreadServersOverridesOnlyTheAFEntry(t *testing.T) {
 	got, ok := CodexThreadServers(
 		[]ServerDef{threadAFDef(), attachStdioDef("user1"), attachHTTPDef("remote1")},
 		CodexThreadOpts{SessionName: "slot01"})
 	if !ok {
-		t.Fatal("CodexThreadServers reported nothing to send for a non-empty set")
+		t.Fatal("CodexThreadServers reported nothing to send for a set containing af")
 	}
 
+	// Thread config MERGES with the file layers, so restating anything else would put
+	// the user's secrets into an RPC payload for no benefit — and would shadow servers
+	// af does not manage (hand-added rows, trusted project config) with a stale copy.
+	if len(got) != 1 || got[BuiltinAF] == nil {
+		t.Fatalf("thread map = %v, want only the af entry", got)
+	}
 	af, _ := got[BuiltinAF].(map[string]any)
-	env, _ := af["env"].(map[string]any)
-	if env[sessionNameVar] != "slot01" {
+	if env, _ := af["env"].(map[string]any); env[sessionNameVar] != "slot01" {
 		t.Fatalf("af env = %v, want %s=slot01 — without it a managed session cannot name itself",
 			af["env"], sessionNameVar)
+	}
+}
+
+// The override is whole-entry, not field-wise: a thread definition REPLACES the
+// config.toml one for that name. An entry carrying only env would therefore launch a
+// server with no command.
+func TestCodexThreadServersRestatesTheWholeAFEntry(t *testing.T) {
+	d := threadAFDef()
+	d.TimeoutMS = 2500
+	got, _ := CodexThreadServers([]ServerDef{d}, CodexThreadOpts{SessionName: "slot01"})
+	af, _ := got[BuiltinAF].(map[string]any)
+
+	if af["command"] != d.Command {
+		t.Fatalf("command = %v, want %q", af["command"], d.Command)
+	}
+	if want := anySlice(d.Args); !reflect.DeepEqual(af["args"], want) {
+		t.Fatalf("args = %v, want %v", af["args"], want)
+	}
+	if af["startup_timeout_sec"] != 2.5 {
+		t.Fatalf("startup_timeout_sec = %v, want 2.5 from 2500ms", af["startup_timeout_sec"])
+	}
+	// Same fields config.toml carries, so managed and TUI launch the same server.
+	blocks := strings.Join(codexServerBlocks([]ServerDef{d}), "\n")
+	for _, want := range []string{`command = "` + d.Command + `"`, "startup_timeout_sec = 2.5"} {
+		if !strings.Contains(blocks, want) {
+			t.Fatalf("config.toml no longer carries %q — the two paths have diverged:\n%s", want, blocks)
+		}
+	}
+}
+
+// Credentials must keep travelling by name. A literal value here would ride the
+// app-server RPC and whatever it persists.
+func TestCodexThreadServersForwardsCredentialsByName(t *testing.T) {
+	got, _ := CodexThreadServers([]ServerDef{threadAFDef()}, CodexThreadOpts{SessionName: "slot01"})
+	af, _ := got[BuiltinAF].(map[string]any)
+
+	if want := []any{"AGENT_ADDR", "AGENT_TOKEN"}; !reflect.DeepEqual(af["env_vars"], want) {
+		t.Fatalf("af env_vars = %v, want %v", af["env_vars"], want)
 	}
 	// Forwarded AND literal would be two answers to one question; the daemon has no
 	// AF_SESSION_NAME to forward, so the literal must be the only one.
@@ -37,81 +80,22 @@ func TestCodexThreadServersStampsSessionNameOnAFOnly(t *testing.T) {
 				sessionNameVar, af["env_vars"])
 		}
 	}
-	// The credentials keep travelling by name, not by value.
-	if want := []any{"AGENT_ADDR", "AGENT_TOKEN"}; !reflect.DeepEqual(af["env_vars"], want) {
-		t.Fatalf("af env_vars = %v, want %v", af["env_vars"], want)
-	}
-
-	for _, name := range []string{"user1", "remote1"} {
-		e, _ := got[name].(map[string]any)
-		if e == nil {
-			t.Fatalf("%q missing: a thread-local map REPLACES config.toml, so dropping a "+
-				"user server here removes it from every managed codex session", name)
-		}
-		if env, _ := e["env"].(map[string]any); env[sessionNameVar] != nil {
-			t.Fatalf("%q was handed the session name; only the af server has a reason to "+
-				"know it", name)
-		}
-	}
 }
 
-// The thread map is the JSON twin of the config.toml blocks. If the two ever describe
-// different servers, a managed session and a TUI session stop seeing the same tools.
-func TestCodexThreadServersMatchConfigTOMLBlocks(t *testing.T) {
-	defs := []ServerDef{threadAFDef(), attachStdioDef("user1"), attachHTTPDef("remote1")}
-	got, _ := CodexThreadServers(defs, CodexThreadOpts{})
-	blocks := strings.Join(codexServerBlocks(defs), "\n")
-
-	if len(got) != len(defs) {
-		t.Fatalf("thread map has %d servers, config.toml has %d", len(got), len(defs))
-	}
-	stdio, _ := got["user1"].(map[string]any)
-	if stdio["command"] != "/usr/bin/thing" {
-		t.Fatalf("stdio command = %v", stdio["command"])
-	}
-	if env, _ := stdio["env"].(map[string]any); env["THING_TOKEN"] != "s3cr3t" {
-		t.Fatalf("stdio env = %v, want the same literal config.toml already carries", stdio["env"])
-	}
-	if !strings.Contains(blocks, `THING_TOKEN = "s3cr3t"`) {
-		t.Fatalf("config.toml no longer carries the value literally — the two paths have "+
-			"diverged and this test's premise is stale:\n%s", blocks)
-	}
-	remote, _ := got["remote1"].(map[string]any)
-	if remote["url"] != "https://mcp.example.com/mcp" {
-		t.Fatalf("remote url = %v", remote["url"])
-	}
-	if h, _ := remote["http_headers"].(map[string]any); h["Authorization"] != "Bearer tok" {
-		t.Fatalf("remote headers = %v", remote["http_headers"])
-	}
-}
-
-// An empty map is a working DENY (docs/27 §9.3), so "nothing to say" must mean "send
-// no key" — otherwise a registry that yields no codex servers would silently strip
-// the ones config.toml provides.
-func TestCodexThreadServersRefusesToEmitAnEmptyMap(t *testing.T) {
-	if got, ok := CodexThreadServers(nil, CodexThreadOpts{SessionName: "slot01"}); ok || got != nil {
-		t.Fatalf("CodexThreadServers(nil) = %v, %v; want nil, false so the caller omits the key", got, ok)
-	}
-}
-
-func TestCodexThreadServersOmitsSessionNameWhenUnknown(t *testing.T) {
-	got, _ := CodexThreadServers([]ServerDef{threadAFDef()}, CodexThreadOpts{})
-	af, _ := got[BuiltinAF].(map[string]any)
-	if af["env"] != nil {
-		t.Fatalf("af env = %v, want none when there is no session name to stamp", af["env"])
-	}
-	// The forward stays in place: it is what the TUI route relies on.
-	if got, want := af["env_vars"], []any{"AF_SESSION_NAME", "AGENT_ADDR", "AGENT_TOKEN"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("af env_vars = %v, want %v", got, want)
-	}
-}
-
-func TestCodexThreadServersCarriesStartupTimeout(t *testing.T) {
-	d := attachStdioDef("slow")
-	d.TimeoutMS = 2500
-	got, _ := CodexThreadServers([]ServerDef{d}, CodexThreadOpts{})
-	e, _ := got["slow"].(map[string]any)
-	if e["startup_timeout_sec"] != 2.5 {
-		t.Fatalf("startup_timeout_sec = %v, want 2.5 seconds from 2500ms", e["startup_timeout_sec"])
+func TestCodexThreadServersSendsNothingWithoutASessionNameOrAF(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		defs []ServerDef
+		opts CodexThreadOpts
+	}{
+		{"no session name", []ServerDef{threadAFDef()}, CodexThreadOpts{}},
+		{"af not attached", []ServerDef{attachStdioDef("user1")}, CodexThreadOpts{SessionName: "slot01"}},
+		{"empty registry", nil, CodexThreadOpts{SessionName: "slot01"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got, ok := CodexThreadServers(tc.defs, tc.opts); ok || got != nil {
+				t.Fatalf("= %v, %v; want nil, false so the caller omits the key and inherits", got, ok)
+			}
+		})
 	}
 }
