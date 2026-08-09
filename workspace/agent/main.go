@@ -18,6 +18,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 )
 
 // buildVersion is stamped by the release pipeline via
@@ -129,6 +130,13 @@ func main() {
 	// reseeded the base AGENTS.md / status plugin just before us). claude's rtk is
 	// handled separately via its settings.json hook.
 	reconcileAgentRTK()
+	// Mint this boot's name for af's own MCP server, BEFORE anything materializes a
+	// config. A repository's project-scoped MCP config beats af's user-scope one on
+	// every kind but claude (docs/48 §8.4), so a repo that happens to define a server
+	// called "af" would silently take over self-report, the handoff proposal and
+	// Chromium attach; a random suffix makes that collision go away, and rotating it
+	// per boot means even a deliberate one is shaken off by a restart.
+	log.Printf("mcp: af server name for this boot = %s", mcpreg.RotateAFServerName())
 	// Write the MCP registry into each CLI's own config (docs/48 P3) so the servers a
 	// user registered are live from container start — including for a CLI they launch
 	// by hand in a terminal, which never passes through the session launch hook.
