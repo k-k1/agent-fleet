@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -191,6 +192,34 @@ func TestBuildForkLinesRefusesEmptyResult(t *testing.T) {
 	}
 }
 
+// 「この発言の続きから」（Include）: 次のユーザープロンプトの手前が新しい切断点になる。
+// ForkAt の意味（この uuid の手前まで残す）は変わらないので、材料化も起動もそのまま通る。
+func TestNextPromptUUID(t *testing.T) {
+	lines := [][]byte{
+		forkUserLine(t, "u1", "ALPHA"),
+		toolCall(t, "a1", "tool_1"),
+		toolResult(t, "r1", "tool_1"), // ツール結果は user 行だが「次のプロンプト」ではない
+		assistantLine(t, "a2", "done"),
+		forkUserLine(t, "u2", "BETA"),
+		assistantLine(t, "a3", "ok"),
+	}
+	got, err := nextPromptUUID(lines, "u1")
+	if err != nil {
+		t.Fatalf("nextPromptUUID: %v", err)
+	}
+	if got != "u2" {
+		t.Fatalf("nextPromptUUID(u1) = %q; want u2 — ツール結果の user 行を掴んではいけない", got)
+	}
+	// 最後のやり取り: 次が無い = 全部残す（"" で会話まるごとの経路に落ちる）。
+	if got, err := nextPromptUUID(lines, "u2"); err != nil || got != "" {
+		t.Fatalf("nextPromptUUID(last) = %q, %v; want \"\", nil", got, err)
+	}
+	// アンカー自体の検査は排他のときと同じ（ツール結果からは「続きから」もできない）。
+	if _, err := nextPromptUUID(lines, "r1"); err == nil {
+		t.Error("nextPromptUUID(tool result) = nil error; the anchor must be validated too")
+	}
+}
+
 func TestMaterializeForkAtWritesBranchTranscript(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -261,7 +290,7 @@ func TestClaudeCapsAdvertiseForkAt(t *testing.T) {
 	if !(agentImpl{}).Caps().CanForkAt {
 		t.Fatal("CanForkAt is false — the mirror would never offer 「ここから分岐」")
 	}
-	_, err := (agentImpl{}).ResolveForkAt(m, "u2")
+	_, err := (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: "u2"})
 	if err == nil {
 		t.Fatal("ResolveForkAt with no transcript = nil error; want a refusal")
 	}

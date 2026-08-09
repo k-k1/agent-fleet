@@ -1,7 +1,7 @@
 # 55. 発言時点からの会話分岐（fork at message）
 
-> ◐ P1〜P3 実装済み（契約 ＋ opencode ＋ codex ＋ claude ＋ Console 導線）。**3 種とも
-> サーバ側は実 CLI で通し確認済み**、Console からの通しはデプロイ待ち。残り = P4（v1.1）。
+> ◐ P1〜P4a 実装済み（契約 ＋ 3 kind ＋ Console 導線 ＋「続きから」）。**3 種とも
+> サーバ側は実 CLI で通し確認済み**、Console からの通しはデプロイ待ち。残り = P4b（cursor / copilot）。
 > 設計判断は [decisions/0039](decisions/0039-fork-at-message.md)。
 > 旧判断（会話まるごと分岐のみ・地点分岐は非サポートにつき却下）は
 > [history/fork-from-chat.md](history/fork-from-chat.md)。本書はそれを差し替える。
@@ -151,8 +151,27 @@ compaction パートの `tail_start_id` も新 ID へ張り替えている。
 | codex | 選んだ発言が属する turn の**1 つ前**の turn id（`lastTurnId` は inclusive） | 直前まで |
 | opencode | 選んだ発言の `messageID` そのもの（exclusive） | 直前まで |
 
-「この発言と回答まで含めて分岐したい」（＝続きから別方向）は v1.1 の追加オプションとする。
-どのエンジンでも**アンカーを 1 つ後ろへずらすだけ**で表現できるので、契約は変えずに済む。
+### もう 1 つのモード「この発言の続きから」（v1.1・✅ 実装済み）
+
+「この発言と、それが得た回答まで引き継いで、その先を別方向へ」も要る。**同じ操作が 1 往復
+ずれているだけ**なので、モーダルで選ばせて `{include: true}` を送る。既定は「やり直す」——
+方針を間違えた直後がいちばん多い用途で、そこでは分岐点の発言も捨てたい。
+
+各エンジンへの変換は resolver が吸収する（`agents.ForkPoint{Anchor, Include}`）。
+
+| kind | やり直す（既定） | 続きから（include） |
+| --- | --- | --- |
+| claude | 選んだ行の手前で切る | **次のユーザープロンプト**の手前で切る |
+| codex | 1 つ前の turn id | **その turn 自身**（`lastTurnId` が包含なので素直） |
+| opencode | 選んだ `messageID` | **次のユーザー発言の `messageID`** |
+
+**最後のやり取りを「続きから」= 会話まるごと**。全部残すとはそういうことなので、resolver は
+空文字（＝分岐点なし）を返し、既存の会話まるごと分岐の経路に落ちる。逆に**最初のやり取りを
+「やり直す」は codex だけ表現できない**（`lastTurnId` を空にすると「まるごと」の意味になって
+しまう）ので断る。この 2 つは対称ではなく、どちらもエンジン側の都合そのもの。
+
+下書きの投入は「やり直す」のときだけ。「続きから」ではその発言が分岐先に残っているので、
+入力欄にも同じ文が入ると二重に見える。
 
 ## 55.4 データ契約
 
@@ -193,10 +212,12 @@ ForkAt string `json:"forkAt,omitempty"`
 取らない。**任意ボディ**を受けるよう広げる。
 
 ```json
-{ "at": "<anchorId>" }
+{ "at": "<anchorId>", "include": false }
 ```
 
 - `at` 省略＝従来どおり会話まるごと分岐（後方互換）。ボディ無し（旧クライアント）も同じ。
+- `include`（既定 false）＝分岐点の発言とその回答まで引き継ぐ（§55.3）。kind ごとの変換は
+  `ForkAtResolver` が吸収するので、`Meta.ForkAt` の意味（この値の手前まで残す）は変わらない。
   ただし**壊れた JSON は 400**にする — 読めないボディを黙って捨てると、地点指定のつもりの
   要求が会話まるごと分岐に化ける。
 - エラーは意味で 2 つに割る。`400 fork_at_unsupported` ＝この種別／起動方式には地点分岐という
@@ -344,6 +365,9 @@ SQLite。いずれも未検証で、`CanForkAt` は false のままにする。
   ✅ codex 分は `internal/agents/codex/fork_at_test.go`（転写が turn id をアンカーに持つこと・
   **1 つ前の turn へ変換すること**・最初の turn の拒否・未知アンカーの拒否・`thread/fork` の
   params に `lastTurnId` を載せる/載せない・CLI ルートの起動拒否）。
+  ✅ 「続きから」（include）は 3 kind とも単体で押さえてある — codex は turn 自身、opencode は
+  次のユーザー発言（最後なら ""）、claude は `nextPromptUUID`（**ツール結果の user 行を
+  掴まないこと**を含む）。
 - **Agent HTTP**: `at` 有無での分岐、`fork_bad_anchor` の各条件、後方互換（`at` 省略）。
   ✅ `session_fork_at_test.go`（非対応 kind・CLI ルート・壊れたボディ・ボディ無しで
   新ゲートを踏まないこと）。
@@ -357,6 +381,8 @@ SQLite。いずれも未検証で、`CanForkAt` は false のままにする。
   であることと、分岐点なしなら 2 往復まるごと来ることを確かめる。ここが本命で、モックが
   確かめられるのは「messageID を送ったこと」まで、**opencode がその messageID をどう解釈するか**
   は実物にしか聞けない。1 往復ずれても、ミラー上は「分岐できた」に見えてしまう。
+  「続きから」も同じ実行の中で見る（1 番目を「続きから」＝ 2 番目を「やり直す」と同じ地点に
+  なること、最後を「続きから」＝ `""` になること）。モデル呼び出しの追加は無い。
   既存の live tier と同じ `-run TestContractLive` 一括起動に自動で乗る
   （`.github/workflows/opencode-contract.yml`）。
 - **実 CLI（claude・`clicontract` タグ）**: ✅ `TestContractLiveClaudeForkAt`。実 claude で 2 ターン
@@ -388,7 +414,8 @@ SQLite。いずれも未検証で、`CanForkAt` は false のままにする。
 | P1.5 | Console の分岐導線（ユーザー発言の「ここから分岐」・確認モーダル・下書き投入） | ✅ |
 | P2 | codex（`lastTurnId`＋アンカー変換） | ✅ |
 | P3 | claude（jsonl 手術＋切断点検査＋縮退）＋ ドリフト検知テスト | ✅ |
-| P4 | v1.1: 「この発言と回答を含めて分岐」オプション、cursor / copilot の実験 | — |
+| P4a | v1.1「この発言の続きから」（3 kind ＋ Console のモード選択） | ✅ |
+| P4b | cursor / copilot の転写手術が効くかの実験 | — |
 
 **使える範囲は claude（TUI）／ managed の opencode・codex**。導線を出す条件は kind ごとに
 違うので `canBranchInSession`（`caps.forkAt` × `caps.forkAtManagedOnly` × managed × readOnly）に
@@ -418,9 +445,10 @@ MVP（P1＋P1.5）のサーバ側は**実 CLI で通し確認済み**（§55.8 �
 3. **claude の sidechain（Task サブエージェント）を含む区間の切断。** サブエージェントの発言を
    アンカーにすることは拒否済み。未実測なのは、親のターンだけを切って sidechain 行が
    宙に浮いた prefix が残る場合の resume 挙動。
-4. **opencode の `messageID` に assistant メッセージ ID を渡したときの挙動**（コード上は同じ
-   `>=` 比較で成立するはずだが、v1.1 の「含める」で使うので実測しておく）。
-5. cursor / copilot の転写手術（P4）。
+4. ~~**opencode の `messageID` に assistant メッセージ ID を渡したときの挙動**~~ **不要になった**:
+   「続きから」は *次のユーザー発言の id* を渡す設計にしたので、assistant の id を分岐点に
+   することが無い（`>=` の打ち切りは同じだが、指す対象がユーザー発言だけで済む）。
+5. cursor / copilot の転写手術（P4b）。
 
 ## 55.11 実測の再現手順
 
