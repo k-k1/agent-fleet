@@ -86,12 +86,13 @@ var threadFeatures = map[string]any{"default_mode_request_user_input": true}
 // and it was measured to reach the spawned child — so the session name is stamped
 // there and `propose_session_handoff` stops guessing from cwd.
 //
-// Since a thread-local map REPLACES the global config rather than merging with it,
-// mcpreg emits the WHOLE effective set. When it has nothing to say — registry
-// unreadable, or no servers for codex — the key is omitted entirely so the thread
-// inherits config.toml. Omitting is the safe failure: sending `{}` would deny every
-// server, and losing the user's MCP servers is a far worse outcome than losing the
-// session name (which degrades to the cwd fallback that shipped before this).
+// A thread map MERGES with the file config layers — $CODEX_HOME/config.toml and a
+// trusted project's own .codex/config.toml both still apply — and for a shared name
+// the thread definition wins (measured 0.147.0, docs/27 §9.3.1). So mcpreg restates
+// ONLY the af entry: everything else, including servers af does not manage at all,
+// comes through untouched. When there is nothing to override the key is omitted and
+// the thread inherits everything, which is also the safe failure for an unreadable
+// registry — the session name degrades to the cwd fallback and nothing else changes.
 func threadConfig(slot string) map[string]any {
 	cfg := map[string]any{"features": threadFeatures}
 	if servers, ok := threadMCPServers(slot); ok {

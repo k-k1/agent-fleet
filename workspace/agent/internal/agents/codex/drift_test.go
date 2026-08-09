@@ -241,8 +241,16 @@ func TestDriftCodexThreadMCPConfigIsScoped(t *testing.T) {
 }
 
 // TestDriftCodexThreadMCPConfigReplacesGlobalServers pins the docs/27 §9.3
-// security contract: a thread-local mcp_servers map REPLACES the daemon's global
-// configuration rather than merging with it, so an empty map is a working deny.
+// security contract: a thread-local mcp_servers map REPLACES servers the daemon was
+// given via `-c` overrides rather than merging with them, so an empty map is a
+// working deny for that layer.
+//
+// SCOPE — measured 2026-08-09, 0.147.0: this holds for `-c`-supplied servers ONLY.
+// FILE layers behave the opposite way: $CODEX_HOME/config.toml and a trusted
+// project's .codex/config.toml both merge through a thread map in every combination
+// of ephemeral/persistent and empty/non-empty (TestDriftCodexThreadConfigMergeMatrix).
+// The startDriftAppServer call below passes the global server as `-c`, which is why
+// this test sees replacement — do not read it as a general contract.
 //
 // This assertion was inverted on 2026-07-20. It previously asserted the opposite
 // ("an empty map is not an allowlist; the global server leaks in") and carried a
@@ -269,10 +277,11 @@ func TestDriftCodexThreadMCPConfigReplacesGlobalServers(t *testing.T) {
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		if names := driftMCPServerNames(t, cl, cleared); len(names) > 0 {
-			t.Fatalf("thread-local empty mcp_servers no longer denies global servers: got %v.\n"+
-				"docs/27 §9.3 assumes thread config REPLACES the global set; if codex has "+
-				"switched to merging, the none/af_read/af_write permission boundary for the "+
-				"managed assistant chat is gone and must not be relied on.", names)
+			t.Fatalf("thread-local empty mcp_servers no longer denies `-c`-supplied servers: "+
+				"got %v.\ndocs/27 §9.3 assumes thread config REPLACES that layer; if codex has "+
+				"switched to merging it too, the none/af_read/af_write permission boundary for "+
+				"the managed assistant chat is gone and must not be relied on. (File-configured "+
+				"servers already merge — that is expected, see the scope note above.)", names)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -283,6 +292,14 @@ func TestDriftCodexThreadMCPConfigReplacesGlobalServers(t *testing.T) {
 // Unix socket. newAppClient performs the real initialize handshake, so this
 // exercises the production JSON-RPC wire rather than a schema fixture.
 func startDriftAppServer(t *testing.T, configArgs ...string) *appClient {
+	t.Helper()
+	return startDriftAppServerSeeded(t, nil, configArgs...)
+}
+
+// startDriftAppServerSeeded is startDriftAppServer with a hook that writes into the
+// isolated HOME before the daemon boots — for the config layers ($CODEX_HOME/config.toml
+// and its projects table) that only take effect if they are already on disk.
+func startDriftAppServerSeeded(t *testing.T, seed func(home string), configArgs ...string) *appClient {
 	t.Helper()
 	// Codex intentionally refuses to create its helper aliases under /tmp. Use a
 	// short-lived directory beneath the real home instead; HOME is still fully
@@ -296,6 +313,9 @@ func startDriftAppServer(t *testing.T, configArgs ...string) *appClient {
 		t.Fatalf("make isolated app-server home: %v", err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	if seed != nil {
+		seed(home)
+	}
 	socket := filepath.Join(t.TempDir(), "app-server.sock")
 	ctx, cancel := context.WithCancel(context.Background())
 	var output bytes.Buffer
