@@ -73,6 +73,13 @@ func TestDriftCodexThreadMCPConfigProbeReportsMissingEnv(t *testing.T) {
 	}
 }
 
+// The reconciliation path (thread/resume re-applying this config) cannot be measured
+// here: a thread has no rollout to resume until a turn has actually started, and a
+// credential-free turn fails before writing one (measured — turn/start against an
+// unauthenticated daemon leaves "no rollout found"). That measurement therefore lives
+// in Tier 2 as TestLiveDriftCodexThreadMCPConfigAppliesOnResume, which can afford a
+// real turn.
+
 // TestDriftCodexThreadMCPConfigForwardsEnvVarsFromDaemon settles how the SECRETS
 // travel. A thread-local map replaces the global one (docs/27 §9.3), so the af server
 // would lose the `env_vars` forward that today hands it AGENT_TOKEN — and re-supplying
@@ -113,7 +120,11 @@ const probeUnset = "<unset>"
 // server, and spawning is the whole measurement (same trick as the /bin/true threads).
 func startIdentityProbeThread(t *testing.T, cl *appClient, probeDir, slot string) string {
 	t.Helper()
-	return startDriftThread(t, cl, map[string]any{
+	return startDriftThread(t, cl, identityProbeConfig(probeDir, slot))
+}
+
+func identityProbeConfig(probeDir, slot string) map[string]any {
+	return map[string]any{
 		"mcp_servers": map[string]any{
 			identityProbeServer: map[string]any{
 				"command": "/bin/sh",
@@ -121,7 +132,7 @@ func startIdentityProbeThread(t *testing.T, cl *appClient, probeDir, slot string
 				"env":     map[string]any{"AF_SESSION_NAME": slot},
 			},
 		},
-	})
+	}
 }
 
 // identityProbeArgs writes the inherited AF_SESSION_NAME to out. The destination

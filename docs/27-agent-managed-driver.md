@@ -356,16 +356,30 @@ daemon 1本（`codex app-server` / `opencode serve`）から spawn されるの�
 
 従って **managed セッションの MCP 子へ per-session の識別子を注入することは可能**で、LLM に自分の
 セッション名を言わせる必要はない（そもそも managed の LLM は shell からも `$AF_SESSION_NAME` を
-読めないので、引数方式は `[agent-fleet]` 注記付きの指示でしか成立しない）。実装時の制約は 3 つ:
+読めないので、引数方式は `[agent-fleet]` 注記付きの指示でしか成立しない）。
 
-1. **thread config はグローバルを置換する**（前節）。thread に `mcp_servers` を載せるなら、ユーザー
-   登録の MCP も含めた**全量**を thread ごとに materialize する必要がある。`mcpreg.Materialize` は
-   現状 kind 単位でグローバル設定ファイルを書くだけなので、thread 単位の組み立て口が要る。
-2. **秘密情報は `env` に literal で書かない。** `AGENT_TOKEN` / `AF_SECRET_KEY` は今日どおり
-   `env_vars` の転送で渡す（上表 4 行目のとおり thread scope でも効く）。literal にすると
-   app-server の RPC ペイロードと、その永続先へ token が乗る。
-3. `thread/start` と `thread/resume` の両方が `config` を受けるので、注入点は `threadStart` /
-   `threadResume` / `threadFork` の 3 箇所（現状は共有の `threadFeatures` を渡すだけ）。
+**実装済み**（`mcpreg.CodexThreadServers` ＋ codex driver の `threadConfig`）。設計上の要点:
+
+1. **thread config はグローバルを置換する**（前節）ので、`mcpreg.CodexThreadServers` は af だけでなく
+   **効いている全サーバ**を毎回出す。`codexServerBlocks`（config.toml 側）の JSON 双子で、値の literal /
+   `env_vars` 転送の切り分けまで同じ — 「managed と TUI で見えるサーバが同じ」を構造で保証するため。
+   両者がずれたら `TestCodexThreadServersMatchConfigTOMLBlocks` が落ちる。
+2. **何も言えないときは键ごと省く**（継承）。空マップは deny なので、レジストリを読めない・codex 向けの
+   サーバが無い・slot 名が無い、のいずれでも `mcp_servers` を送らずに config.toml を継承させる。
+   セッション名を失う（cwd 推定へ縮退）方が、ユーザーの MCP を全部失うよりましという判断。
+3. **秘密は今日と同じ経路のまま。** `AGENT_TOKEN` / `AF_SECRET_KEY` は `env_vars` 転送（上表 4 行目）。
+   ユーザー登録サーバの env / ヘッダ値は config.toml が既に 0600 で literal に持っているものと同じ値を
+   同じ形で載せる（新しい信頼境界を跨がない）。
+4. 注入点は `threadStart` / `threadResume` / `threadFork` の 3 箇所。**af 以外のサーバにセッション名は
+   渡さない** — 自セッションについて Agent に話し返す契約を持つのは af だけで、他へ渡すのは
+   fleet のトポロジを無関係なプロセスへ漏らすだけ。
+5. `thread/resume` が config を再適用するか（＝Agent 再起動後に復旧したセッションが識別子を保つか）は
+   **Tier 1 では測れない**: rollout はターンが始まって初めて生まれ、無認証のターンは rollout を残さない
+   （実測）。`TestLiveDriftCodexThreadMCPConfigAppliesOnResume` として Tier 2（`driftlive`）に置いた。
+
+副次的な効果として、managed セッションは `$CODEX_HOME/config.toml` のリロード契約
+（`mcp_config_drift_test.go`）に**もう依存しない** — thread/start ごとにレジストリを読み直すため。
+あの drift テストが今守っているのは、thread 単位 config を送らない縮退経路の方。
 
 **opencode managed には同等の口が無い**（実測 1.18.15、`contract_mcp_identity_test.go`）:
 

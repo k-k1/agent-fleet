@@ -138,7 +138,7 @@ func TestResolveForkAtRejectsUnknownAnchor(t *testing.T) {
 func TestThreadForkSendsLastTurnID(t *testing.T) {
 	m, cl := newMockCodexServer(t)
 
-	_, _ = threadFork(cl, "src-thread", "/dir", "turn-2")
+	_, _ = threadFork(cl, "src-thread", "/dir", "turn-2", "")
 	p, ok := m.lastCall("thread/fork")
 	if !ok {
 		t.Fatal("thread/fork was never called")
@@ -154,7 +154,7 @@ func TestThreadForkSendsLastTurnID(t *testing.T) {
 		t.Errorf("lastTurnId = %v; want turn-2", got["lastTurnId"])
 	}
 
-	_, _ = threadFork(cl, "src-thread", "/dir", "")
+	_, _ = threadFork(cl, "src-thread", "/dir", "", "")
 	p, _ = m.lastCall("thread/fork")
 	got = nil
 	if err := json.Unmarshal(p, &got); err != nil {

@@ -1730,13 +1730,17 @@ func mcpStdioCall(req mcpReq) []byte {
 
 // mcpOwningSession names the session this MCP process serves.
 //
-// AF_SESSION_NAME is the contract, but it only reaches here for TERMINAL sessions:
-// session_tmux.go puts it in the tmux launch env, so codex forwards it (mcpreg's
-// extraEnvVars) and claude inherits it. MANAGED sessions have no such env — their MCP
-// child is spawned by the ONE shared daemon (`codex app-server` / `opencode serve`)
-// the Agent started, which cannot carry a per-session name. So managed callers always
-// land in the cwd fallback below (2026-08-09 実測: app-server と serve の子は
-// AF_SESSION_NAME 0 件、claude(tmux) の子は有り).
+// AF_SESSION_NAME is the contract, and it arrives two ways. TERMINAL sessions get it
+// from the tmux launch env (session_tmux.go), which codex forwards (mcpreg's
+// extraEnvVars) and claude inherits. MANAGED codex sessions get it from the THREAD
+// config instead (mcpreg.CodexThreadServers, docs/27 §9.3.1) — their MCP child is
+// spawned by the ONE shared daemon the Agent started, whose process env cannot carry
+// anything per-session.
+//
+// MANAGED OPENCODE has neither: its MCP config is global and the child is spawned per
+// project directory, so sessions sharing a worktree share one child (measured 1.18.15,
+// contract_mcp_identity_test.go). Those callers land in the cwd fallback below, as do
+// codex threads whose config had to be omitted (unreadable registry).
 //
 // The fallback matches the working folder, which is not unique — several sessions
 // routinely share one worktree. Narrowing by liveness resolves the common shape (the
