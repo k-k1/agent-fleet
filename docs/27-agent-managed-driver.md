@@ -329,6 +329,47 @@ thread 単位 replace/deny API を待つ必要はない。ただし本節冒頭�
 従って上記は権限隔離を要求するデプロイでは維持すべき制約だが、このワークスペースでの Codex managed
 チャット統合を妨げる条件ではない。会話固有の AF MCP は追加設定として thread ごとに分離する。
 
+#### 9.3.1 thread 単位 config は MCP 子プロセスへ「値」も届く（managed のセッション同定）
+
+上記は thread ごとに MCP の**在庫**を分離できるという測定で、**値の受け渡し**までは示していなかった。
+managed セッションの同定にはこちらが要る。
+
+背景: セッション側 MCP サーバは `AF_SESSION_NAME` で自分の持ち主を知る。TUI ルートは tmux 起動 env
+（`session_tmux.go`）でこれが届くが、**managed ルートには届かない** — MCP の子は AF が起動した共有
+daemon 1本（`codex app-server` / `opencode serve`）から spawn されるので、プロセス env に per-session の
+名前を載せる場所が無い。2026-08-09 実測でも app-server と opencode serve の子は `AF_SESSION_NAME` を
+持たず、claude(tmux) の子だけが持っていた。結果、`propose_session_handoff` は cwd 推定へ落ちて、
+同じワークツリーを複数セッションが共有していると同定に失敗する（実障害）。
+
+**実測（codex-cli 0.147.0、`drift_mcp_identity_test.go`）:**
+
+| thread config に書いたもの | MCP 子プロセスが観測した値 |
+| --- | --- |
+| `mcp_servers.<name>.env = {AF_SESSION_NAME: "slot_aaa"}` | `slot_aaa`（**届く**） |
+| 同じサーバ名で別 thread に `"slot_bbb"` | `slot_bbb`（thread 間で混ざらない） |
+| `env` を書かない（対照） | 未設定（プローブが値を別経路から拾っていないことの担保） |
+| `mcp_servers.<name>.env_vars = ["X"]` | daemon 自身の env の `X`（**thread scope でも転送は生きている**） |
+
+プローブは `command="/bin/sh"` + `args` で env をファイルへ落とすだけのもので、MCP ハンドシェイクは
+失敗する。既存 2 本と同じく「spawn されること」だけを測っており、モデルも課金も伴わない。
+既存 2 本（scoped / replaces）も 0.147.0 で同一結果 — 0.144.5・0.144.6 からのドリフト無し。
+
+従って **managed セッションの MCP 子へ per-session の識別子を注入することは可能**で、LLM に自分の
+セッション名を言わせる必要はない（そもそも managed の LLM は shell からも `$AF_SESSION_NAME` を
+読めないので、引数方式は `[agent-fleet]` 注記付きの指示でしか成立しない）。実装時の制約は 3 つ:
+
+1. **thread config はグローバルを置換する**（前節）。thread に `mcp_servers` を載せるなら、ユーザー
+   登録の MCP も含めた**全量**を thread ごとに materialize する必要がある。`mcpreg.Materialize` は
+   現状 kind 単位でグローバル設定ファイルを書くだけなので、thread 単位の組み立て口が要る。
+2. **秘密情報は `env` に literal で書かない。** `AGENT_TOKEN` / `AF_SECRET_KEY` は今日どおり
+   `env_vars` の転送で渡す（上表 4 行目のとおり thread scope でも効く）。literal にすると
+   app-server の RPC ペイロードと、その永続先へ token が乗る。
+3. `thread/start` と `thread/resume` の両方が `config` を受けるので、注入点は `threadStart` /
+   `threadResume` / `threadFork` の 3 箇所（現状は共有の `threadFeatures` を渡すだけ）。
+
+opencode managed は driver 側に MCP 配線が無く、共有 `opencode serve` のグローバル設定由来。
+同等の口があるかは**未調査**。
+
 ### 9.4 config
 
 ネイティブ設定ファイルと既存 settings API（`internal/agents/codex/settings.go` の regex ベース原子的更新、
