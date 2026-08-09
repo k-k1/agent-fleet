@@ -397,9 +397,25 @@ user レベルしか表示しないため（openai/codex#13025）、これを pr
 4. **秘密は今日と同じ経路のまま。** `AGENT_TOKEN` / `AF_SECRET_KEY` は `env_vars` 転送（上表 4 行目）で、
    値は RPC ペイロードに載らない。
 5. 注入点は `threadStart` / `threadResume` / `threadFork` の 3 箇所。af 以外にセッション名は渡さない。
-6. `thread/resume` が config を再適用するか（＝Agent 再起動後に復旧したセッションが識別子を保つか）は
-   **Tier 1 では測れない**: rollout はターンが始まって初めて生まれ、無認証のターンは rollout を残さない
-   （実測）。`TestLiveDriftCodexThreadMCPConfigAppliesOnResume` として Tier 2（`driftlive`）に置いた。
+6. ⚠️ **`thread/resume` は `config.mcp_servers` を適用しない**（実測 0.147.0・Tier 2
+   `TestLiveDriftCodexThreadMCPConfigAppliesOnResume`。rollout はターンが始まって初めて生まれ、
+   無認証のターンは rollout を残さないので Tier 1 では測れず、実ターン 1 回＝約 19k tokens を
+   使って測った）。**thread はスタートした時の MCP 設定を持ち続ける。**
+
+   従って識別子が生き残るかは「その thread を誰がスタートしたか」で決まる:
+
+   | 復旧の形 | af エントリのセッション名 |
+   | --- | --- |
+   | Agent 再起動・daemon は生存（adopt） | **保つ**（thread は start 時の設定のまま） |
+   | daemon 自体が入れ替わる（クラッシュ・Restart） | **失う** → cwd＋生存の推定へ縮退 |
+   | 新規セッション（thread/start） | 保つ |
+
+   修復口も探したが無い: `thread/settings/update` は `mcp_servers` を**受け取るが何も変わらない**
+   （同テストで測定）。bypass ポリシーの再表明と同じ手は使えない。
+
+   縮退先は「同じ作業フォルダで生きているセッションが 1 つなら当てられる」ので、実害が残るのは
+   **daemon 入れ替え × 同一ワークツリーに生存セッションが複数**の場合だけ。そこは取り違えずに
+   拒否する（`mcpOwningSession`）。
 
 **opencode managed には同等の口が無い**（実測 1.18.15、`contract_mcp_identity_test.go`）:
 
