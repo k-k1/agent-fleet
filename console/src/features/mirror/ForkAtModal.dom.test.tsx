@@ -104,6 +104,20 @@ describe("ForkAtModal", () => {
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("この分岐点は使えません");
   });
 
+  it("surfaces the server's reason from a RESOLVED {error} body, not a generic message", async () => {
+    // api() は失敗しても reject しない — 4xx/5xx は {error:{code,message}} として
+    // **解決**する（client.ts）。ここを resolve で書かないと、reject しか試さないテストが
+    // 通ってしまい、実際の画面では理由が全部「no session in fork response」に化ける。
+    apiJSON.mockResolvedValue({ error: { code: "fork_bad_anchor", message: "エージェントの発言からは分岐できません" } });
+    mount();
+    await act(async () => {
+      goButton().click();
+    });
+    expect(done).toEqual([]);
+    expect(closed).toBe(0);
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("エージェントの発言からは分岐できません");
+  });
+
   it("does not report success when the response carries no session", async () => {
     // 200 でも name が無ければ分岐できていない。ここで通すと、開くべきペインが無いまま
     // 「分岐しました」だけが出る。

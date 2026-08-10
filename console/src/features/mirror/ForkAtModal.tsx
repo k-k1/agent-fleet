@@ -56,6 +56,10 @@ export function ForkAtModal({
         at: target.anchorId,
         include: mode === "continue",
       });
+      // api() は失敗しても throw せず {error:{code,message}} を返す（client.ts）。ここで
+      // 先に見ないと、サーバが返した理由（分岐点が使えない・上限・起動方式）が全部下の
+      // 汎用メッセージに化け、失敗しても原因が分からない画面になる。
+      if (d?.error) throw d.error as ApiError;
       if (!d?.name) throw new Error("no session in fork response");
       // 下書きを入れるのは「打ち直す」ときだけ。「続きから」ではその発言は分岐先に残って
       // いるので、入力欄に同じ文が現れたら二重に見える。
