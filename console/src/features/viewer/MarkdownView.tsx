@@ -93,7 +93,7 @@ export function MarkdownView({
     const repair = repairFullwidthTables(body);
     const rawHtml = marked.parse(repair?.body ?? body, { gfm: true, breaks }) as string;
     el.innerHTML = DOMPurify.sanitize(rawHtml);
-    if (frontMatter) renderFrontMatter(el, frontMatter.attributes);
+    if (frontMatter) renderFrontMatter(el, frontMatter.attributes, frontMatter.lenient);
 
     renderEmoji(el); // :shortcode: → emoji (skips code / pre)
 
@@ -243,7 +243,7 @@ function markRepairedTables(root: HTMLElement, repair: TableRepair) {
   for (const index of repair.repaired) tables[index]?.before(notice());
 }
 
-function renderFrontMatter(root: HTMLElement, attributes: Record<string, unknown>) {
+function renderFrontMatter(root: HTMLElement, attributes: Record<string, unknown>, lenient?: boolean) {
   const panel = document.createElement("dl");
   panel.className = "md-frontmatter";
   for (const [key, value] of Object.entries(attributes)) {
@@ -253,7 +253,15 @@ function renderFrontMatter(root: HTMLElement, attributes: Record<string, unknown
     content.textContent = formatFrontMatterValue(value);
     panel.append(name, content);
   }
-  if (panel.childElementCount) root.prepend(panel);
+  if (!panel.childElementCount) return;
+  root.prepend(panel);
+  // Same bargain as a repaired table: readable here, still broken everywhere
+  // else, so the reader is told rather than left to find out on GitHub.
+  if (!lenient) return;
+  const note = document.createElement("p");
+  note.className = "md-frontmatter-note";
+  note.textContent = t("view.frontmatter_invalid");
+  root.prepend(note);
 }
 
 function formatFrontMatterValue(value: unknown): string {
