@@ -50,6 +50,7 @@
 - [53-chromium-attach-view.md](53-chromium-attach-view.md) — 外部プロセスが所有するheadless Chromiumへloopback CDPでattachし、描画・限定入力をConsoleへ中継。ローカルAF MCPが引き渡しを準備し、ユーザーはaction linkを1回クリックして操作ペインを開く（設計確定・未実装。設計判断は [decisions/0038](decisions/0038-chromium-attach-view.md)）
 - [54-opencode-console-oauth.md](54-opencode-console-oauth.md) — opencode に API キー以外の認証経路を足す: 共有 `opencode serve` の device flow API（`mode:"auto"`）を Console の接続カードから叩き、opencode.ai アカウントでサインインする（✅ 実装済み。API 実測記録を含む）
 - [55-fork-at-message.md](55-fork-at-message.md) — 発言時点からの会話分岐: ミラーの過去のユーザー発言を選び、そこまでの文脈を持つ新セッションを起こす。アンカーは kind 固有の不透明 ID（claude=uuid / codex=turn id / opencode=message id / copilot=event id）で、codex・opencode は公式パラメータ、claude・copilot は転写の切り詰め（各 CLI の実測記録を含む。◐ P1〜P5＝契約＋4 kind（claude/codex/opencode/copilot）＋Console 導線＋「この発言の続きから」まで実装済み・4 種とも実 CLI で通し確認済み。残＝Console からの通し確認。cursor/kiro/agy は対象外と確定。設計判断は [decisions/0039](decisions/0039-fork-at-message.md)）
+- [58-cross-session-messaging.md](58-cross-session-messaging.md) — セッション同士のメッセージ: アシスタントを介さず、セッションが `list_peer_sessions` / `send_to_peer_session` で互いへ平文1本を送る。配管は既存（停止中は再開して届け、ターン開始まで配達検証）で、新規は帰属と安全弁 — 指示台帳の arm に触らない・shell/ssm は送受信とも不可・封筒はプロンプト前置・ループ対策とミラー専用行。Claude ネイティブ機能との共存も扱う（設計確定・未実装。**AF は `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` でネイティブ機能を無自覚に殺していた**実測記録を含む。設計判断は [decisions/0041](decisions/0041-cross-session-messaging.md)）
 
 > 完了後も実装契約や実測リファレンスとしてコードから参照する 24・26〜30 は番号付きのまま残す。
 > 時系列の実装プランとして役目を終えたものは history/ へ移動: [19 assistant-chat](history/19-assistant-chat.md) /
@@ -98,6 +99,7 @@
 - [0033-stored-text-locale.md](decisions/0033-stored-text-locale.md) — 「保存データは JA 統一」を撤回：利用者が読む自前生成文（chat の notice）はキー＋引数で保存し Console のカタログで訳す。モデルが読む/書く文字列は据え置き（[0016](decisions/0016-i18n.md) §7 を一部上書き・設計 [28 §2.5/§4](28-i18n.md)）
 - [0038-chromium-attach-view.md](decisions/0038-chromium-attach-view.md) — 外部所有Chromiumはloopback CDPへattachし、MCPが返すaction linkをユーザーがクリックしてConsoleペインへ開く（設計 [53](53-chromium-attach-view.md)）
 - [0039-fork-at-message.md](decisions/0039-fork-at-message.md) — 会話の分岐点は kind 固有の不透明アンカーで指し（`idx` は使わない）、codex/opencode は公式パラメータ、claude だけ `sessionId` のみ書き換える jsonl 手術を許す（設計 [55](55-fork-at-message.md)・旧判断 [history/fork-from-chat](history/fork-from-chat.md) を差し替え）
+- [0041-cross-session-messaging.md](decisions/0041-cross-session-messaging.md) — セッション同士のメッセージは af の直接送信（P2P）で行い、Claude ネイティブ経路とは共存させる。peer は指示台帳の arm に触らず、shell/ssm は送受信とも不可、封筒はプロンプト前置。`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` は落とし `DISABLE_TELEMETRY`/`DISABLE_ERROR_REPORTING` は残す（設計 [58](58-cross-session-messaging.md)・[35](35-packaging.md) §35.9 の残置判断を訂正）
 
 > 0023〜0032 は対応する設計ドキュメントの行（上記「番号付きの機能設計・実装記録」）に併記。
 
