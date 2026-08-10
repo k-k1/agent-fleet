@@ -16,6 +16,18 @@ the interactive screen is just redoing its onboarding, and it usually clears if 
 from the ⋯ menu. The traditional manual `/login` inside the terminal works alongside this too.
 You can check the connection status in ⚙ Settings → the "Agents" tab ([06](06-agents.md)).
 
+### claude doesn't know `/list-agents`, or says it can't message another session
+
+Claude Code's own cross-session messaging is **deliberately disabled** in Agent Fleet, because
+enabling it also switches Claude's usage telemetry back on. Agent Fleet has its own version of
+the same thing: turn on **Settings > Agents > Session > "Messages between sessions"** (off by
+default; it applies to sessions started from then on). It reaches other agent kinds as well as
+claude, and reaches stopped sessions too. The full comparison is in
+[02 Sessions](02-sessions.md#how-this-differs-from-claude-codes-own-version).
+
+If the agent still seems to lack the tools after you turn it on, check whether that session was
+already running beforehand — a running session keeps its current tools until it restarts.
+
 ### A session won't resume / is shown struck through
 
 If the state is **"Folder missing — can't resume"**, that session's **working folder is gone**
