@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -355,6 +356,58 @@ func TestBrowserAttachmentResumesScreencastAfterUnsupportedURL(t *testing.T) {
 	status, err := m.Get(created.ID)
 	if err != nil || status.State != attachmentStateViewerOpen {
 		t.Fatalf("recovered attachment status = %+v err=%v", status, err)
+	}
+	m.Delete(created.ID)
+}
+
+// TestBrowserAttachmentScreencastRetriesFrameNotActive covers the same
+// immediate-attach race as TestBrowserScreencastRetriesFrameNotActive, but for
+// the Chromium attach path: a viewer attaches while the target page is still
+// swapping from about:blank to the navigated document, so the first
+// Page.startScreencast calls are rejected with "Not attached to an active
+// page". startScreencast must retry that transient rejection instead of
+// surfacing it as a fatal error that disconnects the viewer with zero frames.
+func TestBrowserAttachmentScreencastRetriesFrameNotActive(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	cdp.transient = map[string]int{"Page.startScreencast": 3}
+	cdp.transientErr = fmt.Errorf("CDP Page.startScreencast (-32000): Not attached to an active page")
+	m := fakeAttachmentManager(cdp, 0)
+	created := createFakeAttachment(t, m)
+	a, err := m.lookupActive(created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.mu.Lock()
+	a.visible = true
+	a.mu.Unlock()
+
+	if err := a.startScreencast(); err != nil {
+		t.Fatalf("startScreencast should retry the transient not-active rejection, got %v", err)
+	}
+	a.castMu.Lock()
+	casting := a.casting
+	a.castMu.Unlock()
+	if !casting {
+		t.Fatal("screencast did not arm after the transient rejections cleared")
+	}
+	n := 0
+	for _, mth := range cdp.methods() {
+		if mth == "Page.startScreencast" {
+			n++
+		}
+	}
+	if n < 4 {
+		t.Fatalf("expected startScreencast to be retried (>=4 calls), got %d", n)
+	}
+
+	// A non-transient error must NOT be retried: it returns immediately.
+	a.stopScreencast()
+	cdp.mu.Lock()
+	cdp.fail = map[string]error{"Page.startScreencast": fmt.Errorf("CDP Page.startScreencast (-32000): some other failure")}
+	cdp.calls = nil
+	cdp.mu.Unlock()
+	if err := a.startScreencast(); err == nil {
+		t.Fatal("a non-transient startScreencast error should be returned, not swallowed")
 	}
 	m.Delete(created.ID)
 }
