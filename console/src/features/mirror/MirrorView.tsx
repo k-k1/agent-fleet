@@ -2000,8 +2000,12 @@ export function MirrorView({
     if (!res) return; // 送るものが無い
     if (!res.ok) {
       // 届かなかった＝コメントは畳まれていない。理由を出して打ち直せることを伝える
-      // （undelivered = 却下は通ったが本文が入らなかった）。
-      toast(res.message || tr(res.reason === "undelivered" ? "plan.feedback_undelivered" : "mirror.send_failed"));
+      // （undelivered = 却下は通ったが本文が入らなかった）。ただし say 経路の失敗は
+      // sendPrompt が具体的な理由（許可待ち・停止中…）を既に出しているので重ねない —
+      // 汎用の「送信できませんでした」がその上に乗ると、何が起きたのか分からなくなる。
+      if (res.reason !== "say") {
+        toast(res.message || tr(res.reason === "undelivered" ? "plan.feedback_undelivered" : "mirror.send_failed"));
+      }
       return;
     }
     if (res.via === "reject") {

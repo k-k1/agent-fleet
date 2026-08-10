@@ -234,11 +234,16 @@ export interface PlanRespondLike {
   message?: string;
 }
 
+// 失敗の reason は「誰が利用者に伝えるか」も決める:
+//   say         — 発話経路が拒否された。say（＝sendPrompt）が理由を通知済みなので、
+//                 呼び出し側が重ねて出すと汎用文言が具体的な理由に被さる。
+//   respond     — /plan-respond が断った。message をそのまま見せる。
+//   undelivered — 却下は通ったが本文が入らなかった（コンポーザ復帰を確認できず）。
 export type PlanDeliveryResult =
   /** 届いた＝コメントは畳み済み。via は経路、feedback は実際に送った本文（エコー用）。 */
   | { ok: true; via: "reject" | "prompt"; feedback: string }
-  /** 届かなかった＝何も畳んでいない。undelivered は「却下は通ったが本文が入らなかった」。 */
-  | { ok: false; reason: "failed" | "undelivered"; message?: string };
+  /** 届かなかった＝何も畳んでいない。 */
+  | { ok: false; reason: "say" | "respond" | "undelivered"; message?: string };
 
 export async function deliverPlanComments(
   key: string,
@@ -254,7 +259,7 @@ export async function deliverPlanComments(
   const ids = list.map((c) => c.id);
   // 発話経路。say の戻り値を見ずに畳んだのが実障害の正体なので、ここが唯一の分岐点。
   const bySaying = async (): Promise<PlanDeliveryResult> => {
-    if (!(await deps.say(feedback))) return { ok: false, reason: "failed" };
+    if (!(await deps.say(feedback))) return { ok: false, reason: "say" };
     markPlanCommentsSent(key, ids);
     return { ok: true, via: "prompt", feedback };
   };
@@ -263,7 +268,7 @@ export async function deliverPlanComments(
   if (!res.ok) {
     // すでに別経路で判断済み（no_plan）なら、ただの発話として届ける。
     if (res.code === "no_plan") return bySaying();
-    return { ok: false, reason: "failed", message: res.message };
+    return { ok: false, reason: "respond", message: res.message };
   }
   // 却下は通ったがフィードバックは届いていない（コンポーザ復帰を確認できず）。
   if (!res.delivered) return { ok: false, reason: "undelivered", message: res.message };

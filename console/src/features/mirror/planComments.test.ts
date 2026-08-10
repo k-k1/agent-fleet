@@ -157,7 +157,9 @@ describe("deliverPlanComments", () => {
     const say = vi.fn().mockResolvedValue(false);
     const res = await deliverPlanComments(k(), { pending: false, respond: vi.fn(), say });
 
-    expect(res).toEqual({ ok: false, reason: "failed" });
+    // reason "say" = 発話経路の失敗。sendPrompt が理由を通知済みなので、呼び出し側は
+    // 重ねてトーストしない（この 1 文字が二重トーストの有無を決める）。
+    expect(res).toEqual({ ok: false, reason: "say" });
     expect(sentBodies()).toEqual([]);
     expect(unsentComments(getPlanComments(k()))).toHaveLength(1);
   });
@@ -169,7 +171,7 @@ describe("deliverPlanComments", () => {
     const res = await deliverPlanComments(k(), { pending: true, respond, say });
 
     expect(say).toHaveBeenCalledTimes(1); // フォールバックは走る
-    expect(res).toEqual({ ok: false, reason: "failed" });
+    expect(res).toEqual({ ok: false, reason: "say" });
     expect(sentBodies()).toEqual([]);
   });
 
@@ -206,7 +208,7 @@ describe("deliverPlanComments", () => {
       say: vi.fn().mockResolvedValue(true),
     });
 
-    expect(res).toEqual({ ok: false, reason: "failed", message: "セッションが停止しています" });
+    expect(res).toEqual({ ok: false, reason: "respond", message: "セッションが停止しています" });
     expect(sentBodies()).toEqual([]);
   });
 
