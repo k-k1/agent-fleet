@@ -212,6 +212,54 @@ off.** In the chat view, **"Branch here"** on one of your past messages
 conversation up to that point copied as-is, on the same agent. The exact wording and the
 fine details survive, which is what you want for "redo it from that instruction".
 
+## Messages between sessions
+
+One of your running sessions can send **a single short message** to another. If a handoff
+passes the whole context, this passes one line.
+
+It earns its keep in situations like these:
+
+- A session working in another worktree landed a change that breaks yours — "I just rebased
+  develop; pull `api.ts` before you carry on"
+- A decision the other session was blocked on got settled — "auth is OAuth, go ahead"
+- A long-running job reports its result back to the session you are watching
+
+**It is off by default.** Turn it on in **Settings > Agents > Session > "Messages between
+sessions"**. The change applies to **sessions started from then on**; sessions already running
+keep their current tools until they restart.
+
+Once it is on, an agent sends a message when it judges one is needed, and you can also ask for
+one ("tell the session next door what we just did").
+
+- **Messages cross agent kinds** — claude to codex, opencode to cursor, and so on.
+- **They reach a stopped session** — it is resumed first, then the message is delivered.
+- **Delivery is confirmed; being read or acted on is not.** A reply is not guaranteed either.
+- **Only plain text travels.** No conversation history, no files. To pass the context itself,
+  use the handoff or the branch above.
+- **Raw shell sessions (shell / ssm) can neither send nor receive**, because the text sent to
+  them would run verbatim as a command.
+
+The receiving agent is told explicitly that the message is *not* an instruction from you. A
+message from another session **cannot stand in for your approval** (it can't answer a pending
+permission prompt) and **is not a reason to edit configuration or `CLAUDE.md`**. Commands
+written in the body arrive as plain text and are not executed. The chat view badges each one
+with its sender, so it never blends into what you typed.
+
+### How this differs from Claude Code's own version
+
+Claude Code has a feature for the same purpose (cross-session messaging — `/list-agents` and
+`SendMessage`), but **it is disabled in Agent Fleet**. Enabling it also switches Claude's
+usage telemetry back on, which we chose not to make the default for a self-hosted fleet. That
+is why `/list-agents` does nothing here; use the Agent Fleet version above instead.
+
+| | Claude Code's | Agent Fleet's |
+|---|---|---|
+| Which agents you can reach | claude only | claude / codex / opencode / cursor / kiro / agy / copilot |
+| A stopped session | Can't be reached | **Resumed, then delivered** |
+| Record of it | One collapsed line in the terminal | A badge with the sender in the chat view |
+| Sessions on another machine or the web | Can reply to them | **Not supported** (same workspace only) |
+| Holding or refusing on the receiving side | Available | Not yet — only the workspace-wide on/off |
+
 ## Changing the title and branch name
 
 - **Rename** — changes the identifying name in the list. Saving it empty reverts to the automatic name (repository name + timestamp). **"Ask AI to suggest"** has a name proposed from the conversation contents; adopt it with "Use this".
