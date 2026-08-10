@@ -28,6 +28,13 @@ import (
 // 差し替えるため（install_kiro のピン比較テスト）— 実行時は書き換えない。
 var buildPinsPath = "/usr/local/share/agent-fleet/versions.json"
 
+// bakedUVToolRoot はイメージが `uv tool install` を置く root（Dockerfile の
+// UV_TOOL_DIR）。buildPinsPath と同じくテスト差し替えのための var — 実行時は
+// 書き換えない。ハードコードのままだと「焼き込み側には無いはず」を確かめる
+// テストが *実コンテナの焼き込み* を拾ってしまい、焼き込みの無い CI では通るのに
+// 実環境の Workspace では落ちる、という逆向きの脆さになる。
+var bakedUVToolRoot = "/usr/local/share/uv/tools"
+
 // toolSpec は 1 ツール分の観測点。Cmd は PATH 解決（実効）と ~/.local/bin/<Cmd>
 // （ユーザー local）の両方に使う。Baked はイメージが焼く実体パス（gh はラッパーでは
 // なく libexec の本体、go は tarball 展開先）。
@@ -149,7 +156,7 @@ func uvToolRoot(exePath, home string) string {
 	if home != "" && strings.HasPrefix(exePath, home+string(os.PathSeparator)) {
 		return filepath.Join(home, ".local", "share", "uv", "tools")
 	}
-	return "/usr/local/share/uv/tools"
+	return bakedUVToolRoot
 }
 
 // uvToolVersion は uv tool の venv にある dist-info ディレクトリ名から版を読む。
