@@ -797,11 +797,16 @@ func promptBlocker(name string) string {
 	if meta.Kind == session.KindKiro {
 		return blockingState(kiro.LiveState(meta))
 	}
-	st, ok := status.Read(session.UUID(meta.Dir, name))
+	sid := session.UUID(meta.Dir, name)
+	st, ok := status.Read(sid)
 	if !ok {
 		return ""
 	}
-	return blockingState(st.State)
+	// effectiveModal: a captured question/plan payload wins over the "permission" the
+	// tool's own permission_prompt wrote, so the refusal names the modal that is really
+	// on screen (plan_pending, not permission_pending) and the operator is pointed at
+	// the surface that can actually decide it.
+	return blockingState(effectiveModal(sid, st.State))
 }
 
 // blockingState maps a live state to "" (free) or the state itself (blocking). An
