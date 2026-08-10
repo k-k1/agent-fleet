@@ -82,6 +82,27 @@ func IsBuiltin(id string) bool {
 	return ok
 }
 
+// PeerMessagingEnabled reports whether the session-side af server should also advertise
+// the session-to-session messaging tools (docs/58 / ADR 0041). package main installs it
+// at startup (it reads ui-prefs, which lives there); nil means OFF, which is also the
+// product default — peer messaging is opt-in.
+//
+// A hook rather than a constant because the answer is a user setting that can change
+// between materializations, and mcpreg must not grow a dependency on the settings layer.
+var PeerMessagingEnabled func() bool
+
+func peerMessagingOn() bool { return PeerMessagingEnabled != nil && PeerMessagingEnabled() }
+
+// builtinRunArgsFor resolves a builtin's launch args, applying the switches that depend
+// on user settings rather than on the spec alone.
+func builtinRunArgsFor(id string, spec builtinSpec) []string {
+	args := append([]string(nil), spec.runArgs...)
+	if id == BuiltinAF && peerMessagingOn() {
+		args = append(args, "--peer-messaging")
+	}
+	return args
+}
+
 // BuiltinRunArgs returns the subcommand args that launch a builtin's MCP server.
 // Callers supply the executable themselves because it is not always this binary's
 // own path: agy's chat runs from an isolated HOME and needs its own resolved exe.
@@ -90,7 +111,7 @@ func BuiltinRunArgs(id string) ([]string, bool) {
 	if !ok {
 		return nil, false
 	}
-	return append([]string(nil), spec.runArgs...), true
+	return builtinRunArgsFor(id, spec), true
 }
 
 // BuiltinReady reports whether the user has configured the credential the builtin
@@ -135,7 +156,7 @@ func builtinDefs(s *secrets.Data) []ServerDef {
 			Origin:    OriginBuiltin,
 			Transport: TransportStdio,
 			Command:   paths.ExePath(),
-			Args:      append([]string(nil), spec.runArgs...),
+			Args:      builtinRunArgsFor(id, spec),
 			Enabled:   true,
 			Targets:   targets,
 		})

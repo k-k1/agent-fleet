@@ -211,6 +211,12 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// (docs/38): "schedule" / "schedule-manual" from the CP scheduler; anything else
 		// (incl. empty — the operator MCP) records as "operator". Whitelisted server-side.
 		Source string `json:"source"`
+		// PeerFrom marks this as a session-to-session message and names the SENDING
+		// session (docs/58 / ADR 0041). It is not a badge string the caller picks: the
+		// server validates it, refuses report_to alongside it, builds the envelope
+		// itself and applies the peer rate limit. See session_peer.go for why those
+		// invariants live server-side.
+		PeerFrom string `json:"peer_from"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_body", "invalid JSON body")
@@ -229,6 +235,41 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("keys/seq must have at most %d elements", maxInputSteps))
 		return
 	}
+	// peer 送信（docs/58 / ADR 0041）。ここで全ての不変条件を満たしてから通常の投入経路へ
+	// 合流させる。managed/tui の分岐より前に置くのは自己申告1行と同じ理由で、片方の経路
+	// だけ素通しになるのを防ぐため。
+	if body.PeerFrom != "" {
+		// arm 非干渉は構造で担保する: 両方が載った要求は通さない。呼び出し元の実装ミスで
+		// peer メッセージが指示台帳に載ると、リコンサイラが「利用者の新指示」と誤認する
+		// （ADR 0041 決定4／docs/51 の早期 settle 事故と同型）。
+		if body.ReportTo != "" {
+			httpx.WriteErr(w, http.StatusBadRequest, "peer_with_report_to",
+				"peer_from と report_to は同時に指定できません（peer メッセージは指示台帳に載せません）")
+			return
+		}
+		if len(body.Keys) > 0 || len(body.Seq) > 0 {
+			httpx.WriteErr(w, http.StatusBadRequest, "peer_needs_prompt",
+				"peer_from は {prompt} 経路でのみ使えます")
+			return
+		}
+		if err := peerValidateMessage(body.Prompt); err != nil {
+			writePeerErr(w, err)
+			return
+		}
+		if _, err := peerPolicy(body.PeerFrom, name); err != nil {
+			writePeerErr(w, err)
+			return
+		}
+		if err := peerRate.allow(body.PeerFrom, name, strings.TrimSpace(body.Prompt), time.Now()); err != nil {
+			writePeerErr(w, err)
+			return
+		}
+		// 封筒はサーバが付ける（呼び出し元に組ませない＝付け忘れも名乗り詐称も起きない）。
+		body.Prompt = peerEnvelope(body.PeerFrom, body.Prompt)
+		// 無人経路なので配達検証は必須。打鍵 200 で「送れた」と返すと、送信側モデルは
+		// 伝わった前提で先へ進んでしまう。
+		body.Confirm = true
+	}
 	// docs/51 Phase 3 §自己申告ファストパス: 報告義務を負う指示（report_to 付き）にだけ
 	// 「終わったら af_report を呼べ」を1行足す。managed/tui の分岐より前に置くのは、
 	// どちらの経路でも同じ1行が乗るようにするため（分岐の後だと片方で漏れる）。
@@ -245,7 +286,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	// /input 側の分岐が漏れていた）。{keys}/{seq}（生 TUI 駆動）は tui 専用のまま。
 	if len(body.Keys) == 0 && len(body.Seq) == 0 {
 		if meta, ok := session.ReadMeta(name); ok && meta.DriverKind() == session.DriverManaged {
-			handleManagedInputPrompt(w, meta, body.Prompt, body.ReportTo, body.Source)
+			handleManagedInputPrompt(w, meta, body.Prompt, body.ReportTo, body.Source, body.PeerFrom)
 			return
 		}
 	}
@@ -411,10 +452,16 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	// 追加であって上書きではないので、キュー投入で先行指示が潰れない)。carrying report_to
 	// (operator / scheduler) それ自体は、ミラーが user ターンにバッジを付けるための由来
 	// としても覚える (docs/30 ② / docs/38 バッジ).
-	if body.ReportTo != "" {
+	switch {
+	case body.PeerFrom != "":
+		// peer は台帳に載せない（arm 非干渉 — ADR 0041 決定4）。覚えるのはミラーの
+		// バッジ用の由来だけ。Discord への転記もしない: あれは「利用者が Console で
+		// 打った入力」をスレッドへ反映するためのもので、peer はどちらでもない。
+		recordInjection(name, body.Prompt, turnSourcePeer)
+	case body.ReportTo != "":
 		addInstruction(name, body.ReportTo, injectionSource(body.Source))
 		recordInjection(name, body.Prompt, injectionSource(body.Source))
-	} else {
+	default:
 		// Genuine Console-typed input (not an operator/MCP injection): mirror it into
 		// the session's Discord thread so the thread reflects both directions (docs/37
 		// Fix ②). Best-effort + async — never blocks or fails the input.
@@ -423,11 +470,32 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name})
 }
 
+// writePeerErr maps a peer rejection (session_peer.go) onto its HTTP status. 4xx across
+// the board: every one of them is "the caller may not send this", not a server fault.
+// The rate/duplicate pair gets 429 so a sender can tell "slow down" from "malformed".
+func writePeerErr(w http.ResponseWriter, err error) {
+	rej, ok := err.(*peerRejection)
+	if !ok {
+		httpx.WriteErr(w, http.StatusBadRequest, "peer_rejected", err.Error())
+		return
+	}
+	status := http.StatusBadRequest
+	switch rej.Code {
+	case "peer_rate_limited", "peer_duplicate":
+		status = http.StatusTooManyRequests
+	case "peer_from_forbidden", "peer_target_forbidden":
+		status = http.StatusForbidden
+	case "peer_from_unknown", "peer_target_unknown":
+		status = http.StatusNotFound
+	}
+	httpx.WriteErr(w, status, rej.Code, rej.Msg)
+}
+
 // handleManagedInputPrompt is /input's {prompt} counterpart to handleManagedTurn's
 // start op (session_turn.go) — same ThreadHandle.Send delivery, but keeps /input's
 // report_to contract (addInstruction / recordOperatorInjection) that /turn doesn't
 // carry, so send_to_session's docs/30 auto-report keeps working for managed sessions.
-func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, reportTo, source string) {
+func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, reportTo, source, peerFrom string) {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
 		httpx.WriteErr(w, http.StatusBadRequest, "empty_prompt", "prompt, keys or seq is required")
@@ -458,10 +526,13 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 		return
 	}
 	markSessionWorking(meta.Name)
-	if reportTo != "" {
+	switch {
+	case peerFrom != "":
+		recordInjection(meta.Name, prompt, turnSourcePeer) // 台帳には載せない（ADR 0041 決定4）
+	case reportTo != "":
 		addInstruction(meta.Name, reportTo, injectionSource(source))
 		recordInjection(meta.Name, prompt, injectionSource(source))
-	} else {
+	default:
 		go bridge.MirrorUserInput(meta.Name, prompt) // docs/37 Fix ②: Console-input mirror
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": meta.Name})

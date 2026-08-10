@@ -476,6 +476,17 @@
 .mirror-turn.user.from-schedule {
   border-left: 2px solid color-mix(in srgb, var(--ok, #5ec07a) 55%, var(--border));
 }
+/* Peer-injected user turn (docs/58 / ADR 0041): ANOTHER SESSION sent this. Its own
+   (purple-ish) hue so the four injected origins (operator / chat / schedule / peer) read
+   apart. This badge is the only visualisation a peer message gets, so it is deliberately
+   as loud as the operator one rather than a faint metadata pill. */
+.mt-peer {
+  background: color-mix(in srgb, var(--peer, #b48ee0) 18%, transparent);
+  color: var(--peer, #b48ee0);
+}
+.mirror-turn.user.from-peer {
+  border-left: 2px solid color-mix(in srgb, var(--peer, #b48ee0) 55%, var(--border));
+}
 /* Reasoning effort/variant chip (codex reasoning_effort / opencode variant), shown
    right after the model. A faint pill so it reads as secondary metadata. */
 .mt-effort {
