@@ -183,6 +183,10 @@ func buildMux() *http.ServeMux {
 	// Separate axis from the MCP registry (docs/48) — never auto-triggered, never
 	// touches user/global config.
 	mux.HandleFunc("GET /repos/{name}/mcp", handleRepoMCP)
+	// docs/56 P1: reflect a server from one project MCP file to another
+	// (plan → apply, optimistic lock via planHash) and add a git-ignore entry.
+	mux.HandleFunc("POST /repos/{name}/mcp/plan", handleRepoMCPPlan)
+	mux.HandleFunc("POST /repos/{name}/mcp/apply", handleRepoMCPApply)
 	// Source-control view + light edits (docs/17 P3-5).
 	mux.HandleFunc("GET /repos/{name}/changes", handleRepoChanges)
 	mux.HandleFunc("GET /repos/{name}/diff", handleRepoDiff)

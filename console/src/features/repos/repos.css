@@ -907,3 +907,107 @@
   font-size: 11px;
   color: var(--warn);
 }
+
+/* ProjectActionPanels (docs/56 P1) — the copy/ignore write flows. */
+.pmcp-link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font-size: 11px;
+  cursor: pointer;
+  margin-left: auto;
+}
+.pmcp-link-btn:hover {
+  text-decoration: underline;
+}
+.pmcp-cell-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--ok);
+  cursor: pointer;
+}
+.pmcp-cell-btn:hover {
+  text-decoration: underline;
+}
+.pmcp-panel {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border2, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pmcp-panel-done {
+  background: color-mix(in srgb, var(--ok) 6%, transparent);
+}
+.pmcp-panel-title {
+  margin: 0;
+  font-weight: 600;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pmcp-panel-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+.pmcp-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+.pmcp-radio-group label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 400;
+}
+.pmcp-warn-hint {
+  color: var(--warn);
+}
+.pmcp-preview {
+  border-top: 1px solid var(--border2, var(--border));
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pmcp-diff {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.pmcp-diff-side {
+  border-radius: 6px;
+  padding: 6px 8px;
+  overflow-x: auto;
+}
+.pmcp-diff-side.del {
+  background: color-mix(in srgb, var(--del) 8%, transparent);
+}
+.pmcp-diff-side.add {
+  background: color-mix(in srgb, var(--ok) 8%, transparent);
+}
+.pmcp-diff-h {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.pmcp-diff-side pre {
+  margin: 0;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
