@@ -682,9 +682,11 @@
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
-/* Sits above a table the viewer had to repair (fullwidth ｜ instead of |). Quiet on
-   purpose — the table is readable, it is the source file that still needs fixing. */
-.md-table-repaired {
+/* Sits above a table the viewer had to repair (fullwidth ｜ instead of |), or above
+   front matter that is not valid YAML. Quiet on purpose — the document is readable,
+   it is the source file that still needs fixing. */
+.md-table-repaired,
+.md-frontmatter-note {
   margin: 1.4em 0 0.4em;
   padding: 5px 9px;
   border-left: 3px solid var(--warn);
@@ -693,6 +695,11 @@
   color: var(--muted);
   font-size: 0.85em;
   line-height: 1.5;
+}
+/* This one opens the document, so it has no room above it. */
+.md-frontmatter-note {
+  margin-top: 0;
+  margin-bottom: 0.6em;
 }
 .markdown h1,
 .markdown h2,
