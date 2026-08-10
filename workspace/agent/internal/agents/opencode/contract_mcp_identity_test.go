@@ -152,9 +152,9 @@ func seedProbeMCP(t *testing.T, home, log string) {
 				"type": "local",
 				"command": []string{"/bin/sh", "-c",
 					// Idles rather than exiting: an instant exit could be respawned in a loop
-			// and inflate the count. 45s outlives the measurement window without
-			// leaving a long-lived orphan on a shared host.
-			`printf '%s\n' "${AF_SESSION_NAME-<unset>}" >> "$0"; exec sleep 45`, log},
+					// and inflate the count. 45s outlives the measurement window without
+					// leaving a long-lived orphan on a shared host.
+					`printf '%s\n' "${AF_SESSION_NAME-<unset>}" >> "$0"; exec sleep 45`, log},
 				"environment": map[string]string{"AF_SESSION_NAME": globalProbeValue},
 				"enabled":     true,
 			},
