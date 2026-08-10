@@ -705,25 +705,41 @@ func (a *browserAttachment) startScreencast() error {
 	if a.casting {
 		return nil
 	}
-	a.mu.Lock()
-	blocked := a.terminal || a.state == attachmentStateUnsupportedURL || a.controlMode == attachmentControlLocked
-	// Cap the IMAGE at the pane, not the layout viewport: zoom-to-fit lays the
-	// page out wider on purpose, and the frame is scaled back down anyway.
-	image := a.pane
-	if image.Width < 1 || image.Height < 1 {
-		image = a.viewport
-	}
-	a.mu.Unlock()
-	if blocked {
-		return nil
-	}
-	err := a.manager.call(a.cdp, a.sessionID, "Page.startScreencast", map[string]any{
-		"format": "jpeg", "quality": a.manager.config.JPEGQuality,
-		"maxWidth": image.Width, "maxHeight": image.Height,
-	}, nil)
-	if err == nil {
-		a.casting = true
-		a.castGen.Store(a.castEpoch.Add(1))
+	// A viewer can attach while the target page is still committing its first
+	// navigation (about:blank -> target), the same transient window documented
+	// on the owned-page path in browser_manager.go. Retry briefly on that one
+	// error; any other error, or an attachment that has gone away, returns
+	// immediately. See screencastFrameNotActive.
+	var err error
+	for attempt := 0; attempt < 12; attempt++ {
+		a.mu.Lock()
+		blocked := a.terminal || a.state == attachmentStateUnsupportedURL || a.controlMode == attachmentControlLocked
+		// Cap the IMAGE at the pane, not the layout viewport: zoom-to-fit lays the
+		// page out wider on purpose, and the frame is scaled back down anyway.
+		image := a.pane
+		if image.Width < 1 || image.Height < 1 {
+			image = a.viewport
+		}
+		a.mu.Unlock()
+		if blocked {
+			return nil
+		}
+		if !a.manager.owns(a) {
+			return errBrowserNotFound
+		}
+		err = a.manager.call(a.cdp, a.sessionID, "Page.startScreencast", map[string]any{
+			"format": "jpeg", "quality": a.manager.config.JPEGQuality,
+			"maxWidth": image.Width, "maxHeight": image.Height,
+		}, nil)
+		if err == nil {
+			a.casting = true
+			a.castGen.Store(a.castEpoch.Add(1))
+			return nil
+		}
+		if !screencastFrameNotActive(err) {
+			return err
+		}
+		time.Sleep(40 * time.Millisecond)
 	}
 	return err
 }
