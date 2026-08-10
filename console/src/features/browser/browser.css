@@ -178,6 +178,24 @@
 }
 .browser-attach-mode-user-control { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
 .browser-attach-mode-locked { color: var(--muted); }
+/* The wrapper only exists so useDismiss has a stable ref while open; it must
+   not add a flex item of its own to the toolbar row. */
+.browser-attach-switch-wrap { display: contents; }
+.browser-attach-switch-menu { min-width: 260px; max-width: 360px; }
+.browser-attach-switch-item {
+  white-space: normal;
+  align-items: flex-start;
+}
+.browser-attach-switch-item-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+.browser-attach-switch-item-text strong,
+.browser-attach-switch-item-text small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browser-attach-switch-item-text strong { font-size: 12px; font-weight: 500; }
+.browser-attach-switch-item-text small { color: var(--muted); font: 11px var(--mono); }
 .browser-attach-readonly {
   flex: none;
   margin: 0;

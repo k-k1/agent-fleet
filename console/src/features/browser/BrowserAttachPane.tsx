@@ -6,6 +6,7 @@ import { Button, IconButton } from "../../ui/Button.tsx";
 import { toast } from "../../ui/toast.ts";
 import type { BrowserAttachmentSnapshot } from "./attachmentController.ts";
 import { ensureBrowserAttachment } from "./attachmentService.ts";
+import { BrowserAttachTargetSwitcher } from "./BrowserAttachTargetSwitcher.tsx";
 import { BrowserConsoleDrawer, BrowserSurface } from "./BrowserSurface.tsx";
 
 interface BrowserAttachPaneProps {
@@ -27,6 +28,15 @@ export function BrowserAttachPane({ paneId, attachmentId }: BrowserAttachPanePro
   const copySelection = async () => {
     if (await controller.copySelection()) toast(tr("browser.copied_selection"), { kind: "success" });
     else toast(tr("browser.copy_selection_empty"), { kind: "info" });
+  };
+
+  const switchTarget = async (targetId: string) => {
+    try {
+      await controller.retarget(targetId);
+    } catch (error) {
+      toast(errText(error as { code?: string; message?: string }), { kind: "error" });
+      throw error;
+    }
   };
 
   useEffect(() => controller.subscribe(setSnapshot), [controller]);
@@ -84,6 +94,11 @@ export function BrowserAttachPane({ paneId, attachmentId }: BrowserAttachPanePro
           <strong>{snapshot.title || tr("pane.kind.browser_attach")}</strong>
           {origin && <span>{origin}</span>}
         </span>
+        <BrowserAttachTargetSwitcher
+          disabled={snapshot.state === "detached" || snapshot.state === "expired" || snapshot.state === "disconnected"}
+          listSiblingTargets={() => controller.listSiblingTargets()}
+          onSelect={switchTarget}
+        />
         <IconButton icon="copy" label={tr("browser.copy_selection")} onClick={() => void copySelection()} />
         <IconButton
           icon={fit ? "zoom-out" : "screen-full"}

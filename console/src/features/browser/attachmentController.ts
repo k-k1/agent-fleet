@@ -34,6 +34,32 @@ export interface BrowserAttachmentStatus {
   handoff: BrowserAttachmentHandoff | null;
 }
 
+/** A candidate for retarget: another target on the same Chromium instance. */
+export interface BrowserAttachmentSiblingTarget {
+  targetId: string;
+  title: string;
+  url: string;
+  current: boolean;
+}
+
+export function normalizeBrowserAttachmentSiblingTargets(raw: unknown): BrowserAttachmentSiblingTarget[] {
+  const value = raw as Record<string, unknown> | null;
+  const list = value && Array.isArray(value.targets) ? value.targets : [];
+  const targets: BrowserAttachmentSiblingTarget[] = [];
+  for (const entry of list) {
+    if (!entry || typeof entry !== "object") continue;
+    const t = entry as Record<string, unknown>;
+    if (typeof t.targetId !== "string" || !t.targetId) continue;
+    targets.push({
+      targetId: t.targetId,
+      title: typeof t.title === "string" ? t.title : "",
+      url: typeof t.url === "string" ? t.url : "",
+      current: t.current === true,
+    });
+  }
+  return targets;
+}
+
 const normalizedControlMode = (value: unknown): BrowserAttachmentControlMode =>
   value === "user-control" || value === "locked" ? value : "view-only";
 
@@ -101,6 +127,8 @@ export interface BrowserAttachmentControllerDeps {
   submitResult(id: string, result: Exclude<BrowserAttachmentResult, "pending">): Promise<BrowserAttachmentStatus | null>;
   openSocket(id: string): BrowserSocket;
   drawFrame(canvas: BrowserCanvas, frame: ArrayBuffer | Blob): Promise<void>;
+  listSiblingTargets(id: string): Promise<BrowserAttachmentSiblingTarget[]>;
+  retarget(id: string, targetId: string): Promise<BrowserAttachmentStatus>;
 }
 
 type Listener = (snapshot: BrowserAttachmentSnapshot) => void;
@@ -336,6 +364,25 @@ export class BrowserAttachmentController {
     await this.deps.detach(this.attachmentId);
     this.closeSocket();
     this.update({ state: "detached", attachmentState: "detached", controlMode: "locked" });
+  }
+
+  /** Other targets on the same Chromium instance this attachment could switch to. */
+  listSiblingTargets(): Promise<BrowserAttachmentSiblingTarget[]> {
+    return this.deps.listSiblingTargets(this.attachmentId);
+  }
+
+  /**
+   * Switch this SAME attachment (same id, same pane, same handoff link) onto a
+   * different target on the same Chromium instance — the alternative to
+   * closing the pane and asking the agent to mint a brand new attachment link
+   * for every tab a multi-tab script hands off. The WS "ready" push the Agent
+   * sends right after applies the rest (title/url/state); this only needs to
+   * apply what the HTTP response already carries so the toolbar updates
+   * without waiting on that round trip.
+   */
+  async retarget(targetId: string): Promise<void> {
+    const status = await this.deps.retarget(this.attachmentId, targetId);
+    this.applyStatus(status);
   }
 
   async dispose(): Promise<void> {
