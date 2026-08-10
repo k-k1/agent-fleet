@@ -26,11 +26,11 @@ import (
 // forkLine is the slice of a transcript line the cut logic reasons about. Everything else
 // travels verbatim — the file is rewritten from the ORIGINAL bytes, not from this struct.
 type forkLine struct {
-	Type             string          `json:"type"`
-	UUID             string          `json:"uuid"`
-	IsMeta           bool            `json:"isMeta"`
-	IsSidechain      bool            `json:"isSidechain"`
-	IsCompactSummary bool            `json:"isCompactSummary"`
+	Type             string `json:"type"`
+	UUID             string `json:"uuid"`
+	IsMeta           bool   `json:"isMeta"`
+	IsSidechain      bool   `json:"isSidechain"`
+	IsCompactSummary bool   `json:"isCompactSummary"`
 	Message          struct {
 		Role    string          `json:"role"`
 		Content json.RawMessage `json:"content"`
