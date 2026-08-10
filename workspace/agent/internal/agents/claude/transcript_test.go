@@ -218,8 +218,11 @@ func TestQuestionOptionPreview(t *testing.T) {
 // TestQueuedCommandTurn checks that a mid-run steering prompt — logged only as an
 // attachment/queued_command event, never as a user line (claude ≥2.1.207) — parses
 // into a plain user turn, and that non-human / non-queued attachments stay invisible.
+//
+// AnchorID が空であることも固定する: 付けると「ここから分岐」の導線が出て、cutIndex が
+// type:"user" 以外を拒むので必ず 400 になる（実セッションで再現）。
 func TestQueuedCommandTurn(t *testing.T) {
-	line := []byte(`{"type":"attachment","attachment":{"type":"queued_command","prompt":" origin/mainをマージして ","commandMode":"prompt","origin":{"kind":"human"}},"timestamp":"2026-07-11T09:16:51.851Z","gitBranch":"feat/x","cwd":"/w"}`)
+	line := []byte(`{"type":"attachment","uuid":"f023bf25-4b3e-4d2d-aad3-f601d9a035c2","attachment":{"type":"queued_command","prompt":" origin/mainをマージして ","commandMode":"prompt","origin":{"kind":"human"}},"timestamp":"2026-07-11T09:16:51.851Z","gitBranch":"feat/x","cwd":"/w"}`)
 	turn, ok := parseTurn(line, 7)
 	if !ok {
 		t.Fatalf("queued_command: not parsed")
@@ -227,6 +230,9 @@ func TestQueuedCommandTurn(t *testing.T) {
 	if turn.Role != "user" || turn.Text != "origin/mainをマージして" || turn.Idx != 7 ||
 		turn.TS != "2026-07-11T09:16:51.851Z" || turn.Branch != "feat/x" || turn.Cwd != "/w" {
 		t.Errorf("turn = %+v", turn)
+	}
+	if turn.AnchorID != "" {
+		t.Errorf("AnchorID = %q, want empty (割り込み発言からは分岐できない)", turn.AnchorID)
 	}
 	if len(turn.Parts) != 1 || turn.Parts[0].Kind != "text" || turn.Parts[0].Text != "origin/mainをマージして" {
 		t.Errorf("parts = %+v", turn.Parts)
