@@ -175,6 +175,25 @@ func TestPromptBlockerGatesPrompt(t *testing.T) {
 	if got := promptBlocker("no_such_session"); got != "" {
 		t.Fatalf("unknown session must read as free, got %q", got)
 	}
+	// AskUserQuestion / ExitPlanMode fire their OWN permission_prompt between the tool's
+	// PreToolUse and PostToolUse, so the stored state reads "permission" while the
+	// terminal still shows the question menu / the plan dialog. The refusal must name the
+	// modal that is really up — telling the operator 「許可カードから」 for a plan sends
+	// them to a card the Console isn't even showing (it suppresses the permission there).
+	status.Persist(sid, "permission")
+	status.WritePendingPlan(sid, "# 作業計画")
+	if got := promptBlocker(name); got != "plan" {
+		t.Fatalf("permission state with a captured plan = %q, want plan", got)
+	}
+	status.WritePendingQuestion(sid, []byte(`[{"question":"q"}]`))
+	if got := promptBlocker(name); got != "question" {
+		t.Fatalf("a captured question outranks the plan, got %q", got)
+	}
+	status.RemovePendingQuestion(sid)
+	status.RemovePendingPlan(sid)
+	if got := promptBlocker(name); got != "permission" {
+		t.Fatalf("a genuine tool permission must stay permission, got %q", got)
+	}
 }
 
 // Each blocking state gets its own wire code so the Console can explain it; the

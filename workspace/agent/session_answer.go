@@ -220,7 +220,10 @@ func handleSessionPlanRespond(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sid := session.UUID(meta.Dir, meta.Name)
-	if st, _ := status.Read(sid); st.State != "plan" {
+	// effectiveModal, not the raw state: ExitPlanMode's own permission_prompt overwrites
+	// "plan" with "permission" while its approval dialog is still up (session_status.go),
+	// and judging by the raw state refused every decision taken after that hook fired.
+	if st, _ := status.Read(sid); effectiveModal(sid, st.State) != "plan" {
 		httpx.WriteErr(w, http.StatusConflict, "no_plan", "no pending plan approval (already handled?)")
 		return
 	}

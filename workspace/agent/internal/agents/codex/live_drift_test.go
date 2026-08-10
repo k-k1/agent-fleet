@@ -632,7 +632,7 @@ func TestLiveDriftCodexForkAtLastTurn(t *testing.T) {
 	if first == second {
 		t.Fatalf("both user turns share turn id %s — task_started no longer delimits turns", first)
 	}
-	resolved, err := (agentImpl{}).ResolveForkAt(m, second)
+	resolved, err := (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: second})
 	if err != nil {
 		t.Fatalf("ResolveForkAt(%s): %v", second, err)
 	}

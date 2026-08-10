@@ -918,6 +918,9 @@ export const ja = {
   "agents.auto_title": "タイトル自動提案",
   "agents.note_auto_title":
     "タイトル未設定のセッションで数回やり取りしたら、AIが短いタイトル案をセッションのチャット上部に表示します。アシスタントのタイトル提案は「アシスタント」タブで設定します。",
+  "agents.peer_messaging": "セッション間メッセージ",
+  "agents.note_peer_messaging":
+    "セッションが、同じワークスペースの別のセッションへ短いメッセージを送れるようにします。並行して動かしている作業コピーの間で「いま入れた変更がそちらを壊す」「待っていた判断が決まった」を、あなたを経由せずに直接伝えられます。エージェント種別をまたいで届き（claude ↔ codex など）、相手が停止中なら再開して届けます。受け取った側には「利用者の指示ではない」と伝わり、承認の代行や設定変更の根拠にはなりません。ミラーには送信元付きのバッジが出ます。生シェル（shell / ssm）のセッションは送受信とも対象外です。**反映は次に起動するセッションから**で、すでに動いているセッションは再起動するまで変わりません。\n既定 OFF。ONにすると、あるセッションが読んだ内容（リポジトリの中身など）を元に他のセッションへ指示を書けるようになるため、増える面を承知のうえで有効にしてください。",
   "agents.claude_rate_limit_resume": "利用上限リセット後の自動再開",
   "agents.note_claude_rate_limit_resume":
     "Claude セッションが利用上限で中断したとき、上限が解ける時刻に、そのセッションへ「続きを進めて」と1回だけ送る再開予約を作ります。予約は使用後に削除され、繰り返し実行はしません。待機中にワークスペースが停止しても、予約時刻に起動して届けます。その時刻に人が既にセッションを動かしていれば見送ります。利用上限に達したときと、実際に自動再開したときは通知センターにも表示します。Console から直接起動したセッションも対象です。既定 ON。\nOFF にしても、上限メニュー（「1. リセットまで待つ / 2. 管理者に増枠を依頼」）は自動確定します。メニュー中は通知・報告・入力を受け付けず、自動で選ぶのは待つ側（無課金）だけです。2 を選びたい場合は、メニュー表示中に自分で選んでください。",
@@ -1927,7 +1930,13 @@ export const ja = {
   "mirror.fork_at_intro":
     "ここまでの会話をそのまま引き継いだ新しいセッションを作ります。この発言と、それ以降のやり取りは引き継ぎません（要約ではなく複製です）。",
   "mirror.fork_at_point": "分岐点",
+  "mirror.fork_at_mode": "どこから始めるか",
+  "mirror.fork_at_mode_redo": "この発言をやり直す",
+  "mirror.fork_at_mode_redo_hint": "この発言は引き継がない",
+  "mirror.fork_at_mode_continue": "この発言の続きから",
+  "mirror.fork_at_mode_continue_hint": "この発言と回答まで引き継ぐ",
   "mirror.fork_at_carried": "この発言より前のやり取り（あなたの発言 {count} 件）を引き継ぎます",
+  "mirror.fork_at_carried_incl": "この発言とその回答までのやり取り（あなたの発言 {count} 件）を引き継ぎます",
   "mirror.fork_at_keeps_source": "いまのセッションはそのまま残ります",
   "mirror.fork_at_draft": "この発言は新しいセッションの入力欄に下書きとして入ります（送信はしません）",
   "mirror.fork_at_go": "分岐する",
@@ -1944,6 +1953,10 @@ export const ja = {
     "ターンが中断（接続断・一時的なレート制限など）したため、Agent が続きを走らせるために自動で送ったプロンプトです。あなたもアシスタントも入力していません。",
   "mirror.from_chat": "{provider} から",
   "mirror.from_chat_title": "チャット（{provider} など）から返信で送られた入力です。コンソールで入力したものではありません。",
+  "mirror.from_peer": "別のセッションから",
+  "mirror.from_peer_named": "{name} から",
+  "mirror.from_peer_title":
+    "同じワークスペースの別のセッションが送ったメッセージです。あなたもアシスタントも入力していません。エージェントには「利用者の指示ではない」と伝えてあり、これを根拠に権限設定や設定ファイルを変えることはしません。",
   "mirror.effort_hint": "推論の努力度（codex reasoning_effort / opencode variant）",
   "mirror.token_hint": "入力(文脈)↑ / 出力↓ トークン",
   "mirror.time_span_hint": "開始 {start} — 完了 {end}",
@@ -2796,6 +2809,7 @@ export const ja = {
   "pj.no_changes": "変更はありません",
   "pj.changed_files": "変更ファイル",
   "pj.click_open_diff": "（クリックで作業差分／右クリックでメニュー）",
+  "pj.click_open_file": "（未追跡のためクリックでファイル表示／右クリックでメニュー）",
   "pj.row_menu": "メニュー",
   "pj.deleted_no_open": "削除されたファイルのため差分のみ開けます",
   "pj.files": "ファイル",
@@ -3310,6 +3324,8 @@ export const ja = {
   "view.conversation_not_found": "会話が見つかりません: {slug}",
   "view.table_repaired":
     "このテーブルは半角 | ではなく全角 ｜ で書かれているため、補正して表示しています。他の Markdown ビューアでは崩れたまま表示されます。",
+  "view.frontmatter_invalid":
+    "この front matter は YAML として無効なため、`キー: 値` の行として読んで表示しています。他の Markdown ビューアでは本文に混ざって表示されます。値の先頭が ` や @ などの記号になっている行は、値全体を引用符で囲ってください。",
 
 
   // === P5 ログイン切れモーダル（AuthExpiredModal） ===

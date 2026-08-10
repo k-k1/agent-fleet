@@ -131,6 +131,34 @@ sent, and it's reflected in the conversation once the agent starts processing.
 
 A stopped session is read-only history; to reply, restart it with **"Resume and continue"**.
 
+### Branch from a past message
+
+Hover (or focus) one of **your own** past messages and **"Branch here"** appears under that
+bubble. Pressing it creates a **new session** carrying the conversation up to that point.
+**The current session is left exactly as it is.**
+
+Use it for "I want to try a different approach from that instruction" or "I took a wrong
+turn back there and want to redo it" — without copying and pasting the conversation. There
+are two ways to branch:
+
+- **Redo this message** (default) — the message itself is left out. The branch opens in the
+  state you were in just before sending it, with your original wording waiting in the
+  composer as a **draft**. Editing and resending, or just resending, is one action either way.
+- **Continue after it** — the message and the reply it got are both carried over. Use this
+  when you want to head in a different direction from a point that went well.
+
+The confirmation dialog shows the branch point, how many exchanges are carried over, and
+that the original stays.
+
+**Don't confuse it with handoff.** A handoff *summarises the conversation and passes it to a
+different agent*; a branch *copies the conversation as-is within the same agent*. Branch when
+the exact wording and the fine details matter; hand off when you want another agent to take over.
+
+If the button isn't there, one of these applies: you can't branch from the agent's messages,
+nor from one that's still being sent. Only **claude, codex, opencode and copilot** sessions
+support it, and codex and opencode only in **managed** execution (the CLI launch command has
+no way to pass a branch point).
+
 ## Memo queue
 
 The memo queue is for **capturing instructions on the spot as they occur to you, then

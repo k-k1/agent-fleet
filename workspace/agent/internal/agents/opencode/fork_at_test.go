@@ -50,7 +50,7 @@ func forkAtStore(t *testing.T) session.Meta {
 
 func TestResolveForkAtPassesAnchorThrough(t *testing.T) {
 	m := forkAtStore(t)
-	got, err := agentImpl{}.ResolveForkAt(m, "msg_1")
+	got, err := agentImpl{}.ResolveForkAt(m, agents.ForkPoint{Anchor: "msg_1"})
 	if err != nil {
 		t.Fatalf("ResolveForkAt(msg_1) error: %v", err)
 	}
@@ -58,6 +58,47 @@ func TestResolveForkAtPassesAnchorThrough(t *testing.T) {
 	// 指したアンカーをそのまま渡すのが正しい — ここで 1 つずらすと分岐点が 1 往復ずれる。
 	if got != "msg_1" {
 		t.Fatalf("ResolveForkAt(msg_1) = %q; want msg_1", got)
+	}
+}
+
+// 「この発言の続きから」（Include）: 次のユーザー発言の手前まで＝間の回答は全部引き継ぐ。
+// 次が無ければ会話まるごと（""）が正解 — 最後まで残すとはそういうこと。
+func TestResolveForkAtInclude(t *testing.T) {
+	db := newOpencodeLiveStore(t)
+	dir := "/home/dev/repos/y"
+	const ses = "ses_inc"
+	if _, err := db.Exec(`INSERT INTO session(id,parent_id,directory,time_created) VALUES(?,NULL,?,1)`, ses, dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range []struct{ id, data string }{
+		{"msg_1", `{"role":"user","time":{"created":1000}}`},
+		{"msg_2", `{"role":"assistant","time":{"created":1100,"completed":1200}}`},
+		{"msg_3", `{"role":"user","time":{"created":1300}}`},
+		{"msg_4", `{"role":"assistant","time":{"created":1400,"completed":1500}}`},
+	} {
+		if _, err := db.Exec(`INSERT INTO message(id,session_id,time_created,time_updated,data) VALUES(?,?,1,1,?)`,
+			m.id, ses, m.data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	m := session.Meta{Dir: dir, Name: "n", Kind: session.KindOpencode, Driver: session.DriverManaged}
+
+	got, err := (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: "msg_1", Include: true})
+	if err != nil {
+		t.Fatalf("ResolveForkAt(msg_1, include): %v", err)
+	}
+	if got != "msg_3" {
+		t.Fatalf("ResolveForkAt(msg_1, include) = %q; want msg_3 (the NEXT prompt — everything "+
+			"between it and the anchor is the reply we are keeping)", got)
+	}
+
+	got, err = (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: "msg_3", Include: true})
+	if err != nil {
+		t.Fatalf("ResolveForkAt(msg_3, include): %v", err)
+	}
+	if got != "" {
+		t.Fatalf("ResolveForkAt(last exchange, include) = %q; want \"\" = the whole conversation", got)
 	}
 }
 
@@ -71,7 +112,7 @@ func TestResolveForkAtRejectsUnusableAnchors(t *testing.T) {
 		{"sidechain", "msg_9"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := (agentImpl{}).ResolveForkAt(m, tc.anchor)
+			got, err := (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: tc.anchor})
 			if err == nil {
 				t.Fatalf("ResolveForkAt(%q) = %q, nil; want an error", tc.anchor, got)
 			}
@@ -84,7 +125,7 @@ func TestResolveForkAtRejectsUnusableAnchors(t *testing.T) {
 func TestResolveForkAtRefusesCLIRoute(t *testing.T) {
 	m := forkAtStore(t)
 	m.Driver = session.DriverTUI
-	_, err := (agentImpl{}).ResolveForkAt(m, "msg_1")
+	_, err := (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: "msg_1"})
 	if err == nil {
 		t.Fatal("ResolveForkAt on the CLI route = nil error; want a refusal")
 	}

@@ -104,6 +104,13 @@ export function AgentsTab() {
         <OnOff value={s.autoTitleSuggest} onChange={(v) => setSetting("autoTitleSuggest", v)} />
       </Row>
       <p className="muted ds-note">{tr("agents.note_auto_title")}</p>
+      {/* セッション間メッセージ（docs/58 / ADR 0041）。カードの中ではなくここに置くのは、
+          af 自身の MCP が配られる 7 kind すべてに効く設定で、特定のエージェントの
+          設定ではないから（claude カードに入れると claude 限定に見える）。 */}
+      <Row label={tr("agents.peer_messaging")}>
+        <OnOff value={s.peerMessaging} onChange={(v) => setSetting("peerMessaging", v)} />
+      </Row>
+      <p className="muted ds-note">{tr("agents.note_peer_messaging")}</p>
     </section>
   );
 

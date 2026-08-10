@@ -129,6 +129,21 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	st := h.settings
 	h.mu.Unlock()
 
+	// First Resume of a forked slot (docs/55): mint this slot's session id and build its
+	// session-state directory from the source before spawning, so the spawn below takes
+	// the ordinary session/load path. Without this the slot has no sid, spawn falls to
+	// session/new, and the branch quietly opens as an empty conversation.
+	if m.ForkFrom != "" && sids.Read(slotSid) == "" {
+		sid, err := newSessionID()
+		if err != nil {
+			return nil, fmt.Errorf("セッション ID を採番できません: %w", err)
+		}
+		if err := MaterializeForkAt(m.ForkFrom, sid, m.ForkAt); err != nil {
+			return nil, fmt.Errorf("分岐を作成できませんでした: %w", err)
+		}
+		sids.Write(slotSid, sid)
+	}
+
 	if err := h.spawn(st); err != nil {
 		return nil, err
 	}

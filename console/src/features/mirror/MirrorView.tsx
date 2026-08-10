@@ -87,9 +87,7 @@ import { awaitingReply, confirmedWorkEnd, latestWorkPromptIndex, textOfParts, wo
 import { echoLanded, echoNeedsResync, type PendingEcho } from "./pendingEcho.ts";
 import { PLAN_APPROVE_KEYS, planOutcome } from "./planDecision.ts";
 import {
-  formatPlanFeedback,
-  getPlanComments,
-  markPlanCommentsSent,
+  deliverPlanComments,
   planKey,
   removePlanComment,
   unsentComments,
@@ -204,6 +202,16 @@ interface Part {
   stderr?: string; // kind=bash: the ! command's stderr (output field holds stdout)
 }
 // A raw transcript turn (GET …/messages) and a grouped block (groupTurns output).
+// peerSenderOf reads the sending session's name back out of the envelope the Agent
+// prepends to a peer message (session_peer.go peerEnvelope). Parsing display text is
+// normally a smell, but the name genuinely lives nowhere else on this side: peer turns
+// are ordinary injected user turns whose only extra is the "peer" source tag. Returns
+// null for anything that doesn't match, and the badge then degrades to "別のセッション".
+const PEER_ENVELOPE_RE = /^\[agent-fleet:peer from=([A-Za-z0-9][A-Za-z0-9_-]*)\]/;
+function peerSenderOf(text: string): string | null {
+  return PEER_ENVELOPE_RE.exec(text)?.[1] ?? null;
+}
+
 interface Turn {
   role: string;
   text?: string;
@@ -1375,13 +1383,17 @@ export function MirrorView({
   // sendPrompt submits one prompt (the composer). Never used to answer an AUQ —
   // the modal ignores typed text, so a text send would confirm option 1 (docs/dev/92).
   // attachments は managed セッションの API 添付（send() が織り込みと使い分ける）。
-  const sendPrompt = async (text: string, attachments?: string[]) => {
+  // 戻り値は「セッションに受理されたか」。呼び出し側の大半は投げっぱなしでよいが、
+  // プランコメントの送信済みマークだけはこれを見る必要がある — 失敗をトーストするだけで
+  // void を返していたころ、届かなかったコメントまで畳まれて打ち直せなくなっていた
+  // （permission_pending で弾かれた直後に「送信済み」になる、2026-08-10 報告の症状）。
+  const sendPrompt = async (text: string, attachments?: string[]): Promise<boolean> => {
     const t = (text || "").trim();
-    if ((!t && !attachments?.length) || sending) return;
+    if ((!t && !attachments?.length) || sending) return false;
     // WS down: nothing can receive the prompt (a send would 502). The composer is already
     // hidden while stopped, but other callers (seed prompt, file drop) reach here too — bail
     // before the optimistic echo so a send never looks accepted when it can't be.
-    if (wsDown()) return;
+    if (wsDown()) return false;
     setSending(true);
     // start = 新しい turn / steer = 実行中 turn への追撃 — 楽観的に working へ倒す前の
     // 実状態で決める。tui では同じ型付けに落ちるが、managed の turn/start・turn/steer
@@ -1410,6 +1422,7 @@ export function MirrorView({
     setSending(false);
     // Pick up the just-logged user turn quickly rather than waiting a full interval.
     setTimeout(() => tickRef.current?.(), 250);
+    return res.ok;
   };
 
   // seedSubmit reliably fires the launch seed's first prompt. A freshly-launched CLI
@@ -1964,13 +1977,10 @@ export function MirrorView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingPlan, session]);
 
-  // プランへのコメントを届ける。経路は「押した瞬間の状態」で決まる:
-  //   承認待ち → /plan-respond の reject（Escape でダイアログを閉じ、コンポーザが戻って
-  //     から投入するところまでサーバが面倒を見る）。開いたまま /input へ送ると本文が
-  //     モーダルに飲まれ Enter が承認になるため、この経路でしか安全に届かない。
-  //   それ以外（却下後・plan モードで入力待ち／実行中） → 普通の発話として送る。
-  // 送信済みの印は「実際に届いた」ときだけ付ける — 届かなかったコメントを消してしまうと
-  // 利用者は打ち直せない。
+  // プランへのコメントを届ける。どの経路で送りいつ送信済みにするかの判断は
+  // deliverPlanComments（planComments.ts）が持つ — この巨大コンポーネントは
+  // レンダリングテストを持てないので、判断だけ外に出して単体で固定してある。
+  // ここに残るのは React 側の後始末: 押下ガード、楽観 却下 バッジ、トースト、エコー。
   const sendPlanComments = async (plan: string) => {
     if (sending) return;
     // 停止中のセッションには届かない。プランカードは履歴にも出る＝コンポーザと違って
@@ -1981,44 +1991,38 @@ export function MirrorView({
       return;
     }
     if (wsDown()) return;
-    const key = planKey(session, plan);
-    const list = unsentComments(getPlanComments(key));
-    if (!list.length) return;
-    const feedback = formatPlanFeedback(list);
-    const ids = list.map((c) => c.id);
     const isPending = !!pendingPlan && pendingPlan.trim() === plan.trim();
-    if (!isPending) {
-      await sendPrompt(feedback);
-      markPlanCommentsSent(key, ids);
-      return;
+    if (isPending) {
+      // 却下を伴う経路。送信ボタンを塞ぎ、バッジと「返信待ち」状態を先に倒しておく
+      // （sendPrompt は自前で sending を面倒みるので、発話だけの経路では触らない）。
+      setSending(true);
+      rejectedPlansRef.current.add(plan.trim()); // 楽観 却下 バッジ（実 outcome で planOutcome が調停）
+      wasWorkingRef.current = false; // 中断と同じ: 返信を待つ状態ではなくなる
+      finalizingRef.current = false;
+      setFinalizing(false);
     }
-    setSending(true);
-    rejectedPlansRef.current.add(plan.trim()); // 楽観 却下 バッジ（実 outcome で planOutcome が調停）
-    wasWorkingRef.current = false; // 中断と同じ: 返信を待つ状態ではなくなる
-    finalizingRef.current = false;
-    setFinalizing(false);
-    const res = await sessionPlanRespond(session, "reject", feedback);
-    setSending(false);
+    const res = await deliverPlanComments(planKey(session, plan), {
+      pending: isPending,
+      respond: (feedback) => sessionPlanRespond(session, "reject", feedback),
+      say: (feedback) => sendPrompt(feedback),
+    });
+    if (isPending) setSending(false);
+    if (!res) return; // 送るものが無い
     if (!res.ok) {
-      // すでに別経路で判断済み（no_plan）なら、ただの発話として届ける。
-      if (res.code === "no_plan") {
-        await sendPrompt(feedback);
-        markPlanCommentsSent(key, ids);
-        return;
+      // 届かなかった＝コメントは畳まれていない。理由を出して打ち直せることを伝える
+      // （undelivered = 却下は通ったが本文が入らなかった）。ただし say 経路の失敗は
+      // sendPrompt が具体的な理由（許可待ち・停止中…）を既に出しているので重ねない —
+      // 汎用の「送信できませんでした」がその上に乗ると、何が起きたのか分からなくなる。
+      if (res.reason !== "say") {
+        toast(res.message || tr(res.reason === "undelivered" ? "plan.feedback_undelivered" : "mirror.send_failed"));
       }
-      toast(res.message || tr("mirror.send_failed"));
       return;
     }
-    if (!res.delivered) {
-      // 却下は通ったがフィードバックは届いていない（コンポーザ復帰を確認できず）。
-      // 送信済みにせず、コンポーザから送り直せることを伝える。
-      toast(res.message || tr("plan.feedback_undelivered"));
-      return;
+    if (res.via === "reject") {
+      const echoId = ++echoSeqCounter; // 実ターンが載るまでの楽観エコー（sendPrompt と同じ）
+      applyEchoes((p) => [...p, { id: echoId, text: res.feedback, sinceIdx: newestIdx(), at: Date.now() }]);
+      setTimeout(() => tickRef.current?.(), 400);
     }
-    markPlanCommentsSent(key, ids);
-    const echoId = ++echoSeqCounter; // 実ターンが載るまでの楽観エコー（sendPrompt と同じ）
-    applyEchoes((p) => [...p, { id: echoId, text: feedback, sinceIdx: newestIdx(), at: Date.now() }]);
-    setTimeout(() => tickRef.current?.(), 400);
   };
 
   // Open a SendUserFile entry in its own split pane (same as the file tree's split-open).
@@ -3266,10 +3270,11 @@ export function MirrorView({
         <ForkAtModal
           session={session}
           target={forkAtTarget}
-          onDone={(name) => {
-            // 分岐点の発言を新セッションの下書きに置いてから開く。開いた瞬間に打ち直せる
-            // ことがこの機能の要点で、ユーザーに元発言を探して貼り直させたら意味がない。
-            writeDraft("af.mirror-draft." + name, forkAtTarget.text);
+          onDone={(name, { draft }) => {
+            // 「打ち直す」分岐では、分岐点の発言を新セッションの下書きに置いてから開く。
+            // 開いた瞬間に打ち直せることが要点で、元発言を探して貼り直させたら意味がない。
+            // 「続きから」では発言が分岐先に残っているので draft は空で来る。
+            writeDraft("af.mirror-draft." + name, draft);
             bumpSessions();
             openTargetInNew({ content: { kind: "terminal", chat: true }, session: name });
             toast(tr("mirror.fork_at_done"));
@@ -4092,6 +4097,12 @@ function Turn({
   // cut off. Nobody typed it and no operator sent it, so it needs its own badge — an
   // unattributed "続けて" in the transcript is the most confusing kind of injected turn.
   const fromAutoResume = isUser && turn.source === "auto-resume";
+  // Peer origin (docs/58 / ADR 0041): ANOTHER SESSION typed into this one. Neither the
+  // user nor the operator sent it, and this badge is its ONLY visualisation — the
+  // sender's name exists nowhere else on this side except the server-built envelope
+  // prefix, so read it back from the text.
+  const fromPeer = isUser && turn.source === "peer";
+  const peerFrom = fromPeer ? peerSenderOf(turn.text ?? "") : null;
   // Chat-bridge origin (docs/37 P2a): a reply the user sent from Discord/Slack, injected
   // into the session — badged distinctly from self-typed input, like operator turns.
   const chatProvider = isUser
@@ -4110,6 +4121,7 @@ function Turn({
         (fromOperator ? " from-operator" : "") +
         (fromSchedule ? " from-schedule" : "") +
         (fromAutoResume ? " from-schedule" : "") +
+        (fromPeer ? " from-peer" : "") +
         (chatProvider ? " from-chat" : "")
       }
       data-turn-idx={turn.idx}
@@ -4137,6 +4149,13 @@ function Turn({
           // Re-sent by the agent after a cut-off (docs/47 §4-6) — self-repair, not an instruction.
           <span className="mt-op mt-sched" title={tr("mirror.from_auto_resume_title")}>
             <Icon name="sync" /> {tr("mirror.from_auto_resume")}
+          </span>
+        )}
+        {fromPeer && (
+          // Sent by another session (docs/58) — not the user, not the operator.
+          <span className="mt-op mt-peer" title={tr("mirror.from_peer_title")}>
+            <Icon name="arrow-swap" />{" "}
+            {peerFrom ? tr("mirror.from_peer_named", { name: peerFrom }) : tr("mirror.from_peer")}
           </span>
         )}
         {chatProvider && (

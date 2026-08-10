@@ -30,9 +30,13 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 
 // event is the shared envelope of an events.jsonl line.
 type event struct {
-	Type string          `json:"type"`
-	TS   string          `json:"timestamp"`
-	Data json.RawMessage `json:"data"`
+	Type string `json:"type"`
+	TS   string `json:"timestamp"`
+	// ID/ParentID: every events.jsonl line carries them (実測) — a uuid chain like
+	// claude's. The user.message id is the fork anchor (docs/55 §55.5).
+	ID       string          `json:"id"`
+	ParentID string          `json:"parentId"`
+	Data     json.RawMessage `json:"data"`
 }
 
 // outClip bounds tool output carried to the Console (same spirit as the other
@@ -115,7 +119,8 @@ func parseEvents(path string) []transcript.Turn {
 			flush()
 			turns = append(turns, transcript.Turn{
 				Role: "user", Text: d.Content, TS: ev.TS, Idx: idx,
-				Parts: []transcript.Part{{Kind: "text", Text: d.Content}},
+				Parts:    []transcript.Part{{Kind: "text", Text: d.Content}},
+				AnchorID: ev.ID,
 			})
 		case "assistant.turn_start":
 			var d struct {

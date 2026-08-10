@@ -21,6 +21,42 @@ describe("splitYamlFrontMatter", () => {
     expect(splitYamlFrontMatter("---\ntitle: Example\n# Body")).toBeNull();
     expect(splitYamlFrontMatter("---\ntitle: [\n---\n# Body")).toBeNull();
   });
+
+  // YAML reserves ` and @ as the first character of a plain scalar, so a line a
+  // human reads as perfectly ordinary throws and used to drop the whole block
+  // into the body as one run-on paragraph. Read it line by line instead — and
+  // flag it, because every other Markdown viewer still shows the mess.
+  it("reads a block YAML rejects as flat key: value lines", () => {
+    const source = "---\n用途: 商業化可能性評価\n備考: `レビュー_辛口編集者.md` とは役割が違う\n---\n\n# 本文";
+    expect(splitYamlFrontMatter(source)).toEqual({
+      attributes: { 用途: "商業化可能性評価", 備考: "`レビュー_辛口編集者.md` とは役割が違う" },
+      body: "\n# 本文",
+      lenient: true,
+    });
+  });
+
+  it("keeps valid YAML off the lenient path, Japanese keys included", () => {
+    expect(splitYamlFrontMatter("---\n用途: 評価\n---\n# 本文")).toEqual({
+      attributes: { 用途: "評価" },
+      body: "# 本文",
+    });
+  });
+
+  it("skips blank and comment lines, and unquotes a quoted value", () => {
+    expect(splitYamlFrontMatter('---\n# note\n\nout: `a.md`\nname: "x: y"\n---\n')).toEqual({
+      attributes: { out: "`a.md`", name: "x: y" },
+      body: "",
+      lenient: true,
+    });
+  });
+
+  // The lenient read only rescues plain text. Anything shaped like real YAML that
+  // failed to parse stays prose: a wrong string on screen is worse than the mess.
+  it("refuses the lenient read for nesting, lists, and structured values", () => {
+    expect(splitYamlFrontMatter("---\nout: `a.md`\ntags:\n  - one\n  - [\n---\n")).toBeNull();
+    expect(splitYamlFrontMatter("---\nout: `a.md`\ntags: [one, [\n---\n")).toBeNull();
+    expect(splitYamlFrontMatter("---\nout: `a.md`\nplain text line\ntitle: [\n---\n")).toBeNull();
+  });
 });
 
 describe("repairFullwidthTables", () => {

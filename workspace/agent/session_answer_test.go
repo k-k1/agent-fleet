@@ -8,6 +8,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
@@ -64,6 +65,19 @@ func TestPlanRespondGuards(t *testing.T) {
 	}
 	if rec := do("slot63", `{"decision":"maybe"}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad decision: %d %s", rec.Code, rec.Body.String())
+	}
+	// …but the pending plan is the captured PAYLOAD, not the state. ExitPlanMode's own
+	// permission_prompt overwrites "plan" with "permission" while its approval dialog is
+	// still up, and refusing there broke the plan card's コメント送信 outright: this 409
+	// no_plan made the Console fall back to /input, which the {prompt} guard then refused
+	// as permission_pending. Nothing could deliver the feedback.
+	dir64 := t.TempDir()
+	session.WriteMeta(session.Meta{Name: "slot64", Dir: dir64, Kind: session.KindClaude})
+	sid64 := session.UUID(dir64, "slot64")
+	status.Persist(sid64, "permission")
+	status.WritePendingPlan(sid64, "# 作業計画")
+	if rec := do("slot64", `{"decision":"reject","feedback":"ここを直して"}`); strings.Contains(rec.Body.String(), "no_plan") {
+		t.Fatalf("captured plan must be decidable under the permission state: %d %s", rec.Code, rec.Body.String())
 	}
 }
 
