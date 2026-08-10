@@ -251,3 +251,31 @@ describe("quote controls", () => {
     expect(button?.getAttribute("aria-label")).toBeTruthy();
   });
 });
+
+// A front matter block YAML rejects (here: a value opening with a backtick, which
+// YAML reserves) used to land in the body as one run-on paragraph. It now fills the
+// property panel like any other, with a notice — the file is still broken elsewhere.
+describe("front matter", () => {
+  it("shows an invalid block in the property panel, with a notice", async () => {
+    useChatStore.getState().setConvs([]);
+    await render("---\n用途: 商業化可能性評価\n備考: `レビュー.md` とは役割が違う\n---\n\n# 本文");
+
+    const panel = host.querySelector(".md-frontmatter");
+    expect([...(panel?.querySelectorAll("dt") ?? [])].map((d) => d.textContent)).toEqual(["用途", "備考"]);
+    expect(panel?.querySelectorAll("dd")[1]?.textContent).toBe("`レビュー.md` とは役割が違う");
+    // Only the heading is left in the body — no stray paragraph, no <hr>.
+    expect(host.querySelector("hr")).toBeNull();
+    expect(host.querySelector("h1")?.textContent).toBe("本文");
+
+    const note = host.querySelector(".md-frontmatter-note");
+    expect(note?.nextElementSibling).toBe(panel);
+  });
+
+  it("leaves a valid block unmarked", async () => {
+    useChatStore.getState().setConvs([]);
+    await render("---\n用途: 評価\n---\n\n# 本文");
+
+    expect(host.querySelector(".md-frontmatter dd")?.textContent).toBe("評価");
+    expect(host.querySelector(".md-frontmatter-note")).toBeNull();
+  });
+});

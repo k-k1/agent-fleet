@@ -1,6 +1,6 @@
 # 0039. 会話の分岐点は kind 固有の不透明アンカーで指し、claude だけ jsonl 手術を許す
 
-- 状態: 採用・P1〜P3 実装済み（契約＋opencode＋codex＋claude＋Console 導線。3 種とも実 CLI 検証済み）
+- 状態: 採用・P1〜P5 実装済み（契約＋4 kind〔claude/codex/opencode/copilot〕＋Console 導線＋「続きから」。4 種とも実 CLI 検証済み）
 - 関連: [55-fork-at-message.md](../55-fork-at-message.md) /
   [history/fork-from-chat.md](../history/fork-from-chat.md)（本 ADR が差し替える旧判断） /
   [27-agent-managed-driver.md](../27-agent-managed-driver.md) /
@@ -25,7 +25,7 @@ jsonl 改変は壊れやすい」を理由に一度却下されている。
 ## 決定
 
 1. **分岐点は kind 固有の不透明 ID（アンカー）で指す。** `transcript.Turn` に `AnchorID` を足し、
-   claude = メッセージ uuid、codex = turn id、opencode = message id を入れる。転写の行番号
+   claude = メッセージ uuid、codex = turn id、opencode = message id、copilot = イベント id を入れる。転写の行番号
    `Idx` は compaction で動くため恒久アンカーにしない。
 2. **Console はアンカーを解釈しない。** 受け取った文字列をそのまま fork API へ返すだけとし、
    包含（inclusive / exclusive）の差異吸収を含む kind 別の知識は Agent 側に閉じる。
@@ -34,6 +34,13 @@ jsonl 改変は壊れやすい」を理由に一度却下されている。
 4. **v1 の意味論は「選んだユーザー発言の直前まで」の 1 つに固定する。** 分岐先はその発言を
    打つ直前の状態で開き、元の発言文はコンポーザーの下書きに入れる（送信はしない）。
    「その発言と回答を含める」は v1.1 のオプションとし、アンカーを 1 つ後ろへずらして表現する。
+   *v1.1 実装（採用）*: `agents.ForkPoint{Anchor, Include}` で resolver が吸収し、`Meta.ForkAt`
+   の意味（この値の手前まで残す）は変えない。既定は「やり直す」——方針を間違えた直後が
+   いちばん多い用途で、そこでは分岐点の発言も捨てたい。下書きの投入も「やり直す」限定で、
+   「続きから」では発言が分岐先に残るため入れると二重に見える。
+   非対称が 2 つ残るが、どちらもエンジン側の都合そのものなので隠さない: **最後のやり取りを
+   「続きから」は会話まるごと**（`""` に解決して既存経路へ）、**最初のやり取りを「やり直す」は
+   codex だけ表現できない**（空 `lastTurnId` が「まるごと」の意味になるため断る）。
 5. **fork API は任意ボディ `{at}` へ広げる。** `at` 省略は従来の会話まるごと分岐で、後方互換を
    保つ。解決できないアンカーは **4xx で失敗させる**（会話まるごと分岐へ倒さない）。
    *実装時の補正*: エラーコードは意味で 2 つに割った — `fork_at_unsupported`（この種別／起動
@@ -58,12 +65,22 @@ jsonl 改変は壊れやすい」を理由に一度却下されている。
    返す形にし、Console も `caps.forkAtManagedOnly` で同じ差を持つ。
    *順序*: 分岐点の解決は `ForkSource` より**前**に行う。経路が違うセッションに
    「分岐できる会話がまだありません」と返しても、ユーザーは会話を増やそうとするだけで直らない。
-10. **v1 の対象は claude / codex / opencode の 3 種。** cursor / copilot は手術が効く見込みが
-    あるが未検証、kiro は CLI 側が ID を採番、agy は SQLite ストアのため対象外とし、
-    `Caps.CanForkAt` は false に保つ。
-11. **分岐で生えたセッションの出自は既存 fork と同じ `handoff` を継ぐ。** 「人が開いた数」に
+11. **対象は claude / codex / opencode / copilot の 4 種。** kiro は CLI 側が ID を採番、agy は
+    SQLite ストアのため対象外とし、`Caps.CanForkAt` は false に保つ。
+    *P4b 調査（2026-08-09）*: **cursor は不可**と確定した — 転写の行が `{role, message.content}`
+    だけで `uuid`/`parentUuid`/`sessionId` を持たず（パーサも読んでいない）、分岐点に使える
+    恒久 ID が無い。「Claude Code 互換 JSONL」は形が似ているという意味で、識別子まで同じでは
+    なかった。行番号での代用は決定 1 が却下済み。**copilot は実装した**（events.jsonl が復元元 — `session.db` を
+    無改変のまま残しても、切り詰めた events.jsonl のほうが文脈を決めた）。単位が
+    ディレクトリ一式になるだけで claude と同型。**`session.db` はコピーして触らない**：
+    意味を知らないファイルを書き換え始めた時点で、この手術は「読めるものを同じ形で書き直す」
+    から「他プロダクトの内部状態を owns する」に変わる。索引（`session-store.db`）も書かない
+    ——未登録の session-state を resume すると copilot が自分で登録する（実測）。
+    材料化は TUI と managed の**両経路**に置く（managed を忘れると sid が無く `session/new` へ
+    落ち、分岐先が空の会話として開く）。
+12. **分岐で生えたセッションの出自は既存 fork と同じ `handoff` を継ぐ。** 「人が開いた数」に
     混ぜない（ADR 0029 §6）。
-12. **分岐と引き継ぎは別機能として併存させる。** 引き継ぎ＝要約して別エージェントへ渡す、
+13. **分岐と引き継ぎは別機能として併存させる。** 引き継ぎ＝要約して別エージェントへ渡す、
     分岐＝同じエージェントで文脈をそのまま複製する。UI でこの差を明示する。
 
 ## 採らなかった案

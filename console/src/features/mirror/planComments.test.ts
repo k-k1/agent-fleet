@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   addPlanComment,
+  deliverPlanComments,
   formatPlanFeedback,
   getPlanComments,
   markPlanCommentsSent,
@@ -103,5 +104,133 @@ describe("formatPlanFeedback", () => {
     expect(formatPlanFeedback(one, "全体的に急いで")).toMatch(/全体的に急いで$/);
     expect(formatPlanFeedback([], "これだけ")).toBe("これだけ");
     expect(formatPlanFeedback([])).toBe("");
+  });
+});
+
+// 送信経路の判断。ここが唯一 MirrorView の外に出せた部分で、実障害（届いていない
+// コメントが「送信済み」になり、送信ボタンごと消えて打ち直せない）はこの判断にあった。
+describe("deliverPlanComments", () => {
+  const k = () => planKey("s1", PLAN);
+  const seed = (...bodies: string[]) => {
+    for (const b of bodies) addPlanComment(k(), { quote: "本文", nth: 0, body: b });
+    return unsentComments(getPlanComments(k())).map((c) => c.id);
+  };
+  const sentBodies = () =>
+    getPlanComments(k())
+      .filter((c) => c.sentAt)
+      .map((c) => c.body);
+  const okRespond = { ok: true, delivered: true };
+  /** 送信できたときだけ在る「実際に送った本文」を取り出す（届いていなければ失敗させる）。 */
+  const feedbackOf = (r: Awaited<ReturnType<typeof deliverPlanComments>>) => {
+    if (!r?.ok) throw new Error("届いていない: " + JSON.stringify(r));
+    return r.feedback;
+  };
+
+  it("承認待ちなら respond（却下）で送り、届いたぶんだけ畳む", async () => {
+    seed("1つめ", "2つめ");
+    const respond = vi.fn().mockResolvedValue(okRespond);
+    const say = vi.fn().mockResolvedValue(true);
+    const res = await deliverPlanComments(k(), { pending: true, respond, say });
+
+    expect(res).toMatchObject({ ok: true, via: "reject" });
+    expect(say).not.toHaveBeenCalled(); // 承認ダイアログが開いたまま自由文を送らない
+    // 送った本文がそのまま返る（呼び出し側はこれを楽観エコーに使う）。
+    expect(respond).toHaveBeenCalledWith(feedbackOf(res));
+    expect(feedbackOf(res)).toContain("1つめ");
+    expect(sentBodies()).toEqual(["1つめ", "2つめ"]);
+  });
+
+  it("承認待ちでなければ普通の発話として送る", async () => {
+    seed("指摘");
+    const respond = vi.fn();
+    const say = vi.fn().mockResolvedValue(true);
+    const res = await deliverPlanComments(k(), { pending: false, respond, say });
+
+    expect(res).toMatchObject({ ok: true, via: "prompt" });
+    expect(respond).not.toHaveBeenCalled();
+    expect(sentBodies()).toEqual(["指摘"]);
+  });
+
+  // 実障害そのもの: 発話が弾かれた（許可待ち・停止中など）のに畳んでいた。
+  it("発話が届かなければ何も畳まない — 打ち直せる状態を保つ", async () => {
+    seed("指摘");
+    const say = vi.fn().mockResolvedValue(false);
+    const res = await deliverPlanComments(k(), { pending: false, respond: vi.fn(), say });
+
+    // reason "say" = 発話経路の失敗。sendPrompt が理由を通知済みなので、呼び出し側は
+    // 重ねてトーストしない（この 1 文字が二重トーストの有無を決める）。
+    expect(res).toEqual({ ok: false, reason: "say" });
+    expect(sentBodies()).toEqual([]);
+    expect(unsentComments(getPlanComments(k()))).toHaveLength(1);
+  });
+
+  it("no_plan は発話へ落とす。その発話も失敗したら畳まない", async () => {
+    seed("指摘");
+    const respond = vi.fn().mockResolvedValue({ ok: false, code: "no_plan" });
+    const say = vi.fn().mockResolvedValue(false);
+    const res = await deliverPlanComments(k(), { pending: true, respond, say });
+
+    expect(say).toHaveBeenCalledTimes(1); // フォールバックは走る
+    expect(res).toEqual({ ok: false, reason: "say" });
+    expect(sentBodies()).toEqual([]);
+  });
+
+  it("no_plan から発話で届けば畳む（経路は prompt）", async () => {
+    seed("指摘");
+    const respond = vi.fn().mockResolvedValue({ ok: false, code: "no_plan" });
+    const res = await deliverPlanComments(k(), {
+      pending: true,
+      respond,
+      say: vi.fn().mockResolvedValue(true),
+    });
+
+    expect(res).toMatchObject({ ok: true, via: "prompt" });
+    expect(sentBodies()).toEqual(["指摘"]);
+  });
+
+  it("却下は通ったが本文が入らなかった（undelivered）ときは畳まない", async () => {
+    seed("指摘");
+    const res = await deliverPlanComments(k(), {
+      pending: true,
+      respond: vi.fn().mockResolvedValue({ ok: true, delivered: false, message: "コンポーザ復帰を確認できず" }),
+      say: vi.fn().mockResolvedValue(true),
+    });
+
+    expect(res).toEqual({ ok: false, reason: "undelivered", message: "コンポーザ復帰を確認できず" });
+    expect(sentBodies()).toEqual([]);
+  });
+
+  it("respond の失敗理由はそのまま返す（呼び出し側がトーストする）", async () => {
+    seed("指摘");
+    const res = await deliverPlanComments(k(), {
+      pending: true,
+      respond: vi.fn().mockResolvedValue({ ok: false, code: "not_running", message: "セッションが停止しています" }),
+      say: vi.fn().mockResolvedValue(true),
+    });
+
+    expect(res).toEqual({ ok: false, reason: "respond", message: "セッションが停止しています" });
+    expect(sentBodies()).toEqual([]);
+  });
+
+  it("未送信が無ければ何も送らない（null）", async () => {
+    const ids = seed("送信済みにする");
+    markPlanCommentsSent(k(), ids);
+    const respond = vi.fn();
+    const say = vi.fn();
+    expect(await deliverPlanComments(k(), { pending: true, respond, say })).toBeNull();
+    expect(respond).not.toHaveBeenCalled();
+    expect(say).not.toHaveBeenCalled();
+  });
+
+  it("送るのも畳むのも未送信ぶんだけ — 送信済みは本文にも入らない", async () => {
+    const ids = seed("古い指摘");
+    markPlanCommentsSent(k(), ids);
+    addPlanComment(k(), { quote: "本文", nth: 0, body: "新しい指摘" });
+    const respond = vi.fn().mockResolvedValue(okRespond);
+    const res = await deliverPlanComments(k(), { pending: true, respond, say: vi.fn() });
+
+    expect(feedbackOf(res)).not.toContain("古い指摘");
+    expect(feedbackOf(res)).toContain("新しい指摘");
+    expect(sentBodies()).toEqual(["古い指摘", "新しい指摘"]);
   });
 });

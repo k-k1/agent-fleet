@@ -453,8 +453,19 @@ ENV GIT_TERMINAL_PROMPT=0 \
 # b1c1c41 / an earlier revision of docs/35 §35.9-10 — the real cause is the git
 # credential prompt handled just above; these flags never stop `gh pr view`). Kept only
 # as harmless hardening for restricted/air-gapped networks and privacy, and it aligns
-# with the version-pinned CLI story (DISABLE_AUTOUPDATER above). Harmless when fully
-# connected.
+# with the version-pinned CLI story (DISABLE_AUTOUPDATER above).
+#
+# NOT harmless any more, and NOT free to remove: these also turn OFF cross-session
+# messaging (claude sessions messaging each other directly). Measured on 2.1.226 —
+# NONESSENTIAL_TRAFFIC *and* DISABLE_TELEMETRY each gate it on their own, so BOTH must
+# be unset for the feature to come back, and DISABLE_ERROR_REPORTING is irrelevant to
+# it. (The upstream env-var table says DISABLE_TELEMETRY does not affect feature-flag
+# evaluation; it does. docs/58 §58.12 has the 3-runs-per-config matrix.)
+#
+# So this block is what currently blocks a session-to-session channel that AF cannot
+# see — one that bypasses the Console, the dispatch ledger and the mirror. Dropping
+# these two for any other reason opens it SILENTLY. Read docs/58 §58.10 first; the
+# decision to leave the feature off is ADR 0041.
 ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
     DISABLE_TELEMETRY=1 \
     DISABLE_ERROR_REPORTING=1

@@ -42,6 +42,14 @@ func TestProbeVersionMissing(t *testing.T) {
 // home 配下かどうかで root を選び分けているところまで見る。
 func TestUVToolVersion(t *testing.T) {
 	home := t.TempDir()
+	// 焼き込み root は temp へ逃がす。実パス（/usr/local/share/uv/tools）のままだと、
+	// 「焼き込み側には無いはず」を確かめる下のケースが *このコンテナの実際の焼き込み*
+	// （mcp_proxy_for_aws-1.6.4.dist-info）を拾って落ちる — 焼き込みの無い CI ランナー
+	// でだけ通る、実環境に弱いテストになっていた。
+	baked := t.TempDir()
+	prevBaked := bakedUVToolRoot
+	bakedUVToolRoot = baked
+	t.Cleanup(func() { bakedUVToolRoot = prevBaked })
 	// ユーザー導入の uv tool を模す: <home>/.local/share/uv/tools/<tool>/…
 	tool := filepath.Join(home, ".local", "share", "uv", "tools", "mcp-proxy-for-aws")
 	sp := filepath.Join(tool, "lib", "python3.11", "site-packages")
@@ -65,9 +73,22 @@ func TestUVToolVersion(t *testing.T) {
 		t.Errorf("uvToolVersion(missing) = %+v, want nil", got)
 	}
 	// 実体はあるのに venv が別 root（= 焼き込み側を見に行く）→「未導入」に化けさせず
-	// 版不明として実体を見せる。home="" で home 判定を外すと /usr/local 側を引く。
+	// 版不明として実体を見せる。home="" で home 判定を外すと焼き込み側を引く。
 	if got := uvToolVersion(exe, "mcp-proxy-for-aws", ""); got == nil || got.Version != "" {
 		t.Errorf("uvToolVersion(root 不一致) = %+v, want 版不明", got)
+	}
+	// 逆向き: home 配下に無い実体は焼き込み root の venv から版を読む。home 側と別の版を
+	// 置いてあるので、root の選び分けが逆になれば 1.6.4 が返って落ちる。
+	bakedSP := filepath.Join(baked, "mcp-proxy-for-aws", "lib", "python3.11", "site-packages")
+	if err := os.MkdirAll(filepath.Join(bakedSP, "mcp_proxy_for_aws-1.5.0.dist-info"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bakedExe := filepath.Join(t.TempDir(), "mcp-proxy-for-aws")
+	if err := os.WriteFile(bakedExe, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := uvToolVersion(bakedExe, "mcp-proxy-for-aws", home); got == nil || got.Version != "1.5.0" {
+		t.Errorf("uvToolVersion(焼き込み) = %+v, want 1.5.0", got)
 	}
 }
 

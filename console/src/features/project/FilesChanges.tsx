@@ -5,9 +5,11 @@
 // the folder is the identity, the project+branch is what a reader recognises.
 // Groups follow the rail's project order (base, then its worktrees oldest-first)
 // so the two lists read the same way. Clicking a row opens the working diff in the
-// viewer (same as the SCM pane's changes list); untracked/added files without a
-// diff still open it — DiffView falls back sensibly. Revived from the old
-// FilesSection (deleted 52582b9), minus its file-management extras.
+// viewer (same as the SCM pane's changes list) — EXCEPT an untracked file, which
+// git has no diff for: the working diff would be an empty pane, so the row opens
+// the file itself in the viewer instead. The row menu still offers 差分 for anyone
+// who wants it. Revived from the old FilesSection (deleted 52582b9), minus its
+// file-management extras.
 import { useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, isTransientErr } from "../../core/api/client.ts";
@@ -166,8 +168,8 @@ export function FilesChanges() {
                   <li
                     key={c.path + (c.untracked ? "?" : "")}
                     className="fsrow chg-row"
-                    title={c.path + tr("pj.click_open_diff")}
-                    onClick={() => openFileDiff(repo, rel, staged)}
+                    title={c.path + tr(c.untracked ? "pj.click_open_file" : "pj.click_open_diff")}
+                    onClick={() => (c.untracked ? openFileMode(c.path, "view") : openFileDiff(repo, rel, staged))}
                     onContextMenu={(e) => {
                       e.preventDefault();
                       e.stopPropagation();

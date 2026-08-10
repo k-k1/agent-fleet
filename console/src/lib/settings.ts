@@ -221,6 +221,16 @@ export interface Settings {
   // Sessions only — the assistant-chat side split off into assistantTitleSuggest.
   // Default true so existing users get it without an explicit opt-in.
   autoTitleSuggest: boolean;
+  // Global ON/OFF for session-to-session messaging (AgentsTab セッション, docs/58 /
+  // ADR 0041). Not per-agent: it applies to every kind that gets af's own MCP server
+  // (claude / codex / opencode / cursor / kiro / agy / copilot), and shell / ssm can
+  // neither send nor receive by construction.
+  // Default FALSE, unlike autoTitleSuggest: letting sessions type into each other
+  // widens the injection surface (a session that read a poisoned repo can reach every
+  // other session), so it has to be chosen rather than inherited on upgrade. The Agent
+  // reads this key from ui-prefs to decide whether the session-side MCP server
+  // advertises the two peer tools at all.
+  peerMessaging: boolean;
   // How the opencode launch-model list is shaped (AgentsTab > opencode). One
   // OPENCODE_API_KEY opens both opencode.ai billing routes, so the same model shows up
   // twice: opencode/… (Zen, pay-per-request) and opencode-go/… (the Go subscription).
@@ -536,6 +546,7 @@ const DEFAULTS: Settings = {
   hiddenModels: {},
   claudeCustomModels: [],
   autoTitleSuggest: true,
+  peerMessaging: false, // opt-in（docs/58 / ADR 0041）— 既定で増やしてよい面ではない
   opencodeCatalog: "zen",
   expandThinking: {},
   assistantTitleSuggest: true,

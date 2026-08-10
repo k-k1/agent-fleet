@@ -41,8 +41,13 @@ loopback で届く（preview の下請け `/proxy/{port}`とBrowserManagerの直
   誤判定・誤 kill しうるため、target 参照は全て `=name` の exact 形式で行うのが本リポジトリの規約。
 - **DB ミラー（B 案）**: CP の `GET /api/sessions` は running 時に Agent から取得して DB を洗い替え、
   stopped 時は DB から `alive:false` 配信＝**Workspace 停止中でも一覧が見える**（[06 §6.3](06-data-model.md)）。
-- **fork**: claude/codex/opencode の会話履歴を引き継いだ新セッションを別スロットに分岐
-  （`POST /sessions/{name}/fork`）。新スロットは元の kind と driver を引き継ぐ。
+- **fork**: claude/codex/opencode/copilot の会話履歴を引き継いだ新セッションを別スロットに分岐
+  （`POST /sessions/{name}/fork`）。新スロットは元の kind と driver を引き継ぐ。任意ボディ
+  `{"at": <anchorId>, "include": bool}` で**過去の発言時点**から分岐できる（docs/55）。分岐点の
+  アンカーは `transcript.Turn.AnchorID`（kind 固有の不透明 ID）で、包含差の吸収と起動方式の
+  可否は各 kind の `ForkAtResolver` が答える（`agents.ErrForkAtRoute` → `fork_at_unsupported`）。
+  実現手段は kind で割れる: codex/opencode は runtime API の公式パラメータ（managed 必須）、
+  claude/copilot は転写の切り詰め（TUI でも可）。
 - **driver 切替**: Codex / OpenCode は `POST /sessions/{name}/driver` で同じ会話を `managed` ⇄ `tui` に
   stop→resume する。実行中 turn がある間は `409 busy_switch`。kind・dir・native conversation ID は維持する。
 - **モデル解決（作成時）**: codex/opencode/copilot を明示モデル付きで作成する際、Agent は live カタログ

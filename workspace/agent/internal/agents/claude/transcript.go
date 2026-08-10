@@ -313,10 +313,14 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 		if a.Type != "queued_command" || txt == "" || (a.Origin.Kind != "" && a.Origin.Kind != "human") {
 			return transcript.Turn{}, false
 		}
+		// AnchorID は**付けない**（docs/55）。この行は type:"attachment" で、分岐点の検査
+		// （forkat.go の cutIndex）は type:"user" の行しか受け付けないため、uuid を渡すと
+		// 「ここから分岐」の導線が出るのに必ず 400（エージェントの発言からは分岐できません）
+		// になる。割り込みはターンの途中（tool_use と tool_result の間）に注入されるので、
+		// その手前で切る分岐はそもそも成立しない — 導線を出さないのが正しい答え。
 		return transcript.Turn{
 			Role: "user", Parts: []transcript.Part{{Kind: "text", Text: txt}}, Text: txt,
 			Idx: idx, TS: ev.Timestamp, Sidechain: ev.IsSidechain, Branch: ev.GitBranch, Cwd: ev.Cwd,
-			AnchorID: ev.UUID,
 		}, true
 	}
 	if ev.Type != "user" && ev.Type != "assistant" {

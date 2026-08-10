@@ -90,7 +90,8 @@ func (agentImpl) ForkSource(m session.Meta) (string, error) {
 //
 // Branching before the FIRST turn has no representable lastTurnId: an empty value means
 // "the whole conversation" to codex, which is the opposite. Refuse instead of sending it.
-func (agentImpl) ResolveForkAt(m session.Meta, anchor string) (string, error) {
+func (agentImpl) ResolveForkAt(m session.Meta, at agents.ForkPoint) (string, error) {
+	anchor := at.Anchor
 	if anchor == "" {
 		return "", errors.New("分岐点が指定されていません")
 	}
@@ -112,6 +113,11 @@ func (agentImpl) ResolveForkAt(m session.Meta, anchor string) (string, error) {
 	for i, tid := range ids {
 		if tid != anchor {
 			continue
+		}
+		// 「この発言の続きから」は codex では素直: lastTurnId が包含なので、そのターン自身を
+		// 渡せば「そのやり取りまで残す」になる。ずらしが要るのは排他側（1 つ前）だけ。
+		if at.Include {
+			return tid, nil
 		}
 		if i == 0 {
 			return "", errors.New("最初のやり取りからは分岐できません（新しいセッションを作ってください）")

@@ -15,6 +15,7 @@ package copilot
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -34,10 +35,59 @@ type agentImpl struct{}
 
 func (agentImpl) Kind() string { return session.KindCopilot }
 
-// No fork (copilot exposes no fork affordance) and no display label. The chat
-// mirror IS supported: transcript.go reads session-state/<sid>/events.jsonl,
-// which copilot appends live in every mode.
-func (agentImpl) Caps() agents.Caps { return agents.Caps{CanTranscript: true} }
+// The chat mirror IS supported: transcript.go reads session-state/<sid>/events.jsonl,
+// which copilot appends live in every mode. CanFork/CanForkAt: copilot exposes no fork
+// affordance of its own, so both are done by copying the session-state directory and
+// truncating events.jsonl (forkat.go) — events.jsonl is the restore source (実測,
+// docs/55 §55.5). No display label.
+func (agentImpl) Caps() agents.Caps {
+	return agents.Caps{CanTranscript: true, CanFork: true, CanForkAt: true}
+}
+
+// ForkSource resolves this session's copilot session id as the fork source, refusing when
+// nothing has been recorded yet (a branch of an empty conversation is a new session).
+func (agentImpl) ForkSource(m session.Meta) (string, error) {
+	sid := SessionID(m)
+	if sid == "" {
+		return "", errors.New("分岐できる会話がまだありません")
+	}
+	lines, err := readEventLines(sid)
+	if err != nil || !hasUserMessage(lines) {
+		return "", errors.New("分岐できる会話がまだありません")
+	}
+	return sid, nil
+}
+
+// ResolveForkAt validates the anchor against this session's own events.jsonl. Like
+// claude, the value travels unchanged (the cut is expressed as "stop before this event"),
+// and validating here rather than only at launch means a bad anchor is reported as such
+// instead of as a session that starts and dies.
+func (agentImpl) ResolveForkAt(m session.Meta, at agents.ForkPoint) (string, error) {
+	sid := SessionID(m)
+	if sid == "" {
+		return "", errors.New("分岐できる会話がまだありません")
+	}
+	lines, err := readEventLines(sid)
+	if err != nil {
+		return "", errors.New("copilot の会話ログを読めません")
+	}
+	anchor := at.Anchor
+	if at.Include {
+		next, err := nextPromptID(lines, anchor)
+		if err != nil {
+			return "", err
+		}
+		if next == "" {
+			return "", nil // 最後のやり取り = 全部残す（会話まるごとの経路へ）
+		}
+		anchor = next
+	}
+	// Dry run of the real surgery so this answer and the launch can never disagree.
+	if _, err := forkEventLines(lines, anchor, sid, sid); err != nil {
+		return "", err
+	}
+	return anchor, nil
+}
 
 func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.LaunchPlan, error) {
 	if !session.DirExists(m.Dir) {
@@ -54,6 +104,15 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 			return agents.LaunchPlan{}, fmt.Errorf("セッション ID を採番できません: %w", err)
 		}
 		sids.Write(session.UUID(m.Dir, m.Name), sid)
+	}
+	// First launch of a fork (docs/55): build our own session-state directory before
+	// copilot starts, so the launch below is an ordinary `--session-id <sid>` resume.
+	// A failure must NOT fall through to a fresh session — the user asked for a branch
+	// carrying history, and starting empty looks like the branch silently lost it.
+	if m.ForkFrom != "" && !sessionStateExists(sid) {
+		if err := MaterializeForkAt(m.ForkFrom, sid, m.ForkAt); err != nil {
+			return agents.LaunchPlan{}, fmt.Errorf("分岐を作成できませんでした: %w", err)
+		}
 	}
 	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Effort, m.Mode, sid), Cwd: m.CWD()}, nil
 }

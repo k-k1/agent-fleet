@@ -212,3 +212,66 @@ export function formatPlanFeedback(comments: PlanComment[], note?: string): stri
   const head = t("mirror.plan_feedback_head", { count: items.length });
   return extra ? `${head}\n\n${body}\n\n${extra}` : `${head}\n\n${body}`;
 }
+
+// deliverPlanComments は「溜めたコメントをどう届け、いつ送信済みにするか」の判断だけを
+// 持つ。送信そのもの（respond = /plan-respond の reject、say = 普通の発話）は呼び出し側
+// から注入するので、ここは MirrorView を描画せずに検証できる — その MirrorView が
+// 巨大すぎてレンダリングテストを持てないことが、この判断のバグ（下記）を素通しにした。
+//
+// 経路は「押した瞬間の状態」で決まる:
+//   pending  → respond。承認ダイアログが開いたまま自由文を送ると本文がモーダルに飲まれ
+//     Enter が承認になるため、Escape で閉じてから投入する経路でしか安全に届かない。
+//   それ以外（却下後・plan モードで入力待ち／実行中） → say（普通の発話）。
+//   pending のつもりが既に判断済みだった（no_plan）→ say へ落とす。
+//
+// 送信済みの印は「実際に届いた」ときだけ付ける。届かなかったコメントを畳むと unsent が
+// 0 になって送信ボタンごと消え、利用者は打ち直せない（2026-08-10 の実障害: say の失敗を
+// 見ずに畳んでいたため、エラートーストと「送信済み」が同時に出ていた）。
+export interface PlanRespondLike {
+  ok: boolean;
+  code?: string;
+  delivered?: boolean;
+  message?: string;
+}
+
+// 失敗の reason は「誰が利用者に伝えるか」も決める:
+//   say         — 発話経路が拒否された。say（＝sendPrompt）が理由を通知済みなので、
+//                 呼び出し側が重ねて出すと汎用文言が具体的な理由に被さる。
+//   respond     — /plan-respond が断った。message をそのまま見せる。
+//   undelivered — 却下は通ったが本文が入らなかった（コンポーザ復帰を確認できず）。
+export type PlanDeliveryResult =
+  /** 届いた＝コメントは畳み済み。via は経路、feedback は実際に送った本文（エコー用）。 */
+  | { ok: true; via: "reject" | "prompt"; feedback: string }
+  /** 届かなかった＝何も畳んでいない。 */
+  | { ok: false; reason: "say" | "respond" | "undelivered"; message?: string };
+
+export async function deliverPlanComments(
+  key: string,
+  deps: {
+    pending: boolean;
+    respond: (feedback: string) => Promise<PlanRespondLike>;
+    say: (feedback: string) => Promise<boolean>;
+  },
+): Promise<PlanDeliveryResult | null> {
+  const list = unsentComments(getPlanComments(key));
+  if (!list.length) return null; // 送るものが無い（ボタンも出ない状態）
+  const feedback = formatPlanFeedback(list);
+  const ids = list.map((c) => c.id);
+  // 発話経路。say の戻り値を見ずに畳んだのが実障害の正体なので、ここが唯一の分岐点。
+  const bySaying = async (): Promise<PlanDeliveryResult> => {
+    if (!(await deps.say(feedback))) return { ok: false, reason: "say" };
+    markPlanCommentsSent(key, ids);
+    return { ok: true, via: "prompt", feedback };
+  };
+  if (!deps.pending) return bySaying();
+  const res = await deps.respond(feedback);
+  if (!res.ok) {
+    // すでに別経路で判断済み（no_plan）なら、ただの発話として届ける。
+    if (res.code === "no_plan") return bySaying();
+    return { ok: false, reason: "respond", message: res.message };
+  }
+  // 却下は通ったがフィードバックは届いていない（コンポーザ復帰を確認できず）。
+  if (!res.delivered) return { ok: false, reason: "undelivered", message: res.message };
+  markPlanCommentsSent(key, ids);
+  return { ok: true, via: "reject", feedback };
+}

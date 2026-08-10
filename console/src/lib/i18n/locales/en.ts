@@ -913,6 +913,9 @@ export const en: Record<keyof typeof ja, string> = {
   "agents.auto_title": "Auto-suggest title",
   "agents.note_auto_title":
     "After a few exchanges in a session with no title, AI shows a short title suggestion at the top of the session chat. The assistant-side title suggestion is configured on the Assistant tab.",
+  "agents.peer_messaging": "Messages between sessions",
+  "agents.note_peer_messaging":
+    "Lets a session send a short message to another session in this workspace, so parallel working copies can tell each other \"the change I just landed breaks yours\" or \"the decision you were blocked on is settled\" without going through you. Messages cross agent kinds (claude ↔ codex, …) and reach a stopped session by resuming it. The receiving agent is told the message is not an instruction from you: it can never stand in for your approval or justify a config change. The mirror badges each one with its sender. Raw shell sessions (shell / ssm) can neither send nor receive. **The change applies to sessions started from now on**; sessions already running keep their current tools until restarted.\nDefault OFF. Turning it on means a session can write instructions to other sessions based on what it read (repository contents included), so enable it deliberately.",
   "agents.claude_rate_limit_resume": "Auto-resume after a usage limit resets",
   "agents.note_claude_rate_limit_resume":
     "When a Claude session is interrupted by its usage limit, a one-time resume is booked to send \"please carry on\" to that session when the limit resets. The booking is deleted after use and never repeats. If the workspace stops while waiting, it is started at the booked time for delivery. The resume is skipped if you are already driving the session then. Reaching the limit and a successful automatic resume are also shown in the notification center. Sessions launched directly from Console are included. Default ON.\nEven when OFF, the limit menu (\"1. Stop and wait for limit to reset / 2. Ask your admin for more usage\") is still confirmed automatically. While the menu is open, the session accepts no input, notifications, or reports, and only the no-cost waiting option is chosen automatically. To pick 2, choose it yourself while the menu is on screen.",
@@ -1895,7 +1898,13 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.fork_at_intro":
     "Creates a new session carrying the conversation up to this point. This message — and everything after it — is left out. It's a copy, not a summary.",
   "mirror.fork_at_point": "Branch point",
+  "mirror.fork_at_mode": "Where to start",
+  "mirror.fork_at_mode_redo": "Redo this message",
+  "mirror.fork_at_mode_redo_hint": "leaves this message out",
+  "mirror.fork_at_mode_continue": "Continue after it",
+  "mirror.fork_at_mode_continue_hint": "keeps this message and its reply",
   "mirror.fork_at_carried": "Carries everything before this message ({count} of your messages)",
+  "mirror.fork_at_carried_incl": "Carries everything through this message and its reply ({count} of your messages)",
   "mirror.fork_at_keeps_source": "This session stays as it is",
   "mirror.fork_at_draft": "This message lands in the new session's composer as a draft (not sent)",
   "mirror.fork_at_go": "Branch",
@@ -1912,6 +1921,10 @@ export const en: Record<keyof typeof ja, string> = {
     "Sent by the agent to carry on after the turn was cut off (dropped connection, temporary rate limit, …) — typed neither by you nor by the assistant.",
   "mirror.from_chat": "From {provider}",
   "mirror.from_chat_title": "Sent as a reply from chat ({provider}) — not typed at the console.",
+  "mirror.from_peer": "From another session",
+  "mirror.from_peer_named": "From {name}",
+  "mirror.from_peer_title":
+    "A message another session in this workspace sent — typed neither by you nor by the assistant. The agent is told it is not an instruction from you, and will not change permissions or config because a peer asked.",
   "mirror.effort_hint": "Reasoning effort (codex reasoning_effort / opencode variant)",
   "mirror.token_hint": "Input (context) ↑ / output ↓ tokens",
   "mirror.time_span_hint": "Started {start} — finished {end}",
@@ -2755,6 +2768,7 @@ export const en: Record<keyof typeof ja, string> = {
   "pj.no_changes": "No changes",
   "pj.changed_files": "Changed files",
   "pj.click_open_diff": " (click to open working diff; right-click for the menu)",
+  "pj.click_open_file": " (untracked — click to open the file; right-click for the menu)",
   "pj.row_menu": "Menu",
   "pj.deleted_no_open": "The file is deleted — only the diff can be opened",
   "pj.files": "Files",
@@ -3267,6 +3281,8 @@ export const en: Record<keyof typeof ja, string> = {
   "view.conversation_not_found": "Conversation not found: {slug}",
   "view.table_repaired":
     "This table is written with the fullwidth ｜ instead of |, so it is shown repaired here. Other Markdown viewers will still render it as plain text.",
+  "view.frontmatter_invalid":
+    "This front matter is not valid YAML, so it is read line by line as `key: value` here. Other Markdown viewers will render it as body text — quote any value that starts with a reserved character such as ` or @.",
 
 
   // === P5 ログイン切れモーダル（AuthExpiredModal） ===

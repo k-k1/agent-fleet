@@ -36,6 +36,12 @@ const (
 	// だから — 利用者がミラーを見たとき、自分もオペレーターも送っていない「続けて」が
 	// 誰の仕業か分からないのが一番困る。
 	turnSourceAutoResume = "auto-resume"
+	// turnSourcePeer is another SESSION's message (docs/58 / ADR 0041). バッジを分ける
+	// 理由は auto-resume と同じで、しかもこちらの方が切実 — 利用者もオペレーターも
+	// 送っていない指示がミラーに現れたとき、それが「隣の worktree のセッションから来た」
+	// と分からないと、誰の仕業か辿る手段が無い。**このバッジが peer 着信の唯一の可視化**
+	// なので、付け忘れると人間から見えない経路になる。
+	turnSourcePeer = "peer"
 )
 
 // injectionSource maps a caller-supplied source onto the recordable vocabulary. The
