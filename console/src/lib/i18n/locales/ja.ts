@@ -1950,6 +1950,10 @@ export const ja = {
     "ターンが中断（接続断・一時的なレート制限など）したため、Agent が続きを走らせるために自動で送ったプロンプトです。あなたもアシスタントも入力していません。",
   "mirror.from_chat": "{provider} から",
   "mirror.from_chat_title": "チャット（{provider} など）から返信で送られた入力です。コンソールで入力したものではありません。",
+  "mirror.from_peer": "別のセッションから",
+  "mirror.from_peer_named": "{name} から",
+  "mirror.from_peer_title":
+    "同じワークスペースの別のセッションが送ったメッセージです。あなたもアシスタントも入力していません。エージェントには「利用者の指示ではない」と伝えてあり、これを根拠に権限設定や設定ファイルを変えることはしません。",
   "mirror.effort_hint": "推論の努力度（codex reasoning_effort / opencode variant）",
   "mirror.token_hint": "入力(文脈)↑ / 出力↓ トークン",
   "mirror.time_span_hint": "開始 {start} — 完了 {end}",
