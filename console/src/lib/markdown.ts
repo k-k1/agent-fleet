@@ -3,6 +3,10 @@ import { load } from "js-yaml";
 export interface YamlFrontMatter {
   attributes: Record<string, unknown>;
   body: string;
+  // The block is not valid YAML and was read as flat `key: value` lines instead
+  // (see parseFlatEntries). The viewer says so out loud: every other tool still
+  // sees a broken document.
+  lenient?: boolean;
 }
 
 // Read a YAML front matter block at the start of a Markdown document. Marked
@@ -10,8 +14,9 @@ export interface YamlFrontMatter {
 // rendering the body.
 //
 // Only a complete, mapping-shaped block at byte zero is recognized. This leaves
-// thematic breaks, invalid YAML, and incomplete front matter (while a chat
-// message is streaming) as ordinary Markdown.
+// thematic breaks and incomplete front matter (while a chat message is streaming)
+// as ordinary Markdown. A complete block YAML rejects gets one more chance as flat
+// `key: value` lines (parseFlatEntries) before it is left as Markdown too.
 export interface TableRepair {
   body: string;
   // Indexes, in document order among all table blocks found, of the tables that were
@@ -125,17 +130,56 @@ export function repairFullwidthTables(source: string): TableRepair | null {
   return repaired.length ? { body: lines.join("\n"), repaired, total } : null;
 }
 
+// One `key: value` line, the way a human writes front matter: the key at column
+// zero (so nothing nested), a non-empty value on the same line. A leading `#` or
+// `-` is a comment or a list item \u2014 shapes this fallback does not claim to read.
+const FLAT_ENTRY = /^([^\s#-][^:]*?)[\t ]*:[\t ]+(\S.*)$/;
+// A value opening with a YAML structure indicator \u2014 a flow collection, a block
+// scalar, an anchor / alias / tag \u2014 was meant as real YAML, and it is broken.
+// Reading it as a string would show the reader something nobody wrote, so leave
+// the whole block alone instead ("title: [" stays prose, as it always did).
+const STRUCTURED_VALUE = /^[[\]{}|>&*!%,#]/;
+// Surrounding quotes are the author's, not the value's \u2014 strip one matching pair.
+const unquote = (value: string): string =>
+  /^"[^"]*"$/.test(value) || /^'[^']*'$/.test(value) ? value.slice(1, -1) : value;
+
+// Read a front matter block that YAML rejected as flat `key: value` lines.
+//
+// Why bother: YAML reserves ` and @ as the FIRST character of a plain scalar, so
+// an entirely ordinary line \u2014 \u5099\u8003: `\u30EC\u30D3\u30E5\u30FC_\u8F9B\u53E3\u7DE8\u96C6\u8005.md` \u3068\u306F\u5F79\u5272\u304C\u9055\u3046 \u2014 throws,
+// and the whole block then renders as one run-on paragraph of prose above the
+// document. Read line by line it is exactly what the author meant.
+//
+// Only a block where every line is a flat entry (blank and comment lines aside)
+// is accepted; anything with nesting, lists or block scalars returns null and
+// keeps the old behavior of rendering as Markdown.
+function parseFlatEntries(yaml: string): Record<string, unknown> | null {
+  const attributes: Record<string, unknown> = {};
+  for (const line of yaml.split(/\r?\n/)) {
+    if (/^[\t ]*$/.test(line) || /^[\t ]*#/.test(line)) continue;
+    const entry = line.match(FLAT_ENTRY);
+    if (!entry) return null;
+    const value = entry[2].trim();
+    if (STRUCTURED_VALUE.test(value)) return null;
+    attributes[entry[1]] = unquote(value);
+  }
+  return Object.keys(attributes).length ? attributes : null;
+}
+
 export function splitYamlFrontMatter(source: string): YamlFrontMatter | null {
   const match = source.match(/^\uFEFF?---[\t ]*\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)[\t ]*(?:\r?\n|$)/);
   if (!match) return null;
   const yaml = match[0]
     .replace(/^\uFEFF?---[\t ]*\r?\n/, "")
     .replace(/\r?\n(?:---|\.\.\.)[\t ]*(?:\r?\n|$)$/, "");
+  const body = source.slice(match[0].length);
+  let attributes: unknown;
   try {
-    const attributes = load(yaml);
-    if (!attributes || Array.isArray(attributes) || typeof attributes !== "object") return null;
-    return { attributes: attributes as Record<string, unknown>, body: source.slice(match[0].length) };
+    attributes = load(yaml);
   } catch {
-    return null;
+    const flat = parseFlatEntries(yaml);
+    return flat ? { attributes: flat, body, lenient: true } : null;
   }
+  if (!attributes || Array.isArray(attributes) || typeof attributes !== "object") return null;
+  return { attributes: attributes as Record<string, unknown>, body };
 }
