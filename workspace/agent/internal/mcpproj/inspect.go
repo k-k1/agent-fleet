@@ -22,6 +22,11 @@ type fileSpec struct {
 	// specKind selects which mcpreg.JSONEntrySpellings entry parses this file.
 	// "" means codex's TOML shape (parseCodexServers) instead of a JSON spelling.
 	specKind string
+	// seed is written into a file P1 creates from scratch (opencode's "$schema"),
+	// matching what that CLI's own writer would produce (docs/56 §6) — never
+	// applied to a file that already exists. nil for kinds whose own `mcp add`
+	// writes no header of its own.
+	seed map[string]any
 }
 
 // fileSpecs is v1's target list (docs/56 §4.3). .mcp.json and .github/mcp.json are
@@ -30,7 +35,8 @@ type fileSpec struct {
 // "mcpServers" shape pending the real measurement docs/56 §14 item 4 defers to P3.
 var fileSpecs = []fileSpec{
 	{path: ".mcp.json", kinds: []string{session.KindClaude, session.KindCopilot}, specKind: session.KindClaude},
-	{path: "opencode.json", kinds: []string{session.KindOpencode}, specKind: session.KindOpencode},
+	{path: "opencode.json", kinds: []string{session.KindOpencode}, specKind: session.KindOpencode,
+		seed: map[string]any{"$schema": "https://opencode.ai/config.json"}},
 	{path: ".codex/config.toml", kinds: []string{session.KindCodex}},
 	{path: ".cursor/mcp.json", kinds: []string{session.KindCursor}, specKind: session.KindCursor},
 	{path: ".github/mcp.json", kinds: []string{session.KindCopilot}, specKind: session.KindClaude},

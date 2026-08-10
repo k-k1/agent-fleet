@@ -1,11 +1,13 @@
-// ProjectModal — docs/56 P0 / docs/57 §3: a working copy's project-scope settings,
+// ProjectModal — docs/56 / docs/57 §3: a working copy's project-scope settings,
 // entered from the repo row's right-click menu (a SEPARATE modal from the settings
 // dialog on purpose — that one is workspace-wide/user-scope, this one is "this one
 // repo", and mixing the two would make it unclear which scope a value belongs to).
-// P0 ships exactly one section (MCP servers), read-only: the servers × files matrix
-// that answers "is the same server duplicated, and which copy is actually alive"
-// (docs/56 §1's novel-lab motivation). Reflecting a value between files (plan/apply)
-// is P1 — this modal never sends a write.
+// Ships exactly one section (MCP servers): the servers × files matrix that answers
+// "is the same server duplicated, and which copy is actually alive" (docs/56 §1's
+// novel-lab motivation), plus the P1 write actions (③, docs/56 §9.2) — copying a
+// server into another file (with dialect translation and conflict resolution) and
+// adding a file to git's ignore list. This modal never plans-and-applies silently:
+// every write goes through a preview the user must explicitly confirm.
 import { useState } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
@@ -16,6 +18,7 @@ import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { errText, isTransientErr } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { kindIcon, kindLabel } from "../../lib/sessionkind.ts";
+import { ProjectCopyPanel, ProjectIgnorePanel } from "./ProjectActionPanels.tsx";
 import {
   dialectsText,
   divergedNames,
@@ -40,6 +43,7 @@ export function ProjectModal({ repo, onClose }: ProjectModalProps) {
 
   const [snap, setSnap] = useState<ProjectSnapshot | null>(null);
   const [err, setErr] = useState("");
+  const [reloadTick, setReloadTick] = useState(0);
 
   useRetryLoad(
     async (signal) => {
@@ -60,7 +64,7 @@ export function ProjectModal({ repo, onClose }: ProjectModalProps) {
       setSnap(d);
       return true;
     },
-    [repo, running],
+    [repo, running, reloadTick],
   );
 
   return (
@@ -77,18 +81,34 @@ export function ProjectModal({ repo, onClose }: ProjectModalProps) {
         ) : !snap ? (
           <p className="ps-note">{tr("common.loading")}</p>
         ) : (
-          <ProjectMcpSection snap={snap} />
+          <ProjectMcpSection repo={repo} snap={snap} onApplied={() => setReloadTick((n) => n + 1)} />
         )}
       </div>
     </Modal>
   );
 }
 
-function ProjectMcpSection({ snap }: { snap: ProjectSnapshot }) {
+interface ProjectMcpSectionProps {
+  repo: string;
+  snap: ProjectSnapshot;
+  onApplied: () => void;
+}
+
+function ProjectMcpSection({ repo, snap, onApplied }: ProjectMcpSectionProps) {
   const tr = useT();
   const names = matrixServerNames(snap.files);
   const diverged = divergedNames(snap.warnings);
   const [warningsOpen, setWarningsOpen] = useState(true);
+  const [copySource, setCopySource] = useState<{ file: string; name: string } | null>(null);
+  const [ignoreFile, setIgnoreFile] = useState<string | null>(null);
+
+  const closeActions = () => {
+    setCopySource(null);
+    setIgnoreFile(null);
+  };
+  const handleApplied = () => {
+    onApplied();
+  };
 
   return (
     <div className="pmcp-section">
@@ -130,9 +150,23 @@ function ProjectMcpSection({ snap }: { snap: ProjectSnapshot }) {
                       : tr("pmcp.untracked")}
               </span>
             )}
+            {f.exists && snap.vcs === "git" && !f.ignored && (
+              <button
+                type="button"
+                className="pmcp-link-btn"
+                onClick={() => {
+                  closeActions();
+                  setIgnoreFile(f.path);
+                }}
+              >
+                {tr("pmcp.add_to_ignore")}
+              </button>
+            )}
           </li>
         ))}
       </ul>
+
+      {ignoreFile && <ProjectIgnorePanel repo={repo} file={ignoreFile} onClose={closeActions} />}
 
       {names.length > 0 ? (
         <>
@@ -163,9 +197,17 @@ function ProjectMcpSection({ snap }: { snap: ProjectSnapshot }) {
                       return (
                         <td key={f.path} className={"pmcp-cell" + (s ? " present" : "")}>
                           {s ? (
-                            <span title={s.transport}>
+                            <button
+                              type="button"
+                              className="pmcp-cell-btn"
+                              title={tr("pmcp.copy_from_cell", { server: name, file: f.path })}
+                              onClick={() => {
+                                closeActions();
+                                setCopySource({ file: f.path, name });
+                              }}
+                            >
                               <Icon name="circle-filled" /> {s.transport}
-                            </span>
+                            </button>
                           ) : (
                             <Icon name="circle-outline" className="muted" />
                           )}
@@ -180,6 +222,10 @@ function ProjectMcpSection({ snap }: { snap: ProjectSnapshot }) {
         </>
       ) : (
         <p className="ps-note">{tr("pmcp.empty")}</p>
+      )}
+
+      {copySource && (
+        <ProjectCopyPanel repo={repo} snap={snap} source={copySource} onClose={closeActions} onApplied={handleApplied} />
       )}
 
       {snap.warnings && snap.warnings.length > 0 && (

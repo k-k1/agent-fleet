@@ -42,6 +42,11 @@ type JSONEntrySpelling struct {
 	TypeKey   string
 	TypeStdio string
 	TypeHTTP  string
+	// AlwaysEnabled: this kind's own writer always states an explicit "enabled":
+	// true on every entry (opencode — OpencodeServers' comment: "opencode's
+	// default, said out loud"). A P1 write matches what the CLI itself would
+	// produce (docs/56 §6) rather than omit a key only some kinds expect.
+	AlwaysEnabled bool
 }
 
 // JSONEntrySpellings is keyed by session.Kind*. Only kinds mcpproj parses as a
@@ -63,6 +68,7 @@ var JSONEntrySpellings = map[string]JSONEntrySpelling{
 		ServersKey: "mcp", CommandKey: "command", ArgsFolded: true, EnvKey: "environment",
 		URLKey: "url", HeadersKey: "headers",
 		TypeKey: "type", TypeStdio: "local", TypeHTTP: "remote",
+		AlwaysEnabled: true,
 	},
 	session.KindCursor: {
 		// No discriminator (cursorServers' comment: "af writes the

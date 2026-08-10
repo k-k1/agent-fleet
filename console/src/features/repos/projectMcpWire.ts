@@ -9,7 +9,7 @@
 // every Warning is a code plus parameters, and warningText() below is where the
 // Console turns that back into a localized sentence.
 
-import { api } from "../../core/api/client.ts";
+import { api, apiJSON } from "../../core/api/client.ts";
 import { t } from "../../lib/i18n/index.ts";
 
 export interface ProjectServer {
@@ -65,6 +65,79 @@ export interface ProjectSnapshot {
 
 export const fetchProjectMcpSnapshot = (repo: string): Promise<ProjectSnapshot> =>
   api(`api/repos/${encodeURIComponent(repo)}/mcp`);
+
+// --- P1: plan → apply (docs/56 §5 / §10) --------------------------------------
+//
+// A pure ops list, computed client-side from the panel's form state — never
+// stored server-side (docs/56 §5's "純粋なワンショット"). planHash is an opaque
+// echo: compute it via planProjectMcp, pass the SAME value to applyProjectMcp: a
+// 409 means a file the ops would write changed in between (docs/56 §5's
+// optimistic lock) and the panel must re-plan rather than retry blindly.
+
+export type OnConflict = "overwrite" | "skip" | "rename";
+export type DialectChoice = "as-is" | "translate" | "expand";
+export type IgnoreWhere = "exclude" | "gitignore";
+
+export interface ProjectOp {
+  op: "copy" | "ignore";
+  // copy
+  from?: { file: string; name: string };
+  to?: { file: string };
+  as?: string;
+  onConflict?: OnConflict;
+  withSecrets?: boolean;
+  dialect?: DialectChoice;
+  // ignore
+  file?: string;
+  where?: IgnoreWhere;
+}
+
+export interface ProjectOpResult {
+  index: number;
+  status: "ok" | "skipped" | "error";
+  reason?: string;
+  file?: string;
+  resolvedName?: string;
+  before?: ProjectServer;
+  after?: ProjectServer;
+  gateCode?: string;
+  ignoreFile?: string;
+  alreadyPresent?: boolean;
+}
+
+export interface ProjectPlanResult {
+  planHash: string;
+  ops: ProjectOpResult[];
+  warnings?: ProjectWarning[];
+}
+
+export const planProjectMcp = (repo: string, ops: ProjectOp[]): Promise<ProjectPlanResult> =>
+  apiJSON(`api/repos/${encodeURIComponent(repo)}/mcp/plan`, "POST", { ops });
+
+export const applyProjectMcp = (repo: string, ops: ProjectOp[], planHash: string): Promise<ProjectPlanResult> =>
+  apiJSON(`api/repos/${encodeURIComponent(repo)}/mcp/apply`, "POST", { ops, planHash });
+
+/** Whether file already has an entry named name — for progressive disclosure of
+ * the onConflict choice (docs/56 §9.2: only ask when there IS a conflict). */
+export function targetHasEntry(files: ProjectFile[], file: string, name: string): boolean {
+  const f = files.find((x) => x.path === file);
+  return !!f?.servers?.some((s) => s.name === name);
+}
+
+export function opErrorText(reason?: string): string {
+  switch (reason) {
+    case "mcp_project_copy_source_unreadable":
+      return t("pmcp.op_source_unreadable");
+    case "mcp_project_copy_source_missing":
+      return t("pmcp.op_source_missing");
+    case "mcp_project_copy_dest_unreadable":
+      return t("pmcp.op_dest_unreadable");
+    case "mcp_project_copy_conflict":
+      return t("pmcp.op_conflict");
+    default:
+      return reason || t("err.unknown");
+  }
+}
 
 // --- matrix helpers (servers × files, docs/56 §9.2 ②) -----------------------
 
