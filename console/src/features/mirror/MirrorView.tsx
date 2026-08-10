@@ -87,9 +87,7 @@ import { awaitingReply, confirmedWorkEnd, latestWorkPromptIndex, textOfParts, wo
 import { echoLanded, echoNeedsResync, type PendingEcho } from "./pendingEcho.ts";
 import { PLAN_APPROVE_KEYS, planOutcome } from "./planDecision.ts";
 import {
-  formatPlanFeedback,
-  getPlanComments,
-  markPlanCommentsSent,
+  deliverPlanComments,
   planKey,
   removePlanComment,
   unsentComments,
@@ -1969,14 +1967,10 @@ export function MirrorView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingPlan, session]);
 
-  // プランへのコメントを届ける。経路は「押した瞬間の状態」で決まる:
-  //   承認待ち → /plan-respond の reject（Escape でダイアログを閉じ、コンポーザが戻って
-  //     から投入するところまでサーバが面倒を見る）。開いたまま /input へ送ると本文が
-  //     モーダルに飲まれ Enter が承認になるため、この経路でしか安全に届かない。
-  //   それ以外（却下後・plan モードで入力待ち／実行中） → 普通の発話として送る。
-  // 送信済みの印は「実際に届いた」ときだけ付ける — 届かなかったコメントを消してしまうと
-  // 利用者は打ち直せない。発話経路の成否は sendPrompt の戻り値で受ける（失敗はトースト
-  // されるが、それを見て畳まないのは呼び出し側の責任）。
+  // プランへのコメントを届ける。どの経路で送りいつ送信済みにするかの判断は
+  // deliverPlanComments（planComments.ts）が持つ — この巨大コンポーネントは
+  // レンダリングテストを持てないので、判断だけ外に出して単体で固定してある。
+  // ここに残るのは React 側の後始末: 押下ガード、楽観 却下 バッジ、トースト、エコー。
   const sendPlanComments = async (plan: string) => {
     if (sending) return;
     // 停止中のセッションには届かない。プランカードは履歴にも出る＝コンポーザと違って
@@ -1987,44 +1981,34 @@ export function MirrorView({
       return;
     }
     if (wsDown()) return;
-    const key = planKey(session, plan);
-    const list = unsentComments(getPlanComments(key));
-    if (!list.length) return;
-    const feedback = formatPlanFeedback(list);
-    const ids = list.map((c) => c.id);
     const isPending = !!pendingPlan && pendingPlan.trim() === plan.trim();
-    if (!isPending) {
-      if (await sendPrompt(feedback)) markPlanCommentsSent(key, ids);
-      return;
+    if (isPending) {
+      // 却下を伴う経路。送信ボタンを塞ぎ、バッジと「返信待ち」状態を先に倒しておく
+      // （sendPrompt は自前で sending を面倒みるので、発話だけの経路では触らない）。
+      setSending(true);
+      rejectedPlansRef.current.add(plan.trim()); // 楽観 却下 バッジ（実 outcome で planOutcome が調停）
+      wasWorkingRef.current = false; // 中断と同じ: 返信を待つ状態ではなくなる
+      finalizingRef.current = false;
+      setFinalizing(false);
     }
-    setSending(true);
-    rejectedPlansRef.current.add(plan.trim()); // 楽観 却下 バッジ（実 outcome で planOutcome が調停）
-    wasWorkingRef.current = false; // 中断と同じ: 返信を待つ状態ではなくなる
-    finalizingRef.current = false;
-    setFinalizing(false);
-    const res = await sessionPlanRespond(session, "reject", feedback);
-    setSending(false);
+    const res = await deliverPlanComments(planKey(session, plan), {
+      pending: isPending,
+      respond: (feedback) => sessionPlanRespond(session, "reject", feedback),
+      say: (feedback) => sendPrompt(feedback),
+    });
+    if (isPending) setSending(false);
+    if (!res) return; // 送るものが無い
     if (!res.ok) {
-      // すでに別経路で判断済み（no_plan）なら、ただの発話として届ける。ここも「届いたら
-      // だけ」畳む — この経路で無条件に畳んでいたのが、送信ボタンごとコメントが消えて
-      // 打ち直せなくなった実障害の後半（前半は Agent 側の state 判定・972d3a66）。
-      if (res.code === "no_plan") {
-        if (await sendPrompt(feedback)) markPlanCommentsSent(key, ids);
-        return;
-      }
-      toast(res.message || tr("mirror.send_failed"));
+      // 届かなかった＝コメントは畳まれていない。理由を出して打ち直せることを伝える
+      // （undelivered = 却下は通ったが本文が入らなかった）。
+      toast(res.message || tr(res.reason === "undelivered" ? "plan.feedback_undelivered" : "mirror.send_failed"));
       return;
     }
-    if (!res.delivered) {
-      // 却下は通ったがフィードバックは届いていない（コンポーザ復帰を確認できず）。
-      // 送信済みにせず、コンポーザから送り直せることを伝える。
-      toast(res.message || tr("plan.feedback_undelivered"));
-      return;
+    if (res.via === "reject") {
+      const echoId = ++echoSeqCounter; // 実ターンが載るまでの楽観エコー（sendPrompt と同じ）
+      applyEchoes((p) => [...p, { id: echoId, text: res.feedback, sinceIdx: newestIdx(), at: Date.now() }]);
+      setTimeout(() => tickRef.current?.(), 400);
     }
-    markPlanCommentsSent(key, ids);
-    const echoId = ++echoSeqCounter; // 実ターンが載るまでの楽観エコー（sendPrompt と同じ）
-    applyEchoes((p) => [...p, { id: echoId, text: feedback, sinceIdx: newestIdx(), at: Date.now() }]);
-    setTimeout(() => tickRef.current?.(), 400);
   };
 
   // Open a SendUserFile entry in its own split pane (same as the file tree's split-open).
