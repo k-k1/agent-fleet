@@ -412,6 +412,47 @@ func TestBrowserAttachmentScreencastRetriesFrameNotActive(t *testing.T) {
 	m.Delete(created.ID)
 }
 
+// TestBrowserAttachmentStartScreencastBringsTargetToFront covers a real-world
+// gap found while investigating a live "pane stays black despite a connected
+// viewer" report: an attach target is very often not Chromium's foreground
+// tab (e.g. a script with many tabs open, cycling between them), and Chromium
+// throttles paints on background tabs so Page.startScreencast succeeds but no
+// screencastFrame ever arrives. startScreencast must activate the target
+// before arming the cast so it actually renders.
+func TestBrowserAttachmentStartScreencastBringsTargetToFront(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	m := fakeAttachmentManager(cdp, 0)
+	created := createFakeAttachment(t, m)
+	a, err := m.lookupActive(created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.mu.Lock()
+	a.visible = true
+	a.mu.Unlock()
+
+	if err := a.startScreencast(); err != nil {
+		t.Fatal(err)
+	}
+	methods := cdp.methods()
+	frontIdx, castIdx := -1, -1
+	for i, mth := range methods {
+		if mth == "Page.bringToFront" && frontIdx == -1 {
+			frontIdx = i
+		}
+		if mth == "Page.startScreencast" && castIdx == -1 {
+			castIdx = i
+		}
+	}
+	if frontIdx == -1 {
+		t.Fatalf("startScreencast did not call Page.bringToFront: %v", methods)
+	}
+	if castIdx == -1 || frontIdx > castIdx {
+		t.Fatalf("Page.bringToFront must precede Page.startScreencast: %v", methods)
+	}
+	m.Delete(created.ID)
+}
+
 func TestBrowserAttachmentControlModeHTTPContract(t *testing.T) {
 	m := fakeAttachmentManager(newFakeBrowserCDP(), 0)
 	created := createFakeAttachment(t, m)

@@ -705,6 +705,14 @@ func (a *browserAttachment) startScreencast() error {
 	if a.casting {
 		return nil
 	}
+	// An attach target is owned by something else (a Playwright script, another
+	// tab the human has open) and is very often not the foreground tab: Chromium
+	// throttles paints on background tabs, so Page.startScreencast succeeds but
+	// no screencastFrame ever arrives. Bring it to front so it actually renders;
+	// best-effort, ignore failure (the target may not support activation, and
+	// startScreencast below still gets a real error if the page is truly gone).
+	_ = a.manager.call(a.cdp, a.sessionID, "Page.bringToFront", nil, nil)
+
 	// A viewer can attach while the target page is still committing its first
 	// navigation (about:blank -> target), the same transient window documented
 	// on the owned-page path in browser_manager.go. Retry briefly on that one
