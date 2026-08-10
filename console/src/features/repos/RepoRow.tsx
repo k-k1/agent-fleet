@@ -21,6 +21,7 @@ import { agentOf, repoLaunchKinds } from "../../agents/registry.ts";
 import { t, useT } from "../../lib/i18n/index.ts";
 import { ordClass } from "../../layout/badges.ts";
 import { BranchModal } from "./BranchModal.tsx";
+import { ProjectModal } from "./ProjectModal.tsx";
 import { openRepoScm } from "../scm/open.ts";
 import { LaunchModal } from "./LaunchModal.tsx";
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
@@ -100,6 +101,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
   const wrapRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [branchOpen, setBranchOpen] = useState(false);
+  const [projectOpen, setProjectOpen] = useState(false);
   const menuRef = useRef<HTMLUListElement>(null);
   const toast = useToast();
   const tr = useT();
@@ -394,6 +396,13 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                 </button>
               </li>
             )}
+            {/* プロジェクトスコープの MCP 設定（docs/56 P0）— 別モーダル（設定モーダルは
+                workspace 全体＝user スコープの場所なので混ぜない、docs/57 §3）。 */}
+            <li>
+              <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); setProjectOpen(true); }}>
+                <Icon name="gear" /> {tr("repo.project_settings")}
+              </button>
+            </li>
             <li className="ui-menu-sep" role="separator" />
             {kinds.map((k) => (
               <li key={k}>
@@ -461,6 +470,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
           }}
         />
       )}
+      {projectOpen && <ProjectModal repo={r.name} onClose={() => setProjectOpen(false)} />}
       {launchModal && (
         <LaunchModal
           repo={r.name}

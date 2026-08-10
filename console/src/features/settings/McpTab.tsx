@@ -193,6 +193,10 @@ export function McpTab() {
   return (
     <div className="mcp-tab">
       <Hint>{tr("mcp.intro")}</Hint>
+      {/* プロジェクトスコープ（リポジトリの .mcp.json 等）は別軸（docs/56 P0）— この
+          タブは実効レジストリ（user/tenant/builtin）だけを扱う。行き止まりにしない
+          よう導線だけ 1 行置く（docs/57 §3）。 */}
+      <p className="ps-note">{tr("mcp.project_scope_note")}</p>
       {shadowed.length > 0 && (
         <p className="ps-note ps-note-warn">{tr("mcp.shadowed", { names: shadowed.join(", ") })}</p>
       )}

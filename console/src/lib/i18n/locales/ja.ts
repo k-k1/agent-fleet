@@ -416,6 +416,8 @@ export const ja = {
     "MCP サーバーの登録内容はワークスペース内の暗号化ストアにあります。起動すると読み込めます。",
   "mcp.intro":
     "任意の MCP サーバーを登録して、アシスタントチャットと対話セッションから使えるようにします。環境変数とヘッダの値はワークスペース内に暗号化保存され、この画面には返りません。",
+  "mcp.project_scope_note":
+    "プロジェクトスコープ（リポジトリの .mcp.json 等）はここでは扱いません → リポジトリの右クリックメニュー「プロジェクト設定…」から",
   "mcp.empty": "登録済みの MCP サーバーはありません。",
   "mcp.add": "MCP サーバーを追加",
   "mcp.edit": "編集",
@@ -2588,6 +2590,45 @@ export const ja = {
   "repo.svn_update": "更新（svn）",
   "repo.svn_cleanup": "ロックを解除",
   "repo.revision": "リビジョン {rev}",
+  "repo.project_settings": "プロジェクト設定…",
+
+  // === プロジェクト設定モーダル（docs/56 P0 + docs/57、features/repos/ProjectModal.tsx）===
+  "pmcp.title": "プロジェクト設定 — {repo}",
+  "pmcp.ws_required_title": "ワークスペースが停止しています",
+  "pmcp.ws_required_hint": "作業コピーの中のファイルを読むには、ワークスペースの起動が必要です。",
+  "pmcp.worktree_note": "これは worktree です。コミットするまで他の作業コピーには反映されません。",
+  "pmcp.vcs_svn_note": "SVN の作業コピーです。追跡状態（tracked / ignored）は判定できません。",
+  "pmcp.vcs_none_note": "バージョン管理下にありません。追跡状態（tracked / ignored）は判定できません。",
+  "pmcp.files_title": "ファイル",
+  "pmcp.file_missing": "（無し）",
+  "pmcp.file_unparsable": "読み取れません",
+  "pmcp.tracked": "追跡済み",
+  "pmcp.untracked": "未追跡",
+  "pmcp.ignored": "無視設定",
+  "pmcp.tracked_unknown": "判定不可",
+  "pmcp.matrix_title": "サーバー",
+  "pmcp.server_col": "サーバー",
+  "pmcp.empty": "プロジェクトスコープの MCP サーバーは見つかりませんでした。",
+  "pmcp.diverged_hint": "ファイル間で内容が異なります",
+  "pmcp.warnings_title": "警告（{n} 件）",
+  "pmcp.kinds_title": "エージェント別の状態",
+  "pmcp.kind_no_scope": "プロジェクトスコープはありません（グローバル設定のみ）",
+  "pmcp.kind_unverified": "未検証（要ログインのため実測できていません）",
+  "pmcp.dialect_none": "展開なし",
+  "pmcp.gate_approval": "承認が必要（未承認の間は起動しません）",
+  "pmcp.gate_trust": "trust 設定が必要（無いと読み込まれません）",
+  "pmcp.gate_none": "次に起動するセッションから有効",
+  "pmcp.w_file_unreadable": "{file} を読み取れませんでした（形式が壊れている可能性があります）",
+  "pmcp.w_name_hijack":
+    "{file} の \"{server}\" は Agent Fleet 自身が使う名前です。このリポジトリのセッションでは自己申告・引き継ぎ提案・ブラウザ接続が使えなくなっている可能性があります",
+  "pmcp.w_name_invalid": "{file} の \"{server}\" という名前は一部の CLI で扱えない可能性があります",
+  "pmcp.w_dialect_broken":
+    "{file} の \"{server}\" の値が {dialect} を使っていますが、{kind} では正しく展開されず静かに壊れます",
+  "pmcp.w_dialect_mismatch": "{file} の \"{server}\" の値が {dialect} を使っていますが、{kind} では展開されません",
+  "pmcp.w_secret_tracked": "{file} の \"{server}\" の {key} は秘密情報に見え、既に Git 管理下にあります",
+  "pmcp.w_secret_vcs_uncertain":
+    "{file} の \"{server}\" の {key} は秘密情報に見えますが、バージョン管理の状態を判定できません",
+  "pmcp.w_server_diverged": "\"{server}\" は複数のファイルに定義されており内容が異なります: {files}",
 
   // === P2 プロジェクトファイル（features/project/ProjectFiles.tsx）===
   "proj.overwrite_title": "ファイルを上書き",

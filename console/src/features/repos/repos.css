@@ -781,3 +781,129 @@
   align-items: center;
   gap: 10px;
 }
+
+/* ProjectModal (docs/56 P0) — project-scope MCP servers × files matrix. */
+.pmcp-modal {
+  width: min(720px, 92vw);
+}
+.pmcp-body {
+  max-height: 70vh;
+  overflow-y: auto;
+}
+.pmcp-h {
+  margin: 14px 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.pmcp-h:first-child {
+  margin-top: 0;
+}
+.pmcp-h-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.pmcp-files,
+.pmcp-warnings,
+.pmcp-kinds {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pmcp-file-row,
+.pmcp-kind-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border2, var(--border));
+  border-radius: 6px;
+  font-size: 12px;
+}
+.pmcp-file-path {
+  font-family: var(--mono-font, monospace);
+  font-weight: 600;
+}
+.pmcp-kind-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.pmcp-file-state {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+}
+.pmcp-file-state.warn {
+  color: var(--warn);
+}
+.pmcp-matrix-wrap {
+  overflow-x: auto;
+}
+.pmcp-matrix {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+.pmcp-matrix th,
+.pmcp-matrix td {
+  border: 1px solid var(--border2, var(--border));
+  padding: 5px 8px;
+  text-align: left;
+  white-space: nowrap;
+}
+.pmcp-matrix th {
+  color: var(--muted);
+  font-weight: 600;
+  font-family: var(--mono-font, monospace);
+}
+.pmcp-server-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+}
+.pmcp-diverge {
+  color: var(--warn);
+}
+.pmcp-cell {
+  color: var(--muted);
+}
+.pmcp-cell.present {
+  color: var(--ok);
+}
+.pmcp-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.45;
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--border));
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+  color: var(--fg);
+}
+.pmcp-warning.red {
+  border-color: color-mix(in srgb, var(--del) 45%, var(--border));
+  background: color-mix(in srgb, var(--del) 8%, transparent);
+}
+.pmcp-badge-unverified {
+  font-size: 11px;
+  color: var(--warn);
+}

@@ -178,6 +178,11 @@ func buildMux() *http.ServeMux {
 	// Launch prompt templates (repo 起動 modal): .claude/commands, .claude/skills,
 	// .agent-fleet/launch-prompts.md — aggregated read-only from the working copy.
 	mux.HandleFunc("GET /repos/{name}/prompt-templates", handleRepoPromptTemplates)
+	// Project-scope MCP servers (docs/56 P0): read-only cross-file snapshot of the
+	// working copy's own .mcp.json / opencode.json / .codex/config.toml / etc.
+	// Separate axis from the MCP registry (docs/48) — never auto-triggered, never
+	// touches user/global config.
+	mux.HandleFunc("GET /repos/{name}/mcp", handleRepoMCP)
 	// Source-control view + light edits (docs/17 P3-5).
 	mux.HandleFunc("GET /repos/{name}/changes", handleRepoChanges)
 	mux.HandleFunc("GET /repos/{name}/diff", handleRepoDiff)

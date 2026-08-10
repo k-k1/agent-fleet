@@ -414,6 +414,8 @@ export const en: Record<keyof typeof ja, string> = {
     "Registered MCP servers live in the workspace's encrypted store. Start it to load them.",
   "mcp.intro":
     "Register any MCP server to make it available to the assistant chat and to interactive sessions. Environment-variable and header values are stored encrypted inside the workspace and are never sent back to this screen.",
+  "mcp.project_scope_note":
+    "Project-scope servers (a repo's .mcp.json etc.) are not handled here → use the repo's right-click menu, \"Project settings…\"",
   "mcp.empty": "No MCP servers registered yet.",
   "mcp.add": "Add MCP server",
   "mcp.edit": "Edit",
@@ -2548,6 +2550,45 @@ export const en: Record<keyof typeof ja, string> = {
   "repo.svn_update": "Update (svn)",
   "repo.svn_cleanup": "Clean up lock",
   "repo.revision": "Revision {rev}",
+  "repo.project_settings": "Project settings…",
+
+  // === Project settings modal (docs/56 P0 + docs/57, features/repos/ProjectModal.tsx) ===
+  "pmcp.title": "Project settings — {repo}",
+  "pmcp.ws_required_title": "The workspace is stopped",
+  "pmcp.ws_required_hint": "Reading files inside the working copy requires the workspace to be running.",
+  "pmcp.worktree_note": "This is a worktree. Changes here will not reach other working copies until committed.",
+  "pmcp.vcs_svn_note": "This is an SVN working copy. Tracked/ignored state cannot be determined.",
+  "pmcp.vcs_none_note": "This working copy is not under version control. Tracked/ignored state cannot be determined.",
+  "pmcp.files_title": "Files",
+  "pmcp.file_missing": "(none)",
+  "pmcp.file_unparsable": "Unreadable",
+  "pmcp.tracked": "Tracked",
+  "pmcp.untracked": "Untracked",
+  "pmcp.ignored": "Ignored",
+  "pmcp.tracked_unknown": "Undetermined",
+  "pmcp.matrix_title": "Servers",
+  "pmcp.server_col": "Server",
+  "pmcp.empty": "No project-scope MCP servers were found.",
+  "pmcp.diverged_hint": "Content differs between files",
+  "pmcp.warnings_title": "Warnings ({n})",
+  "pmcp.kinds_title": "Status by agent",
+  "pmcp.kind_no_scope": "No project scope (global config only)",
+  "pmcp.kind_unverified": "Unverified (requires a login this environment cannot measure)",
+  "pmcp.dialect_none": "No expansion",
+  "pmcp.gate_approval": "Requires approval (does not start until approved)",
+  "pmcp.gate_trust": "Requires trust (not read without it)",
+  "pmcp.gate_none": "Effective from the next session",
+  "pmcp.w_file_unreadable": "Could not read {file} (it may be malformed)",
+  "pmcp.w_name_hijack":
+    "\"{server}\" in {file} is a name Agent Fleet itself uses. Self-report, handoff proposals, and browser attach may be broken in sessions on this repo",
+  "pmcp.w_name_invalid": "The name \"{server}\" in {file} may not be accepted by some CLIs",
+  "pmcp.w_dialect_broken":
+    "\"{server}\" in {file} uses {dialect}, which {kind} does not expand correctly — it will break silently",
+  "pmcp.w_dialect_mismatch": "\"{server}\" in {file} uses {dialect}, which {kind} does not expand",
+  "pmcp.w_secret_tracked": "{key} on \"{server}\" in {file} looks like a secret and is already under Git",
+  "pmcp.w_secret_vcs_uncertain":
+    "{key} on \"{server}\" in {file} looks like a secret, but the version-control state could not be determined",
+  "pmcp.w_server_diverged": "\"{server}\" is defined in more than one file with different content: {files}",
 
   // === P2 project files (features/project/ProjectFiles.tsx) ===
   "proj.overwrite_title": "Overwrite file",
