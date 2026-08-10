@@ -1,6 +1,7 @@
 # 0041. セッション同士のメッセージは af の直接送信で行い、ネイティブ経路とは共存させる
 
-- 状態: 採用・未実装（設計のみ。実装は docs/58 の P0〜P3）
+- 状態: 採用・未実装（設計のみ。実装は docs/58 の P1〜P3。**P0 の実測は完了**し、
+  その結果として決定1 が「開ける」から「有効化しない」へ差し戻った）
 - 関連: [58-cross-session-messaging.md](../58-cross-session-messaging.md) /
   [51-session-report-v2-ledger.md](../51-session-report-v2-ledger.md)（arm と台帳の所有者） /
   [0035-session-report-v2-ledger.md](0035-session-report-v2-ledger.md)（決定5: 申告はタイミング信号のみ） /
@@ -28,19 +29,29 @@ AF はこれと同型の配管を**既に全部持っている**。`af` MCP の 
 帰属と安全弁をどう設計するか**にある。
 
 もう一つ、実測で分かった事実がある。**AF は自分でネイティブ機能を殺していた。**
-`workspace/Dockerfile:458` の `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` は telemetry と
-error reporting に加えて **GrowthBook feature flag 評価も止める**ため、この機能が有効化条件を
-満たせない。docs/35 §35.9 のとおり、このキーは入力ハングの誤診断で入れて真因判明後も
-「無害なハードニング」として残置されたもので、Dockerfile のコメント "Harmless when fully
-connected" は本機能の登場で虚偽になった。
+`workspace/Dockerfile:458` の `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` と
+`DISABLE_TELEMETRY=1` は、どちらも **GrowthBook feature flag 評価を止める**ため、この機能が
+有効化条件を満たせない（実測 — docs/58 §58.12 の env 行列。**公開ドキュメントは
+`DISABLE_TELEMETRY` が feature flag を止めないと明記しているが、2.1.226 の実挙動は違う**）。
+docs/35 §35.9 のとおり、前者は入力ハングの誤診断で入れて真因判明後も「無害なハードニング」
+として残置されたキーである。
 
 ## 決定
 
-1. **ネイティブ経路は開けて、AF 経路と共存させる。** `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`
-   を Dockerfile から落とす。`DISABLE_TELEMETRY=1` と `DISABLE_ERROR_REPORTING=1` は
-   **残す** — 実測どおりこの2キーは feature flag 評価を止めないので、telemetry と error
-   reporting を止めたままフラグ評価だけが戻る。プライバシー姿勢は変わらない。
-   air-gapped 配備ではフラグ取得が失敗して機能がオフのままになるだけで、劣化は穏当。
+1. **ネイティブ経路は有効化しない。env は現状維持とする。** 有効化には
+   `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` と `DISABLE_TELEMETRY` の**両方**を落とす必要が
+   あり、**telemetry が復活する**。セルフホスト製品として telemetry を既定 ON へ倒す判断は、
+   セッション間メッセージという1機能の対価としては重い。ネイティブ経路が塞がっていても、
+   本 ADR が定める AF 版 peer messaging（決定2 以降）は成立し、**異種エージェント間という
+   本来の差別化には影響しない**。
+   - 副作用として、claude セッションに `SendMessage` / `ListAgents` は配られない。
+     二重化（決定11 の旧案）とその運用指示は不要になる。
+   - **この結合は Dockerfile のコメントに明記する。** 現状はこの2キーが事実上の遮断に
+     なっており、別の理由で誰かが外すと、Console・台帳・グラフの外を通る claude↔claude の
+     裏チャネルが**無言で開く**。コメントが無ければ次の担当者はそれに気付けない。
+   - 塞ぎ方を managed settings（`crossSessionInbound: refuse` ＋ `SendMessage`/`ListAgents`
+     の deny）へ二重化するかは保留。env が効いている限り不要で、入れるなら env を外す判断と
+     同時に行う。
 
 2. **AF 版は P2P とする。** セッションが `send_to_peer_session` を直接呼ぶ。オペレーター会話を
    経由させない。経由案は既存の conv / arm / グラフの軸を1つも壊さない利点があるが、
@@ -93,11 +104,12 @@ connected" は本機能の登場で虚偽になった。
     通り、そこは既知の不可視バグ（メモ `mirror-queued-steering-invisible`）を踏む。
     **人間が一番見たい場面で見えない**ため、可視化は v1 の受入条件であって後回しにしない。
 
-11. **ネイティブと AF の二重化は運用指示で裁く。** claude セッションは `SendMessage` と
-    `send_to_peer_session` を両方持つ。`workspace-notes.md` に **AF 版を優先**（台帳に残る・
-    停止中に届く・異種 kind に届く）と書き、ネイティブは fallback とする。あわせて
-    `isolatePeerMachines: true` を managed settings に置く — コンテナ内の交換と、Remote
-    Control 経由でワークスペース外へ返信が出ることは別の信頼境界である。
+11. **AF 版の着信に「機械可読な出自」は付かないことを前提に設計する。** ネイティブ経路の
+    着信は transcript に `origin:{kind:"peer", …}` を持ち、通常入力（`origin:{kind:"human"}`）
+    と機械的に区別できる（実測・docs/58 §58.12）。**AF 版はこれを再現できない** — 投入が
+    TUI への打鍵である以上、受信側の transcript では `origin.kind:"human"` /
+    `promptSource:"typed"` の通常入力にしか見えない。したがって決定4（arm を一切いじらない）は
+    AF 版では**回避不能な必須要件**であり、「後で出自を見て弾く」という逃げ道は無い。
 
 12. **作業グループ（docs/52）を認可境界にしない。** ui-prefs 上のフロント完結概念で
     サーバ実体が無く、境界として使うには新しいサーバ状態が要る。実境界は従来どおり
@@ -109,22 +121,25 @@ connected" は本機能の登場で虚偽になった。
 - **オペレーター仲介を維持し、セッションは「誰々に伝えたい」を propose するだけにする。**
   既存の軸を1つも壊さないが、無人で止まる（決定2）。
 - **`--write` をセッションにも配る。** 最小の変更に見えて、`create_session` /
-  `stop_session` / `delete_*` まで一緒に開く。`mcp_stdio.go:102-106` の分離判断を
+  `stop_session` / `delete_*` まで一緒に開く。`mcp_stdio.go:100-105` の分離判断を
   正面から捨てることになり、得るものに対して面が広すぎる。
 - **peer メッセージも `report_to` を運び、送信元セッションへ完了を返す。** 報告の宛先は
   会話（conv）であってセッションではないため、セッション宛の報告チャネルを新設する必要が
   ある。決定4 のリスクをそのまま抱え込むわりに、v1 の用途（通知）に対して過剰。
+- **ネイティブ経路を開けて AF 経路と共存させる。** 一度は採用したが、P0 実測で
+  「有効化 = telemetry 復活」と判明したため撤回した（決定1）。撤回の理由は telemetry の
+  一点のみで、技術的な障害ではない — **リコンサイラとの両立自体は実測で成立している**
+  （`origin.kind:"peer"` で判別可能）。telemetry の方針が変われば再検討できる。
 - **ネイティブ機能を managed settings で塞ぐ**（`crossSessionInbound: refuse` ＋
-  `SendMessage`/`ListAgents` の deny）。可観測性の一貫性という点では筋が通るが、
-  claude↔claude の最短経路を殺してまで AF 経路へ寄せる利得が、実装前の時点では不明。
-  共存させたうえで、二重化は決定11 の運用指示で裁く。
+  `SendMessage`/`ListAgents` の deny）。env が既に遮断しているため現時点では冗長。
+  env を外す判断をする日が来たら同時に入れる（決定1 の但し書き）。
 
 ## 影響 / 未解決
 
-- **P0 の実測が前提を決める**: ネイティブ経路の着信ターンが transcript 上で通常のユーザー
-  入力と**区別できるか**。区別できないなら、決定1（開ける）はリコンサイラに未知の入力源を
-  与えることになり、決定4 と同じリスクをネイティブ側で抱える。区別できない場合は決定1 を
-  「塞ぐ」へ差し戻す余地を残す。
+- **P0 の実測は完了した**（2026-08-10・docs/58 §58.12）。当初「決定1 の前提を握る」と
+  していた「着信ターンを transcript 上で区別できるか」は **区別できる**（`origin.kind`・
+  `isMeta`・`promptSource` の3つ）。結果として決定1 が差し戻ったのは telemetry が理由で
+  あって、この実測が理由ではない。
 - 決定9 に伴う俯瞰図は docs/44 の後続タスク。本 ADR ではスコープに含めない。
 - 受信側の accept / hold / refuse（Claude の `crossSessionInbound` 相当）は P2。v1 は
   ワークスペース単位の opt-in だけで、セッション単位の拒否権は持たない。
