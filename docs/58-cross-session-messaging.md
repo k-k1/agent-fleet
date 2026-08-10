@@ -305,7 +305,7 @@ deny）へ二重化するかは保留とする。env が効いている限り冗
 | P | 内容 | 完了条件 |
 |---|------|----------|
 | **P0** ✅ | ネイティブ経路の実測（§58.12）。env 行列・socket・送受信の通し・着信ターンの transcript 構造 | **完了（2026-08-10）**。env は現状維持と決まったので rootfs 再ビルドは行わない。残作業は Dockerfile のコメント訂正（§58.10）のみ |
-| **P1** ◐ | `--peer-messaging` ＋ ツール2本 ＋ 封筒 ＋ 宛先ポリシー ＋ レート制限 / 重複 drop ＋ ミラーのバッジ ＋ `workspace-notes.md` の常設ルール | **実装済み**（下記）。残＝**実機での通し確認**（claude → codex / codex → claude / 停止中への送信）と、opt-in を切り替える Console 設定 UI |
+| **P1** ◐ | `--peer-messaging` ＋ ツール2本 ＋ 封筒 ＋ 宛先ポリシー ＋ レート制限 / 重複 drop ＋ ミラーのバッジ ＋ 設定 UI ＋ `workspace-notes.md` の常設ルール | **実装済み**（下記）。残＝**実機での通し確認**（claude → codex / codex → claude / 停止中への送信）|
 | **P2** | 受信側の accept / hold / refuse（セッション単位）＋ 通知センターからの承認 | 保留 → 承認 → 配送が通る |
 | **P3** | 台帳の `kind:"peer"` / `from` ＋ フリート俯瞰図（docs/44 後続） | peer エッジが図に出る |
 
@@ -322,7 +322,8 @@ deny）へ二重化するかは保留とする。env が効いている限り冗
 | `session_io.go` `handleSessionInput` | `peer_from` の受け口。`report_to` との同時指定を **400 で拒否**（arm 非干渉を構造で担保）、封筒付与、`confirm` 強制、`recordInjection(…, turnSourcePeer)` |
 | `mcp_stdio.go` | `--peer-messaging` ＋ `list_peer_sessions` / `send_to_peer_session`。広告と call の両方でゲート |
 | `mcpreg/builtin.go` | `PeerMessagingEnabled` フック経由で builtin「af」の `runArgs` に `--peer-messaging` を足す |
-| `ui_prefs.go` | `peerMessaging`（ui-prefs）。**既定 false**（明示的な opt-in） |
+| `ui_prefs.go` | `peerMessaging`（ui-prefs）。**既定 false**（明示的な opt-in）。切替時は `materializeMCPAll()` を呼ぶ |
+| Console 設定 | 設定 > エージェント > **「セッション」**（`AgentsTab` の `sessionSettings`）。**各カードの中ではない** — af の MCP が配られる 7 kind すべてに効く設定で、Claude Code カードに置くと claude 限定に見える |
 
 `peerTargetAllowed` が `normalizeKind` を通さず生の kind を見るのは意図的。`normalizeKind` は
 未知/空を claude へ倒すので、Kind が空のメタが1つあるだけで shell 以外の穴が開く。

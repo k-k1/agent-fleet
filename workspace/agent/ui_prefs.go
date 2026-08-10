@@ -364,9 +364,18 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	before := opencodeCatalogPref()
+	peerBefore := peerMessagingPref()
 	if err := os.WriteFile(uiPrefsPath(), body, 0o600); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 		return
+	}
+	// セッション間メッセージ（docs/58）の ON/OFF は、セッション側 af サーバーの起動引数
+	// （--peer-messaging）を変える。各 CLI のネイティブ MCP 設定は materialize 時に書かれる
+	// ので、ここで書き直さないと「トグルしたのに何も起きない」になる。既に起動している
+	// セッションは自分の設定を読み込み済みなので、効くのは次に起動するセッションから
+	// （UI の説明文もそう書いてある）。
+	if peerMessagingPref() != peerBefore {
+		materializeMCPAll()
 	}
 	// 枠の切替は注入する env を変える（無料枠は OPENCODE_API_KEY を落とす）。鍵の
 	// 変更と同じ扱いで、動いている serve を作り直さないと古い環境のまま残る。
