@@ -29,9 +29,11 @@ describe("parseQuestionAnswers", () => {
   });
 
   it("drops the option preview appended after the last answer", () => {
-    // Verbatim shape from a real transcript: an option with a `preview` gets
+    // The SHAPE is verbatim from a real transcript: an option with a `preview` gets
     // `" selected preview:\n<mockup>` glued on after the closing quote. The mockup's own
     // quotes used to end up in the answer, so the picked option matched nothing.
+    // Identifiers inside it are dummies — a fixture copied straight out of a real
+    // session is how real names end up in a public repo (docs/35 §35.7.5).
     const raw =
       'Your questions have been answered: "`branch = develop/3.0.x` はどうする？"="branch も release/3.0.3 に" selected preview:\n' +
       '# .gitmodules\n[submodule "example-core"]\n\tbranch = release/3.0.3. You can now continue with these answers in mind.';
