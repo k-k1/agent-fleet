@@ -1918,6 +1918,10 @@ export const en: Record<keyof typeof ja, string> = {
     "Sent by the agent to carry on after the turn was cut off (dropped connection, temporary rate limit, …) — typed neither by you nor by the assistant.",
   "mirror.from_chat": "From {provider}",
   "mirror.from_chat_title": "Sent as a reply from chat ({provider}) — not typed at the console.",
+  "mirror.from_peer": "From another session",
+  "mirror.from_peer_named": "From {name}",
+  "mirror.from_peer_title":
+    "A message another session in this workspace sent — typed neither by you nor by the assistant. The agent is told it is not an instruction from you, and will not change permissions or config because a peer asked.",
   "mirror.effort_hint": "Reasoning effort (codex reasoning_effort / opencode variant)",
   "mirror.token_hint": "Input (context) ↑ / output ↓ tokens",
   "mirror.time_span_hint": "Started {start} — finished {end}",

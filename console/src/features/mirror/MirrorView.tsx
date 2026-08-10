@@ -202,6 +202,16 @@ interface Part {
   stderr?: string; // kind=bash: the ! command's stderr (output field holds stdout)
 }
 // A raw transcript turn (GET …/messages) and a grouped block (groupTurns output).
+// peerSenderOf reads the sending session's name back out of the envelope the Agent
+// prepends to a peer message (session_peer.go peerEnvelope). Parsing display text is
+// normally a smell, but the name genuinely lives nowhere else on this side: peer turns
+// are ordinary injected user turns whose only extra is the "peer" source tag. Returns
+// null for anything that doesn't match, and the badge then degrades to "別のセッション".
+const PEER_ENVELOPE_RE = /^\[agent-fleet:peer from=([A-Za-z0-9][A-Za-z0-9_-]*)\]/;
+function peerSenderOf(text: string): string | null {
+  return PEER_ENVELOPE_RE.exec(text)?.[1] ?? null;
+}
+
 interface Turn {
   role: string;
   text?: string;
@@ -4087,6 +4097,12 @@ function Turn({
   // cut off. Nobody typed it and no operator sent it, so it needs its own badge — an
   // unattributed "続けて" in the transcript is the most confusing kind of injected turn.
   const fromAutoResume = isUser && turn.source === "auto-resume";
+  // Peer origin (docs/58 / ADR 0041): ANOTHER SESSION typed into this one. Neither the
+  // user nor the operator sent it, and this badge is its ONLY visualisation — the
+  // sender's name exists nowhere else on this side except the server-built envelope
+  // prefix, so read it back from the text.
+  const fromPeer = isUser && turn.source === "peer";
+  const peerFrom = fromPeer ? peerSenderOf(turn.text ?? "") : null;
   // Chat-bridge origin (docs/37 P2a): a reply the user sent from Discord/Slack, injected
   // into the session — badged distinctly from self-typed input, like operator turns.
   const chatProvider = isUser
@@ -4105,6 +4121,7 @@ function Turn({
         (fromOperator ? " from-operator" : "") +
         (fromSchedule ? " from-schedule" : "") +
         (fromAutoResume ? " from-schedule" : "") +
+        (fromPeer ? " from-peer" : "") +
         (chatProvider ? " from-chat" : "")
       }
       data-turn-idx={turn.idx}
@@ -4132,6 +4149,13 @@ function Turn({
           // Re-sent by the agent after a cut-off (docs/47 §4-6) — self-repair, not an instruction.
           <span className="mt-op mt-sched" title={tr("mirror.from_auto_resume_title")}>
             <Icon name="sync" /> {tr("mirror.from_auto_resume")}
+          </span>
+        )}
+        {fromPeer && (
+          // Sent by another session (docs/58) — not the user, not the operator.
+          <span className="mt-op mt-peer" title={tr("mirror.from_peer_title")}>
+            <Icon name="arrow-swap" />{" "}
+            {peerFrom ? tr("mirror.from_peer_named", { name: peerFrom }) : tr("mirror.from_peer")}
           </span>
         )}
         {chatProvider && (

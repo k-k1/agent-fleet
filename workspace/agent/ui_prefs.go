@@ -10,6 +10,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -62,6 +63,20 @@ func opencodeCatalogPref() string {
 	v, _ := readUIPrefs()["opencodeCatalog"].(string)
 	return opencode.CatalogPref(v)
 }
+
+// peerMessagingPref is the ON/OFF for session-to-session messaging (docs/58 / ADR 0041,
+// ui-prefs peerMessaging). Missing/invalid ⇒ **false**: this one is opt-in, unlike
+// autoTitleSuggest. Letting sessions type into each other widens the injection surface
+// (a session that read a poisoned repo can now reach every other session), so it has to
+// be a deliberate choice rather than something a fleet inherits by upgrading.
+func peerMessagingPref() bool {
+	v, _ := readUIPrefs()["peerMessaging"].(bool)
+	return v
+}
+
+// mcpreg builds the session-side af server's launch args and must not read main's
+// config files itself, so it takes the answer as a hook (same shape as opencode.UsagePref).
+func init() { mcpreg.PeerMessagingEnabled = peerMessagingPref }
 
 // The opencode package needs the same preference to decide whether to inject
 // OPENCODE_API_KEY at all（無料枠は注入しない）and what to report to /connections.

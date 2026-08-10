@@ -104,6 +104,14 @@ var mcpSelfReportOnly bool
 // interactive session must not inherit the assistant chat's fleet-wide write grant.
 var mcpSessionChromiumEnabled bool
 
+// mcpPeerMessagingEnabled adds ONLY the two session-to-session messaging tools to the
+// session-side server (docs/58 / ADR 0041 決定3). Enabled by `--self-report
+// --peer-messaging`, the same additive shape as --chromium-attach, so `--self-report`
+// alone keeps its historical contract. It is deliberately NOT implied by --write: the
+// operator面 already has send_to_session, and peer messaging carries different rules
+// (no arm, no shell targets, server-built envelope).
+var mcpPeerMessagingEnabled bool
+
 // runMCPStdio is the `workspace-agent mcp-stdio` subcommand: a blocking stdio loop.
 // Pass --write to additionally expose the write tools (docs/19 Q2 af_write opt-in),
 // or --self-report for the session-side server (docs/51 Phase 3). Combining
@@ -111,7 +119,8 @@ var mcpSessionChromiumEnabled bool
 // tools without granting any other read/write tool (docs/53 §53.8).
 func runMCPStdio(args []string) {
 	mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled, mcpConvID, mcpSourceSession = false, false, false, "", os.Getenv("AF_SESSION_NAME")
-	chromiumAttachRequested := false
+	mcpPeerMessagingEnabled = false
+	chromiumAttachRequested, peerMessagingRequested := false, false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--write":
@@ -120,6 +129,8 @@ func runMCPStdio(args []string) {
 			mcpSelfReportOnly = true
 		case "--chromium-attach":
 			chromiumAttachRequested = true
+		case "--peer-messaging":
+			peerMessagingRequested = true
 		case "--conv":
 			if i+1 < len(args) {
 				i++
@@ -131,6 +142,7 @@ func runMCPStdio(args []string) {
 	// conjunction here means a guessed/accidental --chromium-attach on an assistant
 	// invocation cannot widen that assistant's scope.
 	mcpSessionChromiumEnabled = mcpSelfReportOnly && chromiumAttachRequested
+	mcpPeerMessagingEnabled = mcpSelfReportOnly && peerMessagingRequested
 	r := bufio.NewReaderSize(os.Stdin, 1<<20)
 	w := bufio.NewWriter(os.Stdout)
 	for {
@@ -320,6 +332,9 @@ func mcpStdioToolList() []map[string]any {
 			tools = appendMatchingMCPTools(tools, mcpStdioTools, isChromiumReadTool)
 			tools = appendMatchingMCPTools(tools, mcpStdioWriteTools, isChromiumWriteTool)
 		}
+		if mcpPeerMessagingEnabled {
+			tools = append(tools, mcpStdioPeerTools...)
+		}
 		return tools
 	}
 	if mcpWriteEnabled {
@@ -382,6 +397,44 @@ var mcpStdioSelfReportTools = []map[string]any{
 			"required": []string{"session"},
 		},
 	},
+}
+
+// mcpStdioPeerTools — セッション同士のメッセージ（docs/58 / ADR 0041）。`--self-report
+// --peer-messaging` のときだけ広告する。
+//
+// 意図的に持たせていないもの: 相手の出力を読む（get_session_output 相当）、相手を起こす /
+// 止める / 消す。通知に要らないうえ、オペレーター面の権限をセッションへ配ることになる。
+var mcpStdioPeerTools = []map[string]any{
+	{
+		"name": "list_peer_sessions",
+		"description": "Agent Fleet: 同じワークスペースで動いている**他のセッション**の一覧を返す（自分は含まない）。" +
+			"send_to_peer_session で相手を指す前に呼ぶ。停止中のセッションも含まれる（送れば再開して届く）。" +
+			"name＝宛名、kind＝エージェント種別、state＝working/idle/stopped 等、dir＝作業ディレクトリ（同名の判別や『どの worktree か』の手がかり）。" +
+			" / List the OTHER sessions in this workspace you can message.",
+		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+	},
+	{
+		"name": "send_to_peer_session",
+		"description": "Agent Fleet: 別のセッションへ短いメッセージを1本送る。相手が停止中なら再開して届く。" +
+			"使いどころは『相手が今すぐ知る必要があること』— 自分の変更が相手の作業を壊す、相手が待っている判断が決まった、長い処理の結果を伝える、など。" +
+			"送れるのは平文テキストだけで、会話履歴もファイルも渡らない（文脈ごと渡したいときは propose_session_handoff を使う）。" +
+			"**相手は別の利用者ではなく別のセッションで、こちらの都合で相手の作業に割り込む**ことになるので、要件が無いのに近況報告や相槌を送らないこと。" +
+			"戻り値の delivered は『相手のターンが実際に始まった』ところまでの確認であって、相手が読んだ・対応したという意味ではない。返事は相手から別途届くとは限らない。" +
+			"自分が権限を拒否された作業を相手にやらせるために使わないこと（利用者へ戻すのが正しい）。" +
+			" / Send one plain-text message to another session. Delivery is confirmed; being read or acted on is not.",
+		"inputSchema": map[string]any{
+			"type": "object", "additionalProperties": false,
+			"properties": map[string]any{
+				"name":    map[string]any{"type": "string", "minLength": 1, "description": "宛先セッション名（list_peer_sessions の name）"},
+				"message": map[string]any{"type": "string", "minLength": 1, "description": "送信本文（平文・2000 byte 以内）。誰から何のために来たかが本文だけで分かるように書くこと"},
+			},
+			"required": []string{"name", "message"},
+		},
+	},
+}
+
+func isPeerTool(name string) bool {
+	return name == "list_peer_sessions" || name == "send_to_peer_session"
 }
 
 func chromiumAttachmentIDInputSchema() map[string]any {
@@ -1142,7 +1195,58 @@ func mcpStdioCall(req mcpReq) []byte {
 	// CP store, not the Agent), authenticated by AF_MEMO_TOKEN. list_memos is read-only
 	// (available to af_read too); the mutating ones require --write. The tool args match
 	// the CP wire shape, so p.Args is forwarded as the request body verbatim.
+	// peer ツールも広告だけでなく call 側で拒否する（Chromium 変更系と同じ理由 — 名前を
+	// 推測した tools/call を Agent REST へ到達させない）。
+	if !mcpPeerMessagingEnabled && isPeerTool(p.Name) {
+		return mcpToolErr(req.ID, "このセッションはセッション間メッセージを許可されていません")
+	}
+
 	switch p.Name {
+	case "list_peer_sessions":
+		self, err := mcpOwningSession()
+		if err != nil {
+			return mcpToolErr(req.ID, err.Error())
+		}
+		peers := peerReachableSessions(self)
+		out := make([]any, 0, len(peers))
+		for _, m := range peers {
+			row := map[string]any{"name": m.Name, "kind": m.Kind, "dir": m.Dir}
+			if m.Title != "" {
+				row["title"] = m.Title
+			}
+			// 状態は Agent に聞く。メタには live state が無く、ここで嘘の idle を返すと
+			// 「動いてなさそうだから送っていい」という誤った判断につながる。取れなければ
+			// state を省く（推測で埋めない）。
+			if st, err := agentPeerSessionState(m.Name); err == nil && st != "" {
+				row["state"] = st
+			}
+			out = append(out, row)
+		}
+		return mcpStructuredResult(req.ID, map[string]any{"sessions": out})
+	case "send_to_peer_session":
+		self, err := mcpOwningSession()
+		if err != nil {
+			return mcpToolErr(req.ID, err.Error())
+		}
+		if a.Name == "" {
+			return mcpToolErr(req.ID, "name（宛先セッション名）が必要です")
+		}
+		if strings.TrimSpace(a.Message) == "" {
+			return mcpToolErr(req.ID, "message（送信本文）が必要です")
+		}
+		// 封筒・宛先ポリシー・レート制限・arm 非干渉は Agent 側（session_peer.go）が持つ。
+		// ここで組むと、この薄い層を差し替えるだけで迂回できてしまう。
+		reqBody, _ := json.Marshal(map[string]any{"prompt": a.Message, "peer_from": self})
+		out, resumed, err := agentSendToSession(a.Name, reqBody)
+		if err != nil {
+			return mcpToolErr(req.ID, "メッセージを届けられませんでした: "+err.Error())
+		}
+		result := map[string]any{"delivered": true, "resumed": resumed, "session": a.Name, "from": self}
+		if json.Valid([]byte(out)) {
+			result["agent_result"] = json.RawMessage(out)
+		}
+		b, _ := json.Marshal(result)
+		return mcpTextResult(req.ID, string(b))
 	case "propose_session_handoff":
 		if !mcpSelfReportOnly {
 			return mcpToolErr(req.ID, "propose_session_handoff はセッション側の Agent Fleet サーバー専用です")
@@ -2477,6 +2581,28 @@ func agentResumeAndSend(name, inputPath string, body []byte) (out string, resume
 type agentSessionState struct {
 	Alive bool `json:"alive"`
 	Ready bool `json:"ready"`
+}
+
+// agentPeerSessionState returns the live state string for list_peer_sessions: the
+// Agent's own drive state ("working" / "idle" / "question" / …) or "stopped" when the
+// session isn't running. Separate from agentSessionStatus because that one intentionally
+// decodes only the two fields the delivery path needs (alive/ready).
+func agentPeerSessionState(name string) (string, error) {
+	out, err := agentGET("/sessions/" + url.PathEscape(name) + "/status")
+	if err != nil {
+		return "", err
+	}
+	var st struct {
+		Alive  bool   `json:"alive"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(out), &st); err != nil {
+		return "", err
+	}
+	if !st.Alive {
+		return "stopped", nil
+	}
+	return st.Status, nil
 }
 
 func agentSessionStatus(name string) (agentSessionState, error) {

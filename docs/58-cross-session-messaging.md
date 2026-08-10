@@ -249,9 +249,18 @@ docs/44 の後続に委ねる（P3）。
 peer 着信は**専用行**として描く。送信元・時刻・本文（表示専用・サニタイズ済み・
 docs/44 §2.1 の `excerpt` と同じ扱い）を出す。
 
-**これを後回しにしない理由**: 相手が作業中のときの peer 着信は割り込み投入経路を通り、
-そこには既知の不可視バグがある（割り込みプロンプトがミラーに出ない）。**人間が一番
-見たい場面で見えない**ため、受入条件6 に「作業中も」と明記してある。
+**これを後回しにしない理由**: 相手が作業中のときの peer 着信は割り込み投入経路を通る。
+そこには「割り込みプロンプトがミラーに出ない」という不可視バグがあった（claude が
+mid-run のキュー投入を `type:"user"` ではなく `queued_command` として書くため）。
+**修正済み**（`63190e0` — `parseTurn` が `queued_command` を user ターンへ合成する）なので
+受入条件6 は既存機構の上で成立するが、**人間が一番見たい場面**なのでバッジの付与まで
+含めて P1 の完了条件に入れてある。
+
+*実装（P1）*: 由来は既存の注入元記録（`recordInjection` → `transcript.Turn.Source` →
+Console バッジ）に相乗りし、`turnSourcePeer = "peer"` を足した。operator / chat /
+schedule に続く4つ目の origin で、Console 側は `--peer` トークン（ダーク `#b48ee0` /
+ライト `#6b21a8`）の専用バッジを出す。送信元セッション名は**サーバが組んだ封筒から読み戻す**
+— peer ターンは「source タグが付いただけの普通の注入ターン」なので、名前はそこにしか無い。
 
 ## 58.10 ネイティブ経路は有効化しない
 
@@ -296,9 +305,31 @@ deny）へ二重化するかは保留とする。env が効いている限り冗
 | P | 内容 | 完了条件 |
 |---|------|----------|
 | **P0** ✅ | ネイティブ経路の実測（§58.12）。env 行列・socket・送受信の通し・着信ターンの transcript 構造 | **完了（2026-08-10）**。env は現状維持と決まったので rootfs 再ビルドは行わない。残作業は Dockerfile のコメント訂正（§58.10）のみ |
-| **P1** | `--peer-messaging` ＋ ツール2本 ＋ 封筒 ＋ 宛先ポリシー ＋ レート制限 / 重複 drop ＋ ミラー専用行 ＋ `workspace-notes.md` の常設ルール | claude → codex / codex → claude / 停止中への送信が実機で通る。arm が動かないことをテストで固定 |
+| **P1** ◐ | `--peer-messaging` ＋ ツール2本 ＋ 封筒 ＋ 宛先ポリシー ＋ レート制限 / 重複 drop ＋ ミラーのバッジ ＋ `workspace-notes.md` の常設ルール | **実装済み**（下記）。残＝**実機での通し確認**（claude → codex / codex → claude / 停止中への送信）と、opt-in を切り替える Console 設定 UI |
 | **P2** | 受信側の accept / hold / refuse（セッション単位）＋ 通知センターからの承認 | 保留 → 承認 → 配送が通る |
 | **P3** | 台帳の `kind:"peer"` / `from` ＋ フリート俯瞰図（docs/44 後続） | peer エッジが図に出る |
+
+### P1 実装メモ（2026-08-10）
+
+**不変条件は全部 Agent 側に置いた**（`workspace/agent/session_peer.go` ＋ `/input`）。MCP は
+`peer_from` を1つ足すだけの薄い層で、封筒の付与・宛先ポリシー・レート制限・arm 非干渉の
+どれも MCP を差し替えるだけでは迂回できない。テスト（`session_peer_test.go`）もその境界で
+書いてある — HTTP ハンドラを直接叩いて 400 / 403 / 429 を確かめる。
+
+| 置き場 | 役割 |
+|--------|------|
+| `session_peer.go` | 宛先ポリシー（shell/ssm・自己宛・archived・kind allowlist）／封筒／レート制限・重複 drop |
+| `session_io.go` `handleSessionInput` | `peer_from` の受け口。`report_to` との同時指定を **400 で拒否**（arm 非干渉を構造で担保）、封筒付与、`confirm` 強制、`recordInjection(…, turnSourcePeer)` |
+| `mcp_stdio.go` | `--peer-messaging` ＋ `list_peer_sessions` / `send_to_peer_session`。広告と call の両方でゲート |
+| `mcpreg/builtin.go` | `PeerMessagingEnabled` フック経由で builtin「af」の `runArgs` に `--peer-messaging` を足す |
+| `ui_prefs.go` | `peerMessaging`（ui-prefs）。**既定 false**（明示的な opt-in） |
+
+`peerTargetAllowed` が `normalizeKind` を通さず生の kind を見るのは意図的。`normalizeKind` は
+未知/空を claude へ倒すので、Kind が空のメタが1つあるだけで shell 以外の穴が開く。
+
+既定を false にしたのは、この機能が**注入面を広げる**から。汚染されたリポジトリを読んだ
+セッションが他の全セッションへ打鍵できるようになるので、アップグレードで黙って有効化される
+のではなく、利用者が選んで入れる形にした。
 
 ## 58.12 実測記録
 
