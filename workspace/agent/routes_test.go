@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -16,9 +17,46 @@ import (
 
 func smokeHandler(t *testing.T) http.Handler {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	isolateAgentConfigDirs(t)
 	t.Setenv("AGENT_TOKEN", "smoke-token")
 	return httpx.RequireToken(buildMux())
+}
+
+// isolateAgentConfigDirs points HOME **and every config dir that is pinned by its own
+// environment variable** at one throwaway tree.
+//
+// HOME alone is not enough, and the gap is not theoretical: paths.ClaudeConfigDir()
+// honours $CLAUDE_CONFIG_DIR, which production sets to /var/lib/af/claude (a dedicated
+// mount outside home). So a test that only isolated HOME and then hit
+// POST /mcp-servers — which materializes the registry into every CLI's config — wrote
+// its fixture server into the developer's REAL .claude.json. It was found there on
+// 2026-08-09 as a live `wiki` → https://mcp.example.com/mcp entry, straight out of
+// mcp_servers_test.go.
+//
+// Worse than the stray row: the ownership ledger (mcp-managed.json) DID land in the
+// temp HOME, so af never learned it wrote that name — the row became an orphan no
+// later materialize is allowed to remove (docs/48 §8.2), and only a hand-run
+// `claude mcp remove` clears it.
+//
+// The other kinds escaped only by luck: CODEX_HOME / COPILOT_HOME / KIRO_HOME /
+// XDG_CONFIG_HOME are unset in this container, so they resolved under the temp HOME.
+// Set them here too rather than depend on that.
+func isolateAgentConfigDirs(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for k, v := range map[string]string{
+		"CLAUDE_CONFIG_DIR": filepath.Join(home, ".claude"),
+		"CODEX_HOME":        filepath.Join(home, ".codex"),
+		"COPILOT_HOME":      filepath.Join(home, ".copilot"),
+		"KIRO_HOME":         filepath.Join(home, ".kiro"),
+		"XDG_CONFIG_HOME":   filepath.Join(home, ".config"),
+		"XDG_DATA_HOME":     filepath.Join(home, ".local", "share"),
+		"XDG_CACHE_HOME":    filepath.Join(home, ".cache"),
+		"XDG_STATE_HOME":    filepath.Join(home, ".local", "state"),
+	} {
+		t.Setenv(k, v)
+	}
 }
 
 func smokeDo(t *testing.T, h http.Handler, method, path, token, body string) *httptest.ResponseRecorder {
