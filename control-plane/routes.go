@@ -436,6 +436,8 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/repos/{name}/svn-cleanup", rest)
 	// Launch prompt templates (repo 起動 modal) — proxied to the Agent.
 	mux.HandleFunc("GET /api/repos/{name}/prompt-templates", rest)
+	// Project-scope MCP servers (docs/56 P0) — proxied to the Agent.
+	mux.HandleFunc("GET /api/repos/{name}/mcp", rest)
 	// Source-control view + light edits (docs/17 P3-5) — proxied to the Agent.
 	mux.HandleFunc("GET /api/repos/{name}/changes", rest)
 	mux.HandleFunc("GET /api/repos/{name}/diff", rest)
