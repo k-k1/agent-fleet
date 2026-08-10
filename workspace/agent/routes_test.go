@@ -152,3 +152,21 @@ func TestBrowserAttachmentControlModeRouteRegistered(t *testing.T) {
 		t.Fatalf("route pattern=%q", pattern)
 	}
 }
+
+// The retarget pair must not be swallowed by the {id} route either — same
+// concern as the list route above, one level deeper.
+func TestBrowserAttachmentSiblingTargetsRouteRegistered(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/browser/attachments/ba_0123456789abcdef0123456789abcdef/targets", nil)
+	_, pattern := buildMux().Handler(req)
+	if pattern != "GET /browser/attachments/{id}/targets" {
+		t.Fatalf("route pattern=%q", pattern)
+	}
+}
+
+func TestBrowserAttachmentRetargetRouteRegistered(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/browser/attachments/ba_0123456789abcdef0123456789abcdef/retarget", nil)
+	_, pattern := buildMux().Handler(req)
+	if pattern != "POST /browser/attachments/{id}/retarget" {
+		t.Fatalf("route pattern=%q", pattern)
+	}
+}
