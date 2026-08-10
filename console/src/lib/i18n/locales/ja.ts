@@ -3317,6 +3317,8 @@ export const ja = {
   "view.conversation_not_found": "会話が見つかりません: {slug}",
   "view.table_repaired":
     "このテーブルは半角 | ではなく全角 ｜ で書かれているため、補正して表示しています。他の Markdown ビューアでは崩れたまま表示されます。",
+  "view.frontmatter_invalid":
+    "この front matter は YAML として無効なため、`キー: 値` の行として読んで表示しています。他の Markdown ビューアでは本文に混ざって表示されます。値の先頭が ` や @ などの記号になっている行は、値全体を引用符で囲ってください。",
 
 
   // === P5 ログイン切れモーダル（AuthExpiredModal） ===

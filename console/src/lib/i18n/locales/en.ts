@@ -3274,6 +3274,8 @@ export const en: Record<keyof typeof ja, string> = {
   "view.conversation_not_found": "Conversation not found: {slug}",
   "view.table_repaired":
     "This table is written with the fullwidth ｜ instead of |, so it is shown repaired here. Other Markdown viewers will still render it as plain text.",
+  "view.frontmatter_invalid":
+    "This front matter is not valid YAML, so it is read line by line as `key: value` here. Other Markdown viewers will render it as body text — quote any value that starts with a reserved character such as ` or @.",
 
 
   // === P5 ログイン切れモーダル（AuthExpiredModal） ===
