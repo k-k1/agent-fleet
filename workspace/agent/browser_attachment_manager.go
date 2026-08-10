@@ -84,7 +84,10 @@ type browserAttachment struct {
 func defaultBrowserAttachmentManagerConfig() browserAttachmentManagerConfig {
 	fps := browserConfigInt("AF_BROWSER_MAX_FPS", 12, 1, 30)
 	return browserAttachmentManagerConfig{
-		UnviewedTTL:      10 * time.Minute,
+		// The link is typically handed off through chat (agent creates it, reports
+		// it, the human reads the message and clicks later), not opened the instant
+		// it's created, so this needs real slack. 30m matches HandoffTTL below.
+		UnviewedTTL:      time.Duration(browserConfigInt("AF_BROWSER_ATTACH_UNVIEWED_TTL_SEC", 1800, 30, 24*3600)) * time.Second,
 		ViewerGrace:      60 * time.Second,
 		HandoffTTL:       30 * time.Minute,
 		DiscoveryTimeout: 3 * time.Second,
@@ -100,7 +103,7 @@ var workspaceBrowserAttachmentManager = newBrowserAttachmentManager(defaultBrows
 
 func newBrowserAttachmentManager(config browserAttachmentManagerConfig) *browserAttachmentManager {
 	if config.UnviewedTTL <= 0 {
-		config.UnviewedTTL = 10 * time.Minute
+		config.UnviewedTTL = 30 * time.Minute
 	}
 	if config.ViewerGrace <= 0 {
 		config.ViewerGrace = time.Minute
