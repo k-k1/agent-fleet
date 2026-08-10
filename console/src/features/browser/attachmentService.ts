@@ -4,8 +4,10 @@ import type { BrowserCanvas, BrowserSocket } from "./controller.ts";
 import {
   BrowserAttachmentRegistry,
   browserAttachmentSocketURL,
+  normalizeBrowserAttachmentSiblingTargets,
   normalizeBrowserAttachmentStatus,
   type BrowserAttachmentResult,
+  type BrowserAttachmentSiblingTarget,
   type BrowserAttachmentStatus,
 } from "./attachmentController.ts";
 
@@ -68,6 +70,19 @@ async function submitBrowserAttachmentResult(
   return data && typeof data.id === "string" ? normalizeBrowserAttachmentStatus(data) : null;
 }
 
+/** Other targets on the same Chromium instance an attachment could switch to. */
+export async function listBrowserAttachmentSiblingTargets(id: string): Promise<BrowserAttachmentSiblingTarget[]> {
+  const data = await api(`api/browser/attachments/${encodeURIComponent(id)}/targets`);
+  throwAPIError(data);
+  return normalizeBrowserAttachmentSiblingTargets(data);
+}
+
+async function retargetBrowserAttachment(id: string, targetId: string): Promise<BrowserAttachmentStatus> {
+  const data = await apiJSON(`api/browser/attachments/${encodeURIComponent(id)}/retarget`, "POST", { targetId });
+  throwAPIError(data);
+  return normalizeBrowserAttachmentStatus(data);
+}
+
 function attachmentSocket(id: string): BrowserSocket {
   return new WebSocket(browserAttachmentSocketURL(document.baseURI, location.protocol, id, getTenant()));
 }
@@ -91,6 +106,8 @@ const registry = new BrowserAttachmentRegistry({
   submitResult: submitBrowserAttachmentResult,
   openSocket: attachmentSocket,
   drawFrame,
+  listSiblingTargets: listBrowserAttachmentSiblingTargets,
+  retarget: retargetBrowserAttachment,
 });
 
 export const ensureBrowserAttachment = (paneId: string, attachmentId: string) =>

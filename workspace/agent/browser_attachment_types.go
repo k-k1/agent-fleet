@@ -80,6 +80,33 @@ type browserAttachmentControlModeRequest struct {
 	ControlMode string `json:"controlMode"`
 }
 
+// browserAttachmentRetargetRequest switches an existing attachment onto a
+// different CDP target on the same port, keeping its id/URL (and so its
+// already-open Console pane) instead of forcing a close-and-reattach cycle.
+type browserAttachmentRetargetRequest struct {
+	TargetID string `json:"targetId"`
+	// BrowserID is optional; when set the retarget fails unless the endpoint
+	// really is that Chromium instance (same guard as Create).
+	BrowserID string `json:"browserId,omitempty"`
+}
+
+// browserAttachmentSiblingTarget is a candidate for Retarget: another target
+// on the SAME Chromium instance this attachment is already on. Current marks
+// the one the attachment is presently attached to so the Console can show it
+// distinctly, since (unlike browserAttachTarget from plain discovery) the
+// caller has no other way to tell which of several open tabs — often with an
+// identical title — is the one it is already looking at.
+type browserAttachmentSiblingTarget struct {
+	TargetID string `json:"targetId"`
+	Title    string `json:"title"`
+	URL      string `json:"url"`
+	Current  bool   `json:"current"`
+}
+
+type browserAttachmentSiblingTargetsResponse struct {
+	Targets []browserAttachmentSiblingTarget `json:"targets"`
+}
+
 type browserAttachmentHandoffResponse struct {
 	Message         string `json:"message"`
 	CompletionLabel string `json:"completionLabel"`
