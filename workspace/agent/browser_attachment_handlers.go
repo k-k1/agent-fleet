@@ -107,6 +107,32 @@ func handleBrowserAttachmentControlMode(w http.ResponseWriter, r *http.Request) 
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
+func handleBrowserAttachmentSiblingTargets(w http.ResponseWriter, r *http.Request) {
+	resp, err := workspaceBrowserAttachmentManager.ListSiblingTargets(r.PathValue("id"))
+	if err != nil {
+		writeBrowserAttachmentError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
+}
+
+func handleBrowserAttachmentRetarget(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
+	var req browserAttachmentRetargetRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_browser_attachment", "invalid browser retarget request")
+		return
+	}
+	resp, err := workspaceBrowserAttachmentManager.Retarget(r.PathValue("id"), req)
+	if err != nil {
+		writeBrowserAttachmentError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
+}
+
 func handleBrowserAttachmentHandoffResult(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
 	var req browserAttachmentHandoffResultRequest
@@ -723,8 +749,9 @@ func (v *browserAttachmentViewer) call(method string, params, result any) bool {
 	a := v.attachment
 	a.mu.Lock()
 	terminal := a.terminal
+	cdp, sessionID := a.cdp, a.sessionID
 	a.mu.Unlock()
-	if terminal || a.manager.call(a.cdp, a.sessionID, method, params, result) != nil {
+	if terminal || a.manager.call(cdp, sessionID, method, params, result) != nil {
 		v.protocolError("browser_command_failed", "browser attachment command failed")
 		if !terminal {
 			go a.manager.markTerminal(a, attachmentStateDisconnected, "Chromium disconnected")
@@ -742,8 +769,9 @@ func (v *browserAttachmentViewer) post(method string, params any) {
 	a := v.attachment
 	a.mu.Lock()
 	terminal := a.terminal
+	cdp, sessionID := a.cdp, a.sessionID
 	a.mu.Unlock()
-	if terminal || a.cdp.Send(method, params, a.sessionID) != nil {
+	if terminal || cdp.Send(method, params, sessionID) != nil {
 		v.protocolError("browser_command_failed", "browser attachment command failed")
 		if !terminal {
 			go a.manager.markTerminal(a, attachmentStateDisconnected, "Chromium disconnected")

@@ -37,6 +37,13 @@ type fakeBrowserCDP struct {
 	// then succeeds (e.g. Page.startScreencast during the initial navigation commit).
 	transient    map[string]int
 	transientErr error
+	// attachSessionID overrides the canned Target.attachToTarget response's
+	// sessionId when non-empty. Real Chromium hands out a unique session id
+	// per attach; tests that dial more than one fake CDP for the same
+	// attachment (e.g. a retarget onto a fresh connection) set a distinct
+	// value per instance so the two sessions stay distinguishable instead of
+	// both defaulting to "session-1".
+	attachSessionID string
 }
 
 func newFakeBrowserCDP() *fakeBrowserCDP {
@@ -69,7 +76,11 @@ func (f *fakeBrowserCDP) Call(_ context.Context, method string, params any, sess
 	case "Target.createTarget":
 		response = map[string]any{"targetId": "target-1"}
 	case "Target.attachToTarget":
-		response = map[string]any{"sessionId": "session-1"}
+		sessionID := "session-1"
+		if f.attachSessionID != "" {
+			sessionID = f.attachSessionID
+		}
+		response = map[string]any{"sessionId": sessionID}
 	case "Page.getFrameTree":
 		response = map[string]any{"frameTree": map[string]any{"frame": map[string]any{"id": "frame-1"}}}
 	case "Page.getLayoutMetrics":

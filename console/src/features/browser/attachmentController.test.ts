@@ -49,6 +49,8 @@ function fakeDeps(mode: BrowserAttachmentStatus["controlMode"]) {
     async submitResult(_id, result) { submitted.push(result); return null; },
     openSocket() { return socket; },
     async drawFrame(_canvas: BrowserCanvas) {},
+    async listSiblingTargets() { return []; },
+    async retarget() { return status(mode); },
   };
   return { deps, socket, submitted, detached };
 }
