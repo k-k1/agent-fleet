@@ -1375,13 +1375,17 @@ export function MirrorView({
   // sendPrompt submits one prompt (the composer). Never used to answer an AUQ —
   // the modal ignores typed text, so a text send would confirm option 1 (docs/dev/92).
   // attachments は managed セッションの API 添付（send() が織り込みと使い分ける）。
-  const sendPrompt = async (text: string, attachments?: string[]) => {
+  // 戻り値は「セッションに受理されたか」。呼び出し側の大半は投げっぱなしでよいが、
+  // プランコメントの送信済みマークだけはこれを見る必要がある — 失敗をトーストするだけで
+  // void を返していたころ、届かなかったコメントまで畳まれて打ち直せなくなっていた
+  // （permission_pending で弾かれた直後に「送信済み」になる、2026-08-10 報告の症状）。
+  const sendPrompt = async (text: string, attachments?: string[]): Promise<boolean> => {
     const t = (text || "").trim();
-    if ((!t && !attachments?.length) || sending) return;
+    if ((!t && !attachments?.length) || sending) return false;
     // WS down: nothing can receive the prompt (a send would 502). The composer is already
     // hidden while stopped, but other callers (seed prompt, file drop) reach here too — bail
     // before the optimistic echo so a send never looks accepted when it can't be.
-    if (wsDown()) return;
+    if (wsDown()) return false;
     setSending(true);
     // start = 新しい turn / steer = 実行中 turn への追撃 — 楽観的に working へ倒す前の
     // 実状態で決める。tui では同じ型付けに落ちるが、managed の turn/start・turn/steer
@@ -1410,6 +1414,7 @@ export function MirrorView({
     setSending(false);
     // Pick up the just-logged user turn quickly rather than waiting a full interval.
     setTimeout(() => tickRef.current?.(), 250);
+    return res.ok;
   };
 
   // seedSubmit reliably fires the launch seed's first prompt. A freshly-launched CLI
@@ -1970,7 +1975,8 @@ export function MirrorView({
   //     モーダルに飲まれ Enter が承認になるため、この経路でしか安全に届かない。
   //   それ以外（却下後・plan モードで入力待ち／実行中） → 普通の発話として送る。
   // 送信済みの印は「実際に届いた」ときだけ付ける — 届かなかったコメントを消してしまうと
-  // 利用者は打ち直せない。
+  // 利用者は打ち直せない。発話経路の成否は sendPrompt の戻り値で受ける（失敗はトースト
+  // されるが、それを見て畳まないのは呼び出し側の責任）。
   const sendPlanComments = async (plan: string) => {
     if (sending) return;
     // 停止中のセッションには届かない。プランカードは履歴にも出る＝コンポーザと違って
@@ -1988,8 +1994,7 @@ export function MirrorView({
     const ids = list.map((c) => c.id);
     const isPending = !!pendingPlan && pendingPlan.trim() === plan.trim();
     if (!isPending) {
-      await sendPrompt(feedback);
-      markPlanCommentsSent(key, ids);
+      if (await sendPrompt(feedback)) markPlanCommentsSent(key, ids);
       return;
     }
     setSending(true);
@@ -2000,10 +2005,11 @@ export function MirrorView({
     const res = await sessionPlanRespond(session, "reject", feedback);
     setSending(false);
     if (!res.ok) {
-      // すでに別経路で判断済み（no_plan）なら、ただの発話として届ける。
+      // すでに別経路で判断済み（no_plan）なら、ただの発話として届ける。ここも「届いたら
+      // だけ」畳む — この経路で無条件に畳んでいたのが、送信ボタンごとコメントが消えて
+      // 打ち直せなくなった実障害の後半（前半は Agent 側の state 判定・972d3a66）。
       if (res.code === "no_plan") {
-        await sendPrompt(feedback);
-        markPlanCommentsSent(key, ids);
+        if (await sendPrompt(feedback)) markPlanCommentsSent(key, ids);
         return;
       }
       toast(res.message || tr("mirror.send_failed"));
