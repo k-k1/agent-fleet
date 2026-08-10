@@ -6,13 +6,26 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
 // resetAFName isolates the per-process cache and the file behind it.
+//
+// Replacing HOME is not enough: paths resolves three of the CLI config trees from
+// their OWN environment variables (CLAUDE_CONFIG_DIR / CODEX_HOME / COPILOT_HOME), and
+// production points CLAUDE_CONFIG_DIR at a mount outside home. A materializer test
+// that only moved HOME would write into the developer's real config — measured
+// 2026-08-09, when a REST test left a live `wiki` server in the real .claude.json and
+// the ownership ledger (which did land in the temp HOME) had no memory of it, making
+// the row an orphan no later materialize may remove (docs/48 §8.2).
 func resetAFName(t *testing.T) {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, "claude-cfg"))
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	t.Setenv("COPILOT_HOME", filepath.Join(home, ".copilot"))
 	afNameOnce.Lock()
 	old := afNameOnce.value
 	afNameOnce.value = ""
@@ -174,7 +187,9 @@ func TestMaterializeSweepsThePreviousBootsAFEntry(t *testing.T) {
 // and is edited by text, not parsed), so the sweep needs its own coverage there.
 func TestMaterializeCodexSweepsThePreviousBootsAFEntry(t *testing.T) {
 	resetAFName(t)
-	codexHome := filepath.Join(os.Getenv("HOME"), ".codex")
+	// Resolve the same way the materializer does, so the fixture and the write can
+	// never land in different trees (they did while this read $HOME/.codex directly).
+	codexHome := paths.CodexHome()
 	if err := os.MkdirAll(codexHome, 0o700); err != nil {
 		t.Fatal(err)
 	}

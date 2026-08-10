@@ -35,7 +35,10 @@ esac
 	t.Setenv("TMUX_TEST_LOG", logPath)
 	t.Setenv("AGENT_INPUT_SUBMIT_DELAY_MS", "0")
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
-	t.Setenv("HOME", t.TempDir())
+	// HOME alone leaves CLAUDE_CONFIG_DIR / CODEX_HOME / COPILOT_HOME pointing at the
+	// real trees, and a session launch materializes the MCP registry into them
+	// (session_tmux.go / startManagedSession). See isolateAgentConfigDirs.
+	isolateAgentConfigDirs(t)
 	return logPath
 }
 
