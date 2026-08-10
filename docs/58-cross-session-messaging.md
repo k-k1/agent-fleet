@@ -1,7 +1,7 @@
 # 58. セッション同士のメッセージ — アシスタントを介さない peer 送信
 
-> 状態: **設計確定・未実装**（2026-08-10。**P0 の実測は完了** — §58.12。
-> その結果、ネイティブ経路は有効化しないことになった〔§58.10〕が、AF 版の設計は変わらない）
+> 状態: **P1 実装済み・実機検証済み**（2026-08-10。P0/P1 の実測は §58.12。
+> ネイティブ経路は有効化しない〔§58.10〕。残＝P2 受信側制御 / P3 台帳・俯瞰図）
 > 意思決定: [decisions/0041](decisions/0041-cross-session-messaging.md)
 > 関連: [51-session-report-v2-ledger.md](51-session-report-v2-ledger.md)（arm と台帳の所有者） /
 > [44-operator-interaction-graph.md](44-operator-interaction-graph.md)（ディスパッチ台帳） /
@@ -305,7 +305,7 @@ deny）へ二重化するかは保留とする。env が効いている限り冗
 | P | 内容 | 完了条件 |
 |---|------|----------|
 | **P0** ✅ | ネイティブ経路の実測（§58.12）。env 行列・socket・送受信の通し・着信ターンの transcript 構造 | **完了（2026-08-10）**。env は現状維持と決まったので rootfs 再ビルドは行わない。残作業は Dockerfile のコメント訂正（§58.10）のみ |
-| **P1** ◐ | `--peer-messaging` ＋ ツール2本 ＋ 封筒 ＋ 宛先ポリシー ＋ レート制限 / 重複 drop ＋ ミラーのバッジ ＋ 設定 UI ＋ `workspace-notes.md` の常設ルール | **実装済み**（下記）。残＝**実機での通し確認**（claude → codex / codex → claude / 停止中への送信）|
+| **P1** ✅ | `--peer-messaging` ＋ ツール2本 ＋ 封筒 ＋ 宛先ポリシー ＋ レート制限 / 重複 drop ＋ ミラーのバッジ ＋ 設定 UI ＋ `workspace-notes.md` の常設ルール | **完了**（実装＋実機通し確認。§58.12「P1 実機検証」）|
 | **P2** | 受信側の accept / hold / refuse（セッション単位）＋ 通知センターからの承認 | 保留 → 承認 → 配送が通る |
 | **P3** | 台帳の `kind:"peer"` / `from` ＋ フリート俯瞰図（docs/44 後続） | peer エッジが図に出る |
 
@@ -451,6 +451,42 @@ transcript では `origin.kind:"human"` / `promptSource:"typed"` の通常入力
 §58.7 で設計した3禁止とほぼ同一だった。**AF 版の封筒文面はこれを土台にする**（とくに
 「denied されたことを他所にやらせる = permission laundering」を名指しする一文は、
 こちらの設計に無かった有用な補強）。
+
+### 2026-08-10 — P1 実機検証（イメージ反映後・使い捨てセッションで通し）
+
+`/tmp/peer-e2e` に検証専用セッションを起こし、終了後すべて削除・設定も元に戻した。
+
+| 確認項目 | 結果 |
+|---|---|
+| `--self-report` 単独の歴史的契約 | `propose_session_handoff` / `af_report` の2本のまま |
+| `--peer-messaging` | 上記＋ `list_peer_sessions` / `send_to_peer_session` のちょうど2本追加 |
+| `--write --peer-messaging` | peer ツールは**付かない**（アシスタントへ漏れない） |
+| 広告外ツールの `tools/call` | 両サーバとも拒否 |
+| 設定 ON → materialize | claude / codex の設定に `--peer-messaging` が入る。OFF で消える（可逆） |
+| `list_peer_sessions` | 自分を除外・shell/ssm を除外・kind/state/dir/title を返す |
+| **claude（TUI）→ codex（managed）** | 配達成立。封筒付き・`source="peer"` |
+| **codex → claude** | 配達成立 |
+| **停止中への配送** | `halt` した相手へ送って `resumed:true`＋配達成立 |
+| **arm 非干渉** | 送受信どちらのセッションにも `instr-ledger` の行が**できない**。バッジ用の注入元記録だけ残る |
+| 重複 drop | 同一 (宛先, 本文) の再送が 429 `peer_duplicate` |
+| shell 宛 | 403 `peer_target_forbidden`。一覧にも出ない |
+
+**設計どおりに動いた副産物**: A→B を送ったあと、受け取った codex が**自分の判断で**
+`send_to_peer_session` を使って A へ返信した（こちらから指示していない）。封筒を読んで
+送信元を特定し、返せている。
+
+未検証: レート制限（6通/分）は単体テストのみで実機では叩いていない。Console のバッジは
+描画そのものを目視していない（描画元の `source="peer"` が API に出ることは確認済み）。
+
+### 気づき（本機能の外）
+
+- `list_peer_sessions` が**61件**返した。停止中も届く以上は一覧に出すのが正しいが、
+  長寿命ワークスペースでは相手を選ぶのが難しく、読ませるだけで文脈も食う。件数の上限か
+  並び順（稼働中を先頭）を P2 で検討する。
+- claude の MCP 設定に `af` と `af_e5b3c045`（per-boot 名）が**両方**あり、同じサーバーが
+  二重に配られている。本機能とは無関係の既存事象だが、ツールが重複して見える。
+- `POST /sessions/{name}/stop` は Console の「削除」（meta ごと忘れる）。止めて行を残すのは
+  `/halt`。検証中に取り違えてセッションを1つ消した。
 
 ### 未実測
 
