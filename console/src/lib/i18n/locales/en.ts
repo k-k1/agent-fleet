@@ -1580,6 +1580,10 @@ export const en: Record<keyof typeof ja, string> = {
   "browser.attach.replace_current": "Open in current pane",
   "browser.attach.open_failed": "The Chromium operation view could not be opened.",
   "browser.attach.open_link": "Open the browser and operate it (opens as a pane in this tab)",
+  "browser.attach.switch_tab": "Switch to another tab",
+  "browser.attach.switch_tab_loading": "Loading tabs…",
+  "browser.attach.switch_tab_failed": "Could not load tabs.",
+  "browser.attach.switch_tab_empty": "No other tabs are open on this Chromium instance.",
   "wsbar.tile.ws_mem": "Workspace memory: {mem}G",
   "wsbar.tile.ws_mem_oom_note":
     "⚠ A process in the container was OOM-killed within the last few minutes (memory limit reached; a build/agent may have been killed)",

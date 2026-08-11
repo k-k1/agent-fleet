@@ -159,6 +159,11 @@ func main() {
 	// リコンサイラより前に走らせること — 変換前の tick は「未報告の指示なし」を見る。
 	migrateReportArms()
 	startReportReconciler()
+	// ブラウザ attach ハンドオフの配送台帳（docs/53 完了通知節）: 前回起動時に
+	// resolveBrowserHandoff は済んだが deliverBrowserHandoff が完了する前に落ちた
+	// 分を拾い直す。busy/idle の settle 判定を持たないので上のリコンサイラとは
+	// 無関係に一度きりでよい。
+	sweepUndeliveredBrowserHandoffs()
 	// Codex sessions use a shared local app-server when available（P3 からは
 	// codex.Serve() の RuntimeSupervisor が daemon を所有する）。AF attaches
 	// a read-only observer per loaded thread: compaction state, rate limits, and

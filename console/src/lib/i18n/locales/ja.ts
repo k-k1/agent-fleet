@@ -1592,6 +1592,10 @@ export const ja = {
   "browser.attach.replace_current": "現在のペインで開く",
   "browser.attach.open_failed": "Chromium操作画面を開けませんでした。",
   "browser.attach.open_link": "ブラウザを開いて操作する（このタブのペインで開きます）",
+  "browser.attach.switch_tab": "別のタブに切り替える",
+  "browser.attach.switch_tab_loading": "タブを読み込み中…",
+  "browser.attach.switch_tab_failed": "タブの読み込みに失敗しました。",
+  "browser.attach.switch_tab_empty": "同じ Chromium に他のタブはありません。",
   // リソースタイル（tile のツールチップ）
   "wsbar.tile.ws_mem": "ワークスペースのメモリ: {mem}G",
   "wsbar.tile.ws_mem_oom_note":
