@@ -70,6 +70,11 @@ type browserAttachmentHandoffRequest struct {
 	CompletionLabel string `json:"completionLabel"`
 	AllowCancel     bool   `json:"allowCancel"`
 	ControlMode     string `json:"controlMode"`
+	// SessionName is internal-only: populated by the request_browser_action MCP
+	// tool (never by Console) with the requesting session's own AF_SESSION_NAME,
+	// so a human's completion/cancellation can be delivered back into that
+	// session's conversation. See browser_handoff_ledger.go.
+	SessionName string `json:"sessionName,omitempty"`
 }
 
 type browserAttachmentHandoffResultRequest struct {
