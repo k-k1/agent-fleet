@@ -425,6 +425,16 @@ export function MirrorView({
   const draftKey = session ? "af.mirror-draft." + session : null;
   const [draft, setDraft] = useDraft(draftKey);
   const [sending, setSending] = useState(false);
+  // sendingRef mirrors `sending` for a synchronous re-entrancy check. `sending` alone
+  // (React state) isn't enough: two send() invocations arriving in the same task (Enter
+  // auto-repeat, an IME compositionend immediately followed by its own keydown, or a
+  // stray double click before the button's `disabled` re-render commits) both read the
+  // stale pre-update value and both pass the `sending` guard in sendPrompt — producing
+  // two real POST /turn calls for what was one user action. The duplicate then depends on
+  // codex's own handling of an immediate identical resubmission (observed: silently
+  // absorbed into nothing), leaving the second optimistic echo with no turn to reconcile
+  // against — stuck at 反映待ち forever. Set/read synchronously, before any state commit.
+  const sendingRef = useRef(false);
   // 返信サジェスト v2: ✨ボタンで取得した LLM 文脈候補（Layer A のチップ列にマージ）と取得中フラグ。
   const [llmSuggestions, setLlmSuggestions] = useState<string[]>([]);
   const [suggesting, setSuggesting] = useState(false);
@@ -1389,11 +1399,15 @@ export function MirrorView({
   // （permission_pending で弾かれた直後に「送信済み」になる、2026-08-10 報告の症状）。
   const sendPrompt = async (text: string, attachments?: string[]): Promise<boolean> => {
     const t = (text || "").trim();
-    if ((!t && !attachments?.length) || sending) return false;
+    // sendingRef (not the `sending` state alone) guards re-entrancy: two invocations
+    // arriving in the same task both read `sending` before either commit lands, but the
+    // ref is set synchronously right here, so the second call sees it immediately.
+    if ((!t && !attachments?.length) || sendingRef.current) return false;
     // WS down: nothing can receive the prompt (a send would 502). The composer is already
     // hidden while stopped, but other callers (seed prompt, file drop) reach here too — bail
     // before the optimistic echo so a send never looks accepted when it can't be.
     if (wsDown()) return false;
+    sendingRef.current = true;
     setSending(true);
     // start = 新しい turn / steer = 実行中 turn への追撃 — 楽観的に working へ倒す前の
     // 実状態で決める。tui では同じ型付けに落ちるが、managed の turn/start・turn/steer
@@ -1419,6 +1433,7 @@ export function MirrorView({
       toast(res.message || tr("mirror.send_failed"));
       setDraft((d) => d || t);
     }
+    sendingRef.current = false;
     setSending(false);
     // Pick up the just-logged user turn quickly rather than waiting a full interval.
     setTimeout(() => tickRef.current?.(), 250);
