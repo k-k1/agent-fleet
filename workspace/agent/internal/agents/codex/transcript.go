@@ -327,6 +327,7 @@ func parseResponseItem(payload json.RawMessage, ts string, idx int, cwd, branch 
 		Content   []struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
+			Path string `json:"path"` // localImage echo, when Codex preserves it verbatim
 		} `json:"content"`
 	}
 	if json.Unmarshal(payload, &p) != nil {
@@ -372,20 +373,40 @@ func parseResponseItem(payload json.RawMessage, ts string, idx int, cwd, branch 
 			return transcript.Turn{}, "", false // developer/system instructions — noise
 		}
 		var sb strings.Builder
+		// hasAttachment: a user message can be an image with no caption at all (the
+		// composer's ＋/paste with the text box left empty) — turn/start's localImage
+		// item then has no accompanying "text" content, so the loop below never writes
+		// anything to sb. That must not make this look like a droppable non-prompt: the
+		// pending 反映待ち echo (pendingEcho.ts) can only resolve against a real user
+		// turn, and one that never lands (because we dropped it here) leaves it stuck
+		// forever — recoverable only by a page reload that wipes the client's in-memory
+		// echo state, not by anything server-side. If Codex preserves the path, fold it
+		// into the text too so the existing pasted-path thumbnail/echo matching
+		// (pastedImages.ts PASTE_PATH_RE) still recognizes it.
+		hasAttachment := false
 		for _, c := range p.Content {
-			if c.Type == "input_text" || c.Type == "output_text" || c.Type == "text" {
+			switch {
+			case c.Type == "input_text" || c.Type == "output_text" || c.Type == "text":
 				if c.Text != "" {
 					sb.WriteString(c.Text)
+				}
+			case c.Type != "":
+				hasAttachment = true
+				if c.Path != "" {
+					if sb.Len() > 0 {
+						sb.WriteString(" ")
+					}
+					sb.WriteString(c.Path)
 				}
 			}
 		}
 		text := strings.TrimSpace(sb.String())
-		if text == "" {
+		if text == "" && !(p.Role == "user" && hasAttachment) {
 			return transcript.Turn{}, "", false
 		}
 		if p.Role == "user" {
 			text = cleanUserText(text)
-			if text == "" {
+			if text == "" && !hasAttachment {
 				return transcript.Turn{}, "", false // injected context only, not a prompt
 			}
 		}

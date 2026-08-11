@@ -213,6 +213,40 @@ internal policy
 	}
 }
 
+// TestCodexImageOnlyUserTurnNotDropped covers a caption-less paste-and-send: the
+// managed turn/start input has no "text" item at all (buildInput only adds one when
+// the prompt is non-empty), so a user message whose content is purely an attachment
+// (no input_text) must still produce a turn. Previously it was silently dropped
+// (text == "" was treated as "not a real prompt" for every content shape), which
+// left the Console's optimistic 反映待ち echo with no real user turn to reconcile
+// against — stuck until a page reload wiped the client's in-memory echo state.
+func TestCodexImageOnlyUserTurnNotDropped(t *testing.T) {
+	item := wrapItem(t, map[string]any{
+		"type": "message", "role": "user",
+		"content": []map[string]string{{"type": "input_image", "image_url": "data:image/png;base64,AAAA"}},
+	})
+	turns, _ := parseRollout([][]byte{item})
+	if len(turns) != 1 || turns[0].Role != "user" {
+		t.Fatalf("turns = %+v, want one (possibly empty-text) user turn", turns)
+	}
+}
+
+// TestCodexImageOnlyUserTurnKeepsPath covers the case where Codex does preserve the
+// uploaded path on the echoed attachment item: it should be folded into the turn's
+// text so the existing pasted-path thumbnail/echo matching (pastedImages.ts
+// PASTE_PATH_RE) still recognizes it.
+func TestCodexImageOnlyUserTurnKeepsPath(t *testing.T) {
+	path := "/home/dev/.cache/agent-fleet/pasted/a/paste-1.png"
+	item := wrapItem(t, map[string]any{
+		"type": "message", "role": "user",
+		"content": []map[string]string{{"type": "localImage", "path": path}},
+	})
+	turns, _ := parseRollout([][]byte{item})
+	if len(turns) != 1 || !strings.Contains(turns[0].Text, path) {
+		t.Fatalf("turns = %+v, want one user turn whose text contains %q", turns, path)
+	}
+}
+
 func TestCodexParseRolloutEmpty(t *testing.T) {
 	if turns, _ := parseRollout(nil); len(turns) != 0 {
 		t.Fatalf("empty rollout -> %d turns, want 0", len(turns))
