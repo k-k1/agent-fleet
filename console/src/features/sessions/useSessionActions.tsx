@@ -29,6 +29,12 @@ export interface SessionActions {
    * agent sessions archive (restorable), shell/ssm delete. Repo-scoped stopped
    * sessions are bulk-cleared from the Cleanup modal's stage ① instead. */
   clearOrphans(orphans: Session[]): Promise<void>;
+  /** Bulk-tidy every STOPPED session in a scope (the right-click repo menu passes
+   * that folder's own sessions — a worktree's are a separate folder, so a parent
+   * repo's sweep never touches them). Same split as the Cleanup modal's stage ①:
+   * agent sessions archive (restorable), shell/ssm delete. Locked and live
+   * sessions are left alone. */
+  archiveStopped(sessions: Session[]): Promise<void>;
   /** Halt a live session into 停止中 (resumable): kills tmux, keeps the meta. */
   halt(name: string, display: string): Promise<void>;
   /** Mint a NEW live session (fresh slug, same title/dir/model), archive the old. */
@@ -133,6 +139,40 @@ export function useSessionActions(): SessionActions {
     const done = results.filter((r) => r.ok).length;
     const failed = results.length - done;
     // 失敗した行は残る — そのペインまで閉じない。
+    for (const r of results) if (r.ok) closeSessionPanes(r.s.name);
+    toast(failed ? t("clean.run_done", { done, failed }) : t("clean.run_done_ok", { done }));
+    void refreshSessions();
+  };
+
+  const archiveStopped = async (all: Session[]) => {
+    const targets = all.filter((s) => !s.alive && !s.locked); // 稼働中・削除ロック中は対象外
+    if (targets.length === 0) return;
+    // 停止セッションの片付けは Cleanup モーダルの ①と同じ振り分け: エージェントは
+    // アーカイブ（復元可）、shell/ssm は会話に残す価値が無いので削除。
+    const ephemeral = targets.filter((s) => agentOf(s.kind).caps.ephemeral);
+    const keepable = targets.filter((s) => !agentOf(s.kind).caps.ephemeral);
+    const parts: string[] = [];
+    if (keepable.length) parts.push(t("sess.cleanup_archive_n", { count: keepable.length }));
+    if (ephemeral.length) parts.push(t("sess.cleanup_delete_n", { count: ephemeral.length }));
+    if (
+      !(await askConfirm({
+        title: tr("clean.stage1_confirm_title"),
+        body: tr("clean.stage1_confirm_body", { parts: parts.join(tr("common.list_sep")) }),
+        confirmLabel: tr("clean.confirm_do", { count: targets.length }),
+        danger: ephemeral.length > 0,
+      }))
+    )
+      return;
+    const call = (s: Session, ep: "archive" | "stop") =>
+      raw(`api/sessions/${encodeURIComponent(s.name)}/${ep}`, { method: "POST" })
+        .then((res) => ({ s, ok: res.ok }))
+        .catch(() => ({ s, ok: false }));
+    const results = await Promise.all([
+      ...keepable.map((s) => call(s, "archive")),
+      ...ephemeral.map((s) => call(s, "stop")),
+    ]);
+    const done = results.filter((r) => r.ok).length;
+    const failed = results.length - done;
     for (const r of results) if (r.ok) closeSessionPanes(r.s.name);
     toast(failed ? t("clean.run_done", { done, failed }) : t("clean.run_done_ok", { done }));
     void refreshSessions();
@@ -267,5 +307,5 @@ export function useSessionActions(): SessionActions {
     }
   };
 
-  return { archive, deleteSession, setLocked, clearOrphans, halt, recreate, handoff, switchDriver };
+  return { archive, deleteSession, setLocked, clearOrphans, archiveStopped, halt, recreate, handoff, switchDriver };
 }
