@@ -679,7 +679,7 @@ func registerTerminalPreviewRoutes(mux *http.ServeMux, cfg config) {
 	pv := newPreviewAPI(cfg.mgr, cfg.publicBaseURL)
 	mux.HandleFunc("GET /ws/terminal", proxy.withResolved(proxy.terminal))
 	mux.HandleFunc("/preview/{port}", pv.redirect)
-	mux.HandleFunc("/preview/{port}/{rest...}", pv.withResolved(pv.proxy))
+	mux.HandleFunc("/preview/{port}/{rest...}", pv.withPreviewResolved(pv.proxy))
 }
 
 // Legacy path compatibility: the deployment used to be served under
