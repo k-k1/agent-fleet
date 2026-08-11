@@ -29,9 +29,12 @@ export function useFocusTrap(ref: RefObject<HTMLElement | null>, active = true):
     const opener = document.activeElement as HTMLElement | null;
 
     // Give the dialog focus so Tab has somewhere to cycle from — unless a child
-    // already grabbed it (autoFocus) or we're on touch.
+    // already grabbed it (autoFocus) or we're on touch. A `[data-autofocus]`
+    // descendant (e.g. a confirm dialog's primary action) wins over the plain
+    // first-focusable fallback, so Space/Enter can fire it without Tabbing.
     if (!coarsePointer() && !container.contains(document.activeElement)) {
-      (focusable(container)[0] ?? container).focus?.();
+      const initial = container.querySelector<HTMLElement>("[data-autofocus]:not([disabled])");
+      (initial ?? focusable(container)[0] ?? container).focus?.();
     }
 
     const onKey = (e: KeyboardEvent) => {

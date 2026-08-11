@@ -55,7 +55,9 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   // Back button / back-swipe also cancels, and peels the confirm before the
   // modal beneath it (both push a layered history guard).
   useBackClose(() => finish(false), !!req);
-  // Trap Tab within the confirm while it's open; restore focus to the opener on close.
+  // Trap Tab within the confirm while it's open; focus lands on the confirm button
+  // (data-autofocus below) so Space/Enter fires it immediately — Esc is the escape
+  // hatch for changing your mind. Restore focus to the opener on close.
   const dialogRef = useRef<HTMLDivElement>(null);
   useFocusTrap(dialogRef, !!req);
   const titleId = useId();
@@ -83,7 +85,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
                 <Button variant="ghost" onClick={() => finish(false)}>
                   {tr("ui.cancel")}
                 </Button>
-                <Button variant={req.danger ?? true ? "danger" : "primary"} onClick={() => finish(true)}>
+                <Button variant={req.danger ?? true ? "danger" : "primary"} onClick={() => finish(true)} data-autofocus>
                   {req.confirmLabel || tr("ui.run")}
                 </Button>
               </div>

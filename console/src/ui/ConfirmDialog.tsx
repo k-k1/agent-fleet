@@ -38,8 +38,9 @@ export function ConfirmDialog({
   // 端末の戻る操作でもこの確認だけ剥がせるように（ConfirmProvider と同じ流儀）。
   // busy 中は Esc/backdrop 同様に無効。
   useBackClose(onCancel, !busy);
-  // Trap Tab within the confirm; focus lands on キャンセル first (the safe default for
-  // a destructive action), and returns to the opener on close.
+  // Trap Tab within the confirm; focus lands on the confirm button (data-autofocus
+  // below) so Space/Enter fires it immediately — Esc is the escape hatch for
+  // changing your mind. Returns focus to the opener on close.
   const ref = useRef<HTMLDivElement>(null);
   useFocusTrap(ref, true);
   const titleId = useId();
@@ -56,7 +57,7 @@ export function ConfirmDialog({
           <Button variant="ghost" onClick={onCancel} disabled={busy}>
             {tr("ui.cancel")}
           </Button>
-          <Button variant={danger ? "danger" : "default"} onClick={onConfirm} disabled={busy}>
+          <Button variant={danger ? "danger" : "default"} onClick={onConfirm} disabled={busy} data-autofocus>
             {busy ? tr("ui.running") : confirmLabel ?? tr("ui.run")}
           </Button>
         </div>
