@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -42,6 +43,30 @@ func createFakeAttachment(t *testing.T, m *browserAttachmentManager) browserAtta
 		t.Fatalf("create attachment: %v", err)
 	}
 	return resp
+}
+
+// fakeAttachmentManagerWithTargets is fakeAttachmentManager with more than the
+// one fixed "target-1", for tests that need to switch between sibling tabs on
+// the same port. Retarget dials a genuinely separate CDP connection for the
+// new target and independently closes the old one — exactly like a real
+// Chromium attach — so Dial hands out a fresh fake per call (recorded in
+// dialed) rather than reusing one: sharing a single fake here would make
+// closing "the old connection" also close the one still in use, which is a
+// test-fixture bug, not anything Retarget itself does.
+func fakeAttachmentManagerWithTargets(dialed *[]*fakeBrowserCDP, targets []browserAttachTarget) *browserAttachmentManager {
+	return newBrowserAttachmentManager(browserAttachmentManagerConfig{
+		UnviewedTTL: time.Hour, ViewerGrace: time.Hour, HandoffTTL: time.Hour,
+		DiscoveryTimeout: time.Second, CommandTimeout: time.Second, FrameInterval: time.Millisecond,
+		Discover: func(int, time.Duration) (cdpDiscovery, error) {
+			return cdpDiscovery{DebuggerURL: "ws://untrusted.invalid/devtools/browser/raw-secret", Targets: targets}, nil
+		},
+		Dial: func(context.Context, int, string) (browserCDP, error) {
+			cdp := newFakeBrowserCDP()
+			cdp.attachSessionID = fmt.Sprintf("session-%d", len(*dialed)+1)
+			*dialed = append(*dialed, cdp)
+			return cdp, nil
+		},
+	})
 }
 
 func TestBrowserAttachmentLifecycleDoesNotCloseExternalTarget(t *testing.T) {
@@ -359,6 +384,270 @@ func TestBrowserAttachmentResumesScreencastAfterUnsupportedURL(t *testing.T) {
 	m.Delete(created.ID)
 }
 
+// TestBrowserAttachmentScreencastRetriesFrameNotActive covers the same
+// immediate-attach race as TestBrowserScreencastRetriesFrameNotActive, but for
+// the Chromium attach path: a viewer attaches while the target page is still
+// swapping from about:blank to the navigated document, so the first
+// Page.startScreencast calls are rejected with "Not attached to an active
+// page". startScreencast must retry that transient rejection instead of
+// surfacing it as a fatal error that disconnects the viewer with zero frames.
+func TestBrowserAttachmentScreencastRetriesFrameNotActive(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	cdp.transient = map[string]int{"Page.startScreencast": 3}
+	cdp.transientErr = fmt.Errorf("CDP Page.startScreencast (-32000): Not attached to an active page")
+	m := fakeAttachmentManager(cdp, 0)
+	created := createFakeAttachment(t, m)
+	a, err := m.lookupActive(created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.mu.Lock()
+	a.visible = true
+	a.mu.Unlock()
+
+	if err := a.startScreencast(); err != nil {
+		t.Fatalf("startScreencast should retry the transient not-active rejection, got %v", err)
+	}
+	a.castMu.Lock()
+	casting := a.casting
+	a.castMu.Unlock()
+	if !casting {
+		t.Fatal("screencast did not arm after the transient rejections cleared")
+	}
+	n := 0
+	for _, mth := range cdp.methods() {
+		if mth == "Page.startScreencast" {
+			n++
+		}
+	}
+	if n < 4 {
+		t.Fatalf("expected startScreencast to be retried (>=4 calls), got %d", n)
+	}
+
+	// A non-transient error must NOT be retried: it returns immediately.
+	a.stopScreencast()
+	cdp.mu.Lock()
+	cdp.fail = map[string]error{"Page.startScreencast": fmt.Errorf("CDP Page.startScreencast (-32000): some other failure")}
+	cdp.calls = nil
+	cdp.mu.Unlock()
+	if err := a.startScreencast(); err == nil {
+		t.Fatal("a non-transient startScreencast error should be returned, not swallowed")
+	}
+	m.Delete(created.ID)
+}
+
+// TestBrowserAttachmentStartScreencastBringsTargetToFront covers a real-world
+// gap found while investigating a live "pane stays black despite a connected
+// viewer" report: an attach target is very often not Chromium's foreground
+// tab (e.g. a script with many tabs open, cycling between them), and Chromium
+// throttles paints on background tabs so Page.startScreencast succeeds but no
+// screencastFrame ever arrives. startScreencast must activate the target
+// before arming the cast so it actually renders.
+func TestBrowserAttachmentStartScreencastBringsTargetToFront(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	m := fakeAttachmentManager(cdp, 0)
+	created := createFakeAttachment(t, m)
+	a, err := m.lookupActive(created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.mu.Lock()
+	a.visible = true
+	a.mu.Unlock()
+
+	if err := a.startScreencast(); err != nil {
+		t.Fatal(err)
+	}
+	methods := cdp.methods()
+	frontIdx, castIdx := -1, -1
+	for i, mth := range methods {
+		if mth == "Page.bringToFront" && frontIdx == -1 {
+			frontIdx = i
+		}
+		if mth == "Page.startScreencast" && castIdx == -1 {
+			castIdx = i
+		}
+	}
+	if frontIdx == -1 {
+		t.Fatalf("startScreencast did not call Page.bringToFront: %v", methods)
+	}
+	if castIdx == -1 || frontIdx > castIdx {
+		t.Fatalf("Page.bringToFront must precede Page.startScreencast: %v", methods)
+	}
+	m.Delete(created.ID)
+}
+
+// TestBrowserAttachmentRetargetSwitchesTargetKeepingID covers the feature this
+// exists for: a script driving many tabs in turn (e.g. posting several drafts)
+// used to force closing the pane and asking the agent to mint a brand new
+// attachment link for every tab switch. Retarget must keep the same id/URL
+// while moving the live session onto a different target, so an already-open
+// Console pane keeps working across the switch.
+func TestBrowserAttachmentRetargetSwitchesTargetKeepingID(t *testing.T) {
+	var dialed []*fakeBrowserCDP
+	targets := []browserAttachTarget{
+		{TargetID: "target-1", Type: "page", Title: "First", URL: "https://example.invalid/one"},
+		{TargetID: "target-2", Type: "page", Title: "Second", URL: "https://example.invalid/two"},
+	}
+	m := fakeAttachmentManagerWithTargets(&dialed, targets)
+	created := createFakeAttachment(t, m)
+	a, err := m.lookupActive(created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.mu.Lock()
+	a.viewer = &browserAttachmentViewer{attachment: a, control: make(chan browserOutbound, 8), done: make(chan struct{})}
+	a.visible = true
+	a.mu.Unlock()
+	if len(dialed) != 1 {
+		t.Fatalf("expected exactly one dialed connection after create, got %d", len(dialed))
+	}
+	oldCDP := dialed[0]
+
+	resp, err := m.Retarget(created.ID, browserAttachmentRetargetRequest{TargetID: "target-2"})
+	if err != nil {
+		t.Fatalf("retarget: %v", err)
+	}
+	if resp.ID != created.ID || resp.OpenURL != created.OpenURL {
+		t.Fatalf("retarget must keep the same id/URL, got %+v", resp)
+	}
+	if resp.Title != "Second" || resp.URL != "https://example.invalid/two" {
+		t.Fatalf("retarget did not pick up the new target's title/url: %+v", resp)
+	}
+
+	a.mu.Lock()
+	targetID, targetKey := a.targetID, a.targetKey
+	a.mu.Unlock()
+	if targetID != "target-2" || targetKey != "9222:target-2" {
+		t.Fatalf("attachment did not move onto target-2: targetID=%s targetKey=%s", targetID, targetKey)
+	}
+
+	// The old target must be free for a new attachment to claim...
+	if _, err := m.Create(browserAttachmentCreateRequest{
+		Port: 9222, TargetID: "target-1", Viewport: browserViewportRequest{Width: 800, Height: 600, DeviceScaleFactor: 1},
+	}); err != nil {
+		t.Fatalf("target-1 should be free after retargeting away from it: %v", err)
+	}
+	// ...and the new one must now be claimed, refusing a second attach.
+	if _, err := m.Create(browserAttachmentCreateRequest{
+		Port: 9222, TargetID: "target-2", Viewport: browserViewportRequest{Width: 800, Height: 600, DeviceScaleFactor: 1},
+	}); asAttachmentAPIError(err).Code != "browser_already_attached" {
+		t.Fatalf("target-2 should now be claimed by the retargeted attachment: %v", err)
+	}
+
+	if len(dialed) != 3 {
+		t.Fatalf("expected a fresh dial for retarget's new target plus the two Creates above, got %d", len(dialed))
+	}
+	newCDP := dialed[1]
+	if !containsBrowserMethod(oldCDP.methods(), "Target.detachFromTarget") {
+		t.Fatalf("retarget did not detach the old session on the old connection: %v", oldCDP.methods())
+	}
+	newMethods := newCDP.methods()
+	if !containsBrowserMethod(newMethods, "Target.attachToTarget") {
+		t.Fatalf("retarget did not attach the new session on a fresh connection: %v", newMethods)
+	}
+	if !containsBrowserMethod(newMethods, "Page.startScreencast") {
+		t.Fatalf("retarget did not resume the cast on the new target for the still-visible viewer: %v", newMethods)
+	}
+}
+
+func TestBrowserAttachmentRetargetConflictsWithExistingAttachment(t *testing.T) {
+	var dialed []*fakeBrowserCDP
+	targets := []browserAttachTarget{
+		{TargetID: "target-1", Type: "page", Title: "First", URL: "https://example.invalid/one"},
+		{TargetID: "target-2", Type: "page", Title: "Second", URL: "https://example.invalid/two"},
+	}
+	m := fakeAttachmentManagerWithTargets(&dialed, targets)
+	first := createFakeAttachment(t, m)
+	second, err := m.Create(browserAttachmentCreateRequest{
+		Port: 9222, TargetID: "target-2", Viewport: browserViewportRequest{Width: 800, Height: 600, DeviceScaleFactor: 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = m.Retarget(first.ID, browserAttachmentRetargetRequest{TargetID: "target-2"})
+	if asAttachmentAPIError(err).Code != "browser_already_attached" {
+		t.Fatalf("retargeting onto an already-attached target should conflict, got %v", err)
+	}
+
+	status, err := m.Get(first.ID)
+	if err != nil || status.URL != "https://example.invalid/one" {
+		t.Fatalf("a failed retarget must leave the attachment on its original target: %+v err=%v", status, err)
+	}
+	m.Delete(first.ID)
+	m.Delete(second.ID)
+}
+
+// TestBrowserAttachmentEndSessionIfCurrentIgnoresSupersededSession is a direct
+// unit test of the guard that keeps a stale (pre-retarget) eventLoop
+// generation from tearing down an attachment that has already moved on: its
+// connection ending must only be treated as a real disconnect if the session
+// id it was launched for is still the attachment's current one.
+func TestBrowserAttachmentEndSessionIfCurrentIgnoresSupersededSession(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	m := fakeAttachmentManager(cdp, 0)
+	created := createFakeAttachment(t, m)
+	a, err := m.lookupActive(created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.mu.Lock()
+	current := a.sessionID
+	a.mu.Unlock()
+
+	m.endSessionIfCurrent(a, "a-superseded-session-id", "stale connection closed")
+	if status, err := m.Get(created.ID); err != nil || status.State == attachmentStateDisconnected {
+		t.Fatalf("a superseded session ending must not mark the attachment terminal: %+v err=%v", status, err)
+	}
+
+	m.endSessionIfCurrent(a, current, "current connection really closed")
+	if status, err := m.Get(created.ID); err != nil || status.State != attachmentStateDisconnected {
+		t.Fatalf("the current session ending must mark the attachment terminal: %+v err=%v", status, err)
+	}
+}
+
+// TestBrowserAttachmentListSiblingTargetsMarksCurrentAndHidesPort covers the
+// Retarget picker's data source: it must return the other targets on the same
+// Chromium instance, mark which one this attachment is presently on (the
+// caller has no other way to tell — see the type's doc comment), and never
+// require or leak the underlying port.
+func TestBrowserAttachmentListSiblingTargetsMarksCurrentAndHidesPort(t *testing.T) {
+	targets := []browserAttachTarget{
+		{TargetID: "target-1", Type: "page", Title: "First", URL: "https://example.invalid/one"},
+		{TargetID: "target-2", Type: "page", Title: "Second", URL: "https://example.invalid/two"},
+	}
+	var dialed []*fakeBrowserCDP
+	m := fakeAttachmentManagerWithTargets(&dialed, targets)
+	created := createFakeAttachment(t, m)
+
+	resp, err := m.ListSiblingTargets(created.ID)
+	if err != nil {
+		t.Fatalf("list sibling targets: %v", err)
+	}
+	if len(resp.Targets) != 2 {
+		t.Fatalf("expected both sibling targets, got %+v", resp.Targets)
+	}
+	byID := map[string]browserAttachmentSiblingTarget{}
+	for _, target := range resp.Targets {
+		byID[target.TargetID] = target
+	}
+	if !byID["target-1"].Current {
+		t.Fatalf("target-1 (what Create attached to) should be marked current: %+v", resp.Targets)
+	}
+	if byID["target-2"].Current {
+		t.Fatalf("target-2 should not be marked current: %+v", resp.Targets)
+	}
+
+	wire, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(wire), "9222") || strings.Contains(strings.ToLower(string(wire)), "port") {
+		t.Fatalf("sibling targets response must not leak the port: %s", wire)
+	}
+}
+
 func TestBrowserAttachmentControlModeHTTPContract(t *testing.T) {
 	m := fakeAttachmentManager(newFakeBrowserCDP(), 0)
 	created := createFakeAttachment(t, m)
@@ -399,7 +688,7 @@ func TestBrowserAttachmentTargetCloseAndTTL(t *testing.T) {
 	cdp := newFakeBrowserCDP()
 	m := fakeAttachmentManager(cdp, 30*time.Millisecond)
 	resp := createFakeAttachment(t, m)
-	m.handleEvent(m.attachments[resp.ID], browserCDPEvent{Method: "Target.targetDestroyed", Params: json.RawMessage(`{"targetId":"target-1"}`)})
+	m.handleEvent(m.attachments[resp.ID], "session-1", "target-1", browserCDPEvent{Method: "Target.targetDestroyed", Params: json.RawMessage(`{"targetId":"target-1"}`)})
 	status, err := m.Get(resp.ID)
 	if err != nil || status.State != attachmentStateTargetClosed {
 		t.Fatalf("target close state = %+v err=%v", status, err)

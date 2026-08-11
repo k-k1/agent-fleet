@@ -256,6 +256,53 @@ func TestMCPChromiumToolsRelayAndStructuredFallback(t *testing.T) {
 	}
 }
 
+// TestMCPRequestBrowserActionCarriesOwningSessionForDelivery covers the wiring
+// that lets a completed/cancelled handoff be delivered back into the
+// requesting session's conversation (browser_handoff_ledger.go): the tool
+// must attach its own AF_SESSION_NAME to the handoff REST body so the Agent
+// knows who to notify, but must never fail the call over a missing one.
+func TestMCPRequestBrowserActionCarriesOwningSessionForDelivery(t *testing.T) {
+	var lastBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		lastBody = nil // json.Decode into a live map only overwrites shared keys, never clears absent ones
+		_ = json.NewDecoder(r.Body).Decode(&lastBody)
+		_, _ = w.Write([]byte(`{"id":"ba_1","state":"attached","openUrl":"/open/browser-attachment/ba_1","viewer":false,"controlMode":"user-control","handoff":{"message":"m","completionLabel":"c","allowCancel":false,"controlMode":"user-control","result":"pending"}}`))
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	t.Setenv("AGENT_ADDR", u.Host)
+	// Isolates mcpOwningSession's cwd-based fallback (an empty session store +
+	// an unrelated cwd never resolves to a session), so clearing mcpSourceSession
+	// below deterministically reaches the "no owning session" branch.
+	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
+	t.Chdir(t.TempDir())
+
+	oldWrite, oldSelfReport, oldSessionChromium, oldSource := mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled, mcpSourceSession
+	mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled = false, true, true
+	t.Cleanup(func() {
+		mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled, mcpSourceSession = oldWrite, oldSelfReport, oldSessionChromium, oldSource
+	})
+
+	mcpSourceSession = "the-requesting-session"
+	_ = structuredMCPValue(t, callChromiumMCP(t, "request_browser_action", map[string]any{
+		"attachment_id": "ba_1", "message": "m",
+	}))
+	if lastBody["sessionName"] != "the-requesting-session" {
+		t.Fatalf("handoff REST body = %#v, want sessionName carried through", lastBody)
+	}
+
+	mcpSourceSession = "" // no owning session (e.g. AF_SESSION_NAME unset) — must not fail the call
+	result := structuredMCPValue(t, callChromiumMCP(t, "request_browser_action", map[string]any{
+		"attachment_id": "ba_1", "message": "m",
+	}))
+	if result["result"] != "pending" {
+		t.Fatalf("request_browser_action without an owning session should still succeed: %#v", result)
+	}
+	if _, ok := lastBody["sessionName"]; ok {
+		t.Fatalf("handoff REST body must omit sessionName when there is no owning session: %#v", lastBody)
+	}
+}
+
 func TestMCPChromiumErrorsDoNotExposeAgentDetails(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
