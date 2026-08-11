@@ -2534,6 +2534,7 @@ export const en: Record<keyof typeof ja, string> = {
   "repo.ff_parent": "Fast-forward from parent",
   "repo.sess_running": "{n} running sessions",
   "repo.sess_stopped": "{n} stopped sessions",
+  "repo.archive_stopped": "Archive all stopped sessions",
   "repo.launch_title": "Start working (defaults to an isolated worktree · agent/model/first instruction)",
   "repo.no_agents": "No available agents",
   "repo.quick_launch": "Pick a kind and launch immediately (no prompt)",

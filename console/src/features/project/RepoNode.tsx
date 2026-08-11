@@ -95,6 +95,10 @@ export function RepoNode({ r, childRepos, ctx, actions }: RepoNodeProps) {
   // running inside.
   let sessAlive = mine.filter((s) => s.alive).length;
   let sessTotal = mine.length;
+  // 右クリック「停止中のセッション全てアーカイブ」— このノード自身のフォルダの
+  // セッションだけが対象（mine は sessionsInFolder(r.name) 由来なので、worktree
+  // は別フォルダ名として扱われ、親レポの一括操作には自然と含まれない）。
+  const stoppedMine = mine.filter((s) => !s.alive && !s.locked);
   if (!open && childRepos) {
     for (const c of childRepos) {
       const cs = sessionsInFolder(sessions, c.name);
@@ -126,7 +130,14 @@ export function RepoNode({ r, childRepos, ctx, actions }: RepoNodeProps) {
           <Icon name={open ? "chevron-down" : "chevron-right"} />
         </button>
         <ul className="sess-list proj-node-repo">
-          <RepoRowConnected r={r} ctx={ctx} onToggle={node.toggle} sess={{ alive: sessAlive, total: sessTotal }} />
+          <RepoRowConnected
+            r={r}
+            ctx={ctx}
+            onToggle={node.toggle}
+            sess={{ alive: sessAlive, total: sessTotal }}
+            stoppedCount={stoppedMine.length}
+            onArchiveStopped={() => void actions.archiveStopped(stoppedMine)}
+          />
         </ul>
       </div>
       {open && (
