@@ -27,9 +27,13 @@ interface RepoRowConnectedProps {
   onToggle?: () => void;
   /** Session tally badge (see RepoRow.sess) — computed by the owning node. */
   sess?: { alive: number; total: number };
+  /** 停止中セッション一括アーカイブ（右クリックメニュー）— このフォルダ直下の
+   * セッションだけを対象にした件数/ハンドラを、所有ノード（RepoNode）が渡す。 */
+  onArchiveStopped?: () => void;
+  stoppedCount?: number;
 }
 
-export function RepoRowConnected({ r, ctx, onToggle, sess }: RepoRowConnectedProps) {
+export function RepoRowConnected({ r, ctx, onToggle, sess, onArchiveStopped, stoppedCount }: RepoRowConnectedProps) {
   const settings = useSettings(); // default model for claude 起動
   const tr = useT();
   const toast = useToast();
@@ -49,6 +53,8 @@ export function RepoRowConnected({ r, ctx, onToggle, sess }: RepoRowConnectedPro
       active={ctx.scmRepo === r.name}
       selected={r.name === ctx.activeRepo}
       sess={sess}
+      onArchiveStopped={onArchiveStopped}
+      stoppedCount={stoppedCount}
       opens={ctx.rPanes?.get(r.name)}
       onFocusPane={setActive}
       onToggle={onToggle}

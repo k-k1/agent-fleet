@@ -74,6 +74,11 @@ export interface RepoRowProps {
   /** Advances this WT to the parent working copy's HEAD when it is a strict FF. */
   onParentFF?: () => void;
   onDelete?: () => void;
+  /** 停止中のセッション全てアーカイブ（右クリックメニュー）。このフォルダ直下の
+   * セッションのみが対象 — worktree は別フォルダなので、親レポの一括操作には
+   * 含まれない（呼び出し側が sessionsInFolder でスコープ済みの件数/ハンドラを渡す）。 */
+  onArchiveStopped?: () => void;
+  stoppedCount?: number;
   /** 削除ロック（docs/45）の切替。ロック中は削除メニューが無効になり、空になった
    * worktree の自動 prune も止まる（保護の実体は Agent 側の 403）。 */
   onToggleLock?: (locked: boolean) => void;
@@ -87,7 +92,7 @@ export interface RepoRowProps {
   onFocusPane?: (id: string) => void;
 }
 
-export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, sess, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onParentFF, onDelete, onToggleLock, onUpdate, onCleanup, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane }: RepoRowProps) {
+export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, sess, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onParentFF, onDelete, onToggleLock, onUpdate, onCleanup, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane, onArchiveStopped, stoppedCount = 0 }: RepoRowProps) {
   // SVN working copies (docs/41) are flat: no branch/SCM view/worktree, so the card
   // never opens Source Control and the menu shows svn actions (update/cleanup) instead
   // of git ones (branch switch / FF / commit).
@@ -430,6 +435,17 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                     </button>
                   </li>
                 ))}
+              </>
+            )}
+            {onArchiveStopped && stoppedCount > 0 && (
+              <>
+                <li className="ui-menu-sep" role="separator" />
+                <li>
+                  <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onArchiveStopped(); }}>
+                    <Icon name="archive" /> {tr("repo.archive_stopped")}
+                    {tr("common.paren", { v: stoppedCount })}
+                  </button>
+                </li>
               </>
             )}
             {(onDelete || onToggleLock) && <li className="ui-menu-sep" role="separator" />}
