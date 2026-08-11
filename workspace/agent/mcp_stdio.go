@@ -695,7 +695,9 @@ var mcpStdioWriteTools = []map[string]any{
 	{
 		"name": "request_browser_action",
 		"description": "Chromium attachmentをユーザーへ引き渡す操作案内を作成・更新する。user-controlへ移す前にowner側の対象Pageへの自動操作を停止すること。" +
-			"最終確定操作は代行せず、完了/中止はユーザーの自己申告であって外部サイト上の成功証明ではない。",
+			"最終確定操作は代行せず、完了/中止はユーザーの自己申告であって外部サイト上の成功証明ではない。" +
+			"ユーザーが応答すると、その結果がこのセッションの会話へ新しい入力として自動的に届く（停止中でも再開される）ので、" +
+			"このツール自体は結果を待たず即座に返る。届いたらget_browser_action_resultで構造化結果を確認すること。",
 		"inputSchema": map[string]any{
 			"type":                 "object",
 			"additionalProperties": false,
@@ -2047,6 +2049,12 @@ func mcpRequestBrowserAction(id json.RawMessage, attachmentID, message, completi
 	}
 	if controlMode != "" {
 		req["controlMode"] = controlMode
+	}
+	// Best-effort: without a valid owning session there is simply nobody to notify
+	// once a human responds — the handoff still works exactly as before, the tool
+	// call must not fail over this. See browser_handoff_ledger.go.
+	if self, err := mcpOwningSession(); err == nil {
+		req["sessionName"] = self
 	}
 	reqBody, _ := json.Marshal(req)
 	body, err := agentPOST("/browser/attachments/"+url.PathEscape(attachmentID)+"/handoff", reqBody)

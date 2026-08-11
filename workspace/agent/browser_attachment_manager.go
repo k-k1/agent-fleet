@@ -78,12 +78,17 @@ type browserAttachment struct {
 	url         string
 	controlMode string
 	handoff     *browserAttachmentHandoffResponse
-	viewer      *browserAttachmentViewer
-	reserved    bool
-	visible     bool
-	terminal    bool
-	expiresAt   time.Time
-	expiry      *time.Timer
+	// handoffSession is the session to notify once a human resolves the CURRENT
+	// handoff (empty when UpdateHandoff was called without one — see
+	// browser_handoff_ledger.go). Set alongside handoff, so it always matches
+	// whichever handoff round is live.
+	handoffSession string
+	viewer         *browserAttachmentViewer
+	reserved       bool
+	visible        bool
+	terminal       bool
+	expiresAt      time.Time
+	expiry         *time.Timer
 
 	latestFrame chan []byte
 	frameEvents chan browserScreencastFrame
@@ -579,6 +584,7 @@ func (m *browserAttachmentManager) UpdateHandoff(id string, req browserAttachmen
 		Message: req.Message, CompletionLabel: req.CompletionLabel, AllowCancel: req.AllowCancel,
 		ControlMode: req.ControlMode, Result: "pending",
 	}
+	a.handoffSession = req.SessionName
 	visible := a.visible && a.viewer != nil
 	if !visible {
 		a.armExpiryLocked(m.config.HandoffTTL)
@@ -591,6 +597,9 @@ func (m *browserAttachmentManager) UpdateHandoff(id string, req browserAttachmen
 		_ = a.startScreencast()
 	}
 	a.notifyJSON(map[string]any{"type": "handoff", "handoff": resp.Handoff, "controlMode": req.ControlMode})
+	// Durable BEFORE returning: a crash between this and SetHandoffResult must
+	// still leave a row for the startup sweep to find once a result exists.
+	recordBrowserHandoffRequested(req.SessionName, a.id, req.Message)
 	return resp, nil
 }
 
@@ -635,6 +644,7 @@ func (m *browserAttachmentManager) SetHandoffResult(id, result string) (browserA
 	a.handoff.Result = result
 	a.handoff.ControlMode = attachmentControlLocked
 	a.controlMode = attachmentControlLocked
+	sessionName := a.handoffSession
 	if a.viewer == nil {
 		a.armExpiryLocked(m.config.ViewerGrace)
 	}
@@ -642,6 +652,16 @@ func (m *browserAttachmentManager) SetHandoffResult(id, result string) (browserA
 	a.mu.Unlock()
 	a.stopScreencast()
 	a.notifyJSON(map[string]any{"type": "handoff", "handoff": resp.Handoff, "controlMode": attachmentControlLocked})
+	// Deliver the result back into the requesting session's conversation
+	// (docs/53 完了通知節). Off the request goroutine: a human's button click
+	// must return immediately, not block on resuming a stopped session or on
+	// the CLI's own delivery-confirmation round trip (up to 45s — see
+	// agentSendToSession). The ledger row already on disk (recordBrowserHandoffRequested)
+	// is what makes this crash-safe: undeliveredBrowserHandoffs retries at the
+	// next Agent start if this goroutine never gets to run.
+	if row, ok := resolveBrowserHandoff(sessionName, a.id, result); ok {
+		go deliverBrowserHandoff(sessionName, row)
+	}
 	return resp, nil
 }
 
