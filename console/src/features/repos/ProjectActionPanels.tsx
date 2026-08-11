@@ -1,28 +1,23 @@
 // ProjectActionPanels — docs/56 §9.2 ③ / §7.5 操作A: the two write actions P1
-// ships. Both follow the same shape: build one Op from form state, plan() to show
-// a masked preview + warnings, apply() only once the user has seen that preview
-// (docs/56 §5 "マージは利用者が決める" — this UI never plans-and-applies in one
-// click). A field change after a plan clears it, forcing a fresh preview before
-// apply is allowed again — the previewed op and the applied op must be the exact
-// op the user is looking at.
+// ships. Copy is deliberately ONE decision (which agent) plus one optional toggle
+// (copy secret values too) — not a form: dialect and overwrite-vs-skip are decided
+// FOR the user from the destination's own known contract (translate when the
+// target kind has a native dialect, overwrite when a same-named entry already
+// exists — docs/56 §5 still requires a preview before every write, so the user
+// sees exactly what will land and can cancel, but is never asked to pick options
+// that have one obviously-right answer). plan() computes that preview; apply()
+// only runs once the user has looked at it and confirmed.
 import { useState } from "react";
 import { useT } from "../../lib/i18n/index.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { errText } from "../../core/api/client.ts";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
-import { Field } from "../settings/mcpForm.tsx";
-import { kindLabel } from "../../lib/sessionkind.ts";
+import { Field, Meta } from "../settings/mcpForm.tsx";
+import { kindIcon, kindLabel } from "../../lib/sessionkind.ts";
 import { openFileDiff } from "../scm/open.ts";
-import {
-  applyProjectMcp,
-  gateText,
-  opErrorText,
-  planProjectMcp,
-  targetHasEntry,
-  warningText,
-} from "./projectMcpWire.ts";
-import type { DialectChoice, OnConflict, ProjectOp, ProjectPlanResult, ProjectServer, ProjectSnapshot } from "./projectMcpWire.ts";
+import { applyProjectMcp, gateText, opErrorText, planProjectMcp, warningText } from "./projectMcpWire.ts";
+import type { ProjectFile, ProjectOp, ProjectPlanResult, ProjectServer, ProjectSnapshot } from "./projectMcpWire.ts";
 
 type ApiResult<T> = T | { error: { code: string; message?: string } };
 
@@ -36,6 +31,20 @@ async function call<T>(fn: () => Promise<T>): Promise<ApiResult<T>> {
 
 // --- copy ----------------------------------------------------------------
 
+// The agent kinds a copy may target — kiro is read-only (docs/56 §4.3, its
+// project-scope write contract is unmeasured) and agy has no project scope at
+// all, so neither is offered as a destination.
+const COPY_TARGET_KINDS = ["claude", "codex", "opencode", "cursor", "copilot"];
+
+// v1's file↔kind map is fixed (docs/56 §4.3): each kind reads exactly one project
+// file (copilot has a second, .github/mcp.json, but .mcp.json — listed first — is
+// its documented default when both could apply). Picking by KIND here, not by raw
+// path, is the whole point of this redesign — the file is an implementation detail
+// the destination-agent choice already determines.
+function fileForKind(files: ProjectFile[], kind: string): string | undefined {
+  return files.find((f) => f.kinds.includes(kind))?.path;
+}
+
 interface CopyPanelProps {
   repo: string;
   snap: ProjectSnapshot;
@@ -47,46 +56,41 @@ interface CopyPanelProps {
 export function ProjectCopyPanel({ repo, snap, source, onClose, onApplied }: CopyPanelProps) {
   const tr = useT();
   const toast = useToast();
-  const otherFiles = snap.files.filter((f) => f.path !== source.file);
+  const sourceFile = snap.files.find((f) => f.path === source.file);
+  const sourceKinds = new Set(sourceFile?.kinds || []);
 
-  const [toFile, setToFile] = useState(otherFiles[0]?.path || "");
-  const [asName, setAsName] = useState(source.name);
-  const [dialect, setDialect] = useState<DialectChoice>("translate");
+  const targets = COPY_TARGET_KINDS.map((kind) => ({ kind, file: fileForKind(snap.files, kind) })).filter(
+    (t): t is { kind: string; file: string } => !!t.file && !sourceKinds.has(t.kind),
+  );
+
+  const [targetKind, setTargetKind] = useState<string | null>(null);
   const [withSecrets, setWithSecrets] = useState(false);
-  const [onConflict, setOnConflict] = useState<OnConflict>("overwrite");
   const [plan, setPlan] = useState<ProjectPlanResult | null>(null);
   const [applied, setApplied] = useState<ProjectPlanResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
-  const resolvedAs = asName.trim() || source.name;
-  const toFileObj = snap.files.find((f) => f.path === toFile);
-  const destKind = toFileObj?.kinds[0];
-  const destKindInfo = snap.kinds.find((k) => k.kind === destKind);
-  const canTranslate = !!destKindInfo?.dialects?.length;
-  const effectiveDialect: DialectChoice = canTranslate ? dialect : "as-is";
-  const hasConflict = !!toFile && targetHasEntry(snap.files, toFile, resolvedAs);
-
-  const clearPlan = () => {
-    setPlan(null);
-    setErr("");
+  const opFor = (kind: string, secrets: boolean): ProjectOp | null => {
+    const file = targets.find((t) => t.kind === kind)?.file;
+    if (!file) return null;
+    const canTranslate = !!snap.kinds.find((k) => k.kind === kind)?.dialects?.length;
+    return {
+      op: "copy",
+      from: { file: source.file, name: source.name },
+      to: { file },
+      as: source.name,
+      onConflict: "overwrite",
+      withSecrets: secrets,
+      dialect: canTranslate ? "translate" : "as-is",
+    };
   };
 
-  const buildOp = (): ProjectOp => ({
-    op: "copy",
-    from: { file: source.file, name: source.name },
-    to: { file: toFile },
-    as: resolvedAs,
-    onConflict: hasConflict ? onConflict : "overwrite",
-    withSecrets,
-    dialect: effectiveDialect,
-  });
-
-  const doPlan = async () => {
-    if (!toFile) return;
+  const runPlan = async (kind: string, secrets: boolean) => {
+    const op = opFor(kind, secrets);
+    if (!op) return;
     setBusy(true);
     setErr("");
-    const res = await call(() => planProjectMcp(repo, [buildOp()]));
+    const res = await call(() => planProjectMcp(repo, [op]));
     setBusy(false);
     if ("error" in res) {
       setErr(errText(res.error));
@@ -95,11 +99,26 @@ export function ProjectCopyPanel({ repo, snap, source, onClose, onApplied }: Cop
     setPlan(res);
   };
 
+  const pickTarget = (kind: string) => {
+    setTargetKind(kind);
+    setPlan(null);
+    setErr("");
+    void runPlan(kind, withSecrets);
+  };
+
+  const toggleSecrets = () => {
+    const next = !withSecrets;
+    setWithSecrets(next);
+    if (targetKind) void runPlan(targetKind, next);
+  };
+
   const doApply = async () => {
-    if (!plan) return;
+    if (!plan || !targetKind) return;
+    const op = opFor(targetKind, withSecrets);
+    if (!op) return;
     setBusy(true);
     setErr("");
-    const res = await call(() => applyProjectMcp(repo, [buildOp()], plan.planHash));
+    const res = await call(() => applyProjectMcp(repo, [op], plan.planHash));
     setBusy(false);
     if ("error" in res) {
       if (res.error.code === "mcp_project_plan_stale") {
@@ -115,11 +134,6 @@ export function ProjectCopyPanel({ repo, snap, source, onClose, onApplied }: Cop
       toast(opErrorText(opRes.reason));
       return;
     }
-    if (opRes.status === "skipped") {
-      toast(tr("pmcp.op_skipped_toast"));
-      onClose();
-      return;
-    }
     setApplied(res);
     onApplied();
   };
@@ -130,7 +144,7 @@ export function ProjectCopyPanel({ repo, snap, source, onClose, onApplied }: Cop
     return (
       <div className="pmcp-panel pmcp-panel-done">
         <p className="pmcp-panel-title">
-          <Icon name="check" /> {tr("pmcp.applied", { file: opRes.file || toFile })}
+          <Icon name="check" /> {tr("pmcp.applied", { file: opRes.file || "" })}
         </p>
         {gate && (
           <p className="ps-note">
@@ -142,7 +156,7 @@ export function ProjectCopyPanel({ repo, snap, source, onClose, onApplied }: Cop
             variant="ghost"
             icon="source-control"
             onClick={() => {
-              openFileDiff(repo, opRes.file || toFile, false);
+              if (opRes.file) openFileDiff(repo, opRes.file, false);
               onClose();
             }}
           >
@@ -157,113 +171,49 @@ export function ProjectCopyPanel({ repo, snap, source, onClose, onApplied }: Cop
   return (
     <div className="pmcp-panel">
       <p className="pmcp-panel-title">{tr("pmcp.copy_title", { server: source.name, file: source.file })}</p>
-      <Field label={tr("pmcp.copy_to")}>
-        <select
-          className="cinput"
-          value={toFile}
-          onChange={(e) => {
-            setToFile(e.target.value);
-            clearPlan();
-          }}
-        >
-          {otherFiles.map((f) => (
-            <option key={f.path} value={f.path}>
-              {f.path}
-            </option>
-          ))}
-        </select>
-      </Field>
-      <Field label={tr("pmcp.copy_as")}>
-        <input
-          className="cinput"
-          value={asName}
-          onChange={(e) => {
-            setAsName(e.target.value);
-            clearPlan();
-          }}
-        />
-      </Field>
-      {hasConflict && (
-        <Field label={tr("pmcp.on_conflict")}>
-          <select
-            className="cinput"
-            value={onConflict}
-            onChange={(e) => {
-              setOnConflict(e.target.value as OnConflict);
-              clearPlan();
-            }}
-          >
-            <option value="overwrite">{tr("pmcp.on_conflict_overwrite")}</option>
-            <option value="skip">{tr("pmcp.on_conflict_skip")}</option>
-            <option value="rename">{tr("pmcp.on_conflict_rename")}</option>
-          </select>
-        </Field>
-      )}
-      <Field label={tr("pmcp.dialect_label")}>
-        <div className="pmcp-radio-group">
-          {canTranslate && (
-            <label>
-              <input
-                type="radio"
-                checked={dialect === "translate"}
-                onChange={() => {
-                  setDialect("translate");
-                  clearPlan();
-                }}
-              />{" "}
-              {tr("pmcp.dialect_translate")}
-            </label>
-          )}
-          <label>
-            <input
-              type="radio"
-              checked={effectiveDialect === "as-is"}
-              onChange={() => {
-                setDialect("as-is");
-                clearPlan();
-              }}
-            />{" "}
-            {tr("pmcp.dialect_as_is")}
-          </label>
-          <label>
-            <input
-              type="radio"
-              checked={dialect === "expand"}
-              onChange={() => {
-                setDialect("expand");
-                clearPlan();
-              }}
-            />{" "}
-            {tr("pmcp.dialect_expand")}
-          </label>
-        </div>
-        {!canTranslate && destKind && <div className="hint">{tr("pmcp.dialect_none_hint", { kind: kindLabel(destKind) })}</div>}
-      </Field>
-      <Field label={tr("pmcp.with_secrets")}>
-        <label>
-          <input
-            type="checkbox"
-            checked={withSecrets}
-            onChange={(e) => {
-              setWithSecrets(e.target.checked);
-              clearPlan();
-            }}
-          />{" "}
-          {tr("pmcp.with_secrets_label")}
-        </label>
-        {withSecrets && <div className="hint pmcp-warn-hint">{tr("pmcp.with_secrets_warn")}</div>}
-      </Field>
 
-      {err && <p className="ps-note ps-note-warn">{err}</p>}
+      {!targetKind ? (
+        <>
+          <div className="pmcp-kind-chips">
+            {targets.map((t) => (
+              <button key={t.kind} type="button" className="pmcp-kind-chip-btn" onClick={() => pickTarget(t.kind)}>
+                <Icon name={kindIcon(t.kind)} /> {kindLabel(t.kind)}
+              </button>
+            ))}
+          </div>
+          {targets.length === 0 && <p className="ps-note">{tr("pmcp.copy_no_targets")}</p>}
+          <div className="pmcp-panel-actions">
+            <Button variant="ghost" onClick={onClose}>
+              {tr("ui.cancel")}
+            </Button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="pmcp-copy-target">
+            <button type="button" className="pmcp-link-btn" onClick={() => setTargetKind(null)}>
+              <Icon name="arrow-left" /> {tr("pmcp.copy_change_target")}
+            </button>
+            <span>
+              <Icon name={kindIcon(targetKind)} /> {kindLabel(targetKind)}
+            </span>
+          </p>
 
-      {plan && (
-        <div className="pmcp-preview">
-          {plan.ops[0].status === "skipped" ? (
-            <p className="ps-note">{tr("pmcp.op_skipped_toast")}</p>
-          ) : (
-            <>
-              <p className="pmcp-panel-title">{tr("pmcp.preview_title")}</p>
-              <PreviewDiff before={plan.ops[0].before} after={plan.ops[0].after} />
+          {err && <p className="ps-note ps-note-warn">{err}</p>}
+          {busy && !plan && <p className="ps-note">{tr("common.loading")}</p>}
+
+          {plan && (
+            <div className="pmcp-preview">
+              {plan.ops[0].before && (
+                <p className="ps-note ps-note-warn">
+                  <Icon name="warning" /> {tr("pmcp.copy_will_overwrite", { file: plan.ops[0].file || "" })}
+                </p>
+              )}
+              {plan.ops[0].after && <ServerSummary s={plan.ops[0].after} />}
+              <label className="pmcp-secrets-toggle">
+                <input type="checkbox" checked={withSecrets} onChange={toggleSecrets} /> {tr("pmcp.with_secrets_label")}
+              </label>
+              {withSecrets && <div className="hint pmcp-warn-hint">{tr("pmcp.with_secrets_warn")}</div>}
               {gateText(plan.ops[0].gateCode) && (
                 <p className="ps-note">
                   <Icon name="clock" /> {gateText(plan.ops[0].gateCode)}
@@ -274,45 +224,37 @@ export function ProjectCopyPanel({ repo, snap, source, onClose, onApplied }: Cop
                   <Icon name={w.severity === "red" ? "error" : "warning"} /> {warningText(w)}
                 </p>
               ))}
-            </>
+            </div>
           )}
-        </div>
-      )}
 
-      <div className="pmcp-panel-actions">
-        <Button variant="ghost" onClick={onClose} disabled={busy}>
-          {tr("ui.cancel")}
-        </Button>
-        {!plan ? (
-          <Button onClick={doPlan} disabled={busy || !toFile}>
-            {tr("pmcp.preview_action")}
-          </Button>
-        ) : (
-          <Button onClick={doApply} disabled={busy || plan.ops[0].status === "skipped"}>
-            {tr("pmcp.apply_action")}
-          </Button>
-        )}
-      </div>
+          <div className="pmcp-panel-actions">
+            <Button variant="ghost" onClick={onClose} disabled={busy}>
+              {tr("ui.cancel")}
+            </Button>
+            <Button onClick={doApply} disabled={busy || !plan}>
+              {tr("pmcp.apply_action")}
+            </Button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
 
-function PreviewDiff({ before, after }: { before?: ProjectServer; after?: ProjectServer }) {
+// ServerSummary — plain key/value rows (docs/56 §9.2's "プレビュー", not a raw JSON
+// dump): the command/URL as one line, env/header VALUE NAMES only (values stay
+// masked or absent — this is a preview, not an editor).
+function ServerSummary({ s }: { s: ProjectServer }) {
   const tr = useT();
   return (
-    <div className="pmcp-diff">
-      {before && (
-        <div className="pmcp-diff-side del">
-          <div className="pmcp-diff-h">{tr("pmcp.diff_before")}</div>
-          <pre>{JSON.stringify(before, null, 2)}</pre>
-        </div>
+    <div className="pmcp-summary">
+      {s.transport === "http" ? (
+        <Meta k={tr("pmcp.summary_url")} v={s.url} />
+      ) : (
+        <Meta k={tr("pmcp.summary_command")} v={[s.command, ...(s.args || [])].filter(Boolean).join(" ")} />
       )}
-      {after && (
-        <div className="pmcp-diff-side add">
-          <div className="pmcp-diff-h">{tr("pmcp.diff_after")}</div>
-          <pre>{JSON.stringify(after, null, 2)}</pre>
-        </div>
-      )}
+      {s.env && Object.keys(s.env).length > 0 && <Meta k={tr("pmcp.summary_env")} v={Object.keys(s.env).join(", ")} />}
+      {s.headers && Object.keys(s.headers).length > 0 && <Meta k={tr("pmcp.summary_headers")} v={Object.keys(s.headers).join(", ")} />}
     </div>
   );
 }

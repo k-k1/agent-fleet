@@ -984,30 +984,51 @@
   flex-direction: column;
   gap: 6px;
 }
-.pmcp-diff {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
+.pmcp-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
-.pmcp-diff-side {
-  border-radius: 6px;
-  padding: 6px 8px;
-  overflow-x: auto;
+/* Copy target picker: one chip per destination agent, docs/56 P1's redesign away
+   from a raw file-path dropdown (feedback 2026-08-11 — target by agent, not file). */
+.pmcp-kind-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
-.pmcp-diff-side.del {
-  background: color-mix(in srgb, var(--del) 8%, transparent);
+.pmcp-kind-chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid var(--border2, var(--border));
+  border-radius: 999px;
+  background: var(--bg2, transparent);
+  color: var(--fg);
+  font-size: 12px;
+  cursor: pointer;
 }
-.pmcp-diff-side.add {
-  background: color-mix(in srgb, var(--ok) 8%, transparent);
+.pmcp-kind-chip-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
-.pmcp-diff-h {
-  font-size: 11px;
-  color: var(--muted);
-  margin-bottom: 4px;
-}
-.pmcp-diff-side pre {
+.pmcp-copy-target {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   margin: 0;
-  font-size: 11px;
-  white-space: pre-wrap;
-  word-break: break-word;
+  font-size: 12px;
+}
+.pmcp-copy-target > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+}
+.pmcp-secrets-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 400;
 }
