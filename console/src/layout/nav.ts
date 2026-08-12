@@ -20,7 +20,7 @@ export function paneByOrdinal(layout: Layout, n: number): string | undefined {
  * up/down move within the active pane's column. */
 export function neighborPane(layout: Layout, dir: Dir): string | undefined {
   const rows = paneRows(layout);
-  const active = rows.find((r) => r.id === layout.activeId) ?? rows[0];
+  const active = rows.find((r) => r.id === layout.activeCellId) ?? rows[0];
   if (!active) return undefined;
 
   if (dir === "up" || dir === "down") {
@@ -43,7 +43,7 @@ export function neighborPane(layout: Layout, dir: Dir): string | undefined {
 export function cyclePane(layout: Layout, delta: number): string | undefined {
   const rows = paneRows(layout);
   if (rows.length === 0) return undefined;
-  const idx = rows.findIndex((r) => r.id === layout.activeId);
+  const idx = rows.findIndex((r) => r.id === layout.activeCellId);
   const cur = idx < 0 ? 0 : idx;
   // 二重 mod: |delta| > rows.length の負方向でも負インデックスにならない。
   return rows[(((cur + delta) % rows.length) + rows.length) % rows.length].id;

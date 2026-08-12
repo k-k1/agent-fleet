@@ -130,7 +130,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   const openTarget = useLayoutStore((s) => s.openTarget);
   const openTargetInNew = useLayoutStore((s) => s.openTargetInNew);
   const setActivePane = useLayoutStore((s) => s.setActive);
-  const isActivePane = useLayoutStore((s) => s.layout.activeId === paneId);
+  const isActivePane = useLayoutStore((s) => s.layout.cols.some((col) => col.cells.some((cell) => cell.id === s.layout.activeCellId && cell.selectedViewId === paneId)));
   const revealInFiles = useFilesStore((s) => s.revealInFiles);
   const settings = useSettings();
   // wrap is the per-pane override; fall back to the global setting.

@@ -1,30 +1,33 @@
 import { describe, it, expect } from "vitest";
 import type { Layout } from "./types.ts";
-import { blankPane } from "./types.ts";
 import { paneByOrdinal, neighborPane, cyclePane } from "./nav.ts";
 
 // Two columns × two rows. paneRows numbers them in reading order:
 //   col0: a(1,r0) b(2,r1) · col1: c(3,r0) d(4,r1)
 function grid(activeId: string): Layout {
   return {
+    version: 3,
+    mode: "split",
     cols: [
-      { id: "c0", rowRatio: 0.5, panes: [blankPane("a"), blankPane("b")] },
-      { id: "c1", rowRatio: 0.5, panes: [blankPane("c"), blankPane("d")] },
+      { id: "c0", rowRatio: 0.5, cells: ["a", "b"].map((id) => ({ id, selectedViewId: null, views: [] })) },
+      { id: "c1", rowRatio: 0.5, cells: ["c", "d"].map((id) => ({ id, selectedViewId: null, views: [] })) },
     ],
     colRatios: [0.5, 0.5],
-    activeId,
+    activeCellId: activeId,
   };
 }
 
 // col0 has two rows, col1 has one — for the "clamp into a shorter column" case.
 function ragged(activeId: string): Layout {
   return {
+    version: 3,
+    mode: "split",
     cols: [
-      { id: "c0", rowRatio: 0.5, panes: [blankPane("a"), blankPane("b")] },
-      { id: "c1", rowRatio: 0.5, panes: [blankPane("c")] },
+      { id: "c0", rowRatio: 0.5, cells: ["a", "b"].map((id) => ({ id, selectedViewId: null, views: [] })) },
+      { id: "c1", rowRatio: 0.5, cells: [{ id: "c", selectedViewId: null, views: [] }] },
     ],
     colRatios: [0.5, 0.5],
-    activeId,
+    activeCellId: activeId,
   };
 }
 

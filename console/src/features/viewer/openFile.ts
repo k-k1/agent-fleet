@@ -17,7 +17,7 @@ export function openFileMode(filePath: string, mode: "view" | "edit"): void {
   const existing = allPanes(st.layout).find((p) => p.content.kind === "file" && p.content.filePath === filePath);
   if (existing) {
     st.setPaneTarget(existing.id, { content });
-    st.setActive(existing.id);
+    st.selectTab(existing.id);
     return;
   }
   st.openTarget({ content });
