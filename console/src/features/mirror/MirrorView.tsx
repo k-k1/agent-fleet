@@ -316,6 +316,7 @@ export function MirrorView({
   onToggleMirror,
   readOnly = false,
   onResume,
+  headerActions,
 }: {
   paneId: string;
   session: string;
@@ -325,6 +326,8 @@ export function MirrorView({
   onToggleMirror: (v: boolean) => void;
   readOnly?: boolean;
   onResume?: () => void;
+  /** Pane actions placed immediately before the chat/terminal toggle. */
+  headerActions?: ReactNode;
 }) {
   const settings = useSettings();
   // Per-agent descriptor: how this session's assistant signs its turns, and which
@@ -2571,8 +2574,11 @@ export function MirrorView({
             {managedSettings?.mode === "plan" && <span> · Plan</span>}
           </button>
         )}
-        {/* Managed（paneless）セッションにはターミナルが無い — トグル自体を出さない。 */}
-        {!managed && <MirrorToggle mirror={!!mirror} onToggle={onToggleMirror} running={running} />}
+        <span className="mirror-head-actions">
+          {headerActions}
+          {/* Managed（paneless）セッションにはターミナルが無い — トグル自体を出さない。 */}
+          {!managed && <MirrorToggle mirror={!!mirror} onToggle={onToggleMirror} running={running} />}
+        </span>
       </header>
 
       {ctxUsage && <ContextBar {...ctxUsage} spends={spends} maxSpend={maxSpend} />}
