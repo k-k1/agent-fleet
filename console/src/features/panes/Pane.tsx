@@ -26,6 +26,7 @@ import { coarsePointer } from "../../lib/device.ts";
 import { findScroller, VIEWER_KINDS } from "../../lib/keyScroll.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { IconButton } from "../../ui/Button.tsx";
+import { Icon } from "../../ui/Icon.tsx";
 import { cx } from "../../ui/cx.ts";
 import { isManagedSession } from "../../types/session.ts";
 import type { Session } from "../../types/session.ts";
@@ -37,6 +38,7 @@ import { usePopoutMode } from "../../lib/popoutMode.ts";
 import type { PaneView } from "../../layout/types.ts";
 import { paneTitle } from "./paneTitle.ts";
 import { acceptsPaneDrag, setTabDragShield, tabOwnsDrop } from "./paneDnd.ts";
+import { stateInfo } from "../../lib/sessionview.ts";
 
 // Drag payload MIME — identifies a pane-to-pane drag (vs any other drag).
 const DND = "application/x-af-pane";
@@ -243,6 +245,11 @@ function PopulatedPane({
     if (view.content.kind === "terminal" && view.session && !session) return tr("pane.no_session");
     return paneTitle(view, session);
   };
+  const tabState = (view: PaneView) => {
+    if (view.content.kind !== "terminal" || !view.session) return null;
+    const session = sessionByName.get(view.session);
+    return session ? stateInfo(session) : null;
+  };
   // The selected session can be shown either as terminal or chat. Keep these
   // cell actions in the respective header, immediately before that switch,
   // so they never disappear merely because the user chose チャット.
@@ -348,53 +355,61 @@ function PopulatedPane({
           aria-label={tr("display.pane_layout_tabs")}
           onWheel={onTabsWheel}
         >
-          {views.map((view) => (
-            <div className={cx("pane-tab", view.id === cell.selectedViewId && "selected")} role="presentation" key={view.id}>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={view.id === cell.selectedViewId}
-                title={tabLabel(view)}
-                draggable
-                onDragStart={(e) => {
-                  e.dataTransfer.setData(TAB_DND, view.id);
-                  e.dataTransfer.effectAllowed = "move";
-                  setTabDragShield(true);
-                }}
-                onDragEnd={() => setTabDragShield(false)}
-                onDragOver={(e) => {
-                  if (!e.dataTransfer.types.includes(TAB_DND)) return;
-                  // The tab owns center drops for reordering. Edge drops belong
-                  // to the Cell, even when a wide tab visually covers the edge.
-                  if (!tabOwnsDrop(zoneFor(e))) return;
-                  e.preventDefault();
-                  e.stopPropagation();
-                }}
-                onDrop={(e) => {
-                  const source = e.dataTransfer.getData(TAB_DND);
-                  if (!source || !tabOwnsDrop(zoneFor(e))) return;
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setTabDragShield(false);
-                  moveTab(source, cell.id, view.id);
-                }}
-                onAuxClick={(e) => {
-                  if (e.button === 1) { e.preventDefault(); closeTab(view.id); }
-                }}
-                onClick={() => selectTab(view.id)}
-              >
-                {tabLabel(view)}
-              </button>
-              <button
-                type="button"
-                className="pane-tab-close"
-                aria-label={tr("ui.close_pane_hint")}
-                onClick={(e) => { e.stopPropagation(); closeTab(view.id); }}
-              >
-                ×
-              </button>
-            </div>
-          ))}
+          {views.map((view) => {
+            const state = tabState(view);
+            return (
+              <div className={cx("pane-tab", view.id === cell.selectedViewId && "selected")} role="presentation" key={view.id}>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={view.id === cell.selectedViewId}
+                  title={tabLabel(view)}
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData(TAB_DND, view.id);
+                    e.dataTransfer.effectAllowed = "move";
+                    setTabDragShield(true);
+                  }}
+                  onDragEnd={() => setTabDragShield(false)}
+                  onDragOver={(e) => {
+                    if (!e.dataTransfer.types.includes(TAB_DND)) return;
+                    // The tab owns center drops for reordering. Edge drops belong
+                    // to the Cell, even when a wide tab visually covers the edge.
+                    if (!tabOwnsDrop(zoneFor(e))) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }}
+                  onDrop={(e) => {
+                    const source = e.dataTransfer.getData(TAB_DND);
+                    if (!source || !tabOwnsDrop(zoneFor(e))) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setTabDragShield(false);
+                    moveTab(source, cell.id, view.id);
+                  }}
+                  onAuxClick={(e) => {
+                    if (e.button === 1) { e.preventDefault(); closeTab(view.id); }
+                  }}
+                  onClick={() => selectTab(view.id)}
+                >
+                  {state && (
+                    <span className={cx("pane-tab-state", state.cls)} title={state.text}>
+                      <Icon name={state.icon} spin={state.spin} />
+                    </span>
+                  )}
+                  <span className="pane-tab-title">{tabLabel(view)}</span>
+                </button>
+                <button
+                  type="button"
+                  className="pane-tab-close"
+                  aria-label={tr("ui.close_pane_hint")}
+                  onClick={(e) => { e.stopPropagation(); closeTab(view.id); }}
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
       {canDrag && (
