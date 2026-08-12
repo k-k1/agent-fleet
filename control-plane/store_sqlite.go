@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -531,24 +530,61 @@ func (s *sqlStore) PutUserLimit(ctx context.Context, membershipID string, maxSes
 }
 
 func (s *sqlStore) SetWorkspaceState(ctx context.Context, workspaceID, state string) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE workspace SET state=?, last_active_at=? WHERE id=?`, state, nowTS(), workspaceID)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = lockWorkspace(ctx, tx, workspaceID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE workspace SET state=?, last_active_at=? WHERE id=?`, state, nowTS(), workspaceID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM workspace_stop_intent WHERE workspace_id=?`, workspaceID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // RecordWorkspaceActivity merges a monotonic activity watermark and connection
 // lease from any CP replica. CASE is portable across SQLite/Postgres and prevents
 // an inactive replica from shortening another replica's live lease.
-func (s *sqlStore) RecordWorkspaceActivity(ctx context.Context, workspaceID, lastSeenAt, connectedUntil string) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO workspace_activity
+func lockWorkspace(ctx context.Context, q sqlExecQuery, workspaceID string) error {
+	_, err := q.ExecContext(ctx, `UPDATE workspace SET id=id WHERE id=?`, workspaceID)
+	return err
+}
+
+func (s *sqlStore) RecordWorkspaceActivity(ctx context.Context, workspaceID, lastSeenAt, connectedUntil, now string) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	if err = lockWorkspace(ctx, tx, workspaceID); err != nil {
+		return false, err
+	}
+	var stopping int
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM workspace_stop_intent WHERE workspace_id=?`, workspaceID).Scan(&stopping); err != nil {
+		return false, err
+	}
+	if stopping != 0 {
+		return false, nil
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO workspace_activity
 		(workspace_id, last_seen_at, connected_until, updated_at) VALUES(?,?,?,?)
 		ON CONFLICT(workspace_id) DO UPDATE SET
 		 last_seen_at=CASE WHEN workspace_activity.last_seen_at > excluded.last_seen_at
 		                   THEN workspace_activity.last_seen_at ELSE excluded.last_seen_at END,
 		 connected_until=CASE WHEN workspace_activity.connected_until > excluded.connected_until
 		                      THEN workspace_activity.connected_until ELSE excluded.connected_until END,
-		 updated_at=excluded.updated_at`, workspaceID, lastSeenAt, connectedUntil, leaseTS(time.Now()))
-	return err
+		 updated_at=excluded.updated_at`, workspaceID, lastSeenAt, connectedUntil, now); err != nil {
+		return false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *sqlStore) WorkspaceHasRecentActivity(ctx context.Context, workspaceID, cutoff, now string) (bool, error) {
@@ -559,6 +595,48 @@ func (s *sqlStore) WorkspaceHasRecentActivity(ctx context.Context, workspaceID, 
 		return false, nil
 	}
 	return err == nil, err
+}
+
+func (s *sqlStore) ClaimWorkspaceIdleStop(ctx context.Context, workspaceID, owner, operationID, cutoff, now string) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	if err = lockWorkspace(ctx, tx, workspaceID); err != nil {
+		return false, err
+	}
+	var leaseActive int
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM session_share_owner_lease
+		WHERE owner_membership_id=? AND operation_id=? AND expires_at>?`, owner, operationID, now).Scan(&leaseActive); err != nil {
+		return false, err
+	}
+	if leaseActive == 0 {
+		return false, nil
+	}
+	var recent int
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM workspace_activity
+		WHERE workspace_id=? AND (last_seen_at>? OR connected_until>?)`, workspaceID, cutoff, now).Scan(&recent); err != nil {
+		return false, err
+	}
+	if recent != 0 {
+		return false, nil
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO workspace_stop_intent
+		(workspace_id,owner_membership_id,operation_id,created_at) VALUES(?,?,?,?)
+		ON CONFLICT(workspace_id) DO UPDATE SET owner_membership_id=excluded.owner_membership_id,
+		operation_id=excluded.operation_id,created_at=excluded.created_at`, workspaceID, owner, operationID, now); err != nil {
+		return false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *sqlStore) ReleaseWorkspaceIdleStop(ctx context.Context, workspaceID, operationID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM workspace_stop_intent WHERE workspace_id=? AND operation_id=?`, workspaceID, operationID)
+	return err
 }
 
 func (s *sqlStore) GetWorkspaceByMembership(ctx context.Context, membershipID string) (Workspace, bool, error) {

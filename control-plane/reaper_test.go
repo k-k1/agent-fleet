@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -214,11 +215,17 @@ func TestReaperObservesActivityFromAnotherControlPlane(t *testing.T) {
 		activate func(context.Context, *manager, Workspace) func()
 	}{
 		{name: "remote request", activate: func(ctx context.Context, m *manager, ws Workspace) func() {
-			m.touchWorkspace(ctx, ws.ID)
+			if err := m.touchWorkspace(ctx, ws.ID); err != nil {
+				panic(err)
+			}
 			return func() {}
 		}},
 		{name: "remote live connection", activate: func(ctx context.Context, m *manager, ws Workspace) func() {
-			return m.trackWorkspaceConnection(ctx, ws.ID, "session-a")
+			release, err := m.trackWorkspaceConnection(ctx, ws.ID, "session-a")
+			if err != nil {
+				panic(err)
+			}
+			return release
 		}},
 	}
 	for _, tc := range tests {
@@ -241,12 +248,12 @@ func TestReaperObservesActivityFromAnotherControlPlane(t *testing.T) {
 func TestWorkspaceActivityMergeNeverShortensRemotePresence(t *testing.T) {
 	st, ws, _ := reaperLifecycleFixture(t)
 	now := time.Now().UTC()
-	if err := st.RecordWorkspaceActivity(context.Background(), ws.ID, leaseTS(now), leaseTS(now.Add(time.Minute))); err != nil {
+	if ok, err := st.RecordWorkspaceActivity(context.Background(), ws.ID, leaseTS(now), leaseTS(now.Add(time.Minute)), leaseTS(now)); err != nil || !ok {
 		t.Fatal(err)
 	}
 	// An inactive replica reports connectedUntil=now. The existing future lease
 	// from another replica must remain authoritative.
-	if err := st.RecordWorkspaceActivity(context.Background(), ws.ID, leaseTS(now.Add(time.Second)), leaseTS(now)); err != nil {
+	if ok, err := st.RecordWorkspaceActivity(context.Background(), ws.ID, leaseTS(now.Add(time.Second)), leaseTS(now), leaseTS(now)); err != nil || !ok {
 		t.Fatal(err)
 	}
 	active, err := st.WorkspaceHasRecentActivity(context.Background(), ws.ID, leaseTS(now.Add(time.Hour)), leaseTS(now.Add(30*time.Second)))
@@ -255,6 +262,56 @@ func TestWorkspaceActivityMergeNeverShortensRemotePresence(t *testing.T) {
 	}
 	if !active {
 		t.Fatal("later inactive report shortened another replica's connection lease")
+	}
+}
+
+func TestWorkspaceIdleStopClaimRejectsLaterActivity(t *testing.T) {
+	st, ws, _ := reaperLifecycleFixture(t)
+	ctx := context.Background()
+	lease, err := acquireWorkspaceLifecycleLease(ctx, st, ws.MembershipID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Close()
+	now := time.Now().UTC()
+	claimed, err := st.ClaimWorkspaceIdleStop(ctx, ws.ID, ws.MembershipID, lease.token,
+		leaseTS(now.Add(time.Hour)), leaseTS(now))
+	if err != nil || !claimed {
+		t.Fatalf("claim=%v err=%v", claimed, err)
+	}
+	managerA := &manager{store: st, conns: newConnRegistry()}
+	if err := managerA.touchWorkspace(ctx, ws.ID); !errors.Is(err, errWorkspaceStopping) {
+		t.Fatalf("activity after stop claim error=%v, want workspace stopping", err)
+	}
+	if err := st.ReleaseWorkspaceIdleStop(ctx, ws.ID, lease.token); err != nil {
+		t.Fatal(err)
+	}
+	if err := managerA.touchWorkspace(ctx, ws.ID); err != nil {
+		t.Fatalf("activity after intent release: %v", err)
+	}
+}
+
+func TestWorkspaceActivityCoalescesWithinProtectedLease(t *testing.T) {
+	st, ws, _ := reaperLifecycleFixture(t)
+	m := &manager{store: st, conns: newConnRegistry()}
+	ctx := context.Background()
+	if err := m.touchWorkspace(ctx, ws.ID); err != nil {
+		t.Fatal(err)
+	}
+	var first string
+	if err := st.db.QueryRowContext(ctx, `SELECT updated_at FROM workspace_activity WHERE workspace_id=?`, ws.ID).Scan(&first); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	if err := m.touchWorkspace(ctx, ws.ID); err != nil {
+		t.Fatal(err)
+	}
+	var second string
+	if err := st.db.QueryRowContext(ctx, `SELECT updated_at FROM workspace_activity WHERE workspace_id=?`, ws.ID).Scan(&second); err != nil {
+		t.Fatal(err)
+	}
+	if second != first {
+		t.Fatalf("coalesced request performed another DB write: first=%s second=%s", first, second)
 	}
 }
 

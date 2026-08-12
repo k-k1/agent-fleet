@@ -56,6 +56,10 @@ idle reaperはこれらのfence待機後に、最新DB activity、接続数／la
 leaseへも記録し、接続中は5秒ごとに更新する。別CP replicaのreaperもこれを参照し、inactive replicaが
 他replicaのleaseを短縮することはない。古いsweepのidle判定を使い回さず、待機中または別replicaで
 復帰したWorkspaceの停止を見送る。行数はWorkspace数を上限とし、activity量に比例して増えない。
+各activity更新は15秒の保護leaseを作り、同じCPでは安全な先頭5秒内の更新をcoalesceするため、previewの
+asset／HMR requestごとにSQLite writeは発生しない。idle Stopはowner leaseと結び付くDB stop intentを
+activity行と同じWorkspace row lock下でclaimする。activityが先ならclaimできず、claimが先なら新規
+ingressを`workspace_stopping`で拒否するため、最終確認と`Runtime.Stop`の間にも受理済みactivityは入らない。
 native Runtimeではcontext cancelだけに依存せず、`dataDir/lifecycle.lock` のkernel flockを
 lifecycle／承認の全区間で保持する。期限切れleaseを得た新holderも旧holderのStart／Stopが静止するまで
 進めない。Start後にleaseを失えば起動時刻まで一致する自分のPIDだけを回収し、Stop中に失えば既送信の
