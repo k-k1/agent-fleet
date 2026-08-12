@@ -371,7 +371,14 @@ function PopulatedPane({
                     e.dataTransfer.effectAllowed = "move";
                     setTabDragShield(true);
                   }}
-                  onDragEnd={() => setTabDragShield(false)}
+                  onDragEnd={() => {
+                    setTabDragShield(false);
+                    // onDragEnd always fires on the source element once a drag ends,
+                    // even when the tab's own onDrop stopped propagation before the
+                    // Cell's onDrop could clear `zone` (leaving the droptarget/blue
+                    // overlay stuck after a tab reorder).
+                    setZone(null);
+                  }}
                   onDragOver={(e) => {
                     if (!e.dataTransfer.types.includes(TAB_DND)) return;
                     // The tab owns center drops for reordering. Edge drops belong
