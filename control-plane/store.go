@@ -337,8 +337,7 @@ type SessionShareStore interface {
 	CountPendingSessionShareProposals(ctx context.Context, catalogID string) (int, error)
 	ExpireSessionShareProposals(ctx context.Context, ownerMembershipID, now string) error
 	TransitionSessionShareProposal(ctx context.Context, id, from, to, decidedBy, decidedAt string, clearBody bool) (bool, error)
-	ClaimAndApplySessionShareProposal(ctx context.Context, id, ownerMembershipID, decidedBy, now string,
-		apply func(SessionShareProposal, SharedSessionCatalog) error) (string, error)
+	ClaimSessionShareProposal(ctx context.Context, id, ownerMembershipID, decidedBy, now string) (SessionShareProposal, SharedSessionCatalog, string, error)
 }
 
 type TenantStore interface {

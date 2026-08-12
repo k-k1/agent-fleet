@@ -308,88 +308,86 @@ func (s *sqlStore) ExpireSessionShareProposals(ctx context.Context, owner, now s
 	return err
 }
 
-func (s *sqlStore) ClaimAndApplySessionShareProposal(ctx context.Context, id, owner, by, now string,
-	apply func(SessionShareProposal, SharedSessionCatalog) error) (string, error) {
+// ClaimSessionShareProposal uses a short transaction to linearize approval with
+// ACL/catalog mutations, then commits processing before any Agent HTTP I/O. The
+// proposal id is the durable Agent operation id, so a lost response is reconciled
+// without repeating the side effect.
+func (s *sqlStore) ClaimSessionShareProposal(ctx context.Context, id, owner, by, now string) (SessionShareProposal, SharedSessionCatalog, string, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return "", err
+		return SessionShareProposal{}, SharedSessionCatalog{}, "", err
 	}
 	defer tx.Rollback()
 	p, ok, err := scanProposal(tx.QueryRowContext(ctx, `SELECT id,tenant_id,catalog_id,owner_membership_id,proposer_membership_id,
 		action,ciphertext,key_ref,status,created_at,expires_at,decided_at,decided_by FROM session_share_proposal WHERE id=?`, id))
 	if err != nil {
-		return "", err
+		return p, SharedSessionCatalog{}, "", err
 	}
 	if !ok || p.OwnerMembershipID != owner {
-		return "not_found", nil
+		return p, SharedSessionCatalog{}, "not_found", nil
 	}
 	if p.Status != "pending" {
-		return p.Status, nil
+		return p, SharedSessionCatalog{}, p.Status, nil
 	}
 	if p.ExpiresAt <= now {
 		if _, err = tx.ExecContext(ctx, `UPDATE session_share_proposal SET status='expired',ciphertext='',decided_at=? WHERE id=? AND status='pending'`, now, id); err != nil {
-			return "", err
+			return p, SharedSessionCatalog{}, "", err
 		}
 		if err = tx.Commit(); err != nil {
-			return "", err
+			return p, SharedSessionCatalog{}, "", err
 		}
-		return "expired", nil
+		return p, SharedSessionCatalog{}, "expired", nil
 	}
 	c, ok, err := scanCatalog(tx.QueryRowContext(ctx, `SELECT id,workspace_id,owner_membership_id,name,kind,dir,repo,
 		working_copy_id,title,label,created_at,state,archived,last_seen FROM shared_session_catalog WHERE id=?`, p.CatalogID))
 	if err != nil {
-		return "", err
+		return p, c, "", err
 	}
 	if !ok {
-		return "not_found", nil
+		return p, c, "not_found", nil
 	}
-	// This no-op update is a portable row lock: SQLite takes its write lock and
-	// Postgres locks every currently matching ACL row until the Agent result has
-	// been durably recorded. Permission changes/deletes therefore cannot pass the
-	// final authorization check and race the side effect.
+	// Portable row locks make an ACL/catalog mutation and this claim commit in a
+	// deterministic order, but are released before the external Agent request.
+	if _, err = tx.ExecContext(ctx, `UPDATE shared_session_catalog SET last_seen=last_seen WHERE id=?`, c.ID); err != nil {
+		return p, c, "", err
+	}
 	if _, err = tx.ExecContext(ctx, `UPDATE session_share SET updated_at=updated_at
 		WHERE owner_membership_id=? AND recipient_membership_id=? AND permission='rw'
 		  AND ((scope_type='session' AND scope_key=?) OR (scope_type IN ('repo','worktree') AND scope_key=?))`,
 		owner, p.ProposerMembershipID, c.Name, c.WorkingCopyID); err != nil {
-		return "", err
+		return p, c, "", err
 	}
 	var authorized int
 	err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM session_share WHERE owner_membership_id=? AND recipient_membership_id=? AND permission='rw'
 		AND ((scope_type='session' AND scope_key=?) OR (scope_type IN ('repo','worktree') AND scope_key=?))`,
 		owner, p.ProposerMembershipID, c.Name, c.WorkingCopyID).Scan(&authorized)
 	if err != nil {
-		return "", err
+		return p, c, "", err
 	}
 	if authorized == 0 {
 		if _, err = tx.ExecContext(ctx, `UPDATE session_share_proposal SET status='expired',ciphertext='',decided_at=? WHERE id=? AND status='pending'`, now, id); err != nil {
-			return "", err
+			return p, c, "", err
 		}
 		if err = tx.Commit(); err != nil {
-			return "", err
+			return p, c, "", err
 		}
-		return "expired", nil
+		return p, c, "expired", nil
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE session_share_proposal SET status='processing',decided_by=?,decided_at=? WHERE id=? AND status='pending'`, by, now, id)
 	if err != nil {
-		return "", err
+		return p, c, "", err
 	}
 	n, err := result.RowsAffected()
 	if err != nil || n != 1 {
-		return "processing", err
-	}
-	applyErr := apply(p, c)
-	if applyErr == nil {
-		if _, err = tx.ExecContext(ctx, `UPDATE session_share_proposal SET status='approved',ciphertext='',decided_by=?,decided_at=? WHERE id=? AND status='processing'`, by, nowTS(), id); err != nil {
-			return "", err
-		}
+		return p, c, "processing", err
 	}
 	if err = tx.Commit(); err != nil {
-		return "", err
+		return p, c, "", err
 	}
-	if applyErr != nil {
-		return "processing", applyErr
-	}
-	return "approved", nil
+	p.Status = "processing"
+	p.DecidedBy = by
+	p.DecidedAt = now
+	return p, c, "claimed", nil
 }
 func (s *sqlStore) TransitionSessionShareProposal(ctx context.Context, id, from, to, by, at string, clearBody bool) (bool, error) {
 	body := "ciphertext"

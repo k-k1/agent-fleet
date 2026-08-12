@@ -138,20 +138,13 @@ func TestSessionShareClaimRechecksRWAndNeverRepeatsUnknown(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var calls atomic.Int32
-	state, applyErr := st.ClaimAndApplySessionShareProposal(ctx, proposal.ID, owner.ID, ownerIdentity.ID, nowTS(), func(SessionShareProposal, SharedSessionCatalog) error {
-		calls.Add(1)
-		return context.DeadlineExceeded // models response loss after an unknown outcome
-	})
-	if applyErr == nil || state != "processing" || calls.Load() != 1 {
-		t.Fatalf("first state=%q err=%v calls=%d", state, applyErr, calls.Load())
+	_, _, state, claimErr := st.ClaimSessionShareProposal(ctx, proposal.ID, owner.ID, ownerIdentity.ID, nowTS())
+	if claimErr != nil || state != "claimed" {
+		t.Fatalf("first state=%q err=%v", state, claimErr)
 	}
-	state, applyErr = st.ClaimAndApplySessionShareProposal(ctx, proposal.ID, owner.ID, ownerIdentity.ID, nowTS(), func(SessionShareProposal, SharedSessionCatalog) error {
-		calls.Add(1)
-		return nil
-	})
-	if applyErr != nil || state != "processing" || calls.Load() != 1 {
-		t.Fatalf("retry state=%q err=%v calls=%d", state, applyErr, calls.Load())
+	_, _, state, claimErr = st.ClaimSessionShareProposal(ctx, proposal.ID, owner.ID, ownerIdentity.ID, nowTS())
+	if claimErr != nil || state != "processing" {
+		t.Fatalf("retry state=%q err=%v", state, claimErr)
 	}
 
 	second := proposal
@@ -162,12 +155,9 @@ func TestSessionShareClaimRechecksRWAndNeverRepeatsUnknown(t *testing.T) {
 	if changed, err := st.UpdateSessionSharePermission(ctx, share.ID, owner.ID, "ro", nowTS()); err != nil || !changed {
 		t.Fatalf("downgrade changed=%v err=%v", changed, err)
 	}
-	state, applyErr = st.ClaimAndApplySessionShareProposal(ctx, second.ID, owner.ID, ownerIdentity.ID, nowTS(), func(SessionShareProposal, SharedSessionCatalog) error {
-		calls.Add(1)
-		return nil
-	})
-	if applyErr != nil || state != "expired" || calls.Load() != 1 {
-		t.Fatalf("downgraded state=%q err=%v calls=%d", state, applyErr, calls.Load())
+	_, _, state, claimErr = st.ClaimSessionShareProposal(ctx, second.ID, owner.ID, ownerIdentity.ID, nowTS())
+	if claimErr != nil || state != "expired" {
+		t.Fatalf("downgraded state=%q err=%v", state, claimErr)
 	}
 	unknown, ok, err := st.GetSessionShareProposal(ctx, proposal.ID)
 	if err != nil || !ok || unknown.Status != "expired" || unknown.Ciphertext != "" {
@@ -175,7 +165,7 @@ func TestSessionShareClaimRechecksRWAndNeverRepeatsUnknown(t *testing.T) {
 	}
 }
 
-func TestSessionShareACLChangeSerializesWithClaimedApply(t *testing.T) {
+func TestSessionShareClaimReleasesDBBeforeAgentIO(t *testing.T) {
 	ctx := context.Background()
 	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
@@ -207,37 +197,27 @@ func TestSessionShareACLChangeSerializesWithClaimedApply(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	applyDone := make(chan error, 1)
+	_, _, state, err := st.ClaimSessionShareProposal(ctx, proposal.ID, owner.ID, ownerIdentity.ID, nowTS())
+	if err != nil || state != "claimed" {
+		t.Fatalf("claim state=%q err=%v", state, err)
+	}
+	// The Agent request happens after Claim returns. An unrelated write must not
+	// wait for that external I/O window on SQLite's global write lock.
+	writeDone := make(chan error, 1)
 	go func() {
-		state, err := st.ClaimAndApplySessionShareProposal(ctx, proposal.ID, owner.ID, ownerIdentity.ID, nowTS(), func(SessionShareProposal, SharedSessionCatalog) error {
-			close(entered)
-			<-release
-			return nil
-		})
-		if err == nil && state != "approved" {
-			err = context.Canceled
-		}
-		applyDone <- err
-	}()
-	<-entered
-	downgradeDone := make(chan error, 1)
-	go func() {
-		_, err := st.UpdateSessionSharePermission(ctx, share.ID, owner.ID, "ro", nowTS())
-		downgradeDone <- err
+		writeDone <- st.InsertAudit(ctx, AuditLog{ID: newID(), TenantID: tenant.ID, ActorKind: "system", ActorID: "test", Action: "share.claim.concurrent-write", At: nowTS()})
 	}()
 	select {
-	case err := <-downgradeDone:
-		t.Fatalf("ACL downgrade crossed an in-flight authorized apply: %v", err)
-	case <-time.After(50 * time.Millisecond):
+	case err := <-writeDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("unrelated DB write remained blocked after proposal claim")
 	}
-	close(release)
-	if err := <-applyDone; err != nil {
-		t.Fatal(err)
-	}
-	if err := <-downgradeDone; err != nil {
-		t.Fatal(err)
+	changed, err := st.TransitionSessionShareProposal(ctx, proposal.ID, "processing", "approved", ownerIdentity.ID, nowTS(), true)
+	if err != nil || !changed {
+		t.Fatalf("finalize changed=%v err=%v", changed, err)
 	}
 	got, ok, err := st.GetSessionShareProposal(ctx, proposal.ID)
 	if err != nil || !ok || got.Status != "approved" {

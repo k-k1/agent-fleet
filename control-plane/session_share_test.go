@@ -219,3 +219,52 @@ func TestWorkspaceStopWaitsForSharedApprovalLifecycleLock(t *testing.T) {
 	}
 	<-done
 }
+
+func TestShareDowngradeWaitsForAuthorizedAgentOperation(t *testing.T) {
+	ctx := context.Background()
+	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tenant, _ := st.EnsureDefaultTenant(ctx)
+	ownerIdentity, _ := st.UpsertIdentity(ctx, "owner-lock@example.com", "owner-lock", "")
+	recipientIdentity, _ := st.UpsertIdentity(ctx, "recipient-lock@example.com", "recipient-lock", "")
+	owner, _ := st.EnsureMembership(ctx, ownerIdentity.ID, tenant.ID, "member")
+	recipient, _ := st.EnsureMembership(ctx, recipientIdentity.ID, tenant.ID, "member")
+	ownerViews, _ := st.ListMemberships(ctx, ownerIdentity.ID)
+	share := SessionShare{ID: newID(), TenantID: tenant.ID, OwnerMembershipID: owner.ID,
+		RecipientMembershipID: recipient.ID, ScopeType: "session", ScopeKey: "s1", Permission: "rw",
+		CreatedAt: nowTS(), UpdatedAt: nowTS()}
+	if err := st.PutSessionShare(ctx, share); err != nil {
+		t.Fatal(err)
+	}
+	mgr := &manager{store: st}
+	lock := mgr.shareLockFor(owner.ID)
+	lock.Lock() // approval holds this only across its authorized Agent HTTP call
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		req := httptest.NewRequest(http.MethodPatch, "/api/session-shares/"+share.ID, strings.NewReader(`{"permission":"ro"}`))
+		req.SetPathValue("id", share.ID)
+		rec := httptest.NewRecorder()
+		newSessionShareAPI(mgr).patch(rec, req, ownerIdentity, ownerViews[0])
+		done <- rec
+	}()
+	select {
+	case <-done:
+		t.Fatal("share downgrade crossed an authorized Agent operation")
+	case <-time.After(50 * time.Millisecond):
+	}
+	lock.Unlock()
+	select {
+	case rec := <-done:
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("share downgrade did not continue after Agent operation finished")
+	}
+}
