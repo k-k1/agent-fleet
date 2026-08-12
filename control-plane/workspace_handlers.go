@@ -367,6 +367,13 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 	if err := lease.checkpoint(ctx); err != nil {
 		return workspaceLifecycleLeaseError(err)
 	}
+	// A reaper may have crashed after committing its stop intent but before
+	// Runtime.Stop. This explicit lifecycle operation owns the replacement DB
+	// lease and host fence, so reconcile the orphan even when State is running
+	// and Start would otherwise return early.
+	if err := a.mgr.store.ClearWorkspaceIdleStop(ctx, res.ws.ID); err != nil {
+		return internalErr(err)
+	}
 	switch rt.State(ctx) {
 	case "running":
 		return nil

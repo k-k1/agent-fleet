@@ -639,6 +639,24 @@ func (s *sqlStore) ReleaseWorkspaceIdleStop(ctx context.Context, workspaceID, op
 	return err
 }
 
+// ClearWorkspaceIdleStop is the explicit lifecycle reconciliation path. Callers
+// must already own the distributed lifecycle lease (and adapter host fence), so
+// an intent orphaned by a crashed reaper can be safely superseded.
+func (s *sqlStore) ClearWorkspaceIdleStop(ctx context.Context, workspaceID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = lockWorkspace(ctx, tx, workspaceID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM workspace_stop_intent WHERE workspace_id=?`, workspaceID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *sqlStore) GetWorkspaceByMembership(ctx context.Context, membershipID string) (Workspace, bool, error) {
 	ws, err := scanWorkspace(s.db.QueryRowContext(ctx, workspaceCols+` WHERE membership_id=?`, membershipID))
 	if err == sql.ErrNoRows {

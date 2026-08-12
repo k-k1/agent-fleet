@@ -478,6 +478,12 @@ func (rp *reaper) stopWorkspace(ctx context.Context, rt Runtime, ws Workspace, w
 		_ = rp.mgr.store.ReleaseWorkspaceIdleStop(releaseCtx, ws.ID, lease.token)
 		cancel()
 	}()
+	// A CP can be paused after the intent commit. Revalidate ownership before the
+	// irreversible Runtime call so an expired old holder cannot resume into Stop.
+	if err := lease.checkpoint(ctx); err != nil {
+		log.Printf("idle-stop: lifecycle lost after claim %s: %v", ws.ContainerName, err)
+		return
+	}
 	if err := rt.Stop(lease.Context()); err != nil {
 		log.Printf("idle-stop: stop %s: %v", ws.ContainerName, err)
 		return
