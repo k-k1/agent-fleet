@@ -456,7 +456,10 @@ export function moveTab(l: Layout, id: string, targetId: string, beforeId?: stri
   // needs a genuinely new blank-view identity. Reusing the moved id would make
   // terminal/browser registries see two owners for the same runtime resource.
   const sourceNext = withoutTab(source, id, alloc);
-  const targetViews = orderedTabViews(target);
+  // A fresh split cell is an empty terminal placeholder, not a real tab the
+  // user asked to keep. The first dropped tab fills it instead of leaving an
+  // inactive 「セッション未接続」 tab alongside the moved view.
+  const targetViews = isBlankPane(target) && !(target.tabs?.length) ? [] : orderedTabViews(target);
   const insertAt = beforeId ? targetViews.findIndex((current) => current.id === beforeId) : targetViews.length;
   targetViews.splice(insertAt < 0 ? targetViews.length : insertAt, 0, { ...view, lastUsedAt: Date.now() });
   const targetNext = tabCell(view.id, targetViews, targetViews.map((current) => current.id));
