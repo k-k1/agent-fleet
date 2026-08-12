@@ -1526,7 +1526,7 @@ export const ja = {
   "display.pane_layout": "メイン領域の配置",
   "display.pane_layout_split": "分割ペイン",
   "display.pane_layout_tabs": "タブ付きグリッド",
-  "display.pane_layout_note": "分割方式とタブ方式の配置はそれぞれ保存されます。",
+  "display.pane_layout_note": "この端末だけに適用され、分割方式とタブ方式の配置はそれぞれ保存されます。",
   "wsbar.close_all": "全て閉じる",
   "wsbar.close_all_title": "全ペインを閉じる",
   // オーバーフロー／プレビュー／リソース

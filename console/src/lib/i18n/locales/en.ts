@@ -1515,7 +1515,7 @@ export const en: Record<keyof typeof ja, string> = {
   "display.pane_layout": "Main area layout",
   "display.pane_layout_split": "Split panes",
   "display.pane_layout_tabs": "Tabbed grid",
-  "display.pane_layout_note": "Each layout keeps its own saved arrangement.",
+  "display.pane_layout_note": "Applies only to this device; each layout keeps its own saved arrangement.",
   "wsbar.close_all": "Close all",
   "wsbar.close_all_title": "Close all panes",
   "wsbar.more_title": "Resource info / opencode web / preview",

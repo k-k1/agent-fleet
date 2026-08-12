@@ -187,8 +187,8 @@ export interface Settings {
   minimap: boolean;
   iconSet: string;
   theme: string;
-  /** Main-area layout profile. Stored per user; each profile's concrete layout
-   * remains per tenant and browser tab. */
+  /** Main-area layout profile. Stored only on this device; each profile's
+   * concrete layout remains per user, tenant and browser tab. */
   paneLayout: "split" | "tabs";
   // UI 表示言語（docs/28 / ADR 0016）。"ja" | "en"。theme と違い端末ローカルにせずサーバ同期し、
   // 言語は人単位で全端末に追従させる。既定はブラウザ言語判定→日本語フォールバック（detectLocale）。
@@ -955,6 +955,7 @@ export async function refreshUIPrefs(): Promise<void> {
 // 声・速度・辞書・フォント等の“好み”は従来どおりクロスデバイス同期のまま（DEVICE_LOCAL 外）。
 // これにより「サーバ優先＋保存デバウンス取りこぼしで OFF が復活」する経路もこれらのキーでは消える。
 const DEVICE_LOCAL = new Set<keyof Settings>([
+  "paneLayout", // メイン領域の方式（同じ利用者でも端末ごとに使い分ける）
   "ttsEnabled", // 音声読み上げ ON/OFF
   "ttsSessionNotify", // 音声通知 ON/OFF
   "usageResetNotify", // 制限リセット通知 ON/OFF（この端末で鳴らすか）
@@ -969,11 +970,15 @@ const DEVICE_LOCAL = new Set<keyof Settings>([
   "workingSetActive", // 表示中の作業グループ（docs/52 — 端末ごとに別案件を見る）
 ]);
 
+/** Exported as a policy seam so persistence tests can pin which preferences
+ * must never cross the device boundary. */
+export const isDeviceLocalSetting = (key: keyof Settings): boolean => DEVICE_LOCAL.has(key);
+
 // serverPrefs は端末ローカルキーを除いた、サーバへ保存してよい設定だけの浅いコピー。
 function serverPrefs(s: Settings): Partial<Settings> {
   const out: Partial<Settings> = {};
   for (const k of Object.keys(s) as (keyof Settings)[]) {
-    if (!DEVICE_LOCAL.has(k)) (out as any)[k] = s[k];
+    if (!isDeviceLocalSetting(k)) (out as any)[k] = s[k];
   }
   return out;
 }
@@ -1027,7 +1032,7 @@ export async function hydrateUIPrefs(): Promise<void> {
     (typeof a === "object" && a !== null && typeof b === "object" && b !== null &&
       JSON.stringify(a) === JSON.stringify(b));
   for (const k of Object.keys(DEFAULTS)) {
-    if (DEVICE_LOCAL.has(k as keyof Settings)) continue; // 端末ローカルは復元しない
+    if (isDeviceLocalSetting(k as keyof Settings)) continue; // 端末ローカルは復元しない
     if (k in srv && !sameValue(srv[k], (merged as any)[k])) {
       (merged as any)[k] = srv[k];
       changed = true;
