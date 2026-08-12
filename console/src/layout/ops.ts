@@ -26,6 +26,12 @@ export const freshTabbedLayout = (): Layout => ({
   activeId: "p0",
 });
 
+/** Close-all returns to one empty pane without changing the selected layout
+ * profile. Switching a tabbed layout to `split` here made the settings effect
+ * immediately restore the old tabbed arrangement from storage. */
+export const resetLayout = (l: Layout): Layout =>
+  l.mode === "tabs" ? freshTabbedLayout() : freshLayout();
+
 /** A 1-pane layout showing exactly one descriptor — the pop-out tab's seed
  * (features/panes/popout.ts). Uses the freshLayout ids so a later persist/restore
  * round-trips identically. */
