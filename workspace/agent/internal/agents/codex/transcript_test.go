@@ -1,7 +1,10 @@
 package codex
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -595,6 +598,137 @@ func TestCodexImageGenUserFile(t *testing.T) {
 	if files == nil || len(files.Files) != 1 || files.Files[0] != genPath {
 		t.Fatalf("userfile part = %+v, want exactly [%s]", files, genPath)
 	}
+}
+
+// TestCodexParseCallOutputViewImage exercises parseCallOutput's 4th return value
+// (inlineImages) directly: a view_image-shaped output — an input_image block with no
+// "Generated images are saved" text anywhere — must report genImages == nil (no
+// already-servable path exists) and inlineImages carrying the raw data URL.
+func TestCodexParseCallOutputViewImage(t *testing.T) {
+	payload := []byte(`{"type":"custom_tool_call_output","call_id":"call_view1","output":[` +
+		`{"type":"input_text","text":"Script completed\nWall time 0.1 seconds\nOutput:\n"},` +
+		`{"type":"input_image","image_url":"data:image/png;base64,iVBORw0KGgo="}` +
+		`]}`)
+	id, out, gen, imgs := parseCallOutput(payload)
+	if id != "call_view1" {
+		t.Errorf("callID = %q, want call_view1", id)
+	}
+	if !strings.Contains(out, "Script completed") || strings.Contains(out, "data:image") {
+		t.Errorf("output = %q, want the text block only, no base64 leak", out)
+	}
+	if gen != nil {
+		t.Errorf("genImages = %v, want nil (no announced path)", gen)
+	}
+	if len(imgs) != 1 || imgs[0] != "data:image/png;base64,iVBORw0KGgo=" {
+		t.Errorf("inlineImages = %v, want the one data URL", imgs)
+	}
+}
+
+// TestCodexViewImageStashedFromRollout is the parseRollout-level counterpart: a
+// real-shaped view_image call+output must leave the tool part carrying
+// ViewImageCallID/ViewImageData (not yet persisted — parseRollout is pure, only
+// readTranscript's persistViewImages call performs I/O).
+func TestCodexViewImageStashedFromRollout(t *testing.T) {
+	lines := [][]byte{
+		wrapItem(t, map[string]any{
+			"type": "custom_tool_call", "name": "exec", "call_id": "call_view1",
+			"input": `const r = await tools.view_image({path:"/tmp/shot.png",detail:"high"});
+image(r.image_url);`,
+		}),
+		wrapItem(t, map[string]any{
+			"type": "custom_tool_call_output", "call_id": "call_view1",
+			"output": []map[string]string{
+				{"type": "input_text", "text": "Script completed\nWall time 0.1 seconds\nOutput:\n"},
+				{"type": "input_image", "image_url": "data:image/png;base64,iVBORw0KGgo="},
+			},
+		}),
+	}
+	turns, _ := parseRollout(lines)
+	var p *transcript.Part
+	for i := range turns {
+		for j := range turns[i].Parts {
+			if turns[i].Parts[j].Tool == "view_image" {
+				p = &turns[i].Parts[j]
+			}
+		}
+	}
+	if p == nil {
+		t.Fatalf("no view_image trace in %+v", turns)
+	}
+	if p.ViewImageCallID != "call_view1" {
+		t.Errorf("ViewImageCallID = %q, want call_view1", p.ViewImageCallID)
+	}
+	if len(p.ViewImageData) != 1 || p.ViewImageData[0] != "data:image/png;base64,iVBORw0KGgo=" {
+		t.Errorf("ViewImageData = %v, want the one data URL", p.ViewImageData)
+	}
+}
+
+// TestCodexPersistViewImagesTo covers the actual I/O step: decoding the stashed data
+// URL to a servable file, appending a sibling userfile part, and — since
+// readTranscript re-parses the whole rollout on every /messages poll — staying
+// idempotent (and still re-emitting the userfile part, not just on the first poll)
+// across a second independent parse of the same rollout. dir is t.TempDir(), never
+// the real home (this repo's tests must not touch real config/state paths).
+func TestCodexPersistViewImagesTo(t *testing.T) {
+	want := []byte("PNGDATA")
+	dataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(want)
+	lines := [][]byte{
+		wrapItem(t, map[string]any{
+			"type": "custom_tool_call", "name": "exec", "call_id": "call_view1",
+			"input": `const r = await tools.view_image({path:"/tmp/shot.png",detail:"high"});
+image(r.image_url);`,
+		}),
+		wrapItem(t, map[string]any{
+			"type": "custom_tool_call_output", "call_id": "call_view1",
+			"output": []map[string]string{
+				{"type": "input_text", "text": "Script completed\nOutput:\n"},
+				{"type": "input_image", "image_url": dataURL},
+			},
+		}),
+	}
+	dir := t.TempDir()
+	wantPath := filepath.Join(dir, "call_view1-0.png")
+
+	checkPersisted := func(turns []transcript.Turn) {
+		t.Helper()
+		var files *transcript.Part
+		for i := range turns {
+			for j := range turns[i].Parts {
+				if turns[i].Parts[j].Kind == "userfile" {
+					files = &turns[i].Parts[j]
+				}
+			}
+		}
+		if files == nil || len(files.Files) != 1 || files.Files[0] != wantPath {
+			t.Fatalf("userfile part = %+v, want exactly [%s]", files, wantPath)
+		}
+		got, err := os.ReadFile(wantPath)
+		if err != nil {
+			t.Fatalf("ReadFile(%s): %v", wantPath, err)
+		}
+		if string(got) != string(want) {
+			t.Errorf("persisted bytes = %q, want %q", got, want)
+		}
+	}
+
+	turns, _ := parseRollout(lines)
+	persistViewImagesTo(turns, dir)
+	checkPersisted(turns)
+	for i := range turns {
+		for j := range turns[i].Parts {
+			if len(turns[i].Parts[j].ViewImageData) != 0 || turns[i].Parts[j].ViewImageCallID != "" {
+				t.Errorf("part %+v: ViewImageData/CallID should be cleared after persisting", turns[i].Parts[j])
+			}
+		}
+	}
+
+	// Simulate a second, independent /messages poll re-parsing the same rollout: a
+	// fresh turns slice with the data URL freshly stashed again. The file already
+	// exists on disk (idempotent skip), but the userfile part must still be emitted —
+	// not just on the very first poll.
+	turns2, _ := parseRollout(lines)
+	persistViewImagesTo(turns2, dir)
+	checkPersisted(turns2)
 }
 
 // wrapItem marshals a response_item payload line for parseRollout.
