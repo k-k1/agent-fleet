@@ -216,7 +216,7 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
     selectTab: (id) => commit(ops.selectTab(get().layout, id), false),
     moveTab: (id, targetPaneId, beforeTabId) => commit(ops.moveTab(get().layout, id, targetPaneId, beforeTabId)),
     dropSplitTab: (id, refPaneId, dir) => commit(ops.dropSplitTab(get().layout, id, refPaneId, dir)),
-    resetToTerminal: () => commit(ops.freshLayout()),
+    resetToTerminal: () => commit(ops.resetLayout(get().layout)),
   };
 });
 

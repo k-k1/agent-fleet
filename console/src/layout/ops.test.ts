@@ -14,6 +14,7 @@ import {
   splitRight,
   splitDown,
   freshTabbedLayout,
+  resetLayout,
   openInTab,
   selectTab,
   closeTab,
@@ -135,6 +136,12 @@ describe("openInNew", () => {
 });
 
 describe("tabbed layout", () => {
+  it("close-all keeps the tabbed profile instead of restoring its old layout", () => {
+    let l = openInTab(freshTabbedLayout(), term("s0"));
+    l = splitRight(l);
+    expect(resetLayout(l)).toEqual(freshTabbedLayout());
+  });
+
   it("adds views as tabs and focuses an exact duplicate", () => {
     let l = openInTab(freshTabbedLayout(), term("s0"));
     l = openInTab(l, file("one.ts"));
