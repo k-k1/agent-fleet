@@ -390,16 +390,55 @@ export function moveTab(l: Layout, id: string, targetId: string): Layout {
     if (cell.id === targetId) target = cell;
   }
   if (!source || !view || !target || source === target) return l;
+  const alloc = idAlloc(l);
+  const sourceViews = [paneView(source), ...(source.tabs || [])].filter((v) => v.id !== id);
+  // A visual cell projects its selected view, so once its last view leaves it
+  // needs a genuinely new blank-view identity. Reusing the moved id would make
+  // terminal/browser registries see two owners for the same runtime resource.
+  const sourceNext: Pane = sourceViews.length
+    ? { ...sourceViews[0], tabs: sourceViews.slice(1) }
+    : blankPane(alloc.nextPane());
+  const targetNext = replaceSelected(target, { ...view, lastUsedAt: Date.now() });
+  const cols = mapPanes(l, (p) => p === source ? sourceNext : p === target ? targetNext : p);
+  return { ...l, cols, activeId: view.id };
+}
+
+/** Tear one tab out into a new visual cell. The target edge decides whether
+ * the cell becomes a new right column or a row beneath the target cell; the
+ * tab itself keeps its runtime id. */
+export function dropSplitTab(l: Layout, id: string, refId: string, dir: "right" | "down"): Layout {
+  if (!tabbed(l) || id === refId) return l;
+  let source: Pane | undefined;
+  let view: PaneView | undefined;
+  let refCol: Column | undefined;
+  for (const col of l.cols) for (const cell of col.panes) {
+    if (cell.id === refId) refCol = col;
+    const found = [paneView(cell), ...(cell.tabs || [])].find((v) => v.id === id);
+    if (found) { source = cell; view = found; }
+  }
+  if (!source || !view || !refCol) return l;
+  if (dir === "right" && l.cols.length >= MAX_TAB_COLS) return l;
+  if (dir === "down" && refCol.panes.length >= 2 && source.id !== refId) return l;
+
+  const alloc = idAlloc(l);
   const sourceViews = [paneView(source), ...(source.tabs || [])].filter((v) => v.id !== id);
   const sourceNext: Pane = sourceViews.length
     ? { ...sourceViews[0], tabs: sourceViews.slice(1) }
-    : blankPane(source.id);
-  const targetNext: Pane = {
-    ...target,
-    tabs: [...(target.tabs || []), view],
-  };
-  const cols = mapPanes(l, (p) => p === source ? sourceNext : p === target ? targetNext : p);
-  return { ...l, cols, activeId: targetNext.id };
+    : blankPane(alloc.nextPane());
+  const without = l.cols.map((col) => ({
+    ...col,
+    panes: col.panes.map((cell) => (cell === source ? sourceNext : cell)),
+  }));
+  if (dir === "right") {
+    const cols = [...without, { id: alloc.nextCol(), rowRatio: 0.5, panes: [{ ...view, tabs: [] }] }];
+    return { ...l, cols, colRatios: equalRatios(cols.length), activeId: view.id };
+  }
+  const targetCol = without.find((col) => col.id === refCol!.id);
+  if (!targetCol || targetCol.panes.length >= 2) return l;
+  const cols = without.map((col) =>
+    col.id === targetCol.id ? { ...col, rowRatio: 0.5, panes: [...col.panes, { ...view, tabs: [] }] } : col,
+  );
+  return { ...l, cols, activeId: view.id };
 }
 
 /** closeSessionPanes removes every pane attached to a session (archive / clear /
@@ -489,7 +528,7 @@ export function dropSplit(l: Layout, srcId: string, refId: string, dir: "right" 
   if (dir === "right") {
     const alloc = idAlloc(l);
     const cols = without.concat([{ id: alloc.nextCol(), rowRatio: 0.5, panes: [src] }]);
-    if (cols.length > MAX_COLS) return l; // the freed origin column may offset this, so re-check
+    if (cols.length > tabCap(l)) return l; // the freed origin column may offset this, so re-check
     return { ...l, cols, colRatios: equalRatios(cols.length), activeId: srcId };
   }
   // dir === 'down': add the pane as a second row under the dropped-onto pane's column.

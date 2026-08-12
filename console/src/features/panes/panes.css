@@ -37,7 +37,9 @@
   min-height: 28px;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 3px 34px 3px 4px;
+  /* The ordinal remains in its established top-left position, outside the
+     tab title. This space prevents the first title from appearing as `1pha`. */
+  padding: 3px 34px 3px 34px;
   gap: 3px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
@@ -48,7 +50,7 @@
 .pane:has(.pane-tabs) > .chatview,
 .pane:has(.pane-tabs) > .browser-pane,
 .pane:has(.pane-tabs) > .browser-attach-pane { margin-top: 29px; height: calc(100% - 29px); }
-.pane-tab { display: flex; flex: none; max-width: 180px; border: 1px solid transparent; border-radius: 4px; }
+.pane-tab { display: flex; flex: 0 1 260px; min-width: 120px; max-width: 260px; border: 1px solid transparent; border-radius: 4px; }
 .pane-tab.selected { border-color: var(--accent); background: var(--active-bg); }
 .pane-tab > button:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; background: transparent; color: var(--fg); padding: 2px 4px 2px 7px; font: 11px/18px var(--sans); }
 .pane-tab-close { border: 0; background: transparent; color: var(--muted); padding: 0 5px; font: 16px/18px var(--sans); }
