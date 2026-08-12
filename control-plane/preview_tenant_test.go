@@ -59,6 +59,14 @@ func newPreviewTenantTestEnv(t *testing.T, agentURL string) (mux *http.ServeMux)
 	if err != nil {
 		t.Fatalf("membership security: %v", err)
 	}
+	for _, ws := range []Workspace{
+		{ID: "ws-default", TenantID: dflt.ID, MembershipID: memDefault.ID, ContainerName: "default", Network: "n", DataDir: "d1", AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: nowTS()},
+		{ID: "ws-security", TenantID: sec.ID, MembershipID: memSecurity.ID, ContainerName: "security", Network: "n", DataDir: "d2", AgentPort: "2", AgentToken: "t", State: "running", CreatedAt: nowTS()},
+	} {
+		if err := st.CreateWorkspace(ctx, ws); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	mgr := &manager{
 		rts: map[string]cachedRT{

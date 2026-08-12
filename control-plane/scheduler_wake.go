@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -90,7 +91,13 @@ func (f *wakeFirer) fire(ctx context.Context, sch Schedule, slot time.Time) (str
 	//    keep-alive at all — the reaper could then reclaim the very workspace this fire
 	//    had just booted. Holding it across the start closes that window, and the
 	//    AfterFunc release runs on every path (including the early returns below).
-	releasePresence := f.mgr.trackWorkspaceConnection(ctx, res.ws.ID, "")
+	releasePresence, presenceErr := f.mgr.trackWorkspaceConnection(ctx, res.ws.ID, "")
+	if presenceErr != nil {
+		if errors.Is(presenceErr, errWorkspaceStopping) {
+			return "skipped_stopped", "", nil
+		}
+		return "", "", presenceErr
+	}
 	f.scheduleRelease(releasePresence)
 
 	var wakeErr error
@@ -122,7 +129,7 @@ func (f *wakeFirer) fire(ctx context.Context, sch Schedule, slot time.Time) (str
 		// is not left recorded as stopped while it is serving this fire.
 		log.Printf("scheduler: %s recovered — agent became ready after the start deadline (schedule %s)", res.ws.ID, sch.ID)
 		_ = f.mgr.store.SetWorkspaceState(ctx, res.ws.ID, "running")
-		f.mgr.touchWorkspace(ctx, res.ws.ID)
+		_ = f.mgr.touchWorkspace(ctx, res.ws.ID)
 	}
 	// session_mode=assistant (docs/38 アシスタント発火): run one assistant-chat turn
 	// instead of driving a session.

@@ -420,7 +420,7 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 	// already bumped DB last_active_at). Without this the reaper could stop the
 	// freshly-started workspace on its next sweep off a stale in-memory lastSeen
 	// (P3-9; see reaper.idleBase).
-	a.mgr.touchWorkspace(ctx, res.ws.ID)
+	_ = a.mgr.touchWorkspace(ctx, res.ws.ID)
 	return nil
 }
 

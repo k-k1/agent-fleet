@@ -390,8 +390,10 @@ type WorkspaceStore interface {
 	GetWorkspaceByMembership(ctx context.Context, membershipID string) (Workspace, bool, error)
 	CreateWorkspace(ctx context.Context, ws Workspace) error
 	SetWorkspaceState(ctx context.Context, workspaceID, state string) error
-	RecordWorkspaceActivity(ctx context.Context, workspaceID, lastSeenAt, connectedUntil string) error
+	RecordWorkspaceActivity(ctx context.Context, workspaceID, lastSeenAt, connectedUntil, now string) (bool, error)
 	WorkspaceHasRecentActivity(ctx context.Context, workspaceID, cutoff, now string) (bool, error)
+	ClaimWorkspaceIdleStop(ctx context.Context, workspaceID, ownerMembershipID, operationID, cutoff, now string) (bool, error)
+	ReleaseWorkspaceIdleStop(ctx context.Context, workspaceID, operationID string) error
 	// Per-workspace member settings (JSON blob; "" = none). CP-owned so they can be
 	// read/written while the container is stopped; mapped to env at container start.
 	GetWorkspaceSettings(ctx context.Context, workspaceID string) (string, error)

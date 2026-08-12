@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"net/url"
@@ -42,6 +43,15 @@ const (
 	workspacePresenceHeartbeat = 5 * time.Second
 	workspacePresenceTTL       = 15 * time.Second
 )
+
+var errWorkspaceStopping = errors.New("workspace idle stop is in progress")
+
+func workspaceActivityAPIError(err error) *apiError {
+	if errors.Is(err, errWorkspaceStopping) {
+		return &apiError{http.StatusConflict, "workspace_stopping", "workspace is stopping; retry after it has stopped"}
+	}
+	return &apiError{http.StatusServiceUnavailable, "activity_unavailable", "workspace activity could not be recorded"}
+}
 
 func newConnRegistry() *connRegistry {
 	return &connRegistry{
@@ -130,32 +140,66 @@ func (r *connRegistry) isAttached(wsID, session string) bool {
 // touchWorkspace mirrors request activity both locally and into a single
 // monotonic DB row. The shared watermark closes the HA blind spot where the
 // reaper on CP-B could not see traffic served by CP-A.
-func (m *manager) touchWorkspace(ctx context.Context, wsID string) {
-	m.conns.touch(wsID)
-	m.recordWorkspaceActivity(ctx, wsID)
+func (m *manager) activityLockFor(wsID string) *sync.Mutex {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.activityLocks == nil {
+		m.activityLocks = map[string]*sync.Mutex{}
+	}
+	if m.activityLocks[wsID] == nil {
+		m.activityLocks[wsID] = &sync.Mutex{}
+	}
+	return m.activityLocks[wsID]
 }
 
-func (m *manager) recordWorkspaceActivity(ctx context.Context, wsID string) {
-	conns, lastSeen, seen := m.conns.snapshot(wsID)
+func (m *manager) touchWorkspace(ctx context.Context, wsID string) error {
+	m.conns.touch(wsID)
+	return m.recordWorkspaceActivity(ctx, wsID, false)
+}
+
+func (m *manager) recordWorkspaceActivity(ctx context.Context, wsID string, force bool) error {
+	lock := m.activityLockFor(wsID)
+	lock.Lock()
+	defer lock.Unlock()
+	now := time.Now().UTC()
+	if !force {
+		m.mu.Lock()
+		protected := m.activityProtectedUntil[wsID]
+		m.mu.Unlock()
+		if protected.After(now) {
+			return nil
+		}
+	}
+	_, lastSeen, seen := m.conns.snapshot(wsID)
 	if !seen {
 		lastSeen = time.Now()
 	}
-	now := time.Now().UTC()
-	connectedUntil := now
-	if conns > 0 {
-		connectedUntil = now.Add(workspacePresenceTTL)
+	accepted, err := m.store.RecordWorkspaceActivity(ctx, wsID, leaseTS(lastSeen),
+		leaseTS(now.Add(workspacePresenceTTL)), leaseTS(now))
+	if err != nil {
+		return err
 	}
-	if err := m.store.RecordWorkspaceActivity(ctx, wsID, leaseTS(lastSeen), leaseTS(connectedUntil)); err != nil {
-		log.Printf("workspace activity: persist %s: %v", wsID, err)
+	if !accepted {
+		return errWorkspaceStopping
 	}
+	m.mu.Lock()
+	if m.activityProtectedUntil == nil {
+		m.activityProtectedUntil = map[string]time.Time{}
+	}
+	m.activityProtectedUntil[wsID] = now.Add(workspacePresenceHeartbeat)
+	m.mu.Unlock()
+	return nil
 }
 
 // trackWorkspaceConnection publishes a renewable cross-replica presence lease
 // for a terminal/scheduler keepalive. One goroutine per long-lived connection is
 // bounded by the number of actual connections; DB storage remains one row per WS.
-func (m *manager) trackWorkspaceConnection(ctx context.Context, wsID, session string) func() {
+func (m *manager) trackWorkspaceConnection(ctx context.Context, wsID, session string) (func(), error) {
 	m.conns.addConn(wsID, session)
-	m.recordWorkspaceActivity(ctx, wsID)
+	if err := m.recordWorkspaceActivity(ctx, wsID, true); err != nil {
+		m.conns.doneConn(wsID, session)
+		return nil, err
+	}
 	stop := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
@@ -166,7 +210,9 @@ func (m *manager) trackWorkspaceConnection(ctx context.Context, wsID, session st
 			select {
 			case <-ticker.C:
 				hbCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-				m.recordWorkspaceActivity(hbCtx, wsID)
+				if err := m.recordWorkspaceActivity(hbCtx, wsID, true); err != nil {
+					log.Printf("workspace presence: %s: %v", wsID, err)
+				}
 				cancel()
 			case <-stop:
 				return
@@ -180,10 +226,10 @@ func (m *manager) trackWorkspaceConnection(ctx context.Context, wsID, session st
 			<-done
 			m.conns.doneConn(wsID, session)
 			flushCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			m.recordWorkspaceActivity(flushCtx, wsID)
+			_ = m.recordWorkspaceActivity(flushCtx, wsID, true)
 			cancel()
 		})
-	}
+	}, nil
 }
 
 // reaper owns the sweep loop. sessionDef/wsDef are the deployment-default
@@ -419,6 +465,19 @@ func (rp *reaper) stopWorkspace(ctx context.Context, rt Runtime, ws Workspace, w
 	if recent {
 		return
 	}
+	claimed, err := rp.mgr.store.ClaimWorkspaceIdleStop(lease.Context(), ws.ID, ws.MembershipID,
+		lease.token, leaseTS(checkNow.Add(-wsTO)), leaseTS(checkNow))
+	if err != nil || !claimed {
+		if err != nil {
+			log.Printf("idle-stop: claim %s: %v", ws.ContainerName, err)
+		}
+		return
+	}
+	defer func() {
+		releaseCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_ = rp.mgr.store.ReleaseWorkspaceIdleStop(releaseCtx, ws.ID, lease.token)
+		cancel()
+	}()
 	if err := rt.Stop(lease.Context()); err != nil {
 		log.Printf("idle-stop: stop %s: %v", ws.ContainerName, err)
 		return
