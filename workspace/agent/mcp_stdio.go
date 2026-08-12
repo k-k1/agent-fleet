@@ -426,7 +426,7 @@ var mcpStdioPeerTools = []map[string]any{
 			"type": "object", "additionalProperties": false,
 			"properties": map[string]any{
 				"name":    map[string]any{"type": "string", "minLength": 1, "description": "宛先セッション名（list_peer_sessions の name）"},
-				"message": map[string]any{"type": "string", "minLength": 1, "description": "送信本文（平文・2000 byte 以内）。誰から何のために来たかが本文だけで分かるように書くこと"},
+				"message": map[string]any{"type": "string", "minLength": 1, "description": "送信本文（平文・16 KiB（16,384 byte）以内）。誰から何のために来たかが本文だけで分かるように書くこと"},
 			},
 			"required": []string{"name", "message"},
 		},
