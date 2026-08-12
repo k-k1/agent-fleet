@@ -37,6 +37,10 @@
   min-height: 32px;
   overflow-x: auto;
   overflow-y: hidden;
+  /* Native horizontal panning on a touch screen; no custom gesture layer means
+     inertia and the browser's accessibility settings continue to work. */
+  touch-action: pan-x;
+  overscroll-behavior-x: contain;
   /* The ordinal remains in its established top-left position, outside the
      tab title. This space prevents the first title from appearing as `1pha`. */
   padding: 4px 34px 0 34px;
