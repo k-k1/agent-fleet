@@ -76,6 +76,9 @@ export interface Pane {
    * above always describe its selected view, so legacy consumers continue to
    * read a Pane without a special projection layer. */
   tabs?: PaneView[];
+  /** Visual tab order, independent of which view is selected into the Pane
+   * fields above. This prevents selection from moving a tab to the left edge. */
+  tabOrder?: string[];
 }
 
 /** A column: 1 or 2 stacked panes plus the split ratio between them. */

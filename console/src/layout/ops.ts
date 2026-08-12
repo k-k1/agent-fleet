@@ -57,10 +57,48 @@ export const isBlankPane = (p: Pane): boolean => p.content.kind === "terminal" &
 const tabbed = (l: Layout) => l.mode === "tabs";
 const tabCap = (l: Layout) => (tabbed(l) ? MAX_TAB_COLS : MAX_COLS);
 
+const cellViews = (cell: Pane): PaneView[] => [paneView(cell), ...(cell.tabs || [])];
+
+/** Return every view in the visual order saved for this tab cell. Older saved
+ * layouts lack tabOrder; their current selected-first order is a safe fallback. */
+export function orderedTabViews(cell: Pane): PaneView[] {
+  const views = cellViews(cell);
+  const byId = new Map(views.map((view) => [view.id, view] as const));
+  const out: PaneView[] = [];
+  for (const id of cell.tabOrder || []) {
+    const view = byId.get(id);
+    if (view) { out.push(view); byId.delete(id); }
+  }
+  for (const view of views) if (byId.has(view.id)) out.push(view);
+  return out;
+}
+
+function tabCell(selectedId: string, views: PaneView[], order: string[]): Pane {
+  const ordered = (() => {
+    const byId = new Map(views.map((view) => [view.id, view] as const));
+    const out: string[] = [];
+    for (const id of order) if (byId.has(id) && !out.includes(id)) out.push(id);
+    for (const view of views) if (!out.includes(view.id)) out.push(view.id);
+    return out;
+  })();
+  const selected = views.find((view) => view.id === selectedId);
+  if (!selected) throw new Error("selected tab missing from cell");
+  return { ...selected, tabs: views.filter((view) => view.id !== selectedId), tabOrder: ordered };
+}
+
 function replaceSelected(cell: Pane, view: PaneView): Pane {
-  const previous = paneView(cell);
-  const rest = (cell.tabs || []).filter((t) => t.id !== view.id);
-  return { ...view, tabs: [...rest, previous] };
+  const views = cellViews(cell).map((current) => current.id === view.id ? view : current);
+  return tabCell(view.id, views, cell.tabOrder || orderedTabViews(cell).map((current) => current.id));
+}
+
+function withoutTab(cell: Pane, id: string, alloc: ReturnType<typeof idAlloc>): Pane {
+  const views = orderedTabViews(cell).filter((view) => view.id !== id);
+  if (views.length === 0) {
+    const blank = blankPane(alloc.nextPane());
+    return { ...blank, tabs: [], tabOrder: [blank.id] };
+  }
+  const selectedId = views.some((view) => view.id === cell.id) ? cell.id : views[0].id;
+  return tabCell(selectedId, views, views.map((view) => view.id));
 }
 
 /** Make a tab selected in its current cell, preserving all runtime identities. */
@@ -69,7 +107,7 @@ export function selectTab(l: Layout, id: string): Layout {
   for (const col of l.cols) {
     for (const cell of col.panes) {
       if (cell.id === id) {
-        const current = { ...cell, lastUsedAt: Date.now() };
+        const current = tabCell(id, cellViews(cell).map((view) => view.id === id ? { ...view, lastUsedAt: Date.now() } : view), cell.tabOrder || []);
         return { ...l, cols: mapPanes(l, (p) => (p === cell ? current : p)), activeId: id };
       }
       const view = cell.tabs?.find((t) => t.id === id);
@@ -203,11 +241,12 @@ export function openInTab(l: Layout, target: OpenTarget): Layout {
   const view = make(alloc.nextPane());
   const total = allViews(l).length;
   if (isBlankPane(active) && !(active.tabs?.length)) {
-    const selected: Pane = { ...view, tabs: [] };
+    const selected = tabCell(view.id, [view], [view.id]);
     return { ...l, cols: mapPanes(l, (p) => (p.id === active.id ? selected : p)), activeId: view.id };
   }
   if (total < MAX_TABS) {
-    const selected: Pane = { ...view, tabs: [...(active.tabs || []), paneView(active)] };
+    const previous = orderedTabViews(active);
+    const selected = tabCell(view.id, [...previous, view], [...previous.map((current) => current.id), view.id]);
     return { ...l, cols: mapPanes(l, (p) => (p.id === active.id ? selected : p)), activeId: view.id };
   }
   const victim = allViews(l)
@@ -222,10 +261,15 @@ function replaceView(l: Layout, oldId: string, next: PaneView): Layout {
   const cols = l.cols.map((c) => ({
     ...c,
     panes: c.panes.map((p) => {
-      if (p.id === oldId) { replaced = true; return { ...next, tabs: p.tabs || [] }; }
+      if (p.id === oldId) {
+        replaced = true;
+        const views = cellViews(p).map((view) => view.id === oldId ? next : view);
+        return tabCell(next.id, views, (p.tabOrder || orderedTabViews(p).map((view) => view.id)).map((id) => id === oldId ? next.id : id));
+      }
       if (!p.tabs?.some((t) => t.id === oldId)) return p;
       replaced = true;
-      return { ...p, tabs: p.tabs.map((t) => (t.id === oldId ? next : t)) };
+      const views = cellViews(p).map((view) => view.id === oldId ? next : view);
+      return tabCell(p.id, views, (p.tabOrder || orderedTabViews(p).map((view) => view.id)).map((id) => id === oldId ? next.id : id));
     }),
   }));
   return replaced ? selectTab({ ...l, cols, activeId: l.activeId }, next.id) : l;
@@ -359,19 +403,23 @@ export function closePane(l: Layout, paneId: string, removeOutright = false): La
 export function closeTab(l: Layout, id: string, removeCell = false): Layout {
   if (!tabbed(l)) return closePane(l, id, removeCell);
   for (const col of l.cols) for (const cell of col.panes) {
-    const views = [paneView(cell), ...(cell.tabs || [])];
+    const views = orderedTabViews(cell);
     if (!views.some((v) => v.id === id)) continue;
     if (removeCell && views.length === 1) return removePanes(l, (p) => p === cell);
     if (id !== cell.id) {
-      return { ...l, cols: mapPanes(l, (p) => (p === cell ? { ...p, tabs: (p.tabs || []).filter((t) => t.id !== id) } : p)) };
+      const remaining = views.filter((view) => view.id !== id);
+      return { ...l, cols: mapPanes(l, (p) => (p === cell ? tabCell(cell.id, remaining, remaining.map((view) => view.id)) : p)) };
     }
     const remaining = views.filter((v) => v.id !== id);
     if (remaining.length === 0) {
       const blank = blankPane(cell.id);
+      blank.tabs = [];
+      blank.tabOrder = [blank.id];
       return { ...l, cols: mapPanes(l, (p) => (p === cell ? blank : p)), activeId: blank.id };
     }
-    const chosen = remaining[0];
-    const selected: Pane = { ...chosen, tabs: remaining.filter((v) => v.id !== chosen.id) };
+    const closedAt = views.findIndex((view) => view.id === id);
+    const chosen = remaining[Math.min(closedAt, remaining.length - 1)];
+    const selected = tabCell(chosen.id, remaining, remaining.map((view) => view.id));
     return { ...l, cols: mapPanes(l, (p) => (p === cell ? selected : p)), activeId: selected.id };
   }
   return l;
@@ -379,26 +427,33 @@ export function closeTab(l: Layout, id: string, removeCell = false): Layout {
 
 /** Move a view to another tab cell without allocating an id. The source keeps
  * an empty cell when its final tab leaves; geometry is intentionally stable. */
-export function moveTab(l: Layout, id: string, targetId: string): Layout {
-  if (!tabbed(l) || id === targetId) return l;
+export function moveTab(l: Layout, id: string, targetId: string, beforeId?: string): Layout {
+  if (!tabbed(l)) return l;
   let source: Pane | undefined;
   let view: PaneView | undefined;
   let target: Pane | undefined;
   for (const cell of allPanes(l)) {
-    const found = [paneView(cell), ...(cell.tabs || [])].find((v) => v.id === id);
+    const found = cellViews(cell).find((v) => v.id === id);
     if (found) { source = cell; view = found; }
     if (cell.id === targetId) target = cell;
   }
-  if (!source || !view || !target || source === target) return l;
+  if (!source || !view || !target) return l;
   const alloc = idAlloc(l);
-  const sourceViews = [paneView(source), ...(source.tabs || [])].filter((v) => v.id !== id);
+  if (source === target) {
+    if (beforeId === id) return l;
+    const kept = orderedTabViews(source).filter((current) => current.id !== id);
+    const index = beforeId ? kept.findIndex((current) => current.id === beforeId) : kept.length;
+    kept.splice(index < 0 ? kept.length : index, 0, view);
+    return { ...l, cols: mapPanes(l, (p) => (p === source ? tabCell(source.id, kept, kept.map((current) => current.id)) : p)) };
+  }
   // A visual cell projects its selected view, so once its last view leaves it
   // needs a genuinely new blank-view identity. Reusing the moved id would make
   // terminal/browser registries see two owners for the same runtime resource.
-  const sourceNext: Pane = sourceViews.length
-    ? { ...sourceViews[0], tabs: sourceViews.slice(1) }
-    : blankPane(alloc.nextPane());
-  const targetNext = replaceSelected(target, { ...view, lastUsedAt: Date.now() });
+  const sourceNext = withoutTab(source, id, alloc);
+  const targetViews = orderedTabViews(target);
+  const insertAt = beforeId ? targetViews.findIndex((current) => current.id === beforeId) : targetViews.length;
+  targetViews.splice(insertAt < 0 ? targetViews.length : insertAt, 0, { ...view, lastUsedAt: Date.now() });
+  const targetNext = tabCell(view.id, targetViews, targetViews.map((current) => current.id));
   const cols = mapPanes(l, (p) => p === source ? sourceNext : p === target ? targetNext : p);
   return { ...l, cols, activeId: view.id };
 }
@@ -421,22 +476,19 @@ export function dropSplitTab(l: Layout, id: string, refId: string, dir: "right" 
   if (dir === "down" && refCol.panes.length >= 2 && source.id !== refId) return l;
 
   const alloc = idAlloc(l);
-  const sourceViews = [paneView(source), ...(source.tabs || [])].filter((v) => v.id !== id);
-  const sourceNext: Pane = sourceViews.length
-    ? { ...sourceViews[0], tabs: sourceViews.slice(1) }
-    : blankPane(alloc.nextPane());
+  const sourceNext = withoutTab(source, id, alloc);
   const without = l.cols.map((col) => ({
     ...col,
     panes: col.panes.map((cell) => (cell === source ? sourceNext : cell)),
   }));
   if (dir === "right") {
-    const cols = [...without, { id: alloc.nextCol(), rowRatio: 0.5, panes: [{ ...view, tabs: [] }] }];
+    const cols = [...without, { id: alloc.nextCol(), rowRatio: 0.5, panes: [tabCell(view.id, [view], [view.id])] }];
     return { ...l, cols, colRatios: equalRatios(cols.length), activeId: view.id };
   }
   const targetCol = without.find((col) => col.id === refCol!.id);
   if (!targetCol || targetCol.panes.length >= 2) return l;
   const cols = without.map((col) =>
-    col.id === targetCol.id ? { ...col, rowRatio: 0.5, panes: [...col.panes, { ...view, tabs: [] }] } : col,
+    col.id === targetCol.id ? { ...col, rowRatio: 0.5, panes: [...col.panes, tabCell(view.id, [view], [view.id])] } : col,
   );
   return { ...l, cols, activeId: view.id };
 }
