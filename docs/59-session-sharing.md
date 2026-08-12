@@ -63,6 +63,9 @@ ingressを`workspace_stopping`で拒否するため、最終確認と`Runtime.St
 claim直後にもowner leaseを再検証し、pauseから戻った期限切れholderは`Runtime.Stop`へ進まない。claim後に
 CPがcrashしてintentだけ残った場合は、次の明示Startが新しいlifecycle lease／host fence取得後に清算する。
 Runtimeがrunningでも早期return前に行うため、idle reaper無効環境でも利用者操作で回復できる。
+Postgres HAではさらにWorkspace ID由来のsession advisory lockを専用DB connectionで外部Runtime I/Oの
+全区間保持する。CPがpauseしてもlockは残り、新holderは旧操作の静止まで待つ。process crash時はconnection
+切断で自動解放されるため、Docker／ECSでもlease checkpoint直後のpause gapを越えてStop／Startが交差しない。
 native Runtimeではcontext cancelだけに依存せず、`dataDir/lifecycle.lock` のkernel flockを
 lifecycle／承認の全区間で保持する。期限切れleaseを得た新holderも旧holderのStart／Stopが静止するまで
 進めない。Start後にleaseを失えば起動時刻まで一致する自分のPIDだけを回収し、Stop中に失えば既送信の

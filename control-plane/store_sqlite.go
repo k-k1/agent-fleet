@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -26,6 +28,7 @@ var migrationFS embed.FS
 // legacy data hook. See openSQLite / openPostgres.
 type sqlStore struct {
 	db         *sqlDB
+	dialect    string
 	mfs        embed.FS                    // embedded numbered migrations
 	mdir       string                      // dir within mfs
 	legacyHook func(context.Context) error // sqlite-only post-migration data move; nil for pg
@@ -46,7 +49,7 @@ func openSQLite(path string) (*sqlStore, error) {
 		db.Close()
 		return nil, err
 	}
-	s := &sqlStore{db: &sqlDB{DB: db, rb: rebindNoop}, mfs: migrationFS, mdir: "migrations"}
+	s := &sqlStore{db: &sqlDB{DB: db, rb: rebindNoop}, dialect: "sqlite", mfs: migrationFS, mdir: "migrations"}
 	s.legacyHook = s.migrateMemberships
 	return s, nil
 }
@@ -655,6 +658,33 @@ func (s *sqlStore) ClearWorkspaceIdleStop(ctx context.Context, workspaceID strin
 		return err
 	}
 	return tx.Commit()
+}
+
+// AcquireWorkspaceOperationFence holds a Postgres session advisory lock across
+// external Runtime I/O. Unlike a time-based lease it remains held while a CP is
+// paused and is released automatically if the process/connection dies. SQLite is
+// the single-CP local profile; native additionally supplies its kernel flock.
+func (s *sqlStore) AcquireWorkspaceOperationFence(ctx context.Context, workspaceID string) (func(), error) {
+	if s.dialect != "postgres" {
+		return func() {}, nil
+	}
+	conn, err := s.db.DB.Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if _, err = conn.ExecContext(ctx, `SELECT pg_advisory_lock(hashtextextended($1, 0))`, workspaceID); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			unlockCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			_, _ = conn.ExecContext(unlockCtx, `SELECT pg_advisory_unlock(hashtextextended($1, 0))`, workspaceID)
+			cancel()
+			_ = conn.Close()
+		})
+	}, nil
 }
 
 func (s *sqlStore) GetWorkspaceByMembership(ctx context.Context, membershipID string) (Workspace, bool, error) {

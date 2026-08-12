@@ -48,6 +48,19 @@ func acquireRuntimeOperationFence(ctx context.Context, rt Runtime) (func(), erro
 	return func() {}, nil
 }
 
+func (m *manager) acquireWorkspaceOperationFence(ctx context.Context, workspaceID string, rt Runtime) (func(), error) {
+	releaseDB, err := m.store.AcquireWorkspaceOperationFence(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	releaseRuntime, err := acquireRuntimeOperationFence(ctx, rt)
+	if err != nil {
+		releaseDB()
+		return nil, err
+	}
+	return func() { releaseRuntime(); releaseDB() }, nil
+}
+
 // dockerRuntime is the first Runtime adapter; the ECS adapter (P3-7) must satisfy
 // the same contract. This assertion fails the build if either drifts.
 var _ Runtime = (*dockerRuntime)(nil)

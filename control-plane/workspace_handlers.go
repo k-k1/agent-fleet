@@ -215,7 +215,7 @@ func (a workspaceAPI) recreate(w http.ResponseWriter, r *http.Request, res *reso
 		return
 	}
 	defer lease.Close()
-	releaseFence, err := acquireRuntimeOperationFence(lease.Context(), res.rt)
+	releaseFence, err := a.mgr.acquireWorkspaceOperationFence(lease.Context(), res.ws.ID, res.rt)
 	if err != nil {
 		writeAPIErr(w, workspaceLifecycleLeaseError(err))
 		return
@@ -277,7 +277,7 @@ func (a workspaceAPI) cleanHome(w http.ResponseWriter, r *http.Request, res *res
 		return
 	}
 	defer lease.Close()
-	releaseFence, err := acquireRuntimeOperationFence(lease.Context(), res.rt)
+	releaseFence, err := a.mgr.acquireWorkspaceOperationFence(lease.Context(), res.ws.ID, res.rt)
 	if err != nil {
 		writeAPIErr(w, workspaceLifecycleLeaseError(err))
 		return
@@ -355,7 +355,7 @@ func (a workspaceAPI) ensureWorkspaceStartedRT(ctx context.Context, res *resolve
 		return workspaceLifecycleLeaseError(err)
 	}
 	defer lease.Close()
-	releaseFence, err := acquireRuntimeOperationFence(lease.Context(), rt)
+	releaseFence, err := a.mgr.acquireWorkspaceOperationFence(lease.Context(), res.ws.ID, rt)
 	if err != nil {
 		return workspaceLifecycleLeaseError(err)
 	}
@@ -456,7 +456,7 @@ func (a workspaceAPI) stop(w http.ResponseWriter, r *http.Request, res *resolved
 		return
 	}
 	defer lease.Close()
-	releaseFence, err := acquireRuntimeOperationFence(lease.Context(), res.rt)
+	releaseFence, err := a.mgr.acquireWorkspaceOperationFence(lease.Context(), res.ws.ID, res.rt)
 	if err != nil {
 		writeAPIErr(w, workspaceLifecycleLeaseError(err))
 		return

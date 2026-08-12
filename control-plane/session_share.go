@@ -712,18 +712,15 @@ func (a sessionShareAPI) approve(w http.ResponseWriter, r *http.Request, ident I
 		writeAPIErr(w, &apiError{404, "not_found", "proposal not found"})
 		return
 	}
-	// The DB owner lease fences replicas that are running normally. Native mode
-	// additionally needs a kernel-held fence: a paused old CP can outlive its DB
-	// lease while its host process operation is still unwinding.
 	applyCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	releaseFence, err := acquireRuntimeOperationFence(applyCtx, res.rt)
-	if err != nil {
-		writeAPIErr(w, &apiError{409, "share_operation_in_progress", "workspace lifecycle operation is still quiescing"})
-		return
-	}
-	defer releaseFence()
 	if p.Status == "processing" {
+		releaseFence, fenceErr := a.mgr.acquireWorkspaceOperationFence(applyCtx, res.ws.ID, res.rt)
+		if fenceErr != nil {
+			writeAPIErr(w, &apiError{409, "share_operation_in_progress", "workspace lifecycle operation is still quiescing"})
+			return
+		}
+		defer releaseFence()
 		state, status := lookupAgentShareOperation(res.rt, p.ID)
 		if state == "applied" && status < http.StatusBadRequest {
 			changed, err := a.mgr.store.FinalizeSessionShareProposal(r.Context(), p.ID, p.OwnerMembershipID, ident.ID, nowTS())
@@ -777,6 +774,15 @@ func (a sessionShareAPI) approve(w http.ResponseWriter, r *http.Request, ident I
 		writeAPIErr(w, &apiError{404, "not_found", "proposal or shared session not found"})
 		return
 	}
+	// Lock order is owner DB lease (acquired by Claim) → Postgres advisory fence
+	// → adapter host fence. This matches lifecycle operations and prevents both a
+	// cross-replica pause gap and an advisory/lease deadlock.
+	releaseFence, err := a.mgr.acquireWorkspaceOperationFence(applyCtx, res.ws.ID, res.rt)
+	if err != nil {
+		writeAPIErr(w, &apiError{409, "share_operation_in_progress", "workspace lifecycle operation is still quiescing"})
+		return
+	}
+	defer releaseFence()
 	path := "/sessions/" + url.PathEscape(catalog.Name) + "/" + proposalActions[claimed.Action]
 	if err := agentShareOperation(applyCtx, res.rt, path, body, claimed.ID); err != nil {
 		writeAPIErr(w, &apiError{409, "proposal_outcome_unknown", "the operation result is unknown and will not be retried: " + err.Error()})
