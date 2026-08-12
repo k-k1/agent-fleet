@@ -142,8 +142,14 @@ func (m *manager) stopWorkspaceByMembership(ctx context.Context, membershipID st
 	if err != nil {
 		return err
 	}
-	defer releaseWorkspaceLifecycleLease(m.store, membershipID, lease)
-	if err := m.runtimeFor(ws, "").Stop(ctx); err != nil {
+	defer lease.Close()
+	if err := lease.checkpoint(ctx); err != nil {
+		return err
+	}
+	if err := m.runtimeFor(ws, "").Stop(lease.Context()); err != nil {
+		return err
+	}
+	if err := lease.checkpoint(ctx); err != nil {
 		return err
 	}
 	return m.store.SetWorkspaceState(ctx, ws.ID, "stopped")
@@ -164,9 +170,18 @@ func (m *manager) cleanHomeByMembership(ctx context.Context, membershipID string
 	if err != nil {
 		return err
 	}
-	defer releaseWorkspaceLifecycleLease(m.store, membershipID, lease)
-	_ = m.runtimeFor(ws, "").Stop(ctx) // best-effort
-	if err := cleanHome(m.rootedDataDir(ws)); err != nil {
+	defer lease.Close()
+	if err := lease.checkpoint(ctx); err != nil {
+		return err
+	}
+	_ = m.runtimeFor(ws, "").Stop(lease.Context()) // best-effort
+	if err := lease.checkpoint(ctx); err != nil {
+		return err
+	}
+	if err := cleanHomeContext(lease.Context(), m.rootedDataDir(ws)); err != nil {
+		return err
+	}
+	if err := lease.checkpoint(ctx); err != nil {
 		return err
 	}
 	return m.store.SetWorkspaceState(ctx, ws.ID, "stopped")
