@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"net/url"
@@ -36,6 +37,20 @@ type connRegistry struct {
 	wsConns  map[string]int            // workspaceID -> open long-lived conns (terminal/preview)
 	attached map[string]map[string]int // workspaceID -> session name -> attached terminals
 	lastSeen map[string]time.Time      // workspaceID -> last request activity
+}
+
+const (
+	workspacePresenceHeartbeat = 5 * time.Second
+	workspacePresenceTTL       = 15 * time.Second
+)
+
+var errWorkspaceStopping = errors.New("workspace idle stop is in progress")
+
+func workspaceActivityAPIError(err error) *apiError {
+	if errors.Is(err, errWorkspaceStopping) {
+		return &apiError{http.StatusConflict, "workspace_stopping", "workspace is stopping; retry after it has stopped"}
+	}
+	return &apiError{http.StatusServiceUnavailable, "activity_unavailable", "workspace activity could not be recorded"}
 }
 
 func newConnRegistry() *connRegistry {
@@ -120,6 +135,101 @@ func (r *connRegistry) isAttached(wsID, session string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.attached[wsID] != nil && r.attached[wsID][session] > 0
+}
+
+// touchWorkspace mirrors request activity both locally and into a single
+// monotonic DB row. The shared watermark closes the HA blind spot where the
+// reaper on CP-B could not see traffic served by CP-A.
+func (m *manager) activityLockFor(wsID string) *sync.Mutex {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.activityLocks == nil {
+		m.activityLocks = map[string]*sync.Mutex{}
+	}
+	if m.activityLocks[wsID] == nil {
+		m.activityLocks[wsID] = &sync.Mutex{}
+	}
+	return m.activityLocks[wsID]
+}
+
+func (m *manager) touchWorkspace(ctx context.Context, wsID string) error {
+	m.conns.touch(wsID)
+	return m.recordWorkspaceActivity(ctx, wsID, false)
+}
+
+func (m *manager) recordWorkspaceActivity(ctx context.Context, wsID string, force bool) error {
+	lock := m.activityLockFor(wsID)
+	lock.Lock()
+	defer lock.Unlock()
+	now := time.Now().UTC()
+	if !force {
+		m.mu.Lock()
+		protected := m.activityProtectedUntil[wsID]
+		m.mu.Unlock()
+		if protected.After(now) {
+			return nil
+		}
+	}
+	_, lastSeen, seen := m.conns.snapshot(wsID)
+	if !seen {
+		lastSeen = time.Now()
+	}
+	accepted, err := m.store.RecordWorkspaceActivity(ctx, wsID, leaseTS(lastSeen),
+		leaseTS(now.Add(workspacePresenceTTL)), leaseTS(now))
+	if err != nil {
+		return err
+	}
+	if !accepted {
+		return errWorkspaceStopping
+	}
+	m.mu.Lock()
+	if m.activityProtectedUntil == nil {
+		m.activityProtectedUntil = map[string]time.Time{}
+	}
+	m.activityProtectedUntil[wsID] = now.Add(workspacePresenceHeartbeat)
+	m.mu.Unlock()
+	return nil
+}
+
+// trackWorkspaceConnection publishes a renewable cross-replica presence lease
+// for a terminal/scheduler keepalive. One goroutine per long-lived connection is
+// bounded by the number of actual connections; DB storage remains one row per WS.
+func (m *manager) trackWorkspaceConnection(ctx context.Context, wsID, session string) (func(), error) {
+	m.conns.addConn(wsID, session)
+	if err := m.recordWorkspaceActivity(ctx, wsID, true); err != nil {
+		m.conns.doneConn(wsID, session)
+		return nil, err
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(workspacePresenceHeartbeat)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				hbCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				if err := m.recordWorkspaceActivity(hbCtx, wsID, true); err != nil {
+					log.Printf("workspace presence: %s: %v", wsID, err)
+				}
+				cancel()
+			case <-stop:
+				return
+			}
+		}
+	}()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			close(stop)
+			<-done
+			m.conns.doneConn(wsID, session)
+			flushCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			_ = m.recordWorkspaceActivity(flushCtx, wsID, true)
+			cancel()
+		})
+	}, nil
 }
 
 // reaper owns the sweep loop. sessionDef/wsDef are the deployment-default
@@ -254,7 +364,7 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, sessTO time.
 	}
 	base := rp.idleBase(seen, lastSeen, ws.LastActiveAt)
 	if now.Sub(base) >= wsTO {
-		rp.stopWorkspace(ctx, rt, ws)
+		rp.stopWorkspace(ctx, rt, ws, wsTO)
 	}
 }
 
@@ -293,10 +403,93 @@ func (rp *reaper) haltSession(ctx context.Context, rt Runtime, ws Workspace, nam
 	log.Printf("idle-stop: halted idle claude session %s in %s (tenant %s)", name, ws.ContainerName, ws.TenantID)
 }
 
-// stopWorkspace docker-stops a cold workspace and mirrors state to the DB.
-func (rp *reaper) stopWorkspace(ctx context.Context, rt Runtime, ws Workspace) {
-	if err := rt.Stop(ctx); err != nil {
+// stopWorkspace stops a cold workspace through the same distributed lifecycle
+// fence as explicit/admin stops. The idle reaper runs independently in every CP
+// replica, so a direct Runtime.Stop could otherwise cross an approved shared
+// operation or another holder's recreate/clean/start.
+func (rp *reaper) stopWorkspace(ctx context.Context, rt Runtime, ws Workspace, wsTO time.Duration) {
+	lock := rp.mgr.startLockFor(ws.ID)
+	lock.Lock()
+	defer lock.Unlock()
+	lease, err := acquireWorkspaceLifecycleLease(ctx, rp.mgr.store, ws.MembershipID)
+	if err != nil {
+		log.Printf("idle-stop: lifecycle busy %s: %v", ws.ContainerName, err)
+		return
+	}
+	defer lease.Close()
+	releaseFence, err := rp.mgr.acquireWorkspaceOperationFence(lease.Context(), ws.ID, rt)
+	if err != nil {
+		log.Printf("idle-stop: runtime fence %s: %v", ws.ContainerName, err)
+		return
+	}
+	defer releaseFence()
+	if err := lease.checkpoint(ctx); err != nil {
+		log.Printf("idle-stop: lifecycle lost %s: %v", ws.ContainerName, err)
+		return
+	}
+	// A start/recreate may have won the local lock while this sweep was waiting.
+	// Never turn its non-running transitional state into a fresh Stop.
+	if rt.State(lease.Context()) != "running" {
+		return
+	}
+	// The initial idle decision was made before potentially waiting on three
+	// fences. Re-read every activity signal while we own them; otherwise a proxy
+	// reconnect or a session becoming busy during that wait would be stopped by a
+	// stale sweep decision.
+	freshWS, ok, err := rp.mgr.store.GetWorkspaceByMembership(lease.Context(), ws.MembershipID)
+	if err != nil || !ok {
+		log.Printf("idle-stop: refresh workspace %s: found=%v err=%v", ws.ContainerName, ok, err)
+		return
+	}
+	sessions, err := rp.mgr.agentSessions(lease.Context(), rt)
+	if err != nil {
+		log.Printf("idle-stop: refresh sessions %s: %v", ws.ContainerName, err)
+		return
+	}
+	for _, s := range sessions {
+		if s.Alive && (s.State == "working" || s.State == "question") {
+			return
+		}
+	}
+	conns, lastSeen, seen := rp.mgr.conns.snapshot(ws.ID)
+	if conns > 0 || time.Since(rp.idleBase(seen, lastSeen, freshWS.LastActiveAt)) < wsTO {
+		return
+	}
+	checkNow := time.Now().UTC()
+	recent, err := rp.mgr.store.WorkspaceHasRecentActivity(lease.Context(), ws.ID,
+		leaseTS(checkNow.Add(-wsTO)), leaseTS(checkNow))
+	if err != nil {
+		log.Printf("idle-stop: shared activity %s: %v", ws.ContainerName, err)
+		return
+	}
+	if recent {
+		return
+	}
+	claimed, err := rp.mgr.store.ClaimWorkspaceIdleStop(lease.Context(), ws.ID, ws.MembershipID,
+		lease.token, leaseTS(checkNow.Add(-wsTO)), leaseTS(checkNow))
+	if err != nil || !claimed {
+		if err != nil {
+			log.Printf("idle-stop: claim %s: %v", ws.ContainerName, err)
+		}
+		return
+	}
+	defer func() {
+		releaseCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_ = rp.mgr.store.ReleaseWorkspaceIdleStop(releaseCtx, ws.ID, lease.token)
+		cancel()
+	}()
+	// A CP can be paused after the intent commit. Revalidate ownership before the
+	// irreversible Runtime call so an expired old holder cannot resume into Stop.
+	if err := lease.checkpoint(ctx); err != nil {
+		log.Printf("idle-stop: lifecycle lost after claim %s: %v", ws.ContainerName, err)
+		return
+	}
+	if err := rt.Stop(lease.Context()); err != nil {
 		log.Printf("idle-stop: stop %s: %v", ws.ContainerName, err)
+		return
+	}
+	if err := lease.checkpoint(ctx); err != nil {
+		log.Printf("idle-stop: lifecycle lost after stop %s: %v", ws.ContainerName, err)
 		return
 	}
 	if err := rp.mgr.store.SetWorkspaceState(ctx, ws.ID, "stopped"); err != nil {

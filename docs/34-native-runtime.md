@@ -46,6 +46,10 @@ docker / ecs と並ぶ第3のアダプタとして `native` を追加した。**
 - **tmux 分離**: 既存の `AF_TMUX_SOCKET` seam（tmuxx.Cmd、docs/32 M1 事故の再発防止機構）に
   ワークスペース名を渡す。ホストユーザー自身の tmux や他ワークスペースのサーバへは構造的に
   届かない。Stop 時の `tmux -L <name> kill-server` も同ソケット限定。
+- **lifecycle fencing**: 複数CPのDB leaseに加え、`dataDir/lifecycle.lock` をkernel flockして
+  native Start／Stopと共有RW操作を直列化する。旧holderがheartbeatを失っても新holderは旧操作の
+  静止を待つ。未確定StartはPIDと`/proc/<pid>/stat`の起動時刻を照合して自分のspawnだけを回収し、
+  cancel後のStopはSIGKILL・tmux掃除・pidfile削除へ進まない。
 - **State の意味論は docker と同一**: 生存プロセス=running / pid ファイル残骸（クラッシュ）
   =stopped / 正常停止後（pid ファイル除去済）=none。「通常の停止状態は none」という Console
   依存を保つ。pid 再利用誤認は `/proc/<pid>/cmdline` の argv[0] 照合で防ぐ。

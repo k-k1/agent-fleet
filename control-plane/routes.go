@@ -21,6 +21,7 @@ func buildMux(cfg config) *http.ServeMux {
 	registerWorkspaceRoutes(mux, cfg)
 	registerEventsRoutes(mux, cfg)
 	registerSessionRoutes(mux, cfg)
+	registerSessionShareRoutes(mux, cfg)
 	registerChatRoutes(mux, cfg)
 	registerAssistantRoutes(mux, cfg)
 	registerTTSRoutes(mux, cfg)
@@ -253,6 +254,20 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/sessions/{name}/suggest-replies", rest) // LLM reply suggestion v2 (this session's convo)
 	mux.HandleFunc("GET /api/sessions/{name}/skills", rest)           // ミラーのスキルピッカー（docs/50 / ADR0034）
 	mux.HandleFunc("POST /api/sessions/{name}/rename-branch", rest)   // worktree deferred-naming: git branch -m
+}
+
+func registerSessionShareRoutes(mux *http.ServeMux, cfg config) {
+	a := newSessionShareAPI(cfg.mgr)
+	mux.HandleFunc("GET /api/session-shares", a.withMembership(a.listOwned))
+	mux.HandleFunc("POST /api/session-shares", a.withResolved(a.put))
+	mux.HandleFunc("PATCH /api/session-shares/{id}", a.withMembership(a.patch))
+	mux.HandleFunc("DELETE /api/session-shares/{id}", a.withMembership(a.delete))
+	mux.HandleFunc("GET /api/shared-sessions", a.withMembership(a.listReceived))
+	mux.HandleFunc("GET /api/shared-sessions/{id}/messages", a.withMembership(a.messages))
+	mux.HandleFunc("POST /api/shared-sessions/{id}/proposals", a.withMembership(a.propose))
+	mux.HandleFunc("GET /api/session-share-proposals", a.withMembership(a.listProposals))
+	mux.HandleFunc("POST /api/session-share-proposals/{id}/approve", a.withMembership(a.approve))
+	mux.HandleFunc("POST /api/session-share-proposals/{id}/reject", a.withMembership(a.reject))
 }
 
 // Assistant chat (docs/19) — headless-CLI LLM chat/translation, proxied to the

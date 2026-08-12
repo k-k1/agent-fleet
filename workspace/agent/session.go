@@ -28,10 +28,10 @@ func wireSession(m session.Meta, alive bool) session.Session {
 	li := agentOf(m.Kind).WireLive(m, alive)
 	s := session.Session{
 		Name: m.Name, Tmux: session.TmuxName(m.Name), Dir: m.Dir, Subdir: m.Subdir, Kind: m.Kind, Driver: m.Driver,
-		Repo: m.Repo, Title: m.Title, Display: session.Display(m), Color: m.Color, Label: m.Label,
+		Repo: m.Repo, WorkingCopyID: workingCopyID(m.Dir), Title: m.Title, Display: session.Display(m), Color: m.Color, Label: m.Label,
 		Started: started, CreatedAt: m.CreatedAt, Branch: m.Branch,
 		RemoteUrl: li.RemoteURL, State: li.State, Alive: alive, Resumable: li.Resumable,
-		BackgroundBusy: li.BackgroundBusy, Context: li.Context, Locked: m.Locked,
+		BackgroundBusy: li.BackgroundBusy, Context: li.Context, Locked: m.Locked, Archived: m.Archived,
 	}
 	// For a stopped session, surface WHY it ended (crash / OOM) if the pane recorder
 	// captured a cause. A clean quit (exited) or a deliberate stop (empty reason) leaves

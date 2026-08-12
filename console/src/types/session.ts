@@ -30,6 +30,7 @@ export interface Session {
   color?: string; // terminal background hue (hex); SSM sessions carry their host color
   label?: string; // claude --name (with an "[AF] " tag); absent for shell
   repo?: string | null; // working-copy folder the (agent) session runs in
+  workingCopyId?: string;
   path?: string; // absolute working dir
   dir?: string; // working dir shown in the row tooltip
   // Folder BENEATH dir the agent actually runs in, slash-relative ("" / absent = dir

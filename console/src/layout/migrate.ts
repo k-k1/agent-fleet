@@ -109,6 +109,12 @@ function contentFromFlat(p: any): PaneContent {
         ? { kind: "browserAttach", attachmentId }
         : { kind: "terminal", chat: false };
     }
+    case "sharedSession": {
+      const sharedSessionId = str(p.sharedSessionId);
+      return sharedSessionId && /^[A-Za-z0-9_-]{1,256}$/.test(sharedSessionId)
+        ? { kind: "sharedSession", sharedSessionId }
+        : { kind: "terminal", chat: false };
+    }
     default:
       return { kind: "terminal", chat: false };
   }

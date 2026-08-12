@@ -6,14 +6,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -26,6 +28,110 @@ type workspaceAPI struct {
 	memberAuth
 	proxy     agentProxyAPI
 	autostart bool
+}
+
+const (
+	workspaceLifecycleLease     = 30 * time.Second
+	workspaceLifecycleHeartbeat = 10 * time.Second
+)
+
+type workspaceLifecycleLeaseGuard struct {
+	store     Store
+	owner     string
+	token     string
+	ttl       time.Duration
+	ctx       context.Context
+	cancel    context.CancelFunc
+	stop      chan struct{}
+	done      chan struct{}
+	closeOnce sync.Once
+	lost      atomic.Bool
+}
+
+func leaseTS(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000000000Z07:00") }
+
+func acquireWorkspaceLifecycleLease(ctx context.Context, st Store, owner string) (*workspaceLifecycleLeaseGuard, error) {
+	return acquireWorkspaceLifecycleLeaseWithTiming(ctx, st, owner, workspaceLifecycleLease, workspaceLifecycleHeartbeat)
+}
+
+func acquireWorkspaceLifecycleLeaseWithTiming(ctx context.Context, st Store, owner string, ttl, heartbeat time.Duration) (*workspaceLifecycleLeaseGuard, error) {
+	now := time.Now().UTC()
+	token := newID()
+	ok, err := st.AcquireSessionShareOwnerLease(ctx, owner, token, leaseTS(now), leaseTS(now.Add(ttl)))
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, errSessionShareOwnerBusy
+	}
+	opCtx, cancel := context.WithCancel(ctx)
+	guard := &workspaceLifecycleLeaseGuard{store: st, owner: owner, token: token, ttl: ttl,
+		ctx: opCtx, cancel: cancel, stop: make(chan struct{}), done: make(chan struct{})}
+	go guard.heartbeat(heartbeat)
+	return guard, nil
+}
+
+func (l *workspaceLifecycleLeaseGuard) heartbeat(interval time.Duration) {
+	defer close(l.done)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			err := l.checkpoint(ctx)
+			cancel()
+			if err != nil {
+				l.markLost()
+				return
+			}
+		case <-l.stop:
+			return
+		case <-l.ctx.Done():
+			return
+		}
+	}
+}
+
+func (l *workspaceLifecycleLeaseGuard) markLost() {
+	l.lost.Store(true)
+	l.cancel()
+}
+
+func (l *workspaceLifecycleLeaseGuard) checkpoint(ctx context.Context) error {
+	if l.lost.Load() {
+		return errSessionShareOwnerBusy
+	}
+	now := time.Now().UTC()
+	ok, err := l.store.RenewSessionShareOwnerLease(ctx, l.owner, l.token, leaseTS(now), leaseTS(now.Add(l.ttl)))
+	if err != nil || !ok {
+		l.markLost()
+		if err != nil {
+			return err
+		}
+		return errSessionShareOwnerBusy
+	}
+	return nil
+}
+
+func (l *workspaceLifecycleLeaseGuard) Context() context.Context { return l.ctx }
+
+func (l *workspaceLifecycleLeaseGuard) Close() {
+	l.closeOnce.Do(func() {
+		close(l.stop)
+		<-l.done
+		l.cancel()
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = l.store.ReleaseSessionShareOwnerLease(ctx, l.owner, l.token)
+	})
+}
+
+func workspaceLifecycleLeaseError(err error) *apiError {
+	if errors.Is(err, errSessionShareOwnerBusy) {
+		return &apiError{http.StatusConflict, "workspace_operation_in_progress", "an approved Agent or workspace operation is in progress"}
+	}
+	return internalErr(err)
 }
 
 func newWorkspaceAPI(m *manager, autostart bool) workspaceAPI {
@@ -98,23 +204,57 @@ func (a workspaceAPI) start(w http.ResponseWriter, r *http.Request, res *resolve
 // ~/repos are wiped (the user accepts losing them, incl. uncommitted work) and
 // running sessions are lost — so the Console guards this behind a warning dialog.
 func (a workspaceAPI) recreate(w http.ResponseWriter, r *http.Request, res *resolved) {
-	// Stop + wipe under the workspace start lock so a concurrent start cannot bring
-	// the container up mid-teardown (startResolved re-acquires the lock itself).
+	// Stop + wipe + restart under the local start lock and distributed owner lease
+	// so neither another process nor another CP replica can enter mid-teardown.
 	lock := a.mgr.startLockFor(res.ws.ID)
 	lock.Lock()
+	defer lock.Unlock()
+	lease, err := acquireWorkspaceLifecycleLease(r.Context(), a.mgr.store, res.mv.MembershipID)
+	if err != nil {
+		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+		return
+	}
+	defer lease.Close()
+	releaseFence, err := a.mgr.acquireWorkspaceOperationFence(lease.Context(), res.ws.ID, res.rt)
+	if err != nil {
+		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+		return
+	}
+	defer releaseFence()
+	if err := lease.checkpoint(r.Context()); err != nil {
+		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+		return
+	}
 	// Stop は「まだ存在しない」等は許容する(best-effort)が、まだ running のまま
 	// なら中断する — ライブ bind-mount 配下の削除は不整合を起こすため。
-	if err := res.rt.Stop(r.Context()); err != nil && res.rt.State(r.Context()) == "running" {
-		lock.Unlock()
+	if err := res.rt.Stop(lease.Context()); err != nil && res.rt.State(r.Context()) == "running" {
 		log.Printf("recreate: stop failed for ws %s (still running, aborting wipe): %v", res.ws.ID, err)
 		writeAPIErr(w, &apiError{http.StatusInternalServerError, "stop_failed", "could not stop the workspace; recreate aborted"})
 		return
 	}
+	if err := lease.checkpoint(r.Context()); err != nil {
+		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+		return
+	}
 	// Clear the working copies while the container is down. Targeted: we keep the
 	// encrypted secrets store and everything else in home.
-	_ = os.RemoveAll(filepath.Join(a.mgr.rootedDataDir(res.ws), "home", "repos"))
-	lock.Unlock()
-	a.startResolved(w, r, res)
+	if err := removeAllContext(lease.Context(), filepath.Join(a.mgr.rootedDataDir(res.ws), "home", "repos")); err != nil {
+		if leaseErr := lease.checkpoint(r.Context()); leaseErr != nil {
+			writeAPIErr(w, workspaceLifecycleLeaseError(leaseErr))
+		} else {
+			writeAPIErr(w, internalErr(err))
+		}
+		return
+	}
+	if err := lease.checkpoint(r.Context()); err != nil {
+		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+		return
+	}
+	if aerr := a.ensureWorkspaceStartedRTLocked(lease.Context(), res, res.rt, lease); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"name": res.rt.Name(), "state": res.rt.State(r.Context())})
 }
 
 // cleanHome tears the container down, wipes the whole home EXCEPT auth/connection
@@ -130,19 +270,53 @@ func (a workspaceAPI) recreate(w http.ResponseWriter, r *http.Request, res *reso
 func (a workspaceAPI) cleanHome(w http.ResponseWriter, r *http.Request, res *resolved) {
 	lock := a.mgr.startLockFor(res.ws.ID)
 	lock.Lock()
+	defer lock.Unlock()
+	lease, err := acquireWorkspaceLifecycleLease(r.Context(), a.mgr.store, res.mv.MembershipID)
+	if err != nil {
+		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+		return
+	}
+	defer lease.Close()
+	releaseFence, err := a.mgr.acquireWorkspaceOperationFence(lease.Context(), res.ws.ID, res.rt)
+	if err != nil {
+		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+		return
+	}
+	defer releaseFence()
+	if err := lease.checkpoint(r.Context()); err != nil {
+		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+		return
+	}
 	// recreate と同じく、Stop 失敗かつまだ running なら中断(ライブ bind-mount 配下
 	// の削除を避ける)。
-	if err := res.rt.Stop(r.Context()); err != nil && res.rt.State(r.Context()) == "running" {
-		lock.Unlock()
+	if err := res.rt.Stop(lease.Context()); err != nil && res.rt.State(r.Context()) == "running" {
 		log.Printf("clean-home: stop failed for ws %s (still running, aborting wipe): %v", res.ws.ID, err)
 		writeAPIErr(w, &apiError{http.StatusInternalServerError, "stop_failed", "could not stop the workspace; clean-home aborted"})
 		return
 	}
+	if err := lease.checkpoint(r.Context()); err != nil {
+		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+		return
+	}
 	// Wipe home (keep-list preserved) while the container is down — deleting under a
 	// live bind-mount risks inconsistency (see cleanHome's contract in runtime_docker.go).
-	_ = cleanHome(a.mgr.rootedDataDir(res.ws))
-	lock.Unlock()
-	a.startResolved(w, r, res)
+	if err := cleanHomeContext(lease.Context(), a.mgr.rootedDataDir(res.ws)); err != nil {
+		if leaseErr := lease.checkpoint(r.Context()); leaseErr != nil {
+			writeAPIErr(w, workspaceLifecycleLeaseError(leaseErr))
+		} else {
+			writeAPIErr(w, internalErr(err))
+		}
+		return
+	}
+	if err := lease.checkpoint(r.Context()); err != nil {
+		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+		return
+	}
+	if aerr := a.ensureWorkspaceStartedRTLocked(lease.Context(), res, res.rt, lease); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"name": res.rt.Name(), "state": res.rt.State(r.Context())})
 }
 
 // ensureWorkspaceStarted brings a stopped workspace up, enforcing the same
@@ -169,13 +343,37 @@ func (a workspaceAPI) ensureWorkspaceStartedUnattended(ctx context.Context, res 
 
 // ensureWorkspaceStartedRT is the shared body, parameterized by the runtime that drives
 // this particular start (they differ only in the container env they would apply).
-// Serialized per workspace (startLockFor): the state check and Start form a
-// check-then-act that concurrent callers (explicit start, auto-starts, scheduler
-// wake) must not interleave — the quota TOCTOU collapses under the same lock.
+// Serialized per workspace locally (startLockFor) and across CP replicas (owner
+// lease): the state check and Start form a check-then-act that explicit starts,
+// auto-starts and scheduler wake must not interleave.
 func (a workspaceAPI) ensureWorkspaceStartedRT(ctx context.Context, res *resolved, rt Runtime) *apiError {
 	lock := a.mgr.startLockFor(res.ws.ID)
 	lock.Lock()
 	defer lock.Unlock()
+	lease, err := acquireWorkspaceLifecycleLease(ctx, a.mgr.store, res.mv.MembershipID)
+	if err != nil {
+		return workspaceLifecycleLeaseError(err)
+	}
+	defer lease.Close()
+	releaseFence, err := a.mgr.acquireWorkspaceOperationFence(lease.Context(), res.ws.ID, rt)
+	if err != nil {
+		return workspaceLifecycleLeaseError(err)
+	}
+	defer releaseFence()
+	return a.ensureWorkspaceStartedRTLocked(lease.Context(), res, rt, lease)
+}
+
+func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *resolved, rt Runtime, lease *workspaceLifecycleLeaseGuard) *apiError {
+	if err := lease.checkpoint(ctx); err != nil {
+		return workspaceLifecycleLeaseError(err)
+	}
+	// A reaper may have crashed after committing its stop intent but before
+	// Runtime.Stop. This explicit lifecycle operation owns the replacement DB
+	// lease and host fence, so reconcile the orphan even when State is running
+	// and Start would otherwise return early.
+	if err := a.mgr.store.ClearWorkspaceIdleStop(ctx, res.ws.ID); err != nil {
+		return internalErr(err)
+	}
 	switch rt.State(ctx) {
 	case "running":
 		return nil
@@ -207,15 +405,29 @@ func (a workspaceAPI) ensureWorkspaceStartedRT(ctx context.Context, res *resolve
 	if err := stageWorkspaceDocs(a.mgr.rootedDataDir(res.ws), res.mv.Role); err != nil {
 		log.Printf("stage workspace docs (ws=%s role=%s): %v", res.ws.ID, res.mv.Role, err)
 	}
+	if err := lease.checkpoint(ctx); err != nil {
+		return workspaceLifecycleLeaseError(err)
+	}
 	if err := rt.Start(ctx); err != nil {
 		return internalErr(err)
+	}
+	if err := lease.checkpoint(ctx); err != nil {
+		if f, ok := rt.(runtimeStartFencer); ok {
+			abortCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			_ = f.AbortUncommittedStart(abortCtx)
+			cancel()
+		}
+		return workspaceLifecycleLeaseError(err)
+	}
+	if f, ok := rt.(runtimeStartFencer); ok {
+		f.CommitStart()
 	}
 	_ = a.mgr.store.SetWorkspaceState(ctx, res.ws.ID, "running")
 	// A start IS activity: reset the in-memory idle clock too (SetWorkspaceState
 	// already bumped DB last_active_at). Without this the reaper could stop the
 	// freshly-started workspace on its next sweep off a stale in-memory lastSeen
 	// (P3-9; see reaper.idleBase).
-	a.mgr.conns.touch(res.ws.ID)
+	_ = a.mgr.touchWorkspace(ctx, res.ws.ID)
 	return nil
 }
 
@@ -232,8 +444,34 @@ func (a workspaceAPI) startResolved(w http.ResponseWriter, r *http.Request, res 
 }
 
 func (a workspaceAPI) stop(w http.ResponseWriter, r *http.Request, res *resolved) {
-	if err := res.rt.Stop(r.Context()); err != nil {
+	// Serialize with starts/recreates and owner-approved shared operations. Once a
+	// stop wins this lock, no shared operation may pass a stale running check;
+	// once an approved operation wins it, stop waits for its durable outcome.
+	lock := a.mgr.startLockFor(res.ws.ID)
+	lock.Lock()
+	defer lock.Unlock()
+	lease, err := acquireWorkspaceLifecycleLease(r.Context(), a.mgr.store, res.mv.MembershipID)
+	if err != nil {
+		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+		return
+	}
+	defer lease.Close()
+	releaseFence, err := a.mgr.acquireWorkspaceOperationFence(lease.Context(), res.ws.ID, res.rt)
+	if err != nil {
+		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+		return
+	}
+	defer releaseFence()
+	if err := lease.checkpoint(r.Context()); err != nil {
+		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+		return
+	}
+	if err := res.rt.Stop(lease.Context()); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if err := lease.checkpoint(r.Context()); err != nil {
+		writeAPIErr(w, workspaceLifecycleLeaseError(err))
 		return
 	}
 	_ = a.mgr.store.SetWorkspaceState(r.Context(), res.ws.ID, "stopped")
@@ -256,8 +494,9 @@ type sessionWire struct {
 	// Subdir: the folder BENEATH Dir the agent actually runs in ("" = Dir itself).
 	// Same relay caveat as the fields around it — absent here, the Console never sees
 	// which folder a session was launched in. DB ミラーには列が無いので停止中は載らない。
-	Subdir string `json:"subdir,omitempty"`
-	Repo   string `json:"repo"`
+	Subdir        string `json:"subdir,omitempty"`
+	Repo          string `json:"repo"`
+	WorkingCopyID string `json:"workingCopyId,omitempty"`
 	// Title: the user-supplied display title. Console の displayName は title を最優先
 	// で見るが、この struct に無かった頃は中継で silently drop されていた（claude 系は
 	// label にも title が埋まるため露見せず、label を使わない shell/ssm だけ表示名が
@@ -278,7 +517,8 @@ type sessionWire struct {
 	// Locked is the user's deletion lock. sessionWire decode→re-emits the Agent
 	// response for both GET /api/sessions and SSE, so omitting this field makes a
 	// successfully saved lock immediately disappear from the Console.
-	Locked bool `json:"locked,omitempty"`
+	Locked   bool `json:"locked,omitempty"`
+	Archived bool `json:"archived,omitempty"`
 	// BackgroundBusy passes through the Agent's "idle but a run_in_background task is
 	// still running" flag so the Console can badge it. Not persisted to the DB mirror
 	// (a stopped workspace has no live background work).

@@ -258,6 +258,23 @@ type SessionRow struct {
 	CreatedAt, State, LastSeen                string
 }
 
+type SessionShare struct {
+	ID, TenantID, OwnerMembershipID, RecipientMembershipID string
+	ScopeType, ScopeKey, Permission, CreatedAt, UpdatedAt  string
+}
+
+type SharedSessionCatalog struct {
+	ID, WorkspaceID, OwnerMembershipID, Name, Kind, Dir, Repo string
+	WorkingCopyID, Title, Label, CreatedAt, State, LastSeen   string
+	Archived                                                  bool
+}
+
+type SessionShareProposal struct {
+	ID, TenantID, CatalogID, OwnerMembershipID, ProposerMembershipID string
+	Action, Ciphertext, KeyRef, Status                               string
+	CreatedAt, ExpiresAt, DecidedAt, DecidedBy                       string
+}
+
 // GitRepo is one internal bare repository owned by a tenant (docs/reference/
 // internal-git-provider). The on-disk bare lives at ${DATA_DIR}/git/<slug>/<name>.git;
 // this row is the ledger the list/serve paths trust over an FS walk.
@@ -297,8 +314,34 @@ type Store interface {
 	NotificationStore
 	ScheduleStore
 	MCPServerStore
+	SessionShareStore
 
 	Close() error
+}
+
+type SessionShareStore interface {
+	PutSessionShare(ctx context.Context, row SessionShare) error
+	GetSessionShare(ctx context.Context, id string) (SessionShare, bool, error)
+	ListSessionSharesByOwner(ctx context.Context, membershipID string) ([]SessionShare, error)
+	ListSessionSharesByRecipient(ctx context.Context, membershipID string) ([]SessionShare, error)
+	DeleteSessionShare(ctx context.Context, id, ownerMembershipID string) error
+	DeleteSessionSharesByScope(ctx context.Context, ownerMembershipID, scopeType, scopeKey string) error
+	UpdateSessionSharePermission(ctx context.Context, id, ownerMembershipID, permission, updatedAt string) (bool, error)
+	ReplaceSharedSessionCatalog(ctx context.Context, workspaceID, ownerMembershipID string, rows []SharedSessionCatalog) error
+	GetSharedSessionCatalog(ctx context.Context, id string) (SharedSessionCatalog, bool, error)
+	ListSharedSessionCatalogByOwner(ctx context.Context, membershipID string) ([]SharedSessionCatalog, error)
+	CreateSessionShareProposal(ctx context.Context, row SessionShareProposal) error
+	CreateSessionShareProposalLimited(ctx context.Context, row SessionShareProposal, maxPending int) (bool, error)
+	GetSessionShareProposal(ctx context.Context, id string) (SessionShareProposal, bool, error)
+	ListSessionShareProposalsByOwner(ctx context.Context, membershipID string) ([]SessionShareProposal, error)
+	CountPendingSessionShareProposals(ctx context.Context, catalogID string) (int, error)
+	ExpireSessionShareProposals(ctx context.Context, ownerMembershipID, now string) error
+	TransitionSessionShareProposal(ctx context.Context, id, from, to, decidedBy, decidedAt string, clearBody bool) (bool, error)
+	ClaimSessionShareProposal(ctx context.Context, id, ownerMembershipID, decidedBy, now, leaseUntil string) (SessionShareProposal, SharedSessionCatalog, string, error)
+	FinalizeSessionShareProposal(ctx context.Context, id, ownerMembershipID, decidedBy, decidedAt string) (bool, error)
+	AcquireSessionShareOwnerLease(ctx context.Context, ownerMembershipID, operationID, now, leaseUntil string) (bool, error)
+	RenewSessionShareOwnerLease(ctx context.Context, ownerMembershipID, operationID, now, leaseUntil string) (bool, error)
+	ReleaseSessionShareOwnerLease(ctx context.Context, ownerMembershipID, operationID string) error
 }
 
 type TenantStore interface {
@@ -347,6 +390,12 @@ type WorkspaceStore interface {
 	GetWorkspaceByMembership(ctx context.Context, membershipID string) (Workspace, bool, error)
 	CreateWorkspace(ctx context.Context, ws Workspace) error
 	SetWorkspaceState(ctx context.Context, workspaceID, state string) error
+	RecordWorkspaceActivity(ctx context.Context, workspaceID, lastSeenAt, connectedUntil, now string) (bool, error)
+	WorkspaceHasRecentActivity(ctx context.Context, workspaceID, cutoff, now string) (bool, error)
+	ClaimWorkspaceIdleStop(ctx context.Context, workspaceID, ownerMembershipID, operationID, cutoff, now string) (bool, error)
+	ReleaseWorkspaceIdleStop(ctx context.Context, workspaceID, operationID string) error
+	ClearWorkspaceIdleStop(ctx context.Context, workspaceID string) error
+	AcquireWorkspaceOperationFence(ctx context.Context, workspaceID string) (func(), error)
 	// Per-workspace member settings (JSON blob; "" = none). CP-owned so they can be
 	// read/written while the container is stopped; mapped to env at container start.
 	GetWorkspaceSettings(ctx context.Context, workspaceID string) (string, error)
