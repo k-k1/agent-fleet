@@ -2,7 +2,7 @@
 // hidden) while the pane shows another view, so the PTY socket and scrollback
 // survive switching kinds. Ported from the old console onto the content union.
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, DragEvent as RDragEvent } from "react";
+import type { CSSProperties, DragEvent as RDragEvent, WheelEvent as RWheelEvent } from "react";
 import type { Pane as PaneT } from "../../layout/types.ts";
 import { ordClass } from "../../layout/badges.ts";
 import { usePaneHover, hoverMatches } from "../../lib/panehover.tsx";
@@ -221,6 +221,18 @@ export function Pane({
     e.dataTransfer.setData(DND, pane.id);
     e.dataTransfer.effectAllowed = "move";
   };
+  // A wheel over a tab strip should browse tabs, not scroll the view behind it.
+  // Keep the event untouched at either end so a user can still continue into the
+  // page/terminal naturally once there are no more tabs in that direction.
+  const onTabsWheel = (e: RWheelEvent<HTMLDivElement>) => {
+    const strip = e.currentTarget;
+    if (strip.scrollWidth <= strip.clientWidth) return;
+    const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+    if (!delta) return;
+    const before = strip.scrollLeft;
+    strip.scrollLeft += delta;
+    if (strip.scrollLeft !== before) e.preventDefault();
+  };
   // Outer 30% of the splittable edges is a split zone; the center swaps.
   const zoneFor = (e: RDragEvent): "center" | "down" | "right" => {
     const r = e.currentTarget.getBoundingClientRect();
@@ -274,6 +286,7 @@ export function Pane({
           className="pane-tabs"
           role="tablist"
           aria-label={tr("display.pane_layout_tabs")}
+          onWheel={onTabsWheel}
         >
           {views.map((view) => (
             <div className={cx("pane-tab", view.id === pane.id && "selected")} role="presentation" key={view.id}>
