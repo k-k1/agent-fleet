@@ -11,6 +11,7 @@
 // panes that left the layout are disposed here; nothing else may call keepOnly.
 import { keepOnly } from "./term.ts";
 import { useLayoutStore } from "../layout/store.ts";
+import { allViews } from "../layout/ops.ts";
 
 export {
   ensureTerm,
@@ -38,6 +39,6 @@ export {
 export function wireTerminalReconcile(): () => void {
   return useLayoutStore.subscribe((s, prev) => {
     if (s.layout === prev.layout) return;
-    keepOnly(s.layout.cols.flatMap((c) => c.panes.map((p) => p.id)));
+    keepOnly(allViews(s.layout).map((p) => p.id));
   });
 }

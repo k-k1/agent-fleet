@@ -24,6 +24,35 @@
      breathing ≈ 16px + n×24px (n=1 → 40px, the old lone-× value). */
   --pane-ctl-w: calc(16px + var(--pane-ctl-n, 2) * 24px);
 }
+
+/* A tabbed-grid cell keeps the existing Pane surface and runtime identity. The
+   tab strip sits above every view rather than asking each feature header to
+   learn about tabs. It scrolls horizontally so a busy cell never narrows the
+   terminal/view content below usability. */
+.pane-tabs {
+  position: absolute;
+  z-index: 4;
+  inset: 0 0 auto 0;
+  display: flex;
+  min-height: 28px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 3px 34px 3px 4px;
+  gap: 3px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.pane-tabs ~ .pane-controls { top: 1px; }
+.pane:has(.pane-tabs) > .view,
+.pane:has(.pane-tabs) > .mirrorview,
+.pane:has(.pane-tabs) > .chatview,
+.pane:has(.pane-tabs) > .browser-pane,
+.pane:has(.pane-tabs) > .browser-attach-pane { margin-top: 29px; height: calc(100% - 29px); }
+.pane-tab { display: flex; flex: none; max-width: 180px; border: 1px solid transparent; border-radius: 4px; }
+.pane-tab.selected { border-color: var(--accent); background: var(--active-bg); }
+.pane-tab > button:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; background: transparent; color: var(--fg); padding: 2px 4px 2px 7px; font: 11px/18px var(--sans); }
+.pane-tab-close { border: 0; background: transparent; color: var(--muted); padding: 0 5px; font: 16px/18px var(--sans); }
+.pane-tab-close:hover { color: var(--fg); background: var(--hover-bg); }
 .pane {
   transition:
     opacity 0.12s ease,

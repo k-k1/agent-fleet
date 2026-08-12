@@ -9,7 +9,7 @@ import { useMemo, useRef } from "react";
 import type { CSSProperties, PointerEvent as RPointerEvent, ReactNode } from "react";
 import { useLayoutStore } from "../../layout/store.ts";
 import { paneOrdinals } from "../../layout/badges.ts";
-import { isBlankPane } from "../../layout/ops.ts";
+import { isBlankPane, MAX_TAB_COLS } from "../../layout/ops.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useIsMobile } from "../../lib/device.ts";
 import { Pane } from "./Pane.tsx";
@@ -112,7 +112,7 @@ export function PaneHost() {
       single={total === 1}
       // Desktop: up to 4 columns, each splittable top/bottom. Mobile: only a
       // single top/bottom split (max 2 panes total).
-      canSplitRight={!isMobile && N < 4}
+      canSplitRight={!isMobile && N < (layout.mode === "tabs" ? MAX_TAB_COLS : 4)}
       canSplitDown={isMobile ? total < 2 : col.panes.length < 2}
       canClose={total > 1 || !isBlankSingle(pane)}
       canDrag={total > 1}
