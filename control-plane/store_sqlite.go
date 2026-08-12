@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -533,6 +534,31 @@ func (s *sqlStore) SetWorkspaceState(ctx context.Context, workspaceID, state str
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE workspace SET state=?, last_active_at=? WHERE id=?`, state, nowTS(), workspaceID)
 	return err
+}
+
+// RecordWorkspaceActivity merges a monotonic activity watermark and connection
+// lease from any CP replica. CASE is portable across SQLite/Postgres and prevents
+// an inactive replica from shortening another replica's live lease.
+func (s *sqlStore) RecordWorkspaceActivity(ctx context.Context, workspaceID, lastSeenAt, connectedUntil string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO workspace_activity
+		(workspace_id, last_seen_at, connected_until, updated_at) VALUES(?,?,?,?)
+		ON CONFLICT(workspace_id) DO UPDATE SET
+		 last_seen_at=CASE WHEN workspace_activity.last_seen_at > excluded.last_seen_at
+		                   THEN workspace_activity.last_seen_at ELSE excluded.last_seen_at END,
+		 connected_until=CASE WHEN workspace_activity.connected_until > excluded.connected_until
+		                      THEN workspace_activity.connected_until ELSE excluded.connected_until END,
+		 updated_at=excluded.updated_at`, workspaceID, lastSeenAt, connectedUntil, leaseTS(time.Now()))
+	return err
+}
+
+func (s *sqlStore) WorkspaceHasRecentActivity(ctx context.Context, workspaceID, cutoff, now string) (bool, error) {
+	var one int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM workspace_activity
+		WHERE workspace_id=? AND (last_seen_at > ? OR connected_until > ?)`, workspaceID, cutoff, now).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func (s *sqlStore) GetWorkspaceByMembership(ctx context.Context, membershipID string) (Workspace, bool, error) {

@@ -45,7 +45,7 @@ func (a browserAPI) rest(w http.ResponseWriter, r *http.Request, res *resolved) 
 		return
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		a.mgr.conns.touch(res.ws.ID)
+		a.mgr.touchWorkspace(r.Context(), res.ws.ID)
 	}
 
 	if unsafeRelayPath(r.URL.Path) {

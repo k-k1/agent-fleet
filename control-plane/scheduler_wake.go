@@ -90,8 +90,8 @@ func (f *wakeFirer) fire(ctx context.Context, sch Schedule, slot time.Time) (str
 	//    keep-alive at all — the reaper could then reclaim the very workspace this fire
 	//    had just booted. Holding it across the start closes that window, and the
 	//    AfterFunc release runs on every path (including the early returns below).
-	f.mgr.conns.addConn(res.ws.ID, "")
-	f.scheduleRelease(res.ws.ID)
+	releasePresence := f.mgr.trackWorkspaceConnection(ctx, res.ws.ID, "")
+	f.scheduleRelease(releasePresence)
 
 	var wakeErr error
 	if shouldWake {
@@ -122,7 +122,7 @@ func (f *wakeFirer) fire(ctx context.Context, sch Schedule, slot time.Time) (str
 		// is not left recorded as stopped while it is serving this fire.
 		log.Printf("scheduler: %s recovered — agent became ready after the start deadline (schedule %s)", res.ws.ID, sch.ID)
 		_ = f.mgr.store.SetWorkspaceState(ctx, res.ws.ID, "running")
-		f.mgr.conns.touch(res.ws.ID)
+		f.mgr.touchWorkspace(ctx, res.ws.ID)
 	}
 	// session_mode=assistant (docs/38 アシスタント発火): run one assistant-chat turn
 	// instead of driving a session.
@@ -143,12 +143,12 @@ func (f *wakeFirer) fire(ctx context.Context, sch Schedule, slot time.Time) (str
 // scheduleRelease drops the keep-alive after the settle window. time.AfterFunc runs on
 // its own goroutine so the fire path does not block; doneConn is safe on an already-
 // gone workspace (it only decrements a positive counter).
-func (f *wakeFirer) scheduleRelease(wsID string) {
+func (f *wakeFirer) scheduleRelease(release func()) {
 	settle := f.settle
 	if settle <= 0 {
 		settle = 5 * time.Minute
 	}
-	time.AfterFunc(settle, func() { f.mgr.conns.doneConn(wsID, "") })
+	time.AfterFunc(settle, release)
 }
 
 // awaitAgentReady polls the Agent's session list until it responds or readyTimeout
