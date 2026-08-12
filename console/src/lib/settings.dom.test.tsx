@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { expandThinking, getSettings, normalizeClaudeCustomModels, type Settings } from "./settings.ts";
+import { expandThinking, getSettings, isDeviceLocalSetting, normalizeClaudeCustomModels, type Settings } from "./settings.ts";
 
 // 純ロジックだが jsdom プロジェクト（.dom.test.tsx）に置く: settings.ts は API クライアント
 // 経由で読み込み時に localStorage を触るため、node 環境では import 自体が落ちる。
@@ -44,5 +44,16 @@ describe("normalizeClaudeCustomModels", () => {
 
   it("falls back to an empty catalog for a broken stored value", () => {
     expect(normalizeClaudeCustomModels("claude-opus-4-8")).toEqual([]);
+  });
+});
+
+describe("device-local settings", () => {
+  it("keeps the pane layout profile on this device", () => {
+    expect(isDeviceLocalSetting("paneLayout")).toBe(true);
+  });
+
+  it("continues syncing personal content preferences", () => {
+    expect(isDeviceLocalSetting("viewerFont")).toBe(false);
+    expect(isDeviceLocalSetting("locale")).toBe(false);
   });
 });
