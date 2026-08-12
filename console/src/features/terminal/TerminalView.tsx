@@ -4,6 +4,7 @@
 // unmounting), so the PTY socket and scrollback survive view switches. The PTY
 // connection follows the `session` prop declaratively.
 import { useEffect, useMemo, useRef } from "react";
+import type { ReactNode } from "react";
 import {
   ensureTerm,
   repaint,
@@ -46,6 +47,7 @@ interface TerminalViewProps {
   mirror?: boolean;
   onToggleMirror?: (toChat: boolean) => void;
   onResume?: () => void;
+  headerActions?: ReactNode;
 }
 
 export function TerminalView({
@@ -58,6 +60,7 @@ export function TerminalView({
   mirror = false,
   onToggleMirror,
   onResume,
+  headerActions,
 }: TerminalViewProps) {
   const tr = useT();
   const ref = useRef<HTMLDivElement>(null);
@@ -227,7 +230,10 @@ export function TerminalView({
         ) : (
           <span className="pane-head-title">{session ? tr("onb.session") : tr("onb.session_disconnected")}</span>
         )}
-        {canMirror && <MirrorToggle mirror={mirror} onToggle={onToggleMirror} running={running} />}
+        <span className="pane-head-actions">
+          {headerActions}
+          {canMirror && <MirrorToggle mirror={mirror} onToggle={onToggleMirror} running={running} />}
+        </span>
       </header>
       {ctxUsage && <ContextBar {...ctxUsage} />}
       <div className="term-body">
