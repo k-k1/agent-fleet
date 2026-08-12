@@ -110,6 +110,7 @@ export function PaneHost() {
       style={{ position: "absolute", ...rect }}
       active={total > 1 && pane.id === layout.activeId}
       single={total === 1}
+      tabbed={layout.mode === "tabs"}
       // Desktop: up to 4 columns, each splittable top/bottom. Mobile: only a
       // single top/bottom split (max 2 panes total).
       canSplitRight={!isMobile && N < (layout.mode === "tabs" ? MAX_TAB_COLS : 4)}

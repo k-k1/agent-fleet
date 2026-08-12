@@ -47,6 +47,8 @@ interface PaneProps {
   style?: CSSProperties;
   active?: boolean;
   single?: boolean;
+  /** The tabbed-grid profile shows a tab strip even for its sole view. */
+  tabbed?: boolean;
   canSplitRight?: boolean;
   canSplitDown?: boolean;
   canClose?: boolean;
@@ -64,6 +66,7 @@ export function Pane({
   style,
   active,
   single,
+  tabbed,
   canSplitRight,
   canSplitDown,
   canClose,
@@ -256,7 +259,7 @@ export function Pane({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      {pane.tabs && (
+      {tabbed && (
         <div
           className="pane-tabs"
           role="tablist"
