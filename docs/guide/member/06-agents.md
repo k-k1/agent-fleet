@@ -140,7 +140,7 @@ paste it → wait for approval).
 **opencode** saves the **API key of the LLM provider you want to use as an env**.
 Picking a preset fills in the env name automatically.
 
-- **OpenCode Go** (default · `OPENCODE_API_KEY`) / **Anthropic** / **OpenAI** / **OpenRouter** / **Google Gemini** / **Custom…** (specify the env name yourself)
+- **OpenCode Go** (default · `OPENCODE_API_KEY`) / **Anthropic** / **OpenAI** / **OpenRouter** / **Google Gemini** / **Sakana AI** (`SAKANA_API_KEY` · Fugu / Fugu Ultra) / **Custom…** (specify the env name yourself)
 
 Paste the key and press **"Connect"** to save it; it's injected when opencode launches. You
 can register multiple keys, and choose from the connected providers' models at launch.
