@@ -6,8 +6,19 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
 )
+
+type shareStopRuntime struct{ stopped chan struct{} }
+
+func (r shareStopRuntime) Start(context.Context) error  { return nil }
+func (r shareStopRuntime) Stop(context.Context) error   { close(r.stopped); return nil }
+func (r shareStopRuntime) State(context.Context) string { return "running" }
+func (r shareStopRuntime) Endpoint() string             { return "" }
+func (r shareStopRuntime) Token() string                { return "" }
+func (r shareStopRuntime) Name() string                 { return "share-stop" }
 
 func TestEffectiveSharePermission(t *testing.T) {
 	c := SharedSessionCatalog{OwnerMembershipID: "owner", Name: "s1", WorkingCopyID: "wc1"}
@@ -74,20 +85,34 @@ func TestSharedMessagesAuthorizeAndRemoveWorkspacePaths(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	var catalogDeleted atomic.Bool
 	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/sessions/session-1/messages" {
-			t.Errorf("path=%q", r.URL.Path)
-		}
 		if r.Header.Get("Authorization") != "Bearer tok" {
 			t.Errorf("authorization=%q", r.Header.Get("Authorization"))
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"jsonlPath": "/home/dev/.claude/session.jsonl",
-			"messages": []any{map[string]any{
-				"text": "visible", "cwd": "/home/dev/repos/private",
-				"parts": []any{map[string]any{"info": "edited", "filePath": "/home/dev/repos/private/secret.go"}},
-			}},
-		})
+		switch r.URL.Path {
+		case "/sessions/catalog":
+			if catalogDeleted.Load() {
+				_ = json.NewEncoder(w).Encode(map[string]any{"sessions": []any{}})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"sessions": []any{map[string]any{
+				"name": "session-1", "kind": "codex", "dir": "/home/dev/repos/private", "repo": "private", "workingCopyId": "wc-1",
+			}}})
+		case "/repos":
+			_ = json.NewEncoder(w).Encode(map[string]any{"repos": []any{map[string]any{"workingCopyId": "wc-1"}}})
+		case "/sessions/session-1/messages":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"jsonlPath": "/home/dev/.claude/session.jsonl",
+				"messages": []any{map[string]any{
+					"text": "visible", "cwd": "/home/dev/repos/private",
+					"parts": []any{map[string]any{"info": "edited", "filePath": "/home/dev/repos/private/secret.go"}},
+				}},
+			})
+		default:
+			t.Errorf("path=%q", r.URL.Path)
+			http.NotFound(w, r)
+		}
 	}))
 	defer agent.Close()
 
@@ -139,4 +164,57 @@ func TestSharedMessagesAuthorizeAndRemoveWorkspacePaths(t *testing.T) {
 	if denied.Code != http.StatusNotFound {
 		t.Fatalf("unauthorized status=%d body=%s", denied.Code, denied.Body.String())
 	}
+
+	// A bookmarked catalog id cannot bypass a later live deletion simply because
+	// the recipient skipped the shared-session list endpoint.
+	catalogDeleted.Store(true)
+	deletedReq := httptest.NewRequest(http.MethodGet, "/api/shared-sessions/catalog-1/messages", nil)
+	deletedReq.SetPathValue("id", catalog.ID)
+	deleted := httptest.NewRecorder()
+	api.messages(deleted, deletedReq, recipientIdentity, recipientViews[0])
+	if deleted.Code != http.StatusNotFound {
+		t.Fatalf("deleted direct-id status=%d body=%s", deleted.Code, deleted.Body.String())
+	}
+}
+
+func TestWorkspaceStopWaitsForSharedApprovalLifecycleLock(t *testing.T) {
+	ctx := context.Background()
+	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tenant, _ := st.EnsureDefaultTenant(ctx)
+	identity, _ := st.UpsertIdentity(ctx, "owner-stop@example.com", "owner-stop", "")
+	membership, _ := st.EnsureMembership(ctx, identity.ID, tenant.ID, "member")
+	workspace := Workspace{ID: newID(), TenantID: tenant.ID, MembershipID: membership.ID, ContainerName: "c", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: nowTS()}
+	if err := st.CreateWorkspace(ctx, workspace); err != nil {
+		t.Fatal(err)
+	}
+	runtime := shareStopRuntime{stopped: make(chan struct{})}
+	mgr := &manager{store: st, rts: map[string]cachedRT{}}
+	lock := mgr.startLockFor(workspace.ID)
+	lock.Lock() // the approval path holds this across its Agent operation
+	done := make(chan struct{})
+	go func() {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/workspace/stop", nil)
+		newWorkspaceAPI(mgr, false).stop(rec, req, &resolved{rt: runtime, ws: workspace})
+		close(done)
+	}()
+	select {
+	case <-runtime.stopped:
+		t.Fatal("workspace stopped while an approved operation held the lifecycle lock")
+	case <-time.After(50 * time.Millisecond):
+	}
+	lock.Unlock()
+	select {
+	case <-runtime.stopped:
+	case <-time.After(time.Second):
+		t.Fatal("workspace stop did not continue after approval released the lifecycle lock")
+	}
+	<-done
 }

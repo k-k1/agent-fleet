@@ -6,13 +6,24 @@ import (
 )
 
 func (s *sqlStore) PutSessionShare(ctx context.Context, r SessionShare) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO session_share
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `INSERT INTO session_share
 		(id,tenant_id,owner_membership_id,recipient_membership_id,scope_type,scope_key,permission,created_at,updated_at)
 		VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(owner_membership_id,recipient_membership_id,scope_type,scope_key)
 		DO UPDATE SET permission=excluded.permission,updated_at=excluded.updated_at`,
 		r.ID, r.TenantID, r.OwnerMembershipID, r.RecipientMembershipID, r.ScopeType, r.ScopeKey,
 		r.Permission, r.CreatedAt, r.UpdatedAt)
-	return err
+	if err != nil {
+		return err
+	}
+	if err = invalidateUnauthorizedProposals(ctx, tx, r.OwnerMembershipID, r.UpdatedAt); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func scanSessionShare(row interface{ Scan(...any) error }) (SessionShare, bool, error) {
@@ -57,12 +68,71 @@ func (s *sqlStore) ListSessionSharesByRecipient(ctx context.Context, id string) 
 	return s.listSessionShares(ctx, "recipient_membership_id", id)
 }
 func (s *sqlStore) DeleteSessionShare(ctx context.Context, id, owner string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM session_share WHERE id=? AND owner_membership_id=?`, id, owner)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `DELETE FROM session_share WHERE id=? AND owner_membership_id=?`, id, owner); err != nil {
+		return err
+	}
+	if err = invalidateUnauthorizedProposals(ctx, tx, owner, nowTS()); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *sqlStore) DeleteSessionSharesByScope(ctx context.Context, owner, scopeType, scopeKey string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM session_share WHERE owner_membership_id=? AND scope_type=? AND scope_key=?`, owner, scopeType, scopeKey)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `DELETE FROM session_share WHERE owner_membership_id=? AND scope_type=? AND scope_key=?`, owner, scopeType, scopeKey); err != nil {
+		return err
+	}
+	if err = invalidateUnauthorizedProposals(ctx, tx, owner, nowTS()); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+type sqlExecQuery interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func invalidateUnauthorizedProposals(ctx context.Context, q sqlExecQuery, owner, now string) error {
+	_, err := q.ExecContext(ctx, `UPDATE session_share_proposal SET status='expired',ciphertext='',decided_at=?
+		WHERE owner_membership_id=? AND status IN ('pending','processing') AND NOT EXISTS (
+			SELECT 1 FROM shared_session_catalog c JOIN session_share s
+			  ON s.owner_membership_id=c.owner_membership_id
+			 AND s.recipient_membership_id=session_share_proposal.proposer_membership_id
+			 AND s.permission='rw'
+			 AND ((s.scope_type='session' AND s.scope_key=c.name)
+			   OR (s.scope_type IN ('repo','worktree') AND s.scope_key=c.working_copy_id))
+			WHERE c.id=session_share_proposal.catalog_id
+		)`, now, owner)
 	return err
+}
+
+func (s *sqlStore) UpdateSessionSharePermission(ctx context.Context, id, owner, permission, updatedAt string) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE session_share SET permission=?,updated_at=? WHERE id=? AND owner_membership_id=?`, permission, updatedAt, id, owner)
+	if err != nil {
+		return false, err
+	}
+	if err = invalidateUnauthorizedProposals(ctx, tx, owner, updatedAt); err != nil {
+		return false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	return n == 1, err
 }
 
 func (s *sqlStore) ReplaceSharedSessionCatalog(ctx context.Context, workspaceID, owner string, in []SharedSessionCatalog) error {
@@ -202,8 +272,92 @@ func (s *sqlStore) CountPendingSessionShareProposals(ctx context.Context, catalo
 func (s *sqlStore) ExpireSessionShareProposals(ctx context.Context, owner, now string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE session_share_proposal
 		SET status='expired',ciphertext='',decided_at=?
-		WHERE owner_membership_id=? AND status='pending' AND expires_at<=?`, now, owner, now)
+		WHERE owner_membership_id=? AND status IN ('pending','processing') AND expires_at<=?`, now, owner, now)
 	return err
+}
+
+func (s *sqlStore) ClaimAndApplySessionShareProposal(ctx context.Context, id, owner, by, now string,
+	apply func(SessionShareProposal, SharedSessionCatalog) error) (string, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	p, ok, err := scanProposal(tx.QueryRowContext(ctx, `SELECT id,tenant_id,catalog_id,owner_membership_id,proposer_membership_id,
+		action,ciphertext,key_ref,status,created_at,expires_at,decided_at,decided_by FROM session_share_proposal WHERE id=?`, id))
+	if err != nil {
+		return "", err
+	}
+	if !ok || p.OwnerMembershipID != owner {
+		return "not_found", nil
+	}
+	if p.Status != "pending" {
+		return p.Status, nil
+	}
+	if p.ExpiresAt <= now {
+		if _, err = tx.ExecContext(ctx, `UPDATE session_share_proposal SET status='expired',ciphertext='',decided_at=? WHERE id=? AND status='pending'`, now, id); err != nil {
+			return "", err
+		}
+		if err = tx.Commit(); err != nil {
+			return "", err
+		}
+		return "expired", nil
+	}
+	c, ok, err := scanCatalog(tx.QueryRowContext(ctx, `SELECT id,workspace_id,owner_membership_id,name,kind,dir,repo,
+		working_copy_id,title,label,created_at,state,archived,last_seen FROM shared_session_catalog WHERE id=?`, p.CatalogID))
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "not_found", nil
+	}
+	// This no-op update is a portable row lock: SQLite takes its write lock and
+	// Postgres locks every currently matching ACL row until the Agent result has
+	// been durably recorded. Permission changes/deletes therefore cannot pass the
+	// final authorization check and race the side effect.
+	if _, err = tx.ExecContext(ctx, `UPDATE session_share SET updated_at=updated_at
+		WHERE owner_membership_id=? AND recipient_membership_id=? AND permission='rw'
+		  AND ((scope_type='session' AND scope_key=?) OR (scope_type IN ('repo','worktree') AND scope_key=?))`,
+		owner, p.ProposerMembershipID, c.Name, c.WorkingCopyID); err != nil {
+		return "", err
+	}
+	var authorized int
+	err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM session_share WHERE owner_membership_id=? AND recipient_membership_id=? AND permission='rw'
+		AND ((scope_type='session' AND scope_key=?) OR (scope_type IN ('repo','worktree') AND scope_key=?))`,
+		owner, p.ProposerMembershipID, c.Name, c.WorkingCopyID).Scan(&authorized)
+	if err != nil {
+		return "", err
+	}
+	if authorized == 0 {
+		if _, err = tx.ExecContext(ctx, `UPDATE session_share_proposal SET status='expired',ciphertext='',decided_at=? WHERE id=? AND status='pending'`, now, id); err != nil {
+			return "", err
+		}
+		if err = tx.Commit(); err != nil {
+			return "", err
+		}
+		return "expired", nil
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE session_share_proposal SET status='processing',decided_by=?,decided_at=? WHERE id=? AND status='pending'`, by, now, id)
+	if err != nil {
+		return "", err
+	}
+	n, err := result.RowsAffected()
+	if err != nil || n != 1 {
+		return "processing", err
+	}
+	applyErr := apply(p, c)
+	if applyErr == nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE session_share_proposal SET status='approved',ciphertext='',decided_by=?,decided_at=? WHERE id=? AND status='processing'`, by, nowTS(), id); err != nil {
+			return "", err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return "", err
+	}
+	if applyErr != nil {
+		return "processing", applyErr
+	}
+	return "approved", nil
 }
 func (s *sqlStore) TransitionSessionShareProposal(ctx context.Context, id, from, to, by, at string, clearBody bool) (bool, error) {
 	body := "ciphertext"

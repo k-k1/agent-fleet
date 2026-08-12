@@ -3556,6 +3556,8 @@ export const en: Record<keyof typeof ja, string> = {
   "share.pending": "{count} pending approval(s)",
   "share.pending_title": "Shared-session approvals",
   "share.reject": "Reject",
+  "share.reconcile": "Check result",
+  "share.outcome_unknown": "The send result could not be confirmed. It will not be retried automatically; you can check the recorded result.",
   "share.approve": "Approve and send",
   "share.session_scope": "Session",
   "share.repo_scope": "Repository",

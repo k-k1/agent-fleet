@@ -276,8 +276,13 @@ func (a sessionShareAPI) patch(w http.ResponseWriter, r *http.Request, ident Ide
 	}
 	s.Permission = in.Permission
 	s.UpdatedAt = nowTS()
-	if err := a.mgr.store.PutSessionShare(r.Context(), s); err != nil {
+	changed, err := a.mgr.store.UpdateSessionSharePermission(r.Context(), s.ID, mv.MembershipID, s.Permission, s.UpdatedAt)
+	if err != nil {
 		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !changed {
+		writeAPIErr(w, &apiError{404, "not_found", "share not found"})
 		return
 	}
 	_ = a.mgr.store.InsertAudit(context.Background(), AuditLog{ID: newID(), TenantID: mv.TenantID, ActorKind: "user", ActorID: ident.ID, Action: "session.share.permission", Target: s.ID, Detail: "permission=" + in.Permission, HTTPStatus: 200, At: nowTS()})
@@ -378,6 +383,24 @@ func (a sessionShareAPI) authorizeCatalog(ctx context.Context, mv MembershipView
 	if !ok {
 		return c, nil, &apiError{404, "not_found", "shared session not found"}
 	}
+	res, e := a.ownerResolved(ctx, c.OwnerMembershipID)
+	if e != nil {
+		return c, nil, e
+	}
+	// Direct catalog URLs must not bypass live inventory reconciliation. A deleted
+	// session or working copy removes its catalog/rule before ACL evaluation.
+	if res.rt.State(ctx) == "running" {
+		if err := a.syncCatalog(ctx, res); err != nil {
+			return c, nil, &apiError{502, "owner_workspace_unreachable", "owner workspace inventory is unavailable"}
+		}
+		c, ok, err = a.mgr.store.GetSharedSessionCatalog(ctx, id)
+		if err != nil {
+			return c, nil, internalErr(err)
+		}
+		if !ok {
+			return c, nil, &apiError{404, "not_found", "shared session not found"}
+		}
+	}
 	shares, err := a.mgr.store.ListSessionSharesByRecipient(ctx, mv.MembershipID)
 	if err != nil {
 		return c, nil, internalErr(err)
@@ -385,10 +408,6 @@ func (a sessionShareAPI) authorizeCatalog(ctx context.Context, mv MembershipView
 	p := effectivePermission(shares, c)
 	if p == "" || (wantRW && p != "rw") {
 		return c, nil, &apiError{404, "not_found", "shared session not found"}
-	}
-	res, e := a.ownerResolved(ctx, c.OwnerMembershipID)
-	if e != nil {
-		return c, nil, e
 	}
 	return c, res, nil
 }
@@ -469,9 +488,13 @@ func (a sessionShareAPI) openProposal(ctx context.Context, p SessionShareProposa
 var proposalActions = map[string]string{"turn": "turn", "respond": "respond", "answer-question": "answer-question", "plan-respond": "plan-respond"}
 
 func (a sessionShareAPI) propose(w http.ResponseWriter, r *http.Request, ident Identity, mv MembershipView) {
-	c, _, e := a.authorizeCatalog(r.Context(), mv, r.PathValue("id"), true)
+	c, res, e := a.authorizeCatalog(r.Context(), mv, r.PathValue("id"), true)
 	if e != nil {
 		writeAPIErr(w, e)
+		return
+	}
+	if res.rt.State(r.Context()) != "running" {
+		writeAPIErr(w, &apiError{409, "owner_workspace_stopped", "owner workspace is stopped"})
 		return
 	}
 	raw, err := io.ReadAll(io.LimitReader(r.Body, shareProposalMaxBytes+1))
@@ -565,33 +588,44 @@ func (a sessionShareAPI) approve(w http.ResponseWriter, r *http.Request, ident I
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	if !ok || p.OwnerMembershipID != mv.MembershipID || p.Status != "pending" {
+	if !ok || p.OwnerMembershipID != mv.MembershipID {
 		writeAPIErr(w, &apiError{404, "not_found", "proposal not found"})
 		return
 	}
-	exp, _ := time.Parse(time.RFC3339, p.ExpiresAt)
-	if time.Now().After(exp) {
-		_, _ = a.mgr.store.TransitionSessionShareProposal(r.Context(), p.ID, "pending", "expired", ident.ID, nowTS(), true)
-		writeAPIErr(w, &apiError{409, "proposal_expired", "proposal expired"})
-		return
-	}
-	c, ok, err := a.mgr.store.GetSharedSessionCatalog(r.Context(), p.CatalogID)
-	if err != nil || !ok {
-		writeAPIErr(w, &apiError{404, "not_found", "shared session not found"})
-		return
-	}
-	shares, err := a.mgr.store.ListSessionSharesByRecipient(r.Context(), p.ProposerMembershipID)
-	if err != nil {
-		writeAPIErr(w, internalErr(err))
-		return
-	}
-	if effectivePermission(shares, c) != "rw" {
-		writeAPIErr(w, &apiError{409, "share_changed", "RW share is no longer active"})
-		return
-	}
 	res, e := a.ownerResolved(r.Context(), p.OwnerMembershipID)
-	if e != nil || res.rt.State(r.Context()) != "running" {
+	if e != nil {
 		writeAPIErr(w, &apiError{409, "owner_workspace_stopped", "owner workspace is stopped"})
+		return
+	}
+	workspaceLock := a.mgr.startLockFor(res.ws.ID)
+	workspaceLock.Lock()
+	defer workspaceLock.Unlock()
+	if res.rt.State(r.Context()) != "running" {
+		writeAPIErr(w, &apiError{409, "owner_workspace_stopped", "owner workspace is stopped"})
+		return
+	}
+	if p.Status == "processing" {
+		state, status := lookupAgentShareOperation(res.rt, p.ID)
+		if state == "applied" && status < http.StatusBadRequest {
+			changed, err := a.mgr.store.TransitionSessionShareProposal(r.Context(), p.ID, "processing", "approved", ident.ID, nowTS(), true)
+			if err != nil {
+				writeAPIErr(w, internalErr(err))
+				return
+			}
+			if changed {
+				writeJSON(w, 200, map[string]any{"status": "approved", "reconciled": true})
+				return
+			}
+		}
+		writeAPIErr(w, &apiError{409, "proposal_outcome_unknown", "the operation was claimed; its outcome cannot be retried safely"})
+		return
+	}
+	if p.Status != "pending" {
+		writeAPIErr(w, &apiError{409, "proposal_already_decided", "proposal was already decided"})
+		return
+	}
+	if err := a.syncCatalog(r.Context(), res); err != nil {
+		writeAPIErr(w, &apiError{502, "owner_workspace_unreachable", "owner workspace inventory is unavailable"})
 		return
 	}
 	body, err := a.openProposal(r.Context(), p)
@@ -599,30 +633,76 @@ func (a sessionShareAPI) approve(w http.ResponseWriter, r *http.Request, ident I
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	claimed, err := a.mgr.store.TransitionSessionShareProposal(r.Context(), p.ID, "pending", "processing", ident.ID, nowTS(), false)
+	// Do not bind the durable claim/Agent call to the browser connection. If the
+	// response is lost, the transaction must still commit processing rather than
+	// roll back and make a side effect retryable.
+	applyCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	state, err := a.mgr.store.ClaimAndApplySessionShareProposal(applyCtx, p.ID, mv.MembershipID, ident.ID, nowTS(),
+		func(claimed SessionShareProposal, catalog SharedSessionCatalog) error {
+			path := "/sessions/" + url.PathEscape(catalog.Name) + "/" + proposalActions[claimed.Action]
+			return agentShareOperation(applyCtx, res.rt, path, body, claimed.ID)
+		})
 	if err != nil {
-		writeAPIErr(w, internalErr(err))
+		writeAPIErr(w, &apiError{409, "proposal_outcome_unknown", "the operation result is unknown and will not be retried: " + err.Error()})
 		return
 	}
-	if !claimed {
-		writeAPIErr(w, &apiError{http.StatusConflict, "proposal_already_decided", "proposal was already decided"})
+	switch state {
+	case "approved":
+	case "expired":
+		writeAPIErr(w, &apiError{409, "share_changed", "proposal expired or RW share is no longer active"})
+		return
+	case "processing":
+		writeAPIErr(w, &apiError{409, "proposal_outcome_unknown", "the operation was claimed; its outcome cannot be retried safely"})
+		return
+	default:
+		writeAPIErr(w, &apiError{404, "not_found", "proposal or shared session not found"})
 		return
 	}
-	path := "/sessions/" + url.PathEscape(c.Name) + "/" + proposalActions[p.Action]
-	if _, err = agentText(r.Context(), res.rt, http.MethodPost, path, body); err != nil {
-		_, _ = a.mgr.store.TransitionSessionShareProposal(r.Context(), p.ID, "processing", "pending", "", "", false)
-		writeAPIErr(w, &apiError{409, "proposal_stale", err.Error()})
-		return
-	}
-	changed, err := a.mgr.store.TransitionSessionShareProposal(r.Context(), p.ID, "processing", "approved", ident.ID, nowTS(), true)
-	if err != nil {
-		writeAPIErr(w, internalErr(err))
-		return
-	}
-	if !changed {
-		writeAPIErr(w, &apiError{http.StatusConflict, "proposal_state_changed", "proposal state changed while applying it"})
-		return
-	}
-	_ = a.mgr.store.InsertAudit(context.Background(), AuditLog{ID: newID(), TenantID: mv.TenantID, ActorKind: "user", ActorID: ident.ID, Action: "session.share.proposal.approve", Target: c.Name, Detail: "proposer=" + p.ProposerMembershipID + " action=" + p.Action, HTTPStatus: 200, At: nowTS()})
+	_ = a.mgr.store.InsertAudit(context.Background(), AuditLog{ID: newID(), TenantID: mv.TenantID, ActorKind: "user", ActorID: ident.ID, Action: "session.share.proposal.approve", Target: p.CatalogID, Detail: "proposer=" + p.ProposerMembershipID + " action=" + p.Action, HTTPStatus: 200, At: nowTS()})
 	writeJSON(w, 200, map[string]any{"status": "approved"})
+}
+
+func agentShareOperation(ctx context.Context, rt Runtime, path string, body []byte, operationID string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rt.Endpoint()+path, strings.NewReader(string(body)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Agent-Fleet-Operation-ID", operationID)
+	if rt.Token() != "" {
+		req.Header.Set("Authorization", "Bearer "+rt.Token())
+	}
+	resp, err := agentHTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= http.StatusBadRequest {
+		return &agentHTTPError{status: resp.StatusCode, body: strings.TrimSpace(string(payload))}
+	}
+	return nil
+}
+
+func lookupAgentShareOperation(rt Runtime, operationID string) (string, int) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, rt.Endpoint()+"/share-operations/"+url.PathEscape(operationID), nil)
+	if rt.Token() != "" {
+		req.Header.Set("Authorization", "Bearer "+rt.Token())
+	}
+	resp, err := agentHTTPClient.Do(req)
+	if err != nil {
+		return "", 0
+	}
+	defer resp.Body.Close()
+	var result struct {
+		State      string `json:"state"`
+		StatusCode int    `json:"statusCode"`
+	}
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&result) != nil {
+		return "", 0
+	}
+	return result.State, result.StatusCode
 }

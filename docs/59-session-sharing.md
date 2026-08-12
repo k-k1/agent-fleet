@@ -34,8 +34,18 @@ inventory から消えた場合は catalog、単体共有規則、未処理提�
 
 RW 提案本文は最大 32 KiB、1セッション20件、24時間で失効する。本文は tenant key custodian
 がある環境では暗号化して CP DB に置き、承認・拒否・失効時に消去する。承認は DB の
-`pending → processing` 条件付き更新で一人だけが取得してから Agent へ送るため、二重クリックや
-複数ブラウザによる二重実行を防ぐ。共有権限と所有者 Workspace の状態は承認時にも再検証する。
+`pending → processing` 条件付き更新で一人だけが取得してから Agent へ送る。claim transaction は
+期限、catalog、現在の RW ACL を再検証し、該当 ACL 行を Agent の結果が永続化されるまでロックする。
+そのため、共有解除／RO 降格と副作用の順序は DB 上で一意になる。ACL 変更が先なら提案を失効して
+本文を消し、承認が先なら副作用の完了後に ACL 変更が通る。Workspace の停止も同じ
+workspace lifecycle lock を使い、停止が先なら送信せず、承認が先なら結果の永続化後に停止する。
+
+CP は proposal ID を `X-Agent-Fleet-Operation-ID` として Agent へ渡す。Agent は home volume 内に
+その ID を副作用前に create-only で永続 claim し、ハンドラ応答を永続化してから CP へ返す。
+同じ ID の再送は保存済み応答を再生し、claim だけが残った場合は「結果不明」として実行しない。
+したがって、成功後の応答喪失、5xx、CP/Agent crash のどの場合も副作用を二重実行しない。
+CP の `processing` はこの結果不明 lease を表し、自動で `pending` へ戻さない。Agent に完了記録が
+あれば次の照会で `approved` へ収束し、判定不能のままなら元の24時間期限で失効して本文を消す。
 
 ## 3. 閲覧と停止状態
 
@@ -46,6 +56,10 @@ CP DB の `shared_session_catalog` はセッション名、表示情報、状態
   共有先の閲覧操作で Workspace を自動起動しない。
 - セッション停止／アーカイブ: 所有者 Workspace が起動中なら会話を閲覧できる。
 - セッション削除: catalog から消え、共有先にも表示されない。
+
+一覧画面を経由しない保存済み catalog ID への直接アクセスでも、所有者 Workspace が起動中なら
+毎回 live inventory を同期してから ACL を評価する。削除済みセッション／作業コピーの古い規則で
+履歴閲覧や RW 提案を続けることはできない。
 
 履歴応答は `Cache-Control: private, no-store` とし、共通 ETag middleware も `no-store` 応答を
 バッファ／検証子化しない。CP は `cwd`、`path`、`filePath`、JSONL の所在など Workspace 内の

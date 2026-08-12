@@ -25,7 +25,7 @@ export function SharedSessionsSection() {
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [open, setOpen] = useState(false);
   const loadProposals = () => api("api/session-share-proposals").then((d) => {
-    if (!d?.error) setProposals((d.proposals || []).filter((p: Proposal) => p.status === "pending"));
+    if (!d?.error) setProposals((d.proposals || []).filter((p: Proposal) => p.status === "pending" || p.status === "processing"));
   }).catch(() => {});
   useEffect(() => {
     const stop = startSharedSessionsPolling();
@@ -65,9 +65,10 @@ export function SharedSessionsSection() {
               <article className="share-proposal-card" key={p.id}>
                 <strong>{p.proposerUserKey}</strong>
                 <p>{p.payload?.prompt || p.payload?.feedback || p.action}</p>
+                {p.status === "processing" && <p className="muted">{tr("share.outcome_unknown")}</p>}
                 <div className="ui-modal-actions">
-                  <Button onClick={() => void decide(p.id, "reject")}>{tr("share.reject")}</Button>
-                  <Button variant="primary" onClick={() => void decide(p.id, "approve")}>{tr("share.approve")}</Button>
+                  {p.status === "pending" && <Button onClick={() => void decide(p.id, "reject")}>{tr("share.reject")}</Button>}
+                  <Button variant="primary" onClick={() => void decide(p.id, "approve")}>{p.status === "processing" ? tr("share.reconcile") : tr("share.approve")}</Button>
                 </div>
               </article>
             ))}
