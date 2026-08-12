@@ -176,7 +176,7 @@ func parseRolloutFull(lines [][]byte) ([]transcript.Turn, []transcript.Task, []t
 				answered[id] = true
 				if ti, okk := callTurn[id]; okk && len(turns[ti].Parts) > 0 && out != "" {
 					if turns[ti].Parts[0].Kind == "question" {
-						turns[ti].Parts[0].Answer = answerText(out)
+						turns[ti].Parts[0].Answer = answerText(out, turns[ti].Parts[0].Questions)
 					} else {
 						turns[ti].Parts[0].Output = out
 					}
@@ -609,13 +609,25 @@ func genImagePaths(out string) []string {
 }
 
 // answerText renders a request_user_input function_call_output into the chosen answer
-// label(s) for display — matching claude's clean "label, label" form so the mirror's
-// QuestionBlock highlights the picked options instead of dumping raw JSON. codex wraps
-// the reply as {"answers":{"<questionId>":{"answers":["label",…]}}}; we flatten every
-// question's answer array (keys sorted for a stable order). Falls back to the raw output
-// when the shape doesn't match (e.g. a free-text reply stored differently), so the
-// answer is never lost.
-func answerText(out string) string {
+// label(s) for display. codex wraps the reply as
+// {"answers":{"<questionId>":{"answers":["label",…]}}}. For a single question that
+// flattened "label, label" form is enough — matching claude's clean prose so the
+// mirror's QuestionBlock highlights the picked options instead of dumping raw JSON.
+//
+// For MULTIPLE questions in one call, flattening loses which label belongs to which
+// question: every card ends up showing every question's combined picks (reported
+// 2026-08-12 — a 3-question AUQ where each card's "自由入力" box showed the OTHER two
+// questions' selections). codex's per-question "id" (request_user_input's
+// questions[].id) reappears verbatim as the answers map's key (実測 against a live
+// rollout: {"answers":{"switch_behavior":{...},"new_open_behavior":{...},...}} keyed
+// by the same ids the request's questions[] carried), so when `questions` carries
+// those ids we render the same anchored `"<question>"="<answer>"[, ...]` prose claude's
+// AskUserQuestion tool_result uses — the Console's per-question parser
+// (console/src/features/mirror/questionAnswers.ts byAnchors) already splits that form
+// per question. Falls back to the old flattened form (ids absent/mismatched, or a
+// shape we don't recognize) so the answer is never lost, just possibly ambiguous as
+// before.
+func answerText(out string, questions []transcript.Question) string {
 	var env struct {
 		Answers map[string]struct {
 			Answers []string `json:"answers"`
@@ -624,6 +636,29 @@ func answerText(out string) string {
 	if json.Unmarshal([]byte(out), &env) != nil || len(env.Answers) == 0 {
 		return out
 	}
+	label := func(k string) string {
+		var vals []string
+		for _, s := range env.Answers[k].Answers {
+			if s = strings.TrimSpace(s); s != "" {
+				vals = append(vals, s)
+			}
+		}
+		return strings.Join(vals, ", ")
+	}
+	if len(questions) > 1 {
+		pairs := make([]string, 0, len(questions))
+		for _, q := range questions {
+			a, ok := env.Answers[q.ID]
+			if q.ID == "" || !ok || len(a.Answers) == 0 {
+				pairs = nil
+				break
+			}
+			pairs = append(pairs, `"`+q.Question+`"="`+label(q.ID)+`"`)
+		}
+		if len(pairs) == len(questions) {
+			return strings.Join(pairs, ", ")
+		}
+	}
 	keys := make([]string, 0, len(env.Answers))
 	for k := range env.Answers {
 		keys = append(keys, k)
@@ -631,10 +666,8 @@ func answerText(out string) string {
 	sort.Strings(keys)
 	var labels []string
 	for _, k := range keys {
-		for _, s := range env.Answers[k].Answers {
-			if s = strings.TrimSpace(s); s != "" {
-				labels = append(labels, s)
-			}
+		if s := label(k); s != "" {
+			labels = append(labels, s)
 		}
 	}
 	if len(labels) == 0 {
