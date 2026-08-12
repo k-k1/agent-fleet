@@ -216,8 +216,8 @@ const paneOrdinalCommands: Command[] = Array.from({ length: PANE_ORD_COUNT }, (_
 export const ALL_COMMANDS: Command[] = [
   // ---- Pane / layout (leader p, + Alt accelerators) ----
   { id: "pane.splitRight", title: "keys.cmd.splitRight", seq: "p r", when: notMinimalPopout, run: () => layoutStore().splitRight() },
-  { id: "pane.splitDown", title: "keys.cmd.splitDown", seq: "p d", when: notMinimalPopout, run: () => layoutStore().splitDown(getLayout().activeId) },
-  { id: "pane.close", title: "keys.cmd.close", seq: "p w", run: () => layoutStore().closePane(getLayout().activeId) },
+  { id: "pane.splitDown", title: "keys.cmd.splitDown", seq: "p d", when: notMinimalPopout, run: () => layoutStore().splitDown(getLayout().activeCellId) },
+  { id: "pane.close", title: "keys.cmd.close", seq: "p w", run: () => layoutStore().closePane(getLayout().activeCellId) },
   { id: "pane.closeAll", title: "keys.cmd.closeAll", seq: "p a", when: notMinimalPopout, run: () => layoutStore().resetToTerminal() },
   { id: "pane.wrap", title: "keys.cmd.wrap", seq: "p \\", run: toggleWrap },
   { id: "pane.popout", title: "keys.cmd.popout", seq: "p t", when: canPopoutActive, run: () => popoutActive("popout") },

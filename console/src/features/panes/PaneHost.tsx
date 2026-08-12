@@ -9,11 +9,11 @@ import { useMemo, useRef } from "react";
 import type { CSSProperties, PointerEvent as RPointerEvent, ReactNode } from "react";
 import { useLayoutStore } from "../../layout/store.ts";
 import { paneOrdinals } from "../../layout/badges.ts";
-import { isBlankPane, MAX_TAB_COLS } from "../../layout/ops.ts";
+import { MAX_TAB_COLS, selectedView } from "../../layout/ops.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useIsMobile } from "../../lib/device.ts";
 import { Pane } from "./Pane.tsx";
-import type { Column, Pane as PaneT } from "../../layout/types.ts";
+import type { Cell, Column } from "../../layout/types.ts";
 
 const D = 6; // divider thickness in px
 
@@ -36,7 +36,7 @@ export function PaneHost() {
   const cols = layout.cols;
   const N = cols.length;
   const ratios = layout.colRatios;
-  const total = cols.reduce((n, c) => n + c.panes.length, 0);
+  const total = cols.reduce((n, c) => n + c.cells.length, 0);
   const ordinalById = useMemo(() => paneOrdinals(layout), [layout]);
 
   // Cumulative left-ratio before column i.
@@ -101,35 +101,39 @@ export function PaneHost() {
   };
 
   // A lone, empty terminal is the base state — nothing to close.
-  const isBlankSingle = (pane: PaneT) => total === 1 && isBlankPane(pane);
+  const isBlankSingle = (cell: Cell) => total === 1 && cell.views.length === 0;
 
-  const renderPane = (pane: PaneT, col: Column, row: number, rect: CSSProperties) => (
+  const renderPane = (cell: Cell, col: Column, row: number, rect: CSSProperties) => {
+    const pane = selectedView(cell);
+    return (
     <Pane
-      key={layout.mode === "tabs" ? `cell:${col.id}:${row}` : pane.id}
+      key={cell.id}
+      cell={cell}
       pane={pane}
       style={{ position: "absolute", ...rect }}
-      active={total > 1 && pane.id === layout.activeId}
+      active={cell.id === layout.activeCellId}
       single={total === 1}
       tabbed={layout.mode === "tabs"}
       // Desktop: up to 4 columns, each splittable top/bottom. Mobile: only a
       // single top/bottom split (max 2 panes total).
       canSplitRight={!isMobile && N < (layout.mode === "tabs" ? MAX_TAB_COLS : 4)}
-      canSplitDown={isMobile ? total < 2 : col.panes.length < 2}
-      canClose={total > 1 || !isBlankSingle(pane)}
+      canSplitDown={isMobile ? total < 2 : col.cells.length < 2}
+      canClose={total > 1 || !isBlankSingle(cell)}
       canDrag={total > 1}
       onActivate={setActive}
       onClose={closePane}
       onSwap={swapPanes}
       onDropSplit={dropSplit}
-      sessionMeta={pane.session ? sessionByName.get(pane.session) : null}
-      ordinal={total > 1 ? ordinalById.get(pane.id) : null}
+      sessionMeta={pane?.session ? sessionByName.get(pane.session) : null}
+      ordinal={total > 1 ? ordinalById.get(cell.id) : null}
     />
-  );
+    );
+  };
 
   const paneEls: ReactNode[] = [];
   const dividerEls: ReactNode[] = [];
   cols.forEach((col, i) => {
-    const panes = col.panes;
+    const panes = col.cells;
     // On a phone only the first column shows; panes in other columns stay
     // mounted (terminal + socket alive) but hidden.
     if (isMobile && i > 0) {

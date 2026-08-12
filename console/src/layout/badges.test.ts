@@ -13,9 +13,11 @@ const pane = (id: string, content: PaneContent): Pane => ({ ...blankPane(id), co
 // One column per pane, in reading order — enough for the derivations under test.
 function layoutOf(panes: Pane[], activeId: string): Layout {
   return {
-    cols: panes.map((p, i) => ({ id: "c" + i, rowRatio: 0.5, panes: [p] })),
+    version: 3,
+    mode: "split",
+    cols: panes.map((p, i) => ({ id: "c" + i, rowRatio: 0.5, cells: [{ id: "g" + i, selectedViewId: p.id, views: [p] }] })),
     colRatios: panes.map(() => 1 / panes.length),
-    activeId,
+    activeCellId: "g" + panes.findIndex((p) => p.id === activeId),
   };
 }
 
@@ -36,7 +38,7 @@ describe("activeChatId", () => {
   it("reports the conversation the FOCUSED pane shows, not merely an open one", () => {
     const l = layoutOf([pane("a", chat("c1")), pane("b", chat("c2"))], "b");
     expect(activeChatId(l)).toBe("c2");
-    expect(activeChatId({ ...l, activeId: "a" })).toBe("c1");
+    expect(activeChatId({ ...l, activeCellId: "g0" })).toBe("c1");
   });
 
   it("is null when the active pane is a draft or isn't a chat at all", () => {

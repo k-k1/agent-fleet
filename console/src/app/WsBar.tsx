@@ -800,7 +800,7 @@ export function WsBar() {
   const splitDown = useLayoutStore((s) => s.splitDown);
   const resetToTerminal = useLayoutStore((s) => s.resetToTerminal);
   const openPaneTarget = useLayoutStore((s) => s.openTarget);
-  const activePaneId = layout.activeId;
+  const activePaneId = layout.activeCellId;
   const openStart = useSessionsStore((s) => s.openStart);
   const askConfirm = useConfirm();
   const tr = useT();
@@ -829,16 +829,16 @@ export function WsBar() {
 
   // "Close all panes" collapses the split layout back to one empty terminal pane.
   // Disabled when there's already just a single empty pane (nothing to close).
-  const totalPanes = layout.cols.reduce((n, c) => n + c.panes.length, 0);
-  const onlyPane = totalPanes === 1 ? layout.cols[0].panes[0] : null;
+  const totalPanes = layout.cols.reduce((n, c) => n + c.cells.length, 0);
+  const onlyPane = totalPanes === 1 ? layout.cols[0].cells[0] : null;
   const canCloseAll = !(onlyPane && isBlankPane(onlyPane));
 
   // Split (moved here from the per-pane header): 右に分割 appends a column (global);
   // 上下に分割 splits the ACTIVE pane's column into rows. Same limits as before — up to
   // 4 columns (desktop only), each column up to 2 panes. Mobile: one top/bottom split.
-  const activeCol = layout.cols.find((c) => c.panes.some((p) => p.id === activePaneId));
+  const activeCol = layout.cols.find((c) => c.cells.some((p) => p.id === activePaneId));
   const canSplitRight = !isMobile && layout.cols.length < (layout.mode === "tabs" ? MAX_TAB_COLS : 4);
-  const canSplitDown = isMobile ? totalPanes < 2 : (activeCol ? activeCol.panes.length : totalPanes) < 2;
+  const canSplitDown = isMobile ? totalPanes < 2 : (activeCol ? activeCol.cells.length : totalPanes) < 2;
 
   // はじめる while stopped: don't dead-end (起動導線 Ph3) — confirm, start the
   // workspace, and open the hub once the 4s poll reports running. startQueued
