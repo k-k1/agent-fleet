@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -15,6 +16,7 @@ import (
 const (
 	shareProposalMaxBytes = 32 << 10
 	shareProposalMaxOpen  = 20
+	shareOwnerLease       = 2 * time.Minute
 )
 
 type shareReadWindow struct {
@@ -89,7 +91,9 @@ func (a sessionShareAPI) syncCatalogLocked(ctx context.Context, res *resolved) e
 			WorkingCopyID: s.WorkingCopyID, Title: s.Title, Label: s.Label, CreatedAt: s.CreatedAt,
 			State: state, Archived: s.Archived, LastSeen: now})
 	}
-	if err := a.mgr.store.ReplaceSharedSessionCatalog(ctx, res.ws.ID, res.mv.MembershipID, rows); err != nil {
+	if err := a.mgr.store.ReplaceSharedSessionCatalog(ctx, res.ws.ID, res.mv.MembershipID, rows); errors.Is(err, errSessionShareOwnerBusy) {
+		return nil // another CP replica is applying an already-authorized operation
+	} else if err != nil {
 		return err
 	}
 	// A deleted working copy terminates its dynamic rule. Only prune after a
@@ -259,6 +263,10 @@ func (a sessionShareAPI) put(w http.ResponseWriter, r *http.Request, res *resolv
 		}
 	}
 	if err := a.mgr.store.PutSessionShare(r.Context(), row); err != nil {
+		if errors.Is(err, errSessionShareOwnerBusy) {
+			writeAPIErr(w, &apiError{409, "share_operation_in_progress", "an approved Agent operation is in progress; retry the share change"})
+			return
+		}
 		writeAPIErr(w, internalErr(err))
 		return
 	}
@@ -291,6 +299,10 @@ func (a sessionShareAPI) patch(w http.ResponseWriter, r *http.Request, ident Ide
 	s.UpdatedAt = nowTS()
 	changed, err := a.mgr.store.UpdateSessionSharePermission(r.Context(), s.ID, mv.MembershipID, s.Permission, s.UpdatedAt)
 	if err != nil {
+		if errors.Is(err, errSessionShareOwnerBusy) {
+			writeAPIErr(w, &apiError{409, "share_operation_in_progress", "an approved Agent operation is in progress; retry the share change"})
+			return
+		}
 		writeAPIErr(w, internalErr(err))
 		return
 	}
@@ -315,6 +327,10 @@ func (a sessionShareAPI) delete(w http.ResponseWriter, r *http.Request, ident Id
 		return
 	}
 	if err := a.mgr.store.DeleteSessionShare(r.Context(), s.ID, mv.MembershipID); err != nil {
+		if errors.Is(err, errSessionShareOwnerBusy) {
+			writeAPIErr(w, &apiError{409, "share_operation_in_progress", "an approved Agent operation is in progress; retry the share change"})
+			return
+		}
 		writeAPIErr(w, internalErr(err))
 		return
 	}
@@ -699,7 +715,7 @@ func (a sessionShareAPI) approve(w http.ResponseWriter, r *http.Request, ident I
 	if p.Status == "processing" {
 		state, status := lookupAgentShareOperation(res.rt, p.ID)
 		if state == "applied" && status < http.StatusBadRequest {
-			changed, err := a.mgr.store.TransitionSessionShareProposal(r.Context(), p.ID, "processing", "approved", ident.ID, nowTS(), true)
+			changed, err := a.mgr.store.FinalizeSessionShareProposal(r.Context(), p.ID, p.OwnerMembershipID, ident.ID, nowTS())
 			if err != nil {
 				writeAPIErr(w, internalErr(err))
 				return
@@ -730,7 +746,9 @@ func (a sessionShareAPI) approve(w http.ResponseWriter, r *http.Request, ident I
 	// ACL and catalog changes from crossing the authorized Agent operation.
 	applyCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	claimed, catalog, state, err := a.mgr.store.ClaimSessionShareProposal(applyCtx, p.ID, mv.MembershipID, ident.ID, nowTS())
+	claimNow := time.Now().UTC()
+	claimed, catalog, state, err := a.mgr.store.ClaimSessionShareProposal(applyCtx, p.ID, mv.MembershipID, ident.ID,
+		claimNow.Format(time.RFC3339), claimNow.Add(shareOwnerLease).Format(time.RFC3339))
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -743,6 +761,9 @@ func (a sessionShareAPI) approve(w http.ResponseWriter, r *http.Request, ident I
 	case "processing":
 		writeAPIErr(w, &apiError{409, "proposal_outcome_unknown", "the operation was already claimed; its outcome cannot be retried safely"})
 		return
+	case "busy":
+		writeAPIErr(w, &apiError{409, "share_operation_in_progress", "another approved Agent operation is in progress"})
+		return
 	default:
 		writeAPIErr(w, &apiError{404, "not_found", "proposal or shared session not found"})
 		return
@@ -754,7 +775,7 @@ func (a sessionShareAPI) approve(w http.ResponseWriter, r *http.Request, ident I
 	}
 	finalizeCtx, finalizeCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer finalizeCancel()
-	changed, err := a.mgr.store.TransitionSessionShareProposal(finalizeCtx, claimed.ID, "processing", "approved", ident.ID, nowTS(), true)
+	changed, err := a.mgr.store.FinalizeSessionShareProposal(finalizeCtx, claimed.ID, claimed.OwnerMembershipID, ident.ID, nowTS())
 	if err != nil {
 		writeAPIErr(w, &apiError{409, "proposal_outcome_unknown", "the Agent applied the operation but Control Plane could not record the result: " + err.Error()})
 		return

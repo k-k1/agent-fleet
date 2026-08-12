@@ -268,3 +268,73 @@ func TestShareDowngradeWaitsForAuthorizedAgentOperation(t *testing.T) {
 		t.Fatal("share downgrade did not continue after Agent operation finished")
 	}
 }
+
+func TestShareLeaseBlocksDowngradeAcrossManagers(t *testing.T) {
+	ctx := context.Background()
+	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tenant, _ := st.EnsureDefaultTenant(ctx)
+	ownerIdentity, _ := st.UpsertIdentity(ctx, "ha-owner@example.com", "ha-owner", "")
+	recipientIdentity, _ := st.UpsertIdentity(ctx, "ha-recipient@example.com", "ha-recipient", "")
+	owner, _ := st.EnsureMembership(ctx, ownerIdentity.ID, tenant.ID, "member")
+	recipient, _ := st.EnsureMembership(ctx, recipientIdentity.ID, tenant.ID, "member")
+	ownerViews, _ := st.ListMemberships(ctx, ownerIdentity.ID)
+	workspace := Workspace{ID: newID(), TenantID: tenant.ID, MembershipID: owner.ID, ContainerName: "c", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: nowTS()}
+	if err := st.CreateWorkspace(ctx, workspace); err != nil {
+		t.Fatal(err)
+	}
+	catalog := SharedSessionCatalog{ID: newID(), WorkspaceID: workspace.ID, OwnerMembershipID: owner.ID, Name: "ha-session", Kind: "codex", WorkingCopyID: "wc-ha", LastSeen: nowTS()}
+	if err := st.ReplaceSharedSessionCatalog(ctx, workspace.ID, owner.ID, []SharedSessionCatalog{catalog}); err != nil {
+		t.Fatal(err)
+	}
+	share := SessionShare{ID: newID(), TenantID: tenant.ID, OwnerMembershipID: owner.ID,
+		RecipientMembershipID: recipient.ID, ScopeType: "session", ScopeKey: catalog.Name, Permission: "rw",
+		CreatedAt: nowTS(), UpdatedAt: nowTS()}
+	if err := st.PutSessionShare(ctx, share); err != nil {
+		t.Fatal(err)
+	}
+	proposal := SessionShareProposal{ID: newID(), TenantID: tenant.ID, CatalogID: catalog.ID,
+		OwnerMembershipID: owner.ID, ProposerMembershipID: recipient.ID, Action: "turn", Ciphertext: "opaque",
+		Status: "pending", CreatedAt: nowTS(), ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}
+	if err := st.CreateSessionShareProposal(ctx, proposal); err != nil {
+		t.Fatal(err)
+	}
+	managerA := &manager{store: st}
+	managerB := &manager{store: st}
+	localA := managerA.shareLockFor(owner.ID)
+	localA.Lock() // a different manager has a distinct in-process mutex
+	claimAt := time.Now().UTC()
+	_, _, state, err := managerA.store.ClaimSessionShareProposal(ctx, proposal.ID, owner.ID, ownerIdentity.ID,
+		claimAt.Format(time.RFC3339), claimAt.Add(shareOwnerLease).Format(time.RFC3339))
+	if err != nil || state != "claimed" {
+		localA.Unlock()
+		t.Fatalf("claim state=%q err=%v", state, err)
+	}
+	patch := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPatch, "/api/session-shares/"+share.ID, strings.NewReader(`{"permission":"ro"}`))
+		req.SetPathValue("id", share.ID)
+		rec := httptest.NewRecorder()
+		newSessionShareAPI(managerB).patch(rec, req, ownerIdentity, ownerViews[0])
+		return rec
+	}
+	blocked := patch()
+	if blocked.Code != http.StatusConflict || !strings.Contains(blocked.Body.String(), "share_operation_in_progress") {
+		localA.Unlock()
+		t.Fatalf("cross-manager downgrade status=%d body=%s", blocked.Code, blocked.Body.String())
+	}
+	localA.Unlock()
+	changed, err := st.FinalizeSessionShareProposal(ctx, proposal.ID, owner.ID, ownerIdentity.ID, nowTS())
+	if err != nil || !changed {
+		t.Fatalf("finalize changed=%v err=%v", changed, err)
+	}
+	after := patch()
+	if after.Code != http.StatusOK {
+		t.Fatalf("post-finalize downgrade status=%d body=%s", after.Code, after.Body.String())
+	}
+}

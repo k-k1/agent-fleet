@@ -3,7 +3,27 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 )
+
+var errSessionShareOwnerBusy = errors.New("session share owner has an Agent operation in progress")
+
+func lockSessionShareOwner(ctx context.Context, q sqlExecQuery, owner string) error {
+	_, err := q.ExecContext(ctx, `UPDATE membership SET id=id WHERE id=?`, owner)
+	return err
+}
+
+func ensureSessionShareOwnerIdle(ctx context.Context, q sqlExecQuery, owner, now string) error {
+	var active int
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM session_share_owner_lease
+		WHERE owner_membership_id=? AND expires_at>?`, owner, now).Scan(&active); err != nil {
+		return err
+	}
+	if active != 0 {
+		return errSessionShareOwnerBusy
+	}
+	return nil
+}
 
 func (s *sqlStore) PutSessionShare(ctx context.Context, r SessionShare) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -11,6 +31,12 @@ func (s *sqlStore) PutSessionShare(ctx context.Context, r SessionShare) error {
 		return err
 	}
 	defer tx.Rollback()
+	if err = lockSessionShareOwner(ctx, tx, r.OwnerMembershipID); err != nil {
+		return err
+	}
+	if err = ensureSessionShareOwnerIdle(ctx, tx, r.OwnerMembershipID, r.UpdatedAt); err != nil {
+		return err
+	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO session_share
 		(id,tenant_id,owner_membership_id,recipient_membership_id,scope_type,scope_key,permission,created_at,updated_at)
 		VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(owner_membership_id,recipient_membership_id,scope_type,scope_key)
@@ -73,6 +99,12 @@ func (s *sqlStore) DeleteSessionShare(ctx context.Context, id, owner string) err
 		return err
 	}
 	defer tx.Rollback()
+	if err = lockSessionShareOwner(ctx, tx, owner); err != nil {
+		return err
+	}
+	if err = ensureSessionShareOwnerIdle(ctx, tx, owner, nowTS()); err != nil {
+		return err
+	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM session_share WHERE id=? AND owner_membership_id=?`, id, owner); err != nil {
 		return err
 	}
@@ -87,6 +119,12 @@ func (s *sqlStore) DeleteSessionSharesByScope(ctx context.Context, owner, scopeT
 		return err
 	}
 	defer tx.Rollback()
+	if err = lockSessionShareOwner(ctx, tx, owner); err != nil {
+		return err
+	}
+	if err = ensureSessionShareOwnerIdle(ctx, tx, owner, nowTS()); err != nil {
+		return err
+	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM session_share WHERE owner_membership_id=? AND scope_type=? AND scope_key=?`, owner, scopeType, scopeKey); err != nil {
 		return err
 	}
@@ -121,6 +159,12 @@ func (s *sqlStore) UpdateSessionSharePermission(ctx context.Context, id, owner, 
 		return false, err
 	}
 	defer tx.Rollback()
+	if err = lockSessionShareOwner(ctx, tx, owner); err != nil {
+		return false, err
+	}
+	if err = ensureSessionShareOwnerIdle(ctx, tx, owner, updatedAt); err != nil {
+		return false, err
+	}
 	result, err := tx.ExecContext(ctx, `UPDATE session_share SET permission=?,updated_at=? WHERE id=? AND owner_membership_id=?`, permission, updatedAt, id, owner)
 	if err != nil {
 		return false, err
@@ -141,6 +185,12 @@ func (s *sqlStore) ReplaceSharedSessionCatalog(ctx context.Context, workspaceID,
 		return err
 	}
 	defer tx.Rollback()
+	if err = lockSessionShareOwner(ctx, tx, owner); err != nil {
+		return err
+	}
+	if err = ensureSessionShareOwnerIdle(ctx, tx, owner, nowTS()); err != nil {
+		return err
+	}
 	keep := map[string]bool{}
 	for _, r := range in {
 		keep[r.Name] = true
@@ -302,22 +352,40 @@ func (s *sqlStore) CountPendingSessionShareProposals(ctx context.Context, catalo
 	return n, err
 }
 func (s *sqlStore) ExpireSessionShareProposals(ctx context.Context, owner, now string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE session_share_proposal
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = lockSessionShareOwner(ctx, tx, owner); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE session_share_proposal
 		SET status='expired',ciphertext='',decided_at=?
-		WHERE owner_membership_id=? AND status IN ('pending','processing') AND expires_at<=?`, now, owner, now)
-	return err
+		WHERE owner_membership_id=? AND expires_at<=? AND
+		 (status='pending' OR (status='processing' AND NOT EXISTS (
+			SELECT 1 FROM session_share_owner_lease l
+			WHERE l.owner_membership_id=session_share_proposal.owner_membership_id AND l.expires_at>?
+		 )))`, now, owner, now, now)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // ClaimSessionShareProposal uses a short transaction to linearize approval with
 // ACL/catalog mutations, then commits processing before any Agent HTTP I/O. The
 // proposal id is the durable Agent operation id, so a lost response is reconciled
 // without repeating the side effect.
-func (s *sqlStore) ClaimSessionShareProposal(ctx context.Context, id, owner, by, now string) (SessionShareProposal, SharedSessionCatalog, string, error) {
+func (s *sqlStore) ClaimSessionShareProposal(ctx context.Context, id, owner, by, now, leaseUntil string) (SessionShareProposal, SharedSessionCatalog, string, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return SessionShareProposal{}, SharedSessionCatalog{}, "", err
 	}
 	defer tx.Rollback()
+	if err = lockSessionShareOwner(ctx, tx, owner); err != nil {
+		return SessionShareProposal{}, SharedSessionCatalog{}, "", err
+	}
 	p, ok, err := scanProposal(tx.QueryRowContext(ctx, `SELECT id,tenant_id,catalog_id,owner_membership_id,proposer_membership_id,
 		action,ciphertext,key_ref,status,created_at,expires_at,decided_at,decided_by FROM session_share_proposal WHERE id=?`, id))
 	if err != nil {
@@ -346,6 +414,11 @@ func (s *sqlStore) ClaimSessionShareProposal(ctx context.Context, id, owner, by,
 	if !ok {
 		return p, c, "not_found", nil
 	}
+	if err = ensureSessionShareOwnerIdle(ctx, tx, owner, now); errors.Is(err, errSessionShareOwnerBusy) {
+		return p, c, "busy", nil
+	} else if err != nil {
+		return p, c, "", err
+	}
 	// Portable row locks make an ACL/catalog mutation and this claim commit in a
 	// deterministic order, but are released before the external Agent request.
 	if _, err = tx.ExecContext(ctx, `UPDATE shared_session_catalog SET last_seen=last_seen WHERE id=?`, c.ID); err != nil {
@@ -373,6 +446,12 @@ func (s *sqlStore) ClaimSessionShareProposal(ctx context.Context, id, owner, by,
 		}
 		return p, c, "expired", nil
 	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO session_share_owner_lease
+		(owner_membership_id,operation_id,expires_at,updated_at) VALUES(?,?,?,?)
+		ON CONFLICT(owner_membership_id) DO UPDATE SET operation_id=excluded.operation_id,
+		expires_at=excluded.expires_at,updated_at=excluded.updated_at`, owner, id, leaseUntil, now); err != nil {
+		return p, c, "", err
+	}
 	result, err := tx.ExecContext(ctx, `UPDATE session_share_proposal SET status='processing',decided_by=?,decided_at=? WHERE id=? AND status='pending'`, by, now, id)
 	if err != nil {
 		return p, c, "", err
@@ -388,6 +467,32 @@ func (s *sqlStore) ClaimSessionShareProposal(ctx context.Context, id, owner, by,
 	p.DecidedBy = by
 	p.DecidedAt = now
 	return p, c, "claimed", nil
+}
+
+func (s *sqlStore) FinalizeSessionShareProposal(ctx context.Context, id, owner, by, at string) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	if err = lockSessionShareOwner(ctx, tx, owner); err != nil {
+		return false, err
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE session_share_proposal
+		SET status='approved',ciphertext='',decided_by=?,decided_at=?
+		WHERE id=? AND owner_membership_id=? AND status='processing'`, by, at, id, owner)
+	if err != nil {
+		return false, err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM session_share_owner_lease
+		WHERE owner_membership_id=? AND operation_id=?`, owner, id); err != nil {
+		return false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 func (s *sqlStore) TransitionSessionShareProposal(ctx context.Context, id, from, to, by, at string, clearBody bool) (bool, error) {
 	body := "ciphertext"
