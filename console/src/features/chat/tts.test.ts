@@ -81,13 +81,15 @@ describe("TTS pane stereo pan", () => {
     wrap: null,
   });
   const layout: Layout = {
+    version: 3,
+    mode: "split",
     cols: [
-      { id: "left-col", rowRatio: 0.5, panes: [pane("left-top"), pane("left-bottom")] },
-      { id: "center-col", rowRatio: 0.5, panes: [pane("center")] },
-      { id: "right-col", rowRatio: 0.5, panes: [pane("right")] },
+      { id: "left-col", rowRatio: 0.5, cells: [pane("left-top"), pane("left-bottom")].map((v) => ({ id: "g-" + v.id, selectedViewId: v.id, views: [v] })) },
+      { id: "center-col", rowRatio: 0.5, cells: [pane("center")].map((v) => ({ id: "g-" + v.id, selectedViewId: v.id, views: [v] })) },
+      { id: "right-col", rowRatio: 0.5, cells: [pane("right")].map((v) => ({ id: "g-" + v.id, selectedViewId: v.id, views: [v] })) },
     ],
     colRatios: [0.25, 0.5, 0.25],
-    activeId: "center",
+    activeCellId: "g-center",
   };
 
   it("左右端を最大パン、中央列を中央へ配置する", () => {

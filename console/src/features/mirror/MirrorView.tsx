@@ -5104,7 +5104,7 @@ function UserFileBlock({ files, caption, onOpen }: { files?: string[]; caption?:
 function findPlanPane(session: string): string | null {
   const layout = useLayoutStore.getState().layout;
   for (const col of layout?.cols || []) {
-    for (const pane of col.panes) {
+    for (const cell of col.cells) for (const pane of cell.views) {
       if (pane.content.kind === "doc" && pane.content.docSession === session) return pane.id;
     }
   }
@@ -5115,7 +5115,7 @@ function findPlanPane(session: string): string | null {
 function findPane(id: string) {
   const layout = useLayoutStore.getState().layout;
   for (const col of layout?.cols || []) {
-    for (const pane of col.panes) if (pane.id === id) return pane;
+    for (const cell of col.cells) for (const pane of cell.views) if (pane.id === id) return pane;
   }
   return null;
 }

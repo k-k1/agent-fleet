@@ -22,7 +22,7 @@ function cssEscape(s: string): string {
  * view). No-op on touch devices, where focusing would summon the soft keyboard. */
 export function focusPaneContent(paneId: string): void {
   if (coarsePointer()) return;
-  const pane = document.querySelector<HTMLElement>(`.pane[data-pane-id="${cssEscape(paneId)}"]`);
+  const pane = document.querySelector<HTMLElement>(`.pane[data-cell-id="${cssEscape(paneId)}"]`);
   pane?.querySelector<HTMLElement>(CONTENT_SELECTOR)?.focus();
 }
 

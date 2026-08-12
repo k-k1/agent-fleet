@@ -25,6 +25,14 @@
   --pane-ctl-w: calc(16px + var(--pane-ctl-n, 2) * 24px);
 }
 
+.pane > .pane-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  color: var(--muted2);
+  padding: 32px;
+}
+
 /* A tabbed-grid cell keeps the existing Pane surface and runtime identity. The
    tab strip sits above every view rather than asking each feature header to
    learn about tabs. It scrolls horizontally so a busy cell never narrows the
