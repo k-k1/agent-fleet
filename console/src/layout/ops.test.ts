@@ -186,6 +186,15 @@ describe("tabbed layout", () => {
     expect(allViews(l).map((p) => p.id)).toContain(moving);
     expect(l.cols[1].panes[0].id).toBe(moving);
   });
+  it("fills a fresh split cell without retaining its empty placeholder as a tab", () => {
+    let l = openInTab(freshTabbedLayout(), term("s0"));
+    const source = l.activeId;
+    l = splitRight(l);
+    const target = l.activeId;
+    l = moveTab(l, source, target);
+    expect(orderedTabViews(l.cols[1].panes[0]).map((view) => view.id)).toEqual([source]);
+    expect(allViews(l).map((view) => view.id)).not.toContain(target);
+  });
   it("moves a tab to a new right split without rebuilding its identity", () => {
     let l = openInTab(freshTabbedLayout(), term("s0"));
     l = openInTab(l, file("one.ts"));
