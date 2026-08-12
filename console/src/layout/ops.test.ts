@@ -195,6 +195,15 @@ describe("tabbed layout", () => {
     expect(orderedTabViews(l.cols[1].panes[0]).map((view) => view.id)).toEqual([source]);
     expect(allViews(l).map((view) => view.id)).not.toContain(target);
   });
+  it("closes an empty cell while retaining the tabbed profile for the final cell", () => {
+    let l = freshTabbedLayout();
+    l = splitRight(l);
+    const empty = l.activeId;
+    l = closePane(l, empty);
+    expect(l.mode).toBe("tabs");
+    expect(l.cols).toHaveLength(1);
+    expect(isBlankPane(l.cols[0].panes[0])).toBe(true);
+  });
   it("moves a tab to a new right split without rebuilding its identity", () => {
     let l = openInTab(freshTabbedLayout(), term("s0"));
     l = openInTab(l, file("one.ts"));

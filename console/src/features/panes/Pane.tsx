@@ -216,6 +216,32 @@ export function Pane({
     if (view.content.kind === "terminal" && view.session && !session) return tr("pane.no_session");
     return paneTitle(view, session);
   };
+  // The selected session can be shown either as terminal or chat. Keep these
+  // cell actions in the respective header, immediately before that switch,
+  // so they never disappear merely because the user chose チャット.
+  const tabHeaderActions = tabbed ? (
+    <span className="tab-pane-actions">
+      {showPopout && (
+        <IconButton
+          icon="link-external"
+          label={tr("ui.popout_pane_hint")}
+          onClick={() => openPanePopout(pane, "popout")}
+        />
+      )}
+      {canClose && (
+        <IconButton
+          icon="close"
+          label={tr("ui.close_pane_hint")}
+          className="pane-close"
+          onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+          onAuxClick={(e) => {
+            if (e.button === 1) { e.preventDefault(); onClose(pane.id, true); }
+          }}
+          onClick={(e) => onClose(pane.id, e.ctrlKey || e.metaKey)}
+        />
+      )}
+    </span>
+  ) : undefined;
 
   const onDragStart = (e: RDragEvent) => {
     e.dataTransfer.setData(DND, pane.id);
@@ -395,25 +421,7 @@ export function Pane({
             mirror={mirror}
             onToggleMirror={onToggleMirror}
             onResume={onResume}
-            headerActions={tabbed ? (
-              <span className="term-tab-actions">
-                {showPopout && (
-                  <IconButton
-                    icon="link-external"
-                    label={tr("ui.popout_pane_hint")}
-                    onClick={() => openPanePopout(pane, "popout")}
-                  />
-                )}
-                {canClose && (
-                  <IconButton
-                    icon="close"
-                    label={tr("ui.close_pane_hint")}
-                    className="pane-close"
-                    onClick={(e) => onClose(pane.id, e.ctrlKey || e.metaKey)}
-                  />
-                )}
-              </span>
-            ) : undefined}
+            headerActions={tabHeaderActions}
           />
         </div>
       )}
@@ -427,6 +435,7 @@ export function Pane({
           onToggleMirror={onToggleMirror}
           readOnly={!attached}
           onResume={onResume}
+          headerActions={tabHeaderActions}
         />
       )}
       {pane.content.kind === "scm" && <SourceControlView repo={pane.content.scmRepo} path={pane.content.scmPath} />}

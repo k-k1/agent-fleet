@@ -82,6 +82,15 @@
      --sel-accent alone can't reach the :root-derived --sel-bg/--sel-fg (tokens.css). */
   --sel-accent: var(--viewer-accent, var(--topbar-accent));
 }
+.mirror-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+/* In a group the actions themselves own the right alignment, keeping the
+   pop-out/close pair immediately left of the chat/terminal switch. */
+.mirror-head-actions .mirror-toggle { margin-left: 0; }
 /* Each ターミナル/チャット segment is an icon + label; center them with a small gap
    so the button reads well both with the label and (on narrow panes) icon-only. */
 .mirror-toggle .seg-btn {
