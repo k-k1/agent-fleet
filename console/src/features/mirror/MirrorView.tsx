@@ -113,7 +113,7 @@ import { ManagedSettingsModal } from "./ManagedSettingsModal.tsx";
 import { ForkAtModal } from "./ForkAtModal.tsx";
 import type { ForkAtTarget } from "./ForkAtModal.tsx";
 import { canBranchFrom, canBranchInSession, carriedUserTurns } from "./forkAt.ts";
-import { HandoffProposal, useHandoffProposal } from "./HandoffProposal.tsx";
+import { HandoffProposal, useHandoffProposals, type Proposal as HandoffProposalT } from "./HandoffProposal.tsx";
 import { chronoInsertIndex } from "./handoffPlacement.ts";
 import { carryEnd, endOf, footTime } from "./turnTime.ts";
 
@@ -372,9 +372,13 @@ export function MirrorView({
       return next;
     });
   const [loaded, setLoaded] = useState(false); // false until the first transcript fetch returns
-  // This session's outstanding handoff proposal. Owned here (not inside the card) because
-  // the card is placed at its created_at inside the transcript, not pinned to the bottom.
-  const [handoff, setHandoff] = useHandoffProposal(session);
+  // This session's outstanding handoff proposals (possibly more than one — a single turn
+  // can fan a task out into several parallel follow-ups). Owned here (not inside the
+  // card) because each card is placed at its created_at inside the transcript, not
+  // pinned to the bottom.
+  const [handoffs, setHandoffs] = useHandoffProposals(session);
+  const updateHandoff = (id: string, next: HandoffProposalT | null) =>
+    setHandoffs(next ? handoffs.map((h) => (h.id === id ? next : h)) : handoffs.filter((h) => h.id !== id));
   const [termState, setTermState] = useState(""); // terminal-only state: "resume" | "compacting" | "update" | ""
   // Compaction progress (parsed from the pane) so the 圧縮中 block shows a bar, not just a spinner.
   const [compactProg, setCompactProg] = useState<{ pct: number; elapsed?: string } | null>(null);
@@ -2696,9 +2700,10 @@ export function MirrorView({
               {tr("mirror.ws_stopped_history")}
             </div>
           )
-        ) : groups.length === 0 && !pending && !pendingPlan && !pendingPerm && !handoff ? (
-          // !handoff: with an empty transcript the proposal is the only thing to show,
-          // and it now lives inside renderGroups (which the empty branch would skip).
+        ) : groups.length === 0 && !pending && !pendingPlan && !pendingPerm && handoffs.length === 0 ? (
+          // handoffs.length === 0: with an empty transcript the proposals are the only
+          // thing to show, and they now live inside renderGroups (which the empty branch
+          // would skip).
           <div className="mirror-empty muted">
             {readOnly
               ? tr("mirror.no_history")
@@ -2723,20 +2728,18 @@ export function MirrorView({
             atBottomRef.current,
             expandThinking(settings, sessionMeta?.kind),
             (p) => rejectedPlansRef.current.has(p.trim()),
-            handoff
-              ? {
-                  at: handoff.created_at,
-                  node: (
-                    <HandoffProposal
-                      key="handoff"
-                      session={session}
-                      sessionMeta={sessionMeta}
-                      proposal={handoff}
-                      onChange={setHandoff}
-                    />
-                  ),
-                }
-              : undefined,
+            handoffs.map((h) => ({
+              at: h.created_at,
+              node: (
+                <HandoffProposal
+                  key={"handoff-" + h.id}
+                  session={session}
+                  sessionMeta={sessionMeta}
+                  proposal={h}
+                  onChange={(next) => updateHandoff(h.id, next)}
+                />
+              ),
+            })),
             canForkAt ? openForkAt : undefined,
           )
         )}
@@ -3573,17 +3576,24 @@ function renderGroups(
   // 各カード > 動作設定・既定オフ）。kind 単位なので codex と opencode は独立に効く。
   expandThinking: boolean,
   isRejectedPlan: (plan: string) => boolean,
-  // A durable card to place at its own moment in the conversation (the handoff
-  // proposal). Appended last only while nothing newer exists — never pinned there,
-  // which is what used to hide every later message (see handoffPlacement).
-  inlineCard?: { at: number; node: ReactNode },
+  // Durable cards to place at their own moment in the conversation (handoff proposals —
+  // a session may have more than one outstanding at once). Each is appended last only
+  // while nothing newer exists — never pinned there, which is what used to hide every
+  // later message (see handoffPlacement).
+  inlineCards: Array<{ at: number; node: ReactNode }> = [],
   // Branch from a past user turn (docs/55); undefined = this session can't, so no turn
   // shows the affordance.
   onForkAt?: (turn: Group) => void,
 ) {
   const els = [];
   let prevCtx = "";
-  const cardAt = inlineCard ? chronoInsertIndex(groups.map((g) => g.ts), inlineCard.at) : -1;
+  const times = groups.map((g) => g.ts);
+  // Sorted by `at` so cards landing at the same insertion slot (e.g. several proposed in
+  // one turn, all newer than every group) still render oldest-first.
+  const cards = inlineCards
+    .slice()
+    .sort((a, b) => a.at - b.at)
+    .map((c) => ({ ...c, insertAt: chronoInsertIndex(times, c.at) }));
   // The current work boundary — INCLUDING a just-sent optimistic echo (pending). If we
   // skipped pending here, sending a new prompt would leave lastUser on the PREVIOUS user
   // turn, so the previous (already-finished) reply counts as "the live exchange" below and
@@ -3591,7 +3601,7 @@ function renderGroups(
   // the boundary (but not un-run queued prompts), which keeps the old reply folded.
   const lastUser = latestWorkPromptIndex(groups);
   for (let i = 0; i < groups.length; i++) {
-    if (i === cardAt) els.push(inlineCard!.node);
+    for (const c of cards) if (c.insertAt === i) els.push(c.node);
     const g = groups[i];
     const ctx = g.branch || g.cwd ? (g.branch || "") + "\x1f" + (g.cwd || "") : "";
     if (ctx && ctx !== prevCtx) {
@@ -3639,9 +3649,9 @@ function renderGroups(
       ),
     );
   }
-  // Nothing in the transcript is newer than the card (the normal case right after a
-  // session proposes its handoff): it goes last — until the next turn arrives.
-  if (cardAt >= groups.length) els.push(inlineCard!.node);
+  // Nothing in the transcript is newer than these cards (the normal case right after a
+  // session proposes a handoff): they go last — until the next turn arrives.
+  for (const c of cards) if (c.insertAt >= groups.length) els.push(c.node);
   return els;
 }
 

@@ -368,7 +368,7 @@ func mcpStdioToolAdvertised(name string) bool {
 var mcpStdioSelfReportTools = []map[string]any{
 	{
 		"name":        "propose_session_handoff",
-		"description": "Agent Fleet: 次の新規セッションへ渡す初回プロンプトを利用者へ提案する。セッションは起動しない。作業の区切りで、未完了事項・変更点・次の手順を次のエージェントがそのまま実行できるプロンプトにまとめて渡す。利用者が Console で内容を確認・編集し、エージェントとモデルを選んでから起動する。",
+		"description": "Agent Fleet: 次の新規セッションへ渡す初回プロンプトを利用者へ提案する。セッションは起動しない。作業の区切りで、未完了事項・変更点・次の手順を次のエージェントがそのまま実行できるプロンプトにまとめて渡す。利用者が Console で内容を確認・編集し、エージェントとモデルを選んでから起動する。呼ぶたびに新しい提案が追加される（複数の後続セッションへ並行して引き継ぐ場合は複数回呼んでよい。上書きはされない）。",
 		"inputSchema": map[string]any{
 			"type": "object", "additionalProperties": false,
 			"properties": map[string]any{

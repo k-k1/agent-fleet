@@ -121,7 +121,11 @@ interface LaunchSeedStore {
 	 *  dialog's success path badges that proposal 起動済み; a cancelled dialog leaves it
 	 *  untouched, which is why the mark can't happen when the seed is set. */
 	handoffSession: string;
-	set(p: string, title?: string, handoffSession?: string): void;
+	/** Which of that session's (possibly several) outstanding proposals this is — a
+	 *  session may propose more than one handoff in a turn, so the session name alone
+	 *  no longer identifies the card to badge. */
+	handoffId: string;
+	set(p: string, title?: string, handoffSession?: string, handoffId?: string): void;
   clear(): void;
 }
 
@@ -129,8 +133,9 @@ export const useLaunchSeed = create<LaunchSeedStore>((set) => ({
 	prompt: "",
 	title: "",
 	handoffSession: "",
-	set: (prompt, title = "", handoffSession = "") => set({ prompt, title, handoffSession }),
-	clear: () => set({ prompt: "", title: "", handoffSession: "" }),
+	handoffId: "",
+	set: (prompt, title = "", handoffSession = "", handoffId = "") => set({ prompt, title, handoffSession, handoffId }),
+	clear: () => set({ prompt: "", title: "", handoffSession: "", handoffId: "" }),
 }));
 
 /** Poll every 60s while the tab is visible AND the workspace is running, so the
