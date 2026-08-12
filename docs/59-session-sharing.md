@@ -44,7 +44,10 @@ replica間でもAgent操作を横切れない。成功確定とlease解放も同
 share mutexにより競合リクエストを待機させる。そのためSQLiteの全write lockやPostgres connectionを
 外部I/O中に保持せず、共有解除／RO降格との順序は一意になる。ACL変更が先なら提案を失効して本文を
 消し、承認が先なら副作用の完了後にACL変更が通る。Workspace の停止も同じ
-workspace lifecycle lock を使い、停止が先なら送信せず、承認が先なら結果の永続化後に停止する。
+owner leaseを使う。start／stop／recreate／clean-homeはRuntime操作の前に同じ行へ最大10分のleaseを
+取得し、終了時に解放する。そのため別CP replicaからのlifecycle変更もAgent操作を横切れない。
+lifecycle変更が先なら
+承認claimをbusyで拒否し、承認が先なら結果の永続化後にlifecycle変更を再試行できる。
 
 CP は proposal ID を `X-Agent-Fleet-Operation-ID` として Agent へ渡す。Agent は home volume 内に
 その ID を副作用前に create-only で永続 claim し、ハンドラ応答を永続化してから CP へ返す。

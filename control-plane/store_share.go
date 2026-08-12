@@ -25,6 +25,48 @@ func ensureSessionShareOwnerIdle(ctx context.Context, q sqlExecQuery, owner, now
 	return nil
 }
 
+func (s *sqlStore) AcquireSessionShareOwnerLease(ctx context.Context, owner, operationID, now, leaseUntil string) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	if err = lockSessionShareOwner(ctx, tx, owner); err != nil {
+		return false, err
+	}
+	if err = ensureSessionShareOwnerIdle(ctx, tx, owner, now); errors.Is(err, errSessionShareOwnerBusy) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO session_share_owner_lease
+		(owner_membership_id,operation_id,expires_at,updated_at) VALUES(?,?,?,?)
+		ON CONFLICT(owner_membership_id) DO UPDATE SET operation_id=excluded.operation_id,
+		expires_at=excluded.expires_at,updated_at=excluded.updated_at`, owner, operationID, leaseUntil, now); err != nil {
+		return false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *sqlStore) ReleaseSessionShareOwnerLease(ctx context.Context, owner, operationID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = lockSessionShareOwner(ctx, tx, owner); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM session_share_owner_lease
+		WHERE owner_membership_id=? AND operation_id=?`, owner, operationID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *sqlStore) PutSessionShare(ctx context.Context, r SessionShare) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

@@ -21,6 +21,18 @@ func (r shareStopRuntime) Endpoint() string             { return "" }
 func (r shareStopRuntime) Token() string                { return "" }
 func (r shareStopRuntime) Name() string                 { return "share-stop" }
 
+type shareLifecycleRuntime struct {
+	starts atomic.Int32
+	stops  atomic.Int32
+}
+
+func (r *shareLifecycleRuntime) Start(context.Context) error  { r.starts.Add(1); return nil }
+func (r *shareLifecycleRuntime) Stop(context.Context) error   { r.stops.Add(1); return nil }
+func (r *shareLifecycleRuntime) State(context.Context) string { return "running" }
+func (r *shareLifecycleRuntime) Endpoint() string             { return "" }
+func (r *shareLifecycleRuntime) Token() string                { return "" }
+func (r *shareLifecycleRuntime) Name() string                 { return "share-lifecycle" }
+
 func TestEffectiveSharePermission(t *testing.T) {
 	c := SharedSessionCatalog{OwnerMembershipID: "owner", Name: "s1", WorkingCopyID: "wc1"}
 	shares := []SessionShare{
@@ -203,7 +215,7 @@ func TestWorkspaceStopWaitsForSharedApprovalLifecycleLock(t *testing.T) {
 	go func() {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/api/workspace/stop", nil)
-		newWorkspaceAPI(mgr, false).stop(rec, req, &resolved{rt: runtime, ws: workspace})
+		newWorkspaceAPI(mgr, false).stop(rec, req, &resolved{rt: runtime, ws: workspace, mv: MembershipView{MembershipID: membership.ID}})
 		close(done)
 	}()
 	select {
@@ -269,7 +281,7 @@ func TestShareDowngradeWaitsForAuthorizedAgentOperation(t *testing.T) {
 	}
 }
 
-func TestShareLeaseBlocksDowngradeAcrossManagers(t *testing.T) {
+func TestOwnerLeaseSerializesShareAndLifecycleAcrossManagers(t *testing.T) {
 	ctx := context.Background()
 	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
@@ -328,6 +340,25 @@ func TestShareLeaseBlocksDowngradeAcrossManagers(t *testing.T) {
 		localA.Unlock()
 		t.Fatalf("cross-manager downgrade status=%d body=%s", blocked.Code, blocked.Body.String())
 	}
+	runtime := &shareLifecycleRuntime{}
+	resolvedOwner := &resolved{rt: runtime, ws: workspace, mv: ownerViews[0]}
+	for _, invoke := range []func(http.ResponseWriter, *http.Request, *resolved){
+		newWorkspaceAPI(managerB, false).start,
+		newWorkspaceAPI(managerB, false).stop,
+		newWorkspaceAPI(managerB, false).recreate,
+		newWorkspaceAPI(managerB, false).cleanHome,
+	} {
+		rec := httptest.NewRecorder()
+		invoke(rec, httptest.NewRequest(http.MethodPost, "/api/workspace/lifecycle", nil), resolvedOwner)
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "workspace_operation_in_progress") {
+			localA.Unlock()
+			t.Fatalf("cross-manager lifecycle status=%d body=%s", rec.Code, rec.Body.String())
+		}
+	}
+	if runtime.stops.Load() != 0 || runtime.starts.Load() != 0 {
+		localA.Unlock()
+		t.Fatalf("blocked lifecycle reached runtime: starts=%d stops=%d", runtime.starts.Load(), runtime.stops.Load())
+	}
 	localA.Unlock()
 	changed, err := st.FinalizeSessionShareProposal(ctx, proposal.ID, owner.ID, ownerIdentity.ID, nowTS())
 	if err != nil || !changed {
@@ -336,5 +367,28 @@ func TestShareLeaseBlocksDowngradeAcrossManagers(t *testing.T) {
 	after := patch()
 	if after.Code != http.StatusOK {
 		t.Fatalf("post-finalize downgrade status=%d body=%s", after.Code, after.Body.String())
+	}
+
+	second := proposal
+	second.ID = newID()
+	second.Status = "pending"
+	second.Ciphertext = "opaque-2"
+	if err := st.CreateSessionShareProposal(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+	lifecycleToken := newID()
+	lifecycleNow := time.Now().UTC()
+	acquired, err := managerB.store.AcquireSessionShareOwnerLease(ctx, owner.ID, lifecycleToken,
+		lifecycleNow.Format(time.RFC3339), lifecycleNow.Add(workspaceLifecycleLease).Format(time.RFC3339))
+	if err != nil || !acquired {
+		t.Fatalf("lifecycle lease acquired=%v err=%v", acquired, err)
+	}
+	_, _, state, err = managerA.store.ClaimSessionShareProposal(ctx, second.ID, owner.ID, ownerIdentity.ID,
+		lifecycleNow.Format(time.RFC3339), lifecycleNow.Add(shareOwnerLease).Format(time.RFC3339))
+	if err != nil || state != "busy" {
+		t.Fatalf("claim crossed lifecycle lease: state=%q err=%v", state, err)
+	}
+	if err := managerB.store.ReleaseSessionShareOwnerLease(ctx, owner.ID, lifecycleToken); err != nil {
+		t.Fatal(err)
 	}
 }

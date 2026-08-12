@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 )
@@ -160,6 +161,10 @@ func (a adminAPI) stopWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.mgr.stopWorkspaceByMembership(r.Context(), mem.ID); err != nil {
+		if errors.Is(err, errSessionShareOwnerBusy) {
+			writeAPIErr(w, workspaceLifecycleLeaseError(err))
+			return
+		}
 		writeAPIErr(w, internalErr(err))
 		return
 	}
@@ -202,6 +207,10 @@ func (a adminAPI) cleanHome(w http.ResponseWriter, r *http.Request, _ Identity) 
 		return
 	}
 	if err := a.mgr.cleanHomeByMembership(r.Context(), mem.ID); err != nil {
+		if errors.Is(err, errSessionShareOwnerBusy) {
+			writeAPIErr(w, workspaceLifecycleLeaseError(err))
+			return
+		}
 		writeAPIErr(w, internalErr(err))
 		return
 	}

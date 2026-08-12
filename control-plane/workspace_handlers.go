@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -26,6 +27,35 @@ type workspaceAPI struct {
 	memberAuth
 	proxy     agentProxyAPI
 	autostart bool
+}
+
+const workspaceLifecycleLease = 10 * time.Minute
+
+func acquireWorkspaceLifecycleLease(ctx context.Context, st Store, owner string) (string, error) {
+	now := time.Now().UTC()
+	token := newID()
+	ok, err := st.AcquireSessionShareOwnerLease(ctx, owner, token, now.Format(time.RFC3339),
+		now.Add(workspaceLifecycleLease).Format(time.RFC3339))
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", errSessionShareOwnerBusy
+	}
+	return token, nil
+}
+
+func releaseWorkspaceLifecycleLease(st Store, owner, token string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_ = st.ReleaseSessionShareOwnerLease(ctx, owner, token)
+}
+
+func workspaceLifecycleLeaseError(err error) *apiError {
+	if errors.Is(err, errSessionShareOwnerBusy) {
+		return &apiError{http.StatusConflict, "workspace_operation_in_progress", "an approved Agent or workspace operation is in progress"}
+	}
+	return internalErr(err)
 }
 
 func newWorkspaceAPI(m *manager, autostart bool) workspaceAPI {
@@ -98,14 +128,20 @@ func (a workspaceAPI) start(w http.ResponseWriter, r *http.Request, res *resolve
 // ~/repos are wiped (the user accepts losing them, incl. uncommitted work) and
 // running sessions are lost — so the Console guards this behind a warning dialog.
 func (a workspaceAPI) recreate(w http.ResponseWriter, r *http.Request, res *resolved) {
-	// Stop + wipe under the workspace start lock so a concurrent start cannot bring
-	// the container up mid-teardown (startResolved re-acquires the lock itself).
+	// Stop + wipe + restart under the local start lock and distributed owner lease
+	// so neither another process nor another CP replica can enter mid-teardown.
 	lock := a.mgr.startLockFor(res.ws.ID)
 	lock.Lock()
+	defer lock.Unlock()
+	lease, err := acquireWorkspaceLifecycleLease(r.Context(), a.mgr.store, res.mv.MembershipID)
+	if err != nil {
+		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+		return
+	}
+	defer releaseWorkspaceLifecycleLease(a.mgr.store, res.mv.MembershipID, lease)
 	// Stop は「まだ存在しない」等は許容する(best-effort)が、まだ running のまま
 	// なら中断する — ライブ bind-mount 配下の削除は不整合を起こすため。
 	if err := res.rt.Stop(r.Context()); err != nil && res.rt.State(r.Context()) == "running" {
-		lock.Unlock()
 		log.Printf("recreate: stop failed for ws %s (still running, aborting wipe): %v", res.ws.ID, err)
 		writeAPIErr(w, &apiError{http.StatusInternalServerError, "stop_failed", "could not stop the workspace; recreate aborted"})
 		return
@@ -113,8 +149,11 @@ func (a workspaceAPI) recreate(w http.ResponseWriter, r *http.Request, res *reso
 	// Clear the working copies while the container is down. Targeted: we keep the
 	// encrypted secrets store and everything else in home.
 	_ = os.RemoveAll(filepath.Join(a.mgr.rootedDataDir(res.ws), "home", "repos"))
-	lock.Unlock()
-	a.startResolved(w, r, res)
+	if aerr := a.ensureWorkspaceStartedRTLocked(r.Context(), res, res.rt); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"name": res.rt.Name(), "state": res.rt.State(r.Context())})
 }
 
 // cleanHome tears the container down, wipes the whole home EXCEPT auth/connection
@@ -130,10 +169,16 @@ func (a workspaceAPI) recreate(w http.ResponseWriter, r *http.Request, res *reso
 func (a workspaceAPI) cleanHome(w http.ResponseWriter, r *http.Request, res *resolved) {
 	lock := a.mgr.startLockFor(res.ws.ID)
 	lock.Lock()
+	defer lock.Unlock()
+	lease, err := acquireWorkspaceLifecycleLease(r.Context(), a.mgr.store, res.mv.MembershipID)
+	if err != nil {
+		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+		return
+	}
+	defer releaseWorkspaceLifecycleLease(a.mgr.store, res.mv.MembershipID, lease)
 	// recreate と同じく、Stop 失敗かつまだ running なら中断(ライブ bind-mount 配下
 	// の削除を避ける)。
 	if err := res.rt.Stop(r.Context()); err != nil && res.rt.State(r.Context()) == "running" {
-		lock.Unlock()
 		log.Printf("clean-home: stop failed for ws %s (still running, aborting wipe): %v", res.ws.ID, err)
 		writeAPIErr(w, &apiError{http.StatusInternalServerError, "stop_failed", "could not stop the workspace; clean-home aborted"})
 		return
@@ -141,8 +186,11 @@ func (a workspaceAPI) cleanHome(w http.ResponseWriter, r *http.Request, res *res
 	// Wipe home (keep-list preserved) while the container is down — deleting under a
 	// live bind-mount risks inconsistency (see cleanHome's contract in runtime_docker.go).
 	_ = cleanHome(a.mgr.rootedDataDir(res.ws))
-	lock.Unlock()
-	a.startResolved(w, r, res)
+	if aerr := a.ensureWorkspaceStartedRTLocked(r.Context(), res, res.rt); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"name": res.rt.Name(), "state": res.rt.State(r.Context())})
 }
 
 // ensureWorkspaceStarted brings a stopped workspace up, enforcing the same
@@ -169,13 +217,22 @@ func (a workspaceAPI) ensureWorkspaceStartedUnattended(ctx context.Context, res 
 
 // ensureWorkspaceStartedRT is the shared body, parameterized by the runtime that drives
 // this particular start (they differ only in the container env they would apply).
-// Serialized per workspace (startLockFor): the state check and Start form a
-// check-then-act that concurrent callers (explicit start, auto-starts, scheduler
-// wake) must not interleave — the quota TOCTOU collapses under the same lock.
+// Serialized per workspace locally (startLockFor) and across CP replicas (owner
+// lease): the state check and Start form a check-then-act that explicit starts,
+// auto-starts and scheduler wake must not interleave.
 func (a workspaceAPI) ensureWorkspaceStartedRT(ctx context.Context, res *resolved, rt Runtime) *apiError {
 	lock := a.mgr.startLockFor(res.ws.ID)
 	lock.Lock()
 	defer lock.Unlock()
+	lease, err := acquireWorkspaceLifecycleLease(ctx, a.mgr.store, res.mv.MembershipID)
+	if err != nil {
+		return workspaceLifecycleLeaseError(err)
+	}
+	defer releaseWorkspaceLifecycleLease(a.mgr.store, res.mv.MembershipID, lease)
+	return a.ensureWorkspaceStartedRTLocked(ctx, res, rt)
+}
+
+func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *resolved, rt Runtime) *apiError {
 	switch rt.State(ctx) {
 	case "running":
 		return nil
@@ -238,6 +295,12 @@ func (a workspaceAPI) stop(w http.ResponseWriter, r *http.Request, res *resolved
 	lock := a.mgr.startLockFor(res.ws.ID)
 	lock.Lock()
 	defer lock.Unlock()
+	lease, err := acquireWorkspaceLifecycleLease(r.Context(), a.mgr.store, res.mv.MembershipID)
+	if err != nil {
+		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+		return
+	}
+	defer releaseWorkspaceLifecycleLease(a.mgr.store, res.mv.MembershipID, lease)
 	if err := res.rt.Stop(r.Context()); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
