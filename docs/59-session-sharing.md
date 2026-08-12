@@ -51,6 +51,11 @@ holderによるhome削除もlease contextを各entry間で検査して中断す�
 新holderのleaseは消さない。そのため別CP replicaからの
 lifecycle変更もAgent操作を横切れない。lifecycle変更が先なら
 承認claimをbusyで拒否し、承認が先なら結果の永続化後にlifecycle変更を再試行できる。
+native Runtimeではcontext cancelだけに依存せず、`dataDir/lifecycle.lock` のkernel flockを
+lifecycle／承認の全区間で保持する。期限切れleaseを得た新holderも旧holderのStart／Stopが静止するまで
+進めない。Start後にleaseを失えば起動時刻まで一致する自分のPIDだけを回収し、Stop中に失えば既送信の
+SIGTERM後の終了を待つがSIGKILL・tmux・pidfile更新には進まない。PID再利用や旧holderによる新Agent停止を
+防ぎながら、rollback不能な途中状態を次世代へ跨がせない。
 
 CP は proposal ID を `X-Agent-Fleet-Operation-ID` として Agent へ渡す。Agent は home volume 内に
 その ID を副作用前に create-only で永続 claim し、ハンドラ応答を永続化してから CP へ返す。

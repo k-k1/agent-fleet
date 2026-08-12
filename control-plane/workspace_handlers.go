@@ -215,6 +215,12 @@ func (a workspaceAPI) recreate(w http.ResponseWriter, r *http.Request, res *reso
 		return
 	}
 	defer lease.Close()
+	releaseFence, err := acquireRuntimeOperationFence(lease.Context(), res.rt)
+	if err != nil {
+		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+		return
+	}
+	defer releaseFence()
 	if err := lease.checkpoint(r.Context()); err != nil {
 		writeAPIErr(w, workspaceLifecycleLeaseError(err))
 		return
@@ -271,6 +277,12 @@ func (a workspaceAPI) cleanHome(w http.ResponseWriter, r *http.Request, res *res
 		return
 	}
 	defer lease.Close()
+	releaseFence, err := acquireRuntimeOperationFence(lease.Context(), res.rt)
+	if err != nil {
+		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+		return
+	}
+	defer releaseFence()
 	if err := lease.checkpoint(r.Context()); err != nil {
 		writeAPIErr(w, workspaceLifecycleLeaseError(err))
 		return
@@ -343,6 +355,11 @@ func (a workspaceAPI) ensureWorkspaceStartedRT(ctx context.Context, res *resolve
 		return workspaceLifecycleLeaseError(err)
 	}
 	defer lease.Close()
+	releaseFence, err := acquireRuntimeOperationFence(lease.Context(), rt)
+	if err != nil {
+		return workspaceLifecycleLeaseError(err)
+	}
+	defer releaseFence()
 	return a.ensureWorkspaceStartedRTLocked(lease.Context(), res, rt, lease)
 }
 
@@ -388,7 +405,15 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 		return internalErr(err)
 	}
 	if err := lease.checkpoint(ctx); err != nil {
+		if f, ok := rt.(runtimeStartFencer); ok {
+			abortCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			_ = f.AbortUncommittedStart(abortCtx)
+			cancel()
+		}
 		return workspaceLifecycleLeaseError(err)
+	}
+	if f, ok := rt.(runtimeStartFencer); ok {
+		f.CommitStart()
 	}
 	_ = a.mgr.store.SetWorkspaceState(ctx, res.ws.ID, "running")
 	// A start IS activity: reset the in-memory idle clock too (SetWorkspaceState
@@ -424,6 +449,12 @@ func (a workspaceAPI) stop(w http.ResponseWriter, r *http.Request, res *resolved
 		return
 	}
 	defer lease.Close()
+	releaseFence, err := acquireRuntimeOperationFence(lease.Context(), res.rt)
+	if err != nil {
+		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+		return
+	}
+	defer releaseFence()
 	if err := lease.checkpoint(r.Context()); err != nil {
 		writeAPIErr(w, workspaceLifecycleLeaseError(err))
 		return

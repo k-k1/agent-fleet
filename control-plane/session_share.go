@@ -712,6 +712,17 @@ func (a sessionShareAPI) approve(w http.ResponseWriter, r *http.Request, ident I
 		writeAPIErr(w, &apiError{404, "not_found", "proposal not found"})
 		return
 	}
+	// The DB owner lease fences replicas that are running normally. Native mode
+	// additionally needs a kernel-held fence: a paused old CP can outlive its DB
+	// lease while its host process operation is still unwinding.
+	applyCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	releaseFence, err := acquireRuntimeOperationFence(applyCtx, res.rt)
+	if err != nil {
+		writeAPIErr(w, &apiError{409, "share_operation_in_progress", "workspace lifecycle operation is still quiescing"})
+		return
+	}
+	defer releaseFence()
 	if p.Status == "processing" {
 		state, status := lookupAgentShareOperation(res.rt, p.ID)
 		if state == "applied" && status < http.StatusBadRequest {
@@ -744,8 +755,6 @@ func (a sessionShareAPI) approve(w http.ResponseWriter, r *http.Request, ident I
 	// Do not bind the durable claim/Agent call to the browser connection. Claiming
 	// is a short transaction; the per-owner mutex (not a DB lock/connection) keeps
 	// ACL and catalog changes from crossing the authorized Agent operation.
-	applyCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
 	claimNow := time.Now().UTC()
 	claimed, catalog, state, err := a.mgr.store.ClaimSessionShareProposal(applyCtx, p.ID, mv.MembershipID, ident.ID,
 		claimNow.Format(time.RFC3339), claimNow.Add(shareOwnerLease).Format(time.RFC3339))
