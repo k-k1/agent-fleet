@@ -7,7 +7,7 @@
 // missing we MIGRATE the old key so the user's split carries over. All input is
 // untrusted JSON — validated field by field; anything unusable degrades to a
 // blank terminal pane (never a crash), an unusable layout to null.
-import type { Layout, Pane, PaneContent, PaneView } from "./types.ts";
+import type { Cell, Layout, PaneContent, View } from "./types.ts";
 import { blankPane } from "./types.ts";
 import { equalRatios, MAX_COLS, MAX_TAB_COLS, MAX_TABS } from "./ops.ts";
 
@@ -123,12 +123,12 @@ export function validateStoredContent(c: unknown): PaneContent {
 }
 const contentFromStored = validateStoredContent;
 
-function paneFrom(raw: any): Pane | null {
+function viewFrom(raw: any): View | null {
   const id = str(raw?.id);
   if (!id) return null;
   const isNew = raw.content && typeof raw.content === "object";
   const content = isNew ? contentFromStored(raw.content) : contentFromFlat(raw);
-  const pane: Pane = {
+  return {
     id,
     // Both formats keep the pane's bound session OUTSIDE the view identity: the
     // old wide struct carried `session` at the top level too (even for file/scm
@@ -138,26 +138,28 @@ function paneFrom(raw: any): Pane | null {
     wrap: typeof raw.wrap === "boolean" ? raw.wrap : null,
     ...(typeof raw.lastUsedAt === "number" && raw.lastUsedAt > 0 ? { lastUsedAt: raw.lastUsedAt } : {}),
   };
-  if (Array.isArray(raw.tabs)) {
-    const tabs: PaneView[] = [];
-    const seen = new Set([id]);
-    for (const tab of raw.tabs) {
-      const parsed = paneFrom({ ...tab, tabs: undefined });
-      if (!parsed || seen.has(parsed.id)) continue;
-      seen.add(parsed.id);
-      tabs.push({ id: parsed.id, session: parsed.session, content: parsed.content, wrap: parsed.wrap,
-        ...(typeof tab.lastUsedAt === "number" && tab.lastUsedAt > 0 ? { lastUsedAt: tab.lastUsedAt } : {}) });
-    }
-    pane.tabs = tabs;
-    const valid = new Set([id, ...tabs.map((tab) => tab.id)]);
-    const order: string[] = [];
-    if (Array.isArray(raw.tabOrder)) for (const entry of raw.tabOrder) {
-      if (typeof entry === "string" && valid.has(entry) && !order.includes(entry)) order.push(entry);
-    }
-    for (const entry of valid) if (!order.includes(entry)) order.push(entry);
-    pane.tabOrder = order;
+}
+
+function legacyCellFrom(raw: any, cellId: string): Cell | null {
+  const selected = viewFrom(raw);
+  if (!selected) return null;
+  const views: View[] = [selected];
+  const seen = new Set([selected.id]);
+  for (const tab of Array.isArray(raw.tabs) ? raw.tabs : []) {
+    const view = viewFrom(tab);
+    if (view && !seen.has(view.id)) { seen.add(view.id); views.push(view); }
   }
-  return pane;
+  const byId = new Map(views.map((view) => [view.id, view] as const));
+  const ordered: View[] = [];
+  for (const id of Array.isArray(raw.tabOrder) ? raw.tabOrder : []) {
+    const view = typeof id === "string" ? byId.get(id) : undefined;
+    if (view) { ordered.push(view); byId.delete(id); }
+  }
+  for (const view of views) if (byId.has(view.id)) ordered.push(view);
+  const syntheticBlank = selected.content.kind === "terminal" && !selected.session && ordered.length === 1;
+  return syntheticBlank
+    ? { id: cellId, selectedViewId: null, views: [] }
+    : { id: cellId, selectedViewId: selected.id, views: ordered };
 }
 
 /** normalizeStored turns parsed JSON (old flat OR new format) into a valid
@@ -168,21 +170,35 @@ export function normalizeStored(raw: unknown): Layout | null {
   if (!l || !Array.isArray(l.cols) || l.cols.length === 0 || l.cols.length > (mode === "tabs" ? MAX_TAB_COLS : MAX_COLS)) return null;
   const cols = [];
   const seen = new Set<string>();
-  for (const c of l.cols) {
+  for (let ci = 0; ci < l.cols.length; ci++) {
+    const c = l.cols[ci];
     const id = str(c?.id);
-    if (!id || seen.has(id) || !Array.isArray(c.panes)) return null;
+    const rawCells = Array.isArray(c.cells) ? c.cells : c.panes;
+    if (!id || seen.has(id) || !Array.isArray(rawCells)) return null;
     seen.add(id);
-    const panes: Pane[] = [];
-    for (const rp of c.panes.slice(0, 2)) {
-      const p = paneFrom(rp);
-      if (!p || seen.has(p.id) || p.tabs?.some((tab) => seen.has(tab.id))) return null;
-      seen.add(p.id);
-      p.tabs?.forEach((tab) => seen.add(tab.id));
-      panes.push(p);
+    const cells: Cell[] = [];
+    for (let ri = 0; ri < rawCells.slice(0, 2).length; ri++) {
+      const rc = rawCells[ri];
+      let cell: Cell | null;
+      if (Array.isArray(rc?.views)) {
+        const cellId = str(rc.id);
+        if (!cellId) return null;
+        const views: View[] = rc.views.map(viewFrom).filter((v: View | null): v is View => !!v);
+        const selectedId = str(rc.selectedViewId);
+        cell = { id: cellId, views, selectedViewId: selectedId && views.some((v) => v.id === selectedId) ? selectedId : views[0]?.id || null };
+      } else {
+        cell = legacyCellFrom(rc, `g${ci * 2 + ri}`);
+      }
+      if (!cell || seen.has(cell.id) || cell.views.some((view) => seen.has(view.id))) return null;
+      seen.add(cell.id);
+      cell.views.forEach((view) => seen.add(view.id));
+      if (mode === "split" && cell.views.length > 1) cell.views = cell.views.slice(0, 1);
+      if (!cell.views.some((v) => v.id === cell!.selectedViewId)) cell.selectedViewId = cell.views[0]?.id || null;
+      cells.push(cell);
     }
-    if (panes.length === 0) continue;
+    if (cells.length === 0) continue;
     const rowRatio = typeof c.rowRatio === "number" && c.rowRatio > 0 && c.rowRatio < 1 ? c.rowRatio : 0.5;
-    cols.push({ id, rowRatio, panes });
+    cols.push({ id, rowRatio, cells });
   }
   if (cols.length === 0) return null;
   let colRatios: number[] = Array.isArray(l.colRatios) ? l.colRatios : [];
@@ -197,15 +213,16 @@ export function normalizeStored(raw: unknown): Layout | null {
     const sum = colRatios.reduce((n, r) => n + r, 0);
     colRatios = colRatios.map((r) => r / sum);
   }
-  const activeId =
-    cols.some((c) => c.panes.some((p) => p.id === l.activeId || p.tabs?.some((t) => t.id === l.activeId))) && typeof l.activeId === "string"
-      ? l.activeId
-      : cols[0].panes[0].id;
+  const requestedActive = str(l.activeCellId) || str(l.activeId);
+  let activeCellId = cols[0].cells[0].id;
+  for (const col of cols) for (const cell of col.cells) {
+    if (cell.id === requestedActive || cell.views.some((v) => v.id === requestedActive)) activeCellId = cell.id;
+  }
   if (mode === "tabs") {
-    const count = cols.reduce((n, c) => n + c.panes.reduce((m, p) => m + 1 + (p.tabs?.length || 0), 0), 0);
+    const count = cols.reduce((n, c) => n + c.cells.reduce((m, cell) => m + cell.views.length, 0), 0);
     if (count > MAX_TABS) return null;
   }
-  return { mode, cols, colRatios, activeId };
+  return { version: 3, mode, cols, colRatios, activeCellId };
 }
 
 /** Storage key: the pane layout is persisted per (user, tenant) so a different

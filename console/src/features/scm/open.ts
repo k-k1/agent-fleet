@@ -11,7 +11,7 @@ function openReusing(kind: "commit" | "wtdiff", content: PaneContent): void {
   const existing = allPanes(st.layout).find((p) => p.content.kind === kind);
   if (existing) {
     st.setPaneTarget(existing.id, { content });
-    st.setActive(existing.id);
+    st.selectTab(existing.id);
     return;
   }
   st.openTargetInNew({ content });

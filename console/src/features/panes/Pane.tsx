@@ -3,7 +3,7 @@
 // survive switching kinds. Ported from the old console onto the content union.
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, DragEvent as RDragEvent, WheelEvent as RWheelEvent } from "react";
-import type { Pane as PaneT } from "../../layout/types.ts";
+import type { Cell, Pane as PaneT } from "../../layout/types.ts";
 import { ordClass } from "../../layout/badges.ts";
 import { usePaneHover, hoverMatches } from "../../lib/panehover.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -43,7 +43,8 @@ const TAB_DND = "application/x-af-pane-tab";
 
 
 interface PaneProps {
-  pane: PaneT;
+  cell: Cell;
+  pane?: PaneT;
   style?: CSSProperties;
   active?: boolean;
   single?: boolean;
@@ -61,7 +62,43 @@ interface PaneProps {
   ordinal?: number | null;
 }
 
-export function Pane({
+export function Pane(props: PaneProps) {
+  return props.pane ? <PopulatedPane {...props} pane={props.pane} /> : <EmptyPane {...props} />;
+}
+
+function EmptyPane({ cell, style, active, tabbed, canSplitRight, canSplitDown, canClose, canDrag, onActivate, onClose, onSwap, onDropSplit, ordinal }: PaneProps) {
+  const tr = useT();
+  return (
+    <div
+      className={cx("pane", active && "active", ordinal ? ordClass(ordinal) : "")}
+      style={style}
+      data-cell-id={cell.id}
+      onMouseDownCapture={() => onActivate(cell.id)}
+      onDragOver={(e) => { if (e.dataTransfer.types.includes(TAB_DND) || e.dataTransfer.types.includes(DND)) e.preventDefault(); }}
+      onDrop={(e) => {
+        const tabId = e.dataTransfer.getData(TAB_DND);
+        const sourceCellId = e.dataTransfer.getData(DND);
+        if (!tabId && !sourceCellId) return;
+        e.preventDefault();
+        const rect = e.currentTarget.getBoundingClientRect();
+        const right = canSplitRight && (e.clientX - rect.left) / rect.width >= 0.7;
+        const down = canSplitDown && (e.clientY - rect.top) / rect.height >= 0.7;
+        const dir = down ? "down" : right ? "right" : null;
+        const store = useLayoutStore.getState();
+        if (tabId) dir ? store.dropSplitTab(tabId, cell.id, dir) : store.moveTab(tabId, cell.id);
+        else if (sourceCellId) dir ? onDropSplit(sourceCellId, cell.id, dir) : onSwap(sourceCellId, cell.id);
+      }}
+    >
+      {tabbed && <div className="pane-tabs" role="tablist" aria-label={tr("display.pane_layout_tabs")} />}
+      {canDrag && <button type="button" className={cx("pane-grip", ordinal ? "pane-ord " + ordClass(ordinal) : "")} draggable onDragStart={(e) => { e.dataTransfer.setData(DND, cell.id); e.dataTransfer.effectAllowed = "move"; }}>{ordinal}</button>}
+      <div className="pane-empty">{tr("pane.no_session")}</div>
+      {canClose && <div className="pane-controls"><IconButton icon="close" label={tr("ui.close_pane_hint")} onClick={() => onClose(cell.id, true)} /></div>}
+    </div>
+  );
+}
+
+function PopulatedPane({
+  cell,
   pane,
   style,
   active,
@@ -79,6 +116,7 @@ export function Pane({
   ordinal,
 }: PaneProps) {
   const tr = useT();
+  if (!pane) return null;
   const paneRef = useRef<HTMLDivElement>(null);
   const isTerm = pane.content.kind === "terminal";
   // Minimal pop-out tab: hide the pop-out button (the pane already IS its own
@@ -87,7 +125,7 @@ export function Pane({
   // Cross-highlight: glow this pane while its rail row / mini-map cell is
   // hovered (and vice-versa). Keyed by pane id or a shared session name.
   const { hover, setHover } = usePaneHover();
-  const hovered = hoverMatches(hover, pane.id, pane.session);
+  const hovered = hoverMatches(hover, cell.id, pane.session);
   const ordCls = ordinal ? ordClass(ordinal) : "";
   // null when not a drop target; else the pointer's zone: 'center' → swap;
   // 'right'/'down' → tear the dragged pane off into a new split.
@@ -194,20 +232,7 @@ export function Pane({
   // width (--pane-ctl-w, panes.css) instead of per-view magic numbers.
   const showPopout = popoutTabMode !== "popout" && canPopout(pane);
   const ctlCount = (showPopout ? 1 : 0) + (canWrap ? 1 : 0) + (canClose ? 1 : 0);
-  const unorderedViews: PaneView[] = [
-    { id: pane.id, session: pane.session, content: pane.content, wrap: pane.wrap, lastUsedAt: pane.lastUsedAt },
-    ...(pane.tabs || []),
-  ];
-  const views = (() => {
-    const byId = new Map(unorderedViews.map((view) => [view.id, view] as const));
-    const ordered: PaneView[] = [];
-    for (const id of pane.tabOrder || []) {
-      const view = byId.get(id);
-      if (view) { ordered.push(view); byId.delete(id); }
-    }
-    for (const view of unorderedViews) if (byId.has(view.id)) ordered.push(view);
-    return ordered;
-  })();
+  const views: PaneView[] = cell.views;
   // Never expose the runtime session slug in the tab strip: sessions have a
   // user-facing title, and unloaded metadata should read as a neutral state
   // until it arrives instead of briefly leaking an opaque identifier.
@@ -235,16 +260,16 @@ export function Pane({
           className="pane-close"
           onMouseDown={(e) => e.button === 1 && e.preventDefault()}
           onAuxClick={(e) => {
-            if (e.button === 1) { e.preventDefault(); onClose(pane.id, true); }
+            if (e.button === 1) { e.preventDefault(); onClose(cell.id, true); }
           }}
-          onClick={(e) => onClose(pane.id, e.ctrlKey || e.metaKey)}
+          onClick={(e) => onClose(cell.id, e.ctrlKey || e.metaKey)}
         />
       )}
     </span>
   ) : undefined;
 
   const onDragStart = (e: RDragEvent) => {
-    e.dataTransfer.setData(DND, pane.id);
+    e.dataTransfer.setData(DND, cell.id);
     e.dataTransfer.effectAllowed = "move";
   };
   // A wheel over a tab strip should browse tabs, not scroll the view behind it.
@@ -288,10 +313,10 @@ export function Pane({
     const src = e.dataTransfer.getData(tabDrag ? TAB_DND : DND);
     if (!src) return;
     if (tabDrag) {
-      if (z === "right" || z === "down") dropSplitTab(src, pane.id, z);
-      else moveTab(src, pane.id);
-    } else if (z === "right" || z === "down") onDropSplit(src, pane.id, z);
-    else onSwap(src, pane.id);
+      if (z === "right" || z === "down") dropSplitTab(src, cell.id, z);
+      else moveTab(src, cell.id);
+    } else if (z === "right" || z === "down") onDropSplit(src, cell.id, z);
+    else onSwap(src, cell.id);
   };
 
   return (
@@ -300,8 +325,9 @@ export function Pane({
       className={cx("pane", active && "active", zone && "droptarget", hovered && "pane-hover", ordCls)}
       style={{ ...style, "--pane-ctl-n": ctlCount } as CSSProperties}
       data-pane-id={pane.id}
-      onMouseDownCapture={() => onActivate(pane.id)}
-      onMouseEnter={() => setHover({ session: pane.session || null, paneId: pane.id })}
+      data-cell-id={cell.id}
+      onMouseDownCapture={() => onActivate(cell.id)}
+      onMouseEnter={() => setHover({ session: pane.session || null, paneId: cell.id })}
       onMouseLeave={() => setHover(null)}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
@@ -315,18 +341,18 @@ export function Pane({
           onWheel={onTabsWheel}
         >
           {views.map((view) => (
-            <div className={cx("pane-tab", view.id === pane.id && "selected")} role="presentation" key={view.id}>
+            <div className={cx("pane-tab", view.id === cell.selectedViewId && "selected")} role="presentation" key={view.id}>
               <button
                 type="button"
                 role="tab"
-                aria-selected={view.id === pane.id}
+                aria-selected={view.id === cell.selectedViewId}
                 title={tabLabel(view)}
                 draggable
                 onDragStart={(e) => { e.dataTransfer.setData(TAB_DND, view.id); e.dataTransfer.effectAllowed = "move"; }}
                 onDragOver={(e) => { if (e.dataTransfer.types.includes(TAB_DND)) { e.preventDefault(); e.stopPropagation(); } }}
                 onDrop={(e) => {
                   const source = e.dataTransfer.getData(TAB_DND);
-                  if (source) { e.preventDefault(); e.stopPropagation(); moveTab(source, pane.id, view.id); }
+                  if (source) { e.preventDefault(); e.stopPropagation(); moveTab(source, cell.id, view.id); }
                 }}
                 onAuxClick={(e) => {
                   if (e.button === 1) { e.preventDefault(); closeTab(view.id); }

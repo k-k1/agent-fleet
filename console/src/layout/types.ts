@@ -1,24 +1,19 @@
-// Pane-layout domain types for the next console (docs/22). The main area is a
-// layout of up to 4 columns; each column stacks 1 or 2 panes — up to 8 panes.
+// Layout v3 separates geometry from runtime content. A Cell is the stable DOM,
+// badge and drop-target identity; a View is a tab and the terminal/browser/editor
+// runtime identity. Selecting a tab must never change the containing Cell id.
 //
 // Two deliberate axes (do not conflate):
 //   - PaneContent.kind = which VIEW the pane renders (terminal/file/scm/…)
 //   - a session's kind = which agent runs in it (claude/codex/…, types/session)
 //
-// ── The paneId contract (hard invariant, enforced by ops + tests) ──
-// A pane's id IS its runtime-view identity: the xterm instance/WebSocket and the
-// ephemeral browser Page/WebSocket live in module maps keyed by paneId, and the
-// flat-absolute PaneHost keys DOM nodes by it. Operations that move a pane
-// (swap, drop-split) MUST relocate the same pane object keeping its id — never
-// mint a new id and copy content (a new id builds a fresh xterm + WebGL context
-// and blanks the moved terminal). Ids are only allocated for genuinely NEW panes.
+// ── ID contracts (hard invariants, enforced by ops + tests) ──
+// Cell.id: geometry, React key, activation, ordinal badge and DnD target.
+// View.id: tab, xterm/WebSocket, browser controller and dirty-editor identity.
+// Moving or selecting a View preserves both identities. Empty Cells contain no
+// synthetic terminal View and therefore allocate no runtime resource.
 //
-// ── session lives on the Pane, not in the content union ──
-// A pane owns one persistent (possibly hidden) terminal. Showing a file/SCM view
-// in the pane hides the terminal but keeps its PTY socket + scrollback warm;
-// switching back to the terminal view reveals the same session. So `session` is
-// pane-level state tied to the xterm identity, while `content` is just what the
-// pane currently renders.
+// `session` lives on View, outside PaneContent: it is part of the persistent
+// terminal runtime identity and remains bound while that View moves between Cells.
 
 /** What a pane renders. terminal renders the pane's own `session` (chat = the
  * read-mostly Markdown mirror instead of the raw PTY). */
@@ -55,8 +50,12 @@ export type PaneKind = PaneContent["kind"];
  * is also the visual pane; in the tabbed layout several views live in one
  * visual pane. Keep this identity separate from geometry so moving a tab never
  * recreates its xterm or browser controller. */
-export interface PaneView {
-  id: string;
+export type ViewId = string;
+export type CellId = string;
+export type ColumnId = string;
+
+export interface View {
+  id: ViewId;
   session: string | null;
   content: PaneContent;
   wrap: boolean | null;
@@ -64,38 +63,35 @@ export interface PaneView {
   lastUsedAt?: number;
 }
 
-export interface Pane {
-  id: string;
-  /** Session bound to this pane's persistent xterm (kept warm across view switches). */
-  session: string | null;
-  content: PaneContent;
-  /** Per-pane soft-wrap override for text views (null = follow the global setting). */
-  wrap: boolean | null;
-  lastUsedAt?: number;
-  /** In tabbed mode, inactive views stored in this visual pane. The fields
-   * above always describe its selected view, so legacy consumers continue to
-   * read a Pane without a special projection layer. */
-  tabs?: PaneView[];
-  /** Visual tab order, independent of which view is selected into the Pane
-   * fields above. This prevents selection from moving a tab to the left edge. */
-  tabOrder?: string[];
+/** Compatibility name used by content-oriented consumers. A Pane is now a
+ * runtime View, never a geometry cell. */
+export type Pane = View;
+export type PaneView = View;
+
+export interface Cell {
+  id: CellId;
+  selectedViewId: ViewId | null;
+  /** Array order is the tab order. Empty means a real empty cell: no synthetic
+   * disconnected-terminal runtime is allocated merely to represent geometry. */
+  views: View[];
 }
 
 /** A column: 1 or 2 stacked panes plus the split ratio between them. */
 export interface Column {
-  id: string;
+  id: ColumnId;
   rowRatio: number; // top pane's height fraction when the column is split
-  panes: Pane[]; // [pane] or [pane, pane]
+  cells: Cell[]; // [cell] or [cell, cell]
 }
 
 /** The full layout: columns + their width fractions + the active pane id. */
 export interface Layout {
+  version: 3;
   /** `split` is the established 4 x 2 one-view-per-pane layout. `tabs` keeps
    * the same grid mechanics but caps it at 3 x 2 and lets each cell own tabs. */
   mode?: "split" | "tabs";
   cols: Column[]; // 1–4 columns
   colRatios: number[]; // column width fractions, sums to 1, len == cols.length
-  activeId: string; // id of the active pane (click / key target)
+  activeCellId: CellId;
 }
 
 /** What an open-operation targets: the view to show, plus (for terminals) the
@@ -115,10 +111,6 @@ export const blankPane = (id: string): Pane => ({
   wrap: null,
 });
 
-export const paneView = (pane: Pane): PaneView => ({
-  id: pane.id,
-  session: pane.session,
-  content: pane.content,
-  wrap: pane.wrap,
-  ...(pane.lastUsedAt ? { lastUsedAt: pane.lastUsedAt } : {}),
-});
+export const paneView = (pane: Pane): PaneView => ({ ...pane });
+
+export const emptyCell = (id: CellId): Cell => ({ id, selectedViewId: null, views: [] });

@@ -37,7 +37,7 @@ export const MAX_PANE_PAN = 0.7;
 // 上下に積まれたペインは同じ列なので同じ位置。単一列・対象外・設定OFFは中央へ戻す。
 export function ttsPanePan(enabled: boolean, layout: Layout, paneId?: string): number {
   if (!enabled || !paneId || layout.cols.length < 2) return 0;
-  const colIndex = layout.cols.findIndex((col) => col.panes.some((pane) => pane.id === paneId));
+  const colIndex = layout.cols.findIndex((col) => col.cells.some((cell) => cell.views.some((view) => view.id === paneId)));
   if (colIndex < 0) return 0;
 
   const rawWidths = layout.cols.map((_, i) => Math.max(0, layout.colRatios[i] ?? 0));

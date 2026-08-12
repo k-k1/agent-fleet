@@ -12,10 +12,12 @@ import {
   saveDirtyGuardRequest,
 } from "./dirtyRegistry.ts";
 
-const layout = (content: Layout["cols"][number]["panes"][number]["content"]): Layout => ({
-  cols: [{ id: "c1", rowRatio: 1, panes: [{ id: "p1", session: null, wrap: null, content }] }],
+const layout = (content: import("../../layout/types.ts").PaneContent): Layout => ({
+  version: 3,
+  mode: "split",
+  cols: [{ id: "c1", rowRatio: 0.5, cells: [{ id: "g1", selectedViewId: "p1", views: [{ id: "p1", session: null, wrap: null, content }] }] }],
   colRatios: [1],
-  activeId: "p1",
+  activeCellId: "g1",
 });
 
 afterEach(clearDirtyRegistryForTests);
@@ -63,13 +65,15 @@ describe("dirty navigation registry", () => {
       content: { kind: "file" as const, filePath: `${i + 1}.txt` },
     }));
     const full: Layout = {
+      version: 3,
+      mode: "split",
       cols: [0, 1, 2, 3].map((i) => ({
         id: `c${i + 1}`,
         rowRatio: 0.5,
-        panes: panes.slice(i * 2, i * 2 + 2),
+        cells: panes.slice(i * 2, i * 2 + 2).map((view, row) => ({ id: `g${i * 2 + row + 1}`, selectedViewId: view.id, views: [view] })),
       })),
       colRatios: [0.25, 0.25, 0.25, 0.25],
-      activeId: "p1",
+      activeCellId: "g1",
     };
     registerDirtyEditor({
       paneId: "p8",

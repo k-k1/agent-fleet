@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { allPanes, closePane, freshLayout, openActive, openInNew, setActive } from "./ops.ts";
+import { activeView, allPanes, closePane, freshLayout, openActive, openInNew, selectView } from "./ops.ts";
 import type { Layout, OpenTarget } from "./types.ts";
 import {
   browserAttachmentIdFromLink,
@@ -43,10 +43,10 @@ describe("Chromium attachment action route", () => {
   it("focuses a duplicate, then reuses a blank without growing", () => {
     let layout = openActive(freshLayout(), file("source.md"));
     layout = openInNew(layout, { content: { kind: "browserAttach", attachmentId: "ba_same" } });
-    layout = setActive(layout, allPanes(layout)[0].id);
+    layout = selectView(layout, allPanes(layout)[0].id);
     const duplicate = planBrowserAttachmentOpen(layout, "ba_same", false);
     expect(duplicate.kind).toBe("commit");
-    if (duplicate.kind === "commit") expect(duplicate.layout.activeId).toBe(allPanes(layout)[1].id);
+    if (duplicate.kind === "commit") expect(activeView(duplicate.layout)?.id).toBe(allPanes(layout)[1].id);
 
     layout = closePane(layout, allPanes(layout)[1].id);
     const blank = planBrowserAttachmentOpen(layout, "ba_new", false);
@@ -65,15 +65,16 @@ describe("Chromium attachment action route", () => {
       if (plan.kind === "commit") layout = plan.layout;
     }
     expect(layout.cols).toHaveLength(4);
-    expect(layout.cols.every((column) => column.panes.length === 2)).toBe(true);
+    expect(layout.cols.every((column) => column.cells.length === 2)).toBe(true);
   });
 
   it("asks at the desktop/mobile cap and replaces only the active pane after consent", () => {
     const desktop = fullDesktop();
     expect(planBrowserAttachmentOpen(desktop, "ba_overflow", false)).toEqual({ kind: "confirm-replace" });
-    const activeId = desktop.activeId;
+    const activeId = activeView(desktop)!.id;
+    const activeCellId = desktop.activeCellId;
     const replaced = replaceActiveWithBrowserAttachment(desktop, "ba_overflow");
-    expect(replaced.activeId).toBe(activeId);
+    expect(replaced.activeCellId).toBe(activeCellId);
     expect(allPanes(replaced).find((pane) => pane.id === activeId)?.content).toEqual({
       kind: "browserAttach",
       attachmentId: "ba_overflow",
