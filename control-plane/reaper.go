@@ -254,7 +254,7 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, sessTO time.
 	}
 	base := rp.idleBase(seen, lastSeen, ws.LastActiveAt)
 	if now.Sub(base) >= wsTO {
-		rp.stopWorkspace(ctx, rt, ws)
+		rp.stopWorkspace(ctx, rt, ws, wsTO)
 	}
 }
 
@@ -297,7 +297,7 @@ func (rp *reaper) haltSession(ctx context.Context, rt Runtime, ws Workspace, nam
 // fence as explicit/admin stops. The idle reaper runs independently in every CP
 // replica, so a direct Runtime.Stop could otherwise cross an approved shared
 // operation or another holder's recreate/clean/start.
-func (rp *reaper) stopWorkspace(ctx context.Context, rt Runtime, ws Workspace) {
+func (rp *reaper) stopWorkspace(ctx context.Context, rt Runtime, ws Workspace, wsTO time.Duration) {
 	lock := rp.mgr.startLockFor(ws.ID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -320,6 +320,29 @@ func (rp *reaper) stopWorkspace(ctx context.Context, rt Runtime, ws Workspace) {
 	// A start/recreate may have won the local lock while this sweep was waiting.
 	// Never turn its non-running transitional state into a fresh Stop.
 	if rt.State(lease.Context()) != "running" {
+		return
+	}
+	// The initial idle decision was made before potentially waiting on three
+	// fences. Re-read every activity signal while we own them; otherwise a proxy
+	// reconnect or a session becoming busy during that wait would be stopped by a
+	// stale sweep decision.
+	freshWS, ok, err := rp.mgr.store.GetWorkspaceByMembership(lease.Context(), ws.MembershipID)
+	if err != nil || !ok {
+		log.Printf("idle-stop: refresh workspace %s: found=%v err=%v", ws.ContainerName, ok, err)
+		return
+	}
+	sessions, err := rp.mgr.agentSessions(lease.Context(), rt)
+	if err != nil {
+		log.Printf("idle-stop: refresh sessions %s: %v", ws.ContainerName, err)
+		return
+	}
+	for _, s := range sessions {
+		if s.Alive && (s.State == "working" || s.State == "question") {
+			return
+		}
+	}
+	conns, lastSeen, seen := rp.mgr.conns.snapshot(ws.ID)
+	if conns > 0 || time.Since(rp.idleBase(seen, lastSeen, freshWS.LastActiveAt)) < wsTO {
 		return
 	}
 	if err := rt.Stop(lease.Context()); err != nil {
