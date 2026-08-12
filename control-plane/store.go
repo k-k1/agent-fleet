@@ -340,6 +340,7 @@ type SessionShareStore interface {
 	ClaimSessionShareProposal(ctx context.Context, id, ownerMembershipID, decidedBy, now, leaseUntil string) (SessionShareProposal, SharedSessionCatalog, string, error)
 	FinalizeSessionShareProposal(ctx context.Context, id, ownerMembershipID, decidedBy, decidedAt string) (bool, error)
 	AcquireSessionShareOwnerLease(ctx context.Context, ownerMembershipID, operationID, now, leaseUntil string) (bool, error)
+	RenewSessionShareOwnerLease(ctx context.Context, ownerMembershipID, operationID, now, leaseUntil string) (bool, error)
 	ReleaseSessionShareOwnerLease(ctx context.Context, ownerMembershipID, operationID string) error
 }
 

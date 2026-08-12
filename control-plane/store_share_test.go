@@ -159,8 +159,10 @@ func TestSessionShareClaimRechecksRWAndNeverRepeatsUnknown(t *testing.T) {
 	if err := st.CreateSessionShareProposal(ctx, second); err != nil {
 		t.Fatal(err)
 	}
-	afterLease := leaseUntil.Add(time.Second).Format(time.RFC3339)
-	if changed, err := st.UpdateSessionSharePermission(ctx, share.ID, owner.ID, "ro", afterLease); err != nil || !changed {
+	if err := st.ReleaseSessionShareOwnerLease(ctx, owner.ID, proposal.ID); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := st.UpdateSessionSharePermission(ctx, share.ID, owner.ID, "ro", nowTS()); err != nil || !changed {
 		t.Fatalf("downgrade changed=%v err=%v", changed, err)
 	}
 	_, _, state, claimErr = st.ClaimSessionShareProposal(ctx, second.ID, owner.ID, ownerIdentity.ID, nowTS(), testShareLeaseUntil())

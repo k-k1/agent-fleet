@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -389,6 +390,88 @@ func TestOwnerLeaseSerializesShareAndLifecycleAcrossManagers(t *testing.T) {
 		t.Fatalf("claim crossed lifecycle lease: state=%q err=%v", state, err)
 	}
 	if err := managerB.store.ReleaseSessionShareOwnerLease(ctx, owner.ID, lifecycleToken); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLifecycleLeaseHeartbeatAndFencingCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tenant, _ := st.EnsureDefaultTenant(ctx)
+	identity, _ := st.UpsertIdentity(ctx, "lease-heartbeat@example.com", "lease-heartbeat", "")
+	member, _ := st.EnsureMembership(ctx, identity.ID, tenant.ID, "member")
+
+	// A live holder renews beyond its original TTL, so another manager cannot
+	// acquire the owner even after that first deadline has passed.
+	live, err := acquireWorkspaceLifecycleLeaseWithTiming(ctx, st, member.ID, 300*time.Millisecond, 50*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(650 * time.Millisecond)
+	now := time.Now().UTC()
+	acquired, err := st.AcquireSessionShareOwnerLease(ctx, member.ID, newID(), leaseTS(now), leaseTS(now.Add(time.Second)))
+	if err != nil {
+		live.Close()
+		t.Fatal(err)
+	}
+	if acquired {
+		live.Close()
+		t.Fatal("heartbeat did not preserve lifecycle lease ownership")
+	}
+	live.Close()
+
+	// Simulate a paused CP whose heartbeat cannot run. Once a new holder acquires
+	// the expired row, the old holder's CAS checkpoint must fail before the next
+	// destructive lifecycle stage and its Close must not delete the new lease.
+	old, err := acquireWorkspaceLifecycleLeaseWithTiming(ctx, st, member.ID, 100*time.Millisecond, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(250 * time.Millisecond)
+	newToken := newID()
+	now = time.Now().UTC()
+	acquired, err = st.AcquireSessionShareOwnerLease(ctx, member.ID, newToken, leaseTS(now), leaseTS(now.Add(time.Second)))
+	if err != nil || !acquired {
+		old.Close()
+		t.Fatalf("new holder acquired=%v err=%v", acquired, err)
+	}
+	runtime := &shareLifecycleRuntime{}
+	if err := old.checkpoint(ctx); err == nil {
+		_ = runtime.Start(ctx) // represents the next wipe/start stage
+	}
+	if runtime.starts.Load() != 0 {
+		old.Close()
+		t.Fatal("expired holder advanced past its fencing checkpoint")
+	}
+	fencedDir := filepath.Join(t.TempDir(), "must-survive")
+	if err := os.MkdirAll(fencedDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fencedFile := filepath.Join(fencedDir, "data")
+	if err := os.WriteFile(fencedFile, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeAllContext(old.Context(), fencedDir); err == nil {
+		old.Close()
+		t.Fatal("fenced holder entered cancellable wipe")
+	}
+	if _, err := os.Stat(fencedFile); err != nil {
+		old.Close()
+		t.Fatalf("fenced holder removed data: %v", err)
+	}
+	old.Close()
+	now = time.Now().UTC()
+	if renewed, err := st.RenewSessionShareOwnerLease(ctx, member.ID, newToken, leaseTS(now), leaseTS(now.Add(time.Second))); err != nil || !renewed {
+		t.Fatalf("old holder removed/replaced new lease: renewed=%v err=%v", renewed, err)
+	}
+	if err := st.ReleaseSessionShareOwnerLease(ctx, member.ID, newToken); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -11,10 +11,11 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -29,26 +30,101 @@ type workspaceAPI struct {
 	autostart bool
 }
 
-const workspaceLifecycleLease = 10 * time.Minute
+const (
+	workspaceLifecycleLease     = 30 * time.Second
+	workspaceLifecycleHeartbeat = 10 * time.Second
+)
 
-func acquireWorkspaceLifecycleLease(ctx context.Context, st Store, owner string) (string, error) {
-	now := time.Now().UTC()
-	token := newID()
-	ok, err := st.AcquireSessionShareOwnerLease(ctx, owner, token, now.Format(time.RFC3339),
-		now.Add(workspaceLifecycleLease).Format(time.RFC3339))
-	if err != nil {
-		return "", err
-	}
-	if !ok {
-		return "", errSessionShareOwnerBusy
-	}
-	return token, nil
+type workspaceLifecycleLeaseGuard struct {
+	store     Store
+	owner     string
+	token     string
+	ttl       time.Duration
+	ctx       context.Context
+	cancel    context.CancelFunc
+	stop      chan struct{}
+	done      chan struct{}
+	closeOnce sync.Once
+	lost      atomic.Bool
 }
 
-func releaseWorkspaceLifecycleLease(st Store, owner, token string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	_ = st.ReleaseSessionShareOwnerLease(ctx, owner, token)
+func leaseTS(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000000000Z07:00") }
+
+func acquireWorkspaceLifecycleLease(ctx context.Context, st Store, owner string) (*workspaceLifecycleLeaseGuard, error) {
+	return acquireWorkspaceLifecycleLeaseWithTiming(ctx, st, owner, workspaceLifecycleLease, workspaceLifecycleHeartbeat)
+}
+
+func acquireWorkspaceLifecycleLeaseWithTiming(ctx context.Context, st Store, owner string, ttl, heartbeat time.Duration) (*workspaceLifecycleLeaseGuard, error) {
+	now := time.Now().UTC()
+	token := newID()
+	ok, err := st.AcquireSessionShareOwnerLease(ctx, owner, token, leaseTS(now), leaseTS(now.Add(ttl)))
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, errSessionShareOwnerBusy
+	}
+	opCtx, cancel := context.WithCancel(ctx)
+	guard := &workspaceLifecycleLeaseGuard{store: st, owner: owner, token: token, ttl: ttl,
+		ctx: opCtx, cancel: cancel, stop: make(chan struct{}), done: make(chan struct{})}
+	go guard.heartbeat(heartbeat)
+	return guard, nil
+}
+
+func (l *workspaceLifecycleLeaseGuard) heartbeat(interval time.Duration) {
+	defer close(l.done)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			err := l.checkpoint(ctx)
+			cancel()
+			if err != nil {
+				l.markLost()
+				return
+			}
+		case <-l.stop:
+			return
+		case <-l.ctx.Done():
+			return
+		}
+	}
+}
+
+func (l *workspaceLifecycleLeaseGuard) markLost() {
+	l.lost.Store(true)
+	l.cancel()
+}
+
+func (l *workspaceLifecycleLeaseGuard) checkpoint(ctx context.Context) error {
+	if l.lost.Load() {
+		return errSessionShareOwnerBusy
+	}
+	now := time.Now().UTC()
+	ok, err := l.store.RenewSessionShareOwnerLease(ctx, l.owner, l.token, leaseTS(now), leaseTS(now.Add(l.ttl)))
+	if err != nil || !ok {
+		l.markLost()
+		if err != nil {
+			return err
+		}
+		return errSessionShareOwnerBusy
+	}
+	return nil
+}
+
+func (l *workspaceLifecycleLeaseGuard) Context() context.Context { return l.ctx }
+
+func (l *workspaceLifecycleLeaseGuard) Close() {
+	l.closeOnce.Do(func() {
+		close(l.stop)
+		<-l.done
+		l.cancel()
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = l.store.ReleaseSessionShareOwnerLease(ctx, l.owner, l.token)
+	})
 }
 
 func workspaceLifecycleLeaseError(err error) *apiError {
@@ -138,18 +214,37 @@ func (a workspaceAPI) recreate(w http.ResponseWriter, r *http.Request, res *reso
 		writeAPIErr(w, workspaceLifecycleLeaseError(err))
 		return
 	}
-	defer releaseWorkspaceLifecycleLease(a.mgr.store, res.mv.MembershipID, lease)
+	defer lease.Close()
+	if err := lease.checkpoint(r.Context()); err != nil {
+		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+		return
+	}
 	// Stop は「まだ存在しない」等は許容する(best-effort)が、まだ running のまま
 	// なら中断する — ライブ bind-mount 配下の削除は不整合を起こすため。
-	if err := res.rt.Stop(r.Context()); err != nil && res.rt.State(r.Context()) == "running" {
+	if err := res.rt.Stop(lease.Context()); err != nil && res.rt.State(r.Context()) == "running" {
 		log.Printf("recreate: stop failed for ws %s (still running, aborting wipe): %v", res.ws.ID, err)
 		writeAPIErr(w, &apiError{http.StatusInternalServerError, "stop_failed", "could not stop the workspace; recreate aborted"})
 		return
 	}
+	if err := lease.checkpoint(r.Context()); err != nil {
+		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+		return
+	}
 	// Clear the working copies while the container is down. Targeted: we keep the
 	// encrypted secrets store and everything else in home.
-	_ = os.RemoveAll(filepath.Join(a.mgr.rootedDataDir(res.ws), "home", "repos"))
-	if aerr := a.ensureWorkspaceStartedRTLocked(r.Context(), res, res.rt); aerr != nil {
+	if err := removeAllContext(lease.Context(), filepath.Join(a.mgr.rootedDataDir(res.ws), "home", "repos")); err != nil {
+		if leaseErr := lease.checkpoint(r.Context()); leaseErr != nil {
+			writeAPIErr(w, workspaceLifecycleLeaseError(leaseErr))
+		} else {
+			writeAPIErr(w, internalErr(err))
+		}
+		return
+	}
+	if err := lease.checkpoint(r.Context()); err != nil {
+		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+		return
+	}
+	if aerr := a.ensureWorkspaceStartedRTLocked(lease.Context(), res, res.rt, lease); aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
@@ -175,18 +270,37 @@ func (a workspaceAPI) cleanHome(w http.ResponseWriter, r *http.Request, res *res
 		writeAPIErr(w, workspaceLifecycleLeaseError(err))
 		return
 	}
-	defer releaseWorkspaceLifecycleLease(a.mgr.store, res.mv.MembershipID, lease)
+	defer lease.Close()
+	if err := lease.checkpoint(r.Context()); err != nil {
+		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+		return
+	}
 	// recreate と同じく、Stop 失敗かつまだ running なら中断(ライブ bind-mount 配下
 	// の削除を避ける)。
-	if err := res.rt.Stop(r.Context()); err != nil && res.rt.State(r.Context()) == "running" {
+	if err := res.rt.Stop(lease.Context()); err != nil && res.rt.State(r.Context()) == "running" {
 		log.Printf("clean-home: stop failed for ws %s (still running, aborting wipe): %v", res.ws.ID, err)
 		writeAPIErr(w, &apiError{http.StatusInternalServerError, "stop_failed", "could not stop the workspace; clean-home aborted"})
 		return
 	}
+	if err := lease.checkpoint(r.Context()); err != nil {
+		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+		return
+	}
 	// Wipe home (keep-list preserved) while the container is down — deleting under a
 	// live bind-mount risks inconsistency (see cleanHome's contract in runtime_docker.go).
-	_ = cleanHome(a.mgr.rootedDataDir(res.ws))
-	if aerr := a.ensureWorkspaceStartedRTLocked(r.Context(), res, res.rt); aerr != nil {
+	if err := cleanHomeContext(lease.Context(), a.mgr.rootedDataDir(res.ws)); err != nil {
+		if leaseErr := lease.checkpoint(r.Context()); leaseErr != nil {
+			writeAPIErr(w, workspaceLifecycleLeaseError(leaseErr))
+		} else {
+			writeAPIErr(w, internalErr(err))
+		}
+		return
+	}
+	if err := lease.checkpoint(r.Context()); err != nil {
+		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+		return
+	}
+	if aerr := a.ensureWorkspaceStartedRTLocked(lease.Context(), res, res.rt, lease); aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
@@ -228,11 +342,14 @@ func (a workspaceAPI) ensureWorkspaceStartedRT(ctx context.Context, res *resolve
 	if err != nil {
 		return workspaceLifecycleLeaseError(err)
 	}
-	defer releaseWorkspaceLifecycleLease(a.mgr.store, res.mv.MembershipID, lease)
-	return a.ensureWorkspaceStartedRTLocked(ctx, res, rt)
+	defer lease.Close()
+	return a.ensureWorkspaceStartedRTLocked(lease.Context(), res, rt, lease)
 }
 
-func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *resolved, rt Runtime) *apiError {
+func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *resolved, rt Runtime, lease *workspaceLifecycleLeaseGuard) *apiError {
+	if err := lease.checkpoint(ctx); err != nil {
+		return workspaceLifecycleLeaseError(err)
+	}
 	switch rt.State(ctx) {
 	case "running":
 		return nil
@@ -264,8 +381,14 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 	if err := stageWorkspaceDocs(a.mgr.rootedDataDir(res.ws), res.mv.Role); err != nil {
 		log.Printf("stage workspace docs (ws=%s role=%s): %v", res.ws.ID, res.mv.Role, err)
 	}
+	if err := lease.checkpoint(ctx); err != nil {
+		return workspaceLifecycleLeaseError(err)
+	}
 	if err := rt.Start(ctx); err != nil {
 		return internalErr(err)
+	}
+	if err := lease.checkpoint(ctx); err != nil {
+		return workspaceLifecycleLeaseError(err)
 	}
 	_ = a.mgr.store.SetWorkspaceState(ctx, res.ws.ID, "running")
 	// A start IS activity: reset the in-memory idle clock too (SetWorkspaceState
@@ -300,9 +423,17 @@ func (a workspaceAPI) stop(w http.ResponseWriter, r *http.Request, res *resolved
 		writeAPIErr(w, workspaceLifecycleLeaseError(err))
 		return
 	}
-	defer releaseWorkspaceLifecycleLease(a.mgr.store, res.mv.MembershipID, lease)
-	if err := res.rt.Stop(r.Context()); err != nil {
+	defer lease.Close()
+	if err := lease.checkpoint(r.Context()); err != nil {
+		writeAPIErr(w, workspaceLifecycleLeaseError(err))
+		return
+	}
+	if err := res.rt.Stop(lease.Context()); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if err := lease.checkpoint(r.Context()); err != nil {
+		writeAPIErr(w, workspaceLifecycleLeaseError(err))
 		return
 	}
 	_ = a.mgr.store.SetWorkspaceState(r.Context(), res.ws.ID, "stopped")
