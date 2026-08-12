@@ -1,6 +1,6 @@
 import { mobileMatches } from "../lib/device.ts";
 import type { Layout, OpenTarget } from "./types.ts";
-import { activePane, allPanes, isBlankPane, openActive, openInNew, sameTarget } from "./ops.ts";
+import { activePane, allPanes, allViews, isBlankPane, openActive, openInNew, sameTarget } from "./ops.ts";
 
 export const DESKTOP_PANE_LIMIT = 8;
 export const MOBILE_PANE_LIMIT = 2;
@@ -55,7 +55,7 @@ export function planBrowserAttachmentOpen(
   mobile = mobileMatches(),
 ): BrowserAttachmentOpenPlan {
   const target = browserAttachmentTarget(attachmentId);
-  const panes = allPanes(layout);
+  const panes = layout.mode === "tabs" ? allViews(layout) : allPanes(layout);
   if (panes.some((pane) => sameTarget(pane, target)) || panes.some(isBlankPane)) {
     return { kind: "commit", layout: openInNew(layout, target, { mobile }) };
   }

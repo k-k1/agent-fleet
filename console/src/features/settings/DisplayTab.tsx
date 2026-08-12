@@ -39,6 +39,17 @@ export function DisplayTab() {
         </Row>
       </section>
       <section className="ds-group">
+        <h4 className="ds-title">{tr("display.pane_layout")}</h4>
+        <Row label={tr("display.pane_layout") }>
+          <Choice
+            value={s.paneLayout}
+            options={[["split", tr("display.pane_layout_split")], ["tabs", tr("display.pane_layout_tabs")]]}
+            onChange={(v) => setSetting("paneLayout", v as "split" | "tabs")}
+          />
+        </Row>
+        <p className="muted ds-note">{tr("display.pane_layout_note")}</p>
+      </section>
+      <section className="ds-group">
         <h4 className="ds-title">{tr("display.color_theme")}</h4>
         <Row label={tr("display.theme")}>
           <Choice

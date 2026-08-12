@@ -28,6 +28,7 @@ interface LayoutStore {
   commitAction(next: Layout, push?: boolean): Promise<boolean>;
   /** Restore the tenant's saved split (or reset). Called at boot + tenant switch. */
   load(slug: string): void;
+  loadMode(slug: string, mode: "split" | "tabs"): void;
   /** Seed a 1-pane layout from a pop-out descriptor (instead of load()) on the
    * pop-out tab's first boot. Persists immediately so a reload restores it. */
   initSinglePane(content: PaneContent, session: string | null, wrap: boolean | null): void;
@@ -48,11 +49,13 @@ interface LayoutStore {
   setColRatios(ratios: number[]): void;
   setRowRatio(colId: string, r: number): void;
   setPaneWrap(paneId: string, wrap: boolean | null): void;
+  selectTab(id: string): void;
+  moveTab(id: string, targetPaneId: string): void;
   resetToTerminal(): void;
 }
 
 function persist(layout: Layout): void {
-  const key = LKEY_NEW(getUser(), getTenant());
+  const key = LKEY_NEW(getUser(), getTenant(), layout.mode === "tabs" ? "tabs" : "split");
   const json = JSON.stringify(layout);
   // Per-tab copy: sessionStorage survives this tab's reloads but is private to the
   // tab and GC'd on close, so two tabs of the same account keep different layouts.
@@ -144,6 +147,13 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
       } catch {}
     },
 
+    loadMode(slug, mode) {
+      const l = loadStoredLayout(getUser(), slug, mode) || (mode === "tabs" ? ops.freshTabbedLayout() : ops.freshLayout());
+      set({ layout: l, hydrated: true });
+      persist(l);
+      try { history.replaceState({ __af: true, layout: l }, ""); } catch {}
+    },
+
     initSinglePane(content, session, wrap) {
       const l = ops.singlePaneLayout(content, session, wrap);
       set({ layout: l, hydrated: true });
@@ -202,6 +212,8 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
     setColRatios: (ratios) => commit(ops.setColRatios(get().layout, ratios), false),
     setRowRatio: (colId, r) => commit(ops.setRowRatio(get().layout, colId, r), false),
     setPaneWrap: (paneId, wrap) => commit(ops.setPaneWrap(get().layout, paneId, wrap), false),
+    selectTab: (id) => commit(ops.selectTab(get().layout, id), false),
+    moveTab: (id, targetPaneId) => commit(ops.moveTab(get().layout, id, targetPaneId)),
     resetToTerminal: () => commit(ops.freshLayout()),
   };
 });

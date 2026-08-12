@@ -34,9 +34,11 @@ import { BrowserPane } from "../browser/BrowserPane.tsx";
 import { BrowserAttachPane } from "../browser/BrowserAttachPane.tsx";
 import { canPopout, openPanePopout } from "./popout.ts";
 import { usePopoutMode } from "../../lib/popoutMode.ts";
+import type { PaneView } from "../../layout/types.ts";
 
 // Drag payload MIME — identifies a pane-to-pane drag (vs any other drag).
 const DND = "application/x-af-pane";
+const TAB_DND = "application/x-af-pane-tab";
 
 
 interface PaneProps {
@@ -161,6 +163,9 @@ export function Pane({
 
   // Per-pane line-wrap override for text views (null = follow the global setting).
   const setPaneWrap = useLayoutStore((s) => s.setPaneWrap);
+  const selectTab = useLayoutStore((s) => s.selectTab);
+  const closeTab = useLayoutStore((s) => s.closePane);
+  const moveTab = useLayoutStore((s) => s.moveTab);
   const settings = useSettings();
   const wrapOn = pane.wrap ?? settings.wrap;
   const canWrap =
@@ -182,6 +187,18 @@ export function Pane({
   // width (--pane-ctl-w, panes.css) instead of per-view magic numbers.
   const showPopout = popoutTabMode !== "popout" && canPopout(pane);
   const ctlCount = (showPopout ? 1 : 0) + (canWrap ? 1 : 0) + (canClose ? 1 : 0);
+  const views: PaneView[] = [
+    { id: pane.id, session: pane.session, content: pane.content, wrap: pane.wrap, lastUsedAt: pane.lastUsedAt },
+    ...(pane.tabs || []),
+  ];
+  const tabLabel = (view: PaneView) =>
+    view.content.kind === "terminal"
+      ? view.session || tr("pane.empty")
+      : view.content.kind === "file" || view.content.kind === "read"
+        ? view.content.filePath.split("/").pop() || view.content.filePath
+        : view.content.kind === "doc" || view.content.kind === "diff"
+          ? view.content.docTitle
+          : view.content.kind;
 
   const onDragStart = (e: RDragEvent) => {
     e.dataTransfer.setData(DND, pane.id);
@@ -230,6 +247,42 @@ export function Pane({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
+      {pane.tabs && (
+        <div
+          className="pane-tabs"
+          role="tablist"
+          aria-label={tr("display.pane_layout_tabs")}
+          onDragOver={(e) => { if (e.dataTransfer.types.includes(TAB_DND)) e.preventDefault(); }}
+          onDrop={(e) => {
+            const id = e.dataTransfer.getData(TAB_DND);
+            if (id) { e.preventDefault(); e.stopPropagation(); moveTab(id, pane.id); }
+          }}
+        >
+          {views.map((view) => (
+            <div className={cx("pane-tab", view.id === pane.id && "selected")} role="presentation" key={view.id}>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={view.id === pane.id}
+                title={tabLabel(view)}
+                draggable
+                onDragStart={(e) => { e.dataTransfer.setData(TAB_DND, view.id); e.dataTransfer.effectAllowed = "move"; }}
+                onClick={() => selectTab(view.id)}
+              >
+                {tabLabel(view)}
+              </button>
+              <button
+                type="button"
+                className="pane-tab-close"
+                aria-label={tr("ui.close_pane_hint")}
+                onClick={(e) => { e.stopPropagation(); closeTab(view.id); }}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       {canDrag && (
         // The drag grip doubles as the pane's ordinal chip: a colored number that
         // matches the rail and mini-map, still draggable to swap.
