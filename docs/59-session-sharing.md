@@ -38,10 +38,12 @@ RW 提案本文は最大 32 KiB、1セッション20件、24時間で失効す�
 がある環境では暗号化して CP DB に置き、承認・拒否・失効時に消去する。承認は DB の
 `pending → processing` 条件付き更新で一人だけが取得してから Agent へ送る。claim transaction は
 期限、catalog、現在の RW ACL を再検証して `processing` をcommitした時点で終了する。Agent HTTPを
-DB transaction内に置かず、所有者単位のshare mutexでACL／catalog変更とAgent操作だけを直列化する。
-そのためSQLiteの全write lockやPostgres connectionを外部I/O中に保持せず、共有解除／RO降格との
-順序は一意になる。ACL変更が先なら提案を失効して本文を消し、承認が先なら副作用の完了後に
-ACL変更が通る。Workspace の停止も同じ
+DB transaction内に置かず、claimと同じtransactionでowner単位の2分leaseを取得する。ACL／catalog
+変更と期限GCもmembership行を短時間lockしてactive leaseを検査するため、Postgresを共有する複数CP
+replica間でもAgent操作を横切れない。成功確定とlease解放も同じtransactionで行い、同一process内では
+share mutexにより競合リクエストを待機させる。そのためSQLiteの全write lockやPostgres connectionを
+外部I/O中に保持せず、共有解除／RO降格との順序は一意になる。ACL変更が先なら提案を失効して本文を
+消し、承認が先なら副作用の完了後にACL変更が通る。Workspace の停止も同じ
 workspace lifecycle lock を使い、停止が先なら送信せず、承認が先なら結果の永続化後に停止する。
 
 CP は proposal ID を `X-Agent-Fleet-Operation-ID` として Agent へ渡す。Agent は home volume 内に
@@ -52,7 +54,8 @@ CP は proposal ID を `X-Agent-Fleet-Operation-ID` として Agent へ渡す。
 GCし、判定不能な`processing`証跡は別枠で90日保持する。容量が判定不能証跡だけで埋まった場合は、
 証跡を捨てず、新しい副作用をclaim前に拒否する。
 CP の `processing` はこの結果不明 lease を表し、自動で `pending` へ戻さない。Agent に完了記録が
-あれば次の照会で `approved` へ収束し、判定不能のままなら元の24時間期限で失効して本文を消す。
+あれば次の照会で `approved` へ収束する。提案の24時間期限を跨いでもactive owner lease中の
+`processing`は一覧pollで失効させず、lease終了後も判定不能なら失効して本文を消す。
 
 ## 3. 閲覧と停止状態
 

@@ -13,6 +13,10 @@ import (
 	"time"
 )
 
+func testShareLeaseUntil() string {
+	return time.Now().Add(shareOwnerLease).UTC().Format(time.RFC3339)
+}
+
 func TestSessionShareStoreRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
@@ -138,11 +142,14 @@ func TestSessionShareClaimRechecksRWAndNeverRepeatsUnknown(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, state, claimErr := st.ClaimSessionShareProposal(ctx, proposal.ID, owner.ID, ownerIdentity.ID, nowTS())
+	claimAt := time.Now().UTC()
+	leaseUntil := claimAt.Add(shareOwnerLease)
+	_, _, state, claimErr := st.ClaimSessionShareProposal(ctx, proposal.ID, owner.ID, ownerIdentity.ID,
+		claimAt.Format(time.RFC3339), leaseUntil.Format(time.RFC3339))
 	if claimErr != nil || state != "claimed" {
 		t.Fatalf("first state=%q err=%v", state, claimErr)
 	}
-	_, _, state, claimErr = st.ClaimSessionShareProposal(ctx, proposal.ID, owner.ID, ownerIdentity.ID, nowTS())
+	_, _, state, claimErr = st.ClaimSessionShareProposal(ctx, proposal.ID, owner.ID, ownerIdentity.ID, nowTS(), testShareLeaseUntil())
 	if claimErr != nil || state != "processing" {
 		t.Fatalf("retry state=%q err=%v", state, claimErr)
 	}
@@ -152,10 +159,11 @@ func TestSessionShareClaimRechecksRWAndNeverRepeatsUnknown(t *testing.T) {
 	if err := st.CreateSessionShareProposal(ctx, second); err != nil {
 		t.Fatal(err)
 	}
-	if changed, err := st.UpdateSessionSharePermission(ctx, share.ID, owner.ID, "ro", nowTS()); err != nil || !changed {
+	afterLease := leaseUntil.Add(time.Second).Format(time.RFC3339)
+	if changed, err := st.UpdateSessionSharePermission(ctx, share.ID, owner.ID, "ro", afterLease); err != nil || !changed {
 		t.Fatalf("downgrade changed=%v err=%v", changed, err)
 	}
-	_, _, state, claimErr = st.ClaimSessionShareProposal(ctx, second.ID, owner.ID, ownerIdentity.ID, nowTS())
+	_, _, state, claimErr = st.ClaimSessionShareProposal(ctx, second.ID, owner.ID, ownerIdentity.ID, nowTS(), testShareLeaseUntil())
 	if claimErr != nil || state != "expired" {
 		t.Fatalf("downgraded state=%q err=%v", state, claimErr)
 	}
@@ -197,7 +205,7 @@ func TestSessionShareClaimReleasesDBBeforeAgentIO(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, state, err := st.ClaimSessionShareProposal(ctx, proposal.ID, owner.ID, ownerIdentity.ID, nowTS())
+	_, _, state, err := st.ClaimSessionShareProposal(ctx, proposal.ID, owner.ID, ownerIdentity.ID, nowTS(), testShareLeaseUntil())
 	if err != nil || state != "claimed" {
 		t.Fatalf("claim state=%q err=%v", state, err)
 	}
@@ -215,13 +223,64 @@ func TestSessionShareClaimReleasesDBBeforeAgentIO(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("unrelated DB write remained blocked after proposal claim")
 	}
-	changed, err := st.TransitionSessionShareProposal(ctx, proposal.ID, "processing", "approved", ownerIdentity.ID, nowTS(), true)
+	changed, err := st.FinalizeSessionShareProposal(ctx, proposal.ID, owner.ID, ownerIdentity.ID, nowTS())
 	if err != nil || !changed {
 		t.Fatalf("finalize changed=%v err=%v", changed, err)
 	}
 	got, ok, err := st.GetSessionShareProposal(ctx, proposal.ID)
 	if err != nil || !ok || got.Status != "approved" {
 		t.Fatalf("proposal=%+v ok=%v err=%v", got, ok, err)
+	}
+}
+
+func TestSessionShareExpiryPreservesLeasedProcessingAtDeadline(t *testing.T) {
+	ctx := context.Background()
+	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tenant, _ := st.EnsureDefaultTenant(ctx)
+	ownerIdentity, _ := st.UpsertIdentity(ctx, "deadline-owner@example.com", "deadline-owner", "")
+	recipientIdentity, _ := st.UpsertIdentity(ctx, "deadline-recipient@example.com", "deadline-recipient", "")
+	owner, _ := st.EnsureMembership(ctx, ownerIdentity.ID, tenant.ID, "member")
+	recipient, _ := st.EnsureMembership(ctx, recipientIdentity.ID, tenant.ID, "member")
+	workspace := Workspace{ID: newID(), TenantID: tenant.ID, MembershipID: owner.ID, ContainerName: "c", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: nowTS()}
+	if err := st.CreateWorkspace(ctx, workspace); err != nil {
+		t.Fatal(err)
+	}
+	catalog := SharedSessionCatalog{ID: newID(), WorkspaceID: workspace.ID, OwnerMembershipID: owner.ID, Name: "deadline", Kind: "codex", WorkingCopyID: "wc-deadline", LastSeen: nowTS()}
+	if err := st.ReplaceSharedSessionCatalog(ctx, workspace.ID, owner.ID, []SharedSessionCatalog{catalog}); err != nil {
+		t.Fatal(err)
+	}
+	share := SessionShare{ID: newID(), TenantID: tenant.ID, OwnerMembershipID: owner.ID, RecipientMembershipID: recipient.ID, ScopeType: "session", ScopeKey: catalog.Name, Permission: "rw", CreatedAt: nowTS(), UpdatedAt: nowTS()}
+	if err := st.PutSessionShare(ctx, share); err != nil {
+		t.Fatal(err)
+	}
+	claimAt := time.Now().UTC().Truncate(time.Second)
+	proposal := SessionShareProposal{ID: newID(), TenantID: tenant.ID, CatalogID: catalog.ID, OwnerMembershipID: owner.ID, ProposerMembershipID: recipient.ID, Action: "turn", Ciphertext: "opaque", Status: "pending", CreatedAt: claimAt.Format(time.RFC3339), ExpiresAt: claimAt.Add(time.Second).Format(time.RFC3339)}
+	if err := st.CreateSessionShareProposal(ctx, proposal); err != nil {
+		t.Fatal(err)
+	}
+	_, _, state, err := st.ClaimSessionShareProposal(ctx, proposal.ID, owner.ID, ownerIdentity.ID,
+		claimAt.Format(time.RFC3339), claimAt.Add(shareOwnerLease).Format(time.RFC3339))
+	if err != nil || state != "claimed" {
+		t.Fatalf("claim state=%q err=%v", state, err)
+	}
+	pollAt := claimAt.Add(2 * time.Second).Format(time.RFC3339)
+	if err := st.ExpireSessionShareProposals(ctx, owner.ID, pollAt); err != nil {
+		t.Fatal(err)
+	}
+	processing, ok, err := st.GetSessionShareProposal(ctx, proposal.ID)
+	if err != nil || !ok || processing.Status != "processing" || processing.Ciphertext == "" {
+		t.Fatalf("processing proposal expired under active lease: %+v ok=%v err=%v", processing, ok, err)
+	}
+	changed, err := st.FinalizeSessionShareProposal(ctx, proposal.ID, owner.ID, ownerIdentity.ID, pollAt)
+	if err != nil || !changed {
+		t.Fatalf("finalize changed=%v err=%v", changed, err)
 	}
 }
 
