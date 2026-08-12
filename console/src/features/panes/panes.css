@@ -57,11 +57,18 @@
   border-bottom: 1px solid var(--border);
 }
 .pane-tabs ~ .pane-controls { top: 1px; }
-.pane:has(.pane-tabs) > .view,
-.pane:has(.pane-tabs) > .mirrorview,
-.pane:has(.pane-tabs) > .chatview,
-.pane:has(.pane-tabs) > .browser-pane,
-.pane:has(.pane-tabs) > .browser-attach-pane { margin-top: 32px; height: calc(100% - 32px); }
+/* Push the view body below the tab strip. Named per-view-class (.mirrorview,
+   .fileview, ...) instead of this negation was tried first and bit us: every
+   view class not on the list rendered its own header UNDER the strip
+   (invisible, since .pane-tabs is opaque and z-index:4 above it) instead of
+   below it — diff/scm (.fileview/.scmview) shipped missing, and sharing's
+   .shared-view was never added at all. Exclude only the pane's own chrome
+   (tab strip itself, grip, control cluster, find bar, drop hint, empty-state)
+   so every current AND future view class is covered with no list to maintain. */
+.pane:has(.pane-tabs) > :not(.pane-tabs, .pane-grip, .pane-controls, .pane-find, .drop-indicator, .pane-empty) {
+  margin-top: 32px;
+  height: calc(100% - 32px);
+}
 .pane-tab {
   position: relative;
   display: flex;
