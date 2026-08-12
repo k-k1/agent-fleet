@@ -363,20 +363,41 @@ func TestCodexCompactedReplacementHistory(t *testing.T) {
 }
 
 func TestCodexAnswerText(t *testing.T) {
-	cases := []struct{ in, want string }{
+	cases := []struct {
+		in        string
+		questions []transcript.Question
+		want      string
+	}{
 		// single-question select: the label, not the raw envelope
-		{`{"answers":{"ask_user_test":{"answers":["質問だけ確認 (Recommended)"]}}}`, "質問だけ確認 (Recommended)"},
+		{`{"answers":{"ask_user_test":{"answers":["質問だけ確認 (Recommended)"]}}}`, nil, "質問だけ確認 (Recommended)"},
 		// multi-select within one question: joined labels
-		{`{"answers":{"q":{"answers":["AWS","セルフホスト"]}}}`, "AWS, セルフホスト"},
-		// multiple questions: flattened, keys sorted for a stable order
-		{`{"answers":{"b":{"answers":["Two"]},"a":{"answers":["One"]}}}`, "One, Two"},
+		{`{"answers":{"q":{"answers":["AWS","セルフホスト"]}}}`, nil, "AWS, セルフホスト"},
+		// multiple questions with no ids to match against (older/synthetic rollout):
+		// flattened, keys sorted for a stable order
+		{`{"answers":{"b":{"answers":["Two"]},"a":{"answers":["One"]}}}`, nil, "One, Two"},
+		// multiple questions WITH ids: anchored per-question prose, not flattened —
+		// this is what the Console's per-question parser (questionAnswers.ts) needs to
+		// attribute each answer to its own card instead of every card showing every
+		// question's combined picks.
+		{
+			`{"answers":{"b":{"answers":["Two"]},"a":{"answers":["One"]}}}`,
+			[]transcript.Question{{ID: "a", Question: "Q1?"}, {ID: "b", Question: "Q2?"}},
+			`"Q1?"="One", "Q2?"="Two"`,
+		},
+		// ids present but one doesn't match the answers map: falls back to flattened
+		// rather than dropping the mismatched question's answer.
+		{
+			`{"answers":{"a":{"answers":["One"]},"b":{"answers":["Two"]}}}`,
+			[]transcript.Question{{ID: "a", Question: "Q1?"}, {ID: "missing", Question: "Q2?"}},
+			"One, Two",
+		},
 		// unknown shape falls back to the raw output (answer never lost)
-		{`plain free text`, "plain free text"},
-		{`{"answers":{}}`, `{"answers":{}}`},
+		{`plain free text`, nil, "plain free text"},
+		{`{"answers":{}}`, nil, `{"answers":{}}`},
 	}
 	for _, c := range cases {
-		if got := answerText(c.in); got != c.want {
-			t.Errorf("answerText(%q) = %q, want %q", c.in, got, c.want)
+		if got := answerText(c.in, c.questions); got != c.want {
+			t.Errorf("answerText(%q, %+v) = %q, want %q", c.in, c.questions, got, c.want)
 		}
 	}
 }
@@ -399,6 +420,32 @@ func TestCodexQuestionAnswerFromRollout(t *testing.T) {
 	}
 	if got != "Yes" {
 		t.Fatalf("question answer = %q, want %q", got, "Yes")
+	}
+}
+
+// TestCodexQuestionAnswerFromRolloutMultiQuestion is the multi-question counterpart of
+// TestCodexQuestionAnswerFromRollout: one request_user_input call asking several
+// questions must resolve to an answer per question, each attributed to its own id —
+// not one flattened string that (via the Console's byAnchors fallback) shows every
+// question's combined picks on every card. Shape taken from a real rollout (実測
+// 2026-08-12): each questions[].id reappears verbatim as the answers map's key.
+func TestCodexQuestionAnswerFromRolloutMultiQuestion(t *testing.T) {
+	lines := [][]byte{
+		[]byte(`{"type":"response_item","payload":{"type":"function_call","call_id":"c1","name":"request_user_input","arguments":"{\"questions\":[{\"id\":\"switch_behavior\",\"question\":\"切替時どうする？\",\"options\":[{\"label\":\"方式ごとに保持\"}]},{\"id\":\"tab_capacity\",\"question\":\"上限は？\",\"options\":[{\"label\":\"全体24件まで\"}]}]}"}}`),
+		[]byte(`{"type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"{\"answers\":{\"switch_behavior\":{\"answers\":[\"方式ごとに保持\"]},\"tab_capacity\":{\"answers\":[\"全体24件まで\"]}}}"}}`),
+	}
+	turns, _ := parseRollout(lines)
+	var got string
+	for _, tn := range turns {
+		for _, p := range tn.Parts {
+			if p.Kind == "question" {
+				got = p.Answer
+			}
+		}
+	}
+	want := `"切替時どうする？"="方式ごとに保持", "上限は？"="全体24件まで"`
+	if got != want {
+		t.Fatalf("question answer = %q, want %q", got, want)
 	}
 }
 
