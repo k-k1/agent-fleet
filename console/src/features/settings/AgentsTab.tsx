@@ -283,7 +283,7 @@ function ClaudeCustomModelsRow() {
   const [value, setValue] = useState("");
   const id = value.trim();
   const duplicate = s.claudeCustomModels.some((m) => m.toLowerCase() === id.toLowerCase());
-  const valid = /^claude-[a-z0-9][a-z0-9._-]*$/i.test(id) && !duplicate;
+  const valid = /^claude-[a-z0-9][a-z0-9._\-[\]]*$/i.test(id) && !duplicate;
   const add = () => {
     if (!valid) return;
     setSettings({ claudeCustomModels: [...s.claudeCustomModels, id] });
