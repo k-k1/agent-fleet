@@ -135,6 +135,14 @@ func (m *manager) stopWorkspaceByMembership(ctx context.Context, membershipID st
 	if err != nil || !ok {
 		return err
 	}
+	lock := m.startLockFor(ws.ID)
+	lock.Lock()
+	defer lock.Unlock()
+	lease, err := acquireWorkspaceLifecycleLease(ctx, m.store, membershipID)
+	if err != nil {
+		return err
+	}
+	defer releaseWorkspaceLifecycleLease(m.store, membershipID, lease)
 	if err := m.runtimeFor(ws, "").Stop(ctx); err != nil {
 		return err
 	}
@@ -149,6 +157,14 @@ func (m *manager) cleanHomeByMembership(ctx context.Context, membershipID string
 	if err != nil || !ok {
 		return err
 	}
+	lock := m.startLockFor(ws.ID)
+	lock.Lock()
+	defer lock.Unlock()
+	lease, err := acquireWorkspaceLifecycleLease(ctx, m.store, membershipID)
+	if err != nil {
+		return err
+	}
+	defer releaseWorkspaceLifecycleLease(m.store, membershipID, lease)
 	_ = m.runtimeFor(ws, "").Stop(ctx) // best-effort
 	if err := cleanHome(m.rootedDataDir(ws)); err != nil {
 		return err
