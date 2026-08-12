@@ -26,7 +26,12 @@ const ATTACH_PROMPTS = [FILE_PROMPT, FILE_PROMPT_GENERIC, IMG_PROMPT, IMG_PROMPT
 export const PASTE_PATH_RE = /\S*\/pasted\/[^\s/]+\/(paste-\d+[\w.-]*)/g;
 // Codex app-server serializes a localImage input back into the rollout as a textual
 // marker alongside the image item. It is transport metadata, not user-authored text.
-const CODEX_IMAGE_TAG_RE = /<image\b[^>]*\bpath="[^"]+"[^>]*>/gi;
+// A captioned send round-trips as separate input_text items concatenated with no
+// separator — opening tag, then (after the input_image item) a bare "</image>" — so
+// both must be stripped or the leftover closing tag keeps the reconciled text from
+// ever matching the plain caption of the optimistic echo (pendingEcho.ts), and the
+// 反映待ち badge never clears.
+const CODEX_IMAGE_TAG_RE = /<image\b[^>]*\bpath="[^"]+"[^>]*>|<\/image>/gi;
 
 // isImageName reports whether a pasted basename is a thumbnail-able image.
 export function isImageName(name: string): boolean {
