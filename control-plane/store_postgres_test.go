@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"os"
+	"sync"
 	"testing"
+	"time"
 )
 
 // TestPostgresStore runs a broad round-trip against a real Postgres to validate the
@@ -89,6 +91,31 @@ func TestPostgresStore(t *testing.T) {
 	if got, ok, err := st.GetWorkspaceByMembership(ctx, m1.ID); err != nil || !ok || got.State != "running" {
 		t.Fatalf("get ws: ok=%v err=%v %+v", ok, err, got)
 	}
+	// Nine same-key waiters must poll without pinning the remaining nine pool
+	// connections; the holder still needs one for checkpoint/finalization work.
+	releaseFence, err := st.AcquireWorkspaceOperationFence(ctx, ws.ID)
+	if err != nil {
+		t.Fatalf("advisory holder: %v", err)
+	}
+	var waiters sync.WaitGroup
+	waiters.Add(9)
+	for range 9 {
+		go func() {
+			defer waiters.Done()
+			release, err := st.AcquireWorkspaceOperationFence(ctx, ws.ID)
+			if err == nil {
+				release()
+			}
+		}()
+	}
+	time.Sleep(100 * time.Millisecond)
+	queryCtx, queryCancel := context.WithTimeout(ctx, time.Second)
+	if _, err := st.GetTenant(queryCtx, tn.ID); err != nil {
+		t.Fatalf("pool exhausted by advisory waiters: %v", err)
+	}
+	queryCancel()
+	releaseFence()
+	waiters.Wait()
 	if err := st.PutWrappedDEK(ctx, ws.ID, "ct1", "kref"); err != nil {
 		t.Fatalf("put dek: %v", err)
 	}

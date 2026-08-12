@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"database/sql/driver"
 	"embed"
 	"encoding/hex"
 	"errors"
@@ -668,23 +669,46 @@ func (s *sqlStore) AcquireWorkspaceOperationFence(ctx context.Context, workspace
 	if s.dialect != "postgres" {
 		return func() {}, nil
 	}
-	conn, err := s.db.DB.Conn(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if _, err = conn.ExecContext(ctx, `SELECT pg_advisory_lock(hashtextextended($1, 0))`, workspaceID); err != nil {
-		_ = conn.Close()
-		return nil, err
+	var conn *sql.Conn
+	for {
+		var err error
+		conn, err = s.db.DB.Conn(ctx)
+		if err != nil { return nil, err }
+		var acquired bool
+		err = conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock(hashtextextended($1, 0))`, workspaceID).Scan(&acquired)
+		if err != nil {
+			discardSQLConn(conn) // server may have acquired immediately before the error
+			return nil, err
+		}
+		if acquired { break }
+		_ = conn.Close() // return the waiter connection before polling again
+		select {
+		case <-ctx.Done(): return nil, ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
 	var once sync.Once
 	return func() {
 		once.Do(func() {
 			unlockCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			_, _ = conn.ExecContext(unlockCtx, `SELECT pg_advisory_unlock(hashtextextended($1, 0))`, workspaceID)
+			var unlocked bool
+			err := conn.QueryRowContext(unlockCtx, `SELECT pg_advisory_unlock(hashtextextended($1, 0))`, workspaceID).Scan(&unlocked)
 			cancel()
+			if err != nil || !unlocked {
+				discardSQLConn(conn)
+				return
+			}
 			_ = conn.Close()
 		})
 	}, nil
+}
+
+// database/sql Conn.Close returns a physical PG session to the pool, which is
+// unsafe when advisory-lock ownership is uncertain. ErrBadConn tells the pool to
+// destroy that session; PostgreSQL then releases all of its session locks.
+func discardSQLConn(conn *sql.Conn) {
+	_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+	_ = conn.Close()
 }
 
 func (s *sqlStore) GetWorkspaceByMembership(ctx context.Context, membershipID string) (Workspace, bool, error) {

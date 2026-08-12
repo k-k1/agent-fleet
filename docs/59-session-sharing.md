@@ -66,6 +66,9 @@ Runtimeがrunningでも早期return前に行うため、idle reaper無効環境�
 Postgres HAではさらにWorkspace ID由来のsession advisory lockを専用DB connectionで外部Runtime I/Oの
 全区間保持する。CPがpauseしてもlockは残り、新holderは旧操作の静止まで待つ。process crash時はconnection
 切断で自動解放されるため、Docker／ECSでもlease checkpoint直後のpause gapを越えてStop／Startが交差しない。
+待機者は`pg_try_advisory_lock`をpollして未取得connectionを即poolへ返すため、holderのcheckpoint／finalize用
+connectionを枯渇させない。取得結果不明またはunlock失敗時は物理sessionを`ErrBadConn`で破棄し、lockを
+保持したsessionがpoolへ戻ることを防ぐ。
 native Runtimeではcontext cancelだけに依存せず、`dataDir/lifecycle.lock` のkernel flockを
 lifecycle／承認の全区間で保持する。期限切れleaseを得た新holderも旧holderのStart／Stopが静止するまで
 進めない。Start後にleaseを失えば起動時刻まで一致する自分のPIDだけを回収し、Stop中に失えば既送信の
