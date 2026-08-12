@@ -39,6 +39,25 @@
 .pane-head-title {
   color: var(--muted);
 }
+.pane-head-actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+.term-tab-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 5px;
+  border-right: 1px solid var(--border);
+}
+.term-tab-actions .ui-btn {
+  width: 22px;
+  height: 22px;
+  padding: 2px;
+}
 .pane-session {
   display: inline-flex;
   align-items: center;
