@@ -208,6 +208,56 @@ func TestReaperRevalidatesActivityAfterFenceWait(t *testing.T) {
 	}
 }
 
+func TestReaperObservesActivityFromAnotherControlPlane(t *testing.T) {
+	tests := []struct {
+		name     string
+		activate func(context.Context, *manager, Workspace) func()
+	}{
+		{name: "remote request", activate: func(ctx context.Context, m *manager, ws Workspace) func() {
+			m.touchWorkspace(ctx, ws.ID)
+			return func() {}
+		}},
+		{name: "remote live connection", activate: func(ctx context.Context, m *manager, ws Workspace) func() {
+			return m.trackWorkspaceConnection(ctx, ws.ID, "session-a")
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			st, ws, managerB := reaperLifecycleFixture(t)
+			managerA := &manager{store: st, conns: newConnRegistry()}
+			releaseActivity := tc.activate(context.Background(), managerA, ws)
+			defer releaseActivity()
+
+			rt := newReaperFenceRuntime(t)
+			close(rt.fenceRelease) // no lifecycle conflict; test shared activity only
+			(&reaper{mgr: managerB}).stopWorkspace(context.Background(), rt, ws, time.Minute)
+			if rt.stops.Load() != 0 {
+				t.Fatal("reaper stopped activity served by another CP replica")
+			}
+		})
+	}
+}
+
+func TestWorkspaceActivityMergeNeverShortensRemotePresence(t *testing.T) {
+	st, ws, _ := reaperLifecycleFixture(t)
+	now := time.Now().UTC()
+	if err := st.RecordWorkspaceActivity(context.Background(), ws.ID, leaseTS(now), leaseTS(now.Add(time.Minute))); err != nil {
+		t.Fatal(err)
+	}
+	// An inactive replica reports connectedUntil=now. The existing future lease
+	// from another replica must remain authoritative.
+	if err := st.RecordWorkspaceActivity(context.Background(), ws.ID, leaseTS(now.Add(time.Second)), leaseTS(now)); err != nil {
+		t.Fatal(err)
+	}
+	active, err := st.WorkspaceHasRecentActivity(context.Background(), ws.ID, leaseTS(now.Add(time.Hour)), leaseTS(now.Add(30*time.Second)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !active {
+		t.Fatal("later inactive report shortened another replica's connection lease")
+	}
+}
+
 // TestIdleBase pins the tier-2 idle clock's start to the LATEST of the three
 // activity signals (boot time / in-memory lastSeen / DB last_active_at). The
 // headline case is the regression that made a just-started workspace stop right

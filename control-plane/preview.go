@@ -100,7 +100,7 @@ func (a previewAPI) setPreviewTenantCookie(w http.ResponseWriter, r *http.Reques
 // the /preview/{port} sub-path. HTTP only for now; WebSocket/HMR is a follow-up.
 func (a previewAPI) proxy(w http.ResponseWriter, r *http.Request, res *resolved) {
 	rt := res.rt
-	a.mgr.conns.touch(res.ws.ID) // P3-9: preview traffic keeps the workspace warm
+	a.mgr.touchWorkspace(r.Context(), res.ws.ID) // P3-9: preview traffic keeps the workspace warm
 	port := r.PathValue("port")
 	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
 		http.Error(w, "bad preview port", http.StatusBadRequest)

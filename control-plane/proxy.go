@@ -143,7 +143,7 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 	// must NOT keep a workspace warm, or a left-open tab would defeat idle-stop —
 	// real presence is instead signalled by an attached terminal or a busy session.
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		a.mgr.conns.touch(res.ws.ID)
+		a.mgr.touchWorkspace(r.Context(), res.ws.ID)
 	}
 	if unsafeRelayPath(r.URL.Path) {
 		http.Error(w, "bad proxy path", http.StatusBadRequest)
@@ -223,7 +223,7 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 // reach the browser as they arrive instead of buffering in net/http's ~4KB writer.
 func (a agentProxyAPI) stream(w http.ResponseWriter, r *http.Request, res *resolved) {
 	rt := res.rt
-	a.mgr.conns.touch(res.ws.ID) // a chat turn is real activity (POST)
+	a.mgr.touchWorkspace(r.Context(), res.ws.ID) // a chat turn is real activity (POST)
 	if unsafeRelayPath(r.URL.Path) {
 		http.Error(w, "bad proxy path", http.StatusBadRequest)
 		return
@@ -307,8 +307,8 @@ func (a agentProxyAPI) terminal(w http.ResponseWriter, r *http.Request, res *res
 	// P3-9: an attached terminal keeps the workspace warm and pins its session
 	// (tier 1 won't halt a session someone is watching).
 	session := r.URL.Query().Get("session")
-	a.mgr.conns.addConn(res.ws.ID, session)
-	defer a.mgr.conns.doneConn(res.ws.ID, session)
+	releasePresence := a.mgr.trackWorkspaceConnection(r.Context(), res.ws.ID, session)
+	defer releasePresence()
 	// No auto-start: opening a terminal must NOT boot a stopped workspace. Otherwise a
 	// mere session click (which opens /ws/pty) would silently revive the whole WS. A
 	// stopped workspace is brought up only by the explicit WORKSPACE Start control;
