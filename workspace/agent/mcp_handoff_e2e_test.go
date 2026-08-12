@@ -78,8 +78,8 @@ func TestE2EHandoffProposalLandsUnderTheCallingSession(t *testing.T) {
 					t.Fatalf("tools/call = %+v, want a refusal mentioning %q", resp, tc.wantRefusal)
 				}
 				for name := range tc.alive {
-					if p, _ := readHandoffProposal(name); p != nil {
-						t.Fatalf("a proposal was filed under %q despite the refusal: %+v", name, p)
+					if list, _ := readHandoffProposals(name); len(list) != 0 {
+						t.Fatalf("a proposal was filed under %q despite the refusal: %+v", name, list)
 					}
 				}
 				return
@@ -87,11 +87,12 @@ func TestE2EHandoffProposalLandsUnderTheCallingSession(t *testing.T) {
 			if resp.isError {
 				t.Fatalf("tools/call failed: %s", resp.text)
 			}
-			p, err := readHandoffProposal(tc.wantOwner)
-			if err != nil || p == nil {
-				t.Fatalf("no proposal under %q (err=%v) — the card would never appear in that "+
-					"session's mirror", tc.wantOwner, err)
+			list, err := readHandoffProposals(tc.wantOwner)
+			if err != nil || len(list) != 1 {
+				t.Fatalf("no proposal under %q (err=%v, list=%+v) — the card would never appear in "+
+					"that session's mirror", tc.wantOwner, err, list)
 			}
+			p := list[0]
 			if p.Prompt != "続き" || p.Title != "次のセッションへ" {
 				t.Fatalf("proposal = %+v, want the prompt/title the tool was called with", p)
 			}
@@ -99,7 +100,7 @@ func TestE2EHandoffProposalLandsUnderTheCallingSession(t *testing.T) {
 				if name == tc.wantOwner {
 					continue
 				}
-				if other, _ := readHandoffProposal(name); other != nil {
+				if other, _ := readHandoffProposals(name); len(other) != 0 {
 					t.Fatalf("the proposal ALSO landed under %q — a handoff was filed in "+
 						"somebody else's session", name)
 				}
