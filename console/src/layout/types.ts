@@ -51,6 +51,19 @@ export type PaneContent =
 
 export type PaneKind = PaneContent["kind"];
 
+/** A view is the unit that owns a runtime identity. In the classic layout it
+ * is also the visual pane; in the tabbed layout several views live in one
+ * visual pane. Keep this identity separate from geometry so moving a tab never
+ * recreates its xterm or browser controller. */
+export interface PaneView {
+  id: string;
+  session: string | null;
+  content: PaneContent;
+  wrap: boolean | null;
+  /** Monotonic-ish wall clock used only for the tab-layout LRU replacement. */
+  lastUsedAt?: number;
+}
+
 export interface Pane {
   id: string;
   /** Session bound to this pane's persistent xterm (kept warm across view switches). */
@@ -58,6 +71,11 @@ export interface Pane {
   content: PaneContent;
   /** Per-pane soft-wrap override for text views (null = follow the global setting). */
   wrap: boolean | null;
+  lastUsedAt?: number;
+  /** In tabbed mode, inactive views stored in this visual pane. The fields
+   * above always describe its selected view, so legacy consumers continue to
+   * read a Pane without a special projection layer. */
+  tabs?: PaneView[];
 }
 
 /** A column: 1 or 2 stacked panes plus the split ratio between them. */
@@ -69,6 +87,9 @@ export interface Column {
 
 /** The full layout: columns + their width fractions + the active pane id. */
 export interface Layout {
+  /** `split` is the established 4 x 2 one-view-per-pane layout. `tabs` keeps
+   * the same grid mechanics but caps it at 3 x 2 and lets each cell own tabs. */
+  mode?: "split" | "tabs";
   cols: Column[]; // 1–4 columns
   colRatios: number[]; // column width fractions, sums to 1, len == cols.length
   activeId: string; // id of the active pane (click / key target)
@@ -89,4 +110,12 @@ export const blankPane = (id: string): Pane => ({
   session: null,
   content: { ...BLANK_TERMINAL },
   wrap: null,
+});
+
+export const paneView = (pane: Pane): PaneView => ({
+  id: pane.id,
+  session: pane.session,
+  content: pane.content,
+  wrap: pane.wrap,
+  ...(pane.lastUsedAt ? { lastUsedAt: pane.lastUsedAt } : {}),
 });

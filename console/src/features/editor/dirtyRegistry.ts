@@ -1,4 +1,5 @@
 import type { Layout } from "../../layout/types.ts";
+import { allViews } from "../../layout/ops.ts";
 
 export interface DirtyEditorEntry {
   paneId: string;
@@ -149,11 +150,9 @@ export function cancelDirtyGuardRequest(id: number): void {
 
 function panesById(layout: Layout): Map<string, string> {
   const out = new Map<string, string>();
-  for (const col of layout.cols) {
-    for (const pane of col.panes) {
-      const key = pane.content.kind === "file" ? `file:${pane.content.filePath}` : pane.content.kind;
-      out.set(pane.id, key);
-    }
+  for (const pane of allViews(layout)) {
+    const key = pane.content.kind === "file" ? `file:${pane.content.filePath}` : pane.content.kind;
+    out.set(pane.id, key);
   }
   return out;
 }

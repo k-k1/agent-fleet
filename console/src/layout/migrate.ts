@@ -7,9 +7,9 @@
 // missing we MIGRATE the old key so the user's split carries over. All input is
 // untrusted JSON — validated field by field; anything unusable degrades to a
 // blank terminal pane (never a crash), an unusable layout to null.
-import type { Layout, Pane, PaneContent } from "./types.ts";
+import type { Layout, Pane, PaneContent, PaneView } from "./types.ts";
 import { blankPane } from "./types.ts";
-import { equalRatios, MAX_COLS } from "./ops.ts";
+import { equalRatios, MAX_COLS, MAX_TAB_COLS, MAX_TABS } from "./ops.ts";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -128,7 +128,7 @@ function paneFrom(raw: any): Pane | null {
   if (!id) return null;
   const isNew = raw.content && typeof raw.content === "object";
   const content = isNew ? contentFromStored(raw.content) : contentFromFlat(raw);
-  return {
+  const pane: Pane = {
     id,
     // Both formats keep the pane's bound session OUTSIDE the view identity: the
     // old wide struct carried `session` at the top level too (even for file/scm
@@ -137,13 +137,27 @@ function paneFrom(raw: any): Pane | null {
     content,
     wrap: typeof raw.wrap === "boolean" ? raw.wrap : null,
   };
+  if (Array.isArray(raw.tabs)) {
+    const tabs: PaneView[] = [];
+    const seen = new Set([id]);
+    for (const tab of raw.tabs) {
+      const parsed = paneFrom({ ...tab, tabs: undefined });
+      if (!parsed || seen.has(parsed.id)) continue;
+      seen.add(parsed.id);
+      tabs.push({ id: parsed.id, session: parsed.session, content: parsed.content, wrap: parsed.wrap,
+        ...(typeof tab.lastUsedAt === "number" && tab.lastUsedAt > 0 ? { lastUsedAt: tab.lastUsedAt } : {}) });
+    }
+    if (tabs.length) pane.tabs = tabs;
+  }
+  return pane;
 }
 
 /** normalizeStored turns parsed JSON (old flat OR new format) into a valid
  * Layout, or null when unusable (caller falls back to a fresh layout). */
 export function normalizeStored(raw: unknown): Layout | null {
   const l = raw as any;
-  if (!l || !Array.isArray(l.cols) || l.cols.length === 0 || l.cols.length > MAX_COLS) return null;
+  const mode = l?.mode === "tabs" ? "tabs" : "split";
+  if (!l || !Array.isArray(l.cols) || l.cols.length === 0 || l.cols.length > (mode === "tabs" ? MAX_TAB_COLS : MAX_COLS)) return null;
   const cols = [];
   const seen = new Set<string>();
   for (const c of l.cols) {
@@ -175,10 +189,14 @@ export function normalizeStored(raw: unknown): Layout | null {
     colRatios = colRatios.map((r) => r / sum);
   }
   const activeId =
-    cols.some((c) => c.panes.some((p) => p.id === l.activeId)) && typeof l.activeId === "string"
+    cols.some((c) => c.panes.some((p) => p.id === l.activeId || p.tabs?.some((t) => t.id === l.activeId))) && typeof l.activeId === "string"
       ? l.activeId
       : cols[0].panes[0].id;
-  return { cols, colRatios, activeId };
+  if (mode === "tabs") {
+    const count = cols.reduce((n, c) => n + c.panes.reduce((m, p) => m + 1 + (p.tabs?.length || 0), 0), 0);
+    if (count > MAX_TABS) return null;
+  }
+  return { mode, cols, colRatios, activeId };
 }
 
 /** Storage key: the pane layout is persisted per (user, tenant) so a different
@@ -188,8 +206,8 @@ export function normalizeStored(raw: unknown): Layout | null {
  * `af.layout.<slug>` keys: switching to the user-scoped scheme intentionally
  * resets the layout once rather than attributing a shared layout to whoever logs
  * in first. */
-export const LKEY_NEW = (user: string, slug: string): string =>
-  "af.layout2." + (user || "") + "." + (slug || "");
+export const LKEY_NEW = (user: string, slug: string, mode: "split" | "tabs" = "split"): string =>
+  "af.layout2." + (user || "") + "." + (slug || "") + (mode === "tabs" ? ".tabs" : "");
 
 /** loadStoredLayout reads the persisted layout for a (user, tenant). Returns null
  * when nothing usable is stored.
@@ -201,15 +219,15 @@ export const LKEY_NEW = (user: string, slug: string): string =>
  * fall back to the shared localStorage entry, which every tab also updates: that
  * seeds a brand-new tab (and an upgrading single-tab user) from the most recently
  * active layout instead of a blank one. Both stores use the same (user, tenant) key. */
-export function loadStoredLayout(user: string, slug: string): Layout | null {
-  const key = LKEY_NEW(user, slug);
+export function loadStoredLayout(user: string, slug: string, mode: "split" | "tabs" = "split"): Layout | null {
+  const key = LKEY_NEW(user, slug, mode);
   for (const store of [safeSession(), localStorageOr(null)]) {
     if (!store) continue;
     try {
       const s = store.getItem(key);
       if (s) {
         const l = normalizeStored(JSON.parse(s));
-        if (l) return l;
+        if (l && (l.mode || "split") === mode) return l;
       }
     } catch {
       /* corrupted entry — fall through to the next store / a fresh layout */

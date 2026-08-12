@@ -28,7 +28,7 @@ import { useSessionNotifications } from "../features/sessions/useSessionNotifica
 import { useReposStore, startReposPolling } from "../features/repos/store.ts";
 import { useFilesStore } from "../features/files/store.ts";
 import { useChatStore, startChatPolling } from "../features/chat/store.ts";
-import { hydrateUIPrefs, refreshUIPrefs } from "../lib/settings.ts";
+import { hydrateUIPrefs, refreshUIPrefs, setSetting, useSettings } from "../lib/settings.ts";
 import { MOBILE_QUERY, coarsePointer } from "../lib/device.ts";
 import { PaneHost } from "../features/panes/PaneHost.tsx";
 import { LayoutMap } from "../features/panes/LayoutMap.tsx";
@@ -105,6 +105,7 @@ export function App() {
   // so enabling the scheduler no longer needs a browser reload.
   const schedulerEnabled = useTenantStore((s) => (s.whoami ? !!s.whoami.scheduler_enabled : true));
   const layout = useLayoutStore((s) => s.layout);
+  const paneLayout = useSettings().paneLayout;
   const settingsOpen = useSettingsUI((s) => s.settingsOpen);
   const adminOpen = useSettingsUI((s) => s.adminOpen);
   const guideOpen = useSettingsUI((s) => s.guideOpen);
@@ -383,6 +384,16 @@ export function App() {
     void useWorkspaceStore.getState().refresh();
     void useSessionsStore.getState().refresh();
   }, [booted, tenant]);
+
+  // The preference chooses a profile, not a conversion: each profile retains
+  // its own tab-local layout so switching never destroys terminals or drafts.
+  useEffect(() => {
+    if (!booted || layout.mode === paneLayout) return;
+    void confirmDirtyNavigation("layout").then((proceed) => {
+      if (proceed) useLayoutStore.getState().loadMode(tenant, paneLayout);
+      else setSetting("paneLayout", layout.mode === "tabs" ? "tabs" : "split");
+    });
+  }, [booted, tenant, paneLayout, layout.mode]);
 
   // A Chromium attachment changes layout only after the user has followed its
   // action URL. MCP/server activity alone never reaches this effect. It runs

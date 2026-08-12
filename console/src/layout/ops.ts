@@ -4,13 +4,23 @@
 // returns the INPUT layout by reference, so callers can `next === cur` to skip
 // commits. Ported behavior-for-behavior from the old state.tsx (its comments
 // carried over where the reasoning still matters).
-import type { Layout, Column, Pane, PaneContent, OpenTarget } from "./types.ts";
-import { blankPane } from "./types.ts";
+import type { Layout, Column, Pane, PaneContent, OpenTarget, PaneView } from "./types.ts";
+import { blankPane, paneView } from "./types.ts";
 
 export const MAX_COLS = 4;
+export const MAX_TAB_COLS = 3;
+export const MAX_TABS = 24;
 export const equalRatios = (n: number): number[] => Array(n).fill(1 / n);
 
 export const freshLayout = (): Layout => ({
+  mode: "split",
+  cols: [{ id: "c0", rowRatio: 0.5, panes: [blankPane("p0")] }],
+  colRatios: [1],
+  activeId: "p0",
+});
+
+export const freshTabbedLayout = (): Layout => ({
+  mode: "tabs",
   cols: [{ id: "c0", rowRatio: 0.5, panes: [blankPane("p0")] }],
   colRatios: [1],
   activeId: "p0",
@@ -29,7 +39,12 @@ export const singlePaneLayout = (
   activeId: "p0",
 });
 
+/** Selected views — the established meaning of `allPanes`, retained for rails,
+ * keyboard geometry and legacy callers. */
 export const allPanes = (l: Layout): Pane[] => l.cols.flatMap((c) => c.panes);
+/** Every runtime view, including inactive tabs. */
+export const allViews = (l: Layout): PaneView[] =>
+  l.cols.flatMap((c) => c.panes.flatMap((p) => [paneView(p), ...(p.tabs || [])]));
 export const paneById = (l: Layout, id: string): Pane | undefined =>
   allPanes(l).find((p) => p.id === id);
 export const activePane = (l: Layout): Pane | undefined =>
@@ -38,6 +53,36 @@ export const activePane = (l: Layout): Pane | undefined =>
 /** An empty terminal pane — no session, nothing shown. Closing a pane's content
  * blanks it to this; closing an already-blank pane is what actually removes it. */
 export const isBlankPane = (p: Pane): boolean => p.content.kind === "terminal" && !p.session;
+
+const tabbed = (l: Layout) => l.mode === "tabs";
+const tabCap = (l: Layout) => (tabbed(l) ? MAX_TAB_COLS : MAX_COLS);
+
+function replaceSelected(cell: Pane, view: PaneView): Pane {
+  const previous = paneView(cell);
+  const rest = (cell.tabs || []).filter((t) => t.id !== view.id);
+  return { ...view, tabs: [...rest, previous] };
+}
+
+/** Make a tab selected in its current cell, preserving all runtime identities. */
+export function selectTab(l: Layout, id: string): Layout {
+  if (!tabbed(l)) return setActive(l, id);
+  for (const col of l.cols) {
+    for (const cell of col.panes) {
+      if (cell.id === id) {
+        const current = { ...cell, lastUsedAt: Date.now() };
+        return { ...l, cols: mapPanes(l, (p) => (p === cell ? current : p)), activeId: id };
+      }
+      const view = cell.tabs?.find((t) => t.id === id);
+      if (!view) continue;
+      const cols = l.cols.map((c) => ({
+        ...c,
+        panes: c.panes.map((p) => (p === cell ? replaceSelected(p, { ...view, lastUsedAt: Date.now() }) : p)),
+      }));
+      return { ...l, cols, activeId: id };
+    }
+  }
+  return l;
+}
 
 /** Id allocator: next pane/column ids past the current maxima. Scanned per call
  * (≤8 panes) instead of stored counters, so history-restored layouts can never
@@ -49,8 +94,10 @@ export function idAlloc(l: Layout): { nextPane(): string; nextCol(): string } {
     const cn = parseInt(String(c.id).slice(1), 10);
     if (!Number.isNaN(cn)) cMax = Math.max(cMax, cn);
     for (const p of c.panes) {
-      const pn = parseInt(String(p.id).slice(1), 10);
+      for (const view of [paneView(p), ...(p.tabs || [])]) {
+      const pn = parseInt(String(view.id).slice(1), 10);
       if (!Number.isNaN(pn)) pMax = Math.max(pMax, pn);
+      }
     }
   }
   return {
@@ -120,6 +167,7 @@ const mapPanes = (l: Layout, fn: (p: Pane) => Pane): Column[] =>
  * around. For a terminal target the incoming chat intent still wins (clicking a
  * session open as chat elsewhere flips that pane to its terminal), then focuses. */
 export function openActive(l: Layout, target: OpenTarget): Layout {
+  if (tabbed(l)) return openInTab(l, target);
   const active = activePane(l);
   if (!active) return l;
   const other = allPanes(l).find((p) => p.id !== l.activeId && sameTarget(p, target));
@@ -142,6 +190,47 @@ export function openActive(l: Layout, target: OpenTarget): Layout {
   return { ...l, cols };
 }
 
+/** Tab profile navigation always accumulates a view in the active cell. Exact
+ * duplicates focus the existing tab; at capacity the oldest non-active view is
+ * replaced (the store's dirty guard still protects an editor buffer). */
+export function openInTab(l: Layout, target: OpenTarget): Layout {
+  const dup = allViews(l).find((p) => sameTarget(p as Pane, target));
+  if (dup) return selectTab(l, dup.id);
+  const active = activePane(l);
+  if (!active) return l;
+  const make = (id: string): PaneView => ({ ...paneView(blankPane(id)), ...applyTarget(blankPane(id), target), lastUsedAt: Date.now() });
+  const alloc = idAlloc(l);
+  const view = make(alloc.nextPane());
+  const total = allViews(l).length;
+  if (isBlankPane(active) && !(active.tabs?.length)) {
+    const selected: Pane = { ...view, tabs: [] };
+    return { ...l, cols: mapPanes(l, (p) => (p.id === active.id ? selected : p)), activeId: view.id };
+  }
+  if (total < MAX_TABS) {
+    const selected: Pane = { ...view, tabs: [...(active.tabs || []), paneView(active)] };
+    return { ...l, cols: mapPanes(l, (p) => (p.id === active.id ? selected : p)), activeId: view.id };
+  }
+  const victim = allViews(l)
+    .filter((p) => p.id !== l.activeId)
+    .sort((a, b) => (a.lastUsedAt || 0) - (b.lastUsedAt || 0))[0];
+  if (!victim) return l;
+  return replaceView(l, victim.id, view);
+}
+
+function replaceView(l: Layout, oldId: string, next: PaneView): Layout {
+  let replaced = false;
+  const cols = l.cols.map((c) => ({
+    ...c,
+    panes: c.panes.map((p) => {
+      if (p.id === oldId) { replaced = true; return { ...next, tabs: p.tabs || [] }; }
+      if (!p.tabs?.some((t) => t.id === oldId)) return p;
+      replaced = true;
+      return { ...p, tabs: p.tabs.map((t) => (t.id === oldId ? next : t)) };
+    }),
+  }));
+  return replaced ? selectTab({ ...l, cols, activeId: l.activeId }, next.id) : l;
+}
+
 export interface OpenInNewOpts {
   /** Phone: no extra columns — grow the active column downward (max 2 panes). */
   mobile?: boolean;
@@ -154,6 +243,7 @@ export interface OpenInNewOpts {
  * fill a blank pane → add a right column (≤4) → split a single-pane column →
  * reuse a non-active pane once all 8 slots are used (preserving the source pane). */
 export function openInNew(l: Layout, target: OpenTarget, opts: OpenInNewOpts = {}): Layout {
+  if (tabbed(l)) return openInTab(l, target);
   const alloc = idAlloc(l);
   if (!opts.force) {
     const dup = allPanes(l).find((p) => sameTarget(p, target));
@@ -215,11 +305,19 @@ export function openInNew(l: Layout, target: OpenTarget, opts: OpenInNewOpts = {
 /** Replace one pane's content by id (not "active") — e.g. a chat draft pane
  * promoting to a real conversation while in the background. */
 export function setPaneTarget(l: Layout, paneId: string, target: OpenTarget): Layout {
+  if (tabbed(l)) {
+    const p = paneById(l, paneId);
+    return p ? replaceView(l, paneId, { ...applyTarget(p, target), lastUsedAt: Date.now() }) : l;
+  }
   if (!paneById(l, paneId)) return l;
   return { ...l, cols: mapPanes(l, (p) => (p.id === paneId ? applyTarget(p, target) : p)) };
 }
 
 export function setPaneWrap(l: Layout, paneId: string, wrap: boolean | null): Layout {
+  if (tabbed(l)) {
+    const p = paneById(l, paneId);
+    return p ? replaceView(l, paneId, { ...paneView(p), wrap }) : l;
+  }
   if (!paneById(l, paneId)) return l;
   return { ...l, cols: mapPanes(l, (p) => (p.id === paneId ? { ...p, wrap } : p)) };
 }
@@ -246,6 +344,7 @@ function removePanes(l: Layout, pred: (p: Pane) => boolean): Layout {
  * collapses, widths re-equalize). removeOutright skips step 1. The very last
  * pane can't be removed — it stays as the base blank terminal. */
 export function closePane(l: Layout, paneId: string, removeOutright = false): Layout {
+  if (tabbed(l)) return closeTab(l, paneId, removeOutright);
   const target = paneById(l, paneId);
   if (!target) return l;
   if (!removeOutright && !isBlankPane(target)) {
@@ -255,15 +354,68 @@ export function closePane(l: Layout, paneId: string, removeOutright = false): La
   return removePanes(l, (p) => p.id === paneId);
 }
 
+/** Close one tab directly. The last tab becomes an empty cell; removing that
+ * cell is a deliberate second action, matching the approved tab-layout UX. */
+export function closeTab(l: Layout, id: string, removeCell = false): Layout {
+  if (!tabbed(l)) return closePane(l, id, removeCell);
+  for (const col of l.cols) for (const cell of col.panes) {
+    const views = [paneView(cell), ...(cell.tabs || [])];
+    if (!views.some((v) => v.id === id)) continue;
+    if (removeCell && views.length === 1) return removePanes(l, (p) => p === cell);
+    if (id !== cell.id) {
+      return { ...l, cols: mapPanes(l, (p) => (p === cell ? { ...p, tabs: (p.tabs || []).filter((t) => t.id !== id) } : p)) };
+    }
+    const remaining = views.filter((v) => v.id !== id);
+    if (remaining.length === 0) {
+      const blank = blankPane(cell.id);
+      return { ...l, cols: mapPanes(l, (p) => (p === cell ? blank : p)), activeId: blank.id };
+    }
+    const chosen = remaining[0];
+    const selected: Pane = { ...chosen, tabs: remaining.filter((v) => v.id !== chosen.id) };
+    return { ...l, cols: mapPanes(l, (p) => (p === cell ? selected : p)), activeId: selected.id };
+  }
+  return l;
+}
+
+/** Move a view to another tab cell without allocating an id. The source keeps
+ * an empty cell when its final tab leaves; geometry is intentionally stable. */
+export function moveTab(l: Layout, id: string, targetId: string): Layout {
+  if (!tabbed(l) || id === targetId) return l;
+  let source: Pane | undefined;
+  let view: PaneView | undefined;
+  let target: Pane | undefined;
+  for (const cell of allPanes(l)) {
+    const found = [paneView(cell), ...(cell.tabs || [])].find((v) => v.id === id);
+    if (found) { source = cell; view = found; }
+    if (cell.id === targetId) target = cell;
+  }
+  if (!source || !view || !target || source === target) return l;
+  const sourceViews = [paneView(source), ...(source.tabs || [])].filter((v) => v.id !== id);
+  const sourceNext: Pane = sourceViews.length
+    ? { ...sourceViews[0], tabs: sourceViews.slice(1) }
+    : blankPane(source.id);
+  const targetNext: Pane = {
+    ...target,
+    tabs: [...(target.tabs || []), view],
+  };
+  const cols = mapPanes(l, (p) => p === source ? sourceNext : p === target ? targetNext : p);
+  return { ...l, cols, activeId: targetNext.id };
+}
+
 /** closeSessionPanes removes every pane attached to a session (archive / clear /
  * recreate) in one step. No-op when the session isn't shown anywhere. */
 export function closeSessionPanes(l: Layout, name: string): Layout {
+  if (tabbed(l)) {
+    const ids = allViews(l).filter((p) => p.content.kind === "terminal" && p.session === name).map((p) => p.id);
+    return ids.reduce((next, id) => closeTab(next, id, true), l);
+  }
   const hit = (p: Pane) => p.content.kind === "terminal" && p.session === name;
   if (!allPanes(l).some(hit)) return l;
   return removePanes(l, hit);
 }
 
 export function setActive(l: Layout, id: string): Layout {
+  if (tabbed(l)) return selectTab(l, id);
   if (l.activeId === id || !paneById(l, id)) return l;
   return { ...l, activeId: id };
 }
@@ -287,7 +439,7 @@ export function setRowRatio(l: Layout, colId: string, r: number): Layout {
 /** splitRight appends a new full-height column (≤ MAX_COLS) holding a fresh
  * blank pane, made active. Column widths reset to equal. No-op at the cap. */
 export function splitRight(l: Layout): Layout {
-  if (l.cols.length >= MAX_COLS) return l;
+  if (l.cols.length >= tabCap(l)) return l;
   const alloc = idAlloc(l);
   const id = alloc.nextPane();
   const cols = [...l.cols, { id: alloc.nextCol(), rowRatio: 0.5, panes: [blankPane(id)] }];

@@ -1,5 +1,6 @@
 import { api, apiJSON, getTenant } from "../../core/api/client.ts";
 import { useLayoutStore } from "../../layout/store.ts";
+import { allViews } from "../../layout/ops.ts";
 import type { BrowserCanvas, BrowserSocket } from "./controller.ts";
 import {
   BrowserAttachmentRegistry,
@@ -116,7 +117,7 @@ export const ensureBrowserAttachment = (paneId: string, attachmentId: string) =>
 export function wireBrowserAttachmentReconcile(): () => void {
   return useLayoutStore.subscribe((state, previous) => {
     if (state.layout === previous.layout) return;
-    registry.keepOnly(state.layout.cols.flatMap((column) => column.panes.map((pane) => pane.id)));
+    registry.keepOnly(allViews(state.layout).map((pane) => pane.id));
   });
 }
 
