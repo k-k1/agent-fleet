@@ -51,6 +51,7 @@ interface LayoutStore {
   setPaneWrap(paneId: string, wrap: boolean | null): void;
   selectTab(id: string): void;
   moveTab(id: string, targetPaneId: string): void;
+  dropSplitTab(id: string, refPaneId: string, dir: "right" | "down"): void;
   resetToTerminal(): void;
 }
 
@@ -214,6 +215,7 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
     setPaneWrap: (paneId, wrap) => commit(ops.setPaneWrap(get().layout, paneId, wrap), false),
     selectTab: (id) => commit(ops.selectTab(get().layout, id), false),
     moveTab: (id, targetPaneId) => commit(ops.moveTab(get().layout, id, targetPaneId)),
+    dropSplitTab: (id, refPaneId, dir) => commit(ops.dropSplitTab(get().layout, id, refPaneId, dir)),
     resetToTerminal: () => commit(ops.freshLayout()),
   };
 });

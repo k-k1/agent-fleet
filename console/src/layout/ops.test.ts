@@ -18,6 +18,7 @@ import {
   selectTab,
   closeTab,
   moveTab,
+  dropSplitTab,
   allViews,
   setActive,
   setColRatios,
@@ -175,7 +176,17 @@ describe("tabbed layout", () => {
     const moving = l.activeId;
     l = moveTab(l, moving, second);
     expect(allViews(l).map((p) => p.id)).toContain(moving);
-    expect(l.cols[1].panes[0].tabs?.map((p) => p.id)).toContain(moving);
+    expect(l.cols[1].panes[0].id).toBe(moving);
+  });
+  it("moves a tab to a new right split without rebuilding its identity", () => {
+    let l = openInTab(freshTabbedLayout(), term("s0"));
+    l = openInTab(l, file("one.ts"));
+    const moved = l.activeId;
+    l = selectTab(l, "p1");
+    l = dropSplitTab(l, moved, l.activeId, "right");
+    expect(l.cols).toHaveLength(2);
+    expect(l.cols[1].panes[0].id).toBe(moved);
+    expect(new Set(allViews(l).map((p) => p.id)).size).toBe(allViews(l).length);
   });
 });
 
