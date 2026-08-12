@@ -7,6 +7,7 @@ import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
 // A working copy from GET /api/repos.
 export interface Repo {
   name: string;
+  workingCopyId?: string;
   path?: string;
   branch?: string;
   dirty?: boolean;

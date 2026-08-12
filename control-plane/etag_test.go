@@ -132,3 +132,15 @@ func TestEtagJSONFlushAbandonsBuffering(t *testing.T) {
 		t.Fatalf("streamed body mangled: %q", rec.Body.String())
 	}
 }
+
+func TestEtagJSONSkipsNoStore(t *testing.T) {
+	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "private, no-store")
+		_, _ = io.WriteString(w, `{"secret":"transcript"}`)
+	})
+	rec := etagDo(h, "")
+	if rec.Header().Get("ETag") != "" {
+		t.Fatalf("no-store response must not be tagged, got %q", rec.Header().Get("ETag"))
+	}
+}

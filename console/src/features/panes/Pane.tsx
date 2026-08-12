@@ -32,6 +32,7 @@ import type { Session } from "../../types/session.ts";
 import { PaneFind } from "./PaneFind.tsx";
 import { BrowserPane } from "../browser/BrowserPane.tsx";
 import { BrowserAttachPane } from "../browser/BrowserAttachPane.tsx";
+import { SharedSessionView } from "../sharing/SharedSessionView.tsx";
 import { canPopout, openPanePopout } from "./popout.ts";
 import { usePopoutMode } from "../../lib/popoutMode.ts";
 import type { PaneView } from "../../layout/types.ts";
@@ -517,6 +518,9 @@ function PopulatedPane({
       )}
       {pane.content.kind === "browserAttach" && (
         <BrowserAttachPane paneId={pane.id} attachmentId={pane.content.attachmentId} />
+      )}
+      {pane.content.kind === "sharedSession" && (
+        <SharedSessionView sharedSessionId={pane.content.sharedSessionId} />
       )}
     </div>
   );

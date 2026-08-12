@@ -20,6 +20,7 @@ func buildMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handleHealth)
 	mux.HandleFunc("GET /sessions", handleListSessions)
+	mux.HandleFunc("GET /sessions/catalog", handleSessionCatalog)
 	mux.HandleFunc("GET /notifications", handleNotifications)
 	mux.HandleFunc("POST /notifications/ack", handleNotificationsAck)
 	mux.HandleFunc("POST /sessions", handleCreateSession)
