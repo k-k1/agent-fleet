@@ -256,8 +256,9 @@ type sessionWire struct {
 	// Subdir: the folder BENEATH Dir the agent actually runs in ("" = Dir itself).
 	// Same relay caveat as the fields around it — absent here, the Console never sees
 	// which folder a session was launched in. DB ミラーには列が無いので停止中は載らない。
-	Subdir string `json:"subdir,omitempty"`
-	Repo   string `json:"repo"`
+	Subdir        string `json:"subdir,omitempty"`
+	Repo          string `json:"repo"`
+	WorkingCopyID string `json:"workingCopyId,omitempty"`
 	// Title: the user-supplied display title. Console の displayName は title を最優先
 	// で見るが、この struct に無かった頃は中継で silently drop されていた（claude 系は
 	// label にも title が埋まるため露見せず、label を使わない shell/ssm だけ表示名が
@@ -278,7 +279,8 @@ type sessionWire struct {
 	// Locked is the user's deletion lock. sessionWire decode→re-emits the Agent
 	// response for both GET /api/sessions and SSE, so omitting this field makes a
 	// successfully saved lock immediately disappear from the Console.
-	Locked bool `json:"locked,omitempty"`
+	Locked   bool `json:"locked,omitempty"`
+	Archived bool `json:"archived,omitempty"`
 	// BackgroundBusy passes through the Agent's "idle but a run_in_background task is
 	// still running" flag so the Console can badge it. Not persisted to the DB mirror
 	// (a stopped workspace has no live background work).

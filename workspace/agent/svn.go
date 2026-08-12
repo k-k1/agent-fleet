@@ -159,12 +159,13 @@ func svnDirty(dir string) bool {
 func svnRepoEntry(name, dir string) Repo {
 	rev, url := svnInfo(dir)
 	return Repo{
-		Name:     name,
-		Path:     dir,
-		Vcs:      "svn",
-		Revision: rev,
-		URL:      url,
-		Dirty:    svnDirty(dir),
+		Name:          name,
+		WorkingCopyID: workingCopyID(dir),
+		Path:          dir,
+		Vcs:           "svn",
+		Revision:      rev,
+		URL:           url,
+		Dirty:         svnDirty(dir),
 	}
 }
 

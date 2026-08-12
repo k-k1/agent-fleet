@@ -39,6 +39,7 @@ import { SchedulesSection } from "../features/schedules/SchedulesSection.tsx";
 import { ProjectTree } from "../features/project/ProjectTree.tsx";
 import { OtherSessionsSection } from "../features/project/OtherSessionsSection.tsx";
 import { StoppedSessionsSection } from "../features/project/StoppedSessionsSection.tsx";
+import { SharedSessionsSection } from "../features/sharing/SharedSessionsSection.tsx";
 import { FilesSection } from "../features/project/FilesSection.tsx";
 import { Section } from "../ui/Section.tsx";
 import { WsBar } from "./WsBar.tsx";
@@ -496,6 +497,7 @@ export function App() {
                 {schedulerEnabled && <SchedulesSection />}
                 <ProjectTree />
                 <OtherSessionsSection />
+                <SharedSessionsSection />
                 <FilesSection />
               </>
             ) : (
@@ -505,6 +507,7 @@ export function App() {
                 {schedulerEnabled && <SchedulesSection />}
                 <StoppedRailSection id="repos" title={tr("ui.repositories")} icon="repo" />
                 <StoppedSessionsSection />
+                <SharedSessionsSection />
                 <StoppedRailSection id="files" title={tr("ui.files")} icon="files" defaultOpen={false} />
               </>
             )}

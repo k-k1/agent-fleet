@@ -177,6 +177,25 @@ func handleListSessions(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
 }
 
+// handleSessionCatalog is the sharing inventory. Unlike the ordinary list it
+// includes archived rows, but only kinds with a structured transcript.
+func handleSessionCatalog(w http.ResponseWriter, r *http.Request) {
+	live := tmuxx.LiveSessionNames()
+	items := []session.Session{}
+	for _, m := range session.ListMetas() {
+		if !agentOf(m.Kind).Caps().CanTranscript {
+			continue
+		}
+		alive := live[m.Name]
+		if m.DriverKind() == session.DriverManaged {
+			alive = managedAlive(m)
+		}
+		items = append(items, wireSession(m, alive))
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].CreatedAt > items[j].CreatedAt })
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sessions": items})
+}
+
 type createReq struct {
 	// Name is IGNORED: the server auto-allocates a unique slug as the session's
 	// identity. Kept in the wire struct only so older clients that still send it

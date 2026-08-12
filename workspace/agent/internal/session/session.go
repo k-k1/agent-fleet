@@ -92,18 +92,19 @@ type Session struct {
 	// Subdir mirrors Meta.Subdir: the folder beneath Dir the agent actually runs in
 	// ("" = Dir itself). Dir stays the working copy, so the Console keeps grouping
 	// sessions by copy and only shows this as extra "where inside it" detail.
-	Subdir    string `json:"subdir,omitempty"`
-	Repo      string `json:"repo"`      // working dir basename (display)
-	Title     string `json:"title"`     // user-supplied display title (optional, any kind)
-	Display   string `json:"display"`   // human-readable name (title → claude label → repo@time); never the slug alone
-	Color     string `json:"color"`     // terminal background hue (hex); SSM carries its host color
-	Label     string `json:"label"`     // claude --name display name (claude only)
-	Started   string `json:"started"`   // "01/02 15:04" local time, for the list
-	CreatedAt string `json:"createdAt"` // RFC3339
-	RemoteUrl string `json:"remoteUrl"` // claude.ai Remote Control URL, when RC is bridged
-	State     string `json:"state"`     // claude live state: working | idle | question | ""
-	Alive     bool   `json:"alive"`     // true = live tmux session; false = stopped
-	Resumable bool   `json:"resumable"` // false = stopped claude whose working dir is gone
+	Subdir        string `json:"subdir,omitempty"`
+	Repo          string `json:"repo"` // working dir basename (display)
+	WorkingCopyID string `json:"workingCopyId,omitempty"`
+	Title         string `json:"title"`     // user-supplied display title (optional, any kind)
+	Display       string `json:"display"`   // human-readable name (title → claude label → repo@time); never the slug alone
+	Color         string `json:"color"`     // terminal background hue (hex); SSM carries its host color
+	Label         string `json:"label"`     // claude --name display name (claude only)
+	Started       string `json:"started"`   // "01/02 15:04" local time, for the list
+	CreatedAt     string `json:"createdAt"` // RFC3339
+	RemoteUrl     string `json:"remoteUrl"` // claude.ai Remote Control URL, when RC is bridged
+	State         string `json:"state"`     // claude live state: working | idle | question | ""
+	Alive         bool   `json:"alive"`     // true = live tmux session; false = stopped
+	Resumable     bool   `json:"resumable"` // false = stopped claude whose working dir is gone
 	// BackgroundBusy: state is idle (turn done) but a run_in_background task is still
 	// running under the pane. Lets the Console mark 入力待ち as "still working in bg".
 	BackgroundBusy bool `json:"backgroundBusy"`
@@ -136,7 +137,8 @@ type Session struct {
 	// every removal path (stop=forget meta / delete / TTL prune / a working-copy
 	// delete that would take it down with it) refuses until it is unlocked. The
 	// Console badges the row and disables its delete item off this flag.
-	Locked bool `json:"locked,omitempty"`
+	Locked   bool `json:"locked,omitempty"`
+	Archived bool `json:"archived,omitempty"`
 }
 
 // ContextUsage is a claude session's current context fill — the newest assistant

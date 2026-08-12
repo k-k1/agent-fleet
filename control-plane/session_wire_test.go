@@ -32,7 +32,7 @@ func (s stubRuntime) Name() string     { return "stub" }
 // Agent の /sessions 1 行ぶんの実形状（workspace/agent の wireSession が出す
 // JSON と同じ key）。exit 系は docs/26（OOM で死んだ停止セッション）の実例値。
 const agentSessionsPayload = `{"sessions":[{
-	"name":"s1","tmux":"claude_s1","dir":"/home/dev/repos/x","kind":"claude",
+	"name":"s1","tmux":"claude_s1","dir":"/home/dev/repos/x","workingCopyId":"wc_123","kind":"claude",
 	"driver":"managed","repo":"x","title":"t","display":"[AF] t","color":"#332211",
 	"label":"[AF] t","started":"07/15 12:00","createdAt":"2026-07-15T12:00:00+09:00",
 	"remoteUrl":"","state":"","alive":false,"resumable":true,"locked":true,"backgroundBusy":false,
@@ -83,8 +83,9 @@ func TestAgentSessionsRelayKeepsFields(t *testing.T) {
 		// 同時に drop されていた表示系。
 		"color": "#332211",
 		// P1.5 で追加済みの driver（回帰防止に固定）。
-		"driver": "managed",
-		"title":  "t",
+		"driver":        "managed",
+		"title":         "t",
+		"workingCopyId": "wc_123",
 		// branch/worktree 系（既存だが同型事故の回帰防止に固定）。
 		"branch":        "main",
 		"currentBranch": "dev",

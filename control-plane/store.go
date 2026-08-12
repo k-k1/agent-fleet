@@ -258,6 +258,23 @@ type SessionRow struct {
 	CreatedAt, State, LastSeen                string
 }
 
+type SessionShare struct {
+	ID, TenantID, OwnerMembershipID, RecipientMembershipID string
+	ScopeType, ScopeKey, Permission, CreatedAt, UpdatedAt  string
+}
+
+type SharedSessionCatalog struct {
+	ID, WorkspaceID, OwnerMembershipID, Name, Kind, Dir, Repo string
+	WorkingCopyID, Title, Label, CreatedAt, State, LastSeen   string
+	Archived                                                  bool
+}
+
+type SessionShareProposal struct {
+	ID, TenantID, CatalogID, OwnerMembershipID, ProposerMembershipID string
+	Action, Ciphertext, KeyRef, Status                               string
+	CreatedAt, ExpiresAt, DecidedAt, DecidedBy                       string
+}
+
 // GitRepo is one internal bare repository owned by a tenant (docs/reference/
 // internal-git-provider). The on-disk bare lives at ${DATA_DIR}/git/<slug>/<name>.git;
 // this row is the ledger the list/serve paths trust over an FS walk.
@@ -297,8 +314,27 @@ type Store interface {
 	NotificationStore
 	ScheduleStore
 	MCPServerStore
+	SessionShareStore
 
 	Close() error
+}
+
+type SessionShareStore interface {
+	PutSessionShare(ctx context.Context, row SessionShare) error
+	GetSessionShare(ctx context.Context, id string) (SessionShare, bool, error)
+	ListSessionSharesByOwner(ctx context.Context, membershipID string) ([]SessionShare, error)
+	ListSessionSharesByRecipient(ctx context.Context, membershipID string) ([]SessionShare, error)
+	DeleteSessionShare(ctx context.Context, id, ownerMembershipID string) error
+	DeleteSessionSharesByScope(ctx context.Context, ownerMembershipID, scopeType, scopeKey string) error
+	ReplaceSharedSessionCatalog(ctx context.Context, workspaceID, ownerMembershipID string, rows []SharedSessionCatalog) error
+	GetSharedSessionCatalog(ctx context.Context, id string) (SharedSessionCatalog, bool, error)
+	ListSharedSessionCatalogByOwner(ctx context.Context, membershipID string) ([]SharedSessionCatalog, error)
+	CreateSessionShareProposal(ctx context.Context, row SessionShareProposal) error
+	GetSessionShareProposal(ctx context.Context, id string) (SessionShareProposal, bool, error)
+	ListSessionShareProposalsByOwner(ctx context.Context, membershipID string) ([]SessionShareProposal, error)
+	CountPendingSessionShareProposals(ctx context.Context, catalogID string) (int, error)
+	ExpireSessionShareProposals(ctx context.Context, ownerMembershipID, now string) error
+	TransitionSessionShareProposal(ctx context.Context, id, from, to, decidedBy, decidedAt string, clearBody bool) (bool, error)
 }
 
 type TenantStore interface {

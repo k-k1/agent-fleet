@@ -42,7 +42,8 @@ export type PaneContent =
    * value persisted in layout state; CDP port/target/URL/credentials stay on
    * the Agent side and are resolved again through the authenticated API.
    */
-  | { kind: "browserAttach"; attachmentId: string };
+  | { kind: "browserAttach"; attachmentId: string }
+  | { kind: "sharedSession"; sharedSessionId: string };
 
 export type PaneKind = PaneContent["kind"];
 

@@ -49,7 +49,8 @@ func (w *etagWriter) WriteHeader(status int) {
 	}
 	w.decided = true
 	w.status = status
-	if status == http.StatusOK && strings.HasPrefix(w.Header().Get("Content-Type"), "application/json") {
+	if status == http.StatusOK && strings.HasPrefix(w.Header().Get("Content-Type"), "application/json") &&
+		!strings.Contains(strings.ToLower(w.Header().Get("Cache-Control")), "no-store") {
 		w.buf = &bytes.Buffer{} // defer the real WriteHeader until finish()
 		return
 	}

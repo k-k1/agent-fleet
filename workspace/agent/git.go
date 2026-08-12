@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -12,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
@@ -51,14 +55,17 @@ func isGitRepo(dir string) bool {
 
 // Repo is the list-view representation of a working copy.
 type Repo struct {
-	Name     string `json:"name"`
-	Path     string `json:"path"`
-	Branch   string `json:"branch"`
-	Dirty    bool   `json:"dirty"`
-	Ahead    int    `json:"ahead"`
-	Behind   int    `json:"behind"`
-	Provider string `json:"provider,omitempty"` // origin host slug: github/bitbucket/gitlab, or the bare host
-	Remote   string `json:"remote,omitempty"`   // origin host (for a tooltip); no path/token
+	Name string `json:"name"`
+	// WorkingCopyID identifies this filesystem generation. Re-creating a folder with
+	// the same name yields a different id, so a dynamic share never resurrects.
+	WorkingCopyID string `json:"workingCopyId"`
+	Path          string `json:"path"`
+	Branch        string `json:"branch"`
+	Dirty         bool   `json:"dirty"`
+	Ahead         int    `json:"ahead"`
+	Behind        int    `json:"behind"`
+	Provider      string `json:"provider,omitempty"` // origin host slug: github/bitbucket/gitlab, or the bare host
+	Remote        string `json:"remote,omitempty"`   // origin host (for a tooltip); no path/token
 	// Vcs discriminates the working-copy kind: "git" (default/omitted) or "svn"
 	// (docs/41). SVN copies are flat — no branches/ahead/behind/worktree — so the
 	// Console gates git-only actions on it; Revision/URL carry the svn-side facts.
@@ -85,6 +92,93 @@ type Repo struct {
 	// DELETE /repos/{name} is refused even with force=true, and the automatic
 	// worktree prune skips it. Toggled by POST /repos/{name}/lock.
 	Locked bool `json:"locked,omitempty"`
+}
+
+func workingCopyID(dir string) string {
+	marker, err := workingCopyMarkerPath(dir)
+	if err == nil {
+		if id := readWorkingCopyID(marker); id != "" {
+			return id
+		}
+		buf := make([]byte, 16)
+		if _, err := rand.Read(buf); err == nil {
+			id := "wc_" + hex.EncodeToString(buf)
+			f, openErr := os.OpenFile(marker, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+			if openErr == nil {
+				_, writeErr := f.WriteString(id + "\n")
+				closeErr := f.Close()
+				if writeErr == nil && closeErr == nil {
+					return id
+				}
+				_ = os.Remove(marker)
+			} else if os.IsExist(openErr) {
+				if id := readWorkingCopyID(marker); id != "" {
+					return id
+				}
+			}
+		}
+	}
+
+	// Read-only or damaged metadata should not make the working copy disappear
+	// from the API. Device+inode is stable for the life of the metadata entry;
+	// writable working copies use the random persisted marker above.
+	metadata := filepath.Join(dir, ".git")
+	if _, err := os.Lstat(metadata); err != nil {
+		metadata = filepath.Join(dir, ".svn")
+	}
+	fi, err := os.Lstat(metadata)
+	if err != nil {
+		return ""
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return ""
+	}
+	seed := fmt.Sprintf("%s:%d:%d", filepath.Clean(dir), st.Dev, st.Ino)
+	sum := sha256.Sum256([]byte(seed))
+	return fmt.Sprintf("wc_%x", sum[:12])
+}
+
+func workingCopyMarkerPath(dir string) (string, error) {
+	gitMarker := filepath.Join(dir, ".git")
+	fi, err := os.Lstat(gitMarker)
+	if err == nil && fi.IsDir() {
+		return filepath.Join(gitMarker, "agent-fleet-working-copy-id"), nil
+	}
+	if err == nil && fi.Mode().IsRegular() {
+		body, readErr := os.ReadFile(gitMarker)
+		if readErr != nil {
+			return "", readErr
+		}
+		gitDir := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(body)), "gitdir:"))
+		if gitDir == "" {
+			return "", fmt.Errorf("empty gitdir")
+		}
+		if !filepath.IsAbs(gitDir) {
+			gitDir = filepath.Join(dir, gitDir)
+		}
+		return filepath.Join(filepath.Clean(gitDir), "agent-fleet-working-copy-id"), nil
+	}
+	svnMarker := filepath.Join(dir, ".svn")
+	if svnInfo, svnErr := os.Stat(svnMarker); svnErr == nil && svnInfo.IsDir() {
+		return filepath.Join(svnMarker, "agent-fleet-working-copy-id"), nil
+	}
+	return "", fmt.Errorf("working-copy metadata not found")
+}
+
+func readWorkingCopyID(path string) string {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	id := strings.TrimSpace(string(body))
+	if !strings.HasPrefix(id, "wc_") || len(id) != 35 {
+		return ""
+	}
+	if _, err := hex.DecodeString(strings.TrimPrefix(id, "wc_")); err != nil {
+		return ""
+	}
+	return id
 }
 
 // RepoIntegration is a local-only comparison; it never fetches. TargetUnique is
@@ -262,7 +356,7 @@ func handleListRepos(w http.ResponseWriter, r *http.Request) {
 			createdAt = worktreeCreatedAt(dir)
 		}
 		repos = append(repos, Repo{
-			Name: e.Name(), Path: dir, Branch: st.Branch,
+			Name: e.Name(), WorkingCopyID: workingCopyID(dir), Path: dir, Branch: st.Branch,
 			Dirty: st.Dirty, Ahead: st.Ahead, Behind: st.Behind,
 			Provider: provider, Remote: host,
 			Worktree: wt, Parent: parent, CreatedAt: createdAt,
