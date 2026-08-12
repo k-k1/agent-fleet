@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"os"
-	"sync"
 	"testing"
 	"time"
 )
@@ -97,15 +96,19 @@ func TestPostgresStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("advisory holder: %v", err)
 	}
-	var waiters sync.WaitGroup
-	waiters.Add(9)
+	defer releaseFence()
+	waitCtx, waitCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer waitCancel()
+	results := make(chan error, 9)
 	for range 9 {
 		go func() {
-			defer waiters.Done()
-			release, err := st.AcquireWorkspaceOperationFence(ctx, ws.ID)
-			if err == nil {
-				release()
+			release, err := st.AcquireWorkspaceOperationFence(waitCtx, ws.ID)
+			if err != nil {
+				results <- err
+				return
 			}
+			release()
+			results <- nil
 		}()
 	}
 	time.Sleep(100 * time.Millisecond)
@@ -115,7 +118,16 @@ func TestPostgresStore(t *testing.T) {
 	}
 	queryCancel()
 	releaseFence()
-	waiters.Wait()
+	for i := 0; i < 9; i++ {
+		select {
+		case err := <-results:
+			if err != nil {
+				t.Fatalf("advisory waiter %d: %v", i, err)
+			}
+		case <-waitCtx.Done():
+			t.Fatalf("advisory waiters did not finish: completed=%d/9: %v", i, waitCtx.Err())
+		}
+	}
 	if err := st.PutWrappedDEK(ctx, ws.ID, "ct1", "kref"); err != nil {
 		t.Fatalf("put dek: %v", err)
 	}
