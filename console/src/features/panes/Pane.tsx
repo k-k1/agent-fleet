@@ -1,7 +1,7 @@
 // Pane — one slot of the main-area layout. The terminal stays mounted (just
 // hidden) while the pane shows another view, so the PTY socket and scrollback
 // survive switching kinds. Ported from the old console onto the content union.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, DragEvent as RDragEvent } from "react";
 import type { Pane as PaneT } from "../../layout/types.ts";
 import { ordClass } from "../../layout/badges.ts";
@@ -35,6 +35,7 @@ import { BrowserAttachPane } from "../browser/BrowserAttachPane.tsx";
 import { canPopout, openPanePopout } from "./popout.ts";
 import { usePopoutMode } from "../../lib/popoutMode.ts";
 import type { PaneView } from "../../layout/types.ts";
+import { paneTitle } from "./paneTitle.ts";
 
 // Drag payload MIME — identifies a pane-to-pane drag (vs any other drag).
 const DND = "application/x-af-pane";
@@ -166,6 +167,9 @@ export function Pane({
   const selectTab = useLayoutStore((s) => s.selectTab);
   const closeTab = useLayoutStore((s) => s.closePane);
   const moveTab = useLayoutStore((s) => s.moveTab);
+  const dropSplitTab = useLayoutStore((s) => s.dropSplitTab);
+  const sessions = useSessionsStore((s) => s.sessions);
+  const sessionByName = useMemo(() => new Map(sessions.map((s) => [s.name, s] as const)), [sessions]);
   const settings = useSettings();
   const wrapOn = pane.wrap ?? settings.wrap;
   const canWrap =
@@ -191,14 +195,14 @@ export function Pane({
     { id: pane.id, session: pane.session, content: pane.content, wrap: pane.wrap, lastUsedAt: pane.lastUsedAt },
     ...(pane.tabs || []),
   ];
-  const tabLabel = (view: PaneView) =>
-    view.content.kind === "terminal"
-      ? view.session || tr("pane.empty")
-      : view.content.kind === "file" || view.content.kind === "read"
-        ? view.content.filePath.split("/").pop() || view.content.filePath
-        : view.content.kind === "doc" || view.content.kind === "diff"
-          ? view.content.docTitle
-          : view.content.kind;
+  // Never expose the runtime session slug in the tab strip: sessions have a
+  // user-facing title, and unloaded metadata should read as a neutral state
+  // until it arrives instead of briefly leaking an opaque identifier.
+  const tabLabel = (view: PaneView) => {
+    const session = view.session ? sessionByName.get(view.session) ?? null : null;
+    if (view.content.kind === "terminal" && view.session && !session) return tr("pane.no_session");
+    return paneTitle(view, session);
+  };
 
   const onDragStart = (e: RDragEvent) => {
     e.dataTransfer.setData(DND, pane.id);
@@ -213,7 +217,8 @@ export function Pane({
     return dd > rd ? "down" : "right";
   };
   const onDragOver = (e: RDragEvent) => {
-    if (!canDrag || !e.dataTransfer.types.includes(DND)) return;
+    const tabDrag = e.dataTransfer.types.includes(TAB_DND);
+    if (!canDrag || (!e.dataTransfer.types.includes(DND) && !tabDrag)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
     const z = zoneFor(e);
@@ -224,13 +229,17 @@ export function Pane({
     setZone(null);
   };
   const onDrop = (e: RDragEvent) => {
-    if (!e.dataTransfer.types.includes(DND)) return;
+    const tabDrag = e.dataTransfer.types.includes(TAB_DND);
+    if (!e.dataTransfer.types.includes(DND) && !tabDrag) return;
     e.preventDefault();
     const z = zone;
     setZone(null);
     const src = e.dataTransfer.getData(DND);
     if (!src) return;
-    if (z === "right" || z === "down") onDropSplit(src, pane.id, z);
+    if (tabDrag) {
+      if (z === "right" || z === "down") dropSplitTab(src, pane.id, z);
+      else moveTab(src, pane.id);
+    } else if (z === "right" || z === "down") onDropSplit(src, pane.id, z);
     else onSwap(src, pane.id);
   };
 
@@ -252,11 +261,6 @@ export function Pane({
           className="pane-tabs"
           role="tablist"
           aria-label={tr("display.pane_layout_tabs")}
-          onDragOver={(e) => { if (e.dataTransfer.types.includes(TAB_DND)) e.preventDefault(); }}
-          onDrop={(e) => {
-            const id = e.dataTransfer.getData(TAB_DND);
-            if (id) { e.preventDefault(); e.stopPropagation(); moveTab(id, pane.id); }
-          }}
         >
           {views.map((view) => (
             <div className={cx("pane-tab", view.id === pane.id && "selected")} role="presentation" key={view.id}>
