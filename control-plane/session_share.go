@@ -445,30 +445,97 @@ func (a sessionShareAPI) messages(w http.ResponseWriter, r *http.Request, _ Iden
 		writeAPIErr(w, &apiError{502, "bad_owner_response", "invalid owner response"})
 		return
 	}
-	for _, k := range []string{"jsonlPath", "jsonlLines", "jsonlMtime", "jsonlMatches"} {
-		delete(payload, k)
-	}
-	stripSharedPrivateFields(payload)
+	payload = sharedTranscriptDTO(payload)
 	w.Header().Set("Cache-Control", "private, no-store")
 	writeJSON(w, resp.StatusCode, payload)
 }
 
-// stripSharedPrivateFields removes workspace-local coordinates from transcript
-// DTOs. Visible prose and tool summaries remain, but cannot become a file API.
-func stripSharedPrivateFields(v any) {
-	switch x := v.(type) {
-	case map[string]any:
-		for _, key := range []string{"cwd", "file", "filePath", "path", "attachmentPath", "jsonlPath"} {
-			delete(x, key)
+// sharedTranscriptDTO is intentionally an allowlist, not a list of known path
+// spellings. Agent kinds have historically emitted file, files, file_path and
+// filePath; a future structured coordinate must stay private by default. Prose,
+// tool summaries/output and edit text are conversation content and remain visible.
+func sharedTranscriptDTO(payload map[string]any) map[string]any {
+	out := map[string]any{}
+	copyAllowed(out, payload, "cursor", "reset", "status", "alive", "firstLine", "hasMore")
+	messages, _ := payload["messages"].([]any)
+	shared := make([]any, 0, len(messages))
+	for _, raw := range messages {
+		turn, ok := raw.(map[string]any)
+		if !ok {
+			continue
 		}
-		for _, child := range x {
-			stripSharedPrivateFields(child)
+		t := map[string]any{}
+		copyAllowed(t, turn, "role", "text", "source", "model", "effort", "ctxWindow", "sidechain",
+			"inTok", "outTok", "cacheRead", "cacheCreate", "ts", "endTs", "idx", "anchorId")
+		parts, _ := turn["parts"].([]any)
+		visibleParts := make([]any, 0, len(parts))
+		for _, partRaw := range parts {
+			part, ok := partRaw.(map[string]any)
+			if !ok {
+				continue
+			}
+			p := map[string]any{}
+			copyAllowed(p, part, "kind", "text", "tool", "info", "cause", "output", "prompt", "agentType",
+				"status", "model", "answer", "plan", "caption", "qid")
+			p["questions"] = sharedQuestions(part["questions"])
+			p["edits"] = sharedEdits(part["edits"])
+			visibleParts = append(visibleParts, p)
 		}
-	case []any:
-		for _, child := range x {
-			stripSharedPrivateFields(child)
+		t["parts"] = visibleParts
+		shared = append(shared, t)
+	}
+	out["messages"] = shared
+	return out
+}
+
+func copyAllowed(dst, src map[string]any, keys ...string) {
+	for _, key := range keys {
+		if value, ok := src[key]; ok {
+			dst[key] = value
 		}
 	}
+}
+
+func sharedQuestions(raw any) []any {
+	items, _ := raw.([]any)
+	out := make([]any, 0, len(items))
+	for _, item := range items {
+		question, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		q := map[string]any{}
+		copyAllowed(q, question, "id", "header", "question", "multiSelect")
+		options, _ := question["options"].([]any)
+		visibleOptions := make([]any, 0, len(options))
+		for _, optionRaw := range options {
+			option, ok := optionRaw.(map[string]any)
+			if !ok {
+				continue
+			}
+			o := map[string]any{}
+			copyAllowed(o, option, "label", "description", "preview")
+			visibleOptions = append(visibleOptions, o)
+		}
+		q["options"] = visibleOptions
+		out = append(out, q)
+	}
+	return out
+}
+
+func sharedEdits(raw any) []any {
+	items, _ := raw.([]any)
+	out := make([]any, 0, len(items))
+	for _, item := range items {
+		edit, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		e := map[string]any{}
+		copyAllowed(e, edit, "old", "new")
+		out = append(out, e)
+	}
+	return out
 }
 
 func (a sessionShareAPI) sealProposal(ctx context.Context, tenant string, body []byte) (string, string, error) {
@@ -514,15 +581,6 @@ func (a sessionShareAPI) propose(w http.ResponseWriter, r *http.Request, ident I
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	n, err := a.mgr.store.CountPendingSessionShareProposals(r.Context(), c.ID)
-	if err != nil {
-		writeAPIErr(w, internalErr(err))
-		return
-	}
-	if n >= shareProposalMaxOpen {
-		writeAPIErr(w, &apiError{429, "too_many_proposals", "too many pending proposals"})
-		return
-	}
 	ct, kr, err := a.sealProposal(r.Context(), mv.TenantID, in.Payload)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -530,8 +588,13 @@ func (a sessionShareAPI) propose(w http.ResponseWriter, r *http.Request, ident I
 	}
 	now := time.Now().UTC()
 	p := SessionShareProposal{ID: newID(), TenantID: mv.TenantID, CatalogID: c.ID, OwnerMembershipID: c.OwnerMembershipID, ProposerMembershipID: mv.MembershipID, Action: in.Action, Ciphertext: ct, KeyRef: kr, Status: "pending", CreatedAt: now.Format(time.RFC3339), ExpiresAt: now.Add(24 * time.Hour).Format(time.RFC3339)}
-	if err := a.mgr.store.CreateSessionShareProposal(r.Context(), p); err != nil {
+	created, err := a.mgr.store.CreateSessionShareProposalLimited(r.Context(), p, shareProposalMaxOpen)
+	if err != nil {
 		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !created {
+		writeAPIErr(w, &apiError{429, "too_many_proposals", "too many pending proposals"})
 		return
 	}
 	_ = a.mgr.store.InsertAudit(context.Background(), AuditLog{ID: newID(), TenantID: mv.TenantID, ActorKind: "user", ActorID: ident.ID,
@@ -540,6 +603,7 @@ func (a sessionShareAPI) propose(w http.ResponseWriter, r *http.Request, ident I
 }
 
 func (a sessionShareAPI) listProposals(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+	w.Header().Set("Cache-Control", "private, no-store")
 	if err := a.mgr.store.ExpireSessionShareProposals(r.Context(), mv.MembershipID, nowTS()); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return

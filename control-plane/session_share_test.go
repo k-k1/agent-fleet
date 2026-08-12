@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -38,24 +39,24 @@ func TestEffectiveSharePermission(t *testing.T) {
 	}
 }
 
-func TestStripSharedPrivateFields(t *testing.T) {
-	v := map[string]any{"jsonlPath": "/secret/log", "messages": []any{map[string]any{
-		"cwd": "/home/dev/repos/private", "text": "visible", "parts": []any{map[string]any{"kind": "tool", "file": "secret.txt", "info": "edited"}},
+func TestSharedTranscriptDTOAllowsContentAndRejectsEveryUnknownCoordinate(t *testing.T) {
+	v := map[string]any{"jsonlPath": "/secret/log", "futureTopSecret": "hidden", "messages": []any{map[string]any{
+		"cwd": "/home/dev/repos/private", "text": "visible", "role": "assistant", "idx": float64(1),
+		"file_path": "/top/path", "parts": []any{map[string]any{
+			"kind": "tool", "file": "secret.txt", "files": []any{"attachment.png"}, "filePath": "/camel",
+			"file_path": "/snake", "path": "/generic", "attachmentPath": "/attach", "unknownCoordinate": "/future",
+			"info": "edited", "output": "visible tool output", "edits": []any{map[string]any{"old": "a", "new": "b", "path": "/edit/path"}},
+		}},
 	}}}
-	stripSharedPrivateFields(v)
-	if _, ok := v["jsonlPath"]; ok {
-		t.Fatal("jsonlPath survived")
+	out := sharedTranscriptDTO(v)
+	encoded, _ := json.Marshal(out)
+	for _, secret := range []string{"jsonlPath", "futureTopSecret", "cwd", "file_path", "filePath", "attachmentPath", "unknownCoordinate", "secret.txt", "attachment.png", "/generic", "/edit/path"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("private/unknown field %q survived: %s", secret, encoded)
+		}
 	}
-	msg := v["messages"].([]any)[0].(map[string]any)
-	if _, ok := msg["cwd"]; ok {
-		t.Fatal("cwd survived")
-	}
-	part := msg["parts"].([]any)[0].(map[string]any)
-	if _, ok := part["file"]; ok {
-		t.Fatal("file survived")
-	}
-	if msg["text"] != "visible" || part["info"] != "edited" {
-		t.Fatalf("visible fields changed: %#v", v)
+	if !strings.Contains(string(encoded), "visible tool output") || !strings.Contains(string(encoded), `"old":"a"`) {
+		t.Fatalf("visible allowlisted content removed: %s", encoded)
 	}
 }
 

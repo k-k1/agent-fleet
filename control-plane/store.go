@@ -331,6 +331,7 @@ type SessionShareStore interface {
 	GetSharedSessionCatalog(ctx context.Context, id string) (SharedSessionCatalog, bool, error)
 	ListSharedSessionCatalogByOwner(ctx context.Context, membershipID string) ([]SharedSessionCatalog, error)
 	CreateSessionShareProposal(ctx context.Context, row SessionShareProposal) error
+	CreateSessionShareProposalLimited(ctx context.Context, row SessionShareProposal, maxPending int) (bool, error)
 	GetSessionShareProposal(ctx context.Context, id string) (SessionShareProposal, bool, error)
 	ListSessionShareProposalsByOwner(ctx context.Context, membershipID string) ([]SessionShareProposal, error)
 	CountPendingSessionShareProposals(ctx context.Context, catalogID string) (int, error)

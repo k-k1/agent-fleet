@@ -232,6 +232,38 @@ func (s *sqlStore) CreateSessionShareProposal(ctx context.Context, r SessionShar
 		r.Action, r.Ciphertext, r.KeyRef, r.Status, r.CreatedAt, r.ExpiresAt)
 	return err
 }
+func (s *sqlStore) CreateSessionShareProposalLimited(ctx context.Context, r SessionShareProposal, maxPending int) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	// Serialize creators per catalog on both backends. SQLite's first write takes
+	// the database write lock; Postgres locks this catalog row until commit.
+	if _, err = tx.ExecContext(ctx, `UPDATE shared_session_catalog SET last_seen=last_seen WHERE id=?`, r.CatalogID); err != nil {
+		return false, err
+	}
+	var n int
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM session_share_proposal WHERE catalog_id=? AND status='pending'`, r.CatalogID).Scan(&n); err != nil {
+		return false, err
+	}
+	if n >= maxPending {
+		if err = tx.Commit(); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO session_share_proposal
+		(id,tenant_id,catalog_id,owner_membership_id,proposer_membership_id,action,ciphertext,key_ref,status,created_at,expires_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?)`, r.ID, r.TenantID, r.CatalogID, r.OwnerMembershipID, r.ProposerMembershipID,
+		r.Action, r.Ciphertext, r.KeyRef, r.Status, r.CreatedAt, r.ExpiresAt); err != nil {
+		return false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
 func scanProposal(row interface{ Scan(...any) error }) (SessionShareProposal, bool, error) {
 	var r SessionShareProposal
 	err := row.Scan(&r.ID, &r.TenantID, &r.CatalogID, &r.OwnerMembershipID, &r.ProposerMembershipID, &r.Action,
