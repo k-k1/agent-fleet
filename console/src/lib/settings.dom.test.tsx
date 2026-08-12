@@ -38,8 +38,8 @@ describe("expandThinking", () => {
 describe("normalizeClaudeCustomModels", () => {
   it("trims ids and drops aliases, duplicates, and broken values", () => {
     expect(normalizeClaudeCustomModels([
-      " claude-opus-4-8 ", "CLAUDE-OPUS-4-8", "claude-opus-4-7", "opus", "bad model", 42, "",
-    ])).toEqual(["claude-opus-4-8", "claude-opus-4-7"]);
+      " claude-opus-4-8 ", "CLAUDE-OPUS-4-8", "claude-opus-4-7", "claude-opus-4-6[1m]", "opus", "bad model", 42, "",
+    ])).toEqual(["claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6[1m]"]);
   });
 
   it("falls back to an empty catalog for a broken stored value", () => {

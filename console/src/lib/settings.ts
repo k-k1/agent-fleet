@@ -813,7 +813,7 @@ export function normalizeClaudeCustomModels(value: unknown): string[] {
     if (typeof raw !== "string") continue;
     const id = raw.trim();
     const key = id.toLowerCase();
-    if (!/^claude-[a-z0-9][a-z0-9._-]*$/i.test(id) || seen.has(key) ||
+    if (!/^claude-[a-z0-9][a-z0-9._\-[\]]*$/i.test(id) || seen.has(key) ||
         CLAUDE_MODELS.some(([alias]) => alias.toLowerCase() === key)) continue;
     seen.add(key);
     out.push(id);
