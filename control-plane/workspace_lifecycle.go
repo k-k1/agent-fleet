@@ -144,7 +144,7 @@ func (m *manager) stopWorkspaceByMembership(ctx context.Context, membershipID st
 	}
 	defer lease.Close()
 	rt := m.runtimeFor(ws, "")
-	releaseFence, err := acquireRuntimeOperationFence(lease.Context(), rt)
+	releaseFence, err := m.acquireWorkspaceOperationFence(lease.Context(), ws.ID, rt)
 	if err != nil {
 		return err
 	}
@@ -178,7 +178,7 @@ func (m *manager) cleanHomeByMembership(ctx context.Context, membershipID string
 	}
 	defer lease.Close()
 	rt := m.runtimeFor(ws, "")
-	releaseFence, err := acquireRuntimeOperationFence(lease.Context(), rt)
+	releaseFence, err := m.acquireWorkspaceOperationFence(lease.Context(), ws.ID, rt)
 	if err != nil {
 		return err
 	}

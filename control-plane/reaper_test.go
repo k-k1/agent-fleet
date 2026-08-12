@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,6 +18,17 @@ type reaperFenceRuntime struct {
 	fenceRelease chan struct{}
 	endpoint     string
 	busy         atomic.Bool
+}
+
+type operationFenceGateStore struct {
+	Store
+	mu sync.Mutex
+}
+
+func (s *operationFenceGateStore) AcquireWorkspaceOperationFence(context.Context, string) (func(), error) {
+	s.mu.Lock()
+	var once sync.Once
+	return func() { once.Do(s.mu.Unlock) }, nil
 }
 
 func (r *reaperFenceRuntime) Start(context.Context) error  { return nil }
@@ -345,6 +357,38 @@ func TestExplicitStartClearsOrphanedIdleStopIntentWhileRunning(t *testing.T) {
 	}
 	if err := mgr.touchWorkspace(ctx, ws.ID); err != nil {
 		t.Fatalf("activity remained blocked after explicit Start: %v", err)
+	}
+}
+
+func TestWorkspaceOperationFenceBlocksSecondControlPlaneWithoutAdapterFence(t *testing.T) {
+	st, ws, _ := reaperLifecycleFixture(t)
+	gate := &operationFenceGateStore{Store: st}
+	mgrA := &manager{store: gate}
+	mgrB := &manager{store: gate}
+	rt := &shareLifecycleRuntime{} // Docker/ECS-like: no runtimeOperationFencer
+	releaseA, err := mgrA.acquireWorkspaceOperationFence(context.Background(), ws.ID, rt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acquiredB := make(chan func(), 1)
+	go func() {
+		release, err := mgrB.acquireWorkspaceOperationFence(context.Background(), ws.ID, rt)
+		if err == nil {
+			acquiredB <- release
+		}
+	}()
+	select {
+	case release := <-acquiredB:
+		release()
+		t.Fatal("second CP crossed the distributed operation fence")
+	case <-time.After(50 * time.Millisecond):
+	}
+	releaseA()
+	select {
+	case release := <-acquiredB:
+		release()
+	case <-time.After(time.Second):
+		t.Fatal("second CP did not proceed after old holder quiesced")
 	}
 }
 

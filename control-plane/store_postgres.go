@@ -49,5 +49,5 @@ func openPostgres(url string) (*sqlStore, error) {
 		db.Close()
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
-	return &sqlStore{db: &sqlDB{DB: db, rb: rebindDollar}, mfs: pgMigrationFS, mdir: "migrations-pg"}, nil
+	return &sqlStore{db: &sqlDB{DB: db, rb: rebindDollar}, dialect: "postgres", mfs: pgMigrationFS, mdir: "migrations-pg"}, nil
 }

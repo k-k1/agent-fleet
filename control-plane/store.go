@@ -395,6 +395,7 @@ type WorkspaceStore interface {
 	ClaimWorkspaceIdleStop(ctx context.Context, workspaceID, ownerMembershipID, operationID, cutoff, now string) (bool, error)
 	ReleaseWorkspaceIdleStop(ctx context.Context, workspaceID, operationID string) error
 	ClearWorkspaceIdleStop(ctx context.Context, workspaceID string) error
+	AcquireWorkspaceOperationFence(ctx context.Context, workspaceID string) (func(), error)
 	// Per-workspace member settings (JSON blob; "" = none). CP-owned so they can be
 	// read/written while the container is stopped; mapped to env at container start.
 	GetWorkspaceSettings(ctx context.Context, workspaceID string) (string, error)

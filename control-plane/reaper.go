@@ -417,7 +417,7 @@ func (rp *reaper) stopWorkspace(ctx context.Context, rt Runtime, ws Workspace, w
 		return
 	}
 	defer lease.Close()
-	releaseFence, err := acquireRuntimeOperationFence(lease.Context(), rt)
+	releaseFence, err := rp.mgr.acquireWorkspaceOperationFence(lease.Context(), ws.ID, rt)
 	if err != nil {
 		log.Printf("idle-stop: runtime fence %s: %v", ws.ContainerName, err)
 		return
