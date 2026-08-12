@@ -112,6 +112,53 @@
   padding: 4px 3px 3px 9px;
   font: 12px/19px var(--sans);
   text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.pane-tab-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pane-tab-state {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 16px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1;
+}
+.pane-tab-state.on {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  border-color: color-mix(in srgb, var(--ok) 38%, transparent);
+}
+.pane-tab-state.off,
+.pane-tab-state.dead {
+  color: var(--muted);
+  border-color: var(--border2);
+}
+.pane-tab-state.off.warn,
+.pane-tab-state.question {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+}
+.pane-tab-state.working {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.pane-tab-state.bg {
+  color: #17a2a2;
+  background: color-mix(in srgb, #17a2a2 12%, transparent);
+  border-color: color-mix(in srgb, #17a2a2 38%, transparent);
 }
 .pane-tab-close {
   flex: none;
