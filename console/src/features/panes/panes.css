@@ -160,6 +160,17 @@
 .pane.droptarget {
   border-color: var(--accent);
 }
+
+/* Native HTML D&D auto-scrolls the scrollable element under the pointer. While
+   moving a tab, cover every View (including other Cells) with the Cell's own
+   transparent drop surface so terminal/chat/file scroll positions stay fixed.
+   The tab strip remains above it and continues to own reorder drops. */
+body.tab-dragging .pane::after {
+  position: absolute;
+  z-index: 3;
+  inset: 32px 0 0;
+  content: "";
+}
 .pane.pane-hover {
   border-color: color-mix(in srgb, var(--ord, var(--accent)) 70%, var(--border2));
 }

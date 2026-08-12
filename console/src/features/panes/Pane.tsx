@@ -36,7 +36,7 @@ import { canPopout, openPanePopout } from "./popout.ts";
 import { usePopoutMode } from "../../lib/popoutMode.ts";
 import type { PaneView } from "../../layout/types.ts";
 import { paneTitle } from "./paneTitle.ts";
-import { acceptsPaneDrag, tabOwnsDrop } from "./paneDnd.ts";
+import { acceptsPaneDrag, setTabDragShield, tabOwnsDrop } from "./paneDnd.ts";
 
 // Drag payload MIME — identifies a pane-to-pane drag (vs any other drag).
 const DND = "application/x-af-pane";
@@ -81,6 +81,7 @@ function EmptyPane({ cell, style, active, tabbed, canSplitRight, canSplitDown, c
         const sourceCellId = e.dataTransfer.getData(DND);
         if (!tabId && !sourceCellId) return;
         e.preventDefault();
+        if (tabId) setTabDragShield(false);
         const rect = e.currentTarget.getBoundingClientRect();
         const right = canSplitRight && (e.clientX - rect.left) / rect.width >= 0.7;
         const down = canSplitDown && (e.clientY - rect.top) / rect.height >= 0.7;
@@ -312,6 +313,7 @@ function PopulatedPane({
     const tabDrag = e.dataTransfer.types.includes(TAB_DND);
     if (!e.dataTransfer.types.includes(DND) && !tabDrag) return;
     e.preventDefault();
+    if (tabDrag) setTabDragShield(false);
     // Recompute at drop time. dragover state is visual feedback and may lag a
     // frame, especially when the pointer just crossed from a tab into an edge.
     const z = zoneFor(e);
@@ -354,7 +356,12 @@ function PopulatedPane({
                 aria-selected={view.id === cell.selectedViewId}
                 title={tabLabel(view)}
                 draggable
-                onDragStart={(e) => { e.dataTransfer.setData(TAB_DND, view.id); e.dataTransfer.effectAllowed = "move"; }}
+                onDragStart={(e) => {
+                  e.dataTransfer.setData(TAB_DND, view.id);
+                  e.dataTransfer.effectAllowed = "move";
+                  setTabDragShield(true);
+                }}
+                onDragEnd={() => setTabDragShield(false)}
                 onDragOver={(e) => {
                   if (!e.dataTransfer.types.includes(TAB_DND)) return;
                   // The tab owns center drops for reordering. Edge drops belong
@@ -368,6 +375,7 @@ function PopulatedPane({
                   if (!source || !tabOwnsDrop(zoneFor(e))) return;
                   e.preventDefault();
                   e.stopPropagation();
+                  setTabDragShield(false);
                   moveTab(source, cell.id, view.id);
                 }}
                 onAuxClick={(e) => {
