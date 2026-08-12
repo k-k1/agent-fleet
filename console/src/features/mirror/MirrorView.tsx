@@ -2089,13 +2089,16 @@ export function MirrorView({
   const openDiff = (p: Part) => showDiff(p.file || "", p.edits, p.tool || "");
 
   // Composer history = the user's own prompts in this conversation (so ↑ works even
-  // after a reload, not just for prompts typed since mount). Newest last.
+  // after a reload, not just for prompts typed since mount). Newest last. Slash-command /
+  // skill invocations are logged as system-tagged turns that isNoise hides from the transcript
+  // view, so they're recovered via parseCommand and pushed in their re-typeable "/name args"
+  // form — otherwise a skill run would vanish from ↑ recall entirely.
   const history: string[] = [];
   for (const t of turns) {
-    if (t.role === "user" && t.text && !isNoise(t)) {
-      const s = t.text.trim();
-      if (s && history[history.length - 1] !== s) history.push(s);
-    }
+    if (t.role !== "user") continue;
+    const slash = parseCommand(t);
+    const s = slash ? slash.name + (slash.args ? " " + slash.args : "") : t.text && !isNoise(t) ? t.text.trim() : "";
+    if (s && history[history.length - 1] !== s) history.push(s);
   }
 
   // Recall the previous / next prompt from history (shared by ↑/↓ and the on-screen
