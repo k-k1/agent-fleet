@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -172,7 +174,7 @@ func parseRolloutFull(lines [][]byte) ([]transcript.Turn, []transcript.Task, []t
 			if pt := parsePlan(ev.Payload); pt != nil {
 				tasks = pt // update_plan resends the whole list
 			}
-			if id, out, gen := parseCallOutput(ev.Payload); id != "" {
+			if id, out, gen, imgs := parseCallOutput(ev.Payload); id != "" {
 				answered[id] = true
 				if ti, okk := callTurn[id]; okk && len(turns[ti].Parts) > 0 && out != "" {
 					if turns[ti].Parts[0].Kind == "question" {
@@ -186,6 +188,12 @@ func parseRolloutFull(lines [][]byte) ([]transcript.Turn, []transcript.Task, []t
 					// of a tool trace.
 					if len(gen) > 0 {
 						turns[ti].Parts = append(turns[ti].Parts, transcript.Part{Kind: "userfile", Files: gen})
+					} else if len(imgs) > 0 {
+						// view_image: the screenshot only exists as inline base64 here (no
+						// servable path was announced) — stash it for readTranscript to
+						// decode and persist to a servable file (see persistViewImages).
+						turns[ti].Parts[0].ViewImageCallID = id
+						turns[ti].Parts[0].ViewImageData = imgs
 					}
 				}
 			}
@@ -538,7 +546,13 @@ func reasoningText(payload json.RawMessage) string {
 //     input_image data URL plus a text block that re-embeds it as JSON — pure noise for
 //     a text trace, so those are dropped (the image itself reaches the user as the
 //     userfile part synthesized from genImages).
-func parseCallOutput(payload json.RawMessage) (callID, output string, genImages []string) {
+// parseCallOutput additionally returns any inline "data:image/...;base64,..." URLs
+// found in an array-shaped output (codex's view_image tool_result embeds the
+// screenshot this way — no path text, unlike image_gen, whose result also carries
+// this shape but ANNOUNCES an already-servable path separately, which genImagePaths
+// extracts). The caller only uses inlineImages when genImages is empty, so
+// image_gen's existing behavior is unaffected by this also being populated for it.
+func parseCallOutput(payload json.RawMessage) (callID, output string, genImages []string, inlineImages []string) {
 	var p struct {
 		Type   string          `json:"type"`
 		CallID string          `json:"call_id"`
@@ -546,20 +560,25 @@ func parseCallOutput(payload json.RawMessage) (callID, output string, genImages 
 	}
 	if json.Unmarshal(payload, &p) != nil ||
 		(p.Type != "function_call_output" && p.Type != "custom_tool_call_output") {
-		return "", "", nil
+		return "", "", nil, nil
 	}
 	out := ""
+	var imgs []string
 	if len(p.Output) > 0 {
 		switch p.Output[0] {
 		case '"':
 			_ = json.Unmarshal(p.Output, &out)
 		case '[':
 			var blocks []struct {
-				Text string `json:"text"`
+				Text     string `json:"text"`
+				ImageURL string `json:"image_url"`
 			}
 			if json.Unmarshal(p.Output, &blocks) == nil {
 				var sb strings.Builder
 				for _, b := range blocks {
+					if b.ImageURL != "" {
+						imgs = append(imgs, b.ImageURL)
+					}
 					t := strings.TrimSpace(b.Text)
 					if strings.HasPrefix(t, `{"image_url":"data:image`) || strings.HasPrefix(t, "data:image") {
 						continue // base64 image re-embedded as text — noise
@@ -586,7 +605,7 @@ func parseCallOutput(payload json.RawMessage) (callID, output string, genImages 
 			}
 		}
 	}
-	return p.CallID, transcript.CapOutput(out), genImagePaths(out)
+	return p.CallID, transcript.CapOutput(out), genImagePaths(out), imgs
 }
 
 // genImageRe matches the imagegen harness's completion notice ("Generated images are
@@ -606,6 +625,162 @@ func genImagePaths(out string) []string {
 		}
 	}
 	return paths
+}
+
+// maxViewImageEncodedLen bounds the base64 payload persistViewImagesTo will decode
+// (~28MB encoded ≈ 20MB decoded) — generous for a screenshot, guards against a
+// malformed or runaway inline payload turning into an oversized allocation/file.
+const maxViewImageEncodedLen = 28 << 20
+
+// decodeDataURL splits a "data:<mime>;base64,<payload>" URL into its mime type and
+// decoded bytes. ok is false for anything else (codex is only known to emit base64
+// PNG data URLs for view_image, but this stays defensive rather than assuming).
+func decodeDataURL(u string) (mime string, data []byte, ok bool) {
+	const prefix = "data:"
+	if !strings.HasPrefix(u, prefix) {
+		return "", nil, false
+	}
+	comma := strings.IndexByte(u, ',')
+	if comma < 0 {
+		return "", nil, false
+	}
+	header := u[len(prefix):comma]
+	if !strings.HasSuffix(header, ";base64") {
+		return "", nil, false
+	}
+	if len(u)-(comma+1) > maxViewImageEncodedLen {
+		return "", nil, false
+	}
+	data, err := base64.StdEncoding.DecodeString(u[comma+1:])
+	if err != nil {
+		return "", nil, false
+	}
+	return strings.TrimSuffix(header, ";base64"), data, true
+}
+
+// extForDataURLMime maps a data URL's mime type to a file extension. Codex's
+// screenshots are PNG in every observed case; the default keeps an unrecognized
+// mime openable rather than dropping the image.
+func extForDataURLMime(mime string) string {
+	switch mime {
+	case "image/jpeg", "image/jpg":
+		return ".jpg"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	default:
+		return ".png"
+	}
+}
+
+// sanitizeCallID reduces a call_id to a safe filename fragment. codex's call_ids are
+// already alnum+underscore (e.g. "call_YHcw5Pm6sBMucKvcvz4iErte"), but this stays
+// defensive against a future format change rather than trusting it blindly.
+func sanitizeCallID(id string) string {
+	if id == "" {
+		return "call"
+	}
+	var b strings.Builder
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	return b.String()
+}
+
+// viewImagePersisted caches destination paths already confirmed on disk this
+// process's lifetime, so readTranscript's repeated re-parses of the same rollout
+// (one per /messages poll, across several independent call sites — see
+// persistViewImages) skip even the os.Stat check after the first success. It only
+// gates the WRITE — every call still returns the path so the sibling userfile Part
+// keeps being emitted on every read, not just the first.
+var viewImagePersisted sync.Map // dest path -> struct{}
+
+// persistViewImages decodes and writes any pending view_image inline data
+// (stashed on Part.ViewImageData by parseRolloutFull, see the parseCallOutput call
+// site) to a servable per-session directory, then appends a sibling kind=userfile
+// Part so the mirror's existing UserFileBlock/FileThumb renders it inline — the same
+// treatment codex's own image_gen results already get via genImagePaths, just with
+// agent-fleet doing the file write since codex never wrote view_image's screenshot
+// anywhere servable itself (see workspace/agent/session_paste.go's pastedDir(sid)
+// for the sibling convention this mirrors: homeDir()/.cache/agent-fleet/<kind>/<sid>).
+func persistViewImages(turns []transcript.Turn, sid string) {
+	persistViewImagesTo(turns, filepath.Join(paths.HomeDir(), ".cache", "agent-fleet", "codex-view-image", sid))
+}
+
+// persistViewImagesTo is persistViewImages with an explicit target directory, so
+// tests can point it at t.TempDir() instead of the real home. Errors are always
+// swallowed per-file: a write failure (disk full, permissions) must never surface
+// to readTranscript's caller — this is best-effort image persistence, not a
+// required part of reading the transcript.
+func persistViewImagesTo(turns []transcript.Turn, dir string) {
+	dirMade := false
+	for ti := range turns {
+		var files []string
+		for pi := range turns[ti].Parts {
+			p := &turns[ti].Parts[pi]
+			if len(p.ViewImageData) == 0 {
+				continue
+			}
+			for i, u := range p.ViewImageData {
+				mime, data, ok := decodeDataURL(u)
+				if !ok {
+					continue
+				}
+				dest := filepath.Join(dir, sanitizeCallID(p.ViewImageCallID)+"-"+strconv.Itoa(i)+extForDataURLMime(mime))
+				if _, done := viewImagePersisted.Load(dest); !done {
+					if _, err := os.Stat(dest); err != nil {
+						if !dirMade {
+							if os.MkdirAll(dir, 0o700) != nil {
+								continue
+							}
+							dirMade = true
+						}
+						if writeFileAtomic(dir, dest, data) != nil {
+							continue
+						}
+					}
+					viewImagePersisted.Store(dest, struct{}{})
+				}
+				files = append(files, dest)
+			}
+			p.ViewImageData = nil
+			p.ViewImageCallID = ""
+		}
+		if len(files) > 0 {
+			turns[ti].Parts = append(turns[ti].Parts, transcript.Part{Kind: "userfile", Files: files})
+		}
+	}
+}
+
+// writeFileAtomic writes data to dest via a temp file + rename in dir, mirroring
+// workspace/agent/session_paste.go's savePastedImageTo so a reader never observes a
+// partially-written file.
+func writeFileAtomic(dir, dest string, data []byte) error {
+	tmp, err := os.CreateTemp(dir, ".view-image-*")
+	if err != nil {
+		return err
+	}
+	_, werr := tmp.Write(data)
+	cerr := tmp.Close()
+	if werr != nil {
+		_ = os.Remove(tmp.Name())
+		return werr
+	}
+	if cerr != nil {
+		_ = os.Remove(tmp.Name())
+		return cerr
+	}
+	if err := os.Rename(tmp.Name(), dest); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	return nil
 }
 
 // answerText renders a request_user_input function_call_output into the chosen answer
@@ -1193,6 +1368,7 @@ func readTranscript(m session.Meta) (agents.TranscriptData, bool) {
 		return td, true
 	}
 	turns, tasks, pending, mode := parseRolloutFull(lines)
+	persistViewImages(turns, slot)
 	td := agents.TranscriptData{Turns: turns, Path: path, Tasks: tasks, Pending: pending, Mode: mode, Compacting: compacting}
 	managedEnrich(m, &td)
 	return td, true
