@@ -61,4 +61,16 @@ describe("splitPastedImages", () => {
     expect(samePastedPrompt(landed, "確認して")).toBe(true);
     expect(samePastedPrompt(landed, "別の依頼")).toBe(false);
   });
+  it("strips a trailing bare </image> closing tag (captioned Codex send)", () => {
+    // Real rollout shape for a captioned managed-Codex send: input_text items are
+    // concatenated with no separator, so the closing tag glues directly onto the
+    // opening tag/caption with no surrounding whitespace.
+    const landed = `確認して<image name=[Image #1] path="${P1}"></image>`;
+    expect(splitPastedImages(landed)).toEqual({
+      text: "確認して",
+      images: ["paste-1.png"],
+      files: [],
+    });
+    expect(samePastedPrompt(landed, "確認して")).toBe(true);
+  });
 });
