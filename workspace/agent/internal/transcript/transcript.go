@@ -29,6 +29,14 @@ type Part struct {
 	Files     []string   `json:"files,omitempty"`     // kind=userfile: SendUserFile paths, browse-root-relative (openable in a pane)
 	Caption   string     `json:"caption,omitempty"`   // kind=userfile: optional caption the agent attached
 	QID       string     `json:"qid,omitempty"`       // kind=question/plan/delegation: tool_use id, so the Console can patch a late-arriving answer (see CollectInteractionAnswers) onto an already-delivered turn
+
+	// ViewImageCallID/ViewImageData carry a codex view_image tool_result's inline
+	// "data:image/...;base64,..." payload(s) from the pure rollout parser up to
+	// readTranscript, which persists them to a servable file and appends a sibling
+	// kind=userfile Part with the result — never serialized to the Console (json:"-"),
+	// and cleared once persisted. kind=tool (Tool="view_image") only.
+	ViewImageCallID string   `json:"-"`
+	ViewImageData   []string `json:"-"`
 }
 
 // Edit is one before/after pair for an edit-family tool, so the Console can render
