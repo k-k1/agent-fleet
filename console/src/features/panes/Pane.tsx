@@ -194,10 +194,20 @@ export function Pane({
   // width (--pane-ctl-w, panes.css) instead of per-view magic numbers.
   const showPopout = popoutTabMode !== "popout" && canPopout(pane);
   const ctlCount = (showPopout ? 1 : 0) + (canWrap ? 1 : 0) + (canClose ? 1 : 0);
-  const views: PaneView[] = [
+  const unorderedViews: PaneView[] = [
     { id: pane.id, session: pane.session, content: pane.content, wrap: pane.wrap, lastUsedAt: pane.lastUsedAt },
     ...(pane.tabs || []),
   ];
+  const views = (() => {
+    const byId = new Map(unorderedViews.map((view) => [view.id, view] as const));
+    const ordered: PaneView[] = [];
+    for (const id of pane.tabOrder || []) {
+      const view = byId.get(id);
+      if (view) { ordered.push(view); byId.delete(id); }
+    }
+    for (const view of unorderedViews) if (byId.has(view.id)) ordered.push(view);
+    return ordered;
+  })();
   // Never expose the runtime session slug in the tab strip: sessions have a
   // user-facing title, and unloaded metadata should read as a neutral state
   // until it arrives instead of briefly leaking an opaque identifier.
@@ -274,6 +284,11 @@ export function Pane({
                 title={tabLabel(view)}
                 draggable
                 onDragStart={(e) => { e.dataTransfer.setData(TAB_DND, view.id); e.dataTransfer.effectAllowed = "move"; }}
+                onDragOver={(e) => { if (e.dataTransfer.types.includes(TAB_DND)) { e.preventDefault(); e.stopPropagation(); } }}
+                onDrop={(e) => {
+                  const source = e.dataTransfer.getData(TAB_DND);
+                  if (source) { e.preventDefault(); e.stopPropagation(); moveTab(source, pane.id, view.id); }
+                }}
                 onClick={() => selectTab(view.id)}
               >
                 {tabLabel(view)}
