@@ -315,6 +315,39 @@ func TestWorkspaceActivityCoalescesWithinProtectedLease(t *testing.T) {
 	}
 }
 
+func TestExplicitStartClearsOrphanedIdleStopIntentWhileRunning(t *testing.T) {
+	st, ws, mgr := reaperLifecycleFixture(t)
+	ctx := context.Background()
+	old, err := acquireWorkspaceLifecycleLease(ctx, st, ws.MembershipID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	claimed, err := st.ClaimWorkspaceIdleStop(ctx, ws.ID, ws.MembershipID, old.token,
+		leaseTS(now.Add(time.Hour)), leaseTS(now))
+	if err != nil || !claimed {
+		t.Fatalf("claim=%v err=%v", claimed, err)
+	}
+	old.Close() // simulate the crashed holder's owner lease eventually disappearing
+
+	rt := newReaperFenceRuntime(t)
+	close(rt.fenceRelease)
+	res := &resolved{rt: rt, ws: ws, mv: MembershipView{MembershipID: ws.MembershipID, TenantID: ws.TenantID}}
+	if aerr := newWorkspaceAPI(mgr, false).ensureWorkspaceStartedRT(ctx, res, rt); aerr != nil {
+		t.Fatalf("explicit Start reconciliation: %+v", aerr)
+	}
+	var intents int
+	if err := st.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM workspace_stop_intent WHERE workspace_id=?`, ws.ID).Scan(&intents); err != nil {
+		t.Fatal(err)
+	}
+	if intents != 0 {
+		t.Fatalf("orphaned stop intents after running Start = %d", intents)
+	}
+	if err := mgr.touchWorkspace(ctx, ws.ID); err != nil {
+		t.Fatalf("activity remained blocked after explicit Start: %v", err)
+	}
+}
+
 // TestIdleBase pins the tier-2 idle clock's start to the LATEST of the three
 // activity signals (boot time / in-memory lastSeen / DB last_active_at). The
 // headline case is the regression that made a just-started workspace stop right
