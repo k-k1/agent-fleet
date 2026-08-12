@@ -293,10 +293,41 @@ func (rp *reaper) haltSession(ctx context.Context, rt Runtime, ws Workspace, nam
 	log.Printf("idle-stop: halted idle claude session %s in %s (tenant %s)", name, ws.ContainerName, ws.TenantID)
 }
 
-// stopWorkspace docker-stops a cold workspace and mirrors state to the DB.
+// stopWorkspace stops a cold workspace through the same distributed lifecycle
+// fence as explicit/admin stops. The idle reaper runs independently in every CP
+// replica, so a direct Runtime.Stop could otherwise cross an approved shared
+// operation or another holder's recreate/clean/start.
 func (rp *reaper) stopWorkspace(ctx context.Context, rt Runtime, ws Workspace) {
-	if err := rt.Stop(ctx); err != nil {
+	lock := rp.mgr.startLockFor(ws.ID)
+	lock.Lock()
+	defer lock.Unlock()
+	lease, err := acquireWorkspaceLifecycleLease(ctx, rp.mgr.store, ws.MembershipID)
+	if err != nil {
+		log.Printf("idle-stop: lifecycle busy %s: %v", ws.ContainerName, err)
+		return
+	}
+	defer lease.Close()
+	releaseFence, err := acquireRuntimeOperationFence(lease.Context(), rt)
+	if err != nil {
+		log.Printf("idle-stop: runtime fence %s: %v", ws.ContainerName, err)
+		return
+	}
+	defer releaseFence()
+	if err := lease.checkpoint(ctx); err != nil {
+		log.Printf("idle-stop: lifecycle lost %s: %v", ws.ContainerName, err)
+		return
+	}
+	// A start/recreate may have won the local lock while this sweep was waiting.
+	// Never turn its non-running transitional state into a fresh Stop.
+	if rt.State(lease.Context()) != "running" {
+		return
+	}
+	if err := rt.Stop(lease.Context()); err != nil {
 		log.Printf("idle-stop: stop %s: %v", ws.ContainerName, err)
+		return
+	}
+	if err := lease.checkpoint(ctx); err != nil {
+		log.Printf("idle-stop: lifecycle lost after stop %s: %v", ws.ContainerName, err)
 		return
 	}
 	if err := rp.mgr.store.SetWorkspaceState(ctx, ws.ID, "stopped"); err != nil {

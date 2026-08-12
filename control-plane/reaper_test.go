@@ -1,9 +1,141 @@
 package main
 
 import (
+	"context"
+	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+type reaperFenceRuntime struct {
+	stops        atomic.Int32
+	fenceEntered chan struct{}
+	fenceRelease chan struct{}
+}
+
+func (r *reaperFenceRuntime) Start(context.Context) error  { return nil }
+func (r *reaperFenceRuntime) Stop(context.Context) error   { r.stops.Add(1); return nil }
+func (r *reaperFenceRuntime) State(context.Context) string { return "running" }
+func (r *reaperFenceRuntime) Endpoint() string             { return "" }
+func (r *reaperFenceRuntime) Token() string                { return "" }
+func (r *reaperFenceRuntime) Name() string                 { return "reaper-fence" }
+func (r *reaperFenceRuntime) AcquireOperationFence(ctx context.Context) (func(), error) {
+	close(r.fenceEntered)
+	select {
+	case <-r.fenceRelease:
+		return func() {}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func reaperLifecycleFixture(t *testing.T) (*sqlStore, Workspace, *manager) {
+	t.Helper()
+	ctx := context.Background()
+	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := st.migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tenant, _ := st.EnsureDefaultTenant(ctx)
+	identity, _ := st.UpsertIdentity(ctx, "reaper-fence@example.com", "reaper-fence", "")
+	membership, _ := st.EnsureMembership(ctx, identity.ID, tenant.ID, "member")
+	ws := Workspace{ID: newID(), TenantID: tenant.ID, MembershipID: membership.ID,
+		ContainerName: "reaper-fence", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t",
+		State: "running", CreatedAt: nowTS()}
+	if err := st.CreateWorkspace(ctx, ws); err != nil {
+		t.Fatal(err)
+	}
+	return st, ws, &manager{store: st, conns: newConnRegistry()}
+}
+
+func TestReaperStopUsesLifecycleLeaseAndRuntimeFence(t *testing.T) {
+	ctx := context.Background()
+	st, ws, mgr := reaperLifecycleFixture(t)
+	rp := &reaper{mgr: mgr}
+
+	// An approved share operation owns the same distributed lease. The reaper
+	// must skip this sweep without reaching Runtime.Stop.
+	op := newID()
+	now := time.Now().UTC()
+	acquired, err := st.AcquireSessionShareOwnerLease(ctx, ws.MembershipID, op, leaseTS(now), leaseTS(now.Add(time.Minute)))
+	if err != nil || !acquired {
+		t.Fatalf("acquire share lease: acquired=%v err=%v", acquired, err)
+	}
+	blockedRT := &reaperFenceRuntime{fenceEntered: make(chan struct{}), fenceRelease: make(chan struct{})}
+	rp.stopWorkspace(ctx, blockedRT, ws)
+	if blockedRT.stops.Load() != 0 {
+		t.Fatal("reaper stopped workspace while share owner lease was active")
+	}
+	select {
+	case <-blockedRT.fenceEntered:
+		t.Fatal("reaper reached runtime fence before acquiring the DB lease")
+	default:
+	}
+	if err := st.ReleaseSessionShareOwnerLease(ctx, ws.MembershipID, op); err != nil {
+		t.Fatal(err)
+	}
+
+	// Once the DB lease is available, Stop must still wait behind the host fence
+	// held by an old native lifecycle operation.
+	rt := &reaperFenceRuntime{fenceEntered: make(chan struct{}), fenceRelease: make(chan struct{})}
+	done := make(chan struct{})
+	go func() {
+		rp.stopWorkspace(ctx, rt, ws)
+		close(done)
+	}()
+	select {
+	case <-rt.fenceEntered:
+	case <-time.After(time.Second):
+		t.Fatal("reaper did not reach runtime fence")
+	}
+	if rt.stops.Load() != 0 {
+		t.Fatal("reaper crossed the native runtime fence")
+	}
+	close(rt.fenceRelease)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("reaper did not finish after runtime fence release")
+	}
+	if rt.stops.Load() != 1 {
+		t.Fatalf("Stop calls = %d, want 1", rt.stops.Load())
+	}
+}
+
+func TestReaperStopWaitsForLocalWorkspaceOperation(t *testing.T) {
+	_, ws, mgr := reaperLifecycleFixture(t)
+	rp := &reaper{mgr: mgr}
+	rt := &reaperFenceRuntime{fenceEntered: make(chan struct{}), fenceRelease: make(chan struct{})}
+	lock := mgr.startLockFor(ws.ID)
+	lock.Lock() // same-CP shared approval/recreate owns this before its side effect
+	done := make(chan struct{})
+	go func() {
+		rp.stopWorkspace(context.Background(), rt, ws)
+		close(done)
+	}()
+	select {
+	case <-rt.fenceEntered:
+		t.Fatal("reaper crossed the local workspace mutex")
+	case <-time.After(50 * time.Millisecond):
+	}
+	lock.Unlock()
+	select {
+	case <-rt.fenceEntered:
+	case <-time.After(time.Second):
+		t.Fatal("reaper did not proceed after local operation completed")
+	}
+	close(rt.fenceRelease)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("reaper did not finish after all fences released")
+	}
+}
 
 // TestIdleBase pins the tier-2 idle clock's start to the LATEST of the three
 // activity signals (boot time / in-memory lastSeen / DB last_active_at). The

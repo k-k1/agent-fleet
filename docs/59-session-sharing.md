@@ -44,7 +44,7 @@ replica間でもAgent操作を横切れない。成功確定とlease解放も同
 share mutexにより競合リクエストを待機させる。そのためSQLiteの全write lockやPostgres connectionを
 外部I/O中に保持せず、共有解除／RO降格との順序は一意になる。ACL変更が先なら提案を失効して本文を
 消し、承認が先なら副作用の完了後にACL変更が通る。Workspace の停止も同じ
-owner leaseを使う。start／stop／recreate／clean-homeはRuntime操作の前に同じ行へ30秒のleaseを
+owner leaseを使う。start／stop／recreate／clean-home／idle reaperはRuntime操作の前に同じ行へ30秒のleaseを
 取得し、10秒ごとにoperation ID一致のCASで更新して終了時に解放する。heartbeat／CASを失ったholderは
 Runtime contextをcancelし、stop後、wipe前後、start前後のcheckpointを越えて次段階へ進めない。古い
 holderによるhome削除もlease contextを各entry間で検査して中断する。解放はoperation ID条件付きなので、
