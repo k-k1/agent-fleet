@@ -138,7 +138,7 @@ Claude の挙動は同じ画面で切り替えられます。
 **opencode** は、使いたい LLM プロバイダの **API キーを env として保存**します。
 プリセットから選ぶと env 名が自動で埋まります。
 
-- **OpenCode Go**（既定・`OPENCODE_API_KEY`）/ **Anthropic** / **OpenAI** / **OpenRouter** / **Google Gemini** / **カスタム…**（env 名を自分で指定）
+- **OpenCode Go**（既定・`OPENCODE_API_KEY`）/ **Anthropic** / **OpenAI** / **OpenRouter** / **Google Gemini** / **Sakana AI**（`SAKANA_API_KEY`・Fugu / Fugu Ultra）/ **カスタム…**（env 名を自分で指定）
 
 キーを貼って **「接続」** すると保存され、opencode起動時に注入されます。複数のキーを
 登録でき、起動時に接続済みプロバイダのモデルを選べます。

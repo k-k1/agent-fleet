@@ -1364,6 +1364,7 @@ const OC_PRESETS = [
   ["openai", "OpenAI", "OPENAI_API_KEY", "https://platform.openai.com/api-keys"],
   ["openrouter", "OpenRouter", "OPENROUTER_API_KEY", "https://openrouter.ai/keys"],
   ["google", "Google Gemini", "GEMINI_API_KEY", "https://aistudio.google.com/apikey"],
+  ["sakana", "Sakana AI", "SAKANA_API_KEY", "https://console.sakana.ai/api-keys"],
   ["custom", "", "", ""], // label resolved via i18n (agents.oc_custom) at render
 ];
 
