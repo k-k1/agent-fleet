@@ -16,7 +16,9 @@ Workspace やファイル API へ直接到達する経路は作らず、Control 
 
 `workingCopyId` は表示名やパスではない。Agent が Git/SVN の管理領域へランダム ID を
 作成時に保存する。同じ作業コピーでは不変で、削除後に同名フォルダを作り直しても別 ID に
-なるため、古い規則が新しい作業コピーへ復活しない。作業コピーが消えたことを live inventory
+なるため、古い規則が新しい作業コピーへ復活しない。管理領域がread-only／破損などで永続
+random markerを作成・読取できない作業コピーは `workingCopyId` を空にして、repo/worktree
+共有の対象にしない（device/inode等の再利用可能なfallbackは使わない）。作業コピーが消えたことを live inventory
 で確認した時点で、対応する repo/worktree 規則も削除する。
 
 セッション inventory は transcript 対応 kind のみを含む。shell/SSM は共有できない。
@@ -61,9 +63,11 @@ CP DB の `shared_session_catalog` はセッション名、表示情報、状態
 毎回 live inventory を同期してから ACL を評価する。削除済みセッション／作業コピーの古い規則で
 履歴閲覧や RW 提案を続けることはできない。
 
-履歴応答は `Cache-Control: private, no-store` とし、共通 ETag middleware も `no-store` 応答を
+履歴応答と復号したRW提案一覧は `Cache-Control: private, no-store` とし、共通 ETag middleware も `no-store` 応答を
 バッファ／検証子化しない。CP は `cwd`、`path`、`filePath`、JSONL の所在など Workspace 内の
-座標を再帰的に除く。受信一覧にも所有者の絶対パスを返さない。添付ファイルやファイル API は
+座標を除く。共有履歴は除外リストではなく専用allowlist DTOへ変換し、未知のfieldと
+`file`／`files`／`file_path`等の全構造化座標を既定で落とす。本文、ツール要約・出力、diff本文、
+質問内容だけを通す。受信一覧にも所有者の絶対パスを返さない。添付ファイルやファイル API は
 v1 の共有対象外である。
 
 ただし、会話本文・Agent の回答・ツール出力そのものは共有対象であり、その中に利用者が書いた
@@ -74,7 +78,8 @@ v1 の共有対象外である。
 
 会話本文を CP に複製しないため、共有専用の保存 quota は設けない。データ量は所有者 Workspace の
 既存ディスク quota にだけ計上される。共有に必要な CP 永続データは ACL、軽量 catalog、未処理の
-小さな RW 提案だけである。
+小さな RW 提案だけである。1セッション20件のpending上限はcatalog行をロックした同一transactionで
+count＋insertするため、並行POSTでも超過しない。
 
 一方、起動中なら無制限に読めるという意味ではない。履歴は cursor/limit で増分取得し、CP は
 受信者×セッションごとに毎分120回へ制限し、1応答の decode 上限を16 MiBにする。Console は

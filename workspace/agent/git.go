@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -15,7 +14,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
@@ -119,24 +117,10 @@ func workingCopyID(dir string) string {
 		}
 	}
 
-	// Read-only or damaged metadata should not make the working copy disappear
-	// from the API. Device+inode is stable for the life of the metadata entry;
-	// writable working copies use the random persisted marker above.
-	metadata := filepath.Join(dir, ".git")
-	if _, err := os.Lstat(metadata); err != nil {
-		metadata = filepath.Join(dir, ".svn")
-	}
-	fi, err := os.Lstat(metadata)
-	if err != nil {
-		return ""
-	}
-	st, ok := fi.Sys().(*syscall.Stat_t)
-	if !ok {
-		return ""
-	}
-	seed := fmt.Sprintf("%s:%d:%d", filepath.Clean(dir), st.Dev, st.Ino)
-	sum := sha256.Sum256([]byte(seed))
-	return fmt.Sprintf("wc_%x", sum[:12])
+	// Sharing must fail closed when the persistent random marker cannot be
+	// created/read. A device+inode fallback can be reused after delete/recreate and
+	// would silently resurrect an old repo/worktree ACL on a different copy.
+	return ""
 }
 
 func workingCopyMarkerPath(dir string) (string, error) {

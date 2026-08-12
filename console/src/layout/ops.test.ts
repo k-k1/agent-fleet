@@ -184,4 +184,13 @@ describe("layout v3 migration", () => {
     const empty = ops.freshTabbedLayout();
     expect(normalizeStored(JSON.parse(JSON.stringify(empty)))).toEqual(empty);
   });
+
+  it("round-trips a persisted shared-session view and rejects an unsafe id", () => {
+    const shared = ops.singlePaneLayout({ kind: "sharedSession", sharedSessionId: "catalog_abc-123" }, null);
+    expect(normalizeStored(JSON.parse(JSON.stringify(shared)))).toEqual(shared);
+
+    const unsafe = JSON.parse(JSON.stringify(shared));
+    unsafe.cols[0].cells[0].views[0].content.sharedSessionId = "../../foreign";
+    expect(normalizeStored(unsafe)!.cols[0].cells[0].views[0].content).toEqual({ kind: "terminal", chat: false });
+  });
 });
