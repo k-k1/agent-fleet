@@ -407,6 +407,10 @@ var homeKeep = map[string]bool{
 // entries in homeKeep. The caller MUST stop the container first — we mutate the host
 // bind-mount source, and deleting under a live mount risks inconsistency.
 func cleanHome(dataDir string) error {
+	return cleanHomeContext(context.Background(), dataDir)
+}
+
+func cleanHomeContext(ctx context.Context, dataDir string) error {
 	home := filepath.Join(dataDir, "home")
 	entries, err := os.ReadDir(home)
 	if err != nil {
@@ -416,14 +420,49 @@ func cleanHome(dataDir string) error {
 		return err
 	}
 	for _, e := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if homeKeep[e.Name()] {
 			continue
 		}
-		if err := os.RemoveAll(filepath.Join(home, e.Name())); err != nil {
+		if err := removeAllContext(ctx, filepath.Join(home, e.Name())); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// removeAllContext is the cancellable lifecycle equivalent of os.RemoveAll.
+// It never follows symlinks and checks the lease-derived context between entries,
+// so a fenced holder stops deleting before another CP can start the workspace.
+func removeAllContext(ctx context.Context, path string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return os.Remove(path)
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if err := removeAllContext(ctx, filepath.Join(path, entry.Name())); err != nil {
+			return err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return os.Remove(path)
 }
 
 // dockerInspectOut runs `docker <args...>` and returns its stdout.

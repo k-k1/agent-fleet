@@ -135,7 +135,27 @@ func (m *manager) stopWorkspaceByMembership(ctx context.Context, membershipID st
 	if err != nil || !ok {
 		return err
 	}
-	if err := m.runtimeFor(ws, "").Stop(ctx); err != nil {
+	lock := m.startLockFor(ws.ID)
+	lock.Lock()
+	defer lock.Unlock()
+	lease, err := acquireWorkspaceLifecycleLease(ctx, m.store, membershipID)
+	if err != nil {
+		return err
+	}
+	defer lease.Close()
+	rt := m.runtimeFor(ws, "")
+	releaseFence, err := m.acquireWorkspaceOperationFence(lease.Context(), ws.ID, rt)
+	if err != nil {
+		return err
+	}
+	defer releaseFence()
+	if err := lease.checkpoint(ctx); err != nil {
+		return err
+	}
+	if err := rt.Stop(lease.Context()); err != nil {
+		return err
+	}
+	if err := lease.checkpoint(ctx); err != nil {
 		return err
 	}
 	return m.store.SetWorkspaceState(ctx, ws.ID, "stopped")
@@ -149,8 +169,31 @@ func (m *manager) cleanHomeByMembership(ctx context.Context, membershipID string
 	if err != nil || !ok {
 		return err
 	}
-	_ = m.runtimeFor(ws, "").Stop(ctx) // best-effort
-	if err := cleanHome(m.rootedDataDir(ws)); err != nil {
+	lock := m.startLockFor(ws.ID)
+	lock.Lock()
+	defer lock.Unlock()
+	lease, err := acquireWorkspaceLifecycleLease(ctx, m.store, membershipID)
+	if err != nil {
+		return err
+	}
+	defer lease.Close()
+	rt := m.runtimeFor(ws, "")
+	releaseFence, err := m.acquireWorkspaceOperationFence(lease.Context(), ws.ID, rt)
+	if err != nil {
+		return err
+	}
+	defer releaseFence()
+	if err := lease.checkpoint(ctx); err != nil {
+		return err
+	}
+	_ = rt.Stop(lease.Context()) // best-effort
+	if err := lease.checkpoint(ctx); err != nil {
+		return err
+	}
+	if err := cleanHomeContext(lease.Context(), m.rootedDataDir(ws)); err != nil {
+		return err
+	}
+	if err := lease.checkpoint(ctx); err != nil {
 		return err
 	}
 	return m.store.SetWorkspaceState(ctx, ws.ID, "stopped")

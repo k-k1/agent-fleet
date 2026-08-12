@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"database/sql/driver"
 	"embed"
 	"encoding/hex"
 	"errors"
@@ -12,6 +13,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -26,6 +29,7 @@ var migrationFS embed.FS
 // legacy data hook. See openSQLite / openPostgres.
 type sqlStore struct {
 	db         *sqlDB
+	dialect    string
 	mfs        embed.FS                    // embedded numbered migrations
 	mdir       string                      // dir within mfs
 	legacyHook func(context.Context) error // sqlite-only post-migration data move; nil for pg
@@ -46,7 +50,7 @@ func openSQLite(path string) (*sqlStore, error) {
 		db.Close()
 		return nil, err
 	}
-	s := &sqlStore{db: &sqlDB{DB: db, rb: rebindNoop}, mfs: migrationFS, mdir: "migrations"}
+	s := &sqlStore{db: &sqlDB{DB: db, rb: rebindNoop}, dialect: "sqlite", mfs: migrationFS, mdir: "migrations"}
 	s.legacyHook = s.migrateMemberships
 	return s, nil
 }
@@ -530,9 +534,181 @@ func (s *sqlStore) PutUserLimit(ctx context.Context, membershipID string, maxSes
 }
 
 func (s *sqlStore) SetWorkspaceState(ctx context.Context, workspaceID, state string) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE workspace SET state=?, last_active_at=? WHERE id=?`, state, nowTS(), workspaceID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = lockWorkspace(ctx, tx, workspaceID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE workspace SET state=?, last_active_at=? WHERE id=?`, state, nowTS(), workspaceID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM workspace_stop_intent WHERE workspace_id=?`, workspaceID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// RecordWorkspaceActivity merges a monotonic activity watermark and connection
+// lease from any CP replica. CASE is portable across SQLite/Postgres and prevents
+// an inactive replica from shortening another replica's live lease.
+func lockWorkspace(ctx context.Context, q sqlExecQuery, workspaceID string) error {
+	_, err := q.ExecContext(ctx, `UPDATE workspace SET id=id WHERE id=?`, workspaceID)
 	return err
+}
+
+func (s *sqlStore) RecordWorkspaceActivity(ctx context.Context, workspaceID, lastSeenAt, connectedUntil, now string) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	if err = lockWorkspace(ctx, tx, workspaceID); err != nil {
+		return false, err
+	}
+	var stopping int
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM workspace_stop_intent WHERE workspace_id=?`, workspaceID).Scan(&stopping); err != nil {
+		return false, err
+	}
+	if stopping != 0 {
+		return false, nil
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO workspace_activity
+		(workspace_id, last_seen_at, connected_until, updated_at) VALUES(?,?,?,?)
+		ON CONFLICT(workspace_id) DO UPDATE SET
+		 last_seen_at=CASE WHEN workspace_activity.last_seen_at > excluded.last_seen_at
+		                   THEN workspace_activity.last_seen_at ELSE excluded.last_seen_at END,
+		 connected_until=CASE WHEN workspace_activity.connected_until > excluded.connected_until
+		                      THEN workspace_activity.connected_until ELSE excluded.connected_until END,
+		 updated_at=excluded.updated_at`, workspaceID, lastSeenAt, connectedUntil, now); err != nil {
+		return false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *sqlStore) WorkspaceHasRecentActivity(ctx context.Context, workspaceID, cutoff, now string) (bool, error) {
+	var one int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM workspace_activity
+		WHERE workspace_id=? AND (last_seen_at > ? OR connected_until > ?)`, workspaceID, cutoff, now).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (s *sqlStore) ClaimWorkspaceIdleStop(ctx context.Context, workspaceID, owner, operationID, cutoff, now string) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	if err = lockWorkspace(ctx, tx, workspaceID); err != nil {
+		return false, err
+	}
+	var leaseActive int
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM session_share_owner_lease
+		WHERE owner_membership_id=? AND operation_id=? AND expires_at>?`, owner, operationID, now).Scan(&leaseActive); err != nil {
+		return false, err
+	}
+	if leaseActive == 0 {
+		return false, nil
+	}
+	var recent int
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM workspace_activity
+		WHERE workspace_id=? AND (last_seen_at>? OR connected_until>?)`, workspaceID, cutoff, now).Scan(&recent); err != nil {
+		return false, err
+	}
+	if recent != 0 {
+		return false, nil
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO workspace_stop_intent
+		(workspace_id,owner_membership_id,operation_id,created_at) VALUES(?,?,?,?)
+		ON CONFLICT(workspace_id) DO UPDATE SET owner_membership_id=excluded.owner_membership_id,
+		operation_id=excluded.operation_id,created_at=excluded.created_at`, workspaceID, owner, operationID, now); err != nil {
+		return false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *sqlStore) ReleaseWorkspaceIdleStop(ctx context.Context, workspaceID, operationID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM workspace_stop_intent WHERE workspace_id=? AND operation_id=?`, workspaceID, operationID)
+	return err
+}
+
+// ClearWorkspaceIdleStop is the explicit lifecycle reconciliation path. Callers
+// must already own the distributed lifecycle lease (and adapter host fence), so
+// an intent orphaned by a crashed reaper can be safely superseded.
+func (s *sqlStore) ClearWorkspaceIdleStop(ctx context.Context, workspaceID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = lockWorkspace(ctx, tx, workspaceID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM workspace_stop_intent WHERE workspace_id=?`, workspaceID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// AcquireWorkspaceOperationFence holds a Postgres session advisory lock across
+// external Runtime I/O. Unlike a time-based lease it remains held while a CP is
+// paused and is released automatically if the process/connection dies. SQLite is
+// the single-CP local profile; native additionally supplies its kernel flock.
+func (s *sqlStore) AcquireWorkspaceOperationFence(ctx context.Context, workspaceID string) (func(), error) {
+	if s.dialect != "postgres" {
+		return func() {}, nil
+	}
+	var conn *sql.Conn
+	for {
+		var err error
+		conn, err = s.db.DB.Conn(ctx)
+		if err != nil { return nil, err }
+		var acquired bool
+		err = conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock(hashtextextended($1, 0))`, workspaceID).Scan(&acquired)
+		if err != nil {
+			discardSQLConn(conn) // server may have acquired immediately before the error
+			return nil, err
+		}
+		if acquired { break }
+		_ = conn.Close() // return the waiter connection before polling again
+		select {
+		case <-ctx.Done(): return nil, ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			unlockCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			var unlocked bool
+			err := conn.QueryRowContext(unlockCtx, `SELECT pg_advisory_unlock(hashtextextended($1, 0))`, workspaceID).Scan(&unlocked)
+			cancel()
+			if err != nil || !unlocked {
+				discardSQLConn(conn)
+				return
+			}
+			_ = conn.Close()
+		})
+	}, nil
+}
+
+// database/sql Conn.Close returns a physical PG session to the pool, which is
+// unsafe when advisory-lock ownership is uncertain. ErrBadConn tells the pool to
+// destroy that session; PostgreSQL then releases all of its session locks.
+func discardSQLConn(conn *sql.Conn) {
+	_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+	_ = conn.Close()
 }
 
 func (s *sqlStore) GetWorkspaceByMembership(ctx context.Context, membershipID string) (Workspace, bool, error) {

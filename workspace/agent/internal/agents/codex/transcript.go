@@ -546,6 +546,7 @@ func reasoningText(payload json.RawMessage) string {
 //     input_image data URL plus a text block that re-embeds it as JSON — pure noise for
 //     a text trace, so those are dropped (the image itself reaches the user as the
 //     userfile part synthesized from genImages).
+//
 // parseCallOutput additionally returns any inline "data:image/...;base64,..." URLs
 // found in an array-shaped output (codex's view_image tool_result embeds the
 // screenshot this way — no path text, unlike image_gen, whose result also carries

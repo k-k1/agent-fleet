@@ -16,6 +16,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -26,6 +27,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -53,6 +55,13 @@ type nativeRuntime struct {
 	secretKey  string
 	sessionCmd string
 	extraEnv   []string
+	spawnMu    sync.Mutex
+	spawned    nativeSpawn
+}
+
+type nativeSpawn struct {
+	pid     int
+	startID string
 }
 
 var _ Runtime = (*nativeRuntime)(nil)
@@ -178,6 +187,45 @@ func (n *nativeRuntime) Name() string     { return n.name }
 
 func (n *nativeRuntime) pidFile() string { return filepath.Join(n.dataDir, "agent.pid") }
 
+func (n *nativeRuntime) lifecycleLockFile() string {
+	return filepath.Join(n.dataDir, "lifecycle.lock")
+}
+
+// AcquireOperationFence complements the renewable DB lease with a kernel-held
+// host fence. If a CP is paused past lease expiry, the new DB holder still waits
+// here until the old native Start/Stop has quiesced.
+func (n *nativeRuntime) AcquireOperationFence(ctx context.Context) (func(), error) {
+	if err := os.MkdirAll(n.dataDir, 0o755); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(n.lifecycleLockFile(), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	for {
+		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			var once sync.Once
+			return func() {
+				once.Do(func() {
+					_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+					_ = f.Close()
+				})
+			}, nil
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+			_ = f.Close()
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			_ = f.Close()
+			return nil, ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
 // State mirrors the docker adapter's semantics: a live process is "running", a
 // stale pidfile (crashed / SIGKILLed agent) is "stopped", and no pidfile at all
 // is "none" — Stop removes the pidfile, so the normal stopped state is "none",
@@ -198,7 +246,7 @@ func (n *nativeRuntime) State(ctx context.Context) string {
 // own environment carries deployment secrets (AF_MASTER_KEY, oauth secrets, DB
 // URLs) that must never leak into a workspace process that runs arbitrary user
 // sessions.
-func (n *nativeRuntime) Start(ctx context.Context) error {
+func (n *nativeRuntime) Start(ctx context.Context) (retErr error) {
 	if n.State(ctx) == "running" {
 		return nil
 	}
@@ -244,17 +292,24 @@ func (n *nativeRuntime) Start(ctx context.Context) error {
 		return fmt.Errorf("start workspace-agent: %w", err)
 	}
 	pid := cmd.Process.Pid
+	spawn := nativeSpawn{pid: pid, startID: nativeProcessStartID(pid)}
+	n.spawnMu.Lock()
+	n.spawned = spawn
+	n.spawnMu.Unlock()
+	// Reap from the moment Start succeeds, including pidfile-write failures.
+	go func() { _ = cmd.Wait() }()
+	defer func() {
+		if retErr != nil {
+			n.abortSpawn(spawn)
+		}
+	}()
 	if err := os.WriteFile(n.pidFile(), []byte(strconv.Itoa(pid)+"\n"), 0o644); err != nil {
-		_ = cmd.Process.Kill()
 		return fmt.Errorf("write pidfile: %w", err)
 	}
 	// Record what this process was spawned FROM, so Stale() can later tell that the
 	// deployment moved on (af update / a rebuild) while this process still runs the
 	// old code. Best-effort: a missing stamp just means "unknown" (never stale).
 	_ = os.WriteFile(n.binStampPath(), []byte(n.spawnStamp()), 0o644)
-	// Reap the child when it exits so it never lingers as a zombie under the CP.
-	go func() { _ = cmd.Wait() }()
-
 	// Rootfs mode gets a much larger default budget: the FIRST start runs the
 	// entrypoint's pinned boot-install (npm + GitHub downloads, minutes) before
 	// the agent ever listens. Overridable either way (AF_AGENT_HEALTH_WAIT_SEC).
@@ -283,6 +338,49 @@ func (n *nativeRuntime) Start(ctx context.Context) error {
 		return fmt.Errorf("%w (see %s)", err, filepath.Join(n.dataDir, "agent.log"))
 	}
 	return nil
+}
+
+// CommitStart marks the process as belonging to the durable running state. Until
+// this point the lifecycle holder may still lose its DB lease after Start has
+// returned, in which case AbortUncommittedStart removes only this exact spawn.
+func (n *nativeRuntime) CommitStart() {
+	n.spawnMu.Lock()
+	n.spawned = nativeSpawn{}
+	n.spawnMu.Unlock()
+}
+
+func (n *nativeRuntime) AbortUncommittedStart(ctx context.Context) error {
+	_ = ctx // quiescence is mandatory; cancellation must not release the host fence early
+	n.spawnMu.Lock()
+	spawn := n.spawned
+	n.spawnMu.Unlock()
+	if spawn.pid <= 0 {
+		return nil
+	}
+	n.abortSpawn(spawn)
+	return nil
+}
+
+func (n *nativeRuntime) abortSpawn(spawn nativeSpawn) {
+	if sameNativeProcess(spawn.pid, n.agentBin, spawn.startID) {
+		_ = syscall.Kill(-spawn.pid, syscall.SIGTERM)
+		deadline := time.Now().Add(2 * time.Second)
+		for sameNativeProcess(spawn.pid, n.agentBin, spawn.startID) && time.Now().Before(deadline) {
+			time.Sleep(25 * time.Millisecond)
+		}
+		if sameNativeProcess(spawn.pid, n.agentBin, spawn.startID) {
+			_ = syscall.Kill(-spawn.pid, syscall.SIGKILL)
+			for sameNativeProcess(spawn.pid, n.agentBin, spawn.startID) {
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
+	}
+	removePidFileIfPID(n.pidFile(), spawn.pid)
+	n.spawnMu.Lock()
+	if n.spawned == spawn {
+		n.spawned = nativeSpawn{}
+	}
+	n.spawnMu.Unlock()
 }
 
 // binStampPath / spawnStamp — what the agent was actually launched FROM, recorded
@@ -539,16 +637,39 @@ func flattenEnv(env map[string]string) []string {
 // killed explicitly as a fallback for the SIGKILL path (a graceful agent exit
 // has already done this itself).
 func (n *nativeRuntime) Stop(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	pid := readPidFile(n.pidFile())
-	if pid > 0 && pidAlive(pid, n.agentBin) {
+	startID := nativeProcessStartID(pid)
+	if pid > 0 && sameNativeProcess(pid, n.agentBin, startID) {
 		_ = syscall.Kill(-pid, syscall.SIGTERM)
 		deadline := time.Now().Add(time.Duration(stopGraceSec()) * time.Second)
-		for pidAlive(pid, n.agentBin) && time.Now().Before(deadline) {
-			time.Sleep(200 * time.Millisecond)
+		for sameNativeProcess(pid, n.agentBin, startID) && time.Now().Before(deadline) {
+			select {
+			case <-ctx.Done():
+				// SIGTERM cannot be rolled back. Keep the host fence held until this
+				// exact old process is quiescent, but never escalate or touch state
+				// after lease ownership was lost.
+				for sameNativeProcess(pid, n.agentBin, startID) {
+					time.Sleep(25 * time.Millisecond)
+				}
+				return ctx.Err()
+			case <-time.After(100 * time.Millisecond):
+			}
 		}
-		if pidAlive(pid, n.agentBin) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if sameNativeProcess(pid, n.agentBin, startID) {
 			_ = syscall.Kill(-pid, syscall.SIGKILL)
+			for sameNativeProcess(pid, n.agentBin, startID) {
+				time.Sleep(10 * time.Millisecond)
+			}
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	// Best-effort: reap a tmux server left behind by a non-graceful agent death.
 	// Scoped to this workspace's socket, so other workspaces (and the host user's
@@ -559,7 +680,7 @@ func (n *nativeRuntime) Stop(ctx context.Context) error {
 		_ = exec.CommandContext(ctx, "tmux", "-L", n.name, "kill-server").Run()
 	}
 	// "normal stopped state is none" — same semantics as docker stop + rm.
-	_ = os.Remove(n.pidFile())
+	removePidFileIfPID(n.pidFile(), pid)
 	return nil
 }
 
@@ -593,4 +714,38 @@ func pidAlive(pid int, agentBin string) bool {
 		argv0 = argv0[:i]
 	}
 	return filepath.Base(argv0) == filepath.Base(agentBin)
+}
+
+// Linux process start time makes a PID identity stable across reuse. On hosts
+// without /proc, the existing executable-name guard remains the best signal.
+func nativeProcessStartID(pid int) string {
+	if pid <= 0 {
+		return ""
+	}
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return ""
+	}
+	i := strings.LastIndex(string(b), ") ")
+	if i < 0 {
+		return ""
+	}
+	fields := strings.Fields(string(b)[i+2:])
+	if len(fields) <= 19 { // field 22 (starttime); slice begins at field 3
+		return ""
+	}
+	return fields[19]
+}
+
+func sameNativeProcess(pid int, agentBin, startID string) bool {
+	if !pidAlive(pid, agentBin) {
+		return false
+	}
+	return startID == "" || nativeProcessStartID(pid) == startID
+}
+
+func removePidFileIfPID(path string, pid int) {
+	if pid > 0 && readPidFile(path) == pid {
+		_ = os.Remove(path)
+	}
 }

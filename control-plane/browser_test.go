@@ -63,7 +63,11 @@ func newBrowserTestEnv(t *testing.T, rt Runtime) browserTestEnv {
 	if err != nil {
 		t.Fatalf("membership: %v", err)
 	}
-	workspace := Workspace{ID: "ws-browser", TenantID: tenant.ID, MembershipID: membership.ID}
+	workspace := Workspace{ID: "ws-browser", TenantID: tenant.ID, MembershipID: membership.ID,
+		ContainerName: "browser", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: nowTS()}
+	if err := st.CreateWorkspace(ctx, workspace); err != nil {
+		t.Fatalf("workspace: %v", err)
+	}
 	mgr := &manager{
 		rts:             map[string]cachedRT{membership.ID: {rt: rt, ws: workspace}},
 		store:           st,

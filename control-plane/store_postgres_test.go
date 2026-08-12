@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 )
 
 // TestPostgresStore runs a broad round-trip against a real Postgres to validate the
@@ -88,6 +89,44 @@ func TestPostgresStore(t *testing.T) {
 	}
 	if got, ok, err := st.GetWorkspaceByMembership(ctx, m1.ID); err != nil || !ok || got.State != "running" {
 		t.Fatalf("get ws: ok=%v err=%v %+v", ok, err, got)
+	}
+	// Nine same-key waiters must poll without pinning the remaining nine pool
+	// connections; the holder still needs one for checkpoint/finalization work.
+	releaseFence, err := st.AcquireWorkspaceOperationFence(ctx, ws.ID)
+	if err != nil {
+		t.Fatalf("advisory holder: %v", err)
+	}
+	defer releaseFence()
+	waitCtx, waitCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer waitCancel()
+	results := make(chan error, 9)
+	for range 9 {
+		go func() {
+			release, err := st.AcquireWorkspaceOperationFence(waitCtx, ws.ID)
+			if err != nil {
+				results <- err
+				return
+			}
+			release()
+			results <- nil
+		}()
+	}
+	time.Sleep(100 * time.Millisecond)
+	queryCtx, queryCancel := context.WithTimeout(ctx, time.Second)
+	if _, err := st.GetTenant(queryCtx, tn.ID); err != nil {
+		t.Fatalf("pool exhausted by advisory waiters: %v", err)
+	}
+	queryCancel()
+	releaseFence()
+	for i := 0; i < 9; i++ {
+		select {
+		case err := <-results:
+			if err != nil {
+				t.Fatalf("advisory waiter %d: %v", i, err)
+			}
+		case <-waitCtx.Done():
+			t.Fatalf("advisory waiters did not finish: completed=%d/9: %v", i, waitCtx.Err())
+		}
 	}
 	if err := st.PutWrappedDEK(ctx, ws.ID, "ct1", "kref"); err != nil {
 		t.Fatalf("put dek: %v", err)

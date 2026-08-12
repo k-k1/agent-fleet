@@ -89,6 +89,7 @@ export function sameTarget(view: View, target: OpenTarget): boolean {
         : !!t.draftAssistantId && c.kind === "chat" && c.draftAssistantId === t.draftAssistantId;
     case "browser": return c.kind === "browser" && c.port === t.port && c.path === t.path;
     case "browserAttach": return c.kind === "browserAttach" && c.attachmentId === t.attachmentId;
+    case "sharedSession": return c.kind === "sharedSession" && c.sharedSessionId === t.sharedSessionId;
   }
 }
 

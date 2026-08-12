@@ -32,13 +32,21 @@ func newFSProxyTest(t *testing.T, agent http.Handler) (agentProxyAPI, *resolved,
 		store.Close()
 		t.Fatal(err)
 	}
+	ctx := context.Background()
+	tenant, _ := store.EnsureDefaultTenant(ctx)
+	identity, _ := store.UpsertIdentity(ctx, "fs@example.com", "fs", "")
+	membership, _ := store.EnsureMembership(ctx, identity.ID, tenant.ID, "member")
+	workspace := Workspace{ID: "ws1", TenantID: tenant.ID, MembershipID: membership.ID, ContainerName: "fs", Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "running", CreatedAt: nowTS()}
+	if err := store.CreateWorkspace(ctx, workspace); err != nil {
+		t.Fatal(err)
+	}
 	mgr := &manager{store: store, conns: newConnRegistry()}
 	proxy := newAgentProxyAPI(mgr)
 	res := &resolved{
 		rt:    stubRuntime{endpoint: server.URL, token: "agent-token"},
-		ws:    Workspace{ID: "ws1", TenantID: "tenant1", MembershipID: "member1"},
+		ws:    workspace,
 		ident: Identity{ID: "user1"},
-		mv:    MembershipView{MembershipID: "member1"},
+		mv:    MembershipView{MembershipID: membership.ID},
 	}
 	return proxy, res, store, func() {
 		server.Close()
@@ -89,7 +97,7 @@ func TestCPFSFilePutProxiesExactBodyAndAuditsOnlyPath(t *testing.T) {
 	if rec.Code != http.StatusOK || called.Load() != 1 {
 		t.Fatalf("status=%d called=%d body=%s", rec.Code, called.Load(), rec.Body.String())
 	}
-	rows, err := store.ListAuditByTenant(context.Background(), "tenant1", 10)
+	rows, err := store.ListAuditByTenant(context.Background(), res.ws.TenantID, 10)
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("audit rows=%+v err=%v", rows, err)
 	}
@@ -120,7 +128,7 @@ func TestCPFSFilePutAuditsWriteStateUnknown(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "write_state_unknown") {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	rows, err := store.ListAuditByTenant(context.Background(), "tenant1", 10)
+	rows, err := store.ListAuditByTenant(context.Background(), res.ws.TenantID, 10)
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("audit rows=%+v err=%v", rows, err)
 	}
@@ -141,7 +149,7 @@ func TestCPFSFilePutDoesNotAuditOrdinaryFailure(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	rows, err := store.ListAuditByTenant(context.Background(), "tenant1", 10)
+	rows, err := store.ListAuditByTenant(context.Background(), res.ws.TenantID, 10)
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("ordinary failure audit rows=%+v err=%v", rows, err)
 	}
@@ -158,7 +166,7 @@ func TestCPFSFilePutInvalidAuditPathIsFixedToken(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	rows, err := store.ListAuditByTenant(context.Background(), "tenant1", 10)
+	rows, err := store.ListAuditByTenant(context.Background(), res.ws.TenantID, 10)
 	if err != nil || len(rows) != 1 || rows[0].Target != "<invalid-path>" {
 		t.Fatalf("audit rows=%+v err=%v", rows, err)
 	}
@@ -206,7 +214,7 @@ func TestCPFSFilePutRejectsMalformedBodyBeforeProxy(t *testing.T) {
 	if called.Load() != 0 {
 		t.Fatalf("malformed requests reached Agent %d times", called.Load())
 	}
-	rows, err := store.ListAuditByTenant(context.Background(), "tenant1", 10)
+	rows, err := store.ListAuditByTenant(context.Background(), res.ws.TenantID, 10)
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("malformed body audit rows=%+v err=%v", rows, err)
 	}

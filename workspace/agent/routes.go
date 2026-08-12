@@ -20,6 +20,7 @@ func buildMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handleHealth)
 	mux.HandleFunc("GET /sessions", handleListSessions)
+	mux.HandleFunc("GET /sessions/catalog", handleSessionCatalog)
 	mux.HandleFunc("GET /notifications", handleNotifications)
 	mux.HandleFunc("POST /notifications/ack", handleNotificationsAck)
 	mux.HandleFunc("POST /sessions", handleCreateSession)
@@ -27,6 +28,7 @@ func buildMux() *http.ServeMux {
 	// response was lost to a client timeout, so the caller need not retry into a dup.
 	// Top-level path (not under /sessions/{name}/…) to avoid a mux wildcard collision.
 	mux.HandleFunc("GET /sessions-idempotency/{key}", handleIdempotencyLookup)
+	mux.HandleFunc("GET /share-operations/{key}", handleShareOperationLookup)
 	mux.HandleFunc("POST /sessions/{name}/fork", handleForkSession)
 	mux.HandleFunc("POST /sessions/{name}/stop", handleStopSession)
 	mux.HandleFunc("POST /sessions/{name}/halt", handleHaltSession)
@@ -52,13 +54,13 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /sessions/{name}/input", handleSessionInput)
 	// Semantic turn ops + Interaction 応答（docs/27 P1.5/P2）— driver 抽象の受け口。
 	// tui は tmux 経路へ委譲、managed は ThreadHandle へ（P2: opencode / P3: codex）。
-	mux.HandleFunc("POST /sessions/{name}/turn", handleSessionTurn)
-	mux.HandleFunc("POST /sessions/{name}/respond", handleSessionRespond)
+	mux.Handle("POST /sessions/{name}/turn", withShareOperationIdempotency(http.HandlerFunc(handleSessionTurn)))
+	mux.Handle("POST /sessions/{name}/respond", withShareOperationIdempotency(http.HandlerFunc(handleSessionRespond)))
 	// オペレーターの AUQ 回答（docs/30）: 質問フォーム全体を choices（1-based）で
 	// 一括回答。TUI claude はキー駆動、managed は Interaction 応答に落ちる。
-	mux.HandleFunc("POST /sessions/{name}/answer-question", handleSessionAnswerQuestion)
+	mux.Handle("POST /sessions/{name}/answer-question", withShareOperationIdempotency(http.HandlerFunc(handleSessionAnswerQuestion)))
 	// オペレーターのプラン承認/却下（docs/30）: approve=Enter、reject=中断＋feedback 送信。
-	mux.HandleFunc("POST /sessions/{name}/plan-respond", handleSessionPlanRespond)
+	mux.Handle("POST /sessions/{name}/plan-respond", withShareOperationIdempotency(http.HandlerFunc(handleSessionPlanRespond)))
 	// ThreadSettings の動的更新（docs/27 §9.4-3、managed 専用 — 稼働中セッションの
 	// モデル/effort/モード変更）。tui は従来どおり /input のキー操作。
 	mux.HandleFunc("GET /sessions/{name}/settings", handleSessionSettingsGet)

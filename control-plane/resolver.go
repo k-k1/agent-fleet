@@ -226,6 +226,23 @@ func (m *manager) startLockFor(wsID string) *sync.Mutex {
 	return l
 }
 
+// shareLockFor serializes the brief ACL/catalog claim and the one authorized
+// Agent operation with owner-side share changes. Unlike the previous database
+// transaction, this does not hold a DB connection or write lock during HTTP I/O.
+func (m *manager) shareLockFor(ownerMembershipID string) *sync.Mutex {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.shareLocks == nil {
+		m.shareLocks = map[string]*sync.Mutex{}
+	}
+	l, ok := m.shareLocks[ownerMembershipID]
+	if !ok {
+		l = &sync.Mutex{}
+		m.shareLocks[ownerMembershipID] = l
+	}
+	return l
+}
+
 // resolveByMembership resolves a runtime from a PAT's stored identity+membership
 // (the MCP path, which has no gateway headers). The membership must still be an
 // active membership of the identity — so a revoked membership 403s here.
