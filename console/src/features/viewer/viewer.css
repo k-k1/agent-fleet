@@ -932,7 +932,9 @@
   border-left: 3px solid var(--border);
   margin-left: 0;
   padding: 0.2em 1em;
-  color: var(--muted);
+  /* var(--muted) alone (#888 on dark) reads too low-contrast for quoted prose;
+     mix it toward --fg so it stays visually "muted" but is actually legible. */
+  color: color-mix(in srgb, var(--fg) 55%, var(--muted) 45%);
 }
 .markdown table {
   border-collapse: collapse;
