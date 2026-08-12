@@ -1,12 +1,13 @@
-// A session can propose its successor's first prompt through the deliberately
-// narrow session-side MCP.  The proposal is editable, but only the user can open
-// the normal launch dialog (and therefore select agent/model and create a session).
+// A session can propose one or more successors' first prompts through the deliberately
+// narrow session-side MCP — a single turn may fan a task out into several parallel
+// follow-ups. The proposal is editable, but only the user can open the normal launch
+// dialog (and therefore select agent/model and create a session).
 //
-// The card renders at the point in the conversation where it was proposed (see
+// Each card renders at the point in the conversation where it was proposed (see
 // handoffPlacement), NOT as the scroller's last child: a durable card pinned to the
 // bottom owns the mirror's landing position forever, and every message sent afterwards
 // looks lost behind it (2026-08-04 実障害). That is why the fetch lives in a hook the
-// mirror owns — it needs created_at to place the card.
+// mirror owns — it needs created_at to place each card.
 import { useEffect, useState } from "react";
 import { api, apiJSON, errText } from "../../core/api/client.ts";
 import { Icon } from "../../ui/Icon.tsx";
@@ -16,6 +17,7 @@ import { useLaunchSeed, useLaunchTarget, type Repo } from "../repos/store.ts";
 import type { Session } from "../../types/session.ts";
 
 export interface Proposal {
+  id: string;
   prompt: string;
   title?: string;
   created_at: number;
@@ -25,21 +27,22 @@ export interface Proposal {
   launched_at?: number;
 }
 
-/** Poll this session's outstanding proposal. Separate from the card so the mirror can
- *  place the card chronologically. Clears on session change — a pane swaps sessions
- *  without remounting the mirror, so a stale proposal would otherwise show for a tick. */
-export function useHandoffProposal(session: string): [Proposal | null, (p: Proposal | null) => void] {
-  const [proposal, setProposal] = useState<Proposal | null>(null);
+/** Poll this session's outstanding proposals (oldest first). Separate from the cards so
+ *  the mirror can place each one chronologically. Clears on session change — a pane
+ *  swaps sessions without remounting the mirror, so stale proposals would otherwise show
+ *  for a tick. */
+export function useHandoffProposals(session: string): [Proposal[], (ps: Proposal[]) => void] {
+  const [proposals, setProposals] = useState<Proposal[]>([]);
   useEffect(() => {
     let alive = true;
-    setProposal(null);
+    setProposals([]);
     const load = async () => {
       try {
         const d = await api(`api/sessions/${encodeURIComponent(session)}/handoff-proposal`);
         if (d?.error || !alive) return;
-        setProposal(d?.proposal && typeof d.proposal.prompt === "string" ? (d.proposal as Proposal) : null);
+        setProposals(Array.isArray(d?.proposals) ? (d.proposals as Proposal[]) : []);
       } catch {
-        /* transient polling failure: keep the last visible proposal */
+        /* transient polling failure: keep the last visible proposals */
       }
     };
     void load();
@@ -49,13 +52,14 @@ export function useHandoffProposal(session: string): [Proposal | null, (p: Propo
       window.clearInterval(timer);
     };
   }, [session]);
-  return [proposal, setProposal];
+  return [proposals, setProposals];
 }
 
-/** markHandoffLaunched badges the proposal once a session really started from it.
- *  Called from the launch dialog's success path — a cancelled dialog must not badge. */
-export async function markHandoffLaunched(session: string): Promise<void> {
-  await apiJSON(`api/sessions/${encodeURIComponent(session)}/handoff-proposal`, "POST", { launched: true }).catch(
+/** markHandoffLaunched badges the proposal identified by id once a session really
+ *  started from it. Called from the launch dialog's success path — a cancelled dialog
+ *  must not badge. */
+export async function markHandoffLaunched(session: string, id: string): Promise<void> {
+  await apiJSON(`api/sessions/${encodeURIComponent(session)}/handoff-proposal`, "POST", { id, launched: true }).catch(
     () => undefined, // best-effort badge: never let it break the launch it follows
   );
 }
@@ -89,7 +93,11 @@ export function HandoffProposal({
   const save = async () => {
     if (!draft.trim() || !title.trim() || busy) return;
     setBusy(true);
-    const d = await apiJSON(`api/sessions/${encodeURIComponent(session)}/handoff-proposal`, "POST", { prompt: draft, title });
+    const d = await apiJSON(`api/sessions/${encodeURIComponent(session)}/handoff-proposal`, "POST", {
+      id: proposal.id,
+      prompt: draft,
+      title,
+    });
     setBusy(false);
     if (d?.error) {
       toast(tr("mirror.handoff_save_failed", { msg: errText(d.error) }));
@@ -101,7 +109,10 @@ export function HandoffProposal({
   const discard = async () => {
     if (busy) return;
     setBusy(true);
-    const d = await apiJSON(`api/sessions/${encodeURIComponent(session)}/handoff-proposal`, "DELETE");
+    const d = await apiJSON(
+      `api/sessions/${encodeURIComponent(session)}/handoff-proposal?id=${encodeURIComponent(proposal.id)}`,
+      "DELETE",
+    );
     setBusy(false);
     if (d?.error) {
       toast(tr("mirror.handoff_discard_failed", { msg: errText(d.error) }));
@@ -121,8 +132,8 @@ export function HandoffProposal({
       branch: sessionMeta?.currentBranch || sessionMeta?.branch,
       worktree: sessionMeta?.worktree,
     };
-    // Carry WHICH session proposed this, so the dialog's success path can badge it.
-    useLaunchSeed.getState().set(proposal.prompt, proposal.title, session);
+    // Carry WHICH session/proposal this is, so the dialog's success path can badge it.
+    useLaunchSeed.getState().set(proposal.prompt, proposal.title, session, proposal.id);
     useLaunchTarget.getState().open(repo);
   };
   return (
