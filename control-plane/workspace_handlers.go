@@ -232,6 +232,12 @@ func (a workspaceAPI) startResolved(w http.ResponseWriter, r *http.Request, res 
 }
 
 func (a workspaceAPI) stop(w http.ResponseWriter, r *http.Request, res *resolved) {
+	// Serialize with starts/recreates and owner-approved shared operations. Once a
+	// stop wins this lock, no shared operation may pass a stale running check;
+	// once an approved operation wins it, stop waits for its durable outcome.
+	lock := a.mgr.startLockFor(res.ws.ID)
+	lock.Lock()
+	defer lock.Unlock()
 	if err := res.rt.Stop(r.Context()); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return

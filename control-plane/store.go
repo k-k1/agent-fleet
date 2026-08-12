@@ -326,6 +326,7 @@ type SessionShareStore interface {
 	ListSessionSharesByRecipient(ctx context.Context, membershipID string) ([]SessionShare, error)
 	DeleteSessionShare(ctx context.Context, id, ownerMembershipID string) error
 	DeleteSessionSharesByScope(ctx context.Context, ownerMembershipID, scopeType, scopeKey string) error
+	UpdateSessionSharePermission(ctx context.Context, id, ownerMembershipID, permission, updatedAt string) (bool, error)
 	ReplaceSharedSessionCatalog(ctx context.Context, workspaceID, ownerMembershipID string, rows []SharedSessionCatalog) error
 	GetSharedSessionCatalog(ctx context.Context, id string) (SharedSessionCatalog, bool, error)
 	ListSharedSessionCatalogByOwner(ctx context.Context, membershipID string) ([]SharedSessionCatalog, error)
@@ -335,6 +336,8 @@ type SessionShareStore interface {
 	CountPendingSessionShareProposals(ctx context.Context, catalogID string) (int, error)
 	ExpireSessionShareProposals(ctx context.Context, ownerMembershipID, now string) error
 	TransitionSessionShareProposal(ctx context.Context, id, from, to, decidedBy, decidedAt string, clearBody bool) (bool, error)
+	ClaimAndApplySessionShareProposal(ctx context.Context, id, ownerMembershipID, decidedBy, now string,
+		apply func(SessionShareProposal, SharedSessionCatalog) error) (string, error)
 }
 
 type TenantStore interface {

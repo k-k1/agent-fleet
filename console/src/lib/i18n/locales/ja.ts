@@ -3599,6 +3599,8 @@ export const ja = {
   "share.pending": "承認待ち {count}件",
   "share.pending_title": "共有セッションの承認待ち",
   "share.reject": "却下",
+  "share.reconcile": "結果を照会",
+  "share.outcome_unknown": "送信結果を確認できませんでした。安全のため自動再送はしません。結果を照会できます。",
   "share.approve": "承認して送信",
   "share.session_scope": "セッション",
   "share.repo_scope": "リポジトリ",
