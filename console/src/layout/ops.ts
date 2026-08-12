@@ -382,7 +382,7 @@ function removePanes(l: Layout, pred: (p: Pane) => boolean): Layout {
     })
     .filter((c) => c.panes.length > 0);
   const remaining = cols.flatMap((c) => c.panes);
-  if (remaining.length === 0) return freshLayout();
+  if (remaining.length === 0) return tabbed(l) ? freshTabbedLayout() : freshLayout();
   const activeId = remaining.some((p) => p.id === l.activeId) ? l.activeId : remaining[0].id;
   const colRatios = cols.length === l.cols.length ? l.colRatios : equalRatios(cols.length);
   return { ...l, cols, colRatios, activeId };
@@ -394,7 +394,13 @@ function removePanes(l: Layout, pred: (p: Pane) => boolean): Layout {
  * collapses, widths re-equalize). removeOutright skips step 1. The very last
  * pane can't be removed — it stays as the base blank terminal. */
 export function closePane(l: Layout, paneId: string, removeOutright = false): Layout {
-  if (tabbed(l)) return closeTab(l, paneId, removeOutright);
+  if (tabbed(l)) {
+    const target = paneById(l, paneId);
+    // An empty cell has already completed the first close step. Its close
+    // affordance therefore removes the cell directly (unless it is the last
+    // one, where closeTab/removePanes supplies a fresh tabbed base cell).
+    return closeTab(l, paneId, removeOutright || !!target && isBlankPane(target) && !(target.tabs?.length));
+  }
   const target = paneById(l, paneId);
   if (!target) return l;
   if (!removeOutright && !isBlankPane(target)) {
