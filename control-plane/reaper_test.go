@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -12,12 +14,14 @@ type reaperFenceRuntime struct {
 	stops        atomic.Int32
 	fenceEntered chan struct{}
 	fenceRelease chan struct{}
+	endpoint     string
+	busy         atomic.Bool
 }
 
 func (r *reaperFenceRuntime) Start(context.Context) error  { return nil }
 func (r *reaperFenceRuntime) Stop(context.Context) error   { r.stops.Add(1); return nil }
 func (r *reaperFenceRuntime) State(context.Context) string { return "running" }
-func (r *reaperFenceRuntime) Endpoint() string             { return "" }
+func (r *reaperFenceRuntime) Endpoint() string             { return r.endpoint }
 func (r *reaperFenceRuntime) Token() string                { return "" }
 func (r *reaperFenceRuntime) Name() string                 { return "reaper-fence" }
 func (r *reaperFenceRuntime) AcquireOperationFence(ctx context.Context) (func(), error) {
@@ -28,6 +32,21 @@ func (r *reaperFenceRuntime) AcquireOperationFence(ctx context.Context) (func(),
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+func newReaperFenceRuntime(t *testing.T) *reaperFenceRuntime {
+	t.Helper()
+	r := &reaperFenceRuntime{fenceEntered: make(chan struct{}), fenceRelease: make(chan struct{})}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		state := "idle"
+		if r.busy.Load() {
+			state = "working"
+		}
+		_, _ = w.Write([]byte(`{"sessions":[{"name":"s","alive":true,"state":"` + state + `"}]}`))
+	}))
+	r.endpoint = srv.URL
+	t.Cleanup(srv.Close)
+	return r
 }
 
 func reaperLifecycleFixture(t *testing.T) (*sqlStore, Workspace, *manager) {
@@ -66,8 +85,8 @@ func TestReaperStopUsesLifecycleLeaseAndRuntimeFence(t *testing.T) {
 	if err != nil || !acquired {
 		t.Fatalf("acquire share lease: acquired=%v err=%v", acquired, err)
 	}
-	blockedRT := &reaperFenceRuntime{fenceEntered: make(chan struct{}), fenceRelease: make(chan struct{})}
-	rp.stopWorkspace(ctx, blockedRT, ws)
+	blockedRT := newReaperFenceRuntime(t)
+	rp.stopWorkspace(ctx, blockedRT, ws, time.Second)
 	if blockedRT.stops.Load() != 0 {
 		t.Fatal("reaper stopped workspace while share owner lease was active")
 	}
@@ -82,10 +101,10 @@ func TestReaperStopUsesLifecycleLeaseAndRuntimeFence(t *testing.T) {
 
 	// Once the DB lease is available, Stop must still wait behind the host fence
 	// held by an old native lifecycle operation.
-	rt := &reaperFenceRuntime{fenceEntered: make(chan struct{}), fenceRelease: make(chan struct{})}
+	rt := newReaperFenceRuntime(t)
 	done := make(chan struct{})
 	go func() {
-		rp.stopWorkspace(ctx, rt, ws)
+		rp.stopWorkspace(ctx, rt, ws, time.Second)
 		close(done)
 	}()
 	select {
@@ -110,12 +129,12 @@ func TestReaperStopUsesLifecycleLeaseAndRuntimeFence(t *testing.T) {
 func TestReaperStopWaitsForLocalWorkspaceOperation(t *testing.T) {
 	_, ws, mgr := reaperLifecycleFixture(t)
 	rp := &reaper{mgr: mgr}
-	rt := &reaperFenceRuntime{fenceEntered: make(chan struct{}), fenceRelease: make(chan struct{})}
+	rt := newReaperFenceRuntime(t)
 	lock := mgr.startLockFor(ws.ID)
 	lock.Lock() // same-CP shared approval/recreate owns this before its side effect
 	done := make(chan struct{})
 	go func() {
-		rp.stopWorkspace(context.Background(), rt, ws)
+		rp.stopWorkspace(context.Background(), rt, ws, time.Second)
 		close(done)
 	}()
 	select {
@@ -134,6 +153,58 @@ func TestReaperStopWaitsForLocalWorkspaceOperation(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("reaper did not finish after all fences released")
+	}
+}
+
+func TestReaperRevalidatesActivityAfterFenceWait(t *testing.T) {
+	tests := []struct {
+		name     string
+		activate func(*manager, *reaperFenceRuntime, Workspace) error
+	}{
+		{name: "connection resumed", activate: func(m *manager, _ *reaperFenceRuntime, ws Workspace) error {
+			m.conns.addConn(ws.ID, "")
+			return nil
+		}},
+		{name: "request touched workspace", activate: func(m *manager, _ *reaperFenceRuntime, ws Workspace) error {
+			m.conns.touch(ws.ID)
+			return nil
+		}},
+		{name: "database activity refreshed", activate: func(m *manager, _ *reaperFenceRuntime, ws Workspace) error {
+			return m.store.SetWorkspaceState(context.Background(), ws.ID, "running")
+		}},
+		{name: "agent became busy", activate: func(_ *manager, rt *reaperFenceRuntime, _ Workspace) error {
+			rt.busy.Store(true)
+			return nil
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, ws, mgr := reaperLifecycleFixture(t)
+			rp := &reaper{mgr: mgr}
+			rt := newReaperFenceRuntime(t)
+			done := make(chan struct{})
+			go func() {
+				rp.stopWorkspace(context.Background(), rt, ws, time.Second)
+				close(done)
+			}()
+			select {
+			case <-rt.fenceEntered:
+			case <-time.After(time.Second):
+				t.Fatal("reaper did not wait at runtime fence")
+			}
+			if err := tc.activate(mgr, rt, ws); err != nil {
+				t.Fatal(err)
+			}
+			close(rt.fenceRelease)
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("reaper did not finish activity revalidation")
+			}
+			if rt.stops.Load() != 0 {
+				t.Fatal("reaper stopped workspace that became active during fence wait")
+			}
+		})
 	}
 }
 
