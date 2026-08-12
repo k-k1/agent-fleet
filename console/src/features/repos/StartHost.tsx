@@ -26,6 +26,7 @@ export function StartHost() {
   const seedPrompt = useLaunchSeed((s) => s.prompt);
   const seedTitle = useLaunchSeed((s) => s.title);
   const seedHandoff = useLaunchSeed((s) => s.handoffSession);
+  const seedHandoffId = useLaunchSeed((s) => s.handoffId);
   const clearSeed = useLaunchSeed((s) => s.clear);
   // Open the hub whenever the global tick changes (skip the mount value).
   const lastTickRef = useRef(startTick);
@@ -84,7 +85,7 @@ export function StartHost() {
             if (r.ok) {
               // Seeded by a handoff proposal: badge it 起動済み now that a session
               // really exists. The proposal itself stays — discarding is the user's call.
-              if (seedHandoff) void markHandoffLaunched(seedHandoff);
+              if (seedHandoff && seedHandoffId) void markHandoffLaunched(seedHandoff, seedHandoffId);
               setShow(false); // launched — drop the hub underneath too
               clearSeed();
             }
