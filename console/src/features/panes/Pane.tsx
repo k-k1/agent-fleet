@@ -247,7 +247,7 @@ export function Pane({
     e.preventDefault();
     const z = zone;
     setZone(null);
-    const src = e.dataTransfer.getData(DND);
+    const src = e.dataTransfer.getData(tabDrag ? TAB_DND : DND);
     if (!src) return;
     if (tabDrag) {
       if (z === "right" || z === "down") dropSplitTab(src, pane.id, z);
@@ -289,6 +289,9 @@ export function Pane({
                   const source = e.dataTransfer.getData(TAB_DND);
                   if (source) { e.preventDefault(); e.stopPropagation(); moveTab(source, pane.id, view.id); }
                 }}
+                onAuxClick={(e) => {
+                  if (e.button === 1) { e.preventDefault(); closeTab(view.id); }
+                }}
                 onClick={() => selectTab(view.id)}
               >
                 {tabLabel(view)}
@@ -318,7 +321,7 @@ export function Pane({
           {ordinal ?? <span className="codicon codicon-gripper" aria-hidden="true" />}
         </button>
       )}
-      <div className="pane-controls">
+      {!(tabbed && isTerm) && <div className="pane-controls">
         {showPopout && (
           <IconButton
             icon="link-external"
@@ -349,7 +352,7 @@ export function Pane({
             onClick={(e) => onClose(pane.id, e.ctrlKey || e.metaKey)}
           />
         )}
-      </div>
+      </div>}
 
       {/* Drop hint while dragging a pane over this one. */}
       {zone && <div className={"drop-indicator zone-" + zone} />}
@@ -379,6 +382,25 @@ export function Pane({
             mirror={mirror}
             onToggleMirror={onToggleMirror}
             onResume={onResume}
+            headerActions={tabbed ? (
+              <span className="term-tab-actions">
+                {showPopout && (
+                  <IconButton
+                    icon="link-external"
+                    label={tr("ui.popout_pane_hint")}
+                    onClick={() => openPanePopout(pane, "popout")}
+                  />
+                )}
+                {canClose && (
+                  <IconButton
+                    icon="close"
+                    label={tr("ui.close_pane_hint")}
+                    className="pane-close"
+                    onClick={(e) => onClose(pane.id, e.ctrlKey || e.metaKey)}
+                  />
+                )}
+              </span>
+            ) : undefined}
           />
         </div>
       )}
