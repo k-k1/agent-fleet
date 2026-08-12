@@ -23,6 +23,7 @@ type manager struct {
 	rts        map[string]cachedRT    // cache keyed by membership id; DB is source of truth
 	buildLocks map[string]*sync.Mutex // per-membership first-resolve serialization
 	startLocks map[string]*sync.Mutex // per-workspace start/recreate serialization
+	shareLocks map[string]*sync.Mutex // per-owner share ACL/catalog/approval serialization
 	store      Store
 	conns      *connRegistry // P3-9: live activity/attachment tracking for idle-stop
 

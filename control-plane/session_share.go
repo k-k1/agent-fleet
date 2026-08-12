@@ -57,6 +57,13 @@ func (a sessionShareAPI) allowRead(key string) bool {
 }
 
 func (a sessionShareAPI) syncCatalog(ctx context.Context, res *resolved) error {
+	lock := a.mgr.shareLockFor(res.mv.MembershipID)
+	lock.Lock()
+	defer lock.Unlock()
+	return a.syncCatalogLocked(ctx, res)
+}
+
+func (a sessionShareAPI) syncCatalogLocked(ctx context.Context, res *resolved) error {
 	if res.rt.State(ctx) != "running" {
 		return nil
 	}
@@ -186,11 +193,14 @@ func (a sessionShareAPI) put(w http.ResponseWriter, r *http.Request, res *resolv
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "share_self", "cannot share with yourself"})
 		return
 	}
+	shareLock := a.mgr.shareLockFor(res.mv.MembershipID)
+	shareLock.Lock()
+	defer shareLock.Unlock()
 	if res.rt.State(r.Context()) != "running" {
 		writeAPIErr(w, &apiError{http.StatusConflict, "workspace_not_running", "owner workspace must be running to create a share"})
 		return
 	}
-	if err := a.syncCatalog(r.Context(), res); err != nil {
+	if err := a.syncCatalogLocked(r.Context(), res); err != nil {
 		writeAPIErr(w, &apiError{http.StatusConflict, "workspace_not_running", "owner workspace must be running to create a share"})
 		return
 	}
@@ -265,6 +275,9 @@ func (a sessionShareAPI) patch(w http.ResponseWriter, r *http.Request, ident Ide
 		writeAPIErr(w, &apiError{400, "bad_share", "invalid permission"})
 		return
 	}
+	shareLock := a.mgr.shareLockFor(mv.MembershipID)
+	shareLock.Lock()
+	defer shareLock.Unlock()
 	s, ok, err := a.mgr.store.GetSessionShare(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -289,6 +302,9 @@ func (a sessionShareAPI) patch(w http.ResponseWriter, r *http.Request, ident Ide
 	writeJSON(w, 200, shareDTO(s, a.recipientKey(r.Context(), mv.TenantID, s.RecipientMembershipID)))
 }
 func (a sessionShareAPI) delete(w http.ResponseWriter, r *http.Request, ident Identity, mv MembershipView) {
+	shareLock := a.mgr.shareLockFor(mv.MembershipID)
+	shareLock.Lock()
+	defer shareLock.Unlock()
 	s, ok, err := a.mgr.store.GetSessionShare(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -668,6 +684,18 @@ func (a sessionShareAPI) approve(w http.ResponseWriter, r *http.Request, ident I
 		writeAPIErr(w, &apiError{409, "owner_workspace_stopped", "owner workspace is stopped"})
 		return
 	}
+	shareLock := a.mgr.shareLockFor(p.OwnerMembershipID)
+	shareLock.Lock()
+	defer shareLock.Unlock()
+	p, ok, err = a.mgr.store.GetSessionShareProposal(r.Context(), p.ID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !ok || p.OwnerMembershipID != mv.MembershipID {
+		writeAPIErr(w, &apiError{404, "not_found", "proposal not found"})
+		return
+	}
 	if p.Status == "processing" {
 		state, status := lookupAgentShareOperation(res.rt, p.ID)
 		if state == "applied" && status < http.StatusBadRequest {
@@ -688,7 +716,7 @@ func (a sessionShareAPI) approve(w http.ResponseWriter, r *http.Request, ident I
 		writeAPIErr(w, &apiError{409, "proposal_already_decided", "proposal was already decided"})
 		return
 	}
-	if err := a.syncCatalog(r.Context(), res); err != nil {
+	if err := a.syncCatalogLocked(r.Context(), res); err != nil {
 		writeAPIErr(w, &apiError{502, "owner_workspace_unreachable", "owner workspace inventory is unavailable"})
 		return
 	}
@@ -697,30 +725,42 @@ func (a sessionShareAPI) approve(w http.ResponseWriter, r *http.Request, ident I
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	// Do not bind the durable claim/Agent call to the browser connection. If the
-	// response is lost, the transaction must still commit processing rather than
-	// roll back and make a side effect retryable.
+	// Do not bind the durable claim/Agent call to the browser connection. Claiming
+	// is a short transaction; the per-owner mutex (not a DB lock/connection) keeps
+	// ACL and catalog changes from crossing the authorized Agent operation.
 	applyCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	state, err := a.mgr.store.ClaimAndApplySessionShareProposal(applyCtx, p.ID, mv.MembershipID, ident.ID, nowTS(),
-		func(claimed SessionShareProposal, catalog SharedSessionCatalog) error {
-			path := "/sessions/" + url.PathEscape(catalog.Name) + "/" + proposalActions[claimed.Action]
-			return agentShareOperation(applyCtx, res.rt, path, body, claimed.ID)
-		})
+	claimed, catalog, state, err := a.mgr.store.ClaimSessionShareProposal(applyCtx, p.ID, mv.MembershipID, ident.ID, nowTS())
 	if err != nil {
-		writeAPIErr(w, &apiError{409, "proposal_outcome_unknown", "the operation result is unknown and will not be retried: " + err.Error()})
+		writeAPIErr(w, internalErr(err))
 		return
 	}
 	switch state {
-	case "approved":
+	case "claimed":
 	case "expired":
 		writeAPIErr(w, &apiError{409, "share_changed", "proposal expired or RW share is no longer active"})
 		return
 	case "processing":
-		writeAPIErr(w, &apiError{409, "proposal_outcome_unknown", "the operation was claimed; its outcome cannot be retried safely"})
+		writeAPIErr(w, &apiError{409, "proposal_outcome_unknown", "the operation was already claimed; its outcome cannot be retried safely"})
 		return
 	default:
 		writeAPIErr(w, &apiError{404, "not_found", "proposal or shared session not found"})
+		return
+	}
+	path := "/sessions/" + url.PathEscape(catalog.Name) + "/" + proposalActions[claimed.Action]
+	if err := agentShareOperation(applyCtx, res.rt, path, body, claimed.ID); err != nil {
+		writeAPIErr(w, &apiError{409, "proposal_outcome_unknown", "the operation result is unknown and will not be retried: " + err.Error()})
+		return
+	}
+	finalizeCtx, finalizeCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer finalizeCancel()
+	changed, err := a.mgr.store.TransitionSessionShareProposal(finalizeCtx, claimed.ID, "processing", "approved", ident.ID, nowTS(), true)
+	if err != nil {
+		writeAPIErr(w, &apiError{409, "proposal_outcome_unknown", "the Agent applied the operation but Control Plane could not record the result: " + err.Error()})
+		return
+	}
+	if !changed {
+		writeAPIErr(w, &apiError{409, "proposal_outcome_unknown", "the Agent applied the operation but the proposal result could not be finalized"})
 		return
 	}
 	_ = a.mgr.store.InsertAudit(context.Background(), AuditLog{ID: newID(), TenantID: mv.TenantID, ActorKind: "user", ActorID: ident.ID, Action: "session.share.proposal.approve", Target: p.CatalogID, Detail: "proposer=" + p.ProposerMembershipID + " action=" + p.Action, HTTPStatus: 200, At: nowTS()})

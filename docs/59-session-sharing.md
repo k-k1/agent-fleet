@@ -37,15 +37,20 @@ inventory から消えた場合は catalog、単体共有規則、未処理提�
 RW 提案本文は最大 32 KiB、1セッション20件、24時間で失効する。本文は tenant key custodian
 がある環境では暗号化して CP DB に置き、承認・拒否・失効時に消去する。承認は DB の
 `pending → processing` 条件付き更新で一人だけが取得してから Agent へ送る。claim transaction は
-期限、catalog、現在の RW ACL を再検証し、該当 ACL 行を Agent の結果が永続化されるまでロックする。
-そのため、共有解除／RO 降格と副作用の順序は DB 上で一意になる。ACL 変更が先なら提案を失効して
-本文を消し、承認が先なら副作用の完了後に ACL 変更が通る。Workspace の停止も同じ
+期限、catalog、現在の RW ACL を再検証して `processing` をcommitした時点で終了する。Agent HTTPを
+DB transaction内に置かず、所有者単位のshare mutexでACL／catalog変更とAgent操作だけを直列化する。
+そのためSQLiteの全write lockやPostgres connectionを外部I/O中に保持せず、共有解除／RO降格との
+順序は一意になる。ACL変更が先なら提案を失効して本文を消し、承認が先なら副作用の完了後に
+ACL変更が通る。Workspace の停止も同じ
 workspace lifecycle lock を使い、停止が先なら送信せず、承認が先なら結果の永続化後に停止する。
 
 CP は proposal ID を `X-Agent-Fleet-Operation-ID` として Agent へ渡す。Agent は home volume 内に
 その ID を副作用前に create-only で永続 claim し、ハンドラ応答を永続化してから CP へ返す。
 同じ ID の再送は保存済み応答を再生し、claim だけが残った場合は「結果不明」として実行しない。
 したがって、成功後の応答喪失、5xx、CP/Agent crash のどの場合も副作用を二重実行しない。
+保存応答bodyは32 KiB、1記録は64 KiB、ledger全体は512件かつ32 MiBに制限する。成功記録は7日で
+GCし、判定不能な`processing`証跡は別枠で90日保持する。容量が判定不能証跡だけで埋まった場合は、
+証跡を捨てず、新しい副作用をclaim前に拒否する。
 CP の `processing` はこの結果不明 lease を表し、自動で `pending` へ戻さない。Agent に完了記録が
 あれば次の照会で `approved` へ収束し、判定不能のままなら元の24時間期限で失効して本文を消す。
 
