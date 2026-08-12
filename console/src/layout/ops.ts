@@ -477,7 +477,10 @@ export function moveTab(l: Layout, id: string, targetId: string, beforeId?: stri
  * the cell becomes a new right column or a row beneath the target cell; the
  * tab itself keeps its runtime id. */
 export function dropSplitTab(l: Layout, id: string, refId: string, dir: "right" | "down"): Layout {
-  if (!tabbed(l) || id === refId) return l;
+  // `id === refId` is normal when the selected tab is dragged to the edge of
+  // its own cell. Unlike a center drop, an edge drop means tear this tab into
+  // a new split, so it must not be treated as a no-op.
+  if (!tabbed(l)) return l;
   let source: Pane | undefined;
   let view: PaneView | undefined;
   let refCol: Column | undefined;
