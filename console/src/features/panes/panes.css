@@ -57,7 +57,9 @@
 .pane-tab {
   position: relative;
   display: flex;
-  flex: none;
+  /* Prefer a readable wide title, but share the available strip width first.
+     Horizontal scrolling begins only after every tab has reached 120px. */
+  flex: 0 1 260px;
   inline-size: clamp(120px, 22vw, 260px);
   min-width: 120px;
   max-width: 260px;
