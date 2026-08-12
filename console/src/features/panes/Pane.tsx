@@ -36,6 +36,7 @@ import { canPopout, openPanePopout } from "./popout.ts";
 import { usePopoutMode } from "../../lib/popoutMode.ts";
 import type { PaneView } from "../../layout/types.ts";
 import { paneTitle } from "./paneTitle.ts";
+import { acceptsPaneDrag, tabOwnsDrop } from "./paneDnd.ts";
 
 // Drag payload MIME — identifies a pane-to-pane drag (vs any other drag).
 const DND = "application/x-af-pane";
@@ -286,7 +287,7 @@ function PopulatedPane({
   };
   // Outer 30% of the splittable edges is a split zone; the center swaps.
   const zoneFor = (e: RDragEvent): "center" | "down" | "right" => {
-    const r = e.currentTarget.getBoundingClientRect();
+    const r = paneRef.current?.getBoundingClientRect() ?? e.currentTarget.getBoundingClientRect();
     const rd = canSplitRight ? (e.clientX - r.left) / r.width - 0.7 : -1;
     const dd = canSplitDown ? (e.clientY - r.top) / r.height - 0.7 : -1;
     if (rd < 0 && dd < 0) return "center";
@@ -294,7 +295,10 @@ function PopulatedPane({
   };
   const onDragOver = (e: RDragEvent) => {
     const tabDrag = e.dataTransfer.types.includes(TAB_DND);
-    if (!canDrag || (!e.dataTransfer.types.includes(DND) && !tabDrag)) return;
+    // `canDrag` governs CELL dragging (the ordinal grip is absent for a lone
+    // cell), not tab dragging. A tab in the only cell must still be tearable
+    // into a right/down split.
+    if (!acceptsPaneDrag(!!canDrag, e.dataTransfer.types.includes(DND), tabDrag)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
     const z = zoneFor(e);
@@ -308,7 +312,9 @@ function PopulatedPane({
     const tabDrag = e.dataTransfer.types.includes(TAB_DND);
     if (!e.dataTransfer.types.includes(DND) && !tabDrag) return;
     e.preventDefault();
-    const z = zone;
+    // Recompute at drop time. dragover state is visual feedback and may lag a
+    // frame, especially when the pointer just crossed from a tab into an edge.
+    const z = zoneFor(e);
     setZone(null);
     const src = e.dataTransfer.getData(tabDrag ? TAB_DND : DND);
     if (!src) return;
@@ -349,10 +355,20 @@ function PopulatedPane({
                 title={tabLabel(view)}
                 draggable
                 onDragStart={(e) => { e.dataTransfer.setData(TAB_DND, view.id); e.dataTransfer.effectAllowed = "move"; }}
-                onDragOver={(e) => { if (e.dataTransfer.types.includes(TAB_DND)) { e.preventDefault(); e.stopPropagation(); } }}
+                onDragOver={(e) => {
+                  if (!e.dataTransfer.types.includes(TAB_DND)) return;
+                  // The tab owns center drops for reordering. Edge drops belong
+                  // to the Cell, even when a wide tab visually covers the edge.
+                  if (!tabOwnsDrop(zoneFor(e))) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
                 onDrop={(e) => {
                   const source = e.dataTransfer.getData(TAB_DND);
-                  if (source) { e.preventDefault(); e.stopPropagation(); moveTab(source, cell.id, view.id); }
+                  if (!source || !tabOwnsDrop(zoneFor(e))) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  moveTab(source, cell.id, view.id);
                 }}
                 onAuxClick={(e) => {
                   if (e.button === 1) { e.preventDefault(); closeTab(view.id); }
