@@ -53,7 +53,8 @@
 .pane-tab {
   position: relative;
   display: flex;
-  flex: 0 1 260px;
+  flex: none;
+  inline-size: clamp(120px, 22vw, 260px);
   min-width: 120px;
   max-width: 260px;
   height: 28px;

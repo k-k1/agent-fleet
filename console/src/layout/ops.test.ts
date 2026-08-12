@@ -19,6 +19,7 @@ import {
   closeTab,
   moveTab,
   dropSplitTab,
+  orderedTabViews,
   allViews,
   setActive,
   setColRatios,
@@ -187,6 +188,26 @@ describe("tabbed layout", () => {
     expect(l.cols).toHaveLength(2);
     expect(l.cols[1].panes[0].id).toBe(moved);
     expect(new Set(allViews(l).map((p) => p.id)).size).toBe(allViews(l).length);
+  });
+  it("keeps a selected tab in its visual position", () => {
+    let l = openInTab(freshTabbedLayout(), term("s0"));
+    const first = l.activeId;
+    l = openInTab(l, file("one.ts"));
+    const second = l.activeId;
+    l = openInTab(l, file("two.ts"));
+    const third = l.activeId;
+    l = selectTab(l, first);
+    expect(orderedTabViews(l.cols[0].panes[0]).map((view) => view.id)).toEqual([first, second, third]);
+  });
+  it("reorders tabs when one is dropped onto another tab", () => {
+    let l = openInTab(freshTabbedLayout(), term("s0"));
+    const first = l.activeId;
+    l = openInTab(l, file("one.ts"));
+    const second = l.activeId;
+    l = openInTab(l, file("two.ts"));
+    const third = l.activeId;
+    l = moveTab(l, third, l.cols[0].panes[0].id, first);
+    expect(orderedTabViews(l.cols[0].panes[0]).map((view) => view.id)).toEqual([third, first, second]);
   });
 });
 

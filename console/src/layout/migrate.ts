@@ -136,6 +136,7 @@ function paneFrom(raw: any): Pane | null {
     session: str(raw.session),
     content,
     wrap: typeof raw.wrap === "boolean" ? raw.wrap : null,
+    ...(typeof raw.lastUsedAt === "number" && raw.lastUsedAt > 0 ? { lastUsedAt: raw.lastUsedAt } : {}),
   };
   if (Array.isArray(raw.tabs)) {
     const tabs: PaneView[] = [];
@@ -147,7 +148,14 @@ function paneFrom(raw: any): Pane | null {
       tabs.push({ id: parsed.id, session: parsed.session, content: parsed.content, wrap: parsed.wrap,
         ...(typeof tab.lastUsedAt === "number" && tab.lastUsedAt > 0 ? { lastUsedAt: tab.lastUsedAt } : {}) });
     }
-    if (tabs.length) pane.tabs = tabs;
+    pane.tabs = tabs;
+    const valid = new Set([id, ...tabs.map((tab) => tab.id)]);
+    const order: string[] = [];
+    if (Array.isArray(raw.tabOrder)) for (const entry of raw.tabOrder) {
+      if (typeof entry === "string" && valid.has(entry) && !order.includes(entry)) order.push(entry);
+    }
+    for (const entry of valid) if (!order.includes(entry)) order.push(entry);
+    pane.tabOrder = order;
   }
   return pane;
 }
@@ -167,8 +175,9 @@ export function normalizeStored(raw: unknown): Layout | null {
     const panes: Pane[] = [];
     for (const rp of c.panes.slice(0, 2)) {
       const p = paneFrom(rp);
-      if (!p || seen.has(p.id)) return null;
+      if (!p || seen.has(p.id) || p.tabs?.some((tab) => seen.has(tab.id))) return null;
       seen.add(p.id);
+      p.tabs?.forEach((tab) => seen.add(tab.id));
       panes.push(p);
     }
     if (panes.length === 0) continue;
