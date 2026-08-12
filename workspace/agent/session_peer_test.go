@@ -171,3 +171,9 @@ func TestSessionInputRejectsOversizePeerMessage(t *testing.T) {
 		t.Fatalf("status = %d, body = %s, want 400 message_too_long", rec.Code, rec.Body.String())
 	}
 }
+
+func TestPeerValidateMessageAccepts16KiBBoundary(t *testing.T) {
+	if err := peerValidateMessage(strings.Repeat("x", peerMaxMessageBytes)); err != nil {
+		t.Fatalf("message at %d byte limit rejected: %v", peerMaxMessageBytes, err)
+	}
+}
