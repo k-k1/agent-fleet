@@ -143,10 +143,16 @@ func (m *manager) stopWorkspaceByMembership(ctx context.Context, membershipID st
 		return err
 	}
 	defer lease.Close()
+	rt := m.runtimeFor(ws, "")
+	releaseFence, err := acquireRuntimeOperationFence(lease.Context(), rt)
+	if err != nil {
+		return err
+	}
+	defer releaseFence()
 	if err := lease.checkpoint(ctx); err != nil {
 		return err
 	}
-	if err := m.runtimeFor(ws, "").Stop(lease.Context()); err != nil {
+	if err := rt.Stop(lease.Context()); err != nil {
 		return err
 	}
 	if err := lease.checkpoint(ctx); err != nil {
@@ -171,10 +177,16 @@ func (m *manager) cleanHomeByMembership(ctx context.Context, membershipID string
 		return err
 	}
 	defer lease.Close()
+	rt := m.runtimeFor(ws, "")
+	releaseFence, err := acquireRuntimeOperationFence(lease.Context(), rt)
+	if err != nil {
+		return err
+	}
+	defer releaseFence()
 	if err := lease.checkpoint(ctx); err != nil {
 		return err
 	}
-	_ = m.runtimeFor(ws, "").Stop(lease.Context()) // best-effort
+	_ = rt.Stop(lease.Context()) // best-effort
 	if err := lease.checkpoint(ctx); err != nil {
 		return err
 	}

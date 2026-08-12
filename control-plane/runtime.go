@@ -29,6 +29,25 @@ type Runtime interface {
 	Name() string                     // container / display name
 }
 
+// runtimeOperationFencer is implemented by adapters whose lifecycle resource is
+// local to the CP host and needs an OS-level fence in addition to the DB lease.
+// nativeRuntime uses flock so a paused/expired CP cannot overlap a new holder.
+type runtimeOperationFencer interface {
+	AcquireOperationFence(context.Context) (func(), error)
+}
+
+type runtimeStartFencer interface {
+	AbortUncommittedStart(context.Context) error
+	CommitStart()
+}
+
+func acquireRuntimeOperationFence(ctx context.Context, rt Runtime) (func(), error) {
+	if f, ok := rt.(runtimeOperationFencer); ok {
+		return f.AcquireOperationFence(ctx)
+	}
+	return func() {}, nil
+}
+
 // dockerRuntime is the first Runtime adapter; the ECS adapter (P3-7) must satisfy
 // the same contract. This assertion fails the build if either drifts.
 var _ Runtime = (*dockerRuntime)(nil)

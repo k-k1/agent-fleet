@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"os"
@@ -29,11 +30,121 @@ func TestNativeHelperAgent(t *testing.T) {
 	}
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGTERM)
-	go func() { <-sig; os.Exit(0) }()
+	go func() {
+		<-sig
+		if ms, _ := strconv.Atoi(os.Getenv("AF_TEST_TERM_DELAY_MS")); ms > 0 {
+			time.Sleep(time.Duration(ms) * time.Millisecond)
+		}
+		os.Exit(0)
+	}()
+	if ms, _ := strconv.Atoi(os.Getenv("AF_TEST_HEALTH_DELAY_MS")); ms > 0 {
+		time.Sleep(time.Duration(ms) * time.Millisecond)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	if err := http.ListenAndServe(os.Getenv("AGENT_ADDR"), mux); err != nil {
 		os.Exit(1)
+	}
+}
+
+func newTraditionalNativeRuntime(t *testing.T, extraEnv ...string) *nativeRuntime {
+	t.Helper()
+	dataDir := t.TempDir()
+	return &nativeRuntime{
+		agentBin:  writeFakeAgent(t, t.TempDir()),
+		name:      "af-native-fence-" + newID(),
+		dataDir:   dataDir,
+		agentPort: freeLoopbackPort(t),
+		extraEnv:  extraEnv,
+	}
+}
+
+func waitForPIDFile(t *testing.T, path string) int {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if pid := readPidFile(path); pid > 0 {
+			return pid
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("pidfile was not written: %s", path)
+	return 0
+}
+
+func TestNativeStartCancellationQuiescesExactSpawn(t *testing.T) {
+	rt := newTraditionalNativeRuntime(t, "AF_TEST_HEALTH_DELAY_MS=1000")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- rt.Start(ctx) }()
+	pid := waitForPIDFile(t, rt.pidFile())
+	startID := nativeProcessStartID(pid)
+	cancel()
+	if err := <-done; err == nil {
+		t.Fatal("Start returned nil after context cancellation")
+	}
+	if sameNativeProcess(pid, rt.agentBin, startID) {
+		t.Fatalf("canceled Start left its exact process %d running", pid)
+	}
+	if pid := readPidFile(rt.pidFile()); pid != 0 {
+		t.Fatalf("pidfile remains after canceled Start: %d", pid)
+	}
+	rt.spawnMu.Lock()
+	spawn := rt.spawned
+	rt.spawnMu.Unlock()
+	if spawn.pid != 0 {
+		t.Fatalf("uncommitted spawn remains after cancellation: %+v", spawn)
+	}
+}
+
+func TestNativeStopCancellationWaitsForQuiescenceWithoutCleanup(t *testing.T) {
+	rt := newTraditionalNativeRuntime(t, "AF_TEST_TERM_DELAY_MS=300")
+	if err := rt.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	pid := waitForPIDFile(t, rt.pidFile())
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+	started := time.Now()
+	if err := rt.Stop(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Stop error = %v, want context.Canceled", err)
+	}
+	if elapsed := time.Since(started); elapsed < 200*time.Millisecond {
+		t.Fatalf("Stop returned before the SIGTERM process quiesced: %v", elapsed)
+	}
+	if got := readPidFile(rt.pidFile()); got != pid {
+		t.Fatalf("canceled Stop mutated pidfile: got %d, want %d", got, pid)
+	}
+	if sameNativeProcess(pid, rt.agentBin, "") {
+		t.Fatalf("old process %d still live when canceled Stop returned", pid)
+	}
+}
+
+func TestNativeOperationFenceWaitsForOldHolderQuiescence(t *testing.T) {
+	rt := newTraditionalNativeRuntime(t)
+	releaseA, err := rt.AcquireOperationFence(context.Background())
+	if err != nil {
+		t.Fatalf("Acquire A: %v", err)
+	}
+	acquiredB := make(chan func(), 1)
+	go func() {
+		release, err := rt.AcquireOperationFence(context.Background())
+		if err == nil {
+			acquiredB <- release
+		}
+	}()
+	select {
+	case release := <-acquiredB:
+		release()
+		t.Fatal("second holder crossed the first native fence")
+	case <-time.After(100 * time.Millisecond):
+	}
+	releaseA()
+	select {
+	case release := <-acquiredB:
+		release()
+	case <-time.After(2 * time.Second):
+		t.Fatal("second holder did not acquire after old holder quiesced")
 	}
 }
 
