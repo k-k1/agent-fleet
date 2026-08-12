@@ -1,10 +1,10 @@
 // PaneHost — lays the main area out as up to 4 columns, each a stack of 1 or 2
 // panes. All panes (and dividers) are FLAT, position:absolute children of one
 // stable .panehost: a pane's column/row is expressed purely by its computed CSS
-// rect, not DOM nesting. So moving a pane to another column only changes its
-// rect — React keeps the same keyed DOM node and the xterm is never re-parented
-// (the paneId contract, layout/types.ts). Ported from the old console onto the
-// zustand stores.
+// rect, not DOM nesting. In the split profile the pane id keys that DOM node,
+// so moving a pane keeps its xterm with it. In the tabbed profile a visual cell
+// keeps a geometric key instead: selecting a tab changes the selected view id,
+// but must not remount the cell and reset its tab-strip scroll position.
 import { useMemo, useRef } from "react";
 import type { CSSProperties, PointerEvent as RPointerEvent, ReactNode } from "react";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -103,9 +103,9 @@ export function PaneHost() {
   // A lone, empty terminal is the base state — nothing to close.
   const isBlankSingle = (pane: PaneT) => total === 1 && isBlankPane(pane);
 
-  const renderPane = (pane: PaneT, col: Column, rect: CSSProperties) => (
+  const renderPane = (pane: PaneT, col: Column, row: number, rect: CSSProperties) => (
     <Pane
-      key={pane.id}
+      key={layout.mode === "tabs" ? `cell:${col.id}:${row}` : pane.id}
       pane={pane}
       style={{ position: "absolute", ...rect }}
       active={total > 1 && pane.id === layout.activeId}
@@ -133,16 +133,16 @@ export function PaneHost() {
     // On a phone only the first column shows; panes in other columns stay
     // mounted (terminal + socket alive) but hidden.
     if (isMobile && i > 0) {
-      panes.forEach((p) => paneEls.push(renderPane(p, col, { display: "none" })));
+      panes.forEach((p, row) => paneEls.push(renderPane(p, col, row, { display: "none" })));
       return;
     }
     const left = isMobile ? "0" : colLeft(i);
     const width = isMobile ? "100%" : colWidth(i);
     if (panes.length === 1) {
-      paneEls.push(renderPane(panes[0], col, { left, top: 0, width, height: "100%" }));
+      paneEls.push(renderPane(panes[0], col, 0, { left, top: 0, width, height: "100%" }));
     } else {
       const r = col.rowRatio;
-      paneEls.push(renderPane(panes[0], col, { left, top: 0, width, height: `calc(${r} * ${Hb})` }));
+      paneEls.push(renderPane(panes[0], col, 0, { left, top: 0, width, height: `calc(${r} * ${Hb})` }));
       dividerEls.push(
         <div
           key={`r${col.id}`}
@@ -152,7 +152,7 @@ export function PaneHost() {
         />,
       );
       paneEls.push(
-        renderPane(panes[1], col, {
+        renderPane(panes[1], col, 1, {
           left,
           top: `calc(${r} * ${Hb} + ${D}px)`,
           width,
