@@ -214,6 +214,15 @@ describe("tabbed layout", () => {
     expect(l.cols[1].panes[0].id).toBe(moved);
     expect(new Set(allViews(l).map((p) => p.id)).size).toBe(allViews(l).length);
   });
+  it("splits right when the selected tab is dropped on its own right edge", () => {
+    let l = openInTab(freshTabbedLayout(), term("s0"));
+    const selected = l.activeId;
+    l = openInTab(l, file("one.ts"));
+    l = selectTab(l, selected);
+    l = dropSplitTab(l, selected, selected, "right");
+    expect(l.cols).toHaveLength(2);
+    expect(l.cols[1].panes[0].id).toBe(selected);
+  });
   it("keeps a selected tab in its visual position", () => {
     let l = openInTab(freshTabbedLayout(), term("s0"));
     const first = l.activeId;
