@@ -1,5 +1,6 @@
 import { apiJSON, getTenant, raw, rel } from "../../core/api/client.ts";
 import { useLayoutStore } from "../../layout/store.ts";
+import { allViews } from "../../layout/ops.ts";
 import { BrowserRegistry } from "./controller.ts";
 import type { BrowserCanvas, BrowserControllerDeps, BrowserPageResult } from "./controller.ts";
 import type { BrowserTarget } from "./target.ts";
@@ -64,7 +65,7 @@ export const ensureBrowser = (paneId: string, target: BrowserTarget) => registry
 export function wireBrowserReconcile(): () => void {
   return useLayoutStore.subscribe((state, previous) => {
     if (state.layout === previous.layout) return;
-    registry.keepOnly(state.layout.cols.flatMap((column) => column.panes.map((pane) => pane.id)));
+    registry.keepOnly(allViews(state.layout).map((pane) => pane.id));
   });
 }
 

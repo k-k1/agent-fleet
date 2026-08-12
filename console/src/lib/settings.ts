@@ -187,6 +187,9 @@ export interface Settings {
   minimap: boolean;
   iconSet: string;
   theme: string;
+  /** Main-area layout profile. Stored per user; each profile's concrete layout
+   * remains per tenant and browser tab. */
+  paneLayout: "split" | "tabs";
   // UI 表示言語（docs/28 / ADR 0016）。"ja" | "en"。theme と違い端末ローカルにせずサーバ同期し、
   // 言語は人単位で全端末に追従させる。既定はブラウザ言語判定→日本語フォールバック（detectLocale）。
   locale: string;
@@ -530,6 +533,7 @@ const DEFAULTS: Settings = {
   minimap: true,
   iconSet: "vscode",
   theme: "dark",
+  paneLayout: "split",
   locale: detectLocale(),
   mirrorTheme: "inherit",
   assistantTheme: "inherit",

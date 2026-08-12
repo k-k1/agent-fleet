@@ -10,7 +10,7 @@ import { onPush, pushHealthy } from "../core/push/events.ts";
 import { useTenantStore } from "../core/store/tenant.ts";
 import { useWorkspaceStore, wsStartBusy } from "../core/store/workspace.ts";
 import { useLayoutStore } from "../layout/store.ts";
-import { isBlankPane } from "../layout/ops.ts";
+import { isBlankPane, MAX_TAB_COLS } from "../layout/ops.ts";
 import { useSessionsStore } from "../features/sessions/store.ts";
 import { hintSuffix } from "../features/keys/keyHint.ts";
 import { Icon } from "../ui/Icon.tsx";
@@ -837,7 +837,7 @@ export function WsBar() {
   // 上下に分割 splits the ACTIVE pane's column into rows. Same limits as before — up to
   // 4 columns (desktop only), each column up to 2 panes. Mobile: one top/bottom split.
   const activeCol = layout.cols.find((c) => c.panes.some((p) => p.id === activePaneId));
-  const canSplitRight = !isMobile && layout.cols.length < 4;
+  const canSplitRight = !isMobile && layout.cols.length < (layout.mode === "tabs" ? MAX_TAB_COLS : 4);
   const canSplitDown = isMobile ? totalPanes < 2 : (activeCol ? activeCol.panes.length : totalPanes) < 2;
 
   // はじめる while stopped: don't dead-end (起動導線 Ph3) — confirm, start the

@@ -13,6 +13,12 @@ import {
   dropSplit,
   splitRight,
   splitDown,
+  freshTabbedLayout,
+  openInTab,
+  selectTab,
+  closeTab,
+  moveTab,
+  allViews,
   setActive,
   setColRatios,
   MAX_COLS,
@@ -123,6 +129,53 @@ describe("openInNew", () => {
     l = closePane(l, "p1", true);
     l = openInNew(l, term("s9"), { force: true });
     expect(allPanes(l).some((p) => p.id === "p3")).toBe(true); // p1 not reused… p2 is max → p3
+  });
+});
+
+describe("tabbed layout", () => {
+  it("adds views as tabs and focuses an exact duplicate", () => {
+    let l = openInTab(freshTabbedLayout(), term("s0"));
+    l = openInTab(l, file("one.ts"));
+    expect(l.cols).toHaveLength(1);
+    expect(l.cols[0].panes).toHaveLength(1);
+    expect(allViews(l)).toHaveLength(2);
+    const fileTab = l.activeId;
+    const again = openInTab(l, file("one.ts"));
+    expect(again.activeId).toBe(fileTab);
+    expect(allViews(again)).toHaveLength(2);
+  });
+
+  it("keeps an inactive tab alive while selecting and closing tabs", () => {
+    let l = openInTab(freshTabbedLayout(), term("s0"));
+    const termId = l.activeId;
+    l = openInTab(l, file("one.ts"));
+    const fileId = l.activeId;
+    l = selectTab(l, termId);
+    expect(l.activeId).toBe(termId);
+    expect(allViews(l).map((p) => p.id)).toContain(fileId);
+    l = closeTab(l, fileId);
+    expect(l.activeId).toBe(termId);
+    expect(allViews(l).map((p) => p.id)).not.toContain(fileId);
+  });
+
+  it("caps the grid at three columns", () => {
+    let l = freshTabbedLayout();
+    l = splitRight(l);
+    l = splitRight(l);
+    expect(l.cols).toHaveLength(3);
+    expect(splitRight(l)).toBe(l);
+  });
+  it("moves a tab between cells without changing its id", () => {
+    let l = openInTab(freshTabbedLayout(), term("s0"));
+    const first = l.activeId;
+    l = splitRight(l);
+    const second = l.activeId;
+    l = selectTab(l, first);
+    l = openInTab(l, file("one.ts"));
+    const moving = l.activeId;
+    l = moveTab(l, moving, second);
+    expect(allViews(l).map((p) => p.id)).toContain(moving);
+    expect(l.cols[1].panes[0].tabs?.map((p) => p.id)).toContain(moving);
   });
 });
 
