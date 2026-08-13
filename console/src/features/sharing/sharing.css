@@ -5,12 +5,13 @@
    panes.css) lands flush right of them instead of splitting the row 3 ways. */
 .shared-view-info { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex: 1; min-width: 0; }
 .shared-view-head small { color: var(--muted); }
-.shared-view-body { flex: 1; min-height: 0; overflow: auto; padding: 16px max(16px, 7%); }
+/* 会話本文はミラーと同じブロック(features/mirror/transcript)で描く。mirror.css は
+   main.tsx でグローバルに読み込まれ、.mirror-turn 系はミラー限定の祖先にスコープされて
+   いないので、そのまま使えばテーマ・余白・折りたたみの見え方が完全に一致する。
+   .mirror-turn 自身が padding と全幅の区切り線を持つため、ここでは padding を持たない
+   (ミラーの .mirror-body と同じ)。 */
+.shared-view-body { flex: 1; min-height: 0; overflow: auto; padding: 0; }
 .shared-view-empty, .shared-view-notice { padding: 20px; color: var(--muted); }
-.shared-turn { max-width: 920px; margin: 0 auto 18px; }
-.shared-turn.user { background: var(--surface-2, rgba(127, 127, 127, 0.12)); border-radius: 10px; padding: 12px 14px; }
-.shared-turn-role { color: var(--muted); font-size: 11px; margin-bottom: 6px; }
-.shared-tool { color: var(--muted); font-size: 12px; padding: 4px 0; }
 .shared-propose { border-top: 1px solid var(--border); padding: 10px 14px; display: grid; grid-template-columns: 1fr auto; gap: 8px; }
 .shared-propose textarea { min-height: 58px; resize: vertical; }
 .shared-propose small { grid-column: 1 / -1; color: var(--muted); }
@@ -20,7 +21,67 @@
 .shared-rail-row small { color: var(--muted); }
 .share-proposal-card { border-bottom: 1px solid var(--border); padding: 12px 0; }
 .share-proposal-card p { white-space: pre-wrap; }
-.share-manage-modal { width: min(680px, calc(100vw - 24px)); }
-.share-manage-modal label { display: grid; gap: 5px; margin: 10px 0; }
-.share-manage-modal input, .share-manage-modal select { width: 100%; }
-.share-existing { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 8px; padding: 7px 0; border-top: 1px solid var(--border); }
+
+.share-create-modal { width: min(480px, calc(100vw - 24px)); }
+/* 右クリック起点(initialTarget固定)の対象表示 — .ui-field 内の input/select と同じ
+   見た目の非活性ボックス。 */
+.share-target-fixed {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--panel2);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  color: var(--fg);
+}
+/* 共有先の検索欄 — 候補リストは入力欄の直下に絶対配置する。モーダルは中央寄せの
+   固定サイズなので、右クリックメニュー(SessionRow/RepoRow)の placeFixed のような
+   viewport 端クランプは不要。 */
+.share-recipient-field { position: relative; }
+.share-recipient-suggest {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  margin-top: 2px;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+.share-recipient-suggest .ui-field-hint { padding: 6px 10px; }
+
+.share-list-modal { width: min(560px, calc(100vw - 24px)); }
+.share-list { display: flex; flex-direction: column; }
+.share-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.share-row:first-child { border-top: 0; }
+.share-info { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.share-target-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-recipient { color: var(--muted); font-size: 12px; flex: none; }
+.share-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+
+/* 受信側「共有セッション」のプロジェクト/worktreeツリー — project.css の
+   .proj-node/.proj-children/.proj-node-body(所有者側のツリー)をそのまま流用し、
+   ここでは見出し2種だけ足す。 */
+.shared-project-group { list-style: none; margin: 0 0 4px; }
+.shared-project-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  font-size: 12px;
+}
+.shared-project-head small { color: var(--muted); margin-left: auto; }
+.shared-copy-name { font-size: 12px; padding: 2px 0; }

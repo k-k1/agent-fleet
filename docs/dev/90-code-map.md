@@ -69,7 +69,8 @@
 |----------|------|
 | `main.go` / `routes.go` | 起動・依存配線 / ルート登録・認証 |
 | `agent.go` / `agent_models.go` / `agent_shell_ssm.go` | Agent registry の main 側アダプタ / model catalog / shell・SSM |
-| `agent_rtk.go` | rtk（トークン節約 proxy）の on/off を CLI 3 種の成果物（hook / plugin / AGENTS.md）へ反映 |
+| `agent_rtk.go` | rtk（トークン節約 proxy）の on/off を CLI 4 種の成果物（hook / plugin / AGENTS.md）へ反映 |
+| `agent_instructions.go` | ユーザー指示（docs/60）の配布器と REST。フリート方針＋ユーザー指示＋rtk を各 CLI の user スコープへ 1 人の書き手として配る |
 | `session_handlers.go` / `session_tmux.go` / `session_driver.go` | lifecycle とワイヤ変換 / tui 起動 / driver 切替 |
 | `session_turn.go` | driver 非依存の `/turn`・`/respond`・`/settings` 意味論 API |
 | `session_io.go` / `session_paste.go` | pane capture・入力送信・slash コマンド / 画像ペーストの保存・配信 |
@@ -111,6 +112,8 @@
 | `internal/bridge` | チャットブリッジ配送層（Discord / Slack Gateway・承認・整形、docs/37） |
 | `internal/mcpreg` | MCP レジストリ本体（定義・builtin・CLI 別 materialize・テナント配布、docs/48） |
 | `internal/hostcaps` | ホスト CPU / 実行環境の能力検知（動かせない kind を Console セレクタから隠す capability ガード） |
+| `internal/userinstr` | ユーザー指示の正本（`~/.config/agent-fleet/user-notes.md`）と本文組み立て。配り方は各 kind 側（docs/60） |
+| `internal/mdblock` | AF が所有する markdown ブロック（`<!-- agent-fleet:… -->`）の合成・除去・旧 `cp -f` 版からの移行 |
 | `internal/{status,tmuxx,transcript}` | 共通状態ストア / tmux exact 操作・probe / transcript wire |
 | `internal/{httpx,gitx,fstore,paths,secrets,notice}` | HTTP / git / file store / path / 暗号ストア / 通知補助 |
 
@@ -131,8 +134,8 @@
 | ファイル | 責務 |
 |----------|------|
 | `Dockerfile` / `jvm.Dockerfile` | Workspace イメージ（multi-stage golang→node:22-slim。既定 `BAKE_AGENT_CLIS=0`=エージェント CLI を焼かない lean、[04 §4.9](04-workspace-agent.md)）/ JDK 追加バリアント |
-| `entrypoint.sh` | コンテナ起動時の seed（settings / AGENTS.md / plugin / notes）と agent 起動 |
-| `workspace-notes.md` | 全コンテナに `/etc/claude-code/CLAUDE.md` として配布する運用ポリシー |
+| `entrypoint.sh` | コンテナ起動時の seed（settings / plugin / CLI ピン止め）と agent 起動。**利用ガイドの配布は agent 側**（`agent_instructions.go`） |
+| `workspace-notes.md` | 全コンテナへ配る運用ポリシー（claude=`/etc/claude-code/CLAUDE.md` に焼込 / codex・opencode=agent が AGENTS.md へ合成） |
 | `opencode-plugin/` | `agent-fleet-status.js`（状態バッジ）・`rtk.ts`（bash 書き換え） |
 | `tmux.conf` / `.dockerignore` / `vendor/` | tmux 設定 / `**/*.md` 除外 + embed 対象の `!` 復帰（罠）/ rtk 静的バイナリ置き場（git 管理外） |
 

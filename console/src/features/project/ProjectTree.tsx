@@ -5,7 +5,7 @@
 // decorated flat list — and folding the base folds the whole project. The
 // section header carries the repo actions (clone / 更新) and the
 // session-maintenance actions (整理 / アーカイブ).
-import { useState } from "react";
+import { memo, useState } from "react";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -26,7 +26,7 @@ import { useProjectFilter, normQuery, repoMatches, sessionMatches } from "./filt
 import { RepoNode } from "./RepoNode.tsx";
 import { useRailRoving } from "./useRailRoving.ts";
 import { useT } from "../../lib/i18n/index.ts";
-import { ShareManagerModal } from "../sharing/ShareManagerModal.tsx";
+import { ShareListModal } from "../sharing/ShareListModal.tsx";
 
 // guessRepoName derives a display name from a clone URL for the in-progress
 // spinner row, before the server reports the real name.
@@ -35,7 +35,7 @@ const guessRepoName = (u: string | null | undefined) => {
   return s.split(/[/:]/).pop() || "repo";
 };
 
-export function ProjectTree() {
+export const ProjectTree = memo(function ProjectTree() {
   const tr = useT();
   const repos = useReposStore((s) => s.repos);
   const refreshRepos = useReposStore((s) => s.refresh);
@@ -154,7 +154,7 @@ export function ProjectTree() {
             {tr("pj.clone")}
           </Button>
           <IconButton icon="refresh" label={tr("pj.refresh")} onClick={() => void refreshRepos()} />
-          <IconButton icon="broadcast" label={tr("share.manage_title")} onClick={() => setShowShares(true)} />
+          <IconButton icon="broadcast" label={tr("share.list_title")} onClick={() => setShowShares(true)} />
           <span className="proj-head-sep" aria-hidden="true" />
           <IconButton icon="trash" label={tr("clean.open")} onClick={openCleanup} />
           <IconButton icon="archive" label={tr("pj.open_archive")} onClick={openArchived} />
@@ -187,7 +187,7 @@ export function ProjectTree() {
         </div>
       </div>
       {showClone && <NewRepoModal onClose={() => setShowClone(false)} onClone={doClone} onSvnCheckout={doSvnCheckout} repos={repos} />}
-      {showShares && <ShareManagerModal onClose={() => setShowShares(false)} />}
+      {showShares && <ShareListModal onClose={() => setShowShares(false)} />}
       <ul className="sess-list proj-tree" ref={rail.ref} role="tree" onKeyDown={rail.onKeyDown}>
         {cloning && (
           <li className="repo-cloning">
@@ -219,4 +219,4 @@ export function ProjectTree() {
       </ul>
     </Section>
   );
-}
+});

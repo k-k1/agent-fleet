@@ -55,6 +55,8 @@ func TestEffectiveSharePermission(t *testing.T) {
 func TestSharedTranscriptDTOAllowsContentAndRejectsEveryUnknownCoordinate(t *testing.T) {
 	v := map[string]any{"jsonlPath": "/secret/log", "futureTopSecret": "hidden", "messages": []any{map[string]any{
 		"cwd": "/home/dev/repos/private", "text": "visible", "role": "assistant", "idx": float64(1),
+		"compact":   true,
+		"branch":    "feature/secret-branch",
 		"file_path": "/top/path", "parts": []any{map[string]any{
 			"kind": "tool", "file": "secret.txt", "files": []any{"attachment.png"}, "filePath": "/camel",
 			"file_path": "/snake", "path": "/generic", "attachmentPath": "/attach", "unknownCoordinate": "/future",
@@ -63,13 +65,21 @@ func TestSharedTranscriptDTOAllowsContentAndRejectsEveryUnknownCoordinate(t *tes
 	}}}
 	out := sharedTranscriptDTO(v)
 	encoded, _ := json.Marshal(out)
-	for _, secret := range []string{"jsonlPath", "futureTopSecret", "cwd", "file_path", "filePath", "attachmentPath", "unknownCoordinate", "secret.txt", "attachment.png", "/generic", "/edit/path"} {
+	for _, secret := range []string{"jsonlPath", "futureTopSecret", "cwd", "file_path", "filePath", "attachmentPath", "unknownCoordinate", "secret.txt", "attachment.png", "/generic", "/edit/path",
+		// branch names the owner's work in their repo and is not needed to render the
+		// conversation, so it stays out of the allowlist like every other coordinate.
+		"branch", "feature/secret-branch"} {
 		if strings.Contains(string(encoded), secret) {
 			t.Fatalf("private/unknown field %q survived: %s", secret, encoded)
 		}
 	}
 	if !strings.Contains(string(encoded), "visible tool output") || !strings.Contains(string(encoded), `"old":"a"`) {
 		t.Fatalf("visible allowlisted content removed: %s", encoded)
+	}
+	// compact is a display flag, not a coordinate: the recipient needs it to render a
+	// compaction summary as a folded summary rather than one enormous turn.
+	if !strings.Contains(string(encoded), `"compact":true`) {
+		t.Fatalf("compact flag dropped, compaction summaries would render as plain turns: %s", encoded)
 	}
 }
 
@@ -179,15 +189,187 @@ func TestSharedMessagesAuthorizeAndRemoveWorkspacePaths(t *testing.T) {
 		t.Fatalf("unauthorized status=%d body=%s", denied.Code, denied.Body.String())
 	}
 
-	// A bookmarked catalog id cannot bypass a later live deletion simply because
-	// the recipient skipped the shared-session list endpoint.
+	// A bookmarked catalog id cannot bypass a live deletion simply because the recipient
+	// skipped the shared-session list endpoint. Inventory reconciliation is throttled per
+	// owner (freshCatalog), so the deletion is noticed on the next sync rather than on the
+	// very next request — invalidateCatalog stands in for that window elapsing.
+	//
+	// Note what is NOT throttled: the share rules are re-evaluated from the database on
+	// every request, so an explicit unshare still takes effect immediately (the stranger
+	// case above runs through the same freshCatalog path and is still refused).
 	catalogDeleted.Store(true)
+	api.invalidateCatalog(owner.ID)
 	deletedReq := httptest.NewRequest(http.MethodGet, "/api/shared-sessions/catalog-1/messages", nil)
 	deletedReq.SetPathValue("id", catalog.ID)
 	deleted := httptest.NewRecorder()
 	api.messages(deleted, deletedReq, recipientIdentity, recipientViews[0])
 	if deleted.Code != http.StatusNotFound {
 		t.Fatalf("deleted direct-id status=%d body=%s", deleted.Code, deleted.Body.String())
+	}
+}
+
+// The throttle must bound the staleness it introduces, and must not touch authorization.
+// Both halves matter: skipping the sync is what makes a shared transcript load quickly,
+// and re-checking the rules every time is what keeps an unshare immediate.
+func TestFreshCatalogThrottlesInventoryButNotAuthorization(t *testing.T) {
+	api := newSessionShareAPI(&manager{})
+	if api.freshCatalog("owner-a") {
+		t.Fatal("first call must reconcile — nothing has been synced yet")
+	}
+	if !api.freshCatalog("owner-a") {
+		t.Fatal("second call within the TTL must reuse the reconciled inventory")
+	}
+	if api.freshCatalog("owner-b") {
+		t.Fatal("the window is per owner — owner-b must not ride owner-a's sync")
+	}
+	api.invalidateCatalog("owner-a")
+	if api.freshCatalog("owner-a") {
+		t.Fatal("invalidateCatalog must force the next reconciliation")
+	}
+	// An expired stamp reconciles again, so staleness is bounded by shareCatalogTTL.
+	api.syncedAt["owner-a"] = time.Now().Add(-shareCatalogTTL - time.Second)
+	if api.freshCatalog("owner-a") {
+		t.Fatal("a stamp older than shareCatalogTTL must reconcile")
+	}
+}
+
+func TestSyncCatalogCapturesWorktreeAndParent(t *testing.T) {
+	ctx := context.Background()
+	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tenant, _ := st.EnsureDefaultTenant(ctx)
+	ownerIdentity, _ := st.UpsertIdentity(ctx, "owner-wt@example.com", "owner-wt", "")
+	owner, _ := st.EnsureMembership(ctx, ownerIdentity.ID, tenant.ID, "member")
+	ownerViews, _ := st.ListMemberships(ctx, ownerIdentity.ID)
+	workspace := Workspace{ID: newID(), TenantID: tenant.ID, MembershipID: owner.ID, ContainerName: "c", Network: "n",
+		DataDir: "d", AgentPort: "1", AgentToken: "tok", State: "running", CreatedAt: nowTS()}
+	if err := st.CreateWorkspace(ctx, workspace); err != nil {
+		t.Fatal(err)
+	}
+
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/sessions/catalog":
+			_ = json.NewEncoder(w).Encode(map[string]any{"sessions": []any{
+				map[string]any{"name": "base-session", "kind": "codex", "dir": "/home/dev/repos/proj", "repo": "proj", "workingCopyId": "wc-base"},
+				map[string]any{"name": "wt-session", "kind": "codex", "dir": "/home/dev/repos/proj@feat", "repo": "proj@feat", "workingCopyId": "wc-wt"},
+			}})
+		case "/repos":
+			_ = json.NewEncoder(w).Encode(map[string]any{"repos": []any{
+				map[string]any{"workingCopyId": "wc-base"},
+				map[string]any{"workingCopyId": "wc-wt", "worktree": true, "parent": "proj"},
+			}})
+		default:
+			t.Errorf("path=%q", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer agent.Close()
+
+	mgr := &manager{store: st, rts: map[string]cachedRT{owner.ID: {
+		rt: stubRuntime{endpoint: agent.URL, token: "tok"}, ws: workspace,
+	}}}
+	api := newSessionShareAPI(mgr)
+	resolvedOwner := &resolved{rt: stubRuntime{endpoint: agent.URL, token: "tok"}, ws: workspace, mv: ownerViews[0]}
+	if err := api.syncCatalog(ctx, resolvedOwner); err != nil {
+		t.Fatal(err)
+	}
+
+	catalog, err := st.ListSharedSessionCatalogByOwner(ctx, owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog) != 2 {
+		t.Fatalf("catalog rows=%d", len(catalog))
+	}
+	byName := map[string]SharedSessionCatalog{}
+	for _, c := range catalog {
+		byName[c.Name] = c
+	}
+	base, ok := byName["base-session"]
+	if !ok || base.Worktree || base.Parent != "" {
+		t.Fatalf("base row=%+v ok=%v", base, ok)
+	}
+	wt, ok := byName["wt-session"]
+	if !ok || !wt.Worktree || wt.Parent != "proj" {
+		t.Fatalf("worktree row=%+v ok=%v", wt, ok)
+	}
+}
+
+func TestSearchRecipientsFiltersByEmailAndExcludesSelf(t *testing.T) {
+	ctx := context.Background()
+	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tenant, _ := st.EnsureDefaultTenant(ctx)
+	selfIdentity, _ := st.UpsertIdentity(ctx, "self@example.com", "self", "")
+	aliceIdentity, _ := st.UpsertIdentity(ctx, "alice@acme.example", "alice", "")
+	bobIdentity, _ := st.UpsertIdentity(ctx, "bob@other.com", "bob", "")
+	if _, err := st.EnsureMembership(ctx, selfIdentity.ID, tenant.ID, "member"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.EnsureMembership(ctx, aliceIdentity.ID, tenant.ID, "member"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.EnsureMembership(ctx, bobIdentity.ID, tenant.ID, "member"); err != nil {
+		t.Fatal(err)
+	}
+	selfViews, _ := st.ListMemberships(ctx, selfIdentity.ID)
+	mgr := &manager{store: st}
+	api := newSessionShareAPI(mgr)
+
+	search := func(q string) []map[string]string {
+		req := httptest.NewRequest(http.MethodGet, "/api/session-share-recipients?q="+q, nil)
+		rec := httptest.NewRecorder()
+		api.searchRecipients(rec, req, selfIdentity, selfViews[0])
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		var payload struct {
+			Members []map[string]string `json:"members"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		return payload.Members
+	}
+
+	// 空クエリ: 自分以外の全active メンバーが返る(自分は除外)。
+	all := search("")
+	if len(all) != 2 {
+		t.Fatalf("empty query members=%v", all)
+	}
+	for _, m := range all {
+		if m["email"] == "self@example.com" {
+			t.Fatalf("self appeared in results: %v", all)
+		}
+	}
+
+	// email 部分一致で絞り込める。
+	acme := search("acme.example")
+	if len(acme) != 1 || acme[0]["email"] != "alice@acme.example" {
+		t.Fatalf("filtered members=%v", acme)
+	}
+
+	// 大文字小文字は無視される。
+	upper := search("ALICE")
+	if len(upper) != 1 || upper[0]["userKey"] != "alice" {
+		t.Fatalf("case-insensitive members=%v", upper)
+	}
+
+	if none := search("nobody-matches-this"); len(none) != 0 {
+		t.Fatalf("unexpected match=%v", none)
 	}
 }
 

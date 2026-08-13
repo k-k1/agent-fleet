@@ -3,7 +3,7 @@
 // cell: pane ordinal (color-matched to corner chip + rail badge), a kind hint,
 // a state dot. Click focuses; hover cross-highlights. Hidden when unsplit.
 // Ported onto the new layout types (pane.session + content union).
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import { useLayoutStore } from "../../layout/store.ts";
 import { paneRows, ordClass, paneCount } from "../../layout/badges.ts";
 import { usePaneHover, hoverMatches } from "../../lib/panehover.tsx";
@@ -32,7 +32,7 @@ const KIND_ABBR: Partial<Record<PaneKind, string>> = {
   browserAttach: "web",
 };
 
-export function LayoutMap() {
+export const LayoutMap = memo(function LayoutMap() {
   const layout = useLayoutStore((s) => s.layout);
   const setActive = useLayoutStore((s) => s.setActive);
   const sessions = useSessionsStore((s) => s.sessions);
@@ -103,4 +103,4 @@ export function LayoutMap() {
       </div>
     </div>
   );
-}
+});

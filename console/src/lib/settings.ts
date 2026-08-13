@@ -185,6 +185,11 @@ export interface Settings {
   wrap: boolean;
   tabSize: number;
   minimap: boolean;
+  // Markdown ビュー（Doc/File プレビュー・チャット内マークダウン）のコードブロックを既定で
+  // 折り返し表示するか。各ブロック右下のトグルボタン（features/viewer/MarkdownView.tsx）の
+  // 初期状態になる（ボタンでブロックごとに個別に上書き可能、その上書き自体は永続化しない）。
+  // 既定 true — 横スクロールより折り返しの方が読みやすいことが多いため。
+  markdownCodeWrap: boolean;
   iconSet: string;
   theme: string;
   /** Main-area layout profile. Stored only on this device; each profile's
@@ -238,6 +243,12 @@ export interface Settings {
   // OPENCODE_API_KEY opens both opencode.ai billing routes, so the same model shows up
   // twice: opencode/… (Zen, pay-per-request) and opencode-go/… (the Go subscription).
   // Which opencode.ai billing route this workspace means to use:
+  //   "off"  — hard-disables opencode: overrides any stored key or OAuth login, even
+  //            ones added later without switching the route back. For tenants whose
+  //            security policy forbids opencode reaching a third party without an
+  //            explicit, durable opt-in — the default ("zen", below) already behaves
+  //            like this with nothing configured, but "off" is the deliberate,
+  //            tamper-resistant version of that.
   //   "free" — the zero-auth free models only. Also makes opencode launchable with no
   //            credential at all, and the Agent stops injecting OPENCODE_API_KEY.
   //   "go"   — the subscription route (opencode-go/…). Needs an API key (measured: an
@@ -245,7 +256,7 @@ export interface Settings {
   //   "zen"  — pay-per-request (opencode/…), plus the Go ids when the account has both.
   // The Agent reads this from ui-prefs, so it shapes the MCP list_models an assistant
   // picks from as well as this picker. Legacy values migrate in normalizeSettings.
-  opencodeCatalog: "free" | "go" | "zen";
+  opencodeCatalog: "off" | "free" | "go" | "zen";
   // ミラーの「思考」ブロックを最初から展開して表示するか（kind スコープ／設定 > エージェント >
   // 各カード > 動作設定）。既定は全 kind オフ＝従来どおり畳んだ状態で出す（クリックで開く）。
   // 思考の量は kind とモデルで大きく違い、常時展開が読みやすいかは backend ごとに割れるので、
@@ -531,6 +542,7 @@ const DEFAULTS: Settings = {
   wrap: false,
   tabSize: 4,
   minimap: true,
+  markdownCodeWrap: true,
   iconSet: "vscode",
   theme: "dark",
   paneLayout: "split",
@@ -990,8 +1002,8 @@ function serverPrefs(s: Settings): Partial<Settings> {
 // migrateOpencodeCatalog maps the legacy menu-shaping values onto the billing-route
 // choice. Kept exported for the load() path and the tests — the Agent applies the same
 // rule server-side (opencode.CatalogPref), so the two never disagree.
-export function migrateOpencodeCatalog(v: unknown): "free" | "go" | "zen" {
-  if (v === "free" || v === "go" || v === "zen") return v;
+export function migrateOpencodeCatalog(v: unknown): "off" | "free" | "go" | "zen" {
+  if (v === "off" || v === "free" || v === "go" || v === "zen") return v;
   if (v === "hide-zen") return "go"; // Zen を隠す = Go だけ使う意思
   return "zen"; // go-first / all / 未設定 / 不明 = 従来の見え方
 }

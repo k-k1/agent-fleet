@@ -63,6 +63,17 @@ func CopilotHome() string {
 	return filepath.Join(HomeDir(), ".copilot")
 }
 
+// FleetNotesPath is the workspace guide baked into the image
+// (`workspace/workspace-notes.md` — the fleet layer of docs/60). The agent composes
+// it into each CLI's global instruction file at startup; the env override exists so
+// tests can point at a fixture instead of the image copy.
+func FleetNotesPath() string {
+	if p := os.Getenv("AF_WORKSPACE_NOTES"); p != "" {
+		return p
+	}
+	return "/usr/local/share/agent-fleet/workspace-notes.md"
+}
+
 // CursorHome is cursor's state root (~/.cursor): mcp.json, cli-config.json, projects/.
 func CursorHome() string { return filepath.Join(HomeDir(), ".cursor") }
 

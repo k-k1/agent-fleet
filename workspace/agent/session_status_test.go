@@ -120,6 +120,44 @@ func TestPermissionPromptKeepsPendingQuestion(t *testing.T) {
 	}
 }
 
+// …and the DISPLAY must name the modal that is actually on screen. The overlay above
+// leaves the raw state at "permission" for the whole time the question menu is up, so a
+// badge reading the raw state showed 許可待ち for an AskUserQuestion — the card in the
+// mirror says 質問, the chip next to it says 許可, and the answer path (promptBlocker,
+// which already resolved the overlap) disagrees with both. Pinned on both display
+// paths: the sessions-list badge (wireSession→WireLive) and the chat chip (driveState).
+func TestPendingQuestionBadgeReadsQuestionNotPermission(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := session.Meta{Name: "s-auq", Dir: t.TempDir(), Kind: session.KindClaude, Title: "Project"}
+	session.WriteMeta(m)
+	sid := session.UUID(m.Dir, m.Name)
+
+	feedStatusHook(t, "question", `{"session_id":"`+sid+`","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"Pick"}]}}`)
+	feedStatusHook(t, "permission", `{"session_id":"`+sid+`","notification_type":"permission_prompt","message":"needs permission"}`)
+
+	if got := wireSession(m, true).State; got != "question" {
+		t.Errorf("sessions-list badge = %q, want question (AUQ の permission_prompt が state を上書きしている)", got)
+	}
+	if got := driveState(m, true, false); got != "question" {
+		t.Errorf("chat chip = %q, want question", got)
+	}
+}
+
+// A plain tool permission (no captured question/plan) keeps saying permission — the
+// override is scoped to the overlay, not a blanket rename.
+func TestPlainPermissionStaysPermission(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := session.Meta{Name: "s-perm", Dir: t.TempDir(), Kind: session.KindClaude, Title: "Project"}
+	session.WriteMeta(m)
+	sid := session.UUID(m.Dir, m.Name)
+
+	feedStatusHook(t, "permission", `{"session_id":"`+sid+`","notification_type":"permission_prompt","message":"needs permission"}`)
+
+	if got := wireSession(m, true).State; got != "permission" {
+		t.Errorf("sessions-list badge = %q, want permission", got)
+	}
+}
+
 // A non-permission state (idle/working) still clears a stale pending question, so the
 // retention above is scoped to the permission overlay only.
 func TestIdleClearsPendingQuestion(t *testing.T) {

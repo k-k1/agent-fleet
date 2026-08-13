@@ -383,6 +383,13 @@
   color: var(--muted);
   font-size: 11px;
 }
+/* セッション共有: この working copy(repo/worktree)を誰かに共有中であることを示す
+   バッジ(.repo-lock と対)。 */
+.repo-shared {
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+}
 .repo-state {
   flex: none;
   display: inline-flex;
