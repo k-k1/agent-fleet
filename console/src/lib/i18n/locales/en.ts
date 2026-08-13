@@ -1972,6 +1972,8 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.ctx_trend_label": "Token spend trend",
   "mirror.ctx_trend_peak": "Peak {v}",
   "mirror.open_diff": "Open the diff in another pane",
+  "mirror.show_changes": "Show changes",
+  "mirror.collapse_changes": "Collapse changes",
   "mirror.collapse_tools": "Collapse tools",
   "mirror.expand_tools": "Expand tools",
   "mirror.tools_count_one": "{count} tool",
@@ -1997,6 +1999,8 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.shared_files": "Shared files",
   "mirror.open_in_pane": "Open in another pane: {path}",
   "mirror.plan_fallback": "Plan",
+  "mirror.plan_expand": "Show the full plan",
+  "mirror.plan_collapse": "Collapse the full plan",
 
   // === P2 modal/row common frequent words (common.cancel/close/delete reuse existing) ===
   "common.send": "Send",

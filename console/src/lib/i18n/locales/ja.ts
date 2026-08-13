@@ -2009,6 +2009,8 @@ export const ja = {
   "mirror.ctx_trend_peak": "最大 {v}",
   // ToolTrace / ToolRun
   "mirror.open_diff": "差分を別ペインで開く",
+  "mirror.show_changes": "変更内容を表示",
+  "mirror.collapse_changes": "変更内容をたたむ",
   "mirror.collapse_tools": "ツールをたたむ",
   "mirror.expand_tools": "ツールを展開",
   "mirror.tools_count_one": "{count} 件のツール",
@@ -2037,6 +2039,8 @@ export const ja = {
   "mirror.shared_files": "共有ファイル",
   "mirror.open_in_pane": "別ペインで開く: {path}",
   "mirror.plan_fallback": "プラン",
+  "mirror.plan_expand": "プラン全文を表示",
+  "mirror.plan_collapse": "プラン全文をたたむ",
 
   // === P2 モーダル・行 共通の頻出語（common.cancel/close/delete は既存を再利用）===
   "common.send": "送信",

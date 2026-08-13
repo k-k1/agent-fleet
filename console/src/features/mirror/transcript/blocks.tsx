@@ -22,6 +22,7 @@ import { prettyModel } from "../../../lib/modelName.ts";
 import { t as tr, tCount } from "../../../lib/i18n/index.ts";
 import { useSettings } from "../../../lib/settings.ts";
 import { MarkdownView } from "../../viewer/MarkdownView.tsx";
+import { lineDiff, type DiffEdit } from "../../viewer/DiffView.tsx";
 import { previewBody } from "../optionPreview.ts";
 import { parseQuestionAnswers, resolveAnswer } from "../questionAnswers.ts";
 import { planOutcome } from "../planDecision.ts";
@@ -580,24 +581,96 @@ export function PastedThumb({
   );
 }
 
+// diffStat renders each captured edit through the SAME line differ the diff pane uses
+// (viewer/DiffView lineDiff), so an inline expansion and an opened pane can never
+// disagree about what changed. Returns the per-edit rows plus the aggregate +/- counts.
+function diffStat(edits: DiffEdit[]) {
+  let added = 0;
+  let removed = 0;
+  const hunks = edits.map((e) => {
+    const rows = lineDiff(e.old || "", e.new || "");
+    for (const r of rows) {
+      if (r.t === "add") added++;
+      else if (r.t === "del") removed++;
+    }
+    return rows;
+  });
+  return { hunks, added, removed };
+}
+
+// InlineEdits shows an edit's before/after right where the tool trace sits, for views
+// that have no diff pane to open. The shared-session DTO (docs/59 §3) keeps the diff
+// BODY (old/new) but drops the file path, so there is no coordinate to open — the
+// change itself is all there is to show, and showing it here is the whole affordance.
+// Reuses the diff pane's dv-* markup (viewer.css is loaded globally) so the two read
+// identically.
+export function InlineEdits({ edits }: { edits: DiffEdit[] }) {
+  const { hunks } = diffStat(edits);
+  return (
+    <div className="mt-tool-diff-inline">
+      {hunks.map((rows, hi) => (
+        <div className="dv-hunk" key={hi}>
+          {hunks.length > 1 && <div className="dv-hunk-head">{tr("view.change")} {hi + 1}</div>}
+          <table className="dv-table">
+            <tbody>
+              {rows.map((r, i) => (
+                <tr className={"dv-row dv-" + r.t} key={i}>
+                  <td className="dv-gutter">{r.o || ""}</td>
+                  <td className="dv-gutter">{r.n || ""}</td>
+                  <td className="dv-mark">{r.t === "add" ? "+" : r.t === "del" ? "−" : ""}</td>
+                  <td className="dv-code">{r.text}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ToolTrace renders one faint tool line. Edit-family tools carry their before/after,
-// so they render as a button that opens a diff pane; a tool that carries its output
+// so they render as a button that opens a diff pane — or, when this view has no pane to
+// open one in, as a click-to-expand inline diff; a tool that carries its output
 // (codex/opencode) becomes a click-to-expand row showing the result; the rest are a
 // static trace.
 export function ToolTrace({ p, onOpenDiff }: { p: Part; onOpenDiff?: (p: Part) => void }) {
   const [open, setOpen] = useState(false);
   if (p.edits && p.edits.length) {
+    if (onOpenDiff) {
+      return (
+        <button
+          type="button"
+          className="mt-tool mt-tool-diff"
+          onClick={() => onOpenDiff(p)}
+          title={tr("mirror.open_diff")}
+        >
+          <Icon name="diff" />
+          <span className="mt-tool-name">{p.tool}</span>
+          {p.info && <span className="mt-tool-info">{p.info}</span>}
+        </button>
+      );
+    }
+    const { added, removed } = diffStat(p.edits);
     return (
-      <button
-        type="button"
-        className="mt-tool mt-tool-diff"
-        onClick={() => onOpenDiff && onOpenDiff(p)}
-        title={tr("mirror.open_diff")}
-      >
-        <Icon name="diff" />
-        <span className="mt-tool-name">{p.tool}</span>
-        {p.info && <span className="mt-tool-info">{p.info}</span>}
-      </button>
+      <div className={"mt-tool-out" + (open ? " open" : "")}>
+        <button
+          type="button"
+          className="mt-tool mt-tool-outhead"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          title={open ? tr("mirror.collapse_changes") : tr("mirror.show_changes")}
+        >
+          <Icon name={open ? "chevron-down" : "chevron-right"} />
+          <span className="mt-tool-name">{p.tool}</span>
+          {p.info && <span className="mt-tool-info">{p.info}</span>}
+          <span className="mt-tool-diffstat">
+            {added > 0 && <span className="dv-add">+{added}</span>}
+            {removed > 0 && <span className="dv-del">−{removed}</span>}
+          </span>
+        </button>
+        {open && <InlineEdits edits={p.edits} />}
+      </div>
     );
   }
   if (p.output) {
@@ -823,6 +896,10 @@ export function PlanBlock({
   const commentKey = session && plan ? planKey(session, plan) : null;
   const comments = usePlanComments(commentKey);
   const unsent = unsentComments(comments);
+  // No pane to open the plan into (shared-session view) — expand it in place instead, so
+  // the proposal is still readable in full rather than reduced to its title + lead line.
+  const [expanded, setExpanded] = useState(false);
+  const inline = !onOpen && !!plan;
   return (
     <div className={"mt-plan" + (answered ? " decided" : "")}>
       <div className="mt-plan-head">
@@ -869,6 +946,17 @@ export function PlanBlock({
             <Icon name="split-horizontal" /> {tr("mirror.open_in_pane_short")}
           </button>
         )}
+        {inline && (
+          <button
+            type="button"
+            className="ghost mt-plan-open"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((v) => !v)}
+          >
+            <Icon name={expanded ? "chevron-down" : "chevron-right"} />{" "}
+            {expanded ? tr("mirror.plan_collapse") : tr("mirror.plan_expand")}
+          </button>
+        )}
         {unsent.length > 0 && onSendComments && (
           // 承認待ちなら「却下して送る」（ダイアログを閉じないと本文が届かないため
           // 却下と一体）、それ以外は普通に送るだけ。
@@ -904,6 +992,11 @@ export function PlanBlock({
           </>
         )}
       </div>
+      {inline && expanded && (
+        <div className="mt-plan-body">
+          <MarkdownView source={plan} />
+        </div>
+      )}
     </div>
   );
 }
