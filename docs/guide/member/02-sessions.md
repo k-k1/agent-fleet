@@ -162,11 +162,38 @@ Which operations appear depends on the session's kind and state. For example, AI
 "Archive", while throwaway shell / SSM show "Delete". Log files may remain after deletion, but
 the session cannot be brought back to the list.
 
-To tidy up stopped sessions in bulk, open the cleanup modal from the trash icon
-**"Open cleanup (survey & tidy)"** in the **Repositories** heading. In its stage
-**"① Tidy sessions"**, **"Tidy all"** archives stopped AI sessions and deletes shell / SSM
-(archived ones can be restored from the archive browser).
-"Delete old ones" in the archive list removes items older than 30 days from the list.
+### Tidying up in bulk (cleanup)
+
+When things get untidy, open the cleanup modal from the trash icon **"Open cleanup (survey &
+tidy)"** in the **Repositories** heading. It is split into two stages so that **the riskier
+things stop for you first**.
+
+- **① Tidy sessions** — **"Tidy all"** archives stopped AI sessions and deletes shell / SSM.
+- **② Delete working copies and branches** — **"Delete the safe ones"** removes only what was
+  judged safe.
+
+Every candidate carries a **safety** rating and a reason. You can also pick them off one by one.
+
+| Safety | Meaning |
+|---|---|
+| **Safe** | Merged and clean — nothing is lost by removing it |
+| **Review** | A stopped session, a clean but unmerged worktree, and the like. Look before you decide |
+| **Keep** | Running, uncommitted / unpushed, or delete-locked. Cleanup leaves it alone |
+
+To clear a **Keep**, stop it or push first (as a last resort, force-delete from the Console).
+The **⋯** menu on a session offers a **delete lock**, which takes it out of cleanup's reach.
+
+**Deleting too much is recoverable.** Sessions and branches are stashed in the **trash** before
+they are removed. The **"Trash (restore)"** tab of the cleanup modal **restores** them, and
+**"Delete permanently"** reclaims the space once you are sure. **Only deleting a worktree cannot
+be undone** — and even then only the working copy goes; the history, the remote and the branch
+remain.
+
+Archived sessions are a "shelf" that cleanup does not touch (restore them from the archive
+browser). "Delete old ones" in the archive list removes items older than 30 days from the list.
+
+You can also ask the fleet operator to do the same survey and tidy-up from chat
+([11](11-fleet-operator.md)).
 
 ## When you can — and can't — resume
 
@@ -192,6 +219,30 @@ working copy **has switched** from the branch it was launched on to a different 
 The working tree the running agent sees may have been swapped out, and its edits and diffs may
 no longer line up. If this doesn't ring a bell, check whether an unintended branch switch has
 happened. For parallel work, giving each session its own worktree avoids this confusion.
+
+## Narrowing the view with working sets
+
+Once you are carrying several pieces of work, the left pane fills up with the repositories and
+conversations of all the others. A **working set** groups **repositories, conversations,
+sessions and schedules by piece of work and switches what the left pane shows**. Nothing is
+moved or copied — only **what you see** changes.
+
+- The bar pinned at the top of the left pane (**"All"** by default) switches between groups. It
+  stays visible however far the pane scrolls, so before you panic that "a session disappeared",
+  you can see which group you are looking at.
+- **"Manage groups…"** creates, renames and deletes them. Creating one also switches to it, so
+  you can go straight to assigning rows. **Deleting a group never deletes its contents**
+  (repositories, conversations, sessions).
+- Assignment happens on the rows themselves, from the right-click (**⋯**) menu: base repository
+  rows, conversation rows, and sessions that don't belong to a repository.
+- **What follows on is included automatically.** A worktree follows its parent repository, a
+  session follows its repository, and a schedule follows the conversation that created it, so
+  there is nothing to reassign (those show as already ticked and cannot be unticked there).
+- A repository cloned while a group is active, and a conversation started there, join that group
+  automatically.
+- The setting is yours and **follows you to your other devices** (it is not shared with other
+  members).
+- From the keyboard, the leader key **`w` → `w`** cycles through the groups.
 
 ## Handing a conversation off (handoff)
 
@@ -259,6 +310,44 @@ is why `/list-agents` does nothing here; use the Agent Fleet version above inste
 | Record of it | One collapsed line in the terminal | A badge with the sender in the chat view |
 | Sessions on another machine or the web | Can reply to them | **Not supported** (same workspace only) |
 | Holding or refusing on the receiving side | Available | Not yet — only the workspace-wide on/off |
+
+## Sharing a conversation (shared sessions)
+
+You can show a session's conversation to another member of the same tenant, **read-only** —
+"keep an eye on where this investigation goes", "while you review it, here is how we got here".
+
+**Sharing it**
+
+1. Choose **"Share"** from the **⋯** menu of a session row or a repository row (you can also
+   create one from ⚙ "Shares" in the left pane's **Shared sessions** section → **"New share…"**).
+2. There are three kinds of **target**.
+   - **Session** — that one session.
+   - **Project** — the base working copy **plus the sessions in the worktrees under it**. If you
+     give each session its own worktree, this is usually the one you want.
+   - **WT** — a single worktree.
+3. Pick the **recipient** by searching for their email address.
+4. Pick the **permission**.
+   - **View only** — reading, nothing else.
+   - **May propose** — the recipient can **propose** something to send, and **it does not reach
+     the agent until you approve it**.
+5. **"Unshare"** in the share list ends it.
+
+**Being shared with**
+
+They appear under **Shared sessions** in the left pane, grouped by owner and project. The
+conversation opens read-only; with "may propose" there is a composer for sending the owner a
+proposal (it says up front that nothing is sent until the owner approves). While the owner's
+workspace is stopped, the history cannot be read. The list refreshes on its own, but
+**"Refresh"** pulls it right now.
+
+**Approving** (as the owner): the Shared sessions section shows **"N awaiting approval"**;
+review the content and choose **"Approve and send"** or **"Reject"**.
+
+> **Sharing exposes the whole conversation** — your prompts, the agent's replies, and tool
+> output. Secrets that ended up in the conversation are not detected for you. The recipient can
+> save what they see, so **unsharing cannot recall the copy they already have.** Think once about
+> what is on screen before you share. Archiving a session drops it from the recipient's list (the
+> rule itself remains, so restoring it makes it visible again).
 
 ## Changing the title and branch name
 
