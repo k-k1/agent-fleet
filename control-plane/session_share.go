@@ -498,8 +498,14 @@ func (a sessionShareAPI) listReceived(w http.ResponseWriter, r *http.Request, _ 
 	}
 	members, _ := a.mgr.store.ListMembersByTenant(r.Context(), mv.TenantID)
 	ownerKeys := map[string]string{}
+	// 所有者の名乗りはログイン ID(メールアドレス)。user_key は sanitizeUser を通した
+	// 正規化キー(`a@x.com` → `a-x-com`、衝突時は接尾辞付き)で、人が普段名乗っている
+	// 文字列ではない。email が無い identity(管理者が user_key だけで足した場合)は
+	// 空で返し、表示側が user_key へ落とす。
+	ownerEmails := map[string]string{}
 	for _, m := range members {
 		ownerKeys[m.MembershipID] = m.UserKey
+		ownerEmails[m.MembershipID] = m.Email
 	}
 	// ?refresh=1 は「今の状態を取り直す」明示操作(共有セクションのリロードボタン)。
 	// 定期ポーリングの間引きを飛び越えるが、下限(shareForcedCatalogTTL)は残す —
@@ -540,7 +546,7 @@ func (a sessionShareAPI) listReceived(w http.ResponseWriter, r *http.Request, _ 
 			if p == "" {
 				continue
 			}
-			out = append(out, map[string]any{"id": c.ID, "ownerUserKey": ownerKeys[owner], "name": c.Name, "kind": c.Kind, "repo": c.Repo, "workingCopyId": c.WorkingCopyID, "title": c.Title, "label": c.Label, "createdAt": c.CreatedAt, "state": c.State, "permission": p, "workspaceState": wsState, "worktree": c.Worktree, "parent": c.Parent, "activity": c.Activity,
+			out = append(out, map[string]any{"id": c.ID, "ownerUserKey": ownerKeys[owner], "ownerEmail": ownerEmails[owner], "name": c.Name, "kind": c.Kind, "repo": c.Repo, "workingCopyId": c.WorkingCopyID, "title": c.Title, "label": c.Label, "createdAt": c.CreatedAt, "state": c.State, "permission": p, "workspaceState": wsState, "worktree": c.Worktree, "parent": c.Parent, "activity": c.Activity,
 				// ブランチは作業コピーの表示ラベル(所有者側の repo 行と同じ)。転写 DTO が落とす
 				// turn の branch(会話の描画に不要な座標)とは別物で、これが無いと worktree は
 				// ランダム slug のフォルダ名でしか見分けられない。

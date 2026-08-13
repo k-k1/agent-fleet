@@ -16,7 +16,9 @@ let root: Root | null = null;
 let host: HTMLDivElement;
 
 const session = (over: Partial<SharedSession> & { id: string }): SharedSession => ({
-  ownerUserKey: "owner@example.com",
+  // CP が返す2つ組: 正規化キー(グルーピング/永続キー)と、表示に使うログイン ID。
+  ownerUserKey: "owner-example-com",
+  ownerEmail: "owner@example.com",
   name: over.id,
   kind: "claude",
   state: "stopped",
@@ -30,7 +32,7 @@ async function render(sessions: SharedSession[]): Promise<void> {
   await act(async () => {
     root!.render(
       <ul>
-        {groups.map((g) => <SharedProjectNode key={g.projectName} group={g} showOwner={false} />)}
+        {groups.map((g) => <SharedProjectNode key={g.projectName} group={g} />)}
       </ul>,
     );
   });
@@ -119,6 +121,14 @@ describe("SharedProjectNode", () => {
   it("畳んだ状態は localStorage に残る", async () => {
     await render([session({ id: "a", title: "会話", repo: "proj", workingCopyId: "wc-base" })]);
     await act(async () => host.querySelector<HTMLButtonElement>(".shared-project-head")!.click());
-    expect(localStorage.getItem("af-shared-proj-owner@example.com:proj")).toBe("0");
+    expect(localStorage.getItem("af-shared-proj-owner-example-com:proj")).toBe("0");
+  });
+
+  it("プロジェクト見出しに所有者のログイン ID(メールアドレス)を出す", async () => {
+    await render([session({ id: "a", title: "会話", repo: "proj", workingCopyId: "wc-base" })]);
+    expect(host.querySelector(".shared-project-owner")?.textContent).toBe("owner@example.com");
+    // email を持たない identity(管理者が user_key だけで足した場合)だけ正規化キーへ落ちる。
+    await render([session({ id: "a", title: "会話", repo: "proj", workingCopyId: "wc-base", ownerEmail: undefined })]);
+    expect(host.querySelector(".shared-project-owner")?.textContent).toBe("owner-example-com");
   });
 });
