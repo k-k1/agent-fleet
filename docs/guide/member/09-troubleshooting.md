@@ -28,12 +28,47 @@ claude, and reaches stopped sessions too. The full comparison is in
 If the agent still seems to lack the tools after you turn it on, check whether that session was
 already running beforehand — a running session keeps its current tools until it restarts.
 
+### Sessions or repositories have vanished from the left pane
+
+**Suspect a working set filter first.** When the bar at the top of the left pane shows
+anything other than **"All"**, repositories, conversations and sessions outside that group
+are simply not displayed (nothing was deleted). Switch the bar back to "All" and they
+return ([02](02-sessions.md#narrowing-the-view-with-working-sets)).
+
+If it is still missing, check whether it was **archived** (AI sessions can be restored from
+the archive browser) or tidied away by **cleanup** (deleted sessions can be restored from the
+trash) — [02](02-sessions.md#tidying-up-in-bulk-cleanup).
+
 ### A session won't resume / is shown struck through
 
 If the state is **"Folder missing — can't resume"**, that session's **working folder is gone**
 (typically after deleting the whole worktree). claude / codex / cursor / copilot / kiro / agy / opencode cannot resume from this state.
 Start the same work over as a new session. shell falls back to home and resumes if the
 working folder is missing ([02](02-sessions.md)).
+
+### I shared it, but the recipient sees nothing — or only old conversations
+
+- **Check the scope you shared.** A session share covers that one session. If you give each
+  session its own worktree, the base working copy may hold only the older conversations, so
+  sharing at **project** scope (the base plus the sessions in the worktrees under it) matches
+  how the work is actually laid out.
+- **Archived sessions drop off the recipient's list.** The share rule itself remains, so
+  restoring it from the archive makes it visible again.
+- **While the owner's workspace is stopped, the history cannot be read** — the recipient sees
+  a note saying so.
+- The list refreshes periodically; **"Refresh"** in Shared sessions pulls it right now
+  ([02](02-sessions.md#sharing-a-conversation-shared-sessions)).
+
+### I sent something from a session shared with me, but the agent does nothing
+
+With the **may-propose** permission, what you type **does not reach the agent until the owner
+approves it**. The owner's Shared sessions section shows **"N awaiting approval"** — ask them
+to review it and "Approve and send". With **view only** there is no composer in the first
+place.
+
+If the outcome of a send could not be confirmed, nothing is re-sent automatically, on purpose.
+Use **"Check outcome"** to find out where it stands
+([02](02-sessions.md#sharing-a-conversation-shared-sessions)).
 
 ### Cloning fails
 
@@ -95,11 +130,105 @@ To connect with a ChatGPT subscription, you must first **turn on "Enable device 
 authentication for Codex" under ChatGPT's "Settings > Security"**. If it's off, approving
 won't get you any further ([06](06-agents.md)).
 
+### Cleanup won't remove some things
+
+Candidates rated **Keep** are left alone by cleanup, and the row states why.
+
+- **Running** — stop the session first.
+- **Uncommitted / unpushed** — commit or push and it becomes Safe or Review. If you must drop
+  it anyway, force-delete from the Console.
+- **Delete-locked** — clear the lock from the session's ⋯ menu.
+
+Note that **only deleting a worktree cannot be undone** (the working copy goes; the history,
+the remote and the branch stay). Deleted sessions and branches are stashed in the **trash**,
+so the "Trash (restore)" tab of the cleanup modal brings them back
+([02](02-sessions.md#tidying-up-in-bulk-cleanup)).
+
+### A model I want isn't offered, or launching with it is refused
+
+It may be excluded under **"Models you don't use"** in ⚙ Settings → Agents. An excluded model
+disappears from the launch dialog, the default-model setting and the list an assistant picks
+from, and **launching with that name is refused as well** (including a schedule's model field
+and launches via an assistant). Remove the exclusion on that agent's card
+([06](06-agents.md)).
+
+To use a specific Claude release (a full id such as `claude-opus-4-8`), register it under
+**"Extra Claude models"** on the same screen and it joins the choices.
+
+### An MCP server I registered isn't available in sessions or assistants
+
+Work through ⚙ Settings → MCP servers in this order
+([12](12-settings.md#mcp-servers)).
+
+1. Is it **enabled**? Disabled keeps the definition but hands it to nobody.
+2. Do the **targets** include "sessions" / "assistants"? With both cleared it goes nowhere.
+3. Did you narrow **target agents**? Leaving it empty covers every agent.
+4. **Sessions pick it up from the next session you start** — a running session doesn't change
+   until it restarts.
+5. Press **"Connection test"** and see whether a server name and tool count come back.
+6. Does it say it is unused because the name collides with a tenant distribution? The tenant
+   entry wins.
+7. On an egress-restricted deployment the host may still be **awaiting approval** (the card
+   shows the request flow).
+
+### An agent stopped with "your login has expired"
+
+The error in the chat view offers **"Re-authenticate"**. Connect again from there and **that
+session resumes exactly where it left off**. The agent's card in ⚙ Settings → Agents also
+shows the connection state ([06](06-agents.md)).
+
+### The assistant (operator) stopped carrying things forward on its own
+
+It hit the **automatic reply limit**. As a runaway guard, it can only run so many turns in a
+row with no message from you (default 10, max 50), and **it resumes when you send the next
+message**. The limit is in ⚙ Settings → Assistant (it cannot be unlimited).
+
+If you only want normal completions to stay quiet, turn on **"Quiet completion reports"** in
+the same tab: the card and the notification still arrive, but no automatic turn runs
+([11](11-fleet-operator.md)).
+
+### The chat says the context went over the limit and won't answer
+
+The conversation grew too long. Either **"Compact"** at the right of the context bar (carry a
+summary forward and continue) or open a **new chat** and hand over just the essentials.
+Starting an exchange above 90% auto-compacts first (can be turned off in ⚙ Settings →
+Assistant), but exceeding the limit before that point produces this state. Lowering the
+**automatic compaction threshold** in ⚙ Settings → Assistant makes it less likely to recur
+([07](07-chat-memo.md#when-a-conversation-gets-long-a-context-rule-of-thumb)).
+
+### A scheduled run doesn't fire
+
+Check its row in the **Schedules** section of the left pane.
+
+- A **"Paused"** tag means it is suspended — **"Resume"** in the row menu brings it back.
+- `skipped_*` entries in the **run history** mean the previous run was still going (the
+  overlap policy) or the target conversation was busy.
+- The firing time, timezone and prompt are visible and editable under **"Details & edit"** in
+  the row menu (only the advanced fields — session mode, reuse and so on — are changed from
+  the operator chat).
+- **"Run now"** exercises the same path as a timed firing (allow up to about a minute).
+- If there is no Schedules section at all, scheduled execution is disabled on this deployment
+  ([11](11-fleet-operator.md#scheduled-runs)).
+
 ### Ctrl+C doesn't work in the terminal / I can't copy-paste
 
 Working as intended. In the terminal, Ctrl+C is passed to the program as an interrupt (SIGINT). **Copy is
 automatic on select, or Ctrl+Shift+C; paste with right-click / middle-click / Ctrl+Shift+V**
 ([03](03-terminal.md)).
+
+### App shortcuts such as the command palette don't work
+
+While a terminal has focus, a setting in ⚙ Settings → Keys may be handing your keys to the
+terminal.
+
+- **"Prioritise the terminal over the app while a terminal has focus"** — every Ctrl-key goes
+  to the terminal. Only the leader survives on the app side, so open the palette with the
+  default **Ctrl+K → ;** (**⌘K → ;** on macOS).
+- **"Pass every key to shell / SSM terminals"** — even the leader and the palette go through.
+  Move focus to another pane to get the app operations back.
+
+**?** opens the list of what is bound to what ([03](03-terminal.md#shortcuts),
+[12](12-settings.md#keys)).
 
 ### On a phone, the keyboard pops up on its own / it's hard to operate
 
@@ -145,6 +274,18 @@ Recreate = a new conversation in the same place (the current conversation goes t
 **Q. opencode doesn't show up among the new-session kinds**
 It can't be selected until you've registered at least one API key. Register a key for opencode in
 ⚙ Settings → the "Agents" tab ([06](06-agents.md)).
+
+**Q. If I unshare it, does it disappear from their side too?**
+No. The recipient can save what was displayed, so **unsharing only ends further access** — a
+copy they already saved cannot be recalled. Before sharing, check what the conversation
+exposes (secrets in it are not detected for you). See
+[02](02-sessions.md#sharing-a-conversation-shared-sessions).
+
+**Q. Does "Models you don't use" stop the billing?**
+It prevents picking one by accident; it is not a hard billing guard. The model disappears from
+the launch dialog, the settings and the assistant's list, and launching it by name is refused
+— but **it cannot stop the CLI's own commands, such as typing `/model` inside the terminal**
+([06](06-agents.md)).
 
 **Q. Builds die / freeze from running out of memory**
 The host is shared and memory-constrained. For Node builds, raise the heap only for the command that needs it
