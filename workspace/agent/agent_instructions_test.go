@@ -9,9 +9,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/userinstr"
 )
@@ -68,6 +70,8 @@ func TestReconcileDeliversToEverySupportedKind(t *testing.T) {
 		{"codex", codex.AgentsPath()},
 		{"opencode", instrOpencodeFile()},
 		{"copilot", copilot.UserInstructionsPath()},
+		{"agy", agy.AgentsPath()},
+		{"kiro", kiro.UserInstructionsPath()},
 	} {
 		if got := read(t, tc.path); !strings.Contains(got, "Always report in Japanese.") {
 			t.Fatalf("%s: user text missing from %s:\n%s", tc.name, tc.path, got)
@@ -219,10 +223,60 @@ func TestUnreadableOpencodeConfigIsLeftAloneAndReported(t *testing.T) {
 	}
 }
 
+// agy は rtk と同じ ~/.gemini/AGENTS.md を共有する。両方が並び、互いを消さないこと。
+func TestAgyUserBlockCoexistsWithRTKBlock(t *testing.T) {
+	instrEnv(t)
+	if err := userinstr.SaveText("AGYTEXT\n"); err != nil {
+		t.Fatal(err)
+	}
+	agy.ApplyRTK(true)
+	reconcileAgentInstructions()
+	got := read(t, agy.AgentsPath())
+	if !strings.Contains(got, "AGYTEXT") {
+		t.Fatalf("user text missing:\n%s", got)
+	}
+	if !strings.Contains(got, "rtk (token saver)") {
+		t.Fatalf("rtk block was destroyed by the user block:\n%s", got)
+	}
+	if u, r := strings.Index(got, "<!-- agent-fleet:user-notes -->"), strings.Index(got, "<!-- agent-fleet:rtk -->"); u > r {
+		t.Fatalf("rtk must stay last (%d,%d):\n%s", u, r, got)
+	}
+}
+
+// kiro は global steering ディレクトリに AF 専用の 1 本を置く。他人の steering は触らない。
+func TestKiroLeavesOtherSteeringFilesAlone(t *testing.T) {
+	instrEnv(t)
+	mine := filepath.Join(filepath.Dir(kiro.UserInstructionsPath()), "team-conventions.md")
+	if err := os.MkdirAll(filepath.Dir(mine), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mine, []byte("# team\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := userinstr.SaveText("KIROTEXT\n"); err != nil {
+		t.Fatal(err)
+	}
+	reconcileAgentInstructions()
+	if !strings.Contains(read(t, kiro.UserInstructionsPath()), "KIROTEXT") {
+		t.Fatal("kiro artifact not written")
+	}
+	if err := userinstr.SaveText(""); err != nil {
+		t.Fatal(err)
+	}
+	reconcileAgentInstructions()
+	if read(t, kiro.UserInstructionsPath()) != "" {
+		t.Fatal("clearing the body must remove af's steering file")
+	}
+	if read(t, mine) != "# team\n" {
+		t.Fatal("af removed a steering file that is not its own")
+	}
+}
+
 func TestStateListsUnsupportedKindsWithReasons(t *testing.T) {
 	instrEnv(t)
 	targets := instrState()["targets"].([]instrTarget)
-	want := map[string]string{"cursor": "no_user_scope", "agy": "not_wired", "kiro": "unverified"}
+	// cursor だけは実装待ちではなく**構造的に配れない**（ローカルに user 層が無い）。
+	want := map[string]string{"cursor": "no_user_scope"}
 	for _, tgt := range targets {
 		if reason, ok := want[tgt.Kind]; ok {
 			if tgt.Supported || tgt.Reason != reason {

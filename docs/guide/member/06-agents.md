@@ -233,9 +233,9 @@ Instructions come in three layers, and this setting is the **middle** one.
 
 - **It is never committed to a repository.** It affects you, not your colleagues.
 - It applies to **sessions started from now on**. Running sessions keep what they read at start.
-- It can be delivered to claude / codex / opencode / GitHub Copilot. Agents that can't take it
-  still appear in the list with the reason (Cursor has no local per-user place for instructions,
-  so it can't be supported).
+- It can be delivered to claude / codex / opencode / GitHub Copilot / agy / Kiro. **Cursor is the only
+  one that can't take it**, and it still appears in the list with the reason (Cursor keeps User Rules in
+  your Cursor account, with no local per-user place for instructions).
 - Each row shows **which file it was written to** and **whether it is actually in effect**. When
   something saved but isn't in effect, that row says why.
 - There is a length limit: this text rides along in **every session's context, every time**, so
