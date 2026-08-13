@@ -121,7 +121,12 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # recommendation (suppressed by --no-install-recommends). Bump the ARG after Debian
 # publishes the same security build for both architectures. Fonts and fontconfig are
 # explicit so Japanese pages render without depending on a transient recommendation.
-ARG CHROMIUM_VERSION=151.0.7922.71-1~deb12u1
+# ⚠ bookworm-security は「現行ビルドだけ」を持ち、古い版はミラーから消える。ピンを
+# 放置すると、この層のキャッシュが破れた次のビルドで `Version ... was not found` と
+# 落ちる（＝別の ARG を触った瞬間に無関係に見える形で発火する）。上流のセキュリティ
+# 更新に追随して bump すること。現行版は
+# `curl -fsSL http://security.debian.org/debian-security/dists/bookworm-security/main/binary-<arch>/Packages.xz | xz -dc | grep -A5 '^Package: chromium$'` で確認できる。
+ARG CHROMIUM_VERSION=151.0.7922.137-1~deb12u1
 # BAKE_OPTIONAL_TOOLS=0（native lean rootfs）は chromium 本体・CJK フォントを焼かず
 # オンデマンド DL（P2 の install-chromium、CHROMIUM_DL_VERSION ピン）に回すが、
 # その DL 版が動くための実行時ライブラリと fontconfig/DejaVu はここで明示導入する
