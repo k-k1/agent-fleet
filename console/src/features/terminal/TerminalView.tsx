@@ -218,8 +218,10 @@ export function TerminalView({
         className="view-head-term"
         actions={
           <>
-            {headerActions}
             {canMirror && <MirrorToggle mirror={mirror} onToggle={onToggleMirror} running={running} />}
+            {/* 末尾＝右端。ミラー側（MirrorView）と同じ並びにして、チャット/ターミナルを
+                切り替えてもセル操作ボタンが同じ位置に留まるようにする。 */}
+            {headerActions}
           </>
         }
       >

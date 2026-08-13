@@ -251,9 +251,10 @@ function PopulatedPane({
     const session = sessionByName.get(view.session);
     return session ? stateInfo(session) : null;
   };
-  // The selected session can be shown either as terminal or chat. Keep these
-  // cell actions in the respective header, immediately before that switch,
-  // so they never disappear merely because the user chose チャット.
+  // The selected session can be shown either as terminal or chat, so these cell
+  // actions live in BOTH headers — they never disappear merely because the user
+  // chose チャット. Each header renders them LAST, i.e. flush right, where the
+  // floating cluster sits in a non-tabbed pane (panes.css .tab-pane-actions).
   const tabHeaderActions = tabbed ? (
     <span className="tab-pane-actions">
       {showPopout && (

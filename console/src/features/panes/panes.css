@@ -75,7 +75,37 @@
    feeds ViewHead's `actions` (ui/ViewHead.tsx — SINGLE owner of the
    .view-head-actions rule; do not redeclare it here). Views outside that
    component (.shared-view-head, the browser toolbars) render the same
-   `headerActions` through their own trailing `.view-head-actions` span. */
+   `headerActions` through their own trailing `.view-head-actions` span.
+
+   Because the floating cluster is NOT rendered here, the right gutter every head
+   reserves for it (--pane-ctl-w, and the per-view extras in scm.css) is dead
+   space that pushed the buttons ~64px in from the pane edge — measured 229px
+   from the edge on a mirror head, since the チャット/ターミナル switch sat to
+   their right on top of that. Zero the reserve and inset the heads by the 8px
+   the floating cluster itself uses, so the buttons land in the SAME spot they
+   occupy in a non-tabbed pane. */
+.pane:has(.pane-tabs) {
+  --pane-ctl-w: 0px;
+}
+.pane:has(.pane-tabs) .view-head,
+.pane:has(.pane-tabs) .fileview > .view-head,
+.pane:has(.pane-tabs) .scmview > .view-head {
+  padding-right: 8px;
+}
+/* The pane's own cell actions travel as one unit (Pane.tsx) so they stay a
+   recognisable group when a view puts its own buttons in the same row; the
+   hairline separates them from whatever precedes them (e.g. the mirror switch),
+   mirroring the divider the floating cluster draws before its close button. */
+.tab-pane-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.tab-pane-actions:not(:only-child) {
+  margin-left: 2px;
+  padding-left: 7px;
+  border-left: 1px solid var(--border);
+}
 .pane-tab {
   position: relative;
   display: flex;
