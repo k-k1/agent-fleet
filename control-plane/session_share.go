@@ -17,6 +17,9 @@ const (
 	shareProposalMaxBytes = 32 << 10
 	shareProposalMaxOpen  = 20
 	shareOwnerLease       = 2 * time.Minute
+	// How long a reconciled owner inventory is trusted before authorizeCatalog syncs
+	// again. Bounds only deletion-detection lag, never ACL evaluation — see freshCatalog.
+	shareCatalogTTL = 10 * time.Second
 )
 
 type shareReadWindow struct {
@@ -28,10 +31,53 @@ type sessionShareAPI struct {
 	memberAuth
 	readMu *sync.Mutex
 	reads  map[string]shareReadWindow
+	// syncedAt: when this owner's live inventory was last reconciled. See freshCatalog.
+	syncedAt map[string]time.Time
 }
 
 func newSessionShareAPI(m *manager) sessionShareAPI {
-	return sessionShareAPI{memberAuth: memberAuth{m}, readMu: &sync.Mutex{}, reads: map[string]shareReadWindow{}}
+	return sessionShareAPI{memberAuth: memberAuth{m}, readMu: &sync.Mutex{},
+		reads: map[string]shareReadWindow{}, syncedAt: map[string]time.Time{}}
+}
+
+// freshCatalog reports whether this owner's inventory was reconciled recently enough to
+// skip another round trip, and stamps it when it isn't.
+//
+// syncCatalogLocked costs two HTTP calls into the owner's Workspace Agent
+// (/sessions/catalog + /repos) plus a full ReplaceSharedSessionCatalog, under a per-owner
+// mutex. Running that on EVERY transcript poll — once per recipient every couple of
+// seconds — was the dominant cost of reading a shared session, and the reason the first
+// screenful took so long to appear.
+//
+// This throttles ONLY the inventory reconciliation. Authorization is unaffected:
+// authorizeCatalog still evaluates the share rules against the database on every single
+// request, so revoking a share still takes effect immediately. What can now lag, by at
+// most shareCatalogTTL, is noticing that the owner deleted the session or working copy
+// upstream — the same staleness the periodic list refresh already lives with.
+func (a sessionShareAPI) freshCatalog(owner string) bool {
+	a.readMu.Lock()
+	defer a.readMu.Unlock()
+	now := time.Now()
+	if at, ok := a.syncedAt[owner]; ok && now.Sub(at) < shareCatalogTTL {
+		return true
+	}
+	if len(a.syncedAt) > 10_000 {
+		for k, at := range a.syncedAt {
+			if now.Sub(at) >= shareCatalogTTL {
+				delete(a.syncedAt, k)
+			}
+		}
+	}
+	a.syncedAt[owner] = now
+	return false
+}
+
+// invalidateCatalog forces the next authorizeCatalog to reconcile, for the paths that
+// just changed the inventory themselves and must not read their own stale stamp.
+func (a sessionShareAPI) invalidateCatalog(owner string) {
+	a.readMu.Lock()
+	defer a.readMu.Unlock()
+	delete(a.syncedAt, owner)
 }
 
 func (a sessionShareAPI) allowRead(key string) bool {
@@ -462,8 +508,11 @@ func (a sessionShareAPI) authorizeCatalog(ctx context.Context, mv MembershipView
 	}
 	// Direct catalog URLs must not bypass live inventory reconciliation. A deleted
 	// session or working copy removes its catalog/rule before ACL evaluation.
-	if res.rt.State(ctx) == "running" {
+	// Throttled per owner (freshCatalog): the ACL check below still runs every request,
+	// so this bounds only how long an upstream deletion can go unnoticed.
+	if res.rt.State(ctx) == "running" && !a.freshCatalog(c.OwnerMembershipID) {
 		if err := a.syncCatalog(ctx, res); err != nil {
+			a.invalidateCatalog(c.OwnerMembershipID) // failed sync must not count as fresh
 			return c, nil, &apiError{502, "owner_workspace_unreachable", "owner workspace inventory is unavailable"}
 		}
 		c, ok, err = a.mgr.store.GetSharedSessionCatalog(ctx, id)
@@ -538,8 +587,12 @@ func sharedTranscriptDTO(payload map[string]any) map[string]any {
 			continue
 		}
 		t := map[string]any{}
+		// "compact" is a display flag (this turn is claude's auto-compaction summary), not
+		// a coordinate: it carries no path and no Workspace location, and the summary text
+		// it labels already flows through "text". Without it the recipient renders a
+		// compaction summary as an ordinary giant turn.
 		copyAllowed(t, turn, "role", "text", "source", "model", "effort", "ctxWindow", "sidechain",
-			"inTok", "outTok", "cacheRead", "cacheCreate", "ts", "endTs", "idx", "anchorId")
+			"compact", "inTok", "outTok", "cacheRead", "cacheCreate", "ts", "endTs", "idx", "anchorId")
 		parts, _ := turn["parts"].([]any)
 		visibleParts := make([]any, 0, len(parts))
 		for _, partRaw := range parts {
