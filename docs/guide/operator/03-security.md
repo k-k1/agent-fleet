@@ -82,6 +82,35 @@ in the Console.
 > For now, understand that you can operate up to the "observe and grow the allowlist" stage.
 > The full design picture is in [dev/07 §7.8](../../dev/07-security.md).
 
+## MCP servers and external connections
+
+Users register **their own MCP servers** under ⚙ Settings → MCP servers, and a tenant admin can
+**distribute one to every member** ([admin/04](../admin/04-mcp-egress.md)). Four things matter to
+an operator.
+
+- **Where secrets live.** Environment variable and header values are stored with envelope
+  encryption and handed over only when the server starts; nothing is left in a config file in the
+  clear.
+- **Only remote (HTTP) can be distributed.** Distributing stdio would be equivalent to an admin
+  running an arbitrary command in everybody's container, so it is forbidden by design (a personal
+  registration may still use stdio).
+- **It is coupled to egress.** A registration does nothing if its destination host is not on the
+  allowlist. A user's request for one arrives in the Admin egress tab as "Proposed (needs
+  approval)" — see the procedure above.
+- **There is an inbound door too.** A user can issue an **MCP token** and drive their workspace
+  from Claude Code / Claude Desktop on their own machine. The endpoint is `/mcp` (Bearer auth);
+  on the deployment side it depends on the feature flag (`AF_MCP_ENABLED`) and on whether the
+  ingress passes `/mcp`. The scope (read / write / admin:dangerous) and the expiry are the user's
+  choice, and they can revoke it themselves.
+
+## Handing over the in-workspace browser
+
+An agent can hand a page from the Chromium it started inside the workspace to the user as a
+Console pane (so a human can perform a login, say). Remote debugging is exposed on **loopback
+only**, an attachment starts in **view-only** (it rejects every input from the user) and must be
+explicitly moved to user-control before they can operate it. Not putting CDP endpoints or cookies
+into answers, logs or commits is part of the agent-side instructions as well.
+
 ## Other operational controls
 
 - **The login allowlist is fail-closed.** If all 3 of the `AF_OAUTH_ALLOWED_*` variables are
