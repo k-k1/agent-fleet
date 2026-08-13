@@ -77,7 +77,7 @@ export function SharedSessionView({ sharedSessionId }: { sharedSessionId: string
     <div className="shared-view">
       <header className="shared-view-head">
         <div><Icon name="broadcast" /> <strong>{meta.title || meta.label || meta.name}</strong></div>
-        <small>{meta.ownerUserKey} · {meta.permission.toUpperCase()} · {meta.archived ? tr("share.archived") : meta.state}</small>
+        <small>{meta.ownerUserKey} · {tr(meta.permission === "rw" ? "share.permission_rw" : "share.permission_ro")} · {meta.archived ? tr("share.archived") : meta.state}</small>
       </header>
       <div className="shared-view-body" tabIndex={-1}>
         {error && <div className="shared-view-notice">{error}</div>}

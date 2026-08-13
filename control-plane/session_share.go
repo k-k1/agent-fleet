@@ -79,6 +79,33 @@ func (a sessionShareAPI) syncCatalogLocked(ctx context.Context, res *resolved) e
 	if err := json.Unmarshal([]byte(body), &wire); err != nil {
 		return err
 	}
+	// worktree/parent(受信側のプロジェクト/worktreeツリー表示用、docs/59)は working
+	// copy 単位の情報なので /repos から working_copy_id をキーに引く。取得できなくても
+	// (一時的な Agent 到達不可等)catalog 自体の同期は継続する — この付随情報が
+	// 新規行なら空のままになるだけで、下の失効プルーニング(validWorkingCopy==nil)と
+	// 同じ「transient error では何もしない」方針を踏襲する。
+	type repoInfo struct {
+		worktree bool
+		parent   string
+	}
+	byWorkingCopy := map[string]repoInfo{}
+	var validWorkingCopy map[string]bool
+	if reposBody, reposErr := agentText(ctx, res.rt, http.MethodGet, "/repos", nil); reposErr == nil {
+		var inventory struct {
+			Repos []struct {
+				WorkingCopyID string `json:"workingCopyId"`
+				Worktree      bool   `json:"worktree"`
+				Parent        string `json:"parent"`
+			} `json:"repos"`
+		}
+		if json.Unmarshal([]byte(reposBody), &inventory) == nil {
+			validWorkingCopy = map[string]bool{}
+			for _, repo := range inventory.Repos {
+				byWorkingCopy[repo.WorkingCopyID] = repoInfo{worktree: repo.Worktree, parent: repo.Parent}
+				validWorkingCopy[repo.WorkingCopyID] = true
+			}
+		}
+	}
 	now := nowTS()
 	rows := make([]SharedSessionCatalog, 0, len(wire.Sessions))
 	for _, s := range wire.Sessions {
@@ -86,10 +113,11 @@ func (a sessionShareAPI) syncCatalogLocked(ctx context.Context, res *resolved) e
 		if s.Alive {
 			state = "running"
 		}
+		info := byWorkingCopy[s.WorkingCopyID]
 		rows = append(rows, SharedSessionCatalog{ID: newID(), WorkspaceID: res.ws.ID,
 			OwnerMembershipID: res.mv.MembershipID, Name: s.Name, Kind: s.Kind, Dir: s.Dir, Repo: s.Repo,
 			WorkingCopyID: s.WorkingCopyID, Title: s.Title, Label: s.Label, CreatedAt: s.CreatedAt,
-			State: state, Archived: s.Archived, LastSeen: now})
+			State: state, Archived: s.Archived, LastSeen: now, Worktree: info.worktree, Parent: info.parent})
 	}
 	if err := a.mgr.store.ReplaceSharedSessionCatalog(ctx, res.ws.ID, res.mv.MembershipID, rows); errors.Is(err, errSessionShareOwnerBusy) {
 		return nil // another CP replica is applying an already-authorized operation
@@ -98,26 +126,12 @@ func (a sessionShareAPI) syncCatalogLocked(ctx context.Context, res *resolved) e
 	}
 	// A deleted working copy terminates its dynamic rule. Only prune after a
 	// successful live inventory, never on a transient Agent error.
-	reposBody, err := agentText(ctx, res.rt, http.MethodGet, "/repos", nil)
-	if err != nil {
+	if validWorkingCopy == nil {
 		return nil
-	}
-	var inventory struct {
-		Repos []struct {
-			WorkingCopyID string `json:"workingCopyId"`
-			Worktree      bool   `json:"worktree"`
-		} `json:"repos"`
-	}
-	if json.Unmarshal([]byte(reposBody), &inventory) != nil {
-		return nil
-	}
-	valid := map[string]bool{}
-	for _, repo := range inventory.Repos {
-		valid[repo.WorkingCopyID] = true
 	}
 	shares, _ := a.mgr.store.ListSessionSharesByOwner(ctx, res.mv.MembershipID)
 	for _, share := range shares {
-		if share.ScopeType != "session" && !valid[share.ScopeKey] {
+		if share.ScopeType != "session" && !validWorkingCopy[share.ScopeKey] {
 			_ = a.mgr.store.DeleteSessionSharesByScope(ctx, res.mv.MembershipID, share.ScopeType, share.ScopeKey)
 		}
 	}
@@ -428,7 +442,7 @@ func (a sessionShareAPI) listReceived(w http.ResponseWriter, r *http.Request, _ 
 			if p == "" {
 				continue
 			}
-			out = append(out, map[string]any{"id": c.ID, "ownerUserKey": ownerKeys[owner], "name": c.Name, "kind": c.Kind, "repo": c.Repo, "workingCopyId": c.WorkingCopyID, "title": c.Title, "label": c.Label, "createdAt": c.CreatedAt, "state": c.State, "archived": c.Archived, "permission": p, "workspaceState": wsState})
+			out = append(out, map[string]any{"id": c.ID, "ownerUserKey": ownerKeys[owner], "name": c.Name, "kind": c.Kind, "repo": c.Repo, "workingCopyId": c.WorkingCopyID, "title": c.Title, "label": c.Label, "createdAt": c.CreatedAt, "state": c.State, "archived": c.Archived, "permission": p, "workspaceState": wsState, "worktree": c.Worktree, "parent": c.Parent})
 		}
 	}
 	writeJSON(w, 200, map[string]any{"sessions": out})

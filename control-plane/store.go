@@ -267,6 +267,10 @@ type SharedSessionCatalog struct {
 	ID, WorkspaceID, OwnerMembershipID, Name, Kind, Dir, Repo string
 	WorkingCopyID, Title, Label, CreatedAt, State, LastSeen   string
 	Archived                                                  bool
+	// Worktree/Parent: docs/59 の受信側プロジェクト/worktreeツリー表示用。
+	// Parent は worktree の場合のみ、親(ベース)working copy のフォルダ名。
+	Worktree bool
+	Parent   string
 }
 
 type SessionShareProposal struct {
