@@ -66,8 +66,11 @@ export function MarkdownView({
 }: MarkdownViewProps) {
   const ref = useRef<HTMLDivElement>(null);
   const toast = useToast();
+  const settings = useSettings();
   // Follow the app theme so mermaid diagrams re-render in matching colors.
-  const theme = useSettings().theme === "light" ? "light" : "dark";
+  const theme = settings.theme === "light" ? "light" : "dark";
+  // Initial line-wrap state for each fenced code block's own wrap toggle.
+  const codeWrapDefault = settings.markdownCodeWrap;
   // Callers pass inline arrow callbacks (new identity every render), and panes
   // re-render on hover/focus — keep the latest callbacks in refs so the render
   // effect doesn't depend on them. Otherwise every pane hover re-parsed the whole
@@ -178,7 +181,7 @@ export function MarkdownView({
       try {
         hljs.highlightElement(code);
       } catch {}
-      addCopyButton(code);
+      addCopyButton(code, codeWrapDefault);
     });
     el.querySelectorAll<HTMLElement>("blockquote").forEach(addQuoteCopyButton);
 
@@ -213,7 +216,7 @@ export function MarkdownView({
       alive = false;
       stickyCleanup();
     };
-  }, [source, basePath, baseDir, repo, breaks, streaming, theme, toast]);
+  }, [source, basePath, baseDir, repo, breaks, streaming, theme, codeWrapDefault, toast]);
 
   return <div className="markdown" ref={ref} />;
 }
@@ -602,7 +605,7 @@ function setupStickyHeadings(md: HTMLElement, scroller: HTMLElement): () => void
 // addCopyButton pins code actions at the bottom-right of a fenced code block: copy
 // copies exactly that block, while wrap toggles its own line wrapping. Imperative
 // because the markdown is rendered as sanitized innerHTML, not React nodes.
-function addCopyButton(code: HTMLElement) {
+function addCopyButton(code: HTMLElement, wrapDefault: boolean) {
   const pre = code.parentElement;
   if (!pre) return;
   // Wrap the <pre> so the button pins to the visible bottom-right corner rather than
@@ -625,7 +628,8 @@ function addCopyButton(code: HTMLElement) {
     wrapBtn.setAttribute("aria-pressed", String(enabled));
   };
   wrapBtn.innerHTML = '<i class="codicon codicon-word-wrap"></i>';
-  updateWrapLabel(false);
+  if (wrapDefault) pre.classList.add("md-code-wrap");
+  updateWrapLabel(wrapDefault);
   wrapBtn.addEventListener("click", () => {
     updateWrapLabel(pre.classList.toggle("md-code-wrap"));
   });

@@ -185,6 +185,11 @@ export interface Settings {
   wrap: boolean;
   tabSize: number;
   minimap: boolean;
+  // Markdown ビュー（Doc/File プレビュー・チャット内マークダウン）のコードブロックを既定で
+  // 折り返し表示するか。各ブロック右下のトグルボタン（features/viewer/MarkdownView.tsx）の
+  // 初期状態になる（ボタンでブロックごとに個別に上書き可能、その上書き自体は永続化しない）。
+  // 既定 true — 横スクロールより折り返しの方が読みやすいことが多いため。
+  markdownCodeWrap: boolean;
   iconSet: string;
   theme: string;
   /** Main-area layout profile. Stored only on this device; each profile's
@@ -531,6 +536,7 @@ const DEFAULTS: Settings = {
   wrap: false,
   tabSize: 4,
   minimap: true,
+  markdownCodeWrap: true,
   iconSet: "vscode",
   theme: "dark",
   paneLayout: "split",

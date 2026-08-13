@@ -246,6 +246,8 @@ export const ja = {
   "display.line_numbers": "行番号",
   "display.wrap": "折り返し",
   "display.minimap": "ミニマップ",
+  "display.markdown": "Markdown表示",
+  "display.markdown_wrap": "コードブロックを折り返す",
   "display.session_mirror": "セッションのチャット",
   "display.send_key": "送信キー",
   "display.send_note_enter": "Enter で送信、Shift+Enter で改行。セッション・アシスタントのチャットなど、複数行の入力欄に共通です。",
