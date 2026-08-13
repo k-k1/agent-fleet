@@ -17,9 +17,20 @@ const (
 	shareProposalMaxBytes = 32 << 10
 	shareProposalMaxOpen  = 20
 	shareOwnerLease       = 2 * time.Minute
-	// How long a reconciled owner inventory is trusted before authorizeCatalog syncs
-	// again. Bounds only deletion-detection lag, never ACL evaluation — see freshCatalog.
-	shareCatalogTTL = 10 * time.Second
+	// How long a reconciled owner inventory is trusted before syncing again. Bounds only
+	// deletion-detection (and状態バッジ) lag, never ACL evaluation — see freshCatalog.
+	//
+	// Two tiers, because the two readers want opposite things. Opening a shared session
+	// (authorizeCatalog) is a deliberate act on ONE session and must not serve a session
+	// the owner just deleted, so it stays tight. The list is a background poll running in
+	// every recipient's tab; keeping it tight meant a steady stream of round trips into
+	// somebody else's Workspace for a rail nobody is looking at. It refreshes lazily and
+	// the user pulls a fresh one on demand (?refresh=1 — the section's reload button).
+	shareCatalogTTL     = 10 * time.Second
+	shareListCatalogTTL = 60 * time.Second
+	// Floor for an explicit reload, so the button cannot be held down as an amplifier
+	// into the owner's Workspace.
+	shareForcedCatalogTTL = 3 * time.Second
 )
 
 type shareReadWindow struct {
@@ -52,18 +63,18 @@ func newSessionShareAPI(m *manager) sessionShareAPI {
 // This throttles ONLY the inventory reconciliation. Authorization is unaffected:
 // authorizeCatalog still evaluates the share rules against the database on every single
 // request, so revoking a share still takes effect immediately. What can now lag, by at
-// most shareCatalogTTL, is noticing that the owner deleted the session or working copy
-// upstream — the same staleness the periodic list refresh already lives with.
-func (a sessionShareAPI) freshCatalog(owner string) bool {
+// most `ttl`, is noticing that the owner deleted the session or working copy upstream,
+// and how current the per-session 状態 badge is.
+func (a sessionShareAPI) freshCatalog(owner string, ttl time.Duration) bool {
 	a.readMu.Lock()
 	defer a.readMu.Unlock()
 	now := time.Now()
-	if at, ok := a.syncedAt[owner]; ok && now.Sub(at) < shareCatalogTTL {
+	if at, ok := a.syncedAt[owner]; ok && now.Sub(at) < ttl {
 		return true
 	}
 	if len(a.syncedAt) > 10_000 {
 		for k, at := range a.syncedAt {
-			if now.Sub(at) >= shareCatalogTTL {
+			if now.Sub(at) >= shareListCatalogTTL {
 				delete(a.syncedAt, k)
 			}
 		}
@@ -176,16 +187,19 @@ func (a sessionShareAPI) syncCatalogLocked(ctx context.Context, res *resolved) (
 	now := nowTS()
 	rows := make([]SharedSessionCatalog, 0, len(wire.Sessions))
 	for _, s := range wire.Sessions {
-		state := "stopped"
+		// state は生存(running/stopped)、activity は Agent の live state(working /
+		// question / …)。停止中に前回の activity を残すと「進行中のまま止まった」ように
+		// 見えるので、生きている間だけ持たせる。
+		state, activity := "stopped", ""
 		if s.Alive {
-			state = "running"
+			state, activity = "running", s.State
 		}
 		info := byWorkingCopy[s.WorkingCopyID]
 		rows = append(rows, SharedSessionCatalog{ID: newID(), WorkspaceID: res.ws.ID,
 			OwnerMembershipID: res.mv.MembershipID, Name: s.Name, Kind: s.Kind, Dir: s.Dir, Repo: s.Repo,
 			WorkingCopyID: s.WorkingCopyID, Title: s.Title, Label: s.Label, CreatedAt: s.CreatedAt,
 			State: state, Archived: s.Archived, LastSeen: now, Worktree: info.worktree, Parent: info.parent,
-			ParentWorkingCopyID: info.parentWC, Branch: info.branch})
+			ParentWorkingCopyID: info.parentWC, Branch: info.branch, Activity: activity})
 	}
 	if err := a.mgr.store.ReplaceSharedSessionCatalog(ctx, res.ws.ID, res.mv.MembershipID, rows); errors.Is(err, errSessionShareOwnerBusy) {
 		return byWorkingCopy, nil // another CP replica is applying an already-authorized operation
@@ -487,6 +501,13 @@ func (a sessionShareAPI) listReceived(w http.ResponseWriter, r *http.Request, _ 
 	for _, m := range members {
 		ownerKeys[m.MembershipID] = m.UserKey
 	}
+	// ?refresh=1 は「今の状態を取り直す」明示操作(共有セクションのリロードボタン)。
+	// 定期ポーリングの間引きを飛び越えるが、下限(shareForcedCatalogTTL)は残す —
+	// 押しっぱなしが所有者 Workspace への増幅器にならないように。
+	ttl := shareListCatalogTTL
+	if r.URL.Query().Get("refresh") == "1" {
+		ttl = shareForcedCatalogTTL
+	}
 	out := []any{}
 	for owner := range owners {
 		// 所有者ごとに1回だけ解決する。State() は docker inspect 相当の外部呼び出しで、
@@ -497,12 +518,12 @@ func (a sessionShareAPI) listReceived(w http.ResponseWriter, r *http.Request, _ 
 		if e == nil {
 			wsState = res.rt.State(r.Context())
 		}
-		// 在庫の再突合は authorizeCatalog と同じ per-owner throttle に乗せる。同期は
-		// 所有者の share ロックを握ったまま Agent へ2往復するので、5秒ポーリングごとに
-		// 走らせると共有の作成/解除(同じロックを取る)がその裏で待たされていた。ここで
-		// 遅れるのは「所有者が消した/アーカイブしたことに気付く」までの最大 10 秒だけで、
+		// 在庫の再突合は per-owner throttle に乗せる。同期は所有者の share ロックを
+		// 握ったまま Agent へ2往復するので、5秒ポーリングごとに走らせると共有の
+		// 作成/解除(同じロックを取る)がその裏で待たされていた。ここで遅れるのは
+		// 「所有者が消した/アーカイブしたことに気付く」までと状態バッジの鮮度だけで、
 		// ACL は下の effectivePermission が毎回 DB から評価する。
-		if e == nil && wsState == "running" && !a.freshCatalog(owner) {
+		if e == nil && wsState == "running" && !a.freshCatalog(owner, ttl) {
 			if err := a.syncCatalog(r.Context(), res); err != nil {
 				a.invalidateCatalog(owner) // 失敗を「同期済み」として数えない
 			}
@@ -519,7 +540,7 @@ func (a sessionShareAPI) listReceived(w http.ResponseWriter, r *http.Request, _ 
 			if p == "" {
 				continue
 			}
-			out = append(out, map[string]any{"id": c.ID, "ownerUserKey": ownerKeys[owner], "name": c.Name, "kind": c.Kind, "repo": c.Repo, "workingCopyId": c.WorkingCopyID, "title": c.Title, "label": c.Label, "createdAt": c.CreatedAt, "state": c.State, "permission": p, "workspaceState": wsState, "worktree": c.Worktree, "parent": c.Parent,
+			out = append(out, map[string]any{"id": c.ID, "ownerUserKey": ownerKeys[owner], "name": c.Name, "kind": c.Kind, "repo": c.Repo, "workingCopyId": c.WorkingCopyID, "title": c.Title, "label": c.Label, "createdAt": c.CreatedAt, "state": c.State, "permission": p, "workspaceState": wsState, "worktree": c.Worktree, "parent": c.Parent, "activity": c.Activity,
 				// ブランチは作業コピーの表示ラベル(所有者側の repo 行と同じ)。転写 DTO が落とす
 				// turn の branch(会話の描画に不要な座標)とは別物で、これが無いと worktree は
 				// ランダム slug のフォルダ名でしか見分けられない。
@@ -545,7 +566,7 @@ func (a sessionShareAPI) authorizeCatalog(ctx context.Context, mv MembershipView
 	// session or working copy removes its catalog/rule before ACL evaluation.
 	// Throttled per owner (freshCatalog): the ACL check below still runs every request,
 	// so this bounds only how long an upstream deletion can go unnoticed.
-	if res.rt.State(ctx) == "running" && !a.freshCatalog(c.OwnerMembershipID) {
+	if res.rt.State(ctx) == "running" && !a.freshCatalog(c.OwnerMembershipID, shareCatalogTTL) {
 		if err := a.syncCatalog(ctx, res); err != nil {
 			a.invalidateCatalog(c.OwnerMembershipID) // failed sync must not count as fresh
 			return c, nil, &apiError{502, "owner_workspace_unreachable", "owner workspace inventory is unavailable"}

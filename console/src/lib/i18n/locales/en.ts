@@ -3595,6 +3595,7 @@ export const en: Record<keyof typeof ja, string> = {
 
   "share.shared_sessions": "Shared sessions",
   "share.list_title": "Shares",
+  "share.reload": "Refresh",
   "share.create_title": "Share",
   "share.new": "New share…",
   "share.no_shares": "You haven't shared anything yet.",

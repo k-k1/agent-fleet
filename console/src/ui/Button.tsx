@@ -30,10 +30,12 @@ export interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement>
   icon: string;
   /** Accessible name; also the tooltip. Icon-only buttons MUST be labeled. */
   label: string;
+  /** Spin the icon (in-flight action), same modifier Icon uses. */
+  spin?: boolean;
   variant?: ButtonVariant;
 }
 
-export function IconButton({ icon, label, variant = "ghost", className, ...rest }: IconButtonProps) {
+export function IconButton({ icon, label, variant = "ghost", spin, className, ...rest }: IconButtonProps) {
   return (
     <button
       type="button"
@@ -42,7 +44,7 @@ export function IconButton({ icon, label, variant = "ghost", className, ...rest 
       title={label}
       {...rest}
     >
-      <span className={`codicon codicon-${icon}`} aria-hidden="true" />
+      <span className={`codicon codicon-${icon}` + (spin ? " codicon-spin" : "")} aria-hidden="true" />
     </button>
   );
 }
