@@ -261,33 +261,6 @@ function PopulatedPane({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [views, sessionByName, tr],
   );
-  // The selected session can be shown either as terminal or chat. Keep these
-  // cell actions in the respective header, immediately before that switch,
-  // so they never disappear merely because the user chose チャット.
-  const tabHeaderActions = tabbed ? (
-    <span className="tab-pane-actions">
-      {showPopout && (
-        <IconButton
-          icon="link-external"
-          label={tr("ui.popout_pane_hint")}
-          onClick={() => openPanePopout(pane, "popout")}
-        />
-      )}
-      {canClose && (
-        <IconButton
-          icon="close"
-          label={tr("ui.close_pane_hint")}
-          className="pane-close"
-          onMouseDown={(e) => e.button === 1 && e.preventDefault()}
-          onAuxClick={(e) => {
-            if (e.button === 1) { e.preventDefault(); onClose(cell.id, true); }
-          }}
-          onClick={(e) => onClose(cell.id, e.ctrlKey || e.metaKey)}
-        />
-      )}
-    </span>
-  ) : undefined;
-
   const onDragStart = (e: RDragEvent) => {
     e.dataTransfer.setData(DND, cell.id);
     e.dataTransfer.effectAllowed = "move";
@@ -442,7 +415,7 @@ function PopulatedPane({
           {ordinal ?? <span className="codicon codicon-gripper" aria-hidden="true" />}
         </button>
       )}
-      {!(tabbed && isTerm) && <div className="pane-controls">
+      <div className="pane-controls">
         {showPopout && (
           <IconButton
             icon="link-external"
@@ -467,13 +440,13 @@ function PopulatedPane({
             onAuxClick={(e) => {
               if (e.button === 1) {
                 e.preventDefault();
-                onClose(pane.id, true);
+                onClose(cell.id, true);
               }
             }}
-            onClick={(e) => onClose(pane.id, e.ctrlKey || e.metaKey)}
+            onClick={(e) => onClose(cell.id, e.ctrlKey || e.metaKey)}
           />
         )}
-      </div>}
+      </div>
 
       {/* Drop hint while dragging a pane over this one. */}
       {zone && <div className={"drop-indicator zone-" + zone} />}
@@ -503,7 +476,6 @@ function PopulatedPane({
             mirror={mirror}
             onToggleMirror={onToggleMirror}
             onResume={onResume}
-            headerActions={tabHeaderActions}
           />
         </div>
       )}
@@ -517,7 +489,6 @@ function PopulatedPane({
           onToggleMirror={onToggleMirror}
           readOnly={!attached}
           onResume={onResume}
-          headerActions={tabHeaderActions}
         />
       )}
       {pane.content.kind === "scm" && <SourceControlView repo={pane.content.scmRepo} path={pane.content.scmPath} />}

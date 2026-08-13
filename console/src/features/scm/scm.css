@@ -20,24 +20,9 @@
   container-type: inline-size;
 }
 
-/* Generic non-terminal pane header (also reused by the P4 viewers).
-   NO overflow:hidden here — the ⋯ overflow menu (.scm-more-menu) is an
-   absolutely-positioned child and would be clipped invisible. Children carry
-   their own min-width:0 + ellipsis instead. */
-.view-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  /* Right padding reserves room for the pane control cluster overlaid at the
-     top-right (sized from the rendered button count — --pane-ctl-w, panes.css);
-     left padding for the drag grip at the top-left. */
-  padding: 6px var(--pane-ctl-w, 56px) 6px 34px;
-  min-height: 28px;
-  border-bottom: 1px solid var(--border2);
-  background: var(--panel2);
-  font-size: 12px;
-  white-space: nowrap;
-}
+/* The `.view-head` band itself now lives in ui/ui.css (ui/ViewHead.tsx) — it was
+   declared here AND in mirror.css, and the cascade merged the two. Only the
+   per-view padding overrides stay here. */
 /* File panes carry their own right-edge header buttons (path + download) that
    must clear the cluster too → cluster width + their own room. */
 .fileview > .view-head {
@@ -58,9 +43,6 @@
 }
 .view-title .codicon {
   color: var(--accent);
-}
-.view-spacer {
-  flex: 1;
 }
 
 .scm-branch {

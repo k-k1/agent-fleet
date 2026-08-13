@@ -813,3 +813,61 @@
   border-bottom-width: 2px;
   border-radius: 5px;
 }
+
+/* ---- ViewHead (the header band every pane view renders — ui/ViewHead.tsx) ----
+   SINGLE owner of the band. This used to be declared as a bare `.view-head` in
+   BOTH scm.css and mirror.css: same specificity, so the cascade merged them by
+   import order (main.tsx loads scm before mirror) and the rendered band was
+   mirror's gap/min-height/background/border plus scm's font-size/white-space —
+   with neither file's comments aware of the other. The values below are exactly
+   that measured result, so consolidating changed nothing visually.
+
+   Padding encodes the pane's two overlaid chrome items: the drag grip at the
+   top-left (34px) and the control cluster at the top-right, whose width tracks
+   the rendered button count via --pane-ctl-w (panes.css). 56px is the fallback
+   for a head rendered outside a .pane — keep it in sync with panes.css.
+
+   NO overflow:hidden — overflow menus (.scm-more-menu) are absolutely-positioned
+   children and would be clipped invisible. Children carry min-width:0 + ellipsis. */
+.view-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 6px var(--pane-ctl-w, 56px) 6px 34px;
+  background: var(--bar);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  white-space: nowrap;
+}
+/* The terminal band predates the shared one and is still visibly its own thing:
+   shorter (4px block padding, so ~32px vs 36px against the same ~23px seg
+   control) and on the panel tokens rather than the bar tokens. Kept verbatim
+   under a modifier so this consolidation stayed appearance-preserving — aligning
+   it with the shared band is a deliberate visual change, not a refactor. */
+.view-head-term {
+  gap: 8px;
+  min-height: 28px;
+  padding-block: 4px;
+  background: var(--panel2);
+  border-bottom-color: var(--border2);
+  overflow: hidden;
+}
+/* Right-aligned action cluster. Was duplicated verbatim as .pane-head-actions
+   (terminal.css) and .mirror-head-actions (mirror.css). */
+.view-head-actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+/* In a group the actions own the right alignment themselves. */
+.view-head-actions .mirror-toggle {
+  margin-left: 0;
+}
+/* Pushes everything after it to the right edge (views that have no actions
+   cluster, or that need a gap mid-row). */
+.view-spacer {
+  flex: 1;
+}
