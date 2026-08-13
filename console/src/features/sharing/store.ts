@@ -18,17 +18,27 @@ export interface SharedSession {
   parent?: string;
   /** 作業コピーが今チェックアウトしているブランチ(所有者側の repo 行と同じ表示)。 */
   branch?: string;
+  /**
+   * 稼働中セッションの live state(working | question | plan | permission | blocked |
+   * compacting、空=入力待ち)。停止中は空。所有者側と同じ状態チップの素で、鮮度は
+   * 一覧の同期間引き(既定60秒)＋リロードボタン次第(docs/59 §3)。
+   */
+  activity?: string;
 }
 
 interface SharedSessionsStore {
   sessions: SharedSession[];
-  refresh(): Promise<void>;
+  /** force=true(セクションのリロードボタン)は所有者在庫の再取得まで要求する。 */
+  refresh(force?: boolean): Promise<void>;
 }
 
 export const useSharedSessionsStore = create<SharedSessionsStore>((set) => ({
   sessions: [],
-  async refresh() {
-    const d = await api("api/shared-sessions").catch(() => ({ sessions: [] }));
+  async refresh(force?: boolean) {
+    // 既定のポーリングは CP の DB スナップショットを読むだけ(所有者 Workspace へは
+    // 最大60秒に1回しか行かない)。?refresh=1 だけがその間引きを飛び越える — 状態
+    // バッジや削除の反映を「今すぐ」取り直したいのは人が押したときだけなので。
+    const d = await api("api/shared-sessions" + (force ? "?refresh=1" : "")).catch(() => ({ sessions: [] }));
     if (!d?.error) set({ sessions: Array.isArray(d.sessions) ? d.sessions : [] });
   },
 }));

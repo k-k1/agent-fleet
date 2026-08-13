@@ -27,9 +27,15 @@ export const SharedSessionsSection = memo(function SharedSessionsSection() {
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [open, setOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
+  const [reloading, setReloading] = useState(false);
   const loadProposals = () => api("api/session-share-proposals").then((d) => {
     if (!d?.error) setProposals((d.proposals || []).filter((p: Proposal) => p.status === "pending" || p.status === "processing"));
   }).catch(() => {});
+  const reload = async () => {
+    setReloading(true);
+    await Promise.all([useSharedSessionsStore.getState().refresh(true), loadProposals()]);
+    setReloading(false);
+  };
   useEffect(() => {
     const stop = startSharedSessionsPolling();
     const stopMine = startMySharesPolling();
@@ -53,6 +59,11 @@ export const SharedSessionsSection = memo(function SharedSessionsSection() {
       <Section id="shared-sessions" title={tr("share.shared_sessions")} icon="broadcast" count={sessions.length}
         actions={<>
           {proposals.length > 0 && <IconButton icon="mail" label={tr("share.pending", { count: proposals.length })} onClick={() => setOpen(true)} />}
+          {/* 明示リロード。定期ポーリングは CP のスナップショットを読むだけで、所有者
+              Workspace の在庫は最大60秒に1回しか取り直さない(docs/59 §3)ので、状態や
+              増減を今すぐ反映したいときの出口をここに置く。 */}
+          <IconButton icon={reloading ? "loading" : "refresh"} spin={reloading} label={tr("share.reload")}
+            disabled={reloading} onClick={() => void reload()} />
           <IconButton icon="settings-gear" label={tr("share.list_title")} onClick={() => setManageOpen(true)} />
         </>}>
         <ul className="proj-tree sess-list">
