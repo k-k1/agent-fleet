@@ -102,7 +102,9 @@
 .shared-project-head small,
 .shared-node-toggle small { color: var(--muted); }
 .shared-project-head .shared-project-owner { margin-left: auto; }
-.shared-copy-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shared-copy-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* プロジェクト名も長ければ縮む(ブランチと畳んだときの件数を押し出さない)。 */
+.shared-project-head strong { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 畳んだときのセッション数は右端へ。 */
 .shared-project-head > small:last-child,
 .shared-node-toggle > small:last-child { margin-left: auto; }

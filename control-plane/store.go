@@ -276,6 +276,9 @@ type SharedSessionCatalog struct {
 	// するので、ACL 判定はフォルダ名(Parent)ではなくこの ID で行う — 名前は
 	// 付け替えられるが workingCopyId は作業コピーの世代に固定されるため。
 	ParentWorkingCopyID string
+	// Branch は作業コピーが今チェックアウトしているブランチ(表示専用)。worktree の
+	// フォルダ名はランダム slug なので、受信側はこれが無いとどの作業か分からない。
+	Branch string
 }
 
 type SessionShareProposal struct {

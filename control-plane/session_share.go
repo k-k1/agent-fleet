@@ -111,6 +111,7 @@ type repoInfo struct {
 	worktree bool
 	parent   string
 	parentWC string
+	branch   string
 }
 
 func (a sessionShareAPI) syncCatalog(ctx context.Context, res *resolved) error {
@@ -151,6 +152,7 @@ func (a sessionShareAPI) syncCatalogLocked(ctx context.Context, res *resolved) (
 				WorkingCopyID string `json:"workingCopyId"`
 				Worktree      bool   `json:"worktree"`
 				Parent        string `json:"parent"`
+				Branch        string `json:"branch"`
 			} `json:"repos"`
 		}
 		if json.Unmarshal([]byte(reposBody), &inventory) == nil {
@@ -163,7 +165,7 @@ func (a sessionShareAPI) syncCatalogLocked(ctx context.Context, res *resolved) (
 				}
 			}
 			for _, repo := range inventory.Repos {
-				info := repoInfo{worktree: repo.Worktree, parent: repo.Parent}
+				info := repoInfo{worktree: repo.Worktree, parent: repo.Parent, branch: repo.Branch}
 				if repo.Worktree {
 					info.parentWC = wcByName[repo.Parent]
 				}
@@ -183,7 +185,7 @@ func (a sessionShareAPI) syncCatalogLocked(ctx context.Context, res *resolved) (
 			OwnerMembershipID: res.mv.MembershipID, Name: s.Name, Kind: s.Kind, Dir: s.Dir, Repo: s.Repo,
 			WorkingCopyID: s.WorkingCopyID, Title: s.Title, Label: s.Label, CreatedAt: s.CreatedAt,
 			State: state, Archived: s.Archived, LastSeen: now, Worktree: info.worktree, Parent: info.parent,
-			ParentWorkingCopyID: info.parentWC})
+			ParentWorkingCopyID: info.parentWC, Branch: info.branch})
 	}
 	if err := a.mgr.store.ReplaceSharedSessionCatalog(ctx, res.ws.ID, res.mv.MembershipID, rows); errors.Is(err, errSessionShareOwnerBusy) {
 		return byWorkingCopy, nil // another CP replica is applying an already-authorized operation
@@ -517,7 +519,11 @@ func (a sessionShareAPI) listReceived(w http.ResponseWriter, r *http.Request, _ 
 			if p == "" {
 				continue
 			}
-			out = append(out, map[string]any{"id": c.ID, "ownerUserKey": ownerKeys[owner], "name": c.Name, "kind": c.Kind, "repo": c.Repo, "workingCopyId": c.WorkingCopyID, "title": c.Title, "label": c.Label, "createdAt": c.CreatedAt, "state": c.State, "permission": p, "workspaceState": wsState, "worktree": c.Worktree, "parent": c.Parent})
+			out = append(out, map[string]any{"id": c.ID, "ownerUserKey": ownerKeys[owner], "name": c.Name, "kind": c.Kind, "repo": c.Repo, "workingCopyId": c.WorkingCopyID, "title": c.Title, "label": c.Label, "createdAt": c.CreatedAt, "state": c.State, "permission": p, "workspaceState": wsState, "worktree": c.Worktree, "parent": c.Parent,
+				// ブランチは作業コピーの表示ラベル(所有者側の repo 行と同じ)。転写 DTO が落とす
+				// turn の branch(会話の描画に不要な座標)とは別物で、これが無いと worktree は
+				// ランダム slug のフォルダ名でしか見分けられない。
+				"branch": c.Branch})
 		}
 	}
 	writeJSON(w, 200, map[string]any{"sessions": out})
