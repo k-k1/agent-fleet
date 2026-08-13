@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent, DragEvent as RDragEvent } from "react";
+import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent, DragEvent as RDragEvent, ReactNode } from "react";
 import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond, sessionPlanRespond, sessionSettings, sessionSkills, downloadURL } from "../../core/api/client.ts";
 import type { InteractionAnswer, ManagedThreadSettings, SessionSkill, TurnResult } from "../../core/api/client.ts";
 import { isManagedSession } from "../../types/session.ts";
@@ -182,6 +182,7 @@ export function MirrorView({
   onToggleMirror,
   readOnly = false,
   onResume,
+  headerActions,
 }: {
   paneId: string;
   session: string;
@@ -191,6 +192,8 @@ export function MirrorView({
   onToggleMirror: (v: boolean) => void;
   readOnly?: boolean;
   onResume?: () => void;
+  /** Pane popout/wrap/close (tabbed-grid mode only — see Pane.tsx tabHeaderActions). */
+  headerActions?: ReactNode;
 }) {
   const settings = useSettings();
   // Per-agent descriptor: how this session's assistant signs its turns, and which
@@ -2436,8 +2439,11 @@ export function MirrorView({
     >
       <ViewHead
         actions={
-          /* Managed（paneless）セッションにはターミナルが無い — トグル自体を出さない。 */
-          !managed && <MirrorToggle mirror={!!mirror} onToggle={onToggleMirror} running={running} />
+          <>
+            {headerActions}
+            {/* Managed（paneless）セッションにはターミナルが無い — トグル自体を出さない。 */}
+            {!managed && <MirrorToggle mirror={!!mirror} onToggle={onToggleMirror} running={running} />}
+          </>
         }
       >
         {sessionMeta ? (

@@ -1,6 +1,7 @@
 // CommitDetailView — one commit's detail/diff in its own pane (opened from the
 // graph). Port of views/CommitDetailView.
 import { useState } from "react";
+import type { ReactNode } from "react";
 import { api, isTransientErr } from "../../core/api/client.ts";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { Icon } from "../../ui/Icon.tsx";
@@ -10,7 +11,7 @@ import { useT } from "../../lib/i18n/index.ts";
 import { CommitDetail } from "./GitDiff.tsx";
 import type { CommitData, FoldSignal } from "./GitDiff.tsx";
 
-export function CommitDetailView({ repo, path, sha, wrap }: { repo: string; path?: string; sha: string; wrap?: boolean }) {
+export function CommitDetailView({ repo, path, sha, wrap, headerActions }: { repo: string; path?: string; sha: string; wrap?: boolean; headerActions?: ReactNode }) {
   const tr = useT();
   const enc = encodeURIComponent(repo || "");
   const [commit, setCommit] = useState<CommitData | null>(null);
@@ -51,7 +52,7 @@ export function CommitDetailView({ repo, path, sha, wrap }: { repo: string; path
       {/* The fold/wrap buttons sit inline after a spacer rather than in the
           actions slot: the slot packs its contents at 6px, and these three are
           spaced by the head's own 10px gap today. */}
-      <ViewHead>
+      <ViewHead actions={headerActions}>
         <span className="view-title" title={repo || ""}>
           <Icon name="git-commit" /> {repo}{path ? ` / ${path}` : ""} · {(sha || "").slice(0, 10)}
         </span>
