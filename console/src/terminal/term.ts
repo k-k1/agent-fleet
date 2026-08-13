@@ -325,6 +325,15 @@ function evictForeignTerms(it: Inst, el: HTMLElement) {
     const oel = other.term.element;
     if (!oel || oel.parentElement !== el) continue;
     oel.remove();
+    // An evicted terminal is off-screen by definition, so treat it exactly like
+    // hideTerm: give the WebGL context back. A detached canvas holding a live
+    // context is the state this file warns about (a silent reclaim leaves a
+    // renderer that looks alive and can never paint again), and with up to
+    // MAX_TABS=24 terminals in a layout the ~16-contexts-per-tab browser cap is
+    // reachable on its own. TerminalView's reveal effect re-runs on the paneId
+    // change, so coming back rebuilds the renderer (revealTerm → loadWebgl);
+    // should it not, xterm falls back to its DOM renderer — slower, never black.
+    dropWebgl(other);
     // The ResizeObserver watches the CONTAINER, not the terminal, so leaving it
     // connected would keep refitting a pane that no longer lives there. ensureTerm
     // re-observes on the way back in.
