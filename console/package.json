@@ -12,6 +12,7 @@
     "test": "vitest run",
     "i18n:lint": "node scripts/i18n-lint.mjs",
     "shots": "node scripts/shots/capture.mjs",
+    "panes:heads": "node scripts/pane-heads/check.mjs",
     "mirror:scroll": "node scripts/mirror-scroll/check.mjs",
     "mirror:handoff": "node scripts/mirror-handoff/check.mjs"
   },
