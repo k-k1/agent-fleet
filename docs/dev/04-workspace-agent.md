@@ -251,8 +251,9 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
   以後は設定 UI が真実（毎起動 force すると UI と喧嘩する）。**毎起動 refresh するもの**:
   opencode plugin。
   ⚠️ **利用ガイド（`workspace-notes.md`）の配布は entrypoint から agent へ移した**（docs/60 / ADR 0042）。
-  claude=`/etc/claude-code/CLAUDE.md`（managed policy・image 焼込）は据え置き、codex・opencode の
-  `AGENTS.md` は agent の `reconcileAgentInstructions()` が**マーカー付きで合成**する。
+  claude=`/etc/claude-code/CLAUDE.md`（managed policy・image 焼込）は据え置き、codex・opencode・agy の
+  `AGENTS.md` は agent の `reconcileAgentInstructions()` が**マーカー付きで合成**し、copilot・kiro へは
+  AF 専用ファイル（`agent-fleet-guide.*`）で配る。**cursor はローカルに user スコープが無く配れない。**
   以前の `cp -f` はファイルを丸ごと上書きしており、利用者がそこへ書き足した文章が毎起動で
   消えていた（＝ユーザー層を作れない原因）。同じ 1 人の書き手がフリート方針・ユーザー指示・
   rtk ブロックを順に置き、マーカー外は温存する。
