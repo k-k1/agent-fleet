@@ -23,6 +23,7 @@
 .share-target-fixed {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 6px;
   padding: 6px 8px;
   background: var(--panel2);
@@ -30,6 +31,25 @@
   border-radius: 4px;
   color: var(--fg);
 }
+/* 共有先の検索欄 — 候補リストは入力欄の直下に絶対配置する。モーダルは中央寄せの
+   固定サイズなので、右クリックメニュー(SessionRow/RepoRow)の placeFixed のような
+   viewport 端クランプは不要。 */
+.share-recipient-field { position: relative; }
+.share-recipient-suggest {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  margin-top: 2px;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+.share-recipient-suggest .ui-field-hint { padding: 6px 10px; }
 
 .share-list-modal { width: min(560px, calc(100vw - 24px)); }
 .share-list { display: flex; flex-direction: column; }
