@@ -10,7 +10,7 @@ import { TranscriptView } from "../mirror/transcript/TranscriptView.tsx";
 import type { TranscriptCaps } from "../mirror/transcript/capabilities.ts";
 import type { Turn } from "../mirror/transcript/types.ts";
 import { coalesceUserActions, groupTurns, mergeTurns } from "../mirror/transcript/model.ts";
-import { useSharedSessionsStore } from "./store.ts";
+import { ownerLabel, useSharedSessionsStore } from "./store.ts";
 import "./sharing.css";
 
 // SharedSessionView — the RECIPIENT's read of a session somebody else owns (docs/59).
@@ -233,8 +233,9 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
   const caps: TranscriptCaps = {
     agentName: agentOf(meta?.kind).assistantName,
     // 発言者は読み手ではなく共有元。「あなた」のままだと、他人の会話を読んでいるのに
-    // 自分が書いたように見える。
-    userName: meta?.ownerUserKey,
+    // 自分が書いたように見える。名乗りは共有元のログイン ID(メールアドレス) — user_key は
+    // sanitizeUser を通した正規化キーで、誰のことか読み手に伝わらない。
+    userName: meta && ownerLabel(meta),
     expandThinking: expandThinking(settings, meta?.kind),
   };
 
@@ -261,7 +262,7 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
           </div>
           {meta && (
             <small>
-              {meta.ownerUserKey} · {tr(meta.permission === "rw" ? "share.permission_rw" : "share.permission_ro")} ·{" "}
+              {ownerLabel(meta)} · {tr(meta.permission === "rw" ? "share.permission_rw" : "share.permission_ro")} ·{" "}
               {meta.state}
             </small>
           )}

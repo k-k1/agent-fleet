@@ -14,7 +14,7 @@ import { stateInfo } from "../../lib/sessionview.ts";
 import { usePersistedOpen } from "../../lib/usePersistedOpen.ts";
 import { openSharedSession } from "./open.ts";
 import type { SharedProjectGroup, SharedWorkingCopy } from "./sharedProject.ts";
-import type { SharedSession } from "./store.ts";
+import { ownerLabel, type SharedSession } from "./store.ts";
 import "../project/project.css";
 import "./sharing.css";
 
@@ -26,7 +26,7 @@ function SharedSessionRow({ s }: { s: SharedSession }) {
       <button
         className="shared-rail-row"
         type="button"
-        title={`${s.ownerUserKey} · ${s.repo || s.name}`}
+        title={`${ownerLabel(s)} · ${s.repo || s.name}`}
         onClick={(e) => openSharedSession(s.id, e.ctrlKey || e.metaKey)}
       >
         {/* 所有者側の SessionRow と同じ kind 色付きアイコン — どのエージェントの会話かが
@@ -90,7 +90,7 @@ function SharedCopyNode({ copy }: { copy: SharedWorkingCopy }) {
   );
 }
 
-export function SharedProjectNode({ group, showOwner }: { group: SharedProjectGroup; showOwner: boolean }) {
+export function SharedProjectNode({ group }: { group: SharedProjectGroup }) {
   const tr = useT();
   // ベースのみ(共有された worktree が無い)の一番よくあるケースは、プロジェクト名と
   // その唯一の working copy 名が同一になり二重見出しになるので、1階層に畳む。
@@ -115,7 +115,9 @@ export function SharedProjectNode({ group, showOwner }: { group: SharedProjectGr
             そのものなので、所有者側のベース行と同じくブランチを添える。worktree を
             束ねた見出しはプロジェクト名であって作業コピーではないので付けない。 */}
         {flat && group.copies[0].branch && <span className="repo-branch-inline">{group.copies[0].branch}</span>}
-        {showOwner && <small className="shared-project-owner">{group.ownerUserKey}</small>}
+        {/* 誰の会話かは共有先にとって一番の手掛かりなので、共有元が1人でも常に出す。
+            名乗りはログイン ID(メールアドレス) — 正規化キーは人が名乗る文字列ではない。 */}
+        <small className="shared-project-owner">{ownerLabel(group)}</small>
         {!node.open && <small>{total}</small>}
       </button>
       {node.open && (flat ? (
