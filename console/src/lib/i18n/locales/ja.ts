@@ -1059,15 +1059,20 @@ export const ja = {
   "agents.oc_ws_limit": "直近の上限: {name}（{at} にリセット）",
   "agents.oc_ws_limit_unknown": "枠不明",
   "agents.oc_usage": "使う枠",
+  "agents.oc_usage_off": "オフ",
   "agents.oc_usage_free": "無料枠",
   "agents.oc_usage_go": "Go",
   "agents.oc_usage_zen": "Zen",
+  "agents.oc_usage_note_off":
+    "opencode を一切使いません。API キーを保存済みでも、アカウントにサインイン済みでも起動されません（セキュリティポリシーで無断の外部送信を禁じているワークスペース向け）。既定（Zen）も未接続なら実質同じ挙動ですが、こちらは鍵を後から追加しても動かない、明示的で崩れない設定です。",
   "agents.oc_usage_note_free":
     "認証なしで使える無料モデルだけを一覧に出します（API キーは注入しません）。接続が無くても opencode を起動できますが、混雑や無料枠の上限に左右されます。",
   "agents.oc_usage_note_go":
     "サブスクの opencode-go/… だけを一覧に出します。Go のモデルは API キーに紐づくため、キーの登録が必要です（アカウントのサインインは任意）。",
   "agents.oc_usage_note_zen":
     "従量課金の opencode/… を一覧に出します（Go 契約もあれば両方）。アカウントのサインインか API キーのどちらかが必要です。",
+  "agents.oc_off_desc":
+    "opencode は無効です。保存済みのキーやサインインがあっても使われません。使うには上の「使う枠」を切り替えてください。",
   "agents.oc_free_desc":
     "無料枠で使います。認証は不要です。有料のモデルを使うときは枠を切り替えて、アカウントか API キーを登録してください。",
   "agents.oc_model_go": "{model}（Go）",

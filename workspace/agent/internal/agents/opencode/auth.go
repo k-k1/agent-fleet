@@ -36,7 +36,12 @@ var UsagePref = func() string { return UsageZen }
 // 無料枠（UsageFree）では OPENCODE_API_KEY を落とす — 「無料枠で使う」と決めた
 // ワークスペースが、鍵が残っているというだけで課金経路に乗ってしまわないように。
 // 他プロバイダの鍵（ANTHROPIC_API_KEY など）は利用者自身の課金なので触らない。
+// UsageOff は全鍵を落とす（defense in depth — Connected() が既に呼び出し元を止める
+// はずだが、万一 env() 単体が呼ばれても課金/外部送信経路を残さない）。
 func env() []string {
+	if UsagePref() == UsageOff {
+		return nil
+	}
 	s, err := secrets.Load()
 	if err != nil || len(s.Opencode) == 0 {
 		return nil
@@ -61,15 +66,47 @@ func env() []string {
 // which needs the same provider keys the interactive launcher injects.
 func Env() []string { return env() }
 
-// Available reports whether opencode can run a headless turn at all. Unlike
-// claude/codex (whose CLIs hard-fail without a login), opencode always works when
-// installed — with stored provider keys, its own login, or its zero-auth free tier
-// (verified live: a fresh data dir answers via the free model). So availability is
-// simply "the binary is on PATH"; it sits LAST in the preferred-backend order, so a
-// logged-in claude/codex still wins for defaults.
+// Available reports whether the opencode binary is on PATH at all — a much weaker
+// signal than Connected (below). Used only for the Console Connections panel's
+// "supported" field, which distinguishes "old image, binary missing" from "binary
+// present but not connected".
 func Available() bool {
 	_, err := exec.LookPath("opencode")
 	return err == nil
+}
+
+// connected is the shared "is opencode actually usable" formula: stored provider
+// key(s), a completed account OAuth login, or the user's explicit opt-in to the
+// zero-auth free tier (UsageFree, set in 設定 > エージェント > opencode「使う枠」—
+// default is UsageZen, so a fresh workspace is NOT connected until the user
+// configures something). Takes the already-loaded secrets/oauth state so callers
+// that already have them (Status) don't reload.
+//
+// UsageOff overrides everything else to false, even a stored key or a live OAuth
+// login — the point of an explicit "off" (as opposed to just never touching this
+// setting) is a hard lock a security policy can rely on even if a key gets pasted in
+// later without anyone flipping the route back.
+func connected(s *secrets.Data, oa oauthState) bool {
+	if UsagePref() == UsageOff {
+		return false
+	}
+	return UsagePref() == UsageFree || len(s.Opencode) > 0 || oa.connected
+}
+
+// Connected reports whether opencode is actually usable — see connected() above. This
+// is the single gate every entry point into opencode must honor before it runs a
+// turn: registry.ts's kind availability (via Status below) AND headlessAgentAvailable
+// (chat_providers.go). Unlike claude/codex, opencode's CLI does not hard-fail without
+// credentials — it silently falls back to its own zero-auth free models (verified
+// live: a fresh data dir answers via the free model) — so skipping this check is how
+// assistant chat used to reach a third-party inference service the user never
+// configured, which some tenants' security policy forbids. Default OFF, opt-in only.
+func Connected() bool {
+	s, err := secrets.Load()
+	if err != nil {
+		s = &secrets.Data{}
+	}
+	return connected(s, oauthStatus())
 }
 
 // Status reports which provider env vars are configured (names only,
@@ -86,10 +123,9 @@ func Status(s *secrets.Data) map[string]any {
 	oa := oauthStatus()
 	usage := UsagePref()
 	m := map[string]any{
-		// connected は「この kind を起動できるか」の判定材料（registry.ts）。無料枠は
-		// 認証ゼロで実際に動く（実測: 未接続のまま free モデルが応答）ので、枠として
-		// 選ばれていれば接続扱いにする。
-		"connected":      usage == UsageFree || len(names) > 0 || oa.connected,
+		// connected は「この kind を起動できるか」の判定材料（registry.ts・
+		// headlessAgentAvailable 両方 — Connected と同じ式を共有）。
+		"connected":      connected(s, oa),
 		"envs":           names,
 		"usage":          usage,
 		"supported":      Available(), // バイナリ不在（旧イメージ）なら無料枠でも起動できない

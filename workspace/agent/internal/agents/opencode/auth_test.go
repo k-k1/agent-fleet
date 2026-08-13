@@ -72,6 +72,72 @@ func TestEnvDropsOpencodeKeyOnlyForFreeUsage(t *testing.T) {
 	}
 }
 
+// TestConnectedDefaultsOffWithoutCredentials pins the security-sensitive default:
+// a fresh workspace (no stored provider key, no account OAuth, no explicit free-tier
+// opt-in) must NOT be considered "connected" — headlessAgentAvailable
+// (chat_providers.go) gates assistant chat's opencode backend on this, and it used to
+// gate on Available() alone (binary-on-PATH), which let assistant chat silently reach
+// opencode's zero-auth free tier even when the user configured nothing.
+func TestConnectedDefaultsOffWithoutCredentials(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	orig := UsagePref
+	defer func() { UsagePref = orig }()
+
+	UsagePref = func() string { return UsageZen }
+	if Connected() {
+		t.Fatal("鍵もOAuthも無料枠opt-inも無いのに connected=true — 既定は無料枠OFFのはず")
+	}
+
+	UsagePref = func() string { return UsageFree }
+	if !Connected() {
+		t.Fatal("無料枠へ明示的にopt-inしたのに connected=false")
+	}
+	UsagePref = func() string { return UsageZen }
+
+	s, err := secrets.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Opencode = map[string]string{"ANTHROPIC_API_KEY": "sk-an"}
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if !Connected() {
+		t.Fatal("プロバイダ鍵を保存したのに connected=false")
+	}
+}
+
+// TestUsageOffOverridesStoredCredentials pins the "off" route as a hard lock: even
+// with a provider key AND a completed OAuth login already present, selecting off
+// must force Connected()=false and env() must not leak any key — a security policy
+// that flips this to off must be able to trust it regardless of what was configured
+// before (or gets pasted in later without switching the route back).
+func TestUsageOffOverridesStoredCredentials(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	s, err := secrets.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Opencode = map[string]string{"OPENCODE_API_KEY": "sk-oc", "ANTHROPIC_API_KEY": "sk-an"}
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	orig := UsagePref
+	defer func() { UsagePref = orig }()
+	UsagePref = func() string { return UsageOff }
+
+	if Connected() {
+		t.Fatal("off なのに connected=true — 鍵があっても off は override するはず")
+	}
+	if got := env(); len(got) != 0 {
+		t.Errorf("off なのに env が鍵を返した: %v", redactEnv(got))
+	}
+	if got := Catalog([]string{"opencode/nemotron-3-ultra-free", "anthropic/claude-x"}, UsageOff); len(got) != 0 {
+		t.Errorf("off なのに Catalog が空でない: %v", got)
+	}
+}
+
 // redactEnv keeps assertions readable without printing key material.
 func redactEnv(entries []string) []string {
 	out := make([]string, 0, len(entries))
