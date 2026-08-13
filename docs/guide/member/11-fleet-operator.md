@@ -132,8 +132,10 @@ next run time, so check that it matches your intent.
   in the notification center.
 - In the **"Schedules"** section of the left pane you can see the list and run history
   (success/failure, manual / scheduled, and a link to the session that ran), and the row
-  menu offers **Pause / Resume / Run now / Delete**. Changing the content (editing the
-  time or the instruction text) is done by asking the operator.
+  menu offers **Pause / Resume / Run now / Delete**. **"Details & edit"** in the same menu
+  opens the firing spec, timezone, wake policy, agent, model, report opt-in and the prompt
+  itself for editing; only the advanced execution fields (session mode, reuse target,
+  rotation, overlap policy) are read-only there and changed by asking the operator.
 - By default each run uses a fresh session. If you ask "reuse the same session and build up
   context," **long-lived session reuse** (with rebuild conditions such as every N runs or
   per time period) is also possible.

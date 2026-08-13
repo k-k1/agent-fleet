@@ -24,24 +24,33 @@ account actions. The workspace action bar is the strip for operating your own
 
 While the workspace is running, the sections appear in this order.
 
+Pinned at the very top is the **working set** switcher, which narrows the pane down to one
+piece of work ([02](02-sessions.md#narrowing-the-view-with-working-sets)). Below it, the
+sections appear in this order.
+
 | Section | Contents |
 |---|---|
 | Assistants | Chat that doesn't use a repository, plus purpose-specific assistants |
 | Memo queue | Memos of instructions to send later in a batch |
+| Schedules | Scheduled runs and their history (only where scheduled execution is enabled — [11](11-fleet-operator.md)) |
 | Repositories | Cloned working copies. Under each row, the sessions and worktrees running at that location |
 | Other sessions | shell, SSM, home-launched sessions, and others not belonging to a repository |
+| Shared sessions | Sessions you shared, and sessions other members shared with you (hidden when there are none — [02](02-sessions.md#sharing-a-conversation-shared-sessions)) |
 | Files | A browser for finding and opening files in a repository or home |
 
 While the workspace is stopped, **Session history** is shown in place of the sessions under
 each repository. You can review the history, but operations that need the workspace, such as
-resuming, are done after starting it.
+resuming, are done after starting it (the working set switcher and shared sessions still
+work while it is stopped).
 
 ### Main area and panes
 
 This is where whatever you selected in the left pane is displayed. A session's chat /
 terminal, commit graph, changes, files, diffs, assistant chat, and more open here. It can
 be split into multiple **panes**; the colored number in the left pane is the number of the
-pane displaying that item.
+pane displaying that item. You can choose between **split panes** and a **tabbed grid**, and
+a pane can be popped out into its own browser tab
+([03](03-terminal.md#arranging-multiple-views-panes)).
 
 ## Terminology
 
@@ -62,6 +71,9 @@ pane displaying that item.
 | Pane | One subdivision of the main area |
 | Commit graph | The screen that handles the commit history graph, branches, fetch, and so on |
 | Memo queue | A feature that stores instructions temporarily and sends them to a session later in a batch |
+| Working set | A grouping of repositories, conversations, sessions and schedules by piece of work, used to narrow down the left pane. It does not move or copy anything |
+| Shared session | Showing a session's — or a project's — conversation to another member of the same tenant, read-only. Permission is either "view only" or "may propose" |
+| Cleanup | The modal that inspects stopped sessions, stale worktrees and merged branches and tidies them away. Deleted sessions and branches are stashed in the **trash** and can be restored |
 | Browser pane | A method that renders a web service started inside the workspace (`127.0.0.1:{port}`) in a Console pane, with display and interaction (clicking, typing, scrolling, etc.). HMR, WebSocket, SSE, cookies, and redirects all work. "Open in pane" in the UI. localhost only — external URLs cannot be opened ([08](08-advanced.md)) |
 | Lightweight preview | A lighter way to check the same web service by opening it in another tab through a simple HTTP proxy. Suited to one-off checks of JSON or simple static pages; HMR / WebSocket / SSE are unavailable ([08](08-advanced.md)) |
 
