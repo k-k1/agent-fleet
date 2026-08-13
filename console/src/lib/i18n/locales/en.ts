@@ -245,6 +245,8 @@ export const en: Record<keyof typeof ja, string> = {
   "display.line_numbers": "Line numbers",
   "display.wrap": "Wrap",
   "display.minimap": "Minimap",
+  "display.markdown": "Markdown",
+  "display.markdown_wrap": "Wrap code blocks",
   "display.session_mirror": "Session chat",
   "display.send_key": "Send key",
   "display.send_note_enter": "Enter sends, Shift+Enter for a newline. Applies to every multi-line input — session and assistant chats included.",
