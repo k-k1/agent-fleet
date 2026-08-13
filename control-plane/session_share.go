@@ -104,51 +104,70 @@ func (a sessionShareAPI) allowRead(key string) bool {
 	return true
 }
 
+// repoInfo は /repos の1行から ACL・表示に必要な分だけを抜いたもの。parentWC は
+// worktree の親(ベース)作業コピーの workingCopyId で、repo 共有がプロジェクト全体を
+// 覆うための鍵になる(docs/59 §1)。
+type repoInfo struct {
+	worktree bool
+	parent   string
+	parentWC string
+}
+
 func (a sessionShareAPI) syncCatalog(ctx context.Context, res *resolved) error {
 	lock := a.mgr.shareLockFor(res.mv.MembershipID)
 	lock.Lock()
 	defer lock.Unlock()
-	return a.syncCatalogLocked(ctx, res)
+	_, err := a.syncCatalogLocked(ctx, res)
+	return err
 }
 
-func (a sessionShareAPI) syncCatalogLocked(ctx context.Context, res *resolved) error {
+// syncCatalogLocked は在庫を突合し、ついでに読んだ /repos の内容を返す。呼び出し側
+// (put)が共有対象の実在確認で同じ情報を要るため、Agent への往復をもう1回増やさない。
+// 返り値は Agent が /repos を答えられなかった場合 nil(= 在庫不明)。
+func (a sessionShareAPI) syncCatalogLocked(ctx context.Context, res *resolved) (map[string]repoInfo, error) {
 	if res.rt.State(ctx) != "running" {
-		return nil
+		return nil, nil
 	}
 	body, err := agentText(ctx, res.rt, http.MethodGet, "/sessions/catalog", nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var wire struct {
 		Sessions []sessionWire `json:"sessions"`
 	}
 	if err := json.Unmarshal([]byte(body), &wire); err != nil {
-		return err
+		return nil, err
 	}
 	// worktree/parent(受信側のプロジェクト/worktreeツリー表示用、docs/59)は working
 	// copy 単位の情報なので /repos から working_copy_id をキーに引く。取得できなくても
 	// (一時的な Agent 到達不可等)catalog 自体の同期は継続する — この付随情報が
-	// 新規行なら空のままになるだけで、下の失効プルーニング(validWorkingCopy==nil)と
+	// 新規行なら空のままになるだけで、下の失効プルーニング(byWorkingCopy==nil)と
 	// 同じ「transient error では何もしない」方針を踏襲する。
-	type repoInfo struct {
-		worktree bool
-		parent   string
-	}
-	byWorkingCopy := map[string]repoInfo{}
-	var validWorkingCopy map[string]bool
+	var byWorkingCopy map[string]repoInfo
 	if reposBody, reposErr := agentText(ctx, res.rt, http.MethodGet, "/repos", nil); reposErr == nil {
 		var inventory struct {
 			Repos []struct {
+				Name          string `json:"name"`
 				WorkingCopyID string `json:"workingCopyId"`
 				Worktree      bool   `json:"worktree"`
 				Parent        string `json:"parent"`
 			} `json:"repos"`
 		}
 		if json.Unmarshal([]byte(reposBody), &inventory) == nil {
-			validWorkingCopy = map[string]bool{}
+			byWorkingCopy = map[string]repoInfo{}
+			// Parent はフォルダ名なので、まず名前→workingCopyId を作ってから引き直す。
+			wcByName := map[string]string{}
 			for _, repo := range inventory.Repos {
-				byWorkingCopy[repo.WorkingCopyID] = repoInfo{worktree: repo.Worktree, parent: repo.Parent}
-				validWorkingCopy[repo.WorkingCopyID] = true
+				if !repo.Worktree {
+					wcByName[repo.Name] = repo.WorkingCopyID
+				}
+			}
+			for _, repo := range inventory.Repos {
+				info := repoInfo{worktree: repo.Worktree, parent: repo.Parent}
+				if repo.Worktree {
+					info.parentWC = wcByName[repo.Parent]
+				}
+				byWorkingCopy[repo.WorkingCopyID] = info
 			}
 		}
 	}
@@ -163,25 +182,26 @@ func (a sessionShareAPI) syncCatalogLocked(ctx context.Context, res *resolved) e
 		rows = append(rows, SharedSessionCatalog{ID: newID(), WorkspaceID: res.ws.ID,
 			OwnerMembershipID: res.mv.MembershipID, Name: s.Name, Kind: s.Kind, Dir: s.Dir, Repo: s.Repo,
 			WorkingCopyID: s.WorkingCopyID, Title: s.Title, Label: s.Label, CreatedAt: s.CreatedAt,
-			State: state, Archived: s.Archived, LastSeen: now, Worktree: info.worktree, Parent: info.parent})
+			State: state, Archived: s.Archived, LastSeen: now, Worktree: info.worktree, Parent: info.parent,
+			ParentWorkingCopyID: info.parentWC})
 	}
 	if err := a.mgr.store.ReplaceSharedSessionCatalog(ctx, res.ws.ID, res.mv.MembershipID, rows); errors.Is(err, errSessionShareOwnerBusy) {
-		return nil // another CP replica is applying an already-authorized operation
+		return byWorkingCopy, nil // another CP replica is applying an already-authorized operation
 	} else if err != nil {
-		return err
+		return byWorkingCopy, err
 	}
 	// A deleted working copy terminates its dynamic rule. Only prune after a
 	// successful live inventory, never on a transient Agent error.
-	if validWorkingCopy == nil {
-		return nil
+	if byWorkingCopy == nil {
+		return nil, nil
 	}
 	shares, _ := a.mgr.store.ListSessionSharesByOwner(ctx, res.mv.MembershipID)
 	for _, share := range shares {
-		if share.ScopeType != "session" && !validWorkingCopy[share.ScopeKey] {
+		if _, live := byWorkingCopy[share.ScopeKey]; share.ScopeType != "session" && !live {
 			_ = a.mgr.store.DeleteSessionSharesByScope(ctx, res.mv.MembershipID, share.ScopeType, share.ScopeKey)
 		}
 	}
-	return nil
+	return byWorkingCopy, nil
 }
 
 func memberByUserKey(ctx context.Context, st Store, tenantID, key string) (MemberInfo, bool, error) {
@@ -291,7 +311,8 @@ func (a sessionShareAPI) put(w http.ResponseWriter, r *http.Request, res *resolv
 		writeAPIErr(w, &apiError{http.StatusConflict, "workspace_not_running", "owner workspace must be running to create a share"})
 		return
 	}
-	if err := a.syncCatalogLocked(r.Context(), res); err != nil {
+	repos, err := a.syncCatalogLocked(r.Context(), res)
+	if err != nil {
 		writeAPIErr(w, &apiError{http.StatusConflict, "workspace_not_running", "owner workspace must be running to create a share"})
 		return
 	}
@@ -303,29 +324,14 @@ func (a sessionShareAPI) put(w http.ResponseWriter, r *http.Request, res *resolv
 	found := false
 	if in.Scope.Type == "session" {
 		for _, c := range catalog {
-			if c.Name == in.Scope.Key {
+			// アーカイブ済みは共有先に出さない(docs/59 §1)ので、共有対象にも選べない。
+			if c.Name == in.Scope.Key && !c.Archived {
 				found = true
 				break
 			}
 		}
-	} else {
-		body, ferr := agentText(r.Context(), res.rt, http.MethodGet, "/repos", nil)
-		if ferr == nil {
-			var inventory struct {
-				Repos []struct {
-					WorkingCopyID string `json:"workingCopyId"`
-					Worktree      bool   `json:"worktree"`
-				} `json:"repos"`
-			}
-			if json.Unmarshal([]byte(body), &inventory) == nil {
-				for _, repo := range inventory.Repos {
-					if repo.WorkingCopyID == in.Scope.Key && repo.Worktree == (in.Scope.Type == "worktree") {
-						found = true
-						break
-					}
-				}
-			}
-		}
+	} else if info, ok := repos[in.Scope.Key]; ok {
+		found = info.worktree == (in.Scope.Type == "worktree")
 	}
 	if !found {
 		writeAPIErr(w, &apiError{http.StatusNotFound, "share_target_not_found", "share target not found"})
@@ -425,10 +431,24 @@ func (a sessionShareAPI) delete(w http.ResponseWriter, r *http.Request, ident Id
 	writeJSON(w, 200, map[string]any{"deleted": s.ID})
 }
 
+// effectivePermission — この catalog 行に効く最も強い権限("" なら共有されていない)。
+//
+// repo 規則はプロジェクト全体を覆う: ベース作業コピー直下のセッションに加えて、その
+// 配下 linked worktree のセッションにも効く(docs/59 §1)。所有者の作業は基本 worktree
+// 側で進むため、ベースだけを対象にすると「リポジトリを共有した」のに共有先には古い
+// セッションしか見えない、という結果になっていた。worktree 規則は従来どおり、その
+// worktree 1つだけの範囲。空の scope_key はここでも弾く: workingCopyId を持てない
+// 作業コピー(marker を作れない)や親不明の行は "" を持つので、万一空の規則が入ると
+// 無関係なセッションまで丸ごと巻き込んでしまう(put も空キーは拒否している)。
 func effectivePermission(shares []SessionShare, c SharedSessionCatalog) string {
 	p := ""
 	for _, s := range shares {
-		match := s.OwnerMembershipID == c.OwnerMembershipID && ((s.ScopeType == "session" && s.ScopeKey == c.Name) || ((s.ScopeType == "repo" || s.ScopeType == "worktree") && s.ScopeKey == c.WorkingCopyID))
+		if s.OwnerMembershipID != c.OwnerMembershipID || s.ScopeKey == "" {
+			continue
+		}
+		match := (s.ScopeType == "session" && s.ScopeKey == c.Name) ||
+			(s.ScopeType == "worktree" && s.ScopeKey == c.WorkingCopyID) ||
+			(s.ScopeType == "repo" && (s.ScopeKey == c.WorkingCopyID || s.ScopeKey == c.ParentWorkingCopyID))
 		if match {
 			if s.Permission == "rw" {
 				return "rw"
@@ -450,13 +470,6 @@ func (a sessionShareAPI) ownerResolved(ctx context.Context, owner string) (*reso
 	return a.mgr.resolveByMembership(ctx, iid, owner)
 }
 
-func (a sessionShareAPI) refreshOwnerCatalog(ctx context.Context, owner string) {
-	res, e := a.ownerResolved(ctx, owner)
-	if e == nil && res.rt.State(ctx) == "running" {
-		_ = a.syncCatalog(ctx, res)
-	}
-}
-
 func (a sessionShareAPI) listReceived(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
 	shares, err := a.mgr.store.ListSessionSharesByRecipient(r.Context(), mv.MembershipID)
 	if err != nil {
@@ -467,9 +480,6 @@ func (a sessionShareAPI) listReceived(w http.ResponseWriter, r *http.Request, _ 
 	for _, s := range shares {
 		owners[s.OwnerMembershipID] = true
 	}
-	for owner := range owners {
-		a.refreshOwnerCatalog(r.Context(), owner)
-	}
 	members, _ := a.mgr.store.ListMembersByTenant(r.Context(), mv.TenantID)
 	ownerKeys := map[string]string{}
 	for _, m := range members {
@@ -477,18 +487,37 @@ func (a sessionShareAPI) listReceived(w http.ResponseWriter, r *http.Request, _ 
 	}
 	out := []any{}
 	for owner := range owners {
-		catalog, _ := a.mgr.store.ListSharedSessionCatalogByOwner(r.Context(), owner)
+		// 所有者ごとに1回だけ解決する。State() は docker inspect 相当の外部呼び出しで、
+		// この一覧は受信側のタブごとに5秒間隔で叩かれるため、以前の「解決2回 + State
+		// 2〜3回 + 毎回フル同期」は所有者 Workspace への定常負荷そのものだった。
 		res, e := a.ownerResolved(r.Context(), owner)
 		wsState := "stopped"
 		if e == nil {
 			wsState = res.rt.State(r.Context())
 		}
+		// 在庫の再突合は authorizeCatalog と同じ per-owner throttle に乗せる。同期は
+		// 所有者の share ロックを握ったまま Agent へ2往復するので、5秒ポーリングごとに
+		// 走らせると共有の作成/解除(同じロックを取る)がその裏で待たされていた。ここで
+		// 遅れるのは「所有者が消した/アーカイブしたことに気付く」までの最大 10 秒だけで、
+		// ACL は下の effectivePermission が毎回 DB から評価する。
+		if e == nil && wsState == "running" && !a.freshCatalog(owner) {
+			if err := a.syncCatalog(r.Context(), res); err != nil {
+				a.invalidateCatalog(owner) // 失敗を「同期済み」として数えない
+			}
+		}
+		catalog, _ := a.mgr.store.ListSharedSessionCatalogByOwner(r.Context(), owner)
 		for _, c := range catalog {
+			// アーカイブ済みは所有者が畳んだ会話。共有規則は残す(復元すればまた見える)が、
+			// 共有先の一覧には出さない — 出し続けると「所有者が消したはずの古いセッションが
+			// 延々と残る」ように見える(docs/59 §1)。
+			if c.Archived {
+				continue
+			}
 			p := effectivePermission(shares, c)
 			if p == "" {
 				continue
 			}
-			out = append(out, map[string]any{"id": c.ID, "ownerUserKey": ownerKeys[owner], "name": c.Name, "kind": c.Kind, "repo": c.Repo, "workingCopyId": c.WorkingCopyID, "title": c.Title, "label": c.Label, "createdAt": c.CreatedAt, "state": c.State, "archived": c.Archived, "permission": p, "workspaceState": wsState, "worktree": c.Worktree, "parent": c.Parent})
+			out = append(out, map[string]any{"id": c.ID, "ownerUserKey": ownerKeys[owner], "name": c.Name, "kind": c.Kind, "repo": c.Repo, "workingCopyId": c.WorkingCopyID, "title": c.Title, "label": c.Label, "createdAt": c.CreatedAt, "state": c.State, "permission": p, "workspaceState": wsState, "worktree": c.Worktree, "parent": c.Parent})
 		}
 	}
 	writeJSON(w, 200, map[string]any{"sessions": out})
@@ -530,6 +559,11 @@ func (a sessionShareAPI) authorizeCatalog(ctx context.Context, mv MembershipView
 	p := effectivePermission(shares, c)
 	if p == "" || (wantRW && p != "rw") {
 		return c, nil, &apiError{404, "not_found", "shared session not found"}
+	}
+	// アーカイブ中は一覧から外れる(listReceived)ので、直リンクの読みも同じ扱いにする。
+	// 権限判定の後に置く: 権限が無い相手には従来どおり 404 で、存在の有無すら答えない。
+	if c.Archived {
+		return c, nil, &apiError{http.StatusConflict, "owner_session_archived", "the owner archived this session"}
 	}
 	return c, res, nil
 }
@@ -834,7 +868,7 @@ func (a sessionShareAPI) approve(w http.ResponseWriter, r *http.Request, ident I
 		writeAPIErr(w, &apiError{409, "proposal_already_decided", "proposal was already decided"})
 		return
 	}
-	if err := a.syncCatalogLocked(r.Context(), res); err != nil {
+	if _, err := a.syncCatalogLocked(r.Context(), res); err != nil {
 		writeAPIErr(w, &apiError{502, "owner_workspace_unreachable", "owner workspace inventory is unavailable"})
 		return
 	}

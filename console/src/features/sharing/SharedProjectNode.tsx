@@ -26,9 +26,8 @@ function SharedSessionRow({ s }: { s: SharedSession }) {
         {/* claude の --name 由来の label は "[AF] " 接頭辞付きのことがある。 */}
         <span className="name">{(s.title || s.label || s.name).replace(/^\[AF\]\s*/, "")}</span>
         <small>{tr(s.permission === "rw" ? "share.permission_rw" : "share.permission_ro")}</small>
-        {/* アーカイブは共有解除にならない(docs/59)ため一覧に残る。「古い/削除済みに
-            見える」混乱を避けるため明示する。 */}
-        {s.archived && <Icon name="archive" title={tr("share.archived")} />}
+        {/* アーカイブ済み/削除済みは CP 側で一覧から外れる(docs/59 §1)ので、ここに
+            並ぶのは所有者の手元に今ある会話だけ。 */}
         {s.workspaceState !== "running" && <Icon name="debug-pause" title={tr("share.owner_stopped")} />}
       </button>
     </li>

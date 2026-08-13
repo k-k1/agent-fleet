@@ -63,7 +63,22 @@ function groupedCopies(copies: SharedWorkingCopy[]): SharedWorkingCopy[][] {
   }
   const groups: SharedWorkingCopy[][] = [];
   for (const base of bases) groups.push([base, ...(worktreesByParent.get(base.repo) || []).sort(byCreated)]);
-  for (const o of orphans.sort(byCreated)) groups.push([o]);
+  // 親が共有されていない worktree 群は、親の名前ごとに1グループへまとめる。所有者側と
+  // 違い、受信側ではベース作業コピーが共有に含まれないことが普通にある(セッションを
+  // worktree で切る運用ではベース直下に共有対象のセッションが無い)。1本ずつ独立した
+  // グループにすると、同じプロジェクト名の見出しが worktree の数だけ並んでしまう。
+  const orphansByParent = new Map<string, SharedWorkingCopy[]>();
+  const parentless: SharedWorkingCopy[] = [];
+  for (const o of orphans) {
+    if (!o.parent) { parentless.push(o); continue; }
+    const list = orphansByParent.get(o.parent);
+    if (list) list.push(o);
+    else orphansByParent.set(o.parent, [o]);
+  }
+  for (const parent of [...orphansByParent.keys()].sort(compareText)) {
+    groups.push((orphansByParent.get(parent) || []).sort(byCreated));
+  }
+  for (const o of parentless.sort(byCreated)) groups.push([o]);
   return groups;
 }
 
