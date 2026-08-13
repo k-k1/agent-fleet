@@ -1,11 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { api, apiJSON, errText } from "../../core/api/client.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { agentOf } from "../../agents/registry.ts";
-import { expandThinking, useSettings } from "../../lib/settings.ts";
+import { effectiveTheme, expandThinking, surfaceAccent, surfaceBg, useSettings } from "../../lib/settings.ts";
 import { TranscriptView } from "../mirror/transcript/TranscriptView.tsx";
 import type { TranscriptCaps } from "../mirror/transcript/capabilities.ts";
 import type { Turn } from "../mirror/transcript/types.ts";
@@ -72,6 +72,9 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
   const [error, setError] = useState("");
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  // 上へ読み返している間(自動追従が外れている間)だけ「最新へ」を出す。ミラーと同じ
+  // 見た目・同じ文言で、共有側にだけ無いと「下に何か来ているのか」が分からない。
+  const [showJump, setShowJump] = useState(false);
   const cursor = useRef(cached?.cursor ?? 0);
   const firstLine = useRef(cached?.firstLine ?? 0);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -91,6 +94,7 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
     cursor.current = entry?.cursor ?? 0;
     firstLine.current = entry?.firstLine ?? 0;
     atBottom.current = true;
+    setShowJump(false); // 別セッションを開いた直後は末尾にいる
     // Kick a list refresh so the header meta fills in if the store is still cold — but
     // never await it. Blocking the first transcript fetch behind a full
     // GET /api/shared-sessions (which probes every owner's Workspace state in turn) was
@@ -189,7 +193,18 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
   const onScroll = () => {
     const el = bodyRef.current;
     if (!el) return;
-    atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX;
+    const stuck = el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX;
+    atBottom.current = stuck;
+    setShowJump((s) => (s === !stuck ? s : !stuck));
+  };
+
+  // 「最新へ」: 末尾へ飛んで自動追従を再開する。
+  const jumpToBottom = () => {
+    const el = bodyRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    atBottom.current = true;
+    setShowJump(false);
   };
 
   const propose = async () => {
@@ -223,8 +238,22 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
     expandThinking: expandThinking(settings, meta?.kind),
   };
 
+  // 表示設定の「共有セッション」テーマ／背景(docs/59)。ミラー(.mirrorview)と同じ仕組み:
+  // data-theme がこの面だけの基本トークンを切り替え、--chat-bg / --chat-accent はこの面の
+  // 実効テーマから導く(アプリ側の色をそのまま持ち込むと、反転した面で浮く)。他人の会話を
+  // 読んでいる面を自分のミラーと違う色にできることが、この設定の目的。
+  const sharedEff = effectiveTheme(settings.sharedTheme, settings.theme);
+  const sharedBg = surfaceBg(settings.sharedColor, sharedEff);
+  const sharedAccent = surfaceAccent(settings.sharedColor);
   return (
-    <div className="shared-view">
+    <div
+      className="shared-view"
+      data-theme={settings.sharedTheme !== "inherit" ? settings.sharedTheme : undefined}
+      style={{
+        ...(sharedBg ? { "--chat-bg": sharedBg } : {}),
+        ...(sharedAccent ? { "--chat-accent": sharedAccent } : {}),
+      } as CSSProperties}
+    >
       <header className="shared-view-head">
         <div className="shared-view-info">
           <div>
@@ -267,6 +296,20 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
             <div className="mirror-empty muted">{tr("mirror.no_history")}</div>
           ) : (
             <TranscriptView groups={groups} caps={caps} working={working} autoCollapseWork={atBottom.current} />
+          )}
+          {showJump && (
+            // ミラーと同じ sticky ピル(mirror.css)。高さ0の帯なのでスクロール量を増やさない。
+            <div className="mirror-jump-wrap">
+              <button
+                type="button"
+                className="mirror-jump"
+                onClick={jumpToBottom}
+                title={tr("mirror.jump_latest")}
+                aria-label={tr("mirror.jump_latest")}
+              >
+                <Icon name="arrow-down" /> {tr("mirror.jump_latest")}
+              </button>
+            </div>
           )}
         </div>
       </div>
