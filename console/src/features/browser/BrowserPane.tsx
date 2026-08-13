@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { FormEvent } from "react";
+import type { FormEvent, ReactNode } from "react";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { Button, IconButton } from "../../ui/Button.tsx";
@@ -13,9 +13,11 @@ interface BrowserPaneProps {
   paneId: string;
   port: number;
   path: string;
+  /** Pane popout/wrap/close (tabbed-grid mode only — see Pane.tsx tabHeaderActions). */
+  headerActions?: ReactNode;
 }
 
-export function BrowserPane({ paneId, port, path }: BrowserPaneProps) {
+export function BrowserPane({ paneId, port, path, headerActions }: BrowserPaneProps) {
   const tr = useT();
   const setPaneTarget = useLayoutStore((state) => state.setPaneTarget);
   // Resolve on every render so a tenant-scope registry reset can replace a
@@ -92,6 +94,7 @@ export function BrowserPane({ paneId, port, path }: BrowserPaneProps) {
           {tr("browser.console")}{snapshot.console.length > 0 && <span className="browser-log-badge">{snapshot.console.length}</span>}
         </Button>
         <IconButton icon="debug-restart" label={tr("browser.reconnect")} onClick={() => void controller.reconnect()} />
+        {headerActions && <span className="view-head-actions">{headerActions}</span>}
       </form>
       <BrowserSurface
         controller={controller}

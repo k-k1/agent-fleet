@@ -3,7 +3,7 @@ import { ViewHead } from "../../ui/ViewHead.tsx";
 import { useSettings, fontStack } from "../../lib/settings.ts";
 import { baseName } from "../../lib/filemeta.ts";
 import { useT } from "../../lib/i18n/index.ts";
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 // DiffView renders the before/after of an edit-family tool (Edit/Write/MultiEdit) as a
 // line-level diff in its own pane. The edits live in the pane descriptor (diffEdits),
@@ -21,6 +21,8 @@ interface DiffViewProps {
   tool?: string;
   edits?: DiffEdit[];
   wrap?: boolean;
+  /** Pane popout/wrap/close (tabbed-grid mode only — see Pane.tsx tabHeaderActions). */
+  headerActions?: ReactNode;
 }
 
 // A rendered diff row: context / addition / deletion, with old/new line numbers.
@@ -33,7 +35,7 @@ export interface DiffRow {
   n?: number;
 }
 
-export function DiffView({ title, tool, edits, wrap }: DiffViewProps) {
+export function DiffView({ title, tool, edits, wrap, headerActions }: DiffViewProps) {
   const tr = useT();
   const settings = useSettings();
   const viewerStyle = {
@@ -54,7 +56,7 @@ export function DiffView({ title, tool, edits, wrap }: DiffViewProps) {
   });
   return (
     <div className={"fileview diffview" + (wrap ? "" : " nowrap")} style={viewerStyle}>
-      <ViewHead className="fileinfo">
+      <ViewHead className="fileinfo" actions={headerActions}>
         <span className="fi-name mono" title={title}>
           <Icon name="diff" /> {baseName(title || "") || title || tr("view.diff")}
         </span>

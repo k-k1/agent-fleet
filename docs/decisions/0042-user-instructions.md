@@ -1,7 +1,8 @@
 # 0042. ユーザー指示は AF が所有する 1 本の本文とし、可能な限り「AF 専用ファイル＋参照」で各 CLI へ配る
 
-- 状態: 採用・**P0 実装済み**（2026-08-13。設計は docs/60。実測の結果として決定 4/6/7 が初版から、
-  実装の結果として決定 4 の copilot 経路と決定 5 の entrypoint 側が再度変わった）
+- 状態: 採用・**P0 + P1 実装済み**（2026-08-13。設計は docs/60。実測の結果として決定 4/6/7 が初版から、
+  実装の結果として決定 4 の copilot 経路と決定 5 の entrypoint 側が再度変わった。P1 で kiro の
+  global steering を実測し、**配れないのは cursor だけ**に確定した）
 - 関連: [60-user-instructions.md](../60-user-instructions.md) /
   [57-project-tools.md](../57-project-tools.md)（配布軸 / 管理軸の区分） /
   [0031-mcp-registry.md](0031-mcp-registry.md)（配布軸の所有台帳） /
@@ -45,12 +46,14 @@
    `~/.config/agent-fleet/user-notes.md`。`homeKeep`（`control-plane/runtime_docker.go:396`）に
    `.config` があるため recreate も「home 掃除」も生き残る。CP の DB には置かない。
 2. **本文は 1 本、適用先は kind ごとのチェック。** kind 別本文は同じ文章の N 重管理を作るため採らない。
-   未対応 kind も行として出す（cursor は理由付きで「対応不可」、kiro は実測まで「未検証」）。
+   配れない kind も行として出す。**cursor だけが該当し、理由は「ローカルにユーザー層が無い」**
+   ＝実装待ちではなく構造的な結論なので、「未対応（対応予定）」の顔をさせない。
 3. **配布軸として扱う。** AF が自動で書き、所有範囲を明示する。docs/57 の
    「プロジェクトファイル憲章 8 条」は適用しない。コミットされる場所には一切書かない。
 4. ★ **「他人のファイルに書く」より「AF 専用のファイル＋参照」を優先する。**（実測を受けて初版から変更）
    claude＝単独所有ファイル / opencode＝`instructions` に 1 本追加 / copilot＝`$COPILOT_HOME/instructions/`
-   に AF 専用名のファイル 1 本。**合成は参照手段の無い codex・agy だけの最後の手段**とする。
+   に AF 専用名のファイル 1 本 / kiro＝`~/.kiro/steering/` に AF 専用名のファイル 1 本（global steering が
+   読まれることを実測）。**合成は参照手段の無い codex・agy だけの最後の手段**とする。
    統一のために共有ファイルへの書き込みを増やさない。
    （copilot は `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` でも効くと実測したが、**env は採らない**:
    tmux 起動 / managed ACP / 手打ちの 3 経路すべてに export を配る必要があり、漏れると
@@ -91,4 +94,7 @@
 - `codex/rtk.go` と `agy/rtk.go` に重複していた `stripMarkedBlock` は `internal/mdblock` へ括り出した。
 - 新 REST は `workspace/agent/routes.go` と `control-plane/routes.go` の**両方**へ登録した。
 - rtk の適用は `instrMu` で直列化される（同じ AGENTS.md を 3 種のブロックが共有するため）。
+- agy も codex と同じく AGENTS.md を rtk と共有するので、read-modify-write を `editAgents` に一本化した。
+- kiro の global steering ディレクトリには他人（利用者・チーム）のファイルが同居する。AF は
+  自分の 1 本だけを書き/消しし、**列挙も削除もしない**。
 - docs/39 の棚卸し表（「共通」行が agy も配布対象としていた点）を docs/60 §60.2 で訂正した。

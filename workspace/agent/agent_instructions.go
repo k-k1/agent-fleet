@@ -28,9 +28,11 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mdblock"
@@ -70,16 +72,15 @@ type instrTarget struct {
 	Error   string `json:"error,omitempty"`
 }
 
-// instrSupportedKinds は本文を配れる kind（P0）。順序は Console の表示順。
-var instrSupportedKinds = []string{"claude", "codex", "opencode", "copilot"}
+// instrSupportedKinds は本文を配れる kind。順序は Console の表示順。
+var instrSupportedKinds = []string{"claude", "codex", "opencode", "copilot", "agy", "kiro"}
 
 // instrUnsupported は配れない kind と理由（docs/60 §60.3 の実測結論）。
 var instrUnsupported = []struct{ kind, reason string }{
 	// ローカルにユーザー層が存在しない。User Rules は Cursor アカウント側
 	// （aiserver.v1.UserRules）で、ローカルの rules 収集は全てプロジェクト基準。
+	// ＝ 配線漏れではなく**構造的に配れない**ので、実装待ちの表示にはしない。
 	{"cursor", "no_user_scope"},
-	{"agy", "not_wired"},   // 挿し口は判明済み（~/.gemini/AGENTS.md）。P1 で配線する
-	{"kiro", "unverified"}, // global steering の有無が未実測（docs/60 §60.15-1）
 }
 
 // instrOpencodeFile is the AF-owned body opencode's config points at. It lives under
@@ -115,6 +116,8 @@ func applyInstructionsLocked() {
 	note("codex", codex.ApplyUserInstructions(st.Body("codex")))
 	note("opencode", opencode.ApplyUserInstructions(instrOpencodeFile(), st.Body("opencode")))
 	note("copilot", copilot.ApplyUserInstructions(st.Body("copilot")))
+	note("agy", agy.ApplyUserInstructions(st.Body("agy")))
+	note("kiro", kiro.ApplyUserInstructions(st.Body("kiro")))
 
 	// ③ rtk は常に最後（ファイル内でも最後に来る）。
 	applyRTKLocked()
@@ -149,6 +152,12 @@ func instrState() map[string]any {
 			t.Applied = fileExists(t.Path) == want && opencodeRefers(t.Path) == want
 		case "copilot":
 			t.Delivery, t.Path = deliveryFile, copilot.UserInstructionsPath()
+			t.Applied = fileExists(t.Path) == want
+		case "agy":
+			t.Delivery, t.Path = deliveryCompose, agy.AgentsPath()
+			t.Applied = fileHasBlock(t.Path, "user-notes") == want
+		case "kiro":
+			t.Delivery, t.Path = deliveryFile, kiro.UserInstructionsPath()
 			t.Applied = fileExists(t.Path) == want
 		}
 		targets = append(targets, t)
@@ -260,6 +269,10 @@ func handleUserNotesPreview(w http.ResponseWriter, r *http.Request) {
 		path = instrOpencodeFile()
 	case "copilot":
 		path = copilot.UserInstructionsPath()
+	case "agy":
+		path = agy.AgentsPath()
+	case "kiro":
+		path = kiro.UserInstructionsPath()
 	case "fleet":
 		path = paths.FleetNotesPath()
 	default:
