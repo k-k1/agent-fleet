@@ -111,7 +111,7 @@ import { PendingQuestions } from "./PendingQuestions.tsx";
 // in every capability; a recipient fills in almost none. See transcript/capabilities.ts.
 import { TranscriptView } from "./transcript/TranscriptView.tsx";
 import type { TranscriptCaps } from "./transcript/capabilities.ts";
-import type { Group, Part, Question, TaskItem, Turn, TurnTtsWiring } from "./transcript/types.ts";
+import type { Group, Question, TaskItem, Turn, TurnTtsWiring } from "./transcript/types.ts";
 import { coalesceUserActions, groupTurns, isNoise, latestContext, parseCommand, spendOf } from "./transcript/model.ts";
 import { PlanBlock, TaskChecklist, planTitle } from "./transcript/blocks.tsx";
 
@@ -210,8 +210,6 @@ export function MirrorView({
   const openTargetInNew = useLayoutStore((s) => s.openTargetInNew);
   const setPaneTarget = useLayoutStore((s) => s.setPaneTarget);
   const setActivePane = useLayoutStore((s) => s.setActive);
-  const showDiff = (title: string, edits: unknown, tool: string) =>
-    openTargetInNew({ content: { kind: "diff", docTitle: title, diffTool: tool, diffEdits: edits } });
   const refreshSessions = useSessionsStore((s) => s.refresh);
   const bumpSessions = () => void refreshSessions();
   const wsState = useWorkspaceStore((s) => s.state);
@@ -1952,8 +1950,6 @@ export function MirrorView({
       setTitleActing(false);
     }
   };
-  const openDiff = (p: Part) => showDiff(p.file || "", p.edits, p.tool || "");
-
   // Composer history = the user's own prompts in this conversation (so ↑ works even
   // after a reload, not just for prompts typed since mount). Newest last. Slash-command /
   // skill invocations are logged as system-tagged turns that isNoise hides from the transcript
@@ -2384,7 +2380,6 @@ export function MirrorView({
     fileURL: downloadURL,
     openFile,
     openImage: setLightbox,
-    openDiff,
     openPlan,
     session,
     sendPlanComments: (plan: string) => void sendPlanComments(plan),
