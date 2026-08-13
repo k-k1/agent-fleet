@@ -2435,9 +2435,11 @@ export function MirrorView({
       <ViewHead
         actions={
           <>
-            {headerActions}
             {/* Managed（paneless）セッションにはターミナルが無い — トグル自体を出さない。 */}
             {!managed && <MirrorToggle mirror={!!mirror} onToggle={onToggleMirror} running={running} />}
+            {/* 最後＝右端。タブ付きグリッドではセル操作（別タブ／閉じる）がここに入るので、
+                非タブ時に浮いているクラスタと同じ「右上の角」に見えるよう末尾に置く。 */}
+            {headerActions}
           </>
         }
       >

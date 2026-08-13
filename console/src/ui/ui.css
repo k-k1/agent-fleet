@@ -866,6 +866,19 @@
 .view-head-actions .mirror-toggle {
   margin-left: 0;
 }
+/* ONE auto margin per band. `.session-state` carries its own margin-left:auto so
+   it lands at the right edge of a RAIL ROW (sessions.css), and the chat head is
+   the one band that renders that chip as a DIRECT child — so the band had two
+   auto-margined children and flex splits the free space EVENLY between them:
+   待機中／作業計画 ended up stranded mid-row with a ~equal hole on either side
+   (measured 377px / 371px in a 1100px pane), instead of sitting next to the
+   cluster. The chip's own auto margin already pushes itself AND everything after
+   it to the right, so the trailing cluster must not push a second time. Only the
+   chat head matches: the terminal/mirror chip is nested inside .pane-session, a
+   flex container of its own, so its auto margin never reaches this band. */
+.view-head .session-state ~ .view-head-actions {
+  margin-left: 0;
+}
 /* Pushes everything after it to the right edge (views that have no actions
    cluster, or that need a gap mid-row). */
 .view-spacer {
