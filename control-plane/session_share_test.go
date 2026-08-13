@@ -191,6 +191,77 @@ func TestSharedMessagesAuthorizeAndRemoveWorkspacePaths(t *testing.T) {
 	}
 }
 
+func TestSearchRecipientsFiltersByEmailAndExcludesSelf(t *testing.T) {
+	ctx := context.Background()
+	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tenant, _ := st.EnsureDefaultTenant(ctx)
+	selfIdentity, _ := st.UpsertIdentity(ctx, "self@example.com", "self", "")
+	aliceIdentity, _ := st.UpsertIdentity(ctx, "alice@acme.example", "alice", "")
+	bobIdentity, _ := st.UpsertIdentity(ctx, "bob@other.com", "bob", "")
+	if _, err := st.EnsureMembership(ctx, selfIdentity.ID, tenant.ID, "member"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.EnsureMembership(ctx, aliceIdentity.ID, tenant.ID, "member"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.EnsureMembership(ctx, bobIdentity.ID, tenant.ID, "member"); err != nil {
+		t.Fatal(err)
+	}
+	selfViews, _ := st.ListMemberships(ctx, selfIdentity.ID)
+	mgr := &manager{store: st}
+	api := newSessionShareAPI(mgr)
+
+	search := func(q string) []map[string]string {
+		req := httptest.NewRequest(http.MethodGet, "/api/session-share-recipients?q="+q, nil)
+		rec := httptest.NewRecorder()
+		api.searchRecipients(rec, req, selfIdentity, selfViews[0])
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		var payload struct {
+			Members []map[string]string `json:"members"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		return payload.Members
+	}
+
+	// 空クエリ: 自分以外の全active メンバーが返る(自分は除外)。
+	all := search("")
+	if len(all) != 2 {
+		t.Fatalf("empty query members=%v", all)
+	}
+	for _, m := range all {
+		if m["email"] == "self@example.com" {
+			t.Fatalf("self appeared in results: %v", all)
+		}
+	}
+
+	// email 部分一致で絞り込める。
+	acme := search("acme.example")
+	if len(acme) != 1 || acme[0]["email"] != "alice@acme.example" {
+		t.Fatalf("filtered members=%v", acme)
+	}
+
+	// 大文字小文字は無視される。
+	upper := search("ALICE")
+	if len(upper) != 1 || upper[0]["userKey"] != "alice" {
+		t.Fatalf("case-insensitive members=%v", upper)
+	}
+
+	if none := search("nobody-matches-this"); len(none) != 0 {
+		t.Fatalf("unexpected match=%v", none)
+	}
+}
+
 func TestWorkspaceStopWaitsForSharedApprovalLifecycleLock(t *testing.T) {
 	ctx := context.Background()
 	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))

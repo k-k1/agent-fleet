@@ -137,6 +137,33 @@ func memberByUserKey(ctx context.Context, st Store, tenantID, key string) (Membe
 	return MemberInfo{}, false, nil
 }
 
+// searchRecipients — 同一テナントの共有先候補を email/user_key の部分一致で検索する。
+// 一般メンバーが呼べる(withMembership、管理者権限は問わない) — Console の共有作成
+// combobox はここで解決した user_key だけを送るので、利用者は正規化ルール
+// (sanitizeUser)を意識しない。
+func (a sessionShareAPI) searchRecipients(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	rows, err := a.mgr.store.ListMembersByTenant(r.Context(), mv.TenantID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	out := make([]map[string]string, 0, 20)
+	for _, m := range rows {
+		if m.MembershipID == mv.MembershipID {
+			continue // 自分自身は候補から除外(share_self を事前に避ける)
+		}
+		if q != "" && !strings.Contains(strings.ToLower(m.Email), q) && !strings.Contains(strings.ToLower(m.UserKey), q) {
+			continue
+		}
+		out = append(out, map[string]string{"userKey": m.UserKey, "email": m.Email})
+		if len(out) >= 20 {
+			break
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"members": out})
+}
+
 func (a sessionShareAPI) recipientKey(ctx context.Context, tenantID, membershipID string) string {
 	rows, _ := a.mgr.store.ListMembersByTenant(ctx, tenantID)
 	for _, m := range rows {
