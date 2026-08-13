@@ -5,7 +5,7 @@
 // so moving a pane keeps its xterm with it. In the tabbed profile a visual cell
 // keeps a geometric key instead: selecting a tab changes the selected view id,
 // but must not remount the cell and reset its tab-strip scroll position.
-import { useMemo, useRef } from "react";
+import { memo, useMemo, useRef } from "react";
 import type { CSSProperties, PointerEvent as RPointerEvent, ReactNode } from "react";
 import { useLayoutStore } from "../../layout/store.ts";
 import { paneOrdinals } from "../../layout/badges.ts";
@@ -17,7 +17,7 @@ import type { Cell, Column } from "../../layout/types.ts";
 
 const D = 6; // divider thickness in px
 
-export function PaneHost() {
+export const PaneHost = memo(function PaneHost() {
   const layout = useLayoutStore((s) => s.layout);
   const setActive = useLayoutStore((s) => s.setActive);
   const closePane = useLayoutStore((s) => s.closePane);
@@ -182,4 +182,4 @@ export function PaneHost() {
       {dividerEls}
     </div>
   );
-}
+});

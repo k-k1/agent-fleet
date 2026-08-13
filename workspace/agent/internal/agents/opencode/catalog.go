@@ -35,6 +35,12 @@ import (
 // 直接つないだ他プロバイダ（anthropic/…, openrouter/… — 利用者自身の課金）はどの値でも
 // 落とさない。opencode.ai の枠を選ぶ設定であって、他社の鍵を取り上げる設定ではない。
 const (
+	// UsageOff hard-disables opencode regardless of anything else configured: stored
+	// provider keys, an account OAuth login — none of it is honored while this is
+	// selected (auth.go の connected()/env())。「鍵を消し忘れているだけで無料枠/他社課金
+	// に乗ってしまう」を admin が明示的に断てるようにする選択肢。UsageFree（無料枠を
+	// 使いたい）とは別物 — off は「一切使わない」の宣言で、free の対極にある。
+	UsageOff = "off"
 	// UsageFree keeps only the zero-auth free models. 認証ゼロで動く枠（実測 8 件・
 	// cost.input が 0）で、混雑（503）と無料枠上限に左右される。
 	UsageFree = "free"
@@ -67,8 +73,9 @@ func Catalog(ids []string, pref string) []agents.ModelChoice {
 	// Emptying the picker would be worse than ignoring the preference: an account
 	// without the Go plan that picks Go のみ must still be able to launch. Guard on the
 	// INPUT being non-empty — an already-empty catalog (CLI absent / offline) is not a
-	// preference problem and must not bounce back into this function.
-	if len(out) == 0 && len(ids) > 0 {
+	// preference problem and must not bounce back into this function. UsageOff is
+	// exempt from this rescue: an empty picker IS the intended result of "off".
+	if pref != UsageOff && len(out) == 0 && len(ids) > 0 {
 		return Catalog(ids, UsageZen)
 	}
 	// Go first everywhere: whichever route is selected, a subscription-covered id is
@@ -83,6 +90,9 @@ func Catalog(ids []string, pref string) []agents.ModelChoice {
 // keepForUsage decides whether one id belongs in the menu under pref. opencode.ai の
 // 2 経路だけを判定し、他プロバイダ（利用者自身の鍵）は素通しする。
 func keepForUsage(id, pref string) bool {
+	if pref == UsageOff {
+		return false // 一切使わない宣言 — 他社プロバイダの id も含め、何も出さない。
+	}
 	isGo := strings.HasPrefix(id, goPrefix)
 	isZen := strings.HasPrefix(id, zenPrefix) && !isGo
 	if !isGo && !isZen {
@@ -103,7 +113,7 @@ func keepForUsage(id, pref string) bool {
 // は両方見たいので UsageZen）。未設定/不明は UsageZen ＝ 従来の見え方。
 func CatalogPref(v string) string {
 	switch v {
-	case UsageFree, UsageGo, UsageZen:
+	case UsageOff, UsageFree, UsageGo, UsageZen:
 		return v
 	case "hide-zen":
 		return UsageGo

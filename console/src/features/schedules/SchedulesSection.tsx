@@ -10,7 +10,7 @@
 // row shows the outcome (成功/失敗/スキップ), whether it was a manual run-now or a scheduled
 // fire, and opens the session that fire drove.
 import { createPortal } from "react-dom";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -294,7 +294,7 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, wsets, wctx, onToggleRuns, on
   );
 }
 
-export function SchedulesSection() {
+export const SchedulesSection = memo(function SchedulesSection() {
   const tenant = useTenantStore((s) => s.tenant);
   const toast = useToast();
   const askConfirm = useConfirm();
@@ -512,4 +512,4 @@ export function SchedulesSection() {
       )}
     </Section>
   );
-}
+});

@@ -160,6 +160,37 @@ func LiveState(sid string) string {
 	return state
 }
 
+// EffectiveModal resolves what the claude TUI is ACTUALLY showing, which the raw
+// status state can lie about. AskUserQuestion / ExitPlanMode fire their OWN
+// permission_prompt Notification between the tool's PreToolUse and its PostToolUse, so
+// the stored state flips to "permission" while the terminal still shows the question
+// menu / the plan approval dialog. applyPendingPayloads (package main) deliberately
+// KEEPS the captured payload through that state, which makes the payload — not the
+// state — the truth.
+//
+// EVERY reader has to apply this, display included. Judging by the raw state made
+// /plan-respond answer no_plan for a plan that was plainly pending（2026-08-10 報告）,
+// and left the AUQ 中のセッションのバッジを「許可待ち」と表示させた — 出ているカードは
+// 質問なのにチップだけ許可を名乗る、という食い違い。
+//
+// Non-permission states pass through unchanged, so callers keep switching on it as
+// before. Only the claude/codex hook route writes these payloads, so no other kind can
+// hit the override.
+func EffectiveModal(sid, state string) string {
+	if state != "permission" {
+		return state
+	}
+	// A question outranks a plan (surfacePendingPayloads shows the question card first,
+	// and its keys must reach the question menu).
+	if raw, ok := ReadPendingQuestion(sid); ok && len(raw) > 0 {
+		return "question"
+	}
+	if plan, ok := ReadPendingPlan(sid); ok && plan != "" {
+		return "plan"
+	}
+	return state
+}
+
 // last-tool: the tool about to run, recorded by the permtool PreToolUse hook and read
 // when a permission prompt fires, to give the permission block a concrete subject.
 func WriteLastTool(sid, detail string) {

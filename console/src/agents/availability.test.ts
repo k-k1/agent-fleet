@@ -58,6 +58,13 @@ describe("launch gate — per-agent predicates", () => {
     expect(ready("opencode", { opencode: { envs: [] } })).toBe(false);
   });
 
+  it("keeps opencode out while usage is explicitly off, even with a key or OAuth still present", () => {
+    // usage:"off" is a tamper-resistant hard disable (docs/54 §… — same override the
+    // Agent applies in opencode.Connected()) — a stray stored key must not re-admit it.
+    expect(ready("opencode", { opencode: { usage: "off", envs: ["anthropic"] } })).toBe(false);
+    expect(ready("opencode", { opencode: { usage: "off", connected: true } })).toBe(false);
+  });
+
   it("admits shell once the state is known — it needs no credentials", () => {
     expect(ready("shell", {})).toBe(true);
   });

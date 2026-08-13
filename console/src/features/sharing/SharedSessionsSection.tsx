@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Button, IconButton } from "../../ui/Button.tsx";
 import { Modal } from "../../ui/Modal.tsx";
@@ -20,7 +20,7 @@ interface Proposal {
   expiresAt: string;
 }
 
-export function SharedSessionsSection() {
+export const SharedSessionsSection = memo(function SharedSessionsSection() {
   const tr = useT();
   const sessions = useSharedSessionsStore((s) => s.sessions);
   const ownedShares = useMySharesStore((s) => s.shares.length);
@@ -79,4 +79,4 @@ export function SharedSessionsSection() {
       {manageOpen && <ShareListModal onClose={() => setManageOpen(false)} />}
     </>
   );
-}
+});
