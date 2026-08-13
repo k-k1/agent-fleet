@@ -74,8 +74,8 @@ export function ShareListModal({ onClose }: { onClose: () => void }) {
                   </div>
                   <div className="share-actions">
                     <select value={s.permission} disabled={busy === s.id} onChange={(e) => void change(s.id, e.target.value as "ro" | "rw")}>
-                      <option value="ro">RO</option>
-                      <option value="rw">RW</option>
+                      <option value="ro">{tr("share.permission_ro")}</option>
+                      <option value="rw">{tr("share.permission_rw")}</option>
                     </select>
                     <IconButton icon="trash" label={tr("share.unshare")} variant="danger" disabled={busy === s.id} onClick={() => void remove(s.id)} />
                   </div>

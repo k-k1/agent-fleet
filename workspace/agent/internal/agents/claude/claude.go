@@ -126,7 +126,12 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	if alive {
 		// Default a live claude with no recorded event yet to idle (it sits at the
 		// prompt waiting for input). Hook events refine it.
-		li.State = status.LiveState(sid)
+		//
+		// EffectiveModal: AskUserQuestion / ExitPlanMode 自身の permission_prompt が
+		// state を "permission" へ上書きするので、捕捉済みペイロードのほうを正とする。
+		// 素の state だと、質問カードが出ているセッションのチップだけが「許可待ち」を
+		// 名乗る（バッジと本文の食い違い）。
+		li.State = status.EffectiveModal(sid, status.LiveState(sid))
 		// ペイン由来の判定は 1 フレームを 1 回だけ読んでまとめて下す（tmuxx.ReadPane）。
 		// 述語ごとに capture-pane を叩くと、セッション数 × ポーリング間隔でそのまま効く。
 		pane := tmuxx.ReadPane(m.Name)

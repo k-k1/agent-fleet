@@ -21,7 +21,7 @@
 | copilot | **Copilot Memory はあるが GitHub サーバー側サービス**（repo スコープ事実＋ユーザー選好・28 日失効・管理は GitHub 設定画面）。ローカル `~/.copilot` にはセッションストアのみ | ローカル実体なし | ×（対象外＝versioning する実体がローカルに無い） |
 | cursor | **旧 Memories は製品から削除済み**（〜v2.1、公式の代替は Rules＝`.cursor/rules/*.md`＝リポジトリ内で git 管理可能）。現存する memories は cloud **Automations 専用のサーバー側エントリ**。CLI バンドル内の proto（`aiserver.v1.ListAutomationMemories*` / `PotentiallyGenerateMemory` / `KnowledgeBase*`）で全てクラウド RPC であることを実バイナリ確認 | ローカル実体なし（`~/.cursor` は transcript/worker のみ） | ×（対象外＝サーバー側） |
 | kiro | **自動メモリなし**（changelog 確認済）。永続は ① steering md（workspace `.kiro/steering/` はリポジトリ内＝既に git 管理圏、**global `~/.kiro/steering/*.md`** はユーザー所有・依頼すればエージェントも書く）② `/knowledge`（experimental・既定 OFF・`~/.local/share/kiro-cli/knowledge_bases/` の BM25/意味検索**索引＝派生状態**。実バイナリで knowledge_store/KnowledgeBase リソース確認） | global steering のみ将来ルート候補 | △（watch。global steering は md ディレクトリなので root 1 行で追加可能。索引は ★9 原則で対象外） |
-| （共通） | `AGENTS.md`（codex/opencode/agy） | entrypoint が毎起動イメージ内容へ上書きするフリート管理ファイル＝ユーザーメモリではない | × |
+| （共通） | `AGENTS.md`（codex/opencode。**agy は対象外** — [60](60-user-instructions.md) §60.2 で訂正） | entrypoint が毎起動イメージ内容へ上書きするフリート管理ファイル＝ユーザーメモリではない（`~/.gemini/AGENTS.md` は rtk ブロックのみ 450 B ＝ フリート方針は配られていない） | × |
 
 **結論（全 8 種別調査済・改訂）: 版管理対象になるローカル実体は claude の auto-memory と
 codex の memories ワークスペースの 2 つ。** codex は本フリートで機能を有効化していないだけで、

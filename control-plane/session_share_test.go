@@ -191,6 +191,75 @@ func TestSharedMessagesAuthorizeAndRemoveWorkspacePaths(t *testing.T) {
 	}
 }
 
+func TestSyncCatalogCapturesWorktreeAndParent(t *testing.T) {
+	ctx := context.Background()
+	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tenant, _ := st.EnsureDefaultTenant(ctx)
+	ownerIdentity, _ := st.UpsertIdentity(ctx, "owner-wt@example.com", "owner-wt", "")
+	owner, _ := st.EnsureMembership(ctx, ownerIdentity.ID, tenant.ID, "member")
+	ownerViews, _ := st.ListMemberships(ctx, ownerIdentity.ID)
+	workspace := Workspace{ID: newID(), TenantID: tenant.ID, MembershipID: owner.ID, ContainerName: "c", Network: "n",
+		DataDir: "d", AgentPort: "1", AgentToken: "tok", State: "running", CreatedAt: nowTS()}
+	if err := st.CreateWorkspace(ctx, workspace); err != nil {
+		t.Fatal(err)
+	}
+
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/sessions/catalog":
+			_ = json.NewEncoder(w).Encode(map[string]any{"sessions": []any{
+				map[string]any{"name": "base-session", "kind": "codex", "dir": "/home/dev/repos/proj", "repo": "proj", "workingCopyId": "wc-base"},
+				map[string]any{"name": "wt-session", "kind": "codex", "dir": "/home/dev/repos/proj@feat", "repo": "proj@feat", "workingCopyId": "wc-wt"},
+			}})
+		case "/repos":
+			_ = json.NewEncoder(w).Encode(map[string]any{"repos": []any{
+				map[string]any{"workingCopyId": "wc-base"},
+				map[string]any{"workingCopyId": "wc-wt", "worktree": true, "parent": "proj"},
+			}})
+		default:
+			t.Errorf("path=%q", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer agent.Close()
+
+	mgr := &manager{store: st, rts: map[string]cachedRT{owner.ID: {
+		rt: stubRuntime{endpoint: agent.URL, token: "tok"}, ws: workspace,
+	}}}
+	api := newSessionShareAPI(mgr)
+	resolvedOwner := &resolved{rt: stubRuntime{endpoint: agent.URL, token: "tok"}, ws: workspace, mv: ownerViews[0]}
+	if err := api.syncCatalog(ctx, resolvedOwner); err != nil {
+		t.Fatal(err)
+	}
+
+	catalog, err := st.ListSharedSessionCatalogByOwner(ctx, owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog) != 2 {
+		t.Fatalf("catalog rows=%d", len(catalog))
+	}
+	byName := map[string]SharedSessionCatalog{}
+	for _, c := range catalog {
+		byName[c.Name] = c
+	}
+	base, ok := byName["base-session"]
+	if !ok || base.Worktree || base.Parent != "" {
+		t.Fatalf("base row=%+v ok=%v", base, ok)
+	}
+	wt, ok := byName["wt-session"]
+	if !ok || !wt.Worktree || wt.Parent != "proj" {
+		t.Fatalf("worktree row=%+v ok=%v", wt, ok)
+	}
+}
+
 func TestSearchRecipientsFiltersByEmailAndExcludesSelf(t *testing.T) {
 	ctx := context.Background()
 	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
