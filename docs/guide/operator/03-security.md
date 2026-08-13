@@ -120,6 +120,14 @@ into answers, logs or commits is part of the agent-side instructions as well.
   off by default, and **raw terminal streams are never stored, due to the risk of secrets
   leaking into them**). super_admins / tenant_admins view it from the Audit tab of the Admin
   panel. The admin volume covers how to read it operationally.
+- **Some vendor features are deliberately left disabled.** Claude Code's own cross-session
+  messaging (`/list-agents` / `SendMessage`) is one: **enabling it also brings back Claude's
+  usage telemetry**, so it stays off as a self-hosted default. The same capability is provided by
+  Agent Fleet's own implementation instead (Settings > Agents > session-to-session messaging,
+  **off by default**), where delivery and attribution are under your control — messages stay
+  within one workspace, and the receiving side is told explicitly that it is not an instruction
+  from the user. When a user reports that "`/list-agents` doesn't work", it is this decision, not
+  a fault.
 - **Designed to keep secrets out of logs.** The CP neither holds nor interprets credential
   plaintext, and does not emit it into logs. The unified cred helper decrypts on demand and
   hands it over, so no plaintext files are ever created
