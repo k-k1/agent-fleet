@@ -251,6 +251,41 @@ function PopulatedPane({
     const session = sessionByName.get(view.session);
     return session ? stateInfo(session) : null;
   };
+  // The selected session can be shown either as terminal or chat. Keep these
+  // cell actions in the respective header, immediately before that switch,
+  // so they never disappear merely because the user chose チャット.
+  const tabHeaderActions = tabbed ? (
+    <span className="tab-pane-actions">
+      {showPopout && (
+        <IconButton
+          icon="link-external"
+          label={tr("ui.popout_pane_hint")}
+          onClick={() => openPanePopout(pane, "popout")}
+        />
+      )}
+      {canWrap && (
+        <IconButton
+          icon="word-wrap"
+          label={wrapOn ? tr("ui.unwrap_lines") : tr("ui.wrap_lines")}
+          className={wrapOn ? "on" : ""}
+          onClick={() => setPaneWrap(pane.id, !wrapOn)}
+        />
+      )}
+      {canClose && (
+        <IconButton
+          icon="close"
+          label={tr("ui.close_pane_hint")}
+          className="pane-close"
+          onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+          onAuxClick={(e) => {
+            if (e.button === 1) { e.preventDefault(); onClose(cell.id, true); }
+          }}
+          onClick={(e) => onClose(cell.id, e.ctrlKey || e.metaKey)}
+        />
+      )}
+    </span>
+  ) : undefined;
+
   // Tab count scales with how long a cell has accumulated sessions, and this
   // recomputes a session lookup + state chip per tab — skip it on renders that
   // don't actually change the tabs or the session data behind them (an
@@ -415,7 +450,7 @@ function PopulatedPane({
           {ordinal ?? <span className="codicon codicon-gripper" aria-hidden="true" />}
         </button>
       )}
-      <div className="pane-controls">
+      {!tabbed && <div className="pane-controls">
         {showPopout && (
           <IconButton
             icon="link-external"
@@ -446,7 +481,7 @@ function PopulatedPane({
             onClick={(e) => onClose(cell.id, e.ctrlKey || e.metaKey)}
           />
         )}
-      </div>
+      </div>}
 
       {/* Drop hint while dragging a pane over this one. */}
       {zone && <div className={"drop-indicator zone-" + zone} />}
@@ -476,6 +511,7 @@ function PopulatedPane({
             mirror={mirror}
             onToggleMirror={onToggleMirror}
             onResume={onResume}
+            headerActions={tabHeaderActions}
           />
         </div>
       )}
@@ -489,12 +525,21 @@ function PopulatedPane({
           onToggleMirror={onToggleMirror}
           readOnly={!attached}
           onResume={onResume}
+          headerActions={tabHeaderActions}
         />
       )}
-      {pane.content.kind === "scm" && <SourceControlView repo={pane.content.scmRepo} path={pane.content.scmPath} />}
-      {pane.content.kind === "changes" && <ChangesView repo={pane.content.scmRepo} />}
+      {pane.content.kind === "scm" && (
+        <SourceControlView repo={pane.content.scmRepo} path={pane.content.scmPath} headerActions={tabHeaderActions} />
+      )}
+      {pane.content.kind === "changes" && <ChangesView repo={pane.content.scmRepo} headerActions={tabHeaderActions} />}
       {pane.content.kind === "commit" && (
-        <CommitDetailView repo={pane.content.scmRepo} path={pane.content.scmPath} sha={pane.content.commitSha} wrap={wrapOn} />
+        <CommitDetailView
+          repo={pane.content.scmRepo}
+          path={pane.content.scmPath}
+          sha={pane.content.commitSha}
+          wrap={wrapOn}
+          headerActions={tabHeaderActions}
+        />
       )}
       {pane.content.kind === "wtdiff" && (
         <WorkingDiffView
@@ -502,6 +547,7 @@ function PopulatedPane({
           path={pane.content.filePath}
           staged={pane.content.diffStaged}
           wrap={wrapOn}
+          headerActions={tabHeaderActions}
         />
       )}
       {pane.content.kind === "file" && (
@@ -513,14 +559,16 @@ function PopulatedPane({
           targetColumn={pane.content.targetColumn}
           openMode={pane.content.mode}
           wrap={pane.wrap}
+          headerActions={tabHeaderActions}
         />
       )}
-      {pane.content.kind === "read" && <ReaderView filePath={pane.content.filePath} />}
+      {pane.content.kind === "read" && <ReaderView filePath={pane.content.filePath} headerActions={tabHeaderActions} />}
       {pane.content.kind === "doc" && (
         <DocView
           title={pane.content.docTitle}
           content={pane.content.docContent}
           session={pane.content.docSession}
+          headerActions={tabHeaderActions}
         />
       )}
       {pane.content.kind === "diff" && (
@@ -529,6 +577,7 @@ function PopulatedPane({
           tool={pane.content.diffTool}
           edits={pane.content.diffEdits as DiffEdit[]}
           wrap={wrapOn}
+          headerActions={tabHeaderActions}
         />
       )}
       {pane.content.kind === "chat" && (
@@ -537,16 +586,17 @@ function PopulatedPane({
           draftAssistantId={pane.content.draftAssistantId}
           paneId={pane.id}
           active={single || active}
+          headerActions={tabHeaderActions}
         />
       )}
       {pane.content.kind === "browser" && (
-        <BrowserPane paneId={pane.id} port={pane.content.port} path={pane.content.path} />
+        <BrowserPane paneId={pane.id} port={pane.content.port} path={pane.content.path} headerActions={tabHeaderActions} />
       )}
       {pane.content.kind === "browserAttach" && (
-        <BrowserAttachPane paneId={pane.id} attachmentId={pane.content.attachmentId} />
+        <BrowserAttachPane paneId={pane.id} attachmentId={pane.content.attachmentId} headerActions={tabHeaderActions} />
       )}
       {pane.content.kind === "sharedSession" && (
-        <SharedSessionView sharedSessionId={pane.content.sharedSessionId} />
+        <SharedSessionView sharedSessionId={pane.content.sharedSessionId} headerActions={tabHeaderActions} />
       )}
     </div>
   );

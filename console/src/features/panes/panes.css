@@ -69,6 +69,13 @@
   margin-top: 32px;
   height: calc(100% - 32px);
 }
+/* Tabbed mode: popout/wrap/close move OFF the floating top-right cluster (that
+   overlaps the tab strip — unreachable/misplaced there) and INTO the selected
+   view's own header row instead, via each view's `headerActions` prop, which
+   feeds ViewHead's `actions` (ui/ViewHead.tsx — SINGLE owner of the
+   .view-head-actions rule; do not redeclare it here). Views outside that
+   component (.shared-view-head, the browser toolbars) render the same
+   `headerActions` through their own trailing `.view-head-actions` span. */
 .pane-tab {
   position: relative;
   display: flex;

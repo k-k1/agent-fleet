@@ -1,6 +1,7 @@
 // WorkingDiffView — ONE working-tree file's diff in its own pane, opened from
 // the 変更 view. Port of views/WorkingDiffView.
 import { useState } from "react";
+import type { ReactNode } from "react";
 import { api, isTransientErr } from "../../core/api/client.ts";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { Icon } from "../../ui/Icon.tsx";
@@ -13,11 +14,13 @@ export function WorkingDiffView({
   path,
   staged,
   wrap,
+  headerActions,
 }: {
   repo: string;
   path: string;
   staged?: boolean | null;
   wrap?: boolean;
+  headerActions?: ReactNode;
 }) {
   const tr = useT();
   const [diff, setDiff] = useState("");
@@ -44,7 +47,7 @@ export function WorkingDiffView({
     <div className="scmview">
       {/* Trailing items here are status tags, not actions — they stay inline on
           the head's own gap rather than in the (tighter-packed) actions slot. */}
-      <ViewHead>
+      <ViewHead actions={headerActions}>
         <span className="view-title" title={path || ""}>
           <Icon name="git-compare" /> {path || tr("scm.no_file_selected")}
         </span>

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
-import type { CSSProperties, KeyboardEvent, ClipboardEvent } from "react";
+import type { CSSProperties, KeyboardEvent, ClipboardEvent, ReactNode } from "react";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { ViewHead } from "../../ui/ViewHead.tsx";
@@ -83,6 +83,8 @@ interface ChatViewProps {
   draftAssistantId?: string | null;
   paneId: string;
   active?: boolean;
+  /** Pane popout/wrap/close (tabbed-grid mode only — see Pane.tsx tabHeaderActions). */
+  headerActions?: ReactNode;
 }
 
 // Backends a conversation can run on, straight off the registry cap — the same source as
@@ -91,7 +93,7 @@ const CHAT_KINDS: SessionKind[] = SESSION_KINDS.filter((k) => AGENTS[k].caps.hea
 
 const chatDraftKey = (conversationId: string) => "af.chat-draft." + conversationId;
 
-export function ChatView({ conversationId, draftAssistantId, paneId, active }: ChatViewProps) {
+export function ChatView({ conversationId, draftAssistantId, paneId, active, headerActions }: ChatViewProps) {
   // Store bridge (old context values): promote a draft pane to its real
   // conversation id; bump the rail list; publish the busy chip.
   const setPaneTarget = useLayoutStore((s) => s.setPaneTarget);
@@ -1195,7 +1197,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
         ...(asstAccent ? { "--chat-accent": asstAccent } : {}),
       } as CSSProperties}
     >
-      <ViewHead className="fileinfo">
+      <ViewHead className="fileinfo" actions={headerActions}>
         <span className="fi-name">
           <Icon name={draftAsst?.icon || "comment-discussion"} /> {title}
         </span>
