@@ -1,8 +1,8 @@
 # 60. ユーザー指示 — フリート方針とプロジェクト指示の間の「その人の層」
 
-> 状態: **P0 + P1 実装済み**（2026-08-13。claude / codex / opencode / copilot / agy / kiro の 6 種 ＋
-> Console 設定タブ。**配れないのは cursor だけ**で、それは構造的な理由（§60.3）。
-> 実測は §60.3 / §60.4 / §60.17。残: P2 フリート層の穴埋め）
+> 状態: **P0〜P2 実装済み**（2026-08-13。ユーザー指示は claude / codex / opencode / copilot / agy /
+> kiro の 6 種へ、フリート方針は claude を含む 6 種すべてへ届く。**配れないのは cursor だけ**で、
+> それは構造的な理由（§60.3）。実測は §60.3 / §60.4 / §60.17）
 > 意思決定: [decisions/0042](decisions/0042-user-instructions.md)
 > 関連: [57-project-tools.md](57-project-tools.md)（配布軸 / 管理軸の区分・本件は**配布軸**） /
 > [48-mcp-registry.md](48-mcp-registry.md) §8.2（配布軸の書き込み規約） /
@@ -69,12 +69,12 @@ user/global 指示位置へ配る仕組みを決める。
 `cp -f` は利用者の追記を保存しない。ユーザー層が無いだけでなく、**自力で作ることもできない**
 （作っても次の起動で失われる。しかも失敗の告知が無い）。
 
-**実害② — agy / cursor / kiro / copilot はフリート方針すら読んでいない。**
+**実害② — agy / cursor / kiro / copilot はフリート方針すら読んでいない**（→ P2 で解消。cursor を除く）**。**
 `~/.gemini/AGENTS.md` が rtk ブロック 450 B しか無いことがその証拠。copilot は実測で system prompt が
 15.4k トークン（`copilot -p` の使用量表示）で、その中にフリート方針は含まれていない。
 **[39](39-agent-memory-management.md) の棚卸し表（「共通」行）が「`AGENTS.md`（codex/opencode/agy）」
 としているのは誤り**で、agy は対象外である（本ドキュメントで訂正済み）。
-ユーザー層の配線はこの穴と同じ形をしているので、同じ配布器で塞げる（§60.13 P3）。
+ユーザー層の配線はこの穴と同じ形をしているので、同じ配布器で塞いだ（§60.13 P2）。
 
 ## 60.3 各 kind の配り方（実測で確定）
 
@@ -231,6 +231,23 @@ $CLAUDE_CONFIG_DIR/CLAUDE.md                     ← claude は所定位置に�
 - **未対応 kind も行として出す**（cursor は「ローカルに置き場が無い」と理由付きで確定表示。
   ＝実装待ちではない）。黙って消すと「対応漏れ」に見え、同じ質問が繰り返される。
 
+### フリート方針の配り先（P2）
+
+ユーザー指示とは別に、イメージ焼き込みの `workspace-notes.md` も同じ配布器が配る。
+claude だけは managed policy（`/etc/claude-code/CLAUDE.md`）として**イメージが配る**ので AF は触らない。
+
+| kind | フリート方針の置き場 |
+|---|---|
+| claude | `/etc/claude-code/CLAUDE.md`（managed policy・AF は触らない） |
+| codex / opencode / agy | それぞれの `AGENTS.md` の `fleet` ブロック |
+| copilot | `$COPILOT_HOME/instructions/agent-fleet-guide.instructions.md` |
+| kiro | `~/.kiro/steering/agent-fleet-guide.md` |
+| cursor | 配れない（ローカルに user スコープが無い） |
+
+ユーザー指示と**別ファイル / 別ブロック**にしてあるのは、片方が利用者の切り替え対象で、
+もう片方がオペレーター所有の固定物だから。フリート方針は利用者のトグルに従わない
+（本人の指示を全部オフにしても配られる）。
+
 ## 60.9 サイズ上限は「費用」の話（切断回避ではない）
 
 罠 B が否定された（§60.4）ので、上限の理由は**トークン費用ひとつ**になる。フリート層だけで
@@ -241,6 +258,9 @@ $CLAUDE_CONFIG_DIR/CLAUDE.md                     ← claude は所定位置に�
 - エディタに実バイト数を常時表示する。
 - codex の予算表示は**不要**（global は予算外と実測済み）。代わりに「1 セッションあたりおよそ何トークン
   増えるか」を出す方が意思決定に効く。
+- ⚠️ **P2 で agy / copilot / kiro のセッション開始コストが約 30 KB ぶん増えた**（それまで
+  フリート方針を読んでいなかったため）。これは「読んでいなかった」ことの是正であって、
+  無料ではない。フリート方針自体を痩せさせる話は §60.15-3 に残っている。
 
 ## 60.10 REST（Agent 側だけで閉じる）
 
@@ -284,7 +304,7 @@ $CLAUDE_CONFIG_DIR/CLAUDE.md                     ← claude は所定位置に�
 |---|---|
 | **P0** ✅ | `mdblock` 括り出し → 配布器（`reconcileAgentInstructions`）→ REST → 設定タブ。対応 kind = **claude / codex / opencode / copilot**（4 種とも実測済み）。実装は `internal/userinstr`（正本）/ 各 `internal/agents/<kind>/instructions.go`（配り方）/ `agent_instructions.go`（配布器と REST）/ `console/src/features/settings/InstructionsTab.tsx` |
 | **P1** ✅ | agy（`~/.gemini/AGENTS.md` 合成・rtk と同じ `editAgents` に一本化）＋ kiro（global steering を実測 → AF 専用ファイル）。これで**配れない kind は cursor だけ**になった |
-| **P2** | **フリート層の穴埋め**: agy / copilot / kiro にも `workspace-notes.md` を配る（実害②）。同じ配布器に 1 行。cursor はプロジェクト層しか無いので対象外 |
+| **P2** ✅ | **フリート層の穴埋め**: agy（`AGENTS.md` の fleet ブロック）/ copilot・kiro（AF 専用の `agent-fleet-guide.*` を 1 本）へ `workspace-notes.md` を配る（実害②）。cursor はローカルに user スコープが無いので対象外 |
 | **P3** | 版管理/移送（[39](39-agent-memory-management.md) のルート宣言へ相乗りできるか判断） |
 
 （当初計画の P2「cursor / copilot の実測」は完了し、cursor は**対応不可で確定**、copilot は P0 へ繰り上げた。）
