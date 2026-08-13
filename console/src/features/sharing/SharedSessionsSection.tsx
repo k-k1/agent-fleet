@@ -6,8 +6,8 @@ import { Modal } from "../../ui/Modal.tsx";
 import { api } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { openSharedSession } from "./open.ts";
-import { startSharedSessionsPolling, useSharedSessionsStore } from "./store.ts";
-import { ShareManagerModal } from "./ShareManagerModal.tsx";
+import { startSharedSessionsPolling, startMySharesPolling, useMySharesStore, useSharedSessionsStore } from "./store.ts";
+import { ShareListModal } from "./ShareListModal.tsx";
 import "./sharing.css";
 
 interface Proposal {
@@ -23,22 +23,19 @@ interface Proposal {
 export function SharedSessionsSection() {
   const tr = useT();
   const sessions = useSharedSessionsStore((s) => s.sessions);
+  const ownedShares = useMySharesStore((s) => s.shares.length);
   const [proposals, setProposals] = useState<Proposal[]>([]);
-  const [ownedShares, setOwnedShares] = useState(0);
   const [open, setOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
   const loadProposals = () => api("api/session-share-proposals").then((d) => {
     if (!d?.error) setProposals((d.proposals || []).filter((p: Proposal) => p.status === "pending" || p.status === "processing"));
   }).catch(() => {});
-  const loadOwned = () => api("api/session-shares").then((d) => {
-    if (!d?.error) setOwnedShares(Array.isArray(d.shares) ? d.shares.length : 0);
-  }).catch(() => {});
   useEffect(() => {
     const stop = startSharedSessionsPolling();
+    const stopMine = startMySharesPolling();
     void loadProposals();
-    void loadOwned();
     const timer = window.setInterval(() => void loadProposals(), 5000);
-    return () => { stop(); window.clearInterval(timer); };
+    return () => { stop(); stopMine(); window.clearInterval(timer); };
   }, []);
 
   const decide = async (id: string, decision: "approve" | "reject") => {
@@ -52,7 +49,7 @@ export function SharedSessionsSection() {
       <Section id="shared-sessions" title={tr("share.shared_sessions")} icon="broadcast" count={sessions.length}
         actions={<>
           {proposals.length > 0 && <IconButton icon="mail" label={tr("share.pending", { count: proposals.length })} onClick={() => setOpen(true)} />}
-          <IconButton icon="settings-gear" label={tr("share.manage_title")} onClick={() => setManageOpen(true)} />
+          <IconButton icon="settings-gear" label={tr("share.list_title")} onClick={() => setManageOpen(true)} />
         </>}>
         <ul className="sess-list">
           {sessions.map((s) => (
@@ -85,7 +82,7 @@ export function SharedSessionsSection() {
           </div>
         </Modal>
       )}
-      {manageOpen && <ShareManagerModal onClose={() => { setManageOpen(false); void loadOwned(); }} />}
+      {manageOpen && <ShareListModal onClose={() => setManageOpen(false)} />}
     </>
   );
 }
