@@ -3,6 +3,13 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.8.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.8.0) — 2026-08-13
+
+A session's conversation can now be shown to another member of your tenant, a new
+session can branch from any past message with the conversation copied as-is, the main
+area lays out as a tabbed grid as well as split panes, and sessions can send each other
+a one-line message without going through you.
+
 ## [0.7.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.7.0) — 2026-08-07
 
 OpenCode now signs in with your opencode.ai account from the Console and lets you
