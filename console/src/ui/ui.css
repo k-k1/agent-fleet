@@ -875,8 +875,16 @@
    cluster. The chip's own auto margin already pushes itself AND everything after
    it to the right, so the trailing cluster must not push a second time. Only the
    chat head matches: the terminal/mirror chip is nested inside .pane-session, a
-   flex container of its own, so its auto margin never reaches this band. */
-.view-head .session-state ~ .view-head-actions {
+   flex container of its own, so its auto margin never reaches this band.
+
+   `.fi-end` (path + download, viewer.css) is the same shape and needs the same
+   treatment, but only shows it on a NARROW pane: it normally grows (flex:1 1 0)
+   and swallows the free space, so there is nothing left to split — until the
+   `@container filepane (max-width: 520px)` rule drops it to `flex: 0 0 auto` and
+   the two auto margins strand the download icon mid-row. Any new auto-margined
+   child of this band belongs on this list. */
+.view-head .session-state ~ .view-head-actions,
+.view-head .fi-end ~ .view-head-actions {
   margin-left: 0;
 }
 /* Pushes everything after it to the right edge (views that have no actions
