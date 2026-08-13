@@ -63,6 +63,36 @@ shows **"Slides", "Preview", "Source"**, and slides are the default view.
 - **◀ / ▶** (or ← → / PageUp·PageDown / Space / Home·End) move one slide at a time.
 - **⤢** switches to fullscreen.
 
+## Editing a file
+
+Switch to editing with **View / Edit / Split** at the top of the viewer and you can fix the file
+right there — no need to start a session for a small change (on `.md`, "Split" puts the editor
+and the preview side by side).
+
+- **Save with Ctrl/⌘+S** (or the Save button). The status line shows "Unsaved changes",
+  "Saving", "Saved".
+- **Leaving with unsaved work is stopped.** Moving a pane, reloading, logging out, popping out
+  into another tab and the like ask first, offering **"Save and continue"** or **"Discard and
+  continue"** (a file with unsaved changes cannot be popped out).
+- **When it changes underneath you** — if an agent or another session rewrites the same file you
+  get **"The file changed externally"**, and **"Check the diff"** lets you compare before taking
+  it.
+- **When it conflicts** — saving from a stale revision gives **"Conflicts with the remote
+  change"**. Your text (mine) is kept, and you choose **adopt remote / discard mine / merge
+  manually onto remote as the base**. Even when the outcome of a save cannot be determined, mine
+  and the submitted snapshot are held so you can settle it with "Retry" or "Save explicitly".
+  **Your edit is never silently lost.**
+- **What cannot be saved** — a change over 2 MiB, content containing NUL, CR/CRLF newlines (LF
+  only) and invalid Unicode are refused.
+
+### Have an AI propose the change
+
+**"AI suggestion"** in the editor asks an AI for a change to the selection (or to the whole file
+when nothing is selected). Write the instruction, generate with **Ctrl+Enter**, review the diff
+and choose **Apply** or **Reject** — nothing is rewritten on its own (if the text moved on after
+generation, it tells you to regenerate). The tokens it spends are recorded in ⚙ Settings → Usage
+as **"Edit suggestion (editor)"** ([12](12-settings.md#usage)).
+
 ## Send a file to a session / chat
 
 When you want an agent to "work on this file", open the file and use the **"Send"** button

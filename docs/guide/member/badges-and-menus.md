@@ -28,6 +28,10 @@ shown as text as well, not just an icon.
 The speaker icon means an answer is being read aloud; the warning plus a branch name means the working copy has
 switched to a branch different from the one it started on.
 
+A row can also carry **"Shared"** (visible to another member —
+[02](02-sessions.md#sharing-a-conversation-shared-sessions)) and **"Delete-locked"** (excluded from deletion and
+automatic tidying — [02](02-sessions.md#tidying-up-in-bulk-cleanup)).
+
 ## Repository status display
 
 | Badge | Meaning |
@@ -35,8 +39,8 @@ switched to a branch different from the one it started on.
 | Uncommitted | There are uncommitted changes |
 | = parent | Same commit as the parent working copy |
 | unmerged N | There are N worktree-specific commits not contained in the parent |
-| merged | The worktree's HEAD is contained in the parent in Git history |
-| diverged N↕M | Both the worktree and the parent have their own commits |
+| parent+N, FF ok | The worktree's HEAD is contained in the parent, which is N commits ahead. **"Fast-forward from the parent"** in the menu brings them in ([04](04-git.md)) |
+| diverged N↕M, no FF | Both the worktree and the parent have their own commits; a merge or rebase is needed |
 | n/a | The relation to the parent can't be determined (detached HEAD etc.) |
 | ↑N | N commits ahead of origin |
 | ↓N FF ok | origin is N commits ahead and can be fast-forwarded |
@@ -53,20 +57,32 @@ A collapsed parent repository also aggregates the sessions of the worktrees unde
 - The spinning icon / check on an assistant row — generating an answer / waiting.
 - "Awaiting approval", "Approved", "Rejected" on a plan card — the decision on the plan.
 - "LFS pointer" — a file with only the Git LFS pointer present, not the actual content.
+- **"From the operator", "Scheduled", "Manual run", "Auto-resume", "From <name>"** in the chat view — where a
+  prompt you did not type came from: the fleet operator, a schedule, an auto-resume after an interruption, and
+  [a message from another session](02-sessions.md#messages-between-sessions).
+- **"Paused"** on a schedule row — that schedule is suspended ([11](11-fleet-operator.md)).
+- **"N awaiting approval"** on shared sessions — proposals from a recipient are waiting for you
+  ([02](02-sessions.md#sharing-a-conversation-shared-sessions)).
+- **"Safe" / "Review" / "Keep"** in the cleanup modal — whether it is fine to tidy away
+  ([02](02-sessions.md#tidying-up-in-bulk-cleanup)).
 
 ## Right-click menus
 
 ### Sessions
 
 Depending on state and kind you'll see resume, re-login to SSM, stop, open the remote session, copy the ID,
-rename, rename the branch, hand the conversation off, archive / delete, and recreate.
+rename, rename the branch, hand the conversation off, **Share…**, **set / clear the delete lock**,
+archive / delete, and recreate. For a session that doesn't belong to a repository, **assignment to a working
+set** appears here too (an item shown ticked but unclickable is one that follows its repository or conversation
+automatically).
 Archive keeps the conversation but hides it from the list; recreate archives the current conversation and starts
 a new one in the same place. When there is no working folder, resume, handoff, and recreate are not shown.
 
 ### Repositories / worktrees
 
 You can open the commit graph, open the folder, commit changes, switch branches, copy the branch name,
-Fast-Forward, launch a session by kind, and delete the working copy. A normal click expands / collapses the row.
+Fast-Forward (on a worktree, **"Fast-forward from the parent"**), project settings, **Share…**, **assignment to
+a working set**, launch a session by kind, and delete the working copy. A normal click expands / collapses the row.
 Ctrl / ⌘+click or middle-click opens the commit graph in a new pane.
 
 ### Files / folders
@@ -78,12 +94,20 @@ file and use "Send" in the viewer.
 ### Assistants
 
 New chat and open in a new pane are shown. Assistants you created also show edit and delete.
-Built-in assistants cannot be edited or deleted.
+Built-in assistants cannot be edited or deleted. A conversation row offers rename, the delete lock, and
+**assignment to a working set**.
 
 ### Commit graph
 
 You can view a commit's details, switch to a branch that references it, check it out as a detached HEAD, and
 create a new branch based at that commit. While viewing a submodule, the branch-changing items are not shown.
+
+## Buttons on a pane
+
+At the top right of a pane you get, depending on its content, **toggle wrapping**, **pop out into another tab**
+(the pane moves into a browser tab of its own) and **close** (middle-click / Ctrl+click closes without
+confirmation). Panes that cannot be popped out don't show the button
+([03](03-terminal.md#arranging-multiple-views-panes)).
 
 ## When a menu doesn't appear
 

@@ -48,6 +48,11 @@ members in your tenant (authentication is transparent via an auto-injected token
 can copy the clone URL or **"Browse"** the contents (browsing without cloning). Good for
 prototypes and in-team sharing.
 
+- A repository can be **renamed**, and **deleted** when no longer needed (deletion cannot be undone).
+- The tab talks to the control plane directly, so **it works while the workspace is stopped**.
+- It also serves as a home for code that must not leave the building. Clone it like any other
+  repository — "Start" → "Clone a new repository…" — by pasting the URL you copied.
+
 ## Launch a session from a repository row
 
 Cloned repositories are listed under **Repositories**. The **"Launch"** button on a row opens
@@ -66,8 +71,8 @@ Rows also show status indicators. Learning to read them helps you catch things b
 - **Uncommitted** — there are changes that have not been committed.
 - Worktree **= parent** — same commit as the parent working copy.
 - Worktree **unmerged N** — there are N commits unique to the worktree not yet in the parent.
-- Worktree **merged** — the worktree's HEAD is contained in the parent in Git history.
-- Worktree **diverged N↕M** — both the worktree and the parent have unique commits; a merge or rebase is needed.
+- Worktree **parent+N, FF ok** — the worktree's HEAD is contained in the parent, and **the parent is N commits ahead**. **"Fast-forward from the parent"** in the right-click menu brings those changes straight into this worktree (no merge commit).
+- Worktree **diverged N↕M, no FF** — both the worktree and the parent have unique commits; a merge or rebase is needed.
 - Worktree **n/a** — the relationship cannot be determined, e.g. detached HEAD or a repository with no commits.
 - **↑N** (ahead) — N commits ahead of origin (not pushed).
 - **↓N FF ok** — origin is N commits ahead and can be fast-forwarded cleanly (Fast-Forward in the commit graph).
@@ -89,7 +94,10 @@ Right-clicking a repository or worktree row shows the following actions. Some it
 depending on state and location.
 
 - **Open commit graph** / **Open the folder** / **Commit changes**
-- **Switch branch** / **Copy the branch name** / **Fast-Forward**
+- **Switch branch** / **Copy the branch name** / **Fast-Forward** (on a worktree, **"Fast-forward from the parent"**)
+- **Project settings** — the MCP definitions committed in that repository, with per-agent status and warnings ([12](12-settings.md#mcp-servers))
+- **Share…** — share this working copy's (project's) sessions with another member ([02](02-sessions.md#sharing-a-conversation-shared-sessions))
+- **Assignment to a working set** ([02](02-sessions.md#narrowing-the-view-with-working-sets))
 - Per-kind session launch: claude, codex, opencode, shell, and so on
 - **Delete the working copy** (only for working copies that can be deleted)
 
