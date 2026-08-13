@@ -229,6 +229,8 @@ export const en: Record<keyof typeof ja, string> = {
   "surface.viewer.long": "File viewer background",
   "surface.session.short": "Session",
   "surface.session.long": "Session background",
+  "surface.shared.short": "Shared",
+  "surface.shared.long": "Shared session background",
   "surface.assistant.short": "Assistant",
   "surface.assistant.long": "Assistant background",
 
@@ -240,6 +242,7 @@ export const en: Record<keyof typeof ja, string> = {
   "display.color_theme": "Color theme",
   "display.theme": "Theme",
   "display.session_theme": "Session theme",
+  "display.shared_theme": "Shared session theme",
   "display.assistant_theme": "Assistant theme",
   "display.region_theme_note":
     "The session chat and the assistant chat can use their own theme (dark/light), separate from the app itself (“Match app” follows the app). You can also set each one's background color below.",
