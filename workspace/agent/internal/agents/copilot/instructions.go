@@ -15,7 +15,12 @@ package copilot
 // 同じように読まれる**。$COPILOT_HOME 配下に AF 専用ファイルを持つのは rtk
 // （hooks/rtk.json）で既に踏んでいる前例と同じ形。
 //
-// フリート方針はまだ配っていない（docs/60 §60.13 P2）。ここは user 層だけを扱う。
+// フリート方針も同じディレクトリへ**別ファイル**で置く（docs/60 §60.13 P2）。copilot は
+// これまでワークスペースの運用方針を一切読んでいなかった（system prompt 15.4k トークンに
+// 含まれていないことを実測）。2 ファイルに分けるのは、片方が利用者の切り替え対象
+// （ユーザー指示）で、もう片方がオペレーター所有の固定物（フリート方針）だから。
+// 名前は "guide" < "user" の順で並ぶようにしてある（読み込み順は保証されていないが、
+// 優先順位はユーザー指示側の本文にも明記してあるので、並びに依存しない）。
 
 import (
 	"os"
@@ -29,9 +34,28 @@ func UserInstructionsPath() string {
 	return filepath.Join(Home(), "instructions", "agent-fleet-user.instructions.md")
 }
 
+// FleetNotesPath is the AF-owned file carrying the baked workspace guide.
+func FleetNotesPath() string {
+	return filepath.Join(Home(), "instructions", "agent-fleet-guide.instructions.md")
+}
+
+// ApplyFleetNotes writes the workspace guide. An empty guide is a no-op (an image
+// without one must not silently drop a guide that is already in place).
+func ApplyFleetNotes(fleet string) error {
+	if fleet == "" {
+		return nil
+	}
+	return writeOwnedFile(FleetNotesPath(), fleet)
+}
+
 // ApplyUserInstructions writes (or removes, when body is empty) that file.
 func ApplyUserInstructions(body string) error {
-	path := UserInstructionsPath()
+	return writeOwnedFile(UserInstructionsPath(), body)
+}
+
+// writeOwnedFile writes a file agent-fleet owns outright, removing it when the body
+// is empty so nothing stale is left behind. Writes only when the content changes.
+func writeOwnedFile(path, body string) error {
 	if body == "" {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err

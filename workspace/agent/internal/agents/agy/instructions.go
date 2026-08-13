@@ -18,6 +18,22 @@ import (
 // AgentsPath is agy's global instruction file.
 func AgentsPath() string { return agentsPath() }
 
+// ApplyFleetNotes composes the baked workspace guide into AGENTS.md as an
+// agent-fleet-owned block (docs/60 §60.13 P2 — agy read no fleet policy at all until
+// now: its AGENTS.md held nothing but the 450 B rtk block). An empty guide is a no-op
+// rather than a removal, same as codex's twin.
+func ApplyFleetNotes(fleet string) error {
+	if fleet == "" {
+		return nil
+	}
+	return editAgents(func(s string) string {
+		if !mdblock.Has(s, "fleet") {
+			s = mdblock.StripLegacyPrefix(s, fleet)
+		}
+		return mdblock.Set(s, "fleet", fleet)
+	})
+}
+
 // ApplyUserInstructions writes (or removes, when body is empty) the user-notes block.
 func ApplyUserInstructions(body string) error {
 	return editAgents(func(s string) string { return mdblock.Set(s, "user-notes", body) })
