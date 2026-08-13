@@ -271,6 +271,11 @@ type SharedSessionCatalog struct {
 	// Parent は worktree の場合のみ、親(ベース)working copy のフォルダ名。
 	Worktree bool
 	Parent   string
+	// ParentWorkingCopyID は worktree の場合のみ、親(ベース)working copy の
+	// workingCopyId。repo 共有はプロジェクト全体(ベース＋その worktree)を対象に
+	// するので、ACL 判定はフォルダ名(Parent)ではなくこの ID で行う — 名前は
+	// 付け替えられるが workingCopyId は作業コピーの世代に固定されるため。
+	ParentWorkingCopyID string
 }
 
 type SessionShareProposal struct {

@@ -12,7 +12,6 @@ export interface SharedSession {
   label?: string;
   createdAt?: string;
   state: "running" | "stopped" | string;
-  archived?: boolean;
   permission: "ro" | "rw";
   workspaceState: string;
   worktree?: boolean;

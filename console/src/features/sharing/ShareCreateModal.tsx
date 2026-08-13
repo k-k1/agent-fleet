@@ -15,7 +15,6 @@ import { useReposStore } from "../repos/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { useMySharesStore } from "./store.ts";
-import type { Session } from "../../types/session.ts";
 import "./sharing.css";
 
 interface RecipientCandidate {
@@ -36,7 +35,6 @@ export function ShareCreateModal({ initialTarget, onClose, onCreated }: ShareCre
   const toast = useToast();
   const repos = useReposStore((s) => s.repos);
   const sessions = useSessionsStore((s) => s.sessions);
-  const [archived, setArchived] = useState<Session[]>([]);
   const [target, setTarget] = useState(initialTarget ?? "");
   const [recipientQuery, setRecipientQuery] = useState("");
   const [recipientPick, setRecipientPick] = useState<RecipientCandidate | null>(null);
@@ -57,21 +55,17 @@ export function ShareCreateModal({ initialTarget, onClose, onCreated }: ShareCre
       .finally(() => { if (alive) setSearching(false); });
     return () => { alive = false; };
   }, [debouncedQuery, recipientPick]);
+  // アーカイブ済みは候補に出さない: 共有先の一覧からも外れる(docs/59 §1)ので、
+  // 選べても相手には何も見えない。
   const candidates = useMemo(() => [
-    ...[...sessions, ...archived].filter((s) => agentOf(s.kind).caps.transcript).map((s) => ({
+    ...sessions.filter((s) => agentOf(s.kind).caps.transcript).map((s) => ({
       value: `session:${s.name}`, label: `${tr("share.session_scope")}: ${s.title || s.label || s.name}`,
     })),
     ...repos.filter((r) => r.workingCopyId).map((r) => ({
       value: `${r.worktree ? "worktree" : "repo"}:${r.workingCopyId}`,
       label: `${r.worktree ? tr("share.worktree_scope") : tr("share.repo_scope")}: ${r.name}`,
     })),
-  ], [repos, sessions, archived, tr]);
-  useEffect(() => {
-    // 右クリック起点(locked)は対象が既に確定しているので、候補集めのためだけの
-    // アーカイブ一覧取得は不要。
-    if (locked) return;
-    void api("api/sessions/archived").then((d) => setArchived(d.sessions || [])).catch(() => setArchived([]));
-  }, [locked]);
+  ], [repos, sessions, tr]);
   useEffect(() => { if (!locked && !target && candidates[0]) setTarget(candidates[0].value); }, [locked, candidates, target]);
   const targetLabel = candidates.find((c) => c.value === target)?.label ?? target;
   const canSubmit = !!target && !!recipientPick;
@@ -108,6 +102,9 @@ export function ShareCreateModal({ initialTarget, onClose, onCreated }: ShareCre
             </select>
           </label>
         )}
+        {/* repo 共有はプロジェクト全体(ベース＋配下 worktree)に効く(docs/59 §1)。
+            どこまで見えるかは共有前に明示する。 */}
+        {target.startsWith("repo:") && <p className="ui-field-hint">{tr("share.repo_scope_hint")}</p>}
         <div className="ui-field share-recipient-field">
           <span className="ui-field-label">{tr("share.recipient")}</span>
           {recipientPick ? (
