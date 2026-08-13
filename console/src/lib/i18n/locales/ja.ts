@@ -1656,7 +1656,7 @@ export const ja = {
   "topbar.fullscreen_exit": "全画面解除",
   "topbar.fullscreen_enter": "全画面表示",
   "topbar.reload": "再読み込み",
-  "topbar.appearance_title": "外観（テーマ・配色）",
+  "topbar.appearance_title": "外観（配置・テーマ・配色）",
   "topbar.appearance": "外観",
   "topbar.appearance_details": "詳細",
   "topbar.appearance_details_title": "表示設定を開く（フォント・詳細な配色など）",
