@@ -97,7 +97,7 @@ export const SURFACE_COLORS: { id: string; labelKey: MsgKey; dark: string | null
 // The four themeable surfaces (settings key + labels). Shared by DisplayTab and the
 // TopBar 外観 popover so "which surfaces are colorable" is defined once — `short` for
 // the compact popover rows, `long` for the settings-tab rows.
-export const SURFACE_TARGETS: { key: "topbarColor" | "leftpaneColor" | "viewerColor" | "chatColor" | "assistantColor"; shortKey: MsgKey; longKey: MsgKey }[] = [
+export const SURFACE_TARGETS: { key: "topbarColor" | "leftpaneColor" | "viewerColor" | "chatColor" | "sharedColor" | "assistantColor"; shortKey: MsgKey; longKey: MsgKey }[] = [
   { key: "topbarColor", shortKey: "surface.topbar.short", longKey: "surface.topbar.long" },
   { key: "leftpaneColor", shortKey: "surface.leftpane.short", longKey: "surface.leftpane.long" },
   { key: "viewerColor", shortKey: "surface.viewer.short", longKey: "surface.viewer.long" },
@@ -105,6 +105,9 @@ export const SURFACE_TARGETS: { key: "topbarColor" | "leftpaneColor" | "viewerCo
   // セッション so it isn't confused with the assistant chat. Key kept as chatColor for
   // backward-compat with persisted prefs.
   { key: "chatColor", shortKey: "surface.session.short", longKey: "surface.session.long" },
+  // sharedColor は共有セッション(.shared-view)の同じ仕組み。他人の会話を読んでいる面を
+  // 自分のミラーと別の色にできると、どちらを見ているか一目で分かる(docs/59)。
+  { key: "sharedColor", shortKey: "surface.shared.short", longKey: "surface.shared.long" },
   // assistantColor is the same surface mechanism for the assistant chat (.chatview).
   { key: "assistantColor", shortKey: "surface.assistant.short", longKey: "surface.assistant.long" },
 ];
@@ -202,12 +205,16 @@ export interface Settings {
   // "dark", or "light". Applied by scoping data-theme onto the region container.
   // mirrorTheme → .mirrorview (session mirror); assistantTheme → .chatview (assistant chat).
   mirrorTheme: string;
+  // sharedTheme → .shared-view（受信側の共有セッション、docs/59）。
+  sharedTheme: string;
   assistantTheme: string;
   topbarColor: string;
   leftpaneColor: string;
   viewerColor: string;
-  // Surface color for the session mirror (chatColor) and the assistant chat (assistantColor).
+  // Surface color for the session mirror (chatColor), the recipient-side shared session
+  // (sharedColor) and the assistant chat (assistantColor).
   chatColor: string;
+  sharedColor: string;
   assistantColor: string;
   mirrorSend: string;
   // Default claude model for new sessions (launch dialog + repo 起動). Usually a tier
@@ -548,11 +555,13 @@ const DEFAULTS: Settings = {
   paneLayout: "split",
   locale: detectLocale(),
   mirrorTheme: "inherit",
+  sharedTheme: "inherit",
   assistantTheme: "inherit",
   topbarColor: "default",
   leftpaneColor: "default",
   viewerColor: "default",
   chatColor: "default",
+  sharedColor: "default",
   assistantColor: "default",
   // Markdown mirror composer: "mod-enter" = Ctrl/⌘+Enter submits, Enter inserts a
   // newline (phone-friendly default); "enter" = Enter submits, Shift+Enter newline.
@@ -973,11 +982,13 @@ const DEVICE_LOCAL = new Set<keyof Settings>([
   "usageResetNotify", // 制限リセット通知 ON/OFF（この端末で鳴らすか）
   "theme", // ダーク/ライト
   "mirrorTheme", // セッションミラーのテーマ（端末ごとの見せ方）
+  "sharedTheme", // 共有セッションのテーマ（端末ごとの見せ方）
   "assistantTheme", // アシスタントチャットのテーマ（端末ごとの見せ方）
   "topbarColor", // 外観の配色（サーフェス色）
   "leftpaneColor",
   "viewerColor",
   "chatColor",
+  "sharedColor",
   "assistantColor",
   "workingSetActive", // 表示中の作業グループ（docs/52 — 端末ごとに別案件を見る）
 ]);

@@ -56,4 +56,12 @@ describe("device-local settings", () => {
     expect(isDeviceLocalSetting("viewerFont")).toBe(false);
     expect(isDeviceLocalSetting("locale")).toBe(false);
   });
+
+  // 面ごとのテーマ/背景は「この端末でどう見せるか」なので端末ローカル。共有セッション
+  // (docs/59)も同じ扱い — 追加時にここから漏らすと、別端末の見え方を勝手に上書きする。
+  it("keeps every per-region look on this device", () => {
+    for (const key of ["mirrorTheme", "sharedTheme", "assistantTheme", "chatColor", "sharedColor"] as const) {
+      expect(isDeviceLocalSetting(key)).toBe(true);
+    }
+  });
 });
