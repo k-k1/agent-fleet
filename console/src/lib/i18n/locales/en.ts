@@ -1049,15 +1049,19 @@ export const en: Record<keyof typeof ja, string> = {
   "agents.oc_ws_limit": "Last limit: {name} (resets {at})",
   "agents.oc_ws_limit_unknown": "unknown window",
   "agents.oc_usage": "Route",
+  "agents.oc_usage_off": "Off",
   "agents.oc_usage_free": "Free tier",
   "agents.oc_usage_go": "Go",
   "agents.oc_usage_zen": "Zen",
+  "agents.oc_usage_note_off":
+    "opencode is never used. It won't launch even with a stored API key or a signed-in account (for workspaces whose security policy forbids reaching an outside service without permission). The default (Zen) behaves the same when nothing is connected, but this is the explicit, tamper-resistant version — adding a key later still won't turn it on.",
   "agents.oc_usage_note_free":
     "Lists only the models that work with no credentials (the API key isn't injected). opencode can be launched without any connection, but the free tier is subject to congestion and usage caps.",
   "agents.oc_usage_note_go":
     "Lists only the subscription ids (opencode-go/…). Go models are tied to an API key, so one must be stored; signing in to the account is optional.",
   "agents.oc_usage_note_zen":
     "Lists the pay-per-request ids (opencode/…), plus the Go ids when the account has both. Needs either an account sign-in or an API key.",
+  "agents.oc_off_desc": "opencode is disabled. Any stored key or sign-in is ignored. Switch the Route above to use it.",
   "agents.oc_free_desc":
     "Using the free tier — no credentials needed. To use paid models, switch the route and connect an account or an API key.",
   "agents.oc_model_go": "{model} (Go)",
