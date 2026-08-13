@@ -143,10 +143,11 @@ const WINDOW = 400;
 const FINALIZE_GRACE_MS = 8000;
 
 // The user counts as "stuck to the bottom" (auto-follow on) while within this many px of
-// the end. Above it, following stops and the jump-to-latest button appears. Kept generous
-// so the typing indicator / stop-button row appearing and disappearing at the end (a
-// ~40–60px height swing between polls) never nudges us out of "at bottom" and drops follow.
-const NEAR_BOTTOM_PX = 160;
+// the end. Above it, following stops and the jump-to-latest button appears. Narrower than
+// before by request, so follow drops more readily on scroll-up — note this sits close to
+// the typing indicator / stop-button row's ~40–60px height swing between polls, so that
+// swing can occasionally nudge us out of "at bottom" on its own.
+const NEAR_BOTTOM_PX = 80;
 
 // After an interaction inside the transcript, hold off the bottom re-pin for this long, so
 // content the READER grew (expanding a 作業過程 disclosure, switching code wrapping) keeps
