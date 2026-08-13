@@ -3665,6 +3665,8 @@ export const ja = {
   "share.recipient_change": "変更",
   "share.permission": "権限",
   "share.approval_required": "所有者承認付き",
+  "share.permission_ro": "閲覧のみ",
+  "share.permission_rw": "提案可",
   "share.create": "共有する",
   "share.unshare": "解除",
   "share.save_failed": "共有設定を保存できませんでした",

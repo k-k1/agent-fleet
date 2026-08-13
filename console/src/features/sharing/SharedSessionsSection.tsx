@@ -1,13 +1,13 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { Section } from "../../ui/Section.tsx";
-import { Icon } from "../../ui/Icon.tsx";
 import { Button, IconButton } from "../../ui/Button.tsx";
 import { Modal } from "../../ui/Modal.tsx";
 import { api } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
-import { openSharedSession } from "./open.ts";
 import { startSharedSessionsPolling, startMySharesPolling, useMySharesStore, useSharedSessionsStore } from "./store.ts";
 import { ShareListModal } from "./ShareListModal.tsx";
+import { SharedProjectNode } from "./SharedProjectNode.tsx";
+import { groupedSharedSessions } from "./sharedProject.ts";
 import "./sharing.css";
 
 interface Proposal {
@@ -42,6 +42,10 @@ export const SharedSessionsSection = memo(function SharedSessionsSection() {
     await api(`api/session-share-proposals/${encodeURIComponent(id)}/${decision}`, { method: "POST" });
     await loadProposals();
   };
+  // 複数の相手から共有を受けている場合だけ owner 見出しを出す(通常の1人だけの
+  // ケースでは冗長な階層を増やさない)。
+  const groups = useMemo(() => groupedSharedSessions(sessions), [sessions]);
+  const showOwner = useMemo(() => new Set(sessions.map((s) => s.ownerUserKey)).size > 1, [sessions]);
 
   if (sessions.length === 0 && proposals.length === 0 && ownedShares === 0) return null;
   return (
@@ -51,18 +55,8 @@ export const SharedSessionsSection = memo(function SharedSessionsSection() {
           {proposals.length > 0 && <IconButton icon="mail" label={tr("share.pending", { count: proposals.length })} onClick={() => setOpen(true)} />}
           <IconButton icon="settings-gear" label={tr("share.list_title")} onClick={() => setManageOpen(true)} />
         </>}>
-        <ul className="sess-list">
-          {sessions.map((s) => (
-            <li key={s.id}>
-              <button className="shared-rail-row" type="button" title={`${s.ownerUserKey} · ${s.repo || s.name}`}
-                onClick={(e) => openSharedSession(s.id, e.ctrlKey || e.metaKey)}>
-                <Icon name="comment-discussion" />
-                <span className="name">{s.title || s.label || s.name}</span>
-                <small>{s.ownerUserKey} · {s.permission.toUpperCase()}</small>
-                {s.workspaceState !== "running" && <Icon name="debug-pause" title={tr("share.owner_stopped")} />}
-              </button>
-            </li>
-          ))}
+        <ul className="proj-tree sess-list">
+          {groups.map((g) => <SharedProjectNode key={`${g.ownerUserKey}:${g.copies[0].workingCopyId}`} group={g} showOwner={showOwner} />)}
         </ul>
       </Section>
       {open && (
