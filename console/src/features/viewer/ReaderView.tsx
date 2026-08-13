@@ -13,6 +13,7 @@ import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { baseName, langFor } from "../../lib/filemeta.ts";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
+import { ViewHead } from "../../ui/ViewHead.tsx";
 import { useSettings, setSetting, READER_FONTS, readerFontStack } from "../../lib/settings.ts";
 import { useLocale, useT } from "../../lib/i18n/index.ts";
 import { startNarration, BLOCK_BEAT, SENT_BEAT, TAME_BEAT, readerVoiceChoices, voiceChoiceOpts, type NarrationHandle } from "../chat/tts.ts";
@@ -266,7 +267,7 @@ export function ReaderView({ filePath }: { filePath: string }) {
 
   return (
     <div className="fileview readerview" style={readerStyle}>
-      <header className="view-head fileinfo reader-head">
+      <ViewHead className="fileinfo reader-head">
         <span className="fi-name mono">
           <FileIcon name={baseName(filePath)} /> {baseName(filePath)}
         </span>
@@ -366,7 +367,7 @@ export function ReaderView({ filePath }: { filePath: string }) {
         <span className="fi-path muted" title={filePath}>
           {filePath}
         </span>
-      </header>
+      </ViewHead>
 
       {err ? (
         <pre className="filebody muted">({err})</pre>

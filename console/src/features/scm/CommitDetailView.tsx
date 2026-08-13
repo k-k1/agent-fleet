@@ -4,6 +4,7 @@ import { useState } from "react";
 import { api, isTransientErr } from "../../core/api/client.ts";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { Icon } from "../../ui/Icon.tsx";
+import { ViewHead } from "../../ui/ViewHead.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { CommitDetail } from "./GitDiff.tsx";
@@ -47,7 +48,10 @@ export function CommitDetailView({ repo, path, sha, wrap }: { repo: string; path
   }
   return (
     <div className="scmview">
-      <header className="view-head">
+      {/* The fold/wrap buttons sit inline after a spacer rather than in the
+          actions slot: the slot packs its contents at 6px, and these three are
+          spaced by the head's own 10px gap today. */}
+      <ViewHead>
         <span className="view-title" title={repo || ""}>
           <Icon name="git-commit" /> {repo}{path ? ` / ${path}` : ""} · {(sha || "").slice(0, 10)}
         </span>
@@ -67,7 +71,7 @@ export function CommitDetailView({ repo, path, sha, wrap }: { repo: string; path
         >
           <Icon name="word-wrap" /> <span className="lbl">{tr("scm.wrap")}</span>
         </button>
-      </header>
+      </ViewHead>
       <div className="scm-scroll">
         <CommitDetail commit={commit} wrap={effWrap} fold={fold} />
       </div>

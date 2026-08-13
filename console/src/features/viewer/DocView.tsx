@@ -10,6 +10,7 @@ import type { CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { MarkdownView } from "./MarkdownView.tsx";
 import { Icon } from "../../ui/Icon.tsx";
+import { ViewHead } from "../../ui/ViewHead.tsx";
 import { useSettings, fontStack } from "../../lib/settings.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useFilesStore } from "../files/store.ts";
@@ -178,7 +179,7 @@ export function DocView({ title, content, session }: DocViewProps) {
   const full = key ? comments.length >= MAX_COMMENTS : false;
   return (
     <div className="fileview docview" style={viewerStyle}>
-      <header className="view-head fileinfo">
+      <ViewHead className="fileinfo">
         <span className="fi-name mono">
           <Icon name="checklist" /> {title || tr("view.document")}
         </span>
@@ -188,7 +189,7 @@ export function DocView({ title, content, session }: DocViewProps) {
             <Icon name="comment-discussion" /> {tr("plan.review_tag")}
           </span>
         )}
-      </header>
+      </ViewHead>
       <div className="md-scroll" ref={bodyRef} onMouseUp={() => captureRef.current()}>
         <MarkdownView
           source={content || ""}

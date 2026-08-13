@@ -79,10 +79,12 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { t as tr, tCount, useT } from "../../lib/i18n/index.ts";
 import { Trans } from "../../lib/i18n/Trans.tsx";
 import { fmtTok } from "../../lib/fmttok.ts";
-import { kindIcon, kindLabel, kindShort, kindClass } from "../../lib/sessionkind.ts";
+import { kindIcon, kindLabel, kindClass } from "../../lib/sessionkind.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { hasLaunchSeed, takeLaunchSeed } from "../../lib/launchSeed.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
+import { ViewHead } from "../../ui/ViewHead.tsx";
+import { PaneSessionChip } from "../panes/PaneSessionChip.tsx";
 import { awaitingReply, confirmedWorkEnd, latestWorkPromptIndex, textOfParts, workSplit } from "./mirrorParts.ts";
 import { echoLanded, echoNeedsResync, type PendingEcho } from "./pendingEcho.ts";
 import { PLAN_APPROVE_KEYS, planOutcome } from "./planDecision.ts";
@@ -317,7 +319,6 @@ export function MirrorView({
   onToggleMirror,
   readOnly = false,
   onResume,
-  headerActions,
 }: {
   paneId: string;
   session: string;
@@ -327,8 +328,6 @@ export function MirrorView({
   onToggleMirror: (v: boolean) => void;
   readOnly?: boolean;
   onResume?: () => void;
-  /** Pane actions placed immediately before the chat/terminal toggle. */
-  headerActions?: ReactNode;
 }) {
   const settings = useSettings();
   // Per-agent descriptor: how this session's assistant signs its turns, and which
@@ -2548,23 +2547,14 @@ export function MirrorView({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      <header className="view-head">
+      <ViewHead
+        actions={
+          /* Managed（paneless）セッションにはターミナルが無い — トグル自体を出さない。 */
+          !managed && <MirrorToggle mirror={!!mirror} onToggle={onToggleMirror} running={running} />
+        }
+      >
         {sessionMeta ? (
-          // The display name ellipsizes in a narrow pane and the slug stays hidden
-          // (internal id) — hovering the header shows both in full.
-          <span className="pane-session" title={displayName(sessionMeta) + "\nID: " + sessionMeta.name}>
-            <span className={"kind-tag kind-" + kindClass(sessionMeta.kind)}>
-              <Icon name={kindIcon(sessionMeta.kind)} />
-              <span className="kt-label kt-full">{kindLabel(sessionMeta.kind)}</span>
-              <span className="kt-label kt-short">{kindShort(sessionMeta.kind)}</span>
-            </span>
-            <span className="session-display">{displayName(sessionMeta)}</span>
-            {chip && (
-              <span className={"session-state " + chip.cls}>
-                <Icon name={chip.icon} spin={chip.spin} /> {chip.text}
-              </span>
-            )}
-          </span>
+          <PaneSessionChip session={sessionMeta} state={chip} />
         ) : (
           <span className="view-title">{tr("mirror.session_fallback")}</span>
         )}
@@ -2582,12 +2572,7 @@ export function MirrorView({
             {managedSettings?.mode === "plan" && <span> · Plan</span>}
           </button>
         )}
-        <span className="mirror-head-actions">
-          {headerActions}
-          {/* Managed（paneless）セッションにはターミナルが無い — トグル自体を出さない。 */}
-          {!managed && <MirrorToggle mirror={!!mirror} onToggle={onToggleMirror} running={running} />}
-        </span>
-      </header>
+      </ViewHead>
 
       {ctxUsage && <ContextBar {...ctxUsage} spends={spends} maxSpend={maxSpend} />}
       {tasks.length > 0 && <TaskChecklist key={session} tasks={tasks} session={session} />}
