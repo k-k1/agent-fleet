@@ -220,7 +220,7 @@ RUN set -eux; \
 # BAKE_AGENT_CLIS=0（lean 配布 variant）は rtk も焼かない — entrypoint の boot-install
 # が versions.json の rtk ピンで ~/.local/bin へ導入する（docs/35 §35.4.1）。
 ARG BAKE_RTK=1
-ARG RTK_VERSION=0.44.2
+ARG RTK_VERSION=0.45.0
 RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -250,10 +250,10 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 換えて再ビルド → 各 Workspace を Stop→Start。latest の確認は `npm view <pkg> version`。
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
-ARG CLAUDE_CODE_VERSION=2.1.224
-ARG OPENCODE_VERSION=1.18.15
+ARG CLAUDE_CODE_VERSION=2.1.231
+ARG OPENCODE_VERSION=1.18.18
 ARG CODEX_VERSION=0.147.0
-ARG COPILOT_VERSION=1.0.78
+ARG COPILOT_VERSION=1.0.79
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
         "opencode-ai@${OPENCODE_VERSION}" \
@@ -277,10 +277,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # 注意: agy は Go BoringCrypto(FIPS) ビルドで、x86 では RDRAND 命令が無いホストだと
 # 起動即 SIGABRT する（0008 PoC: Ryzen Embedded R2514）。RDRAND 非提示のビルドホスト
 # でもイメージは焼けるよう、起動を伴う --version 検証は rdrand 提示時だけ行う。
-ARG AGY_VERSION=1.1.11
-ARG AGY_RELEASE_BUILD=4956531888881664
-ARG AGY_SHA256_X64=caef1dd4c99c57dee1d1dec2b6c67726df535ea49ec71eabadd36daff8223d19
-ARG AGY_SHA256_ARM64=f3a03713e3e3cc84477e115d3fd9de1c232386b09384ba8690df6fc0cb0abbf3
+ARG AGY_VERSION=1.1.12
+ARG AGY_RELEASE_BUILD=5877618327814144
+ARG AGY_SHA256_X64=c778ae4fd11e5dc2dbddfd7108ee1974ae60fd531afb246be41c6e4bb49c81ca
+ARG AGY_SHA256_ARM64=dbfcc9bb91716d68410d99027892d34cf412dae1d23b82e191549a8629ddab38
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -323,9 +323,9 @@ ENV AGY_CLI_DISABLE_AUTO_UPDATE=1
 # setTimeout(...).unref() で走るが `disableAutoUpdate || channel==="static"` でスキップ）。
 # 焼き込みでは AF が起動フラグ `--disable-auto-update`（全経路）＋ entrypoint の
 # cli-config.json `channel:"static"` 再固定の二重で封じる（詳細 docs/40 Track B）。
-ARG CURSOR_VERSION=2026.08.04-aaa8809
-ARG CURSOR_SHA256_X64=e282068dcb5cdd668b8ce2e3456c58be13bb64a834e1ad49f8534b5cd7aa2fe5
-ARG CURSOR_SHA256_ARM64=d5196289292a660b59807ac508c9ac36ec1e1a1a7e4697af3ef6824fdea984ee
+ARG CURSOR_VERSION=2026.08.11-e8db854
+ARG CURSOR_SHA256_X64=bfff4bf6f4e9dd30c1d0ef0a70b6077b074015dd2948e4c50685d53afdcfce5a
+ARG CURSOR_SHA256_ARM64=ea13f92e295f523a99ce8d8f57d6894d21e5d1e2d030ffad718ccd5955ca2eed
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -362,9 +362,9 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # `app.disableAutoupdates` で止める設定型なので、封殺は runtime（entrypoint 起動毎再固定
 # ＋ 縦割りの ensureSettings）に寄せる（copilot の COPILOT_AUTO_UPDATE とは違い build ENV
 # では止められない）。
-ARG KIRO_VERSION=2.16.2
-ARG KIRO_SHA256_X64=0e88b51c894b08915ae47f48da70b8b9c94c267c157f778f54e1c5f5f42b682f
-ARG KIRO_SHA256_ARM64=b902454638f9c13d7713f31a4903fba548c789d99fd29ad2df8f6dacdf8d7fb5
+ARG KIRO_VERSION=2.18.0
+ARG KIRO_SHA256_X64=05c880af3ce6b7c78e1eb23f7a90b4e29536e91989a92e2c7e960a74b80fe63d
+ARG KIRO_SHA256_ARM64=d0e89137d203f8723b0651514324d1afd18dbb2fa0589d7b0e6a68c073284784
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
