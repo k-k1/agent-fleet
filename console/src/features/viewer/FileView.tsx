@@ -12,6 +12,7 @@ import { api, downloadURL, isTransientErr } from "../../core/api/client.ts";
 import { baseName, langFor, langLabel, humanSize, countLines, isMarpDoc, imageFormat } from "../../lib/filemeta.ts";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
+import { ViewHead } from "../../ui/ViewHead.tsx";
 import { useSettings, fontStack } from "../../lib/settings.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -780,7 +781,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
     // range.toString() + a state update on every repeat, degrading O(n²) as the selection
     // grew. Mouse selection keeps its instant onMouseUp (one event per drag).
     <div className="fileview" style={viewerStyle} ref={bodyRef} onFocusCapture={onFocusCapture} onMouseUp={captureSelection}>
-      <header className="view-head fileinfo">
+      <ViewHead className="fileinfo">
         <span className="fi-name mono">
           <FileIcon name={baseName(filePath)} /> {baseName(filePath)}
         </span>
@@ -943,7 +944,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
             <Icon name="cloud-download" />
           </a>
         </span>
-      </header>
+      </ViewHead>
 
       {canEdit && (
         <div

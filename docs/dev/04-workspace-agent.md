@@ -249,8 +249,13 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
 - **entrypoint の seed 方針 = 「無い時のみ」**: `settings.json`（skip-permissions / RC /
   通知 / rtk フック）、`~/.gradle/gradle.properties`（メモリ制約ホスト向けの保守的既定）。
   以後は設定 UI が真実（毎起動 force すると UI と喧嘩する）。**毎起動 refresh するもの**:
-  opencode plugin・各エージェントの利用ガイド（`workspace-notes.md` 単一ソース→
-  claude=`/etc/claude-code/CLAUDE.md`（managed policy・image 焼込）/ codex・opencode=AGENTS.md へ cp）。
+  opencode plugin。
+  ⚠️ **利用ガイド（`workspace-notes.md`）の配布は entrypoint から agent へ移した**（docs/60 / ADR 0042）。
+  claude=`/etc/claude-code/CLAUDE.md`（managed policy・image 焼込）は据え置き、codex・opencode の
+  `AGENTS.md` は agent の `reconcileAgentInstructions()` が**マーカー付きで合成**する。
+  以前の `cp -f` はファイルを丸ごと上書きしており、利用者がそこへ書き足した文章が毎起動で
+  消えていた（＝ユーザー層を作れない原因）。同じ 1 人の書き手がフリート方針・ユーザー指示・
+  rtk ブロックを順に置き、マーカー外は温存する。
   ⚠️ `.dockerignore` は `**/*.md` 除外に `!workspace-notes.md` 例外が必要（`//go:embed` も同様）。
 - **タイムゾーン**: toolchains 設定の `timezone`（既定 `Asia/Tokyo`）を entrypoint が `export TZ`。
   反映は Stop→Start。

@@ -24,6 +24,7 @@ import { KeysTab } from "./KeysTab.tsx";
 import { EnvTab } from "./EnvTab.tsx";
 import { AgentsTab } from "./AgentsTab.tsx";
 import { AssistantTab } from "./AssistantTab.tsx";
+import { InstructionsTab } from "./InstructionsTab.tsx";
 import { TtsTab } from "./TtsTab.tsx";
 import { GitTab } from "./GitTab.tsx";
 import { SsmTab } from "./SsmTab.tsx";
@@ -50,6 +51,7 @@ const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
       ["tts", "set.tab_tts"],
       ["notifications", "set.tab_notifications"],
       ["assistant", "set.tab_assistant"],
+      ["instructions", "set.tab_instructions"],
     ],
   },
   {
@@ -171,6 +173,7 @@ export function SettingsDialog() {
             </div>
             {section === "agents" && <AgentsTab />}
             {section === "assistant" && <AssistantTab />}
+            {section === "instructions" && <InstructionsTab />}
             {section === "tts" && <TtsTab />}
             {section === "notifications" && <NotificationsTab />}
             {section === "git" && <GitTab />}

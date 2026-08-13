@@ -15,6 +15,7 @@ import (
 	"log"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
@@ -290,9 +291,17 @@ func routeOperatorInbound(m gatewayMessage, conv, text, token string, deps Recei
 
 // startTypingPulse fires the typing indicator immediately and then every
 // typingPulseInterval until the returned stop func is called.
+//
+// **stop は goroutine の終了まで待つ**（idempotent）。以前は close(done) するだけで
+// 戻っていたため、「止めた」あとも in-flight の typing POST が走り続け、返信を出した
+// 後に打鍵中インジケータが一瞬残った。テストではもっとはっきり出て、次のテストが
+// 差し替えた discordAPIBase をこの goroutine が読み、`-race` がデータ競合として検出した
+// （slack 側の post 漏れと同じ「テストを跨いで生き残る goroutine」— docs/60 作業中に発見）。
 func startTypingPulse(token, channelID string) func() {
 	done := make(chan struct{})
+	exited := make(chan struct{})
 	go func() {
+		defer close(exited)
 		_ = DiscordTriggerTyping(token, channelID)
 		t := time.NewTicker(typingPulseInterval)
 		defer t.Stop()
@@ -305,7 +314,11 @@ func startTypingPulse(token, channelID string) func() {
 			}
 		}
 	}()
-	return func() { close(done) }
+	var once sync.Once
+	return func() {
+		once.Do(func() { close(done) })
+		<-exited
+	}
 }
 
 // routeInteraction is the P2b button-click gate — the interactive counterpart of
