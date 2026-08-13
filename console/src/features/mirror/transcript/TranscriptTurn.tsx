@@ -53,7 +53,7 @@ export function TranscriptTurn({
 }) {
   const isUser = turn.role === "user";
   const agentName = caps.agentName;
-  const who = isUser ? tr("chat.you") : turn.sidechain ? tr("mirror.subagent") : agentName;
+  const who = isUser ? caps.userName || tr("chat.you") : turn.sidechain ? tr("mirror.subagent") : agentName;
   const ctxTok = turn.inTok + turn.cacheRead + turn.cacheCreate;
   const spend = spendOf(turn);
   const maxSpend = caps.maxSpend || 0;

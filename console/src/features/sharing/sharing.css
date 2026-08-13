@@ -76,12 +76,62 @@
    .proj-node/.proj-children/.proj-node-body(所有者側のツリー)をそのまま流用し、
    ここでは見出し2種だけ足す。 */
 .shared-project-group { list-style: none; margin: 0 0 4px; }
-.shared-project-head {
+
+/* 見出し2種はどちらも「押すと畳む」ボタン。高さを固定値で決めているのは、下の
+   sticky 段(worktree 見出しがプロジェクト見出しの真下に留まる)がこの高さに依存
+   するため — 行の高さが変わると帯が重なるか隙間が開く。 */
+.shared-project-head,
+.shared-node-toggle {
   display: flex;
   align-items: center;
   gap: 6px;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 26px;
   padding: 4px 9px;
   font-size: 12px;
+  line-height: 18px;
+  background: none;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
 }
-.shared-project-head small { color: var(--muted); margin-left: auto; }
-.shared-copy-name { font-size: 12px; padding: 2px 0; }
+.shared-project-head:hover,
+.shared-node-toggle:hover { background: var(--surface-2, rgba(127, 127, 127, 0.12)); }
+.shared-project-head small,
+.shared-node-toggle small { color: var(--muted); }
+.shared-project-head .shared-project-owner { margin-left: auto; }
+.shared-copy-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* プロジェクト名も長ければ縮む(ブランチと畳んだときの件数を押し出さない)。 */
+.shared-project-head strong { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 畳んだときのセッション数は右端へ。 */
+.shared-project-head > small:last-child,
+.shared-node-toggle > small:last-child { margin-left: auto; }
+/* このツリーの caret は行全体のボタンの中にあるので、project.css のボタン用
+   スタイル(高さ伸長・上寄せ)ではなくアイコンとして並べる。 */
+.shared-project-head .proj-node-caret,
+.shared-node-toggle .proj-node-caret {
+  align-self: center;
+  width: 14px;
+  padding-top: 0;
+}
+.shared-node-toggle { padding-left: 0; }
+
+/* sticky の段組み。所有者側ツリー(project.css)の見出しは絞り込みバーの分だけ
+   下げてあるが、共有セクションにその帯は無い — その offset のまま置くと見出しが
+   自分のノードから離れて無関係な行の上に浮く(実際に崩れて見えていた)。ここで
+   セクション見出し(top:0/z:3)→プロジェクト見出し→working copy 見出し、と
+   段と z を張り直す(内側ほど手前にしない＝押し上げられた側が下に潜る)。 */
+.shared-project-head {
+  position: sticky;
+  top: var(--sec-head-h, 34px);
+  z-index: 2;
+  background: var(--leftpane-bg);
+}
+.shared-project-group .proj-node > .proj-node-head {
+  position: sticky;
+  top: calc(var(--sec-head-h, 34px) + 26px);
+  z-index: 1;
+  background: var(--leftpane-bg);
+}

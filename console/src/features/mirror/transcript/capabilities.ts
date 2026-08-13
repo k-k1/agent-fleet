@@ -26,6 +26,12 @@ import type { Group, Part, TurnTtsWiring } from "./types.ts";
 export interface TranscriptCaps {
   /** Display name of the agent answering (registry name, e.g. "Claude"). */
   agentName: string;
+  /**
+   * Display name for user-role turns. Absent → 「あなた」/"You", which is right only
+   * when the reader IS the person who typed them (the mirror). A recipient is reading
+   * somebody else's conversation, so the shared view passes the owner's login id.
+   */
+  userName?: string;
 
   // ── Content resolution ────────────────────────────────────────────────────────
   /** Repo the paths in Markdown resolve against, for click-to-open links. */
