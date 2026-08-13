@@ -40,6 +40,11 @@ docker build -t agent-fleet/workspace:dev ../../workspace   # per-user workspace
 docker compose up -d --build
 ```
 
+The snippet above builds the images from this tree, which is what you want while
+developing. A **release** is consumed the other way round: the bundle from the
+[distribution repo](https://github.com/k-k1/agent-fleet-dist) pulls pinned images from
+GHCR ([decisions/0037](docs/decisions/0037-registry-policy.md)).
+
 Procedures, key generation, backup/restore, upgrades, incident response and DooD
 constraints are collected in **[deploy/compose/README.md](deploy/compose/README.md)
 (runbook)**. Local dev (host processes) remains
@@ -69,7 +74,7 @@ Console bundle against a demo dataset — regenerate them with
 
 | Topic | Decision | Rationale / notes |
 |------|------|-----------|
-| Claude auth | each user runs `/login` with their own account | the console surfaces each user's auth state and prompts re-login |
+| Agent auth | each user connects their own account/seat from the Console (Claude: OAuth code paste; Codex: ChatGPT device code or API key; Copilot rides the GitHub connection; Cursor / Kiro: browser sign-in; OpenCode: provider API keys or an opencode account) | the console surfaces each user's auth state and prompts re-login; a manual `/login` in the terminal still works as a fallback |
 | User isolation | one container per user | highly portable, strong isolation, fits AWS well |
 | Target scale | ~20 users (concurrent) | a single cluster + an orchestration layer is enough |
 | Persistence | `local`=bind mount / `aws`=EBS/EFS | home, clones, credentials and history are kept on disk |
@@ -97,6 +102,7 @@ the code)
 | [07-security](docs/dev/07-security.md) / [08-integrations](docs/dev/08-integrations.md) | threat model, auth, crypto / external integrations |
 | [09-deploy](docs/dev/09-deploy.md) / [10-development](docs/dev/10-development.md) | deployment & portability / development practices |
 | [90-code-map](docs/dev/90-code-map.md) / [91-internal-git](docs/dev/91-internal-git.md) | code map / internal git provider |
+| [92-tui-modal-driving](docs/dev/92-tui-modal-driving.md) / [93-worktree-dependencies](docs/dev/93-worktree-dependencies.md) | driving a CLI's modal TUI / what a worktree shares vs. duplicates per ecosystem |
 
 **User guide [docs/guide/](docs/guide/README.md)**: split by persona (member / admin /
 operator / lite).
@@ -112,7 +118,7 @@ operator / lite).
 > [docs/README.md](docs/README.md)).
 
 **decisions/ — decision records (why, and the discarded options)** — the table below
-is an excerpt; the full set (0001–0035) is in [docs/decisions/](docs/decisions/)
+is an excerpt; the full set (0001–0042) is in [docs/decisions/](docs/decisions/)
 | File | Contents |
 |----------|------|
 | [0001-self-host-vs-saas.md](docs/decisions/0001-self-host-vs-saas.md) | delivery model: SaaS abandoned, per-company self-hosting adopted (ToS grounds, residual risk) |
@@ -157,8 +163,10 @@ product.
 - **Working copy** — the working directory of a git repository cloned inside a
   Workspace.
 - **Session** — the logical unit of a conversation, its settings and execution state,
-  tied to a working copy. Codex / OpenCode can run on a shared runtime and do not
-  necessarily own a dedicated CLI process or tmux session.
+  tied to a working copy. It does not imply a terminal: Codex / OpenCode / Copilot /
+  Cursor / Kiro default to a **managed** execution method driven from the chat view
+  (Codex and OpenCode run on a shared runtime with no per-session CLI process at all),
+  while Claude / Antigravity and the plain shell / SSM sessions use a terminal.
 
 ## License
 
