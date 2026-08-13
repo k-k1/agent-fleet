@@ -214,13 +214,20 @@
   width: 100%;
   margin-bottom: 8px;
 }
-.acct-theme-seg .seg-btn {
+/* 幅いっぱいに等分する。`.choice-seg .seg-btn { flex: 0 0 auto }`（下方・同じ詳細度）が
+   後勝ちするので、.acct-menu を足して勝たせる。等分しないとボタンは文字幅のままで、
+   右に残った余白が同色の枠内に見え「押せない領域」に見えてしまう（色見本が 1 行に
+   収まる幅にしてポップが広がったぶん、なおさら目立つ）。 */
+.acct-menu .acct-theme-seg .seg-btn {
   flex: 1;
 }
 .acct-swatch-row {
   margin-bottom: 8px;
 }
-.acct-swatch-lbl {
+/* 色以外のセグメント（メイン領域の配置）にも、色見本の段と同じ小さな見出しを付ける。
+   何のセグメントか分かるようにするためで、見た目は .acct-swatch-lbl と揃える。 */
+.acct-swatch-lbl,
+.appr-seg-lbl {
   display: block;
   font-size: 10px;
   color: var(--muted);
@@ -234,6 +241,17 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 外観 popover: 色見本（11 色）は 1 行に並べる。折り返すと面ごとの段の切れ目が
+   見えなくなり、どの見本がどの面のものか分からなくなるため。幅は中身なりに広げ、
+   色を増やしてもここを直さずに済むよう max-content で追従させる（狭い窓では
+   ビューポート幅で頭打ち。スマホ側の固定配置クランプは下のメディアクエリ）。 */
+.appr-menu {
+  width: max-content;
+  max-width: calc(100vw - 16px);
+}
+.appr-menu .swatch-row {
+  flex-wrap: nowrap;
 }
 /* 外観 popover header: title left, 詳細 link right */
 .appr-head {
