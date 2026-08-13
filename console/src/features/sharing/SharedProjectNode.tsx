@@ -10,6 +10,7 @@
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { kindClass, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
+import { stateInfo } from "../../lib/sessionview.ts";
 import { usePersistedOpen } from "../../lib/usePersistedOpen.ts";
 import { openSharedSession } from "./open.ts";
 import type { SharedProjectGroup, SharedWorkingCopy } from "./sharedProject.ts";
@@ -19,6 +20,7 @@ import "./sharing.css";
 
 function SharedSessionRow({ s }: { s: SharedSession }) {
   const tr = useT();
+  const st = stateInfo({ kind: s.kind, alive: s.state === "running", state: s.activity });
   return (
     <li>
       <button
@@ -36,8 +38,17 @@ function SharedSessionRow({ s }: { s: SharedSession }) {
         <span className="name">{(s.title || s.label || s.name).replace(/^\[AF\]\s*/, "")}</span>
         <small>{tr(s.permission === "rw" ? "share.permission_rw" : "share.permission_ro")}</small>
         {/* アーカイブ済み/削除済みは CP 側で一覧から外れる(docs/59 §1)ので、ここに
-            並ぶのは所有者の手元に今ある会話だけ。 */}
-        {s.workspaceState !== "running" && <Icon name="debug-pause" title={tr("share.owner_stopped")} />}
+            並ぶのは所有者の手元に今ある会話だけ。
+            状態チップは所有者側の SessionRow と同じ stateInfo。所有者 Workspace が
+            停止中のときは、その1つの事実で全行が止まっているので、行ごとの
+            停止中チップではなくワークスペース停止のアイコンだけを出す。 */}
+        {s.workspaceState !== "running" ? (
+          <Icon name="debug-pause" title={tr("share.owner_stopped")} />
+        ) : (
+          <span className={"session-state mini " + st.cls} title={st.text}>
+            <Icon name={st.icon} spin={st.spin} />
+          </span>
+        )}
       </button>
     </li>
   );

@@ -26,10 +26,25 @@ export const displayName = (s: Session): string => {
   return `${s.repo || s.name} @${stamp(s.createdAt)}`;
 };
 
+// What stateInfo actually reads. Structural on purpose: Session satisfies it, and so
+// does the recipient-side SharedSession (docs/59) — a shared row must show the same
+// 進行中 / 入力待ち / 質問中 chip as the owner's own rail, from the same code, or the two
+// sides drift apart in exactly the way that makes a shared list untrustworthy.
+export interface SessionState {
+  kind?: string;
+  alive?: boolean;
+  state?: string;
+  resumable?: boolean;
+  backgroundBusy?: boolean;
+  exitReason?: string;
+  exitCode?: number;
+  exitSignal?: number;
+}
+
 // exitLabel describes why a stopped session's agent process died, when the pane
 // recorder caught an abnormal end. Returns null for a clean quit or a deliberate stop
 // (no reason recorded) — those keep the plain 停止中 chip.
-export const exitLabel = (s: Session): { text: string; hint: string } | null => {
+export const exitLabel = (s: SessionState): { text: string; hint: string } | null => {
   switch (s.exitReason) {
     case "oom":
       return {
@@ -54,7 +69,7 @@ export const exitLabel = (s: Session): { text: string; hint: string } | null => 
 };
 
 // stateInfo maps a session to its status chip (codicon + label + color class).
-export const stateInfo = (s: Session): StateInfo => {
+export const stateInfo = (s: SessionState): StateInfo => {
   if (!s.alive) {
     // A stopped claude whose working dir was deleted can't be resumed (archive only).
     if (s.resumable === false) return { cls: "off dead", icon: "circle-slash", text: t("state.folder_missing") };

@@ -57,6 +57,26 @@ describe("SharedProjectNode", () => {
     expect(host.querySelector(".shared-rail-row .sess-kic")?.className).toContain("kind-codex");
   });
 
+  it("稼働中は所有者側と同じ状態チップ、所有者WS停止中はワークスペース停止だけを出す", async () => {
+    await render([
+      session({ id: "a", title: "質問中", repo: "proj", workingCopyId: "wc", state: "running", activity: "question" }),
+      session({ id: "b", title: "進行中", repo: "proj", workingCopyId: "wc", state: "running", activity: "working" }),
+      session({ id: "c", title: "入力待ち", repo: "proj", workingCopyId: "wc", state: "running" }),
+      session({ id: "d", title: "停止中", repo: "proj", workingCopyId: "wc", state: "stopped" }),
+    ]);
+    const chips = [...host.querySelectorAll<HTMLElement>(".session-state")].map((el) => el.className);
+    expect(chips).toEqual([
+      "session-state mini question",
+      "session-state mini working",
+      "session-state mini on",
+      "session-state mini off",
+    ]);
+    // 所有者 Workspace が停止していれば、行ごとの状態ではなくその1事実だけを出す。
+    await render([session({ id: "a", title: "会話", repo: "proj", workingCopyId: "wc", workspaceState: "stopped" })]);
+    expect(host.querySelectorAll(".session-state")).toHaveLength(0);
+    expect(host.querySelector(".shared-rail-row .codicon-debug-pause")).toBeTruthy();
+  });
+
   it("プロジェクト見出しで畳むと配下のセッションが消える", async () => {
     await render([
       session({ id: "a", title: "ベースの会話", repo: "proj", workingCopyId: "wc-base" }),

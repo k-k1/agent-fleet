@@ -242,23 +242,36 @@ func TestSharedMessagesAuthorizeAndRemoveWorkspacePaths(t *testing.T) {
 // and re-checking the rules every time is what keeps an unshare immediate.
 func TestFreshCatalogThrottlesInventoryButNotAuthorization(t *testing.T) {
 	api := newSessionShareAPI(&manager{})
-	if api.freshCatalog("owner-a") {
+	if api.freshCatalog("owner-a", shareCatalogTTL) {
 		t.Fatal("first call must reconcile — nothing has been synced yet")
 	}
-	if !api.freshCatalog("owner-a") {
+	if !api.freshCatalog("owner-a", shareCatalogTTL) {
 		t.Fatal("second call within the TTL must reuse the reconciled inventory")
 	}
-	if api.freshCatalog("owner-b") {
+	if api.freshCatalog("owner-b", shareCatalogTTL) {
 		t.Fatal("the window is per owner — owner-b must not ride owner-a's sync")
 	}
 	api.invalidateCatalog("owner-a")
-	if api.freshCatalog("owner-a") {
+	if api.freshCatalog("owner-a", shareCatalogTTL) {
 		t.Fatal("invalidateCatalog must force the next reconciliation")
 	}
-	// An expired stamp reconciles again, so staleness is bounded by shareCatalogTTL.
+	// An expired stamp reconciles again, so staleness is bounded by the TTL.
 	api.syncedAt["owner-a"] = time.Now().Add(-shareCatalogTTL - time.Second)
-	if api.freshCatalog("owner-a") {
+	if api.freshCatalog("owner-a", shareCatalogTTL) {
 		t.Fatal("a stamp older than shareCatalogTTL must reconcile")
+	}
+	// 一覧はもっと寛い窓で回り(定期ポーリングを所有者 Workspace へ流し込まない)、明示
+	// リロードだけがそれを飛び越える — ただし押しっぱなし対策の下限は残る。
+	api.syncedAt["owner-a"] = time.Now().Add(-shareCatalogTTL - time.Second)
+	if !api.freshCatalog("owner-a", shareListCatalogTTL) {
+		t.Fatal("the list window must be wider than the direct-read one")
+	}
+	api.syncedAt["owner-a"] = time.Now().Add(-shareForcedCatalogTTL - time.Second)
+	if api.freshCatalog("owner-a", shareForcedCatalogTTL) {
+		t.Fatal("an explicit reload must reconcile past the list window")
+	}
+	if !api.freshCatalog("owner-a", shareForcedCatalogTTL) {
+		t.Fatal("a reload held down must still be floored — the second one reuses the sync")
 	}
 }
 
@@ -361,8 +374,10 @@ func TestListReceivedCoversWorktreesAndHidesArchived(t *testing.T) {
 		switch r.URL.Path {
 		case "/sessions/catalog":
 			_ = json.NewEncoder(w).Encode(map[string]any{"sessions": []any{
-				map[string]any{"name": "base-live", "kind": "codex", "repo": "proj", "workingCopyId": "wc-base"},
-				map[string]any{"name": "wt-live", "kind": "codex", "repo": "proj@feat", "workingCopyId": "wc-wt"},
+				map[string]any{"name": "base-live", "kind": "codex", "repo": "proj", "workingCopyId": "wc-base",
+					"alive": true, "state": "question"},
+				map[string]any{"name": "wt-live", "kind": "codex", "repo": "proj@feat", "workingCopyId": "wc-wt",
+					"alive": true, "state": "working"},
 				map[string]any{"name": "base-archived", "kind": "codex", "repo": "proj", "workingCopyId": "wc-base", "archived": true},
 			}})
 		case "/repos":
@@ -395,8 +410,8 @@ func TestListReceivedCoversWorktreesAndHidesArchived(t *testing.T) {
 	}
 	var payload struct {
 		Sessions []struct {
-			ID, Name, Permission, Branch string
-			Worktree                     bool
+			ID, Name, Permission, Branch, State, Activity string
+			Worktree                                      bool
 		} `json:"sessions"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
@@ -412,6 +427,14 @@ func TestListReceivedCoversWorktreesAndHidesArchived(t *testing.T) {
 		// ランダム slug なので、これが無いとどの作業か分からない)。
 		if want := map[string]string{"base-live": "develop", "wt-live": "feature/x"}[s.Name]; want != s.Branch {
 			t.Fatalf("branch=%q for %s, want %q", s.Branch, s.Name, want)
+		}
+		// 状態バッジ(進行中 / 入力待ち / 質問中)の素。state は生存、activity は Agent の
+		// live state で、CP が捨てていた分。
+		if s.State != "running" {
+			t.Fatalf("state=%q for %s", s.State, s.Name)
+		}
+		if want := map[string]string{"base-live": "question", "wt-live": "working"}[s.Name]; want != s.Activity {
+			t.Fatalf("activity=%q for %s, want %q", s.Activity, s.Name, want)
 		}
 	}
 	if !listed["base-live"] || !listed["wt-live"] {
