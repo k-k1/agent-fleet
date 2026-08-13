@@ -47,6 +47,13 @@ export const THEMES: { id: string; labelKey: MsgKey }[] = [
   { id: "light", labelKey: "theme.light" },
 ];
 
+// メイン領域の配置プロファイル。DisplayTab と TopBar の外観ポップの両方が使うので、
+// 選択肢はここに一本化する（片側だけラベルが増える／ずれるのを防ぐ）。
+export const PANE_LAYOUTS: { id: "split" | "tabs"; labelKey: MsgKey }[] = [
+  { id: "split", labelKey: "display.pane_layout_split" },
+  { id: "tabs", labelKey: "display.pane_layout_tabs" },
+];
+
 // UI 表示言語（docs/28 / ADR 0016）。ラベルは各言語の自称なので翻訳しない（どの言語で見ても
 // 母語名で並ぶ）。id は i18n カタログ／SUPPORTED_LOCALES と一致させる。
 export const LOCALES = [

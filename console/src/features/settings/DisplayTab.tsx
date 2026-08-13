@@ -13,6 +13,7 @@ import {
   REGION_THEMES,
   SURFACE_TARGETS,
   LOCALES,
+  PANE_LAYOUTS,
 } from "../../lib/settings.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import type { MsgKey } from "../../lib/i18n/index.ts";
@@ -43,7 +44,7 @@ export function DisplayTab() {
         <Row label={tr("display.pane_layout") }>
           <Choice
             value={s.paneLayout}
-            options={[["split", tr("display.pane_layout_split")], ["tabs", tr("display.pane_layout_tabs")]]}
+            options={PANE_LAYOUTS.map((p) => [p.id, tr(p.labelKey)])}
             onChange={(v) => setSetting("paneLayout", v as "split" | "tabs")}
           />
         </Row>
