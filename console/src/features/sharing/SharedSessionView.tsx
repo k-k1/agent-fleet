@@ -215,7 +215,7 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
           {meta && (
             <small>
               {meta.ownerUserKey} · {tr(meta.permission === "rw" ? "share.permission_rw" : "share.permission_ro")} ·{" "}
-              {meta.archived ? tr("share.archived") : meta.state}
+              {meta.state}
             </small>
           )}
         </div>

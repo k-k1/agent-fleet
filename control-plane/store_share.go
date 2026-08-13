@@ -216,7 +216,8 @@ func invalidateUnauthorizedProposals(ctx context.Context, q sqlExecQuery, owner,
 			 AND s.recipient_membership_id=session_share_proposal.proposer_membership_id
 			 AND s.permission='rw'
 			 AND ((s.scope_type='session' AND s.scope_key=c.name)
-			   OR (s.scope_type IN ('repo','worktree') AND s.scope_key=c.working_copy_id))
+			   OR (s.scope_type IN ('repo','worktree') AND s.scope_key=c.working_copy_id)
+			   OR (s.scope_type='repo' AND s.scope_key=c.parent_working_copy_id AND c.parent_working_copy_id<>''))
 			WHERE c.id=session_share_proposal.catalog_id
 		)`, now, owner)
 	return err
@@ -277,13 +278,13 @@ func (s *sqlStore) ReplaceSharedSessionCatalog(ctx context.Context, workspaceID,
 			worktree = 1
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO shared_session_catalog
-			(id,workspace_id,owner_membership_id,name,kind,dir,repo,working_copy_id,title,label,created_at,state,archived,last_seen,worktree,parent)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(workspace_id,name) DO UPDATE SET
+			(id,workspace_id,owner_membership_id,name,kind,dir,repo,working_copy_id,title,label,created_at,state,archived,last_seen,worktree,parent,parent_working_copy_id)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(workspace_id,name) DO UPDATE SET
 			kind=excluded.kind,dir=excluded.dir,repo=excluded.repo,working_copy_id=excluded.working_copy_id,
 			title=excluded.title,label=excluded.label,state=excluded.state,archived=excluded.archived,last_seen=excluded.last_seen,
-			worktree=excluded.worktree,parent=excluded.parent`,
+			worktree=excluded.worktree,parent=excluded.parent,parent_working_copy_id=excluded.parent_working_copy_id`,
 			existing, workspaceID, owner, r.Name, r.Kind, r.Dir, r.Repo, r.WorkingCopyID, r.Title,
-			r.Label, r.CreatedAt, r.State, archived, r.LastSeen, worktree, r.Parent)
+			r.Label, r.CreatedAt, r.State, archived, r.LastSeen, worktree, r.Parent, r.ParentWorkingCopyID)
 		if err != nil {
 			return err
 		}
@@ -319,7 +320,8 @@ func scanCatalog(row interface{ Scan(...any) error }) (SharedSessionCatalog, boo
 	var r SharedSessionCatalog
 	var archived, worktree int
 	err := row.Scan(&r.ID, &r.WorkspaceID, &r.OwnerMembershipID, &r.Name, &r.Kind, &r.Dir, &r.Repo,
-		&r.WorkingCopyID, &r.Title, &r.Label, &r.CreatedAt, &r.State, &archived, &r.LastSeen, &worktree, &r.Parent)
+		&r.WorkingCopyID, &r.Title, &r.Label, &r.CreatedAt, &r.State, &archived, &r.LastSeen, &worktree,
+		&r.Parent, &r.ParentWorkingCopyID)
 	if err == sql.ErrNoRows {
 		return SharedSessionCatalog{}, false, nil
 	}
@@ -329,11 +331,11 @@ func scanCatalog(row interface{ Scan(...any) error }) (SharedSessionCatalog, boo
 }
 func (s *sqlStore) GetSharedSessionCatalog(ctx context.Context, id string) (SharedSessionCatalog, bool, error) {
 	return scanCatalog(s.db.QueryRowContext(ctx, `SELECT id,workspace_id,owner_membership_id,name,kind,dir,repo,
-		working_copy_id,title,label,created_at,state,archived,last_seen,worktree,parent FROM shared_session_catalog WHERE id=?`, id))
+		working_copy_id,title,label,created_at,state,archived,last_seen,worktree,parent,parent_working_copy_id FROM shared_session_catalog WHERE id=?`, id))
 }
 func (s *sqlStore) ListSharedSessionCatalogByOwner(ctx context.Context, owner string) ([]SharedSessionCatalog, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,workspace_id,owner_membership_id,name,kind,dir,repo,
-		working_copy_id,title,label,created_at,state,archived,last_seen,worktree,parent FROM shared_session_catalog
+		working_copy_id,title,label,created_at,state,archived,last_seen,worktree,parent,parent_working_copy_id FROM shared_session_catalog
 		WHERE owner_membership_id=? ORDER BY created_at DESC`, owner)
 	if err != nil {
 		return nil, err
@@ -482,7 +484,7 @@ func (s *sqlStore) ClaimSessionShareProposal(ctx context.Context, id, owner, by,
 		return p, SharedSessionCatalog{}, "expired", nil
 	}
 	c, ok, err := scanCatalog(tx.QueryRowContext(ctx, `SELECT id,workspace_id,owner_membership_id,name,kind,dir,repo,
-		working_copy_id,title,label,created_at,state,archived,last_seen,worktree,parent FROM shared_session_catalog WHERE id=?`, p.CatalogID))
+		working_copy_id,title,label,created_at,state,archived,last_seen,worktree,parent,parent_working_copy_id FROM shared_session_catalog WHERE id=?`, p.CatalogID))
 	if err != nil {
 		return p, c, "", err
 	}
@@ -499,16 +501,20 @@ func (s *sqlStore) ClaimSessionShareProposal(ctx context.Context, id, owner, by,
 	if _, err = tx.ExecContext(ctx, `UPDATE shared_session_catalog SET last_seen=last_seen WHERE id=?`, c.ID); err != nil {
 		return p, c, "", err
 	}
+	// scope_key='' は put が拒否するので、ベース直下のセッション(parent_working_copy_id='')が
+	// repo 規則へ誤って一致することはない — effectivePermission と同じ判定を SQL 側でも保つ。
 	if _, err = tx.ExecContext(ctx, `UPDATE session_share SET updated_at=updated_at
 		WHERE owner_membership_id=? AND recipient_membership_id=? AND permission='rw'
-		  AND ((scope_type='session' AND scope_key=?) OR (scope_type IN ('repo','worktree') AND scope_key=?))`,
-		owner, p.ProposerMembershipID, c.Name, c.WorkingCopyID); err != nil {
+		  AND ((scope_type='session' AND scope_key=?) OR (scope_type IN ('repo','worktree') AND scope_key=?)
+		    OR (scope_type='repo' AND scope_key=? AND scope_key<>''))`,
+		owner, p.ProposerMembershipID, c.Name, c.WorkingCopyID, c.ParentWorkingCopyID); err != nil {
 		return p, c, "", err
 	}
 	var authorized int
 	err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM session_share WHERE owner_membership_id=? AND recipient_membership_id=? AND permission='rw'
-		AND ((scope_type='session' AND scope_key=?) OR (scope_type IN ('repo','worktree') AND scope_key=?))`,
-		owner, p.ProposerMembershipID, c.Name, c.WorkingCopyID).Scan(&authorized)
+		AND ((scope_type='session' AND scope_key=?) OR (scope_type IN ('repo','worktree') AND scope_key=?)
+		  OR (scope_type='repo' AND scope_key=? AND scope_key<>''))`,
+		owner, p.ProposerMembershipID, c.Name, c.WorkingCopyID, c.ParentWorkingCopyID).Scan(&authorized)
 	if err != nil {
 		return p, c, "", err
 	}

@@ -52,6 +52,35 @@ func TestEffectiveSharePermission(t *testing.T) {
 	}
 }
 
+// repo 共有はプロジェクト全体 — ベース直下だけでなく、その配下 worktree のセッションにも
+// 効く(docs/59 §1)。所有者の作業は worktree 側で進むので、ここが効かないと「リポジトリを
+// 共有した」のに共有先には何も見えない。逆に worktree 共有はその1つに閉じたままにする。
+func TestRepoShareCoversWorktreeSessionsButWorktreeShareStaysNarrow(t *testing.T) {
+	base := SharedSessionCatalog{OwnerMembershipID: "owner", Name: "s-base", WorkingCopyID: "wc-base"}
+	wt := SharedSessionCatalog{OwnerMembershipID: "owner", Name: "s-wt", WorkingCopyID: "wc-wt",
+		Worktree: true, Parent: "proj", ParentWorkingCopyID: "wc-base"}
+	repoShare := []SessionShare{{OwnerMembershipID: "owner", ScopeType: "repo", ScopeKey: "wc-base", Permission: "ro"}}
+	if got := effectivePermission(repoShare, base); got != "ro" {
+		t.Fatalf("base under repo share=%q", got)
+	}
+	if got := effectivePermission(repoShare, wt); got != "ro" {
+		t.Fatalf("worktree under repo share=%q", got)
+	}
+	wtShare := []SessionShare{{OwnerMembershipID: "owner", ScopeType: "worktree", ScopeKey: "wc-wt", Permission: "rw"}}
+	if got := effectivePermission(wtShare, base); got != "" {
+		t.Fatalf("worktree share must not reach the base copy: %q", got)
+	}
+	// 親不明(旧行 / marker 無し)は ParentWorkingCopyID が空。scope_key は空を拒否して
+	// いるので、空同士でどの規則にも吸い寄せられないことを固定する。
+	orphan := SharedSessionCatalog{OwnerMembershipID: "owner", Name: "s-orphan", WorkingCopyID: "wc-x"}
+	if got := effectivePermission(repoShare, orphan); got != "" {
+		t.Fatalf("unrelated copy matched a repo share: %q", got)
+	}
+	if got := effectivePermission([]SessionShare{{OwnerMembershipID: "owner", ScopeType: "repo", ScopeKey: "", Permission: "rw"}}, orphan); got != "" {
+		t.Fatalf("empty scope key matched an empty parent: %q", got)
+	}
+}
+
 func TestSharedTranscriptDTOAllowsContentAndRejectsEveryUnknownCoordinate(t *testing.T) {
 	v := map[string]any{"jsonlPath": "/secret/log", "futureTopSecret": "hidden", "messages": []any{map[string]any{
 		"cwd": "/home/dev/repos/private", "text": "visible", "role": "assistant", "idx": float64(1),
@@ -299,6 +328,116 @@ func TestSyncCatalogCapturesWorktreeAndParent(t *testing.T) {
 	wt, ok := byName["wt-session"]
 	if !ok || !wt.Worktree || wt.Parent != "proj" {
 		t.Fatalf("worktree row=%+v ok=%v", wt, ok)
+	}
+}
+
+// 受信側の一覧は「今そこにある会話」だけを出す: repo 共有はベース＋配下 worktree の
+// セッションを覆い、所有者がアーカイブした行は(規則は残したまま)隠す。アーカイブ済みが
+// 出続けると、所有者が畳んだ古いセッションが延々と残っているように見える — これが
+// 「削除したはずのセッションが消えない」という報告の実体だった。
+func TestListReceivedCoversWorktreesAndHidesArchived(t *testing.T) {
+	ctx := context.Background()
+	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tenant, _ := st.EnsureDefaultTenant(ctx)
+	ownerIdentity, _ := st.UpsertIdentity(ctx, "owner-list@example.com", "owner-list", "")
+	recipientIdentity, _ := st.UpsertIdentity(ctx, "recipient-list@example.com", "recipient-list", "")
+	owner, _ := st.EnsureMembership(ctx, ownerIdentity.ID, tenant.ID, "member")
+	recipient, _ := st.EnsureMembership(ctx, recipientIdentity.ID, tenant.ID, "member")
+	recipientViews, _ := st.ListMemberships(ctx, recipientIdentity.ID)
+	workspace := Workspace{ID: newID(), TenantID: tenant.ID, MembershipID: owner.ID, ContainerName: "c", Network: "n",
+		DataDir: "d", AgentPort: "1", AgentToken: "tok", State: "running", CreatedAt: nowTS()}
+	if err := st.CreateWorkspace(ctx, workspace); err != nil {
+		t.Fatal(err)
+	}
+
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/sessions/catalog":
+			_ = json.NewEncoder(w).Encode(map[string]any{"sessions": []any{
+				map[string]any{"name": "base-live", "kind": "codex", "repo": "proj", "workingCopyId": "wc-base"},
+				map[string]any{"name": "wt-live", "kind": "codex", "repo": "proj@feat", "workingCopyId": "wc-wt"},
+				map[string]any{"name": "base-archived", "kind": "codex", "repo": "proj", "workingCopyId": "wc-base", "archived": true},
+			}})
+		case "/repos":
+			_ = json.NewEncoder(w).Encode(map[string]any{"repos": []any{
+				map[string]any{"name": "proj", "workingCopyId": "wc-base"},
+				map[string]any{"name": "proj@feat", "workingCopyId": "wc-wt", "worktree": true, "parent": "proj"},
+			}})
+		default:
+			t.Errorf("path=%q", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer agent.Close()
+
+	mgr := &manager{store: st, rts: map[string]cachedRT{owner.ID: {
+		rt: stubRuntime{endpoint: agent.URL, token: "tok"}, ws: workspace,
+	}}}
+	api := newSessionShareAPI(mgr)
+	if err := st.PutSessionShare(ctx, SessionShare{ID: newID(), TenantID: tenant.ID, OwnerMembershipID: owner.ID,
+		RecipientMembershipID: recipient.ID, ScopeType: "repo", ScopeKey: "wc-base", Permission: "ro",
+		CreatedAt: nowTS(), UpdatedAt: nowTS()}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	api.listReceived(rec, httptest.NewRequest(http.MethodGet, "/api/shared-sessions", nil), recipientIdentity, recipientViews[0])
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Sessions []struct {
+			ID, Name, Permission string
+			Worktree             bool
+		} `json:"sessions"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	listed := map[string]bool{}
+	for _, s := range payload.Sessions {
+		listed[s.Name] = true
+		if s.Permission != "ro" {
+			t.Fatalf("permission=%q for %s", s.Permission, s.Name)
+		}
+	}
+	if !listed["base-live"] || !listed["wt-live"] {
+		t.Fatalf("repo share must cover the base copy AND its worktrees: %+v", payload.Sessions)
+	}
+	if listed["base-archived"] {
+		t.Fatalf("archived session stayed in the recipient list: %+v", payload.Sessions)
+	}
+
+	// 直リンク(catalog id)からの読みも同じ扱い: 一覧から隠れているものは開けない。
+	catalog, err := st.ListSharedSessionCatalogByOwner(ctx, owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var archivedID string
+	for _, c := range catalog {
+		if c.Name == "base-archived" {
+			archivedID = c.ID
+		}
+		if c.Name == "wt-live" && c.ParentWorkingCopyID != "wc-base" {
+			t.Fatalf("worktree row lost its parent working copy id: %+v", c)
+		}
+	}
+	if archivedID == "" {
+		t.Fatal("archived row must stay in the catalog (restore brings it back)")
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/shared-sessions/"+archivedID+"/messages", nil)
+	req.SetPathValue("id", archivedID)
+	denied := httptest.NewRecorder()
+	api.messages(denied, req, recipientIdentity, recipientViews[0])
+	if denied.Code != http.StatusConflict || !strings.Contains(denied.Body.String(), "owner_session_archived") {
+		t.Fatalf("archived direct read status=%d body=%s", denied.Code, denied.Body.String())
 	}
 }
 
