@@ -506,6 +506,10 @@ func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("PUT /api/agents/rtk", rest)
 	// rtk token-savings history (WsBar "rtk 効果" chip) — proxied to the Agent.
 	mux.HandleFunc("GET /api/agents/rtk/gain", rest)
+	// ユーザー指示（docs/60 / ADR 0042）— 正本も配布先もコンテナ内なので Agent 中継のみ。
+	mux.HandleFunc("GET /api/user-notes", rest)
+	mux.HandleFunc("PUT /api/user-notes", rest)
+	mux.HandleFunc("GET /api/user-notes/preview", rest)
 	// codex / opencode model catalogs (launch model picker) — proxied to the Agent.
 	mux.HandleFunc("GET /api/agents/{kind}/models", rest)
 	// エージェントメモリの版管理（docs/39 / ADR 0022 P1〜P3）— Agent 側で完結する処理の中継。

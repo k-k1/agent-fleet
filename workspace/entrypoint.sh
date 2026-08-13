@@ -558,24 +558,21 @@ os.replace(tmp, p)
 PY
 fi
 
-# Workspace 利用ガイド（やってはいけないこと等）を各エージェントが常時読み込む位置へ配置。
-#   claude   … /etc/claude-code/CLAUDE.md（イメージに焼込済の managed policy。毎セッション読込）
-#   codex    … ~/.codex/AGENTS.md（$CODEX_HOME/AGENTS.md。全セッションに適用）
-#   opencode … ~/.config/opencode/AGENTS.md（全セッションに適用）
-# codex/opencode 分は home 永続のため、毎起動で最新イメージの内容へ refresh する。
-WS_NOTES="/usr/local/share/agent-fleet/workspace-notes.md"
-if [ -f "$WS_NOTES" ]; then
-  mkdir -p "$HOME/.codex" "$HOME/.config/opencode"
-  cp -f "$WS_NOTES" "$HOME/.codex/AGENTS.md" 2>/dev/null \
-    && echo "[entrypoint] seeded ~/.codex/AGENTS.md" \
-    || echo "[entrypoint] WARN: failed to seed ~/.codex/AGENTS.md"
-  cp -f "$WS_NOTES" "$HOME/.config/opencode/AGENTS.md" 2>/dev/null \
-    && echo "[entrypoint] seeded ~/.config/opencode/AGENTS.md" \
-    || echo "[entrypoint] WARN: failed to seed opencode AGENTS.md"
-  # The agent appends codex's rtk-usage block to ~/.codex/AGENTS.md after this (see
-  # reconcileAgentRTK), driven by the durable rtk toggle. We seed the base file fresh
-  # here; the agent re-applies the block so the toggle survives restarts.
-fi
+# Workspace 利用ガイドと**ユーザー指示**の配置は agent 側が持つ（docs/60 / ADR 0042 の
+# reconcileAgentInstructions）。ここは置き場のディレクトリだけ用意する。
+#   claude   … /etc/claude-code/CLAUDE.md（イメージ焼込の managed policy。ここでは触らない）
+#              ＋ $CLAUDE_CONFIG_DIR/CLAUDE.md（ユーザー指示・agent が書く）
+#   codex    … ~/.codex/AGENTS.md（フリート方針 + ユーザー指示 + rtk を agent が合成）
+#   opencode … ~/.config/opencode/AGENTS.md（フリート方針）＋ opencode.json の
+#              instructions が指す AF 専用ファイル（ユーザー指示）
+#
+# ⚠️ ここは以前 `cp -f` でこの 2 ファイルを丸ごと上書きしていた。つまり利用者が
+# AGENTS.md へ書き足した文章はコンテナ再起動のたびに黙って消えており、それが
+# 「ユーザー層を自力で作れない」原因そのものだった（docs/60 実害①）。いまは agent が
+# フリート方針 + ユーザー指示 + rtk ブロックを**1 人の書き手**としてマーカー付きで
+# 合成し、マーカー外は温存する。agent はこの直後に exec され、セッションを起こすのは
+# その agent 自身なので、合成前のファイルを読むセッションは存在しない。
+mkdir -p "$HOME/.codex" "$HOME/.config/opencode"
 
 # Gradle defaults for a shared, memory-constrained host (seed only when missing, so
 # user/project tuning persists). Real harm seen: builds ballooned RAM and the daemon

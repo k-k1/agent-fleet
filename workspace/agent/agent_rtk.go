@@ -86,10 +86,20 @@ func prefOnDefault(p *bool) bool {
 // opencode.ApplyRTK（rtk.ts プラグインの seed/remove、docs/23 残① Wave D）、codex
 // は codex.ApplyRTK（AGENTS.md のマーカーブロック、同 Wave E）。
 
-// reconcileAgentRTK applies the durable prefs to the on-disk artifacts. Called at
-// startup (after the entrypoint reseeded the base files). When rtk is not in the
-// image, both are forced off (any stale artifact is removed).
+// reconcileAgentRTK applies the durable prefs to the on-disk artifacts. When rtk is
+// not in the image, all are forced off (any stale artifact is removed).
+//
+// codex / agy の artifact は AGENTS.md のブロックで、同じファイルへユーザー指示と
+// フリート方針も書かれる。だから書き込みは instrMu で直列化し、順序も
+// fleet → user-notes → rtk に固定する（agent_instructions.go）。
 func reconcileAgentRTK() {
+	instrMu.Lock()
+	defer instrMu.Unlock()
+	applyRTKLocked()
+}
+
+// applyRTKLocked は instrMu を保持した状態で呼ぶ本体。
+func applyRTKLocked() {
 	avail := claude.RTKAvailable()
 	p := readAgentRTKPrefs()
 	opencode.ApplyRTK(avail && prefOnDefault(p.Opencode))

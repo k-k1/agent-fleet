@@ -3458,3 +3458,124 @@
     width: 100%;
   }
 }
+
+/* ── エージェントへの指示（docs/60）─────────────────────────────────────
+   本文エディタ + 配り先テーブル。テーブルは「どの kind に・どう配られ・いま効いて
+   いるか」を1行で読ませるのが役目で、未対応の kind も薄く出したままにする
+   （消すと「対応漏れ」に見える）。 */
+.instr-editor-label {
+  display: block;
+  margin: 12px 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.instr-editor {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--input-bg, var(--bg));
+  color: var(--fg);
+  resize: vertical;
+}
+.instr-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.instr-meta .instr-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.instr-over {
+  color: var(--del);
+  font-weight: 600;
+}
+.instr-targets {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.instr-targets td {
+  padding: 6px 8px 6px 0;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.instr-targets .instr-kind {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.instr-targets .instr-where {
+  color: var(--muted);
+  min-width: 0;
+}
+.instr-where code {
+  display: block;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 26em;
+}
+.instr-delivery {
+  display: inline-block;
+  margin-right: 6px;
+}
+/* 「書いた」と「効いている」を別に見せるための状態列。 */
+.instr-ok {
+  color: var(--add);
+}
+.instr-pending,
+.instr-badge {
+  color: var(--muted);
+}
+.instr-fail {
+  color: var(--del);
+}
+.instr-unsupported {
+  opacity: 0.7;
+}
+.instr-peek {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.instr-peek-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--panel, var(--bg));
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+}
+.instr-peek-head code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.instr-peek-head .ui-btn {
+  margin-left: auto;
+}
+.instr-peek-body {
+  margin: 0;
+  padding: 8px;
+  max-height: 20em;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

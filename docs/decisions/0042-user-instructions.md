@@ -1,6 +1,7 @@
 # 0042. ユーザー指示は AF が所有する 1 本の本文とし、可能な限り「AF 専用ファイル＋参照」で各 CLI へ配る
 
-- 状態: 採用・未実装（設計は docs/60。**P0 の実測は完了**し、その結果として決定 4/6/7 が初版から変わった）
+- 状態: 採用・**P0 実装済み**（2026-08-13。設計は docs/60。実測の結果として決定 4/6/7 が初版から、
+  実装の結果として決定 4 の copilot 経路と決定 5 の entrypoint 側が再度変わった）
 - 関連: [60-user-instructions.md](../60-user-instructions.md) /
   [57-project-tools.md](../57-project-tools.md)（配布軸 / 管理軸の区分） /
   [0031-mcp-registry.md](0031-mcp-registry.md)（配布軸の所有台帳） /
@@ -48,13 +49,18 @@
 3. **配布軸として扱う。** AF が自動で書き、所有範囲を明示する。docs/57 の
    「プロジェクトファイル憲章 8 条」は適用しない。コミットされる場所には一切書かない。
 4. ★ **「他人のファイルに書く」より「AF 専用のファイル＋参照」を優先する。**（実測を受けて初版から変更）
-   claude＝単独所有ファイル / opencode＝`instructions` に 1 本追加 / copilot＝env でディレクトリを渡す。
-   **合成は参照手段の無い codex・agy だけの最後の手段**とする。統一のために共有ファイルへの
-   書き込みを増やさない。
-5. **合成する 2 kind では 1 ファイル 1 ライターにする。** `reconcileAgentRTK` を
+   claude＝単独所有ファイル / opencode＝`instructions` に 1 本追加 / copilot＝`$COPILOT_HOME/instructions/`
+   に AF 専用名のファイル 1 本。**合成は参照手段の無い codex・agy だけの最後の手段**とする。
+   統一のために共有ファイルへの書き込みを増やさない。
+   （copilot は `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` でも効くと実測したが、**env は採らない**:
+   tmux 起動 / managed ACP / 手打ちの 3 経路すべてに export を配る必要があり、漏れると
+   「そのセッションだけ効かない」という見えない穴になる。ファイルは全経路で同じに読まれる。）
+5. **フリート方針の配置も agent 側へ移し、1 ファイル 1 ライターにする。** `reconcileAgentRTK` を
    `reconcileAgentInstructions` へ格上げし、「フリート本文 ＋ ユーザーブロック ＋ rtk ブロック ＋
-   マーカー外の温存」を毎回まるごと組み立てる。entrypoint の `cp -f`（全消し）はマーカー合成に置換する。
-   適用は必ず agent 側（entrypoint だと生存中の Console 編集が反映されない）。
+   マーカー外の温存」を毎回まるごと組み立てる。**entrypoint の `cp -f` は置換ではなく削除**した
+   — シェルでマーカー合成を再実装すればドリフトする 2 つ目の実装になり、生存中の Console 編集も
+   反映されないため。セッションを起こすのは agent 自身なので、合成前を読むセッションは無い。
+   `cp -f` 時代の生のコピーは先頭行で識別して 1 度だけ剥がす（`mdblock.StripLegacyPrefix`）。
 6. **claude の置き場は `$CLAUDE_CONFIG_DIR/CLAUDE.md`。**（実測で確定。`~/.claude/CLAUDE.md` は使わない）
    managed policy には触らない。
 7. **サイズ上限 8 KB の根拠は「費用」であって truncation ではない。**（罠 B 否定を受けて初版から変更）
@@ -80,10 +86,9 @@
 
 ## 影響
 
-- `workspace/entrypoint.sh` の配布ロジックが agent 側の配布器へ移る（entrypoint は基底配置と
-  copilot 用 env の export のみ）。
-- `codex/rtk.go` と `agy/rtk.go` に重複している `stripMarkedBlock` を `internal/mdblock` へ括り出す。
-- copilot はセッション起動 env に `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` を足す必要がある
-  （手打ちの `copilot` にも効かせるため entrypoint でも export する）。
-- 新 REST は `workspace/agent/routes.go` と `control-plane/routes.go` の**両方**へ登録が必要。
+- `workspace/entrypoint.sh` の配布ロジック（`cp -f`）は削除し、agent 側の配布器へ移した。
+  entrypoint に残るのは置き場のディレクトリ作成だけ。
+- `codex/rtk.go` と `agy/rtk.go` に重複していた `stripMarkedBlock` は `internal/mdblock` へ括り出した。
+- 新 REST は `workspace/agent/routes.go` と `control-plane/routes.go` の**両方**へ登録した。
+- rtk の適用は `instrMu` で直列化される（同じ AGENTS.md を 3 種のブロックが共有するため）。
 - docs/39 の棚卸し表（「共通」行が agy も配布対象としていた点）を docs/60 §60.2 で訂正した。
