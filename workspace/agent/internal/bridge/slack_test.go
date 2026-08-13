@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,11 +22,69 @@ type slackPost struct {
 	blocks   []any
 }
 
+// slackRecorder collects what the fake server saw.
+//
+// **なぜ mutex と wait があるか（フレーク実測 2026-08-13）**: 受信側の一部経路は
+// わざと非同期で、遅いオペレーターターンを読み取りゴルーチンから外して走らせ、
+// 終わってから返信を post する（slack_socket.go の routeSlackOperator）。テストが
+// 「ターンが呼ばれた」だけを待って終わると、その post は **次のテストが差し替えた
+// slackAPIBase**（パッケージ変数）へ飛び、次のテストの記録に混ざる。実際に
+// TestSlackFlatSend が「投稿1件のはずが2件」で落ちた。加えて、サーバー側の append と
+// テスト側の読み出しが同時に走るので slice 自体もデータ競合になる。
+//
+// よって記録は mutex で守り、非同期 post を伴うテストは wait で**実際に届くまで待つ**
+// （＝ゴルーチンを次のテストへ持ち越さない）。
+type slackRecorder struct {
+	mu    sync.Mutex
+	posts []slackPost
+}
+
+func (r *slackRecorder) add(p slackPost) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.posts = append(r.posts, p)
+}
+
+// all returns a snapshot copy — 呼び出し後にサーバーが書いても手元は壊れない。
+func (r *slackRecorder) all() []slackPost {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]slackPost(nil), r.posts...)
+}
+
+func (r *slackRecorder) len() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.posts)
+}
+
+func (r *slackRecorder) reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.posts = nil
+}
+
+// wait blocks until at least n posts have arrived, and fails the test if they don't.
+// 非同期 post を待ち切ることが目的なので、成功時にはもう書き手がいない。
+func (r *slackRecorder) wait(t *testing.T, n int) []slackPost {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if got := r.all(); len(got) >= n {
+			return got
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("waited for %d slack post(s), saw %d: %+v", n, r.len(), r.all())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 // fakeSlack serves the Web API methods the provider uses and records every post/update. It
 // returns incrementing message ts so a thread root is captured. Auth is the bot bearer token.
-func fakeSlack(t *testing.T, wantBotToken string) *[]slackPost {
+func fakeSlack(t *testing.T, wantBotToken string) *slackRecorder {
 	t.Helper()
-	var posts []slackPost
+	rec := &slackRecorder{}
 	tsN := 1000
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		method := strings.TrimPrefix(r.URL.Path, "/")
@@ -58,7 +117,7 @@ func fakeSlack(t *testing.T, wantBotToken string) *[]slackPost {
 				return
 			}
 			blk, _ := body["blocks"].([]any)
-			posts = append(posts, slackPost{
+			rec.add(slackPost{
 				method: method, channel: strFrom(body["channel"]), threadTS: strFrom(body["thread_ts"]),
 				text: strFrom(body["text"]), blocks: blk,
 			})
@@ -71,7 +130,7 @@ func fakeSlack(t *testing.T, wantBotToken string) *[]slackPost {
 	old := slackAPIBase
 	slackAPIBase = srv.URL
 	t.Cleanup(func() { slackAPIBase = old; srv.Close() })
-	return &posts
+	return rec
 }
 
 func strFrom(v any) string {
@@ -89,11 +148,11 @@ func TestSlackFlatSend(t *testing.T) {
 	if err := sp.Send(Message{Kind: "answer-ready", SessionName: "s1", DisplayName: "Sess"}); err != nil {
 		t.Fatal(err)
 	}
-	if len(*posts) != 1 || (*posts)[0].channel != "D-U9" || (*posts)[0].threadTS != "" {
-		t.Fatalf("flat DM post wrong: %+v", *posts)
+	if posts.len() != 1 || posts.all()[0].channel != "D-U9" || posts.all()[0].threadTS != "" {
+		t.Fatalf("flat DM post wrong: %+v", posts.all())
 	}
-	if !strings.Contains((*posts)[0].text, "Sess") {
-		t.Fatalf("headline missing display name: %q", (*posts)[0].text)
+	if !strings.Contains(posts.all()[0].text, "Sess") {
+		t.Fatalf("headline missing display name: %q", posts.all()[0].text)
 	}
 }
 
@@ -113,11 +172,11 @@ func TestSlackThreadedSendAndResume(t *testing.T) {
 	if delivered < 2 {
 		t.Fatalf("want a seed + at least one threaded reply, delivered=%d", delivered)
 	}
-	if (*posts)[0].threadTS != "" {
-		t.Fatalf("seed must be top-level, got thread_ts=%q", (*posts)[0].threadTS)
+	if posts.all()[0].threadTS != "" {
+		t.Fatalf("seed must be top-level, got thread_ts=%q", posts.all()[0].threadTS)
 	}
 	root := "1001" // first ts returned by the fake
-	for _, p := range (*posts)[1:] {
+	for _, p := range posts.all()[1:] {
 		if p.threadTS != root {
 			t.Fatalf("reply not threaded to root %s: %+v", root, p)
 		}
@@ -125,13 +184,13 @@ func TestSlackThreadedSendAndResume(t *testing.T) {
 	if ref, ok := slackThreads.load()["s1"]; !ok || ref.Thread != root || ref.Channel != "C1" {
 		t.Fatalf("thread store not persisted: %+v ok=%v", ref, ok)
 	}
-	before := len(*posts)
+	before := posts.len()
 	// Resume from the full delivered count — nothing new should post.
 	if d2, err := sp.SendFrom(m, delivered); err != nil || d2 != delivered {
 		t.Fatalf("resume changed count: d2=%d err=%v", d2, err)
 	}
-	if len(*posts) != before {
-		t.Fatalf("resume duplicated posts: before=%d after=%d", before, len(*posts))
+	if posts.len() != before {
+		t.Fatalf("resume duplicated posts: before=%d after=%d", before, posts.len())
 	}
 }
 
@@ -144,8 +203,8 @@ func TestSlackSessionReportSuppressedInThread(t *testing.T) {
 	if _, err := sp.SendFrom(Message{Kind: "session-report", SessionName: "s1", DisplayName: "S"}, 0); err != nil {
 		t.Fatal(err)
 	}
-	if len(*posts) != 0 {
-		t.Fatalf("session-report must be suppressed in thread mode, posts=%+v", *posts)
+	if posts.len() != 0 {
+		t.Fatalf("session-report must be suppressed in thread mode, posts=%+v", posts.all())
 	}
 }
 
@@ -159,7 +218,7 @@ func TestSlackButtonsRendered(t *testing.T) {
 		t.Fatal(err)
 	}
 	var cids []string
-	for _, p := range *posts {
+	for _, p := range posts.all() {
 		cids = append(cids, slackButtonCustomIDs(p.blocks)...)
 	}
 	foundAllow := false
@@ -183,16 +242,16 @@ func TestSlackMirrorInput(t *testing.T) {
 	_ = s.Save()
 	slackThreads.save(threadMap{"s1": {Channel: "C1", Thread: "1001"}})
 	mirrorSlackInput("s1", "手動入力")
-	if len(*posts) == 0 || (*posts)[0].threadTS != "1001" || !strings.Contains((*posts)[0].text, "手動入力") {
-		t.Fatalf("mirror should echo into the thread: %+v", *posts)
+	if posts.len() == 0 || posts.all()[0].threadTS != "1001" || !strings.Contains(posts.all()[0].text, "手動入力") {
+		t.Fatalf("mirror should echo into the thread: %+v", posts.all())
 	}
 	// Opt out → no echo.
-	*posts = nil
+	posts.reset()
 	s.Slack.MirrorInputOff = true
 	_ = s.Save()
 	mirrorSlackInput("s1", "また入力")
-	if len(*posts) != 0 {
-		t.Fatalf("opted-out mirror must not post: %+v", *posts)
+	if posts.len() != 0 {
+		t.Fatalf("opted-out mirror must not post: %+v", posts.all())
 	}
 }
 

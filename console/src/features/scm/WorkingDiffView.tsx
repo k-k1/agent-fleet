@@ -4,6 +4,7 @@ import { useState } from "react";
 import { api, isTransientErr } from "../../core/api/client.ts";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { Icon } from "../../ui/Icon.tsx";
+import { ViewHead } from "../../ui/ViewHead.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { Diff } from "./GitDiff.tsx";
 
@@ -41,14 +42,16 @@ export function WorkingDiffView({
 
   return (
     <div className="scmview">
-      <header className="view-head">
+      {/* Trailing items here are status tags, not actions — they stay inline on
+          the head's own gap rather than in the (tighter-packed) actions slot. */}
+      <ViewHead>
         <span className="view-title" title={path || ""}>
           <Icon name="git-compare" /> {path || tr("scm.no_file_selected")}
         </span>
         <span className="view-spacer" />
         {staged ? <span className="scm-staged-tag">staged</span> : null}
         {repo && <span className="scm-repo-tag">{repo}</span>}
-      </header>
+      </ViewHead>
       <div className="scm-scroll">
         <Diff text={diff} wrap={wrap} />
       </div>

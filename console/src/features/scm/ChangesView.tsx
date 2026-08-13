@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, apiJSON, rawJSON, isTransientErr } from "../../core/api/client.ts";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { Icon } from "../../ui/Icon.tsx";
+import { ViewHead } from "../../ui/ViewHead.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -91,15 +92,17 @@ export function ChangesView({ repo }: { repo: string }) {
 
   return (
     <div className="scmview">
-      <header className="view-head">
+      <ViewHead
+        actions={
+          <button type="button" className="ui-btn ui-btn-ghost ui-iconbtn" title={tr("scm.refresh")} onClick={() => void refresh()}>
+            <Icon name="refresh" />
+          </button>
+        }
+      >
         <span className="view-title">
           <Icon name="git-commit" /> {repo} — {tr("scm.changes")}
         </span>
-        <span className="view-spacer" />
-        <button type="button" className="ui-btn ui-btn-ghost ui-iconbtn" title={tr("scm.refresh")} onClick={() => void refresh()}>
-          <Icon name="refresh" />
-        </button>
-      </header>
+      </ViewHead>
       <div className="changes-body">
         <ul className="changes">
           {changes.length === 0 && <EmptyState icon="check" title={tr("scm.no_changes")} />}

@@ -216,6 +216,32 @@ How it takes effect differs a little by agent.
 - **copilot** — shell commands are routed through rtk by a hook, so it takes effect deterministically, like claude / opencode (applies to new sessions).
 - **codex / agy** — they have no command-rewrite mechanism, so it's **instruction-based (best effort)**. It only nudges the agent to "please use rtk"; it isn't enforced.
 
+## Agent instructions (write down how you work, once)
+
+Whatever you write under **⚙Settings → "Agent instructions"** is added to the instructions of
+every agent you start in this workspace from then on. The language and tone of reports, when
+you want to be asked before something happens, which tools to prefer — anything you find
+yourself **retyping into every prompt** can move here.
+
+Instructions come in three layers, and this setting is the **middle** one.
+
+| Layer | Whose it is | Can you change it? |
+|-------|-------------|--------------------|
+| Workspace guide | The whole fleet (your operator) | Not from here — and it wins if the two conflict |
+| **Agent instructions** | **You** | **This setting** |
+| Repository instructions (`CLAUDE.md` / `AGENTS.md`) | The whole team (committed) | Edit them in the repository |
+
+- **It is never committed to a repository.** It affects you, not your colleagues.
+- It applies to **sessions started from now on**. Running sessions keep what they read at start.
+- It can be delivered to claude / codex / opencode / GitHub Copilot. Agents that can't take it
+  still appear in the list with the reason (Cursor has no local per-user place for instructions,
+  so it can't be supported).
+- Each row shows **which file it was written to** and **whether it is actually in effect**. When
+  something saved but isn't in effect, that row says why.
+- There is a length limit: this text rides along in **every session's context, every time**, so
+  shorter works better.
+- **Don't put secrets (API keys, tokens) here.** It is plain text that several agents read.
+
 ---
 
 For those who want to know how it works: [dev/08 Integrations (auth methods)](../../dev/08-integrations.md) · [dev/04 Workspace Agent (kind integration / RTK mechanism)](../../dev/04-workspace-agent.md)

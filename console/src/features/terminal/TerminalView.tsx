@@ -4,7 +4,6 @@
 // unmounting), so the PTY socket and scrollback survive view switches. The PTY
 // connection follows the `session` prop declaratively.
 import { useEffect, useMemo, useRef } from "react";
-import type { ReactNode } from "react";
 import {
   ensureTerm,
   repaint,
@@ -23,10 +22,10 @@ import { termBackground } from "../../lib/termcolor.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { rel } from "../../core/api/client.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
-import { kindIcon, kindLabel, kindShort, kindClass } from "../../lib/sessionkind.ts";
-import { displayName, stateInfo } from "../../lib/sessionview.ts";
+import { stateInfo } from "../../lib/sessionview.ts";
 import { Button } from "../../ui/Button.tsx";
-import { Icon } from "../../ui/Icon.tsx";
+import { ViewHead } from "../../ui/ViewHead.tsx";
+import { PaneSessionChip } from "../panes/PaneSessionChip.tsx";
 import { TermKeys } from "./TermKeys.tsx";
 import { MirrorToggle } from "../mirror/MirrorToggle.tsx";
 import { OnboardingCard } from "./OnboardingCard.tsx";
@@ -47,7 +46,6 @@ interface TerminalViewProps {
   mirror?: boolean;
   onToggleMirror?: (toChat: boolean) => void;
   onResume?: () => void;
-  headerActions?: ReactNode;
 }
 
 export function TerminalView({
@@ -60,7 +58,6 @@ export function TerminalView({
   mirror = false,
   onToggleMirror,
   onResume,
-  headerActions,
 }: TerminalViewProps) {
   const tr = useT();
   const ref = useRef<HTMLDivElement>(null);
@@ -213,28 +210,16 @@ export function TerminalView({
 
   return (
     <div className="termview">
-      <header className="pane-head">
+      <ViewHead
+        className="view-head-term"
+        actions={canMirror && <MirrorToggle mirror={mirror} onToggle={onToggleMirror} running={running} />}
+      >
         {session && sessionMeta ? (
-          // The display name ellipsizes in a narrow pane — the hover tip carries it in full.
-          <span className="pane-session" title={displayName(sessionMeta) + "\nID: " + sessionMeta.name}>
-            <span className={"kind-tag kind-" + kindClass(sessionMeta.kind)}>
-              <span className={`codicon codicon-${kindIcon(sessionMeta.kind)}`} aria-hidden="true" />
-              <span className="kt-full">{kindLabel(sessionMeta.kind)}</span>
-              <span className="kt-short">{kindShort(sessionMeta.kind)}</span>
-            </span>
-            <span className="pane-session-name">{displayName(sessionMeta)}</span>
-            <span className={"session-state " + st!.cls}>
-              <Icon name={st!.icon} spin={st!.spin} /> {st!.text}
-            </span>
-          </span>
+          <PaneSessionChip session={sessionMeta} state={st} />
         ) : (
           <span className="pane-head-title">{session ? tr("onb.session") : tr("onb.session_disconnected")}</span>
         )}
-        <span className="pane-head-actions">
-          {headerActions}
-          {canMirror && <MirrorToggle mirror={mirror} onToggle={onToggleMirror} running={running} />}
-        </span>
-      </header>
+      </ViewHead>
       {ctxUsage && <ContextBar {...ctxUsage} />}
       <div className="term-body">
         <div className={"terminal" + (disableIme ? " terminal-ime-disabled terminal-shellssm" : "")} ref={ref} />
