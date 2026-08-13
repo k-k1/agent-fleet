@@ -48,6 +48,10 @@ func TestSpinnerActive(t *testing.T) {
 		"✽ nativeRuntime アダプタ実装 (AF_RUNTIME=native)… (9m 26s · ↓ 35.7k tokens)",
 		"* nativeRuntime アダプタ実装… (9m 26s · ↓ 35.7k tokens)",
 		"✳ Rebuild (native) の検証… (3s)",
+		// A slash command running as a todo renders its own name as the activeForm — '/'
+		// is punctuation, so \p{L}\p{N} alone missed it. Real capture (claude_sqchdhn): a
+		// 20-minute /copyedit turn read idle for its whole duration.
+		"· /copyedit 02-noir A6… (20m 1s · almost done thinking with high effort)",
 	}
 	for _, s := range busy {
 		if !spinnerActive(s) {
@@ -86,6 +90,12 @@ func TestSpinnerActive(t *testing.T) {
 		"//\t✢ Tempering… (6s · thinking with high effort)",
 		"// e.g. ✽ Perusing… (5m 42s · ↓ 17.8k tokens)",
 		"#  ✳ Working… (1m 2s · ↓ 900 tokens)",
+		// The slash-command alternative must not reopen the "//" comment hole it was added
+		// to close: a comment whose text happens to start with '/' still has no space
+		// between the two slashes, so it must keep reading idle.
+		"// /copyedit 02-noir A6… (20m 1s · almost done thinking with high effort)",
+		// ...and the ≥2-space-indented-quote guard must still hold for the new alternative.
+		"  · /copyedit 02-noir A6… (20m 1s · almost done thinking with high effort)",
 	}
 	for _, s := range idle {
 		if spinnerActive(s) {

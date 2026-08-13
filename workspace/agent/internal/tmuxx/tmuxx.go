@@ -75,6 +75,17 @@ func Cmd(args ...string) *exec.Cmd {
 // line quoting a spinner inside a "//" comment cannot either (the head is not punctuation)
 // — which matters because sessions asked to debug the TUI read their own pane.
 //
+// A slash command running as a todo renders ITS OWN NAME as the activeForm ("· /copyedit
+// 02-noir A6… (20m 1s · almost done thinking with high effort)", real capture) — '/' is
+// punctuation, so \p{L}\p{N} alone reads that idle for the whole command, same failure
+// mode as the ASCII-glyph and CJK cases above. It can't simply join the \p{L}\p{N} class:
+// a "//" comment's second slash sits in exactly the position a lone-glyph '/' would
+// occupy once \S? backtracks to empty, so a bare-alternative class would match this file's
+// own "// ..." examples. The second alternative below requires the glyph AND the space
+// both present (\S, not \S?; a literal space, not " ?") before the '/' — a "//" comment
+// has no space between its two slashes, so it can only ever feed the '/' to the empty-glyph
+// path, which the mandatory-glyph alternative does not accept.
+//
 // It must not match the post-turn summary claude leaves in the transcript
 // ("✻ Worked for 13m 53s", "✻ Sautéed for 5s · 1 shell still running"): those use a
 // past-tense verb with no "…" and no parenthesised timer, so the ellipsis is what
@@ -82,7 +93,7 @@ func Cmd(args ...string) *exec.Cmd {
 // renders at column 0, so a ≥2-space-indented transcript line that merely quotes a
 // spinner — including this file's own examples, when a session is asked to debug the TUI
 // — can't match). Best-effort; one captured frame.
-var spinnerRe = regexp.MustCompile(`(?m)^\S? ?[\p{L}\p{N}][^\n\x{2026}]*\x{2026} \([^)\n]*[0-9]+(?:h|m|s)\b`)
+var spinnerRe = regexp.MustCompile(`(?m)^(?:\S? ?[\p{L}\p{N}]|\S /)[^\n\x{2026}]*\x{2026} \([^)\n]*[0-9]+(?:h|m|s)\b`)
 
 // spinnerActive reports whether the captured pane text shows a turn actively running —
 // either the classic "esc to interrupt" affordance or the live spinner header (see
