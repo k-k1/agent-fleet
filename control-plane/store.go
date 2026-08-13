@@ -279,6 +279,9 @@ type SharedSessionCatalog struct {
 	// Branch は作業コピーが今チェックアウトしているブランチ(表示専用)。worktree の
 	// フォルダ名はランダム slug なので、受信側はこれが無いとどの作業か分からない。
 	Branch string
+	// Activity は Agent の live state(working | idle | question | plan | permission |
+	// blocked | compacting)。State は running/stopped(生存)なので別に持つ。停止中は空。
+	Activity string
 }
 
 type SessionShareProposal struct {

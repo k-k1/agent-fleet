@@ -3638,6 +3638,7 @@ export const ja = {
 
   "share.shared_sessions": "共有セッション",
   "share.list_title": "共有一覧",
+  "share.reload": "最新に更新",
   "share.create_title": "共有する",
   "share.new": "新規共有…",
   "share.no_shares": "まだ誰にも共有していません。",

@@ -278,14 +278,14 @@ func (s *sqlStore) ReplaceSharedSessionCatalog(ctx context.Context, workspaceID,
 			worktree = 1
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO shared_session_catalog
-			(id,workspace_id,owner_membership_id,name,kind,dir,repo,working_copy_id,title,label,created_at,state,archived,last_seen,worktree,parent,parent_working_copy_id,branch)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(workspace_id,name) DO UPDATE SET
+			(id,workspace_id,owner_membership_id,name,kind,dir,repo,working_copy_id,title,label,created_at,state,archived,last_seen,worktree,parent,parent_working_copy_id,branch,activity)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(workspace_id,name) DO UPDATE SET
 			kind=excluded.kind,dir=excluded.dir,repo=excluded.repo,working_copy_id=excluded.working_copy_id,
 			title=excluded.title,label=excluded.label,state=excluded.state,archived=excluded.archived,last_seen=excluded.last_seen,
 			worktree=excluded.worktree,parent=excluded.parent,parent_working_copy_id=excluded.parent_working_copy_id,
-			branch=excluded.branch`,
+			branch=excluded.branch,activity=excluded.activity`,
 			existing, workspaceID, owner, r.Name, r.Kind, r.Dir, r.Repo, r.WorkingCopyID, r.Title,
-			r.Label, r.CreatedAt, r.State, archived, r.LastSeen, worktree, r.Parent, r.ParentWorkingCopyID, r.Branch)
+			r.Label, r.CreatedAt, r.State, archived, r.LastSeen, worktree, r.Parent, r.ParentWorkingCopyID, r.Branch, r.Activity)
 		if err != nil {
 			return err
 		}
@@ -322,7 +322,7 @@ func scanCatalog(row interface{ Scan(...any) error }) (SharedSessionCatalog, boo
 	var archived, worktree int
 	err := row.Scan(&r.ID, &r.WorkspaceID, &r.OwnerMembershipID, &r.Name, &r.Kind, &r.Dir, &r.Repo,
 		&r.WorkingCopyID, &r.Title, &r.Label, &r.CreatedAt, &r.State, &archived, &r.LastSeen, &worktree,
-		&r.Parent, &r.ParentWorkingCopyID, &r.Branch)
+		&r.Parent, &r.ParentWorkingCopyID, &r.Branch, &r.Activity)
 	if err == sql.ErrNoRows {
 		return SharedSessionCatalog{}, false, nil
 	}
@@ -332,11 +332,11 @@ func scanCatalog(row interface{ Scan(...any) error }) (SharedSessionCatalog, boo
 }
 func (s *sqlStore) GetSharedSessionCatalog(ctx context.Context, id string) (SharedSessionCatalog, bool, error) {
 	return scanCatalog(s.db.QueryRowContext(ctx, `SELECT id,workspace_id,owner_membership_id,name,kind,dir,repo,
-		working_copy_id,title,label,created_at,state,archived,last_seen,worktree,parent,parent_working_copy_id,branch FROM shared_session_catalog WHERE id=?`, id))
+		working_copy_id,title,label,created_at,state,archived,last_seen,worktree,parent,parent_working_copy_id,branch,activity FROM shared_session_catalog WHERE id=?`, id))
 }
 func (s *sqlStore) ListSharedSessionCatalogByOwner(ctx context.Context, owner string) ([]SharedSessionCatalog, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,workspace_id,owner_membership_id,name,kind,dir,repo,
-		working_copy_id,title,label,created_at,state,archived,last_seen,worktree,parent,parent_working_copy_id,branch FROM shared_session_catalog
+		working_copy_id,title,label,created_at,state,archived,last_seen,worktree,parent,parent_working_copy_id,branch,activity FROM shared_session_catalog
 		WHERE owner_membership_id=? ORDER BY created_at DESC`, owner)
 	if err != nil {
 		return nil, err
@@ -485,7 +485,7 @@ func (s *sqlStore) ClaimSessionShareProposal(ctx context.Context, id, owner, by,
 		return p, SharedSessionCatalog{}, "expired", nil
 	}
 	c, ok, err := scanCatalog(tx.QueryRowContext(ctx, `SELECT id,workspace_id,owner_membership_id,name,kind,dir,repo,
-		working_copy_id,title,label,created_at,state,archived,last_seen,worktree,parent,parent_working_copy_id,branch FROM shared_session_catalog WHERE id=?`, p.CatalogID))
+		working_copy_id,title,label,created_at,state,archived,last_seen,worktree,parent,parent_working_copy_id,branch,activity FROM shared_session_catalog WHERE id=?`, p.CatalogID))
 	if err != nil {
 		return p, c, "", err
 	}
