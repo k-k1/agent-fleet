@@ -107,9 +107,15 @@ func applyInstructionsLocked() {
 		}
 	}
 
-	// ① フリート方針（配れる kind のみ。順序の都合でユーザー指示より先）。
+	// ① フリート方針（順序の都合でユーザー指示より先）。claude は managed policy として
+	// イメージに焼かれている（/etc/claude-code/CLAUDE.md）ので AF は触らない。cursor は
+	// ローカルに user スコープが無いので配れない。それ以外の 5 種はここが唯一の配布経路
+	// — agy / copilot / kiro は docs/60 §60.13 P2 まで**運用方針を一切読んでいなかった**。
 	note("codex", codex.ApplyFleetNotes(fleet))
 	note("opencode", opencode.ApplyFleetNotes(fleet))
+	note("agy", agy.ApplyFleetNotes(fleet))
+	note("copilot", copilot.ApplyFleetNotes(fleet))
+	note("kiro", kiro.ApplyFleetNotes(fleet))
 
 	// ② ユーザー指示。
 	note("claude", claude.ApplyUserInstructions(st.Body("claude")))
