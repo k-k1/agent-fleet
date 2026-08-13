@@ -340,35 +340,10 @@ func applyPendingPayloads(sid, state string, h hookInput) {
 	}
 }
 
-// effectiveModal resolves what the claude TUI is ACTUALLY showing, which the raw
-// status state can lie about. AskUserQuestion / ExitPlanMode fire their OWN
-// permission_prompt Notification between the tool's PreToolUse and its PostToolUse, so
-// the stored state flips to "permission" while the terminal still shows the question
-// menu / the plan approval dialog. applyPendingPayloads deliberately KEEPS the captured
-// payload through that state, which makes the payload — not the state — the truth.
-//
-// Every reader has to apply this, not just the display path (surfacePendingPayloads):
-// judging by the raw state made /plan-respond answer no_plan for a plan that was
-// plainly pending (the plan card is on screen, `st.State` says "permission"), and the
-// Console's fallback to /input was then refused as permission_pending — プランへの
-// コメントがどちらの経路でも送れない、という実障害（2026-08-10 報告）。
-//
-// Non-permission states pass through unchanged, so callers keep switching on it as
-// before. Only claude writes these payloads, so no other kind can hit the override.
-func effectiveModal(sid, state string) string {
-	if state != "permission" {
-		return state
-	}
-	// A question outranks a plan (surfacePendingPayloads shows the question card first,
-	// and its keys must reach the question menu).
-	if raw, ok := status.ReadPendingQuestion(sid); ok && len(raw) > 0 {
-		return "question"
-	}
-	if plan, ok := status.ReadPendingPlan(sid); ok && plan != "" {
-		return "plan"
-	}
-	return state
-}
+// effectiveModal は status.EffectiveModal（question > plan > permission の優先順位）
+// の別名。判定そのものは status パッケージが持つ — 表示側（claude の WireLive /
+// driveState）も同じ解決を通す必要があり、そちらは package main を import できない。
+func effectiveModal(sid, state string) string { return status.EffectiveModal(sid, state) }
 
 // permToolDetail renders "Tool · target" for the permission block (target = the file
 // or the first line of the command); just the tool name when no recognizable arg.
