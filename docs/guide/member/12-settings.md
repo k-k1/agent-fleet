@@ -51,8 +51,6 @@ Everything about appearance.
   readable at a glance.
 - **Terminal** — font and font size ([03](03-terminal.md)).
 - **File viewer** — tab width, line numbers, wrapping, minimap, Markdown rendering ([05](05-files.md)).
-- **Session chat** — the **send key**: **Enter to send (Shift+Enter for a newline)** or **Ctrl+Enter to send
-  (Enter for a newline — better on a phone)**. It applies to both session chat and assistant chat.
 - **Reader view** / **file icons** (icon set).
 - **Main area layout** — **split panes** (drag the dividers) or **tabbed grid** (each cell switches by tab).
   Stored **on this device only**, and the two layouts are remembered separately, so moving between them does not
@@ -68,6 +66,8 @@ Everything about appearance.
 - **Pass every key to shell / SSM terminals** — stronger than the above: the leader (Ctrl/⌘+K) and the palette
   (Ctrl/⌘+P) are passed through too, making it a pure terminal. It applies only to shell / SSM, not to agent
   terminals. Off by default.
+- **Send key** — **Ctrl+Enter to send (Enter for a newline — the default)** or **Enter to send
+  (Shift+Enter for a newline)**. It applies to both session chat and assistant chat.
 - **Reply suggestions** — chips with short replies above the composer ([07](07-chat-memo.md)). This is also
   where you clear what has been learned or unpin pinned chips.
 - **✨ AI reply suggestions button** — the button that generates suggestions from the recent conversation. On by
@@ -254,7 +254,7 @@ deeper reset that also removes home except logins and connections). Both lose un
 | What you want | Tab |
 |---|---|
 | Text is too small / change the colours | Display |
-| Send with Enter | Display (send key) |
+| Send with Enter | Keys (send key) |
 | Switch panes by tab | Display (main area layout) |
 | Rebind a shortcut / pass keys to the terminal | Keys |
 | Have replies read out loud | Speech |
