@@ -93,7 +93,7 @@ func TestReconcileDeliversToEverySupportedKind(t *testing.T) {
 func TestReconcileComposesFleetGuideForCodexAndOpencode(t *testing.T) {
 	instrEnv(t)
 	reconcileAgentInstructions()
-	for _, path := range []string{codex.AgentsPath(), opencode.AgentsPath()} {
+	for _, path := range []string{codex.AgentsPath(), opencode.AgentsPath(), agy.AgentsPath()} {
 		got := read(t, path)
 		if !strings.Contains(got, "do not delete other sessions' work") {
 			t.Fatalf("%s: fleet guide missing:\n%s", path, got)
@@ -101,6 +101,54 @@ func TestReconcileComposesFleetGuideForCodexAndOpencode(t *testing.T) {
 		if !strings.Contains(got, "<!-- agent-fleet:fleet -->") {
 			t.Fatalf("%s: fleet content must be marked so the user's own text survives", path)
 		}
+	}
+}
+
+// ★ 実害②の回帰: agy / copilot / kiro はワークスペースの運用方針を一切読んでいなかった。
+// フリート方針はオペレーター所有なので、ユーザー指示が空でも・適用先を全部外しても配る。
+func TestFleetGuideReachesTheKindsThatHadNone(t *testing.T) {
+	instrEnv(t)
+	off := false
+	if err := userinstr.SavePrefs(userinstr.Prefs{Enabled: &off}); err != nil {
+		t.Fatal(err)
+	}
+	reconcileAgentInstructions()
+
+	for _, tc := range []struct{ name, path string }{
+		{"copilot", copilot.FleetNotesPath()},
+		{"kiro", kiro.FleetNotesPath()},
+	} {
+		if got := read(t, tc.path); !strings.Contains(got, "do not delete other sessions' work") {
+			t.Fatalf("%s: fleet guide missing from %s:\n%s", tc.name, tc.path, got)
+		}
+	}
+	if !strings.Contains(read(t, agy.AgentsPath()), "do not delete other sessions' work") {
+		t.Fatal("agy: fleet guide missing")
+	}
+	// ユーザー指示は切ってあるので、そちらの artifact は無いままであること。
+	if read(t, copilot.UserInstructionsPath()) != "" || read(t, kiro.UserInstructionsPath()) != "" {
+		t.Fatal("user artifacts must not appear while the master switch is off")
+	}
+}
+
+// agy の 1 ファイルに fleet / user / rtk が同居しても、順序と個数が壊れないこと。
+func TestAgyFileHoldsFleetUserAndRTKInOrder(t *testing.T) {
+	instrEnv(t)
+	if err := userinstr.SaveText("AGYORDER\n"); err != nil {
+		t.Fatal(err)
+	}
+	agy.ApplyRTK(true)
+	reconcileAgentInstructions()
+	reconcileAgentInstructions() // 冪等
+	got := read(t, agy.AgentsPath())
+	fleet := strings.Index(got, "<!-- agent-fleet:fleet -->")
+	user := strings.Index(got, "<!-- agent-fleet:user-notes -->")
+	rtk := strings.Index(got, "<!-- agent-fleet:rtk -->")
+	if fleet < 0 || user < 0 || rtk < 0 || !(fleet < user && user < rtk) {
+		t.Fatalf("order must be fleet<user<rtk (%d,%d,%d):\n%s", fleet, user, rtk, got)
+	}
+	if n := strings.Count(got, "<!-- agent-fleet:fleet -->"); n != 1 {
+		t.Fatalf("fleet block written %d times:\n%s", n, got)
 	}
 }
 
