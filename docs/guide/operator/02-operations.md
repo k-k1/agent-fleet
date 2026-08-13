@@ -121,6 +121,25 @@ agents themselves cannot do any work without reaching their model endpoints. The
 install path is for hosts on a restricted internal network, not for a genuinely disconnected
 one.
 
+## Distributing fleet policy (instructions to every agent)
+
+Every agent running in a workspace can be made to read **the operator's policy**. It lives in the
+repository as `workspace/workspace-notes.md`, is baked into the Workspace image and delivered to
+every container (claude reads it as the managed policy at `/etc/claude-code/CLAUDE.md` on every
+session; codex and opencode are seeded with the same text at each start).
+
+- This is where fleet-wide rules go: **what must not be done** (deleting repositories, writing
+  credentials in the clear), **the constraints of this environment** (no root, no Docker, shared
+  memory), **how branches are handled**.
+- **Applying a change needs an image rebuild**: edit → rebuild the image → each user recreates
+  their workspace, or it takes effect the next time a container is created.
+- A user's own additions do **not** belong in this layer. They go in each person's ⚙ Settings →
+  Agent instructions, and fleet policy wins where the two conflict
+  ([member/06](../member/06-agents.md#agent-instructions-write-down-how-you-work-once)).
+- **Its length is a per-session context cost.** Every agent reads it every time, so before adding
+  to it, check that it is genuinely needed by everyone, every time. This layer cannot be
+  delivered to cursor.
+
 ## Idle stop and force-stop
 
 - **Automatic idle stop (scale-to-zero)**: setting `AF_SESSION_IDLE_TIMEOUT` /

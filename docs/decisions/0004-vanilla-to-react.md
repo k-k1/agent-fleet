@@ -5,7 +5,7 @@
 
 ## 背景
 
-確定スタックは当初から React（[requirements §1.6](../reference/requirements.md#16-確定事項再掲)）だが、Phase 1 MVP は
+確定スタックは当初から React（[requirements §1.6（現 dev/01 §1.1）](../dev/01-architecture.md#11-何であるか提供モデル)）だが、Phase 1 MVP は
 **最小 vanilla JS**（`app.js` 617+行）で出した。機能追加（SCM / Files / Admin / Connections / テナント picker）で
 情報設計が破綻——ナビゲーション無し、暗号アイコンの羅列、サイドバーとオーバーレイの混在、ヘッダ過密。
 刷新にあたり「vanilla 維持 / 軽量フレームワーク CDN / React 本格採用」を比較した。当時のブリーフ（旧 18）は

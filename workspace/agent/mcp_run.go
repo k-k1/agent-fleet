@@ -110,7 +110,7 @@ func runGrafanaMCP(extra []string) {
 // profile/region set as env. No secret is injected — the server reads the AWS
 // credential chain (the user's SSO login, same as ssm sessions), so an expired
 // SSO session surfaces as per-tool errors and the fix is `aws sso login`. The
-// server is read-only by design (all tools are read/analyze; verified v0.1.4),
+// server is read-only by design (all tools are read/analyze; verified v0.1.8),
 // so no disable flags are needed.
 func runCloudWatchMCP(extra []string) {
 	s, err := secrets.Load()

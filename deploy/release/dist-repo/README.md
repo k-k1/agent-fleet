@@ -49,7 +49,10 @@ Key features:
   reachable through lightweight previews.
 - **Multi-user by design** — Google OAuth login, tenants and roles
   (member / admin / operator), per-user network isolation, envelope encryption
-  for secrets at rest, and per-workspace memory quotas.
+  for secrets at rest, and per-workspace memory quotas. Workspaces stay
+  isolated, yet a conversation can be **shared with another member per session
+  or per project** (view-only, or may-propose — a proposal reaches the agent
+  only after the owner approves it).
 - **Usage visibility** — see each agent account's usage and rate limits (and
   when they reset) at a glance, plus per-session context usage with warnings
   and summarized handover before the context window fills up. A **token ledger
@@ -62,7 +65,9 @@ Key features:
   drive the fleet: start and steer multiple agent sessions, orchestrate work
   across different agents and hand tasks over between them with summarized
   context, and act as an **SRE assistant** through PagerDuty / Grafana /
-  CloudWatch integrations and AWS SSM login sessions to your servers.
+  CloudWatch integrations and AWS SSM login sessions to your servers. Sessions
+  can also send each other short notes directly (opt-in; they cross agent kinds,
+  and a stopped peer is resumed to receive one).
 - **Scheduled execution** — have the assistant schedule recurring agent runs in
   plain language ("every weekday at 9:00, review yesterday's changes"): the
   control plane fires them on a wall-clock (cron / interval / one-off, timezone-
@@ -79,8 +84,24 @@ Key features:
   drive the whole fleet from chat — destructive actions triggered from chat
   stop at an approve/deny gate first. An opt-in full-text mode posts the
   agent's actual replies (with automatic secret redaction).
+- **MCP in three directions** — ① **built-in integrations** (PagerDuty /
+  Grafana / CloudWatch / Agent Toolkit for AWS) that connect by entering
+  credentials; ② **your own MCP servers** (stdio or remote HTTP) registered and
+  handed to assistants and sessions — values are stored with envelope encryption
+  and passed only when the server starts, a tenant admin can distribute one to
+  everybody, and on an egress-restricted deployment a host goes through an
+  approval flow; ③ **from an external Claude Code / Claude Desktop**, drive your
+  own workspace with a scoped, expiring token.
+- **Keep agent behaviour consistent across the org** — fleet-wide policy
+  (distributed by the operator) and per-user instructions are delivered to every
+  agent kind in each CLI's own idiom. The memory an agent accumulates by itself
+  (Claude's auto-memory, Codex's memories) is snapshotted and can be rolled back
+  to any point.
 - **Operable** — backup/restore scripts, forward-only DB migrations for
-  upgrades, air-gap installation paths, and MCP integration points.
+  upgrades, and air-gap installation paths. A turn cut short by a dropped
+  connection or a temporary rate limit resumes itself, and a session stopped by
+  a usage limit picks up again when the limit lifts — so unattended work does
+  not sit dead until morning.
 
 Each user signs in to the agent CLIs with **their own account/seat** (e.g. a
 Claude subscription) from the console; the deployment itself does not bundle or
@@ -139,11 +160,12 @@ provider API keys), Cursor and Kiro expose none. **SSM** sessions (remote login 
 behave like Shell: terminal only, no conversation, and not tied to a workspace worktree.
 
 **Default model for the assistant chat** — each assistant can pin its own, and Claude's
-default is also settable deployment-wide via `AF_CHAT_MODEL`. These favour fast, low-cost
-tiers because the assistant is conversational: Claude → Sonnet 5 · Codex → `gpt-5.6-luna`
-· OpenCode → `opencode/nemotron-3-ultra-free` · Antigravity → Gemini 3.5 Flash · Cursor →
-its own default (Auto). Cursor's assistant runs **read-only** (`--mode ask`). Kiro is **not**
-available as an assistant chat (it has no headless chat mode).
+default is also settable deployment-wide via `AF_CHAT_MODEL`. Pin nothing and it uses the
+"recommended" tier, picked from the connected catalogue to favour the fast, low-cost tiers
+that suit a conversation (the settings screen shows what it currently resolves to; at the
+time of writing Claude → Sonnet 5 · Codex → `gpt-5.6-luna` · Antigravity → Gemini 3.5 Flash
+· Cursor → its own default (Auto)). Cursor's assistant runs **read-only** (`--mode ask`).
+Kiro is **not** available as an assistant chat (it has no headless chat mode).
 
 ## Getting started — which edition?
 
@@ -185,7 +207,7 @@ af start
 ### Cloning private repos (git-provider OAuth)
 
 Each user connects their own GitHub / Bitbucket from the Console
-(**⚙ Settings → Git**) — pasting a token works out of the box. To also light up
+(**⚙ Settings → Git hosting**) — pasting a token works out of the box. To also light up
 the one-click **"Connect via OAuth"** buttons, set these in the environment
 **before `af start`** (the launcher passes them through to the control plane):
 
