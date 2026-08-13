@@ -109,6 +109,20 @@ automatically attempts a summary handoff and then retries the reply. If it was e
 too far to recover, a notice to that effect appears in the conversation (and the
 notification center), so deal with it via "Compact" or a new chat.
 
+### Put what must not be forgotten in the work plan
+
+There is one slot that is **carried forward verbatim, never summarised** — through compaction
+and into every new session: the **work plan**, next to the context bar. Write down the
+constraints (assumptions that hold from here on), the givens (facts the next move depends on)
+and what comes next (order, dependencies), and a long conversation stops drifting off its base.
+
+- **"Edit"** writes it directly. **"Refresh"** re-derives it from the recent conversation — press
+  it right after a discussion changes the direction.
+- On compaction it is updated automatically to match the recent conversation.
+- **"Clear"** empties it (the conversation history and the handoff summary are untouched).
+- It is not a list of finished work. It works when it holds only what you would get wrong
+  without.
+
 ## Reading and replying to a running agent's conversation
 
 claude, codex, cursor, copilot, kiro, agy, and opencode sessions can be driven from the **Chat** view. With Terminal (CLI)
@@ -130,6 +144,32 @@ running you can halt it with **"Stop"** (Esc). Right after sending, the message 
 sent, and it's reflected in the conversation once the agent starts processing.
 
 A stopped session is read-only history; to reply, restart it with **"Resume and continue"**.
+
+### Writing comments on a plan
+
+When you want to say "change just this part" about a long plan, you don't have to quote it and
+retype. **"Open in pane"** on the plan card opens the body in a pane marked for **review**, and
+**selecting a passage lets you attach a comment to it**.
+
+The plan card then sends them all at once with **"Send comments (N)"**. For a plan awaiting
+approval it reads **"Send comments and reject (N)"** — delivering the body requires closing the
+approval dialog, so the two go together. The agent comes back with a revised plan that takes
+your comments into account.
+
+### Reply suggestions
+
+Above the input field, chips offer short replies you use often (OK, go ahead, commit …) plus
+suggestions that follow the latest reply. Clicking inserts one into the field; **hold Ctrl, ⌘ or
+Alt while clicking to send it immediately**. The suggestions learn from the short messages you
+send, and right-click (long-press on touch) lets you **pin** or remove one.
+
+It works from the keyboard alone: with the field empty, **Tab** moves to the chips, **←→** moves
+between them, **Enter** inserts, **Ctrl (⌘) +Enter** sends, and **Esc** returns to the field (if
+you set Enter to send, Enter and Ctrl+Enter swap roles).
+
+The **✨ button** hands the recent conversation to an AI and adds suggestions that fit the
+context (it only spends tokens when you press it). Show or hide all of this in ⚙ Settings →
+Keys.
 
 ### Branch from a past message
 

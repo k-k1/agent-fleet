@@ -30,6 +30,7 @@ to look up colored marks and right-click actions, see [Icons, badges, and menus]
 9. [Troubleshooting](09-troubleshooting.md) — Fixes by symptom, plus an FAQ
 10. [Ops tooling PoC](10-ops-mcp-poc.md) 🧪 — Wiring up PagerDuty / Grafana / CloudWatch / AWS over MCP to talk through incidents (experimental)
 11. [Fleet operator](11-fleet-operator.md) — Directing multiple sessions from chat, handover, parallel work, scheduled runs
+12. [Settings](12-settings.md) — Every tab of the ⚙ settings dialog; the map for "where is that setting?"
 
 For the "how to do it", this guide is canonical. When you get curious about the internal
 "how it works", follow the "For those who want to know how it works" link at the end of each
@@ -67,10 +68,13 @@ environment — your **workspace**. It holds the operations that affect your wor
 
 While the workspace is running, the following sections are stacked vertically.
 
+- **Working set** (pinned at the top) — narrows the view down to one piece of work ([02](02-sessions.md)).
 - **Assistants** — simple chat that doesn't use a repository ([07](07-chat-memo.md)).
 - **Memo queue** — memos of instructions to send later in a batch ([07](07-chat-memo.md)).
+- **Schedules** — scheduled runs and their history ([11](11-fleet-operator.md)).
 - **Repositories** — working copies, and the sessions running at each location ([02](02-sessions.md), [04](04-git.md)).
 - **Other sessions** — sessions that don't belong to a repository ([02](02-sessions.md)).
+- **Shared sessions** — sessions you shared, and sessions shared with you ([02](02-sessions.md)).
 - **Files** — a file browser for the workspace ([05](05-files.md)).
 
 While the workspace is stopped, you can review sessions in **Session history**.
