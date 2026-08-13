@@ -22,54 +22,11 @@
   ime-mode: inactive;
 }
 
-/* Pane header: kind badge + session name + state pill. Leaves room for the
-   grip (left) and the control cluster (right), which float above it. */
-.pane-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px var(--pane-ctl-w, 40px) 4px 34px; /* right clears the control cluster (popout/close) */
-  min-height: 28px;
-  border-bottom: 1px solid var(--border2);
-  background: var(--panel2);
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-}
+/* The terminal head is the shared band (ui/ui.css) plus the .view-head-term
+   modifier that keeps its own shorter, panel-toned metrics. */
 .pane-head-title {
   color: var(--muted);
 }
-.pane-head-actions {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  gap: 6px;
-  margin-left: auto;
-}
-.tab-pane-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  padding-right: 5px;
-  border-right: 1px solid var(--border);
-}
-.tab-pane-actions .ui-btn {
-  width: 22px;
-  height: 22px;
-  padding: 2px;
-}
-.pane-session {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.pane-session-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-weight: 600;
-}
-
 /* Session kind badge — old base exactly (10px/600, radius 3, muted default);
    per-kind colors below override color/bg/border. */
 .kind-tag {
@@ -100,14 +57,6 @@
    to icon + 2-char short label when the pane is narrow (split panes). */
 .termview {
   container: paneview / inline-size;
-}
-@container paneview (max-width: 460px) {
-  .pane-head .kind-tag .kt-full {
-    display: none;
-  }
-  .pane-head .kind-tag .kt-short {
-    display: inline;
-  }
 }
 /* Collapse the kind badge to its 2-char short form when the pane header gets
    narrow — the full word otherwise squeezes the session name to "nov…". Applies

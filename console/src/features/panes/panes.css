@@ -302,6 +302,20 @@ body.row-resizing {
 .pane-grip:active {
   cursor: grabbing;
 }
+/* Session chip in a view head (panes/PaneSessionChip.tsx) — the kind badge, the
+   display name and the status pill, shared by the terminal and chat heads. */
+.pane-session {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.pane-session-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+
 /* Control cluster (wrap / ×) — old styles.css verbatim: ALWAYS visible (loose
    floating icons at rest); pane hover/active adds a faint backing + border that
    pulls the actions into one recognizable cluster. */
