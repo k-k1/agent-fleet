@@ -7,7 +7,7 @@
 // フォルダを開く) opens the section so the target is visible — hence the
 // controlled Section + own persistence (the old console's af-section-files key,
 // so an existing collapse choice carries over).
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { IconButton } from "../../ui/Button.tsx";
@@ -21,7 +21,7 @@ const KEY = "af-section-files";
 const HOME_KEY = "af-files-home";
 const VIEW_KEY = "af-files-view"; // the old console's tree/changes choice carries over
 
-export function FilesSection() {
+export const FilesSection = memo(function FilesSection() {
   const tr = useT();
   const reveal = useFilesStore((s) => s.reveal);
   const bump = useFilesStore((s) => s.bump);
@@ -190,4 +190,4 @@ export function FilesSection() {
       )}
     </Section>
   );
-}
+});
