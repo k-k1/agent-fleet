@@ -5,7 +5,7 @@
 // views/FileView onto the zustand stores.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { CSSProperties, FocusEvent, KeyboardEvent } from "react";
+import type { CSSProperties, FocusEvent, KeyboardEvent, ReactNode } from "react";
 import { SendSelectionModal } from "../memo/SendSelectionModal.tsx";
 import hljs from "highlight.js/lib/common";
 import { api, downloadURL, isTransientErr } from "../../core/api/client.ts";
@@ -100,6 +100,8 @@ interface FileViewProps {
   /** The host pane's id — lets global keyboard commands drive this view's local
    * Markdown preview/source toggle via the pane-view action registry. */
   paneId?: string;
+  /** Pane popout/wrap/close (tabbed-grid mode only — see Pane.tsx tabHeaderActions). */
+  headerActions?: ReactNode;
 }
 
 interface FileData {
@@ -125,7 +127,7 @@ function dismissSoftKeyboard(): void {
   virtualKeyboard?.hide?.();
 }
 
-export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, paneId }: FileViewProps) {
+export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, paneId, headerActions }: FileViewProps) {
   const tr = useT();
   const openTarget = useLayoutStore((s) => s.openTarget);
   const openTargetInNew = useLayoutStore((s) => s.openTargetInNew);
@@ -943,6 +945,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
             <Icon name="cloud-download" />
           </a>
         </span>
+        {headerActions && <span className="view-head-actions">{headerActions}</span>}
       </header>
 
       {canEdit && (

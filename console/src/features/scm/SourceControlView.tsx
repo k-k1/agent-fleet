@@ -2,7 +2,7 @@
 // by clicking a repo. Changes+commit box and per-commit detail live in their own
 // panes. Port of views/SourceControlView onto the zustand stores.
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { FormEvent, KeyboardEvent as RKeyboardEvent } from "react";
+import type { FormEvent, KeyboardEvent as RKeyboardEvent, ReactNode } from "react";
 import { api, apiJSON, errText, isTransientErr } from "../../core/api/client.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { Modal } from "../../ui/Modal.tsx";
@@ -32,7 +32,7 @@ interface ScmStatus {
 
 interface SubmoduleInfo { name: string; path: string; initialized: boolean; sha?: string }
 
-export function SourceControlView({ repo, path = "" }: { repo: string; path?: string }) {
+export function SourceControlView({ repo, path = "", headerActions }: { repo: string; path?: string; headerActions?: ReactNode }) {
   const tr = useT();
   const askConfirm = useConfirm();
   const toast = useToast();
@@ -338,6 +338,7 @@ export function SourceControlView({ repo, path = "" }: { repo: string; path?: st
             </div>
           )}
         </div>
+        {headerActions && <span className="view-head-actions">{headerActions}</span>}
       </header>
       <div className="cgraph-body" ref={bodyRef} tabIndex={0} onKeyDown={onKey}>
         {loading && commits.length === 0 ? (

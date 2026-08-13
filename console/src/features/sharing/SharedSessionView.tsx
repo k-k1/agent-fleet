@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { api, apiJSON, errText } from "../../core/api/client.ts";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -14,7 +15,7 @@ interface SharedTurn {
   ts?: string;
   parts?: Array<{ kind?: string; text?: string; tool?: string; info?: string }>;
 }
-export function SharedSessionView({ sharedSessionId }: { sharedSessionId: string }) {
+export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSessionId: string; headerActions?: ReactNode }) {
   const tr = useT();
   const meta = useSharedSessionsStore((s) => s.sessions.find((x) => x.id === sharedSessionId));
   const refreshList = useSharedSessionsStore((s) => s.refresh);
@@ -76,8 +77,11 @@ export function SharedSessionView({ sharedSessionId }: { sharedSessionId: string
   return (
     <div className="shared-view">
       <header className="shared-view-head">
-        <div><Icon name="broadcast" /> <strong>{meta.title || meta.label || meta.name}</strong></div>
-        <small>{meta.ownerUserKey} · {meta.permission.toUpperCase()} · {meta.archived ? tr("share.archived") : meta.state}</small>
+        <div className="shared-view-info">
+          <div><Icon name="broadcast" /> <strong>{meta.title || meta.label || meta.name}</strong></div>
+          <small>{meta.ownerUserKey} · {meta.permission.toUpperCase()} · {meta.archived ? tr("share.archived") : meta.state}</small>
+        </div>
+        {headerActions && <span className="view-head-actions">{headerActions}</span>}
       </header>
       <div className="shared-view-body" tabIndex={-1}>
         {error && <div className="shared-view-notice">{error}</div>}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { errText } from "../../core/api/client.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useT } from "../../lib/i18n/index.ts";
@@ -12,9 +13,11 @@ import { BrowserConsoleDrawer, BrowserSurface } from "./BrowserSurface.tsx";
 interface BrowserAttachPaneProps {
   paneId: string;
   attachmentId: string;
+  /** Pane popout/wrap/close (tabbed-grid mode only — see Pane.tsx tabHeaderActions). */
+  headerActions?: ReactNode;
 }
 
-export function BrowserAttachPane({ paneId, attachmentId }: BrowserAttachPaneProps) {
+export function BrowserAttachPane({ paneId, attachmentId, headerActions }: BrowserAttachPaneProps) {
   const tr = useT();
   const closePane = useLayoutStore((state) => state.closePane);
   const controller = ensureBrowserAttachment(paneId, attachmentId);
@@ -124,6 +127,7 @@ export function BrowserAttachPane({ paneId, attachmentId }: BrowserAttachPanePro
         >
           {tr("browser.attach.detach")}
         </Button>
+        {headerActions && <span className="view-head-actions">{headerActions}</span>}
       </div>
 
       {/* A fresh attachment is view-only by contract (docs/53 §53.11): the agent

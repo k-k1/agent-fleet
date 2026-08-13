@@ -2,7 +2,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useSettings, fontStack } from "../../lib/settings.ts";
 import { baseName } from "../../lib/filemeta.ts";
 import { useT } from "../../lib/i18n/index.ts";
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 // DiffView renders the before/after of an edit-family tool (Edit/Write/MultiEdit) as a
 // line-level diff in its own pane. The edits live in the pane descriptor (diffEdits),
@@ -20,6 +20,8 @@ interface DiffViewProps {
   tool?: string;
   edits?: DiffEdit[];
   wrap?: boolean;
+  /** Pane popout/wrap/close (tabbed-grid mode only — see Pane.tsx tabHeaderActions). */
+  headerActions?: ReactNode;
 }
 
 // A rendered diff row: context / addition / deletion, with old/new line numbers.
@@ -32,7 +34,7 @@ export interface DiffRow {
   n?: number;
 }
 
-export function DiffView({ title, tool, edits, wrap }: DiffViewProps) {
+export function DiffView({ title, tool, edits, wrap, headerActions }: DiffViewProps) {
   const tr = useT();
   const settings = useSettings();
   const viewerStyle = {
@@ -62,6 +64,7 @@ export function DiffView({ title, tool, edits, wrap }: DiffViewProps) {
           {added > 0 && <span className="dv-add">+{added}</span>}
           {removed > 0 && <span className="dv-del">−{removed}</span>}
         </span>
+        {headerActions && <span className="view-head-actions">{headerActions}</span>}
       </header>
       <div className="dv-scroll">
         {hunks.map((rows, hi) => (

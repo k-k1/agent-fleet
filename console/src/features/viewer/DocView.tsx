@@ -6,7 +6,7 @@
 // 送信はミラーのプランカードが担う（送り先の状態＝承認待ちか却下後かで経路が変わるため、
 // 判断はセッションの状態を持っている側に置く）。
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { MarkdownView } from "./MarkdownView.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -28,6 +28,8 @@ interface DocViewProps {
   content?: string;
   /** どのセッションから開かれたか（プランのときだけ入る）。レビュー面の有効化条件。 */
   session?: string;
+  /** Pane popout/wrap/close (tabbed-grid mode only — see Pane.tsx tabHeaderActions). */
+  headerActions?: ReactNode;
 }
 
 interface PendingComment {
@@ -58,7 +60,7 @@ function clampFixed(el: HTMLElement | null, x: number, y: number) {
   el.style.top = Math.round(Math.min(Math.max(EDGE, y), maxY)) + "px";
 }
 
-export function DocView({ title, content, session }: DocViewProps) {
+export function DocView({ title, content, session, headerActions }: DocViewProps) {
   const tr = useT();
   const openTarget = useLayoutStore((s) => s.openTarget);
   const openTargetInNew = useLayoutStore((s) => s.openTargetInNew);
@@ -188,6 +190,7 @@ export function DocView({ title, content, session }: DocViewProps) {
             <Icon name="comment-discussion" /> {tr("plan.review_tag")}
           </span>
         )}
+        {headerActions && <span className="view-head-actions">{headerActions}</span>}
       </header>
       <div className="md-scroll" ref={bodyRef} onMouseUp={() => captureRef.current()}>
         <MarkdownView
