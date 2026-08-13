@@ -55,6 +55,8 @@ func TestEffectiveSharePermission(t *testing.T) {
 func TestSharedTranscriptDTOAllowsContentAndRejectsEveryUnknownCoordinate(t *testing.T) {
 	v := map[string]any{"jsonlPath": "/secret/log", "futureTopSecret": "hidden", "messages": []any{map[string]any{
 		"cwd": "/home/dev/repos/private", "text": "visible", "role": "assistant", "idx": float64(1),
+		"compact":   true,
+		"branch":    "feature/secret-branch",
 		"file_path": "/top/path", "parts": []any{map[string]any{
 			"kind": "tool", "file": "secret.txt", "files": []any{"attachment.png"}, "filePath": "/camel",
 			"file_path": "/snake", "path": "/generic", "attachmentPath": "/attach", "unknownCoordinate": "/future",
@@ -63,13 +65,21 @@ func TestSharedTranscriptDTOAllowsContentAndRejectsEveryUnknownCoordinate(t *tes
 	}}}
 	out := sharedTranscriptDTO(v)
 	encoded, _ := json.Marshal(out)
-	for _, secret := range []string{"jsonlPath", "futureTopSecret", "cwd", "file_path", "filePath", "attachmentPath", "unknownCoordinate", "secret.txt", "attachment.png", "/generic", "/edit/path"} {
+	for _, secret := range []string{"jsonlPath", "futureTopSecret", "cwd", "file_path", "filePath", "attachmentPath", "unknownCoordinate", "secret.txt", "attachment.png", "/generic", "/edit/path",
+		// branch names the owner's work in their repo and is not needed to render the
+		// conversation, so it stays out of the allowlist like every other coordinate.
+		"branch", "feature/secret-branch"} {
 		if strings.Contains(string(encoded), secret) {
 			t.Fatalf("private/unknown field %q survived: %s", secret, encoded)
 		}
 	}
 	if !strings.Contains(string(encoded), "visible tool output") || !strings.Contains(string(encoded), `"old":"a"`) {
 		t.Fatalf("visible allowlisted content removed: %s", encoded)
+	}
+	// compact is a display flag, not a coordinate: the recipient needs it to render a
+	// compaction summary as a folded summary rather than one enormous turn.
+	if !strings.Contains(string(encoded), `"compact":true`) {
+		t.Fatalf("compact flag dropped, compaction summaries would render as plain turns: %s", encoded)
 	}
 }
 
@@ -179,15 +189,47 @@ func TestSharedMessagesAuthorizeAndRemoveWorkspacePaths(t *testing.T) {
 		t.Fatalf("unauthorized status=%d body=%s", denied.Code, denied.Body.String())
 	}
 
-	// A bookmarked catalog id cannot bypass a later live deletion simply because
-	// the recipient skipped the shared-session list endpoint.
+	// A bookmarked catalog id cannot bypass a live deletion simply because the recipient
+	// skipped the shared-session list endpoint. Inventory reconciliation is throttled per
+	// owner (freshCatalog), so the deletion is noticed on the next sync rather than on the
+	// very next request — invalidateCatalog stands in for that window elapsing.
+	//
+	// Note what is NOT throttled: the share rules are re-evaluated from the database on
+	// every request, so an explicit unshare still takes effect immediately (the stranger
+	// case above runs through the same freshCatalog path and is still refused).
 	catalogDeleted.Store(true)
+	api.invalidateCatalog(owner.ID)
 	deletedReq := httptest.NewRequest(http.MethodGet, "/api/shared-sessions/catalog-1/messages", nil)
 	deletedReq.SetPathValue("id", catalog.ID)
 	deleted := httptest.NewRecorder()
 	api.messages(deleted, deletedReq, recipientIdentity, recipientViews[0])
 	if deleted.Code != http.StatusNotFound {
 		t.Fatalf("deleted direct-id status=%d body=%s", deleted.Code, deleted.Body.String())
+	}
+}
+
+// The throttle must bound the staleness it introduces, and must not touch authorization.
+// Both halves matter: skipping the sync is what makes a shared transcript load quickly,
+// and re-checking the rules every time is what keeps an unshare immediate.
+func TestFreshCatalogThrottlesInventoryButNotAuthorization(t *testing.T) {
+	api := newSessionShareAPI(&manager{})
+	if api.freshCatalog("owner-a") {
+		t.Fatal("first call must reconcile — nothing has been synced yet")
+	}
+	if !api.freshCatalog("owner-a") {
+		t.Fatal("second call within the TTL must reuse the reconciled inventory")
+	}
+	if api.freshCatalog("owner-b") {
+		t.Fatal("the window is per owner — owner-b must not ride owner-a's sync")
+	}
+	api.invalidateCatalog("owner-a")
+	if api.freshCatalog("owner-a") {
+		t.Fatal("invalidateCatalog must force the next reconciliation")
+	}
+	// An expired stamp reconciles again, so staleness is bounded by shareCatalogTTL.
+	api.syncedAt["owner-a"] = time.Now().Add(-shareCatalogTTL - time.Second)
+	if api.freshCatalog("owner-a") {
+		t.Fatal("a stamp older than shareCatalogTTL must reconcile")
 	}
 }
 
