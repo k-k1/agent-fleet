@@ -17,7 +17,10 @@ export interface SharedWorkingCopy {
 }
 
 export interface SharedProjectGroup {
+  /** グルーピング／永続キーの同一性はこちら(正規化キー)。表示は ownerEmail 側。 */
   ownerUserKey: string;
+  /** 所有者のログイン ID(メールアドレス)。未設定の identity では空。 */
+  ownerEmail?: string;
   projectName: string;
   copies: SharedWorkingCopy[]; // [base?, ...worktrees] — base が共有されていなければ worktree のみ
 }
@@ -94,9 +97,12 @@ export function groupedSharedSessions(sessions: SharedSession[]): SharedProjectG
   }
   const out: SharedProjectGroup[] = [];
   for (const owner of [...byOwner.keys()].sort(compareText)) {
-    for (const group of groupedCopies(copiesOf(byOwner.get(owner) || []))) {
+    const owned = byOwner.get(owner) || [];
+    // email は identity 単位なので、この所有者のどの行から取っても同じ。
+    const ownerEmail = owned.find((s) => s.ownerEmail)?.ownerEmail;
+    for (const group of groupedCopies(copiesOf(owned))) {
       const head = group[0];
-      out.push({ ownerUserKey: owner, projectName: head.worktree ? head.parent || head.repo : head.repo, copies: group });
+      out.push({ ownerUserKey: owner, ownerEmail, projectName: head.worktree ? head.parent || head.repo : head.repo, copies: group });
     }
   }
   return out;

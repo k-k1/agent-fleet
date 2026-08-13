@@ -48,10 +48,7 @@ export const SharedSessionsSection = memo(function SharedSessionsSection() {
     await api(`api/session-share-proposals/${encodeURIComponent(id)}/${decision}`, { method: "POST" });
     await loadProposals();
   };
-  // 複数の相手から共有を受けている場合だけ owner 見出しを出す(通常の1人だけの
-  // ケースでは冗長な階層を増やさない)。
   const groups = useMemo(() => groupedSharedSessions(sessions), [sessions]);
-  const showOwner = useMemo(() => new Set(sessions.map((s) => s.ownerUserKey)).size > 1, [sessions]);
 
   if (sessions.length === 0 && proposals.length === 0 && ownedShares === 0) return null;
   return (
@@ -67,7 +64,7 @@ export const SharedSessionsSection = memo(function SharedSessionsSection() {
           <IconButton icon="settings-gear" label={tr("share.list_title")} onClick={() => setManageOpen(true)} />
         </>}>
         <ul className="proj-tree sess-list">
-          {groups.map((g) => <SharedProjectNode key={`${g.ownerUserKey}:${g.copies[0].workingCopyId}`} group={g} showOwner={showOwner} />)}
+          {groups.map((g) => <SharedProjectNode key={`${g.ownerUserKey}:${g.copies[0].workingCopyId}`} group={g} />)}
         </ul>
       </Section>
       {open && (
