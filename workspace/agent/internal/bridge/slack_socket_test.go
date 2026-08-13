@@ -11,7 +11,7 @@ import (
 // injects; an operator-thread reply runs the operator turn.
 func TestRouteSlackInboundIdentityGate(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	fakeSlack(t, "xoxb-tok")
+	posts := fakeSlack(t, "xoxb-tok")
 	slackThreads.save(threadMap{"sess-a": {Channel: "C1", Thread: "root-a"}})
 	slackOperator.save("C1", "root-op", "conv-op")
 
@@ -55,6 +55,15 @@ func TestRouteSlackInboundIdentityGate(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("operator turn was not invoked")
 	}
+	// ★ ターンが呼ばれただけでは終わらない: 返信の post は同じゴルーチンの続きで、
+	// ここで待たないと**次のテスト**が差し替えた slackAPIBase へ飛んで、そちらの記録を
+	// 汚す（TestSlackFlatSend が「1件のはずが2件」で落ちた実測フレークの原因）。
+	// 返信内容そのものは discord 側の twin（TestRouteOperatorInbound）で見ているので、
+	// ここは「スレッドへ返ったこと」だけを確認して書き手を終わらせる。
+	reply := posts.wait(t, 1)[0]
+	if reply.channel != "C1" || reply.threadTS != "root-op" {
+		t.Fatalf("operator reply must go back into the operator thread: %+v", reply)
+	}
 }
 
 // TestRouteSlackInteractionGate: the bound user's click is applied + the message edited; a
@@ -79,13 +88,13 @@ func TestRouteSlackInteractionGate(t *testing.T) {
 	}
 	// The message is edited to show the outcome (chat.update).
 	var updated bool
-	for _, p := range *posts {
+	for _, p := range posts.all() {
 		if p.method == "chat.update" && p.channel == "C1" && p.text == "✓ done" {
 			updated = true
 		}
 	}
 	if !updated {
-		t.Fatalf("interaction must edit the message with feedback: %+v", *posts)
+		t.Fatalf("interaction must edit the message with feedback: %+v", posts.all())
 	}
 }
 
