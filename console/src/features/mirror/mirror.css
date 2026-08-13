@@ -15,7 +15,16 @@
   flex-direction: column;
   background: var(--chat-bg, var(--viewer-bg, var(--bg)));
 }
-/* Legacy control styles (old styles.css element globals), scoped to the mirror.
+/* Legacy control styles (old styles.css element globals), scoped to the views that
+   host the transcript render layer — the mirror AND the recipient's shared session
+   (docs/59). The blocks in features/mirror/transcript are shared by both and still
+   carry this raw <button className="ghost|primary"> markup, so scoping these to
+   .mirrorview alone made the very same footer render as a plain bordered button in
+   the shared view (the コピー button stood out like a primary action). :where() keeps
+   the specificity at zero, so ui/Button's .ui-btn rules still win where used.
+   Historical note follows.
+
+   Legacy control styles (old styles.css element globals), scoped to the mirror.
    The verbatim-ported MirrorView keeps raw <button className="ghost|primary">
    markup that relied on the old console's global button rules — the next entry
    deliberately has no element globals (ui/ uses .ui-btn), so replicate them here.
@@ -23,7 +32,7 @@
    element-level globals (a single class rule like .mirror-mode must still win).
    Placed before the co-located rules below so later rules win ties, matching the
    old cascade. Dissolved when MirrorView moves to ui/Button (P8). */
-:where(.mirrorview) button {
+:where(.mirrorview, .shared-view) button {
   background: var(--btn);
   color: var(--fg);
   border: 1px solid var(--btn-border);
@@ -32,35 +41,35 @@
   cursor: pointer;
   font: inherit;
 }
-:where(.mirrorview) button:hover:not(:disabled) {
+:where(.mirrorview, .shared-view) button:hover:not(:disabled) {
   background: var(--btn-h);
 }
-:where(.mirrorview) button:disabled {
+:where(.mirrorview, .shared-view) button:disabled {
   opacity: 0.4;
   cursor: default;
 }
-:where(.mirrorview) button.ghost {
+:where(.mirrorview, .shared-view) button.ghost {
   background: transparent;
   border-color: transparent;
   color: var(--muted);
   padding: 2px 6px;
 }
-:where(.mirrorview) button.ghost:hover:not(:disabled) {
+:where(.mirrorview, .shared-view) button.ghost:hover:not(:disabled) {
   background: var(--btn);
   color: var(--fg);
 }
-:where(.mirrorview) button.icon {
+:where(.mirrorview, .shared-view) button.icon {
   padding: 1px 6px;
   font-size: 12px;
   line-height: 1.3;
 }
-:where(.mirrorview) button.primary {
+:where(.mirrorview, .shared-view) button.primary {
   background: var(--accent);
   color: var(--on-accent);
   border-color: var(--accent);
   font-weight: 600;
 }
-:where(.mirrorview) button.primary:hover:not(:disabled) {
+:where(.mirrorview, .shared-view) button.primary:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent) 85%, #fff);
 }
 /* The chat head runs the session name a half-pixel larger than the terminal head
@@ -596,6 +605,11 @@
   font-size: 12px;
   border-radius: 6px;
   color: var(--muted);
+  /* フッターの控えめな操作。枠と地の消し込みをこの class 自身に持つ — ホスト側の
+     button globals(上の :where)に頼ると、別の面で描いたときだけ主ボタンのように
+     浮き上がる(共有セッションで実際にそう見えていた)。 */
+  background: transparent;
+  border: 0;
 }
 .mt-copy:hover {
   color: var(--fg);

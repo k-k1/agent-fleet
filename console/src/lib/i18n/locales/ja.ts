@@ -229,6 +229,8 @@ export const ja = {
   "surface.viewer.long": "ファイルビューアの背景",
   "surface.session.short": "セッション",
   "surface.session.long": "セッションの背景",
+  "surface.shared.short": "共有セッション",
+  "surface.shared.long": "共有セッションの背景",
   "surface.assistant.short": "アシスタント",
   "surface.assistant.long": "アシスタントの背景",
 
@@ -241,6 +243,7 @@ export const ja = {
   "display.color_theme": "カラーテーマ",
   "display.theme": "テーマ",
   "display.session_theme": "セッションのテーマ",
+  "display.shared_theme": "共有セッションのテーマ",
   "display.assistant_theme": "アシスタントのテーマ",
   "display.region_theme_note":
     "セッションのチャットとアシスタントのチャットは、アプリ本体とは別のテーマ（ダーク／ライト）で表示できます（「アプリに合わせる」で本体に追従）。背景色も下でそれぞれ指定できます。",

@@ -65,6 +65,15 @@ export function DisplayTab() {
             onChange={(v) => setSetting("mirrorTheme", v)}
           />
         </Row>
+        {/* 共有セッション(docs/59)は他人の会話を読む面。自分のミラーと別のテーマ/背景に
+            できると、どちらを見ているのかが色で分かる。 */}
+        <Row label={tr("display.shared_theme")}>
+          <Choice
+            value={s.sharedTheme}
+            options={REGION_THEMES.map((x) => [x.id, tr(x.labelKey)])}
+            onChange={(v) => setSetting("sharedTheme", v)}
+          />
+        </Row>
         <p className="muted ds-note">{tr("display.region_theme_note")}</p>
         {/* assistantColor + assistantTheme moved to the Assistant tab (its appearance
             lives with its behavior); every other surface color stays here. */}
