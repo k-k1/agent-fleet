@@ -59,7 +59,8 @@ forward while keeping an eye on another.
 - **Close** — the pane's close button (middle-click / Ctrl+click closes it directly without confirmation).
 - **Pop out into another tab** — the pop-out button at the top right of a pane **moves that pane into a browser tab of its own** (it leaves the original screen). The popped-out tab gets a slim title bar, and **"Expand to full Console"** turns it into the normal Console. Some panes cannot be popped out. Good for parking one session on a second monitor.
 
-**There are two ways to arrange them**, switched in ⚙ Settings → Display → **main area layout**.
+**There are two ways to arrange them**, switched from **Appearance** (the paint can) in the top bar,
+or in ⚙ Settings → Display → **main area layout**.
 
 - **Split panes** (default) — arranged side by side, with draggable dividers for size.
 - **Tabbed grid** — each cell switches by tab, so a lot of open items fit without adding cells.

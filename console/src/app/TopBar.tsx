@@ -8,7 +8,7 @@ import { useTtsStore, toggleTtsPlayback } from "../core/store/tts.ts";
 import { useSettingsUI } from "../features/settings/store.ts";
 import { useHostUpdate } from "../features/settings/hostUpdate.ts";
 import { rel, clearLocalState } from "../core/api/client.ts";
-import { useSettings, setSetting, THEMES, SURFACE_TARGETS, LOCALES } from "../lib/settings.ts";
+import { useSettings, setSetting, THEMES, SURFACE_TARGETS, LOCALES, PANE_LAYOUTS } from "../lib/settings.ts";
 import { useT, getLocale } from "../lib/i18n/index.ts";
 import { useIsMobile, isStandalonePWA } from "../lib/device.ts";
 import { buildInfo, buildLabel } from "../lib/version.ts";
@@ -216,6 +216,25 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                 </button>
               </div>
               <div className="acct-theme">
+                {/* 配置（分割ペイン / タブ付きグリッド）は色ではないが、面の見え方を
+                    ここで完結させたいので外観ポップの先頭に置く。設定→表示と同じ
+                    paneLayout を書くだけで、実際の切り替え（未保存の編集がある場合の
+                    確認を含む）は App の loadMode 側が受け持つ。 */}
+                <div className="appr-seg-row">
+                  <span className="appr-seg-lbl">{tr("display.pane_layout")}</span>
+                  <div className="ui-seg choice-seg acct-theme-seg">
+                    {PANE_LAYOUTS.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        className={"seg-btn" + (s.paneLayout === p.id ? " active" : "")}
+                        onClick={() => setSetting("paneLayout", p.id)}
+                      >
+                        {tr(p.labelKey)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <div className="ui-seg choice-seg acct-theme-seg">
                   {LOCALES.map((l) => (
                     <button
