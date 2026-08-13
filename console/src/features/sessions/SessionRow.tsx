@@ -36,6 +36,8 @@ import {
 import { useSessionUI } from "./ui.ts";
 import { useSessionsStore } from "./store.ts";
 import { HandoffModal } from "./HandoffModal.tsx";
+import { ShareCreateModal } from "../sharing/ShareCreateModal.tsx";
+import { useMySharesStore } from "../sharing/store.ts";
 import type { SessionActions } from "./useSessionActions.tsx";
 import type { Session } from "../../types/session.ts";
 
@@ -66,6 +68,9 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
   const menuBtnRef = useRef<HTMLButtonElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [handoffOpen, setHandoffOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const myShares = useMySharesStore((st) => st.shares);
+  const isShared = myShares.some((sh) => sh.scope.type === "session" && sh.scope.key === s.name);
   useDismiss([menuRef, menuElRef], menuOpen, () => setMenuOpen(false));
   useMenuRoving(menuElRef, menuOpen);
   // The dropdown is position:fixed, anchored under the ⋯ button and clamped
@@ -202,6 +207,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
         )}
         {/* 削除ロック（docs/45）: 鍵バッジ。「なぜ削除が押せないのか」を行の上で示す。 */}
         {s.locked && <Icon name="lock" className="sess-lock" title={tr("srow.locked_badge")} />}
+        {isShared && <Icon name="broadcast" className="sess-shared" title={tr("srow.shared_badge")} />}
         <span className={"session-state " + st.cls + (loud ? "" : " mini")} title={st.text}>
           <Icon name={st.icon} spin={st.spin} />
           {loud && <> {st.text}</>}
@@ -366,6 +372,20 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
                     <Icon name="git-branch" /> {tr("srow.handoff")}
                   </button>
                 )}
+                {/* セッション共有: 同一テナントの別ユーザーへ会話を共有する。shell/SSM は
+                    transcript が無く共有対象外(docs/59)。 */}
+                {agentOf(s.kind).caps.transcript && (
+                  <button
+                    type="button"
+                    className="ui-menu-item"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setShareOpen(true);
+                    }}
+                  >
+                    <Icon name="broadcast" /> {tr("srow.share")}
+                  </button>
+                )}
                 {/* 作業グループ (docs/52): membership toggles — repo-less rows only. */}
                 {repoLess && wsets.length > 0 && (
                   <>
@@ -442,6 +462,9 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
       )}
       {handoffOpen && actions && (
         <HandoffModal session={s} actions={actions} onClose={() => setHandoffOpen(false)} />
+      )}
+      {shareOpen && (
+        <ShareCreateModal initialTarget={`session:${s.name}`} onClose={() => setShareOpen(false)} />
       )}
     </li>
   );

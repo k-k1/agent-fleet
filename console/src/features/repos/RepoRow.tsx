@@ -22,6 +22,8 @@ import { t, useT } from "../../lib/i18n/index.ts";
 import { ordClass } from "../../layout/badges.ts";
 import { BranchModal } from "./BranchModal.tsx";
 import { ProjectModal } from "./ProjectModal.tsx";
+import { ShareCreateModal } from "../sharing/ShareCreateModal.tsx";
+import { useMySharesStore } from "../sharing/store.ts";
 import { openRepoScm } from "../scm/open.ts";
 import { LaunchModal } from "./LaunchModal.tsx";
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
@@ -107,6 +109,9 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [branchOpen, setBranchOpen] = useState(false);
   const [projectOpen, setProjectOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const myShares = useMySharesStore((st) => st.shares);
+  const isShared = myShares.some((sh) => (sh.scope.type === "repo" || sh.scope.type === "worktree") && sh.scope.key === r.workingCopyId);
   const menuRef = useRef<HTMLUListElement>(null);
   const toast = useToast();
   const tr = useT();
@@ -202,6 +207,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
             )}
             {/* 削除ロック（docs/45）: 鍵バッジ。削除メニューが灰色な理由をここで示す。 */}
             {r.locked && <Icon name="lock" className="repo-lock" title={tr("repo.locked_hint")} />}
+            {isShared && <Icon name="broadcast" className="repo-shared" title={tr("repo.shared_badge")} />}
           </span>
           {(r.dirty || r.integration || ((r.ahead || r.behind) ?? 0) > 0) && (
             <span className="repo-state">
@@ -408,6 +414,16 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                 <Icon name="gear" /> {tr("repo.project_settings")}
               </button>
             </li>
+            {/* セッション共有(docs/59): read-only/破損等で永続 marker を持てない working
+                copy は workingCopyId が無く、repo/worktree 単位の共有対象にできない
+                (ShareCreateModal の candidates と同じ制約)。 */}
+            {r.workingCopyId && (
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); setShareOpen(true); }}>
+                  <Icon name="broadcast" /> {tr("repo.share")}
+                </button>
+              </li>
+            )}
             <li className="ui-menu-sep" role="separator" />
             {kinds.map((k) => (
               <li key={k}>
@@ -487,6 +503,12 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
         />
       )}
       {projectOpen && <ProjectModal repo={r.name} onClose={() => setProjectOpen(false)} />}
+      {shareOpen && r.workingCopyId && (
+        <ShareCreateModal
+          initialTarget={`${r.worktree ? "worktree" : "repo"}:${r.workingCopyId}`}
+          onClose={() => setShareOpen(false)}
+        />
+      )}
       {launchModal && (
         <LaunchModal
           repo={r.name}
