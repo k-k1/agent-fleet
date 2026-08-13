@@ -367,8 +367,9 @@ func TestListReceivedCoversWorktreesAndHidesArchived(t *testing.T) {
 			}})
 		case "/repos":
 			_ = json.NewEncoder(w).Encode(map[string]any{"repos": []any{
-				map[string]any{"name": "proj", "workingCopyId": "wc-base"},
-				map[string]any{"name": "proj@feat", "workingCopyId": "wc-wt", "worktree": true, "parent": "proj"},
+				map[string]any{"name": "proj", "workingCopyId": "wc-base", "branch": "develop"},
+				map[string]any{"name": "proj@feat", "workingCopyId": "wc-wt", "worktree": true, "parent": "proj",
+					"branch": "feature/x"},
 			}})
 		default:
 			t.Errorf("path=%q", r.URL.Path)
@@ -394,8 +395,8 @@ func TestListReceivedCoversWorktreesAndHidesArchived(t *testing.T) {
 	}
 	var payload struct {
 		Sessions []struct {
-			ID, Name, Permission string
-			Worktree             bool
+			ID, Name, Permission, Branch string
+			Worktree                     bool
 		} `json:"sessions"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
@@ -406,6 +407,11 @@ func TestListReceivedCoversWorktreesAndHidesArchived(t *testing.T) {
 		listed[s.Name] = true
 		if s.Permission != "ro" {
 			t.Fatalf("permission=%q for %s", s.Permission, s.Name)
+		}
+		// 受信側ツリーは作業コピーをブランチ名で見分ける(worktree のフォルダ名は
+		// ランダム slug なので、これが無いとどの作業か分からない)。
+		if want := map[string]string{"base-live": "develop", "wt-live": "feature/x"}[s.Name]; want != s.Branch {
+			t.Fatalf("branch=%q for %s, want %q", s.Branch, s.Name, want)
 		}
 	}
 	if !listed["base-live"] || !listed["wt-live"] {
