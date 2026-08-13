@@ -60,7 +60,13 @@ function SharedCopyNode({ copy }: { copy: SharedWorkingCopy }) {
             <Icon name={node.open ? "chevron-down" : "chevron-right"} />
           </span>
           <Icon name={copy.worktree ? "git-branch" : "root-folder"} />
-          <span className="shared-copy-name">{copy.repo}</span>
+          {/* 所有者側の RepoRow と同じ名乗り: worktree はブランチ名で呼ぶ(フォルダは
+              "<base>@<ランダム slug>" で、どの作業か分からない)、ベースはフォルダ名＋
+              現在のブランチを控えめに添える。ブランチ不明(SVN / 取得前)はフォルダ名。 */}
+          <span className="shared-copy-name" title={copy.repo}>
+            {copy.worktree ? copy.branch || copy.repo : copy.repo}
+          </span>
+          {!copy.worktree && copy.branch && <span className="repo-branch-inline">{copy.branch}</span>}
           {!node.open && <small>{copy.sessions.length}</small>}
         </button>
       </div>
@@ -94,6 +100,10 @@ export function SharedProjectNode({ group, showOwner }: { group: SharedProjectGr
         </span>
         <Icon name="root-folder" />
         <strong>{group.projectName}</strong>
+        {/* 1階層に畳んだ(ベース作業コピーだけ)ときは、この見出しがその作業コピーの行
+            そのものなので、所有者側のベース行と同じくブランチを添える。worktree を
+            束ねた見出しはプロジェクト名であって作業コピーではないので付けない。 */}
+        {flat && group.copies[0].branch && <span className="repo-branch-inline">{group.copies[0].branch}</span>}
         {showOwner && <small className="shared-project-owner">{group.ownerUserKey}</small>}
         {!node.open && <small>{total}</small>}
       </button>
