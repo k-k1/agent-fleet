@@ -5,6 +5,7 @@ import {
   groupTurns,
   isNoise,
   latestContext,
+  mergeTurns,
   parseCommand,
   peerSenderOf,
 } from "./model.ts";
@@ -150,5 +151,39 @@ describe("peerSenderOf", () => {
   it("peer 封筒から送信元セッション名を読む", () => {
     expect(peerSenderOf("[agent-fleet:peer from=build-api] お願い")).toBe("build-api");
     expect(peerSenderOf("ふつうの発話")).toBeNull();
+  });
+});
+
+describe("mergeTurns", () => {
+  it("同じ idx の再送は積まずに置き換える", () => {
+    // opencode/codex は伸びている最中の assistant ターンを毎ポーリング送り直す。
+    // 素朴に append すると同じ回答が何度も並ぶ(共有ビューで実際に起きた)。
+    const held = [user("お願い", { idx: 1 }), asst("考え中", { idx: 2 })];
+    const merged = mergeTurns(held, [asst("考え中… できました", { idx: 2 })]);
+    expect(merged).toHaveLength(2);
+    expect(merged[1].text).toBe("考え中… できました");
+  });
+
+  it("重なりのない増分は追加する", () => {
+    const merged = mergeTurns([user("A", { idx: 1 })], [asst("B", { idx: 2 })]);
+    expect(merged.map((t) => t.text)).toEqual(["A", "B"]);
+  });
+
+  it("前方ページを重ねても idx 昇順に整う(以前の会話を読み込む)", () => {
+    const held = [user("新しい", { idx: 10 }), asst("新しい返事", { idx: 11 })];
+    const older = [user("古い", { idx: 4 }), asst("古い返事", { idx: 5 }), user("新しい", { idx: 10 })];
+    const merged = mergeTurns(older, held);
+    expect(merged.map((t) => t.idx)).toEqual([4, 5, 10, 11]);
+  });
+
+  it("何も変わらなければ同じ配列を返す(再レンダーを起こさない)", () => {
+    const held = [user("A", { idx: 1 })];
+    expect(mergeTurns(held, [])).toBe(held);
+    expect(mergeTurns(held, [user("A", { idx: 1 })])).toBe(held);
+  });
+
+  it("idx を持たない(旧 Agent の)ターンは到着順のまま", () => {
+    const merged = mergeTurns([user("A")], [asst("B")]);
+    expect(merged.map((t) => t.text)).toEqual(["A", "B"]);
   });
 });

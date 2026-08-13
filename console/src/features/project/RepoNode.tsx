@@ -6,7 +6,7 @@
 // project — that's how you focus on one ("畳む＝擬似集中"). The open state
 // persists per folder (af-proj-<repo>). File browsing lives in the rail-bottom
 // ファイル section (FilesSection), not inside the node.
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useSessionsStore } from "../sessions/store.ts";
 import { SessionRow } from "../sessions/SessionRow.tsx";
@@ -17,29 +17,9 @@ import type { RepoRailContext } from "../repos/useRepoRail.ts";
 import type { Repo } from "../repos/store.ts";
 import type { Session } from "../../types/session.ts";
 import { sessionsInFolder } from "../../lib/project.ts";
+import { usePersistedOpen } from "../../lib/usePersistedOpen.ts";
 import { useProjectFilter, normQuery, sessionMatches } from "./filter.ts";
 import { useT } from "../../lib/i18n/index.ts";
-
-// A collapse flag persisted under `key`. While nothing is stored yet the flag
-// FOLLOWS `dflt` live (it's derived, not snapshotted) — so a node whose default
-// depends on data that loads async (has sessions → open) settles correctly, and
-// launching a session into a folded-by-default empty repo pops it open. The
-// first explicit toggle pins the choice. Mirrors ui/Section's localStorage
-// convention so a folded node stays folded across reloads.
-function usePersistedOpen(key: string, dflt = true) {
-  const [stored, setStored] = useState<boolean | null>(() => {
-    const v = localStorage.getItem(key);
-    return v === null ? null : v === "1";
-  });
-  const open = stored === null ? dflt : stored;
-  const set = (v: boolean) => {
-    setStored(v);
-    try {
-      localStorage.setItem(key, v ? "1" : "0");
-    } catch {}
-  };
-  return { open, toggle: () => set(!open), set };
-}
 
 interface RepoNodeProps {
   r: Repo;
