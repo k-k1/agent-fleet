@@ -1481,6 +1481,38 @@ button.mt-tool-outhead {
   border-radius: 4px;
   opacity: 0.85;
 }
+/* An edit expanded in place, for views with no diff pane to open (the shared-session
+   view — the DTO keeps the diff body but drops the path, docs/59 §3). Sits in the same
+   slot as .mt-tool-output and borrows the diff pane's dv-* row styling (viewer.css). */
+.mt-tool-diffstat {
+  margin-left: auto;
+  padding-left: 8px;
+  display: inline-flex;
+  gap: 6px;
+  font-size: 11px;
+}
+.mt-tool-diff-inline {
+  margin: 2px 0 4px 18px;
+  padding: 4px 0;
+  max-height: 320px;
+  overflow: auto;
+  background: var(--surface-2, rgba(127, 127, 127, 0.1));
+  border-radius: 4px;
+}
+.mt-tool-diff-inline .dv-table {
+  font-size: 11px;
+}
+
+/* The full plan Markdown, expanded under the card when there is no pane to open it in. */
+.mt-plan-body {
+  margin-top: 6px;
+  padding: 8px 10px;
+  max-height: 420px;
+  overflow: auto;
+  background: var(--surface-2, rgba(127, 127, 127, 0.1));
+  border-radius: 4px;
+}
+
 /* Chain-of-thought disclosure (codex/opencode reasoning), styled like the compaction
    summary: a faint collapsed row that expands to the reasoning Markdown. */
 .mirror-thinking {
