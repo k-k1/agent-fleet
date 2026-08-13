@@ -16,7 +16,33 @@
 .shared-rail-row small { color: var(--muted); }
 .share-proposal-card { border-bottom: 1px solid var(--border); padding: 12px 0; }
 .share-proposal-card p { white-space: pre-wrap; }
-.share-manage-modal { width: min(680px, calc(100vw - 24px)); }
-.share-manage-modal label { display: grid; gap: 5px; margin: 10px 0; }
-.share-manage-modal input, .share-manage-modal select { width: 100%; }
-.share-existing { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 8px; padding: 7px 0; border-top: 1px solid var(--border); }
+
+.share-create-modal { width: min(480px, calc(100vw - 24px)); }
+/* 右クリック起点(initialTarget固定)の対象表示 — .ui-field 内の input/select と同じ
+   見た目の非活性ボックス。 */
+.share-target-fixed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--panel2);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  color: var(--fg);
+}
+
+.share-list-modal { width: min(560px, calc(100vw - 24px)); }
+.share-list { display: flex; flex-direction: column; }
+.share-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.share-row:first-child { border-top: 0; }
+.share-info { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.share-target-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-recipient { color: var(--muted); font-size: 12px; flex: none; }
+.share-actions { display: flex; align-items: center; gap: 8px; flex: none; }
