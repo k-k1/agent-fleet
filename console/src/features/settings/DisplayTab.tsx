@@ -108,6 +108,13 @@ export function DisplayTab() {
       </section>
 
       <section className="ds-group">
+        <h4 className="ds-title">{tr("display.markdown")}</h4>
+        <Row label={tr("display.markdown_wrap")}>
+          <OnOff value={s.markdownCodeWrap} onChange={(v) => setSetting("markdownCodeWrap", v)} />
+        </Row>
+      </section>
+
+      <section className="ds-group">
         <h4 className="ds-title">{tr("display.session_mirror")}</h4>
         <Row label={tr("display.font")}>
           <FontSelect value={s.chatFont} onChange={(v) => setSetting("chatFont", v)} fonts={CHAT_FONTS} stack={chatFontStack} />
