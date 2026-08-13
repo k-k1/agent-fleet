@@ -1641,7 +1641,7 @@ export const en: Record<keyof typeof ja, string> = {
   "topbar.fullscreen_exit": "Exit fullscreen",
   "topbar.fullscreen_enter": "Fullscreen",
   "topbar.reload": "Reload",
-  "topbar.appearance_title": "Appearance (theme, colors)",
+  "topbar.appearance_title": "Appearance (layout, theme, colors)",
   "topbar.appearance": "Appearance",
   "topbar.appearance_details": "Details",
   "topbar.appearance_details_title": "Open display settings (fonts, advanced colors, …)",

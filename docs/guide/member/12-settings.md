@@ -54,7 +54,8 @@ Everything about appearance.
 - **Reader view** / **file icons** (icon set).
 - **Main area layout** — **split panes** (drag the dividers) or **tabbed grid** (each cell switches by tab).
   Stored **on this device only**, and the two layouts are remembered separately, so moving between them does not
-  disturb either ([03](03-terminal.md)).
+  disturb either ([03](03-terminal.md)). If you switch often, the same choice sits in **Appearance** (the paint
+  can) in the top bar.
 
 ### Keys
 
