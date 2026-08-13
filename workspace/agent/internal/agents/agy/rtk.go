@@ -1,7 +1,6 @@
 package agy
 
 import (
-	"os"
 	"path/filepath"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mdblock"
@@ -32,24 +31,9 @@ func agentsPath() string { return filepath.Join(paths.GeminiHome(), "AGENTS.md")
 // ApplyRTK appends (on) or removes (off) the marked rtk block in ~/.gemini/AGENTS.md.
 // Idempotent: any prior block is stripped first. Writes only when changed.
 func ApplyRTK(on bool) {
-	path := agentsPath()
-	orig := ""
-	if b, err := os.ReadFile(path); err == nil {
-		orig = string(b)
-	}
 	body := ""
 	if on {
 		body = rtkBlock
 	}
-	out := mdblock.Set(orig, "rtk", body)
-	if out == orig || out == "" {
-		return // no change, or nothing to write (no base file & rtk off)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return
-	}
-	tmp := path + ".af-tmp"
-	if os.WriteFile(tmp, []byte(out), 0o644) == nil {
-		_ = os.Rename(tmp, path)
-	}
+	_ = editAgents(func(s string) string { return mdblock.Set(s, "rtk", body) })
 }
