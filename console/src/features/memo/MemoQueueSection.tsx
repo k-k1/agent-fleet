@@ -6,7 +6,7 @@
 //   - categories are first-class (add empty, rename, delete) and everything reorders by
 //     drag — memos within/between categories, and the categories themselves;
 //   - "送信…" opens SendMemoModal to edit the concatenated text and pick a destination.
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent, DragEvent as RDragEvent, RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Section } from "../../ui/Section.tsx";
@@ -121,7 +121,7 @@ function groupMemos(memos: Memo[], cats: MemoCategory[]): RepoBlock[] {
   return repos.filter((rb) => rb.groups.length > 0);
 }
 
-export function MemoQueueSection() {
+export const MemoQueueSection = memo(function MemoQueueSection() {
   const workspaceRunning = useWorkspaceStore((s) => s.state) === "running";
   const tenant = useTenantStore((s) => s.tenant);
   const memosKey = useMemoStore((s) => s.tick);
@@ -906,7 +906,7 @@ export function MemoQueueSection() {
       )}
     </>
   );
-}
+});
 
 function dedupeGroups(groups: { repo: string; category: string }[]): { repo: string; category: string }[] {
   const seen = new Set<string>();

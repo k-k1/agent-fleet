@@ -5,7 +5,7 @@
 // decorated flat list — and folding the base folds the whole project. The
 // section header carries the repo actions (clone / 更新) and the
 // session-maintenance actions (整理 / アーカイブ).
-import { useState } from "react";
+import { memo, useState } from "react";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -35,7 +35,7 @@ const guessRepoName = (u: string | null | undefined) => {
   return s.split(/[/:]/).pop() || "repo";
 };
 
-export function ProjectTree() {
+export const ProjectTree = memo(function ProjectTree() {
   const tr = useT();
   const repos = useReposStore((s) => s.repos);
   const refreshRepos = useReposStore((s) => s.refresh);
@@ -219,4 +219,4 @@ export function ProjectTree() {
       </ul>
     </Section>
   );
-}
+});
