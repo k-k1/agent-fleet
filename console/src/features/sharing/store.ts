@@ -15,6 +15,8 @@ export interface SharedSession {
   archived?: boolean;
   permission: "ro" | "rw";
   workspaceState: string;
+  worktree?: boolean;
+  parent?: string;
 }
 
 interface SharedSessionsStore {
