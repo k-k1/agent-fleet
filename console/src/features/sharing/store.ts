@@ -3,7 +3,10 @@ import { api } from "../../core/api/client.ts";
 
 export interface SharedSession {
   id: string;
+  /** 所有者の正規化キー(`a@x.com` → `a-x-com`)。グルーピングと永続キーの同一性判定用。 */
   ownerUserKey: string;
+  /** 所有者のログイン ID(メールアドレス)。表示はこちら — ownerLabel() 参照。 */
+  ownerEmail?: string;
   name: string;
   kind: string;
   repo?: string;
@@ -24,6 +27,15 @@ export interface SharedSession {
    * 一覧の同期間引き(既定60秒)＋リロードボタン次第(docs/59 §3)。
    */
   activity?: string;
+}
+
+/**
+ * 所有者の名乗り。人が名乗るのはログイン ID(メールアドレス)なので email を優先し、
+ * email を持たない identity(管理者が user_key だけで足した場合)だけ正規化キーへ落とす。
+ * グルーピングや localStorage の鍵には使わない — あちらは ownerUserKey で同一性を取る。
+ */
+export function ownerLabel(o: { ownerUserKey: string; ownerEmail?: string }): string {
+  return o.ownerEmail || o.ownerUserKey;
 }
 
 interface SharedSessionsStore {

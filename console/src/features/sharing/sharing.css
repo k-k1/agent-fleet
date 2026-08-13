@@ -138,6 +138,13 @@
   z-index: 2;
   background: var(--leftpane-bg);
 }
+/* worktree ノード側は詳細度を1段上げる(`.wt` を明示する)。project.css の
+   `.proj-node.wt > .proj-node-head` は所有者側ツリー用に絞り込みバー分だけ下げた段
+   (--sec-head-h + 69px)を持ち、共有ツリーの worktree ノードにも同じ詳細度(0,3,0)で
+   当たる。同値なら勝敗は束ねられた順で決まり、実際のバンドルでは project.css が後ろに
+   来て負ける — worktree 見出しだけ 43px 低い位置に貼り付き、プロジェクト見出しとの間に
+   空帯ができて、そこをセッション行が素通りしていた(見出しが行に重なって見える)。 */
+.shared-project-group .proj-node.wt > .proj-node-head,
 .shared-project-group .proj-node > .proj-node-head {
   position: sticky;
   top: calc(var(--sec-head-h, 34px) + 26px);
