@@ -263,6 +263,14 @@ function PopulatedPane({
           onClick={() => openPanePopout(pane, "popout")}
         />
       )}
+      {canWrap && (
+        <IconButton
+          icon="word-wrap"
+          label={wrapOn ? tr("ui.unwrap_lines") : tr("ui.wrap_lines")}
+          className={wrapOn ? "on" : ""}
+          onClick={() => setPaneWrap(pane.id, !wrapOn)}
+        />
+      )}
       {canClose && (
         <IconButton
           icon="close"
@@ -426,7 +434,7 @@ function PopulatedPane({
           {ordinal ?? <span className="codicon codicon-gripper" aria-hidden="true" />}
         </button>
       )}
-      {!(tabbed && isTerm) && <div className="pane-controls">
+      {!tabbed && <div className="pane-controls">
         {showPopout && (
           <IconButton
             icon="link-external"
@@ -504,10 +512,18 @@ function PopulatedPane({
           headerActions={tabHeaderActions}
         />
       )}
-      {pane.content.kind === "scm" && <SourceControlView repo={pane.content.scmRepo} path={pane.content.scmPath} />}
-      {pane.content.kind === "changes" && <ChangesView repo={pane.content.scmRepo} />}
+      {pane.content.kind === "scm" && (
+        <SourceControlView repo={pane.content.scmRepo} path={pane.content.scmPath} headerActions={tabHeaderActions} />
+      )}
+      {pane.content.kind === "changes" && <ChangesView repo={pane.content.scmRepo} headerActions={tabHeaderActions} />}
       {pane.content.kind === "commit" && (
-        <CommitDetailView repo={pane.content.scmRepo} path={pane.content.scmPath} sha={pane.content.commitSha} wrap={wrapOn} />
+        <CommitDetailView
+          repo={pane.content.scmRepo}
+          path={pane.content.scmPath}
+          sha={pane.content.commitSha}
+          wrap={wrapOn}
+          headerActions={tabHeaderActions}
+        />
       )}
       {pane.content.kind === "wtdiff" && (
         <WorkingDiffView
@@ -515,6 +531,7 @@ function PopulatedPane({
           path={pane.content.filePath}
           staged={pane.content.diffStaged}
           wrap={wrapOn}
+          headerActions={tabHeaderActions}
         />
       )}
       {pane.content.kind === "file" && (
@@ -526,14 +543,16 @@ function PopulatedPane({
           targetColumn={pane.content.targetColumn}
           openMode={pane.content.mode}
           wrap={pane.wrap}
+          headerActions={tabHeaderActions}
         />
       )}
-      {pane.content.kind === "read" && <ReaderView filePath={pane.content.filePath} />}
+      {pane.content.kind === "read" && <ReaderView filePath={pane.content.filePath} headerActions={tabHeaderActions} />}
       {pane.content.kind === "doc" && (
         <DocView
           title={pane.content.docTitle}
           content={pane.content.docContent}
           session={pane.content.docSession}
+          headerActions={tabHeaderActions}
         />
       )}
       {pane.content.kind === "diff" && (
@@ -542,6 +561,7 @@ function PopulatedPane({
           tool={pane.content.diffTool}
           edits={pane.content.diffEdits as DiffEdit[]}
           wrap={wrapOn}
+          headerActions={tabHeaderActions}
         />
       )}
       {pane.content.kind === "chat" && (
@@ -550,16 +570,17 @@ function PopulatedPane({
           draftAssistantId={pane.content.draftAssistantId}
           paneId={pane.id}
           active={single || active}
+          headerActions={tabHeaderActions}
         />
       )}
       {pane.content.kind === "browser" && (
-        <BrowserPane paneId={pane.id} port={pane.content.port} path={pane.content.path} />
+        <BrowserPane paneId={pane.id} port={pane.content.port} path={pane.content.path} headerActions={tabHeaderActions} />
       )}
       {pane.content.kind === "browserAttach" && (
-        <BrowserAttachPane paneId={pane.id} attachmentId={pane.content.attachmentId} />
+        <BrowserAttachPane paneId={pane.id} attachmentId={pane.content.attachmentId} headerActions={tabHeaderActions} />
       )}
       {pane.content.kind === "sharedSession" && (
-        <SharedSessionView sharedSessionId={pane.content.sharedSessionId} />
+        <SharedSessionView sharedSessionId={pane.content.sharedSessionId} headerActions={tabHeaderActions} />
       )}
     </div>
   );

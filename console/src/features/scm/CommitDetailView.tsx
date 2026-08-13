@@ -1,6 +1,7 @@
 // CommitDetailView — one commit's detail/diff in its own pane (opened from the
 // graph). Port of views/CommitDetailView.
 import { useState } from "react";
+import type { ReactNode } from "react";
 import { api, isTransientErr } from "../../core/api/client.ts";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { Icon } from "../../ui/Icon.tsx";
@@ -9,7 +10,7 @@ import { useT } from "../../lib/i18n/index.ts";
 import { CommitDetail } from "./GitDiff.tsx";
 import type { CommitData, FoldSignal } from "./GitDiff.tsx";
 
-export function CommitDetailView({ repo, path, sha, wrap }: { repo: string; path?: string; sha: string; wrap?: boolean }) {
+export function CommitDetailView({ repo, path, sha, wrap, headerActions }: { repo: string; path?: string; sha: string; wrap?: boolean; headerActions?: ReactNode }) {
   const tr = useT();
   const enc = encodeURIComponent(repo || "");
   const [commit, setCommit] = useState<CommitData | null>(null);
@@ -67,6 +68,7 @@ export function CommitDetailView({ repo, path, sha, wrap }: { repo: string; path
         >
           <Icon name="word-wrap" /> <span className="lbl">{tr("scm.wrap")}</span>
         </button>
+        {headerActions && <span className="view-head-actions">{headerActions}</span>}
       </header>
       <div className="scm-scroll">
         <CommitDetail commit={commit} wrap={effWrap} fold={fold} />

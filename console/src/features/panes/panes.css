@@ -69,6 +69,19 @@
   margin-top: 32px;
   height: calc(100% - 32px);
 }
+/* Tabbed mode: popout/wrap/close move OFF the floating top-right cluster (that
+   overlaps the tab strip — unreachable/misplaced there) and INTO the selected
+   view's own header row instead, via each view's `headerActions` prop. Every
+   view-family header (.view-head, .pane-head, .shared-view-head, the browser
+   toolbars) ends with this as its last child so the actions land flush right,
+   matching the space already reserved by --pane-ctl-w. */
+.view-head-actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
 .pane-tab {
   position: relative;
   display: flex;

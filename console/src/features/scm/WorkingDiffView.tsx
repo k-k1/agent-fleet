@@ -1,6 +1,7 @@
 // WorkingDiffView — ONE working-tree file's diff in its own pane, opened from
 // the 変更 view. Port of views/WorkingDiffView.
 import { useState } from "react";
+import type { ReactNode } from "react";
 import { api, isTransientErr } from "../../core/api/client.ts";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { Icon } from "../../ui/Icon.tsx";
@@ -12,11 +13,13 @@ export function WorkingDiffView({
   path,
   staged,
   wrap,
+  headerActions,
 }: {
   repo: string;
   path: string;
   staged?: boolean | null;
   wrap?: boolean;
+  headerActions?: ReactNode;
 }) {
   const tr = useT();
   const [diff, setDiff] = useState("");
@@ -48,6 +51,7 @@ export function WorkingDiffView({
         <span className="view-spacer" />
         {staged ? <span className="scm-staged-tag">staged</span> : null}
         {repo && <span className="scm-repo-tag">{repo}</span>}
+        {headerActions && <span className="view-head-actions">{headerActions}</span>}
       </header>
       <div className="scm-scroll">
         <Diff text={diff} wrap={wrap} />
