@@ -140,7 +140,10 @@ func driveState(m session.Meta, alive, heal bool) string {
 		}
 	}
 	sid := session.UUID(m.Dir, m.Name)
-	state := status.LiveState(sid)
+	// WireLive と同じ解決（status.EffectiveModal）: 質問/プランのペイロードが捕捉されて
+	// いる permission は、TUI が実際に出しているモーダル（question / plan）で名乗る。
+	// 一覧のバッジ（WireLive）とチャットのチップ（ここ）は同じ状態を見せる必要がある。
+	state := status.EffectiveModal(sid, status.LiveState(sid))
 	isClaude := normalizeKind(m.Kind) == session.KindClaude
 	// ペインを読むのは 1 回だけ（tmuxx.ReadPane）。heal=false（/output）は従来どおり
 	// ペインを見ないが、claude の上限モーダルだけは heal に関係なく報告する必要がある
