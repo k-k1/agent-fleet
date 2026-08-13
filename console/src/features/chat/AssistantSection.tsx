@@ -3,7 +3,7 @@
 // conversation history list. Picking an assistant opens a DRAFT — nothing is
 // persisted until the first message. Port onto the zustand stores.
 import { createPortal } from "react-dom";
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -38,7 +38,7 @@ import {
 import type { ConversationMeta } from "../../types/chat.ts";
 import type { Assistant, AssistantInput } from "../../types/assistant.ts";
 
-export function AssistantSection() {
+export const AssistantSection = memo(function AssistantSection() {
   const layout = useLayoutStore((s) => s.layout);
   const setActive = useLayoutStore((s) => s.setActive);
   const openTargetInNew = useLayoutStore((s) => s.openTargetInNew);
@@ -509,4 +509,4 @@ export function AssistantSection() {
       )}
     </>
   );
-}
+});
