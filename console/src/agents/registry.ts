@@ -467,9 +467,14 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // an account connection, or 無料枠 — the zero-auth free tier really does answer
     // without credentials (measured), so a workspace that chose it must be able to
     // launch. supported === false (binary missing / old image) still hides the kind,
-    // the same guard cursor and agy use.
+    // the same guard cursor and agy use. usage === "off" is checked FIRST and vetoes
+    // the rest unconditionally — it is the explicit, tamper-resistant disable (Agent's
+    // opencode.Connected(), auth.go): even a stored key or a live OAuth login must not
+    // re-admit opencode while off is selected, the same override the Agent applies to
+    // headlessAgentAvailable for assistant chat.
     available: (c) =>
       c.conns?.opencode?.supported !== false &&
+      c.conns?.opencode?.usage !== "off" &&
       ((c.conns?.opencode?.envs?.length ?? 0) > 0 ||
         !!c.conns?.opencode?.connected ||
         c.conns?.opencode?.usage === "free"),

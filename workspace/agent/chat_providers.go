@@ -81,7 +81,11 @@ func headlessAgentAvailable(kind string) bool {
 	case session.KindCodex:
 		v = codex.LoggedIn()
 	case session.KindOpencode:
-		v = opencode.Available()
+		// binary present AND actually usable (stored key / oauth / explicit free-tier
+		// opt-in) — opencode.Available() alone used to let assistant chat silently fall
+		// back to opencode's zero-auth free tier for any unconfigured workspace, which
+		// some tenants' security policy forbids. Default OFF, opt-in only.
+		v = opencode.Available() && opencode.Connected()
 	case session.KindAgy:
 		v = agy.SignedIn()
 	case session.KindCursor:

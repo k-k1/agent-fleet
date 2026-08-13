@@ -251,6 +251,16 @@ function PopulatedPane({
     const session = sessionByName.get(view.session);
     return session ? stateInfo(session) : null;
   };
+  // Tab count scales with how long a cell has accumulated sessions, and this
+  // recomputes a session lookup + state chip per tab — skip it on renders that
+  // don't actually change the tabs or the session data behind them (an
+  // unrelated ancestor re-render, e.g. the left-rail drawer toggling, was
+  // otherwise redoing this on every tab for every unrelated repaint).
+  const tabInfo = useMemo(
+    () => views.map((view) => ({ view, label: tabLabel(view), state: tabState(view) })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [views, sessionByName, tr],
+  );
   // The selected session can be shown either as terminal or chat. Keep these
   // cell actions in the respective header, immediately before that switch,
   // so they never disappear merely because the user chose チャット.
@@ -356,22 +366,28 @@ function PopulatedPane({
           aria-label={tr("display.pane_layout_tabs")}
           onWheel={onTabsWheel}
         >
-          {views.map((view) => {
-            const state = tabState(view);
+          {tabInfo.map(({ view, label, state }) => {
             return (
               <div className={cx("pane-tab", view.id === cell.selectedViewId && "selected")} role="presentation" key={view.id}>
                 <button
                   type="button"
                   role="tab"
                   aria-selected={view.id === cell.selectedViewId}
-                  title={tabLabel(view)}
+                  title={label}
                   draggable
                   onDragStart={(e) => {
                     e.dataTransfer.setData(TAB_DND, view.id);
                     e.dataTransfer.effectAllowed = "move";
                     setTabDragShield(true);
                   }}
-                  onDragEnd={() => setTabDragShield(false)}
+                  onDragEnd={() => {
+                    setTabDragShield(false);
+                    // onDragEnd always fires on the source element once a drag ends,
+                    // even when the tab's own onDrop stopped propagation before the
+                    // Cell's onDrop could clear `zone` (leaving the droptarget/blue
+                    // overlay stuck after a tab reorder).
+                    setZone(null);
+                  }}
                   onDragOver={(e) => {
                     if (!e.dataTransfer.types.includes(TAB_DND)) return;
                     // The tab owns center drops for reordering. Edge drops belong
@@ -398,7 +414,7 @@ function PopulatedPane({
                       <Icon name={state.icon} spin={state.spin} />
                     </span>
                   )}
-                  <span className="pane-tab-title">{tabLabel(view)}</span>
+                  <span className="pane-tab-title">{label}</span>
                 </button>
                 <button
                   type="button"
