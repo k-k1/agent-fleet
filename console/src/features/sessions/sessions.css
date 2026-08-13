@@ -189,6 +189,14 @@
   font-size: 11px;
 }
 
+/* セッション共有: 自分がこのセッションを誰かに共有中であることを示すバッジ。
+   .sess-lock と同じ扱い(muted、警告色なし)。 */
+.sess-shared {
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 /* Ordinal badges (right side, shown while split). */
 .sess-ords {
   display: flex;
