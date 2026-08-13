@@ -301,12 +301,49 @@ function keepInputVisible(it: Inst | null) {
   if (overlap > 0) main.style.transform = `translateY(-${Math.ceil(overlap) + 4}px)`;
 }
 
+// evictForeignTerms enforces the one-container-one-terminal half of the paneId ==
+// terminal identity contract (service.ts): whoever takes `el` gets it to itself.
+//
+// The tabbed layout REUSES one React component — and therefore one container div —
+// for every tab of a cell: selecting a tab only changes the paneId prop, it does not
+// remount TerminalView. So ensureTerm is called for the newly selected pane on the
+// very div that still holds the previous tab's xterm, and term.open() APPENDS. The
+// container ended up with both elements: the older one stays first and fills the
+// pane, the newly selected one is pushed below it and out of view. The pane then
+// shows the PREVIOUS session's live screen — its TUI and its tmux status line — while
+// the header, the PTY socket and every keystroke belong to the session the user
+// actually selected. That is the "ターミナルを開くと別のセッションの tmux にアタッチ
+// される" report: nothing mis-attached, the pane was painting the wrong terminal.
+//
+// Detaching is safe and reversible: the evicted pane keeps its instance, socket and
+// scrollback, and its own ensureTerm re-parents the element (and repaints it via
+// forceFit) when that tab comes back — the same path a React remount already takes.
+function evictForeignTerms(it: Inst, el: HTMLElement) {
+  if (!el) return;
+  for (const other of insts.values()) {
+    if (other === it || !other.term) continue;
+    const oel = other.term.element;
+    if (!oel || oel.parentElement !== el) continue;
+    oel.remove();
+    // The ResizeObserver watches the CONTAINER, not the terminal, so leaving it
+    // connected would keep refitting a pane that no longer lives there. ensureTerm
+    // re-observes on the way back in.
+    if (other.ro) {
+      try {
+        other.ro.disconnect();
+      } catch {}
+      other.ro = null;
+    }
+  }
+}
+
 // ensureTerm builds a pane's terminal once and opens it into `el`. Subsequent calls
 // for the same pane re-open into the element if React remounted the container; the
 // instance (and scrollback) persists.
 export function ensureTerm(paneId: string, el: HTMLElement) {
   let it = insts.get(paneId);
   if (it && it.term) {
+    evictForeignTerms(it, el);
     // Re-attach to the element if React remounted the container. xterm's open()
     // is a silent NO-OP once a terminal has opened (5.x) — calling it again
     // neither moves nor recreates the DOM, so the remounted container stayed
@@ -328,6 +365,7 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
     it = { sessionListeners: new Set(), session: null };
     insts.set(paneId, it);
   }
+  evictForeignTerms(it, el); // term.open() appends — the container must be ours alone
   const s0 = getSettings();
   const term = new Terminal({
     fontSize: s0.termSize,

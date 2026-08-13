@@ -34,3 +34,21 @@ if (typeof globalThis.ResizeObserver === "undefined") {
     disconnect(): void {}
   } as unknown as typeof ResizeObserver;
 }
+
+// matchMedia も無い。device.ts はガード無しで呼ぶし、xterm も open() の中で
+// devicePixelRatio を取るために叩く（無いと Terminal.open が例外で死ぬ）。常に
+// matches:false = デスクトップ／細ポインタ相当を返すだけの器を置く — jsdom には
+// レイアウトもメディアも無いので、実機の分岐そのものはここでは検証できない。
+if (typeof window !== "undefined" && typeof window.matchMedia !== "function") {
+  window.matchMedia = ((query: string) =>
+    ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener() {},
+      removeEventListener() {},
+      addListener() {},
+      removeListener() {},
+      dispatchEvent: () => false,
+    })) as unknown as typeof window.matchMedia;
+}
