@@ -16,6 +16,8 @@ export interface SharedSession {
   workspaceState: string;
   worktree?: boolean;
   parent?: string;
+  /** 作業コピーが今チェックアウトしているブランチ(所有者側の repo 行と同じ表示)。 */
+  branch?: string;
 }
 
 interface SharedSessionsStore {

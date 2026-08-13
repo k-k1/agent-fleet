@@ -71,6 +71,19 @@ describe("SharedProjectNode", () => {
     expect(rows()).toEqual(["ベースの会話", "WTの会話"]);
   });
 
+  it("worktree はブランチ名で名乗り、ベースはフォルダ名＋ブランチ", async () => {
+    await render([
+      session({ id: "a", title: "ベースの会話", repo: "proj", workingCopyId: "wc-base", branch: "develop" }),
+      session({
+        id: "b", title: "WTの会話", repo: "proj@wip-abc", workingCopyId: "wc-wt",
+        worktree: true, parent: "proj", branch: "feature/G3-1159",
+      }),
+    ]);
+    const names = [...host.querySelectorAll<HTMLElement>(".shared-copy-name")].map((el) => el.textContent);
+    expect(names).toEqual(["proj", "feature/G3-1159"]);
+    expect([...host.querySelectorAll<HTMLElement>(".repo-branch-inline")].map((el) => el.textContent)).toEqual(["develop"]);
+  });
+
   it("working copy 単位でも畳める(畳んだ側だけが隠れる)", async () => {
     await render([
       session({ id: "a", title: "ベースの会話", repo: "proj", workingCopyId: "wc-base" }),
