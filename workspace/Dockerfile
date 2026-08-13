@@ -70,7 +70,7 @@ ARG BAKE_OPTIONAL_TOOLS=1
 # stored URL + service-account token and -disable-write -disable-admin). Works
 # against self-hosted / Grafana Cloud / Amazon Managed Grafana. Bump
 # MCP_GRAFANA_VERSION to upgrade (ARG pin busts the cache; same idiom as GH_VERSION).
-ARG MCP_GRAFANA_VERSION=0.17.1
+ARG MCP_GRAFANA_VERSION=1.1.0
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64) mgarch=x86_64 ;; arm64) mgarch=arm64 ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
@@ -87,12 +87,18 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # them uv drops a managed interpreter into root's home, unreadable by the
 # runtime user. The venv + entrypoint under /usr/local are root-owned and
 # world-readable, which is all the runtime user needs.
-ARG CLOUDWATCH_MCP_VERSION=0.1.4
+# `test -x` では捕まらない壊れ方があるので import まで踏む: 0.1.4 の依存宣言は
+# `mcp[cli]>=1.23.0` と上限が無く、mcp 2.0.0 が出た今ビルドすると 2.0.0 が入って
+# `mcp.server.fastmcp` を失い、実行時に ModuleNotFoundError で即死する（実測）。
+# 0.1.8 は `<2.0.0` で上限を持つ。ピンは版だけでなく解決結果まで含めて検証する。
+ARG CLOUDWATCH_MCP_VERSION=0.1.8
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     UV_TOOL_DIR=/usr/local/share/uv/tools UV_TOOL_BIN_DIR=/usr/local/bin \
     UV_PYTHON_DOWNLOADS=never UV_NO_CACHE=1 \
     uv tool install --python /usr/bin/python3 "awslabs.cloudwatch-mcp-server==${CLOUDWATCH_MCP_VERSION}"; \
     test -x /usr/local/bin/awslabs.cloudwatch-mcp-server; \
+    /usr/local/share/uv/tools/awslabs-cloudwatch-mcp-server/bin/python \
+      -c "import awslabs.cloudwatch_mcp_server.server"; \
     fi
 
 # AWS MCP proxy (Agent Toolkit for AWS — docs/25 §AWS MCP) baked the same way:
@@ -156,7 +162,7 @@ RUN apt-get update \
 # Python wheels use the C toolchain (build-essential) installed above. `go install`
 # binaries and the module cache land under ~/go (home volume → persist). Keep
 # GO_VERSION in step with agent/go.mod's `go` directive; bump here to upgrade.
-ARG GO_VERSION=1.26.4
+ARG GO_VERSION=1.26.5
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64) goarch=amd64 ;; arm64) goarch=arm64 ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
@@ -173,7 +179,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # volume; the Control Plane only resolves non-secret host bookmarks. arch auto-detected.
 # 版は ARG でピン止め（versioned URL — かつては latest URL で未ピンだった。docs/35
 # §35.9-7(c)。bump は下の ARG を書き換えて再ビルド）。
-ARG AWSCLI_VERSION=2.36.4
+ARG AWSCLI_VERSION=2.36.22
 ARG SESSION_MANAGER_PLUGIN_VERSION=1.2.835.0
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     arch="$(dpkg --print-architecture)"; \
@@ -198,7 +204,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # (gh-auth-wrapper.sh) にする。ラッパーが呼び出しのたびに git と同一の cred helper
 # からトークンを取り出し GH_TOKEN に注入するので、`gh auth login` 不要で gh が使える
 # （docs/dev/08 §8.3）。ラッパー本体の COPY は末尾の高頻度 COPY 群でまとめて行う。
-ARG GH_VERSION=2.96.0
+ARG GH_VERSION=2.97.0
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64|arm64) gharch="$arch" ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
