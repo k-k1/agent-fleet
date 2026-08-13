@@ -87,6 +87,45 @@ export function parseCommand(t: Turn): { name: string; args: string } | null {
   return { name: name[1].trim(), args: args ? args[1].trim() : "" };
 }
 
+// mergeTurns folds a freshly fetched batch into the turns a view already holds, keyed by
+// `idx` — the turn's ABSOLUTE position in the transcript (claude: the jsonl line number;
+// store-backed agents: the turn index), which the Agent keeps stable across every window,
+// increment and backward page.
+//
+// Appending blindly is wrong, and both failure modes have been seen in the shared view:
+//   * store-backed agents (opencode/codex) re-send the CURRENT assistant turn each poll
+//     while its parts are still growing — its idx does not change, so a plain append
+//     stacks the same answer over and over;
+//   * a re-poll straight after a page load, or a backward page that ends where the held
+//     window begins, overlaps by a turn or two.
+// Replacing by idx makes a poll idempotent; sorting by idx then keeps history in
+// transcript order no matter which direction the batches arrived from (live increments
+// append, 以前の会話を読み込む prepends). Turns from an Agent old enough not to send idx
+// are left in arrival order — nothing to key on, and that is the pre-existing behaviour.
+export function mergeTurns<T extends Turn>(held: T[], incoming: T[]): T[] {
+  if (!incoming.length) return held;
+  const byIdx = new Map<number, number>();
+  for (let i = 0; i < held.length; i++) {
+    if (typeof held[i].idx === "number") byIdx.set(held[i].idx as number, i);
+  }
+  let next = held;
+  for (const turn of incoming) {
+    const at = typeof turn.idx === "number" ? byIdx.get(turn.idx) : undefined;
+    if (at === undefined) {
+      if (next === held) next = [...held];
+      next.push(turn);
+      if (typeof turn.idx === "number") byIdx.set(turn.idx, next.length - 1);
+    } else if (JSON.stringify(next[at]) !== JSON.stringify(turn)) {
+      if (next === held) next = [...held];
+      next[at] = turn;
+    }
+  }
+  if (next !== held && next.every((t) => typeof t.idx === "number")) {
+    next.sort((a, b) => (a.idx as number) - (b.idx as number));
+  }
+  return next;
+}
+
 // coalesceUserActions surfaces user actions that Claude logs as system-tagged user turns and
 // isNoise would otherwise drop: a `!` shell command (`<bash-input>` + the paired `<bash-stdout>`
 // result turn) becomes a kind="bash" terminal block; a `/` slash command / skill invocation
