@@ -10,12 +10,18 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { api, apiJSON, errText } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
+import { useDebounced } from "../../lib/useDebounced.ts";
 import { useReposStore } from "../repos/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { useMySharesStore } from "./store.ts";
 import type { Session } from "../../types/session.ts";
 import "./sharing.css";
+
+interface RecipientCandidate {
+  userKey: string;
+  email: string;
+}
 
 interface ShareCreateModalProps {
   /** "session:<name>" | "repo:<workingCopyId>" | "worktree:<workingCopyId>" — when set
@@ -32,10 +38,25 @@ export function ShareCreateModal({ initialTarget, onClose, onCreated }: ShareCre
   const sessions = useSessionsStore((s) => s.sessions);
   const [archived, setArchived] = useState<Session[]>([]);
   const [target, setTarget] = useState(initialTarget ?? "");
-  const [recipient, setRecipient] = useState("");
+  const [recipientQuery, setRecipientQuery] = useState("");
+  const [recipientPick, setRecipientPick] = useState<RecipientCandidate | null>(null);
+  const [suggestions, setSuggestions] = useState<RecipientCandidate[]>([]);
+  const [searching, setSearching] = useState(false);
   const [permission, setPermission] = useState<"ro" | "rw">("ro");
   const [saving, setSaving] = useState(false);
   const locked = !!initialTarget;
+  const debouncedQuery = useDebounced(recipientQuery, 250);
+  useEffect(() => {
+    // 選択済みなら検索候補は不要(チップ表示に切り替わっている)。
+    if (recipientPick) return;
+    let alive = true;
+    setSearching(true);
+    api(`api/session-share-recipients?q=${encodeURIComponent(debouncedQuery)}`)
+      .then((d) => { if (alive) setSuggestions(d?.error ? [] : d.members || []); })
+      .catch(() => { if (alive) setSuggestions([]); })
+      .finally(() => { if (alive) setSearching(false); });
+    return () => { alive = false; };
+  }, [debouncedQuery, recipientPick]);
   const candidates = useMemo(() => [
     ...[...sessions, ...archived].filter((s) => agentOf(s.kind).caps.transcript).map((s) => ({
       value: `session:${s.name}`, label: `${tr("share.session_scope")}: ${s.title || s.label || s.name}`,
@@ -53,7 +74,7 @@ export function ShareCreateModal({ initialTarget, onClose, onCreated }: ShareCre
   }, [locked]);
   useEffect(() => { if (!locked && !target && candidates[0]) setTarget(candidates[0].value); }, [locked, candidates, target]);
   const targetLabel = candidates.find((c) => c.value === target)?.label ?? target;
-  const canSubmit = !!target && !!recipient.trim();
+  const canSubmit = !!target && !!recipientPick;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -61,7 +82,7 @@ export function ShareCreateModal({ initialTarget, onClose, onCreated }: ShareCre
     const [type, key] = target.split(":", 2);
     if (!type || !key) return;
     setSaving(true);
-    const d = await apiJSON("api/session-shares", "POST", { recipientUserKey: recipient.trim(), scope: { type, key }, permission })
+    const d = await apiJSON("api/session-shares", "POST", { recipientUserKey: recipientPick.userKey, scope: { type, key }, permission })
       .catch(() => ({ error: { message: tr("share.save_failed") } }));
     setSaving(false);
     if (d?.error) { toast(errText(d.error)); return; }
@@ -87,10 +108,40 @@ export function ShareCreateModal({ initialTarget, onClose, onCreated }: ShareCre
             </select>
           </label>
         )}
-        <label className="ui-field">
+        <div className="ui-field share-recipient-field">
           <span className="ui-field-label">{tr("share.recipient")}</span>
-          <input value={recipient} onChange={(e) => setRecipient(e.target.value)} placeholder="user-login-id" autoFocus={locked} />
-        </label>
+          {recipientPick ? (
+            <div className="share-target-fixed">
+              <Icon name="account" /> {recipientPick.email}
+              <Button small variant="ghost" onClick={() => { setRecipientPick(null); setRecipientQuery(""); }}>
+                {tr("share.recipient_change")}
+              </Button>
+            </div>
+          ) : (
+            <>
+              <input
+                type="search"
+                value={recipientQuery}
+                onChange={(e) => setRecipientQuery(e.target.value)}
+                placeholder={tr("share.recipient_search_ph")}
+                autoFocus={locked}
+              />
+              {(searching || suggestions.length > 0 || debouncedQuery) && (
+                <ul className="share-recipient-suggest">
+                  {searching && <li className="ui-field-hint">{tr("common.loading")}</li>}
+                  {!searching && suggestions.length === 0 && <li className="ui-field-hint">{tr("share.recipient_no_match")}</li>}
+                  {!searching && suggestions.map((c) => (
+                    <li key={c.userKey}>
+                      <button type="button" className="ui-menu-item" onClick={() => setRecipientPick(c)}>
+                        <Icon name="account" /> {c.email}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+        </div>
         <div className="ui-field">
           <span className="ui-field-label">{tr("share.permission")}</span>
           <div className="ui-seg">

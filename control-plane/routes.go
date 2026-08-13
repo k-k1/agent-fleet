@@ -259,6 +259,7 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 func registerSessionShareRoutes(mux *http.ServeMux, cfg config) {
 	a := newSessionShareAPI(cfg.mgr)
 	mux.HandleFunc("GET /api/session-shares", a.withMembership(a.listOwned))
+	mux.HandleFunc("GET /api/session-share-recipients", a.withMembership(a.searchRecipients))
 	mux.HandleFunc("POST /api/session-shares", a.withResolved(a.put))
 	mux.HandleFunc("PATCH /api/session-shares/{id}", a.withMembership(a.patch))
 	mux.HandleFunc("DELETE /api/session-shares/{id}", a.withMembership(a.delete))
