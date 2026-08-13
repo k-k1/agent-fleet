@@ -3585,6 +3585,8 @@ export const en: Record<keyof typeof ja, string> = {
   "share.recipient_change": "Change",
   "share.permission": "Permission",
   "share.approval_required": "owner approval required",
+  "share.permission_ro": "View only",
+  "share.permission_rw": "Can propose",
   "share.create": "Share",
   "share.unshare": "Unshare",
   "share.save_failed": "Could not save the share.",

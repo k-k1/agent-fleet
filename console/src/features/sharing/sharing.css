@@ -66,3 +66,17 @@
 .share-target-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .share-recipient { color: var(--muted); font-size: 12px; flex: none; }
 .share-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+
+/* 受信側「共有セッション」のプロジェクト/worktreeツリー — project.css の
+   .proj-node/.proj-children/.proj-node-body(所有者側のツリー)をそのまま流用し、
+   ここでは見出し2種だけ足す。 */
+.shared-project-group { list-style: none; margin: 0 0 4px; }
+.shared-project-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  font-size: 12px;
+}
+.shared-project-head small { color: var(--muted); margin-left: auto; }
+.shared-copy-name { font-size: 12px; padding: 2px 0; }
