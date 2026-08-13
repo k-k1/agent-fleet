@@ -145,8 +145,8 @@ export function ShareCreateModal({ initialTarget, onClose, onCreated }: ShareCre
         <div className="ui-field">
           <span className="ui-field-label">{tr("share.permission")}</span>
           <div className="ui-seg">
-            <button type="button" className={"seg-btn" + (permission === "ro" ? " active" : "")} onClick={() => setPermission("ro")}>RO</button>
-            <button type="button" className={"seg-btn" + (permission === "rw" ? " active" : "")} onClick={() => setPermission("rw")}>RW</button>
+            <button type="button" className={"seg-btn" + (permission === "ro" ? " active" : "")} onClick={() => setPermission("ro")}>{tr("share.permission_ro")}</button>
+            <button type="button" className={"seg-btn" + (permission === "rw" ? " active" : "")} onClick={() => setPermission("rw")}>{tr("share.permission_rw")}</button>
           </div>
           {permission === "rw" && <span className="ui-field-hint">{tr("share.approval_required")}</span>}
         </div>
