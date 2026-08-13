@@ -77,17 +77,5 @@ func TestApplyCodexRTKNoBaseFile(t *testing.T) {
 	}
 }
 
-func TestStripMarkedBlock(t *testing.T) {
-	s := "head\n\n" + rtkMarkerStart + "\nblock\n" + rtkMarkerEnd + "\n\ntail\n"
-	got := stripMarkedBlock(s, rtkMarkerStart, rtkMarkerEnd)
-	if strings.Contains(got, "block") || strings.Contains(got, rtkMarkerStart) {
-		t.Fatalf("strip left residue: %q", got)
-	}
-	if !strings.Contains(got, "head") || !strings.Contains(got, "tail") {
-		t.Fatalf("strip ate surrounding content: %q", got)
-	}
-	// no markers: unchanged.
-	if stripMarkedBlock("plain text", rtkMarkerStart, rtkMarkerEnd) != "plain text" {
-		t.Fatal("strip changed marker-free text")
-	}
-}
+// マーカーの strip/append そのものの単体試験は internal/mdblock へ移した
+// （codex/agy/ユーザー指示の共通実装になったため）。ここは AGENTS.md への適用側だけを見る。

@@ -208,15 +208,16 @@ describe("fenced-code controls", () => {
 
     const pre = host.querySelector("pre");
     const button = host.querySelector<HTMLButtonElement>(".md-code-wrap-toggle");
-    expect(pre?.classList.contains("md-code-wrap")).toBe(false);
-    expect(button?.getAttribute("aria-pressed")).toBe("false");
-
-    await act(async () => button?.click());
+    // markdownCodeWrap defaults to true, so a fresh block starts wrapped.
     expect(pre?.classList.contains("md-code-wrap")).toBe(true);
     expect(button?.getAttribute("aria-pressed")).toBe("true");
 
     await act(async () => button?.click());
     expect(pre?.classList.contains("md-code-wrap")).toBe(false);
+    expect(button?.getAttribute("aria-pressed")).toBe("false");
+
+    await act(async () => button?.click());
+    expect(pre?.classList.contains("md-code-wrap")).toBe(true);
   });
 });
 
