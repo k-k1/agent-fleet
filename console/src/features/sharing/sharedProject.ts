@@ -11,6 +11,8 @@ export interface SharedWorkingCopy {
   repo: string;
   worktree: boolean;
   parent: string;
+  /** チェックアウト中のブランチ(不明なら "")。worktree の見出しはこれを名前に使う。 */
+  branch: string;
   sessions: SharedSession[];
 }
 
@@ -28,7 +30,8 @@ function copiesOf(sessions: SharedSession[]): SharedWorkingCopy[] {
     const id = s.workingCopyId || `session:${s.name}`; // working copy 不明なら1セッション=1ノード
     let copy = byId.get(id);
     if (!copy) {
-      copy = { workingCopyId: id, repo: s.repo || s.name, worktree: !!s.worktree, parent: s.parent || "", sessions: [] };
+      copy = { workingCopyId: id, repo: s.repo || s.name, worktree: !!s.worktree, parent: s.parent || "",
+        branch: s.branch || "", sessions: [] };
       byId.set(id, copy);
     }
     copy.sessions.push(s);

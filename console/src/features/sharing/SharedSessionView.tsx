@@ -9,7 +9,7 @@ import { expandThinking, useSettings } from "../../lib/settings.ts";
 import { TranscriptView } from "../mirror/transcript/TranscriptView.tsx";
 import type { TranscriptCaps } from "../mirror/transcript/capabilities.ts";
 import type { Turn } from "../mirror/transcript/types.ts";
-import { coalesceUserActions, groupTurns } from "../mirror/transcript/model.ts";
+import { coalesceUserActions, groupTurns, mergeTurns } from "../mirror/transcript/model.ts";
 import { useSharedSessionsStore } from "./store.ts";
 import "./sharing.css";
 
@@ -26,9 +26,14 @@ import "./sharing.css";
 // path / filePath and every structured coordinate before it ever reaches the browser
 // (docs/59 §3, control-plane/session_share.go sharedTranscriptDTO).
 
-// First page size. Smaller than the mirror's 400: the first screenful should paint fast,
-// and everything earlier is one scroll away (`before=` paging, below).
-const WINDOW = 60;
+// Page size, in transcript LINES (claude) / turns (store-backed agents) — the same
+// window the mirror asks for. It used to be 60 for a faster first paint, but 60 claude
+// jsonl lines is often a fraction of ONE exchange (a single answer spans a thinking
+// line, every tool call and the reply), so the opening screen could start mid-answer
+// with the prompt that caused it out of frame, and 以前の会話を読み込む had to be
+// pressed over and over. The first-paint cost that motivated 60 was the per-request
+// inventory sync, which is now throttled per owner (docs/59 §3).
+const WINDOW = 400;
 // Poll cadence, matching the mirror's. The server allows 120 reads/min per
 // recipient+session, so even the working cadence stays well inside the limit.
 const POLL_WORKING = 1200;
@@ -71,6 +76,7 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
   const firstLine = useRef(cached?.firstLine ?? 0);
   const bodyRef = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
+  const loadingOlderRef = useRef(false);
   // Set while prepending older history, to keep the reader's position put (below).
   const anchor = useRef<number | null>(null);
 
@@ -119,8 +125,11 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
         if (typeof d.hasMore === "boolean") setHasMore(d.hasMore);
         setWorking(d.status === "working");
         const incoming: SharedTurn[] = Array.isArray(d.messages) ? d.messages : [];
+        // reset: 所有者側の転写が縮んだ/差し替わった(圧縮など) — 置き換える。それ以外は
+        // idx を鍵にした冪等マージ。同じターンの再送(伸びている最中の assistant ターン)や
+        // ページ境界の重なりを、そのまま積み増さないため(mergeTurns の注記を参照)。
         if (d.reset) setTurns(incoming);
-        else if (incoming.length) setTurns((old) => [...old, ...incoming]);
+        else if (incoming.length) setTurns((old) => mergeTurns(old, incoming));
       }
       timer = window.setTimeout(tick, d?.status === "working" ? POLL_WORKING : POLL_IDLE);
     };
@@ -143,7 +152,11 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
   // just uses them, which is what lets the first fetch stay small.
   const loadOlder = async () => {
     const el = bodyRef.current;
-    if (!el || loadingOlder || firstLine.current <= 0) return;
+    // 進行中の判定は ref で持つ。state の loadingOlder はボタンの disabled が効くまでに
+    // 1 レンダー遅れるので、素早い2連打が同じ `before=` で二重に取りに行き、同じページを
+    // 2回積む(「押すと同じ履歴が何度も出てくる」)。
+    if (!el || loadingOlderRef.current || firstLine.current <= 0) return;
+    loadingOlderRef.current = true;
     setLoadingOlder(true);
     const keep = el.scrollHeight - el.scrollTop; // distance from the bottom, held across the prepend
     const d = await api(`${path}/messages?before=${firstLine.current}&limit=${WINDOW}`).catch(() => null);
@@ -153,9 +166,11 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
       setHasMore(!!d.hasMore);
       if (incoming.length) {
         anchor.current = keep;
-        setTurns((old) => [...incoming, ...old]);
+        // 古いページを先頭に置いて、いま持っている分をマージし直す(idx 昇順)。
+        setTurns((old) => mergeTurns(incoming, old));
       }
     }
+    loadingOlderRef.current = false;
     setLoadingOlder(false);
   };
 
@@ -202,6 +217,9 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
   // and fall back to self-contained renderings (tool edits and plans expand in place).
   const caps: TranscriptCaps = {
     agentName: agentOf(meta?.kind).assistantName,
+    // 発言者は読み手ではなく共有元。「あなた」のままだと、他人の会話を読んでいるのに
+    // 自分が書いたように見える。
+    userName: meta?.ownerUserKey,
     expandThinking: expandThinking(settings, meta?.kind),
   };
 
