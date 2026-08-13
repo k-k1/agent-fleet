@@ -6,7 +6,7 @@
 // 文の index を onUnit で受けてハイライトする）。グローバル 1 本再生・TopBar 停止と相乗り。
 // content kind は "read"（layout/types.ts）。ファイル右クリック「朗読で開く」や FileView の
 // 「朗読」ボタンから開く。
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { api, isTransientErr } from "../../core/api/client.ts";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
@@ -28,7 +28,7 @@ interface FileData {
   content?: string;
 }
 
-export function ReaderView({ filePath }: { filePath: string }) {
+export function ReaderView({ filePath, headerActions }: { filePath: string; headerActions?: ReactNode }) {
   const tr = useT();
   const settings = useSettings();
   // なろう形式ルビ・縦書きは日本語専用機能なので UI ロケールが ja のときだけ有効化する
@@ -267,7 +267,7 @@ export function ReaderView({ filePath }: { filePath: string }) {
 
   return (
     <div className="fileview readerview" style={readerStyle}>
-      <ViewHead className="fileinfo reader-head">
+      <ViewHead className="fileinfo reader-head" actions={headerActions}>
         <span className="fi-name mono">
           <FileIcon name={baseName(filePath)} /> {baseName(filePath)}
         </span>

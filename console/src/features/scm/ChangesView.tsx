@@ -2,6 +2,7 @@
 // discard, commit box, repo identity). A file's diff opens in a SEPARATE pane
 // (openFileDiff). Port of views/ChangesView onto the zustand stores.
 import { useCallback, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { api, apiJSON, rawJSON, isTransientErr } from "../../core/api/client.ts";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { Icon } from "../../ui/Icon.tsx";
@@ -21,7 +22,7 @@ interface Change {
   worktree?: string;
 }
 
-export function ChangesView({ repo }: { repo: string }) {
+export function ChangesView({ repo, headerActions }: { repo: string; headerActions?: ReactNode }) {
   const tr = useT();
   const askConfirm = useConfirm();
   const toast = useToast();
@@ -94,9 +95,12 @@ export function ChangesView({ repo }: { repo: string }) {
     <div className="scmview">
       <ViewHead
         actions={
-          <button type="button" className="ui-btn ui-btn-ghost ui-iconbtn" title={tr("scm.refresh")} onClick={() => void refresh()}>
-            <Icon name="refresh" />
-          </button>
+          <>
+            <button type="button" className="ui-btn ui-btn-ghost ui-iconbtn" title={tr("scm.refresh")} onClick={() => void refresh()}>
+              <Icon name="refresh" />
+            </button>
+            {headerActions}
+          </>
         }
       >
         <span className="view-title">

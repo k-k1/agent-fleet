@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { api, apiJSON, errText } from "../../core/api/client.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { Button } from "../../ui/Button.tsx";
@@ -52,7 +53,7 @@ interface CacheEntry {
 }
 const transcriptCache = new Map<string, CacheEntry>();
 
-export function SharedSessionView({ sharedSessionId }: { sharedSessionId: string }) {
+export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSessionId: string; headerActions?: ReactNode }) {
   const tr = useT();
   const settings = useSettings();
   const meta = useSharedSessionsStore((s) => s.sessions.find((x) => x.id === sharedSessionId));
@@ -207,15 +208,18 @@ export function SharedSessionView({ sharedSessionId }: { sharedSessionId: string
   return (
     <div className="shared-view">
       <header className="shared-view-head">
-        <div>
-          <Icon name="broadcast" /> <strong>{meta?.title || meta?.label || meta?.name || tr("share.shared_sessions")}</strong>
+        <div className="shared-view-info">
+          <div>
+            <Icon name="broadcast" /> <strong>{meta?.title || meta?.label || meta?.name || tr("share.shared_sessions")}</strong>
+          </div>
+          {meta && (
+            <small>
+              {meta.ownerUserKey} · {tr(meta.permission === "rw" ? "share.permission_rw" : "share.permission_ro")} ·{" "}
+              {meta.archived ? tr("share.archived") : meta.state}
+            </small>
+          )}
         </div>
-        {meta && (
-          <small>
-            {meta.ownerUserKey} · {tr(meta.permission === "rw" ? "share.permission_rw" : "share.permission_ro")} ·{" "}
-            {meta.archived ? tr("share.archived") : meta.state}
-          </small>
-        )}
+        {headerActions && <span className="view-head-actions">{headerActions}</span>}
       </header>
       <div className="shared-view-body" ref={bodyRef} onScroll={onScroll} tabIndex={-1}>
         <div className="mirror-scroll">
