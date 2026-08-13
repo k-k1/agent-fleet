@@ -1,6 +1,6 @@
-# 0042. ユーザー指示は AF が所有する 1 本の本文とし、各 CLI の global 指示へマーカー合成で配る
+# 0042. ユーザー指示は AF が所有する 1 本の本文とし、可能な限り「AF 専用ファイル＋参照」で各 CLI へ配る
 
-- 状態: 採用・未実装（設計は docs/60。P0 の実測 3 点は未了＝docs/60 §60.15）
+- 状態: 採用・未実装（設計は docs/60。**P0 の実測は完了**し、その結果として決定 4/6/7 が初版から変わった）
 - 関連: [60-user-instructions.md](../60-user-instructions.md) /
   [57-project-tools.md](../57-project-tools.md)（配布軸 / 管理軸の区分） /
   [0031-mcp-registry.md](0031-mcp-registry.md)（配布軸の所有台帳） /
@@ -18,13 +18,25 @@
   `~/.config/opencode/AGENTS.md` を上書きする。利用者の追記は黙って消える。
 - claude 側の配布先 `/etc/claude-code/CLAUDE.md` は root 所有で、コンテナ内の `dev` は書けない。
 - `~/.gemini/AGENTS.md` は 450 B（rtk ブロックのみ）＝ **agy はフリート方針すら読んでいない**。
-  cursor / kiro / copilot には配布経路自体が無い。
+  copilot も同様（system prompt 15.4k トークンにフリート方針は無い）。cursor / kiro にも配布経路が無い。
 
-加えて 2 つの罠が測れた。①opencode は `<home>/.claude/CLAUDE.md` を global 指示として読むが、
-AF は claude に `CLAUDE_CONFIG_DIR=/var/lib/af/claude` を渡しているので claude はそこを読まない
-（置き場を間違えると別 kind にだけ効く）。②codex の `AGENTS.md` はバイト予算制
-（`core/src/agents_md.rs` の `remaining_bytes` / `project doc exceeds remaining budget; truncating`、
-上流既定 32 KiB）で、フリート方針だけで 29.9 KB ＝ 予算の 91% を使っている。
+設計時に疑った 2 つの罠は、実測で片方が消え、片方が形を変えた。
+
+- **罠 B（codex のバイト予算）は否定された。** `codex debug prompt-input`（API 課金なしで
+  モデル可視プロンプトを JSON 出力）で測ると、`project_doc_max_bytes`（既定 32 KiB）は
+  **プロジェクト文書チェーンの合計にのみ**効き、`$CODEX_HOME/AGENTS.md` は予算外・上限なし
+  （42 KB の global が無傷で通過）。疑っていた既存バグは存在しない。
+- **罠 A は形を変えて残った。** claude は `$CLAUDE_CONFIG_DIR/CLAUDE.md` を読み、
+  `~/.claude/CLAUDE.md` は読まない（カナリアで確定）。opencode もこれを拾わなかった
+  （バンドルには経路があるが実挙動は否定。条件未特定）。つまり後者に置くと**どの kind にも効かない**。
+
+そして最も設計を変えた発見は、**多くの kind は「他人のファイルに書かなくても」配れる**ことだった。
+
+- opencode: `opencode.json` の `instructions` 配列に AF 専用ファイルを 1 本足せば効く（実測）。
+- copilot: `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` に AF 専用ディレクトリを渡せば効く（実測・ファイル非所有）。
+- claude: user memory ファイルは既定で存在しないので、AF が単独所有できる。
+- codex / agy: 追加指示ファイルを指す設定が無く、合成しか手段が無い。
+- cursor: ローカルにユーザー層が存在しない（User Rules は `aiserver.v1.UserRules` ＝ サーバー側）。
 
 ## 決定
 
@@ -32,36 +44,46 @@ AF は claude に `CLAUDE_CONFIG_DIR=/var/lib/af/claude` を渡しているの�
    `~/.config/agent-fleet/user-notes.md`。`homeKeep`（`control-plane/runtime_docker.go:396`）に
    `.config` があるため recreate も「home 掃除」も生き残る。CP の DB には置かない。
 2. **本文は 1 本、適用先は kind ごとのチェック。** kind 別本文は同じ文章の N 重管理を作るため採らない。
-   未対応 kind も行として出し「未対応 / 未検証」バッジを付ける（docs/57 §2 の作法）。
-3. **配布軸として扱う。** AF が自動で書き、マーカーで所有を示す。docs/57 の
-   「プロジェクトファイル憲章 8 条」（自動契機を作らない・所有マーカーを置かない）は**適用しない**。
-   逆に、コミットされる場所には一切書かない。
-4. **1 ファイルにライターは 1 人にする。** 追記者を増やさず、`reconcileAgentRTK` を
-   `reconcileAgentInstructions` へ格上げして「フリート本文 ＋ ユーザーブロック ＋ rtk ブロック ＋
+   未対応 kind も行として出す（cursor は理由付きで「対応不可」、kiro は実測まで「未検証」）。
+3. **配布軸として扱う。** AF が自動で書き、所有範囲を明示する。docs/57 の
+   「プロジェクトファイル憲章 8 条」は適用しない。コミットされる場所には一切書かない。
+4. ★ **「他人のファイルに書く」より「AF 専用のファイル＋参照」を優先する。**（実測を受けて初版から変更）
+   claude＝単独所有ファイル / opencode＝`instructions` に 1 本追加 / copilot＝env でディレクトリを渡す。
+   **合成は参照手段の無い codex・agy だけの最後の手段**とする。統一のために共有ファイルへの
+   書き込みを増やさない。
+5. **合成する 2 kind では 1 ファイル 1 ライターにする。** `reconcileAgentRTK` を
+   `reconcileAgentInstructions` へ格上げし、「フリート本文 ＋ ユーザーブロック ＋ rtk ブロック ＋
    マーカー外の温存」を毎回まるごと組み立てる。entrypoint の `cp -f`（全消し）はマーカー合成に置換する。
-   ユーザーブロックの適用は必ず agent 側（entrypoint だと生存中の Console 編集が反映されない）。
-5. **優先順位は本文に散文で書く。** フラットな 1 ファイルに合成する以上、階層の信号は文章でしか伝わらない。
-   ユーザーブロック先頭に「衝突時はワークスペース方針が優先」を AF が固定文で入れる。
-6. **claude だけは合成しない。** native な user memory 層があるので独立ファイルとして書き、
-   managed policy には触らない。ただし**実パスは実測してから配線する**（罠①）。
-7. **サイズ上限を機能として持つ。** ハード上限 8 KB、エディタにバイト数と codex 予算の残量を表示する。
-   「保存できません」ではなく「どの kind で何が切られるか」を出す。
+   適用は必ず agent 側（entrypoint だと生存中の Console 編集が反映されない）。
+6. **claude の置き場は `$CLAUDE_CONFIG_DIR/CLAUDE.md`。**（実測で確定。`~/.claude/CLAUDE.md` は使わない）
+   managed policy には触らない。
+7. **サイズ上限 8 KB の根拠は「費用」であって truncation ではない。**（罠 B 否定を受けて初版から変更）
+   エディタにはバイト数と「1 セッションあたり増えるトークンの目安」を出す。codex 予算の残量表示は作らない。
 8. **エージェントに書かせない。** 編集用 MCP ツールは作らず、経路は Console REST のみ
    （置き場は `fs.go` の denylist 内でファイルペインからも触れない）。peer の依頼で書き換えない旨を
    `workspace-notes.md` に追記する。
-9. **フリート層の穴（agy/cursor/kiro/copilot）は同じ合成器で塞ぐ。** 別機構を作らない（docs/60 §60.13 P3）。
+9. **フリート層の穴（agy/copilot/kiro）は同じ配布器で塞ぐ。** 別機構を作らない（docs/60 §60.13 P2）。
+   cursor はローカルにユーザー層が無いため、フリート方針もユーザー指示も配れないと確定した。
+10. **契約の実測手段を型として残す。** `codex debug prompt-input`（課金なしのプロンプト検証）と
+    行動カナリア（内容開示を拒否する CLI にも効く読み込み確認）を docs/60 §60.17 に記録し、
+    kind 追加・版上げ時のドリフト検知に再利用する。
 
 ## 却下した案
 
 - **entrypoint の `cp -f` をマーカー合成に変えるだけ（UI なし）。** 破壊は止まるが、利用者は kind ごとに
   N 箇所へ同じ文章を書くことになり、claude は `/etc` なので原理的に不可能。合成方式だけ採用した。
-- **セッション起動時に `--append-system-prompt` 相当で渡す。** claude しか揃わず、managed 経路と二重になる。
+- **全 kind を AGENTS.md 合成で統一。** 実装は 1 本化されるが、触らなくてよい他人のファイルを
+  触ることになる（決定 4）。
+- **セッション起動時に `--append-system-prompt` 相当で渡す。** claude しか揃わず managed 経路と二重になる。
+  （copilot の env 注入は CLI 公式のユーザースコープ機構なので別物として採用。）
 - **CP の DB に置いてワークスペース跨ぎで共有。** 永続性の要求は home 側で満たせている。v2 の選択肢。
 
 ## 影響
 
-- `workspace/entrypoint.sh` の配布ロジックが agent 側の合成器へ移る（entrypoint は基底配置のみ）。
+- `workspace/entrypoint.sh` の配布ロジックが agent 側の配布器へ移る（entrypoint は基底配置と
+  copilot 用 env の export のみ）。
 - `codex/rtk.go` と `agy/rtk.go` に重複している `stripMarkedBlock` を `internal/mdblock` へ括り出す。
+- copilot はセッション起動 env に `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` を足す必要がある
+  （手打ちの `copilot` にも効かせるため entrypoint でも export する）。
 - 新 REST は `workspace/agent/routes.go` と `control-plane/routes.go` の**両方**へ登録が必要。
-- docs/39 の棚卸し表（「共通」行が agy も配布対象としている点）を docs/60 §60.2 で訂正した。
-- 罠②の実測次第では、**フリート方針そのものを痩せさせる**判断が別途必要になる。
+- docs/39 の棚卸し表（「共通」行が agy も配布対象としていた点）を docs/60 §60.2 で訂正した。
