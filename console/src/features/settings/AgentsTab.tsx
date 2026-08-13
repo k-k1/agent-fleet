@@ -1384,11 +1384,14 @@ function OpencodeUsageRow() {
         <Choice
           value={s.opencodeCatalog}
           options={[
+            ["off", tr("agents.oc_usage_off")],
             ["free", tr("agents.oc_usage_free")],
             ["go", tr("agents.oc_usage_go")],
             ["zen", tr("agents.oc_usage_zen")],
           ]}
-          onChange={(v) => setSettings({ opencodeCatalog: v === "free" || v === "go" ? v : "zen" })}
+          onChange={(v) =>
+            setSettings({ opencodeCatalog: v === "off" || v === "free" || v === "go" ? v : "zen" })
+          }
         />
       </SettingRow>
       <p className="ps-note">{tr(`agents.oc_usage_note_${s.opencodeCatalog}`)}</p>
@@ -1573,11 +1576,12 @@ function OpencodeCard({
     reload();
   };
 
-  const usage = s.opencodeCatalog; // free | go | zen（課金経路の選択・docs/54）
+  const usage = s.opencodeCatalog; // off | free | go | zen（課金経路の選択・docs/54）
+  const off = usage === "off";
   const pill = [
-    usage === "free" ? tr("agents.oc_usage_free") : "",
-    envs.length > 0 ? tr("agents.oc_key_count", { count: envs.length }) : "",
-    account ? tr("agents.oc_account_only") : "",
+    off ? tr("agents.oc_usage_off") : usage === "free" ? tr("agents.oc_usage_free") : "",
+    !off && envs.length > 0 ? tr("agents.oc_key_count", { count: envs.length }) : "",
+    !off && account ? tr("agents.oc_account_only") : "",
   ]
     .filter(Boolean)
     .join(" / ");
@@ -1588,7 +1592,7 @@ function OpencodeCard({
       name={kindDisplayName("opencode")}
       status={
         running ? (
-          <StatusPill on={usage === "free" || envs.length > 0 || account}>
+          <StatusPill on={!off && (usage === "free" || envs.length > 0 || account)}>
             {pill || tr("conn.disconnected")}
           </StatusPill>
         ) : undefined
@@ -1601,7 +1605,9 @@ function OpencodeCard({
           <div className="p-body">
             <OpencodeUsageRow />
           </div>
-          {usage === "free" ? (
+          {off ? (
+            <div className="p-desc">{tr("agents.oc_off_desc")}</div>
+          ) : usage === "free" ? (
             <div className="p-desc">{tr("agents.oc_free_desc")}</div>
           ) : (
             <div className="p-desc">{tr("agents.oc_account_desc")}</div>
@@ -1641,7 +1647,7 @@ function OpencodeCard({
             )}
             <p className="ps-note">{tr("agents.oc_account_note")}</p>
           </div>
-          {usage !== "free" && <OpencodeWorkspaceRow st={st} reload={reload} />}
+          {usage !== "free" && !off && <OpencodeWorkspaceRow st={st} reload={reload} />}
           <div className="p-desc">{tr("agents.oc_desc")}</div>
           <div className="p-body">
             {preset === "go" && (

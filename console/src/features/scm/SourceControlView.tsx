@@ -5,6 +5,7 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } f
 import type { FormEvent, KeyboardEvent as RKeyboardEvent, ReactNode } from "react";
 import { api, apiJSON, errText, isTransientErr } from "../../core/api/client.ts";
 import { Icon } from "../../ui/Icon.tsx";
+import { ViewHead } from "../../ui/ViewHead.tsx";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
@@ -272,7 +273,10 @@ export function SourceControlView({ repo, path = "", headerActions }: { repo: st
 
   return (
     <div className="scmview">
-      <header className="view-head">
+      {/* .scm-acts / .scm-more own their own spacing and the collapse-to-⋯
+          behaviour, so they stay inline after the spacer rather than moving into
+          the actions slot. */}
+      <ViewHead actions={headerActions}>
         <span className="view-title">
           <Icon name={path ? "repo-forked" : "repo"} /> {repo}{path ? ` / ${path}` : ""}
         </span>
@@ -338,8 +342,7 @@ export function SourceControlView({ repo, path = "", headerActions }: { repo: st
             </div>
           )}
         </div>
-        {headerActions && <span className="view-head-actions">{headerActions}</span>}
-      </header>
+      </ViewHead>
       <div className="cgraph-body" ref={bodyRef} tabIndex={0} onKeyDown={onKey}>
         {loading && commits.length === 0 ? (
           <EmptyState icon="loading" title={tr("scm.loading")} />

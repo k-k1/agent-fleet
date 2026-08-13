@@ -1,4 +1,5 @@
 import { Icon } from "../../ui/Icon.tsx";
+import { ViewHead } from "../../ui/ViewHead.tsx";
 import { useSettings, fontStack } from "../../lib/settings.ts";
 import { baseName } from "../../lib/filemeta.ts";
 import { useT } from "../../lib/i18n/index.ts";
@@ -55,7 +56,7 @@ export function DiffView({ title, tool, edits, wrap, headerActions }: DiffViewPr
   });
   return (
     <div className={"fileview diffview" + (wrap ? "" : " nowrap")} style={viewerStyle}>
-      <header className="view-head fileinfo">
+      <ViewHead className="fileinfo" actions={headerActions}>
         <span className="fi-name mono" title={title}>
           <Icon name="diff" /> {baseName(title || "") || title || tr("view.diff")}
         </span>
@@ -64,8 +65,7 @@ export function DiffView({ title, tool, edits, wrap, headerActions }: DiffViewPr
           {added > 0 && <span className="dv-add">+{added}</span>}
           {removed > 0 && <span className="dv-del">−{removed}</span>}
         </span>
-        {headerActions && <span className="view-head-actions">{headerActions}</span>}
-      </header>
+      </ViewHead>
       <div className="dv-scroll">
         {hunks.map((rows, hi) => (
           <div className="dv-hunk" key={hi}>

@@ -487,10 +487,11 @@ func surfacePendingPayloads(resp map[string]any, sid, state string) {
 	// and suppress the permission — the Console drives it with the correct keys. The
 	// payload is cleared by its own lifecycle (PostToolUse→working, idle) once resolved.
 	//
-	// Same precedence as effectiveModal (session_status.go), which applies it on the
-	// WRITE paths (/plan-respond, the {prompt} guard). Display and decision must agree on
-	// which modal is up — when only this side applied it, the Console showed a plan card
-	// whose 送信 the Agent refused as「許可の判断待ち」.
+	// Same precedence as status.EffectiveModal, which applies it on the WRITE paths
+	// (/plan-respond, the {prompt} guard) and on the state chips (WireLive / driveState).
+	// Display and decision must agree on which modal is up — when only this side applied
+	// it, the Console showed a plan card whose 送信 the Agent refused as「許可の判断待ち」,
+	// and an AUQ カードの隣で state チップだけが「許可待ち」を名乗った。
 	pq, hasQ := status.ReadPendingQuestion(sid)
 	pp, hasP := status.ReadPendingPlan(sid)
 	if state == "permission" && !hasQ && !hasP {

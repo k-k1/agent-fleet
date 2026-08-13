@@ -1,10 +1,9 @@
 package agy
 
 import (
-	"os"
 	"path/filepath"
-	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mdblock"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
@@ -16,8 +15,8 @@ import (
 // プロジェクト root の AGENTS.md は対話モードのみ）。durable な設定と起動時
 // reconcile は package main（agent_rtk.go）に残る。
 
-const rtkMarkerStart = "<!-- agent-fleet:rtk -->"
-const rtkMarkerEnd = "<!-- /agent-fleet:rtk -->"
+// マーカーの綴りは mdblock が持つ（codex/agy/ユーザー指示で共通）。
+var rtkMarkerStart, rtkMarkerEnd = mdblock.Markers("rtk")
 
 // rtkBlock is the instruction appended to ~/.gemini/AGENTS.md when rtk is on.
 const rtkBlock = "## rtk (token saver) — prefer it for shell commands\n" +
@@ -29,56 +28,12 @@ const rtkBlock = "## rtk (token saver) — prefer it for shell commands\n" +
 
 func agentsPath() string { return filepath.Join(paths.GeminiHome(), "AGENTS.md") }
 
-// stripMarkedBlock removes the region from start..end (inclusive) and rejoins. A
-// missing end marker (malformed file) drops everything from start onward.
-// （codex/rtk.go の同名ヘルパの複製 — 極小のため共有せず重複を許容。）
-func stripMarkedBlock(s, start, end string) string {
-	i := strings.Index(s, start)
-	if i < 0 {
-		return s
-	}
-	rest := s[i+len(start):]
-	k := strings.Index(rest, end)
-	if k < 0 {
-		return strings.TrimRight(s[:i], "\n") + "\n"
-	}
-	tail := rest[k+len(end):]
-	head := strings.TrimRight(s[:i], "\n")
-	tail = strings.TrimLeft(tail, "\n")
-	if head == "" {
-		return tail
-	}
-	if tail == "" {
-		return head + "\n"
-	}
-	return head + "\n\n" + tail
-}
-
 // ApplyRTK appends (on) or removes (off) the marked rtk block in ~/.gemini/AGENTS.md.
 // Idempotent: any prior block is stripped first. Writes only when changed.
 func ApplyRTK(on bool) {
-	path := agentsPath()
-	orig := ""
-	if b, err := os.ReadFile(path); err == nil {
-		orig = string(b)
-	}
-	out := stripMarkedBlock(orig, rtkMarkerStart, rtkMarkerEnd)
+	body := ""
 	if on {
-		block := rtkMarkerStart + "\n" + rtkBlock + rtkMarkerEnd + "\n"
-		if out == "" {
-			out = block
-		} else {
-			out = strings.TrimRight(out, "\n") + "\n\n" + block
-		}
+		body = rtkBlock
 	}
-	if out == orig || out == "" {
-		return // no change, or nothing to write (no base file & rtk off)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return
-	}
-	tmp := path + ".af-tmp"
-	if os.WriteFile(tmp, []byte(out), 0o644) == nil {
-		_ = os.Rename(tmp, path)
-	}
+	_ = editAgents(func(s string) string { return mdblock.Set(s, "rtk", body) })
 }

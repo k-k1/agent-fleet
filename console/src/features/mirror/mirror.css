@@ -63,13 +63,11 @@
 :where(.mirrorview) button.primary:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent) 85%, #fff);
 }
-/* Session display name in the chat head (shared look with the sessions rail). */
-:where(.mirrorview) .session-display {
-  font-weight: 600;
+/* The chat head runs the session name a half-pixel larger than the terminal head
+   does (shared look with the sessions rail). The rest of the chip is shared —
+   panes/PaneSessionChip.tsx, .pane-session-name in terminal.css. */
+:where(.mirrorview) .pane-session-name {
   font-size: 12.5px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 /* ---- Markdown mirror (case-A: read-mostly view of a claude session) ---- */
 /* Right-align the ターミナル/ミラー switch in the view-head, left of the pane
@@ -82,15 +80,8 @@
      --sel-accent alone can't reach the :root-derived --sel-bg/--sel-fg (tokens.css). */
   --sel-accent: var(--viewer-accent, var(--topbar-accent));
 }
-.mirror-head-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: auto;
-}
-/* In a group the actions themselves own the right alignment, keeping the
-   pop-out/close pair immediately left of the chat/terminal switch. */
-.mirror-head-actions .mirror-toggle { margin-left: 0; }
+/* The head's action cluster is .view-head-actions (ui/ui.css) — it was declared
+   identically here and in terminal.css. */
 /* Each ターミナル/チャット segment is an icon + label; center them with a small gap
    so the button reads well both with the label and (on narrow panes) icon-only. */
 .mirror-toggle .seg-btn {
@@ -1481,6 +1472,38 @@ button.mt-tool-outhead {
   border-radius: 4px;
   opacity: 0.85;
 }
+/* An edit expanded in place, for views with no diff pane to open (the shared-session
+   view — the DTO keeps the diff body but drops the path, docs/59 §3). Sits in the same
+   slot as .mt-tool-output and borrows the diff pane's dv-* row styling (viewer.css). */
+.mt-tool-diffstat {
+  margin-left: auto;
+  padding-left: 8px;
+  display: inline-flex;
+  gap: 6px;
+  font-size: 11px;
+}
+.mt-tool-diff-inline {
+  margin: 2px 0 4px 18px;
+  padding: 4px 0;
+  max-height: 320px;
+  overflow: auto;
+  background: var(--surface-2, rgba(127, 127, 127, 0.1));
+  border-radius: 4px;
+}
+.mt-tool-diff-inline .dv-table {
+  font-size: 11px;
+}
+
+/* The full plan Markdown, expanded under the card when there is no pane to open it in. */
+.mt-plan-body {
+  margin-top: 6px;
+  padding: 8px 10px;
+  max-height: 420px;
+  overflow: auto;
+  background: var(--surface-2, rgba(127, 127, 127, 0.1));
+  border-radius: 4px;
+}
+
 /* Chain-of-thought disclosure (codex/opencode reasoning), styled like the compaction
    summary: a faint collapsed row that expands to the reasoning Markdown. */
 .mirror-thinking {
@@ -2472,22 +2495,10 @@ button.mt-bash-toggle:hover {
     width: 24px;
   }
 }
-.view-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  /* Equalize head heights across pane types: the mirror/terminal heads are sized
-     by the ターミナル⇄チャット seg control (~23px content), but the chat head has
-     only text chips and would render ~4px shorter. 36px = 23px content + 12px
-     vertical padding + 1px border-bottom (border-box). */
-  min-height: 36px;
-  /* right padding reserves room for the pane control cluster overlaid at the top-right
-     (sized from the rendered button count — --pane-ctl-w, panes.css); left padding
-     reserves room for the drag grip overlaid at the top-left, just left of the badge. */
-  padding: 6px var(--pane-ctl-w, 56px) 6px 34px;
-  background: var(--bar);
-  border-bottom: 1px solid var(--border);
-}
+/* The `.view-head` band moved to ui/ui.css (ui/ViewHead.tsx). Its min-height of
+   36px — 23px seg-control content + 12px padding + 1px border — is what keeps
+   the chat head from rendering ~4px shorter than the mirror head, and it lives
+   with the rest of the band now. */
 
 .managed-settings-btn {
   margin-left: auto;

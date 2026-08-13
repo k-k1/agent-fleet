@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import type { CSSProperties, KeyboardEvent, ClipboardEvent, ReactNode } from "react";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import { Icon } from "../../ui/Icon.tsx";
+import { ViewHead } from "../../ui/ViewHead.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
 import { openSessionChatSplit } from "../sessions/open.ts";
 import { openChatSplit } from "./open.ts";
@@ -1196,7 +1197,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
         ...(asstAccent ? { "--chat-accent": asstAccent } : {}),
       } as CSSProperties}
     >
-      <header className="view-head fileinfo">
+      <ViewHead className="fileinfo" actions={headerActions}>
         <span className="fi-name">
           <Icon name={draftAsst?.icon || "comment-discussion"} /> {title}
         </span>
@@ -1277,8 +1278,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
             <Icon name="checklist" /> {tr("chat.plan.title")}
           </button>
         )}
-        {headerActions && <span className="view-head-actions">{headerActions}</span>}
-      </header>
+      </ViewHead>
       {planOpen && conversationId && (
         <ChatPlan
           conversationId={conversationId}

@@ -1,13 +1,13 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { Section } from "../../ui/Section.tsx";
-import { Icon } from "../../ui/Icon.tsx";
 import { Button, IconButton } from "../../ui/Button.tsx";
 import { Modal } from "../../ui/Modal.tsx";
 import { api } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
-import { openSharedSession } from "./open.ts";
-import { startSharedSessionsPolling, useSharedSessionsStore } from "./store.ts";
-import { ShareManagerModal } from "./ShareManagerModal.tsx";
+import { startSharedSessionsPolling, startMySharesPolling, useMySharesStore, useSharedSessionsStore } from "./store.ts";
+import { ShareListModal } from "./ShareListModal.tsx";
+import { SharedProjectNode } from "./SharedProjectNode.tsx";
+import { groupedSharedSessions } from "./sharedProject.ts";
 import "./sharing.css";
 
 interface Proposal {
@@ -20,31 +20,32 @@ interface Proposal {
   expiresAt: string;
 }
 
-export function SharedSessionsSection() {
+export const SharedSessionsSection = memo(function SharedSessionsSection() {
   const tr = useT();
   const sessions = useSharedSessionsStore((s) => s.sessions);
+  const ownedShares = useMySharesStore((s) => s.shares.length);
   const [proposals, setProposals] = useState<Proposal[]>([]);
-  const [ownedShares, setOwnedShares] = useState(0);
   const [open, setOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
   const loadProposals = () => api("api/session-share-proposals").then((d) => {
     if (!d?.error) setProposals((d.proposals || []).filter((p: Proposal) => p.status === "pending" || p.status === "processing"));
   }).catch(() => {});
-  const loadOwned = () => api("api/session-shares").then((d) => {
-    if (!d?.error) setOwnedShares(Array.isArray(d.shares) ? d.shares.length : 0);
-  }).catch(() => {});
   useEffect(() => {
     const stop = startSharedSessionsPolling();
+    const stopMine = startMySharesPolling();
     void loadProposals();
-    void loadOwned();
     const timer = window.setInterval(() => void loadProposals(), 5000);
-    return () => { stop(); window.clearInterval(timer); };
+    return () => { stop(); stopMine(); window.clearInterval(timer); };
   }, []);
 
   const decide = async (id: string, decision: "approve" | "reject") => {
     await api(`api/session-share-proposals/${encodeURIComponent(id)}/${decision}`, { method: "POST" });
     await loadProposals();
   };
+  // 複数の相手から共有を受けている場合だけ owner 見出しを出す(通常の1人だけの
+  // ケースでは冗長な階層を増やさない)。
+  const groups = useMemo(() => groupedSharedSessions(sessions), [sessions]);
+  const showOwner = useMemo(() => new Set(sessions.map((s) => s.ownerUserKey)).size > 1, [sessions]);
 
   if (sessions.length === 0 && proposals.length === 0 && ownedShares === 0) return null;
   return (
@@ -52,20 +53,10 @@ export function SharedSessionsSection() {
       <Section id="shared-sessions" title={tr("share.shared_sessions")} icon="broadcast" count={sessions.length}
         actions={<>
           {proposals.length > 0 && <IconButton icon="mail" label={tr("share.pending", { count: proposals.length })} onClick={() => setOpen(true)} />}
-          <IconButton icon="settings-gear" label={tr("share.manage_title")} onClick={() => setManageOpen(true)} />
+          <IconButton icon="settings-gear" label={tr("share.list_title")} onClick={() => setManageOpen(true)} />
         </>}>
-        <ul className="sess-list">
-          {sessions.map((s) => (
-            <li key={s.id}>
-              <button className="shared-rail-row" type="button" title={`${s.ownerUserKey} · ${s.repo || s.name}`}
-                onClick={(e) => openSharedSession(s.id, e.ctrlKey || e.metaKey)}>
-                <Icon name="comment-discussion" />
-                <span className="name">{s.title || s.label || s.name}</span>
-                <small>{s.ownerUserKey} · {s.permission.toUpperCase()}</small>
-                {s.workspaceState !== "running" && <Icon name="debug-pause" title={tr("share.owner_stopped")} />}
-              </button>
-            </li>
-          ))}
+        <ul className="proj-tree sess-list">
+          {groups.map((g) => <SharedProjectNode key={`${g.ownerUserKey}:${g.copies[0].workingCopyId}`} group={g} showOwner={showOwner} />)}
         </ul>
       </Section>
       {open && (
@@ -85,7 +76,7 @@ export function SharedSessionsSection() {
           </div>
         </Modal>
       )}
-      {manageOpen && <ShareManagerModal onClose={() => { setManageOpen(false); void loadOwned(); }} />}
+      {manageOpen && <ShareListModal onClose={() => setManageOpen(false)} />}
     </>
   );
-}
+});

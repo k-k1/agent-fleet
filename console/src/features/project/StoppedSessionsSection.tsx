@@ -2,6 +2,7 @@
 // Plane, but repo metadata and mutating session operations require the Agent.
 // Show every session as one history list instead of misclassifying all of them
 // as "その他" merely because the repo endpoint is unavailable.
+import { memo } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
 import { activePane } from "../../layout/ops.ts";
@@ -11,7 +12,7 @@ import { SessionRow } from "../sessions/SessionRow.tsx";
 import { useActiveWorkingSet, sessionInSet } from "../../lib/workingSetsStore.ts";
 import { useT } from "../../lib/i18n/index.ts";
 
-export function StoppedSessionsSection() {
+export const StoppedSessionsSection = memo(function StoppedSessionsSection() {
   const tr = useT();
   const sessions = useSessionsStore((s) => s.sessions);
   const layout = useLayoutStore((s) => s.layout);
@@ -42,4 +43,4 @@ export function StoppedSessionsSection() {
       </ul>
     </Section>
   );
-}
+});

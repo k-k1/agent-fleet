@@ -5,7 +5,7 @@
 // (すべて when unscoped); the menu switches groups, the modal manages them.
 // Assignment lives on the rows themselves (repo / conversation / session menus).
 import { createPortal } from "react-dom";
-import { useLayoutEffect, useRef, useState } from "react";
+import { memo, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "../ui/Icon.tsx";
 import { Modal } from "../ui/Modal.tsx";
 import { Button, IconButton } from "../ui/Button.tsx";
@@ -25,7 +25,7 @@ import {
 } from "../lib/workingSetsStore.ts";
 import type { WorkingSet } from "../lib/workingSetsStore.ts";
 
-export function WorkingSetBar() {
+export const WorkingSetBar = memo(function WorkingSetBar() {
   const tr = useT();
   const settings = useSettings();
   const sets = workingSetList(settings);
@@ -99,7 +99,7 @@ export function WorkingSetBar() {
       {manageOpen && <WorkingSetManageModal onClose={() => setManageOpen(false)} />}
     </div>
   );
-}
+});
 
 // Manage modal: create / rename (inline, commit on blur or Enter) / delete.
 // Deleting removes only the group definition — members are never touched
