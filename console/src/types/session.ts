@@ -91,8 +91,9 @@ export interface ProviderConn {
   // false 明示のときだけ OFF — 未設定（旧接続）は ON 扱い。
   notify?: boolean;
   // opencode: 選択中の課金経路（docs/54）。"free" は認証ゼロで起動できる枠なので、
-  // 起動ゲートはこれを見て未接続でも opencode を許す。
-  usage?: "free" | "go" | "zen";
+  // 起動ゲートはこれを見て未接続でも opencode を許す。"off" は逆に、鍵や OAuth が
+  // あっても起動ゲートを閉じる明示的な無効化（connected は false になる）。
+  usage?: "off" | "free" | "go" | "zen";
   // opencode: APIキー（envs）と併存する opencode アカウント接続（docs/54）。
   oauth?: boolean; // Console アカウントで接続済みか
   oauth_label?: string; // 接続先の組織名（opencode が返すラベル）

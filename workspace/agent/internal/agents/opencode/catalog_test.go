@@ -124,10 +124,21 @@ func TestCatalogPrefMigratesLegacyValues(t *testing.T) {
 		UsageFree:  UsageFree,
 		UsageGo:    UsageGo,
 		UsageZen:   UsageZen,
+		UsageOff:   UsageOff,
 	} {
 		if got := CatalogPref(v); got != want {
 			t.Errorf("CatalogPref(%q) = %q, want %q", v, got, want)
 		}
+	}
+}
+
+// off は「一切使わない」の明示的な宣言なので、Catalog の空ピッカー救済（本来
+// 起動不能を避けるための Zen フォールバック）の対象外 — 空のままが正しい。他社
+// プロバイダの id（opencode.ai 経由でない）も含め、何も出さない。
+func TestCatalogOffStaysEmpty(t *testing.T) {
+	ids := []string{"opencode/deepseek-v4-pro", "opencode-go/glm-5.2", "anthropic/claude-opus-5"}
+	if got := Catalog(ids, UsageOff); len(got) != 0 {
+		t.Errorf("off = %+v, want 空", got)
 	}
 }
 
