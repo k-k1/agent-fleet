@@ -126,10 +126,12 @@ func main() {
 	// Wire claude's statusLine to us so we capture its rate_limits (5h/weekly usage)
 	// locally for the WsBar chip. Wraps a user's own statusLine rather than clobbering.
 	claude.EnsureStatusLine()
-	// Apply the durable codex/opencode rtk prefs to their artifacts (the entrypoint
-	// reseeded the base AGENTS.md / status plugin just before us). claude's rtk is
-	// handled separately via its settings.json hook.
-	reconcileAgentRTK()
+	// Compose the instruction files every session reads: the baked fleet guide, the
+	// user's own instructions (docs/60) and the rtk block — in that order, through one
+	// writer. This replaces the entrypoint's old `cp -f` of workspace-notes.md, which
+	// destroyed anything the user had added to those files on every container start.
+	// Sessions are started by us, so nothing can read a half-composed file.
+	reconcileAgentInstructions()
 	// Mint this boot's name for af's own MCP server, BEFORE anything materializes a
 	// config. A repository's project-scoped MCP config beats af's user-scope one on
 	// every kind but claude (docs/48 §8.4), so a repo that happens to define a server

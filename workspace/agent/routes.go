@@ -239,6 +239,10 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("PUT /agents/rtk", handleAgentRTKPut)
 	// rtk token-savings history (rtk gain) for the WsBar "rtk 効果" chip.
 	mux.HandleFunc("GET /agents/rtk/gain", handleAgentRTKGain)
+	// ユーザー指示（docs/60）— フリート方針とプロジェクト指示の間の層。
+	mux.HandleFunc("GET /user-notes", handleUserNotesGet)
+	mux.HandleFunc("PUT /user-notes", handleUserNotesPut)
+	mux.HandleFunc("GET /user-notes/preview", handleUserNotesPreview)
 	// Live model catalogs (codex: `codex debug models` / opencode: `opencode models`)
 	// for the Console's launch model picker.
 	mux.HandleFunc("GET /agents/{kind}/models", handleAgentModels)
