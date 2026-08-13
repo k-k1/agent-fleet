@@ -82,6 +82,35 @@ in the Console.
 > For now, understand that you can operate up to the "observe and grow the allowlist" stage.
 > The full design picture is in [dev/07 §7.8](../../dev/07-security.md).
 
+## MCP servers and external connections
+
+Users register **their own MCP servers** under ⚙ Settings → MCP servers, and a tenant admin can
+**distribute one to every member** ([admin/04](../admin/04-mcp-egress.md)). Four things matter to
+an operator.
+
+- **Where secrets live.** Environment variable and header values are stored with envelope
+  encryption and handed over only when the server starts; nothing is left in a config file in the
+  clear.
+- **Only remote (HTTP) can be distributed.** Distributing stdio would be equivalent to an admin
+  running an arbitrary command in everybody's container, so it is forbidden by design (a personal
+  registration may still use stdio).
+- **It is coupled to egress.** A registration does nothing if its destination host is not on the
+  allowlist. A user's request for one arrives in the Admin egress tab as "Proposed (needs
+  approval)" — see the procedure above.
+- **There is an inbound door too.** A user can issue an **MCP token** and drive their workspace
+  from Claude Code / Claude Desktop on their own machine. The endpoint is `/mcp` (Bearer auth);
+  on the deployment side it depends on the feature flag (`AF_MCP_ENABLED`) and on whether the
+  ingress passes `/mcp`. The scope (read / write / admin:dangerous) and the expiry are the user's
+  choice, and they can revoke it themselves.
+
+## Handing over the in-workspace browser
+
+An agent can hand a page from the Chromium it started inside the workspace to the user as a
+Console pane (so a human can perform a login, say). Remote debugging is exposed on **loopback
+only**, an attachment starts in **view-only** (it rejects every input from the user) and must be
+explicitly moved to user-control before they can operate it. Not putting CDP endpoints or cookies
+into answers, logs or commits is part of the agent-side instructions as well.
+
 ## Other operational controls
 
 - **The login allowlist is fail-closed.** If all 3 of the `AF_OAUTH_ALLOWED_*` variables are
@@ -91,6 +120,14 @@ in the Console.
   off by default, and **raw terminal streams are never stored, due to the risk of secrets
   leaking into them**). super_admins / tenant_admins view it from the Audit tab of the Admin
   panel. The admin volume covers how to read it operationally.
+- **Some vendor features are deliberately left disabled.** Claude Code's own cross-session
+  messaging (`/list-agents` / `SendMessage`) is one: **enabling it also brings back Claude's
+  usage telemetry**, so it stays off as a self-hosted default. The same capability is provided by
+  Agent Fleet's own implementation instead (Settings > Agents > session-to-session messaging,
+  **off by default**), where delivery and attribution are under your control — messages stay
+  within one workspace, and the receiving side is told explicitly that it is not an instruction
+  from the user. When a user reports that "`/list-agents` doesn't work", it is this decision, not
+  a fault.
 - **Designed to keep secrets out of logs.** The CP neither holds nor interprets credential
   plaintext, and does not emit it into logs. The unified cred helper decrypts on demand and
   hands it over, so no plaintext files are ever created

@@ -16,7 +16,7 @@ This guide is the authoritative source for the "how to" of operating the product
 |-----------|----------|---------------------|
 | A developer writing code in the Console every day | **[member/](member/README.md)** | Login through sessions, git, files, agents, chat, and troubleshooting |
 | Someone who skips the terminal — mostly chat and progress checks | **[lite.md](lite.md)** | The minimal guide for using Agent Fleet without touching the black screen |
-| Someone managing the team's members, limits, and audits | **[admin/](admin/README.md)** | Adding members, resource limits, audit logs, usage |
+| Someone managing the team's members, limits, and audits | **[admin/](admin/README.md)** | Adding members, resource limits, audit logs, usage, distributing shared MCP servers |
 | IT / SRE handling deployment, backups, and incident response | **[operator/](operator/README.md)** | Setup, operations, security, troubleshooting |
 
 You may fall into more than one (e.g. a team lead who also develops is member + admin). The

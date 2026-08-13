@@ -28,6 +28,7 @@ whenever you want to know how things work.
 | Get an overview of running sessions across the tenant | Sessions | [02-limits.md](02-limits.md) |
 | See who changed what (audit log) | Audit | [03-audit-usage.md](03-audit-usage.md) |
 | View usage (running time) and export it as CSV | Usage | [03-audit-usage.md](03-audit-usage.md) |
+| Distribute a shared MCP server to the whole team | MCP | [04-mcp-egress.md](04-mcp-egress.md) |
 
 ## How to enter the admin screen
 
@@ -40,7 +41,7 @@ that is something else. Managing the team is done from "Admin".
 
 ## Layout of the admin screen
 
-The admin screen is divided into 5 sections by the tabs at the top.
+The admin screen is divided into 7 sections by the tabs at the top.
 
 - **Tenants** — the member list, with a drill-down into each member's detail (resources, sessions,
   operations). This is the section you will use most day to day. → [01-members.md](01-members.md) / [02-limits.md](02-limits.md)
@@ -49,7 +50,11 @@ The admin screen is divided into 5 sections by the tabs at the top.
 - **Audit** — search the record of change operations (who, when, what). → [03-audit-usage.md](03-audit-usage.md)
 - **Egress** — control of external traffic (egress). This is super_admin only. If you, as a
   tenant_admin, open it, you'll see "You don't have permission". When egress controls become
-  necessary, go to your IT department.
+  necessary, go to your IT department. → [04-mcp-egress.md](04-mcp-egress.md)
+- **MCP** — distribute a shared MCP server to every member of the tenant. This one is yours to
+  operate. → [04-mcp-egress.md](04-mcp-egress.md)
+- **Speech** — start/stop the VOICEVOX engine and hold the tenant-wide pronunciation
+  dictionary. super_admin only. → [04-mcp-egress.md](04-mcp-egress.md)
 
 In every section, the option to switch tenants **appears only for super_admin**. You always see
 only your own tenant.
@@ -63,7 +68,8 @@ divided like this.
 |------|------|
 | Adding members, session limits, force-stopping workspaces, reviewing audit and usage | **You (tenant_admin)** |
 | Creating new tenants, setting tenant-wide resource limits and idle auto-stop, granting admin rights, cleaning home | Deployment-wide administrator (super_admin) |
-| Egress (external traffic) controls | super_admin |
+| Distributing a shared MCP server to the team | **You (tenant_admin)** |
+| Egress (external traffic) controls, the speech engine and the shared dictionary | super_admin |
 | Switching the join mode (auto-join ⇄ invite-only), deployment-wide environment settings, backups, upgrades, host incident response | IT / SRE (operator) |
 
 super_admin and IT are often the same person, and from your point of view both are "someone
@@ -95,5 +101,5 @@ state on the "Sessions" tab; at month end, export running time from "Usage".
 
 ---
 
-- Read next: [01 Member management](01-members.md) → [02 Resource limits and sessions](02-limits.md) → [03 Audit and usage](03-audit-usage.md)
+- Read next: [01 Member management](01-members.md) → [02 Resource limits and sessions](02-limits.md) → [03 Audit and usage](03-audit-usage.md) → [04 MCP distribution and egress](04-mcp-egress.md)
 - Guide index: [../README.md](../README.md)

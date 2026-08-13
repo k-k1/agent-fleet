@@ -54,6 +54,7 @@ to understand all of it. **All you need to remember is the following list on the
 - **Memo queue** — the list of request memos you've collected. It shows a count badge.
 - **Files (the repository tree)** — where the dev team's documents and slides live.
 - **Sessions** — the list of development AI work. Status badges (colored marks) show progress at a glance.
+- **Shared sessions** — work a developer has shown you. It doesn't appear when nothing is shared (chapter 7).
 
 It also works on a narrow smartphone screen. In that case the left-side list starts out
 collapsed; press the three-line (menu) button near the top to open it. It closes automatically
@@ -96,8 +97,9 @@ From "**Assistants**" on the left, choose "**+ New chat**" and a conversation wi
 Just write in the input field at the bottom and send. It's good at requests like "translate
 this", "summarize this", "make this text easier to read".
 
-- Send as described in the input field (**Enter to send / Shift+Enter for newline**; Ctrl+Enter
-  in some environments). You can also paste in an image and ask "what is this?".
+- By default you send with **Ctrl+Enter (⌘+Enter on a Mac)**; Enter inserts a newline. If you
+  would rather send with Enter alone, switch the **send key** in ⚙ Settings → Keys. You can also
+  paste in an image and ask "what is this?".
 - While the conversation is still empty, it says "**Send a message to start the conversation.**"
   The very first time you open it, it says "**No chats yet. Start one from +.**"
 - Even with no configuration at all, several **assistants (AI personalities/roles)** come ready
@@ -197,6 +199,19 @@ to follow that work's **conversation** in a readable form (formatted turn by tur
 is the black screen for developers, so looking at "Chat" alone is enough for you. While you're
 watching, it shows "**Viewing history (resume to type)**" — you're essentially in read-only mode.
 
+### Reading work that was shared with you
+
+When a developer **shares** something with you ("keep an eye on how this goes"), it appears under
+**Shared sessions** on the left. Click it and you can read that conversation **read-only**. It
+opens independently of your own workspace, so you don't need to have any repository.
+
+- Only with the **may-propose** permission can you **propose** something to send from the field
+  below. A proposal reaches the AI **only after the owner (the developer who shared it) approves
+  it** — nothing starts moving on its own.
+- **While the owner's workspace is stopped**, the history can't be read. It says so; ask the
+  developer to start it.
+- If the list looks out of date, press **"Refresh"**.
+
 ### An important ground rule
 
 When the AI is **waiting for someone's reply** — as in "Question" or "Awaiting permission" —
@@ -211,9 +226,12 @@ can send the work off in a direction the developer never intended.
 
 ### First moves when something goes wrong
 
-1. First, try **reloading** the page (browser refresh).
-2. If you haven't pressed "Start workspace", most features won't work. Check that it's started.
-3. If it still doesn't work, don't push through — **ask your administrator**. Login, connections,
+1. **If items disappeared from the left**, check that the button at the very top of the left pane
+   still says **"All"**. When it shows another name (a working set), only that group is listed —
+   nothing was deleted.
+2. Try **reloading** the page (browser refresh).
+3. If you haven't pressed "Start workspace", most features won't work. Check that it's started.
+4. If it still doesn't work, don't push through — **ask your administrator**. Login, connections,
    and permissions are the administrator's territory.
 
 ### FAQ

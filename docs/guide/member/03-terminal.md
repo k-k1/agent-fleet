@@ -57,8 +57,16 @@ forward while keeping an eye on another.
 - **Open in a new pane** — **Ctrl+click** (or **middle-click**) a session, repository, or file item to open it **in a new pane** without replacing the current one. The assistant's right-click menu also has "Open in a new pane". For per-item differences, see [Icons, badges, and menus](badges-and-menus.md).
 - **Rearrange** — drag the handle at the top of a pane to swap it with another pane. Drag the borders to change width and height too.
 - **Close** — the pane's close button (middle-click / Ctrl+click closes it directly without confirmation).
+- **Pop out into another tab** — the pop-out button at the top right of a pane **moves that pane into a browser tab of its own** (it leaves the original screen). The popped-out tab gets a slim title bar, and **"Expand to full Console"** turns it into the normal Console. Some panes cannot be popped out. Good for parking one session on a second monitor.
 
-On desktop you can arrange up to 4 columns × 2 rows. On phones it's 1 column, up to 2 panes.
+**There are two ways to arrange them**, switched in ⚙ Settings → Display → **main area layout**.
+
+- **Split panes** (default) — arranged side by side, with draggable dividers for size.
+- **Tabbed grid** — each cell switches by tab, so a lot of open items fit without adding cells.
+
+The setting is stored **on this device only**, and the two layouts remember their arrangements
+separately, so moving between them disturbs neither. On desktop you can arrange up to 4 columns
+× 2 rows. On phones it's 1 column, up to 2 panes.
 
 Each pane's content is independent. For claude / codex / cursor / copilot / kiro / agy / opencode running as Terminal (CLI),
 the **Chat ⇄ Terminal** toggle at the top switches between the conversation's Markdown view and
