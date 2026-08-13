@@ -1,6 +1,7 @@
 # 60. ユーザー指示 — フリート方針とプロジェクト指示の間の「その人の層」
 
-> 状態: **設計確定・未実装。P0 の実測は完了**（2026-08-13。実測は §60.3 / §60.4 / §60.17。残る実測は kiro のみ）
+> 状態: **P0 実装済み**（2026-08-13。claude / codex / opencode / copilot ＋ Console 設定タブ。
+> 実測は §60.3 / §60.4 / §60.17。残: P1 agy・kiro / P2 フリート層の穴埋め）
 > 意思決定: [decisions/0042](decisions/0042-user-instructions.md)
 > 関連: [57-project-tools.md](57-project-tools.md)（配布軸 / 管理軸の区分・本件は**配布軸**） /
 > [48-mcp-registry.md](48-mcp-registry.md) §8.2（配布軸の書き込み規約） /
@@ -84,18 +85,23 @@ agy 1.1.12 / kiro 2.16.0 / cursor 2026.08.11-e8db854。実測手順は §60.17�
 | claude | `$CLAUDE_CONFIG_DIR/CLAUDE.md`（user memory）を **AF が単独所有**。既定では存在しないファイルなので合成不要 | いいえ | ✅ 実測（カナリア） |
 | codex | `$CODEX_HOME/AGENTS.md` に**マーカー合成**。**これが唯一の手**（追加指示ファイルを指す設定キーは 0.147.0 に無い） | はい（合成） | ✅ 実測（`codex debug prompt-input`） |
 | opencode | `~/.config/opencode/opencode.json` の **`instructions` 配列に AF 専用ファイルを 1 本足す**。`AGENTS.md` には触らない | 設定 1 キーのみ | ✅ 実測（行動カナリア） |
-| copilot | **`COPILOT_CUSTOM_INSTRUCTIONS_DIRS` に AF 専用ディレクトリを渡す**（env）。ファイルを 1 つも所有しない | いいえ | ✅ 実測（行動カナリア） |
+| copilot | **`$COPILOT_HOME/instructions/agent-fleet-user.instructions.md`**（AF 専用の名前のファイル 1 本） | AF 専用ファイル | ✅ 実測（行動カナリア） |
 | agy | `~/.gemini/AGENTS.md` に**マーカー合成**（rtk が既に使用中） | はい（合成） | [32](32-agy-agent-kind.md) Track A 実測 |
 | kiro | steering（`.kiro/steering`）。**global 版の有無は未確認** | 未定 | ◐ P1 で実測 |
 | cursor | **ローカルのユーザー層は存在しない＝未対応**。User Rules はサーバー側（`aiserver.v1.UserRules` protobuf）で、ローカルの rules 収集（`.cursor/rules/**/*.mdc` / `AGENTS.md` / `CLAUDE.md` / `CLAUDE.local.md` / `.cursorrules`）は全て **rootDirectory（プロジェクト）基準** | — | ✅ 静的実測・**対応不可で確定** |
 
-copilot の user スコープは実測で 3 経路あり、うち env を採る:
+copilot の user スコープは実測で 3 経路とも効いた。採るのは**ディレクトリ内の専用ファイル**:
 
 ```
-$COPILOT_HOME/copilot-instructions.md                  … 効く（実測）。利用者のファイルなので所有したくない
-$COPILOT_HOME/instructions/**/*.instructions.md        … 同上
-COPILOT_CUSTOM_INSTRUCTIONS_DIRS=<dir>                 … 効く（実測）。★AF 専用ディレクトリを渡せる
+$COPILOT_HOME/copilot-instructions.md                  … 効く。ただし利用者のファイルなので所有しない
+$COPILOT_HOME/instructions/**/*.instructions.md        … 効く。★AF 専用の名前で 1 本置く（採用）
+COPILOT_CUSTOM_INSTRUCTIONS_DIRS=<dir>                 … 効く。ファイルを一切持たずに済むが不採用
 ```
+
+env を採らなかった理由: 効かせるには tmux 起動 / managed ACP ドライバ / 利用者が手で叩く
+`copilot` の**3 経路すべて**に export を配る必要があり、1 つ漏れると「そのセッションだけ
+効かない」という画面から見えない穴になる。ファイルならどの起動経路でも同じように読まれる。
+$COPILOT_HOME 配下に AF 専用ファイルを持つのは rtk（`hooks/rtk.json`）で既に踏んでいる前例。
 
 opencode のバイナリから読み取れた収集規則（1.18.18）:
 
@@ -185,11 +191,11 @@ $CLAUDE_CONFIG_DIR/CLAUDE.md                     ← claude は所定位置に�
 
 | kind | 手段 | 備考 |
 |---|---|---|
-| claude | `$CLAUDE_CONFIG_DIR/CLAUDE.md` を生成/削除 | managed policy には触らない（root 所有） |
-| opencode | `opencode.json` の `instructions` に AF のパスを 1 本追加（既に entrypoint が permission キーを書いている同じファイル） | `AGENTS.md` は触らない |
-| copilot | セッション起動 env に `COPILOT_CUSTOM_INSTRUCTIONS_DIRS` を渡す＋entrypoint でも export | ファイル非所有。**手打ちの `copilot` にも効かせるため export が要る** |
+| claude | `$CLAUDE_CONFIG_DIR/CLAUDE.md` の `user-notes` ブロック | managed policy には触らない（root 所有） |
+| opencode | AF 専用ファイル＋`opencode.json` の `instructions` に 1 本追加 | `AGENTS.md` にはフリート方針だけ |
+| copilot | `$COPILOT_HOME/instructions/agent-fleet-user.instructions.md` | AF 専用の名前なので丸ごと書き/消しできる |
 | codex | `$CODEX_HOME/AGENTS.md` を合成 | 参照手段が無い（0.147.0） |
-| agy | `~/.gemini/AGENTS.md` を合成 | 同上 |
+| agy | `~/.gemini/AGENTS.md` を合成（P1） | 同上 |
 
 合成する 2 kind のファイル構成:
 
@@ -200,10 +206,15 @@ $CLAUDE_CONFIG_DIR/CLAUDE.md                     ← claude は所定位置に�
                       + （マーカー外に利用者が書いた部分があれば温存）
 ```
 
-- entrypoint は**基底の配置だけ**を続け（`cp -f` はマーカー合成に置換）、ユーザーブロックの適用は
-  **必ず agent 側**で行う。entrypoint に持たせると、コンテナ生存中の Console 編集が反映されない。
-- `stripMarkedBlock` は `codex/rtk.go` と `agy/rtk.go` に既に**重複**している。3 つ目を作る前に
-  `workspace/agent/internal/mdblock` へ括り出す。
+- **entrypoint はフリート方針を配らない**（`cp -f` は削除した）。配置も合成も agent 側の
+  `reconcileAgentInstructions()` が持つ ＝ 1 実装・1 書き手。entrypoint に残すと、
+  シェルでマーカー合成を再実装することになり（＝ドリフトする 2 つ目の実装）、
+  コンテナ生存中の Console 編集も反映されない。セッションを起こすのは agent 自身なので、
+  合成前のファイルを読むセッションは存在しない。
+- マーカー操作は `workspace/agent/internal/mdblock`（`codex/rtk.go`・`agy/rtk.go` の重複を
+  括り出したもの）。**移行**もここが持つ: `cp -f` 時代の生のフリート方針は、その先頭行で
+  識別して 1 度だけ剥がす（`StripLegacyPrefix`）。バイト比較では版が違うと移行できず、
+  それより弱い判定では利用者の文章を巻き込むため、判定は先頭行に限定する。
 - ユーザーブロック（および参照で配る本文）の先頭には、AF が固定文を 1 行入れる（§60.5-4）:
 
 > 以下は利用者個人の方針です。上のワークスペース方針と衝突する場合はワークスペース方針が優先します。
@@ -269,7 +280,7 @@ $CLAUDE_CONFIG_DIR/CLAUDE.md                     ← claude は所定位置に�
 
 | 段階 | 内容 |
 |---|---|
-| **P0** | `mdblock` 括り出し → 配布器（`reconcileAgentInstructions`）→ REST → 設定タブ。対応 kind = **claude / codex / opencode / copilot**（4 種とも実測済み） |
+| **P0** ✅ | `mdblock` 括り出し → 配布器（`reconcileAgentInstructions`）→ REST → 設定タブ。対応 kind = **claude / codex / opencode / copilot**（4 種とも実測済み）。実装は `internal/userinstr`（正本）/ 各 `internal/agents/<kind>/instructions.go`（配り方）/ `agent_instructions.go`（配布器と REST）/ `console/src/features/settings/InstructionsTab.tsx` |
 | **P1** | agy（`~/.gemini/AGENTS.md` 合成）＋ kiro（global steering の有無を実測してから） |
 | **P2** | **フリート層の穴埋め**: agy / copilot / kiro にも `workspace-notes.md` を配る（実害②）。同じ配布器に 1 行。cursor はプロジェクト層しか無いので対象外 |
 | **P3** | 版管理/移送（[39](39-agent-memory-management.md) のルート宣言へ相乗りできるか判断） |
