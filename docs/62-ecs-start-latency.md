@@ -1,8 +1,8 @@
 # 62. ECS の Workspace 起動レイテンシ — SOCI 遅延ロードの採否
 
-> 状態: **調査のみ・実装なし**（2026-08-14）。結論は **条件付き採用**＝「~100s の内訳を実測してから
-> SOCI（Seekable OCI）遅延ロードへ進む」。計測（§62.7 P0）と 504 の解消（§62.7 P0.5）は
-> SOCI の採否と独立に先行してよい。
+> 状態: 調査（2026-08-14）＋ **P0.5 実装済**（504 の解消・§62.5.1）。SOCI 本体は **条件付き採用**＝
+> 「~100s の内訳を実測してから SOCI（Seekable OCI）遅延ロードへ進む」で、**P0 / P1 は未着手**。
+> 計測（§62.7 P0）と 504 の解消（§62.7 P0.5）は SOCI の採否と独立。
 > 意思決定: **ADR は未起票**（§62.7 P1 に進む決定をした時点で 0044 として起こす）
 > 関連: [dev/09-deploy.md §9.5](dev/09-deploy.md)（aws ターゲットの縮約） /
 > [deploy/aws/ecs/README.md](../deploy/aws/ecs/README.md)（ランブック・"Known behavior: first Start may 504"） /
@@ -152,10 +152,45 @@ skopeo copy --all oci-archive:ws-soci.tar docker://$ECR_HOST/af-workspace:$VERSI
   ために常時 EC2 を置くなら [ec2-single](../deploy/aws/ec2-single/) を使えばよい。選択肢は既に repo 内にある。
 - **(b) は SOCI と排他ではなく、むしろ SOCI の効果を削る**（縮めた先が 250MiB 閾値に近づく）。
   ECS の本番運用実績が出て EFS コストが読めるまで保留。
-- **(c) にはまだ塞げる穴が 1 つ残っている**（SOCI の採否と独立に効く）: `Start` が `waitReady` で
+- **(c) にはまだ塞げる穴が 1 つ残っている**（SOCI の採否と独立に効く。以下は実装前の記述）:
+  `Start` が `waitReady` で
   最大 90s ブロックし（`AF_ECS_START_TIMEOUT_SEC` 既定 90）、`30-ingress.yaml` の ALB は
   `idle_timeout` 未設定＝**60s 既定**。**この 90 > 60 が 504 の直接原因**。Start を即時 return にして
-  収束を `State()` に委ねるのが筋（ALB の idle を上げるのは対症療法）。
+  収束を `State()` に委ねるのが筋（ALB の idle を上げるのは対症療法）。→ **§62.5.1 で実装済**。
+
+### 62.5.1 P0.5 の実装（504 の解消・2026-08-14）
+
+**`Start` は `desiredCount 1` まででリターンし、healthz 待ちは背景ゴルーチン
+（`runtime_ecs.go` の `watchReady`）へ出した。** 選択肢は「45s へ切り詰めて同期待ちを残す」か
+「即時 return」の二択だったが、**後者しか意味を持たない**ことが読解で確定した:
+
+- **同期待ちが成功する経路が存在しない。** `Start` は `running` と `starting` を手前で早期 return
+  するので、`waitReady` に到達した時点で必ず**タスクをゼロから起動している**。Fargate はタスク間に
+  イメージキャッシュを持たない（§62.1）から、そこから healthz までは常にフル pull ＋ entrypoint。
+  旧コメントが待っていた「ウォームなイメージの通常ケース」は**この runtime には最初から無い**
+  ——90s 待って必ずタイムアウトし、どのみち `nil` を返していた。45s に切り詰めるのは
+  「無駄な待ちを 45s 残す」だけになる。
+- **`starting` の意味は変わらない。** 収束を `State()` に委ねるのは `runtime.go` の Runtime 契約
+  （「`starting` = launch が収束中。呼び出し側は再 Start もアイドル停止もしない」）そのままで、
+  ECS 専用に例外を足していない。docker アダプタとの差（あちらは healthz 失敗で `Start` がエラー）は
+  **元からある**もので、今回広がってはいない（ECS は P3-7 段5 finding A 以来 non-fatal）。
+- **呼び出し側は既に耐えている。** Console の `start()` は **Start 応答の `state` を読んでおらず**、
+  4s の `GET /api/workspace` ポーリングで cold start を `稼働中` まで歩かせる
+  （`console/src/core/store/workspace.ts`・ゲートウェイタイムアウトで abort しても固着しない設計）。
+  scheduler の wake も `ensureWorkspaceStarted` の後に自前の寛容な `awaitAgentReady` を持つ。
+  → **Console 側の変更は不要**。
+- **`AF_ECS_START_TIMEOUT_SEC` の意味が変わった**（既定 **90s → 300s**）。誰も待たない背景ポーリングの
+  予算になったので、ALB idle より短くする理由が消え、逆に ~100s の収束より短いと毎回 false な
+  「not ready」ログを出す。native アダプタの 300s と同じ理屈。
+- 残した価値は**ログ 1 行**（`Agent healthy <n>s after Start`）。AWS 側のトレース無しで
+  「Start から Agent 応答まで何秒か」をワークスペース単位で残せる＝ **P0 の計測の足しになる**。
+- ついでに `30-ingress.yaml` の ALB に `idle_timeout.timeout_seconds: 60` を**明示**した
+  （AWS 既定と同値＝挙動は不変）。「暗黙の 60s」が CP の全ハンドラの上限であることを、
+  次に長い処理を書く人が見る場所に書いておくため。**idle を上げる対症療法は採っていない。**
+
+**未検証**: 実 ECS では未確認（Docker も AWS 資格情報も無い開発環境）。検証は Go の単体テスト
+（`runtime_ecs_test.go`: 即時 return / 背景予算 / 呼び出し元 ctx の cancel を跨ぐこと）まで。
+実機では「Start の応答が 60s 未満で `starting` を返す」ことと、上記ログ行の出力を確認すること。
 
 ## 62.6 結論
 
@@ -174,10 +209,12 @@ skopeo copy --all oci-archive:ws-soci.tar docker://$ECR_HOST/af-workspace:$VERSI
 4. **判定ゲート: pull が 100s の 40% 未満なら SOCI は投資対効果が薄い** → (b) か boot-install の
    非同期化へ切り替える。
 
-### P0.5 — 504 の解消（P0 と並行・SOCI と独立）
+### P0.5 — 504 の解消（P0 と並行・SOCI と独立）✅ 実装済
 
-5. `runtime_ecs.go` の `Start` を非同期化（即時 return、収束は `State()` に委ねる）。
-   暫定なら `AF_ECS_START_TIMEOUT_SEC` を ALB idle 未満（45s）に。
+5. ~~`runtime_ecs.go` の `Start` を非同期化（即時 return、収束は `State()` に委ねる）。~~
+   → **§62.5.1**。`watchReady` を背景ゴルーチンへ。暫定案（`AF_ECS_START_TIMEOUT_SEC` を 45s に
+   切り詰めて同期待ちを残す）は**採らなかった**——ECS では同期待ちが成功する経路が無いため。
+   実 ECS では未検証（単体テストまで）。
 
 ### P1 — SOCI 導入（`release-ecr.sh` のみ）
 

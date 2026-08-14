@@ -185,17 +185,93 @@ func TestECSStartCreatesEverything(t *testing.T) {
 func TestECSStartNonFatalWhenAgentNotReady(t *testing.T) {
 	// A large image cold-pull can outlast the readiness budget. Start must still
 	// succeed (service is at desired 1; the workspace converges) rather than flip a
-	// starting workspace to "failed" (P3-7 段5 finding A).
+	// starting workspace to "failed" (P3-7 段5 finding A). The watch is asynchronous
+	// now, so wait for it to actually run before asserting.
 	fe, ff, fs := &fakeECS{}, &fakeEFS{}, &fakeSSM{}
 	rt := newTestECS(fe, ff, fs)
+	watched := make(chan struct{})
 	rt.waitReady = func(context.Context, string, time.Duration) error {
+		close(watched)
 		return fmt.Errorf("agent did not become healthy within 90s")
 	}
 	if err := rt.Start(context.Background()); err != nil {
 		t.Fatalf("Start must not fail on readiness timeout, got %v", err)
 	}
+	select {
+	case <-watched:
+	case <-time.After(5 * time.Second):
+		t.Fatal("readiness watch never ran")
+	}
 	if len(fe.createCalls) != 1 {
 		t.Errorf("service should still be created (desired 1), createCalls=%d", len(fe.createCalls))
+	}
+}
+
+func TestECSStartDoesNotBlockOnReadiness(t *testing.T) {
+	// The 504 fix (docs/62 §62.5): Start runs inside the HTTP request, and the ALB in
+	// front of the CP has a 60s idle timeout, so Start must return as soon as the
+	// service is at desiredCount 1 — never sit on the readiness poll, whose budget is
+	// deliberately longer than any single request may take.
+	fe, ff, fs := &fakeECS{}, &fakeEFS{}, &fakeSSM{}
+	rt := newTestECS(fe, ff, fs)
+	rt.cfg.startTimeout = 5 * time.Minute
+	budgets := make(chan time.Duration, 1)
+	release := make(chan struct{})
+	rt.waitReady = func(_ context.Context, _ string, d time.Duration) error {
+		budgets <- d
+		<-release // a cold pull the poll never sees finish
+		return nil
+	}
+	defer close(release)
+
+	done := make(chan error, 1)
+	go func() { done <- rt.Start(context.Background()) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Start blocked on the readiness wait — this is what returns 504 through the ALB")
+	}
+	select {
+	case d := <-budgets:
+		if d != 5*time.Minute {
+			t.Errorf("readiness watch budget = %s, want the full startTimeout (5m)", d)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("readiness watch never ran")
+	}
+	// Start returning early must not have skipped the launch itself.
+	if len(fe.createCalls) != 1 || aws.ToInt32(fe.createCalls[0].DesiredCount) != 1 {
+		t.Errorf("service not created at desired 1: %+v", fe.createCalls)
+	}
+}
+
+func TestECSStartReadinessWatchOutlivesCallerContext(t *testing.T) {
+	// The watch must survive the caller's context: Start's ctx is the HTTP request's
+	// (and the lifecycle lease's), both of which end the moment the response is
+	// written — a watch attached to it would be canceled before the pull finishes.
+	fe, ff, fs := &fakeECS{}, &fakeEFS{}, &fakeSSM{}
+	rt := newTestECS(fe, ff, fs)
+	seen := make(chan context.Context, 1)
+	rt.waitReady = func(c context.Context, _ string, _ time.Duration) error {
+		seen <- c
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	var watchCtx context.Context
+	select {
+	case watchCtx = <-seen:
+	case <-time.After(5 * time.Second):
+		t.Fatal("readiness watch never ran")
+	}
+	cancel() // the request is answered; the workspace is still pulling
+	if err := watchCtx.Err(); err != nil {
+		t.Errorf("readiness watch context died with the caller: %v", err)
 	}
 }
 

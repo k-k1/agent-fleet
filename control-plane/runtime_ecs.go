@@ -67,7 +67,8 @@ type ecsRuntime struct {
 	// set. registerTaskDef stamps them into the task definition revision.
 	cpu, memory string
 	// waitReady polls the Agent /healthz through Endpoint(); a field so tests can
-	// stub it out (real path hits HTTP, unavailable in unit tests).
+	// stub it out (real path hits HTTP, unavailable in unit tests). Start runs it in
+	// the background (watchReady), never on the caller's thread.
 	waitReady func(ctx context.Context, endpoint string, timeout time.Duration) error
 }
 
@@ -91,7 +92,7 @@ type ecsConfig struct {
 	cpu, memory    string   // Fargate task size (e.g. "1024" / "2048")
 	posixUID       int64    // EFS access-point owner uid/gid (container dev user)
 	posixGID       int64
-	startTimeout   time.Duration // wait budget for RUNNING + healthz on Start
+	startTimeout   time.Duration // budget for the background readiness watch (see watchReady)
 }
 
 // ecsFactory is the `aws` RuntimeFactory. It carries the shared AWS clients and
@@ -155,9 +156,13 @@ func newECSFactory(m *manager) (RuntimeFactory, error) {
 		memory:         envOr("AF_ECS_TASK_MEMORY", "2048"),
 		posixUID:       int64(envInt("AF_ECS_POSIX_UID", 1000)),
 		posixGID:       int64(envInt("AF_ECS_POSIX_GID", 1000)),
-		// Best-effort readiness budget (Start no longer fails on timeout): keep it
-		// modest so a cold pull returns "starting" quickly rather than blocking.
-		startTimeout: time.Duration(envInt("AF_ECS_START_TIMEOUT_SEC", 90)) * time.Second,
+		// How long the BACKGROUND readiness watch keeps polling /healthz after Start
+		// returns (observability only — nothing waits on it, see watchReady). Sized
+		// over the whole convergence, not under the ALB idle timeout: a Fargate cold
+		// pull plus a fresh home's boot-install runs past 100s (docs/62 §62.3), and a
+		// budget shorter than that would just log a false "not ready" every Start.
+		// Same reasoning as runtime_native's 300s health wait.
+		startTimeout: time.Duration(envInt("AF_ECS_START_TIMEOUT_SEC", 300)) * time.Second,
 	}
 	log.Printf("runtime=ecs region=%s cluster=%s namespace=%s efs=%s", cfg.region, cfg.cluster, cfg.namespaceArn, cfg.efsFileSystem)
 	return &ecsFactory{
@@ -238,9 +243,8 @@ func (e *ecsRuntime) Stop(ctx context.Context) error {
 
 // Start brings the workspace up: ensure the two EFS access points, push the token
 // + DEK to SSM SecureString, register a fresh task definition (current image/env),
-// then create-or-update the service to desiredCount 1. It best-effort waits for the
-// Agent to be healthy over Service Connect but does not fail if a cold image pull
-// outlasts the budget (see below) — the workspace converges asynchronously.
+// then create-or-update the service to desiredCount 1 and RETURN — the launch
+// converges asynchronously and State() reports "starting" until it does.
 func (e *ecsRuntime) Start(ctx context.Context) error {
 	switch e.State(ctx) {
 	case "running":
@@ -270,20 +274,53 @@ func (e *ecsRuntime) Start(ctx context.Context) error {
 	if err := e.upsertService(ctx, taskDefArn); err != nil {
 		return fmt.Errorf("service: %w", err)
 	}
-	// Best-effort readiness: wait for the Agent /healthz so the common warm-image
-	// case returns already-reachable (an immediate session-create then succeeds).
-	// But a large workspace image cold-pulls for minutes on first launch, which can
-	// outlast the budget — do NOT fail Start then. The service is at desiredCount 1
-	// and converges on its own; the Console polls State() and the caller retries
-	// against the now-provisioned service. Erroring here would flip a legitimately
-	// starting workspace to "failed" (P3-7 段5 finding A).
-	if e.waitReady != nil {
-		if err := e.waitReady(ctx, e.Endpoint(), e.cfg.startTimeout); err != nil {
-			log.Printf("ecs start: service %s at desired 1 but Agent not ready within %s (%v); it will converge",
-				e.name, e.cfg.startTimeout, err)
-		}
-	}
+	e.watchReady(ctx)
 	return nil
+}
+
+// watchReady polls the Agent /healthz for the record only: it runs on its own
+// goroutine so Start returns as soon as the service sits at desiredCount 1.
+//
+// Start used to block here (docs/62 §62.5). Two things made that wait pure cost:
+//
+//   - It cannot succeed. Reaching this point means a task is launching FROM ZERO —
+//     "running" and "starting" both return early above — and Fargate keeps no image
+//     cache between tasks, so every launch pays a full ~1GB pull (docs/62 §62.1).
+//     The "warm image" the old comment waited for does not exist on this runtime;
+//     the wait timed out every time and Start returned nil anyway.
+//   - It broke the caller. Start runs inside the HTTP request (workspace_handlers
+//     ensureWorkspaceStartedRTLocked), and the ALB in front of the CP has the
+//     default 60s idle timeout (deploy/aws/ecs/cfn/30-ingress.yaml), so a 90s wait
+//     killed the *response* with a 504 while the workspace converged fine behind it.
+//
+// So convergence is the poller's job: startResolved answers with the live State()
+// ("starting"), the Console keeps polling GET /api/workspace, and the scheduler's
+// wake has its own tolerant awaitAgentReady after the start. A readiness failure
+// must still NEVER fail Start — that would flip a legitimately starting workspace
+// to "failed" (P3-7 段5 finding A) — which is now structural: nothing reads it.
+//
+// What is left is the log line, and it is the cheapest instrument we have for the
+// unmeasured ~100s (docs/62 §62.7 P0): it records how long the Agent actually took
+// to answer after Start, per workspace, without an AWS-side trace.
+func (e *ecsRuntime) watchReady(ctx context.Context) {
+	if e.waitReady == nil {
+		return
+	}
+	// Detach from the caller's context. The whole point is to outlive the HTTP
+	// response (and the lifecycle lease released right after Start returns), whose
+	// cancelation would otherwise abort the poll immediately. WithoutCancel keeps
+	// any request-scoped values while dropping the deadline/cancelation.
+	watchCtx := context.WithoutCancel(ctx)
+	name, endpoint, budget := e.name, e.Endpoint(), e.cfg.startTimeout
+	started := time.Now()
+	go func() {
+		if err := e.waitReady(watchCtx, endpoint, budget); err != nil {
+			log.Printf("ecs start: service %s at desired 1 but Agent not ready within %s (%v); it may still converge",
+				name, budget, err)
+			return
+		}
+		log.Printf("ecs start: service %s Agent healthy %.0fs after Start", name, time.Since(started).Seconds())
+	}()
 }
 
 // ensureAccessPoint returns the id of the per-membership EFS access point for the
