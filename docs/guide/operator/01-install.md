@@ -183,6 +183,12 @@ Once you do split, each tenant can carry its own login rules (Admin panel → th
 | **Auto-join domains** | An address in this domain joins this tenant on first sign-in | One domain can belong to only one tenant |
 | **Invite domains** | Bounds who may be **added** as a member | The invite form only — never a per-request check |
 
+**Sign-in methods** takes the provider ids from your `.env` (`AF_OIDC_PROVIDERS`, plus Google),
+and the field lists them right underneath: every id this deployment has, with the label that
+appears on its sign-in button and the issuer it points at. An id the deployment does not have is
+refused when you save, so there is nothing to look up in the environment first. A tenant's own
+approved method goes in the same field as `t:<tenant>:<method>`.
+
 Each tenant also gets its own sign-in page at `https://<PUBLIC_DOMAIN>/login/<slug>`, showing
 only the methods that tenant accepts. Hand that URL to new members; there is no invitation email
 (the CP has no SMTP, by design).
