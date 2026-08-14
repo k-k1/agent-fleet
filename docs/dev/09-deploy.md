@@ -93,6 +93,12 @@ Java 版を選ぶと、entrypoint が未導入分をここへ自動導入し `JA
   **CP が実行時に決定論的な名前で作る**（アダプタはステートレス・CFN churn ゼロ）。
 - Runtime 契約の `starting` 状態は実質 ECS 専用（Fargate の cold image pull が分単位）。呼び出し側は
   収束待ちの間、再 Start もアイドル停止もしない。docker アダプタは秒で上がるため実際には報告しない。
+  - この起動レイテンシの短縮（SOCI 遅延ロードの採否・代替案比較・実測計画）は
+    [62-ecs-start-latency.md](../62-ecs-start-latency.md)。結論は**条件付き採用**で、SOCI の前提は
+    現構成が変更ゼロで満たす（PV 1.4.0 / ECR private / gzip）が、**~100s の内訳が未計測**のため
+    先に `describe-tasks` の `pullStartedAt`/`pullStoppedAt` で pull 時間を切り出すのがゲート。
+  - 初回 Start の 504 は **`AF_ECS_START_TIMEOUT_SEC`（既定 90s）> ALB idle（既定 60s）**が直接原因で、
+    SOCI とは独立に潰せる（[62 §62.5](../62-ecs-start-latency.md)）。
 - コスト特性（ec2-single との比較）は [§9.8](#98-コスト特性ec2-single--ecs)。
 
 ## 9.6 パリティと相違点

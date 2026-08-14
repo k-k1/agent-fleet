@@ -233,6 +233,31 @@ measured). The Console polls `GET /api/workspace` so users just see "starting";
 when driving the API directly, poll the same endpoint instead of trusting the
 Start response code.
 
+The 504 itself has one concrete cause: the adapter's readiness wait
+(`AF_ECS_START_TIMEOUT_SEC`, default **90s**) outlives the ALB's **60s** idle
+timeout (`30-ingress.yaml` sets no `idle_timeout` attribute). That is fixable
+independently of the pull time.
+
+**Measure before optimizing.** Nobody has split the ~100s into its parts. One
+Start gives you both numbers:
+
+```bash
+# image pull window (and the surrounding task lifecycle)
+aws ecs describe-tasks --cluster <cluster> --tasks <task-arn> \
+  --query 'tasks[0].{created:createdAt,pullStart:pullStartedAt,pullStop:pullStoppedAt,started:startedAt}'
+# entrypoint cost (boot-install of the pinned CLIs on a fresh home is NOT a pull)
+aws logs tail <ws-log-group> --since 10m
+```
+
+Note the workspace image pushed here is the **lean** variant
+(`BAKE_AGENT_CLIS=0`), so a *fresh home* additionally pays a one-time
+npm/GitHub boot-install inside the entrypoint (~60s for all CLIs, measured in
+`workspace/entrypoint.sh`). That cost is network, not image pull, and it does
+not recur — `~/.local` persists on EFS. Whether to adopt SOCI (Seekable OCI)
+lazy loading for the pull itself is analysed in
+[`docs/62-ecs-start-latency.md`](../../../docs/62-ecs-start-latency.md)
+(conclusion: conditional yes, gated on the measurement above).
+
 ## Cost & ephemerality
 
 Standing costs while the substrate is up: **NAT (~$32/mo)**, ALB (~$20/mo), RDS
