@@ -6,6 +6,7 @@ import { useEffect } from "react";
 import { useLayoutStore } from "../../layout/store.ts";
 import { activePane } from "../../layout/ops.ts";
 import { useSessionsStore } from "../sessions/store.ts";
+import { useSharedSessionsStore } from "../sharing/store.ts";
 import { stateInfo } from "../../lib/sessionview.ts";
 import { setPopoutMode } from "../../lib/popoutMode.ts";
 import { useT } from "../../lib/i18n/index.ts";
@@ -18,9 +19,12 @@ export function PopoutTitleBar() {
   const tr = useT();
   const layout = useLayoutStore((s) => s.layout);
   const sessions = useSessionsStore((s) => s.sessions);
+  const sharedSessions = useSharedSessionsStore((s) => s.sessions);
   const pane = activePane(layout);
   const session = pane?.session ? (sessions.find((s) => s.name === pane.session) ?? null) : null;
-  const title = pane ? paneTitle(pane, session) : "";
+  const sharedSessionId = pane && pane.content.kind === "sharedSession" ? pane.content.sharedSessionId : null;
+  const shared = sharedSessionId ? sharedSessions.find((s) => s.id === sharedSessionId) : undefined;
+  const title = pane ? paneTitle(pane, session, shared) : "";
   const st = session ? stateInfo(session) : null;
 
   // The tab's browser title mirrors the pane so the tab strip stays readable

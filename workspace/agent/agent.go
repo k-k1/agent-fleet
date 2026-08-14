@@ -156,6 +156,15 @@ func driveState(m session.Meta, alive, heal bool) string {
 	// のコメント参照）。WireLive と同じ判定をここでも行うのは、チャット/ミラーが見るのは
 	// この関数だからで、片側だけ直すと一覧と本文でチップが食い違う。状態の書き換え
 	// （HealIdle）は heal 側にだけ寄せる。
+	// 認証切れ（docs/47 §4-8）。WireLive と同じ判定を同じ順（上限メニューより先）でここでも
+	// 行う — ミラー／チャットのチップと一覧のバッジが食い違うと、どちらが本当か利用者には
+	// 分からない。順序の理由は WireLive 側のコメント参照（待っても直らない方を先に出す）。
+	if isClaude && claude.AuthExpired() {
+		if heal && state != "idle" {
+			claude.HealIdle(sid)
+		}
+		return agents.StateAuth
+	}
 	if isClaude && pane.RateLimitMenu {
 		if heal && state != "idle" {
 			claude.HealIdle(sid)

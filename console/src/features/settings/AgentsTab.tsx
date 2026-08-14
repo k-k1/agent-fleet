@@ -505,7 +505,16 @@ function ClaudeCard({
       name={kindDisplayName("claude")}
       status={
         running ? (
-          <StatusPill on={st?.connected}>{st?.connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>
+          /* 期限切れは「接続済み」ではない: 資格情報は手元にあるので `claude auth status`
+             は loggedIn を返すが、それでターンは始まらない（docs/47 §4-8）。緑のピルの
+             ままにすると、この画面がまさに嘘をつく場所になる。 */
+          <StatusPill on={st?.connected && !st?.expired}>
+            {!st?.connected
+              ? tr("conn.disconnected")
+              : st?.expired
+                ? tr("conn.expired")
+                : tr("conn.connected")}
+          </StatusPill>
         ) : undefined
       }
     >
@@ -557,6 +566,20 @@ function ClaudeCard({
             {st.email || tr("conn.connected")}
           </span>
           {st.plan && <span className="p-pl">{st.plan}</span>}
+          {/* 期限（docs/47 §4-8）。CLI 側の予告は残り1日以下・15秒で消える起動ヒント
+              だけで、切れた後は何も出ない。ここは消えない場所なので、切れる前から
+              静かに出しておく。日時は tooltip（行を伸ばさない）。 */}
+          {(st.expired || st.days_left !== undefined) && (
+            <span className="p-exp" title={st.expires_at ? new Date(st.expires_at).toLocaleString() : undefined}>
+              {st.expired
+                ? tr("conn.expired")
+                : st.days_left
+                  ? tr("conn.expires_in", { days: st.days_left })
+                  : /* 残り 1 日未満、または更新期限は過ぎたが最後のアクセストークンで
+                       まだ動いている状態（数時間で止まる）。日数では言えない。 */
+                    tr("conn.expires_soon")}
+            </span>
+          )}
           <ReauthButton onClick={() => void reauth()} />
           <DisconnectButton onClick={disconnect} />
         </div>

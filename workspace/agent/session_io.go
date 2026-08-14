@@ -868,6 +868,14 @@ func promptBlocker(name string) string {
 	if meta.Kind == session.KindKiro {
 		return blockingState(kiro.LiveState(meta))
 	}
+	// claude: 資格情報が切れているなら、どのモーダルより先にこれで断る（docs/47 §4-8）。
+	// TUI は文字を受け取り Enter も通るのに**ターンが 1 つも始まらない**ので、送信側から
+	// 見ると成功に見え、ミラーにはプロンプトが 反映待ち のまま残る（利用者報告 2026-08-14）。
+	// 断ることで初めて「認証切れです」と言える。キー操作（{keys}/{seq}）は塞がない —
+	// ペインで /login を踏むのは正当な回復手段。
+	if normalizeKind(meta.Kind) == session.KindClaude && claude.AuthExpired() {
+		return agents.StateAuth
+	}
 	sid := session.UUID(meta.Dir, name)
 	st, ok := status.Read(sid)
 	if !ok {
@@ -902,6 +910,8 @@ func blockedErrCode(state string) string {
 		return "plan_pending"
 	case "permission":
 		return "permission_pending"
+	case agents.StateAuth:
+		return "auth_expired"
 	}
 	return "interaction_pending"
 }
@@ -914,6 +924,8 @@ func blockedErrMessage(state string) string {
 		return "a plan is awaiting approval; decide it from the plan card (typed text would be swallowed by the dialog and the Enter would approve it)"
 	case "permission":
 		return "a permission prompt is awaiting a decision; answer it from the permission card (typed text would be swallowed by the menu and the Enter would allow it)"
+	case agents.StateAuth:
+		return "the claude login for this workspace has expired; re-authenticate from 設定 > エージェント (a prompt sent now would be accepted by the TUI but never start a turn)"
 	}
 	return "the session is showing an interactive prompt (" + state + "); answer it from the Console, not free text"
 }

@@ -143,6 +143,21 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		// HealIdle は非 idle のときだけ呼ぶ — 下の自己修復と同じガードで、MarkTurnEndErr が
 		// idle を永続化するので 2 回目以降の poll では走らない（メニューは人が消すまで出た
 		// ままなので、これが無いと毎 poll 通知と完了報告を撃ち続ける）。
+		//
+		// 認証切れ（docs/47 §4-8）を上限メニューより先に見るのは、両方が同時に立ちうる中で
+		// **待っても直らない方**だから: 上限は時刻が来れば解けるが、期限切れは再認証するまで
+		// 何も動かない。メニューの自動解除はペインを直接読む（rate_limit_resume.go）ので、
+		// ここで auth を返してもその回復経路は塞がらない。
+		// 走っていたことになっているターンを HealIdle で畳んでから名乗るのは上限と同じ形 —
+		// 401 で切れたターンでは Stop hook が鳴らず、進行中 のまま貼り付くとバッジが出る前に
+		// 一覧が嘘をつく。
+		if AuthExpired() {
+			if li.State != "idle" {
+				HealIdle(sid)
+			}
+			li.State = agents.StateAuth
+			return li
+		}
 		if pane.RateLimitMenu {
 			if li.State != "idle" {
 				HealIdle(sid)

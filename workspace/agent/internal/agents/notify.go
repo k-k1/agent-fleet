@@ -108,6 +108,24 @@ const StateAborted = "aborted"
 // 消えた瞬間に次の poll が普通の idle を返せばよく、消えたことを知る別経路が要らない。
 const StateBlocked = "blocked"
 
+// StateAuth is the same kind of live-only wire state as StateBlocked, for the one cause
+// that no keypress in the pane can clear: **the workspace's claude login has expired**
+// (docs/47 §4-8 — 資格情報の refresh も access も過ぎている)。
+//
+// StateBlocked と分けるのは、利用者に促す次の一手が正反対だから: 上限は「待て」、
+// 認証切れは「今すぐ再認証しろ」。同じ 停止中 バッジに畳むと、待っていれば直ると
+// 読めてしまう — 認証切れは待っても永久に直らない。
+//
+// idle に寄せてはいけない理由は StateBlocked と同じで、しかもこちらの方が実害が出た:
+// 入力待ちに見えるのでミラー／オペレーター／定時実行がプロンプトを送り、TUI は
+// 受け取るが**ターンは 1 つも始まらない**（送信は成功したように見え、ミラーには
+// 反映待ちのプロンプトだけが残る — 利用者報告 2026-08-14）。
+//
+// ワークスペース単位の事実（資格情報はコンテナに 1 つ）なので claude のセッション
+// 全部が同時にこれを名乗る。status ストアには書かない — 再認証した瞬間に次の poll が
+// 普通の状態を返せばよく、消えたことを知る別経路が要らない（StateBlocked と同型）。
+const StateAuth = "auth"
+
 // MarkTurnEndErr is MarkTurnEnd carrying the reason a turn failed. failure is the
 // one-line summary the driver built (empty for a clean turn); it rides the notifier's
 // excerpt so the operator report can say the turn errored and the chat bridge can post
