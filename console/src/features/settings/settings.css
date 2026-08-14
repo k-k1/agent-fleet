@@ -3345,6 +3345,27 @@
 .mcp-origin-builtin {
   color: var(--muted2);
 }
+/* Tenant-defined sign-in method status (docs/61 §61.11). The colours answer one
+   question only — can anybody sign in with this right now — so "approved but
+   unusable" reads as a warning rather than as success. */
+.idp-state {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border2);
+  color: var(--muted);
+  flex: none;
+}
+.idp-state.idp-active {
+  color: var(--ok, #2aa79b);
+  border-color: color-mix(in srgb, var(--ok, #2aa79b) 45%, var(--border2));
+}
+.idp-state.idp-pending {
+  color: var(--warn, #d9a441);
+  border-color: color-mix(in srgb, var(--warn, #d9a441) 45%, var(--border2));
+}
 /* key/value secret editor (env vars / headers) */
 .mcp-kv {
   display: flex;

@@ -1308,6 +1308,56 @@ export const en: Record<keyof typeof ja, string> = {
     "Invite domains apply only when adding a member. Someone already on the roster keeps working even from another domain (use \"Remove member\" below to take them off). " +
     "An auto-join domain can belong to only one tenant.",
   "admin.login_url": "Sign-in URL for this tenant:",
+
+  // --- tenant-defined sign-in methods (docs/61 §61.11 · P4), for a group whose
+  // subsidiaries each have their own Entra tenant. The tenant admin writes the
+  // definition, the deployment admin activates it (決定 30) — that asymmetry is the
+  // feature. ---
+  "admin.idp_title": "Sign-in methods for this tenant",
+  "admin.idp_note": "activation needs a deployment administrator",
+  "admin.idp_hint":
+    "Register your own IdP (Entra ID / Okta / Keycloak …) as a sign-in method for this tenant. " +
+    "A new method starts as \"waiting for approval\": until a deployment administrator approves it, no button appears on the sign-in page and no one can sign in with it.",
+  "admin.idp_none": "None registered yet.",
+  "admin.idp_add": "Add a sign-in method",
+  "admin.idp_approve": "Approve and activate",
+  "admin.idp_suspend": "Suspend",
+  "admin.idp_reapply": "Request approval",
+  "admin.idp_state_pending": "Waiting for approval",
+  "admin.idp_state_active": "Active",
+  "admin.idp_state_suspended": "Suspended",
+  "admin.idp_state_broken": "Approved, but the settings are incomplete",
+  "admin.idp_name": "Name",
+  "admin.idp_name_hint": "Identifier within this tenant (a-z, 0-9, - _). For example: entra",
+  "admin.idp_issuer": "Issuer URL",
+  "admin.idp_issuer_hint": "The IdP's issuer URL. For Entra ID, use the URL containing your own tenant GUID (common / organizations require tenant ids below).",
+  "admin.idp_client_id": "Client ID",
+  "admin.idp_client_secret": "Client secret",
+  "admin.idp_secret_hint": "Encrypted when saved, and never shown again.",
+  "admin.idp_secret_kept": "Leave empty to keep the stored value.",
+  "admin.idp_trust": "How the email is trusted",
+  "admin.idp_trust_hint": "Why the email this IdP asserts can be believed. Entra ID never sends email_verified, so pick the pinned-issuer rule.",
+  "admin.idp_trust_issuer": "The issuer is pinned to our own tenant",
+  "admin.idp_trust_email": "The IdP asserts email_verified",
+  "admin.idp_domains": "Email domains to admit",
+  "admin.idp_domains_hint":
+    "The domains that may sign in with this method (required). It cannot be empty: this method does not fall back to the deployment-wide allowlist, so an empty list admits nobody. " +
+    "One domain can belong to only one tenant.",
+  "admin.idp_tids": "Allowed tenant ids (Entra tid, optional)",
+  "admin.idp_tids_hint": "Comma-separated. Required when the issuer is common / organizations.",
+  "admin.idp_label_ja": "Button label (Japanese)",
+  "admin.idp_label_en": "Button label (English)",
+  "admin.idp_repend_hint":
+    "Changing the issuer, the client ID or the trust rule — or adding a domain or tenant id — sends the method back for approval, " +
+    "because the approval was given to that issuer for that scope.",
+  "admin.idp_delete_title": "Delete {name}",
+  "admin.idp_delete_body":
+    "This removes the sign-in method. People who used it can no longer sign in, but their workspaces, homes and stored credentials are kept.",
+  "admin.idp_register": "Tenant-defined sign-in methods",
+  "admin.idp_pending_count": "{n} waiting for approval",
+  "admin.idp_register_hint":
+    "Every IdP registered by a tenant. Approval is a point-in-time check, but the IdP's own settings (self-sign-up, for one) can change afterwards. " +
+    "Approved methods stay listed here so their issuers and domains can be reviewed periodically. Approve or suspend from the tenant's own screen.",
   "admin.member_removed": "removed",
   "admin.remove_member": "Remove member",
   "admin.remove_title": "Remove {key} from {slug}",
