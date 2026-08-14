@@ -545,6 +545,76 @@ ADR0030 §3 が Agent 直送を避けた第一の理由「誰が何を送った�
 | `internal/agents/claude/errors_test.go` | 実測レコードの label/detail/cause/summary/part、認証判定の3入口（`error`・401・文言）、上限/超過/5xx/403 で `cause` が立たないこと、`parseTurn` が text part ではなく error part を出すこと |
 | `internal/agents/claude/abort_test.go` | 認証切れ文言と `authentication_failed` が blocked に落ちること（意図した分類として固定） |
 
+## 4-8. 追補（2026-08-14）— 認証切れを**落ちる前に**識別する（状態と送信ガード）
+
+§4-7 で足したのは**事後**の見え方だった: ターンが 401 で死に、転写に合成レコードが残って
+初めて「認証切れだった」と分かる。利用者から上がったのはその手前の穴で、症状はこうだった
+（スクリーンショット 2 枚・2026-08-14）:
+
+- 端末には起動直後のバナー `⚠ Your login expires in 1 day · run /login to renew`。
+- Console のセッションは **入力待ち**。
+- なのにミラーへ送ったプロンプトは **反映待ち** のまま動かない（ターンが 1 つも始まらない）。
+
+### 4-8-1. なぜ気づけなかったか
+
+1. **AF はそのバナーを読んでいなかった**（リポジトリ全体に検出コードが無い）。
+2. **CLI の警告は当てにならない。** 2.1.231 のバイナリ実測（起動時ヒント
+   `id="oauth-expiry-warning"`）:
+
+   ```js
+   if (apiProvider !== "firstParty" || !oauthLogin) return null
+   if (typeof refreshTokenExpiresAt !== "number") return null
+   if (expiresAt > refreshTokenExpiresAt + 3d) return null
+   const left = refreshTokenExpiresAt - now
+   if (left > 3d || left <= 0) return null        // ← 期限切れ後は null
+   return { daysLeft: ceil(left / 1d) }           // 描くのは daysLeft <= 1 のときだけ
+   ```
+
+   つまり出るのは**残り1日以下の15秒**だけで、**切れた後の TUI には何の痕跡も残らない**。
+3. **`claude auth status` は期限を返さない**（`--json` / `--text` とも
+   `loggedIn/authMethod/apiProvider/email/orgId/orgName/subscriptionType` のみ・実測）。
+   §4-7 で書いた「カードの状態表示を根拠にするな」の続きで、期限という軸がそもそも無かった。
+4. **入力待ちのまま送信を受けてしまう。** TUI は文字も Enter も受け取るのでミラー側は成功に
+   見え、残るのは反映待ちの吹き出しだけ（`pendingEcho` は「送信後に来たエラーターン」で解決
+   するが、ターンが 1 つも生まれないこの経路では永久に解決しない）。
+
+### 4-8-2. 直し方 — 資格情報の 2 つの epoch を材料にする
+
+判定材料は claude 自身が見ているのと同じ 2 つ（`$CLAUDE_CONFIG_DIR/.credentials.json`）。
+**トークン本体は読まない**（値をログにも DTO にも載せない — 出すのは時刻と真偽だけ）:
+
+| フィールド | 実測 | 意味 |
+|---|---|---|
+| `claudeAiOauth.expiresAt` | 約8時間 | アクセストークンの期限。refresh で伸びる |
+| `claudeAiOauth.refreshTokenExpiresAt` | 約30日 | **サインインし直す期限**。これが切れたらもう伸ばせない |
+
+- `internal/agents/claude/authexpiry.go`（新規）— `Dead`（＝**両方**過ぎた＝確実にターンを
+  開始できない）と `Soon`（更新期限まで3日以内）を分ける。**片方（refresh）だけ切れた状態を
+  Dead と呼ばない**のは、最後のアクセストークンでまだ数時間動くから — 動いているセッションの
+  送信を断つのは誤検知の中で一番高くつく。判断しない（`Known=false`）のは、環境変数トークン
+  運転（`CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY`）・`refreshTokenExpiresAt` 欠落・
+  `expiresAt > refresh + 3d`（CLI の null 条件そのまま）。読みは stat（パス+mtime+サイズ）で
+  キャッシュ — 一覧ポーリング × セッション数で読まれるが、再認証直後に古い判定が残らない。
+- **live 状態 `agents.StateAuth`（"auth"）**（新規）— `StateBlocked` と同じ「live 限定・status
+  ストアに書かない」種類だが別の値にする。利用者に促す次の一手が正反対だから: 上限は「待て」、
+  認証切れは「今すぐ再認証しろ」。`WireLive`（一覧）と `driveState`（ミラー/チャット）の両方で
+  同じ判定を行う（片側だけだとバッジと本文が食い違う）。上限メニューと同じく、走っていた
+  ことになっているターンは `HealIdle` で畳んでから名乗る（401 では Stop hook が鳴らない）。
+- **送信ガード** — `promptBlocker` が claude の認証切れを `auth_expired` (409) で断る。ミラーは
+  楽観 echo を消し、下書きを戻し、理由をトーストする（＝反映待ちの吹き出しが残らない）。
+  キー操作（`{keys}`/`{seq}`）は塞がない — ペインで `/login` を踏むのは正当な回復手段。
+- **接続カード** — `GET /connections` の claude に `expires_at` / `expired` / `days_left` を
+  追加。期限切れなら状態ピルは緑の「接続済み」にせず「認証切れ」、3日以内なら「あとN日で
+  期限切れ」を隣の **再認証** ボタンと並べて出す。
+
+### 4-8-3. テスト
+
+| 対象 | 内容 |
+|---|---|
+| `internal/agents/claude/authexpiry_test.go` | 分類（通常/残り1日/残り3日/refresh切れ・access生存/両方切れ/envトークン/サブスクの形でない）、材料欠落は「分からない」であること、ファイル経由の読みと再認証直後にキャッシュが張り付かないこと |
+| `session_auth_expiry_state_test.go` | 待機プロンプトのペインでも `driveState` が `auth` を返し working マーカーが畳まれること、生きた資格情報では変わらないこと、`promptBlocker` が `auth_expired` で断ること／断たないこと |
+| `console/src/lib/sessionview.test.ts` | 認証切れが idle とも blocked とも別のチップになること |
+
 ## 5. 積み残し
 
 - 対象は claude TUI のみ（`isApiErrorMessage` は claude 固有）。他 TUI 種別は別シグナルが要る。
@@ -555,6 +625,14 @@ ADR0030 §3 が Agent 直送を避けた第一の理由「誰が何を送った�
   §4-6 で解消（Agent 自身が再開させるので会話の有無に依らない）。
 - 再開プロンプトの言語は表示言語 `uiLocale`（§4-4 / §4-6）。セッション毎の言語を持てば
   決定的にできるが、v1 では持たせていない。
+- 認証切れ（§4-8）は**通知を出していない**。資格情報はコンテナに 1 つなので、セッション毎に
+  通知すると 1 つの事実で N 個鳴る。ワークスペース単位で 1 回だけ鳴らす器（`usageResetNotify`
+  相当）を用意するまでは、チップ・カード・送信の拒否理由の 3 点で伝える。
+- 判定は claude のサブスク OAuth（`claudeAiOauth`）だけ。API キー運転・Bedrock/Vertex 経路や
+  他 kind の資格情報の期限は見ていない（材料も実測も無い）。
+- **サーバ側の失効は依然として事前には分からない**（§4-7 の実測どおり `claude auth status` は
+  手元しか見ない）。§4-8 が塞ぐのは「期限が来て切れた」側で、失効・取り消しは今までどおり
+  401 の事後検出になる。
 - 上限で停止したセッションを Console から**手で**復帰させる導線は無い（自動解除に任せるか、
   ペインで選ぶ）。増枠依頼（選択肢 2）は課金判断を含むので、出すならワンクリック実行では
   なく明示的な確認付きで。
