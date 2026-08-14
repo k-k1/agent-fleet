@@ -914,6 +914,13 @@
   font-family: var(--mono);
   flex: none;
 }
+/* ログインの期限（docs/47 §4-8）。期限切れ／あと数日、のどちらも同じ warn 色で
+   アカウント行に置く — 隣が 再認証 ボタンなので、読んだ流れで直せる。 */
+.p-who .p-exp {
+  font-size: 11px;
+  color: var(--warn);
+  flex: none;
+}
 /* アカウント行のアクションは右端へ寄せる。auto マージンを持つのは行内で最初の
    ボタンだけ — 両方に付けると 再認証 と 切断 が行の左右へ離れてしまう。 */
 .p-who .conn-reauth,

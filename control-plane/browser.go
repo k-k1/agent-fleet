@@ -145,7 +145,7 @@ func (a browserAPI) socketToAgent(w http.ResponseWriter, r *http.Request, res *r
 	dialer := websocket.Dialer{HandshakeTimeout: browserHandshakeTimeout, EnableCompression: true}
 	up, agentResp, err := dialer.Dial(agentURL, headers)
 	if err != nil {
-		writeBrowserAgentHandshakeError(w, agentResp)
+		writeAgentHandshakeError(w, agentResp, "cannot reach workspace agent browser")
 		return
 	}
 	defer up.Close()
@@ -203,9 +203,14 @@ func browserAgentWebSocketURLForPath(endpoint, socketPath, browserID string) (st
 // Preserve the Agent's structured bad-id/already-attached handshake response.
 // Only the status, content type, and bounded body cross the boundary; headers
 // such as Agent bearer challenges are not exposed to the Console.
-func writeBrowserAgentHandshakeError(w http.ResponseWriter, resp *http.Response) {
+// writeAgentHandshakeError answers a failed CP→Agent WebSocket dial. gorilla returns a
+// non-nil response exactly when the Agent ANSWERED and refused with an ordinary HTTP
+// status (ErrBadHandshake) — relaying it is the difference between "the agent said no,
+// and why" and a blanket 502 that claims the agent is unreachable when it plainly was.
+// resp == nil is the genuinely-unreachable case, and only that gets the fallback 502.
+func writeAgentHandshakeError(w http.ResponseWriter, resp *http.Response, fallback string) {
 	if resp == nil {
-		http.Error(w, "cannot reach workspace agent browser", http.StatusBadGateway)
+		http.Error(w, fallback, http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()

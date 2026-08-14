@@ -55,6 +55,10 @@ func isolateAgentState(t *testing.T) {
 	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
 	// status ストアは HOME 直下（paths.AgentConfigDir）— 実フリートのマーカーを書かない。
 	t.Setenv("HOME", t.TempDir())
+	// claude の設定/資格情報も隔離する。HOME だけでは足りない: このコンテナでは
+	// CLAUDE_CONFIG_DIR が実フリートの木を指しているので、状態判定（認証切れ・docs/47
+	// §4-8）が実際のログイン期限に左右されてしまう。
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	// 専用ソケットに対してのみ kill-server が許される（dev/04 §4.11）。
 	t.Cleanup(func() { _ = tmuxx.Cmd("kill-server").Run() })
 }

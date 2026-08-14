@@ -90,6 +90,14 @@ export interface ProviderConn {
   // チャット連携（discord / slack）: 通知マスタの表示形（notifyOff の反転）。
   // false 明示のときだけ OFF — 未設定（旧接続）は ON 扱い。
   notify?: boolean;
+  // claude（docs/47 §4-8）: OAuth 資格情報の期限。`claude auth status` は期限を一切
+  // 返さないので、Agent が資格情報の refreshTokenExpiresAt を直接読んで載せている。
+  // expired = 更新トークンもアクセストークンも過ぎた（＝もうターンを開始できない）、
+  // days_left = 期限まで 3 日以内のときだけ入る予告。無ければ判断材料が無い
+  // （APIキー運転・未接続・形式変更）で、**期限切れではない**。
+  expires_at?: string;
+  expired?: boolean;
+  days_left?: number;
   // opencode: 選択中の課金経路（docs/54）。"free" は認証ゼロで起動できる枠なので、
   // 起動ゲートはこれを見て未接続でも opencode を許す。"off" は逆に、鍵や OAuth が
   // あっても起動ゲートを閉じる明示的な無効化（connected は false になる）。
