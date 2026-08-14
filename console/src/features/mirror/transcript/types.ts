@@ -50,6 +50,11 @@ export interface Part {
   edits?: any[];
   questions?: Question[];
   answer?: string;
+  // declined marks kind=question only: the answer text is claude's own decline
+  // boilerplate (an Escape out of the AskUserQuestion modal — e.g. the preview
+  // free-text bug, docs/dev/92 §6), not a genuine pick — QuestionBlock must not render
+  // it as an answered card.
+  declined?: boolean;
   plan?: string;
   qid?: string; // kind=question/plan/delegation: tool_use id, to patch a late answer (see patchAnswers)
   files?: string[]; // kind=userfile: SendUserFile paths (browse-root-relative)

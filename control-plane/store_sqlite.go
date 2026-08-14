@@ -290,11 +290,46 @@ func (s *sqlStore) getTenant(ctx context.Context, id string) (Tenant, error) {
 	var t Tenant
 	var keyRef sql.NullString
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, slug, name, status, limits, isolation, COALESCE(key_ref,''), created_at
+		`SELECT id, slug, name, status, limits, isolation, COALESCE(key_ref,''), created_at,
+		        allowed_providers, auto_join_domains, allowed_domains
 		 FROM tenant WHERE id=?`, id).
-		Scan(&t.ID, &t.Slug, &t.Name, &t.Status, &t.Limits, &t.Isolation, &keyRef, &t.CreatedAt)
+		Scan(&t.ID, &t.Slug, &t.Name, &t.Status, &t.Limits, &t.Isolation, &keyRef, &t.CreatedAt,
+			&t.AllowedProviders, &t.AutoJoinDomains, &t.AllowedDomains)
 	t.KeyRef = keyRef.String
 	return t, err
+}
+
+// SetTenantLogin writes the per-tenant login rules (docs/61 §61.9.7).
+func (s *sqlStore) SetTenantLogin(ctx context.Context, tenantID, allowedProviders, autoJoinDomains, allowedDomains string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE tenant SET allowed_providers=?, auto_join_domains=?, allowed_domains=? WHERE id=?`,
+		allowedProviders, autoJoinDomains, allowedDomains, tenantID)
+	return err
+}
+
+// ListTenantLoginRules loads every tenant's rules in one query, already split into
+// slices — the shape the entry-gate cache and the auto-join resolution want.
+func (s *sqlStore) ListTenantLoginRules(ctx context.Context) ([]TenantLoginRules, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, slug, name, allowed_providers, auto_join_domains, allowed_domains
+		 FROM tenant WHERE status='active' ORDER BY slug`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TenantLoginRules
+	for rows.Next() {
+		var r TenantLoginRules
+		var provs, autoJoin, allowed string
+		if err := rows.Scan(&r.ID, &r.Slug, &r.Name, &provs, &autoJoin, &allowed); err != nil {
+			return nil, err
+		}
+		r.AllowedProviders = splitCSVLower(provs)
+		r.AutoJoinDomains = splitDomainCSV(autoJoin)
+		r.AllowedDomains = splitDomainCSV(allowed)
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 func (s *sqlStore) UpsertIdentity(ctx context.Context, email, key, roleHint string) (Identity, error) {
@@ -325,6 +360,246 @@ func (s *sqlStore) UpsertIdentity(ctx context.Context, email, key, roleHint stri
 		Scan(&id.ID, &id.Email, &id.UserKey, &id.Role, &id.Status, &last)
 	id.LastLoginAt = last.String
 	return id, err
+}
+
+// DemoteSuperAdmins enforces "SUPER_ADMIN_EMAILS is the only source of truth" at
+// startup (ADR0043 決定 24). UpsertIdentity's roleHint stays upgrade-only on
+// purpose: addMembership / cleanHome / stopWorkspace all call it with roleHint="",
+// so putting the demotion there would strip an operator's role the moment somebody
+// added a member. The revocation therefore lives here, in a pass CP runs once at
+// boot — which is also the only moment that reaches a person who has left and will
+// never sign in again.
+//
+// The candidate set is read first rather than expressed as a NOT IN (…) so the
+// caller can log exactly whose role was revoked; the set is a handful of rows.
+func (s *sqlStore) DemoteSuperAdmins(ctx context.Context, keep []string) ([]string, error) {
+	keepSet := make(map[string]bool, len(keep))
+	for _, e := range keep {
+		if e = strings.ToLower(strings.TrimSpace(e)); e != "" {
+			keepSet[e] = true
+		}
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, email FROM identity WHERE role='super_admin' AND email <> ''`)
+	if err != nil {
+		return nil, err
+	}
+	type row struct{ id, email string }
+	var cands []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.email); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		cands = append(cands, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	var demoted []string
+	for _, c := range cands {
+		if keepSet[strings.ToLower(c.email)] {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx,
+			`UPDATE identity SET role='user' WHERE id=? AND role='super_admin'`, c.id); err != nil {
+			return demoted, err
+		}
+		demoted = append(demoted, c.email)
+	}
+	return demoted, nil
+}
+
+// LinkIdentity resolves a login that carries an IdP subject to a person, applying
+// the three rules of docs/61 §61.5 in order:
+//
+//  1. (provider, subject) already recorded => that identity, whatever its email is
+//     now. user_key does not move, so home and secrets stay put across a rename.
+//  2. not recorded, but the email matches an identity => join it. This is what
+//     makes "sign in with the company address and you land in the same workspace
+//     whichever button you pressed" true, and it is how an existing Google-only
+//     deployment migrates: the first login after the upgrade takes this path.
+//  3. neither => a NEW identity (isNew), created through UpsertIdentity so the
+//     user_key collision guard still applies.
+//
+// Rule 2 matches on the email the IdP asserted, which is safe only because every
+// enabled provider is one the operator configured and each declares how it
+// justifies that email (§61.4) — the allowlist is what keeps a foreign address
+// from reaching this code at all. Two DIFFERENT emails are never merged: proving
+// you can sign in to both accounts shows control of both, not that they are one
+// person, and the merge would be irreversible.
+//
+// ★ emailJoin=false is a TENANT-DEFINED provider (docs/61 §61.11): the operator did
+// not configure that issuer, a subsidiary's administrator did, so an asserted
+// address is not proof of being that person. Rule 2 becomes rule 2' — CLAIM an
+// identity nobody has ever signed in as (the placeholder an invite leaves behind,
+// which is how a subsidiary's first login is supposed to work), and refuse with
+// errIdentityClaimed when the address belongs to an account that has a login
+// history. Falling through to rule 3 instead would NOT be fail-closed: user_key is
+// sanitizeUser(email), so UpsertIdentity's ON CONFLICT(user_key) would land right
+// back on the very identity rule 2 was refusing to join (and identity.email is
+// UNIQUE, so a genuinely separate row cannot exist either). Refusing is the only
+// answer that is actually a refusal.
+func (s *sqlStore) LinkIdentity(ctx context.Context, provider, subject, email, fallbackKey, roleHint string, emailJoin bool) (Identity, bool, error) {
+	if provider == "" || subject == "" { // no subject to key on: legacy/pre-P0 session
+		ident, err := s.UpsertIdentity(ctx, email, fallbackKey, roleHint)
+		return ident, false, err
+	}
+	identityID, err := s.identityIDForProvider(ctx, provider, subject)
+	if err != nil {
+		return Identity{}, false, err
+	}
+	isNew := false
+	if identityID == "" {
+		ident, ok, err := s.identityByEmail(ctx, email)
+		switch {
+		case err != nil:
+			return Identity{}, false, err
+		case ok && emailJoin: // rule 2
+			identityID = ident.ID
+		case ok: // rule 2', a tenant-defined provider: claim, never join
+			claimed, err := s.identityHasProvider(ctx, ident.ID)
+			if err != nil {
+				return Identity{}, false, err
+			}
+			if claimed {
+				return Identity{}, false, errIdentityClaimed
+			}
+			identityID = ident.ID
+		default: // rule 3
+			ident, created, err := s.createIdentityForLogin(ctx, email, fallbackKey, roleHint)
+			if err != nil {
+				return Identity{}, false, err
+			}
+			identityID, isNew = ident.ID, created
+		}
+	}
+	// Record the pair. ON CONFLICT only refreshes the display columns: an existing
+	// mapping is never re-pointed at another identity, so a subject cannot be moved
+	// onto someone else's workspace by a later login.
+	now := nowTS()
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO identity_provider(provider, subject, identity_id, email, created_at, last_login_at)
+		 VALUES(?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(provider, subject) DO UPDATE SET
+		   email = excluded.email,
+		   last_login_at = excluded.last_login_at`,
+		provider, subject, identityID, email, now, now); err != nil {
+		return Identity{}, false, err
+	}
+	if err := s.touchIdentity(ctx, identityID, email, roleHint); err != nil {
+		return Identity{}, false, err
+	}
+	ident, ok, err := s.GetIdentityByID(ctx, identityID)
+	if err != nil {
+		return Identity{}, false, err
+	}
+	if !ok {
+		return Identity{}, false, fmt.Errorf("identity %s vanished mid-login", identityID)
+	}
+	return ident, isNew, nil
+}
+
+// errIdentityClaimed is returned when a tenant-defined provider asserts an address
+// that already belongs to somebody who has signed in here. The login is refused
+// rather than joined or duplicated — see LinkIdentity.
+var errIdentityClaimed = errors.New("this email address already belongs to an account on this deployment")
+
+// identityHasProvider reports whether anybody has ever completed an IdP login as
+// this identity. An identity with no such row is either an invite placeholder or a
+// pre-P1 account; that is the line rule 2' draws.
+func (s *sqlStore) identityHasProvider(ctx context.Context, identityID string) (bool, error) {
+	var one int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT 1 FROM identity_provider WHERE identity_id=? LIMIT 1`, identityID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// identityIDForProvider returns the identity a (provider, subject) is bound to,
+// or "" when the pair has never signed in here.
+func (s *sqlStore) identityIDForProvider(ctx context.Context, provider, subject string) (string, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT identity_id FROM identity_provider WHERE provider=? AND subject=?`, provider, subject).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
+// identityByEmail finds the person an address already belongs to. Non-empty
+// emails are UNIQUE (idx_identity_email), so at most one row matches; the empty
+// email never does (those rows are invite-by-user_key placeholders, claimed through
+// UpsertIdentity's key path instead).
+func (s *sqlStore) identityByEmail(ctx context.Context, email string) (Identity, bool, error) {
+	if strings.TrimSpace(email) == "" {
+		return Identity{}, false, nil
+	}
+	var idn Identity
+	var last sql.NullString
+	// Lowercased in Go rather than with LOWER(?) so the placeholder's type is never
+	// in question on Postgres, and ordered so a case-differing pair (possible: the
+	// unique index is on the exact string) resolves the same way every time.
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, email, user_key, role, status, COALESCE(last_login_at,'')
+		 FROM identity WHERE LOWER(email)=? ORDER BY id LIMIT 1`,
+		strings.ToLower(strings.TrimSpace(email))).
+		Scan(&idn.ID, &idn.Email, &idn.UserKey, &idn.Role, &idn.Status, &last)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Identity{}, false, nil
+	}
+	if err != nil {
+		return Identity{}, false, err
+	}
+	idn.LastLoginAt = last.String
+	return idn, true, nil
+}
+
+// createIdentityForLogin runs rule 3 through UpsertIdentity (so the user_key
+// collision guard applies) and reports whether a row was actually created. An
+// admin who pre-created the person by user_key (invite) leaves a row with an
+// empty email waiting to be claimed — claiming it is not a new account, so it
+// must not raise the "this is a new account" notice.
+func (s *sqlStore) createIdentityForLogin(ctx context.Context, email, key, roleHint string) (Identity, bool, error) {
+	finalKey, err := s.disambiguateUserKey(ctx, email, key)
+	if err != nil {
+		return Identity{}, false, err
+	}
+	_, existed, err := s.GetIdentityByUserKey(ctx, finalKey)
+	if err != nil {
+		return Identity{}, false, err
+	}
+	ident, err := s.UpsertIdentity(ctx, email, key, roleHint)
+	return ident, !existed, err
+}
+
+// touchIdentity updates the display email and last login of an identity resolved
+// by (provider, subject). It deliberately does NOT go through UpsertIdentity:
+// that one re-derives the key from the email and would divert a renamed person to
+// a fresh user_key (disambiguateUserKey), which is exactly what §61.5 forbids.
+// Role still upgrades only (never downgrades), same as UpsertIdentity.
+func (s *sqlStore) touchIdentity(ctx context.Context, identityID, email, roleHint string) error {
+	// Two shapes rather than one with NULLIF/CASE: both dialects parse these
+	// without having to infer a placeholder's type from a bare '' literal.
+	var err error
+	if email == "" {
+		_, err = s.db.ExecContext(ctx, `UPDATE identity SET last_login_at=? WHERE id=?`, nowTS(), identityID)
+	} else {
+		_, err = s.db.ExecContext(ctx, `UPDATE identity SET last_login_at=?, email=? WHERE id=?`, nowTS(), email, identityID)
+	}
+	if err != nil {
+		return err
+	}
+	if roleHint != "super_admin" {
+		return nil
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE identity SET role='super_admin' WHERE id=?`, identityID)
+	return err
 }
 
 // disambiguateUserKey guards against sanitizeUser collisions: user_key is UNIQUE
@@ -387,7 +662,8 @@ func (s *sqlStore) GetIdentityByID(ctx context.Context, id string) (Identity, bo
 
 func (s *sqlStore) ListTenants(ctx context.Context) ([]Tenant, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, slug, name, status, limits, isolation, COALESCE(key_ref,''), created_at
+		`SELECT id, slug, name, status, limits, isolation, COALESCE(key_ref,''), created_at,
+		        allowed_providers, auto_join_domains, allowed_domains
 		 FROM tenant ORDER BY slug`)
 	if err != nil {
 		return nil, err
@@ -396,7 +672,8 @@ func (s *sqlStore) ListTenants(ctx context.Context) ([]Tenant, error) {
 	var out []Tenant
 	for rows.Next() {
 		var t Tenant
-		if err := rows.Scan(&t.ID, &t.Slug, &t.Name, &t.Status, &t.Limits, &t.Isolation, &t.KeyRef, &t.CreatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.Slug, &t.Name, &t.Status, &t.Limits, &t.Isolation, &t.KeyRef, &t.CreatedAt,
+			&t.AllowedProviders, &t.AutoJoinDomains, &t.AllowedDomains); err != nil {
 			return nil, err
 		}
 		out = append(out, t)
@@ -405,10 +682,19 @@ func (s *sqlStore) ListTenants(ctx context.Context) ([]Tenant, error) {
 }
 
 func (s *sqlStore) ListMembersByTenant(ctx context.Context, tenantID string) ([]MemberInfo, error) {
+	return s.listMembersByStatus(ctx, tenantID, "active")
+}
+
+// ListRemovedMembersByTenant is the offboarded half — see the interface comment.
+func (s *sqlStore) ListRemovedMembersByTenant(ctx context.Context, tenantID string) ([]MemberInfo, error) {
+	return s.listMembersByStatus(ctx, tenantID, "inactive")
+}
+
+func (s *sqlStore) listMembersByStatus(ctx context.Context, tenantID, status string) ([]MemberInfo, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT m.id, i.user_key, i.email, i.role, m.role
 		 FROM membership m JOIN identity i ON i.id = m.identity_id
-		 WHERE m.tenant_id=? AND m.status='active' ORDER BY i.user_key`, tenantID)
+		 WHERE m.tenant_id=? AND m.status=? ORDER BY i.user_key`, tenantID, status)
 	if err != nil {
 		return nil, err
 	}
@@ -474,6 +760,16 @@ func (s *sqlStore) IdentityIDForMembership(ctx context.Context, membershipID str
 	return id, true, nil
 }
 
+// EnsureMembership inserts the membership and leaves an existing row untouched —
+// including its status.
+//
+// ★ It must NOT reactivate. It is called from the auto-provisioning paths
+// (auto_join_domains, AF_PROVISION=auto), which run on every login of a person who
+// currently has no active membership; reactivating there would undo an
+// administrator's removal the next time the person opened the page, which is
+// precisely the offboarding docs/61 §61.10.6 exists to make work. Coming back onto
+// a roster is an explicit act — the invite API reactivates deliberately
+// (adminAPI.addMembership).
 func (s *sqlStore) EnsureMembership(ctx context.Context, identityID, tenantID, role string) (Membership, error) {
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO membership(id, identity_id, tenant_id, role, status, created_at)
@@ -508,6 +804,61 @@ func (s *sqlStore) SetMembershipRole(ctx context.Context, membershipID, role str
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE membership SET role=? WHERE id=?`, role, membershipID)
 	return err
+}
+
+func (s *sqlStore) SetMembershipStatus(ctx context.Context, membershipID, status string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE membership SET status=? WHERE id=?`, status, membershipID)
+	return err
+}
+
+// EmailHasActiveMembership answers the entry gate's membership term (決定 16).
+// LOWER() is applied to the COLUMN, not to the placeholder: Postgres cannot infer a
+// type for LOWER($1) and errors, which is the same reason identityByEmail lowercases
+// in Go.
+func (s *sqlStore) EmailHasActiveMembership(ctx context.Context, email string) (bool, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return false, nil
+	}
+	var one int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT 1 FROM membership m JOIN identity i ON i.id = m.identity_id
+		 WHERE m.status='active' AND i.email <> '' AND LOWER(i.email) = ?
+		 LIMIT 1`, email).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// EmailHasActiveMembershipInTenant is EmailHasActiveMembership narrowed to one
+// tenant — the entry-gate term a tenant-defined provider is allowed to use
+// (docs/61 §61.11.3-3). Being on ANOTHER tenant's roster says nothing about this
+// subsidiary's IdP.
+func (s *sqlStore) EmailHasActiveMembershipInTenant(ctx context.Context, email, tenantID string) (bool, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" || tenantID == "" {
+		return false, nil
+	}
+	var one int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT 1 FROM membership m JOIN identity i ON i.id = m.identity_id
+		 WHERE m.status='active' AND m.tenant_id = ? AND i.email <> '' AND LOWER(i.email) = ?
+		 LIMIT 1`, tenantID, email).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (s *sqlStore) AnyActiveMembership(ctx context.Context) (bool, error) {
+	var one int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM membership WHERE status='active' LIMIT 1`).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func (s *sqlStore) GetUserLimit(ctx context.Context, membershipID string) (UserLimit, bool, error) {
@@ -673,17 +1024,22 @@ func (s *sqlStore) AcquireWorkspaceOperationFence(ctx context.Context, workspace
 	for {
 		var err error
 		conn, err = s.db.DB.Conn(ctx)
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		var acquired bool
 		err = conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock(hashtextextended($1, 0))`, workspaceID).Scan(&acquired)
 		if err != nil {
 			discardSQLConn(conn) // server may have acquired immediately before the error
 			return nil, err
 		}
-		if acquired { break }
+		if acquired {
+			break
+		}
 		_ = conn.Close() // return the waiter connection before polling again
 		select {
-		case <-ctx.Done(): return nil, ctx.Err()
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
@@ -2003,5 +2359,132 @@ func (s *sqlStore) UpdateMCPServer(ctx context.Context, m MCPServerRow) error {
 
 func (s *sqlStore) DeleteMCPServer(ctx context.Context, tenantID, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM mcp_server WHERE tenant_id=? AND id=?`, tenantID, id)
+	return err
+}
+
+// --- tenant-defined login providers (docs/61 §61.11 + ADR0043 決定 29-33) -------
+
+const tenantIdPCols = `SELECT id, tenant_id, name, label_ja, label_en, issuer, client_id,
+       secret_enc, key_ref, trust, allowed_tids, allowed_domains, status,
+       approved_by, approved_at, created_by, created_at, updated_at FROM tenant_idp`
+
+func scanTenantIdP(sc scanner) (TenantIdP, error) {
+	var t TenantIdP
+	err := sc.Scan(&t.ID, &t.TenantID, &t.Name, &t.LabelJA, &t.LabelEN, &t.Issuer, &t.ClientID,
+		&t.SecretEnc, &t.KeyRef, &t.Trust, &t.AllowedTIDs, &t.AllowedDomains, &t.Status,
+		&t.ApprovedBy, &t.ApprovedAt, &t.CreatedBy, &t.CreatedAt, &t.UpdatedAt)
+	return t, err
+}
+
+func (s *sqlStore) ListTenantIdPs(ctx context.Context, tenantID string) ([]TenantIdP, error) {
+	rows, err := s.db.QueryContext(ctx, tenantIdPCols+` WHERE tenant_id=? ORDER BY name`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TenantIdP
+	for rows.Next() {
+		t, err := scanTenantIdP(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlStore) ListAllTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]string, error) {
+	return s.listTenantIdPs(ctx, "")
+}
+
+func (s *sqlStore) ListActiveTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]string, error) {
+	return s.listTenantIdPs(ctx, "active")
+}
+
+// listTenantIdPs is the deployment-wide read. The tenant slug travels with each row
+// because the provider id the rest of CP sees is built from it (t:<slug>:<name>),
+// and joining here saves the caller a lookup per row.
+//
+// ★ Rows of a non-active tenant are left out: a suspended tenant's IdP must not keep
+// minting sessions, the same way ListTenantLoginRules only loads active tenants.
+func (s *sqlStore) listTenantIdPs(ctx context.Context, status string) ([]TenantIdP, map[string]string, error) {
+	q := `SELECT p.id, p.tenant_id, p.name, p.label_ja, p.label_en, p.issuer, p.client_id,
+	             p.secret_enc, p.key_ref, p.trust, p.allowed_tids, p.allowed_domains, p.status,
+	             p.approved_by, p.approved_at, p.created_by, p.created_at, p.updated_at, t.slug
+	      FROM tenant_idp p JOIN tenant t ON t.id = p.tenant_id
+	      WHERE t.status='active'`
+	args := []any{}
+	if status != "" {
+		q += ` AND p.status=?`
+		args = append(args, status)
+	}
+	q += ` ORDER BY t.slug, p.name`
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	var out []TenantIdP
+	slugs := map[string]string{}
+	for rows.Next() {
+		var t TenantIdP
+		var slug string
+		if err := rows.Scan(&t.ID, &t.TenantID, &t.Name, &t.LabelJA, &t.LabelEN, &t.Issuer, &t.ClientID,
+			&t.SecretEnc, &t.KeyRef, &t.Trust, &t.AllowedTIDs, &t.AllowedDomains, &t.Status,
+			&t.ApprovedBy, &t.ApprovedAt, &t.CreatedBy, &t.CreatedAt, &t.UpdatedAt, &slug); err != nil {
+			return nil, nil, err
+		}
+		out = append(out, t)
+		slugs[t.TenantID] = slug
+	}
+	return out, slugs, rows.Err()
+}
+
+func (s *sqlStore) GetTenantIdP(ctx context.Context, tenantID, id string) (TenantIdP, bool, error) {
+	t, err := scanTenantIdP(s.db.QueryRowContext(ctx, tenantIdPCols+` WHERE tenant_id=? AND id=?`, tenantID, id))
+	if err == sql.ErrNoRows {
+		return TenantIdP{}, false, nil
+	}
+	return t, err == nil, err
+}
+
+func (s *sqlStore) CreateTenantIdP(ctx context.Context, t TenantIdP) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO tenant_idp(id, tenant_id, name, label_ja, label_en, issuer, client_id,
+		   secret_enc, key_ref, trust, allowed_tids, allowed_domains, status,
+		   approved_by, approved_at, created_by, created_at, updated_at)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		t.ID, t.TenantID, t.Name, t.LabelJA, t.LabelEN, t.Issuer, t.ClientID,
+		t.SecretEnc, t.KeyRef, t.Trust, t.AllowedTIDs, t.AllowedDomains, t.Status,
+		t.ApprovedBy, t.ApprovedAt, t.CreatedBy, t.CreatedAt, t.UpdatedAt)
+	return err
+}
+
+// UpdateTenantIdP replaces the editable content of a row. status / approved_* are
+// written here too, because an edit that changes the issuer, the client_id or the
+// trust rule sends the row back to pending (決定 30) — the caller computes that and
+// this is where it lands.
+func (s *sqlStore) UpdateTenantIdP(ctx context.Context, t TenantIdP) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE tenant_idp SET name=?, label_ja=?, label_en=?, issuer=?, client_id=?,
+		   secret_enc=?, key_ref=?, trust=?, allowed_tids=?, allowed_domains=?,
+		   status=?, approved_by=?, approved_at=?, updated_at=?
+		 WHERE tenant_id=? AND id=?`,
+		t.Name, t.LabelJA, t.LabelEN, t.Issuer, t.ClientID,
+		t.SecretEnc, t.KeyRef, t.Trust, t.AllowedTIDs, t.AllowedDomains,
+		t.Status, t.ApprovedBy, t.ApprovedAt, t.UpdatedAt,
+		t.TenantID, t.ID)
+	return err
+}
+
+func (s *sqlStore) SetTenantIdPStatus(ctx context.Context, tenantID, id, status, approvedBy, approvedAt, updatedAt string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE tenant_idp SET status=?, approved_by=?, approved_at=?, updated_at=? WHERE tenant_id=? AND id=?`,
+		status, approvedBy, approvedAt, updatedAt, tenantID, id)
+	return err
+}
+
+func (s *sqlStore) DeleteTenantIdP(ctx context.Context, tenantID, id string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM tenant_idp WHERE tenant_id=? AND id=?`, tenantID, id)
 	return err
 }

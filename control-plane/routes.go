@@ -95,12 +95,14 @@ func isAuthExempt(p string) bool {
 
 // --- 機能別ルート登録 ---------------------------------------------------------
 
-// Health + CP-native Google OAuth (AUTH=oauth) + identity. The login page, OAuth
+// Health + CP-native OIDC login (AUTH=oauth) + identity. The login page, OAuth
 // endpoints, health check and the login page's brand asset are reachable without
-// a session; see oauth_google.go.
+// a session; see oauth.go (flow/session) and oauth_oidc.go (the IdP client).
 func registerAuthRoutes(mux *http.ServeMux, cfg config) {
 	exemptExact("/login", "/healthz")
-	exemptPrefix("/oauth2/", "/brand/")
+	// /login/<tenant-slug> is the per-tenant sign-in page (docs/61 §61.9.3) and is
+	// reachable without a session, like /login itself.
+	exemptPrefix("/oauth2/", "/brand/", "/login/")
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
 	// Build version (docs/35 §35.6.1). Deliberately NOT auth-exempt: /healthz is
 	// frozen (restart-cp.sh compares the body to "ok" verbatim) and the version
@@ -109,6 +111,7 @@ func registerAuthRoutes(mux *http.ServeMux, cfg config) {
 		writeJSON(w, http.StatusOK, map[string]any{"version": buildVersion})
 	})
 	mux.HandleFunc("GET /login", cfg.handleLogin)
+	mux.HandleFunc("GET /login/{slug}", cfg.handleLogin) // per-tenant page (docs/61 §61.9.3)
 	mux.HandleFunc("GET /oauth2/login", cfg.handleOAuthLogin)
 	mux.HandleFunc("GET /oauth2/callback", cfg.handleOAuthCallback)
 	mux.HandleFunc("GET /oauth2/logout", cfg.handleOAuthLogout)
@@ -132,9 +135,21 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/members/{key}/sessions", adm.memberSessions) // per-member session list (read-only)
 	mux.HandleFunc("POST /api/admin/tenants", adm.withSuperAdmin(adm.createTenant))
 	mux.HandleFunc("POST /api/admin/memberships", adm.addMembership)
+	mux.HandleFunc("DELETE /api/admin/memberships", adm.removeMembership) // offboarding (docs/61 §61.10.6)
 	mux.HandleFunc("POST /api/admin/stop-workspace", adm.stopWorkspace)
-	mux.HandleFunc("POST /api/admin/clean-home", adm.withSuperAdmin(adm.cleanHome)) // wipe home (keep auth/connections)
+	mux.HandleFunc("POST /api/admin/clean-home", adm.cleanHome) // wipe home (tenant_admin, docs/61 §61.10.6)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/limits", adm.withSuperAdmin(adm.setTenantLimits))
+	mux.HandleFunc("PUT /api/admin/tenants/{slug}/login", adm.withSuperAdmin(adm.setTenantLogin)) // per-tenant login rules (docs/61 §61.9.7)
+	// Tenant-defined sign-in methods (docs/61 §61.11). The rows are the tenant's, so
+	// these gate on tenant_admin mid-handler; ACTIVATION is checked inside setStatus,
+	// which is the one super_admin step (決定 30). The queue is deployment-wide.
+	idp := newTenantIdPAPI(cfg.mgr)
+	mux.HandleFunc("GET /api/admin/tenants/{slug}/idp", idp.list)
+	mux.HandleFunc("POST /api/admin/tenants/{slug}/idp", idp.upsert)
+	mux.HandleFunc("PUT /api/admin/tenants/{slug}/idp/{id}", idp.upsert)
+	mux.HandleFunc("DELETE /api/admin/tenants/{slug}/idp/{id}", idp.remove)
+	mux.HandleFunc("POST /api/admin/tenants/{slug}/idp/{id}/status", idp.setStatus)
+	mux.HandleFunc("GET /api/admin/idp", idp.withSuperAdmin(idp.queue)) // approval queue (super_admin)
 	mux.HandleFunc("PUT /api/admin/user-limits", adm.setUserLimit)
 	mux.HandleFunc("PUT /api/admin/membership-role", adm.withSuperAdmin(adm.setMembershipRole))         // grant/revoke tenant_admin (super_admin only)
 	mux.HandleFunc("GET /api/admin/host", adm.withSuperAdmin(adm.hostStats))                            // host load / memory (super_admin)

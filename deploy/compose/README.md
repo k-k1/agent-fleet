@@ -7,9 +7,10 @@ home and git working copies, and drives agent sessions from the browser. A Go
 control plane orchestrates the workspaces; deployment targets include this on-prem
 Docker Compose stack, AWS ECS (CloudFormation), and a Docker-less native runtime.
 
-This runbook covers the Docker Compose target: your team logs in with Google and
-works on **one deployment per company**, on your own infrastructure, with your own
-agent seats (e.g. your Claude subscription).
+This runbook covers the Docker Compose target: your team signs in with your
+company's IdP — Google, Microsoft Entra ID, Okta, Keycloak, Auth0, Cognito,
+GitLab — and works on **one deployment per company**, on your own infrastructure,
+with your own agent seats (e.g. your Claude subscription).
 
 This directory is the whole deployment surface:
 
@@ -33,7 +34,11 @@ no registry login. Point `REGISTRY` at your own mirror to pull from elsewhere.
 - A Linux host with **Docker** (Engine + `docker compose`).
 - A **public domain** with a DNS A/AAAA record pointing at this host (for TLS).
   Internal-only? Use the `tls internal` fallback in `Caddyfile`.
-- A **Google OAuth 2.0** Web client (for login).
+- An **IdP client for login**: a Google OAuth 2.0 Web client, or an OIDC app
+  registration at Entra ID / Okta / Keycloak / Auth0 / Cognito / GitLab. Only one
+  redirect URI is ever registered, whichever (and however many) you use.
+  SAML-only IdP (HENNGE One / TrustLogin / CloudGate …)? Front the CP with
+  oauth2-proxy or Keycloak and run `AUTH=proxy` instead.
 - Your team's **Claude** login (each user logs in with their own seat from the
   Console after first launch — bring your own; company Team/Enterprise seats
   recommended over personal Pro/Max).
@@ -59,8 +64,8 @@ head -c 32 /dev/urandom | base64   # -> AF_MASTER_KEY   (store a copy in a vault
 head -c 32 /dev/urandom | base64   # -> AF_COOKIE_SECRET
 # 2) set DOCKER_GID to the host docker group:
 getent group docker | cut -d: -f3  # -> DOCKER_GID
-# 3) fill in PUBLIC_DOMAIN / PUBLIC_BASE_URL / GOOGLE_OAUTH_* /
-#    AF_OAUTH_ALLOWED_DOMAINS / SUPER_ADMIN_EMAILS / DATA_DIR in .env
+# 3) fill in PUBLIC_DOMAIN / PUBLIC_BASE_URL / your IdP (GOOGLE_OAUTH_* and/or
+#    AF_OIDC_*) / AF_OAUTH_ALLOWED_DOMAINS / SUPER_ADMIN_EMAILS / DATA_DIR in .env
 mkdir -p "$(grep -E '^DATA_DIR=' .env | cut -d= -f2)"
 
 # 4) build the per-user workspace image (compose builds only the CP; the CP
@@ -89,20 +94,85 @@ a multi-minute wait for whoever presses Start first.
 Then open `https://<PUBLIC_DOMAIN>`, sign in with a `SUPER_ADMIN_EMAILS` account,
 and launch a workspace.
 
-### Google OAuth setup
+### Login IdP setup
 
-In Google Cloud Console → *APIs & Services* → *Credentials* → create an **OAuth
-client ID** (Web application). Add an **Authorized redirect URI**:
+Whichever IdPs you enable, the redirect URI you register is always this one — it
+does not multiply with the number of providers:
 
 ```
 https://<PUBLIC_DOMAIN>/oauth2/callback
 ```
 
-Copy the client ID/secret into `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET`.
+**Google.** In Google Cloud Console → *APIs & Services* → *Credentials* → create
+an **OAuth client ID** (Web application), add the redirect URI above, and copy the
+client ID/secret into `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET`.
+
+**Microsoft Entra ID / Okta / Keycloak / Auth0 / Cognito / GitLab.** Register a
+confidential *web* app at the IdP with the same redirect URI, then in `.env`:
+
+```sh
+AF_OIDC_PROVIDERS=entra
+AF_OIDC_ENTRA_ISSUER=https://login.microsoftonline.com/<tenant-guid>/v2.0
+AF_OIDC_ENTRA_CLIENT_ID=<application-client-id>
+AF_OIDC_ENTRA_CLIENT_SECRET=<client-secret-value>
+AF_OIDC_ENTRA_TRUST=issuer                       # required; see below
+AF_OIDC_ENTRA_LABEL_JA=Microsoft でサインイン     # optional button labels
+AF_OIDC_ENTRA_LABEL_EN=Sign in with Microsoft
+```
+
+- **`_TRUST` has no default on purpose.** It states why this IdP's email may be
+  believed, and the login page is the front door: `email_verified` accepts only
+  the addresses the IdP marks verified (Google, most Okta / Keycloak / Auth0
+  setups); `issuer` says the issuer is pinned to one tenant, so its directory's
+  addresses are authoritative. Entra ID never emits `email_verified`, so `issuer`
+  is the correct value there. A provider with no `_TRUST` is disabled at startup.
+- ★ **Pin the Entra issuer to your tenant guid.** With the `/common/` or
+  `/organizations/` endpoint, everyone on earth with a Microsoft account reaches
+  your login, and personal accounts can change their own email — which would make
+  the email allowlist meaningless. The CP refuses to start on those endpoints
+  unless `AF_OIDC_ENTRA_ALLOWED_TIDS` names the tenants you accept.
+- Set several ids in `AF_OIDC_PROVIDERS` (`entra,okta`) to offer several buttons.
+  A provider whose settings are incomplete is disabled with a warning in the CP
+  log — one broken IdP never locks the whole company out — and the CP only
+  refuses to start when no provider at all is usable.
+- Pressing a different button lands the same person in the same workspace as long
+  as the IdPs hand out the same email address. From then on that IdP account is
+  remembered, so a later rename at the IdP no longer moves anyone's home
+  directory. Two **different** addresses stay two people, and cannot be merged
+  afterwards — someone who signs in with an address nobody has used here before is
+  shown a page saying a new workspace was created.
+
+**GitHub.** Not OIDC, so it is configured separately — and what authorizes the
+sign-in is membership in an org you list:
+
+```sh
+AF_GITHUB_ALLOWED_ORGS=acme,acme-labs    # required; also what enables the button
+GITHUB_OAUTH_CLIENT_SECRET=<client-secret>
+AF_GITHUB_ALLOWED_DOMAINS=example.com    # strongly recommended; see below
+```
+
+- The OAuth App is the same one the Console's GitHub "Connect" button uses
+  (`GITHUB_OAUTH_CLIENT_ID`) — just add the redirect URI
+  `<PUBLIC_BASE_URL>/oauth2/callback` to it. Set `AF_GITHUB_LOGIN_CLIENT_ID` /
+  `AF_GITHUB_LOGIN_CLIENT_SECRET` instead if you would rather the login use an app
+  of its own (approving an app for an org approves it for both flows).
+- ★ **If your org restricts third-party OAuth apps, an org owner must approve the
+  app.** Until they do, the membership check sees nothing and *everybody* is
+  rejected — with settings that look correct.
+- ★ **Set `AF_GITHUB_ALLOWED_DOMAINS` too.** GitHub gives us the account's primary
+  **verified** address, which for most people is a personal one — and a personal
+  address is a different person here, so they land in a new empty workspace
+  instead of their own. Refusing at the door is kinder than letting someone work
+  in a workspace they never meant to create.
+- Membership is re-checked through the API, cached for `AF_GITHUB_MEMBERSHIP_TTL`
+  (10m) and, if GitHub is unreachable, honored for `AF_GITHUB_MEMBERSHIP_GRACE`
+  (1h) past the last positive answer. The cache is in memory, so after a CP
+  restart these sessions are asked to **sign in again** — they are not rejected,
+  and GitHub usually completes that round trip without prompting.
 
 ### Git provider OAuth (GitHub / Bitbucket) — optional
 
-Google OAuth above is for **console login**. To also enable the one-click
+Login above is for the **console**. To also enable the one-click
 "Connect via OAuth" buttons for cloning private repos, set the git-provider vars
 in `.env` (users can always paste a token instead, without these):
 
@@ -120,7 +190,24 @@ in `.env` (users can always paste a token instead, without these):
   with zero friction. Create additional tenants only if you need hard separation
   (e.g. departments) — each membership gets a fully isolated workspace.
 - `AF_PROVISION=auto` (default) auto-admits any allow-listed login into the
-  default tenant. Set `AF_PROVISION=invite` to require an admin to add people.
+  default tenant. Set `AF_PROVISION=invite` to require an admin to add people —
+  you can do that from the first boot, since a `SUPER_ADMIN_EMAILS` account
+  reaches the Admin panel with no membership of its own.
+- **An invitation is itself permission to sign in.** Somebody you add in the
+  Admin panel gets past the login without also being in `AF_OAUTH_ALLOWED_*`, so
+  an invite-run deployment keeps one roster rather than two lists that drift.
+- Each tenant can carry **login rules** (Admin → tenant → Login rules): which
+  sign-in methods it accepts, which domains join it automatically, and which
+  domains may be invited. It also gets its own page at
+  `<PUBLIC_BASE_URL>/login/<slug>`, showing only the methods that tenant accepts —
+  that URL is what you hand to a new member (there is no invitation email).
+- **Offboarding is "Remove member"** (Admin → tenant → member). Disabling the
+  account at the IdP does not end a session that already exists — the signed
+  cookie is valid for up to `AF_SESSION_TTL`. Removing them from the roster (or
+  the allowlist) takes effect on their very next request. To cut every session at
+  once, rotate `AF_COOKIE_SECRET` and restart.
+- `SUPER_ADMIN_EMAILS` is read **once at startup** and is the only source of
+  truth: on restart the CP also revokes the role from accounts no longer listed.
 
 ## Backup & restore
 
@@ -227,9 +314,15 @@ encodes them, but if you customize it, keep them:
 | "permission denied" on docker.sock | `DOCKER_GID` matches `getent group docker`? |
 | Workspace starts but home is empty | DooD (B): `DATA_DIR` identical inside/outside; same path on restore |
 | Can't reach a started workspace | DooD (A): CP + Caddy both `network_mode: host` |
-| Login always denied | allowlist empty (fail-closed) — set `AF_OAUTH_ALLOWED_DOMAINS`/`_EMAILS` |
+| Login always denied | allowlist empty **and nobody invited yet** (fail-closed) — set `AF_OAUTH_ALLOWED_DOMAINS`/`_EMAILS`, or invite somebody |
+| "this tenant needs a different sign-in" | the tenant's Login rules → sign-in methods excludes the IdP they used; send them `<PUBLIC_BASE_URL>/login/<slug>` |
+| A removed person still has access | the IdP block doesn't end their session — remove the member (Admin → tenant → member) or rotate `AF_COOKIE_SECRET` |
 | TLS not issued | DNS A/AAAA → this host? ports 80/443 reachable? Let's Encrypt rate limit? |
-| Redirect URI mismatch | Google console URI == `<PUBLIC_BASE_URL>/oauth2/callback` |
+| Redirect URI mismatch | the IdP's registered URI == `<PUBLIC_BASE_URL>/oauth2/callback` |
+| A login button is missing | that provider was disabled at startup — `docker compose logs cp \| grep -i "login provider"` names the missing setting |
+| CP exits on an Entra config | `/common/` or `/organizations/` issuer without `AF_OIDC_<ID>_ALLOWED_TIDS` — pin the issuer to your tenant guid |
+| Every GitHub login is rejected | the org restricts third-party OAuth apps and nobody approved this one (`docker compose logs cp \| grep "returned 403"`), or the person's primary verified address is outside `AF_GITHUB_ALLOWED_DOMAINS` |
+| GitHub users are asked to sign in again after a restart | expected: the org-membership cache is in memory. They are re-verified, not rejected |
 
 ## Security notes
 

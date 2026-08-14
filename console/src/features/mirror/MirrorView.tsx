@@ -87,7 +87,7 @@ import { awaitingReply, confirmedWorkEnd, latestWorkPromptIndex, textOfParts } f
 import { echoLanded, echoNeedsResync, type PendingEcho } from "./pendingEcho.ts";
 import { PLAN_APPROVE_KEYS } from "./planDecision.ts";
 import { deliverPlanComments, planKey } from "./planComments.ts";
-import { patchAnswers } from "./interactionAnswers.ts";
+import { type InteractionAnswerWire, patchAnswers } from "./interactionAnswers.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { useDismiss } from "../../lib/useDismiss.ts";
 import {
@@ -776,7 +776,8 @@ export function MirrorView({
           // Late interaction answers (AskUserQuestion/ExitPlanMode/Agent), keyed by
           // tool_use id — see patchAnswers. Sent every poll; applied to whatever turns we
           // hold after the append/reset below.
-          const answers = d.answers && typeof d.answers === "object" ? (d.answers as Record<string, string>) : null;
+          const answers =
+            d.answers && typeof d.answers === "object" ? (d.answers as Record<string, InteractionAnswerWire>) : null;
           if (d.reset) {
             setTurns(patchAnswers(Array.isArray(d.messages) ? d.messages : [], answers));
             // Servers now resend a TAIL window on reset and set firstLine/hasMore

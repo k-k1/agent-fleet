@@ -211,4 +211,161 @@ func TestPostgresStore(t *testing.T) {
 	if v, err := st.GetSetting(ctx, "egress_mode"); err != nil || v != "log" {
 		t.Fatalf("get setting: %v %q", err, v)
 	}
+
+	// identity_provider round trip (docs/61 P1 / migrations-pg/0021). Everything
+	// below had only ever run on SQLite: the pair table, its
+	// ON CONFLICT(provider, subject) upsert, and the LOWER(email)=? lookup. Postgres
+	// is the stricter dialect about placeholder types, which is why identityByEmail
+	// lowercases in Go rather than calling LOWER(?) and touchIdentity has two
+	// statements instead of one with NULLIF.
+	const pgEmail = "Yamada@Acme.co.jp" // stored with the case the IdP asserted
+	seed, err := st.UpsertIdentity(ctx, pgEmail, sanitizeUser(pgEmail), "")
+	if err != nil {
+		t.Fatalf("link seed: %v", err)
+	}
+	// Rule 2: no pair recorded yet, but the address is already someone's — join that
+	// person. Matching is case-insensitive even though the unique index is on the
+	// exact string, so a differently-cased login must not fork a second identity.
+	joined, isNew, err := st.LinkIdentity(ctx, googleProviderID, "pg-sub-1", "yamada@acme.co.jp", sanitizeUser(pgEmail), "", true)
+	if err != nil || isNew || joined.ID != seed.ID || joined.UserKey != seed.UserKey {
+		t.Fatalf("link rule 2: %+v isNew=%v err=%v want id=%s key=%s", joined, isNew, err, seed.ID, seed.UserKey)
+	}
+	// Rule 1 + rename: the recorded pair outranks the address, so user_key — the home
+	// directory name — stays put and only the display email moves.
+	const pgRenamed = "yamada-hanako@acme.co.jp"
+	moved, isNew, err := st.LinkIdentity(ctx, googleProviderID, "pg-sub-1", pgRenamed, sanitizeUser(pgRenamed), "", true)
+	if err != nil || isNew || moved.ID != seed.ID || moved.UserKey != seed.UserKey || moved.Email != pgRenamed {
+		t.Fatalf("link rule 1: %+v isNew=%v err=%v want id=%s key=%s", moved, isNew, err, seed.ID, seed.UserKey)
+	}
+	// touchIdentity's other statement: nothing asserted, so last_login_at moves and
+	// the display email must survive rather than be blanked.
+	if _, _, err := st.LinkIdentity(ctx, googleProviderID, "pg-sub-1", "", sanitizeUser(pgRenamed), "", true); err != nil {
+		t.Fatalf("link without an asserted email: %v", err)
+	}
+	if got, ok, err := st.GetIdentityByID(ctx, seed.ID); err != nil || !ok || got.Email != pgRenamed {
+		t.Fatalf("empty assertion cleared the email: %+v ok=%v err=%v", got, ok, err)
+	}
+	// Rule 3: an address nobody owns is a new person — the isNew that raises the
+	// "this is a new workspace" notice on a multi-IdP deployment.
+	const pgOther = "tanaka@acme.co.jp"
+	fresh, isNew, err := st.LinkIdentity(ctx, "entra", "pg-sub-2", pgOther, sanitizeUser(pgOther), "", true)
+	if err != nil || !isNew || fresh.ID == seed.ID || fresh.UserKey != sanitizeUser(pgOther) {
+		t.Fatalf("link rule 3: %+v isNew=%v err=%v", fresh, isNew, err)
+	}
+	if n := countRows(t, st, "identity_provider"); n != 2 {
+		t.Fatalf("identity_provider rows = %d, want 2", n)
+	}
+
+	// tenant login rules round trip (docs/61 P3 / migrations-pg/0022). The columns
+	// arrive by ALTER on an existing table, and the entry gate reads them on every
+	// request, so a dialect slip here would take the whole login down.
+	if err := st.SetTenantLogin(ctx, t2.ID, "entra,github", "acme.co.jp", "acme.co.jp"); err != nil {
+		t.Fatalf("set tenant login: %v", err)
+	}
+	if got, err := st.GetTenant(ctx, t2.ID); err != nil ||
+		got.AllowedProviders != "entra,github" || got.AutoJoinDomains != "acme.co.jp" || got.AllowedDomains != "acme.co.jp" {
+		t.Fatalf("tenant login round trip: %v %+v", err, got)
+	}
+	// The default tenant was created before the ALTER, so it must read back as the
+	// NOT NULL DEFAULT '' rather than a NULL that would fail the Scan.
+	if got, err := st.GetTenant(ctx, tn.ID); err != nil || got.AllowedProviders != "" {
+		t.Fatalf("pre-existing tenant row: %v %+v", err, got)
+	}
+	rules, err := st.ListTenantLoginRules(ctx)
+	if err != nil {
+		t.Fatalf("list tenant login rules: %v", err)
+	}
+	var found bool
+	for _, r := range rules {
+		if r.ID == t2.ID {
+			found = true
+			if len(r.AllowedProviders) != 2 || r.AutoJoinDomains[0] != "acme.co.jp" {
+				t.Fatalf("rules split wrong: %+v", r)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("t2 missing from %+v", rules)
+	}
+
+	// membership deactivate + the entry gate's roster lookup (LOWER on the column,
+	// not on the placeholder — Postgres cannot infer a type for LOWER($1)).
+	if ok, err := st.EmailHasActiveMembership(ctx, "DEV@example.com"); err != nil || !ok {
+		t.Fatalf("EmailHasActiveMembership = (%v,%v), want true", ok, err)
+	}
+	if any, err := st.AnyActiveMembership(ctx); err != nil || !any {
+		t.Fatalf("AnyActiveMembership = (%v,%v), want true", any, err)
+	}
+	memT2, _, err := st.GetMembership(ctx, i2.ID, t2.ID)
+	if err != nil {
+		t.Fatalf("get membership: %v", err)
+	}
+	if err := st.SetMembershipStatus(ctx, memT2.ID, "inactive"); err != nil {
+		t.Fatalf("deactivate: %v", err)
+	}
+	if got, _, err := st.GetMembership(ctx, i2.ID, t2.ID); err != nil || got.Status != "inactive" {
+		t.Fatalf("membership status = %+v %v", got, err)
+	}
+	// EnsureMembership must NOT revive it (that is the invite path's explicit job).
+	if _, err := st.EnsureMembership(ctx, i2.ID, t2.ID, "member"); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	if got, _, _ := st.GetMembership(ctx, i2.ID, t2.ID); got.Status != "inactive" {
+		t.Fatalf("EnsureMembership revived a deactivated membership: %+v", got)
+	}
+
+	// tenant_idp round trip (docs/61 P4 / migrations-pg/0023). The table is created
+	// by this migration, the deployment-wide read JOINs tenant, and the approval path
+	// is a second UPDATE — all of it had only ever run on SQLite.
+	idpRow := TenantIdP{
+		ID: newID(), TenantID: t2.ID, Name: "entra",
+		Issuer: "https://login.microsoftonline.com/guid-pg/v2.0", ClientID: "c",
+		SecretEnc: "sealed", KeyRef: t2.ID, Trust: trustIssuer,
+		AllowedDomains: "sub.example", Status: "pending", CreatedAt: nowTS(), UpdatedAt: nowTS(),
+	}
+	if err := st.CreateTenantIdP(ctx, idpRow); err != nil {
+		t.Fatalf("create tenant_idp: %v", err)
+	}
+	if got, ok, err := st.GetTenantIdP(ctx, t2.ID, idpRow.ID); err != nil || !ok || got.Status != "pending" || got.SecretEnc != "sealed" {
+		t.Fatalf("get tenant_idp: %+v ok=%v err=%v", got, ok, err)
+	}
+	// Only APPROVED rows reach the login layer — the property the whole feature rests on.
+	if act, _, err := st.ListActiveTenantIdPs(ctx); err != nil || len(act) != 0 {
+		t.Fatalf("pending row must not be active: %+v %v", act, err)
+	}
+	if err := st.SetTenantIdPStatus(ctx, t2.ID, idpRow.ID, "active", "boss", nowTS(), nowTS()); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	act, slugs, err := st.ListActiveTenantIdPs(ctx)
+	if err != nil || len(act) != 1 || slugs[t2.ID] != t2.Slug || act[0].ApprovedBy != "boss" {
+		t.Fatalf("active tenant_idp: %+v slugs=%v err=%v", act, slugs, err)
+	}
+	// The tenant-scoped roster lookup. dev@example.com is an ACTIVE member of the
+	// default tenant and was deactivated in t2 just above, so this one call proves
+	// both halves: the tenant scoping and the active-only filter.
+	if ok, err := st.EmailHasActiveMembershipInTenant(ctx, "DEV@example.com", tn.ID); err != nil || !ok {
+		t.Fatalf("EmailHasActiveMembershipInTenant = (%v,%v), want true", ok, err)
+	}
+	if ok, err := st.EmailHasActiveMembershipInTenant(ctx, "DEV@example.com", t2.ID); err != nil || ok {
+		t.Fatalf("a deactivated membership must not count = (%v,%v), want false", ok, err)
+	}
+	if err := st.DeleteTenantIdP(ctx, t2.ID, idpRow.ID); err != nil {
+		t.Fatalf("delete tenant_idp: %v", err)
+	}
+	if _, ok, _ := st.GetTenantIdP(ctx, t2.ID, idpRow.ID); ok {
+		t.Fatal("tenant_idp row survived the delete")
+	}
+
+	// super_admin revocation (決定 24): i2 was upgraded above, and dropping it from
+	// the env list must take it away.
+	demoted, err := st.DemoteSuperAdmins(ctx, []string{"someone-else@example.com"})
+	if err != nil {
+		t.Fatalf("demote: %v", err)
+	}
+	if len(demoted) != 1 || demoted[0] != "dev@example.com" {
+		t.Fatalf("demoted = %v, want dev@example.com", demoted)
+	}
+	if got, _, _ := st.GetIdentityByID(ctx, i2.ID); got.Role != "user" {
+		t.Fatalf("role after demotion = %q", got.Role)
+	}
 }

@@ -5,6 +5,7 @@
 // contract is unchanged; only the packaging moved to modules.
 
 import { signalAuthExpired } from "../auth/authExpired.ts";
+import { signalProviderRequired } from "../auth/providerRequired.ts";
 import { t, tMaybe } from "../../lib/i18n/index.ts";
 
 // Resolve URLs relative to where the Console is mounted, so it works both at the
@@ -186,6 +187,13 @@ export const api = (path: string, opts?: RequestInit): Promise<any> => {
     if (text) {
       try {
         const parsed = JSON.parse(text);
+        // The active tenant accepts a different sign-in method than this session
+        // was minted with (docs/61 §61.9.4). Latch it so a dialog can offer the
+        // re-sign-in link — otherwise every request for that tenant just fails and
+        // the person is left with no way to reach it. Mirrors the 401 latch above.
+        if (parsed?.error?.code === "provider_required" && selectedTenant) {
+          signalProviderRequired({ tenant: selectedTenant, provider: "" });
+        }
         if (method === "GET" && r.ok) {
           const etag = r.headers.get("ETag");
           if (etag) {

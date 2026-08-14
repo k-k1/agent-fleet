@@ -80,13 +80,16 @@ func (c config) handleBitbucketOAuthStart(w http.ResponseWriter, r *http.Request
 		})
 		return
 	}
-	user := c.mgr.resolveUser(r)
-	if user == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{
-			"error": map[string]string{"code": "unauthenticated", "message": "no gateway identity"},
-		})
+	// The flow is keyed by the person's real user_key, not by sanitizeUser(email):
+	// since docs/61 §61.5 an identity keeps its key when the IdP changes the email,
+	// so the two can differ, and the callback would otherwise resolve a DIFFERENT
+	// workspace and install the token there.
+	ident, aerr := c.mgr.identityFor(r.Context(), r)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
 		return
 	}
+	user := ident.UserKey
 	state := randHex(16)
 	bbFlows.put(state, bbState{user: user, tenant: r.Header.Get("X-AF-Tenant"), created: time.Now()})
 

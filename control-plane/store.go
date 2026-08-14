@@ -14,6 +14,19 @@ import (
 
 type Tenant struct {
 	ID, Slug, Name, Status, Limits, Isolation, KeyRef, CreatedAt string
+	// Per-tenant login rules (docs/61 §61.9.7, migration 0039). All CSV, all
+	// optional; see TenantLoginRules for what each one governs and why there is no
+	// allowed_emails among them.
+	AllowedProviders, AutoJoinDomains, AllowedDomains string
+}
+
+// TenantLoginRules is the login-relevant slice of a tenant, as loaded in bulk by
+// the entry gate's cache (docs/61 §61.9.6/§61.9.7). Slug is carried because the
+// deterministic tie-break for two tenants claiming the same auto-join domain is
+// "lowest slug wins" (§61.9.8).
+type TenantLoginRules struct {
+	ID, Slug, Name                                    string
+	AllowedProviders, AutoJoinDomains, AllowedDomains []string
 }
 
 // Identity is a person, unique by email within the deployment. role is the
@@ -330,6 +343,7 @@ type Store interface {
 	ScheduleStore
 	MCPServerStore
 	SessionShareStore
+	TenantIdPStore
 
 	Close() error
 }
@@ -366,6 +380,57 @@ type TenantStore interface {
 	GetTenantBySlug(ctx context.Context, slug string) (Tenant, bool, error)
 	SetTenantLimits(ctx context.Context, tenantID, limitsJSON string) error
 	ListTenants(ctx context.Context) ([]Tenant, error)
+	// SetTenantLogin stores the three CSV login rules (docs/61 §61.9.7). Values are
+	// normalized by the caller (lowercased, deduped); this only writes them.
+	SetTenantLogin(ctx context.Context, tenantID, allowedProviders, autoJoinDomains, allowedDomains string) error
+	// ListTenantLoginRules is the entry gate's bulk read: one query behind a short
+	// TTL cache rather than a per-request lookup (§61.9.7).
+	ListTenantLoginRules(ctx context.Context) ([]TenantLoginRules, error)
+}
+
+// TenantIdP is one tenant-defined login provider (docs/61 §61.11, migration 0040).
+// SecretEnc is opaque ciphertext here exactly like MCPServerRow.HeadersEnc: the
+// SQL layer stores and returns it, and tenant_idp.go owns the sealing.
+//
+// ★ Status governs everything. Only "active" rows are turned into a provider, and
+// a row is born "pending" until a super_admin approves it (決定 30). ApprovedBy /
+// ApprovedAt are the copy of that approval kept next to the row — the audit ledger
+// is the record.
+type TenantIdP struct {
+	ID, TenantID, Name              string
+	LabelJA, LabelEN                string
+	Issuer, ClientID                string
+	SecretEnc, KeyRef               string
+	Trust                           string
+	AllowedTIDs, AllowedDomains     string // CSV
+	Status                          string // pending | active | suspended
+	ApprovedBy, ApprovedAt          string
+	CreatedBy, CreatedAt, UpdatedAt string
+}
+
+// TenantIdPStore is the tenant-defined login provider registry (docs/61 §61.11).
+// Every mutation carries tenant_id in the WHERE, the way MCPServerStore does, so a
+// tenant_admin of one tenant can never reach another's row even if an id leaks.
+// ListActiveTenantIdPs is the exception by design: it is the deployment-wide read
+// the login layer needs to assemble the provider set, and it is never reached from
+// a tenant-scoped handler.
+type TenantIdPStore interface {
+	ListTenantIdPs(ctx context.Context, tenantID string) ([]TenantIdP, error)
+	// ListAllTenantIdPs returns every row with its tenant slug, for the super_admin
+	// approval queue. slugs are returned separately so the store stays free of view
+	// structs; the handler joins them.
+	ListAllTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]string, error)
+	// ListActiveTenantIdPs returns the approved rows only — the login layer's bulk
+	// read, behind the same short TTL cache the tenant rules use.
+	ListActiveTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]string, error)
+	GetTenantIdP(ctx context.Context, tenantID, id string) (TenantIdP, bool, error)
+	CreateTenantIdP(ctx context.Context, row TenantIdP) error
+	UpdateTenantIdP(ctx context.Context, row TenantIdP) error
+	// SetTenantIdPStatus is the approval / suspension path, kept apart from the
+	// content update so approving cannot accidentally rewrite the issuer that was
+	// being approved.
+	SetTenantIdPStatus(ctx context.Context, tenantID, id, status, approvedBy, approvedAt, updatedAt string) error
+	DeleteTenantIdP(ctx context.Context, tenantID, id string) error
 }
 
 type IdentityStore interface {
@@ -373,16 +438,48 @@ type IdentityStore interface {
 	// upgrades the deployment role (e.g. "super_admin" from SUPER_ADMIN_EMAILS);
 	// it never downgrades.
 	UpsertIdentity(ctx context.Context, email, key, roleHint string) (Identity, error)
+	// LinkIdentity is UpsertIdentity for a login that proved an IdP subject
+	// (AUTH=oauth). The (provider, subject) pair decides who this is, so an email
+	// change keeps the same identity — and therefore the same user_key, workspace
+	// and secrets (docs/61 §61.5). isNew reports that no existing identity matched
+	// and a new one was created, which is the only signal the caller has that this
+	// person landed in a different workspace than the one they may expect.
+	// fallbackKey is used only on that path (it is sanitizeUser(email)).
+	//
+	// ★ emailJoin selects rule 2 ("this address already belongs to someone — join
+	// that identity"). It is FALSE for a tenant-defined provider (docs/61 §61.11 +
+	// 決定 32): its issuer belongs to the subsidiary, not to the operator, so an
+	// admin there could otherwise mint a token carrying a colleague's address and
+	// land in that colleague's identity — home, secrets and all. The caller decides,
+	// because the naming rule that distinguishes the two kinds of provider
+	// (tenantProviderID) belongs to the login layer, not to SQL.
+	LinkIdentity(ctx context.Context, provider, subject, email, fallbackKey, roleHint string, emailJoin bool) (ident Identity, isNew bool, err error)
 	GetIdentityByID(ctx context.Context, id string) (Identity, bool, error)
 	// GetIdentityByUserKey is the READ-ONLY lookup for view paths (admin stats,
 	// admin MCP list tools): unlike UpsertIdentity it neither inserts a row for a
 	// mistyped key nor touches last_login_at.
 	GetIdentityByUserKey(ctx context.Context, key string) (Identity, bool, error)
+	// DemoteSuperAdmins drops every identity whose deployment role is super_admin
+	// and whose email is NOT in keep back to "user", and returns the demoted
+	// addresses. SUPER_ADMIN_EMAILS is the single source of truth and CP runs this
+	// once at STARTUP (ADR0043 決定 24): a login-time sync would never reach the
+	// person who left, because the person who left never logs in again. Identities
+	// with an empty email are left alone — they cannot be named in the env, so
+	// demoting them would be unrecoverable by the documented procedure.
+	DemoteSuperAdmins(ctx context.Context, keep []string) ([]string, error)
 }
 
 type MembershipStore interface {
 	ListMemberships(ctx context.Context, identityID string) ([]MembershipView, error)
 	ListMembersByTenant(ctx context.Context, tenantID string) ([]MemberInfo, error)
+	// ListRemovedMembersByTenant returns the tenant's DEACTIVATED memberships.
+	// Deliberately a second method rather than a flag on the one above: every other
+	// caller of that one (share targets, the MCP admin tools, the session overview)
+	// reads it as "who is a member of this tenant" and must never be handed somebody
+	// who was taken off the roster. The admin roster still needs them, because
+	// offboarding runs remove → stop workspace → clean home and the last two steps
+	// happen when the person is already off the list (docs/61 §61.10.6).
+	ListRemovedMembersByTenant(ctx context.Context, tenantID string) ([]MemberInfo, error)
 	EnsureMembership(ctx context.Context, identityID, tenantID, role string) (Membership, error)
 	GetMembership(ctx context.Context, identityID, tenantID string) (Membership, bool, error)
 	// GetMembershipByID resolves a membership (with its tenant slug + live role) by
@@ -396,6 +493,30 @@ type MembershipStore interface {
 	// SetMembershipRole changes a membership's tenant-scoped role (member |
 	// tenant_admin). EnsureMembership only inserts, so this is the update path.
 	SetMembershipRole(ctx context.Context, membershipID, role string) error
+	// SetMembershipStatus deactivates (or restores) a membership. Offboarding is a
+	// LOGICAL delete: the workspace, its home and its secrets survive, but every
+	// path that resolves a membership already requires status='active', so the
+	// person is locked out on the next request (docs/61 §61.10.6 / 決定 22).
+	// Hard deletion is deliberately not offered — schedules, audit rows and shares
+	// reference the membership id.
+	SetMembershipStatus(ctx context.Context, membershipID, status string) error
+	// EmailHasActiveMembership reports whether the person at this address is on any
+	// tenant's roster. This is the term decision 16 adds to the entry gate: being
+	// invited is itself permission to reach the login, so an invite-run deployment
+	// need not also maintain AF_OAUTH_ALLOWED_*.
+	// ★ Matched on identity.email, NOT on sanitizeUser(email): since P1 a person may
+	// keep a user_key that no longer derives from their current address.
+	EmailHasActiveMembership(ctx context.Context, email string) (bool, error)
+	// EmailHasActiveMembershipInTenant is the same question asked of ONE tenant. A
+	// tenant-defined provider (docs/61 §61.11) may only admit that tenant's own
+	// people, so its entry gate cannot use the deployment-wide answer above: being
+	// on some other subsidiary's roster is not permission to use this subsidiary's
+	// IdP (決定 32-3).
+	EmailHasActiveMembershipInTenant(ctx context.Context, email, tenantID string) (bool, error)
+	// AnyActiveMembership reports whether the deployment has any roster at all —
+	// used by the startup warning, which must no longer claim "every login is
+	// denied" on a deployment that runs purely on invitations.
+	AnyActiveMembership(ctx context.Context) (bool, error)
 	// MembershipOwnerName resolves a membership to a human display label (email, or
 	// the user key) — e.g. for stamping on an LFS lock. "" when it can't be resolved.
 	MembershipOwnerName(ctx context.Context, membershipID string) (string, error)

@@ -19,8 +19,10 @@ vi.stubGlobal("window", { fetch: fetchMock });
 vi.stubGlobal("fetch", fetchMock);
 
 let useTenantStore: (typeof import("./tenant.ts"))["useTenantStore"];
+let setTenant: (typeof import("../api/client.ts"))["setTenant"];
 beforeAll(async () => {
   ({ useTenantStore } = await import("./tenant.ts"));
+  ({ setTenant } = await import("../api/client.ts"));
 });
 
 const jsonRes = (body: unknown) =>
@@ -68,5 +70,40 @@ describe("tenant store refreshWhoami", () => {
     fetchMock.mockRejectedValue(new Error("network"));
     await expect(useTenantStore.getState().refreshWhoami()).resolves.toBeUndefined();
     expect(useTenantStore.getState().whoami).toEqual({ user: "u1", scheduler_enabled: false });
+  });
+});
+
+// ?tenant=<slug> is the hint the Control Plane leaves after a sign-in that started
+// at /login/<slug> (docs/61 §61.10.4), so somebody who opened their department's
+// link lands in that department rather than in whichever tenant this browser last
+// used. It is a PRESELECTION only: it is honoured just when the server already
+// listed that tenant among the person's memberships (ADR0043 決定 14).
+describe("tenant store boot hint", () => {
+  const boot = async (search: string, slugs: string[], persisted: string) => {
+    vi.stubGlobal("location", { search, pathname: "/" });
+    setTenant(persisted);
+    fetchMock.mockReset();
+    fetchMock.mockImplementation((...args: unknown[]) => {
+      const url = String(args[0]);
+      if (url.includes("whoami")) return Promise.resolve(jsonRes({ user: "u1" }));
+      return Promise.resolve(jsonRes({ tenants: slugs.map((slug) => ({ slug })), super_admin: false }));
+    });
+    advance(60_000);
+    await useTenantStore.getState().init();
+    return useTenantStore.getState().tenant;
+  };
+
+  it("prefers the hinted tenant over the persisted selection", async () => {
+    expect(await boot("?tenant=sales", ["dev", "sales"], "dev")).toBe("sales");
+  });
+
+  it("ignores a tenant the person is not a member of", async () => {
+    // Anyone can type any slug — this is exactly why the hint may never be an
+    // authorization input. Fall back to the persisted (still valid) selection.
+    expect(await boot("?tenant=secret", ["dev", "sales"], "dev")).toBe("dev");
+  });
+
+  it("keeps the persisted selection when there is no hint", async () => {
+    expect(await boot("", ["dev", "sales"], "sales")).toBe("sales");
   });
 });
