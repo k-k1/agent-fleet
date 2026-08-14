@@ -95,9 +95,9 @@ func isAuthExempt(p string) bool {
 
 // --- 機能別ルート登録 ---------------------------------------------------------
 
-// Health + CP-native Google OAuth (AUTH=oauth) + identity. The login page, OAuth
+// Health + CP-native OIDC login (AUTH=oauth) + identity. The login page, OAuth
 // endpoints, health check and the login page's brand asset are reachable without
-// a session; see oauth_google.go.
+// a session; see oauth.go (flow/session) and oauth_oidc.go (the IdP client).
 func registerAuthRoutes(mux *http.ServeMux, cfg config) {
 	exemptExact("/login", "/healthz")
 	exemptPrefix("/oauth2/", "/brand/")
