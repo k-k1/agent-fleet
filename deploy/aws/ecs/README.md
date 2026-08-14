@@ -224,19 +224,28 @@ service supports it:
 | ssm | CP secrets (out-of-band) | PutParameter/DeleteParameter under `/af-cp/*` |
 | sts | account resolution in release-ecr.sh | GetCallerIdentity |
 
-## Known behavior: first Start may 504 at the ALB
+## Known behavior: a cold Start answers `starting`, not `running`
 
-A cold workspace Start (image pull + agent wait) can outlast the ALB's 60s idle
-timeout, so the *HTTP request* dies with 504 — but the CP keeps provisioning
-server-side and the workspace converges to `running` shortly after (~100s
-measured). The Console polls `GET /api/workspace` so users just see "starting";
-when driving the API directly, poll the same endpoint instead of trusting the
-Start response code.
+A cold workspace Start pays a full image pull on every launch (Fargate keeps no
+image cache between tasks) and converges in **~100s measured**. `POST
+/api/workspace/start` does **not** wait for that: it returns as soon as the ECS
+service sits at `desiredCount 1`, with the live state — normally `starting`.
+Poll `GET /api/workspace` for the transition to `running`; the Console already
+does (4s, and it walks the cold start to `running` without a reload).
 
-The 504 itself has one concrete cause: the adapter's readiness wait
-(`AF_ECS_START_TIMEOUT_SEC`, default **90s**) outlives the ALB's **60s** idle
-timeout (`30-ingress.yaml` sets no `idle_timeout` attribute). That is fixable
-independently of the pull time.
+Older builds blocked the request on the Agent readiness wait
+(`AF_ECS_START_TIMEOUT_SEC`, then 90s) and so outlived the ALB's **60s** idle
+timeout — the *HTTP request* died with a **504** while the workspace converged
+fine behind it. Fixed in `control-plane/runtime_ecs.go` (`watchReady`): the
+readiness poll now runs in the background for a log line only
+(`ecs start: service <name> Agent healthy <n>s after Start`), on a budget
+deliberately longer (default **300s**) than any request may take. `30-ingress.yaml`
+now spells the ALB's `idle_timeout` out at its default 60s so the ceiling is
+visible. 🚧 Verified by unit tests only — not re-run against a live ECS stack.
+
+Note `running` here means the ECS **task** is RUNNING, which is a moment before
+the entrypoint has finished and the Agent answers. A create issued in that window
+still gets `502 workspace agent unreachable`; retry.
 
 **Measure before optimizing.** Nobody has split the ~100s into its parts. One
 Start gives you both numbers:

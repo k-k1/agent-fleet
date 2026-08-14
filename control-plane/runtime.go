@@ -11,6 +11,14 @@ import (
 // and reaper stay backend-agnostic. Endpoint() hides the reachability difference
 // (host-published 127.0.0.1:port locally vs Service Connect on ECS).
 type Runtime interface {
+	// Start brings the workspace up and returns once the launch is COMMITTED — which
+	// is not the same as "the Agent answers". The local adapters boot in seconds and
+	// do wait for /healthz, but ECS commits a desiredCount-1 service and converges
+	// asynchronously (every Fargate launch pays a full image pull), so callers must
+	// not read a nil error as "Agent reachable": poll State(), or let the Agent call
+	// itself fail and retry. Start runs inside an HTTP request, so no adapter may
+	// block it past the ingress idle timeout (docs/62 §62.5 — a 90s wait here is
+	// exactly what made a cold ECS Start come back as a 504).
 	Start(ctx context.Context) error
 	Stop(ctx context.Context) error
 	// State reports the live container/service state:
