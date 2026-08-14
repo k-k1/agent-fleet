@@ -10,6 +10,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { coarsePointer } from "../lib/device.ts";
 import { WebglAddon } from "@xterm/addon-webgl";
+import { CanvasAddon } from "@xterm/addon-canvas";
 import "@xterm/xterm/css/xterm.css";
 import { wsURL, rel } from "../core/api/client.ts";
 import { isAuthExpired } from "../core/auth/authExpired.ts";
@@ -34,6 +35,7 @@ interface Inst {
   connAt?: number; // ms when the CURRENT socket began connecting (stall watchdog — see ensureAttached)
   connWd?: ReturnType<typeof setTimeout>; // connect-stall watchdog timer (see attach)
   webgl?: WebglAddon | null; // live WebGL renderer addon (dropped while hidden — see hideTerm)
+  canvas?: CanvasAddon | null; // 2D fallback renderer, when WebGL is unavailable/lost/over budget (see loadCanvas)
 }
 const insts = new Map<string, Inst>();
 function inst(paneId: string): Inst | null {
@@ -236,10 +238,11 @@ function forceFit(it: Inst | null | undefined) {
   fitInst(it);
   try {
     /* eslint-disable @typescript-eslint/no-explicit-any */
-    // Canvas-backed (WebGL) renderer ONLY: a stale/blank canvas or a corrupted glyph atlas
-    // must be cleared + the atlas rebuilt before the repaint below can show correct pixels.
-    // WebGL is gated off on touch devices (loadWebgl), so this branch is desktop-only.
-    if (it.webgl) {
+    // Canvas-backed renderers ONLY (WebGL or the 2D canvas fallback): a stale/blank canvas
+    // or a corrupted glyph atlas must be cleared + the atlas rebuilt before the repaint
+    // below can show correct pixels. Both are gated off on touch devices (loadWebgl /
+    // loadCanvas), so this branch is desktop-only and never hits the DOM renderer.
+    if (it.webgl || it.canvas) {
       const core = (it.term as any)._core;
       core?._renderService?.clear?.();
       (it.term as any).clearTextureAtlas?.();
@@ -332,8 +335,10 @@ function evictForeignTerms(it: Inst, el: HTMLElement) {
     // MAX_TABS=24 terminals in a layout the ~16-contexts-per-tab browser cap is
     // reachable on its own. TerminalView's reveal effect re-runs on the paneId
     // change, so coming back rebuilds the renderer (revealTerm → loadWebgl);
-    // should it not, xterm falls back to its DOM renderer — slower, never black.
+    // should it not, xterm falls back to its DOM renderer — never black, but slow
+    // enough with CJK to freeze the tab (loadCanvas), so the reveal path matters.
     dropWebgl(other);
+    dropCanvas(other); // an off-screen pane holds no renderer resources at all
     // The ResizeObserver watches the CONTAINER, not the terminal, so leaving it
     // connected would keep refitting a pane that no longer lives there. ensureTerm
     // re-observes on the way back in.
@@ -607,16 +612,67 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
   return term;
 }
 
-// loadWebgl attaches a WebGL renderer to a pane's terminal (no-op when one is
-// already live, or when WebGL2 is unavailable — xterm then stays on the DOM
-// renderer). One WebGL context per VISIBLE terminal — browsers cap ~16 across
-// all tabs, so hidden panes give theirs up (hideTerm) to stay off the reclaim
-// radar. On context loss (GPU reset / tab backgrounded / the browser reclaiming
-// the oldest context once the cap is hit) we dispose the addon so xterm reverts
-// to the DOM renderer. Disposing alone leaves the grid blank — the existing rows
-// aren't marked dirty, so nothing repaints until the next PTY write or resize.
-// That's the "pane content sometimes goes blank" symptom. Force a refit + full
-// repaint right after dispose so the fallback renderer paints the current screen
+// Live WebGL contexts we will hold at once, kept well under the browser's ~16-per-tab
+// cap. The cap counts contexts the browser has not yet collected, so our own churn
+// (drop/load on hide/reveal/redraw) leaves garbage contexts that still occupy slots —
+// budgeting only the ones we KNOW about keeps that headroom. Panes past the budget get
+// the canvas renderer, which is only marginally slower and holds no GPU context at all.
+const WEBGL_BUDGET = 12;
+const webglLive = (): number => {
+  let n = 0;
+  for (const it of insts.values()) if (it.webgl) n++;
+  return n;
+};
+
+// loadCanvas puts a pane on xterm's 2D canvas renderer — the fallback for every case
+// where WebGL can't or shouldn't be used on a DESKTOP pane (over budget, WebGL2
+// missing, context lost). It exists to keep us off xterm's DOM renderer, whose
+// WidthCache measures each unique glyph by writing textContent and reading offsetWidth:
+// one forced synchronous layout PER GLYPH, and its cache is per-renderer-instance, so
+// every renderer rebuild pays it again from cold. Measured under the real stylesheets
+// on a 40x80 Japanese screen: 2278ms for 3000 unique glyphs cold vs 1.1ms warm — this
+// is the Chrome-only Console freeze (Firefox never lost its context, so it never fell
+// back). ASCII alone hides it: the DOM cache is a flat array for charCode < 256.
+//
+// Touch devices deliberately stay on the DOM renderer: their WebGL grief (loadWebgl)
+// was about rebuilt contexts painting black, which is not a thing 2D canvas does — but
+// that is an untested change on real phones, and the DOM renderer is honest there
+// (small grids, few unique glyphs). Desktop is where this bites.
+function loadCanvas(it: Inst) {
+  const term = it.term;
+  if (!term || it.canvas || coarsePointer()) return;
+  try {
+    const canvas = new CanvasAddon();
+    term.loadAddon(canvas);
+    it.canvas = canvas;
+  } catch {
+    it.canvas = null; // xterm stays on the DOM renderer — slow with CJK, but it paints
+  }
+}
+
+// dropCanvas removes the 2D fallback. Only ONE renderer addon may be loaded at a time
+// (each replaces the active renderer), so WebGL must drop it before taking over.
+function dropCanvas(it: Inst) {
+  const canvas = it.canvas;
+  if (!canvas) return;
+  it.canvas = null;
+  try {
+    canvas.dispose();
+  } catch {}
+}
+
+// loadWebgl attaches a WebGL renderer to a pane's terminal (no-op when one is already
+// live). One WebGL context per VISIBLE terminal — browsers cap ~16 across all tabs, so
+// hidden panes give theirs up (hideTerm) to stay off the reclaim radar, and WEBGL_BUDGET
+// keeps us clear of the cap on top of that. When WebGL can't be had (over budget, no
+// WebGL2, context lost) the pane lands on the canvas renderer rather than xterm's DOM
+// renderer — see loadCanvas for why that distinction is the whole point.
+//
+// On context loss (GPU reset / tab backgrounded / the browser reclaiming the oldest
+// context once the cap is hit) we dispose the addon. Disposing alone leaves the grid
+// blank — the existing rows aren't marked dirty, so nothing repaints until the next PTY
+// write or resize. That's the "pane content sometimes goes blank" symptom. Force a
+// refit + full repaint right after dispose so the fallback paints the current screen
 // immediately.
 function loadWebgl(it: Inst) {
   const term = it.term;
@@ -636,6 +692,13 @@ function loadWebgl(it: Inst) {
   // context (so nothing to lose or rebuild, and it cannot go black) and is plenty fast
   // for a terminal. Desktops (fine pointer) keep WebGL.
   if (coarsePointer()) return;
+  // Over budget: take the canvas renderer rather than a 13th context. Creating it
+  // anyway is what evicts some OTHER pane's context — including a pane that is
+  // visible and has no idea it was robbed (webglLost documents that failure).
+  if (webglLive() >= WEBGL_BUDGET) {
+    loadCanvas(it);
+    return;
+  }
   try {
     const webgl = new WebglAddon();
     webgl.onContextLoss(() => {
@@ -643,20 +706,28 @@ function loadWebgl(it: Inst) {
       try {
         webgl.dispose();
       } catch {}
+      // Land on canvas, NOT on xterm's DOM renderer: the repaint below would other-
+      // wise measure every glyph on screen through a cold WidthCache (see loadCanvas).
+      loadCanvas(it);
       try {
         fitInst(it);
         term.refresh(0, term.rows - 1);
       } catch {}
     });
+    dropCanvas(it); // only one renderer addon at a time — WebGL takes over from canvas
     term.loadAddon(webgl);
     it.webgl = webgl;
   } catch {
     it.webgl = null;
+    loadCanvas(it); // no WebGL2 in this browser/tab
   }
 }
 
-// dropWebgl tears a pane's WebGL renderer down (xterm falls back to the DOM
-// renderer); the terminal, its buffer and its socket are untouched.
+// dropWebgl tears a pane's WebGL renderer down (xterm falls back to whatever is left
+// — the canvas addon if one is loaded, otherwise its DOM renderer); the terminal, its
+// buffer and its socket are untouched. Deliberately does NOT pull in the canvas
+// fallback: hideTerm/evict call this for OFF-SCREEN panes, which must hold no renderer
+// resources at all, and the rebuild paths call loadWebgl right after.
 function dropWebgl(it: Inst) {
   const webgl = it.webgl;
   if (!webgl) return;
@@ -672,8 +743,17 @@ function dropWebgl(it: Inst) {
 function redrawVisible(it: Inst) {
   const el = it.term?.element;
   if (!el || !el.isConnected || el.getClientRects().length === 0) return;
-  dropWebgl(it);
-  loadWebgl(it);
+  // Rebuild the context only when it is actually dead. This used to drop+load
+  // unconditionally, and it runs on every window focus and visibilitychange for EVERY
+  // pane — so ordinary tab switching threw away healthy contexts and asked for new
+  // ones. The discarded ones still occupy browser slots until they are collected,
+  // which is how a tab reaches the ~16 cap and starts evicting the contexts of panes
+  // that never moved (webglLost). A live context needs no rebuild: forceFit below
+  // clears and repaints it, which is what the black-pane recovery actually needs.
+  if (!it.webgl || webglLost(it)) {
+    dropWebgl(it);
+    loadWebgl(it);
+  }
   // Force a clear+repaint even when the grid shape is unchanged: the renderer may have
   // sat hidden/stale and fit() alone would no-op, leaving the pane black.
   forceFit(it);
@@ -689,7 +769,13 @@ function redrawVisible(it: Inst) {
 // xterm's IntersectionObserver anyway, so writes while hidden stay cheap.
 export function hideTerm(paneId: string) {
   const it = inst(paneId);
-  if (it) dropWebgl(it);
+  if (!it) return;
+  dropWebgl(it);
+  // The 2D fallback goes too: a hidden pane needs no renderer, and holding it would
+  // keep a full-size backing canvas per hidden terminal. What takes over is the DOM
+  // renderer, which xterm's IntersectionObserver keeps paused while hidden — so its
+  // expensive cold-cache repaint (loadCanvas) never runs; revealTerm re-renders first.
+  dropCanvas(it);
 }
 
 // revealTerm makes a re-shown terminal paint deterministically instead of hoping
@@ -880,9 +966,10 @@ function startHeartbeat(paneId: string, ws: WebSocket) {
           // what the refresh-only watchdog could not). Rebuild the atlas before
           // repainting; unlike _renderService.clear() this never blanks the
           // canvas, so the tick stays flicker-free. The DOM renderer has no
-          // atlas — refresh alone remains the whole repaint there (a84c8a1).
+          // atlas — refresh alone remains the whole repaint there (a84c8a1). The 2D
+          // canvas fallback keeps an atlas too, so it gets the same treatment.
           /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-          if (it.webgl) (it.term as any).clearTextureAtlas?.();
+          if (it.webgl || it.canvas) (it.term as any).clearTextureAtlas?.();
           it.term!.refresh(0, it.term!.rows - 1);
         }
       }
@@ -1128,10 +1215,13 @@ export function disposeTerm(paneId: string) {
   }
   if (it.term) {
     try {
-      it.term.dispose(); // also disposes loaded addons (webgl included)
+      it.term.dispose(); // also disposes loaded addons (webgl/canvas included)
     } catch {}
     it.term = null;
+    // Clear BOTH renderer handles: webglLive() counts them to budget contexts, so a
+    // stale handle on a disposed terminal would permanently shrink the budget.
     it.webgl = null;
+    it.canvas = null;
   }
   setSession(it, null);
   insts.delete(paneId);
