@@ -33,6 +33,23 @@ func instrEnv(t *testing.T) {
 	instrErrs = map[string]string{}
 }
 
+// stubRTKOnPath puts a dummy `rtk` at the front of PATH.
+//
+// reconcileAgentInstructions() re-applies the rtk block from the durable setting
+// AND claude.RTKAvailable() (= exec.LookPath("rtk")), so on a host without rtk it
+// strips the block again right after the test wrote it. The tests below then
+// asserted on whether the *developer's machine* happened to have rtk installed —
+// green on a workspace image, red on every CI runner. Stub the binary so the
+// reconcile logic is what is under test.
+func stubRTKOnPath(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "rtk"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 // doJSON drives the handlers through a mux registered exactly like routes.go, so a
 // pattern typo here fails the test rather than silently 404ing in production.
 func doJSON(t *testing.T, method, path, body string) *httptest.ResponseRecorder {
@@ -134,6 +151,7 @@ func TestFleetGuideReachesTheKindsThatHadNone(t *testing.T) {
 // agy の 1 ファイルに fleet / user / rtk が同居しても、順序と個数が壊れないこと。
 func TestAgyFileHoldsFleetUserAndRTKInOrder(t *testing.T) {
 	instrEnv(t)
+	stubRTKOnPath(t)
 	if err := userinstr.SaveText("AGYORDER\n"); err != nil {
 		t.Fatal(err)
 	}
@@ -274,6 +292,7 @@ func TestUnreadableOpencodeConfigIsLeftAloneAndReported(t *testing.T) {
 // agy は rtk と同じ ~/.gemini/AGENTS.md を共有する。両方が並び、互いを消さないこと。
 func TestAgyUserBlockCoexistsWithRTKBlock(t *testing.T) {
 	instrEnv(t)
+	stubRTKOnPath(t)
 	if err := userinstr.SaveText("AGYTEXT\n"); err != nil {
 		t.Fatal(err)
 	}

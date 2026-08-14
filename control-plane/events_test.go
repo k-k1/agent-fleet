@@ -21,6 +21,15 @@ import (
 // /sessions and /notifications, and the resolved record pointing at it.
 func eventsTestEnv(t *testing.T, sessionsBody *atomic.Value) (eventsAPI, *resolved) {
 	t.Helper()
+	var sessionsDelay atomic.Value
+	return eventsTestEnvDelayed(t, sessionsBody, &sessionsDelay)
+}
+
+// eventsTestEnvDelayed is eventsTestEnv with a knob that makes the stub Agent's
+// /sessions slow, so a poll can still be in flight when the request context is
+// cancelled — the shape the hosted CI runner hit by being slow.
+func eventsTestEnvDelayed(t *testing.T, sessionsBody *atomic.Value, sessionsDelay *atomic.Value) (eventsAPI, *resolved) {
+	t.Helper()
 	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -42,6 +51,9 @@ func eventsTestEnv(t *testing.T, sessionsBody *atomic.Value) (eventsAPI, *resolv
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/sessions":
+			if d, ok := sessionsDelay.Load().(time.Duration); ok && d > 0 {
+				time.Sleep(d)
+			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(sessionsBody.Load().(string)))
 		case "/notifications":
@@ -149,6 +161,32 @@ func TestEventsStreamPushesChange(t *testing.T) {
 	_ = json.Unmarshal(frames["sessions"][1], &sess)
 	if sess.Sessions[0]["alive"] != false {
 		t.Errorf("second sessions frame = %v, want alive=false", sess)
+	}
+}
+
+// TestEventsStreamNoFrameWhenCancelledMidPoll: 購読者が切れた瞬間に走っていた
+// tick は、フレームを 1 本も足さない。
+//
+// これは hosted CI で上の 2 本が落ちていた原因そのもの。sessions の payload は
+// Agent への HTTP が失敗すると DB ミラー（別 shape）へフォールバックするので、
+// リクエスト ctx のキャンセルが poll の最中に当たると「変化した」ように見えて
+// 余分なフレームが出る。手元では poll が 1ms 未満で終わるので窓に当たらず、
+// 遅いランナーでだけ当たっていた。ここでは Agent をわざと遅くして再現する。
+func TestEventsStreamNoFrameWhenCancelledMidPoll(t *testing.T) {
+	var body, delay atomic.Value
+	body.Store(`{"sessions":[{"name":"s1","kind":"claude","alive":true}]}`)
+	a, res := eventsTestEnvDelayed(t, &body, &delay)
+
+	// 初回 tick（スナップショット）は素通しし、その後の poll を締切より長くする。
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		delay.Store(500 * time.Millisecond)
+	}()
+	frames, _ := runStream(t, a, res, 120*time.Millisecond)
+
+	if got := len(frames["sessions"]); got != 1 {
+		t.Fatalf("sessions frames = %d, want 1 (a cancelled poll is not a change): %s",
+			got, frames["sessions"])
 	}
 }
 
