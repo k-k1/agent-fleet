@@ -1,12 +1,13 @@
 # 62. ECS の Workspace 起動レイテンシ — SOCI 遅延ロードの採否
 
-> 状態: 調査（2026-08-14）＋ **P0.5 実装済**（504 の解消・§62.5.1）。SOCI 本体は **条件付き採用**＝
-> 「~100s の内訳を実測してから SOCI（Seekable OCI）遅延ロードへ進む」で、**P0 / P1 は未着手**。
-> 計測（§62.7 P0）と 504 の解消（§62.7 P0.5）は SOCI の採否と独立。
+> 状態: 調査（2026-08-14）＋ **P0.5 実装済**（504 の解消・§62.5.1）＋ **P0 計測 完了**（2026-08-15・§62.9）。
+> **判定は「P1 へ進まない」**——実測した pull は判定ゲートの両条件を落とした（**35.0s < 40s** かつ
+> **総収束の 22% < 40%**）。SOCI の技術的前提は満たしたままだが、**縮める価値のある区間ではなかった**。
+> 支配項は §62.7 のモデルに無かった区間、**Start API → ECS がタスクを作るまでの 40〜143s**（§62.9.4）。
 > **索引生成のツールチェーンは開発 Workspace で実測済み**（§62.4.1）——起票時に書いた
 > 「Docker が無いのでここでは実検証できない」は**誤りだった**。`crane` + `soci --standalone` で
 > root も Docker も containerd も無しに index manifest v2 まで生成できる。
-> 意思決定: **ADR は未起票**（§62.7 P1 に進む決定をした時点で 0044 として起こす）
+> 意思決定: **ADR は起票しない**（P1 に進まないため。0044 は欠番にせず次の議題に回す）
 > 関連: [dev/09-deploy.md §9.5](dev/09-deploy.md)（aws ターゲットの縮約） /
 > [deploy/aws/ecs/README.md](../deploy/aws/ecs/README.md)（ランブック・"Known behavior: first Start may 504"） /
 > [35-packaging.md](35-packaging.md) §35.4.1（`BAKE_AGENT_CLIS` / `BAKE_OPTIONAL_TOOLS` の配布ノブ）
@@ -78,13 +79,26 @@
 **イメージのバイト数の 6〜7 割は起動パスに現れない**。AWS の一般論（「pull が起動時間の 76%、
 うち起動に必要なのは平均 6.4%」）に素直に当てはまる形状で、SOCI が効く側。
 
-### イメージサイズの根拠（推定・未実測）
+### イメージサイズ（2026-08-15 実測・推定を置換）
 
-ECS 用 ws イメージは `deploy/compose/release.sh` 経由なので **lean（`BAKE_AGENT_CLIS=0`）だが
-`BAKE_OPTIONAL_TOOLS=1`**（chromium / Go / awscli は焼かれている）。[35-packaging.md](35-packaging.md)
-に残る実測は「images 1.04GB（CP+WS の tar.gz）」と「lean rootfs 展開 915MB（こちらは
-`BAKE_OPTIONAL_TOOLS=0`）」。ここから ws の compressed は 0.9GB 前後と推定。**開発ワークスペースには
-Docker が無く実測していない**（推定値として扱うこと）。
+`af-workspace:0.8.0`（GHCR の配布イメージ）のマニフェストを直接読んだ値:
+
+| 項目 | 実測 |
+|---|---|
+| compressed 合計 | **962,872,701 B = 918 MiB** |
+| 層数 | **34** |
+| 最大の層 | **318 MiB** |
+
+**推定していた「0.9GB 前後」は当たっていた**（`0.7.0` は 902MiB で、版が上がっても形は変わらない）。
+variant も probe の中から実物で確認した——`/usr/bin/chromium` `/usr/local/go` `/usr/local/aws-cli`
+がいずれも存在する＝**`BAKE_AGENT_CLIS=0` かつ `BAKE_OPTIONAL_TOOLS=1`** で、§62.3 が前提にしていた
+形そのもの。⚠️ `deploy/release/build.sh` に `BAKE_OPTIONAL_TOOLS=0` を渡す行があるが、あれは
+**native の rootfs 用イメージ専用**で、コンテナ像は Dockerfile 既定の `1` のまま。読み違えやすい。
+
+なお **ECR へ入れるのに docker は要らなかった**。GHCR にある配布イメージを
+`crane copy ghcr.io/k-k1/agent-fleet/{workspace,control-plane}:0.8.0 → <acct>.dkr.ecr…/af-*:dev`
+でレジストリ間コピーすれば、ダイジェストも層構成も保ったまま ECR に載る（§62.4.1 で未検証だった
+「crane が ECR に対して素直に振る舞うか」も、これで push 方向の確認が取れた）。
 
 ### 効果を削る要因（3 つ・ここが判断の肝）
 
@@ -100,10 +114,15 @@ Docker が無く実測していない**（推定値として扱うこと）。
 - **(c)** 背景でフル pull が続くので、起動直後に chromium やビルドを叩けば結局待つ
   （待ちが後ろへずれるだけ。とはいえ体感は改善）。
 
-### 数字
+### 数字（実測で置換・2026-08-15）
 
-AWS 公称 40〜60%（>750MB のイメージで 60% 超の事例）。pull が仮に 50〜60s なら
-**25〜35s 短縮＝体感 100s → 65〜75s**。(a) の分を差し引く必要があり、**実測前に数字を約束しない**。
+> 以下は**当時の見積り**。実測は §62.9 で、**pull は仮定の 50〜60s ではなく 27〜40s だった**。
+> ~~AWS 公称 40〜60%（>750MB のイメージで 60% 超の事例）。pull が仮に 50〜60s なら
+> **25〜35s 短縮＝体感 100s → 65〜75s**。~~
+> 「実測前に数字を約束しない」を守った結果、**約束しなくて正解だった**側に転んだ:
+> 公称 40〜60% を実測 pull 35.0s に掛けても **14〜21s** で、しかもそれは総収束 ~160s の 1 割弱。
+> (b) の「~100s の相当部分が pull ではない可能性」は**当たり**で、想定より更に踏み込んで
+> **pull でも boot-install でもない区間**が最大項だった（§62.9.4）。
 
 ## 62.4 パイプラインへの組み込み
 
@@ -241,13 +260,22 @@ assert している**（`workspace/Dockerfile` の `find / -perm /6000 -exec chm
 
 ## 62.6 結論
 
-**条件付き採用**。SOCI の技術的前提はこの構成が**すべて満たしており**（変更ゼロで発火する）、
-イメージ形状も効く側。ただし **~100s のうち pull が何秒かを誰も測っていない**ので、
-25〜35s という見積りは仮定の上に乗っている。**計測を先行ゲートにする**。
+> **2026-08-15 追記（最終）: 不採用。** 以下の「条件付き採用」は計測前の結論で、条件＝判定ゲートは
+> §62.9 の実測で**落ちた**。SOCI の技術的前提は今も全部満たしているが、**pull は総収束の 22%
+> （35.0s / ~160s）しかなく、40〜60% 削っても体感は 14〜21s しか動かない**。同じ労力を
+> §62.9.4 の最大項（スケジューラ反応 40〜143s）に向けるほうが桁が大きい。
+
+~~**条件付き採用**~~（当時の結論）。SOCI の技術的前提はこの構成が**すべて満たしており**
+（変更ゼロで発火する）、イメージ形状も効く側。ただし **~100s のうち pull が何秒かを誰も測って
+いない**ので、25〜35s という見積りは仮定の上に乗っている。**計測を先行ゲートにする**。
+
+→ **このゲートの置き方自体は正しかった**。仮定のまま P1 に入っていれば、`release-ecr.sh` に
+版ピン 2 本と変換手順を足し、リリース手順を恒久的に複雑にしたうえで、体感 160s → 140s 程度の
+改善しか得られなかった。
 
 ## 62.7 実装計画
 
-### P0 — 計測（コード変更なし）
+### P0 — 計測（コード変更なし）✅ 実施済（2026-08-15・結果は §62.9）
 
 収束時間は `describe-tasks` の 4 つのタイムスタンプで 3 区間に割れる。これは AWS 自身が推す方法で、
 開発者ガイドの "Task lifecycle logging" が「このタイムスタンプで**イメージ取得にどれだけ費やしたかを
@@ -364,23 +392,26 @@ aws logs tail /af/af-ecs-ingress/cp --since 15m | grep 'Agent healthy' # §62.5.
    切り詰めて同期待ちを残す）は**採らなかった**——ECS では同期待ちが成功する経路が無いため。
    実 ECS では未検証（単体テストまで）。
 
-### P1 — SOCI 導入（`release-ecr.sh` のみ・**この Workspace で実行できる**・§62.4.1）
+### P1 — SOCI 導入 ❌ **着手しない**（P0 の判定ゲートで落ちた・§62.9.3）
 
-6. **最初の 1 手は `crane push` の確認**。ECR を立て、変換済み OCI layout を push して
-   SOCI アーティファクトのマニフェストが保たれるかを見る（§62.4.1 の唯一の未検証点）。
-   確認は `aws ecr batch-get-image` で `artifactType == application/vnd.amazon.soci.index.v2+json`。
-7. `release-ecr.sh` に `--soci` を追加（既定 off）。`soci` v0.15.0 / `crane` v0.21.9 を版ピン＋sha256 で
-   取得（`GH_VERSION` の流儀。soci の checksum 資産は `.tar.gz.sha256sum`）。
-8. workspace イメージのみ変換、CP は素通し。`--soci` 時は `docker push` を通さず crane 一本化
-   （＝未変換を絶対に push しない）。`--prefetch-file` のチューニングはここで詰める。
-9. `deploy/aws/ecs/README.md` の §ECR push / §Upgrade に手順追記。
+以下は**実施しない**手順として残す（前提が変われば復活しうるため）。復活の条件は 1 つ、
+**pull が総収束の 40% 以上かつ 40s 以上になること**——例えば §62.9.4 のスケジューラ反応が
+解消されて総収束が 60s 台まで落ちれば、35s の pull は一気に過半になり、そこで再評価する。
 
-### P2 — 検証
+6. ~~**最初の 1 手は `crane push` の確認**~~ → **P0 のついでに済んだ**。GHCR → ECR の
+   `crane copy` が通り、ダイジェスト・層構成を保ったまま ECR に載ることを確認した（§62.3）。
+   残る未検証は「**SOCI アーティファクトを含む**マニフェストが ECR で保たれるか」だけ。
+7. ~~`release-ecr.sh` に `--soci` を追加~~（既定 off・版ピン＋sha256）。
+8. ~~workspace イメージのみ変換、CP は素通し~~。`--prefetch-file` のチューニング。
+9. ~~`deploy/aws/ecs/README.md` に手順追記~~。
 
-10. P0 の L1 probe の `IMG` を変換済みタグに差し替えて回す。**workspace 側のコード変更は不要**
-    （probe の `command` が task metadata v4 を叩き、ログの `"Snapshotter"` が `soci` か `overlayfs` かで判る）。
-11. L2 の (B) も再実行して P0 と差分を取る。
-12. 効果が出なければ索引なしで再 push して即ロールバック。
+### P2 — 検証 ❌ 同上（P1 に入らないので不要）
+
+10. ~~L1 probe の `IMG` を変換済みタグに差し替えて回す~~。**ハーネスは動くことを確認済み**——
+    probe のログに `"Snapshotter":"overlayfs"` が出た（＝変換後に `soci` へ変わるかを見る
+    A/B の型は、そのまま使える状態で残っている）。
+11. ~~L2 の (B) も再実行して差分を取る~~。
+12. ~~効果が出なければ索引なしで再 push して即ロールバック~~。
 
 ## 62.8 一次情報
 
@@ -396,3 +427,106 @@ aws logs tail /af/af-ecs-ingress/cp --since 15m | grep 'Agent healthy' # §62.5.
 - [awslabs/cfn-ecr-aws-soci-index-builder](https://github.com/awslabs/cfn-ecr-aws-soci-index-builder)
 - [aws-fargate-seekable-oci-toolbox / am-i-lazy](https://github.com/aws-samples/aws-fargate-seekable-oci-toolbox/blob/main/am-i-lazy/README.md)
   — task metadata v4 の `Snapshotter` フィールドでの検証
+
+## 62.9 P0 の実測（2026-08-15・sandbox で deploy → 計測 → teardown）
+
+### 62.9.1 計測環境
+
+- AWS sandbox（`ap-northeast-1`）に `00-network` → `10-data` → `20-platform` → `30-ingress` を
+  deploy し、計測後に全て `delete-stack`（§62.9.6）。**ECS 構成の「実運用実績なし」は崩していない。**
+- イメージは **GHCR の配布ビルド `0.8.0` を `crane copy` で ECR へ複製**（`af-workspace:dev` /
+  `af-control-plane:dev`）。開発 Workspace に docker は無いが、**レジストリ間コピーに docker は
+  要らない**——§62.4.1 で「索引生成に docker は要らない」と分かったのと同じ理屈。
+- 認証は `AuthMode=dev`、ALB の SG は計測元の /32 に限定（README の注意書きどおり）。
+- 計測は `aws` CLI（§62.7.1 の判断どおり。AWS MCP の書き込みトグルは開けていない）。
+
+### 62.9.2 L1 — pull の孤立計測（probe タスク・3 回）
+
+`af-ws-pullprobe`（entrypoint を潰した使い捨て task def）で同じイメージを 3 回引いた。
+
+| run | provision | **pull** | start | created→started |
+|---|---|---|---|---|
+| 1 | 9.8s | **27.5s** | 3.0s | 40.4s |
+| 2 | 11.5s | **27.3s** | 3.8s | 42.6s |
+| 3 | 9.5s | **32.4s** | 2.0s | 43.9s |
+| **平均** | **10.3s** | **29.1s** | **2.9s** | **42.3s** |
+
+- **918 MiB を 29.1s ＝ 約 31 MiB/s**。S3 ゲートウェイエンドポイント経由（§62.1）でこの値。
+- task metadata v4 に **`"Snapshotter":"overlayfs"`** — SOCI 前のベースラインとして期待どおりで、
+  §62.7 が「P2 の A/B ハーネスをそのまま兼ねる」と書いた仕掛けが**実際に動くことも確認できた**。
+
+### 62.9.3 L2 — 実ワークスペースの端から端
+
+**(A) 新規ホームの初回 Start**（EFS access point が空）:
+
+| 区間 | 実測 |
+|---|---|
+| Start API → task 作成 | ~0.5s |
+| provision | 14.2s |
+| pull | 27.7s |
+| pull 完了 → task started | 36.1s |
+| entrypoint（boot-install 込み） | ~48s |
+| **総収束（Start API → Agent 応答）** | **126.5s** |
+
+boot-install の内訳はログどおり **4CLI で 41s、rtk +1s、agy +6s ＝ 48s**
+（`entrypoint.sh` のコメントが言う「約 60s」と同じ桁。**SOCI では 1 秒も縮まない**区間）。
+
+**(B) Stop → 再 Start（温ホーム・3 回）** — 判定に使うのはこちら:
+
+| run | Start API→task 作成 | provision | **pull** | pull→started | 総収束 |
+|---|---|---|---|---|---|
+| B1 | ~40s（導出） | 16.6s | **39.5s** | 26.5s | 135.4s |
+| B2 | 143.2s | 18.9s | **27.9s** | 24.8s | 217.8s |
+| B3 | 52.4s | 13.0s | **37.5s** | 25.3s | 128.5s |
+| **平均** | **~79s** | **16.2s** | **35.0s** | **25.5s** | **160.6s** |
+
+温ホームであることはログで確認済み（`boot-install: npm CLIs already present in ~/.local (skip)`
+以下 4 行）。entrypoint は **21s** で Agent 待受まで到達＝(A) との差 ~27s が boot-install 分。
+
+**判定ゲート（§62.7）の当てはめ**:
+
+| 条件 | 実測 | 判定 |
+|---|---|---|
+| (B) の pull が **絶対値 40s 以上** | 35.0s（最大でも 39.5s） | ❌ |
+| (B) の pull が **総収束の 40% 以上** | 13〜29%（平均 **22%**） | ❌ |
+
+**AND 条件の両方を落とした → P1 には進まない。**
+
+### 62.9.4 最大項は §62.7 のモデルに無かった 2 区間
+
+(B) の ~160s を割ると、**イメージ取得は 35s（22%）だけ**で、残りはこう分かれる:
+
+1. **Start API → ECS がタスクを作るまで 40〜143s（平均 ~79s ＝ 総収束の 30〜66%）**。
+   これが最大項。**CP 側の遅れではない**ことをログで切り分けた——CP は POST 直後に
+   `desiredCount 1` へ上げており（`ecs start: service af-ws-dev at desired 1 but …` が出る）、
+   そこから ECS の**サービススケジューラがタスクを作るまで**の時間がこれ。
+   `desiredCount 0 → 1` の反応時間そのもので、**イメージ側の手（SOCI も縮小も）は 1 秒も効かない**。
+2. **pull 完了 → task started が実ワークスペースでは 24.8〜26.5s**（probe は 2.0〜3.8s）。
+   差の ~22s は **EFS ボリューム／access point のマウントとコンテナ作成**。これも SOCI の射程外。
+
+⚠️ **1 のばらつきが大きい（40s と 143s）**点は未解明。計測は 4 分間隔で stop→start を繰り返して
+おり、**同一サービスを短時間に上げ下げしたことが ECS 側の反応を鈍らせた可能性**は否定できない。
+ただし「scale-to-zero で毎回払う」形はまさにこれなので、**次に調べる価値があるのはここ**。
+
+### 62.9.5 P0.5（504 の解消）は検証できていない
+
+**ECR に載せた CP は GHCR の `0.8.0` で、§62.5.1 の修正（`watchReady` の背景化）より前の版。**
+そのため 3 回とも Start API は **60.05〜60.25s で 504** になり、CP ログに
+`ecs start: … Agent not ready within 1m30s (agent health wait canceled: context canceled)` が出た。
+
+これは**旧挙動の実測再現**であり、§62.5.1 の診断（90s 同期待ち > ALB idle 60s）が実機でそのとおり
+であることの裏付けにはなる。ただし **修正後の挙動（Start が 60s 未満で `starting` を返す・
+`Agent healthy <n>s after Start` のログ）は未確認のまま**。確認には P0.5 を含む CP イメージ
+（`0.8.1` 以降）を ECR に載せた再走が要る。**§62.5.1 の「実 ECS では未検証」は据え置き。**
+
+なお **Console 側が耐える設計であること**は実測で確かめられた——504 が返っても
+`GET /api/workspace` のポーリングは 126〜218s の cold start を最後まで歩き切り、
+`running` に到達した（§62.5.1 が「呼び出し側は既に耐えている」と読んだとおり）。
+
+### 62.9.6 後始末
+
+per-workspace リソース（CFN の外）を先に掃除してから 4 スタックを削除した。**README §Teardown に
+書かれていない落とし穴が 1 つ**: `10-data` の出力キーは **`EfsId`**（`FileSystemId` ではない）で、
+**EFS access point を消し損ねると `af-ecs-data` の削除が止まる**。掃除の順は
+ECS Service → task definition（`af-ws*`）→ **EFS access point** → SSM（`/af-ws/*` `/af-cp/*`）
+→ ロググループ → スタック（ingress → platform → data → network）。
