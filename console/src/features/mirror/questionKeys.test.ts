@@ -18,6 +18,12 @@ import {
 
 const opts = (...labels: string[]) => ({ options: labels.map((label) => ({ label })) });
 const q3: QKQuestion = opts("赤", "青", "緑");
+// A question whose options carry a preview — claude's AskUserQuestion drops the
+// "Type something" row for these (docs/dev/92 §6), which is the shape the free-text
+// tests below exercise.
+const withPreview = (...labels: string[]): QKQuestion => ({
+  options: labels.map((label, i) => (i === 0 ? { label, preview: "モックアップ\n2行目" } : { label })),
+});
 // Compact rendering so a failure diff reads as the actual keystrokes.
 const show = (seq: KeyStep[]) => seq.map((s) => (s.t !== undefined ? `type:${s.t}` : s.k)).join(" ");
 
@@ -116,16 +122,18 @@ describe("buildMenuSeq — codex / opencode (no verified write-in row)", () => {
 });
 
 describe("buildClaudeSeq — AskUserQuestion tabbed modal", () => {
-  it("selects a single-select option and closes on the review page", () => {
-    // Trailing Enter activates "Submit answers" on claude's review page — the menus
-    // have no such page, which is the core shape difference between the two builders.
-    expect(show(buildClaudeSeq([q3], [["青"]], [""]))).toBe("Down Enter Enter");
+  it("selects a single-select option with no trailing Enter — a single question has no review page", () => {
+    // A lone single-select question submits on its own Enter (verified in the real TUI);
+    // an extra trailing Enter here would land in the composer after the modal has already
+    // closed. Multi-question and multi-select forms DO reach a review page — see below.
+    expect(show(buildClaudeSeq([q3], [["青"]], [""]))).toBe("Down Enter");
   });
 
   it("types single-select free text directly into the row (no Enter to enter it)", () => {
     // claude's free-text row IS the input field — unlike agy's, which must be entered
-    // first. Typing lands, then Enter confirms and auto-advances.
-    expect(show(buildClaudeSeq([q3], [[]], ["紫"]))).toBe("Down Down Down type:紫 Enter Enter");
+    // first. Typing lands, then Enter confirms and submits (no review page for one
+    // question, so no trailing Enter here either).
+    expect(show(buildClaudeSeq([q3], [[]], ["紫"]))).toBe("Down Down Down type:紫 Enter");
   });
 
   it("toggles multi-select options in place, then advances with Right", () => {
@@ -161,6 +169,68 @@ describe("buildClaudeSeq — AskUserQuestion tabbed modal", () => {
     const q: QKQuestion = { ...opts("A", "B", "C"), multiSelect: true };
     expect(show(buildClaudeSeq([q], [["C", "A"]], [""]))).toBe("Enter Down Down Enter Right Enter");
   });
+
+  it("keeps the trailing Enter for a single MULTI-select question (its Enter only toggles, never submits)", () => {
+    // Unlike single-select, a lone multi-select question still reaches a submit step
+    // (via Right), so the review-page Enter is not the single-question special case.
+    const q: QKQuestion = { ...opts("A", "B"), multiSelect: true };
+    expect(show(buildClaudeSeq([q], [[]], [""]))).toBe("Right Enter");
+  });
+});
+
+describe("buildClaudeSeq — preview options drop the free-text row (docs/dev/92 §6)", () => {
+  // claude's AskUserQuestion renders single-select options with a `preview` in a wide
+  // layout that has NO "Type something" row — replaced by a per-OPTION "n to add notes"
+  // field. The old downs(opts.length) math assumed the free-text row still sat right
+  // after the last option; with preview it instead lands on the unnumbered "Chat about
+  // this" row, which silently swallows the typed text and then Enter activates "Chat
+  // about this" — claude reports this back as "User declined to answer questions" /
+  // "(No answer provided)". Reported bug (szawtwy, and reproduced live in this session):
+  // every preview-bearing free-text answer failed this way regardless of question count.
+  const preview: QKQuestion = withPreview("案A", "案B", "案C");
+
+  it("opens notes with 'n' instead of navigating to a Type-something row that doesn't exist", () => {
+    // No Down at all: a question's tab always starts with the cursor on option 0, and
+    // notes attach without needing to select that option first (実測: submits as
+    // "(no option selected) notes: …").
+    expect(show(buildClaudeSeq([preview], [[]], ["コスト優先で"]))).toBe("n type:コスト優先で Enter");
+  });
+
+  it("still uses Down×i, Enter for a plain OPTION pick on a previewed question", () => {
+    // Only the free-text path changes; picking a listed option never touched the
+    // free-text row in the first place.
+    expect(show(buildClaudeSeq([preview], [["案B"]], [""]))).toBe("Down Enter");
+  });
+
+  it("decides per QUESTION, not once for the whole form", () => {
+    // A form can mix a previewed question with a plain one (the real report's shape:
+    // 3 questions, only 2 carrying preview) — each question's own options decide which
+    // free-text row (if any) applies for that page.
+    const seq = buildClaudeSeq([preview, opts("X", "Y")], [[], ["Y"]], ["自由記述", ""]);
+    expect(show(seq)).toBe("n type:自由記述 Enter Down Enter Enter");
+  });
+
+  it("free text on a LATER plain question still uses the old Type-something row, even after an earlier previewed one", () => {
+    const seq = buildClaudeSeq([preview, opts("X", "Y")], [["案A"], []], ["", "自由記述"]);
+    // q1: previewed, answered by picking the option (no free text) → Down×0, Enter.
+    // q2: plain, answered by free text → Down×opts.length(2), type, Enter, then the
+    // multi-question review page's trailing Enter.
+    expect(show(seq)).toBe("Enter Down Down type:自由記述 Enter Enter");
+  });
+
+  it("buildClaudeSubmit routes a previewed single question's free text through the same walk", () => {
+    // Mirrors the existing non-preview case: free text always disqualifies the
+    // click-verified short path (buildSinglePickKeys), preview or not.
+    const out = buildClaudeSubmit([preview], [[]], ["コスト優先で"]);
+    expect(out.keys).toBeUndefined();
+    expect(show(out.seq!)).toBe(show(buildClaudeSeq([preview], [[]], ["コスト優先で"])));
+  });
+
+  it("folds a previewed question's free text the same way as the plain row", () => {
+    // The notes field is still a single-line input under the hood (ctrl+g opens Vim for
+    // more, but the driven path doesn't use that) — multi-line answers fold like normal.
+    expect(show(buildClaudeSeq([preview], [[]], ["一行目\n二行目"]))).toBe("n type:一行目 二行目 Enter");
+  });
 });
 
 describe("free text folded to one line (TUI paths only)", () => {
@@ -174,7 +244,7 @@ describe("free text folded to one line (TUI paths only)", () => {
 
   it("folds newlines in a single-select answer into single spaces", () => {
     const seq = buildClaudeSeq([q3], [[]], ["一行目\n二行目"]);
-    expect(show(seq)).toBe("Down Down Down type:一行目 二行目 Enter Enter");
+    expect(show(seq)).toBe("Down Down Down type:一行目 二行目 Enter");
   });
 
   it("collapses blank lines and the whitespace around a fold", () => {
@@ -199,7 +269,7 @@ describe("free text folded to one line (TUI paths only)", () => {
   });
 
   it("treats a newline-only answer as blank and falls back to the option", () => {
-    expect(show(buildClaudeSeq([q3], [["青"]], ["\n \n"]))).toBe("Down Enter Enter");
+    expect(show(buildClaudeSeq([q3], [["青"]], ["\n \n"]))).toBe("Down Enter");
   });
 
   it("leaves managed answers untouched — structured JSON carries newlines fine", () => {

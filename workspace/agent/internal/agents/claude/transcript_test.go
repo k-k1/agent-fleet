@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -163,11 +164,11 @@ func TestCollectInteractionAnswers(t *testing.T) {
 		[]byte(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"bg1","content":"agent launched"}]}}`),
 	}
 	ans := CollectInteractionAnswers(lines)
-	if got := ans["q1"]; got != `Your questions have been answered: "どれ"="全部". You can now continue.` {
-		t.Errorf("question answer = %q", got)
+	if got := ans["q1"]; got.Text != `Your questions have been answered: "どれ"="全部". You can now continue.` || got.Declined {
+		t.Errorf("question answer = %+v", got)
 	}
-	if got := ans["p1"]; got != "User approved the plan" {
-		t.Errorf("plan answer = %q", got)
+	if got := ans["p1"]; got.Text != "User approved the plan" || got.Declined {
+		t.Errorf("plan answer = %+v", got)
 	}
 	// A background delegation only ever gets a launch ack, never a final report — excluded,
 	// mirroring assistantParts' QID gating, so its card is never falsely marked completed.
@@ -188,8 +189,63 @@ func TestCollectInteractionAnswers(t *testing.T) {
 	if q == nil || q.Answer != "" {
 		t.Fatalf("windowed question = %+v, want present with empty Answer", q)
 	}
-	if ans[q.QID] == "" {
+	if ans[q.QID].Text == "" {
 		t.Errorf("map must carry the answer for the split-out question qid %q", q.QID)
+	}
+}
+
+// TestCollectInteractionAnswers_Declined pins the fix for "回答済みと表示されるのに
+// 中身は却下の定型文" (docs/dev/92 §6): an Escape/interrupt out of AskUserQuestion
+// (e.g. the preview free-text bug — a free-text answer lands on the unnumbered "Chat
+// about this" row and Enter activates it) surfaces as an is_error tool_result carrying
+// claude's own "wants to clarify"/"(No answer provided)" boilerplate — real transcript
+// text, captured from the reported session. That must be flagged Declined so the
+// Console can show "却下" instead of rendering it as an answered card.
+func TestCollectInteractionAnswers_Declined(t *testing.T) {
+	// Real transcript text (captured from the reported session) contains nested quotes and
+	// newlines, so build the JSON line with json.Marshal instead of hand-quoting it.
+	declineText := "The user doesn't want to proceed with this tool use. The tool use was rejected " +
+		"(eg. if it was a file edit, the new_string was NOT written to the file). To tell you how " +
+		"to proceed, the user said:\nThe user wants to clarify these questions.\n\n    " +
+		"Questions asked:\n- \"どれにしますか？\"\n  (No answer provided)"
+	declineResult, err := json.Marshal(map[string]any{
+		"type":    "user",
+		"message": map[string]any{"content": []map[string]any{{"type": "tool_result", "tool_use_id": "q1", "is_error": true, "content": declineText}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := [][]byte{
+		[]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"q1","name":"AskUserQuestion","input":{"questions":[{"header":"方式","question":"どれにしますか？","options":[{"label":"案A"},{"label":"案B"}]}]}}]}}`),
+		declineResult,
+		// A genuine free-text answer also has is_error=false normally, but even an
+		// unrelated is_error tool_result (e.g. a validation failure) must not be
+		// misread as a decline — only THIS specific boilerplate should flag it.
+		[]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"q2","name":"AskUserQuestion","input":{"questions":[{"header":"方式","question":"別の質問","options":[{"label":"案A"},{"label":"案B"}]}]}}]}}`),
+		[]byte(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"q2","is_error":true,"content":"malformed AskUserQuestion input"}]}}`),
+	}
+	ans := CollectInteractionAnswers(lines)
+	if got := ans["q1"]; !got.Declined {
+		t.Errorf("q1 = %+v, want Declined=true (claude's decline boilerplate)", got)
+	}
+	if got := ans["q2"]; got.Declined {
+		t.Errorf("q2 = %+v, want Declined=false (is_error alone isn't a decline)", got)
+	}
+
+	// Same signal must reach CollectTurns' window-local resolution (Part.Declined), not
+	// only the whole-transcript map — a live window that holds both the tool_use and its
+	// declined tool_result must not wait for the Console's late patch to show it.
+	turns := CollectTurns(lines, 0, len(lines))
+	var q1 *transcript.Part
+	for i := range turns {
+		for pi := range turns[i].Parts {
+			if turns[i].Parts[pi].QID == "q1" {
+				q1 = &turns[i].Parts[pi]
+			}
+		}
+	}
+	if q1 == nil || !q1.Declined {
+		t.Fatalf("windowed q1 = %+v, want Declined=true", q1)
 	}
 }
 
