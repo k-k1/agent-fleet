@@ -17,20 +17,34 @@ import (
 	"time"
 )
 
-// eventsTestEnv builds a sqlite-backed eventsAPI plus a stub Agent serving
-// /sessions and /notifications, and the resolved record pointing at it.
-func eventsTestEnv(t *testing.T, sessionsBody *atomic.Value) (eventsAPI, *resolved) {
-	t.Helper()
-	var sessionsDelay atomic.Value
-	return eventsTestEnvDelayed(t, sessionsBody, &sessionsDelay)
+// eventsStub は stub Agent を外から動かすノブと、そこへ届いた poll の回数。
+// 回数を持つのは、テストの窓を**経過時間ではなく進捗で**切るため（runStream）。
+type eventsStub struct {
+	body  atomic.Value // string — /sessions の応答本文
+	delay atomic.Value // time.Duration — 2 回目以降の /sessions を遅くする
+	polls atomic.Int64 // /sessions が呼ばれた回数
 }
 
-// eventsTestEnvDelayed is eventsTestEnv with a knob that makes the stub Agent's
-// /sessions slow, so a poll can still be in flight when the request context is
-// cancelled — the shape the hosted CI runner hit by being slow.
-func eventsTestEnvDelayed(t *testing.T, sessionsBody *atomic.Value, sessionsDelay *atomic.Value) (eventsAPI, *resolved) {
+func newEventsStub(body string) *eventsStub {
+	s := &eventsStub{}
+	s.body.Store(body)
+	return s
+}
+
+func (s *eventsStub) setBody(b string)         { s.body.Store(b) }
+func (s *eventsStub) setDelay(d time.Duration) { s.delay.Store(d) }
+
+// waitPolls blocks until the stub has served n polls, or the deadline passes.
+func (s *eventsStub) waitPolls(n int64, deadline time.Time) {
+	for s.polls.Load() < n && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// eventsTestEnv builds a sqlite-backed eventsAPI plus a stub Agent serving
+// /sessions and /notifications, and the resolved record pointing at it.
+func eventsTestEnv(t *testing.T, stub *eventsStub) (eventsAPI, *resolved) {
 	t.Helper()
-	var sessionsHits atomic.Int64
 	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -52,15 +66,19 @@ func eventsTestEnvDelayed(t *testing.T, sessionsBody *atomic.Value, sessionsDela
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/sessions":
-			// 遅延は 2 回目以降にだけ効かせる。初回 tick（スナップショット）を
-			// 必ず素通しするのが要点で、これを「N ミリ秒後に遅延を有効化する」
-			// で書くと、遅いランナーでは初回の poll 自体が遅延に巻き込まれて
-			// スナップショットごと消える（実際にそうなった）。
-			if d, ok := sessionsDelay.Load().(time.Duration); ok && d > 0 && sessionsHits.Add(1) > 1 {
-				time.Sleep(d)
+			// 遅延は 2 回目以降にだけ効かせる。初回 tick（スナップショット）は
+			// 必ず素通しさせる。
+			n := stub.polls.Add(1)
+			if d, ok := stub.delay.Load().(time.Duration); ok && d > 0 && n > 1 {
+				// 相手（CP 側の poll）が切れたら即座に返す。素の Sleep だと
+				// httptest.Server.Close() が最後まで待ってテストが遅くなる。
+				select {
+				case <-time.After(d):
+				case <-r.Context().Done():
+				}
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(sessionsBody.Load().(string)))
+			_, _ = w.Write([]byte(stub.body.Load().(string)))
 		case "/notifications":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"notifications":[]}`))
@@ -78,12 +96,23 @@ func eventsTestEnvDelayed(t *testing.T, sessionsBody *atomic.Value, sessionsDela
 	return a, res
 }
 
-// runStream drives a.stream until the deadline and returns the decoded frames
-// (per-stream payload sequences) plus the raw body (for ping assertions).
-func runStream(t *testing.T, a eventsAPI, res *resolved, d time.Duration) (map[string][]json.RawMessage, string) {
+// runStream drives a.stream until the stub Agent has served `polls` polls, then
+// cancels the request (= the subscriber went away), and returns the decoded
+// frames plus the raw body (for ping assertions).
+//
+// **窓を経過時間ではなく進捗で切る**のがこの helper の要点。以前は固定の締切
+// （120ms 等）で、これは「ランナーがその間に何 tick 回せるか」に賭けていた。
+// hosted CI では初回 tick が終わる前に窓が閉じ、検査対象のスナップショットが
+// 出ないまま 0 フレームで落ちた。絶対の backstop は残すが、それはハングの保険で
+// あって判定には使わない。
+func runStream(t *testing.T, a eventsAPI, res *resolved, stub *eventsStub, polls int64) (map[string][]json.RawMessage, string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), d)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	go func() {
+		stub.waitPolls(polls, time.Now().Add(25*time.Second))
+		cancel()
+	}()
 	r := httptest.NewRequest("GET", "/api/events", nil).WithContext(ctx)
 	w := httptest.NewRecorder()
 	a.stream(w, r, res)
@@ -112,10 +141,10 @@ func runStream(t *testing.T, a eventsAPI, res *resolved, d time.Duration) (map[s
 // ショットが 1 回ずつ流れ、その後の無変化 tick では再送されない（diff 抑制 —
 // これが P3 の削減効果そのもの）。
 func TestEventsStreamSnapshotThenSilence(t *testing.T) {
-	var body atomic.Value
-	body.Store(`{"sessions":[{"name":"s1","kind":"claude","alive":true}]}`)
-	a, res := eventsTestEnv(t, &body)
-	frames, _ := runStream(t, a, res, 120*time.Millisecond)
+	stub := newEventsStub(`{"sessions":[{"name":"s1","kind":"claude","alive":true}]}`)
+	a, res := eventsTestEnv(t, stub)
+	// スナップショット 1 回 ＋ 無変化 tick 4 回分。
+	frames, _ := runStream(t, a, res, stub, 5)
 
 	for _, stream := range []string{"workspace", "stats", "sessions", "notifications"} {
 		if len(frames[stream]) != 1 {
@@ -144,15 +173,15 @@ func TestEventsStreamSnapshotThenSilence(t *testing.T) {
 // TestEventsStreamPushesChange: Agent 側の sessions が変わったら、その stream
 // だけがもう 1 フレーム流れる。
 func TestEventsStreamPushesChange(t *testing.T) {
-	var body atomic.Value
-	body.Store(`{"sessions":[{"name":"s1","kind":"claude","alive":true}]}`)
-	a, res := eventsTestEnv(t, &body)
+	stub := newEventsStub(`{"sessions":[{"name":"s1","kind":"claude","alive":true}]}`)
+	a, res := eventsTestEnv(t, stub)
 
+	// 変更はスナップショットが出てから入れる（何 ms 後、ではなく何 poll 後）。
 	go func() {
-		time.Sleep(50 * time.Millisecond)
-		body.Store(`{"sessions":[{"name":"s1","kind":"claude","alive":false}]}`)
+		stub.waitPolls(2, time.Now().Add(25*time.Second))
+		stub.setBody(`{"sessions":[{"name":"s1","kind":"claude","alive":false}]}`)
 	}()
-	frames, _ := runStream(t, a, res, 150*time.Millisecond)
+	frames, _ := runStream(t, a, res, stub, 6)
 
 	if got := len(frames["sessions"]); got != 2 {
 		t.Fatalf("sessions frames = %d, want 2 (snapshot + change)", got)
@@ -178,13 +207,12 @@ func TestEventsStreamPushesChange(t *testing.T) {
 // 余分なフレームが出る。手元では poll が 1ms 未満で終わるので窓に当たらず、
 // 遅いランナーでだけ当たっていた。ここでは Agent をわざと遅くして再現する。
 func TestEventsStreamNoFrameWhenCancelledMidPoll(t *testing.T) {
-	var body, delay atomic.Value
-	body.Store(`{"sessions":[{"name":"s1","kind":"claude","alive":true}]}`)
-	// 遅延は stub 側で 2 回目の /sessions から効く（初回＝スナップショットは
-	// 必ず素通し）。締切より長いので、2 回目以降の poll は必ず中断される。
-	delay.Store(500 * time.Millisecond)
-	a, res := eventsTestEnvDelayed(t, &body, &delay)
-	frames, _ := runStream(t, a, res, 120*time.Millisecond)
+	stub := newEventsStub(`{"sessions":[{"name":"s1","kind":"claude","alive":true}]}`)
+	// 2 回目の /sessions は 5 秒眠る。runStream はその poll が始まった時点で
+	// 打ち切るので、キャンセルは必ず poll の最中に当たる。
+	stub.setDelay(5 * time.Second)
+	a, res := eventsTestEnv(t, stub)
+	frames, _ := runStream(t, a, res, stub, 2)
 
 	if got := len(frames["sessions"]); got != 1 {
 		t.Fatalf("sessions frames = %d, want 1 (a cancelled poll is not a change): %s",
@@ -220,11 +248,10 @@ func TestRoundStats(t *testing.T) {
 // TestEventsStreamPing: 無送信が ping 間隔を超えたらコメント ping を流す
 // （クライアント watchdog / 中間プロキシの keep-alive）。
 func TestEventsStreamPing(t *testing.T) {
-	var body atomic.Value
-	body.Store(`{"sessions":[]}`)
-	a, res := eventsTestEnv(t, &body)
+	stub := newEventsStub(`{"sessions":[]}`)
+	a, res := eventsTestEnv(t, stub)
 	a.ping = time.Millisecond
-	_, raw := runStream(t, a, res, 100*time.Millisecond)
+	_, raw := runStream(t, a, res, stub, 3)
 	if !strings.Contains(raw, ": ping") {
 		t.Errorf("no ping in quiet stream; body=%q", raw)
 	}
