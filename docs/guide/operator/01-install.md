@@ -192,6 +192,42 @@ only the methods that tenant accepts. Hand that URL to new members; there is no 
 > a contractor's address workable — and the way to end their access is to remove the member, not
 > to narrow this field.
 
+### A subsidiary with its own IdP
+
+When a tenant is a separate company — a group subsidiary, or a business still being merged — its
+Entra ID (or Okta / Keycloak) tenant is a different one, with its own issuer, client ID and
+secret. Rather than adding it to `.env` and restarting the CP for every subsidiary, that tenant's
+own administrator registers it from the Console: **Admin → the tenant → "Sign-in methods."** They
+fill in the issuer, client ID, client secret, how the email is trusted, and the email domains it
+may admit.
+
+> **A new sign-in method does nothing until you approve it.** It is created as *waiting for
+> approval*, and until a deployment administrator activates it (from the same screen), no button
+> appears on the tenant's sign-in page and no session is issued even to somebody who constructs
+> the sign-in link by hand.
+>
+> **This one step is not bureaucracy.** Registering an IdP is the power to declare *who somebody
+> is*, and on this deployment a person is identified by their email address — deployment-wide,
+> including who is a deployment administrator. An admin who could activate their own issuer could
+> issue themselves a token carrying *your* address. Approving is a once-per-subsidiary action, so
+> the day-to-day picture ("the department runs itself") is unchanged.
+
+What to check before approving, on the deployment-wide list under **Admin → Tenants**:
+
+- **The issuer** really is that company's own tenant — not a `common` / `organizations` endpoint
+  (those accept every Microsoft account in the world, and are refused unless tenant ids are pinned).
+- **The email domains** are theirs. This list is what the approval is *for*: it bounds which
+  addresses that issuer is allowed to assert, and a domain can belong to only one tenant. Do not
+  approve a method that claims the parent company's domain.
+
+Changing the issuer, the client ID or the trust rule — or *adding* a domain — sends the method
+back for approval, because the approval was given to that issuer for that scope. Suspending is
+always available, to the tenant's own administrator as well: stopping should never wait for you.
+
+Approved methods stay on that list with who approved them and when. Treat it as a register to
+re-read now and then, not a queue that empties: the IdP stays under the other company's control,
+and settings such as self-sign-up can be turned on after you approved it.
+
 ## 5. Start it up
 
 Once `.env` is complete, create `DATA_DIR` and start with `docker compose up -d` (as-is if you
