@@ -197,14 +197,15 @@ only the methods that tenant accepts. Hand that URL to new members; there is no 
 When a tenant is a separate company — a group subsidiary, or a business still being merged — its
 Entra ID (or Okta / Keycloak) tenant is a different one, with its own issuer, client ID and
 secret. Rather than adding it to `.env` and restarting the CP for every subsidiary, that tenant's
-own administrator registers it from the Console: **Admin → the tenant → "Sign-in methods."** They
-fill in the issuer, client ID, client secret, how the email is trusted, and the email domains it
-may admit.
+own administrator registers it from the Console: **Tenant settings → "Sign-in methods"** (the
+account menu's *Tenant settings*). They fill in the issuer, client ID, client secret, how the
+email is trusted, and the email domains it may admit. As a deployment administrator you reach the
+same panel from **Admin → the tenant → "Sign-in methods."**
 
 > **A new sign-in method does nothing until you approve it.** It is created as *waiting for
-> approval*, and until a deployment administrator activates it (from the same screen), no button
-> appears on the tenant's sign-in page and no session is issued even to somebody who constructs
-> the sign-in link by hand.
+> approval*, and until a deployment administrator activates it (from Admin → the tenant), no
+> button appears on the tenant's sign-in page and no session is issued even to somebody who
+> constructs the sign-in link by hand.
 >
 > **This one step is not bureaucracy.** Registering an IdP is the power to declare *who somebody
 > is*, and on this deployment a person is identified by their email address — deployment-wide,

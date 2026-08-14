@@ -104,6 +104,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
 
   const openSettings = useSettingsUI((st) => st.openSettings);
   const openAdmin = useSettingsUI((st) => st.openAdmin);
+  const openTenantSettings = useSettingsUI((st) => st.openTenantSettings);
   // Native host self-update (docs/42): null on non-native deployments. When a newer
   // version is staged we surface it here — next to the build stamp — as a nudge into
   // 設定 → ツールチェーン, where the actual "再起動して適用" action lives.
@@ -312,6 +313,14 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                 <button className="acct-item" role="menuitem" onClick={() => run(() => openSettings())}>
                   <Icon name="gear" /> {tr("topbar.settings")}
                 </button>
+                {/* テナント設定は「自分が管理しているテナント」の面なので、入口は
+                    tenant_admin の在籍だけで決まる（デプロイ管理者は管理モーダルの
+                    テナント詳細から同じ面に入る）。 */}
+                {tenants?.some((t) => t.role === "tenant_admin") && (
+                  <button className="acct-item" role="menuitem" onClick={() => run(() => openTenantSettings())}>
+                    <Icon name="organization" /> {tr("topbar.tenant_settings")}
+                  </button>
+                )}
                 {(superAdmin || tenants?.some((t) => t.role === "tenant_admin")) && (
                   <button className="acct-item" role="menuitem" onClick={() => run(openAdmin)}>
                     <Icon name="shield" /> {tr("topbar.admin")}
