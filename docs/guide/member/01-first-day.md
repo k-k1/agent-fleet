@@ -8,8 +8,10 @@ English | [日本語](01-first-day.ja.md)
 
 ## Log in
 
-Open the Console URL in your browser and you'll first be asked to **sign in with Google**.
-Sign in with your company Google account (only permitted accounts can get in).
+Open the Console URL in your browser and you'll first be asked to **sign in**. Which button
+you see depends on what your company set up — Google, Microsoft, or another sign-in provider;
+if there are several, use your company account with whichever one your administrator told you
+to use (only permitted accounts can get in).
 
 Once you're logged in, a **tenant selector** appears at the very top of the screen. A tenant
 is a group such as a department, and your workspaces are separated per tenant. In most cases

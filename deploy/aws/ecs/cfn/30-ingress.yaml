@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
   agent-fleet ECS adapter (P3-7) — ingress + Control Plane service. ACM cert (DNS-
   validated via Route53), an internet-facing ALB that only terminates TLS (auth is
-  CP-native Google OAuth, AUTH=oauth — no ALB OIDC), the CP/Console Fargate service
+  the CP-native login, AUTH=oauth — no ALB OIDC), the CP/Console Fargate service
   (Service Connect client so it can reach the workspace Agents it provisions), and
   the Route53 alias. Imports 00-network, 10-data (EFS + RDS) and 20-platform. The CP
   is wired with AF_ECS_* so the stage-2 ecsRuntime provisions workspaces on demand, and
@@ -51,16 +51,64 @@ Parameters:
     Type: String
     Default: /af-cp
     Description: SSM SecureString path prefix holding the CP secrets (created out of
-      band before deploy — see README). Params - google-client-secret, cookie-secret,
-      master-key.
+      band before deploy — see README). Params - cookie-secret, master-key, plus
+      google-client-secret and/or oidc-client-secret depending on the IdP in use.
   GoogleClientId:
     Type: String
     Default: ""
     Description: Google OAuth client id (not secret; the secret comes from SSM).
+      Leave empty to sign in with the OIDC provider below instead.
+  OidcProviderId:
+    Type: String
+    Default: ""
+    AllowedPattern: "^[A-Z0-9_]*$"
+    Description: >-
+      Enable an OIDC IdP (Entra ID / Okta / Keycloak / Auth0 / Cognito / GitLab)
+      under this id — UPPERCASE, e.g. ENTRA (it names the AF_OIDC_<ID>_* env). Empty
+      = Google only. Its client secret must exist at ${SsmPrefix}/oidc-client-secret.
+      docs/61.
+  OidcIssuer:
+    Type: String
+    Default: ""
+    Description: >-
+      AF_OIDC_<ID>_ISSUER, e.g. https://login.microsoftonline.com/<tenant-guid>/v2.0.
+      ★ Pin Entra to your tenant guid — with /common/ or /organizations/ every
+      Microsoft account in the world reaches the login and personal accounts can
+      rewrite their own email, so the CP refuses to start unless OidcAllowedTids is set.
+  OidcClientId:
+    Type: String
+    Default: ""
+    Description: AF_OIDC_<ID>_CLIENT_ID (not secret; the secret comes from SSM).
+  OidcTrust:
+    Type: String
+    Default: issuer
+    AllowedValues: [ issuer, email_verified ]
+    Description: >-
+      AF_OIDC_<ID>_TRUST — why this IdP's email may be believed. issuer = the issuer
+      is pinned to one tenant (Entra ID, which never emits email_verified).
+      email_verified = accept only when the IdP asserts that claim (Okta / Keycloak / Auth0).
+  OidcAllowedTids:
+    Type: String
+    Default: ""
+    Description: AF_OIDC_<ID>_ALLOWED_TIDS — accepted Entra tenant ids. Required only
+      when the issuer is the /common/ or /organizations/ endpoint.
+  OidcLabelJa:
+    Type: String
+    Default: ""
+    Description: Login button label, Japanese (default is generated from the id).
+  OidcLabelEn:
+    Type: String
+    Default: ""
+    Description: Login button label, English (default is generated from the id).
   AllowedEmails:
     Type: String
     Default: ""
     Description: AF_OAUTH_ALLOWED_EMAILS (comma-separated) permitted to sign in.
+  AllowedDomains:
+    Type: String
+    Default: ""
+    Description: AF_OAUTH_ALLOWED_DOMAINS (comma-separated email domains) permitted
+      to sign in. Both allowlists empty => every login is denied (fail closed).
   SuperAdminEmails:
     Type: String
     Default: ""
@@ -70,10 +118,17 @@ Parameters:
     Default: oauth
     AllowedValues: [ oauth, dev ]
     Description: >-
-      CP auth mode. oauth (default) = CP-native Google OAuth. dev = fixed dev
+      CP auth mode. oauth (default) = the CP-native login (Google and/or OIDC). dev = fixed dev
       identity with NO login — sandbox/E2E gates only: restrict the ALB security
       group to your own IP before using it (an internet-facing ALB with dev auth
       hands out an authenticated session to anyone who reaches it).
+
+Conditions:
+  # Each IdP's client secret is pulled from SSM, and a Secrets entry pointing at a
+  # parameter that doesn't exist stops the task from starting — so wire each one in
+  # only when that IdP is actually configured.
+  HasGoogle: !Not [ !Equals [ !Ref GoogleClientId, "" ] ]
+  HasOidc: !Not [ !Equals [ !Ref OidcProviderId, "" ] ]
 
 Resources:
   Cert:
@@ -187,7 +242,17 @@ Resources:
             - { Name: PUBLIC_DOMAIN, Value: !Ref Fqdn }
             - { Name: GOOGLE_OAUTH_CLIENT_ID, Value: !Ref GoogleClientId }
             - { Name: AF_OAUTH_ALLOWED_EMAILS, Value: !Ref AllowedEmails }
+            - { Name: AF_OAUTH_ALLOWED_DOMAINS, Value: !Ref AllowedDomains }
             - { Name: SUPER_ADMIN_EMAILS, Value: !Ref SuperAdminEmails }
+            # Generic OIDC IdP (docs/61). The redirect URI stays the single
+            # https://<Fqdn>/oauth2/callback whether or not this is enabled.
+            - { Name: AF_OIDC_PROVIDERS, Value: !Ref OidcProviderId }
+            - !If [ HasOidc, { Name: !Sub "AF_OIDC_${OidcProviderId}_ISSUER", Value: !Ref OidcIssuer }, !Ref "AWS::NoValue" ]
+            - !If [ HasOidc, { Name: !Sub "AF_OIDC_${OidcProviderId}_CLIENT_ID", Value: !Ref OidcClientId }, !Ref "AWS::NoValue" ]
+            - !If [ HasOidc, { Name: !Sub "AF_OIDC_${OidcProviderId}_TRUST", Value: !Ref OidcTrust }, !Ref "AWS::NoValue" ]
+            - !If [ HasOidc, { Name: !Sub "AF_OIDC_${OidcProviderId}_ALLOWED_TIDS", Value: !Ref OidcAllowedTids }, !Ref "AWS::NoValue" ]
+            - !If [ HasOidc, { Name: !Sub "AF_OIDC_${OidcProviderId}_LABEL_JA", Value: !Ref OidcLabelJa }, !Ref "AWS::NoValue" ]
+            - !If [ HasOidc, { Name: !Sub "AF_OIDC_${OidcProviderId}_LABEL_EN", Value: !Ref OidcLabelEn }, !Ref "AWS::NoValue" ]
             # AF_RUNTIME=ecs = the P3-7 stage-2 adapter. The AF_ECS_* below give it the
             # substrate placement it needs to provision per-workspace ECS services.
             - { Name: AF_RUNTIME, Value: ecs }
@@ -214,8 +279,16 @@ Resources:
               ValueFrom: !Sub
                 - "${Arn}:password::"
                 - Arn: !ImportValue { "Fn::Sub": "${DataStackName}-DbSecretArn" }
-            - Name: GOOGLE_OAUTH_CLIENT_SECRET
-              ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/google-client-secret"
+            - !If
+              - HasGoogle
+              - Name: GOOGLE_OAUTH_CLIENT_SECRET
+                ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/google-client-secret"
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasOidc
+              - Name: !Sub "AF_OIDC_${OidcProviderId}_CLIENT_SECRET"
+                ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/oidc-client-secret"
+              - !Ref "AWS::NoValue"
             - Name: AF_COOKIE_SECRET
               ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/cookie-secret"
             - Name: AF_MASTER_KEY

@@ -373,6 +373,14 @@ type IdentityStore interface {
 	// upgrades the deployment role (e.g. "super_admin" from SUPER_ADMIN_EMAILS);
 	// it never downgrades.
 	UpsertIdentity(ctx context.Context, email, key, roleHint string) (Identity, error)
+	// LinkIdentity is UpsertIdentity for a login that proved an IdP subject
+	// (AUTH=oauth). The (provider, subject) pair decides who this is, so an email
+	// change keeps the same identity — and therefore the same user_key, workspace
+	// and secrets (docs/61 §61.5). isNew reports that no existing identity matched
+	// and a new one was created, which is the only signal the caller has that this
+	// person landed in a different workspace than the one they may expect.
+	// fallbackKey is used only on that path (it is sanitizeUser(email)).
+	LinkIdentity(ctx context.Context, provider, subject, email, fallbackKey, roleHint string) (ident Identity, isNew bool, err error)
 	GetIdentityByID(ctx context.Context, id string) (Identity, bool, error)
 	// GetIdentityByUserKey is the READ-ONLY lookup for view paths (admin stats,
 	// admin MCP list tools): unlike UpsertIdentity it neither inserts a row for a

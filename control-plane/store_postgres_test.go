@@ -211,4 +211,48 @@ func TestPostgresStore(t *testing.T) {
 	if v, err := st.GetSetting(ctx, "egress_mode"); err != nil || v != "log" {
 		t.Fatalf("get setting: %v %q", err, v)
 	}
+
+	// identity_provider round trip (docs/61 P1 / migrations-pg/0021). Everything
+	// below had only ever run on SQLite: the pair table, its
+	// ON CONFLICT(provider, subject) upsert, and the LOWER(email)=? lookup. Postgres
+	// is the stricter dialect about placeholder types, which is why identityByEmail
+	// lowercases in Go rather than calling LOWER(?) and touchIdentity has two
+	// statements instead of one with NULLIF.
+	const pgEmail = "Yamada@Acme.co.jp" // stored with the case the IdP asserted
+	seed, err := st.UpsertIdentity(ctx, pgEmail, sanitizeUser(pgEmail), "")
+	if err != nil {
+		t.Fatalf("link seed: %v", err)
+	}
+	// Rule 2: no pair recorded yet, but the address is already someone's — join that
+	// person. Matching is case-insensitive even though the unique index is on the
+	// exact string, so a differently-cased login must not fork a second identity.
+	joined, isNew, err := st.LinkIdentity(ctx, googleProviderID, "pg-sub-1", "yamada@acme.co.jp", sanitizeUser(pgEmail), "")
+	if err != nil || isNew || joined.ID != seed.ID || joined.UserKey != seed.UserKey {
+		t.Fatalf("link rule 2: %+v isNew=%v err=%v want id=%s key=%s", joined, isNew, err, seed.ID, seed.UserKey)
+	}
+	// Rule 1 + rename: the recorded pair outranks the address, so user_key — the home
+	// directory name — stays put and only the display email moves.
+	const pgRenamed = "yamada-hanako@acme.co.jp"
+	moved, isNew, err := st.LinkIdentity(ctx, googleProviderID, "pg-sub-1", pgRenamed, sanitizeUser(pgRenamed), "")
+	if err != nil || isNew || moved.ID != seed.ID || moved.UserKey != seed.UserKey || moved.Email != pgRenamed {
+		t.Fatalf("link rule 1: %+v isNew=%v err=%v want id=%s key=%s", moved, isNew, err, seed.ID, seed.UserKey)
+	}
+	// touchIdentity's other statement: nothing asserted, so last_login_at moves and
+	// the display email must survive rather than be blanked.
+	if _, _, err := st.LinkIdentity(ctx, googleProviderID, "pg-sub-1", "", sanitizeUser(pgRenamed), ""); err != nil {
+		t.Fatalf("link without an asserted email: %v", err)
+	}
+	if got, ok, err := st.GetIdentityByID(ctx, seed.ID); err != nil || !ok || got.Email != pgRenamed {
+		t.Fatalf("empty assertion cleared the email: %+v ok=%v err=%v", got, ok, err)
+	}
+	// Rule 3: an address nobody owns is a new person — the isNew that raises the
+	// "this is a new workspace" notice on a multi-IdP deployment.
+	const pgOther = "tanaka@acme.co.jp"
+	fresh, isNew, err := st.LinkIdentity(ctx, "entra", "pg-sub-2", pgOther, sanitizeUser(pgOther), "")
+	if err != nil || !isNew || fresh.ID == seed.ID || fresh.UserKey != sanitizeUser(pgOther) {
+		t.Fatalf("link rule 3: %+v isNew=%v err=%v", fresh, isNew, err)
+	}
+	if n := countRows(t, st, "identity_provider"); n != 2 {
+		t.Fatalf("identity_provider rows = %d, want 2", n)
+	}
 }

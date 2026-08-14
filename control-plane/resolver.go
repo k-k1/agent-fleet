@@ -25,6 +25,25 @@ func (m *manager) resolveIdentity(r *http.Request) identity {
 
 func (m *manager) resolveUser(r *http.Request) string { return m.resolveIdentity(r).key }
 
+// upsertIdentity resolves a request to the person behind it. Under AUTH=oauth the
+// request context carries the (provider, subject) the session was minted with
+// (authGate), and that pair — not the email — decides who this is: an email
+// change must not move user_key, which is the workspace home directory name
+// (docs/61 §61.5). AUTH=proxy and AUTH=dev have no IdP subject to offer, so they
+// keep resolving by email exactly as before; failing closed here would break
+// every existing proxy deployment and dev itself.
+//
+// key/email are the caller's own, taken from resolveIdentity on the same request,
+// so the context pair always describes the same person. Do not call this with
+// another person's key while a session context is in scope — the pair wins.
+func (m *manager) upsertIdentity(ctx context.Context, email, key, roleHint string) (Identity, error) {
+	if ref, ok := loginRefFrom(ctx); ok {
+		ident, _, err := m.store.LinkIdentity(ctx, ref.provider, ref.subject, email, key, roleHint)
+		return ident, err
+	}
+	return m.store.UpsertIdentity(ctx, email, key, roleHint)
+}
+
 func (m *manager) roleHintFor(email string) string {
 	if email != "" && m.superAdmins[strings.ToLower(email)] {
 		return "super_admin"
@@ -51,7 +70,7 @@ func (m *manager) identityFor(ctx context.Context, r *http.Request) (Identity, *
 	if id.key == "" {
 		return Identity{}, &apiError{http.StatusUnauthorized, "unauthenticated", "no gateway identity"}
 	}
-	ident, err := m.store.UpsertIdentity(ctx, id.email, id.key, m.roleHintFor(id.email))
+	ident, err := m.upsertIdentity(ctx, id.email, id.key, m.roleHintFor(id.email))
 	if err != nil {
 		return Identity{}, internalErr(err)
 	}
@@ -88,7 +107,7 @@ func (m *manager) membershipsFor(ctx context.Context, ident Identity) ([]Members
 // records, creating the workspace on first use. tenantSel is the X-AF-Tenant
 // value (slug or tenant id); empty means "default selection".
 func (m *manager) resolveFull(ctx context.Context, key, email, tenantSel string) (*resolved, *apiError) {
-	ident, err := m.store.UpsertIdentity(ctx, email, key, m.roleHintFor(email))
+	ident, err := m.upsertIdentity(ctx, email, key, m.roleHintFor(email))
 	if err != nil {
 		return nil, internalErr(err)
 	}
@@ -107,7 +126,7 @@ func (m *manager) resolveFull(ctx context.Context, key, email, tenantSel string)
 // membership WITHOUT building/creating a workspace — for lightweight per-member
 // resources (e.g. SSM host bookmarks) that don't need a running container.
 func (m *manager) resolveMembership(ctx context.Context, key, email, tenantSel string) (Identity, MembershipView, *apiError) {
-	ident, err := m.store.UpsertIdentity(ctx, email, key, m.roleHintFor(email))
+	ident, err := m.upsertIdentity(ctx, email, key, m.roleHintFor(email))
 	if err != nil {
 		return Identity{}, MembershipView{}, internalErr(err)
 	}
