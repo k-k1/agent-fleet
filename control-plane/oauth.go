@@ -52,8 +52,25 @@ const (
 type principal struct {
 	Provider string
 	Subject  string // the IdP's stable subject id (unlike email, it never changes)
+	// Realm is the authority that verified Subject: the issuer URL for OIDC, the
+	// fixed https://github.com for the GitHub adapter. Two providers with one realm
+	// are two buttons onto the same IdP, which is what lets the deployment's GitHub
+	// and a tenant's own GitHub resolve to one person (docs/61 §61.15, rule 1.5).
+	// It is filled in by the callback from the provider itself — never from a
+	// tenant-supplied field — so a tenant cannot name somebody else's realm.
+	Realm    string
 	Email    string
 	Verified bool
+}
+
+// providerRealm answers "where would this provider prove someone", reusing the
+// optional interface the admin provider list already relies on (login_provider_api.go).
+// A provider that does not implement it simply takes no part in rule 1.5.
+func providerRealm(p loginProvider) string {
+	if pi, ok := p.(providerIssuer); ok {
+		return pi.issuerURL()
+	}
+	return ""
 }
 
 // loginProvider is one sign-in button: an IdP the deployment enabled. Every
@@ -462,6 +479,9 @@ func (c config) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		loginRedirect(w, r, "denied", tenant)
 		return
 	}
+	// ★ Stamped here, from the provider CP resolved by id — not from anything the
+	// exchange returned and not from the row a tenant typed (docs/61 §61.15).
+	pr.Realm = providerRealm(p)
 	allowed, err := p.Allowed(r.Context(), pr)
 	if err != nil || !allowed {
 		loginRedirect(w, r, "forbidden", tenant)
@@ -534,15 +554,14 @@ func (c config) linkAfterLogin(ctx context.Context, p principal) (bool, error) {
 		return false, nil
 	}
 	tenantDefined := isTenantProviderID(p.Provider)
-	if len(c.providers) < 2 && !tenantDefined {
-		return false, nil
-	}
 	roleHint := c.mgr.roleHintFor(p.Email)
 	if tenantDefined {
 		roleHint = ""
 	}
-	_, isNew, err := c.mgr.store.LinkIdentity(ctx, p.Provider, p.Subject, p.Email,
-		sanitizeUser(p.Email), roleHint, !tenantDefined)
+	_, isNew, err := c.mgr.store.LinkIdentity(ctx, IdentityLink{
+		Provider: p.Provider, Subject: p.Subject, Realm: p.Realm, Email: p.Email,
+		FallbackKey: sanitizeUser(p.Email), RoleHint: roleHint, EmailJoin: !tenantDefined,
+	})
 	switch {
 	case errors.Is(err, errIdentityClaimed):
 		return false, err
@@ -550,6 +569,16 @@ func (c config) linkAfterLogin(ctx context.Context, p principal) (bool, error) {
 		// Not fatal to the login: the next request resolves the identity the usual
 		// way. Only the notice is lost.
 		log.Printf("oauth: link %s/%s: %v", p.Provider, p.Subject, err)
+		return false, nil
+	}
+	// ★ The single-provider deployment used to skip this function entirely, and the
+	// resolver wrote the row on the first API request instead. It now runs anyway,
+	// because that path has no provider object and therefore no realm — and a row
+	// with no realm cannot take part in rule 1.5 when the tenant later adds its own
+	// GitHub (docs/61 §61.15). What stays suppressed is the NOTICE: with one button
+	// there is no second account to have landed in by mistake, so announcing a new
+	// account would be noise nobody can act on.
+	if len(c.providers) < 2 && !tenantDefined {
 		return false, nil
 	}
 	return isNew, nil
@@ -693,7 +722,8 @@ func (c config) handleLogin(w http.ResponseWriter, r *http.Request) {
 		"{{TITLE}}", html.EscapeString(title),
 		"{{NOTE}}", note,
 		"{{ERROR}}", loginErrorBlock(r.URL.Query().Get("error"), lang),
-		"{{BUTTONS}}", c.loginButtons(r.Context(), sanitizeNext(r.URL.Query().Get("next")), lang, slug, rules.AllowedProviders),
+		"{{BUTTONS}}", c.loginButtons(r.Context(), sanitizeNext(r.URL.Query().Get("next")), lang, slug,
+			rules.AllowedProviders, rules.HiddenProviders),
 	).Replace(loginPageHTML)
 	_, _ = w.Write([]byte(page))
 }
@@ -710,7 +740,7 @@ func (c config) handleLogin(w http.ResponseWriter, r *http.Request) {
 // the group's subsidiaries, readable by anyone who can reach the login (決定 32-4).
 // They come last: the department's own button belongs next to the deployment-wide
 // ones, and an operator who wants only that button says so in allowed_providers.
-func (c config) loginButtons(ctx context.Context, next, lang, tenant string, allowed []string) string {
+func (c config) loginButtons(ctx context.Context, next, lang, tenant string, allowed, hidden []string) string {
 	providers := c.providers
 	if tenant != "" && c.mgr != nil {
 		providers = append(append([]loginProvider(nil), providers...),
@@ -719,9 +749,26 @@ func (c config) loginButtons(ctx context.Context, next, lang, tenant string, all
 	if len(providers) == 0 {
 		return `<div class="err">` + loginText[lang].errUnconfigured + `</div>`
 	}
+	// ★ hidden_providers removes a button WITHOUT removing the method (docs/61
+	// §61.15.9): a subsidiary that runs on its own GitHub still has to accept the
+	// parent company's method for the colleague on loan, and that person signs in on
+	// the generic /login. Applied only when something would remain — a page with no
+	// buttons is a dead end, and the tenant's own mistake must not become one.
+	visible := providers
+	if len(hidden) > 0 {
+		kept := make([]loginProvider, 0, len(providers))
+		for _, p := range providers {
+			if providerInList(allowed, p.ID()) && !providerInList(hidden, p.ID()) {
+				kept = append(kept, p)
+			}
+		}
+		if len(kept) > 0 {
+			visible = kept
+		}
+	}
 	var b strings.Builder
 	shown := 0
-	for _, p := range providers {
+	for _, p := range visible {
 		if !providerInList(allowed, p.ID()) {
 			continue
 		}

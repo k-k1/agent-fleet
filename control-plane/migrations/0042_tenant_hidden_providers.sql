@@ -1,0 +1,24 @@
+-- Sign-in methods a tenant ACCEPTS but does not put a button on (docs/61 §61.15.9).
+--
+-- allowed_providers (0039) does two jobs at once: it decides which methods may be
+-- used to enter the tenant AND which buttons its login page shows. That is fine
+-- until a tenant has a member who signs in somewhere else -- somebody on loan from
+-- the parent company, who has no account with the subsidiary's own IdP. To let that
+-- person switch into the tenant, the parent's method has to be accepted, and then
+-- its button appears on the subsidiary's page even though nobody there uses it.
+--
+-- So the two jobs are separated. This column lists the methods to leave OFF the
+-- tenant's login page while still accepting them:
+--
+--   allowed_providers  = t:sub:github, google   accepted (unchanged meaning)
+--   hidden_providers   = google                 accepted, but no button here
+--
+-- ★ It is display only, and must never be read as a gate. The enforcement stays in
+-- resolver.go (決定 14: hiding a button is never the enforcement) -- somebody who
+-- signs in on the generic /login with the hidden method and switches tenants is
+-- ADMITTED, which is exactly the case this column exists for.
+--
+-- Empty (the default, and every existing row) = show every accepted method, which is
+-- the behaviour before this column.
+-- NOTE the migrator splits on the semicolon, so comments must not contain one.
+ALTER TABLE tenant ADD COLUMN hidden_providers TEXT NOT NULL DEFAULT ''
