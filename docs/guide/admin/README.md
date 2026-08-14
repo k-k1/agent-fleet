@@ -50,11 +50,17 @@ The rail on the left holds two groups.
 
 **Sign-in**
 
-- **Sign-in methods** — register your own company's IdP (Entra ID / Okta / Keycloak …) as a way
-  into this tenant. Registering is not enough: a deployment administrator has to approve it.
+- **Sign-in methods** — register your own company's IdP (Entra ID / Okta / Keycloak …), or a
+  **GitHub organization**, as a way into this tenant. Registering is not enough: a deployment
+  administrator has to approve it. With GitHub you list the **allowed organizations** instead of
+  an issuer and use an OAuth App created in your own organization — the approval is read as
+  "these organizations, these domains", so **adding an organization sends it back for approval**.
   → [operator/01 Install](../operator/01-install.md)
 - **Login rules** — **read-only** view of what is in effect for this tenant: the usable sign-in
-  methods, the auto-join domains and the invitable domains. Changing them is a deployment
+  methods (★ narrowing these to your own methods locks out people who also belong to another
+  tenant and sign in there — the same address at a different IdP is a different login; keep their
+  method accepted and list it under *methods to keep off the sign-in page* instead), the
+  auto-join domains and the invitable domains. Changing them is a deployment
   administrator's job; this panel exists so you can read *why* an invitation was refused without
   asking anyone.
 
