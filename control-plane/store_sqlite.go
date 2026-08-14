@@ -327,6 +327,157 @@ func (s *sqlStore) UpsertIdentity(ctx context.Context, email, key, roleHint stri
 	return id, err
 }
 
+// LinkIdentity resolves a login that carries an IdP subject to a person, applying
+// the three rules of docs/61 §61.5 in order:
+//
+//  1. (provider, subject) already recorded => that identity, whatever its email is
+//     now. user_key does not move, so home and secrets stay put across a rename.
+//  2. not recorded, but the email matches an identity => join it. This is what
+//     makes "sign in with the company address and you land in the same workspace
+//     whichever button you pressed" true, and it is how an existing Google-only
+//     deployment migrates: the first login after the upgrade takes this path.
+//  3. neither => a NEW identity (isNew), created through UpsertIdentity so the
+//     user_key collision guard still applies.
+//
+// Rule 2 matches on the email the IdP asserted, which is safe only because every
+// enabled provider is one the operator configured and each declares how it
+// justifies that email (§61.4) — the allowlist is what keeps a foreign address
+// from reaching this code at all. Two DIFFERENT emails are never merged: proving
+// you can sign in to both accounts shows control of both, not that they are one
+// person, and the merge would be irreversible.
+func (s *sqlStore) LinkIdentity(ctx context.Context, provider, subject, email, fallbackKey, roleHint string) (Identity, bool, error) {
+	if provider == "" || subject == "" { // no subject to key on: legacy/pre-P0 session
+		ident, err := s.UpsertIdentity(ctx, email, fallbackKey, roleHint)
+		return ident, false, err
+	}
+	identityID, err := s.identityIDForProvider(ctx, provider, subject)
+	if err != nil {
+		return Identity{}, false, err
+	}
+	isNew := false
+	if identityID == "" {
+		ident, ok, err := s.identityByEmail(ctx, email)
+		switch {
+		case err != nil:
+			return Identity{}, false, err
+		case ok: // rule 2
+			identityID = ident.ID
+		default: // rule 3
+			ident, created, err := s.createIdentityForLogin(ctx, email, fallbackKey, roleHint)
+			if err != nil {
+				return Identity{}, false, err
+			}
+			identityID, isNew = ident.ID, created
+		}
+	}
+	// Record the pair. ON CONFLICT only refreshes the display columns: an existing
+	// mapping is never re-pointed at another identity, so a subject cannot be moved
+	// onto someone else's workspace by a later login.
+	now := nowTS()
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO identity_provider(provider, subject, identity_id, email, created_at, last_login_at)
+		 VALUES(?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(provider, subject) DO UPDATE SET
+		   email = excluded.email,
+		   last_login_at = excluded.last_login_at`,
+		provider, subject, identityID, email, now, now); err != nil {
+		return Identity{}, false, err
+	}
+	if err := s.touchIdentity(ctx, identityID, email, roleHint); err != nil {
+		return Identity{}, false, err
+	}
+	ident, ok, err := s.GetIdentityByID(ctx, identityID)
+	if err != nil {
+		return Identity{}, false, err
+	}
+	if !ok {
+		return Identity{}, false, fmt.Errorf("identity %s vanished mid-login", identityID)
+	}
+	return ident, isNew, nil
+}
+
+// identityIDForProvider returns the identity a (provider, subject) is bound to,
+// or "" when the pair has never signed in here.
+func (s *sqlStore) identityIDForProvider(ctx context.Context, provider, subject string) (string, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT identity_id FROM identity_provider WHERE provider=? AND subject=?`, provider, subject).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
+// identityByEmail finds the person an address already belongs to. Non-empty
+// emails are UNIQUE (idx_identity_email), so at most one row matches; the empty
+// email never does (those rows are invite-by-user_key placeholders, claimed through
+// UpsertIdentity's key path instead).
+func (s *sqlStore) identityByEmail(ctx context.Context, email string) (Identity, bool, error) {
+	if strings.TrimSpace(email) == "" {
+		return Identity{}, false, nil
+	}
+	var idn Identity
+	var last sql.NullString
+	// Lowercased in Go rather than with LOWER(?) so the placeholder's type is never
+	// in question on Postgres, and ordered so a case-differing pair (possible: the
+	// unique index is on the exact string) resolves the same way every time.
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, email, user_key, role, status, COALESCE(last_login_at,'')
+		 FROM identity WHERE LOWER(email)=? ORDER BY id LIMIT 1`,
+		strings.ToLower(strings.TrimSpace(email))).
+		Scan(&idn.ID, &idn.Email, &idn.UserKey, &idn.Role, &idn.Status, &last)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Identity{}, false, nil
+	}
+	if err != nil {
+		return Identity{}, false, err
+	}
+	idn.LastLoginAt = last.String
+	return idn, true, nil
+}
+
+// createIdentityForLogin runs rule 3 through UpsertIdentity (so the user_key
+// collision guard applies) and reports whether a row was actually created. An
+// admin who pre-created the person by user_key (invite) leaves a row with an
+// empty email waiting to be claimed — claiming it is not a new account, so it
+// must not raise the "this is a new account" notice.
+func (s *sqlStore) createIdentityForLogin(ctx context.Context, email, key, roleHint string) (Identity, bool, error) {
+	finalKey, err := s.disambiguateUserKey(ctx, email, key)
+	if err != nil {
+		return Identity{}, false, err
+	}
+	_, existed, err := s.GetIdentityByUserKey(ctx, finalKey)
+	if err != nil {
+		return Identity{}, false, err
+	}
+	ident, err := s.UpsertIdentity(ctx, email, key, roleHint)
+	return ident, !existed, err
+}
+
+// touchIdentity updates the display email and last login of an identity resolved
+// by (provider, subject). It deliberately does NOT go through UpsertIdentity:
+// that one re-derives the key from the email and would divert a renamed person to
+// a fresh user_key (disambiguateUserKey), which is exactly what §61.5 forbids.
+// Role still upgrades only (never downgrades), same as UpsertIdentity.
+func (s *sqlStore) touchIdentity(ctx context.Context, identityID, email, roleHint string) error {
+	// Two shapes rather than one with NULLIF/CASE: both dialects parse these
+	// without having to infer a placeholder's type from a bare '' literal.
+	var err error
+	if email == "" {
+		_, err = s.db.ExecContext(ctx, `UPDATE identity SET last_login_at=? WHERE id=?`, nowTS(), identityID)
+	} else {
+		_, err = s.db.ExecContext(ctx, `UPDATE identity SET last_login_at=?, email=? WHERE id=?`, nowTS(), email, identityID)
+	}
+	if err != nil {
+		return err
+	}
+	if roleHint != "super_admin" {
+		return nil
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE identity SET role='super_admin' WHERE id=?`, identityID)
+	return err
+}
+
 // disambiguateUserKey guards against sanitizeUser collisions: user_key is UNIQUE
 // and identity-defining, so two different emails that sanitize to the same key
 // ("a.b@x" vs "a-b@x", or long addresses truncated at 40 chars) would otherwise
