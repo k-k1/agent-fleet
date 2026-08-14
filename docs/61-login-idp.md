@@ -1012,6 +1012,25 @@ P3 の保存時検証は env 由来の provider id しか通さなかったの�
 3 箇所に同じ規則を書くと 4 箇所目で漏れる。callback の `linkAfterLogin` だけは
 `store.LinkIdentity` を直接呼ぶので、そこにも同じ抑止を書いてある。
 
+★ **改訂 — 置き場を「テナント設定」モーダルへ移した（2026-08-14・Console IA 刷新）。**
+§61.11.6 は 2 つの面を「テナント詳細（tenant_admin）」「管理タブ（super_admin）」と書いたが、
+前者の実体は super_admin の管理モーダルの中にあり、tenant_admin は自分のものを見るために
+デプロイ管理者の画面へ入る必要があった。読み手ごとに面を分けた:
+
+| 面 | 誰が | どこ |
+|----|------|------|
+| サインイン方式（自テナントの行の作成・編集・停止・削除） | tenant_admin | **テナント設定**モーダル（アカウントメニュー） |
+| 同じ欄＋**承認して有効化** | super_admin | 管理モーダル → そのテナント（従来どおり。承認は決定 30 の一手なのでここに残す） |
+| ログイン規則の 3 欄（編集） | super_admin | 管理モーダル → そのテナント（PUT が `withSuperAdmin` 固定＝決定 19） |
+| 同じ 3 欄（**読み取り専用**） | tenant_admin | テナント設定モーダル。招待が弾かれた理由を自分で読めるようにするため、値は見せて操作は置かない |
+| サインイン方法の登録簿（デプロイ全体） | super_admin | 管理モーダル → テナント一覧（従来どおり） |
+
+★ 実装は 1 つ（`console/src/features/settings/tenantLogin.tsx`）を両モーダルから差す形にした。
+**出し分けは props（`isSuper`）だけで、サーバ側のゲートは何も緩めていない** — 承認は CP の
+`setStatus` が `ident.Role != "super_admin"` を見て 403 を返す。`isSuper` の出どころも従来と同じ
+`GET /api/admin/tenants` の `super_admin` フラグのまま（面を分けても取得元を変えない）。
+移設したパネルの i18n キーは `admin.*` のまま据え置き（改名は移設と別コミットで行う方針）。
+
 ★ **`/api/tenants` の DTO は広げていない。** 承認状態を返したくなるが、`apiError` に
 フィールドを足せない（positional な composite literal が 249 箇所）のと同じ判断で、
 承認状態は管理 API（`/api/admin/tenants/{slug}/idp`・`/api/admin/idp`）から読む。

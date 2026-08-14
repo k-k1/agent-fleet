@@ -1366,6 +1366,27 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.remove_keeps": "The workspace, its home and stored credentials are kept (use \"Clean home\" first to erase them).",
   "admin.remove_undo": "To restore access, add the same email address as a member again.",
 
+  // --- tenant settings modal (the tenant administrator's surface). The admin modal is
+  // the whole deployment, personal settings are yourself; this one is "the tenant you
+  // administer". Panels moved here keep their admin.* keys (renaming is a separate
+  // change from moving). ---
+  "tenant.title": "Tenant settings",
+  "tenant.back": "All tenant settings",
+  "tenant.group_login": "Sign-in",
+  "tenant.tab_signin": "Sign-in methods",
+  "tenant.tab_rules": "Login rules",
+  "tenant.picker": "Tenant",
+  "tenant.none": "You don't administer any tenant.",
+  "tenant.forbidden": "You don't have permission to view this tenant's settings.",
+  "tenant.rules_readonly_note": "only a deployment administrator can change these",
+  "tenant.rules_hint":
+    "An auto-join domain can belong to only one tenant. " +
+    "To change any of these rules, ask a deployment administrator.",
+  "tenant.rules_unset": "not set (no restriction)",
+  "tenant.rules_providers_note": "Sign-in methods usable in this tenant. When not set, every active method may be used.",
+  "tenant.rules_autojoin_note": "People with an email address in this domain join this tenant on their first sign-in.",
+  "tenant.rules_invite_note": "A guard that applies only when adding a member. It does not affect people who are already members.",
+
   // --- keyboard system (features/keys · docs/29). Command/group names drive both the
   // display and the command palette's bilingual match. {n} is the pane ordinal. ---
   "keys.grp.pane": "Panes / layout",
@@ -1738,6 +1759,7 @@ export const en: Record<keyof typeof ja, string> = {
   "topbar.user_guide": "User guide",
   "topbar.guide": "Getting-started guide",
   "topbar.settings": "Settings",
+  "topbar.tenant_settings": "Tenant settings",
   "topbar.admin": "Admin",
   "topbar.logout": "Sign out",
   "topbar.build": "Build {label}",

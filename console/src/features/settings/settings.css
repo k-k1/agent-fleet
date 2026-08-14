@@ -213,6 +213,27 @@
   color: var(--dialog-muted);
 }
 
+/* テナント設定モーダル（TenantDialog）。骨格は個人設定と同じ settings-* をそのまま
+   使い、ここでは中身が管理モーダル由来（.admin-*）であることの調整だけを足す。
+   .admin-surface が同じ理由で当てている「弱い文字をダイアログ用に持ち上げる」規則が
+   モーダル面には効かないため、テナントモーダルに限って同じ持ち上げを掛ける。 */
+.tenant-modal .admin-panel h4 .af-note,
+.tenant-modal .af-unit,
+.tenant-modal .af-val.unset,
+.tenant-modal .admin-hint,
+.tenant-modal .admin-hint code {
+  color: var(--dialog-muted);
+}
+.tenant-modal .settings-content .admin-panel + .admin-panel {
+  margin-top: 12px;
+}
+/* 複数テナントを管理している人向けの切り替え。レールの見出し直下に置くので、
+   レール項目と同じ幅・同じ余白に合わせる。 */
+.tenant-modal .tenant-picker {
+  width: 100%;
+  margin: 2px 0 0;
+}
+
 /* display settings tab */
 .ds-group {
   margin-bottom: 22px;
@@ -2129,6 +2150,16 @@
   font-size: 11px;
   color: var(--muted);
   min-height: 13px;
+}
+/* 読み取り専用の値（入力欄の代わりに置くテキスト）。入力欄と同じ .admin-fld の
+   中で、見出し(.af-cap)と補足(.af-unit)の間に入る。未設定は値ではないので弱める。 */
+.af-val {
+  font-size: 12.5px;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+.af-val.unset {
+  color: var(--muted);
 }
 .admin-hint {
   margin: 9px 0 0;
