@@ -64,8 +64,16 @@
    below it — diff/scm (.fileview/.scmview) shipped missing, and sharing's
    .shared-view was never added at all. Exclude only the pane's own chrome
    (tab strip itself, grip, control cluster, find bar, drop hint, empty-state)
-   so every current AND future view class is covered with no list to maintain. */
-.pane:has(.pane-tabs) > :not(.pane-tabs, .pane-grip, .pane-controls, .pane-find, .drop-indicator, .pane-empty) {
+   so every current AND future view class is covered with no list to maintain.
+
+   Keyed on .pane.tabbed (Pane.tsx sets it from the same `tabbed` prop that renders
+   the strip), NOT :has(.pane-tabs). The :has() form was correct but pathologically
+   slow in Chrome: a descendant :has() makes the browser re-test the subject on ANY
+   mutation inside it, and .pane contains the terminal, whose DOM renderer rewrites
+   its rows every frame. Measured on a stuttering Console: 19.2s of a 20s profile in
+   Recalculate style, forced reflows eating ~all of every click/rAF handler. Firefox
+   was unaffected, which is what made it look like a browser bug rather than ours. */
+.pane.tabbed > :not(.pane-tabs, .pane-grip, .pane-controls, .pane-find, .drop-indicator, .pane-empty) {
   margin-top: 32px;
   height: calc(100% - 32px);
 }
@@ -84,12 +92,12 @@
    their right on top of that. Zero the reserve and inset the heads by the 8px
    the floating cluster itself uses, so the buttons land in the SAME spot they
    occupy in a non-tabbed pane. */
-.pane:has(.pane-tabs) {
+.pane.tabbed {
   --pane-ctl-w: 0px;
 }
-.pane:has(.pane-tabs) .view-head,
-.pane:has(.pane-tabs) .fileview > .view-head,
-.pane:has(.pane-tabs) .scmview > .view-head {
+.pane.tabbed .view-head,
+.pane.tabbed .fileview > .view-head,
+.pane.tabbed .scmview > .view-head {
   padding-right: 8px;
 }
 /* The pane's own cell actions travel as one unit (Pane.tsx) so they stay a
