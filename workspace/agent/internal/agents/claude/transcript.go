@@ -234,10 +234,14 @@ func CollectTurns(lines [][]byte, lo, hi int) []transcript.Turn {
 		}
 		for pi := range t.Parts {
 			if (t.Parts[pi].Kind == "question" || t.Parts[pi].Kind == "plan") && t.Parts[pi].QID != "" {
-				t.Parts[pi].Answer = answers[t.Parts[pi].QID]
+				a := answers[t.Parts[pi].QID]
+				t.Parts[pi].Answer = a.Text
+				if t.Parts[pi].Kind == "question" {
+					t.Parts[pi].Declined = a.Declined
+				}
 			}
 			if t.Parts[pi].Kind == "delegation" && t.Parts[pi].QID != "" {
-				if result := answers[t.Parts[pi].QID]; result != "" {
+				if result := answers[t.Parts[pi].QID].Text; result != "" {
 					t.Parts[pi].Output = transcript.CapOutput(result)
 					// Only foreground delegations retain QID; their tool_result is final.
 					t.Parts[pi].Status = "completed"
@@ -469,11 +473,32 @@ func assistantParts(raw json.RawMessage) (parts []transcript.Part, text string) 
 	return parts, strings.TrimSpace(sb.String())
 }
 
+// InteractionAnswer is one interaction tool's resolved tool_result: the text (a picked
+// label, free text, or a delegation's capped output) plus whether it was a DECLINE —
+// claude's own "The user doesn't want to proceed… wants to clarify these questions" /
+// "(No answer provided)" rejection boilerplate (an Escape/interrupt out of the
+// AskUserQuestion modal, e.g. docs/dev/92 §6's preview free-text bug) — rather than a
+// genuine answer. Declined is only ever set for kind=question: ExitPlanMode already has
+// its own text-heuristic outcome classification (planDecision.ts isRejected), and a
+// delegation's tool_result is its output, not an answer to decline.
+type InteractionAnswer struct {
+	Text     string `json:"text"`
+	Declined bool   `json:"declined,omitempty"`
+}
+
+// isDeclinedAnswer recognizes claude's AskUserQuestion decline boilerplate — an Escape
+// out of the modal, surfaced as an is_error tool_result whose text is the "wants to
+// clarify" template with "(No answer provided)" for every question. Matched on content
+// (not is_error alone) because other tools also return is_error for unrelated reasons.
+func isDeclinedAnswer(text string, isErr bool) bool {
+	return isErr && strings.Contains(text, "(No answer provided)")
+}
+
 // collectAnswers maps each tool_use id to the text of its tool_result — used to show
 // which option an answered AskUserQuestion resolved to. Best-effort: the answer text
 // is whatever text the tool_result carried (a selected label, or a free-text reply).
-func collectAnswers(lines [][]byte) map[string]string {
-	out := map[string]string{}
+func collectAnswers(lines [][]byte) map[string]InteractionAnswer {
+	out := map[string]InteractionAnswer{}
 	for _, ln := range lines {
 		var ev struct {
 			Message struct {
@@ -486,6 +511,7 @@ func collectAnswers(lines [][]byte) map[string]string {
 		var blocks []struct {
 			Type      string          `json:"type"`
 			ToolUseID string          `json:"tool_use_id"`
+			IsError   bool            `json:"is_error"`
 			Content   json.RawMessage `json:"content"`
 		}
 		if json.Unmarshal(ev.Message.Content, &blocks) != nil {
@@ -494,7 +520,7 @@ func collectAnswers(lines [][]byte) map[string]string {
 		for _, b := range blocks {
 			if b.Type == "tool_result" && b.ToolUseID != "" {
 				if t := contentText(b.Content); t != "" {
-					out[b.ToolUseID] = t
+					out[b.ToolUseID] = InteractionAnswer{Text: t, Declined: isDeclinedAnswer(t, b.IsError)}
 				}
 			}
 		}
@@ -514,10 +540,11 @@ func collectAnswers(lines [][]byte) map[string]string {
 // tools are included (not every tool_result) so the payload stays small — a Bash/Read
 // round-trip resolves within its own turn and never needs a late patch. Delegation outputs
 // are capped like CollectTurns; question/plan answers are small and kept whole.
-func CollectInteractionAnswers(lines [][]byte) map[string]string {
+func CollectInteractionAnswers(lines [][]byte) map[string]InteractionAnswer {
 	interactive := map[string]bool{} // qid the Console may need to patch later
 	delegation := map[string]bool{}  // subset whose value is a (capped) delegation output
-	out := map[string]string{}
+	question := map[string]bool{}    // subset that can be Declined (AskUserQuestion only)
+	out := map[string]InteractionAnswer{}
 	for _, ln := range lines {
 		var ev struct {
 			Message struct {
@@ -532,6 +559,7 @@ func CollectInteractionAnswers(lines [][]byte) map[string]string {
 			Name      string          `json:"name"`
 			ID        string          `json:"id"`
 			ToolUseID string          `json:"tool_use_id"`
+			IsError   bool            `json:"is_error"`
 			Input     json.RawMessage `json:"input"`
 			Content   json.RawMessage `json:"content"`
 		}
@@ -547,6 +575,9 @@ func CollectInteractionAnswers(lines [][]byte) map[string]string {
 				case "AskUserQuestion", "ExitPlanMode":
 					if b.ID != "" {
 						interactive[b.ID] = true
+						if b.Name == "AskUserQuestion" {
+							question[b.ID] = true
+						}
 					}
 				case "Agent", "Task":
 					// Only foreground delegations get a final tool_result (a background one
@@ -565,7 +596,10 @@ func CollectInteractionAnswers(lines [][]byte) map[string]string {
 						if delegation[b.ToolUseID] {
 							t = transcript.CapOutput(t)
 						}
-						out[b.ToolUseID] = t
+						out[b.ToolUseID] = InteractionAnswer{
+							Text:     t,
+							Declined: question[b.ToolUseID] && isDeclinedAnswer(t, b.IsError),
+						}
 					}
 				}
 			}
