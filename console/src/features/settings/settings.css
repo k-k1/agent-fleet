@@ -3415,6 +3415,33 @@
   color: var(--warn, #d9a441);
   border-color: color-mix(in srgb, var(--warn, #d9a441) 45%, var(--border2));
 }
+/* What may be written in "使えるサインイン方法" (docs/61 §61.11.8 ·
+   tenantLogin.tsx DeploymentSignInMethods). It sits directly under the rules form
+   because that is the only place the person who mistyped an id will look. Rows
+   are the .adm-mcp-row family; only the id — the value actually typed — is mono,
+   the display name leads. */
+.idp-known {
+  margin-top: 14px;
+}
+.idp-known > .af-cap {
+  display: block;
+  font-size: 11.5px;
+  color: var(--fg);
+  margin-bottom: 2px;
+}
+/* ★ 枠は var(--border2) では引けない — ライトでは #e6e8ec が地の #f4f5f7 とほぼ同色で、
+   チップが消えて id が宙に浮いた文字列に見える（実測）。前景を薄く混ぜると、どちらの
+   テーマでも同じ濃さで浮く。 */
+.idp-known code {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent);
+  border-radius: 4px;
+  padding: 0 5px;
+}
 /* key/value secret editor (env vars / headers) */
 .mcp-kv {
   display: flex;

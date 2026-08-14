@@ -31,7 +31,7 @@ included here as well. The working directory is `deploy/compose/`.
 | CP exits with a message about a multi-tenant issuer | An Entra `/common/` or `/organizations/` issuer with no `AF_OIDC_<ID>_ALLOWED_TIDS`. Pin the issuer to your tenant GUID |
 | Every GitHub sign-in is rejected | The org has not approved the OAuth app (`grep "returned 403"` in the CP log), or the person's primary verified address is outside `AF_GITHUB_ALLOWED_DOMAINS` |
 | GitHub users must sign in again after a CP restart | Expected. The org-membership cache is in memory; they are re-verified, not rejected |
-| A tenant registered a sign-in method but no button appears | It is still *waiting for approval*, or it was approved and its settings are incomplete. Admin → the tenant → **Sign-in methods** says which; `grep -i "tenant login provider"` in the CP log names the fault |
+| A tenant registered a sign-in method but no button appears | It is still *waiting for approval*, or it was approved and its settings are incomplete. Admin → the tenant → **Sign-in methods** says which, and so does the register under the tenant list (which also carries the approve/suspend buttons, so you do not have to walk into the tenant); `grep -i "tenant login provider"` in the CP log names the fault |
 | "This email address is already used by another sign-in method" | A tenant-defined method asserted an address that already belongs to an account someone has signed in as. This is deliberate — that method may not take over an existing account. They sign in the way they normally do |
 
 ## Diagnosing the 3 DooD constraints ("starts but silently doesn't work")

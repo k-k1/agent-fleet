@@ -1024,6 +1024,7 @@ P3 の保存時検証は env 由来の provider id しか通さなかったの�
 | ログイン規則の 3 欄（編集） | super_admin | 管理モーダル → そのテナント（PUT が `withSuperAdmin` 固定＝決定 19） |
 | 同じ 3 欄（**読み取り専用**） | tenant_admin | テナント設定モーダル。招待が弾かれた理由を自分で読めるようにするため、値は見せて操作は置かない |
 | サインイン方法の登録簿（デプロイ全体）＋**承認して有効化 / 停止する** | super_admin | 管理モーダル → テナント一覧 |
+| デプロイ共通のサインイン方法の一覧（**読み取り専用**） | super_admin | 管理モーダル → そのテナント → ログイン規則のパネル内（欄の直下） |
 
 ★ **改訂（2026-08-15）— 承認は登録簿の行から打てるようにした。** 上の表の最終行は当初
 「一覧するだけ」で、承認するにはテナント詳細まで降りる必要があった。承認待ちの件数が
@@ -1049,6 +1050,32 @@ per-member の stats / sessions・`clean-home`・membership の DELETE）。
 `setStatus` が `ident.Role != "super_admin"` を見て 403 を返す。`isSuper` の出どころも従来と同じ
 `GET /api/admin/tenants` の `super_admin` フラグのまま（面を分けても取得元を変えない）。
 移設したパネルの i18n キーは `admin.*` のまま据え置き（改名は移設と別コミットで行う方針）。
+
+★ **改訂（2026-08-15）— 「使えるサインイン方法」に何が書けるかを画面から読めるようにした。**
+`tenant.allowed_providers` は自由入力で、書ける値はデプロイの env（`AF_OIDC_PROVIDERS` と Google の
+歴史的な env）にしか無く、間違えれば保存が 400 `unknown_provider` で弾かれるだけだった —
+**弾かれた人が次に何を打てばいいかは、画面のどこにも書いていない**。集合そのものは
+`manager.knownProviderIDs` にあったが、**それを外に出すハンドラが 1 本も無かった**ので、
+まず CP に読み取り API を足した:
+
+- `GET /api/admin/providers`（`withSuperAdmin`・`control-plane/login_provider_api.go`）。返すのは
+  **id・ボタンの文言（ja/en）・issuer** だけで、`client_id` も `client_secret` も載せない。
+  「設定をそのまま出す」管理 API はスクリーンショットに秘密が写る道なので、画面に出す情報から
+  逆算して決めた。issuer だけは残した — 「entra がどの Entra か」は登録簿がテナント定義の行に
+  対して答えているのと同じ問いだから。
+- `issuerURL()` は `loginProvider` インターフェースには足さず、組み込みの実装型（`oidcProvider` /
+  `githubProvider`）だけが持つ任意インターフェースにした。インターフェースに足すと、テストの
+  偽 provider が全部メソッドを生やすことになる。GitHub は OIDC ではないが（アダプタは REST を
+  読む）、身元の出どころという意味では `https://github.com` 固定で答えは同じ。
+- テナント定義の `t:<slug>:<name>` は**この一覧に混ぜない**（実行時に増減し、全部並べると
+  グループ会社の名簿になる・決定 32-4）。自テナントの分は同じ画面の下に出ているので、
+  ヒントで「承認済みなら `t:テナント名:方法名` と書ける」とだけ言う。
+
+Console 側は**規則のパネルの中**（欄の直下）に置いた。別の面に置くと、打ち間違えて弾かれた人が
+そこへ辿り着けない。表示は**表示名が主で、打ち込む id は `<code>`** — provider id は技術識別子で、
+主役にすると「entra とは何か」を別の場所で聞くことになる（`t:<slug>:<name>` に対する扱いと同じ）。
+読み取り専用版（テナント設定・tenant_admin）には**出さない**: これはデプロイ全体の情報で、
+GET 自体が `withSuperAdmin`、そもそも規則を編集できるのは super_admin だけ（決定 19）。
 
 ★ **`/api/tenants` の DTO は広げていない。** 承認状態を返したくなるが、`apiError` に
 フィールドを足せない（positional な composite literal が 249 箇所）のと同じ判断で、

@@ -204,3 +204,45 @@ test("デプロイ管理者: 登録簿の行から承認して有効化できる
   await expect(register.locator("button", { hasText: "停止する" })).toHaveCount(1);
   await expect(register.locator("button", { hasText: "承認して有効化" })).toHaveCount(0);
 });
+
+// 「使えるサインイン方法」は自由入力で、何が書けるかは env にしか無かった（打ち間違えると
+// CP が 400 unknown_provider で弾くだけ）。GET /api/admin/providers を欄のすぐ下に出す。
+// バンドルを動かして見るのは、置き場（規則のパネルの中）と、tenant_admin の面に漏れて
+// いないことが、コンポーネント単体では確かめられないため。
+test("デプロイ管理者: ログイン規則の欄に、書ける provider id が並ぶ", async ({ page }) => {
+  await page.route("**/api/**", async (route) => {
+    const p = new URL(route.request().url()).pathname;
+    if (p === "/api/whoami") return route.fulfill({ json: { auth_mode: "dev", user: "root", email: "root@example.com" } });
+    if (p === "/api/tenants") return route.fulfill({ json: { tenants: [{ slug: "acme", name: "Acme", role: "tenant_admin" }], super_admin: true } });
+    if (p === "/api/workspace") return route.fulfill({ json: { state: "running" } });
+    if (p === "/api/sessions") return route.fulfill({ json: { sessions: [] } });
+    if (p === "/api/admin/tenants") return route.fulfill({ json: { tenants: [TENANT], super_admin: true } });
+    if (p === "/api/admin/tenants/acme/idp") return route.fulfill({ json: { providers: [IDP] } });
+    if (p === "/api/admin/tenants/acme/members") return route.fulfill({ json: { members: MEMBERS } });
+    if (p === "/api/admin/idp") return route.fulfill({ json: { providers: [IDP] } });
+    // 秘密は載らない（CP 側 login_provider_api.go が id・表示名・issuer だけを返す）。
+    if (p === "/api/admin/providers")
+      return route.fulfill({
+        json: {
+          providers: [
+            { id: "google", label_ja: "Google でサインイン", label_en: "Sign in with Google", issuer: "https://accounts.google.com" },
+            { id: "entra", label_ja: "Microsoft でサインイン", label_en: "Sign in with Microsoft", issuer: IDP.issuer },
+          ],
+        },
+      });
+    return route.abort();
+  });
+  await page.goto(origin);
+
+  await page.locator(".acct-btn").click();
+  await page.locator(".acct-menu .acct-item", { hasText: "管理" }).click();
+  await page.locator(".tc-name", { hasText: "Acme" }).first().click();
+
+  // 答えは欄と同じパネルの中にある（別の面に置くと、弾かれた人が辿り着けない）。
+  const rules = page.locator(".admin-panel", { hasText: "ログイン規則" });
+  const known = rules.locator(".idp-known");
+  await expect(known.locator(".adm-mcp-row")).toHaveCount(2);
+  await expect(known.locator(".adm-mcp-row").nth(1).locator(".as-name")).toHaveText("Microsoft でサインイン");
+  await expect(known.locator(".adm-mcp-row").nth(1).locator("code")).toHaveText("entra");
+  await expect(known.locator(".adm-mcp-row").nth(1).locator(".as-repo")).toHaveText(IDP.issuer);
+});
