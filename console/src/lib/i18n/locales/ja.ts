@@ -1369,6 +1369,26 @@ export const ja = {
   "admin.remove_keeps": "ワークスペース・home・保存済みの認証情報は残ります（消すには先に「home を掃除」）。",
   "admin.remove_undo": "戻すには、同じメールアドレスでもう一度「メンバー追加」してください。",
 
+  // --- テナント設定モーダル（テナント管理者の面）。管理モーダル＝デプロイ全体、
+  // 個人設定＝自分、に対してここは「自分が管理しているテナント」。移設してきた
+  // パネル本体の文言は admin.* のまま（キー改名は移設と別に行う）。---
+  "tenant.title": "テナント設定",
+  "tenant.back": "テナント設定一覧",
+  "tenant.group_login": "ログイン",
+  "tenant.tab_signin": "サインイン方式",
+  "tenant.tab_rules": "ログイン規則",
+  "tenant.picker": "テナント",
+  "tenant.none": "管理しているテナントがありません。",
+  "tenant.forbidden": "このテナントの設定を見る権限がありません。",
+  "tenant.rules_readonly_note": "変更できるのはデプロイ管理者だけです",
+  "tenant.rules_hint":
+    "「自動参加ドメイン」は 1 ドメインにつき 1 テナントだけ設定できます。" +
+    "これらの規則そのものを変えるには、デプロイ管理者に依頼してください。",
+  "tenant.rules_unset": "未設定（制限なし）",
+  "tenant.rules_providers_note": "このテナントで使えるサインイン方法。未設定なら有効な方式すべてが使えます。",
+  "tenant.rules_autojoin_note": "このドメインのメールアドレスの人は、初回ログインでこのテナントに参加します。",
+  "tenant.rules_invite_note": "メンバーを追加するときだけ効くガードです。既にメンバーの人には影響しません。",
+
   // --- キーボード操作体系（features/keys・docs/29）。コマンド/グループ名は表示と
   // コマンドパレットの日英マッチ両方に使う。{n} はペイン序数。---
   "keys.grp.pane": "ペイン / レイアウト",
@@ -1751,6 +1771,7 @@ export const ja = {
   "topbar.user_guide": "利用ガイド",
   "topbar.guide": "はじめかたガイド",
   "topbar.settings": "設定",
+  "topbar.tenant_settings": "テナント設定",
   "topbar.admin": "管理",
   "topbar.logout": "ログアウト",
   "topbar.build": "ビルド {label}",
