@@ -53,6 +53,27 @@ interface Tenant {
   auto_join_domains?: string;
   allowed_domains?: string;
 }
+// A tenant-defined sign-in method (docs/61 §61.11). client_secret is write-only —
+// it is never in a response, and has_secret is how the form knows one is stored.
+interface TenantIdP {
+  id: string;
+  name: string;
+  label_ja?: string;
+  label_en?: string;
+  issuer: string;
+  client_id: string;
+  client_secret?: string;
+  trust: string;
+  allowed_tids?: string;
+  allowed_domains?: string;
+  provider_id?: string;
+  tenant_slug?: string;
+  status?: string;
+  has_secret?: boolean;
+  approved_by?: string;
+  approved_at?: string;
+  usable?: boolean;
+}
 interface Member {
   user_key: string;
   email?: string;
@@ -254,12 +275,18 @@ export function AdminTab() {
       </div>
 
       {view.stage === "tenants" && (
-        <TenantsList
-          tenants={tenants}
-          isSuper={isSuper}
-          onReload={loadTenants}
-          onOpen={(slug) => drill({ stage: "tenant", slug })}
-        />
+        <>
+          <TenantsList
+            tenants={tenants}
+            isSuper={isSuper}
+            onReload={loadTenants}
+            onOpen={(slug) => drill({ stage: "tenant", slug })}
+          />
+          {/* The deployment-wide register of tenant-defined sign-in methods
+              (docs/61 §61.11.6). Only a super_admin approves one, so only a
+              super_admin sees the list. */}
+          {isSuper && <SignInMethodRegister />}
+        </>
       )}
       {view.stage === "tenant" && (
         <TenantView
@@ -1581,6 +1608,12 @@ function TenantView({
           trusted to say who somebody is. */}
       {isSuper && <TenantLoginRules slug={slug} tenant={tenant} onChanged={onChanged} />}
 
+      {/* Tenant-defined sign-in methods (docs/61 §61.11). Unlike the rules above,
+          this one IS the tenant_admin's — they write the row, including the client
+          secret. What they cannot do is activate it: that is the operator's one
+          step (決定 30), so the approve control appears only for a super_admin. */}
+      <TenantSignInMethods slug={slug} isSuper={isSuper} />
+
       <section className="admin-panel">
         <h4>{tr("admin.members")}</h4>
         {members === null ? (
@@ -1689,6 +1722,335 @@ function TenantLoginRules({
         <button onClick={save} className="primary">{tr("common.save")}</button>
         {saved && <span className="saved-note"><Icon name="check" /> {tr("admin.saved")}</span>}
       </div>
+    </section>
+  );
+}
+
+// --- tenant-defined sign-in methods (docs/61 §61.11 / ADR0043 決定 29-33) ------
+
+// idpStatusLabel maps the row status to what the reader needs to know: not the
+// state name, but whether anybody can sign in with it right now.
+type IdPStatusKey =
+  | "admin.idp_state_active"
+  | "admin.idp_state_broken"
+  | "admin.idp_state_suspended"
+  | "admin.idp_state_pending";
+
+function idpStatusKey(row: TenantIdP): IdPStatusKey {
+  if (row.status === "active") return row.usable ? "admin.idp_state_active" : "admin.idp_state_broken";
+  if (row.status === "suspended") return "admin.idp_state_suspended";
+  return "admin.idp_state_pending";
+}
+
+const emptyIdP = (): TenantIdP => ({
+  id: "",
+  name: "",
+  issuer: "",
+  client_id: "",
+  client_secret: "",
+  trust: "issuer",
+  allowed_domains: "",
+  allowed_tids: "",
+});
+
+// TenantSignInMethods — the tenant's own IdP definitions.
+//
+// ★ The two things this screen has to make obvious, because getting either wrong is
+// how a subsidiary onboarding stalls:
+//
+//  1. a new method does NOT work until a deployment administrator approves it. The
+//     status chip says so, and the sign-in URL is shown only once it does — handing
+//     out a URL whose button does not exist yet just produces support tickets
+//     (docs/61 §61.14 の 2 つ目).
+//  2. the allowed domains are not optional. They are what the approval is FOR: they
+//     bound which addresses this issuer may assert.
+function TenantSignInMethods({ slug, isSuper }: { slug: string; isSuper: boolean }) {
+  const tr = useT();
+  const toast = useToast();
+  const [rows, setRows] = useState<TenantIdP[] | null>(null);
+  const [form, setForm] = useState<TenantIdP | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [confirmDel, setConfirmDel] = useState<TenantIdP | null>(null);
+  const base = `api/admin/tenants/${encodeURIComponent(slug)}/idp`;
+
+  const load = useCallback(async () => {
+    const res = await api(base);
+    setRows(res?.providers || []);
+  }, [base]);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const save = async () => {
+    if (!form) return;
+    setBusy(true);
+    try {
+      const body = {
+        name: form.name.trim(),
+        label_ja: (form.label_ja || "").trim(),
+        label_en: (form.label_en || "").trim(),
+        issuer: form.issuer.trim(),
+        client_id: form.client_id.trim(),
+        // An empty secret on an edit keeps the stored one (the server merges), which
+        // is why the field is blank rather than pre-filled with a mask.
+        client_secret: (form.client_secret || "").trim(),
+        trust: form.trust,
+        allowed_tids: (form.allowed_tids || "").trim(),
+        allowed_domains: (form.allowed_domains || "").trim(),
+      };
+      const res = form.id
+        ? await apiJSON(`${base}/${encodeURIComponent(form.id)}`, "PUT", body)
+        : await apiJSON(base, "POST", body);
+      if (res?.error) {
+        toast(errText(res.error));
+        return;
+      }
+      setForm(null);
+      load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const setStatus = async (row: TenantIdP, status: string) => {
+    setBusy(true);
+    try {
+      const res = await apiJSON(`${base}/${encodeURIComponent(row.id)}/status`, "POST", { status });
+      if (res?.error) {
+        toast(errText(res.error));
+        return;
+      }
+      load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (row: TenantIdP) => {
+    setBusy(true);
+    try {
+      const res = await apiJSON(`${base}/${encodeURIComponent(row.id)}`, "DELETE");
+      if (res?.error) {
+        toast(errText(res.error));
+        return;
+      }
+      setConfirmDel(null);
+      load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const loginURL = new URL("login/" + encodeURIComponent(slug), document.baseURI).toString();
+  const anyActive = (rows || []).some((r) => r.status === "active" && r.usable);
+
+  return (
+    <section className="admin-panel">
+      <h4>
+        {tr("admin.idp_title")}
+        <span className="af-note">{tr("admin.idp_note")}</span>
+      </h4>
+      <p className="admin-hint">{tr("admin.idp_hint")}</p>
+      {rows === null ? (
+        <p className="muted">{tr("common.loading")}</p>
+      ) : rows.length === 0 ? (
+        <p className="muted">{tr("admin.idp_none")}</p>
+      ) : (
+        rows.map((row) =>
+          form && form.id === row.id ? (
+            <IdPForm key={row.id} form={form} setForm={setForm} busy={busy} onSave={save} onCancel={() => setForm(null)} />
+          ) : (
+            <div key={row.id} className={"adm-mcp-row" + (row.status === "active" && row.usable ? "" : " off")}>
+              <span className="as-name mono" title={row.provider_id}>
+                {row.name}
+              </span>
+              <span className="as-repo muted" title={row.issuer}>
+                {row.issuer}
+              </span>
+              <span className={"idp-state idp-" + (row.status || "pending")}>{tr(idpStatusKey(row))}</span>
+              <span className="allow-acts">
+                <button type="button" className="ghost xs" disabled={busy} onClick={() => setForm({ ...row, client_secret: "" })}>
+                  {tr("mcp.edit")}
+                </button>
+                {/* ★ Activation is the deployment administrator's step and nobody
+                    else's — that single asymmetry is what keeps a tenant admin from
+                    being able to make themselves one (決定 30). */}
+                {isSuper && row.status !== "active" && (
+                  <button type="button" className="ghost xs" disabled={busy} onClick={() => setStatus(row, "active")}>
+                    {tr("admin.idp_approve")}
+                  </button>
+                )}
+                {row.status === "active" ? (
+                  <button type="button" className="ghost xs" disabled={busy} onClick={() => setStatus(row, "suspended")}>
+                    {tr("admin.idp_suspend")}
+                  </button>
+                ) : (
+                  row.status === "suspended" && (
+                    <button type="button" className="ghost xs" disabled={busy} onClick={() => setStatus(row, "pending")}>
+                      {tr("admin.idp_reapply")}
+                    </button>
+                  )
+                )}
+                <button type="button" className="ghost xs danger" disabled={busy} onClick={() => setConfirmDel(row)}>
+                  {tr("common.delete")}
+                </button>
+              </span>
+            </div>
+          ),
+        )
+      )}
+      {form && form.id === "" ? (
+        <IdPForm form={form} setForm={setForm} busy={busy} onSave={save} onCancel={() => setForm(null)} />
+      ) : (
+        !form && (
+          <button type="button" className="ghost" onClick={() => setForm(emptyIdP())}>
+            <Icon name="add" /> {tr("admin.idp_add")}
+          </button>
+        )
+      )}
+      {/* The sign-in URL appears only once something on it works. Before that it is
+          a page with no button, and a URL handed out early is worse than none. */}
+      {anyActive && (
+        <p className="admin-hint">
+          {tr("admin.login_url")} <code>{loginURL}</code>
+        </p>
+      )}
+      {confirmDel && (
+        <ConfirmDialog
+          title={tr("admin.idp_delete_title", { name: confirmDel.name })}
+          confirmLabel={tr("common.delete")}
+          danger
+          busy={busy}
+          onCancel={() => setConfirmDel(null)}
+          onConfirm={() => remove(confirmDel)}
+        >
+          <p>{tr("admin.idp_delete_body")}</p>
+        </ConfirmDialog>
+      )}
+    </section>
+  );
+}
+
+function IdPForm({
+  form,
+  setForm,
+  busy,
+  onSave,
+  onCancel,
+}: {
+  form: TenantIdP;
+  setForm: (f: TenantIdP) => void;
+  busy: boolean;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  const tr = useT();
+  const set = (patch: Partial<TenantIdP>) => setForm({ ...form, ...patch });
+  const valid = form.name.trim() && form.issuer.trim() && form.client_id.trim() && (form.allowed_domains || "").trim() && (form.id || (form.client_secret || "").trim());
+  return (
+    <div className="ssm-frm adm-mcp-form">
+      <div className="ssm-fgrid">
+        <Field label={tr("admin.idp_name")} req hint={tr("admin.idp_name_hint")}>
+          <input value={form.name} placeholder="entra" onChange={(e) => set({ name: e.target.value })} />
+        </Field>
+        <Field label={tr("admin.idp_trust")} req hint={tr("admin.idp_trust_hint")}>
+          <select value={form.trust} onChange={(e) => set({ trust: e.target.value })}>
+            <option value="issuer">{tr("admin.idp_trust_issuer")}</option>
+            <option value="email_verified">{tr("admin.idp_trust_email")}</option>
+          </select>
+        </Field>
+        <Field label={tr("admin.idp_issuer")} req wide hint={tr("admin.idp_issuer_hint")}>
+          <input
+            value={form.issuer}
+            placeholder="https://login.microsoftonline.com/<tenant-guid>/v2.0"
+            onChange={(e) => set({ issuer: e.target.value })}
+          />
+        </Field>
+        <Field label={tr("admin.idp_client_id")} req>
+          <input value={form.client_id} onChange={(e) => set({ client_id: e.target.value })} />
+        </Field>
+        <Field
+          label={tr("admin.idp_client_secret")}
+          req={!form.id}
+          hint={form.id && form.has_secret ? tr("admin.idp_secret_kept") : tr("admin.idp_secret_hint")}
+        >
+          <input
+            type="password"
+            autoComplete="new-password"
+            value={form.client_secret || ""}
+            placeholder={form.id && form.has_secret ? "***" : ""}
+            onChange={(e) => set({ client_secret: e.target.value })}
+          />
+        </Field>
+        <Field label={tr("admin.idp_domains")} req wide hint={tr("admin.idp_domains_hint")}>
+          <input
+            value={form.allowed_domains || ""}
+            placeholder="@sub.co.jp"
+            onChange={(e) => set({ allowed_domains: e.target.value })}
+          />
+        </Field>
+        <Field label={tr("admin.idp_tids")} wide hint={tr("admin.idp_tids_hint")}>
+          <input value={form.allowed_tids || ""} onChange={(e) => set({ allowed_tids: e.target.value })} />
+        </Field>
+        <Field label={tr("admin.idp_label_ja")}>
+          <input value={form.label_ja || ""} onChange={(e) => set({ label_ja: e.target.value })} />
+        </Field>
+        <Field label={tr("admin.idp_label_en")}>
+          <input value={form.label_en || ""} onChange={(e) => set({ label_en: e.target.value })} />
+        </Field>
+      </div>
+      <p className="admin-hint">{tr("admin.idp_repend_hint")}</p>
+      <div className="admin-actions">
+        <button className="primary" disabled={busy || !valid} onClick={onSave}>
+          {tr("common.save")}
+        </button>
+        <button className="ghost" disabled={busy} onClick={onCancel}>
+          {tr("common.cancel")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// SignInMethodRegister — the deployment-wide view of every tenant-defined method
+// (docs/61 §61.11.6), super_admin only.
+//
+// ★ It is deliberately a REGISTER rather than a queue that empties. Approval is a
+// single point-in-time check, but the IdP behind it stays under somebody else's
+// control and its settings can change afterwards (self-sign-up being switched on is
+// the classic one) — so the approved rows stay listed, with who approved them and
+// when, and that list is what a periodic review reads. Pending rows sort first
+// because somebody is waiting on those.
+function SignInMethodRegister() {
+  const tr = useT();
+  const [rows, setRows] = useState<TenantIdP[] | null>(null);
+  useEffect(() => {
+    api("api/admin/idp").then((res) => setRows(res?.providers || []));
+  }, []);
+  if (rows === null || rows.length === 0) return null;
+  const pending = rows.filter((r) => r.status === "pending").length;
+  return (
+    <section className="admin-panel">
+      <h4>
+        {tr("admin.idp_register")}
+        {pending > 0 && <span className="af-note">{tr("admin.idp_pending_count", { n: pending })}</span>}
+      </h4>
+      <p className="admin-hint">{tr("admin.idp_register_hint")}</p>
+      {rows.map((row) => (
+        <div key={row.id} className={"adm-mcp-row" + (row.status === "active" && row.usable ? "" : " off")}>
+          <span className="as-name mono" title={row.provider_id}>
+            {row.tenant_slug}
+          </span>
+          <span className="as-repo muted" title={row.issuer}>
+            {row.issuer}
+          </span>
+          <span className="muted">{row.allowed_domains}</span>
+          <span className={"idp-state idp-" + (row.status || "pending")}>{tr(idpStatusKey(row))}</span>
+          {row.approved_at && (
+            <span className="muted">{fmtAt(row.approved_at)}</span>
+          )}
+        </div>
+      ))}
     </section>
   );
 }
