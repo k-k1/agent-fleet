@@ -227,6 +227,24 @@
 .tenant-modal .settings-content .admin-panel + .admin-panel {
   margin-top: 12px;
 }
+/* メンバーの 2 段（一覧 → 詳細）。管理モーダルと同じ .admin-nav / .admin-crumbs を
+   使うが、あちらは .admin-surface で、settings-modal の button リセット（枠付きピル）
+   を通らない。ここでは「戻る」がピルになってしまうので、その分だけ戻す。
+   .settings-crumb（スマホのレール↔本文）はモーダル自体の段で、こちらは本文の中の段。
+   両方出ても意味は重ならない。 */
+.tenant-modal .tenant-drill {
+  margin: 0 0 12px;
+}
+.tenant-modal .admin-back {
+  border: none;
+  background: transparent;
+  color: var(--dialog-muted);
+  padding: 4px 6px;
+}
+.tenant-modal .admin-back:hover:not(:disabled) {
+  background: var(--btn);
+  color: var(--fg);
+}
 /* 複数テナントを管理している人向けの切り替え。レールの見出し直下に置くので、
    レール項目と同じ幅・同じ余白に合わせる。 */
 .tenant-modal .tenant-picker {

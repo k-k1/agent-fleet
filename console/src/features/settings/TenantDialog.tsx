@@ -18,20 +18,20 @@ import { useT } from "../../lib/i18n/index.ts";
 import { useSettingsUI } from "./store.ts";
 import { mobileMatches } from "../../lib/device.ts";
 import { useBackClose } from "../../lib/backClose.ts";
+import { Icon } from "../../ui/Icon.tsx";
 import { Modal } from "../../ui/Modal.tsx";
 import { TenantLoginRulesView, TenantSignInMethods } from "./tenantLogin.tsx";
-
-// 管理 API のテナント表現のうち、この画面が読む分だけ。ログイン規則の 3 列は
-// GET /api/admin/tenants に載っており、テナント管理者にも自分のテナント分だけ返る。
-interface AdminTenant {
-  slug: string;
-  name?: string;
-  allowed_providers?: string;
-  auto_join_domains?: string;
-  allowed_domains?: string;
-}
+import { MembersPanel, MemberView } from "./tenantMembers.tsx";
+import { AllSessionsView, AuditView, UsageView } from "./tenantOps.tsx";
+import { McpAdminView } from "./mcpAdmin.tsx";
+import type { Member, Tenant } from "./adminShared.ts";
 
 // レールの並び。項目 = [セクションキー, i18n キー]。ここの順がそのまま表示順。
+//
+// 「運用」に並ぶ 4 つは、CP が tenant_admin に自テナント分を返す面（GET
+// /api/admin/{sessions,usage,audit} と /api/admin/mcp-servers）。管理モーダルにしか
+// 置き場が無かったので、デプロイ管理者と同じ画面を通らないと自分の部署のことすら
+// 見られなかった。
 const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
   {
     key: "login",
@@ -39,6 +39,17 @@ const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
     items: [
       ["signin", "tenant.tab_signin"],
       ["rules", "tenant.tab_rules"],
+    ],
+  },
+  {
+    key: "manage",
+    label: "tenant.group_manage",
+    items: [
+      ["members", "tenant.tab_members"],
+      ["sessions", "tenant.tab_sessions"],
+      ["usage", "tenant.tab_usage"],
+      ["audit", "tenant.tab_audit"],
+      ["mcp", "tenant.tab_mcp"],
     ],
   },
 ];
@@ -65,6 +76,7 @@ export function TenantDialog() {
     }
     if (ALL_SECTIONS.includes(tenantSection)) {
       setSection(tenantSection);
+      setMember(null);
       setEntered(true);
     }
   }, [tenantSection]);
@@ -73,10 +85,17 @@ export function TenantDialog() {
   // 面を分けても取得元を変えない（テナント管理者だけの人には false が返り、承認ボタン
   // は出ない）。tenants は super_admin なら全テナント、そうでなければ自分が
   // tenant_admin のテナントだけがサーバ側で絞られて返る。
-  const [tenants, setTenants] = useState<AdminTenant[] | null>(null);
+  const [tenants, setTenants] = useState<Tenant[] | null>(null);
   const [isSuper, setIsSuper] = useState(false);
   const [forbidden, setForbidden] = useState(false);
   const [slug, setSlug] = useState("");
+
+  // メンバーは「一覧 → 詳細」の 2 段。レールを人の数だけ伸ばすと、40 人いる部署で
+  // 破綻するし、外した／追加した瞬間にレールが動く。段はここ（本文）で積む。
+  const [member, setMember] = useState<Member | null>(null);
+  // 端末の戻るは、まず詳細を閉じる（モーダルごと閉じない）。レールより後に
+  // 積まれるので、こちらが先に剥がれる。
+  useBackClose(() => setMember(null), !!member);
 
   const load = useCallback(async () => {
     try {
@@ -85,7 +104,7 @@ export function TenantDialog() {
         setForbidden(true);
         return;
       }
-      const list: AdminTenant[] = d.tenants || [];
+      const list: Tenant[] = d.tenants || [];
       setTenants(list);
       setIsSuper(!!d.super_admin);
       setSlug((cur) => (cur && list.some((t) => t.slug === cur) ? cur : list[0]?.slug || ""));
@@ -108,6 +127,46 @@ export function TenantDialog() {
     if (tenants === null) return <p className="muted pad">{tr("common.loading")}</p>;
     if (!tenant) return <p className="muted pad">{tr("tenant.none")}</p>;
     if (section === "rules") return <TenantLoginRulesView slug={tenant.slug} tenant={tenant} />;
+    if (section === "members") {
+      if (member) {
+        return (
+          <>
+            <div className="admin-nav tenant-drill">
+              <button type="button" className="admin-back" onClick={() => setMember(null)}>
+                <Icon name="arrow-left" /> {tr("common.back")}
+              </button>
+              <nav className="admin-crumbs">
+                <button type="button" className="crumb" onClick={() => setMember(null)}>
+                  {tr("tenant.tab_members")}
+                </button>
+                <Icon name="chevron-right" className="crumb-sep" />
+                <span className="crumb here">{member.user_key}</span>
+              </nav>
+            </div>
+            <MemberView
+              slug={tenant.slug}
+              member={member}
+              isSuper={isSuper}
+              onChanged={load}
+              // 外した人の詳細を開いたままにしない — 一覧へ戻して読み直す。
+              onRemoved={() => {
+                setMember(null);
+                load();
+              }}
+            />
+          </>
+        );
+      }
+      return <MembersPanel slug={tenant.slug} isSuper={isSuper} onOpenMember={setMember} />;
+    }
+    // ★ 運用の 3 面には、この画面が見ているテナント 1 つだけを渡す。isSuper={false}
+    // は「あなたはデプロイ管理者ではない」ではなく「この画面はテナントを跨がない」
+    // の意味で、テナント選択欄を出さないための指定（誰の分が返るかはサーバが決める）。
+    // slug を key にしているのは、テナントを切り替えたらポーリングごと張り直すため。
+    if (section === "sessions") return <AllSessionsView key={tenant.slug} tenants={[tenant]} isSuper={false} />;
+    if (section === "usage") return <UsageView key={tenant.slug} tenants={[tenant]} isSuper={false} />;
+    if (section === "audit") return <AuditView key={tenant.slug} tenants={[tenant]} isSuper={false} />;
+    if (section === "mcp") return <McpAdminView key={tenant.slug} tenants={[tenant]} />;
     return <TenantSignInMethods slug={tenant.slug} isSuper={isSuper} />;
   };
 
@@ -124,7 +183,10 @@ export function TenantDialog() {
                 <select
                   className="tenant-picker"
                   value={slug}
-                  onChange={(e) => setSlug(e.target.value)}
+                  onChange={(e) => {
+                    setSlug(e.target.value);
+                    setMember(null); // 別のテナントの名簿に、前のテナントの人が残らないように
+                  }}
                   aria-label={tr("tenant.picker")}
                 >
                   {tenants?.map((t) => (
@@ -146,6 +208,7 @@ export function TenantDialog() {
                     aria-current={section === key ? "page" : undefined}
                     onClick={() => {
                       setSection(key);
+                      setMember(null);
                       setEntered(true);
                     }}
                   >

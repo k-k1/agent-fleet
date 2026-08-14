@@ -110,16 +110,20 @@ export function McpAdminView({ tenants }: { tenants: Tenant[] }) {
     <div className="admin-stage mcp-admin">
       <section className="admin-panel">
         <div className="usage-toolbar">
-          <label>
-            {tr("admin.tenant")}
-            <select value={slug} onChange={(e) => setSlug(e.target.value)}>
-              {tenants.map((t) => (
-                <option key={t.slug} value={t.slug}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          {/* テナントが 1 つしか渡らない置き場（テナント設定モーダル）では選ぶものが
+              無い。1 択のセレクトは操作できる顔をした飾りにしかならないので出さない。 */}
+          {tenants.length > 1 && (
+            <label>
+              {tr("admin.tenant")}
+              <select value={slug} onChange={(e) => setSlug(e.target.value)}>
+                {tenants.map((t) => (
+                  <option key={t.slug} value={t.slug}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <button type="button" className="ghost" title={tr("admin.refresh")} onClick={load}>
             <Icon name="refresh" />
           </button>

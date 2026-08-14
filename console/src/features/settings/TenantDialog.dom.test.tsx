@@ -44,12 +44,19 @@ const IDP = {
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
+const MEMBER = { user_key: "tanaka", email: "tanaka@acme.co.jp", role: "member", state: "running" };
+
 function respond(superAdmin: boolean) {
   api.mockImplementation((path: string) => {
     if (path === "api/admin/tenants") {
       return Promise.resolve({ tenants: [TENANT], super_admin: superAdmin });
     }
     if (path.endsWith("/idp")) return Promise.resolve({ providers: [IDP] });
+    if (path.endsWith("/members")) return Promise.resolve({ members: [MEMBER] });
+    if (path.includes("/stats")) return Promise.resolve({ running: true, mem_used: 1, mem_max: 2 });
+    if (path.includes("/sessions")) return Promise.resolve({ sessions: [] });
+    if (path.startsWith("api/admin/sessions")) return Promise.resolve({ sessions: [] });
+    if (path.startsWith("api/admin/audit")) return Promise.resolve({ audit: [] });
     return Promise.resolve({});
   });
 }
@@ -121,5 +128,50 @@ describe("TenantDialog", () => {
     expect(vals[2]).toContain("未設定");
     // このテナント専用のログイン URL は規則の面にも出る（人が配る導線・決定 28）。
     expect(content.textContent).toContain("login/acme");
+  });
+
+  it("メンバーは一覧 → 詳細の 2 段で、戻ると一覧に戻る", async () => {
+    respond(false);
+    await mount("members");
+    expect(api).toHaveBeenCalledWith("api/admin/tenants/acme/members");
+    const row = document.querySelector<HTMLButtonElement>(".member-row");
+    expect(row).toBeTruthy();
+    expect(document.querySelector(".tenant-drill")).toBeNull(); // 一覧の段ではパンくずを出さない
+
+    await act(async () => {
+      row!.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    // 詳細（本文の中の段）。パンくずに一覧へ戻る導線が要る — レール項目は「メンバー」
+    // のままなので、それだけでは一覧に戻れない。
+    expect(document.querySelector(".member-detail")).toBeTruthy();
+    const crumb = document.querySelector<HTMLButtonElement>(".tenant-drill .admin-back");
+    expect(crumb).toBeTruthy();
+    // 外す・home を掃除は tenant_admin の操作（docs/61 §61.10.6）なので出ている。
+    expect(document.querySelector(".member-detail")!.textContent).toContain("メンバーを外す");
+
+    await act(async () => {
+      crumb!.click();
+    });
+    expect(document.querySelector(".member-detail")).toBeNull();
+    expect(document.querySelector(".member-row")).toBeTruthy();
+  });
+
+  it("運用の面はテナント 1 つに閉じる（テナント選択欄を出さない）", async () => {
+    respond(false);
+    await mount("sessions");
+    const content = document.querySelector(".settings-content")!;
+    expect(api).toHaveBeenCalledWith("api/admin/sessions?tenant=acme");
+    // 跨いで見る画面ではないので、全テナントを選ぶ欄は無い。
+    expect(content.querySelector(".usage-toolbar select")).toBeNull();
+  });
+
+  it("MCP 配布はこのテナント宛に読む", async () => {
+    respond(false);
+    await mount("mcp");
+    expect(api).toHaveBeenCalledWith("api/admin/mcp-servers?tenant=acme");
+    expect(document.querySelector(".settings-content .usage-toolbar select")).toBeNull();
   });
 });
