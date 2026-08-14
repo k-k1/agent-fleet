@@ -230,8 +230,14 @@ func jsonCopy(dst *strings.Builder, r *http.Request) (int64, error) {
 
 func newTestHandle(t *testing.T, srv *httptest.Server) *threadHandle {
 	t.Setenv("HOME", t.TempDir()) // status.Persist の書き先をテスト内に隔離
+	// sid はテスト毎に別にする。turn は pump の goroutine で走り、テストが終わっても
+	// 止まらない（TestQuestionFlow / TestRespondRejectOnCancel は turnDelay=2s の turn を
+	// 走らせたまま返る）ので、固定 sid だと**後続テストの中で前のテストの turn が終端**し、
+	// プロセス共有の状態通知 seam（agents.SetStateNotifier）へ同じ sid の遷移を流し込む。
+	// 実測: 負荷時に TestManagedTurnNotifiesCompletion が
+	// `transition = [sid-test idle idle]` / `[sid-test  idle]` で落ちる（8 反復に 1 回程度）。
 	return &threadHandle{
-		name: "slot-test", dir: "/tmp", ocSid: "sid-test",
+		name: "slot-test", dir: "/tmp", ocSid: "sid-" + t.Name(),
 		addr: srv.URL, ses: "ses_test", alive: true, gen: 1,
 		events: make(chan agents.Event, 64),
 	}
@@ -469,7 +475,12 @@ func TestManagedTurnNotifiesCompletion(t *testing.T) {
 	h := newTestHandle(t, srv)
 
 	got := make(chan [3]string, 8)
+	// 通知 seam はプロセス共有。前のテストが走らせたままの turn（newTestHandle のコメント）
+	// がこの窓で終端すると、その遷移がここへ届く — 自分の sid の分だけ拾う。
 	agents.SetStateNotifier(func(sid, previous, state, excerpt string) {
+		if sid != h.ocSid {
+			return
+		}
 		got <- [3]string{sid, previous, state}
 	})
 	t.Cleanup(func() { agents.SetStateNotifier(nil) })
