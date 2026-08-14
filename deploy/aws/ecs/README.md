@@ -30,7 +30,7 @@ platform changes:
 
 | File | Status | Contents |
 |------|--------|----------|
-| `cfn/00-network.yaml` | **proven** (deploy→verify→teardown in sandbox) | VPC, 2×AZ public+private subnets, IGW, NAT, base SGs (`alb`/`cp`/`ws`) |
+| `cfn/00-network.yaml` | **proven** (deploy→verify→teardown in sandbox) | VPC, 2×AZ public+private subnets, IGW, NAT, S3 gateway endpoint, base SGs (`alb`/`cp`/`ws`) |
 | `cfn/10-data.yaml` | **proven** (EFS 2 mount targets available, RDS pg18 available/private/encrypted) | EFS filesystem + mount targets, RDS(Postgres, single-AZ t4g.micro, RDS-managed master secret) |
 | `cfn/20-platform.yaml` | **proven** (ECR×2, cluster ACTIVE w/ SC default, 3 IAM roles) | ECR (cp+workspace), ECS cluster, Service Connect namespace (`af.internal`), IAM roles (`cp-task`/`exec`/`ws-task`) |
 | `cfn/30-ingress.yaml` | **proven** (CP boots on Fargate, `/healthz` 200, `/oauth2/login` → Google w/ correct redirect_uri) | ACM(DNS-validated), ALB (TLS-termination only — auth is CP-native `AUTH=oauth`, no ALB OIDC), CP/Console Fargate service (Service Connect client), Route53 alias |
@@ -191,7 +191,7 @@ service supports it:
 | Service | Why | Actions (summary) |
 |---|---|---|
 | cloudformation | stack CRUD | Create/Update/Delete/Describe stacks + change sets |
-| ec2 | 00-network (VPC/subnets/NAT/SG) | Create/Delete/Describe VPC, subnets, IGW, NAT, EIP, routes, security groups |
+| ec2 | 00-network (VPC/subnets/NAT/SG/endpoint) | Create/Delete/Describe VPC, subnets, IGW, NAT, EIP, routes, security groups, VPC endpoints |
 | ecr | 20-platform repos + image push | CreateRepository/DeleteRepository/Describe*, GetAuthorizationToken, BatchCheckLayerAvailability, InitiateLayerUpload, UploadLayerPart, CompleteLayerUpload, PutImage |
 | ecs | 20-platform cluster + 30-ingress service | Create/Delete/Describe cluster & service, RegisterTaskDefinition, plus `iam:CreateServiceLinkedRole` once per account |
 | servicediscovery | Service Connect namespace | Create/Delete/Get namespace |
@@ -220,10 +220,20 @@ Standing costs while the substrate is up: **NAT (~$32/mo)**, ALB (~$20/mo), RDS
 t4g.micro (~$15–30/mo), EFS (usage). For iteration, **deploy → E2E → `delete-stack`**
 and keep stacks short-lived.
 
-- NAT is needed because workspaces egress to **git / Anthropic** (public internet).
-  VPC endpoints (ECR api+dkr, S3 gw, Logs, SSM) cut AWS-service traffic off NAT but
-  not the public git/Anthropic egress — for a dev loop, a **NAT instance** (t4g.nano)
-  or just accepting the NAT Gateway for the hours a stack lives is simpler.
+- NAT is needed because workspaces egress to **git / Anthropic** (public internet),
+  and every private-subnet task also reaches ECR / CloudWatch Logs / SSM through it
+  (there is no public IP on those tasks) — so the NAT is on the **workspace start
+  path**, not just the user's internet access.
+  - The **S3 gateway endpoint is in `00-network.yaml`** because it is free (no
+    hourly charge, no ENI) and ECR layer blobs live in S3 — it takes the bulk of
+    every cold image pull off the NAT's $0.045/GB data processing. **Interface**
+    endpoints (ecr.api, ecr.dkr, logs, ssm) are left out on purpose: $0.01/AZ/hour
+    × 2 AZ each adds up past the NAT Gateway they would relieve.
+  - What still crosses the NAT: git / Anthropic / npm / package registries (the real
+    developer traffic), plus the small ECR auth+manifest, Logs and SSM calls.
+  - Replacing the NAT Gateway with a **NAT instance** (t4g.nano/small, ~$7–12/mo vs
+    $33) is the remaining lever for a dev loop, at the price of running it yourself
+    (source/dest check off, iptables MASQUERADE, ASG for replacement + route rewrite).
 - Persistence: `10-data.yaml` takes a **`Persistence` parameter** — `delete`
   (default, sandbox-ephemeral: EFS/RDS dropped with the stack, no backups) or
   `retain` (production: EFS `Retain`, RDS `Snapshot` + 7-day backups + deletion
