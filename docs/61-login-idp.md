@@ -106,7 +106,7 @@ L1（Console へのログイン）の IdP が **Google 1 種に固定**されて
   新テーブル `identity_provider` を足し、`identity` 本体（`user_key` / home / secrets）は触らない。
 
 ```sql
--- migrations/0031_identity_provider.sql（次の空き番号）
+-- migrations/0038_identity_provider.sql（次の空き番号。0037 まで使用済み）
 CREATE TABLE identity_provider (
   provider      TEXT NOT NULL,          -- "google" / "entra" / "github" ...（設定の provider id）
   subject       TEXT NOT NULL,          -- IdP の sub（GitHub は数値 id。login 名は改名され得るので使わない）
@@ -369,7 +369,7 @@ AF_GITHUB_MEMBERSHIP_GRACE=1h
 admin から編集する。env に `AF_TENANT_<SLUG>_…` を生やす案は、テナントが実行時に増える以上ずれる。
 
 ```sql
--- migrations/0032_tenant_login.sql（0031 は §61.5 の identity_provider）
+-- migrations/0039_tenant_login.sql（0038 は §61.5 の identity_provider）
 ALTER TABLE tenant ADD COLUMN allowed_providers TEXT NOT NULL DEFAULT ''; -- CSV。空=デプロイの全 provider
 ALTER TABLE tenant ADD COLUMN auto_join_domains TEXT NOT NULL DEFAULT ''; -- CSV。自動参加（§61.9.5）
 ALTER TABLE tenant ADD COLUMN allowed_domains   TEXT NOT NULL DEFAULT ''; -- CSV。招待時のガードのみ
@@ -617,9 +617,9 @@ super_admin が毎日の運用に出てくるのは、部署テナントの新�
 | 段階 | 内容 | スキーマ変更 |
 |------|------|------------|
 | **P0**（実装済み）| プロバイダ抽象 ＋ 汎用 OIDC（Entra / Okta / Keycloak / Auth0 / Cognito）。Google を同実装の 1 インスタンスへ移す。ログイン画面の複数ボタン・`sessionClaims` 拡張（`prov` / `sub`）・設定と文書 | 無し |
-| **P1** | `identity_provider` テーブルと解決規則（§61.5）。Console の「アカウントを追加」導線 | `0031` |
+| **P1** | `identity_provider` テーブルと解決規則（§61.5）。Console の「アカウントを追加」導線 | `0038` |
 | **P2** | GitHub アダプタ（org 判定・TTL キャッシュ・猶予） | 無し |
-| **P3** | テナント毎のログイン（§61.9）: `/login/<slug>`・`allowed_providers` の強制・入口の門に membership を含める・`auto_join_domains` / `allowed_domains`・admin 編集 UI・`provider_required` の再サインイン導線。★ **membership の削除／無効化 API**（§61.10.6）と **`super_admin` のブートストラップ**（§61.10.2）を含む | `0032` |
+| **P3** | テナント毎のログイン（§61.9）: `/login/<slug>`・`allowed_providers` の強制・入口の門に membership を含める・`auto_join_domains` / `allowed_domains`・admin 編集 UI・`provider_required` の再サインイン導線。★ **membership の削除／無効化 API**（§61.10.6）と **`super_admin` のブートストラップ**（§61.10.2）を含む | `0039` |
 
 - **P1 を P2 より先に置くのが本設計の要点**。GitHub は email 不一致が常態なので、リンク機構なしに
   出すと §61.5-1 の workspace 分裂を必ず起こす。
