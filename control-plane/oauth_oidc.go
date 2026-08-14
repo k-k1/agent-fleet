@@ -112,6 +112,10 @@ func (p *oidcProvider) Label(lang string) string {
 	return defaultProviderLabel(p.id, lang)
 }
 
+// issuerURL names the identity source for the admin list (login_provider_api.go).
+// Not a credential: the same URL is in the deployment's own discovery traffic.
+func (p *oidcProvider) issuerURL() string { return p.issuer }
+
 // hasOwnAllowlist reports whether this provider carries its own allowlist (used
 // by the startup warning about a deployment where every login would be denied).
 func (p *oidcProvider) hasOwnAllowlist() bool {
