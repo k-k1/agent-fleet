@@ -3,6 +3,13 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.8.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.8.0) — 2026-08-13
+
+セッションの会話を同じテナントの他のメンバーへ読み取り専用で見せられるようになり、
+過去の発言から会話をそのまま引き継いだ新しいセッションへ分岐できるようになりました。
+メイン領域は分割ペインに加えてタブ付きグリッドで並べられ、セッション同士はあなたを
+経由せずに一行のメッセージを送り合えます。
+
 ## [0.7.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.7.0) — 2026-08-07
 
 opencode.ai のアカウントで Console からサインインできるようになり、セッションが使う枠も
