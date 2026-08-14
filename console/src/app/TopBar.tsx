@@ -321,7 +321,12 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                     <Icon name="organization" /> {tr("topbar.tenant_settings")}
                   </button>
                 )}
-                {(superAdmin || tenants?.some((t) => t.role === "tenant_admin")) && (
+                {/* ★ 管理はデプロイ全体の面（テナントの作成・上限・ログイン規則・
+                    egress・ホスト・読み上げ辞書）で、CP はどれも withSuperAdmin 固定。
+                    tenant_admin にも意味のある面（メンバー・セッション・使用量・監査・
+                    MCP 配布）はテナント設定へ移したので、ここは super_admin だけでよい。
+                    ここを閉じたことは権限の実装ではない — サーバは前から 403 を返す。 */}
+                {superAdmin && (
                   <button className="acct-item" role="menuitem" onClick={() => run(openAdmin)}>
                     <Icon name="shield" /> {tr("topbar.admin")}
                   </button>
