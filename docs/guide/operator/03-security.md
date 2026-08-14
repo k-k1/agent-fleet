@@ -114,11 +114,16 @@ into answers, logs or commits is part of the agent-side instructions as well.
 ## Other operational controls
 
 - **The login allowlist is fail-closed.** If all 3 of the `AF_OAUTH_ALLOWED_*` variables are
-  empty, all logins are rejected. `_EMAILS_FILE` is re-read on every login, so **additions take
-  effect without a CP restart** (removals likewise). The check runs **on every request**, not
-  just at sign-in, so removing someone locks them out on their very next request instead of
-  waiting out `AF_SESSION_TTL` — that is the offboarding path. Configuration is in
-  [01 §6](01-install.md).
+  empty **and nobody holds a tenant membership and no tenant has an auto-join domain**, all
+  logins are rejected. `_EMAILS_FILE` is re-read on every login, so **additions take effect
+  without a CP restart** (removals likewise). The check runs **on every request**, not just at
+  sign-in, so removing someone locks them out on their very next request instead of waiting out
+  `AF_SESSION_TTL` — that is the offboarding path. Configuration is in [01 §6](01-install.md).
+- **Being invited is itself permission to reach the login.** Somebody added to a tenant in the
+  Admin panel can sign in without also appearing in `AF_OAUTH_ALLOWED_*`, so a deployment run
+  on invitations keeps one roster instead of two lists that drift apart. Passing the door does
+  not put anyone *inside* anything: which tenant they may use is a separate check, and somebody
+  with no membership lands on the same "ask an administrator" page as before.
 - **Each login provider declares why its email may be trusted.** `AF_OIDC_<ID>_TRUST` is
   mandatory (`email_verified` or `issuer`) and a provider that omits it is disabled at startup,
   because the allowlist is written in email addresses. In particular, an Entra ID issuer must be
@@ -142,6 +147,75 @@ into answers, logs or commits is part of the agent-side instructions as well.
   plaintext, and does not emit it into logs. The unified cred helper decrypts on demand and
   hands it over, so no plaintext files are ever created
   ([dev/07 §7.6](../../dev/07-security.md)).
+
+## Offboarding: how access is actually revoked
+
+There are two ways in, so there are two ways out. Which one applies depends on how the
+deployment admits people.
+
+| How they get in | How you take them out | When it takes effect |
+|---|---|---|
+| The allowlist (`AF_OAUTH_ALLOWED_*`) | Remove them from it | The next request (the check runs per request) |
+| Tenant membership (an invitation) | **Admin panel → the tenant → the member → "Remove member"** | The next request |
+
+**Sessions cannot be revoked individually.** The session cookie is stateless — a signed
+`{email, exp}` and nothing else, with no server-side session store — so there is no "sign out
+of all devices" and a cookie stays technically valid for up to `AF_SESSION_TTL` (7 days by
+default). What actually shuts the door is the per-request re-check above. So:
+
+> **Removing them at the IdP is not enough on its own.** Disabling the Microsoft/Google account
+> stops them getting a *new* session; the one already in their browser keeps working until you
+> also remove them from the allowlist or from the tenant.
+
+Take the steps in this order — the first one is what revokes access, the rest are cleanup:
+
+1. **Remove the membership** (or take them off the allowlist).
+2. **Stop the workspace** (Admin panel → the member → "Force-stop workspace").
+3. **Clean the home** — only after they have pushed anything they still want. `~/repos` is not
+   recoverable afterwards.
+
+Two asymmetries are worth knowing *before* somebody leaves rather than after:
+
+- **Scheduled runs are personal.** A schedule belongs to the membership, so everything the
+  person had scheduled **stops**. Whoever takes over recreates them.
+- **Internal git repositories belong to the tenant.** They survive; nothing is lost when the
+  person who created them leaves.
+
+### The emergency stop: rotating `AF_COOKIE_SECRET`
+
+If you need everyone's session invalidated *right now* — a leaked cookie, a laptop lost, an
+account you cannot reach — the only immediate switch is to change the cookie signing key:
+
+```sh
+openssl rand -base64 32          # generate a new value
+# put it in AF_COOKIE_SECRET in .env / oauth.env / the SSM parameter, then restart the CP
+docker compose up -d control-plane
+```
+
+Every session cookie signed with the old key stops verifying, so **everybody is logged out and
+signs in again**. It is blunt, it costs everyone one sign-in, and it is the only thing that
+works within seconds. Note what it does *not* do: it does not remove anyone's access — if the
+person is still on the allowlist or still holds a membership, they simply sign in again. Use it
+together with the removal steps above, not instead of them.
+
+## Handing over `super_admin`
+
+`SUPER_ADMIN_EMAILS` (the host's env) is the single source of truth for who administers the
+deployment, and it is read **once at startup** — so a change needs a CP restart. Deliberately,
+there is no way to promote a super_admin from inside the Console: the people who can run the
+whole deployment should be exactly the people who can edit the host's files.
+
+1. Edit `SUPER_ADMIN_EMAILS` (add the successor, remove the predecessor) and restart the CP.
+2. On restart the CP **also revokes the role in the database** for any account no longer listed
+   — it logs `super_admin revoked (not in SUPER_ADMIN_EMAILS): …`. Without this step the old
+   administrator would keep the role in the database forever, because the natural fix ("sync it
+   at login") never reaches somebody who has left and never logs in again.
+3. The successor gets the role on their first sign-in.
+4. Then offboard the predecessor as above (memberships, workspace, home).
+
+> If the only super_admin leaves without handing over, this is recoverable: whoever can edit
+> the host's env adds themselves and restarts. The one prerequisite is that **somebody in the
+> company can still reach the host** — worth checking before you need it.
 
 ## Reporting vulnerabilities
 

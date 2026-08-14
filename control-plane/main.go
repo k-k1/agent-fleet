@@ -138,10 +138,24 @@ func main() {
 		log.Fatalf("db migrate: %v", err)
 	}
 	mgr.store = store
+	mgr.tenantLogin = newTenantLoginCache(store)
 	if dt, err := store.EnsureDefaultTenant(ctx); err != nil {
 		log.Fatalf("ensure default tenant: %v", err)
 	} else {
 		mgr.defaultTenantID = dt.ID // used by rootedDataDir to detect flat paths
+	}
+	// ★ SUPER_ADMIN_EMAILS is the single source of truth for the deployment role,
+	// and this is where removing somebody from it takes effect (docs/61 §61.10.7 +
+	// ADR0043 決定 24). UpsertIdentity only ever upgrades, on purpose — it is called
+	// with roleHint="" from addMembership / cleanHome / stopWorkspace, so demoting
+	// there would strip an operator the moment anyone added a member. And a
+	// login-time sync would never reach the case that matters: the person who left
+	// does not log in again. A startup pass lines up exactly with the documented
+	// handover, which is "edit the env, restart CP".
+	if demoted, err := store.DemoteSuperAdmins(ctx, superAdminEmailList()); err != nil {
+		log.Printf("WARNING: super_admin sync: %v", err)
+	} else if len(demoted) > 0 {
+		log.Printf("super_admin revoked (not in SUPER_ADMIN_EMAILS): %s", strings.Join(demoted, ", "))
 	}
 	if err := mgr.backfill(ctx); err != nil {
 		log.Printf("backfill warning: %v", err)
@@ -281,6 +295,12 @@ func main() {
 	// that is fatal below. Must run before buildMux — it captures cfg by value.
 	provs, provErr := buildLoginProviders(cfg)
 	cfg.setProviders(provs)
+	// The admin API validates a tenant's allowed_providers against this set, so a
+	// rule can't name an IdP the deployment doesn't have (docs/61 §61.9.4).
+	mgr.knownProviderIDs = map[string]bool{}
+	for _, p := range provs {
+		mgr.knownProviderIDs[p.ID()] = true
+	}
 
 	mux := buildMux(cfg)
 
@@ -297,8 +317,21 @@ func main() {
 				"(GOOGLE_OAUTH_CLIENT_ID + GOOGLE_OAUTH_CLIENT_SECRET, AF_OIDC_PROVIDERS with AF_OIDC_<ID>_{ISSUER,CLIENT_ID,CLIENT_SECRET,TRUST}, " +
 				"and/or GITHUB_OAUTH_CLIENT_ID + GITHUB_OAUTH_CLIENT_SECRET + AF_GITHUB_ALLOWED_ORGS)")
 		}
+		// ★ "No allowlist" no longer means "nobody can sign in": since P3 the entry
+		// gate also admits anyone on a tenant's roster or matching an auto-join
+		// domain (docs/61 §61.9.6), which is the whole point of the invite-run
+		// deployment — no AF_OAUTH_ALLOWED_* at all. So check the database before
+		// warning, and only say "every login is denied" when that is actually true.
 		if !cfg.hasDeploymentAllowlist() && !anyProviderAllowlist(cfg.providers) {
-			log.Printf("WARNING: AUTH=oauth with no allowlist (AF_OAUTH_ALLOWED_EMAILS / AF_OAUTH_ALLOWED_DOMAINS / AF_OAUTH_ALLOWED_EMAILS_FILE / AF_OIDC_<ID>_ALLOWED_EMAILS / AF_OIDC_<ID>_ALLOWED_DOMAINS / AF_GITHUB_ALLOWED_ORGS) — every login is denied")
+			hasRoster, err := mgr.store.AnyActiveMembership(ctx)
+			switch {
+			case err != nil:
+				log.Printf("WARNING: could not check for existing memberships: %v", err)
+			case hasRoster:
+				log.Printf("login: no email allowlist configured — access is governed by tenant membership and auto_join_domains (docs/61 §61.9.6)")
+			default:
+				log.Printf("WARNING: AUTH=oauth with no allowlist (AF_OAUTH_ALLOWED_EMAILS / AF_OAUTH_ALLOWED_DOMAINS / AF_OAUTH_ALLOWED_EMAILS_FILE / AF_OIDC_<ID>_ALLOWED_EMAILS / AF_OIDC_<ID>_ALLOWED_DOMAINS / AF_GITHUB_ALLOWED_ORGS) and no tenant membership or auto_join_domains — every login is denied")
+			}
 		}
 		ids := make([]string, 0, len(cfg.providers))
 		for _, p := range cfg.providers {
@@ -315,6 +348,18 @@ func main() {
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// superAdminEmailList returns SUPER_ADMIN_EMAILS as a slice (the manager keeps the
+// same value as a lookup set). Read once at startup — unlike the allowlist file it
+// is NOT live-read, so changing it takes a CP restart, which is also when the
+// revocation pass above runs.
+func superAdminEmailList() []string {
+	var out []string
+	for e := range emailSet(os.Getenv("SUPER_ADMIN_EMAILS")) {
+		out = append(out, e)
+	}
+	return out
 }
 
 // envBool parses a boolean env var (1/true/yes/on = true, 0/false/no/off = false);

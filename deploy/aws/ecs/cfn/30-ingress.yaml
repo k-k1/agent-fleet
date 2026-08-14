@@ -132,11 +132,17 @@ Parameters:
     Type: String
     Default: ""
     Description: AF_OAUTH_ALLOWED_DOMAINS (comma-separated email domains) permitted
-      to sign in. Both allowlists empty => every login is denied (fail closed).
+      to sign in. Somebody invited to a tenant in the Admin panel also gets in
+      without being listed here, so an invite-run deployment can leave both empty.
+      Both empty AND nobody invited => every login is denied (fail closed), which
+      is what a fresh stack looks like - set one to get your first admin in.
   SuperAdminEmails:
     Type: String
     Default: ""
-    Description: SUPER_ADMIN_EMAILS (comma-separated).
+    Description: SUPER_ADMIN_EMAILS (comma-separated). Read once at task start and
+      treated as the only source of truth - an account removed from this list also
+      loses the role in the database on the next start, so a handover completes for
+      somebody who never signs in again. Changing it needs a service redeploy.
   AuthMode:
     Type: String
     Default: oauth

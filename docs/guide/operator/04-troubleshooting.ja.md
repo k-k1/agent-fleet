@@ -20,7 +20,9 @@
 | docker.sock で "permission denied" | `DOCKER_GID` がホストの docker グループ GID と一致しているか（DooD 制約 C）|
 | Workspace は起動するのに home が空 | `DATA_DIR` が CP の内外で同一絶対パスか。リストア時も同じパスか（DooD 制約 B）|
 | 起動した Workspace に到達できない | CP と Caddy が両方 `network_mode: host` か（DooD 制約 A）|
-| ログインが常に拒否される | 許可リストが空（fail-closed）。`AF_OAUTH_ALLOWED_DOMAINS` / `_EMAILS` を設定 |
+| ログインが常に拒否される | 許可リストが空で、**かつまだ誰も招待していない**（fail-closed）。`AF_OAUTH_ALLOWED_DOMAINS` / `_EMAILS` を設定するか、招待する |
+| 特定の人だけ「このテナントには別のサインインが必要です」 | そのテナントの**ログイン規則 → 使えるサインイン方法**に、その人が使った IdP が入っていない。`/login/<slug>` を案内する |
+| 外したはずの人がまだ使える | IdP 側で止めてもセッションは切れない。名簿から外す（管理 → テナント → メンバー → **メンバーを外す**）か許可リストから消す |
 | TLS 証明書が発行されない | DNS A/AAAA がこのホストを指すか。80/443 が到達可能か。Let's Encrypt のレート制限 |
 | redirect URI mismatch | IdP に登録した URI が `<PUBLIC_BASE_URL>/oauth2/callback` と一致しているか |
 | サインインのボタンが出ない | その provider が起動時に無効化された。`docker compose logs control-plane \| grep -i "login provider"` に不足している設定名が出る |
@@ -51,8 +53,20 @@ CP はコンテナですが、ホストの Docker デーモンを外から駆動
 ## ログインできない
 
 - **常に拒否される** → 許可リスト（`AF_OAUTH_ALLOWED_EMAILS` / `_DOMAINS` / `_EMAILS_FILE`）が
-  **すべて空だと全拒否**です（fail-closed = 安全側に倒す設計）。少なくとも 1 つ設定します。
-  `_EMAILS_FILE` はログインごとに再読込されるので追加は再起動不要です。
+  **すべて空で、かつ誰もテナントに招待されていないと全拒否**です（fail-closed = 安全側に倒す設計）。
+  少なくとも 1 つ設定するか、その人をメンバーとして追加します。`_EMAILS_FILE` はログインごとに
+  再読込されるので追加は再起動不要で、招待も即時に効きます。
+- **「このテナントには別のサインインが必要です」（`provider_required`）** → そのテナントの
+  **ログイン規則 → 使えるサインイン方法**に、そのセッションの IdP が入っていません。故障では
+  ありません — セッションは provider を 1 つしか持たないので、別の方法を要求するテナントへ移る
+  には再サインインが要ります。Console が導線を出します。
+  `https://<PUBLIC_DOMAIN>/login/<slug>` を開けば、そのテナントが受け付ける方法だけが並びます。
+  *規則の方*が間違っているなら管理画面で直してください。
+- **外したはずの人がまだ使えている** → IdP 側でアカウントを止めても、**すでに持っているセッションは
+  切れません**。署名済み cookie は最大 `AF_SESSION_TTL`（既定 7 日）有効で、個別失効の手段はあり
+  ません。名簿から外す（管理 → テナント → メンバー → **メンバーを外す**）か許可リストから消して
+  ください — どちらも**次のリクエスト**で効きます。全セッションを一度に切るなら
+  `AF_COOKIE_SECRET` のローテーション（[03 のオフボーディング節](03-security.ja.md)）。
 - **redirect URI mismatch** → IdP 側（Google Cloud Console、Entra のアプリ登録など）に登録した
   承認済みリダイレクト URI が `<PUBLIC_BASE_URL>/oauth2/callback` と**完全一致**しているか。
   `PUBLIC_BASE_URL` を変えたら IdP 側も合わせます（[01 §3](01-install.ja.md)）。有効にする provider が

@@ -294,7 +294,7 @@ func TestGitHubProviderRequiresItsOrgList(t *testing.T) {
 			t.Setenv("AF_GITHUB_LOGIN_CLIENT_SECRET", "")
 			var logs strings.Builder
 			restore := captureLog(&logs)
-			p := newGitHubProvider(func(string) bool { return true }, true)
+			p := newGitHubProvider(func(string) bool { return true }, nil, true)
 			restore()
 			if (p != nil) != tc.wantProvider {
 				t.Fatalf("provider = %v, want configured=%v", p, tc.wantProvider)
@@ -326,7 +326,7 @@ func TestGitHubLoginClientIDOverridesTheSharedOne(t *testing.T) {
 	t.Setenv("AF_GITHUB_LOGIN_CLIENT_ID", "login-app")
 	t.Setenv("AF_GITHUB_LOGIN_CLIENT_SECRET", "login-secret")
 	t.Setenv("AF_GITHUB_ALLOWED_ORGS", "acme")
-	p := newGitHubProvider(func(string) bool { return true }, true)
+	p := newGitHubProvider(func(string) bool { return true }, nil, true)
 	if p == nil {
 		t.Fatal("provider not configured")
 	}
