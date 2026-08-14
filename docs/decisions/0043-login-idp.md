@@ -1,7 +1,7 @@
 # 0043. ログイン IdP はプロバイダ別実装を増やさず「汎用 OIDC 1 本 ＋ GitHub だけ専用」にし、同一人物の保証を GitHub より先に入れる
 
 - 状態: 採用・**未実装**（2026-08-14。設計は docs/61。同日、1 デプロイ内を部署でテナント分割する
-  要件を受けて**決定 13〜21（テナント毎のログイン・P3）を追加**した。うち決定 15/16 は
+  要件を受けて**決定 13〜27（テナント毎のログイン・責務分担・P3）を追加**した。うち決定 15/16 は
   「テナント毎にログインできる ID を管理すればよい」という指摘を受けた見直しで、
   招待 API が既にあることを実測して**テナント側の email リストを設計から落とした**）
 - 関連: [61-login-idp.md](../61-login-idp.md) /
@@ -143,6 +143,39 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
     admin API 自体は `identityFor` だけで通るので API 直叩きなら可能だが、手順として成立しない。
     直すまでの運用は「**`auto` で立ち上げ → テナント作成と招待 → `invite` へ切替**」（docs/61 §61.10.2）。
 
+### 責務分担（2026-08-14 確認）
+
+24. **`super_admin` の指定はホスト側の env（`SUPER_ADMIN_EMAILS`・`main.go:85`）のままとし、
+    Console からの昇格は作らない。** デプロイ全体を動かせる権限は、そのデプロイを設置した人＝
+    ホストのファイルに触れる人だけが持つ。アプリ内で増やせると設置者以外が権限を作れてしまう。
+    許可リストと違い **live-read ではなく起動時に 1 度読むだけ**なので、変更には CP 再起動が要る。
+    ★ **ただし剥奪ができない（現状の穴・P3 で塞ぐ）。** `UpsertIdentity` は
+    「Upgrade (never downgrade)」（`store_sqlite.go:314-317`）なので、`SUPER_ADMIN_EMAILS` から
+    消して再起動しても `identity.role` は `super_admin` のまま残り、降格 API も無い
+    （`setMembershipRole` はテナント役割のみ）＝ DB 直編集以外に手段が無い。
+    env を単一の正とし、**ログイン時にリストに無ければ `user` へ落とす**。
+    実装注意 — **降格を `UpsertIdentity` の `roleHint` に持たせない**。
+    `addMembership`（`tenants.go:285`）/ `cleanHome`（`:195`）/ `stopWorkspace`（`:149`）は
+    `roleHint=""` で呼ぶため、誰かをテナントに追加しただけで super_admin が落ちる。
+    本人の email が確定しているログイン経路（`identityFor` / `resolveFull`）だけが同期するよう
+    専用の store メソッドに分ける。
+25. **テナントの新設と `tenant_admin` の任命は `super_admin`。** 実装は既にこのとおりで変更不要
+    （`POST /api/admin/tenants` は `withSuperAdmin`＝`routes.go:133`、`tenant_admin` を付けられるのは
+    super_admin だけ＝`tenants.go:280`、`PUT /api/admin/membership-role` も `withSuperAdmin`）。
+    super_admin が日常運用に出るのは**この 2 つだけ**にする。
+26. ★ **workspace / home の削除は `tenant_admin` の責務。** 部署の人員を把握しているのは部署側で、
+    情シスに毎回頼む形にしない。**現状 `clean-home` は super_admin 限定**
+    （`routes.go:136` の `adm.withSuperAdmin(adm.cleanHome)`。ハンドラもテナント所属を見ていない）
+    なので、**P3 でハンドラ内 `tenantAdminFor` ゲートへ付け替える**。前例は同ファイルの
+    `stopWorkspace`（`tenants.go:145`）で、これにより tenant_admin は自部署のメンバーの home しか
+    消せない。順序は「membership 無効化 → workspace 停止 → home 削除」で、停止は既に
+    tenant_admin ができるため揃えるのは `clean-home` だけ。即時削除にしない扱いは
+    [0028-deletion-lock](0028-deletion-lock.md) と掃除の段階制に合わせる。
+    決定 22 の membership 無効化 API も同じく tenant_admin（自テナント分）に開く。
+27. **招待の通知機能は作らない。** 招待 URL（`/login/<slug>`）は tenant_admin が口頭 / 社内チャットなど
+    **CP の外**で伝える。CP にメール送信を持たせない方針（決定 10 の magic link 却下と同じ理由）で、
+    通知経路を足しても「本人に届いたか」の保証は結局得られない。
+
 ## 却下した案
 
 - **Entra 専用実装を足すだけ。** 最短だが、Okta / Keycloak の要望のたびに同じ作業を繰り返す。
@@ -154,6 +187,12 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
 - **magic link / パスワードログイン。** IdP を持たない小さな会社には効くが、CP が資格情報と
   SMTP を背負う。需要が出てから別 ADR で判断する。
 - **Apple / LINE / Slack / Atlassian / Discord。** 会社が入退社を統制する手段にならず、B2B の入口に値しない。
+- **`super_admin` を Console から昇格できるようにする。** 運用は楽になるが、設置者以外が
+  デプロイ全体の権限を作れてしまう（決定 24）。
+- **招待メール / 通知を CP から送る。** URL を人が伝える手間は残るが、SMTP 依存が増え、
+  「本人に届いたか」の保証も得られない（決定 27）。
+- **workspace / home の削除を super_admin 限定のままにする。** 現状の実装はこれだが、
+  部署の人員を把握していない情シスに毎回頼む形になる（決定 26）。
 - **テナントに `allowed_emails` カラムを持たせる。** 「テナント毎にログインできる ID を管理する」の
   最も素直な実装だが、membership が既に同じ名簿なので二重台帳になる（決定 15）。
 - **テナント毎のログインをサブドメインで分ける / URL・cookie のテナント指定を認可の根拠にする /
@@ -184,5 +223,10 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
 - P3 で `selectMembership`（`resolver.go:128`）にテナント規則と `prov` の突合が入り、
   戻り値のエラーコードに `provider_required` が増える。Console のテナント切替は
   これを 403 として扱わず**再サインイン導線**に変える必要がある。
+- P3 で `clean-home` の権限が super_admin 限定から tenant_admin（自テナント分）へ広がる（決定 26）。
+  `routes.go:136` の `withSuperAdmin` を外し、ハンドラ内で `tenantAdminFor` を取る形に変える。
+  **権限を広げる変更なので、監査（`audit.go`）に誰がどのテナントの誰の home を消したかを必ず残す。**
+- P3 で `identity.role` の降格経路ができる（決定 24）。`UpsertIdentity` の
+  「never downgrade」は**維持したまま**、ログイン経路専用の同期メソッドを足す形にする。
 - P3 で `AF_PROVISION` の意味が広がる（`auto_join_domains` 一致が `auto` / `invite` より先に効く）。
   一致しないときの挙動は現行と同じなので、既存デプロイの見え方は変わらない。
