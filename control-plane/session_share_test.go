@@ -525,9 +525,9 @@ func TestSearchRecipientsFiltersByEmailAndExcludesSelf(t *testing.T) {
 	}
 
 	// email 部分一致で絞り込める。
-	acme := search("acme.example")
-	if len(acme) != 1 || acme[0]["email"] != "alice@acme.example" {
-		t.Fatalf("filtered members=%v", acme)
+	filtered := search("acme.example")
+	if len(filtered) != 1 || filtered[0]["email"] != "alice@acme.example" {
+		t.Fatalf("filtered members=%v", filtered)
 	}
 
 	// 大文字小文字は無視される。
