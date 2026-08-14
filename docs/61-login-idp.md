@@ -340,7 +340,7 @@ AF_GITHUB_MEMBERSHIP_GRACE=1h
 
 ★ **全社共通ドメインの会社ではこれが本命**になる。`@acme.co.jp` しか無ければ
 `auto_join_domains` では部署を分けられないが、名簿（membership）は最初からドメインに依存しない。
-このため **IdP のグループ（Entra の `groups` / GitHub の team）連携は必須ではなくなった**（§61.13）。
+このため **IdP のグループ（Entra の `groups` / GitHub の team）連携は必須ではなくなった**（§61.14）。
 
 ★ **招待は email に紐づくので、GitHub 単独ログインとは噛み合わない。** `addMembership` は
 `sanitizeUser(email)` で identity を先に作る（`tenants.go:271-286`）。GitHub の登録 email が
@@ -612,7 +612,155 @@ P3 で名簿を membership へ寄せると、その役割は「membership を無
 `super_admin` の指定。テナントの中の人と物（メンバー・workspace・home）は tenant_admin が持つ。
 super_admin が毎日の運用に出てくるのは、部署テナントの新設と管理者の任命だけになる。
 
-## 61.11 段階
+## 61.11 テナント定義の認証方式（P4）— 子会社ごとに Entra が違う場合
+
+§61.9 は「1 社の中を部署で分ける・Entra テナントは 1 つ」という例で書いた。しかし
+**グループ各社**（[roadmap](roadmap.md) §12.2 の本来の想定）や分社・M&A の途中では、
+**テナントごとに Entra テナント自体が違う**（tenant guid が違う＝issuer が違う＝アプリ登録も
+client_id / secret も別）。「部署」と「別法人」の境目は運用上つながっている。
+
+### 61.11.1 P0 でも「並べる」だけならできる（実測）
+
+provider id は任意の文字列で、issuer / client_id / secret / `ALLOWED_TIDS` / 許可リストは
+**すべて provider 単位**なので、Entra を 2 つ env に並べれば動く。実測済み:
+
+```sh
+AF_OIDC_PROVIDERS=entra_sales,entra_sub
+AF_OIDC_ENTRA_SALES_ISSUER=https://login.microsoftonline.com/<guid-acme>/v2.0
+AF_OIDC_ENTRA_SUB_ISSUER=https://login.microsoftonline.com/<guid-sub>/v2.0
+# → providers=[entra_sales entra_sub]、ログイン画面にボタン 2 つ
+```
+
+P3 の `allowed_providers` がこれを選び分ければ「テナント A は EntraA、テナント B は EntraB」は
+成立する。**新しい機構は要らない。** ただしこの形には 3 つの穴がある。
+
+| 穴 | 内容 |
+|----|------|
+| ★ 部署追加が再起動作業に戻る | §61.10.3〜4 は「テナント新設は super_admin・再起動不要／情シスは何もしていない」と書いたが、**新テナントが自前の IdP を持つ場合は env 追加＋CP 再起動**が要る（§61.10.8 の責務分担表とは整合するが、運用イメージとは矛盾する） |
+| ボタンが見分けられない | 素の `/login` は有効な IdP を全部出す（§61.9.3）ので「Microsoft でサインイン」が 2 つ並ぶ。`LABEL_JA` で `Microsoft（営業部）` と書き分けられる（P0 で対応済み）が、**英語ラベル未設定時の自動生成は `Sign in with Entra_sales`** になり、そのままでは出せない |
+| `allowed_providers` の既定が緩い | 「空＝デプロイの全 provider」は issuer が 1 つの前提。**複数 issuer のデプロイでは `allowed_providers` を必須**にする方が意図に合う |
+
+### 61.11.2 ★ tenant_admin に「認証方式の追加」を単独でやらせてはいけない
+
+秘密を DB に持つこと自体は既に前例がある（§61.11.4）。問題は**誰が有効化できるか**で、
+ここが本節の核心。プロジェクト MCP（[48](48-mcp-registry.md)）は「そのテナントのエージェントが
+**外へ**叩きに行く先」だが、**IdP は「誰であるか」を宣言する主体**で、追加はデプロイ全体に効く。
+
+現行コードでの乗っ取り経路（すべて実測）:
+
+1. `identity.user_key = sanitizeUser(email)`（`resolver.go:281`）は**デプロイ全体で 1 つの名前空間**。
+2. デプロイ役割は **email の一致**で決まる — `roleHintFor`（`resolver.go:28`）が `SUPER_ADMIN_EMAILS` と
+   突合し、ログインのたびに `identityFor` → `UpsertIdentity` で反映される。
+3. よって **tenant_admin が自分の支配下の IdP（自前 Keycloak を立てれば済む）を登録できると、
+   `email=<情シスの super_admin>` を主張するトークンを自分で発行し、自テナントのボタンから
+   サインインできる。** `authGate` はそれを通し、`UpsertIdentity` が role を `super_admin` に上げる。
+4. しかも **`UpsertIdentity` は never downgrade**（`store_sqlite.go:314-317`）なので、
+   不正な provider を後から消しても **role は残る**。
+5. `trust: "issuer"` は防波堤にならない。「issuer を固定したから信じる」の issuer が攻撃者自身。
+
+★ **悪意が無くても起きる。** tenant_admin がセルフサインアップ有効な Auth0 テナントを善意で登録した
+瞬間、自テナントではなく**デプロイ全体**が開く。
+
+つまり **「設定行はテナント所有でよいが、*有効化*はデプロイ全体の行為」**。
+§61.9.2 で引いた「入口の門とテナントの門を混ぜない」線の、**入口側**に属する。
+
+### 61.11.3 決めごと — 保存と入力はテナント、有効化は super_admin の承認
+
+- tenant_admin が自テナントの認証方式を Console で作成・編集する（`client_secret` もここで入力し、
+  テナント鍵で封印して保存）。作成直後の状態は **`pending`**。
+- **super_admin が承認して `active`。** 承認前は**ログイン画面にボタンが出ず、セッションも発行しない**。
+  子会社の受け入れは 1 回きりなので運用負荷はほぼゼロで、「日常の運用に情シスが出てこない」
+  （§61.10.8）は保てる。
+- 無効化（`suspended`）は tenant_admin も super_admin もできる。**止める方向は誰でも早く**打てる。
+- 承認を省略できる env（`AF_ALLOW_TENANT_IDP=1` のような opt-out）は**作らない**（§61.13）。
+
+これと**必ずセットで**要る 4 点。承認モデルでも省略できない。
+
+1. ★ **テナント定義の provider からは `super_admin` を取れない。** `roleHintFor` は
+   **env 由来 provider のログインにだけ**効かせる。承認を通った後でも、IdP の管理者は
+   その会社の情シスであってこのデプロイの設置者ではない。
+2. ★ **P1（`identity_provider`・`0038`）が前提条件。** テナント定義の provider は
+   `(provider, subject)` で identity を作り、**§61.5 の「email が一致したら既存 identity へ結合」を
+   無効化する**。これが無いと、email を騙るだけで既存の identity＝home＝secrets を乗っ取れる。
+   **順序として P1 が先**で、ここは P2 より強い依存。
+3. **テナント定義の provider は自テナントにしか入れない。** セッションの `prov` を
+   `resolveFull` で突合し、他テナントには `provider_required`（§61.9.4）。入口の許可リストも
+   そのテナントのものを使い、デプロイ共通リストへはフォールバックしない。
+4. **素の `/login` には出さない**（`/login/<slug>` 限定）。全子会社のボタンが未認証者に並ぶと
+   組織構成が漏れる（§61.9.3 の「未知 slug は 404 にしない」と同じ配慮）。
+
+### 61.11.4 秘密の保存 — 前例は `mcp_server`
+
+「テナント管理者が UI で入力した秘密を、テナント鍵で封印して DB に置く」は
+[48](48-mcp-registry.md) で既に production の形になっている。そのまま踏襲する。
+
+| | 実装（実測） |
+|---|---|
+| 保存 | `mcp_server.headers_enc` ＋ `key_ref`（`store.go:203-217`） |
+| 封印 | `sealHeaders` → `custodian.Wrap(tenantID, …)`（`mcp_server.go:146`）。AES-256-GCM・**AAD = keyRef でテナントに束縛**（`custodian.go`） |
+| 書き手 | tenant_admin（`adminUpsert` → `tenantAdminFor`・`mcp_server.go:409`） |
+| 読み出し | UI へは `***` でマスク、更新時は `mergeHeaders` で**触っていない値が生き残る** |
+| 復号不能 | 空マップにせず `mcp_headers_unreadable` で明示エラー（「全部入れ直せ」と言う） |
+
+正直に添える限界が 2 つ:
+
+- `localCustodian` の KEK は `HMAC(master, "af-kek:"+tenantID)` なので、**`AF_MASTER_KEY` を持てば
+  全テナント分が開く**（[dev/07 §7.6](dev/07-security.md)）。テナント間の暗号学的分離ではない。
+- env から DB へ移すと、秘密が **`DATA_DIR`＝バックアップの中**に入る（env は外）。
+  `AF_MASTER_KEY` をデータ領域の外に置く既存ルールが守られていれば中身は暗号文のままだが、
+  posture は変わる。MCP のトークンで既に受容済みの水準ではある。
+
+### 61.11.5 スキーマと名前空間
+
+```sql
+-- migrations/0040_tenant_idp.sql（0038 は §61.5、0039 は §61.9.7）
+CREATE TABLE tenant_idp (
+  id            TEXT PRIMARY KEY,
+  tenant_id     TEXT NOT NULL REFERENCES tenant(id),
+  name          TEXT NOT NULL,            -- テナント内の provider id（"entra" 等）
+  label_ja      TEXT NOT NULL DEFAULT '',
+  label_en      TEXT NOT NULL DEFAULT '',
+  issuer        TEXT NOT NULL,
+  client_id     TEXT NOT NULL,
+  secret_enc    TEXT NOT NULL DEFAULT '', -- client_secret（テナント鍵で封印・§61.11.4）
+  key_ref       TEXT NOT NULL DEFAULT '',
+  trust         TEXT NOT NULL,            -- email_verified | issuer（§61.4・既定なし）
+  allowed_tids  TEXT NOT NULL DEFAULT '', -- CSV
+  allowed_domains TEXT NOT NULL DEFAULT '',
+  status        TEXT NOT NULL DEFAULT 'pending', -- pending | active | suspended
+  approved_by   TEXT NOT NULL DEFAULT '', -- 承認した super_admin の identity_id（監査）
+  approved_at   TEXT,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL,
+  UNIQUE (tenant_id, name)
+);
+```
+
+★ **provider id の名前空間を分ける。** env 由来は今までどおり `entra`、DB 由来は
+**`t:<tenant-slug>:<name>`** とする。混ぜると、テナントが `google` という名前で行を作った瞬間に
+env の Google を上書きできてしまう。`sessionClaims.prov` にもこの形で入るので、
+`resolveFull` は prefix を見るだけで「これはテナント定義か」を判定できる。
+
+`common` / `organizations` issuer ＋ `ALLOWED_TIDS` 空の禁止（決定 7）は **API のバリデーションとして
+同じく効かせる**。env 側は起動時 fatal だが、DB 側は保存時 400 で弾く（実行中に落とせないため）。
+
+### 61.11.6 UI
+
+- **テナント詳細に「認証方式」欄**（tenant_admin が見える）。追加フォームは issuer / client_id /
+  client_secret / trust / ラベル ja・en / 許可ドメイン / tid。保存すると `pending` で並ぶ。
+- **super_admin 側に承認キュー**（管理タブ）。「どのテナントが、どの issuer を、誰の申請で」を出し、
+  承認・却下する。**承認は監査ログに必ず残す**（`approved_by` / `approved_at` はその写し）。
+- 承認済み行の secret は `***` 表示。編集して空のままなら既存値を維持（`mergeHeaders` と同じ規則）。
+- ★ **issuer を変更したら `pending` へ戻す。** 承認は「この issuer を信じてよい」に対して与えたもので、
+  issuer が変われば承認の対象そのものが変わる。client_id / trust の変更も同じ扱いにする。
+
+### 61.11.7 段階への位置づけ
+
+**P4。P1（`0038`）が前提**で、P3 とは独立に見えるが `/login/<slug>` と `allowed_providers` の
+強制（P3）が無いと 61.11.3 の 3・4 が成立しないため、**実質 P1 → P3 → P4** の順になる。
+P4 を入れない会社は §61.11.1 の env 併記で足りる（再起動が要るだけ）。
+
+## 61.12 段階
 
 | 段階 | 内容 | スキーマ変更 |
 |------|------|------------|
@@ -620,13 +768,16 @@ super_admin が毎日の運用に出てくるのは、部署テナントの新�
 | **P1** | `identity_provider` テーブルと解決規則（§61.5）。Console の「アカウントを追加」導線 | `0038` |
 | **P2** | GitHub アダプタ（org 判定・TTL キャッシュ・猶予） | 無し |
 | **P3** | テナント毎のログイン（§61.9）: `/login/<slug>`・`allowed_providers` の強制・入口の門に membership を含める・`auto_join_domains` / `allowed_domains`・admin 編集 UI・`provider_required` の再サインイン導線。★ **membership の削除／無効化 API**（§61.10.6）と **`super_admin` のブートストラップ**（§61.10.2）を含む | `0039` |
+| **P4** | テナント定義の認証方式（§61.11）: `tenant_idp` テーブル・秘密の封印保存・tenant_admin の編集 UI・**super_admin の承認フロー**・provider の名前空間分離 | `0040` |
 
 - **P1 を P2 より先に置くのが本設計の要点**。GitHub は email 不一致が常態なので、リンク機構なしに
   出すと §61.5-1 の workspace 分裂を必ず起こす。
 - **P3 は P1 / P2 と独立**で、P0 の直後に着手してよい（依存は `prov` クレームだけ）。
+- **P4 は P1 が必須**（§61.11.3-2）。email 一致で identity を結合する規則が生きたままテナント定義の
+  IdP を許すと、email を騙るだけで既存 identity を乗っ取れる。
 - P0 だけでも「Microsoft でログインしたい」は満たせる。
 
-## 61.12 却下した代替案
+## 61.13 却下した代替案
 
 - **CP に SAML SP を実装する。** 日本企業の IdP は SAML 前提が多いが、SP 実装（メタデータ・署名検証・
   暗号化アサーション・リプレイ防止）は OIDC の数倍の面積で、stdlib では収まらない。
@@ -659,8 +810,24 @@ super_admin が毎日の運用に出てくるのは、部署テナントの新�
   管理 API のある DB 側に置く（§61.9.7）。
 - **セッションに複数 provider を同時に持たせる。** テナント間移動の再ログインは消えるが、
   cookie が「認可状態の集合」になり、失効とオフボーディングの意味が曖昧になる（§61.9.4）。
+- ★ **tenant_admin が単独で認証方式を有効化できるようにする。** 「テナントのことはテナントで完結」
+  という §61.10.8 の線には最も忠実で、子会社の受け入れに情シスが出てこない。だが
+  **IdP を足せる人はそのデプロイの誰にでもなれる**（§61.11.2）。`user_key` が email 由来で
+  デプロイ全体に 1 つ、デプロイ役割も email 一致で決まる以上、これは権限昇格そのもので、
+  tenant_admin の任命が super_admin の任命と同義になってしまう。承認を 1 段挟む
+  （子会社あたり 1 回）方が、失うものに対して圧倒的に安い。
+- **承認を省略する env（`AF_ALLOW_TENANT_IDP=1`）を用意する。** 「自社の tenant_admin は信頼できる」
+  デプロイ向けの逃げ道だが、**fail-closed を env 1 行で外せる形にすると、それが既定の設置手順に
+  なる**（許可リストを空にしたまま運用しないのと同じ理由）。承認は 1 回きりの操作なので、
+  外す価値が無い。
+- **テナントの `client_secret` を env に置いたまま、DB にはテナントの選択だけ持たせる。**
+  秘密がバックアップに入らない利点はある（§61.11.4）。ただしテナント追加のたびに
+  ホストのファイル編集＋CP 再起動が必要で、§61.11.1 の穴がそのまま残る。
+  MCP のヘッダで既に同じ posture を受容しているため、ここだけ厳しくする理由が無い。
+- **テナント定義の provider に env と同じ id 空間を使う。** 実装は短いが、テナントが `google` という
+  名前の行を作った瞬間に env の Google を上書きできる。`t:<slug>:<name>` に分ける（§61.11.5）。
 
-## 61.13 残る未決
+## 61.14 残る未決
 
 - Console のアカウント連携 UI をどのグループに置くか（設定モーダルの IA・[settings-modal](../docs/README.md) 参照の再編と衝突しないか）。
 - `audit.go` に provider を残すか（監査上は残したいが、DTO を広げる前に既存カラムから導出できないか確認する）。
@@ -680,3 +847,10 @@ super_admin が毎日の運用に出てくるのは、部署テナントの新�
   残るのは猶予の長さと棚の見せ方で、[45-deletion-lock](45-deletion-lock.md) と掃除の段階制に合わせて決める。
 - `prompt=select_account` 相当を各 IdP でどう揃えるか（Entra は `prompt=select_account` が使えるが、
   IdP によっては未対応で無視される）。
+- **P4**: テナント定義の provider で許可リスト（`allowed_domains` / tid）が空のときの扱い。
+  §61.11.3-3 でデプロイ共通リストへフォールバックしないと決めたので**全拒否**になるが、
+  「承認したのに誰も入れない」を招く。保存時に必須とするか、承認画面で警告するか。
+- **P4**: 承認待ち（`pending`）の間、tenant_admin に何をどう見せるか。ログイン URL を先に配ってしまうと
+  「押しても入れない」だけの画面になる。承認されるまで URL を出さない方が親切かもしれない。
+- **P4**: 承認した issuer の**その後**を誰が見るか。IdP 側の設定（セルフサインアップの有効化など）は
+  承認後に変えられるので、承認は一度きりの点検にしかならない。定期的な再確認を促す仕組みが要るか。

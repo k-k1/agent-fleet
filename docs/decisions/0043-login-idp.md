@@ -189,6 +189,49 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
     **CP の外**で伝える。CP にメール送信を持たせない方針（決定 10 の magic link 却下と同じ理由）で、
     通知経路を足しても「本人に届いたか」の保証は結局得られない。
 
+### テナント定義の認証方式（P4・子会社ごとに Entra が違う場合・docs/61 §61.11）
+
+29. **テナント毎に provider 定義そのものを持てるようにする（P4）。** グループ各社・分社では
+    テナントごとに Entra テナントが違う（issuer も client_id/secret も別）。P0 の env でも
+    `AF_OIDC_PROVIDERS=entra_a,entra_b` と並べれば動く（実測済み）が、**テナントを増やすたびに
+    ホストのファイル編集＋CP 再起動**になり、「テナント新設は再起動不要」（決定 25・docs/61 §61.10.3）と
+    矛盾する。定義を DB へ移し、tenant_admin が Console から編集できるようにする。
+30. ★ **有効化は `super_admin` の承認を要する。編集と保存は tenant_admin、有効化は別の人。**
+    プロジェクト MCP（[0031](0031-mcp-registry.md)）は tenant_admin が単独で登録できるが、
+    あれは「そのテナントのエージェントが**外へ**叩きに行く先」で、**IdP は「誰であるか」を宣言する
+    主体**だから同じ扱いにはできない。実測した乗っ取り経路: `user_key = sanitizeUser(email)`
+    （`resolver.go:281`）は**デプロイ全体で 1 つの名前空間**で、デプロイ役割も **email 一致**で決まる
+    （`roleHintFor`・`resolver.go:28`）。よって自分の支配下の IdP を登録できる tenant_admin は
+    `email=<super_admin>` を主張するトークンを自分で発行してサインインでき、`UpsertIdentity` が
+    role を上げ、**never downgrade（`store_sqlite.go:314-317`）なので不正 provider を消しても残る**。
+    `trust: "issuer"` は防波堤にならない（issuer が攻撃者自身）。★ **悪意が無くても起きる** —
+    セルフサインアップ有効な Auth0 テナントを善意で登録した瞬間にデプロイ全体が開く。
+    承認は子会社あたり 1 回きりなので、運用コストは失うものに対して圧倒的に小さい。
+    無効化（`suspended`）は tenant_admin も打てる — **止める方向は誰でも早く**。
+    ★ **issuer / client_id / trust を変更したら `pending` へ戻す**。承認は「この issuer を信じてよい」に
+    対して与えたもので、issuer が変われば承認の対象そのものが変わる。
+31. ★ **テナント定義の provider からは `super_admin` を取れない。** `roleHintFor` は
+    **env 由来 provider のログインにだけ**効かせる。承認済みでも、その IdP の管理者はその会社の
+    情シスであってこのデプロイの設置者ではない（決定 24 の「デプロイ全体の権限はホストに触れる人だけ」）。
+32. ★ **P4 は P1（`0038`）が前提。** テナント定義の provider は `(provider, subject)` で identity を
+    作り、**決定 4 / docs/61 §61.5 の「email 一致で既存 identity へ結合」を無効化する**。
+    これが無いと、email を騙るだけで既存の identity＝home＝secrets を乗っ取れる。
+    あわせて、テナント定義の provider は**自テナントにしか入れない**（`prov` を `resolveFull` で突合。
+    入口の許可リストもそのテナントのものを使い、デプロイ共通リストへフォールバックしない）し、
+    **素の `/login` には出さず `/login/<slug>` 限定**にする（全子会社のボタンが未認証者に並ぶと
+    組織構成が漏れる）。依存関係は実質 **P1 → P3 → P4**。
+33. **`client_secret` は DB にテナント鍵で封印して置く。前例は `mcp_server`。**
+    `headers_enc` ＋ `key_ref` を `custodian.Wrap(tenantID, …)` で封印し（`mcp_server.go:146`・
+    AES-256-GCM・AAD=keyRef）、UI へは `***` でマスク、更新は merge で未編集の値を残し、
+    復号不能は空にせず明示エラー（`mcp_headers_unreadable`）——この 4 点をそのまま踏襲する。
+    正直に添える限界 2 つ: `localCustodian` の KEK は master 由来なので**テナント間の暗号学的分離では
+    ない**（[0005](0005-envelope-custodian.md)）／env から DB へ移すと秘密が **`DATA_DIR`＝
+    バックアップの中**に入る（`AF_MASTER_KEY` をデータ領域の外に置く既存ルールが前提）。
+    ★ **provider id の名前空間を分ける**: env 由来は `entra`、DB 由来は `t:<tenant-slug>:<name>`。
+    混ぜるとテナントが `google` という名前の行を作って env の Google を上書きできる。
+    `common` / `organizations` ＋ TIDs 空の禁止（決定 7）は、DB 側では**保存時 400** で効かせる
+    （実行中の CP は落とせないため）。
+
 ## 却下した案
 
 - **Entra 専用実装を足すだけ。** 最短だが、Okta / Keycloak の要望のたびに同じ作業を繰り返す。
@@ -213,10 +256,21 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
   **退職者はもうログインしない**ので DB に `super_admin` が残り続ける（決定 24）。
 - **テナントに `allowed_emails` カラムを持たせる。** 「テナント毎にログインできる ID を管理する」の
   最も素直な実装だが、membership が既に同じ名簿なので二重台帳になる（決定 15）。
+- ★ **tenant_admin が単独で認証方式を有効化できるようにする。** 「テナントのことはテナントで完結」
+  という決定 25/26 の線には最も忠実だが、**IdP を足せる人はそのデプロイの誰にでもなれる**（決定 30）。
+  tenant_admin の任命が super_admin の任命と同義になってしまう。
+- **承認を省略する env（`AF_ALLOW_TENANT_IDP=1`）を用意する。** 「自社の tenant_admin は信頼できる」
+  デプロイ向けの逃げ道だが、**fail-closed を env 1 行で外せる形にすると、それが既定の設置手順になる**。
+  承認は子会社あたり 1 回きりなので、外す価値が無い（決定 30）。
+- **テナントの `client_secret` は env に置いたまま、DB にはテナントの選択だけ持たせる。**
+  秘密がバックアップに入らない利点はあるが、テナント追加のたびにホスト編集＋再起動が残る。
+  MCP のヘッダで既に同じ posture を受容している以上、ここだけ厳しくする理由が無い（決定 33）。
+- **テナント定義の provider に env と同じ id 空間を使う。** 実装は短いが、テナントが `google` という
+  行を作って env の Google を上書きできる（決定 33）。
 - **テナント毎のログインをサブドメインで分ける / URL・cookie のテナント指定を認可の根拠にする /
   テナント規則を `authGate` に置く / `allowed_domains` を毎リクエストの制約にする /
   `auto_join_domains` を唯一の帰属手段にする / テナント規則を env に置く /
-  セッションに複数 provider を持たせる。** それぞれ決定 13〜19 の裏返しで、理由は docs/61 §61.12。
+  セッションに複数 provider を持たせる。** それぞれ決定 13〜19 の裏返しで、理由は docs/61 §61.13。
 
 ## 影響
 
@@ -253,3 +307,14 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
   テナント所有なので残る）という非対称は、事前に知らないと退職後に気づくことになる。
 - P3 で `AF_PROVISION` の意味が広がる（`auto_join_domains` 一致が `auto` / `invite` より先に効く）。
   一致しないときの挙動は現行と同じなので、既存デプロイの見え方は変わらない。
+- P4 で `tenant_idp`（`0040`）が増え、**provider の一覧が env 固定ではなくなる**（決定 29）。
+  P0 の `buildLoginProviders` は起動時に 1 回読むだけなので、DB 由来の provider を扱うには
+  **実行時に足し引きできる形へ変える**（短 TTL キャッシュ＋管理 API の書き込みで破棄。決定 19 の
+  テナント規則と同じ扱い）。承認・停止が再起動なしで効くことが P4 の前提なので、ここは避けられない。
+- P4 で `roleHintFor`（`resolver.go:28`）に「どの provider で入ったか」が渡るようになる（決定 31）。
+  `sessionClaims.prov` は P0 で入っているので、経路としては `authGate` から下ろすだけ。
+- P4 で Console に面が 2 つ増える: テナント詳細の「認証方式」（tenant_admin）と、
+  super_admin の**承認キュー**。承認は権限を作る操作なので、**`audit.go` に必ず残す**
+  （誰がどのテナントのどの issuer を承認したか）。
+- P4 の秘密は `DATA_DIR` の DB に入るため、**バックアップの取り扱い（`AF_MASTER_KEY` を
+  データ領域の外に置く）が今より効く**。operator guide の該当箇所に一言足す（二言語とも）。
