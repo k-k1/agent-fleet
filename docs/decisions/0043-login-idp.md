@@ -1,7 +1,7 @@
 # 0043. ログイン IdP はプロバイダ別実装を増やさず「汎用 OIDC 1 本 ＋ GitHub だけ専用」にし、同一人物の保証を GitHub より先に入れる
 
 - 状態: 採用・**未実装**（2026-08-14。設計は docs/61。同日、1 デプロイ内を部署でテナント分割する
-  要件を受けて**決定 13〜27（テナント毎のログイン・責務分担・P3）を追加**した。うち決定 15/16 は
+  要件を受けて**決定 13〜28（テナント毎のログイン・責務分担・移譲と退職・P3）を追加**した。うち決定 15/16 は
   「テナント毎にログインできる ID を管理すればよい」という指摘を受けた見直しで、
   招待 API が既にあることを実測して**テナント側の email リストを設計から落とした**）
 - 関連: [61-login-idp.md](../61-login-idp.md) /
@@ -153,12 +153,14 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
     「Upgrade (never downgrade)」（`store_sqlite.go:314-317`）なので、`SUPER_ADMIN_EMAILS` から
     消して再起動しても `identity.role` は `super_admin` のまま残り、降格 API も無い
     （`setMembershipRole` はテナント役割のみ）＝ DB 直編集以外に手段が無い。
-    env を単一の正とし、**ログイン時にリストに無ければ `user` へ落とす**。
+    env を単一の正とし、**CP 起動時に一括同期する**（`SUPER_ADMIN_EMAILS` に無い `super_admin` を
+    `user` へ落とす）。★ ログイン時同期ではなく**起動時**にする理由は移譲・退職ケース —
+    退職者はもう二度とログインしないので、ログイン時同期では DB に `super_admin` が残り続ける
+    （docs/61 §61.10.7）。起動時なら env を書き換えて再起動する移譲手順とタイミングが一致する。
     実装注意 — **降格を `UpsertIdentity` の `roleHint` に持たせない**。
     `addMembership`（`tenants.go:285`）/ `cleanHome`（`:195`）/ `stopWorkspace`（`:149`）は
     `roleHint=""` で呼ぶため、誰かをテナントに追加しただけで super_admin が落ちる。
-    本人の email が確定しているログイン経路（`identityFor` / `resolveFull`）だけが同期するよう
-    専用の store メソッドに分ける。
+    起動時の一括 UPDATE なら `roleHint` を通らないので、この罠を構造的に回避できる。
 25. **テナントの新設と `tenant_admin` の任命は `super_admin`。** 実装は既にこのとおりで変更不要
     （`POST /api/admin/tenants` は `withSuperAdmin`＝`routes.go:133`、`tenant_admin` を付けられるのは
     super_admin だけ＝`tenants.go:280`、`PUT /api/admin/membership-role` も `withSuperAdmin`）。
@@ -172,7 +174,18 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
     tenant_admin ができるため揃えるのは `clean-home` だけ。即時削除にしない扱いは
     [0028-deletion-lock](0028-deletion-lock.md) と掃除の段階制に合わせる。
     決定 22 の membership 無効化 API も同じく tenant_admin（自テナント分）に開く。
-27. **招待の通知機能は作らない。** 招待 URL（`/login/<slug>`）は tenant_admin が口頭 / 社内チャットなど
+27. ★ **セッションの即時失効は「`AF_COOKIE_SECRET` のローテーション」しか無い。これを runbook に書く。**
+    セッション cookie は stateless（HMAC over `{email, exp}`・`oauth_google.go:85-93`）で、
+    サーバ側にセッションストアも個別失効も「全端末からログアウト」も無い。今それで足りていたのは、
+    **許可リストから消せば `authGate` が毎リクエスト弾く**（`:299-309`）のが実質の失効機構だったため。
+    決定 15/16 で名簿を membership に寄せると、その役割は membership 無効化が担うが、
+    ★ **`AF_OAUTH_ALLOWED_DOMAINS` を併用しているデプロイでは塞がらない** — 前任は membership を
+    全部外されてもドメイン一致だけで入口を通り、管理 API は `identityFor` だけで通って membership を
+    要求せず、決定 24 未修正なら `role` は `super_admin` のままなので `withSuperAdmin` を通過して
+    **自分を復帰させられる**（手元の cookie は最大 `AF_SESSION_TTL`＝既定 168h 有効）。
+    対策は決定 24 の起動時同期＋このローテーション手順の 2 段。**サーバ側セッションストアは作らない**
+    — stateless cookie の軽さは CP の設計上の利点で、失効のために状態を持つのは代償が大きい。
+28. **招待の通知機能は作らない。** 招待 URL（`/login/<slug>`）は tenant_admin が口頭 / 社内チャットなど
     **CP の外**で伝える。CP にメール送信を持たせない方針（決定 10 の magic link 却下と同じ理由）で、
     通知経路を足しても「本人に届いたか」の保証は結局得られない。
 
@@ -193,6 +206,11 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
   「本人に届いたか」の保証も得られない（決定 27）。
 - **workspace / home の削除を super_admin 限定のままにする。** 現状の実装はこれだが、
   部署の人員を把握していない情シスに毎回頼む形になる（決定 26）。
+- **サーバ側セッションストアを持って個別失効できるようにする。** 退職者を即座に切れるが、
+  stateless cookie の軽さ（DB 参照ゼロで認証が済む）を捨てることになる。
+  鍵ローテーションという即時手段が既にあるので、そこまでの代償は払わない（決定 27）。
+- **`super_admin` の降格をログイン時だけに同期する。** 実装は素直だが、
+  **退職者はもうログインしない**ので DB に `super_admin` が残り続ける（決定 24）。
 - **テナントに `allowed_emails` カラムを持たせる。** 「テナント毎にログインできる ID を管理する」の
   最も素直な実装だが、membership が既に同じ名簿なので二重台帳になる（決定 15）。
 - **テナント毎のログインをサブドメインで分ける / URL・cookie のテナント指定を認可の根拠にする /
@@ -227,6 +245,11 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
   `routes.go:136` の `withSuperAdmin` を外し、ハンドラ内で `tenantAdminFor` を取る形に変える。
   **権限を広げる変更なので、監査（`audit.go`）に誰がどのテナントの誰の home を消したかを必ず残す。**
 - P3 で `identity.role` の降格経路ができる（決定 24）。`UpsertIdentity` の
-  「never downgrade」は**維持したまま**、ログイン経路専用の同期メソッドを足す形にする。
+  「never downgrade」は**維持したまま**、起動時に一括同期する処理を `main.go` に足す形にする。
+- `AF_COOKIE_SECRET` のローテーション手順（＝全員ログアウト）を **operator の runbook に新設**する
+  （決定 27）。現状 `deploy/**` にも `docs/guide/operator/**` にも記述が無い。guide は二言語とも。
+- 退職・移譲の棚卸し表（docs/61 §61.10.7）を operator guide にも出す。とくに
+  **定時実行は `Schedule.MembershipID`＝個人所有なので止まる**（内部 git は `git_repo.tenant_id`＝
+  テナント所有なので残る）という非対称は、事前に知らないと退職後に気づくことになる。
 - P3 で `AF_PROVISION` の意味が広がる（`auto_join_domains` 一致が `auto` / `invite` より先に効く）。
   一致しないときの挙動は現行と同じなので、既存デプロイの見え方は変わらない。
