@@ -77,9 +77,6 @@ type tenantIdPStoreView interface {
 type tenantProviderSnapshot struct {
 	byID   map[string]*oidcProvider
 	bySlug map[string][]*oidcProvider // login-page order, per tenant
-	// tenantOf maps a provider id to the tenant that owns it, so the tenant gate can
-	// pin a session without parsing the slug back into a lookup.
-	tenantOf map[string]string
 }
 
 // builtProvider caches the constructed provider so an unchanged row keeps its OIDC
@@ -152,9 +149,8 @@ func (r *tenantIdPRegistry) snapshot(ctx context.Context) *tenantProviderSnapsho
 	}
 
 	snap := &tenantProviderSnapshot{
-		byID:     map[string]*oidcProvider{},
-		bySlug:   map[string][]*oidcProvider{},
-		tenantOf: map[string]string{},
+		byID:   map[string]*oidcProvider{},
+		bySlug: map[string][]*oidcProvider{},
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -190,7 +186,6 @@ func (r *tenantIdPRegistry) snapshot(ctx context.Context) *tenantProviderSnapsho
 		keep[id] = p
 		snap.byID[id] = p.prov
 		snap.bySlug[slug] = append(snap.bySlug[slug], p.prov)
-		snap.tenantOf[id] = row.TenantID
 	}
 	r.built = keep
 	r.snap, r.exp = snap, time.Now().Add(r.ttl)
@@ -229,19 +224,6 @@ func (r *tenantIdPRegistry) providersForSlug(ctx context.Context, slug string) [
 		out = append(out, p)
 	}
 	return out
-}
-
-// tenantIDFor returns the tenant that owns an active provider id.
-func (r *tenantIdPRegistry) tenantIDFor(ctx context.Context, id string) (string, bool) {
-	if r == nil || !isTenantProviderID(id) {
-		return "", false
-	}
-	snap := r.snapshot(ctx)
-	if snap == nil {
-		return "", false
-	}
-	t, ok := snap.tenantOf[id]
-	return t, ok
 }
 
 // --- building one provider from its row --------------------------------------
