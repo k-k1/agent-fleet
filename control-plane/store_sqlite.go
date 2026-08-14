@@ -673,17 +673,22 @@ func (s *sqlStore) AcquireWorkspaceOperationFence(ctx context.Context, workspace
 	for {
 		var err error
 		conn, err = s.db.DB.Conn(ctx)
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		var acquired bool
 		err = conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock(hashtextextended($1, 0))`, workspaceID).Scan(&acquired)
 		if err != nil {
 			discardSQLConn(conn) // server may have acquired immediately before the error
 			return nil, err
 		}
-		if acquired { break }
+		if acquired {
+			break
+		}
 		_ = conn.Close() // return the waiter connection before polling again
 		select {
-		case <-ctx.Done(): return nil, ctx.Err()
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
