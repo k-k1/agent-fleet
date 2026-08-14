@@ -227,7 +227,9 @@ service supports it:
 ## Known behavior: a cold Start answers `starting`, not `running`
 
 A cold workspace Start pays a full image pull on every launch (Fargate keeps no
-image cache between tasks) and converges in **~100s measured**. `POST
+image cache between tasks). Measured end-to-end in the sandbox (2026-08-15,
+`docs/62` §62.9): **126s on a fresh home, 128–218s on a warm one** — the earlier
+"~100s" was optimistic. `POST
 /api/workspace/start` does **not** wait for that: it returns as soon as the ECS
 service sits at `desiredCount 1`, with the live state — normally `starting`.
 Poll `GET /api/workspace` for the transition to `running`; the Console already
@@ -247,8 +249,14 @@ Note `running` here means the ECS **task** is RUNNING, which is a moment before
 the entrypoint has finished and the Agent answers. A create issued in that window
 still gets `502 workspace agent unreachable`; retry.
 
-**Measure before optimizing.** Nobody has split the ~100s into its parts. One
-Start gives you both numbers:
+**The split has been measured** (2026-08-15,
+[`docs/62-ecs-start-latency.md`](../../../docs/62-ecs-start-latency.md) §62.9), and
+the answer was not the image. On a warm-home Stop→Start, the ~160s average breaks
+down as **~79s waiting for the ECS service scheduler to create a task after
+`desiredCount` 0→1**, **35s image pull** (918 MiB compressed, 34 layers), **~25s
+EFS mount + container create**, **16s provision**, **21s entrypoint**. Image pull
+is only ~22% of it, so SOCI lazy loading was **rejected** — the lever is the
+scheduler reaction time. Re-measure the same way if any of this changes:
 
 ```bash
 # image pull window (and the surrounding task lifecycle)
@@ -314,7 +322,18 @@ aws cloudformation delete-stack --stack-name af-ecs-network   # last (others dep
 Per-workspace resources the CP created at runtime (ECS Services, task defs, EFS
 access points, SSM params) are **not** in these stacks — deregister/delete them via
 the CP's own workspace-delete path, or sweep by the `af-ws*` name/tag prefix, before
-deleting `af-ecs-network`.
+deleting `af-ecs-network`. Order that works (measured 2026-08-15):
+
+1. ECS **Service** `af-ws*` — `update-service --desired-count 0`, then `delete-service --force`.
+2. **Task definitions** `af-ws*` — `deregister-task-definition` for every ACTIVE revision
+   (the adapter registers a new one per Start, so expect several).
+3. **EFS access points** — `describe-access-points --file-system-id <efs>` then delete each.
+   ⚠️ **Miss these and `delete-stack af-ecs-data` stalls.** The filesystem id is the
+   `EfsId` output of `af-ecs-data` (*not* `FileSystemId` — a sweep script keyed on the
+   wrong name silently deletes nothing).
+4. **SSM** `/af-ws/*` (per-workspace DEK/token) and `/af-cp/*` (the out-of-band CP
+   secrets you created before `30-ingress`).
+5. Then the four `delete-stack` calls above, in order.
 
 ## Notes
 
