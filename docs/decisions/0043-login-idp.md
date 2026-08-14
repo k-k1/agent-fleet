@@ -123,6 +123,25 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
     「membership が正」という単一の正が崩れて同期衝突を扱うことになる。将来入れるとしても
     membership を上書きせず、**管理画面に差分を出して人が承認**する形にする。
     （Entra の `groups` は overage で Graph 参照に化けるため、実装も見た目より重い。）
+22. ★ **membership の削除／無効化 API を P3 のスコープに必ず含める。** 運用を書き下して見つかった穴で、
+    現状 `MembershipStore`（`store.go:383-402`）にあるのは `EnsureMembership`（挿入のみ）と
+    `SetMembershipRole` だけ、`routes.go` にも `DELETE /api/admin/memberships` が無い。
+    今それで足りているのは、オフボーディングが **env / ファイルの許可リストから消す**こと
+    （`oauth_google.go:299-309` の毎リクエスト再判定）で成立していたため。決定 15/16 で名簿を
+    membership に寄せると**この経路が消える** — IdP 側で無効化しても署名済みセッション cookie は
+    最大 `AF_SESSION_TTL`（既定 168h＝7 日）有効なので、外せなければ最大 7 日残る。
+    **異動（旧部署から外す）も退職（全部から外す）も実行できない。**
+    `Membership` には `Status` があり `GetMembershipByID` も missing/inactive を想定しているので、
+    **論理削除（`status='inactive'`）で足りる**（workspace / home は残したまま締め出せる）。
+    外した後の workspace / home の扱いは [0028-deletion-lock](0028-deletion-lock.md) と
+    掃除の段階制に合わせ、即削除しない。
+23. **`super_admin` は membership が無くても管理画面に入れるようにする（P3）。**
+    現状コードを追う限り、`AF_PROVISION=invite` で立ち上げると最初の 1 人が入れない —
+    membership ゼロだと `GET /api/tenants` が 403 `not_provisioned`（`resolver.go:69`）、
+    Console は `data.error` 分岐で `superAdmin` を立てず（`tenant.ts:93-100`・既定 `false`）、
+    管理メニューの表示条件 `superAdmin || tenant_admin`（`TopBar.tsx:319`）が偽になる。
+    admin API 自体は `identityFor` だけで通るので API 直叩きなら可能だが、手順として成立しない。
+    直すまでの運用は「**`auto` で立ち上げ → テナント作成と招待 → `invite` へ切替**」（docs/61 §61.10.2）。
 
 ## 却下した案
 
@@ -140,7 +159,7 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
 - **テナント毎のログインをサブドメインで分ける / URL・cookie のテナント指定を認可の根拠にする /
   テナント規則を `authGate` に置く / `allowed_domains` を毎リクエストの制約にする /
   `auto_join_domains` を唯一の帰属手段にする / テナント規則を env に置く /
-  セッションに複数 provider を持たせる。** それぞれ決定 13〜19 の裏返しで、理由は docs/61 §61.11。
+  セッションに複数 provider を持たせる。** それぞれ決定 13〜19 の裏返しで、理由は docs/61 §61.12。
 
 ## 影響
 

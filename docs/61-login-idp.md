@@ -319,7 +319,7 @@ AF_GITHUB_MEMBERSHIP_GRACE=1h
 
 ★ **全社共通ドメインの会社ではこれが本命**になる。`@acme.co.jp` しか無ければ
 `auto_join_domains` では部署を分けられないが、名簿（membership）は最初からドメインに依存しない。
-このため **IdP のグループ（Entra の `groups` / GitHub の team）連携は必須ではなくなった**（§61.12）。
+このため **IdP のグループ（Entra の `groups` / GitHub の team）連携は必須ではなくなった**（§61.13）。
 
 ★ **招待は email に紐づくので、GitHub 単独ログインとは噛み合わない。** `addMembership` は
 `sanitizeUser(email)` で identity を先に作る（`tenants.go:271-286`）。GitHub の登録 email が
@@ -379,21 +379,127 @@ ALTER TABLE tenant ADD COLUMN allowed_domains   TEXT NOT NULL DEFAULT ''; -- CSV
 この節は **P0（`prov` クレーム）さえ済めば着手でき、P1 / P2 とは独立**。GitHub を入れない会社でも
 「部署ごとにテナントを分け、Entra 限定にする」だけで価値が出る。
 
-## 61.10 段階
+## 61.10 運用イメージ（部署分割の一連の流れ）
+
+例: acme 社が 1 デプロイを持ち、中を **営業（sales）/ 開発（dev）/ 情シス（it）** に分ける。
+IdP は Entra ID、email は全社共通の `@acme.co.jp` だけ（＝ドメインでは部署を分けられない）。
+以下は **P0＋P3 まで実装した後**の姿。
+
+### 61.10.1 設置（情シス・1 回だけ）
+
+Entra 側にアプリ登録を **1 つ**。リダイレクト URI は `https://af.acme.co.jp/oauth2/callback` の
+**1 本だけ**で、部署テナントを何個増やしても増えない（§61.6・決定 8）。
+
+```sh
+AUTH=oauth
+PUBLIC_BASE_URL=https://af.acme.co.jp
+AF_COOKIE_SECRET=<base64-32-bytes>
+AF_OIDC_PROVIDERS=entra
+AF_OIDC_ENTRA_ISSUER=https://login.microsoftonline.com/<tenant-guid>/v2.0   # common にしない
+AF_OIDC_ENTRA_CLIENT_ID=... / AF_OIDC_ENTRA_CLIENT_SECRET=...
+AF_OIDC_ENTRA_TRUST=issuer
+SUPER_ADMIN_EMAILS=joho@acme.co.jp
+AF_PROVISION=auto            # ★ 最初は auto。招待運用へ切り替えるのは 61.10.2 の後
+```
+
+★ **`AF_OAUTH_ALLOWED_*` は書かなくてよい**（P3 後）。招待した人は membership で入口を通るため
+（§61.9.6）。ここが「名簿を 1 箇所に寄せる」の実利。
+
+### 61.10.2 最初の 1 人（＝ブートストラップ）
+
+1. 情シスの人が `https://af.acme.co.jp/` を開く → Entra でサインイン → `auto` なので既定テナントに入る。
+2. `SUPER_ADMIN_EMAILS` に載っているので `super_admin`（`resolver.go:29`）。アカウントメニューに管理が出る。
+3. 管理 → テナント作成で `sales` / `dev` / `it` を作る。
+4. 自分を `it` に `tenant_admin` として招待し、各部署の責任者も `tenant_admin` で招待する
+   （**`tenant_admin` を付けられるのは `super_admin` だけ** — `tenants.go:280`）。
+5. `AF_PROVISION=invite` に変えて CP を再起動。以降、招待されていない人は入れない。
+
+★ **いきなり `invite` で立ち上げてはいけない。** コードを追う限り、membership を 1 つも持たない人は
+`GET /api/tenants` が 403 `not_provisioned` を返し（`resolver.go:69`）、Console は
+`data.error` 分岐で `superAdmin` を立てないまま終わる（`tenant.ts:93-100`、既定 `false`）。
+その結果、管理メニューの表示条件 `superAdmin || tenant_admin`（`TopBar.tsx:319`）が偽になり、
+**`super_admin` でも管理画面に到達できない**。API 直叩き（`POST /api/admin/tenants` は
+`identityFor` だけで通る）なら可能だが、運用手順としては成立しない。
+→ **P3 の作業項目**: membership が無くても `super_admin` には `/api/tenants` が
+`{tenants: [], super_admin: true}` を返すようにする（現状は 403 で潰れる）。
+
+### 61.10.3 部署を 1 つ増やす（情シス）
+
+1. 管理 → テナント作成（`slug=sales` / 名前=営業部）。
+2. そのテナントの設定（P3 で追加する面）:
+   - 使える認証方式 = Entra のみ（`allowed_providers`）
+   - 招待ガード = `@acme.co.jp`（`allowed_domains`。他社ドメインを誤って招待しない保険）
+   - 専用ログイン URL = `https://af.acme.co.jp/login/sales`
+3. 営業部長を `tenant_admin` で招待。以降のメンバー追加は部長が自部署だけできる
+   （`tenantAdminFor` — `resolver.go:38`）。
+
+### 61.10.4 新しい人が入る（部長の操作 → 本人）
+
+1. 部長: 管理 → メンバー追加に `yamada@acme.co.jp` / role=member を入れて送信。
+   この時点で **identity 行と membership が先に作られる**（本人はまだ一度もログインしていない。
+   `tenants.go:285-291`）。
+2. 部長: 本人に `https://af.acme.co.jp/login/sales` を伝える。
+3. 本人: その URL を開くと **Entra のボタンだけ**が出る（`allowed_providers`）。サインイン。
+4. 入口の門は membership があるので通る。テナントの門も membership があるので通る。
+   `sales` の workspace が初回アクセスで作られる。
+5. ★ **情シスは何もしていない**（env も再起動も無し）。これが現状との一番の違い
+   — 今は `AF_OAUTH_ALLOWED_EMAILS_FILE` に 1 行足す作業が別に要る。
+
+### 61.10.5 兼務（1 人が 2 部署）
+
+- `sales` と `dev` の両方に招待する。ログイン後、Console のテナント切替に 2 つ出る
+  （`tenant.ts:107-110` は 2 件以上でピッカーを出す）。
+- ★ **workspace は membership 毎＝部署毎に別**（home も secrets も別・[dev/07 §7.2](dev/07-security.md)）。
+  同じ人でも営業の作業と開発の作業は混ざらない。これは既存の性質で、部署分割と相性が良い。
+- 部署で使える認証方式が違う場合（例: `dev` だけ GitHub 可）、切り替え時に
+  `provider_required` で再サインインを促す（§61.9.4）。
+
+### 61.10.6 異動・退職 — ★ ここに現状の穴がある
+
+運用としては「**名簿から外す**」＝ membership を消す（または無効化する）だけのはずだが、
+**その API が存在しない**。`MembershipStore`（`store.go:383-402`）にあるのは
+`EnsureMembership`（挿入のみ）/ `SetMembershipRole` / 各種 Get だけで、削除も無効化も無い。
+`routes.go` にも `DELETE /api/admin/memberships` は無い。
+
+- **今そうなっている理由**: 現行のオフボーディングは **env / ファイルの許可リストから消す**ことで、
+  `authGate` が毎リクエスト再判定して即座に締め出す設計だった（`oauth_google.go:299-309`）。
+  membership は「入れる人の名簿」ではなく「入った人の記録」でよかった。
+- **P3 で名簿を membership に寄せると、これが効かなくなる。** IdP 側で無効化しても
+  **署名済みセッション cookie は最大 `AF_SESSION_TTL`（既定 168h＝7 日）有効**なので、
+  membership を消せないと最大 7 日間アクセスが残る。
+- ★ **したがって P3 のスコープに membership の削除／無効化 API と管理 UI を必ず含める。**
+  これが無いと部署分割の運用は回らない（異動＝旧部署から外す、退職＝全部から外す、が実行できない）。
+  `Membership` には `Status` があり `GetMembershipByID` も「missing/inactive」を想定しているので、
+  **論理削除（`status='inactive'`）で足りる** — workspace / home を残したまま締め出せる。
+- 併せて決める: 外した後の **workspace / home をどう扱うか**（即削除しない・
+  [45-deletion-lock](45-deletion-lock.md) と掃除の段階制に合わせる）。
+
+### 61.10.7 まとめ — 情シスが触る場所
+
+| やること | 触る場所 | 再起動 |
+|---------|---------|-------|
+| 設置 | env（IdP 1 つ分）＋ Entra のアプリ登録 1 つ | 初回のみ |
+| 部署を増やす | 管理 → テナント作成＋設定 | 不要 |
+| 人を入れる | 管理 → メンバー追加（部長でも可） | 不要 |
+| 異動 | 新部署に追加＋旧部署から外す（**P3 で API 追加**） | 不要 |
+| 退職 | 全部署から外す＋ IdP 側で無効化 | 不要 |
+| IdP を増やす | env に `AF_OIDC_PROVIDERS` を 1 つ足す | 要 |
+
+## 61.11 段階
 
 | 段階 | 内容 | スキーマ変更 |
 |------|------|------------|
 | **P0** | プロバイダ抽象 ＋ 汎用 OIDC（Entra / Okta / Keycloak / Auth0 / Cognito）。Google を同実装の 1 インスタンスへ移す。ログイン画面の複数ボタン・`sessionClaims` 拡張（`prov` / `sub`）・設定と文書 | 無し |
 | **P1** | `identity_provider` テーブルと解決規則（§61.5）。Console の「アカウントを追加」導線 | `0031` |
 | **P2** | GitHub アダプタ（org 判定・TTL キャッシュ・猶予） | 無し |
-| **P3** | テナント毎のログイン（§61.9）: `/login/<slug>`・`allowed_providers` の強制・入口の門に membership を含める・`auto_join_domains` / `allowed_domains`・admin 編集 UI・`provider_required` の再サインイン導線 | `0032` |
+| **P3** | テナント毎のログイン（§61.9）: `/login/<slug>`・`allowed_providers` の強制・入口の門に membership を含める・`auto_join_domains` / `allowed_domains`・admin 編集 UI・`provider_required` の再サインイン導線。★ **membership の削除／無効化 API**（§61.10.6）と **`super_admin` のブートストラップ**（§61.10.2）を含む | `0032` |
 
 - **P1 を P2 より先に置くのが本設計の要点**。GitHub は email 不一致が常態なので、リンク機構なしに
   出すと §61.5-1 の workspace 分裂を必ず起こす。
 - **P3 は P1 / P2 と独立**で、P0 の直後に着手してよい（依存は `prov` クレームだけ）。
 - P0 だけでも「Microsoft でログインしたい」は満たせる。
 
-## 61.11 却下した代替案
+## 61.12 却下した代替案
 
 - **CP に SAML SP を実装する。** 日本企業の IdP は SAML 前提が多いが、SP 実装（メタデータ・署名検証・
   暗号化アサーション・リプレイ防止）は OIDC の数倍の面積で、stdlib では収まらない。
@@ -427,7 +533,7 @@ ALTER TABLE tenant ADD COLUMN allowed_domains   TEXT NOT NULL DEFAULT ''; -- CSV
 - **セッションに複数 provider を同時に持たせる。** テナント間移動の再ログインは消えるが、
   cookie が「認可状態の集合」になり、失効とオフボーディングの意味が曖昧になる（§61.9.4）。
 
-## 61.12 残る未決
+## 61.13 残る未決
 
 - Console のアカウント連携 UI をどのグループに置くか（設定モーダルの IA・[settings-modal](../docs/README.md) 参照の再編と衝突しないか）。
 - `audit.go` に provider を残すか（監査上は残したいが、DTO を広げる前に既存カラムから導出できないか確認する）。
@@ -442,5 +548,11 @@ ALTER TABLE tenant ADD COLUMN allowed_domains   TEXT NOT NULL DEFAULT ''; -- CSV
   `provider_required` は見せないと再ログインに誘導できないが、`allowed_domains` 違反を詳細に見せると
   他部署のドメイン構成が漏れる。
 - テナント規則による拒否を `audit.go` に残すか（§61.9.8 の競合解決も含めて）。
+- membership を外した人の **workspace / home をいつ消すか**（§61.10.6）。即削除しないのは決まりだが、
+  棚に載せるのか、テナント管理者に見えるのか、猶予は何日かは [45-deletion-lock](45-deletion-lock.md) と
+  掃除の段階制に合わせて決める。
+- 招待した本人へ**通知を出すか**（現状の招待は API を叩くだけで、本人には何も届かない）。
+  メール送信を CP に持たせない方針（§61.3 の magic link 却下と同じ理由）なので、
+  URL を人が伝える運用のままにするか、Console の通知センターに載せるか。
 - `prompt=select_account` 相当を各 IdP でどう揃えるか（Entra は `prompt=select_account` が使えるが、
   IdP によっては未対応で無視される）。
