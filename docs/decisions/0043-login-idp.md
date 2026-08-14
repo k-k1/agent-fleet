@@ -1,7 +1,9 @@
 # 0043. ログイン IdP はプロバイダ別実装を増やさず「汎用 OIDC 1 本 ＋ GitHub だけ専用」にし、同一人物の保証を GitHub より先に入れる
 
 - 状態: 採用・**未実装**（2026-08-14。設計は docs/61。同日、1 デプロイ内を部署でテナント分割する
-  要件を受けて**決定 13〜20（テナント毎のログイン・P3）を追加**した）
+  要件を受けて**決定 13〜21（テナント毎のログイン・P3）を追加**した。うち決定 15/16 は
+  「テナント毎にログインできる ID を管理すればよい」という指摘を受けた見直しで、
+  招待 API が既にあることを実測して**テナント側の email リストを設計から落とした**）
 - 関連: [61-login-idp.md](../61-login-idp.md) /
   [dev/07-security.md](../dev/07-security.md) §7.3（AUTH 3 モード＝現行契約） /
   [dev/06-data-model.md](../dev/06-data-model.md)（`identity` / `user_key`） /
@@ -85,13 +87,23 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
     絞るだけでは不十分**で、セッションの `prov` をテナント解決時に突合して強制する
     （さもないと汎用 `/login` で GitHub ログイン → `X-AF-Tenant` 差し替えで抜けられる）。
     決定 1 で `prov` クレームを足す価値の半分はここにある。
-15. ★ **email / ドメイン規則を 2 つに分ける。** (A) `auto_join_domains`＝自動参加（新規のみ）と
-    (B) `allowed_domains` / `allowed_emails`＝制約（既存メンバーにも毎回）は**別フィールド**にする。
-    1 つで兼ねると「異動しても残る」か「招待した業務委託（別ドメイン）が締め出される」の
-    どちらかを必ず起こす。(B) の既定は空（制約なし＝membership だけで判断）。
-16. **入口の判定は「和」にする**（デプロイ全体の許可リスト ∪ 各テナントの規則）。積にすると
-    テナントを足すたびにデプロイ全体のリストにも足す二重管理になる。和でも危険が増えないのは、
-    入口通過が「どこかに入れる」を意味しないため（決定 13）。**すべて空なら現行どおり全拒否**。
+15. ★ **「テナント毎にログインできる ID の名簿」は membership が持ち、テナントに `allowed_emails` を
+    足さない。** 実測すると器は既にある — `POST /api/admin/memberships`（`tenants.go:254`）は
+    email から**未ログインの人の identity を先に作って** membership を張る＝招待そのもので、
+    Console の管理タブに UI もある（`AdminTab.tsx:1593`）。テナント側に email リストを足すと
+    同じ「誰が入れるか」を 2 箇所で管理する**二重台帳**になり必ずずれる。
+    これにより**全社共通ドメインの会社でも部署分割が成立**する（名簿はドメインに依存しない）。
+    テナントが持つのは `auto_join_domains`（自動参加・省力化）と `allowed_domains`
+    （**招待時のガードのみ**。tenant_admin が自部署ドメイン外を勝手に足すのを防ぐ）の 2 つだけ。
+    `allowed_domains` を毎リクエストの制約にはしない — 正規に招待した業務委託（別ドメイン）が
+    締め出され、例外リストが要り、結局二重台帳へ戻るため。**継続的な可否は membership が持つ**。
+16. **入口の判定は「和」にし、そこに「membership を持つこと」を含める**
+    （デプロイ全体の許可リスト ∪ 各テナントの `auto_join_domains` ∪ membership）。
+    ★ 最後の項が現状で欠けている接続で、いまは招待済みでも `AF_OAUTH_ALLOWED_*`(env) に
+    載っていなければ `authGate` が入口で弾く。繋ぐと**招待運用のデプロイでは env の許可リストが
+    不要**になり、名簿が membership 1 箇所に寄る。積にすると招待のたびに env にも足す二重管理になる。
+    和でも危険が増えないのは、入口通過が「どこかに入れる」を意味しないため（決定 13）。
+    **すべて空なら現行どおり全拒否**。
 17. **ログイン画面の分割はパス方式（`/login/<slug>`）**。サブドメイン方式はワイルドカード DNS と
     証明書が要り、Funnel は 1 ホスト名しか出せず、redirect_uri が増えて決定 8 を壊す。
     **未知の slug は 404 にせず汎用画面**を返す（テナント slug の存在有無を未認証者に漏らさない）。
@@ -106,6 +118,11 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
     （`oauth_google.go:130`）、DB＋キャッシュはこれより軽い。
 20. **P3（テナント毎のログイン）は P1 / P2 と独立**で、P0 の直後に着手してよい（依存は `prov` だけ）。
     GitHub を入れない会社でも「部署ごとにテナントを分け、Entra 限定にする」だけで価値が出る。
+21. **IdP のグループ（Entra `groups` / GitHub team）→ テナント同期は入れない。** 決定 15 で名簿を
+    membership に寄せたため必須ではなくなり、残る利点は異動の自動追従だけ。入れると
+    「membership が正」という単一の正が崩れて同期衝突を扱うことになる。将来入れるとしても
+    membership を上書きせず、**管理画面に差分を出して人が承認**する形にする。
+    （Entra の `groups` は overage で Graph 参照に化けるため、実装も見た目より重い。）
 
 ## 却下した案
 
@@ -118,8 +135,11 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
 - **magic link / パスワードログイン。** IdP を持たない小さな会社には効くが、CP が資格情報と
   SMTP を背負う。需要が出てから別 ADR で判断する。
 - **Apple / LINE / Slack / Atlassian / Discord。** 会社が入退社を統制する手段にならず、B2B の入口に値しない。
+- **テナントに `allowed_emails` カラムを持たせる。** 「テナント毎にログインできる ID を管理する」の
+  最も素直な実装だが、membership が既に同じ名簿なので二重台帳になる（決定 15）。
 - **テナント毎のログインをサブドメインで分ける / URL・cookie のテナント指定を認可の根拠にする /
-  テナント規則を `authGate` に置く / (A)(B) を 1 リストで兼ねる / テナント規則を env に置く /
+  テナント規則を `authGate` に置く / `allowed_domains` を毎リクエストの制約にする /
+  `auto_join_domains` を唯一の帰属手段にする / テナント規則を env に置く /
   セッションに複数 provider を持たせる。** それぞれ決定 13〜19 の裏返しで、理由は docs/61 §61.11。
 
 ## 影響
@@ -137,7 +157,10 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
 - `dev/07-security.md` §7.3 の「AUTH 3 モード」表は、`oauth` 行が「Google」ではなくなるので書き換え。
 - GitHub を入れる会社には **org の OAuth App 承認**という設置手順が 1 つ増える
   （org が OAuth App access restrictions を有効にしていると、承認前は membership が見えず全員拒否になる）。
-- P3 で `tenant` に 4 カラム増える（`0032`）。`Tenant` 構造体（`store.go:15`）と
+- P3 で `authGate` の入口判定が membership を参照するようになる（決定 16）。招待運用のデプロイでは
+  `AF_OAUTH_ALLOWED_*` を空にできるようになるので、**「空＝全拒否」の警告文
+  （`main.go:283`）は「かつ membership も無い」まで含めた条件に直す**必要がある。
+- P3 で `tenant` に 3 カラム増える（`0032`）。`Tenant` 構造体（`store.go:15`）と
   `CreateTenant`（`store.go:364`）まわり、テナント管理 API と Console の管理 UI に編集面が要る。
 - P3 で `selectMembership`（`resolver.go:128`）にテナント規則と `prov` の突合が入り、
   戻り値のエラーコードに `provider_required` が増える。Console のテナント切替は
