@@ -304,6 +304,16 @@ func main() {
 	mgr.knownProviderIDs = map[string]bool{}
 	for _, p := range provs {
 		mgr.knownProviderIDs[p.ID()] = true
+		// ★ Stamp the realm on the logins this provider recorded before the column
+		// existed (docs/61 §61.15). Here rather than in the migration because only
+		// the set just built knows which id is which IdP — and rule 1.5 refuses to
+		// act on a realm it had to guess. A failure is logged, never fatal: the
+		// consequence is one join that falls back to today's behavior.
+		if realm := providerRealm(p); realm != "" {
+			if err := mgr.store.FillProviderRealm(ctx, p.ID(), realm); err != nil {
+				log.Printf("WARNING: recording the realm of login provider %q: %v", p.ID(), err)
+			}
+		}
 	}
 
 	mux := buildMux(cfg)
