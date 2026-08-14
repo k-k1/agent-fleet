@@ -48,6 +48,10 @@ interface Tenant {
   ws_idle_timeout?: string;
   allow_agent_self_update?: boolean;
   terminal_history_retention_days?: number;
+  // Per-tenant login rules, stored as CSV (docs/61 §61.9.7).
+  allowed_providers?: string;
+  auto_join_domains?: string;
+  allowed_domains?: string;
 }
 interface Member {
   user_key: string;
@@ -57,6 +61,10 @@ interface Member {
   state?: string;
   max_sessions?: number | null;
   mem_limit?: number | null; // per-workspace RAM cap in bytes (0/undefined = unset)
+  /** "active" | "removed". A removed member is off the roster and can no longer
+   *  sign in, but stays on THIS list so the rest of the offboarding sequence
+   *  (stop workspace → clean home) is still reachable (docs/61 §61.10.6). */
+  status?: string;
 }
 // Drill-down location: stage plus (optionally) the tenant slug / member being viewed.
 interface View {
@@ -268,6 +276,12 @@ export function AdminTab() {
           member={view.member!}
           isSuper={isSuper}
           onChanged={loadTenants}
+          onRemoved={() => {
+            // The member no longer exists at this stage — step back to the tenant
+            // rather than leave a detail view of somebody who is off the roster.
+            loadTenants();
+            goBack();
+          }}
         />
       )}
       </>
@@ -1561,6 +1575,12 @@ function TenantView({
         </section>
       )}
 
+      {/* Per-tenant login rules (docs/61 §61.9). super_admin only: two of the
+          three reach past this tenant — an auto-join domain widens the whole
+          deployment's entry gate, and the provider list decides which IdP is
+          trusted to say who somebody is. */}
+      {isSuper && <TenantLoginRules slug={slug} tenant={tenant} onChanged={onChanged} />}
+
       <section className="admin-panel">
         <h4>{tr("admin.members")}</h4>
         {members === null ? (
@@ -1577,7 +1597,7 @@ function TenantView({
                   {m.super_admin && <Icon name="star-full" className="mr-star" title="super_admin" />}
                 </span>
                 <span className="mr-email muted">{m.email || ""}</span>
-                <span className="mr-role">{m.role}</span>
+                <span className="mr-role">{m.status === "removed" ? tr("admin.member_removed") : m.role}</span>
                 {m.max_sessions != null && <span className="mr-lim muted">s≤{m.max_sessions}</span>}
                 <Icon name="chevron-right" className="mr-go" />
               </button>
@@ -1587,6 +1607,89 @@ function TenantView({
         <AddMember slug={slug} isSuper={isSuper} onAdded={loadMembers} />
       </section>
     </div>
+  );
+}
+
+// TenantLoginRules — the editor for the three CSV columns of docs/61 §61.9.7.
+//
+// The three are deliberately unlike each other and the hints say so, because the
+// costly mistake is treating allowed_domains as "who may use this tenant": it is
+// only a bound on who may be INVITED. Continuing access is membership, and making
+// the domain a per-request constraint would lock out the contractor somebody
+// invited on purpose (§61.9.5).
+function TenantLoginRules({
+  slug,
+  tenant,
+  onChanged,
+}: {
+  slug: string;
+  tenant: Tenant | null | undefined;
+  onChanged: () => void;
+}) {
+  const tr = useT();
+  const toast = useToast();
+  const [providers, setProviders] = useState(tenant?.allowed_providers || "");
+  const [autoJoin, setAutoJoin] = useState(tenant?.auto_join_domains || "");
+  const [domains, setDomains] = useState(tenant?.allowed_domains || "");
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    setProviders(tenant?.allowed_providers || "");
+    setAutoJoin(tenant?.auto_join_domains || "");
+    setDomains(tenant?.allowed_domains || "");
+  }, [slug, tenant]);
+
+  const save = async () => {
+    const res = await apiJSON(`api/admin/tenants/${encodeURIComponent(slug)}/login`, "PUT", {
+      allowed_providers: providers.trim(),
+      auto_join_domains: autoJoin.trim(),
+      allowed_domains: domains.trim(),
+    });
+    if (res?.error) {
+      toast(errText(res.error));
+      return;
+    }
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1500);
+    onChanged();
+  };
+
+  // The URL a tenant_admin hands to a new colleague (§61.10.4). Shown here because
+  // there is no notification path — passing it on is a human step, on purpose
+  // (決定 28: no SMTP in the Control Plane).
+  const loginURL = new URL("login/" + encodeURIComponent(slug), document.baseURI).toString();
+
+  return (
+    <section className="admin-panel">
+      <div className="admin-fgroup">
+        <h4>{tr("admin.login_rules")}<span className="af-note">{tr("admin.login_rules_note")}</span></h4>
+        <div className="admin-fgrid">
+          <label className="admin-fld">
+            <span className="af-cap">{tr("admin.allowed_providers")}</span>
+            <input type="text" placeholder="entra, google" value={providers} onChange={(e) => setProviders(e.target.value)} />
+            <span className="af-unit">{tr("admin.allowed_providers_unit")}</span>
+          </label>
+          <label className="admin-fld">
+            <span className="af-cap">{tr("admin.auto_join_domains")}</span>
+            <input type="text" placeholder="@sales.acme.co.jp" value={autoJoin} onChange={(e) => setAutoJoin(e.target.value)} />
+            <span className="af-unit">{tr("admin.auto_join_domains_unit")}</span>
+          </label>
+          <label className="admin-fld">
+            <span className="af-cap">{tr("admin.invite_domains")}</span>
+            <input type="text" placeholder="@acme.co.jp" value={domains} onChange={(e) => setDomains(e.target.value)} />
+            <span className="af-unit">{tr("admin.invite_domains_unit")}</span>
+          </label>
+        </div>
+        <p className="admin-hint">{tr("admin.login_rules_hint")}</p>
+        <p className="admin-hint">
+          {tr("admin.login_url")} <code>{loginURL}</code>
+        </p>
+      </div>
+      <div className="admin-actions">
+        <button onClick={save} className="primary">{tr("common.save")}</button>
+        {saved && <span className="saved-note"><Icon name="check" /> {tr("admin.saved")}</span>}
+      </div>
+    </section>
   );
 }
 
@@ -1638,18 +1741,22 @@ function MemberView({
   member,
   isSuper,
   onChanged,
+  onRemoved,
 }: {
   slug: string;
   member: Member;
   isSuper: boolean;
   onChanged: () => void;
+  onRemoved: () => void;
 }) {
   const tr = useT();
+  const toast = useToast();
   const [stats, setStats] = useState<any>(null);
   const [sessions, setSessions] = useState<any[] | null>(null);
   const [confirmStop, setConfirmStop] = useState(false);
   const [confirmClean, setConfirmClean] = useState(false);
   const [confirmGrant, setConfirmGrant] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const [busy, setBusy] = useState(false);
   const [limitOpen, setLimitOpen] = useState(false);
   const [limit, setLimit] = useState<number | string>(member.max_sessions ?? 0);
@@ -1734,6 +1841,26 @@ function MemberView({
     poll(); // mem_max reflects the new cap after the next start; refresh sessions/stats
     onChanged();
   };
+  // Offboarding (docs/61 §61.10.6). The membership is deactivated, not deleted:
+  // the workspace, its home and its secrets stay put, so a transfer can be undone
+  // by re-inviting. It is the step that actually revokes access — the signed
+  // session cookie itself lives for up to AF_SESSION_TTL and cannot be revoked
+  // individually — so it comes FIRST in the sequence, before stopping the
+  // workspace and wiping the home.
+  const removeMember = async () => {
+    setBusy(true);
+    try {
+      const res = await apiJSON("api/admin/memberships", "DELETE", { tenant_slug: slug, user_key: key });
+      if (res?.error) {
+        toast(errText(res.error));
+        return;
+      }
+      setConfirmRemove(false);
+      onRemoved();
+    } finally {
+      setBusy(false);
+    }
+  };
   const setRoleTo = async (newRole: string) => {
     setBusy(true);
     try {
@@ -1755,7 +1882,11 @@ function MemberView({
         </span>
         <span className="mh-key mono">{key}</span>
         {member.super_admin && <Icon name="star-full" className="mr-star" title={tr("admin.super_admin_deploy_title")} />}
-        <span className="mh-role">{role}{role === "tenant_admin" ? tr("admin.tenant_admin_paren") : ""}</span>
+        <span className="mh-role">
+          {member.status === "removed"
+            ? tr("admin.member_removed")
+            : role + (role === "tenant_admin" ? tr("admin.tenant_admin_paren") : "")}
+        </span>
         {member.email && <span className="mh-email muted">{member.email}</span>}
       </header>
 
@@ -1860,9 +1991,15 @@ function MemberView({
           <button onClick={() => { setLimit(member.max_sessions ?? 0); setMemMb(member.mem_limit ? Math.round(member.mem_limit / 1048576) : 0); setLimitOpen(true); }}>
             <Icon name="settings" /> {tr("admin.set_limits")}
           </button>
-          {isSuper && (
-            <button className="danger-btn" onClick={() => setConfirmClean(true)}>
-              <Icon name="trash" /> {tr("admin.clean_home")}
+          {/* clean-home is a tenant_admin action now (docs/61 §61.10.6 / 決定 26):
+              the department knows who left, so the whole offboarding sequence
+              belongs to it rather than half of it being a ticket to IT. */}
+          <button className="danger-btn" onClick={() => setConfirmClean(true)}>
+            <Icon name="trash" /> {tr("admin.clean_home")}
+          </button>
+          {member.status !== "removed" && (
+            <button className="danger-btn" disabled={busy} onClick={() => setConfirmRemove(true)}>
+              <Icon name="close" /> {tr("admin.remove_member")}
             </button>
           )}
         </div>
@@ -1917,6 +2054,19 @@ function MemberView({
           <p>{tr("admin.clean_body")}</p>
           <p className="muted">{tr("admin.clean_keep")}</p>
           <p className="muted">{tr("admin.clean_delete")}</p>
+        </ConfirmDialog>
+      )}
+      {confirmRemove && (
+        <ConfirmDialog
+          title={tr("admin.remove_title", { key, slug })}
+          confirmLabel={tr("admin.remove_confirm")}
+          busy={busy}
+          onCancel={() => setConfirmRemove(false)}
+          onConfirm={removeMember}
+        >
+          <p>{tr("admin.remove_body", { slug })}</p>
+          <p className="muted">{tr("admin.remove_keeps")}</p>
+          <p className="muted">{tr("admin.remove_undo")}</p>
         </ConfirmDialog>
       )}
       {confirmGrant && (

@@ -41,6 +41,17 @@ interface TenantStore {
 const WHOAMI_MIN_INTERVAL_MS = 30000;
 let lastWhoamiAt = 0;
 
+// tenantHintFromURL reads the ?tenant= the Control Plane appends after a sign-in
+// that started at /login/<slug>. Read once at boot and never trusted beyond
+// picking among memberships the server itself returned.
+function tenantHintFromURL(): string {
+  try {
+    return new URLSearchParams(location.search).get("tenant") || "";
+  } catch {
+    return "";
+  }
+}
+
 export const useTenantStore = create<TenantStore>((set) => ({
   whoami: null,
   tenants: [],
@@ -104,7 +115,14 @@ export const useTenantStore = create<TenantStore>((set) => ({
         set({ tenant: slug, showPicker: false });
         return true;
       }
-      let cur = getTenant();
+      // ?tenant=<slug> is the hint the per-tenant login URL leaves behind
+      // (/login/<slug> → docs/61 §61.10.4), so somebody who opened their
+      // department's link lands in that department rather than in whichever
+      // tenant this browser last used. It is only ever a preselection: it is
+      // honoured only when the server already listed that tenant among this
+      // person's memberships, and every request is authorized server-side
+      // regardless (ADR0043 決定 14).
+      let cur = tenantHintFromURL() || getTenant();
       if (!list.some((t) => t.slug === cur)) cur = list[0].slug;
       setTenant(cur);
       set({ tenant: cur, showPicker: true });

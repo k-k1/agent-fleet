@@ -20,8 +20,21 @@ func newTenantAPI(m *manager) tenantAPI { return tenantAPI{memberAuth{m}, m.stor
 // tenant picker (docs/14 P3-2). Single-membership users get one entry, so the
 // Console can auto-select and hide the picker.
 func (a tenantAPI) list(w http.ResponseWriter, r *http.Request, ident Identity) {
+	isSuper := ident.Role == "super_admin"
 	ms, aerr := a.mgr.membershipsFor(r.Context(), ident)
 	if aerr != nil {
+		// ★ A super_admin with no membership still gets an answer (docs/61 §61.10.2
+		// + 決定 23). Bootstrapping a deployment with AF_PROVISION=invite used to
+		// dead-end right here: this endpoint 403'd, the Console's error branch left
+		// superAdmin false, and the admin menu — whose condition is
+		// `superAdmin || tenant_admin` — never appeared, so the one person entitled
+		// to create the first tenant could not reach the screen that creates it.
+		// The admin API itself was always reachable (it gates on identityFor), so
+		// this only ever blocked the UI; it is still not a workable procedure.
+		if aerr.code == "not_provisioned" && isSuper {
+			writeJSON(w, http.StatusOK, map[string]any{"tenants": []any{}, "super_admin": true})
+			return
+		}
 		writeAPIErr(w, aerr)
 		return
 	}
@@ -30,15 +43,21 @@ func (a tenantAPI) list(w http.ResponseWriter, r *http.Request, ident Identity) 
 		// allow_agent_self_update: the operator gate, surfaced so the Console can
 		// show/hide the member's "keep CLIs updated" toggle for this tenant.
 		allowUpd := false
+		var provs []string
 		if t, err := a.store.GetTenant(r.Context(), m.TenantID); err == nil {
 			allowUpd = parseLimits(t.Limits).AllowAgentSelfUpdate
+			provs = splitCSVLower(t.AllowedProviders)
 		}
 		out = append(out, map[string]any{
 			"slug": m.TenantSlug, "name": m.TenantName, "role": m.Role,
 			"allow_agent_self_update": allowUpd,
+			// Which sign-in methods this tenant accepts (docs/61 §61.9.4; empty = any).
+			// The Console needs it to turn a provider_required refusal into a
+			// re-sign-in link instead of a dead end.
+			"allowed_providers": provs,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"tenants": out, "super_admin": ident.Role == "super_admin"})
+	writeJSON(w, http.StatusOK, map[string]any{"tenants": out, "super_admin": isSuper})
 }
 
 // adminAPI is the tenant/membership admin handler set（docs/23 残③）: tenant
@@ -99,9 +118,93 @@ func (a adminAPI) listTenants(w http.ResponseWriter, r *http.Request, ident Iden
 			"session_idle_timeout": lim.SessionIdleTimeout, "ws_idle_timeout": lim.WSIdleTimeout,
 			"allow_agent_self_update":         lim.AllowAgentSelfUpdate,
 			"terminal_history_retention_days": lim.TerminalHistoryRetentionDays,
+			// Per-tenant login rules (docs/61 §61.9.7), for the admin editor.
+			"allowed_providers": t.AllowedProviders,
+			"auto_join_domains": t.AutoJoinDomains,
+			"allowed_domains":   t.AllowedDomains,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tenants": out, "super_admin": isSuper})
+}
+
+// setTenantLogin (PUT /api/admin/tenants/{slug}/login) stores the per-tenant login
+// rules (docs/61 §61.9.7). super_admin only, deliberately: two of the three fields
+// reach past the tenant. auto_join_domains widens the DEPLOYMENT's entry gate — a
+// whole email domain gets in — and allowed_providers decides which IdP is trusted
+// to say who someone is. Those are the operator's calls (決定 24/25), while what a
+// tenant_admin owns is the roster inside their own tenant.
+func (a adminAPI) setTenantLogin(w http.ResponseWriter, r *http.Request, ident Identity) {
+	var body struct {
+		AllowedProviders string `json:"allowed_providers"`
+		AutoJoinDomains  string `json:"auto_join_domains"`
+		AllowedDomains   string `json:"allowed_domains"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
+		return
+	}
+	t, ok, err := a.mgr.store.GetTenantBySlug(r.Context(), r.PathValue("slug"))
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !ok {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "no_tenant", "unknown tenant"})
+		return
+	}
+	provs := splitCSVLower(body.AllowedProviders)
+	autoJoin := splitDomainCSV(body.AutoJoinDomains)
+	allowed := splitDomainCSV(body.AllowedDomains)
+
+	// Naming a provider the deployment does not have would silently produce a login
+	// page with no buttons, so refuse it here rather than at 3am.
+	for _, p := range provs {
+		if a.mgr.knownProviderIDs != nil && !a.mgr.knownProviderIDs[p] {
+			writeAPIErr(w, &apiError{http.StatusBadRequest, "unknown_provider",
+				"no login provider named " + p + " is enabled on this deployment"})
+			return
+		}
+	}
+	// ★ One domain, one tenant (docs/61 §61.9.8). The resolution rule ("lowest slug
+	// wins") exists for rows that predate this check; the check exists so nobody
+	// has to rely on it. Rejecting on save is the only place a human is present to
+	// read the reason.
+	rules, err := a.mgr.store.ListTenantLoginRules(r.Context())
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	for _, other := range rules {
+		if other.ID == t.ID {
+			continue
+		}
+		for _, d := range autoJoin {
+			for _, od := range other.AutoJoinDomains {
+				if d == od {
+					writeAPIErr(w, &apiError{http.StatusConflict, "auto_join_conflict",
+						"domain " + d + " is already an auto-join domain of tenant " + other.Slug})
+					return
+				}
+			}
+		}
+	}
+
+	if err := a.mgr.store.SetTenantLogin(r.Context(), t.ID, joinCSV(provs), joinCSV(autoJoin), joinCSV(allowed)); err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	// These rules ARE the entry gate; a cached copy would keep letting people in.
+	a.mgr.tenantLogin.invalidate()
+	_ = a.mgr.store.InsertAudit(r.Context(), AuditLog{
+		ID: newID(), TenantID: t.ID, ActorKind: "user", ActorID: ident.ID,
+		Action: "tenant.login_rules", Target: t.Slug,
+		Detail: "providers=" + joinCSV(provs) + " auto_join=" + joinCSV(autoJoin) + " allowed=" + joinCSV(allowed),
+		At:     nowTS(),
+	})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"tenant": t.Slug, "allowed_providers": joinCSV(provs),
+		"auto_join_domains": joinCSV(autoJoin), "allowed_domains": joinCSV(allowed),
+	})
 }
 
 // listMembers (GET /api/admin/tenants/{slug}/members).
@@ -115,20 +218,33 @@ func (a adminAPI) listMembers(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	out := make([]map[string]any, 0, len(members))
-	for _, m := range members {
-		container, state := a.mgr.workspaceStateByMembership(r.Context(), m.MembershipID)
-		row := map[string]any{
-			"user_key": m.UserKey, "email": m.Email, "role": m.MemberRole,
-			"super_admin": m.IdentityRole == "super_admin",
-			"container":   container, "state": state,
-		}
-		if ul, ok, _ := a.mgr.store.GetUserLimit(r.Context(), m.MembershipID); ok {
-			row["max_sessions"] = ul.MaxSessions
-			row["mem_limit"] = ul.MemLimit
-		}
-		out = append(out, row)
+	// Removed members stay on the ADMIN roster (and only here) so the rest of the
+	// offboarding sequence — stop the workspace, wipe the home — is still
+	// reachable after access has been revoked (docs/61 §61.10.6).
+	removed, err := a.mgr.store.ListRemovedMembersByTenant(r.Context(), t.ID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
 	}
+	out := make([]map[string]any, 0, len(members)+len(removed))
+	add := func(list []MemberInfo, status string) {
+		for _, m := range list {
+			container, state := a.mgr.workspaceStateByMembership(r.Context(), m.MembershipID)
+			row := map[string]any{
+				"user_key": m.UserKey, "email": m.Email, "role": m.MemberRole,
+				"super_admin": m.IdentityRole == "super_admin",
+				"container":   container, "state": state,
+				"status": status,
+			}
+			if ul, ok, _ := a.mgr.store.GetUserLimit(r.Context(), m.MembershipID); ok {
+				row["max_sessions"] = ul.MaxSessions
+				row["mem_limit"] = ul.MemLimit
+			}
+			out = append(out, row)
+		}
+	}
+	add(members, "active")
+	add(removed, "removed")
 	writeJSON(w, http.StatusOK, map[string]any{"tenant": t.Slug, "members": out})
 }
 
@@ -174,7 +290,17 @@ func (a adminAPI) stopWorkspace(w http.ResponseWriter, r *http.Request) {
 // cleanHome (POST /api/admin/clean-home {tenant_slug,user_key}) wipes a
 // member's workspace home except auth/connection state. Same target resolution as
 // stop-workspace; the container is stopped first.
-func (a adminAPI) cleanHome(w http.ResponseWriter, r *http.Request, _ Identity) {
+//
+// ★ tenant_admin, not super_admin (docs/61 §61.10.6 + 決定 26). The offboarding
+// sequence is "deactivate the membership → stop the workspace → wipe the home",
+// and the department is who knows that somebody left. Leaving only this last step
+// with the operator meant every leaver became a ticket to IT. The gate is
+// tenantAdminFor, exactly as stopWorkspace already does it, so a tenant_admin can
+// only reach their OWN members' homes.
+//
+// ★ This widens a permission, so it is audited: who wiped whose home in which
+// tenant, always.
+func (a adminAPI) cleanHome(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		UserKey    string `json:"user_key"`
 		TenantSlug string `json:"tenant_slug"`
@@ -183,13 +309,8 @@ func (a adminAPI) cleanHome(w http.ResponseWriter, r *http.Request, _ Identity) 
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
 		return
 	}
-	t, ok, err := a.mgr.store.GetTenantBySlug(r.Context(), body.TenantSlug)
-	if err != nil {
-		writeAPIErr(w, internalErr(err))
-		return
-	}
+	caller, t, ok := a.tenantAdminFor(w, r, body.TenantSlug)
 	if !ok {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "no_tenant", "unknown tenant"})
 		return
 	}
 	ident, err := a.mgr.store.UpsertIdentity(r.Context(), "", body.UserKey, "")
@@ -214,6 +335,10 @@ func (a adminAPI) cleanHome(w http.ResponseWriter, r *http.Request, _ Identity) 
 		writeAPIErr(w, internalErr(err))
 		return
 	}
+	_ = a.mgr.store.InsertAudit(r.Context(), AuditLog{
+		ID: newID(), TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
+		Action: "workspace.clean_home", Target: ident.UserKey, At: nowTS(),
+	})
 	writeJSON(w, http.StatusOK, map[string]any{"cleaned": body.UserKey, "tenant": t.Slug})
 }
 
@@ -282,16 +407,138 @@ func (a adminAPI) addMembership(w http.ResponseWriter, r *http.Request) {
 	if body.Role == "tenant_admin" && caller.Role == "super_admin" {
 		role = "tenant_admin"
 	}
+	// ★ allowed_domains is a guard on THIS call and nowhere else (docs/61 §61.9.5).
+	// It stops a tenant_admin from putting an address outside their department's
+	// domain on the roster. It is deliberately not re-checked per request: doing so
+	// would lock out the contractor somebody invited on purpose, which would then
+	// need an exception list — a second roster, which is what this design avoids.
+	if aerr := a.checkInviteDomain(r, t, body.Email, key); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
 	ident, err := a.mgr.store.UpsertIdentity(r.Context(), body.Email, key, "")
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	if _, err := a.mgr.store.EnsureMembership(r.Context(), ident.ID, t.ID, role); err != nil {
+	mem, err := a.mgr.store.EnsureMembership(r.Context(), ident.ID, t.ID, role)
+	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
+	// ★ Re-inviting somebody who was removed puts them back. EnsureMembership
+	// deliberately does not reactivate (it also serves the auto-provisioning paths,
+	// where that would undo an offboarding on the person's next visit) — so an
+	// invite, which IS an explicit decision, does it here.
+	if mem.Status != "active" {
+		if err := a.mgr.store.SetMembershipStatus(r.Context(), mem.ID, "active"); err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
+	}
+	// Being on a roster is an entry-gate term now (docs/61 §61.9.6) — an invited
+	// person must be able to sign in immediately, not after the cache expires.
+	a.mgr.tenantLogin.invalidate()
+	_ = a.mgr.store.InsertAudit(r.Context(), AuditLog{
+		ID: newID(), TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
+		Action: "membership.add", Target: ident.UserKey, Detail: "role=" + role, At: nowTS(),
+	})
 	writeJSON(w, http.StatusOK, map[string]any{"user_key": ident.UserKey, "tenant": t.Slug, "role": role})
+}
+
+// checkInviteDomain applies tenant.allowed_domains to an invite. The address is
+// the one being invited, or — when the invite names only a user_key — the one
+// already on that identity. An invite with no address at all cannot be checked, so
+// a tenant that set a guard refuses it rather than letting it through unexamined.
+func (a adminAPI) checkInviteDomain(r *http.Request, t Tenant, email, key string) *apiError {
+	domains := splitDomainCSV(t.AllowedDomains)
+	if len(domains) == 0 {
+		return nil
+	}
+	if email == "" {
+		if ident, ok, err := a.mgr.store.GetIdentityByUserKey(r.Context(), key); err == nil && ok {
+			email = ident.Email
+		}
+	}
+	if email == "" {
+		return &apiError{http.StatusBadRequest, "email_required",
+			"tenant " + t.Slug + " restricts invites to " + joinCSV(domains) + "; invite by email address"}
+	}
+	if !domainMatches(domains, email) {
+		return &apiError{http.StatusForbidden, "domain_not_allowed",
+			"tenant " + t.Slug + " only accepts members from: " + joinCSV(domains)}
+	}
+	return nil
+}
+
+// removeMembership (DELETE /api/admin/memberships {tenant_slug,user_key}) takes
+// somebody off a tenant's roster — the transfer/leaver operation docs/61 §61.10.6
+// found missing, and the one that P3 makes load-bearing: once the roster is also
+// the entry gate (§61.9.6), being unable to remove a row means being unable to
+// offboard at all. A signed session cookie is valid for up to AF_SESSION_TTL
+// (7 days by default) and cannot be revoked individually, so without this the
+// person keeps their access for a week after they leave (決定 22/27).
+//
+// The delete is LOGICAL (status='inactive'): the workspace, its home and its
+// encrypted secrets survive, and every resolution path already requires an active
+// membership, so access stops on the very next request. Deleting the row outright
+// would orphan the schedules, audit entries and shares that reference it.
+// Reinstating is just re-inviting — EnsureMembership reactivates.
+//
+// tenant_admin (their own tenant) or super_admin, matching who owns the roster.
+func (a adminAPI) removeMembership(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		UserKey    string `json:"user_key"`
+		TenantSlug string `json:"tenant_slug"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
+		return
+	}
+	caller, t, ok := a.tenantAdminFor(w, r, body.TenantSlug)
+	if !ok {
+		return
+	}
+	ident, found, err := a.mgr.store.GetIdentityByUserKey(r.Context(), body.UserKey)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !found {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "no_membership", "not a member"})
+		return
+	}
+	// ★ Not yourself. Removing your own last admin membership from the UI is an
+	// easy misclick with no undo from inside the product — the remaining path
+	// would be another admin, or the host's env.
+	if ident.ID == caller.ID {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "self_removal",
+			"you cannot remove your own membership; ask another administrator"})
+		return
+	}
+	mem, ok, err := a.mgr.store.GetMembership(r.Context(), ident.ID, t.ID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !ok {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "no_membership", "not a member"})
+		return
+	}
+	if err := a.mgr.store.SetMembershipStatus(r.Context(), mem.ID, "inactive"); err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	// Drop the cached runtime as well as the login caches: the workspace stays on
+	// disk, but nothing should keep serving it from memory for this membership.
+	a.mgr.evictMembershipCache(mem.ID)
+	a.mgr.tenantLogin.invalidate()
+	_ = a.mgr.store.InsertAudit(r.Context(), AuditLog{
+		ID: newID(), TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
+		Action: "membership.remove", Target: ident.UserKey,
+		Detail: "status=inactive (workspace and home kept)", At: nowTS(),
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"removed": ident.UserKey, "tenant": t.Slug})
 }
 
 // setTenantLimits (PUT /api/admin/tenants/{slug}/limits) — docs/16 P3-4.

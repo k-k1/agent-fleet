@@ -290,11 +290,46 @@ func (s *sqlStore) getTenant(ctx context.Context, id string) (Tenant, error) {
 	var t Tenant
 	var keyRef sql.NullString
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, slug, name, status, limits, isolation, COALESCE(key_ref,''), created_at
+		`SELECT id, slug, name, status, limits, isolation, COALESCE(key_ref,''), created_at,
+		        allowed_providers, auto_join_domains, allowed_domains
 		 FROM tenant WHERE id=?`, id).
-		Scan(&t.ID, &t.Slug, &t.Name, &t.Status, &t.Limits, &t.Isolation, &keyRef, &t.CreatedAt)
+		Scan(&t.ID, &t.Slug, &t.Name, &t.Status, &t.Limits, &t.Isolation, &keyRef, &t.CreatedAt,
+			&t.AllowedProviders, &t.AutoJoinDomains, &t.AllowedDomains)
 	t.KeyRef = keyRef.String
 	return t, err
+}
+
+// SetTenantLogin writes the per-tenant login rules (docs/61 §61.9.7).
+func (s *sqlStore) SetTenantLogin(ctx context.Context, tenantID, allowedProviders, autoJoinDomains, allowedDomains string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE tenant SET allowed_providers=?, auto_join_domains=?, allowed_domains=? WHERE id=?`,
+		allowedProviders, autoJoinDomains, allowedDomains, tenantID)
+	return err
+}
+
+// ListTenantLoginRules loads every tenant's rules in one query, already split into
+// slices — the shape the entry-gate cache and the auto-join resolution want.
+func (s *sqlStore) ListTenantLoginRules(ctx context.Context) ([]TenantLoginRules, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, slug, name, allowed_providers, auto_join_domains, allowed_domains
+		 FROM tenant WHERE status='active' ORDER BY slug`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TenantLoginRules
+	for rows.Next() {
+		var r TenantLoginRules
+		var provs, autoJoin, allowed string
+		if err := rows.Scan(&r.ID, &r.Slug, &r.Name, &provs, &autoJoin, &allowed); err != nil {
+			return nil, err
+		}
+		r.AllowedProviders = splitCSVLower(provs)
+		r.AutoJoinDomains = splitDomainCSV(autoJoin)
+		r.AllowedDomains = splitDomainCSV(allowed)
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 func (s *sqlStore) UpsertIdentity(ctx context.Context, email, key, roleHint string) (Identity, error) {
@@ -325,6 +360,56 @@ func (s *sqlStore) UpsertIdentity(ctx context.Context, email, key, roleHint stri
 		Scan(&id.ID, &id.Email, &id.UserKey, &id.Role, &id.Status, &last)
 	id.LastLoginAt = last.String
 	return id, err
+}
+
+// DemoteSuperAdmins enforces "SUPER_ADMIN_EMAILS is the only source of truth" at
+// startup (ADR0043 決定 24). UpsertIdentity's roleHint stays upgrade-only on
+// purpose: addMembership / cleanHome / stopWorkspace all call it with roleHint="",
+// so putting the demotion there would strip an operator's role the moment somebody
+// added a member. The revocation therefore lives here, in a pass CP runs once at
+// boot — which is also the only moment that reaches a person who has left and will
+// never sign in again.
+//
+// The candidate set is read first rather than expressed as a NOT IN (…) so the
+// caller can log exactly whose role was revoked; the set is a handful of rows.
+func (s *sqlStore) DemoteSuperAdmins(ctx context.Context, keep []string) ([]string, error) {
+	keepSet := make(map[string]bool, len(keep))
+	for _, e := range keep {
+		if e = strings.ToLower(strings.TrimSpace(e)); e != "" {
+			keepSet[e] = true
+		}
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, email FROM identity WHERE role='super_admin' AND email <> ''`)
+	if err != nil {
+		return nil, err
+	}
+	type row struct{ id, email string }
+	var cands []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.email); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		cands = append(cands, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	var demoted []string
+	for _, c := range cands {
+		if keepSet[strings.ToLower(c.email)] {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx,
+			`UPDATE identity SET role='user' WHERE id=? AND role='super_admin'`, c.id); err != nil {
+			return demoted, err
+		}
+		demoted = append(demoted, c.email)
+	}
+	return demoted, nil
 }
 
 // LinkIdentity resolves a login that carries an IdP subject to a person, applying
@@ -538,7 +623,8 @@ func (s *sqlStore) GetIdentityByID(ctx context.Context, id string) (Identity, bo
 
 func (s *sqlStore) ListTenants(ctx context.Context) ([]Tenant, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, slug, name, status, limits, isolation, COALESCE(key_ref,''), created_at
+		`SELECT id, slug, name, status, limits, isolation, COALESCE(key_ref,''), created_at,
+		        allowed_providers, auto_join_domains, allowed_domains
 		 FROM tenant ORDER BY slug`)
 	if err != nil {
 		return nil, err
@@ -547,7 +633,8 @@ func (s *sqlStore) ListTenants(ctx context.Context) ([]Tenant, error) {
 	var out []Tenant
 	for rows.Next() {
 		var t Tenant
-		if err := rows.Scan(&t.ID, &t.Slug, &t.Name, &t.Status, &t.Limits, &t.Isolation, &t.KeyRef, &t.CreatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.Slug, &t.Name, &t.Status, &t.Limits, &t.Isolation, &t.KeyRef, &t.CreatedAt,
+			&t.AllowedProviders, &t.AutoJoinDomains, &t.AllowedDomains); err != nil {
 			return nil, err
 		}
 		out = append(out, t)
@@ -556,10 +643,19 @@ func (s *sqlStore) ListTenants(ctx context.Context) ([]Tenant, error) {
 }
 
 func (s *sqlStore) ListMembersByTenant(ctx context.Context, tenantID string) ([]MemberInfo, error) {
+	return s.listMembersByStatus(ctx, tenantID, "active")
+}
+
+// ListRemovedMembersByTenant is the offboarded half — see the interface comment.
+func (s *sqlStore) ListRemovedMembersByTenant(ctx context.Context, tenantID string) ([]MemberInfo, error) {
+	return s.listMembersByStatus(ctx, tenantID, "inactive")
+}
+
+func (s *sqlStore) listMembersByStatus(ctx context.Context, tenantID, status string) ([]MemberInfo, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT m.id, i.user_key, i.email, i.role, m.role
 		 FROM membership m JOIN identity i ON i.id = m.identity_id
-		 WHERE m.tenant_id=? AND m.status='active' ORDER BY i.user_key`, tenantID)
+		 WHERE m.tenant_id=? AND m.status=? ORDER BY i.user_key`, tenantID, status)
 	if err != nil {
 		return nil, err
 	}
@@ -625,6 +721,16 @@ func (s *sqlStore) IdentityIDForMembership(ctx context.Context, membershipID str
 	return id, true, nil
 }
 
+// EnsureMembership inserts the membership and leaves an existing row untouched —
+// including its status.
+//
+// ★ It must NOT reactivate. It is called from the auto-provisioning paths
+// (auto_join_domains, AF_PROVISION=auto), which run on every login of a person who
+// currently has no active membership; reactivating there would undo an
+// administrator's removal the next time the person opened the page, which is
+// precisely the offboarding docs/61 §61.10.6 exists to make work. Coming back onto
+// a roster is an explicit act — the invite API reactivates deliberately
+// (adminAPI.addMembership).
 func (s *sqlStore) EnsureMembership(ctx context.Context, identityID, tenantID, role string) (Membership, error) {
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO membership(id, identity_id, tenant_id, role, status, created_at)
@@ -659,6 +765,41 @@ func (s *sqlStore) SetMembershipRole(ctx context.Context, membershipID, role str
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE membership SET role=? WHERE id=?`, role, membershipID)
 	return err
+}
+
+func (s *sqlStore) SetMembershipStatus(ctx context.Context, membershipID, status string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE membership SET status=? WHERE id=?`, status, membershipID)
+	return err
+}
+
+// EmailHasActiveMembership answers the entry gate's membership term (決定 16).
+// LOWER() is applied to the COLUMN, not to the placeholder: Postgres cannot infer a
+// type for LOWER($1) and errors, which is the same reason identityByEmail lowercases
+// in Go.
+func (s *sqlStore) EmailHasActiveMembership(ctx context.Context, email string) (bool, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return false, nil
+	}
+	var one int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT 1 FROM membership m JOIN identity i ON i.id = m.identity_id
+		 WHERE m.status='active' AND i.email <> '' AND LOWER(i.email) = ?
+		 LIMIT 1`, email).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (s *sqlStore) AnyActiveMembership(ctx context.Context) (bool, error) {
+	var one int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM membership WHERE status='active' LIMIT 1`).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func (s *sqlStore) GetUserLimit(ctx context.Context, membershipID string) (UserLimit, bool, error) {

@@ -66,8 +66,21 @@ type manager struct {
 	// provisioning policy (docs/14): "auto" (gateway-trusted auto-provision into
 	// the default tenant) | "invite" (deny unknown identities). superAdmins are
 	// emails granted identity.role=super_admin (deployment-wide).
+	//
+	// docs/61 §61.9.8 puts a third case FIRST: a tenant whose auto_join_domains
+	// matches the address wins over both of these, so a deployment can split into
+	// departments by domain without touching AF_PROVISION.
 	provisionMode string
 	superAdmins   map[string]bool
+
+	// tenantLogin caches the per-tenant login rules (docs/61 §61.9.7). Read by the
+	// entry gate on every request and by the tenant gate on every resolution;
+	// dropped by every admin write that can change who may enter.
+	tenantLogin *tenantLoginCache
+	// knownProviderIDs is the set of login provider ids this deployment actually
+	// enabled, so the admin API can refuse a tenant rule naming one that does not
+	// exist. nil in AUTH=proxy/dev, where the check is skipped.
+	knownProviderIDs map[string]bool
 
 	// at-rest encryption (P3-3). master32 = SHA-256 of AF_MASTER_KEY (nil in dev).
 	// custodian wraps/unwraps per-workspace DEKs; nil in dev (no encryption).

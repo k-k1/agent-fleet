@@ -23,6 +23,7 @@ import {
 import { useSessionsStore, startSessionsPolling } from "../features/sessions/store.ts";
 import { SessionModals } from "../features/sessions/SessionModals.tsx";
 import { AuthExpiredModal } from "../features/auth/AuthExpiredModal.tsx";
+import { ProviderRequiredModal } from "../features/auth/ProviderRequiredModal.tsx";
 import { WsStartingDialog } from "./WsStartingDialog.tsx";
 import { useSessionNotifications } from "../features/sessions/useSessionNotifications.ts";
 import { useReposStore, startReposPolling } from "../features/repos/store.ts";
@@ -449,6 +450,7 @@ export function App() {
         <SessionModals />
         <WsStartingDialog />
         <AuthExpiredModal />
+        <ProviderRequiredModal />
         <DirtyGuardHost />
         <WhichKey />
         <CommandPalette />
@@ -533,6 +535,7 @@ export function App() {
       <SessionModals />
       <WsStartingDialog />
       <AuthExpiredModal />
+      <ProviderRequiredModal />
       <DirtyGuardHost />
       <WhichKey />
       <CommandPalette />

@@ -54,13 +54,35 @@
   `/oauth2/*`・`/login`・`/healthz`・`/brand/*`、自前認証を持つ `/mcp`・`/mcp/*`（Bearer PAT）・
   `/git/*`（Basic git token）・`/internal/*`（デプロイ内部の Bearer トークン: egress ingest /
   schedule bridge / mcp-servers poll）、旧パス互換リダイレクトの `/agent-fleet[/…]`。
-- 許可リスト 3 系統の併用可・**すべて空なら全拒否（fail-closed）**:
-  `AF_OAUTH_ALLOWED_EMAILS`（CSV）/ `AF_OAUTH_ALLOWED_DOMAINS`（CSV）/
+- 許可リスト 3 系統の併用可: `AF_OAUTH_ALLOWED_EMAILS`（CSV）/ `AF_OAUTH_ALLOWED_DOMAINS`（CSV）/
   `AF_OAUTH_ALLOWED_EMAILS_FILE`（1 行 = メール or `@domain`・ログイン毎に再読込＝**追加は再起動不要**）。
   provider ごとに `AF_OIDC_<ID>_ALLOWED_{EMAILS,DOMAINS}` を置くと、その provider ではデプロイ共通
-  リストの**代わりに**それが使われる。
-- **判定はログイン時だけでなく毎リクエスト**（許可リストから消す＝オフボーディング経路。
-  セッション cookie の TTL を待たずに次のリクエストで締め出される）。
+  リストの**代わりに**それが使われる（per-provider の絞り込み）。
+- ★ **入口の判定は email 軸の「和」**（[61](../61-login-idp.md) §61.9.6・P3）:
+
+  ```
+  ( provider 固有リスト | デプロイ共通リスト )  ∪  ( tenant.auto_join_domains | membership 保有 )
+  ```
+
+  後半 2 項が DB 由来。**招待された人は `AF_OAUTH_ALLOWED_*` に載っていなくても入口を通る**ので、
+  招待運用のデプロイは名簿を membership 1 箇所に寄せられる。
+  **すべて空（許可リストも membership も auto_join も無い）なら全拒否（fail-closed）は維持**。
+  和を取るのは **email 軸の中だけ**で、種類の違う判定（GitHub の org・下記②の①側）は AND のまま
+  — さもないと membership を持つだけで org 判定を迂回できる。
+  参照は `tenant` テーブル ＋ **30 秒 TTL のメモリキャッシュ**（管理 API の書き込みで破棄）。
+- **判定はログイン時だけでなく毎リクエスト**（許可リストから消す／membership を無効化する＝
+  オフボーディング経路。セッション cookie の TTL を待たずに次のリクエストで締め出される）。
+  セッション cookie は stateless なので**個別失効は無く**、全セッションを即時に切る唯一の手段は
+  `AF_COOKIE_SECRET` のローテーション（[ADR0043](../decisions/0043-login-idp.md) 決定 27）。
+- ★ **テナントの門は authGate に置かない**（決定 13）。`authGate` はテナントを知らない
+  （`X-AF-Tenant` を読むのはその先）ので、テナント規則を持ち込むと「どのテナントで判定するか」が
+  決まらない。テナント側の判定（`tenant.allowed_providers` とセッションの `prov` の突合）は
+  `resolveFull` / `resolveMembership` で行い、外れたら **`provider_required`** を返して
+  Console から再サインインへ誘導する（403 で終わらせない）。
+- **`SUPER_ADMIN_EMAILS` は起動時に 1 度だけ読み、それが唯一の正**（決定 24）。
+  `UpsertIdentity` の roleHint は upgrade-only のまま、**起動時に一括で降格**する
+  （リストに無い `super_admin` を `user` へ。email が空の identity は env で名指せないので対象外）。
+  ログイン時同期にしないのは、**退職者は二度とログインしない**ため。
 
 ### 7.3.1 ログイン IdP（`oauth` モード）
 
@@ -97,7 +119,9 @@ Google も同実装の 1 インスタンスで、**env 名（`GOOGLE_OAUTH_*`）
   （`GITHUB_OAUTH_CLIENT_ID` は git 連携の device flow が先に使っている env なので、それ単体では
   ログインを有効にしない）。
 - ②**email 許可リスト**: `AF_GITHUB_ALLOWED_{EMAILS,DOMAINS}` → 無ければデプロイ共通 →
-  どちらも未設定なら email の門は無し（org が許可リストそのもの）。email はアカウントの
+  どちらも未設定なら email の門は無し（org が許可リストそのもの）。P3 の DB 由来の項
+  （auto_join / membership）は**この②にだけ**足される — ①は別軸なので AND のまま。
+  email はアカウントの
   **`primary && verified`** のみを `GET /user/emails` から採る（`GET /user` の `email` は検証
   フラグを持たず、非公開設定で `null`）。`subject` は**数値 id**（`login` は改名できる）。
 - 毎リクエスト再判定は API 呼び出しになるため、`(provider, subject)` キーの TTL キャッシュ
