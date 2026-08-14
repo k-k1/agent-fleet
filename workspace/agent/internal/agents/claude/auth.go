@@ -111,6 +111,7 @@ func HandleComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// claude wrote its own .credentials.json; nothing for us to store.
+	resetCredCache() // 期限判定を書き戻した資格情報で取り直す（同じ stat のまま中身が変わりうる）
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true})
 }
 
@@ -118,6 +119,7 @@ func HandleComplete(w http.ResponseWriter, r *http.Request) {
 func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
 	// claude owns its credentials; log out via the CLI so it clears them properly.
 	_ = exec.Command("claude", "auth", "logout").Run()
+	resetCredCache()
 	// Best-effort: drop any legacy stored token from the encrypted store too.
 	if s, err := secrets.Load(); err == nil && s.Claude != "" {
 		s.Claude = ""
@@ -168,6 +170,12 @@ func loggedIn() bool {
 // Status reports connection status plus the authenticated account (email,
 // plan) for the Console — `claude auth status` exposes the logged-in identity.
 // GET /connections.
+//
+// 期限（expires_at / days_left / expired）を足しているのは、`claude auth status` が
+// **期限を一切返さない**から（--json も --text も loggedIn/email/orgId/subscriptionType
+// だけ・実測 2.1.231）。カードはそれだけを見ていたので、切れても「接続済み」のまま
+// だった（docs/47 §4-7 で書いた「カードの状態表示を根拠にするな」の続き）。期限は
+// authexpiry.go が資格情報から直接読む。
 func Status() map[string]any {
 	out, err := exec.Command("claude", "auth", "status").Output()
 	if err != nil {
@@ -181,7 +189,17 @@ func Status() map[string]any {
 	if json.Unmarshal(out, &st) != nil || !st.LoggedIn {
 		return map[string]any{"connected": false}
 	}
-	return map[string]any{"connected": true, "email": st.Email, "plan": st.SubscriptionType}
+	m := map[string]any{"connected": true, "email": st.Email, "plan": st.SubscriptionType}
+	if e := CredentialExpiry(); e.Known {
+		now := time.Now()
+		m["expires_at"] = e.Refresh.UTC().Format(time.RFC3339)
+		if e.Dead(now) {
+			m["expired"] = true
+		} else if e.Soon(now) {
+			m["days_left"] = e.DaysLeft(now)
+		}
+	}
+	return m
 }
 
 var (

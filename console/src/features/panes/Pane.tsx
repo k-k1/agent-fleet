@@ -34,12 +34,14 @@ import { PaneFind } from "./PaneFind.tsx";
 import { BrowserPane } from "../browser/BrowserPane.tsx";
 import { BrowserAttachPane } from "../browser/BrowserAttachPane.tsx";
 import { SharedSessionView } from "../sharing/SharedSessionView.tsx";
+import { useSharedSessionsStore } from "../sharing/store.ts";
 import { canPopout, openPanePopout } from "./popout.ts";
 import { usePopoutMode } from "../../lib/popoutMode.ts";
 import type { PaneView } from "../../layout/types.ts";
 import { paneTitle } from "./paneTitle.ts";
 import { acceptsPaneDrag, setTabDragShield, tabOwnsDrop } from "./paneDnd.ts";
 import { stateInfo } from "../../lib/sessionview.ts";
+import { kindClass, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
 
 // Drag payload MIME — identifies a pane-to-pane drag (vs any other drag).
 const DND = "application/x-af-pane";
@@ -74,7 +76,7 @@ function EmptyPane({ cell, style, active, tabbed, canSplitRight, canSplitDown, c
   const tr = useT();
   return (
     <div
-      className={cx("pane", active && "active", ordinal ? ordClass(ordinal) : "")}
+      className={cx("pane", active && "active", tabbed && "tabbed", ordinal ? ordClass(ordinal) : "")}
       style={style}
       data-cell-id={cell.id}
       onMouseDownCapture={() => onActivate(cell.id)}
@@ -216,6 +218,10 @@ function PopulatedPane({
   const dropSplitTab = useLayoutStore((s) => s.dropSplitTab);
   const sessions = useSessionsStore((s) => s.sessions);
   const sessionByName = useMemo(() => new Map(sessions.map((s) => [s.name, s] as const)), [sessions]);
+  // A shared-session tab isn't backed by a local Session — it needs its own
+  // name/kind, kept in the recipient-side store (docs/59) instead.
+  const sharedSessions = useSharedSessionsStore((s) => s.sessions);
+  const sharedById = useMemo(() => new Map(sharedSessions.map((s) => [s.id, s] as const)), [sharedSessions]);
   const settings = useSettings();
   const wrapOn = pane.wrap ?? settings.wrap;
   const canWrap =
@@ -244,12 +250,22 @@ function PopulatedPane({
   const tabLabel = (view: PaneView) => {
     const session = view.session ? sessionByName.get(view.session) ?? null : null;
     if (view.content.kind === "terminal" && view.session && !session) return tr("pane.no_session");
-    return paneTitle(view, session);
+    const shared = view.content.kind === "sharedSession" ? sharedById.get(view.content.sharedSessionId) : undefined;
+    return paneTitle(view, session, shared);
   };
   const tabState = (view: PaneView) => {
     if (view.content.kind !== "terminal" || !view.session) return null;
     const session = sessionByName.get(view.session);
     return session ? stateInfo(session) : null;
+  };
+  // Kind-colored badge for a shared-session tab — the same visual language as
+  // the shared-sessions rail row (SharedProjectNode), so which agent it is
+  // reads at a glance across several open shared tabs.
+  const tabKindIcon = (view: PaneView) => {
+    if (view.content.kind !== "sharedSession") return null;
+    const shared = sharedById.get(view.content.sharedSessionId);
+    if (!shared) return null;
+    return { icon: kindIcon(shared.kind), cls: kindClass(shared.kind), label: kindLabel(shared.kind) };
   };
   // The selected session can be shown either as terminal or chat, so these cell
   // actions live in BOTH headers — they never disappear merely because the user
@@ -293,9 +309,9 @@ function PopulatedPane({
   // unrelated ancestor re-render, e.g. the left-rail drawer toggling, was
   // otherwise redoing this on every tab for every unrelated repaint).
   const tabInfo = useMemo(
-    () => views.map((view) => ({ view, label: tabLabel(view), state: tabState(view) })),
+    () => views.map((view) => ({ view, label: tabLabel(view), state: tabState(view), kic: tabKindIcon(view) })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [views, sessionByName, tr],
+    [views, sessionByName, sharedById, tr],
   );
   const onDragStart = (e: RDragEvent) => {
     e.dataTransfer.setData(DND, cell.id);
@@ -357,7 +373,7 @@ function PopulatedPane({
   return (
     <div
       ref={paneRef}
-      className={cx("pane", active && "active", zone && "droptarget", hovered && "pane-hover", ordCls)}
+      className={cx("pane", active && "active", tabbed && "tabbed", zone && "droptarget", hovered && "pane-hover", ordCls)}
       style={{ ...style, "--pane-ctl-n": ctlCount } as CSSProperties}
       data-pane-id={pane.id}
       data-cell-id={cell.id}
@@ -375,7 +391,7 @@ function PopulatedPane({
           aria-label={tr("display.pane_layout_tabs")}
           onWheel={onTabsWheel}
         >
-          {tabInfo.map(({ view, label, state }) => {
+          {tabInfo.map(({ view, label, state, kic }) => {
             return (
               <div className={cx("pane-tab", view.id === cell.selectedViewId && "selected")} role="presentation" key={view.id}>
                 <button
@@ -421,6 +437,11 @@ function PopulatedPane({
                   {state && (
                     <span className={cx("pane-tab-state", state.cls)} title={state.text}>
                       <Icon name={state.icon} spin={state.spin} />
+                    </span>
+                  )}
+                  {kic && (
+                    <span className={cx("pane-tab-kic sess-kic", "kind-" + kic.cls)} title={kic.label}>
+                      <Icon name={kic.icon} />
                     </span>
                   )}
                   <span className="pane-tab-title">{label}</span>
