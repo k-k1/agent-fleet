@@ -46,6 +46,15 @@ export const en: Record<keyof typeof ja, string> = {
   "err.send_failed": "Failed to send.",
   "err.network": "Network error",
   "err.unknown": "An unknown error occurred.",
+  // per-tenant login (docs/61 §61.9). provider_required has a dedicated modal that
+  // offers the re-sign-in link; this string is the fallback outside it.
+  "err.provider_required": "This tenant needs a different sign-in method. Please sign in again.",
+  "err.not_provisioned": "You don't belong to any tenant yet. Ask an administrator to add you.",
+  "err.domain_not_allowed": "That email domain can't be invited to this tenant.",
+  "err.email_required": "This tenant restricts invites by domain. Invite by email address.",
+  "err.auto_join_conflict": "That auto-join domain already belongs to another tenant.",
+  "err.unknown_provider": "That sign-in method isn't enabled on this deployment.",
+  "err.self_removal": "You can't remove your own membership. Ask another administrator.",
   "err.bad_share": "That share request is invalid.",
   "err.member_not_found": "That recipient isn't a member of this tenant. Pick one from the search results.",
   "err.share_self": "You can't share with yourself.",
@@ -1284,6 +1293,100 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.grant_body_2": ".",
   "admin.grant_note": "After granting, they can manage members, view resources, force-stop workspaces, and set session limits within this tenant (other tenants are unaffected).",
 
+  // --- per-tenant login (docs/61 §61.9 · P3). The three rules look alike and are
+  // not: reading "invite domains" as "domains that may use this tenant" is the
+  // mistake that breaks the operation. ---
+  "admin.login_rules": "Login rules",
+  "admin.login_rules_note": "empty = no restriction",
+  "admin.allowed_providers": "Sign-in methods",
+  "admin.allowed_providers_unit": "provider ids, comma-separated. Empty = every enabled method",
+  "admin.auto_join_domains": "Auto-join domains",
+  "admin.auto_join_domains_unit": "joins this tenant on first sign-in",
+  "admin.invite_domains": "Invite domains",
+  "admin.invite_domains_unit": "a guard on adding members only",
+  "admin.login_rules_hint":
+    "Invite domains apply only when adding a member. Someone already on the roster keeps working even from another domain (use \"Remove member\" below to take them off). " +
+    "An auto-join domain can belong to only one tenant.",
+  "admin.login_url": "Sign-in URL for this tenant:",
+
+  // --- tenant-defined sign-in methods (docs/61 §61.11 · P4), for a group whose
+  // subsidiaries each have their own Entra tenant. The tenant admin writes the
+  // definition, the deployment admin activates it (決定 30) — that asymmetry is the
+  // feature. ---
+  "admin.idp_title": "Sign-in methods for this tenant",
+  "admin.idp_note": "activation needs a deployment administrator",
+  "admin.idp_hint":
+    "Register your own IdP (Entra ID / Okta / Keycloak …) as a sign-in method for this tenant. " +
+    "A new method starts as \"waiting for approval\": until a deployment administrator approves it, no button appears on the sign-in page and no one can sign in with it.",
+  "admin.idp_none": "None registered yet.",
+  "admin.idp_add": "Add a sign-in method",
+  "admin.idp_approve": "Approve and activate",
+  "admin.idp_suspend": "Suspend",
+  "admin.idp_reapply": "Request approval",
+  "admin.idp_state_pending": "Waiting for approval",
+  "admin.idp_state_active": "Active",
+  "admin.idp_state_suspended": "Suspended",
+  "admin.idp_state_broken": "Approved, but the settings are incomplete",
+  "admin.idp_name": "Name",
+  "admin.idp_name_hint": "Identifier within this tenant (a-z, 0-9, - _). For example: entra",
+  "admin.idp_issuer": "Issuer URL",
+  "admin.idp_issuer_hint": "The IdP's issuer URL. For Entra ID, use the URL containing your own tenant GUID (common / organizations require tenant ids below).",
+  "admin.idp_client_id": "Client ID",
+  "admin.idp_client_secret": "Client secret",
+  "admin.idp_secret_hint": "Encrypted when saved, and never shown again.",
+  "admin.idp_secret_kept": "Leave empty to keep the stored value.",
+  "admin.idp_trust": "How the email is trusted",
+  "admin.idp_trust_hint": "Why the email this IdP asserts can be believed. Entra ID never sends email_verified, so pick the pinned-issuer rule.",
+  "admin.idp_trust_issuer": "The issuer is pinned to our own tenant",
+  "admin.idp_trust_email": "The IdP asserts email_verified",
+  "admin.idp_domains": "Email domains to admit",
+  "admin.idp_domains_hint":
+    "The domains that may sign in with this method (required). It cannot be empty: this method does not fall back to the deployment-wide allowlist, so an empty list admits nobody. " +
+    "One domain can belong to only one tenant.",
+  "admin.idp_tids": "Allowed tenant ids (Entra tid, optional)",
+  "admin.idp_tids_hint": "Comma-separated. Required when the issuer is common / organizations.",
+  "admin.idp_label_ja": "Button label (Japanese)",
+  "admin.idp_label_en": "Button label (English)",
+  "admin.idp_repend_hint":
+    "Changing the issuer, the client ID or the trust rule — or adding a domain or tenant id — sends the method back for approval, " +
+    "because the approval was given to that issuer for that scope.",
+  "admin.idp_delete_title": "Delete {name}",
+  "admin.idp_delete_body":
+    "This removes the sign-in method. People who used it can no longer sign in, but their workspaces, homes and stored credentials are kept.",
+  "admin.idp_register": "Tenant-defined sign-in methods",
+  "admin.idp_pending_count": "{n} waiting for approval",
+  "admin.idp_register_hint":
+    "Every IdP registered by a tenant. Approval is a point-in-time check, but the IdP's own settings (self-sign-up, for one) can change afterwards. " +
+    "Approved methods stay listed here so their issuers and domains can be reviewed periodically. Approve or suspend from the tenant's own screen.",
+  "admin.member_removed": "removed",
+  "admin.remove_member": "Remove member",
+  "admin.remove_title": "Remove {key} from {slug}",
+  "admin.remove_confirm": "Remove",
+  "admin.remove_body": "This takes the member off the {slug} roster. Access stops from the next request.",
+  "admin.remove_keeps": "The workspace, its home and stored credentials are kept (use \"Clean home\" first to erase them).",
+  "admin.remove_undo": "To restore access, add the same email address as a member again.",
+
+  // --- tenant settings modal (the tenant administrator's surface). The admin modal is
+  // the whole deployment, personal settings are yourself; this one is "the tenant you
+  // administer". Panels moved here keep their admin.* keys (renaming is a separate
+  // change from moving). ---
+  "tenant.title": "Tenant settings",
+  "tenant.back": "All tenant settings",
+  "tenant.group_login": "Sign-in",
+  "tenant.tab_signin": "Sign-in methods",
+  "tenant.tab_rules": "Login rules",
+  "tenant.picker": "Tenant",
+  "tenant.none": "You don't administer any tenant.",
+  "tenant.forbidden": "You don't have permission to view this tenant's settings.",
+  "tenant.rules_readonly_note": "only a deployment administrator can change these",
+  "tenant.rules_hint":
+    "An auto-join domain can belong to only one tenant. " +
+    "To change any of these rules, ask a deployment administrator.",
+  "tenant.rules_unset": "not set (no restriction)",
+  "tenant.rules_providers_note": "Sign-in methods usable in this tenant. When not set, every active method may be used.",
+  "tenant.rules_autojoin_note": "People with an email address in this domain join this tenant on their first sign-in.",
+  "tenant.rules_invite_note": "A guard that applies only when adding a member. It does not affect people who are already members.",
+
   // --- keyboard system (features/keys · docs/29). Command/group names drive both the
   // display and the command palette's bilingual match. {n} is the pane ordinal. ---
   "keys.grp.pane": "Panes / layout",
@@ -1656,6 +1759,7 @@ export const en: Record<keyof typeof ja, string> = {
   "topbar.user_guide": "User guide",
   "topbar.guide": "Getting-started guide",
   "topbar.settings": "Settings",
+  "topbar.tenant_settings": "Tenant settings",
   "topbar.admin": "Admin",
   "topbar.logout": "Sign out",
   "topbar.build": "Build {label}",
@@ -1998,6 +2102,7 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.answered": "Answered",
   "mirror.freeform_label": "Free text: ",
   "mirror.answer_label": "Answer: ",
+  "mirror.question_declined": "Declined by the agent — no answer was recorded",
   "mirror.approval_pending": "Awaiting approval",
   "mirror.approved": "Approved",
   "mirror.rejected": "Rejected",
@@ -3401,6 +3506,12 @@ export const en: Record<keyof typeof ja, string> = {
   "auth.expired_body": "Your login session has expired. Sessions you are working on keep running on the workspace (a lapsed browser login does not stop them).",
   "auth.expired_relogin_hint": "Log in again and you'll return to this screen and can continue working.",
   "auth.relogin": "Log in again",
+
+  // === tenant requires another sign-in method (ProviderRequiredModal · docs/61 §61.9.4) ===
+  "auth.provider_required_title": "This tenant needs a different sign-in",
+  "auth.provider_required_body": "{tenant} only accepts a sign-in method other than the one you used.",
+  "auth.provider_required_hint": "Sign in again to enter this tenant. To go back to the tenant you were in, cancel and switch tenants instead.",
+  "auth.provider_required_signin": "Sign in again",
 
   // === Text/code editor (docs/44 Phase 2) ===
   "editor.aria_label": "{path} editor",

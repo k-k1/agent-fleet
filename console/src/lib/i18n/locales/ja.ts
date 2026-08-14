@@ -47,6 +47,15 @@ export const ja = {
   "err.send_failed": "送信に失敗しました",
   "err.network": "通信エラー",
   "err.unknown": "不明なエラーが発生しました",
+  // テナント毎のログイン（docs/61 §61.9）。provider_required は専用モーダルが
+  // 再サインイン導線を出すので、この文言はモーダル外で出た場合の保険。
+  "err.provider_required": "このテナントには別のサインイン方法が必要です。サインインし直してください。",
+  "err.not_provisioned": "所属するテナントがありません。管理者に追加を依頼してください。",
+  "err.domain_not_allowed": "このテナントに招待できるメールアドレスのドメインではありません。",
+  "err.email_required": "このテナントはドメインで招待を制限しています。メールアドレスで招待してください。",
+  "err.auto_join_conflict": "その自動参加ドメインは既に別のテナントが使っています。",
+  "err.unknown_provider": "そのサインイン方法はこのデプロイで有効になっていません。",
+  "err.self_removal": "自分自身を名簿から外すことはできません。他の管理者に依頼してください。",
   "err.bad_share": "共有リクエストが不正です。",
   "err.member_not_found": "指定した相手は同じテナントのメンバーではありません。検索候補から選び直してください。",
   "err.share_self": "自分自身を共有先に指定することはできません。",
@@ -1289,6 +1298,97 @@ export const ja = {
   "admin.grant_body_2": " のテナント管理者権限を付与します。",
   "admin.grant_note": "付与後はこのテナント内のメンバー管理・リソース閲覧・ワークスペース強制停止・セッション上限設定ができるようになります（他テナントには影響しません）。",
 
+  // --- テナント毎のログイン（docs/61 §61.9・P3）。3 つの規則は似て非なるもので、
+  // とくに「招待できるドメイン」を「使えるドメイン」と読み違えると運用が壊れる。---
+  "admin.login_rules": "ログイン規則",
+  "admin.login_rules_note": "空欄 = 制限なし",
+  "admin.allowed_providers": "使えるサインイン方法",
+  "admin.allowed_providers_unit": "provider id をカンマ区切り。空 = 有効な全方式",
+  "admin.auto_join_domains": "自動参加ドメイン",
+  "admin.auto_join_domains_unit": "初回ログイン時にこのテナントへ自動で参加",
+  "admin.invite_domains": "招待できるドメイン",
+  "admin.invite_domains_unit": "メンバー追加時のガードのみ",
+  "admin.login_rules_hint":
+    "「招待できるドメイン」はメンバー追加時にだけ効きます。既にメンバーの人は、別ドメインでもそのまま使えます（外すには下のメンバー詳細から「メンバーを外す」）。" +
+    "「自動参加ドメイン」は 1 ドメインにつき 1 テナントだけ設定できます。",
+  "admin.login_url": "このテナント専用のログイン URL:",
+
+  // --- テナント定義の認証方式（docs/61 §61.11・P4）。子会社ごとに Entra が違う場合。
+  // 作るのはテナント管理者、有効化はデプロイ管理者（決定 30）。この非対称が本体。---
+  "admin.idp_title": "このテナントのサインイン方法",
+  "admin.idp_note": "有効化にはデプロイ管理者の承認が必要",
+  "admin.idp_hint":
+    "自社の IdP（Entra / Okta / Keycloak など）をこのテナント専用のサインイン方法として登録できます。" +
+    "登録した時点では「承認待ち」で、デプロイ管理者が承認するまでログイン画面にボタンは出ず、サインインもできません。",
+  "admin.idp_none": "まだ登録されていません。",
+  "admin.idp_add": "サインイン方法を追加",
+  "admin.idp_approve": "承認して有効化",
+  "admin.idp_suspend": "停止する",
+  "admin.idp_reapply": "承認を申請する",
+  "admin.idp_state_pending": "承認待ち",
+  "admin.idp_state_active": "有効",
+  "admin.idp_state_suspended": "停止中",
+  "admin.idp_state_broken": "承認済みだが設定に不備あり",
+  "admin.idp_name": "名前",
+  "admin.idp_name_hint": "テナント内で使う識別子（英小文字・数字・- _）。例: entra",
+  "admin.idp_issuer": "issuer（発行者 URL）",
+  "admin.idp_issuer_hint": "IdP の issuer URL。Entra は自社テナントの GUID を含む URL を指定します（common / organizations は tid の指定が必須）。",
+  "admin.idp_client_id": "client_id",
+  "admin.idp_client_secret": "client_secret",
+  "admin.idp_secret_hint": "保存時に暗号化され、画面に表示されることはありません。",
+  "admin.idp_secret_kept": "空のままにすると、保存済みの値をそのまま使います。",
+  "admin.idp_trust": "email の信頼方法",
+  "admin.idp_trust_hint": "この IdP が名乗る email をなぜ信じてよいか。Entra は email_verified を出さないため「issuer 固定」を選びます。",
+  "admin.idp_trust_issuer": "issuer が自社テナントに固定されている",
+  "admin.idp_trust_email": "IdP が email_verified を返す",
+  "admin.idp_domains": "受け入れるメールドメイン",
+  "admin.idp_domains_hint":
+    "この方式でサインインできるドメイン（必須）。空にはできません — この方式はデプロイ共通の許可リストを使わないため、空だと誰も入れなくなります。" +
+    "同じドメインを 2 つのテナントが持つことはできません。",
+  "admin.idp_tids": "許可する tenant id（Entra の tid・任意）",
+  "admin.idp_tids_hint": "カンマ区切り。issuer が common / organizations の場合は必須です。",
+  "admin.idp_label_ja": "ボタンの文言（日本語）",
+  "admin.idp_label_en": "ボタンの文言（英語）",
+  "admin.idp_repend_hint":
+    "issuer / client_id / email の信頼方法を変更したとき、または受け入れるドメイン・tid を追加したときは、" +
+    "承認がやり直しになります（承認は「この issuer をこの範囲で信じてよい」に対して与えられたものなので）。",
+  "admin.idp_delete_title": "{name} を削除する",
+  "admin.idp_delete_body":
+    "このサインイン方法を削除します。この方式で入っていた人はサインインできなくなりますが、" +
+    "ワークスペース・home・保存済みの認証情報は残ります。",
+  "admin.idp_register": "テナント定義のサインイン方法",
+  "admin.idp_pending_count": "承認待ち {n} 件",
+  "admin.idp_register_hint":
+    "各テナントが登録した IdP の一覧です。承認は一度きりの点検ですが、IdP 側の設定（セルフサインアップの有効化など）は承認後にも変わり得ます。" +
+    "承認済みのものもここに残るので、定期的に issuer と受け入れドメインを見直してください。承認・停止はテナントの詳細画面から行います。",
+  "admin.member_removed": "外れています（名簿から削除済み）",
+  "admin.remove_member": "メンバーを外す",
+  "admin.remove_title": "{key} を {slug} から外す",
+  "admin.remove_confirm": "外す",
+  "admin.remove_body": "このメンバーを {slug} の名簿から外します。次のリクエストからアクセスできなくなります。",
+  "admin.remove_keeps": "ワークスペース・home・保存済みの認証情報は残ります（消すには先に「home を掃除」）。",
+  "admin.remove_undo": "戻すには、同じメールアドレスでもう一度「メンバー追加」してください。",
+
+  // --- テナント設定モーダル（テナント管理者の面）。管理モーダル＝デプロイ全体、
+  // 個人設定＝自分、に対してここは「自分が管理しているテナント」。移設してきた
+  // パネル本体の文言は admin.* のまま（キー改名は移設と別に行う）。---
+  "tenant.title": "テナント設定",
+  "tenant.back": "テナント設定一覧",
+  "tenant.group_login": "ログイン",
+  "tenant.tab_signin": "サインイン方式",
+  "tenant.tab_rules": "ログイン規則",
+  "tenant.picker": "テナント",
+  "tenant.none": "管理しているテナントがありません。",
+  "tenant.forbidden": "このテナントの設定を見る権限がありません。",
+  "tenant.rules_readonly_note": "変更できるのはデプロイ管理者だけです",
+  "tenant.rules_hint":
+    "「自動参加ドメイン」は 1 ドメインにつき 1 テナントだけ設定できます。" +
+    "これらの規則そのものを変えるには、デプロイ管理者に依頼してください。",
+  "tenant.rules_unset": "未設定（制限なし）",
+  "tenant.rules_providers_note": "このテナントで使えるサインイン方法。未設定なら有効な方式すべてが使えます。",
+  "tenant.rules_autojoin_note": "このドメインのメールアドレスの人は、初回ログインでこのテナントに参加します。",
+  "tenant.rules_invite_note": "メンバーを追加するときだけ効くガードです。既にメンバーの人には影響しません。",
+
   // --- キーボード操作体系（features/keys・docs/29）。コマンド/グループ名は表示と
   // コマンドパレットの日英マッチ両方に使う。{n} はペイン序数。---
   "keys.grp.pane": "ペイン / レイアウト",
@@ -1671,6 +1771,7 @@ export const ja = {
   "topbar.user_guide": "利用ガイド",
   "topbar.guide": "はじめかたガイド",
   "topbar.settings": "設定",
+  "topbar.tenant_settings": "テナント設定",
   "topbar.admin": "管理",
   "topbar.logout": "ログアウト",
   "topbar.build": "ビルド {label}",
@@ -2036,6 +2137,7 @@ export const ja = {
   "mirror.answered": "回答済み",
   "mirror.freeform_label": "自由入力: ",
   "mirror.answer_label": "回答: ",
+  "mirror.question_declined": "エージェント側で却下されました（回答は記録されていません）",
   // PlanBlock
   "mirror.approval_pending": "承認待ち",
   "mirror.approved": "承認済み",
@@ -3445,6 +3547,12 @@ export const ja = {
   "auth.expired_body": "ログインセッションの有効期限が切れました。作業中のセッションはワークスペース上でそのまま動き続けています（ブラウザのログイン切れでは停止しません）。",
   "auth.expired_relogin_hint": "再ログインすると、この画面に戻って作業を続けられます。",
   "auth.relogin": "再ログイン",
+
+  // === サインイン方法が違うテナント（ProviderRequiredModal・docs/61 §61.9.4） ===
+  "auth.provider_required_title": "このテナントには別のサインインが必要です",
+  "auth.provider_required_body": "{tenant} は、いまサインインしている方法とは別のサインイン方法だけを受け付ける設定になっています。",
+  "auth.provider_required_hint": "サインインし直すとこのテナントに入れます。元のテナントに戻る場合は、このままキャンセルしてテナントを切り替えてください。",
+  "auth.provider_required_signin": "サインインし直す",
 
   // === Text/コード編集（docs/44 Phase 2） ===
   "editor.aria_label": "{path} エディター",

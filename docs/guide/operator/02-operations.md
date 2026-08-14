@@ -29,7 +29,9 @@ What is **not included**:
 
 - `shared/jvm` (the re-fetchable, huge Temurin JDKs) is deliberately excluded.
 - **`AF_MASTER_KEY` is not included.** It lives in `.env` and is by design never put into
-  the archive.
+  the archive. **Keep it outside the data area** — the archive now also carries the client
+  secrets of tenant-defined sign-in methods (sealed with that key), so a copy of the key stored
+  next to the data would undo the separation the envelope encryption exists for.
 
 > These two points are the heart of operations. The backup archive is **sensitive data that
 > contains plaintext Claude state**, so be strict about the permissions and encryption of

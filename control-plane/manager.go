@@ -66,8 +66,32 @@ type manager struct {
 	// provisioning policy (docs/14): "auto" (gateway-trusted auto-provision into
 	// the default tenant) | "invite" (deny unknown identities). superAdmins are
 	// emails granted identity.role=super_admin (deployment-wide).
+	//
+	// docs/61 §61.9.8 puts a third case FIRST: a tenant whose auto_join_domains
+	// matches the address wins over both of these, so a deployment can split into
+	// departments by domain without touching AF_PROVISION.
 	provisionMode string
 	superAdmins   map[string]bool
+
+	// tenantLogin caches the per-tenant login rules (docs/61 §61.9.7). Read by the
+	// entry gate on every request and by the tenant gate on every resolution;
+	// dropped by every admin write that can change who may enter.
+	tenantLogin *tenantLoginCache
+	// tenantIdP is the RUNTIME set of tenant-defined login providers (docs/61
+	// §61.11). It lives here rather than in config for the reason tenant_idp.go
+	// gives: config is copied by value into every handler, so a set stored there
+	// could never change without a restart — and approving or suspending a
+	// subsidiary's IdP has to take effect at once.
+	tenantIdP *tenantIdPRegistry
+	// knownProviderIDs is the set of ENV-defined login provider ids this deployment
+	// enabled, so the admin API can refuse a tenant rule naming one that does not
+	// exist. nil in AUTH=proxy/dev, where the check is skipped.
+	//
+	// ★ Tenant-defined ids are deliberately absent: they come and go at runtime, and
+	// tenant.allowed_providers is validated against this set at SAVE time, when a
+	// still-pending provider legitimately has no entry yet. tenantProviderIDsFor
+	// answers that half of the question instead.
+	knownProviderIDs map[string]bool
 
 	// at-rest encryption (P3-3). master32 = SHA-256 of AF_MASTER_KEY (nil in dev).
 	// custodian wraps/unwraps per-workspace DEKs; nil in dev (no encryption).

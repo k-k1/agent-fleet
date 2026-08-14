@@ -1857,6 +1857,23 @@ button.mt-bash-toggle:hover {
   border-left-color: color-mix(in srgb, var(--chat-accent) 45%, var(--border));
   background: color-mix(in srgb, var(--fg) 3%, var(--bg));
 }
+/* Declined (an Escape out of the modal, not a real answer) — same muted red as a
+   rejected plan (.mt-plan-badge.no), so the two "the agent didn't get an answer"
+   states read the same way. */
+.mt-question.declined {
+  border-left-color: color-mix(in srgb, #e5534b 40%, var(--border));
+}
+.mq-done.declined {
+  background: color-mix(in srgb, #e5534b 24%, transparent);
+  color: color-mix(in srgb, #e5534b 62%, var(--fg));
+  border-radius: 999px;
+  padding: 1px 7px;
+  opacity: 1;
+}
+.mq-declined-note {
+  margin-top: 6px;
+  font-size: 12px;
+}
 .mq-opt:disabled {
   cursor: default;
   opacity: 0.55;

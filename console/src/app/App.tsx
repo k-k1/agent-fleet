@@ -23,6 +23,7 @@ import {
 import { useSessionsStore, startSessionsPolling } from "../features/sessions/store.ts";
 import { SessionModals } from "../features/sessions/SessionModals.tsx";
 import { AuthExpiredModal } from "../features/auth/AuthExpiredModal.tsx";
+import { ProviderRequiredModal } from "../features/auth/ProviderRequiredModal.tsx";
 import { WsStartingDialog } from "./WsStartingDialog.tsx";
 import { useSessionNotifications } from "../features/sessions/useSessionNotifications.ts";
 import { useReposStore, startReposPolling } from "../features/repos/store.ts";
@@ -47,6 +48,7 @@ import { TopBar } from "./TopBar.tsx";
 import { useSettingsUI, wireSettingsHistory } from "../features/settings/store.ts";
 import { SettingsDialog } from "../features/settings/SettingsDialog.tsx";
 import { AdminDialog } from "../features/settings/AdminDialog.tsx";
+import { TenantDialog } from "../features/settings/TenantDialog.tsx";
 import { GuideModal } from "../features/terminal/OnboardingCard.tsx";
 import { StartHost } from "../features/repos/StartHost.tsx";
 import { startNotificationPolling, useNotificationStore, wireNotificationReadOnActiveSession } from "../features/notifications/store.ts";
@@ -109,6 +111,7 @@ export function App() {
   const paneLayout = useSettings().paneLayout;
   const settingsOpen = useSettingsUI((s) => s.settingsOpen);
   const adminOpen = useSettingsUI((s) => s.adminOpen);
+  const tenantOpen = useSettingsUI((s) => s.tenantOpen);
   const guideOpen = useSettingsUI((s) => s.guideOpen);
   const [booted, setBooted] = useState(false);
   const notificationSource = useNotificationStore((s) => s.sourceState);
@@ -445,10 +448,12 @@ export function App() {
         </main>
         {settingsOpen && <SettingsDialog />}
         {adminOpen && <AdminDialog />}
+        {tenantOpen && <TenantDialog />}
         {guideOpen && <GuideModal />}
         <SessionModals />
         <WsStartingDialog />
         <AuthExpiredModal />
+        <ProviderRequiredModal />
         <DirtyGuardHost />
         <WhichKey />
         <CommandPalette />
@@ -528,11 +533,13 @@ export function App() {
       </div>
       {settingsOpen && <SettingsDialog />}
       {adminOpen && <AdminDialog />}
+      {tenantOpen && <TenantDialog />}
       {guideOpen && <GuideModal />}
       <StartHost />
       <SessionModals />
       <WsStartingDialog />
       <AuthExpiredModal />
+      <ProviderRequiredModal />
       <DirtyGuardHost />
       <WhichKey />
       <CommandPalette />

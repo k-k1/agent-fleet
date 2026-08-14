@@ -20,9 +20,17 @@
 | docker.sock で "permission denied" | `DOCKER_GID` がホストの docker グループ GID と一致しているか（DooD 制約 C）|
 | Workspace は起動するのに home が空 | `DATA_DIR` が CP の内外で同一絶対パスか。リストア時も同じパスか（DooD 制約 B）|
 | 起動した Workspace に到達できない | CP と Caddy が両方 `network_mode: host` か（DooD 制約 A）|
-| ログインが常に拒否される | 許可リストが空（fail-closed）。`AF_OAUTH_ALLOWED_DOMAINS` / `_EMAILS` を設定 |
+| ログインが常に拒否される | 許可リストが空で、**かつまだ誰も招待していない**（fail-closed）。`AF_OAUTH_ALLOWED_DOMAINS` / `_EMAILS` を設定するか、招待する |
+| 特定の人だけ「このテナントには別のサインインが必要です」 | そのテナントの**ログイン規則 → 使えるサインイン方法**に、その人が使った IdP が入っていない。`/login/<slug>` を案内する |
+| 外したはずの人がまだ使える | IdP 側で止めてもセッションは切れない。名簿から外す（管理 → テナント → メンバー → **メンバーを外す**）か許可リストから消す |
 | TLS 証明書が発行されない | DNS A/AAAA がこのホストを指すか。80/443 が到達可能か。Let's Encrypt のレート制限 |
-| redirect URI mismatch | Google Console の URI が `<PUBLIC_BASE_URL>/oauth2/callback` と一致しているか |
+| redirect URI mismatch | IdP に登録した URI が `<PUBLIC_BASE_URL>/oauth2/callback` と一致しているか |
+| サインインのボタンが出ない | その provider が起動時に無効化された。`docker compose logs control-plane \| grep -i "login provider"` に不足している設定名が出る |
+| マルチテナント issuer を理由に CP が起動しない | Entra の `/common/` `/organizations/` issuer で `AF_OIDC_<ID>_ALLOWED_TIDS` が空。issuer を自社テナント GUID に固定する |
+| GitHub ログインが全員拒否される | org が OAuth App を未承認（CP ログの `returned 403`）か、本人の primary/verified アドレスが `AF_GITHUB_ALLOWED_DOMAINS` の外 |
+| CP 再起動後に GitHub の人だけ再サインインを求められる | 仕様。org メンバーシップのキャッシュはメモリ上。拒否ではなく再確認 |
+| テナントがサインイン方法を登録したのにボタンが出ない | まだ「承認待ち」か、承認済みだが設定に不備がある。管理 → そのテナント → **このテナントのサインイン方法**の状態表示で分かる。不備の内容は CP ログの `tenant login provider` に出る |
+| 「このメールアドレスは、すでに別のサインイン方法で使われています」 | テナント定義の方式が、既にログイン実績のあるアドレスを名乗った。仕様です — その方式に既存アカウントを乗っ取らせないため。いつも使っているサインイン方法でログインしてもらう |
 
 ## DooD の 3 制約の診断（「起動するのに静かに動かない」）
 
@@ -47,11 +55,46 @@ CP はコンテナですが、ホストの Docker デーモンを外から駆動
 ## ログインできない
 
 - **常に拒否される** → 許可リスト（`AF_OAUTH_ALLOWED_EMAILS` / `_DOMAINS` / `_EMAILS_FILE`）が
-  **すべて空だと全拒否**です（fail-closed = 安全側に倒す設計）。少なくとも 1 つ設定します。
-  `_EMAILS_FILE` はログインごとに再読込されるので追加は再起動不要です。
-- **redirect URI mismatch** → Google Cloud Console の承認済みリダイレクト URI が
-  `<PUBLIC_BASE_URL>/oauth2/callback` と**完全一致**しているか。`PUBLIC_BASE_URL` を変えたら Google 側も
-  合わせます（[01 §3](01-install.ja.md)）。
+  **すべて空で、かつ誰もテナントに招待されていないと全拒否**です（fail-closed = 安全側に倒す設計）。
+  少なくとも 1 つ設定するか、その人をメンバーとして追加します。`_EMAILS_FILE` はログインごとに
+  再読込されるので追加は再起動不要で、招待も即時に効きます。
+- **「このテナントには別のサインインが必要です」（`provider_required`）** → そのテナントの
+  **ログイン規則 → 使えるサインイン方法**に、そのセッションの IdP が入っていません。故障では
+  ありません — セッションは provider を 1 つしか持たないので、別の方法を要求するテナントへ移る
+  には再サインインが要ります。Console が導線を出します。
+  `https://<PUBLIC_DOMAIN>/login/<slug>` を開けば、そのテナントが受け付ける方法だけが並びます。
+  *規則の方*が間違っているなら管理画面で直してください。
+- **外したはずの人がまだ使えている** → IdP 側でアカウントを止めても、**すでに持っているセッションは
+  切れません**。署名済み cookie は最大 `AF_SESSION_TTL`（既定 7 日）有効で、個別失効の手段はあり
+  ません。名簿から外す（管理 → テナント → メンバー → **メンバーを外す**）か許可リストから消して
+  ください — どちらも**次のリクエスト**で効きます。全セッションを一度に切るなら
+  `AF_COOKIE_SECRET` のローテーション（[03 のオフボーディング節](03-security.ja.md)）。
+- **redirect URI mismatch** → IdP 側（Google Cloud Console、Entra のアプリ登録など）に登録した
+  承認済みリダイレクト URI が `<PUBLIC_BASE_URL>/oauth2/callback` と**完全一致**しているか。
+  `PUBLIC_BASE_URL` を変えたら IdP 側も合わせます（[01 §3](01-install.ja.md)）。有効にする provider が
+  何個でも、この URI は 1 本だけです。
+- **設定したはずのサインインボタンがログイン画面に出ない** → 設定が不完全なため起動時に無効化
+  されています（1 つの IdP の設定ミスで全員が締め出されないための挙動）。
+  `docker compose logs control-plane | grep -i "login provider"` に不足している変数名が出ます。
+  多いのは、既定値を持たない `AF_OIDC_<ID>_TRUST` の未設定です。
+- **マルチテナント issuer を理由に CP が終了する** → Entra ID の issuer が `/common/` または
+  `/organizations/` で `AF_OIDC_<ID>_ALLOWED_TIDS` が空です。これらのエンドポイントでは Microsoft
+  アカウントを持つ全人類がログイン画面に立て、個人アカウントは自分の email を付け替えられるため、
+  許可リストが意味を失います。issuer を自社テナント GUID
+  （`https://login.microsoftonline.com/<tenant-guid>/v2.0`）に固定するか、受け入れるテナントを
+  列挙してください。
+- **設定は正しく見えるのに GitHub ログインが全員拒否される** → 多いのは、org 側がサードパーティ
+  OAuth App を制限していて、まだ承認されていないケースです。承認されるまでメンバーシップは
+  見えません。`docker compose logs control-plane | grep "returned 403"` にその旨が出ます。
+  もう 1 つの原因はアドレスで、GitHub が渡すのはアカウントの **primary かつ verified** な
+  メールアドレスです。これが個人用アドレスだと `AF_GITHUB_ALLOWED_DOMAINS` の外になります。
+  本人が会社アドレスを GitHub に登録して verified・primary にするか、別のボタンでサインイン
+  してもらってください。
+- **CP を再起動すると GitHub の人だけ再サインインを求められる** → 不具合ではなく仕様です。
+  org メンバーシップの判定結果と、それを更新するためのトークンはメモリ上にしか持たないため、
+  再起動すると再確認する材料が無くなります。「許可されていません」ではなく「もう一度サイン
+  インしてください」を出すのはそのためで、GitHub 側のセッションが生きていれば、この往復は
+  たいてい利用者に見えません。
 - **cookie が保存されない/ログイン直後に戻される** → `AUTH=oauth` は Secure cookie を使うため
   **HTTPS 必須**です。素の HTTP（TLS 未終端）では保存されません。`PUBLIC_BASE_URL` が `https://` か、
   TLS が実際に発行されているか（下記）を確認します。
@@ -117,7 +160,11 @@ A. 提供モデルは 1 社 = 1 デプロイ = 1 ホストです。CP はホス�
 複数ホストへの分散や HA 構成は現行の対象外です。大規模化の設計方向は [dev/09](../../dev/09-deploy.md)
 （aws ターゲットは実装済みだが実運用実績なし）を参照してください。
 
-**Q. Google 以外の認証（LDAP / SAML など）を使いたい。**
-A. CP ネイティブは Google OAuth（`AUTH=oauth`）です。既存の認証ゲートウェイ（oauth2-proxy / ALB
-OIDC など）を前段に置き、`AUTH=proxy` で上流のメールヘッダを信頼させる形なら、他の IdP も間接的に
-使えます（[01 §3](01-install.ja.md) / [dev/07 §7.3](../../dev/07-security.md)）。
+**Q. Google 以外の認証（Microsoft 365 / LDAP / SAML など）を使いたい。**
+A. CP ネイティブ（`AUTH=oauth`）は OIDC を話すので、**Microsoft Entra ID・Okta・Keycloak・Auth0・
+Cognito・GitLab は設定だけで使えます** — `AF_OIDC_PROVIDERS` と数個の `AF_OIDC_<ID>_*`、そして
+IdP 側にリダイレクト URI を 1 本（[01 §3](01-install.ja.md)）。同時に複数有効化でき、その場合は
+ログイン画面に provider の数だけボタンが並びます。
+SAML のみの IdP（HENNGE One / TrustLogin / CloudGate など）と LDAP は CP には実装していません。
+既存のゲートウェイ（oauth2-proxy / Keycloak / ALB OIDC）を前段に置き、`AUTH=proxy` で上流のメール
+ヘッダを信頼させてください（[dev/07 §7.3](../../dev/07-security.md)）。

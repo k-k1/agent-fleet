@@ -482,7 +482,7 @@ func TestSearchRecipientsFiltersByEmailAndExcludesSelf(t *testing.T) {
 	}
 	tenant, _ := st.EnsureDefaultTenant(ctx)
 	selfIdentity, _ := st.UpsertIdentity(ctx, "self@example.com", "self", "")
-	aliceIdentity, _ := st.UpsertIdentity(ctx, "alice@accrete-inc.com", "alice", "")
+	aliceIdentity, _ := st.UpsertIdentity(ctx, "alice@acme.example", "alice", "")
 	bobIdentity, _ := st.UpsertIdentity(ctx, "bob@other.com", "bob", "")
 	if _, err := st.EnsureMembership(ctx, selfIdentity.ID, tenant.ID, "member"); err != nil {
 		t.Fatal(err)
@@ -525,9 +525,9 @@ func TestSearchRecipientsFiltersByEmailAndExcludesSelf(t *testing.T) {
 	}
 
 	// email 部分一致で絞り込める。
-	accrete := search("accrete-inc.com")
-	if len(accrete) != 1 || accrete[0]["email"] != "alice@accrete-inc.com" {
-		t.Fatalf("filtered members=%v", accrete)
+	filtered := search("acme.example")
+	if len(filtered) != 1 || filtered[0]["email"] != "alice@acme.example" {
+		t.Fatalf("filtered members=%v", filtered)
 	}
 
 	// 大文字小文字は無視される。

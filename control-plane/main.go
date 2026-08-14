@@ -31,7 +31,9 @@ type config struct {
 	bbKey         string
 	bbSecret      string
 	publicBaseURL string // external base, e.g. https://host (for redirect_uri)
-	// CP-native Google OAuth (AUTH=oauth) — replaces oauth2-proxy. See oauth_google.go.
+	// CP-native OIDC login (AUTH=oauth) — replaces oauth2-proxy. See oauth.go /
+	// oauth_oidc.go. Google keeps its historical env names and is one instance of
+	// the generic OIDC client (docs/61 §61.6).
 	googleClientID     string
 	googleClientSecret string
 	cookieSecret       []byte        // HMAC key for the signed session cookie
@@ -40,7 +42,11 @@ type config struct {
 	allowEmails        map[string]bool
 	allowDomains       map[string]bool // allowed email domains (lowercased, no leading @)
 	allowEmailsFile    string          // emails.txt-style allowlist, read live per callback
-	autostart          bool            // P3-9: on-demand start of a stopped workspace on intentful access
+	// Enabled login providers, in login-page display order, plus the id lookup the
+	// callback resolves state against. Built by buildLoginProviders/setProviders.
+	providers    []loginProvider
+	providerByID map[string]loginProvider
+	autostart    bool // P3-9: on-demand start of a stopped workspace on intentful access
 	// Egress observation (docs/20 M2, log-only). egressToken authenticates the
 	// forward proxy's POST /internal/egress; egressDedup collapses would-block audit
 	// rows to one per (day, host). Both empty/nil unless egress is configured.
@@ -132,10 +138,28 @@ func main() {
 		log.Fatalf("db migrate: %v", err)
 	}
 	mgr.store = store
+	mgr.tenantLogin = newTenantLoginCache(store)
+	// Tenant-defined login providers (docs/61 §61.11). Unlike the env providers built
+	// below, this set is read from the database on demand, so approving a subsidiary's
+	// IdP needs no restart (決定 29).
+	mgr.tenantIdP = newTenantIdPRegistry(store, mgr.openTenantSecret)
 	if dt, err := store.EnsureDefaultTenant(ctx); err != nil {
 		log.Fatalf("ensure default tenant: %v", err)
 	} else {
 		mgr.defaultTenantID = dt.ID // used by rootedDataDir to detect flat paths
+	}
+	// ★ SUPER_ADMIN_EMAILS is the single source of truth for the deployment role,
+	// and this is where removing somebody from it takes effect (docs/61 §61.10.7 +
+	// ADR0043 決定 24). UpsertIdentity only ever upgrades, on purpose — it is called
+	// with roleHint="" from addMembership / cleanHome / stopWorkspace, so demoting
+	// there would strip an operator the moment anyone added a member. And a
+	// login-time sync would never reach the case that matters: the person who left
+	// does not log in again. A startup pass lines up exactly with the documented
+	// handover, which is "edit the env, restart CP".
+	if demoted, err := store.DemoteSuperAdmins(ctx, superAdminEmailList()); err != nil {
+		log.Printf("WARNING: super_admin sync: %v", err)
+	} else if len(demoted) > 0 {
+		log.Printf("super_admin revoked (not in SUPER_ADMIN_EMAILS): %s", strings.Join(demoted, ", "))
 	}
 	if err := mgr.backfill(ctx); err != nil {
 		log.Printf("backfill warning: %v", err)
@@ -184,7 +208,7 @@ func main() {
 		bbSecret:      os.Getenv("BITBUCKET_OAUTH_SECRET"),
 		publicBaseURL: publicBaseURL,
 		mgr:           mgr,
-		// CP-native Google OAuth (AUTH=oauth).
+		// CP-native OIDC login (AUTH=oauth). Google's env names are unchanged.
 		googleClientID:     os.Getenv("GOOGLE_OAUTH_CLIENT_ID"),
 		googleClientSecret: os.Getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
 		cookieSecret:       decodeKey(os.Getenv("AF_COOKIE_SECRET")),
@@ -269,20 +293,67 @@ func main() {
 		log.Printf("scheduler: enabled (interval=%s settle=%s wake_timeout=%s jitter=%s)", iv, settle, ready, scheduleJitterMax)
 	}
 
+	// Login providers (docs/61 §61.6): Google (historical env names) plus every id
+	// listed in AF_OIDC_PROVIDERS. A provider with incomplete config is dropped
+	// with a warning inside; only the unsafe multi-tenant Entra case errors, and
+	// that is fatal below. Must run before buildMux — it captures cfg by value.
+	provs, provErr := buildLoginProviders(cfg)
+	cfg.setProviders(provs)
+	// The admin API validates a tenant's allowed_providers against this set, so a
+	// rule can't name an IdP the deployment doesn't have (docs/61 §61.9.4).
+	mgr.knownProviderIDs = map[string]bool{}
+	for _, p := range provs {
+		mgr.knownProviderIDs[p.ID()] = true
+	}
+
 	mux := buildMux(cfg)
 
 	// In oauth mode the CP is the edge (behind Funnel): gate every request on a
-	// verified Google session. dev/proxy modes keep the prior behavior (no gate;
-	// proxy trusts the upstream oauth2-proxy header).
+	// verified session. dev/proxy modes keep the prior behavior (no gate; proxy
+	// trusts the upstream oauth2-proxy header).
 	var handler http.Handler = mux
 	if cfg.mgr.authMode == "oauth" {
+		if provErr != nil {
+			log.Fatalf("AUTH=oauth: %v", provErr)
+		}
 		if !cfg.oauthConfigured() {
-			log.Fatalf("AUTH=oauth requires GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, AF_COOKIE_SECRET, PUBLIC_BASE_URL")
+			log.Fatalf("AUTH=oauth requires AF_COOKIE_SECRET, PUBLIC_BASE_URL and at least one login provider " +
+				"(GOOGLE_OAUTH_CLIENT_ID + GOOGLE_OAUTH_CLIENT_SECRET, AF_OIDC_PROVIDERS with AF_OIDC_<ID>_{ISSUER,CLIENT_ID,CLIENT_SECRET,TRUST}, " +
+				"and/or GITHUB_OAUTH_CLIENT_ID + GITHUB_OAUTH_CLIENT_SECRET + AF_GITHUB_ALLOWED_ORGS)")
 		}
-		if len(cfg.allowEmails) == 0 && len(cfg.allowDomains) == 0 && cfg.allowEmailsFile == "" {
-			log.Printf("WARNING: AUTH=oauth with no allowlist (AF_OAUTH_ALLOWED_EMAILS / AF_OAUTH_ALLOWED_DOMAINS / AF_OAUTH_ALLOWED_EMAILS_FILE) — every login is denied")
+		// ★ "No allowlist" no longer means "nobody can sign in": since P3 the entry
+		// gate also admits anyone on a tenant's roster or matching an auto-join
+		// domain (docs/61 §61.9.6), which is the whole point of the invite-run
+		// deployment — no AF_OAUTH_ALLOWED_* at all. So check the database before
+		// warning, and only say "every login is denied" when that is actually true.
+		if !cfg.hasDeploymentAllowlist() && !anyProviderAllowlist(cfg.providers) {
+			hasRoster, err := mgr.store.AnyActiveMembership(ctx)
+			// A tenant-defined provider carries its own (mandatory) domain list
+			// (docs/61 §61.11), so an approved one is also a way in — counting it keeps
+			// the warning from claiming "every login is denied" on a deployment that
+			// runs entirely on a subsidiary's own IdP.
+			if !hasRoster && err == nil {
+				if rows, _, lerr := mgr.store.ListActiveTenantIdPs(ctx); lerr == nil && len(rows) > 0 {
+					hasRoster = true
+				}
+			}
+			switch {
+			case err != nil:
+				log.Printf("WARNING: could not check for existing memberships: %v", err)
+			case hasRoster:
+				log.Printf("login: no email allowlist configured — access is governed by tenant membership and auto_join_domains (docs/61 §61.9.6)")
+			default:
+				log.Printf("WARNING: AUTH=oauth with no allowlist (AF_OAUTH_ALLOWED_EMAILS / AF_OAUTH_ALLOWED_DOMAINS / AF_OAUTH_ALLOWED_EMAILS_FILE / AF_OIDC_<ID>_ALLOWED_EMAILS / AF_OIDC_<ID>_ALLOWED_DOMAINS / AF_GITHUB_ALLOWED_ORGS) and no tenant membership or auto_join_domains — every login is denied")
+			}
 		}
+		ids := make([]string, 0, len(cfg.providers))
+		for _, p := range cfg.providers {
+			ids = append(ids, p.ID())
+		}
+		log.Printf("login providers: %s", strings.Join(ids, ", "))
 		handler = cfg.authGate(mux)
+	} else if provErr != nil {
+		log.Printf("WARNING: login provider config rejected (AUTH=%s so it is unused): %v", cfg.mgr.authMode, provErr)
 	}
 
 	log.Printf("control-plane %s on %s (console=%s, ws image=%s, auth=%s, runtime=%s)", buildVersion, cfg.addr, cfg.consoleDir, cfg.mgr.image, cfg.mgr.authMode, rtProfile)
@@ -290,6 +361,18 @@ func main() {
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// superAdminEmailList returns SUPER_ADMIN_EMAILS as a slice (the manager keeps the
+// same value as a lookup set). Read once at startup — unlike the allowlist file it
+// is NOT live-read, so changing it takes a CP restart, which is also when the
+// revocation pass above runs.
+func superAdminEmailList() []string {
+	var out []string
+	for e := range emailSet(os.Getenv("SUPER_ADMIN_EMAILS")) {
+		out = append(out, e)
+	}
+	return out
 }
 
 // envBool parses a boolean env var (1/true/yes/on = true, 0/false/no/off = false);
