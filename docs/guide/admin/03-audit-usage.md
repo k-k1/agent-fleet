@@ -3,11 +3,11 @@
 English | [日本語](03-audit-usage.ja.md)
 
 The audit log lets you trace "who did what"; usage tallies "how much was used". Both are available
-from tabs in the admin screen, scoped to your own tenant.
+from the tenant settings rail, scoped to your own tenant.
 
-## Audit log (Audit tab)
+## Audit log ("Audit")
 
-The **"Audit"** tab is the **record of change operations** that happened within the tenant. Each
+The **"Audit"** section is the **record of change operations** that happened within the tenant. Each
 row is one operation, with the following columns.
 
 - **Time** — when it was done.
@@ -36,9 +36,9 @@ Therefore the audit log cannot trace "what exactly that member typed in the term
 trace is "when, who, against which file or session, made what kind of change". The design intent
 behind the recording scope is laid out in [dev/07 §7.7 Audit](../../dev/07-security.md).
 
-## Usage (Usage tab)
+## Usage ("Usage")
 
-The **"Usage"** tab tallies each member's **workspace running time**. Usage here means "how much
+The **"Usage"** section tallies each member's **workspace running time**. Usage here means "how much
 infrastructure was occupied" — the time a workspace was up — not Claude fees. Claude is
 "bring your own" (BYO): each member logs in with their own subscription (seat), so the cost borne
 by the operator is the occupancy time. The value is sampled roughly every 5 minutes, so it is an
@@ -85,11 +85,10 @@ As tenant_admin you cannot grant rights. Only a super_admin can grant roles. Ask
 department / deployment administrator ("What the roles mean" in [01-members.md](01-members.md)).
 
 **Q. I want to delete a member who has left the company.**
-The admin screen has no delete button. Ask IT to revoke the membership. In the meantime,
-force-stopping that person's workspace reins in their activity and resource occupancy
-([02-limits.md](02-limits.md)).
+You can. From "Operations" on the member detail: **Remove member → Force-stop the workspace →
+Clean home**, in that order ("Removing a member" in [01-members.md](01-members.md)).
 
-**Q. Opening the "Egress" tab says I don't have permission.**
+**Q. Where is egress (external traffic) control?**
 Egress (external traffic) control is super_admin only. When traffic control becomes necessary,
 consult your IT department ([operator/README.md](../operator/README.md)).
 
