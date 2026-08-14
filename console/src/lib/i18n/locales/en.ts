@@ -38,6 +38,8 @@ export const en: Record<keyof typeof ja, string> = {
     "The agent is waiting for a permission decision. Allow or deny it from the permission card before sending — typed text would be swallowed by the menu and allow it.",
   "err.interaction_pending":
     "The agent is showing an interactive prompt. Answer it from its card before sending.",
+  "err.auth_expired":
+    "This workspace's Claude login has expired. Re-authenticate from Settings > Agents before sending (sent now, the terminal would take the text but no turn would ever start).",
   "err.not_running": "The session is stopped. Resume it before sending.",
   "err.driver_unavailable": "Managed execution isn't available for this agent.",
   "err.runtime_failed": "Couldn't start the agent. Wait a moment and try again.",
@@ -316,6 +318,9 @@ export const en: Record<keyof typeof ja, string> = {
   "conn.disconnected": "Not connected",
   "conn.connect": "Connect",
   "conn.connect_failed": "Failed to connect: {msg}",
+  "conn.expired": "Login expired",
+  "conn.expires_in": "Expires in {days} day(s)",
+  "conn.expires_soon": "Expires soon",
   "provider.click_to_copy": "Click to copy",
   "provider.disconnect": "Disconnect",
   "provider.disconnect_confirm_title": "Disconnect this connection?",
@@ -1438,6 +1443,7 @@ export const en: Record<keyof typeof ja, string> = {
   "state.plan": "Plan ready",
   "state.permission": "Awaiting permission",
   "state.blocked": "Limit reached — action needed",
+  "state.auth_expired": "Login expired — sign in again",
   "state.idle_bg": "Ready · running in background",
   "state.idle": "Ready",
 

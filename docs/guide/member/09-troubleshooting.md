@@ -177,6 +177,19 @@ The error in the chat view offers **"Re-authenticate"**. Connect again from ther
 session resumes exactly where it left off**. The agent's card in ⚙ Settings → Agents also
 shows the connection state ([06](06-agents.md)).
 
+### A Claude session shows "Login expired — sign in again", or sending starts nothing
+
+**This workspace's Claude login has expired.** The credentials are still on disk, so the
+terminal looks like an ordinary ready prompt — but nothing you send there ever starts a turn.
+That is why the Console shows the **Login expired** chip instead of Ready and refuses the send
+outright (without the refusal, a prompt looks delivered and then simply never runs). Fix it from
+⚙ Settings → Agents → the Claude card's **Re-authenticate**. You don't need to stop the session;
+it continues once you are signed in again.
+
+The same card warns ahead of time with **"Expires in N day(s)"** (within three days). The CLI's
+own warning only appears with a day left and disappears after 15 seconds, so this card is the
+place where you can still notice it before it bites.
+
 ### The assistant (operator) stopped carrying things forward on its own
 
 It hit the **automatic reply limit**. As a runaway guard, it can only run so many turns in a
