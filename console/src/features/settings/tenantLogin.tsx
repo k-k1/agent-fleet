@@ -24,6 +24,9 @@ export interface TenantLoginFields {
   allowed_providers?: string;
   auto_join_domains?: string;
   allowed_domains?: string;
+  // 受け入れるが、このテナントのログイン画面には出さない方式（docs/61 §61.15.9）。
+  // ★ 表示だけの欄で、門ではない。
+  hidden_providers?: string;
 }
 
 // テナントが定義したサインイン方法（docs/61 §61.11）。client_secret は書き込み専用 —
@@ -33,12 +36,16 @@ export interface TenantIdP {
   name: string;
   label_ja?: string;
   label_en?: string;
+  // kind は「どのアダプタで動くか」＝出す欄そのものを変える（docs/61 §61.15）。
+  // 既定は oidc（P4 の行はこの列より古い）。
+  kind?: string;
   issuer: string;
   client_id: string;
   client_secret?: string;
   trust: string;
   allowed_tids?: string;
   allowed_domains?: string;
+  allowed_orgs?: string;
   provider_id?: string;
   tenant_slug?: string;
   status?: string;
@@ -129,12 +136,14 @@ export function TenantLoginRules({
   const [providers, setProviders] = useState(tenant?.allowed_providers || "");
   const [autoJoin, setAutoJoin] = useState(tenant?.auto_join_domains || "");
   const [domains, setDomains] = useState(tenant?.allowed_domains || "");
+  const [hidden, setHidden] = useState(tenant?.hidden_providers || "");
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     setProviders(tenant?.allowed_providers || "");
     setAutoJoin(tenant?.auto_join_domains || "");
     setDomains(tenant?.allowed_domains || "");
+    setHidden(tenant?.hidden_providers || "");
   }, [slug, tenant]);
 
   const save = async () => {
@@ -142,6 +151,7 @@ export function TenantLoginRules({
       allowed_providers: providers.trim(),
       auto_join_domains: autoJoin.trim(),
       allowed_domains: domains.trim(),
+      hidden_providers: hidden.trim(),
     });
     if (res?.error) {
       toast(errText(res.error));
@@ -176,10 +186,22 @@ export function TenantLoginRules({
             <input type="text" placeholder="@acme.co.jp" value={domains} onChange={(e) => setDomains(e.target.value)} />
             <span className="af-unit">{tr("admin.invite_domains_unit")}</span>
           </label>
+          {/* ★ 受け入れる方式と、ボタンに出す方式は別のこと。兼務の人のために本社の
+              方式を受け入れたままにしつつ、そのテナントの画面には出さない、が書ける
+              （docs/61 §61.15.9）。門は resolver 側のままで、ここは表示だけ。 */}
+          <label className="admin-fld">
+            <span className="af-cap">{tr("admin.hidden_providers")}</span>
+            <input type="text" placeholder="google" value={hidden} onChange={(e) => setHidden(e.target.value)} />
+            <span className="af-unit">{tr("admin.hidden_providers_unit")}</span>
+          </label>
         </div>
         {/* 「使えるサインイン方法」の答えは欄の隣にしか置けない — 別の面に置くと、
             打ち間違えて 400 で弾かれた人がそこへ辿り着けない。 */}
         <DeploymentSignInMethods />
+        {/* ★ 絞り込みの副作用は、絞る人の画面にしか書く場所が無い。兼務の人は
+            他テナントの方式で入っていることがあり、その方式を外すと切り替えが
+            provider_required で止まる（docs/61 §61.15 の運用上の注意）。 */}
+        <p className="admin-hint">{tr("admin.allowed_providers_shared_note")}</p>
         <p className="admin-hint">{tr("admin.login_rules_hint")}</p>
         <p className="admin-hint">
           {tr("admin.login_url")} <code>{loginURL}</code>
@@ -227,9 +249,11 @@ export function TenantLoginRulesView({
           {row(tr("admin.allowed_providers"), (tenant?.allowed_providers || "").trim(), tr("tenant.rules_providers_note"))}
           {row(tr("admin.auto_join_domains"), (tenant?.auto_join_domains || "").trim(), tr("tenant.rules_autojoin_note"))}
           {row(tr("admin.invite_domains"), (tenant?.allowed_domains || "").trim(), tr("tenant.rules_invite_note"))}
+          {row(tr("admin.hidden_providers"), (tenant?.hidden_providers || "").trim(), tr("admin.hidden_providers_unit"))}
         </div>
         {/* 管理モーダル側の同名ヒント（admin.login_rules_hint）はこの面に合わない —
             「下のメンバー詳細から外す」は、この画面には無い操作を指してしまう。 */}
+        <p className="admin-hint">{tr("admin.allowed_providers_shared_note")}</p>
         <p className="admin-hint">{tr("tenant.rules_hint")}</p>
         <p className="admin-hint">
           {tr("admin.login_url")} <code>{loginURL}</code>
@@ -249,6 +273,14 @@ type IdPStatusKey =
   | "admin.idp_state_suspended"
   | "admin.idp_state_pending";
 
+// idpSource は行の「身元の出どころ」を 1 行で言う。OIDC は issuer がその答えだが、
+// GitHub の issuer は全テナント共通の github.com なので、それを出しても何も区別が
+// つかない — 実際に効いているのは組織の方（docs/61 §61.15）。
+function idpSource(row: TenantIdP): string {
+  if (row.kind === "github") return "GitHub: " + (row.allowed_orgs || "");
+  return row.issuer;
+}
+
 function idpStatusKey(row: TenantIdP): IdPStatusKey {
   if (row.status === "active") return row.usable ? "admin.idp_state_active" : "admin.idp_state_broken";
   if (row.status === "suspended") return "admin.idp_state_suspended";
@@ -258,12 +290,14 @@ function idpStatusKey(row: TenantIdP): IdPStatusKey {
 const emptyIdP = (): TenantIdP => ({
   id: "",
   name: "",
+  kind: "oidc",
   issuer: "",
   client_id: "",
   client_secret: "",
   trust: "issuer",
   allowed_domains: "",
   allowed_tids: "",
+  allowed_orgs: "",
 });
 
 // TenantSignInMethods — そのテナント自身の IdP 定義。
@@ -301,6 +335,7 @@ export function TenantSignInMethods({ slug, isSuper }: { slug: string; isSuper: 
         name: form.name.trim(),
         label_ja: (form.label_ja || "").trim(),
         label_en: (form.label_en || "").trim(),
+        kind: form.kind || "oidc",
         issuer: form.issuer.trim(),
         client_id: form.client_id.trim(),
         // 編集時に空のままなら保存済みの秘密をそのまま使う（サーバがマージする）。
@@ -309,6 +344,7 @@ export function TenantSignInMethods({ slug, isSuper }: { slug: string; isSuper: 
         trust: form.trust,
         allowed_tids: (form.allowed_tids || "").trim(),
         allowed_domains: (form.allowed_domains || "").trim(),
+        allowed_orgs: (form.allowed_orgs || "").trim(),
       };
       const res = form.id
         ? await apiJSON(`${base}/${encodeURIComponent(form.id)}`, "PUT", body)
@@ -376,8 +412,8 @@ export function TenantSignInMethods({ slug, isSuper }: { slug: string; isSuper: 
               <span className="as-name mono" title={row.provider_id}>
                 {row.name}
               </span>
-              <span className="as-repo muted" title={row.issuer}>
-                {row.issuer}
+              <span className="as-repo muted" title={idpSource(row)}>
+                {idpSource(row)}
               </span>
               <span className={"idp-state idp-" + (row.status || "pending")}>{tr(idpStatusKey(row))}</span>
               <span className="allow-acts">
@@ -459,27 +495,68 @@ function IdPForm({
 }) {
   const tr = useT();
   const set = (patch: Partial<TenantIdP>) => setForm({ ...form, ...patch });
-  const valid = form.name.trim() && form.issuer.trim() && form.client_id.trim() && (form.allowed_domains || "").trim() && (form.id || (form.client_secret || "").trim());
+  // ★ 種類で「何を訊くか」が変わる。GitHub には issuer も tid も無く（発行元は
+  // github.com 1 つ）、代わりに組織が要る — 空欄のまま出すと、埋めようのない欄を
+  // 見せて 400 で弾くことになる（docs/61 §61.15）。
+  const isGitHub = form.kind === "github";
+  const callbackURL = new URL("oauth2/callback", document.baseURI).toString();
+  const valid =
+    form.name.trim() &&
+    form.client_id.trim() &&
+    (form.allowed_domains || "").trim() &&
+    (isGitHub ? (form.allowed_orgs || "").trim() : form.issuer.trim()) &&
+    (form.id || (form.client_secret || "").trim());
   return (
     <div className="ssm-frm adm-mcp-form">
       <div className="ssm-fgrid">
         <Field label={tr("admin.idp_name")} req hint={tr("admin.idp_name_hint")}>
-          <input value={form.name} placeholder="entra" onChange={(e) => set({ name: e.target.value })} />
+          <input value={form.name} placeholder={isGitHub ? "github" : "entra"} onChange={(e) => set({ name: e.target.value })} />
         </Field>
-        <Field label={tr("admin.idp_trust")} req hint={tr("admin.idp_trust_hint")}>
-          <select value={form.trust} onChange={(e) => set({ trust: e.target.value })}>
-            <option value="issuer">{tr("admin.idp_trust_issuer")}</option>
-            <option value="email_verified">{tr("admin.idp_trust_email")}</option>
+        <Field label={tr("admin.idp_kind")} req hint={tr("admin.idp_kind_hint")}>
+          {/* ★ 種類を変えたら、もう一方の欄は捨てる。持ち越すと「issuer が
+              https://github.com の OIDC 行」のような、保存はできるのに動かない行が
+              作れてしまう（github 行の issuer はサーバが入れた定数なので、なおさら
+              残す意味が無い）。 */}
+          <select
+            value={form.kind || "oidc"}
+            onChange={(e) =>
+              set(
+                e.target.value === "github"
+                  ? { kind: "github", issuer: "", allowed_tids: "" }
+                  : { kind: "oidc", allowed_orgs: "", issuer: form.issuer === "https://github.com" ? "" : form.issuer },
+              )
+            }
+          >
+            <option value="oidc">{tr("admin.idp_kind_oidc")}</option>
+            <option value="github">{tr("admin.idp_kind_github")}</option>
           </select>
         </Field>
-        <Field label={tr("admin.idp_issuer")} req wide hint={tr("admin.idp_issuer_hint")}>
-          <input
-            value={form.issuer}
-            placeholder="https://login.microsoftonline.com/<tenant-guid>/v2.0"
-            onChange={(e) => set({ issuer: e.target.value })}
-          />
-        </Field>
-        <Field label={tr("admin.idp_client_id")} req>
+        {isGitHub ? (
+          <Field label={tr("admin.idp_orgs")} req wide hint={tr("admin.idp_orgs_hint")}>
+            <input
+              value={form.allowed_orgs || ""}
+              placeholder="acme-sub"
+              onChange={(e) => set({ allowed_orgs: e.target.value })}
+            />
+          </Field>
+        ) : (
+          <>
+            <Field label={tr("admin.idp_trust")} req hint={tr("admin.idp_trust_hint")}>
+              <select value={form.trust} onChange={(e) => set({ trust: e.target.value })}>
+                <option value="issuer">{tr("admin.idp_trust_issuer")}</option>
+                <option value="email_verified">{tr("admin.idp_trust_email")}</option>
+              </select>
+            </Field>
+            <Field label={tr("admin.idp_issuer")} req wide hint={tr("admin.idp_issuer_hint")}>
+              <input
+                value={form.issuer}
+                placeholder="https://login.microsoftonline.com/<tenant-guid>/v2.0"
+                onChange={(e) => set({ issuer: e.target.value })}
+              />
+            </Field>
+          </>
+        )}
+        <Field label={tr("admin.idp_client_id")} req hint={isGitHub ? tr("admin.idp_github_app_hint", { url: callbackURL }) : undefined}>
           <input value={form.client_id} onChange={(e) => set({ client_id: e.target.value })} />
         </Field>
         <Field
@@ -495,16 +572,23 @@ function IdPForm({
             onChange={(e) => set({ client_secret: e.target.value })}
           />
         </Field>
-        <Field label={tr("admin.idp_domains")} req wide hint={tr("admin.idp_domains_hint")}>
+        <Field
+          label={tr("admin.idp_domains")}
+          req
+          wide
+          hint={isGitHub ? tr("admin.idp_github_domains_note") : tr("admin.idp_domains_hint")}
+        >
           <input
             value={form.allowed_domains || ""}
             placeholder="@sub.co.jp"
             onChange={(e) => set({ allowed_domains: e.target.value })}
           />
         </Field>
-        <Field label={tr("admin.idp_tids")} wide hint={tr("admin.idp_tids_hint")}>
-          <input value={form.allowed_tids || ""} onChange={(e) => set({ allowed_tids: e.target.value })} />
-        </Field>
+        {!isGitHub && (
+          <Field label={tr("admin.idp_tids")} wide hint={tr("admin.idp_tids_hint")}>
+            <input value={form.allowed_tids || ""} onChange={(e) => set({ allowed_tids: e.target.value })} />
+          </Field>
+        )}
         <Field label={tr("admin.idp_label_ja")}>
           <input value={form.label_ja || ""} onChange={(e) => set({ label_ja: e.target.value })} />
         </Field>
@@ -588,8 +672,8 @@ export function SignInMethodRegister() {
           <span className="as-name mono" title={row.provider_id}>
             {row.tenant_slug}
           </span>
-          <span className="as-repo muted" title={row.issuer}>
-            {row.issuer}
+          <span className="as-repo muted" title={idpSource(row)}>
+            {idpSource(row)}
           </span>
           <span className="muted">{row.allowed_domains}</span>
           <span className={"idp-state idp-" + (row.status || "pending")}>{tr(idpStatusKey(row))}</span>
